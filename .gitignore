@@ -1,0 +1,29 @@
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Build output
+out/
+dist/
+release/
+*.tsbuildinfo
+storybook-static/
+
+# Claude Design の書き出し（手元でだけ使う。ライセンスがはっきりしないので公開しない）
+design/Claude IDE.dc.html
+design/support.js
+design/.thumbnail
+# README のデモ動画（npm run demo:record の出力）
+demo-videos/
+
+# オーナーだけの手順と運用（個人の環境に由来する内容を含むので、公開しない。手元にだけ置く）
+MAINTAINING.md
+CLAUDE.local.md
+# 開発初期の検証メモ（ほかの製品の内部を調べた記録を含むので、公開しない）
+docs/architecture-verification.md

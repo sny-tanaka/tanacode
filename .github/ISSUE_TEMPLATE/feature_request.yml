@@ -1,0 +1,24 @@
+name: 要望
+description: 新しい機能や、今の動きを変える提案
+title: "[要望] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 困っていること
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 欲しい動き
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考えた代わりの方法（任意）
+    validations:
+      required: false

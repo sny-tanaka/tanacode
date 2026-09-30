@@ -1,0 +1,44 @@
+# v から始まるタグ（v0.1.0 など）をプッシュすると、Apple Silicon 用と Intel 用の zip と pkg（インストーラー）を作って、GitHub Releases の下書きに置く。
+# 署名・公証はしていない。下書きの中身を確かめてから、GitHub の画面で公開する
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # タグとアプリのバージョンがずれていたら止める（package.json の version を上げ忘れないように）
+      - name: バージョンを確かめる
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      # 画面側のビルドはメモリを 4GB ほど使う。ランナー（メモリ 7GB）では Node の既定の上限（約 2GB）で止まるため、上限を上げる
+      - run: npm run release
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      # zip と pkg の SHA-256 を SHA256SUMS.txt にまとめ、下書きの説明に載せる表も作る（ファイル名だけで書き、ダウンロードした場所で shasum -c できるようにする）
+      - name: チェックサムを計算する
+        working-directory: release
+        run: |
+          shasum -a 256 -- *.zip *.pkg > SHA256SUMS.txt
+          awk '
+            BEGIN { print "## SHA-256 のチェックサム\n\n| ファイル | SHA-256 |\n| --- | --- |" }
+            { print "| `" $2 "` | `" $1 "` |" }
+            END { print "\n確かめ方: ダウンロードしたファイルで `shasum -a 256 <ファイル>` を実行し、表の値との一致を確認（同じ内容は `SHA256SUMS.txt` にも）\n" }
+          ' SHA256SUMS.txt > "$RUNNER_TEMP/release-notes.md"
+      # --notes-file の中身は、自動で作られる変更点の前に付く
+      - name: Releases の下書きを作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --generate-notes --notes-file "$RUNNER_TEMP/release-notes.md" --title "$GITHUB_REF_NAME"

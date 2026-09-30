@@ -1,0 +1,4554 @@
+:root {
+  /* スクロールバーの角・入力欄の大きさを変えるつまみ・チェックボックスなど、Chromium が描く部品も暗い色にする */
+  color-scheme: dark;
+  /* 背景（本家 Claude Code の実測値に合わせたもの）。読む場所は bg-panel と bg-surface の 2 段だけで組み、中間の灰色を足さない */
+  --bg-chrome: #111111; /* セッション一覧・サイドバー・タイトルバー・ステータスバー・アクティビティバー */
+  --bg-panel: #151515; /* チャット・エディタ・ターミナル（読む場所） */
+  --bg-surface: #262625; /* カード・質問のカード・表のヘッダー・バッジ・選択中の行 */
+  --bg-input: #20201f; /* チャットの入力欄 */
+  --bg-hover: #1e1e1d;
+  --bg-selected: var(--bg-surface); /* 選択中の行 */
+  --bg-selected-ide: #29272f; /* エクスプローラーの選択中ファイル（わずかに紫） */
+  --bg-current-line: #1a1a1a; /* エディタの現在行 */
+  /* 線 */
+  --border-subtle: #232323; /* ペインの区切り・表の横線 */
+  --border-strong: #333332; /* 入力欄・ボタンの枠 */
+  /* 文字。いちばん明るい text-heading は、見出し・タイトル・選択中の項目だけ（本文には使わない） */
+  --text-heading: #f0efec; /* 見出し・セッションのタイトル・選択中の項目・カードのタイトル */
+  --text-primary: #c7c6c3; /* 本文・コードの本文・ツール名 */
+  --text-secondary: #898781; /* パス・補足・「N件の操作」・カードの説明文・タイムスタンプ */
+  --text-tertiary: #6e6c66; /* 行番号・プレースホルダー・動いていないアイコンだけ（ほかに、押せない部品の文字） */
+  /* アクセント（アイコンの 3 色の彩度を落としたもの） */
+  --claude: #d4835c; /* Claude が動いていることを示す場所（実行中の点・セッションの輪・ワークフローの点）と、Claude が書き換えたファイルの印 */
+  --ide: #9083cf; /* IDE 側の操作（エクスプローラーの選択・アクティビティバーのアクティブなアイコン） */
+  --blue: #6d9ccf; /* グラデーションの終端。状態の色（新しい応答・起動中・Claude が読んだもの）にも使う */
+  --ok: #5fb98a;
+  --warn: #d3ae5e; /* 人の対応待ち・git の変更ありの点 */
+  --danger: #d98a82;
+  /* グラデーション。使うのはチャットの入力欄の枠・実行中のツールカードと答える前の質問のカードの枠・エディタのアクティブなタブの上端・セッションの見出しの印だけ */
+  --grad: linear-gradient(90deg, #d4835c, #9083cf 55%, #6d9ccf);
+  --grad-short: linear-gradient(90deg, #d4835c, #6d9ccf);
+  /* 流すためのグラデーション。--grad の 3 色を折り返して並べ、繰り返しても継ぎ目が出ないようにする */
+  --grad-flow: linear-gradient(90deg, #d4835c, #9083cf 25%, #6d9ccf 50%, #9083cf 75%, #d4835c);
+  /* 送信ボタン（塗りつぶさない） */
+  --send-bg: #2c2830;
+  --send-bg-hover: #342f3a;
+  --send-fg: #c5b9e6;
+  --send-border: #4c445e;
+  /* インラインコード */
+  --code-inline-fg: #ed7e7e;
+  --code-inline-bg: #2e2422;
+  /* 指示に無い場所の色。上の色から作る（どれも不透明で、rgba や opacity で減光しない） */
+  --border-focus: #4c445e; /* チャット以外の入力欄を選んだとき・ボタンのホバーの枠 */
+  --text-on-fill: #161616; /* 色で塗った小さな印（バッジ・チェック）の上の文字 */
+  --claude-tint: #2d231e; /* 実行中の数やバッジの背景 */
+  --ok-tint: #1f2a23;
+  --warn-tint: #2c2719;
+  --danger-tint: #2a2222;
+  --hit: #3a3446; /* 検索のヒット */
+  --editor-selection: #34323d; /* エディタの選択範囲 */
+  /* ゲージ（コンテキスト・利用枠・CPU／メモリ）の青。高くなると warn・danger に変わる。
+     デザインの指示とは別に、ユーザーの希望で今までの青・黄・赤のままにしている */
+  --gauge: #72b0e8;
+  /* シンタックスハイライト。変数は text-primary、記号は text-secondary */
+  --syntax-keyword: #ab9bd8;
+  --syntax-string: #98bf9c;
+  --syntax-type: #d1b98a; /* 型・属性（数値もこの色） */
+  --syntax-function: #7ea6cf;
+  --syntax-tag: #7fb5ab;
+  --syntax-comment: #71706a; /* italic */
+  /* ターミナルの 16 色（xterm.js） */
+  --ansi-black: #2e2e2c;
+  --ansi-red: #d98a82;
+  --ansi-green: #98bf9c;
+  --ansi-yellow: #d1b98a;
+  --ansi-blue: #7ea6cf;
+  --ansi-magenta: #ab9bd8;
+  --ansi-cyan: #7fb5ab;
+  --ansi-white: #95938c;
+  --ansi-bright-black: #72716b;
+  --ansi-bright-red: #e6a49c;
+  --ansi-bright-green: #b0d3b2;
+  --ansi-bright-yellow: #e2cda3;
+  --ansi-bright-blue: #9dbfe0;
+  --ansi-bright-magenta: #c2b5e6;
+  --ansi-bright-cyan: #9ccbc2;
+  --ansi-bright-white: #bfbcb4;
+  /* macOS のシステムフォント（英数字は SF、日本語はヒラギノ）。画面での表示向けに調整されていて、IBM Plex Sans JP より読みやすかった */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', sans-serif;
+  --font-mono: 'JetBrains Mono', Menlo, monospace;
+}
+
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-chrome);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 400;
+  /* -webkit-font-smoothing: antialiased は付けない。暗い背景だと線が細くなり、読みにくくなる */
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+/* 縦と横のスクロールバーが出会う角（既定は白） */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+input[type='checkbox'] {
+  accent-color: var(--ide);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* タイトルバー（左端は macOS の信号機ボタン用に空ける） */
+.titlebar {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 0 86px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border-subtle);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+/* アプリのロゴ（アイコンと名前）。高さ 44px の帯に、高さ 20px で置く */
+.titlebar-logo {
+  height: 20px;
+  width: auto;
+  flex: none;
+  /* ドラッグでウインドウを動かせるよう、画像をつかまない */
+  -webkit-user-drag: none;
+  user-select: none;
+}
+/* ロゴの横のバージョン。ロゴに添える控えめな文字にする */
+.titlebar-version {
+  flex: none;
+  margin-left: -4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.pane-heading {
+  padding: 12px 14px 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* エクスプローラー */
+.explorer {
+  width: var(--w-side, 284px);
+  flex: none;
+  display: flex;
+  flex-direction: row;
+  background: var(--bg-chrome);
+  border-right: 1px solid var(--border-subtle);
+  user-select: none;
+}
+/* サイドパネルの切り替え（左端に縦に並べるアイコン） */
+.activity-bar {
+  flex: none;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 6px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.activity-bar button {
+  position: relative;
+  width: 44px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.activity-bar button:hover {
+  color: var(--text-primary);
+}
+.activity-bar button.on {
+  color: var(--ide);
+  border-left-color: var(--ide);
+}
+.activity-badge {
+  position: absolute;
+  right: 5px;
+  bottom: 6px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}
+.activity-badge.live {
+  background: var(--claude);
+  color: var(--text-on-fill);
+}
+.side-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.side-panel-title {
+  flex: none;
+  padding: 11px 12px 6px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+/* カラムの境目のつまみ（ドラッグで幅を変える） */
+.resizer {
+  position: relative;
+  flex: none;
+  width: 0;
+  z-index: 20;
+}
+.resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+}
+.resizer:hover::before,
+body.resizing .resizer::before {
+  /* つまみ（幅 6px）の中央に、不透明の線を 2px だけ引く */
+  background: linear-gradient(var(--ide), var(--ide)) center / 2px 100% no-repeat;
+}
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.resizing * {
+  cursor: col-resize !important;
+}
+
+/* ソース管理 */
+.tree-label.git-modified {
+  color: var(--warn);
+}
+.tree-label.git-added,
+.tree-label.git-untracked {
+  color: var(--ok);
+}
+.tree-label.git-deleted {
+  color: var(--danger);
+}
+.tree-label.git-conflict {
+  color: var(--danger);
+  text-decoration: underline wavy;
+}
+/* 中に変更があるフォルダ。名前の色は変えず、名前の右に点を出す */
+.tree-git-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.editor-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-host[hidden] {
+  display: none;
+}
+.diff-pane-head {
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 16px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.diff-pane-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.diff-pane-kind {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.diff-pane .editor-tab-close {
+  visibility: visible;
+}
+.scm-empty {
+  padding: 12px 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.scm-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.scm-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px 6px;
+}
+.scm-branch {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.scm-branch:hover,
+.scm-sync:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.scm-branch-icon {
+  color: var(--ide);
+}
+.scm-sync {
+  flex: none;
+  min-width: 24px;
+  padding: 2px 5px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.scm-sync:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.scm-branch-menu {
+  position: absolute;
+  top: 32px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.scm-branch-menu input {
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.scm-branch-list {
+  max-height: 260px;
+  overflow: auto;
+  padding: 4px;
+}
+.scm-branch-list button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.scm-branch-list button:hover {
+  background: var(--bg-selected);
+}
+.scm-branch-list button.current {
+  color: var(--ide);
+}
+.scm-branch-list button.scm-branch-default {
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 5px 5px 0 0;
+  font-family: var(--font-ui);
+}
+.scm-branch-note {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 10px;
+}
+.scm-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.scm-commit textarea {
+  resize: vertical;
+  /* 2 行が収まる高さ（足りないとスクロールバーが出る） */
+  min-height: 52px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.scm-commit textarea:focus {
+  border-color: var(--border-focus);
+}
+.scm-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scm-commit-row .send-button {
+  margin-left: auto;
+}
+.scm-amend {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.scm-message {
+  margin: 0 8px 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.scm-message.error {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.scm-lists {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 12px;
+}
+.scm-section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px 4px 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.scm-count {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.scm-none {
+  padding: 2px 22px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.scm-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px 0 22px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.scm-row:hover,
+.scm-row.active {
+  background: var(--bg-hover);
+}
+.scm-name {
+  flex: none;
+}
+.scm-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.scm-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  visibility: hidden;
+}
+.scm-row:hover .scm-actions,
+.scm-section-head:hover .scm-actions {
+  visibility: visible;
+}
+.scm-actions button {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.scm-actions button:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.scm-code {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--warn);
+}
+.scm-code.code-A,
+.scm-code.code-U {
+  color: var(--ok);
+}
+.scm-code.code-D {
+  color: var(--danger);
+}
+
+/* ブランチの変更（ソース管理パネルの先頭） */
+.scm-branch-base {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 4px 26px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.review-count {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  flex: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.scm-name.deleted {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+
+.side-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.side-body[hidden] {
+  display: none;
+}
+
+/* 全文検索 */
+.search-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  user-select: text;
+}
+.search-box {
+  display: flex;
+  gap: 4px;
+  margin: 4px 8px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+}
+.search-box:focus-within {
+  border-color: var(--border-focus);
+}
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.search-flag {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.search-flag.on {
+  border-color: var(--send-border);
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+.search-summary {
+  padding: 2px 12px 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.search-results {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 12px;
+}
+.search-file-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.search-file-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.search-file-count {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.search-match {
+  width: 100%;
+  display: flex;
+  gap: 6px;
+  padding: 2px 10px 2px 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.search-match:hover {
+  background: var(--bg-hover);
+}
+.search-line {
+  flex: none;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.search-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-text mark {
+  border-radius: 2px;
+  background: var(--hit);
+  color: var(--text-primary);
+}
+
+/* ⌘P */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 80px;
+  /* ダイアログの後ろの幕。rgba で暗くしてよい例外（デザイナー確認済み） */
+  background: rgba(0, 0, 0, 0.55);
+}
+.quick-open {
+  width: min(600px, 90vw);
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.quick-open input {
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+.quick-open-list {
+  max-height: 420px;
+  overflow: auto;
+  padding: 4px;
+}
+.quick-open-item {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.quick-open-item.selected {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.quick-open-name {
+  font-family: var(--font-mono);
+}
+.quick-open-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.quick-open-empty {
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.tree {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 12px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-right: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.tree-row.dir {
+  color: var(--text-secondary);
+}
+.tree-row:hover {
+  background: var(--bg-hover);
+}
+.tree-row.active {
+  background: var(--bg-selected-ide);
+  color: var(--text-heading);
+}
+.tree-chevron {
+  width: 10px;
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.tree-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 名前の右の印（フォルダの点）のあとの空き。M / A などの印は右端に寄せる */
+.tree-fill {
+  flex: 1;
+}
+/* Claude Code による変更（M: 変更 / A: 新規作成） */
+.tree-mark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--claude);
+}
+.tree-dir-mark {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--claude);
+}
+
+/* 中央（エディタ + デバッグ用ターミナル） */
+.center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+}
+.editor-tabs {
+  height: 36px;
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.editor-tabs::-webkit-scrollbar {
+  height: 0;
+}
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 16px;
+  cursor: pointer;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.editor-tab.active {
+  /* 上端の 2px をグラデーションにする（右の区切り線はそのまま） */
+  background:
+    var(--grad-short) top / 100% 2px no-repeat,
+    var(--bg-panel);
+  color: var(--text-heading);
+}
+.editor-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--claude);
+}
+.editor-tab-dot.dirty {
+  background: var(--text-primary);
+}
+.editor-tab-close {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  visibility: hidden;
+}
+.editor-tab:hover .editor-tab-close,
+.editor-tab.active .editor-tab-close {
+  visibility: visible;
+}
+.editor-tab-close:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.editor-crumb {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre;
+  overflow: hidden;
+}
+/* 未保存の変更とディスクの変更がぶつかったときのバナー */
+.pending-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 16px 8px;
+  padding: 7px 8px 7px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.pending-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.pending-text {
+  flex: 1;
+}
+
+/* 開いているファイルの、直近のターンの変更 */
+.change-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--ok-tint);
+  color: var(--text-primary);
+}
+.change-bar .diff-add,
+.change-bar .diff-del {
+  font-size: 12px;
+}
+.change-bar .ghost-button {
+  margin: -4px -6px -4px 0;
+}
+
+/* エディタ上の差分表示 */
+.diff-added-line {
+  background: var(--ok-tint);
+}
+.diff-added-gutter {
+  background: var(--ok);
+  width: 3px !important;
+  margin-left: 3px;
+}
+.diff-removed-zone {
+  background: var(--danger-tint);
+}
+.diff-removed-text {
+  height: 21px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 21px;
+  white-space: pre;
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+.diff-removed-margin {
+  background: var(--danger-tint);
+}
+.editor-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.editor-monaco {
+  position: absolute;
+  inset: 0;
+}
+.editor-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-panel);
+  color: var(--text-tertiary);
+}
+
+.terminal-panel {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+.terminal-panel[hidden] {
+  display: none;
+}
+.terminal-resizer {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 5;
+}
+.terminal-resizer:hover {
+  background: var(--ide);
+}
+body.resizing-rows {
+  cursor: row-resize;
+  user-select: none;
+}
+.terminal-panel-head {
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.terminal-tabs {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px 0 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.terminal-tab.claude-screen-tab {
+  flex: none;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+}
+.terminal-panel-head .ghost-button {
+  flex: none;
+  white-space: nowrap;
+}
+.terminal-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.terminal-tab.active {
+  color: var(--text-heading);
+  background: var(--bg-selected);
+}
+.terminal-tab-close,
+.terminal-add,
+.terminal-panel-close {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+}
+.terminal-tab-close {
+  padding: 2px 4px;
+  font-size: 12px;
+}
+.terminal-add {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.terminal-panel-close {
+  padding: 4px 6px;
+  font-size: 14px;
+}
+.terminal-tab-close:hover,
+.terminal-add:hover,
+.terminal-panel-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-selected);
+}
+.terminal-panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.terminal-host {
+  position: absolute;
+  inset: 6px 0 0 8px;
+}
+.terminal-host[hidden] {
+  display: none;
+}
+.status-button {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.status-button:hover,
+.status-button.on {
+  color: var(--text-primary);
+  background: var(--bg-selected);
+}
+
+/* Claude Code ペイン */
+.claude {
+  width: var(--w-claude, 400px);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-subtle);
+}
+.claude-header {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.claude-mark {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 1px;
+  background: linear-gradient(135deg, #d4835c, #6d9ccf);
+  transform: rotate(45deg);
+}
+/* 作業中は、ひし形の中のグラデーションを流す */
+.claude-mark.working {
+  background: var(--grad-flow) 0 0 / 200% 100%;
+  animation: grad-flow 2.4s linear infinite;
+}
+.claude-title {
+  color: var(--text-heading);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ghost-button {
+  flex: none;
+  white-space: nowrap;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ghost-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.ghost-button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.ghost-button.on {
+  border-color: var(--send-border);
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+
+/* オン・オフのスイッチ（ヘッダーのボタンと並ぶ大きさ）。オンの色は .ghost-button.on にそろえる */
+.toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+.toggle:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.toggle-track {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  flex: none;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transition:
+    transform 0.15s,
+    background 0.15s;
+}
+.toggle.on .toggle-track {
+  border-color: var(--send-border);
+  background: var(--send-bg);
+}
+.toggle.on .toggle-thumb {
+  transform: translateX(10px);
+  background: var(--send-fg);
+}
+.toggle.on:not(:disabled) {
+  color: var(--send-fg);
+}
+/* アイコンのときは、文字の高さに合わせて並べる */
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+}
+.toggle:disabled .toggle-track {
+  opacity: 0.6;
+}
+
+.chat-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding-left: 2px;
+}
+.chat-note.error {
+  color: var(--danger);
+}
+.chat-note.working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--claude);
+}
+/* 作業中の ToDo の名前は長いことがあるので、1 行に収めて切る（進み具合は切らない） */
+.chat-note.working .working-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.working-detail {
+  flex: none;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.chat-user {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+/* 発言の「ここまで戻す」（/rewind）。ホバーで出す */
+.chat-rewind {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  visibility: hidden;
+}
+.chat-user:hover .chat-rewind {
+  visibility: visible;
+}
+.chat-rewind:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+.chat-user-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-user-text {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-prompt {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.markdown {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  padding: 0 2px;
+  overflow-wrap: anywhere;
+}
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown table,
+.markdown blockquote {
+  margin: 0 0 12px;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 20px;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 12px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+.markdown a {
+  color: var(--ide);
+  text-decoration: none;
+}
+.markdown a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--code-inline-bg);
+  color: var(--code-inline-fg);
+}
+.markdown pre {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow-x: auto;
+}
+.markdown pre code {
+  padding: 0;
+  background: none;
+  color: var(--text-primary);
+}
+/* シェルのコードブロックの「実行」ボタン（右上） */
+.markdown pre.runnable {
+  position: relative;
+  padding-right: 76px;
+}
+.code-run {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-chrome);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.code-run:hover {
+  border-color: var(--border-focus);
+  color: var(--send-fg);
+}
+.markdown table {
+  border-collapse: collapse;
+  font-size: 12px;
+  display: block;
+  overflow-x: auto;
+}
+.markdown th,
+.markdown td {
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 4px 8px;
+  text-align: left;
+}
+.markdown th {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 400;
+}
+.markdown blockquote {
+  padding-left: 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.tool-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  /* 終わったカードの枠は、列の区切り線と同じ灰色（実行中と見分けやすくする） */
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+/* 実行中の枠。グラデーションを流す層を枠の上に重ねて、濃さ（opacity）だけを切り替える。
+   終わるとグラデーションを流したまま薄くして消すので、いきなり灰色に変わってちらつかない */
+.tool-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--grad-flow) 0 0 / 200% 100%;
+  /* 内側をくり抜いて、枠の 1px だけを残す */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.6s ease-out;
+  pointer-events: none;
+}
+.tool-card.running::before {
+  opacity: 1;
+  transition-duration: 0.2s;
+}
+/* 流すのは、実行中と、終わって薄くしている間だけ（FINISH_MS と合わせる） */
+.tool-card.running::before,
+.tool-card.finishing::before {
+  animation: grad-flow 3s linear infinite;
+}
+.tool-card.clickable {
+  cursor: pointer;
+}
+.tool-card.clickable:hover {
+  background: var(--bg-hover);
+}
+.tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.tool-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+/* 実行中の丸は、ぐるぐる（.spinner と同じ）にする。丸より少し大きいので、はみ出した分は隣の余白に重ねる */
+.tool-dot.running {
+  width: 9px;
+  height: 9px;
+  margin: -1px;
+}
+.tool-dot.done {
+  background: var(--ok);
+}
+.tool-dot.error {
+  background: var(--danger);
+}
+.tool-name {
+  color: var(--text-primary);
+  font-weight: 400;
+  flex: none;
+}
+.tool-target {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-add,
+.diff-del {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.diff-add {
+  color: var(--ok);
+}
+.diff-del {
+  color: var(--danger);
+}
+/* 説明はコマンドではなく文章なので、UI の書体で読む */
+.tool-target.described {
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+}
+.tool-card-status {
+  padding-left: 15px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.chat-input-wrap {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+.chat-input {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+}
+.chat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* @ファイル・/コマンドの補完 */
+.suggest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+}
+.suggest-item {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.suggest-item.selected {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.suggest-label {
+  flex: none;
+  font-family: var(--font-mono);
+}
+.suggest-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+/* 貼り付け・ドロップした画像 */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border-radius: 5px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+.attachment button {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.attachment button:hover {
+  color: var(--text-primary);
+}
+.chat-input:focus-within {
+  /* 選んでいる間だけ、枠 1px をグラデーションにする（内側は bg-surface） */
+  border-color: transparent;
+  background:
+    linear-gradient(var(--bg-input), var(--bg-input)) padding-box,
+    var(--grad) border-box;
+}
+/* Claude Code の作業中は、選んでいなくても枠をグラデーションにして、ゆっくり流す */
+.chat-input.working,
+.chat-input.working:focus-within {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--bg-input), var(--bg-input)) padding-box,
+    var(--grad-flow) border-box;
+  background-size:
+    100% 100%,
+    200% 100%;
+  animation: grad-flow-border 6s linear infinite;
+}
+.chat-input.dragging,
+.chat-input.dragging:focus-within {
+  border-color: var(--ide);
+  background: var(--send-bg);
+}
+.chat-input .chat-prompt {
+  line-height: 26px;
+}
+.chat-input textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.6;
+  padding: 3px 0;
+  max-height: 200px;
+}
+.chat-input textarea::placeholder {
+  color: var(--text-tertiary);
+}
+.send-button {
+  flex: none;
+  padding: 4px 11px;
+  border: 1px solid var(--send-border);
+  border-radius: 7px;
+  background: var(--send-bg);
+  color: var(--send-fg);
+  cursor: pointer;
+}
+.send-button:hover:not(:disabled) {
+  background: var(--send-bg-hover);
+}
+/* 送れない状態（入力が空なだけなら、ふだんの色のまま） */
+.send-button:disabled {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.send-button.secondary,
+.send-button.secondary:hover:not(:disabled) {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+}
+
+/* ステータスバー */
+.statusbar {
+  height: 24px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px;
+  background: var(--bg-chrome);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.status-link {
+  color: var(--ide);
+  text-decoration: none;
+  cursor: pointer;
+}
+.status-link:hover {
+  color: var(--ide);
+}
+
+/* セッション一覧 */
+.sidebar {
+  width: var(--w-sessions, 248px);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-chrome);
+  border-right: 1px solid var(--border-subtle);
+  user-select: none;
+}
+.new-session-button {
+  margin: 10px 10px 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 400;
+  cursor: pointer;
+  text-align: left;
+}
+/* ふだんの背景（bg-surface）は bg-hover より明るいので、背景は変えず枠で示す（暗くすると、ホバーで沈んで見える） */
+.new-session-button:hover {
+  border-color: var(--border-focus);
+}
+.new-session-plus {
+  color: var(--text-secondary);
+}
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+.pane-heading.clickable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+.pane-heading.clickable:hover {
+  color: var(--text-primary);
+}
+.session-empty {
+  padding: 4px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.session-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px;
+  padding: 7px 8px 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.session-row:hover {
+  background: var(--bg-hover);
+}
+.session-row.active {
+  background: var(--bg-selected);
+}
+.session-row.archived .session-title {
+  color: var(--text-secondary);
+}
+/* 既存の会話の取り込み */
+.import-session-button {
+  margin: 6px 12px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.import-session-button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+.import-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.import-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-meta {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.session-rename {
+  width: 100%;
+  padding: 1px 4px;
+  border: 1px solid var(--border-focus);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+.session-action.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* セッションの状態の印。形で見分ける: 回る弧 = 作業中 / 輪 = バックグラウンドの完了待ち /
+   脈打つ点 = 操作待ち / 点 = 新しい応答・終了。何もしていなければ出さない（文言は .session-state） */
+.session-indicator {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+}
+/* 起動中・作業中・バックグラウンドの完了待ちは、どれもぐるぐる（.spinner と同じ）にする */
+.session-indicator.waiting {
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.session-indicator.unread {
+  transform: scale(0.8);
+  background: var(--blue);
+}
+.session-indicator.exited {
+  transform: scale(0.8);
+  background: var(--text-tertiary);
+}
+/* 進行中・処理中の印。グラデーションの尾を引いて回る輪（ぐるぐる）。
+   実行中の丸・セッションの状態の印・ステータスバーの印も、同じ見た目にそろえる */
+.spinner,
+.tool-dot.running,
+.status-dot.running,
+.session-indicator.running,
+.session-indicator.starting,
+.session-indicator.background {
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 40deg, var(--claude) 150deg, var(--ide) 250deg, var(--blue) 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), #000 calc(100% - 1.5px));
+  animation: spin 0.9s linear infinite;
+}
+.spinner {
+  width: 9px;
+  height: 9px;
+}
+.status-dot.running {
+  width: 9px;
+  height: 9px;
+  margin: -1px;
+}
+/* 進行中・処理中の文字。グラデーションをゆっくり流す（ぐるぐると組にする） */
+.flow-text,
+.working-label,
+.session-state.running,
+.session-state.background,
+.session-state.starting,
+.task-tray-count.running,
+.task-card-state.running,
+.workflow-status.running {
+  background: var(--grad-flow) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: grad-flow 3s linear infinite;
+}
+/* ぐるぐると文字の組（Busy） */
+.busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* グラデーションを 1 周期（200% の幅）ぶん横に流す。背景 1 枚のもの（文字・ひし形）と、枠（中の塗り + 枠のグラデーション）の 2 通り */
+@keyframes grad-flow {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes grad-flow-border {
+  to {
+    background-position:
+      0 0,
+      -200% 0;
+  }
+}
+/* 新しく出た行・開いたまとまりを、少し下からふわっと出す */
+.chat-list > *,
+.tool-group-list {
+  transition:
+    opacity 0.22s ease-out,
+    transform 0.22s ease-out;
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+/* 終わった印（CheckMark）。丸を描いてから、中のチェックを描く */
+/* 状態の丸の代わりに出すときは、丸と同じ大きさの場所に重ねて描く（はみ出した分は隣の余白に重なる） */
+.check-slot {
+  position: relative;
+  flex: none;
+}
+.check-slot > .check-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -7px 0 0 -7px;
+}
+.check-mark {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.check-mark circle,
+.check-mark path {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.check-mark.animate {
+  animation: check-pop 0.5s ease-out;
+}
+.check-mark.animate circle {
+  stroke-dasharray: 41;
+  stroke-dashoffset: 41;
+  animation: check-draw 0.35s ease-out forwards;
+}
+.check-mark.animate path {
+  stroke-dasharray: 14;
+  stroke-dashoffset: 14;
+  animation: check-draw 0.25s ease-out 0.3s forwards;
+}
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes check-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* ターンが終わったときの「完了」。チェックを描いたあと、しばらくしてから消える（DONE_MS と合わせる） */
+.chat-note.working-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  animation: fade-away 0.4s ease-in 1.4s forwards;
+}
+@keyframes fade-away {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .check-mark.animate,
+  .check-mark.animate circle,
+  .check-mark.animate path,
+  .chat-note.working-done {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .spinner,
+  .tool-dot.running,
+  .status-dot.running,
+  .session-indicator.running,
+  .session-indicator.starting,
+  .session-indicator.background,
+  .flow-text,
+  .working-label,
+  .session-state.running,
+  .session-state.background,
+  .session-state.starting,
+  .task-tray-count.running,
+  .task-card-state.running,
+  .workflow-status.running,
+  .todo-item.in_progress .todo-text,
+  .todo-current,
+  .flow-node.running,
+  .flow-edges path.active,
+  .claude-mark.working,
+  .tool-card.running::before,
+  .tool-card.finishing::before,
+  .menu-card,
+  .chat-input.working {
+    animation: none;
+  }
+  .chat-list > *,
+  .tool-group-list {
+    transition: none;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.session-state.waiting {
+  color: var(--warn);
+  font-weight: 600;
+}
+.session-state.unread {
+  color: var(--blue);
+}
+/* 点を薄くせず（色はそのまま）、大きさで動いていることを示す */
+@keyframes pulse {
+  50% {
+    transform: scale(0.6);
+  }
+}
+.session-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.session-title,
+.session-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-title {
+  color: var(--text-heading);
+}
+.session-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.session-action {
+  display: none;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-chrome);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.session-row:hover .session-action {
+  display: block;
+}
+.session-action:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+}
+
+.chat-callout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.chat-callout span {
+  flex: 1;
+}
+.chat-callout-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ターン終了時の変更の要約 */
+
+/* チャット入力欄の下のモデル・エフォート */
+.chat-options {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.chat-options select {
+  min-width: 0;
+  flex: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+}
+.model-refresh {
+  flex: none;
+  width: 24px;
+  margin-left: -4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.model-refresh:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+.chat-options select:disabled {
+  color: var(--text-tertiary);
+}
+
+/* ツールカードの詳細（入力・出力・差分） */
+.tool-toggle {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+.tool-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.tool-toggle.open {
+  transform: rotate(90deg);
+}
+.tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  cursor: auto;
+}
+.tool-section-label {
+  margin-bottom: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.tool-pre {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.tool-pre.error {
+  color: var(--danger);
+}
+.tool-pre.diff .add {
+  color: var(--ok);
+}
+.tool-pre.diff .del {
+  color: var(--danger);
+}
+.tool-pre.diff .hunk {
+  color: var(--text-secondary);
+}
+.subagent-progress {
+  margin-left: 8px;
+  color: var(--text-secondary);
+}
+
+/* 思考（本文が記録されているときだけ） */
+.chat-thinking {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.chat-thinking summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.chat-thinking-text {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+/* Todo リスト（チャットの上に固定） */
+.todo-panel {
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+.todo-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.todo-title {
+  font-weight: 400;
+}
+.todo-count {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.todo-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.todo-list {
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 160px;
+  overflow: auto;
+  list-style: none;
+  font-size: 12px;
+}
+.todo-item {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+.todo-item.completed {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+.todo-item.in_progress .todo-text,
+.todo-current {
+  /* 進行中の項目は、グラデーションを流す（.flow-text と同じ） */
+  background: var(--grad-flow) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: grad-flow 3s linear infinite;
+}
+.todo-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 18px;
+}
+.todo-mark .check-mark {
+  width: 12px;
+  height: 12px;
+}
+
+/* バックグラウンドのタスク（ワークフローなど）の完了通知 */
+.chat-notice {
+  align-self: center;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: center;
+}
+/* 全文を開けるお知らせ（CI の自動修正・スケジュールタスク） */
+.chat-notice.expandable {
+  max-width: 100%;
+  text-align: left;
+}
+.chat-notice.expandable summary {
+  cursor: pointer;
+  text-align: center;
+}
+.chat-notice.expandable[open] {
+  align-self: stretch;
+  border-radius: 8px;
+}
+.chat-notice-detail {
+  max-height: 320px;
+  margin: 6px 0 4px;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 起動時のお知らせなど、画面に出るだけのもの */
+.chat-info {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+/* ! を付けて実行したシェルのコマンド */
+.chat-shell {
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.chat-shell summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.chat-shell summary::-webkit-details-marker {
+  display: none;
+}
+.chat-shell-prompt {
+  flex: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+.chat-shell-command {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.chat-shell-toggle {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.chat-shell[open] .chat-shell-toggle {
+  color: var(--text-secondary);
+}
+.chat-shell > .tool-pre {
+  margin: 0 12px 10px;
+}
+
+/* 会話の圧縮の区切り */
+.chat-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.chat-divider::before,
+.chat-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--border-strong);
+}
+
+/* API エラー（再試行中は控えめに） */
+.chat-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--danger-tint);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.chat-error.retrying {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+/* ワークフロー */
+.workflow-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.workflow-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.workflow-status {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workflow-status.completed {
+  background: var(--ok-tint);
+  color: var(--ok);
+}
+.workflow-status.failed,
+.workflow-status.stopped,
+.workflow-status.killed {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.workflow-summary {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.workflow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-primary);
+}
+.workflow-step-arrow {
+  margin-right: 6px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.workflow-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.workflow-phase-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-primary);
+}
+.workflow-phase-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.workflow-empty {
+  padding-left: 15px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.workflow-agent-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.workflow-agent-row:hover {
+  background: var(--bg-hover);
+}
+.workflow-agent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.workflow-agent-meta {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.workflow-agent-detail {
+  margin: 2px 0 4px 15px;
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 5px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.workflow-agent-detail-label {
+  color: var(--text-secondary);
+}
+.workflow-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* 画面に出ている選択メニュー（AskUserQuestion・許可確認など） */
+.menu-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  /* 枠 1px をグラデーションにする（入力欄と同じ）。中は地の色のまま */
+  border: 1px solid transparent;
+  /* 答えるまでは進行中の質問なので、ツールカードの実行中と同じく枠のグラデーションを流す */
+  background:
+    linear-gradient(var(--bg-panel), var(--bg-panel)) padding-box,
+    var(--grad-flow) border-box;
+  background-size:
+    100% 100%,
+    200% 100%;
+  animation: grad-flow-border 3s linear infinite;
+}
+/* 実行の許可は、ふだんの質問と分けて黄色の枠にする */
+.menu-card.permission {
+  border-color: var(--warn);
+  background: transparent;
+  animation: none;
+}
+.menu-card-kind {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+}
+.menu-card.permission .menu-card-kind {
+  color: var(--warn);
+}
+.menu-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.menu-tab {
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.menu-tab.answered {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.menu-context {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.menu-title {
+  font-weight: 400;
+  line-height: 1.6;
+  /* 質問文の段落の区切り（改行）を出す */
+  white-space: pre-wrap;
+  color: var(--text-heading);
+}
+.menu-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.menu-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-option:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-selected);
+}
+.menu-option.chosen {
+  border-color: var(--ide);
+}
+/* プレビューを出している選択肢 */
+.menu-option.previewed {
+  border-color: var(--border-focus);
+}
+/* 選択肢のプレビュー（Claude が比べるために付けた図や文章）。等幅で、空白や改行をそのまま出す */
+.menu-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+.menu-preview-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.menu-preview-body {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre;
+}
+.menu-preview-none {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.menu-option.submit {
+  justify-content: center;
+  background: var(--send-bg);
+  border-color: var(--send-border);
+  color: var(--send-fg);
+  font-weight: 400;
+}
+.menu-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.menu-option-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.menu-check {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+}
+.menu-check.on {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--text-on-fill);
+}
+.menu-text-input {
+  display: flex;
+  gap: 8px;
+}
+.menu-text-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-focus);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+.menu-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.terminal-instance {
+  height: 100%;
+}
+.terminal-instance[hidden] {
+  display: none;
+}
+
+/* Claude へのコメント（差分・エディタの行の下） */
+.comment-glyph {
+  cursor: pointer;
+}
+.comment-glyph::before {
+  content: '+';
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0 2px;
+  border-radius: 4px;
+  background: var(--ide);
+  color: var(--text-on-fill);
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1;
+}
+.comment-zone {
+  z-index: 10;
+}
+.comment-box {
+  max-width: min(640px, var(--comment-max-width, 640px));
+  margin: 4px 0 4px 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--ide);
+  font-family: var(--font-ui, inherit);
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: normal;
+}
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.comment-mark {
+  color: var(--ide);
+  font-weight: 400;
+}
+.comment-lines {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.comment-head .ghost-button {
+  padding: 1px 8px;
+  font-size: 11px;
+}
+.comment-text {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+.comment-box textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+}
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+/* 入力欄の上のコメント */
+.comment-chip {
+  max-width: 100%;
+  cursor: pointer;
+  border-left: 2px solid var(--ide);
+}
+.comment-chip-where {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ide);
+}
+.comment-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* レビューパネルのコメント一覧 */
+.review-comments {
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+  padding: 8px 0;
+}
+.review-comments-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.review-hint {
+  padding: 2px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.review-comment {
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.review-comment:hover {
+  background: var(--bg-hover);
+}
+.review-comment-where {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ide);
+}
+.review-comment-where button {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.review-comment-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 入力欄の上のタスク一覧（チャットが進んでも流れない） */
+.task-tray {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 6px 10px 6px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+.task-tray-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.task-tray-count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.task-row:hover,
+.task-row.active {
+  background: var(--bg-hover);
+}
+/* 終わったタスク。チェックを描いて「完了」と出したあと、たたんで消える（LEAVE_MS と合わせる） */
+.task-row.leaving {
+  overflow: hidden;
+  animation: task-row-leave 0.35s ease-in 1.4s forwards;
+}
+.task-row.leaving .task-progress {
+  /* 「完了」などは短いので、名前に押されて切れないようにする */
+  flex: none;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+}
+@keyframes task-row-leave {
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-row.leaving {
+    animation: none;
+  }
+}
+.task-kind {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.task-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.task-progress {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.task-time {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.task-more {
+  margin-left: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.tool-open {
+  margin-left: 10px;
+  white-space: nowrap;
+  color: var(--ide);
+  font-size: 11px;
+}
+.workflow-open {
+  flex: none;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+/* タスクの中身（エディタの場所に出す） */
+.task-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.task-pane-kind {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.task-pane-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-body {
+  flex: 1;
+  min-height: 0;
+  max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+.task-prompt {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.task-prompt summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.task-result {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--ok-tint);
+}
+.task-result-label {
+  margin-bottom: 4px;
+  color: var(--ok);
+  font-size: 11px;
+  font-weight: 400;
+}
+.task-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.task-split .task-body {
+  max-width: none;
+  margin: 0;
+}
+.task-split > .task-body {
+  min-width: 0;
+}
+/* ワークフローの左の一覧（概要と全エージェント）。セッション一覧と同じく、ホバーで明るく、選んだものはさらに明るくする */
+.task-agents {
+  flex: none;
+  width: 280px;
+  overflow-y: auto;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-chrome);
+}
+.task-overview {
+  grid-template-columns: auto 1fr;
+  padding: 7px 6px;
+  font-size: 13px;
+}
+.task-overview svg {
+  color: var(--text-secondary);
+}
+.task-agents-label {
+  margin: 10px 6px 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.task-phase {
+  margin-bottom: 10px;
+}
+.task-phase-title {
+  display: flex;
+  gap: 6px;
+  padding: 2px 6px 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+/* 説明が長くても、フェーズ名は縮めない（説明のほうを省略する） */
+.task-phase-name {
+  flex: none;
+}
+.task-agent {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 7px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.task-agent:hover {
+  background: var(--bg-hover);
+}
+.task-agent.active {
+  background: var(--bg-selected);
+}
+.task-agent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-agent-meta {
+  grid-column: 2;
+  display: flex;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+/* ワークフローのフロー図（フェーズを左から右へ、同時に動いたエージェントを上から縦に積む） */
+.flow-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: none;
+  padding: 16px 20px;
+  overflow: hidden;
+}
+.flow-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 920px;
+}
+.flow-summary-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.flow-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+/* まとめは上に残し、図の枠だけを縦横にスクロールする（横のバーがいつも枠の下端に見える） */
+.flow-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 6px;
+}
+.flow-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.flow-board {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 56px;
+  width: max-content;
+  padding: 4px;
+}
+.flow-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+.flow-edges path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+.flow-edges path.active {
+  /* 色は WorkflowFlow が stroke にグラデーションを渡す。破線を、つながりの向きに流す */
+  stroke-dasharray: 6 5;
+  animation: edge-flow 0.8s linear infinite;
+}
+@keyframes edge-flow {
+  to {
+    stroke-dashoffset: -11;
+  }
+}
+/* 並んで動いたフェーズは縦に積む。見出しの高さは、まとまりの先頭どうしで揃える（WorkflowFlow が測って合わせる） */
+.flow-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.flow-group > .flow-phase:last-child {
+  flex: 1;
+}
+.flow-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-radius: 10px;
+  background: var(--bg-chrome);
+}
+.flow-phase-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 220px;
+}
+.flow-phase-title {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-primary);
+}
+.flow-phase-detail {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.flow-phase-body {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 56px;
+}
+.flow-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.flow-stage.child {
+  position: relative;
+}
+/* 子ワークフローの枠。場所を取らないように外側に描き、ほかのフェーズとエージェントの上端を揃える */
+.flow-stage.child::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  pointer-events: none;
+}
+.flow-child {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.flow-node {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 200px;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.flow-node:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-tertiary);
+}
+/* 動いているエージェントは、ツールカードと同じく枠のグラデーションを流す（中はフェーズの箱の地の色） */
+.flow-node.running,
+.flow-node.running:hover {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--bg-chrome), var(--bg-chrome)) padding-box,
+    var(--grad-flow) border-box;
+  background-size:
+    100% 100%,
+    200% 100%;
+  animation: grad-flow-border 3s linear infinite;
+}
+.flow-node.running:hover {
+  background:
+    linear-gradient(var(--bg-hover), var(--bg-hover)) padding-box,
+    var(--grad-flow) border-box;
+  background-size:
+    100% 100%,
+    200% 100%;
+}
+.flow-node.failed {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+}
+.flow-node.empty {
+  align-items: center;
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: default;
+}
+.flow-node-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.flow-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-node-meta {
+  display: flex;
+  gap: 8px;
+  padding-left: 15px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.flow-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* バックグラウンドの Bash の出力 */
+.bash-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  max-width: none;
+}
+.bash-command {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.bash-prompt {
+  color: var(--text-secondary);
+}
+.bash-output {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.bash-note {
+  color: var(--text-secondary);
+}
+.bash-cursor {
+  color: var(--claude);
+  animation: bash-blink 1s steps(2) infinite;
+}
+@keyframes bash-blink {
+  50% {
+    visibility: hidden;
+  }
+}
+.bash-foot {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.bash-id {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* Claude が知っているファイル（エクスプローラーの行頭の点） */
+.tree-know {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.tree-know.read {
+  background: var(--blue);
+}
+.tree-know.edited {
+  background: var(--claude);
+}
+.tree-know.stale {
+  border: 1px solid var(--blue);
+  box-sizing: border-box;
+}
+
+/* コンテキストの使用量 */
+.context-meter {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.context-meter-bar {
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-selected);
+  overflow: hidden;
+}
+.context-meter-bar span {
+  display: block;
+  height: 100%;
+  background: var(--gauge);
+}
+.context-meter.mid .context-meter-bar span {
+  background: var(--warn);
+}
+.context-meter.high .context-meter-bar span {
+  background: var(--danger);
+}
+.context-meter-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* プランの利用枠（セッション一覧の最下部） */
+.usage-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px 12px;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.usage-panel:hover {
+  background: var(--bg-hover);
+}
+.usage-panel:disabled {
+  cursor: progress;
+}
+.usage-empty,
+.usage-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.usage-status.error {
+  color: var(--warn);
+}
+.usage-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.usage-label {
+  color: var(--text-primary);
+}
+.usage-percent {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.usage-reset {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.usage-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-selected);
+  overflow: hidden;
+}
+.usage-bar span {
+  display: block;
+  height: 100%;
+  background: var(--gauge);
+}
+.usage-gauge.mid .usage-bar span {
+  background: var(--warn);
+}
+.usage-gauge.high .usage-bar span {
+  background: var(--danger);
+}
+
+/* hooks の実行（ツールカードの中と、ツールに付かないものはチャットに 1 行） */
+.hook-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding-left: 15px;
+}
+.hook-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 5px;
+  /* 枠を指定しないと、ボタンの既定の明るい枠が出て、ホバー（暗い枠）より目立ってしまう */
+  border: 1px solid transparent;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.hook-chip:hover {
+  border-color: var(--border-focus);
+}
+.hook-mark {
+  flex: none;
+  color: var(--ok);
+}
+.hook-run.blocked .hook-mark,
+.hook-run.error .hook-mark {
+  color: var(--danger);
+}
+.hook-run.blocked .hook-chip,
+.hook-run.error .hook-chip {
+  border-color: var(--danger);
+}
+.hook-run.context .hook-mark {
+  color: var(--blue);
+}
+.hook-event {
+  flex: none;
+  color: var(--text-primary);
+}
+.hook-command {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.hook-time {
+  flex: none;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.hook-detail {
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+}
+.hook-facts {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.chat-hooks {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.chat-hooks-label {
+  flex: none;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.chat-hooks .hook-runs {
+  flex: 1;
+  min-width: 0;
+  padding-left: 0;
+}
+
+/* フッターの CPU・メモリ */
+.system-stat {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.system-meter {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-selected);
+  overflow: hidden;
+}
+.system-meter span {
+  display: block;
+  height: 100%;
+  background: var(--gauge);
+}
+.system-meter.mid span {
+  background: var(--warn);
+}
+.system-meter.high span {
+  background: var(--danger);
+}
+
+/* Markdown プレビュー */
+.editor-crumb-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.segmented {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-subtle);
+}
+.segmented button {
+  padding: 1px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.segmented button:hover {
+  color: var(--text-primary);
+}
+.segmented button.active {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.editor-body.md-preview .editor-monaco {
+  visibility: hidden;
+}
+.editor-body.md-split .editor-monaco {
+  right: 50%;
+}
+.markdown-preview {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg-panel);
+}
+.editor-body.md-split .markdown-preview {
+  left: 50%;
+  border-left: 1px solid var(--border-subtle);
+}
+.markdown-doc {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 20px 32px 48px;
+  font-size: 14px;
+  line-height: 1.75;
+}
+.markdown-doc h1,
+.markdown-doc h2,
+.markdown-doc h3,
+.markdown-doc h4,
+.markdown-doc h5,
+.markdown-doc h6 {
+  margin: 28px 0 10px;
+  line-height: 1.35;
+  scroll-margin-top: 12px;
+}
+.markdown-doc h1 {
+  font-size: 24px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.markdown-doc h2 {
+  font-size: 19px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.markdown-doc h3 {
+  font-size: 16px;
+}
+.markdown-doc h4,
+.markdown-doc h5,
+.markdown-doc h6 {
+  font-size: 14px;
+}
+.markdown-doc p,
+.markdown-doc ul,
+.markdown-doc ol,
+.markdown-doc pre,
+.markdown-doc table,
+.markdown-doc blockquote {
+  margin: 0 0 14px;
+}
+.markdown-doc li + li {
+  margin-top: 3px;
+}
+.markdown-doc code {
+  font-size: 12.5px;
+}
+.markdown-doc pre code {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.markdown-doc table {
+  font-size: 13px;
+}
+.markdown-doc img {
+  max-width: 100%;
+}
+.markdown-doc hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 24px 0;
+}
+.markdown-doc input[type='checkbox'] {
+  margin-right: 6px;
+}
+.markdown-mermaid {
+  margin: 0 0 14px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  text-align: center;
+  overflow-x: auto;
+}
+.markdown-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+.markdown-mermaid-error {
+  margin: -8px 0 14px;
+  color: var(--danger);
+  font-size: 12px;
+}
+.markdown-doc li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -18px;
+}
+
+/* アプリ内プレビュー */
+.preview-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+}
+.preview-pane[hidden] {
+  display: none;
+}
+.preview-toolbar {
+  min-height: 40px;
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-nav {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.preview-nav:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-selected);
+}
+.preview-nav:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.preview-address {
+  flex: 1 1 180px;
+  min-width: 140px;
+  margin: 0 4px;
+}
+.preview-address input {
+  width: 100%;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.preview-address input:focus {
+  border-color: var(--border-focus);
+}
+.preview-width {
+  flex: none;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.preview-toolbar .ghost-button.on {
+  color: var(--send-fg);
+  background: var(--send-bg);
+  border-color: var(--send-fg);
+  background: var(--send-bg);
+}
+.preview-errors {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+.preview-hint {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ide);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-hint.error {
+  color: var(--danger);
+  background: var(--danger-tint);
+}
+.preview-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+}
+.preview-body.framed {
+  background: var(--bg-chrome);
+  padding: 12px 0;
+}
+.preview-frame {
+  position: relative;
+  width: min(100%, var(--preview-width));
+  height: 100%;
+  /* 表示するページの既定の背景（アプリの色ではない） */
+  background: #fff;
+}
+.preview-body:not(.framed) .preview-frame {
+  width: 100%;
+}
+.preview-body.framed .preview-frame {
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
+.preview-webview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+}
+body.resizing webview,
+body.resizing-rows webview {
+  pointer-events: none;
+}
+
+/* タスク（サイドパネル） */
+.task-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 12px;
+}
+.task-list-group + .task-list-group {
+  margin-top: 10px;
+}
+.task-list-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  cursor: pointer;
+}
+.task-card:hover {
+  border-color: var(--border-strong);
+}
+.task-card.active {
+  border-color: var(--ide);
+}
+.task-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* サイドパネルが狭くても、「実行中」などを縦に割らない */
+  white-space: nowrap;
+  overflow: hidden;
+}
+.task-card-state {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.task-card-state.failed {
+  color: var(--danger);
+}
+.task-card-name {
+  font-size: 12px;
+  color: var(--text-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-card-progress {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scm-lists .review-comments {
+  max-height: none;
+  margin-top: 8px;
+}
+
+/* 起動を待っている発言（起動が終わったら送る） */
+.chat-user.pending {
+  border: 1px dashed var(--border-strong);
+  color: var(--text-secondary);
+}
+.chat-user.pending .chat-rewind {
+  visibility: visible;
+}
+.chat-user-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* 新規セッション（チャット欄でフォルダを選んで始める） */
+.new-session-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 24px 22px;
+  overflow-y: auto;
+}
+.new-session-mark {
+  width: 12px;
+  height: 12px;
+  margin-bottom: 8px;
+  border-radius: 3px;
+  background: var(--text-tertiary);
+  transform: rotate(45deg);
+}
+.new-session-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 400;
+}
+.new-session-sub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+.new-session-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.new-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.new-session-chip svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+}
+.new-session-chip:hover {
+  background: var(--bg-hover);
+}
+.new-session-chip.branch {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.new-session-chip.empty {
+  border-color: var(--border-focus);
+  color: var(--send-fg);
+}
+.new-session-chevron {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.new-session-warning {
+  font-size: 11px;
+  color: var(--danger);
+}
+.folder-picker {
+  position: relative;
+  min-width: 0;
+}
+.folder-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  width: 300px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.folder-menu-heading {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.folder-menu-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.folder-menu-item:hover,
+.folder-menu-item.selected {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.folder-menu-name {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.folder-menu-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-subtle);
+}
+
+/* ワークフローの再開（resumeFromRunId） */
+.workflow-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.workflow-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* ツールの呼び出しのまとまり（本文と本文の間。畳んだ 1 行） */
+.tool-group {
+  display: flex;
+  flex-direction: column;
+}
+.tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  /* 文字の左端を本文（.markdown の左 2px）にそろえ、ホバーの塗りだけ外にはみ出させる */
+  padding: 0 8px;
+  margin: 0 -6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.tool-group-head:hover {
+  background: var(--bg-hover);
+}
+.tool-group-chevron {
+  flex: none;
+  width: 12px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  transition: transform 0.12s;
+}
+.tool-group-head.open .tool-group-chevron {
+  transform: rotate(90deg);
+}
+.tool-group-count {
+  flex: none;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.tool-group-part {
+  flex: none;
+}
+.tool-group-failed {
+  flex: none;
+  color: var(--danger);
+}
+.tool-group-meta {
+  flex: none;
+  color: var(--text-secondary);
+}
+/* 畳んだまとまりの下に出す、実行中のツールの行。1 行ずつ少し下からふわっと出て、
+   終わるとチェックを描いてから、たたんで消える（タスクの行と同じ動き。LEAVE_MS と合わせる） */
+.tool-live {
+  display: flex;
+  flex-direction: column;
+}
+.tool-live-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  /* 印を、上の行の「N件の操作」の文字の左端（本文の左 2px + 矢印 12px + 間 6px）にそろえる */
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  transition:
+    opacity 0.22s ease-out,
+    transform 0.22s ease-out;
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.tool-live-line.leaving {
+  animation: task-row-leave 0.35s ease-in 1.4s forwards;
+}
+.tool-live-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-live-line {
+    transition: none;
+  }
+  .tool-live-line.leaving {
+    animation: none;
+  }
+}
+.tool-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 12px;
+}
+
+.tool-group-list > .hook-runs {
+  margin-top: 0;
+  padding-left: 0;
+}
+
+/* Claude が SendUserFile で送ったファイル。畳まずに本文の流れに出す */
+.sent-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.sent-files-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sent-files-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.sent-files-failed {
+  font-size: 11px;
+  color: var(--danger);
+}
+.sent-files-caption {
+  color: var(--text-primary);
+}
+.sent-file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  /* 枠を指定しないと、ボタンの既定の明るい枠が出る。ふだんは列の区切り線と同じ灰色 */
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sent-file:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-hover);
+}
+.sent-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.sent-file-dir {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* 会話ログに埋め込まれた画像（添付した画像・ツールの結果のスクリーンショット） */
+.chat-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-image {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.chat-image:hover {
+  border-color: var(--border-focus);
+}
+.chat-image img {
+  display: block;
+  max-width: 240px;
+  max-height: 160px;
+  object-fit: contain;
+}
+.chat-image.placeholder {
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: default;
+}
+/* 画像の拡大表示。背景の暗幕は、決めてある例外の rgba を使う */
+.image-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: zoom-out;
+}
+.image-zoom img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+/* AskUserQuestion への回答。畳まずに本文の流れに出す */
+.chat-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--ide);
+  border-radius: 0 8px 8px 0;
+  background: var(--bg-surface);
+}
+.chat-answers-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.chat-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat-answer-question {
+  color: var(--text-secondary);
+}
+.chat-answer-header {
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.chat-answer-value {
+  color: var(--text-primary);
+  font-weight: 400;
+}
+
+/* アイコンだけのボタンの名前（TooltipLayer。ボタンに data-tip を付けると、ホバーで出る） */
+.tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition: opacity 0.12s ease-out;
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+/* チャットを上へスクロールしたときに、下端の中央に浮かせる「最新のメッセージへ」のボタン */
+.chat-list-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-jump-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transform: translateX(-50%);
+  transition:
+    opacity 0.15s ease-out,
+    color 0.12s ease-out,
+    border-color 0.12s ease-out;
+  @starting-style {
+    opacity: 0;
+  }
+}
+.chat-jump-bottom:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-jump-bottom {
+    transition: none;
+  }
+}

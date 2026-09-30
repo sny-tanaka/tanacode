@@ -1,0 +1,107 @@
+{
+  "name": "tanacode",
+  "version": "0.1.2",
+  "private": true,
+  "description": "空いた画面に Claude の中身を映す macOS アプリ",
+  "license": "MIT",
+  "author": "Shunya Tanaka",
+  "homepage": "https://github.com/sny-tanaka/tanacode",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sny-tanaka/tanacode.git"
+  },
+  "main": "out/main/index.js",
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty-permissions.mjs",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dist": "electron-vite build && electron-builder --mac",
+    "install-app": "npm run dist && node scripts/install-app.mjs",
+    "icon": "electron scripts/make-icon.mjs",
+    "storybook": "storybook dev -p 6006 --no-open",
+    "build-storybook": "storybook build -o storybook-static",
+    "demo:record": "electron scripts/record-demo.mjs",
+    "release": "electron-vite build && electron-builder --mac zip pkg --publish never -c.directories.output=release --arm64 && electron-builder --mac zip pkg --publish never -c.directories.output=release --x64"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "diff": "^9.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@storybook/react-vite": "^10.6.0",
+    "@types/node": "^22.20.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "dompurify": "^3.4.16",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "marked": "^18.0.14",
+    "marked-cjk-friendly": "^0.1.2",
+    "mermaid": "^12.0.0",
+    "monaco-editor": "^0.57.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "rollup-plugin-license": "^3.7.1",
+    "storybook": "^10.6.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  },
+  "build": {
+    "appId": "dev.tanacode.app",
+    "productName": "tanacode",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
+    "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSE",
+        "to": "LICENSE.electron.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSES.chromium.html",
+        "to": "LICENSES.chromium.html"
+      },
+      {
+        "from": "out/renderer/THIRD_PARTY_NOTICES.txt",
+        "to": "THIRD_PARTY_NOTICES.txt"
+      }
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.icns",
+      "identity": null,
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "pkg": {
+      "installLocation": "/Applications",
+      "isRelocatable": false,
+      "identity": null
+    }
+  }
+}

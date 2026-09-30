@@ -1,0 +1,71 @@
+name: 不具合の報告
+description: 期待どおりに動かないことの報告
+title: "[不具合] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        脆弱性は Issue ではなく、[SECURITY.md](https://github.com/sny-tanaka/tanacode/security/policy) の手順で報告。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きたか
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動き
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現の手順
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: tanacode-version
+    attributes:
+      label: tanacode の版
+      description: アプリのタイトルバーに出る版
+      placeholder: v0.1.2
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS の版
+      placeholder: "26.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: mac-type
+    attributes:
+      label: Mac の種類
+      options:
+        - Apple Silicon
+        - Intel
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code の版
+      description: "`claude --version` の出力"
+      placeholder: 2.1.283 (Claude Code)
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: スクリーンショット・ログ（任意）
+      description: 会話の中身やパスなど、公開したくない情報は消してから貼ってください
+    validations:
+      required: false

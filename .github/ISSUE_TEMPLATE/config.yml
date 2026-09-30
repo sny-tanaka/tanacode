@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 脆弱性の報告
+    url: https://github.com/sny-tanaka/tanacode/security/policy
+    about: 脆弱性は Issue ではなく、SECURITY.md の手順で非公開で報告
