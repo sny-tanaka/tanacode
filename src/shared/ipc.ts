@@ -85,6 +85,8 @@ export const IpcChannel = {
   UsageGet: 'usage:get',
   UsageRefresh: 'usage:refresh',
   UsageChanged: 'usage:changed',
+  NotificationsGet: 'notifications:get',
+  NotificationsSet: 'notifications:set',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   StatusLineChanged: 'statusline:changed',
@@ -252,6 +254,11 @@ export type TanacodeApi = {
     // Claude Code 自身の控え（/usage を開いたときのもの）の方が新しければ読み込む
     refresh(): Promise<void>;
     onChanged(listener: (usage: UsageLimits) => void): () => void;
+  };
+  // macOS の通知（作業の完了・確認待ち）を出すか。ウインドウ右上のベルで切り替える。アプリ側に保存し、Claude Code の設定は変えない
+  notifications: {
+    get(): Promise<boolean>;
+    set(on: boolean): Promise<void>;
   };
   // この Mac の CPU・メモリの使用状況（2 秒ごと）
   system: {

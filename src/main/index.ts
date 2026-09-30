@@ -12,12 +12,14 @@ import {
   type SearchOptions,
   type SessionOptions,
 } from '@shared/ipc';
+import { AppSettings } from './app-settings';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
 import type { AgentLogRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
+import { menuNotice } from './notice-text';
 import { PtyHost } from './pty-host-client';
 import { DEFAULT_PTY_SIZE, SessionManager } from './session-manager';
 import { SessionStore } from './session-store';
@@ -33,6 +35,7 @@ let mainWindow: BrowserWindow | null = null;
 let manager: SessionManager;
 let ptyHost: PtyHost | null = null;
 let usage: UsageMonitor;
+let settings: AppSettings;
 let statusLines: StatusLineWatcher;
 let system: SystemMonitor;
 let watchers: WorkspaceWatchers;
@@ -165,11 +168,14 @@ async function pickFolder(): Promise<string | null> {
   return dir;
 }
 
-function notify(sessionId: string, title: string | null, body: string): void {
+// 通知のタイトルはアプリの名前、サブタイトルはセッション名
+function notify(sessionId: string, sessionTitle: string | null, message: string): void {
+  if (!settings.notificationsEnabled()) return;
   const windowActive = mainWindow?.isFocused() ?? false;
   if (windowActive && manager.isFocused(sessionId)) return;
   if (!Notification.isSupported()) return;
-  const notification = new Notification({ title: title ?? '新しいセッション', body });
+  // 音は macOS のシステム音の Glass（指定しないと、既定の通知音が鳴る）
+  const notification = new Notification({ title: 'tanacode', subtitle: sessionTitle ?? '新しいセッション', body: message, sound: 'Glass' });
   notification.on('click', () => {
     showWindow();
     send(IpcChannel.SessionsSelect, sessionId);
@@ -250,6 +256,8 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
   ipcMain.handle(IpcChannel.UsageGet, () => usage.get());
   ipcMain.handle(IpcChannel.UsageRefresh, () => usage.refresh());
+  ipcMain.handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
+  ipcMain.handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   ipcMain.handle(IpcChannel.ModelsRefresh, () =>
     readModelCatalog().then(
       (catalog) => (catalog ? { catalog } : { error: 'Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません' }),
@@ -430,6 +438,7 @@ app.whenReady().then(async () => {
     send(IpcChannel.FilesChanged, { root, paths });
   });
   const store = new SessionStore(join(app.getPath('userData'), 'sessions.json'));
+  settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
   // 以前のレビュー機能が作業フォルダを控えていた場所。もう使わないので消す
   void rm(join(app.getPath('userData'), 'snapshots'), { recursive: true, force: true });
   statusLines = new StatusLineWatcher(
@@ -458,8 +467,9 @@ app.whenReady().then(async () => {
     onSessionsChanged: (sessions) => send(IpcChannel.SessionsChanged, sessions),
     onChat: (batch) => send(IpcChannel.ChatEvents, batch),
     onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
-    onTurnCompleted: (session) => notify(session.id, session.title, 'Claude Code の作業が完了しました'),
-    onAttention: (session) => notify(session.id, session.title, 'Claude Code が確認を求めています'),
+    onTurnCompleted: (session) => notify(session.id, session.title, '作業が完了しました'),
+    onAttention: (session, attention) =>
+      notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : 'ターミナルでの操作が必要です'),
     onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
     onActivity: (sessionId, activity) => send(IpcChannel.ScreenActivity, { sessionId, activity }),
     onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),

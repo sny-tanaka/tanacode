@@ -71,6 +71,10 @@ const api: TanacodeApi = {
     refresh: () => ipcRenderer.invoke(IpcChannel.UsageRefresh),
     onChanged: (listener) => subscribe<UsageLimits>(IpcChannel.UsageChanged, listener),
   },
+  notifications: {
+    get: () => ipcRenderer.invoke(IpcChannel.NotificationsGet),
+    set: (on) => ipcRenderer.invoke(IpcChannel.NotificationsSet, on),
+  },
   system: {
     onStats: (listener) => subscribe<SystemStats>(IpcChannel.SystemStats, listener),
   },

@@ -257,6 +257,7 @@ export class DemoBackend {
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },
+      notifications: { get: () => ok(true), set: () => ok(undefined) },
       system: {
         onStats: (l) => {
           const tick = () =>
