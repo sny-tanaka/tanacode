@@ -4041,7 +4041,9 @@ body.resizing-rows webview {
   gap: 6px;
   /* サイドパネルが狭くても、「実行中」などを縦に割らない */
   white-space: nowrap;
-  overflow: hidden;
+  /* 完了のチェックは状態の丸（7px）の場所からはみ出して描くので、その分だけ切らずに見せる */
+  overflow: clip;
+  overflow-clip-margin: 4px;
 }
 .task-card-state {
   font-size: 11px;
