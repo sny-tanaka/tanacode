@@ -6,6 +6,8 @@ import { TooltipLayer } from '../src/renderer/src/layout/Tooltip';
 import { installMockApi } from './mockApi';
 
 installMockApi();
+// アプリ（src/renderer/index.html）と同じ言語にする。日本語の折り返し（word-break: auto-phrase）は言語が日本語のときだけ効く
+document.documentElement.lang = 'ja';
 
 // 部品は読む場所（チャット・エディタ）の地の色の上に置く。幅はストーリーごとに parameters.width で変えられる
 const preview: Preview = {

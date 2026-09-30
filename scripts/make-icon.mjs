@@ -1,4 +1,4 @@
-// アプリのアイコン（build/icon.png と build/icon.icns）を build/icon-source.png から作る。
+// アプリのアイコン（build/icon.png と build/icon.icns、画面に出す小さい版）を build/icon-source.png から作る。
 // 元画像は角丸の四角の周りが黒いので、その外側を透明にし、macOS の標準の大きさ（1024 の中に 824 の角丸）に合わせる。
 // 画像の読み書きに Electron の nativeImage を使うので `electron scripts/make-icon.mjs` で動かす
 import { execFileSync } from 'node:child_process';
@@ -6,6 +6,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { app, nativeImage } from 'electron';
 
 const SOURCE = 'build/icon-source.png';
+const APP_ICON = 'src/renderer/src/assets/icon.png';
 // 元画像の中の角丸の四角（測った値）
 const SOURCE_BOX = { x: 100, y: 98, width: 1054, height: 1054 };
 const SOURCE_RADIUS = 266;
@@ -42,6 +43,8 @@ function makeIcon() {
   }
   const icon = nativeImage.createFromBitmap(out, { width: SIZE, height: SIZE });
   writeFileSync('build/icon.png', icon.toPNG());
+  // 新規セッションの画面に出す小さい版（表示は 64px なので、2 倍の画面でも足りる大きさ）
+  writeFileSync(APP_ICON, icon.resize({ width: 256, height: 256, quality: 'best' }).toPNG());
 
   const set = 'build/icon.iconset';
   rmSync(set, { recursive: true, force: true });
@@ -53,7 +56,7 @@ function makeIcon() {
   }
   execFileSync('iconutil', ['-c', 'icns', set, '-o', 'build/icon.icns']);
   rmSync(set, { recursive: true, force: true });
-  console.log('build/icon.png, build/icon.icns');
+  console.log(`build/icon.png, build/icon.icns, ${APP_ICON}`);
 }
 
 app.whenReady().then(() => {
