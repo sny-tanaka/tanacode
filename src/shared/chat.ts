@@ -41,6 +41,9 @@ export type ChatEvent =
   // Claude への、ユーザーの発言ではない知らせ（バックグラウンドのタスクの完了・CI の自動修正・スケジュールタスク）。
   // Claude はこれを受けて作業を始める。detail: 開くと読める全文
   | { type: 'notice'; id: string; text: string; detail?: string }
+  // 別の Claude（サブエージェント・ほかのセッション）からの知らせで、待機中の Claude Code が続きを始める。
+  // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
+  | { type: 'turn-start' }
   // 画面に出るだけのお知らせ（起動時の「AGENTS.md を読み込みました」など）。ターンは始まらない
   | { type: 'info'; id: string; text: string }
   // 入力欄で ! を付けて実行したシェルのコマンド（Claude には渡らない）
@@ -125,6 +128,8 @@ export type TranscriptEntry = {
   parentUuid?: string | null;
   isMeta?: boolean;
   isSidechain?: boolean;
+  // user 行の出どころ（human・task-notification・peer など）。peer: 別の Claude（サブエージェント・ほかのセッション）からの知らせ
+  origin?: { kind?: string };
   url?: string;
   // bridge-session 行の Remote Control の ID（/remote-control で切ると空になる）
   bridgeSessionId?: string;
@@ -255,6 +260,10 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     });
     return events;
   }
+
+  // 待機中の Claude Code は、別の Claude からの知らせで続きを始める。会話ログでは isMeta の user 行で残るので、ここで拾う
+  // （作業の途中に届いたものは attachment の queued_command になり、ターンは始まらない）
+  if (entry.type === 'user' && entry.isMeta && entry.origin?.kind === 'peer' && !sidechain) return [{ type: 'turn-start' }];
 
   if (entry.type === 'user' && !entry.isMeta && !entry.isCompactSummary && !entry.isVisibleInTranscriptOnly) {
     const content = entry.message?.content;
