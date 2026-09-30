@@ -32,6 +32,7 @@ import { TerminalPanel, type TerminalView } from './terminal/TerminalPanel';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
 import { TooltipLayer } from './layout/Tooltip';
+import { useNotifications } from './notifications/useNotifications';
 import { setCursor } from './editor/cursorStore';
 
 type EditorState = { files: OpenFile[]; activePath: string | null; reveal: RevealRequest | null };
@@ -74,6 +75,7 @@ export function App() {
   const { knowledgeOf, load: loadKnowledge } = useSessionKnowledge(selectedId);
   const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId);
   const columns = useColumnWidths();
+  const [notifications, setNotifications] = useNotifications();
   const resizer = (column: Column) => (
     <Resizer
       width={columns.widths[column]}
@@ -422,7 +424,7 @@ export function App() {
   return (
     <div className="app">
       <TooltipLayer />
-      <TitleBar />
+      <TitleBar notifications={notifications} onNotificationsChange={setNotifications} />
       <div
         className="main"
         ref={columns.mainRef}

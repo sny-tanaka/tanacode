@@ -168,6 +168,7 @@ npm run dev
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うかなど） |
+| `settings.json` | アプリ自身の設定（今は、macOS の通知を出すか。右上のベルで切り替える） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `usage.json` | 最後に分かった利用枠 |
@@ -193,6 +194,8 @@ npm run dev
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）
+  - `app-settings.ts`: アプリ自身の設定（今は通知のオン・オフ）の保存
+  - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
 - `src/preload`: renderer に `window.tanacode` の API を公開する
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
@@ -203,6 +206,7 @@ npm run dev
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内プレビュー（webview・要素の選択）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧・利用枠・CPU/メモリ・コンテキスト・カラム
+  - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）
 - `design/`: アプリのロゴ

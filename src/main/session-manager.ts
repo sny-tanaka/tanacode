@@ -13,7 +13,7 @@ import type {
   SessionAttention,
   SessionSummary,
 } from '@shared/ipc';
-import type { Activity, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { Activity, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { StatusLineInfo } from '@shared/statusline';
@@ -110,8 +110,8 @@ type Listeners = {
   onBashTasks: (sessionId: string, tasks: BashTask[]) => void;
   onKnowledge: (sessionId: string, knowledge: SessionKnowledge) => void;
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
-  // 選択メニューが新しく出た（質問・許可確認）
-  onAttention: (session: SessionSummary) => void;
+  // ユーザーの操作待ちになった。menu: 選択メニューが新しく出た（質問・許可確認）、unsupported: チャットでは操作できない画面が出た（ターミナルでの操作が要る）
+  onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu } | { kind: 'unsupported' }) => void;
 };
 
 export class SessionManager {
@@ -756,7 +756,11 @@ export class SessionManager {
     rt.attention = attention;
     this.emitSessions();
     const summary = this.summary(id);
-    if (summary && before === null && info.state.kind === 'menu') this.listeners.onAttention(summary);
+    // 終了したセッションは、最後の画面が残っていても通知しない（チャットの「操作できない画面」の案内も、動いているセッションだけ）
+    if (summary && rt.process && before === null) {
+      if (info.state.kind === 'menu') this.listeners.onAttention(summary, { kind: 'menu', menu: info.state.menu });
+      else if (info.state.kind === 'unknown') this.listeners.onAttention(summary, { kind: 'unsupported' });
+    }
   }
 
   // バックグラウンドタスクの数が変わったら、一覧の表示を更新する
@@ -833,7 +837,9 @@ export class SessionManager {
         if (rt && !this.isFocused(id)) rt.unread = true;
         changed = true;
         const summary = this.summary(id);
-        if (summary) this.listeners.onTurnCompleted(summary);
+        // バックグラウンドのタスクが動いているあいだは、まだ完了ではない（一覧も「完了待ち」）。
+        // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す
+        if (summary && summary.backgroundTasks === 0) this.listeners.onTurnCompleted(summary);
       }
     }
     if (changed) this.emitSessions();

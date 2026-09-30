@@ -161,6 +161,13 @@ input[type='checkbox'] {
   font-size: 11px;
   color: var(--text-tertiary);
 }
+/* 右端のボタン（通知のベル）。帯はドラッグでウインドウを動かせるので、押せるようにドラッグを外す */
+.titlebar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
 
 .main {
   flex: 1;
