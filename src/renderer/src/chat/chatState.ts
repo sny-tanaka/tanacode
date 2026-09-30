@@ -64,7 +64,7 @@ export type ChatState = {
   todos: TodoItem[] | null;
   // 結果（番号）を待っている TaskCreate（ツールの呼び出しの id ごと）
   pendingTasks: Record<string, TodoItem>;
-  // ターンの途中（発言か完了通知で始まり、turn-end で終わる）。起動中に読み直した会話で始まったターンも数える
+  // ターンの途中（発言・完了通知・別の Claude からの知らせで始まり、turn-end で終わる）。起動中に読み直した会話で始まったターンも数える
   inTurn: boolean;
   // Claude Code の作業中に送って、順番を待っている発言
   queued: string[];
@@ -168,6 +168,8 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         inTurn: true,
         items: [...state.items, { kind: 'notice', id: event.id, text: event.text, detail: event.detail }],
       };
+    case 'turn-start':
+      return { ...state, status: turn(state, 'running'), inTurn: true };
     case 'info':
       return { ...state, items: [...state.items, { kind: 'info', id: event.id, text: event.text }] };
     case 'shell':

@@ -812,7 +812,7 @@ export class SessionManager {
         rt.remoteConnected = remote.url !== null;
         this.reconcileRemote(id);
       }
-      if (events.some((e) => e.type === 'user' || e.type === 'notice')) rt.turnOpen = true;
+      if (events.some((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start')) rt.turnOpen = true;
       if (events.some((e) => e.type === 'turn-end')) rt.turnOpen = false;
     }
     if (events.length > 0) {
