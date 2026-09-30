@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NewSessionOptions, WorkspaceInfo } from '@shared/ipc';
 import type { PermissionMode } from '@shared/screen';
+import icon from '../assets/icon.png';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
@@ -128,12 +129,13 @@ export function NewSessionPane({
         )}
       </header>
       <div className="new-session-body">
-        <span className="new-session-mark" />
+        <span className="new-session-hero">
+          <img className="new-session-icon" src={icon} alt="" draggable={false} />
+        </span>
         <p className="new-session-title">何から始めますか？</p>
         <p className="new-session-sub">
-          フォルダを選んで最初の指示を送ると、そのフォルダで Claude Code が起動します。
-          <br />
-          起動が終わるのを待ってから送るので、スラッシュコマンドもそのまま使えます。
+          <span>フォルダを選んで最初の指示を送ると、そのフォルダで Claude Code が起動します。</span>
+          <span>起動が終わるのを待ってから送るので、スラッシュコマンドもそのまま使えます。</span>
         </p>
       </div>
       <div className="chat-input-wrap">

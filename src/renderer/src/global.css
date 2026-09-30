@@ -4094,29 +4094,84 @@ body.resizing-rows webview {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   padding: 24px 22px;
   overflow-y: auto;
+  text-align: center;
 }
-.new-session-mark {
-  width: 12px;
-  height: 12px;
-  margin-bottom: 8px;
-  border-radius: 3px;
-  background: var(--text-tertiary);
-  transform: rotate(45deg);
+/* アイコンの後ろに、アプリの配色（橙と青）のほのかな光を敷く。はっきり見えない程度 */
+.new-session-hero {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 14px;
+}
+.new-session-hero::before {
+  content: '';
+  position: absolute;
+  inset: -40px;
+  background:
+    radial-gradient(closest-side at 38% 58%, rgba(212, 131, 92, 0.2), transparent),
+    radial-gradient(closest-side at 62% 58%, rgba(109, 156, 207, 0.22), transparent);
+  filter: blur(8px);
+  pointer-events: none;
+}
+.new-session-icon {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
 }
 .new-session-title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 400;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-heading);
+  word-break: auto-phrase;
+  text-wrap: balance;
 }
 .new-session-sub {
   margin: 0;
-  font-size: 12px;
+  max-width: 520px;
+  font-size: 13px;
   line-height: 1.7;
   color: var(--text-secondary);
+  /* 狭いときは、文節の切れ目で折り返す（語の途中では折らない） */
+  word-break: auto-phrase;
+}
+/* 文ごとに行の長さをそろえる（1 つのブロックの中に <br> を挟むと、そろわない） */
+.new-session-sub span {
+  display: block;
+  text-wrap: balance;
+}
+/* 開いたとき、アイコン・見出し・説明を順に少し下からふわっと出す */
+.new-session-hero,
+.new-session-title,
+.new-session-sub {
+  animation: new-session-rise 0.5s ease-out backwards;
+}
+.new-session-title {
+  animation-delay: 0.08s;
+}
+.new-session-sub {
+  animation-delay: 0.16s;
+}
+@keyframes new-session-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+/* 上の reduced-motion のまとめより後ろに書いているので、ここで止める */
+@media (prefers-reduced-motion: reduce) {
+  .new-session-hero,
+  .new-session-title,
+  .new-session-sub {
+    animation: none;
+  }
 }
 .new-session-chips {
   display: flex;
