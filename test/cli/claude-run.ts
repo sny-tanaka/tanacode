@@ -106,7 +106,7 @@ export class ClaudeRun {
   private readonly firstClaudeSessionId = randomUUID();
   // 起動前に返す、何も映っていない画面
   private readonly blank = new ScreenTracker(DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows, () => {}, () => {});
-  private readonly screens = new Map<ScreenName, ScreenLine[]>();
+  private readonly screens = new Map<ScreenName, { lines: ScreenLine[]; serialized: string }>();
   // 今出ている選択メニューの見出しと、出た時刻。menusClosed: メニューが閉じた（別の画面になった）回数
   private menuShown: { title: string; at: number } | null = null;
   private menusClosed = 0;
@@ -230,6 +230,15 @@ export class ClaudeRun {
     // 権限モードは、はじめの起動と同じく manual にする（open では既定のままになる）
     if (resume && !this.hasConversation()) throw new Error('再開する会話がまだありません');
     manager['start'](this.sessionId, 'manual');
+  }
+
+  // 同じフォルダで新しいセッションを作って起動する（アプリの新規セッションと同じ）。今の claude は止める
+  newSession(): void {
+    this.stopClaude();
+    this.sessionId = null;
+    this.exited = null;
+    this.menuShown = null;
+    this.start();
   }
 
   // claude だけを止める（--resume で起動し直す前に）。claude が自分で終わったのと同じく、session-manager の onExit を通る
@@ -422,9 +431,9 @@ export class ClaudeRun {
     return true;
   }
 
-  // 今の画面を控えとして取っておく（ScreenTracker と同じ形の行）
+  // 今の画面を控えとして取っておく。ScreenTracker と同じ形の行と、文字の属性ごとの書き出し（書きかけの読み取りは、薄い字を見分ける）
   capture(name: ScreenName): void {
-    this.screens.set(name, this.lines());
+    this.screens.set(name, { lines: this.lines(), serialized: (this.sessionId && this.host.serialized(this.sessionId)) || '' });
   }
 
   // 取っておいた画面と、会話ログ・statusLine・フックが書いた質問を dir に書き出す。
@@ -443,7 +452,10 @@ export class ClaudeRun {
   // 取っておいた画面だけを書き出す（基本の台本でない台本は、画面だけを控えに残す）
   recordScreens(dir: string): void {
     mkdirSync(join(dir, 'screens'), { recursive: true });
-    for (const [name, lines] of this.screens) writeFileSync(join(dir, 'screens', `${name}.json`), this.fixed(`${JSON.stringify(lines, null, 1)}\n`));
+    for (const [name, { lines, serialized }] of this.screens) {
+      writeFileSync(join(dir, 'screens', `${name}.json`), this.fixed(`${JSON.stringify(lines, null, 1)}\n`));
+      writeFileSync(join(dir, 'screens', `${name}.ansi`), this.fixed(serialized));
+    }
   }
 
   // 使い捨てのフォルダのパスを、決まったパスに置き換える。会話ログのフォルダ名（パスの英数字以外を - にしたもの）も置き換える

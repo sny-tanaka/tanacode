@@ -126,6 +126,12 @@ export class FakePtyHost implements PtyHostApi {
     return lines;
   }
 
+  // 今動いている tag の claude の画面を、文字の属性（薄い字など）ごと書き出したもの。控えから ScreenTracker で読み直すのに使う
+  serialized(tag: string): string | null {
+    const hosted = [...this.all].reverse().find((h) => h.info.tag === tag);
+    return hosted && !hosted.disposed ? hosted.serializer.serialize() : null;
+  }
+
   // 今動いている tag の claude に、アプリを通さずに打つ（アプリが止まっている間の操作）
   write(tag: string, data: string): void {
     for (const hosted of this.ptys.values()) if (hosted.info.tag === tag && hosted.exitCode === null) hosted.proc.write(data);

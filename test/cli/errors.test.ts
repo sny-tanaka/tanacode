@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -174,11 +173,9 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
   });
 
   it('新しい会話の最初の発言から、ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks が読める', async () => {
-    // claude を起動し直して、新しい会話にする（/clear ではなく、会話ログがまだ無い状態から。
+    // 新しいセッションで、新しい会話にする（/clear ではなく、会話ログがまだ無い状態から。
     // Claude Code は新しい会話ログを作るとき、最初の応答の行を発言の行より先に書くことがある）
-    run.stopClaude();
-    run.claudeSessionId = randomUUID();
-    run.start();
+    run.newSession();
     await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
     await begin(TOOLS_PROMPT, { clear: false });
     await untilDone('ツールの確認の返事', () => events().some((e) => e.type === 'assistant-text' && e.text === TOOLS_REPLY) && events().some((e) => e.type === 'turn-end'), 60_000);

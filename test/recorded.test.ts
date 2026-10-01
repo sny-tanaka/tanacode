@@ -3,9 +3,11 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isTranscriptEntry, toChatEvents } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
-import type { ScreenLine } from '@shared/screen';
+import type { AskQuestion, ScreenInfo, ScreenLine } from '@shared/screen';
 import { transcriptPath } from '../src/main/claude-session';
 import { applyQuestions, askQuestionsOf, findEffort, findMode, findModel, parseMenu, promptRange } from '../src/main/screen-parser';
+import { ScreenTracker } from '../src/main/screen-tracker';
+import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { parseStatusLine } from '../src/main/statusline';
 import {
   FIXTURE_ROOT,
@@ -20,6 +22,22 @@ import {
   checkWorkflowApproval,
   type ScreenName,
 } from './scenario';
+import { checkEarlyDraft, checkPromptBack } from './scenarios/errors';
+import { DRAFT, EFFORT, LONG_PASTE, SHELL_COMMAND, checkDraft, checkEffort, checkPastedDraft } from './scenarios/input';
+import {
+  ASK_MULTI,
+  ASK_PREVIEW,
+  ASK_TABS,
+  ASK_TALL,
+  checkMulti,
+  checkMultiReview,
+  checkPreview,
+  checkTabsFirst,
+  checkTabsLast,
+  checkTabsMulti,
+  checkTabsReview,
+  checkTall,
+} from './scenarios/questions';
 
 // 本物の Claude Code から取った控え（test/fixtures/claude-code/<版>/）を、アプリの読み取りにかける。
 // 控えは、互換性の確認（npm run test:cli）に TANACODE_RECORD=1 を付けて取る。古い版の控えも残し、読めるままかを確かめ続ける
@@ -34,6 +52,23 @@ else it('動作確認済のバージョンの控えがある', () => expect(vers
 describe.each(versions)('Claude Code %s の控え', (version) => {
   const dir = join(DIR, version);
   const screen = (name: ScreenName) => JSON.parse(readFileSync(join(dir, 'screens', `${name}.json`), 'utf8')) as ScreenLine[];
+  // 控えを取ったあとに足した台本の画面は、古い版の控えには無い
+  const has = (name: ScreenName) => existsSync(join(dir, 'screens', `${name}.json`));
+  // 文字の属性ごと書き出した画面を、アプリと同じ ScreenTracker に流し込んで読む（書きかけは薄い字を見分ける）
+  const replay = async (name: ScreenName): Promise<ScreenInfo> => {
+    const tracker = new ScreenTracker(DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows, () => {}, () => {});
+    tracker.feed(readFileSync(join(dir, 'screens', `${name}.ansi`), 'utf8'));
+    // 描画が落ち着いてから読み、入力欄が出て少し経つと ready になる（screen-tracker.ts の SETTLE_MS・READY_AFTER_MS）
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const info = tracker.current;
+    tracker.dispose();
+    return info;
+  };
+  // AskUserQuestion の画面は、アプリと同じく会話ログの質問で組み立て直す
+  const question = (name: ScreenName, questions: AskQuestion[]) => {
+    const menu = parseMenu(screen(name));
+    return menu && applyQuestions(menu, questions, new Map());
+  };
   const askInput = () => (JSON.parse(readFileSync(join(dir, 'ask.json'), 'utf8')) as { tool_input?: unknown }).tool_input;
   const entries = readFileSync(join(dir, 'transcript.jsonl'), 'utf8')
     .split('\n')
@@ -87,6 +122,42 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
 
   it('/rewind の「何を戻すか」が読める', () => {
     checkRewindRestore(parseMenu(screen('rewind-restore')));
+  });
+
+  it.skipIf(!has('question-tabs-first'))('複数の質問のページ送りと、回答の確認画面が読める', () => {
+    checkTabsFirst(question('question-tabs-first', ASK_TABS));
+    checkTabsMulti(question('question-tabs-multi', ASK_TABS));
+    checkTabsLast(question('question-tabs-last', ASK_TABS));
+    checkTabsReview(question('question-tabs-review', ASK_TABS));
+  });
+
+  it.skipIf(!has('question-multi'))('複数選択だけの質問が読める', () => {
+    checkMulti(question('question-multi', ASK_MULTI));
+    checkMultiReview(question('question-multi-review', ASK_MULTI));
+  });
+
+  it.skipIf(!has('question-preview'))('プレビュー付きの選択肢が読める', () => {
+    checkPreview(question('question-preview', ASK_PREVIEW));
+  });
+
+  it.skipIf(!has('question-tall'))('説明が長く、上が切れて見える質問が読める', () => {
+    checkTall(question('question-tall', ASK_TALL));
+    checkTall(question('question-tall-moved', ASK_TALL), '3');
+  });
+
+  it.skipIf(!has('effort'))('--effort を付けた入力欄のエフォートとモデル名が読める', async () => {
+    checkEffort(await replay('effort'), EFFORT);
+  });
+
+  it.skipIf(!has('draft'))('入力欄の書きかけが読める', async () => {
+    checkDraft(await replay('draft'), DRAFT);
+    checkPastedDraft(await replay('pasted-draft'), LONG_PASTE.split('\n').length);
+    checkDraft(await replay('shell-draft'), `!${SHELL_COMMAND}`);
+  });
+
+  it.skipIf(!has('interrupt-draft'))('中断のあとの入力欄が読める', async () => {
+    checkEarlyDraft(await replay('interrupt-draft'));
+    checkPromptBack(await replay('tool-interrupted'));
   });
 
   it('会話ログからチャットを組み立てられる', () => {
