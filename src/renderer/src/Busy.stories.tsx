@@ -10,6 +10,7 @@ import { Busy } from './layout/Busy';
 import { StatusBar } from './StatusBar';
 import { TaskTray } from './tasks/TaskTray';
 import type { TaskEntry } from './tasks/taskList';
+import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 
 // 進行中・処理中を表すところ。どれも「グラデーションのぐるぐる」と「グラデーションが流れる文字」にそろえている
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
@@ -104,6 +105,7 @@ function Catalog() {
           pr={null}
           showCursor={false}
           language={null}
+          claudeVersion={VERIFIED_CLAUDE_CODE_VERSION}
         />
       </Place>
     </div>

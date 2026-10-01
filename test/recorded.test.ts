@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isTranscriptEntry, toChatEvents } from '@shared/chat';
+import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { ScreenLine } from '@shared/screen';
 import { transcriptPath } from '../src/main/claude-session';
 import { applyQuestions, askQuestionsOf, findEffort, findMode, parseMenu, promptRange } from '../src/main/screen-parser';
@@ -15,6 +16,8 @@ const DIR = join(__dirname, 'fixtures', 'claude-code');
 const versions = existsSync(DIR) ? readdirSync(DIR) : [];
 
 if (versions.length === 0) it.skip('控えがまだありません（TANACODE_RECORD=1 npm run test:cli で取る）', () => {});
+// ステータスバーで「確かめた版」とする版（VERIFIED_CLAUDE_CODE_VERSION）は、控えで確かめられる版にする
+else it('確かめた版の控えがある', () => expect(versions).toContain(VERIFIED_CLAUDE_CODE_VERSION));
 
 describe.each(versions)('Claude Code %s の控え', (version) => {
   const dir = join(DIR, version);

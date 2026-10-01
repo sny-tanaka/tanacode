@@ -1,4 +1,5 @@
 import type { ChatEvent } from '@shared/chat';
+import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type {
   BranchChanges,
   DirEntry,
@@ -267,6 +268,8 @@ export class DemoBackend {
           return () => clearInterval(timer);
         },
       },
+      // 動画に警告が映らないよう、確かめた版にする
+      claudeVersion: { get: () => ok(VERIFIED_CLAUDE_CODE_VERSION), onChanged: () => () => {} },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
       models: { get: () => ok(this.catalog), refresh: () => ok({ catalog: this.catalog }) },
       knowledge: {

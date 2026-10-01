@@ -1795,6 +1795,25 @@ body.resizing-rows {
   height: 7px;
   border-radius: 50%;
 }
+/* Claude Code の版。確かめた版と違うときは、新しい版（warn・↑）と古い版（danger・↓）で印と色を分ける */
+.claude-version {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.claude-version svg {
+  flex: none;
+}
+.claude-version.newer {
+  color: var(--warn);
+}
+.claude-version.older,
+.claude-version.missing {
+  color: var(--danger);
+}
 .status-link {
   color: var(--ide);
   text-decoration: none;

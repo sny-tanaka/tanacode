@@ -97,6 +97,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `npm test`（`test/recorded.test.ts`）: `npm run test:cli` のときに取った控え（`test/fixtures/claude-code/<版>/`）を、同じ読み取りにかけます。`claude` が無くても速く流せます。古い版の控えも残し、読めるままかを確かめ続けます。
   - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
   - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
+- 動作を確かめた版は `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと違えば印を付けます（新しい版と古い版で分ける）。
+  - 上げるときは、その版で `TANACODE_RECORD=1 npm run test:cli` が通ることを確かめ、控えを `test/fixtures/claude-code/<版>/` に入れます。控えがあれば、`npm test` は確かめた版の控えがあるかも見ます。
+  - README の「動作を確かめた版」も合わせて直します。
 - GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
   - 定期の確認で失敗したら、Issue を立てます（同じ版の Issue が開いていれば立てない）。
   - 途中の控えは artifact（`claude-code-<版>`）に残します。新しい版の控えを足すときは、これを `test/fixtures/claude-code/` に入れてコミットします。
@@ -211,6 +214,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `subagent-tracker.ts` / `workflow-tracker.ts` / `bash-task-tracker.ts`: サブエージェント・ワークフロー・バックグラウンドの Bash の進み具合
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `statusline.ts` / `usage-monitor.ts` / `model-catalog.ts`: statusLine・利用枠・モデル一覧
+  - `claude-version.ts`: 入っている Claude Code の版（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
@@ -230,7 +234,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧・利用枠・CPU/メモリ・コンテキスト・カラム
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、動作を確かめた Claude Code の版（`claude-code.ts`）
 - `design/`: アプリのロゴ
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）

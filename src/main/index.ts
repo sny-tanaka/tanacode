@@ -27,6 +27,7 @@ import { readModelCatalog } from './model-catalog';
 import { StatusLineWatcher } from './statusline';
 import { ShellTerminals } from './shell-terminals';
 import { SystemMonitor } from './system-monitor';
+import { ClaudeVersionMonitor } from './claude-version';
 import { UsageMonitor } from './usage-monitor';
 import { Workspace } from './workspace';
 import { WorkspaceWatchers } from './workspace-watcher';
@@ -38,6 +39,7 @@ let usage: UsageMonitor;
 let settings: AppSettings;
 let statusLines: StatusLineWatcher;
 let system: SystemMonitor;
+let claudeVersions: ClaudeVersionMonitor;
 let watchers: WorkspaceWatchers;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
@@ -255,6 +257,7 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.ModelsGet, () => readModelCatalog().catch(() => null));
   ipcMain.handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
   ipcMain.handle(IpcChannel.UsageGet, () => usage.get());
+  ipcMain.handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
   ipcMain.handle(IpcChannel.UsageRefresh, () => usage.refresh());
   ipcMain.handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   ipcMain.handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
@@ -479,6 +482,7 @@ app.whenReady().then(async () => {
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
   }, remoteControl);
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
+  claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
   await manager.adopt();
   registerIpc();
@@ -487,6 +491,9 @@ app.whenReady().then(async () => {
   void usage.start();
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
+  claudeVersions.start();
+  // ターミナルで Claude Code を更新して戻ってきたときに、すぐ表示を変える
+  app.on('browser-window-focus', () => void claudeVersions.refresh());
   app.on('activate', () => showWindow());
 });
 
@@ -498,6 +505,7 @@ app.on('before-quit', (event) => {
   }
   statusLines?.close();
   system?.stop();
+  claudeVersions?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   manager?.closeAll(false);
   ptyHost?.close();

@@ -78,6 +78,10 @@ const api: TanacodeApi = {
   system: {
     onStats: (listener) => subscribe<SystemStats>(IpcChannel.SystemStats, listener),
   },
+  claudeVersion: {
+    get: () => ipcRenderer.invoke(IpcChannel.ClaudeVersionGet),
+    onChanged: (listener) => subscribe<string | null>(IpcChannel.ClaudeVersionChanged, listener),
+  },
   statusLine: {
     get: (sessionId) => ipcRenderer.invoke(IpcChannel.StatusLineGet, sessionId),
     onChanged: (listener) => subscribe<SessionStatusLine>(IpcChannel.StatusLineChanged, listener),
