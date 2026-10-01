@@ -110,7 +110,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと同じならチェックマーク、違えば警告の印を付けます（新しい版と古い版で分ける）。
   - 上げるのは、GitHub Actions の毎日の確認です（下）。新しい版で通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作ります。マージは人が PR を見てから。
     - `VERIFIED_CLAUDE_CODE_VERSION`
-    - README と GUIDE の「動作確認済」の行の版
+    - README と GUIDE の「動作確認済」の行の版（README の先頭のバッジも、alt に「動作確認済」を入れてあるので一緒に変わる）
     - その版の控え（`test/fixtures/claude-code/<版>/`）
   - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <版>`）。
