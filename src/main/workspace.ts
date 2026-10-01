@@ -13,6 +13,9 @@ const IMAGE_TYPES: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
   '.svg': 'image/svg+xml',
 };
 const MAX_LISTED_FILES = 50000;
@@ -37,6 +40,12 @@ export class Workspace {
   async readFile(relPath: string): Promise<FileContent> {
     const abs = this.resolve(relPath);
     const { size } = await stat(abs);
+    // 画像は、エディタに絵として出す（SVG は文字として編集できるので、ここでは扱わない）
+    const ext = extname(relPath).toLowerCase();
+    if (IMAGE_TYPES[ext] && ext !== '.svg') {
+      if (size > MAX_IMAGE_BYTES) return { kind: 'too-large', size };
+      return { kind: 'image', url: await this.imageUrl(abs, IMAGE_TYPES[ext]) };
+    }
     if (size > MAX_FILE_BYTES) return { kind: 'too-large', size };
     const buf = await readFile(abs);
     if (buf.includes(0)) return { kind: 'binary' };
@@ -50,6 +59,10 @@ export class Workspace {
     const abs = this.resolve(relPath);
     const { size } = await stat(abs);
     if (size > MAX_IMAGE_BYTES) return null;
+    return this.imageUrl(abs, mime);
+  }
+
+  private async imageUrl(abs: string, mime: string): Promise<string> {
     return `data:${mime};base64,${(await readFile(abs)).toString('base64')}`;
   }
 
