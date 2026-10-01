@@ -87,6 +87,16 @@ export function RemoteIcon({ size = 22 }: { size?: number }) {
   );
 }
 
+// 錠: セッション一覧の並びのロック。locked で閉じた錠、そうでなければ開いた錠
+export function LockIcon({ locked, size = 22 }: { locked: boolean; size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+      <path d={locked ? 'M8 10.5V7.5a4 4 0 0 1 8 0v3' : 'M8 10.5V7.5a4 4 0 0 1 7.6-1.7'} />
+    </svg>
+  );
+}
+
 // 通知: ベル（タイトルバーの通知トグルに使う小さいアイコン）
 export function BellIcon({ size = 22 }: { size?: number }) {
   return (

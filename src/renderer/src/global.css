@@ -1862,6 +1862,35 @@ body.resizing-rows {
   overflow-y: auto;
   padding-bottom: 12px;
 }
+/* 「アクティブ」の見出しの右端に、並びのロックのボタンを置く（見出しの高さは変えない） */
+.session-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.session-lock {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -6px -6px -6px 0;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.session-lock:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+/* ロック中は、オンのスイッチと同じ色 */
+.session-lock.on {
+  color: var(--send-fg);
+}
 .pane-heading.clickable {
   display: flex;
   align-items: center;
