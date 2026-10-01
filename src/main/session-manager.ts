@@ -20,7 +20,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import { BashTaskTracker } from './bash-task-tracker';
-import { branchCut, readAgentLog, readChatLog, type ChainEntry } from './chat-log';
+import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
 import { KnowledgeTracker } from './knowledge-tracker';
 import type { PtyHostApi } from './pty-host-client';
@@ -658,6 +658,28 @@ export class SessionManager {
     rt.chain.push({ uuid: entry.uuid, type: entry.type, eventStart: rt.events.length });
   }
 
+  // 応答の前に Esc で中断した発言は、Claude Code が会話から外して入力欄に戻す。会話ログには何も書かれないので、
+  // 入力欄に戻ったのを画面で見て、発言の表示を取り消し、ターンを終える（戻った文字は、チャットの入力欄に移す）
+  private withdrawPulledBack(id: string, rt: Runtime, draft: string): void {
+    const cut = pulledBackPrompt(rt.events, draft);
+    if (cut === null) return;
+    const kept = rt.events.slice(0, cut);
+    // 発言の行から後の行を、会話のつながりからも外す（発言の前の、イベントの無い行は残す）
+    let at = -1;
+    rt.chain.forEach((c, i) => {
+      if (c.type === 'user' && c.eventStart === cut) at = i;
+    });
+    if (at !== -1) rt.chain = rt.chain.slice(0, at);
+    rt.events = kept;
+    // replace は events に残さない（kept がそのまま置き換え後の状態）。通し番号だけ進める
+    const fromSeq = rt.seq;
+    rt.seq += 1;
+    this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: kept }], live: true });
+    rt.turnOpen = false;
+    this.pushEvents(id, [{ type: 'turn-end' }]);
+    this.emitSessions();
+  }
+
   // 作業中に送った発言は、Claude Code が受け取るまで会話ログに発言として書かれず、順番待ち（queue-operation）にだけ書かれる。
   // それを追って、受け取られるまでチャットに「順番待ち」として出す
   private trackQueue(id: string, rt: Runtime, entry: TranscriptEntry): void {
@@ -707,6 +729,7 @@ export class SessionManager {
     const oneMillion = screen.oneMillionSeen;
     if (oneMillion !== null && this.store.get(id)?.oneMillion !== oneMillion) this.store.update(id, { oneMillion });
     if (info.state.kind === 'prompt') this.reconcileRemote(id);
+    if (info.state.kind === 'prompt' && rt.turnOpen && screen.currentActivity === null) this.withdrawPulledBack(id, rt, info.draft);
     const attention = info.state.kind === 'menu' ? info.state.menu.kind : info.state.kind === 'unknown' ? 'other' : null;
     if (attention === rt.attention) return;
     const before = rt.attention;

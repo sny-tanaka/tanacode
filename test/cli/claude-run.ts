@@ -57,6 +57,8 @@ type Options = {
   settings?: Record<string, unknown>;
   // 作業フォルダに置いておくファイル（パス → 中身）
   files?: Record<string, string>;
+  // claude に足す環境変数（API エラーの再試行の回数を減らすなど）
+  env?: Record<string, string>;
 };
 
 // 本物の claude を、アプリと同じ SessionManager で動かして読む。src/main/index.ts と同じ組み立て方で、
@@ -110,7 +112,7 @@ export class ClaudeRun {
 
   constructor(
     private readonly baseUrl: string,
-    options: Options = {},
+    private readonly options: Options = {},
   ) {
     mkdirSync(join(this.home, '.claude'), { recursive: true });
     mkdirSync(this.cwd, { recursive: true });
@@ -137,6 +139,8 @@ export class ClaudeRun {
       NO_PROXY: '127.0.0.1,localhost',
       DISABLE_AUTOUPDATER: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // 台本ごとに足す環境変数（再試行の回数など）
+      ...this.options.env,
     };
     this.host = new FakePtyHost(CLAUDE_BIN, env, [STATUS_FILE_ENV, ASK_FILE_ENV]);
   }

@@ -16,7 +16,12 @@ export type Step = Block[];
 
 // match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）。
 // model: 応答に書くモデル（無ければ頼まれたモデル。会話ログのモデルが画面のモデル名になるかを見るため）
-export type Conversation = { match: string; steps: Step[]; delayMs?: number; model?: string };
+// failures: 応答の番号 → 応答の代わりに返す API エラー
+export type Conversation = { match: string; steps: Step[]; delayMs?: number; model?: string; failures?: Record<number, ApiFailure> };
+
+// 応答の代わりに返す API エラー。status: HTTP の状態コード（529 は overloaded）。errorType: エラーの種類（overloaded_error など）。
+// times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）
+export type ApiFailure = { status: number; errorType: string; message: string; times?: number };
 
 type Message = { role?: string; content?: string | { type?: string; text?: string }[] };
 type Body = {
@@ -31,6 +36,8 @@ export class MockApi {
   // 受け取ったリクエスト（うまくいかなかったときの手がかり）
   readonly requests: string[] = [];
   private count = 0;
+  // 返した API エラーの回数（台本の文字と応答の番号ごと）
+  private readonly failed = new Map<string, number>();
   // 台本のある会話に付いてきたツールの名前（台本で使うツールが、今の Claude Code にあるかを確かめる）
   readonly tools = new Set<string>();
 
@@ -74,6 +81,13 @@ export class MockApi {
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
     this.requests.push(`  ${conversation ? `「${conversation.match}」の会話・${index} 番目の応答` : `台本の無い呼び出し（${first.slice(0, 60)}）`}`);
     if (conversation?.delayMs) await new Promise((resolve) => setTimeout(resolve, conversation.delayMs));
+    const failure = conversation?.failures?.[index];
+    const key = `${conversation?.match}:${index}`;
+    if (failure && (failure.times === undefined || (this.failed.get(key) ?? 0) < failure.times)) {
+      this.failed.set(key, (this.failed.get(key) ?? 0) + 1);
+      this.requests.push(`  → API エラー ${failure.status}（${this.failed.get(key)} 回目）`);
+      return fail(res, failure);
+    }
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
     const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason };
     if (body.stream) stream(res, answer);
@@ -94,6 +108,12 @@ function message({ id, model, content, stopReason }: Reply) {
     stop_sequence: null,
     usage: { input_tokens: 100, output_tokens: 20 },
   };
+}
+
+// 本物の API と同じ形のエラー（{ type: 'error', error: { type, message } }）
+function fail(res: ServerResponse, { status, errorType, message }: ApiFailure): void {
+  res.writeHead(status, { 'content-type': 'application/json', 'request-id': `req_mock_${status}` });
+  res.end(JSON.stringify({ type: 'error', error: { type: errorType, message } }));
 }
 
 function json(res: ServerResponse, value: unknown): void {

@@ -62,6 +62,12 @@ export function recentlySent(sessionId: string): string | null {
   return sent && Date.now() - sent.at < SENDING_MS ? sent.text : null;
 }
 
+// 中断した（Esc を送った）ので、直前に打ち込んだ文字はもう打ち込んでいる途中ではない。
+// 応答の前に中断すると Claude Code は発言を入力欄に戻すので、それを打ち込み途中の文字と取り違えず、チャットの入力欄に移す
+export function forgetSent(sessionId: string): void {
+  lastSent.delete(sessionId);
+}
+
 // Claude Code に送る。画像はパスを貼り付けとして送ると [Image #n] として添付される
 export async function submitToClaude(sessionId: string, rawText: string, attachments: string[]): Promise<void> {
   const { pty } = window.tanacode;

@@ -90,6 +90,7 @@ export class TranscriptTail {
     let buffer = Buffer.concat([this.pending, chunk]);
     let bufferStart = chunkStart - this.pending.length;
     let newline: number;
+    const read: { entry: unknown; isHistory: boolean }[] = [];
     while ((newline = buffer.indexOf(0x0a)) !== -1) {
       const line = buffer.subarray(0, newline).toString('utf8').trim();
       const lineEnd = bufferStart + newline + 1;
@@ -102,12 +103,47 @@ export class TranscriptTail {
       } catch {
         continue;
       }
-      this.onEntry(entry, lineEnd <= this.historyBytes);
+      read.push({ entry, isHistory: lineEnd <= this.historyBytes });
     }
+    for (const { entry, isHistory } of parentFirst(read, (r) => r.entry)) this.onEntry(entry, isHistory);
     this.pending = buffer;
     if (!this.historySignaled && this.historyBytes > 0 && this.offset >= this.historyBytes) {
       this.historySignaled = true;
       this.onHistoryLoaded?.();
     }
   }
+}
+
+// Claude Code は新しい会話ログを作るとき、最初の応答の行を、発言の行（とそれに続く attachment の行）より先に書くことがある。
+// 親（parentUuid）が同じまとまりの後ろにある行は、親を読んだすぐ後ろに回す（親の無い行・親がまとまりに無い行はそのまま）
+export function parentFirst<T>(items: T[], entryOf: (item: T) => unknown): T[] {
+  const uuidOf = (item: T) => {
+    const uuid = (entryOf(item) as { uuid?: unknown } | null)?.uuid;
+    return typeof uuid === 'string' ? uuid : null;
+  };
+  const parentOf = (item: T) => {
+    const parent = (entryOf(item) as { parentUuid?: unknown } | null)?.parentUuid;
+    return typeof parent === 'string' ? parent : null;
+  };
+  const uuids = new Set(items.map(uuidOf).filter((u) => u !== null));
+  const done = new Set<string>();
+  const waiting = new Map<string, T[]>();
+  const out: T[] = [];
+  const emit = (item: T) => {
+    out.push(item);
+    const uuid = uuidOf(item);
+    if (uuid === null) return;
+    done.add(uuid);
+    const children = waiting.get(uuid);
+    waiting.delete(uuid);
+    children?.forEach(emit);
+  };
+  for (const item of items) {
+    const parent = parentOf(item);
+    if (parent !== null && uuids.has(parent) && !done.has(parent)) waiting.set(parent, [...(waiting.get(parent) ?? []), item]);
+    else emit(item);
+  }
+  // 親が出てこなかったもの（同じ uuid の行が親より前にしか無いなど）は、最後にそのまま出す
+  for (const children of waiting.values()) out.push(...children);
+  return out;
 }
