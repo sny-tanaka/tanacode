@@ -1795,7 +1795,7 @@ body.resizing-rows {
   height: 7px;
   border-radius: 50%;
 }
-/* Claude Code の版。確かめた版と違うときは、新しい版（warn・↑）と古い版（danger・↓）で印と色を分ける */
+/* Claude Code の版。動作確認済のバージョンと同じならチェックマーク（ok）。違うときは、新しい版（warn・↑）と古い版（danger・↓）で印と色を分ける */
 .claude-version {
   display: flex;
   align-items: center;
@@ -1806,6 +1806,9 @@ body.resizing-rows {
 }
 .claude-version svg {
   flex: none;
+}
+.claude-version.same svg {
+  color: var(--ok);
 }
 .claude-version.newer {
   color: var(--warn);

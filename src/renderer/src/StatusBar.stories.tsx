@@ -4,7 +4,7 @@ import { StatusBar } from './StatusBar';
 
 const noop = () => {};
 
-// 確かめた版の最後の数字をずらした版
+// 動作確認済のバージョンの最後の数字をずらした版
 const shifted = (delta: number) => VERIFIED_CLAUDE_CODE_VERSION.replace(/\d+$/, (n) => String(Number(n) + delta));
 
 const meta = {
@@ -34,7 +34,7 @@ export const 待機中: Story = {};
 export const 起動中: Story = { args: { status: 'starting' } };
 export const 作業中: Story = { args: { status: 'running' } };
 export const 異常終了: Story = { args: { status: 'exited', exitCode: 1 } };
-// Claude Code の版が、tanacode で確かめた版と違う（マウスを乗せると理由が出る）
+// Claude Code の版が、tanacode で動作確認済のバージョンと違う（マウスを乗せると理由が出る）
 export const 版が新しい: Story = { args: { claudeVersion: shifted(3) } };
 export const 版が古い: Story = { args: { claudeVersion: shifted(-3) } };
 export const Claudeが見つからない: Story = { args: { claudeVersion: null } };

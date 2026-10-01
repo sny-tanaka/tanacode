@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareVersions, versionMatch } from '@shared/claude-code';
 
-// ステータスバーで、入っている Claude Code の版を tanacode で確かめた版と比べる
+// ステータスバーで、入っている Claude Code の版を tanacode で動作確認済のバージョンと比べる
 describe('versionMatch', () => {
   it('同じ版だけが same', () => {
     expect(versionMatch('2.1.286', '2.1.286')).toBe('same');

@@ -268,7 +268,7 @@ export class DemoBackend {
           return () => clearInterval(timer);
         },
       },
-      // 動画に警告が映らないよう、確かめた版にする
+      // 動画に警告が映らないよう、動作確認済のバージョンにする
       claudeVersion: { get: () => ok(VERIFIED_CLAUDE_CODE_VERSION), onChanged: () => () => {} },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
       models: { get: () => ok(this.catalog), refresh: () => ok({ catalog: this.catalog }) },
