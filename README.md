@@ -6,7 +6,7 @@
 <h3 align="center">空いた画面に Claude の中身を映す macOS アプリ</h3>
 
 <p align="center">
-  <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=%E6%9C%80%E6%96%B0%E7%89%88&color=2ea043" alt="最新版" /></a>
+  <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=%E6%9C%80%E6%96%B0%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3&color=2ea043" alt="最新バージョン" /></a>
   <img src="https://img.shields.io/badge/macOS-13%20%E4%BB%A5%E9%99%8D-555555?logo=apple" alt="対応する macOS: 13 以降" />
   <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/%E5%8B%95%E4%BD%9C%E7%A2%BA%E8%AA%8D%E6%B8%88%E3%81%AE%20Claude%20Code-2.1.286-d4835c" alt="動作確認済の Claude Code: 2.1.286" /></a>
   <img src="https://img.shields.io/badge/%E3%83%A9%E3%82%A4%E3%82%BB%E3%83%B3%E3%82%B9-MIT-2f6fd6" alt="ライセンス: MIT" />
@@ -70,7 +70,7 @@ https://github.com/user-attachments/assets/f95733ef-2203-46c2-b3d4-17b3ab6d7a6b
 - macOS 13 以降（Apple Silicon・Intel）
 - [Claude Code](https://code.claude.com/docs)（`claude` CLI）
   - ターミナルで一度 `claude` を起動し、初回のセットアップ（テーマの選択とログイン）を済ませておきます
-  - tanacode で動作確認済のバージョンは 2.1.286。違うバージョンのときは、ステータスバーの版に警告の印が付きます（マウスを乗せると理由を表示）
+  - tanacode で動作確認済のバージョンは 2.1.286。違うバージョンのときは、ステータスバーのバージョンに警告の印が付きます（マウスを乗せると理由を表示）
   - 最新の Claude Code で動くかも、毎日自動で確認。それでも Claude Code の更新で、一部の表示や操作が動かなくなる場合あり
 
 ## インストール
@@ -130,9 +130,9 @@ npm run install-app
 
 ### 更新
 
-自動アップデートは無し。新しい版が出ると、タイトルバーのバージョンの右に青いダウンロードの印が出ます（GitHub の Releases を 1 時間ごとに確認）。リポジトリの Watch → Custom → Releases でも通知を受け取れます。
+自動アップデートは無し。新しいバージョンが出ると、タイトルバーのバージョンの右に青いダウンロードの印が出ます（GitHub の Releases を 1 時間ごとに確認）。リポジトリの Watch → Custom → Releases でも通知を受け取れます。
 
-- **ソースから入れた場合**: 次を実行してから tanacode を終了し、終了のダイアログで「動かしたまま終了」を選んで起動し直します。動いている Claude Code は止まらず、新しい版がそのまま引き継ぎます
+- **ソースから入れた場合**: 次を実行してから tanacode を終了し、終了のダイアログで「動かしたまま終了」を選んで起動し直します。動いている Claude Code は止まらず、新しいバージョンがそのまま引き継ぎます
 
   ```bash
   git pull
@@ -140,7 +140,7 @@ npm run install-app
   npm run install-app
   ```
 
-- **ビルド済みのアプリの場合**: 新しい版を入れる前に、メニューの「ファイル → Claude Code も止めて終了」で終了します。アプリの入れ替えで、動いている Claude Code が途中で切れないようにするためです
+- **ビルド済みのアプリの場合**: 新しいバージョンを入れる前に、メニューの「ファイル → Claude Code も止めて終了」で終了します。アプリの入れ替えで、動いている Claude Code が途中で切れないようにするためです
 
 ### アンインストール
 

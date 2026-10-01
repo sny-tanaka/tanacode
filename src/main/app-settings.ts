@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-// notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しい版を確かめるか
+// notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しいバージョンが出たら通知するか
 type Values = { notifications: boolean; updateCheck: boolean };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -48,7 +48,7 @@ export class AppSettings {
   }
 }
 
-// 無い・読めない値は、オン（通知は、この設定ができる前の版と同じく出す）
+// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）
 function load(file: string): Values {
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as { notifications?: unknown; updateCheck?: unknown };

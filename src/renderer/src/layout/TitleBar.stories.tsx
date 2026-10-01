@@ -26,11 +26,11 @@ export const 通知オフ: Story = { render: () => <Demo initial={false} /> };
 // 設定を読み込むまでは、ベルを出さない
 export const 読み込み中: Story = { args: { notifications: null } };
 
-// バージョンの横の印。最新ならチェック、新しい版があればダウンロードの印。マウスを乗せると説明が出る
-export const 最新版: Story = { args: { update: { latest: __APP_VERSION__, available: false, url: '' } } };
+// バージョンの横の印。最新ならチェック、新しいバージョンがあればダウンロードの印。マウスを乗せると説明が出る
+export const 最新バージョン: Story = { args: { update: { latest: __APP_VERSION__, available: false, url: '' } } };
 
-// まだ見ていない新しい版は、印が動く（マウスを乗せると止まる。見るたびに動くよう、見た記録を消してから出す）
-export const 新しい版あり: Story = {
+// まだ見ていない新しいバージョンは、印が動く（マウスを乗せると止まる。見るたびに動くよう、見た記録を消してから出す）
+export const 新しいバージョンあり: Story = {
   beforeEach: () => localStorage.removeItem(SEEN_KEY),
   args: { update: { latest: '9.9.9', available: true, url: 'https://github.com/sny-tanaka/tanacode/releases/tag/v9.9.9' } },
 };

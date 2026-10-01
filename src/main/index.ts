@@ -341,12 +341,12 @@ function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
-        // 既定の appMenu の並びに、新しい版を確かめるかの切り替えを足す
+        // 既定の appMenu の並びに、「新しいバージョンが出たら通知する」の切り替えを足す
         label: app.name,
         submenu: [
           { role: 'about' },
           { type: 'separator' },
-          { label: '新しい版を確かめる', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
           { type: 'separator' },
           { role: 'services' },
           { type: 'separator' },
@@ -385,7 +385,7 @@ function buildMenu(): void {
   );
 }
 
-// メニューの「新しい版を確かめる」。オフにしたら、GitHub への問い合わせをやめて、タイトルバーの印も消す。
+// メニューの「新しいバージョンが出たら通知する」。オフにしたら、GitHub への問い合わせをやめて、タイトルバーの印も消す。
 // 保存できなかったら、チェックを元に戻す
 function setUpdateCheck(item: MenuItem): void {
   try {

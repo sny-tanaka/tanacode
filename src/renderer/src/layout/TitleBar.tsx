@@ -4,11 +4,11 @@ import { AppUpdateMark } from './AppUpdate';
 import { BellIcon } from './icons';
 import { Toggle } from './Toggle';
 
-// ウインドウの上の帯。左の信号ボタンの右に、アプリのロゴ（アイコンと名前）とバージョン・新しい版の印を並べ、右端に通知のベルを置く。
+// ウインドウの上の帯。左の信号ボタンの右に、アプリのロゴ（アイコンと名前）とバージョン・新しいバージョンの印を並べ、右端に通知のベルを置く。
 // ロゴを押すと、GitHub の tanacode のリポジトリを開く（ツールチップは出さず、カーソルだけ変える）。
 // フォルダはセッション一覧とエクスプローラー、ブランチは下のバーで分かるので、ここには出さない。
 // notifications: macOS の通知を出すか（null は、設定を読み込むまで。そのあいだはベルを出さない）
-// update: 新しい版を確かめた結果（null は、まだ分からない・確かめる設定がオフ。そのあいだは印を出さない）
+// update: 新しいバージョンを確かめた結果（null は、まだ分からない・確かめる設定がオフ。そのあいだは印を出さない）
 export function TitleBar({
   notifications,
   onNotificationsChange,

@@ -171,7 +171,7 @@ input[type='checkbox'] {
   font-size: 11px;
   color: var(--text-tertiary);
 }
-/* バージョンの横の新しい版の印。文字は出さず、ツールチップで知らせる。マウスを乗せられるよう、ドラッグを外す */
+/* バージョンの横の、新しいバージョンの印。文字は出さず、ツールチップで知らせる。マウスを乗せられるよう、ドラッグを外す */
 .app-update {
   flex: none;
   display: flex;
@@ -199,7 +199,7 @@ input[type='checkbox'] {
 .app-update.available:hover {
   background: var(--bg-hover);
 }
-/* まだ見ていない新しい版。矢印を受け皿へ落とす動きと、周りに広がる波紋を 3 回。目の端でも気づけるようにする */
+/* まだ見ていない新しいバージョン。矢印を受け皿へ落とす動きと、周りに広がる波紋を 3 回。目の端でも気づけるようにする */
 .app-update.calling .app-update-arrow {
   animation: app-update-drop 1.2s ease-out 3;
 }

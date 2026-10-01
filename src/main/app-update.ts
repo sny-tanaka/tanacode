@@ -1,8 +1,8 @@
 import { REPO_URL, type AppUpdate } from '@shared/app-update';
 import { compareVersions } from '@shared/claude-code';
 
-// tanacode の新しい版。自動アップデートは無いので、GitHub の公開の Releases の最新の版を確かめて、タイトルバーで知らせるだけ。
-// releases/latest は公開済みの版だけを返す（下書き・プレリリースは返さない）。認証なしの上限は 1 時間に 60 回なので、1 時間ごとで足りる
+// tanacode の新しいバージョン。自動アップデートは無いので、GitHub の公開の Releases の最新バージョンを確かめて、タイトルバーで知らせるだけ。
+// releases/latest は公開済みのバージョンだけを返す（下書き・プレリリースは返さない）。認証なしの上限は 1 時間に 60 回なので、1 時間ごとで足りる
 const REPO = 'sny-tanaka/tanacode';
 const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 const INTERVAL_MS = 60 * 60_000;
@@ -10,13 +10,13 @@ const TIMEOUT_MS = 15_000;
 
 export type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
-// releases/latest の返事から版を取り出す（タグ v0.1.5 → 0.1.5）。形が違えば null
+// releases/latest の返事からバージョンを取り出す（タグ v0.1.5 → 0.1.5）。形が違えば null
 export function parseLatestRelease(body: unknown): string | null {
   const tag = typeof body === 'object' && body !== null ? (body as { tag_name?: unknown }).tag_name : undefined;
   return (typeof tag === 'string' && /^v?(\d+\.\d+\.\d+)$/.exec(tag)?.[1]) || null;
 }
 
-// 開くページは、返事の html_url を使わずに版から組み立てる（Releases のページ以外を開かない）
+// 開くページは、返事の html_url を使わずにバージョンから組み立てる（Releases のページ以外を開かない）
 export function appUpdateOf(current: string, latest: string): AppUpdate {
   return { latest, available: compareVersions(latest, current) > 0, url: `${REPO_URL}/releases/tag/v${latest}` };
 }

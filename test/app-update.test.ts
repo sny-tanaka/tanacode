@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { AppUpdateMonitor, appUpdateOf, parseLatestRelease, type Fetcher } from '../src/main/app-update';
 
-// タイトルバーで知らせる、tanacode の新しい版（GitHub の Releases の latest）
+// タイトルバーで知らせる、tanacode の新しいバージョン（GitHub の Releases の latest）
 describe('parseLatestRelease', () => {
-  it('タグから版を取り出す', () => {
+  it('タグからバージョンを取り出す', () => {
     expect(parseLatestRelease({ tag_name: 'v0.1.5' })).toBe('0.1.5');
     expect(parseLatestRelease({ tag_name: '1.2.3' })).toBe('1.2.3');
   });
@@ -17,14 +17,14 @@ describe('parseLatestRelease', () => {
 });
 
 describe('appUpdateOf', () => {
-  it('今の版より新しいときだけ available', () => {
+  it('今のバージョンより新しいときだけ available', () => {
     expect(appUpdateOf('0.1.4', '0.1.5').available).toBe(true);
     expect(appUpdateOf('0.1.4', '0.1.4').available).toBe(false);
-    // 開発中の版が、公開済みの版より新しいとき
+    // 開発中のバージョンが、公開済みのバージョンより新しいとき
     expect(appUpdateOf('0.2.0', '0.1.5').available).toBe(false);
   });
 
-  it('開くページは、その版の Releases のページ', () => {
+  it('開くページは、そのバージョンの Releases のページ', () => {
     expect(appUpdateOf('0.1.4', '0.1.5').url).toBe('https://github.com/sny-tanaka/tanacode/releases/tag/v0.1.5');
   });
 });
