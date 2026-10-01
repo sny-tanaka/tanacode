@@ -1,6 +1,8 @@
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenLine } from '@shared/screen';
 
 const RULE = /^\s*─{20,}\s*$/;
+// 許可の確認で、実行するコマンドを上下から囲む点線（例: 「╌╌╌…」）。飾りなので補足に入れない
+const DASHED_RULE = /^[╌┄┈]{20,}$/;
 // 下の段に重ねて出るメニュー（/rewind の「何を戻すか」など）の上端の線。右に「◐ medium · /effort」などが重なることがある
 const TOP_EDGE = /^\s*▔{20,}/;
 // 入力欄の枠の横線。名前を付けたセッション（claude -n・/rename）では、上の線の右端に名前が入る（例: 「────── 名前 ─」）
@@ -85,7 +87,10 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   const textOption = options.slice(0, Math.max(chat, 0)).filter((o) => o.id !== 'submit').pop();
   if (chat !== -1 && textOption) textOption.textInput = true;
 
-  const raw = lines.slice(top, first).map((l) => l.text.trim());
+  const raw = lines
+    .slice(top, first)
+    .map((l) => l.text.trim())
+    .filter((t) => !DASHED_RULE.test(t));
   // AskUserQuestion の質問文は、行頭に縦線（│）の付いた枠で、端末の幅で折り返して出る。
   // 縦線を外し、行をつなぎ直して 1 つの文にする
   const boxed = raw.filter((t) => BOXED.test(t)).map((t) => t.replace(BOXED, ''));

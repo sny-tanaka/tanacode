@@ -10,11 +10,13 @@ export function snippet(text: string): string {
 }
 
 // 確認待ちの通知の本文。質問は質問文、許可は実行しようとしている内容（チャットの確認カードの上の補足）、
-// それ以外は画面の見出し。読み取れなかったときは、種類だけを伝える
+// それ以外は画面の見出し。読み取れなかったときは、種類だけを伝える。
+// 許可の補足のうち Claude Code の使い方の案内（「Tip: auto mode handles these prompts …」）は、実行する内容ではないので除く
+// （長い案内が先にあると、本文の長さの上限で実行するコマンドが切れてしまう）
 export function menuNotice(menu: Menu): string {
   if (menu.kind === 'question') return snippet(menu.title) || '質問しています';
   if (menu.kind === 'permission') {
-    const detail = snippet(menu.context.join(' '));
+    const detail = snippet(menu.context.filter((line) => !/^Tip:/.test(line)).join(' '));
     return detail ? `実行の許可: ${detail}` : '実行の許可を求めています';
   }
   const title = snippet(menu.title);

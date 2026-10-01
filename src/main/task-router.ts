@@ -72,12 +72,10 @@ export class TaskRouter {
     if (launch) workflows.add(launch, isHistory);
 
     const notice = taskNotificationOf(entry);
-    const notified = notice?.text.match(/<tool-use-id>(.*?)<\/tool-use-id>[\s\S]*?<status>(.*?)<\/status>/);
-    if (notice && notified) {
-      workflows.notified(notified[1], notified[2]);
-      const result = notice.text.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim() ?? null;
-      subagents.notified(notified[1], notified[2], result, notice.usage);
-      bashTasks.notified(notified[1], notified[2]);
+    if (notice && notice.toolUseId !== null && notice.status !== null) {
+      workflows.notified(notice.toolUseId, notice.status);
+      subagents.notified(notice.toolUseId, notice.status, notice.result, notice.usage);
+      bashTasks.notified(notice.toolUseId, notice.status);
     }
   }
 }
@@ -89,12 +87,23 @@ function isTrue(value: unknown): boolean {
 
 export type TaskUsage = { durationMs: number | null; totalTokens: number | null; toolUses: number | null };
 
+// 完了通知の中身。toolUseId・status: どのタスクがどうなったか（無ければ null）。result: サブエージェントの結果の文
+export type TaskNotification = {
+  text: string;
+  usage: TaskUsage | null;
+  toolUseId: string | null;
+  status: string | null;
+  result: string | null;
+};
+
 // バックグラウンドのタスクの完了通知（<task-notification>）。書かれ方は 3 通りあり、同じ通知が複数の形で書かれることもある
 // （受け取る側は何度受け取っても同じ結果になる）:
 // - ユーザーの発言の行（Claude が待っているときに届いた）
 // - attachment の queued_command（Claude の作業中に届いて、そのターンに差し込まれた。所要時間などが付く）
 // - queue-operation の enqueue（届いた時点のキュー。どの通知にもある）
-export function taskNotificationOf(entry: TranscriptEntry): { text: string; usage: TaskUsage | null } | null {
+// サブエージェントの使用量（所要時間・トークン数・ツールの回数）は、本文の <usage> にも入っている。
+// attachment の usage が無い形（発言の行・enqueue）では、本文から読む
+export function taskNotificationOf(entry: TranscriptEntry): TaskNotification | null {
   const e = entry as TranscriptEntry & { operation?: string; content?: unknown };
   let text: unknown = null;
   let usage: TaskUsage | null = null;
@@ -106,7 +115,31 @@ export function taskNotificationOf(entry: TranscriptEntry): { text: string; usag
     const num = (v: unknown) => (typeof v === 'number' ? v : null);
     if (u) usage = { durationMs: num(u.durationMs), totalTokens: num(u.totalTokens), toolUses: num(u.toolUses) };
   }
-  return typeof text === 'string' && text.includes('<task-notification>') ? { text, usage } : null;
+  if (typeof text !== 'string' || !text.includes('<task-notification>')) return null;
+  usage ??= usageOfText(text);
+  const notified = text.match(/<tool-use-id>(.*?)<\/tool-use-id>[\s\S]*?<status>(.*?)<\/status>/);
+  return {
+    text,
+    usage,
+    toolUseId: notified?.[1] ?? null,
+    status: notified?.[2] ?? null,
+    result: text.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim() ?? null,
+  };
+}
+
+// 本文の <usage>（例: <usage><subagent_tokens>120</subagent_tokens><tool_uses>1</tool_uses><duration_ms>395</duration_ms></usage>）。
+// <result> の後ろにある（結果の文の中の同じ文字は読まない）
+function usageOfText(text: string): TaskUsage | null {
+  const block = text.slice(text.lastIndexOf('</result>') + 1).match(/<usage>([\s\S]*?)<\/usage>/)?.[1];
+  if (!block) return null;
+  const tag = (...names: string[]) => {
+    for (const name of names) {
+      const value = block.match(new RegExp(`<${name}>(\\d+)</${name}>`))?.[1];
+      if (value !== undefined) return Number(value);
+    }
+    return null;
+  };
+  return { durationMs: tag('duration_ms'), totalTokens: tag('subagent_tokens', 'total_tokens'), toolUses: tag('tool_uses') };
 }
 
 // SendMessage の結果から、再開したエージェントの ID を読む（{"success":true,"resumedAgentId":"…"}）

@@ -23,7 +23,7 @@ import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
 import { KnowledgeTracker } from './knowledge-tracker';
-import type { PtyHost } from './pty-host-client';
+import type { PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
 import { askQuestionsOf } from './screen-parser';
@@ -113,7 +113,7 @@ export class SessionManager {
   private closed = false;
 
   constructor(
-    private readonly host: PtyHost,
+    private readonly host: PtyHostApi,
     private readonly store: SessionStore,
     private readonly watchers: WorkspaceWatchers,
     private readonly statusLines: StatusLineWatcher,
@@ -625,11 +625,21 @@ export class SessionManager {
       adopted,
     );
     rt.process.start();
+    if (adopted) void this.catchUpStatusLine(id, rt.process);
     // 引き継いだ claude は前のアプリの頃から動いていて、会話もしている。画面から入力欄を読めるのを待たずに、起動済みとする
     // （入力欄を読むのは画面が描き直されたときなので、読み取りがずれたまま Claude Code が何も描かずに待っていると、いつまでも「起動中」になる）
     if (adopted && hasConversation(transcriptPath(record.cwd, claudeSessionId))) screen.markReady();
     if (adopted && (adopted.cols !== rt.size.cols || adopted.rows !== rt.size.rows)) this.resize(id, rt.size.cols, rt.size.rows);
     this.emitSessions();
+  }
+
+  // 引き継いだ claude が、アプリが止まっている間に書いた statusLine を読む。次の応答で書かれるのを待つと、
+  // それまでモデル・コンテキストが出ず、アプリが止まっている間の /clear にも追従できない（前の会話を出したままになる）
+  private async catchUpStatusLine(id: string, process: ClaudeSession): Promise<void> {
+    const info = await this.statusLines.peek(id);
+    const rt = this.runtimes.get(id);
+    // 読んでいる間に新しいものが届いていれば、そちらを使う
+    if (info && rt?.process === process && !rt.statusLine) this.statusLineChanged(id, info);
   }
 
   // 巻き戻しで会話が枝分かれしたら、親より後に表示していたものを捨てて、親の時点の表示に戻す

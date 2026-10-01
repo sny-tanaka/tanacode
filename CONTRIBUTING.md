@@ -36,7 +36,7 @@ npm run dev
 | `npm run dev` | 開発モードで起動（renderer は HMR） |
 | `npm run build` / `npm start` | ビルドして起動 |
 | `npm run typecheck` | 型チェック |
-| `npm test` | 本物の Claude Code から取った控えで、画面・会話ログ・statusLine の読み取りを確かめる |
+| `npm test` | 本物の Claude Code から取った控えで、画面・会話ログ・statusLine の読み取りを確かめる（読み取りの部品の単体の確認も） |
 | `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名なし） |
@@ -88,16 +88,20 @@ npm run dev
 tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に頼っています。Claude Code の更新でこれらの形が変わると、アプリの読み取りが通らなくなります。そこで、本物の Claude Code でアプリの読み取りを確かめます。
 
 - `npm run test:cli`（`test/cli/`）: 本物の `claude` を node-pty で起動し、アプリと同じ部品で読みます。
-  - 読む部品: 画面は `ScreenTracker`、会話ログは `TranscriptFollower` と `toChatEvents`、バックグラウンドの作業と質問は `TaskRouter` と各トラッカー、statusLine は `parseStatusLine`、`/` の候補は `listCommands`。
+  - 動かすのは本物の `SessionManager`。`src/main/index.ts` と同じく `SessionStore`・`StatusLineWatcher`・`WorkspaceWatchers` と組み立て、pty ホストだけを node-pty を直に使う偽物（`test/cli/fake-pty-host.ts`。`PtyHost` と同じ形の `spawn`・`attach`・`list`）に、userData を使い捨てのフォルダに差し替えます。Electron には頼りません。
+  - 通る道もアプリと同じ: 画面は `ScreenTracker`、会話ログは `ClaudeSession` の `TranscriptFollower` から `SessionManager` の行の処理（引き継いだ claude の行の扱い・巻き戻し・順番待ち・モデル名・`TaskRouter` と各トラッカー・`KnowledgeTracker`）、statusLine と AskUserQuestion のフックは `StatusLineWatcher`（`<id>.json`・`<id>.ask.json`）。`/` の候補は `listCommands`。
+  - 確かめるのは、`SessionManager` が配信したもの（チャットのイベント・画面の状態・操作待ちの知らせ・作業の完了の知らせ・一覧の状態）。テストの部品は `test/cli/claude-run.ts` の `ClaudeRun`。
+  - 決まった時間だけ待たず、画面や会話ログの状態を待ちます（打った文字が入力欄に出てから Enter・選んだメニューが閉じたか）。メニューは、出てから 0.3 秒たつまで選びません。Claude Code は、許可の確認などを出した直後の入力を受け付けないことがあるためです。
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 3 つ。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 4 つ。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
-    | `basic.test.ts`（台本は `test/scenario.ts`） | フォルダの信頼の確認 → 入力欄 → Bash（許可の確認・PostToolUse の hooks）→ AskUserQuestion → Write（許可の確認）→ 返事。チャットの組み立て・statusLine・`/` の候補（会話ログのスキル一覧）も |
-    | `background.test.ts` | サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（始める前の確認も）。それぞれ完了まで、トラッカーで追えるか |
-    | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち → `/compact` → `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind` |
+    | `basic.test.ts`（台本は `test/scenario.ts`） | フォルダの信頼の確認 → 入力欄 → Bash（許可の確認・PostToolUse の hooks）→ AskUserQuestion → Write（許可の確認）→ 返事。チャットの組み立て（会話ログからと、`SessionManager` の配信から）・操作待ちの知らせと通知の本文・完了の知らせ・読んだ・書いたファイル・statusLine・`/` の候補（会話ログのスキル一覧）も |
+    | `background.test.ts` | サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（始める前の確認・実行中の journal も）。それぞれ完了まで、トラッカーで追えるか。完了通知（`<task-notification>`）は、出力ファイルや完了時の記録という後ろ盾と分けて、会話ログの行と `taskNotificationOf` だけで読めるか、チャットの知らせになるかも |
+    | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 会話ログのモデル名 → `/compact` → `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind`（「何を戻すか」のメニューと、会話を戻して発言したときの `replace` のイベント） |
+    | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
 
   - 確かめられないもの: Remote Control とモデルの一覧の控え（claude.ai へのログインが要る）、ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）、`/usage` の利用枠。
   - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます。
@@ -131,6 +135,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 起動するのはアプリではなく、pty ホストという常駐プロセス。アプリを再起動しても Claude Code を止めないためです。
     - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケットでやりとりします。パスが長すぎるときは一時フォルダに置きます。
     - ホストは Claude Code の画面を仮想の端末で持っています。起動し直したアプリは、その画面（`@xterm/addon-serialize`）と、Claude Code が起動した時刻を受け取って引き継ぎます。その時刻より後の会話ログの行は、今も動いている Claude Code が書いたものとして扱います。途中のターン・バックグラウンドのタスク・質問は、終わったことにせず、そのまま追いかけます。
+    - 引き継いだときは、アプリが止まっている間に書かれた statusLine のファイルも、次の書き込みを待たずに読みます。止まっている間に `/clear` で会話が変わっていても、すぐ新しい会話ログに乗り換えます。
     - アプリも Claude Code も無くなって 10 秒たつと、ホストは自分で終わります。
     - やりとりの形を変えたら、`pty-host-protocol.ts` の `PROTOCOL` を上げます。起動したアプリは、形の違う古いホストを Claude Code ごと止めて、起動し直します。止まったセッションは `--resume` で再開します。ホストのログは userData の `pty-host.log`。
   - 新しい会話には `--session-id <uuid>` を、再開には `--resume <id>` を付けます。
@@ -142,6 +147,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 会話ログは、変更の通知（`fs.watch`）ですぐ読みます。取りこぼしに備えて、0.15 秒ごとにも確かめます。
   - 作業中に送った発言は、会話ログの順番待ちの行（`queue-operation`）から読みます。
 - 選択メニュー（質問・許可の確認・巻き戻し・フォルダの信頼の確認）だけは、pty の画面を仮想の端末で再現して読み取ります。選んだ答えは ↑/↓ と Enter のキー入力にして送ります。
+  - キー（↑/↓・権限モードの Shift+Tab）は 1 つ送るたびに、画面にそれが映るのを待ってから次を送ります。キーを送る前から描いていた画面の読み取りで先に進むと、キーを重ねて送ってしまうためです。
   - 選択肢は、`❯` の行から上へたどって最初に見つかる「1.」から読みます。ワークフローを始める前の確認のように、説明の中にも番号付きの一覧（フェーズ）があるためです。
   - 問いかけが説明の上にある確認（「Run a dynamic workflow?」「Confirm you want to restore …:」）は、`?`（無ければ `:`）で終わる行を見出しにします。`/rewind` の「何を戻すか」の縦線の枠は質問文ではなく、戻す先の発言の引用なので、補足に出します。下の段に重ねて出るメニューの上端は `▔` の線です。
   - フォルダの信頼の確認は、選択肢に番号がありません（`❯ No, exit` など）。番号付きの選択肢が無いときは、下に操作説明があり、`❯` の行と同じ字下げの行が続くものを選択肢として読みます。上の文章は、問いかけ（`?` を含む段落）を見出しに、ほかを補足にします。
@@ -184,6 +190,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - 終わったエージェントに `SendMessage` で続きを頼んで再開したものは、別の実行として出します。完了の知らせは `SendMessage` の呼び出しに届き、会話は前と同じエージェントのログに続けて書かれます。
 - ワークフローのフロー図の順番は、journal.jsonl の開始・終了の並びから読みます。途中から再開した実行でも、前の起動からの順番が分かります。子ワークフローは、`workflow()` で呼んだもの。
+- 完了通知（`<task-notification>`）は、発言の行・作業中の差し込み（attachment）・順番待ち（queue-operation）の 3 つの形で書かれます。サブエージェントの使用量（所要時間・トークン数・ツールの回数）は、attachment の `usage` が無い形でも、本文の `<usage>` から読みます。
+- バックグラウンドの Bash の出力ファイルは、一度に一つずつ読みます。読んでいる途中に完了通知が届いたら、読み終えてからもう一度読み、終了コードを読んでから終わったことにします（終了コードの行を読み落とさない・終了コードの無い「完了」を出さないため）。
+- 許可の確認で、実行するコマンドを囲む点線は補足に入れません。通知の本文では、Claude Code の使い方の案内（`Tip:`）の行を除きます。
 
 ### ターミナル
 
@@ -230,7 +239,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `src/main`: Electron のメインプロセス
   - `session-manager.ts` / `session-store.ts`: セッションの作成・再開・アーカイブ・再起動・通知と、一覧の保存
   - `claude-session.ts`: pty ホストに `claude` を起動させる・引き継ぐ（起動オプション・statusLine と質問のフックの注入）
-  - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続
+  - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
   - `screen-tracker.ts` / `screen-parser.ts`: pty の画面を仮想の端末で再現し、選択メニューを読み取る
   - `subagent-tracker.ts` / `workflow-tracker.ts` / `bash-task-tracker.ts`: サブエージェント・ワークフロー・バックグラウンドの Bash の進み具合
@@ -262,8 +271,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
-  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session` の 3 つの台本）と、モックの API・`claude` を動かす部品（`claude-run.ts`）
+  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt` の 4 つの台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
+  - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
 
 ## デモ動画の仕組み
 

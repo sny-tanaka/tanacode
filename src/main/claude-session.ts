@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
-import type { HostedPty, PtyHost } from './pty-host-client';
+import type { PtyHandle, PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { STATUS_FILE_ENV, sessionSettings } from './statusline';
@@ -40,11 +40,11 @@ type Handlers = {
 
 // claude は pty ホスト（アプリとは別の常駐プロセス）が起動して持つ。アプリを再起動しても止まらず、起動し直したアプリが引き継ぐ
 export class ClaudeSession {
-  private process: HostedPty | null = null;
+  private process: PtyHandle | null = null;
   private transcript: TranscriptFollower | null = null;
 
   constructor(
-    private readonly host: PtyHost,
+    private readonly host: PtyHostApi,
     private readonly options: Options,
     private readonly handlers: Handlers,
     // 前のアプリが起動して、まだ動いている claude（引き継ぐ）。null なら新しく起動する
@@ -53,7 +53,7 @@ export class ClaudeSession {
 
   start(): void {
     const { sessionId, cwd, claudeSessionId, statusFile, askFile, cols, rows } = this.options;
-    let proc: HostedPty;
+    let proc: PtyHandle;
     if (this.adopted) {
       proc = this.host.attach(this.adopted);
       // 引き継いだときは、今の画面を描き直してから続き（一覧を受け取ったあとに届いていた分も）を受け取る

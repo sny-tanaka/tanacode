@@ -159,7 +159,7 @@ export class ScreenTracker {
         if (target === -1) return;
         if (current === target) break;
         this.write(target > current ? KEY_DOWN : KEY_UP);
-        await this.nextRead(500);
+        await this.readUntil(() => this.menu()?.options.findIndex((o) => o.pointed) !== current, 500);
       }
       if (text) {
         this.write(KEY_CLEAR_LINE + text);
@@ -179,8 +179,9 @@ export class ScreenTracker {
     try {
       for (let step = 0; step <= MODE_CYCLE; step++) {
         if (this.info.mode === target) return true;
+        const before = this.info.mode;
         this.write(KEY_SHIFT_TAB);
-        await this.nextRead(800);
+        await this.readUntil(() => this.info.mode !== before, 800);
       }
       return this.info.mode === target;
     } finally {
@@ -209,7 +210,10 @@ export class ScreenTracker {
         }
         const before = state.pointed;
         this.write(KEY_UP);
-        await this.nextRead(500);
+        await this.readUntil(() => {
+          const now = this.state();
+          return now.kind !== 'rewind' || now.pointed !== before;
+        }, 500);
         // 一覧の先頭に着いて動かなくなった
         const after = this.state();
         if (after.kind === 'rewind' && after.pointed === before) break;
@@ -265,6 +269,17 @@ export class ScreenTracker {
 
   private menu(): Menu | null {
     return this.info.state.kind === 'menu' ? this.info.state.menu : null;
+  }
+
+  // 送ったキーが画面に映るまで待つ。キーを送る前から描いていた画面の読み取り（キーがまだ映っていないもの）で
+  // 先に進むと、次のキーを重ねて送ってしまう（権限モードを 1 つ飛ばすなど）。changed が真になるか、timeoutMs たつまで読み続ける
+  private async readUntil(changed: () => boolean, timeoutMs: number): Promise<void> {
+    const until = Date.now() + timeoutMs;
+    while (!changed()) {
+      const left = until - Date.now();
+      if (left <= 0) return;
+      await this.nextRead(left);
+    }
   }
 
   private nextRead(timeoutMs: number): Promise<void> {

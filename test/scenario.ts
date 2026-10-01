@@ -91,6 +91,8 @@ export function checkPrompt(info: Pick<ScreenInfo, 'mode' | 'effort' | 'model'>)
 export function checkPermission(menu: Menu | null, target: string): void {
   expect(menu?.kind).toBe('permission');
   expect([menu!.title, ...menu!.context].join('\n')).toContain(target);
+  // コマンドを囲む点線などの飾りの行は、補足に入れない
+  expect(menu!.context.filter((line) => /^[╌┄┈─]{20,}$/.test(line))).toEqual([]);
   expect(menu!.options.some((o) => o.pointed)).toBe(true);
   expect(menu!.options[0].label).toMatch(/^Yes/);
 }

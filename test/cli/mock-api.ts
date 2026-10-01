@@ -14,8 +14,9 @@ export type Block =
 // 会話の n 番目の応答（n = リクエストに入っている assistant の発言の数）
 export type Step = Block[];
 
-// match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）
-export type Conversation = { match: string; steps: Step[]; delayMs?: number };
+// match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）。
+// model: 応答に書くモデル（無ければ頼まれたモデル。会話ログのモデルが画面のモデル名になるかを見るため）
+export type Conversation = { match: string; steps: Step[]; delayMs?: number; model?: string };
 
 type Message = { role?: string; content?: string | { type?: string; text?: string }[] };
 type Body = {
@@ -74,7 +75,7 @@ export class MockApi {
     this.requests.push(`  ${conversation ? `「${conversation.match}」の会話・${index} 番目の応答` : `台本の無い呼び出し（${first.slice(0, 60)}）`}`);
     if (conversation?.delayMs) await new Promise((resolve) => setTimeout(resolve, conversation.delayMs));
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
-    const answer = { id: `msg_mock_${++this.count}`, model: body.model ?? 'claude-mock', content: blocks, stopReason };
+    const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason };
     if (body.stream) stream(res, answer);
     else json(res, message(answer));
   }
