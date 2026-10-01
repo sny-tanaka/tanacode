@@ -397,9 +397,11 @@ export class ScreenTracker {
     this.onChange(next);
   }
 
-  // 入力欄の文字。先頭の「❯ 」と続きの行の字下げを除き、薄い文字（入力例の「Try "…"」）は含めない
+  // 入力欄の文字。先頭の「❯ 」と続きの行の字下げを除き、薄い文字（入力例の「Try "…"」）は含めない。
+  // ! を打ってシェルのコマンドを書いている間は、先頭の目印が「! 」になるので、打ったとおり「!」を付ける
   private draft([start, end]: [number, number]): string {
     const buf = this.term.buffer.active;
+    const shell = buf.getLine(buf.viewportY + start)?.getCell(0)?.getChars() === '!';
     const rows: string[] = [];
     for (let y = start; y < end; y++) {
       const line = buf.getLine(buf.viewportY + y);
@@ -412,7 +414,8 @@ export class ScreenTracker {
       }
       rows.push(text.trimEnd());
     }
-    return rows.join('\n').trim();
+    const text = rows.join('\n').trim();
+    return shell ? `!${text}` : text;
   }
 
   private lines(): ScreenLine[] {

@@ -118,11 +118,11 @@ export class BashTaskTracker {
     } finally {
       await handle.close();
     }
-    // 終わると最後に「[exited with code N]」が書かれる
-    const exit = text.match(/\n?\[exited with code (-?\d+)\]\s*$/);
-    const exitCode = exit ? Number(exit[1]) : t.task.exitCode;
+    // 終わると最後に「[exited with code N]」が書かれる。止められたとき（TaskStop など）は「[killed]」で、完了通知は届かない
+    const exit = text.match(/\n?\[(?:exited with code (-?\d+)|killed)\]\s*$/);
+    const exitCode = exit?.[1] !== undefined ? Number(exit[1]) : t.task.exitCode;
     let state = t.task.state;
-    if (exit && state === 'running') state = exitCode === 0 ? 'completed' : 'failed';
+    if (exit && state === 'running') state = exit[1] === undefined ? 'killed' : exitCode === 0 ? 'completed' : 'failed';
     t.task = {
       ...t.task,
       state,

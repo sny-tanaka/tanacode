@@ -59,6 +59,9 @@ type Options = {
   files?: Record<string, string>;
   // claude に足す環境変数（API エラーの再試行の回数を減らすなど）
   env?: Record<string, string>;
+  // 起動の引数に付けるモデル・エフォート（claudeArgs の model・effort）。無ければ付けない
+  model?: string;
+  effort?: string;
 };
 
 // 本物の claude を、アプリと同じ SessionManager で動かして読む。src/main/index.ts と同じ組み立て方で、
@@ -195,6 +198,11 @@ export class ClaudeRun {
     return transcriptPath(this.cwd, this.claudeSessionId);
   }
 
+  // サブエージェントの会話ログ（session-manager の agentLog と同じく、SubagentTracker に聞く）。まだ分からなければ null
+  subagentLog(toolUseId: string): string | null {
+    return this.runtime()?.subagents.logFile(toolUseId, join(this.sessionDir(), 'subagents')) ?? null;
+  }
+
   // session-manager が持っている、今のチャットのイベント（巻き戻しのあとは巻き戻した状態。画面がはじめに受け取るもの）
   chat(): ChatEvent[] {
     return this.sessionId && this.app ? this.app.manager.snapshot(this.sessionId).events : [];
@@ -214,7 +222,7 @@ export class ClaudeRun {
     const manager = this.manager;
     if (!this.sessionId) {
       // 許可の確認を出させる（API キーでは既定が auto になり、確認が出ない）
-      this.sessionId = manager.create(this.cwd, { model: null, effort: null, mode: 'manual', remoteControl: false });
+      this.sessionId = manager.create(this.cwd, { model: this.options.model ?? null, effort: this.options.effort ?? null, mode: 'manual', remoteControl: false });
       return;
     }
     if (this.runtime()?.process) throw new Error('claude が動いています（stopClaude で止めてから start します）');

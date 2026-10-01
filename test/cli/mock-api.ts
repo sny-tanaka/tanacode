@@ -9,7 +9,9 @@ import type { AddressInfo } from 'node:net';
 
 export type Block =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  // 思考。署名（signature）はモックなので、それらしい文字にする
+  | { type: 'thinking'; thinking: string; signature?: string };
 
 // 会話の n 番目の応答（n = リクエストに入っている assistant の発言の数）
 export type Step = Block[];
@@ -43,6 +45,9 @@ export class MockApi {
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
+  // ツールの一覧が付いていない呼び出し（タイトル作りなど）への返事。match: その呼び出しの発言に含まれる文字。
+  // どれにも当たらなければ、これまでどおり短い文を返す
+  plainReplies: { match: string; text: string }[] = [];
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -75,9 +80,10 @@ export class MockApi {
       tools.length > 0 ? this.conversations.filter((c) => at(c) !== -1).sort((a, b) => at(b) - at(a))[0] : undefined;
     const index = body.messages?.filter((m) => m.role === 'assistant').length ?? 0;
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
+    const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
     const blocks: Block[] = conversation
       ? (conversation.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }])
-      : [{ type: 'text', text: 'テスト' }];
+      : [{ type: 'text', text: plain?.text ?? 'テスト' }];
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
     this.requests.push(`  ${conversation ? `「${conversation.match}」の会話・${index} 番目の応答` : `台本の無い呼び出し（${first.slice(0, 60)}）`}`);
     if (conversation?.delayMs) await new Promise((resolve) => setTimeout(resolve, conversation.delayMs));
@@ -94,6 +100,9 @@ export class MockApi {
     else json(res, message(answer));
   }
 }
+
+// 思考の署名（本物の API が付ける暗号の署名の代わり）
+const MOCK_SIGNATURE = 'bW9jay1zaWduYXR1cmU=';
 
 type Reply = { id: string; model: string; content: Block[]; stopReason: string };
 
@@ -130,6 +139,10 @@ function stream(res: ServerResponse, reply: Reply): void {
     if (block.type === 'text') {
       send('content_block_start', { index, content_block: { type: 'text', text: '' } });
       send('content_block_delta', { index, delta: { type: 'text_delta', text: block.text } });
+    } else if (block.type === 'thinking') {
+      send('content_block_start', { index, content_block: { type: 'thinking', thinking: '', signature: '' } });
+      send('content_block_delta', { index, delta: { type: 'thinking_delta', thinking: block.thinking } });
+      send('content_block_delta', { index, delta: { type: 'signature_delta', signature: block.signature ?? MOCK_SIGNATURE } });
     } else {
       send('content_block_start', { index, content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} } });
       send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });

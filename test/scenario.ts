@@ -50,6 +50,7 @@ export function stepsFor(cwd: string): Step[] {
 // workflow-approval（background.test.ts）と rewind-restore（session.test.ts）は、ほかの台本で取る。
 // question- で始まるもの（question を除く）は、AskUserQuestion の台本（questions.test.ts）で取る
 // interrupt-draft・tool-interrupted は失敗と中断の台本（errors.test.ts）で取る
+// effort・draft・pasted-draft・shell-draft（input.test.ts）は、--effort を付けた入力欄・書きかけ・長い貼り付けの目印・! のコマンドを書いている入力欄
 export type ScreenName =
   | 'trust'
   | 'prompt'
@@ -60,7 +61,8 @@ export type ScreenName =
   | 'rewind-restore'
   | QuestionScreenName
   | 'interrupt-draft'
-  | 'tool-interrupted';
+  | 'tool-interrupted'
+  | InputScreenName;
 
 // AskUserQuestion の台本（test/scenarios/questions.ts）で取る画面
 export type QuestionScreenName =
@@ -73,6 +75,8 @@ export type QuestionScreenName =
   | 'question-preview'
   | 'question-tall'
   | 'question-tall-moved';
+
+type InputScreenName = 'effort' | 'draft' | 'pasted-draft' | 'shell-draft';
 
 // /rewind で戻す先の発言（session.test.ts）
 export const REWOUND = '再開して続けてください';

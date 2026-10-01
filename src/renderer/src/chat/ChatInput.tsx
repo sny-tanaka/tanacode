@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SlashCommand } from '@shared/ipc';
+import { bracketedPaste, promptKeys } from '@shared/prompt-keys';
 import type { ReviewComment } from '../review/LineComments';
 import { stripControlChars } from './sanitize';
 
@@ -77,13 +78,12 @@ export async function submitToClaude(sessionId: string, rawText: string, attachm
   lastSent.set(sessionId, { text: text.replace(/\s/g, ''), at: Date.now() });
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   for (const path of attachments) {
-    pty.write(sessionId, `\x1b[200~${stripControlChars(path)}\x1b[201~`);
+    pty.write(sessionId, bracketedPaste(stripControlChars(path)));
     await sleep(300);
     pty.write(sessionId, ' ');
   }
-  // 改行を含む入力はブラケットペーストで送り、途中の改行で送信されないようにする。
-  // 1 行の入力は打鍵で送る（制御文字は除いてあるので、キー操作になる文字は残らない。/compact などのコマンドも今までどおり届く）
-  if (text) pty.write(sessionId, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text);
+  // 改行を含む入力は貼り付けとして送る（promptKeys）
+  if (text) pty.write(sessionId, promptKeys(text));
   await sleep(50);
   pty.write(sessionId, '\r');
 }

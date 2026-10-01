@@ -249,7 +249,7 @@ function unwrapInPlace(lines: string[]): string[] {
   return result;
 }
 
-// 通常の入力欄: 横線の直後に「❯」で始まる行があり、その下にも横線がある
+// 通常の入力欄: 横線の直後に「❯」（シェルのコマンドを書いている間は「!」）で始まる行があり、その下にも横線がある
 export function hasPrompt(lines: ScreenLine[]): boolean {
   return promptRange(lines) !== null;
 }
@@ -288,26 +288,30 @@ export function isStreaming(lines: ScreenLine[], promptStart: number): boolean {
   return false;
 }
 
+// 入力欄の最初の行の目印。! を打ってシェルのコマンドを書いている間は「!」になる
+const PROMPT_MARK = /^[❯!](\s|$)/;
+
 export function promptRange(lines: ScreenLine[]): [number, number] | null {
   for (let i = lines.length - 1; i >= 1; i--) {
     const text = lines[i].text;
-    if (!/^❯(\s|$)/.test(text) || OPTION.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
+    if (!PROMPT_MARK.test(text) || OPTION.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
     const end = lines.findIndex((l, j) => j > i && j < i + 30 && PROMPT_RULE.test(l.text));
     if (end !== -1) return [i, end];
   }
   return null;
 }
 
-// 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort」など）。--resume ではバナーが出ない。
+// 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort · Claude Max」など）。--resume ではバナーが出ない。
 // 会話の本文にもモデル名は出てくるので、バナーの行だけを見る。バナーは 2 つの形がある
 // - 枠の中（前の Claude Code）: 「│  Haiku 4.5 · Claude Max · …」
 // - ロゴの右（今の Claude Code）: 「▐▛███▜▌   Claude Code v2.1.286」の次の行の「▝▜█████▛▘  Opus 5.5 · Claude Max」
+// エフォートを指定して起動すると（--effort）、モデル名のあとに「with low effort」が入る
 export function findModel(lines: ScreenLine[]): string | null {
   const logo = lines.findIndex((l) => BANNER_TITLE.test(l.text));
   const banner = [...lines.filter((l) => l.text.startsWith('│')), ...(logo === -1 ? [] : lines.slice(logo + 1, logo + 3))];
   for (const { text } of banner) {
     // 新しい系統名にも対応できるよう、名前は決め打ちしない
-    const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?) ·/);
+    const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?)(?: with \S+ effort)? ·/);
     if (m) return m[1];
   }
   return null;
