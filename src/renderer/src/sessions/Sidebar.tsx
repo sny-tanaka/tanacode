@@ -1,7 +1,21 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
+import { inLockedOrder } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
+import { LockIcon } from '../layout/icons';
 import { UsagePanel } from '../usage/UsagePanel';
+
+// 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
+export const SESSION_LOCK_KEY = 'tanacode.sessionOrderLock';
+
+function loadLock(): string[] | null {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(SESSION_LOCK_KEY) ?? 'null');
+    return Array.isArray(saved) && saved.every((id) => typeof id === 'string') ? saved : null;
+  } catch {
+    return null;
+  }
+}
 
 type Props = {
   sessions: SessionSummary[];
@@ -32,8 +46,28 @@ export const Sidebar = memo(function Sidebar({
   const [showArchived, setShowArchived] = useState(false);
   // 名前を変えている行
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
-  const active = sessions.filter((s) => !s.archived);
-  const archived = sessions.filter((s) => s.archived);
+  // ロック中の並び（null はロックしていない。そのときは、受け取った最終更新の新しい順のまま出す）
+  const [lock, setLock] = useState<string[] | null>(loadLock);
+  const ordered = useMemo(() => (lock ? inLockedOrder(sessions, lock) : sessions), [sessions, lock]);
+  const active = ordered.filter((s) => !s.archived);
+  const archived = ordered.filter((s) => s.archived);
+
+  // ロックしたあとにできたセッションを並びに加え（先頭）、消えたセッションを外す。
+  // 一覧を読み込む前（空）は外さない（保存した並びを失わないため）
+  useEffect(() => {
+    if (!lock || sessions.length === 0) return;
+    const next = inLockedOrder(sessions, lock).map((s) => s.id);
+    if (next.length !== lock.length || next.some((id, i) => id !== lock[i])) setLock(next);
+  }, [sessions, lock]);
+
+  useEffect(() => {
+    try {
+      if (lock) localStorage.setItem(SESSION_LOCK_KEY, JSON.stringify(lock));
+      else localStorage.removeItem(SESSION_LOCK_KEY);
+    } catch {
+      // 保存できなくても、この起動のあいだはロックできる
+    }
+  }, [lock]);
 
   const row = (s: SessionSummary) => {
     const activity = activityOf(s, statusOf(s.id));
@@ -121,7 +155,22 @@ export const Sidebar = memo(function Sidebar({
         既存の会話を開く…
       </button>
       <div className="session-list">
-        <div className="pane-heading">アクティブ</div>
+        <div className="pane-heading session-heading">
+          アクティブ
+          <button
+            className={`session-lock${lock ? ' on' : ''}`}
+            aria-pressed={!!lock}
+            aria-label="並びをロック"
+            data-tip={
+              lock
+                ? '並びをロック中\nクリックで解除すると、最終更新の新しい順に戻ります'
+                : '並びをロック\nロックすると、更新があっても並びが入れ替わりません'
+            }
+            onClick={() => setLock(lock ? null : sessions.map((s) => s.id))}
+          >
+            <LockIcon locked={!!lock} size={13} />
+          </button>
+        </div>
         {active.length === 0 && <div className="session-empty">セッションはありません</div>}
         {active.map(row)}
         {archived.length > 0 && (
