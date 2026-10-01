@@ -1,6 +1,7 @@
 ---
 name: release
-description: tanacode の新しい版（vX.Y.Z）をリリースする手順。版を上げる PR・タグのプッシュ・GitHub Actions の見守り・下書きの点検・公開まで。新しい版を出すときに使います。
+description: tanacode の新しい版（vX.Y.Z）をリリースする手順。引数は新しい版（例 0.1.4）。版を上げる PR・タグのプッシュ・GitHub Actions の見守り・下書きの点検・公開まで。新しい版を出すときに使います。
+argument-hint: "[X.Y.Z]"
 disable-model-invocation: true
 ---
 
@@ -8,18 +9,20 @@ disable-model-invocation: true
 
 新しい版をリリースするための手順書。タグ `vX.Y.Z` をプッシュすると、`.github/workflows/release.yml` が Apple Silicon 用と Intel 用の zip と pkg を作り、`SHA256SUMS.txt` と SHA-256 の表を付けて GitHub Releases の下書きに置きます。公開は下書きを点検してから。
 
-以下の `X.Y.Z` は新しい版、`<前のタグ>` は直前のリリースのタグ（例: `v0.1.2`）に置き換えます。リポジトリは `sny-tanaka/tanacode`。
+以下の `X.Y.Z` は新しい版（`/release 0.1.4` の引数）、`<前のタグ>` は直前のリリースのタグ（例: `v0.1.2`）に置き換えます。リポジトリは `sny-tanaka/tanacode`。
 
 ## 決まり
 
-- develop には直接プッシュしません。作業用のブランチ → develop 向けの PR → マージはオーナー。
-  - develop のルールセットは承認 1 件が必要。オーナーは例外として、PR の画面の「Merge without waiting for requirements to be met (bypass rules)」で squash マージします。
-  - エージェントは PR をマージしません。
-- 次の 3 か所では、必ず AskUserQuestion でユーザーに確かめてから進めます。推奨の選択肢を先頭に置き、ラベルの末尾に「(推奨)」。
-  - コミット（とプッシュ・PR の作成）の前
-  - タグのプッシュの前
-  - リリースの公開の前
-- タグの削除・下書きの削除など、取り消しにくい操作も、同じく AskUserQuestion で確かめてから。
+- **オーナーの操作は、なしにします**。確認を挟まず、版を上げる PR のマージから公開まで進めます。`/release` を呼んだこと自体が、リリースしてよいという指示です。
+- develop には直接プッシュしません。作業用のブランチ → develop 向けの PR → squash マージ。
+  - develop のルールセットは、PR を通すことを求めます（承認の数は 0）。
+  - **版を上げる PR に限り、CI がすべて通っていれば、エージェントがマージします**（オーナーの指示。2026-10-01）。ほかの PR は、これまでどおりオーナーがマージします。
+  - マージするのは、変更が `package.json` と `package-lock.json` の `version` だけの PR（2 の 1 で確かめた PR）に限ります。
+- 手を止めてユーザーに聞くのは、次の場合だけです。選択を伴うので AskUserQuestion を使い、推奨の選択肢を先頭に置いて、ラベルの末尾に「(推奨)」。
+  - 引数で版が渡されていないとき（1 の 3）
+  - 点検（5）で、期待と違うものが見つかったとき（公開はしません）
+  - 失敗の原因が 4 の表の中になく、どうするか決められないとき
+  - タグの削除・下書きの削除など、取り消しにくい操作（7）
 - 署名・公証は無し。利用者には README の手順で開いてもらいます。
 
 ## 1. 準備
@@ -45,9 +48,11 @@ disable-model-invocation: true
 
    PR の一覧は、前のタグの日付より後にマージされたものだけを拾います。
 
-3. 変更点の一覧をまとめてユーザーに見せ、版の上げ方を AskUserQuestion で確かめます。
-   - patch（不具合の修正・文書だけ）と minor（機能の追加・変更）のうち、変更の中身に合う方を先頭に「(推奨)」。
-   - 新しい版 `X.Y.Z` がここで決まります。`git ls-remote --tags origin vX.Y.Z` で、同じタグがまだ無いことも確かめます。
+3. 新しい版 `X.Y.Z` を決めます。
+   - 引数で渡されていれば、それを使います（聞きません）。
+   - 渡されていないときだけ、変更点の一覧を見せ、版の上げ方を AskUserQuestion で確かめます。patch（不具合の修正・文書だけ）と minor（機能の追加・変更）のうち、変更の中身に合う方を先頭に「(推奨)」。
+   - `git ls-remote --tags origin vX.Y.Z` で、同じタグがまだ無いことを確かめます。あれば止めてユーザーに伝えます。
+4. 変更点の一覧をまとめます。2 の PR の本文と、5 の下書きの説明に使います。
 
 ## 2. 版を上げる PR
 
@@ -58,14 +63,14 @@ disable-model-invocation: true
    npm version X.Y.Z --no-git-tag-version
    git diff --stat
    npm run typecheck
+   npm test
    ```
 
    確かめること
    - `git diff --stat` に出るのが `package.json` と `package-lock.json` の 2 つだけ
-   - `npm run typecheck` が通ること。通らなければ止めてユーザーに伝えます（このブランチでは直しません。直しは別の PR で）
+   - `npm run typecheck` と `npm test` が通ること（タグを付けたあとの Actions で落ちて、作り直すのを防ぎます）。通らなければ止めてユーザーに伝えます（このブランチでは直しません。直しは別の PR で）
 
-2. AskUserQuestion で、コミット・プッシュ・PR の作成をしてよいか確かめます。
-3. コミットしてプッシュし、develop 向けの PR を作ります。コミットメッセージと PR は日本語。
+2. コミットしてプッシュし、develop 向けの PR を作ります。コミットメッセージと PR は日本語。
 
    ```bash
    git commit -am "chore: vX.Y.Z にする"
@@ -75,13 +80,26 @@ disable-model-invocation: true
 
    PR の本文には、1 でまとめた変更点の一覧（PR の番号付き）。本文のファイルは `mktemp` などで作る一時ファイルに。
 
-4. PR の URL をユーザーに伝え、マージを待ちます。マージは上の「決まり」のとおりオーナーが行います。マージされたかは次で確かめます。
+3. PR の URL をユーザーに伝えます。
+4. CI がすべて終わるまで待ちます。
 
    ```bash
+   gh pr checks <PR の番号> --watch
+   ```
+
+   確かめること
+   - すべて `pass`（`skipping` は可。たとえば PR では動かない `update` ジョブ）
+   - `gh pr view <PR の番号> --json mergeStateStatus --jq .mergeStateStatus` が `CLEAN`
+   - どれかが `fail` なら、マージせずに止めて、ユーザーに伝えます（このブランチでは直しません）
+
+5. 通っていれば、squash マージします。ユーザーには聞きません。
+
+   ```bash
+   gh pr merge <PR の番号> --squash
    gh pr view <PR の番号> --json state,mergeCommit --jq '{state, oid: .mergeCommit.oid}'
    ```
 
-   `state` が `MERGED` になるまで先へ進みません。
+   `state` が `MERGED` になるまで先へ進みません。待っているあいだにオーナーが先にマージしていたときは、そのまま「3. タグを付けてプッシュ」へ進みます。閉じられた（`CLOSED`）ときは止めて、ユーザーに伝えます。
 
 ## 3. タグを付けてプッシュ
 
@@ -104,8 +122,7 @@ disable-model-invocation: true
    git tag -a vX.Y.Z -m "vX.Y.Z" <mergeCommit.oid>
    ```
 
-3. AskUserQuestion で、タグをプッシュしてよいか確かめます（プッシュすると Actions が動き出します）。
-4. タグをプッシュします。
+3. タグをプッシュします（プッシュすると Actions が動き出します）。
 
    ```bash
    git push origin vX.Y.Z
@@ -166,7 +183,7 @@ disable-model-invocation: true
 
      下書きで `gh release download` が失敗するときは、`SHA256SUMS.txt` の添付の id を 1 で見て、`gh api -H "Accept: application/octet-stream" repos/sny-tanaka/tanacode/releases/assets/<添付の id>` で読みます。
 
-3. 説明に変更点の節を足すか、AskUserQuestion でユーザーに聞きます。足すときは、今の説明を一時ファイルに書き出し、SHA-256 の節の後ろに「## 変更点」の節（1 でまとめた一覧）を足してから反映します。SHA-256 の表は変えません。
+3. 説明に「## 変更点」の節を、聞かずに毎回足します。今の説明を一時ファイルに書き出し、SHA-256 の節の後ろに、1 でまとめた一覧を足してから反映します。SHA-256 の表は変えません。
 
    ```bash
    gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.tag_name == "vX.Y.Z") | .body' > <一時ファイル>
@@ -176,7 +193,7 @@ disable-model-invocation: true
 
 ## 6. 公開
 
-1. 5 の点検の結果と下書きの URL を見せて、AskUserQuestion で公開してよいか確かめます。
+1. 5 の点検がすべて通っていれば、確認を挟まず公開します。期待と違うものがあれば、公開せずに止めて、結果と下書きの URL を見せ、AskUserQuestion でどうするか確かめます。
 2. 公開して、最新のリリースにします。
 
    ```bash
