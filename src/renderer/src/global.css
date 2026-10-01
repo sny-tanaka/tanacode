@@ -185,7 +185,56 @@ input[type='checkbox'] {
   color: var(--text-tertiary);
 }
 .app-update.available {
+  position: relative;
   color: var(--blue);
+}
+/* まだ見ていない新しい版。矢印を受け皿へ落とす動きと、周りに広がる波紋を 3 回。目の端でも気づけるようにする */
+.app-update.calling .app-update-arrow {
+  animation: app-update-drop 1.2s ease-out 3;
+}
+.app-update.calling::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid var(--blue);
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  animation: app-update-ripple 1.2s ease-out 3;
+}
+@keyframes app-update-drop {
+  0% {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+  30% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  42% {
+    transform: translateY(1.5px);
+  }
+  55%,
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes app-update-ripple {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.9;
+  }
+  70%,
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-update.calling .app-update-arrow,
+  .app-update.calling::after {
+    animation: none;
+  }
 }
 /* 右端のボタン（通知のベル）。帯はドラッグでウインドウを動かせるので、押せるようにドラッグを外す */
 .titlebar-actions {

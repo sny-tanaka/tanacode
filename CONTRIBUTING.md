@@ -221,7 +221,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - 図案だけの元の画像は `design/logo-mark.png`（背景を透過したもの）。ロゴは、これと「tanacode」の文字を並べた `design/logo.png`。README は、どちらのテーマでも読める背景付きの `design/logo-banner.png` を使います。タイトルバーのロゴは `src/renderer/src/assets/logo.png`、アプリのアイコンは `build/icon-source.png` から `npm run icon` で作ります。新規セッションの画面に出す小さいアイコン（`src/renderer/src/assets/icon.png`）も、同じ `npm run icon` で作ります。
 - バージョンは、ビルドのときに `package.json` の `version` を埋め込みます。
-- バージョンの右には、新しい版の印（`layout/AppUpdate.tsx`）。main の `app-update.ts` が、起動時と 1 時間ごとに GitHub の `releases/latest` を問い合わせ、`app.getVersion()` と比べます。`releases/latest` は公開済みの版だけを返すので、Releases の下書きを公開した時点で知らせが出ます。開くページは、返事の `html_url` を使わずに版から組み立てます。問い合わせは `net.fetch`（macOS のプロキシの設定が効く）。確かめられなかったときは前の結果のまま。メニューの「新しい版を確かめる」でオフにすると、問い合わせを止めて印も消します。
+- バージョンの右には、新しい版の印（`layout/AppUpdate.tsx`）。main の `app-update.ts` が、起動時と 1 時間ごとに GitHub の `releases/latest` を問い合わせ、`app.getVersion()` と比べます。`releases/latest` は公開済みの版だけを返すので、Releases の下書きを公開した時点で知らせが出ます。開くページは、返事の `html_url` を使わずに版から組み立てます。問い合わせは `net.fetch`（macOS のプロキシの設定が効く）。確かめられなかったときは前の結果のまま。メニューの「新しい版を確かめる」でオフにすると、問い合わせを止めて印も消します。新しい版の印は、目の端でも気づけるよう、見つけたときに動かします（まだ見ていなければ 1 時間ごとにも）。マウスを乗せた・押した版は localStorage に残し、その版ではもう動かしません。
 
 ## 読むもの・書くもの
 
