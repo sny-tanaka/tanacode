@@ -144,6 +144,20 @@ input[type='checkbox'] {
   -webkit-app-region: drag;
   user-select: none;
 }
+/* ロゴのボタン。押すと GitHub のリポジトリを開く。帯はドラッグでウインドウを動かせるので、押せるようにドラッグを外す */
+.titlebar-logo-link {
+  flex: none;
+  display: flex;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.12s ease-out;
+}
+.titlebar-logo-link:hover {
+  opacity: 0.8;
+}
 /* アプリのロゴ（アイコンと名前）。高さ 44px の帯に、高さ 20px で置く */
 .titlebar-logo {
   height: 20px;
@@ -174,19 +188,20 @@ input[type='checkbox'] {
   border: none;
   border-radius: 4px;
   background: none;
-  cursor: pointer;
   -webkit-app-region: no-drag;
-}
-.app-update:hover {
-  background: var(--bg-hover);
 }
 /* 最新なら、バージョンの文字と同じ色で控えめに */
 .app-update.latest {
   color: var(--text-tertiary);
+  cursor: default;
 }
 .app-update.available {
   position: relative;
   color: var(--blue);
+  cursor: pointer;
+}
+.app-update.available:hover {
+  background: var(--bg-hover);
 }
 /* まだ見ていない新しい版。矢印を受け皿へ落とす動きと、周りに広がる波紋を 3 回。目の端でも気づけるようにする */
 .app-update.calling .app-update-arrow {

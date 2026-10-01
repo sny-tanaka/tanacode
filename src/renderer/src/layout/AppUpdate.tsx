@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { REPO_URL, type AppUpdate } from '@shared/app-update';
+import type { AppUpdate } from '@shared/app-update';
 
 // tanacode の新しい版（GitHub の Releases）。まだ分からない・確かめる設定がオフなら null
 export function useAppUpdate(): AppUpdate | null {
@@ -38,19 +38,14 @@ function seenVersion(): string | null {
 
 // タイトルバーのバージョンの横の印。最新なら控えめなチェック、新しい版があれば青いダウンロードの印。
 // 文字は出さず、マウスを乗せると「最新版です」「v0.1.5 があります」と、更新の手順が出る。
-// 押すと、最新ならリポジトリのページ、新しい版があればその版の Releases のページを GitHub で開く
+// 新しい版の印を押すと、その版の Releases のページを開く
 export function AppUpdateMark({ update }: { update: AppUpdate | null }) {
   if (!update) return null;
   if (!update.available)
     return (
-      <button
-        className="app-update latest"
-        aria-label="最新版です"
-        data-tip={'最新版です\n押すと、GitHub の tanacode のページを開きます'}
-        onClick={() => window.open(REPO_URL)}
-      >
+      <span className="app-update latest" data-tip="最新版です">
         <CheckIcon />
-      </button>
+      </span>
     );
   return <UpdateAvailable key={update.latest} update={update} />;
 }
