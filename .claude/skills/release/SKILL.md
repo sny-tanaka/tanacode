@@ -13,10 +13,11 @@ disable-model-invocation: true
 
 ## 決まり
 
-- **オーナーの操作は、版を上げる PR のマージの 1 回だけ**にします。それ以外は、確認を挟まず公開まで進めます。`/release` を呼んだこと自体が、リリースしてよいという指示です。
-- develop には直接プッシュしません。作業用のブランチ → develop 向けの PR → マージはオーナー。
-  - develop のルールセットは、PR を通すことを求めます（承認の数は 0）。オーナーは PR の画面の「Squash and merge」で squash マージします。
-  - エージェントは PR をマージしません。
+- **オーナーの操作は、なしにします**。確認を挟まず、版を上げる PR のマージから公開まで進めます。`/release` を呼んだこと自体が、リリースしてよいという指示です。
+- develop には直接プッシュしません。作業用のブランチ → develop 向けの PR → squash マージ。
+  - develop のルールセットは、PR を通すことを求めます（承認の数は 0）。
+  - **版を上げる PR に限り、CI がすべて通っていれば、エージェントがマージします**（オーナーの指示。2026-10-01）。ほかの PR は、これまでどおりオーナーがマージします。
+  - マージするのは、変更が `package.json` と `package-lock.json` の `version` だけの PR（2 の 1 で確かめた PR）に限ります。
 - 手を止めてユーザーに聞くのは、次の場合だけです。選択を伴うので AskUserQuestion を使い、推奨の選択肢を先頭に置いて、ラベルの末尾に「(推奨)」。
   - 引数で版が渡されていないとき（1 の 3）
   - 点検（5）で、期待と違うものが見つかったとき（公開はしません）
@@ -79,15 +80,26 @@ disable-model-invocation: true
 
    PR の本文には、1 でまとめた変更点の一覧（PR の番号付き）。本文のファイルは `mktemp` などで作る一時ファイルに。
 
-3. PR の URL をユーザーに伝え、「マージしてください。マージされたら自動で続けます」と書きます。マージは上の「決まり」のとおりオーナーが行います。
-4. マージされるまで、Bash の `run_in_background` で見張ります。マージを検知したら、ユーザーに聞かずに 3 へ進みます。
+3. PR の URL をユーザーに伝えます。
+4. CI がすべて終わるまで待ちます。
 
    ```bash
-   until [ "$(gh pr view <PR の番号> --json state --jq .state)" = "MERGED" ]; do sleep 15; done
+   gh pr checks <PR の番号> --watch
+   ```
+
+   確かめること
+   - すべて `pass`（`skipping` は可。たとえば PR では動かない `update` ジョブ）
+   - `gh pr view <PR の番号> --json mergeStateStatus --jq .mergeStateStatus` が `CLEAN`
+   - どれかが `fail` なら、マージせずに止めて、ユーザーに伝えます（このブランチでは直しません）
+
+5. 通っていれば、squash マージします。ユーザーには聞きません。
+
+   ```bash
+   gh pr merge <PR の番号> --squash
    gh pr view <PR の番号> --json state,mergeCommit --jq '{state, oid: .mergeCommit.oid}'
    ```
 
-   `state` が `MERGED` になるまで先へ進みません。閉じられた（`CLOSED`）ときは止めて、ユーザーに伝えます。
+   `state` が `MERGED` になるまで先へ進みません。待っているあいだにオーナーが先にマージしていたときは、そのまま「3. タグを付けてプッシュ」へ進みます。閉じられた（`CLOSED`）ときは止めて、ユーザーに伝えます。
 
 ## 3. タグを付けてプッシュ
 
