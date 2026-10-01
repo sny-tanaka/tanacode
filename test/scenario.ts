@@ -42,12 +42,22 @@ export function stepsFor(cwd: string): Step[] {
 }
 
 // 控えに残す画面
-export type ScreenName = 'prompt' | 'bash-permission' | 'question' | 'write-permission';
+export type ScreenName = 'trust' | 'prompt' | 'bash-permission' | 'question' | 'write-permission';
 
-// 起動したあとの入力欄（権限モードは --permission-mode manual で起動する）
-export function checkPrompt(info: Pick<ScreenInfo, 'mode' | 'effort'>): void {
+// 初めてのフォルダで出る、フォルダの信頼の確認（番号の無い選択肢）。問いかけを見出しにする
+export function checkTrust(menu: Menu | null): void {
+  expect(menu?.kind).toBe('other');
+  expect(menu!.title).toContain('trust');
+  expect(menu!.options.length).toBeGreaterThanOrEqual(2);
+  expect(menu!.options.filter((o) => o.pointed)).toHaveLength(1);
+  expect(menu!.options.some((o) => /^Yes/.test(o.label))).toBe(true);
+}
+
+// 起動したあとの入力欄（権限モードは --permission-mode manual で起動する）。モデル名は起動時のバナーから読む
+export function checkPrompt(info: Pick<ScreenInfo, 'mode' | 'effort' | 'model'>): void {
   expect(info.mode).toBe('manual');
   expect(info.effort).not.toBeNull();
+  expect(info.model).toMatch(/^[A-Z][a-z]+ \d/);
 }
 
 // target: 確認の見出しか補足（実行しようとしているコマンドなど）に出るはずの文字

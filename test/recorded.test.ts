@@ -5,9 +5,9 @@ import { isTranscriptEntry, toChatEvents } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { ScreenLine } from '@shared/screen';
 import { transcriptPath } from '../src/main/claude-session';
-import { applyQuestions, askQuestionsOf, findEffort, findMode, parseMenu, promptRange } from '../src/main/screen-parser';
+import { applyQuestions, askQuestionsOf, findEffort, findMode, findModel, parseMenu, promptRange } from '../src/main/screen-parser';
 import { parseStatusLine } from '../src/main/statusline';
-import { FIXTURE_ROOT, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, type ScreenName } from './scenario';
+import { FIXTURE_ROOT, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, checkTrust, type ScreenName } from './scenario';
 
 // 本物の Claude Code から取った控え（test/fixtures/claude-code/<版>/）を、アプリの読み取りにかける。
 // 控えは、互換性の確認（npm run test:cli）に TANACODE_RECORD=1 を付けて取る。古い版の控えも残し、読めるままかを確かめ続ける
@@ -39,10 +39,14 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
     process.env.HOME = oldHome;
   });
 
+  it('フォルダの信頼の確認が読める', () => {
+    checkTrust(parseMenu(screen('trust')));
+  });
+
   it('入力欄と、入力欄のまわりの表示が読める', () => {
     const lines = screen('prompt');
     expect(promptRange(lines)).not.toBeNull();
-    checkPrompt({ mode: findMode(lines), effort: findEffort(lines) });
+    checkPrompt({ mode: findMode(lines), effort: findEffort(lines), model: findModel(lines) });
   });
 
   it('Bash の許可の確認が読める', () => {

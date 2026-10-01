@@ -6,7 +6,7 @@ import { toChatEvents } from '@shared/chat';
 import type { Menu, ScreenInfo } from '@shared/screen';
 import { transcriptPath } from '../../src/main/claude-session';
 import { parseStatusLine } from '../../src/main/statusline';
-import { PROMPT, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, stepsFor } from '../scenario';
+import { PROMPT, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, checkTrust, stepsFor } from '../scenario';
 import { CLAUDE_BIN, ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi } from './mock-api';
 
@@ -44,6 +44,13 @@ describe(`Claude Code ${version}`, () => {
       if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version));
       run?.stop();
       await api?.stop();
+    });
+
+    it('フォルダの信頼の確認がメニューとして読める', async () => {
+      const menu = await run.waitFor('信頼の確認', menuOf('other'));
+      run.capture('trust');
+      checkTrust(menu);
+      await run.answer(menu.title, menu.options.find((o) => /^Yes/.test(o.label))!.id);
     });
 
     it('入力欄と、入力欄のまわりの表示が読める', async () => {

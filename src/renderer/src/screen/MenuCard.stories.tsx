@@ -76,6 +76,22 @@ export const 実行の許可: Story = {
   },
 };
 
+// 初めてのフォルダで出る、フォルダの信頼の確認（Claude Code の画面では番号の無い選択肢）
+export const フォルダの信頼の確認: Story = {
+  args: {
+    menu: {
+      kind: 'other',
+      tabs: [],
+      title:
+        "Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.",
+      context: ['Accessing workspace:', '/Users/me/src/tanacode', "Claude Code'll be able to read, edit, and execute files here.", 'Security guide'],
+      options: [option('1', 'No, exit', { pointed: true }), option('2', 'Yes, I trust this folder')],
+      multiSelect: false,
+      hint: 'Enter to confirm · Esc to cancel',
+    },
+  },
+};
+
 // 選択肢にプレビューがある質問。ホバーした選択肢のプレビューが下に出る
 export const プレビュー付き: Story = {
   args: {

@@ -53,15 +53,10 @@ export class ClaudeRun {
   constructor(private readonly baseUrl: string) {
     mkdirSync(this.home, { recursive: true });
     mkdirSync(this.cwd, { recursive: true });
-    // 最初の案内（テーマの選択）・API キーの確認・フォルダの信頼の確認は済んだことにする
+    // 最初の案内（テーマの選択）と API キーの確認は済んだことにする。フォルダの信頼の確認は、アプリでも出るのでそのまま
     writeFileSync(
       join(this.home, '.claude.json'),
-      JSON.stringify({
-        hasCompletedOnboarding: true,
-        theme: 'dark',
-        customApiKeyResponses: { approved: [API_KEY.slice(-20)], rejected: [] },
-        projects: { [this.cwd]: { hasTrustDialogAccepted: true } },
-      }),
+      JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', customApiKeyResponses: { approved: [API_KEY.slice(-20)], rejected: [] } }),
     );
     this.screen = new ScreenTracker(COLS, ROWS, (data) => this.proc?.write(data), () => {});
   }

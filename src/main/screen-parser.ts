@@ -12,6 +12,10 @@ const FOOTER = /Esc to cancel|Enter to (select|confirm)/;
 const TABS = /[☐☒]/;
 const BOXED = /^│\s?/;
 const CHAT_ABOUT_THIS = 'Chat about this';
+// 番号の無い選択肢のメニューで、カーソルのある行（例: 「 ❯ No, exit」）
+const PLAIN_POINTER = /^(\s*❯\s+)\S/;
+// 起動時のバナーの、ロゴの右の 1 行目
+const BANNER_TITLE = /Claude Code v\d+\.\d+\.\d+/;
 // AskUserQuestion の回答の確認画面の見出し
 const REVIEW_TITLE = 'Review your answers';
 // メニューとみなす範囲（フッターから上に何行まで見るか）
@@ -22,7 +26,7 @@ const MAX_MENU_LINES = 40;
 export function parseMenu(lines: ScreenLine[]): Menu | null {
   const footer = findLastIndex(lines, (l) => FOOTER.test(l.text));
   const pointer = findLastIndex(lines, (l) => /❯\s+(\d+\.|Submit\s*$|Next\s*$)/.test(l.text));
-  if (pointer === -1) return null;
+  if (pointer === -1) return parsePlainMenu(lines, footer);
   const end = footer > pointer ? footer : lines.length;
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
 
@@ -102,6 +106,54 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
     multiSelect: options.some((o) => o.checked !== null),
     hint: end === footer ? lines[footer].text.trim() : '',
     previewLayout: previewAt !== null,
+  };
+}
+
+// 番号の無い選択肢のメニュー（フォルダの信頼の確認など）。例:
+//   Quick safety check: Is this a project you created or one you trust? …
+//   ❯ No, exit
+//     Yes, I trust this folder
+//   Enter to confirm · Esc to cancel
+// ほかの画面と取り違えないよう、下に操作説明があり、❯ の行と同じ字下げの行が続く（2 つ以上の選択肢）ものだけを読む。
+// 選択肢の番号は上から 1, 2, …（選ぶときは ↑/↓ で動かすので、画面の番号は要らない）
+function parsePlainMenu(lines: ScreenLine[], footer: number): Menu | null {
+  if (footer === -1) return null;
+  const pointer = findLastIndex(lines.slice(0, footer), (l) => PLAIN_POINTER.test(l.text));
+  if (pointer === -1 || footer - pointer > MAX_MENU_LINES) return null;
+  // 選択肢の名前が始まる文字の位置。ほかの選択肢の行は、この位置まで空白で、そこから文字が始まる
+  const column = lines[pointer].text.match(PLAIN_POINTER)![1].length;
+  const isOption = (i: number) => {
+    const text = lines[i].text;
+    return i === pointer || (text.slice(0, column).trim() === '' && /\S/.test(text.charAt(column)));
+  };
+  let first = pointer;
+  while (first > 0 && isOption(first - 1)) first--;
+  let last = pointer;
+  while (last + 1 < footer && isOption(last + 1)) last++;
+  if (last === first) return null;
+  // 選択肢と操作説明の間には、空行しか無い
+  if (lines.slice(last + 1, footer).some((l) => l.text.trim())) return null;
+
+  const options: MenuOption[] = lines.slice(first, last + 1).map((l, i) => ({
+    id: String(i + 1),
+    label: l.text.trim().replace(/^❯\s+/, ''),
+    description: '',
+    pointed: first + i === pointer,
+    checked: null,
+    textInput: false,
+  }));
+  // 上の文章は段落ごとにつなぎ直し、問いかけ（? を含む最後の段落）を見出しに、ほかを補足にする
+  const paragraphs = unwrap(lines.slice(menuTop(lines, first), first).map((l) => l.text)).split('\n').filter(Boolean);
+  const asking = findLastIndex(paragraphs, (p) => p.includes('?'));
+  const at = asking === -1 ? paragraphs.length - 1 : asking;
+  return {
+    kind: 'other',
+    tabs: [],
+    title: paragraphs[at] ?? '',
+    context: paragraphs.filter((_, i) => i !== at),
+    options,
+    multiSelect: false,
+    hint: lines[footer].text.trim(),
   };
 }
 
@@ -210,12 +262,15 @@ export function promptRange(lines: ScreenLine[]): [number, number] | null {
   return null;
 }
 
-// 起動時のバナー（枠の中の「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort」など）。
-// 会話の本文にもモデル名は出てくるので、枠の行（│ で始まる）だけを見る。--resume ではバナーが出ない
+// 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort」など）。--resume ではバナーが出ない。
+// 会話の本文にもモデル名は出てくるので、バナーの行だけを見る。バナーは 2 つの形がある
+// - 枠の中（前の Claude Code）: 「│  Haiku 4.5 · Claude Max · …」
+// - ロゴの右（今の Claude Code）: 「▐▛███▜▌   Claude Code v2.1.286」の次の行の「▝▜█████▛▘  Opus 5.5 · Claude Max」
 export function findModel(lines: ScreenLine[]): string | null {
-  for (const { text } of lines) {
-    if (!text.startsWith('│')) continue;
-    // 例: 「│  Haiku 4.5 · Claude Max · …」。新しい系統名にも対応できるよう、名前は決め打ちしない
+  const logo = lines.findIndex((l) => BANNER_TITLE.test(l.text));
+  const banner = [...lines.filter((l) => l.text.startsWith('│')), ...(logo === -1 ? [] : lines.slice(logo + 1, logo + 3))];
+  for (const { text } of banner) {
+    // 新しい系統名にも対応できるよう、名前は決め打ちしない
     const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?) ·/);
     if (m) return m[1];
   }
