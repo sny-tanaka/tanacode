@@ -1,12 +1,18 @@
-import { memo, useEffect, useState } from 'react';
+import { Fragment, memo, useEffect, useState } from 'react';
 import type { BranchChanges, FileChange, GitAction, GitBranches, GitEntry, GitState } from '@shared/ipc';
+import { buildTree, filesInTreeOrder, visibleRows } from '@shared/scm-tree';
 import { CommentList } from '../review/CommentList';
 import type { ReviewComment } from '../review/LineComments';
 import { Busy } from '../layout/Busy';
+import { ListViewIcon, TreeViewIcon } from '../layout/icons';
+import type { ScmView } from './scmView';
 
 type Props = {
   sessionId: string;
   state: GitState | null;
+  // 変更の見せ方（ファイルの一覧 / フォルダごとのツリー）。ステージ済みの変更・変更・ブランチの変更のすべてに効く
+  view: ScmView;
+  onViewChange: (view: ScmView) => void;
   onRefresh: () => void;
   onOpenDiff: (path: string, staged: boolean) => void;
   // ブランチの変更（基点 ↔ 作業ツリー）の差分を開く。activeBranchPath は開いているもの
@@ -23,6 +29,8 @@ type Props = {
 export const ScmPanel = memo(function ScmPanel({
   sessionId,
   state,
+  view,
+  onViewChange,
   onRefresh,
   onOpenDiff,
   onOpenBranchDiff,
@@ -88,6 +96,15 @@ export const ScmPanel = memo(function ScmPanel({
           <span className="tree-chevron">▾</span>
         </button>
         <div className="spacer" />
+        {/* 押すと切り替わる先のアイコンと名前を出す（VS Code と同じ） */}
+        <button
+          className="scm-sync scm-view"
+          onClick={() => onViewChange(view === 'tree' ? 'list' : 'tree')}
+          data-tip={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
+          aria-label={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
+        >
+          {view === 'tree' ? <ListViewIcon size={14} /> : <TreeViewIcon size={14} />}
+        </button>
         <button className="scm-sync" disabled={!!busy} onClick={() => void run({ kind: 'pull' }, 'プル中…')} data-tip={state.upstream ? `${state.upstream} からプル` : 'プル'} aria-label="プル">
           ↓{state.behind || ''}
         </button>
@@ -141,11 +158,12 @@ export const ScmPanel = memo(function ScmPanel({
 
       <div className="scm-lists">
         {state.branchChanges && (
-          <BranchSection changes={state.branchChanges} activePath={activeBranchPath} onOpen={onOpenBranchDiff} />
+          <BranchSection changes={state.branchChanges} view={view} activePath={activeBranchPath} onOpen={onOpenBranchDiff} />
         )}
         <Section
           title="ステージ済みの変更"
           entries={staged}
+          view={view}
           staged
           onOpen={(e) => onOpenDiff(e.path, true)}
           actions={[{ label: '−', title: 'ステージを取り消す', run: (paths) => void run({ kind: 'unstage', paths }, '取り消し中…') }]}
@@ -153,6 +171,7 @@ export const ScmPanel = memo(function ScmPanel({
         <Section
           title="変更"
           entries={changes}
+          view={view}
           staged={false}
           onOpen={(e) => onOpenDiff(e.path, false)}
           actions={[
@@ -178,22 +197,82 @@ export const ScmPanel = memo(function ScmPanel({
 const KIND_LABEL = { added: '新規', modified: '変更', deleted: '削除' } as const;
 const KIND_CODE = { added: 'A', modified: 'M', deleted: 'D' } as const;
 
-// 並べる順（パス順）。差分の「前へ / 次へ」もこの順で移る
-export function branchPaths(changes: BranchChanges | null): string[] {
-  return changes ? Object.keys(changes.files).sort((a, b) => a.localeCompare(b)) : [];
+// 並べる順（一覧はパス順、ツリーは見えている順）。差分の「前へ / 次へ」もこの順で移る
+export function branchPaths(changes: BranchChanges | null, view: ScmView): string[] {
+  if (!changes) return [];
+  const paths = Object.keys(changes.files).sort((a, b) => a.localeCompare(b));
+  return view === 'tree' ? filesInTreeOrder(buildTree(paths.map((path) => ({ path })))).map((item) => item.path) : paths;
+}
+
+// ツリーの行の左の余白。フォルダは矢印から、ファイルはフォルダの名前に合わせて 1 段ずつ右に下げる
+const TREE_INDENT = 12;
+const dirPadding = (depth: number) => 10 + depth * TREE_INDENT;
+const filePadding = (depth: number) => 26 + depth * TREE_INDENT;
+
+// 変更の行を、一覧（ファイルを並べるだけ）かツリー（フォルダごと）で出す。
+// ツリーでは、フォルダの行を押すと畳める。フォルダの行の操作は、フォルダの下のすべてのファイルに効く。
+// renderFile の depth は、一覧では null、ツリーではフォルダの深さ（ルートの直下が 0）
+function ChangeRows<T extends { path: string }>({
+  items,
+  view,
+  actions,
+  renderFile,
+}: {
+  items: T[];
+  view: ScmView;
+  actions?: Action[];
+  renderFile: (item: T, depth: number | null) => React.ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  if (view === 'list') return items.map((item) => <Fragment key={item.path}>{renderFile(item, null)}</Fragment>);
+  const toggle = (dir: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(dir)) next.add(dir);
+      return next;
+    });
+  return visibleRows(buildTree(items), collapsed).map(({ node, depth }) =>
+    node.kind === 'file' ? (
+      <Fragment key={`f:${node.path}`}>{renderFile(node.item, depth)}</Fragment>
+    ) : (
+      <div key={`d:${node.path}`} className="scm-row scm-dir-row" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} title={node.path}>
+        <span className="tree-chevron">{collapsed.has(node.path) ? '▸' : '▾'}</span>
+        <span className="scm-dir-name">{node.name}</span>
+        {actions && (
+          <span className="scm-actions">
+            {actions.map((a) => (
+              <button
+                key={a.label}
+                data-tip={`${a.title}（フォルダ内すべて）`}
+                aria-label={`${a.title}（フォルダ内すべて）`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  a.run(node.items.map((x) => x.path));
+                }}
+              >
+                {a.label}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
+    ),
+  );
 }
 
 function BranchSection({
   changes,
+  view,
   activePath,
   onOpen,
 }: {
   changes: BranchChanges;
+  view: ScmView;
   activePath: string | null;
   onOpen: (path: string) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const paths = branchPaths(changes);
+  const paths = branchPaths(changes, 'list');
   const total = paths.reduce(
     (sum, p) => ({ added: sum.added + changes.files[p].added, removed: sum.removed + changes.files[p].removed }),
     { added: 0, removed: 0 },
@@ -220,20 +299,42 @@ function BranchSection({
             )}
           </div>
           {paths.length === 0 && <div className="scm-none">変更はありません</div>}
-          {paths.map((path) => (
-            <BranchRow key={path} path={path} change={changes.files[path]} active={path === activePath} onOpen={onOpen} />
-          ))}
+          <ChangeRows
+            items={paths.map((path) => ({ path }))}
+            view={view}
+            renderFile={({ path }, depth) => (
+              <BranchRow path={path} change={changes.files[path]} active={path === activePath} depth={depth} onOpen={onOpen} />
+            )}
+          />
         </>
       )}
     </div>
   );
 }
 
-function BranchRow({ path, change, active, onOpen }: { path: string; change: FileChange; active: boolean; onOpen: (path: string) => void }) {
+// depth: ツリーでのフォルダの深さ（一覧では null。名前の右にフォルダのパスを出す）
+function BranchRow({
+  path,
+  change,
+  active,
+  depth,
+  onOpen,
+}: {
+  path: string;
+  change: FileChange;
+  active: boolean;
+  depth: number | null;
+  onOpen: (path: string) => void;
+}) {
   return (
-    <div className={`scm-row${active ? ' active' : ''}`} onClick={() => onOpen(path)} title={`${path}（${KIND_LABEL[change.kind]}）`}>
+    <div
+      className={`scm-row${active ? ' active' : ''}`}
+      style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
+      onClick={() => onOpen(path)}
+      title={`${path}（${KIND_LABEL[change.kind]}）`}
+    >
       <span className={`scm-name${change.kind === 'deleted' ? ' deleted' : ''}`}>{path.split('/').pop()}</span>
-      <span className="scm-dir">{path.split('/').slice(0, -1).join('/')}</span>
+      {depth === null && <span className="scm-dir">{path.split('/').slice(0, -1).join('/')}</span>}
       {change.binary ? (
         <span className="review-count">バイナリ</span>
       ) : (
@@ -252,12 +353,14 @@ type Action = { label: string; title: string; run: (paths: string[]) => void };
 function Section({
   title,
   entries,
+  view,
   staged,
   actions,
   onOpen,
 }: {
   title: string;
   entries: GitEntry[];
+  view: ScmView;
   staged: boolean;
   actions: Action[];
   onOpen: (entry: GitEntry) => void;
@@ -288,32 +391,43 @@ function Section({
         </span>
       </div>
       {open && entries.length === 0 && <div className="scm-none">変更はありません</div>}
-      {open &&
-        entries.map((entry) => {
-          const code = staged ? entry.index : entry.index === '?' ? 'U' : entry.worktree;
-          return (
-            <div key={`${staged}:${entry.path}`} className="scm-row" onClick={() => onOpen(entry)} title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}>
-              <span className="scm-name">{entry.path.split('/').pop()}</span>
-              <span className="scm-dir">{entry.path.split('/').slice(0, -1).join('/')}</span>
-              <span className="scm-actions">
-                {actions.map((a) => (
-                  <button
-                    key={a.label}
-                    data-tip={a.title}
-                    aria-label={a.title}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      a.run([entry.path]);
-                    }}
-                  >
-                    {a.label}
-                  </button>
-                ))}
-              </span>
-              <span className={`scm-code code-${code}`}>{code}</span>
-            </div>
-          );
-        })}
+      {open && (
+        <ChangeRows
+          items={entries}
+          view={view}
+          actions={actions}
+          renderFile={(entry, depth) => {
+            const code = staged ? entry.index : entry.index === '?' ? 'U' : entry.worktree;
+            return (
+              <div
+                className="scm-row"
+                style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
+                onClick={() => onOpen(entry)}
+                title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}
+              >
+                <span className="scm-name">{entry.path.split('/').pop()}</span>
+                {depth === null && <span className="scm-dir">{entry.path.split('/').slice(0, -1).join('/')}</span>}
+                <span className="scm-actions">
+                  {actions.map((a) => (
+                    <button
+                      key={a.label}
+                      data-tip={a.title}
+                      aria-label={a.title}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        a.run([entry.path]);
+                      }}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </span>
+                <span className={`scm-code code-${code}`}>{code}</span>
+              </div>
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

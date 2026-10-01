@@ -11,6 +11,7 @@ import { Explorer } from './explorer/Explorer';
 import type { ReviewComment } from './review/LineComments';
 import { DiffPane } from './scm/DiffPane';
 import { branchPaths, ScmPanel } from './scm/ScmPanel';
+import { useScmView, type ScmView } from './scm/scmView';
 import { gitMarks, useGitState } from './scm/useGitState';
 import { QuickOpen } from './search/QuickOpen';
 import { SearchPanel } from './search/SearchPanel';
@@ -145,6 +146,7 @@ export function App() {
   const addComment = useCallback((c: ReviewComment) => setSessionComments((list) => [...list, c]), [setSessionComments]);
   const removeComment = useCallback((id: string) => setSessionComments((list) => list.filter((c) => c.id !== id)), [setSessionComments]);
   const git = useGitState(viewId, cwd);
+  const [scmView, setScmView] = useScmView();
   // このブランチの基点から作業ツリーまでの変更（エディタ・エクスプローラーの印と、ソース管理の「ブランチの変更」）
   const branchChanges = git.state?.isRepo ? git.state.branchChanges : null;
   const changes = branchChanges?.files ?? NO_CHANGES;
@@ -530,6 +532,8 @@ export function App() {
                   key={cwd}
                   sessionId={viewId}
                   state={git.state}
+                  view={scmView}
+                  onViewChange={setScmView}
                   onRefresh={git.refresh}
                   onOpenDiff={openScmDiff}
                   onOpenBranchDiff={openBranchDiff}
@@ -581,6 +585,7 @@ export function App() {
               sessionId={viewId}
               view={diffView}
               branchChanges={branchChanges}
+              scmView={scmView}
               comments={sessionComments}
               onAddComment={addComment}
               onRemoveComment={removeComment}
@@ -664,6 +669,7 @@ function DiffView({
   sessionId,
   view,
   branchChanges,
+  scmView,
   comments,
   onAddComment,
   onRemoveComment,
@@ -673,6 +679,7 @@ function DiffView({
   sessionId: string;
   view: DiffView;
   branchChanges: BranchChanges | null;
+  scmView: ScmView;
   comments: ReviewComment[];
   onAddComment: (comment: ReviewComment) => void;
   onRemoveComment: (id: string) => void;
@@ -693,7 +700,7 @@ function DiffView({
       />
     );
   }
-  const paths = branchPaths(branchChanges);
+  const paths = branchPaths(branchChanges, scmView);
   const index = paths.indexOf(view.path);
   const change = branchChanges?.files[view.path];
   const mergeBase = branchChanges?.base.mergeBase ?? null;

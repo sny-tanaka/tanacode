@@ -66,6 +66,24 @@ export function BranchIcon() {
   );
 }
 
+// ソース管理の見せ方: ファイルの一覧（同じ幅の行が並ぶ）と、フォルダごとのツリー（下の行ほど右に下がる）
+export function ListViewIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+export function TreeViewIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <path d="M4 6h16" />
+      <path d="M8 6v12M8 12h12M8 18h12" />
+    </svg>
+  );
+}
+
 // フォルダ（新規セッションの作業フォルダ）
 export function FolderIcon() {
   return (

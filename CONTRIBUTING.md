@@ -280,7 +280,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks）
-  - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更）
+  - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で localStorage に保つ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
@@ -288,7 +288,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧・利用枠・CPU/メモリ・コンテキスト・カラム
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
 - `design/`: アプリのロゴ
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
