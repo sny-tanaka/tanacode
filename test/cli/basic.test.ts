@@ -3,15 +3,16 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents } from '@shared/chat';
-import type { Menu, ScreenInfo } from '@shared/screen';
 import { transcriptPath } from '../../src/main/claude-session';
+import { listCommands } from '../../src/main/commands';
 import { parseStatusLine } from '../../src/main/statusline';
-import { PROMPT, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, checkTrust, stepsFor } from '../scenario';
-import { CLAUDE_BIN, ClaudeRun, claudeVersion } from './claude-run';
+import { PROMPT, SETTINGS, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, checkTrust, stepsFor } from '../scenario';
+import { CLAUDE_BIN, ClaudeRun, claudeVersion, menuOf } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude（TANACODE_CLAUDE_BIN、無ければ PATH の claude）を、モックの API で動かす（料金はかからない）。
-// Claude Code の画面・会話ログ・statusLine・フックの形が変わって、アプリの読み取りが通らなくなったら失敗する。
+// 基本の台本（test/scenario.ts）: 信頼の確認・入力欄・許可の確認・質問・hooks・チャット・statusLine・/ の候補。
+// Claude Code の形が変わって、アプリの読み取りが通らなくなったら失敗する。
 // TANACODE_RECORD=1 を付けると、途中の画面・会話ログなどを test/fixtures/claude-code/<版>/ に控えとして残す
 
 // アプリが付ける引数（claudeArgs）が、今の claude にまだあるか
@@ -19,8 +20,6 @@ const FLAGS = ['--session-id', '--resume', '--remote-control', '--model', '--eff
 
 const version = claudeVersion();
 
-// 選択メニューが出るのを待つ
-const menuOf = (kind: Menu['kind']) => (info: ScreenInfo) => (info.state.kind === 'menu' && info.state.menu.kind === kind ? info.state.menu : null);
 
 describe(`Claude Code ${version}`, () => {
   it('アプリが付ける引数がある', () => {
@@ -35,8 +34,8 @@ describe(`Claude Code ${version}`, () => {
 
     beforeAll(async () => {
       api = new MockApi();
-      run = new ClaudeRun(await api.start());
-      api.steps = stepsFor(run.cwd);
+      run = new ClaudeRun(await api.start(), { settings: SETTINGS });
+      api.conversations = [{ match: PROMPT, steps: stepsFor(run.cwd) }];
       run.start();
     });
 
@@ -60,10 +59,7 @@ describe(`Claude Code ${version}`, () => {
     });
 
     it('Bash の許可の確認がメニューとして読める', async () => {
-      run.type(PROMPT);
-      // 打った文字が入力欄に入ってから送る
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      run.type('\r');
+      await run.send(PROMPT);
       const menu = await run.waitFor('Bash の許可', menuOf('permission'));
       run.capture('bash-permission');
       checkPermission(menu, 'mkdir checked');
@@ -94,6 +90,12 @@ describe(`Claude Code ${version}`, () => {
     it('会話ログからチャットを組み立てられる', async () => {
       await run.waitFor('ターンの終わり', () => events().some((e) => e.type === 'turn-end'));
       checkChat(run.entries, events(), run.cwd);
+    });
+
+    it('会話ログのスキルの一覧から、/ の候補を作れる', async () => {
+      // 新しい会話には、まだスキルの一覧が無いので、同じフォルダの会話ログから借りる
+      const commands = await listCommands(run.cwd, null);
+      expect(commands.filter((c) => c.source === 'skill').length).toBeGreaterThan(0);
     });
 
     it('statusLine の JSON が読める', async () => {

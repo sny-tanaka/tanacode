@@ -2,7 +2,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 
 // Anthropic の Messages API のふりをするサーバー。ANTHROPIC_BASE_URL をここに向けると、
-// 本物の claude を API の料金なしで動かせる。返す応答は、決めておいた台本（Step）のとおり
+// 本物の claude を API の料金なしで動かせる。返す応答は、決めておいた台本（Conversation）のとおり。
+// 本体の会話のほか、サブエージェントやワークフローのエージェントも別の会話として API を呼ぶので、
+// 会話のはじめ（最初の応答より前）の発言で台本を選ぶ。ワークフローのエージェントには元のユーザーの依頼のあとに
+// スクリプトが作った仕事が届くので、台本の文字がいちばん後ろに出てくるものを選ぶ
 
 export type Block =
   | { type: 'text'; text: string }
@@ -11,11 +14,15 @@ export type Block =
 // 会話の n 番目の応答（n = リクエストに入っている assistant の発言の数）
 export type Step = Block[];
 
+// match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）
+export type Conversation = { match: string; steps: Step[]; delayMs?: number };
+
+type Message = { role?: string; content?: string | { type?: string; text?: string }[] };
 type Body = {
   model?: string;
   stream?: boolean;
   tools?: { name?: string }[];
-  messages?: { role?: string }[];
+  messages?: Message[];
 };
 
 export class MockApi {
@@ -23,9 +30,11 @@ export class MockApi {
   // 受け取ったリクエスト（うまくいかなかったときの手がかり）
   readonly requests: string[] = [];
   private count = 0;
+  // 台本のある会話に付いてきたツールの名前（台本で使うツールが、今の Claude Code にあるかを確かめる）
+  readonly tools = new Set<string>();
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
-  steps: Step[] = [];
+  conversations: Conversation[] = [];
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -47,16 +56,27 @@ export class MockApi {
     if (path !== '/v1/messages') return json(res, {});
 
     const body = JSON.parse(raw || '{}') as Body;
-    // 本体の会話にはツールの一覧が付く。付いていないもの（タイトル作りなどの裏の呼び出し）には短い文を返す
-    const main = body.tools?.some((t) => t.name === 'Bash') ?? false;
+    // ツールの一覧が付いていないもの（タイトル作りなどの裏の呼び出し）には、台本を使わず短い文を返す
+    const tools = body.tools ?? [];
+    const messages = body.messages ?? [];
+    const reply = messages.findIndex((m) => m.role === 'assistant');
+    const opening = (reply === -1 ? messages : messages.slice(0, reply)).filter((m) => m.role === 'user');
+    const first = opening.map(textOf).join('\n');
+    const at = (c: Conversation) => first.lastIndexOf(c.match);
+    const conversation =
+      tools.length > 0 ? this.conversations.filter((c) => at(c) !== -1).sort((a, b) => at(b) - at(a))[0] : undefined;
     const index = body.messages?.filter((m) => m.role === 'assistant').length ?? 0;
-    const blocks: Block[] = main ? (this.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }]) : [{ type: 'text', text: 'テスト' }];
+    if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
+    const blocks: Block[] = conversation
+      ? (conversation.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }])
+      : [{ type: 'text', text: 'テスト' }];
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
-    this.requests.push(`  ${main ? `本体の会話・${index} 番目の応答` : '裏の呼び出し'}`);
+    this.requests.push(`  ${conversation ? `「${conversation.match}」の会話・${index} 番目の応答` : `台本の無い呼び出し（${first.slice(0, 60)}）`}`);
+    if (conversation?.delayMs) await new Promise((resolve) => setTimeout(resolve, conversation.delayMs));
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
-    const reply = { id: `msg_mock_${++this.count}`, model: body.model ?? 'claude-mock', content: blocks, stopReason };
-    if (body.stream) stream(res, reply);
-    else json(res, message(reply));
+    const answer = { id: `msg_mock_${++this.count}`, model: body.model ?? 'claude-mock', content: blocks, stopReason };
+    if (body.stream) stream(res, answer);
+    else json(res, message(answer));
   }
 }
 
@@ -98,4 +118,10 @@ function stream(res: ServerResponse, reply: Reply): void {
   send('message_delta', { delta: { stop_reason: reply.stopReason, stop_sequence: null }, usage: { output_tokens: 20 } });
   send('message_stop', {});
   res.end();
+}
+
+function textOf(message: Message | undefined): string {
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  return (content ?? []).map((b) => (b.type === 'text' ? (b.text ?? '') : '')).join('\n');
 }

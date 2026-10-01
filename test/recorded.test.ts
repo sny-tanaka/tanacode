@@ -7,7 +7,19 @@ import type { ScreenLine } from '@shared/screen';
 import { transcriptPath } from '../src/main/claude-session';
 import { applyQuestions, askQuestionsOf, findEffort, findMode, findModel, parseMenu, promptRange } from '../src/main/screen-parser';
 import { parseStatusLine } from '../src/main/statusline';
-import { FIXTURE_ROOT, checkAskInput, checkChat, checkPermission, checkPrompt, checkQuestion, checkStatusLine, checkTrust, type ScreenName } from './scenario';
+import {
+  FIXTURE_ROOT,
+  checkAskInput,
+  checkChat,
+  checkPermission,
+  checkPrompt,
+  checkQuestion,
+  checkRewindRestore,
+  checkStatusLine,
+  checkTrust,
+  checkWorkflowApproval,
+  type ScreenName,
+} from './scenario';
 
 // 本物の Claude Code から取った控え（test/fixtures/claude-code/<版>/）を、アプリの読み取りにかける。
 // 控えは、互換性の確認（npm run test:cli）に TANACODE_RECORD=1 を付けて取る。古い版の控えも残し、読めるままかを確かめ続ける
@@ -67,6 +79,14 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
 
   it('Write の許可の確認が読める', () => {
     checkPermission(parseMenu(screen('write-permission')), 'hello.txt');
+  });
+
+  it('ワークフローを始める前の確認が読める', () => {
+    checkWorkflowApproval(parseMenu(screen('workflow-approval')));
+  });
+
+  it('/rewind の「何を戻すか」が読める', () => {
+    checkRewindRestore(parseMenu(screen('rewind-restore')));
   });
 
   it('会話ログからチャットを組み立てられる', () => {

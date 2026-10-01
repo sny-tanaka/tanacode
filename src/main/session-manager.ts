@@ -27,10 +27,11 @@ import type { PtyHost } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
 import { askQuestionsOf } from './screen-parser';
+import { TaskRouter } from './task-router';
 import { ScreenTracker } from './screen-tracker';
 import type { StatusLineWatcher } from './statusline';
 import { SubagentTracker } from './subagent-tracker';
-import { WorkflowTracker, workflowLaunchOf } from './workflow-tracker';
+import { WorkflowTracker } from './workflow-tracker';
 import type { SessionRecord, SessionStore } from './session-store';
 import type { WorkspaceWatchers } from './workspace-watcher';
 
@@ -49,18 +50,10 @@ type Runtime = {
   events: ChatEvent[];
   unread: boolean;
   workflows: WorkflowTracker;
-  // Workflow ツールに直接渡されたスクリプト（tool_use ID ごと）。フェーズ名を読むのに使う
-  workflowScripts: Map<string, string>;
   subagents: SubagentTracker;
-  // Agent ツールの tool_use ID（結果の行がどのツールのものか分かるように）
-  agentToolIds: Set<string>;
-  // SendMessage の tool_use ID（結果が、前に起動したエージェントの再開かを見る）
-  sendMessageIds: Set<string>;
-  // 回答を待っている AskUserQuestion の tool_use ID
-  askToolId: string | null;
-  // run_in_background で呼んだ Bash の入力（tool_use ID ごと）
-  bashInputs: Map<string, Record<string, unknown>>;
   bashTasks: BashTaskTracker;
+  // 会話ログの行を、上の 3 つと画面の質問に振り分ける
+  tasks: TaskRouter;
   // Claude が読んだ・書いたファイルとコンテキストの使用量
   knowledge: KnowledgeTracker;
   // statusLine から読んだモデル・コンテキスト・利用枠（応答のたびに更新）
@@ -502,22 +495,26 @@ export class SessionManager {
         this.listeners.onSubagents(id, runs);
         this.countBackground(id);
       });
+      const bashTasks = new BashTaskTracker((tasks) => {
+        this.listeners.onBashTasks(id, tasks);
+        this.countBackground(id);
+      });
+      const tasks = new TaskRouter({
+        workflows,
+        subagents,
+        bashTasks,
+        screen: () => this.runtimes.get(id)?.screen ?? null,
+        sessionDir: () => this.sessionDir(id),
+      });
       rt = {
         process: null,
         seq: 0,
         events: [],
         unread: false,
         workflows,
-        workflowScripts: new Map(),
         subagents,
-        agentToolIds: new Set(),
-        sendMessageIds: new Set(),
-        askToolId: null,
-        bashInputs: new Map(),
-        bashTasks: new BashTaskTracker((tasks) => {
-          this.listeners.onBashTasks(id, tasks);
-          this.countBackground(id);
-        }),
+        bashTasks,
+        tasks,
         knowledge: new KnowledgeTracker(record.cwd, (value) => this.listeners.onKnowledge(id, value)),
         statusLine: null,
         chain: [],
@@ -651,56 +648,6 @@ export class SessionManager {
     rt.chain.push({ uuid: entry.uuid, type: entry.type, eventStart: rt.events.length });
   }
 
-  // バックグラウンドで動くもの（ワークフロー・サブエージェント）の起動・結果・完了通知を追う。
-  // isHistory: 前に起動した claude が書いた行（今は動いていない）
-  // isHistory: 前の起動の行（過去のもの）。replaying: 読み直している行（引き継いだ claude が書いた、今も続いている行を含む）
-  private trackTasks(id: string, rt: Runtime, entry: TranscriptEntry, isHistory: boolean, replaying: boolean): void {
-    const content = Array.isArray(entry.message?.content) ? entry.message.content : [];
-    for (const block of content) {
-      if (block.type === 'tool_use' && block.name === 'Workflow' && block.id && typeof block.input?.script === 'string') {
-        rt.workflowScripts.set(block.id, block.input.script);
-      }
-      if (block.type === 'tool_use' && (block.name === 'Agent' || block.name === 'Task') && block.id) {
-        rt.agentToolIds.add(block.id);
-        if (!isHistory) rt.subagents.start(block.id, this.sessionDir(id), isTrue(block.input?.run_in_background));
-      }
-      if (block.type === 'tool_use' && block.name === 'SendMessage' && block.id) rt.sendMessageIds.add(block.id);
-      if (block.type === 'tool_result' && block.tool_use_id && rt.sendMessageIds.has(block.tool_use_id)) {
-        const agentId = resumedAgentOf(entry.toolUseResult, block.content);
-        if (agentId) rt.subagents.resume(block.tool_use_id, agentId, this.sessionDir(id), isHistory);
-      }
-      if (block.type === 'tool_result' && block.tool_use_id && rt.agentToolIds.has(block.tool_use_id)) {
-        rt.subagents.finish(block.tool_use_id, entry.toolUseResult, !!block.is_error, isHistory);
-      }
-      // 質問の選択メニューは、画面ではなく AskUserQuestion の input から組み立てる（画面が低いと選択肢の一部しか出ない）
-      if (block.type === 'tool_use' && block.name === 'AskUserQuestion' && block.id && !isHistory) {
-        rt.askToolId = block.id;
-        rt.screen?.setQuestions(askQuestionsOf(block.input));
-      }
-      if (block.type === 'tool_result' && block.tool_use_id && block.tool_use_id === rt.askToolId) {
-        rt.askToolId = null;
-        // 読み直しで届いた答えは、今の画面の質問への答えではない
-        rt.screen?.setQuestions(null, !replaying);
-      }
-      if (block.type === 'tool_use' && block.name === 'Bash' && block.id && block.input && isTrue(block.input.run_in_background)) {
-        rt.bashInputs.set(block.id, block.input);
-      }
-      const bashInput = block.type === 'tool_result' && block.tool_use_id ? rt.bashInputs.get(block.tool_use_id) : undefined;
-      if (bashInput) rt.bashTasks.start(block.tool_use_id!, bashInput, entry.toolUseResult, resultText(block.content), isHistory);
-    }
-    const launch = workflowLaunchOf(entry, rt.workflowScripts);
-    if (launch) rt.workflows.add(launch, isHistory);
-
-    const notice = taskNotificationOf(entry);
-    const notified = notice?.text.match(/<tool-use-id>(.*?)<\/tool-use-id>[\s\S]*?<status>(.*?)<\/status>/);
-    if (notice && notified) {
-      rt.workflows.notified(notified[1], notified[2]);
-      const result = notice.text.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim() ?? null;
-      rt.subagents.notified(notified[1], notified[2], result, notice.usage);
-      rt.bashTasks.notified(notified[1], notified[2]);
-    }
-  }
-
   // 作業中に送った発言は、Claude Code が受け取るまで会話ログに発言として書かれず、順番待ち（queue-operation）にだけ書かれる。
   // それを追って、受け取られるまでチャットに「順番待ち」として出す
   private trackQueue(id: string, rt: Runtime, entry: TranscriptEntry): void {
@@ -799,7 +746,7 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     // 引き継いだ claude が起動してから書いた行は、読み直した履歴でも今動いているもの（バックグラウンドのタスクや質問を追う）
     const past = isHistory && !(rt?.aliveSince && entryTime(entry) >= rt.aliveSince);
-    if (rt) this.trackTasks(id, rt, entry, past, isHistory);
+    rt?.tasks.track(entry, past, isHistory);
     if (rt && !past) this.trackQueue(id, rt, entry);
     rt?.knowledge.handle(entry);
 
@@ -894,32 +841,7 @@ function stateLabel(rt: Runtime): string {
   return '待機中';
 }
 
-// run_in_background は真偽値のほか、文字列の "true" で来ることもある
-function isTrue(value: unknown): boolean {
-  return value === true || value === 'true';
-}
 
-export type TaskUsage = { durationMs: number | null; totalTokens: number | null; toolUses: number | null };
-
-// バックグラウンドのタスクの完了通知（<task-notification>）。書かれ方は 3 通りあり、同じ通知が複数の形で書かれることもある
-// （受け取る側は何度受け取っても同じ結果になる）:
-// - ユーザーの発言の行（Claude が待っているときに届いた）
-// - attachment の queued_command（Claude の作業中に届いて、そのターンに差し込まれた。所要時間などが付く）
-// - queue-operation の enqueue（届いた時点のキュー。どの通知にもある）
-export function taskNotificationOf(entry: TranscriptEntry): { text: string; usage: TaskUsage | null } | null {
-  const e = entry as TranscriptEntry & { operation?: string; content?: unknown };
-  let text: unknown = null;
-  let usage: TaskUsage | null = null;
-  if (entry.type === 'user') text = entry.message?.content;
-  else if (entry.type === 'queue-operation' && e.operation === 'enqueue') text = e.content;
-  else if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command') {
-    text = entry.attachment.prompt;
-    const u = entry.attachment.usage as Record<string, unknown> | undefined;
-    const num = (v: unknown) => (typeof v === 'number' ? v : null);
-    if (u) usage = { durationMs: num(u.durationMs), totalTokens: num(u.totalTokens), toolUses: num(u.toolUses) };
-  }
-  return typeof text === 'string' && text.includes('<task-notification>') ? { text, usage } : null;
-}
 
 // 順番待ちの発言の文字。画像つきのときは content が配列で来る
 function queuedText(content: unknown): string | null {
@@ -957,22 +879,4 @@ function hasConversation(file: string): boolean {
   }
 }
 
-// SendMessage の結果から、再開したエージェントの ID を読む（{"success":true,"resumedAgentId":"…"}）
-function resumedAgentOf(toolUseResult: unknown, content: unknown): string | null {
-  const read = (value: unknown): string | null => {
-    const id = (value as { resumedAgentId?: unknown } | null)?.resumedAgentId;
-    return typeof id === 'string' && id ? id : null;
-  };
-  if (read(toolUseResult)) return read(toolUseResult);
-  try {
-    return read(JSON.parse(resultText(content)));
-  } catch {
-    return null;
-  }
-}
 
-function resultText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.map((b: { text?: unknown }) => (typeof b.text === 'string' ? b.text : '')).join('\n');
-}

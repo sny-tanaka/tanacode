@@ -8,12 +8,17 @@ import type { Step } from './cli/mock-api';
 
 // Claude Code との互換性を確かめる台本と、アプリが読み取れるべきもの。
 // 本物の claude を動かす確認（test/cli）と、そのとき取った控えを読む確認（test/recorded.test.ts）で共有する。
-// 台本: 発言 → Bash を実行（許可の確認）→ AskUserQuestion で質問 → Write でファイルを作る（許可の確認）→ 文章で返事
+// 台本: 発言 → Bash を実行（許可の確認）→ AskUserQuestion で質問 → Write でファイルを作る（許可の確認）→ 文章で返事。
+// ユーザーの設定に、Bash のあとに動く hooks（PostToolUse）を入れておく
 
 // 控えに書くときの、使い捨てのフォルダのパス（実行のたびに変わるので決まったものに置き換える）
 export const FIXTURE_ROOT = '/tmp/tanacode-cli';
 
 export const PROMPT = '確認を始めてください';
+
+// ユーザーの設定（~/.claude/settings.json）。何か出力する hooks だけが会話ログに残る
+export const HOOK_COMMAND = 'echo tanacode-hook';
+export const SETTINGS = { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: HOOK_COMMAND }] }] } };
 
 export const QUESTION = {
   question: 'どちらの書き方にしますか？',
@@ -42,7 +47,29 @@ export function stepsFor(cwd: string): Step[] {
 }
 
 // 控えに残す画面
-export type ScreenName = 'trust' | 'prompt' | 'bash-permission' | 'question' | 'write-permission';
+// workflow-approval（background.test.ts）と rewind-restore（session.test.ts）は、ほかの台本で取る
+export type ScreenName = 'trust' | 'prompt' | 'bash-permission' | 'question' | 'write-permission' | 'workflow-approval' | 'rewind-restore';
+
+// /rewind で戻す先の発言（session.test.ts）
+export const REWOUND = '再開して続けてください';
+
+// ワークフローを始める前の確認。説明の中のフェーズの一覧（番号付き）を、選択肢と取り違えない
+export function checkWorkflowApproval(menu: Menu | null): void {
+  expect(menu?.kind).toBe('other');
+  expect(menu!.title).toMatch(/workflow.*\?$/i);
+  expect(menu!.options.map((o) => o.label)).not.toContain('調べる');
+  expect(menu!.options.find((o) => /^Yes/.test(o.label))?.pointed).toBe(true);
+}
+
+// /rewind で戻す先を選んだあとの「何を戻すか」。戻す先の発言（縦線の枠の引用）は、見出しではなく補足に出る
+export function checkRewindRestore(menu: Menu | null): void {
+  expect(menu?.kind).toBe('other');
+  expect(menu!.title).toMatch(/restore/i);
+  expect(menu!.context.join('\n')).toContain(REWOUND);
+  expect(menu!.options.some((o) => /^Restore conversation/.test(o.label))).toBe(true);
+  expect(menu!.options.some((o) => /Never mind/i.test(o.label))).toBe(true);
+  expect(menu!.options.filter((o) => o.pointed)).toHaveLength(1);
+}
 
 // 初めてのフォルダで出る、フォルダの信頼の確認（番号の無い選択肢）。問いかけを見出しにする
 export function checkTrust(menu: Menu | null): void {
@@ -90,6 +117,7 @@ export function checkChat(entries: TranscriptEntry[], events: ChatEvent[], cwd: 
     { type: 'assistant-text', text: 'コマンドを実行します。' },
     { type: 'tool-use', id: 'toolu_bash', name: 'Bash', description: '確認のフォルダを作る' },
     { type: 'tool-result', id: 'toolu_bash', isError: false, output: expect.stringContaining('tanacode-check') },
+    { type: 'hook', run: expect.objectContaining({ event: 'PostToolUse', command: HOOK_COMMAND, toolUseId: 'toolu_bash' }) },
     { type: 'tool-use', id: 'toolu_ask', name: 'AskUserQuestion' },
     { type: 'tool-result', id: 'toolu_ask', isError: false, answers: [{ header: QUESTION.header, question: QUESTION.question, answer: 'です・ます' }] },
     { type: 'tool-use', id: 'toolu_write', name: 'Write', filePath: file },

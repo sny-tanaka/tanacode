@@ -87,15 +87,25 @@ npm run dev
 
 tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に頼っています。Claude Code の更新でこれらの形が変わると、アプリの読み取りが通らなくなります。そこで、本物の Claude Code でアプリの読み取りを確かめます。
 
-- `npm run test:cli`（`test/cli/`）: 本物の `claude` を node-pty で起動し、アプリと同じ部品（`ScreenTracker`・`TranscriptTail`・`toChatEvents`・`parseStatusLine`）で読みます。
+- `npm run test:cli`（`test/cli/`）: 本物の `claude` を node-pty で起動し、アプリと同じ部品で読みます。
+  - 読む部品: 画面は `ScreenTracker`、会話ログは `TranscriptFollower` と `toChatEvents`、バックグラウンドの作業と質問は `TaskRouter` と各トラッカー、statusLine は `parseStatusLine`、`/` の候補は `listCommands`。
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
-  - 台本（`test/scenario.ts`）: 発言 → Bash を実行（許可の確認）→ AskUserQuestion で質問 → Write でファイルを作る（許可の確認）→ 文章で返事。
+  - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
+  - 台本は 3 つ。それぞれ別の `claude` を起動して、同時に流します。
+
+    | ファイル | 台本 |
+    | --- | --- |
+    | `basic.test.ts`（台本は `test/scenario.ts`） | フォルダの信頼の確認 → 入力欄 → Bash（許可の確認・PostToolUse の hooks）→ AskUserQuestion → Write（許可の確認）→ 返事。チャットの組み立て・statusLine・`/` の候補（会話ログのスキル一覧）も |
+    | `background.test.ts` | サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（始める前の確認も）。それぞれ完了まで、トラッカーで追えるか |
+    | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち → `/compact` → `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind` |
+
+  - 確かめられないもの: Remote Control とモデルの一覧の控え（claude.ai へのログインが要る）、ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）、`/usage` の利用枠。
   - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます。
   - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
   - 失敗したときは、そのときの Claude Code の画面がログに出ます。
 - `npm test`（`test/recorded.test.ts`）: `npm run test:cli` のときに取った控え（`test/fixtures/claude-code/<版>/`）を、同じ読み取りにかけます。`claude` が無くても速く流せます。古い版の控えも残し、読めるままかを確かめ続けます。
-  - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
+  - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。基本の台本は画面・会話ログ・statusLine・フックの入力を、ほかの台本は画面だけ（ワークフローを始める前の確認・`/rewind` の「何を戻すか」）を残します。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
   - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと同じならチェックマーク、違えば警告の印を付けます（新しい版と古い版で分ける）。
   - 上げるときは、その版で `TANACODE_RECORD=1 npm run test:cli` が通ることを確かめ、控えを `test/fixtures/claude-code/<版>/` に入れます。控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
@@ -124,6 +134,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 会話ログは、変更の通知（`fs.watch`）ですぐ読みます。取りこぼしに備えて、0.15 秒ごとにも確かめます。
   - 作業中に送った発言は、会話ログの順番待ちの行（`queue-operation`）から読みます。
 - 選択メニュー（質問・許可の確認・巻き戻し・フォルダの信頼の確認）だけは、pty の画面を仮想の端末で再現して読み取ります。選んだ答えは ↑/↓ と Enter のキー入力にして送ります。
+  - 選択肢は、`❯` の行から上へたどって最初に見つかる「1.」から読みます。ワークフローを始める前の確認のように、説明の中にも番号付きの一覧（フェーズ）があるためです。
+  - 問いかけが説明の上にある確認（「Run a dynamic workflow?」「Confirm you want to restore …:」）は、`?`（無ければ `:`）で終わる行を見出しにします。`/rewind` の「何を戻すか」の縦線の枠は質問文ではなく、戻す先の発言の引用なので、補足に出します。下の段に重ねて出るメニューの上端は `▔` の線です。
   - フォルダの信頼の確認は、選択肢に番号がありません（`❯ No, exit` など）。番号付きの選択肢が無いときは、下に操作説明があり、`❯` の行と同じ字下げの行が続くものを選択肢として読みます。上の文章は、問いかけ（`?` を含む段落）を見出しに、ほかを補足にします。
 - 起動時のバナーのモデル名は、ロゴの右の「Claude Code vX.Y.Z」の次の行から読みます（前の Claude Code の、枠の中の形にも対応）。
   - AskUserQuestion の質問文・選択肢・説明・プレビューは、その入力から取ります。画面からは、カーソルの位置・チェック・「その他」に打った文字・どの質問のページかだけを読みます。画面が低いと Claude Code は選択肢の一部しか出さないためです。
@@ -214,6 +226,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
   - `screen-tracker.ts` / `screen-parser.ts`: pty の画面を仮想の端末で再現し、選択メニューを読み取る
   - `subagent-tracker.ts` / `workflow-tracker.ts` / `bash-task-tracker.ts`: サブエージェント・ワークフロー・バックグラウンドの Bash の進み具合
+  - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `statusline.ts` / `usage-monitor.ts` / `model-catalog.ts`: statusLine・利用枠・モデル一覧
   - `claude-version.ts`: 入っている Claude Code の版（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
@@ -241,7 +254,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
-  - `cli/`: 本物の `claude` を動かす確認と、モックの API
+  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session` の 3 つの台本）と、モックの API・`claude` を動かす部品（`claude-run.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
 
 ## デモ動画の仕組み
