@@ -48,7 +48,7 @@ npm run dev
 `npm install` のあと `npm run install-app` を実行すると、ビルドして「アプリケーション」フォルダに入れます。手元でビルドしたものは、ダウンロードの印が付かないので `xattr` のコマンドは不要。
 
 - 動いているアプリの上に上書きせず、隣にコピーしてから名前の付け替えで入れ替えます。動いているアプリと Claude Code は、そのまま動き続けます。
-- 終了のダイアログで「動かしたまま終了」を選んで起動し直すと、新しい版になります。
+- 終了のダイアログで「動かしたまま終了」を選んで起動し直すと、新しいバージョンになります。
 
 ### 開発版での注意
 
@@ -66,6 +66,7 @@ npm run dev
 
 - コードのコメント・コミットメッセージ・ドキュメント・画面の文言は、日本語で書きます（コード中の識別子や、ツール名・コマンドなどの固有名詞はそのままでかまいません）。
 - README・GUIDE・CONTRIBUTING・SECURITY は、名詞で止められるところは体言止め、動詞で終わる文は「です・ます」で書きます（例:「ワンクリックで作成。作成後に編集することもできます。」）。機能を変えたら、読む人に合わせて該当する文書も直します。
+- 「版」は単体で使わず、「バージョン」と書きます（「新しいバージョン」「最新バージョン」など）。「開発版」のような熟語はそのまま。
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコンは「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
@@ -120,26 +121,26 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
   - 失敗したときは、そのときの Claude Code の画面がログに出ます。
-- `npm test`（`test/recorded.test.ts`）: `npm run test:cli` のときに取った控え（`test/fixtures/claude-code/<版>/`）を、同じ読み取りにかけます。`claude` が無くても速く流せます。古い版の控えも残し、読めるままかを確かめ続けます。
+- `npm test`（`test/recorded.test.ts`）: `npm run test:cli` のときに取った控え（`test/fixtures/claude-code/<バージョン>/`）を、同じ読み取りにかけます。`claude` が無くても速く流せます。古いバージョンの控えも残し、読めるままかを確かめ続けます。
   - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。基本の台本は画面・会話ログ・statusLine・フックの入力を、ほかの台本は画面だけ（ワークフローを始める前の確認・`/rewind` の「何を戻すか」・AskUserQuestion の各ページ・中断のあとの入力欄・入力欄のまわり（`--effort`・書きかけ・長い貼り付けの目印・`!` のコマンド））を残します。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。画面は、文字の行（`.json`）と、文字の属性ごとの書き出し（`.ansi`。`@xterm/addon-serialize`）の 2 つを残します。書きかけ（`draft`）は薄い字の入力例を除いて読むので、`.ansi` を `ScreenTracker` に流し込んで確かめます。
   - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
-- tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと同じならチェックマーク、違えば警告の印を付けます（新しい版と古い版で分ける）。
-  - 上げるのは、GitHub Actions の毎日の確認です（下）。新しい版で通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします。
+- tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っているバージョンがこれと同じならチェックマーク、違えば警告の印を付けます（新しいバージョンと古いバージョンで分ける）。
+  - 上げるのは、GitHub Actions の毎日の確認です（下）。新しいバージョンで通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします。
     - `VERIFIED_CLAUDE_CODE_VERSION`
-    - README と GUIDE の「動作確認済」の行の版（README の先頭のバッジも、alt に「動作確認済」を入れてあるので一緒に変わる）
-    - その版の控え（`test/fixtures/claude-code/<版>/`）
+    - README と GUIDE の「動作確認済」の行のバージョン（README の先頭のバッジも、alt に「動作確認済」を入れてあるので一緒に変わる）
+    - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`）
   - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
-  - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <版>`）。
+  - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
 - GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
-  - 定期の確認で失敗したら、Issue を立てます（同じ版の Issue が開いていれば立てない）。
-  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<版>`）を作って、そのまま squash マージします。動作確認済のバージョンと同じ版で、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じ版の PR が一度でもあれば（閉じたものも）、作り直しません。
+  - 定期の確認で失敗したら、Issue を立てます（同じバージョンの Issue が開いていれば立てない）。
+  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、そのまま squash マージします。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
     - PR を作ってマージするのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
     - GitHub Actions が作った PR では、PR の CI が動きません。そのため、マージの条件は PR の CI ではなく、同じ確認（`check` ジョブの `npm test` と本物の claude での `npm run test:cli`、書き換えたあとの `npm test`）が通ったことです。確かめた実行へのリンクを PR の説明に載せます。
     - マージできなかったときは、`update` ジョブが失敗して、PR は開いたまま残ります。人が見てマージします。
     - マージしたあとの develop への push では、GitHub Actions のトークンの仕様で、ワークフローが動きません。
     - リポジトリの設定（Settings → Actions → General）で「Allow GitHub Actions to create and approve pull requests」をオンにしておく必要があります。develop のルールセット（need-pr）は、PR を通すことだけを求めています（承認 0 人・squash のみ）。必須のチェックを足すと、PR の CI が動かないこの PR はマージできなくなります。
-  - 途中の控えは artifact（`claude-code-<版>`）にも残します。
-  - 「Run workflow」で、版を指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古い版では作らない）。
+  - 途中の控えは artifact（`claude-code-<バージョン>`）にも残します。
+  - 「Run workflow」で、バージョンを指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古いバージョンでは作らない）。
 
 ## 仕組み
 
@@ -168,7 +169,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 起動時のバナーのモデル名は、ロゴの右の「Claude Code vX.Y.Z」の次の行から読みます（前の Claude Code の、枠の中の形にも対応）。
   - AskUserQuestion の質問文・選択肢・説明・プレビューは、その入力から取ります。画面からは、カーソルの位置・チェック・「その他」に打った文字・どの質問のページかだけを読みます。画面が低いと Claude Code は選択肢の一部しか出さないためです。
   - 選択肢の説明が長く、メニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れて見えません。そのときは、見えている選択肢の名前がそろう質問として組み立てます。カーソルのある選択肢が切れて `❯` が見えないときは、カーソルは見えている選択肢より上にあります（見えていないのが 1 つめだけなら、1 つめ）。カードで選んだとき、カーソルが目的の選択肢まで来なければ、違う選択肢で答えないよう Enter などを送りません。
-  - 今の Claude Code は、AskUserQuestion の行を答えたあとで会話ログに書きます。そこで、質問を出す前の PreToolUse のフックで、入力をセッションごとのファイルに書かせて読みます（下の `--settings`）。フックが無い（前の版のアプリが起動した）Claude Code では、画面から組み立てます。質問文は縦線（│）の枠で端末の幅に折り返して出るので、縦線を外して行をつなぎ直します。
+  - 今の Claude Code は、AskUserQuestion の行を答えたあとで会話ログに書きます。そこで、質問を出す前の PreToolUse のフックで、入力をセッションごとのファイルに書かせて読みます（下の `--settings`）。フックが無い（前のバージョンのアプリが起動した）Claude Code では、画面から組み立てます。質問文は縦線（│）の枠で端末の幅に折り返して出るので、縦線を外して行をつなぎ直します。
 - アプリが起動する Claude Code にだけ、`--settings` で statusLine を足します。
   - Claude Code は応答のたびに JSON を渡してきます。中身はモデル・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フォルダの信頼の確認の前にフラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
@@ -221,6 +222,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - 図案だけの元の画像は `design/logo-mark.png`（背景を透過したもの）。ロゴは、これと「tanacode」の文字を並べた `design/logo.png`。README は、どちらのテーマでも読める背景付きの `design/logo-banner.png` を使います。タイトルバーのロゴは `src/renderer/src/assets/logo.png`、アプリのアイコンは `build/icon-source.png` から `npm run icon` で作ります。新規セッションの画面に出す小さいアイコン（`src/renderer/src/assets/icon.png`）も、同じ `npm run icon` で作ります。
 - バージョンは、ビルドのときに `package.json` の `version` を埋め込みます。
+- バージョンの右には、新しいバージョンの印（`layout/AppUpdate.tsx`）。main の `app-update.ts` が、起動時と 1 時間ごとに GitHub の `releases/latest` を問い合わせ、`app.getVersion()` と比べます。`releases/latest` は公開済みのバージョンだけを返すので、Releases の下書きを公開した時点で知らせが出ます。開くページは、返事の `html_url` を使わずにバージョンから組み立てます。問い合わせは `net.fetch`（macOS のプロキシの設定が効く）。確かめられなかったときは前の結果のまま。メニューの「新しいバージョンが出たら通知する」でオフにすると、問い合わせを止めて印も消します。新しいバージョンの印は、目の端でも気づけるよう、見つけたときに動かします（まだ見ていなければ 1 時間ごとにも）。マウスを乗せた・押したバージョンは localStorage に残し、そのバージョンではもう動かしません。
 
 ## 読むもの・書くもの
 
@@ -234,6 +236,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
+| `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと。メニューの「新しいバージョンが出たら通知する」で止められる） |
 
 ### 書くもの
 
@@ -242,7 +245,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うかなど） |
-| `settings.json` | アプリ自身の設定（今は、macOS の通知を出すか。右上のベルで切り替える） |
+| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `usage.json` | 最後に分かった利用枠 |
@@ -264,13 +267,14 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `statusline.ts` / `usage-monitor.ts` / `model-catalog.ts`: statusLine・利用枠・モデル一覧
-  - `claude-version.ts`: 入っている Claude Code の版（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
+  - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）
-  - `app-settings.ts`: アプリ自身の設定（今は通知のオン・オフ）の保存
+  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか）の保存
+  - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
 - `src/preload`: renderer に `window.tanacode` の API を公開する
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーは部品の隣の `*.stories.tsx`
@@ -293,6 +297,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
+  - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
 
 ## デモ動画の仕組み
 

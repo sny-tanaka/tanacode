@@ -16,6 +16,7 @@ import {
   type SessionSummary,
   type TanacodeApi,
 } from '@shared/ipc';
+import type { AppUpdate } from '@shared/app-update';
 import type { SystemStats } from '@shared/system';
 import type { UsageLimits } from '@shared/usage';
 
@@ -81,6 +82,10 @@ const api: TanacodeApi = {
   claudeVersion: {
     get: () => ipcRenderer.invoke(IpcChannel.ClaudeVersionGet),
     onChanged: (listener) => subscribe<string | null>(IpcChannel.ClaudeVersionChanged, listener),
+  },
+  appUpdate: {
+    get: () => ipcRenderer.invoke(IpcChannel.AppUpdateGet),
+    onChanged: (listener) => subscribe<AppUpdate | null>(IpcChannel.AppUpdateChanged, listener),
   },
   statusLine: {
     get: (sessionId) => ipcRenderer.invoke(IpcChannel.StatusLineGet, sessionId),

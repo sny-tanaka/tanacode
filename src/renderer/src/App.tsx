@@ -32,6 +32,7 @@ import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/tas
 import { TerminalPanel, type TerminalView } from './terminal/TerminalPanel';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
+import { useAppUpdate } from './layout/AppUpdate';
 import { TooltipLayer } from './layout/Tooltip';
 import { useNotifications } from './notifications/useNotifications';
 import { setCursor } from './editor/cursorStore';
@@ -78,6 +79,7 @@ export function App() {
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
+  const appUpdate = useAppUpdate();
   const resizer = (column: Column) => (
     <Resizer
       width={columns.widths[column]}
@@ -426,7 +428,7 @@ export function App() {
   return (
     <div className="app">
       <TooltipLayer />
-      <TitleBar notifications={notifications} onNotificationsChange={setNotifications} />
+      <TitleBar notifications={notifications} onNotificationsChange={setNotifications} update={appUpdate} />
       <div
         className="main"
         ref={columns.mainRef}

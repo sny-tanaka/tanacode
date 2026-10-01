@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, powerMonitor, session, shell, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, session, shell, type MenuItem, type WebContents } from 'electron';
 import {
   IpcChannel,
   type DiscoveredSession,
@@ -13,6 +13,7 @@ import {
   type SessionOptions,
 } from '@shared/ipc';
 import { AppSettings } from './app-settings';
+import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
@@ -40,6 +41,7 @@ let settings: AppSettings;
 let statusLines: StatusLineWatcher;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
+let appUpdates: AppUpdateMonitor;
 let watchers: WorkspaceWatchers;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
@@ -258,6 +260,7 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
   ipcMain.handle(IpcChannel.UsageGet, () => usage.get());
   ipcMain.handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
+  ipcMain.handle(IpcChannel.AppUpdateGet, () => appUpdates.get());
   ipcMain.handle(IpcChannel.UsageRefresh, () => usage.refresh());
   ipcMain.handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   ipcMain.handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
@@ -337,7 +340,23 @@ async function saveAttachment(name: string, data: Uint8Array): Promise<string> {
 function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      { role: 'appMenu' },
+      {
+        // 既定の appMenu の並びに、「新しいバージョンが出たら通知する」の切り替えを足す
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
       {
         label: 'ファイル',
         submenu: [
@@ -364,6 +383,19 @@ function buildMenu(): void {
       { role: 'windowMenu' },
     ]),
   );
+}
+
+// メニューの「新しいバージョンが出たら通知する」。オフにしたら、GitHub への問い合わせをやめて、タイトルバーの印も消す。
+// 保存できなかったら、チェックを元に戻す
+function setUpdateCheck(item: MenuItem): void {
+  try {
+    settings.setUpdateCheckEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+    return;
+  }
+  if (item.checked) appUpdates.start();
+  else appUpdates.stop();
 }
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
@@ -483,6 +515,8 @@ app.whenReady().then(async () => {
   }, remoteControl);
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
+  // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
+  appUpdates = new AppUpdateMonitor(app.getVersion(), (update) => send(IpcChannel.AppUpdateChanged, update), (url, init) => net.fetch(url, init));
   // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
   await manager.adopt();
   registerIpc();
@@ -492,6 +526,7 @@ app.whenReady().then(async () => {
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
   claudeVersions.start();
+  if (settings.updateCheckEnabled()) appUpdates.start();
   // ターミナルで Claude Code を更新して戻ってきたときに、すぐ表示を変える
   app.on('browser-window-focus', () => void claudeVersions.refresh());
   app.on('activate', () => showWindow());
@@ -506,6 +541,7 @@ app.on('before-quit', (event) => {
   statusLines?.close();
   system?.stop();
   claudeVersions?.stop();
+  appUpdates?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   manager?.closeAll(false);
   ptyHost?.close();
