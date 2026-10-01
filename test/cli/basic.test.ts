@@ -32,12 +32,16 @@ describe(`Claude Code ${version}`, () => {
     let api: MockApi;
     let run: ClaudeRun;
     const events = () => run.entries.flatMap((e) => toChatEvents(e, run.cwd));
-    // 選択メニューが出たとき: session-manager の知らせ（onAttention）・一覧の操作待ち・状態の文言。返すのは通知の本文
-    const checkAttention = (kind: 'permission' | 'question', state: string): string => {
-      const last = run.attentions.at(-1);
-      expect(last?.kind === 'menu' && last.menu.kind).toBe(kind);
+    // 選択メニューが出たとき: 一覧の操作待ちと状態の文言
+    const checkWaiting = (kind: 'permission' | 'question', state: string): void => {
       expect(run.summary()?.attention).toBe(kind);
       expect(run.manager.liveSessions()).toEqual([{ title: expect.any(String), state }]);
+    };
+    // 操作待ちでないところから選択メニューが出たときの、session-manager の知らせ（onAttention。アプリは通知を出す）。返すのは通知の本文。
+    // 確認に答えてすぐ次の確認が出たとき（操作待ちのまま切り替わったとき）は、知らせを出し直さない（session-manager の handleScreen）
+    const checkNotified = (kind: 'permission' | 'question'): string => {
+      const last = run.attentions.at(-1);
+      expect(last?.kind === 'menu' && last.menu.kind).toBe(kind);
       return last?.kind === 'menu' ? menuNotice(last.menu) : '';
     };
 
@@ -73,7 +77,8 @@ describe(`Claude Code ${version}`, () => {
       run.capture('bash-permission');
       checkPermission(menu, 'mkdir checked');
       // session-manager は操作待ちを知らせ（アプリは通知を出す）、一覧の状態を変える
-      expect(checkAttention('permission', '実行の許可待ち')).toContain('mkdir checked');
+      checkWaiting('permission', '実行の許可待ち');
+      expect(checkNotified('permission')).toContain('mkdir checked');
       await run.answer(menu.title, menu.options[0].id);
     });
 
@@ -82,7 +87,9 @@ describe(`Claude Code ${version}`, () => {
       run.capture('question');
       checkQuestion(menu);
       checkAskInput(run.askInput());
-      expect(checkAttention('question', '質問への回答待ち')).toBe(QUESTION.question);
+      // 許可の確認に答えてすぐ質問が出るので、知らせが出るかは時間しだい。通知に出す本文だけを確かめる
+      checkWaiting('question', '質問への回答待ち');
+      expect(menuNotice(menu)).toBe(QUESTION.question);
       await run.answer(menu.title, menu.options[0].id);
     });
 
