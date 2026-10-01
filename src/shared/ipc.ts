@@ -190,6 +190,8 @@ export type DirEntry = { name: string; path: string; isDir: boolean };
 export type FileContent =
   | { kind: 'text'; text: string }
   | { kind: 'binary' }
+  // 画像（PNG・JPEG など。SVG は文字なので text）。url は data URL（レンダラーはファイルを直接読めない）
+  | { kind: 'image'; url: string }
   | { kind: 'too-large'; size: number };
 // paths は root からの相対パス
 export type FilesChanged = { root: string; paths: string[] };

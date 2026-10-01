@@ -347,6 +347,11 @@ export const EditorPane = memo(function EditorPane({
         )}
         {!active && <div className="editor-placeholder">エクスプローラーからファイルを開いてください</div>}
         {active?.content.kind === 'binary' && <div className="editor-placeholder">バイナリファイルは表示できません</div>}
+        {active?.content.kind === 'image' && (
+          <div className="editor-image">
+            <img src={active.content.url} alt={active.path} draggable={false} />
+          </div>
+        )}
         {active?.content.kind === 'too-large' && (
           <div className="editor-placeholder">
             ファイルが大きすぎるため表示できません（{Math.round(active.content.size / 1024 / 1024)}MB）
