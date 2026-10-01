@@ -151,13 +151,16 @@ export class ScreenTracker {
     if (this.busy) return;
     this.busy = true;
     try {
-      for (let step = 0; step < 30; step++) {
+      for (let step = 0; ; step++) {
         const menu = this.menu();
         if (!menu) return;
+        // カーソルが見えない（画面より高い質問で、上の切れた選択肢にある）ときは -1。↓ で見えるところまで送る
         const current = menu.options.findIndex((o) => o.pointed);
         const target = menu.options.findIndex((o) => o.id === optionId);
         if (target === -1) return;
         if (current === target) break;
+        // 目的の選択肢にカーソルが来なかったら、違う選択肢で答えないよう何も送らない
+        if (step === 30) return;
         this.write(target > current ? KEY_DOWN : KEY_UP);
         await this.readUntil(() => this.menu()?.options.findIndex((o) => o.pointed) !== current, 500);
       }

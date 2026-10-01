@@ -102,6 +102,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `background.test.ts` | サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（始める前の確認・実行中の journal も）。それぞれ完了まで、トラッカーで追えるか。完了通知（`<task-notification>`）は、出力ファイルや完了時の記録という後ろ盾と分けて、会話ログの行と `taskNotificationOf` だけで読めるか、チャットの知らせになるかも |
     | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 会話ログのモデル名 → `/compact` → `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind`（「何を戻すか」のメニューと、会話を戻して発言したときの `replace` のイベント） |
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
+    | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
 
   - 確かめられないもの: Remote Control とモデルの一覧の控え（claude.ai へのログインが要る）、ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）、`/usage` の利用枠。
   - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます。
@@ -109,7 +110,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
   - 失敗したときは、そのときの Claude Code の画面がログに出ます。
 - `npm test`（`test/recorded.test.ts`）: `npm run test:cli` のときに取った控え（`test/fixtures/claude-code/<版>/`）を、同じ読み取りにかけます。`claude` が無くても速く流せます。古い版の控えも残し、読めるままかを確かめ続けます。
-  - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。基本の台本は画面・会話ログ・statusLine・フックの入力を、ほかの台本は画面だけ（ワークフローを始める前の確認・`/rewind` の「何を戻すか」）を残します。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
+  - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。基本の台本は画面・会話ログ・statusLine・フックの入力を、ほかの台本は画面だけ（ワークフローを始める前の確認・`/rewind` の「何を戻すか」・AskUserQuestion の各ページ）を残します。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
   - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと同じならチェックマーク、違えば警告の印を付けます（新しい版と古い版で分ける）。
   - 上げるのは、GitHub Actions の毎日の確認です（下）。新しい版で通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作ります。マージは人が PR を見てから。
@@ -153,6 +154,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - フォルダの信頼の確認は、選択肢に番号がありません（`❯ No, exit` など）。番号付きの選択肢が無いときは、下に操作説明があり、`❯` の行と同じ字下げの行が続くものを選択肢として読みます。上の文章は、問いかけ（`?` を含む段落）を見出しに、ほかを補足にします。
 - 起動時のバナーのモデル名は、ロゴの右の「Claude Code vX.Y.Z」の次の行から読みます（前の Claude Code の、枠の中の形にも対応）。
   - AskUserQuestion の質問文・選択肢・説明・プレビューは、その入力から取ります。画面からは、カーソルの位置・チェック・「その他」に打った文字・どの質問のページかだけを読みます。画面が低いと Claude Code は選択肢の一部しか出さないためです。
+  - 選択肢の説明が長く、メニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れて見えません。そのときは、見えている選択肢の名前がそろう質問として組み立てます。カーソルのある選択肢が切れて `❯` が見えないときは、カーソルは見えている選択肢より上にあります（見えていないのが 1 つめだけなら、1 つめ）。カードで選んだとき、カーソルが目的の選択肢まで来なければ、違う選択肢で答えないよう Enter などを送りません。
   - 今の Claude Code は、AskUserQuestion の行を答えたあとで会話ログに書きます。そこで、質問を出す前の PreToolUse のフックで、入力をセッションごとのファイルに書かせて読みます（下の `--settings`）。フックが無い（前の版のアプリが起動した）Claude Code では、画面から組み立てます。質問文は縦線（│）の枠で端末の幅に折り返して出るので、縦線を外して行をつなぎ直します。
 - アプリが起動する Claude Code にだけ、`--settings` で statusLine を足します。
   - Claude Code は応答のたびに JSON を渡してきます。中身はモデル・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。
@@ -271,7 +273,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
-  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt` の 4 つの台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
+  - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion）
+  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
 

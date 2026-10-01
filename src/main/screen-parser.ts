@@ -30,12 +30,18 @@ const MAX_MENU_LINES = 40;
 export function parseMenu(lines: ScreenLine[]): Menu | null {
   const footer = findLastIndex(lines, (l) => FOOTER.test(l.text));
   const pointer = findLastIndex(lines, (l) => /❯\s+(\d+\.|Submit\s*$|Next\s*$)/.test(l.text));
-  if (pointer === -1) return parsePlainMenu(lines, footer);
+  // AskUserQuestion のメニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れる。
+  // カーソルが切れた選択肢にあると ❯ が見えないが、操作説明の上に番号付きの「Chat about this」があれば質問として読む
+  const clipped =
+    pointer === -1 && footer !== -1 && lines.slice(0, footer).some((l) => l.text.match(OPTION)?.[3].trim() === CHAT_ABOUT_THIS);
+  if (pointer === -1 && !clipped) return parsePlainMenu(lines, footer);
   const end = footer > pointer ? footer : lines.length;
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
 
-  const first = optionsStart(lines, top, pointer, end);
+  const first = optionsStart(lines, top, clipped ? end - 1 : pointer, end);
   if (first === -1) return null;
+  // 「1.」が見えているのにカーソルが無いのは、上が切れたメニューではない
+  if (clipped && lines[first].text.match(OPTION)?.[2] === '1') return null;
 
   // 選択肢のどれかにプレビューがあると、選択肢の右にプレビューの枠（┌─┐）と「Notes: press n to add notes」が並ぶ。
   // 枠が始まる位置（文字の位置）より右は読み飛ばし、左の列だけを選択肢として読む
@@ -80,7 +86,7 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
     }
     prevFull = full;
   }
-  if (!options.some((o) => o.pointed)) return null;
+  if (!clipped && !options.some((o) => o.pointed)) return null;
 
   // 「Chat about this」の直前の選択肢が自由記述（「Type something.」、入力後は入力した文字列になる）
   const chat = options.findIndex((o) => o.label === CHAT_ABOUT_THIS);
@@ -373,10 +379,17 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
   const title = squash(menu.title);
   const header = squash([...menu.context, menu.title].join(''));
   const matches = title ? questions.flatMap((q, i) => (squash(q.question).includes(title) ? [i] : [])) : [];
-  const index = matches.length > 1 ? (matches.find((i) => header.endsWith(squash(questions[i].question))) ?? -1) : (matches[0] ?? -1);
+  const byTitle = matches.length > 1 ? (matches.find((i) => header.endsWith(squash(questions[i].question))) ?? -1) : (matches[0] ?? -1);
+  // メニューが画面より高くて上が切れると、質問文が見えない（menu.title は上の選択肢の説明の切れ端になる）。
+  // そのときは、見えている選択肢の名前がそろう質問にする
+  const firstShown = menu.options.find((o) => /^\d+$/.test(o.id));
+  const cut = !!firstShown && firstShown.id !== '1';
+  const index = byTitle === -1 && cut ? questionByOptions(menu, questions) : byTitle;
   if (index === -1) return menu;
   const q = questions[index];
   const onScreen = new Map(menu.options.map((o) => [o.id, o]));
+  // 上が切れてカーソルが見えないとき、カーソルは見えている選択肢より上にある。見えていないのが 1 つめだけなら、そこにある
+  const hiddenPointer = cut && !menu.options.some((o) => o.pointed) && firstShown.id === '2' ? '1' : null;
   const option = (id: string, base: Omit<MenuOption, 'id' | 'pointed' | 'checked'>, checkable: boolean): MenuOption => {
     const shown = onScreen.get(id);
     const key = `${index}:${id}`;
@@ -386,7 +399,7 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
       id,
       ...base,
       label: base.textInput ? (last?.label ?? 'Type something.') : base.label,
-      pointed: shown?.pointed ?? false,
+      pointed: shown?.pointed ?? id === hiddenPointer,
       checked: checkable ? (last?.checked ?? false) : null,
     };
   };
@@ -402,6 +415,19 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
   }
   if (chat) options.push({ ...chat, id: String(q.options.length + 2) });
   return { ...menu, title: q.question, context: [], options, multiSelect: q.multiSelect };
+}
+
+// 画面に見えている選択肢（番号と名前）と自由記述の番号が、すべて合う質問。1 つに決まらなければ -1
+function questionByOptions(menu: Menu, questions: AskQuestion[]): number {
+  const shown = menu.options.filter((o) => /^\d+$/.test(o.id) && o.label !== CHAT_ABOUT_THIS);
+  const matches = questions.flatMap((q, i) => {
+    const fits = shown.every((o) => {
+      const n = Number(o.id);
+      return o.textInput ? n === q.options.length + 1 : n <= q.options.length && squash(o.label) === squash(q.options[n - 1].label);
+    });
+    return shown.length > 0 && fits ? [i] : [];
+  });
+  return matches.length === 1 ? matches[0] : -1;
 }
 
 // AskUserQuestion の input から質問を取り出す。形が違えば null

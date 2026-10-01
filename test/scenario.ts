@@ -47,8 +47,29 @@ export function stepsFor(cwd: string): Step[] {
 }
 
 // 控えに残す画面
-// workflow-approval（background.test.ts）と rewind-restore（session.test.ts）は、ほかの台本で取る
-export type ScreenName = 'trust' | 'prompt' | 'bash-permission' | 'question' | 'write-permission' | 'workflow-approval' | 'rewind-restore';
+// workflow-approval（background.test.ts）と rewind-restore（session.test.ts）は、ほかの台本で取る。
+// question- で始まるもの（question を除く）は、AskUserQuestion の台本（questions.test.ts）で取る
+export type ScreenName =
+  | 'trust'
+  | 'prompt'
+  | 'bash-permission'
+  | 'question'
+  | 'write-permission'
+  | 'workflow-approval'
+  | 'rewind-restore'
+  | QuestionScreenName;
+
+// AskUserQuestion の台本（test/scenarios/questions.ts）で取る画面
+export type QuestionScreenName =
+  | 'question-tabs-first'
+  | 'question-tabs-multi'
+  | 'question-tabs-last'
+  | 'question-tabs-review'
+  | 'question-multi'
+  | 'question-multi-review'
+  | 'question-preview'
+  | 'question-tall'
+  | 'question-tall-moved';
 
 // /rewind で戻す先の発言（session.test.ts）
 export const REWOUND = '再開して続けてください';
