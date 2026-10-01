@@ -1,4 +1,4 @@
-import type { AppUpdate } from '@shared/app-update';
+import { REPO_URL, type AppUpdate } from '@shared/app-update';
 import { compareVersions } from '@shared/claude-code';
 
 // tanacode の新しい版。自動アップデートは無いので、GitHub の公開の Releases の最新の版を確かめて、タイトルバーで知らせるだけ。
@@ -18,7 +18,7 @@ export function parseLatestRelease(body: unknown): string | null {
 
 // 開くページは、返事の html_url を使わずに版から組み立てる（Releases のページ以外を開かない）
 export function appUpdateOf(current: string, latest: string): AppUpdate {
-  return { latest, available: compareVersions(latest, current) > 0, url: `https://github.com/${REPO}/releases/tag/v${latest}` };
+  return { latest, available: compareVersions(latest, current) > 0, url: `${REPO_URL}/releases/tag/v${latest}` };
 }
 
 // 起動時と 1 時間ごとに確かめ、結果が変わったら知らせる。確かめられなかったとき（オフラインなど）は、前の結果のままにする。

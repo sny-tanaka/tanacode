@@ -174,19 +174,18 @@ input[type='checkbox'] {
   border: none;
   border-radius: 4px;
   background: none;
+  cursor: pointer;
   -webkit-app-region: no-drag;
+}
+.app-update:hover {
+  background: var(--bg-hover);
 }
 /* 最新なら、バージョンの文字と同じ色で控えめに */
 .app-update.latest {
   color: var(--text-tertiary);
-  cursor: default;
 }
 .app-update.available {
   color: var(--blue);
-  cursor: pointer;
-}
-.app-update.available:hover {
-  background: var(--bg-hover);
 }
 /* 右端のボタン（通知のベル）。帯はドラッグでウインドウを動かせるので、押せるようにドラッグを外す */
 .titlebar-actions {
