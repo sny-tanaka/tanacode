@@ -86,7 +86,11 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
   return (
     <section className="editor diff-pane">
       <div className="diff-pane-head">
-        <span className="diff-pane-title">{path}</span>
+        {/* 列が狭いときは、フォルダの部分から省略してファイル名を残す */}
+        <span className="diff-pane-title" data-tip={path}>
+          <span className="diff-pane-dir">{path.slice(0, path.lastIndexOf('/') + 1)}</span>
+          <span>{path.slice(path.lastIndexOf('/') + 1)}</span>
+        </span>
         <span className="diff-pane-kind">{subtitle}</span>
         <div className="spacer" />
         {nav && (

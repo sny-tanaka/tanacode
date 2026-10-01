@@ -105,6 +105,8 @@ export function useNow(active: boolean): number {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!active) return;
+    // 動いていない間の古い時刻のまま、最初の 1 秒を描かないよう、動き出したらすぐ今の時刻にする
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [active]);
@@ -113,5 +115,5 @@ export function useNow(active: boolean): number {
 
 export function elapsed(task: TaskEntry, now: number): number | null {
   if (task.durationMs !== null) return task.durationMs;
-  return task.startedAt && task.state === 'running' ? now - task.startedAt : null;
+  return task.startedAt && task.state === 'running' ? Math.max(0, now - task.startedAt) : null;
 }
