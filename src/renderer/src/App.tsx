@@ -21,6 +21,7 @@ import { NewSessionPane } from './sessions/NewSessionPane';
 import { Sidebar } from './sessions/Sidebar';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
+import { useClaudeVersion } from './system/ClaudeVersion';
 import { useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
@@ -76,6 +77,7 @@ export function App() {
   const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId);
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
+  const claudeVersion = useClaudeVersion();
   const resizer = (column: Column) => (
     <Resizer
       width={columns.widths[column]}
@@ -650,6 +652,7 @@ export function App() {
         pr={chat.pr}
         showCursor={activeFile?.content.kind === 'text'}
         language={language}
+        claudeVersion={claudeVersion}
       />
     </div>
   );

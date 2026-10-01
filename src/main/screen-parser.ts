@@ -1,6 +1,10 @@
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenLine } from '@shared/screen';
 
 const RULE = /^\s*─{20,}\s*$/;
+// 許可の確認で、実行するコマンドを上下から囲む点線（例: 「╌╌╌…」）。飾りなので補足に入れない
+const DASHED_RULE = /^[╌┄┈]{20,}$/;
+// 下の段に重ねて出るメニュー（/rewind の「何を戻すか」など）の上端の線。右に「◐ medium · /effort」などが重なることがある
+const TOP_EDGE = /^\s*▔{20,}/;
 // 入力欄の枠の横線。名前を付けたセッション（claude -n・/rename）では、上の線の右端に名前が入る（例: 「────── 名前 ─」）
 const PROMPT_RULE = /^\s*─{20,}(?: .+ ─+)?\s*$/;
 // 画面が低いと、選択肢は一部だけが出て、外にまだあることを ↑ / ↓ で示す（例: 「↓ 2. …」）
@@ -12,6 +16,10 @@ const FOOTER = /Esc to cancel|Enter to (select|confirm)/;
 const TABS = /[☐☒]/;
 const BOXED = /^│\s?/;
 const CHAT_ABOUT_THIS = 'Chat about this';
+// 番号の無い選択肢のメニューで、カーソルのある行（例: 「 ❯ No, exit」）
+const PLAIN_POINTER = /^(\s*❯\s+)\S/;
+// 起動時のバナーの、ロゴの右の 1 行目
+const BANNER_TITLE = /Claude Code v\d+\.\d+\.\d+/;
 // AskUserQuestion の回答の確認画面の見出し
 const REVIEW_TITLE = 'Review your answers';
 // メニューとみなす範囲（フッターから上に何行まで見るか）
@@ -22,12 +30,18 @@ const MAX_MENU_LINES = 40;
 export function parseMenu(lines: ScreenLine[]): Menu | null {
   const footer = findLastIndex(lines, (l) => FOOTER.test(l.text));
   const pointer = findLastIndex(lines, (l) => /❯\s+(\d+\.|Submit\s*$|Next\s*$)/.test(l.text));
-  if (pointer === -1) return null;
+  // AskUserQuestion のメニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れる。
+  // カーソルが切れた選択肢にあると ❯ が見えないが、操作説明の上に番号付きの「Chat about this」があれば質問として読む
+  const clipped =
+    pointer === -1 && footer !== -1 && lines.slice(0, footer).some((l) => l.text.match(OPTION)?.[3].trim() === CHAT_ABOUT_THIS);
+  if (pointer === -1 && !clipped) return parsePlainMenu(lines, footer);
   const end = footer > pointer ? footer : lines.length;
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
 
-  const first = lines.findIndex((l, i) => i >= top && i < end && OPTION.test(l.text));
+  const first = optionsStart(lines, top, clipped ? end - 1 : pointer, end);
   if (first === -1) return null;
+  // 「1.」が見えているのにカーソルが無いのは、上が切れたメニューではない
+  if (clipped && lines[first].text.match(OPTION)?.[2] === '1') return null;
 
   // 選択肢のどれかにプレビューがあると、選択肢の右にプレビューの枠（┌─┐）と「Notes: press n to add notes」が並ぶ。
   // 枠が始まる位置（文字の位置）より右は読み飛ばし、左の列だけを選択肢として読む
@@ -72,14 +86,17 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
     }
     prevFull = full;
   }
-  if (!options.some((o) => o.pointed)) return null;
+  if (!clipped && !options.some((o) => o.pointed)) return null;
 
   // 「Chat about this」の直前の選択肢が自由記述（「Type something.」、入力後は入力した文字列になる）
   const chat = options.findIndex((o) => o.label === CHAT_ABOUT_THIS);
   const textOption = options.slice(0, Math.max(chat, 0)).filter((o) => o.id !== 'submit').pop();
   if (chat !== -1 && textOption) textOption.textInput = true;
 
-  const raw = lines.slice(top, first).map((l) => l.text.trim());
+  const raw = lines
+    .slice(top, first)
+    .map((l) => l.text.trim())
+    .filter((t) => !DASHED_RULE.test(t));
   // AskUserQuestion の質問文は、行頭に縦線（│）の付いた枠で、端末の幅で折り返して出る。
   // 縦線を外し、行をつなぎ直して 1 つの文にする
   const boxed = raw.filter((t) => BOXED.test(t)).map((t) => t.replace(BOXED, ''));
@@ -89,9 +106,22 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   // 回答の確認画面では、長い質問だけが縦線付きで出る。縦線の行を質問文として取り出すと、質問と回答の並びが崩れるので、
   // その場でつなぎ直して上から順に並べる（最後の「Ready to submit your answers?」が問い）
   const review = header.includes(REVIEW_TITLE);
-  const texts = review ? unwrapInPlace(raw.filter((t) => t !== tabLine)) : header.filter((t) => t !== tabLine);
-  const title = boxed.length > 0 && !review ? unwrap(boxed) : (texts.pop() ?? '');
-  const kind = tabs.length > 0 || chat !== -1 || previewAt !== null ? 'question' : /Do you want to/.test(title) ? 'permission' : 'other';
+  const question = tabs.length > 0 || chat !== -1 || previewAt !== null;
+  // 縦線の枠は、質問では質問文。そのほかのメニューでは引用（/rewind の「何を戻すか」の、戻す先の発言）なので、その場でつなぎ直す
+  const inPlace = review || (boxed.length > 0 && !question);
+  const texts = inPlace ? unwrapInPlace(raw.filter((t) => t !== tabLine)) : header.filter((t) => t !== tabLine);
+  let title = boxed.length > 0 && !inPlace ? unwrap(boxed) : (texts.pop() ?? '');
+  const kind = question ? 'question' : /Do you want to/.test(title) ? 'permission' : 'other';
+  // そのほかの確認（ワークフローを始める前の確認・/rewind の「何を戻すか」など）は、問いかけが説明の上にあることがある
+  // （「Run a dynamic workflow?」「Confirm you want to restore …:」）。最後の行が問いかけでなければ、
+  // ? で終わる行（無ければ : で終わる行）を見出しにして、最後の行は補足に回す
+  const asks = (mark: string) => findLastIndex(texts, (t) => t.endsWith(mark));
+  const asking = kind === 'other' && !review && !title.endsWith('?') ? (asks('?') !== -1 ? asks('?') : asks(':')) : -1;
+  if (asking !== -1) {
+    const asked = texts.splice(asking, 1)[0];
+    texts.push(title);
+    title = asked;
+  }
 
   return {
     kind,
@@ -102,6 +132,64 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
     multiSelect: options.some((o) => o.checked !== null),
     hint: end === footer ? lines[footer].text.trim() : '',
     previewLayout: previewAt !== null,
+  };
+}
+
+// 選択肢の最初の行。カーソル（❯）の行から上へたどって、最初に見つかる「1.」の行。
+// 説明の中にも番号付きの一覧があることがある（ワークフローを始める前の確認のフェーズの一覧）ので、範囲の先頭からは探さない。
+// 画面が低くて「1.」が見えていないときは、範囲の中で最初の選択肢の行
+function optionsStart(lines: ScreenLine[], top: number, pointer: number, end: number): number {
+  for (let i = Math.min(pointer, end - 1); i >= top; i--) {
+    if (lines[i].text.match(OPTION)?.[2] === '1') return i;
+  }
+  return lines.findIndex((l, i) => i >= top && i < end && OPTION.test(l.text));
+}
+
+// 番号の無い選択肢のメニュー（フォルダの信頼の確認など）。例:
+//   Quick safety check: Is this a project you created or one you trust? …
+//   ❯ No, exit
+//     Yes, I trust this folder
+//   Enter to confirm · Esc to cancel
+// ほかの画面と取り違えないよう、下に操作説明があり、❯ の行と同じ字下げの行が続く（2 つ以上の選択肢）ものだけを読む。
+// 選択肢の番号は上から 1, 2, …（選ぶときは ↑/↓ で動かすので、画面の番号は要らない）
+function parsePlainMenu(lines: ScreenLine[], footer: number): Menu | null {
+  if (footer === -1) return null;
+  const pointer = findLastIndex(lines.slice(0, footer), (l) => PLAIN_POINTER.test(l.text));
+  if (pointer === -1 || footer - pointer > MAX_MENU_LINES) return null;
+  // 選択肢の名前が始まる文字の位置。ほかの選択肢の行は、この位置まで空白で、そこから文字が始まる
+  const column = lines[pointer].text.match(PLAIN_POINTER)![1].length;
+  const isOption = (i: number) => {
+    const text = lines[i].text;
+    return i === pointer || (text.slice(0, column).trim() === '' && /\S/.test(text.charAt(column)));
+  };
+  let first = pointer;
+  while (first > 0 && isOption(first - 1)) first--;
+  let last = pointer;
+  while (last + 1 < footer && isOption(last + 1)) last++;
+  if (last === first) return null;
+  // 選択肢と操作説明の間には、空行しか無い
+  if (lines.slice(last + 1, footer).some((l) => l.text.trim())) return null;
+
+  const options: MenuOption[] = lines.slice(first, last + 1).map((l, i) => ({
+    id: String(i + 1),
+    label: l.text.trim().replace(/^❯\s+/, ''),
+    description: '',
+    pointed: first + i === pointer,
+    checked: null,
+    textInput: false,
+  }));
+  // 上の文章は段落ごとにつなぎ直し、問いかけ（? を含む最後の段落）を見出しに、ほかを補足にする
+  const paragraphs = unwrap(lines.slice(menuTop(lines, first), first).map((l) => l.text)).split('\n').filter(Boolean);
+  const asking = findLastIndex(paragraphs, (p) => p.includes('?'));
+  const at = asking === -1 ? paragraphs.length - 1 : asking;
+  return {
+    kind: 'other',
+    tabs: [],
+    title: paragraphs[at] ?? '',
+    context: paragraphs.filter((_, i) => i !== at),
+    options,
+    multiSelect: false,
+    hint: lines[footer].text.trim(),
   };
 }
 
@@ -161,7 +249,7 @@ function unwrapInPlace(lines: string[]): string[] {
   return result;
 }
 
-// 通常の入力欄: 横線の直後に「❯」で始まる行があり、その下にも横線がある
+// 通常の入力欄: 横線の直後に「❯」（シェルのコマンドを書いている間は「!」）で始まる行があり、その下にも横線がある
 export function hasPrompt(lines: ScreenLine[]): boolean {
   return promptRange(lines) !== null;
 }
@@ -200,23 +288,30 @@ export function isStreaming(lines: ScreenLine[], promptStart: number): boolean {
   return false;
 }
 
+// 入力欄の最初の行の目印。! を打ってシェルのコマンドを書いている間は「!」になる
+const PROMPT_MARK = /^[❯!](\s|$)/;
+
 export function promptRange(lines: ScreenLine[]): [number, number] | null {
   for (let i = lines.length - 1; i >= 1; i--) {
     const text = lines[i].text;
-    if (!/^❯(\s|$)/.test(text) || OPTION.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
+    if (!PROMPT_MARK.test(text) || OPTION.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
     const end = lines.findIndex((l, j) => j > i && j < i + 30 && PROMPT_RULE.test(l.text));
     if (end !== -1) return [i, end];
   }
   return null;
 }
 
-// 起動時のバナー（枠の中の「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort」など）。
-// 会話の本文にもモデル名は出てくるので、枠の行（│ で始まる）だけを見る。--resume ではバナーが出ない
+// 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort · Claude Max」など）。--resume ではバナーが出ない。
+// 会話の本文にもモデル名は出てくるので、バナーの行だけを見る。バナーは 2 つの形がある
+// - 枠の中（前の Claude Code）: 「│  Haiku 4.5 · Claude Max · …」
+// - ロゴの右（今の Claude Code）: 「▐▛███▜▌   Claude Code v2.1.286」の次の行の「▝▜█████▛▘  Opus 5.5 · Claude Max」
+// エフォートを指定して起動すると（--effort）、モデル名のあとに「with low effort」が入る
 export function findModel(lines: ScreenLine[]): string | null {
-  for (const { text } of lines) {
-    if (!text.startsWith('│')) continue;
-    // 例: 「│  Haiku 4.5 · Claude Max · …」。新しい系統名にも対応できるよう、名前は決め打ちしない
-    const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?) ·/);
+  const logo = lines.findIndex((l) => BANNER_TITLE.test(l.text));
+  const banner = [...lines.filter((l) => l.text.startsWith('│')), ...(logo === -1 ? [] : lines.slice(logo + 1, logo + 3))];
+  for (const { text } of banner) {
+    // 新しい系統名にも対応できるよう、名前は決め打ちしない
+    const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?)(?: with \S+ effort)? ·/);
     if (m) return m[1];
   }
   return null;
@@ -264,6 +359,7 @@ export function findEffort(lines: ScreenLine[]): string | null {
 function menuTop(lines: ScreenLine[], bottom: number): number {
   const limit = Math.max(0, bottom - MAX_MENU_LINES);
   for (let i = bottom - 1; i >= limit; i--) {
+    if (TOP_EDGE.test(lines[i].text)) return i + 1;
     if (!RULE.test(lines[i].text)) continue;
     const next = lines.slice(i + 1, bottom).find((l) => l.text.trim());
     // 横線の下が選択肢なら、メニューの途中の区切り。プレビュー付きの質問では、番号の無い「Chat about this」が横線の下に来る
@@ -287,10 +383,17 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
   const title = squash(menu.title);
   const header = squash([...menu.context, menu.title].join(''));
   const matches = title ? questions.flatMap((q, i) => (squash(q.question).includes(title) ? [i] : [])) : [];
-  const index = matches.length > 1 ? (matches.find((i) => header.endsWith(squash(questions[i].question))) ?? -1) : (matches[0] ?? -1);
+  const byTitle = matches.length > 1 ? (matches.find((i) => header.endsWith(squash(questions[i].question))) ?? -1) : (matches[0] ?? -1);
+  // メニューが画面より高くて上が切れると、質問文が見えない（menu.title は上の選択肢の説明の切れ端になる）。
+  // そのときは、見えている選択肢の名前がそろう質問にする
+  const firstShown = menu.options.find((o) => /^\d+$/.test(o.id));
+  const cut = !!firstShown && firstShown.id !== '1';
+  const index = byTitle === -1 && cut ? questionByOptions(menu, questions) : byTitle;
   if (index === -1) return menu;
   const q = questions[index];
   const onScreen = new Map(menu.options.map((o) => [o.id, o]));
+  // 上が切れてカーソルが見えないとき、カーソルは見えている選択肢より上にある。見えていないのが 1 つめだけなら、そこにある
+  const hiddenPointer = cut && !menu.options.some((o) => o.pointed) && firstShown.id === '2' ? '1' : null;
   const option = (id: string, base: Omit<MenuOption, 'id' | 'pointed' | 'checked'>, checkable: boolean): MenuOption => {
     const shown = onScreen.get(id);
     const key = `${index}:${id}`;
@@ -300,7 +403,7 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
       id,
       ...base,
       label: base.textInput ? (last?.label ?? 'Type something.') : base.label,
-      pointed: shown?.pointed ?? false,
+      pointed: shown?.pointed ?? id === hiddenPointer,
       checked: checkable ? (last?.checked ?? false) : null,
     };
   };
@@ -316,6 +419,19 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
   }
   if (chat) options.push({ ...chat, id: String(q.options.length + 2) });
   return { ...menu, title: q.question, context: [], options, multiSelect: q.multiSelect };
+}
+
+// 画面に見えている選択肢（番号と名前）と自由記述の番号が、すべて合う質問。1 つに決まらなければ -1
+function questionByOptions(menu: Menu, questions: AskQuestion[]): number {
+  const shown = menu.options.filter((o) => /^\d+$/.test(o.id) && o.label !== CHAT_ABOUT_THIS);
+  const matches = questions.flatMap((q, i) => {
+    const fits = shown.every((o) => {
+      const n = Number(o.id);
+      return o.textInput ? n === q.options.length + 1 : n <= q.options.length && squash(o.label) === squash(q.options[n - 1].label);
+    });
+    return shown.length > 0 && fits ? [i] : [];
+  });
+  return matches.length === 1 ? matches[0] : -1;
 }
 
 // AskUserQuestion の input から質問を取り出す。形が違えば null

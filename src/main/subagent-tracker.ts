@@ -3,7 +3,7 @@ import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { toolTarget } from '@shared/chat';
 import type { SubagentRun } from '@shared/subagent';
-import type { TaskUsage } from './session-manager';
+import type { TaskUsage } from './task-router';
 
 const POLL_MS = 1000;
 const RECENT_TOOLS = 5;

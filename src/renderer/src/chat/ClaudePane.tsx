@@ -11,7 +11,7 @@ import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
-import { ChatInput, recentlySent, type CompletionSource } from './ChatInput';
+import { ChatInput, forgetSent, recentlySent, type CompletionSource } from './ChatInput';
 import { ChatRow } from './ChatRow';
 import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
@@ -188,6 +188,8 @@ export const ClaudePane = memo(function ClaudePane({
   const draft = live && screen?.state.kind === 'prompt' ? screen.draft : '';
   const movedDraft = useRef<string | null>(null);
   useEffect(() => {
+    // 消えたら忘れる（同じ発言をもう一度中断して戻ったときも移す）
+    if (!draft) movedDraft.current = null;
     if (!draft || movedDraft.current === draft) return;
     // 送信中の文字は Claude Code の入力欄に打ち込んでいる途中なので、残った文字として扱わない。
     // 貼り付けた文字や画像は入力欄では [Pasted text #1 +6 lines]・[Image #1] の目印になるので、除いて比べる
@@ -487,7 +489,10 @@ export const ClaudePane = memo(function ClaudePane({
             blocked={blocked}
             onSend={send}
             showInterrupt={running && !canSend && !menu}
-            onInterrupt={() => window.tanacode.pty.write(session.id, '\x1b')}
+            onInterrupt={() => {
+              forgetSent(session.id);
+              window.tanacode.pty.write(session.id, '\x1b');
+            }}
           />
           <div className="chat-options">
             <select

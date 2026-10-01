@@ -12,7 +12,9 @@ type Tracked = { task: BashTask; outputFile: string | null; size: number };
 export class BashTaskTracker {
   private readonly tasks = new Map<string, Tracked>();
   private timer: NodeJS.Timeout | null = null;
-  private polling = false;
+  // 読んでいる途中の読み込みと、そのあとに読む予定の読み込み
+  private running: Promise<void> = Promise.resolve();
+  private next: Promise<void> | null = null;
 
   constructor(private readonly onChange: (tasks: BashTask[]) => void) {}
 
@@ -47,15 +49,18 @@ export class BashTaskTracker {
     this.onChange(this.all());
   }
 
-  // 完了通知（<task-notification>）
+  // 完了通知（<task-notification>）。出力ファイルの最後（終了コード）を読んでから、終わったことにして知らせる
+  // （先に終わったことにすると、読んでいる途中の読み込みが、終了コードの無いまま「完了」を知らせてしまう）
   notified(toolUseId: string, status: string): void {
     const t = this.tasks.get(toolUseId);
     if (!t) return;
     const state = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : status === 'killed' ? 'killed' : 'stopped';
-    t.task = { ...t.task, state, endedAt: t.task.endedAt ?? (t.task.startedAt ? Date.now() : null) };
-    // 出力ファイルの最後（終了コード）を読んでから知らせる
+    const notifiedAt = Date.now();
     t.size = -1;
-    void this.poll().then(() => this.onChange(this.all()));
+    void this.poll().then(() => {
+      t.task = { ...t.task, state, endedAt: t.task.endedAt ?? (t.task.startedAt ? notifiedAt : null) };
+      this.onChange(this.all());
+    });
   }
 
   stopRunning(): void {
@@ -78,17 +83,24 @@ export class BashTaskTracker {
     this.timer = null;
   }
 
-  private async poll(): Promise<void> {
-    if (this.polling) return;
-    this.polling = true;
-    try {
-      let changed = false;
-      for (const t of this.tasks.values()) changed = (await this.read(t)) || changed;
-      if (changed) this.onChange(this.all());
-      if (![...this.tasks.values()].some((t) => t.task.state === 'running')) this.stopTimer();
-    } finally {
-      this.polling = false;
-    }
+  // 読み込みは一度に一つずつ。読んでいる途中に頼まれたら、それが終わってからもう一度読む（頼まれたあとの中身を読む）。
+  // 途中の読み込みに任せると、完了通知の前に読んだ中身（終了コードの無いもの）で終わり、そのまま読み直さないことがある
+  private poll(): Promise<void> {
+    if (this.next) return this.next;
+    const next = this.running.then(() => {
+      this.next = null;
+      return this.pollOnce();
+    });
+    this.next = next;
+    this.running = next.catch(() => undefined);
+    return next;
+  }
+
+  private async pollOnce(): Promise<void> {
+    let changed = false;
+    for (const t of this.tasks.values()) changed = (await this.read(t)) || changed;
+    if (changed) this.onChange(this.all());
+    if (![...this.tasks.values()].some((t) => t.task.state === 'running')) this.stopTimer();
   }
 
   private async read(t: Tracked): Promise<boolean> {
@@ -106,11 +118,11 @@ export class BashTaskTracker {
     } finally {
       await handle.close();
     }
-    // 終わると最後に「[exited with code N]」が書かれる
-    const exit = text.match(/\n?\[exited with code (-?\d+)\]\s*$/);
-    const exitCode = exit ? Number(exit[1]) : t.task.exitCode;
+    // 終わると最後に「[exited with code N]」が書かれる。止められたとき（TaskStop など）は「[killed]」で、完了通知は届かない
+    const exit = text.match(/\n?\[(?:exited with code (-?\d+)|killed)\]\s*$/);
+    const exitCode = exit?.[1] !== undefined ? Number(exit[1]) : t.task.exitCode;
     let state = t.task.state;
-    if (exit && state === 'running') state = exitCode === 0 ? 'completed' : 'failed';
+    if (exit && state === 'running') state = exit[1] === undefined ? 'killed' : exitCode === 0 ? 'completed' : 'failed';
     t.task = {
       ...t.task,
       state,

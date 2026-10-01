@@ -17,8 +17,27 @@ const EARLY_CHUNKS = 2000;
 
 type PtyListeners = { data: ((data: string) => void)[]; exit: ((exitCode: number) => void)[] };
 
+// ClaudeSession が使う、pty の操作（HostedPty の形）
+export interface PtyHandle {
+  onData(listener: (data: string) => void): void;
+  onExit(listener: (exitCode: number) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  detach(): void;
+}
+
+// SessionManager・ClaudeSession が使う、pty ホストの操作（PtyHost の形）。
+// Claude Code との互換性の確認（test/cli）は、node-pty を直に使う偽物に差し替えて、本物の SessionManager を動かす
+export interface PtyHostApi {
+  list(): Promise<HostedPtyInfo[]>;
+  spawn(request: Omit<SpawnRequest, 'id'>): PtyHandle;
+  attach(info: HostedPtyInfo): PtyHandle;
+  forget(id: string): void;
+}
+
 // ホストが持っている pty のひとつ。node-pty の IPty と同じように使う
-export class HostedPty {
+export class HostedPty implements PtyHandle {
   private readonly listeners: PtyListeners = { data: [], exit: [] };
   // まだ誰も受け取っていない間に届いた出力（引き継ぎの一覧を受け取ってから、アプリが見始めるまでの分）
   private early: string[] | null = [];
@@ -77,7 +96,7 @@ export class HostedPty {
 }
 
 // pty ホストとの接続。ホストが無ければ起動し、形（PROTOCOL）が違う古いホストなら止めて起動し直す
-export class PtyHost {
+export class PtyHost implements PtyHostApi {
   private socket: Socket | null = null;
   private readonly ptys = new Map<string, HostedPty>();
   private readonly pending = new Map<number, (ptys: HostedPtyInfo[]) => void>();

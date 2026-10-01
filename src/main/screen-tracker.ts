@@ -151,15 +151,18 @@ export class ScreenTracker {
     if (this.busy) return;
     this.busy = true;
     try {
-      for (let step = 0; step < 30; step++) {
+      for (let step = 0; ; step++) {
         const menu = this.menu();
         if (!menu) return;
+        // カーソルが見えない（画面より高い質問で、上の切れた選択肢にある）ときは -1。↓ で見えるところまで送る
         const current = menu.options.findIndex((o) => o.pointed);
         const target = menu.options.findIndex((o) => o.id === optionId);
         if (target === -1) return;
         if (current === target) break;
+        // 目的の選択肢にカーソルが来なかったら、違う選択肢で答えないよう何も送らない
+        if (step === 30) return;
         this.write(target > current ? KEY_DOWN : KEY_UP);
-        await this.nextRead(500);
+        await this.readUntil(() => this.menu()?.options.findIndex((o) => o.pointed) !== current, 500);
       }
       if (text) {
         this.write(KEY_CLEAR_LINE + text);
@@ -179,8 +182,9 @@ export class ScreenTracker {
     try {
       for (let step = 0; step <= MODE_CYCLE; step++) {
         if (this.info.mode === target) return true;
+        const before = this.info.mode;
         this.write(KEY_SHIFT_TAB);
-        await this.nextRead(800);
+        await this.readUntil(() => this.info.mode !== before, 800);
       }
       return this.info.mode === target;
     } finally {
@@ -209,7 +213,10 @@ export class ScreenTracker {
         }
         const before = state.pointed;
         this.write(KEY_UP);
-        await this.nextRead(500);
+        await this.readUntil(() => {
+          const now = this.state();
+          return now.kind !== 'rewind' || now.pointed !== before;
+        }, 500);
         // 一覧の先頭に着いて動かなくなった
         const after = this.state();
         if (after.kind === 'rewind' && after.pointed === before) break;
@@ -265,6 +272,17 @@ export class ScreenTracker {
 
   private menu(): Menu | null {
     return this.info.state.kind === 'menu' ? this.info.state.menu : null;
+  }
+
+  // 送ったキーが画面に映るまで待つ。キーを送る前から描いていた画面の読み取り（キーがまだ映っていないもの）で
+  // 先に進むと、次のキーを重ねて送ってしまう（権限モードを 1 つ飛ばすなど）。changed が真になるか、timeoutMs たつまで読み続ける
+  private async readUntil(changed: () => boolean, timeoutMs: number): Promise<void> {
+    const until = Date.now() + timeoutMs;
+    while (!changed()) {
+      const left = until - Date.now();
+      if (left <= 0) return;
+      await this.nextRead(left);
+    }
   }
 
   private nextRead(timeoutMs: number): Promise<void> {
@@ -379,9 +397,11 @@ export class ScreenTracker {
     this.onChange(next);
   }
 
-  // 入力欄の文字。先頭の「❯ 」と続きの行の字下げを除き、薄い文字（入力例の「Try "…"」）は含めない
+  // 入力欄の文字。先頭の「❯ 」と続きの行の字下げを除き、薄い文字（入力例の「Try "…"」）は含めない。
+  // ! を打ってシェルのコマンドを書いている間は、先頭の目印が「! 」になるので、打ったとおり「!」を付ける
   private draft([start, end]: [number, number]): string {
     const buf = this.term.buffer.active;
+    const shell = buf.getLine(buf.viewportY + start)?.getCell(0)?.getChars() === '!';
     const rows: string[] = [];
     for (let y = start; y < end; y++) {
       const line = buf.getLine(buf.viewportY + y);
@@ -394,7 +414,8 @@ export class ScreenTracker {
       }
       rows.push(text.trimEnd());
     }
-    return rows.join('\n').trim();
+    const text = rows.join('\n').trim();
+    return shell ? `!${text}` : text;
   }
 
   private lines(): ScreenLine[] {

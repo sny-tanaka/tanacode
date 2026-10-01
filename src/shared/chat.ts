@@ -48,6 +48,8 @@ export type ChatEvent =
   | { type: 'info'; id: string; text: string }
   // 入力欄で ! を付けて実行したシェルのコマンド（Claude には渡らない）
   | { type: 'shell'; id: string; command: string; output: string }
+  // ! のコマンドの出力。今の Claude Code はコマンドと出力を別の行に書くので、直前の shell に付ける
+  | { type: 'shell-output'; id: string; output: string }
   // 会話の圧縮（/compact・自動圧縮）の区切り
   | { type: 'divider'; id: string; text: string }
   // API エラー。retrying: Claude Code が自動で再試行している（応答が来れば消す）
@@ -460,12 +462,12 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
 
 // user 行に入る、ユーザーの発言ではないもの
 function specialUserText(id: string, text: string): ChatEvent | null {
-  // ! を付けて実行したコマンド。出力は <bash-stdout> / <bash-stderr> に入る
-  if (text.startsWith('<bash-input>')) {
-    const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1] ?? '';
-    const output = [tag('bash-stdout'), tag('bash-stderr')].map((s) => s.trim()).filter(Boolean).join('\n');
-    return { type: 'shell', id, command: tag('bash-input').trim(), output: truncate(output, OUTPUT_CHARS) };
-  }
+  // ! を付けて実行したコマンド。出力は <bash-stdout> / <bash-stderr> に入る。
+  // 前の Claude Code は同じ行に、今の Claude Code はコマンド（<bash-input>）と出力を別の行に書く
+  const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1] ?? '';
+  const shellOutput = () => truncate([tag('bash-stdout'), tag('bash-stderr')].map((s) => s.trim()).filter(Boolean).join('\n'), OUTPUT_CHARS);
+  if (text.startsWith('<bash-input>')) return { type: 'shell', id, command: tag('bash-input').trim(), output: shellOutput() };
+  if (text.startsWith('<bash-stdout>') || text.startsWith('<bash-stderr>')) return { type: 'shell-output', id, output: shellOutput() };
   // 本家アプリの「Auto-fix pull requests」が、PR のレビューコメントや CI の失敗を Claude に知らせる
   if (text.startsWith('<ci-monitor-event>')) {
     const body = text.replace(/^<ci-monitor-event>/, '').replace(/<\/ci-monitor-event>\s*$/, '').trim();

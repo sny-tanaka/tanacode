@@ -17,6 +17,8 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:cli": "vitest run --config vitest.cli.config.ts",
     "dist": "electron-vite build && electron-builder --mac",
     "install-app": "npm run dist && node scripts/install-app.mjs",
     "icon": "electron scripts/make-icon.mjs",
@@ -54,7 +56,8 @@
     "rollup-plugin-license": "^3.7.1",
     "storybook": "^10.6.0",
     "typescript": "^7.0.2",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^5.0.3"
   },
   "build": {
     "appId": "dev.tanacode.app",

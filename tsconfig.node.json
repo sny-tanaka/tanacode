@@ -10,5 +10,5 @@
     "types": ["node"],
     "paths": { "@shared/*": ["./src/shared/*"] }
   },
-  "include": ["electron.vite.config.ts", "scripts/third-party-notices.ts","src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+  "include": ["electron.vite.config.ts", "vitest.config.ts", "vitest.cli.config.ts", "scripts/third-party-notices.ts", "test/**/*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
 }

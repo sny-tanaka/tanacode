@@ -1,8 +1,9 @@
-import { execFile } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { compareVersions } from '@shared/claude-code';
 import type { ModelCatalog, ModelChoice } from '@shared/models';
+import { claudeVersion } from './claude-version';
 
 // Claude Code が /model の一覧として持っている控え（~/.claude/cache/model-catalog/<組織>-<…>-cc.json）
 const CATALOG_DIR = join(homedir(), '.claude', 'cache', 'model-catalog');
@@ -47,20 +48,4 @@ export async function readModelCatalog(): Promise<ModelCatalog | null> {
       };
     });
   return { choices, updatedAt: data.fetchedAt ?? newest.mtime };
-}
-
-function claudeVersion(): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile('claude', ['--version'], { timeout: 10_000 }, (err, stdout) => resolve(err ? null : (stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null)));
-  });
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
 }

@@ -126,6 +126,14 @@ function withHook(items: ChatItem[], id: string, run: HookRun): ChatItem[] {
   return [...items, { kind: 'hook', id, runs: [run] }];
 }
 
+// ! のコマンドの出力を、まだ出力の無い直前の shell に付ける。見つからなければ、出力だけの shell として出す
+function withShellOutput(items: ChatItem[], id: string, output: string): ChatItem[] {
+  const index = items.findLastIndex((i) => i.kind === 'shell');
+  const shell = items[index];
+  if (shell?.kind !== 'shell' || shell.output) return [...items, { kind: 'shell', id, command: '', output }];
+  return items.map((item, i) => (i === index ? { ...shell, output } : item));
+}
+
 // 会話ログから作ったイベントをまとめてチャットにする（アーカイブ済みセッションの表示用）
 export function chatFromEvents(events: ChatEvent[]): ChatState {
   return events.reduce(apply, EMPTY_CHAT);
@@ -174,6 +182,8 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       return { ...state, items: [...state.items, { kind: 'info', id: event.id, text: event.text }] };
     case 'shell':
       return { ...state, items: [...state.items, { kind: 'shell', id: event.id, command: event.command, output: event.output }] };
+    case 'shell-output':
+      return { ...state, items: withShellOutput(state.items, event.id, event.output) };
     case 'assistant-text':
       return { ...state, items: [...withoutRetrying(state.items), { kind: 'text', id: event.id, text: event.text }] };
     case 'tool-use':
@@ -262,10 +272,10 @@ function withBatch(current: Entry | undefined, { fromSeq, events }: ChatBatch): 
   return { chat: fresh.reduce(apply, base.chat), nextSeq: fromSeq + events.length };
 }
 
-// 会話ログに出た発言と、順番待ちの発言の数（送信中の発言が会話ログに出たかを見るのに使う）。
+// 会話ログに出た発言（! のコマンドを含む）と、順番待ちの発言の数（送信中の発言が会話ログに出たかを見るのに使う）。
 // 順番待ちが受け取られると発言に移るので、合計は減らない
 export function arrivedCount(chat: ChatState): number {
-  return chat.items.filter((i) => i.kind === 'user').length + chat.queued.length;
+  return chat.items.filter((i) => i.kind === 'user' || (i.kind === 'shell' && i.command)).length + chat.queued.length;
 }
 
 // 選択していないセッションでも描き直す変化。一覧の状態の表示と、送信中・起動待ちの発言の送り出しに関わる

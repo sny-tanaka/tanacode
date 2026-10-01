@@ -89,6 +89,8 @@ export const IpcChannel = {
   NotificationsSet: 'notifications:set',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
+  ClaudeVersionGet: 'claude:version-get',
+  ClaudeVersionChanged: 'claude:version-changed',
   StatusLineChanged: 'statusline:changed',
   KnowledgeChanged: 'knowledge:changed',
 } as const;
@@ -263,6 +265,11 @@ export type TanacodeApi = {
   // この Mac の CPU・メモリの使用状況（2 秒ごと）
   system: {
     onStats(listener: (stats: SystemStats) => void): () => void;
+  };
+  // 入っている Claude Code の版（`claude --version`。見つからなければ null）。起動時・10 分ごと・ウィンドウを前に出したときに確かめる
+  claudeVersion: {
+    get(): Promise<string | null>;
+    onChanged(listener: (version: string | null) => void): () => void;
   };
   // セッションごとの statusLine（モデル・コンテキスト・利用枠）
   statusLine: {

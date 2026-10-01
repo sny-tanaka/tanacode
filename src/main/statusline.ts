@@ -1,5 +1,5 @@
 import { readFileSync, watch, type FSWatcher } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ASK_FILE_ENV } from '@shared/chat';
@@ -121,6 +121,13 @@ export class StatusLineWatcher {
       clearTimeout(this.timers.get(sessionId));
       this.timers.set(sessionId, setTimeout(() => void this.read(sessionId), 150));
     });
+  }
+
+  // 今ファイルにある statusLine を読む（知らせない）。時刻はファイルが書かれた時刻
+  async peek(sessionId: string): Promise<StatusLineInfo | null> {
+    const file = this.fileFor(sessionId);
+    const [text, written] = await Promise.all([readFile(file, 'utf8').catch(() => null), stat(file).then((s) => s.mtimeMs, () => Date.now())]);
+    return text ? parseStatusLine(text, written) : null;
   }
 
   async read(sessionId: string): Promise<StatusLineInfo | null> {

@@ -1,0 +1,142 @@
+# Claude Code との互換性の確認。本物の claude をモックの API で動かし、画面・会話ログ・statusLine・フックを
+# アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
+# 毎日、その日の最新の Claude Code で確かめる。
+# - 読み取れなくなっていたら、Issue を立てる
+# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作る。その版の控えも一緒に入れる
+# 途中の画面などの控えは artifact にも残す
+name: claude-code-check
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  schedule:
+    # 毎日 6:17（日本時間）
+    - cron: '17 21 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 確かめる Claude Code の版（空なら最新）
+        required: false
+
+# PR の CI でも動くので、既定は読むだけ。書き込みは、それが要るジョブだけに付ける
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      version: ${{ steps.claude.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Electron の本体は使わないので落とさない
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # 控えで読み取りを確かめる
+      - run: npm test
+      - name: Claude Code を入れる
+        id: claude
+        env:
+          VERSION: ${{ inputs.version || 'latest' }}
+        run: |
+          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
+          bin="$RUNNER_TEMP/claude/node_modules/.bin/claude"
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+          echo "version=$("$bin" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" >> "$GITHUB_OUTPUT"
+      - name: 本物の claude で確かめる
+        run: npm run test:cli
+        env:
+          TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          TANACODE_RECORD: 1
+      - name: 控えを残す
+        if: always() && steps.claude.outputs.version
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-${{ steps.claude.outputs.version }}
+          path: test/fixtures/claude-code/
+          if-no-files-found: ignore
+      # 同じ版の Issue がもう開いていれば、立てない
+      - name: 定期の確認で失敗したら Issue を立てる
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.claude.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Claude Code ${VERSION:-（版が分からない）} で読み取れないところがあります"
+          if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then exit 0; fi
+          gh issue create --title "$title" --body "毎日の互換性の確認（claude-code-check）が失敗しました。
+
+          - 失敗した実行: $RUN_URL
+          - 失敗したテストのログに、そのときの Claude Code の画面が出ています
+          - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
+
+  # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作る（マージは人が PR を見てから）。
+  # 書き込める権限が要るので、確認とは別のジョブにする（PR のコードを、書き込める権限で動かさない）
+  update:
+    needs: check
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # 確認のジョブで取った控え
+      - uses: actions/download-artifact@v4
+        with:
+          name: claude-code-${{ needs.check.outputs.version }}
+          path: test/fixtures/claude-code/
+      # 同じ版の PR が一度でもあれば（閉じたものも）、作り直さない
+      - name: 動作確認済のバージョンを上げる PR を作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          BASE: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          action=$(node scripts/update-verified-version.mjs "$VERSION")
+          echo "することは: $action"
+          if [ "$action" = skip ]; then exit 0; fi
+          branch="claude-code/$VERSION"
+          if [ -n "$(gh pr list --head "$branch" --state all --json number --jq '.[].number')" ]; then
+            echo "$branch の PR はもうあります"
+            exit 0
+          fi
+          # 書き換えたあとも、控えで読み取りを確かめる（動作確認済のバージョンの控えがあるかも見る）
+          npm test
+          if [ "$action" = bump ]; then
+            title="chore: 動作確認済の Claude Code を $VERSION にする"
+            summary="毎日の互換性の確認が Claude Code $VERSION で通ったので、動作確認済のバージョンを上げます。ステータスバーは、この版と同じならチェックマークを出します。"
+          else
+            title="test: Claude Code $VERSION の控えを足す"
+            summary="動作確認済のバージョン（$VERSION）の控えがまだ無いので、毎日の互換性の確認で取った控えを足します。"
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add src/shared/claude-code.ts README.md GUIDE.md "test/fixtures/claude-code/$VERSION"
+          git commit -m "$title"
+          git push -u origin "$branch"
+          gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$summary
+
+          - 確かめた実行: $RUN_URL（\`npm test\` と、本物の claude での \`npm run test:cli\` が通っています）
+          - \`test/fixtures/claude-code/$VERSION/\` は、その実行で取った控えです
+          - この PR は GitHub Actions が作ったので、PR の CI は自動では動きません。確かめ直すときは、Actions の claude-code-check を「Run workflow」で $branch に対して実行します
+          - マージしたあと、アプリのリリースで利用者に届きます"
