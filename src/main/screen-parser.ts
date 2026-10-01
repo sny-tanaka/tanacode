@@ -1,6 +1,8 @@
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenLine } from '@shared/screen';
 
 const RULE = /^\s*─{20,}\s*$/;
+// 下の段に重ねて出るメニュー（/rewind の「何を戻すか」など）の上端の線。右に「◐ medium · /effort」などが重なることがある
+const TOP_EDGE = /^\s*▔{20,}/;
 // 入力欄の枠の横線。名前を付けたセッション（claude -n・/rename）では、上の線の右端に名前が入る（例: 「────── 名前 ─」）
 const PROMPT_RULE = /^\s*─{20,}(?: .+ ─+)?\s*$/;
 // 画面が低いと、選択肢は一部だけが出て、外にまだあることを ↑ / ↓ で示す（例: 「↓ 2. …」）
@@ -30,7 +32,7 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   const end = footer > pointer ? footer : lines.length;
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
 
-  const first = lines.findIndex((l, i) => i >= top && i < end && OPTION.test(l.text));
+  const first = optionsStart(lines, top, pointer, end);
   if (first === -1) return null;
 
   // 選択肢のどれかにプレビューがあると、選択肢の右にプレビューの枠（┌─┐）と「Notes: press n to add notes」が並ぶ。
@@ -93,9 +95,22 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   // 回答の確認画面では、長い質問だけが縦線付きで出る。縦線の行を質問文として取り出すと、質問と回答の並びが崩れるので、
   // その場でつなぎ直して上から順に並べる（最後の「Ready to submit your answers?」が問い）
   const review = header.includes(REVIEW_TITLE);
-  const texts = review ? unwrapInPlace(raw.filter((t) => t !== tabLine)) : header.filter((t) => t !== tabLine);
-  const title = boxed.length > 0 && !review ? unwrap(boxed) : (texts.pop() ?? '');
-  const kind = tabs.length > 0 || chat !== -1 || previewAt !== null ? 'question' : /Do you want to/.test(title) ? 'permission' : 'other';
+  const question = tabs.length > 0 || chat !== -1 || previewAt !== null;
+  // 縦線の枠は、質問では質問文。そのほかのメニューでは引用（/rewind の「何を戻すか」の、戻す先の発言）なので、その場でつなぎ直す
+  const inPlace = review || (boxed.length > 0 && !question);
+  const texts = inPlace ? unwrapInPlace(raw.filter((t) => t !== tabLine)) : header.filter((t) => t !== tabLine);
+  let title = boxed.length > 0 && !inPlace ? unwrap(boxed) : (texts.pop() ?? '');
+  const kind = question ? 'question' : /Do you want to/.test(title) ? 'permission' : 'other';
+  // そのほかの確認（ワークフローを始める前の確認・/rewind の「何を戻すか」など）は、問いかけが説明の上にあることがある
+  // （「Run a dynamic workflow?」「Confirm you want to restore …:」）。最後の行が問いかけでなければ、
+  // ? で終わる行（無ければ : で終わる行）を見出しにして、最後の行は補足に回す
+  const asks = (mark: string) => findLastIndex(texts, (t) => t.endsWith(mark));
+  const asking = kind === 'other' && !review && !title.endsWith('?') ? (asks('?') !== -1 ? asks('?') : asks(':')) : -1;
+  if (asking !== -1) {
+    const asked = texts.splice(asking, 1)[0];
+    texts.push(title);
+    title = asked;
+  }
 
   return {
     kind,
@@ -107,6 +122,16 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
     hint: end === footer ? lines[footer].text.trim() : '',
     previewLayout: previewAt !== null,
   };
+}
+
+// 選択肢の最初の行。カーソル（❯）の行から上へたどって、最初に見つかる「1.」の行。
+// 説明の中にも番号付きの一覧があることがある（ワークフローを始める前の確認のフェーズの一覧）ので、範囲の先頭からは探さない。
+// 画面が低くて「1.」が見えていないときは、範囲の中で最初の選択肢の行
+function optionsStart(lines: ScreenLine[], top: number, pointer: number, end: number): number {
+  for (let i = Math.min(pointer, end - 1); i >= top; i--) {
+    if (lines[i].text.match(OPTION)?.[2] === '1') return i;
+  }
+  return lines.findIndex((l, i) => i >= top && i < end && OPTION.test(l.text));
 }
 
 // 番号の無い選択肢のメニュー（フォルダの信頼の確認など）。例:
@@ -319,6 +344,7 @@ export function findEffort(lines: ScreenLine[]): string | null {
 function menuTop(lines: ScreenLine[], bottom: number): number {
   const limit = Math.max(0, bottom - MAX_MENU_LINES);
   for (let i = bottom - 1; i >= limit; i--) {
+    if (TOP_EDGE.test(lines[i].text)) return i + 1;
     if (!RULE.test(lines[i].text)) continue;
     const next = lines.slice(i + 1, bottom).find((l) => l.text.trim());
     // 横線の下が選択肢なら、メニューの途中の区切り。プレビュー付きの質問では、番号の無い「Chat about this」が横線の下に来る
