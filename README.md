@@ -69,7 +69,7 @@ https://github.com/user-attachments/assets/40edf942-d957-4228-b8e1-048ddd7f964e
 - macOS 13 以降（Apple Silicon・Intel）
 - [Claude Code](https://code.claude.com/docs)（`claude` CLI）
   - ターミナルで一度 `claude` を起動し、初回のセットアップ（テーマの選択とログイン）を済ませておきます
-  - 動作を確かめたのは 2.1.283。Claude Code の更新で、一部の表示や操作が動かなくなる場合あり
+  - 最新の Claude Code で動くかを、毎日自動で確認。それでも Claude Code の更新で、一部の表示や操作が動かなくなる場合あり
 
 ## インストール
 

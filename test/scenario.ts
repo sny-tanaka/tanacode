@@ -1,0 +1,99 @@
+import { join } from 'node:path';
+import { expect } from 'vitest';
+import type { ChatEvent, TranscriptEntry } from '@shared/chat';
+import type { Menu, ScreenInfo } from '@shared/screen';
+import type { StatusLineInfo } from '@shared/statusline';
+import { askQuestionsOf } from '../src/main/screen-parser';
+import type { Step } from './cli/mock-api';
+
+// Claude Code との互換性を確かめる台本と、アプリが読み取れるべきもの。
+// 本物の claude を動かす確認（test/cli）と、そのとき取った控えを読む確認（test/recorded.test.ts）で共有する。
+// 台本: 発言 → Bash を実行（許可の確認）→ AskUserQuestion で質問 → Write でファイルを作る（許可の確認）→ 文章で返事
+
+// 控えに書くときの、使い捨てのフォルダのパス（実行のたびに変わるので決まったものに置き換える）
+export const FIXTURE_ROOT = '/tmp/tanacode-cli';
+
+export const PROMPT = '確認を始めてください';
+
+export const QUESTION = {
+  question: 'どちらの書き方にしますか？',
+  header: '書き方',
+  multiSelect: false,
+  options: [
+    { label: 'です・ます', description: '丁寧な書き方' },
+    { label: 'だ・である', description: '言い切る書き方' },
+  ],
+};
+
+// モックの API が返す応答。WORK は作業フォルダに置き換える
+const STEPS: Step[] = [
+  [
+    { type: 'text', text: 'コマンドを実行します。' },
+    // echo だけだと読むだけのコマンドとして確認なしで動くので、フォルダも作る
+    { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'mkdir checked && echo tanacode-check', description: '確認のフォルダを作る' } },
+  ],
+  [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: { questions: [QUESTION] } }],
+  [{ type: 'tool_use', id: 'toolu_write', name: 'Write', input: { file_path: 'WORK/hello.txt', content: 'こんにちは\n' } }],
+  [{ type: 'text', text: 'チェック完了' }],
+];
+
+export function stepsFor(cwd: string): Step[] {
+  return JSON.parse(JSON.stringify(STEPS).replaceAll('WORK', cwd)) as Step[];
+}
+
+// 控えに残す画面
+export type ScreenName = 'prompt' | 'bash-permission' | 'question' | 'write-permission';
+
+// 起動したあとの入力欄（権限モードは --permission-mode manual で起動する）
+export function checkPrompt(info: Pick<ScreenInfo, 'mode' | 'effort'>): void {
+  expect(info.mode).toBe('manual');
+  expect(info.effort).not.toBeNull();
+}
+
+// target: 確認の見出しか補足（実行しようとしているコマンドなど）に出るはずの文字
+export function checkPermission(menu: Menu | null, target: string): void {
+  expect(menu?.kind).toBe('permission');
+  expect([menu!.title, ...menu!.context].join('\n')).toContain(target);
+  expect(menu!.options.some((o) => o.pointed)).toBe(true);
+  expect(menu!.options[0].label).toMatch(/^Yes/);
+}
+
+// questions を渡したあとの質問のメニュー（ScreenTracker が applyQuestions で組み立てたもの）
+export function checkQuestion(menu: Menu | null): void {
+  expect(menu?.kind).toBe('question');
+  expect(menu!.title).toBe(QUESTION.question);
+  expect(menu!.options.slice(0, 2).map((o) => ({ label: o.label, description: o.description }))).toEqual(QUESTION.options);
+  expect(menu!.options[0].pointed).toBe(true);
+}
+
+// PreToolUse のフックが書いた AskUserQuestion の入力
+export function checkAskInput(input: unknown): void {
+  expect(askQuestionsOf(input)).toEqual([{ ...QUESTION, options: QUESTION.options.map((o) => ({ ...o, preview: undefined })) }]);
+}
+
+export function checkChat(entries: TranscriptEntry[], events: ChatEvent[], cwd: string): void {
+  // 画面のモデル名は、会話ログの応答のモデル（session-manager の modelOf）から取る
+  expect(entries.find((e) => e.type === 'assistant')?.message?.model).toMatch(/^claude-[a-z]+-\d/);
+  const file = join(cwd, 'hello.txt');
+  const expected = [
+    { type: 'user', text: PROMPT },
+    { type: 'assistant-text', text: 'コマンドを実行します。' },
+    { type: 'tool-use', id: 'toolu_bash', name: 'Bash', description: '確認のフォルダを作る' },
+    { type: 'tool-result', id: 'toolu_bash', isError: false, output: expect.stringContaining('tanacode-check') },
+    { type: 'tool-use', id: 'toolu_ask', name: 'AskUserQuestion' },
+    { type: 'tool-result', id: 'toolu_ask', isError: false, answers: [{ header: QUESTION.header, question: QUESTION.question, answer: 'です・ます' }] },
+    { type: 'tool-use', id: 'toolu_write', name: 'Write', filePath: file },
+    { type: 'tool-result', id: 'toolu_write', isError: false, filePath: file, added: 1 },
+    { type: 'assistant-text', text: 'チェック完了' },
+    { type: 'turn-end' },
+  ];
+  for (const event of expected) expect(events).toContainEqual(expect.objectContaining(event));
+}
+
+export function checkStatusLine(info: StatusLineInfo | null, version: string, transcriptPath: string): void {
+  expect(info).not.toBeNull();
+  expect(info!.version).toBe(version);
+  expect(info!.model).not.toBeNull();
+  expect(info!.context).not.toBeNull();
+  expect(info!.transcriptPath).toBe(transcriptPath);
+}

@@ -52,22 +52,14 @@ export class ClaudeSession {
   ) {}
 
   start(): void {
-    const { sessionId, cwd, claudeSessionId, resume, remoteControlName, model, effort, permissionMode, statusFile, askFile, cols, rows } =
-      this.options;
+    const { sessionId, cwd, claudeSessionId, statusFile, askFile, cols, rows } = this.options;
     let proc: HostedPty;
     if (this.adopted) {
       proc = this.host.attach(this.adopted);
       // 引き継いだときは、今の画面を描き直してから続き（一覧を受け取ったあとに届いていた分も）を受け取る
       if (this.adopted.screen) this.handlers.onData(this.adopted.screen);
     } else {
-      const args = [resume ? '--resume' : '--session-id', claudeSessionId];
-      if (remoteControlName) args.push('--remote-control', remoteControlName);
-      // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する
-      args.push('--model', model ?? 'default');
-      if (effort) args.push('--effort', effort);
-      if (permissionMode) args.push('--permission-mode', permissionMode);
-      // このセッションだけの設定。ユーザーの設定ファイルは書き換えない
-      args.push('--settings', sessionSettings());
+      const args = claudeArgs(this.options);
       const env = { ...childEnv(), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile };
       proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd, env, cols, rows });
     }
@@ -124,6 +116,22 @@ export class ClaudeSession {
     this.process = null;
     proc?.detach();
   }
+}
+
+// claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
+export function claudeArgs(
+  options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'>,
+): string[] {
+  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode } = options;
+  const args = [resume ? '--resume' : '--session-id', claudeSessionId];
+  if (remoteControlName) args.push('--remote-control', remoteControlName);
+  // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する
+  args.push('--model', model ?? 'default');
+  if (effort) args.push('--effort', effort);
+  if (permissionMode) args.push('--permission-mode', permissionMode);
+  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない
+  args.push('--settings', sessionSettings());
+  return args;
 }
 
 // Claude Code は cwd の英数字以外を '-' に置き換えたディレクトリに会話ログを書く

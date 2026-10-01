@@ -6,6 +6,7 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 - [始め方](#始め方)
 - [書き方の決まり](#書き方の決まり)
 - [見た目の確かめ方](#見た目の確かめ方)
+- [Claude Code との互換性の確かめ方](#claude-code-との互換性の確かめ方)
 - [仕組み](#仕組み)
 - [機能ごとの実装メモ](#機能ごとの実装メモ)
 - [読むもの・書くもの](#読むもの書くもの)
@@ -18,8 +19,8 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 - 不具合・要望は、まず Issue へ。大きな変更は、実装の前に Issue で相談
 - 脆弱性は Issue ではなく [SECURITY.md](SECURITY.md) の手順で
 - PR は `develop` ブランチへ
-- 出す前に `npm run typecheck`。画面を変えたときは Storybook で確かめ、PR にスクリーンショットを添付
-- 自動テストはまだ無し
+- 出す前に `npm run typecheck` と `npm test`。画面を変えたときは Storybook で確かめ、PR にスクリーンショットを添付
+- 画面・会話ログ・statusLine の読み取りを変えたときは、`npm run test:cli` も（下の「Claude Code との互換性の確かめ方」）
 
 ## 始め方
 
@@ -35,6 +36,8 @@ npm run dev
 | `npm run dev` | 開発モードで起動（renderer は HMR） |
 | `npm run build` / `npm start` | ビルドして起動 |
 | `npm run typecheck` | 型チェック |
+| `npm test` | 本物の Claude Code から取った控えで、画面・会話ログ・statusLine の読み取りを確かめる |
+| `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名なし） |
 | `npm run install-app` | `npm run dist` のあと、`/Applications/tanacode.app` に入れ替える（下の「ソースからビルドして使う」） |
@@ -79,6 +82,25 @@ npm run dev
   - 新しい行は、少し下からふわっと出します。macOS の「視差効果を減らす」がオンなら、動きは止めます。
   - アイコンだけのボタンのツールチップは、アプリで描きます（`data-tip`）。OS のツールチップ（`title`）は出るまで遅いためです。
 - デザインの指示で守るのは、文字色・背景色・専用のグラデーション。
+
+## Claude Code との互換性の確かめ方
+
+tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に頼っています。Claude Code の更新でこれらの形が変わると、アプリの読み取りが通らなくなります。そこで、本物の Claude Code でアプリの読み取りを確かめます。
+
+- `npm run test:cli`（`test/cli/`）: 本物の `claude` を node-pty で起動し、アプリと同じ部品（`ScreenTracker`・`TranscriptTail`・`toChatEvents`・`parseStatusLine`）で読みます。
+  - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
+  - 台本（`test/scenario.ts`）: 発言 → Bash を実行（許可の確認）→ AskUserQuestion で質問 → Write でファイルを作る（許可の確認）→ 文章で返事。
+  - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます。
+  - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
+  - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
+  - 失敗したときは、そのときの Claude Code の画面がログに出ます。
+- `npm test`（`test/recorded.test.ts`）: `npm run test:cli` のときに取った控え（`test/fixtures/claude-code/<版>/`）を、同じ読み取りにかけます。`claude` が無くても速く流せます。古い版の控えも残し、読めるままかを確かめ続けます。
+  - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
+  - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
+- GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
+  - 定期の確認で失敗したら、Issue を立てます（同じ版の Issue が開いていれば立てない）。
+  - 途中の控えは artifact（`claude-code-<版>`）に残します。新しい版の控えを足すときは、これを `test/fixtures/claude-code/` に入れてコミットします。
+  - 「Run workflow」で、版を指定して確かめることもできます。
 
 ## 仕組み
 
@@ -211,6 +233,10 @@ npm run dev
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）
 - `design/`: アプリのロゴ
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画
+- `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
+  - `scenario.ts`: 台本と、アプリが読み取れるべきもの
+  - `cli/`: 本物の `claude` を動かす確認と、モックの API
+  - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
 
 ## デモ動画の仕組み
 
