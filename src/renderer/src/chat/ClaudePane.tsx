@@ -93,7 +93,7 @@ export const ClaudePane = memo(function ClaudePane({
 }: Props) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
-  // ターミナルで選んだ出力やプレビューで選んだ要素などを、入力欄の末尾に足す
+  // ターミナルで選んだ出力やアプリ内ブラウザで選んだ要素などを、入力欄の末尾に足す
   useInsertInput(session.id, (text, added) => {
     setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);

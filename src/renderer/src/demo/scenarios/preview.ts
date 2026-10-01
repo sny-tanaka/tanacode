@@ -4,9 +4,9 @@ import { sleep, type Director } from '../director';
 import { demoWebview, installDemoWebview, refreshDemoWebviews, type DemoPage } from '../webview';
 import { Claude, pastTurn, statusLine } from './claude';
 
-// 動画 5「アプリ内プレビュー」: 開発中のページをアプリの中で開き、崩れている要素をクリックで選んで Claude に直してもらう。
-// フッターの「プレビュー」→ URL を開く → 表示幅をスマホに → 税込価格の行が折り返して崩れている → 「要素を選ぶ」で価格を選ぶ
-// （入力欄にセレクタ・HTML と切り出した画像が入る）→ 書き足して送る → Claude が CSS を直し、プレビューが直る
+// 動画 5「アプリ内ブラウザ」: 開発中のページをアプリの中で開き、崩れている要素をクリックで選んで Claude に直してもらう。
+// フッターの「ブラウザ」→ URL を開く → 表示幅をスマホに → 税込価格の行が折り返して崩れている → 「要素を選ぶ」で価格を選ぶ
+// （入力欄にセレクタ・HTML と切り出した画像が入る）→ 書き足して送る → Claude が CSS を直し、ブラウザの表示が直る
 
 export const PREVIEW_SESSION = 'demo-preview';
 
@@ -80,7 +80,7 @@ export function setupPreview(backend: DemoBackend): void {
   installDemoWebview((url) => (url.includes(URL) ? menuPage(backend) : null));
 }
 
-// プレビューのページの中の要素へカーソルを動かす（ページには、動いた位置の出来事を送る）
+// ブラウザのページの中の要素へカーソルを動かす（ページには、動いた位置の出来事を送る）
 async function moveInPage(d: Director, selector: string, ms = 700): Promise<{ x: number; y: number }> {
   const wv = demoWebview();
   const target = wv?.pageElement(selector);
@@ -100,9 +100,9 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
     };
   });
 
-  // 1. フッターの「プレビュー」を開き、開発サーバーの URL を開く
+  // 1. フッターの「ブラウザ」を開き、開発サーバーの URL を開く
   await sleep(1000);
-  await d.click(d.byText('.status-button', 'プレビュー'), { ms: 900 });
+  await d.click(d.byText('.status-button', 'ブラウザ'), { ms: 900 });
   await sleep(700);
   await d.click('.preview-address input', { ms: 600 });
   await d.type('.preview-address input', URL, 70);
@@ -140,7 +140,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   await sent;
   claude.startWorking();
 
-  // 5. Claude が CSS を直すと、開発サーバーの更新でプレビューも直る
+  // 5. Claude が CSS を直すと、開発サーバーの更新でブラウザの表示も直る
   await sleep(1500);
   await claude.tool('Read', 'src/styles.css', 700, { filePath: `${ROOT}/src/styles.css` });
   await claude.edit('src/styles.css', CSS_PRICE_STACKED, 1000, ['+  display: block;', '-  margin-left: 6px;']);

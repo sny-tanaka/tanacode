@@ -278,7 +278,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
-  - `preview/`: アプリ内プレビュー（webview・要素の選択）
+  - `preview/`: アプリ内ブラウザ（webview・要素の選択。画面では「ブラウザ」）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧・利用枠・CPU/メモリ・コンテキスト・カラム
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
@@ -299,7 +299,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `backend.ts`: アプリの API（`window.tanacode`）の作り物。ファイル・git・会話・画面の状態をメモリに持ちます
   - `director.ts`: 画面に作り物のマウスカーソルを描いて、移動・ホバー・クリック・文字入力をします（録画には OS のカーソルが映らないため）
   - `data.ts`: デモ用のプロジェクト（カフェのメニューを出す小さな React のアプリ）
-  - `webview.ts`: アプリ内プレビューの `<webview>` の代わり。Storybook では webview が動かないので、iframe で作り物のページを出します
+  - `webview.ts`: アプリ内ブラウザの `<webview>` の代わり。Storybook では webview が動かないので、iframe で作り物のページを出します
   - `scenarios/`: 動画ごとの台本。`claude.ts` は、ツールの呼び出しと結果を会話に足す作り物の Claude
   - `Demo.stories.tsx`: Storybook の「デモ」。ここで台本を流して見られます
 - 動画は 6 本。
