@@ -153,10 +153,6 @@ input[type='checkbox'] {
   background: none;
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transition: opacity 0.12s ease-out;
-}
-.titlebar-logo-link:hover {
-  opacity: 0.8;
 }
 /* アプリのロゴ（アイコンと名前）。高さ 44px の帯に、高さ 20px で置く */
 .titlebar-logo {

@@ -5,7 +5,7 @@ import { BellIcon } from './icons';
 import { Toggle } from './Toggle';
 
 // ウインドウの上の帯。左の信号ボタンの右に、アプリのロゴ（アイコンと名前）とバージョン・新しい版の印を並べ、右端に通知のベルを置く。
-// ロゴを押すと、GitHub の tanacode のリポジトリを開く。
+// ロゴを押すと、GitHub の tanacode のリポジトリを開く（ツールチップは出さず、カーソルだけ変える）。
 // フォルダはセッション一覧とエクスプローラー、ブランチは下のバーで分かるので、ここには出さない。
 // notifications: macOS の通知を出すか（null は、設定を読み込むまで。そのあいだはベルを出さない）
 // update: 新しい版を確かめた結果（null は、まだ分からない・確かめる設定がオフ。そのあいだは印を出さない）
@@ -20,7 +20,7 @@ export function TitleBar({
 }) {
   return (
     <header className="titlebar">
-      <button className="titlebar-logo-link" data-tip="GitHub の tanacode のページを開く" onClick={() => window.open(REPO_URL)}>
+      <button className="titlebar-logo-link" aria-label="GitHub の tanacode のページを開く" onClick={() => window.open(REPO_URL)}>
         <img className="titlebar-logo" src={logo} alt="tanacode" />
       </button>
       <span className="titlebar-version">v{__APP_VERSION__}</span>
