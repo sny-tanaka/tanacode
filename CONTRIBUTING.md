@@ -108,12 +108,20 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。基本の台本は画面・会話ログ・statusLine・フックの入力を、ほかの台本は画面だけ（ワークフローを始める前の確認・`/rewind` の「何を戻すか」）を残します。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。
   - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと同じならチェックマーク、違えば警告の印を付けます（新しい版と古い版で分ける）。
-  - 上げるときは、その版で `TANACODE_RECORD=1 npm run test:cli` が通ることを確かめ、控えを `test/fixtures/claude-code/<版>/` に入れます。控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
-  - README と GUIDE の「動作確認済のバージョン」も合わせて直します。
+  - 上げるのは、GitHub Actions の毎日の確認です（下）。新しい版で通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作ります。マージは人が PR を見てから。
+    - `VERIFIED_CLAUDE_CODE_VERSION`
+    - README と GUIDE の「動作確認済」の行の版
+    - その版の控え（`test/fixtures/claude-code/<版>/`）
+  - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
+  - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <版>`）。
 - GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
   - 定期の確認で失敗したら、Issue を立てます（同じ版の Issue が開いていれば立てない）。
-  - 途中の控えは artifact（`claude-code-<版>`）に残します。新しい版の控えを足すときは、これを `test/fixtures/claude-code/` に入れてコミットします。
-  - 「Run workflow」で、版を指定して確かめることもできます。
+  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<版>`）を作ります。動作確認済のバージョンと同じ版で、その控えがまだコミットされていなければ、控えだけを足す PR を作ります。同じ版の PR が一度でもあれば（閉じたものも）、作り直しません。
+    - PR を作るのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
+    - GitHub Actions が作った PR では、PR の CI が自動では動きません。確かめた実行へのリンクを PR の説明に載せます。
+    - リポジトリの設定（Settings → Actions → General）で「Allow GitHub Actions to create and approve pull requests」をオンにしておく必要があります。
+  - 途中の控えは artifact（`claude-code-<版>`）にも残します。
+  - 「Run workflow」で、版を指定して確かめることもできます。通れば、定期の確認と同じく PR を作ります（動作確認済のバージョンより古い版では作らない）。
 
 ## 仕組み
 
@@ -251,7 +259,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）
 - `design/`: アプリのロゴ
-- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画
+- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session` の 3 つの台本）と、モックの API・`claude` を動かす部品（`claude-run.ts`）
