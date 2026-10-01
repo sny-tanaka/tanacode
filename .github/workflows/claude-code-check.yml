@@ -2,7 +2,7 @@
 # アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
 # 毎日、その日の最新の Claude Code で確かめる。
 # - 読み取れなくなっていたら、Issue を立てる
-# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作る。その版の控えも一緒に入れる
+# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる
 # 途中の画面などの控えは artifact にも残す
 name: claude-code-check
 
@@ -80,7 +80,8 @@ jobs:
           - 失敗したテストのログに、そのときの Claude Code の画面が出ています
           - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
 
-  # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作る（マージは人が PR を見てから）。
+  # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、そのままマージする。
+  # GitHub Actions が作った PR では PR の CI が動かないので、同じ確認（check ジョブと、書き換えたあとの npm test）が通ったことをマージの条件にする。
   # 書き込める権限が要るので、確認とは別のジョブにする（PR のコードを、書き込める権限で動かさない）
   update:
     needs: check
@@ -138,5 +139,13 @@ jobs:
 
           - 確かめた実行: $RUN_URL（\`npm test\` と、本物の claude での \`npm run test:cli\` が通っています）
           - \`test/fixtures/claude-code/$VERSION/\` は、その実行で取った控えです
-          - この PR は GitHub Actions が作ったので、PR の CI は自動では動きません。確かめ直すときは、Actions の claude-code-check を「Run workflow」で $branch に対して実行します
+          - この PR は GitHub Actions が作ったので、PR の CI は動きません。上の確認が通ったので、そのまま squash マージします
           - マージしたあと、アプリのリリースで利用者に届きます"
+          # 作ったばかりの PR は、マージできるかの判定が終わっていないことがあるので、数回やり直す。
+          # マージできなかったときは、ジョブを失敗させる（PR は開いたまま残るので、人が見てマージする）
+          for _ in 1 2 3; do
+            if gh pr merge "$branch" --squash; then exit 0; fi
+            sleep 10
+          done
+          echo "$branch の PR をマージできませんでした。PR を開いて確かめてください"
+          exit 1

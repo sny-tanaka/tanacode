@@ -124,7 +124,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 控えは `TANACODE_RECORD=1 npm run test:cli` で取ります。基本の台本は画面・会話ログ・statusLine・フックの入力を、ほかの台本は画面だけ（ワークフローを始める前の確認・`/rewind` の「何を戻すか」・AskUserQuestion の各ページ・中断のあとの入力欄・入力欄のまわり（`--effort`・書きかけ・長い貼り付けの目印・`!` のコマンド））を残します。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。画面は、文字の行（`.json`）と、文字の属性ごとの書き出し（`.ansi`。`@xterm/addon-serialize`）の 2 つを残します。書きかけ（`draft`）は薄い字の入力例を除いて読むので、`.ansi` を `ScreenTracker` に流し込んで確かめます。
   - 控えは、クラウドの開発環境のように Claude Code の設定やトークンが置かれた環境では取りません。その環境ならではの表示が画面に混ざるためです。GitHub Actions が残した artifact か、手元の Mac で取ったものを使います。
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っている版がこれと同じならチェックマーク、違えば警告の印を付けます（新しい版と古い版で分ける）。
-  - 上げるのは、GitHub Actions の毎日の確認です（下）。新しい版で通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作ります。マージは人が PR を見てから。
+  - 上げるのは、GitHub Actions の毎日の確認です（下）。新しい版で通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします。
     - `VERIFIED_CLAUDE_CODE_VERSION`
     - README と GUIDE の「動作確認済」の行の版（README の先頭のバッジも、alt に「動作確認済」を入れてあるので一緒に変わる）
     - その版の控え（`test/fixtures/claude-code/<版>/`）
@@ -132,12 +132,14 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <版>`）。
 - GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
   - 定期の確認で失敗したら、Issue を立てます（同じ版の Issue が開いていれば立てない）。
-  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<版>`）を作ります。動作確認済のバージョンと同じ版で、その控えがまだコミットされていなければ、控えだけを足す PR を作ります。同じ版の PR が一度でもあれば（閉じたものも）、作り直しません。
-    - PR を作るのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
-    - GitHub Actions が作った PR では、PR の CI が自動では動きません。確かめた実行へのリンクを PR の説明に載せます。
-    - リポジトリの設定（Settings → Actions → General）で「Allow GitHub Actions to create and approve pull requests」をオンにしておく必要があります。
+  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<版>`）を作って、そのまま squash マージします。動作確認済のバージョンと同じ版で、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じ版の PR が一度でもあれば（閉じたものも）、作り直しません。
+    - PR を作ってマージするのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
+    - GitHub Actions が作った PR では、PR の CI が動きません。そのため、マージの条件は PR の CI ではなく、同じ確認（`check` ジョブの `npm test` と本物の claude での `npm run test:cli`、書き換えたあとの `npm test`）が通ったことです。確かめた実行へのリンクを PR の説明に載せます。
+    - マージできなかったときは、`update` ジョブが失敗して、PR は開いたまま残ります。人が見てマージします。
+    - マージしたあとの develop への push では、GitHub Actions のトークンの仕様で、ワークフローが動きません。
+    - リポジトリの設定（Settings → Actions → General）で「Allow GitHub Actions to create and approve pull requests」をオンにしておく必要があります。develop のルールセット（need-pr）は、PR を通すことだけを求めています（承認 0 人・squash のみ）。必須のチェックを足すと、PR の CI が動かないこの PR はマージできなくなります。
   - 途中の控えは artifact（`claude-code-<版>`）にも残します。
-  - 「Run workflow」で、版を指定して確かめることもできます。通れば、定期の確認と同じく PR を作ります（動作確認済のバージョンより古い版では作らない）。
+  - 「Run workflow」で、版を指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古い版では作らない）。
 
 ## 仕組み
 
