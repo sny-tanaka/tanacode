@@ -31,11 +31,16 @@ export const TOOLS_REPLY = 'ツールの確認が終わりました';
 // コマンドに [ ] を入れて、止めた理由の行（「…hook error: [コマンド]: 理由」）からコマンドを読めるかも確かめる
 export const BLOCK_HOOK = 'if [ -n "$(grep tanacode-forbidden)" ]; then echo "禁止のコマンドです" >&2; exit 2; fi';
 export const BLOCK_REASON = '禁止のコマンドです';
+// PostToolUse の hooks。コマンドに tanacode-post-block を含む Bash のあとで exit 2 する。ツールはもう動いたあとなので、
+// 止めた理由が Claude に渡り、会話ログには hook_blocking_error の attachment が書かれる（PreToolUse で止めたときは書かれない）
+export const POST_BLOCK_HOOK = 'if [ -n "$(grep tanacode-post-block)" ]; then echo "あとから止めました" >&2; exit 2; fi';
+export const POST_BLOCK_REASON = 'あとから止めました';
 // Stop の hooks。何も出力しないので、記録は stop_hook_summary の行だけになる
 export const STOP_HOOK = 'cat > /dev/null';
 export const SETTINGS = {
   hooks: {
     PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: BLOCK_HOOK }] }],
+    PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: POST_BLOCK_HOOK }] }],
     Stop: [{ hooks: [{ type: 'command', command: STOP_HOOK }] }],
   },
 };
@@ -88,6 +93,7 @@ const CONVERSATIONS: Conversation[] = [
     steps: [
       [{ type: 'tool_use', id: 'toolu_fail', name: 'Bash', input: { command: 'echo tanacode-fail && exit 3', description: '失敗するコマンド' } }],
       [{ type: 'tool_use', id: 'toolu_blocked', name: 'Bash', input: { command: 'echo tanacode-forbidden', description: '止められるコマンド' } }],
+      [{ type: 'tool_use', id: 'toolu_post_blocked', name: 'Bash', input: { command: 'echo tanacode-post-block', description: 'あとから止められるコマンド' } }],
       [{ type: 'tool_use', id: 'toolu_write', name: 'Write', input: { file_path: `WORK/${NOTES}`, content: NOTES_BEFORE } }],
       [{ type: 'tool_use', id: 'toolu_edit', name: 'Edit', input: { file_path: `WORK/${NOTES}`, old_string: 'three', new_string: 'THREE\nthree-and-half' } }],
       [{ type: 'text', text: TOOLS_REPLY }],
@@ -216,6 +222,19 @@ export function checkToolErrors(events: ChatEvent[], cwd: string): void {
         outcome: 'blocked',
         message: BLOCK_REASON,
         toolUseId: 'toolu_blocked',
+      }),
+    },
+    // PostToolUse の hooks で止めたときは、ツールは動いたあと。hook_blocking_error の attachment から、止めた hooks が出る
+    { type: 'tool-use', id: 'toolu_post_blocked', name: 'Bash' },
+    {
+      type: 'hook',
+      run: expect.objectContaining({
+        event: 'PostToolUse',
+        name: 'PostToolUse:Bash',
+        command: POST_BLOCK_HOOK,
+        outcome: 'blocked',
+        message: expect.stringContaining(POST_BLOCK_REASON),
+        toolUseId: 'toolu_post_blocked',
       }),
     },
     { type: 'tool-use', id: 'toolu_write', name: 'Write', filePath: file, target: NOTES },

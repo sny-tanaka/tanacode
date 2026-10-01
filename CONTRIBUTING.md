@@ -109,7 +109,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
-  - 確かめられないもの: Remote Control とモデルの一覧の控え（claude.ai へのログインが要る）、ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）、`/usage` の利用枠、API エラーの再試行中の行（`api_error`。今の Claude Code は会話ログに書かない）。
+  - 確かめられないもの:
+    - Remote Control とモデルの一覧の控え（claude.ai へのログインが要る）
+    - ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）
+    - `/usage` の利用枠
+    - API エラーの再試行中の行（`system` の `api_error`）: 今の Claude Code は、再試行中にこの行を作って画面には出しますが、会話ログに残す前に飛ばします。チャットの「再試行中」の表示は、今は出ません
+    - 貼り付けの `<pasted_content>` の囲み: Claude Code の入力欄に貼り付けたものは囲まれません。囲まれるのは、claude.ai など外から送られた発言（Remote Control）の貼り付けです
+  - hooks で止めたときの行（`hook_blocking_error` の attachment）は、PostToolUse・PostToolUseFailure の hooks でだけ書かれます。PreToolUse で止めたときは書かれず、ツールの結果の文章（「PreToolUse:Bash hook error: …」）から読みます。どちらも `errors.test.ts` で確かめます。
   - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます。
   - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
