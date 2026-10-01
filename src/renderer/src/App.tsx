@@ -99,7 +99,7 @@ export function App() {
   // 左から 3 番目のペイン
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
-  // セッションごとの、プレビューで開いているページ
+  // セッションごとの、アプリ内ブラウザで開いているページ
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
   const [comments, setComments] = useState<Record<string, ReviewComment[]>>({});
@@ -252,7 +252,7 @@ export function App() {
   }, []);
 
   // line を渡すと、ディスクから読み直したうえでその行を表示する（Claude Code の編集直後に開くため）。
-  // エディタの場所に差分・タスク・プレビューを出していたら閉じて、エディタを見せる
+  // エディタの場所に差分・タスク・ブラウザを出していたら閉じて、エディタを見せる
   const openFile = useCallback(
     async (path: string, line?: number) => {
       if (!viewId || !cwd) return;

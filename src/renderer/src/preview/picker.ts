@@ -1,7 +1,7 @@
 import { token } from '../theme';
 import { codeBlock, inlineCode, stripControlChars } from '../chat/sanitize';
 
-// プレビューのページに差し込んで、要素を 1 つ選んでもらうスクリプト。
+// アプリ内ブラウザのページに差し込んで、要素を 1 つ選んでもらうスクリプト。
 // マウスを乗せた要素を枠で示し、クリックした要素の情報を返す（Esc で null）。ページのクリック処理は動かさない
 export type PickedElement = {
   url: string;
@@ -101,7 +101,7 @@ const oneLine = (s: unknown) => stripControlChars(String(s ?? '')).replace(/\s+/
 
 // Claude への指示に添える文章
 export function describePicked(p: PickedElement): string {
-  const lines = [`プレビュー（${oneLine(p.url)}）で選んだ要素:`, `- セレクタ: ${inlineCode(oneLine(p.selector))}`];
+  const lines = [`アプリ内ブラウザ（${oneLine(p.url)}）で選んだ要素:`, `- セレクタ: ${inlineCode(oneLine(p.selector))}`];
   const text = oneLine(p.text);
   if (text) lines.push(`- テキスト: 「${text}」`);
   // html に ``` が入っていてもフェンスから抜けられないよう、フェンスは中身より長くする

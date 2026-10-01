@@ -180,7 +180,7 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
   const sendErrors = () => {
     if (!page || page.consoleErrors.length === 0) return;
     // エラーの文はページが書けるので、中に ``` があってもブロックから抜けないようにする
-    insertIntoChat(sessionId, `プレビュー（${page.url}）のコンソールに出たエラー:\n${codeBlock(page.consoleErrors.join('\n'))}\n`);
+    insertIntoChat(sessionId, `アプリ内ブラウザ（${page.url}）のコンソールに出たエラー:\n${codeBlock(page.consoleErrors.join('\n'))}\n`);
     update(sessionId, { consoleErrors: [] });
   };
 
@@ -240,7 +240,7 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
         <button className="preview-nav" disabled={!shown} onClick={() => wv?.openDevTools()} data-tip="開発者ツール" aria-label="開発者ツール">
           ⚙
         </button>
-        <button className="preview-nav" onClick={onClose} data-tip="プレビューを閉じる" aria-label="プレビューを閉じる">
+        <button className="preview-nav" onClick={onClose} data-tip="ブラウザを閉じる" aria-label="ブラウザを閉じる">
           ✕
         </button>
       </div>
