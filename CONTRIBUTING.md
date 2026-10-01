@@ -221,6 +221,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - 図案だけの元の画像は `design/logo-mark.png`（背景を透過したもの）。ロゴは、これと「tanacode」の文字を並べた `design/logo.png`。README は、どちらのテーマでも読める背景付きの `design/logo-banner.png` を使います。タイトルバーのロゴは `src/renderer/src/assets/logo.png`、アプリのアイコンは `build/icon-source.png` から `npm run icon` で作ります。新規セッションの画面に出す小さいアイコン（`src/renderer/src/assets/icon.png`）も、同じ `npm run icon` で作ります。
 - バージョンは、ビルドのときに `package.json` の `version` を埋め込みます。
+- バージョンの右には、新しい版の印（`layout/AppUpdate.tsx`）。main の `app-update.ts` が、起動時と 1 時間ごとに GitHub の `releases/latest` を問い合わせ、`app.getVersion()` と比べます。`releases/latest` は公開済みの版だけを返すので、Releases の下書きを公開した時点で知らせが出ます。開くページは、返事の `html_url` を使わずに版から組み立てます。問い合わせは `net.fetch`（macOS のプロキシの設定が効く）。確かめられなかったときは前の結果のまま。メニューの「新しい版を確かめる」でオフにすると、問い合わせを止めて印も消します。
 
 ## 読むもの・書くもの
 
@@ -234,6 +235,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
+| `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しい版（起動時・1 時間ごと。メニューの「新しい版を確かめる」で止められる） |
 
 ### 書くもの
 
@@ -242,7 +244,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うかなど） |
-| `settings.json` | アプリ自身の設定（今は、macOS の通知を出すか。右上のベルで切り替える） |
+| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しい版を確かめるか。右上のベルと、メニューの「新しい版を確かめる」で切り替える） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `usage.json` | 最後に分かった利用枠 |
@@ -270,7 +272,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）
-  - `app-settings.ts`: アプリ自身の設定（今は通知のオン・オフ）の保存
+  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しい版を確かめるか）の保存
+  - `app-update.ts`: tanacode の新しい版（GitHub の Releases。起動時・1 時間ごと）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
 - `src/preload`: renderer に `window.tanacode` の API を公開する
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーは部品の隣の `*.stories.tsx`
@@ -293,6 +296,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
+  - `app-update.test.ts`: 新しい版の確認（Releases の返事の読み取り・版の比べ方・確かめられなかったときと止めたとき）
 
 ## デモ動画の仕組み
 

@@ -7,6 +7,7 @@ import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
 import type { UsageLimits } from './usage';
 import type { AgentLogRef, BashTask } from './task';
+import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
 
 export const IpcChannel = {
@@ -91,6 +92,8 @@ export const IpcChannel = {
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
   ClaudeVersionChanged: 'claude:version-changed',
+  AppUpdateGet: 'app-update:get',
+  AppUpdateChanged: 'app-update:changed',
   StatusLineChanged: 'statusline:changed',
   KnowledgeChanged: 'knowledge:changed',
 } as const;
@@ -270,6 +273,11 @@ export type TanacodeApi = {
   claudeVersion: {
     get(): Promise<string | null>;
     onChanged(listener: (version: string | null) => void): () => void;
+  };
+  // tanacode の新しい版（GitHub の Releases）。起動時と 1 時間ごとに確かめる。まだ分からない・確かめる設定がオフなら null
+  appUpdate: {
+    get(): Promise<AppUpdate | null>;
+    onChanged(listener: (update: AppUpdate | null) => void): () => void;
   };
   // セッションごとの statusLine（モデル・コンテキスト・利用枠）
   statusLine: {

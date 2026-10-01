@@ -161,6 +161,33 @@ input[type='checkbox'] {
   font-size: 11px;
   color: var(--text-tertiary);
 }
+/* バージョンの横の新しい版の印。文字は出さず、ツールチップで知らせる。マウスを乗せられるよう、ドラッグを外す */
+.app-update {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: -6px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  -webkit-app-region: no-drag;
+}
+/* 最新なら、バージョンの文字と同じ色で控えめに */
+.app-update.latest {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.app-update.available {
+  color: var(--blue);
+  cursor: pointer;
+}
+.app-update.available:hover {
+  background: var(--bg-hover);
+}
 /* 右端のボタン（通知のベル）。帯はドラッグでウインドウを動かせるので、押せるようにドラッグを外す */
 .titlebar-actions {
   flex: none;
