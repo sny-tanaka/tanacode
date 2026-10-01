@@ -172,6 +172,12 @@ async function pickFolder(): Promise<string | null> {
   return dir;
 }
 
+// 出した通知を、クリックされるまで持っておく。Electron の Notification は、JS から参照されなくなると回収され、
+// そのあとクリックしても click が届かない（アプリは前に出るが、セッションは移らない。electron/electron#16922）。
+// 閉じたときの close は、必ず届くとは限らない。溜まりすぎないよう、古いものから手放す
+const liveNotifications = new Set<Notification>();
+const MAX_LIVE_NOTIFICATIONS = 50;
+
 // 通知のタイトルはアプリの名前、サブタイトルはセッション名
 function notify(sessionId: string, sessionTitle: string | null, message: string): void {
   if (!settings.notificationsEnabled()) return;
@@ -180,10 +186,19 @@ function notify(sessionId: string, sessionTitle: string | null, message: string)
   if (!Notification.isSupported()) return;
   // 音は macOS のシステム音の Glass（指定しないと、既定の通知音が鳴る）
   const notification = new Notification({ title: 'tanacode', subtitle: sessionTitle ?? '新しいセッション', body: message, sound: 'Glass' });
+  const release = () => liveNotifications.delete(notification);
   notification.on('click', () => {
+    release();
     showWindow();
     send(IpcChannel.SessionsSelect, sessionId);
   });
+  notification.on('close', release);
+  notification.on('failed', release);
+  liveNotifications.add(notification);
+  if (liveNotifications.size > MAX_LIVE_NOTIFICATIONS) {
+    const oldest = liveNotifications.values().next().value;
+    if (oldest) liveNotifications.delete(oldest);
+  }
   notification.show();
 }
 

@@ -188,6 +188,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 止まっているセッションは、選んだ時点で `claude --resume` で会話を再開します。
 - 終了のダイアログの「Claude Code も止めて終了」は、pty ホストも止めます。動いているセッションが無いときも、聞かずに pty ホストまで止めて終わります。
 - kill（SIGTERM）で止めたときも、ふつうの終了と同じく聞きます。もう一度送ると、聞かずに強制的に終わります（Claude Code は止まらない）。
+- macOS の通知（`notify`）は、出したものをクリック・閉じる・失敗のどれかまで main で持っておきます（上限 50 件）。持っていないと、Electron が回収してしまい、クリックしても `click` が届きません（アプリは前に出ても、セッションが移らない）。
 - Remote Control の切り替えは、Claude Code が動いていればその場で `/remote-control` を送ります。以前つないでいた会話を再開すると、Claude Code はフラグが無くても勝手につなぎ直すので、オフのセッションでそうなったら、すぐに `/remote-control` で切ります。
 
 ### チャット
