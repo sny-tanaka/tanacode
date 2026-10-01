@@ -495,6 +495,12 @@ body.resizing * {
   color: var(--text-tertiary);
   cursor: default;
 }
+/* 一覧 / ツリーの切り替え（文字ではなく線画のアイコン） */
+.scm-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .scm-branch-menu {
   position: absolute;
   top: 32px;
@@ -659,6 +665,15 @@ body.resizing * {
   text-overflow: ellipsis;
   color: var(--text-secondary);
   font-size: 11px;
+}
+/* ツリーのフォルダの行。長い名前は省略する（ファイルの名前と違い、縮められる） */
+.scm-dir-row {
+  color: var(--text-secondary);
+}
+.scm-dir-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .scm-actions {
   margin-left: auto;
