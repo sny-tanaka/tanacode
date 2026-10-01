@@ -18,7 +18,7 @@
 
 **基本の流れ**: 指示を送る → ツールの操作は 1 行に畳まれる → 質問にはボタンで回答 → 書き換わった行はエディタで確認 → サブエージェントは入力欄の上に並ぶ
 
-https://github.com/user-attachments/assets/37108310-f132-4b9b-8b4d-9740771e311a
+https://github.com/user-attachments/assets/8a14e102-a9e2-4002-9300-6a3405a2e468
 
 ## いつもの Claude Code のまま
 
@@ -33,31 +33,31 @@ https://github.com/user-attachments/assets/37108310-f132-4b9b-8b4d-9740771e311a
 
 サブエージェント・ワークフロー・バックグラウンドの Bash は、動いている間は入力欄の上に表示。ワークフローは、GitHub Actions のようなフロー図とエージェントごとの会話で追跡。
 
-https://github.com/user-attachments/assets/b0c14f75-fffa-449e-b3af-5f66791da3bb
+https://github.com/user-attachments/assets/269deae1-56b6-4543-9585-6bc8a37bdd67
 
 ### どのセッションが手待ちか、一目で
 
 並行して動くセッションの状態（作業中・完了待ち・質問への回答待ち・新しい応答）を、一覧の印で区別。見ていないセッションの完了や確認は、macOS の通知で。
 
-https://github.com/user-attachments/assets/cfd42026-30ad-4b0a-ab53-d4ac370a7567
+https://github.com/user-attachments/assets/381be032-ad00-4bf6-ad4d-b54ba4770f01
 
 ### Claude が何を読んだか、ファイルツリーで
 
 今の会話で Claude が読んだファイルは青、書いたファイルは橙の点。圧縮で要約に置き換わったファイルも区別。コンテキストの使用量はメーター、hooks の出力と止めた理由はチャットに。
 
-https://github.com/user-attachments/assets/7f3e4fab-1b89-4206-8803-d7c2b5946303
+https://github.com/user-attachments/assets/e2e2fa3e-2cb6-4fb9-a1db-eaba4f291b11
 
 ### プッシュ前に、変更を PR のようにレビュー
 
 ブランチが分岐したところからの変更（コミット済みも含む）を、プルリクエストのような一覧で確認。差分の行に付けたコメントは、次の指示に添えて Claude へ。GitHub に PR を作る必要は無し。
 
-https://github.com/user-attachments/assets/df937676-cf42-4f77-b2e0-e2ebceb07acd
+https://github.com/user-attachments/assets/99a38a3c-cdbd-4f9f-9d2c-1514f93e4b9a
 
 ### 画面を指さして「ここを直して」
 
 開発中のページをアプリの中で表示。クリックで選んだ要素のセレクタ・HTML・画像を、そのまま Claude への指示に添付。
 
-https://github.com/user-attachments/assets/40edf942-d957-4228-b8e1-048ddd7f964e
+https://github.com/user-attachments/assets/f95733ef-2203-46c2-b3d4-17b3ab6d7a6b
 
 ### そのほか
 

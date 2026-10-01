@@ -330,10 +330,20 @@ body.resizing * {
   border-bottom: 1px solid var(--border-subtle);
 }
 .diff-pane-title {
+  min-width: 0;
+  display: flex;
   font-family: var(--font-mono);
   font-size: 12px;
+  white-space: nowrap;
+}
+.diff-pane-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .diff-pane-kind {
+  flex: none;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 11px;
 }
