@@ -1,6 +1,6 @@
 {
   "name": "tanacode",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "空いた画面に Claude の中身を映す macOS アプリ",
   "license": "MIT",
