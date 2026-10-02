@@ -1,0 +1,162 @@
+[
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "           Claude Code v2.1.287",
+  "full": false
+ },
+ {
+  "text": "           Opus 5.5 · API Usage Billing",
+  "full": false
+ },
+ {
+  "text": "           /tmp/tanacode-cli/work",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ 確認を始めてください                                                                                                  ",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "● コマンドを実行します。",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "● 確認のフォルダを作る",
+  "full": false
+ },
+ {
+  "text": "  ⎿  $ mkdir checked && echo tanacode-check",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": " Bash command",
+  "full": false
+ },
+ {
+  "text": " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+  "full": false
+ },
+ {
+  "text": " 確認のフォルダを作る",
+  "full": false
+ },
+ {
+  "text": "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  "full": true
+ },
+ {
+  "text": " mkdir checked && echo tanacode-check",
+  "full": false
+ },
+ {
+  "text": "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  "full": true
+ },
+ {
+  "text": " Do you want to proceed?",
+  "full": false
+ },
+ {
+  "text": " ❯ 1. Yes",
+  "full": false
+ },
+ {
+  "text": "   2. Yes, and always allow access to /tmp/tanacode-cli/work from this project",
+  "full": false
+ },
+ {
+  "text": "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+  "full": false
+ },
+ {
+  "text": "   4. No",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": " Esc to cancel · Tab to amend",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ }
+]

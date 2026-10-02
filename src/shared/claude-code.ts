@@ -1,6 +1,6 @@
 // tanacode で動作確認済の Claude Code のバージョン。互換性の確認（npm run test:cli）が通った版にする。
 // 版は低くても高くても動かない場合があるので、これと同じ版でなければステータスバーで知らせる
-export const VERIFIED_CLAUDE_CODE_VERSION = '2.1.286';
+export const VERIFIED_CLAUDE_CODE_VERSION = '2.1.287';
 
 // same: 動作確認済のバージョン / newer: それより新しい / older: 古い / missing: claude が見つからない・版が読めない
 export type VersionMatch = 'same' | 'newer' | 'older' | 'missing';
