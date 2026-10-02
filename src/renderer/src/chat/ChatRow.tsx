@@ -109,7 +109,7 @@ export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashT
   }
   if (item.kind === 'thinking') {
     return (
-      <details className="chat-thinking">
+      <details className="chat-thinking" open>
         <summary>思考</summary>
         <div className="chat-thinking-text">{item.text}</div>
       </details>
