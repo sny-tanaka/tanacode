@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
-import type { SessionSummary } from '@shared/ipc';
+import type { SessionSummary, SessionWorktree } from '@shared/ipc';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
 import { ClaudePane } from './ClaudePane';
@@ -25,6 +25,7 @@ const session: SessionSummary = {
   effort: null,
   settingsFile: null,
   remoteControl: false,
+  worktree: null,
 };
 
 // 発言と返答を交互に並べた、スクロールできる長さの会話
@@ -40,12 +41,23 @@ function conversation(count: number): ChatItem[] {
   );
 }
 
-function Pane({ items, settingsFile = null }: { items: ChatItem[]; settingsFile?: string | null }) {
+// worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示
+function Pane({
+  items,
+  settingsFile = null,
+  worktree = null,
+  pending = null,
+}: {
+  items: ChatItem[];
+  settingsFile?: string | null;
+  worktree?: SessionWorktree | null;
+  pending?: string | null;
+}) {
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
-        session={{ ...session, settingsFile }}
-        chat={{ ...EMPTY_CHAT, status: 'idle', items }}
+        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing }}
+        chat={{ ...EMPTY_CHAT, status: worktree?.preparing ? 'starting' : 'idle', items }}
         screen={null}
         workflows={new Map()}
         subagents={new Map()}
@@ -60,12 +72,13 @@ function Pane({ items, settingsFile = null }: { items: ChatItem[]; settingsFile?
         onCommentsChange={noop}
         onShowComment={noop}
         onOpenTerminal={noop}
+        onShowShell={noop}
         onToggleTerminal={noop}
         onOpenFile={noop}
         onResume={noop}
         onUnarchive={noop}
         onSend={noop}
-        pending={null}
+        pending={pending === null ? null : { text: pending, attachments: [] }}
         sending={[]}
         onTakePending={() => null}
       />
@@ -135,4 +148,23 @@ export const 設定ファイルで動いている: Story = {
 export const 設定ファイルの登録なし: Story = {
   beforeEach: () => mockApi({ 'settingsFiles.list': () => Promise.resolve([]) }),
   args: { settingsFile: 'f1' },
+};
+
+const WORKTREE: SessionWorktree = { name: 'tc-1002-k3x9', branch: 'worktree-tc-1002-k3x9', root: '/Users/me/work/app', preparing: null };
+
+// worktree の準備の途中（package-lock.json が元のフォルダと違うので npm install している）。最初の指示は、準備が終わるのを待って送る。
+// 「ターミナルで見る」で、npm install の進み具合のタブを出す
+export const worktreeの準備中: Story = {
+  args: { items: [], worktree: { ...WORKTREE, preparing: 'installing' }, pending: 'ログイン画面のバグを直してください。' },
+};
+
+// worktree の準備が終わったあと。何をしたかを、知らせとして出す
+export const worktreeで始めた: Story = {
+  args: {
+    items: [
+      { kind: 'info', id: 'i1', text: 'worktree .claude/worktrees/tc-1002-k3x9（ブランチ worktree-tc-1002-k3x9）で始めました。node_modules は元のフォルダから複製しました' },
+      ...conversation(2),
+    ],
+    worktree: WORKTREE,
+  },
 };

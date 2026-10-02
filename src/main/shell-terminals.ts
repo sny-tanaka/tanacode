@@ -7,6 +7,8 @@ type Shell = { proc: pty.IPty; owner: string };
 type Listeners = {
   onData: (id: string, data: string) => void;
   onExit: (id: string, exitCode: number) => void;
+  // アプリがコマンドのターミナルを開いた（run）
+  onOpened?: (owner: string, id: string, name: string) => void;
 };
 
 // ユーザーが自分で使うターミナル。セッション（owner）ごとに、そのフォルダでログインシェルを開く
@@ -29,6 +31,26 @@ export class ShellTerminals {
       this.listeners.onExit(id, exitCode);
     });
     return { id, name: basename(shell) };
+  }
+
+  // アプリが実行するコマンド（worktree の npm install）を、セッションのターミナルのタブに出しながら実行する。終了コードを返す。
+  // ログインシェルで実行する（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）
+  run(owner: string, cwd: string, command: string, name: string): Promise<number> {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const env = childEnv();
+    env.TERM_PROGRAM = 'tanacode';
+    const proc = pty.spawn(shell, ['-l', '-c', command], { name: 'xterm-256color', cols: 100, rows: 24, cwd, env });
+    const id = `task-${++this.seq}`;
+    this.shells.set(id, { proc, owner });
+    proc.onData((data) => this.listeners.onData(id, data));
+    this.listeners.onOpened?.(owner, id, name);
+    return new Promise((resolve) => {
+      proc.onExit(({ exitCode }) => {
+        this.shells.delete(id);
+        this.listeners.onExit(id, exitCode);
+        resolve(exitCode);
+      });
+    });
   }
 
   write(id: string, data: string): void {

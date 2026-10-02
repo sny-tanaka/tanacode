@@ -6,6 +6,7 @@ import { basename, join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, session, shell, type MenuItem, type WebContents } from 'electron';
 import {
   IpcChannel,
+  type ArchiveOptions,
   type DiscoveredSession,
   type GitAction,
   type NewSessionOptions,
@@ -56,6 +57,7 @@ let confirmingQuit = false;
 const shells = new ShellTerminals({
   onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
   onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
+  onOpened: (owner, id, name) => send(IpcChannel.ShellOpened, { owner, id, name }),
 });
 
 // アプリ内プレビューの webview が使うセッション（renderer の PreviewPane の PARTITION と同じ名前）
@@ -222,14 +224,14 @@ function registerIpc(): void {
   const isDirectory = (path: string) => stat(path).then((s) => s.isDirectory(), () => false);
   ipcMain.handle(IpcChannel.SessionsCreate, async (_e, cwd: string, options: NewSessionOptions) => {
     if (!(await isDirectory(cwd))) throw new Error(`フォルダが見つかりません: ${cwd}`);
-    return manager.create(cwd, options);
+    return options.worktree ? manager.createInWorktree(cwd, options) : manager.create(cwd, options);
   });
   ipcMain.handle(IpcChannel.FolderPick, () => pickFolder());
   ipcMain.handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
   ipcMain.handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
   ipcMain.handle(IpcChannel.FolderCommands, (_e, cwd: string) => listCommands(cwd, null));
   ipcMain.handle(IpcChannel.FolderOpen, async (_e, cwd: string) => {
-    const known = pickedFolders.has(cwd) || manager.list().some((s) => s.cwd === cwd);
+    const known = pickedFolders.has(cwd) || manager.list().some((s) => s.cwd === cwd || s.worktree?.root === cwd);
     if (!known || !(await isDirectory(cwd))) throw new Error(`フォルダを開けません: ${cwd}`);
     const id = `folder:${randomUUID()}`;
     folderViews.set(id, cwd);
@@ -243,13 +245,18 @@ function registerIpc(): void {
     watchers.release(cwd);
   });
   ipcMain.handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
-  ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string) => manager.archive(id));
+  ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string, options?: ArchiveOptions) => {
+    // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
+    if (options?.removeWorktree) shells.killOwner(id);
+    return manager.archive(id, options);
+  });
+  ipcMain.handle(IpcChannel.SessionsWorktreeLeftovers, (_e, id: string) => manager.worktreeLeftovers(id));
   ipcMain.handle(IpcChannel.SessionsUnarchive, (_e, id: string) => manager.unarchive(id));
   ipcMain.handle(IpcChannel.SessionsSnapshot, (_e, id: string) => manager.snapshot(id));
   ipcMain.handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
-  ipcMain.handle(IpcChannel.SessionsRemove, (_e, id: string) => {
+  ipcMain.handle(IpcChannel.SessionsRemove, (_e, id: string, options?: ArchiveOptions) => {
     shells.killOwner(id);
-    return manager.remove(id);
+    return manager.remove(id, options);
   });
   ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
   ipcMain.handle(IpcChannel.ChatImage, (_e, key: string) => imageOf(key));
@@ -551,7 +558,7 @@ app.whenReady().then(async () => {
     onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
     onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl, settingsFiles);
+  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name));
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く

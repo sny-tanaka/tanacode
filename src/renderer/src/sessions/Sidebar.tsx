@@ -4,7 +4,8 @@ import type { SettingsFile } from '@shared/settings-file';
 import { inLockedOrder } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
 import { useSettingsFiles } from '../chat/settingsFiles';
-import { LockIcon } from '../layout/icons';
+import { LockIcon, WorktreeIcon } from '../layout/icons';
+import { PREPARING_LABEL } from './worktree';
 import { UsagePanel } from '../usage/UsagePanel';
 
 // 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
@@ -119,7 +120,18 @@ export const Sidebar = memo(function Sidebar({
                 {' · '}
               </>
             )}
-            {s.cwd.split('/').pop()}
+            {s.worktree ? (
+              <span
+                className="session-worktree"
+                title={`worktree ${s.worktree.name}（ブランチ ${s.worktree.branch}）で動いています\n元のフォルダ: ${s.worktree.root}`}
+              >
+                {s.worktree.root.split('/').pop()}
+                <WorktreeIcon size={11} />
+                {s.worktree.name}
+              </span>
+            ) : (
+              s.cwd.split('/').pop()
+            )}
             {s.settingsFile && (
               <>
                 {' · '}
@@ -144,7 +156,8 @@ export const Sidebar = memo(function Sidebar({
             className="session-action danger"
             onClick={(e) => {
               e.stopPropagation();
-              if (window.confirm(`「${s.title ?? '新しいセッション'}」を一覧から削除しますか？\n（Claude Code の会話ログは残ります）`)) onRemove(s.id);
+              // worktree のセッションは、worktree をどうするかを App のダイアログで聞く
+              if (s.worktree || window.confirm(`「${s.title ?? '新しいセッション'}」を一覧から削除しますか？\n（Claude Code の会話ログは残ります）`)) onRemove(s.id);
             }}
             title="一覧から削除"
           >
@@ -217,6 +230,7 @@ function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.attention === 'question') return { kind: 'waiting', label: '質問への回答待ち' };
   if (s.attention === 'permission') return { kind: 'waiting', label: '実行の許可待ち' };
   if (s.attention === 'other') return { kind: 'waiting', label: '操作待ち' };
+  if (s.worktree?.preparing) return { kind: 'starting', label: PREPARING_LABEL[s.worktree.preparing] };
   const background = s.backgroundTasks > 0 ? `バックグラウンド ${s.backgroundTasks}件` : null;
   if (status === 'starting') return { kind: 'starting', label: '起動中' };
   if (status === 'running') return { kind: 'running', label: background ? `作業中（${background}）` : '作業中' };

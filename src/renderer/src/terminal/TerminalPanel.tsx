@@ -11,7 +11,8 @@ import { xtermOptions } from './xterm';
 // パネルに出すもの: ユーザーのシェルか、Claude Code の生の画面か
 export type TerminalView = 'shell' | 'claude';
 
-type ShellTab = { id: string; name: string; title: string | null };
+// task: アプリが開いたコマンドのタブ（worktree の npm install）。終わってもタブは残し、exitCode に終了コードを入れる
+type ShellTab = { id: string; name: string; title: string | null; task?: boolean; exitCode?: number };
 type Xterm = { term: Terminal; fit: FitAddon; element: HTMLDivElement };
 
 const HEIGHT_KEY = 'tanacode.terminalHeight';
@@ -54,20 +55,74 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
   const activeShell = sessionId ? tabs.find((t) => t.id === active[sessionId]) ?? tabs[0] ?? null : null;
   const showShell = open && view === 'shell';
 
+  // アプリが開いたコマンドのタブ（終わってもタブを残す）
+  const taskIds = useRef(new Set<string>());
+
+  // xterm を作ってパネルに置く（まだ見せない）
+  const makeXterm = useCallback((): Xterm => {
+    const element = document.createElement('div');
+    element.className = 'terminal-instance';
+    element.hidden = true;
+    hostRef.current!.appendChild(element);
+    const term = new Terminal(xtermOptions());
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    // URL は ⌘ クリックでブラウザで開く
+    term.loadAddon(new WebLinksAddon((event, uri) => event.metaKey && window.open(uri)));
+    // ⌘K で画面を消す（macOS のターミナルと同じ）
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.metaKey && e.key === 'k') {
+        term.clear();
+        return false;
+      }
+      return true;
+    });
+    term.open(element);
+    return { term, fit, element };
+  }, []);
+
+  // 開いた pty（id）と xterm をつなぐ。xterm を用意する前に届いていた出力も流す
+  const attachXterm = useCallback(
+    (id: string, x: Xterm = makeXterm()): Xterm => {
+      const { term } = x;
+      xterms.current.set(id, x);
+      term.onData((data) => window.tanacode.shell.write(id, data));
+      term.onResize(({ cols, rows }) => window.tanacode.shell.resize(id, cols, rows));
+      term.onSelectionChange(() => setHasSelection(term.hasSelection()));
+      for (const data of pending.current.get(id) ?? []) term.write(data);
+      pending.current.delete(id);
+      return x;
+    },
+    [makeXterm],
+  );
+
   useEffect(() => {
     const offData = window.tanacode.shell.onData(({ id, data }) => {
       const x = xterms.current.get(id);
       if (x) x.term.write(data);
       else pending.current.set(id, [...(pending.current.get(id) ?? []), data]);
     });
-    // シェルが終わったら（exit など）タブを閉じる
-    const offExit = window.tanacode.shell.onExit(({ id }) => {
+    // シェルが終わったら（exit など）タブを閉じる。アプリが開いたコマンドのタブは、出力を見られるよう残す
+    const offExit = window.tanacode.shell.onExit(({ id, exitCode }) => {
+      if (taskIds.current.has(id)) {
+        setShells((prev) =>
+          Object.fromEntries(Object.entries(prev).map(([owner, list]) => [owner, list.map((t) => (t.id === id ? { ...t, exitCode } : t))])),
+        );
+        return;
+      }
       const x = xterms.current.get(id);
       x?.term.dispose();
       x?.element.remove();
       xterms.current.delete(id);
       pending.current.delete(id);
       setShells((prev) => Object.fromEntries(Object.entries(prev).map(([owner, list]) => [owner, list.filter((t) => t.id !== id)])));
+    });
+    // アプリがコマンドのタブを開いた。そのセッションで選んでおく（「ターミナルで見る」で出す）
+    const offOpened = window.tanacode.shell.onOpened(({ owner, id, name }) => {
+      taskIds.current.add(id);
+      attachXterm(id);
+      setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null, task: true }] }));
+      setActive((prev) => ({ ...prev, [owner]: id }));
     });
     const observer = new ResizeObserver(() => {
       for (const x of xterms.current.values()) if (!x.element.hidden) x.fit.fit();
@@ -76,6 +131,7 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
     return () => {
       offData();
       offExit();
+      offOpened();
       observer.disconnect();
     };
   }, []);
@@ -84,35 +140,16 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
     if (creating.current) return;
     creating.current = true;
     try {
-      const element = document.createElement('div');
-      element.className = 'terminal-instance';
       for (const x of xterms.current.values()) x.element.hidden = true;
-      hostRef.current!.appendChild(element);
-      const term = new Terminal(xtermOptions());
-      const fit = new FitAddon();
-      term.loadAddon(fit);
-      // URL は ⌘ クリックでブラウザで開く
-      term.loadAddon(new WebLinksAddon((event, uri) => event.metaKey && window.open(uri)));
-      // ⌘K で画面を消す（macOS のターミナルと同じ）
-      term.attachCustomKeyEventHandler((e) => {
-        if (e.type === 'keydown' && e.metaKey && e.key === 'k') {
-          term.clear();
-          return false;
-        }
-        return true;
-      });
-      term.open(element);
-      fit.fit();
+      const x = makeXterm();
+      x.element.hidden = false;
+      x.fit.fit();
+      const { term } = x;
       const { id, name } = await window.tanacode.shell.create(owner, term.cols, term.rows);
-      xterms.current.set(id, { term, fit, element });
-      term.onData((data) => window.tanacode.shell.write(id, data));
-      term.onResize(({ cols, rows }) => window.tanacode.shell.resize(id, cols, rows));
-      term.onSelectionChange(() => setHasSelection(term.hasSelection()));
+      attachXterm(id, x);
       term.onTitleChange((title) =>
         setShells((prev) => ({ ...prev, [owner]: (prev[owner] ?? []).map((t) => (t.id === id ? { ...t, title: title || null } : t)) })),
       );
-      for (const data of pending.current.get(id) ?? []) term.write(data);
-      pending.current.delete(id);
       if (queued.current?.owner === owner) {
         // 見えない制御文字で、見えているコマンドと違うものが動かないようにする
         window.tanacode.shell.write(id, `${stripControlChars(queued.current.command)}\r`);
@@ -123,7 +160,17 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
     } finally {
       creating.current = false;
     }
-  }, []);
+  }, [makeXterm, attachXterm]);
+
+  // 終わったコマンドのタブを閉じる（pty はもう無いので、画面のタブだけを片付ける）
+  const closeTask = (id: string) => {
+    const x = xterms.current.get(id);
+    x?.term.dispose();
+    x?.element.remove();
+    xterms.current.delete(id);
+    taskIds.current.delete(id);
+    setShells((prev) => Object.fromEntries(Object.entries(prev).map(([owner, list]) => [owner, list.filter((t) => t.id !== id)])));
+  };
 
   // パネルを開き、新しいシェルのタブでコマンドを実行する。パネルが見えてから作る（隠れたままだと大きさを測れない）。
   // パネルを開いたことで「1 つも無ければ開く」が先にシェルを作っても、そちらで実行される
@@ -208,14 +255,15 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
               }}
               title={t.title ?? t.name}
             >
-              <span>{t.title ?? `${t.name} ${i + 1}`}</span>
+              <span>{t.task ? taskLabel(t) : (t.title ?? `${t.name} ${i + 1}`)}</span>
               <button
                 className="terminal-tab-close"
                 aria-label="このターミナルを閉じる"
-                data-tip="このターミナルを閉じる"
+                data-tip={t.task && t.exitCode === undefined ? '止めて閉じる' : 'このターミナルを閉じる'}
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.tanacode.shell.kill(t.id);
+                  if (t.task && t.exitCode !== undefined) closeTask(t.id);
+                  else window.tanacode.shell.kill(t.id);
                 }}
               >
                 ×
@@ -258,4 +306,10 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
       </div>
     </div>
   );
+}
+
+// アプリが開いたコマンドのタブの名前。終わったら、うまくいったかを添える
+function taskLabel(tab: ShellTab): string {
+  if (tab.exitCode === undefined) return `${tab.name}（実行中）`;
+  return tab.exitCode === 0 ? `${tab.name}（完了）` : `${tab.name}（失敗 ${tab.exitCode}）`;
 }
