@@ -72,6 +72,19 @@ function Pane({ items }: { items: ChatItem[] }) {
   );
 }
 
+// ツールの呼び出しの間に思考が挟まる会話。思考はツールのまとまりに入れず、外に出す
+const tool = (id: string, name: string, target: string): ChatItem => ({ kind: 'tool', id, name, target, status: 'done', input: '{}' });
+const withThinking: ChatItem[] = [
+  { kind: 'user', id: 'u1', text: 'ログイン画面のバグを直してください。' },
+  { kind: 'thinking', id: 'th1', text: 'まずログイン画面の部品と、フォームの送信の処理を読む。' },
+  tool('r1', 'Read', 'src/Login.tsx'),
+  tool('r2', 'Grep', 'onSubmit'),
+  { kind: 'thinking', id: 'th2', text: '送信のたびに二重に呼ばれている。useEffect の依存の配列が足りないのが原因らしい。' },
+  tool('e1', 'Edit', 'src/Login.tsx'),
+  tool('b1', 'Bash', 'npm test'),
+  { kind: 'text', id: 't1', text: '`useEffect` の依存の配列を直しました。テストも通っています。' },
+];
+
 // 3 秒ごとに返答が増える。最下部にいれば追いかけ、上へスクロールしていれば追いかけずにボタンを出す
 function GrowingPane() {
   const [count, setCount] = useState(30);
@@ -93,5 +106,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const 長い会話: Story = {};
+
+export const 思考を挟む会話: Story = { args: { items: withThinking } };
 
 export const 返答が増える: Story = { render: () => <GrowingPane /> };
