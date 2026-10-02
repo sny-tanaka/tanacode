@@ -4,28 +4,26 @@ import { mcpParts, toolLabel } from './toolLabel';
 
 export type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
-// 本文と本文の間に続くツールの呼び出し（と思考）のまとまり。畳んで 1 行で出す
+// 本文と本文の間に続くツールの呼び出しのまとまり。畳んで 1 行で出す
 export type ToolGroup = { kind: 'tool-group'; id: string; items: ChatItem[]; tools: ToolItem[] };
 
 // ツールに付かない hooks の続き（Stop・SessionStart など）。これも畳んで 1 行で出す
 export type HookGroup = { kind: 'hook-group'; id: string; runs: HookRun[] };
 
 // チャットの行を、ツールの呼び出しのまとまりごとに束ねる。
-// 本文・発言・通知・エラー・区切り・ツールに付かない hooks・ユーザーに送ったファイル・質問への回答で区切る。ツールを含まない思考だけのまとまりは束ねない。
+// 本文・思考・発言・通知・エラー・区切り・ツールに付かない hooks・ユーザーに送ったファイル・質問への回答で区切る。思考はまとまりに入れず、外に出す。
 // ワークフローも束ねる（実行中のものは入力欄の上のトレイに出るので、進み具合はそこで見られる）。
 // ツールに付かない hooks は、続いているものを 1 つに束ねる
 export function groupTools(items: ChatItem[]): ChatRowItem[] {
   const out: ChatRowItem[] = [];
-  let run: ChatItem[] = [];
+  let run: ToolItem[] = [];
   const flush = () => {
-    const tools = run.filter((i): i is ToolItem => i.kind === 'tool');
-    if (tools.length > 0) out.push({ kind: 'tool-group', id: `group:${tools[0].id}`, items: run, tools });
-    else out.push(...run);
+    if (run.length > 0) out.push({ kind: 'tool-group', id: `group:${run[0].id}`, items: run, tools: run });
     run = [];
   };
   for (const item of items) {
     // ユーザーに送ったファイルと、質問への回答は、本文と同じく畳まずに出す
-    if ((item.kind === 'tool' && item.name !== 'SendUserFile' && !item.answers) || item.kind === 'thinking') {
+    if (item.kind === 'tool' && item.name !== 'SendUserFile' && !item.answers) {
       run.push(item);
       continue;
     }
