@@ -7,8 +7,7 @@ import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
-import { BranchIcon, FolderIcon, WorktreeIcon } from '../layout/icons';
-import { Toggle } from '../layout/Toggle';
+import { BranchIcon, FolderIcon } from '../layout/icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 
 // 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control・worktree（このマシンだけの好みなので localStorage に置く）
@@ -128,13 +127,6 @@ export function NewSessionPane({
         <span className="claude-mark" />
         <span className="claude-title">新規セッション</span>
         <div className="spacer" />
-        <Toggle
-          label={<WorktreeIcon size={15} />}
-          name="worktree で始める"
-          on={options.worktree}
-          title={`worktree で始める\n${WORKTREE_ABOUT}\n${options.worktree ? '始めると、新しい worktree を作ります' : '始めても、このフォルダで動かします'}`}
-          onChange={(worktree) => change({ worktree })}
-        />
         <RemoteControlToggle on={options.remoteControl} connected={null} onChange={(remoteControl) => change({ remoteControl })} />
         {onCancel && (
           <button className="ghost-button" onClick={onCancel} title="前に見ていたセッションに戻る">
@@ -161,12 +153,10 @@ export function NewSessionPane({
               {currentBranch}
             </button>
           )}
-          {options.worktree && cwd && !missing && (
-            <span className="new-session-chip worktree" title={`${WORKTREE_ABOUT}\nフォルダの .claude/worktrees/ に、新しいブランチで作ります`}>
-              <WorktreeIcon size={14} />
-              新しい worktree
-            </span>
-          )}
+          <label className="new-session-check" data-tip={WORKTREE_ABOUT}>
+            <input type="checkbox" checked={options.worktree} onChange={(e) => change({ worktree: e.target.checked })} />
+            worktree を使う
+          </label>
           {missing && <span className="new-session-warning">フォルダが見つかりません</span>}
         </div>
         <ChatInput
@@ -250,7 +240,7 @@ export function NewSessionPane({
 }
 
 const WORKTREE_ABOUT =
-  'claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。同じフォルダで並行して動かしても、変更がぶつかりません';
+  'claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。\n同じフォルダで並行して動かしても、変更がぶつかりません。\n場所はフォルダの .claude/worktrees/、ブランチは worktree-<名前>';
 
 // 作業フォルダの選択。最近使ったフォルダか、ダイアログで選んだフォルダ
 function FolderPicker({ cwd, folders, onChange }: { cwd: string | null; folders: string[]; onChange: (cwd: string) => void }) {

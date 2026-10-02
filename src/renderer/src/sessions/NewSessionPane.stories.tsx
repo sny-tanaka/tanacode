@@ -71,7 +71,7 @@ export const 設定ファイルを選んでいる: Story = {
   },
 };
 
-// 前に「worktree で始める」をオンにしていたとき。ヘッダーのトグルがオンになり、フォルダの横に「新しい worktree」の印が出る
+// 前に「worktree を使う」にチェックを入れていたとき。フォルダ・ブランチの横のチェックが入った状態で開く
 export const worktreeで始める: Story = {
   beforeEach: () => {
     localStorage.setItem('tanacode.newSessionOptions', JSON.stringify({ worktree: true }));

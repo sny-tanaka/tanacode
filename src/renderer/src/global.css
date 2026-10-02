@@ -4895,13 +4895,22 @@ body.resizing-rows webview {
   }
 }
 
-/* worktree のセッション。新規セッションの画面のチップ（押せない印）と、セッション一覧の行の worktree の名前 */
-.new-session-chip.worktree {
+/* worktree のセッション。新規セッションの画面の「worktree を使う」と、セッション一覧の行の worktree の名前 */
+.new-session-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
   color: var(--text-secondary);
-  cursor: default;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
 }
-.new-session-chip.worktree:hover {
-  background: var(--bg-surface);
+.new-session-check:hover {
+  color: var(--text-primary);
+}
+.new-session-check input {
+  margin: 0;
 }
 .session-worktree {
   display: inline-flex;
