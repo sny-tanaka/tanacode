@@ -96,7 +96,7 @@ const CATEGORY_OF: Record<string, string> = {
 
 function categoryOf(tool: ToolItem): Category {
   const mcp = mcpParts(tool.name);
-  const label = mcp ? (mcp.server === 'Browser' || mcp.server === 'Chrome' ? 'ブラウザ' : 'MCP') : (CATEGORY_OF[tool.name] ?? 'その他');
+  const label = mcp ? (mcp.server === 'Browser' || mcp.server === 'Chrome' || mcp.server === 'アプリ内ブラウザ' ? 'ブラウザ' : 'MCP') : (CATEGORY_OF[tool.name] ?? 'その他');
   return CATEGORIES.find((c) => c.label === label)!;
 }
 

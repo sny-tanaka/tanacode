@@ -11,8 +11,13 @@ const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as
 export default defineConfig({
   main: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
-    // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）
-    build: { rollupOptions: { input: { index: resolve('src/main/index.ts'), 'pty-host': resolve('src/main/pty-host.ts') } } },
+    // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
+    // browser-mcp: アプリ内ブラウザの MCP サーバー（Claude Code が起動し、アプリへ中継する）
+    build: {
+      rollupOptions: {
+        input: { index: resolve('src/main/index.ts'), 'pty-host': resolve('src/main/pty-host.ts'), 'browser-mcp': resolve('src/main/browser-mcp.ts') },
+      },
+    },
   },
   preload: {
     resolve: { alias: { '@shared': resolve('src/shared') } },

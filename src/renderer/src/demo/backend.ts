@@ -365,6 +365,15 @@ export class DemoBackend {
           return ok(path);
         },
       },
+      browser: {
+        attach: () => {},
+        onOpen: () => () => {},
+        onActivity: () => () => {},
+        onViewport: () => () => {},
+        hosts: () => ok([]),
+        setHosts: (hosts) => ok(hosts),
+        onHostsOpen: () => () => {},
+      },
       pathForFile: () => '',
     };
   }

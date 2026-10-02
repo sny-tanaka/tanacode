@@ -1,16 +1,14 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { PROTOCOL, type ClientMessage, type HostMessage, type HostedPtyInfo, type SpawnRequest } from './pty-host-protocol';
+import { socketPathIn } from './socket-path';
 
 // ホストを起動してから、待ち受けを始めるまで待つ時間
 const START_TIMEOUT_MS = 5000;
 const RETRY_MS = 100;
-// Unix ソケットのパスの長さの上限（macOS は 104 バイト）
-const MAX_SOCKET_PATH = 100;
 
 // 受け手がいない間に溜めておく出力の数
 const EARLY_CHUNKS = 2000;
@@ -110,7 +108,7 @@ export class PtyHost implements PtyHostApi {
 
   // dir: ソケットとログを置くフォルダ（userData）
   static async start(dir: string, hostScript: string): Promise<PtyHost> {
-    const host = new PtyHost(socketPathFor(dir), hostScript, join(dir, 'pty-host.log'));
+    const host = new PtyHost(socketPathIn(dir, 'pty-host', 'pty'), hostScript, join(dir, 'pty-host.log'));
     await host.connect();
     return host;
   }
@@ -269,19 +267,12 @@ export class PtyHost implements PtyHostApi {
 }
 
 // ホストを動かす実行ファイル。macOS では、アプリ本体だと Dock にアイコンが出るので、
-// 同梱の「<名前> Helper.app」（LSUIElement。Dock に出ない）を Node として使う
-function hostExecutable(): string {
+// 同梱の「<名前> Helper.app」（LSUIElement。Dock に出ない）を Node として使う。アプリ内ブラウザの中継（browser-mcp.js）も同じもので動かす
+export function hostExecutable(): string {
   if (process.platform !== 'darwin') return process.execPath;
   const name = `${basename(process.execPath)} Helper`;
   const helper = join(dirname(process.execPath), '..', 'Frameworks', `${name}.app`, 'Contents', 'MacOS', name);
   return existsSync(helper) ? helper : process.execPath;
-}
-
-// ソケットは userData に置く。パスが長すぎるときは、一時フォルダに userData ごとの名前で置く
-function socketPathFor(dir: string): string {
-  const path = join(dir, 'pty-host.sock');
-  if (Buffer.byteLength(path) <= MAX_SOCKET_PATH) return path;
-  return join(tmpdir(), `tanacode-pty-${createHash('sha1').update(dir).digest('hex').slice(0, 12)}.sock`);
 }
 
 function tryConnect(path: string): Promise<Socket | null> {

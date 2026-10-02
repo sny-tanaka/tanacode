@@ -34,6 +34,7 @@ import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
 import { TerminalPanel, type TerminalView } from './terminal/TerminalPanel';
+import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
 import { useAppUpdate } from './layout/AppUpdate';
@@ -105,8 +106,10 @@ export function App() {
   // 左から 3 番目のペイン
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
-  // セッションごとの、アプリ内ブラウザで開いているページ
+  // セッションごとの、アプリ内ブラウザで開いているページ（Claude が開いたものも）
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  // アプリ内ブラウザで Claude に許す先のダイアログ（メニューから開く）
+  const [browserHostsOpen, setBrowserHostsOpen] = useState(false);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
   const [comments, setComments] = useState<Record<string, ReviewComment[]>>({});
   const [quickOpen, setQuickOpen] = useState(false);
@@ -229,7 +232,41 @@ export function App() {
     }
   }, [selectedId, loadScreen, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine]);
 
-  useEffect(() => setDiffView(null), [viewId]);
+  // Claude がアプリ内ブラウザを操作し始めたセッション（帯が消えるまで）と、見ていない間に操作したセッション
+  const browsing = useRef(new Set<string>());
+  const browsedUnseen = useRef(new Set<string>());
+
+  // セッションを切り替えたら、エディタの場所は閉じる。見ていない間に Claude がブラウザを操作したセッションなら、ブラウザを開く
+  useEffect(() => setDiffView(viewId && browsedUnseen.current.delete(viewId) ? { source: 'preview' } : null), [viewId]);
+
+  // Claude によるアプリ内ブラウザの操作。そのセッションを見ているときだけ、操作を始めたときにエディタの場所にブラウザを開く
+  // （閉じても、続けて操作している間は開き直さない）。見ていないセッションは裏で動かし、戻ったときに開く
+  useEffect(() => {
+    const offActivity = window.tanacode.browser.onActivity(({ sessionId, active }) => {
+      if (!active) {
+        browsing.current.delete(sessionId);
+        return;
+      }
+      if (browsing.current.has(sessionId)) return;
+      browsing.current.add(sessionId);
+      if (sessionId === selectedIdRef.current) setDiffView({ source: 'preview' });
+      else browsedUnseen.current.add(sessionId);
+    });
+    const offOpen = window.tanacode.browser.onOpen(({ sessionId, url }) => setPreviewUrls((prev) => ({ ...prev, [sessionId]: url })));
+    const offHosts = window.tanacode.browser.onHostsOpen(() => setBrowserHostsOpen(true));
+    return () => {
+      offActivity();
+      offOpen();
+      offHosts();
+    };
+  }, []);
+
+  // 消した・アーカイブしたセッションのブラウザは閉じる
+  useEffect(() => {
+    if (!sessions) return;
+    const live = new Set(sessions.filter((s) => !s.archived).map((s) => s.id));
+    setPreviewUrls((prev) => (Object.keys(prev).every((id) => live.has(id)) ? prev : Object.fromEntries(Object.entries(prev).filter(([id]) => live.has(id)))));
+  }, [sessions]);
 
   useEffect(() => {
     if (!viewId || workspaces[viewId]) return;
@@ -399,6 +436,8 @@ export function App() {
   const statuses = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, chatOf(s.id).status])), [statusKey]);
   const statusOf = useCallback((id: string) => statuses.get(id) ?? 'not-started', [statuses]);
   const openImport = useCallback(() => setImporting(true), []);
+  const navigatePreview = useCallback((id: string, url: string) => setPreviewUrls((prev) => ({ ...prev, [id]: url })), []);
+  const closeCenter = useCallback(() => setDiffView(null), []);
   const removeSession = useCallback(
     (id: string) => {
       void window.tanacode.sessions.remove(id);
@@ -582,6 +621,7 @@ export function App() {
           />
         )}
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
+        {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
         {quickOpen && viewId && (
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
         )}
@@ -648,15 +688,14 @@ export function App() {
               </button>
             </div>
           )}
-          {selected && !selected.archived && (
-            <PreviewPane
-              sessionId={selected.id}
-              visible={diffView?.source === 'preview'}
-              url={previewUrls[selected.id] ?? null}
-              onNavigate={(url) => setPreviewUrls((prev) => ({ ...prev, [selected.id]: url }))}
-              onClose={() => setDiffView(null)}
-            />
-          )}
+          {/* 見ていないセッションのブラウザも持っておく（Claude が裏で操作できるように） */}
+          <PreviewPane
+            sessionId={selected && !selected.archived ? selected.id : null}
+            visible={diffView?.source === 'preview' && !!selected && !selected.archived}
+            urls={previewUrls}
+            onNavigate={navigatePreview}
+            onClose={closeCenter}
+          />
           <TerminalPanel
             sessionId={selected && !selected.archived ? selected.id : null}
             open={terminal.open}

@@ -55,7 +55,7 @@ https://github.com/user-attachments/assets/99a38a3c-cdbd-4f9f-9d2c-1514f93e4b9a
 
 ### 画面を指さして「ここを直して」
 
-開発中のページをアプリの中で表示。クリックで選んだ要素のセレクタ・HTML・画像を、そのまま Claude への指示に添付。
+開発中のページをアプリの中で表示。クリックで選んだ要素のセレクタ・HTML・画像を、そのまま Claude への指示に添付。直したあとは、Claude も同じブラウザでページを開き、スクリーンショット・コンソール・クリックで自分で確認（MCP。別に入れるものは無し。開けるのは localhost などの開発用の先だけ）。
 
 https://github.com/user-attachments/assets/f95733ef-2203-46c2-b3d4-17b3ab6d7a6b
 

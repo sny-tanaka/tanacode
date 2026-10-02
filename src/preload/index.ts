@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import {
   IpcChannel,
+  type BrowserActivity,
+  type BrowserOpenRequest,
+  type BrowserViewportChange,
   type ChatBatch,
   type FilesChanged,
   type PtyData,
@@ -159,6 +162,15 @@ const api: TanacodeApi = {
   },
   attachments: {
     save: (name, data) => ipcRenderer.invoke(IpcChannel.AttachmentSave, name, data),
+  },
+  browser: {
+    attach: (sessionId, webContentsId) => ipcRenderer.send(IpcChannel.BrowserAttach, sessionId, webContentsId),
+    onOpen: (listener) => subscribe<BrowserOpenRequest>(IpcChannel.BrowserOpen, listener),
+    onActivity: (listener) => subscribe<BrowserActivity>(IpcChannel.BrowserActivity, listener),
+    onViewport: (listener) => subscribe<BrowserViewportChange>(IpcChannel.BrowserViewport, listener),
+    hosts: () => ipcRenderer.invoke(IpcChannel.BrowserHostsGet),
+    setHosts: (hosts) => ipcRenderer.invoke(IpcChannel.BrowserHostsSet, hosts),
+    onHostsOpen: (listener) => subscribe<undefined>(IpcChannel.BrowserHostsOpen, () => listener()),
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
 };

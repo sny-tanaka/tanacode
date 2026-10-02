@@ -2169,6 +2169,42 @@ body.resizing-rows {
   padding: 10px 14px;
   border-top: 1px solid var(--border-subtle);
 }
+/* アプリ内ブラウザで Claude に許す先 */
+.browser-host {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.browser-host-default {
+  padding-right: 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.browser-hosts-error {
+  padding: 6px 16px;
+  color: var(--danger);
+  background: var(--danger-tint);
+  font-size: 12px;
+}
+.browser-hosts-foot {
+  gap: 8px;
+}
+/* .quick-open input を上書きする */
+.settings-files-dialog .browser-hosts-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.settings-files-dialog .browser-hosts-input:focus {
+  border-color: var(--border-focus);
+}
 .session-rename {
   width: 100%;
   padding: 1px 4px;
@@ -4154,6 +4190,14 @@ body.resizing-rows {
 .preview-pane[hidden] {
   display: none;
 }
+/* Claude が操作したセッションのブラウザを、見ていない間も描かせておく（透明にして、ほかの表示の後ろに置く。大きさは画面が決める） */
+.preview-pane.offstage {
+  position: absolute;
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
 .preview-toolbar {
   min-height: 40px;
   flex: none;
@@ -4235,6 +4279,41 @@ body.resizing-rows {
 .preview-hint.error {
   color: var(--danger);
   background: var(--danger-tint);
+}
+/* Claude が操作中の帯 */
+.preview-claude {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-claude-label {
+  color: var(--text-tertiary);
+}
+/* Claude がこれから押す要素の枠（ページの上に重ねる） */
+.preview-click-box {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border: 2px solid var(--claude);
+  border-radius: 4px;
+  animation: preview-click-box 0.4s ease-out;
+}
+@keyframes preview-click-box {
+  from {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview-click-box {
+    animation: none;
+  }
 }
 .preview-body {
   position: relative;

@@ -14,6 +14,9 @@ import {
   type SessionOptions,
 } from '@shared/ipc';
 import { AppSettings } from './app-settings';
+import { normalizeHostPattern } from '@shared/browser-tools';
+import { BrowserBridge, type BrowserMcpLaunch } from './browser-bridge';
+import { BrowserControl } from './browser-control';
 import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
@@ -22,10 +25,11 @@ import type { AgentLogRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
 import { menuNotice } from './notice-text';
-import { PtyHost } from './pty-host-client';
+import { hostExecutable, PtyHost } from './pty-host-client';
 import { DEFAULT_PTY_SIZE, SessionManager } from './session-manager';
 import { SettingsFiles } from './settings-files';
 import { SessionStore } from './session-store';
+import { socketPathIn } from './socket-path';
 import { readModelCatalog } from './model-catalog';
 import { StatusLineWatcher } from './statusline';
 import { ShellTerminals } from './shell-terminals';
@@ -46,6 +50,9 @@ let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
 let watchers: WorkspaceWatchers;
+// Claude によるアプリ内ブラウザの操作。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
+let browserBridge: BrowserBridge | null = null;
+let browser: BrowserControl;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
 // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -80,6 +87,8 @@ function restrictPermissions(): void {
   const preview = session.fromPartition(PREVIEW_PARTITION);
   preview.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   preview.setPermissionCheckHandler(() => false);
+  // ダウンロードも断る（Claude が操作したページが、勝手にファイルを保存させないように）
+  preview.on('will-download', (event) => event.preventDefault());
 }
 
 // プレビューの webview の中で移ってよい先。トップのフレームは http(s) のページと about:blank だけ（file: や
@@ -127,9 +136,10 @@ function createWindow(): void {
     if (!/^https?:\/\//.test(params.src) && params.src !== 'about:blank') event.preventDefault();
   });
   contents.on('did-attach-webview', (_e, guest) => {
-    // 新しいウィンドウを開くリンクは、ふだんのブラウザで開く
+    // 新しいウィンドウを開くリンクは、ふだんのブラウザで開く。
+    // Claude の操作で開こうとしたものは開かない（ふだんのブラウザで、許していない先を開かせない）
     guest.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+      if (/^https?:\/\//.test(url) && !browser?.isOperating(guest)) void shell.openExternal(url);
       return { action: 'deny' };
     });
   });
@@ -243,12 +253,16 @@ function registerIpc(): void {
     watchers.release(cwd);
   });
   ipcMain.handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
-  ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string) => manager.archive(id));
+  ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string) => {
+    browser.forget(id);
+    return manager.archive(id);
+  });
   ipcMain.handle(IpcChannel.SessionsUnarchive, (_e, id: string) => manager.unarchive(id));
   ipcMain.handle(IpcChannel.SessionsSnapshot, (_e, id: string) => manager.snapshot(id));
   ipcMain.handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
   ipcMain.handle(IpcChannel.SessionsRemove, (_e, id: string) => {
     shells.killOwner(id);
+    browser.forget(id);
     return manager.remove(id);
   });
   ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
@@ -323,6 +337,25 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.ReadImage, (_e, id: string, relPath: string) =>
     new Workspace(cwdOf(id)).readImage(relPath).catch(() => null),
   );
+  ipcMain.on(IpcChannel.BrowserAttach, (_e, id: string, webContentsId: number) => browser.attach(id, webContentsId));
+  ipcMain.handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
+  ipcMain.handle(IpcChannel.BrowserHostsSet, (_e, hosts: string[]) => setBrowserHosts(hosts));
+}
+
+// アプリ内ブラウザで Claude に許す先を保存する。書き方をそろえ、重なりを除く。書き方が違うものがあれば、保存せずに断る
+function setBrowserHosts(hosts: unknown): string[] {
+  const list = Array.isArray(hosts) ? hosts.filter((h): h is string => typeof h === 'string' && h.trim() !== '') : [];
+  const bad = list.filter((h) => !normalizeHostPattern(h));
+  if (bad.length > 0) throw new Error(`書き方が違います: ${bad.join('、')}（例: example.test・*.example.test・192.168.0.10）`);
+  const normalized = [...new Set(list.map((h) => normalizeHostPattern(h)!))];
+  settings.setBrowserHosts(normalized);
+  return normalized;
+}
+
+// 起動する Claude Code に足す、アプリ内ブラウザの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
+function browserLaunch(): BrowserMcpLaunch | null {
+  if (!browserBridge || !settings.browserControlEnabled()) return null;
+  return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: browserBridge.socketPath, version: app.getVersion() };
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
@@ -382,6 +415,14 @@ function buildMenu(): void {
           { role: 'about' },
           { type: 'separator' },
           { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+          {
+            label: 'アプリ内ブラウザで Claude に許す先…',
+            click: () => {
+              showWindow();
+              send(IpcChannel.BrowserHostsOpen, undefined);
+            },
+          },
           { type: 'separator' },
           { role: 'services' },
           { type: 'separator' },
@@ -431,6 +472,16 @@ function setUpdateCheck(item: MenuItem): void {
   }
   if (item.checked) appUpdates.start();
   else appUpdates.stop();
+}
+
+// メニューの「Claude にアプリ内ブラウザを操作させる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。保存できなかったら、チェックを元に戻す
+function setBrowserControl(item: MenuItem): void {
+  try {
+    settings.setBrowserControlEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
 }
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
@@ -490,8 +541,10 @@ function useLoginShellPath(): void {
 // （file: や mailto: などの外部プロトコル）へ移らないようにする。新しいウィンドウは did-attach-webview の setWindowOpenHandler で扱う
 app.on('web-contents-created', (_e, contents) => {
   if (contents.getType() !== 'webview') return;
+  // Claude の操作でトップのフレームが移るときは、Claude に許した先だけ（リンクやリダイレクトで、外のサイトを開かせない）
   const guard = (event: Electron.Event<{ url: string; isMainFrame: boolean }>) => {
     if (!isPreviewDestination(event.url, event.isMainFrame)) event.preventDefault();
+    else if (event.isMainFrame && browser?.blocksNavigation(contents, event.url)) event.preventDefault();
   };
   contents.on('will-navigate', guard);
   contents.on('will-frame-navigate', guard);
@@ -524,6 +577,24 @@ app.whenReady().then(async () => {
   settingsFiles = new SettingsFiles(settings, join(app.getPath('userData'), 'session-settings'), (files) =>
     send(IpcChannel.SettingsFilesChanged, files),
   );
+  // Claude によるアプリ内ブラウザの操作。中継（MCP サーバー）からの呼び出しを、userData のソケットで受ける。
+  // 待ち受けを始められなくても、アプリはそのまま使う（Claude Code に MCP サーバーを足さない）
+  browser = new BrowserControl({
+    send,
+    enabled: () => settings.browserControlEnabled(),
+    extraHosts: () => settings.browserHosts(),
+    host: () => mainWindow?.webContents ?? null,
+    hasSession: (id) => !!manager?.summary(id),
+    channels: { open: IpcChannel.BrowserOpen, activity: IpcChannel.BrowserActivity, viewport: IpcChannel.BrowserViewport },
+  });
+  browser.watchNetwork(session.fromPartition(PREVIEW_PARTITION));
+  const bridge = new BrowserBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args) => browser.handle(id, tool, args));
+  try {
+    await bridge.start();
+    browserBridge = bridge;
+  } catch (error) {
+    console.error('アプリ内ブラウザの待ち受けを始められませんでした', error);
+  }
   // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
   try {
     ptyHost = await PtyHost.start(app.getPath('userData'), join(__dirname, 'pty-host.js'));
@@ -551,7 +622,7 @@ app.whenReady().then(async () => {
     onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
     onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl, settingsFiles);
+  }, remoteControl, settingsFiles, browserLaunch);
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
@@ -584,6 +655,7 @@ app.on('before-quit', (event) => {
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   manager?.closeAll(false);
   ptyHost?.close();
+  browserBridge?.close();
   shells.killAll();
 });
 

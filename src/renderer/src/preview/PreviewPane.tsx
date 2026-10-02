@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import type { BrowserActivity, BrowserRect } from '@shared/ipc';
 import { insertIntoChat } from '../chat/insertInput';
+import { Busy } from '../layout/Busy';
 import { codeBlock } from '../chat/sanitize';
 import { CANCEL_PICKER_SCRIPT, describePicked, pickerScript, type PickedElement } from './picker';
 
@@ -15,6 +17,7 @@ type Webview = HTMLElement & {
   getURL(): string;
   focus(): void;
   openDevTools(): void;
+  getWebContentsId(): number;
   executeJavaScript<T>(code: string, userGesture?: boolean): Promise<T>;
   capturePage(rect?: { x: number; y: number; width: number; height: number }): Promise<{ isEmpty(): boolean; toDataURL(): string }>;
 };
@@ -38,13 +41,17 @@ const WIDTHS = [
 ];
 
 type Props = {
-  sessionId: string;
+  // 見せるセッション（選んでいるセッション。無ければ null）
+  sessionId: string | null;
   visible: boolean;
-  // このセッションで開いているページ（まだ開いていなければ null）
-  url: string | null;
-  onNavigate: (url: string) => void;
+  // セッションごとの、開くページ（まだ開いていないセッションは無い）。Claude が開いたものも入る
+  urls: Record<string, string>;
+  onNavigate: (sessionId: string, url: string) => void;
   onClose: () => void;
 };
+
+// Claude がそのセッションのブラウザを操作している様子（main の browser-control から）
+type ClaudeActivity = Omit<BrowserActivity, 'sessionId'>;
 
 export function normalizeUrl(input: string): string | null {
   const text = input.trim();
@@ -59,16 +66,30 @@ export function normalizeUrl(input: string): string | null {
   }
 }
 
-// 開発中のページをアプリの中で開く。セッションごとに webview を持ち、切り替えても読み込み直さない
-export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Props) {
+// 開発中のページをアプリの中で開く。セッションごとに webview を持ち、切り替えても読み込み直さない。
+// Claude が操作したセッションの webview は、見ていない間も描かせたままにする（display: none だと大きさが 0 になり、撮れず、押せない）。
+// 透明にして画面の後ろに置き、ブラウザを開いたときと同じ大きさで描かせる
+export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: Props) {
+  const paneRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const views = useRef(new Map<string, Webview>());
+  // 最後に webview に開かせた URL（urls が変わったときだけ移る）
+  const applied = useRef(new Map<string, string>());
   const [pages, setPages] = useState<Record<string, PageState>>({});
-  const [address, setAddress] = useState(url ?? '');
   const [picking, setPicking] = useState(false);
-  const [width, setWidth] = useState(0);
+  // セッションごとの表示幅（0 は全幅）。Claude も変える
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  const [claude, setClaude] = useState<Record<string, ClaudeActivity>>({});
+  // Claude が操作したことのあるセッション。見ていない間も描かせておく
+  const [operated, setOperated] = useState<ReadonlySet<string>>(() => new Set());
+  // 見ていない間の大きさ（ブラウザを開いたときの場所の大きさ）
+  const [offstageSize, setOffstageSize] = useState<{ width: number; height: number } | null>(null);
+  const url = sessionId ? (urls[sessionId] ?? null) : null;
+  const [address, setAddress] = useState(url ?? '');
   const addressRef = useRef<HTMLInputElement>(null);
-  const page = pages[sessionId];
+  const page = sessionId ? pages[sessionId] : undefined;
+  const width = sessionId ? (widths[sessionId] ?? 0) : 0;
+  const activity = sessionId ? claude[sessionId] : undefined;
 
   const update = (id: string, patch: Partial<PageState>) =>
     setPages((prev) => {
@@ -76,15 +97,36 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
       return { ...prev, [id]: { ...base, ...patch } };
     });
 
-  // セッションの webview を用意し、表示するものだけを出す
+  // Claude の操作の様子と、表示幅の切り替え
+  useEffect(
+    () =>
+      window.tanacode.browser.onActivity(({ sessionId: id, ...rest }) => {
+        setClaude((prev) => ({ ...prev, [id]: rest }));
+        if (rest.active) setOperated((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+      }),
+    [],
+  );
+  useEffect(() => window.tanacode.browser.onViewport(({ sessionId: id, width: w }) => setWidths((prev) => ({ ...prev, [id]: w }))), []);
+
+  // セッションの webview を用意し（見ていないセッションの分も。Claude が開いたもの）、開く URL が変わったら移る
   useEffect(() => {
-    if (url && !views.current.has(sessionId)) {
-      const id = sessionId;
+    for (const [id, next] of Object.entries(urls)) {
+      const existing = views.current.get(id);
+      if (existing) {
+        if (applied.current.get(id) !== next) {
+          applied.current.set(id, next);
+          existing.src = next;
+        }
+        continue;
+      }
       const wv = document.createElement('webview') as Webview;
       wv.setAttribute('partition', PARTITION);
       wv.className = 'preview-webview';
-      const sync = () =>
-        update(id, { url: wv.getURL(), canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() });
+      const sync = () => update(id, { url: wv.getURL(), canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() });
+      // 中身（webContents）ができたら main に知らせる。Claude の操作は、main がこれを直接動かす
+      wv.addEventListener('did-attach', () => {
+        if (typeof wv.getWebContentsId === 'function') window.tanacode.browser.attach(id, wv.getWebContentsId());
+      });
       wv.addEventListener('did-start-loading', () => update(id, { loading: true, error: null }));
       wv.addEventListener('did-stop-loading', () => {
         update(id, { loading: false });
@@ -112,20 +154,49 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
           return { ...prev, [id]: { ...current, consoleErrors: [...current.consoleErrors, message + where].slice(-MAX_CONSOLE_ERRORS) } };
         });
       });
-      wv.src = url;
+      wv.src = next;
+      applied.current.set(id, next);
       views.current.set(id, wv);
-      update(id, { url, loading: true });
+      update(id, { url: next, loading: true });
       hostRef.current!.appendChild(wv);
     }
-    for (const [id, wv] of views.current) wv.style.display = id === sessionId ? '' : 'none';
-  }, [sessionId, url]);
+    // 消したセッションの webview は捨てる
+    for (const [id, wv] of views.current) {
+      if (id in urls) continue;
+      wv.remove();
+      views.current.delete(id);
+      applied.current.delete(id);
+    }
+  }, [urls]);
 
-  // 開く URL が変わったら移る（アドレス欄や見つけたサーバーから）
+  // 見せるセッションの webview だけを出す。Claude が操作したものは、透明にして描かせたままにする
   useEffect(() => {
-    const wv = views.current.get(sessionId);
-    if (wv && url && url !== pages[sessionId]?.url && url !== wv.src) wv.src = url;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
+    for (const [id, wv] of views.current) {
+      const shown = visible && id === sessionId;
+      const background = !shown && operated.has(id);
+      const w = widths[id] ?? 0;
+      Object.assign(wv.style, {
+        display: shown || background ? '' : 'none',
+        opacity: background ? '0' : '',
+        pointerEvents: background ? 'none' : '',
+        zIndex: background ? '-1' : '',
+        // ほかのセッションの表示幅は、そのセッションのもの（見せているセッションは枠の幅に合わせる）
+        width: background && id !== sessionId && w ? `${w}px` : '',
+      });
+    }
+  }, [sessionId, visible, operated, widths, urls]);
+
+  // 見ていない間の大きさを、ブラウザを開いたときの場所（中央の列）に合わせる
+  const offstage = !visible && [...operated].some((id) => views.current.has(id));
+  useEffect(() => {
+    const parent = paneRef.current?.parentElement;
+    if (!offstage || !parent) return;
+    const measure = () => setOffstageSize({ width: parent.clientWidth, height: parent.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [offstage]);
 
   useEffect(() => setAddress(page?.url || url || ''), [sessionId, page?.url, url]);
 
@@ -140,14 +211,17 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, sessionId]);
 
-  const current = () => views.current.get(sessionId);
+  const current = () => (sessionId ? views.current.get(sessionId) : undefined);
 
   const go = (input: string) => {
     const next = normalizeUrl(input);
-    if (!next) return;
-    onNavigate(next);
+    if (!next || !sessionId) return;
+    onNavigate(sessionId, next);
     const wv = current();
-    if (wv) wv.src = next;
+    if (wv) {
+      applied.current.set(sessionId, next);
+      wv.src = next;
+    }
   };
 
   const cancelPick = () => {
@@ -157,7 +231,7 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
 
   const pick = async () => {
     const wv = current();
-    if (!wv) return;
+    if (!wv || !sessionId) return;
     if (picking) {
       cancelPick();
       return;
@@ -178,7 +252,7 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
   };
 
   const sendErrors = () => {
-    if (!page || page.consoleErrors.length === 0) return;
+    if (!page || !sessionId || page.consoleErrors.length === 0) return;
     // エラーの文はページが書けるので、中に ``` があってもブロックから抜けないようにする
     insertIntoChat(sessionId, `アプリ内ブラウザ（${page.url}）のコンソールに出たエラー:\n${codeBlock(page.consoleErrors.join('\n'))}\n`);
     update(sessionId, { consoleErrors: [] });
@@ -188,7 +262,13 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
   const shown = !!url && !!wv;
 
   return (
-    <div className="preview-pane" hidden={!visible}>
+    <div
+      ref={paneRef}
+      className={`preview-pane${offstage ? ' offstage' : ''}`}
+      hidden={!visible && !offstage}
+      aria-hidden={!visible}
+      style={offstage && offstageSize ? { width: offstageSize.width, height: offstageSize.height } : undefined}
+    >
       <div className="preview-toolbar">
         <button className="preview-nav" disabled={!page?.canGoBack} onClick={() => wv?.goBack()} data-tip="戻る" aria-label="戻る">
           ←
@@ -222,7 +302,12 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
             aria-label="開く URL"
           />
         </form>
-        <select className="preview-width" value={width} onChange={(e) => setWidth(Number(e.target.value))} title="表示幅">
+        <select
+          className="preview-width"
+          value={width}
+          onChange={(e) => sessionId && setWidths((prev) => ({ ...prev, [sessionId]: Number(e.target.value) }))}
+          title="表示幅"
+        >
           {WIDTHS.map((w) => (
             <option key={w.value} value={w.value}>
               {w.label}
@@ -244,6 +329,7 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
           ✕
         </button>
       </div>
+      {activity?.active && <ClaudeBar label={activity.label} />}
       {picking && <div className="preview-hint">ページの要素をクリックしてください（Esc でやめる）</div>}
       {page?.error && (
         <div className="preview-hint error">
@@ -254,7 +340,9 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
         </div>
       )}
       <div className={`preview-body${width ? ' framed' : ''}`} style={{ '--preview-width': width ? `${width}px` : '100%' } as React.CSSProperties}>
-        <div className="preview-frame" ref={hostRef} />
+        <div className="preview-frame" ref={hostRef}>
+          {activity?.box && visible && <ClickBox rect={activity.box} />}
+        </div>
         {!url && (
           <div className="preview-empty">
             <p>上のアドレス欄に URL を入れて Enter で開きます</p>
@@ -263,6 +351,21 @@ export function PreviewPane({ sessionId, visible, url, onNavigate, onClose }: Pr
       </div>
     </div>
   );
+}
+
+// 「Claude が操作中」の帯。label: 今の操作（スクリーンショット・クリックなど）
+export function ClaudeBar({ label }: { label: string | null }) {
+  return (
+    <div className="preview-claude" role="status">
+      <Busy>Claude が操作中</Busy>
+      {label && <span className="preview-claude-label">{label}</span>}
+    </div>
+  );
+}
+
+// Claude がこれから押す要素の枠（ページの上に重ねる。ページの中には描かない）
+export function ClickBox({ rect }: { rect: BrowserRect }) {
+  return <div className="preview-click-box" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} />;
 }
 
 // 選んだ要素のまわりを切り出して画像にし、添付として保存する
