@@ -3,6 +3,7 @@ import type { Activity, PermissionMode, ScreenInfo } from './screen';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { ModelCatalog } from './models';
+import type { SettingsFile } from './settings-file';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
 import type { UsageLimits } from './usage';
@@ -28,6 +29,12 @@ export const IpcChannel = {
   FolderCommands: 'folders:commands',
   FolderOpen: 'folders:open',
   FolderClose: 'folders:close',
+  SettingsFilesList: 'settings-files:list',
+  SettingsFilesPick: 'settings-files:pick',
+  SettingsFilesAdd: 'settings-files:add',
+  SettingsFilesRename: 'settings-files:rename',
+  SettingsFilesRemove: 'settings-files:remove',
+  SettingsFilesChanged: 'settings-files:changed',
   SessionsConfigure: 'sessions:configure',
   SessionsRestart: 'sessions:restart',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
@@ -116,6 +123,8 @@ export type SessionSummary = {
   backgroundTasks: number;
   model: string | null;
   effort: string | null;
+  // 起動に重ねる、登録した設定ファイルの ID（SettingsFile.id）。null は標準の設定のまま
+  settingsFile: string | null;
   // Remote Control を使うか（このセッションの指定。実際につながっているかは会話ログの bridge_status で分かる）
   remoteControl: boolean;
 };
@@ -167,7 +176,8 @@ export type SessionStatusLine = { sessionId: string; info: StatusLineInfo };
 // アプリの外で作られた Claude Code の会話
 export type DiscoveredSession = { claudeSessionId: string; cwd: string; title: string; updatedAt: number };
 
-export type SessionOptions = { model: string | null; effort: string | null };
+// settingsFile を変えると、モデルとエフォートは新しい設定ファイルの既定に戻る（設定によって選べるモデルが違うため）
+export type SessionOptions = { model: string | null; effort: string | null; settingsFile: string | null };
 // 新規セッションを始めるときの指定。どれも null なら Claude Code の既定値（ユーザー設定）
 export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean };
 export type SessionScreen = { sessionId: string; info: ScreenInfo };
@@ -212,7 +222,7 @@ export type TanacodeApi = {
     // 表示中のセッション。通知の要否と未読の解除に使う
     focus(id: string | null): void;
     snapshot(id: string): Promise<SessionSnapshot>;
-    // モデル・エフォートを変える。起動中なら --resume で起動し直して反映する
+    // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
     configure(id: string, options: SessionOptions): Promise<void>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）
     restart(id: string): Promise<void>;
@@ -287,6 +297,19 @@ export type TanacodeApi = {
     onChanged(listener: (payload: SessionStatusLine) => void): () => void;
   };
   // モデル欄の選択肢（Claude Code の /model の一覧）
+  // 登録した設定ファイル（セッションごとに選んで、標準の設定に重ねて起動する）
+  settingsFiles: {
+    list(): Promise<SettingsFile[]>;
+    // ファイルの選択ダイアログを開き、選んだファイルのパスを返す（取りやめたら null）
+    pick(): Promise<string | null>;
+    // 登録する。name を省くと、ファイル名から付ける。読めないファイルなら、理由を添えて失敗する
+    add(path: string, name?: string): Promise<SettingsFile>;
+    // 名前を変える。空の名前や、ほかと同じ名前なら、理由を添えて失敗する
+    rename(id: string, name: string): Promise<void>;
+    // 登録から外す（ファイル自体は消さない）。使っているセッションは、次に起動するときに理由を出して断る
+    remove(id: string): Promise<void>;
+    onChanged(listener: (files: SettingsFile[]) => void): () => void;
+  };
   models: {
     // Claude Code が持っているモデル一覧の控え（~/.claude/cache/model-catalog）。無ければ null
     get(): Promise<ModelCatalog | null>;

@@ -2,15 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NewSessionOptions, WorkspaceInfo } from '@shared/ipc';
 import type { PermissionMode } from '@shared/screen';
 import icon from '../assets/icon.png';
+import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
+import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
 import { BranchIcon, FolderIcon } from '../layout/icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 
-// 最後に選んだモデル・エフォート・モード・Remote Control（このマシンだけの好みなので localStorage に置く）
+// 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control（このマシンだけの好みなので localStorage に置く）
 const OPTIONS_KEY = 'tanacode.newSessionOptions';
-const DEFAULT_OPTIONS: NewSessionOptions = { model: null, effort: null, mode: null, remoteControl: true };
+const DEFAULT_OPTIONS: NewSessionOptions = { model: null, effort: null, settingsFile: null, mode: null, remoteControl: true };
 
 function loadOptions(): NewSessionOptions {
   try {
@@ -67,10 +69,14 @@ export function NewSessionPane({
   const [starting, setStarting] = useState(false);
   const [options, setOptions] = useState<NewSessionOptions>(loadOptions);
   const models = useModelCatalog();
+  const settingsFiles = useSettingsFiles();
+  // 前に選んだ設定ファイルを登録から外していても、黙って標準に戻さない（選択欄に「（登録なし）」と出し、送ると理由つきで断られる）
+  const settingsFile = settingsFiles.find((f) => f.id === options.settingsFile) ?? null;
   // 選んだモデルで選べるエフォート。空ならエフォートを選べないモデル（既定のモデルなら全部）
   const efforts = models.choices.find((c) => c.value === options.model)?.efforts ?? EFFORTS;
   const change = (patch: Partial<NewSessionOptions>) => {
-    const next = { ...options, ...patch };
+    // 設定ファイルを変えたら、モデルとエフォートは新しい設定ファイルの既定に戻す（前の設定のモデルが、新しい設定で使えるとは限らない）
+    const next = { ...options, ...patch, ...('settingsFile' in patch ? { model: null, effort: null } : {}) };
     // エフォートを選べないモデルに変えたら、エフォートの指定は外す
     const allowed = models.choices.find((c) => c.value === next.model)?.efforts ?? EFFORTS;
     if (next.effort && !allowed.includes(next.effort)) next.effort = null;
@@ -110,7 +116,7 @@ export function NewSessionPane({
       await onStart(cwd, text, attachments, options);
       onCommentsChange([]);
     } catch (err) {
-      window.alert(`セッションを始められませんでした: ${err instanceof Error ? err.message : String(err)}`);
+      window.alert(`セッションを始められませんでした: ${errorMessage(err)}`);
       setStarting(false);
     }
   };
@@ -168,12 +174,18 @@ export function NewSessionPane({
           autoFocus
         />
         <div className="chat-options">
+          <SettingsFileSelect
+            value={options.settingsFile}
+            files={settingsFiles}
+            onChange={(value) => change({ settingsFile: value })}
+            title="設定ファイル（標準の設定に重ねて起動します。このセッションだけで、始めたあとも切り替えられます）"
+          />
           <select
             value={options.model ?? ''}
             onChange={(e) => change({ model: e.target.value || null })}
             title="モデル（--model。このセッションだけで、既定値は変わりません）"
           >
-            <option value="">既定のモデル</option>
+            <option value="">{settingsFile?.model ? `既定（${settingsFile.model}）` : '既定のモデル'}</option>
             {options.model && !models.choices.some((c) => c.value === options.model) && (
               <option value={options.model}>{options.model}</option>
             )}

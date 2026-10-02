@@ -25,3 +25,8 @@ export function installMockApi(): void {
 export function mockApi(handlers: Record<string, Handler>): void {
   for (const [key, handler] of Object.entries(handlers)) overrides.set(key, handler);
 }
+
+// ストーリーで決めた返事を捨てる（preview がストーリーごとに呼ぶ。前のストーリーの返事が次に残らないように）
+export function resetMockApi(): void {
+  overrides.clear();
+}

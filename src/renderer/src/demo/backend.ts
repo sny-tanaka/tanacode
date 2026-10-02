@@ -117,6 +117,7 @@ export class DemoBackend {
         backgroundTasks: 0,
         model: null,
         effort: null,
+        settingsFile: null,
         remoteControl: false,
         ...summary,
       },
@@ -273,6 +274,15 @@ export class DemoBackend {
       // デモ動画には新しいバージョンの印を映さない
       appUpdate: { get: () => ok(null), onChanged: () => () => {} },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
+      // デモ動画では設定ファイルを登録しない（選択欄は「標準」のまま）
+      settingsFiles: {
+        list: () => ok([]),
+        pick: () => ok(null),
+        add: () => Promise.reject(new Error('デモでは設定ファイルを登録できません')),
+        rename: () => ok(undefined),
+        remove: () => ok(undefined),
+        onChanged: () => () => {},
+      },
       models: { get: () => ok(this.catalog), refresh: () => ok({ catalog: this.catalog }) },
       knowledge: {
         get: (id) => ok({ files: s(id).knowledge, contextTokens: s(id).contextTokens }),

@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BranchChanges, FileChange, FileContent, NewSessionOptions, WorkspaceInfo } from '@shared/ipc';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
+import { errorMessage } from './errorMessage';
 import { chatFromEvents, useSessionChats, type ChatState } from './chat/chatState';
 import { usePendingSends } from './chat/pendingSends';
+import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
+import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type OpenFile, type RevealRequest } from './editor/EditorPane';
 import { languageFor, languageLabel } from './editor/monaco';
@@ -108,6 +111,8 @@ export function App() {
   const [comments, setComments] = useState<Record<string, ReviewComment[]>>({});
   const [quickOpen, setQuickOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  // 設定ファイルの管理ダイアログ（チャットの入力欄の下と新規セッションの画面の選択欄から開く）
+  const settingsFilesOpen = useSettingsFilesDialogOpen();
   // アーカイブ済みセッションのチャット（再開せずに会話ログから作る）
   const [archivedChats, setArchivedChats] = useState<Record<string, ChatState>>({});
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -244,12 +249,27 @@ export function App() {
       .then((events) => setArchivedChats((prev) => ({ ...prev, [id]: { ...chatFromEvents(events), status: 'not-started' } })));
   }, [selected, archivedChats]);
 
+  // セッションを開く（止まっていれば再開する）。開けなかったら理由を出す（登録した設定ファイルが読めないときなど）。
+  // 一覧が更新されるたびに開き直すので、同じ理由は 1 回だけ出す
+  const openFailures = useRef(new Map<string, string>());
+  const openSession = useCallback((id: string) => {
+    void window.tanacode.sessions
+      .open(id)
+      .then(() => openFailures.current.delete(id))
+      .catch((error: unknown) => {
+        const message = errorMessage(error);
+        if (openFailures.current.get(id) === message) return;
+        openFailures.current.set(id, message);
+        window.alert(`セッションを開けませんでした: ${message}`);
+      });
+  }, []);
+
   // このアプリの起動後にまだ動かしていないセッションは、選んだ時点で再開する
   useEffect(() => {
     if (selected && !selected.archived && !selected.running && chat.status === 'not-started') {
-      void window.tanacode.sessions.open(selected.id);
+      openSession(selected.id);
     }
-  }, [selected, chat.status]);
+  }, [selected, chat.status, openSession]);
 
   const updateEditor = useCallback((dir: string, fn: (state: EditorState) => EditorState) => {
     setEditors((prev) => ({ ...prev, [dir]: fn(prev[dir] ?? EMPTY_EDITOR) }));
@@ -394,8 +414,8 @@ export function App() {
     [],
   );
   const openSelected = useCallback(() => {
-    if (selectedIdRef.current) void window.tanacode.sessions.open(selectedIdRef.current);
-  }, []);
+    if (selectedIdRef.current) openSession(selectedIdRef.current);
+  }, [openSession]);
   const sendToSelected = useCallback(
     (text: string, attachments: string[]) => {
       if (selectedIdRef.current) pendingSends.send(selectedIdRef.current, text, attachments);
@@ -561,6 +581,7 @@ export function App() {
             onClose={() => setImporting(false)}
           />
         )}
+        {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
         {quickOpen && viewId && (
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
         )}

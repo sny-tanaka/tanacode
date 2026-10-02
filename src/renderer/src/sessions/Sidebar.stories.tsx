@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
 import type { SessionStatus } from '../chat/chatState';
+import { mockApi } from '../../../../.storybook/mockApi';
 import { SESSION_LOCK_KEY, Sidebar } from './Sidebar';
 
 // セッション一覧。ロックしていなければ、更新のあったセッションが上に来る（実際は main が最終更新の新しい順に並べて渡す）。
@@ -22,6 +23,7 @@ const session = (n: number, title: string, cwd: string, patch: Partial<SessionSu
   backgroundTasks: 0,
   model: null,
   effort: null,
+  settingsFile: null,
   remoteControl: false,
   ...patch,
 });
@@ -30,7 +32,9 @@ const INITIAL: SessionSummary[] = [
   session(1, 'ログイン画面の直し', '/Users/me/work/cafe-menu', { running: true }),
   session(2, 'テストの追加', '/Users/me/work/tanacode', { unread: true }),
   session(3, 'README の更新', '/Users/me/work/tanacode'),
-  session(4, '依存の更新', '/Users/me/work/cafe-menu'),
+  // 標準以外の設定ファイルを重ねて動いているセッションは、行の末尾に設定ファイルの名前が出る（登録に無ければ「（登録なし）」）
+  session(4, '依存の更新', '/Users/me/work/cafe-menu', { settingsFile: 'f1' }),
+  session(6, '社内 API の確認', '/Users/me/work/notes', { settingsFile: 'f0' }),
   session(5, '古い調査', '/Users/me/work/notes', { archived: true }),
 ];
 
@@ -93,6 +97,12 @@ const meta = {
   title: 'セッション/セッション一覧',
   component: Demo,
   parameters: { width: 560, background: '--bg-panel' },
+  // 「依存の更新」は登録した設定ファイル（litellm）を重ねている。「社内 API の確認」の設定ファイル（f0）は登録に無い
+  beforeEach: () =>
+    mockApi({
+      'settingsFiles.list': () =>
+        Promise.resolve([{ id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' }]),
+    }),
 } satisfies Meta<typeof Demo>;
 
 export default meta;

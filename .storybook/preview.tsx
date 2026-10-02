@@ -3,7 +3,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '../src/renderer/src/global.css';
 import { TooltipLayer } from '../src/renderer/src/layout/Tooltip';
-import { installMockApi } from './mockApi';
+import { installMockApi, resetMockApi } from './mockApi';
 
 installMockApi();
 // アプリ（src/renderer/index.html）と同じ言語にする。日本語の折り返し（word-break: auto-phrase）は言語が日本語のときだけ効く
@@ -11,6 +11,8 @@ document.documentElement.lang = 'ja';
 
 // 部品は読む場所（チャット・エディタ）の地の色の上に置く。幅はストーリーごとに parameters.width で変えられる
 const preview: Preview = {
+  // ストーリー自身の beforeEach（mockApi で返事を決める）より先に走るので、ここで前のストーリーの返事を捨てる
+  beforeEach: () => resetMockApi(),
   parameters: {
     layout: 'fullscreen',
     controls: { expanded: true },

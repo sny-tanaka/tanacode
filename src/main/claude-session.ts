@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
+import type { PreparedSettings } from './settings-files';
 import type { PtyHandle, PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
@@ -22,6 +23,8 @@ type Options = {
   effort: string | null;
   // --permission-mode。Shift+Tab と同じくこのセッションだけ。null なら既定のまま
   permissionMode: PermissionMode | null;
+  // 設定ファイルを選んでいるとき、アプリの設定と登録した設定を合わせたファイルと、その model。null なら標準の設定のまま
+  settings: PreparedSettings | null;
   // statusLine の JSON を書かせるファイル（--settings で足す statusLine が環境変数から読む）
   statusFile: string;
   // AskUserQuestion の入力を書かせるファイル（sessionSettings のフック）
@@ -120,17 +123,20 @@ export class ClaudeSession {
 
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
-  options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'>,
+  options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
+    Partial<Pick<Options, 'settings'>>,
 ): string[] {
-  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode } = options;
+  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode, settings = null } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
   if (remoteControlName) args.push('--remote-control', remoteControlName);
-  // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する
-  args.push('--model', model ?? 'default');
+  // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する。
+  // --model は設定ファイルの model を上書きするので、登録した設定ファイルに model があれば、選んでいないときはそれを渡す
+  args.push('--model', model ?? settings?.model ?? 'default');
   if (effort) args.push('--effort', effort);
   if (permissionMode) args.push('--permission-mode', permissionMode);
-  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない
-  args.push('--settings', sessionSettings());
+  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
+  // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings());
   return args;
 }
 

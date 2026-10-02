@@ -17,6 +17,7 @@ const session = (id: string): SessionSummary => ({
   backgroundTasks: 0,
   model: null,
   effort: null,
+  settingsFile: null,
   remoteControl: false,
 });
 
