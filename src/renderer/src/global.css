@@ -2097,6 +2097,78 @@ body.resizing-rows {
   color: var(--text-secondary);
   font-size: 11px;
 }
+/* 設定ファイルの管理 */
+.settings-files-dialog {
+  outline: none;
+}
+.settings-files-head {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.settings-files-head h2 {
+  margin: 0 0 4px;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-files-head p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.settings-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.settings-file-row:hover {
+  background: var(--bg-hover);
+}
+.settings-file-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 名前はその場で直せる。普段は枠を見せず、触れると枠が出る（.quick-open input を上書きする） */
+.settings-files-dialog .settings-file-name {
+  margin: 0 -6px;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.settings-files-dialog .settings-file-name:hover {
+  border-color: var(--border-strong);
+}
+.settings-files-dialog .settings-file-name:focus {
+  border-color: var(--border-focus);
+  background: var(--bg-surface);
+}
+.settings-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.settings-file-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+.settings-files-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
 .session-rename {
   width: 100%;
   padding: 1px 4px;
@@ -2400,7 +2472,9 @@ body.resizing-rows {
 /* チャット入力欄の下のモデル・エフォート */
 .chat-options {
   display: flex;
-  gap: 8px;
+  /* 設定ファイルの欄があると、狭い列（既定 400px）には 1 行に収まらないので折り返す */
+  flex-wrap: wrap;
+  gap: 6px 8px;
   margin-top: 8px;
 }
 .chat-options select {
@@ -2430,6 +2504,18 @@ body.resizing-rows {
 }
 .chat-options select:disabled {
   color: var(--text-tertiary);
+}
+/* 設定ファイル（標準以外）を選んでいるとき。別の設定（接続先・API キーなど）で動いていると分かるよう、色を付ける */
+.chat-options select.settings-file-select {
+  max-width: 160px;
+}
+.chat-options select.settings-file-select.on {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+/* セッション一覧の行の、設定ファイルの名前（ヘッダーは幅に余裕がないので、ここに出す） */
+.session-settings-file {
+  color: var(--warn);
 }
 
 /* ツールカードの詳細（入力・出力・差分） */

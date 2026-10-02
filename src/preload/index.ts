@@ -17,6 +17,7 @@ import {
   type TanacodeApi,
 } from '@shared/ipc';
 import type { AppUpdate } from '@shared/app-update';
+import type { SettingsFile } from '@shared/settings-file';
 import type { SystemStats } from '@shared/system';
 import type { UsageLimits } from '@shared/usage';
 
@@ -90,6 +91,14 @@ const api: TanacodeApi = {
   statusLine: {
     get: (sessionId) => ipcRenderer.invoke(IpcChannel.StatusLineGet, sessionId),
     onChanged: (listener) => subscribe<SessionStatusLine>(IpcChannel.StatusLineChanged, listener),
+  },
+  settingsFiles: {
+    list: () => ipcRenderer.invoke(IpcChannel.SettingsFilesList),
+    pick: () => ipcRenderer.invoke(IpcChannel.SettingsFilesPick),
+    add: (path, name) => ipcRenderer.invoke(IpcChannel.SettingsFilesAdd, path, name),
+    rename: (id, name) => ipcRenderer.invoke(IpcChannel.SettingsFilesRename, id, name),
+    remove: (id) => ipcRenderer.invoke(IpcChannel.SettingsFilesRemove, id),
+    onChanged: (listener) => subscribe<SettingsFile[]>(IpcChannel.SettingsFilesChanged, listener),
   },
   models: {
     get: () => ipcRenderer.invoke(IpcChannel.ModelsGet),

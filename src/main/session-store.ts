@@ -12,6 +12,8 @@ export type SessionRecord = {
   // 起動時に --model / --effort で渡す。null は Claude Code の既定値（ユーザー設定）のまま
   model?: string | null;
   effort?: string | null;
+  // 起動に重ねる、登録した設定ファイルの ID（SettingsFile.id）。null・無いものは標準の設定のまま
+  settingsFile?: string | null;
   // Remote Control を使うか。無いもの（この指定ができる前のセッション）は使う
   remoteControl?: boolean;
   // 起動時の表示で分かった、1M コンテキストのモデルか（再開時は表示が読めないことがあるので覚えておく）

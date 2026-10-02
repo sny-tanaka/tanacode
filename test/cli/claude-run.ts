@@ -222,7 +222,7 @@ export class ClaudeRun {
     const manager = this.manager;
     if (!this.sessionId) {
       // 許可の確認を出させる（API キーでは既定が auto になり、確認が出ない）
-      this.sessionId = manager.create(this.cwd, { model: this.options.model ?? null, effort: this.options.effort ?? null, mode: 'manual', remoteControl: false });
+      this.sessionId = manager.create(this.cwd, { model: this.options.model ?? null, effort: this.options.effort ?? null, settingsFile: null, mode: 'manual', remoteControl: false });
       return;
     }
     if (this.runtime()?.process) throw new Error('claude が動いています（stopClaude で止めてから start します）');

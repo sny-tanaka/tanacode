@@ -1,7 +1,9 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
+import type { SettingsFile } from '@shared/settings-file';
 import { inLockedOrder } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
+import { useSettingsFiles } from '../chat/settingsFiles';
 import { LockIcon } from '../layout/icons';
 import { UsagePanel } from '../usage/UsagePanel';
 
@@ -44,6 +46,7 @@ export const Sidebar = memo(function Sidebar({
   onRemove,
 }: Props) {
   const [showArchived, setShowArchived] = useState(false);
+  const settingsFiles = useSettingsFiles();
   // 名前を変えている行
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   // ロック中の並び（null はロックしていない。そのときは、受け取った最終更新の新しい順のまま出す）
@@ -117,6 +120,12 @@ export const Sidebar = memo(function Sidebar({
               </>
             )}
             {s.cwd.split('/').pop()}
+            {s.settingsFile && (
+              <>
+                {' · '}
+                <SettingsFileName id={s.settingsFile} files={settingsFiles} />
+              </>
+            )}
           </span>
         </div>
         <button
@@ -191,6 +200,19 @@ export const Sidebar = memo(function Sidebar({
 type Activity = { kind: 'waiting' | 'running' | 'background' | 'starting' | 'unread' | 'exited'; label: string };
 
 // 一覧に出すセッションの状態。上ほど優先する（何もしていなければ null で、印も文言も出さない）
+// 行の末尾に出す、セッションが重ねている設定ファイルの名前。登録から外されていたら「（登録なし）」
+function SettingsFileName({ id, files }: { id: string; files: SettingsFile[] }) {
+  const file = files.find((f) => f.id === id);
+  return (
+    <span
+      className="session-settings-file"
+      title={file ? `設定ファイル「${file.name}」を重ねています（${file.path}）` : '重ねている設定ファイルが、登録にありません'}
+    >
+      {file?.name ?? '（登録なし）'}
+    </span>
+  );
+}
+
 function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.attention === 'question') return { kind: 'waiting', label: '質問への回答待ち' };
   if (s.attention === 'permission') return { kind: 'waiting', label: '実行の許可待ち' };

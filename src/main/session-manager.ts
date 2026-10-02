@@ -22,6 +22,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
+import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
 import type { PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
@@ -120,6 +121,8 @@ export class SessionManager {
     private readonly listeners: Listeners,
     // Remote Control を使えるか。開発版では使わない（起動するたびにスマホに通知が届くため）
     private readonly remoteControlAvailable = true,
+    // 登録した設定ファイルを、起動する Claude Code に重ねる。無ければ設定ファイルは使えない
+    private readonly settingsFiles: SettingsFiles | null = null,
   ) {}
 
   list(): SessionSummary[] {
@@ -140,6 +143,7 @@ export class SessionManager {
           backgroundTasks: rt?.process ? rt.background : 0,
           model: r.model ?? null,
           effort: r.effort ?? null,
+          settingsFile: r.settingsFile ?? null,
           remoteControl: this.wantsRemote(r),
         };
       });
@@ -164,6 +168,8 @@ export class SessionManager {
   }
 
   create(cwd: string, options: NewSessionOptions): string {
+    // 使えない設定ファイルなら、記録を作る前に断る（使えないまま標準の設定で始めてしまわないように）
+    this.checkSettingsFile(options.settingsFile);
     const now = Date.now();
     const id = randomUUID();
     this.store.add({
@@ -175,6 +181,7 @@ export class SessionManager {
       archived: false,
       model: options.model,
       effort: options.effort,
+      settingsFile: options.settingsFile,
       remoteControl: options.remoteControl,
       createdAt: now,
       updatedAt: now,
@@ -239,6 +246,7 @@ export class SessionManager {
   archive(id: string): void {
     const rt = this.runtimes.get(id);
     rt?.process?.kill();
+    this.settingsFiles?.release(id);
     rt?.screen?.dispose();
     rt?.workflows.dispose();
     rt?.subagents.dispose();
@@ -401,11 +409,36 @@ export class SessionManager {
   }
 
   configure(id: string, options: SessionOptions): void {
-    const modelChanged = (this.store.get(id)?.model ?? null) !== options.model;
-    // モデルを変えたら、1M コンテキストかどうかは起動時の表示で分かり直す
-    this.store.update(id, { model: options.model, effort: options.effort, ...(modelChanged ? { oneMillion: undefined } : {}) });
+    const record = this.store.get(id);
+    const settingsFile = options.settingsFile ?? null;
+    const settingsChanged = (record?.settingsFile ?? null) !== settingsFile;
+    if (settingsChanged) this.checkSettingsFile(settingsFile);
+    // 設定ファイルを変えたら、モデルとエフォートは新しい設定の既定に戻す（前の設定のモデルが、新しい設定で使えるとは限らない）
+    const model = settingsChanged ? null : options.model;
+    const effort = settingsChanged ? null : options.effort;
+    const modelChanged = (record?.model ?? null) !== model;
+    // モデルや設定ファイルを変えたら、1M コンテキストかどうかは起動時の表示で分かり直す
+    this.store.update(id, { model, effort, settingsFile, ...(modelChanged || settingsChanged ? { oneMillion: undefined } : {}) });
     if (this.runtimes.get(id)?.process) this.restart(id);
     else this.emitSessions();
+  }
+
+  // 登録した設定ファイルを使えるか確かめる。使えなければ理由を添えて投げる
+  private checkSettingsFile(settingsFile: string | null | undefined): void {
+    if (!settingsFile) return;
+    if (!this.settingsFiles) throw new Error('設定ファイルを使えない状態です');
+    this.settingsFiles.check(settingsFile);
+  }
+
+  // 設定ファイルを選んでいるセッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。選んでいなければ null
+  private prepareSettings(id: string, settingsFile: string | null | undefined): PreparedSettings | null {
+    if (!settingsFile) {
+      // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
+      this.settingsFiles?.release(id);
+      return null;
+    }
+    if (!this.settingsFiles) throw new Error('設定ファイルを使えない状態です');
+    return this.settingsFiles.prepare(id, settingsFile);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -416,6 +449,8 @@ export class SessionManager {
       this.open(id);
       return;
     }
+    // 起動し直せないと分かっているのに、動いている claude を止めないよう、先に設定ファイルを確かめる
+    this.checkSettingsFile(this.store.get(id)?.settingsFile);
     const mode = rt.screen?.current.mode ?? rt.startMode;
     rt.process.kill();
     rt.process = null;
@@ -458,9 +493,11 @@ export class SessionManager {
   closeAll(stop: boolean): void {
     if (this.closed) return;
     this.closed = true;
-    for (const rt of this.runtimes.values()) {
-      if (stop) rt.process?.kill();
-      else rt.process?.detach();
+    for (const [id, rt] of this.runtimes) {
+      if (stop) {
+        rt.process?.kill();
+        this.settingsFiles?.release(id);
+      } else rt.process?.detach();
       rt.screen?.dispose();
       rt.workflows.dispose();
       rt.subagents.dispose();
@@ -479,6 +516,10 @@ export class SessionManager {
   private start(id: string, mode: PermissionMode | null = null, adopted: HostedPtyInfo | null = null): void {
     const record = this.store.get(id);
     if (!record) throw new Error(`unknown session: ${id}`);
+
+    // 設定ファイルを使えなければ、何も変えずにここで断る（標準の設定に黙って切り替わらないように）。
+    // 引き継ぐ claude は、前のアプリが起動したままなので、書き直さない
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId));
@@ -583,6 +624,7 @@ export class SessionManager {
         model: record.model ?? null,
         effort: record.effort ?? null,
         permissionMode: mode,
+        settings,
         statusFile: this.statusLines.fileFor(id),
         askFile: this.statusLines.askFileFor(id),
         ...rt.size,
@@ -594,6 +636,7 @@ export class SessionManager {
         },
         onExit: (exitCode) => {
           rt.process = null;
+          this.settingsFiles?.release(id);
           rt.workflows.stopRunning();
           rt.subagents.stopRunning();
           rt.bashTasks.stopRunning();

@@ -3,6 +3,7 @@ import type { SessionSummary } from '@shared/ipc';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode, ScreenInfo } from '@shared/screen';
 import type { BashTask, TaskRef } from '@shared/task';
+import { errorMessage } from '../errorMessage';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ContextMeter } from '../knowledge/ContextMeter';
 import { contextWindow } from '../knowledge/useSessionKnowledge';
@@ -24,6 +25,7 @@ import type { ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
+import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
@@ -237,12 +239,28 @@ export const ClaudePane = memo(function ClaudePane({
     if (error) window.alert(error);
   };
 
-  const configure = (patch: { model?: string | null; effort?: string | null }) =>
-    void window.tanacode.sessions.configure(session.id, {
-      model: session.model,
-      effort: session.effort,
-      ...patch,
-    });
+  const settingsFiles = useSettingsFiles();
+  const configure = (patch: { model?: string | null; effort?: string | null; settingsFile?: string | null }) =>
+    void window.tanacode.sessions
+      .configure(session.id, {
+        model: session.model,
+        effort: session.effort,
+        settingsFile: session.settingsFile,
+        ...patch,
+      })
+      .catch((error: unknown) => window.alert(`変更できませんでした: ${errorMessage(error)}`));
+  // 設定ファイルを変えると、これまでの会話の内容が新しい設定の接続先に送られる（別の契約・別のアカウントに渡ることがある）ので、会話があれば確かめる
+  const changeSettingsFile = (settingsFile: string | null) => {
+    const name = settingsFile === null ? '標準' : (settingsFiles.find((f) => f.id === settingsFile)?.name ?? '登録なし');
+    if (
+      chat.items.length > 0 &&
+      !window.confirm(
+        `設定ファイルを「${name}」に変えます。Claude Code を起動し直して会話を続けます。設定の内容（接続先の URL・API キーなど）によっては、これまでの会話の内容が新しい接続先に送られます。\n\n変えますか？`,
+      )
+    )
+      return;
+    configure({ settingsFile });
+  };
 
   const completion = useMemo<CompletionSource>(
     () => ({
@@ -299,7 +317,9 @@ export const ClaudePane = memo(function ClaudePane({
             onClick={() => {
               const busy = running || tasks.some((t) => t.state === 'running');
               if (busy && !window.confirm('作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？')) return;
-              void window.tanacode.sessions.restart(session.id);
+              void window.tanacode.sessions
+                .restart(session.id)
+                .catch((error: unknown) => window.alert(`再起動できませんでした: ${errorMessage(error)}`));
             }}
             title="Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます"
           >
@@ -495,6 +515,13 @@ export const ClaudePane = memo(function ClaudePane({
             }}
           />
           <div className="chat-options">
+            <SettingsFileSelect
+              value={session.settingsFile}
+              files={settingsFiles}
+              disabled={!canConfigure}
+              onChange={changeSettingsFile}
+              title="設定ファイル（変更すると Claude Code を起動し直して会話を再開します。モデルとエフォートは設定ファイルの既定に戻ります）"
+            />
             <select
               value={modelValue}
               disabled={!canConfigure}

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
+import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
 import { ClaudePane } from './ClaudePane';
 import { EMPTY_CHAT, type ChatItem } from './chatState';
@@ -22,6 +23,7 @@ const session: SessionSummary = {
   backgroundTasks: 0,
   model: null,
   effort: null,
+  settingsFile: null,
   remoteControl: false,
 };
 
@@ -38,11 +40,11 @@ function conversation(count: number): ChatItem[] {
   );
 }
 
-function Pane({ items }: { items: ChatItem[] }) {
+function Pane({ items, settingsFile = null }: { items: ChatItem[]; settingsFile?: string | null }) {
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
-        session={session}
+        session={{ ...session, settingsFile }}
         chat={{ ...EMPTY_CHAT, status: 'idle', items }}
         screen={null}
         workflows={new Map()}
@@ -95,3 +97,27 @@ type Story = StoryObj<typeof meta>;
 export const 長い会話: Story = {};
 
 export const 返答が増える: Story = { render: () => <GrowingPane /> };
+
+const LITELLM = { id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' };
+
+// 設定ファイルの選択欄は、登録が 0 件でも入力欄の下に出る（「管理…」から最初の 1 件を登録する）。標準のままなら、色は付かない
+export const 設定ファイルが無い: Story = {
+  beforeEach: () => mockApi({ 'settingsFiles.list': () => Promise.resolve([]) }),
+};
+
+// 登録した設定ファイルがあるとき。標準のままなので、色は付かない
+export const 設定ファイルを選べる: Story = {
+  beforeEach: () => mockApi({ 'settingsFiles.list': () => Promise.resolve([LITELLM]) }),
+};
+
+// 標準以外の設定ファイルで動いているセッション。取り違えないよう、選択欄に色が付く（一覧の行にも名前が出る）
+export const 設定ファイルで動いている: Story = {
+  beforeEach: () => mockApi({ 'settingsFiles.list': () => Promise.resolve([LITELLM]) }),
+  args: { settingsFile: 'f1' },
+};
+
+// 選んでいた設定ファイルを登録から外したとき。黙って標準に見せず、「（登録なし）」と出す
+export const 設定ファイルの登録なし: Story = {
+  beforeEach: () => mockApi({ 'settingsFiles.list': () => Promise.resolve([]) }),
+  args: { settingsFile: 'f1' },
+};

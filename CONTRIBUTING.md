@@ -156,6 +156,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 新しい会話には `--session-id <uuid>` を、再開には `--resume <id>` を付けます。
   - Remote Control をオンにしたセッションは、`--remote-control tanacode-<フォルダ名>` を付けます（開発版を除く）。
   - モデル・エフォート・権限モードを選んだときは、`--model` / `--effort` / `--permission-mode` も付けます。ユーザーの既定値（`~/.claude/settings.json`）は変えません。
+  - 設定ファイル（登録した Claude Code の設定ファイル。セッションごとに選ぶ。`SessionRecord.settingsFile` に登録の ID を持つ）を選んだセッションは、`--settings` にアプリの設定と登録した設定を合わせたファイルを渡します（`settings-files.ts`）。
+    - Claude Code は `--settings` を 2 回渡しても合わせず、最後の 1 つしか使いません（実測）。そのため、登録した設定ファイルを 2 つ目として足さず、アプリが合わせます。`hooks` は両方を残し、`statusLine` はアプリのもの（登録した設定の statusLine は、そのコマンドを `tee` の先で動かして包む）、`env`・`model` などは登録した設定のままにします。
+    - 登録するのは名前とパス（`userData/settings.json` の `settingsFiles`。`AppSettings`）だけで、ファイルの中身は預かりません。名前を変えても、セッションが指す先（ID）は変わりません。読めないファイル（無い・JSON でない）は登録できません。
+    - 合わせたファイルは `userData/session-settings/<セッション ID>.json`（`0600`、フォルダは `0700`）。登録した設定の `env` に API キーが入るので、引数（`ps` に見える）や pty ホストへの要求には載せず、パスだけを渡します。起動のたびに書き直し、Claude Code が終わった・アーカイブした・標準に戻した・アプリが Claude Code ごと終了したときに消します（アプリだけ終了して引き継ぐときは残します）。
+    - `--model` は設定ファイルの `model` を上書きするので（実測）、モデルを選んでいないときは登録した設定の `model` を `--model` に渡します。設定ファイルを変えたら、モデルとエフォートは `null` に戻します（設定によって使えるモデルが違うため）。
+    - 登録が外れている・ファイルが無い・読めないときは、記録を作る前・起動し直す前・動いている Claude Code を止める前に断ります。標準の設定に黙って切り替えると、意図しない契約で動いてしまうためです。登録を外すのは、使っているセッションがあっても止めません（次に起動するときに断られる）。
 - チャットは pty の画面ではなく、会話ログから組み立てます。会話ログは `~/.claude/projects/<フォルダ>/<id>.jsonl`。`/clear` で会話が切り替わっても追いかけます。
   - `/clear` のあとの会話ログは、statusLine の `transcript_path` で分かります（Remote Control を使っていなくても追える）。Remote Control を使っていれば、新しい会話ログにも同じ `bridge-session` の ID が書かれるので、それでも追います。
   - Remote Control のつながりは、会話ログの `bridge_status`（URL）と `bridge-session`（ID。切ると空になる）の行で分かります。以前つないでいた会話を再開して勝手につなぎ直したときは、`bridge-session` の行だけが書かれます。
@@ -237,6 +243,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
+| 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
 | `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと。メニューの「新しいバージョンが出たら通知する」で止められる） |
 
 ### 書くもの
@@ -246,9 +253,10 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うかなど） |
-| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える） |
+| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
+| `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
 | `usage.json` | 最後に分かった利用枠 |
 
 次のものは変更しません。
@@ -261,6 +269,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `src/main`: Electron のメインプロセス
   - `session-manager.ts` / `session-store.ts`: セッションの作成・再開・アーカイブ・再起動・通知と、一覧の保存
   - `claude-session.ts`: pty ホストに `claude` を起動させる・引き継ぐ（起動オプション・statusLine と質問のフックの注入）
+  - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
   - `screen-tracker.ts` / `screen-parser.ts`: pty の画面を仮想の端末で再現し、選択メニューを読み取る
@@ -274,11 +283,11 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）
-  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか）の保存
+  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、登録した設定ファイル）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
 - `src/preload`: renderer に `window.tanacode` の API を公開する
-- `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーは部品の隣の `*.stories.tsx`
+- `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で localStorage に保つ）
@@ -299,6 +308,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
+  - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
 
 ## デモ動画の仕組み
 

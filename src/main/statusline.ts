@@ -15,18 +15,23 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // hooks: AskUserQuestion を出す前に、その入力（質問・選択肢の説明・プレビュー）をセッションごとのファイルに書かせる。
 // 会話ログには答えたあとにしか書かれないので、質問のカードに説明やプレビューを出すにはこれが要る
 export function sessionSettings(): string {
-  const own = userStatusLineCommand();
-  const command = own ? `tee "$${STATUS_FILE_ENV}" | ${own}` : `cat > "$${STATUS_FILE_ENV}"`;
-  return JSON.stringify({
+  return JSON.stringify(ownSettings(userStatusLineCommand()));
+}
+
+// sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
+// 登録した設定ファイルを重ねるときは、そのファイルの statusLine を inner にして、settings-files.ts が合成する
+export function ownSettings(inner: string | null): Record<string, unknown> {
+  const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
+  return {
     statusLine: { type: 'command', command },
     hooks: { PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] }] },
-  });
+  };
 }
 
 // ユーザー自身の設定（~/.claude/settings.json）の statusLine だけを探す。
 // プロジェクトの設定（.claude/settings*.json）は見ない。clone したリポジトリのコマンドを --settings に写すと、
 // Claude Code のフォルダの信頼の確認や管理ポリシーを通らずに動くおそれがあるため
-function userStatusLineCommand(): string | null {
+export function userStatusLineCommand(): string | null {
   let settings: { statusLine?: { type?: string; command?: string } } | null = null;
   try {
     settings = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8'));

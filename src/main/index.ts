@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, session, shell, type MenuItem, type WebContents } from 'electron';
 import {
@@ -23,6 +24,7 @@ import { imageOf } from './image-cache';
 import { menuNotice } from './notice-text';
 import { PtyHost } from './pty-host-client';
 import { DEFAULT_PTY_SIZE, SessionManager } from './session-manager';
+import { SettingsFiles } from './settings-files';
 import { SessionStore } from './session-store';
 import { readModelCatalog } from './model-catalog';
 import { StatusLineWatcher } from './statusline';
@@ -39,6 +41,7 @@ let ptyHost: PtyHost | null = null;
 let usage: UsageMonitor;
 let settings: AppSettings;
 let statusLines: StatusLineWatcher;
+let settingsFiles: SettingsFiles;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
@@ -172,6 +175,18 @@ async function pickFolder(): Promise<string | null> {
   return dir;
 }
 
+// 設定ファイルの選択。Claude Code の設定は隠しフォルダ（~/.claude）にあるので、そこから始めて、隠しファイルも見せる
+async function pickSettingsFile(): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: '設定ファイルを選択',
+    defaultPath: join(homedir(), '.claude'),
+    properties: ['openFile', 'showHiddenFiles'],
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  };
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
 // 出した通知を、クリックされるまで持っておく。Electron の Notification は、JS から参照されなくなると回収され、
 // そのあとクリックしても click が届かない（アプリは前に出るが、セッションは移らない。electron/electron#16922）。
 // 閉じたときの close は、必ず届くとは限らない。溜まりすぎないよう、古いものから手放す
@@ -271,6 +286,11 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.SubagentsGet, (_e, id: string) => manager.subagents(id));
   ipcMain.handle(IpcChannel.TasksBash, (_e, id: string) => manager.bashTasks(id));
   ipcMain.handle(IpcChannel.KnowledgeGet, (_e, id: string) => manager.knowledge(id));
+  ipcMain.handle(IpcChannel.SettingsFilesList, () => settingsFiles.list());
+  ipcMain.handle(IpcChannel.SettingsFilesPick, () => pickSettingsFile());
+  ipcMain.handle(IpcChannel.SettingsFilesAdd, (_e, path: string, name?: string) => settingsFiles.add(path, name));
+  ipcMain.handle(IpcChannel.SettingsFilesRename, (_e, id: string, name: string) => settingsFiles.rename(id, name));
+  ipcMain.handle(IpcChannel.SettingsFilesRemove, (_e, id: string) => settingsFiles.remove(id));
   ipcMain.handle(IpcChannel.ModelsGet, () => readModelCatalog().catch(() => null));
   ipcMain.handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
   ipcMain.handle(IpcChannel.UsageGet, () => usage.get());
@@ -500,6 +520,10 @@ app.whenReady().then(async () => {
     (id, input) => manager.askQuestionsChanged(id, input),
   );
   await statusLines.start();
+  // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせたファイルは session-settings に置く
+  settingsFiles = new SettingsFiles(settings, join(app.getPath('userData'), 'session-settings'), (files) =>
+    send(IpcChannel.SettingsFilesChanged, files),
+  );
   // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
   try {
     ptyHost = await PtyHost.start(app.getPath('userData'), join(__dirname, 'pty-host.js'));
@@ -527,7 +551,7 @@ app.whenReady().then(async () => {
     onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
     onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl);
+  }, remoteControl, settingsFiles);
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
