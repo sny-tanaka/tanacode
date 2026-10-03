@@ -76,9 +76,21 @@ export async function readAgentLog(file: string, cwd: string): Promise<ChatEvent
 
 // 会話ログ全体をチャットのイベントにする（アーカイブ済みセッションを再開せずに見るため）
 export async function readChatLog(file: string, cwd: string): Promise<ChatEvent[]> {
+  return chatEventsOf(await readEntries(file), cwd);
+}
+
+// 作業の書き出しの材料。チャットのイベントと、作業したブランチ（会話ログの行の gitBranch。出てきた順・重なりなし）。
+// live: Claude Code が動いている。作業の途中なら、結果を待っているツールは実行中のまま（中断にしない）
+export async function readExportLog(file: string, cwd: string, live: boolean): Promise<{ events: ChatEvent[]; branches: string[] }> {
+  const entries = await readEntries(file);
+  const branches = [...new Set(entries.filter((e) => !e.isSidechain).map((e) => e.gitBranch).filter((b): b is string => typeof b === 'string' && b !== ''))];
+  return { events: chatEventsOf(entries, cwd, !live), branches };
+}
+
+function chatEventsOf(entries: TranscriptEntry[], cwd: string, endTurn = true): ChatEvent[] {
   let events: ChatEvent[] = [];
   let chain: ChainEntry[] = [];
-  for (const entry of await readEntries(file)) {
+  for (const entry of entries) {
     if (entry.uuid && !entry.isSidechain) {
       const cut = branchCut(chain, entry);
       if (cut) {
@@ -90,5 +102,5 @@ export async function readChatLog(file: string, cwd: string): Promise<ChatEvent[
     events.push(...toChatEvents(entry, cwd, false, rememberImage));
   }
   // 応答のないまま終わったターンを作業中として扱わない
-  return [...events, { type: 'turn-end' }];
+  return endTurn ? [...events, { type: 'turn-end' }] : events;
 }

@@ -10,6 +10,7 @@ import { isParentMessageDraft, modeWithin, weakerMode, type SessionState } from 
 import type {
   ArchiveOptions,
   ChatBatch,
+  ExportSource,
   NewSessionOptions,
   ScreenChoice,
   SessionOptions,
@@ -28,7 +29,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import { BashTaskTracker } from './bash-task-tracker';
-import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, type ChainEntry } from './chat-log';
+import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
@@ -355,6 +356,15 @@ export class SessionManager {
     const record = this.store.get(id);
     if (!record) return Promise.resolve([]);
     return readChatLog(transcriptPath(record.cwd, record.claudeSessionId), record.cwd);
+  }
+
+  // 作業の書き出しの材料。動いているセッションも、会話ログを最初から読み直す（画像も画像置き場に入れ直す）
+  async exportSource(id: string): Promise<ExportSource> {
+    const record = this.store.get(id);
+    if (!record) throw new Error('セッションが見つかりません');
+    const live = !!this.runtimes.get(id)?.process;
+    const { events, branches } = await readExportLog(transcriptPath(record.cwd, record.claudeSessionId), record.cwd, live);
+    return { events, branches, home: homedir() };
   }
 
   // 未起動・終了済みなら起動（再開）する。起動中なら何もしない。

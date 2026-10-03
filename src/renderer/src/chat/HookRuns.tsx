@@ -17,15 +17,24 @@ export function HookRuns({ runs }: { runs: HookRun[] }) {
       {runs.map((run, i) => (
         <div key={i} className={`hook-run ${run.outcome}`}>
           <button className="hook-chip" onClick={() => setOpen(open === i ? null : i)} title={run.command ?? run.name}>
-            <HookMark outcome={run.outcome} />
-            <span className="hook-event">{run.event}</span>
-            <span className="hook-command">{run.command ?? run.name}</span>
-            {run.durationMs !== null && <span className="hook-time">{formatMs(run.durationMs)}</span>}
+            <HookChip run={run} />
           </button>
           {open === i && <HookDetail run={run} />}
         </div>
       ))}
     </div>
+  );
+}
+
+// 1 件の見出し（結果の印・きっかけ・コマンド・かかった時間）。作業の書き出しでも使う
+export function HookChip({ run }: { run: HookRun }) {
+  return (
+    <>
+      <HookMark outcome={run.outcome} />
+      <span className="hook-event">{run.event}</span>
+      <span className="hook-command">{run.command ?? run.name}</span>
+      {run.durationMs !== null && <span className="hook-time">{formatMs(run.durationMs)}</span>}
+    </>
   );
 }
 
@@ -38,7 +47,7 @@ function HookMark({ outcome }: { outcome: HookRun['outcome'] }) {
   );
 }
 
-function HookDetail({ run }: { run: HookRun }) {
+export function HookDetail({ run }: { run: HookRun }) {
   const facts = [
     OUTCOME[run.outcome].label,
     run.exitCode !== null ? `終了コード ${run.exitCode}` : null,

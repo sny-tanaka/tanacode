@@ -45,6 +45,17 @@ function render(text: string): { html: string; commands: (string | null)[] } {
   return { html: marked.parse(text, { async: false, gfm: true, breaks: true, renderer }), commands };
 }
 
+// 作業の書き出し（静的な HTML）用。チャットと同じ整形と消毒をして、文字列で返す（実行ボタンは付けない）
+export function markdownHtml(text: string): string {
+  const fragment = DOMPurify.sanitize(render(text).html, { ...SANITIZE, RETURN_DOM_FRAGMENT: true });
+  replaceExternalImages(fragment);
+  // 「既定のブラウザで開く」はアプリの中の言い方なので外す（書き出した HTML ではふつうのリンク）
+  fragment.querySelectorAll('.markdown-external-image').forEach((note) => note.removeAttribute('title'));
+  const box = document.createElement('div');
+  box.appendChild(fragment);
+  return box.innerHTML;
+}
+
 // onRunCommand: シェルのコードブロック（```bash など）に「実行」ボタンを付け、押したらそのコマンドを渡す
 export function Markdown({ text, onRunCommand }: { text: string; onRunCommand?: (command: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);

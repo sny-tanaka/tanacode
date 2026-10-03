@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import type { QuestionAnswer } from '@shared/chat';
 import type { BashTask, TaskRef } from '@shared/task';
 import { DisclosureIcon, IconButton, RewindIcon } from '../icons';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
@@ -170,22 +171,7 @@ export const ChatRow = memo(function ChatRow({
       </details>
     );
   }
-  if (item.answers) {
-    return (
-      <div className="chat-answers">
-        <div className="chat-answers-label">質問への回答</div>
-        {item.answers.map((a, i) => (
-          <div key={i} className="chat-answer">
-            <div className="chat-answer-question">
-              {a.header && <span className="chat-answer-header">{a.header}</span>}
-              {a.question}
-            </div>
-            <div className="chat-answer-value">→ {a.answer}</div>
-          </div>
-        ))}
-      </div>
-    );
-  }
+  if (item.answers) return <AnswersCard answers={item.answers} />;
   if (item.sentFiles) {
     return <SentFilesCard files={item.sentFiles} failed={item.status === 'error'} onOpenFile={onOpenFile} />;
   }
@@ -214,3 +200,21 @@ export const ChatRow = memo(function ChatRow({
     />
   );
 }, sameRow);
+
+// AskUserQuestion の質問と、選んだ答え。作業の書き出しでも使う
+export function AnswersCard({ answers }: { answers: QuestionAnswer[] }) {
+  return (
+    <div className="chat-answers">
+      <div className="chat-answers-label">質問への回答</div>
+      {answers.map((a, i) => (
+        <div key={i} className="chat-answer">
+          <div className="chat-answer-question">
+            {a.header && <span className="chat-answer-header">{a.header}</span>}
+            {a.question}
+          </div>
+          <div className="chat-answer-value">→ {a.answer}</div>
+        </div>
+      ))}
+    </div>
+  );
+}

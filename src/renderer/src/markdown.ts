@@ -7,8 +7,8 @@ marked.use(markedCjkFriendly());
 
 export { marked };
 
-// 外の画像（http(s) の src）。// で始まるものも、ブラウザは外へ読みにいく
-const EXTERNAL_IMAGE = /^(https?:)?\/\//i;
+// 外の画像（http(s) の src）。// で始まるものも、https:example.com のように // の無いものも、ブラウザは外へ読みにいく
+const EXTERNAL_IMAGE = /^(?:https?:|\/\/)/i;
 
 // 外の画像を、画像の代わりに「外部の画像: <URL>」のリンクにする（押すと、外部リンクと同じく既定のブラウザで開く）。
 // 返答に ![](https://…/?q=<秘密>) が混ざると、描いた時点で秘密が外へ送られるため、外の画像は読み込まない（CSP でも止めている）。

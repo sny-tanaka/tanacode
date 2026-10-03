@@ -5,10 +5,11 @@ import { useSessionValues } from '../sessionValues';
 
 export type ToolStatus = 'running' | 'done' | 'error';
 
+// at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 export type ChatItem =
   // parent: 親セッションの Claude からの指示なら、親セッションの ID
-  | { kind: 'user'; id: string; text: string; images?: string[]; parent?: string }
-  | { kind: 'text'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; images?: string[]; at?: number; parent?: string }
+  | { kind: 'text'; id: string; text: string; at?: number }
   // sessions: 子セッションからの知らせなら、その子の ID
   | { kind: 'notice'; id: string; text: string; detail?: string; sessions?: string[] }
   | { kind: 'info'; id: string; text: string }
@@ -141,6 +142,19 @@ export function chatFromEvents(events: ChatEvent[]): ChatState {
   return events.reduce(apply, EMPTY_CHAT);
 }
 
+// ToDo の一覧を変えたツールの呼び出し（id）ごとの、変えたあとの一覧。作業の書き出しで、進み具合を途中に挟むのに使う。
+// TaskCreate は結果で番号が分かってから一覧に入るので、結果のところで数える
+export function todoSteps(events: ChatEvent[]): Map<string, TodoItem[]> {
+  const steps = new Map<string, TodoItem[]>();
+  let state = EMPTY_CHAT;
+  for (const event of events) {
+    const next = apply(state, event);
+    if (next.todos && next.todos !== state.todos && (event.type === 'tool-use' || event.type === 'tool-result')) steps.set(event.id, next.todos);
+    state = next;
+  }
+  return steps;
+}
+
 // 起動中は ready が届くまで状態を変えない（再開時に読み直す過去の会話で、待機中や作業中にしない）
 function turn(state: ChatState, status: 'idle' | 'running'): SessionStatus {
   return state.status === 'starting' || state.status === 'exited' ? state.status : status;
@@ -168,7 +182,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ...state,
         status: turn(state, 'running'),
         inTurn: true,
-        items: [...state.items, { kind: 'user', id: event.id, text: event.text, images: event.images, parent: event.parent }],
+        items: [...state.items, { kind: 'user', id: event.id, text: event.text, images: event.images, at: event.at, parent: event.parent }],
       };
     case 'notice':
       // 完了通知を受けて Claude Code が続きを始める
@@ -187,7 +201,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'shell-output':
       return { ...state, items: withShellOutput(state.items, event.id, event.output) };
     case 'assistant-text':
-      return { ...state, items: [...withoutRetrying(state.items), { kind: 'text', id: event.id, text: event.text }] };
+      return { ...state, items: [...withoutRetrying(state.items), { kind: 'text', id: event.id, text: event.text, at: event.at }] };
     case 'tool-use':
       return {
         ...state,

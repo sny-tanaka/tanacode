@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type MenuItem, type WebContents } from 'electron';
@@ -241,6 +241,29 @@ async function pickSettingsFile(): Promise<string | null> {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+// 作業の書き出しで保存したファイル（Finder で見せてよいもの）
+const savedExports = new Set<string>();
+
+// 書き出した HTML を、保存のダイアログで選んだ場所に保存する（どこにも送らない）。ファイル名は画面が付けたもので、パスの区切りなどは除く。
+// 会話の中身（社内の情報や API キーが入ることがある）なので、ほかのユーザーからは読めないようにする
+async function saveExport(html: unknown, fileName: unknown): Promise<string | null> {
+  if (typeof html !== 'string' || typeof fileName !== 'string') throw new Error('書き出す中身がありません');
+  const name = fileName.replace(/[/\\:\x00-\x1f]/g, ' ').replace(/^\.+/, '').trim().slice(0, 120) || '作業';
+  const options: Electron.SaveDialogOptions = {
+    title: '作業を書き出す',
+    defaultPath: join(app.getPath('downloads'), name.endsWith('.html') ? name : `${name}.html`),
+    filters: [{ name: 'HTML', extensions: ['html'] }],
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+  };
+  const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return null;
+  await writeFile(result.filePath, html, { encoding: 'utf8', mode: 0o600 });
+  // mode は新しく作るときにしか効かないので、上書きしたときのために付け直す
+  await chmod(result.filePath, 0o600);
+  savedExports.add(result.filePath);
+  return result.filePath;
+}
+
 // 出した通知を、クリックされるまで持っておく。Electron の Notification は、JS から参照されなくなると回収され、
 // そのあとクリックしても click が届かない（アプリは前に出るが、セッションは移らない。electron/electron#16922）。
 // 閉じたときの close は、必ず届くとは限らない。溜まりすぎないよう、古いものから手放す
@@ -324,6 +347,11 @@ function registerIpc(): void {
   });
   ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
   ipcMain.handle(IpcChannel.ChatImage, (_e, key: string) => imageOf(key));
+  ipcMain.handle(IpcChannel.SessionsExportSource, (_e, id: string) => manager.exportSource(id));
+  ipcMain.handle(IpcChannel.SessionsExportSave, (_e, html: unknown, fileName: unknown) => saveExport(html, fileName));
+  ipcMain.on(IpcChannel.SessionsExportReveal, (_e, path: string) => {
+    if (savedExports.has(path)) shell.showItemInFolder(path);
+  });
   ipcMain.handle(IpcChannel.SessionsDiscover, () => discoverSessions(manager.claudeSessionIds()));
   ipcMain.handle(IpcChannel.SessionsImport, (_e, s: DiscoveredSession) => manager.importSession(s.claudeSessionId, s.cwd, s.title));
   ipcMain.handle(IpcChannel.SessionsConfigure, (_e, id: string, options: SessionOptions) => manager.configure(id, options));

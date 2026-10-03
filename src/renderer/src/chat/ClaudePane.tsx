@@ -5,8 +5,9 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode, ScreenInfo } from '@shared/screen';
 import type { BashTask, TaskRef } from '@shared/task';
 import { errorMessage } from '../errorMessage';
-import { ArrowDownIcon, CloseIcon, CompressIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
+import { ArrowDownIcon, CloseIcon, CompressIcon, ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
+import { ExportDialog } from '../export/ExportDialog';
 import { ContextMeter } from '../knowledge/ContextMeter';
 import { contextUsage } from '../knowledge/useSessionKnowledge';
 import { MenuCard } from '../screen/MenuCard';
@@ -117,6 +118,8 @@ export const ClaudePane = memo(function ClaudePane({
 }: Props) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
+  // 作業の書き出しの確認を出している
+  const [exporting, setExporting] = useState(false);
   // ターミナルで選んだ出力やアプリ内ブラウザで選んだ要素などを、入力欄の末尾に足す
   useInsertInput(session.id, (text, added) => {
     setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
@@ -154,6 +157,8 @@ export const ClaudePane = memo(function ClaudePane({
     stickToBottom.current = true;
     setAwayFromBottom(false);
     jumping.current = false;
+    // 書き出しの確認は、開いたセッションのもの。切り替えたら閉じる
+    setExporting(false);
   }
 
   useLayoutEffect(() => {
@@ -352,6 +357,13 @@ export const ClaudePane = memo(function ClaudePane({
             }}
           />
         )}
+        <IconButton
+          size="md"
+          icon={ExportIcon}
+          label="作業を書き出す…"
+          tip="このセッションの流れを、1 枚の HTML ファイルに書き出す"
+          onClick={() => setExporting(true)}
+        />
         {!session.archived && (
           <IconButton
             size="md"
@@ -529,6 +541,7 @@ export const ClaudePane = memo(function ClaudePane({
         )}
       </div>
 
+      {exporting && <ExportDialog key={session.id} session={session} onClose={() => setExporting(false)} />}
       <TaskTray tasks={tasks} activeKey={activeTaskKey} onOpen={(t) => onOpenTask(t.ref)} onStop={onStopTask} stopping={stoppingTasks} />
       {!session.archived && (
         <div className="chat-input-wrap">
