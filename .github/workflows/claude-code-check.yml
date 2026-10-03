@@ -2,7 +2,7 @@
 # アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
 # 毎日、その日の最新の Claude Code で確かめる。
 # - 読み取れなくなっていたら、Issue を立てる
-# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる
+# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる。マージしたらブランチは消す
 # 途中の画面などの控えは artifact にも残す
 name: claude-code-check
 
@@ -142,9 +142,13 @@ jobs:
           - この PR は GitHub Actions が作ったので、PR の CI は動きません。上の確認が通ったので、そのまま squash マージします
           - マージしたあと、アプリのリリースで利用者に届きます"
           # 作ったばかりの PR は、マージできるかの判定が終わっていないことがあるので、数回やり直す。
-          # マージできなかったときは、ジョブを失敗させる（PR は開いたまま残るので、人が見てマージする）
+          # マージできなかったときは、ジョブを失敗させる（PR は開いたまま残るので、人が見てマージする）。
+          # GitHub Actions がマージした PR は、リポジトリの設定の「ブランチの自動削除」が効かないので、マージしたらブランチを消す
           for _ in 1 2 3; do
-            if gh pr merge "$branch" --squash; then exit 0; fi
+            if gh pr merge "$branch" --squash; then
+              git push origin --delete "$branch"
+              exit 0
+            fi
             sleep 10
           done
           echo "$branch の PR をマージできませんでした。PR を開いて確かめてください"
