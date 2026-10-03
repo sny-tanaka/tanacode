@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { userEvent, within } from 'storybook/test';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { NewSessionPane } from './NewSessionPane';
 
@@ -6,12 +8,17 @@ import { NewSessionPane } from './NewSessionPane';
 
 const noop = () => {};
 
+const FOLDERS = ['/Users/me/work/tanacode', '/Users/me/work/cafe-menu', '/Users/me/work/old-experiment'];
+
 // width は、チャットの列の幅（アプリでは列の境目を動かして変える）
 function Pane({ width }: { width: number }) {
+  // 最近のフォルダ。「外す」を押すと、アプリと同じように一覧から消える
+  const [folders, setFolders] = useState(FOLDERS);
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)', ['--w-claude' as string]: `${width}px` }}>
       <NewSessionPane
-        folders={['/Users/me/work/tanacode', '/Users/me/work/cafe-menu']}
+        folders={folders}
+        onForgetFolder={(dir) => setFolders((list) => list.filter((d) => d !== dir))}
         cwd="/Users/me/work/tanacode"
         onCwdChange={noop}
         branch="develop"
@@ -43,6 +50,14 @@ export const 広い幅: Story = { args: { width: 900 } };
 
 // 列を細くしたとき
 export const 細い幅: Story = { args: { width: 340 } };
+
+// 最近のフォルダのメニュー。行にマウスを乗せると、右端に「外す」が出る（使わなくなったフォルダを一覧から外せる）
+export const 最近のフォルダを外せる: Story = {
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByTitle('/Users/me/work/tanacode'));
+    await userEvent.hover(within(canvasElement).getByTitle('/Users/me/work/cafe-menu'));
+  },
+};
 
 const LITELLM = { id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' };
 
