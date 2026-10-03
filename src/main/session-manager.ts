@@ -777,7 +777,11 @@ export class SessionManager {
       runtime.worktreeCreated = waitForWorktree(record.cwd, () => runtime.process === process).then((created) => {
         if (created && runtime.process === process) {
           this.watch(runtime, record.cwd);
-          void this.prepareWorktree(id, 'created');
+          // .git ができた時点では、git worktree add がまだファイルを書き出している（大きなリポジトリでは、git ls-files が空になる。実測）。
+          // Claude Code は worktree を作り終えてから入力欄を出すので、それを待ってから node_modules を用意する
+          void this.untilScreenReady(runtime, process).then((ready) => {
+            if (ready) void this.prepareWorktree(id, 'created');
+          });
         } else if (runtime.preparing === 'creating') {
           runtime.preparing = null;
         }
@@ -790,6 +794,15 @@ export class SessionManager {
     if (adopted && hasConversation(transcriptPath(record.cwd, claudeSessionId))) screen.markReady();
     if (adopted && (adopted.cols !== rt.size.cols || adopted.rows !== rt.size.rows)) this.resize(id, rt.size.cols, rt.size.rows);
     this.emitSessions();
+  }
+
+  // Claude Code が入力欄を出すまで待つ。その前に終わった・起動し直したら false
+  private async untilScreenReady(rt: Runtime, process: ClaudeSession): Promise<boolean> {
+    for (;;) {
+      if (rt.process !== process) return false;
+      if (rt.screen?.current.ready) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
 
   // ファイルの変更を見張る（フォルダがあれば。同じセッションでは一度だけ）

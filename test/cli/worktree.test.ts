@@ -69,7 +69,8 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
   });
 
   it('準備が終わってから入力を受け付け、会話ログは worktree の側に書かれる', async () => {
-    await prompt();
+    // 入力欄が出てから準備（node_modules）を始め、終わってから ready を配信する
+    await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 30_000);
     const kinds = run.chatEvents.map((e) => e.type);
     // 準備の知らせ（worktree で始めた）は、ready より先
     expect(kinds.indexOf('info')).toBeGreaterThan(-1);
@@ -114,10 +115,10 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
 
     await run.reopen();
     expect(existsSync(join(path, '.git'))).toBe(true);
+    await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'info' && e.text.includes('作り直しました')), 30_000);
     await prompt();
     // 作り直した worktree で、前の会話を読み直している
     expect(shown(run.chat()).some((e) => e.type === 'user' && e.text === HELLO)).toBe(true);
-    expect(run.chatEvents.some((e) => e.type === 'info' && e.text.includes('作り直しました'))).toBe(true);
   });
 });
 
@@ -133,4 +134,29 @@ describe(`Claude Code ${version} の worktree のセッション（信頼して�
       await api.stop();
     }
   });
+});
+
+describe(`Claude Code ${version} の worktree のセッション（大きなモノレポ）`, () => {
+  // git worktree add は .git を先に書き、そのあとでファイルを書き出す。大きなリポジトリでは、.git ができた時点で
+  // git ls-files が空になる（実測）。入力欄が出るのを待ってから用意するので、サブフォルダの node_modules も見つかる
+  it('workspaces の各パッケージの node_modules も、元のフォルダから用意する', async () => {
+    const files: Record<string, string> = { '.gitignore': 'node_modules/\n', 'package.json': '{}', 'package-lock.json': '{}', 'node_modules/y/index.js': '' };
+    for (const name of ['web', 'api']) {
+      files[`packages/${name}/package.json`] = '{}';
+      files[`packages/${name}/node_modules/x/index.js`] = '';
+    }
+    for (let i = 0; i < 40_000; i++) files[`src/d${i % 400}/f${i}.txt`] = `${i}\n`;
+    const api = new MockApi();
+    const run = new ClaudeRun(await api.start(), { git: true, trusted: true, files });
+    try {
+      await run.startInWorktree();
+      await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 120_000);
+      const note = run.chatEvents.find((e) => e.type === 'info');
+      // macOS 以外では APFS のクローンができないので「複製できませんでした」になり、いちばん上で npm install する。どちらでも場所は並ぶ
+      for (const dir of ['packages/web/node_modules', 'packages/api/node_modules']) expect(note).toMatchObject({ text: expect.stringContaining(dir) });
+    } finally {
+      await run.stop();
+      await api.stop();
+    }
+  }, 180_000);
 });
