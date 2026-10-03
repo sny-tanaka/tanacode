@@ -16,6 +16,9 @@ export type SessionRecord = {
   settingsFile?: string | null;
   // Remote Control を使うか。無いもの（この指定ができる前のセッション）は使う
   remoteControl?: boolean;
+  // worktree で始めたセッション（claude --worktree）。cwd は worktree のフォルダ（root/.claude/worktrees/<name>）、
+  // root は元のフォルダ（リポジトリのいちばん上）、branch は Claude Code が作ったブランチ。無いものはふつうのセッション
+  worktree?: { name: string; branch: string; root: string } | null;
   // 起動時の表示で分かった、1M コンテキストのモデルか（再開時は表示が読めないことがあるので覚えておく）
   oneMillion?: boolean;
   createdAt: number;

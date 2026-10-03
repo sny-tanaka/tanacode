@@ -119,6 +119,7 @@ export class DemoBackend {
         effort: null,
         settingsFile: null,
         remoteControl: false,
+        worktree: null,
         ...summary,
       },
       events: [{ type: 'process-start' }, { type: 'ready' }, ...events],
@@ -222,7 +223,7 @@ export class DemoBackend {
         list: () => ok(this.summaries()),
         create: () => ok(''),
         open: () => ok(undefined),
-        archive: () => ok(undefined),
+        archive: () => ok(null),
         unarchive: () => ok(undefined),
         focus: (id) => {
           this.focused = id;
@@ -234,7 +235,8 @@ export class DemoBackend {
         setRemoteControl: () => ok(null),
         remoteControlAvailable: () => ok(true),
         rename: () => ok(undefined),
-        remove: () => ok(undefined),
+        remove: () => ok(null),
+        worktreeLeftovers: () => ok(null),
         history: (id) => ok([...s(id).events]),
         image: (key) => ok(this.images.get(key) ?? null),
         discover: () => ok([]),
@@ -324,6 +326,7 @@ export class DemoBackend {
         kill: () => {},
         onData: () => () => {},
         onExit: () => () => {},
+        onOpened: () => () => {},
       },
       folders: {
         pick: () => ok(null),

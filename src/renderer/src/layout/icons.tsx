@@ -66,6 +66,19 @@ export function BranchIcon() {
   );
 }
 
+// worktree のセッション: 1 つの幹から 2 つに分かれる（ブランチの印とは別の形）。size で大きさを変えられる
+export function WorktreeIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="18" cy="5" r="2" />
+      <circle cx="12" cy="19" r="2" />
+      <path d="M6 7v1.5A2.5 2.5 0 0 0 8.5 11h7A2.5 2.5 0 0 0 18 8.5V7" />
+      <path d="M12 11v6" />
+    </svg>
+  );
+}
+
 // ソース管理の見せ方: ファイルの一覧（同じ幅の行が並ぶ）と、フォルダごとのツリー（下の行ほど右に下がる）
 export function ListViewIcon({ size = 22 }: { size?: number }) {
   return (

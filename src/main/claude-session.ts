@@ -12,8 +12,13 @@ import type { EntryHandler } from './transcript-tail';
 type Options = {
   // アプリのセッション ID（pty ホストで、どのセッションの claude かの目印にする）
   sessionId: string;
+  // セッションのフォルダ（会話ログはここに書かれる。worktree のセッションでは worktree のフォルダ）
   cwd: string;
   claudeSessionId: string;
+  // worktree の名前。新しい会話なら元のフォルダ（worktreeRoot）で claude --worktree <名前> を起動し、Claude Code に worktree を作らせる。
+  // 再開は worktree のフォルダで --resume（Claude Code は会話ログの worktree-state から worktree に戻る）
+  worktree?: string | null;
+  worktreeRoot?: string | null;
   // true: 既存の会話を --resume で再開する / false: --session-id で新規に始める
   resume: boolean;
   // Remote Control の名前。null なら --remote-control を付けない
@@ -64,7 +69,9 @@ export class ClaudeSession {
     } else {
       const args = claudeArgs(this.options);
       const env = { ...childEnv(), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile };
-      proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd, env, cols, rows });
+      const { worktree, worktreeRoot, resume } = this.options;
+      const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
+      proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd: spawnCwd, env, cols, rows });
     }
     proc.onData((data) => {
       if (this.process === proc) this.handlers.onData(data);
@@ -103,6 +110,23 @@ export class ClaudeSession {
     this.process?.resize(cols, rows);
   }
 
+  // 止めて、終わるのを待つ（worktree を消す前に。消している途中に Claude Code が書き込まないように）
+  stop(timeoutMs = 10_000): Promise<void> {
+    const proc = this.process;
+    if (!proc) {
+      this.kill();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      proc.onExit(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+      this.kill();
+    });
+  }
+
   kill(): void {
     this.transcript?.stop();
     this.transcript = null;
@@ -124,10 +148,12 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings'>>,
+    Partial<Pick<Options, 'settings' | 'worktree'>>,
 ): string[] {
-  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode, settings = null } = options;
+  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode, settings = null, worktree = null } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
+  // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
+  if (worktree && !resume) args.push('--worktree', worktree);
   if (remoteControlName) args.push('--remote-control', remoteControlName);
   // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する。
   // --model は設定ファイルの model を上書きするので、登録した設定ファイルに model があれば、選んでいないときはそれを渡す

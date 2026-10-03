@@ -361,12 +361,14 @@ const HOOK_OUTCOME: Record<string, HookRun['outcome']> = {
 // 会話ログの attachment（hook_success など）。出力のあった hooks だけが記録される
 // アプリが足した、AskUserQuestion の質問をファイルに書かせるフック（main の sessionSettings）に渡す環境変数
 export const ASK_FILE_ENV = 'TANACODE_ASK_FILE';
+// アプリが足した、worktree やブランチを消す操作で確認を出させるフック（main の worktree-guard.ts）の目印
+export const GUARD_HOOK_ENV = 'TANACODE_WORKTREE_GUARD';
 
 function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
   const type = typeof a?.type === 'string' ? a.type : '';
   if (!a || !type.startsWith('hook_')) return null;
   // アプリが足したフックは、ユーザーのフックではないので出さない
-  if (typeof a.command === 'string' && a.command.includes(ASK_FILE_ENV)) return null;
+  if (typeof a.command === 'string' && (a.command.includes(ASK_FILE_ENV) || a.command.includes(GUARD_HOOK_ENV))) return null;
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
   const blocking = (a.blockingError ?? null) as { blockingError?: string; command?: string } | null;

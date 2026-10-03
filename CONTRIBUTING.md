@@ -96,7 +96,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 7 つのファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 8 つのファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -106,7 +106,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
     | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の Esc → 中断した会話の `--resume`（`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
-    | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
+    | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備の知らせが ready より先 → 会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでは始まらず、理由を日本語で返す。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
+| `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
@@ -154,7 +155,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - アプリも Claude Code も無くなって 10 秒たつと、ホストは自分で終わります。
     - やりとりの形を変えたら、`pty-host-protocol.ts` の `PROTOCOL` を上げます。起動したアプリは、形の違う古いホストを Claude Code ごと止めて、起動し直します。止まったセッションは `--resume` で再開します。ホストのログは userData の `pty-host.log`。
   - 新しい会話には `--session-id <uuid>` を、再開には `--resume <id>` を付けます。
-  - Remote Control をオンにしたセッションは、`--remote-control tanacode-<フォルダ名>` を付けます（開発版を除く）。
+  - Remote Control をオンにしたセッションは、`--remote-control tanacode-<フォルダ名>` を付けます（開発版を除く）。worktree のセッションのフォルダ名は、元のフォルダの名前。
+  - worktree のセッションは、新しい会話なら元のフォルダ（リポジトリのいちばん上）で `--worktree <名前>` を付けて起動します。再開は worktree のフォルダで `--resume` だけ（Claude Code は会話ログの `worktree-state` の行から worktree に戻る。実測）。
   - モデル・エフォート・権限モードを選んだときは、`--model` / `--effort` / `--permission-mode` も付けます。ユーザーの既定値（`~/.claude/settings.json`）は変えません。
   - 設定ファイル（登録した Claude Code の設定ファイル。セッションごとに選ぶ。`SessionRecord.settingsFile` に登録の ID を持つ）を選んだセッションは、`--settings` にアプリの設定と登録した設定を合わせたファイルを渡します（`settings-files.ts`）。
     - Claude Code は `--settings` を 2 回渡しても合わせず、最後の 1 つしか使いません（実測）。そのため、登録した設定ファイルを 2 つ目として足さず、アプリが合わせます。`hooks` は両方を残し、`statusLine` はアプリのもの（登録した設定の statusLine は、そのコマンドを `tee` の先で動かして包む）、`env`・`model` などは登録した設定のままにします。
@@ -180,6 +182,10 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - Claude Code は応答のたびに JSON を渡してきます。中身はモデル・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フォルダの信頼の確認の前にフラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
 - 同じく `--settings` で、AskUserQuestion の PreToolUse のフックを足します。質問の入力をセッションごとのファイルに書かせるだけで、何も止めません。ユーザー自身のフックは、これまでどおり一緒に動きます。このフックはチャットのフックの一覧に出しません。
+- Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
+  - `ask` は、権限モードが auto や bypassPermissions でも確認を出します（実測）。止めはしません。
+  - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
+  - チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_WORKTREE_GUARD`）。
 - 裏で Claude Code を別に起動することはありません。利用枠の取得に `/usage` を実行することもありません。
 
 ## 機能ごとの実装メモ
@@ -195,6 +201,29 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 終了のダイアログの「Claude Code も止めて終了」は、pty ホストも止めます。動いているセッションが無いときも、聞かずに pty ホストまで止めて終わります。
 - kill（SIGTERM）で止めたときも、ふつうの終了と同じく聞きます。もう一度送ると、聞かずに強制的に終わります（Claude Code は止まらない）。
 - macOS の通知（`notify`）は、出したものをクリック・閉じる・失敗のどれかまで main で持っておきます（上限 50 件）。持っていないと、Electron が回収してしまい、クリックしても `click` が届きません（アプリは前に出ても、セッションが移らない）。
+- worktree のセッション（`worktree.ts`・`SessionManager.createInWorktree`）
+  - 名前は `tc-<月日>-<乱数 4 文字>`。場所は `<リポジトリのいちばん上>/.claude/worktrees/<名前>`、ブランチは `worktree-<名前>`（どちらも Claude Code の決まり。サブフォルダから始めても、いちばん上に作る。実測）。`SessionRecord.cwd` は worktree のフォルダ、`SessionRecord.worktree` に名前・ブランチ・元のフォルダを持ちます。
+  - worktree を作るのは Claude Code（`claude --worktree`）。アプリが `git worktree add` して、ふつうに `claude` を起動する形にしないのは、Claude Code の隔離のチェックが効かないためです。
+  - `sessions.create` は、Claude Code が worktree を作る（`.git` ができる）まで待ってから返します。右パネルとエディタが、すぐ worktree を開けるようにするためです。作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて断ります。
+    - `claude --worktree` は、まだ信頼していないフォルダでは、信頼の確認を出さずに「Workspace trust not yet accepted」で終わります（実測）。そのときは、日本語の理由にして返します。
+  - ファイルの監視は、worktree ができてから始めます（無いフォルダは見張れない）。
+  - `node_modules` の用意は、Claude Code が入力欄を出してから始めます。`git worktree add` は `.git` を先に書き、そのあとでファイルを書き出すので、`.git` ができた時点では、大きなリポジトリだと `git ls-files` が空になります（実測。サブフォルダの `package.json` を見落とす）。Claude Code は worktree を作り終えてから入力欄を出します。
+  - 準備の段階（`SessionWorktree.preparing`: creating・restoring・copying・installing）は、一覧とチャットに出します。準備が終わるまで `ready` を配信しないので、最初の指示はその後に送られます（`pendingSends` の今の形のまま）。終わったら、何をしたかを `info` のイベントでチャットに出します。
+  - `node_modules`: モノレポのため、worktree で `git ls-files` した `package.json` のフォルダごとに見ます（node_modules の中は除く）。元のフォルダにあって worktree に無い `node_modules` を、ディレクトリ丸ごと 1 回の `clonefile(2)`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。
+    - `cp -c -R` はファイル 1 つごとにクローンするので、ファイルの多い `node_modules` では遅くなります（実測: 15 万ファイルで 44 秒。丸ごとの `clonefile` なら 3 秒）。`clonefile` を呼べるコマンドは無いので、macOS 標準の `osascript`（JXA の `ObjC.bindFunction`）から呼びます（`apfsClone`）。
+    - 別のボリューム・APFS 以外などで `clonefile` が失敗したときは `cp -c -R` に切り替えます（こちらはクローンできなければ通常のコピーになります）。
+    - install のコマンドは、lock ファイルで決めます（`LOCKFILES`。`pnpm-lock.yaml` → `pnpm install`、`yarn.lock` → `yarn install`、`bun.lock(b)` → `bun install`、`package-lock.json` → `npm install`）。同じフォルダに複数あれば、npm 以外を使います（古い `package-lock.json` が残っていることがあるため）。
+    - install する場所: lock があり、元のフォルダでも依存を入れている（`node_modules` か `.pnp.cjs` がある）場所のうち、lock が元のフォルダと違うところと、複製できなかった `node_modules` を受け持つところ（同じフォルダか、いちばん近い上のフォルダの lock。workspaces ならいちばん上）。上のフォルダから順に実行します。
+    - yarn の Plug'n'Play: `.pnp.cjs` はふつう gitignore されていて worktree に無く、`yarn install` するまで依存を読めません。元のフォルダにあって worktree に無ければ、lock が同じでも `yarn install` します。
+    - install は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、`shell.onOpened` でターミナルパネルにタブを出させます。タブは終わっても残し、終了コードを名前に添えます。
+  - 元のフォルダの未追跡に `.claude/worktrees/` が出ないよう、`.gitignore` で無視されていなければ `.git/info/exclude`（`git rev-parse --git-path info/exclude`）に足します。リポジトリの `.gitignore` は書き換えません。
+  - Claude Code は worktree に「claude session <名前> (pid …)」のロックを付け、プロセスを止めても残します。`--resume` では付け直しません（実測）。消すときは、この理由のロックだけ外し、ほかのロックがあれば消さずに断ります。
+  - 削除: アーカイブ・一覧からの削除で `removeWorktree` を指定したときだけ。`ClaudeSession.stop` で Claude Code が終わるのを待ち、未コミットの変更と未追跡のファイルがあれば、一時的なインデックス（`GIT_INDEX_FILE`）で `read-tree HEAD` → `add -A` → `write-tree` → `commit-tree` して `refs/tanacode/backup/<名前>`（あれば `-2`・`-3`…）に残します。そのうえで `git worktree remove --force`。何も残っていなければ `--force` なし。最後に `git branch -d`（マージ済みのときだけ消える）。
+    - `git worktree remove` の前に、gitignore されたフォルダ（`node_modules`・`dist` など）を `git ls-files --others --ignored --exclude-standard --directory` で見つけ、`<git-common-dir>/tanacode-trash/<名前>-<乱数>/` へ `rename` で動かします（`setAsideIgnoredDirs`）。`git worktree remove` に消させると、ファイルの多い `node_modules` で 20〜30 秒かかるためです（実測: mitsucari の約 25 万ファイルで 27 秒。`rm -rf` で 31 秒、8 並列でも 18 秒で、APFS のファイル削除が下限）。`rename` なら 0.2 秒で返ります。
+    - `git worktree remove` に失敗したら、動かしたフォルダを元に戻します。成功したら、ごみ箱を裏で `rm -rf` します（待たない）。アプリが終わって消し残しても、次に worktree を消すときに片付けます（使っている最中のごみ箱は消さないよう、メモリに覚えておきます）。`rename` できないフォルダ（別のボリュームなど）は動かさず、git に消させます。
+    - 消す前の確認に出すもの（`worktreeLeftovers`）: 未コミットの変更と未追跡のファイルの数（`git status`）、プッシュしていないコミット（上流が無ければ、このブランチだけにあって、どのリモートにも無いコミット）、デフォルトブランチに入っていないコミット。
+  - 作り直し: 削除したセッションを開くと、`git worktree add <場所> <ブランチ>`（ブランチが無ければ `-b` で今の HEAD から）で作り直してから、worktree のフォルダで `--resume` します。Claude Code は worktree を消したあとに再開すると、元のフォルダで「worktree の結び付きを外した」と言って続けるため（実測）、作り直してから起動します。
+  - アプリが自分から worktree を消すことはありません（「Claude Code も止めて終了」でも消さない）。Claude Code の終了時の確認（残す・消す）は、アプリがプロセスを止めるので出ません。Claude Code の自動の掃除も、`--worktree` のセッションは対象外です。
 - Remote Control の切り替えは、Claude Code が動いていればその場で `/remote-control` を送ります。以前つないでいた会話を再開すると、Claude Code はフラグが無くても勝手につなぎ直すので、オフのセッションでそうなったら、すぐに `/remote-control` で切ります。
 
 ### チャット
@@ -223,6 +252,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 ### ターミナル
 
 - シェルは、セッションのフォルダでログインシェル（`$SHELL -l`）を開きます。
+- アプリが実行するコマンド（worktree の `npm install`・`yarn install` など）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、`shell:opened` でタブを足させます。終わってもタブは残し（`ShellTab.task`）、閉じるボタンは画面のタブだけを片付けます。
 - 「Claude Code」タブでは、Claude Code の生の画面（pty）を出します。見ているあいだだけ、画面の大きさをパネルに合わせます。閉じると元の大きさ（120×40）に戻します。
 
 ### 画面の上の帯
@@ -242,6 +272,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude/cache/model-catalog/*-cc.json` | モデルの一覧と、選べるエフォート |
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
+| worktree のセッションのリポジトリ（`git worktree list`・`git status`・`git rev-list`） | worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに入っていないコミット）と、Claude Code のロック |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
 | 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
 | `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと。メニューの「新しいバージョンが出たら通知する」で止められる） |
@@ -259,9 +290,20 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
 | `usage.json` | 最後に分かった利用枠 |
 
+worktree のセッションでは、ユーザーの操作に合わせて、リポジトリに次のものを書き込みます。
+
+| 場所 | いつ・何を |
+| --- | --- |
+| `.claude/worktrees/<名前>`・ブランチ `worktree-<名前>` | 始めるとき（作るのは Claude Code）。削除したセッションを戻すとき（作り直すのはアプリ） |
+| `.git/info/exclude` | 始めるとき。`.claude/worktrees/` が `.gitignore` で無視されていなければ、`/.claude/worktrees/` を足す |
+| `.claude/worktrees/<名前>/node_modules` | 始めるとき・作り直したとき。元のフォルダの `node_modules` の APFS のクローンと、`npm install`・`yarn install` など |
+| `refs/tanacode/backup/<名前>` | worktree を削除するとき。未コミットの変更と未追跡のファイルの控えのコミット |
+| `.git/tanacode-trash/<名前>-<乱数>` | worktree を削除するとき。gitignore されたフォルダ（`node_modules` など）の一時の動かし先。裏で消すので、ふだんは残らない |
+| worktree・マージ済みのブランチ・Claude Code のロックを消す | worktree を削除してアーカイブ・一覧から削除するとき |
+
 次のものは変更しません。
 
-- ユーザーのリポジトリ: エディタでの保存や、ソース管理パネルでの操作をしたときだけ書き込みます。
+- ユーザーのリポジトリ: エディタでの保存や、ソース管理パネルでの操作、worktree のセッションの作成・削除をしたときだけ書き込みます。
 - Claude Code の設定: `~/.claude/settings.json`、`~/.claude.json`、認証情報などには書き込みません。
 
 ## ソースの構成
@@ -269,6 +311,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `src/main`: Electron のメインプロセス
   - `session-manager.ts` / `session-store.ts`: セッションの作成・再開・アーカイブ・再起動・通知と、一覧の保存
   - `claude-session.ts`: pty ホストに `claude` を起動させる・引き継ぐ（起動オプション・statusLine と質問のフックの注入）
+  - `worktree.ts`: worktree のセッション（名前と場所・`.git/info/exclude`・`node_modules` の用意・残っているもの・控えを残して消す・作り直す）
+  - `worktree-guard.ts`: worktree やブランチを消す操作で、許可の確認を出させる hooks（awk）
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
@@ -282,7 +326,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
-  - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）
+  - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）
   - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、登録した設定ファイル）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
@@ -295,7 +339,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内ブラウザ（webview・要素の選択。画面では「ブラウザ」）
-  - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧・利用枠・CPU/メモリ・コンテキスト・カラム
+  - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト・カラム
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
@@ -304,11 +348,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
-  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
+  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
+  - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
+  - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
 
 ## デモ動画の仕組み
 

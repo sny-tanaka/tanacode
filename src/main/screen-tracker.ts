@@ -418,6 +418,14 @@ export class ScreenTracker {
     return shell ? `!${text}` : text;
   }
 
+  // 今の画面の文字（空の行を除く）。起動に失敗したときの理由に添える
+  text(): string {
+    return this.lines()
+      .map((line) => line.text.trimEnd())
+      .filter(Boolean)
+      .join('\n');
+  }
+
   private lines(): ScreenLine[] {
     const buf = this.term.buffer.active;
     const lines: ScreenLine[] = [];

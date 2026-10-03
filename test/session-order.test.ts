@@ -19,6 +19,7 @@ const session = (id: string): SessionSummary => ({
   effort: null,
   settingsFile: null,
   remoteControl: false,
+  worktree: null,
 });
 
 const ids = (sessions: SessionSummary[]) => sessions.map((s) => s.id);
