@@ -1,7 +1,7 @@
-// images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）
+// images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 export type ChatEvent =
-  | { type: 'user'; id: string; text: string; images?: string[] }
-  | { type: 'assistant-text'; id: string; text: string }
+  | { type: 'user'; id: string; text: string; images?: string[]; at?: number }
+  | { type: 'assistant-text'; id: string; text: string; at?: number }
   | { type: 'thinking'; id: string; text: string }
   // input: 入力の詳細（Bash のコマンド全文など）。todos: TodoWrite の一覧。taskChange: TaskCreate・TaskUpdate の中身。at: 会話ログの時刻（ミリ秒）
   // sentFiles: SendUserFile でユーザーに送ったファイル（絶対パス）と添え書き
@@ -157,6 +157,8 @@ export type TranscriptEntry = {
   preventedContinuation?: boolean;
   stopReason?: string;
   toolUseID?: string;
+  // その行を書いたときのブランチ（作業の書き出しで使う）
+  gitBranch?: string;
   // pr-link
   prNumber?: number;
   prUrl?: string;
@@ -182,7 +184,7 @@ export function bridgeUrlOf(entry: TranscriptEntry): string | null | undefined {
 // onImage: 画像を受け取る先（無ければ画像は出さない）
 export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = false, onImage?: ImageSink): ChatEvent[] {
   if (entry.isSidechain && !sidechain) return [];
-  const at = entry.timestamp ? Date.parse(entry.timestamp) || undefined : undefined;
+  const at = timeOf(entry);
 
   if (entry.type === 'system') {
     if (entry.subtype === 'turn_duration') return [{ type: 'turn-end' }];
@@ -238,7 +240,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     const events: ChatEvent[] = [];
     blocks.forEach((block, i) => {
       if (block.type === 'text' && block.text?.trim()) {
-        events.push({ type: 'assistant-text', id: `${entry.uuid}:${i}`, text: block.text });
+        events.push({ type: 'assistant-text', id: `${entry.uuid}:${i}`, text: block.text, at });
       } else if (block.type === 'thinking' && block.thinking?.trim()) {
         // 多くの思考は本文が空（署名だけ）で記録される。本文があるときだけ出す。
         // 前後の改行は、折り返しを保つ表示で空行になるので取り除く
@@ -329,7 +331,7 @@ function withImages(events: ChatEvent[], entry: TranscriptEntry, images: string[
   events.forEach((e, i) => {
     if (e.type === 'user') last = i;
   });
-  if (last === -1) return [...events, { type: 'user', id: entry.uuid ?? '', text: '', images }];
+  if (last === -1) return [...events, { type: 'user', id: entry.uuid ?? '', text: '', images, at: timeOf(entry) }];
   return events.map((e, i) => (i === last && e.type === 'user' ? { ...e, images } : e));
 }
 
@@ -460,9 +462,13 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   if (command === '/compact') return [];
   if (command) {
     const args = text.match(/<command-args>(.*?)<\/command-args>/s)?.[1]?.trim();
-    return [{ type: 'user', id: entry.uuid ?? '', text: args ? `${command} ${args}` : command }];
+    return [{ type: 'user', id: entry.uuid ?? '', text: args ? `${command} ${args}` : command, at: timeOf(entry) }];
   }
-  return [{ type: 'user', id: entry.uuid ?? '', text: unwrapPasted(text) }];
+  return [{ type: 'user', id: entry.uuid ?? '', text: unwrapPasted(text), at: timeOf(entry) }];
+}
+
+function timeOf(entry: TranscriptEntry): number | undefined {
+  return entry.timestamp ? Date.parse(entry.timestamp) || undefined : undefined;
 }
 
 // user 行に入る、ユーザーの発言ではないもの

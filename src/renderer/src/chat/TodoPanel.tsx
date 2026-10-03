@@ -32,24 +32,29 @@ export function TodoPanel({ todos }: { todos: TodoItem[] }) {
         </span>
         {!open && current && <span className="todo-current">{current.activeForm ?? current.content}</span>}
       </button>
-      {open && (
-        <ul className="todo-list">
-          {todos.map((todo, i) => (
-            <li key={i} className={`todo-item ${todo.status}`}>
-              <span className="todo-mark">
-                {todo.status === 'completed' ? (
-                  <CheckMark animate={drawing(todo.content)} />
-                ) : todo.status === 'in_progress' ? (
-                  <span className="spinner" />
-                ) : (
-                  (MARK[todo.status] ?? '○')
-                )}
-              </span>
-              <span className="todo-text">{todo.status === 'in_progress' ? (todo.activeForm ?? todo.content) : todo.content}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {open && <TodoList todos={todos} drawing={drawing} />}
     </div>
+  );
+}
+
+// 項目の一覧。drawing: チェックを描いて見せる項目。作業の書き出しでも使う（描かない）
+export function TodoList({ todos, drawing = () => false }: { todos: TodoItem[]; drawing?: (content: string) => boolean }) {
+  return (
+    <ul className="todo-list">
+      {todos.map((todo, i) => (
+        <li key={i} className={`todo-item ${todo.status}`}>
+          <span className="todo-mark">
+            {todo.status === 'completed' ? (
+              <CheckMark animate={drawing(todo.content)} />
+            ) : todo.status === 'in_progress' ? (
+              <span className="spinner" />
+            ) : (
+              (MARK[todo.status] ?? '○')
+            )}
+          </span>
+          <span className="todo-text">{todo.status === 'in_progress' ? (todo.activeForm ?? todo.content) : todo.content}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

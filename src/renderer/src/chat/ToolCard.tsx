@@ -11,8 +11,9 @@ import type { ChatItem } from './chatState';
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
-const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
-const STATUS_LABEL = { running: '実行中…', done: '完了', error: 'エラー / 中断' } as const;
+// 変えた行の数（+3 −1）を出すツール
+export const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+export const STATUS_LABEL = { running: '実行中…', done: '完了', error: 'エラー / 中断' } as const;
 const SUBAGENT_LABEL = { running: '実行中…', done: '完了', failed: '失敗', stopped: '停止' } as const;
 
 type Props = {
@@ -114,41 +115,50 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
       {item.hooks && item.hooks.length > 0 && <HookRuns runs={item.hooks} />}
       {open && (
         <div className="tool-detail" onClick={(e) => e.stopPropagation()}>
-          {subagent && subagent.recent.length > 0 && (
-            <Section label={subagent.state === 'running' ? '直近のツール' : '最後のツール'}>
-              <pre className="tool-pre">{subagent.recent.map((r) => `${toolLabel(r.name)}  ${r.target}`).join('\n')}</pre>
-            </Section>
-          )}
-          {item.input && (
-            <Section label={item.name === 'Agent' || item.name === 'Task' ? 'プロンプト' : '入力'}>
-              <pre className="tool-pre">{item.input}</pre>
-            </Section>
-          )}
-          {item.patch && (
-            <Section label="差分">
-              <pre className="tool-pre diff">
-                {item.patch.map((line, i) => (
-                  <span key={i} className={line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('@@') ? 'hunk' : ''}>
-                    {line}
-                    {'\n'}
-                  </span>
-                ))}
-              </pre>
-            </Section>
-          )}
-          {subagent?.result && (
-            <Section label="結果">
-              <pre className="tool-pre">{subagent.result}</pre>
-            </Section>
-          )}
-          {item.output && (
-            <Section label={item.status === 'error' ? 'エラー' : '結果'}>
-              <pre className={`tool-pre${item.status === 'error' ? ' error' : ''}`}>{item.output}</pre>
-            </Section>
-          )}
+          <ToolDetail item={item} subagent={subagent} />
         </div>
       )}
     </div>
+  );
+}
+
+// 開いたカードの中身（入力・差分・結果）。作業の書き出しでも使う
+export function ToolDetail({ item, subagent }: { item: ToolItem; subagent?: SubagentRun }) {
+  return (
+    <>
+      {subagent && subagent.recent.length > 0 && (
+        <Section label={subagent.state === 'running' ? '直近のツール' : '最後のツール'}>
+          <pre className="tool-pre">{subagent.recent.map((r) => `${toolLabel(r.name)}  ${r.target}`).join('\n')}</pre>
+        </Section>
+      )}
+      {item.input && (
+        <Section label={item.name === 'Agent' || item.name === 'Task' ? 'プロンプト' : '入力'}>
+          <pre className="tool-pre">{item.input}</pre>
+        </Section>
+      )}
+      {item.patch && (
+        <Section label="差分">
+          <pre className="tool-pre diff">
+            {item.patch.map((line, i) => (
+              <span key={i} className={line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('@@') ? 'hunk' : ''}>
+                {line}
+                {'\n'}
+              </span>
+            ))}
+          </pre>
+        </Section>
+      )}
+      {subagent?.result && (
+        <Section label="結果">
+          <pre className="tool-pre">{subagent.result}</pre>
+        </Section>
+      )}
+      {item.output && (
+        <Section label={item.status === 'error' ? 'エラー' : '結果'}>
+          <pre className={`tool-pre${item.status === 'error' ? ' error' : ''}`}>{item.output}</pre>
+        </Section>
+      )}
+    </>
   );
 }
 

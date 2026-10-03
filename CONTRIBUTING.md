@@ -321,6 +321,29 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 印は、セッションごとに画面のメモリに持ちます（アプリを終了すると消える）。付けたときの要約の行（圧縮の区切り）と一緒に覚え、圧縮が進んで要約の行が変わったら使いません（ヘッダーの「圧縮」・自動の圧縮も）。送った時点では外しません。送れなかったときに、付け直さなくてよいようにするためです。
   - パネルは、セッションごとに作り直します（`key`）。書きかけの指示を、切り替えた先のセッションに送らないためです。
 
+### 作業の書き出し
+
+- 材料は、会話ログを最初から読み直したもの（`sessions.exportSource` → `readExportLog`）。動いているセッションでも、画面のチャットではなく会話ログから作ります。読み直すときに、画像も画像置き場（`image-cache.ts`）に入れ直します。ブランチは、会話ログの行の `gitBranch`（会話全体で出てきた順。範囲には合わせない）。
+  - アーカイブ済みなどの止まっているセッションは、チャットと同じく最後にターンを終わらせ、結果の来なかったツールを中断にします。Claude Code が動いているセッションは終わらせず、作業の途中のツールを実行中のまま入れます。
+  - 期間と発言の時刻のため、発言と応答のイベントに会話ログの時刻（`at`）を持たせています。
+- 範囲の切り方・選んだものの外し方・`~` への置き換え・先頭に出すものは `exportContent.ts`。
+  - 最初の発言からの範囲には、その前の行（起動時のお知らせなど）も入れます。最後の発言までの範囲は、次の発言の手前（その発言への応答の終わり）まで。
+  - ツールの結果を外すときは、`!` のコマンドの出力と hooks の出力（標準出力・標準エラー・Claude に渡した内容・止めた理由）も外します。変えた行の数・hooks の結果・ツールの入力は残します。差分を外すときは、`NotebookEdit` の入力（書いた中身が入る）も外します（Edit・Write の入力は、もともと空）。
+  - `~` への置き換えは、チャットの行・ToDo の一覧・セッション名・フォルダ・ブランチの文字をすべて書き換えます（画像の鍵は uuid なので変わらない）。`/Users/me2`・`/Users/me.old` のような別のフォルダと、パスの途中（`…/Data/Users/me`・URL の中）は置き換えません。Claude Code の会話ログのフォルダ名（パスの `/` と `.` を `-` にした `-Users-me-…`）の中も、名前を残さないよう `-~` にします。
+- HTML は、チャットの部品を `renderToStaticMarkup` で文字にします（`ExportDocument.tsx`）。チャットと同じクラスを使い、畳む・開くは `<details>` で動かします（JavaScript は入れない）。
+  - お知らせ・思考・区切り・エラー・`!` のコマンドは `ChatRow`、質問と答えは `AnswersCard`、届いたファイルは `SentFilesCard`、カードの中身は `ToolDetail`、hooks は `HookChip`・`HookDetail`、ToDo は `TodoList` を、チャットと共通で使います。画面で動かすもの（終わるときの動き・画像の取り寄せ・コードブロックの実行ボタン）は使いません。
+  - Markdown は、チャットと同じ整形と消毒（`markdownHtml`）をして入れます。チャットの Markdown には mermaid の図やコードの色付けが無いので、そのまま静的な HTML になります。
+  - 画像を押すと大きく出すのも `<details>`。開いたときに `summary` の `::before` を画面いっぱいの暗幕にし、暗幕を押すと閉じます。小さく並べるときの `overflow: hidden` が残ると暗幕が描かれないので、開いたときは外します（実測）。
+  - ToDo の進み具合は、ToDo を変えたツールごとに、変えたあとの一覧を持ち（`todoSteps`）、そのまとまりの下に出します。
+- CSS は、`global.css` の元の文字（`?raw`）から、書き出した中身に当たる規則だけを抜き出します（`exportCss.ts`）。ホバー・`[open]` などの状態は外して、当たる要素があるかを見ます。`@font-face`・`@keyframes` は入れず、動きは止めます。
+  - ブラウザが読み込んだ規則（`CSSRule.cssText`）を書き戻さないのは、`var()` を使った一括指定（`background: var(--grad-flow) …`）の後ろに個別の指定（`background-clip` など）があると、値が空になって消えるためです（実測。進行中の ToDo の文字が消えた）。
+  - 書き出した HTML でしか使わない見た目は、`global.css` の「書き出した HTML」の節に `export-` で始まるクラスで書きます。ページを縦に流す指定（アプリの画面は高さを画面に合わせている）と、動きを止める指定は、`exportHtml.tsx` の `PAGE_CSS`。
+- 外へ読みにいかないよう、`<meta http-equiv="Content-Security-Policy">` で `default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'` にします（`base`・`form` は `default-src` で止まらない）。本文のリンクの先を開いただけで名前解決しないよう、`x-dns-prefetch-control` も切ります。
+- 画像は、長い辺 1,600px までに縮めて WebP（品質 0.85）にします。小さくならなければ元のまま（GIF も、動きを残すため元のまま）。
+- 保存は main（`saveExport`）。保存のダイアログ（既定は「ダウンロード」の `<セッション名> <日付>.html`）で選んだ場所に、`0600` で書きます（`writeFile` の `mode` は新しく作るときにしか効かないので、上書きのために `chmod` し直す）。Finder で見せるのは、このアプリが保存したパスだけ。
+- HTML を作る部品（react-dom/server・`global.css` の文字）は大きいので、書き出すときに読み込みます（`import('./exportHtml')`）。
+- 書き出すのは本体の会話だけ。サブエージェント・ワークフローの会話は入れません。
+
 ### バックグラウンドの作業（タスク）
 
 - 動いているものを人が止める操作（`SessionManager.stopTask` → `ScreenTracker.stopTask`）は、本家の `/tasks`（別名 `/bashes`。バックグラウンドで動いているものを管理する画面）を、キー入力で操作して行います。Claude Code は、止めたものを会話ログに `<task-notification>`（Bash は `status` が `killed`、「was stopped by the user」の要約付き）として書くので、止まったかはトラッカーが今までどおり読みます。
@@ -396,7 +419,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 | 場所 | 使い道 |
 | --- | --- |
-| `~/.claude/projects/**/<id>.jsonl` | 会話・ツール・hooks・圧縮・読み書きしたファイル |
+| `~/.claude/projects/**/<id>.jsonl` | 会話・ツール・hooks・圧縮・読み書きしたファイル・作業したブランチ（作業の書き出し） |
 | `~/.claude/projects/**/<id>/subagents/`、`.../tasks/*.output` | サブエージェントの会話、バックグラウンドの Bash の出力 |
 | `~/.claude/cache/model-catalog/*-cc.json` | モデルの一覧と、選べるエフォート |
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
@@ -420,6 +443,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
 | `usage.json` | 最後に分かった利用枠 |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
+
+作業を書き出したときは、保存のダイアログで選んだ場所に HTML ファイルを 1 つ書きます（`0600`）。
 
 worktree のセッションでは、ユーザーの操作に合わせて、リポジトリに次のものを書き込みます。
 
@@ -480,6 +505,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
   - `icons/`: アプリのアイコン（自作の線画）・`IconButton`・`DisclosureIcon`・一覧（`catalog.ts`。Storybook の「カタログ/アイコン」と `test/icons.test.ts` が使う）
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
+  - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
 - `design/`: アプリのロゴ
@@ -489,6 +515,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser`・`stop` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
+  - `export.test.ts`: 作業の書き出し（範囲・入れるものの数と外し方・`~` への置き換え・先頭に出すもの・ToDo の進み具合・HTML の中身・CSS の抜き出し）。画面の部品を読むので、型は `tsconfig.web.json` で見ます
   - `context.test.ts`: コンテキストの中身（まとめ方・大きさの直し方・圧縮の前後・巻き戻し）と、圧縮の指示の組み立て・スラッシュコマンドの送り方
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）

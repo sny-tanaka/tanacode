@@ -5321,6 +5321,305 @@ body.resizing-rows webview {
   color: var(--text-secondary);
 }
 
+/* 作業を書き出す前の確認（ExportDialog） */
+.export-dialog {
+  outline: none;
+}
+.export-dialog-head {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.export-dialog-head h2 {
+  margin: 0 0 6px;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+.export-dialog-head p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.export-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+  font-size: 12px;
+}
+.export-dialog-status {
+  margin: 0;
+  color: var(--text-primary);
+}
+.export-dialog-status.ok {
+  color: var(--ok);
+}
+.export-dialog-status.error {
+  color: var(--danger);
+}
+.export-dialog-path {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.export-dialog-note,
+.export-dialog-summary {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.export-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.export-range select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.export-dialog-label,
+.export-range-sep {
+  flex: none;
+  color: var(--text-secondary);
+}
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.export-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  cursor: pointer;
+}
+/* .quick-open input（検索欄の見た目）を打ち消す。フォーカスの枠も戻す */
+.export-option input {
+  flex: none;
+  margin: 2px 0 0;
+  padding: 0;
+  border: none;
+  outline: revert;
+}
+.export-option > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+/* 範囲の中に入るものが無い（選んでも変わらない） */
+.export-option.empty {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.export-option-count {
+  flex: none;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.export-option code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.export-dialog-warning {
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+.export-dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* 書き出した HTML（ExportDocument）。アプリの画面では使わず、書き出すときに、中身に当たるものだけを集めて入れる */
+.export-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+  background: var(--bg-panel);
+}
+.export-head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.export-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.export-title {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.export-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.export-fact {
+  display: contents;
+}
+.export-fact dt {
+  color: var(--text-secondary);
+}
+.export-fact dd {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.export-fact dd.mono {
+  font-family: var(--font-mono);
+}
+.export-files {
+  font-size: 12px;
+}
+.export-files summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.export-files ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0 0 0 16px;
+  list-style: none;
+}
+.export-files li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.export-file-path {
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.chat-list.export-chat {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+}
+.export-time {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 24px;
+}
+/* 畳んだまとまり・ツールのカード・hooks・画像は、<details> の <summary> で開閉する（JavaScript を入れないため） */
+.export-files summary,
+.export-group > summary,
+.export-tool > summary,
+.export-hook > summary,
+.export-image > summary {
+  list-style: none;
+}
+.export-files summary::-webkit-details-marker,
+.export-group > summary::-webkit-details-marker,
+.export-tool > summary::-webkit-details-marker,
+.export-hook > summary::-webkit-details-marker,
+.export-image > summary::-webkit-details-marker {
+  display: none;
+}
+.export-tool > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+}
+.export-tool[open] > summary .tool-toggle .disclosure {
+  transform: rotate(90deg);
+}
+.export-hook > summary {
+  width: fit-content;
+}
+/* 届いたファイルは、書き出しでは押せない（エディタが無い） */
+.export-chat .sent-file {
+  cursor: default;
+}
+.export-chat .sent-file:hover {
+  border-color: var(--border-subtle);
+  background: var(--bg-panel);
+}
+.export-todos {
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+.export-todos .todo-head {
+  cursor: default;
+}
+.export-todos .todo-list {
+  max-height: none;
+}
+/* 画像を押すと、暗幕の上に大きく出す。暗幕か画像を押すと戻る（暗幕は summary の ::before なので、押すと閉じる）。
+   小さく並べるときの角の切り抜き（overflow: hidden）が残ると、暗幕が描かれないので外す */
+.export-image[open] > summary {
+  overflow: visible;
+}
+.export-image[open] > summary::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: zoom-out;
+}
+.export-image[open] > summary img {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 101;
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 64px);
+  border-radius: 6px;
+  transform: translate(-50%, -50%);
+  cursor: zoom-out;
+}
+.export-foot {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-align: center;
+}
+
 /* worktree のセッションをアーカイブ・削除するときの確認 */
 .worktree-dialog {
   outline: none;
