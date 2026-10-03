@@ -95,6 +95,7 @@ export async function runMulti(backend: DemoBackend, d: Director): Promise<void>
   });
 
   // 1. 3 つのセッションが作業中、1 つがバックグラウンドの完了待ち。見ているのは画像のセッション
+  d.caption('セッションの一覧の印で、作業中（回る弧）・バックグラウンドの完了待ち（輪）が分かります');
   images.startWorking();
   readme.startWorking();
   tests.startWorking();
@@ -111,6 +112,7 @@ export async function runMulti(backend: DemoBackend, d: Director): Promise<void>
   tests.result(testRead);
 
   // 2. テストのセッションが終わる（新しい応答）。README のセッションが質問してくる（回答待ち）
+  d.caption('終わったセッションは「新しい応答」（青）、質問してきたセッションは「回答待ち」（黄色）に');
   finish(backend, tests, TESTS, [
     '価格まわりのテストを 4 件足しました。',
     '',
@@ -129,6 +131,7 @@ export async function runMulti(backend: DemoBackend, d: Director): Promise<void>
   await sleep(1800);
 
   // 3. 回答待ちのセッションに移って、質問に答える
+  d.caption('回答待ちのセッションに移って、質問に答えます');
   await d.click(d.byText('.session-row', 'README のセットアップ'), { ms: 900 });
   await sleep(1500);
   await d.moveTo(d.byText('.menu-option', 'README に「Node'), { ms: 700 });
@@ -145,6 +148,7 @@ export async function runMulti(backend: DemoBackend, d: Director): Promise<void>
   const nvmrc = readme.use('Write', '.nvmrc', { filePath: `${ROOT}/.nvmrc` });
 
   // 4. 画像のセッションが終わる（見ていないので新しい応答）
+  d.caption('見ていない間に終わったセッションにも、新しい応答の印が付きます');
   images.result(imgEdit, { filePath: `${ROOT}/src/components/MenuCard.tsx`, added: 2, removed: 1 });
   finish(backend, images, MULTI_SESSION, [
     'メニューの画像を遅延読み込みにしました。',
@@ -157,10 +161,12 @@ export async function runMulti(backend: DemoBackend, d: Director): Promise<void>
   await sleep(700);
 
   // 5. 新しい応答が来たテストのセッションを読む
+  d.caption('新しい応答が来たセッションを、順に読んでいきます');
   await d.click(d.byText('.session-row', '価格まわりのテスト'), { ms: 900 });
   await sleep(2400);
 
   // 6. ワークフローが終わり、Claude が結果をまとめる。README のセッションも終わる
+  d.caption('バックグラウンドのワークフローも終わり、結果が届きます');
   backend.setWorkflows(A11Y, [{ ...WORKFLOW, status: 'completed', durationMs: 260_000 }]);
   backend.update(A11Y, { backgroundTasks: 0 });
   backend.push(A11Y, { type: 'notice', id: 'ay-done', text: 'ワークフロー a11y-audit が終わりました' });
@@ -180,6 +186,7 @@ export async function runMulti(backend: DemoBackend, d: Director): Promise<void>
   await sleep(1600);
 
   // 7. 残りの新しい応答を読む
+  d.caption('残りの新しい応答も読みます。どのセッションが手待ちか、一目で分かります');
   await d.click(d.byText('.session-row', 'アクセシビリティ'), { ms: 900 });
   await sleep(2200);
   await d.click(d.byText('.session-row', 'メニュー画像'), { ms: 900 });

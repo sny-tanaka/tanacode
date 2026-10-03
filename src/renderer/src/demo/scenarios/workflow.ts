@@ -170,6 +170,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   const log = (step: number) => backend.setAgentLog(id, `${WORKFLOW_TOOL}:reader`, readerLog(step));
 
   // 1. 指示を送る
+  d.caption('点検と修正を、ワークフローで進めるよう頼みます');
   await sleep(1000);
   await d.click('.chat-input textarea');
   await d.type('.chat-input textarea', PROMPT);
@@ -179,6 +180,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   claude.startWorking();
 
   // 2. Claude がワークフローを起動する（入力欄の上のトレイに出る）
+  d.caption('Claude がワークフローを起動すると、入力欄の上のトレイに出ます');
   await sleep(1500);
   claude.say('観点ごとに並列で点検し、見つかった問題を直すワークフローを動かします。');
   await sleep(500);
@@ -203,6 +205,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   backend.push(id, { type: 'turn-end' });
 
   // 3. トレイの行を開くと、概要のフロー図が出る。サイドパネルもタスクに切り替わる
+  d.caption('トレイの行を開くと、フロー図で段階ごとの進み具合が見えます');
   await sleep(900);
   flow.tool('contrast', 'Read');
   log(1);
@@ -223,6 +226,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   await sleep(900);
 
   // 4. 一覧から「読み上げ」を選び、その会話を見る
+  d.caption('エージェントを選ぶと、そのエージェントの会話を読めます');
   await d.click(d.byText('.task-agent', '読み上げ'), { ms: 800 });
   await sleep(1400);
   log(5);
@@ -234,6 +238,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   await sleep(1000);
 
   // 5. 概要に戻る。修正が進み、確認に移る
+  d.caption('概要に戻ると、点検から修正・確認へと進んでいくのが分かります');
   await d.click('.task-agent.task-overview', { ms: 800 });
   flow.tool('fix-card', 'Read');
   flow.tool('fix-css', 'Read');
@@ -263,6 +268,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   flow.complete();
 
   // 6. 完了の知らせを受けて、Claude が結果をまとめる
+  d.caption('ワークフローが終わると、Claude が結果をまとめます');
   await sleep(1200);
   backend.push(id, { type: 'notice', id: 'wf-done', text: 'ワークフロー a11y-audit が終わりました' });
   claude.startWorking();

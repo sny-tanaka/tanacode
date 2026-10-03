@@ -16,6 +16,8 @@
 
 <sub>個人が作っている非公式のツール。Anthropic の公式製品ではなく、Anthropic の承認や支援も受けていません。</sub>
 
+**ブラウザで試せるデモ**: [sny-tanaka.github.io/tanacode](https://sny-tanaka.github.io/tanacode/)。機能を選ぶと、実際の画面で操作の流れを紹介。作り物のデータで動くため、本物の Claude には繋がりません。
+
 **基本の流れ**: 指示を送る → ツールの操作は 1 行に畳まれる → 質問にはボタンで回答 → 書き換わった行はエディタで確認 → サブエージェントは入力欄の上に並ぶ
 
 https://github.com/user-attachments/assets/8a14e102-a9e2-4002-9300-6a3405a2e468

@@ -1,0 +1,71 @@
+# デモのサイト（ブラウザで動くデモ）を GitHub Pages に公開する。
+# - develop に入ったら、ビルドして公開する
+# - PR では、ビルドが通るかだけを確かめる（公開はしない）
+# 公開には、リポジトリの Settings → Pages の Source を「GitHub Actions」にしておく
+name: demo-site
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'src/renderer/**'
+      - 'src/shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.demo.config.ts'
+      - 'scripts/third-party-notices.ts'
+      - '.github/workflows/demo-site.yml'
+  pull_request:
+    paths:
+      - 'src/renderer/**'
+      - 'src/shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.demo.config.ts'
+      - 'scripts/third-party-notices.ts'
+      - '.github/workflows/demo-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同じブランチでは 1 つずつ動かす。PR は新しいものが来たら古いものを取りやめる（公開は途中で止めず、終わるのを待つ）
+concurrency:
+  group: demo-site-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Electron の本体は使わないので落とさない
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # 画面側のビルドはメモリを 4GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
+      - run: npm run demo:build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo-site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

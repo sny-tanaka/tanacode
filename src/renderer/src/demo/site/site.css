@@ -1,0 +1,285 @@
+/* デモのサイトだけの見た目。色・文字はアプリ（global.css）の変数を使う */
+
+.demo-site {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* アプリの画面。上の帯の下の残りを使う */
+.demo-app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ブラウザには macOS の信号機ボタンが無いので、タイトルバーの左の空きに飾りで描く */
+.demo-app .titlebar {
+  position: relative;
+}
+.demo-app .titlebar::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow:
+    20px 0 #febc2e,
+    40px 0 #28c840;
+}
+
+/* 上の帯。機能一覧・いまの操作の説明・再生の操作 */
+.demo-bar {
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.demo-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--grad);
+  color: var(--text-on-fill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.demo-caption {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+.demo-tour-title {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.demo-caption-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-heading);
+  font-size: 14px;
+  animation: demo-caption-in 0.35s ease-out;
+}
+@keyframes demo-caption-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.demo-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.demo-button:hover {
+  border-color: var(--border-focus);
+  color: var(--text-heading);
+}
+.demo-button.primary {
+  border-color: var(--send-border);
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+.demo-button.primary:hover {
+  background: var(--send-bg-hover);
+}
+
+.demo-link {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-decoration: none;
+}
+.demo-link:hover {
+  color: var(--text-heading);
+  text-decoration: underline;
+}
+
+.demo-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.demo-icon-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-heading);
+}
+
+:where(.demo-ui) :focus-visible {
+  outline: 2px solid var(--ide);
+  outline-offset: 2px;
+}
+
+/* 再生中に触ろうとしたときの知らせ */
+.demo-blocked {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20000;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-heading);
+  font-size: 13px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  animation: demo-caption-in 0.2s ease-out;
+}
+
+/* 機能一覧（作り物のカーソルより上に出す） */
+.demo-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.demo-menu {
+  width: min(640px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.demo-menu:focus {
+  outline: none;
+}
+.demo-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.demo-menu-logo {
+  height: 24px;
+  width: auto;
+}
+.demo-menu-lead {
+  margin: 14px 0 0;
+  color: var(--text-heading);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.demo-menu-note {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.demo-menu-warn {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.demo-tour-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.demo-tour {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-chrome);
+  color: inherit;
+  text-decoration: none;
+}
+.demo-tour:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-hover);
+}
+.demo-tour.current {
+  border-color: var(--send-border);
+}
+.demo-tour-num {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.demo-tour-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.demo-tour-name {
+  color: var(--text-heading);
+  font-size: 14px;
+  font-weight: 600;
+}
+.demo-tour-summary {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.demo-menu-foot {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}

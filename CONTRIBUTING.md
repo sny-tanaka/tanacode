@@ -12,6 +12,7 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 - [読むもの・書くもの](#読むもの書くもの)
 - [ソースの構成](#ソースの構成)
 - [デモ動画の仕組み](#デモ動画の仕組み)
+- [デモのサイト](#デモのサイト)
 - [ライセンスの表示](#ライセンスの表示)
 
 ## 貢献の流れ
@@ -44,6 +45,7 @@ npm run dev
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名なし） |
 | `npm run install-app` | `npm run dist` のあと、`/Applications/tanacode.app` に入れ替える（下の「ソースからビルドして使う」） |
 | `npm run demo:record -- <動画の名前>` | README のデモ動画を録る（下の「デモ動画の仕組み」） |
+| `npm run demo:dev` / `npm run demo:build` | ブラウザで動くデモのサイトを開く（http://localhost:5180）/ `demo-site/` に書き出す（下の「デモのサイト」） |
 
 ### ソースからビルドして使う
 
@@ -599,7 +601,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
-  - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
+  - `demo/`: README のデモ動画とデモのサイトの、作り物のデータと台本（下の「デモ動画の仕組み」「デモのサイト」）
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴ
@@ -625,10 +627,11 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - README の動画は、本物の Claude Code ではなく、作り物のデータと台本で録ります。会社の情報やユーザー名の入ったパスなどが映らず、UI を直したあとも同じ動きで録り直せます。
 - `src/renderer/src/demo/`
   - `backend.ts`: アプリの API（`window.tanacode`）の作り物。ファイル・git・会話・画面の状態をメモリに持ちます
-  - `director.ts`: 画面に作り物のマウスカーソルを描いて、移動・ホバー・クリック・文字入力をします（録画には OS のカーソルが映らないため）
+  - `director.ts`: 画面に作り物のマウスカーソルを描いて、移動・ホバー・クリック・文字入力をします（録画には OS のカーソルが映らないため）。台本の待ち時間（`sleep`）は、デモのサイトで一時停止できるよう 100ms ずつ進めます
   - `data.ts`: デモ用のプロジェクト（カフェのメニューを出す小さな React のアプリ）
   - `webview.ts`: アプリ内ブラウザの `<webview>` の代わり。Storybook では webview が動かないので、iframe で作り物のページを出します
-  - `scenarios/`: 動画ごとの台本。`claude.ts` は、ツールの呼び出しと結果を会話に足す作り物の Claude
+  - `scenarios/`: 動画ごとの台本。`claude.ts` は、ツールの呼び出しと結果を会話に足す作り物の Claude。手順ごとの `d.caption('…')` は、デモのサイトの上の帯に出す説明です（動画には映りません）
+  - `tours.ts`: 動画（ツアー）の一覧。名前・説明・始まりのプロジェクト・列の幅・台本をまとめ、動画とデモのサイトの両方で使います
   - `Demo.stories.tsx`: Storybook の「デモ」。ここで台本を流して見られます
 - 動画は 6 本。
   - `基本`: Claude Code がもともと持つ機能（チャット・ツール・質問・バックグラウンドの作業・エディタ）の見せ方
@@ -642,6 +645,20 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - 1440×900 の画面を 1.5 倍の解像度（2160×1350）で描きます。
   - `ワークフロー` はフロー図を全部入れるため、2000×1250 の画面を 1.08 倍で描きます。出来上がりの大きさはほかと同じ（`SIZES`）。
 - README の動画は、GitHub にアップロードした動画の URL を貼っています。リポジトリに置いた MP4 は、GitHub が README の中で再生しないためです。
+
+## デモのサイト
+
+- 動画と同じ台本を、ブラウザでその場で流すサイト。GitHub Pages（https://sny-tanaka.github.io/tanacode/）で公開します。機能が増えても動画を撮り足さずに紹介でき、見る人は見たい機能だけを選べます。
+- 画面はアプリと同じ部品で、`window.tanacode` を作り物（`backend.ts`）に差し替えて動かします。本物の Claude Code・git・ファイルには触れません。
+- `src/renderer/src/demo/site/`
+  - `index.html` / `main.tsx`: 入り口。`?tour=<id>` でツアーを選びます（`id` は `tours.ts`）。無ければ機能一覧を出します。ツアーを変えるときはページを読み込み直し、アプリの状態を持ち越しません
+  - `DemoSite.tsx`: 上の帯（機能一覧・いまの操作の説明・一時停止・最初から）と機能一覧。ツアーが終わったら、そのまま触れます。チャットに送った発言には、デモであることを知らせる決まった返事をします
+  - `inputGuard.ts`: ツアーの再生中は、見ている人のマウス・キーボードの操作をアプリに届けません（台本の操作とぶつからないように）。台本の操作は `isTrusted` が false なので通ります
+  - `site.css`: サイトだけの見た目（上の帯・機能一覧・タイトルバーの飾りの信号機ボタン）
+- `vite.demo.config.ts`: サイトのビルドの設定。`@shared` の別名・バージョンの埋め込み・ライセンス表示（`demo-site/THIRD_PARTY_NOTICES.txt`）はアプリと同じ。どこに置いても読めるよう、パスは相対にします。
+- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR ではビルドが通るかだけを確かめます）。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
+- ツアーを足すとき: 台本を `scenarios/` に書き、`tours.ts` に足します。手順ごとに `d.caption('…')` で説明を付けます。動画も録るなら、`Demo.stories.tsx` にストーリーを足します。
+- 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。`npm run demo:dev` で、直したツアーが最後まで流れるか確かめます。
 
 ## ライセンスの表示
 
