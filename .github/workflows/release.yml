@@ -28,6 +28,12 @@ jobs:
       - run: npm run release
         env:
           NODE_OPTIONS: --max-old-space-size=6144
+      # 翻訳の補助プログラムが入ったかを確かめる（electron-builder は、extraResources の元のファイルが無くても警告だけで進む）
+      - name: 翻訳の補助プログラムを確かめる
+        run: |
+          for app in release/mac-arm64/tanacode.app release/mac/tanacode.app; do
+            test -x "$app/Contents/Resources/tanacode-translate"
+          done
       # zip と pkg の SHA-256 を SHA256SUMS.txt にまとめる（ファイル名だけで書き、ダウンロードした場所で shasum -c できるようにする）
       - name: チェックサムを計算する
         working-directory: release

@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { QuestionAnswer } from '@shared/chat';
 import type { BashTask, TaskRef } from '@shared/task';
+import { useBlockTranslation } from '../translate/BlockTranslation';
 import { DisclosureIcon, IconButton, RewindIcon } from '../icons';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { WorkflowCard } from '../workflow/WorkflowCard';
@@ -106,7 +107,7 @@ export const ChatRow = memo(function ChatRow({
     );
   }
   if (item.kind === 'text') {
-    return <Markdown text={item.text} onRunCommand={onRunCommand} />;
+    return <ResponseBlock text={item.text} onRunCommand={onRunCommand} />;
   }
   if (item.kind === 'notice') {
     // 子セッションからの知らせには、その子へ移るリンクを添える
@@ -161,15 +162,7 @@ export const ChatRow = memo(function ChatRow({
     );
   }
   if (item.kind === 'thinking') {
-    return (
-      <details className="chat-thinking" open>
-        <summary>
-          <DisclosureIcon open={false} />
-          思考
-        </summary>
-        <div className="chat-thinking-text">{item.text}</div>
-      </details>
-    );
+    return <ThinkingBlock text={item.text} />;
   }
   if (item.answers) return <AnswersCard answers={item.answers} />;
   if (item.sentFiles) {
@@ -200,6 +193,35 @@ export const ChatRow = memo(function ChatRow({
     />
   );
 }, sameRow);
+
+// Claude の応答の本文。日本語でない文なら、マウスを乗せると翻訳のボタンが出て、押すと下に訳文を出す
+function ResponseBlock({ text, onRunCommand }: { text: string; onRunCommand?: (command: string) => void }) {
+  // 訳文のコードブロックには、実行ボタンを付けない（原文の方にある）
+  const translation = useBlockTranslation(text, (translated) => <Markdown text={translated} />);
+  return (
+    <div className="chat-response reveal-host">
+      <Markdown text={text} onRunCommand={onRunCommand} />
+      {translation.button}
+      {translation.panel}
+    </div>
+  );
+}
+
+// 思考（本文が記録されているときだけ）。翻訳のボタンは見出しの横に出し、訳文は本文の下に出す
+function ThinkingBlock({ text }: { text: string }) {
+  const translation = useBlockTranslation(text, (translated) => <div className="chat-thinking-text">{translated}</div>);
+  return (
+    <details className="chat-thinking reveal-host" open>
+      <summary>
+        <DisclosureIcon open={false} />
+        思考
+        {translation.button}
+      </summary>
+      <div className="chat-thinking-text">{text}</div>
+      {translation.panel}
+    </details>
+  );
+}
 
 // AskUserQuestion の質問と、選んだ答え。作業の書き出しでも使う
 export function AnswersCard({ answers }: { answers: QuestionAnswer[] }) {

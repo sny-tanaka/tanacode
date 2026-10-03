@@ -2772,6 +2772,53 @@ details[open] > summary > .disclosure {
   white-space: pre-wrap;
 }
 
+/* 思考・応答の翻訳（日本語でない文のときだけ、ホバーでボタンを出す）。
+   応答ではボタンを本文の右上に重ね、思考では見出しの横に置く。訳文を出している間・訳している間は、ボタンを出したままにする */
+.chat-response {
+  position: relative;
+}
+.chat-response > .chat-translate {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  background: var(--bg-panel);
+}
+/* コードブロックで始まる応答では、コードブロックの「実行」ボタンと重ならないよう、少し下げる */
+.chat-response:has(> .chat-translate) > .markdown > pre:first-child {
+  margin-top: 24px;
+}
+.icon-button.reveal.chat-translate.on,
+.icon-button.reveal.chat-translate.busy {
+  visibility: visible;
+}
+/* 訳文はブロックの下に、原文と分けて出す */
+.chat-translation {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+}
+.chat-translation-label {
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.chat-translation > .chat-thinking-text {
+  margin-top: 0;
+  padding-left: 0;
+  border-left: none;
+}
+.chat-translation-note {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.chat-translation-note.failed {
+  color: var(--warn);
+}
+
 /* Todo リスト（チャットの上に固定） */
 .todo-panel {
   flex: none;

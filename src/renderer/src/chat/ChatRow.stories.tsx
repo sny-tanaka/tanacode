@@ -1,4 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { userEvent, within } from 'storybook/test';
+import type { TranslateResult } from '@shared/translate';
+import { mockApi } from '../../../../.storybook/mockApi';
 import { ChatRow } from './ChatRow';
 
 const noop = () => {};
@@ -145,3 +148,74 @@ export const セッションへの参照の札: Story = {
     onSelectSession: noop,
   },
 };
+
+// ---- 翻訳（日本語でない思考・応答に、ホバーで出るボタン。押すと下に訳文） ----
+
+const englishThinking = `The user wants a translate button on each block instead of right-click.
+I should check how ChatRow renders the thinking block, then add the button next to the summary.
+
+Let me also make sure the translation appears below the original.`;
+
+const englishResponse = `## Summary
+
+I added a translate button to the thinking and response blocks.
+
+- The button appears on hover.
+- Code blocks are kept as they are.
+
+\`\`\`bash
+npm test
+\`\`\``;
+
+const JA: Record<string, string> = {
+  'The user wants a translate button on each block instead of right-click.': 'ユーザーは、右クリックではなく、各ブロックに翻訳ボタンを置くことを望んでいます。',
+  'I should check how ChatRow renders the thinking block, then add the button next to the summary.': 'ChatRow が思考ブロックをどのように描くかを確認し、見出しの横にボタンを追加すべきです。',
+  'Let me also make sure the translation appears below the original.': '訳文が原文の下に表示されることも確認しておきます。',
+  Summary: 'まとめ',
+  'I added a translate button to the thinking and response blocks.': '思考ブロックと応答ブロックに翻訳ボタンを追加しました。',
+  'The button appears on hover.': 'ボタンはマウスを乗せると表示されます。',
+  'Code blocks are kept as they are.': 'コードブロックはそのまま残ります。',
+};
+
+// 翻訳が使える環境にして、訳す依頼への返事を決める
+const translation = (run: (texts: string[]) => Promise<TranslateResult>) => () =>
+  mockApi({ 'translate.available': () => Promise.resolve(true), 'translate.run': (texts) => run(texts as string[]) });
+const translated = translation((texts) => Promise.resolve({ ok: true, texts: texts.map((t) => JA[t] ?? t), source: 'en' }));
+
+// ボタンはホバーで出るので、ブロックに乗ってから押す
+const pressTranslate = async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+  const button = await within(canvasElement).findByLabelText('日本語訳');
+  await userEvent.hover(button.closest('.reveal-host')!);
+  await userEvent.click(button);
+};
+
+export const 思考_英語: Story = { args: { item: { kind: 'thinking', id: 'th1', text: englishThinking } }, beforeEach: translated };
+
+export const 思考_英語_訳文: Story = {
+  args: { item: { kind: 'thinking', id: 'th2', text: englishThinking } },
+  beforeEach: translated,
+  play: pressTranslate,
+};
+
+export const 本文_英語: Story = { args: { item: { kind: 'text', id: 't3', text: englishResponse } }, beforeEach: translated };
+
+export const 本文_英語_訳文: Story = {
+  args: { item: { kind: 'text', id: 't4', text: englishResponse } },
+  beforeEach: translated,
+  play: pressTranslate,
+};
+
+export const 本文_英語_訳している途中: Story = {
+  args: { item: { kind: 'text', id: 't5', text: englishResponse } },
+  beforeEach: translation(() => new Promise(() => {})),
+  play: pressTranslate,
+};
+
+export const 本文_英語_翻訳データなし: Story = {
+  args: { item: { kind: 'text', id: 't6', text: englishResponse } },
+  beforeEach: translation(() => Promise.resolve({ ok: false, error: 'not-installed', source: 'en' })),
+  play: pressTranslate,
+};
+
+// 日本語の本文には、翻訳が使える環境でもボタンを出さない
+export const 本文_日本語には出さない: Story = { args: { item: { kind: 'text', id: 't7', text: markdown } }, beforeEach: translated };
