@@ -108,6 +108,13 @@ export const IpcChannel = {
   BrowserActivity: 'browser:activity',
   BrowserViewport: 'browser:viewport',
   BrowserAttach: 'browser:attach',
+  // タブ。main → 画面: 新しいタブで開く・選ぶ・閉じる / 画面 → main: 今のタブが変わった
+  BrowserNewTab: 'browser:new-tab',
+  BrowserSelectTab: 'browser:select-tab',
+  BrowserCloseTab: 'browser:close-tab',
+  BrowserActivate: 'browser:activate',
+  // 今のページを、ふだんのブラウザで開く
+  BrowserOpenExternal: 'browser:open-external',
   BrowserHostsGet: 'browser:hosts-get',
   BrowserHostsSet: 'browser:hosts-set',
   // メニューの「アプリ内ブラウザで Claude に許す先…」から。許す先のダイアログを開かせる
@@ -123,6 +130,13 @@ export type BrowserActivity = { sessionId: string; active: boolean; label: strin
 
 // Claude が、まだブラウザを開いていないセッションでページを開いた
 export type BrowserOpenRequest = { sessionId: string; url: string };
+
+// 新しいタブで開く。ページが新しいウィンドウで開こうとした（target=_blank・window.open）か、Claude が新しいタブで開いた。
+// background: 裏で開く（⌘ を押したままのクリック）/ openerTabId: 開いたページのタブ
+export type BrowserNewTabRequest = { sessionId: string; url: string; background: boolean; openerTabId: string | null };
+
+// セッションのタブ
+export type BrowserTabRef = { sessionId: string; tabId: string };
 
 // Claude が表示幅を変えた（0 は全幅）
 export type BrowserViewportChange = { sessionId: string; width: number };
@@ -412,9 +426,16 @@ export type TanacodeApi = {
   };
   // Claude によるアプリ内ブラウザの操作（Claude Code に足す MCP サーバー tanacode-browser）
   browser: {
-    // セッションの webview を作った（main が、その中身を操作できるようにする）
-    attach(sessionId: string, webContentsId: number): void;
+    // タブの webview を作った（main が、その中身を操作できるようにする）
+    attach(sessionId: string, tabId: string, webContentsId: number): void;
+    // 今のタブが変わった（タブが無くなったら null）。Claude の操作は今のタブに対して行う
+    activate(sessionId: string, tabId: string | null): void;
     onOpen(listener: (request: BrowserOpenRequest) => void): () => void;
+    onNewTab(listener: (request: BrowserNewTabRequest) => void): () => void;
+    onSelectTab(listener: (tab: BrowserTabRef) => void): () => void;
+    onCloseTab(listener: (tab: BrowserTabRef) => void): () => void;
+    // ふだんのブラウザで開く（http(s) だけ）
+    openExternal(url: string): Promise<void>;
     onActivity(listener: (activity: BrowserActivity) => void): () => void;
     onViewport(listener: (change: BrowserViewportChange) => void): () => void;
     // ユーザーが足した、Claude に許す先（localhost などの既定は含まない）

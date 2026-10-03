@@ -236,15 +236,19 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 足すのは起動するときだけ。`~/.claude` の設定や `.mcp.json` には書き込みません（statusLine と hooks を `--settings` で足しているのと同じ考え方）。
 - 許可: 読むだけのツールは `--allowedTools` で許可済みに。ページを動かすツールは、ふつうの許可の確認を通します。JavaScript の実行（`evaluate`）は、`--settings` に `permissions.ask` を入れて毎回確かめます。ask のルールは allow より強いので、「次から聞かない」でプロジェクトの設定に許可が残っても、次も確認が出ます（実測）。登録した設定ファイルを重ねるときは、その `permissions` に足します（`mergeSettings`）。
 - 実行はメインプロセス（`browser-control.ts`）。そのセッションの webview の中身（`webContents`）を直接動かします。
-  - 画面（`PreviewPane`）は、webview を作ったら（`did-attach`）その `webContents` の ID を main に知らせます（`browser.attach`）。main は、アプリの画面の中の webview だけを受け付けます。まだブラウザを開いていないセッションで Claude が URL を開くときは、main が画面に webview を作らせ（`browser:open`）、知らせを待ちます。
+  - アプリ内ブラウザは、セッションごとにタブ（1 つのタブに 1 つの webview）を持ちます。画面（`PreviewPane`）は、タブの webview の準備ができたら（`dom-ready`。それより前の `getWebContentsId` は例外になる）、その `webContents` の ID を main に知らせます（`browser.attach`）。今のタブが変わったときも知らせ（`browser.activate`）、Claude の操作は今のタブに対して行います。main は、アプリの画面の中の webview だけを受け付けます。
+  - タブの番号は、画面がタブを作った順（タブの ID の番号）。画面の並びと Claude の `list_tabs` をそろえるため、新しいタブはいつも右端に足します。
+  - まだタブの無いセッションで Claude が URL を開くときは、main が画面にタブを作らせ（`browser:open`）、知らせを待ちます。新しいタブで開くとき（`newTab`）は `browser:new-tab`。タブの切り替え・閉じるも、main が画面に頼みます。
+  - 新しいウィンドウで開くもの（`target=_blank`・`window.open`）は、webview に `allowpopups` を付けて main の `setWindowOpenHandler` に届かせ、ウィンドウは作らずに、同じセッションの新しいタブで開かせます（`openFromPage`）。`allowpopups` が無いと、main に届かずに捨てられます。新しいタブのページは、開いたページ（`window.opener`）とつながりません。
+  - コンソールの出力と失敗した通信は、webview ができたとき（`did-attach-webview` から `track`）から集めます。タブの知らせ（`dom-ready`）を待つと、ページの最初のスクリプトが出したものを取りこぼすためです。
   - スクリーンショットは `capturePage`（Retina でもページの大きさに縮める）。ページ全体とアクセシビリティのツリーは CDP（`webContents.debugger`）。開発者ツールを開いていても使えます。
   - クリック・入力・キーは CDP の `Input.*` で送ります。ウィンドウが前に無くても届き、ページには本物の操作（`isTrusted`）として届きます。スクロールは、真ん中（か要素）から上へたどった、動かせる入れ物の `scrollBy`（CDP のホイールは、動きが遅れて量が読めないため）。
   - 要素を探す・読むスクリプトは、ページとは別の JavaScript の世界（`executeJavaScriptInIsolatedWorld`）で動かします。ページのスクリプトに `querySelector` などを書き換えられないように。`evaluate` だけはページの世界で動かします。
-  - コンソールの出力と失敗した通信（`webRequest` の 4xx・5xx とエラー）は main で集め、新しいページを開いたら空にします。
-- 隠れているセッションの webview: `display: none` だと大きさが 0 になり、撮れず、押せません（Electron の画面の外で実測。`WebContentsView` に移すまでもありませんでした）。そこで、Claude が操作したことのあるセッションの webview は、見ていない間も透明（`opacity: 0`）にして、ほかの表示の後ろ（`z-index: -1`・`pointer-events: none`）に置き、ブラウザを開いたときと同じ大きさで描かせます。ブラウザのペイン自体を閉じているときも、ペインごと同じようにします（`.preview-pane.offstage`）。ウィンドウを最小化していても撮れます。
+  - コンソールの出力と失敗した通信（`webRequest` の 4xx・5xx とエラー）は、新しいページを開いたら空にします。
+- 隠れているセッションの今のタブの webview: `display: none` だと大きさが 0 になり、撮れず、押せません（Electron の画面の外で実測。`WebContentsView` に移すまでもありませんでした）。そこで、Claude が操作したことのあるセッションの今のタブの webview は、見ていない間も透明（`opacity: 0`）にして、ほかの表示の後ろ（`z-index: -1`・`pointer-events: none`）に置き、ブラウザを開いたときと同じ大きさで描かせます。ブラウザのペイン自体を閉じているときも、ペインごと同じようにします（`.preview-pane.offstage`）。ウィンドウを最小化していても撮れます。
 - 表示: main は、呼び出しの始めと終わりに操作の様子（`browser:activity`）を送ります。画面は、そのセッションを見ていれば、操作が始まったときにエディタの場所にブラウザを開きます（帯が消えるまでは開き直さない）。見ていなければ覚えておき、切り替えたときに開きます。帯は最後の操作から 8 秒で消します。クリックと入力の前には、押す要素の位置を送り、画面がページの上に枠を重ねます（ページの中には描かない）。
 - 守り: Claude が開ける・読める・操作できるのは、`isClaudeAllowedUrl` に通るページだけ（既定の `localhost`・`127.0.0.1`・`*.local` と、`settings.json` の `browserHosts`）。開く前の URL・戻る／進む先・今のページを、呼び出しのたびに確かめます。
-  - Claude の呼び出しの間（と終わって 2 秒）は、トップのフレームが許していない先へ移るの（リンク・リダイレクト・ページのスクリプト）を止め（`blocksNavigation`。`web-contents-created` の見張りから呼ぶ）、新しいウィンドウも開きません（ふだんはふだんのブラウザで開くものも）。止めたことは、その呼び出しの結果で Claude に伝えます。ユーザーの操作で許していない先へ移ったときは、次の呼び出しから断ります。
+  - Claude の呼び出しの間（と終わって 2 秒）は、トップのフレームが許していない先へ移るの（リンク・リダイレクト・ページのスクリプト）を止め（`blocksNavigation`。`web-contents-created` の見張りから呼ぶ）、許していない先を新しいタブでも開きません（`openFromPage`）。止めたことは、その呼び出しの結果で Claude に伝えます。新しいタブで開いたことも伝えます。ユーザーの操作で許していない先へ移った（開いた）ときは、次の呼び出しから断ります（`list_tabs` でも、そのタブのタイトルは読ませません）。
   - `evaluate` は、ユーザーの操作の扱い（userGesture）を付けずに実行します。`file:` に行けないこと（`isPreviewDestination`）・権限を全部断ること（`restrictPermissions`）は、今までどおり。プレビューのセッションのダウンロードは断ります。
 - オン・オフ: メニューの「tanacode → Claude にアプリ内ブラウザを操作させる」（`settings.json` の `browserControl`）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。待ち受けを始められなかったときも、足しません。
 
@@ -322,7 +326,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
-  - `preview/`: アプリ内ブラウザ（webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・Claude に許す先のダイアログ。画面では「ブラウザ」）
+  - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・Claude に許す先のダイアログ。画面では「ブラウザ」）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧・利用枠・CPU/メモリ・コンテキスト・カラム
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）

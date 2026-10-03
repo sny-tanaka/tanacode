@@ -1,11 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { ClaudeBar, ClickBox } from './PreviewPane';
+import { ClaudeBar, ClickBox, TabStrip } from './PreviewPane';
 
-// Claude がアプリ内ブラウザを操作しているときの表示。ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠。
+// アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）。
 // 本物のブラウザ（webview）は Storybook では動かないので、ページの代わりに白い地と作り物のボタンを置く
 
 const meta = {
-  title: 'ブラウザ/Claude が操作中',
+  title: 'ブラウザ/タブと Claude の操作',
   component: ClaudeBar,
   parameters: { background: '--bg-panel' },
 } satisfies Meta<typeof ClaudeBar>;
@@ -34,6 +34,27 @@ export const クリックする要素: Story = {
           <ClickBox rect={{ x: 21, y: 69, width: 100, height: 39 }} />
         </div>
       </div>
+    </div>
+  ),
+};
+
+// ブラウザのタブ。新しいウィンドウで開くリンク（target=_blank）は、新しいタブで開く。読み込み中のタブには印、空のタブは「新しいタブ」
+export const タブ: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ width: 760, height: 120, border: '1px solid var(--border-subtle)' }}>
+      <TabStrip
+        tabs={[
+          { id: 'tab-1', title: 'メニュー｜カフェ', url: 'http://localhost:5173/', loading: false },
+          { id: 'tab-2', title: '', url: 'http://localhost:5173/order/confirm?item=latte&size=large', loading: true },
+          { id: 'tab-3', title: 'とても長いタイトルのページはタブの幅で省略して表示されるかどうか', url: 'http://localhost:5173/about', loading: false },
+          { id: 'tab-4', title: '', url: '', loading: false },
+        ]}
+        active="tab-2"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onNew={() => {}}
+      />
     </div>
   ),
 };

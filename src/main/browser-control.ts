@@ -4,7 +4,8 @@ import type { BrowserActivity, BrowserRect } from '@shared/ipc';
 import { textResult, type ToolResult } from './browser-bridge';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
-// 操作するのは、そのセッションの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
+// 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
+// ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開かせる（openFromPage）。
 // クリックや入力は CDP（Input.*）で送る。ウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる
 
@@ -23,12 +24,16 @@ const TOOL_TIMEOUT_MS = 60_000;
 const LOAD_TIMEOUT_MS = 30_000;
 // 画面（renderer）が webview を作って知らせるまで待つ時間
 const ATTACH_TIMEOUT_MS = 10_000;
+// 今のタブの webview がまだ知らされていないとき（作った直後）に待つ時間
+const ACTIVE_WAIT_MS = 3_000;
 // クリックする要素に枠を出してから押すまでの間（ユーザーが目で追えるように）
 const HIGHLIGHT_MS = 400;
 // 最後の操作のあと、「Claude が操作中」の帯を出しておく時間
 const ACTIVE_LINGER_MS = 8_000;
 // 操作が終わったあとも、Claude の操作として扱う間（押したボタンの処理が少し遅れてページを移すことがあるため）
 const OPERATING_GRACE_MS = 2_000;
+// 1 つのセッションで開けるタブの数（ページが window.open を繰り返しても、タブで埋まらないように）
+const MAX_TABS = 20;
 const VIEWPORTS: Record<string, number> = { full: 0, mobile: 390, tablet: 768 };
 const DEFAULT_STYLES = [
   'display', 'position', 'box-sizing', 'width', 'height', 'margin', 'padding', 'border', 'border-radius',
@@ -37,14 +42,24 @@ const DEFAULT_STYLES = [
 ];
 
 type LogEntry = { level: string; text: string };
+// webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
+type Logs = { console: LogEntry[]; failed: string[] };
+// タブ 1 つ（webview 1 つ）
 type Guest = {
+  tabId: string;
   contents: WebContents;
-  console: LogEntry[];
-  failed: string[];
+  logs: Logs;
   // CDP（debugger）をつないだか
   cdp: boolean;
-  // Claude の操作の間に、許していない先へ移ろうとして止めたもの（呼び出しごとに空にする）
+};
+// セッションのタブ
+type Tabs = {
+  tabs: Map<string, Guest>;
+  // 今のタブ（画面が知らせてくる。Claude の操作はこのタブに対して行う）
+  active: string | null;
+  // Claude の操作の間に、許していない先へ移ろう（開こう）として止めたもの・新しいタブで開いたもの（呼び出しごとに空にする）
   blocked: string | null;
+  opened: string[];
 };
 
 type Deps = {
@@ -58,13 +73,15 @@ type Deps = {
   host: () => WebContents | null;
   // あるセッションか（アーカイブしたものも含む）
   hasSession: (id: string) => boolean;
-  channels: { open: string; activity: string; viewport: string };
+  channels: { open: string; activity: string; viewport: string; newTab: string; selectTab: string; closeTab: string };
 };
 
 class ToolError extends Error {}
 
 export class BrowserControl {
-  private readonly guests = new Map<string, Guest>();
+  private readonly sessions = new Map<string, Tabs>();
+  // webContents の ID → コンソールと失敗した通信
+  private readonly logs = new Map<number, Logs>();
   private readonly waiters = new Map<string, ((guest: Guest) => void)[]>();
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
   // 動いている呼び出しの数（セッションごと）。0 になって少したったら、帯を消す
@@ -77,68 +94,106 @@ export class BrowserControl {
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
   watchNetwork(session: Session): void {
     const filter = { urls: ['http://*/*', 'https://*/*'] };
+    const record = (contentsId: number | undefined, text: string) => {
+      const logs = contentsId === undefined ? undefined : this.logs.get(contentsId);
+      if (!logs) return;
+      logs.failed.push(text);
+      if (logs.failed.length > MAX_FAILED) logs.failed.splice(0, logs.failed.length - MAX_FAILED);
+    };
     session.webRequest.onCompleted(filter, (details) => {
-      if (details.statusCode < 400 || details.webContentsId === undefined) return;
-      this.guestByContents(details.webContentsId)?.failed.push(`${details.statusCode} ${details.method} ${details.url}（${details.resourceType}）`);
-      this.trimFailed(details.webContentsId);
+      if (details.statusCode >= 400) record(details.webContentsId, `${details.statusCode} ${details.method} ${details.url}（${details.resourceType}）`);
     });
     session.webRequest.onErrorOccurred(filter, (details) => {
       // 移ったための中断（ERR_ABORTED）は失敗にしない
-      if (details.webContentsId === undefined || details.error === 'net::ERR_ABORTED') return;
-      this.guestByContents(details.webContentsId)?.failed.push(`${details.error} ${details.method} ${details.url}（${details.resourceType}）`);
-      this.trimFailed(details.webContentsId);
+      if (details.error !== 'net::ERR_ABORTED') record(details.webContentsId, `${details.error} ${details.method} ${details.url}（${details.resourceType}）`);
     });
   }
 
-  // 画面（renderer）が、セッションの webview を作って知らせてきた。アプリの画面の中の webview だけを受け付ける
-  attach(sessionId: string, contentsId: number): void {
-    const contents = allWebContents.fromId(contentsId);
-    const host = this.deps.host();
-    if (!contents || !host || contents.getType() !== 'webview' || contents.hostWebContents !== host) return;
-    if (this.guests.get(sessionId)?.contents === contents) return;
-    const guest: Guest = { contents, console: [], failed: [], cdp: false, blocked: null };
-    this.guests.set(sessionId, guest);
+  // プレビューの webview ができたとき（did-attach-webview）。コンソールと失敗した通信を、この時から集める
+  track(contents: WebContents): Logs {
+    const existing = this.logs.get(contents.id);
+    if (existing) return existing;
+    const logs: Logs = { console: [], failed: [] };
+    const id = contents.id;
+    this.logs.set(id, logs);
     contents.on('console-message', (event) => {
       const { level, message, sourceId, lineNumber } = event;
       const where = sourceId ? ` (${sourceId}${lineNumber ? `:${lineNumber}` : ''})` : '';
-      guest.console.push({ level, text: `${message}${where}` });
-      if (guest.console.length > MAX_CONSOLE) guest.console.splice(0, guest.console.length - MAX_CONSOLE);
+      logs.console.push({ level, text: `${message}${where}` });
+      if (logs.console.length > MAX_CONSOLE) logs.console.splice(0, logs.console.length - MAX_CONSOLE);
     });
     // 新しいページを開いたら、コンソールと失敗した通信を空にする（「今のページを開いてから」のもの）
     contents.on('did-start-navigation', (event) => {
       if (event.isMainFrame && !event.isSameDocument) {
-        guest.console = [];
-        guest.failed = [];
+        logs.console.length = 0;
+        logs.failed.length = 0;
       }
     });
+    contents.once('destroyed', () => this.logs.delete(id));
+    return logs;
+  }
+
+  // 画面（renderer）が、セッションのタブの webview を作って知らせてきた。アプリの画面の中の webview だけを受け付ける
+  attach(sessionId: string, tabId: string, contentsId: number): void {
+    const contents = allWebContents.fromId(contentsId);
+    const host = this.deps.host();
+    if (!contents || !host || contents.getType() !== 'webview' || contents.hostWebContents !== host) return;
+    const session = this.tabsOf(sessionId);
+    if (session.tabs.get(tabId)?.contents === contents) return;
+    const guest: Guest = { tabId, contents, logs: this.track(contents), cdp: false };
+    session.tabs.set(tabId, guest);
+    // 並びは、画面がタブを作った順（タブの ID の番号）
+    session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
     contents.debugger.on('detach', () => (guest.cdp = false));
     contents.once('destroyed', () => {
-      if (this.guests.get(sessionId) === guest) this.guests.delete(sessionId);
+      const current = this.sessions.get(sessionId);
+      if (current?.tabs.get(tabId) === guest) current.tabs.delete(tabId);
     });
     for (const resolve of this.waiters.get(sessionId) ?? []) resolve(guest);
     this.waiters.delete(sessionId);
   }
 
-  // Claude が操作している最中（と、終わってすぐ）の webview か。この間は、許していない先へ移らせず、新しいウィンドウも開かせない
+  // 画面で今のタブが変わった（タブが無くなったら null）
+  activate(sessionId: string, tabId: string | null): void {
+    this.tabsOf(sessionId).active = tabId;
+  }
+
+  // Claude が操作している最中（と、終わってすぐ）の webview か。この間は、許していない先へ移らせず、開かせない
   isOperating(contents: WebContents): boolean {
-    for (const [sessionId, guest] of this.guests) {
-      if (guest.contents !== contents) continue;
-      return (this.running.get(sessionId) ?? 0) > 0 || Date.now() - (this.endedAt.get(sessionId) ?? 0) < OPERATING_GRACE_MS;
-    }
-    return false;
+    const found = this.find(contents);
+    return !!found && this.operating(found.sessionId);
   }
 
   // webview のトップのフレームが url へ移ろうとしている（リンク・リダイレクト・ページのスクリプト）。
   // Claude の操作で、許していない先へ移ろうとしていれば止める（true を返す）。ユーザーの操作は止めない
   blocksNavigation(contents: WebContents, url: string): boolean {
-    if (!this.isOperating(contents) || this.allowed(url)) return false;
-    for (const guest of this.guests.values()) if (guest.contents === contents) guest.blocked = url;
+    const found = this.find(contents);
+    if (!found || !this.operating(found.sessionId) || this.allowed(url)) return false;
+    found.session.blocked = url;
+    return true;
+  }
+
+  // ページが新しいウィンドウで開こうとした（target=_blank・window.open）。同じセッションの新しいタブで開かせる。
+  // Claude の操作で、許していない先を開こうとしたものは開かない。知らない webview なら false（呼び出し元が扱う）
+  openFromPage(contents: WebContents, url: string, disposition: string): boolean {
+    const found = this.find(contents);
+    if (!found) return false;
+    const { sessionId, session } = found;
+    if (session.tabs.size >= MAX_TABS) return true;
+    const operating = this.operating(sessionId);
+    if (operating && !this.allowed(url)) {
+      session.blocked = url;
+      return true;
+    }
+    if (operating) session.opened.push(url);
+    // ⌘ を押したままのクリックは、裏で開く（Claude の操作は、続けて操作できるよう前に出す）
+    this.deps.send(this.deps.channels.newTab, { sessionId, url, background: !operating && disposition === 'background-tab', openerTabId: found.guest.tabId });
     return true;
   }
 
   // セッションを消した・アーカイブしたとき
   forget(sessionId: string): void {
-    this.guests.delete(sessionId);
+    this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
     clearTimeout(this.idleTimers.get(sessionId));
@@ -169,20 +224,32 @@ export class BrowserControl {
   }
 
   private async run(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    const existing = this.guests.get(sessionId);
-    if (existing) existing.blocked = null;
+    const session = this.tabsOf(sessionId);
+    session.blocked = null;
+    session.opened = [];
     const result = await this.dispatch(sessionId, name, args);
+    if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
-    const blocked = this.guests.get(sessionId)?.blocked;
-    if (blocked && !result.isError) {
-      result.content.push({ type: 'text', text: `許していない先（${blocked}）へ移ろうとしたので、止めました` });
+    if (session.blocked) result.content.push({ type: 'text', text: `許していない先（${session.blocked}）へ移ろう（開こう）としたので、止めました` });
+    // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
+    if (session.opened.length > 0) {
+      const guest = await this.activeGuest(sessionId).catch(() => null);
+      if (guest) await waitForLoad(guest.contents);
+      const index = guest ? [...session.tabs.keys()].indexOf(guest.tabId) + 1 : 0;
+      result.content.push({
+        type: 'text',
+        text: `新しいタブ${index > 0 ? `（タブ ${index}）` : ''}で開きました: ${session.opened.join('、')}。このあとの操作は、このタブに対して行います（list_tabs・select_tab でタブを切り替えられます）`,
+      });
     }
     return result;
   }
 
   private async dispatch(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     if (name === 'navigate') return this.navigate(sessionId, args);
-    const guest = this.current(sessionId);
+    if (name === 'list_tabs') return this.listTabs(sessionId);
+    if (name === 'select_tab') return this.selectTab(sessionId, args.index);
+    if (name === 'close_tab') return this.closeTab(sessionId, args.index);
+    const guest = await this.current(sessionId);
     switch (name) {
       case 'screenshot':
         return this.screenshot(guest, optionalString(args.selector), args.fullPage === true);
@@ -221,7 +288,7 @@ export class BrowserControl {
     const rawUrl = optionalString(args.url);
     if (!action && !rawUrl) throw new ToolError('url か action を渡してください');
     if (action) {
-      const guest = this.current(sessionId);
+      const guest = await this.current(sessionId);
       const history = guest.contents.navigationHistory;
       if (action === 'reload') guest.contents.reload();
       else {
@@ -237,23 +304,68 @@ export class BrowserControl {
     }
     const url = toUrl(rawUrl!);
     this.checkUrl(url, '開く先');
-    let guest = this.guests.get(sessionId);
-    if (!guest || guest.contents.isDestroyed()) {
-      // まだブラウザを開いていないセッション。画面に webview を作らせ、知らせを待つ
+    const session = this.tabsOf(sessionId);
+    let guest = await this.activeGuest(sessionId).catch(() => null);
+    if (!guest || args.newTab === true) {
+      // まだブラウザを開いていないセッションか、新しいタブ。画面に webview を作らせ、知らせを待つ
       const attached = this.waitAttach(sessionId);
-      this.deps.send(this.deps.channels.open, { sessionId, url });
+      if (guest) this.deps.send(this.deps.channels.newTab, { sessionId, url, background: false, openerTabId: guest.tabId });
+      else this.deps.send(this.deps.channels.open, { sessionId, url });
       guest = await attached;
       await waitForLoad(guest.contents);
+      if (session.blocked) throw new ToolError(`${url} は、許していない先（${session.blocked}）へ移ろうとしたので、止めました`);
     } else {
       const opened = guest;
       await opened.contents.loadURL(url).catch((error: unknown) => {
         // 許していない先へのリダイレクトを止めた
-        if (opened.blocked) throw new ToolError(`${url} は、許していない先（${opened.blocked}）へ移ろうとしたので、止めました`);
+        if (session.blocked) throw new ToolError(`${url} は、許していない先（${session.blocked}）へ移ろうとしたので、止めました`);
         // 移ったための中断（リダイレクトなど）は失敗にしない
         if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`${url} を開けませんでした（${error instanceof Error ? error.message : String(error)}）`);
       });
     }
-    return this.pageResult(guest, '開きました');
+    return this.pageResult(guest, args.newTab === true ? `新しいタブ（タブ ${[...session.tabs.keys()].indexOf(guest.tabId) + 1}）で開きました` : '開きました');
+  }
+
+  // ---- タブ ----
+
+  private listTabs(sessionId: string): ToolResult {
+    const session = this.tabsOf(sessionId);
+    const tabs = [...session.tabs.values()].filter((g) => !g.contents.isDestroyed());
+    if (tabs.length === 0) return textResult('タブはありません（navigate で開けます）');
+    const lines = tabs.map((guest, i) => {
+      const url = guest.contents.getURL();
+      // 許していない先のページは、タイトルも読ませない（ページが書けるので）
+      const title = this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
+      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '（空のタブ）' : url}`;
+    });
+    return textResult(`タブ（* が今のタブ）:\n${lines.join('\n')}`);
+  }
+
+  // index: 1 から数えたタブの番号
+  private tabAt(sessionId: string, index: unknown): Guest {
+    const tabs = [...this.tabsOf(sessionId).tabs.values()].filter((g) => !g.contents.isDestroyed());
+    const guest = typeof index === 'number' && Number.isInteger(index) ? tabs[index - 1] : undefined;
+    if (!guest) throw new ToolError(`タブ ${String(index)} はありません（タブは ${tabs.length} 個。list_tabs で確かめられます）`);
+    return guest;
+  }
+
+  private async selectTab(sessionId: string, index: unknown): Promise<ToolResult> {
+    const guest = this.tabAt(sessionId, index);
+    this.tabsOf(sessionId).active = guest.tabId;
+    this.deps.send(this.deps.channels.selectTab, { sessionId, tabId: guest.tabId });
+    await sleep(150);
+    return this.pageResult(guest, `タブ ${String(index)} に切り替えました`);
+  }
+
+  private async closeTab(sessionId: string, index: unknown): Promise<ToolResult> {
+    const session = this.tabsOf(sessionId);
+    const guest = index === undefined ? await this.activeGuest(sessionId) : this.tabAt(sessionId, index);
+    const number = [...session.tabs.keys()].indexOf(guest.tabId) + 1;
+    this.deps.send(this.deps.channels.closeTab, { sessionId, tabId: guest.tabId });
+    session.tabs.delete(guest.tabId);
+    // 今のタブを閉じたときは、画面が次のタブを今のタブにして知らせてくる
+    await sleep(150);
+    return textResult(`タブ ${number} を閉じました（残りのタブ: ${session.tabs.size} 個）`);
   }
 
   // 開いたあとのページの様子。許していない先に移っていたら、そう伝える
@@ -261,9 +373,9 @@ export class BrowserControl {
     const url = guest.contents.getURL();
     const lines = [`${done}: ${guest.contents.getTitle() || '（タイトルなし）'}`, `URL: ${url}`];
     if (!this.allowed(url)) lines.push('このページは Claude に許していない先なので、これ以上は読めず、操作もできません');
-    const errors = guest.console.filter((l) => l.level === 'error').length;
+    const errors = guest.logs.console.filter((l) => l.level === 'error').length;
     if (errors > 0) lines.push(`コンソールにエラーが ${errors} 件あります（get_console_logs で読めます）`);
-    if (guest.failed.length > 0) lines.push(`失敗した通信が ${guest.failed.length} 件あります（get_failed_requests で読めます）`);
+    if (guest.logs.failed.length > 0) lines.push(`失敗した通信が ${guest.logs.failed.length} 件あります（get_failed_requests で読めます）`);
     return textResult(lines.join('\n'));
   }
 
@@ -399,15 +511,15 @@ export class BrowserControl {
 
   private consoleLogs(guest: Guest, level: string, clear: boolean): ToolResult {
     const levels = level === 'error' ? ['error'] : level === 'warning' ? ['error', 'warning'] : null;
-    const logs = guest.console.filter((l) => !levels || levels.includes(l.level));
-    if (clear) guest.console = [];
+    const logs = guest.logs.console.filter((l) => !levels || levels.includes(l.level));
+    if (clear) guest.logs.console.length = 0;
     if (logs.length === 0) return textResult('コンソールに出たものはありません');
     return textResult(clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT));
   }
 
   private failedRequests(guest: Guest, clear: boolean): ToolResult {
-    const failed = [...guest.failed];
-    if (clear) guest.failed = [];
+    const failed = [...guest.logs.failed];
+    if (clear) guest.logs.failed.length = 0;
     return textResult(failed.length === 0 ? '失敗した通信はありません' : clip(failed.join('\n'), MAX_TEXT));
   }
 
@@ -549,13 +661,13 @@ export class BrowserControl {
 
   private async evaluate(guest: Guest, expression: string): Promise<ToolResult> {
     let value: unknown;
-    const logged = guest.console.length;
+    const logged = guest.logs.console.length;
     try {
       value = await guest.contents.executeJavaScript(expression);
     } catch (error) {
       // 投げられたエラーの中身は、例外には入らずコンソールに出る（届くのを少し待つ）
       await sleep(100);
-      const thrown = guest.console.slice(logged).filter((l) => l.level === 'error').map((l) => l.text);
+      const thrown = guest.logs.console.slice(logged).filter((l) => l.level === 'error').map((l) => l.text);
       throw new ToolError(`実行に失敗しました: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`);
     }
     let text: string;
@@ -569,12 +681,47 @@ export class BrowserControl {
 
   // ---- 部品 ----
 
-  // 開いているページ。開いていない・許していない先なら、理由を添えて断る
-  private current(sessionId: string): Guest {
-    const guest = this.guests.get(sessionId);
-    if (!guest || guest.contents.isDestroyed()) throw new ToolError('このセッションのアプリ内ブラウザで、まだページを開いていません。navigate で開いてください');
-    this.checkUrl(guest.contents.getURL(), '今のページ');
+  // 今のタブのページ。開いていない・許していない先なら、理由を添えて断る
+  private async current(sessionId: string): Promise<Guest> {
+    const guest = await this.activeGuest(sessionId);
+    const url = guest.contents.getURL();
+    if (isBlank(url)) throw new ToolError('今のタブは空です。navigate で開いてください');
+    this.checkUrl(url, '今のページ');
     return guest;
+  }
+
+  // 今のタブ。作った直後で、まだ画面から知らせが来ていなければ少し待つ
+  private async activeGuest(sessionId: string): Promise<Guest> {
+    const started = Date.now();
+    while (true) {
+      const session = this.sessions.get(sessionId);
+      const guest = session?.active ? session.tabs.get(session.active) : undefined;
+      if (guest && !guest.contents.isDestroyed()) return guest;
+      if (!session?.active || Date.now() - started > ACTIVE_WAIT_MS) {
+        throw new ToolError('このセッションのアプリ内ブラウザで、まだページを開いていません。navigate で開いてください');
+      }
+      await sleep(50);
+    }
+  }
+
+  private tabsOf(sessionId: string): Tabs {
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      session = { tabs: new Map(), active: null, blocked: null, opened: [] };
+      this.sessions.set(sessionId, session);
+    }
+    return session;
+  }
+
+  private find(contents: WebContents): { sessionId: string; session: Tabs; guest: Guest } | null {
+    for (const [sessionId, session] of this.sessions) {
+      for (const guest of session.tabs.values()) if (guest.contents === contents) return { sessionId, session, guest };
+    }
+    return null;
+  }
+
+  private operating(sessionId: string): boolean {
+    return (this.running.get(sessionId) ?? 0) > 0 || Date.now() - (this.endedAt.get(sessionId) ?? 0) < OPERATING_GRACE_MS;
   }
 
   private allowed(url: string): boolean {
@@ -684,19 +831,19 @@ export class BrowserControl {
   private emit(activity: BrowserActivity): void {
     this.deps.send(this.deps.channels.activity, activity);
   }
-
-  private guestByContents(id: number): Guest | undefined {
-    for (const guest of this.guests.values()) if (!guest.contents.isDestroyed() && guest.contents.id === id) return guest;
-    return undefined;
-  }
-
-  private trimFailed(contentsId: number): void {
-    const guest = this.guestByContents(contentsId);
-    if (guest && guest.failed.length > MAX_FAILED) guest.failed.splice(0, guest.failed.length - MAX_FAILED);
-  }
 }
 
 // ---- 小さな部品 ----
+
+// 空のタブ（「＋」で開いたもの・まだ何も開いていないもの）
+function isBlank(url: string): boolean {
+  return url === '' || url === 'about:blank';
+}
+
+// タブの ID（tab-<番号>）の番号
+function tabNumber(tabId: string): number {
+  return Number(tabId.replace(/\D/g, '')) || 0;
+}
 
 const MODIFIER_BITS: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 };
 

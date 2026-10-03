@@ -136,10 +136,12 @@ function createWindow(): void {
     if (!/^https?:\/\//.test(params.src) && params.src !== 'about:blank') event.preventDefault();
   });
   contents.on('did-attach-webview', (_e, guest) => {
-    // 新しいウィンドウを開くリンクは、ふだんのブラウザで開く。
-    // Claude の操作で開こうとしたものは開かない（ふだんのブラウザで、許していない先を開かせない）
-    guest.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//.test(url) && !browser?.isOperating(guest)) void shell.openExternal(url);
+    // コンソールと失敗した通信は、ページの最初のスクリプトから集める（Claude が読む）
+    browser?.track(guest);
+    // 新しいウィンドウで開くもの（target=_blank・window.open）は、アプリ内ブラウザの新しいタブで開く（ウィンドウは作らない）。
+    // Claude の操作で、許していない先を開こうとしたものは開かない（browser-control の openFromPage）
+    guest.setWindowOpenHandler(({ url, disposition }) => {
+      if (/^https?:\/\//.test(url) && !browser?.openFromPage(guest, url, disposition) && !browser?.isOperating(guest)) void shell.openExternal(url);
       return { action: 'deny' };
     });
   });
@@ -337,7 +339,11 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.ReadImage, (_e, id: string, relPath: string) =>
     new Workspace(cwdOf(id)).readImage(relPath).catch(() => null),
   );
-  ipcMain.on(IpcChannel.BrowserAttach, (_e, id: string, webContentsId: number) => browser.attach(id, webContentsId));
+  ipcMain.on(IpcChannel.BrowserAttach, (_e, id: string, tabId: string, webContentsId: number) => browser.attach(id, tabId, webContentsId));
+  ipcMain.on(IpcChannel.BrowserActivate, (_e, id: string, tabId: string | null) => browser.activate(id, tabId));
+  ipcMain.handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return shell.openExternal(url);
+  });
   ipcMain.handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   ipcMain.handle(IpcChannel.BrowserHostsSet, (_e, hosts: string[]) => setBrowserHosts(hosts));
 }
@@ -585,7 +591,14 @@ app.whenReady().then(async () => {
     extraHosts: () => settings.browserHosts(),
     host: () => mainWindow?.webContents ?? null,
     hasSession: (id) => !!manager?.summary(id),
-    channels: { open: IpcChannel.BrowserOpen, activity: IpcChannel.BrowserActivity, viewport: IpcChannel.BrowserViewport },
+    channels: {
+      open: IpcChannel.BrowserOpen,
+      activity: IpcChannel.BrowserActivity,
+      viewport: IpcChannel.BrowserViewport,
+      newTab: IpcChannel.BrowserNewTab,
+      selectTab: IpcChannel.BrowserSelectTab,
+      closeTab: IpcChannel.BrowserCloseTab,
+    },
   });
   browser.watchNetwork(session.fromPartition(PREVIEW_PARTITION));
   const bridge = new BrowserBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args) => browser.handle(id, tool, args));

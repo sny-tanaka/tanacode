@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserActivity, BrowserRect } from '@shared/ipc';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
@@ -24,6 +24,7 @@ type Webview = HTMLElement & {
 
 type PageState = {
   url: string;
+  title: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -39,14 +40,14 @@ const WIDTHS = [
   { value: 390, label: 'スマホ' },
   { value: 768, label: 'タブレット' },
 ];
+const EMPTY_PAGE: PageState = { url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, consoleErrors: [] };
 
 type Props = {
   // 見せるセッション（選んでいるセッション。無ければ null）
   sessionId: string | null;
   visible: boolean;
-  // セッションごとの、開くページ（まだ開いていないセッションは無い）。Claude が開いたものも入る
-  urls: Record<string, string>;
-  onNavigate: (sessionId: string, url: string) => void;
+  // 今あるセッション（アーカイブしていないもの）。消えたセッションのタブは閉じる
+  liveSessionIds: readonly string[];
   onClose: () => void;
 };
 
@@ -66,128 +67,187 @@ export function normalizeUrl(input: string): string | null {
   }
 }
 
-// 開発中のページをアプリの中で開く。セッションごとに webview を持ち、切り替えても読み込み直さない。
-// Claude が操作したセッションの webview は、見ていない間も描かせたままにする（display: none だと大きさが 0 になり、撮れず、押せない）。
+let tabSeq = 0;
+
+// 開発中のページをアプリの中で開く。セッションごとにタブ（webview）を持ち、切り替えても読み込み直さない。
+// ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開く（main が知らせてくる）。
+// Claude が操作したセッションの今のタブは、見ていない間も描かせたままにする（display: none だと大きさが 0 になり、撮れず、押せない）。
 // 透明にして画面の後ろに置き、ブラウザを開いたときと同じ大きさで描かせる
-export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: Props) {
+export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Props) {
   const paneRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  // タブの ID → webview
   const views = useRef(new Map<string, Webview>());
-  // 最後に webview に開かせた URL（urls が変わったときだけ移る）
-  const applied = useRef(new Map<string, string>());
+  // セッションごとのタブ（並び順）と、今のタブ。購読の中からも読むので ref に持ち、変えたら描き直す
+  const tabsRef = useRef(new Map<string, string[]>());
+  const activeRef = useRef(new Map<string, string>());
+  const [, setVersion] = useState(0);
+  const rerender = () => setVersion((v) => v + 1);
+  // タブの ID → ページの様子
   const [pages, setPages] = useState<Record<string, PageState>>({});
   const [picking, setPicking] = useState(false);
   // セッションごとの表示幅（0 は全幅）。Claude も変える
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [claude, setClaude] = useState<Record<string, ClaudeActivity>>({});
-  // Claude が操作したことのあるセッション。見ていない間も描かせておく
+  // Claude が操作したことのあるセッション。見ていない間も今のタブを描かせておく
   const [operated, setOperated] = useState<ReadonlySet<string>>(() => new Set());
   // 見ていない間の大きさ（ブラウザを開いたときの場所の大きさ）
   const [offstageSize, setOffstageSize] = useState<{ width: number; height: number } | null>(null);
-  const url = sessionId ? (urls[sessionId] ?? null) : null;
-  const [address, setAddress] = useState(url ?? '');
   const addressRef = useRef<HTMLInputElement>(null);
-  const page = sessionId ? pages[sessionId] : undefined;
+  const sessionTabs = sessionId ? (tabsRef.current.get(sessionId) ?? []) : [];
+  const activeTab = sessionId ? (activeRef.current.get(sessionId) ?? null) : null;
+  const page = activeTab ? pages[activeTab] : undefined;
+  // 空のタブ（「＋」で開いたもの）は、まだ何も開いていないのと同じに扱う
+  const url = page?.url && page.url !== 'about:blank' ? page.url : null;
+  const [address, setAddress] = useState(url ?? '');
   const width = sessionId ? (widths[sessionId] ?? 0) : 0;
   const activity = sessionId ? claude[sessionId] : undefined;
 
-  const update = (id: string, patch: Partial<PageState>) =>
-    setPages((prev) => {
-      const base = prev[id] ?? { url: '', loading: false, canGoBack: false, canGoForward: false, error: null, consoleErrors: [] };
-      return { ...prev, [id]: { ...base, ...patch } };
-    });
+  const update = (tabId: string, patch: Partial<PageState>) =>
+    setPages((prev) => ({ ...prev, [tabId]: { ...(prev[tabId] ?? EMPTY_PAGE), ...patch } }));
 
-  // Claude の操作の様子と、表示幅の切り替え
-  useEffect(
-    () =>
+  // 今のタブを変えて、main に知らせる（Claude の操作は今のタブに対して行う）
+  const activate = (sid: string, tabId: string | null) => {
+    if (tabId) activeRef.current.set(sid, tabId);
+    else activeRef.current.delete(sid);
+    window.tanacode.browser.activate(sid, tabId);
+    rerender();
+  };
+
+  // タブを開く。url が null なら空のタブ。いつも右端に足す（タブの番号を、Claude の list_tabs と同じ並びにする）
+  const openTab = (sid: string, url: string | null, options: { activate?: boolean } = {}) => {
+    const tabId = `tab-${++tabSeq}`;
+    const wv = document.createElement('webview') as Webview;
+    wv.setAttribute('partition', PARTITION);
+    // allowpopups が無いと、新しいウィンドウで開くもの（target=_blank・window.open）は main に届かずに捨てられる。
+    // 届いたものは、main がウィンドウを作らずに新しいタブで開かせる（setWindowOpenHandler）
+    wv.setAttribute('allowpopups', '');
+    wv.className = 'preview-webview';
+    const sync = () => update(tabId, { url: wv.getURL(), canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() });
+    // 中身（webContents）ができたら main に知らせる。Claude の操作は、main がこれを直接動かす。
+    // getWebContentsId は dom-ready の前に呼ぶと例外になる。ページを移るたびに届くが、main は同じ中身なら何もしない
+    wv.addEventListener('dom-ready', () => {
+      if (typeof wv.getWebContentsId === 'function') window.tanacode.browser.attach(sid, tabId, wv.getWebContentsId());
+    });
+    wv.addEventListener('did-start-loading', () => update(tabId, { loading: true, error: null }));
+    wv.addEventListener('did-stop-loading', () => {
+      update(tabId, { loading: false });
+      sync();
+    });
+    wv.addEventListener('did-navigate', sync);
+    wv.addEventListener('did-navigate-in-page', sync);
+    wv.addEventListener('page-title-updated', (e) => update(tabId, { title: (e as unknown as { title: string }).title }));
+    wv.addEventListener('did-fail-load', (e) => {
+      const { errorCode, errorDescription, isMainFrame, validatedURL } = e as unknown as {
+        errorCode: number;
+        errorDescription: string;
+        isMainFrame: boolean;
+        validatedURL: string;
+      };
+      // -3 は別のページへ移ったための中断
+      if (isMainFrame && errorCode !== -3) update(tabId, { error: `${validatedURL} を読み込めませんでした（${errorDescription}）`, loading: false });
+    });
+    wv.addEventListener('console-message', (e) => {
+      const { level, message, sourceId, line } = e as unknown as { level: number | string; message: string; sourceId?: string; line?: number };
+      if (level !== 3 && level !== 'error') return;
+      const where = sourceId ? ` (${sourceId.replace(/^https?:\/\/[^/]+/, '') || sourceId}${line ? `:${line}` : ''})` : '';
+      setPages((prev) => {
+        const current = prev[tabId];
+        if (!current) return prev;
+        return { ...prev, [tabId]: { ...current, consoleErrors: [...current.consoleErrors, message + where].slice(-MAX_CONSOLE_ERRORS) } };
+      });
+    });
+    wv.src = url ?? 'about:blank';
+    views.current.set(tabId, wv);
+    update(tabId, { url: url ?? '', loading: !!url });
+    tabsRef.current.set(sid, [...(tabsRef.current.get(sid) ?? []), tabId]);
+    hostRef.current!.appendChild(wv);
+    if (options.activate !== false || !activeRef.current.has(sid)) activate(sid, tabId);
+    else rerender();
+    return tabId;
+  };
+
+  // タブを閉じる。今のタブなら、右（無ければ左）のタブに移る
+  const closeTab = (sid: string, tabId: string) => {
+    const list = tabsRef.current.get(sid) ?? [];
+    const index = list.indexOf(tabId);
+    if (index < 0) return;
+    views.current.get(tabId)?.remove();
+    views.current.delete(tabId);
+    setPages((prev) => {
+      const { [tabId]: _, ...rest } = prev;
+      return rest;
+    });
+    const next = list.filter((id) => id !== tabId);
+    if (next.length > 0) tabsRef.current.set(sid, next);
+    else tabsRef.current.delete(sid);
+    if (activeRef.current.get(sid) === tabId) activate(sid, next[Math.min(index, next.length - 1)] ?? null);
+    else rerender();
+  };
+
+  const closeSession = (sid: string) => {
+    for (const tabId of [...(tabsRef.current.get(sid) ?? [])]) closeTab(sid, tabId);
+  };
+
+  // main からの知らせ: Claude の操作の様子・表示幅・タブを開く／選ぶ／閉じる
+  useEffect(() => {
+    const offs = [
       window.tanacode.browser.onActivity(({ sessionId: id, ...rest }) => {
         setClaude((prev) => ({ ...prev, [id]: rest }));
         if (rest.active) setOperated((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
       }),
-    [],
-  );
-  useEffect(() => window.tanacode.browser.onViewport(({ sessionId: id, width: w }) => setWidths((prev) => ({ ...prev, [id]: w }))), []);
+      window.tanacode.browser.onViewport(({ sessionId: id, width: w }) => setWidths((prev) => ({ ...prev, [id]: w }))),
+      // Claude が、まだタブの無いセッションでページを開く
+      window.tanacode.browser.onOpen(({ sessionId: id, url: next }) => {
+        const current = activeRef.current.get(id);
+        const wv = current ? views.current.get(current) : undefined;
+        if (wv) wv.src = next;
+        else openTab(id, next);
+      }),
+      // ページが新しいウィンドウで開こうとした（target=_blank・window.open）か、Claude が新しいタブで開く
+      window.tanacode.browser.onNewTab(({ sessionId: id, url: next, background }) => openTab(id, next, { activate: !background })),
+      window.tanacode.browser.onSelectTab(({ sessionId: id, tabId }) => {
+        if (tabsRef.current.get(id)?.includes(tabId)) activate(id, tabId);
+      }),
+      window.tanacode.browser.onCloseTab(({ sessionId: id, tabId }) => closeTab(id, tabId)),
+    ];
+    return () => offs.forEach((off) => off());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // セッションの webview を用意し（見ていないセッションの分も。Claude が開いたもの）、開く URL が変わったら移る
+  // 消した・アーカイブしたセッションのタブは閉じる
+  const liveKey = liveSessionIds.join(',');
   useEffect(() => {
-    for (const [id, next] of Object.entries(urls)) {
-      const existing = views.current.get(id);
-      if (existing) {
-        if (applied.current.get(id) !== next) {
-          applied.current.set(id, next);
-          existing.src = next;
-        }
-        continue;
-      }
-      const wv = document.createElement('webview') as Webview;
-      wv.setAttribute('partition', PARTITION);
-      wv.className = 'preview-webview';
-      const sync = () => update(id, { url: wv.getURL(), canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() });
-      // 中身（webContents）ができたら main に知らせる。Claude の操作は、main がこれを直接動かす
-      wv.addEventListener('did-attach', () => {
-        if (typeof wv.getWebContentsId === 'function') window.tanacode.browser.attach(id, wv.getWebContentsId());
-      });
-      wv.addEventListener('did-start-loading', () => update(id, { loading: true, error: null }));
-      wv.addEventListener('did-stop-loading', () => {
-        update(id, { loading: false });
-        sync();
-      });
-      wv.addEventListener('did-navigate', sync);
-      wv.addEventListener('did-navigate-in-page', sync);
-      wv.addEventListener('did-fail-load', (e) => {
-        const { errorCode, errorDescription, isMainFrame, validatedURL } = e as unknown as {
-          errorCode: number;
-          errorDescription: string;
-          isMainFrame: boolean;
-          validatedURL: string;
-        };
-        // -3 は別のページへ移ったための中断
-        if (isMainFrame && errorCode !== -3) update(id, { error: `${validatedURL} を読み込めませんでした（${errorDescription}）`, loading: false });
-      });
-      wv.addEventListener('console-message', (e) => {
-        const { level, message, sourceId, line } = e as unknown as { level: number | string; message: string; sourceId?: string; line?: number };
-        if (level !== 3 && level !== 'error') return;
-        const where = sourceId ? ` (${sourceId.replace(/^https?:\/\/[^/]+/, '') || sourceId}${line ? `:${line}` : ''})` : '';
-        setPages((prev) => {
-          const current = prev[id];
-          if (!current) return prev;
-          return { ...prev, [id]: { ...current, consoleErrors: [...current.consoleErrors, message + where].slice(-MAX_CONSOLE_ERRORS) } };
+    const live = new Set(liveSessionIds);
+    for (const sid of [...tabsRef.current.keys()]) if (!live.has(sid)) closeSession(sid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveKey]);
+
+  // 見せるセッションの今のタブだけを出す。Claude が操作したセッションの今のタブは、透明にして描かせたままにする。
+  // 描く前に決める（裏で開いたタブが、一瞬見えないように）
+  useLayoutEffect(() => {
+    for (const [sid, list] of tabsRef.current) {
+      const current = activeRef.current.get(sid);
+      for (const tabId of list) {
+        const wv = views.current.get(tabId);
+        if (!wv) continue;
+        const shown = visible && sid === sessionId && tabId === current;
+        const background = !shown && tabId === current && operated.has(sid);
+        const w = widths[sid] ?? 0;
+        Object.assign(wv.style, {
+          display: shown || background ? '' : 'none',
+          opacity: background ? '0' : '',
+          pointerEvents: background ? 'none' : '',
+          zIndex: background ? '-1' : '',
+          // ほかのセッションの表示幅は、そのセッションのもの（見せているセッションは枠の幅に合わせる）
+          width: background && sid !== sessionId && w ? `${w}px` : '',
         });
-      });
-      wv.src = next;
-      applied.current.set(id, next);
-      views.current.set(id, wv);
-      update(id, { url: next, loading: true });
-      hostRef.current!.appendChild(wv);
+      }
     }
-    // 消したセッションの webview は捨てる
-    for (const [id, wv] of views.current) {
-      if (id in urls) continue;
-      wv.remove();
-      views.current.delete(id);
-      applied.current.delete(id);
-    }
-  }, [urls]);
-
-  // 見せるセッションの webview だけを出す。Claude が操作したものは、透明にして描かせたままにする
-  useEffect(() => {
-    for (const [id, wv] of views.current) {
-      const shown = visible && id === sessionId;
-      const background = !shown && operated.has(id);
-      const w = widths[id] ?? 0;
-      Object.assign(wv.style, {
-        display: shown || background ? '' : 'none',
-        opacity: background ? '0' : '',
-        pointerEvents: background ? 'none' : '',
-        zIndex: background ? '-1' : '',
-        // ほかのセッションの表示幅は、そのセッションのもの（見せているセッションは枠の幅に合わせる）
-        width: background && id !== sessionId && w ? `${w}px` : '',
-      });
-    }
-  }, [sessionId, visible, operated, widths, urls]);
+  });
 
   // 見ていない間の大きさを、ブラウザを開いたときの場所（中央の列）に合わせる
-  const offstage = !visible && [...operated].some((id) => views.current.has(id));
+  const offstage = !visible && [...operated].some((sid) => activeRef.current.has(sid));
   useEffect(() => {
     const parent = paneRef.current?.parentElement;
     if (!offstage || !parent) return;
@@ -198,30 +258,33 @@ export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: P
     return () => observer.disconnect();
   }, [offstage]);
 
-  useEffect(() => setAddress(page?.url || url || ''), [sessionId, page?.url, url]);
+  useEffect(() => setAddress(url ?? ''), [sessionId, activeTab, url]);
 
-  // まだ何も開いていなければ、すぐ URL を貼れるようにアドレス欄にカーソルを置く
+  // まだ何も開いていなければ（空のタブも）、すぐ URL を貼れるようにアドレス欄にカーソルを置く
   useEffect(() => {
     if (visible && !url) addressRef.current?.focus();
-  }, [visible, url, sessionId]);
+  }, [visible, url, sessionId, activeTab]);
 
-  // セッションを切り替えたり閉じたりしたら、要素選びをやめる
+  // セッションやタブを切り替えたり閉じたりしたら、要素選びをやめる
   useEffect(() => {
-    if (picking && !visible) cancelPick();
+    if (picking) cancelPick();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, sessionId]);
+  }, [visible, sessionId, activeTab]);
 
-  const current = () => (sessionId ? views.current.get(sessionId) : undefined);
+  const current = () => (activeTab ? views.current.get(activeTab) : undefined);
 
   const go = (input: string) => {
     const next = normalizeUrl(input);
     if (!next || !sessionId) return;
-    onNavigate(sessionId, next);
     const wv = current();
-    if (wv) {
-      applied.current.set(sessionId, next);
-      wv.src = next;
-    }
+    if (wv) wv.src = next;
+    else openTab(sessionId, next);
+  };
+
+  const newTab = () => {
+    if (!sessionId) return;
+    openTab(sessionId, null);
+    addressRef.current?.focus();
   };
 
   const cancelPick = () => {
@@ -252,10 +315,10 @@ export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: P
   };
 
   const sendErrors = () => {
-    if (!page || !sessionId || page.consoleErrors.length === 0) return;
+    if (!page || !activeTab || !sessionId || page.consoleErrors.length === 0) return;
     // エラーの文はページが書けるので、中に ``` があってもブロックから抜けないようにする
     insertIntoChat(sessionId, `アプリ内ブラウザ（${page.url}）のコンソールに出たエラー:\n${codeBlock(page.consoleErrors.join('\n'))}\n`);
-    update(sessionId, { consoleErrors: [] });
+    update(activeTab, { consoleErrors: [] });
   };
 
   const wv = current();
@@ -269,6 +332,15 @@ export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: P
       aria-hidden={!visible}
       style={offstage && offstageSize ? { width: offstageSize.width, height: offstageSize.height } : undefined}
     >
+      {sessionId && sessionTabs.length > 0 && (
+        <TabStrip
+          tabs={sessionTabs.map((id) => ({ id, title: pages[id]?.title ?? '', url: pages[id]?.url ?? '', loading: pages[id]?.loading ?? false }))}
+          active={activeTab}
+          onSelect={(tabId) => activate(sessionId, tabId)}
+          onClose={(tabId) => closeTab(sessionId, tabId)}
+          onNew={newTab}
+        />
+      )}
       <div className="preview-toolbar">
         <button className="preview-nav" disabled={!page?.canGoBack} onClick={() => wv?.goBack()} data-tip="戻る" aria-label="戻る">
           ←
@@ -322,6 +394,15 @@ export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: P
             エラー {page.consoleErrors.length} 件
           </button>
         )}
+        <button
+          className="preview-nav"
+          disabled={!shown}
+          onClick={() => url && void window.tanacode.browser.openExternal(url)}
+          data-tip="ふだんのブラウザで開く"
+          aria-label="ふだんのブラウザで開く"
+        >
+          ↗
+        </button>
         <button className="preview-nav" disabled={!shown} onClick={() => wv?.openDevTools()} data-tip="開発者ツール" aria-label="開発者ツール">
           ⚙
         </button>
@@ -349,6 +430,60 @@ export function PreviewPane({ sessionId, visible, urls, onNavigate, onClose }: P
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+type TabInfo = { id: string; title: string; url: string; loading: boolean };
+
+// ブラウザのタブの並び。中ボタンのクリックでも閉じる
+export function TabStrip({
+  tabs,
+  active,
+  onSelect,
+  onClose,
+  onNew,
+}: {
+  tabs: TabInfo[];
+  active: string | null;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+  onNew: () => void;
+}) {
+  return (
+    <div className="preview-tabs" role="tablist" aria-label="ブラウザのタブ">
+      {tabs.map((tab) => {
+        const label = tab.title || (tab.url && tab.url !== 'about:blank' ? tab.url.replace(/^https?:\/\//, '') : '新しいタブ');
+        return (
+          <div
+            key={tab.id}
+            role="tab"
+            aria-selected={tab.id === active}
+            className={`preview-tab${tab.id === active ? ' active' : ''}`}
+            title={tab.url && tab.url !== 'about:blank' ? `${tab.title ? `${tab.title}\n` : ''}${tab.url}` : undefined}
+            onMouseDown={(e) => {
+              if (e.button === 0) onSelect(tab.id);
+            }}
+            onAuxClick={(e) => {
+              if (e.button === 1) onClose(tab.id);
+            }}
+          >
+            {tab.loading && <span className="tool-dot running" />}
+            <span className="preview-tab-title">{label}</span>
+            <button
+              className="preview-tab-close"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onClose(tab.id)}
+              aria-label="タブを閉じる"
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+      <button className="preview-tab-new" onClick={onNew} data-tip="新しいタブ" aria-label="新しいタブ">
+        ＋
+      </button>
     </div>
   );
 }

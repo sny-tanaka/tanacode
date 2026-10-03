@@ -106,8 +106,6 @@ export function App() {
   // 左から 3 番目のペイン
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
-  // セッションごとの、アプリ内ブラウザで開いているページ（Claude が開いたものも）
-  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   // アプリ内ブラウザで Claude に許す先のダイアログ（メニューから開く）
   const [browserHostsOpen, setBrowserHostsOpen] = useState(false);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
@@ -252,21 +250,16 @@ export function App() {
       if (sessionId === selectedIdRef.current) setDiffView({ source: 'preview' });
       else browsedUnseen.current.add(sessionId);
     });
-    const offOpen = window.tanacode.browser.onOpen(({ sessionId, url }) => setPreviewUrls((prev) => ({ ...prev, [sessionId]: url })));
     const offHosts = window.tanacode.browser.onHostsOpen(() => setBrowserHostsOpen(true));
     return () => {
       offActivity();
-      offOpen();
       offHosts();
     };
   }, []);
 
-  // 消した・アーカイブしたセッションのブラウザは閉じる
-  useEffect(() => {
-    if (!sessions) return;
-    const live = new Set(sessions.filter((s) => !s.archived).map((s) => s.id));
-    setPreviewUrls((prev) => (Object.keys(prev).every((id) => live.has(id)) ? prev : Object.fromEntries(Object.entries(prev).filter(([id]) => live.has(id)))));
-  }, [sessions]);
+  // アーカイブしていないセッション（ブラウザのタブを持っておくもの。消した・アーカイブしたセッションのタブは閉じる）
+  const liveKey = (sessions ?? []).filter((s) => !s.archived).map((s) => s.id).join(',');
+  const liveSessionIds = useMemo(() => (liveKey ? liveKey.split(',') : []), [liveKey]);
 
   useEffect(() => {
     if (!viewId || workspaces[viewId]) return;
@@ -436,7 +429,6 @@ export function App() {
   const statuses = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, chatOf(s.id).status])), [statusKey]);
   const statusOf = useCallback((id: string) => statuses.get(id) ?? 'not-started', [statuses]);
   const openImport = useCallback(() => setImporting(true), []);
-  const navigatePreview = useCallback((id: string, url: string) => setPreviewUrls((prev) => ({ ...prev, [id]: url })), []);
   const closeCenter = useCallback(() => setDiffView(null), []);
   const removeSession = useCallback(
     (id: string) => {
@@ -692,8 +684,7 @@ export function App() {
           <PreviewPane
             sessionId={selected && !selected.archived ? selected.id : null}
             visible={diffView?.source === 'preview' && !!selected && !selected.archived}
-            urls={previewUrls}
-            onNavigate={navigatePreview}
+            liveSessionIds={liveSessionIds}
             onClose={closeCenter}
           />
           <TerminalPanel

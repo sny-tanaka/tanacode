@@ -367,7 +367,12 @@ export class DemoBackend {
       },
       browser: {
         attach: () => {},
+        activate: () => {},
         onOpen: () => () => {},
+        onNewTab: () => () => {},
+        onSelectTab: () => () => {},
+        onCloseTab: () => () => {},
+        openExternal: () => ok(undefined),
         onActivity: () => () => {},
         onViewport: () => () => {},
         hosts: () => ok([]),

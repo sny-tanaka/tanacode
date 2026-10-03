@@ -4190,6 +4190,75 @@ body.resizing-rows {
 .preview-pane[hidden] {
   display: none;
 }
+/* ブラウザのタブ（エディタのタブと同じ形。グラデーションの上端は付けない） */
+.preview-tabs {
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-tabs::-webkit-scrollbar {
+  height: 0;
+}
+.preview-tab {
+  flex: 0 1 200px;
+  min-width: 90px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 12px;
+  cursor: pointer;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.preview-tab.active {
+  background: var(--bg-panel);
+  color: var(--text-heading);
+}
+.preview-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-tab-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  visibility: hidden;
+}
+.preview-tab:hover .preview-tab-close,
+.preview-tab.active .preview-tab-close {
+  visibility: visible;
+}
+.preview-tab-close:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.preview-tab-new {
+  flex: none;
+  width: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.preview-tab-new:hover {
+  color: var(--text-primary);
+  background: var(--bg-selected);
+}
 /* Claude が操作したセッションのブラウザを、見ていない間も描かせておく（透明にして、ほかの表示の後ろに置く。大きさは画面が決める） */
 .preview-pane.offstage {
   position: absolute;
