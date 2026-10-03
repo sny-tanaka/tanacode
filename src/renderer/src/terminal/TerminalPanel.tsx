@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { insertIntoChat } from '../chat/insertInput';
+import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
 import { ClaudeScreen } from './ClaudeScreen';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
 import { useRunInTerminal } from './runInTerminal';
@@ -29,7 +30,10 @@ function loadHeight(): number {
 }
 
 type Props = {
+  // 持ち主（セッション。新規セッションの画面では、そこで開いているフォルダ）
   sessionId: string | null;
+  // Claude Code の画面のタブを出すか（新規セッションの画面には、画面を出す Claude Code がない）
+  claudeScreen?: boolean;
   open: boolean;
   view: TerminalView;
   onView: (view: TerminalView) => void;
@@ -38,7 +42,8 @@ type Props = {
 
 // エディタの下のターミナル。セッションごとに、そのフォルダでシェルを好きなだけ開ける。
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
-export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props) {
+export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requestedView, onView, onClose }: Props) {
+  const view: TerminalView = claudeScreen ? requestedView : 'shell';
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
   // xterm を用意する前に届いた出力
@@ -256,37 +261,39 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
               title={t.title ?? t.name}
             >
               <span>{t.task ? taskLabel(t) : (t.title ?? `${t.name} ${i + 1}`)}</span>
-              <button
-                className="terminal-tab-close"
-                aria-label="このターミナルを閉じる"
-                data-tip={t.task && t.exitCode === undefined ? '止めて閉じる' : 'このターミナルを閉じる'}
+              <IconButton
+                icon={CloseIcon}
+                size="sm"
+                label="このターミナルを閉じる"
+                tip={t.task && t.exitCode === undefined ? '止めて閉じる' : 'このターミナルを閉じる'}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (t.task && t.exitCode !== undefined) closeTask(t.id);
                   else window.tanacode.shell.kill(t.id);
                 }}
-              >
-                ×
-              </button>
+              />
             </div>
           ))}
-          <button
-            className="terminal-add"
-            data-tip="新しいターミナル"
-            aria-label="新しいターミナル"
+          <IconButton
+            icon={AddIcon}
+            size="sm"
+            label="新しいターミナル"
             onClick={() => {
               onView('shell');
               if (sessionId) void newShell(sessionId);
             }}
-          >
-            ＋
-          </button>
+          />
         </div>
         {view === 'shell' && (
-          <button className="ghost-button" disabled={!hasSelection} onClick={sendSelection} title="ターミナルで選んだ出力を、チャットの入力欄に貼る">
-            Claude へ送る
-          </button>
+          <IconButton
+            icon={SendIcon}
+            label="Claude へ送る"
+            tip={'Claude へ送る\nターミナルで選んだ出力を、チャットの入力欄に貼る'}
+            disabled={!hasSelection}
+            onClick={sendSelection}
+          />
         )}
+        {claudeScreen && (
         <button
           role="tab"
           aria-selected={view === 'claude'}
@@ -296,9 +303,8 @@ export function TerminalPanel({ sessionId, open, view, onView, onClose }: Props)
         >
           Claude Code
         </button>
-        <button className="terminal-panel-close" onClick={onClose} data-tip="パネルを閉じる（⌃`）" aria-label="パネルを閉じる">
-          ×
-        </button>
+        )}
+        <IconButton icon={CloseIcon} label="パネルを閉じる" tip="パネルを閉じる（⌃`）" onClick={onClose} />
       </div>
       <div className="terminal-panel-body">
         <div className="terminal-host" hidden={view !== 'shell'} ref={hostRef} />

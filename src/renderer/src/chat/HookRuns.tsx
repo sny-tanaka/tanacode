@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { HookRun } from '@shared/chat';
+import { CheckIcon, CloseIcon, InfoCircleIcon, StopIcon } from '../icons';
 
 const OUTCOME = {
-  success: { label: '成功', mark: '✓' },
-  blocked: { label: '止めた', mark: '■' },
-  error: { label: '失敗', mark: '✕' },
-  context: { label: 'Claude に情報を渡した', mark: 'ℹ' },
+  success: { label: '成功', Mark: CheckIcon },
+  blocked: { label: '止めた', Mark: StopIcon },
+  error: { label: '失敗', Mark: CloseIcon },
+  context: { label: 'Claude に情報を渡した', Mark: InfoCircleIcon },
 } as const;
 
 // hooks の実行の一覧。1 件ずつ小さく並べ、クリックでコマンドと出力を開く
@@ -16,7 +17,7 @@ export function HookRuns({ runs }: { runs: HookRun[] }) {
       {runs.map((run, i) => (
         <div key={i} className={`hook-run ${run.outcome}`}>
           <button className="hook-chip" onClick={() => setOpen(open === i ? null : i)} title={run.command ?? run.name}>
-            <span className="hook-mark">{OUTCOME[run.outcome].mark}</span>
+            <HookMark outcome={run.outcome} />
             <span className="hook-event">{run.event}</span>
             <span className="hook-command">{run.command ?? run.name}</span>
             {run.durationMs !== null && <span className="hook-time">{formatMs(run.durationMs)}</span>}
@@ -25,6 +26,15 @@ export function HookRuns({ runs }: { runs: HookRun[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function HookMark({ outcome }: { outcome: HookRun['outcome'] }) {
+  const { Mark } = OUTCOME[outcome];
+  return (
+    <span className="hook-mark">
+      <Mark size={12} />
+    </span>
   );
 }
 

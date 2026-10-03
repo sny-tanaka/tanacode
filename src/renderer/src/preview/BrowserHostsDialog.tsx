@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_BROWSER_HOSTS, normalizeHostPattern } from '@shared/browser-tools';
 import { errorMessage } from '../errorMessage';
+import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 
 // アプリ内ブラウザで、Claude が開いて・読んで・操作してよい先。既定（localhost・127.0.0.1・*.local）に足す。
 // アプリ内ブラウザはログイン状態を共有するので、外のサイトは、ユーザーが足したものだけにする。メニューから開く
@@ -86,9 +87,7 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
               <div className="settings-file-body">
                 <span className="browser-host">{host}</span>
               </div>
-              <button className="ghost-button" onClick={() => void remove(host)}>
-                削除
-              </button>
+              <IconButton icon={TrashIcon} danger label="削除" onClick={() => void remove(host)} />
             </div>
           ))}
         </div>
@@ -109,12 +108,8 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
             spellCheck={false}
             aria-label="足す先"
           />
-          <button type="submit" className="ghost-button" disabled={!input.trim()}>
-            追加
-          </button>
-          <button type="button" className="ghost-button" onClick={onClose}>
-            閉じる
-          </button>
+          <IconButton icon={AddIcon} type="submit" label="追加" disabled={!input.trim()} />
+          <IconButton icon={CloseIcon} label="閉じる" tip="閉じる（Esc）" onClick={onClose} />
         </form>
       </div>
     </div>

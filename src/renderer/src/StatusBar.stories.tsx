@@ -4,8 +4,6 @@ import type { SystemStats } from '@shared/system';
 import { mockApi } from '../../../.storybook/mockApi';
 import { StatusBar } from './StatusBar';
 
-const noop = () => {};
-
 // 動作確認済のバージョンの最後の数字をずらした版
 const shifted = (delta: number) => VERIFIED_CLAUDE_CODE_VERSION.replace(/\d+$/, (n) => String(Number(n) + delta));
 
@@ -14,10 +12,6 @@ const meta = {
   component: StatusBar,
   parameters: { width: 1200, background: '--bg-chrome' },
   args: {
-    previewOpen: false,
-    onTogglePreview: noop,
-    terminalOpen: true,
-    onToggleTerminal: noop,
     status: 'idle',
     exitCode: null,
     branch: 'develop',

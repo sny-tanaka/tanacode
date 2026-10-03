@@ -290,6 +290,9 @@ function registerIpc(): void {
     if (cwd === undefined) return;
     folderViews.delete(id);
     watchers.release(cwd);
+    // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
+    shells.killOwner(id);
+    browser.forget(id);
   });
   ipcMain.handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
   ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string, options?: ArchiveOptions) => {
@@ -369,7 +372,7 @@ function registerIpc(): void {
   ipcMain.on(IpcChannel.PtyResize, (_e, id: string, cols: number, rows: number) => manager.resize(id, cols, rows));
   ipcMain.on(IpcChannel.PtyResetSize, (_e, id: string) => manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
   ipcMain.handle(IpcChannel.ShellCreate, (_e, id: string, cols: number, rows: number) =>
-    shells.create(id, manager.cwdOf(id), cols, rows),
+    shells.create(id, cwdOf(id), cols, rows),
   );
   ipcMain.on(IpcChannel.ShellWrite, (_e, id: string, data: string) => shells.write(id, data));
   ipcMain.on(IpcChannel.ShellResize, (_e, id: string, cols: number, rows: number) => shells.resize(id, cols, rows));

@@ -4,7 +4,22 @@ import { buildTree, filesInTreeOrder, visibleRows } from '@shared/scm-tree';
 import { CommentList } from '../review/CommentList';
 import type { ReviewComment } from '../review/LineComments';
 import { Busy } from '../layout/Busy';
-import { FetchIcon, ListViewIcon, TreeViewIcon } from '../layout/icons';
+import {
+  AddIcon,
+  BranchIcon,
+  ChevronDownIcon,
+  DefaultBranchIcon,
+  DisclosureIcon,
+  FetchIcon,
+  IconButton,
+  ListViewIcon,
+  MinusIcon,
+  PullIcon,
+  PushIcon,
+  TreeViewIcon,
+  UndoIcon,
+  type IconComponent,
+} from '../icons';
 import type { ScmView } from './scmView';
 
 type Props = {
@@ -91,29 +106,30 @@ export const ScmPanel = memo(function ScmPanel({
           }
           title="ブランチを切り替える"
         >
-          <span className="scm-branch-icon">⎇</span>
+          <span className="scm-branch-icon">
+            <BranchIcon size={14} />
+          </span>
           {state.branch ?? '(detached)'}
-          <span className="tree-chevron">▾</span>
+          <span className="tree-chevron">
+            <ChevronDownIcon size={12} />
+          </span>
         </button>
         <div className="spacer" />
         {/* 押すと切り替わる先のアイコンと名前を出す（VS Code と同じ） */}
-        <button
-          className="scm-sync scm-icon"
+        <IconButton
+          icon={view === 'tree' ? ListViewIcon : TreeViewIcon}
+          label={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
           onClick={() => onViewChange(view === 'tree' ? 'list' : 'tree')}
-          data-tip={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
-          aria-label={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
-        >
-          {view === 'tree' ? <ListViewIcon size={14} /> : <TreeViewIcon size={14} />}
-        </button>
+        />
         <button className="scm-sync" disabled={!!busy} onClick={() => void run({ kind: 'pull' }, 'プル中…')} data-tip={state.upstream ? `${state.upstream} からプル` : 'プル'} aria-label="プル">
-          ↓{state.behind || ''}
+          <PullIcon size={14} />
+          {state.behind || ''}
         </button>
         <button className="scm-sync" disabled={!!busy || state.empty} onClick={() => void run({ kind: 'push' }, 'プッシュ中…')} data-tip={state.upstream ? `${state.upstream} へプッシュ` : 'origin にプッシュ（上流を設定）'} aria-label="プッシュ">
-          ↑{state.ahead || ''}
+          <PushIcon size={14} />
+          {state.ahead || ''}
         </button>
-        <button className="scm-sync scm-icon" disabled={!!busy} onClick={() => void run({ kind: 'fetch' }, 'フェッチ中…')} data-tip="フェッチ" aria-label="フェッチ">
-          <FetchIcon size={14} />
-        </button>
+        <IconButton icon={FetchIcon} label="フェッチ" disabled={!!busy} onClick={() => void run({ kind: 'fetch' }, 'フェッチ中…')} />
       </div>
       {branchMenu && (
         <BranchMenu
@@ -166,7 +182,7 @@ export const ScmPanel = memo(function ScmPanel({
           view={view}
           staged
           onOpen={(e) => onOpenDiff(e.path, true)}
-          actions={[{ label: '−', title: 'ステージを取り消す', run: (paths) => void run({ kind: 'unstage', paths }, '取り消し中…') }]}
+          actions={[{ icon: MinusIcon, title: 'ステージを取り消す', run: (paths) => void run({ kind: 'unstage', paths }, '取り消し中…') }]}
         />
         <Section
           title="変更"
@@ -176,8 +192,9 @@ export const ScmPanel = memo(function ScmPanel({
           onOpen={(e) => onOpenDiff(e.path, false)}
           actions={[
             {
-              label: '↺',
+              icon: UndoIcon,
               title: '変更を破棄',
+              danger: true,
               run: (paths) => {
                 const what = paths.length === 1 ? paths[0] : `${paths.length} 件のファイル`;
                 if (window.confirm(`${what} の変更を破棄しますか？（未追跡のファイルは削除されます。元に戻せません）`)) {
@@ -185,7 +202,7 @@ export const ScmPanel = memo(function ScmPanel({
                 }
               },
             },
-            { label: '+', title: 'ステージする', run: (paths) => void run({ kind: 'stage', paths }, 'ステージ中…') },
+            { icon: AddIcon, title: 'ステージする', run: (paths) => void run({ kind: 'stage', paths }, 'ステージ中…') },
           ]}
         />
         <CommentList comments={comments} onShow={onShowComment} onRemove={onRemoveComment} />
@@ -204,10 +221,10 @@ export function branchPaths(changes: BranchChanges | null, view: ScmView): strin
   return view === 'tree' ? filesInTreeOrder(buildTree(paths.map((path) => ({ path })))).map((item) => item.path) : paths;
 }
 
-// ツリーの行の左の余白。フォルダは矢印から、ファイルはフォルダの名前に合わせて 1 段ずつ右に下げる
+// ツリーの行の左の余白。フォルダは矢印から、ファイルはフォルダの名前（矢印 12px とすき間 6px のあと）に合わせて 1 段ずつ右に下げる
 const TREE_INDENT = 12;
 const dirPadding = (depth: number) => 10 + depth * TREE_INDENT;
-const filePadding = (depth: number) => 26 + depth * TREE_INDENT;
+const filePadding = (depth: number) => 28 + depth * TREE_INDENT;
 
 // 変更の行を、一覧（ファイルを並べるだけ）かツリー（フォルダごと）で出す。
 // ツリーでは、フォルダの行を押すと畳める。フォルダの行の操作は、フォルダの下のすべてのファイルに効く。
@@ -235,23 +252,26 @@ function ChangeRows<T extends { path: string }>({
     node.kind === 'file' ? (
       <Fragment key={`f:${node.path}`}>{renderFile(node.item, depth)}</Fragment>
     ) : (
-      <div key={`d:${node.path}`} className="scm-row scm-dir-row" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} title={node.path}>
-        <span className="tree-chevron">{collapsed.has(node.path) ? '▸' : '▾'}</span>
+      <div key={`d:${node.path}`} className="scm-row scm-dir-row reveal-host" style={{ paddingLeft: dirPadding(depth) }} onClick={() => toggle(node.path)} title={node.path}>
+        <span className="tree-chevron">
+          <DisclosureIcon open={!collapsed.has(node.path)} />
+        </span>
         <span className="scm-dir-name">{node.name}</span>
         {actions && (
           <span className="scm-actions">
             {actions.map((a) => (
-              <button
-                key={a.label}
-                data-tip={`${a.title}（フォルダ内すべて）`}
-                aria-label={`${a.title}（フォルダ内すべて）`}
+              <IconButton
+                key={a.title}
+                reveal
+                size="sm"
+                icon={a.icon}
+                danger={a.danger}
+                label={`${a.title}（フォルダ内すべて）`}
                 onClick={(e) => {
                   e.stopPropagation();
                   a.run(node.items.map((x) => x.path));
                 }}
-              >
-                {a.label}
-              </button>
+              />
             ))}
           </span>
         )}
@@ -283,7 +303,9 @@ function BranchSection({
   return (
     <div className="scm-section">
       <div className="scm-section-head" onClick={() => setOpen((v) => !v)} title={from}>
-        <span className="tree-chevron">{open ? '▾' : '▸'}</span>
+        <span className="tree-chevron">
+          <DisclosureIcon open={open} />
+        </span>
         <span className="scm-section-title">ブランチの変更</span>
         <span className="scm-count">{paths.length}</span>
       </div>
@@ -348,7 +370,8 @@ function BranchRow({
   );
 }
 
-type Action = { label: string; title: string; run: (paths: string[]) => void };
+// icon: ボタンの絵。title: ボタンの名前。danger: 元に戻せない操作（hover で赤くする）
+type Action = { icon: IconComponent; title: string; danger?: boolean; run: (paths: string[]) => void };
 
 function Section({
   title,
@@ -369,24 +392,27 @@ function Section({
   if (entries.length === 0 && staged) return null;
   return (
     <div className="scm-section">
-      <div className="scm-section-head" onClick={() => setOpen((v) => !v)}>
-        <span className="tree-chevron">{open ? '▾' : '▸'}</span>
+      <div className="scm-section-head reveal-host" onClick={() => setOpen((v) => !v)}>
+        <span className="tree-chevron">
+          <DisclosureIcon open={open} />
+        </span>
         <span className="scm-section-title">{title}</span>
         <span className="scm-count">{entries.length}</span>
         <span className="scm-actions">
           {entries.length > 0 &&
             actions.map((a) => (
-              <button
-                key={a.label}
-                data-tip={`すべて${a.title}`}
-                aria-label={`すべて${a.title}`}
+              <IconButton
+                key={a.title}
+                reveal
+                size="sm"
+                icon={a.icon}
+                danger={a.danger}
+                label={`すべて${a.title}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   a.run(entries.map((x) => x.path));
                 }}
-              >
-                {a.label}
-              </button>
+              />
             ))}
         </span>
       </div>
@@ -400,7 +426,7 @@ function Section({
             const code = staged ? entry.index : entry.index === '?' ? 'U' : entry.worktree;
             return (
               <div
-                className="scm-row"
+                className="scm-row reveal-host"
                 style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
                 onClick={() => onOpen(entry)}
                 title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}
@@ -409,17 +435,18 @@ function Section({
                 {depth === null && <span className="scm-dir">{entry.path.split('/').slice(0, -1).join('/')}</span>}
                 <span className="scm-actions">
                   {actions.map((a) => (
-                    <button
-                      key={a.label}
-                      data-tip={a.title}
-                      aria-label={a.title}
+                    <IconButton
+                      key={a.title}
+                      reveal
+                      size="sm"
+                      icon={a.icon}
+                      danger={a.danger}
+                      label={a.title}
                       onClick={(e) => {
                         e.stopPropagation();
                         a.run([entry.path]);
                       }}
-                    >
-                      {a.label}
-                    </button>
+                    />
                   ))}
                 </span>
                 <span className={`scm-code code-${code}`}>{code}</span>
@@ -474,13 +501,15 @@ function BranchMenu({
             onClick={onSwitchDefault}
             title={`フェッチしてから ${branches.defaultBranch} に切り替え、リモートの最新まで進める`}
           >
-            ⟳ 最新のデフォルトブランチへ切り替える
+            <DefaultBranchIcon size={14} />
+            最新のデフォルトブランチへ切り替える
             <span className="scm-branch-note">{branches.defaultBranch}</span>
           </button>
         )}
         {canCreate && (
           <button onClick={() => onPick(q, 'create')}>
-            ＋ 新しいブランチ「{q}」を作って切り替える
+            <AddIcon size={14} />
+            新しいブランチ「{q}」を作って切り替える
           </button>
         )}
         {local.map((b) => (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsFile } from '@shared/settings-file';
 import { errorMessage } from '../errorMessage';
+import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 import { useSettingsFiles } from './settingsFiles';
 
 // 登録した設定ファイルの管理。登録・名前の変更・登録から外す（ファイル自体は触らない）
@@ -99,12 +100,8 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <div className="settings-files-foot">
-          <button className="ghost-button" disabled={picking} onClick={() => void add()}>
-            追加…
-          </button>
-          <button className="ghost-button" onClick={close}>
-            閉じる
-          </button>
+          <IconButton icon={AddIcon} label="追加" tip="追加…（ファイルを選ぶ）" disabled={picking} onClick={() => void add()} />
+          <IconButton icon={CloseIcon} label="閉じる" tip="閉じる（Esc）" onClick={close} />
         </div>
       </div>
     </div>
@@ -166,9 +163,7 @@ function SettingsFileRow({
         </span>
         {file.error !== null && <span className="settings-file-error">{file.error}</span>}
       </div>
-      <button className="ghost-button" onClick={onRemove}>
-        削除
-      </button>
+      <IconButton size="sm" icon={TrashIcon} label="削除" tip="登録から外す（ファイル自体は消えません）" onClick={onRemove} />
     </div>
   );
 }

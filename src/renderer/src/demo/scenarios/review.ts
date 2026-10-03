@@ -106,7 +106,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   // 2. MenuCard.tsx の差分を開き、インラインにする
   await d.click('.scm-row[title^="src/components/MenuCard.tsx"]');
   await sleep(900);
-  await d.click(d.byText('.diff-pane-head .ghost-button', 'インライン'), { ms: 600 });
+  await d.click('.diff-pane-head [aria-label="インライン"]', { ms: 600 });
   await sleep(900);
 
   // 3. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）

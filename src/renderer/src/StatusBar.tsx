@@ -1,6 +1,6 @@
 import type { PullRequestLink } from '@shared/chat';
 import type { SessionWorktree } from '@shared/ipc';
-import { WorktreeIcon } from './layout/icons';
+import { WorktreeIcon } from './icons';
 import type { SessionStatus } from './chat/chatState';
 import { SystemStats } from './system/SystemStats';
 import { ClaudeVersion } from './system/ClaudeVersion';
@@ -17,10 +17,6 @@ const STATUS = {
 } as const;
 
 type Props = {
-  previewOpen: boolean;
-  onTogglePreview: () => void;
-  terminalOpen: boolean;
-  onToggleTerminal: () => void;
   status: SessionStatus;
   exitCode: number | null;
   branch: string | null;
@@ -33,20 +29,9 @@ type Props = {
   // エディタのカーソル位置を出す（テキストのファイルを開いているとき）
   showCursor: boolean;
   language: string | null;
-  // 入っている Claude Code の版（undefined はまだ確かめていない、null は見つからない）
+  // 入っている Claude Code のバージョン（undefined はまだ確かめていない、null は見つからない）
   claudeVersion: string | null | undefined;
 };
-
-// 「ブラウザ」ボタンの印。ブラウザを開くボタンだと一目で分かるようにする
-function GlobeIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="8" cy="8" r="6.5" />
-      <path d="M1.5 8h13" />
-      <path d="M8 1.5c1.9 1.8 2.9 4 2.9 6.5S9.9 12.7 8 14.5C6.1 12.7 5.1 10.5 5.1 8S6.1 3.3 8 1.5Z" />
-    </svg>
-  );
-}
 
 // カーソル位置は 1 キーごとに変わるので、ここだけで読む
 function CursorPosition() {
@@ -55,10 +40,6 @@ function CursorPosition() {
 }
 
 export function StatusBar({
-  previewOpen,
-  onTogglePreview,
-  terminalOpen,
-  onToggleTerminal,
   status,
   exitCode,
   branch,
@@ -96,18 +77,6 @@ export function StatusBar({
         </a>
       )}
       <div className="spacer" />
-      <button
-        className={`status-button with-icon${previewOpen ? ' on' : ''}`}
-        onClick={onTogglePreview}
-        data-tip={'アプリ内のブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます'}
-        data-tip-side="top"
-      >
-        <GlobeIcon />
-        ブラウザ
-      </button>
-      <button className={`status-button${terminalOpen ? ' on' : ''}`} onClick={onToggleTerminal} data-tip="ターミナルを開く・閉じる（⌃`）" data-tip-side="top">
-        ターミナル
-      </button>
       <SystemStats />
       {showCursor && <CursorPosition />}
       {language && <span>{language}</span>}

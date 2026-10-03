@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckMark } from '../layout/CheckMark';
 import { formatDuration } from '../workflow/WorkflowCard';
-import { StopIcon } from '../layout/icons';
+import { DisclosureIcon, IconButton, StopIcon } from '../icons';
 import { elapsed, stoppable, useNow, type TaskEntry } from './taskList';
 
 const KIND_LABEL = { subagent: 'エージェント', workflow: 'ワークフロー', bash: 'Bash' } as const;
@@ -34,7 +34,7 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
   return (
     <div className="task-tray">
       <button className="task-tray-head" onClick={() => setCollapsed((v) => !v)}>
-        <span className="tree-chevron">{collapsed ? '▸' : '▾'}</span>
+        <DisclosureIcon open={!collapsed} />
         タスク
         {running > 0 && <span className="task-tray-count running">実行中 {running}</span>}
       </button>
@@ -57,24 +57,21 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
             <span className="task-name">{task.name}</span>
             <span className="task-progress">{left ? LEFT_LABEL[task.state] : task.progress}</span>
             {ms !== null && <span className="task-time">{formatDuration(ms)}</span>}
-            {stoppable(task) &&
-              (stopping.has(task.key) ? (
-                <span className="task-stop busy" aria-label="止めています" data-tip="止めています…">
-                  <span className="spinner" />
-                </span>
-              ) : (
-                <button
-                  className="task-stop"
-                  aria-label="止める"
-                  data-tip="止める"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onStop(task);
-                  }}
-                >
-                  <StopIcon size={16} />
-                </button>
-              ))}
+            {stoppable(task) && (
+              <IconButton
+                icon={StopIcon}
+                danger
+                size="sm"
+                className="task-stop"
+                busy={stopping.has(task.key)}
+                label={stopping.has(task.key) ? '止めています' : '止める'}
+                tip={stopping.has(task.key) ? '止めています…' : undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStop(task);
+                }}
+              />
+            )}
           </div>
         );
       })}

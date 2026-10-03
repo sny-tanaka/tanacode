@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { FileBaseline, FileChange, FileContent } from '@shared/ipc';
 import { LineComments, type ReviewComment } from '../review/LineComments';
+import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, EyeIcon, IconButton, type IconComponent } from '../icons';
 import { DiffDecorations } from './diffDecorations';
 import { MarkdownPreview } from './MarkdownPreview';
 import { editorTheme, languageFor, monaco } from './monaco';
@@ -8,12 +9,12 @@ import { editorTheme, languageFor, monaco } from './monaco';
 export type OpenFile = { path: string; content: FileContent };
 // seq が変わるたびに、その行を表示してカーソルを置く
 export type RevealRequest = { path: string; line: number; seq: number };
-// Markdown ファイルの表示のしかた
+// Markdown ファイルの表示のしかた。タブは絵だけなので、名前（label）は aria-label とツールチップに付ける
 type MarkdownMode = 'preview' | 'split' | 'source';
-const MARKDOWN_MODES: { mode: MarkdownMode; label: string }[] = [
-  { mode: 'preview', label: 'プレビュー' },
-  { mode: 'split', label: '並べる' },
-  { mode: 'source', label: 'ソース' },
+const MARKDOWN_MODES: { mode: MarkdownMode; label: string; icon: IconComponent }[] = [
+  { mode: 'preview', label: 'プレビュー', icon: EyeIcon },
+  { mode: 'split', label: '並べる', icon: ColumnsIcon },
+  { mode: 'source', label: 'ソース', icon: CodeIcon },
 ];
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
 
@@ -266,7 +267,7 @@ export const EditorPane = memo(function EditorPane({
         {files.map((f) => (
           <div
             key={f.path}
-            className={`editor-tab${f.path === activePath ? ' active' : ''}`}
+            className={`editor-tab reveal-host${f.path === activePath ? ' active' : ''}`}
             onClick={() => onActivate(f.path)}
             title={f.path}
           >
@@ -276,17 +277,17 @@ export const EditorPane = memo(function EditorPane({
             ) : (
               changes[f.path] && <span className="editor-tab-dot" title="このブランチで変わったファイル" />
             )}
-            <button
-              className="editor-tab-close"
+            {/* 選んでいるタブでは、いつも出しておく */}
+            <IconButton
+              size="sm"
+              reveal={f.path !== activePath}
+              icon={CloseIcon}
+              label="閉じる"
               onClick={(e) => {
                 e.stopPropagation();
                 close(f.path);
               }}
-              aria-label="閉じる"
-              data-tip="閉じる"
-            >
-              ×
-            </button>
+            />
           </div>
         ))}
       </div>
@@ -294,15 +295,17 @@ export const EditorPane = memo(function EditorPane({
         <span className="editor-crumb-path">{active ? active.path.split('/').join('  ›  ') : ''}</span>
         {markdownMode && activePath && (
           <div className="segmented" role="tablist" aria-label="Markdown の表示">
-            {MARKDOWN_MODES.map(({ mode, label }) => (
+            {MARKDOWN_MODES.map(({ mode, label, icon: Icon }) => (
               <button
                 key={mode}
                 role="tab"
                 aria-selected={markdownMode === mode}
+                aria-label={label}
+                data-tip={label}
                 className={markdownMode === mode ? 'active' : ''}
                 onClick={() => setMarkdownMode(activePath, mode)}
               >
-                {label}
+                <Icon size={14} />
               </button>
             ))}
           </div>
@@ -326,9 +329,7 @@ export const EditorPane = memo(function EditorPane({
           <span className="diff-add">+{change.added}</span>
           <span className="diff-del">−{change.removed}</span>
           <div className="spacer" />
-          <button className="ghost-button" onClick={() => onShowDiff(activePath)}>
-            差分を見る
-          </button>
+          <IconButton icon={DiffIcon} label="差分を見る" onClick={() => onShowDiff(activePath)} />
         </div>
       )}
       <div className={`editor-body${markdownMode ? ` md-${markdownMode}` : ''}`}>

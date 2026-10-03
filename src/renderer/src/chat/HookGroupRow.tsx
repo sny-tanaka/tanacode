@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { DisclosureIcon } from '../icons';
 import { HookRuns } from './HookRuns';
 import { hookSummary, type HookGroup } from './toolGroups';
 
@@ -10,7 +11,7 @@ export const HookGroupRow = memo(function HookGroupRow({ group, open, onToggle }
   return (
     <div className="tool-group">
       <button className={`tool-group-head${open ? ' open' : ''}`} onClick={() => onToggle(group.id)} aria-expanded={open}>
-        <span className="tool-group-chevron">▸</span>
+        <DisclosureIcon open={open} />
         <span className="tool-group-count">{summary.count}</span>
         {summary.events.map((event) => (
           <span key={event} className="tool-group-part">

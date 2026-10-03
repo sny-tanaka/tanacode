@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import DOMPurify from 'dompurify';
+import { PlayIcon, iconHtml } from '../icons';
 import { marked, replaceExternalImages } from '../markdown';
 import { stripControlChars } from './sanitize';
 
@@ -64,8 +65,10 @@ export function Markdown({ text, onRunCommand }: { text: string; onRunCommand?: 
       if (!command) return;
       const button = document.createElement('button');
       button.className = 'code-run';
-      button.textContent = '▶ 実行';
-      button.title = 'ターミナルパネルの新しいシェルで実行する';
+      // アイコンは React の外で作る DOM に入れるので、SVG を文字列にして入れる（名前とツールチップは IconButton と同じ属性）
+      button.innerHTML = iconHtml(PlayIcon, 12);
+      button.setAttribute('aria-label', '実行');
+      button.dataset.tip = '実行';
       // 画面の文字ではなく、描くときに控えたコマンドを実行する
       button.addEventListener('click', (e) => {
         e.stopPropagation();
