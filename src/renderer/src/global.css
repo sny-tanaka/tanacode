@@ -1344,6 +1344,24 @@ body.resizing-rows {
 .icon-button.busy {
   cursor: default;
 }
+/* 主な操作（送信・コミット・コメントを追加）。文字の主要ボタン（.send-button）と同じ色と枠 */
+.icon-button.primary {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--send-border);
+  border-radius: 7px;
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+.icon-button.primary:hover:not(:disabled) {
+  background: var(--send-bg-hover);
+  color: var(--send-fg);
+}
+.icon-button.primary:disabled {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+}
 /* 行・見出し（.reveal-host）にホバーするか、中にフォーカスがあるときだけ出すボタン */
 .icon-button.reveal {
   visibility: hidden;
@@ -1765,9 +1783,10 @@ body.resizing-rows {
   align-items: flex-end;
   gap: 8px;
 }
+/* 送信と同じ位置に出る中断は、送信と同じ大きさにそろえる */
 .chat-input-row > .icon-button.danger {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
 }

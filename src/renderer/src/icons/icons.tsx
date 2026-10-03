@@ -127,6 +127,14 @@ export const PushIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// コミット: 履歴の線（左右）の上の、コミットの丸
+export const CommitIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M3 12h6M15 12h6" />
+  </Svg>
+);
+
 // 変更を破棄: 元に戻す矢印
 export const UndoIcon: IconComponent = (p) => (
   <Svg {...p}>

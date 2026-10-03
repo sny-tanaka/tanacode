@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { insertIntoChat } from '../chat/insertInput';
-import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
+import { AddIcon, CloseIcon, IconButton, MonitorIcon, SendIcon } from '../icons';
 import { ClaudeScreen } from './ClaudeScreen';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
 import { useRunInTerminal } from './runInTerminal';
@@ -299,9 +299,10 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
           aria-selected={view === 'claude'}
           className={`terminal-tab claude-screen-tab${view === 'claude' ? ' active' : ''}`}
           onClick={() => onView(view === 'claude' ? 'shell' : 'claude')}
-          title="Claude Code の画面をそのまま表示して操作する"
+          aria-label="Claude Code の画面"
+          data-tip={'Claude Code の画面\nClaude Code そのものの画面をそのまま表示して操作する'}
         >
-          Claude Code
+          <MonitorIcon size={14} />
         </button>
         )}
         <IconButton icon={CloseIcon} label="パネルを閉じる" tip="パネルを閉じる（⌃`）" onClick={onClose} />

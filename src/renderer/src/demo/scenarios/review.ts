@@ -85,7 +85,7 @@ async function comment(d: Director, text: string, body: string): Promise<void> {
   await sleep(300);
   await d.type('.comment-box.draft textarea', body, 40);
   await sleep(300);
-  await d.click(d.byText('.comment-box.draft button', 'コメントを追加'), { ms: 500 });
+  await d.click('.comment-box.draft [aria-label="コメントを追加"]', { ms: 500 });
 }
 
 export async function runReview(backend: DemoBackend, d: Director): Promise<void> {
@@ -125,7 +125,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
-  await d.click(d.byText('.send-button', '送信'));
+  await d.click('.chat-input-row [aria-label="送信"]');
   await sent;
   claude.startWorking();
 

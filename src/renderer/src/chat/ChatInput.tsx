@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SlashCommand } from '@shared/ipc';
 import { bracketedPaste, promptKeys } from '@shared/prompt-keys';
-import { CloseIcon, IconButton, StopIcon } from '../icons';
+import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
 import { stripControlChars } from './sanitize';
 
@@ -334,9 +334,7 @@ export function ChatInput({
         {showInterrupt ? (
           <IconButton icon={StopIcon} danger label="中断" onClick={onInterrupt} />
         ) : (
-          <button className="send-button" onClick={onSend} disabled={blocked}>
-            送信
-          </button>
+          <IconButton primary icon={SendIcon} label="送信" tip="送信（⌘Enter）" onClick={onSend} disabled={blocked} />
         )}
       </div>
     </div>

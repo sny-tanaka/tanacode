@@ -8,6 +8,7 @@ import {
   AddIcon,
   BranchIcon,
   ChevronDownIcon,
+  CommitIcon,
   DefaultBranchIcon,
   DisclosureIcon,
   FetchIcon,
@@ -165,9 +166,7 @@ export const ScmPanel = memo(function ScmPanel({
             <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} />
             直前のコミットを修正
           </label>
-          <button className="send-button" disabled={!!busy} onClick={() => void commit()}>
-            コミット
-          </button>
+          <IconButton primary icon={CommitIcon} label="コミット" tip={amend ? '直前のコミットを修正（⌘Enter）' : 'コミット（⌘Enter）'} disabled={!!busy} onClick={() => void commit()} />
         </div>
       </div>
       {(busy || error) && <div className={`scm-message${error ? ' error' : ''}`}>{error ?? <Busy>{busy}</Busy>}</div>}

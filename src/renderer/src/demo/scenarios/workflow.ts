@@ -174,7 +174,7 @@ export async function runWorkflow(backend: DemoBackend, d: Director): Promise<vo
   await d.click('.chat-input textarea');
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
-  await d.click(d.byText('.send-button', '送信'));
+  await d.click('.chat-input-row [aria-label="送信"]');
   await sent;
   claude.startWorking();
 

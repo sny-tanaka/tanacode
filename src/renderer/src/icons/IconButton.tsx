@@ -16,13 +16,15 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'title' | 'children' 
   pressed?: boolean;
   // 実行中。回る輪に替えて押せなくする
   busy?: boolean;
+  // 主な操作（送信・コミット・コメントを追加）。文字の主要ボタン（.send-button）と同じ色と枠で、少し大きい
+  primary?: boolean;
   // 行や見出しにホバーしたときだけ出す（キーボードのフォーカスでも出る）
   reveal?: boolean;
 };
 
 // アイコンだけのボタン。見た目・名前・ツールチップを 1 か所にそろえるので、アイコンのボタンはこれで作る
-export function IconButton({ icon: Icon, label, tip, tipSide, size = 'md', danger, pressed, busy, reveal, className, disabled, type = 'button', ...rest }: Props) {
-  const classes = ['icon-button', size, danger && 'danger', pressed && 'on', busy && 'busy', reveal && 'reveal', className].filter(Boolean).join(' ');
+export function IconButton({ icon: Icon, label, tip, tipSide, size = 'md', danger, pressed, busy, primary, reveal, className, disabled, type = 'button', ...rest }: Props) {
+  const classes = ['icon-button', size, danger && 'danger', pressed && 'on', busy && 'busy', primary && 'primary', reveal && 'reveal', className].filter(Boolean).join(' ');
   return (
     <button
       {...rest}
@@ -35,7 +37,7 @@ export function IconButton({ icon: Icon, label, tip, tipSide, size = 'md', dange
       data-tip={tip ?? label}
       data-tip-side={tipSide}
     >
-      {busy ? <span className="spinner" /> : <Icon size={size === 'sm' ? 12 : 14} />}
+      {busy ? <span className="spinner" /> : <Icon size={primary ? 16 : size === 'sm' ? 12 : 14} />}
     </button>
   );
 }

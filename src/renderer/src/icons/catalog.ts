@@ -26,6 +26,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('FetchIcon', 'フェッチ'),
       item('PullIcon', 'プル'),
       item('PushIcon', 'プッシュ'),
+      item('CommitIcon', 'コミット'),
       item('UndoIcon', '変更を破棄'),
       item('DiffIcon', '差分'),
       item('ColumnsIcon', '左右に並べる'),
