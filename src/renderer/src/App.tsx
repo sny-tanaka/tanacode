@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BranchChanges, FileChange, FileContent, NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
+import { listRecentFolders } from '@shared/recent-folders';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
@@ -24,6 +25,7 @@ import { ImportDialog } from './sessions/ImportDialog';
 import { NewSessionPane } from './sessions/NewSessionPane';
 import { Sidebar } from './sessions/Sidebar';
 import { WorktreeDialog } from './sessions/WorktreeDialog';
+import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
 import { useClaudeVersion } from './system/ClaudeVersion';
@@ -428,9 +430,9 @@ export function App() {
     },
     [pendingSends.send, select],
   );
-  // 最近使ったフォルダ（新しい順）
-  // worktree のセッションは、worktree ではなく元のフォルダ
-  const recentFolders = useMemo(() => [...new Set((sessions ?? []).map((s) => s.worktree?.root ?? s.cwd))], [sessions]);
+  // 最近使ったフォルダ（新しい順）。新規セッションの画面から外したフォルダは出さない
+  const [hiddenFolders, hideFolder] = useHiddenFolders();
+  const recentFolders = useMemo(() => listRecentFolders(sessions ?? [], hiddenFolders), [sessions, hiddenFolders]);
 
   // 子の部品（memo している）に渡す関数。描き直しのたびに作り直すと memo が効かないので固定する
   const statusKey = (sessions ?? []).map((s) => `${s.id}:${chatOf(s.id).status}`).join(',');
@@ -550,6 +552,7 @@ export function App() {
         {composing && (
           <NewSessionPane
             folders={recentFolders}
+            onForgetFolder={hideFolder}
             cwd={composing.cwd}
             onCwdChange={changeComposingCwd}
             branch={draft && draft.cwd === composing.cwd && git.state ? (git.state.isRepo ? git.state.branch : null) : undefined}

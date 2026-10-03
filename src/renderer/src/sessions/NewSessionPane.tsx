@@ -33,6 +33,8 @@ function saveOptions(options: NewSessionOptions): void {
 type Props = {
   // 最近使ったフォルダ（新しい順）
   folders: string[];
+  // 最近のフォルダから外す。セッションは消えない
+  onForgetFolder: (dir: string) => void;
   // 選んでいるフォルダ。右パネル（エクスプローラー・ソース管理など）とエディタでも、このフォルダを開く
   cwd: string | null;
   onCwdChange: (cwd: string) => void;
@@ -53,6 +55,7 @@ type Props = {
 // 新規セッション。フォルダを選んで最初の指示を送ると、そのフォルダで Claude Code を起動する
 export function NewSessionPane({
   folders,
+  onForgetFolder,
   cwd,
   onCwdChange,
   branch,
@@ -146,7 +149,7 @@ export function NewSessionPane({
       </div>
       <div className="chat-input-wrap">
         <div className="new-session-chips">
-          <FolderPicker cwd={cwd} folders={folders} onChange={onCwdChange} />
+          <FolderPicker cwd={cwd} folders={folders} onChange={onCwdChange} onForget={onForgetFolder} />
           {currentBranch && (
             <button className="new-session-chip branch" onClick={onOpenScm} title="今のブランチ。押すとソース管理を開き、ブランチを切り替えられる">
               <BranchIcon />
@@ -242,8 +245,18 @@ export function NewSessionPane({
 const WORKTREE_ABOUT =
   'claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。\n同じフォルダで並行して動かしても、変更がぶつかりません。\n場所はフォルダの .claude/worktrees/、ブランチは worktree-<名前>';
 
-// 作業フォルダの選択。最近使ったフォルダか、ダイアログで選んだフォルダ
-function FolderPicker({ cwd, folders, onChange }: { cwd: string | null; folders: string[]; onChange: (cwd: string) => void }) {
+// 作業フォルダの選択。最近使ったフォルダか、ダイアログで選んだフォルダ。使わなくなった最近のフォルダは、一覧から外せる
+function FolderPicker({
+  cwd,
+  folders,
+  onChange,
+  onForget,
+}: {
+  cwd: string | null;
+  folders: string[];
+  onChange: (cwd: string) => void;
+  onForget: (dir: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -282,22 +295,35 @@ function FolderPicker({ cwd, folders, onChange }: { cwd: string | null; folders:
       </button>
       {open && (
         <div className="folder-menu">
-          <div className="folder-menu-heading">最近のフォルダ</div>
-          {folders.map((dir) => (
-            <button
-              key={dir}
-              className={`folder-menu-item${dir === cwd ? ' selected' : ''}`}
-              onClick={() => {
-                onChange(dir);
-                setOpen(false);
-              }}
-              title={dir}
-            >
-              <span className="folder-menu-name">{baseName(dir)}</span>
-              <span className="folder-menu-path">{dir.replace(/^\/Users\/[^/]+/, '~')}</span>
-            </button>
-          ))}
-          <div className="folder-menu-sep" />
+          {folders.length > 0 && (
+            <>
+              <div className="folder-menu-heading">最近のフォルダ</div>
+              {folders.map((dir) => (
+                <div key={dir} className="folder-menu-row">
+                  <button
+                    className={`folder-menu-item${dir === cwd ? ' selected' : ''}`}
+                    onClick={() => {
+                      onChange(dir);
+                      setOpen(false);
+                    }}
+                    title={dir}
+                  >
+                    <span className="folder-menu-name">{baseName(dir)}</span>
+                    <span className="folder-menu-path">{dir.replace(/^\/Users\/[^/]+/, '~')}</span>
+                  </button>
+                  <button
+                    className="folder-menu-forget"
+                    onClick={() => onForget(dir)}
+                    title="最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）"
+                    aria-label={`${baseName(dir)} を最近のフォルダから外す`}
+                  >
+                    外す
+                  </button>
+                </div>
+              ))}
+              <div className="folder-menu-sep" />
+            </>
+          )}
           <button className="folder-menu-item" onClick={() => void pick()}>
             <span className="folder-menu-name">別のフォルダを選ぶ…</span>
           </button>
