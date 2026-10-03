@@ -108,9 +108,13 @@ tanacode の画面の見方と、機能ごとの使い方のまとめ。イン�
 - `node_modules` は、worktree ができたあとで tanacode が用意します。
   - 元のフォルダの `node_modules` を、APFS のクローンで複製します。書き換えるまで、ディスクは増えません。`node_modules/.vite`・`.cache` など、絶対パスが入るキャッシュは除きます。
   - モノレポにも対応します。git で追跡している `package.json` の隣にある `node_modules`（npm の workspaces の各パッケージや、`frontend/` などサブフォルダのプロジェクト）を、すべて複製します。
-  - `package-lock.json` が元のフォルダと違う場所では、続けて `npm install` を実行します。進み具合はターミナルパネルの「npm install」のタブに出ます（終わってもタブは残ります）。
-  - クローンできないとき（APFS 以外・別のボリューム）は、その `node_modules` を受け持つ `package-lock.json` の場所（workspaces ならリポジトリのいちばん上）で `npm install` にします。
-  - 元のフォルダに `node_modules` が無い場所は、何もしません。`npm install` は npm のプロジェクトだけ（yarn・pnpm は複製だけ。Python の `.venv` や Ruby の gem などは対象外）。
+  - 続けて、lock ファイルの場所ごとに、そのパッケージマネージャーで install します。`package-lock.json` なら `npm install`、`yarn.lock` なら `yarn install`、`pnpm-lock.yaml` なら `pnpm install`、`bun.lock`（`bun.lockb`）なら `bun install`。同じ場所に `package-lock.json` とほかの lock があれば、ほかの方を使います。
+    - lock が元のフォルダと違う場所で install します。
+    - クローンできないとき（APFS 以外・別のボリューム）は、その `node_modules` を受け持つ lock の場所（workspaces ならリポジトリのいちばん上）で install します。
+    - yarn の Plug'n'Play（`node_modules` を使わない）で、`.pnp.cjs` が worktree に無いときは `yarn install` します（コミットしている zero-install なら、lock が同じ限り何もしません）。
+    - 進み具合は、ターミナルパネルの「yarn install」などのタブに出ます（終わってもタブは残ります）。そのパッケージマネージャーが入っていなければ、失敗としてチャットに出ます（セッションはそのまま始まります）。
+  - 元のフォルダで依存を入れていない場所（`node_modules` も `.pnp.cjs` も無い）は、何もしません。
+  - Python の `.venv` などは対象外。Ruby の gem は、Ruby の共通の場所（rbenv などの既定）に入れていれば、どの worktree からもそのまま使えます。プロジェクトの中（`vendor/bundle`）に入れているときは、worktree で `bundle install` が要ります（tanacode は何もしません）。
   - 準備の間は、一覧とチャットに「node_modules を複製しています」などと出ます。最初の指示は、準備が終わってから送ります。終わったら、何をしたかをチャットに出します。
 - アーカイブ・一覧からの削除のときに、worktree を残すか削除するかを聞きます（既定は残す）。
   - worktree に残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに入っていないコミット）を並べます。
@@ -267,7 +271,7 @@ Claude Code の設定ファイル（settings.json と同じ形の JSON）を名�
   - ＋ でいくつでも開けます。
   - セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出ます。
   - `exit` するとタブが閉じます。セッションを一覧から削除すると、そのシェルも閉じます。
-  - worktree のセッションで tanacode が実行する `npm install` も、タブに出ます。終わってもタブは残り、名前に「完了」「失敗」が付きます。
+  - worktree のセッションで tanacode が実行する `npm install`・`yarn install` なども、タブに出ます。終わってもタブは残り、名前に「完了」「失敗」が付きます。
 - ターミナルで出力を選んで「Claude へ送る」を押すと、コードブロックとしてチャットの入力欄に貼られます。
 - URL は ⌘ クリックで開きます。⌘K で画面を消します。
 - 「Claude Code」タブでは、Claude Code そのものの画面を見て操作できます。
@@ -348,7 +352,7 @@ Claude Code の設定ファイル（settings.json と同じ形の JSON）を名�
 - 新しいバージョンの確認では、起動時と 1 時間ごとに GitHub の公開の API（`api.github.com`）へ、tanacode の最新バージョンを問い合わせます。送るのは問い合わせだけで、利用状況などは含みません。メニューの「tanacode → 新しいバージョンが出たら通知する」のチェックを外すと、問い合わせを止めます。
 - アプリが起動する Claude Code にだけ、その場の設定（statusLine と、質問を読むための hooks、worktree やブランチを消す操作で確認を出させる hooks）を足します。あなた自身の statusLine と hooks は、これまでどおり動きます。
 - worktree のセッションでは、あなたの操作に合わせて、リポジトリに次のものを書き込みます。
-  - 始めるとき: Claude Code が作る worktree（`.claude/worktrees/<名前>`）とブランチ（`worktree-<名前>`）。`.claude/worktrees/` を `.git/info/exclude` に足すこと（`.gitignore` で無視していないとき）。worktree の中の `node_modules`（複製と `npm install`）
+  - 始めるとき: Claude Code が作る worktree（`.claude/worktrees/<名前>`）とブランチ（`worktree-<名前>`）。`.claude/worktrees/` を `.git/info/exclude` に足すこと（`.gitignore` で無視していないとき）。worktree の中の `node_modules`（複製と、`npm install`・`yarn install` など）
   - worktree を削除してアーカイブ・一覧から削除するとき: 未コミットの変更の控え（`refs/tanacode/backup/<名前>`）。worktree とマージ済みのブランチを消すこと。Claude Code が付けたロックを外すこと
   - 削除したセッションをアーカイブから戻すとき: worktree を作り直すこと
 

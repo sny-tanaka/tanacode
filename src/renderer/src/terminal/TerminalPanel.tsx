@@ -11,7 +11,7 @@ import { xtermOptions } from './xterm';
 // パネルに出すもの: ユーザーのシェルか、Claude Code の生の画面か
 export type TerminalView = 'shell' | 'claude';
 
-// task: アプリが開いたコマンドのタブ（worktree の npm install）。終わってもタブは残し、exitCode に終了コードを入れる
+// task: アプリが開いたコマンドのタブ（worktree の npm install・yarn install など）。終わってもタブは残し、exitCode に終了コードを入れる
 type ShellTab = { id: string; name: string; title: string | null; task?: boolean; exitCode?: number };
 type Xterm = { term: Terminal; fit: FitAddon; element: HTMLDivElement };
 

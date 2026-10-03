@@ -17,8 +17,17 @@ export const WORKTREES_DIR = '.claude/worktrees';
 const CLAUDE_LOCK = /^claude session /;
 // node_modules の中の、絶対パスが入るキャッシュ。複製しても使えないので消す
 const ABSOLUTE_CACHES = ['.vite', '.cache'];
-// npm 以外のパッケージマネージャーの印。あれば npm install はしない
-const OTHER_LOCKFILES = ['yarn.lock', 'pnpm-lock.yaml', 'bun.lockb', 'bun.lock'];
+// lock ファイルと、それを使うパッケージマネージャーの install のコマンド。同じフォルダに複数あれば、上のものを使う
+// （npm 以外を使うリポジトリに、古い package-lock.json が残っていることがあるため）
+const LOCKFILES: { file: string; command: string }[] = [
+  { file: 'pnpm-lock.yaml', command: 'pnpm install' },
+  { file: 'yarn.lock', command: 'yarn install' },
+  { file: 'bun.lock', command: 'bun install' },
+  { file: 'bun.lockb', command: 'bun install' },
+  { file: 'package-lock.json', command: 'npm install' },
+];
+// yarn の Plug'n'Play（node_modules を使わない）。ふつうは gitignore されていて worktree に無く、yarn install するまで依存を読めない
+const PNP_FILE = '.pnp.cjs';
 
 export type WorktreeRef = { name: string; branch: string; root: string };
 export type WorktreePlan = WorktreeRef & { path: string };
@@ -111,32 +120,35 @@ export type NodeModulesResult = {
   cloned: string[];
   // 複製できなかった node_modules（APFS 以外・別のボリューム）
   failed: string[];
-  // npm install を実行した場所と、終了コード
-  installs: { dir: string; exitCode: number }[];
+  // install を実行した場所と、コマンド（npm install など）と、終了コード
+  installs: { dir: string; command: string; exitCode: number }[];
 };
 
 type PrepareHooks = {
   onStep: (step: 'copying' | 'installing') => void;
-  // worktree の cwd で npm install を実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対
-  install: (cwd: string, dir: string) => Promise<number>;
+  // worktree の cwd で install のコマンドを実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対
+  install: (cwd: string, dir: string, command: string) => Promise<number>;
   // node_modules を複製する。既定は APFS のクローン（cp -c -R。書き換えるまでディスクは増えない）
   clone?: (from: string, to: string) => Promise<void>;
 };
 
-// worktree に node_modules を用意する。モノレポ（npm の workspaces や、サブフォルダごとのプロジェクト）にも対応するため、
+// lock ファイルのある場所と、そこで使うパッケージマネージャー
+type LockDir = { dir: string; file: string; command: string };
+
+// worktree に node_modules を用意する。モノレポ（workspaces や、サブフォルダごとのプロジェクト）にも対応するため、
 // git で追跡している package.json の隣の node_modules を、元のフォルダから APFS のクローンで複製する（絶対パスの入るキャッシュは除く）。
-// package-lock.json が元のフォルダと違う場所では、続けて npm install。複製できなかった node_modules は、
-// それを受け持つ package-lock.json（同じ場所か、いちばん近い上のフォルダ。workspaces ならリポジトリのいちばん上）で npm install。
-// 元のフォルダに node_modules が無い場所は何もしない。npm install は npm のプロジェクトだけ（Python の .venv などは対象外）
+// そのうえで、lock ファイル（package-lock.json・yarn.lock・pnpm-lock.yaml・bun.lock）の場所ごとに、そのパッケージマネージャーで install する。
+// install するのは、lock が元のフォルダと違う場所と、複製できなかった node_modules を受け持つ場所（同じ場所か、いちばん近い上のフォルダ。
+// workspaces ならリポジトリのいちばん上）と、yarn の Plug'n'Play で .pnp.cjs が worktree に無い場所。
+// 元のフォルダで使っていない場所（node_modules も .pnp.cjs も無い）は何もしない。Python の .venv や Ruby の gem などは対象外
 export async function prepareNodeModules(root: string, path: string, hooks: PrepareHooks): Promise<NodeModulesResult> {
   const result: NodeModulesResult = { cloned: [], failed: [], installs: [] };
   const dirs = await packageDirs(path);
   const has = (base: string, dir: string, name: string) => existsSync(join(base, dir, name));
   const targets: string[] = [];
   for (const dir of dirs) if ((await isDirectory(join(root, dir, 'node_modules'))) && !has(path, dir, 'node_modules')) targets.push(dir);
-  if (targets.length === 0) return result;
 
-  hooks.onStep('copying');
+  if (targets.length > 0) hooks.onStep('copying');
   for (const dir of targets) {
     const to = join(path, dir, 'node_modules');
     try {
@@ -149,28 +161,29 @@ export async function prepareNodeModules(root: string, path: string, hooks: Prep
     }
   }
 
-  // npm install する場所。package-lock.json のある npm のプロジェクトで、元のフォルダでも node_modules を使っているところ
-  const lockDirs: string[] = [];
+  // install できる場所。lock ファイルがあり、元のフォルダでも依存を入れているところ（node_modules か、yarn の .pnp.cjs がある）
+  const lockDirs: LockDir[] = [];
   for (const dir of dirs) {
-    if (has(path, dir, 'package-lock.json') && has(root, dir, 'node_modules') && (await usesNpm(join(path, dir)))) lockDirs.push(dir);
+    const lock = LOCKFILES.find((l) => has(path, dir, l.file));
+    if (lock && (has(root, dir, 'node_modules') || has(root, dir, PNP_FILE))) lockDirs.push({ dir, ...lock });
   }
-  const installDirs = new Set<string>();
-  for (const dir of lockDirs) {
+  const installs = new Map<string, LockDir>();
+  for (const lock of lockDirs) {
     const [mine, theirs] = await Promise.all([
-      readFile(join(path, dir, 'package-lock.json'), 'utf8').catch(() => null),
-      readFile(join(root, dir, 'package-lock.json'), 'utf8').catch(() => null),
+      readFile(join(path, lock.dir, lock.file), 'utf8').catch(() => null),
+      readFile(join(root, lock.dir, lock.file), 'utf8').catch(() => null),
     ]);
-    if (mine !== theirs) installDirs.add(dir);
+    if (mine !== theirs || (has(root, lock.dir, PNP_FILE) && !has(path, lock.dir, PNP_FILE))) installs.set(lock.dir, lock);
   }
   for (const dir of result.failed) {
     const owner = nearestLockDir(dir, lockDirs);
-    if (owner !== null) installDirs.add(owner);
+    if (owner) installs.set(owner.dir, owner);
   }
-  if (installDirs.size === 0) return result;
+  if (installs.size === 0) return result;
   hooks.onStep('installing');
-  // 上のフォルダから順に（workspaces のいちばん上の npm install が、下の node_modules も作る）
-  for (const dir of [...installDirs].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))) {
-    result.installs.push({ dir, exitCode: await hooks.install(join(path, dir), dir) });
+  // 上のフォルダから順に（workspaces のいちばん上の install が、下の node_modules も作る）
+  for (const lock of [...installs.values()].sort((a, b) => a.dir.split('/').length - b.dir.split('/').length || a.dir.localeCompare(b.dir))) {
+    result.installs.push({ dir: lock.dir, command: lock.command, exitCode: await hooks.install(join(path, lock.dir), lock.dir, lock.command) });
   }
   return result;
 }
@@ -188,12 +201,12 @@ async function packageDirs(path: string): Promise<string[]> {
   return [...dirs].sort();
 }
 
-// dir の node_modules を受け持つ package-lock.json のフォルダ（同じフォルダか、いちばん近い上のフォルダ）
-function nearestLockDir(dir: string, lockDirs: string[]): string | null {
-  let best: string | null = null;
+// dir の node_modules を受け持つ lock ファイルの場所（同じフォルダか、いちばん近い上のフォルダ）
+function nearestLockDir(dir: string, lockDirs: LockDir[]): LockDir | null {
+  let best: LockDir | null = null;
   for (const lock of lockDirs) {
-    const covers = lock === '' || dir === lock || dir.startsWith(`${lock}/`);
-    if (covers && (best === null || lock.length > best.length)) best = lock;
+    const covers = lock.dir === '' || dir === lock.dir || dir.startsWith(`${lock.dir}/`);
+    if (covers && (best === null || lock.dir.length > best.dir.length)) best = lock;
   }
   return best;
 }
@@ -203,12 +216,6 @@ function apfsClone(from: string, to: string): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile('cp', ['-c', '-R', from, to], (err, _stdout, stderr) => (err ? reject(new Error(stderr || err.message)) : resolve()));
   });
-}
-
-// npm のプロジェクトか（package.json があり、ほかのパッケージマネージャーの lockfile が無い）
-async function usesNpm(path: string): Promise<boolean> {
-  if (!existsSync(join(path, 'package.json'))) return false;
-  return !OTHER_LOCKFILES.some((name) => existsSync(join(path, name)));
 }
 
 async function isDirectory(path: string): Promise<boolean> {

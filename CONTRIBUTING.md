@@ -209,9 +209,10 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - ファイルの監視は、worktree ができてから始めます（無いフォルダは見張れない）。
   - 準備の段階（`SessionWorktree.preparing`: creating・restoring・copying・installing）は、一覧とチャットに出します。準備が終わるまで `ready` を配信しないので、最初の指示はその後に送られます（`pendingSends` の今の形のまま）。終わったら、何をしたかを `info` のイベントでチャットに出します。
   - `node_modules`: モノレポのため、worktree で `git ls-files` した `package.json` のフォルダごとに見ます（node_modules の中は除く）。元のフォルダにあって worktree に無い `node_modules` を `cp -c -R`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。
-    - `npm install` する場所: `package-lock.json` があり、元のフォルダでも `node_modules` を使っている場所のうち、lock が元のフォルダと違うところと、複製できなかった `node_modules` を受け持つところ（同じフォルダか、いちばん近い上のフォルダの lock。workspaces ならいちばん上）。上のフォルダから順に実行します。
-    - `yarn.lock`・`pnpm-lock.yaml`・`bun.lock(b)` があれば `npm install` はしません（複製だけ）。
-    - `npm install` は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、`shell.onOpened` でターミナルパネルにタブを出させます。タブは終わっても残し、終了コードを名前に添えます。
+    - install のコマンドは、lock ファイルで決めます（`LOCKFILES`。`pnpm-lock.yaml` → `pnpm install`、`yarn.lock` → `yarn install`、`bun.lock(b)` → `bun install`、`package-lock.json` → `npm install`）。同じフォルダに複数あれば、npm 以外を使います（古い `package-lock.json` が残っていることがあるため）。
+    - install する場所: lock があり、元のフォルダでも依存を入れている（`node_modules` か `.pnp.cjs` がある）場所のうち、lock が元のフォルダと違うところと、複製できなかった `node_modules` を受け持つところ（同じフォルダか、いちばん近い上のフォルダの lock。workspaces ならいちばん上）。上のフォルダから順に実行します。
+    - yarn の Plug'n'Play: `.pnp.cjs` はふつう gitignore されていて worktree に無く、`yarn install` するまで依存を読めません。元のフォルダにあって worktree に無ければ、lock が同じでも `yarn install` します。
+    - install は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、`shell.onOpened` でターミナルパネルにタブを出させます。タブは終わっても残し、終了コードを名前に添えます。
   - 元のフォルダの未追跡に `.claude/worktrees/` が出ないよう、`.gitignore` で無視されていなければ `.git/info/exclude`（`git rev-parse --git-path info/exclude`）に足します。リポジトリの `.gitignore` は書き換えません。
   - Claude Code は worktree に「claude session <名前> (pid …)」のロックを付け、プロセスを止めても残します。`--resume` では付け直しません（実測）。消すときは、この理由のロックだけ外し、ほかのロックがあれば消さずに断ります。
   - 削除: アーカイブ・一覧からの削除で `removeWorktree` を指定したときだけ。`ClaudeSession.stop` で Claude Code が終わるのを待ち、未コミットの変更と未追跡のファイルがあれば、一時的なインデックス（`GIT_INDEX_FILE`）で `read-tree HEAD` → `add -A` → `write-tree` → `commit-tree` して `refs/tanacode/backup/<名前>`（あれば `-2`・`-3`…）に残します。そのうえで `git worktree remove --force`。何も残っていなければ `--force` なし。最後に `git branch -d`（マージ済みのときだけ消える）。
@@ -246,7 +247,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 ### ターミナル
 
 - シェルは、セッションのフォルダでログインシェル（`$SHELL -l`）を開きます。
-- アプリが実行するコマンド（worktree の `npm install`）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、`shell:opened` でタブを足させます。終わってもタブは残し（`ShellTab.task`）、閉じるボタンは画面のタブだけを片付けます。
+- アプリが実行するコマンド（worktree の `npm install`・`yarn install` など）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、`shell:opened` でタブを足させます。終わってもタブは残し（`ShellTab.task`）、閉じるボタンは画面のタブだけを片付けます。
 - 「Claude Code」タブでは、Claude Code の生の画面（pty）を出します。見ているあいだだけ、画面の大きさをパネルに合わせます。閉じると元の大きさ（120×40）に戻します。
 
 ### 画面の上の帯
@@ -290,7 +291,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
 | --- | --- |
 | `.claude/worktrees/<名前>`・ブランチ `worktree-<名前>` | 始めるとき（作るのは Claude Code）。削除したセッションを戻すとき（作り直すのはアプリ） |
 | `.git/info/exclude` | 始めるとき。`.claude/worktrees/` が `.gitignore` で無視されていなければ、`/.claude/worktrees/` を足す |
-| `.claude/worktrees/<名前>/node_modules` | 始めるとき・作り直したとき。元のフォルダの `node_modules` の APFS のクローンと `npm install` |
+| `.claude/worktrees/<名前>/node_modules` | 始めるとき・作り直したとき。元のフォルダの `node_modules` の APFS のクローンと、`npm install`・`yarn install` など |
 | `refs/tanacode/backup/<名前>` | worktree を削除するとき。未コミットの変更と未追跡のファイルの控えのコミット |
 | worktree・マージ済みのブランチ・Claude Code のロックを消す | worktree を削除してアーカイブ・一覧から削除するとき |
 
@@ -319,7 +320,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
-  - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`）
+  - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）
   - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、登録した設定ファイル）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）

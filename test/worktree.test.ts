@@ -239,9 +239,9 @@ describe('node_modules', () => {
     const installs: string[] = [];
     const result = await prepareNodeModules(repo, plan.path, {
       onStep: (s) => steps.push(s),
-      install: (cwd, dir) => {
+      install: (cwd, dir, command) => {
         expect(cwd).toBe(join(plan.path, dir));
-        installs.push(dir);
+        installs.push(`${command} @ ${dir || '.'}`);
         return Promise.resolve(exitCode);
       },
       clone,
@@ -289,7 +289,7 @@ describe('node_modules', () => {
     writeFileSync(join(repo, 'tools', 'cli', 'package-lock.json'), '{"v":2}');
     const plan = await create();
     const { result, steps } = await prepare(plan, copy, 1);
-    expect(result).toEqual({ cloned: ['', 'tools/cli'], failed: [], installs: [{ dir: 'tools/cli', exitCode: 1 }] });
+    expect(result).toEqual({ cloned: ['', 'tools/cli'], failed: [], installs: [{ dir: 'tools/cli', command: 'npm install', exitCode: 1 }] });
     expect(steps).toEqual(['copying', 'installing']);
   });
 
@@ -305,18 +305,64 @@ describe('node_modules', () => {
     expect(result.cloned).toEqual(['']);
     expect(result.failed).toEqual(['packages/web', 'tools/cli']);
     // 上のフォルダから順に
-    expect(installs).toEqual(['', 'tools/cli']);
+    expect(installs).toEqual(['npm install @ .', 'npm install @ tools/cli']);
   });
 
-  it('npm のプロジェクトでなければ（yarn・pnpm など）、複製だけで npm install はしない', async () => {
-    pkg('', null);
-    writeFileSync(join(repo, 'yarn.lock'), '');
+  it('lock ファイルから、使うパッケージマネージャーを見分けて install する（yarn・pnpm・bun）', async () => {
+    for (const [dir, file] of [
+      ['apps/yarn', 'yarn.lock'],
+      ['apps/pnpm', 'pnpm-lock.yaml'],
+      ['apps/bun', 'bun.lock'],
+      ['apps/bunb', 'bun.lockb'],
+    ]) {
+      pkg(dir, null);
+      writeFileSync(join(repo, dir, file), 'v1');
+    }
+    commit();
+    for (const dir of ['apps/yarn', 'apps/pnpm', 'apps/bun', 'apps/bunb']) modules(dir);
+    // 元のフォルダでだけ、lock を書き換えている
+    writeFileSync(join(repo, 'apps', 'yarn', 'yarn.lock'), 'v2');
+    writeFileSync(join(repo, 'apps', 'bun', 'bun.lock'), 'v2');
+    const plan = await create();
+    const fail = (from: string) => (from.includes('pnpm') ? Promise.reject(new Error('cross-device')) : copy(from, from.replace(repo, plan.path)));
+    const { result, installs } = await prepare(plan, fail);
+    expect(result.cloned).toEqual(['apps/bun', 'apps/bunb', 'apps/yarn']);
+    expect(result.failed).toEqual(['apps/pnpm']);
+    expect(installs).toEqual(['bun install @ apps/bun', 'pnpm install @ apps/pnpm', 'yarn install @ apps/yarn']);
+  });
+
+  it('npm 以外の lock があれば、残っている package-lock.json より、そちらを使う', async () => {
+    pkg('', '{}');
+    writeFileSync(join(repo, 'yarn.lock'), 'v1');
     commit();
     modules('');
     const plan = await create();
-    const { result, installs } = await prepare(plan, () => Promise.reject(new Error('cross-device')));
-    expect(result).toEqual({ cloned: [], failed: [''], installs: [] });
-    expect(installs).toEqual([]);
+    const { installs } = await prepare(plan, () => Promise.reject(new Error('cross-device')));
+    expect(installs).toEqual(['yarn install @ .']);
+  });
+
+  it("yarn の Plug'n'Play（node_modules が無い）では、.pnp.cjs が worktree に無ければ yarn install する", async () => {
+    pkg('', null);
+    writeFileSync(join(repo, 'yarn.lock'), 'v1');
+    writeFileSync(join(repo, '.gitignore'), '.env\nnode_modules/\n.pnp.*\n');
+    commit();
+    writeFileSync(join(repo, '.pnp.cjs'), '');
+    const plan = await create();
+    const { result, steps, installs } = await prepare(plan);
+    expect(result).toEqual({ cloned: [], failed: [], installs: [{ dir: '', command: 'yarn install', exitCode: 0 }] });
+    expect(steps).toEqual(['installing']);
+    expect(installs).toEqual(['yarn install @ .']);
+  });
+
+  it("yarn の Plug'n'Play で .pnp.cjs をコミットしていれば（zero-install）、lock が同じなら何もしない", async () => {
+    pkg('', null);
+    writeFileSync(join(repo, 'yarn.lock'), 'v1');
+    writeFileSync(join(repo, '.pnp.cjs'), '');
+    commit();
+    const plan = await create();
+    const { result, steps } = await prepare(plan);
+    expect(result).toEqual({ cloned: [], failed: [], installs: [] });
+    expect(steps).toEqual([]);
   });
 
   it('元のフォルダに node_modules が無ければ何もしない', async () => {

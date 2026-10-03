@@ -137,7 +137,7 @@ export type SessionSummary = {
 // root: 元のフォルダ（リポジトリのいちばん上）/ preparing: 準備の途中（終わるまで最初の指示を送らない）
 export type SessionWorktree = { name: string; branch: string; root: string; preparing: WorktreePreparing | null };
 // creating: Claude Code が worktree を作るのを待っている / restoring: 消した worktree を、残したブランチから作り直している /
-// copying: node_modules を複製している / installing: npm install を実行している
+// copying: node_modules を複製している / installing: パッケージマネージャーの install（npm install など）を実行している
 export type WorktreePreparing = 'creating' | 'restoring' | 'copying' | 'installing';
 
 // worktree を消す前に、残っているもの。数は件数（null は分からない）

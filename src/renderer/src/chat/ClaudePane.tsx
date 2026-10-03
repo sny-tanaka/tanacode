@@ -53,7 +53,7 @@ type Props = {
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
   onOpenTerminal: () => void;
-  // ターミナルパネルのシェルのタブを出す（worktree の npm install の進み具合を見る）
+  // ターミナルパネルのシェルのタブを出す（worktree の npm install などの進み具合を見る）
   onShowShell: () => void;
   onToggleTerminal: () => void;
   onOpenFile: (absPath: string, line?: number) => void;

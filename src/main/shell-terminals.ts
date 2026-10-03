@@ -33,7 +33,7 @@ export class ShellTerminals {
     return { id, name: basename(shell) };
   }
 
-  // アプリが実行するコマンド（worktree の npm install）を、セッションのターミナルのタブに出しながら実行する。終了コードを返す。
+  // アプリが実行するコマンド（worktree の npm install・yarn install など）を、セッションのターミナルのタブに出しながら実行する。終了コードを返す。
   // ログインシェルで実行する（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）
   run(owner: string, cwd: string, command: string, name: string): Promise<number> {
     const shell = process.env.SHELL || '/bin/zsh';
