@@ -209,7 +209,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - ファイルの監視は、worktree ができてから始めます（無いフォルダは見張れない）。
   - `node_modules` の用意は、Claude Code が入力欄を出してから始めます。`git worktree add` は `.git` を先に書き、そのあとでファイルを書き出すので、`.git` ができた時点では、大きなリポジトリだと `git ls-files` が空になります（実測。サブフォルダの `package.json` を見落とす）。Claude Code は worktree を作り終えてから入力欄を出します。
   - 準備の段階（`SessionWorktree.preparing`: creating・restoring・copying・installing）は、一覧とチャットに出します。準備が終わるまで `ready` を配信しないので、最初の指示はその後に送られます（`pendingSends` の今の形のまま）。終わったら、何をしたかを `info` のイベントでチャットに出します。
-  - `node_modules`: モノレポのため、worktree で `git ls-files` した `package.json` のフォルダごとに見ます（node_modules の中は除く）。元のフォルダにあって worktree に無い `node_modules` を `cp -c -R`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。
+  - `node_modules`: モノレポのため、worktree で `git ls-files` した `package.json` のフォルダごとに見ます（node_modules の中は除く）。元のフォルダにあって worktree に無い `node_modules` を、ディレクトリ丸ごと 1 回の `clonefile(2)`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。
+    - `cp -c -R` はファイル 1 つごとにクローンするので、ファイルの多い `node_modules` では遅くなります（実測: 15 万ファイルで 44 秒。丸ごとの `clonefile` なら 3 秒）。`clonefile` を呼べるコマンドは無いので、macOS 標準の `osascript`（JXA の `ObjC.bindFunction`）から呼びます（`apfsClone`）。
+    - 別のボリューム・APFS 以外などで `clonefile` が失敗したときは `cp -c -R` に切り替えます（こちらはクローンできなければ通常のコピーになります）。
     - install のコマンドは、lock ファイルで決めます（`LOCKFILES`。`pnpm-lock.yaml` → `pnpm install`、`yarn.lock` → `yarn install`、`bun.lock(b)` → `bun install`、`package-lock.json` → `npm install`）。同じフォルダに複数あれば、npm 以外を使います（古い `package-lock.json` が残っていることがあるため）。
     - install する場所: lock があり、元のフォルダでも依存を入れている（`node_modules` か `.pnp.cjs` がある）場所のうち、lock が元のフォルダと違うところと、複製できなかった `node_modules` を受け持つところ（同じフォルダか、いちばん近い上のフォルダの lock。workspaces ならいちばん上）。上のフォルダから順に実行します。
     - yarn の Plug'n'Play: `.pnp.cjs` はふつう gitignore されていて worktree に無く、`yarn install` するまで依存を読めません。元のフォルダにあって worktree に無ければ、lock が同じでも `yarn install` します。

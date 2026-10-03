@@ -128,7 +128,7 @@ type PrepareHooks = {
   onStep: (step: 'copying' | 'installing') => void;
   // worktree の cwd で install のコマンドを実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対
   install: (cwd: string, dir: string, command: string) => Promise<number>;
-  // node_modules を複製する。既定は APFS のクローン（cp -c -R。書き換えるまでディスクは増えない）
+  // node_modules を複製する。既定は APFS のクローン（clonefile。書き換えるまでディスクは増えない）
   clone?: (from: string, to: string) => Promise<void>;
 };
 
@@ -211,11 +211,30 @@ function nearestLockDir(dir: string, lockDirs: LockDir[]): LockDir | null {
   return best;
 }
 
-function apfsClone(from: string, to: string): Promise<void> {
-  if (process.platform !== 'darwin') return Promise.reject(new Error('APFS のクローンは macOS だけ'));
+// ディレクトリ丸ごとを 1 回の clonefile(2) で複製するスクリプト（macOS 標準の osascript で動く JXA。clonefile を呼べるコマンドが無いため）
+const CLONEFILE_JXA = [
+  "ObjC.bindFunction('clonefile', ['int', ['char *', 'char *', 'unsigned int']]);",
+  "function run(argv) { if ($.clonefile(argv[0], argv[1], 0) !== 0) throw new Error('clonefile'); }",
+].join('\n');
+
+function run(file: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile('cp', ['-c', '-R', from, to], (err, _stdout, stderr) => (err ? reject(new Error(stderr || err.message)) : resolve()));
+    execFile(file, args, (err, _stdout, stderr) => (err ? reject(new Error(stderr || err.message)) : resolve()));
   });
+}
+
+// node_modules を APFS のクローンで複製する。cp -c -R はファイル 1 つごとにクローンするので、ファイルの多い node_modules では遅い
+// （実測: 15 万ファイルで 44 秒。ディレクトリ丸ごとの clonefile なら 3 秒）。そのため、まず丸ごとの clonefile を試す。
+// できなければ（別のボリューム・APFS 以外など）cp -c -R にする。こちらはクローンできなければ、通常のコピーになる。
+// clonefile が途中までコピー先を作っていたら、cp を重ねずに失敗にする（呼び出し側が消す）
+export async function apfsClone(from: string, to: string): Promise<void> {
+  if (process.platform !== 'darwin') throw new Error('APFS のクローンは macOS だけ');
+  try {
+    await run('osascript', ['-l', 'JavaScript', '-e', CLONEFILE_JXA, from, to]);
+  } catch (error) {
+    if (existsSync(to)) throw error;
+    await run('cp', ['-c', '-R', from, to]);
+  }
 }
 
 async function isDirectory(path: string): Promise<boolean> {

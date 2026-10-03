@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claudeArgs } from '../src/main/claude-session';
 import {
+  apfsClone,
   hideWorktrees,
   planWorktree,
   prepareNodeModules,
@@ -372,5 +373,36 @@ describe('node_modules', () => {
     const { result, steps } = await prepare(plan);
     expect(result).toEqual({ cloned: [], failed: [], installs: [] });
     expect(steps).toEqual([]);
+  });
+});
+
+// 実際の APFS のクローン（macOS だけ。ディレクトリ丸ごとを 1 回の clonefile で複製する）
+describe.skipIf(process.platform !== 'darwin')('APFS のクローン', () => {
+  const tree = () => {
+    const from = join(root, '日本語 の', 'node_modules');
+    mkdirSync(join(from, '.bin'), { recursive: true });
+    mkdirSync(join(from, 'left-pad'), { recursive: true });
+    writeFileSync(join(from, 'left-pad', 'index.js'), 'a');
+    symlinkSync('../left-pad/index.js', join(from, '.bin', 'left-pad'));
+    return from;
+  };
+
+  it('ディレクトリ丸ごと（シンボリックリンクはそのまま）複製し、複製を書き換えても元は変わらない', async () => {
+    const from = tree();
+    const to = join(root, 'to space', 'node_modules');
+    mkdirSync(join(root, 'to space'));
+    await apfsClone(from, to);
+    expect(readdirSync(to, { recursive: true }).sort()).toEqual(readdirSync(from, { recursive: true }).sort());
+    expect(readlinkSync(join(to, '.bin', 'left-pad'))).toBe('../left-pad/index.js');
+    writeFileSync(join(to, 'left-pad', 'index.js'), 'b');
+    expect(readFileSync(join(from, 'left-pad', 'index.js'), 'utf8')).toBe('a');
+  });
+
+  it('コピー先が既にあれば、その中に重ねてコピーせず、失敗にする', async () => {
+    const from = tree();
+    const to = join(root, 'exists');
+    mkdirSync(to);
+    await expect(apfsClone(from, to)).rejects.toThrow();
+    expect(readdirSync(to)).toEqual([]);
   });
 });
