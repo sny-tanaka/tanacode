@@ -194,14 +194,15 @@ export const ChatRow = memo(function ChatRow({
   );
 }, sameRow);
 
-// Claude の応答の本文。日本語でない文なら、マウスを乗せると翻訳のボタンが出て、押すと下に訳文を出す
+// Claude の応答の本文。日本語でない文なら、右上に翻訳のボタンを出しておき、押すと下に訳文を出す。
+// ボタンは本文より先に置いて右へ回り込ませる（本文はボタンをよけて折り返すので、文字が隠れない）
 function ResponseBlock({ text, onRunCommand }: { text: string; onRunCommand?: (command: string) => void }) {
   // 訳文のコードブロックには、実行ボタンを付けない（原文の方にある）
   const translation = useBlockTranslation(text, (translated) => <Markdown text={translated} />);
   return (
-    <div className="chat-response reveal-host">
-      <Markdown text={text} onRunCommand={onRunCommand} />
+    <div className="chat-response">
       {translation.button}
+      <Markdown text={text} onRunCommand={onRunCommand} />
       {translation.panel}
     </div>
   );
@@ -211,7 +212,7 @@ function ResponseBlock({ text, onRunCommand }: { text: string; onRunCommand?: (c
 function ThinkingBlock({ text }: { text: string }) {
   const translation = useBlockTranslation(text, (translated) => <div className="chat-thinking-text">{translated}</div>);
   return (
-    <details className="chat-thinking reveal-host" open>
+    <details className="chat-thinking" open>
       <summary>
         <DisclosureIcon open={false} />
         思考

@@ -2772,24 +2772,14 @@ details[open] > summary > .disclosure {
   white-space: pre-wrap;
 }
 
-/* 思考・応答の翻訳（日本語でない文のときだけ、ホバーでボタンを出す）。
-   応答ではボタンを本文の右上に重ね、思考では見出しの横に置く。訳文を出している間・訳している間は、ボタンを出したままにする */
+/* 思考・応答の翻訳（日本語でない文のときだけ、ボタンを出しておく）。
+   応答ではボタンを本文の右上へ回り込ませ（本文はボタンをよけて折り返す）、思考では見出しの横に置く */
 .chat-response {
-  position: relative;
+  display: flow-root;
 }
 .chat-response > .chat-translate {
-  position: absolute;
-  top: -2px;
-  right: -4px;
-  background: var(--bg-panel);
-}
-/* コードブロックで始まる応答では、コードブロックの「実行」ボタンと重ならないよう、少し下げる */
-.chat-response:has(> .chat-translate) > .markdown > pre:first-child {
-  margin-top: 24px;
-}
-.icon-button.reveal.chat-translate.on,
-.icon-button.reveal.chat-translate.busy {
-  visibility: visible;
+  float: right;
+  margin: -2px -4px 2px 8px;
 }
 /* 訳文はブロックの下に、原文と分けて出す */
 .chat-translation {

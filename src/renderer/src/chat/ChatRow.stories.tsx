@@ -149,7 +149,7 @@ export const セッションへの参照の札: Story = {
   },
 };
 
-// ---- 翻訳（日本語でない思考・応答に、ホバーで出るボタン。押すと下に訳文） ----
+// ---- 翻訳（日本語でない思考・応答に出しておくボタン。押すと下に訳文） ----
 
 const englishThinking = `The user wants a translate button on each block instead of right-click.
 I should check how ChatRow renders the thinking block, then add the button next to the summary.
@@ -182,11 +182,9 @@ const translation = (run: (texts: string[]) => Promise<TranslateResult>) => () =
   mockApi({ 'translate.available': () => Promise.resolve(true), 'translate.run': (texts) => run(texts as string[]) });
 const translated = translation((texts) => Promise.resolve({ ok: true, texts: texts.map((t) => JA[t] ?? t), source: 'en' }));
 
-// ボタンはホバーで出るので、ブロックに乗ってから押す
+// ボタンは「使えるか」の返事が来てから出るので、出るのを待って押す
 const pressTranslate = async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-  const button = await within(canvasElement).findByLabelText('日本語訳');
-  await userEvent.hover(button.closest('.reveal-host')!);
-  await userEvent.click(button);
+  await userEvent.click(await within(canvasElement).findByLabelText('日本語訳'));
 };
 
 export const 思考_英語: Story = { args: { item: { kind: 'thinking', id: 'th1', text: englishThinking } }, beforeEach: translated };
@@ -219,3 +217,9 @@ export const 本文_英語_翻訳データなし: Story = {
 
 // 日本語の本文には、翻訳が使える環境でもボタンを出さない
 export const 本文_日本語には出さない: Story = { args: { item: { kind: 'text', id: 't7', text: markdown } }, beforeEach: translated };
+
+// コードブロックで始まる応答でも、翻訳のボタンと「実行」のボタンが重ならない（コードブロックがボタンをよける）
+export const 本文_英語_コードブロックで始まる: Story = {
+  args: { item: { kind: 'text', id: 't8', text: '```bash\nnpm run typecheck && npm test\n```\n\nBoth commands passed. I will open a pull request next.' } },
+  beforeEach: translated,
+};
