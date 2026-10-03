@@ -24,14 +24,16 @@ const SESSION: SessionSummary = {
   worktree: { name: 'tc-1002-k3x9', branch: 'worktree-tc-1002-k3x9', root: '/Users/me/work/cafe-menu', preparing: null },
 };
 
+const MERGED_PR = { state: 'merged', number: 42, base: 'main', url: 'https://github.com/me/cafe-menu/pull/42', after: 0 } as const;
+
 const CLEAN: WorktreeLeftovers = {
   exists: true,
   branch: 'worktree-tc-1002-k3x9',
   uncommitted: 0,
   untracked: 0,
   unpushed: 0,
-  unmerged: 0,
-  defaultBranch: 'main',
+  contentIn: null,
+  pr: MERGED_PR,
 };
 
 // leftovers: 残っているもの（null は調べられなかった）。選ぶと 1 秒かけて終わる（削除の途中の表示を見るため）
@@ -63,9 +65,30 @@ type Story = StoryObj<typeof meta>;
 // 何も残っていない
 export const 何も残っていない: Story = {};
 
-// 未コミットの変更・未追跡のファイル・プッシュしていないコミット・main に入っていないコミットが残っている
+// 未コミットの変更・未追跡のファイル・プッシュしていないコミットが残っていて、PR はまだマージされていない
 export const 残っているものがある: Story = {
-  args: { leftovers: { ...CLEAN, uncommitted: 3, untracked: 1, unpushed: 2, unmerged: 2 } },
+  args: { leftovers: { ...CLEAN, uncommitted: 3, untracked: 1, unpushed: 2, pr: { ...MERGED_PR, state: 'open' } } },
+};
+
+// PR はマージ済みだが、そのあとに手元でコミットを足した
+export const PRのあとのコミット: Story = {
+  args: { leftovers: { ...CLEAN, unpushed: 1, pr: { ...MERGED_PR, after: 1 } } },
+};
+
+// PR を使わずに、手元でデフォルトブランチにスカッシュマージした
+export const 中身が入っている: Story = {
+  args: { leftovers: { ...CLEAN, contentIn: 'main', pr: { state: 'none' } } },
+};
+
+// PR がマージされずに閉じられた・PR が無い・gh で調べられない
+export const PRが閉じられた: Story = {
+  args: { leftovers: { ...CLEAN, pr: { ...MERGED_PR, state: 'closed' } } },
+};
+export const PRが無い: Story = {
+  args: { leftovers: { ...CLEAN, pr: { state: 'none' } } },
+};
+export const PRを調べられない: Story = {
+  args: { leftovers: { ...CLEAN, pr: { state: 'unknown' } } },
 };
 
 // 一覧から削除するとき

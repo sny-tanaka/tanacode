@@ -5815,6 +5815,9 @@ body.resizing-rows webview {
 .worktree-dialog-status.ok {
   color: var(--ok);
 }
+.worktree-dialog-status.warn {
+  color: var(--warn);
+}
 .worktree-leftovers {
   margin: 0;
   padding: 8px 10px;
