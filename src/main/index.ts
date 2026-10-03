@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, session, shell, type MenuItem, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type MenuItem, type WebContents } from 'electron';
 import {
   IpcChannel,
   type DiscoveredSession,
@@ -32,6 +32,7 @@ import { ShellTerminals } from './shell-terminals';
 import { SystemMonitor } from './system-monitor';
 import { ClaudeVersionMonitor } from './claude-version';
 import { UsageMonitor } from './usage-monitor';
+import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
 import { WorkspaceWatchers } from './workspace-watcher';
 
@@ -95,10 +96,34 @@ function send(channel: string, payload: unknown): void {
   if (contents && !contents.isDestroyed()) contents.send(channel, payload);
 }
 
+// 前に閉じたときのウインドウの位置と大きさ。次の起動で同じところに開く
+function windowStateFile(): string {
+  return join(app.getPath('userData'), 'window-state.json');
+}
+
+function rememberWindowState(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  try {
+    saveWindowState(windowStateFile(), {
+      bounds: win.getNormalBounds(),
+      maximized: win.isMaximized(),
+      fullScreen: win.isFullScreen(),
+    });
+  } catch {
+    // 覚えられなくても、次の起動が既定の大きさになるだけ
+  }
+}
+
 function createWindow(): void {
+  const saved = loadWindowState(windowStateFile());
+  const placement = placeWindow(
+    saved?.bounds ?? null,
+    screen.getAllDisplays().map((display) => display.workArea),
+    { width: 1600, height: 960 },
+  );
   const win = new BrowserWindow({
-    width: 1600,
-    height: 960,
+    ...placement,
+    fullscreen: saved?.fullScreen ?? false,
     minWidth: 1180,
     minHeight: 600,
     // global.css の --bg-chrome と同じ（CSS が読み込まれる前に出る色）
@@ -109,6 +134,15 @@ function createWindow(): void {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true },
   });
   mainWindow = win;
+  if (saved?.maximized && !saved.fullScreen) win.maximize();
+  // macOS の resized・moved は、動かし終えたときに一度だけ届く
+  const remember = () => rememberWindowState(win);
+  win.on('resized', remember);
+  win.on('moved', remember);
+  win.on('maximize', remember);
+  win.on('unmaximize', remember);
+  win.on('enter-full-screen', remember);
+  win.on('leave-full-screen', remember);
 
   const contents = win.webContents;
   contents.setWindowOpenHandler(({ url }) => {
@@ -135,6 +169,7 @@ function createWindow(): void {
   });
   // バツボタンでウインドウを閉じたら、アプリも終了する（Claude Code を止めるかは quit の確認で決める）
   win.on('close', (event) => {
+    rememberWindowState(win);
     if (quitDecided) return;
     event.preventDefault();
     app.quit();
