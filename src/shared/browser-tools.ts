@@ -4,8 +4,13 @@
 export const BROWSER_MCP_SERVER = 'tanacode-browser';
 
 // read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: ページを動かす（Claude Code の許可の確認を通す）/
-// eval: ページで JavaScript を実行する（--settings の PreToolUse のフックが、今のページが localhost なら確認なし、それ以外なら毎回許可の確認を通す）
-export type BrowserToolKind = 'read' | 'act' | 'eval';
+// eval: ページで JavaScript を実行する（--settings の PreToolUse のフックが、今のページが localhost なら確認なし、それ以外なら毎回許可の確認を通す）/
+// ask: ユーザーに操作を頼む（ページは動かさないので、読むだけのツールと同じく許可済みにする）
+export type BrowserToolKind = 'read' | 'act' | 'eval' | 'ask';
+
+// ユーザーに操作を頼むツールと、ユーザーの返事を待つ上限。過ぎたら帯を消して「時間切れ」を返す
+export const BROWSER_ASK_TOOL = 'ask_user_to_act';
+export const BROWSER_ASK_TIMEOUT_MS = 10 * 60_000;
 
 type Schema = Record<string, unknown>;
 
@@ -238,6 +243,23 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: BROWSER_ASK_TOOL,
+    kind: 'ask',
+    label: '操作の依頼',
+    description:
+      'ログイン・二段階認証・決済のテスト画面など、Claude にできない（させたくない）操作や、見た目の判断（この色で合っているか など）を、ユーザーに頼む。' +
+      'アプリ内ブラウザに、頼む内容と「終わった」「できない」のボタンを出し、ユーザーが押すまで返らない（最大 10 分。過ぎたら時間切れ）。' +
+      '返すのは、押したボタン（「できない」なら理由）と、今のページの URL・タイトル。' +
+      'message には、パスワードなどの値を書かない（値はユーザーが入れる。返事には、入れた値を含めない）。' +
+      '待っている間は、ブラウザのほかのツールは使えない。Claude Code がこの呼び出しをバックグラウンドに移した（moved to the background と返ってきた）ときは、ブラウザを操作せず、ほかの作業も始めずにターンを終えて、結果の知らせを待つ',
+    inputSchema: {
+      type: 'object',
+      properties: { message: { type: 'string', description: 'ユーザーに頼む内容（例: テスト用のアカウントでログインしてください）' } },
+      required: ['message'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // MCP の初期化で返す、サーバーの説明（Claude Code はシステムプロンプトに入れる）
@@ -249,6 +271,7 @@ export const BROWSER_MCP_INSTRUCTIONS = [
   '- 見た目は screenshot、文字や構造は get_text・get_accessibility_tree・inspect で確かめる。evaluate はほかでできないときだけ。',
   '- セレクタは、同じオリジンの iframe の中も探す（Storybook のストーリーなど）。別オリジンの iframe の中は、screenshot で位置を見て click の x・y で押す。',
   '- タブがある。ツールは今のタブに対して動く。新しいウィンドウで開くリンクは新しいタブで開き、そのタブが今のタブになる（list_tabs・select_tab・close_tab）。',
+  `- ログイン・二段階認証・決済のテスト画面など、Claude にできない（させたくない）操作や、自信の持てない見た目の判断は、チャットで頼んで止まらずに ${BROWSER_ASK_TOOL} でユーザーに頼む。頼む内容には、パスワードなどの値を書かない。`,
 ].join('\n');
 
 export function browserToolId(name: string): string {
@@ -259,9 +282,9 @@ export function browserTool(name: string): BrowserTool | undefined {
   return BROWSER_TOOLS.find((t) => t.name === name);
 }
 
-// Claude Code の起動の引数 --allowedTools で許可済みにする、読むだけのツール
+// Claude Code の起動の引数 --allowedTools で許可済みにする、読むだけのツールと、ユーザーに操作を頼むツール
 export function allowedBrowserToolIds(): string[] {
-  return BROWSER_TOOLS.filter((t) => t.kind === 'read').map((t) => browserToolId(t.name));
+  return BROWSER_TOOLS.filter((t) => t.kind === 'read' || t.kind === 'ask').map((t) => browserToolId(t.name));
 }
 
 // --settings の PreToolUse のフックで、ページによって確認を出すか決めるツール

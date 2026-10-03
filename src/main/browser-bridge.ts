@@ -24,7 +24,8 @@ export type ToolResult = { content: ToolContent[]; isError?: boolean };
 export type BridgeRequest = { id: number; session: string; tool: string; args: Record<string, unknown> };
 export type BridgeResponse = { id: number; result: ToolResult };
 
-export type BridgeHandler = (session: string, tool: string, args: Record<string, unknown>) => Promise<ToolResult>;
+// signal: 中継がソケットを閉じた（Claude Code が呼び出しを取り消した・中継が終わった）ら abort する
+export type BridgeHandler = (session: string, tool: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<ToolResult>;
 
 // 1 行の上限。スクリーンショットの画像が入るので大きめ
 const MAX_LINE = 32 * 1024 * 1024;
@@ -75,6 +76,9 @@ export class BrowserBridge {
 
   private serve(socket: Socket): void {
     socket.setEncoding('utf8');
+    // 中継は呼び出しのたびにつなぐので、ソケットが閉じたら、その呼び出しはもう誰も待っていない
+    const closed = new AbortController();
+    socket.on('close', () => closed.abort());
     let buffered = '';
     socket.on('data', (chunk: string) => {
       buffered += chunk;
@@ -86,13 +90,13 @@ export class BrowserBridge {
       while ((newline = buffered.indexOf('\n')) >= 0) {
         const line = buffered.slice(0, newline);
         buffered = buffered.slice(newline + 1);
-        if (line) void this.answer(socket, line);
+        if (line) void this.answer(socket, line, closed.signal);
       }
     });
     socket.on('error', () => socket.destroy());
   }
 
-  private async answer(socket: Socket, line: string): Promise<void> {
+  private async answer(socket: Socket, line: string, signal: AbortSignal): Promise<void> {
     let request: BridgeRequest;
     try {
       request = JSON.parse(line) as BridgeRequest;
@@ -103,7 +107,7 @@ export class BrowserBridge {
     const args = request.args && typeof request.args === 'object' && !Array.isArray(request.args) ? request.args : {};
     let result: ToolResult;
     try {
-      result = await this.handler(request.session, request.tool, args);
+      result = await this.handler(request.session, request.tool, args, signal);
     } catch (error) {
       result = textResult(error instanceof Error ? error.message : String(error), true);
     }
@@ -111,16 +115,19 @@ export class BrowserBridge {
   }
 }
 
-// 中継の側。アプリにつないで 1 回呼び、返事を待つ。つながらない・返事が無いときは、Claude に返すエラーの結果にする
-export function callBridge(socketPath: string, request: Omit<BridgeRequest, 'id'>, timeoutMs: number): Promise<ToolResult> {
+// 中継の側。アプリにつないで 1 回呼び、返事を待つ。つながらない・返事が無いときは、Claude に返すエラーの結果にする。
+// signal: Claude Code が呼び出しを取り消した。ソケットを閉じて、アプリに待つのをやめさせる
+export function callBridge(socketPath: string, request: Omit<BridgeRequest, 'id'>, timeoutMs: number, signal?: AbortSignal): Promise<ToolResult> {
   return new Promise((resolve) => {
     const id = 1;
     let buffered = '';
     let done = false;
+    const cancel = () => finish(textResult('取り消されました', true));
     const finish = (result: ToolResult) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
       socket.destroy();
       resolve(result);
     };
@@ -154,6 +161,8 @@ export function callBridge(socketPath: string, request: Omit<BridgeRequest, 'id'
       );
     });
     socket.on('close', () => finish(textResult('tanacode との接続が切れました。もう一度試してください', true)));
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
   });
 }
 
