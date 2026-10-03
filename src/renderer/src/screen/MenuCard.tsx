@@ -52,7 +52,11 @@ export function MenuCard({ sessionId, menu }: Props) {
 
   return (
     <div className={`menu-card ${menu.kind}`}>
-      <div className="menu-card-kind">{KIND_LABEL[menu.kind]}</div>
+      {/* 見出しの行。キャンセルは右上に置く */}
+      <div className="menu-card-head">
+        <div className="menu-card-kind">{KIND_LABEL[menu.kind]}</div>
+        <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="キャンセル（Esc）" onClick={() => window.tanacode.pty.write(sessionId, '\x1b')} />
+      </div>
       {menu.tabs.length > 1 && (
         <div className="menu-tabs">
           {menu.tabs.map((tab) => (
@@ -110,9 +114,6 @@ export function MenuCard({ sessionId, menu }: Props) {
           {shown.preview ? <pre className="menu-preview-body">{shown.preview}</pre> : <div className="menu-preview-none">この選択肢にはプレビューがありません</div>}
         </div>
       )}
-      <div className="menu-footer">
-        <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="キャンセル（Esc）" onClick={() => window.tanacode.pty.write(sessionId, '\x1b')} />
-      </div>
     </div>
   );
 }
