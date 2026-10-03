@@ -296,6 +296,8 @@ export class DemoBackend {
         onChanged: () => () => {},
       },
       models: { get: () => ok(this.catalog), refresh: () => ok({ catalog: this.catalog }) },
+      // デモの動画には翻訳のボタンを出さない
+      translate: { available: () => ok(false), run: () => Promise.reject(new Error('デモでは訳せません')), openSettings: () => ok(undefined) },
       knowledge: {
         get: (id) => ok({ files: s(id).knowledge, contextTokens: s(id).contextTokens }),
         onChanged: (l) => this.ch.knowledge.on(l),

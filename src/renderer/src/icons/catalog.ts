@@ -56,6 +56,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('CodeIcon', '開発者ツール・ソース'),
       item('EyeIcon', 'プレビュー'),
       item('PointerIcon', 'ページの要素を選ぶ'),
+      item('TranslateIcon', '翻訳'),
     ],
   },
   {

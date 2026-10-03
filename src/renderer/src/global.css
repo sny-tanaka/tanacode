@@ -2772,6 +2772,43 @@ details[open] > summary > .disclosure {
   white-space: pre-wrap;
 }
 
+/* 思考・応答の翻訳（日本語でない文のときだけ、ボタンを出しておく）。
+   応答ではボタンを本文の右上へ回り込ませ（本文はボタンをよけて折り返す）、思考では見出しの横に置く */
+.chat-response {
+  display: flow-root;
+}
+.chat-response > .chat-translate {
+  float: right;
+  margin: -2px -4px 2px 8px;
+}
+/* 訳文はブロックの下に、原文と分けて出す */
+.chat-translation {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+}
+.chat-translation-label {
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.chat-translation > .chat-thinking-text {
+  margin-top: 0;
+  padding-left: 0;
+  border-left: none;
+}
+.chat-translation-note {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.chat-translation-note.failed {
+  color: var(--warn);
+}
+
 /* Todo リスト（チャットの上に固定） */
 .todo-panel {
   flex: none;

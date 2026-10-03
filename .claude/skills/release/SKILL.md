@@ -208,6 +208,7 @@ disable-model-invocation: true
    | --- | --- |
    | 画面側のビルドで `JavaScript heap out of memory` | Node のメモリ不足。手元のビルドは約 4GB 使い、ランナーの既定の上限（約 2GB）では止まります。v0.1.2 のときに起き、`release.yml` の `npm run release` に `NODE_OPTIONS: --max-old-space-size=6144` を付けました。消えていないか確かめ、足りなければ上限を上げる直しを PR で入れ、7 の手順で作り直し |
    | 「バージョンを確かめる」で止まる | タグと `package.json` の `version` のずれ。タグを付けたコミットの取り違えか、バージョンを上げる PR がまだマージされていないかのどちらか。7 の手順でタグを付け直し |
+   | 「翻訳の補助プログラムを作れませんでした」、または「翻訳の補助プログラムを確かめる」で止まる | チャットの翻訳の補助プログラム（Swift）を作れなかったか、アプリに入らなかった。ランナーの `swiftc`（Xcode）か `native/translate/main.swift` のコンパイルエラーをログで確かめ、直しを PR で入れ、7 の手順で作り直し |
    | `npm ci` やダウンロードの一時的な失敗 | コードを変えずに `gh run rerun <run の id> --failed` で再実行 |
    | そのほか | ログの要点をユーザーに伝えて、どうするか AskUserQuestion で確かめます |
 
@@ -279,7 +280,7 @@ disable-model-invocation: true
 
 ## 補足
 
-- 配布物を手元で作るなら `npm run release`。`release/` に Apple Silicon 用と Intel 用の zip と pkg を作ります（署名なし）。使っている `dist/` と `/Applications` には触れません。
+- 配布物を手元で作るなら `npm run release`。`release/` に Apple Silicon 用と Intel 用の zip と pkg を作ります（署名なし）。使っている `dist/` と `/Applications` には触れません。翻訳の補助プログラムを作るので、`swiftc`（Xcode Command Line Tools）が要ります（無いと止まる）。
 - パッケージ版は本物の userData と Remote Control 付きで動くので、手元で作ったものを試しに起動しないでください。
 
 ## 最後の報告

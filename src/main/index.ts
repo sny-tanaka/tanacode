@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -38,6 +39,7 @@ import { StatusLineWatcher } from './statusline';
 import { ShellTerminals } from './shell-terminals';
 import { SystemMonitor } from './system-monitor';
 import { ClaudeVersionMonitor } from './claude-version';
+import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, translateTexts, Translator } from './translate';
 import { UsageMonitor } from './usage-monitor';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
@@ -405,6 +407,12 @@ function registerIpc(): void {
       (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }),
     ),
   );
+  // チャットの思考・応答の翻訳（同梱の補助プログラムで、macOS 標準の翻訳を呼ぶ）
+  const translateHelper = translateHelperPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+  const translator = new Translator(translateHelper);
+  ipcMain.handle(IpcChannel.TranslateAvailable, () => translateAvailable(process.getSystemVersion(), existsSync(translateHelper)));
+  ipcMain.handle(IpcChannel.TranslateRun, (_e, texts: unknown) => translator.translate(translateTexts(texts)));
+  ipcMain.handle(IpcChannel.TranslateOpenSettings, () => shell.openExternal(LANGUAGE_SETTINGS_URL));
   ipcMain.handle(IpcChannel.TasksAgentLog, (_e, id: string, ref: AgentLogRef) => manager.agentLog(id, ref));
   ipcMain.handle(IpcChannel.TasksStop, (_e, id: string, ref: TaskRef) => manager.stopTask(id, ref));
   ipcMain.handle(IpcChannel.ScreenChoose, (_e, id: string, choice: ScreenChoice) => manager.choose(id, choice));

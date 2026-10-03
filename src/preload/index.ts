@@ -117,6 +117,11 @@ const api: TanacodeApi = {
     get: () => ipcRenderer.invoke(IpcChannel.ModelsGet),
     refresh: () => ipcRenderer.invoke(IpcChannel.ModelsRefresh),
   },
+  translate: {
+    available: () => ipcRenderer.invoke(IpcChannel.TranslateAvailable),
+    run: (texts) => ipcRenderer.invoke(IpcChannel.TranslateRun, texts),
+    openSettings: () => ipcRenderer.invoke(IpcChannel.TranslateOpenSettings),
+  },
   knowledge: {
     get: (sessionId) => ipcRenderer.invoke(IpcChannel.KnowledgeGet, sessionId),
     onChanged: (listener) => subscribe<SessionKnowledgeChanged>(IpcChannel.KnowledgeChanged, listener),

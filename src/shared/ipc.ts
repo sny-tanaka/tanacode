@@ -11,6 +11,7 @@ import type { UsageLimits } from './usage';
 import type { AgentLogRef, BashTask, TaskRef } from './task';
 import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
+import type { TranslateResult } from './translate';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -101,6 +102,10 @@ export const IpcChannel = {
   ContextGet: 'context:get',
   ModelsGet: 'models:get',
   ModelsRefresh: 'models:refresh',
+  // チャットの思考・応答の翻訳（macOS 標準の翻訳）。使えるか・訳す・システム設定の「言語と地域」を開く
+  TranslateAvailable: 'translate:available',
+  TranslateRun: 'translate:run',
+  TranslateOpenSettings: 'translate:open-settings',
   UsageGet: 'usage:get',
   UsageRefresh: 'usage:refresh',
   UsageChanged: 'usage:changed',
@@ -435,6 +440,15 @@ export type TanacodeApi = {
     get(): Promise<ModelCatalog | null>;
     // Claude Code が持っているモデル一覧の控えを読み直す
     refresh(): Promise<{ catalog: ModelCatalog } | { error: string }>;
+  };
+  // チャットの思考・応答を、macOS 標準の翻訳で日本語に訳す（Mac の中だけで訳し、外へは送らない）
+  translate: {
+    // macOS 15 以降で、翻訳の補助プログラムがあるか
+    available(): Promise<boolean>;
+    // 1 行ずつ訳す（返す texts は同じ順・同じ数）。形が違う・長すぎるときは reject
+    run(texts: string[]): Promise<TranslateResult>;
+    // 翻訳データを入れてもらうために、システム設定の「言語と地域」を開く
+    openSettings(): Promise<void>;
   };
   // Claude が読んだ・書いたファイルと、コンテキストの使用量
   knowledge: {

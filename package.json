@@ -13,18 +13,22 @@
   "main": "out/main/index.js",
   "scripts": {
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
+    "predev": "node scripts/build-translate-helper.mjs",
     "dev": "electron-vite dev",
+    "prebuild": "node scripts/build-translate-helper.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:cli": "vitest run --config vitest.cli.config.ts",
+    "predist": "node scripts/build-translate-helper.mjs",
     "dist": "electron-vite build && electron-builder --mac",
     "install-app": "npm run dist && node scripts/install-app.mjs",
     "icon": "electron scripts/make-icon.mjs",
     "storybook": "storybook dev -p 6006 --no-open",
     "build-storybook": "storybook build -o storybook-static",
     "demo:record": "electron scripts/record-demo.mjs",
+    "prerelease": "node scripts/build-translate-helper.mjs --require",
     "release": "electron-vite build && electron-builder --mac zip pkg --publish never -c.directories.output=release --arm64 && electron-builder --mac zip pkg --publish never -c.directories.output=release --x64"
   },
   "dependencies": {
@@ -89,6 +93,10 @@
       {
         "from": "out/renderer/THIRD_PARTY_NOTICES.txt",
         "to": "THIRD_PARTY_NOTICES.txt"
+      },
+      {
+        "from": "build/native/tanacode-translate",
+        "to": "tanacode-translate"
       }
     ],
     "npmRebuild": false,

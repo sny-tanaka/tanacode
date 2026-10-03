@@ -24,7 +24,9 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 
 ## 始め方
 
-必要なもの: macOS 13 以降・Node.js 22・`claude` CLI（初回のセットアップを済ませたもの）
+必要なもの: macOS 13 以降・Node.js 22・`claude` CLI（初回のセットアップを済ませたもの）・Xcode Command Line Tools（翻訳の補助プログラムを作る `swiftc`。無くてもビルドは進み、翻訳のボタンが出ないだけ）
+
+`npm run dev`・`npm run build`・`npm run dist` は、始める前に翻訳の補助プログラム（`build/native/tanacode-translate`）を作ります（`predev`・`prebuild`・`predist`。下の「翻訳」）。
 
 ```bash
 npm install
@@ -300,6 +302,37 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - コンテキストの上限は、statusLine の値（1M かどうかも含めて正確な値）を使います。圧縮の直後は statusLine の使用量が次の応答まで 0 になるので、会話ログの圧縮後の量（`compactMetadata.postTokens`）を使います。
 - 引数が複数行・長い（800 文字を超える）`/compact` は、名前だけを打鍵し、引数をブラケットペーストで送ります（`promptKeys`）。丸ごと貼り付けると、Claude Code は入力を `[Pasted text #1 …]` の目印に置き換え、`/` で始まらない入力として、コマンドにせずにふつうの発言で送るためです（実測）。ほかの「/単語」で始まる複数行の発言（「/api のエンドポイントを…」など）は、今までどおり丸ごと貼り付けます。名前を打鍵すると、Claude Code がコマンドとして実行したり（`/clear` など）、知らないコマンドとして断ったりするためです。
 
+### 翻訳
+
+- 画面は `src/renderer/src/translate/BlockTranslation.tsx` の `useBlockTranslation`。ボタンと訳文の部品を返し、`chat/ChatRow.tsx` の `ResponseBlock`・`ThinkingBlock` が使います（サブエージェントの会話の表示も同じ部品なので、そこにも出ます）。
+  - ボタンを出すのは、主に日本語でない文のときだけ（`src/shared/translate.ts` の `isMostlyForeign`）。コード・URL・パス（`/` や、文字にはさまれた `.` を含む語。日本語の応答にも多い）を除いた文字で、ラテン文字が 20 字以上、かつ日本語の文字がラテン文字の 1 割に満たないもの（ラテン文字の言語だけが対象）。1 つのブロックの一部だけが英語、ということはないので、ブロック全体で見ます。
+  - 使えるか（`translate:available`）は、ボタンを出す文が来たときに main に一度だけ聞き、答え（使えない、も）を覚えておきます。覚えたもの（使えるか・訳文）は、Storybook がストーリーごとに `resetBlockTranslation` で捨てます（`.storybook/preview.tsx`）。
+  - 訳文を出している間に押すと閉じ、訳せなかったあとに押すと訳し直します。畳んだ思考で押したときは、思考を開きます。ボタンはマウスを乗せなくても出しておきます。応答では本文より先に置いて右へ回り込ませる（`float`）ので、本文やコードブロック（「実行」のボタンも）はボタンをよけ、文字が隠れません。
+  - ボタンは、はじめの描画では出さず、画面に出てから（effect で）出します。作業の書き出しは思考の行を `ChatRow` で `renderToStaticMarkup` するので、押しても動かないボタンが HTML に入らないようにするためです。
+  - 訳文は、原文をキーに画面のメモリにだけ 200 件まで持ちます（保存しない）。訳文の Markdown のコードブロックには、実行ボタンを付けません（原文の方にある）。
+  - アイコンは `TranslateIcon`（`icons.tsx`・`catalog.ts`）。
+- 訳す前後の文字の扱いは、`src/shared/translate.ts` の `planTranslation`・`applyTranslation`。
+  - 1 行ずつ渡します。macOS の翻訳に複数行をまとめて渡すと、改行が空行に増えるためです。
+  - コードブロック（`` ``` ``・`~~~` の囲み。引用の `>` の中のものも。閉じるのは印だけの行で、`` ```bash `` のような行は入れ子の中の開く印として閉じない）の中と、リンクの参照の定義（`[1]: https://…`）は渡しません。行頭の字下げ・引用・リスト（チェックボックスも）・見出しの印は外して渡し、訳したあとに付け直します。文字を含まない行（表の区切りの行など）も渡しません。
+  - 表の行は、区切りの `|` の数が変わったら（崩れたら）原文のまま。インラインコードは、訳しても `` `…` `` のまま残ります（macOS 26 で実測）。太字は「」になることがあります。
+  - かかる時間は 1 行に 50 ミリ秒ほど（200 行で 9 秒。実測）。
+- main は `src/main/translate.ts`（テストのため、electron を import しない）。
+  - 補助プログラムのパス（`translateHelperPath`）は、パッケージ後は `process.resourcesPath`、開発中は `app.getAppPath()/build/native` の `tanacode-translate`。使えるのは、macOS 15 以上で、ファイルがあるとき（`translateAvailable`）。
+  - 画面から来た値は、文字列の配列で、最大 1000 行・合計 100,000 字までかを確かめます（`translateTexts`）。
+  - 依頼ごとに補助プログラムを `execFile` で起動し、訳す文字を標準入力で渡します（`runTranslateHelper`）。依頼は `Translator` が 1 つずつ順に動かします（続けて押されても、一度にたくさん起動しない）。返事は `parseTranslateOutput` で読み、形が違えば `failed`。
+  - IPC は `index.ts` の `registerIpc`（`translate:available`・`translate:run`・`translate:open-settings`）。`translate:open-settings` は、決まった URL（`x-apple.systempreferences:com.apple.Localization-Settings.extension`。「言語と地域」）だけを開きます。
+- 補助プログラムは `native/translate/main.swift`。
+  - 標準入力で `{"texts": [...]}`（JSON）を受け、標準出力に結果の JSON を 1 行で返します。訳せたら `{ok: true, texts, source}`、訳せなければ `{ok: false, error, source?, message?}`（`error` は `same-language`・`not-installed`・`unsupported`・`failed`）。
+  - 元の言語は `NLLanguageRecognizer` で判定し、`LanguageAvailability` で翻訳データが入っている（`installed`）ときだけ訳します。入っていないまま訳すと、ダウンロードの確認を出そうとして止まるためです（窓が画面の外なので見えない）。
+  - macOS 15 では、翻訳のセッションを SwiftUI の `translationTask` からしか作れません。そこで、画面の外に小さな窓を置いて、そこで動かします。アプリは accessory なので前に出ず、フォーカスも奪いません（実測）。
+  - 止まったまま窓が残らないよう、20 秒 + 1 行 0.1 秒で自分で終わります。main も、それより少し長く待って返事が無ければ止めます。
+- 作るのは `scripts/build-translate-helper.mjs`。
+  - `xcrun` の `swiftc` で arm64 と x86_64（`-target <アーキテクチャ>-apple-macos15.0`）を作り、`lipo` で 1 つにまとめ、`codesign --force --sign -` で署名し直して `build/native/tanacode-translate` に置きます（`.gitignore` 済み）。lipo のあとに署名し直さないと、起動を止められることがあるためです。
+  - 元（`main.swift` とこのスクリプト）より新しいものがあれば、作り直しません。
+  - macOS でない・`swiftc` が無い・作れないときは、警告だけ出して進めます（翻訳のボタンが出ないだけ）。`swiftc` があるかは、先に `xcode-select -p` で確かめます（Command Line Tools が無い Mac では、`xcrun` がインストールのダイアログを出すため）。`--require` を付けると失敗にします。
+  - `package.json` の `predev`・`prebuild`・`predist` で呼び、`prerelease` では `--require` 付きで呼びます。`postinstall` には入れません（PR の CI は ubuntu で `npm ci` するため）。
+  - `build.extraResources` で `Contents/Resources/tanacode-translate` に入れます（electron-builder が ad-hoc で署名し直す）。electron-builder は元のファイルが無くても警告だけで進むので、`release.yml` で、パッケージしたあとに両方のアーキテクチャのアプリに入ったかを `test -x` で確かめます。
+
 ### コンテキストの中身と圧縮
 
 - 中身の一覧は、本体の会話ログから `ContextTracker`（`context-tracker.ts`）が集めます。`KnowledgeTracker` と同じく、`SessionManager` が行ごとに渡します。起動していないセッション（アーカイブ済みなど）は、取りに来たときに会話ログ全体を読みます（`readContext`）。
@@ -481,6 +514,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
 | `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと。メニューの「新しいバージョンが出たら通知する」で止められる） |
 
+チャットの翻訳では、ボタンを押したブロックの文字を、同梱の補助プログラム（`Contents/Resources/tanacode-translate`）に標準入力で渡し、macOS 標準の翻訳で Mac の中で訳します。外へは送りません。訳文は画面のメモリにだけ持ち、どこにも書きません。
+
 ### 書くもの
 
 アプリのデータは、すべて `~/Library/Application Support/tanacode/` に置きます。
@@ -549,6 +584,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
+  - `translate.ts`: チャットの翻訳（補助プログラムのパスと使えるか・画面から来た値の検査・補助プログラムの起動と返事の読み取り・依頼を 1 つずつ動かす `Translator`）
 - `src/preload`: renderer に `window.tanacode` の API を公開する
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
@@ -562,10 +598,12 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `icons/`: アプリのアイコン（自作の線画）・`IconButton`・`DisclosureIcon`・一覧（`catalog.ts`。Storybook の「カタログ/アイコン」と `test/icons.test.ts` が使う）
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
+  - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）
+- `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴ
-- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
+- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
@@ -580,6 +618,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行・親への知らせ・`read_session` の会話のまとめ）
+  - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
 
 ## デモ動画の仕組み
 

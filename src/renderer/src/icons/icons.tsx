@@ -316,6 +316,15 @@ export const CodeIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 翻訳: 左上に「文」、右下に「A」
+export const TranslateIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M3.5 6h9M8 3.5V6" />
+    <path d="M10.5 6c-.6 3.2-2.6 5.6-6 7.5M5.5 6c.6 3.2 2.6 5.6 6 7.5" />
+    <path d="M12.5 21l4-10 4 10M14 17.5h5" />
+  </Svg>
+);
+
 // 要素を選ぶ: 点線の枠とカーソル
 export const PointerIcon: IconComponent = (p) => (
   <Svg {...p}>
