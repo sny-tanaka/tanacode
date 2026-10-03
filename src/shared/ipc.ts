@@ -22,6 +22,8 @@ export const IpcChannel = {
   SessionsFocus: 'sessions:focus',
   SessionsSnapshot: 'sessions:snapshot',
   SessionsSelect: 'sessions:select',
+  SessionsSubmit: 'sessions:submit',
+  SessionsInterrupt: 'sessions:interrupt',
   // メニュー（⌘N）から。新規セッションの画面を開かせる
   SessionsNew: 'sessions:new',
   FolderPick: 'folders:pick',
@@ -183,6 +185,8 @@ export type SessionSummary = {
   remoteControl: boolean;
   // worktree で始めたセッション（cwd は worktree のフォルダ）。null はふつうのセッション
   worktree: SessionWorktree | null;
+  // 親セッションの ID（親の Claude が start_session で起動した子セッション）。無ければ親のないセッション
+  parentId?: string | null;
 };
 
 // worktree のセッション。name: worktree の名前（claude --worktree に渡したもの）/ branch: Claude Code が作ったブランチ /
@@ -309,6 +313,11 @@ export type TanacodeApi = {
     // 表示中のセッション。通知の要否と未読の解除に使う
     focus(id: string | null): void;
     snapshot(id: string): Promise<SessionSnapshot>;
+    // Claude Code の入力欄に打ち込んで送る。画像はパスを貼り付けとして送ると [Image #n] として添付される。
+    // 同じセッションへの送信（親セッションからの指示を含む）は、混ざらないよう 1 つずつ順に送る
+    submit(id: string, text: string, attachments: string[]): Promise<void>;
+    // 作業を中断する（Esc を送る）
+    interrupt(id: string): void;
     // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
     configure(id: string, options: SessionOptions): Promise<void>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）

@@ -106,6 +106,16 @@ export class ScreenTracker {
     return this.activity;
   }
 
+  // 画面にキーを送る操作（選択肢を選ぶ・モードの切り替え・巻き戻し・/tasks など）の途中か。途中に別の文字を打つと、その操作の画面に入ってしまう
+  get operating(): boolean {
+    return this.busy;
+  }
+
+  // 今出している AskUserQuestion の質問（フックが書いた入力）。答えが返るまで持つ。出していなければ null
+  get askedQuestions(): AskQuestion[] | null {
+    return this.questions;
+  }
+
   // 会話ログの応答に記録されたモデル。バナーより正確なのでこちらを優先する。
   // 再開時に読み直した過去の応答（fromHistory）は、起動時の表示も新しい応答も無いときだけ使う
   noteModel(model: string, fromHistory = false): void {
@@ -169,29 +179,40 @@ export class ScreenTracker {
   }
 
   // メニューの選択肢を選ぶ。↑/↓ を 1 回ずつ送り、画面上のカーソルが目的の選択肢に来たら key を送る。
-  // text があれば（自由記述）カーソルを合わせたあと、前に打った文字を消して入力してから key を送る
-  async choose(optionId: string, key: 'enter' | 'space' | 'none', text?: string): Promise<void> {
-    if (this.busy) return;
+  // text があれば（自由記述）カーソルを合わせたあと、前に打った文字を消して入力してから key を送る。
+  // expect: キーを送る前に毎回、今のメニューがこれを満たすか確かめる（途中で別のメニューに変わったら、何も送らずにやめる）。
+  // 最後のキーまで送れたら true
+  async choose(optionId: string, key: 'enter' | 'space' | 'none', text?: string, expect?: (menu: Menu) => boolean): Promise<boolean> {
+    if (this.busy) return false;
     this.busy = true;
+    const shown = () => {
+      const menu = this.menu();
+      return menu && (!expect || expect(menu)) ? menu : null;
+    };
     try {
       for (let step = 0; ; step++) {
-        const menu = this.menu();
-        if (!menu) return;
+        const menu = shown();
+        if (!menu) return false;
         // カーソルが見えない（画面より高い質問で、上の切れた選択肢にある）ときは -1。↓ で見えるところまで送る
         const current = menu.options.findIndex((o) => o.pointed);
         const target = menu.options.findIndex((o) => o.id === optionId);
-        if (target === -1) return;
+        if (target === -1) return false;
         if (current === target) break;
         // 目的の選択肢にカーソルが来なかったら、違う選択肢で答えないよう何も送らない
-        if (step === 30) return;
+        if (step === 30) return false;
         this.write(target > current ? KEY_DOWN : KEY_UP);
         await this.readUntil(() => this.menu()?.options.findIndex((o) => o.pointed) !== current, 500);
       }
       if (text) {
+        if (!shown()) return false;
         this.write(KEY_CLEAR_LINE + text);
         await this.nextRead(500);
       }
-      if (key !== 'none') this.write(key === 'space' ? ' ' : '\r');
+      if (key !== 'none') {
+        if (!shown()) return false;
+        this.write(key === 'space' ? ' ' : '\r');
+      }
+      return true;
     } finally {
       this.busy = false;
     }

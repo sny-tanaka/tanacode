@@ -16,8 +16,10 @@ import {
 } from '@shared/ipc';
 import { AppSettings } from './app-settings';
 import { normalizeHostPattern } from '@shared/browser-tools';
-import { BrowserBridge, type BrowserMcpLaunch } from './browser-bridge';
+import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
+import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
+import { SessionsControl } from './sessions-control';
 import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
@@ -53,8 +55,11 @@ let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
 let watchers: WorkspaceWatchers;
 // Claude によるアプリ内ブラウザの操作。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
-let browserBridge: BrowserBridge | null = null;
+let browserBridge: McpBridge | null = null;
 let browser: BrowserControl;
+// Claude によるほかのセッションの扱い（子セッションの起動・指示と、ほかのセッションを覗く）。中継からの呼び出しを、ソケットで受ける
+let sessionsBridge: McpBridge | null = null;
+let sessionsControl: SessionsControl | null = null;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
 // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -296,7 +301,8 @@ function registerIpc(): void {
   });
   ipcMain.handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
   ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string, options?: ArchiveOptions) => {
-    browser.forget(id);
+    // 子セッションも一緒にアーカイブされる
+    for (const target of [id, ...manager.childrenOf(id)]) browser.forget(target);
     // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
     if (options?.removeWorktree) shells.killOwner(id);
     return manager.archive(id, options);
@@ -304,10 +310,14 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.SessionsWorktreeLeftovers, (_e, id: string) => manager.worktreeLeftovers(id));
   ipcMain.handle(IpcChannel.SessionsUnarchive, (_e, id: string) => manager.unarchive(id));
   ipcMain.handle(IpcChannel.SessionsSnapshot, (_e, id: string) => manager.snapshot(id));
+  ipcMain.handle(IpcChannel.SessionsSubmit, (_e, id: string, text: string, attachments: string[]) =>
+    manager.submit(id, String(text ?? ''), Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : []),
+  );
+  ipcMain.on(IpcChannel.SessionsInterrupt, (_e, id: string) => manager.interrupt(id));
   ipcMain.handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
   ipcMain.handle(IpcChannel.SessionsRemove, (_e, id: string, options?: ArchiveOptions) => {
     shells.killOwner(id);
-    browser.forget(id);
+    for (const target of [id, ...manager.childrenOf(id)]) browser.forget(target);
     return manager.remove(id, options);
   });
   ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
@@ -318,7 +328,7 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.SessionsRestart, (_e, id: string) => manager.restart(id));
   ipcMain.handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
   ipcMain.handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
-  ipcMain.handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screen(id));
+  ipcMain.handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));
   ipcMain.handle(IpcChannel.ScreenActivityGet, (_e, id: string) => manager.activity(id));
   ipcMain.handle(IpcChannel.WorkflowsGet, (_e, id: string) => manager.workflows(id));
   ipcMain.handle(IpcChannel.ScreenSetMode, (_e, id: string, mode: PermissionMode) => manager.setMode(id, mode));
@@ -411,6 +421,12 @@ function browserLaunch(): BrowserMcpLaunch | null {
   return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: browserBridge.socketPath, version: app.getVersion() };
 }
 
+// 起動する Claude Code に足す、セッションの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
+function sessionsLaunch(): McpLaunch | null {
+  if (!sessionsBridge || !settings.sessionsControlEnabled()) return null;
+  return { command: hostExecutable(), script: join(__dirname, 'sessions-mcp.js'), socketPath: sessionsBridge.socketPath, version: app.getVersion() };
+}
+
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
   try {
     switch (action.kind) {
@@ -469,6 +485,7 @@ function buildMenu(): void {
           { type: 'separator' },
           { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
           { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+          { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
           {
             label: 'アプリ内ブラウザで Claude に許す先…',
             click: () => {
@@ -537,6 +554,17 @@ function setBrowserControl(item: MenuItem): void {
     return;
   }
   if (!item.checked) browser.cancelAsks();
+}
+
+// メニューの「Claude にほかのセッションを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（sessions-control の handle）。子への知らせも止める。
+// 保存できなかったら、チェックを元に戻す
+function setSessionsControl(item: MenuItem): void {
+  try {
+    settings.setSessionsControlEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
 }
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
@@ -656,12 +684,22 @@ app.whenReady().then(async () => {
     },
   });
   browser.watchNetwork(session.fromPartition(PREVIEW_PARTITION));
-  const bridge = new BrowserBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args, signal) => browser.handle(id, tool, args, signal));
+  const bridge = new McpBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args, signal) => browser.handle(id, tool, args, signal));
   try {
     await bridge.start();
     browserBridge = bridge;
   } catch (error) {
     console.error('アプリ内ブラウザの待ち受けを始められませんでした', error);
+  }
+  // ほかのセッションの扱い。待ち受けを始められなくても、アプリはそのまま使う（Claude Code に MCP サーバーを足さない）
+  const sessions = new McpBridge(socketPathIn(app.getPath('userData'), 'sessions', 'sessions'), (id, tool, args, signal) =>
+    sessionsControl ? sessionsControl.handle(id, tool, args, signal) : Promise.resolve(textResult('tanacode の起動が終わっていません。少し待ってから試してください', true)),
+  );
+  try {
+    await sessions.start();
+    sessionsBridge = sessions;
+  } catch (error) {
+    console.error('セッションの待ち受けを始められませんでした', error);
   }
   // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
   try {
@@ -690,7 +728,8 @@ app.whenReady().then(async () => {
     onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
     onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch);
+  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch);
+  sessionsControl = new SessionsControl({ host: manager, enabled: () => settings.sessionsControlEnabled(), home: homedir() });
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
@@ -724,6 +763,8 @@ app.on('before-quit', (event) => {
   manager?.closeAll(false);
   ptyHost?.close();
   browserBridge?.close();
+  sessionsControl?.dispose();
+  sessionsBridge?.close();
   shells.killAll();
 });
 

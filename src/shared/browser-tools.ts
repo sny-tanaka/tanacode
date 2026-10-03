@@ -1,3 +1,5 @@
+import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+
 // Claude Code に MCP のツールとして渡す、アプリ内ブラウザの操作。中継のスクリプト（src/main/browser-mcp.ts）が tools/list で返し、
 // アプリ（src/main/browser-control.ts）が実行する。Claude Code での名前は mcp__tanacode-browser__<name>
 
@@ -6,22 +8,13 @@ export const BROWSER_MCP_SERVER = 'tanacode-browser';
 // read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: ページを動かす（Claude Code の許可の確認を通す）/
 // eval: ページで JavaScript を実行する（--settings の PreToolUse のフックが、今のページが localhost なら確認なし、それ以外なら毎回許可の確認を通す）/
 // ask: ユーザーに操作を頼む（ページは動かさないので、読むだけのツールと同じく許可済みにする）
-export type BrowserToolKind = 'read' | 'act' | 'eval' | 'ask';
+export type BrowserTool = McpTool;
 
 // ユーザーに操作を頼むツールと、ユーザーの返事を待つ上限。過ぎたら帯を消して「時間切れ」を返す
 export const BROWSER_ASK_TOOL = 'ask_user_to_act';
 export const BROWSER_ASK_TIMEOUT_MS = 10 * 60_000;
 
 type Schema = Record<string, unknown>;
-
-export type BrowserTool = {
-  name: string;
-  kind: BrowserToolKind;
-  // チャットのツールの行に出す短い名前
-  label: string;
-  description: string;
-  inputSchema: { type: 'object'; properties: Record<string, Schema>; required?: string[]; additionalProperties: false };
-};
 
 const selector = (what: string): Schema => ({ type: 'string', description: `${what}の CSS セレクタ` });
 
@@ -274,17 +267,24 @@ export const BROWSER_MCP_INSTRUCTIONS = [
   `- ログイン・二段階認証・決済のテスト画面など、Claude にできない（させたくない）操作や、自信の持てない見た目の判断は、チャットで頼んで止まらずに ${BROWSER_ASK_TOOL} でユーザーに頼む。頼む内容には、パスワードなどの値を書かない。`,
 ].join('\n');
 
+export const BROWSER_MCP: McpServerDef = {
+  name: BROWSER_MCP_SERVER,
+  title: 'tanacode のアプリ内ブラウザ',
+  instructions: BROWSER_MCP_INSTRUCTIONS,
+  tools: BROWSER_TOOLS,
+};
+
 export function browserToolId(name: string): string {
-  return `mcp__${BROWSER_MCP_SERVER}__${name}`;
+  return mcpToolId(BROWSER_MCP_SERVER, name);
 }
 
 export function browserTool(name: string): BrowserTool | undefined {
-  return BROWSER_TOOLS.find((t) => t.name === name);
+  return findTool(BROWSER_MCP, name);
 }
 
 // Claude Code の起動の引数 --allowedTools で許可済みにする、読むだけのツールと、ユーザーに操作を頼むツール
 export function allowedBrowserToolIds(): string[] {
-  return BROWSER_TOOLS.filter((t) => t.kind === 'read' || t.kind === 'ask').map((t) => browserToolId(t.name));
+  return allowedToolIds(BROWSER_MCP);
 }
 
 // --settings の PreToolUse のフックで、ページによって確認を出すか決めるツール

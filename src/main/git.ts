@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { GitBranches } from '@shared/ipc';
 
@@ -210,8 +210,9 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
     files.push({ path, kind, ...(counts.get(path) ?? { added: 0, removed: 0, binary: false }) });
   }
   for (const path of untracked.split('\0').filter(Boolean)) {
-    const size = await stat(join(cwd, path)).then((s) => s.size, () => 0);
-    const text = size <= MAX_COUNT_BYTES ? await readFile(join(cwd, path)).catch(() => null) : null;
+    // ふつうのファイルだけ数える（シンボリックリンクの先・デバイス・名前付きパイプは読まない。/dev/zero へのリンクは読み終わらない）
+    const info = await lstat(join(cwd, path)).catch(() => null);
+    const text = info?.isFile() && info.size <= MAX_COUNT_BYTES ? await readFile(join(cwd, path)).catch(() => null) : null;
     const binary = !!text && text.includes(0);
     const added = text && !binary ? text.toString('utf8').split('\n').length - (text.at(-1) === 10 ? 1 : 0) : 0;
     files.push({ path, kind: 'added', added, removed: 0, binary });

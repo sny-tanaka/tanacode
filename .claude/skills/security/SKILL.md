@@ -154,11 +154,11 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - ▶ 実行ボタンは、サニタイズのあとに作成。実行するコマンドは画面の文字ではなく、marked のトークン（`renderer.code` の `token.text`）から `stripControlChars` を通して控えたもの。`pre` の数とコマンドの数が合わないときは、ボタンを付けません。
 - 外部の画像（`http(s):`・`//`）は読み込まず、リンクに置き換え（`src/renderer/src/markdown.ts` の `replaceExternalImages`。`srcset` も削除）。文書に入れる前（DocumentFragment の中）で呼んでいるか。
 
-**制御文字**（`src/renderer/src/chat/sanitize.ts` の `stripControlChars`）
+**制御文字**（`src/shared/prompt-keys.ts` の `stripControlChars`。画面側は `src/renderer/src/chat/sanitize.ts` から読み込む）
 
 - C0（`\n`・`\t` 以外）・DEL・C1・双方向の制御文字（U+061C・U+200E・U+200F・U+202A〜U+202E・U+2066〜U+2069）の除去と、CR（`\r\n`・`\r`）を `\n` にそろえる処理。
-- Claude（pty）へ送る文字列・シェルに書くコマンドは、必ずここを通します。今の呼び出し元: `chat/ChatInput.tsx` の `submitToClaude`（本文と添付のパス）、`chat/insertInput.ts`、`chat/Markdown.tsx`（▶ 実行のコマンド）、`terminal/TerminalPanel.tsx`、`preview/picker.ts`。新しく pty・シェルに書く所が増えていないか（`grep -rn "pty.write\|shell.write" src/renderer`）。
-- ブラケットペースト（`\x1b[200~ … \x1b[201~`）は、本文が改行を含むときだけ（`submitToClaude`）。
+- Claude（pty）へ送る文字列・シェルに書くコマンドは、必ずここを通します。今の呼び出し元: main の `SessionManager.submit`（チャットの入力欄からの本文と添付のパス・親セッションからの指示・親への知らせ。画面の `submitToClaude` は IPC `sessions:submit` で頼むだけ）、`sessions-control.ts` の `answer_question` の自由記述、画面の `chat/insertInput.ts`、`chat/Markdown.tsx`（▶ 実行のコマンド）、`terminal/TerminalPanel.tsx`、`preview/picker.ts`。新しく pty・シェルに書く所が増えていないか（`grep -rn "pty.write\|shell.write" src/renderer`、`grep -rn "process.write\|\.write(id" src/main`）。
+- ブラケットペースト（`\x1b[200~ … \x1b[201~`）は、本文が改行を含むときだけ（`promptKeys`）。
 - `codeBlock`・`inlineCode` のフェンスは、中身の最も長いバッククォートの連続より長く。
 
 **権限とウィンドウ**（`src/main/index.ts`）
@@ -176,6 +176,16 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 **statusLine**（`src/main/statusline.ts`）
 
 - `--settings` に写す statusLine は、ユーザーの `~/.claude/settings.json` のものだけ（`userStatusLineCommand`）。プロジェクトの `.claude/settings*.json` を読んでいないか。
+
+**ほかのセッションを扱う MCP**（`src/main/sessions-control.ts`・`sessions-bridge.ts`・`session-manager.ts`、`src/shared/session-tools.ts`。2026-10-03 に決めたこと）
+
+- 許可の確認には、親は答えない。`answer_question` は、画面のメニューが AskUserQuestion で出した質問（`ScreenTracker.askedQuestions`。フックが書いた質問）に合うときだけ（`isAskedQuestion`）。メニューを質問と見分けるのは ☐・☒ の行なので、コマンドの文字に ☐ があると許可の確認が質問に見えるためです。キーは `chooseIf`（`ScreenTracker.choose` の `expect`）で、送る前に毎回同じ質問か確かめているか。`stateOf` も、AskUserQuestion が無い質問のメニューは `permission` にしているか。
+- 子の権限モードの上限（`modeOf`）は、アプリが決めたモード（`knownMode`）と画面のモードの弱いほう。画面のモードの行は会話の中の文でも読めるので、画面の文字だけで上げていないか。子の起動のモードは `launchMode` に残し、`open`・`restart` でもそれより強くしないか。
+- 子への指示・親への知らせは、相手の手が空いてから打つ（`submitWhenReady` の `acceptsTyping`：ターンの外・操作待ちでない・入力欄が空・画面の操作の途中でない）。打つ直前と Enter の直前にも確かめ直す（`submit` の `guarded`）。作業中に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になるためです。
+- 子セッションの起動（`start_session`）は、`--settings` の `PreToolUse` のフック（`SESSIONS_GATE_COMMAND`）が毎回 `ask` を返し、auto・bypassPermissions でも人の確認が出るか。子の中継には、子を動かすツールを出していないか（`SESSIONS_MCP_FOR_CHILD`）。アプリも子からの `start_session` を断るか。
+- 見える範囲（`canSee`）は、同じフォルダ（worktree は元のフォルダ）と親子・兄弟だけ。中のフォルダを含めていないか（`~/work` で開いたセッションに、その下の別々のリポジトリを見せない）。一覧や見出しに、見えない子の ID・名前を出していないか。指示・中断・回答は自分の子だけ（`resolve` の `child`）。
+- `start_session` のフォルダは `realpath` してから、親のリポジトリの中か、見えるセッションのフォルダだけ。`get_session_diff` の `path` は `safeRelative`、未追跡のファイルは `lstat` でふつうのファイルだけ・読む大きさと数に上限（`git.ts` の `branchFiles` の行数の数え方も同じ）。
+- 会話ログの目印（`<tanacode-parent-message>`・`<tanacode-session-event>`）は、本文や名前の `<tanacode-`・`</tanacode-` を `neutralizeTags` で打ち消しているか（閉じタグで囲みの外に出た文が、子の Claude に人の発言として読まれないように）。
 
 ### まだ直していない項目
 

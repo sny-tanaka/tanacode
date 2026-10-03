@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { isTranscriptEntry, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { parentMessageText } from '@shared/session-tools';
 import { rememberImage } from './image-cache';
 import { parentFirst } from './transcript-tail';
 
@@ -34,6 +35,15 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
   if (!typed) return null;
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
+    // 親セッションからの指示は、囲みごと入力欄に戻る。複数行の本文は、貼り付けの目印（[Pasted text #1 +6 lines]）になる
+    if (event.type === 'user' && event.parent) {
+      const whole = parentMessageText(event.parent, event.text).replace(/\s/g, '');
+      const [opening, closing] = parentMessageText(event.parent, '\u0001')
+        .split('\u0001')
+        .map((part) => part.replace(/\s/g, ''));
+      const pasted = typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '');
+      return typed === whole || (pasted !== typed && pasted === `${opening}${closing}`) ? i : null;
+    }
     if (event.type === 'user') return event.text.replace(/\s/g, '') === typed ? i : null;
     if (!BEFORE_RESPONSE.has(event.type)) return null;
   }

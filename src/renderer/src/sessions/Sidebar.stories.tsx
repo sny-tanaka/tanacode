@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
 import type { SessionStatus } from '../chat/chatState';
 import { mockApi } from '../../../../.storybook/mockApi';
-import { SESSION_LOCK_KEY, Sidebar } from './Sidebar';
+import { SESSION_COLLAPSED_KEY, SESSION_LOCK_KEY, Sidebar } from './Sidebar';
 
 // セッション一覧。ロックしていなければ、更新のあったセッションが上に来る（実際は main が最終更新の新しい順に並べて渡す）。
 // ロック中は並びを動かさない。下のボタンでセッションを更新して、並びが入れ替わるか（ロック中は動かないか）を確かめる
@@ -124,3 +124,60 @@ export const ロックなし: Story = { args: { locked: false } };
 
 // ロック中: 更新しても並びは動かない（新しく作ったものだけ先頭に入る）
 export const ロック中: Story = { args: { locked: true } };
+
+// 親子のセッション。親の Claude が start_session で起動した子は、親の下にぶら下げて出す（子同士は新しい順）。
+// 親の行の右のボタンで畳む・開く。畳んでいる間は子の数を出し、子が人を待っていれば黄色、作業中なら Claude の色にする。
+// 親をアーカイブ済みにした子（「古い取りまとめの残り」）と、親を一覧から削除した子（「親のいない子」）は、いちばん上の段に出す
+const FAMILY: SessionSummary[] = [
+  session(20, '検索機能の取りまとめ', '/Users/me/work/tanacode', { running: true }),
+  session(21, 'API の実装', '/Users/me/work/tanacode/.claude/worktrees/tc-1003-a1b2', {
+    parentId: 's20',
+    running: true,
+    worktree: { name: 'tc-1003-a1b2', branch: 'worktree-tc-1003-a1b2', root: '/Users/me/work/tanacode', preparing: null },
+  }),
+  session(22, '画面の実装', '/Users/me/work/tanacode/.claude/worktrees/tc-1003-c3d4', {
+    parentId: 's20',
+    running: true,
+    attention: 'question',
+    worktree: { name: 'tc-1003-c3d4', branch: 'worktree-tc-1003-c3d4', root: '/Users/me/work/tanacode', preparing: null },
+  }),
+  session(23, 'テストの追加', '/Users/me/work/tanacode', { parentId: 's20', unread: true }),
+  session(24, 'README の更新', '/Users/me/work/tanacode'),
+  session(25, '古い取りまとめの残り', '/Users/me/work/cafe-menu', { parentId: 's27' }),
+  session(26, '親のいない子', '/Users/me/work/cafe-menu', { parentId: 'gone' }),
+  session(27, '古い取りまとめ', '/Users/me/work/cafe-menu', { archived: true }),
+  session(28, '古い取りまとめの調査', '/Users/me/work/cafe-menu', { archived: true, parentId: 's27' }),
+];
+const familyStatus = (id: string): SessionStatus => (id === 's20' || id === 's21' ? 'running' : 'idle');
+
+// collapsed: 開いた時点で「検索機能の取りまとめ」の子を畳んでいるか（畳んだ状態は localStorage に保つので、開く前にそろえる）
+function Family({ collapsed }: { collapsed: boolean }) {
+  useState(() => {
+    localStorage.removeItem(SESSION_LOCK_KEY);
+    if (collapsed) localStorage.setItem(SESSION_COLLAPSED_KEY, JSON.stringify(['s20']));
+    else localStorage.removeItem(SESSION_COLLAPSED_KEY);
+  });
+  // 畳んだ親の子を選ぶと、親が開く（チャットのリンクから子へ移ったときに見えるように）ので、畳んだ状態では親子のないものを選んでおく
+  const [selectedId, setSelectedId] = useState(collapsed ? 's24' : 's21');
+  return (
+    <div style={{ ['--w-sessions' as string]: '248px', height: 720, display: 'flex', border: '1px solid var(--border-subtle)' }}>
+      <Sidebar
+        sessions={FAMILY}
+        selectedId={selectedId}
+        statusOf={familyStatus}
+        onSelect={setSelectedId}
+        onCreate={noop}
+        onImport={noop}
+        onArchive={noop}
+        onUnarchive={noop}
+        onRename={noop}
+        onRemove={noop}
+      />
+    </div>
+  );
+}
+
+export const 親子: StoryObj<typeof Family> = { args: { collapsed: false }, render: (args) => <Family {...args} /> };
+
+// 畳んだ状態: 親の行に子の数（3）が出る。子の 1 つが質問への回答待ちなので黄色
+export const 親子_畳んだ状態: StoryObj<typeof Family> = { args: { collapsed: true }, render: (args) => <Family {...args} /> };

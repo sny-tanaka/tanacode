@@ -1,10 +1,10 @@
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
-import { BROWSER_MCP_INSTRUCTIONS, BROWSER_MCP_SERVER, BROWSER_TOOLS, browserTool } from '@shared/browser-tools';
-import { textResult, type ToolResult } from './browser-bridge';
+import { findTool, type McpServerDef } from '@shared/mcp-tools';
+import { textResult, type ToolResult } from './mcp-bridge';
 
-// アプリ内ブラウザの MCP サーバー（stdio）。Claude Code と JSON-RPC を 1 行ずつやりとりし、ツールの呼び出しをアプリへ中継する。
-// MCP の SDK は使わず、使う分（initialize・tools/list・tools/call・ping と、取り消しの notifications/cancelled）だけを書く
+// tanacode が Claude Code に足す MCP サーバー（stdio。アプリ内ブラウザ・セッション）。Claude Code と JSON-RPC を 1 行ずつやりとりし、
+// ツールの呼び出しをアプリへ中継する。MCP の SDK は使わず、使う分（initialize・tools/list・tools/call・ping と、取り消しの notifications/cancelled）だけを書く
 
 type Id = string | number | null;
 type Incoming = { jsonrpc?: string; id?: Id; method?: string; params?: Record<string, unknown> };
@@ -14,6 +14,8 @@ type Outgoing = { jsonrpc: '2.0'; id: Id; result?: unknown; error?: { code: numb
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-11-25', '2025-03-26', '2024-11-05'];
 
 export type RelayDeps = {
+  // どの MCP サーバーとして答えるか（ツールの一覧と説明）
+  server: McpServerDef;
   version: string;
   // アプリにツールの呼び出しを渡し、結果を受け取る。signal: Claude Code がその呼び出しを取り消した（Esc で中断した・待つ上限を過ぎた）
   call: (tool: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<ToolResult>;
@@ -30,15 +32,15 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
       return ok({
         protocolVersion: PROTOCOL_VERSIONS.includes(wanted) ? wanted : PROTOCOL_VERSIONS[0],
         capabilities: { tools: {} },
-        serverInfo: { name: BROWSER_MCP_SERVER, title: 'tanacode のアプリ内ブラウザ', version: deps.version },
-        instructions: BROWSER_MCP_INSTRUCTIONS,
+        serverInfo: { name: deps.server.name, title: deps.server.title, version: deps.version },
+        instructions: deps.server.instructions,
       });
     }
     case 'ping':
       return ok({});
     case 'tools/list':
       return ok({
-        tools: BROWSER_TOOLS.map((t) => ({
+        tools: deps.server.tools.map((t) => ({
           name: t.name,
           title: t.label,
           description: t.description,
@@ -50,7 +52,7 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
       const name = typeof params?.name === 'string' ? params.name : '';
       const raw = params?.arguments;
       const args = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-      if (!browserTool(name)) return ok(textResult(`知らないツールです: ${name}`, true));
+      if (!findTool(deps.server, name)) return ok(textResult(`知らないツールです: ${name}`, true));
       return ok(await deps.call(name, args, signal));
     }
     default:

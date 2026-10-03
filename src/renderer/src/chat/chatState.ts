@@ -6,9 +6,11 @@ import { useSessionValues } from '../sessionValues';
 export type ToolStatus = 'running' | 'done' | 'error';
 
 export type ChatItem =
-  | { kind: 'user'; id: string; text: string; images?: string[] }
+  // parent: 親セッションの Claude からの指示なら、親セッションの ID
+  | { kind: 'user'; id: string; text: string; images?: string[]; parent?: string }
   | { kind: 'text'; id: string; text: string }
-  | { kind: 'notice'; id: string; text: string; detail?: string }
+  // sessions: 子セッションからの知らせなら、その子の ID
+  | { kind: 'notice'; id: string; text: string; detail?: string; sessions?: string[] }
   | { kind: 'info'; id: string; text: string }
   | { kind: 'shell'; id: string; command: string; output: string }
   | { kind: 'thinking'; id: string; text: string }
@@ -166,7 +168,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ...state,
         status: turn(state, 'running'),
         inTurn: true,
-        items: [...state.items, { kind: 'user', id: event.id, text: event.text, images: event.images }],
+        items: [...state.items, { kind: 'user', id: event.id, text: event.text, images: event.images, parent: event.parent }],
       };
     case 'notice':
       // 完了通知を受けて Claude Code が続きを始める
@@ -174,7 +176,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ...state,
         status: turn(state, 'running'),
         inTurn: true,
-        items: [...state.items, { kind: 'notice', id: event.id, text: event.text, detail: event.detail }],
+        items: [...state.items, { kind: 'notice', id: event.id, text: event.text, detail: event.detail, sessions: event.sessions }],
       };
     case 'turn-start':
       return { ...state, status: turn(state, 'running'), inTurn: true };

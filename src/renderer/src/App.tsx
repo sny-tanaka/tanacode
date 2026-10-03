@@ -25,6 +25,7 @@ import { ImportDialog } from './sessions/ImportDialog';
 import { NewSessionPane } from './sessions/NewSessionPane';
 import { Sidebar } from './sessions/Sidebar';
 import { WorktreeDialog } from './sessions/WorktreeDialog';
+import { isWorking, liveChildrenOf } from './sessions/sessionTree';
 import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
@@ -52,6 +53,7 @@ type EditorState = { files: OpenFile[]; activePath: string | null; reveal: Revea
 const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
+const NO_SESSIONS: SessionSummary[] = [];
 
 type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'context';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）
@@ -492,10 +494,19 @@ export function App() {
     },
     [forgetSession],
   );
-  const archiveSession = useCallback((id: string) => {
-    if (sessionsRef.current?.find((s) => s.id === id)?.worktree) setWorktreeDialog({ id, action: 'archive' });
-    else void window.tanacode.sessions.archive(id);
-  }, []);
+  const archiveSession = useCallback(
+    (id: string) => {
+      const list = sessionsRef.current ?? [];
+      // 親をアーカイブすると、子セッションも一緒にアーカイブされる（子の worktree は残る）。アクティブな子があれば、先に確かめる
+      const children = liveChildrenOf(list, id);
+      const working = children.filter((c) => isWorking(c, statusOf(c.id))).length;
+      const detail = working > 0 ? `（うち ${working} 件は作業中です）` : '';
+      if (children.length > 0 && !window.confirm(`子セッション ${children.length} 件も一緒にアーカイブします${detail}。アーカイブしますか？`)) return;
+      if (list.find((s) => s.id === id)?.worktree) setWorktreeDialog({ id, action: 'archive' });
+      else void window.tanacode.sessions.archive(id);
+    },
+    [statusOf],
+  );
   // 確認のダイアログで選んだとおりに、アーカイブ・一覧から削除する。worktree を消したら、控えや残したブランチを知らせる
   const finishWorktreeDialog = useCallback(
     async (id: string, action: 'archive' | 'remove', removeWorktree: boolean) => {
@@ -588,6 +599,7 @@ export function App() {
             onForgetFolder={hideFolder}
             cwd={composing.cwd}
             onCwdChange={changeComposingCwd}
+            sessions={sessions ?? NO_SESSIONS}
             branch={draft && draft.cwd === composing.cwd && git.state ? (git.state.isRepo ? git.state.branch : null) : undefined}
             onOpenScm={openScm}
             gitId={draft && draft.cwd === composing.cwd ? draft.id : null}
@@ -603,6 +615,8 @@ export function App() {
         {selected && (
           <ClaudePane
             session={selected}
+            sessions={sessions ?? NO_SESSIONS}
+            onSelectSession={select}
             chat={chat}
             screen={screenOf(selected.id)}
             workflows={workflows}

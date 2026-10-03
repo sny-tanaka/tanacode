@@ -1,6 +1,9 @@
+import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
+
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）
+// parent: 親セッションの Claude からの指示（start_session・send_message）なら、親セッションの ID。人の発言には無い
 export type ChatEvent =
-  | { type: 'user'; id: string; text: string; images?: string[] }
+  | { type: 'user'; id: string; text: string; images?: string[]; parent?: string }
   | { type: 'assistant-text'; id: string; text: string }
   | { type: 'thinking'; id: string; text: string }
   // input: 入力の詳細（Bash のコマンド全文など）。todos: TodoWrite の一覧。taskChange: TaskCreate・TaskUpdate の中身。at: 会話ログの時刻（ミリ秒）
@@ -39,8 +42,8 @@ export type ChatEvent =
       at?: number;
     }
   // Claude への、ユーザーの発言ではない知らせ（バックグラウンドのタスクの完了・CI の自動修正・スケジュールタスク）。
-  // Claude はこれを受けて作業を始める。detail: 開くと読める全文
-  | { type: 'notice'; id: string; text: string; detail?: string }
+  // Claude はこれを受けて作業を始める。detail: 開くと読める全文 / sessions: 子セッションからの知らせなら、その子の ID（チャットから移れる）
+  | { type: 'notice'; id: string; text: string; detail?: string; sessions?: string[] }
   // 別の Claude（サブエージェント・ほかのセッション）からの知らせで、待機中の Claude Code が続きを始める。
   // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
   | { type: 'turn-start' }
@@ -366,12 +369,15 @@ export const ASK_FILE_ENV = 'TANACODE_ASK_FILE';
 export const GUARD_HOOK_ENV = 'TANACODE_WORKTREE_GUARD';
 // アプリが足した、アプリ内ブラウザの JavaScript の実行で、ページによって確認を出させるフック（main の browser-gate.ts）の目印
 export const BROWSER_GATE_HOOK_ENV = 'TANACODE_BROWSER_GATE';
+// アプリが足した、子セッションの起動で、権限モードによらず人の許可の確認を出させるフック（main の statusline.ts）の目印
+export const SESSIONS_GATE_HOOK_ENV = 'TANACODE_SESSIONS_GATE';
+const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV];
 
 function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
   const type = typeof a?.type === 'string' ? a.type : '';
   if (!a || !type.startsWith('hook_')) return null;
   // アプリが足したフックは、ユーザーのフックではないので出さない
-  if (typeof a.command === 'string' && (a.command.includes(ASK_FILE_ENV) || a.command.includes(GUARD_HOOK_ENV) || a.command.includes(BROWSER_GATE_HOOK_ENV))) return null;
+  if (typeof a.command === 'string' && APP_HOOK_MARKS.some((mark) => (a.command as string).includes(mark))) return null;
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
   const blocking = (a.blockingError ?? null) as { blockingError?: string; command?: string } | null;
@@ -446,6 +452,12 @@ function compactText(entry: TranscriptEntry): string {
 
 function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   if (entry.interruptedMessageId || text.startsWith(INTERRUPTED_PREFIX)) return [{ type: 'turn-end' }];
+  // 親セッションの Claude からの指示。人の発言と見分けて出す
+  const fromParent = parseParentMessage(text);
+  if (fromParent) return [{ type: 'user', id: entry.uuid ?? '', text: unwrapPasted(fromParent.body), parent: fromParent.parent }];
+  // 子セッションの作業が終わった・人の対応待ちになった知らせ（アプリが、手の空いている親に送る）
+  const event = parseSessionEvent(text);
+  if (event) return [{ type: 'notice', id: entry.uuid ?? '', text: event.message, sessions: event.sessions }];
   const special = specialUserText(entry.uuid ?? '', text.trimStart());
   if (special) return [special];
   if (text.includes('<task-notification>')) {
@@ -494,6 +506,18 @@ function specialUserText(id: string, text: string): ChatEvent | null {
     return { type: 'notice', id, text: `スケジュールタスク${name ? `「${name}」` : ''}の実行`, detail: truncate(body, OUTPUT_CHARS) };
   }
   return null;
+}
+
+// 順番待ちの発言が、人（または親セッション）の発言か。完了通知や知らせは除く
+export function isHumanPrompt(text: string): boolean {
+  const head = text.trimStart();
+  return !text.includes('<task-notification>') && !head.startsWith('<ci-monitor-event>') && !head.startsWith(`<${SESSION_EVENT_TAG}`);
+}
+
+// 順番待ちとして出す文字。親セッションからの指示は、囲みを外す
+export function promptDisplayText(text: string): string {
+  const fromParent = parseParentMessage(text);
+  return fromParent ? unwrapPasted(fromParent.body) : text;
 }
 
 // 貼り付けた文字は <pasted_content id="…">…</pasted_content id="…"> で囲まれて会話ログに残る
@@ -662,8 +686,9 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     typeof entry.message?.content === 'string'
   ) {
     const text = entry.message.content;
-    if (text.includes('<local-command-') || text.includes('<command-name>')) return null;
-    const firstLine = unwrapPasted(text).trim().split('\n')[0];
+    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text)) return null;
+    // 親セッションからの指示は、囲みを外した本文の 1 行目
+    const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];
     return firstLine ? { title: firstLine.slice(0, 80), priority: 1 } : null;
   }
   return null;

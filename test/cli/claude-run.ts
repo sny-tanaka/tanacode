@@ -6,13 +6,14 @@ import { dirname, join } from 'node:path';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import type { ChatBatch, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
-import type { Activity, Menu, ScreenInfo, ScreenLine } from '@shared/screen';
+import type { Activity, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
+import type { McpLaunch } from '../../src/main/mcp-bridge';
 import { ScreenTracker } from '../../src/main/screen-tracker';
 import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
@@ -65,6 +66,10 @@ type Options = {
   effort?: string;
   // アプリ内ブラウザの MCP サーバー（中継）を足すときの材料（SessionManager の browser）。無ければ足さない
   browser?: BrowserMcpLaunch;
+  // セッションの MCP サーバー（中継）を足すときの材料（SessionManager の sessionsMcp）。無ければ足さない
+  sessions?: McpLaunch;
+  // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
+  mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
   git?: boolean;
   // フォルダの信頼の確認を済ませておく（claude --worktree は、信頼していないフォルダでは始まらない）
@@ -134,6 +139,8 @@ export class ClaudeRun {
         theme: 'dark',
         customApiKeyResponses: { approved: [API_KEY.slice(-20)], rejected: [] },
         ...(options.trusted ? { projects: { [this.cwd]: { hasTrustDialogAccepted: true } } } : {}),
+        // bypassPermissions で起動したときの、はじめの注意は済んだことにする
+        ...(options.mode === 'bypassPermissions' ? { bypassPermissionsModeAccepted: true } : {}),
       }),
     );
     if (options.settings) writeFileSync(join(this.home, '.claude', 'settings.json'), JSON.stringify(options.settings));
@@ -241,14 +248,21 @@ export class ClaudeRun {
     const manager = this.manager;
     if (!this.sessionId) {
       // 許可の確認を出させる（API キーでは既定が auto になり、確認が出ない）
-      this.sessionId = manager.create(this.cwd, { model: this.options.model ?? null, effort: this.options.effort ?? null, settingsFile: null, mode: 'manual', remoteControl: false, worktree: false });
+      this.sessionId = manager.create(this.cwd, {
+        model: this.options.model ?? null,
+        effort: this.options.effort ?? null,
+        settingsFile: null,
+        mode: this.options.mode ?? 'manual',
+        remoteControl: false,
+        worktree: false,
+      });
       return;
     }
     if (this.runtime()?.process) throw new Error('claude が動いています（stopClaude で止めてから start します）');
     // 止まっているセッションを開くのと同じく、会話があれば --resume で再開する（session-manager の start が決める）。
     // 権限モードは、はじめの起動と同じく manual にする（open では既定のままになる）
     if (resume && !this.hasConversation()) throw new Error('再開する会話がまだありません');
-    manager['start'](this.sessionId, 'manual');
+    manager['start'](this.sessionId, this.options.mode ?? 'manual');
   }
 
   // 新規セッションの画面で「worktree で始める」をオンにしたのと同じく、claude --worktree で始める。
@@ -352,6 +366,7 @@ export class ClaudeRun {
       // worktree の npm install などは、画面に出さずに実行する（既定のまま）
       undefined,
       () => this.options.browser ?? null,
+      () => this.options.sessions ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);

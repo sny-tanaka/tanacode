@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { PermissionMode } from '@shared/screen';
 
 export type SessionRecord = {
   id: string;
@@ -21,6 +22,10 @@ export type SessionRecord = {
   worktree?: { name: string; branch: string; root: string } | null;
   // 起動時の表示で分かった、1M コンテキストのモデルか（再開時は表示が読めないことがあるので覚えておく）
   oneMillion?: boolean;
+  // 親セッションの ID（親の Claude が start_session で起動した子セッション）。無いものは親のないセッション
+  parentId?: string | null;
+  // 子セッションを起動したときの権限モード。止まった子を起動し直すときも、このモードで起動する（ユーザーの既定のモードが親より強くても、上げないため）
+  launchMode?: PermissionMode | null;
   createdAt: number;
   updatedAt: number;
 };

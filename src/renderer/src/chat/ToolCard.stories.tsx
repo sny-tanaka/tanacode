@@ -153,3 +153,73 @@ export const 操作のまとまり_説明つき: StoryObj<typeof ToolGroupRow> =
 export const 操作のまとまり_説明つき_開いた状態: StoryObj<typeof ToolGroupRow> = {
   render: () => <ToolGroupRow group={described} open {...groupArgs} />,
 };
+
+// セッションのツール（tanacode-sessions）。対象のセッションを一覧から探して名前を出し、カードのクリックでそのセッションへ移る（右の矢印）
+const CHILD_ID = 'c0ffee12-3456-4789-8abc-def012345678';
+const SESSIONS = [{ id: CHILD_ID, title: 'API の実装' }];
+const sessionArgs = { sessions: SESSIONS, onSelectSession: noop };
+const startPrompt = '検索の API（/api/search）を実装してください。\n入力は q（文字列）と limit（数）。終わったら npm test が通ることを確かめてください。';
+
+// start_session は結果に session_id が入る。対象の欄には最初の指示を出し、起動した子の名前は下の行に出す
+export const セッション_子セッションを始める: Story = {
+  args: {
+    item: tool('st1', 'mcp__tanacode-sessions__start_session', startPrompt.split('\n')[0], {
+      input: JSON.stringify({ prompt: startPrompt, worktree: true, name: 'API の実装' }, null, 2),
+      output: JSON.stringify(
+        {
+          session_id: CHILD_ID,
+          name: 'API の実装',
+          folder: '/Users/you/work/tanacode/.claude/worktrees/tc-1003-a1b2',
+          worktree: { name: 'tc-1003-a1b2', branch: 'worktree-tc-1003-a1b2' },
+          permission_mode: 'acceptEdits',
+          state: 'starting',
+          note: '起動が終わりしだい、最初の指示を送ります。結果は wait_sessions で待ってください',
+        },
+        null,
+        2,
+      ),
+    }),
+    ...sessionArgs,
+  },
+};
+
+// send_message は入力に session_id が入る（先頭 8 文字でもよい）。対象の欄には、ID の代わりにセッションの名前を出す
+export const セッション_子セッションに指示: Story = {
+  args: {
+    item: tool('sm1', 'mcp__tanacode-sessions__send_message', CHILD_ID.slice(0, 8), {
+      input: JSON.stringify({ session_id: CHILD_ID.slice(0, 8), message: 'limit の上限は 100 にしてください' }, null, 2),
+      output: JSON.stringify({ session_id: CHILD_ID, state: 'working', note: '子は作業中なので、順番待ちになりました' }, null, 2),
+    }),
+    ...sessionArgs,
+  },
+};
+
+// 一覧に無いセッション（一覧から削除した子など）は、ID のまま出して、移る操作を付けない
+export const セッション_一覧に無いセッション: Story = {
+  args: {
+    item: tool('gs1', 'mcp__tanacode-sessions__get_session', 'deadbeef', {
+      input: JSON.stringify({ session_id: 'deadbeef' }, null, 2),
+      status: 'error',
+      output: '見えるセッションに、ID が deadbeef のものはありません（list_sessions で確かめてください）',
+    }),
+    ...sessionArgs,
+  },
+};
+
+// 畳んだ行の要約は「セッション N」、実行中の行はツールの名前（「子セッションを待つ…」）
+const sessionGroup = group([
+  tool('sg1', 'mcp__tanacode-sessions__list_sessions', '', { input: '{}' }),
+  tool('sg2', 'mcp__tanacode-sessions__start_session', startPrompt.split('\n')[0], {
+    input: JSON.stringify({ prompt: startPrompt, worktree: true }, null, 2),
+    output: JSON.stringify({ session_id: CHILD_ID, state: 'starting' }, null, 2),
+  }),
+  tool('sg3', 'mcp__tanacode-sessions__wait_sessions', '', { input: '{}', status: 'running', endedAt: undefined }),
+]);
+
+export const セッション_操作のまとまり: StoryObj<typeof ToolGroupRow> = {
+  render: () => <ToolGroupRow group={sessionGroup} open={false} {...groupArgs} {...sessionArgs} />,
+};
+
+export const セッション_操作のまとまり_開いた状態: StoryObj<typeof ToolGroupRow> = {
+  render: () => <ToolGroupRow group={sessionGroup} open {...groupArgs} {...sessionArgs} />,
+};

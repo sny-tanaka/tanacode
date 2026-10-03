@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { userEvent, within } from 'storybook/test';
+import type { SessionSummary } from '@shared/ipc';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { NewSessionPane } from './NewSessionPane';
 
@@ -9,6 +10,31 @@ import { NewSessionPane } from './NewSessionPane';
 const noop = () => {};
 
 const FOLDERS = ['/Users/me/work/tanacode', '/Users/me/work/cafe-menu', '/Users/me/work/old-experiment'];
+
+const session = (id: string, title: string, cwd: string, archived = false): SessionSummary => ({
+  id,
+  title,
+  cwd,
+  archived,
+  createdAt: 0,
+  updatedAt: 0,
+  running: false,
+  unread: false,
+  attention: null,
+  backgroundTasks: 0,
+  model: null,
+  effort: null,
+  settingsFile: null,
+  remoteControl: false,
+  worktree: null,
+});
+
+// 入力欄に @ を打つと、選んだフォルダ（tanacode）のセッションが、ファイルより先に候補に出る（cafe-menu のセッションは出ない）
+const SESSIONS = [
+  session('3f2a9c1e-0000-4000-8000-000000000001', 'チャットの検索', '/Users/me/work/tanacode'),
+  session('7b1d4e2f-0000-4000-8000-000000000002', 'ログイン画面の直し', '/Users/me/work/cafe-menu'),
+  session('a9c3b5d7-0000-4000-8000-000000000003', '古い調査', '/Users/me/work/tanacode', true),
+];
 
 // width は、チャットの列の幅（アプリでは列の境目を動かして変える）
 function Pane({ width }: { width: number }) {
@@ -21,6 +47,7 @@ function Pane({ width }: { width: number }) {
         onForgetFolder={(dir) => setFolders((list) => list.filter((d) => d !== dir))}
         cwd="/Users/me/work/tanacode"
         onCwdChange={noop}
+        sessions={SESSIONS}
         branch="develop"
         onOpenScm={noop}
         gitId="draft-1"
@@ -121,5 +148,16 @@ export const worktreeで始める: Story = {
     localStorage.setItem('tanacode.newSessionOptions', JSON.stringify({ worktree: true }));
     mockApi({ 'settingsFiles.list': () => Promise.resolve([]) });
     return () => localStorage.removeItem('tanacode.newSessionOptions');
+  },
+};
+
+// 入力欄に @ を打ったところ。選んだフォルダ（tanacode）のセッションが、ファイルより先に候補に出る（アクティブなものが先）。
+// 選ぶと @session:xxxxxxxx（名前）が入り、Claude はそのセッションを読める
+export const セッションを候補に出す: Story = {
+  beforeEach: () => {
+    mockApi({ 'folders.listFiles': () => Promise.resolve(['README.md', 'src/main/session-manager.ts', 'src/renderer/src/sessions/Sidebar.tsx']) });
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.type(within(canvasElement).getByRole('textbox'), '@');
   },
 };

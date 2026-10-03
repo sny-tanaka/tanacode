@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BROWSER_ASK_TIMEOUT_MS } from '@shared/browser-tools';
 import type { BrowserAsk, BrowserAskChange } from '@shared/ipc';
-import { textResult, type ToolResult } from './browser-bridge';
+import { textResult, type ToolResult } from './mcp-bridge';
 
 // Claude がユーザーに頼んでいる操作（ask_user_to_act）。セッションごとに 1 つ。
 // ユーザーが「終わった」「できない」を押すか、上限（10 分）を過ぎるか、Claude Code が呼び出しを取り消す（Esc で中断した）まで待つ。

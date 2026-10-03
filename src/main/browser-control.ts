@@ -2,7 +2,8 @@ import { nativeImage, webContents as allWebContents, type NativeImage, type Sess
 import { browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect } from '@shared/ipc';
 import { BrowserAsks } from './browser-asks';
-import { BROWSER_GATE_REQUEST, textResult, type ToolResult } from './browser-bridge';
+import { BROWSER_GATE_REQUEST } from './browser-bridge';
+import { textResult, type ToolResult } from './mcp-bridge';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。

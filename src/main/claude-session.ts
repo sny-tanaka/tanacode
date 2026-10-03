@@ -2,7 +2,9 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
-import { browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from './browser-bridge';
+import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
+import { mcpArgs, type McpServerEntry } from './mcp-bridge';
+import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
 import type { PtyHandle, PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
@@ -37,6 +39,8 @@ type Options = {
   askFile: string;
   // アプリ内ブラウザの MCP サーバー（中継）を足すときの材料。null なら足さない（メニューでオフにしている）
   browser: BrowserMcpLaunch | null;
+  // セッションの MCP サーバー（ほかのセッションを扱う中継）を足すときの材料。null なら足さない（メニューでオフにしている）
+  sessions?: SessionsMcpLaunch | null;
   cols: number;
   rows: number;
 };
@@ -152,9 +156,10 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessionId'>>,
+    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'sessionId'>>,
 ): string[] {
-  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode, settings = null, worktree = null, browser = null, sessionId = '' } = options;
+  const { claudeSessionId, resume, remoteControlName, model, effort, permissionMode, settings = null, worktree = null, browser = null, sessions = null, sessionId = '' } =
+    options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
   // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
   if (worktree && !resume) args.push('--worktree', worktree);
@@ -164,12 +169,16 @@ export function claudeArgs(
   args.push('--model', model ?? settings?.model ?? 'default');
   if (effort) args.push('--effort', effort);
   if (permissionMode) args.push('--permission-mode', permissionMode);
-  // アプリ内ブラウザの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
-  if (browser) args.push(...browserMcpArgs(browser, sessionId));
+  // アプリ内ブラウザ・セッションの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
+  const servers: McpServerEntry[] = [];
+  if (browser) servers.push(browserMcpServer(browser, sessionId));
+  if (sessions) servers.push(sessionsMcpServer(sessions, sessionId));
+  args.push(...mcpArgs(servers));
   // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
-  // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、この設定に入れる
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser));
+  // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、
+  // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、この設定に入れる
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions));
   return args;
 }
 

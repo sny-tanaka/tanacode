@@ -2,8 +2,9 @@ import { memo, useEffect, useRef, useState } from 'react';
 import type { BashTask, TaskRef } from '@shared/task';
 import { DisclosureIcon } from '../icons';
 import { CheckMark } from '../layout/CheckMark';
+import type { SessionLink } from '../sessions/sessionLinks';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
-import { ChatRow, sameTasks } from './ChatRow';
+import { ChatRow, sameTasks, showsSessions } from './ChatRow';
 import { groupSummary, toolLine, type ToolGroup, type ToolItem } from './toolGroups';
 import type { SubagentRuns } from './useSessionSubagents';
 
@@ -16,6 +17,9 @@ type Props = {
   bashTasks: ReadonlyMap<string, BashTask>;
   onOpenFile: (absPath: string, line?: number) => void;
   onOpenTask: ((ref: TaskRef) => void) | null;
+  // セッションのツールのカードで、対象のセッションの名前を出して移れるようにする（ChatRow と同じ）
+  sessions?: readonly SessionLink[];
+  onSelectSession?: (id: string) => void;
 };
 
 function sameGroup(a: Props, b: Props): boolean {
@@ -25,6 +29,7 @@ function sameGroup(a: Props, b: Props): boolean {
     a.onToggle === b.onToggle &&
     a.onOpenFile === b.onOpenFile &&
     a.onOpenTask === b.onOpenTask &&
+    ((a.sessions === b.sessions && a.onSelectSession === b.onSelectSession) || !a.group.items.some(showsSessions)) &&
     sameTasks(a, b, a.group.tools.map((t) => t.id))
   );
 }
@@ -58,7 +63,18 @@ function useLeaving(tools: ToolItem[]): ReadonlySet<string> {
 // 本文と本文の間のツールの呼び出しを、畳んだ 1 行（N件の操作 · 編集 5 …）で出す。
 // 畳んでいる間は、実行中のツールをその下に 1 行ずつふわっと出し、終わったらチェックを描いてから消す。
 // 開くと（自動では開かない）いつものカードが並ぶ
-export const ToolGroupRow = memo(function ToolGroupRow({ group, open, onToggle, workflows, subagents, bashTasks, onOpenFile, onOpenTask }: Props) {
+export const ToolGroupRow = memo(function ToolGroupRow({
+  group,
+  open,
+  onToggle,
+  workflows,
+  subagents,
+  bashTasks,
+  onOpenFile,
+  onOpenTask,
+  sessions,
+  onSelectSession,
+}: Props) {
   const summary = groupSummary(group);
   const leaving = useLeaving(group.tools);
   const live = open ? [] : group.tools.filter((t) => t.status === 'running' || leaving.has(t.id));
@@ -104,6 +120,8 @@ export const ToolGroupRow = memo(function ToolGroupRow({ group, open, onToggle, 
               bashTasks={bashTasks}
               onOpenFile={onOpenFile}
               onOpenTask={onOpenTask}
+              sessions={sessions}
+              onSelectSession={onSelectSession}
             />
           ))}
         </div>

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
+import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode, ScreenInfo } from '@shared/screen';
 import type { BashTask, TaskRef } from '@shared/task';
@@ -13,7 +14,7 @@ import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
-import { ChatInput, forgetSent, recentlySent, type CompletionSource } from './ChatInput';
+import { ChatInput, type CompletionSource } from './ChatInput';
 import { ChatRow } from './ChatRow';
 import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
@@ -29,6 +30,7 @@ import { useCompactState } from './compactState';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
+import { useSessionLinks } from '../sessions/sessionLinks';
 import { PREPARING_LABEL } from '../sessions/worktree';
 
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
@@ -36,6 +38,10 @@ const SLOW_START_MS = 10_000;
 
 type Props = {
   session: SessionSummary;
+  // 一覧のすべてのセッション。チャットに出るほかのセッション（親・子・@ の参照）の名前と、入力欄の @ の候補に使う
+  sessions: SessionSummary[];
+  // ほかのセッションへ移る（チャットの親からの指示・子からの知らせ・@ の参照・セッションのツールのカードから）
+  onSelectSession: (id: string) => void;
   chat: ChatState;
   screen: ScreenInfo | null;
   workflows: WorkflowRuns;
@@ -79,6 +85,8 @@ type Props = {
 // App はチャットのイベントなどで頻繁に描き直されるので、props が変わったときだけ描き直す
 export const ClaudePane = memo(function ClaudePane({
   session,
+  sessions,
+  onSelectSession,
   chat,
   screen,
   workflows,
@@ -206,11 +214,7 @@ export const ClaudePane = memo(function ClaudePane({
     // 消えたら忘れる（同じ発言をもう一度中断して戻ったときも移す）
     if (!draft) movedDraft.current = null;
     if (!draft || movedDraft.current === draft) return;
-    // 送信中の文字は Claude Code の入力欄に打ち込んでいる途中なので、残った文字として扱わない。
-    // 貼り付けた文字や画像は入力欄では [Pasted text #1 +6 lines]・[Image #1] の目印になるので、除いて比べる
-    const sent = recentlySent(session.id);
-    const typed = draft.replace(/\[(?:Pasted text #\d+[^\]]*|Image #\d+)\]/g, '').replace(/\s/g, '');
-    if (sent !== null && (typed === '' || sent.includes(typed))) return;
+    // 送信中の文字（Claude Code の入力欄に打ち込んでいる途中のもの）は、main が draft から除いて知らせるので、ここには来ない
     movedDraft.current = draft;
     setInput((prev) => (prev ? `${prev}\n${draft}` : draft));
     window.tanacode.pty.write(session.id, '\x15'.repeat(draft.split('\n').length + 1));
@@ -275,12 +279,24 @@ export const ClaudePane = memo(function ClaudePane({
     configure({ settingsFile });
   };
 
+  // チャットの行に渡す、ほかのセッションの名前（顔ぶれか名前が変わったときだけ新しくなる）
+  const sessionLinks = useSessionLinks(sessions);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const completion = useMemo<CompletionSource>(
     () => ({
       key: session.id,
       listFiles: () => window.tanacode.workspace.listFiles(session.id),
       listCommands: () => window.tanacode.commands.list(session.id),
+      // @ の候補に出すセッション。このセッションから見えるもの（Claude が read_session で読めるもの）だけ。
+      // ホームのフォルダは画面からは分からないので渡さない（候補が少し広くなるだけで、読めるかは main が改めて決める）
+      listSessions: () => {
+        const self = sessionsRef.current.find((s) => s.id === session.id) ?? session;
+        return sessionsRef.current.filter((s) => s.id !== self.id && canSee(self, s));
+      },
     }),
+    // session は id が同じなら、フォルダも親も同じ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.id],
   );
 
@@ -399,6 +415,8 @@ export const ClaudePane = memo(function ClaudePane({
                 bashTasks={bashTasks}
                 onOpenFile={onOpenFile}
                 onOpenTask={onOpenTask}
+                sessions={sessionLinks}
+                onSelectSession={onSelectSession}
               />
             ) : row.kind === 'hook-group' ? (
               <HookGroupRow key={row.id} group={row} open={openGroups.has(row.id)} onToggle={toggleGroup} />
@@ -413,6 +431,8 @@ export const ClaudePane = memo(function ClaudePane({
                 bashTasks={bashTasks}
                 onOpenFile={onOpenFile}
                 onOpenTask={onOpenTask}
+                sessions={sessionLinks}
+                onSelectSession={onSelectSession}
               />
             ),
           )}
@@ -522,14 +542,11 @@ export const ClaudePane = memo(function ClaudePane({
             onChange={setInput}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
-            placeholder={menu ? '上の選択肢から選んでください' : 'Claude Codeに指示する（⌘Enter で送信 · @ でファイル · / でコマンド）'}
+            placeholder={menu ? '上の選択肢から選んでください' : 'Claude Codeに指示する（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）'}
             blocked={blocked}
             onSend={send}
             showInterrupt={running && !canSend && !menu}
-            onInterrupt={() => {
-              forgetSent(session.id);
-              window.tanacode.pty.write(session.id, '\x1b');
-            }}
+            onInterrupt={() => window.tanacode.sessions.interrupt(session.id)}
           />
           <div className="chat-options">
             <SettingsFileSelect
