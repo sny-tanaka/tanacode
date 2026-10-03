@@ -368,6 +368,20 @@ export class DemoBackend {
           return ok(path);
         },
       },
+      browser: {
+        attach: () => {},
+        activate: () => {},
+        onOpen: () => () => {},
+        onNewTab: () => () => {},
+        onSelectTab: () => () => {},
+        onCloseTab: () => () => {},
+        openExternal: () => ok(undefined),
+        onActivity: () => () => {},
+        onViewport: () => () => {},
+        hosts: () => ok([]),
+        setHosts: (hosts) => ok(hosts),
+        onHostsOpen: () => () => {},
+      },
       pathForFile: () => '',
     };
   }

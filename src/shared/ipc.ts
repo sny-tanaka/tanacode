@@ -105,7 +105,43 @@ export const IpcChannel = {
   AppUpdateChanged: 'app-update:changed',
   StatusLineChanged: 'statusline:changed',
   KnowledgeChanged: 'knowledge:changed',
+  // アプリ内ブラウザを Claude が操作する（MCP）。main → 画面: 開く・操作中の様子・表示幅 / 画面 → main: webview を作った
+  BrowserOpen: 'browser:open',
+  BrowserActivity: 'browser:activity',
+  BrowserViewport: 'browser:viewport',
+  BrowserAttach: 'browser:attach',
+  // タブ。main → 画面: 新しいタブで開く・選ぶ・閉じる / 画面 → main: 今のタブが変わった
+  BrowserNewTab: 'browser:new-tab',
+  BrowserSelectTab: 'browser:select-tab',
+  BrowserCloseTab: 'browser:close-tab',
+  BrowserActivate: 'browser:activate',
+  // 今のページを、ふだんのブラウザで開く
+  BrowserOpenExternal: 'browser:open-external',
+  BrowserHostsGet: 'browser:hosts-get',
+  BrowserHostsSet: 'browser:hosts-set',
+  // メニューの「アプリ内ブラウザで Claude に許す先…」から。許す先のダイアログを開かせる
+  BrowserHostsOpen: 'browser:hosts-open',
 } as const;
+
+// アプリ内ブラウザのページの中の位置と大きさ（CSS の px。見えている範囲の左上から）
+export type BrowserRect = { x: number; y: number; width: number; height: number };
+
+// Claude がアプリ内ブラウザを操作している様子。active: 「Claude が操作中」の帯を出す / label: 今の操作（終わったら null）/
+// box: これから押す要素（枠を出す）
+export type BrowserActivity = { sessionId: string; active: boolean; label: string | null; box: BrowserRect | null };
+
+// Claude が、まだブラウザを開いていないセッションでページを開いた
+export type BrowserOpenRequest = { sessionId: string; url: string };
+
+// 新しいタブで開く。ページが新しいウィンドウで開こうとした（target=_blank・window.open）か、Claude が新しいタブで開いた。
+// background: 裏で開く（⌘ を押したままのクリック）/ openerTabId: 開いたページのタブ
+export type BrowserNewTabRequest = { sessionId: string; url: string; background: boolean; openerTabId: string | null };
+
+// セッションのタブ
+export type BrowserTabRef = { sessionId: string; tabId: string };
+
+// Claude が表示幅を変えた（0 は全幅）
+export type BrowserViewportChange = { sessionId: string; width: number };
 
 export type SessionAttention = 'question' | 'permission' | 'other' | null;
 
@@ -426,6 +462,26 @@ export type TanacodeApi = {
   attachments: {
     // 貼り付け・ドロップされた画像を一時ファイルに保存し、そのパスを返す
     save(name: string, data: Uint8Array): Promise<string>;
+  };
+  // Claude によるアプリ内ブラウザの操作（Claude Code に足す MCP サーバー tanacode-browser）
+  browser: {
+    // タブの webview を作った（main が、その中身を操作できるようにする）
+    attach(sessionId: string, tabId: string, webContentsId: number): void;
+    // 今のタブが変わった（タブが無くなったら null）。Claude の操作は今のタブに対して行う
+    activate(sessionId: string, tabId: string | null): void;
+    onOpen(listener: (request: BrowserOpenRequest) => void): () => void;
+    onNewTab(listener: (request: BrowserNewTabRequest) => void): () => void;
+    onSelectTab(listener: (tab: BrowserTabRef) => void): () => void;
+    onCloseTab(listener: (tab: BrowserTabRef) => void): () => void;
+    // ふだんのブラウザで開く（http(s) だけ）
+    openExternal(url: string): Promise<void>;
+    onActivity(listener: (activity: BrowserActivity) => void): () => void;
+    onViewport(listener: (change: BrowserViewportChange) => void): () => void;
+    // ユーザーが足した、Claude に許す先（localhost などの既定は含まない）
+    hosts(): Promise<string[]>;
+    // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
+    setHosts(hosts: string[]): Promise<string[]>;
+    onHostsOpen(listener: () => void): () => void;
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;

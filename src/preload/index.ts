@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import {
   IpcChannel,
+  type BrowserActivity,
+  type BrowserNewTabRequest,
+  type BrowserOpenRequest,
+  type BrowserTabRef,
+  type BrowserViewportChange,
   type ChatBatch,
   type FilesChanged,
   type PtyData,
@@ -162,6 +167,20 @@ const api: TanacodeApi = {
   },
   attachments: {
     save: (name, data) => ipcRenderer.invoke(IpcChannel.AttachmentSave, name, data),
+  },
+  browser: {
+    attach: (sessionId, tabId, webContentsId) => ipcRenderer.send(IpcChannel.BrowserAttach, sessionId, tabId, webContentsId),
+    activate: (sessionId, tabId) => ipcRenderer.send(IpcChannel.BrowserActivate, sessionId, tabId),
+    onOpen: (listener) => subscribe<BrowserOpenRequest>(IpcChannel.BrowserOpen, listener),
+    onNewTab: (listener) => subscribe<BrowserNewTabRequest>(IpcChannel.BrowserNewTab, listener),
+    onSelectTab: (listener) => subscribe<BrowserTabRef>(IpcChannel.BrowserSelectTab, listener),
+    onCloseTab: (listener) => subscribe<BrowserTabRef>(IpcChannel.BrowserCloseTab, listener),
+    openExternal: (url) => ipcRenderer.invoke(IpcChannel.BrowserOpenExternal, url),
+    onActivity: (listener) => subscribe<BrowserActivity>(IpcChannel.BrowserActivity, listener),
+    onViewport: (listener) => subscribe<BrowserViewportChange>(IpcChannel.BrowserViewport, listener),
+    hosts: () => ipcRenderer.invoke(IpcChannel.BrowserHostsGet),
+    setHosts: (hosts) => ipcRenderer.invoke(IpcChannel.BrowserHostsSet, hosts),
+    onHostsOpen: (listener) => subscribe<undefined>(IpcChannel.BrowserHostsOpen, () => listener()),
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
 };

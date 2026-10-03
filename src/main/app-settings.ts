@@ -5,8 +5,10 @@ import { dirname } from 'node:path';
 export type StoredSettingsFile = { id: string; name: string; path: string };
 
 // notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しいバージョンが出たら通知するか /
-// settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル
-type Values = { notifications: boolean; updateCheck: boolean; settingsFiles: StoredSettingsFile[] };
+// settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
+// browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
+// browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）
+type Values = { notifications: boolean; updateCheck: boolean; settingsFiles: StoredSettingsFile[]; browserControl: boolean; browserHosts: string[] };
 
 // アプリ自身の設定（Claude Code の設定ではない）
 export class AppSettings {
@@ -40,6 +42,22 @@ export class AppSettings {
     this.update({ settingsFiles: files });
   }
 
+  browserControlEnabled(): boolean {
+    return this.values.browserControl;
+  }
+
+  setBrowserControlEnabled(on: boolean): void {
+    this.update({ browserControl: on });
+  }
+
+  browserHosts(): string[] {
+    return this.values.browserHosts;
+  }
+
+  setBrowserHosts(hosts: string[]): void {
+    this.update({ browserHosts: hosts });
+  }
+
   // 保存できなかったら、値を元に戻して例外を投げる（画面の表示と食い違わせない）
   private update(change: Partial<Values>): void {
     const before = this.values;
@@ -60,17 +78,25 @@ export class AppSettings {
   }
 }
 
-// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）。設定ファイルは、無ければ登録なし
+// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）。設定ファイルと許す先は、無ければ無し
 function load(file: string): Values {
   try {
-    const data = JSON.parse(readFileSync(file, 'utf8')) as { notifications?: unknown; updateCheck?: unknown; settingsFiles?: unknown };
+    const data = JSON.parse(readFileSync(file, 'utf8')) as {
+      notifications?: unknown;
+      updateCheck?: unknown;
+      settingsFiles?: unknown;
+      browserControl?: unknown;
+      browserHosts?: unknown;
+    };
     return {
       notifications: data.notifications !== false,
       updateCheck: data.updateCheck !== false,
       settingsFiles: storedFiles(data.settingsFiles),
+      browserControl: data.browserControl !== false,
+      browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
     };
   } catch {
-    return { notifications: true, updateCheck: true, settingsFiles: [] };
+    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [] };
   }
 }
 

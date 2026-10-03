@@ -2,6 +2,7 @@ import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import { askBrowserToolIds } from '@shared/browser-tools';
 import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { WORKTREE_GUARD_COMMAND } from './worktree-guard';
@@ -15,14 +16,16 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // statusLine: 上のとおり。--settings の statusLine はプロジェクトの設定のものより優先されるので、プロジェクトの statusLine はこのセッションでは動かない。
 // hooks: AskUserQuestion を出す前に、その入力（質問・選択肢の説明・プレビュー）をセッションごとのファイルに書かせる。
 // 会話ログには答えたあとにしか書かれないので、質問のカードに説明やプレビューを出すにはこれが要る。
-// Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）
-export function sessionSettings(): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand()));
+// Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。
+// permissions（browser のときだけ）: アプリ内ブラウザで JavaScript を実行するツールを、毎回確かめる（ask のルールは allow より強い。
+// 「次から聞かない」で許可を残されても、確認が出る）
+export function sessionSettings(browser = false): string {
+  return JSON.stringify(ownSettings(userStatusLineCommand(), browser));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
 // 登録した設定ファイルを重ねるときは、そのファイルの statusLine を inner にして、settings-files.ts が合成する
-export function ownSettings(inner: string | null): Record<string, unknown> {
+export function ownSettings(inner: string | null, browser = false): Record<string, unknown> {
   const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
   return {
     statusLine: { type: 'command', command },
@@ -32,6 +35,7 @@ export function ownSettings(inner: string | null): Record<string, unknown> {
         { matcher: 'Bash', hooks: [{ type: 'command', command: WORKTREE_GUARD_COMMAND }] },
       ],
     },
+    ...(browser ? { permissions: { ask: askBrowserToolIds() } } : {}),
   };
 }
 

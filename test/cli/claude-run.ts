@@ -11,6 +11,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
+import type { BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
 import { ScreenTracker } from '../../src/main/screen-tracker';
 import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
@@ -62,6 +63,8 @@ type Options = {
   // 起動の引数に付けるモデル・エフォート（claudeArgs の model・effort）。無ければ付けない
   model?: string;
   effort?: string;
+  // アプリ内ブラウザの MCP サーバー（中継）を足すときの材料（SessionManager の browser）。無ければ足さない
+  browser?: BrowserMcpLaunch;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
   git?: boolean;
   // フォルダの信頼の確認を済ませておく（claude --worktree は、信頼していないフォルダでは始まらない）
@@ -345,6 +348,10 @@ export class ClaudeRun {
       },
       // 開発版と同じく Remote Control は使わない（claude.ai へのログインが要る）
       false,
+      null,
+      // worktree の npm install などは、画面に出さずに実行する（既定のまま）
+      undefined,
+      () => this.options.browser ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);

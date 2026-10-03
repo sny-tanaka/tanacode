@@ -96,7 +96,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 8 つのファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 9 つのファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -106,6 +106,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
     | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の Esc → 中断した会話の `--resume`（`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
+    | `browser.test.ts` | アプリ内ブラウザの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `permissions.ask`）で起動し、ビルドした中継（`test/cli/browser-relay-build.ts` で `src/main/browser-mcp.ts` をまとめたもの）が、アプリの代わりのソケット（`BrowserBridge`）まで呼び出しを運ぶか。読むだけのツールは確認なし・クリックは確認あり・JavaScript の実行は「次から聞かない」を選んでも次も確認・`--resume` のあとも使える・ソケットが無い間は「起動していません」と返し、戻ればそのまま使える |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備の知らせが ready より先 → 会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでは始まらず、理由を日本語で返す。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
 | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
 
@@ -178,6 +179,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - AskUserQuestion の質問文・選択肢・説明・プレビューは、その入力から取ります。画面からは、カーソルの位置・チェック・「その他」に打った文字・どの質問のページかだけを読みます。画面が低いと Claude Code は選択肢の一部しか出さないためです。
   - 選択肢の説明が長く、メニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れて見えません。そのときは、見えている選択肢の名前がそろう質問として組み立てます。カーソルのある選択肢が切れて `❯` が見えないときは、カーソルは見えている選択肢より上にあります（見えていないのが 1 つめだけなら、1 つめ）。カードで選んだとき、カーソルが目的の選択肢まで来なければ、違う選択肢で答えないよう Enter などを送りません。
   - 今の Claude Code は、AskUserQuestion の行を答えたあとで会話ログに書きます。そこで、質問を出す前の PreToolUse のフックで、入力をセッションごとのファイルに書かせて読みます（下の `--settings`）。フックが無い（前のバージョンのアプリが起動した）Claude Code では、画面から組み立てます。質問文は縦線（│）の枠で端末の幅に折り返して出るので、縦線を外して行をつなぎ直します。
+- アプリ内ブラウザを Claude に操作させる設定がオンなら、`--mcp-config` でアプリ内ブラウザの MCP サーバー（中継）を、`--allowedTools` で読むだけのツールの許可を足します（下の「アプリ内ブラウザ（Claude による操作）」）。どちらも値をいくつも取る引数なので、次の `--` で終わるよう `--settings` より前に置きます。
 - アプリが起動する Claude Code にだけ、`--settings` で statusLine を足します。
   - Claude Code は応答のたびに JSON を渡してきます。中身はモデル・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フォルダの信頼の確認の前にフラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
@@ -255,6 +257,33 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - アプリが実行するコマンド（worktree の `npm install`・`yarn install` など）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、`shell:opened` でタブを足させます。終わってもタブは残し（`ShellTab.task`）、閉じるボタンは画面のタブだけを片付けます。
 - 「Claude Code」タブでは、Claude Code の生の画面（pty）を出します。見ているあいだだけ、画面の大きさをパネルに合わせます。閉じると元の大きさ（120×40）に戻します。
 
+### アプリ内ブラウザ（Claude による操作）
+
+- Claude Code に足す MCP サーバー（`tanacode-browser`）は、tanacode に同梱する stdio の中継（`src/main/browser-mcp.ts` → `out/main/browser-mcp.js`）。tanacode 本体を `ELECTRON_RUN_AS_NODE` で動かすので（macOS では pty ホストと同じ Helper.app）、Node.js を別に入れる必要はありません。MCP の SDK は使わず、使う分の JSON-RPC（`initialize`・`tools/list`・`tools/call`・`ping`）だけを書いています（`browser-relay.ts`）。
+  - ツールの一覧（名前・説明・入力の形・種類）は `src/shared/browser-tools.ts`。中継が `tools/list` で返し、アプリが実行し、チャットのツールの行の名前にも使います。中継が一覧を持つのは、アプリが閉じている間に起動した Claude Code にもツールを見せるため。
+  - 中継は、ツールの呼び出しのたびに userData の Unix ソケット（`browser.sock`。作るときから `0600`）でアプリにつなぎ、返事を受け取ったら切ります（`browser-bridge.ts`）。ソケットのパスとセッションは、`--mcp-config` の `env`（`TANACODE_BROWSER_SOCKET`・`TANACODE_BROWSER_SESSION`）で渡します。
+  - HTTP にしないのは、アプリを閉じても Claude Code は動き続けるため。HTTP だと、アプリを起動し直すたびにポートが変わり、接続が切れたままになります。ソケットのパスは変わらないので、アプリが戻ればそのまま使えます。アプリが閉じている間は、中継が「tanacode が起動していません」と返します。
+  - 足すのは起動するときだけ。`~/.claude` の設定や `.mcp.json` には書き込みません（statusLine と hooks を `--settings` で足しているのと同じ考え方）。
+- 許可: 読むだけのツールは `--allowedTools` で許可済みに。ページを動かすツールは、ふつうの許可の確認を通します。JavaScript の実行（`evaluate`）は、`--settings` に `permissions.ask` を入れて毎回確かめます。ask のルールは allow より強いので、「次から聞かない」でプロジェクトの設定に許可が残っても、次も確認が出ます（実測）。登録した設定ファイルを重ねるときは、その `permissions` に足します（`mergeSettings`）。
+- 実行はメインプロセス（`browser-control.ts`）。そのセッションの webview の中身（`webContents`）を直接動かします。
+  - アプリ内ブラウザは、セッションごとにタブ（1 つのタブに 1 つの webview）を持ちます。画面（`PreviewPane`）は、タブの webview の準備ができたら（`dom-ready`。それより前の `getWebContentsId` は例外になる）、その `webContents` の ID を main に知らせます（`browser.attach`）。今のタブが変わったときも知らせ（`browser.activate`）、Claude の操作は今のタブに対して行います。main は、アプリの画面の中の webview だけを受け付けます。
+  - タブの番号は、画面がタブを作った順（タブの ID の番号）。画面の並びと Claude の `list_tabs` をそろえるため、新しいタブはいつも右端に足します。
+  - まだタブの無いセッションで Claude が URL を開くときは、main が画面にタブを作らせ（`browser:open`）、知らせを待ちます。新しいタブで開くとき（`newTab`）は `browser:new-tab`。タブの切り替え・閉じるも、main が画面に頼みます。
+  - 新しいウィンドウで開くもの（`target=_blank`・`window.open`）は、webview に `allowpopups` を付けて main の `setWindowOpenHandler` に届かせ、ウィンドウは作らずに、同じセッションの新しいタブで開かせます（`openFromPage`）。`allowpopups` が無いと、main に届かずに捨てられます。新しいタブのページは、開いたページ（`window.opener`）とつながりません。
+  - コンソールの出力と失敗した通信は、webview ができたとき（`did-attach-webview` から `track`）から集めます。タブの知らせ（`dom-ready`）を待つと、ページの最初のスクリプトが出したものを取りこぼすためです。
+  - スクリーンショットは `capturePage`（Retina でもページの大きさに縮める）。ページ全体とアクセシビリティのツリーは CDP（`webContents.debugger`）。開発者ツールを開いていても使えます。
+  - クリック・入力・キーは CDP の `Input.*` で送ります。ウィンドウが前に無くても届き、ページには本物の操作（`isTrusted`）として届きます。スクロールは、真ん中（か要素）から上へたどった、動かせる入れ物の `scrollBy`（CDP のホイールは、動きが遅れて量が読めないため）。
+  - 要素を探す・読むスクリプトは、ページとは別の JavaScript の世界（`executeJavaScriptInIsolatedWorld`）で動かします。ページのスクリプトに `querySelector` などを書き換えられないように。`evaluate` だけはページの世界で動かします。
+  - iframe: 探す・読むスクリプトは、いちばん外のページと同じオリジンの iframe の中（`contentDocument`。5 段まで）を順に探し、位置はいちばん外の見えている範囲に直して返します（`FRAMES` の部品）。別オリジンの iframe の中はスクリプトから見えないので、`click` の `x`・`y` で押します。押す位置の iframe は、`src`（別プロセスなら、その iframe の今の URL）が許す先のときだけ押します。
+  - 別サイトの iframe は別プロセスで動きます。見ていないタブ（透明にして描かせているもの）では、ページに送った CDP の入力がこの iframe に届きません（実測。見ているタブなら届く）。そこで `Target.setAutoAttach` でその iframe の CDP のセッションにもつなぎ、押す・打つはそのセッションに、iframe の中の位置で送ります。文字（`get_text`）とツリーも、許す先のものはそのセッションから読みます。
+  - コンソールの出力と失敗した通信（`webRequest` の 4xx・5xx とエラー）は、新しいページを開いたら空にします。
+- 隠れているセッションの今のタブの webview: `display: none` だと大きさが 0 になり、撮れず、押せません（Electron の画面の外で実測。`WebContentsView` に移すまでもありませんでした）。そこで、Claude が操作したことのあるセッションの今のタブの webview は、見ていない間も透明（`opacity: 0`）にして、ほかの表示の後ろ（`z-index: -1`・`pointer-events: none`）に置き、ブラウザを開いたときと同じ大きさで描かせます。ブラウザのペイン自体を閉じているときも、ペインごと同じようにします（`.preview-pane.offstage`）。ウィンドウを最小化していても撮れます。
+- 表示: main は、呼び出しの始めと終わりに操作の様子（`browser:activity`）を送ります。画面は、そのセッションを見ていれば、操作が始まったときにエディタの場所にブラウザを開きます（帯が消えるまでは開き直さない）。見ていなければ覚えておき、切り替えたときに開きます。帯は最後の操作から 8 秒で消します。クリックと入力の前には、押す要素の位置を送り、画面がページの上に枠を重ねます（ページの中には描かない）。
+- 守り: Claude が開ける・読める・操作できるのは、`isClaudeAllowedUrl` に通るページだけ（既定の `localhost`・`127.0.0.1`・`*.local` と、`settings.json` の `browserHosts`）。開く前の URL・戻る／進む先・今のページを、呼び出しのたびに確かめます。
+  - Claude の呼び出しの間（と終わって 2 秒）は、トップのフレームが許していない先へ移るの（リンク・リダイレクト・ページのスクリプト）を止め（`blocksNavigation`。`web-contents-created` の見張りから呼ぶ）、許していない先を新しいタブでも開きません（`openFromPage`）。止めたことは、その呼び出しの結果で Claude に伝えます。新しいタブで開いたことも伝えます。ユーザーの操作で許していない先へ移った（開いた）ときは、次の呼び出しから断ります（`list_tabs` でも、そのタブのタイトルは読ませません）。
+  - `evaluate` は、ユーザーの操作の扱い（userGesture）を付けずに実行します。`file:` に行けないこと（`isPreviewDestination`）・権限を全部断ること（`restrictPermissions`）は、今までどおり。プレビューのセッションのダウンロードは断ります。
+- オン・オフ: メニューの「tanacode → Claude にアプリ内ブラウザを操作させる」（`settings.json` の `browserControl`）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。待ち受けを始められなかったときも、足しません。
+
 ### 画面の上の帯
 
 - 図案だけの元の画像は `design/logo-mark.png`（背景を透過したもの）。ロゴは、これと「tanacode」の文字を並べた `design/logo.png`。README は、どちらのテーマでも読める背景付きの `design/logo-banner.png` を使います。タイトルバーのロゴは `src/renderer/src/assets/logo.png`、アプリのアイコンは `build/icon-source.png` から `npm run icon` で作ります。新規セッションの画面に出す小さいアイコン（`src/renderer/src/assets/icon.png`）も、同じ `npm run icon` で作ります。
@@ -284,7 +313,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うかなど） |
-| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス） |
+| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先） |
+| `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
@@ -311,9 +341,13 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
 
 - `src/main`: Electron のメインプロセス
   - `session-manager.ts` / `session-store.ts`: セッションの作成・再開・アーカイブ・再起動・通知と、一覧の保存
-  - `claude-session.ts`: pty ホストに `claude` を起動させる・引き継ぐ（起動オプション・statusLine と質問のフックの注入）
+  - `claude-session.ts`: pty ホストに `claude` を起動させる・引き継ぐ（起動オプション・statusLine と質問のフック・アプリ内ブラウザの MCP の注入）
   - `worktree.ts`: worktree のセッション（名前と場所・`.git/info/exclude`・`node_modules` の用意・残っているもの・控えを残して消す・作り直す）
   - `worktree-guard.ts`: worktree やブランチを消す操作で、許可の確認を出させる hooks（awk）
+  - `browser-mcp.ts` / `browser-relay.ts`: アプリ内ブラウザの MCP サーバー（Claude Code が起動する stdio の中継）の入り口と、MCP の JSON-RPC
+  - `browser-bridge.ts`: 中継とアプリのソケット（待ち受け・呼び出し）と、起動の引数（`--mcp-config`・`--allowedTools`）
+  - `browser-control.ts`: Claude から届いたアプリ内ブラウザの操作を、webview の中身で実行する（スクリーンショット・CDP・許す先の確かめ）
+  - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ）の置き場所
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
@@ -328,7 +362,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）
-  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、登録した設定ファイル）の保存
+  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
@@ -340,23 +374,24 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
-  - `preview/`: アプリ内ブラウザ（webview・要素の選択。画面では「ブラウザ」）
+  - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・Claude に許す先のダイアログ。画面では「ブラウザ」）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト・カラム
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
 - `design/`: アプリのロゴ
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
-  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）
+  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
+  - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成）
 
 ## デモ動画の仕組み
 

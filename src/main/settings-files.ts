@@ -56,9 +56,18 @@ function isRecord(value: unknown): value is Settings {
 
 // 登録した設定（profile）に、アプリの設定（own）を足す。
 // statusLine はアプリのもの（own の中で、登録した設定の statusLine を包んである）、フックは登録した設定のものとアプリのものを両方動かす。
-// それ以外（env・model・permissions など）は登録した設定のまま
+// permissions は登録した設定のものに、アプリのルール（アプリ内ブラウザの ask）を足す。
+// それ以外（env・model など）は登録した設定のまま
 export function mergeSettings(profile: Settings, own: Settings): Settings {
   const merged: Settings = { ...profile, ...own };
+  if (isRecord(own.permissions)) {
+    const permissions: Settings = isRecord(profile.permissions) ? { ...profile.permissions } : {};
+    for (const [key, value] of Object.entries(own.permissions)) {
+      const before = permissions[key];
+      permissions[key] = Array.isArray(value) ? [...(Array.isArray(before) ? before : []), ...value] : value;
+    }
+    merged.permissions = permissions;
+  }
   const profileHooks = isRecord(profile.hooks) ? profile.hooks : {};
   const ownHooks = isRecord(own.hooks) ? own.hooks : {};
   const hooks: Settings = { ...profileHooks };
@@ -142,9 +151,10 @@ export class SettingsFiles {
 
   // セッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。
   // API キーが入っていることがあるので、引数（ps で見える）には載せず、自分だけが読めるファイルにして、パスだけを渡す
-  prepare(sessionId: string, id: string): PreparedSettings {
+  // browser: アプリ内ブラウザの MCP サーバーを足すか（JavaScript の実行を毎回確かめるルールを入れる）
+  prepare(sessionId: string, id: string, browser = false): PreparedSettings {
     const profile = readSettings(this.find(id));
-    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile)));
+    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile), browser));
     mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
     chmodSync(this.runDir, 0o700);
     const settingsFile = join(this.runDir, `${sessionId}.json`);
