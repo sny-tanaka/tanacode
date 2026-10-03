@@ -4,7 +4,7 @@ import { buildTree, filesInTreeOrder, visibleRows } from '@shared/scm-tree';
 import { CommentList } from '../review/CommentList';
 import type { ReviewComment } from '../review/LineComments';
 import { Busy } from '../layout/Busy';
-import { ListViewIcon, TreeViewIcon } from '../layout/icons';
+import { FetchIcon, ListViewIcon, TreeViewIcon } from '../layout/icons';
 import type { ScmView } from './scmView';
 
 type Props = {
@@ -98,7 +98,7 @@ export const ScmPanel = memo(function ScmPanel({
         <div className="spacer" />
         {/* 押すと切り替わる先のアイコンと名前を出す（VS Code と同じ） */}
         <button
-          className="scm-sync scm-view"
+          className="scm-sync scm-icon"
           onClick={() => onViewChange(view === 'tree' ? 'list' : 'tree')}
           data-tip={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
           aria-label={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
@@ -111,8 +111,8 @@ export const ScmPanel = memo(function ScmPanel({
         <button className="scm-sync" disabled={!!busy || state.empty} onClick={() => void run({ kind: 'push' }, 'プッシュ中…')} data-tip={state.upstream ? `${state.upstream} へプッシュ` : 'origin にプッシュ（上流を設定）'} aria-label="プッシュ">
           ↑{state.ahead || ''}
         </button>
-        <button className="scm-sync" disabled={!!busy} onClick={() => void run({ kind: 'fetch' }, 'フェッチ中…')} data-tip="フェッチ" aria-label="フェッチ">
-          ⟳
+        <button className="scm-sync scm-icon" disabled={!!busy} onClick={() => void run({ kind: 'fetch' }, 'フェッチ中…')} data-tip="フェッチ" aria-label="フェッチ">
+          <FetchIcon size={14} />
         </button>
       </div>
       {branchMenu && (

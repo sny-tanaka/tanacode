@@ -70,3 +70,12 @@ export const 設定ファイルを選んでいる: Story = {
     return () => localStorage.removeItem('tanacode.newSessionOptions');
   },
 };
+
+// 前に「worktree を使う」にチェックを入れていたとき。フォルダ・ブランチの横のチェックが入った状態で開く
+export const worktreeで始める: Story = {
+  beforeEach: () => {
+    localStorage.setItem('tanacode.newSessionOptions', JSON.stringify({ worktree: true }));
+    mockApi({ 'settingsFiles.list': () => Promise.resolve([]) });
+    return () => localStorage.removeItem('tanacode.newSessionOptions');
+  },
+};

@@ -108,18 +108,24 @@ export class SourceControl {
     }
     const name = await defaultBranch(this.cwd);
     if (!name) throw new GitError('デフォルトブランチが分かりません');
-    if ((await repoInfo(this.cwd)).branch !== name) {
-      const hasLocal = await git(this.cwd, ['rev-parse', '--verify', '-q', `refs/heads/${name}`]).then(
+    const hasRef = (ref: string) =>
+      git(this.cwd, ['rev-parse', '--verify', '-q', ref]).then(
         () => true,
         () => false,
       );
-      await git(this.cwd, hasLocal ? ['switch', name] : ['switch', '--track', `origin/${name}`]);
+    if ((await repoInfo(this.cwd)).branch !== name) {
+      await git(this.cwd, (await hasRef(`refs/heads/${name}`)) ? ['switch', name] : ['switch', '--track', `origin/${name}`]);
     }
+    // 取り込んだ origin のものに合わせる。手元のブランチの上流は、無いことも origin 以外のこともあるので頼らない
     const { upstream } = await repoInfo(this.cwd);
-    if (!upstream) return;
-    await git(this.cwd, ['merge', '--ff-only', upstream]).catch((err: unknown) => {
+    const remoteRef = hasOrigin && (await hasRef(`refs/remotes/origin/${name}`)) ? `origin/${name}` : null;
+    const target = remoteRef ?? upstream;
+    if (!target) return;
+    // 上流が無いとプル・プッシュの数も出ないので、origin のものを上流にする
+    if (!upstream && remoteRef) await git(this.cwd, ['branch', `--set-upstream-to=${remoteRef}`]);
+    await git(this.cwd, ['merge', '--ff-only', target]).catch((err: unknown) => {
       const detail = err instanceof Error ? err.message : String(err);
-      throw new GitError(`${name} には切り替えましたが、手元の ${name} が ${upstream} と分かれているため最新まで進められませんでした\n${detail}`);
+      throw new GitError(`${name} には切り替えましたが、手元の ${name} が ${target} と分かれているため最新まで進められませんでした\n${detail}`);
     });
   }
 

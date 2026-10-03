@@ -41,6 +41,7 @@ export const IpcChannel = {
   RemoteControlAvailable: 'remote-control:available',
   SessionsRename: 'sessions:rename',
   SessionsRemove: 'sessions:remove',
+  SessionsWorktreeLeftovers: 'sessions:worktree-leftovers',
   SessionsHistory: 'sessions:history',
   ChatImage: 'chat:image',
   SessionsDiscover: 'sessions:discover',
@@ -79,6 +80,7 @@ export const IpcChannel = {
   ShellKill: 'shell:kill',
   ShellData: 'shell:data',
   ShellExit: 'shell:exit',
+  ShellOpened: 'shell:opened',
   WorkspaceInfo: 'workspace:info',
   ListDir: 'fs:list-dir',
   ReadFile: 'fs:read-file',
@@ -163,7 +165,36 @@ export type SessionSummary = {
   settingsFile: string | null;
   // Remote Control を使うか（このセッションの指定。実際につながっているかは会話ログの bridge_status で分かる）
   remoteControl: boolean;
+  // worktree で始めたセッション（cwd は worktree のフォルダ）。null はふつうのセッション
+  worktree: SessionWorktree | null;
 };
+
+// worktree のセッション。name: worktree の名前（claude --worktree に渡したもの）/ branch: Claude Code が作ったブランチ /
+// root: 元のフォルダ（リポジトリのいちばん上）/ preparing: 準備の途中（終わるまで最初の指示を送らない）
+export type SessionWorktree = { name: string; branch: string; root: string; preparing: WorktreePreparing | null };
+// creating: Claude Code が worktree を作るのを待っている / restoring: 消した worktree を、残したブランチから作り直している /
+// copying: node_modules を複製している / installing: パッケージマネージャーの install（npm install など）を実行している
+export type WorktreePreparing = 'creating' | 'restoring' | 'copying' | 'installing';
+
+// worktree を消す前に、残っているもの。数は件数（null は分からない）
+export type WorktreeLeftovers = {
+  // worktree のフォルダがある
+  exists: boolean;
+  branch: string;
+  // 未コミットの変更（追跡しているファイル）と、未追跡のファイル
+  uncommitted: number;
+  untracked: number;
+  // プッシュしていないコミット（上流が無ければ、どのリモートにも無いコミット）
+  unpushed: number;
+  // デフォルトブランチに入っていないコミット（デフォルトブランチが分からなければ null）
+  unmerged: number | null;
+  defaultBranch: string | null;
+};
+
+// アーカイブ・一覧からの削除のときの指定。removeWorktree: worktree のセッションなら、worktree も消す
+export type ArchiveOptions = { removeWorktree: boolean };
+// worktree を消した結果。backupRef: 未コミットの変更の控え（無ければ null）/ branchKept: まだどこにも入っていないコミットがあり、ブランチを残した
+export type WorktreeRemoval = { backupRef: string | null; branch: string; branchKept: boolean };
 
 export type SearchOptions = { caseSensitive: boolean; regex: boolean };
 // matchStart / matchLength は text（行の一部を抜き出したもの）の中での位置
@@ -215,7 +246,8 @@ export type DiscoveredSession = { claudeSessionId: string; cwd: string; title: s
 // settingsFile を変えると、モデルとエフォートは新しい設定ファイルの既定に戻る（設定によって選べるモデルが違うため）
 export type SessionOptions = { model: string | null; effort: string | null; settingsFile: string | null };
 // 新規セッションを始めるときの指定。どれも null なら Claude Code の既定値（ユーザー設定）
-export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean };
+// worktree: claude --worktree で、新しい worktree に分けて始める
+export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean };
 export type SessionScreen = { sessionId: string; info: ScreenInfo };
 export type SessionActivity = { sessionId: string; activity: Activity | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
@@ -230,6 +262,8 @@ export type PtyData = { sessionId: string; data: string };
 // ユーザーが開いたシェル（統合ターミナル）
 export type ShellData = { id: string; data: string };
 export type ShellExit = { id: string; exitCode: number };
+// アプリが開いたコマンドのターミナル（worktree の npm install など）。owner: セッションの id
+export type ShellOpened = { owner: string; id: string; name: string };
 
 export type WorkspaceInfo = { root: string; name: string; branch: string | null };
 export type DirEntry = { name: string; path: string; isDir: boolean };
@@ -253,7 +287,8 @@ export type TanacodeApi = {
     // cwd のフォルダで新しいセッションを始める。作ったセッションの id を返す
     create(cwd: string, options: NewSessionOptions): Promise<string>;
     open(id: string): Promise<void>;
-    archive(id: string): Promise<void>;
+    // worktree のセッションで removeWorktree を指定すると、Claude Code が終わるのを待ってから worktree も消す（消せなければ理由を添えて失敗する）
+    archive(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null>;
     unarchive(id: string): Promise<void>;
     // 表示中のセッション。通知の要否と未読の解除に使う
     focus(id: string | null): void;
@@ -267,8 +302,10 @@ export type TanacodeApi = {
     // Remote Control を使えるか（開発版では、TANACODE_REMOTE_CONTROL=1 で起動したときだけ使える）
     remoteControlAvailable(): Promise<boolean>;
     rename(id: string, title: string): Promise<void>;
-    // 一覧から消す（会話ログは残る）
-    remove(id: string): Promise<void>;
+    // 一覧から消す（会話ログは残る）。removeWorktree は archive と同じ
+    remove(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null>;
+    // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
+    worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null>;
     // 再開せずに会話ログから作ったチャット（アーカイブ済みセッションの表示用）
     history(id: string): Promise<ChatEvent[]>;
     // 会話ログに埋め込まれた画像（イベントの images の鍵）。data URL。もう持っていなければ null
@@ -379,6 +416,8 @@ export type TanacodeApi = {
     kill(id: string): void;
     onData(listener: (payload: ShellData) => void): () => void;
     onExit(listener: (payload: ShellExit) => void): () => void;
+    // アプリがコマンドのターミナルを開いた（終わってもタブは残す）
+    onOpened(listener: (payload: ShellOpened) => void): () => void;
   };
   // まだセッションが無いフォルダ（新規セッションの画面で選んだもの）
   folders: {

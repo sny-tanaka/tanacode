@@ -65,6 +65,10 @@ type Options = {
   effort?: string;
   // アプリ内ブラウザの MCP サーバー（中継）を足すときの材料（SessionManager の browser）。無ければ足さない
   browser?: BrowserMcpLaunch;
+  // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
+  git?: boolean;
+  // フォルダの信頼の確認を済ませておく（claude --worktree は、信頼していないフォルダでは始まらない）
+  trusted?: boolean;
 };
 
 // 本物の claude を、アプリと同じ SessionManager で動かして読む。src/main/index.ts と同じ組み立て方で、
@@ -125,12 +129,23 @@ export class ClaudeRun {
     // 最初の案内（テーマの選択）と API キーの確認は済んだことにする。フォルダの信頼の確認は、アプリでも出るのでそのまま
     writeFileSync(
       join(this.home, '.claude.json'),
-      JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', customApiKeyResponses: { approved: [API_KEY.slice(-20)], rejected: [] } }),
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        theme: 'dark',
+        customApiKeyResponses: { approved: [API_KEY.slice(-20)], rejected: [] },
+        ...(options.trusted ? { projects: { [this.cwd]: { hasTrustDialogAccepted: true } } } : {}),
+      }),
     );
     if (options.settings) writeFileSync(join(this.home, '.claude', 'settings.json'), JSON.stringify(options.settings));
     for (const [path, text] of Object.entries(options.files ?? {})) {
       mkdirSync(dirname(join(this.cwd, path)), { recursive: true });
       writeFileSync(join(this.cwd, path), text);
+    }
+    if (options.git) {
+      const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=tanacode', '-c', 'user.email=tanacode@localhost', ...args], { cwd: this.cwd, stdio: 'ignore' });
+      git('init', '-q', '-b', 'main');
+      git('add', '-A');
+      git('commit', '-qm', 'init', '--allow-empty');
     }
     // 環境変数は最小限にする（Claude Code の中から動かしたときの子セッションの印などを持ち込まない）。
     // アプリが付ける statusLine・AskUserQuestion のファイルの変数だけは、session-manager が渡すものを使う
@@ -197,8 +212,9 @@ export class ClaudeRun {
     return join(dirname(this.transcript()), this.claudeSessionId);
   }
 
+  // 今の会話ログ（worktree のセッションでは、worktree のフォルダの側に書かれる）
   transcript(): string {
-    return transcriptPath(this.cwd, this.claudeSessionId);
+    return (this.sessionId && this.app?.manager.transcriptOf(this.sessionId)) || transcriptPath(this.cwd, this.claudeSessionId);
   }
 
   // サブエージェントの会話ログ（session-manager の agentLog と同じく、SubagentTracker に聞く）。まだ分からなければ null
@@ -225,7 +241,7 @@ export class ClaudeRun {
     const manager = this.manager;
     if (!this.sessionId) {
       // 許可の確認を出させる（API キーでは既定が auto になり、確認が出ない）
-      this.sessionId = manager.create(this.cwd, { model: this.options.model ?? null, effort: this.options.effort ?? null, settingsFile: null, mode: 'manual', remoteControl: false });
+      this.sessionId = manager.create(this.cwd, { model: this.options.model ?? null, effort: this.options.effort ?? null, settingsFile: null, mode: 'manual', remoteControl: false, worktree: false });
       return;
     }
     if (this.runtime()?.process) throw new Error('claude が動いています（stopClaude で止めてから start します）');
@@ -233,6 +249,24 @@ export class ClaudeRun {
     // 権限モードは、はじめの起動と同じく manual にする（open では既定のままになる）
     if (resume && !this.hasConversation()) throw new Error('再開する会話がまだありません');
     manager['start'](this.sessionId, 'manual');
+  }
+
+  // 新規セッションの画面で「worktree で始める」をオンにしたのと同じく、claude --worktree で始める。
+  // Claude Code が worktree を作るまで待つ（作れなければ、session-manager の理由で失敗する）
+  async startInWorktree(): Promise<void> {
+    process.env.HOME = this.home;
+    this.exited = null;
+    if (!this.app) this.launchApp();
+    const options = { model: this.options.model ?? null, effort: this.options.effort ?? null, settingsFile: null, mode: 'manual' as const, remoteControl: false, worktree: true };
+    this.sessionId = await this.manager.createInWorktree(this.cwd, options);
+  }
+
+  // 一覧で選び直したのと同じく、止まっている（アーカイブした）セッションを開く。worktree を消していれば、session-manager が作り直す
+  async reopen(): Promise<void> {
+    process.env.HOME = this.home;
+    this.exited = null;
+    this.menuShown = null;
+    await this.manager.open(this.sessionId!);
   }
 
   // 同じフォルダで新しいセッションを作って起動する（アプリの新規セッションと同じ）。今の claude は止める
@@ -315,6 +349,8 @@ export class ClaudeRun {
       // 開発版と同じく Remote Control は使わない（claude.ai へのログインが要る）
       false,
       null,
+      // worktree の npm install などは、画面に出さずに実行する（既定のまま）
+      undefined,
       () => this.options.browser ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）

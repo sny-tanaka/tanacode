@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BranchChanges, FileChange, FileContent, NewSessionOptions, WorkspaceInfo } from '@shared/ipc';
+import type { BranchChanges, FileChange, FileContent, NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
@@ -23,6 +23,7 @@ import { useSessionWorkflows } from './workflow/useSessionWorkflows';
 import { ImportDialog } from './sessions/ImportDialog';
 import { NewSessionPane } from './sessions/NewSessionPane';
 import { Sidebar } from './sessions/Sidebar';
+import { WorktreeDialog } from './sessions/WorktreeDialog';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
 import { useClaudeVersion } from './system/ClaudeVersion';
@@ -103,6 +104,7 @@ export function App() {
   // エディタの下のターミナルパネル（シェル / Claude Code の生の画面）
   const [terminal, setTerminal] = useState<{ open: boolean; view: TerminalView }>({ open: false, view: 'shell' });
   const showClaudeScreen = useCallback(() => setTerminal({ open: true, view: 'claude' }), []);
+  const showShell = useCallback(() => setTerminal({ open: true, view: 'shell' }), []);
   // 左から 3 番目のペイン
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
@@ -112,6 +114,8 @@ export function App() {
   const [comments, setComments] = useState<Record<string, ReviewComment[]>>({});
   const [quickOpen, setQuickOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  // worktree のセッションをアーカイブ・一覧から削除するときの確認（worktree を残すか消すか）
+  const [worktreeDialog, setWorktreeDialog] = useState<{ id: string; action: 'archive' | 'remove' } | null>(null);
   // 設定ファイルの管理ダイアログ（チャットの入力欄の下と新規セッションの画面の選択欄から開く）
   const settingsFilesOpen = useSettingsFilesDialogOpen();
   // アーカイブ済みセッションのチャット（再開せずに会話ログから作る）
@@ -173,7 +177,7 @@ export function App() {
     const first = sessions.find((s) => !s.archived)?.id ?? null;
     setSelectedId(first);
     // アクティブなセッションが無ければ、新規セッションの画面から始める
-    if (!first) setComposing({ back: null, cwd: sessions[0]?.cwd ?? null });
+    if (!first) setComposing({ back: null, cwd: sessions[0]?.worktree?.root ?? sessions[0]?.cwd ?? null });
   }, [sessions, load]);
 
   const select = useCallback((id: string | null) => {
@@ -187,7 +191,9 @@ export function App() {
   const startComposing = useCallback(() => {
     const list = sessionsRef.current ?? [];
     const back = selectedIdRef.current;
-    const cwd = list.find((s) => s.id === back)?.cwd ?? list[0]?.cwd ?? null;
+    // worktree のセッションなら、元のフォルダ（worktree の中で、また worktree を作らないように）
+    const folderOf = (s: SessionSummary | undefined) => s?.worktree?.root ?? s?.cwd;
+    const cwd = folderOf(list.find((s) => s.id === back)) ?? folderOf(list[0]) ?? null;
     setComposing((prev) => prev ?? { back, cwd });
     setSelectedId(null);
   }, []);
@@ -421,7 +427,8 @@ export function App() {
     [pendingSends.send, select],
   );
   // 最近使ったフォルダ（新しい順）
-  const recentFolders = useMemo(() => [...new Set((sessions ?? []).map((s) => s.cwd))], [sessions]);
+  // worktree のセッションは、worktree ではなく元のフォルダ
+  const recentFolders = useMemo(() => [...new Set((sessions ?? []).map((s) => s.worktree?.root ?? s.cwd))], [sessions]);
 
   // 子の部品（memo している）に渡す関数。描き直しのたびに作り直すと memo が効かないので固定する
   const statusKey = (sessions ?? []).map((s) => `${s.id}:${chatOf(s.id).status}`).join(',');
@@ -430,13 +437,45 @@ export function App() {
   const statusOf = useCallback((id: string) => statuses.get(id) ?? 'not-started', [statuses]);
   const openImport = useCallback(() => setImporting(true), []);
   const closeCenter = useCallback(() => setDiffView(null), []);
-  const removeSession = useCallback(
+  // 一覧から消したセッションを見ていたら、ほかのセッションに移る
+  const forgetSession = useCallback(
     (id: string) => {
-      void window.tanacode.sessions.remove(id);
       pendingSends.drop(id);
       if (id === selectedIdRef.current) setSelectedId(sessionsRef.current?.find((s) => s.id !== id && !s.archived)?.id ?? null);
     },
     [pendingSends.drop],
+  );
+  const removeSession = useCallback(
+    (id: string) => {
+      // worktree のセッションは、worktree をどうするかを聞いてから
+      if (sessionsRef.current?.find((s) => s.id === id)?.worktree) {
+        setWorktreeDialog({ id, action: 'remove' });
+        return;
+      }
+      void window.tanacode.sessions.remove(id);
+      forgetSession(id);
+    },
+    [forgetSession],
+  );
+  const archiveSession = useCallback((id: string) => {
+    if (sessionsRef.current?.find((s) => s.id === id)?.worktree) setWorktreeDialog({ id, action: 'archive' });
+    else void window.tanacode.sessions.archive(id);
+  }, []);
+  // 確認のダイアログで選んだとおりに、アーカイブ・一覧から削除する。worktree を消したら、控えや残したブランチを知らせる
+  const finishWorktreeDialog = useCallback(
+    async (id: string, action: 'archive' | 'remove', removeWorktree: boolean) => {
+      const removal =
+        action === 'archive'
+          ? await window.tanacode.sessions.archive(id, { removeWorktree })
+          : await window.tanacode.sessions.remove(id, { removeWorktree });
+      if (action === 'remove') forgetSession(id);
+      const notes = [
+        removal?.backupRef && `未コミットの変更と未追跡のファイルの控えを ${removal.backupRef} に残しました（git show ${removal.backupRef} で見られます）。`,
+        removal?.branchKept && `ブランチ ${removal.branch} には、まだどこにも入っていないコミットがあるので残しました。`,
+      ].filter(Boolean);
+      if (notes.length > 0) window.alert(`worktree を削除しました。\n${notes.join('\n')}`);
+    },
+    [forgetSession],
   );
   const replaceComments = useCallback((list: ReviewComment[]) => setSessionComments(() => list), [setSessionComments]);
   const showCommentOf = useCallback((c: ReviewComment) => showComment(c.path, c.startLine), [showComment]);
@@ -539,6 +578,7 @@ export function App() {
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}
             onOpenTerminal={showClaudeScreen}
+            onShowShell={showShell}
             onToggleTerminal={toggleClaudeScreen}
             onOpenFile={openAbsolute}
             onResume={openSelected}
@@ -614,6 +654,14 @@ export function App() {
         )}
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
         {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
+        {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
+          <WorktreeDialog
+            session={sessions.find((s) => s.id === worktreeDialog.id)!}
+            action={worktreeDialog.action}
+            onConfirm={(removeWorktree) => finishWorktreeDialog(worktreeDialog.id, worktreeDialog.action, removeWorktree)}
+            onClose={() => setWorktreeDialog(null)}
+          />
+        )}
         {quickOpen && viewId && (
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
         )}
@@ -706,6 +754,7 @@ export function App() {
         status={chat.status}
         exitCode={chat.exitCode}
         branch={(git.state?.isRepo ? git.state.branch : workspace?.branch) ?? null}
+        worktree={selected?.worktree ?? null}
         onOpenScm={() => setSidePanel('scm')}
         pr={chat.pr}
         showCursor={activeFile?.content.kind === 'text'}
@@ -807,5 +856,4 @@ function TaskView({
 }
 
 const renameSession = (id: string, title: string) => void window.tanacode.sessions.rename(id, title);
-const archiveSession = (id: string) => void window.tanacode.sessions.archive(id);
 const unarchiveSession = (id: string) => void window.tanacode.sessions.unarchive(id);

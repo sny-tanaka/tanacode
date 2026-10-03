@@ -66,6 +66,19 @@ export function BranchIcon() {
   );
 }
 
+// worktree のセッション: 1 つの幹から 2 つに分かれる（ブランチの印とは別の形）。size で大きさを変えられる
+export function WorktreeIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="18" cy="5" r="2" />
+      <circle cx="12" cy="19" r="2" />
+      <path d="M6 7v1.5A2.5 2.5 0 0 0 8.5 11h7A2.5 2.5 0 0 0 18 8.5V7" />
+      <path d="M12 11v6" />
+    </svg>
+  );
+}
+
 // ソース管理の見せ方: ファイルの一覧（同じ幅の行が並ぶ）と、フォルダごとのツリー（下の行ほど右に下がる）
 export function ListViewIcon({ size = 22 }: { size?: number }) {
   return (
@@ -121,6 +134,16 @@ export function BellIcon({ size = 22 }: { size?: number }) {
     <svg {...common} width={size} height={size} aria-hidden>
       <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
       <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </svg>
+  );
+}
+
+// フェッチ: 時計回りの矢印（ソース管理のブランチの行に使う小さいアイコン）
+export function FetchIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5" />
+      <path d="M20 3.5v5h-5" />
     </svg>
   );
 }

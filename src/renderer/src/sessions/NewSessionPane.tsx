@@ -10,9 +10,9 @@ import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
 import { BranchIcon, FolderIcon } from '../layout/icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 
-// 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control（このマシンだけの好みなので localStorage に置く）
+// 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control・worktree（このマシンだけの好みなので localStorage に置く）
 const OPTIONS_KEY = 'tanacode.newSessionOptions';
-const DEFAULT_OPTIONS: NewSessionOptions = { model: null, effort: null, settingsFile: null, mode: null, remoteControl: true };
+const DEFAULT_OPTIONS: NewSessionOptions = { model: null, effort: null, settingsFile: null, mode: null, remoteControl: true, worktree: false };
 
 function loadOptions(): NewSessionOptions {
   try {
@@ -153,6 +153,10 @@ export function NewSessionPane({
               {currentBranch}
             </button>
           )}
+          <label className="new-session-check" data-tip={WORKTREE_ABOUT}>
+            <input type="checkbox" checked={options.worktree} onChange={(e) => change({ worktree: e.target.checked })} />
+            worktree を使う
+          </label>
           {missing && <span className="new-session-warning">フォルダが見つかりません</span>}
         </div>
         <ChatInput
@@ -234,6 +238,9 @@ export function NewSessionPane({
     </section>
   );
 }
+
+const WORKTREE_ABOUT =
+  'claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。\n同じフォルダで並行して動かしても、変更がぶつかりません。\n場所はフォルダの .claude/worktrees/、ブランチは worktree-<名前>';
 
 // 作業フォルダの選択。最近使ったフォルダか、ダイアログで選んだフォルダ
 function FolderPicker({ cwd, folders, onChange }: { cwd: string | null; folders: string[]; onChange: (cwd: string) => void }) {

@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { closeSync, openSync, readSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { bridgeUrlOf, isTranscriptEntry, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import type {
+  ArchiveOptions,
   ChatBatch,
   NewSessionOptions,
   ScreenChoice,
@@ -12,6 +14,9 @@ import type {
   SessionSnapshot,
   SessionAttention,
   SessionSummary,
+  WorktreeLeftovers,
+  WorktreePreparing,
+  WorktreeRemoval,
 } from '@shared/ipc';
 import type { Activity, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
@@ -36,6 +41,16 @@ import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
 import type { SessionRecord, SessionStore } from './session-store';
 import type { WorkspaceWatchers } from './workspace-watcher';
+import {
+  hideWorktrees,
+  planWorktree,
+  prepareNodeModules,
+  removeWorktree,
+  restoreWorktree,
+  waitForWorktree,
+  worktreeLeftovers,
+  type NodeModulesResult,
+} from './worktree';
 
 // rename で付けた名前。会話ログのタイトル（最大 3）より常に優先する
 const USER_TITLE_PRIORITY = 4;
@@ -91,7 +106,17 @@ type Runtime = {
   lastBridgeUrl: string | null | undefined;
   // 合わせようとして失敗した向き。同じ向きには試し直さない（指定を変えたら、また試す）
   remoteTried: boolean | null;
+  // worktree の準備の途中（Claude Code が worktree を作るのを待っている・node_modules の用意）。終わるまで ready を配信しない
+  // （最初の指示を、準備が終わる前に送らないため）
+  preparing: WorktreePreparing | null;
+  // Claude Code が worktree を作り終えたか（新しい worktree で起動したときだけ。作れずに終わったら false）
+  worktreeCreated: Promise<boolean> | null;
+  // ファイルの変更を見張っているフォルダ（worktree は、Claude Code が作るまで見張れない）
+  watched: string | null;
 };
+
+// アプリが開くコマンドのターミナル（worktree の npm install・yarn install など）。終了コードを返す。owner: セッションの id
+export type RunTask = (owner: string, cwd: string, command: string, name: string) => Promise<number>;
 
 type Listeners = {
   onSessionsChanged: (sessions: SessionSummary[]) => void;
@@ -124,9 +149,14 @@ export class SessionManager {
     private readonly remoteControlAvailable = true,
     // 登録した設定ファイルを、起動する Claude Code に重ねる。無ければ設定ファイルは使えない
     private readonly settingsFiles: SettingsFiles | null = null,
+    // worktree の npm install などを実行する（アプリはターミナルのタブに出す）。無ければ、画面に出さずに実行する
+    private readonly runTask: RunTask = runQuietly,
     // 起動する Claude Code に、アプリ内ブラウザの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly browser: () => BrowserMcpLaunch | null = () => null,
   ) {}
+
+  // 消した worktree を作り直している途中のセッション（まだ Claude Code を起動していない）
+  private readonly restoring = new Set<string>();
 
   list(): SessionSummary[] {
     return [...this.store.all()]
@@ -148,6 +178,9 @@ export class SessionManager {
           effort: r.effort ?? null,
           settingsFile: r.settingsFile ?? null,
           remoteControl: this.wantsRemote(r),
+          worktree: r.worktree
+            ? { ...r.worktree, preparing: this.restoring.has(r.id) ? 'restoring' : rt?.process ? rt.preparing : null }
+            : null,
         };
       });
   }
@@ -173,6 +206,35 @@ export class SessionManager {
   create(cwd: string, options: NewSessionOptions): string {
     // 使えない設定ファイルなら、記録を作る前に断る（使えないまま標準の設定で始めてしまわないように）
     this.checkSettingsFile(options.settingsFile);
+    const id = this.addRecord(cwd, options, null);
+    this.start(id, options.mode);
+    return id;
+  }
+
+  // claude --worktree で、新しい worktree に分けて始める。名前はアプリが決め、セッションのフォルダは worktree のフォルダにする。
+  // Claude Code が worktree を作るのを待ってから返す（右パネルやエディタが、すぐ worktree を開けるように）。
+  // 作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて失敗する
+  async createInWorktree(cwd: string, options: NewSessionOptions): Promise<string> {
+    this.checkSettingsFile(options.settingsFile);
+    const plan = await planWorktree(cwd);
+    // 元のフォルダのソース管理に、worktree が未追跡として出ないようにする
+    await hideWorktrees(plan.root).catch(() => {});
+    const id = this.addRecord(plan.path, options, { name: plan.name, branch: plan.branch, root: plan.root });
+    this.start(id, options.mode);
+    const rt = this.runtimes.get(id);
+    if (rt?.worktreeCreated && (await rt.worktreeCreated)) return id;
+    const screen = rt?.screen?.text() ?? '';
+    await this.archive(id).catch(() => null);
+    this.store.remove(id);
+    this.emitSessions();
+    // claude --worktree は、まだ信頼していないフォルダでは、信頼の確認を出さずに終わる（実測）
+    if (/trust not yet accepted/i.test(screen)) {
+      throw new Error('このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください');
+    }
+    throw new Error(`Claude Code が worktree を作れませんでした${screen ? `\n\n${screen.split('\n').slice(-8).join('\n')}` : ''}`);
+  }
+
+  private addRecord(cwd: string, options: NewSessionOptions, worktree: SessionRecord['worktree']): string {
     const now = Date.now();
     const id = randomUUID();
     this.store.add({
@@ -186,10 +248,10 @@ export class SessionManager {
       effort: options.effort,
       settingsFile: options.settingsFile,
       remoteControl: options.remoteControl,
+      worktree,
       createdAt: now,
       updatedAt: now,
     });
-    this.start(id, options.mode);
     return id;
   }
 
@@ -214,12 +276,14 @@ export class SessionManager {
     this.emitSessions();
   }
 
-  remove(id: string): void {
-    this.archive(id);
+  // 一覧から消す。worktree を消せなかったら、一覧には（アーカイブして）残したまま、理由を添えて失敗する
+  async remove(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null> {
+    const removal = await this.archive(id, options);
     void rm(this.statusLines.fileFor(id), { force: true });
     void rm(this.statusLines.askFileFor(id), { force: true });
     this.store.remove(id);
     this.emitSessions();
+    return removal;
   }
 
   // 最近使ったセッションのフォルダ（裏で Claude Code を起動するときに使う。信頼済みなので確認が出ない）
@@ -239,25 +303,55 @@ export class SessionManager {
     return readChatLog(transcriptPath(record.cwd, record.claudeSessionId), record.cwd);
   }
 
-  // 未起動・終了済みなら起動（再開）する。起動中なら何もしない
-  open(id: string): void {
-    if (this.runtimes.get(id)?.process) return;
-    if (this.store.get(id)?.archived) this.store.update(id, { archived: false });
+  // 未起動・終了済みなら起動（再開）する。起動中なら何もしない。
+  // worktree のセッションで、worktree を消していたら（アーカイブのときに消した）、残したブランチから作り直してから再開する。
+  // まだ会話が無ければ、元のフォルダで claude --worktree <名前> を起動し、Claude Code は作り直した worktree をそのまま使う（実測）
+  async open(id: string): Promise<void> {
+    if (this.runtimes.get(id)?.process || this.restoring.has(id)) return;
+    const record = this.store.get(id);
+    if (record?.archived) this.store.update(id, { archived: false });
+    if (record?.worktree && !existsSync(record.cwd)) {
+      // 作り直してから起動するまで、一覧では「準備中」にする
+      this.restoring.add(id);
+      this.emitSessions();
+      try {
+        await restoreWorktree(record.worktree, record.cwd);
+      } finally {
+        this.restoring.delete(id);
+        this.emitSessions();
+      }
+      this.start(id);
+      void this.prepareWorktree(id, 'restored');
+      return;
+    }
     this.start(id);
   }
 
-  archive(id: string): void {
+  // アーカイブする。removeWorktree: worktree のセッションなら、Claude Code が終わるのを待ってから worktree も消す
+  async archive(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null> {
     const rt = this.runtimes.get(id);
-    rt?.process?.kill();
+    const record = this.store.get(id);
+    const removing = !!options?.removeWorktree && !!record?.worktree;
+    // 消すときは、消している途中に Claude Code が書き込まないよう、終わるのを待つ
+    if (removing) await rt?.process?.stop();
+    else rt?.process?.kill();
     this.settingsFiles?.release(id);
     rt?.screen?.dispose();
     rt?.workflows.dispose();
     rt?.subagents.dispose();
     rt?.bashTasks.dispose();
-    if (rt) this.watchers.release(this.cwdOf(id));
-    this.runtimes.delete(id);
+    if (rt?.watched) this.watchers.release(rt.watched);
+    if (this.runtimes.get(id) === rt) this.runtimes.delete(id);
     this.store.update(id, { archived: true });
     this.emitSessions();
+    if (!removing || !record?.worktree) return null;
+    return removeWorktree(record.worktree, record.cwd);
+  }
+
+  // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
+  async worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null> {
+    const record = this.store.get(id);
+    return record?.worktree ? worktreeLeftovers(record.worktree, record.cwd) : null;
   }
 
   unarchive(id: string): void {
@@ -450,7 +544,7 @@ export class SessionManager {
   restart(id: string): void {
     const rt = this.runtimes.get(id);
     if (!rt?.process) {
-      this.open(id);
+      void this.open(id);
       return;
     }
     // 起動し直せないと分かっているのに、動いている claude を止めないよう、先に設定ファイルを確かめる
@@ -578,10 +672,14 @@ export class SessionManager {
         historyLoaded: false,
         lastBridgeUrl: undefined,
         remoteTried: null,
+        preparing: null,
+        worktreeCreated: null,
+        watched: null,
       };
       this.runtimes.set(id, rt);
-      this.watchers.retain(record.cwd);
     }
+    // worktree は、Claude Code が作るまでフォルダが無い（作ったあとで見張る）
+    this.watch(rt, record.cwd);
     rt.events = [];
     rt.chain = [];
     // 再開すると過去の会話を読み直すので、そこから集め直す
@@ -618,14 +716,20 @@ export class SessionManager {
     rt.screen = screen;
     this.listeners.onActivity(id, null);
 
+    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする
+    const creating = !!record.worktree && !resume && !adopted && !existsSync(record.cwd);
+    if (creating) runtime.preparing = 'creating';
+
     rt.process = new ClaudeSession(
       this.host,
       {
         sessionId: id,
         cwd: record.cwd,
+        worktree: record.worktree?.name ?? null,
+        worktreeRoot: record.worktree?.root ?? null,
         claudeSessionId,
         resume,
-        remoteControlName: remote ? remoteName(record.cwd) : null,
+        remoteControlName: remote ? remoteName(record.worktree?.root ?? record.cwd) : null,
         model: record.model ?? null,
         effort: record.effort ?? null,
         permissionMode: mode,
@@ -674,11 +778,77 @@ export class SessionManager {
       adopted,
     );
     rt.process.start();
+    if (creating) {
+      const process = rt.process;
+      runtime.worktreeCreated = waitForWorktree(record.cwd, () => runtime.process === process).then((created) => {
+        if (created && runtime.process === process) {
+          this.watch(runtime, record.cwd);
+          // .git ができた時点では、git worktree add がまだファイルを書き出している（大きなリポジトリでは、git ls-files が空になる。実測）。
+          // Claude Code は worktree を作り終えてから入力欄を出すので、それを待ってから node_modules を用意する
+          void this.untilScreenReady(runtime, process).then((ready) => {
+            if (ready) void this.prepareWorktree(id, 'created');
+          });
+        } else if (runtime.preparing === 'creating') {
+          runtime.preparing = null;
+        }
+        return created;
+      });
+    }
     if (adopted) void this.catchUpStatusLine(id, rt.process);
     // 引き継いだ claude は前のアプリの頃から動いていて、会話もしている。画面から入力欄を読めるのを待たずに、起動済みとする
     // （入力欄を読むのは画面が描き直されたときなので、読み取りがずれたまま Claude Code が何も描かずに待っていると、いつまでも「起動中」になる）
     if (adopted && hasConversation(transcriptPath(record.cwd, claudeSessionId))) screen.markReady();
     if (adopted && (adopted.cols !== rt.size.cols || adopted.rows !== rt.size.rows)) this.resize(id, rt.size.cols, rt.size.rows);
+    this.emitSessions();
+  }
+
+  // Claude Code が入力欄を出すまで待つ。その前に終わった・起動し直したら false
+  private async untilScreenReady(rt: Runtime, process: ClaudeSession): Promise<boolean> {
+    for (;;) {
+      if (rt.process !== process) return false;
+      if (rt.screen?.current.ready) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  // ファイルの変更を見張る（フォルダがあれば。同じセッションでは一度だけ）
+  private watch(rt: Runtime, cwd: string): void {
+    if (rt.watched || !existsSync(cwd)) return;
+    this.watchers.retain(cwd);
+    rt.watched = cwd;
+  }
+
+  // worktree に node_modules を用意する。終わるまで ready を配信しない（最初の指示は、準備が終わってから送られる）
+  private async prepareWorktree(id: string, how: 'created' | 'restored'): Promise<void> {
+    const record = this.store.get(id);
+    const rt = this.runtimes.get(id);
+    if (!record?.worktree || !rt) return;
+    const { root, name, branch } = record.worktree;
+    // 起動した Claude Code が先に入力欄を出しても、準備が終わるまで待たせる（await より前に決める）
+    rt.preparing = 'copying';
+    this.emitSessions();
+    const step = (preparing: WorktreePreparing) => {
+      if (this.runtimes.get(id) !== rt) return;
+      rt.preparing = preparing;
+      this.emitSessions();
+    };
+    const result = await prepareNodeModules(root, record.cwd, {
+      onStep: step,
+      install: (cwd, dir, command) => this.runTask(id, cwd, command, dir ? `${command}（${dir}）` : command),
+    }).catch((error: unknown): NodeModulesResult => {
+      console.error('node_modules を用意できませんでした', error);
+      return { cloned: [], failed: [], installs: [] };
+    });
+    if (this.runtimes.get(id) !== rt) return;
+    rt.preparing = null;
+    const where = `.claude/worktrees/${name}（ブランチ ${branch}）`;
+    const notes = [how === 'created' ? `worktree ${where} で始めました` : `消していた worktree ${where} を作り直しました`, nodeModulesNote(result)];
+    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: notes.filter(Boolean).join('。') }]);
+    // 準備の間に入力欄が出ていたら、ここで受け付けられるようになったことにする
+    if (!rt.ready && rt.screen?.current.ready) {
+      rt.ready = true;
+      this.pushEvents(id, [{ type: 'ready' }]);
+    }
     this.emitSessions();
   }
 
@@ -771,7 +941,7 @@ export class SessionManager {
     // /remote-control で切り替えている途中に出るメニューは、質問や確認として見せない
     if (rt.remoteSwitching) return;
     this.listeners.onScreen(id, info);
-    if (info.ready && !rt.ready) {
+    if (info.ready && !rt.ready && !rt.preparing) {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);
     }
@@ -904,6 +1074,29 @@ function fileSize(file: string): number {
   } catch {
     return 0;
   }
+}
+
+// node_modules の用意の結果の知らせ（チャットに出す）。場所は worktree からの相対（'' はいちばん上）
+function nodeModulesNote(result: NodeModulesResult): string | null {
+  const where = (dirs: string[]) => dirs.map((dir) => (dir ? `${dir}/node_modules` : 'node_modules')).join('・');
+  const notes: string[] = [];
+  if (result.cloned.length > 0) notes.push(`${where(result.cloned)} を元のフォルダから複製しました`);
+  if (result.failed.length > 0) notes.push(`${where(result.failed)} は複製できませんでした`);
+  const at = (dir: string) => dir || 'いちばん上';
+  const ok = result.installs.filter((i) => i.exitCode === 0);
+  const failed = result.installs.filter((i) => i.exitCode !== 0);
+  if (ok.length > 0) notes.push(`${ok.map((i) => `${i.command}（${at(i.dir)}）`).join('・')} を実行しました`);
+  if (failed.length > 0) {
+    notes.push(`${failed.map((i) => `${i.command}（${at(i.dir)}・終了コード ${i.exitCode}）`).join('・')} が失敗しました。ターミナルのタブで確かめてください`);
+  }
+  return notes.length > 0 ? notes.join('。') : null;
+}
+
+// ターミナルに出さずにコマンドを実行する（RunTask の既定。互換性の確認など）
+function runQuietly(_owner: string, cwd: string, command: string): Promise<number> {
+  return new Promise((resolve) => {
+    execFile('/bin/sh', ['-c', command], { cwd }, (err) => resolve(err ? (typeof err.code === 'number' ? err.code : 1) : 0));
+  });
 }
 
 // Remote Control のセッション名（スマホの一覧に出る）

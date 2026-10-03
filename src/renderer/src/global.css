@@ -495,8 +495,8 @@ body.resizing * {
   color: var(--text-tertiary);
   cursor: default;
 }
-/* 一覧 / ツリーの切り替え（文字ではなく線画のアイコン） */
-.scm-view {
+/* 一覧 / ツリーの切り替えとフェッチ（文字ではなく線画のアイコン） */
+.scm-icon {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5041,4 +5041,112 @@ body.resizing-rows webview {
   .chat-jump-bottom {
     transition: none;
   }
+}
+
+/* worktree のセッション。新規セッションの画面の「worktree を使う」と、セッション一覧の行の worktree の名前 */
+.new-session-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.new-session-check:hover {
+  color: var(--text-primary);
+}
+.new-session-check input {
+  margin: 0;
+}
+.session-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.session-worktree svg {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+/* worktree のセッションをアーカイブ・削除するときの確認 */
+.worktree-dialog {
+  outline: none;
+}
+.worktree-dialog-head {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.worktree-dialog-head h2 {
+  margin: 0 0 6px;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+.worktree-dialog-head p,
+.worktree-dialog-notes {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.worktree-dialog code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.worktree-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.worktree-dialog-status {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.worktree-dialog-status.ok {
+  color: var(--ok);
+}
+.worktree-leftovers {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--warn-tint);
+  font-size: 12px;
+}
+.worktree-leftovers li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  color: var(--text-primary);
+}
+.worktree-leftover-count {
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+.worktree-dialog-notes {
+  padding-left: 18px;
+}
+.worktree-dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ghost-button.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.chat-note.worktree-preparing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }

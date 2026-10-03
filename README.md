@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=%E6%9C%80%E6%96%B0%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3&color=2ea043" alt="最新バージョン" /></a>
   <img src="https://img.shields.io/badge/macOS-13%20%E4%BB%A5%E9%99%8D-555555?logo=apple" alt="対応する macOS: 13 以降" />
-  <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/%E5%8B%95%E4%BD%9C%E7%A2%BA%E8%AA%8D%E6%B8%88%E3%81%AE%20Claude%20Code-2.1.287-d4835c" alt="動作確認済の Claude Code: 2.1.287" /></a>
+  <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/%E5%8B%95%E4%BD%9C%E7%A2%BA%E8%AA%8D%E6%B8%88%E3%81%AE%20Claude%20Code-2.1.288-d4835c" alt="動作確認済の Claude Code: 2.1.288" /></a>
   <img src="https://img.shields.io/badge/%E3%83%A9%E3%82%A4%E3%82%BB%E3%83%B3%E3%82%B9-MIT-2f6fd6" alt="ライセンス: MIT" />
 </p>
 
@@ -61,6 +61,7 @@ https://github.com/user-attachments/assets/f95733ef-2203-46c2-b3d4-17b3ab6d7a6b
 
 ### そのほか
 
+- **worktree で並行作業**: セッションごとに `claude --worktree` で作業フォルダとブランチを分けて、同じリポジトリでも変更がぶつからない。`node_modules` は APFS のクローンですばやく用意（モノレポ・npm・yarn・pnpm・bun に対応）。アーカイブのときは残っている変更を並べて、消すかどうかを確認（未コミットの変更は控えを残す）
 - **Claude Code だけ再起動**: 会話を続けたまま Claude Code を起動し直し、CLAUDE.md や設定、スキルの本文の変更を反映
 - **利用枠とマシンの状態**: 5 時間枠と週の枠の使用率とリセットまでの時間、CPU とメモリの使用量を常に表示
 - **エディタ・ターミナル・ソース管理**: ファイルツリー・Monaco エディタ・ターミナル・git の操作を、チャットと並べて利用
@@ -70,7 +71,7 @@ https://github.com/user-attachments/assets/f95733ef-2203-46c2-b3d4-17b3ab6d7a6b
 - macOS 13 以降（Apple Silicon・Intel）
 - [Claude Code](https://code.claude.com/docs)（`claude` CLI）
   - ターミナルで一度 `claude` を起動し、初回のセットアップ（テーマの選択とログイン）を済ませておきます
-  - tanacode で動作確認済のバージョンは 2.1.287。違うバージョンのときは、ステータスバーのバージョンに警告の印が付きます（マウスを乗せると理由を表示）
+  - tanacode で動作確認済のバージョンは 2.1.288。違うバージョンのときは、ステータスバーのバージョンに警告の印が付きます（マウスを乗せると理由を表示）
   - 最新の Claude Code で動くかも、毎日自動で確認。それでも Claude Code の更新で、一部の表示や操作が動かなくなる場合あり
 
 ## インストール

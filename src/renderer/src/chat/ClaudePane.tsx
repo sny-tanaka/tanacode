@@ -27,6 +27,7 @@ import { RemoteControlToggle } from './RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
+import { PREPARING_LABEL } from '../sessions/worktree';
 
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
 const SLOW_START_MS = 10_000;
@@ -52,6 +53,8 @@ type Props = {
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
   onOpenTerminal: () => void;
+  // ターミナルパネルのシェルのタブを出す（worktree の npm install などの進み具合を見る）
+  onShowShell: () => void;
   onToggleTerminal: () => void;
   onOpenFile: (absPath: string, line?: number) => void;
   onResume: () => void;
@@ -84,6 +87,7 @@ export const ClaudePane = memo(function ClaudePane({
   onCommentsChange,
   onShowComment,
   onOpenTerminal,
+  onShowShell,
   onToggleTerminal,
   onOpenFile,
   onResume,
@@ -163,13 +167,16 @@ export const ClaudePane = memo(function ClaudePane({
   // 作業中の ToDo（ターミナルのスピナーの行と同じく、進行形の名前を「作業中…」の代わりに出す）
   const currentTodo = chat.todos?.find((t) => t.status === 'in_progress');
   const starting = chat.status === 'starting';
+  // worktree の準備の途中（終わるまで最初の指示を送らない）
+  const preparing = session.archived ? null : (session.worktree?.preparing ?? null);
   const [slowStart, setSlowStart] = useState(false);
   useEffect(() => {
     setSlowStart(false);
-    if (!starting) return;
+    // npm install などは時間がかかるので、準備が終わってから測る
+    if (!starting || preparing) return;
     const timer = setTimeout(() => setSlowStart(true), SLOW_START_MS);
     return () => clearTimeout(timer);
-  }, [starting, session.id]);
+  }, [starting, preparing, session.id]);
   const live = !session.archived && chat.status !== 'exited' && chat.status !== 'not-started';
   const menu = live && screen?.state.kind === 'menu' ? screen.state.menu : null;
   const unknownScreen = live && screen?.state.kind === 'unknown';
@@ -363,9 +370,19 @@ export const ClaudePane = memo(function ClaudePane({
             }
           }}
         >
-          {starting && !pending && chat.items.length === 0 && !slowStart && (
+          {starting && !preparing && !pending && chat.items.length === 0 && !slowStart && (
             <div className="chat-note">
               <Busy>Claude Code を起動しています…</Busy>
+            </div>
+          )}
+          {preparing && (
+            <div className="chat-note worktree-preparing">
+              <Busy>{PREPARING_LABEL[preparing]}…</Busy>
+              {preparing === 'installing' && (
+                <button className="ghost-button" onClick={onShowShell}>
+                  ターミナルで見る
+                </button>
+              )}
             </div>
           )}
           {rows.map((row) =>
@@ -412,7 +429,11 @@ export const ClaudePane = memo(function ClaudePane({
                 {pending.text}
                 {pending.attachments.length > 0 && <span className="chat-user-meta">画像 {pending.attachments.length} 枚</span>}
                 <span className="chat-user-meta">
-                  {chat.status === 'exited' ? 'Claude Code を再開すると送ります' : 'Claude Code の起動を待って送ります…'}
+                  {chat.status === 'exited'
+                    ? 'Claude Code を再開すると送ります'
+                    : preparing
+                      ? 'worktree の準備が終わるのを待って送ります…'
+                      : 'Claude Code の起動を待って送ります…'}
                 </span>
               </span>
               <button
@@ -429,7 +450,7 @@ export const ClaudePane = memo(function ClaudePane({
               </button>
             </div>
           )}
-          {starting && slowStart && !menu && (
+          {starting && slowStart && !preparing && !menu && (
             <div className="chat-callout">
               <span>Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください</span>
               <button className="send-button" onClick={onOpenTerminal}>

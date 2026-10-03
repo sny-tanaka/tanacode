@@ -1,4 +1,6 @@
 import type { PullRequestLink } from '@shared/chat';
+import type { SessionWorktree } from '@shared/ipc';
+import { WorktreeIcon } from './layout/icons';
 import type { SessionStatus } from './chat/chatState';
 import { SystemStats } from './system/SystemStats';
 import { ClaudeVersion } from './system/ClaudeVersion';
@@ -22,6 +24,8 @@ type Props = {
   status: SessionStatus;
   exitCode: number | null;
   branch: string | null;
+  // worktree のセッションなら、その worktree（ブランチ名に印を付ける）
+  worktree?: SessionWorktree | null;
   // ブランチ名を押したとき（ソース管理を開く）
   onOpenScm: () => void;
   // このセッションの PR
@@ -58,6 +62,7 @@ export function StatusBar({
   status,
   exitCode,
   branch,
+  worktree = null,
   onOpenScm,
   pr,
   showCursor,
@@ -76,7 +81,12 @@ export function StatusBar({
       </div>
       <ClaudeVersion version={claudeVersion} />
       {branch && (
-        <button className="status-button" onClick={onOpenScm} data-tip="ソース管理を開く">
+        <button
+          className={`status-button${worktree ? ' with-icon' : ''}`}
+          onClick={onOpenScm}
+          data-tip={worktree ? `worktree ${worktree.name} で動いています（元のフォルダ: ${worktree.root}）\nソース管理を開く` : 'ソース管理を開く'}
+        >
+          {worktree && <WorktreeIcon size={12} />}
           {branch}
         </button>
       )}

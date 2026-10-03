@@ -25,6 +25,7 @@ const session = (n: number, title: string, cwd: string, patch: Partial<SessionSu
   effort: null,
   settingsFile: null,
   remoteControl: false,
+  worktree: null,
   ...patch,
 });
 
@@ -35,6 +36,14 @@ const INITIAL: SessionSummary[] = [
   // 標準以外の設定ファイルを重ねて動いているセッションは、行の末尾に設定ファイルの名前が出る（登録に無ければ「（登録なし）」）
   session(4, '依存の更新', '/Users/me/work/cafe-menu', { settingsFile: 'f1' }),
   session(6, '社内 API の確認', '/Users/me/work/notes', { settingsFile: 'f0' }),
+  // worktree のセッションは、元のフォルダの名前と worktree の名前が並ぶ。準備の途中は、その段階を出す
+  session(7, 'ログインの並行作業', '/Users/me/work/cafe-menu/.claude/worktrees/tc-1002-k3x9', {
+    worktree: { name: 'tc-1002-k3x9', branch: 'worktree-tc-1002-k3x9', root: '/Users/me/work/cafe-menu', preparing: null },
+  }),
+  session(8, '検索の並行作業', '/Users/me/work/cafe-menu/.claude/worktrees/tc-1002-p7mz', {
+    running: true,
+    worktree: { name: 'tc-1002-p7mz', branch: 'worktree-tc-1002-p7mz', root: '/Users/me/work/cafe-menu', preparing: 'installing' },
+  }),
   session(5, '古い調査', '/Users/me/work/notes', { archived: true }),
 ];
 
