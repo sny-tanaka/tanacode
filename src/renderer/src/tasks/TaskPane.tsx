@@ -12,9 +12,9 @@ import { chatFromEvents } from '../chat/chatState';
 import { WorkingNote } from '../chat/WorkingNote';
 import { formatDuration, formatTokens, groupByPhase, shortModel } from '../workflow/WorkflowCard';
 import { WorkflowFlow } from '../workflow/WorkflowFlow';
-import { BASH_STATE_LABEL, elapsed, useNow, type TaskEntry } from './taskList';
+import { BASH_STATE_LABEL, elapsed, stoppable, useNow, type TaskEntry } from './taskList';
 import { Busy } from '../layout/Busy';
-import { FlowIcon } from '../layout/icons';
+import { FlowIcon, StopIcon } from '../layout/icons';
 import { StatusDot } from '../layout/StatusDot';
 
 // 実行中の会話ログを読み直す間隔
@@ -27,6 +27,9 @@ type Props = {
   subagent: SubagentRun | undefined;
   workflow: WorkflowRun | undefined;
   bash: BashTask | undefined;
+  // 動いているものを止める。stopping: 止めている途中
+  stopping: boolean;
+  onStop: () => void;
   onClose: () => void;
   onOpenFile: (absPath: string, line?: number) => void;
 };
@@ -35,7 +38,7 @@ const KIND_LABEL = { subagent: 'サブエージェント', workflow: 'ワーク�
 const STATE_LABEL = { running: '実行中', done: '完了', failed: '失敗', stopped: '停止' } as const;
 
 // サブエージェント・ワークフロー・バックグラウンドの Bash の中身。エディタの場所に大きく出す
-export function TaskPane({ sessionId, task, subagent, workflow, bash, onClose, onOpenFile }: Props) {
+export function TaskPane({ sessionId, task, subagent, workflow, bash, stopping, onStop, onClose, onOpenFile }: Props) {
   const subagentRef = useMemo<AgentLogRef>(() => ({ kind: 'subagent', toolUseId: task.ref.toolUseId }), [task.ref.toolUseId]);
   return (
     <section className="editor task-pane">
@@ -47,6 +50,21 @@ export function TaskPane({ sessionId, task, subagent, workflow, bash, onClose, o
         </span>
         <TaskMeta task={task} subagent={subagent} workflow={workflow} bash={bash} />
         <div className="spacer" />
+        {stoppable(task) && (
+          <button className="task-stop-button" onClick={onStop} disabled={stopping}>
+            {stopping ? (
+              <>
+                <span className="spinner" />
+                止めています…
+              </>
+            ) : (
+              <>
+                <StopIcon size={12} />
+                止める
+              </>
+            )}
+          </button>
+        )}
         <button className="editor-tab-close" onClick={onClose} aria-label="閉じる" data-tip="閉じる">
           ×
         </button>

@@ -32,6 +32,9 @@ export type TaskEntry = {
 
 export const taskKey = (ref: TaskRef) => `${ref.kind}:${ref.toolUseId}`;
 
+// 人が止められるもの。動いているバックグラウンドのもの（サブエージェントは、本体の作業の中で動いているものを除く）
+export const stoppable = (task: TaskEntry) => task.state === 'running' && task.background;
+
 export function buildTasks(
   items: ChatItem[],
   subagents: ReadonlyMap<string, SubagentRun>,

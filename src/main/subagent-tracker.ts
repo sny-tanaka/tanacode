@@ -34,12 +34,13 @@ export class SubagentTracker {
   }
 
   // live: 今まさに起動した。過去の会話を読み直しているときは結果だけ反映する（finish）
-  start(toolUseId: string, sessionDir: string, background: boolean): void {
+  start(toolUseId: string, sessionDir: string, background: boolean, description: string | null): void {
     if (this.runs.has(toolUseId)) return;
     this.runs.set(toolUseId, {
       run: {
         toolUseId,
         agentId: null,
+        description,
         background,
         state: 'running',
         startedAt: Date.now(),
@@ -73,6 +74,7 @@ export class SubagentTracker {
       run: {
         toolUseId,
         agentId,
+        description: [...this.runs.values()].find((t) => t.run.agentId === agentId && t.run.description)?.run.description ?? null,
         background: true,
         // 過去の会話から読んだものは、完了通知が無ければ止まっている
         state: fromHistory ? 'stopped' : 'running',
@@ -103,6 +105,7 @@ export class SubagentTracker {
         run: {
           toolUseId,
           agentId: null,
+          description: null,
           background: launched,
           state: 'running',
           startedAt: null,

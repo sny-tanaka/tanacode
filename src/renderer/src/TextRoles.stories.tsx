@@ -67,7 +67,7 @@ function Catalog() {
       </Section>
       <Section title="タスクの一覧（完了・N秒・カードのタイトル）">
         <div style={{ padding: 8 }}>
-          <TaskListPanel tasks={tasks} activeKey="w1" onOpen={() => {}} />
+          <TaskListPanel tasks={tasks} activeKey="w1" onOpen={() => {}} onStop={() => {}} stopping={new Set()} />
         </div>
       </Section>
       <Section title="ToDo（終わった項目）" background="--bg-panel">

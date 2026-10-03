@@ -33,6 +33,7 @@ import { Resizer, useColumnWidths, type Column } from './layout/columns';
 import { BranchIcon, FilesIcon, SearchIcon, TasksIcon } from './layout/icons';
 import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
+import { useStopTask } from './tasks/useStopTask';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
 import { TerminalPanel, type TerminalView } from './terminal/TerminalPanel';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
@@ -137,6 +138,7 @@ export function App() {
   const tasks = useMemo(() => buildTasks(chat.items, subagents, workflows, bashTasks), [chat.items, subagents, workflows, bashTasks]);
   const activeTaskKey = diffView?.source === 'task' ? taskKey(diffView.ref) : null;
   // 入力欄の上に出すのは実行中のものだけ。終わったものはサイドパネルの「タスク」で見る
+  const { stopping: stoppingTasks, stop: stopTask } = useStopTask(selectedId);
   const trayTasks = useMemo(() => tasks.filter((t) => t.state === 'running'), [tasks]);
   // 実行中を先に、それぞれ新しい順
   const allTasks = useMemo(() => [...tasks].sort((a, b) => Number(b.state === 'running') - Number(a.state === 'running')), [tasks]);
@@ -573,6 +575,8 @@ export function App() {
             tasks={tasks}
             activeTaskKey={activeTaskKey}
             onOpenTask={openTask}
+            onStopTask={stopTask}
+            stoppingTasks={stoppingTasks}
             terminalOpen={terminal.open && terminal.view === 'claude'}
             comments={sessionComments}
             onCommentsChange={replaceComments}
@@ -636,7 +640,14 @@ export function App() {
               </div>
               {selected && (
                 <div hidden={shownPanel !== 'tasks'} className="side-body">
-                  <TaskListPanel tasks={allTasks} activeKey={activeTaskKey} onOpen={openTaskEntry} visible={shownPanel === 'tasks'} />
+                  <TaskListPanel
+                    tasks={allTasks}
+                    activeKey={activeTaskKey}
+                    onOpen={openTaskEntry}
+                    onStop={stopTask}
+                    stopping={stoppingTasks}
+                    visible={shownPanel === 'tasks'}
+                  />
                 </div>
               )}
               <div hidden={shownPanel !== 'search'} className="side-body">
@@ -674,6 +685,8 @@ export function App() {
               subagents={subagents}
               workflows={workflows}
               bash={bashTasks}
+              stopping={stoppingTasks}
+              onStop={stopTask}
               onClose={() => setDiffView(null)}
               onOpenFile={(absPath, line) => {
                 setDiffView(null);
@@ -827,6 +840,8 @@ function TaskView({
   subagents,
   workflows,
   bash,
+  stopping,
+  onStop,
   onClose,
   onOpenFile,
 }: {
@@ -836,6 +851,8 @@ function TaskView({
   subagents: ReturnType<ReturnType<typeof useSessionSubagents>['subagentsOf']>;
   workflows: ReturnType<ReturnType<typeof useSessionWorkflows>['workflowsOf']>;
   bash: ReturnType<ReturnType<typeof useSessionBash>['bashOf']>;
+  stopping: ReadonlySet<string>;
+  onStop: (task: TaskEntry) => void;
   onClose: () => void;
   onOpenFile: (absPath: string, line?: number) => void;
 }) {
@@ -849,6 +866,8 @@ function TaskView({
       subagent={subagents.get(view.toolUseId)}
       workflow={workflows.get(view.toolUseId)}
       bash={bash.get(view.toolUseId)}
+      stopping={stopping.has(task.key)}
+      onStop={() => onStop(task)}
       onClose={onClose}
       onOpenFile={onOpenFile}
     />

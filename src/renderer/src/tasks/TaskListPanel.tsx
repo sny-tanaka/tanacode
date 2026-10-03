@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef } from 'react';
 import { formatDuration } from '../workflow/WorkflowCard';
-import { elapsed, useNow, type TaskEntry, type TaskState } from './taskList';
+import { elapsed, stoppable, useNow, type TaskEntry, type TaskState } from './taskList';
+import { StopIcon } from '../layout/icons';
 import { StatusDot } from '../layout/StatusDot';
 
 const KIND_LABEL = { subagent: 'エージェント', workflow: 'ワークフロー', bash: 'Bash' } as const;
@@ -10,13 +11,16 @@ type Props = {
   tasks: TaskEntry[];
   activeKey: string | null;
   onOpen: (task: TaskEntry) => void;
+  // 動いているものを止める。stopping: 止めている途中のもの（key）
+  onStop: (task: TaskEntry) => void;
+  stopping: ReadonlySet<string>;
   // 見えている（サイドパネルでタスクを開いている）。隠れている間は経過時間を進めない
   visible?: boolean;
 };
 
 // このセッションのサブエージェント・ワークフロー・バックグラウンドの Bash の一覧（実行中も終わったものも）。
 // 開くとエディタの場所に中身を出す
-export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onOpen, visible = true }: Props) {
+export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onOpen, onStop, stopping, visible = true }: Props) {
   const running = tasks.filter((t) => t.state === 'running');
   const finished = tasks.filter((t) => t.state !== 'running');
   const now = useNow(visible && running.length > 0);
@@ -38,6 +42,24 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
           <span className={`task-card-state ${task.state}`}>{STATE_LABEL[task.state]}</span>
           <div className="spacer" />
           {ms !== null && <span className="task-time">{formatDuration(ms)}</span>}
+          {stoppable(task) &&
+            (stopping.has(task.key) ? (
+              <span className="task-stop busy" aria-label="止めています" data-tip="止めています…">
+                <span className="spinner" />
+              </span>
+            ) : (
+              <button
+                className="task-stop"
+                aria-label="止める"
+                data-tip="止める"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStop(task);
+                }}
+              >
+                <StopIcon size={16} />
+              </button>
+            ))}
         </div>
         <div className="task-card-name">{task.name}</div>
         {task.progress && <div className="task-card-progress">{task.progress}</div>}

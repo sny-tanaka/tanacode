@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { ChatEvent } from '@shared/chat';
+import type { BashTask } from '@shared/task';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import { TaskPane } from './TaskPane';
 import type { TaskEntry } from './taskList';
@@ -66,7 +67,7 @@ export const 実行中: StoryObj = {
     installGrowingLog();
     return (
       <div style={{ height: 520, display: 'flex' }}>
-        <TaskPane sessionId="s" task={task} subagent={undefined} workflow={undefined} bash={undefined} onClose={() => {}} onOpenFile={() => {}} />
+        <TaskPane sessionId="s" task={task} subagent={undefined} workflow={undefined} bash={undefined} stopping={false} onStop={() => {}} onClose={() => {}} onOpenFile={() => {}} />
       </div>
     );
   },
@@ -133,8 +134,71 @@ export const ワークフロー: StoryObj = {
     installGrowingLog();
     return (
       <div style={{ height: 560, display: 'flex' }}>
-        <TaskPane sessionId="s" task={workflowTask} subagent={undefined} workflow={run} bash={undefined} onClose={() => {}} onOpenFile={() => {}} />
+        <TaskPane sessionId="s" task={workflowTask} subagent={undefined} workflow={run} bash={undefined} stopping={false} onStop={() => {}} onClose={() => {}} onOpenFile={() => {}} />
       </div>
     );
   },
+};
+
+// バックグラウンドの Bash。見出しの右に「止める」が出る（止めている間は押せない）
+const bash: BashTask = {
+  toolUseId: 'toolu_bg',
+  taskId: 'bz1x9k',
+  command: 'npm run dev',
+  description: 'dev サーバーを起動',
+  state: 'running',
+  startedAt: Date.now() - 95_000,
+  endedAt: null,
+  exitCode: null,
+  output: '  VITE v7.1.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  press h + enter to show help\n',
+  truncated: false,
+};
+
+const bashTask: TaskEntry = {
+  ref: { kind: 'bash', toolUseId: 'toolu_bg' },
+  key: 'bash:toolu_bg',
+  name: 'dev サーバーを起動',
+  state: 'running',
+  background: true,
+  startedAt: Date.now() - 95_000,
+  durationMs: null,
+  progress: '',
+};
+
+export const Bash: StoryObj = {
+  parameters: { width: 720, background: '--bg-panel' },
+  render: () => (
+    <div style={{ height: 320, display: 'flex' }}>
+      <TaskPane sessionId="s" task={bashTask} subagent={undefined} workflow={undefined} bash={bash} stopping={false} onStop={() => {}} onClose={() => {}} onOpenFile={() => {}} />
+    </div>
+  ),
+};
+
+export const Bashを止めている途中: StoryObj = {
+  parameters: { width: 720, background: '--bg-panel' },
+  render: () => (
+    <div style={{ height: 320, display: 'flex' }}>
+      <TaskPane sessionId="s" task={bashTask} subagent={undefined} workflow={undefined} bash={bash} stopping onStop={() => {}} onClose={() => {}} onOpenFile={() => {}} />
+    </div>
+  ),
+};
+
+// 止まったあとは、「止める」は出ない
+export const Bashが止まった: StoryObj = {
+  parameters: { width: 720, background: '--bg-panel' },
+  render: () => (
+    <div style={{ height: 320, display: 'flex' }}>
+      <TaskPane
+        sessionId="s"
+        task={{ ...bashTask, state: 'stopped', durationMs: 112_000 }}
+        subagent={undefined}
+        workflow={undefined}
+        bash={{ ...bash, state: 'killed', endedAt: Date.now() }}
+        stopping={false}
+        onStop={() => {}}
+        onClose={() => {}}
+        onOpenFile={() => {}}
+      />
+    </div>
+  ),
 };

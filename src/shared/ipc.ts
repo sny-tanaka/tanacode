@@ -7,7 +7,7 @@ import type { SettingsFile } from './settings-file';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
 import type { UsageLimits } from './usage';
-import type { AgentLogRef, BashTask } from './task';
+import type { AgentLogRef, BashTask, TaskRef } from './task';
 import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
 
@@ -89,6 +89,7 @@ export const IpcChannel = {
   TasksBash: 'tasks:bash',
   TasksBashChanged: 'tasks:bash-changed',
   TasksAgentLog: 'tasks:agent-log',
+  TasksStop: 'tasks:stop',
   KnowledgeGet: 'knowledge:get',
   ModelsGet: 'models:get',
   ModelsRefresh: 'models:refresh',
@@ -400,6 +401,8 @@ export type TanacodeApi = {
     onBashChanged(listener: (payload: SessionBashTasks) => void): () => void;
     // サブエージェント・ワークフローのエージェントの会話（読むたびに全体を返す）
     agentLog(sessionId: string, ref: AgentLogRef): Promise<ChatEvent[]>;
+    // 動いているバックグラウンドのもの（サブエージェント・ワークフロー・Bash）を止める。止められなかったら理由を返す
+    stop(sessionId: string, ref: TaskRef): Promise<string | null>;
   };
   pty: {
     write(sessionId: string, data: string): void;

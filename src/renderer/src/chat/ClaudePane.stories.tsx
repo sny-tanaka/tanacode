@@ -67,6 +67,8 @@ function Pane({
         tasks={[]}
         activeTaskKey={null}
         onOpenTask={noop}
+        onStopTask={noop}
+        stoppingTasks={new Set()}
         terminalOpen={false}
         comments={[]}
         onCommentsChange={noop}

@@ -72,7 +72,7 @@ function Catalog() {
       </Place>
       <Place title="入力欄の上のタスク">
         <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden' }}>
-          <TaskTray tasks={tasks} activeKey={null} onOpen={noop} />
+          <TaskTray tasks={tasks} activeKey={null} onOpen={noop} onStop={noop} stopping={new Set()} />
         </div>
       </Place>
       <Place title="ToDo（進行中の項目）">

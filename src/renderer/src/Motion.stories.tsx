@@ -115,7 +115,7 @@ function Finish() {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
         <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden' }}>
-          <TaskTray tasks={tasks} activeKey={null} onOpen={noop} />
+          <TaskTray tasks={tasks} activeKey={null} onOpen={noop} onStop={noop} stopping={new Set()} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ minHeight: 24 }}>{step < 3 ? <WorkingNote activity={{ phase: 'writing', elapsed: '12s', tokens: '1.2k' }} /> : step === 3 ? <DoneNote /> : null}</div>

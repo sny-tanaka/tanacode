@@ -96,12 +96,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 9 つのファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 10 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
     | `basic.test.ts`（台本は `test/scenario.ts`） | フォルダの信頼の確認 → 入力欄 → Bash（許可の確認・PostToolUse の hooks）→ AskUserQuestion → Write（許可の確認）→ 返事。チャットの組み立て（会話ログからと、`SessionManager` の配信から）・操作待ちの知らせと通知の本文・完了の知らせ・読んだ・書いたファイル・statusLine・`/` の候補（会話ログのスキル一覧）も |
     | `background.test.ts` | サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（始める前の確認・実行中の journal も）。それぞれ完了まで、トラッカーで追えるか。完了通知（`<task-notification>`）は、出力ファイルや完了時の記録という後ろ盾と分けて、会話ログの行と `taskNotificationOf` だけで読めるか、チャットの知らせになるかも |
+    | `stop.test.ts` | バックグラウンドのタスクを、アプリから止める（`SessionManager.stopTask`）。サブエージェント・Bash 5 つ（長いコマンド・同じコマンドの 2 つ）・ワークフローを動かし続け、`/tasks` の一覧から、コマンド・説明・名前で選んで止める（ほかは動いたまま。同じコマンドが 2 つのときは決められないと断る）。画面を操作している間にメニューや「操作できない画面」の知らせが出ないこと、止めたあと入力欄に戻ること、動いていないもの・書きかけの文字があるときは打たずに断ることも。1 つだけのときは別の `claude` で、一覧を飛ばした詳細の画面（Bash・サブエージェントは止めると閉じ、ワークフローは残る）から止める |
     | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 会話ログのモデル名 → `/compact` → `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind`（「何を戻すか」のメニューと、会話を戻して発言したときの `replace` のイベント） |
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
     | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
@@ -245,6 +246,14 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 ### バックグラウンドの作業（タスク）
 
+- 動いているものを人が止める操作（`SessionManager.stopTask` → `ScreenTracker.stopTask`）は、本家の `/tasks`（別名 `/bashes`。バックグラウンドで動いているものを管理する画面）を、キー入力で操作して行います。Claude Code は、止めたものを会話ログに `<task-notification>`（Bash は `status` が `killed`、「was stopped by the user」の要約付き）として書くので、止まったかはトラッカーが今までどおり読みます。
+  - 止める名前は、`/tasks` の行の見出しと同じもの。Bash はコマンド、サブエージェントは Agent の `description`（`SubagentRun.description`。`SendMessage` で再開したものは元のものから引き継ぐ）、ワークフローは名前。長いコマンドは「…」で省略されるので、同じ名前を先に探し、次に省略された頭が同じもの、最後に途中までしか出ないもの（複数行のコマンド）の順で当てます（`findTaskRows`）。2 つ以上に当たったら、取り違えないよう何も止めずに断ります。
+  - 一覧（`Background`）は、実行中のものだけが種類ごと（`Shells`・`Local agents`・`Dynamic workflows`）に新しい順で並びます。↑/↓ を 1 つずつ送り、カーソル（`❯`）が目的の行に来たら `x` を送ります。一覧に見えていない行は、下へ、行き止まりなら上へ探します。止めたあとも一覧は残ります。
+  - 動いているものが 1 つだけのときは、一覧を飛ばして詳細が出ます（`←` で一覧には戻れません）。Bash は `Command:`、サブエージェントは先頭の行の「種類 › 説明」、ワークフローは先頭の行（名前）で、止めたいものか確かめてから `x` を送ります。Bash とサブエージェントは止めると画面が閉じますが、ワークフローは画面が残ります。
+  - 画面が開いている間は入力欄が消えるので、そのままでは「操作できない画面」と読んで、通知を出してしまいます。操作している間は画面の状態を今のままにし（`holding`）、終わったら画面を読み直します。
+  - 終わったら、入力欄が見えるまで Esc を送ります。入力欄が見えているときは送りません（作業中の Esc は、作業を中断してしまうため）。
+  - 打つのは、入力欄に書きかけの文字が無く、質問や確認の画面が出ていないときだけ（`/tasks` が書きかけの続きに入って、発言として送ってしまうため）。作業中でも `/tasks` は開けて、チャットの順番待ちにもなりません。
+  - 止めると、Claude Code が止められたことを Claude に知らせて、Claude が続けて返事をすることがあります（本家でも同じ）。
 - 終わったエージェントに `SendMessage` で続きを頼んで再開したものは、別の実行として出します。完了の知らせは `SendMessage` の呼び出しに届き、会話は前と同じエージェントのログに続けて書かれます。
 - ワークフローのフロー図の順番は、journal.jsonl の開始・終了の並びから読みます。途中から再開した実行でも、前の起動からの順番が分かります。子ワークフローは、`workflow()` で呼んだもの。
 - 完了通知（`<task-notification>`）は、発言の行・作業中の差し込み（attachment）・順番待ち（queue-operation）の 3 つの形で書かれます。サブエージェントの使用量（所要時間・トークン数・ツールの回数）は、attachment の `usage` が無い形でも、本文の `<usage>` から読みます。
@@ -351,7 +360,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
-  - `screen-tracker.ts` / `screen-parser.ts`: pty の画面を仮想の端末で再現し、選択メニューを読み取る
+  - `screen-tracker.ts` / `screen-parser.ts`: pty の画面を仮想の端末で再現し、選択メニューを読み取る。バックグラウンドのタスクを止める操作（`/tasks` の画面）も
   - `subagent-tracker.ts` / `workflow-tracker.ts` / `bash-task-tracker.ts`: サブエージェント・ワークフロー・バックグラウンドの Bash の進み具合
   - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
@@ -384,9 +393,9 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
-  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
+  - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser`・`stop` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
-  - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー）
+  - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）

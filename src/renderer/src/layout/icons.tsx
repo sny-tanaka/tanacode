@@ -41,6 +41,15 @@ export function FlowIcon({ size = 22 }: { size?: number }) {
   );
 }
 
+// 止める: 角の丸い四角（塗りつぶし）
+export function StopIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size}>
+      <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // タスク: 重なったカードと、動いていることを示す点
 export function TasksIcon() {
   return (

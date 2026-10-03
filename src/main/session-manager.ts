@@ -22,7 +22,7 @@ import type { Activity, Menu, PermissionMode, ScreenInfo } from '@shared/screen'
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { StatusLineInfo } from '@shared/statusline';
-import type { AgentLogRef, BashTask } from '@shared/task';
+import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, type ChainEntry } from './chat-log';
@@ -35,7 +35,7 @@ import type { HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
 import { askQuestionsOf } from './screen-parser';
 import { TaskRouter } from './task-router';
-import { ScreenTracker } from './screen-tracker';
+import { ScreenTracker, type StopResult } from './screen-tracker';
 import type { StatusLineWatcher } from './statusline';
 import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
@@ -467,6 +467,31 @@ export class SessionManager {
 
   bashTasks(id: string): BashTask[] {
     return this.runtimes.get(id)?.bashTasks.all() ?? [];
+  }
+
+  // 動いているバックグラウンドのもの（サブエージェント・ワークフロー・Bash）を止める。止められなかったら理由を返す。
+  // 本家と同じ操作（/tasks の画面で選んで x）を、画面にキーを送って行う。止まったかは、Claude Code が会話ログに書く完了通知で分かる
+  async stopTask(id: string, ref: TaskRef): Promise<string | null> {
+    const rt = this.runtimes.get(id);
+    if (!rt?.process || !rt.screen) return 'セッションが動いていないため、止められません';
+    const name = stopName(rt, ref);
+    if (name === null) return '止められるもの（動いているバックグラウンドのタスク）が見つかりません';
+    switch (await rt.screen.stopTask(name).catch((): StopResult => 'failed')) {
+      case 'stopped':
+        return null;
+      case 'busy':
+        return '別の操作の途中です。少し待ってからもう一度押してください';
+      case 'not-prompt':
+        return '質問や確認の答えを待っているため、今は止められません。答えてから止めてください';
+      case 'draft':
+        return 'ターミナルの入力欄に書きかけの文字があるため、止められません';
+      case 'not-found':
+        return '画面に見つかりませんでした。すでに終わったか、止まっています';
+      case 'ambiguous':
+        return '同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください';
+      case 'failed':
+        return '止められませんでした。ターミナルで /tasks を開いて止めてください';
+    }
   }
 
   // サブエージェント・ワークフローのエージェントの会話
@@ -1100,6 +1125,21 @@ function runQuietly(_owner: string, cwd: string, command: string): Promise<numbe
 }
 
 // Remote Control のセッション名（スマホの一覧に出る）
+// 止めたいものを、本家の /tasks の画面で見分ける名前にする（Bash はコマンド・エージェントは説明・ワークフローは名前）。
+// 動いていない・バックグラウンドでない（本体の作業の中で動いている）・名前が分からないものは null
+function stopName(rt: Runtime, ref: TaskRef): string | null {
+  if (ref.kind === 'bash') {
+    const task = rt.bashTasks.all().find((t) => t.toolUseId === ref.toolUseId);
+    return task?.state === 'running' ? task.command || null : null;
+  }
+  if (ref.kind === 'workflow') {
+    const run = rt.workflows.all().find((w) => w.toolUseId === ref.toolUseId);
+    return run?.status === 'running' ? run.name || null : null;
+  }
+  const run = rt.subagents.all().find((r) => r.toolUseId === ref.toolUseId);
+  return run?.state === 'running' && run.background ? run.description || null : null;
+}
+
 function remoteName(cwd: string): string {
   return `tanacode-${basename(cwd)}`;
 }

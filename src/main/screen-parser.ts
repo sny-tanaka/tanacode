@@ -345,6 +345,71 @@ export function parseRewind(lines: ScreenLine[]): { pointed: string } | null {
   return null;
 }
 
+// /tasks（バックグラウンドで動いているものの画面）。画面の下に重ねて出て、上端は TOP_EDGE の線、最後の行は操作の案内。
+// - list: 2 つ以上あるときの一覧。種類ごとの見出し（Shells (2)・Local agents (1)・Dynamic workflows (1)）の下に
+//   「❯ ⏺ 名前   状態」の行が並ぶ（❯ が選択中）。名前は、Bash はコマンド・エージェントは説明・ワークフローは名前（長いと「…」で省略）。
+//   一覧に出るのは実行中のものだけ
+// - details: 1 つだけのとき、一覧を飛ばして出る詳細。Bash は「Command: …」、エージェントは先頭の行の「種類 › 説明」
+// - workflow: 1 つだけのワークフローの詳細。先頭の行が名前。x で止めても画面は残る
+export type TasksDialog = {
+  view: 'list' | 'details' | 'workflow';
+  // 案内に「x to stop」（ワークフローは「x stop workflow」）がある。止められるのは実行中のものだけ
+  canStop: boolean;
+  // list の行（上から）
+  rows: { label: string; pointed: boolean }[];
+  // details・workflow が何のものかを見分ける文字（コマンド・説明・名前）
+  subjects: string[];
+};
+
+const TASKS_ROW = /^ {3}(?:(❯) | {2})([^\s\p{L}\p{N}]) (\S.*)$/u;
+
+export function parseTasks(lines: ScreenLine[]): TasksDialog | null {
+  const top = findLastIndex(lines, (l) => TOP_EDGE.test(l.text));
+  if (top === -1) return null;
+  const body = lines
+    .slice(top + 1)
+    .map((l) => l.text.trimEnd())
+    .filter(Boolean);
+  const hint = body[body.length - 1] ?? '';
+  if (/Enter to view/.test(hint)) {
+    const rows = body.flatMap((text) => {
+      const m = text.match(TASKS_ROW);
+      // 名前と状態の間は 2 つ以上の空白
+      return m ? [{ label: m[3].split(/\s{2,}/)[0], pointed: m[1] === '❯' }] : [];
+    });
+    return { view: 'list', canStop: /x to stop/.test(hint), rows, subjects: [] };
+  }
+  if (/Esc\/Enter\/Space to close/.test(hint)) {
+    const command = body.map((text) => text.match(/^\s+Command:\s+(\S.*)$/)?.[1]).find(Boolean);
+    const agent = body[0]?.match(/^\s+\S.*? › (\S.*)$/)?.[1];
+    return { view: 'details', canStop: /x to stop/.test(hint), rows: [], subjects: [command, agent].filter((s): s is string => !!s) };
+  }
+  if (/select/.test(hint) && /esc back/.test(hint)) {
+    return { view: 'workflow', canStop: /x stop workflow/.test(hint), rows: [], subjects: body[0] ? [body[0].trim()] : [] };
+  }
+  return null;
+}
+
+// 画面の名前（label）から、止めたいもの（target）に当たる行を探して、当たった行の番号を返す。
+// 画面では空白が詰められ、長いと「…」で省略される。次の順に探し、最初に当たったものだけを返す（2 つ以上返れば決められない）:
+// 1. そのまま同じ（「npm run dev」と「npm run dev:api」を取り違えない）
+// 2. 省略された名前（「…」で終わる）が target の頭と同じ
+// 3. 複数行のコマンドなど、省略の印なしに途中までしか出ないもの
+export function findTaskRows(target: string, labels: string[]): number[] {
+  const goal = squash(target);
+  const shown = labels.map((label) => ({ text: squash(label.replace(/…$/, '')), cut: label.endsWith('…') }));
+  const tiers = [
+    (l: (typeof shown)[number]) => !l.cut && l.text === goal,
+    (l: (typeof shown)[number]) => l.cut && goal.startsWith(l.text),
+    (l: (typeof shown)[number]) => !l.cut && goal.startsWith(l.text),
+  ];
+  for (const tier of tiers) {
+    const hits = shown.flatMap((l, i) => (l.text && tier(l) ? [i] : []));
+    if (hits.length > 0) return hits;
+  }
+  return [];
+}
+
 // 入力欄の上の表示（例: 「● high · /effort」）
 export function findEffort(lines: ScreenLine[]): string | null {
   for (const { text } of lines) {

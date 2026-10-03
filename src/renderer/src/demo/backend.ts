@@ -294,6 +294,7 @@ export class DemoBackend {
         bash: (id) => ok(s(id).bash),
         onBashChanged: (l) => this.ch.bash.on(l),
         agentLog: (id, ref) => ok(s(id).agentLogs[ref.kind === 'workflow' ? `${ref.toolUseId}:${ref.agentId}` : ref.toolUseId] ?? []),
+        stop: () => ok(null),
       },
       pty: {
         // 送った発言は、文字のあとに Enter（\r）で届く

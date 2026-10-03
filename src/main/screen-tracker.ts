@@ -1,6 +1,20 @@
 import { Terminal } from '@xterm/headless';
 import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo, ScreenLine, ScreenState } from '@shared/screen';
-import { applyQuestions, findEffort, findMode, findModel, parseMenu, isStreaming, parseRewind, parseSpinner, promptRange, type SeenOptions } from './screen-parser';
+import {
+  applyQuestions,
+  findEffort,
+  findMode,
+  findModel,
+  findTaskRows,
+  isStreaming,
+  parseMenu,
+  parseRewind,
+  parseSpinner,
+  parseTasks,
+  promptRange,
+  type SeenOptions,
+  type TasksDialog,
+} from './screen-parser';
 
 // 描画が落ち着いてから読む（Ink は 1 回の更新を複数回に分けて書く）
 const SETTLE_MS = 60;
@@ -25,6 +39,13 @@ const REMOTE_CONNECTED = '/remote-control is active';
 const REMOTE_DISCONNECTED = 'Remote Control disconnected';
 // トークン数が増えてからこれだけの間は、応答を受け取っている途中とみなす
 const WRITING_MS = 1500;
+// /tasks の画面で、目的の行を探して動かす回数の上限
+const MAX_TASKS_STEPS = 60;
+
+// stopTask の結果。stopped 以外は、何も止めていない
+// busy: ほかの操作の途中 / not-prompt: 入力欄が出ていない（質問や確認の画面） / draft: 入力欄に書きかけの文字がある /
+// not-found: 画面に見つからない（もう終わった・止まった） / ambiguous: 同じ名前が 2 つ以上あって決められない / failed: 画面が思ったとおりに動かなかった
+export type StopResult = 'stopped' | 'busy' | 'not-prompt' | 'draft' | 'not-found' | 'ambiguous' | 'failed';
 
 // pty の出力を仮想端末に流し込み、画面から「ユーザーの操作が必要な状態」を読み取る
 export class ScreenTracker {
@@ -37,6 +58,8 @@ export class ScreenTracker {
   private promptSeen = false;
   private waiters: (() => void)[] = [];
   private busy = false;
+  // 画面を操作している間（/tasks の画面など、入力欄が消えるとき）。読み取りを止めて、状態を今のままにする
+  private holding = false;
   private modelFromTranscript: string | null = null;
   private modelFromHistory: string | null = null;
   // 起動時の表示に「(1M context)」があったか。会話ログのモデル名には出ないので引き継ぐ
@@ -265,6 +288,86 @@ export class ScreenTracker {
     }
   }
 
+  // バックグラウンドで動いているものを止める。本家の /tasks の画面を開き、name の行を選んで x を送る（人が押すのと同じ操作）。
+  // 止めると、Claude Code が会話ログに「止められた」と書くので、状態はそちらから分かる。
+  // 画面が開いている間は入力欄が消えるので、「操作できない画面」と読まないよう、状態を今のままにしておく（holding）。
+  // 入力欄に書きかけの文字があるときは打たない（/tasks が続きに入って、発言として送ってしまう）
+  async stopTask(name: string): Promise<StopResult> {
+    if (this.busy) return 'busy';
+    if (this.info.state.kind !== 'prompt') return 'not-prompt';
+    if (this.info.draft) return 'draft';
+    this.busy = true;
+    this.holding = true;
+    try {
+      return await this.stopInTasks(name);
+    } finally {
+      await this.closeTasks();
+      this.busy = false;
+      this.holding = false;
+      this.read();
+    }
+  }
+
+  private async stopInTasks(name: string): Promise<StopResult> {
+    this.write('/tasks');
+    // 打った直後は / の補完が出ている。出てから Enter（補完を出している途中の Enter は、送信にならないことがある）
+    await this.readUntil(() => this.lines().some((l) => l.text.trimStart().startsWith('/tasks') && !l.text.includes('❯')), 1500);
+    this.write('\r');
+    await this.readUntil(() => parseTasks(this.lines()) !== null, 3000);
+    // 一覧に出ている 1 つ（または、1 つだけのときの詳細）が name かを見る
+    const there = (d: TasksDialog | null): boolean =>
+      !!d && (d.view === 'list' ? findTaskRows(name, d.rows.map((r) => r.label)).length > 0 : d.canStop && d.subjects.some((s) => findTaskRows(name, [s]).length > 0));
+    const signature = (d: TasksDialog) => JSON.stringify(d.rows);
+    const pressStop = async (): Promise<StopResult> => {
+      this.write('x');
+      await this.readUntil(() => !there(parseTasks(this.lines())), 2000);
+      return there(parseTasks(this.lines())) ? 'failed' : 'stopped';
+    };
+
+    let dialog = parseTasks(this.lines());
+    // 見えていない行は、まず下へ、行き止まりなら上へ探す
+    let direction: 'down' | 'up' = 'down';
+    for (let step = 0; dialog && step < MAX_TASKS_STEPS; step++) {
+      if (dialog.view !== 'list') {
+        if (!there(dialog)) return 'not-found';
+        return pressStop();
+      }
+      const hits = findTaskRows(name, dialog.rows.map((r) => r.label));
+      if (hits.length > 1) return 'ambiguous';
+      const pointed = dialog.rows.findIndex((r) => r.pointed);
+      if (hits.length === 1 && hits[0] === pointed) return dialog.canStop ? pressStop() : 'failed';
+      const before = signature(dialog);
+      this.write(hits.length === 1 ? (hits[0] > pointed ? KEY_DOWN : KEY_UP) : direction === 'down' ? KEY_DOWN : KEY_UP);
+      await this.readUntil(() => {
+        const now = parseTasks(this.lines());
+        return !now || signature(now) !== before;
+      }, 600);
+      dialog = parseTasks(this.lines());
+      // 描き直しの途中で、一瞬読めないことがある
+      if (!dialog) {
+        await this.readUntil(() => parseTasks(this.lines()) !== null, 600);
+        dialog = parseTasks(this.lines());
+      }
+      if (dialog && signature(dialog) === before) {
+        // 動かなかった（一覧の端）
+        if (hits.length === 1) return 'failed';
+        if (direction === 'up') return 'not-found';
+        direction = 'up';
+      }
+    }
+    return dialog ? 'failed' : 'not-found';
+  }
+
+  // /tasks の画面を閉じて入力欄に戻す。入力欄が見えるまで Esc を送る。
+  // 入力欄が見えているときは送らない（作業中の Esc は、作業を中断してしまう）
+  private async closeTasks(): Promise<void> {
+    for (let i = 0; i < 6; i++) {
+      await this.readUntil(() => promptRange(this.lines()) !== null, 700);
+      if (promptRange(this.lines())) return;
+      this.write('\x1b');
+    }
+  }
+
   // 待っている間に画面が変わるので、型の絞り込みをまたがないよう毎回読み直す
   private state(): ScreenState {
     return this.info.state;
@@ -296,6 +399,10 @@ export class ScreenTracker {
   }
 
   private read(): void {
+    if (this.holding) {
+      this.wake();
+      return;
+    }
     const lines = this.lines();
     const banner = findModel(lines);
     if (banner) {
@@ -343,6 +450,10 @@ export class ScreenTracker {
       }
     }
 
+    this.wake();
+  }
+
+  private wake(): void {
     const waiters = this.waiters;
     this.waiters = [];
     waiters.forEach((w) => w());

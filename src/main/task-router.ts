@@ -42,7 +42,8 @@ export class TaskRouter {
       }
       if (block.type === 'tool_use' && (block.name === 'Agent' || block.name === 'Task') && block.id) {
         this.agentToolIds.add(block.id);
-        if (!isHistory) subagents.start(block.id, this.targets.sessionDir(), isTrue(block.input?.run_in_background));
+        const description = block.input?.description;
+        if (!isHistory) subagents.start(block.id, this.targets.sessionDir(), isTrue(block.input?.run_in_background), typeof description === 'string' ? description : null);
       }
       if (block.type === 'tool_use' && block.name === 'SendMessage' && block.id) this.sendMessageIds.add(block.id);
       if (block.type === 'tool_result' && block.tool_use_id && this.sendMessageIds.has(block.tool_use_id)) {
