@@ -14,5 +14,11 @@ const id = new URLSearchParams(location.search).get('tour');
 const tour = TOURS.find((t) => t.id === id) ?? null;
 const backend = prepareTour(tour ?? TOURS[0]);
 
+// 見えている範囲（スクロールバーを除く）の高さ。アプリの画面の高さに使う。
+// スマホの Chrome はページの幅に合わせて縦の基準（100%）まで広げるので、CSS の % では決められない
+const measure = () => document.documentElement.style.setProperty('--demo-viewport-height', `${document.documentElement.clientHeight}px`);
+measure();
+window.addEventListener('resize', measure);
+
 installInputGuard();
 createRoot(document.getElementById('root')!).render(<DemoSite tour={tour} backend={backend} />);

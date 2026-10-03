@@ -32,9 +32,12 @@ export function installInputGuard(): void {
   const stop = (e: Event) => {
     if (!active || !e.isTrusted) return;
     if (e.target instanceof Element && e.target.closest('.demo-ui')) return;
+    // ページのスクロールバーを掴んだとき（出来事は html に届く）は止めない
+    if (e.target === document.documentElement) return;
     e.stopImmediatePropagation();
     e.preventDefault();
-    if (e.type === 'pointerdown' || e.type === 'keydown') window.dispatchEvent(new Event(INPUT_BLOCKED));
+    // 知らせはクリック（タップ）とキーで出す。スマホでスクロールやピンチをしただけでは出さない（click が起きない）
+    if (e.type === 'click' || e.type === 'keydown') window.dispatchEvent(new Event(INPUT_BLOCKED));
   };
   for (const type of EVENTS) window.addEventListener(type, stop, true);
 }
