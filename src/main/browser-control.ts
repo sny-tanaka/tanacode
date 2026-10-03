@@ -41,6 +41,66 @@ const DEFAULT_STYLES = [
   'text-align', 'overflow', 'z-index', 'flex-direction', 'justify-content', 'align-items', 'gap', 'grid-template-columns', 'visibility',
 ];
 
+// ページの中で動かすスクリプトの前に置く部品。いちばん外のページと、同じオリジンの iframe の中（5 段まで）を、同じように探す。
+// 位置は、いちばん外の見えている範囲の左上から（CDP の Input に、そのまま渡せる）。別オリジンの iframe の中は、スクリプトからは見えない
+const FRAMES = `
+const __view = (el) => el.ownerDocument.defaultView;
+const __style = (el) => __view(el).getComputedStyle(el);
+const __inner = (f) => { const r = f.getBoundingClientRect(); const cs = __style(f); return { x: r.left + f.clientLeft + parseFloat(cs.paddingLeft || '0'), y: r.top + f.clientTop + parseFloat(cs.paddingTop || '0') }; };
+const __docs = () => {
+  const out = [];
+  const walk = (doc, ox, oy, frame, depth) => {
+    out.push({ doc, ox, oy, frame });
+    if (depth >= 5) return;
+    for (const f of doc.querySelectorAll('iframe, frame')) {
+      let d = null;
+      try { d = f.contentDocument; } catch (e) {}
+      if (!d || !d.documentElement) continue;
+      const p = __inner(f);
+      walk(d, ox + p.x, oy + p.y, f, depth + 1);
+    }
+  };
+  walk(document, 0, 0, null, 0);
+  return out;
+};
+const __frameOf = (d) => (d.frame ? d.doc.location.href : null);
+const __all = (sel) => { const out = []; for (const d of __docs()) for (const el of d.doc.querySelectorAll(sel)) out.push({ el, ...d }); return out; };
+const __offset = (doc) => __docs().find((d) => d.doc === doc) || { ox: 0, oy: 0 };
+const __rect = (el) => { const r = el.getBoundingClientRect(); const o = __offset(el.ownerDocument); return { x: r.left + o.ox, y: r.top + o.oy, width: r.width, height: r.height }; };
+const __shown = (el) => { const r = el.getBoundingClientRect(); const cs = __style(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'; };
+const __hit = (x, y) => {
+  let el = document.elementFromPoint(x, y), ox = 0, oy = 0;
+  while (el && /^(IFRAME|FRAME)$/.test(el.tagName)) {
+    let d = null;
+    try { d = el.contentDocument; } catch (e) {}
+    if (!d) return { el, cross: true, src: el.src };
+    const p = __inner(el);
+    ox += p.x; oy += p.y;
+    el = d.elementFromPoint(x - ox, y - oy);
+  }
+  return { el, cross: false };
+};
+const __name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.classList.length ? '.' + [...e.classList].slice(0, 2).join('.') : '');
+const __label = (el) => {
+  const t = (el.innerText || el.value || (el.getAttribute && el.getAttribute('aria-label')) || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
+  const f = el.ownerDocument === document ? null : el.ownerDocument.location.href;
+  return __name(el) + (t ? '「' + t + '」' : '') + (f ? '（iframe ' + f + ' の中）' : '');
+};
+`;
+
+// CDP の Accessibility.getFullAXTree の 1 つ
+type AXValue = { value?: unknown };
+type AXNode = {
+  nodeId: string;
+  ignored: boolean;
+  role?: AXValue;
+  name?: AXValue;
+  value?: AXValue;
+  properties?: { name: string; value: AXValue }[];
+  childIds?: string[];
+  parentId?: string;
+};
+
 type LogEntry = { level: string; text: string };
 // webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
 type Logs = { console: LogEntry[]; failed: string[] };
@@ -51,6 +111,9 @@ type Guest = {
   logs: Logs;
   // CDP（debugger）をつないだか
   cdp: boolean;
+  // 別プロセスで動く iframe（別サイトのもの）の CDP のセッション（Target.setAutoAttach でつなぐ）。
+  // 見ていないタブ（透明にして描かせているもの）では、ページに送った操作がこの iframe に届かないので、iframe のセッションに直に送る
+  children: Set<string>;
 };
 // セッションのタブ
 type Tabs = {
@@ -140,11 +203,18 @@ export class BrowserControl {
     if (!contents || !host || contents.getType() !== 'webview' || contents.hostWebContents !== host) return;
     const session = this.tabsOf(sessionId);
     if (session.tabs.get(tabId)?.contents === contents) return;
-    const guest: Guest = { tabId, contents, logs: this.track(contents), cdp: false };
+    const guest: Guest = { tabId, contents, logs: this.track(contents), cdp: false, children: new Set() };
     session.tabs.set(tabId, guest);
     // 並びは、画面がタブを作った順（タブの ID の番号）
     session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
-    contents.debugger.on('detach', () => (guest.cdp = false));
+    contents.debugger.on('detach', () => {
+      guest.cdp = false;
+      guest.children.clear();
+    });
+    contents.debugger.on('message', (_event, method, params: { sessionId?: string; targetInfo?: { type?: string } }) => {
+      if (method === 'Target.attachedToTarget' && params.sessionId && params.targetInfo?.type === 'iframe') guest.children.add(params.sessionId);
+      if (method === 'Target.detachedFromTarget' && params.sessionId) guest.children.delete(params.sessionId);
+    });
     contents.once('destroyed', () => {
       const current = this.sessions.get(sessionId);
       if (current?.tabs.get(tabId) === guest) current.tabs.delete(tabId);
@@ -264,7 +334,7 @@ export class BrowserControl {
       case 'get_failed_requests':
         return this.failedRequests(guest, args.clear === true);
       case 'click':
-        return this.click(sessionId, guest, requiredString(args.selector, 'selector'), args.double === true, optionalString(args.button) ?? 'left');
+        return this.click(sessionId, guest, args);
       case 'type':
         return this.type(sessionId, guest, args);
       case 'press_key':
@@ -423,35 +493,72 @@ export class BrowserControl {
     };
   }
 
+  // 同じオリジンの iframe の中の文字も、iframe ごとに分けて読む
   private async text(guest: Guest, selector: string | undefined): Promise<ToolResult> {
     const result = (await this.world(
       guest,
-      `(() => {
-        const root = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : 'document.body'};
-        if (!root) return null;
-        return { title: document.title, url: location.href, text: root.innerText || root.textContent || '' };
+      `(() => {${FRAMES}
+        const textOf = (el) => (el ? el.innerText || el.textContent || '' : '');
+        ${
+          selector
+            ? `const hit = __all(${JSON.stringify(selector)})[0];
+        if (!hit) return null;
+        const parts = [{ frame: __frameOf(hit), text: textOf(hit.el) }];`
+            : `const parts = __docs().map((d) => ({ frame: __frameOf(d), text: textOf(d.doc.body) }));`
+        }
+        return { title: document.title, url: location.href, parts };
       })()`,
-    )) as { title: string; url: string; text: string } | null;
+    )) as { title: string; url: string; parts: { frame: string | null; text: string }[] } | null;
     if (!result) throw new ToolError(`「${selector}」に当たる要素がありません`);
-    return textResult([`タイトル: ${result.title || '（なし）'}`, `URL: ${result.url}`, '', clip(result.text.replace(/\n{3,}/g, '\n\n').trim(), MAX_TEXT)].join('\n'));
+    // ページ全体のときは、別プロセスの iframe（許す先のものだけ）の文字も読む
+    if (!selector) {
+      for (const frame of await this.childFrames(guest)) {
+        if (!this.allowed(frame.url)) continue;
+        const value = (await this.cdp(guest, 'Runtime.evaluate', { expression: 'document.body ? document.body.innerText : ""', returnByValue: true }, frame.child).catch(() => null)) as { result?: { value?: unknown } } | null;
+        if (typeof value?.result?.value === 'string') result.parts.push({ frame: frame.url, text: value.result.value });
+      }
+    }
+    const body = result.parts
+      .map((p) => `${p.frame ? `--- iframe（${p.frame}）の中 ---\n` : ''}${p.text.replace(/\n{3,}/g, '\n\n').trim()}`)
+      .join('\n\n');
+    return textResult([`タイトル: ${result.title || '（なし）'}`, `URL: ${result.url}`, '', clip(body, MAX_TEXT)].join('\n'));
   }
 
   private async tree(guest: Guest): Promise<ToolResult> {
-    type AXValue = { value?: unknown };
-    type AXNode = {
-      nodeId: string;
-      ignored: boolean;
-      role?: AXValue;
-      name?: AXValue;
-      value?: AXValue;
-      properties?: { name: string; value: AXValue }[];
-      childIds?: string[];
-      parentId?: string;
+    // いちばん外のページと、同じプロセスで動く iframe（同じオリジンなど）のフレームごとに読む。許していない先の iframe は読まない
+    type FrameTree = { frame: { id: string; url: string }; childFrames?: FrameTree[] };
+    const { frameTree } = (await this.cdp(guest, 'Page.getFrameTree')) as { frameTree: FrameTree };
+    const frames: { id: string; url: string; top: boolean }[] = [];
+    const collect = (node: FrameTree, top: boolean) => {
+      frames.push({ id: node.frame.id, url: node.frame.url, top });
+      node.childFrames?.forEach((child) => collect(child, false));
     };
-    const { nodes } = (await this.cdp(guest, 'Accessibility.getFullAXTree')) as { nodes: AXNode[] };
+    collect(frameTree, true);
+    const lines: string[] = [];
+    for (const frame of frames) {
+      if (lines.length >= MAX_TREE_LINES) break;
+      if (!frame.top) {
+        if (!this.allowed(frame.url)) continue;
+        lines.push(`--- iframe（${frame.url}）の中 ---`);
+      }
+      const result = (await this.cdp(guest, 'Accessibility.getFullAXTree', { frameId: frame.id }).catch(() => null)) as { nodes: AXNode[] } | null;
+      if (result) this.formatTree(result.nodes, lines);
+    }
+    // 別プロセスの iframe（許す先のものだけ）
+    for (const frame of await this.childFrames(guest)) {
+      if (lines.length >= MAX_TREE_LINES || !this.allowed(frame.url)) continue;
+      lines.push(`--- iframe（${frame.url}）の中 ---`);
+      const result = (await this.cdp(guest, 'Accessibility.getFullAXTree', {}, frame.child).catch(() => null)) as { nodes: AXNode[] } | null;
+      if (result) this.formatTree(result.nodes, lines);
+    }
+    if (lines.length >= MAX_TREE_LINES) lines.push(`…（${MAX_TREE_LINES} 行で切りました）`);
+    return textResult([`URL: ${guest.contents.getURL()}`, ...lines].join('\n'));
+  }
+
+  // CDP のアクセシビリティのツリーを、字下げした一覧にして lines に足す
+  private formatTree(nodes: AXNode[], lines: string[]): void {
     const byId = new Map(nodes.map((n) => [n.nodeId, n]));
     const root = nodes.find((n) => !n.parentId) ?? nodes[0];
-    const lines: string[] = [];
     const STATES = ['focused', 'checked', 'pressed', 'selected', 'expanded', 'disabled', 'required', 'invalid', 'level'];
     const walk = (node: AXNode | undefined, depth: number) => {
       if (!node || lines.length >= MAX_TREE_LINES) return;
@@ -471,34 +578,36 @@ export class BrowserControl {
       for (const child of node.childIds ?? []) walk(byId.get(child), next);
     };
     walk(root, 0);
-    if (lines.length >= MAX_TREE_LINES) lines.push(`…（${MAX_TREE_LINES} 行で切りました）`);
-    return textResult([`URL: ${guest.contents.getURL()}`, ...lines].join('\n'));
   }
 
   private async inspect(guest: Guest, selector: string, properties: string[] | undefined): Promise<ToolResult> {
     const props = properties && properties.length > 0 ? properties : DEFAULT_STYLES;
     const found = (await this.world(
       guest,
-      `(() => {
+      `(() => {${FRAMES}
         const props = ${JSON.stringify(props)};
-        const all = [...document.querySelectorAll(${JSON.stringify(selector)})];
-        return { total: all.length, items: all.slice(0, 10).map((el) => {
-          const r = el.getBoundingClientRect();
-          const cs = getComputedStyle(el);
+        let all;
+        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'セレクタの書き方が違います: ' + e.message }; }
+        return { total: all.length, items: all.slice(0, 10).map((hit) => {
+          const el = hit.el;
+          const r = __rect(el);
+          const cs = __style(el);
           const html = el.outerHTML;
           return {
             html: html.length > 2000 ? html.slice(0, 2000) + '…' : html,
             rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
-            visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none',
+            visible: __shown(el) && cs.display !== 'none',
+            frame: __frameOf(hit),
             styles: Object.fromEntries(props.map((p) => [p, cs.getPropertyValue(p)])),
           };
         }) };
       })()`,
-    )) as { total: number; items: { html: string; rect: BrowserRect; visible: boolean; styles: Record<string, string> }[] };
+    )) as { error?: string; total: number; items: { html: string; rect: BrowserRect; visible: boolean; frame: string | null; styles: Record<string, string> }[] };
+    if (found.error) throw new ToolError(found.error);
     if (found.total === 0) throw new ToolError(`「${selector}」に当たる要素がありません`);
     const parts = found.items.map((item, i) =>
       [
-        `## ${i + 1} つ目（${item.visible ? '見えている' : '見えていない'}・x=${item.rect.x} y=${item.rect.y} ${item.rect.width}×${item.rect.height}）`,
+        `## ${i + 1} つ目（${item.visible ? '見えている' : '見えていない'}・x=${item.rect.x} y=${item.rect.y} ${item.rect.width}×${item.rect.height}${item.frame ? `・iframe（${item.frame}）の中` : ''}）`,
         '```html',
         item.html,
         '```',
@@ -525,16 +634,25 @@ export class BrowserControl {
 
   // ---- 動かす ----
 
-  private async click(sessionId: string, guest: Guest, selector: string, double: boolean, button: string): Promise<ToolResult> {
-    const target = await this.locate(guest, selector);
+  // selector か、見えている範囲の x・y（スクリーンショットの位置）で押す
+  private async click(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
+    const selector = optionalString(args.selector);
+    const double = args.double === true;
+    const button = optionalString(args.button) ?? 'left';
+    let target: { rect: BrowserRect; description: string; covered: string | null; child?: { session: string; x: number; y: number } };
+    if (selector) target = await this.locate(guest, selector);
+    else if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) target = await this.pointAt(guest, args.x, args.y);
+    else throw new ToolError('selector か、x と y を渡してください');
     const before = guest.contents.getURL();
     await this.highlight(sessionId, target.rect);
-    const { x, y } = center(target.rect);
+    // 別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る
+    const { x, y } = target.child ?? center(target.rect);
+    const child = target.child?.session;
     const pressButton = button === 'right' || button === 'middle' ? button : 'left';
-    await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, child);
     for (let count = 1; count <= (double ? 2 : 1); count++) {
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: pressButton, clickCount: count });
-      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: pressButton, clickCount: count });
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: pressButton, clickCount: count }, child);
+      await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: pressButton, clickCount: count }, child);
     }
     await settle(guest.contents);
     const lines = [`${double ? 'ダブルクリック' : 'クリック'}しました: ${target.description}`];
@@ -556,66 +674,88 @@ export class BrowserControl {
       await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       where = target.description;
     }
-    if (args.clear === true) {
+    // フォーカスが別プロセスの iframe の中なら、そのセッションに送る
+    const child = await this.focusedChild(guest);
+    if (args.clear === true && child) {
+      await this.cdp(
+        guest,
+        'Runtime.evaluate',
+        { expression: '(() => { const el = document.activeElement; if (el && typeof el.select === "function") el.select(); else if (el && el.isContentEditable) getSelection().selectAllChildren(el); })()' },
+        child,
+      );
+      await this.key(guest, 'Backspace', [], child);
+    } else if (args.clear === true) {
       // 欄の文字を全部選んでから消す（ページには、ふつうの削除として届く）
       await this.world(
         guest,
         `(() => {
-          const el = document.activeElement;
+          // フォーカスが同じオリジンの iframe の中にあれば、その中の欄
+          let el = document.activeElement;
+          while (el && /^(IFRAME|FRAME)$/.test(el.tagName)) {
+            let d = null;
+            try { d = el.contentDocument; } catch (e) {}
+            if (!d) break;
+            el = d.activeElement;
+          }
           if (el && typeof el.select === 'function') el.select();
-          else if (el && el.isContentEditable) getSelection().selectAllChildren(el);
+          else if (el && el.isContentEditable) el.ownerDocument.getSelection().selectAllChildren(el);
         })()`,
       );
       await this.key(guest, 'Backspace', []);
     }
-    if (text) await this.cdp(guest, 'Input.insertText', { text });
-    if (args.submit === true) await this.key(guest, 'Enter', []);
+    if (text) await this.cdp(guest, 'Input.insertText', { text }, child);
+    if (args.submit === true) await this.key(guest, 'Enter', [], child);
     await settle(guest.contents);
     return textResult(`${where}に入力しました${args.submit === true ? '（Enter も押しました）' : ''}`);
   }
 
   private async pressKey(guest: Guest, key: string, modifiers: string[]): Promise<ToolResult> {
-    await this.key(guest, key, modifiers);
+    await this.key(guest, key, modifiers, await this.focusedChild(guest));
     await settle(guest.contents);
     return textResult(`${[...modifiers, key].join('+')} を押しました`);
   }
 
-  private async key(guest: Guest, name: string, modifiers: string[]): Promise<void> {
+  private async key(guest: Guest, name: string, modifiers: string[], child?: string): Promise<void> {
     const spec = keySpec(name);
     if (!spec) throw new ToolError(`知らないキーです: ${name}`);
     const bits = modifiers.reduce((sum, m) => sum | (MODIFIER_BITS[m] ?? 0), 0);
     // Ctrl・⌘ と一緒に押すときは、文字を入れない
     const text = bits & (MODIFIER_BITS.control | MODIFIER_BITS.meta) ? undefined : spec.text;
     const base = { key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, modifiers: bits };
-    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) });
-    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) }, child);
+    await this.cdp(guest, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, child);
   }
 
   private async scroll(guest: Guest, selector: string | undefined, deltaX: number, deltaY: number): Promise<ToolResult> {
     if (!selector && !deltaX && !deltaY) throw new ToolError('selector か deltaX・deltaY を渡してください');
     const position = (await this.world(
       guest,
-      `(() => {
-        const target = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : 'null'};
+      `(() => {${FRAMES}
+        const target = ${selector ? `(__all(${JSON.stringify(selector)})[0] || {}).el` : 'null'};
         ${selector ? `if (!target) return null; target.scrollIntoView({ block: 'center', inline: 'nearest' });` : ''}
         const dx = ${deltaX}, dy = ${deltaY};
         let scroller = document.scrollingElement || document.documentElement;
         if (dx || dy) {
-          // 真ん中（selector があればその要素）から上へたどって、動かせる入れ物を探す
-          let el = target || document.elementFromPoint(innerWidth / 2, innerHeight / 2);
-          for (; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
-            const cs = getComputedStyle(el);
-            const canY = dy && /(auto|scroll|overlay)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight;
-            const canX = dx && /(auto|scroll|overlay)/.test(cs.overflowX) && el.scrollWidth > el.clientWidth;
-            if (canY || canX) { scroller = el; break; }
+          // 真ん中（selector があればその要素）から上へたどって、動かせる入れ物を探す。iframe の中のページの上まで来たら、iframe の外へ
+          const can = (e) => {
+            const cs = __style(e);
+            const root = e === e.ownerDocument.scrollingElement;
+            return (dy && e.scrollHeight > e.clientHeight && (root || /(auto|scroll|overlay)/.test(cs.overflowY))) ||
+              (dx && e.scrollWidth > e.clientWidth && (root || /(auto|scroll|overlay)/.test(cs.overflowX)));
+          };
+          const start = target || __hit(innerWidth / 2, innerHeight / 2).el;
+          for (let e = start; e; ) {
+            if (can(e)) { scroller = e; break; }
+            e = e.parentElement || __view(e).frameElement;
           }
           scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' });
         }
-        return { x: Math.round(scroller.scrollLeft), y: Math.round(scroller.scrollTop), page: scroller === (document.scrollingElement || document.documentElement) };
+        const page = scroller === scroller.ownerDocument.scrollingElement;
+        return { x: Math.round(scroller.scrollLeft), y: Math.round(scroller.scrollTop), where: page ? (scroller.ownerDocument === document ? 'ページ' : 'iframe の中のページ') : '中の入れ物' };
       })()`,
-    )) as { x: number; y: number; page: boolean } | null;
+    )) as { x: number; y: number; where: string } | null;
     if (!position) throw new ToolError(`「${selector}」に当たる要素がありません`);
-    return textResult(`スクロールしました（${position.page ? 'ページ' : '中の入れ物'}の位置: x=${position.x} y=${position.y}）`);
+    return textResult(`スクロールしました（${position.where}の位置: x=${position.x} y=${position.y}）`);
   }
 
   private async waitFor(guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
@@ -624,20 +764,24 @@ export class BrowserControl {
     if (!selector && !text) throw new ToolError('selector か text を渡してください');
     const state = optionalString(args.state) ?? 'visible';
     const timeout = Math.min(Math.max(numberOr(args.timeoutMs, 10_000), 0), 30_000);
-    const check = `(() => {
+    const check = `(() => {${FRAMES}
       const state = ${JSON.stringify(state)};
       let el = null;
-      ${selector ? `el = document.querySelector(${JSON.stringify(selector)});` : ''}
+      ${selector ? `el = (__all(${JSON.stringify(selector)})[0] || {}).el || null;` : ''}
       ${
         text
           ? `if (!${selector ? 'el' : 'false'}) {
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         const want = ${JSON.stringify(text)};
-        for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent.includes(want)) { el = n.parentElement; break; }
+        for (const d of __docs()) {
+          if (!d.doc.body) continue;
+          const walker = d.doc.createTreeWalker(d.doc.body, NodeFilter.SHOW_TEXT);
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent.includes(want)) { el = n.parentElement; break; }
+          if (el) break;
+        }
       }`
           : ''
       }
-      const visible = !!el && (() => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'; })();
+      const visible = !!el && __shown(el);
       return state === 'attached' ? !!el : state === 'hidden' ? !visible : visible;
     })()`;
     const started = Date.now();
@@ -751,7 +895,8 @@ export class BrowserControl {
     return guest.contents.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]);
   }
 
-  private async cdp(guest: Guest, method: string, params?: Record<string, unknown>): Promise<unknown> {
+  // CDP の命令を送る。child: 別プロセスの iframe のセッション（無ければページ）
+  private async cdp(guest: Guest, method: string, params?: Record<string, unknown>, child?: string): Promise<unknown> {
     const dbg = guest.contents.debugger;
     if (!guest.cdp || !dbg.isAttached()) {
       try {
@@ -760,36 +905,77 @@ export class BrowserControl {
         if (!dbg.isAttached()) throw new ToolError(`ページを操作する準備ができませんでした（${error instanceof Error ? error.message : String(error)}）`);
       }
       guest.cdp = true;
+      // 別プロセスの iframe にもつなぐ（つながると Target.attachedToTarget が届く）
+      await dbg.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => undefined);
+      await sleep(150);
     }
-    return dbg.sendCommand(method, params);
+    return dbg.sendCommand(method, params, child);
+  }
+
+  // 別プロセスの iframe と、その今の URL
+  private async childFrames(guest: Guest): Promise<{ child: string; url: string }[]> {
+    await this.cdp(guest, 'Target.getTargets').catch(() => undefined);
+    const frames: { child: string; url: string }[] = [];
+    for (const child of guest.children) {
+      const result = (await this.cdp(guest, 'Runtime.evaluate', { expression: 'location.href', returnByValue: true }, child).catch(() => null)) as { result?: { value?: unknown } } | null;
+      if (typeof result?.result?.value === 'string') frames.push({ child, url: result.result.value });
+    }
+    return frames;
+  }
+
+  // src の iframe が別プロセスで動いていれば、そのセッション（オリジンで見つける）
+  private async childFor(guest: Guest, src: string): Promise<{ child: string; url: string } | null> {
+    const origin = originOf(src);
+    if (!origin) return null;
+    return (await this.childFrames(guest)).find((f) => originOf(f.url) === origin) ?? null;
+  }
+
+  // 今キーボードのフォーカスがある、別プロセスの iframe のセッション（ページの中なら undefined）。許していない先なら断る
+  private async focusedChild(guest: Guest): Promise<string | undefined> {
+    const src = (await this.world(
+      guest,
+      `(() => {
+        let el = document.activeElement;
+        while (el && /^(IFRAME|FRAME)$/.test(el.tagName)) {
+          let d = null;
+          try { d = el.contentDocument; } catch (e) {}
+          if (!d) return el.src || null;
+          el = d.activeElement;
+        }
+        return null;
+      })()`,
+    )) as string | null;
+    if (!src) return undefined;
+    const frame = await this.childFor(guest, src);
+    const url = frame?.url ?? src;
+    if (!this.allowed(url)) throw new ToolError(`フォーカスが、許していない先の iframe（${url}）の中にあるので、入力できません`);
+    return frame?.child;
   }
 
   private async viewport(guest: Guest): Promise<{ width: number; height: number; dpr: number }> {
     return (await this.world(guest, '({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })')) as { width: number; height: number; dpr: number };
   }
 
-  // セレクタに当たる要素のうち、見えている最初のものを、見える位置まで動かして、その位置を返す
+  // セレクタに当たる要素（同じオリジンの iframe の中も）のうち、見えている最初のものを、見える位置まで動かして、その位置を返す
   private async locate(guest: Guest, selector: string): Promise<{ rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null }> {
     const found = (await this.world(
       guest,
-      `(() => {
+      `(() => {${FRAMES}
         let all;
-        try { all = [...document.querySelectorAll(${JSON.stringify(selector)})]; } catch (e) { return { error: 'セレクタの書き方が違います: ' + e.message }; }
+        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'セレクタの書き方が違います: ' + e.message }; }
         if (all.length === 0) return { error: 'none' };
-        const shown = (el) => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'; };
-        const el = all.find(shown);
-        if (!el) return { error: 'hidden', count: all.length };
+        const hit = all.find((h) => __shown(h.el));
+        if (!hit) return { error: 'hidden', count: all.length };
+        const el = hit.el;
+        // iframe の中の要素は、外のページも合わせて動かす
         el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-        const r = el.getBoundingClientRect();
-        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-        const top = document.elementFromPoint(cx, cy);
-        const name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.classList.length ? '.' + [...e.classList].slice(0, 2).join('.') : '');
-        const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
+        const r = __rect(el);
+        const top = __hit(r.x + r.width / 2, r.y + r.height / 2).el;
         return {
-          rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+          rect: r,
           viewport: { width: innerWidth, height: innerHeight },
-          description: name(el) + (text ? '「' + text + '」' : ''),
-          covered: top && top !== el && !el.contains(top) && !top.contains(el) ? name(top) : null,
+          description: __label(el),
+          covered: top && top !== el && !el.contains(top) && !top.contains(el) ? __name(top) : null,
         };
       })()`,
     )) as { error?: string; count?: number; rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null };
@@ -797,6 +983,47 @@ export class BrowserControl {
     if (found.error === 'hidden') throw new ToolError(`「${selector}」に当たる要素（${found.count} 個）は、どれも見えていません`);
     if (found.error) throw new ToolError(found.error);
     return found;
+  }
+
+  // 見えている範囲の (x, y) にある要素。別オリジンの iframe の中は、その iframe の src が許す先のときだけ押せる
+  // （スクリプトからは中が見えないので、どのページかは src で決める）
+  private async pointAt(
+    guest: Guest,
+    x: number,
+    y: number,
+  ): Promise<{ rect: BrowserRect; description: string; covered: string | null; child?: { session: string; x: number; y: number } }> {
+    const found = (await this.world(
+      guest,
+      `(() => {${FRAMES}
+        const x = ${x}, y = ${y};
+        if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return { error: 'outside', width: innerWidth, height: innerHeight };
+        const hit = __hit(x, y);
+        if (!hit.el) return { error: 'none' };
+        const inner = hit.cross ? __inner(hit.el) : null;
+        const o = hit.cross ? __offset(hit.el.ownerDocument) : null;
+        return {
+          cross: hit.cross,
+          src: hit.src || null,
+          // 別オリジンの iframe の中身の左上（いちばん外の見えている範囲から）
+          frame: inner ? { x: inner.x + o.ox, y: inner.y + o.oy } : null,
+          description: hit.cross ? __name(hit.el) : __label(hit.el),
+        };
+      })()`,
+    )) as { error?: string; width?: number; height?: number; cross: boolean; src: string | null; frame: { x: number; y: number } | null; description: string };
+    if (found.error === 'outside') throw new ToolError(`x=${x} y=${y} は、見えている範囲（${found.width}×${found.height}）の外です`);
+    if (found.error) throw new ToolError(`x=${x} y=${y} には要素がありません`);
+    const rect = { x: x - 10, y: y - 10, width: 20, height: 20 };
+    if (!found.cross) return { rect, description: `x=${x} y=${y} の ${found.description}`, covered: null };
+    // 別オリジンの iframe。別プロセスで動いていれば、そのセッションに、iframe の中の位置で送る
+    const frame = found.src ? await this.childFor(guest, found.src) : null;
+    const url = frame?.url ?? found.src;
+    if (!url || !this.allowed(url)) throw new ToolError(`x=${x} y=${y} は、許していない先の iframe（${url || 'src なし'}）の中なので、押せません`);
+    return {
+      rect,
+      description: `x=${x} y=${y}（別オリジンの iframe ${url} の中）`,
+      covered: null,
+      child: frame && found.frame ? { session: frame.child, x: x - found.frame.x, y: y - found.frame.y } : undefined,
+    };
   }
 
   // 押す要素に枠を出す（ブラウザを見ているユーザーに、どこを押すかを見せる）
@@ -834,6 +1061,14 @@ export class BrowserControl {
 }
 
 // ---- 小さな部品 ----
+
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
 
 // 空のタブ（「＋」で開いたもの・まだ何も開いていないもの）
 function isBlank(url: string): boolean {
