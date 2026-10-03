@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import {
   IpcChannel,
   type BrowserActivity,
+  type BrowserAskChange,
   type BrowserNewTabRequest,
   type BrowserOpenRequest,
   type BrowserTabRef,
@@ -185,6 +186,10 @@ const api: TanacodeApi = {
     hosts: () => ipcRenderer.invoke(IpcChannel.BrowserHostsGet),
     setHosts: (hosts) => ipcRenderer.invoke(IpcChannel.BrowserHostsSet, hosts),
     onHostsOpen: (listener) => subscribe<undefined>(IpcChannel.BrowserHostsOpen, () => listener()),
+    onAsk: (listener) => subscribe<BrowserAskChange>(IpcChannel.BrowserAsk, listener),
+    asks: () => ipcRenderer.invoke(IpcChannel.BrowserAsksGet),
+    answer: (sessionId, askId, answer) => ipcRenderer.send(IpcChannel.BrowserAnswer, sessionId, askId, answer),
+    onShow: (listener) => subscribe<string>(IpcChannel.BrowserShow, listener),
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
 };

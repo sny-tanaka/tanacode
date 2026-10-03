@@ -234,6 +234,7 @@ function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.attention === 'question') return { kind: 'waiting', label: '質問への回答待ち' };
   if (s.attention === 'permission') return { kind: 'waiting', label: '実行の許可待ち' };
   if (s.attention === 'other') return { kind: 'waiting', label: '操作待ち' };
+  if (s.attention === 'browser') return { kind: 'waiting', label: 'ブラウザでの操作待ち' };
   if (s.worktree?.preparing) return { kind: 'starting', label: PREPARING_LABEL[s.worktree.preparing] };
   const background = s.backgroundTasks > 0 ? `バックグラウンド ${s.backgroundTasks}件` : null;
   if (status === 'starting') return { kind: 'starting', label: '起動中' };

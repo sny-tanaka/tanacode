@@ -161,6 +161,8 @@ export class SessionManager {
 
   // 消した worktree を作り直している途中のセッション（まだ Claude Code を起動していない）
   private readonly restoring = new Set<string>();
+  // Claude がアプリ内ブラウザでユーザーに操作を頼んでいるセッション（browser-control が知らせてくる）
+  private readonly browserAsks = new Set<string>();
 
   list(): SessionSummary[] {
     return [...this.store.all()]
@@ -176,7 +178,7 @@ export class SessionManager {
           updatedAt: r.updatedAt,
           running: !!rt?.process,
           unread: !!rt?.unread,
-          attention: rt?.process ? rt.attention : null,
+          attention: rt?.process ? (rt.attention ?? (this.browserAsks.has(r.id) ? 'browser' : null)) : null,
           backgroundTasks: rt?.process ? rt.background : 0,
           model: r.model ?? null,
           effort: r.effort ?? null,
@@ -194,7 +196,7 @@ export class SessionManager {
     return this.store
       .all()
       .filter((r) => !r.archived && this.runtimes.get(r.id)?.process)
-      .map((r) => ({ title: r.title ?? '新しいセッション', state: stateLabel(this.runtimes.get(r.id)!) }));
+      .map((r) => ({ title: r.title ?? '新しいセッション', state: stateLabel(this.runtimes.get(r.id)!, this.browserAsks.has(r.id)) }));
   }
 
   summary(id: string): SessionSummary | undefined {
@@ -384,6 +386,14 @@ export class SessionManager {
 
   statusLine(id: string): StatusLineInfo | null {
     return this.runtimes.get(id)?.statusLine ?? null;
+  }
+
+  // Claude がアプリ内ブラウザでユーザーに操作を頼んだ・頼み終わった（一覧は「ブラウザでの操作待ち」）
+  browserAskChanged(id: string, asking: boolean): void {
+    if (asking === this.browserAsks.has(id)) return;
+    if (asking) this.browserAsks.add(id);
+    else this.browserAsks.delete(id);
+    this.emitSessions();
   }
 
   // AskUserQuestion を出す直前に、フックがその入力をファイルに書いた（説明・プレビューを質問のカードに出すため）
@@ -1079,8 +1089,9 @@ export class SessionManager {
         changed = true;
         const summary = this.summary(id);
         // バックグラウンドのタスクが動いているあいだは、まだ完了ではない（一覧も「完了待ち」）。
-        // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す
-        if (summary && summary.backgroundTasks === 0) this.listeners.onTurnCompleted(summary);
+        // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す。
+        // ブラウザでの操作を頼んでいるあいだも同じ（2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、Claude はターンを終えて返事を待つ）
+        if (summary && summary.backgroundTasks === 0 && summary.attention !== 'browser') this.listeners.onTurnCompleted(summary);
       }
     }
     if (changed) this.emitSessions();
@@ -1162,10 +1173,11 @@ function remoteName(cwd: string): string {
 }
 
 // 動いている Claude Code の状態の文言（セッション一覧の文言にそろえる）
-function stateLabel(rt: Runtime): string {
+function stateLabel(rt: Runtime, browserAsk: boolean): string {
   if (rt.attention === 'question') return '質問への回答待ち';
   if (rt.attention === 'permission') return '実行の許可待ち';
   if (rt.attention === 'other') return '操作待ち';
+  if (browserAsk) return 'ブラウザでの操作待ち';
   if (!rt.ready) return '起動中';
   const background = rt.background > 0 ? `バックグラウンド ${rt.background}件` : null;
   if (rt.turnOpen) return background ? `作業中（${background}）` : '作業中';

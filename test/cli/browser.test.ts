@@ -2,7 +2,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BROWSER_TOOLS, browserToolId, isLocalUrl } from '@shared/browser-tools';
+import { BROWSER_ASK_TOOL, BROWSER_TOOLS, browserToolId, isLocalUrl } from '@shared/browser-tools';
+import type { BrowserAsk } from '@shared/ipc';
+import { BrowserAsks } from '../../src/main/browser-asks';
 import { BROWSER_GATE_REQUEST, BrowserBridge, textResult, type ToolResult } from '../../src/main/browser-bridge';
 import { buildRelay } from './browser-relay-build';
 import { ClaudeRun, claudeVersion, menuOf } from './claude-run';
@@ -15,6 +17,8 @@ import { MockApi, type Block } from './mock-api';
 // - JavaScript の実行は、フックがアプリに今のページを聞いて決める。localhost のページは確認なし。
 //   それ以外のページは、「次から聞かない」で許可を残しても、次の呼び出しでまた確認が出る。アプリに聞けないときも確認が出る
 // - --resume で再開しても使える / アプリ（ソケット）が無い間は「起動していません」と返し、戻ればそのまま使える
+// - ユーザーに操作を頼む（ask_user_to_act）は、許可の確認なしに届き、ユーザーが返事をするまで返らない。Esc の中断はアプリまで届く。
+//   待ちが長いと Claude Code が呼び出しをバックグラウンドに移すが、返事をすれば結果が知らせで届き、Claude が続きを始める
 
 const BROWSE = 'アプリ内ブラウザで確かめてください';
 const AGAIN = '再開したあとも確かめてください';
@@ -25,6 +29,17 @@ const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwA
 const version = claudeVersion();
 
 const call = (id: string, name: string, input: Record<string, unknown> = {}): Block[] => [{ type: 'tool_use', id, name: browserToolId(name), input }];
+
+// 会話ログのツールの結果（tool_use の id → 中身）
+function toolResult(run: ClaudeRun, toolUseId: string): unknown {
+  for (const entry of run.entries) {
+    const content = entry.type === 'user' ? (entry as { message?: { content?: unknown } }).message?.content : null;
+    if (!Array.isArray(content)) continue;
+    const hit = content.find((b: { type?: string; tool_use_id?: string }) => b.type === 'tool_result' && b.tool_use_id === toolUseId);
+    if (hit) return hit;
+  }
+  return undefined;
+}
 
 describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
   let api: MockApi;
@@ -39,16 +54,7 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
   const REMOTE = 'https://staging.example.test/';
   const pages = [LOCAL, REMOTE, REMOTE];
   const replied = (text: string) => () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
-  // 会話ログのツールの結果（tool_use の id → 中身）
-  const resultOf = (toolUseId: string): unknown => {
-    for (const entry of run.entries) {
-      const content = entry.type === 'user' ? (entry as { message?: { content?: unknown } }).message?.content : null;
-      if (!Array.isArray(content)) continue;
-      const hit = content.find((b: { type?: string; tool_use_id?: string }) => b.type === 'tool_result' && b.tool_use_id === toolUseId);
-      if (hit) return hit;
-    }
-    return undefined;
-  };
+  const resultOf = (toolUseId: string) => toolResult(run, toolUseId);
 
   beforeAll(async () => {
     const script = await buildRelay();
@@ -171,5 +177,102 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     await run.waitFor('返事', replied('閉じている間の確認をしました'));
     expect(JSON.stringify(resultOf('toolu_back'))).toContain('get_text をしました');
     expect(calls.map((c) => c.tool)).toEqual(['screenshot', 'click', 'evaluate', 'evaluate', 'evaluate', 'get_text']);
+  });
+});
+
+describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依頼`, () => {
+  const LOGIN = 'ログインを頼んでください';
+  const AGAIN = 'もう一度頼んでください';
+  const LATER = 'しばらくしてから返事をします';
+  // 呼び出しをバックグラウンドに移すまでの時間（既定は 120 秒。試験では縮める）
+  const BACKGROUND_MS = 6000;
+  const MESSAGE = 'テスト用のアカウントでログインしてください';
+  let api: MockApi;
+  let run: ClaudeRun;
+  let bridge: BrowserBridge;
+  let socketDir: string;
+  // アプリと同じく、頼んでいるものを BrowserAsks で持つ。changes: 頼んだ・終わった（null）の知らせ
+  const changes: (BrowserAsk | null)[] = [];
+  const asks = new BrowserAsks((_session, ask) => changes.push(ask));
+  const asking = () => changes.at(-1) ?? null;
+  const ask = (id: string): Block[] => call(id, BROWSER_ASK_TOOL, { message: MESSAGE });
+  const replied = (text: string) => () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
+  const resultOf = (toolUseId: string) => toolResult(run, toolUseId);
+
+  beforeAll(async () => {
+    const script = await buildRelay();
+    socketDir = mkdtempSync(join(tmpdir(), 'tanacode-browser-ask-'));
+    const socketPath = join(socketDir, 'browser.sock');
+    bridge = new BrowserBridge(socketPath, (session, tool, args, signal) =>
+      tool === BROWSER_ASK_TOOL
+        ? asks.wait(session, args.message, () => ['今のページ: ダッシュボード', 'URL: http://localhost:3000/'], signal)
+        : Promise.resolve(textResult(`${tool} をしました`)),
+    );
+    await bridge.start();
+    api = new MockApi();
+    api.conversations = [
+      {
+        match: LOGIN,
+        steps: [
+          ask('toolu_ask_done'),
+          [{ type: 'text', text: '続きを確かめました' }],
+          ask('toolu_ask_esc'),
+          ask('toolu_ask_later'),
+          [{ type: 'text', text: '返事を待ちます' }],
+          [{ type: 'text', text: '返事が届きました' }],
+        ],
+      },
+    ];
+    run = new ClaudeRun(await api.start(), {
+      env: { CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: String(BACKGROUND_MS) },
+      browser: { command: process.execPath, script, socketPath, version: 'test' },
+    });
+    await run.open();
+  });
+
+  afterAll(async () => {
+    await run?.stop();
+    await api?.stop();
+    bridge?.close();
+    if (socketDir) rmSync(socketDir, { recursive: true, force: true });
+  });
+
+  it('許可の確認なしにアプリまで届き、ユーザーが「終わった」を押すまで返らない。押したら、そのことと今のページが Claude に届く', async () => {
+    await run.send(LOGIN);
+    const first = await run.waitFor('頼み', () => asking());
+    expect(first.message).toBe(MESSAGE);
+    expect(run.screen.current.state.kind).not.toBe('menu');
+    expect(resultOf('toolu_ask_done')).toBeUndefined();
+    asks.answer(run.sessionId!, first.id, { done: true, reason: '' });
+    await run.waitFor('返事', replied('続きを確かめました'));
+    expect(JSON.stringify(resultOf('toolu_ask_done'))).toContain('ユーザーが「終わった」を押しました\\n今のページ: ダッシュボード\\nURL: http://localhost:3000/');
+    expect(asking()).toBeNull();
+  });
+
+  it('待っている間に Esc で中断すると、取り消しがアプリまで届き、帯を消す', async () => {
+    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
+    await run.send(AGAIN);
+    await run.waitFor('2 つ目の頼み', () => asking());
+    run.type('\x1b');
+    await run.waitFor('取り消し', () => asks.list().length === 0 && asking() === null);
+    await run.waitFor('中断の結果', () => resultOf('toolu_ask_esc'));
+    expect(resultOf('toolu_ask_esc')).toMatchObject({ is_error: true });
+  });
+
+  it('待ちが長いと Claude Code がバックグラウンドに移す。そのあとで返事をしても、知らせで Claude に届き、続きを始める', async () => {
+    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
+    await run.send(LATER);
+    const third = await run.waitFor('3 つ目の頼み', () => asking());
+    await run.waitFor('バックグラウンドに移したという結果', () => resultOf('toolu_ask_later'), BACKGROUND_MS + 20_000);
+    expect(JSON.stringify(resultOf('toolu_ask_later'))).toContain('moved to the background');
+    await run.waitFor('ターンの終わり', replied('返事を待ちます'));
+    // 移したあとも、アプリは待ち続けている
+    expect(asks.list()).toEqual([{ sessionId: run.sessionId, ask: third }]);
+    asks.answer(run.sessionId!, third.id, { done: false, reason: 'テスト用のアカウントがありません' });
+    await run.waitFor('知らせのあとの返事', replied('返事が届きました'));
+    const notified = run.entries.find(
+      (e) => e.type === 'user' && JSON.stringify((e as { message?: unknown }).message).includes('ユーザーが「できない」を押しました。理由: テスト用のアカウントがありません'),
+    );
+    expect(notified, 'task-notification の発言').toBeDefined();
   });
 });

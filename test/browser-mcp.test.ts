@@ -1,8 +1,10 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BROWSER_ASK_TOOL,
   BROWSER_TOOLS,
   allowedBrowserToolIds,
   browserToolId,
@@ -12,9 +14,10 @@ import {
   normalizeHostPattern,
 } from '../src/shared/browser-tools';
 import { AppSettings } from '../src/main/app-settings';
+import { BrowserAsks } from '../src/main/browser-asks';
 import { BROWSER_GATE_REQUEST, BrowserBridge, browserGateEnv, browserMcpArgs, callBridge, textResult, type BrowserMcpLaunch } from '../src/main/browser-bridge';
 import { BROWSER_GATE_COMMAND, gateOutput, readAnswer, runGate } from '../src/main/browser-gate';
-import { respond, type RelayDeps } from '../src/main/browser-relay';
+import { respond, runRelay, type RelayDeps } from '../src/main/browser-relay';
 import { claudeArgs } from '../src/main/claude-session';
 import { mergeSettings } from '../src/main/settings-files';
 import { ownSettings } from '../src/main/statusline';
@@ -56,6 +59,8 @@ describe('中継（MCP の JSON-RPC）', () => {
     expect(tools.every((t) => t.inputSchema.type === 'object')).toBe(true);
     expect(tools.find((t) => t.name === 'screenshot')?.annotations.readOnlyHint).toBe(true);
     expect(tools.find((t) => t.name === 'click')?.annotations.readOnlyHint).toBe(false);
+    // ユーザーに操作を頼むツールは、ページを動かさない
+    expect(tools.find((t) => t.name === BROWSER_ASK_TOOL)?.annotations.readOnlyHint).toBe(true);
   });
 
   it('tools/call: アプリに渡す。知らないツールは渡さずにエラーの結果にする', async () => {
@@ -71,6 +76,48 @@ describe('中継（MCP の JSON-RPC）', () => {
     expect(await respond({ jsonrpc: '2.0', method: 'notifications/initialized' }, deps)).toBeNull();
     expect(await respond({ jsonrpc: '2.0', id: 6, method: 'ping' }, deps)).toEqual({ jsonrpc: '2.0', id: 6, result: {} });
     expect(await respond({ jsonrpc: '2.0', id: 7, method: 'resources/list' }, deps)).toMatchObject({ error: { code: -32601 } });
+  });
+
+  it('notifications/cancelled: その呼び出しだけをアプリで取り消し、返事は書かない（ほかの呼び出しには答える）', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const written: unknown[] = [];
+    output.setEncoding('utf8');
+    output.on('data', (chunk: string) => written.push(...chunk.split('\n').filter(Boolean).map((line) => JSON.parse(line) as unknown)));
+    const signals = new Map<string, AbortSignal>();
+    runRelay(
+      input,
+      output,
+      {
+        version: '9.9.9',
+        // 頼む呼び出しは、取り消されるまで返さない
+        call: (tool, _args, signal) => {
+          signals.set(tool, signal);
+          return new Promise((resolve) => {
+            if (tool === BROWSER_ASK_TOOL) signal.addEventListener('abort', () => resolve(textResult('取り消されました', true)));
+            else setTimeout(() => resolve(textResult(`${tool} をしました`)), 50);
+          });
+        },
+      },
+      () => {},
+    );
+    const send = (message: unknown) => input.write(`${JSON.stringify(message)}\n`);
+    send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: BROWSER_ASK_TOOL, arguments: { message: 'ログインしてください' } } });
+    send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'click', arguments: { selector: '#a' } } });
+    await vi.waitFor(() => expect(signals.size).toBe(2));
+    // Claude Code が Esc の中断で送るもの（2.1.288 で実測）
+    send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1, reason: 'AbortError: user-cancel' } });
+    await vi.waitFor(() => expect(written).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(signals.get(BROWSER_ASK_TOOL)?.aborted).toBe(true);
+    expect(signals.get('click')?.aborted).toBe(false);
+    expect(written).toEqual([{ jsonrpc: '2.0', id: 2, result: textResult('click をしました') }]);
+    // 終わった呼び出し・知らない id の取り消しは、何もしない
+    send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2 } });
+    send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 99 } });
+    send({ jsonrpc: '2.0', id: 3, method: 'ping' });
+    await vi.waitFor(() => expect(written).toHaveLength(2));
+    expect(written[1]).toEqual({ jsonrpc: '2.0', id: 3, result: {} });
   });
 });
 
@@ -112,6 +159,109 @@ describe('アプリとのソケット', () => {
     } finally {
       bridge.close();
     }
+  });
+
+  it('中継が取り消すと、ソケットを閉じ、アプリの待ちも取り消す', async () => {
+    const socketPath = join(root, 'browser.sock');
+    const appSignals: AbortSignal[] = [];
+    const bridge = new BrowserBridge(socketPath, (_session, _tool, _args, signal) => {
+      appSignals.push(signal);
+      return new Promise((resolve) => signal.addEventListener('abort', () => resolve(textResult('おそすぎる返事'))));
+    });
+    await bridge.start();
+    try {
+      const cancel = new AbortController();
+      const pending = callBridge(socketPath, { session: 's1', tool: BROWSER_ASK_TOOL, args: { message: 'x' } }, 5000, cancel.signal);
+      await vi.waitFor(() => expect(appSignals).toHaveLength(1));
+      expect(appSignals[0].aborted).toBe(false);
+      cancel.abort();
+      expect(await pending).toEqual(textResult('取り消されました', true));
+      await vi.waitFor(() => expect(appSignals[0].aborted).toBe(true));
+      // はじめから取り消されていれば、すぐ返す
+      const aborted = new AbortController();
+      aborted.abort();
+      expect(await callBridge(socketPath, { session: 's1', tool: BROWSER_ASK_TOOL, args: {} }, 5000, aborted.signal)).toEqual(textResult('取り消されました', true));
+    } finally {
+      bridge.close();
+    }
+  });
+});
+
+describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
+  const page = () => ['今のページ: ログイン', 'URL: http://localhost:3000/login'];
+  const make = (timeoutMs?: number) => {
+    const changes: [string, { id: string; message: string } | null][] = [];
+    const asks = new BrowserAsks((sessionId, ask) => changes.push([sessionId, ask]), timeoutMs);
+    return { asks, changes };
+  };
+
+  it('頼んで、「終わった」を押すまで待つ。押したら、そのことと今のページを返す', async () => {
+    const { asks, changes } = make();
+    const pending = asks.wait('s1', '  テスト用のアカウントでログインしてください  ', page);
+    expect(changes).toEqual([['s1', { id: expect.any(String), message: 'テスト用のアカウントでログインしてください' }]]);
+    const id = changes[0][1]!.id;
+    expect(asks.has('s1')).toBe(true);
+    expect(asks.list()).toEqual([{ sessionId: 's1', ask: changes[0][1] }]);
+    // 前の頼みへの返事・形の違う返事は捨てる
+    asks.answer('s1', 'old', { done: true, reason: '' });
+    asks.answer('s2', id, { done: true, reason: '' });
+    asks.answer('s1', id, null);
+    expect(asks.has('s1')).toBe(true);
+    asks.answer('s1', id, { done: true, reason: '' });
+    expect(await pending).toEqual(textResult('ユーザーが「終わった」を押しました\n今のページ: ログイン\nURL: http://localhost:3000/login'));
+    expect(changes.at(-1)).toEqual(['s1', null]);
+    expect(asks.has('s1')).toBe(false);
+    expect(asks.list()).toEqual([]);
+  });
+
+  it('「できない」は理由を添えて返す（空白はまとめ、書かなければそう伝える）', async () => {
+    const { asks, changes } = make();
+    const first = asks.wait('s1', 'ログインして', page);
+    asks.answer('s1', changes[0][1]!.id, { done: false, reason: ' テスト用の\n アカウントが ない ' });
+    expect((await first).content[0]).toEqual({ type: 'text', text: expect.stringMatching(/^ユーザーが「できない」を押しました。理由: テスト用の アカウントが ない\n今のページ/) });
+    const second = asks.wait('s1', 'ログインして', page);
+    asks.answer('s1', changes[2][1]!.id, { done: false, reason: '' });
+    expect((await second).content[0]).toMatchObject({ text: expect.stringContaining('理由: （書かれていません）') });
+  });
+
+  it('頼む内容が無ければ断る。頼んでいる途中に、同じセッションでもう一つ頼もうとしても断る（ほかのセッションは別）', async () => {
+    const { asks, changes } = make();
+    expect(await asks.wait('s1', '  ', page)).toMatchObject({ isError: true });
+    expect(await asks.wait('s1', 42, page)).toMatchObject({ isError: true });
+    const pending = asks.wait('s1', 'ログインして', page);
+    expect(await asks.wait('s1', 'もう一つ', page)).toEqual(textResult('すでにユーザーに操作を頼んでいます。その返事を待ってください', true));
+    const other = asks.wait('s2', '色を見て', page);
+    expect(changes.map(([sessionId]) => sessionId)).toEqual(['s1', 's2']);
+    asks.cancel('s1');
+    expect(await pending).toEqual(textResult('セッションを閉じたので、頼むのをやめました', true));
+    expect(asks.has('s2')).toBe(true);
+    // メニューでオフにしたときは、すべてやめる
+    asks.cancelAll('オフになりました');
+    expect(await other).toEqual(textResult('オフになりました', true));
+    expect(asks.list()).toEqual([]);
+    expect(changes.slice(-2)).toEqual([['s1', null], ['s2', null]]);
+  });
+
+  it('Claude Code が取り消したら（Esc の中断）、帯を消してやめる', async () => {
+    const { asks, changes } = make();
+    const cancel = new AbortController();
+    const pending = asks.wait('s1', 'ログインして', page, cancel.signal);
+    cancel.abort();
+    expect(await pending).toEqual(textResult('取り消されました', true));
+    expect(changes.at(-1)).toEqual(['s1', null]);
+    // はじめから取り消されていれば、帯を出さない
+    const aborted = new AbortController();
+    aborted.abort();
+    expect(await asks.wait('s1', 'ログインして', page, aborted.signal)).toMatchObject({ isError: true });
+    expect(changes).toHaveLength(2);
+  });
+
+  it('上限を過ぎたら、帯を消して時間切れを返す', async () => {
+    const { asks, changes } = make(30);
+    const result = await asks.wait('s1', 'ログインして', page);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]).toMatchObject({ text: expect.stringMatching(/^時間切れです.*\n今のページ: ログイン/) });
+    expect(changes.at(-1)).toEqual(['s1', null]);
   });
 });
 
@@ -191,6 +341,8 @@ describe('起動の引数', () => {
     });
     expect(args.slice(2)).toEqual(['--allowedTools', allowedBrowserToolIds().join(',')]);
     expect(allowedBrowserToolIds()).toContain(browserToolId('screenshot'));
+    // ユーザーに操作を頼むのは、読むだけのツールと同じく許可済み
+    expect(allowedBrowserToolIds()).toContain(browserToolId(BROWSER_ASK_TOOL));
     expect(allowedBrowserToolIds()).not.toContain(browserToolId('click'));
     expect(allowedBrowserToolIds()).not.toContain(browserToolId('evaluate'));
   });

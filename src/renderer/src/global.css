@@ -4538,6 +4538,60 @@ details[open] > summary > .disclosure {
 .preview-claude-label {
   color: var(--text-tertiary);
 }
+/* 「あなたの番です」の帯（Claude がユーザーに頼んだ操作。人の対応待ちの色） */
+.preview-ask {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: var(--warn-tint);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-ask-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.preview-ask-title {
+  flex: none;
+  color: var(--warn);
+  font-weight: 600;
+}
+.preview-ask-message {
+  min-width: 0;
+  max-height: 7.5em;
+  overflow-y: auto;
+  color: var(--text-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preview-ask-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.preview-ask-reason {
+  width: 240px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+.preview-ask-reason:focus {
+  border-color: var(--border-focus);
+}
 /* Claude がこれから押す要素の枠（ページの上に重ねる） */
 .preview-click-box {
   position: absolute;

@@ -278,6 +278,26 @@ export function App() {
     };
   }, []);
 
+  // Claude がユーザーに操作を頼んだ（ask_user_to_act）。見ているセッションならブラウザを開き、見ていなければ戻ったときに開く。
+  // 頼まれたときの通知をクリックしたら、そのセッションを選んでブラウザを開く（閉じていても開き直す）。
+  // 画面を作り直したとき（ウィンドウを閉じて開き直した）は、今頼まれているセッションも同じに扱う
+  useEffect(() => {
+    const open = (sessionId: string) => {
+      if (sessionId === selectedIdRef.current) setDiffView({ source: 'preview' });
+      else browsedUnseen.current.add(sessionId);
+    };
+    void window.tanacode.browser.asks().then((list) => list.forEach((c) => c.ask && open(c.sessionId)));
+    const offAsk = window.tanacode.browser.onAsk(({ sessionId, ask }) => ask && open(sessionId));
+    const offShow = window.tanacode.browser.onShow((sessionId) => {
+      open(sessionId);
+      select(sessionId);
+    });
+    return () => {
+      offAsk();
+      offShow();
+    };
+  }, [select]);
+
   // アーカイブしていないセッションと、新規セッションの画面のフォルダ（ブラウザのタブを持っておくもの。消した・アーカイブしたセッション、閉じた画面のタブは閉じる）
   const liveKey = [...(sessions ?? []).filter((s) => !s.archived).map((s) => s.id), ...(draftToolId ? [draftToolId] : [])].join(',');
   const liveSessionIds = useMemo(() => (liveKey ? liveKey.split(',') : []), [liveKey]);
