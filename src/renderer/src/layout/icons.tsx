@@ -148,6 +148,18 @@ export function BellIcon({ size = 22 }: { size?: number }) {
 }
 
 // フェッチ: 時計回りの矢印（ソース管理のブランチの行に使う小さいアイコン）
+// 家に下向きの矢印。デフォルトブランチ（帰る場所）へ戻って、最新を取る（今のブランチの更新ではない）
+export function DefaultBranchIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <path d="M3 11 12 3l9 8" />
+      <path d="M5 9.5V20h14V9.5" />
+      <path d="M12 10.5v6" />
+      <path d="M9.5 14 12 16.5 14.5 14" />
+    </svg>
+  );
+}
+
 export function FetchIcon({ size = 22 }: { size?: number }) {
   return (
     <svg {...common} width={size} height={size} aria-hidden>

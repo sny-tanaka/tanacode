@@ -557,6 +557,8 @@ export function App() {
             onCwdChange={changeComposingCwd}
             branch={draft && draft.cwd === composing.cwd && git.state ? (git.state.isRepo ? git.state.branch : null) : undefined}
             onOpenScm={openScm}
+            gitId={draft && draft.cwd === composing.cwd ? draft.id : null}
+            onGitChanged={git.refresh}
             comments={sessionComments}
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}

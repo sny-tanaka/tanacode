@@ -4661,7 +4661,8 @@ button.task-stop:hover {
 @media (prefers-reduced-motion: reduce) {
   .new-session-hero,
   .new-session-title,
-  .new-session-sub {
+  .new-session-sub,
+  .new-session-chip.icon.busy svg {
     animation: none;
   }
 }
@@ -4705,6 +4706,23 @@ button.task-stop:hover {
 .new-session-chip.empty {
   border-color: var(--border-focus);
   color: var(--send-fg);
+}
+/* アイコンだけの小さなボタン（ブランチの横の「最新のデフォルトブランチへ切り替える」） */
+.new-session-chip.icon {
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  margin-left: -2px;
+}
+.new-session-chip.icon:hover:not(:disabled) svg {
+  color: var(--text-primary);
+}
+.new-session-chip.icon:disabled {
+  cursor: default;
+}
+.new-session-chip.icon.busy svg {
+  animation: pulse 1.2s ease-in-out infinite;
 }
 .new-session-chevron {
   font-size: 10px;
