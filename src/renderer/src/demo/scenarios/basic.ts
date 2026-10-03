@@ -52,6 +52,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   });
 
   // 1. 指示を打って送る
+  d.caption('チャットの入力欄から、いつもの Claude Code と同じように指示を送ります');
   await sleep(1200);
   await d.click('.chat-input textarea');
   await d.type('.chat-input textarea', PROMPT);
@@ -61,6 +62,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   claude.startWorking();
 
   // 2. 調べる（畳んだ行の下に、動いているツールが 1 行ずつ出る）
+  d.caption('Claude が使うツールは「N件の操作」にまとまり、動いているものが 1 行ずつ出ます');
   await sleep(1200);
   await claude.tool('Grep', 'formatPrice', 900, { input: 'formatPrice', result: { output: 'src/lib/price.ts\nsrc/components/MenuCard.tsx' } });
   await claude.tool('Read', 'src/components/MenuCard.tsx', 800, { filePath: `${ROOT}/src/components/MenuCard.tsx` });
@@ -72,6 +74,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   await sleep(900);
 
   // 3. 質問にボタンで答える（選択肢にホバーすると、プレビューが切り替わる）
+  d.caption('Claude からの質問には、ボタンで答えられます。選択肢にマウスを乗せると、プレビューが切り替わります');
   claude.stopWorking();
   backend.setScreen(id, { state: { kind: 'menu', menu: QUESTION_MENU } });
   backend.update(id, { attention: 'question' });
@@ -90,6 +93,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   claude.startWorking();
 
   // 4. 書き換える（エクスプローラーに「書いた」の印と、ブランチの変更の M が付く）
+  d.caption('ファイルを書き換えると、エクスプローラーに「書いた」の印と、変更の M が付きます');
   await sleep(1200);
   await claude.edit('src/lib/price.ts', PRICE_WITH_TAX, 900, ['+// 消費税率（10%）', '+export const TAX_RATE = 0.1;', '+', '+// 税込の金額。1 円未満は切り捨てる', '+export function withTax(yen: number): number {', '+  return Math.floor(yen * (1 + TAX_RATE));', '+}']);
   await claude.edit('src/components/MenuCard.tsx', MENU_CARD_WITH_TAX, 900, [
@@ -105,6 +109,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   backend.know(id, {}, 41_000);
 
   // 5. テストはサブエージェントに任せる（入力欄の上のトレイに並ぶ）
+  d.caption('サブエージェントは、入力欄の上のトレイに並び、進み具合が見えます');
   const agent = claude.next('agent');
   const startedAt = Date.now();
   backend.push(id, {
@@ -123,6 +128,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   run('running', 1, [{ name: 'Read', target: 'src/lib/price.test.ts' }]);
 
   // 6. サブエージェントが動いている間に、書き換わったファイルをエディタで開く（変わった行に印が付く）
+  d.caption('待っている間に、書き換わったファイルをエディタで開きます。変わった行には印が付きます');
   await sleep(700);
   await d.click('.tree-row[title="src"]');
   await sleep(250);
@@ -139,6 +145,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   backend.know(id, { 'src/lib/price.test.ts': 'edited' }, 47_000);
 
   // 7. 応答が届いて完了
+  d.caption('応答が届いて完了。チャット・エディタ・エクスプローラーが、ひとつの画面にそろっています');
   await sleep(1000);
   claude.stopWorking();
   claude.say(

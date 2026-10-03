@@ -1,7 +1,29 @@
-// デモ動画の操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
+// デモ動画とデモのサイトの操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
 // 録画は画面の外で描いたコマを撮るので OS のカーソルは映らない。代わりにこのカーソルを映す
 
-export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+// デモのサイトの一時停止。止めている間は、台本の待ち時間を進めない
+let paused = false;
+let resume: () => void = () => {};
+let resumed = Promise.resolve();
+
+export function setPaused(value: boolean): void {
+  if (value === paused) return;
+  paused = value;
+  if (value) resumed = new Promise<void>((r) => (resume = r));
+  else resume();
+}
+
+// 台本の待ち時間。止められるよう、100ms ずつ進める
+export async function sleep(ms: number): Promise<void> {
+  let left = ms;
+  for (;;) {
+    while (paused) await resumed;
+    if (left <= 0) return;
+    const step = Math.min(left, 100);
+    await new Promise<void>((r) => setTimeout(r, step));
+    left -= step;
+  }
+}
 
 type Target = string | Element | (() => Element | null | undefined);
 
@@ -15,6 +37,8 @@ export class Director {
   private x = 0;
   private y = 0;
   private hovered: Element | null = null;
+  // デモのサイトで、いま見せている操作の説明を出す（動画では何も出さない）
+  onCaption: (text: string) => void = () => {};
 
   constructor(start: { x: number; y: number } = { x: window.innerWidth * 0.6, y: window.innerHeight * 0.7 }) {
     const el = document.createElement('div');
@@ -38,13 +62,17 @@ export class Director {
     this.cursor.remove();
   }
 
-  // 要素が出るまで待つ（最大 timeout ms）
+  // 操作の説明（デモのサイトの上の帯に出す）
+  caption(text: string): void {
+    this.onCaption(text);
+  }
+
+  // 要素が出るまで待つ（最大 timeout ms。一時停止している間は数えない）
   async find(target: Target, timeout = 8000): Promise<Element> {
-    const start = Date.now();
-    for (;;) {
+    for (let waited = 0; ; waited += 50) {
       const el = resolve(target);
       if (el) return el;
-      if (Date.now() - start > timeout) throw new Error(`demo: 要素が見つかりません: ${String(target)}`);
+      if (waited > timeout) throw new Error(`demo: 要素が見つかりません: ${String(target)}`);
       await sleep(50);
     }
   }
@@ -98,7 +126,9 @@ export class Director {
     hit.dispatchEvent(new MouseEvent('mousedown', { ...init, buttons: 1 }));
     hit.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
     hit.dispatchEvent(new MouseEvent('mouseup', init));
-    (hit as HTMLElement).click?.();
+    // ボタンの中のアイコン（SVG の線）に当たったときは click() が無いので、出来事を送って親のボタンまで届ける
+    if (hit instanceof HTMLElement) hit.click();
+    else hit.dispatchEvent(new MouseEvent('click', init));
   }
 
   // 入力欄に 1 文字ずつ打つ（React の onChange が動くよう、値を差し替えて input の出来事を起こす）

@@ -94,6 +94,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   const context = (tokens: number) => backend.setStatusLine(id, statusLine(Math.round((tokens / 200_000) * 100), tokens));
 
   // 1. ファイルツリーを開いておく（まだ点は付いていない）
+  d.caption('ファイルツリーを開いておきます。まだ Claude はどのファイルも読んでいません');
   await sleep(900);
   await d.click('.tree-row[title="src"]', { ms: 800 });
   await sleep(200);
@@ -105,6 +106,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   await sleep(500);
 
   // 2. 指示を送る
+  d.caption('指示を送ります');
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
@@ -113,6 +115,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   claude.startWorking();
 
   // 3. 読んだファイルに青い点が付き、コンテキストが伸びる
+  d.caption('Claude が読んだファイルに青い点が付き、コンテキストのメーターが伸びます');
   await sleep(1200);
   for (const [path, tokens] of [
     ['src/types.ts', 14_000],
@@ -126,6 +129,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   }
 
   // 4. 書いたファイルに橙の点。編集のたびに PostToolUse の hooks（型チェック）が動く
+  d.caption('書いたファイルには橙の点。編集のたびに hooks（型チェック）が動きます');
   const edited = async (path: string, text: string, patch: string[], tokens: number, run: Partial<HookRun> = {}) => {
     const toolId = await claude.edit(path, text, 800, patch);
     await sleep(500);
@@ -145,6 +149,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   });
 
   // 5. 畳んだ操作を開くと、編集のカードの下に hooks が出る。止めたもの（赤）を開いて理由を見る
+  d.caption('hooks は編集のカードの下に出ます。止められたもの（赤）を開くと、理由が読めます');
   await sleep(600);
   await d.click(() => [...document.querySelectorAll('.tool-group-head')].at(-1), { ms: 800 });
   await sleep(900);
@@ -163,11 +168,13 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   await sleep(500);
 
   // 6. Claude が型のエラーを直し、今度は hooks が通る
+  d.caption('Claude が型のエラーを直し、今度は hooks が通ります');
   claude.say('型チェックの hooks で、`allergens` が無い品目のことを考えていないと止められました。直します。');
   await sleep(600);
   await edited('src/components/MenuCard.tsx', card(true), ['-      {allergens.length > 0 && (', '+      {allergens && allergens.length > 0 && ('], 40_000);
 
   // 7. 応答が届いて完了。ターンの終わりに Stop の hooks が動く。利用枠も進む
+  d.caption('応答が届いて完了。左下の利用枠も、使った分だけ進みます');
   await sleep(500);
   claude.stopWorking();
   claude.say(
@@ -188,6 +195,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   await sleep(1500);
 
   // 8. 「圧縮」で会話を要約する。区切りが入り、点は白抜き（圧縮前に読んだだけ）になって、メーターが下がる
+  d.caption('「圧縮」すると、点は白抜き（圧縮前に読んだだけ）になり、メーターが下がります');
   await d.click('.claude-header button[aria-label="圧縮"]', { ms: 900 });
   await sent(2);
   claude.startWorking();

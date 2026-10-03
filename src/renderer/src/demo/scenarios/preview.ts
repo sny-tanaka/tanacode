@@ -101,6 +101,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   });
 
   // 1. フッターの「ブラウザ」を開き、開発サーバーの URL を開く
+  d.caption('アプリ内のブラウザで、開発中のページを開きます');
   await sleep(1000);
   await d.click('.activity-bar [aria-label="ブラウザ"]', { ms: 900 });
   await sleep(700);
@@ -111,6 +112,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   await sleep(2200);
 
   // 2. 表示幅をスマホにすると、価格の行が折り返して崩れている
+  d.caption('表示幅をスマホにすると、価格の行が折り返して崩れています');
   await d.click('.preview-width', { ms: 700 });
   const select = document.querySelector('.preview-width') as HTMLSelectElement;
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, '390');
@@ -122,6 +124,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   await sleep(900);
 
   // 3. 「要素を選ぶ」で価格を選ぶ（入力欄にセレクタ・HTML と、切り出した画像が入る）
+  d.caption('「要素を選ぶ」で崩れた要素をクリック。セレクタ・HTML・切り出した画像が入力欄に入ります');
   await d.click('.preview-pane [aria-label="要素を選ぶ"]', { ms: 800 });
   await sleep(500);
   await moveInPage(d, '.menu-card:nth-child(2) .note', 600);
@@ -133,6 +136,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   await sleep(1400);
 
   // 4. 書き足して送る
+  d.caption('直してほしいことを書き足して送ります');
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
@@ -141,6 +145,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   claude.startWorking();
 
   // 5. Claude が CSS を直すと、開発サーバーの更新でブラウザの表示も直る
+  d.caption('Claude が CSS を直すと、ブラウザの表示もその場で直ります');
   await sleep(1500);
   await claude.tool('Read', 'src/styles.css', 700, { filePath: `${ROOT}/src/styles.css` });
   await claude.edit('src/styles.css', CSS_PRICE_STACKED, 1000, ['+  display: block;', '-  margin-left: 6px;']);

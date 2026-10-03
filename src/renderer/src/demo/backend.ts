@@ -20,7 +20,7 @@ import type { BashTask } from '@shared/task';
 import type { UsageLimits } from '@shared/usage';
 import type { WorkflowRun } from '@shared/workflow';
 
-// README のデモ動画用の、アプリの API（window.tanacode）の作り物。
+// README のデモ動画とデモのサイト用の、アプリの API（window.tanacode）の作り物。
 // 本物の Claude Code や git を動かさず、メモリに持ったファイル・会話・画面の状態を返す。
 // 台本（scenarios/）がこの状態を書き換えると、画面へ通知が飛んでアプリがそのまま描き直す
 
@@ -231,9 +231,10 @@ export class DemoBackend {
         },
         snapshot: (id) => ok({ sessionId: id, fromSeq: 0, events: [...s(id).events] }),
         // 画像はパスを貼り付けて添付する（Claude Code は [Image #n] と出す）
+        // 本物と同じく、発言は送った後で（別の順番で）会話に届く。同じ順番で届くと、アプリが「送信中」の仮の発言を消せない
         submit: (id, text, attachments) => {
           const message = `${attachments.map((_, i) => `[Image #${i + 1}] `).join('')}${text}`.trim();
-          if (message) this.onUserMessage(id, message, attachments);
+          if (message) setTimeout(() => this.onUserMessage(id, message, attachments), 0);
           return ok(undefined);
         },
         interrupt: () => {},

@@ -23,6 +23,8 @@ design/support.js
 design/.thumbnail
 # README のデモ動画（npm run demo:record の出力）
 demo-videos/
+# デモのサイト（npm run demo:build の出力）
+/demo-site/
 
 # オーナーだけの手順と運用（個人の環境に由来する内容を含むので、公開しない。手元にだけ置く）
 MAINTAINING.md

@@ -99,21 +99,25 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   });
 
   // 1. ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開く
+  d.caption('ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開きます');
   await sleep(1200);
   await d.click('.status-button[data-tip="ソース管理を開く"]', { ms: 900 });
   await sleep(1400);
 
   // 2. MenuCard.tsx の差分を開き、インラインにする
+  d.caption('変わったファイルを選ぶと、PR のように差分が開きます');
   await d.click('.scm-row[title^="src/components/MenuCard.tsx"]');
   await sleep(900);
   await d.click('.diff-pane-head [aria-label="インライン"]', { ms: 600 });
   await sleep(900);
 
   // 3. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）
+  d.caption('行番号の横の ＋ で、差分の行にコメントを付けます');
   await comment(d, '<small>（税抜', COMMENT_CARD);
   await sleep(1200);
 
   // 4. ↓ で次のファイルへ移り、price.ts にもう 1 件
+  d.caption('↓ で次のファイルへ移り、もう 1 件。コメントは入力欄の上にたまります');
   await d.click('.diff-pane-head [aria-label="次のファイル"]', { ms: 700 });
   await sleep(700);
   await d.click('.diff-pane-head [aria-label="次のファイル"]', { ms: 200 });
@@ -122,6 +126,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   await sleep(1400);
 
   // 5. コメントを添えて送る
+  d.caption('たまったコメントは、指示に添えてまとめて送れます');
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
@@ -130,6 +135,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   claude.startWorking();
 
   // 6. Claude が直す。開いている price.ts の差分も書き換わる
+  d.caption('Claude が直すと、開いている差分もその場で書き換わります');
   await sleep(1400);
   await claude.edit('src/lib/price.ts', PRICE_WITH_TAKEOUT, 900, [
     '-// 消費税率（10%）',
@@ -158,6 +164,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   backend.setStatusLine(id, statusLine(28, 55_000));
 
   // 7. 応答が届いて完了。MenuCard.tsx の差分で、足された行を見る
+  d.caption('応答が届いて完了。直った差分を、そのまま確かめられます');
   await sleep(700);
   claude.stopWorking();
   claude.say(
