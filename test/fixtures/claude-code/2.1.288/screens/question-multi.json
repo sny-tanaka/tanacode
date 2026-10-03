@@ -1,0 +1,162 @@
+[
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": " ▐▛███▛█   Claude Code v2.1.288",
+  "full": false
+ },
+ {
+  "text": "▝▜██████▀  Opus 5.5 · API Usage Billing",
+  "full": false
+ },
+ {
+  "text": " ▝▝   ▝▝   /tmp/tanacode-cli/work",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ 質問の確認を始めてください                                                                                            ",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "● User answered Claude's questions:",
+  "full": false
+ },
+ {
+  "text": "  ⎿  · 文章はどちらの書き方にしますか？ → だ・である",
+  "full": false
+ },
+ {
+  "text": "     · どの言語を使いますか？（いくつでも） → TypeScript, Go, Zig",
+  "full": false
+ },
+ {
+  "text": "     · 画面の色はどうしますか？ → 目に優しい緑",
+  "full": false
+ },
+ {
+  "text": " ",
+  "full": false
+ },
+ {
+  "text": "● 複数の質問の答えを受け取りました",
+  "full": false
+ },
+ {
+  "text": "   ",
+  "full": false
+ },
+ {
+  "text": "✻ Worked for 0s · done 12:33 AM",
+  "full": false
+ },
+ {
+  "text": "   ",
+  "full": false
+ },
+ {
+  "text": "❯ 複数選択の質問をしてください                                                                                          ",
+  "full": true
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": "←  ☒ 確認  ✔ Submit  →",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "どの確認を入れますか？",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "  1. [✔] 型チェック",
+  "full": false
+ },
+ {
+  "text": "         tsc で確かめる",
+  "full": false
+ },
+ {
+  "text": "  2. [ ] 単体テスト",
+  "full": false
+ },
+ {
+  "text": "         vitest で確かめる",
+  "full": false
+ },
+ {
+  "text": "❯ 3. [✔] リンター",
+  "full": false
+ },
+ {
+  "text": "         eslint で確かめる",
+  "full": false
+ },
+ {
+  "text": "  4. [ ] Type something",
+  "full": false
+ },
+ {
+  "text": "     Submit",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": "  5. Chat about this",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ }
+]
