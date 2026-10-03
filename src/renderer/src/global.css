@@ -4022,6 +4022,18 @@ body.resizing-rows {
   font-variant-numeric: tabular-nums;
   cursor: default;
 }
+/* 値は右にそろえる。見えない widest が幅を決めるので、桁が増減しても右隣が動かない */
+.system-value {
+  display: inline-grid;
+  justify-items: end;
+  white-space: nowrap;
+}
+.system-value > * {
+  grid-area: 1 / 1;
+}
+.system-value-widest {
+  visibility: hidden;
+}
 .system-meter {
   width: 36px;
   height: 4px;

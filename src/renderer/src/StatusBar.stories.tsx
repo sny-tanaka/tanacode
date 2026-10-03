@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
+import type { SystemStats } from '@shared/system';
+import { mockApi } from '../../../.storybook/mockApi';
 import { StatusBar } from './StatusBar';
 
 const noop = () => {};
@@ -38,3 +40,18 @@ export const 異常終了: Story = { args: { status: 'exited', exitCode: 1 } };
 export const 版が新しい: Story = { args: { claudeVersion: shifted(3) } };
 export const 版が古い: Story = { args: { claudeVersion: shifted(-3) } };
 export const Claudeが見つからない: Story = { args: { claudeVersion: null } };
+
+// CPU・メモリの桁数が変わっても、右隣（言語・文字コード）が動かないこと。どのストーリーでも、右端の項目の位置が同じになる
+const GB = 1024 ** 3;
+const withStats = (cpuPercent: number, memUsed: number): Story => ({
+  beforeEach: () =>
+    mockApi({
+      'system.onStats': (listener) => {
+        (listener as (stats: SystemStats) => void)({ cpuPercent, memUsed, memTotal: 16 * GB, topCpu: [], topMem: [] });
+        return () => {};
+      },
+    }),
+});
+export const 使用率が1桁: Story = withStats(9, 9.9 * GB);
+export const 使用率が2桁: Story = withStats(10, 10 * GB);
+export const 使用率が3桁: Story = withStats(100, 16 * GB);

@@ -12,16 +12,28 @@ export function SystemStats() {
       <span className="system-stat" title={`CPU を多く使っているプロセス\n${list(stats.topCpu, (p) => `${p.cpu.toFixed(1)}%`)}`}>
         CPU
         <Meter percent={stats.cpuPercent} />
-        <span className="system-value">{stats.cpuPercent}%</span>
+        <Value text={`${stats.cpuPercent}%`} widest="100%" />
       </span>
       <span className="system-stat" title={`メモリを多く使っているプロセス\n${list(stats.topMem, (p) => gb(p.memBytes))}`}>
         メモリ
         <Meter percent={memPercent} />
-        <span className="system-value">
-          {gb(stats.memUsed)} / {gb(stats.memTotal)}
+        <span>
+          <Value text={gb(stats.memUsed)} widest={gb(stats.memTotal)} /> / {gb(stats.memTotal)}
         </span>
       </span>
     </>
+  );
+}
+
+// 桁数が変わっても右隣の項目が動かないよう、いちばん広くなる文字列（widest）の幅を取っておき、値は右にそろえる
+function Value({ text, widest }: { text: string; widest: string }) {
+  return (
+    <span className="system-value">
+      <span className="system-value-widest" aria-hidden>
+        {widest}
+      </span>
+      <span>{text}</span>
+    </span>
   );
 }
 
