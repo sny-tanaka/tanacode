@@ -126,46 +126,108 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
   const text = captionFor(phase, caption);
 
   return (
-    <div className="demo-site">
-      <header className="demo-bar demo-ui">
-        <span className="demo-badge">デモ</span>
-        <button type="button" className="demo-button" onClick={() => setMenu(true)}>
-          機能一覧
-        </button>
-        <div className="demo-caption" aria-live="polite">
-          {tour && <span className="demo-tour-title">{tour.title}</span>}
-          <span key={text} className="demo-caption-text">
-            {text}
-          </span>
+    <>
+      <div className="demo-site">
+        <div className="demo-app">
+          <App />
         </div>
-        {phase === 'playing' && (
-          <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPausedState((p) => !p)}>
-            {paused ? '再開' : '一時停止'}
-          </button>
-        )}
-        {tour && (
-          <button type="button" className="demo-button" onClick={() => location.reload()}>
-            {phase === 'playing' ? '最初から' : 'もう一度'}
-          </button>
-        )}
-        {(phase === 'done' || phase === 'failed') && next && (
-          <a className="demo-button primary" href={`?tour=${next.id}`}>
-            次へ: {next.title}
-          </a>
-        )}
-        <a className="demo-link" href={REPO} target="_blank" rel="noopener noreferrer">
-          GitHub
-        </a>
-      </header>
-      {blocked && (
-        <div className="demo-blocked demo-ui" role="status">
-          ツアーの再生中は操作できません。終わると自由に触れます
-        </div>
-      )}
-      <div className="demo-app">
-        <App />
       </div>
-      {menu && <TourMenu current={tour} onClose={closeMenu} />}
+      <ScreenLayer>
+        <header className="demo-bar demo-ui">
+          <span className="demo-badge">デモ</span>
+          <button type="button" className="demo-button" onClick={() => setMenu(true)}>
+            機能一覧
+          </button>
+          <div className="demo-caption" aria-live="polite">
+            {tour && <span className="demo-tour-title">{tour.title}</span>}
+            <span key={text} className="demo-caption-text">
+              {text}
+            </span>
+          </div>
+          {phase === 'playing' && (
+            <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPausedState((p) => !p)}>
+              {paused ? '再開' : '一時停止'}
+            </button>
+          )}
+          {tour && (
+            <button type="button" className="demo-button" onClick={() => location.reload()}>
+              {phase === 'playing' ? '最初から' : 'もう一度'}
+            </button>
+          )}
+          {(phase === 'done' || phase === 'failed') && next && (
+            <a className="demo-button primary" href={tourHref(next)} onClick={(e) => openTour(e, next)}>
+              次へ: {next.title}
+            </a>
+          )}
+          <a className="demo-link" href={REPO} target="_blank" rel="noopener noreferrer">
+            GitHub
+          </a>
+        </header>
+        {blocked && (
+          <div className="demo-blocked demo-ui" role="status">
+            ツアーの再生中は操作できません。終わると自由に触れます
+          </div>
+        )}
+        {menu && <TourMenu current={tour} onClose={closeMenu} />}
+      </ScreenLayer>
+    </>
+  );
+}
+
+// ツアーの行き先（ハッシュが変わると main.tsx が読み込み直す）
+const tourHref = (tour: Tour) => `#${tour.id}`;
+
+// 今と同じツアーを選んだときはハッシュが変わらないので、自分で読み込み直す
+function openTour(e: React.MouseEvent, tour: Tour): void {
+  if (location.hash !== tourHref(tour)) return;
+  e.preventDefault();
+  location.reload();
+}
+
+// 帯をこの幅より狭く出すときは、2 段にする（上の段に操作、下の段に説明）
+const COMPACT_WIDTH = 760;
+
+// 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。ページをスクロールしても、スマホでピンチで拡大・縮小しても、
+// 画面の上に同じ大きさで出す。スマホの Chrome はページの幅に合わせて fixed の基準ごと広げるので、
+// visualViewport（見えている範囲）の位置と倍率に合わせて動かす。描き直しを避けるため、React の状態にはせず直に書き換える
+function ScreenLayer({ children }: { children: React.ReactNode }) {
+  const layer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = layer.current;
+    if (!el) return;
+    const place = () => {
+      const vv = window.visualViewport;
+      const scale = vv?.scale ?? 1;
+      const width = vv ? vv.width * scale : document.documentElement.clientWidth;
+      const height = vv ? vv.height * scale : window.innerHeight;
+      el.style.width = `${width}px`;
+      el.style.height = `${height}px`;
+      el.style.transform = `translate(${vv?.offsetLeft ?? 0}px, ${vv?.offsetTop ?? 0}px) scale(${1 / scale})`;
+      el.classList.toggle('compact', width < COMPACT_WIDTH);
+    };
+    place();
+    // アプリの画面の上の余白と、作り物のカーソルが要素へ移るときのスクロールの余白を、帯の高さに合わせる
+    const bar = el.querySelector('.demo-bar');
+    const observer = new ResizeObserver(() => {
+      if (bar) document.documentElement.style.setProperty('--demo-bar-height', `${(bar as HTMLElement).offsetHeight}px`);
+    });
+    if (bar) observer.observe(bar);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', place);
+    vv?.addEventListener('scroll', place);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place);
+    return () => {
+      observer.disconnect();
+      vv?.removeEventListener('resize', place);
+      vv?.removeEventListener('scroll', place);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place);
+    };
+  }, []);
+  return (
+    <div ref={layer} className="demo-layer">
+      {children}
     </div>
   );
 }
@@ -179,8 +241,8 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  // アプリの画面は横に広いので、狭い画面では崩れることを先に伝える
-  const narrow = window.innerWidth < 1200;
+  // アプリの画面は横に広いので、狭い画面では一部だけが見えていることと、全体の見方を先に伝える
+  const narrow = document.documentElement.clientWidth < 1280;
   return (
     <div className="demo-menu-backdrop demo-ui" onClick={onClose}>
       <div ref={dialog} className="demo-menu" role="dialog" aria-modal="true" aria-label="機能一覧" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
@@ -196,11 +258,15 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
           Claude Code と IDE をひとつにした macOS アプリ、tanacode のデモ。見たい機能を選ぶと、実際の画面で操作の流れを紹介します。
         </p>
         <p className="demo-menu-note">作り物のデータで動くため、本物の Claude には繋がりません。ツアーが終わると、そのまま自由に触れます。</p>
-        {narrow && <p className="demo-menu-warn">画面の幅が狭いため、表示が崩れることがあります。PC の広い画面でご覧ください。</p>}
+        {narrow && (
+          <p className="demo-menu-warn">
+            画面の幅が狭いため、アプリの画面の一部だけが見えています。スクロールするか、スマホではピンチで縮小すると全体を見られます。
+          </p>
+        )}
         <ol className="demo-tour-list">
           {TOURS.map((t, i) => (
             <li key={t.id}>
-              <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={`?tour=${t.id}`}>
+              <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={tourHref(t)} onClick={(e) => openTour(e, t)}>
                 <span className="demo-tour-num">{i + 1}</span>
                 <span className="demo-tour-body">
                   <span className="demo-tour-name">{t.title}</span>
