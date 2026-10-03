@@ -1,25 +1,25 @@
 ---
 name: release
-description: tanacode の新しい版（vX.Y.Z）をリリースする手順。引数は新しい版（例 0.1.4）。版を上げる PR・タグのプッシュ・GitHub Actions の見守り・下書きの点検・公開まで。新しい版を出すときに使います。
+description: tanacode の新しいバージョン（vX.Y.Z）をリリースする手順。引数は新しいバージョン（例 0.1.4）。省くと、変更点から patch・minor・major のどれを上げるかを提案します。バージョンを上げる PR・タグのプッシュ・GitHub Actions の見守り・下書きの点検・公開まで。新しいバージョンを出すときに使います。
 argument-hint: "[X.Y.Z]"
 disable-model-invocation: true
 ---
 
 # リリースの手順
 
-新しい版をリリースするための手順書。タグ `vX.Y.Z` をプッシュすると、`.github/workflows/release.yml` が Apple Silicon 用と Intel 用の zip と pkg を作り、`SHA256SUMS.txt` と SHA-256 の表を付けて GitHub Releases の下書きに置きます。公開は下書きを点検してから。
+新しいバージョンをリリースするための手順書。タグ `vX.Y.Z` をプッシュすると、`.github/workflows/release.yml` が Apple Silicon 用と Intel 用の zip と pkg を作り、`SHA256SUMS.txt` を付けて GitHub Releases の下書きに置きます。下書きの説明は、自動で作る変更点（What's Changed）が先、SHA-256 の表が末尾（`<details>` で畳んだ形）。公開は下書きを点検してから。
 
-以下の `X.Y.Z` は新しい版（`/release 0.1.4` の引数）、`<前のタグ>` は直前のリリースのタグ（例: `v0.1.2`）に置き換えます。リポジトリは `sny-tanaka/tanacode`。
+以下の `X.Y.Z` は新しいバージョン（`/release 0.1.4` の引数。省いたときは 1 の 3 で決めたもの）、`<前のタグ>` は直前のリリースのタグ（例: `v0.1.2`）に置き換えます。リポジトリは `sny-tanaka/tanacode`。
 
 ## 決まり
 
-- **オーナーの操作は、なしにします**。確認を挟まず、版を上げる PR のマージから公開まで進めます。`/release` を呼んだこと自体が、リリースしてよいという指示です。
+- **オーナーの操作は、なしにします**。確認を挟まず、バージョンを上げる PR のマージから公開まで進めます。`/release` を呼んだこと自体が、リリースしてよいという指示です。
 - develop には直接プッシュしません。作業用のブランチ → develop 向けの PR → squash マージ。
   - develop のルールセットは、PR を通すことを求めます（承認の数は 0）。
-  - **版を上げる PR に限り、CI がすべて通っていれば、エージェントがマージします**（オーナーの指示。2026-10-01）。ほかの PR は、これまでどおりオーナーがマージします。
+  - **バージョンを上げる PR に限り、CI がすべて通っていれば、エージェントがマージします**（オーナーの指示。2026-10-01）。ほかの PR は、これまでどおりオーナーがマージします。
   - マージするのは、変更が `package.json` と `package-lock.json` の `version` だけの PR（2 の 1 で確かめた PR）に限ります。
 - 手を止めてユーザーに聞くのは、次の場合だけです。選択を伴うので AskUserQuestion を使い、推奨の選択肢を先頭に置いて、ラベルの末尾に「(推奨)」。
-  - 引数で版が渡されていないとき（1 の 3）
+  - 引数でバージョンが渡されていないとき（1 の 3。提案を添えて聞きます）
   - 点検（5）で、期待と違うものが見つかったとき（公開はしません）
   - 失敗の原因が 4 の表の中になく、どうするか決められないとき
   - タグの削除・下書きの削除など、取り消しにくい操作（7）
@@ -48,15 +48,31 @@ disable-model-invocation: true
 
    PR の一覧は、前のタグの日付より後にマージされたものだけを拾います。
 
-3. 新しい版 `X.Y.Z` を決めます。
+3. 新しいバージョン `X.Y.Z` を決めます。
    - 引数で渡されていれば、それを使います（聞きません）。
-   - 渡されていないときだけ、変更点の一覧を見せ、版の上げ方を AskUserQuestion で確かめます。patch（不具合の修正・文書だけ）と minor（機能の追加・変更）のうち、変更の中身に合う方を先頭に「(推奨)」。
+   - 渡されていないときは、2 の変更を 1 つずつ読んで上げ方を提案し、AskUserQuestion で確かめます（下の「バージョンの上げ方の決め方」）。
    - `git ls-remote --tags origin vX.Y.Z` で、同じタグがまだ無いことを確かめます。あれば止めてユーザーに伝えます。
+
+   **バージョンの上げ方の決め方**
+
+   PR のタイトルの頭（`feat:`・`fix:` など）は目安にとどめ、本文と差分で、使う人から見て何が変わるかを確かめます。変更ごとに次の表で分け、いちばん大きいものを提案にします。
+
+   | 上げ方 | 当てはまる変更 |
+   | --- | --- |
+   | major（`X+1.0.0`） | 使う人が何かし直さないと、今までどおりに使えなくなる変更。保存した設定・セッションを引き継げない、機能やメニューを無くす、対応する macOS や Claude Code の下限を上げる、インストールや更新の手順が変わる、など |
+   | minor（`X.Y+1.0`） | 機能の追加、目に見える動きや画面の変更。今までの使い方はそのまま通るもの |
+   | patch（`X.Y.Z+1`） | 不具合の修正、見た目の小さな直し、動作確認済の Claude Code の更新、性能の改善。使い方は変わらないもの |
+   | 数えない | 文書・CI・テスト・開発の道具だけの変更（アプリの中身が変わらないもの） |
+
+   - 数えない変更しか無いときは、リリースしなくてよいかもしれないと伝え、patch を推奨にして聞きます。
+   - 0.x の間に major に当たる変更があったときも、そのまま major（1.0.0）を推奨にします。1.0.0 は節目なので、説明に理由をはっきり書きます。
+   - 聞く前に、変更ごとの分け方（PR の番号・タイトル・上げ方・理由を一言）を文章で見せます。
+   - AskUserQuestion の選択肢は patch・minor・major の 3 つ。ラベルは `0.3.0（minor）` のように新しいバージョンと上げ方を並べ、提案を先頭にして末尾に「(推奨)」。説明には、そのバージョンにする理由（推奨でないものは、選ぶとしたらどんなときか）を書きます。
 4. 変更点の一覧をまとめます。2 の PR の本文と、5 の下書きの説明に使います。
 
-## 2. 版を上げる PR
+## 2. バージョンを上げる PR
 
-1. ブランチを作り、版を上げます。`npm version` は `package.json` と `package-lock.json` の両方を書き換えます。
+1. ブランチを作り、バージョンを上げます。`npm version` は `package.json` と `package-lock.json` の両方を書き換えます。
 
    ```bash
    git switch -c release/vX.Y.Z
@@ -153,7 +169,7 @@ disable-model-invocation: true
    | 症状 | 原因と対処 |
    | --- | --- |
    | 画面側のビルドで `JavaScript heap out of memory` | Node のメモリ不足。手元のビルドは約 4GB 使い、ランナーの既定の上限（約 2GB）では止まります。v0.1.2 のときに起き、`release.yml` の `npm run release` に `NODE_OPTIONS: --max-old-space-size=6144` を付けました。消えていないか確かめ、足りなければ上限を上げる直しを PR で入れ、7 の手順で作り直し |
-   | 「バージョンを確かめる」で止まる | タグと `package.json` の `version` のずれ。タグを付けたコミットの取り違えか、版を上げる PR がまだマージされていないかのどちらか。7 の手順でタグを付け直し |
+   | 「バージョンを確かめる」で止まる | タグと `package.json` の `version` のずれ。タグを付けたコミットの取り違えか、バージョンを上げる PR がまだマージされていないかのどちらか。7 の手順でタグを付け直し |
    | `npm ci` やダウンロードの一時的な失敗 | コードを変えずに `gh run rerun <run の id> --failed` で再実行 |
    | そのほか | ログの要点をユーザーに伝えて、どうするか AskUserQuestion で確かめます |
 
@@ -173,6 +189,7 @@ disable-model-invocation: true
      - `tanacode-X.Y.Z-mac-arm64.pkg`・`tanacode-X.Y.Z-mac-arm64.zip`
      - `tanacode-X.Y.Z-mac-x64.pkg`・`tanacode-X.Y.Z-mac-x64.zip`
      - `SHA256SUMS.txt`
+   - 説明の末尾に、SHA-256 の表が `<details>` で畳んで置かれていること（先頭に出ていないこと）
    - 説明の SHA-256 の表と `SHA256SUMS.txt` の値が一致。次のコマンドで「一致」と出れば問題無し
 
      ```bash
@@ -183,7 +200,7 @@ disable-model-invocation: true
 
      下書きで `gh release download` が失敗するときは、`SHA256SUMS.txt` の添付の id を 1 で見て、`gh api -H "Accept: application/octet-stream" repos/sny-tanaka/tanacode/releases/assets/<添付の id>` で読みます。
 
-3. 説明に「## 変更点」の節を、聞かずに毎回足します。今の説明を一時ファイルに書き出し、SHA-256 の節の後ろに、1 でまとめた一覧を足してから反映します。SHA-256 の表は変えません。
+3. 説明に「## 変更点」の節を、聞かずに毎回足します。今の説明を一時ファイルに書き出し、いちばん先頭（`## What's Changed` の前）に、1 でまとめた一覧を足してから反映します。末尾の SHA-256 の表（`<details>` の中）は変えず、先頭にも移しません。
 
    ```bash
    gh api repos/sny-tanaka/tanacode/releases --jq '.[] | select(.tag_name == "vX.Y.Z") | .body' > <一時ファイル>
@@ -200,14 +217,14 @@ disable-model-invocation: true
    gh release edit vX.Y.Z --draft=false --latest
    ```
 
-3. 新しい版になったか確かめます。
+3. 新しいバージョンになったか確かめます。
 
    ```bash
    gh api repos/sny-tanaka/tanacode/releases/latest --jq .tag_name
    curl -s https://img.shields.io/github/v/release/sny-tanaka/tanacode | grep -o '<title>[^<]*</title>'
    ```
 
-   1 つめが `vX.Y.Z`、2 つめが `<title>release: vX.Y.Z</title>` なら完了。README の「最新版」のバッジはこの shields.io の画像。shields.io はキャッシュするので、古い版のままなら数分おいて確かめ直します。
+   1 つめが `vX.Y.Z`、2 つめが `<title>release: vX.Y.Z</title>` なら完了。README の「最新バージョン」のバッジはこの shields.io の画像。shields.io はキャッシュするので、古いバージョンのままなら数分おいて確かめ直します。
 
 ## 7. 失敗して作り直すとき
 
@@ -219,7 +236,7 @@ disable-model-invocation: true
   ```
 
   失敗した run が作りかけの下書きを残していると、次の run の `gh release create` が止まります。5 の 1 のコマンドで下書きが残っていないか確かめ、残っていれば AskUserQuestion で確かめてから `gh release delete vX.Y.Z -R sny-tanaka/tanacode --yes` で消します（タグは別に消します）。
-- **公開したあと**: タグは付け直しません。直しを PR で入れ、版を上げて（例: `X.Y.Z` の次の patch）、1 からやり直します。利用者がすでにダウンロードしているためです。
+- **公開したあと**: タグは付け直しません。直しを PR で入れ、バージョンを上げて（例: `X.Y.Z` の次の patch）、1 からやり直します。利用者がすでにダウンロードしているためです。
 
 ## 補足
 
@@ -231,7 +248,8 @@ disable-model-invocation: true
 ユーザーに、次をまとめて伝えます。
 
 - リリースの URL（`https://github.com/sny-tanaka/tanacode/releases/tag/vX.Y.Z`）
-- 版を上げた PR の URL と、Actions の run の URL
+- 引数を省いたときは、提案した上げ方とその理由、選ばれたバージョン
+- バージョンを上げた PR の URL と、Actions の run の URL
 - 点検の結果（添付 5 つ・SHA-256 の一致・ファイル名）
 - 説明に足した変更点の有無
 - 途中で起きた失敗と、その対処（あれば）

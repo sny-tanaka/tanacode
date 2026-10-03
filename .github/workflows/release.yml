@@ -28,18 +28,23 @@ jobs:
       - run: npm run release
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-      # zip と pkg の SHA-256 を SHA256SUMS.txt にまとめ、下書きの説明に載せる表も作る（ファイル名だけで書き、ダウンロードした場所で shasum -c できるようにする）
+      # zip と pkg の SHA-256 を SHA256SUMS.txt にまとめる（ファイル名だけで書き、ダウンロードした場所で shasum -c できるようにする）
       - name: チェックサムを計算する
         working-directory: release
+        run: shasum -a 256 -- *.zip *.pkg > SHA256SUMS.txt
+      # 説明は、自動で作る変更点（What's Changed）を先に、SHA-256 の表を末尾に畳んで置く。
+      # 表は使う人の多くには要らないので、先頭に出さない（gh release create の --notes-file は自動の変更点の前に付くため、API で変更点を作ってからつなげる）
+      - name: 説明を作る
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          shasum -a 256 -- *.zip *.pkg > SHA256SUMS.txt
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body > "$RUNNER_TEMP/release-notes.md"
           awk '
-            BEGIN { print "## SHA-256 のチェックサム\n\n| ファイル | SHA-256 |\n| --- | --- |" }
+            BEGIN { print "\n<details>\n<summary>SHA-256 のチェックサム</summary>\n\n| ファイル | SHA-256 |\n| --- | --- |" }
             { print "| `" $2 "` | `" $1 "` |" }
-            END { print "\n確かめ方: ダウンロードしたファイルで `shasum -a 256 <ファイル>` を実行し、表の値との一致を確認（同じ内容は `SHA256SUMS.txt` にも）\n" }
-          ' SHA256SUMS.txt > "$RUNNER_TEMP/release-notes.md"
-      # --notes-file の中身は、自動で作られる変更点の前に付く
+            END { print "\n確かめ方: ダウンロードしたファイルで `shasum -a 256 <ファイル>` を実行し、表の値との一致を確認（同じ内容は `SHA256SUMS.txt` にも）\n\n</details>" }
+          ' release/SHA256SUMS.txt >> "$RUNNER_TEMP/release-notes.md"
       - name: Releases の下書きを作る
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --generate-notes --notes-file "$RUNNER_TEMP/release-notes.md" --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --notes-file "$RUNNER_TEMP/release-notes.md" --title "$GITHUB_REF_NAME"
