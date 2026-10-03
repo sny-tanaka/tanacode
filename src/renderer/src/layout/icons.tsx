@@ -124,3 +124,13 @@ export function BellIcon({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+
+// フェッチ: 時計回りの矢印（ソース管理のブランチの行に使う小さいアイコン）
+export function FetchIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...common} width={size} height={size} aria-hidden>
+      <path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5" />
+      <path d="M20 3.5v5h-5" />
+    </svg>
+  );
+}

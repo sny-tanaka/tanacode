@@ -495,8 +495,8 @@ body.resizing * {
   color: var(--text-tertiary);
   cursor: default;
 }
-/* 一覧 / ツリーの切り替え（文字ではなく線画のアイコン） */
-.scm-view {
+/* 一覧 / ツリーの切り替えとフェッチ（文字ではなく線画のアイコン） */
+.scm-icon {
   display: flex;
   align-items: center;
   justify-content: center;
