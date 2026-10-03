@@ -107,9 +107,10 @@ tanacode の画面の見方と、機能ごとの使い方のまとめ。イン�
 - `.env` など gitignore されたファイルは、リポジトリにコミットした `.worktreeinclude` に書いておくと、Claude Code が worktree に写します（tanacode は何もしません）。
 - `node_modules` は、worktree ができたあとで tanacode が用意します。
   - 元のフォルダの `node_modules` を、APFS のクローンで複製します。書き換えるまで、ディスクは増えません。`node_modules/.vite`・`.cache` など、絶対パスが入るキャッシュは除きます。
-  - `package-lock.json` が元のフォルダと違うときは、続けて `npm install` を実行します。進み具合はターミナルパネルの「npm install」のタブに出ます（終わってもタブは残ります）。
-  - クローンできないとき（APFS 以外・別のボリューム）は、`npm install` にします。
-  - 元のフォルダに `node_modules` が無ければ、何もしません。対象は npm だけ（yarn・pnpm と、Python の `.venv` などは対象外）。
+  - モノレポにも対応します。git で追跡している `package.json` の隣にある `node_modules`（npm の workspaces の各パッケージや、`frontend/` などサブフォルダのプロジェクト）を、すべて複製します。
+  - `package-lock.json` が元のフォルダと違う場所では、続けて `npm install` を実行します。進み具合はターミナルパネルの「npm install」のタブに出ます（終わってもタブは残ります）。
+  - クローンできないとき（APFS 以外・別のボリューム）は、その `node_modules` を受け持つ `package-lock.json` の場所（workspaces ならリポジトリのいちばん上）で `npm install` にします。
+  - 元のフォルダに `node_modules` が無い場所は、何もしません。`npm install` は npm のプロジェクトだけ（yarn・pnpm は複製だけ。Python の `.venv` や Ruby の gem などは対象外）。
   - 準備の間は、一覧とチャットに「node_modules を複製しています」などと出ます。最初の指示は、準備が終わってから送ります。終わったら、何をしたかをチャットに出します。
 - アーカイブ・一覧からの削除のときに、worktree を残すか削除するかを聞きます（既定は残す）。
   - worktree に残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに入っていないコミット）を並べます。

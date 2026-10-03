@@ -815,8 +815,11 @@ export class SessionManager {
     };
     const result = await prepareNodeModules(root, record.cwd, {
       onStep: step,
-      install: (cwd) => this.runTask(id, cwd, 'npm install', 'npm install'),
-    }).catch((error: unknown): NodeModulesResult => ({ kind: 'failed', message: error instanceof Error ? error.message : String(error) }));
+      install: (cwd, dir) => this.runTask(id, cwd, 'npm install', dir ? `npm install（${dir}）` : 'npm install'),
+    }).catch((error: unknown): NodeModulesResult => {
+      console.error('node_modules を用意できませんでした', error);
+      return { cloned: [], failed: [], installs: [] };
+    });
     if (this.runtimes.get(id) !== rt) return;
     rt.preparing = null;
     const where = `.claude/worktrees/${name}（ブランチ ${branch}）`;
@@ -1054,15 +1057,18 @@ function fileSize(file: string): number {
   }
 }
 
-// node_modules の用意の結果の知らせ（チャットに出す）
+// node_modules の用意の結果の知らせ（チャットに出す）。場所は worktree からの相対（'' はいちばん上）
 function nodeModulesNote(result: NodeModulesResult): string | null {
-  if (result.kind === 'none') return null;
-  if (result.kind === 'failed') return result.message;
-  const exit = result.kind === 'cloned' ? result.installExitCode : result.exitCode;
-  const failed = exit !== null && exit !== 0 ? `。npm install が失敗しました（終了コード ${exit}）。ターミナルのタブで確かめてください` : '';
-  if (result.kind === 'installed') return `node_modules を複製できなかったので、npm install しました${failed}`;
-  if (exit === null) return 'node_modules は元のフォルダから複製しました';
-  return `node_modules を元のフォルダから複製し、package-lock.json が違うので npm install しました${failed}`;
+  const where = (dirs: string[]) => dirs.map((dir) => (dir ? `${dir}/node_modules` : 'node_modules')).join('・');
+  const notes: string[] = [];
+  if (result.cloned.length > 0) notes.push(`${where(result.cloned)} を元のフォルダから複製しました`);
+  if (result.failed.length > 0) notes.push(`${where(result.failed)} は複製できませんでした`);
+  const failed = result.installs.filter((i) => i.exitCode !== 0);
+  if (result.installs.length > 0) notes.push(`npm install しました（${result.installs.map((i) => i.dir || 'いちばん上').join('・')}）`);
+  if (failed.length > 0) {
+    notes.push(`npm install が失敗しました（${failed.map((i) => `${i.dir || 'いちばん上'}: 終了コード ${i.exitCode}`).join('・')}）。ターミナルのタブで確かめてください`);
+  }
+  return notes.length > 0 ? notes.join('。') : null;
 }
 
 // ターミナルに出さずにコマンドを実行する（RunTask の既定。互換性の確認など）

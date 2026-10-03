@@ -208,7 +208,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - `claude --worktree` は、まだ信頼していないフォルダでは、信頼の確認を出さずに「Workspace trust not yet accepted」で終わります（実測）。そのときは、日本語の理由にして返します。
   - ファイルの監視は、worktree ができてから始めます（無いフォルダは見張れない）。
   - 準備の段階（`SessionWorktree.preparing`: creating・restoring・copying・installing）は、一覧とチャットに出します。準備が終わるまで `ready` を配信しないので、最初の指示はその後に送られます（`pendingSends` の今の形のまま）。終わったら、何をしたかを `info` のイベントでチャットに出します。
-  - `node_modules`: `cp -c -R`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。`package-lock.json` が元のフォルダと違えば `npm install`。クローンに失敗したら `npm install`。`yarn.lock`・`pnpm-lock.yaml`・`bun.lock(b)` があれば `npm install` はしません。
+  - `node_modules`: モノレポのため、worktree で `git ls-files` した `package.json` のフォルダごとに見ます（node_modules の中は除く）。元のフォルダにあって worktree に無い `node_modules` を `cp -c -R`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。
+    - `npm install` する場所: `package-lock.json` があり、元のフォルダでも `node_modules` を使っている場所のうち、lock が元のフォルダと違うところと、複製できなかった `node_modules` を受け持つところ（同じフォルダか、いちばん近い上のフォルダの lock。workspaces ならいちばん上）。上のフォルダから順に実行します。
+    - `yarn.lock`・`pnpm-lock.yaml`・`bun.lock(b)` があれば `npm install` はしません（複製だけ）。
     - `npm install` は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、`shell.onOpened` でターミナルパネルにタブを出させます。タブは終わっても残し、終了コードを名前に添えます。
   - 元のフォルダの未追跡に `.claude/worktrees/` が出ないよう、`.gitignore` で無視されていなければ `.git/info/exclude`（`git rev-parse --git-path info/exclude`）に足します。リポジトリの `.gitignore` は書き換えません。
   - Claude Code は worktree に「claude session <名前> (pid …)」のロックを付け、プロセスを止めても残します。`--resume` では付け直しません（実測）。消すときは、この理由のロックだけ外し、ほかのロックがあれば消さずに断ります。

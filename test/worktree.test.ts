@@ -214,65 +214,117 @@ describe('作り直し', () => {
 });
 
 describe('node_modules', () => {
-  const setUp = async (lock: string) => {
-    const plan = await create();
-    for (const dir of [repo, plan.path]) writeFileSync(join(dir, 'package.json'), '{}');
-    writeFileSync(join(repo, 'package-lock.json'), lock);
-    mkdirSync(join(repo, 'node_modules', '.vite'), { recursive: true });
-    mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true });
-    writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), '');
-    return plan;
+  // 元のフォルダに package.json を置いてコミットし、node_modules を作る（lock: package-lock.json の中身。null なら置かない）
+  const pkg = (dir: string, lock: string | null = '{}') => {
+    mkdirSync(join(repo, dir), { recursive: true });
+    writeFileSync(join(repo, dir, 'package.json'), '{}');
+    if (lock !== null) writeFileSync(join(repo, dir, 'package-lock.json'), lock);
+  };
+  const modules = (dir: string) => {
+    mkdirSync(join(repo, dir, 'node_modules', '.vite'), { recursive: true });
+    mkdirSync(join(repo, dir, 'node_modules', 'left-pad'), { recursive: true });
+    writeFileSync(join(repo, dir, 'node_modules', 'left-pad', 'index.js'), '');
+  };
+  const commit = () => {
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'packages');
   };
   // cp -c の代わり（APFS のクローンは macOS だけ）
   const copy = (from: string, to: string) => {
     execFileSync('cp', ['-R', from, to]);
     return Promise.resolve();
   };
-
-  it('元のフォルダの node_modules を複製し、絶対パスの入るキャッシュは除く。package-lock.json が同じなら npm install しない', async () => {
-    const plan = await setUp('{}');
-    writeFileSync(join(plan.path, 'package-lock.json'), '{}');
+  const prepare = async (plan: WorktreePlan, clone: (from: string, to: string) => Promise<void> = copy, exitCode = 0) => {
     const steps: string[] = [];
     const installs: string[] = [];
     const result = await prepareNodeModules(repo, plan.path, {
       onStep: (s) => steps.push(s),
-      install: (cwd) => (installs.push(cwd), Promise.resolve(0)),
-      clone: copy,
+      install: (cwd, dir) => {
+        expect(cwd).toBe(join(plan.path, dir));
+        installs.push(dir);
+        return Promise.resolve(exitCode);
+      },
+      clone,
     });
-    expect(result).toEqual({ kind: 'cloned', installExitCode: null });
+    return { result, steps, installs };
+  };
+
+  it('元のフォルダの node_modules を複製し、絶対パスの入るキャッシュは除く。package-lock.json が同じなら npm install しない', async () => {
+    pkg('');
+    commit();
+    modules('');
+    const plan = await create();
+    const { result, steps, installs } = await prepare(plan);
+    expect(result).toEqual({ cloned: [''], failed: [], installs: [] });
     expect(existsSync(join(plan.path, 'node_modules', 'left-pad', 'index.js'))).toBe(true);
     expect(existsSync(join(plan.path, 'node_modules', '.vite'))).toBe(false);
     expect(steps).toEqual(['copying']);
     expect(installs).toEqual([]);
   });
 
-  it('package-lock.json が元のフォルダと違えば、続けて npm install', async () => {
-    const plan = await setUp('{"v":2}');
-    writeFileSync(join(plan.path, 'package-lock.json'), '{"v":1}');
-    const steps: string[] = [];
-    const result = await prepareNodeModules(repo, plan.path, { onStep: (s) => steps.push(s), install: () => Promise.resolve(1), clone: copy });
-    expect(result).toEqual({ kind: 'cloned', installExitCode: 1 });
+  it('モノレポでは、追跡している package.json の隣の node_modules をすべて複製する', async () => {
+    // npm の workspaces（lock はいちばん上だけ）と、サブフォルダの別のプロジェクト（自分の lock を持つ）
+    pkg('');
+    pkg('packages/web', null);
+    pkg('packages/api', null);
+    pkg('tools/cli');
+    commit();
+    for (const dir of ['', 'packages/web', 'tools/cli']) modules(dir);
+    const plan = await create();
+    const { result, installs } = await prepare(plan);
+    expect(result.cloned).toEqual(['', 'packages/web', 'tools/cli']);
+    for (const dir of result.cloned) expect(existsSync(join(plan.path, dir, 'node_modules', 'left-pad', 'index.js'))).toBe(true);
+    // 元のフォルダに node_modules の無い packages/api は何もしない
+    expect(existsSync(join(plan.path, 'packages', 'api', 'node_modules'))).toBe(false);
+    expect(installs).toEqual([]);
+  });
+
+  it('package-lock.json が元のフォルダと違う場所だけ、続けて npm install', async () => {
+    pkg('', '{"v":1}');
+    pkg('tools/cli', '{"v":1}');
+    commit();
+    modules('');
+    modules('tools/cli');
+    // 元のフォルダでだけ、tools/cli の lock を書き換えている（コミットしていない）
+    writeFileSync(join(repo, 'tools', 'cli', 'package-lock.json'), '{"v":2}');
+    const plan = await create();
+    const { result, steps } = await prepare(plan, copy, 1);
+    expect(result).toEqual({ cloned: ['', 'tools/cli'], failed: [], installs: [{ dir: 'tools/cli', exitCode: 1 }] });
     expect(steps).toEqual(['copying', 'installing']);
   });
 
-  it('クローンできなければ npm install。npm のプロジェクトでなければ何もしない', async () => {
-    const plan = await setUp('{}');
-    const fail = () => Promise.reject(new Error('cross-device'));
-    const installs: string[] = [];
-    expect(await prepareNodeModules(repo, plan.path, { onStep: () => {}, install: (cwd) => (installs.push(cwd), Promise.resolve(0)), clone: fail })).toEqual({
-      kind: 'installed',
-      exitCode: 0,
-    });
-    expect(installs).toEqual([plan.path]);
-    rmSync(join(plan.path, 'node_modules'), { recursive: true, force: true });
-    writeFileSync(join(plan.path, 'yarn.lock'), '');
-    expect(await prepareNodeModules(repo, plan.path, { onStep: () => {}, install: () => Promise.resolve(0), clone: fail })).toMatchObject({ kind: 'failed' });
+  it('複製できなければ、それを受け持つ package-lock.json の場所で npm install（workspaces はいちばん上）', async () => {
+    pkg('');
+    pkg('packages/web', null);
+    pkg('tools/cli');
+    commit();
+    for (const dir of ['', 'packages/web', 'tools/cli']) modules(dir);
+    const plan = await create();
+    const fail = (from: string) => (from.includes('packages') || from.includes('tools') ? Promise.reject(new Error('cross-device')) : copy(from, from.replace(repo, plan.path)));
+    const { result, installs } = await prepare(plan, fail);
+    expect(result.cloned).toEqual(['']);
+    expect(result.failed).toEqual(['packages/web', 'tools/cli']);
+    // 上のフォルダから順に
+    expect(installs).toEqual(['', 'tools/cli']);
+  });
+
+  it('npm のプロジェクトでなければ（yarn・pnpm など）、複製だけで npm install はしない', async () => {
+    pkg('', null);
+    writeFileSync(join(repo, 'yarn.lock'), '');
+    commit();
+    modules('');
+    const plan = await create();
+    const { result, installs } = await prepare(plan, () => Promise.reject(new Error('cross-device')));
+    expect(result).toEqual({ cloned: [], failed: [''], installs: [] });
+    expect(installs).toEqual([]);
   });
 
   it('元のフォルダに node_modules が無ければ何もしない', async () => {
+    pkg('');
+    commit();
     const plan = await create();
-    const steps: string[] = [];
-    expect(await prepareNodeModules(repo, plan.path, { onStep: (s) => steps.push(s), install: () => Promise.resolve(0), clone: copy })).toEqual({ kind: 'none' });
+    const { result, steps } = await prepare(plan);
+    expect(result).toEqual({ cloned: [], failed: [], installs: [] });
     expect(steps).toEqual([]);
   });
 });

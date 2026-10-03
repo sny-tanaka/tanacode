@@ -105,44 +105,97 @@ export async function restoreWorktree(ref: WorktreeRef, path: string): Promise<v
   else await git(ref.root, ['worktree', 'add', '-b', ref.branch, path]);
 }
 
-export type NodeModulesResult =
-  // 元のフォルダに node_modules が無い・worktree にもうある
-  | { kind: 'none' }
-  // クローンした（installExitCode: package-lock.json が元のフォルダと違ったので、続けて npm install したときの終了コード）
-  | { kind: 'cloned'; installExitCode: number | null }
-  // クローンできなかったので npm install した（npm のプロジェクトでなければ、何もしない）
-  | { kind: 'installed'; exitCode: number }
-  | { kind: 'failed'; message: string };
+// node_modules の用意の結果。場所は worktree からの相対（'' はいちばん上）
+export type NodeModulesResult = {
+  // 元のフォルダから複製した node_modules
+  cloned: string[];
+  // 複製できなかった node_modules（APFS 以外・別のボリューム）
+  failed: string[];
+  // npm install を実行した場所と、終了コード
+  installs: { dir: string; exitCode: number }[];
+};
 
 type PrepareHooks = {
   onStep: (step: 'copying' | 'installing') => void;
-  // worktree で npm install を実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）
-  install: (cwd: string) => Promise<number>;
+  // worktree の cwd で npm install を実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対
+  install: (cwd: string, dir: string) => Promise<number>;
   // node_modules を複製する。既定は APFS のクローン（cp -c -R。書き換えるまでディスクは増えない）
   clone?: (from: string, to: string) => Promise<void>;
 };
 
-// worktree に node_modules を用意する。元のフォルダの node_modules を APFS のクローンで複製し、絶対パスの入るキャッシュは除く。
-// package-lock.json が元のフォルダと違えば、続けて npm install。クローンできなければ（APFS 以外・別のボリューム）npm install。
-// 元のフォルダに node_modules が無ければ何もしない。対象は npm だけ（Python の .venv などは対象外）
+// worktree に node_modules を用意する。モノレポ（npm の workspaces や、サブフォルダごとのプロジェクト）にも対応するため、
+// git で追跡している package.json の隣の node_modules を、元のフォルダから APFS のクローンで複製する（絶対パスの入るキャッシュは除く）。
+// package-lock.json が元のフォルダと違う場所では、続けて npm install。複製できなかった node_modules は、
+// それを受け持つ package-lock.json（同じ場所か、いちばん近い上のフォルダ。workspaces ならリポジトリのいちばん上）で npm install。
+// 元のフォルダに node_modules が無い場所は何もしない。npm install は npm のプロジェクトだけ（Python の .venv などは対象外）
 export async function prepareNodeModules(root: string, path: string, hooks: PrepareHooks): Promise<NodeModulesResult> {
-  const from = join(root, 'node_modules');
-  const to = join(path, 'node_modules');
-  if (!(await isDirectory(from)) || existsSync(to)) return { kind: 'none' };
+  const result: NodeModulesResult = { cloned: [], failed: [], installs: [] };
+  const dirs = await packageDirs(path);
+  const has = (base: string, dir: string, name: string) => existsSync(join(base, dir, name));
+  const targets: string[] = [];
+  for (const dir of dirs) if ((await isDirectory(join(root, dir, 'node_modules'))) && !has(path, dir, 'node_modules')) targets.push(dir);
+  if (targets.length === 0) return result;
+
   hooks.onStep('copying');
-  try {
-    await (hooks.clone ?? apfsClone)(from, to);
-  } catch {
-    await rm(to, { recursive: true, force: true }).catch(() => {});
-    if (!(await usesNpm(path))) return { kind: 'failed', message: 'node_modules を複製できませんでした' };
-    hooks.onStep('installing');
-    return { kind: 'installed', exitCode: await hooks.install(path) };
+  for (const dir of targets) {
+    const to = join(path, dir, 'node_modules');
+    try {
+      await (hooks.clone ?? apfsClone)(join(root, dir, 'node_modules'), to);
+      await Promise.all(ABSOLUTE_CACHES.map((name) => rm(join(to, name), { recursive: true, force: true }).catch(() => {})));
+      result.cloned.push(dir);
+    } catch {
+      await rm(to, { recursive: true, force: true }).catch(() => {});
+      result.failed.push(dir);
+    }
   }
-  await Promise.all(ABSOLUTE_CACHES.map((name) => rm(join(to, name), { recursive: true, force: true }).catch(() => {})));
-  const [mine, theirs] = await Promise.all([readFile(join(path, 'package-lock.json'), 'utf8').catch(() => null), readFile(join(root, 'package-lock.json'), 'utf8').catch(() => null)]);
-  if (mine === theirs || !(await usesNpm(path))) return { kind: 'cloned', installExitCode: null };
+
+  // npm install する場所。package-lock.json のある npm のプロジェクトで、元のフォルダでも node_modules を使っているところ
+  const lockDirs: string[] = [];
+  for (const dir of dirs) {
+    if (has(path, dir, 'package-lock.json') && has(root, dir, 'node_modules') && (await usesNpm(join(path, dir)))) lockDirs.push(dir);
+  }
+  const installDirs = new Set<string>();
+  for (const dir of lockDirs) {
+    const [mine, theirs] = await Promise.all([
+      readFile(join(path, dir, 'package-lock.json'), 'utf8').catch(() => null),
+      readFile(join(root, dir, 'package-lock.json'), 'utf8').catch(() => null),
+    ]);
+    if (mine !== theirs) installDirs.add(dir);
+  }
+  for (const dir of result.failed) {
+    const owner = nearestLockDir(dir, lockDirs);
+    if (owner !== null) installDirs.add(owner);
+  }
+  if (installDirs.size === 0) return result;
   hooks.onStep('installing');
-  return { kind: 'cloned', installExitCode: await hooks.install(path) };
+  // 上のフォルダから順に（workspaces のいちばん上の npm install が、下の node_modules も作る）
+  for (const dir of [...installDirs].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))) {
+    result.installs.push({ dir, exitCode: await hooks.install(join(path, dir), dir) });
+  }
+  return result;
+}
+
+// git で追跡している package.json のあるフォルダ（worktree からの相対。'' はいちばん上）。node_modules の中は除く
+async function packageDirs(path: string): Promise<string[]> {
+  const out = await git(path, ['ls-files', '-z', '--', 'package.json', '*/package.json']).catch(() => null);
+  if (out === null) return [''];
+  const dirs = new Set<string>();
+  for (const file of out.split('\0')) {
+    if (!file || (file !== 'package.json' && !file.endsWith('/package.json'))) continue;
+    if (file.split('/').includes('node_modules')) continue;
+    dirs.add(file === 'package.json' ? '' : file.slice(0, -'/package.json'.length));
+  }
+  return [...dirs].sort();
+}
+
+// dir の node_modules を受け持つ package-lock.json のフォルダ（同じフォルダか、いちばん近い上のフォルダ）
+function nearestLockDir(dir: string, lockDirs: string[]): string | null {
+  let best: string | null = null;
+  for (const lock of lockDirs) {
+    const covers = lock === '' || dir === lock || dir.startsWith(`${lock}/`);
+    if (covers && (best === null || lock.length > best.length)) best = lock;
+  }
+  return best;
 }
 
 function apfsClone(from: string, to: string): Promise<void> {
