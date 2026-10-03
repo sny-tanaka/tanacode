@@ -74,6 +74,7 @@ function Pane({
         onCommentsChange={noop}
         onShowComment={noop}
         onOpenTerminal={noop}
+        onShowContext={noop}
         onShowShell={noop}
         onToggleTerminal={noop}
         onOpenFile={noop}

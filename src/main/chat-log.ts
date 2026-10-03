@@ -44,7 +44,7 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
 const BEFORE_RESPONSE = new Set<ChatEvent['type']>(['hook', 'info', 'queue', 'remote-control', 'pr-link', 'ready']);
 
 // 会話ログの行を、親（parentUuid）が先になる順に読む（TranscriptTail と同じ。parentFirst を参照）
-async function readEntries(file: string): Promise<TranscriptEntry[]> {
+export async function readEntries(file: string): Promise<TranscriptEntry[]> {
   const text = await readFile(file, 'utf8').catch(() => '');
   const entries: TranscriptEntry[] = [];
   for (const line of text.split('\n')) {

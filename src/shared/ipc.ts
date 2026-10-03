@@ -2,6 +2,7 @@ import type { ChatEvent } from './chat';
 import type { Activity, PermissionMode, ScreenInfo } from './screen';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
+import type { SessionContext } from './context';
 import type { ModelCatalog } from './models';
 import type { SettingsFile } from './settings-file';
 import type { StatusLineInfo } from './statusline';
@@ -91,6 +92,7 @@ export const IpcChannel = {
   TasksAgentLog: 'tasks:agent-log',
   TasksStop: 'tasks:stop',
   KnowledgeGet: 'knowledge:get',
+  ContextGet: 'context:get',
   ModelsGet: 'models:get',
   ModelsRefresh: 'models:refresh',
   UsageGet: 'usage:get',
@@ -407,6 +409,10 @@ export type TanacodeApi = {
   knowledge: {
     get(sessionId: string): Promise<SessionKnowledge>;
     onChanged(listener: (payload: SessionKnowledgeChanged) => void): () => void;
+  };
+  // コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・発言ごとのやりとり）
+  context: {
+    get(sessionId: string): Promise<SessionContext>;
   };
   tasks: {
     // バックグラウンドで動かした Bash

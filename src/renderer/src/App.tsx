@@ -29,10 +29,12 @@ import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
 import { useClaudeVersion } from './system/ClaudeVersion';
-import { useSessionKnowledge } from './knowledge/useSessionKnowledge';
+import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
+import { SessionContextPanel } from './knowledge/ContextPanel';
+import { useCompactState } from './chat/compactState';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
-import { BranchIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
+import { BranchIcon, ContextIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
 import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
@@ -51,13 +53,14 @@ const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 
-type SidePanel = 'files' | 'search' | 'scm' | 'tasks';
+type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'context';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）
 const SIDE_PANELS: { id: SidePanel; label: string; title: string; Icon: IconComponent }[] = [
   { id: 'files', label: 'エクスプローラー', title: 'エクスプローラー', Icon: FilesIcon },
   { id: 'search', label: '検索', title: '検索（⌘⇧F）', Icon: SearchIcon },
   { id: 'scm', label: 'ソース管理', title: 'ソース管理（git）。ブランチの変更を見て、行にコメントを付けて Claude に返す', Icon: BranchIcon },
   { id: 'tasks', label: 'タスク', title: 'タスク（サブエージェント・ワークフロー・バックグラウンドの Bash）', Icon: TasksIcon },
+  { id: 'context', label: 'コンテキスト', title: 'コンテキスト（今の会話に入っているものと大きさ。圧縮で残すもの・捨てるものを選ぶ）', Icon: ContextIcon },
 ];
 
 let revealSeq = 0;
@@ -544,6 +547,9 @@ export function App() {
   // タスクは会話のあるセッションだけ。新規セッションの画面ではエクスプローラー・検索・ソース管理だけを出す
   const shownPanel = sidePanel;
   const openScm = useCallback(() => setSidePanel('scm'), []);
+  const showContext = useCallback(() => setSidePanel('context'), []);
+  const compact = useCompactState(selected ?? null, chat, selected ? screenOf(selected.id) : null);
+  const compactWith = useCallback((instructions: string) => sendToSelected(`/compact ${instructions}`, []), [sendToSelected]);
 
   const activeFile = editor.files.find((f) => f.path === editor.activePath);
   const language = activeFile?.content.kind === 'text' ? languageLabel(languageFor(activeFile.path)) : null;
@@ -614,6 +620,7 @@ export function App() {
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}
             onOpenTerminal={showClaudeScreen}
+            onShowContext={showContext}
             onShowShell={showShell}
             onToggleTerminal={toggleClaudeScreen}
             onOpenFile={openAbsolute}
@@ -709,6 +716,22 @@ export function App() {
                 ) : (
                   // 新規セッションの画面にはセッションがない。ボタンは残して、開いたら何が見られるかを伝える
                   <div className="scm-empty">セッションで実行したバックグラウンドタスクが表示されます</div>
+                )}
+              </div>
+              <div hidden={shownPanel !== 'context'} className="side-body">
+                {selected ? (
+                  <SessionContextPanel
+                    key={selected.id}
+                    sessionId={selected.id}
+                    visible={shownPanel === 'context'}
+                    revision={chat.items.length}
+                    {...contextUsage(selected.model, screenOf(selected.id)?.model ?? null, statusLineOf(selected.id), knowledgeOf(selected.id).contextTokens)}
+                    canCompact={compact.canCompact}
+                    compacting={compact.compacting}
+                    onCompact={compactWith}
+                  />
+                ) : (
+                  <div className="scm-empty">セッションのコンテキストの中身が表示されます</div>
                 )}
               </div>
               <div hidden={shownPanel !== 'search'} className="side-body">

@@ -5,6 +5,7 @@ import { toChatEvents, type ChatEvent } from '@shared/chat';
 import { promptKeys } from '@shared/prompt-keys';
 import { readAgentLog } from '../../src/main/chat-log';
 import { KnowledgeTracker } from '../../src/main/knowledge-tracker';
+import { ContextTracker } from '../../src/main/context-tracker';
 import { discoverSessions } from '../../src/main/session-discovery';
 import {
   AGENT_PROMPT,
@@ -34,6 +35,7 @@ import {
   checkImage,
   checkKilled,
   checkKnowledge,
+  checkContext,
   checkLocalCommand,
   checkPasted,
   checkPastedDraft,
@@ -196,6 +198,14 @@ describe(`Claude Code ${version} の読み取り`, () => {
     const knowledge = new KnowledgeTracker(run.cwd, () => {});
     for (const entry of run.entries) knowledge.handle(entry);
     checkKnowledge(knowledge.current());
+  });
+
+  it('読んだファイルと発言のやりとりを、ContextTracker でコンテキストの中身として読める', async () => {
+    const context = new ContextTracker(run.cwd);
+    for (const entry of run.entries) context.handle(entry);
+    checkContext(context.current(), prompt);
+    // アプリと同じく、SessionManager が集めたものも同じ
+    checkContext(await run.manager.context(run.sessionId!), prompt);
   });
 
   it('思考の本文が thinking のイベントになる', () => {

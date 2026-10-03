@@ -2,8 +2,8 @@ import { isAbsolute, relative, sep } from 'node:path';
 import type { TranscriptEntry } from '@shared/chat';
 import type { FileKnowledge, SessionKnowledge } from '@shared/knowledge';
 
-const READ_TOOLS = new Set(['Read']);
-const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+export const READ_TOOLS = new Set(['Read']);
+export const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 // 再開時は過去の会話を 1 行ずつ読み直すので、知らせるのはまとめて行う
 const EMIT_DELAY_MS = 100;
 

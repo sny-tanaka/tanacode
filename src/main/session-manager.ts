@@ -21,6 +21,7 @@ import type {
 import type { Activity, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
+import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -30,6 +31,7 @@ import { ClaudeSession, transcriptPath } from './claude-session';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
+import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
@@ -73,6 +75,8 @@ type Runtime = {
   tasks: TaskRouter;
   // Claude が読んだ・書いたファイルとコンテキストの使用量
   knowledge: KnowledgeTracker;
+  // コンテキストの中身（読んだファイル・大きなツールの結果・発言ごとのやりとりなど）
+  context: ContextTracker;
   // statusLine から読んだモデル・コンテキスト・利用枠（応答のたびに更新）
   statusLine: StatusLineInfo | null;
   // 今の会話ログの行（uuid を持つもの）と、その行から作ったイベントの events 上の位置。巻き戻しの検出に使う
@@ -475,6 +479,15 @@ export class SessionManager {
     return this.runtimes.get(id)?.knowledge.current() ?? { files: {}, contextTokens: null };
   }
 
+  // コンテキストの中身（見ているときだけ取りに来る。使用量が変わったら取り直す）。
+  // 起動していないセッション（アーカイブ済みなど）は、会話ログから読む
+  async context(id: string): Promise<SessionContext> {
+    const rt = this.runtimes.get(id);
+    if (rt) return rt.context.current();
+    const record = this.store.get(id);
+    return record ? readContext(transcriptPath(record.cwd, record.claudeSessionId), record.cwd) : { items: [] };
+  }
+
   bashTasks(id: string): BashTask[] {
     return this.runtimes.get(id)?.bashTasks.all() ?? [];
   }
@@ -691,6 +704,7 @@ export class SessionManager {
         bashTasks,
         tasks,
         knowledge: new KnowledgeTracker(record.cwd, (value) => this.listeners.onKnowledge(id, value)),
+        context: new ContextTracker(record.cwd),
         statusLine: null,
         chain: [],
         screen: null,
@@ -719,6 +733,7 @@ export class SessionManager {
     rt.chain = [];
     // 再開すると過去の会話を読み直すので、そこから集め直す
     rt.knowledge.reset();
+    rt.context.reset();
     this.pushEvents(id, [{ type: 'process-start' }]);
     const runtime = rt;
     runtime.screen?.dispose();
@@ -807,6 +822,7 @@ export class SessionManager {
           this.store.update(id, { claudeSessionId: nextClaudeSessionId });
           rt.chain = [];
           rt.knowledge.reset();
+          rt.context.reset();
           this.pushEvents(id, [{ type: 'reset' }]);
         },
       },
@@ -1036,6 +1052,7 @@ export class SessionManager {
     rt?.tasks.track(entry, past, isHistory);
     if (rt && !past) this.trackQueue(id, rt, entry);
     rt?.knowledge.handle(entry);
+    rt?.context.handle(entry);
 
     if (rt) this.followBranch(id, rt, entry, isHistory);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない

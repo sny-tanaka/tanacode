@@ -2,6 +2,7 @@ import { expect } from 'vitest';
 import { transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import type { DiscoveredSession } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
+import type { SessionContext } from '@shared/context';
 import type { ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
@@ -120,6 +121,17 @@ export function readSteps(cwd: string): Step[] {
 export function checkKnowledge(knowledge: SessionKnowledge): void {
   for (const file of [ATTACHED, READ_FILE, NESTED_MEMORY, IMAGE_FILE]) expect(knowledge.files[file], file).toBe('read');
   expect(knowledge.contextTokens).toBeGreaterThan(0);
+}
+
+// ContextTracker が集めた、コンテキストの中身。添付・Read で読んだファイル（画像も）・サブフォルダの CLAUDE.md がファイルの行に、
+// 発言とその応答が発言のやりとりの行になる
+export function checkContext(context: SessionContext, prompt: string): void {
+  for (const file of [ATTACHED, READ_FILE, NESTED_MEMORY, IMAGE_FILE]) {
+    expect(context.items.find((i) => i.label === file), file).toMatchObject({ kind: 'file', compacted: false });
+  }
+  const topic = context.items.find((i) => i.kind === 'topic' && i.label === prompt);
+  expect(topic?.tokens).toBeGreaterThan(0);
+  expect(context.items.every((i) => Number.isFinite(i.tokens) && i.tokens >= 0)).toBe(true);
 }
 
 // 思考の本文があれば、前後の改行を除いて thinking のイベントになる

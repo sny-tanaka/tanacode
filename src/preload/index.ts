@@ -116,6 +116,9 @@ const api: TanacodeApi = {
     get: (sessionId) => ipcRenderer.invoke(IpcChannel.KnowledgeGet, sessionId),
     onChanged: (listener) => subscribe<SessionKnowledgeChanged>(IpcChannel.KnowledgeChanged, listener),
   },
+  context: {
+    get: (sessionId) => ipcRenderer.invoke(IpcChannel.ContextGet, sessionId),
+  },
   tasks: {
     bash: (sessionId) => ipcRenderer.invoke(IpcChannel.TasksBash, sessionId),
     onBashChanged: (listener) => subscribe<SessionBashTasks>(IpcChannel.TasksBashChanged, listener),

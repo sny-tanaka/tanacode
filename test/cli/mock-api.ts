@@ -42,6 +42,8 @@ export class MockApi {
   private readonly failed = new Map<string, number>();
   // 台本のある会話に付いてきたツールの名前（台本で使うツールが、今の Claude Code にあるかを確かめる）
   readonly tools = new Set<string>();
+  // 受け取ったリクエストの、最後の user の発言の文章（/compact の要約の頼み方などを確かめる）
+  readonly lastPrompts: string[] = [];
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
@@ -72,6 +74,7 @@ export class MockApi {
     // ツールの一覧が付いていないもの（タイトル作りなどの裏の呼び出し）には、台本を使わず短い文を返す
     const tools = body.tools ?? [];
     const messages = body.messages ?? [];
+    this.lastPrompts.push(textOf([...messages].reverse().find((m) => m.role === 'user')));
     const reply = messages.findIndex((m) => m.role === 'assistant');
     const opening = (reply === -1 ? messages : messages.slice(0, reply)).filter((m) => m.role === 'user');
     const first = opening.map(textOf).join('\n');

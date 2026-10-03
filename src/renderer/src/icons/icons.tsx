@@ -77,6 +77,14 @@ export const TasksIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// コンテキスト: 枠（コンテキスト）の中に、大きさの違う中身が並ぶ
+export const ContextIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" />
+    <path d="M7.75 7.75h8.5M7.75 12h5.5M7.75 16.25h2.5" />
+  </Svg>
+);
+
 // ---- Git ----
 
 // worktree: 1 つの幹から 2 つに分かれる（ブランチの印とは別の形）
