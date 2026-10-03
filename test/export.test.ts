@@ -10,6 +10,7 @@ import {
   countContents,
   DEFAULT_EXPORT_OPTIONS,
   exportFileName,
+  formatDateTime,
   formatPeriod,
   imageKeys,
   prepareExport,
@@ -203,7 +204,9 @@ describe('書き出した HTML の中身', () => {
     expect(html).toContain('→ 桜色（推奨）');
     expect(html).toContain('<span class="todo-count">1/2</span>');
     expect(html).toContain('直す前と後の比較です');
-    expect(html).toContain('<time class="export-time" dateTime="2026-10-03T05:05:00.000Z">10/03 14:05</time>');
+    // 時刻は、開いた人の時間帯で出す（CI は UTC で動く）
+    const at = Date.parse('2026-10-03T14:05:00+09:00');
+    expect(html).toContain(`<time class="export-time" dateTime="2026-10-03T05:05:00.000Z">${formatDateTime(at).slice(5)}</time>`);
   });
 
   it('画像は中に入れ、読めなかったものはそう書く', () => {
