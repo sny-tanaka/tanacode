@@ -32,18 +32,36 @@ jobs:
       - name: チェックサムを計算する
         working-directory: release
         run: shasum -a 256 -- *.zip *.pkg > SHA256SUMS.txt
-      # 説明は、自動で作る変更点（What's Changed）を先に、SHA-256 の表を末尾に畳んで置く。
-      # 表は使う人の多くには要らないので、先頭に出さない（gh release create の --notes-file は自動の変更点の前に付くため、API で変更点を作ってからつなげる）
+      # 説明の土台を作る。/release が先頭に変更点の表を足す前提で、ここではダウンロードの表と、畳んだ PR の一覧・SHA-256 の表を置く。
+      # PR の一覧（自動で作る What's Changed）とチェックサムは使う人の多くには要らないので、<details> で畳む
       - name: 説明を作る
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body > "$RUNNER_TEMP/release-notes.md"
+          notes="$RUNNER_TEMP/release-notes.md"
+          version="${GITHUB_REF_NAME#v}"
+          cat > "$notes" <<EOF
+          ## ダウンロード
+
+          | Mac | ファイル |
+          | --- | --- |
+          | Apple Silicon（M1 以降） | \`tanacode-$version-mac-arm64.pkg\`（または \`.zip\`） |
+          | Intel | \`tanacode-$version-mac-x64.pkg\`（または \`.zip\`） |
+
+          署名していないため、初回は macOS の警告が出ます。開き方は [README](https://github.com/$GITHUB_REPOSITORY#ビルド済みのアプリreleases) に。
+
+          <details>
+          <summary>PR の一覧</summary>
+
+          EOF
+          # 自動の一覧の見出しは畳んだ中では大きすぎるので、「What's Changed」を消し、残り（New Contributors など）は小さくする
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body \
+            | sed -e "/^## What's Changed/d" -e 's/^## /#### /' >> "$notes"
           awk '
-            BEGIN { print "\n<details>\n<summary>SHA-256 のチェックサム</summary>\n\n| ファイル | SHA-256 |\n| --- | --- |" }
+            BEGIN { print "\n</details>\n\n<details>\n<summary>SHA-256 のチェックサム</summary>\n\n| ファイル | SHA-256 |\n| --- | --- |" }
             { print "| `" $2 "` | `" $1 "` |" }
             END { print "\n確かめ方: ダウンロードしたファイルで `shasum -a 256 <ファイル>` を実行し、表の値との一致を確認（同じ内容は `SHA256SUMS.txt` にも）\n\n</details>" }
-          ' release/SHA256SUMS.txt >> "$RUNNER_TEMP/release-notes.md"
+          ' release/SHA256SUMS.txt >> "$notes"
       - name: Releases の下書きを作る
         env:
           GH_TOKEN: ${{ github.token }}
