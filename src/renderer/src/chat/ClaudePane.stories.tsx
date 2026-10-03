@@ -155,7 +155,7 @@ export const 設定ファイルの登録なし: Story = {
 const WORKTREE: SessionWorktree = { name: 'tc-1002-k3x9', branch: 'worktree-tc-1002-k3x9', root: '/Users/me/work/app', preparing: null };
 
 // worktree の準備の途中（package-lock.json が元のフォルダと違うので npm install している）。最初の指示は、準備が終わるのを待って送る。
-// 「ターミナルで見る」で、npm install の進み具合のタブを出す
+// 「ターミナルで見る」（モニターのアイコンのボタン）で、npm install の進み具合のタブを出す
 export const worktreeの準備中: Story = {
   args: { items: [], worktree: { ...WORKTREE, preparing: 'installing' }, pending: 'ログイン画面のバグを直してください。' },
 };

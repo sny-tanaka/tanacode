@@ -108,7 +108,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
-  await d.click(d.byText('.send-button', '送信'));
+  await d.click('.chat-input-row [aria-label="送信"]');
   await sent(1);
   claude.startWorking();
 
@@ -188,7 +188,7 @@ export async function runVisibility(backend: DemoBackend, d: Director): Promise<
   await sleep(1500);
 
   // 8. 「圧縮」で会話を要約する。区切りが入り、点は白抜き（圧縮前に読んだだけ）になって、メーターが下がる
-  await d.click(d.byText('.claude-header button', '圧縮'), { ms: 900 });
+  await d.click('.claude-header button[aria-label="圧縮"]', { ms: 900 });
   await sent(2);
   claude.startWorking();
   await sleep(2600);

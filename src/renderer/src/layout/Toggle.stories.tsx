@@ -1,13 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
-import { RemoteIcon } from './icons';
+import { CompressIcon, IconButton, MonitorIcon, ReloadIcon, RemoteIcon } from '../icons';
 import { Toggle } from './Toggle';
 
 // オン・オフのスイッチ。クリックで切り替わる。切り替えの途中（busy）はぐるぐるを出して押せなくする
 function Demo() {
   const [on, setOn] = useState(true);
   const [busy, setBusy] = useState(false);
-  const icon = <RemoteIcon size={15} />;
+  const icon = <RemoteIcon size={16} />;
   const row = (title: string, node: React.ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
       <div style={{ width: 160, fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>{title}</div>
@@ -42,9 +42,9 @@ function Demo() {
         <div className="claude-header" style={{ borderBottom: 'none', padding: 0, flex: 1 }}>
           <div className="spacer" />
           <Toggle label={icon} name="Remote Control" on={on} onChange={setOn} />
-          <button className="ghost-button">圧縮</button>
-          <button className="ghost-button">再起動</button>
-          <button className="ghost-button">ターミナル</button>
+          <IconButton icon={CompressIcon} label="圧縮" />
+          <IconButton icon={ReloadIcon} label="再起動" />
+          <IconButton icon={MonitorIcon} label="Claude Code の画面" pressed />
         </div>,
       )}
     </div>

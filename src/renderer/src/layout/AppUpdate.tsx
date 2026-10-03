@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppUpdate } from '@shared/app-update';
+import { CheckCircleIcon, DownloadIcon } from '../icons';
 
 // tanacode の新しいバージョン（GitHub の Releases）。まだ分からない・確かめる設定がオフなら null
 export function useAppUpdate(): AppUpdate | null {
@@ -42,7 +43,7 @@ export function AppUpdateMark({ update }: { update: AppUpdate | null }) {
   if (!update.available)
     return (
       <span className="app-update latest" data-tip="最新バージョンです">
-        <CheckIcon />
+        <CheckCircleIcon size={14} />
       </span>
     );
   return <UpdateAvailable key={update.latest} update={update} />;
@@ -72,26 +73,7 @@ function UpdateAvailable({ update }: { update: AppUpdate }) {
       onFocus={markSeen}
       onClick={() => (markSeen(), window.open(update.url))}
     >
-      <DownloadIcon />
+      <DownloadIcon size={14} />
     </button>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="8" cy="8" r="6.5" />
-      <path d="M5.2 8.2 7.1 10.1 10.9 6.1" />
-    </svg>
-  );
-}
-
-// 受け皿に下向きの矢印が入る形（ダウンロード）。ステータスバーの Claude Code のバージョンの ↑↓（動作確認済のバージョンとの比較）と見分けられるよう、丸で囲まない
-function DownloadIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path className="app-update-arrow" d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7" />
-      <path d="M2.8 10.8v1.4c0 .7.6 1.3 1.3 1.3h7.8c.7 0 1.3-.6 1.3-1.3v-1.4" />
-    </svg>
   );
 }

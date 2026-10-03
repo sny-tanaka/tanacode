@@ -4,10 +4,11 @@ import type { PermissionMode } from '@shared/screen';
 import icon from '../assets/icon.png';
 import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
+import { useInsertInput } from '../chat/insertInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
-import { BranchIcon, DefaultBranchIcon, FolderIcon } from '../layout/icons';
+import { BranchIcon, ChevronDownIcon, CloseIcon, DefaultBranchIcon, FolderIcon, IconButton, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 
 // 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control・worktree（このマシンだけの好みなので localStorage に置く）
@@ -74,6 +75,11 @@ export function NewSessionPane({
   const [info, setInfo] = useState<WorkspaceInfo | null | undefined>(undefined);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
+  // この画面で開いたターミナルやブラウザで選んだ出力・要素を、入力欄の末尾に足す（セッションの画面と同じ）
+  useInsertInput(gitId ?? '', (text, added) => {
+    setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
+    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+  });
   const [starting, setStarting] = useState(false);
   // 最新のデフォルトブランチへ切り替えている間と、うまくいかなかったときの理由
   const [switching, setSwitching] = useState(false);
@@ -157,9 +163,7 @@ export function NewSessionPane({
         <div className="spacer" />
         <RemoteControlToggle on={options.remoteControl} connected={null} onChange={(remoteControl) => change({ remoteControl })} />
         {onCancel && (
-          <button className="ghost-button" onClick={onCancel} title="前に見ていたセッションに戻る">
-            キャンセル
-          </button>
+          <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="前に見ていたセッションに戻る" onClick={onCancel} />
         )}
       </header>
       <div className="new-session-body">
@@ -177,13 +181,13 @@ export function NewSessionPane({
           <FolderPicker cwd={cwd} folders={folders} onChange={onCwdChange} onForget={onForgetFolder} />
           {currentBranch && (
             <button className="new-session-chip branch" onClick={onOpenScm} title="今のブランチ。押すとソース管理を開き、ブランチを切り替えられる">
-              <BranchIcon />
+              <BranchIcon size={14} />
               {currentBranch}
             </button>
           )}
           {currentBranch && gitId && (
             <button
-              className={`new-session-chip icon${switching ? ' busy' : ''}`}
+              className={`new-session-chip icon-only${switching ? ' busy' : ''}`}
               disabled={switching}
               onClick={() => void switchDefault()}
               data-tip="最新のデフォルトブランチへ切り替える（フェッチして、リモートの最新まで進めます）"
@@ -239,15 +243,14 @@ export function NewSessionPane({
               </option>
             ))}
           </select>
-          <button
+          <IconButton
+            icon={ReloadIcon}
+            label="モデル一覧を更新"
+            tip={refreshTitle(models.catalog)}
+            busy={models.refreshing}
             className="model-refresh"
-            disabled={models.refreshing}
             onClick={() => void models.refresh()}
-            data-tip={refreshTitle(models.catalog)}
-            aria-label="モデル一覧を更新"
-          >
-            {models.refreshing ? '…' : '↻'}
-          </button>
+          />
           <select
             value={efforts.length === 0 ? '' : (options.effort ?? '')}
             disabled={efforts.length === 0}
@@ -326,9 +329,9 @@ function FolderPicker({
         onClick={() => (folders.length > 0 ? setOpen((v) => !v) : void pick())}
         title={cwd ?? '作業するフォルダを選ぶ'}
       >
-        <FolderIcon />
+        <FolderIcon size={14} />
         {cwd ? baseName(cwd) : 'フォルダを選ぶ'}
-        {folders.length > 0 && <span className="new-session-chevron">▾</span>}
+        {folders.length > 0 && <ChevronDownIcon size={12} />}
       </button>
       {open && (
         <div className="folder-menu">
@@ -336,7 +339,7 @@ function FolderPicker({
             <>
               <div className="folder-menu-heading">最近のフォルダ</div>
               {folders.map((dir) => (
-                <div key={dir} className="folder-menu-row">
+                <div key={dir} className="folder-menu-row reveal-host">
                   <button
                     className={`folder-menu-item${dir === cwd ? ' selected' : ''}`}
                     onClick={() => {
@@ -348,14 +351,15 @@ function FolderPicker({
                     <span className="folder-menu-name">{baseName(dir)}</span>
                     <span className="folder-menu-path">{dir.replace(/^\/Users\/[^/]+/, '~')}</span>
                   </button>
-                  <button
+                  <IconButton
+                    icon={CloseIcon}
+                    size="sm"
+                    reveal
                     className="folder-menu-forget"
+                    label={`${baseName(dir)} を最近のフォルダから外す`}
+                    tip="最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）"
                     onClick={() => onForget(dir)}
-                    title="最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）"
-                    aria-label={`${baseName(dir)} を最近のフォルダから外す`}
-                  >
-                    外す
-                  </button>
+                  />
                 </div>
               ))}
               <div className="folder-menu-sep" />

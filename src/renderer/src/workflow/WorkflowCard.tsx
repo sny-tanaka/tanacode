@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import { StatusDot, type DotState } from '../layout/StatusDot';
+import { ChevronRightIcon, IconButton } from '../icons';
 
 const STATUS_LABEL: Record<string, string> = {
   running: '実行中',
@@ -50,9 +51,7 @@ export function WorkflowCard({ run, fallbackName, onOpen }: Props) {
         )}
         <span className={`workflow-status ${run.status}`}>{STATUS_LABEL[run.status] ?? run.status}</span>
         {onOpen && (
-          <button className="ghost-button workflow-open" onClick={onOpen}>
-            開く ›
-          </button>
+          <IconButton icon={ChevronRightIcon} size="sm" label="開く" onClick={onOpen} />
         )}
       </div>
       {run.summary && <div className="workflow-summary">{run.summary}</div>}

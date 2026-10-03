@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { ReactNode } from 'react';
 import { TodoPanel } from './chat/TodoPanel';
-import { BranchIcon, FilesIcon, SearchIcon, TasksIcon } from './layout/icons';
+import { BranchIcon, FilesIcon, SearchIcon, TasksIcon } from './icons';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import type { TaskEntry } from './tasks/taskList';
 
@@ -39,16 +39,16 @@ function Catalog() {
       <Section title="アクティビティバー（動いていないアイコン）">
         <div className="activity-bar" style={{ height: 'auto', borderRight: 'none', flexDirection: 'row' }}>
           <button className="on" aria-label="エクスプローラー">
-            <FilesIcon />
+            <FilesIcon size={22} />
           </button>
           <button aria-label="検索">
-            <SearchIcon />
+            <SearchIcon size={22} />
           </button>
           <button aria-label="ソース管理">
-            <BranchIcon />
+            <BranchIcon size={22} />
           </button>
           <button aria-label="タスク">
-            <TasksIcon />
+            <TasksIcon size={22} />
           </button>
         </div>
       </Section>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { monaco } from '../editor/monaco';
+import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 
 // コードの行・範囲に付けたコメント。Claude への指示として送るまで持っておく
 export type ReviewComment = { id: string; path: string; startLine: number; endLine: number; quote: string; text: string };
@@ -135,9 +136,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove }: Props)
                 <span className="comment-mark">Claude へのコメント</span>
                 <span className="comment-lines">{label(c.startLine, c.endLine)}</span>
                 <div className="spacer" />
-                <button className="ghost-button" onClick={() => onRemove(c.id)}>
-                  削除
-                </button>
+                <IconButton size="sm" danger icon={TrashIcon} label="削除" onClick={() => onRemove(c.id)} />
               </div>
               <div className="comment-text">{c.text}</div>
             </div>,
@@ -188,12 +187,8 @@ function CommentDraft({ label, onCancel, onSubmit }: { label: string; onCancel: 
         }}
       />
       <div className="comment-actions">
-        <button className="ghost-button" onClick={onCancel}>
-          キャンセル
-        </button>
-        <button className="send-button" disabled={!text.trim()} onClick={submit}>
-          コメントを追加
-        </button>
+        <IconButton icon={CloseIcon} label="キャンセル" onClick={onCancel} />
+        <IconButton primary icon={AddIcon} label="コメントを追加" tip="コメントを追加（⌘Enter）" disabled={!text.trim()} onClick={submit} />
       </div>
     </div>
   );

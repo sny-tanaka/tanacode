@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserActivity, BrowserRect } from '@shared/ipc';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
+import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
 import { codeBlock } from '../chat/sanitize';
 import { CANCEL_PICKER_SCRIPT, describePicked, pickerScript, type PickedElement } from './picker';
 
@@ -342,21 +343,14 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         />
       )}
       <div className="preview-toolbar">
-        <button className="preview-nav" disabled={!page?.canGoBack} onClick={() => wv?.goBack()} data-tip="戻る" aria-label="戻る">
-          ←
-        </button>
-        <button className="preview-nav" disabled={!page?.canGoForward} onClick={() => wv?.goForward()} data-tip="進む" aria-label="進む">
-          →
-        </button>
-        <button
-          className="preview-nav"
+        <IconButton icon={ArrowLeftIcon} label="戻る" disabled={!page?.canGoBack} onClick={() => wv?.goBack()} />
+        <IconButton icon={ArrowRightIcon} label="進む" disabled={!page?.canGoForward} onClick={() => wv?.goForward()} />
+        <IconButton
+          icon={page?.loading ? StopIcon : ReloadIcon}
+          label={page?.loading ? '読み込みを止める' : '読み込み直す'}
           disabled={!shown}
           onClick={() => (page?.loading ? wv?.stop() : wv?.reload())}
-          data-tip={page?.loading ? '読み込みを止める' : '読み込み直す'}
-          aria-label={page?.loading ? '読み込みを止める' : '読み込み直す'}
-        >
-          {page?.loading ? '×' : '↻'}
-        </button>
+        />
         <form
           className="preview-address"
           onSubmit={(e) => {
@@ -386,38 +380,40 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
             </option>
           ))}
         </select>
-        <button className={`ghost-button${picking ? ' on' : ''}`} disabled={!shown} onClick={() => void pick()} title="ページの要素をクリックして、その情報と画像をチャットの入力欄に添える">
-          {picking ? '選ぶのをやめる' : '要素を選ぶ'}
-        </button>
+        <IconButton
+          icon={PointerIcon}
+          label={picking ? '選ぶのをやめる' : '要素を選ぶ'}
+          tip={picking ? undefined : 'ページの要素をクリックして、その情報と画像をチャットの入力欄に添える'}
+          pressed={picking}
+          disabled={!shown}
+          onClick={() => void pick()}
+        />
         {page && page.consoleErrors.length > 0 && (
-          <button className="ghost-button preview-errors" onClick={sendErrors} title={`クリックで、コンソールのエラーをチャットの入力欄に貼る\n\n${page.consoleErrors.slice(-5).join('\n')}`}>
-            エラー {page.consoleErrors.length} 件
+          <button
+            className="ghost-button preview-errors"
+            onClick={sendErrors}
+            aria-label={`エラー ${page.consoleErrors.length} 件`}
+            data-tip={`クリックで、コンソールのエラーをチャットの入力欄に貼る\n\n${page.consoleErrors.slice(-5).join('\n')}`}
+          >
+            <WarningIcon size={14} />
+            {page.consoleErrors.length}
           </button>
         )}
-        <button
-          className="preview-nav"
+        <IconButton
+          icon={ExternalLinkIcon}
+          label="ふだんのブラウザで開く"
           disabled={!shown}
           onClick={() => url && void window.tanacode.browser.openExternal(url)}
-          data-tip="ふだんのブラウザで開く"
-          aria-label="ふだんのブラウザで開く"
-        >
-          ↗
-        </button>
-        <button className="preview-nav" disabled={!shown} onClick={() => wv?.openDevTools()} data-tip="開発者ツール" aria-label="開発者ツール">
-          ⚙
-        </button>
-        <button className="preview-nav" onClick={onClose} data-tip="ブラウザを閉じる" aria-label="ブラウザを閉じる">
-          ✕
-        </button>
+        />
+        <IconButton icon={CodeIcon} label="開発者ツール" disabled={!shown} onClick={() => wv?.openDevTools()} />
+        <IconButton icon={CloseIcon} label="ブラウザを閉じる" onClick={onClose} />
       </div>
       {activity?.active && <ClaudeBar label={activity.label} />}
       {picking && <div className="preview-hint">ページの要素をクリックしてください（Esc でやめる）</div>}
       {page?.error && (
         <div className="preview-hint error">
           <span>{page.error}</span>
-          <button className="ghost-button" onClick={() => wv?.reload()}>
-            もう一度
-          </button>
+          <IconButton icon={ReloadIcon} label="もう一度" onClick={() => wv?.reload()} />
         </div>
       )}
       <div className={`preview-body${width ? ' framed' : ''}`} style={{ '--preview-width': width ? `${width}px` : '100%' } as React.CSSProperties}>
@@ -459,7 +455,7 @@ export function TabStrip({
             key={tab.id}
             role="tab"
             aria-selected={tab.id === active}
-            className={`preview-tab${tab.id === active ? ' active' : ''}`}
+            className={`preview-tab reveal-host${tab.id === active ? ' active' : ''}`}
             title={tab.url && tab.url !== 'about:blank' ? `${tab.title ? `${tab.title}\n` : ''}${tab.url}` : undefined}
             onMouseDown={(e) => {
               if (e.button === 0) onSelect(tab.id);
@@ -470,20 +466,11 @@ export function TabStrip({
           >
             {tab.loading && <span className="tool-dot running" />}
             <span className="preview-tab-title">{label}</span>
-            <button
-              className="preview-tab-close"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => onClose(tab.id)}
-              aria-label="タブを閉じる"
-            >
-              ×
-            </button>
+            <IconButton icon={CloseIcon} size="sm" reveal label="タブを閉じる" onMouseDown={(e) => e.stopPropagation()} onClick={() => onClose(tab.id)} />
           </div>
         );
       })}
-      <button className="preview-tab-new" onClick={onNew} data-tip="新しいタブ" aria-label="新しいタブ">
-        ＋
-      </button>
+      <IconButton icon={AddIcon} size="sm" className="preview-tab-new" label="新しいタブ" onClick={onNew} />
     </div>
   );
 }

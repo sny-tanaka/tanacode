@@ -4,6 +4,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode, ScreenInfo } from '@shared/screen';
 import type { BashTask, TaskRef } from '@shared/task';
 import { errorMessage } from '../errorMessage';
+import { ArrowDownIcon, CloseIcon, CompressIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ContextMeter } from '../knowledge/ContextMeter';
 import { contextWindow } from '../knowledge/useSessionKnowledge';
@@ -224,7 +225,7 @@ export const ClaudePane = memo(function ClaudePane({
     [session.id],
   );
 
-  // Claude Code が持っているモデル一覧の控え。↻ で読み直す
+  // Claude Code が持っているモデル一覧の控え。更新のボタンで読み直す
   const models = useModelCatalog();
   const { choices, labelOf } = models;
   // 既定のまま（--model・--effort を渡していない）ときは、実際に動いているものを選択中として出す
@@ -314,18 +315,22 @@ export const ClaudePane = memo(function ClaudePane({
           />
         )}
         {live && (
-          <button
-            className="ghost-button"
+          <IconButton
+            size="md"
+            icon={CompressIcon}
+            label="圧縮"
+            tip="会話を要約してコンテキストを空ける（/compact）。作業中は押せません"
+            busy={compacting}
             disabled={!canCompact}
             onClick={() => onSend('/compact', [])}
-            title="会話を要約してコンテキストを空ける（/compact）。作業中は押せません"
-          >
-            {compacting ? <span className="flow-text">圧縮中…</span> : '圧縮'}
-          </button>
+          />
         )}
         {live && (
-          <button
-            className="ghost-button"
+          <IconButton
+            size="md"
+            icon={ReloadIcon}
+            label="再起動"
+            tip="Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます"
             onClick={() => {
               const busy = running || tasks.some((t) => t.state === 'running');
               if (busy && !window.confirm('作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？')) return;
@@ -333,19 +338,17 @@ export const ClaudePane = memo(function ClaudePane({
                 .restart(session.id)
                 .catch((error: unknown) => window.alert(`再起動できませんでした: ${errorMessage(error)}`));
             }}
-            title="Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます"
-          >
-            再起動
-          </button>
+          />
         )}
         {!session.archived && (
-          <button
-            className={`ghost-button${terminalOpen ? ' on' : ''}`}
+          <IconButton
+            size="md"
+            icon={MonitorIcon}
+            label="Claude Code の画面"
+            tip="Claude Code をターミナルの画面のまま表示して操作する（エディタの下のパネル）"
+            pressed={terminalOpen}
             onClick={onToggleTerminal}
-            title="Claude Code をターミナルの画面のまま表示して操作する（エディタの下のパネル）"
-          >
-            ターミナル
-          </button>
+          />
         )}
       </header>
 
@@ -384,9 +387,7 @@ export const ClaudePane = memo(function ClaudePane({
             <div className="chat-note worktree-preparing">
               <Busy>{PREPARING_LABEL[preparing]}…</Busy>
               {preparing === 'installing' && (
-                <button className="ghost-button" onClick={onShowShell}>
-                  ターミナルで見る
-                </button>
+                <IconButton icon={MonitorIcon} label="ターミナルで見る" onClick={onShowShell} />
               )}
             </div>
           )}
@@ -441,7 +442,12 @@ export const ClaudePane = memo(function ClaudePane({
                       : 'Claude Code の起動を待って送ります…'}
                 </span>
               </span>
-              <button
+              {/* 待っている発言の取り消しは、ホバーしなくても見えるようにする（reveal にしない） */}
+              <IconButton
+                size="sm"
+                icon={CloseIcon}
+                label="取り消す"
+                tip="送るのをやめて入力欄に戻す"
                 className="chat-rewind"
                 onClick={() => {
                   const taken = onTakePending();
@@ -449,36 +455,27 @@ export const ClaudePane = memo(function ClaudePane({
                   setInput((prev) => [taken.text, prev].filter((t) => t.trim()).join('\n'));
                   setAttachments((prev) => [...taken.attachments, ...prev]);
                 }}
-                title="送るのをやめて入力欄に戻す"
-              >
-                取り消す
-              </button>
+              />
             </div>
           )}
           {starting && slowStart && !preparing && !menu && (
             <div className="chat-callout">
               <span>Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください</span>
-              <button className="send-button" onClick={onOpenTerminal}>
-                ターミナルで見る
-              </button>
+              <IconButton icon={MonitorIcon} label="ターミナルで見る" onClick={onOpenTerminal} />
             </div>
           )}
           {menu && <MenuCard key={`${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
           {rewinding && (
             <div className="chat-callout">
               <span>巻き戻し先を選んでいます…</span>
-              <button className="ghost-button" onClick={() => window.tanacode.pty.write(session.id, '\x1b')}>
-                キャンセル（Esc）
-              </button>
+              <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="キャンセル（Esc）" onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
             </div>
           )}
           {unknownScreen && (
             <div className="chat-callout">
               <span>Claude Code がチャットでは操作できない画面を表示しています</span>
               <div className="chat-callout-actions">
-                <button className="ghost-button" onClick={() => window.tanacode.pty.write(session.id, '\x1b')}>
-                  閉じる（Esc）
-                </button>
+                <IconButton icon={CloseIcon} size="md" label="閉じる" tip="閉じる（Esc）" onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
                 <button className="send-button" onClick={onOpenTerminal}>
                   ターミナルで操作
                 </button>
@@ -511,9 +508,7 @@ export const ClaudePane = memo(function ClaudePane({
             data-tip-side="top"
             aria-label="最新のメッセージへ"
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
-            </svg>
+            <ArrowDownIcon size={14} />
           </button>
         )}
       </div>
@@ -560,15 +555,15 @@ export const ClaudePane = memo(function ClaudePane({
                 </option>
               ))}
             </select>
-            <button
+            <IconButton
+              size="md"
+              icon={ReloadIcon}
+              label="モデル一覧を更新"
+              tip={refreshTitle(models.catalog)}
+              busy={models.refreshing}
               className="model-refresh"
-              disabled={models.refreshing}
               onClick={() => void models.refresh()}
-              data-tip={refreshTitle(models.catalog)}
-              aria-label="モデル一覧を更新"
-            >
-              {models.refreshing ? '…' : '↻'}
-            </button>
+            />
             <select
               value={efforts.length === 0 ? '' : effortValue}
               disabled={!canConfigure || efforts.length === 0}

@@ -3,6 +3,7 @@ import type { DirEntry } from '@shared/ipc';
 import type { FileKnowledge } from '@shared/knowledge';
 import type { FileChange } from '@shared/ipc';
 import type { GitMark } from '../scm/useGitState';
+import { DisclosureIcon } from '../icons';
 
 type Props = {
   sessionId: string;
@@ -112,7 +113,7 @@ export const Explorer = memo(function Explorer({ sessionId, root, rootName, acti
             title={entry.path}
           >
             <span className="tree-chevron">
-              {entry.isDir ? (expanded.has(entry.path) ? '▾' : '▸') : knowledge[entry.path] && <KnowledgeDot state={knowledge[entry.path]} />}
+              {entry.isDir ? <DisclosureIcon open={expanded.has(entry.path)} /> : knowledge[entry.path] && <KnowledgeDot state={knowledge[entry.path]} />}
             </span>
             <span className={`tree-label${gitMark(entry, gitMarks)}`}>{entry.name}</span>
             {entry.isDir && gitDirs.has(entry.path) && <span className="tree-git-dot" title="中に git の変更がある" />}
@@ -132,7 +133,9 @@ export const Explorer = memo(function Explorer({ sessionId, root, rootName, acti
   return (
     <div className="tree">
         <div className="tree-row dir" style={{ paddingLeft: 10 }} onClick={() => toggle('')}>
-          <span className="tree-chevron">{expanded.has('') ? '▾' : '▸'}</span>
+          <span className="tree-chevron">
+            <DisclosureIcon open={expanded.has('')} />
+          </span>
           <span className="tree-label">{rootName}</span>
           <span className="tree-fill" />
         </div>

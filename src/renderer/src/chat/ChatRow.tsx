@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { BashTask, TaskRef } from '@shared/task';
+import { DisclosureIcon, IconButton, RewindIcon } from '../icons';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { WorkflowCard } from '../workflow/WorkflowCard';
 import { HookRuns } from './HookRuns';
@@ -48,20 +49,22 @@ function sameRow(a: Props, b: Props): boolean {
 export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashTasks, onRewind, onOpenFile, onOpenTask, onRunCommand }: Props) {
   if (item.kind === 'user') {
     return (
-      <div className="chat-user">
+      <div className="chat-user reveal-host">
         <span className="chat-prompt">›</span>
         <div className="chat-user-body">
           {item.text && <span className="chat-user-text">{item.text}</span>}
           {item.images && <ChatImages keys={item.images} />}
         </div>
         {onRewind && item.text && !item.text.startsWith('/') && (
-          <button
+          <IconButton
+            reveal
+            size="sm"
+            icon={RewindIcon}
+            label="ここまで戻す"
+            tip="この発言の前まで会話やコードを戻す（/rewind）"
             className="chat-rewind"
             onClick={() => onRewind(item.text)}
-            title="この発言の前まで会話やコードを戻す（/rewind）"
-          >
-            ここまで戻す
-          </button>
+          />
         )}
       </div>
     );
@@ -73,7 +76,11 @@ export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashT
     if (!item.detail) return <div className="chat-notice">{item.text}</div>;
     return (
       <details className="chat-notice expandable">
-        <summary>{item.text}</summary>
+        <summary>
+          {/* details の開閉は標準の動きなので、矢印は閉じた形で置き、開いたとき（[open]）に回すのは CSS */}
+          <DisclosureIcon open={false} />
+          {item.text}
+        </summary>
         <pre className="chat-notice-detail">{item.detail}</pre>
       </details>
     );
@@ -110,7 +117,10 @@ export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashT
   if (item.kind === 'thinking') {
     return (
       <details className="chat-thinking" open>
-        <summary>思考</summary>
+        <summary>
+          <DisclosureIcon open={false} />
+          思考
+        </summary>
         <div className="chat-thinking-text">{item.text}</div>
       </details>
     );

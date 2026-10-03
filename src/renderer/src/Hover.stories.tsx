@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { HookRun } from '@shared/chat';
 import { HookRuns } from './chat/HookRuns';
 import { SentFilesCard } from './chat/SentFilesCard';
+import { AddIcon } from './icons';
 
 // ホバーで明るくなるか（ふだんが明るく、ホバーで沈むものが無いか）を見比べる。
 // 枠を指定していないボタンは、ブラウザの既定の明るい枠が出るので、ここに並べて確かめる
@@ -47,7 +48,10 @@ function Catalog() {
       <Place title="新規セッションのボタン（セッション一覧の上）">
         <div style={{ background: 'var(--bg-chrome)', padding: '4px 0' }}>
           <button className="new-session-button" style={{ margin: '4px 10px' }}>
-            <span className="new-session-plus">＋</span>新規セッション
+            <span className="new-session-plus">
+              <AddIcon size={14} />
+            </span>
+            新規セッション
           </button>
         </div>
       </Place>

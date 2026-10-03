@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SlashCommand } from '@shared/ipc';
 import { bracketedPaste, promptKeys } from '@shared/prompt-keys';
+import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
 import { stripControlChars } from './sanitize';
 
@@ -261,16 +262,15 @@ export function ChatInput({
                 {c.endLine !== c.startLine ? `-${c.endLine}` : ''}
               </span>
               <span className="comment-chip-text">{c.text}</span>
-              <button
+              <IconButton
+                size="sm"
+                icon={CloseIcon}
+                label="外す"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemoveComment(c.id);
                 }}
-                aria-label="外す"
-                data-tip="外す"
-              >
-                ×
-              </button>
+              />
             </span>
           ))}
         </div>
@@ -280,9 +280,7 @@ export function ChatInput({
           {attachments.map((path) => (
             <span key={path} className="attachment" title={path}>
               画像 {path.split('/').pop()?.replace(/^[0-9a-f]{8}-/, '')}
-              <button onClick={() => onAttachmentsChange(attachments.filter((p) => p !== path))} aria-label="外す" data-tip="外す">
-                ×
-              </button>
+              <IconButton size="sm" icon={CloseIcon} label="外す" onClick={() => onAttachmentsChange(attachments.filter((p) => p !== path))} />
             </span>
           ))}
         </div>
@@ -334,13 +332,9 @@ export function ChatInput({
           }}
         />
         {showInterrupt ? (
-          <button className="send-button secondary" onClick={onInterrupt}>
-            中断
-          </button>
+          <IconButton icon={StopIcon} danger label="中断" onClick={onInterrupt} />
         ) : (
-          <button className="send-button" onClick={onSend} disabled={blocked}>
-            送信
-          </button>
+          <IconButton primary icon={SendIcon} label="送信" tip="送信（⌘Enter）" onClick={onSend} disabled={blocked} />
         )}
       </div>
     </div>

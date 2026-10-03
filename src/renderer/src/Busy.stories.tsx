@@ -94,10 +94,6 @@ function Catalog() {
       </Place>
       <Place title="ステータスバー">
         <StatusBar
-          previewOpen={false}
-          onTogglePreview={noop}
-          terminalOpen={false}
-          onToggleTerminal={noop}
           status="running"
           exitCode={null}
           branch="develop"

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Menu, MenuOption } from '@shared/screen';
+import { CheckIcon, CloseIcon, IconButton } from '../icons';
 
 const KIND_LABEL = { question: 'Claude Code からの質問', permission: '実行の許可', other: '確認' } as const;
 // 自由記述の欄がまだ空のときの表示（「Type something.」。複数選択では末尾の . が無い）
@@ -56,7 +57,7 @@ export function MenuCard({ sessionId, menu }: Props) {
         <div className="menu-tabs">
           {menu.tabs.map((tab) => (
             <span key={tab.label} className={`menu-tab${tab.answered ? ' answered' : ''}`}>
-              {tab.answered ? '✓ ' : ''}
+              {tab.answered && <CheckIcon size={12} />}
               {tab.label}
             </span>
           ))}
@@ -83,9 +84,7 @@ export function MenuCard({ sessionId, menu }: Props) {
               <button className="send-button" type="submit" disabled={!text.trim()}>
                 {menu.multiSelect ? '決定' : '送信'}
               </button>
-              <button className="ghost-button" type="button" onClick={() => setEditing(false)}>
-                やめる
-              </button>
+              <IconButton icon={CloseIcon} size="md" label="やめる" onClick={() => setEditing(false)} />
             </form>
           ) : (
             <button
@@ -95,7 +94,7 @@ export function MenuCard({ sessionId, menu }: Props) {
               onMouseEnter={() => isChoice(option) && setPreviewed(option.id)}
               onFocus={() => isChoice(option) && setPreviewed(option.id)}
             >
-              {option.checked !== null && <span className={`menu-check${option.checked ? ' on' : ''}`}>{option.checked ? '✓' : ''}</span>}
+              {option.checked !== null && <span className={`menu-check${option.checked ? ' on' : ''}`}>{option.checked && <CheckIcon size={12} />}</span>}
               <span className="menu-option-text">
                 <span className="menu-option-label">{optionLabel(option)}</span>
                 {option.description && <span className="menu-option-desc">{option.description}</span>}
@@ -112,9 +111,7 @@ export function MenuCard({ sessionId, menu }: Props) {
         </div>
       )}
       <div className="menu-footer">
-        <button className="ghost-button" onClick={() => window.tanacode.pty.write(sessionId, '\x1b')}>
-          キャンセル（Esc）
-        </button>
+        <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="キャンセル（Esc）" onClick={() => window.tanacode.pty.write(sessionId, '\x1b')} />
       </div>
     </div>
   );

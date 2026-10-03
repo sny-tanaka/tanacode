@@ -14,7 +14,7 @@ import { formatDuration, formatTokens, groupByPhase, shortModel } from '../workf
 import { WorkflowFlow } from '../workflow/WorkflowFlow';
 import { BASH_STATE_LABEL, elapsed, stoppable, useNow, type TaskEntry } from './taskList';
 import { Busy } from '../layout/Busy';
-import { FlowIcon, StopIcon } from '../layout/icons';
+import { CloseIcon, DisclosureIcon, FlowIcon, IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
 
 // 実行中の会話ログを読み直す間隔
@@ -51,23 +51,17 @@ export function TaskPane({ sessionId, task, subagent, workflow, bash, stopping, 
         <TaskMeta task={task} subagent={subagent} workflow={workflow} bash={bash} />
         <div className="spacer" />
         {stoppable(task) && (
-          <button className="task-stop-button" onClick={onStop} disabled={stopping}>
-            {stopping ? (
-              <>
-                <span className="spinner" />
-                止めています…
-              </>
-            ) : (
-              <>
-                <StopIcon size={12} />
-                止める
-              </>
-            )}
-          </button>
+          <IconButton
+            icon={StopIcon}
+            danger
+            size="md"
+            busy={stopping}
+            label={stopping ? '止めています' : '止める'}
+            tip={stopping ? '止めています…' : undefined}
+            onClick={onStop}
+          />
         )}
-        <button className="editor-tab-close" onClick={onClose} aria-label="閉じる" data-tip="閉じる">
-          ×
-        </button>
+        <IconButton icon={CloseIcon} size="sm" label="閉じる" onClick={onClose} />
       </div>
       {task.ref.kind === 'subagent' && (
         <AgentConversation
@@ -188,12 +182,7 @@ const AgentConversation = memo(function AgentConversation({
         </div>
       )}
       {events !== null && items.length === 0 && <div className="chat-note">{live ? <Busy>起動を待っています…</Busy> : '会話ログがありません'}</div>}
-      {prompt?.kind === 'user' && (
-        <details className="task-prompt" open={prompt.text.length < 600}>
-          <summary>指示</summary>
-          <Markdown text={prompt.text} />
-        </details>
-      )}
+      {prompt?.kind === 'user' && <PromptDetails key={key} text={prompt.text} />}
       {rows.map((row) =>
         row.kind === 'tool-group' ? (
           <ToolGroupRow
@@ -232,6 +221,20 @@ const AgentConversation = memo(function AgentConversation({
     </div>
   );
 });
+
+// 最初の発言（起動時の指示）。長いときは畳んでおく。矢印を出すので、開いているかを持つ
+function PromptDetails({ text }: { text: string }) {
+  const [open, setOpen] = useState(text.length < 600);
+  return (
+    <details className="task-prompt" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>
+        <DisclosureIcon open={open} />
+        指示
+      </summary>
+      <Markdown text={text} />
+    </details>
+  );
+}
 
 // 結果は最後の返事と同じことが多い。同じなら重ねて出さない（結果は長いと途中で切られている）
 function sameAsLastText(items: ReturnType<typeof chatFromEvents>['items'], result: string): boolean {

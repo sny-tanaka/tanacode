@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GitDiffSides } from '@shared/ipc';
 import { editorTheme, languageFor, monaco } from '../editor/monaco';
 import { LineComments, type ReviewComment } from '../review/LineComments';
+import { ArrowDownIcon, ArrowUpIcon, CloseIcon, ColumnsIcon, FileIcon, IconButton, RowsIcon } from '../icons';
 
 type Props = {
   path: string;
@@ -95,26 +96,15 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
         <div className="spacer" />
         {nav && (
           <>
-            <button className="ghost-button" disabled={!nav.onPrev} onClick={() => nav.onPrev?.()} data-tip="前のファイル" aria-label="前のファイル">
-              ↑
-            </button>
+            <IconButton icon={ArrowUpIcon} label="前のファイル" disabled={!nav.onPrev} onClick={() => nav.onPrev?.()} />
             <span className="diff-pane-kind">{nav.position}</span>
-            <button className="ghost-button" disabled={!nav.onNext} onClick={() => nav.onNext?.()} data-tip="次のファイル" aria-label="次のファイル">
-              ↓
-            </button>
+            <IconButton icon={ArrowDownIcon} label="次のファイル" disabled={!nav.onNext} onClick={() => nav.onNext?.()} />
           </>
         )}
-        <button className="ghost-button" onClick={() => setInline((v) => !v)}>
-          {inline ? '左右に並べる' : 'インライン'}
-        </button>
-        {onOpenFile && (
-          <button className="ghost-button" onClick={() => onOpenFile(path)}>
-            ファイルを開く
-          </button>
-        )}
-        <button className="editor-tab-close" onClick={onClose} aria-label="差分を閉じる" data-tip="差分を閉じる">
-          ×
-        </button>
+        {/* 押すと切り替わる先のアイコンと名前を出す */}
+        <IconButton icon={inline ? ColumnsIcon : RowsIcon} label={inline ? '左右に並べる' : 'インライン'} onClick={() => setInline((v) => !v)} />
+        {onOpenFile && <IconButton icon={FileIcon} label="ファイルを開く" onClick={() => onOpenFile(path)} />}
+        <IconButton icon={CloseIcon} label="差分を閉じる" onClick={onClose} />
       </div>
       <div className="editor-body">
         <div className="editor-monaco" ref={containerRef} />

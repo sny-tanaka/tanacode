@@ -1,3 +1,4 @@
+import { IconButton, TrashIcon } from '../icons';
 import type { ReviewComment } from './LineComments';
 
 type Props = {
@@ -22,16 +23,16 @@ export function CommentList({ comments, onShow, onRemove }: Props) {
               <div className="review-comment-where">
                 {c.path}:{c.startLine}
                 {c.endLine !== c.startLine ? `-${c.endLine}` : ''}
-                <button
+                <IconButton
+                  size="sm"
+                  danger
+                  icon={TrashIcon}
+                  label="削除"
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemove(c.id);
                   }}
-                  aria-label="削除"
-                  data-tip="削除"
-                >
-                  ×
-                </button>
+                />
               </div>
               <div className="review-comment-text">{c.text}</div>
             </div>

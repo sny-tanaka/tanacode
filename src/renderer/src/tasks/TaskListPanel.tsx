@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from 'react';
 import { formatDuration } from '../workflow/WorkflowCard';
 import { elapsed, stoppable, useNow, type TaskEntry, type TaskState } from './taskList';
-import { StopIcon } from '../layout/icons';
+import { IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
 
 const KIND_LABEL = { subagent: 'エージェント', workflow: 'ワークフロー', bash: 'Bash' } as const;
@@ -42,24 +42,21 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
           <span className={`task-card-state ${task.state}`}>{STATE_LABEL[task.state]}</span>
           <div className="spacer" />
           {ms !== null && <span className="task-time">{formatDuration(ms)}</span>}
-          {stoppable(task) &&
-            (stopping.has(task.key) ? (
-              <span className="task-stop busy" aria-label="止めています" data-tip="止めています…">
-                <span className="spinner" />
-              </span>
-            ) : (
-              <button
-                className="task-stop"
-                aria-label="止める"
-                data-tip="止める"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onStop(task);
-                }}
-              >
-                <StopIcon size={16} />
-              </button>
-            ))}
+          {stoppable(task) && (
+            <IconButton
+              icon={StopIcon}
+              danger
+              size="sm"
+              className="task-stop"
+              busy={stopping.has(task.key)}
+              label={stopping.has(task.key) ? '止めています' : '止める'}
+              tip={stopping.has(task.key) ? '止めています…' : undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                onStop(task);
+              }}
+            />
+          )}
         </div>
         <div className="task-card-name">{task.name}</div>
         {task.progress && <div className="task-card-progress">{task.progress}</div>}

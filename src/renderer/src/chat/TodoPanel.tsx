@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { TodoItem } from '@shared/chat';
+import { DisclosureIcon } from '../icons';
 import { CheckMark } from '../layout/CheckMark';
 
 const MARK: Record<string, string> = { pending: '○' };
@@ -24,7 +25,7 @@ export function TodoPanel({ todos }: { todos: TodoItem[] }) {
   return (
     <div className="todo-panel">
       <button className="todo-head" onClick={() => setOpen((v) => !v)}>
-        <span className={`tree-chevron`}>{open ? '▾' : '▸'}</span>
+        <DisclosureIcon open={open} />
         <span className="todo-title">Todo</span>
         <span className="todo-count">
           {done}/{todos.length}

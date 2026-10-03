@@ -85,7 +85,7 @@ async function comment(d: Director, text: string, body: string): Promise<void> {
   await sleep(300);
   await d.type('.comment-box.draft textarea', body, 40);
   await sleep(300);
-  await d.click(d.byText('.comment-box.draft button', 'コメントを追加'), { ms: 500 });
+  await d.click('.comment-box.draft [aria-label="コメントを追加"]', { ms: 500 });
 }
 
 export async function runReview(backend: DemoBackend, d: Director): Promise<void> {
@@ -106,7 +106,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   // 2. MenuCard.tsx の差分を開き、インラインにする
   await d.click('.scm-row[title^="src/components/MenuCard.tsx"]');
   await sleep(900);
-  await d.click(d.byText('.diff-pane-head .ghost-button', 'インライン'), { ms: 600 });
+  await d.click('.diff-pane-head [aria-label="インライン"]', { ms: 600 });
   await sleep(900);
 
   // 3. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）
@@ -125,7 +125,7 @@ export async function runReview(backend: DemoBackend, d: Director): Promise<void
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
-  await d.click(d.byText('.send-button', '送信'));
+  await d.click('.chat-input-row [aria-label="送信"]');
   await sent;
   claude.startWorking();
 

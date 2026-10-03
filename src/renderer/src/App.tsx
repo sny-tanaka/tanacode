@@ -32,7 +32,7 @@ import { useClaudeVersion } from './system/ClaudeVersion';
 import { useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
-import { BranchIcon, FilesIcon, SearchIcon, TasksIcon } from './layout/icons';
+import { BranchIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
 import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
@@ -53,7 +53,7 @@ const NO_CHANGES: Record<string, FileChange> = {};
 
 type SidePanel = 'files' | 'search' | 'scm' | 'tasks';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）
-const SIDE_PANELS: { id: SidePanel; label: string; title: string; Icon: () => React.JSX.Element }[] = [
+const SIDE_PANELS: { id: SidePanel; label: string; title: string; Icon: IconComponent }[] = [
   { id: 'files', label: 'エクスプローラー', title: 'エクスプローラー', Icon: FilesIcon },
   { id: 'search', label: '検索', title: '検索（⌘⇧F）', Icon: SearchIcon },
   { id: 'scm', label: 'ソース管理', title: 'ソース管理（git）。ブランチの変更を見て、行にコメントを付けて Claude に返す', Icon: BranchIcon },
@@ -108,6 +108,7 @@ export function App() {
   const [terminal, setTerminal] = useState<{ open: boolean; view: TerminalView }>({ open: false, view: 'shell' });
   const showClaudeScreen = useCallback(() => setTerminal({ open: true, view: 'claude' }), []);
   const showShell = useCallback(() => setTerminal({ open: true, view: 'shell' }), []);
+  const toggleShell = useCallback(() => setTerminal((t) => (t.open && t.view === 'shell' ? { ...t, open: false } : { open: true, view: 'shell' })), []);
   // 左から 3 番目のペイン
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
@@ -130,6 +131,13 @@ export function App() {
   const chat = selected?.archived && liveChat.status === 'not-started' ? (archivedChats[selected.id] ?? liveChat) : liveChat;
   // 右パネル・エディタで扱うもの。選んでいるセッションか、新規セッションの画面で選んでいるフォルダ
   const viewId = selected?.id ?? draft?.id ?? null;
+  // ブラウザとターミナルの持ち主。セッションを見ているときはそのセッション。新規セッションの画面では、いま開いているフォルダ（どのセッションにも紐づかず、画面を閉じると一緒に閉じる）
+  const draftToolId = composing && draft && draft.cwd === composing.cwd ? draft.id : null;
+  const toolId = selected ? (selected.archived ? null : selected.id) : draftToolId;
+  // 新規セッションの画面には、Claude Code の画面がない。ターミナルはシェルで開く
+  useEffect(() => {
+    if (!selected) setTerminal((t) => (t.view === 'claude' ? { ...t, view: 'shell' } : t));
+  }, [selected]);
   const cwd = selected?.cwd ?? draft?.cwd ?? null;
   const editor = (cwd && editors[cwd]) || EMPTY_EDITOR;
   const workspace = viewId ? workspaces[viewId] : undefined;
@@ -267,8 +275,8 @@ export function App() {
     };
   }, []);
 
-  // アーカイブしていないセッション（ブラウザのタブを持っておくもの。消した・アーカイブしたセッションのタブは閉じる）
-  const liveKey = (sessions ?? []).filter((s) => !s.archived).map((s) => s.id).join(',');
+  // アーカイブしていないセッションと、新規セッションの画面のフォルダ（ブラウザのタブを持っておくもの。消した・アーカイブしたセッション、閉じた画面のタブは閉じる）
+  const liveKey = [...(sessions ?? []).filter((s) => !s.archived).map((s) => s.id), ...(draftToolId ? [draftToolId] : [])].join(',');
   const liveSessionIds = useMemo(() => (liveKey ? liveKey.split(',') : []), [liveKey]);
 
   useEffect(() => {
@@ -390,7 +398,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.metaKey && e.code === 'Backquote') {
         e.preventDefault();
-        setTerminal((t) => (t.open && t.view === 'shell' ? { ...t, open: false } : { open: true, view: 'shell' }));
+        toggleShell();
         return;
       }
       if (!(e.metaKey || e.ctrlKey) || !viewId) return;
@@ -514,8 +522,7 @@ export function App() {
   );
 
   // タスクは会話のあるセッションだけ。新規セッションの画面ではエクスプローラー・検索・ソース管理だけを出す
-  const sidePanels = selected ? SIDE_PANELS : SIDE_PANELS.filter((p) => p.id !== 'tasks');
-  const shownPanel = sidePanels.some((p) => p.id === sidePanel) ? sidePanel : 'files';
+  const shownPanel = sidePanel;
   const openScm = useCallback(() => setSidePanel('scm'), []);
 
   const activeFile = editor.files.find((f) => f.path === editor.activePath);
@@ -602,15 +609,41 @@ export function App() {
         {viewId && cwd && workspace && (
           <aside className="explorer">
             <div className="activity-bar">
-              {sidePanels.map(({ id, title, Icon }) => {
+              {SIDE_PANELS.map(({ id, title, Icon }) => {
                 const badge = id === 'scm' ? gitCount : id === 'tasks' ? trayTasks.length : 0;
                 return (
                   <button key={id} className={shownPanel === id ? 'on' : ''} onClick={() => setSidePanel(id)} data-tip={title} data-tip-side="right" aria-label={title}>
-                    <Icon />
+                    <Icon size={22} />
                     {badge > 0 && <span className={`activity-badge${id === 'tasks' ? ' live' : ''}`}>{badge}</span>}
                   </button>
                 );
               })}
+              {/* パネルの切り替えではなく、中央のブラウザと下のターミナルを開く・閉じる（セッションか、新規セッションの画面のフォルダがあるとき） */}
+              {toolId && (
+                <>
+                  <span className="activity-sep" />
+                  <button
+                    className={`activity-toggle${diffView?.source === 'preview' ? ' on' : ''}`}
+                    onClick={() => setDiffView(diffView?.source === 'preview' ? null : { source: 'preview' })}
+                    data-tip={'ブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます'}
+                    data-tip-side="right"
+                    aria-label="ブラウザ"
+                    aria-pressed={diffView?.source === 'preview'}
+                  >
+                    <GlobeIcon size={22} />
+                  </button>
+                  <button
+                    className={`activity-toggle${terminal.open && terminal.view === 'shell' ? ' on' : ''}`}
+                    onClick={toggleShell}
+                    data-tip="ターミナルを開く・閉じる（⌃`）"
+                    data-tip-side="right"
+                    aria-label="ターミナル"
+                    aria-pressed={terminal.open && terminal.view === 'shell'}
+                  >
+                    <TerminalIcon size={22} />
+                  </button>
+                </>
+              )}
             </div>
             <div className="side-panel">
               <div className="side-panel-title">{SIDE_PANELS.find((p) => p.id === shownPanel)?.label}</div>
@@ -643,8 +676,8 @@ export function App() {
                   onRemoveComment={removeComment}
                 />
               </div>
-              {selected && (
-                <div hidden={shownPanel !== 'tasks'} className="side-body">
+              <div hidden={shownPanel !== 'tasks'} className="side-body">
+                {selected ? (
                   <TaskListPanel
                     tasks={allTasks}
                     activeKey={activeTaskKey}
@@ -653,8 +686,11 @@ export function App() {
                     stopping={stoppingTasks}
                     visible={shownPanel === 'tasks'}
                   />
-                </div>
-              )}
+                ) : (
+                  // 新規セッションの画面にはセッションがない。ボタンは残して、開いたら何が見られるかを伝える
+                  <div className="scm-empty">セッションで実行したバックグラウンドタスクが表示されます</div>
+                )}
+              </div>
               <div hidden={shownPanel !== 'search'} className="side-body">
                 <SearchPanel key={cwd} ref={searchInputRef} sessionId={viewId} onOpen={openPath} />
               </div>
@@ -748,13 +784,14 @@ export function App() {
           )}
           {/* 見ていないセッションのブラウザも持っておく（Claude が裏で操作できるように） */}
           <PreviewPane
-            sessionId={selected && !selected.archived ? selected.id : null}
-            visible={diffView?.source === 'preview' && !!selected && !selected.archived}
+            sessionId={toolId}
+            visible={diffView?.source === 'preview' && !!toolId}
             liveSessionIds={liveSessionIds}
             onClose={closeCenter}
           />
           <TerminalPanel
-            sessionId={selected && !selected.archived ? selected.id : null}
+            sessionId={toolId}
+            claudeScreen={!!selected}
             open={terminal.open}
             view={terminal.view}
             onView={(view) => setTerminal({ open: true, view })}
@@ -763,12 +800,6 @@ export function App() {
         </div>
       </div>
       <StatusBar
-        previewOpen={diffView?.source === 'preview'}
-        onTogglePreview={() => setDiffView(diffView?.source === 'preview' ? null : { source: 'preview' })}
-        terminalOpen={terminal.open && terminal.view === 'shell'}
-        onToggleTerminal={() =>
-          setTerminal((t) => (t.open && t.view === 'shell' ? { ...t, open: false } : { open: true, view: 'shell' }))
-        }
         status={chat.status}
         exitCode={chat.exitCode}
         branch={(git.state?.isRepo ? git.state.branch : workspace?.branch) ?? null}

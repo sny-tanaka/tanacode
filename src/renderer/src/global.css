@@ -201,7 +201,7 @@ input[type='checkbox'] {
 }
 /* まだ見ていない新しいバージョン。矢印を受け皿へ落とす動きと、周りに広がる波紋を、マウスを乗せるまで繰り返す。画面を見ていないときでも、見たときに気づけるようにする。
    動きは 1.2 秒で、そのあと 1.8 秒休む（3 秒の周期。キーフレームの % は、1.2 秒の動きを 3 秒に引き伸ばした割合） */
-.app-update.calling .app-update-arrow {
+.app-update.calling .icon > path:first-child {
   animation: app-update-drop 3s ease-out infinite;
 }
 .app-update.calling::after {
@@ -216,7 +216,7 @@ input[type='checkbox'] {
 }
 @keyframes app-update-drop {
   0% {
-    transform: translateY(-4px);
+    transform: translateY(-6px);
     opacity: 0;
   }
   12% {
@@ -224,7 +224,7 @@ input[type='checkbox'] {
     opacity: 1;
   }
   17% {
-    transform: translateY(1.5px);
+    transform: translateY(2px);
   }
   22%,
   100% {
@@ -243,7 +243,7 @@ input[type='checkbox'] {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .app-update.calling .app-update-arrow,
+  .app-update.calling .icon > path:first-child,
   .app-update.calling::after {
     animation: none;
   }
@@ -306,6 +306,18 @@ input[type='checkbox'] {
 }
 .activity-bar button:hover {
   color: var(--text-primary);
+}
+/* パネルの切り替え（上）と、ブラウザ・ターミナルの開閉（下）を分ける */
+.activity-sep {
+  flex: none;
+  width: 22px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-subtle);
+}
+/* 開いている間は色だけ変える（左の線は、いま見ているパネルのしるし） */
+.activity-bar button.activity-toggle.on {
+  border-left-color: transparent;
 }
 .activity-bar button.on {
   color: var(--ide);
@@ -434,9 +446,6 @@ body.resizing * {
   color: var(--text-secondary);
   font-size: 11px;
 }
-.diff-pane .editor-tab-close {
-  visibility: visible;
-}
 .scm-empty {
   padding: 12px 14px;
   color: var(--text-secondary);
@@ -477,11 +486,17 @@ body.resizing * {
   background: var(--bg-hover);
 }
 .scm-branch-icon {
+  display: inline-flex;
   color: var(--ide);
 }
 .scm-sync {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   min-width: 24px;
+  min-height: 26px;
   padding: 2px 5px;
   border: none;
   border-radius: 5px;
@@ -494,12 +509,6 @@ body.resizing * {
 .scm-sync:disabled {
   color: var(--text-tertiary);
   cursor: default;
-}
-/* 一覧 / ツリーの切り替えとフェッチ（文字ではなく線画のアイコン） */
-.scm-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 .scm-branch-menu {
   position: absolute;
@@ -679,25 +688,6 @@ body.resizing * {
   margin-left: auto;
   display: flex;
   gap: 2px;
-  visibility: hidden;
-}
-.scm-row:hover .scm-actions,
-.scm-section-head:hover .scm-actions {
-  visibility: visible;
-}
-.scm-actions button {
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  cursor: pointer;
-}
-.scm-actions button:hover {
-  background: var(--bg-selected);
-  color: var(--text-primary);
 }
 .scm-code {
   flex: none;
@@ -955,10 +945,12 @@ body.resizing * {
   color: var(--text-heading);
 }
 .tree-chevron {
-  width: 10px;
+  width: 12px;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-secondary);
-  font-size: 10px;
 }
 .tree-label {
   flex: 0 1 auto;
@@ -1039,26 +1031,6 @@ body.resizing * {
 .editor-tab-dot.dirty {
   background: var(--text-primary);
 }
-.editor-tab-close {
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  visibility: hidden;
-}
-.editor-tab:hover .editor-tab-close,
-.editor-tab.active .editor-tab-close {
-  visibility: visible;
-}
-.editor-tab-close:hover {
-  background: var(--bg-selected);
-  color: var(--text-primary);
-}
 .editor-crumb {
   height: 28px;
   flex: none;
@@ -1110,7 +1082,7 @@ body.resizing * {
 .change-bar .diff-del {
   font-size: 12px;
 }
-.change-bar .ghost-button {
+.change-bar .icon-button {
   margin: -4px -6px -4px 0;
 }
 
@@ -1246,44 +1218,12 @@ body.resizing-rows {
   font: inherit;
   font-size: 11px;
 }
-.terminal-panel-head .ghost-button {
-  flex: none;
-  white-space: nowrap;
-}
 .terminal-tab:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
 }
 .terminal-tab.active {
   color: var(--text-heading);
-  background: var(--bg-selected);
-}
-.terminal-tab-close,
-.terminal-add,
-.terminal-panel-close {
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: 4px;
-  line-height: 1;
-}
-.terminal-tab-close {
-  padding: 2px 4px;
-  font-size: 12px;
-}
-.terminal-add {
-  padding: 4px 8px;
-  font-size: 13px;
-}
-.terminal-panel-close {
-  padding: 4px 6px;
-  font-size: 14px;
-}
-.terminal-tab-close:hover,
-.terminal-add:hover,
-.terminal-panel-close:hover {
-  color: var(--text-primary);
   background: var(--bg-selected);
 }
 .terminal-panel-body {
@@ -1359,6 +1299,91 @@ body.resizing-rows {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* アイコン（src/renderer/src/icons）。大きさと線の太さは部品が決める。色は文字色 */
+.icon {
+  flex: none;
+}
+/* アイコンだけのボタン（IconButton）。アイコンのボタンの見た目は、ここ 1 か所で決める */
+.icon-button {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.icon-button.sm {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+.icon-button.md {
+  width: 26px;
+  height: 26px;
+}
+.icon-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.icon-button.on,
+.icon-button.on:hover:not(:disabled) {
+  color: var(--send-fg);
+}
+.icon-button.danger:hover:not(:disabled) {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.icon-button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.icon-button.busy {
+  cursor: default;
+}
+/* 主な操作（送信・コミット・コメントを追加）。文字の主要ボタン（.send-button）と同じ色と枠 */
+.icon-button.primary {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--send-border);
+  border-radius: 7px;
+  background: var(--send-bg);
+  color: var(--send-fg);
+}
+.icon-button.primary:hover:not(:disabled) {
+  background: var(--send-bg-hover);
+  color: var(--send-fg);
+}
+.icon-button.primary:disabled {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+}
+/* 行・見出し（.reveal-host）にホバーするか、中にフォーカスがあるときだけ出すボタン */
+.icon-button.reveal {
+  visibility: hidden;
+}
+.reveal-host:hover .icon-button.reveal,
+.reveal-host:focus-within .icon-button.reveal,
+.icon-button.reveal:focus-visible {
+  visibility: visible;
+}
+/* 展開の矢印（DisclosureIcon）。開いたら 90 度回る */
+.disclosure {
+  flex: none;
+  display: inline-flex;
+  transition: transform 0.12s;
+}
+.disclosure.open {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .disclosure {
+    transition: none;
+  }
 }
 .ghost-button {
   flex: none;
@@ -1498,22 +1523,7 @@ body.resizing-rows {
   position: absolute;
   top: 6px;
   right: 6px;
-  padding: 2px 8px;
-  border-radius: 5px;
-  border: 1px solid var(--border-strong);
   background: var(--bg-surface);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  visibility: hidden;
-}
-.chat-user:hover .chat-rewind {
-  visibility: visible;
-}
-.chat-rewind:hover {
-  color: var(--text-primary);
-  border-color: var(--border-focus);
 }
 .chat-user-body {
   flex: 1;
@@ -1599,19 +1609,21 @@ body.resizing-rows {
 /* シェルのコードブロックの「実行」ボタン（右上） */
 .markdown pre.runnable {
   position: relative;
-  padding-right: 76px;
+  padding-right: 40px;
 }
 .code-run {
   position: absolute;
   top: 6px;
   right: 6px;
-  padding: 2px 8px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
   background: var(--bg-chrome);
   color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
   cursor: pointer;
 }
 .code-run:hover {
@@ -1771,6 +1783,13 @@ body.resizing-rows {
   align-items: flex-end;
   gap: 8px;
 }
+/* 送信と同じ位置に出る中断は、送信と同じ大きさにそろえる */
+.chat-input-row > .icon-button.danger {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+}
 
 /* @ファイル・/コマンドの補完 */
 .suggest {
@@ -1835,15 +1854,6 @@ body.resizing-rows {
   color: var(--text-primary);
   font-size: 11px;
 }
-.attachment button {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.attachment button:hover {
-  color: var(--text-primary);
-}
 .chat-input:focus-within {
   /* 選んでいる間だけ、枠 1px をグラデーションにする（内側は bg-surface） */
   border-color: transparent;
@@ -1905,12 +1915,6 @@ body.resizing-rows {
   background: var(--bg-surface);
   color: var(--text-tertiary);
   cursor: default;
-}
-.send-button.secondary,
-.send-button.secondary:hover:not(:disabled) {
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text-primary);
 }
 
 /* ステータスバー */
@@ -1996,6 +2000,7 @@ body.resizing-rows {
   border-color: var(--border-focus);
 }
 .new-session-plus {
+  display: inline-flex;
   color: var(--text-secondary);
 }
 .session-list {
@@ -2010,27 +2015,7 @@ body.resizing-rows {
   justify-content: space-between;
 }
 .session-lock {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
   margin: -6px -6px -6px 0;
-  padding: 0;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-}
-.session-lock:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-/* ロック中は、オンのスイッチと同じ色 */
-.session-lock.on {
-  color: var(--send-fg);
 }
 .pane-heading.clickable {
   display: flex;
@@ -2165,7 +2150,8 @@ body.resizing-rows {
 }
 .settings-files-foot {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--border-subtle);
 }
@@ -2214,10 +2200,6 @@ body.resizing-rows {
   color: var(--text-primary);
   font: inherit;
   outline: none;
-}
-.session-action.danger:hover {
-  color: var(--danger);
-  border-color: var(--danger);
 }
 
 /* セッションの状態の印。形で見分ける: 回る弧 = 作業中 / 輪 = バックグラウンドの完了待ち /
@@ -2455,23 +2437,12 @@ body.resizing-rows {
   font-size: 11px;
   color: var(--text-secondary);
 }
-.session-action {
+/* 行にホバーするまで、場所を取らない（タイトルの幅を削らない） */
+.session-row .icon-button.reveal {
   display: none;
-  flex: none;
-  padding: 2px 7px;
-  border-radius: 5px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-chrome);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
 }
-.session-row:hover .session-action {
-  display: block;
-}
-.session-action:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
+.session-row:hover .icon-button.reveal {
+  display: inline-grid;
 }
 
 .empty-state {
@@ -2525,18 +2496,16 @@ body.resizing-rows {
   font-size: 11px;
 }
 .model-refresh {
-  flex: none;
-  width: 24px;
   margin-left: -4px;
+}
+/* モデルの選択欄の右。選択欄と同じ高さの枠にする */
+.chat-options .model-refresh {
+  width: 24px;
+  height: auto;
+  align-self: stretch;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-.model-refresh:hover:not(:disabled) {
-  color: var(--text-primary);
 }
 .chat-options select:disabled {
   color: var(--text-tertiary);
@@ -2565,16 +2534,11 @@ body.resizing-rows {
   border-radius: 4px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 10px;
   cursor: pointer;
-  transition: transform 0.12s;
 }
 .tool-toggle:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-}
-.tool-toggle.open {
-  transform: rotate(90deg);
 }
 .tool-detail {
   display: flex;
@@ -2624,6 +2588,22 @@ body.resizing-rows {
 .chat-thinking {
   color: var(--text-secondary);
   font-size: 12px;
+}
+.chat-thinking summary,
+.chat-notice.expandable summary,
+.task-prompt summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+}
+.chat-thinking summary::-webkit-details-marker,
+.chat-notice.expandable summary::-webkit-details-marker,
+.task-prompt summary::-webkit-details-marker {
+  display: none;
+}
+details[open] > summary > .disclosure {
+  transform: rotate(90deg);
 }
 .chat-thinking summary {
   cursor: pointer;
@@ -2731,6 +2711,7 @@ body.resizing-rows {
 }
 .chat-notice.expandable summary {
   cursor: pointer;
+  justify-content: center;
   text-align: center;
 }
 .chat-notice.expandable[open] {
@@ -2997,6 +2978,9 @@ body.resizing-rows {
   gap: 6px;
 }
 .menu-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 8px;
   border-radius: 10px;
   border: 1px solid var(--border-strong);
@@ -3109,7 +3093,6 @@ body.resizing-rows {
   place-items: center;
   border-radius: 4px;
   border: 1px solid var(--border-strong);
-  font-size: 11px;
 }
 .menu-check.on {
   background: var(--ok);
@@ -3191,9 +3174,8 @@ body.resizing-rows {
   color: var(--text-secondary);
   font-size: 11px;
 }
-.comment-head .ghost-button {
-  padding: 1px 8px;
-  font-size: 11px;
+.comment-head .icon-button {
+  margin: -3px -4px -3px 0;
 }
 .comment-text {
   white-space: pre-wrap;
@@ -3213,6 +3195,7 @@ body.resizing-rows {
 }
 .comment-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
@@ -3271,12 +3254,8 @@ body.resizing-rows {
   font-size: 11px;
   color: var(--ide);
 }
-.review-comment-where button {
-  margin-left: auto;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
+.review-comment-where .icon-button {
+  margin: -2px 0 -2px auto;
 }
 .review-comment-text {
   font-size: 12px;
@@ -3390,15 +3369,10 @@ body.resizing-rows {
   cursor: pointer;
 }
 .tool-open {
+  display: inline-flex;
+  vertical-align: -2px;
   margin-left: 10px;
-  white-space: nowrap;
   color: var(--ide);
-  font-size: 11px;
-}
-.workflow-open {
-  flex: none;
-  padding: 1px 8px;
-  font-size: 11px;
 }
 
 /* タスクの中身（エディタの場所に出す） */
@@ -3955,6 +3929,7 @@ body.resizing-rows {
 }
 .hook-mark {
   flex: none;
+  display: inline-flex;
   color: var(--ok);
 }
 .hook-run.blocked .hook-mark,
@@ -4071,12 +4046,15 @@ body.resizing-rows {
   border: 1px solid var(--border-subtle);
 }
 .segmented button {
-  padding: 1px 8px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 20px;
+  padding: 0;
   border: none;
   border-radius: 4px;
   background: none;
   color: var(--text-secondary);
-  font-size: 11px;
   cursor: pointer;
 }
 .segmented button:hover {
@@ -4238,38 +4216,12 @@ body.resizing-rows {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.preview-tab-close {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  visibility: hidden;
-}
-.preview-tab:hover .preview-tab-close,
-.preview-tab.active .preview-tab-close {
+.preview-tab.active .icon-button.reveal {
   visibility: visible;
 }
-.preview-tab-close:hover {
-  background: var(--bg-selected);
-  color: var(--text-primary);
-}
 .preview-tab-new {
-  flex: none;
-  width: 32px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.preview-tab-new:hover {
-  color: var(--text-primary);
-  background: var(--bg-selected);
+  align-self: center;
+  margin: 0 4px;
 }
 /* Claude が操作したセッションのブラウザを、見ていない間も描かせておく（透明にして、ほかの表示の後ろに置く。大きさは画面が決める） */
 .preview-pane.offstage {
@@ -4288,24 +4240,6 @@ body.resizing-rows {
   gap: 6px 4px;
   padding: 7px 8px;
   border-bottom: 1px solid var(--border-subtle);
-}
-.preview-nav {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 5px;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.preview-nav:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--bg-selected);
-}
-.preview-nav:disabled {
-  color: var(--text-tertiary);
-  cursor: default;
 }
 .preview-address {
   flex: 1 1 180px;
@@ -4336,13 +4270,13 @@ body.resizing-rows {
   color: var(--text-secondary);
   font-size: 11px;
 }
-.preview-toolbar .ghost-button.on {
-  color: var(--send-fg);
-  background: var(--send-bg);
-  border-color: var(--send-fg);
+.preview-toolbar .icon-button.on {
   background: var(--send-bg);
 }
 .preview-errors {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--danger) !important;
   border-color: var(--danger) !important;
 }
@@ -4498,52 +4432,9 @@ body.resizing-rows webview {
 .task-card-state.failed {
   color: var(--danger);
 }
-/* 止める（カードの右上。ホバーで赤くする。止めている間は丸いぐるぐるにする） */
+/* 止める（IconButton。カードの右上に寄せる。止めている間は丸いぐるぐるになる） */
 .task-stop {
-  flex: none;
-  width: 20px;
-  height: 20px;
   margin: -2px -4px -2px 0;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-button.task-stop:hover {
-  background: var(--danger-tint);
-  color: var(--danger);
-}
-.task-stop.busy {
-  cursor: default;
-}
-/* 止める（タスクの中身の見出し） */
-.task-stop-button {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.task-stop-button:hover:not(:disabled) {
-  border-color: var(--danger);
-  background: var(--danger-tint);
-  color: var(--danger);
-}
-.task-stop-button:disabled {
-  color: var(--text-tertiary);
-  cursor: default;
 }
 .task-card-name {
   font-size: 12px;
@@ -4569,9 +4460,6 @@ button.task-stop:hover {
 .chat-user.pending {
   border: 1px dashed var(--border-strong);
   color: var(--text-secondary);
-}
-.chat-user.pending .chat-rewind {
-  visibility: visible;
 }
 .chat-user-meta {
   display: block;
@@ -4662,7 +4550,7 @@ button.task-stop:hover {
   .new-session-hero,
   .new-session-title,
   .new-session-sub,
-  .new-session-chip.icon.busy svg {
+  .new-session-chip.icon-only.busy svg {
     animation: none;
   }
 }
@@ -4689,10 +4577,7 @@ button.task-stop:hover {
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.new-session-chip svg {
-  flex: none;
-  width: 14px;
-  height: 14px;
+.new-session-chip .icon {
   color: var(--text-secondary);
 }
 .new-session-chip:hover {
@@ -4708,25 +4593,21 @@ button.task-stop:hover {
   color: var(--send-fg);
 }
 /* アイコンだけの小さなボタン（ブランチの横の「最新のデフォルトブランチへ切り替える」） */
-.new-session-chip.icon {
+.new-session-chip.icon-only {
   justify-content: center;
   width: 24px;
   height: 22px;
   padding: 0;
   margin-left: -2px;
 }
-.new-session-chip.icon:hover:not(:disabled) svg {
+.new-session-chip.icon-only:hover:not(:disabled) svg {
   color: var(--text-primary);
 }
-.new-session-chip.icon:disabled {
+.new-session-chip.icon-only:disabled {
   cursor: default;
 }
-.new-session-chip.icon.busy svg {
+.new-session-chip.icon-only.busy svg {
   animation: pulse 1.2s ease-in-out infinite;
-}
-.new-session-chevron {
-  font-size: 10px;
-  color: var(--text-secondary);
 }
 .new-session-warning {
   font-size: 11px;
@@ -4778,29 +4659,13 @@ button.task-stop:hover {
 }
 .folder-menu-row:hover .folder-menu-item,
 .folder-menu-row:focus-within .folder-menu-item {
-  padding-right: 56px;
+  padding-right: 32px;
 }
 .folder-menu-forget {
-  display: none;
   position: absolute;
   right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  padding: 2px 7px;
-  border-radius: 5px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-chrome);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-.folder-menu-row:hover .folder-menu-forget,
-.folder-menu-row:focus-within .folder-menu-forget {
-  display: block;
-}
-.folder-menu-forget:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
 }
 .folder-menu-name {
   font-size: 12px;
@@ -4861,15 +4726,11 @@ button.task-stop:hover {
 .tool-group-head:hover {
   background: var(--bg-hover);
 }
-.tool-group-chevron {
-  flex: none;
-  width: 12px;
+.tool-group-head .disclosure {
   color: var(--text-tertiary);
-  font-size: 10px;
-  transition: transform 0.12s;
 }
-.tool-group-head.open .tool-group-chevron {
-  transform: rotate(90deg);
+.todo-head .disclosure {
+  color: var(--text-secondary);
 }
 .tool-group-count {
   flex: none;

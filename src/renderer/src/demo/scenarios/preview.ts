@@ -102,7 +102,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
 
   // 1. フッターの「ブラウザ」を開き、開発サーバーの URL を開く
   await sleep(1000);
-  await d.click(d.byText('.status-button', 'ブラウザ'), { ms: 900 });
+  await d.click('.activity-bar [aria-label="ブラウザ"]', { ms: 900 });
   await sleep(700);
   await d.click('.preview-address input', { ms: 600 });
   await d.type('.preview-address input', URL, 70);
@@ -122,7 +122,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   await sleep(900);
 
   // 3. 「要素を選ぶ」で価格を選ぶ（入力欄にセレクタ・HTML と、切り出した画像が入る）
-  await d.click(d.byText('.preview-pane .ghost-button', '要素を選ぶ'), { ms: 800 });
+  await d.click('.preview-pane [aria-label="要素を選ぶ"]', { ms: 800 });
   await sleep(500);
   await moveInPage(d, '.menu-card:nth-child(2) .note', 600);
   await sleep(400);
@@ -136,7 +136,7 @@ export async function runPreview(backend: DemoBackend, d: Director): Promise<voi
   await d.click('.chat-input textarea', { ms: 800 });
   await d.type('.chat-input textarea', PROMPT);
   await sleep(300);
-  await d.click(d.byText('.send-button', '送信'));
+  await d.click('.chat-input-row [aria-label="送信"]');
   await sent;
   claude.startWorking();
 

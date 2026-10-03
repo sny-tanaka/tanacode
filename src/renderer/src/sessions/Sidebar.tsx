@@ -4,7 +4,7 @@ import type { SettingsFile } from '@shared/settings-file';
 import { inLockedOrder } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
 import { useSettingsFiles } from '../chat/settingsFiles';
-import { LockIcon, WorktreeIcon } from '../layout/icons';
+import { AddIcon, ArchiveIcon, DisclosureIcon, IconButton, LockIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
 import { PREPARING_LABEL } from './worktree';
 import { UsagePanel } from '../usage/UsagePanel';
 
@@ -78,7 +78,7 @@ export const Sidebar = memo(function Sidebar({
     return (
       <div
         key={s.id}
-        className={`session-row${s.id === selectedId ? ' active' : ''}${s.archived ? ' archived' : ''}`}
+        className={`session-row reveal-host${s.id === selectedId ? ' active' : ''}${s.archived ? ' archived' : ''}`}
         onClick={() => onSelect(s.id)}
         title={s.cwd}
       >
@@ -126,7 +126,7 @@ export const Sidebar = memo(function Sidebar({
                 title={`worktree ${s.worktree.name}（ブランチ ${s.worktree.branch}）で動いています\n元のフォルダ: ${s.worktree.root}`}
               >
                 {s.worktree.root.split('/').pop()}
-                <WorktreeIcon size={11} />
+                <WorktreeIcon size={12} />
                 {s.worktree.name}
               </span>
             ) : (
@@ -140,29 +140,30 @@ export const Sidebar = memo(function Sidebar({
             )}
           </span>
         </div>
-        <button
-          className="session-action"
+        <IconButton
+          icon={s.archived ? UnarchiveIcon : ArchiveIcon}
+          size="sm"
+          reveal
+          label={s.archived ? 'アクティブに戻す' : 'アーカイブ'}
           onClick={(e) => {
             e.stopPropagation();
             if (s.archived) onUnarchive(s.id);
             else onArchive(s.id);
           }}
-          title={s.archived ? 'アクティブに戻す' : 'アーカイブ'}
-        >
-          {s.archived ? '戻す' : 'アーカイブ'}
-        </button>
+        />
         {s.archived && (
-          <button
-            className="session-action danger"
+          <IconButton
+            icon={TrashIcon}
+            size="sm"
+            reveal
+            danger
+            label="一覧から削除"
             onClick={(e) => {
               e.stopPropagation();
               // worktree のセッションは、worktree をどうするかを App のダイアログで聞く
               if (s.worktree || window.confirm(`「${s.title ?? '新しいセッション'}」を一覧から削除しますか？\n（Claude Code の会話ログは残ります）`)) onRemove(s.id);
             }}
-            title="一覧から削除"
-          >
-            削除
-          </button>
+          />
         )}
       </div>
     );
@@ -171,7 +172,10 @@ export const Sidebar = memo(function Sidebar({
   return (
     <nav className="sidebar">
       <button className="new-session-button" onClick={onCreate}>
-        <span className="new-session-plus">＋</span>新規セッション
+        <span className="new-session-plus">
+          <AddIcon size={14} />
+        </span>
+        新規セッション
       </button>
       <button className="import-session-button" onClick={onImport}>
         既存の会話を開く…
@@ -179,26 +183,26 @@ export const Sidebar = memo(function Sidebar({
       <div className="session-list">
         <div className="pane-heading session-heading">
           アクティブ
-          <button
-            className={`session-lock${lock ? ' on' : ''}`}
-            aria-pressed={!!lock}
-            aria-label="並びをロック"
-            data-tip={
+          <IconButton
+            icon={lock ? LockIcon : UnlockIcon}
+            size="sm"
+            className="session-lock"
+            pressed={!!lock}
+            label="並びをロック"
+            tip={
               lock
                 ? '並びをロック中\nクリックで解除すると、最終更新の新しい順に戻ります'
                 : '並びをロック\nロックすると、更新があっても並びが入れ替わりません'
             }
             onClick={() => setLock(lock ? null : sessions.map((s) => s.id))}
-          >
-            <LockIcon locked={!!lock} size={13} />
-          </button>
+          />
         </div>
         {active.length === 0 && <div className="session-empty">セッションはありません</div>}
         {active.map(row)}
         {archived.length > 0 && (
           <>
             <div className="pane-heading clickable" onClick={() => setShowArchived((v) => !v)}>
-              <span className="tree-chevron">{showArchived ? '▾' : '▸'}</span>
+              <DisclosureIcon open={showArchived} />
               アーカイブ済み（{archived.length}）
             </div>
             {showArchived && archived.map(row)}

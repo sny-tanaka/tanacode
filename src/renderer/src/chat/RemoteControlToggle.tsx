@@ -1,4 +1,4 @@
-import { RemoteIcon } from '../layout/icons';
+import { RemoteIcon } from '../icons';
 import { Toggle } from '../layout/Toggle';
 import { useRemoteControlAvailable } from './sessionOptions';
 
@@ -31,7 +31,7 @@ export function RemoteControlToggle({
           : 'つないでいません';
   return (
     <Toggle
-      label={<RemoteIcon size={15} />}
+      label={<RemoteIcon size={16} />}
       name="Remote Control"
       on={available && on}
       disabled={!available}

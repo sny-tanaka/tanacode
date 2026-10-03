@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
+import { ChevronRightIcon, DisclosureIcon } from '../icons';
 import { StatusDot, type DotState } from '../layout/StatusDot';
 import { BASH_STATE_LABEL } from '../tasks/taskList';
 import { ChatImages } from './ChatImages';
@@ -45,7 +46,7 @@ function useFinishing(state: DotState): boolean {
   return finishing;
 }
 
-// ツールの呼び出し。▸ で開くと入力・出力・差分を見られる。ファイルを扱うツールはカードのクリックでファイルを開く
+// ツールの呼び出し。右の矢印で開くと入力・出力・差分を見られる。ファイルを扱うツールはカードのクリックでファイルを開く
 export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props) {
   const [open, setOpen] = useState(false);
   const hasDetail = !!(item.input || item.output || item.patch || subagent?.recent.length || subagent?.result);
@@ -86,7 +87,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
         )}
         {hasDetail && (
           <button
-            className={`tool-toggle${open ? ' open' : ''}`}
+            className="tool-toggle"
             onClick={(e) => {
               e.stopPropagation();
               setOpen((v) => !v);
@@ -94,7 +95,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
             aria-label={open ? '詳細を閉じる' : '詳細を開く'}
             data-tip={open ? '詳細を閉じる' : '詳細を開く'}
           >
-            ▸
+            <DisclosureIcon open={open} />
           </button>
         )}
       </div>
@@ -102,7 +103,12 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
         {dot === 'running' ? <span className="flow-text">{status}</span> : status}
         {subagent && <SubagentProgress run={subagent} />}
         {bash && <span className="subagent-progress">バックグラウンド{bash.exitCode !== null ? ` · 終了コード ${bash.exitCode}` : ''}</span>}
-        {onOpenTask && <span className="tool-open">開く ›</span>}
+        {/* カード全体のクリックで開くので、ボタンにはせず、名前とツールチップだけ付けたアイコンを置く */}
+        {onOpenTask && (
+          <span className="tool-open" role="img" aria-label="開く" data-tip="開く">
+            <ChevronRightIcon size={12} />
+          </span>
+        )}
       </div>
       {item.images && <ChatImages keys={item.images} />}
       {item.hooks && item.hooks.length > 0 && <HookRuns runs={item.hooks} />}

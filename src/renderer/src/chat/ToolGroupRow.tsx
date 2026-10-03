@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { BashTask, TaskRef } from '@shared/task';
+import { DisclosureIcon } from '../icons';
 import { CheckMark } from '../layout/CheckMark';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { ChatRow, sameTasks } from './ChatRow';
@@ -64,7 +65,7 @@ export const ToolGroupRow = memo(function ToolGroupRow({ group, open, onToggle, 
   return (
     <div className="tool-group">
       <button className={`tool-group-head${open ? ' open' : ''}`} onClick={() => onToggle(group.id)} aria-expanded={open}>
-        <span className="tool-group-chevron">▸</span>
+        <DisclosureIcon open={open} />
         <span className="tool-group-count">{summary.count}</span>
         {summary.parts.map((part) => (
           <span key={part} className="tool-group-part">
