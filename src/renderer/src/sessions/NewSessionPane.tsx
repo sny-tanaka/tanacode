@@ -7,7 +7,7 @@ import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
-import { BranchIcon, FolderIcon } from '../layout/icons';
+import { BranchIcon, DefaultBranchIcon, FolderIcon } from '../layout/icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 
 // 最後に選んだ設定ファイル・モデル・エフォート・モード・Remote Control・worktree（このマシンだけの好みなので localStorage に置く）
@@ -42,6 +42,9 @@ type Props = {
   branch: string | null | undefined;
   // ブランチを押したとき。右パネルのソース管理を開く
   onOpenScm: () => void;
+  // 選んでいるフォルダを git の操作に使うときの id（フォルダを開き終えるまでは null）と、操作のあとに git の状態を読み直す関数
+  gitId: string | null;
+  onGitChanged: () => void;
   // エディタ・差分で付けたコメント。最初の指示と一緒に送る
   comments: ReviewComment[];
   onCommentsChange: (comments: ReviewComment[]) => void;
@@ -60,6 +63,8 @@ export function NewSessionPane({
   onCwdChange,
   branch,
   onOpenScm,
+  gitId,
+  onGitChanged,
   comments,
   onCommentsChange,
   onShowComment,
@@ -70,6 +75,9 @@ export function NewSessionPane({
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
+  // 最新のデフォルトブランチへ切り替えている間と、うまくいかなかったときの理由
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [options, setOptions] = useState<NewSessionOptions>(loadOptions);
   const models = useModelCatalog();
   const settingsFiles = useSettingsFiles();
@@ -89,6 +97,7 @@ export function NewSessionPane({
 
   useEffect(() => {
     setInfo(undefined);
+    setSwitchError(null);
     if (!cwd) return;
     let alive = true;
     void window.tanacode.folders.info(cwd).then((value) => alive && setInfo(value));
@@ -107,9 +116,25 @@ export function NewSessionPane({
   );
 
   const missing = !!cwd && info === null;
-  const blocked = !cwd || missing || starting;
+  // ブランチを切り替えている間は送らない（切り替え前のブランチで始まらないように）
+  const blocked = !cwd || missing || starting || switching;
   const canSend = !blocked && (input.trim().length > 0 || attachments.length > 0 || comments.length > 0);
   const currentBranch = branch === undefined ? info?.branch : branch;
+
+  // フェッチしてデフォルトブランチへ切り替え、リモートの最新まで進める（ソース管理のブランチ選択と同じ操作）
+  const switchDefault = async () => {
+    if (!gitId || switching) return;
+    setSwitching(true);
+    setSwitchError(null);
+    try {
+      setSwitchError(await window.tanacode.git.run(gitId, { kind: 'switch-default' }));
+    } catch (err) {
+      setSwitchError(errorMessage(err));
+    } finally {
+      setSwitching(false);
+      onGitChanged();
+    }
+  };
 
   const send = async () => {
     if (!canSend || !cwd) return;
@@ -156,11 +181,23 @@ export function NewSessionPane({
               {currentBranch}
             </button>
           )}
+          {currentBranch && gitId && (
+            <button
+              className={`new-session-chip icon${switching ? ' busy' : ''}`}
+              disabled={switching}
+              onClick={() => void switchDefault()}
+              data-tip="最新のデフォルトブランチへ切り替える（フェッチして、リモートの最新まで進めます）"
+              aria-label="最新のデフォルトブランチへ切り替える"
+            >
+              <DefaultBranchIcon size={14} />
+            </button>
+          )}
           <label className="new-session-check" data-tip={WORKTREE_ABOUT}>
             <input type="checkbox" checked={options.worktree} onChange={(e) => change({ worktree: e.target.checked })} />
             worktree を使う
           </label>
           {missing && <span className="new-session-warning">フォルダが見つかりません</span>}
+          {switchError && <span className="new-session-warning">{switchError}</span>}
         </div>
         <ChatInput
           completion={completion}

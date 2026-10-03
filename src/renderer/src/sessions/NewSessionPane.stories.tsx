@@ -23,6 +23,8 @@ function Pane({ width }: { width: number }) {
         onCwdChange={noop}
         branch="develop"
         onOpenScm={noop}
+        gitId="draft-1"
+        onGitChanged={noop}
         comments={[]}
         onCommentsChange={noop}
         onShowComment={noop}
@@ -56,6 +58,33 @@ export const 最近のフォルダを外せる: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.click(within(canvasElement).getByTitle('/Users/me/work/tanacode'));
     await userEvent.hover(within(canvasElement).getByTitle('/Users/me/work/cafe-menu'));
+  },
+};
+
+// ブランチの横の、最新のデフォルトブランチへ切り替えるボタン（アイコンだけ）にマウスを乗せたところ
+export const 最新のデフォルトブランチへ: Story = {
+  play: async ({ canvasElement }) => {
+    await userEvent.hover(within(canvasElement).getByLabelText('最新のデフォルトブランチへ切り替える'));
+  },
+};
+
+// 切り替えている間。アイコンが脈打ち、完了するまで送信できない
+export const 切り替え中: Story = {
+  beforeEach: () => {
+    mockApi({ 'git.run': () => new Promise(() => {}) });
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByLabelText('最新のデフォルトブランチへ切り替える'));
+  },
+};
+
+// 作業ツリーに変更が残っているなどで切り替えられなかったとき。git の理由を、ブランチの横に出す
+export const 切り替えに失敗: Story = {
+  beforeEach: () => {
+    mockApi({ 'git.run': () => Promise.resolve('error: Your local changes would be overwritten by checkout.') });
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByLabelText('最新のデフォルトブランチへ切り替える'));
   },
 };
 
