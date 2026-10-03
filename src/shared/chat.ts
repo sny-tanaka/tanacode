@@ -240,8 +240,9 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
       if (block.type === 'text' && block.text?.trim()) {
         events.push({ type: 'assistant-text', id: `${entry.uuid}:${i}`, text: block.text });
       } else if (block.type === 'thinking' && block.thinking?.trim()) {
-        // 多くの思考は本文が空（署名だけ）で記録される。本文があるときだけ出す
-        events.push({ type: 'thinking', id: `${entry.uuid}:${i}`, text: block.thinking });
+        // 多くの思考は本文が空（署名だけ）で記録される。本文があるときだけ出す。
+        // 前後の改行は、折り返しを保つ表示で空行になるので取り除く
+        events.push({ type: 'thinking', id: `${entry.uuid}:${i}`, text: block.thinking.trim() });
       } else if (block.type === 'tool_use' && block.id && block.name) {
         const input = block.input ?? {};
         const filePath = typeof input.file_path === 'string' ? input.file_path : undefined;

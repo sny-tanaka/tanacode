@@ -107,7 +107,8 @@ export const READ_FILES = { [ATTACHED]: 'メモ\n', [READ_FILE]: 'コード\n', 
 export function readSteps(cwd: string): Step[] {
   return [
     [
-      { type: 'thinking', thinking: THINKING },
+      // 実際の思考は末尾に改行が付くことがある
+      { type: 'thinking', thinking: `${THINKING}\n` },
       { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: `${cwd}/${READ_FILE}` } },
     ],
     [{ type: 'tool_use', id: 'toolu_image', name: 'Read', input: { file_path: `${cwd}/${IMAGE_FILE}` } }],
@@ -121,7 +122,7 @@ export function checkKnowledge(knowledge: SessionKnowledge): void {
   expect(knowledge.contextTokens).toBeGreaterThan(0);
 }
 
-// 思考の本文があれば、thinking のイベントになる
+// 思考の本文があれば、前後の改行を除いて thinking のイベントになる
 export function checkThinking(events: ChatEvent[]): void {
   expect(events).toContainEqual(expect.objectContaining({ type: 'thinking', text: THINKING }));
 }
