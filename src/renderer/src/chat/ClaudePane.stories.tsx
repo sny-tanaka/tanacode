@@ -57,6 +57,8 @@ function Pane({
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
         session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing }}
+        sessions={[session]}
+        onSelectSession={noop}
         chat={{ ...EMPTY_CHAT, status: worktree?.preparing ? 'starting' : 'idle', items }}
         screen={null}
         workflows={new Map()}

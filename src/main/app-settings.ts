@@ -7,8 +7,16 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しいバージョンが出たら通知するか /
 // settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
 // browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
-// browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）
-type Values = { notifications: boolean; updateCheck: boolean; settingsFiles: StoredSettingsFile[]; browserControl: boolean; browserHosts: string[] };
+// browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
+// sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）
+type Values = {
+  notifications: boolean;
+  updateCheck: boolean;
+  settingsFiles: StoredSettingsFile[];
+  browserControl: boolean;
+  browserHosts: string[];
+  sessionsControl: boolean;
+};
 
 // アプリ自身の設定（Claude Code の設定ではない）
 export class AppSettings {
@@ -54,6 +62,14 @@ export class AppSettings {
     return this.values.browserHosts;
   }
 
+  sessionsControlEnabled(): boolean {
+    return this.values.sessionsControl;
+  }
+
+  setSessionsControlEnabled(on: boolean): void {
+    this.update({ sessionsControl: on });
+  }
+
   setBrowserHosts(hosts: string[]): void {
     this.update({ browserHosts: hosts });
   }
@@ -87,6 +103,7 @@ function load(file: string): Values {
       settingsFiles?: unknown;
       browserControl?: unknown;
       browserHosts?: unknown;
+      sessionsControl?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -94,9 +111,10 @@ function load(file: string): Values {
       settingsFiles: storedFiles(data.settingsFiles),
       browserControl: data.browserControl !== false,
       browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
+      sessionsControl: data.sessionsControl !== false,
     };
   } catch {
-    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [] };
+    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true };
   }
 }
 

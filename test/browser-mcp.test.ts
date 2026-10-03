@@ -5,6 +5,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BROWSER_ASK_TOOL,
+  BROWSER_MCP,
   BROWSER_TOOLS,
   allowedBrowserToolIds,
   browserToolId,
@@ -15,14 +16,18 @@ import {
 } from '../src/shared/browser-tools';
 import { AppSettings } from '../src/main/app-settings';
 import { BrowserAsks } from '../src/main/browser-asks';
-import { BROWSER_GATE_REQUEST, BrowserBridge, browserGateEnv, browserMcpArgs, callBridge, textResult, type BrowserMcpLaunch } from '../src/main/browser-bridge';
+import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from '../src/main/browser-bridge';
+import { McpBridge as BrowserBridge, callBridge as rawCallBridge, textResult, type BridgeRequest } from '../src/main/mcp-bridge';
 import { BROWSER_GATE_COMMAND, gateOutput, readAnswer, runGate } from '../src/main/browser-gate';
-import { respond, runRelay, type RelayDeps } from '../src/main/browser-relay';
+import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
 import { claudeArgs } from '../src/main/claude-session';
 import { mergeSettings } from '../src/main/settings-files';
 import { ownSettings } from '../src/main/statusline';
 
 // アプリ内ブラウザの MCP。中継（MCP の JSON-RPC）・アプリとのソケット・Claude に許す先・起動の引数
+
+const callBridge = (socketPath: string, request: Omit<BridgeRequest, 'id'>, timeoutMs: number, signal?: AbortSignal) =>
+  rawCallBridge(socketPath, request, timeoutMs, BROWSER_CLOSED_MESSAGE, signal);
 
 let root: string;
 beforeEach(() => {
@@ -33,6 +38,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 describe('中継（MCP の JSON-RPC）', () => {
   const calls: [string, Record<string, unknown>][] = [];
   const deps: RelayDeps = {
+    server: BROWSER_MCP,
     version: '9.9.9',
     call: async (tool, args) => {
       calls.push([tool, args]);
@@ -89,6 +95,7 @@ describe('中継（MCP の JSON-RPC）', () => {
       input,
       output,
       {
+        server: BROWSER_MCP,
         version: '9.9.9',
         // 頼む呼び出しは、取り消されるまで返さない
         call: (tool, _args, signal) => {

@@ -6,6 +6,7 @@ import { gatedBrowserToolIds } from '@shared/browser-tools';
 import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
+import { SESSIONS_GATE_COMMAND, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { WORKTREE_GUARD_COMMAND } from './worktree-guard';
 
 // Claude Code は statusLine のコマンドを応答のたびに実行し、モデル・コンテキスト・利用枠（rate_limits）の入った JSON を標準入力に渡す。
@@ -19,14 +20,15 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // 会話ログには答えたあとにしか書かれないので、質問のカードに説明やプレビューを出すにはこれが要る。
 // Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。
 // browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる（browser-gate.ts）。
-// permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）
-export function sessionSettings(browser = false): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(), browser));
+// permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）。
+// sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
+export function sessionSettings(browser = false, sessions = false): string {
+  return JSON.stringify(ownSettings(userStatusLineCommand(), browser, sessions));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
 // 登録した設定ファイルを重ねるときは、そのファイルの statusLine を inner にして、settings-files.ts が合成する
-export function ownSettings(inner: string | null, browser = false): Record<string, unknown> {
+export function ownSettings(inner: string | null, browser = false, sessions = false): Record<string, unknown> {
   const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
   return {
     statusLine: { type: 'command', command },
@@ -35,6 +37,7 @@ export function ownSettings(inner: string | null, browser = false): Record<strin
         { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] },
         { matcher: 'Bash', hooks: [{ type: 'command', command: WORKTREE_GUARD_COMMAND }] },
         ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
+        ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: SESSIONS_GATE_COMMAND, timeout: 10 }] }] : []),
       ],
     },
   };

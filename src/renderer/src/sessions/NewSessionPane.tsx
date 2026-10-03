@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { NewSessionOptions, WorkspaceInfo } from '@shared/ipc';
+import type { NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import type { PermissionMode } from '@shared/screen';
+import { canSee } from '@shared/session-tools';
 import icon from '../assets/icon.png';
 import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
@@ -39,6 +40,8 @@ type Props = {
   // 選んでいるフォルダ。右パネル（エクスプローラー・ソース管理など）とエディタでも、このフォルダを開く
   cwd: string | null;
   onCwdChange: (cwd: string) => void;
+  // 一覧のすべてのセッション。入力欄の @ の候補に、選んでいるフォルダから見えるセッションを出す
+  sessions: SessionSummary[];
   // 右パネルのソース管理が読んだ今のブランチ（切り替えるとすぐ変わる）。まだ読んでいなければ undefined
   branch: string | null | undefined;
   // ブランチを押したとき。右パネルのソース管理を開く
@@ -62,6 +65,7 @@ export function NewSessionPane({
   onForgetFolder,
   cwd,
   onCwdChange,
+  sessions,
   branch,
   onOpenScm,
   gitId,
@@ -112,11 +116,20 @@ export function NewSessionPane({
     };
   }, [cwd]);
 
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const completion = useMemo<CompletionSource>(
     () => ({
       key: `folder:${cwd ?? ''}`,
       listFiles: () => (cwd ? window.tanacode.folders.listFiles(cwd) : Promise.resolve([])),
       listCommands: () => (cwd ? window.tanacode.folders.commands(cwd) : Promise.resolve([])),
+      // 選んだフォルダで始めるセッションから見えるもの（同じリポジトリのセッション）。まだ親子は無い。
+      // ホームのフォルダは画面からは分からないので渡さない（読めるかは main が改めて決める）
+      listSessions: () => {
+        if (!cwd) return [];
+        const draft = { id: '', cwd, worktree: null, parentId: null };
+        return sessionsRef.current.filter((s) => canSee(draft, s));
+      },
     }),
     [cwd],
   );
@@ -210,7 +223,7 @@ export function NewSessionPane({
           attachments={attachments}
           onAttachmentsChange={setAttachments}
           placeholder={
-            cwd ? '最初の指示（⌘Enter で送信 · @ でファイル · / でコマンド）' : '先に作業するフォルダを選んでください'
+            cwd ? '最初の指示（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）' : '先に作業するフォルダを選んでください'
           }
           blocked={blocked}
           onSend={() => void send()}

@@ -43,6 +43,8 @@ const api: TanacodeApi = {
     unarchive: (id) => ipcRenderer.invoke(IpcChannel.SessionsUnarchive, id),
     focus: (id) => ipcRenderer.send(IpcChannel.SessionsFocus, id),
     snapshot: (id) => ipcRenderer.invoke(IpcChannel.SessionsSnapshot, id),
+    submit: (id, text, attachments) => ipcRenderer.invoke(IpcChannel.SessionsSubmit, id, text, attachments),
+    interrupt: (id) => ipcRenderer.send(IpcChannel.SessionsInterrupt, id),
     onChanged: (listener) => subscribe<SessionSummary[]>(IpcChannel.SessionsChanged, listener),
     onSelect: (listener) => subscribe<string>(IpcChannel.SessionsSelect, listener),
     onNew: (listener) => subscribe<undefined>(IpcChannel.SessionsNew, () => listener()),

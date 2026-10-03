@@ -1543,6 +1543,90 @@ body.resizing-rows {
   color: var(--text-secondary);
   font-family: var(--font-mono);
 }
+/* 親セッションの Claude からの指示。人の発言と見分けるため、Claude の色の地と印にして、上に見出しを出す */
+.chat-user.from-parent {
+  background: var(--claude-tint);
+}
+.chat-user.from-parent .chat-prompt {
+  color: var(--claude);
+}
+.chat-from-parent {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin-bottom: -4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--claude);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  /* 1 行に収める。幅が足りないときは、名前だけを「…」で縮める（前後の「親セッション「」と「」からの指示」は折り返さない） */
+  white-space: nowrap;
+}
+button.chat-from-parent {
+  cursor: pointer;
+}
+.chat-from-parent .icon {
+  margin-left: 2px;
+}
+button.chat-from-parent:hover .chat-from-parent-name {
+  text-decoration: underline;
+}
+.chat-from-parent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 発言の中の、@ で選んだセッションへの参照。名前の札にして、押すとそのセッションへ移る */
+.session-ref {
+  display: inline-block;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: var(--send-bg);
+  color: var(--send-fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: left;
+  white-space: normal;
+}
+button.session-ref {
+  cursor: pointer;
+}
+button.session-ref:hover {
+  background: var(--send-bg-hover);
+}
+/* 一覧に無いセッション（一覧から削除したなど）。移れない */
+.session-ref.missing {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+/* 子セッションからの知らせに添える、その子へ移るリンク */
+.chat-session-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-left: 8px;
+}
+.chat-session-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ide);
+  font: inherit;
+  cursor: pointer;
+}
+.chat-session-link:hover {
+  text-decoration: underline;
+}
 
 .markdown {
   font-size: 14px;
@@ -1836,6 +1920,15 @@ body.resizing-rows {
   white-space: nowrap;
   color: var(--text-secondary);
 }
+/* @ の候補のセッション。ファイルと見分けるため、名前を発言の中の札（.session-ref）と同じ色にする */
+.suggest-item.session .suggest-label {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--send-fg);
+  font-family: var(--font-ui);
+}
 
 /* 貼り付け・ドロップした画像 */
 .attachments {
@@ -2048,7 +2141,65 @@ body.resizing-rows {
 .session-row.active {
   background: var(--bg-selected);
 }
+.session-row.active-within {
+  background: var(--bg-hover);
+}
 .session-row.archived .session-title {
+  color: var(--text-secondary);
+}
+/* 子セッション（親の下にぶら下げる）。字下げして、左に親から下りる線を引く（続く子の線はつながる） */
+.session-row.child {
+  margin-left: 22px;
+}
+.session-row.child::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+}
+/* 親の行の、子セッションを畳む・開くボタン。畳んでいる間は子の数を出す */
+.session-children {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.session-children:hover {
+  color: var(--text-primary);
+}
+.session-children.folded {
+  background: var(--bg-surface);
+}
+.session-row.active .session-children.folded {
+  background: var(--bg-hover);
+}
+/* 畳んだ子のどれかが人を待っている・作業している */
+.session-children.folded.waiting {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+.session-children.folded.running {
+  background: var(--claude-tint);
+  color: var(--claude);
+}
+/* 親の下に出せない子（親と区分が違うなど）に添える、親の名前 */
+.session-parent {
   color: var(--text-secondary);
 }
 /* 既存の会話の取り込み */
@@ -2582,6 +2733,10 @@ body.resizing-rows {
 .subagent-progress {
   margin-left: 8px;
   color: var(--text-secondary);
+}
+/* セッションのツールのカードの、対象のセッションの名前 */
+.tool-session {
+  color: var(--text-primary);
 }
 
 /* 思考（本文が記録されているときだけ） */

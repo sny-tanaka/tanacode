@@ -2,10 +2,11 @@
 // tanacode 本体を Node として（ELECTRON_RUN_AS_NODE）動かすので、Node.js を別に入れる必要はない。Electron の API は使わない。
 // ソケットのパスとセッションは、--mcp-config の env で受け取る
 // --gate を付けて動かしたときは、MCP サーバーではなく、JavaScript の実行の確認のフックとして働く（browser-gate.ts）
-import { BROWSER_ASK_TIMEOUT_MS, BROWSER_ASK_TOOL } from '@shared/browser-tools';
-import { BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, callBridge } from './browser-bridge';
+import { BROWSER_ASK_TIMEOUT_MS, BROWSER_ASK_TOOL, BROWSER_MCP } from '@shared/browser-tools';
+import { BROWSER_CLOSED_MESSAGE, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV } from './browser-bridge';
 import { BROWSER_GATE_ARG, runGate } from './browser-gate';
-import { runRelay } from './browser-relay';
+import { callBridge } from './mcp-bridge';
+import { runRelay } from './mcp-relay';
 
 // 1 回の呼び出しを待つ上限。アプリ側の待ち（要素が出るまで待つ・読み込み）より長くする
 const CALL_TIMEOUT_MS = 90_000;
@@ -25,8 +26,10 @@ if (process.argv.includes(BROWSER_GATE_ARG)) {
     process.stdin,
     process.stdout,
     {
+      server: BROWSER_MCP,
       version: process.env.TANACODE_VERSION ?? '0.0.0',
-      call: (tool, args, signal) => callBridge(socketPath, { session, tool, args }, tool === BROWSER_ASK_TOOL ? ASK_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS, signal),
+      call: (tool, args, signal) =>
+        callBridge(socketPath, { session, tool, args }, tool === BROWSER_ASK_TOOL ? ASK_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS, BROWSER_CLOSED_MESSAGE, signal),
     },
     // Claude Code が終われば、標準入力が閉じる
     () => process.exit(0),

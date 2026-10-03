@@ -1,5 +1,6 @@
 import { BROWSER_GATE_HOOK_ENV } from '@shared/chat';
-import { BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV, callBridge, type ToolResult } from './browser-bridge';
+import { BROWSER_CLOSED_MESSAGE, BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV } from './browser-bridge';
+import { callBridge, type ToolResult } from './mcp-bridge';
 
 // アプリ内ブラウザの JavaScript の実行（evaluate）の確認。アプリが起動する Claude Code に、--settings で PreToolUse のフックとして足す。
 // 今のページが localhost（isLocalUrl）なら、確認なしで実行させる（permissionDecision: allow）。それ以外のページは、Claude Code の許可の確認を出させる（ask）。
@@ -40,6 +41,6 @@ export function gateOutput(answer: GateAnswer | null): string {
 
 // フックの本体。アプリに今のページを聞いて、標準出力に書く内容を返す
 export async function runGate(socketPath: string, session: string, timeoutMs: number): Promise<string> {
-  const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: {} }, timeoutMs);
+  const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: {} }, timeoutMs, BROWSER_CLOSED_MESSAGE);
   return gateOutput(readAnswer(result));
 }

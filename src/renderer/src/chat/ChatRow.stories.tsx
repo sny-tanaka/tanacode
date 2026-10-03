@@ -69,3 +69,79 @@ export const エラー: Story = { args: { item: { kind: 'error', id: 'e1', text:
 export const エラー_再試行中: Story = { args: { item: { kind: 'error', id: 'e2', text: 'API Error: 529 Overloaded（再試行 2/10）', retrying: true } } };
 
 export const 区切り: Story = { args: { item: { kind: 'divider', id: 'd1', text: '会話を圧縮しました' } } };
+
+// 子セッションのチャットから見た、ほかのセッション（親・兄弟）。名前の解決と、押して移る先に使う
+const SESSIONS = [
+  { id: '5e8a1c3b-2f4d-4a6b-9c8d-0e1f2a3b4c5d', title: '検索機能の取りまとめ' },
+  { id: '3f2a9c1e-7b6d-4e5f-8a9b-1c2d3e4f5a6b', title: 'API の実装' },
+  { id: '9d7c5b3a-1e2f-4a3b-8c4d-5e6f7a8b9c0d', title: '画面の実装' },
+];
+
+// 親セッションの Claude からの指示。人の発言と見分けて、上に見出しを出す（押すと親へ移る）。巻き戻しのボタンは出さない
+export const 親セッションからの指示: Story = {
+  args: {
+    item: {
+      kind: 'user',
+      id: 'u2',
+      text: '検索の API（/api/search）を実装してください。\n入力は q（文字列）と limit（数）。終わったら npm test が通ることを確かめてください。',
+      parent: SESSIONS[0].id,
+    },
+    sessions: SESSIONS,
+    onSelectSession: noop,
+  },
+};
+
+// 親の名前が長くても見出しは 1 行のまま。名前だけを「…」で縮める
+export const 親セッションからの指示_長い名前: Story = {
+  args: {
+    item: { kind: 'user', id: 'u4', text: '1+1 の答えだけを 1 行で返してください。', parent: 'cccccccc-0000-4000-8000-00000000000c' },
+    sessions: [...SESSIONS, { id: 'cccccccc-0000-4000-8000-00000000000c', title: 'tanacode-sessions で子セッションを起動して結果を待つ取りまとめ' }],
+    onSelectSession: noop,
+  },
+};
+
+// 親を一覧から削除していると、名前を出さず、移る操作も付けない
+export const 親セッションからの指示_親が一覧に無い: Story = {
+  args: {
+    item: { kind: 'user', id: 'u3', text: 'テストを追加してください。', parent: '00000000-0000-4000-8000-000000000000' },
+    sessions: SESSIONS,
+    onSelectSession: noop,
+  },
+};
+
+// 子セッションからの知らせ（親のチャットに出る）。その子へ移るリンクを添える
+export const 子セッションからの知らせ: Story = {
+  args: {
+    item: { kind: 'notice', id: 'n1', text: '子セッション「API の実装」の作業が終わりました', sessions: [SESSIONS[1].id] },
+    sessions: SESSIONS,
+    onSelectSession: noop,
+  },
+};
+
+export const 子セッションからの知らせ_複数: Story = {
+  args: {
+    item: {
+      kind: 'notice',
+      id: 'n2',
+      text: '子セッション 2 件が人の対応を待っています',
+      detail: '「API の実装」: 実行の許可待ち\n「画面の実装」: 質問への回答待ち',
+      sessions: [SESSIONS[1].id, SESSIONS[2].id],
+    },
+    sessions: SESSIONS,
+    onSelectSession: noop,
+  },
+};
+
+// 入力欄の @ で選んだセッションへの参照は、名前の札にする（押すとそのセッションへ移る）。
+// 名前は今の名前（「API の実装」は参照を書いたあとに名前が変わった）。一覧に無いセッションは、参照に添えた名前で、移れない札にする
+export const セッションへの参照の札: Story = {
+  args: {
+    item: {
+      kind: 'user',
+      id: 'u4',
+      text: '@session:3f2a9c1e（API の下書き） と @session:9d7c5b3a（画面の実装） の変更がぶつかっていないか確かめてください。\n前の @session:deadbeef（消した調査） の結論も参考にしてください。',
+    },
+    sessions: SESSIONS,
+    onSelectSession: noop,
+  },
+};

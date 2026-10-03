@@ -1,10 +1,12 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
 import type { SettingsFile } from '@shared/settings-file';
-import { inLockedOrder } from '@shared/session-order';
+import { inLockedOrder, sessionTree, type SessionTreeRow } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
 import { useSettingsFiles } from '../chat/settingsFiles';
 import { AddIcon, ArchiveIcon, DisclosureIcon, IconButton, LockIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
+import { liveChildrenOf } from './sessionTree';
+import { sessionName } from './sessionLinks';
 import { PREPARING_LABEL } from './worktree';
 import { UsagePanel } from '../usage/UsagePanel';
 
@@ -17,6 +19,18 @@ function loadLock(): string[] | null {
     return Array.isArray(saved) && saved.every((id) => typeof id === 'string') ? saved : null;
   } catch {
     return null;
+  }
+}
+
+// 子セッションを畳んだ親（このマシンだけの表示設定なので localStorage に置く）。親の id を入れる。既定は開く
+export const SESSION_COLLAPSED_KEY = 'tanacode.sessionCollapsed';
+
+function loadCollapsed(): ReadonlySet<string> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(SESSION_COLLAPSED_KEY) ?? '[]');
+    return new Set(Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set();
   }
 }
 
@@ -55,6 +69,17 @@ export const Sidebar = memo(function Sidebar({
   const ordered = useMemo(() => (lock ? inLockedOrder(sessions, lock) : sessions), [sessions, lock]);
   const active = ordered.filter((s) => !s.archived);
   const archived = ordered.filter((s) => s.archived);
+  // 子セッションを畳んだ親
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(loadCollapsed);
+  const toggleChildren = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  // 親の下に子をぶら下げた並び（区分ごと）
+  const activeRows = sessionTree(active, sessions, collapsed);
+  const archivedRows = sessionTree(archived, sessions, collapsed);
 
   // ロックしたあとにできたセッションを並びに加え（先頭）、消えたセッションを外す。
   // 一覧を読み込む前（空）は外さない（保存した並びを失わないため）
@@ -73,12 +98,39 @@ export const Sidebar = memo(function Sidebar({
     }
   }, [lock]);
 
-  const row = (s: SessionSummary) => {
+  // 消えたセッションを、畳んだ親から外す（一覧を読み込む前は外さない）
+  useEffect(() => {
+    if (sessions.length === 0 || [...collapsed].every((id) => sessions.some((s) => s.id === id))) return;
+    setCollapsed(new Set([...collapsed].filter((id) => sessions.some((s) => s.id === id))));
+  }, [sessions, collapsed]);
+
+  // 畳んだ親の子に移ったら（チャットのリンクから移ったときなど）、親を開いて見えるようにする
+  useEffect(() => {
+    const parentId = sessions.find((s) => s.id === selectedId)?.parentId;
+    if (parentId && collapsed.has(parentId)) toggleChildren(parentId);
+    // 選んだときだけ。選んだまま畳むことはできる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  useEffect(() => {
+    try {
+      if (collapsed.size > 0) localStorage.setItem(SESSION_COLLAPSED_KEY, JSON.stringify([...collapsed]));
+      else localStorage.removeItem(SESSION_COLLAPSED_KEY);
+    } catch {
+      // 保存できなくても、この起動のあいだは畳める
+    }
+  }, [collapsed]);
+
+  const row = ({ session: s, depth, children, parent }: SessionTreeRow) => {
     const activity = activityOf(s, statusOf(s.id));
+    // 親と一緒にアーカイブされる子（アーカイブ済みの子は数えない）
+    const archivedWith = s.archived ? 0 : liveChildrenOf(sessions, s.id).length;
+    // 選んでいる子を畳んで隠している親（どこを見ているかが分かるよう、薄く色を付ける）
+    const hidesSelected = collapsed.has(s.id) && children.some((c) => c.id === selectedId);
     return (
       <div
         key={s.id}
-        className={`session-row reveal-host${s.id === selectedId ? ' active' : ''}${s.archived ? ' archived' : ''}`}
+        className={`session-row reveal-host${depth === 1 ? ' child' : ''}${s.id === selectedId ? ' active' : ''}${hidesSelected ? ' active-within' : ''}${s.archived ? ' archived' : ''}`}
         onClick={() => onSelect(s.id)}
         title={s.cwd}
       >
@@ -120,12 +172,22 @@ export const Sidebar = memo(function Sidebar({
                 {' · '}
               </>
             )}
+            {/* 親の下に出せない子（親と区分が違うなど）は、親の名前を添える */}
+            {depth === 0 && parent && (
+              <>
+                <span className="session-parent" title={`親セッション「${sessionName(parent)}」から起動した子セッション`}>
+                  親: {sessionName(parent)}
+                </span>
+                {' · '}
+              </>
+            )}
             {s.worktree ? (
               <span
                 className="session-worktree"
                 title={`worktree ${s.worktree.name}（ブランチ ${s.worktree.branch}）で動いています\n元のフォルダ: ${s.worktree.root}`}
               >
-                {s.worktree.root.split('/').pop()}
+                {/* 親の下の子は字下げで幅が狭いので、親と同じリポジトリなら元のフォルダの名前を省く（親の行に出ている） */}
+                {!(depth === 1 && parent && (parent.worktree?.root ?? parent.cwd) === s.worktree.root) && s.worktree.root.split('/').pop()}
                 <WorktreeIcon size={12} />
                 {s.worktree.name}
               </span>
@@ -140,11 +202,20 @@ export const Sidebar = memo(function Sidebar({
             )}
           </span>
         </div>
+        {children.length > 0 && (
+          <ChildrenToggle
+            sessions={children}
+            open={!collapsed.has(s.id)}
+            statusOf={statusOf}
+            onToggle={() => toggleChildren(s.id)}
+          />
+        )}
         <IconButton
           icon={s.archived ? UnarchiveIcon : ArchiveIcon}
           size="sm"
           reveal
           label={s.archived ? 'アクティブに戻す' : 'アーカイブ'}
+          tip={archivedWith > 0 ? `アーカイブ\n子セッション ${archivedWith} 件も一緒にアーカイブします` : undefined}
           onClick={(e) => {
             e.stopPropagation();
             if (s.archived) onUnarchive(s.id);
@@ -198,14 +269,14 @@ export const Sidebar = memo(function Sidebar({
           />
         </div>
         {active.length === 0 && <div className="session-empty">セッションはありません</div>}
-        {active.map(row)}
+        {activeRows.map(row)}
         {archived.length > 0 && (
           <>
             <div className="pane-heading clickable" onClick={() => setShowArchived((v) => !v)}>
               <DisclosureIcon open={showArchived} />
               アーカイブ済み（{archived.length}）
             </div>
-            {showArchived && archived.map(row)}
+            {showArchived && archivedRows.map(row)}
           </>
         )}
       </div>
@@ -213,6 +284,42 @@ export const Sidebar = memo(function Sidebar({
     </nav>
   );
 });
+
+// 親の行の、子セッションを畳む・開くボタン。畳んでいる間は子の数を出し、子が人を待っていれば（作業中なら）その色にする
+function ChildrenToggle({
+  sessions,
+  open,
+  statusOf,
+  onToggle,
+}: {
+  sessions: SessionSummary[];
+  open: boolean;
+  statusOf: (id: string) => SessionStatus;
+  onToggle: () => void;
+}) {
+  const kinds = sessions.map((c) => activityOf(c, statusOf(c.id))?.kind);
+  const waiting = kinds.filter((k) => k === 'waiting').length;
+  const working = kinds.filter((k) => k === 'running' || k === 'starting' || k === 'background').length;
+  const breakdown = [working > 0 && `作業中 ${working}`, waiting > 0 && `操作待ち ${waiting}`].filter(Boolean).join('・');
+  const label = open ? '子セッションを畳む' : `子セッション ${sessions.length} 件を開く`;
+  const tone = open ? '' : waiting > 0 ? ' waiting' : working > 0 ? ' running' : '';
+  return (
+    <button
+      type="button"
+      className={`session-children${open ? '' : ' folded'}${tone}`}
+      aria-expanded={open}
+      aria-label={label}
+      data-tip={`子セッション ${sessions.length} 件${breakdown ? `（${breakdown}）` : ''}\nクリックで${open ? '畳む' : '開く'}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+    >
+      {!open && <span className="session-children-count">{sessions.length}</span>}
+      <DisclosureIcon open={open} />
+    </button>
+  );
+}
 
 type Activity = { kind: 'waiting' | 'running' | 'background' | 'starting' | 'unread' | 'exited'; label: string };
 

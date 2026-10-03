@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { sessionIdOfTool } from '@shared/session-tools';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import { ChevronRightIcon, DisclosureIcon } from '../icons';
 import { StatusDot, type DotState } from '../layout/StatusDot';
+import { findSession, sessionName, type SessionLink } from '../sessions/sessionLinks';
 import { BASH_STATE_LABEL } from '../tasks/taskList';
 import { ChatImages } from './ChatImages';
 import { HookRuns } from './HookRuns';
@@ -24,6 +26,10 @@ type Props = {
   onOpenFile: (absPath: string, line?: number) => void;
   // 中身（サブエージェントの会話・Bash の出力）を大きく開く
   onOpenTask: (() => void) | null;
+  // 一覧のセッション（ID と名前）。セッションのツール（start_session・send_message など）のカードで、対象のセッションを出すのに使う
+  sessions?: readonly SessionLink[];
+  // 対象のセッションへ移る。無ければ移れない
+  onSelectSession?: (id: string) => void;
 };
 
 // 実行中から終わったものに変わってから、枠のグラデーションを消し終えてチェックを描き終えるまで（CSS の tool-card の transition より少し長く）
@@ -47,11 +53,19 @@ function useFinishing(state: DotState): boolean {
   return finishing;
 }
 
-// ツールの呼び出し。右の矢印で開くと入力・出力・差分を見られる。ファイルを扱うツールはカードのクリックでファイルを開く
-export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props) {
+// ツールの呼び出し。右の矢印で開くと入力・出力・差分を見られる。ファイルを扱うツールはカードのクリックでファイルを開く。
+// セッションのツールは、カードのクリックで対象のセッションへ移る
+export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, sessions, onSelectSession }: Props) {
   const [open, setOpen] = useState(false);
   const hasDetail = !!(item.input || item.output || item.patch || subagent?.recent.length || subagent?.result);
   const opensFile = !!item.filePath;
+  // セッションのツールの対象（start_session は結果の、ほかは入力の session_id。先頭 8 文字のこともあるので、一覧から先頭一致で探す）
+  const sessionKey = sessions ? sessionIdOfTool(item.name, item.input, item.output) : null;
+  const session = sessionKey && sessions ? findSession(sessions, sessionKey) : null;
+  const openSession = session && onSelectSession ? () => onSelectSession(session.id) : null;
+  // 入力の session_id がそのまま対象に出るツール（send_message など）は、ID の代わりに名前を出す
+  const targetIsId = !!sessionKey && /^[0-9a-f-]{8,36}$/.test(item.target.trim());
+  const target = targetIsId && session ? sessionName(session) : item.target;
   const status = subagent ? SUBAGENT_LABEL[subagent.state] : bash ? BASH_STATE_LABEL[bash.state] : STATUS_LABEL[item.status];
   const dot: DotState = subagent
     ? subagent.state === 'running' ? 'running' : subagent.state === 'done' ? 'done' : 'error'
@@ -62,9 +76,15 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
 
   return (
     <div
-      className={`tool-card${opensFile || hasDetail || onOpenTask ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
+      className={`tool-card${opensFile || hasDetail || onOpenTask || openSession ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
       onClick={() =>
-        onOpenTask ? onOpenTask() : opensFile ? onOpenFile(item.filePath!, item.line) : hasDetail && setOpen((v) => !v)
+        onOpenTask
+          ? onOpenTask()
+          : openSession
+            ? openSession()
+            : opensFile
+              ? onOpenFile(item.filePath!, item.line)
+              : hasDetail && setOpen((v) => !v)
       }
     >
       <div className="tool-card-head">
@@ -77,7 +97,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
           <span className="tool-target described">{item.description}</span>
         ) : (
           <span className="tool-target" title={item.target}>
-            {item.target}
+            {target}
           </span>
         )}
         {DIFF_TOOLS.has(item.name) && item.added !== undefined && (
@@ -104,11 +124,19 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask }: Props
         {dot === 'running' ? <span className="flow-text">{status}</span> : status}
         {subagent && <SubagentProgress run={subagent} />}
         {bash && <span className="subagent-progress">バックグラウンド{bash.exitCode !== null ? ` · 終了コード ${bash.exitCode}` : ''}</span>}
+        {/* 対象のセッションの名前（対象の欄に名前を出していなければ） */}
+        {session && !(targetIsId && !item.description) && <span className="subagent-progress tool-session">{sessionName(session)}</span>}
         {/* カード全体のクリックで開くので、ボタンにはせず、名前とツールチップだけ付けたアイコンを置く */}
-        {onOpenTask && (
+        {onOpenTask ? (
           <span className="tool-open" role="img" aria-label="開く" data-tip="開く">
             <ChevronRightIcon size={12} />
           </span>
+        ) : (
+          openSession && (
+            <span className="tool-open" role="img" aria-label="セッションを開く" data-tip={`セッション「${sessionName(session!)}」を開く`}>
+              <ChevronRightIcon size={12} />
+            </span>
+          )
         )}
       </div>
       {item.images && <ChatImages keys={item.images} />}

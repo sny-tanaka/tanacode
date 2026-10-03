@@ -4,7 +4,9 @@ import { execFile } from 'node:child_process';
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { bridgeUrlOf, isTranscriptEntry, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { bridgeUrlOf, isHumanPrompt, isTranscriptEntry, promptDisplayText, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { bracketedPaste, promptKeys, stripControlChars } from '@shared/prompt-keys';
+import { isParentMessageDraft, modeWithin, weakerMode, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
   ChatBatch,
@@ -19,7 +21,7 @@ import type {
   WorktreePreparing,
   WorktreeRemoval,
 } from '@shared/ipc';
-import type { Activity, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
@@ -30,6 +32,7 @@ import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
 import type { BrowserMcpLaunch } from './browser-bridge';
+import type { McpLaunch } from './mcp-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
 import { ContextTracker, readContext } from './context-tracker';
@@ -57,6 +60,11 @@ import {
 
 // rename で付けた名前。会話ログのタイトル（最大 3）より常に優先する
 const USER_TITLE_PRIORITY = 4;
+
+// 送ってから、打ち込んだ文字が Claude Code の入力欄から消えるまでの目安（その間は、入力欄に残った文字としてチャットに移さない）
+const TYPING_MS = 5000;
+// 送ってから発言が会話ログに出るまで、作業中として扱う上限（スラッシュコマンドなど、発言として残らないものもある）
+const SUBMIT_GRACE_MS = 15_000;
 
 // Claude Code の画面を見ていないときの pty サイズ。低いと、Claude Code は選択肢の一部だけを出す（↑/↓ で送る）ので、
 // 画面から読むメニューが欠ける。見ているあいだだけ、ターミナルパネルの大きさに合わせる
@@ -92,6 +100,9 @@ type Runtime = {
   ready: boolean;
   // 今回の起動で --permission-mode に渡したモード（画面からモードを読めるまでの間、起動し直すときに使う）
   startMode: PermissionMode | null;
+  // アプリが決めた権限モード（起動の引数か、アプリでの切り替え）。子セッションの権限モードの上限に使う。
+  // 画面の文字は会話の中の文でも読めてしまうので、上限には画面から読んだモードだけを使わない
+  knownMode: PermissionMode | null;
   size: { cols: number; rows: number };
   // 引き継いだ claude（前のアプリが起動したもの）が起動した時刻。これ以降の会話ログの行は、今も動いている claude が書いた
   aliveSince: number | null;
@@ -118,6 +129,13 @@ type Runtime = {
   worktreeCreated: Promise<boolean> | null;
   // ファイルの変更を見張っているフォルダ（worktree は、Claude Code が作るまで見張れない）
   watched: string | null;
+  // 送信の順番待ち。チャットの入力欄からの発言と、親セッションからの指示・知らせを、混ぜずに 1 つずつ打ち込む
+  sendChain: Promise<void>;
+  // 打ち込んでいる途中の文字（空白を除く）と、打ち込み始めた時刻。画面の draft から除いて画面に知らせる（チャットの入力欄に移さないため）
+  typing: { text: string; at: number } | null;
+  // 起動を待って送る発言の数と、送ってから発言が会話ログに出るまでの時刻（ツールで返す状態で、作業中として扱う）
+  pendingSubmits: number;
+  submittedAt: number | null;
 };
 
 // アプリが開くコマンドのターミナル（worktree の npm install・yarn install など）。終了コードを返す。owner: セッションの id
@@ -158,7 +176,21 @@ export class SessionManager {
     private readonly runTask: RunTask = runQuietly,
     // 起動する Claude Code に、アプリ内ブラウザの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly browser: () => BrowserMcpLaunch | null = () => null,
+    // 起動する Claude Code に、セッションの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
+    private readonly sessionsMcp: () => McpLaunch | null = () => null,
   ) {}
+
+  // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
+  private readonly stateListeners = new Set<(id: string) => void>();
+
+  watchState(listener: (id: string) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  private changed(id: string): void {
+    for (const listener of this.stateListeners) listener(id);
+  }
 
   // 消した worktree を作り直している途中のセッション（まだ Claude Code を起動していない）
   private readonly restoring = new Set<string>();
@@ -188,6 +220,7 @@ export class SessionManager {
           worktree: r.worktree
             ? { ...r.worktree, preparing: this.restoring.has(r.id) ? 'restoring' : rt?.process ? rt.preparing : null }
             : null,
+          parentId: r.parentId ?? null,
         };
       });
   }
@@ -210,10 +243,11 @@ export class SessionManager {
     return record.cwd;
   }
 
-  create(cwd: string, options: NewSessionOptions): string {
+  // parentId: 親の Claude が start_session で起動する子セッションなら、親セッションの ID
+  create(cwd: string, options: NewSessionOptions, parentId: string | null = null): string {
     // 使えない設定ファイルなら、記録を作る前に断る（使えないまま標準の設定で始めてしまわないように）
     this.checkSettingsFile(options.settingsFile);
-    const id = this.addRecord(cwd, options, null);
+    const id = this.addRecord(cwd, options, null, parentId);
     this.start(id, options.mode);
     return id;
   }
@@ -221,12 +255,12 @@ export class SessionManager {
   // claude --worktree で、新しい worktree に分けて始める。名前はアプリが決め、セッションのフォルダは worktree のフォルダにする。
   // Claude Code が worktree を作るのを待ってから返す（右パネルやエディタが、すぐ worktree を開けるように）。
   // 作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて失敗する
-  async createInWorktree(cwd: string, options: NewSessionOptions): Promise<string> {
+  async createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null = null): Promise<string> {
     this.checkSettingsFile(options.settingsFile);
     const plan = await planWorktree(cwd);
     // 元のフォルダのソース管理に、worktree が未追跡として出ないようにする
     await hideWorktrees(plan.root).catch(() => {});
-    const id = this.addRecord(plan.path, options, { name: plan.name, branch: plan.branch, root: plan.root });
+    const id = this.addRecord(plan.path, options, { name: plan.name, branch: plan.branch, root: plan.root }, parentId);
     this.start(id, options.mode);
     const rt = this.runtimes.get(id);
     if (rt?.worktreeCreated && (await rt.worktreeCreated)) return id;
@@ -241,7 +275,7 @@ export class SessionManager {
     throw new Error(`Claude Code が worktree を作れませんでした${screen ? `\n\n${screen.split('\n').slice(-8).join('\n')}` : ''}`);
   }
 
-  private addRecord(cwd: string, options: NewSessionOptions, worktree: SessionRecord['worktree']): string {
+  private addRecord(cwd: string, options: NewSessionOptions, worktree: SessionRecord['worktree'], parentId: string | null): string {
     const now = Date.now();
     const id = randomUUID();
     this.store.add({
@@ -256,10 +290,23 @@ export class SessionManager {
       settingsFile: options.settingsFile,
       remoteControl: options.remoteControl,
       worktree,
+      ...(parentId ? { parentId, launchMode: options.mode } : {}),
       createdAt: now,
       updatedAt: now,
     });
     return id;
+  }
+
+  parentOf(id: string): string | null {
+    return this.store.get(id)?.parentId ?? null;
+  }
+
+  // 子セッション（アーカイブしたものも）の ID
+  childrenOf(id: string): string[] {
+    return this.store
+      .all()
+      .filter((r) => r.parentId === id)
+      .map((r) => r.id);
   }
 
   // 既存の会話（アプリの外で作られたもの）を取り込んで再開する
@@ -284,8 +331,9 @@ export class SessionManager {
   }
 
   // 一覧から消す。worktree を消せなかったら、一覧には（アーカイブして）残したまま、理由を添えて失敗する
+  // 子セッションは一緒にアーカイブしない（アーカイブした親を消すときに、戻しておいた子を止めないため）
   async remove(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null> {
-    const removal = await this.archive(id, options);
+    const removal = await this.archive(id, options, false);
     void rm(this.statusLines.fileFor(id), { force: true });
     void rm(this.statusLines.askFileFor(id), { force: true });
     this.store.remove(id);
@@ -336,15 +384,17 @@ export class SessionManager {
         this.restoring.delete(id);
         this.emitSessions();
       }
-      this.start(id);
+      this.start(id, record.launchMode ?? null);
       void this.prepareWorktree(id, 'restored');
       return;
     }
-    this.start(id);
+    // 子セッションは起動したときのモードで（ほかのセッションは、これまでどおり既定のまま）
+    this.start(id, record?.launchMode ?? null);
   }
 
-  // アーカイブする。removeWorktree: worktree のセッションなら、Claude Code が終わるのを待ってから worktree も消す
-  async archive(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null> {
+  // アーカイブする。removeWorktree: worktree のセッションなら、Claude Code が終わるのを待ってから worktree も消す。
+  // children: 子セッションも一緒にアーカイブする（親だけをアーカイブしない）
+  async archive(id: string, options?: ArchiveOptions, children = true): Promise<WorktreeRemoval | null> {
     const rt = this.runtimes.get(id);
     const record = this.store.get(id);
     const removing = !!options?.removeWorktree && !!record?.worktree;
@@ -360,6 +410,11 @@ export class SessionManager {
     if (this.runtimes.get(id) === rt) this.runtimes.delete(id);
     this.store.update(id, { archived: true });
     this.emitSessions();
+    this.changed(id);
+    // 親だけをアーカイブしない。子も一緒にアーカイブする（子の worktree は消さない）
+    for (const child of children ? this.childrenOf(id) : []) {
+      if (!this.store.get(child)?.archived) await this.archive(child);
+    }
     if (!removing || !record?.worktree) return null;
     return removeWorktree(record.worktree, record.cwd);
   }
@@ -382,6 +437,47 @@ export class SessionManager {
       rt.unread = false;
       this.emitSessions();
     }
+  }
+
+  // ツールで返す、今の状態（知らないセッションは null）
+  stateOf(id: string): SessionState | null {
+    const record = this.store.get(id);
+    if (!record) return null;
+    if (record.archived) return 'archived';
+    if (this.restoring.has(id)) return 'starting';
+    const rt = this.runtimes.get(id);
+    if (!rt?.process) return 'exited';
+    // 質問と読めても、AskUserQuestion を出していなければ質問ではない（コマンドの文字に ☐ があると、許可の確認が質問に見える）。
+    // 親が答えられる質問と見せないよう、許可の確認として扱う
+    if (rt.attention === 'question') return rt.screen?.askedQuestions ? 'question' : 'permission';
+    if (rt.attention === 'permission') return 'permission';
+    if (rt.attention === 'other') return 'waiting';
+    if (!rt.ready || rt.preparing) return 'starting';
+    if (rt.pendingSubmits > 0 || rt.turnOpen) return 'working';
+    if (rt.submittedAt !== null && Date.now() - rt.submittedAt < SUBMIT_GRACE_MS) return 'working';
+    if (rt.background > 0) return 'background';
+    return 'idle';
+  }
+
+  // 子セッションの権限モードの上限にする、今の権限モード。アプリが決めたモード（起動の引数・アプリでの切り替え。無ければ manual）と、
+  // 画面から読んだモードの弱いほう（画面の文字は偽れるので、強くする向きには使わない。ターミナルで下げたときは下げる）
+  modeOf(id: string): PermissionMode | null {
+    const rt = this.runtimes.get(id);
+    if (!rt) return null;
+    const known = rt.knownMode ?? 'manual';
+    const shown = rt.screen?.current.mode;
+    return shown ? weakerMode(shown, known) : known;
+  }
+
+  // 今出している AskUserQuestion の質問。出していなければ null
+  askedQuestions(id: string): AskQuestion[] | null {
+    return this.runtimes.get(id)?.screen?.askedQuestions ?? null;
+  }
+
+  // 会話（動かしたことがあれば直近の起動からのイベント、なければ会話ログから作ったもの）
+  async conversation(id: string): Promise<ChatEvent[]> {
+    const rt = this.runtimes.get(id);
+    return rt ? [...rt.events] : this.history(id);
   }
 
   snapshot(id: string): SessionSnapshot {
@@ -547,12 +643,22 @@ export class SessionManager {
     return this.runtimes.get(id)?.screen?.current ?? null;
   }
 
+  // 画面に知らせる ScreenInfo。打ち込んでいる途中の文字は、入力欄に残った文字（draft）から除く
+  screenForView(id: string): ScreenInfo | null {
+    const rt = this.runtimes.get(id);
+    const info = rt?.screen?.current;
+    return rt && info ? shownScreen(rt, info) : null;
+  }
+
   activity(id: string): Activity | null {
     return this.runtimes.get(id)?.screen?.currentActivity ?? null;
   }
 
   async setMode(id: string, mode: PermissionMode): Promise<boolean> {
-    return (await this.runtimes.get(id)?.screen?.setMode(mode)) ?? false;
+    const rt = this.runtimes.get(id);
+    const ok = (await rt?.screen?.setMode(mode)) ?? false;
+    if (ok && rt) rt.knownMode = mode;
+    return ok;
   }
 
   async rewind(id: string, text: string): Promise<boolean> {
@@ -561,6 +667,11 @@ export class SessionManager {
 
   async choose(id: string, choice: ScreenChoice): Promise<void> {
     await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text);
+  }
+
+  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。押せたら true
+  async chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean> {
+    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) ?? false;
   }
 
   configure(id: string, options: SessionOptions): void {
@@ -587,14 +698,15 @@ export class SessionManager {
 
   // 設定ファイルを選んでいるセッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。選んでいなければ null
   // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行の確認のフックを入れる）
-  private prepareSettings(id: string, settingsFile: string | null | undefined, browser: boolean): PreparedSettings | null {
+  // sessions: セッションの MCP サーバーを足すか（合わせる設定に、子セッションの起動の確認のフックを入れる）
+  private prepareSettings(id: string, settingsFile: string | null | undefined, browser: boolean, sessions: boolean): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
       this.settingsFiles?.release(id);
       return null;
     }
     if (!this.settingsFiles) throw new Error('設定ファイルを使えない状態です');
-    return this.settingsFiles.prepare(id, settingsFile, browser);
+    return this.settingsFiles.prepare(id, settingsFile, browser, sessions);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -607,7 +719,10 @@ export class SessionManager {
     }
     // 起動し直せないと分かっているのに、動いている claude を止めないよう、先に設定ファイルを確かめる
     this.checkSettingsFile(this.store.get(id)?.settingsFile);
-    const mode = rt.screen?.current.mode ?? rt.startMode;
+    let mode = rt.screen?.current.mode ?? rt.startMode;
+    // 子セッションは、起動したときのモードより強くしない（画面の文字は偽れるため）
+    const launchMode = this.store.get(id)?.launchMode;
+    if (launchMode && mode && !modeWithin(mode, launchMode)) mode = launchMode;
     rt.process.kill();
     rt.process = null;
     // バックグラウンドのタスクは一緒に止まる
@@ -619,6 +734,98 @@ export class SessionManager {
 
   write(id: string, data: string): void {
     this.runtimes.get(id)?.process?.write(data);
+  }
+
+  // Claude Code の入力欄に打ち込んで送る。画像はパスを貼り付けとして送ると [Image #n] として添付される。
+  // 同じセッションへの送信は 1 つずつ順に打ち込む（チャットの入力欄からの発言と、親セッションからの指示・知らせが混ざらないように）。
+  // guarded: 打つ直前と Enter の直前に、入力欄に打ってよい状態かを確かめ、そうでなければ打たずに失敗する（submitWhenReady）
+  submit(id: string, rawText: string, attachments: string[] = [], guarded = false): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (!rt?.process) return Promise.resolve();
+    const run = async () => {
+      const process = rt.process;
+      if (!process) return;
+      if (guarded && !acceptsTyping(rt)) throw new Error('入力を受け付けられる状態ではなくなったため、送れませんでした');
+      // ESC などが残ると、貼り付けの外に出てキー操作（Enter・Shift+Tab など）として届いてしまうので取り除く
+      const text = stripControlChars(rawText);
+      // 画面の折り返しで空白が変わるので、空白を除いて覚える
+      rt.typing = { text: text.replace(/\s/g, ''), at: Date.now() };
+      rt.submittedAt = Date.now();
+      for (const path of attachments) {
+        process.write(bracketedPaste(stripControlChars(path)));
+        await sleep(300);
+        process.write(' ');
+      }
+      // 改行を含む入力は貼り付けとして送る（promptKeys）
+      if (text) process.write(promptKeys(text));
+      await sleep(50);
+      // Enter の直前にメニューが出ていたら、Enter はメニューの選択になってしまう
+      if (guarded && (rt.screen?.current.state.kind !== 'prompt' || rt.attention !== null)) {
+        throw new Error('質問や確認が出たため、送れませんでした');
+      }
+      process.write('\r');
+      this.changed(id);
+      // 発言として残らなかったとき（スラッシュコマンドなど）も、作業中として扱う時間が過ぎたら知らせ直す
+      setTimeout(() => this.changed(id), SUBMIT_GRACE_MS + 100);
+    };
+    const next = rt.sendChain.then(run, run);
+    rt.sendChain = next.catch(() => {});
+    return next;
+  }
+
+  // 手が空く（ターンが終わり、入力を受け付けられる）のを待ってから送る（子セッションへの指示・親への知らせ）。
+  // 作業中の Claude Code に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になってしまうことがある。
+  // 手が空いていれば、新しい確認が急に出ることはない（ツールを使うには、まず応答が要る）。
+  // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する
+  async submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void> {
+    const rt = this.runtimes.get(id);
+    const process = rt?.process;
+    if (!rt || !process) throw new Error('Claude Code が動いていません');
+    rt.pendingSubmits += 1;
+    this.changed(id);
+    try {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        if (rt.process !== process) throw new Error('Claude Code が終了しました');
+        // 直前に送ったもの（まだ会話ログに出ていない）があれば、それが終わるまで待つ
+        const sending = rt.submittedAt !== null && Date.now() - rt.submittedAt < SUBMIT_GRACE_MS;
+        if (acceptsTyping(rt) && !sending) break;
+        if (Date.now() > deadline) {
+          const screen = rt.screen?.current;
+          if (screen?.state.kind === 'menu') throw new Error('質問や確認の答えを待っているため、送れませんでした');
+          if (screen?.draft) throw new Error('ターミナルの入力欄に書きかけの文字があるため、送れませんでした');
+          throw new Error('Claude Code の手が空かないため、送れませんでした');
+        }
+        await sleep(200);
+      }
+      // 続けて待っているほかの送信が、同じ隙に打ち込まないよう、すぐに印を付ける
+      rt.submittedAt = Date.now();
+      await this.submit(id, text, [], true);
+    } finally {
+      rt.pendingSubmits -= 1;
+      this.changed(id);
+    }
+  }
+
+  // 中断で入力欄に戻った親からの指示を消す（親が止めたとき。人のチャットの入力欄に、囲みのまま移さないため）
+  async withdrawParentDraft(id: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    for (let i = 0; i < 15 && rt?.process; i++) {
+      const draft = rt.screen?.current.draft ?? '';
+      if (rt.screen?.current.state.kind === 'prompt' && isParentMessageDraft(draft)) {
+        rt.process.write('\x15'.repeat(draft.split('\n').length + 1));
+        return;
+      }
+      await sleep(100);
+    }
+  }
+
+  // 作業を中断する（Esc）。打ち込んでいる途中の文字はもう無いので、Claude Code が入力欄に戻した発言は、そのままチャットの入力欄に移す
+  interrupt(id: string): void {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    rt.typing = null;
+    rt.process?.write('\x1b');
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -676,7 +883,10 @@ export class SessionManager {
     // 設定ファイルを使えなければ、何も変えずにここで断る（標準の設定に黙って切り替わらないように）。
     // 引き継ぐ claude は、前のアプリが起動したままなので、書き直さない
     const browser = adopted ? null : this.browser();
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser);
+    const launch = adopted ? null : this.sessionsMcp();
+    // 子セッションには、子を動かすツールを見せない（孫は作れない）
+    const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId));
@@ -722,6 +932,7 @@ export class SessionManager {
         background: 0,
         ready: false,
         startMode: null,
+        knownMode: null,
         size: DEFAULT_PTY_SIZE,
         aliveSince: null,
         turnOpen: false,
@@ -734,6 +945,10 @@ export class SessionManager {
         preparing: null,
         worktreeCreated: null,
         watched: null,
+        sendChain: Promise.resolve(),
+        typing: null,
+        pendingSubmits: 0,
+        submittedAt: null,
       };
       this.runtimes.set(id, rt);
     }
@@ -750,6 +965,7 @@ export class SessionManager {
     runtime.attention = null;
     runtime.ready = false;
     runtime.startMode = mode;
+    runtime.knownMode = mode;
     runtime.aliveSince = adopted?.startedAt ?? null;
     runtime.turnOpen = false;
     runtime.queue = [];
@@ -797,6 +1013,7 @@ export class SessionManager {
         statusFile: this.statusLines.fileFor(id),
         askFile: this.statusLines.askFileFor(id),
         browser,
+        sessions,
         ...rt.size,
       },
       {
@@ -967,8 +1184,7 @@ export class SessionManager {
     if (entry.type !== 'queue-operation') return;
     const text = queuedText(e.content);
     if (e.operation === 'enqueue' && text !== null) {
-      const human = !text.includes('<task-notification>') && !text.trimStart().startsWith('<ci-monitor-event>');
-      this.updateQueue(id, rt, (queue) => [...queue, { text, human }]);
+      this.updateQueue(id, rt, (queue) => [...queue, { text, human: isHumanPrompt(text) }]);
     } else if (e.operation === 'dequeue') {
       this.updateQueue(id, rt, (queue) => queue.slice(1));
     } else if (e.operation === 'remove' && text !== null) {
@@ -983,7 +1199,7 @@ export class SessionManager {
   }
 
   private updateQueue(id: string, rt: Runtime, change: (queue: Runtime['queue']) => Runtime['queue']): void {
-    const human = (queue: Runtime['queue']) => queue.filter((q) => q.human).map((q) => q.text);
+    const human = (queue: Runtime['queue']) => queue.filter((q) => q.human).map((q) => promptDisplayText(q.text));
     const before = human(rt.queue);
     rt.queue = change(rt.queue);
     const after = human(rt.queue);
@@ -1001,7 +1217,7 @@ export class SessionManager {
     if (!rt || rt.screen !== screen) return;
     // /remote-control で切り替えている途中に出るメニューは、質問や確認として見せない
     if (rt.remoteSwitching) return;
-    this.listeners.onScreen(id, info);
+    this.listeners.onScreen(id, shownScreen(rt, info));
     if (info.ready && !rt.ready && !rt.preparing) {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);
@@ -1015,6 +1231,7 @@ export class SessionManager {
     const before = rt.attention;
     rt.attention = attention;
     this.emitSessions();
+    this.changed(id);
     const summary = this.summary(id);
     // 終了したセッションは、最後の画面が残っていても通知しない（チャットの「操作できない画面」の案内も、動いているセッションだけ）
     if (summary && rt.process && before === null) {
@@ -1034,6 +1251,7 @@ export class SessionManager {
     if (count === rt.background) return;
     rt.background = count;
     this.emitSessions();
+    this.changed(id);
   }
 
   private handleEntry(id: string, entry: unknown, isHistory: boolean): void {
@@ -1077,7 +1295,10 @@ export class SessionManager {
         rt.remoteConnected = remote.url !== null;
         this.reconcileRemote(id);
       }
-      if (events.some((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start')) rt.turnOpen = true;
+      if (events.some((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start')) {
+        rt.turnOpen = true;
+        rt.submittedAt = null;
+      }
       if (events.some((e) => e.type === 'turn-end')) rt.turnOpen = false;
     }
     if (events.length > 0) {
@@ -1114,6 +1335,7 @@ export class SessionManager {
     rt.seq += events.length;
     rt.events.push(...events);
     this.listeners.onChat({ sessionId: id, fromSeq, events, live });
+    this.changed(id);
   }
 
   private emitSessions(): void {
@@ -1176,6 +1398,37 @@ function stopName(rt: Runtime, ref: TaskRef): string | null {
   }
   const run = rt.subagents.all().find((r) => r.toolUseId === ref.toolUseId);
   return run?.state === 'running' && run.background ? run.description || null : null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 画面に知らせる ScreenInfo。打ち込んでいる途中の文字（送ったばかりで、まだ Claude Code の入力欄に残っているもの）は、
+// 入力欄に残った文字として扱わない（チャットの入力欄に移すと、送った文字を消してしまう）。
+// 貼り付けた文字や画像は入力欄では [Pasted text #1 +6 lines]・[Image #1] の目印になるので、除いて比べる
+function shownScreen(rt: Runtime, info: ScreenInfo): ScreenInfo {
+  // 親からの指示（中断で戻ったもの）は、人のチャットの入力欄に移さない（親が止めたら、withdrawParentDraft が消す）
+  if (isParentMessageDraft(info.draft)) return { ...info, draft: '' };
+  const typing = rt.typing;
+  if (!typing || !info.draft || Date.now() - typing.at >= TYPING_MS) return info;
+  const typed = info.draft.replace(/\[(?:Pasted text #\d+[^\]]*|Image #\d+)\]/g, '').replace(/\s/g, '');
+  return typed === '' || typing.text.includes(typed) ? { ...info, draft: '' } : info;
+}
+
+// 入力欄に打ってよい状態か。手が空いていて（ターンの外・操作待ちでない）、入力欄に書きかけが無く、画面の操作の途中でもない
+function acceptsTyping(rt: Runtime): boolean {
+  const info = rt.screen?.current;
+  return (
+    !!rt.process &&
+    rt.ready &&
+    !rt.preparing &&
+    !rt.turnOpen &&
+    rt.attention === null &&
+    info?.state.kind === 'prompt' &&
+    !info.draft &&
+    !rt.screen?.operating
+  );
 }
 
 function remoteName(cwd: string): string {

@@ -1,23 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SlashCommand } from '@shared/ipc';
-import { bracketedPaste, promptKeys } from '@shared/prompt-keys';
+import type { SessionSummary, SlashCommand } from '@shared/ipc';
+import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
-import { stripControlChars } from './sanitize';
+import { sessionName } from '../sessions/sessionLinks';
 
 const MAX_SUGGESTIONS = 40;
+// @ の候補に、ファイルより先に出すセッションの数
+const MAX_SESSIONS = 6;
 // コマンドは本家と同じく全部出す（一覧はスクロールする）
 const MAX_COMMANDS = 200;
 // ワークスペースのファイル一覧を読み直す間隔
 const FILES_TTL_MS = 30_000;
-// 送信してから、打ち込んだ文字が Claude Code の入力欄から消えるまでの目安
-const SENDING_MS = 5000;
 
 // @ と / の補完候補の読み込み元。key が変わったら読み直す（セッションか、新規セッションで選んだフォルダ）
 export type CompletionSource = {
   key: string;
   listFiles(): Promise<string[]>;
   listCommands(): Promise<SlashCommand[]>;
+  // @ の候補に出すセッション（自分は除き、見えるものだけ）。無ければセッションは出さない
+  listSessions?(): SessionSummary[];
 };
 
 type Props = {
@@ -42,7 +44,8 @@ type Props = {
   working?: boolean;
 };
 
-type Suggestion = { value: string; label: string; detail: string };
+// session: @ で選ぶセッション（ファイルと見分けて出す）
+type Suggestion = { value: string; label: string; detail: string; session?: boolean };
 // 補完している語: @ファイル名、または先頭の /コマンド
 type Token = { kind: 'file' | 'command'; start: number; query: string };
 
@@ -55,38 +58,9 @@ function tokenAt(text: string, caret: number): Token | null {
   return null;
 }
 
-// セッションごとの、直前に Claude Code の入力欄へ打ち込んだ文字（空白を除く）
-const lastSent = new Map<string, { text: string; at: number }>();
-
-// 打ち込んでいる途中で、まだ Claude Code の入力欄に残っているはずの文字（空白を除く）。無ければ null
-export function recentlySent(sessionId: string): string | null {
-  const sent = lastSent.get(sessionId);
-  return sent && Date.now() - sent.at < SENDING_MS ? sent.text : null;
-}
-
-// 中断した（Esc を送った）ので、直前に打ち込んだ文字はもう打ち込んでいる途中ではない。
-// 応答の前に中断すると Claude Code は発言を入力欄に戻すので、それを打ち込み途中の文字と取り違えず、チャットの入力欄に移す
-export function forgetSent(sessionId: string): void {
-  lastSent.delete(sessionId);
-}
-
-// Claude Code に送る。画像はパスを貼り付けとして送ると [Image #n] として添付される
-export async function submitToClaude(sessionId: string, rawText: string, attachments: string[]): Promise<void> {
-  const { pty } = window.tanacode;
-  // ESC などが残ると、貼り付けの外に出てキー操作（Enter・Shift+Tab など）として届いてしまうので取り除く
-  const text = stripControlChars(rawText);
-  // 画面の折り返しで空白が変わるので、空白を除いて覚える
-  lastSent.set(sessionId, { text: text.replace(/\s/g, ''), at: Date.now() });
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  for (const path of attachments) {
-    pty.write(sessionId, bracketedPaste(stripControlChars(path)));
-    await sleep(300);
-    pty.write(sessionId, ' ');
-  }
-  // 改行を含む入力は貼り付けとして送る（promptKeys）
-  if (text) pty.write(sessionId, promptKeys(text));
-  await sleep(50);
-  pty.write(sessionId, '\r');
+// Claude Code に送る。打ち込みは main が行う（同じセッションへの送信が混ざらないよう、親セッションからの指示と同じ順番待ちに並ぶ）
+export function submitToClaude(sessionId: string, text: string, attachments: string[]): Promise<void> {
+  return window.tanacode.sessions.submit(sessionId, text, attachments);
 }
 
 export function ChatInput({
@@ -113,6 +87,7 @@ export function ChatInput({
   const [dragging, setDragging] = useState(false);
   const files = useRef<{ key: string; list: string[]; at: number } | null>(null);
   const [fileList, setFileList] = useState<string[]>([]);
+  const [sessionList, setSessionList] = useState<SessionSummary[]>([]);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
 
   useEffect(() => {
@@ -129,6 +104,8 @@ export function ChatInput({
   useEffect(() => {
     if (!open || !token) return;
     if (token.kind === 'file') {
+      // セッションは手元の一覧から選ぶので、開くたびに読み直す
+      setSessionList(completion.listSessions?.() ?? []);
       const cached = files.current;
       if (cached?.key === completion.key && Date.now() - cached.at < FILES_TTL_MS) {
         setFileList(cached.list);
@@ -152,6 +129,21 @@ export function ChatInput({
     if (!open || !tokenKind) return [];
     const q = tokenQuery.toLowerCase();
     if (tokenKind === 'file') {
+      // 名前に打った文字を含むセッション。アクティブを先に、その中で前方一致を先に（同じなら一覧の並び＝最終更新の新しい順）
+      const sessions = sessionList
+        .map((s) => {
+          const name = (s.title ?? '').toLowerCase();
+          return { s, score: name.startsWith(q) ? 0 : name.includes(q) ? 1 : -1 };
+        })
+        .filter(({ score }) => score >= 0)
+        .sort((a, b) => Number(a.s.archived) - Number(b.s.archived) || a.score - b.score)
+        .slice(0, MAX_SESSIONS)
+        .map(({ s }) => ({
+          value: `${sessionRef(s.id, s.title)} `,
+          label: sessionName(s),
+          detail: ['セッション', projectRootOf(s).split('/').pop(), s.worktree?.name, s.archived && 'アーカイブ済み'].filter(Boolean).join(' · '),
+          session: true,
+        }));
       const scored = fileList
         .map((path) => {
           const lower = path.toLowerCase();
@@ -161,11 +153,14 @@ export function ChatInput({
         })
         .filter((s) => s.score >= 0)
         .sort((a, b) => a.score - b.score || a.path.length - b.path.length);
-      return scored.slice(0, MAX_SUGGESTIONS).map(({ path }) => ({
-        value: `@${path} `,
-        label: path.slice(path.lastIndexOf('/') + 1),
-        detail: path,
-      }));
+      return [
+        ...sessions,
+        ...scored.slice(0, MAX_SUGGESTIONS).map(({ path }) => ({
+          value: `@${path} `,
+          label: path.slice(path.lastIndexOf('/') + 1),
+          detail: path,
+        })),
+      ];
     }
     // 名前が前方一致 → 別名が前方一致 → 名前の途中に含む の順
     const rank = (c: SlashCommand) => {
@@ -184,7 +179,7 @@ export function ChatInput({
         label: `/${c.name}${c.aliases?.length ? ` (${c.aliases.join(', ')})` : ''}`,
         detail: c.description,
       }));
-  }, [open, tokenKind, tokenQuery, fileList, commands]);
+  }, [open, tokenKind, tokenQuery, fileList, sessionList, commands]);
 
   useEffect(() => setSelected(0), [token?.kind, token?.query]);
 
@@ -240,7 +235,7 @@ export function ChatInput({
           {suggestions.map((s, i) => (
             <button
               key={s.value}
-              className={`suggest-item${i === selected ? ' selected' : ''}`}
+              className={`suggest-item${s.session ? ' session' : ''}${i === selected ? ' selected' : ''}`}
               onMouseDown={(e) => {
                 e.preventDefault();
                 accept(s);

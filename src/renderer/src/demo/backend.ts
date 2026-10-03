@@ -230,6 +230,13 @@ export class DemoBackend {
           if (id && this.sessions.get(id)?.summary.unread) this.update(id, { unread: false });
         },
         snapshot: (id) => ok({ sessionId: id, fromSeq: 0, events: [...s(id).events] }),
+        // 画像はパスを貼り付けて添付する（Claude Code は [Image #n] と出す）
+        submit: (id, text, attachments) => {
+          const message = `${attachments.map((_, i) => `[Image #${i + 1}] `).join('')}${text}`.trim();
+          if (message) this.onUserMessage(id, message, attachments);
+          return ok(undefined);
+        },
+        interrupt: () => {},
         configure: () => ok(undefined),
         restart: () => ok(undefined),
         setRemoteControl: () => ok(null),

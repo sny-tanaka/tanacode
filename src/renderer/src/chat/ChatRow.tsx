@@ -4,12 +4,15 @@ import type { BashTask, TaskRef } from '@shared/task';
 import { DisclosureIcon, IconButton, RewindIcon } from '../icons';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { WorkflowCard } from '../workflow/WorkflowCard';
+import type { SessionLink } from '../sessions/sessionLinks';
 import { HookRuns } from './HookRuns';
 import { ChatImages } from './ChatImages';
 import { Markdown } from './Markdown';
 import { SentFilesCard } from './SentFilesCard';
+import { ParentHeading, SessionLinkList, SessionRefText } from './SessionRefs';
 import { ToolCard } from './ToolCard';
 import type { ChatItem } from './chatState';
+import { isSessionTool } from './toolLabel';
 import type { SubagentRuns } from './useSessionSubagents';
 
 type Props = {
@@ -23,7 +26,20 @@ type Props = {
   onOpenTask: ((ref: TaskRef) => void) | null;
   // 本文のシェルのコードブロックを、ターミナルで実行する。無ければ実行ボタンを出さない
   onRunCommand?: (command: string) => void;
+  // 一覧のセッション（ID と名前）。親からの指示・子からの知らせ・@ の参照・セッションのツールのカードに、名前を出すのに使う
+  sessions?: readonly SessionLink[];
+  // そのセッションへ移る。無ければ移れない（タスクの中身の表示の中など）
+  onSelectSession?: (id: string) => void;
 };
+
+const NO_SESSIONS: readonly SessionLink[] = [];
+
+// ほかのセッションの名前を出す行か。出さない行は、一覧の名前が変わっても描き直さない
+export function showsSessions(item: ChatItem): boolean {
+  if (item.kind === 'user') return !!item.parent || item.text.includes('@session:');
+  if (item.kind === 'notice') return !!item.sessions?.length;
+  return item.kind === 'tool' && isSessionTool(item.name);
+}
 
 // タスクの一覧（Map）は、どれかのタスクが動くたびに新しくなる。行に関係するのは、そのツールのタスクだけなので、それだけを比べる
 // （一覧の中の変わっていないタスクは、stableRuns で前と同じオブジェクトになっている）
@@ -41,22 +57,41 @@ function sameRow(a: Props, b: Props): boolean {
     a.onOpenFile === b.onOpenFile &&
     a.onOpenTask === b.onOpenTask &&
     a.onRunCommand === b.onRunCommand &&
+    (!showsSessions(a.item) || (a.sessions === b.sessions && a.onSelectSession === b.onSelectSession)) &&
     sameTasks(a, b, a.item.kind === 'tool' ? [a.item.id] : [])
   );
 }
 
 // チャットの 1 行。本体のチャットと、タスク（サブエージェントなど）の中身の表示で使う。
 // 入力欄に打つたびにチャット全体が描き直されるので、中身が変わった行だけを描き直す
-export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashTasks, onRewind, onOpenFile, onOpenTask, onRunCommand }: Props) {
+export const ChatRow = memo(function ChatRow({
+  item,
+  workflows,
+  subagents,
+  bashTasks,
+  onRewind,
+  onOpenFile,
+  onOpenTask,
+  onRunCommand,
+  sessions = NO_SESSIONS,
+  onSelectSession,
+}: Props) {
   if (item.kind === 'user') {
+    // 親セッションの Claude からの指示は、人の発言と見分けて出す。
+    // 巻き戻しは出さない（Claude Code の /rewind の一覧では囲みの付いた元の文字で出るので、文字で探せない）
     return (
-      <div className="chat-user reveal-host">
-        <span className="chat-prompt">›</span>
+      <div className={`chat-user reveal-host${item.parent ? ' from-parent' : ''}`}>
+        <span className="chat-prompt">{item.parent ? '»' : '›'}</span>
         <div className="chat-user-body">
-          {item.text && <span className="chat-user-text">{item.text}</span>}
+          {item.parent && <ParentHeading parentId={item.parent} sessions={sessions} onSelectSession={onSelectSession} />}
+          {item.text && (
+            <span className="chat-user-text">
+              <SessionRefText text={item.text} sessions={sessions} onSelectSession={onSelectSession} />
+            </span>
+          )}
           {item.images && <ChatImages keys={item.images} />}
         </div>
-        {onRewind && item.text && !item.text.startsWith('/') && (
+        {onRewind && !item.parent && item.text && !item.text.startsWith('/') && (
           <IconButton
             reveal
             size="sm"
@@ -74,13 +109,23 @@ export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashT
     return <Markdown text={item.text} onRunCommand={onRunCommand} />;
   }
   if (item.kind === 'notice') {
-    if (!item.detail) return <div className="chat-notice">{item.text}</div>;
+    // 子セッションからの知らせには、その子へ移るリンクを添える
+    const links = item.sessions && <SessionLinkList ids={item.sessions} sessions={sessions} onSelectSession={onSelectSession} />;
+    if (!item.detail) {
+      return (
+        <div className="chat-notice">
+          {item.text}
+          {links}
+        </div>
+      );
+    }
     return (
       <details className="chat-notice expandable">
         <summary>
           {/* details の開閉は標準の動きなので、矢印は閉じた形で置き、開いたとき（[open]）に回すのは CSS */}
           <DisclosureIcon open={false} />
           {item.text}
+          {links}
         </summary>
         <pre className="chat-notice-detail">{item.detail}</pre>
       </details>
@@ -150,6 +195,8 @@ export const ChatRow = memo(function ChatRow({ item, workflows, subagents, bashT
       bash={bash}
       onOpenFile={onOpenFile}
       onOpenTask={task && onOpenTask ? () => onOpenTask(task) : null}
+      sessions={sessions}
+      onSelectSession={onSelectSession}
     />
   );
 }, sameRow);
