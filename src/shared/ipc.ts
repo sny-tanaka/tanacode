@@ -44,6 +44,10 @@ export const IpcChannel = {
   SessionsRemove: 'sessions:remove',
   SessionsWorktreeLeftovers: 'sessions:worktree-leftovers',
   SessionsHistory: 'sessions:history',
+  // 作業の書き出し。材料（会話ログ）を読む・保存のダイアログで保存する・保存したファイルを Finder で見せる
+  SessionsExportSource: 'sessions:export-source',
+  SessionsExportSave: 'sessions:export-save',
+  SessionsExportReveal: 'sessions:export-reveal',
   ChatImage: 'chat:image',
   SessionsDiscover: 'sessions:discover',
   SessionsImport: 'sessions:import',
@@ -256,6 +260,9 @@ export type SessionSubagents = { sessionId: string; runs: SubagentRun[] };
 export type SessionBashTasks = { sessionId: string; tasks: BashTask[] };
 export type SessionKnowledgeChanged = { sessionId: string; knowledge: SessionKnowledge };
 export type SessionStatusLine = { sessionId: string; info: StatusLineInfo };
+// 作業の書き出しの材料。events: 会話ログ全体から作ったチャットのイベント（画像は画像置き場に入れ直してある）/
+// branches: 作業したブランチ（会話ログの行に残ったもの。出てきた順）/ home: ホームフォルダ（~ に置き換えるため）
+export type ExportSource = { events: ChatEvent[]; branches: string[]; home: string };
 // アプリの外で作られた Claude Code の会話
 export type DiscoveredSession = { claudeSessionId: string; cwd: string; title: string; updatedAt: number };
 
@@ -326,6 +333,12 @@ export type TanacodeApi = {
     history(id: string): Promise<ChatEvent[]>;
     // 会話ログに埋め込まれた画像（イベントの images の鍵）。data URL。もう持っていなければ null
     image(key: string): Promise<string | null>;
+    // 作業の書き出しの材料（会話ログを読み直す）
+    exportSource(id: string): Promise<ExportSource>;
+    // 書き出した HTML を、保存のダイアログで選んだ場所に保存する。保存したパスを返す（取りやめたら null）。どこにも送らない
+    saveExport(html: string, fileName: string): Promise<string | null>;
+    // 保存した書き出しのファイルを Finder で見せる（このアプリが保存したものだけ）
+    revealExport(path: string): void;
     discover(): Promise<DiscoveredSession[]>;
     // 既存の会話を取り込み、再開する。作ったセッションの id を返す
     import(session: DiscoveredSession): Promise<string>;

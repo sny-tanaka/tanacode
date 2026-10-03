@@ -292,6 +292,15 @@ export const ExternalLinkIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 作業を書き出す: 紙から右へ出る矢印
+export const ExportIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M15 8V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-3" />
+    <path d="M9 12h12" />
+    <path d="M18 9l3 3-3 3" />
+  </Svg>
+);
+
 // プレビュー（見え方を確かめる）: 目
 export const EyeIcon: IconComponent = (p) => (
   <Svg {...p}>

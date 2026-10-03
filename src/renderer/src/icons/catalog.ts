@@ -52,6 +52,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('CompressIcon', '会話を圧縮'),
       item('RewindIcon', 'ここまで戻す'),
       item('ExternalLinkIcon', '別の場所で開く'),
+      item('ExportIcon', '作業を書き出す'),
       item('CodeIcon', '開発者ツール・ソース'),
       item('EyeIcon', 'プレビュー'),
       item('PointerIcon', 'ページの要素を選ぶ'),
