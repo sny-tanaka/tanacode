@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeArgs } from '../src/main/claude-session';
 import {
   apfsClone,
@@ -11,6 +11,7 @@ import {
   prepareNodeModules,
   removeWorktree,
   restoreWorktree,
+  setAsideIgnoredDirs,
   worktreeLeftovers,
   type WorktreePlan,
 } from '../src/main/worktree';
@@ -132,6 +133,60 @@ describe('削除', () => {
     expect(existsSync(plan.path)).toBe(false);
     expect(git(repo, 'branch', '--list', plan.branch)).toBe('');
     expect(git(repo, 'worktree', 'list')).not.toContain(plan.name);
+  });
+
+  describe('gitignore されたフォルダ（node_modules など）', () => {
+    const trash = () => join(repo, '.git', 'tanacode-trash');
+    const trashEmpty = () => !existsSync(trash()) || readdirSync(trash()).length === 0;
+    // node_modules をいちばん上と、追跡しているフォルダの中に作る
+    const modules = (path: string) => {
+      mkdirSync(join(path, 'node_modules', 'left-pad'), { recursive: true });
+      writeFileSync(join(path, 'node_modules', 'left-pad', 'index.js'), 'a');
+      writeFileSync(join(path, '.env'), 'SECRET=1\n');
+    };
+
+    it('消すときは、.git の中のごみ箱へ動かして待たずに済ませ、中身は裏で消える', async () => {
+      const plan = await create();
+      modules(plan.path);
+      await removeWorktree(plan, plan.path);
+      expect(existsSync(plan.path)).toBe(false);
+      expect(git(repo, 'worktree', 'list')).not.toContain(plan.name);
+      await vi.waitFor(() => expect(trashEmpty()).toBe(true), { timeout: 10_000 });
+      // ごみ箱は、ソース管理に出ない
+      expect(git(repo, 'status', '--porcelain', '--untracked-files=all')).toBe('');
+    });
+
+    it('git worktree remove に失敗したときのために、元の場所に戻せる', async () => {
+      const plan = await create();
+      modules(plan.path);
+      const aside = await setAsideIgnoredDirs(plan, plan.path);
+      expect(existsSync(join(plan.path, 'node_modules'))).toBe(false);
+      expect(readdirSync(trash())).toHaveLength(1);
+      await aside.restore();
+      expect(readFileSync(join(plan.path, 'node_modules', 'left-pad', 'index.js'), 'utf8')).toBe('a');
+      expect(trashEmpty()).toBe(true);
+    });
+
+    it('別の worktree を消しても、まだ結果を待っている worktree のごみ箱は消さない', async () => {
+      const waiting = await create();
+      const other = await create();
+      modules(waiting.path);
+      modules(other.path);
+      const aside = await setAsideIgnoredDirs(waiting, waiting.path);
+      await removeWorktree(other, other.path);
+      // other のごみ箱が消えても、waiting のものは残る
+      await vi.waitFor(() => expect(readdirSync(trash())).toHaveLength(1), { timeout: 10_000 });
+      await aside.restore();
+      expect(readFileSync(join(waiting.path, 'node_modules', 'left-pad', 'index.js'), 'utf8')).toBe('a');
+    });
+
+    it('アプリが終わって消し残したごみ箱は、次に worktree を消すときに片付ける', async () => {
+      mkdirSync(join(trash(), 'old-1234', '0', 'left-pad'), { recursive: true });
+      writeFileSync(join(trash(), 'old-1234', '0', 'left-pad', 'index.js'), '');
+      const plan = await create();
+      await removeWorktree(plan, plan.path);
+      await vi.waitFor(() => expect(trashEmpty()).toBe(true), { timeout: 10_000 });
+    });
   });
 
   it('未コミットの変更と未追跡のファイルは、控えのコミットにしてから --force で消す。ふだんのインデックスには触らない', async () => {

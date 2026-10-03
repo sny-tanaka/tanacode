@@ -219,6 +219,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 元のフォルダの未追跡に `.claude/worktrees/` が出ないよう、`.gitignore` で無視されていなければ `.git/info/exclude`（`git rev-parse --git-path info/exclude`）に足します。リポジトリの `.gitignore` は書き換えません。
   - Claude Code は worktree に「claude session <名前> (pid …)」のロックを付け、プロセスを止めても残します。`--resume` では付け直しません（実測）。消すときは、この理由のロックだけ外し、ほかのロックがあれば消さずに断ります。
   - 削除: アーカイブ・一覧からの削除で `removeWorktree` を指定したときだけ。`ClaudeSession.stop` で Claude Code が終わるのを待ち、未コミットの変更と未追跡のファイルがあれば、一時的なインデックス（`GIT_INDEX_FILE`）で `read-tree HEAD` → `add -A` → `write-tree` → `commit-tree` して `refs/tanacode/backup/<名前>`（あれば `-2`・`-3`…）に残します。そのうえで `git worktree remove --force`。何も残っていなければ `--force` なし。最後に `git branch -d`（マージ済みのときだけ消える）。
+    - `git worktree remove` の前に、gitignore されたフォルダ（`node_modules`・`dist` など）を `git ls-files --others --ignored --exclude-standard --directory` で見つけ、`<git-common-dir>/tanacode-trash/<名前>-<乱数>/` へ `rename` で動かします（`setAsideIgnoredDirs`）。`git worktree remove` に消させると、ファイルの多い `node_modules` で 20〜30 秒かかるためです（実測: mitsucari の約 25 万ファイルで 27 秒。`rm -rf` で 31 秒、8 並列でも 18 秒で、APFS のファイル削除が下限）。`rename` なら 0.2 秒で返ります。
+    - `git worktree remove` に失敗したら、動かしたフォルダを元に戻します。成功したら、ごみ箱を裏で `rm -rf` します（待たない）。アプリが終わって消し残しても、次に worktree を消すときに片付けます（使っている最中のごみ箱は消さないよう、メモリに覚えておきます）。`rename` できないフォルダ（別のボリュームなど）は動かさず、git に消させます。
     - 消す前の確認に出すもの（`worktreeLeftovers`）: 未コミットの変更と未追跡のファイルの数（`git status`）、プッシュしていないコミット（上流が無ければ、このブランチだけにあって、どのリモートにも無いコミット）、デフォルトブランチに入っていないコミット。
   - 作り直し: 削除したセッションを開くと、`git worktree add <場所> <ブランチ>`（ブランチが無ければ `-b` で今の HEAD から）で作り直してから、worktree のフォルダで `--resume` します。Claude Code は worktree を消したあとに再開すると、元のフォルダで「worktree の結び付きを外した」と言って続けるため（実測）、作り直してから起動します。
   - アプリが自分から worktree を消すことはありません（「Claude Code も止めて終了」でも消さない）。Claude Code の終了時の確認（残す・消す）は、アプリがプロセスを止めるので出ません。Claude Code の自動の掃除も、`--worktree` のセッションは対象外です。
@@ -296,6 +298,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
 | `.git/info/exclude` | 始めるとき。`.claude/worktrees/` が `.gitignore` で無視されていなければ、`/.claude/worktrees/` を足す |
 | `.claude/worktrees/<名前>/node_modules` | 始めるとき・作り直したとき。元のフォルダの `node_modules` の APFS のクローンと、`npm install`・`yarn install` など |
 | `refs/tanacode/backup/<名前>` | worktree を削除するとき。未コミットの変更と未追跡のファイルの控えのコミット |
+| `.git/tanacode-trash/<名前>-<乱数>` | worktree を削除するとき。gitignore されたフォルダ（`node_modules` など）の一時の動かし先。裏で消すので、ふだんは残らない |
 | worktree・マージ済みのブランチ・Claude Code のロックを消す | worktree を削除してアーカイブ・一覧から削除するとき |
 
 次のものは変更しません。

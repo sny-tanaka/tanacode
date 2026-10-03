@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
@@ -342,8 +342,11 @@ export async function worktreeLeftovers(ref: WorktreeRef, path: string): Promise
 
 // worktree を消す。Claude Code は先に止めておくこと。
 // 1. 未コミットの変更や未追跡のファイルがあれば、一時的なインデックスでコミットにし、refs/tanacode/backup/<名前> に控えを残す
-// 2. git worktree remove。中身が残っているときだけ、控えを取ったうえで --force
-// 3. git branch -d。マージ済みのときだけ消える。まだどこにも入っていないコミットは、ブランチごと残す
+// 2. gitignore されたフォルダ（node_modules など）を、.git の中のごみ箱へ動かす。git worktree remove に消させると、
+//    ファイルの多い node_modules で 20〜30 秒かかる（APFS のファイル削除が遅い）。動かすだけなら一瞬で、中身の削除は 5. で裏に回す
+// 3. git worktree remove。中身が残っているときだけ、控えを取ったうえで --force。失敗したら、2. で動かしたものを戻す
+// 4. git branch -d。マージ済みのときだけ消える。まだどこにも入っていないコミットは、ブランチごと残す
+// 5. ごみ箱の中身を、裏で削除する（待たない）
 // Claude Code が付けたロックは外す。ほかのロック（ユーザーが付けたもの）があれば、消さずに理由を添えて失敗する
 export async function removeWorktree(ref: WorktreeRef, path: string): Promise<WorktreeRemoval> {
   let backupRef: string | null = null;
@@ -357,7 +360,14 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
     }
     const dirty = (await git(path, ['status', '--porcelain', '--untracked-files=all'])).trim() !== '';
     if (dirty) backupRef = await backupChanges(ref, path);
-    await git(ref.root, ['worktree', 'remove', ...(dirty ? ['--force'] : []), path]);
+    const aside = await setAsideIgnoredDirs(ref, path);
+    try {
+      await git(ref.root, ['worktree', 'remove', ...(dirty ? ['--force'] : []), path]);
+    } catch (error) {
+      await aside.restore();
+      throw error;
+    }
+    aside.discard();
   } else {
     // フォルダがもう無い（手で消した）。git に残った登録だけを片付ける
     if (listed?.locked && CLAUDE_LOCK.test(listed.locked)) {
@@ -373,6 +383,72 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
     );
   }
   return { backupRef, branch: ref.branch, branchKept };
+}
+
+// worktree の中の、gitignore されたフォルダ（node_modules・dist など）の動かし先。.git の中なので、worktree と同じボリューム
+// （リネームだけで済み、ファイルは 1 つも触らない）で、ソース管理にも出ない
+const TRASH_DIR = 'tanacode-trash';
+// 使っているごみ箱（動かしてから git worktree remove の結果を待っている間と、裏で削除している間）。
+// 別の worktree の削除が、ほかの削除のごみ箱を消し残しと間違えて消さないように覚えておく
+const trashing = new Set<string>();
+
+export type AsideDirs = {
+  // 動かしたフォルダを、元の場所に戻す（git worktree remove に失敗したとき）
+  restore: () => Promise<void>;
+  // 動かしたフォルダを、裏で削除する。待たない。前に消し残したごみ箱も、あわせて片付ける
+  discard: () => void;
+};
+
+// worktree の中の、gitignore されたフォルダを、ごみ箱へ動かす。動かせなかったフォルダ（別のボリュームなど）は、
+// そのまま git worktree remove が消す（遅いだけで、結果は同じ）
+export async function setAsideIgnoredDirs(ref: WorktreeRef, path: string): Promise<AsideDirs> {
+  const moved: { from: string; to: string }[] = [];
+  let trash: string | null = null;
+  try {
+    const gitDir = resolve(ref.root, (await git(ref.root, ['rev-parse', '--git-common-dir'])).trim());
+    // --directory: 無視されたフォルダは、中に入らずフォルダ名だけを出す（末尾が /）
+    const listed = await git(path, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']);
+    const dirs = listed.split('\0').filter((entry) => entry.endsWith('/'));
+    if (dirs.length > 0) {
+      trash = join(gitDir, TRASH_DIR, `${ref.name}-${randomBytes(3).toString('hex')}`);
+      trashing.add(trash);
+      await mkdir(trash, { recursive: true });
+      for (const dir of dirs) {
+        const from = join(path, dir.slice(0, -1));
+        const to = join(trash, String(moved.length));
+        await rename(from, to).then(
+          () => moved.push({ from, to }),
+          () => {},
+        );
+      }
+    }
+    const root = join(gitDir, TRASH_DIR);
+    return {
+      restore: () => putBack(moved, trash),
+      discard: () => {
+        if (trash) deleteInBackground(trash);
+        // アプリが終わって消し残したごみ箱があれば、ここで片付ける
+        void readdir(root).then((names) => {
+          for (const name of names) if (!trashing.has(join(root, name))) deleteInBackground(join(root, name));
+        }, () => {});
+      },
+    };
+  } catch {
+    // 動かした分は戻して、そのまま git worktree remove に任せる
+    await putBack(moved, trash);
+    return { restore: async () => {}, discard: () => {} };
+  }
+}
+
+async function putBack(moved: { from: string; to: string }[], trash: string | null): Promise<void> {
+  for (const { from, to } of moved) await rename(to, from).catch(() => {});
+  if (trash) await rm(trash, { recursive: true, force: true }).catch(() => {});
+  if (trash) trashing.delete(trash);
+}
+
+function deleteInBackground(dir: string): void {
+  trashing.add(dir);
+  execFile('rm', ['-rf', dir], () => trashing.delete(dir));
 }
 
 // 未コミットの変更と未追跡のファイル（.gitignore で無視されるものは除く）を、ふだんのインデックスに触らずにコミットにして、ref に残す

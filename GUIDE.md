@@ -118,7 +118,7 @@ tanacode の画面の見方と、機能ごとの使い方のまとめ。イン�
   - 準備の間は、一覧とチャットに「node_modules を複製しています」などと出ます。最初の指示は、準備が終わってから送ります。終わったら、何をしたかをチャットに出します。
 - アーカイブ・一覧からの削除のときに、worktree を残すか削除するかを聞きます（既定は残す）。
   - worktree に残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに入っていないコミット）を並べます。
-  - 削除するときは、Claude Code を止めて、終わるのを待ってから消します。
+  - 削除するときは、Claude Code を止めて、終わるのを待ってから消します。`node_modules` などの gitignore されたフォルダは、いったん `.git/tanacode-trash` へ動かして、中身を裏で消すので、ファイルの多いリポジトリでも、削除はすぐ終わります（裏の削除は、終わるまでに 30 秒ほどかかることがあります）。
   - 未コミットの変更と未追跡のファイルは、消す前にコミットにして、`refs/tanacode/backup/<名前>` に控えを残します（`git show refs/tanacode/backup/<名前>` で見られます）。ふだんのステージには触りません。gitignore されたファイル（worktree の中で書き換えた `.env` など）は、控えに入りません。
   - ブランチは、マージ済みのときだけ消します。まだどこにも入っていないコミットがあれば、ブランチごと残します。
   - 自分でロックした worktree（`git worktree lock`）は消しません。
@@ -353,7 +353,7 @@ Claude Code の設定ファイル（settings.json と同じ形の JSON）を名�
 - アプリが起動する Claude Code にだけ、その場の設定（statusLine と、質問を読むための hooks、worktree やブランチを消す操作で確認を出させる hooks）を足します。あなた自身の statusLine と hooks は、これまでどおり動きます。
 - worktree のセッションでは、あなたの操作に合わせて、リポジトリに次のものを書き込みます。
   - 始めるとき: Claude Code が作る worktree（`.claude/worktrees/<名前>`）とブランチ（`worktree-<名前>`）。`.claude/worktrees/` を `.git/info/exclude` に足すこと（`.gitignore` で無視していないとき）。worktree の中の `node_modules`（複製と、`npm install`・`yarn install` など）
-  - worktree を削除してアーカイブ・一覧から削除するとき: 未コミットの変更の控え（`refs/tanacode/backup/<名前>`）。worktree とマージ済みのブランチを消すこと。Claude Code が付けたロックを外すこと
+  - worktree を削除してアーカイブ・一覧から削除するとき: 未コミットの変更の控え（`refs/tanacode/backup/<名前>`）。worktree とマージ済みのブランチを消すこと（gitignore されたフォルダは、`.git/tanacode-trash` に動かしてから裏で消します）。Claude Code が付けたロックを外すこと
   - 削除したセッションをアーカイブから戻すとき: worktree を作り直すこと
 
 詳しくは [CONTRIBUTING.md の「読むもの・書くもの」](CONTRIBUTING.md#読むもの書くもの) を参照。
