@@ -155,7 +155,7 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
             </button>
           )}
           {(phase === 'done' || phase === 'failed') && next && (
-            <a className="demo-button primary" href={`?tour=${next.id}`}>
+            <a className="demo-button primary" href={tourHref(next)} onClick={(e) => openTour(e, next)}>
               次へ: {next.title}
             </a>
           )}
@@ -172,6 +172,16 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
       </ScreenLayer>
     </>
   );
+}
+
+// ツアーの行き先（ハッシュが変わると main.tsx が読み込み直す）
+const tourHref = (tour: Tour) => `#${tour.id}`;
+
+// 今と同じツアーを選んだときはハッシュが変わらないので、自分で読み込み直す
+function openTour(e: React.MouseEvent, tour: Tour): void {
+  if (location.hash !== tourHref(tour)) return;
+  e.preventDefault();
+  location.reload();
 }
 
 // 帯をこの幅より狭く出すときは、2 段にする（上の段に操作、下の段に説明）
@@ -256,7 +266,7 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
         <ol className="demo-tour-list">
           {TOURS.map((t, i) => (
             <li key={t.id}>
-              <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={`?tour=${t.id}`}>
+              <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={tourHref(t)} onClick={(e) => openTour(e, t)}>
                 <span className="demo-tour-num">{i + 1}</span>
                 <span className="demo-tour-body">
                   <span className="demo-tour-name">{t.title}</span>
