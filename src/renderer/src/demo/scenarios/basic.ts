@@ -118,7 +118,7 @@ export async function runBasic(backend: DemoBackend, d: Director): Promise<void>
   });
   const run = (state: 'running' | 'done', toolCalls: number, recent: { name: string; target: string }[]) =>
     backend.setSubagents(id, [
-      { toolUseId: agent, agentId: 'a1', background: false, state, startedAt, model: 'claude-sonnet-5', toolCalls, recent, durationMs: state === 'done' ? Date.now() - startedAt : null, tokens: 12_000, result: null },
+      { toolUseId: agent, agentId: 'a1', description: '税込計算のテストを追加して流す', background: false, state, startedAt, model: 'claude-sonnet-5', toolCalls, recent, durationMs: state === 'done' ? Date.now() - startedAt : null, tokens: 12_000, result: null },
     ]);
   run('running', 1, [{ name: 'Read', target: 'src/lib/price.test.ts' }]);
 

@@ -119,6 +119,7 @@ const api: TanacodeApi = {
     bash: (sessionId) => ipcRenderer.invoke(IpcChannel.TasksBash, sessionId),
     onBashChanged: (listener) => subscribe<SessionBashTasks>(IpcChannel.TasksBashChanged, listener),
     agentLog: (sessionId, ref) => ipcRenderer.invoke(IpcChannel.TasksAgentLog, sessionId, ref),
+    stop: (sessionId, ref) => ipcRenderer.invoke(IpcChannel.TasksStop, sessionId, ref),
   },
   pty: {
     write: (sessionId, data) => ipcRenderer.send(IpcChannel.PtyWrite, sessionId, data),

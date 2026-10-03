@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckMark } from '../layout/CheckMark';
 import { formatDuration } from '../workflow/WorkflowCard';
-import { elapsed, useNow, type TaskEntry } from './taskList';
+import { StopIcon } from '../layout/icons';
+import { elapsed, stoppable, useNow, type TaskEntry } from './taskList';
 
 const KIND_LABEL = { subagent: 'エージェント', workflow: 'ワークフロー', bash: 'Bash' } as const;
 // これより多いときは折りたたむ
@@ -14,10 +15,13 @@ type Props = {
   tasks: TaskEntry[];
   activeKey: string | null;
   onOpen: (task: TaskEntry) => void;
+  // 動いているものを止める。stopping: 止めている途中のもの（key）
+  onStop: (task: TaskEntry) => void;
+  stopping: ReadonlySet<string>;
 };
 
 // 入力欄の上に常に出す、動いているタスクの一覧。チャットが進んでも流れていかない
-export function TaskTray({ tasks, activeKey, onOpen }: Props) {
+export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) {
   // collapsed: 見出しだけにする / expanded: 多いときも全部出す
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -53,6 +57,24 @@ export function TaskTray({ tasks, activeKey, onOpen }: Props) {
             <span className="task-name">{task.name}</span>
             <span className="task-progress">{left ? LEFT_LABEL[task.state] : task.progress}</span>
             {ms !== null && <span className="task-time">{formatDuration(ms)}</span>}
+            {stoppable(task) &&
+              (stopping.has(task.key) ? (
+                <span className="task-stop busy" aria-label="止めています" data-tip="止めています…">
+                  <span className="spinner" />
+                </span>
+              ) : (
+                <button
+                  className="task-stop"
+                  aria-label="止める"
+                  data-tip="止める"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStop(task);
+                  }}
+                >
+                  <StopIcon size={16} />
+                </button>
+              ))}
           </div>
         );
       })}

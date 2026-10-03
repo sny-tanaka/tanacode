@@ -31,7 +31,7 @@ https://github.com/user-attachments/assets/8a14e102-a9e2-4002-9300-6a3405a2e468
 
 ### 並行して動く作業を見失わない
 
-サブエージェント・ワークフロー・バックグラウンドの Bash は、動いている間は入力欄の上に表示。ワークフローは、GitHub Actions のようなフロー図とエージェントごとの会話で追跡。
+サブエージェント・ワークフロー・バックグラウンドの Bash は、動いている間は入力欄の上に表示。そこから止めることもできます。ワークフローは、GitHub Actions のようなフロー図とエージェントごとの会話で追跡。
 
 https://github.com/user-attachments/assets/269deae1-56b6-4543-9585-6bc8a37bdd67
 

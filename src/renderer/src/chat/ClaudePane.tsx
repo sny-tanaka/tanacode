@@ -47,6 +47,9 @@ type Props = {
   tasks: TaskEntry[];
   activeTaskKey: string | null;
   onOpenTask: (ref: TaskRef) => void;
+  // 動いているバックグラウンドのタスクを止める。stoppingTasks: 止めている途中のもの（key）
+  onStopTask: (task: TaskEntry) => void;
+  stoppingTasks: ReadonlySet<string>;
   terminalOpen: boolean;
   // コードに付けたコメント。送信するとき本文に付ける
   comments: ReviewComment[];
@@ -82,6 +85,8 @@ export const ClaudePane = memo(function ClaudePane({
   tasks,
   activeTaskKey,
   onOpenTask,
+  onStopTask,
+  stoppingTasks,
   terminalOpen,
   comments,
   onCommentsChange,
@@ -513,7 +518,7 @@ export const ClaudePane = memo(function ClaudePane({
         )}
       </div>
 
-      <TaskTray tasks={tasks} activeKey={activeTaskKey} onOpen={(t) => onOpenTask(t.ref)} />
+      <TaskTray tasks={tasks} activeKey={activeTaskKey} onOpen={(t) => onOpenTask(t.ref)} onStop={onStopTask} stopping={stoppingTasks} />
       {!session.archived && (
         <div className="chat-input-wrap">
           <ChatInput

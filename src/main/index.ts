@@ -22,7 +22,7 @@ import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
-import type { AgentLogRef } from '@shared/task';
+import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
 import { menuNotice } from './notice-text';
@@ -362,6 +362,7 @@ function registerIpc(): void {
     ),
   );
   ipcMain.handle(IpcChannel.TasksAgentLog, (_e, id: string, ref: AgentLogRef) => manager.agentLog(id, ref));
+  ipcMain.handle(IpcChannel.TasksStop, (_e, id: string, ref: TaskRef) => manager.stopTask(id, ref));
   ipcMain.handle(IpcChannel.ScreenChoose, (_e, id: string, choice: ScreenChoice) => manager.choose(id, choice));
   ipcMain.on(IpcChannel.SessionsFocus, (_e, id: string | null) => manager.focus(id));
   ipcMain.on(IpcChannel.PtyWrite, (_e, id: string, data: string) => manager.write(id, data));

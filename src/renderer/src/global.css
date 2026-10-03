@@ -4486,6 +4486,53 @@ body.resizing-rows webview {
 .task-card-state.failed {
   color: var(--danger);
 }
+/* 止める（カードの右上。ホバーで赤くする。止めている間は丸いぐるぐるにする） */
+.task-stop {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: -2px -4px -2px 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+button.task-stop:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.task-stop.busy {
+  cursor: default;
+}
+/* 止める（タスクの中身の見出し） */
+.task-stop-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.task-stop-button:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.task-stop-button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
 .task-card-name {
   font-size: 12px;
   color: var(--text-heading);
