@@ -269,10 +269,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - install は `ShellTerminals.run` でログインシェルから実行し（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）、`shell.onOpened` でターミナルパネルにタブを出させます。タブは終わっても残し、終了コードを名前に添えます。
   - 元のフォルダの未追跡に `.claude/worktrees/` が出ないよう、`.gitignore` で無視されていなければ `.git/info/exclude`（`git rev-parse --git-path info/exclude`）に足します。リポジトリの `.gitignore` は書き換えません。
   - Claude Code は worktree に「claude session <名前> (pid …)」のロックを付け、プロセスを止めても残します。`--resume` では付け直しません（実測）。消すときは、この理由のロックだけ外し、ほかのロックがあれば消さずに断ります。
-  - 削除: アーカイブ・一覧からの削除で `removeWorktree` を指定したときだけ。`ClaudeSession.stop` で Claude Code が終わるのを待ち、未コミットの変更と未追跡のファイルがあれば、一時的なインデックス（`GIT_INDEX_FILE`）で `read-tree HEAD` → `add -A` → `write-tree` → `commit-tree` して `refs/tanacode/backup/<名前>`（あれば `-2`・`-3`…）に残します。そのうえで `git worktree remove --force`。何も残っていなければ `--force` なし。最後に `git branch -d`（マージ済みのときだけ消える）。
+  - 削除: アーカイブ・一覧からの削除で `removeWorktree` を指定したときだけ。`ClaudeSession.stop` で Claude Code が終わるのを待ち、未コミットの変更と未追跡のファイルがあれば、一時的なインデックス（`GIT_INDEX_FILE`）で `read-tree HEAD` → `add -A` → `write-tree` → `commit-tree` して `refs/tanacode/backup/<名前>`（あれば `-2`・`-3`…）に残します。そのうえで `git worktree remove --force`。何も残っていなければ `--force` なし。最後に `git branch -d`（上流か、元のフォルダの今のブランチにマージ済みのときだけ消える）。消えなくても、手元にしか無いコミットが無ければ（`localOnlyCommits` が 0）、`git branch -D` で消します。数えられなかったときは消しません。
     - `git worktree remove` の前に、gitignore されたフォルダ（`node_modules`・`dist` など）を `git ls-files --others --ignored --exclude-standard --directory` で見つけ、`<git-common-dir>/tanacode-trash/<名前>-<乱数>/` へ `rename` で動かします（`setAsideIgnoredDirs`）。`git worktree remove` に消させると、ファイルの多い `node_modules` で 20〜30 秒かかるためです（実測: mitsucari の約 25 万ファイルで 27 秒。`rm -rf` で 31 秒、8 並列でも 18 秒で、APFS のファイル削除が下限）。`rename` なら 0.2 秒で返ります。
     - `git worktree remove` に失敗したら、動かしたフォルダを元に戻します。成功したら、ごみ箱を裏で `rm -rf` します（待たない）。アプリが終わって消し残しても、次に worktree を消すときに片付けます（使っている最中のごみ箱は消さないよう、メモリに覚えておきます）。`rename` できないフォルダ（別のボリュームなど）は動かさず、git に消させます。
-    - 消す前の確認に出すもの（`worktreeLeftovers`）: 未コミットの変更と未追跡のファイルの数（`git status`）、プッシュしていないコミット（上流が無ければ、このブランチだけにあって、どのリモートにも無いコミット）、デフォルトブランチに入っていないコミット。
+    - 消す前の確認に出すもの（`worktreeLeftovers`）: 未コミットの変更と未追跡のファイルの数（`git status`）、プッシュしていないコミット（`localOnlyCommits`）、ブランチから作った PR。
+    - PR（`github.ts` の `pullRequestsOf`）: `gh pr list --head <ブランチ> --state all --json …`。head の名前は、上流（`branch.<名前>.merge`）があればその名前。いくつかあれば、開いているもの → マージ済み → 閉じたものの順に、新しいもの。`gh` は、起動時に取り込んだログインシェルの PATH から探します。`gh` が無い・ログインしていない・GitHub のリポジトリでないなどで失敗したら「調べられない」として、PR を使わずに数えます。
+    - プッシュしていないコミット（手元にしか無いコミット）: 上流があれば上流に無いもの、無ければ `--remotes` にも、ほかのブランチ（`--branches`）にも無いもの。PR の head のコミットも除きます（GitHub は、マージのあとにリモートのブランチを消しても、PR の head を残すため）。手元に無い head は除けないので（`rev-list` の `--not` に渡すと失敗する）、`cat-file -e` で確かめてから渡します。
+    - それでも残れば、PR を使わずに手元でスカッシュマージ・cherry-pick したものかもしれないので、中身がデフォルトブランチ（手元と `origin/<デフォルトブランチ>`）に入っているかを比べ（`mergedInto`）、入っていれば 0 にします（`contentIn`）。コミットが作り直されてハッシュが変わるので、中身で比べます。デフォルトブランチの、ブランチと分かれたあとの時点（今の先頭と、ブランチが変えたファイルに触れたコミットを古い順に。100 まで）で `git merge-tree --write-tree <時点> <ブランチ>` し、結果のツリーがその時点のツリーと同じ（マージしても何も変わらない）ものがあれば、入っているとみなします。今の先頭だけだと、マージのあとに同じところを変えると衝突して見分けられず、ブランチ全体の差分のパッチ ID（`git cherry`）だと、マージまでにデフォルトブランチが近くの行を変えると一致しないためです。衝突を直してからマージしたものは見分けられず、入っていない側に倒れます。
   - 作り直し: 削除したセッションを開くと、`git worktree add <場所> <ブランチ>`（ブランチが無ければ `-b` で今の HEAD から）で作り直してから、worktree のフォルダで `--resume` します。Claude Code は worktree を消したあとに再開すると、元のフォルダで「worktree の結び付きを外した」と言って続けるため（実測）、作り直してから起動します。
   - アプリが自分から worktree を消すことはありません（「Claude Code も止めて終了」でも消さない）。Claude Code の終了時の確認（残す・消す）は、アプリがプロセスを止めるので出ません。Claude Code の自動の掃除も、`--worktree` のセッションは対象外です。
 - Remote Control の切り替えは、Claude Code が動いていればその場で `/remote-control` を送ります。以前つないでいた会話を再開すると、Claude Code はフラグが無くても勝手につなぎ直すので、オフのセッションでそうなったら、すぐに `/remote-control` で切ります。
@@ -471,7 +474,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude/cache/model-catalog/*-cc.json` | モデルの一覧と、選べるエフォート |
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
-| worktree のセッションのリポジトリ（`git worktree list`・`git status`・`git rev-list`） | worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに入っていないコミット）と、Claude Code のロック |
+| worktree のセッションのリポジトリ（`git worktree list`・`git status`・`git rev-list`・`git merge-tree`） | worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、Claude Code のロック |
+| GitHub の PR（`gh pr list`。`gh` のログインを使う） | worktree のブランチから作った PR がマージ済みか（アーカイブ・一覧から削除するときの確認と、worktree の削除） |
 | Claude が読むセッションのフォルダ（`git diff`・`git ls-files`・未追跡のファイルの中身） | ほかのセッションのブランチの変更（`get_session_diff`。見える範囲のセッションだけ） |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
 | 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
@@ -504,7 +508,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 | `.claude/worktrees/<名前>/node_modules` | 始めるとき・作り直したとき。元のフォルダの `node_modules` の APFS のクローンと、`npm install`・`yarn install` など |
 | `refs/tanacode/backup/<名前>` | worktree を削除するとき。未コミットの変更と未追跡のファイルの控えのコミット |
 | `.git/tanacode-trash/<名前>-<乱数>` | worktree を削除するとき。gitignore されたフォルダ（`node_modules` など）の一時の動かし先。裏で消すので、ふだんは残らない |
-| worktree・マージ済みのブランチ・Claude Code のロックを消す | worktree を削除してアーカイブ・一覧から削除するとき |
+| worktree・手元にしか無いコミットが無いブランチ・Claude Code のロックを消す | worktree を削除してアーカイブ・一覧から削除するとき |
 
 次のものは変更しません。
 

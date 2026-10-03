@@ -200,7 +200,7 @@ export type SessionWorktree = { name: string; branch: string; root: string; prep
 // copying: node_modules を複製している / installing: パッケージマネージャーの install（npm install など）を実行している
 export type WorktreePreparing = 'creating' | 'restoring' | 'copying' | 'installing';
 
-// worktree を消す前に、残っているもの。数は件数（null は分からない）
+// worktree を消す前に、残っているもの。数は件数
 export type WorktreeLeftovers = {
   // worktree のフォルダがある
   exists: boolean;
@@ -208,16 +208,25 @@ export type WorktreeLeftovers = {
   // 未コミットの変更（追跡しているファイル）と、未追跡のファイル
   uncommitted: number;
   untracked: number;
-  // プッシュしていないコミット（上流が無ければ、どのリモートにも無いコミット）
+  // プッシュしていないコミット（上流が無ければ、どのリモートにも、ほかのブランチにも無いコミット）。PR の head に入っているコミットは、
+  // マージのあとにリモートのブランチを消していても GitHub にあるので数えない。中身がデフォルトブランチに入っていれば（手元での
+  // スカッシュマージ・cherry-pick など）0 で、contentIn にそのブランチの名前（そうでなければ null）
   unpushed: number;
-  // デフォルトブランチに入っていないコミット（デフォルトブランチが分からなければ null）
-  unmerged: number | null;
-  defaultBranch: string | null;
+  contentIn: string | null;
+  pr: WorktreePr;
 };
+
+// worktree のブランチから作った PR（gh で調べる。PR がいくつかあれば、開いているもの → マージ済み → 閉じたものの順に、新しいもの）。
+// none: PR が無い / unknown: 調べられない（gh が無い・ログインしていない・GitHub のリポジトリでないなど）/
+// after: PR の head のあとに、手元で足したコミットの数（head のコミットが手元に無ければ null）
+export type WorktreePr =
+  | { state: 'open' | 'merged' | 'closed'; number: number; base: string; url: string; after: number | null }
+  | { state: 'none' }
+  | { state: 'unknown' };
 
 // アーカイブ・一覧からの削除のときの指定。removeWorktree: worktree のセッションなら、worktree も消す
 export type ArchiveOptions = { removeWorktree: boolean };
-// worktree を消した結果。backupRef: 未コミットの変更の控え（無ければ null）/ branchKept: まだどこにも入っていないコミットがあり、ブランチを残した
+// worktree を消した結果。backupRef: 未コミットの変更の控え（無ければ null）/ branchKept: 手元にしか無いコミットがあり、ブランチを残した
 export type WorktreeRemoval = { backupRef: string | null; branch: string; branchKept: boolean };
 
 export type SearchOptions = { caseSensitive: boolean; regex: boolean };

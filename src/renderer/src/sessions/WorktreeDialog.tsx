@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { SessionSummary, WorktreeLeftovers } from '@shared/ipc';
+import type { SessionSummary, WorktreeLeftovers, WorktreePr } from '@shared/ipc';
 import { errorMessage } from '../errorMessage';
 
 // worktree のセッションをアーカイブ・一覧から削除するときの確認。worktree を残すか消すかを選ぶ（既定は残す）。
-// 消す前に、worktree に残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに
-// 入っていないコミット）を並べる。action: archive はアーカイブ、remove は一覧からの削除
+// 消す前に、worktree に残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、ブランチから作った PR が
+// マージ済みかを並べる。action: archive はアーカイブ、remove は一覧からの削除
 export function WorktreeDialog({
   session,
   action,
@@ -80,7 +80,7 @@ export function WorktreeDialog({
             <li>
               削除しても、未コミットの変更と未追跡のファイルは <code>refs/tanacode/backup/{worktree.name}</code> に控えを残します。
             </li>
-            <li>まだどこにも入っていないコミットは、ブランチごと残します。マージ済みのブランチだけ消します。</li>
+            <li>手元にしか無いコミットがあれば、ブランチごと残します。リモートや PR、デフォルトブランチに入っていれば、ブランチも消します。</li>
             <li>gitignore されたファイル（worktree の中で書き換えた .env など）は、控えに入りません。</li>
             {action === 'archive' && <li>削除したセッションをアーカイブから戻すと、残したブランチから worktree を作り直します。</li>}
           </ul>
@@ -105,25 +105,62 @@ export function WorktreeDialog({
 function LeftoverList({ leftovers }: { leftovers: WorktreeLeftovers | null | undefined }) {
   if (leftovers === undefined) return <p className="worktree-dialog-status">残っているものを調べています…</p>;
   if (leftovers === null) return <p className="worktree-dialog-status">残っているものを調べられませんでした</p>;
+  return (
+    <>
+      <Leftovers leftovers={leftovers} />
+      <PrStatus pr={leftovers.pr} />
+    </>
+  );
+}
+
+function Leftovers({ leftovers }: { leftovers: WorktreeLeftovers }) {
   if (!leftovers.exists) return <p className="worktree-dialog-status">worktree のフォルダはもうありません（ブランチの扱いは同じです）</p>;
   const rows = [
     { label: '未コミットの変更', count: leftovers.uncommitted },
     { label: '未追跡のファイル', count: leftovers.untracked },
     { label: 'プッシュしていないコミット', count: leftovers.unpushed },
-    leftovers.defaultBranch && leftovers.unmerged !== null
-      ? { label: `${leftovers.defaultBranch} に入っていないコミット`, count: leftovers.unmerged }
-      : null,
-  ].filter((row) => row !== null);
+  ];
   const left = rows.filter((row) => row.count > 0);
-  if (left.length === 0) return <p className="worktree-dialog-status ok">残っている変更やコミットはありません</p>;
-  return (
-    <ul className="worktree-leftovers">
-      {left.map((row) => (
-        <li key={row.label}>
-          <span>{row.label}</span>
-          <span className="worktree-leftover-count">{row.count} 件</span>
-        </li>
-      ))}
-    </ul>
+  // 手元にしか無いコミットはあるが、中身はデフォルトブランチに入っている（手元でのスカッシュマージ・cherry-pick など）
+  const contentIn = leftovers.contentIn && (
+    <p className="worktree-dialog-status ok">コミットは手元にしかありませんが、中身は {leftovers.contentIn} に入っています</p>
   );
+  if (left.length === 0) {
+    return (
+      <>
+        <p className="worktree-dialog-status ok">残っている変更やコミットはありません</p>
+        {contentIn}
+      </>
+    );
+  }
+  return (
+    <>
+      <ul className="worktree-leftovers">
+        {left.map((row) => (
+          <li key={row.label}>
+            <span>{row.label}</span>
+            <span className="worktree-leftover-count">{row.count} 件</span>
+          </li>
+        ))}
+      </ul>
+      {contentIn}
+    </>
+  );
+}
+
+// ブランチから作った PR がマージ済みか
+function PrStatus({ pr }: { pr: WorktreePr }) {
+  if (pr.state === 'unknown') return <p className="worktree-dialog-status">PR は調べられませんでした（gh が無い・ログインしていないなど）</p>;
+  if (pr.state === 'none') return <p className="worktree-dialog-status">このブランチの PR はありません</p>;
+  const name = `PR #${pr.number}（${pr.base} へ）`;
+  if (pr.state === 'merged' && pr.after) {
+    return (
+      <p className="worktree-dialog-status warn">
+        {name}はマージ済みです。そのあとに足したコミットが {pr.after} 件あります
+      </p>
+    );
+  }
+  if (pr.state === 'merged') return <p className="worktree-dialog-status ok">{name}はマージ済みです</p>;
+  if (pr.state === 'open') return <p className="worktree-dialog-status warn">{name}は、まだマージされていません</p>;
+  return <p className="worktree-dialog-status warn">{name}は、マージされずに閉じられています</p>;
 }

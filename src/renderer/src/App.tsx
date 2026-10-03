@@ -517,7 +517,7 @@ export function App() {
       if (action === 'remove') forgetSession(id);
       const notes = [
         removal?.backupRef && `未コミットの変更と未追跡のファイルの控えを ${removal.backupRef} に残しました（git show ${removal.backupRef} で見られます）。`,
-        removal?.branchKept && `ブランチ ${removal.branch} には、まだどこにも入っていないコミットがあるので残しました。`,
+        removal?.branchKept && `ブランチ ${removal.branch} には、手元にしか無いコミットがあるので残しました。`,
       ].filter(Boolean);
       if (notes.length > 0) window.alert(`worktree を削除しました。\n${notes.join('\n')}`);
     },

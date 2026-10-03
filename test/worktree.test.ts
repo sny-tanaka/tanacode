@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeArgs } from '../src/main/claude-session';
+import { type PullRequest, pullRequestsOf } from '../src/main/github';
 import {
   apfsClone,
   hideWorktrees,
@@ -18,7 +19,11 @@ import {
 
 // worktree のセッション（claude --worktree）の、アプリが受け持つところ。本物の git で確かめる。
 // Claude Code が worktree を作るところは、Claude Code と同じ形（.claude/worktrees/<名前>・ブランチ worktree-<名前>・
-// 「claude session …」のロック）を git で作って代わりにする（本物の Claude Code では test/cli/worktree.test.ts）
+// 「claude session …」のロック）を git で作って代わりにする（本物の Claude Code では test/cli/worktree.test.ts）。
+// PR（gh で GitHub に問い合わせるところ）は差し替える
+
+vi.mock('../src/main/github', () => ({ pullRequestsOf: vi.fn() }));
+const prs = vi.mocked(pullRequestsOf);
 
 let root: string;
 let repo: string;
@@ -26,6 +31,8 @@ let repo: string;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
 beforeEach(() => {
+  // 既定は、gh で調べられない
+  prs.mockReset().mockResolvedValue(null);
   root = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-worktree-')));
   repo = join(root, 'repo');
   mkdirSync(repo);
@@ -95,7 +102,7 @@ describe('元のフォルダのソース管理', () => {
 });
 
 describe('残っているもの', () => {
-  it('未コミットの変更・未追跡のファイル・プッシュしていないコミット・デフォルトブランチに入っていないコミットを数える', async () => {
+  it('未コミットの変更・未追跡のファイル・プッシュしていないコミットを数える', async () => {
     const plan = await create();
     expect(await worktreeLeftovers(plan, plan.path)).toEqual({
       exists: true,
@@ -103,8 +110,8 @@ describe('残っているもの', () => {
       uncommitted: 0,
       untracked: 0,
       unpushed: 0,
-      unmerged: 0,
-      defaultBranch: 'main',
+      contentIn: null,
+      pr: { state: 'unknown' },
     });
     writeFileSync(join(plan.path, 'b.txt'), 'b\n');
     git(plan.path, 'add', 'b.txt');
@@ -114,13 +121,116 @@ describe('残っているもの', () => {
     writeFileSync(join(plan.path, 'new.txt'), 'new\n');
     // .gitignore で無視されるものは数えない
     writeFileSync(join(plan.path, '.env'), 'SECRET=1\n');
-    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ uncommitted: 2, untracked: 1, unpushed: 1, unmerged: 1 });
+    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ uncommitted: 2, untracked: 1, unpushed: 1 });
   });
 
   it('worktree もブランチも無ければ、何も残っていない', async () => {
     const plan = await planWorktree(repo);
-    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ exists: false, uncommitted: 0, untracked: 0, unpushed: 0, unmerged: 0 });
+    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ exists: false, uncommitted: 0, untracked: 0, unpushed: 0 });
   });
+
+  describe('PR', () => {
+    it('PR をスカッシュマージして、リモートのブランチを消していても、PR に入っているコミットはプッシュしていないと数えない', async () => {
+      withOrigin();
+      const plan = await create();
+      commitIn(plan.path, 'b.txt');
+      commitIn(plan.path, 'c.txt');
+      git(plan.path, 'push', '-q', '-u', 'origin', plan.branch);
+      // GitHub がマージのあとにブランチを消し、手元でも prune した（上流が無くなった）
+      git(repo, 'push', '-q', 'origin', '--delete', plan.branch);
+      git(repo, 'fetch', '-q', '--prune');
+      // gh で調べられなければ、どのリモートにも無いコミットとして数える
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 2, pr: { state: 'unknown' } });
+      const head = git(repo, 'rev-parse', plan.branch);
+      prs.mockResolvedValue([pull({ number: 7, state: 'MERGED', headRefOid: head })]);
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({
+        unpushed: 0,
+        contentIn: null,
+        pr: { state: 'merged', number: 7, base: 'main', url: 'https://github.com/me/repo/pull/7', after: 0 },
+      });
+      expect(prs).toHaveBeenLastCalledWith(repo, plan.branch);
+      // マージのあとに足したコミットは、プッシュしていないコミットとして数える
+      commitIn(plan.path, 'd.txt');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, pr: { state: 'merged', after: 1 } });
+    });
+
+    it('上流の名前が違えば、その名前で PR を探す', async () => {
+      withOrigin();
+      const plan = await create();
+      git(plan.path, 'push', '-q', '-u', 'origin', `${plan.branch}:fix/login`);
+      await worktreeLeftovers(plan, plan.path);
+      expect(prs).toHaveBeenLastCalledWith(repo, 'fix/login');
+    });
+
+    it('開いている PR → マージ済み → 閉じたものの順に選ぶ。PR が無ければ none', async () => {
+      const plan = await create();
+      const head = git(repo, 'rev-parse', plan.branch);
+      prs.mockResolvedValue([pull({ number: 3, state: 'CLOSED', headRefOid: head }), pull({ number: 2, state: 'MERGED', headRefOid: head })]);
+      expect((await worktreeLeftovers(plan, plan.path)).pr).toMatchObject({ state: 'merged', number: 2 });
+      prs.mockResolvedValue([pull({ number: 4, state: 'OPEN', headRefOid: head }), pull({ number: 2, state: 'MERGED', headRefOid: head })]);
+      expect((await worktreeLeftovers(plan, plan.path)).pr).toMatchObject({ state: 'open', number: 4 });
+      prs.mockResolvedValue([]);
+      expect((await worktreeLeftovers(plan, plan.path)).pr).toEqual({ state: 'none' });
+    });
+
+    it('PR の head のコミットが手元に無ければ、PR で除かずに数える', async () => {
+      const plan = await create();
+      commitIn(plan.path, 'b.txt');
+      prs.mockResolvedValue([pull({ number: 7, state: 'MERGED', headRefOid: '0123456789abcdef0123456789abcdef01234567' })]);
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, pr: { state: 'merged', after: null } });
+    });
+  });
+
+  describe('PR を使わずに直接コミットしたもの', () => {
+    it('リモートのデフォルトブランチへ直接プッシュしたコミットは、プッシュしていないと数えない', async () => {
+      withOrigin();
+      prs.mockResolvedValue([]);
+      const plan = await create();
+      commitIn(plan.path, 'b.txt');
+      git(plan.path, 'push', '-q', 'origin', 'HEAD:main');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 0, contentIn: null, pr: { state: 'none' } });
+    });
+
+    it('手元でスカッシュマージしてコミットが作り直されていても、中身がデフォルトブランチに入っていれば数えない', async () => {
+      const plan = await create();
+      commitIn(plan.path, 'a.txt', 'b');
+      commitIn(plan.path, 'b.txt');
+      squashMerge(plan.branch);
+      // マージのあとに、デフォルトブランチで同じところを変えていても見分ける
+      commitIn(repo, 'a.txt', 'c');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 0, contentIn: 'main' });
+      // マージのあとに足したコミットがあれば、入っていないとみなす
+      commitIn(plan.path, 'd.txt');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 3, contentIn: null });
+    });
+  });
+});
+
+// cwd で file を書いてコミットする
+const commitIn = (cwd: string, file: string, text = file) => {
+  writeFileSync(join(cwd, file), `${text}\n`);
+  git(cwd, 'add', file);
+  git(cwd, 'commit', '-qm', file);
+};
+
+// repo（main にいる）に、branch をスカッシュマージする
+const squashMerge = (branch: string) => {
+  git(repo, 'merge', '-q', '--squash', branch);
+  git(repo, 'commit', '-qm', 'squash');
+};
+
+// repo に origin（bare）を付ける
+const withOrigin = () => {
+  git(root, 'clone', '-q', '--bare', repo, join(root, 'origin.git'));
+  git(repo, 'remote', 'add', 'origin', join(root, 'origin.git'));
+  git(repo, 'fetch', '-q', 'origin');
+};
+
+// gh pr list の 1 件
+const pull = (pr: Pick<PullRequest, 'number' | 'state' | 'headRefOid'>): PullRequest => ({
+  baseRefName: 'main',
+  url: `https://github.com/me/repo/pull/${pr.number}`,
+  ...pr,
 });
 
 describe('削除', () => {
@@ -222,7 +332,7 @@ describe('削除', () => {
     expect(git(repo, 'show', `refs/tanacode/backup/${plan.name}:new.txt`)).toBe('1');
   });
 
-  it('まだどこにも入っていないコミットがあれば、ブランチごと残す', async () => {
+  it('手元にしか無いコミットがあれば、ブランチごと残す', async () => {
     const plan = await create();
     writeFileSync(join(plan.path, 'b.txt'), 'b\n');
     git(plan.path, 'add', 'b.txt');
@@ -231,6 +341,38 @@ describe('削除', () => {
     expect(removal).toMatchObject({ backupRef: null, branchKept: true });
     expect(existsSync(plan.path)).toBe(false);
     expect(git(repo, 'log', '-1', '--format=%s', plan.branch)).toBe('b');
+  });
+
+  it('PR をスカッシュマージしたブランチは、手元のコミットがすべてその PR に入っていれば消す', async () => {
+    const plan = await create();
+    commitIn(plan.path, 'b.txt');
+    const head = git(repo, 'rev-parse', plan.branch);
+    commitIn(plan.path, 'c.txt');
+    // マージした PR のあとに足したコミットがあれば残す
+    prs.mockResolvedValue([pull({ number: 7, state: 'MERGED', headRefOid: head })]);
+    expect(await removeWorktree(plan, plan.path)).toMatchObject({ branchKept: true });
+    prs.mockResolvedValue([pull({ number: 8, state: 'MERGED', headRefOid: git(repo, 'rev-parse', plan.branch) })]);
+    expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: false });
+    expect(git(repo, 'branch', '--list', plan.branch)).toBe('');
+  });
+
+  it('PR を使わずに、リモートのデフォルトブランチへ直接プッシュしたブランチも消す', async () => {
+    withOrigin();
+    const plan = await create();
+    commitIn(plan.path, 'b.txt');
+    git(plan.path, 'push', '-q', 'origin', 'HEAD:main');
+    // 手元の main は古いままなので、git branch -d では消えない
+    expect(await removeWorktree(plan, plan.path)).toMatchObject({ branchKept: false });
+    expect(git(repo, 'branch', '--list', plan.branch)).toBe('');
+  });
+
+  it('手元でデフォルトブランチにスカッシュマージしたブランチも消す', async () => {
+    const plan = await create();
+    commitIn(plan.path, 'b.txt');
+    commitIn(plan.path, 'c.txt');
+    squashMerge(plan.branch);
+    expect(await removeWorktree(plan, plan.path)).toMatchObject({ branchKept: false });
+    expect(git(repo, 'branch', '--list', plan.branch)).toBe('');
   });
 
   it('ユーザーが付けたロックがあれば、消さずに断る', async () => {
