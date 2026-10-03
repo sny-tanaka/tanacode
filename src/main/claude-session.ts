@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
-import { browserMcpArgs, type BrowserMcpLaunch } from './browser-bridge';
+import { browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from './browser-bridge';
 import type { PtyHandle, PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
@@ -71,7 +71,8 @@ export class ClaudeSession {
       if (this.adopted.screen) this.handlers.onData(this.adopted.screen);
     } else {
       const args = claudeArgs(this.options);
-      const env = { ...childEnv(), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile };
+      // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）
+      const env = { ...childEnv(), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile, ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}) };
       const { worktree, worktreeRoot, resume } = this.options;
       const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
       proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd: spawnCwd, env, cols, rows });
@@ -167,7 +168,7 @@ export function claudeArgs(
   if (browser) args.push(...browserMcpArgs(browser, sessionId));
   // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
-  // アプリ内ブラウザを足すときは、JavaScript の実行を毎回確かめる（permissions.ask）のも、この設定に入れる
+  // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、この設定に入れる
   args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser));
   return args;
 }

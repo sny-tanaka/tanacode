@@ -4,7 +4,7 @@
 export const BROWSER_MCP_SERVER = 'tanacode-browser';
 
 // read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: ページを動かす（Claude Code の許可の確認を通す）/
-// eval: ページで JavaScript を実行する（--settings の permissions.ask で、毎回許可の確認を通す）
+// eval: ページで JavaScript を実行する（--settings の PreToolUse のフックが、今のページが localhost なら確認なし、それ以外なら毎回許可の確認を通す）
 export type BrowserToolKind = 'read' | 'act' | 'eval';
 
 type Schema = Record<string, unknown>;
@@ -230,7 +230,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
     kind: 'eval',
     label: 'JavaScript の実行',
     description:
-      'ページで JavaScript を実行し、最後の式の値（Promise なら待った値）を JSON にして返す。ほかのツールでできないときだけ使う。実行のたびにユーザーの許可が要る',
+      'ページで JavaScript を実行し、最後の式の値（Promise なら待った値）を JSON にして返す。ほかのツールでできないときだけ使う。ページが localhost なら確認なしで実行する。それ以外のページでは、実行のたびにユーザーの許可が要る',
     inputSchema: {
       type: 'object',
       properties: { expression: { type: 'string', description: '実行する JavaScript' } },
@@ -264,8 +264,8 @@ export function allowedBrowserToolIds(): string[] {
   return BROWSER_TOOLS.filter((t) => t.kind === 'read').map((t) => browserToolId(t.name));
 }
 
-// --settings の permissions.ask に入れる、毎回確認するツール
-export function askBrowserToolIds(): string[] {
+// --settings の PreToolUse のフックで、ページによって確認を出すか決めるツール
+export function gatedBrowserToolIds(): string[] {
   return BROWSER_TOOLS.filter((t) => t.kind === 'eval').map((t) => browserToolId(t.name));
 }
 
@@ -291,6 +291,20 @@ export function normalizeHostPattern(input: string): string | null {
   // 「*」だけ・「*.com」のような広すぎるものは許さない
   if (wildcard && !host.includes('.') && host !== 'local' && host !== 'localhost') return null;
   return wildcard ? `*.${host}` : host;
+}
+
+// この Mac の中だけで動いているページ（localhost・127.0.0.1・[::1]・*.localhost）か。JavaScript の実行は、こういうページでは確認を省く。
+// *.local（同じネットワークの別の機械かもしれない）や、ユーザーが足した先は含めない
+export function isLocalUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase();
+  return host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1' || host === '[::1]';
 }
 
 // Claude が開いて・読んで・操作してよいページか。http(s) で、ホストが既定か足した許す先に当たるもの

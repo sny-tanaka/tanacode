@@ -10,6 +10,12 @@ import { BROWSER_MCP_SERVER, allowedBrowserToolIds } from '@shared/browser-tools
 // 中継に渡す環境変数（--mcp-config の env）。ソケットのパスと、どのセッションの Claude Code か
 export const BROWSER_SOCKET_ENV = 'TANACODE_BROWSER_SOCKET';
 export const BROWSER_SESSION_ENV = 'TANACODE_BROWSER_SESSION';
+// 中継の入口（browser-mcp.js）を、JavaScript の実行の確認のフック（browser-gate.ts）として動かすための環境変数。
+// フックは Claude Code の環境で動くので、起動する Claude Code の環境に足す（--mcp-config の env は、MCP サーバーにしか届かない）
+export const BROWSER_COMMAND_ENV = 'TANACODE_BROWSER_COMMAND';
+export const BROWSER_SCRIPT_ENV = 'TANACODE_BROWSER_SCRIPT';
+// フックがアプリに、今のページで JavaScript を実行してよいか（localhost か）を聞く、中継の内部の呼び出し。MCP のツールではない
+export const BROWSER_GATE_REQUEST = 'gate:evaluate';
 
 // MCP のツールの結果（tools/call の result）
 export type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -160,8 +166,18 @@ export type BrowserMcpLaunch = {
   version: string;
 };
 
+// 起動する Claude Code の環境に足す、JavaScript の実行の確認のフックが使う環境変数
+export function browserGateEnv(launch: BrowserMcpLaunch, sessionId: string): Record<string, string> {
+  return {
+    [BROWSER_SOCKET_ENV]: launch.socketPath,
+    [BROWSER_SESSION_ENV]: sessionId,
+    [BROWSER_COMMAND_ENV]: launch.command,
+    [BROWSER_SCRIPT_ENV]: launch.script,
+  };
+}
+
 // --mcp-config と --allowedTools。sessionId: どのセッションの Claude Code か（中継の env で渡す）。
-// 読むだけのツールは許可済みにし、ページを動かすツールは Claude Code の許可の確認を通す
+// 読むだけのツールは許可済みにし、ページを動かすツールは Claude Code の許可の確認を通す（JavaScript の実行は、フックが決める）
 export function browserMcpArgs(launch: BrowserMcpLaunch, sessionId: string): string[] {
   const server = {
     type: 'stdio',

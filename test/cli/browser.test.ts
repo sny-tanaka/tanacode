@@ -2,17 +2,18 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BROWSER_TOOLS, browserToolId } from '@shared/browser-tools';
-import { BrowserBridge, textResult, type ToolResult } from '../../src/main/browser-bridge';
+import { BROWSER_TOOLS, browserToolId, isLocalUrl } from '@shared/browser-tools';
+import { BROWSER_GATE_REQUEST, BrowserBridge, textResult, type ToolResult } from '../../src/main/browser-bridge';
 import { buildRelay } from './browser-relay-build';
 import { ClaudeRun, claudeVersion, menuOf } from './claude-run';
 import { MockApi, type Block } from './mock-api';
 
 // 本物の claude をモックの API で動かし、アプリ内ブラウザの MCP サーバー（中継）を確かめる。
-// アプリと同じ起動の引数（--mcp-config・--allowedTools・--settings の permissions.ask）で起動し、
+// アプリと同じ起動の引数（--mcp-config・--allowedTools・--settings の PreToolUse のフック）で起動し、
 // 中継（src/main/browser-mcp.ts をビルドしたもの）が、アプリの代わりのソケット（BrowserBridge）までツールの呼び出しを運ぶか。
 // - 読むだけのツールは、許可の確認なしに通る / ページを動かすツールは、許可の確認が出る
-// - JavaScript の実行は、「次から聞かない」で許可を残しても、次の呼び出しでまた確認が出る
+// - JavaScript の実行は、フックがアプリに今のページを聞いて決める。localhost のページは確認なし。
+//   それ以外のページは、「次から聞かない」で許可を残しても、次の呼び出しでまた確認が出る。アプリに聞けないときも確認が出る
 // - --resume で再開しても使える / アプリ（ソケット）が無い間は「起動していません」と返し、戻ればそのまま使える
 
 const BROWSE = 'アプリ内ブラウザで確かめてください';
@@ -32,6 +33,11 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
   let socketDir: string;
   // アプリに届いた呼び出し
   const calls: { session: string; tool: string; args: Record<string, unknown> }[] = [];
+  // フックが今のページを聞いてきた回数と、そのとき答えたページ。呼び出しの順に、このページを答える（足りなければ最後のもの）
+  const gates: { session: string; url: string }[] = [];
+  const LOCAL = 'http://localhost:3000/';
+  const REMOTE = 'https://staging.example.test/';
+  const pages = [LOCAL, REMOTE, REMOTE];
   const replied = (text: string) => () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
   // 会話ログのツールの結果（tool_use の id → 中身）
   const resultOf = (toolUseId: string): unknown => {
@@ -49,6 +55,11 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     socketDir = mkdtempSync(join(tmpdir(), 'tanacode-browser-'));
     const socketPath = join(socketDir, 'browser.sock');
     bridge = new BrowserBridge(socketPath, async (session, tool, args): Promise<ToolResult> => {
+      if (tool === BROWSER_GATE_REQUEST) {
+        const url = pages[Math.min(gates.length, pages.length - 1)];
+        gates.push({ session, url });
+        return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
+      }
       calls.push({ session, tool, args });
       if (tool === 'screenshot') return { content: [{ type: 'image', data: PNG, mimeType: 'image/png' }] };
       return textResult(`${tool} をしました`);
@@ -63,10 +74,12 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
         steps: [
           call('toolu_shot', 'screenshot'),
           call('toolu_click', 'click', { selector: '#save' }),
-          call('toolu_eval1', 'evaluate', { expression: 'document.title' }),
+          call('toolu_eval_local', 'evaluate', { expression: 'document.title' }),
+          call('toolu_eval_remote', 'evaluate', { expression: 'document.cookie' }),
           [{ type: 'text', text: '確かめました' }],
-          call('toolu_eval2', 'evaluate', { expression: '1 + 1' }),
+          call('toolu_eval_again', 'evaluate', { expression: '1 + 1' }),
           [{ type: 'text', text: '再開後も確かめました' }],
+          call('toolu_eval_closed', 'evaluate', { expression: '2 + 2' }),
           call('toolu_closed', 'get_text'),
           call('toolu_back', 'get_text'),
           [{ type: 'text', text: '閉じている間の確認をしました' }],
@@ -108,39 +121,55 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     expect(calls[1]).toEqual({ session: run.sessionId, tool: 'click', args: { selector: '#save' } });
   });
 
-  it('JavaScript の実行は、「次から聞かない」を選んでも毎回確かめる', async () => {
+  it('localhost のページの JavaScript の実行は、許可の確認なしに通る', async () => {
+    // 確認が出ていれば、答えないかぎりここで止まる
+    await run.waitFor('localhost のページでの JavaScript の実行の結果', () => resultOf('toolu_eval_local'));
+    expect(calls[2]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.title' } });
+    expect(gates[0]).toEqual({ session: run.sessionId, url: LOCAL });
+    expect(JSON.stringify(resultOf('toolu_eval_local'))).toContain('evaluate をしました');
+  });
+
+  it('localhost 以外のページの JavaScript の実行は、「次から聞かない」を選んでも毎回確かめる', async () => {
     const menu = await run.waitFor('JavaScript の実行の許可の確認', menuOf('permission'));
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
+    expect(menu.context.join('\n')).toContain('document.cookie');
     const always = menu.options.find((o) => /don.t ask again/i.test(o.label));
     expect(always, '「次から聞かない」の選択肢').toBeDefined();
     await run.answer(menu.title, always!.id);
     await run.waitFor('返事', replied('確かめました'));
-    expect(calls[2]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.title' } });
-    // 許可はプロジェクトの設定に残る（次の確認が出るのは、--settings の permissions.ask のため）
+    expect(calls[3]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.cookie' } });
+    expect(gates[1]).toEqual({ session: run.sessionId, url: REMOTE });
+    // 許可はプロジェクトの設定に残る（次の確認が出るのは、フックが確認を出させるため）
     expect(readFileSync(join(run.cwd, '.claude', 'settings.local.json'), 'utf8')).toContain(browserToolId('evaluate'));
   });
 
-  it('--resume で再開しても使え、JavaScript の実行はまた確かめる', async () => {
+  it('--resume で再開しても使え、localhost 以外のページの JavaScript の実行はまた確かめる', async () => {
     run.stopClaude();
     run.start({ resume: true });
     await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
     await run.send(AGAIN);
     const menu = await run.waitFor('JavaScript の実行の許可の確認（2 回目）', menuOf('permission'));
     expect(menu.context.join('\n')).toContain('1 + 1');
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     await run.answer(menu.title, menu.options[0].id);
     await run.waitFor('再開後の返事', replied('再開後も確かめました'));
-    expect(calls[3]).toMatchObject({ tool: 'evaluate', args: { expression: '1 + 1' } });
+    expect(calls[4]).toMatchObject({ tool: 'evaluate', args: { expression: '1 + 1' } });
+    expect(gates).toHaveLength(3);
   });
 
-  it('アプリが無い間は「起動していません」と返し、戻ればそのまま使える', async () => {
+  it('アプリが無い間は「起動していません」と返し、戻ればそのまま使える。JavaScript の実行は、ページを確かめられないので確認が出る', async () => {
     bridge.close();
     await run.send(CLOSED);
+    const menu = await run.waitFor('JavaScript の実行の許可の確認（アプリが無い間）', menuOf('permission'));
+    expect(menu.context.join('\n')).toContain('2 + 2');
+    await run.answer(menu.title, menu.options[0].id);
+    await run.waitFor('閉じている間の JavaScript の実行の結果', () => resultOf('toolu_eval_closed'));
+    expect(JSON.stringify(resultOf('toolu_eval_closed'))).toContain('tanacode が起動していません');
     await run.waitFor('閉じている間の結果', () => resultOf('toolu_closed'));
     expect(JSON.stringify(resultOf('toolu_closed'))).toContain('tanacode が起動していません');
     await bridge.start();
     await run.waitFor('返事', replied('閉じている間の確認をしました'));
     expect(JSON.stringify(resultOf('toolu_back'))).toContain('get_text をしました');
-    expect(calls.map((c) => c.tool)).toEqual(['screenshot', 'click', 'evaluate', 'evaluate', 'get_text']);
+    expect(calls.map((c) => c.tool)).toEqual(['screenshot', 'click', 'evaluate', 'evaluate', 'evaluate', 'get_text']);
   });
 });

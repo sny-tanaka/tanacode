@@ -25,7 +25,7 @@ type Hosted = {
 // pty ホスト（src/main/pty-host.ts と pty-host-client.ts の PtyHost）の代わり。常駐プロセスを起動せず、node-pty を直に使う。
 // やりとりの形（spawn・attach・list・forget、受け手がいない間の出力を溜める、引き継ぎの画面と起動時刻）は PtyHost と同じにする。
 // 起動するのは、アプリが頼む 'claude' ではなく確かめる claude（file）。環境変数は env に、
-// アプリが渡す statusLine・AskUserQuestion のファイルの変数（passEnv）だけを足す（ふだんの環境を持ち込まない）
+// アプリが渡す statusLine・AskUserQuestion のファイルの変数と、アプリ内ブラウザの JavaScript の実行の確認のフックの変数（passEnv）だけを足す（ふだんの環境を持ち込まない）
 export class FakePtyHost implements PtyHostApi {
   // ホストが持っている pty（list に出るもの）
   private readonly ptys = new Map<string, Hosted>();
