@@ -382,6 +382,10 @@ export class DemoBackend {
         hosts: () => ok([]),
         setHosts: (hosts) => ok(hosts),
         onHostsOpen: () => () => {},
+        onAsk: () => () => {},
+        asks: () => ok([]),
+        answer: () => {},
+        onShow: () => () => {},
       },
       pathForFile: () => '',
     };

@@ -25,7 +25,7 @@ import type { PermissionMode } from '@shared/screen';
 import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
-import { menuNotice } from './notice-text';
+import { menuNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
 import { DEFAULT_PTY_SIZE, SessionManager } from './session-manager';
 import { SettingsFiles } from './settings-files';
@@ -242,8 +242,8 @@ async function pickSettingsFile(): Promise<string | null> {
 const liveNotifications = new Set<Notification>();
 const MAX_LIVE_NOTIFICATIONS = 50;
 
-// 通知のタイトルはアプリの名前、サブタイトルはセッション名
-function notify(sessionId: string, sessionTitle: string | null, message: string): void {
+// 通知のタイトルはアプリの名前、サブタイトルはセッション名。clickChannel: クリックで画面に送る知らせ（既定はそのセッションを選ぶ）
+function notify(sessionId: string, sessionTitle: string | null, message: string, clickChannel: string = IpcChannel.SessionsSelect): void {
   if (!settings.notificationsEnabled()) return;
   const windowActive = mainWindow?.isFocused() ?? false;
   if (windowActive && manager.isFocused(sessionId)) return;
@@ -254,7 +254,7 @@ function notify(sessionId: string, sessionTitle: string | null, message: string)
   notification.on('click', () => {
     release();
     showWindow();
-    send(IpcChannel.SessionsSelect, sessionId);
+    send(clickChannel, sessionId);
   });
   notification.on('close', release);
   notification.on('failed', release);
@@ -388,6 +388,8 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) return shell.openExternal(url);
   });
+  ipcMain.handle(IpcChannel.BrowserAsksGet, () => browser.pendingAsks());
+  ipcMain.on(IpcChannel.BrowserAnswer, (_e, id: string, askId: string, answer: unknown) => browser.answerAsk(id, askId, answer));
   ipcMain.handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
   ipcMain.handle(IpcChannel.BrowserHostsSet, (_e, hosts: string[]) => setBrowserHosts(hosts));
 }
@@ -531,7 +533,9 @@ function setBrowserControl(item: MenuItem): void {
     settings.setBrowserControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
+    return;
   }
+  if (!item.checked) browser.cancelAsks();
 }
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
@@ -635,6 +639,11 @@ app.whenReady().then(async () => {
     extraHosts: () => settings.browserHosts(),
     host: () => mainWindow?.webContents ?? null,
     hasSession: (id) => !!manager?.summary(id),
+    // 一覧は「ブラウザでの操作待ち」。見ていないセッションなら通知し、クリックでそのセッションのブラウザを開く
+    onAsk: (id, ask) => {
+      manager?.browserAskChanged(id, !!ask);
+      if (ask) notify(id, manager?.summary(id)?.title ?? null, `ブラウザでの操作の依頼: ${snippet(ask.message)}`, IpcChannel.BrowserShow);
+    },
     channels: {
       open: IpcChannel.BrowserOpen,
       activity: IpcChannel.BrowserActivity,
@@ -642,10 +651,11 @@ app.whenReady().then(async () => {
       newTab: IpcChannel.BrowserNewTab,
       selectTab: IpcChannel.BrowserSelectTab,
       closeTab: IpcChannel.BrowserCloseTab,
+      ask: IpcChannel.BrowserAsk,
     },
   });
   browser.watchNetwork(session.fromPartition(PREVIEW_PARTITION));
-  const bridge = new BrowserBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args) => browser.handle(id, tool, args));
+  const bridge = new BrowserBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args, signal) => browser.handle(id, tool, args, signal));
   try {
     await bridge.start();
     browserBridge = bridge;

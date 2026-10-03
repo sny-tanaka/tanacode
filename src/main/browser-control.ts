@@ -1,13 +1,16 @@
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
 import { browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
-import type { BrowserActivity, BrowserRect } from '@shared/ipc';
+import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect } from '@shared/ipc';
+import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST, textResult, type ToolResult } from './browser-bridge';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開かせる（openFromPage）。
 // クリックや入力は CDP（Input.*）で送る。ウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
-// 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる
+// 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
+// ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
+// その間は、Claude にブラウザを使わせない（ユーザーの操作とぶつからないように）
 
 // 要素を探したり読んだりするスクリプトを動かす、ページとは別の JavaScript の世界（ページのスクリプトに書き換えられない）
 const WORLD = 1100;
@@ -82,7 +85,9 @@ const __hit = (x, y) => {
 };
 const __name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.classList.length ? '.' + [...e.classList].slice(0, 2).join('.') : '');
 const __label = (el) => {
-  const t = (el.innerText || el.value || (el.getAttribute && el.getAttribute('aria-label')) || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
+  // パスワードの欄は、入っている値を使わない（ユーザーが入れた値を Claude に渡さない）
+  const v = el.type === 'password' ? '' : el.value;
+  const t = (el.innerText || v || (el.getAttribute && el.getAttribute('aria-label')) || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
   const f = el.ownerDocument === document ? null : el.ownerDocument.location.href;
   return __name(el) + (t ? '「' + t + '」' : '') + (f ? '（iframe ' + f + ' の中）' : '');
 };
@@ -136,7 +141,9 @@ type Deps = {
   host: () => WebContents | null;
   // あるセッションか（アーカイブしたものも含む）
   hasSession: (id: string) => boolean;
-  channels: { open: string; activity: string; viewport: string; newTab: string; selectTab: string; closeTab: string };
+  // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
+  onAsk: (sessionId: string, ask: BrowserAsk | null) => void;
+  channels: { open: string; activity: string; viewport: string; newTab: string; selectTab: string; closeTab: string; ask: string };
 };
 
 class ToolError extends Error {}
@@ -151,8 +158,15 @@ export class BrowserControl {
   private readonly running = new Map<string, number>();
   // 最後の呼び出しが終わった時刻（セッションごと）
   private readonly endedAt = new Map<string, number>();
+  // ユーザーに頼んでいる操作
+  private readonly asks: BrowserAsks;
 
-  constructor(private readonly deps: Deps) {}
+  constructor(private readonly deps: Deps) {
+    this.asks = new BrowserAsks((sessionId, ask) => {
+      this.deps.send(this.deps.channels.ask, { sessionId, ask } satisfies BrowserAskChange);
+      this.deps.onAsk(sessionId, ask);
+    });
+  }
 
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
   watchNetwork(session: Session): void {
@@ -261,8 +275,28 @@ export class BrowserControl {
     return true;
   }
 
+  // ユーザーに操作を頼んでいるか・頼んでいるもの（画面を作り直したとき用）
+  isAsking(sessionId: string): boolean {
+    return this.asks.has(sessionId);
+  }
+
+  pendingAsks(): BrowserAskChange[] {
+    return this.asks.list();
+  }
+
+  // ユーザーが帯のボタンを押した
+  answerAsk(sessionId: string, askId: unknown, answer: unknown): void {
+    this.asks.answer(sessionId, askId, answer);
+  }
+
+  // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）
+  cancelAsks(): void {
+    this.asks.cancelAll('アプリ内ブラウザの操作がオフになったので、頼むのをやめました');
+  }
+
   // セッションを消した・アーカイブしたとき
   forget(sessionId: string): void {
+    this.asks.cancel(sessionId);
     this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
@@ -270,8 +304,8 @@ export class BrowserControl {
     this.idleTimers.delete(sessionId);
   }
 
-  // 中継から届いた呼び出し
-  async handle(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  // 中継から届いた呼び出し。signal: Claude Code が呼び出しを取り消した（中継がソケットを閉じた）
+  async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId);
     const tool = browserTool(name);
     if (!tool) return textResult(`知らないツールです: ${name}`, true);
@@ -279,6 +313,16 @@ export class BrowserControl {
       return textResult('アプリ内ブラウザの操作は、tanacode のメニュー（tanacode → Claude にアプリ内ブラウザを操作させる）でオフになっています', true);
     }
     if (!this.deps.hasSession(sessionId)) return textResult('このセッションは tanacode にありません', true);
+    if (tool.kind === 'ask') {
+      this.yieldToUser(sessionId);
+      return this.asks.wait(sessionId, args.message, () => this.askedPage(sessionId), signal);
+    }
+    if (this.asks.has(sessionId)) {
+      return textResult(
+        'ユーザーに操作を頼んでいるところです。ユーザーが帯の「終わった」か「できない」を押すまで、ブラウザは使えません。操作せずに返事を待ってください（ユーザーがチャットで済んだと言ってきたら、帯の「終わった」を押してもらってください）',
+        true,
+      );
+    }
     this.begin(sessionId, tool.label);
     let timer: NodeJS.Timeout | undefined;
     try {
@@ -292,6 +336,17 @@ export class BrowserControl {
       clearTimeout(timer);
       this.end(sessionId);
     }
+  }
+
+  // ユーザーの返事に添える、今のページ。許していない先のページ（外の認証のページなど）は、タイトルも URL の道筋も読ませない
+  // （ページが書ける・認証の途中の値が URL に入っていることがある）
+  private askedPage(sessionId: string): string[] {
+    const session = this.sessions.get(sessionId);
+    const guest = session?.active ? session.tabs.get(session.active) : undefined;
+    const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
+    if (!guest || isBlank(url)) return ['今のタブ: （ページを開いていません）'];
+    if (!this.allowed(url)) return [`今のページは Claude に許していない先（${originOf(url) ?? '読めない URL'}）です。これ以上は読めず、操作もできません`];
+    return [`今のページ: ${guest.contents.getTitle() || '（タイトルなし）'}`, `URL: ${url}`];
   }
 
   // JavaScript の実行の確認のフック（browser-gate.ts）への答え。今のタブが localhost のページなら、確認を省いてよい。
@@ -310,7 +365,7 @@ export class BrowserControl {
     const result = await this.dispatch(sessionId, name, args);
     if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
-    if (session.blocked) result.content.push({ type: 'text', text: `許していない先（${session.blocked}）へ移ろう（開こう）としたので、止めました` });
+    if (session.blocked) result.content.push({ type: 'text', text: `許していない先（${this.shownUrl(session.blocked)}）へ移ろう（開こう）としたので、止めました` });
     // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
     if (session.opened.length > 0) {
       const guest = await this.activeGuest(sessionId).catch(() => null);
@@ -393,12 +448,12 @@ export class BrowserControl {
       else this.deps.send(this.deps.channels.open, { sessionId, url });
       guest = await attached;
       await waitForLoad(guest.contents);
-      if (session.blocked) throw new ToolError(`${url} は、許していない先（${session.blocked}）へ移ろうとしたので、止めました`);
+      if (session.blocked) throw new ToolError(`${url} は、許していない先（${this.shownUrl(session.blocked)}）へ移ろうとしたので、止めました`);
     } else {
       const opened = guest;
       await opened.contents.loadURL(url).catch((error: unknown) => {
         // 許していない先へのリダイレクトを止めた
-        if (session.blocked) throw new ToolError(`${url} は、許していない先（${session.blocked}）へ移ろうとしたので、止めました`);
+        if (session.blocked) throw new ToolError(`${url} は、許していない先（${this.shownUrl(session.blocked)}）へ移ろうとしたので、止めました`);
         // 移ったための中断（リダイレクトなど）は失敗にしない
         if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`${url} を開けませんでした（${error instanceof Error ? error.message : String(error)}）`);
       });
@@ -414,9 +469,9 @@ export class BrowserControl {
     if (tabs.length === 0) return textResult('タブはありません（navigate で開けます）');
     const lines = tabs.map((guest, i) => {
       const url = guest.contents.getURL();
-      // 許していない先のページは、タイトルも読ませない（ページが書けるので）
+      // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）
       const title = this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
-      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '（空のタブ）' : url}`;
+      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '（空のタブ）' : this.shownUrl(url)}`;
     });
     return textResult(`タブ（* が今のタブ）:\n${lines.join('\n')}`);
   }
@@ -448,11 +503,12 @@ export class BrowserControl {
     return textResult(`タブ ${number} を閉じました（残りのタブ: ${session.tabs.size} 個）`);
   }
 
-  // 開いたあとのページの様子。許していない先に移っていたら、そう伝える
+  // 開いたあとのページの様子。許していない先に移っていたら、そう伝える（タイトルと URL の道筋は伏せる）
   private pageResult(guest: Guest, done: string): ToolResult {
     const url = guest.contents.getURL();
-    const lines = [`${done}: ${guest.contents.getTitle() || '（タイトルなし）'}`, `URL: ${url}`];
-    if (!this.allowed(url)) lines.push('このページは Claude に許していない先なので、これ以上は読めず、操作もできません');
+    const allowed = this.allowed(url);
+    const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）'}`, `URL: ${this.shownUrl(url)}`];
+    if (!allowed) lines.push('このページは Claude に許していない先なので、これ以上は読めず、操作もできません');
     const errors = guest.logs.console.filter((l) => l.level === 'error').length;
     if (errors > 0) lines.push(`コンソールにエラーが ${errors} 件あります（get_console_logs で読めます）`);
     if (guest.logs.failed.length > 0) lines.push(`失敗した通信が ${guest.logs.failed.length} 件あります（get_failed_requests で読めます）`);
@@ -874,7 +930,9 @@ export class BrowserControl {
     return null;
   }
 
+  // ユーザーに操作を頼んでいる間は、並べて呼ばれた読むツールが動いていても、Claude の操作として扱わない（ユーザーがログインで外へ移れるように）
   private operating(sessionId: string): boolean {
+    if (this.asks.has(sessionId)) return false;
     return (this.running.get(sessionId) ?? 0) > 0 || Date.now() - (this.endedAt.get(sessionId) ?? 0) < OPERATING_GRACE_MS;
   }
 
@@ -882,10 +940,15 @@ export class BrowserControl {
     return isClaudeAllowedUrl(url, this.deps.extraHosts());
   }
 
+  // Claude に見せる URL。許していない先は、オリジンだけ（ログインで外の認証のページへ移ったとき、URL に認証の途中の値が入っていることがある）
+  private shownUrl(url: string): string {
+    return this.allowed(url) ? url : (originOf(url) ?? '読めない URL');
+  }
+
   private checkUrl(url: string, what: string): void {
     if (this.allowed(url)) return;
     throw new ToolError(
-      `${what}（${url}）は、Claude に許していない先です。Claude が開けるのは localhost・127.0.0.1・*.local と、ユーザーが tanacode のメニュー（tanacode → アプリ内ブラウザで Claude に許す先…）で足した先だけです。必要なら、ユーザーに足してもらってください`,
+      `${what}（${this.shownUrl(url)}）は、Claude に許していない先です。Claude が開けるのは localhost・127.0.0.1・*.local と、ユーザーが tanacode のメニュー（tanacode → アプリ内ブラウザで Claude に許す先…）で足した先だけです。必要なら、ユーザーに足してもらってください`,
     );
   }
 
@@ -1040,6 +1103,16 @@ export class BrowserControl {
   private async highlight(sessionId: string, rect: BrowserRect): Promise<void> {
     this.emit({ sessionId, active: true, label: null, box: rect });
     await sleep(HIGHLIGHT_MS);
+  }
+
+  // ユーザーに頼む前に、「Claude が操作中」の帯を下ろし、Claude の操作として扱うのをやめる（終わってすぐの間も）。
+  // ほかの呼び出しが動いている途中なら、それが終わるのに任せる
+  private yieldToUser(sessionId: string): void {
+    if ((this.running.get(sessionId) ?? 0) > 0) return;
+    clearTimeout(this.idleTimers.get(sessionId));
+    this.idleTimers.delete(sessionId);
+    this.endedAt.delete(sessionId);
+    this.emit({ sessionId, active: false, label: null, box: null });
   }
 
   private begin(sessionId: string, label: string): void {

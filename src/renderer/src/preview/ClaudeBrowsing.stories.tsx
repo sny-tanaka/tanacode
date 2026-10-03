@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { ClaudeBar, ClickBox, TabStrip } from './PreviewPane';
+import { AskBar, ClaudeBar, ClickBox, TabStrip } from './PreviewPane';
 
-// アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）。
+// アプリ内ブラウザのタブと、Claude が操作しているときの表示（ツールバーの下の「Claude が操作中」の帯と、これから押す要素の枠）、
+// Claude がユーザーに操作を頼んだときの「あなたの番です」の帯。
 // 本物のブラウザ（webview）は Storybook では動かないので、ページの代わりに白い地と作り物のボタンを置く
 
 const meta = {
@@ -54,6 +55,38 @@ export const タブ: Story = {
         onSelect={() => {}}
         onClose={() => {}}
         onNew={() => {}}
+      />
+    </div>
+  ),
+};
+
+// Claude がユーザーに操作を頼んだ（ask_user_to_act）。「Claude が操作中」の帯の代わりに出す。
+// 「できない」を押すと、ひとこと理由を書く欄に替わる（「戻る」か Esc で戻る）
+export const あなたの番: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ maxWidth: 760, height: 220, border: '1px solid var(--border-subtle)' }}>
+      <AskBar message="テスト用のアカウントでログインしてください。二段階認証のコードは、テスト用の端末に届きます" onAnswer={() => {}} />
+      <div className="preview-body">
+        <div className="preview-frame">
+          <div style={{ padding: 24, font: '16px sans-serif', color: '#222' }}>
+            <h1 style={{ margin: '0 0 16px', fontSize: 24 }}>ログイン</h1>
+            <span style={{ display: 'inline-block', width: 240, height: 28, border: '1px solid #999', borderRadius: 4 }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  ),
+};
+
+// 幅が狭いときは、ボタンが下の行に回る。長い頼みは、帯の中でスクロールする
+export const あなたの番_狭い幅: Story = {
+  args: { label: null },
+  render: () => (
+    <div className="preview-pane" style={{ width: 380, height: 220, border: '1px solid var(--border-subtle)' }}>
+      <AskBar
+        message={'決済のテスト画面で、次のカードで支払ってください。\n1. カード番号はテスト用のもの（決済サービスの文書にあるもの）\n2. 有効期限は未来の日付\n3. 支払いが終わったら、注文の完了画面まで進めてください\n4. 完了画面が出なければ「できない」で教えてください'}
+        onAnswer={() => {}}
       />
     </div>
   ),

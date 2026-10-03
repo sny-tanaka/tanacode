@@ -122,6 +122,12 @@ export const IpcChannel = {
   BrowserHostsSet: 'browser:hosts-set',
   // メニューの「アプリ内ブラウザで Claude に許す先…」から。許す先のダイアログを開かせる
   BrowserHostsOpen: 'browser:hosts-open',
+  // Claude がユーザーに操作を頼む（ask_user_to_act）。main → 画面: 頼んだ・終わった / 画面 → main: 今頼んでいるもの・返事 /
+  // main → 画面: そのセッションのブラウザを開かせる（頼まれたときの通知をクリックした）
+  BrowserAsk: 'browser:ask',
+  BrowserAsksGet: 'browser:asks-get',
+  BrowserAnswer: 'browser:answer',
+  BrowserShow: 'browser:show',
 } as const;
 
 // アプリ内ブラウザのページの中の位置と大きさ（CSS の px。見えている範囲の左上から）
@@ -144,7 +150,14 @@ export type BrowserTabRef = { sessionId: string; tabId: string };
 // Claude が表示幅を変えた（0 は全幅）
 export type BrowserViewportChange = { sessionId: string; width: number };
 
-export type SessionAttention = 'question' | 'permission' | 'other' | null;
+// Claude がユーザーに頼んでいる操作（ask_user_to_act）。id: 頼むたびに変わる（返事をどの頼みへのものか見分ける）/ message: 頼む内容
+export type BrowserAsk = { id: string; message: string };
+// 頼んだ・終わった（ask が null）
+export type BrowserAskChange = { sessionId: string; ask: BrowserAsk | null };
+// ユーザーの返事。done: 「終わった」/ そうでなければ「できない」で、reason はその理由（書かなければ空）
+export type BrowserAnswer = { done: boolean; reason: string };
+
+export type SessionAttention = 'question' | 'permission' | 'other' | 'browser' | null;
 
 export type SessionSummary = {
   id: string;
@@ -156,7 +169,7 @@ export type SessionSummary = {
   running: boolean;
   unread: boolean;
   // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可 /
-  // other: フォルダの信頼確認や認識できない対話画面など / null: 待っていない
+  // other: フォルダの信頼確認や認識できない対話画面など / browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   backgroundTasks: number;
@@ -485,6 +498,12 @@ export type TanacodeApi = {
     // 書き方をそろえて保存し、保存したものを返す。書き方が違うものがあれば、理由を添えて失敗する
     setHosts(hosts: string[]): Promise<string[]>;
     onHostsOpen(listener: () => void): () => void;
+    // Claude がユーザーに頼んでいる操作。asks: 今頼んでいるもの（画面を作り直したとき用）/ answer: ユーザーの返事 /
+    // onShow: そのセッションを選んで、ブラウザを開く（頼まれたときの通知をクリックした）
+    onAsk(listener: (change: BrowserAskChange) => void): () => void;
+    asks(): Promise<BrowserAskChange[]>;
+    answer(sessionId: string, askId: string, answer: BrowserAnswer): void;
+    onShow(listener: (sessionId: string) => void): () => void;
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;

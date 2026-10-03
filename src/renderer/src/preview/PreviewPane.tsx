@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BrowserActivity, BrowserRect } from '@shared/ipc';
+import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserRect } from '@shared/ipc';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
 import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
@@ -90,6 +90,8 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
   // セッションごとの表示幅（0 は全幅）。Claude も変える
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [claude, setClaude] = useState<Record<string, ClaudeActivity>>({});
+  // Claude がユーザーに頼んでいる操作（ask_user_to_act）
+  const [asks, setAsks] = useState<Record<string, BrowserAsk>>({});
   // Claude が操作したことのあるセッション。見ていない間も今のタブを描かせておく
   const [operated, setOperated] = useState<ReadonlySet<string>>(() => new Set());
   // 見ていない間の大きさ（ブラウザを開いたときの場所の大きさ）
@@ -103,6 +105,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
   const [address, setAddress] = useState(url ?? '');
   const width = sessionId ? (widths[sessionId] ?? 0) : 0;
   const activity = sessionId ? claude[sessionId] : undefined;
+  const ask = sessionId ? asks[sessionId] : undefined;
 
   const update = (tabId: string, patch: Partial<PageState>) =>
     setPages((prev) => ({ ...prev, [tabId]: { ...(prev[tabId] ?? EMPTY_PAGE), ...patch } }));
@@ -211,7 +214,18 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         if (tabsRef.current.get(id)?.includes(tabId)) activate(id, tabId);
       }),
       window.tanacode.browser.onCloseTab(({ sessionId: id, tabId }) => closeTab(id, tabId)),
+      window.tanacode.browser.onAsk(({ sessionId: id, ask: next }) =>
+        setAsks((prev) => {
+          if (next) return { ...prev, [id]: next };
+          const { [id]: _, ...rest } = prev;
+          return rest;
+        }),
+      ),
     ];
+    // 画面を作り直したとき（ウィンドウを閉じて開き直した）も、頼まれている操作の帯を出す
+    void window.tanacode.browser.asks().then((list) =>
+      setAsks((prev) => ({ ...Object.fromEntries(list.flatMap((c) => (c.ask ? [[c.sessionId, c.ask]] : []))), ...prev })),
+    );
     return () => offs.forEach((off) => off());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -408,7 +422,11 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         <IconButton icon={CodeIcon} label="開発者ツール" disabled={!shown} onClick={() => wv?.openDevTools()} />
         <IconButton icon={CloseIcon} label="ブラウザを閉じる" onClick={onClose} />
       </div>
-      {activity?.active && <ClaudeBar label={activity.label} />}
+      {ask && sessionId ? (
+        <AskBar key={ask.id} message={ask.message} onAnswer={(answer) => window.tanacode.browser.answer(sessionId, ask.id, answer)} />
+      ) : (
+        activity?.active && <ClaudeBar label={activity.label} />
+      )}
       {picking && <div className="preview-hint">ページの要素をクリックしてください（Esc でやめる）</div>}
       {page?.error && (
         <div className="preview-hint error">
@@ -481,6 +499,58 @@ export function ClaudeBar({ label }: { label: string | null }) {
     <div className="preview-claude" role="status">
       <Busy>Claude が操作中</Busy>
       {label && <span className="preview-claude-label">{label}</span>}
+    </div>
+  );
+}
+
+// 「あなたの番です」の帯。Claude がユーザーに頼んだ操作（ask_user_to_act）と、「終わった」「できない」のボタン。
+// 「できない」は、ひとこと理由を書いて送る（書かなくてもよい）。押すまで、Claude はブラウザを使わずに待っている
+export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answer: BrowserAnswer) => void }) {
+  const [declining, setDeclining] = useState(false);
+  const [reason, setReason] = useState('');
+  return (
+    <div className="preview-ask" role="region" aria-label="Claude からの操作の依頼">
+      <div className="preview-ask-text" role="status">
+        <span className="preview-ask-title">あなたの番です</span>
+        <span className="preview-ask-message">{message}</span>
+      </div>
+      {declining ? (
+        <form
+          className="preview-ask-actions"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onAnswer({ done: false, reason: reason.trim() });
+          }}
+        >
+          <input
+            className="preview-ask-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === 'Escape') setDeclining(false);
+            }}
+            placeholder="理由（任意・パスワードは書かない）"
+            aria-label="できない理由"
+            autoFocus
+          />
+          <button type="submit" className="send-button">
+            送る
+          </button>
+          <button type="button" className="ghost-button" onClick={() => setDeclining(false)}>
+            戻る
+          </button>
+        </form>
+      ) : (
+        <div className="preview-ask-actions">
+          <button className="send-button" onClick={() => onAnswer({ done: true, reason: '' })}>
+            終わった
+          </button>
+          <button className="ghost-button" onClick={() => setDeclining(true)}>
+            できない
+          </button>
+        </div>
+      )}
     </div>
   );
 }

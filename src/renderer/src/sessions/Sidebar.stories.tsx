@@ -33,6 +33,8 @@ const INITIAL: SessionSummary[] = [
   session(1, 'ログイン画面の直し', '/Users/me/work/cafe-menu', { running: true }),
   session(2, 'テストの追加', '/Users/me/work/tanacode', { unread: true }),
   session(3, 'README の更新', '/Users/me/work/tanacode'),
+  // Claude がアプリ内ブラウザでユーザーに操作を頼んでいる（ask_user_to_act）。質問への回答待ちなどと同じ黄色の点
+  session(9, '決済画面の確認', '/Users/me/work/cafe-menu', { running: true, attention: 'browser' }),
   // 標準以外の設定ファイルを重ねて動いているセッションは、行の末尾に設定ファイルの名前が出る（登録に無ければ「（登録なし）」）
   session(4, '依存の更新', '/Users/me/work/cafe-menu', { settingsFile: 'f1' }),
   session(6, '社内 API の確認', '/Users/me/work/notes', { settingsFile: 'f0' }),
