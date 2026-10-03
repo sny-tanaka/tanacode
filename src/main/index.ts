@@ -250,6 +250,8 @@ const MAX_LIVE_NOTIFICATIONS = 50;
 // 通知のタイトルはアプリの名前、サブタイトルはセッション名。clickChannel: クリックで画面に送る知らせ（既定はそのセッションを選ぶ）
 function notify(sessionId: string, sessionTitle: string | null, message: string, clickChannel: string = IpcChannel.SessionsSelect): void {
   if (!settings.notificationsEnabled()) return;
+  // 子セッションは人に通知しない。作業の終わり・質問・人の対応待ちは親に知らせ、人を呼ぶときは親から伝える（sessions-control.ts）
+  if (manager?.parentOf(sessionId)) return;
   const windowActive = mainWindow?.isFocused() ?? false;
   if (windowActive && manager.isFocused(sessionId)) return;
   if (!Notification.isSupported()) return;

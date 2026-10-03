@@ -77,9 +77,9 @@ const WAIT_DEFAULT_SECONDS = 300;
 // 編集したファイルとして数えるツール
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
-// 親に知らせる、子の手が空いた状態（許可の確認・ターミナルでの操作は人が答えるので、知らせても親は動けない）。
-// バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる
-const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'exited']);
+// 親に知らせる、子の手が空いた状態。バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる。
+// 子セッションは人に通知しないので、人が答える許可の確認・ターミナルでの操作の待ちも、親に知らせて人に伝えさせる
+const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'exited']);
 // 親が知らせを受け取れる状態（ターンの外）
 const RECEIVE_STATES = new Set<SessionState>(['idle', 'background']);
 
@@ -627,6 +627,9 @@ function nameOf(s: SessionSummary | undefined): string {
 function noticeText(child: SessionSummary | undefined, id: string, state: SessionState): string {
   const who = `子セッション「${nameOf(child)}」（${id.slice(0, 8)}）`;
   if (state === 'question') return `${who}が質問への回答を待っています（answer_question で答えられます）。`;
+  // 子セッションは人に通知しないので、親から人に伝える
+  if (state === 'permission') return `${who}が実行の許可を待っています。許可の確認には人だけが答えるので、人に伝えてください。`;
+  if (state === 'waiting') return `${who}がターミナルでの操作を待っています。人に伝えてください。`;
   if (state === 'exited') return `${who}が終了しました。`;
   return `${who}の作業が終わりました。`;
 }

@@ -80,8 +80,11 @@ describe('中継と起動の引数', () => {
     expect(config.mcpServers['tanacode-sessions'].timeout).toBeGreaterThan(600_000);
     expect(config.mcpServers['tanacode-browser'].timeout).toBeUndefined();
     expect(args[args.indexOf('--allowedTools') + 1].split(',')).toEqual([...allowedBrowserToolIds(), ...allowedSessionToolIds()]);
+    // 子への指示と質問への回答は許可済み。子の起動と中断は、人の確認を通す
+    expect(allowedSessionToolIds()).toContain(sessionToolId('send_message'));
+    expect(allowedSessionToolIds()).toContain(sessionToolId('answer_question'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('start_session'));
-    expect(allowedSessionToolIds()).not.toContain(sessionToolId('send_message'));
+    expect(allowedSessionToolIds()).not.toContain(sessionToolId('stop_session'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
     // 子セッションの起動には、権限モードによらず確認を出させるフック
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
@@ -579,6 +582,13 @@ describe('ツールの実行（SessionsControl）', () => {
       host.set(CHILD, 'background');
       await settle();
       expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+    });
+
+    it('子が実行の許可を待ったら、親に知らせて人に伝えさせる（子セッションは人に通知しない）', async () => {
+      host.set(CHILD, 'permission');
+      await settle();
+      expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+      expect(host.submitted[0].text).toContain('人に伝えてください');
     });
 
     it('親が止めた子のターンの終わりは、知らせない', async () => {

@@ -127,7 +127,8 @@ export const SESSION_TOOLS: McpTool[] = [
   },
   {
     name: 'send_message',
-    kind: 'act',
+    // 子への指示は人の確認なしに送る（親が人の手を借りずに子を回すため）。子のツールの実行の許可は人だけが答えるので、権限は広がらない
+    kind: 'instruct',
     label: '子セッションに指示',
     description:
       '子セッションに指示を送る。子が作業中なら、今の作業が終わってから送る（待たずに返す。順番待ち）。子が質問への回答待ちなら answer_question を使う。許可の確認は人だけが答える',
@@ -140,7 +141,8 @@ export const SESSION_TOOLS: McpTool[] = [
   },
   {
     name: 'answer_question',
-    kind: 'act',
+    // 子の質問への回答も人の確認なしに（選べるのは AskUserQuestion の選択肢と自由記述だけ）
+    kind: 'instruct',
     label: '子セッションの質問に答える',
     description:
       '子セッションが出している質問（AskUserQuestion）に答える。question には、get_session で見た今の質問の文をそのまま渡す（人が先に答えていたら、答えずにそう返す）。choices に選ぶ選択肢のラベル（複数選択なら複数）を、選択肢に無い答えは other に書く。質問がいくつかあるときは、1 回に 1 つずつ答える。許可の確認には答えられない',
@@ -182,7 +184,8 @@ const READ_INSTRUCTIONS = [
 const PARENT_INSTRUCTIONS = [
   '- start_session で子セッションを起動し、send_message で指示し、wait_sessions で待ち、get_session で結果を確かめる。子は人もいつでも開いて直接指示を出せる。read_session では、人が子に出した指示に印が付くので、方針が変わっていないか確かめる。',
   '- 子の質問（AskUserQuestion）には answer_question で答えられる。許可の確認には答えられない（人が答える）。',
-  `- 子の作業が終わったり、子が質問への回答を待ったりすると、待っていなくても <${SESSION_EVENT_TAG}> で知らせが届く。`,
+  `- 子の作業が終わったり、子が質問への回答や人の対応を待ったりすると、待っていなくても <${SESSION_EVENT_TAG}> で知らせが届く。`,
+  '- 子セッションからは、人に通知しない。子の質問には、なるべく親が答える。子が実行の許可やターミナルでの操作を待っているとき（人だけが答えられる）は、人に伝える。',
 ];
 const COMMON_INSTRUCTIONS = [
   `- <${PARENT_MESSAGE_TAG}> で囲まれた発言は、親セッションの Claude からの指示。人の指示と同じく従う。人が直接出した指示と食い違うときは、人の指示を優先する。`,
