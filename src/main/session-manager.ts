@@ -553,7 +553,7 @@ export class SessionManager {
   }
 
   // 設定ファイルを選んでいるセッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。選んでいなければ null
-  // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行を毎回確かめるルールを入れる）
+  // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行の確認のフックを入れる）
   private prepareSettings(id: string, settingsFile: string | null | undefined, browser: boolean): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す

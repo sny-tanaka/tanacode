@@ -1,7 +1,7 @@
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
-import { browserTool, isClaudeAllowedUrl } from '@shared/browser-tools';
+import { browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import type { BrowserActivity, BrowserRect } from '@shared/ipc';
-import { textResult, type ToolResult } from './browser-bridge';
+import { BROWSER_GATE_REQUEST, textResult, type ToolResult } from './browser-bridge';
 
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
@@ -272,6 +272,7 @@ export class BrowserControl {
 
   // 中継から届いた呼び出し
   async handle(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId);
     const tool = browserTool(name);
     if (!tool) return textResult(`知らないツールです: ${name}`, true);
     if (!this.deps.enabled()) {
@@ -291,6 +292,15 @@ export class BrowserControl {
       clearTimeout(timer);
       this.end(sessionId);
     }
+  }
+
+  // JavaScript の実行の確認のフック（browser-gate.ts）への答え。今のタブが localhost のページなら、確認を省いてよい。
+  // タブが無い・空のときは、確認を出させる側に倒す（待たない。フックは短い間しか待たない）
+  private gate(sessionId: string): ToolResult {
+    const session = this.sessions.get(sessionId);
+    const guest = session?.active ? session.tabs.get(session.active) : undefined;
+    const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
+    return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
   }
 
   private async run(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {

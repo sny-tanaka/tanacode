@@ -2,9 +2,10 @@ import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { askBrowserToolIds } from '@shared/browser-tools';
+import { gatedBrowserToolIds } from '@shared/browser-tools';
 import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
+import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { WORKTREE_GUARD_COMMAND } from './worktree-guard';
 
 // Claude Code は statusLine のコマンドを応答のたびに実行し、モデル・コンテキスト・利用枠（rate_limits）の入った JSON を標準入力に渡す。
@@ -17,8 +18,8 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // hooks: AskUserQuestion を出す前に、その入力（質問・選択肢の説明・プレビュー）をセッションごとのファイルに書かせる。
 // 会話ログには答えたあとにしか書かれないので、質問のカードに説明やプレビューを出すにはこれが要る。
 // Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。
-// permissions（browser のときだけ）: アプリ内ブラウザで JavaScript を実行するツールを、毎回確かめる（ask のルールは allow より強い。
-// 「次から聞かない」で許可を残されても、確認が出る）
+// browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる（browser-gate.ts）。
+// permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）
 export function sessionSettings(browser = false): string {
   return JSON.stringify(ownSettings(userStatusLineCommand(), browser));
 }
@@ -33,9 +34,9 @@ export function ownSettings(inner: string | null, browser = false): Record<strin
       PreToolUse: [
         { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] },
         { matcher: 'Bash', hooks: [{ type: 'command', command: WORKTREE_GUARD_COMMAND }] },
+        ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
       ],
     },
-    ...(browser ? { permissions: { ask: askBrowserToolIds() } } : {}),
   };
 }
 

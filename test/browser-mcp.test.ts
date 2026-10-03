@@ -5,13 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   BROWSER_TOOLS,
   allowedBrowserToolIds,
-  askBrowserToolIds,
   browserToolId,
+  gatedBrowserToolIds,
   isClaudeAllowedUrl,
+  isLocalUrl,
   normalizeHostPattern,
 } from '../src/shared/browser-tools';
 import { AppSettings } from '../src/main/app-settings';
-import { BrowserBridge, browserMcpArgs, callBridge, textResult, type BrowserMcpLaunch } from '../src/main/browser-bridge';
+import { BROWSER_GATE_REQUEST, BrowserBridge, browserGateEnv, browserMcpArgs, callBridge, textResult, type BrowserMcpLaunch } from '../src/main/browser-bridge';
+import { BROWSER_GATE_COMMAND, gateOutput, readAnswer, runGate } from '../src/main/browser-gate';
 import { respond, type RelayDeps } from '../src/main/browser-relay';
 import { claudeArgs } from '../src/main/claude-session';
 import { mergeSettings } from '../src/main/settings-files';
@@ -123,6 +125,27 @@ describe('Claude に許す先', () => {
     }
   });
 
+  it('JavaScript の実行の確認を省くのは、この Mac の中のページだけ（*.local や足した先は含めない）', () => {
+    for (const url of ['http://localhost:3000/', 'https://localhost/a', 'http://127.0.0.1:5173', 'http://[::1]:8080/', 'http://app.localhost:3000/']) {
+      expect(isLocalUrl(url), url).toBe(true);
+    }
+    for (const url of [
+      'http://myapp.local/',
+      'http://192.168.0.10:8080/',
+      'https://example.com/',
+      'http://localhost.example.com/',
+      'http://evil-localhost/',
+      'http://127.0.0.1.example.com/',
+      'http://127.0.0.2/',
+      'file:///etc/passwd',
+      'about:blank',
+      '',
+      'not a url',
+    ]) {
+      expect(isLocalUrl(url), url).toBe(false);
+    }
+  });
+
   it('足した先も許す。*. は下のホストだけ（そのものは含まない）', () => {
     expect(isClaudeAllowedUrl('https://staging.example.test/', ['*.example.test'])).toBe(true);
     expect(isClaudeAllowedUrl('https://example.test/', ['*.example.test'])).toBe(false);
@@ -172,25 +195,101 @@ describe('起動の引数', () => {
     expect(allowedBrowserToolIds()).not.toContain(browserToolId('evaluate'));
   });
 
-  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings で JavaScript の実行を毎回確かめる', () => {
+  type Hook = { matcher: string; hooks: { type: string; command: string; timeout?: number }[] };
+  const gateHooks = (settings: { hooks?: { PreToolUse?: Hook[] } }) => (settings.hooks?.PreToolUse ?? []).filter((h) => h.hooks.some((x) => x.command === BROWSER_GATE_COMMAND));
+
+  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行の確認を決める', () => {
     const args = claudeArgs({ ...base, browser: launch, sessionId: 's1' });
     expect(args.indexOf('--mcp-config')).toBeLessThan(args.indexOf('--settings'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
-    const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: { ask?: string[] } };
-    expect(settings.permissions?.ask).toEqual([browserToolId('evaluate')]);
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
+    expect(gateHooks(settings)).toEqual([{ matcher: browserToolId('evaluate'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
+    // permissions.ask では、ページによって変えられない。許可のルールも足さない
+    expect(settings).not.toHaveProperty('permissions');
+    expect(gatedBrowserToolIds()).toEqual([browserToolId('evaluate')]);
     // オフなら足さない
     const off = claudeArgs(base);
     expect(off).not.toContain('--mcp-config');
     expect(off).not.toContain('--allowedTools');
-    expect(JSON.parse(off[off.indexOf('--settings') + 1])).not.toHaveProperty('permissions');
+    expect(gateHooks(JSON.parse(off[off.indexOf('--settings') + 1]) as { hooks?: { PreToolUse?: Hook[] } })).toEqual([]);
   });
 
-  it('登録した設定ファイルと合わせるときは、その permissions に ask を足す', () => {
-    const profile = { permissions: { allow: ['Bash(ls)'], ask: ['Bash(rm *)'], defaultMode: 'acceptEdits' }, env: { A: '1' } };
-    const merged = mergeSettings(profile, ownSettings(null, true));
-    expect(merged.permissions).toEqual({ allow: ['Bash(ls)'], ask: ['Bash(rm *)', ...askBrowserToolIds()], defaultMode: 'acceptEdits' });
+  it('フックは、起動する Claude Code の環境の変数（中継のコマンド・入口・ソケット・セッション）で中継の入口を --gate 付きで動かす', () => {
+    expect(browserGateEnv(launch, 's1')).toEqual({
+      TANACODE_BROWSER_SOCKET: launch.socketPath,
+      TANACODE_BROWSER_SESSION: 's1',
+      TANACODE_BROWSER_COMMAND: launch.command,
+      TANACODE_BROWSER_SCRIPT: launch.script,
+    });
+    // パスに空白があっても分かれないよう、変数はクォートする。目印の変数は、チャットのフックの一覧に出さないためのもの
+    expect(BROWSER_GATE_COMMAND).toBe('TANACODE_BROWSER_GATE=1 ELECTRON_RUN_AS_NODE=1 "$TANACODE_BROWSER_COMMAND" "$TANACODE_BROWSER_SCRIPT" --gate');
+  });
+
+  it('登録した設定ファイルと合わせるときは、登録した設定のフックと permissions はそのままに、確認のフックを足す', () => {
+    const profile = {
+      permissions: { allow: ['Bash(ls)'], ask: ['Bash(rm *)'], defaultMode: 'acceptEdits' },
+      hooks: { PreToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'echo mine' }] }] },
+      env: { A: '1' },
+    };
+    const merged = mergeSettings(profile, ownSettings(null, true)) as { permissions: unknown; env: unknown; hooks: { PreToolUse: Hook[] } };
+    expect(merged.permissions).toEqual(profile.permissions);
     expect(merged.env).toEqual({ A: '1' });
-    // ブラウザを足さないときは、登録した設定の permissions のまま
-    expect(mergeSettings(profile, ownSettings(null, false)).permissions).toEqual(profile.permissions);
+    expect(merged.hooks.PreToolUse[0].hooks[0].command).toBe('echo mine');
+    expect(gateHooks(merged)).toHaveLength(1);
+    // ブラウザを足さないときは、確認のフックは入らない
+    expect(gateHooks(mergeSettings(profile, ownSettings(null, false)) as { hooks: { PreToolUse: Hook[] } })).toEqual([]);
+  });
+});
+
+describe('JavaScript の実行の確認のフック', () => {
+  const decision = (output: string) => (JSON.parse(output) as { hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput;
+
+  it('localhost のページなら確認なし（allow）、それ以外は確認を出させる（ask）。ページが分からないときも ask', () => {
+    expect(decision(gateOutput({ local: true, url: 'http://localhost:3000/' }))).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'allow' });
+    const remote = decision(gateOutput({ local: false, url: 'https://staging.example.test/' }));
+    expect(remote.permissionDecision).toBe('ask');
+    expect(remote.permissionDecisionReason).toContain('https://staging.example.test/');
+    expect(decision(gateOutput({ local: false, url: '' })).permissionDecision).toBe('ask');
+    expect(decision(gateOutput(null)).permissionDecision).toBe('ask');
+  });
+
+  it('アプリの答えを読む。エラーの返事・形の違う返事は null', () => {
+    expect(readAnswer(textResult('{"local":true,"url":"http://localhost:3000/"}'))).toEqual({ local: true, url: 'http://localhost:3000/' });
+    expect(readAnswer(textResult('{"local":true,"url":"http://localhost:3000/"}', true))).toBeNull();
+    expect(readAnswer(textResult('{"local":"yes","url":1}'))).toBeNull();
+    expect(readAnswer(textResult('知らないツールです'))).toBeNull();
+    expect(readAnswer({ content: [{ type: 'image', data: 'x', mimeType: 'image/png' }] })).toBeNull();
+  });
+
+  it('アプリ（ソケット）に今のページを聞いて答える。アプリが無い・答えが無いときは ask', async () => {
+    const socketPath = join(root, 'gate.sock');
+    const asked: { session: string; tool: string }[] = [];
+    let page = 'http://localhost:3000/';
+    const bridge = new BrowserBridge(socketPath, async (session, tool) => {
+      asked.push({ session, tool });
+      return textResult(JSON.stringify({ local: isLocalUrl(page), url: page }));
+    });
+    await bridge.start();
+    try {
+      expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('allow');
+      expect(asked).toEqual([{ session: 's1', tool: BROWSER_GATE_REQUEST }]);
+      page = 'https://example.com/';
+      expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
+    } finally {
+      bridge.close();
+    }
+    // アプリを閉じている間
+    expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
+  });
+
+  it('アプリが答えられなかった（エラーの返事）ときも ask', async () => {
+    const socketPath = join(root, 'gate-error.sock');
+    const bridge = new BrowserBridge(socketPath, async () => textResult('このセッションは tanacode にありません', true));
+    await bridge.start();
+    try {
+      expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
+    } finally {
+      bridge.close();
+    }
   });
 });

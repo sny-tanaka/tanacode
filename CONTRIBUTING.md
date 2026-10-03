@@ -107,7 +107,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
     | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の Esc → 中断した会話の `--resume`（`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
-    | `browser.test.ts` | アプリ内ブラウザの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `permissions.ask`）で起動し、ビルドした中継（`test/cli/browser-relay-build.ts` で `src/main/browser-mcp.ts` をまとめたもの）が、アプリの代わりのソケット（`BrowserBridge`）まで呼び出しを運ぶか。読むだけのツールは確認なし・クリックは確認あり・JavaScript の実行は「次から聞かない」を選んでも次も確認・`--resume` のあとも使える・ソケットが無い間は「起動していません」と返し、戻ればそのまま使える |
+    | `browser.test.ts` | アプリ内ブラウザの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`test/cli/browser-relay-build.ts` で `src/main/browser-mcp.ts` をまとめたもの）が、アプリの代わりのソケット（`BrowserBridge`）まで呼び出しを運ぶか。読むだけのツールは確認なし・クリックは確認あり・JavaScript の実行は localhost のページなら確認なし、それ以外のページなら「次から聞かない」を選んでも次も確認、アプリに聞けない間も確認・`--resume` のあとも使える・ソケットが無い間は「起動していません」と返し、戻ればそのまま使える |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備の知らせが ready より先 → 会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでは始まらず、理由を日本語で返す。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
 | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
 
@@ -274,7 +274,11 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 中継は、ツールの呼び出しのたびに userData の Unix ソケット（`browser.sock`。作るときから `0600`）でアプリにつなぎ、返事を受け取ったら切ります（`browser-bridge.ts`）。ソケットのパスとセッションは、`--mcp-config` の `env`（`TANACODE_BROWSER_SOCKET`・`TANACODE_BROWSER_SESSION`）で渡します。
   - HTTP にしないのは、アプリを閉じても Claude Code は動き続けるため。HTTP だと、アプリを起動し直すたびにポートが変わり、接続が切れたままになります。ソケットのパスは変わらないので、アプリが戻ればそのまま使えます。アプリが閉じている間は、中継が「tanacode が起動していません」と返します。
   - 足すのは起動するときだけ。`~/.claude` の設定や `.mcp.json` には書き込みません（statusLine と hooks を `--settings` で足しているのと同じ考え方）。
-- 許可: 読むだけのツールは `--allowedTools` で許可済みに。ページを動かすツールは、ふつうの許可の確認を通します。JavaScript の実行（`evaluate`）は、`--settings` に `permissions.ask` を入れて毎回確かめます。ask のルールは allow より強いので、「次から聞かない」でプロジェクトの設定に許可が残っても、次も確認が出ます（実測）。登録した設定ファイルを重ねるときは、その `permissions` に足します（`mergeSettings`）。
+- 許可: 読むだけのツールは `--allowedTools` で許可済みに。ページを動かすツールは、ふつうの許可の確認を通します。JavaScript の実行（`evaluate`）は、`--settings` の `PreToolUse` のフック（`browser-gate.ts`）が、今のページで決めます。`permissions.ask` では、ページによって変えられず、localhost の開発中のページでも毎回確認が出るためです。
+  - 今のページが localhost・127.0.0.1・[::1]・*.localhost（`isLocalUrl`）なら確認なし（`permissionDecision: allow`）。それ以外（`*.local` や足した先を含む）は確認（`ask`）。アプリに聞けない・答えを読めないときも `ask`。
+  - フックは、中継の入口を `--gate` 付きで動かし（`browser-mcp.js`）、アプリにソケットで今のページを聞きます（`BROWSER_GATE_REQUEST`。MCP のツールではなく、中継の `tools/call` では受けません）。フックは Claude Code の環境で動くので、中継の起動に使う環境変数（`browserGateEnv`）を、起動する Claude Code の環境に足します（`--mcp-config` の `env` は MCP サーバーにしか届かないため）。
+  - フックの `ask` は allow のルールより強いので、localhost 以外のページでは、「次から聞かない」でプロジェクトの設定に許可が残っても、次も確認が出ます（実測）。
+  - 登録した設定ファイルを重ねるときは、登録した設定のフックと並べて足します（`mergeSettings`）。
 - 実行はメインプロセス（`browser-control.ts`）。そのセッションの webview の中身（`webContents`）を直接動かします。
   - アプリ内ブラウザは、セッションごとにタブ（1 つのタブに 1 つの webview）を持ちます。画面（`PreviewPane`）は、タブの webview の準備ができたら（`dom-ready`。それより前の `getWebContentsId` は例外になる）、その `webContents` の ID を main に知らせます（`browser.attach`）。今のタブが変わったときも知らせ（`browser.activate`）、Claude の操作は今のタブに対して行います。main は、アプリの画面の中の webview だけを受け付けます。
   - タブの番号は、画面がタブを作った順（タブの ID の番号）。画面の並びと Claude の `list_tabs` をそろえるため、新しいタブはいつも右端に足します。

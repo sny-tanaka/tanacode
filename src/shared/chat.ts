@@ -364,12 +364,14 @@ const HOOK_OUTCOME: Record<string, HookRun['outcome']> = {
 export const ASK_FILE_ENV = 'TANACODE_ASK_FILE';
 // アプリが足した、worktree やブランチを消す操作で確認を出させるフック（main の worktree-guard.ts）の目印
 export const GUARD_HOOK_ENV = 'TANACODE_WORKTREE_GUARD';
+// アプリが足した、アプリ内ブラウザの JavaScript の実行で、ページによって確認を出させるフック（main の browser-gate.ts）の目印
+export const BROWSER_GATE_HOOK_ENV = 'TANACODE_BROWSER_GATE';
 
 function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
   const type = typeof a?.type === 'string' ? a.type : '';
   if (!a || !type.startsWith('hook_')) return null;
   // アプリが足したフックは、ユーザーのフックではないので出さない
-  if (typeof a.command === 'string' && (a.command.includes(ASK_FILE_ENV) || a.command.includes(GUARD_HOOK_ENV))) return null;
+  if (typeof a.command === 'string' && (a.command.includes(ASK_FILE_ENV) || a.command.includes(GUARD_HOOK_ENV) || a.command.includes(BROWSER_GATE_HOOK_ENV))) return null;
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
   const blocking = (a.blockingError ?? null) as { blockingError?: string; command?: string } | null;
