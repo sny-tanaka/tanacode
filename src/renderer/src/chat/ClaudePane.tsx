@@ -7,7 +7,7 @@ import { errorMessage } from '../errorMessage';
 import { ArrowDownIcon, CloseIcon, CompressIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ContextMeter } from '../knowledge/ContextMeter';
-import { contextWindow } from '../knowledge/useSessionKnowledge';
+import { contextUsage } from '../knowledge/useSessionKnowledge';
 import { MenuCard } from '../screen/MenuCard';
 import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
@@ -25,6 +25,7 @@ import type { SubagentRuns } from './useSessionSubagents';
 import type { ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { RemoteControlToggle } from './RemoteControlToggle';
+import { useCompactState } from './compactState';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
@@ -57,6 +58,8 @@ type Props = {
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
   onOpenTerminal: () => void;
+  // サイドパネルにコンテキストの中身を出す（ヘッダーのメーターを押したとき）
+  onShowContext: () => void;
   // ターミナルパネルのシェルのタブを出す（worktree の npm install などの進み具合を見る）
   onShowShell: () => void;
   onToggleTerminal: () => void;
@@ -93,6 +96,7 @@ export const ClaudePane = memo(function ClaudePane({
   onCommentsChange,
   onShowComment,
   onOpenTerminal,
+  onShowContext,
   onShowShell,
   onToggleTerminal,
   onOpenFile,
@@ -192,11 +196,7 @@ export const ClaudePane = memo(function ClaudePane({
   const canSend = !blocked && (input.trim().length > 0 || attachments.length > 0 || comments.length > 0);
   const canConfigure = !running && !menu && !rewinding;
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
-  // /compact は発言として会話ログに残り、圧縮が終わるまで作業中になる
-  // 入力欄に打つたびに描き直されるので、会話が変わったときだけ探す
-  const lastUser = useMemo(() => chat.items.findLast((i) => i.kind === 'user'), [chat.items]);
-  const compacting = running && lastUser?.text === '/compact';
-  const canCompact = live && chat.status === 'idle' && !menu && !rewinding && !!lastUser;
+  const { canCompact, compacting } = useCompactState(session, chat, screen);
 
   // Claude Code の入力欄に文字が残っていたら（巻き戻し直後は戻した発言が入る）、こちらの入力欄に移して向こうは消す。
   // 残したまま送ると、送った文字がその後ろにつながってしまう
@@ -301,11 +301,7 @@ export const ClaudePane = memo(function ClaudePane({
         <span className={`claude-mark${running ? ' working' : ''}`} />
         <span className="claude-title">{session.title ?? 'Claude Code'}</span>
         <div className="spacer" />
-        {statusLine?.context ? (
-          <ContextMeter tokens={statusLine.context.tokens} limit={statusLine.context.size} />
-        ) : (
-          <ContextMeter tokens={contextTokens} limit={contextWindow(session.model, screen?.model ?? null, contextTokens)} />
-        )}
+        <ContextMeter {...contextUsage(session.model, screen?.model ?? null, statusLine, contextTokens)} onClick={onShowContext} />
         {!session.archived && (
           <RemoteControlToggle
             on={session.remoteControl}

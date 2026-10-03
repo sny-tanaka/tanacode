@@ -3804,9 +3804,19 @@ details[open] > summary > .disclosure {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
   font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
+  cursor: pointer;
+}
+.context-meter:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 .context-meter-bar {
   width: 44px;
@@ -3828,6 +3838,224 @@ details[open] > summary > .disclosure {
 }
 .context-meter-value {
   font-variant-numeric: tabular-nums;
+}
+
+/* サイドパネルの「コンテキスト」。中身の一覧と、圧縮で残す・捨てるの印 */
+.context-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.context-summary {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.context-total {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.context-total strong {
+  color: var(--text-heading);
+  font-weight: 600;
+}
+.context-breakdown {
+  font-variant-numeric: tabular-nums;
+}
+.context-toolbar {
+  display: flex;
+  margin-top: 4px;
+}
+.segmented.text button {
+  width: auto;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.context-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+}
+.context-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+}
+.context-row:hover {
+  background: var(--bg-hover);
+}
+.context-row.keep {
+  border-left-color: var(--ok);
+}
+.context-row.drop .context-label {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+.context-row.compacted {
+  opacity: 0.55;
+}
+.context-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.context-kind {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.context-row:hover .context-kind {
+  background: var(--bg-selected);
+}
+.context-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.context-tokens {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.context-row-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+.context-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-selected);
+  overflow: hidden;
+}
+.context-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--gauge);
+}
+.context-row.keep .context-bar span {
+  background: var(--ok);
+}
+.context-row.drop .context-bar span {
+  background: var(--text-tertiary);
+}
+.context-marks {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+.context-mark {
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  cursor: pointer;
+}
+.context-mark:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.context-mark.keep.on {
+  border-color: var(--ok);
+  background: var(--ok-tint);
+  color: var(--ok);
+}
+.context-mark.drop.on {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.context-compacted-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-compacted-head:hover {
+  color: var(--text-primary);
+}
+.context-compact {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.context-compact-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.context-compact-row .send-button {
+  margin-left: auto;
+  font-size: 12px;
+}
+.context-mark-count {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.context-compact-title {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.context-compact textarea {
+  resize: vertical;
+  min-height: 90px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+}
+.context-compact textarea:focus {
+  border-color: var(--border-focus);
+}
+.context-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  line-height: 1.5;
 }
 
 /* プランの利用枠（セッション一覧の最下部） */

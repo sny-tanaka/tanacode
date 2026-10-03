@@ -1,18 +1,21 @@
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '@shared/chat';
+import { promptKeys } from '@shared/prompt-keys';
 import { REWOUND, checkRewindRestore } from '../scenario';
 import { ClaudeRun, claudeVersion, menuOf, shown } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、会話の操作をアプリと同じ部品で読めるかを確かめる。
-// 権限モードの切り替え（Shift+Tab）・作業中の進み具合・作業中に送った発言の順番待ち・/compact・/clear・--resume・/rewind
+// 権限モードの切り替え（Shift+Tab）・作業中の進み具合・作業中に送った発言の順番待ち・/compact（指示を添えたものも）・/clear・--resume・/rewind
 
 const SLOW = 'ゆっくり返事してください';
 const QUEUED = '順番待ちの発言です';
 const AFTER_CLEAR = '新しい会話を始めます';
 const AFTER_RESUME = REWOUND;
 const AFTER_REWIND = '巻き戻したあとの発言です';
+// /compact に添える指示（コンテキストのパネルで組み立てたもの）。行が多いと、入力欄では貼り付けの目印になる
+const COMPACT_INSTRUCTIONS = ['順番待ちの発言の話は詳しく残す。', 'ゆっくりの返事の話は捨ててよい。', '（指示が届いたかの目印 COMPACT-MARK-1）', '以上'].join('\n');
 // 応答に書くモデル（起動時のバナーのモデル名と違うもの）。会話ログのモデルが画面のモデル名になるかを見る
 const MOCK_MODEL = 'claude-mockmodel-9';
 
@@ -83,6 +86,21 @@ describe(`Claude Code ${version} の会話の操作`, () => {
     await run.send('/compact');
     await run.waitFor('圧縮の区切り', () => run.chatEvents.some((e) => e.type === 'divider'), 30_000);
     await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt');
+  });
+
+  it('/compact に複数行の指示を添えると、要約の頼みに指示が入る', async () => {
+    const dividers = () => run.chatEvents.filter((e) => e.type === 'divider').length;
+    const before = dividers();
+    // アプリ（ChatInput の submitToClaude）と同じく、promptKeys で打ち込んでから Enter を送る。
+    // コマンドの名前は打鍵、指示は貼り付けになる（丸ごと貼り付けると、目印に置き換わってコマンドにならない）
+    run.type(promptKeys(`/compact ${COMPACT_INSTRUCTIONS}`));
+    await run.waitFor('入力欄に入る', (info) => info.state.kind === 'prompt' && info.draft.startsWith('/compact '));
+    run.type('\r');
+    await run.waitFor('圧縮の区切り', () => dividers() > before, 30_000);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt');
+    // 指示は、要約の頼み（最後の user の発言）の「Additional Instructions:」の後ろに、改行もそのまま入る
+    const asked = api.lastPrompts.find((p) => p.includes('Additional Instructions:'));
+    expect(asked).toContain(`Additional Instructions:\n${COMPACT_INSTRUCTIONS}`);
   });
 
   it('/clear のあと、statusLine の会話ログのパスで新しい会話ログに乗り換える', async () => {

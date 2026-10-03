@@ -16,6 +16,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('SearchIcon', '検索'),
       item('BranchIcon', 'ソース管理・今のブランチ'),
       item('TasksIcon', 'タスク'),
+      item('ContextIcon', 'コンテキストの中身'),
     ],
   },
   {

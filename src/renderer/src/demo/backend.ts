@@ -290,6 +290,7 @@ export class DemoBackend {
         get: (id) => ok({ files: s(id).knowledge, contextTokens: s(id).contextTokens }),
         onChanged: (l) => this.ch.knowledge.on(l),
       },
+      context: { get: () => ok({ items: [] }) },
       tasks: {
         bash: (id) => ok(s(id).bash),
         onBashChanged: (l) => this.ch.bash.on(l),

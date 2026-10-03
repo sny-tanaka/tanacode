@@ -148,13 +148,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `basic.test.ts`（台本は `test/scenario.ts`） | フォルダの信頼の確認 → 入力欄 → Bash（許可の確認・PostToolUse の hooks）→ AskUserQuestion → Write（許可の確認）→ 返事。チャットの組み立て（会話ログからと、`SessionManager` の配信から）・操作待ちの知らせと通知の本文・完了の知らせ・読んだ・書いたファイル・statusLine・`/` の候補（会話ログのスキル一覧）も |
     | `background.test.ts` | サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（始める前の確認・実行中の journal も）。それぞれ完了まで、トラッカーで追えるか。完了通知（`<task-notification>`）は、出力ファイルや完了時の記録という後ろ盾と分けて、会話ログの行と `taskNotificationOf` だけで読めるか、チャットの知らせになるかも |
     | `stop.test.ts` | バックグラウンドのタスクを、アプリから止める（`SessionManager.stopTask`）。サブエージェント・Bash 5 つ（長いコマンド・同じコマンドの 2 つ）・ワークフローを動かし続け、`/tasks` の一覧から、コマンド・説明・名前で選んで止める（ほかは動いたまま。同じコマンドが 2 つのときは決められないと断る）。画面を操作している間にメニューや「操作できない画面」の知らせが出ないこと、止めたあと入力欄に戻ること、動いていないもの・書きかけの文字があるときは打たずに断ることも。1 つだけのときは別の `claude` で、一覧を飛ばした詳細の画面（Bash・サブエージェントは止めると閉じ、ワークフローは残る）から止める |
-    | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 会話ログのモデル名 → `/compact` → `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind`（「何を戻すか」のメニューと、会話を戻して発言したときの `replace` のイベント） |
+    | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 会話ログのモデル名 → `/compact` → 複数行の指示を添えた `/compact`（入力欄では貼り付けの目印になる。要約の頼みの `Additional Instructions:` に、改行もそのまま入るか）→ `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind`（「何を戻すか」のメニューと、会話を戻して発言したときの `replace` のイベント） |
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
     | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の Esc → 中断した会話の `--resume`（`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
     | `browser.test.ts` | アプリ内ブラウザの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`test/cli/browser-relay-build.ts` で `src/main/browser-mcp.ts` をまとめたもの）が、アプリの代わりのソケット（`BrowserBridge`）まで呼び出しを運ぶか。読むだけのツールは確認なし・クリックは確認あり・JavaScript の実行は localhost のページなら確認なし、それ以外のページなら「次から聞かない」を選んでも次も確認、アプリに聞けない間も確認・`--resume` のあとも使える・ソケットが無い間は「起動していません」と返し、戻ればそのまま使える |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備の知らせが ready より先 → 会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでは始まらず、理由を日本語で返す。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
-| `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
+| `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・コンテキストの中身（`ContextTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
@@ -288,7 +288,38 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - ツールの行の説明は、Bash・Agent などの `description`。
 - 質問のカードでは、押した選択肢に枠を付けます。ターミナルのカーソルが選択肢を順に動く様子は出しません。答えが会話ログに書かれたら、画面の読み取りを待たずにカードを閉じます。答えたあとの画面がうまく読めないと、カードが残ってしまうためです。
 - モデルの一覧は、Claude Code が持っている一覧の控え（`~/.claude/cache/model-catalog/`）から作ります。モデルやエフォートを変えると、`--model` / `--effort` を付けて起動し直し、会話を再開します。
-- コンテキストの上限は、statusLine の値（1M かどうかも含めて正確な値）を使います。
+- コンテキストの上限は、statusLine の値（1M かどうかも含めて正確な値）を使います。圧縮の直後は statusLine の使用量が次の応答まで 0 になるので、会話ログの圧縮後の量（`compactMetadata.postTokens`）を使います。
+- 引数が複数行・長い（800 文字を超える）`/compact` は、名前だけを打鍵し、引数をブラケットペーストで送ります（`promptKeys`）。丸ごと貼り付けると、Claude Code は入力を `[Pasted text #1 …]` の目印に置き換え、`/` で始まらない入力として、コマンドにせずにふつうの発言で送るためです（実測）。ほかの「/単語」で始まる複数行の発言（「/api のエンドポイントを…」など）は、今までどおり丸ごと貼り付けます。名前を打鍵すると、Claude Code がコマンドとして実行したり（`/clear` など）、知らないコマンドとして断ったりするためです。
+
+### コンテキストの中身と圧縮
+
+- 中身の一覧は、本体の会話ログから `ContextTracker`（`context-tracker.ts`）が集めます。`KnowledgeTracker` と同じく、`SessionManager` が行ごとに渡します。起動していないセッション（アーカイブ済みなど）は、取りに来たときに会話ログ全体を読みます（`readContext`）。
+  - 画面は、パネルが見えている間だけ取りに行き（`context:get`）、使用量が変わったら（`knowledge:changed`）取り直します。
+  - 巻き戻し（`/rewind`）は、チャットと同じく `branchCut` で、外れた枝のものを捨てます。同じ uuid の行が 2 回書かれたとき（デスクトップ版の会話ログは圧縮のたびに最初から書き直す・圧縮でそのまま残した行の書き直し）は、前のものを使います。巻き戻しの検出（`branchCut`）より先に見ます。
+- 並べるものと、まとめ方
+  - ファイル: Read の結果・Edit や Write の入力（書いた中身）・`@` や圧縮のあとの添付（`file`）・変更に気づいた知らせ（`edited_text_file`）・CLAUDE.md や記憶（`instructions`・前の Claude Code の `nested_memory`）。同じファイルは 1 行に足します。
+  - ツールの結果: 1,000 トークン以上のものだけ 1 行にし、小さいものはやりとりに足します。スキルの本文（`Skill` のすぐあとの isMeta の行。`sourceToolUseID` でつながる）は、そのツールの行に入れます。
+  - 画像: ツールの結果と発言の添付。画像のファイルを Read したときは、そのファイルの行に入れます。発言の添付は、指示の文でどれか分かるよう、発言の冒頭と何枚目かを名前にします。
+  - サブエージェント: Agent の結果と、完了の知らせ（`<task-notification>` の `<tool-use-id>`）・報告（`<agent-message from>` のサブエージェントの ID）を、起動した行にまとめます。
+  - やりとり: 発言ごと。質問（AskUserQuestion）への答え・待機中に届いた完了の知らせや別の Claude からの知らせでも区切ります（発言だけで区切ると、1 つのまとまりが会話全体の半分以上になりがちなため。実測）。作業の途中に届いた知らせ（`queued_command`）では区切りません（作業の途中に送った人の発言では区切ります）。知らせかどうかは、出どころ（`origin.kind`）か、文の先頭の `<task-notification>` で見ます。圧縮を送った発言・コマンドの記録は、要約の行に入れます。
+  - モデルに渡らない attachment（`prompt_snapshot`・`deferred_tools_record`・`compact_file_reference` など）は数えません。
+  - Claude Code が足す一覧や環境の知らせ（`skill_listing`・`*_delta`・`environment`・`total_tokens_reminder` など）は、一覧に出さず「そのほか」に入れます。圧縮のあとにも送り直され、`/compact` の指示では消せないためです。大きさの直し（下）には入れます。hooks が足した文（`hook_*`）は、そのやりとりに入れます。
+- 大きさの見積もり（会話ログ 129 本で実測）
+  - 文章は文字数から。日本語（CJK の記号・かな・漢字・全角）は 1 文字 1.07 トークン、ほかの文字は 2.2 文字で 1 トークン（Bash の出力やコードが多く、よく言われる 4 文字より重い）。ツールの結果 1 つに 40 を足します。
+  - Claude の応答は、`message.usage.output_tokens`。思考は会話ログに中身が残らない（署名だけ）のに、次の入力に残るためです。同じ応答（`message.id`）は中身のブロックごとに別の行に書かれるので、1 回だけ数えます。書いた中身（Edit・Write の入力）は、応答からファイルの行に移します（その応答の出力より多くは移さない）。
+  - 応答の入力の量は、前の応答の入力と出力に、その間に増えた中身を足したもの。その差で、間に増えた中身（ツールの結果・発言・添付）の見積もりを直します。多くは結果が 1 つなので、ほぼその大きさになります。直す割合が 0.25〜4 倍を外れたとき（ツールの定義の読み込みなど、会話ログに無いものが混ざる）と、圧縮の境目をまたぐときは直しません。巻き戻したあとは、切られた応答で直し終えた分を差から引いて、残りだけを直します。
+  - 画像は、幅 × 高さ ÷ 750（PNG・JPEG・GIF の頭から大きさを読む）。
+  - 一覧の合計と、statusLine の使用量の差を「そのほか（システムプロンプト・ツールの定義・Claude Code が足す知らせなど）」として出します。実測では 3.3 万〜5 万で安定していました（会話ログ 40 本）。
+  - 圧縮の直後は、statusLine の使用量が次の応答まで分かりません（会話ログの圧縮後の量は、システムプロンプトなどを含まない）。一覧の合計より小さいときは、全体の量を出しません。
+- 圧縮の前と後
+  - 最後の `compact_boundary` より前の行のものを、圧縮で要約に置き換わったもの（`compacted`）にします。ただし `compactMetadata.preservedMessages.allUuids` の行（要約せずにそのまま残された直前の応答など）は、今のものとして数えます。
+  - 要約の行（`isCompactSummary`）は「前回の圧縮の要約」の行に。圧縮のあとに添付し直されたファイルは、今のファイルの行になります。
+- 圧縮の指示（`compactInstructions`・`src/shared/context.ts`）
+  - 印から決まった形の文を組み立てます。「A の内容と、「B」から始まるやりとりは詳しく残す。C の出力は捨ててよい。」のように、種類ごとの言い方（ファイルは内容、Bash は出力、検索は検索結果など）でつなぎます。裏で Claude Code を起動して文を作らせることはしません。
+  - Claude Code は、`/compact` の引数を要約のプロンプトの最後（`Additional Instructions:`）に、そのまま足します。長さの上限は無く、改行も残ります（Claude Code 2.1.288 の本体で確認）。
+  - 指示は効きます。本物の Claude Code で、同じ会話を「設計を残し、インストールの出力とポートの調べものは捨てる」「指示なし」「逆の指示」で圧縮すると、残すとした目印はすべて要約に残り、捨ててよいとした目印は 0 件でした（指示なしでは全部残った）。
+  - 印は、セッションごとに画面のメモリに持ちます（アプリを終了すると消える）。付けたときの要約の行（圧縮の区切り）と一緒に覚え、圧縮が進んで要約の行が変わったら使いません（ヘッダーの「圧縮」・自動の圧縮も）。送った時点では外しません。送れなかったときに、付け直さなくてよいようにするためです。
+  - パネルは、セッションごとに作り直します（`key`）。書きかけの指示を、切り替えた先のセッションに送らないためです。
 
 ### バックグラウンドの作業（タスク）
 
@@ -414,6 +445,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `subagent-tracker.ts` / `workflow-tracker.ts` / `bash-task-tracker.ts`: サブエージェント・ワークフロー・バックグラウンドの Bash の進み具合
   - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
+  - `context-tracker.ts`: コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・やりとり）と、その大きさの見積もり
   - `statusline.ts` / `usage-monitor.ts` / `model-catalog.ts`: statusLine・利用枠・モデル一覧
   - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
@@ -434,11 +466,11 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・Claude に許す先のダイアログ。画面では「ブラウザ」）
-  - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト・カラム
+  - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
   - `icons/`: アプリのアイコン（自作の線画）・`IconButton`・`DisclosureIcon`・一覧（`catalog.ts`。Storybook の「カタログ/アイコン」と `test/icons.test.ts` が使う）
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `demo/`: README のデモ動画の作り物のデータと台本（下の「デモ動画の仕組み」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）
 - `design/`: アプリのロゴ
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、デモ動画の録画、動作確認済の Claude Code のバージョンの書き換え
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
@@ -446,6 +478,7 @@ worktree のセッションでは、ユーザーの操作に合わせて、リ�
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser`・`stop` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
+  - `context.test.ts`: コンテキストの中身（まとめ方・大きさの直し方・圧縮の前後・巻き戻し）と、圧縮の指示の組み立て・スラッシュコマンドの送り方
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）

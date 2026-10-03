@@ -345,6 +345,7 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.SubagentsGet, (_e, id: string) => manager.subagents(id));
   ipcMain.handle(IpcChannel.TasksBash, (_e, id: string) => manager.bashTasks(id));
   ipcMain.handle(IpcChannel.KnowledgeGet, (_e, id: string) => manager.knowledge(id));
+  ipcMain.handle(IpcChannel.ContextGet, (_e, id: string) => manager.context(id));
   ipcMain.handle(IpcChannel.SettingsFilesList, () => settingsFiles.list());
   ipcMain.handle(IpcChannel.SettingsFilesPick, () => pickSettingsFile());
   ipcMain.handle(IpcChannel.SettingsFilesAdd, (_e, path: string, name?: string) => settingsFiles.add(path, name));
