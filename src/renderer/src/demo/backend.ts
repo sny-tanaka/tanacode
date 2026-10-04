@@ -1,4 +1,5 @@
 import type { ChatEvent } from '@shared/chat';
+import type { AppUpdate } from '@shared/app-update';
 import type { ContextItem } from '@shared/context';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type {
@@ -8,6 +9,7 @@ import type {
   BrowserOpenRequest,
   BranchChanges,
   DirEntry,
+  DiscoveredSession,
   FileChange,
   GitState,
   ScreenChoice,
@@ -29,9 +31,9 @@ import type { BashTask, TaskRef } from '@shared/task';
 import type { UsageLimits } from '@shared/usage';
 import type { WorkflowRun } from '@shared/workflow';
 
-// README のデモ動画とデモのサイト用の、アプリの API（window.tanacode）の作り物。
+// デモのサイトと Storybook の紹介画像用の、アプリの API（window.tanacode）の作り物。
 // 本物の Claude Code や git を動かさず、メモリに持ったファイル・会話・画面の状態を返す。
-// 台本（scenarios/）がこの状態を書き換えると、画面へ通知が飛んでアプリがそのまま描き直す
+// 台本（story/）がこの状態を書き換えると、画面へ通知が飛んでアプリがそのまま描き直す
 
 type Listener<T> = (value: T) => void;
 
@@ -88,8 +90,16 @@ export class DemoBackend {
   onShellWrite: (id: string, data: string) => void = () => {};
   onExport: (html: string, fileName: string) => void = () => {};
   onCreate: (cwd: string, options: NewSessionOptions) => string = () => '';
-  // 翻訳の対訳（原文の行 → 訳文）。null なら翻訳のボタンを出さない（README の動画には出さない）
+  // 「既存の会話を開く…」で選んだ会話を取り込み、セッションの ID を返す
+  onImport: (session: DiscoveredSession) => string = () => '';
+  // 「既存の会話を開く…」に出す、アプリの外（ターミナル）で作った会話
+  discovered: DiscoveredSession[] = [];
+  // 翻訳の対訳（原文の行 → 訳文）。null なら翻訳のボタンを出さない
   translations: Record<string, string> | null = null;
+  // 入っている Claude Code のバージョンと、tanacode の新しいバージョン（null は、まだ分からない）
+  private claudeVersion = VERIFIED_CLAUDE_CODE_VERSION;
+  private appUpdate: AppUpdate | null = null;
+  private notificationsOn = true;
   // アプリで今見ているセッション（見ていないセッションの応答は「新しい応答」になる）
   focused: string | null = null;
 
@@ -113,6 +123,8 @@ export class DemoBackend {
     shellData: new Channel<ShellData>(),
     shellOpened: new Channel<ShellOpened>(),
     shellExit: new Channel<ShellExit>(),
+    claudeVersion: new Channel<string | null>(),
+    appUpdate: new Channel<AppUpdate | null>(),
   };
   // 頼んでいる「あなたの番です」（セッション → 依頼）
   private readonly asks = new Map<string, BrowserAskChange>();
@@ -230,6 +242,18 @@ export class DemoBackend {
     this.session(id).agentLogs[key] = events;
   }
 
+  // 入っている Claude Code が変わった（ステータスバーのバージョンの印が変わる）
+  setClaudeVersion(version: string): void {
+    this.claudeVersion = version;
+    this.ch.claudeVersion.emit(version);
+  }
+
+  // tanacode の新しいバージョンを確かめた（タイトルバーのバージョンの横の印が変わる）
+  setAppUpdate(update: AppUpdate | null): void {
+    this.appUpdate = update;
+    this.ch.appUpdate.emit(update);
+  }
+
   // Claude がファイルを書き換えた
   writeFile(path: string, text: string): void {
     this.project.files[path] = text;
@@ -321,8 +345,8 @@ export class DemoBackend {
           return ok(`/Users/demo/Desktop/${fileName}`);
         },
         revealExport: () => {},
-        discover: () => ok([]),
-        import: () => ok(''),
+        discover: () => ok([...this.discovered]),
+        import: (session) => ok(this.onImport(session)),
         onChanged: (l) => this.ch.sessions.on(l),
         onSelect: (l) => this.ch.select.on(l),
         onNew: () => () => {},
@@ -343,7 +367,13 @@ export class DemoBackend {
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },
-      notifications: { get: () => ok(true), set: () => ok(undefined) },
+      notifications: {
+        get: () => ok(this.notificationsOn),
+        set: (on) => {
+          this.notificationsOn = on;
+          return ok(undefined);
+        },
+      },
       system: {
         onStats: (l) => {
           const tick = () =>
@@ -353,12 +383,10 @@ export class DemoBackend {
           return () => clearInterval(timer);
         },
       },
-      // 動画に警告が映らないよう、動作確認済のバージョンにする
-      claudeVersion: { get: () => ok(VERIFIED_CLAUDE_CODE_VERSION), onChanged: () => () => {} },
-      // デモ動画には新しいバージョンの印を映さない
-      appUpdate: { get: () => ok(null), onChanged: () => () => {} },
+      claudeVersion: { get: () => ok(this.claudeVersion), onChanged: (l) => this.ch.claudeVersion.on(l) },
+      appUpdate: { get: () => ok(this.appUpdate), onChanged: (l) => this.ch.appUpdate.on(l) },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
-      // デモ動画では設定ファイルを登録しない（選択欄は「標準」のまま）
+      // 設定ファイルは登録しない（選択欄は「標準」のまま）
       settingsFiles: {
         list: () => ok([]),
         pick: () => ok(null),
@@ -368,7 +396,6 @@ export class DemoBackend {
         onChanged: () => () => {},
       },
       models: { get: () => ok(this.catalog), refresh: () => ok({ catalog: this.catalog }) },
-      // デモの動画には翻訳のボタンを出さない
       translate: {
         available: () => ok(this.translations !== null),
         run: (texts) => ok({ ok: true as const, texts: texts.map((t) => this.translations?.[t] ?? t) }),

@@ -1,4 +1,4 @@
-// デモ動画とデモのサイトの操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
+// デモのサイトの操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
 // 録画は画面の外で描いたコマを撮るので OS のカーソルは映らない。代わりにこのカーソルを映す
 
 // デモのサイトの一時停止。止めている間は、台本の待ち時間を進めない
@@ -50,7 +50,7 @@ export class Director {
   private x = 0;
   private y = 0;
   private hovered: Element | null = null;
-  // デモのサイトで、いま見せている操作の説明を出す（動画では何も出さない）
+  // デモのサイトで、いま見せている操作の説明を出す
   onCaption: (text: string) => void = () => {};
 
   constructor(start: { x: number; y: number } = { x: window.innerWidth * 0.6, y: window.innerHeight * 0.7 }) {

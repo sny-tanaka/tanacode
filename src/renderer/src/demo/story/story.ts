@@ -1,9 +1,11 @@
+import { REPO_URL } from '@shared/app-update';
 import type { ChatEvent } from '@shared/chat';
 import { DemoBackend } from '../backend';
 import { cafeProject, DEMO_CATALOG, demoUsage, ROOT } from '../data';
 import { type Director, sleep } from '../director';
 import { Claude, pastTurn, statusLine } from '../scenarios/claude';
 import { installDemoWebview } from '../webview';
+import { DISCOVERED } from './chapters/app';
 import { TRANSLATIONS } from './chapters/wrapup';
 import { cafePage } from './page';
 
@@ -24,9 +26,11 @@ export type Sent = { sessionId: string; text: string; images: string[] };
 export class Story {
   d!: Director;
   private readonly claudes = new Map<string, Claude>();
-  // 書き出した HTML を開いて見せる・閉じる（デモのサイトでは、親のページが重ねて見せる。動画では何もしない）
+  // 書き出した HTML を開いて見せる・閉じる（デモのサイトでは、親のページが重ねて見せる。紹介画像では何もしない）
   showExport: (html: string) => void = () => {};
   hideExport: () => void = () => {};
+  // 台本の目印の場面に来た（紹介画像は、目印 'showcase' の場面で止めて撮る。デモのサイトでは何もしない）
+  mark: (name: string) => Promise<void> = async () => {};
 
   constructor(readonly backend: DemoBackend) {}
 
@@ -123,6 +127,9 @@ export function prepareStory(): Story {
   installDemoWebview((url) => cafePage(backend, url));
   // 翻訳のボタンを出すかは、アプリが最初に 1 回だけ聞くので、始めから訳せるようにしておく（日本語の応答には出ない）
   backend.translations = TRANSLATIONS;
+  // tanacode は最新バージョン（章 8 で新しいバージョンが出る）。「既存の会話を開く…」には、ターミナルで始めた会話を並べておく
+  backend.setAppUpdate({ latest: __APP_VERSION__, available: false, url: `${REPO_URL}/releases/latest` });
+  backend.discovered = DISCOVERED;
   window.tanacode = backend.api();
   return new Story(backend);
 }

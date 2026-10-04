@@ -1,3 +1,4 @@
+import { runApp } from './chapters/app';
 import { CHAPTER_INFO, type ChapterInfo } from './chapterInfo';
 import { runBrowser } from './chapters/browser';
 import { runDelegate } from './chapters/delegate';
@@ -20,6 +21,7 @@ const RUNS: Record<string, (story: Story) => Promise<void>> = {
   review: runReview,
   parallel: runParallel,
   wrapup: runWrapup,
+  app: runApp,
 };
 
 export const CHAPTERS: Chapter[] = CHAPTER_INFO.map((info) => ({ ...info, run: RUNS[info.id] }));

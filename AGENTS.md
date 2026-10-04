@@ -6,4 +6,4 @@ Claude Code と IDE をひとつのアプリ上で使えるようにする、mac
 
 画面の部品や CSS を直したときは、アプリを起動せずに Storybook（`npm run storybook`）で確かめます。
 
-design/ にはアプリのロゴが入っています。
+design/ にはアプリのロゴと、README の紹介画像（screenshot.png）が入っています。

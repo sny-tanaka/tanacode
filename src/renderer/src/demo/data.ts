@@ -224,19 +224,7 @@ export const DEMO_CATALOG: ModelCatalog = {
   updatedAt: Date.now(),
 };
 
-// 動画 1 のあと（税込価格を入れ終わった）のプロジェクト。ブランチの変更に 4 ファイルが並ぶ
-export function taxedProject(): DemoProject {
-  const project = cafeProject();
-  Object.assign(project.files, {
-    'src/lib/price.ts': PRICE_WITH_TAX,
-    'src/components/MenuCard.tsx': MENU_CARD_WITH_TAX,
-    'src/lib/price.test.ts': PRICE_TEST_WITH_TAX,
-    'src/styles.css': CSS_WITH_TAX,
-  });
-  return project;
-}
-
-// レビューのコメントを受けて直したあと（動画 2）
+// レビューのコメントを受けて直したあと（章 5）
 export const PRICE_WITH_TAKEOUT = `// 金額を「¥1,200」の形にする
 export function formatPrice(yen: number): string {
   return \`¥\${yen.toLocaleString('ja-JP')}\`;
@@ -249,25 +237,6 @@ export const TAKEOUT_TAX_RATE = 0.08;
 // 税込の金額。1 円未満は切り捨てる
 export function withTax(yen: number, rate = TAX_RATE): number {
   return Math.floor(yen * (1 + rate));
-}
-`;
-
-export const MENU_CARD_WITH_TAKEOUT = `import { formatPrice, TAKEOUT_TAX_RATE, withTax } from '../lib/price';
-import type { MenuItem } from '../types';
-
-export function MenuCard({ item }: { item: MenuItem }) {
-  const { name, note, price } = item;
-  return (
-    <article className="menu-card">
-      <h3>{name}</h3>
-      <p className="note">{note}</p>
-      <p className="price">
-        {formatPrice(withTax(price))}
-        <small>（税抜 {formatPrice(price)}）</small>
-      </p>
-      <p className="takeout">テイクアウト {formatPrice(withTax(price, TAKEOUT_TAX_RATE))}</p>
-    </article>
-  );
 }
 `;
 
@@ -292,7 +261,7 @@ describe('withTax', () => {
 });
 `;
 
-// スマホで税抜が価格の下の行に出るようにしたあと（動画 5）
+// スマホで税抜が価格の下の行に出るようにしたあと（章 4）
 export const CSS_PRICE_STACKED = `.menu-card {
   display: grid;
   gap: 8px;

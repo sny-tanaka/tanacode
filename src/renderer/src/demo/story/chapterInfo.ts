@@ -48,4 +48,9 @@ export const CHAPTER_INFO: ChapterInfo[] = [
     title: '整理して振り返る',
     summary: 'コンテキストを選んで圧縮し、英語の応答は日本語に訳して読みます。作業の流れは 1 枚の HTML に書き出せます。',
   },
+  {
+    id: 'app',
+    title: 'アプリのまわり',
+    summary: 'セッションの外のこと。ターミナルで始めた会話の取り込み、新しいバージョンの知らせ、動作確認済の Claude Code、CPU・メモリ、通知。',
+  },
 ];
