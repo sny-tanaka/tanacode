@@ -75,7 +75,7 @@ npm run dev
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコン（サイドパネルの切り替えと、ブラウザ・ターミナルの開閉）は「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
-- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）の 3 つ。リリースはメンテナーだけが行います。
+- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）の 3 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
 
 ## 見た目の確かめ方
 

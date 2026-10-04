@@ -1,0 +1,72 @@
+# release.yml が作った Releases の下書きを点検し、説明の先頭に変更点を足して公開する。手動で起動する（workflow_dispatch）。
+# gh を使えない環境（Claude Code の cloud のセッション）から、/release の「5. 下書きの点検」と「6. 公開」を行うためのもの。
+# 点検で期待と違うものが見つかったら、何も変えずに止める
+name: release-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 公開するバージョン（例 1.0.0）
+        required: true
+      notes:
+        description: 説明の先頭（「## ダウンロード」の前）に足す変更点（Markdown）。空なら足さない
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v${{ inputs.version }}
+      VERSION: ${{ inputs.version }}
+      NOTES: ${{ inputs.notes }}
+    steps:
+      - name: 下書きを点検する
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "バージョンは X.Y.Z の形で入れてください（今は $VERSION）"
+
+          release="$RUNNER_TEMP/release.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.TAG)' > "$release"
+          [ "$(jq -s length "$release")" = 1 ] || fail "$TAG のリリースが 1 つではありません（$(jq -s length "$release") 個）"
+          [ "$(jq -r .draft "$release")" = true ] || fail "$TAG は下書きではありません（公開済み？）"
+
+          # 添付が 5 つで、名前が README のダウンロードの表と合うこと
+          expected=$(printf '%s\n' "tanacode-$VERSION-mac-arm64.pkg" "tanacode-$VERSION-mac-arm64.zip" "tanacode-$VERSION-mac-x64.pkg" "tanacode-$VERSION-mac-x64.zip" SHA256SUMS.txt | sort)
+          actual=$(jq -r '.assets[].name' "$release" | sort)
+          [ "$expected" = "$actual" ] || fail "添付が期待と違います: $(echo $actual)"
+
+          # 説明が「## ダウンロード」から始まる（変更点をまだ足していない）こと
+          jq -r .body "$release" > "$RUNNER_TEMP/body.md"
+          [ "$(head -n 1 "$RUNNER_TEMP/body.md")" = '## ダウンロード' ] || fail '説明が「## ダウンロード」から始まっていません（変更点を足し済み？）'
+          grep -q "tanacode-$VERSION-mac-arm64.pkg" "$RUNNER_TEMP/body.md" || fail 'ダウンロードの表のファイル名が添付と合いません'
+          grep -q "tanacode-$VERSION-mac-x64.pkg" "$RUNNER_TEMP/body.md" || fail 'ダウンロードの表のファイル名が添付と合いません'
+
+          # 説明の SHA-256 の表と SHA256SUMS.txt が一致すること
+          asset_id=$(jq -r '.assets[] | select(.name == "SHA256SUMS.txt") | .id' "$release")
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" | sort > "$RUNNER_TEMP/sums.txt"
+          sed -nE 's/^\| `([^`]+)` \| `([0-9a-f]{64})` \|$/\2  \1/p' "$RUNNER_TEMP/body.md" | sort > "$RUNNER_TEMP/table.txt"
+          [ -s "$RUNNER_TEMP/table.txt" ] || fail '説明に SHA-256 の表がありません'
+          diff "$RUNNER_TEMP/table.txt" "$RUNNER_TEMP/sums.txt" || fail '説明の SHA-256 の表と SHA256SUMS.txt が一致しません'
+
+          echo "点検は問題無し: $(jq -r .html_url "$release")"
+      - name: 変更点を足して公開する
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          if [ -n "$NOTES" ]; then
+            printf '%s\n\n' "$NOTES" > "$notes"
+          else
+            : > "$notes"
+          fi
+          cat "$RUNNER_TEMP/body.md" >> "$notes"
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file "$notes" --draft=false --latest
+      - name: 公開を確かめる
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          [ "$latest" = "$TAG" ] || { echo "::error::最新のリリースが $latest のままです"; exit 1; }
+          echo "公開しました: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"

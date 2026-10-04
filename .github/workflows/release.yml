@@ -1,10 +1,17 @@
 # v から始まるタグ（v0.1.0 など）をプッシュすると、Apple Silicon 用と Intel 用の zip と pkg（インストーラー）を作って、GitHub Releases の下書きに置く。
-# 署名・公証はしていない。下書きの中身を確かめてから、GitHub の画面で公開する
+# タグをプッシュできない環境（Claude Code の cloud のセッション）からは、develop で手動で起動する（workflow_dispatch）。
+# そのときは、ビルドが通ったあとに、このワークフローがタグを付けてプッシュする。
+# 署名・公証はしていない。下書きの中身を確かめてから公開する（release-publish.yml か GitHub の画面で）
 name: release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: リリースするバージョン（例 1.0.0）。develop の package.json の version と同じにする
+        required: true
 
 permissions:
   contents: write
@@ -12,8 +19,27 @@ permissions:
 jobs:
   mac:
     runs-on: macos-latest
+    env:
+      # 今回のタグ。タグのプッシュならそのタグ、手動の起動なら v<入力したバージョン>
+      TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+      # 手動の起動は develop から、まだ無いタグに限る（ビルドの前に止めて、時間を無駄にしない）
+      - name: 手動の起動を確かめる
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/develop ]; then
+            echo "::error::手動の起動は develop で行ってください（今は $GITHUB_REF）"
+            exit 1
+          fi
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::バージョンは X.Y.Z の形で入れてください（今は $TAG）"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::$TAG のタグはもうあります"
+            exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -23,7 +49,7 @@ jobs:
       - run: npm test
       # タグとアプリのバージョンがずれていたら止める（package.json の version を上げ忘れないように）
       - name: バージョンを確かめる
-        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+        run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
       # 画面側のビルドはメモリを 4GB ほど使う。ランナー（メモリ 7GB）では Node の既定の上限（約 2GB）で止まるため、上限を上げる
       - run: npm run release
         env:
@@ -38,6 +64,15 @@ jobs:
       - name: チェックサムを計算する
         working-directory: release
         run: shasum -a 256 -- *.zip *.pkg > SHA256SUMS.txt
+      # 手動の起動のときだけ、ビルドが通ったコミットに注釈付きのタグを付けてプッシュする。
+      # GITHUB_TOKEN でのプッシュは、ほかのワークフローを起こさないので、このワークフローが二重に動くことはない
+      - name: タグを付ける
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
       # 説明の土台を作る。/release が先頭に変更点の表を足す前提で、ここではダウンロードの表と、畳んだ PR の一覧・SHA-256 の表を置く。
       # PR の一覧（自動で作る What's Changed）とチェックサムは使う人の多くには要らないので、<details> で畳む
       - name: 説明を作る
@@ -45,7 +80,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes="$RUNNER_TEMP/release-notes.md"
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           cat > "$notes" <<EOF
           ## ダウンロード
 
@@ -61,7 +96,7 @@ jobs:
 
           EOF
           # 自動の一覧の見出しは畳んだ中では大きすぎるので、「What's Changed」を消し、残り（New Contributors など）は小さくする
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body \
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body \
             | sed -e "/^## What's Changed/d" -e 's/^## /#### /' >> "$notes"
           awk '
             BEGIN { print "\n</details>\n\n<details>\n<summary>SHA-256 のチェックサム</summary>\n\n| ファイル | SHA-256 |\n| --- | --- |" }
@@ -71,4 +106,4 @@ jobs:
       - name: Releases の下書きを作る
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --notes-file "$RUNNER_TEMP/release-notes.md" --title "$GITHUB_REF_NAME"
+        run: gh release create "$TAG" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --notes-file "$RUNNER_TEMP/release-notes.md" --title "$TAG"
