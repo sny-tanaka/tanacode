@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import logo from '../../assets/logo.png';
 import { CheckIcon, CloseIcon } from '../../icons';
 import { CHAPTER_INFO, type ChapterInfo } from '../story/chapterInfo';
-import { isStageMessage, type Phase, type ShellMessage, STAGE, stageUrl } from './messages';
+import { type CaptionBox, isStageMessage, type Phase, type ShellMessage, STAGE, stageUrl } from './messages';
 
-// デモのサイトの親のページ。上の帯（目次・いまの章と操作の説明・再生の操作）と、アプリの画面を描く iframe。
+// デモのサイトの親のページ。上の帯（目次・いまの章・再生の操作）と、アプリの画面を描く iframe、操作の説明の吹き出し。
 // アプリの画面は iframe の中で決まった大きさのまま描き（app.tsx）、ここでは iframe ごと縮小して画面に収めるだけにする。
 // ツアーは 1 本で、章に分かれる。目次から章を選ぶと、iframe の中でそれまでの章を早送りで流し、その章から始める
 
@@ -29,10 +29,11 @@ function saveWatched(watched: Set<string>): void {
   }
 }
 
-function captionFor(phase: Phase, caption: string): string {
+// 帯に出す状態の文言（再生中は、説明は吹き出しに出すので、帯には出さない）
+function statusFor(phase: Phase): string {
   switch (phase) {
     case 'playing':
-      return caption || '準備しています…';
+      return '';
     case 'done':
       return 'ツアーが終わりました。このまま自由に触れます';
     case 'failed':
@@ -45,7 +46,7 @@ function captionFor(phase: Phase, caption: string): string {
 // start: ツアーを始める章（ハッシュで選んだもの。無ければツアーを流さず、目次を出す）
 export function DemoSite({ start }: { start: ChapterInfo | null }) {
   const [phase, setPhase] = useState<Phase>(start ? 'playing' : 'free');
-  const [caption, setCaption] = useState('');
+  const [caption, setCaption] = useState<{ text: string; box: CaptionBox | null }>({ text: '', box: null });
   const [chapter, setChapter] = useState(start ? CHAPTER_INFO.indexOf(start) : -1);
   const [preparing, setPreparing] = useState(!!start && CHAPTER_INFO.indexOf(start) > 0);
   const [paused, setPaused] = useState(false);
@@ -65,7 +66,7 @@ export function DemoSite({ start }: { start: ChapterInfo | null }) {
       const message = e.data;
       switch (message.type) {
         case 'demo:caption':
-          setCaption(message.text);
+          setCaption({ text: message.text, box: message.box });
           break;
         case 'demo:phase':
           setPhase(message.phase);
@@ -74,7 +75,7 @@ export function DemoSite({ start }: { start: ChapterInfo | null }) {
         case 'demo:chapter':
           setChapter(message.index);
           setPreparing(message.preparing);
-          if (!message.preparing) setCaption('');
+          if (!message.preparing) setCaption({ text: '', box: null });
           break;
         case 'demo:watched':
           setWatched((prev) => {
@@ -106,11 +107,13 @@ export function DemoSite({ start }: { start: ChapterInfo | null }) {
 
   const current = chapter >= 0 ? CHAPTER_INFO[chapter] : null;
   const last = chapter === CHAPTER_INFO.length - 1;
-  const text = preparing ? `「${current?.title ?? ''}」の手前まで進めています…` : captionFor(phase, caption);
+  const text = preparing ? `「${current?.title ?? ''}」の手前まで進めています…` : statusFor(phase);
+  const callout = phase === 'playing' && !preparing && caption.text ? caption : null;
 
   return (
     <>
       <div className="demo-site">
+        <div className="demo-frame-wrap">
         <div className="demo-frame">
           <iframe ref={frame} className="demo-stage" src={stageUrl(start?.id ?? null)} title="tanacode の画面" onLoad={sendPause} />
           {exported !== null && (
@@ -126,6 +129,8 @@ export function DemoSite({ start }: { start: ChapterInfo | null }) {
             </div>
           )}
         </div>
+        {callout && <Callout text={callout.text} box={callout.box} />}
+        </div>
       </div>
       <ScreenLayer>
         <header className="demo-bar demo-ui">
@@ -139,9 +144,11 @@ export function DemoSite({ start }: { start: ChapterInfo | null }) {
                 {chapter + 1} / {CHAPTER_INFO.length}　{current.title}
               </span>
             )}
-            <span key={text} className="demo-caption-text">
-              {text}
-            </span>
+            {text && (
+              <span key={text} className="demo-caption-text">
+                {text}
+              </span>
+            )}
           </div>
           {phase === 'playing' && !preparing && (
             <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPaused((p) => !p)}>
@@ -214,6 +221,8 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
       el.style.height = `${height}px`;
       el.style.transform = `translate(${vv?.offsetLeft ?? 0}px, ${vv?.offsetTop ?? 0}px) scale(${1 / scale})`;
       el.classList.toggle('compact', width < COMPACT_WIDTH);
+      // 狭い画面では、アプリの画面を帯のすぐ下に寄せ、下の空きに説明の吹き出しを出す（site.css）
+      document.documentElement.classList.toggle('demo-compact', width < COMPACT_WIDTH);
       space();
     };
     // 帯の高さと、アプリの画面を帯の下に収める倍率
@@ -243,6 +252,83 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
   return (
     <div ref={layer} className="demo-layer">
       {children}
+    </div>
+  );
+}
+
+// 操作の説明の吹き出し。アプリの画面の外（縮小しない親のページ）に描くので、スマホでも字が小さくならない。
+// 広い画面では、説明が指す場所（box。アプリの画面の座標）のそばに、矢印を向けて出す。場所が無ければ、アプリの画面の下の方に出す。
+// 狭い画面（スマホ）では、アプリの画面のすぐ下の空きに出し、矢印を指す場所の横の位置に向ける
+type CalloutPlace = { left: number; top: number; width?: number; arrow: 'up' | 'down' | 'none'; arrowX: number };
+
+function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
+  const bubble = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CalloutPlace | null>(null);
+  const layout = useCallback(() => {
+    const el = bubble.current;
+    const wrap = el?.parentElement;
+    if (!el || !wrap) return;
+    const frameW = wrap.offsetWidth;
+    const frameH = wrap.offsetHeight;
+    const scale = frameW / STAGE.width;
+    const rect = wrap.getBoundingClientRect();
+    const pageW = document.documentElement.clientWidth;
+    const compact = pageW < COMPACT_WIDTH;
+    const gap = 12;
+    const edge = 8;
+    const target = box && { x: box.x * scale, y: box.y * scale, width: box.width * scale, height: box.height * scale };
+    const centerX = target ? target.x + target.width / 2 : frameW / 2;
+    if (compact) {
+      // アプリの画面と同じ幅で、すぐ下に出す
+      const arrowX = Math.min(frameW - 18, Math.max(18, centerX));
+      setPlace({ left: 0, top: frameH + gap, width: frameW, arrow: target ? 'up' : 'none', arrowX });
+      return;
+    }
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    // 横はページからはみ出さない範囲で、指す場所の真ん中にそろえる
+    const minLeft = edge - rect.left;
+    const maxLeft = pageW - edge - rect.left - w;
+    const left = Math.min(maxLeft, Math.max(minLeft, centerX - w / 2));
+    const arrowX = Math.min(w - 18, Math.max(18, centerX - left));
+    if (!target) {
+      setPlace({ left, top: frameH - h - Math.max(36, 48 * scale), arrow: 'none', arrowX });
+      return;
+    }
+    // 指す場所の下に入らなければ上、どちらにも入らなければ、指す場所の下の方に重ねる
+    const below = target.y + target.height + gap;
+    const above = target.y - gap - h;
+    if (below + h <= frameH - edge) setPlace({ left, top: below, arrow: 'up', arrowX });
+    else if (above >= edge) setPlace({ left, top: above, arrow: 'down', arrowX });
+    else setPlace({ left, top: Math.min(frameH - h - edge, target.y + target.height - h - edge), arrow: 'none', arrowX });
+  }, [box]);
+  useLayoutEffect(layout, [layout, text]);
+  useEffect(() => {
+    window.addEventListener('resize', layout);
+    const observer = new ResizeObserver(layout);
+    if (bubble.current?.parentElement) observer.observe(bubble.current.parentElement);
+    return () => {
+      window.removeEventListener('resize', layout);
+      observer.disconnect();
+    };
+  }, [layout]);
+  return (
+    <div
+      ref={bubble}
+      className={`demo-callout ${place?.arrow ?? 'none'}`}
+      role="status"
+      aria-live="polite"
+      style={{
+        left: place?.left ?? 0,
+        top: place?.top ?? 0,
+        width: place?.width,
+        visibility: place ? 'visible' : 'hidden',
+        ['--arrow-x' as string]: `${place?.arrowX ?? 0}px`,
+      }}
+    >
+      <span key={text} className="demo-callout-text">
+        {text}
+      </span>
     </div>
   );
 }

@@ -32,7 +32,7 @@ export async function runDelegate(story: Story): Promise<void> {
   const id = MAIN;
 
   // 1. 調べる（畳んだ行の下に、動いているツールが 1 行ずつ出る）
-  d.caption('Claude が使うツールは「N件の操作」の 1 行に畳まれ、動いているものだけが 1 行ずつ出ます');
+  d.caption('Claude が使うツールは「N件の操作」の 1 行に畳まれ、動いているものだけが 1 行ずつ出ます', () => [...document.querySelectorAll('.claude .tool-group')].at(-1));
   await sleep(1000);
   await claude.tool('Grep', 'formatPrice', 900, { input: 'formatPrice', result: { output: 'src/lib/price.ts\nsrc/components/MenuCard.tsx' } });
   await claude.tool('Read', 'src/components/MenuCard.tsx', 800, { filePath: `${ROOT}/src/components/MenuCard.tsx` });
@@ -44,7 +44,7 @@ export async function runDelegate(story: Story): Promise<void> {
   await sleep(900);
 
   // 2. 質問にボタンで答える（選択肢にマウスを乗せると、プレビューが切り替わる）
-  d.caption('Claude からの質問には、ボタンで答えられます。選択肢にマウスを乗せると、プレビューが切り替わります');
+  d.caption('Claude からの質問には、ボタンで答えられます。選択肢にマウスを乗せると、プレビューが切り替わります', '.menu-card');
   claude.stopWorking();
   const answered = story.nextChoice();
   backend.setScreen(id, { state: { kind: 'menu', menu: QUESTION_MENU } });
@@ -64,7 +64,7 @@ export async function runDelegate(story: Story): Promise<void> {
   claude.startWorking();
 
   // 3. 書き換える（エクスプローラーに「書いた」の印と、ブランチの変更の M が付く）
-  d.caption('ファイルを書き換えると、エクスプローラーに「書いた」の印と、変更の M が付きます');
+  d.caption('ファイルを書き換えると、エクスプローラーに「書いた」の印と、変更の M が付きます', '.explorer');
   await sleep(1000);
   await claude.edit('src/lib/price.ts', PRICE_WITH_TAX, 900, ['+// 消費税率（10%）', '+export const TAX_RATE = 0.1;', '+', '+// 税込の金額。1 円未満は切り捨てる', '+export function withTax(yen: number): number {', '+  return Math.floor(yen * (1 + TAX_RATE));', '+}']);
   await claude.edit('src/components/MenuCard.tsx', MENU_CARD_WITH_TAX, 900, [
@@ -80,7 +80,7 @@ export async function runDelegate(story: Story): Promise<void> {
   backend.know(id, {}, 41_000);
 
   // 4. テストはサブエージェントに任せる（入力欄の上のトレイに並ぶ）
-  d.caption('サブエージェントは、入力欄の上のトレイに並び、進み具合が見えます');
+  d.caption('サブエージェントは、入力欄の上のトレイに並び、進み具合が見えます', '.task-tray');
   const agent = claude.next('agent');
   const startedAt = Date.now();
   backend.push(id, {
@@ -100,7 +100,7 @@ export async function runDelegate(story: Story): Promise<void> {
 
   // 5. サブエージェントが動いている間に、書き換わったファイルをエディタで開く（変わった行に印が付く）
   await sleep(700);
-  d.caption('待っている間に、書き換わったファイルをエディタで開きます。このブランチで変わった行に色が付きます');
+  d.caption('待っている間に、書き換わったファイルをエディタで開きます。このブランチで変わった行に色が付きます', '.explorer');
   await story.expand('src');
   await story.expand('src/components', 400);
   run('running', 2, [{ name: 'Edit', target: 'src/lib/price.test.ts' }]);

@@ -55,7 +55,7 @@ export async function runParallel(story: Story): Promise<void> {
   const parent = story.claude();
 
   // 1. 親に、子セッションに分けて進めるよう頼む
-  d.caption('残りの作業を、子セッションに分けて並行で進めるよう頼みます');
+  d.caption('残りの作業を、子セッションに分けて並行で進めるよう頼みます', '.chat-input');
   await story.send(PROMPT);
   parent.startWorking();
   await sleep(1200);
@@ -108,7 +108,7 @@ export async function runParallel(story: Story): Promise<void> {
     story.claude(child).startWorking();
     await sleep(500);
   };
-  d.caption('子セッションを始めるたびに、許可の確認が出ます。子も Claude の利用枠を使うためです');
+  d.caption('子セッションを始めるたびに、許可の確認が出ます。子も Claude の利用枠を使うためです', '.menu-card');
   await startChild(README_CHILD, true);
   await startChild(A11Y_CHILD, false);
   parent.stopWorking();
@@ -117,7 +117,7 @@ export async function runParallel(story: Story): Promise<void> {
   backend.update(MAIN, { backgroundTasks: 1 });
 
   // 3. 子は親の下に並ぶ。一覧の印で、それぞれの状態が分かる
-  d.caption('子セッションは、一覧で親の下に並びます。行の印で、作業中・回答待ち・バックグラウンドの完了待ちが分かります');
+  d.caption('子セッションは、一覧で親の下に並びます。行の印で、作業中・回答待ち・バックグラウンドの完了待ちが分かります', '.session-list');
   const readme = story.claude(README_CHILD);
   const a11y = story.claude(A11Y_CHILD);
   await sleep(800);
@@ -143,7 +143,7 @@ export async function runParallel(story: Story): Promise<void> {
   await sleep(1800);
 
   // 4. 回答待ちの子を開いて答える。子のチャットには、親からの指示に見出しが付く
-  d.caption('回答待ちの子を開いて答えます。子のチャットでは、親からの指示に「親セッションからの指示」の見出しが付きます');
+  d.caption('回答待ちの子を開いて答えます。子のチャットでは、親からの指示に「親セッションからの指示」の見出しが付きます', d.byText('.session-row', 'README に価格'));
   await d.click(d.byText('.session-row', 'README に価格'), { ms: 600 });
   await sleep(1200);
   await d.moveTo('.chat-from-parent', { ms: 800 });
@@ -160,7 +160,7 @@ export async function runParallel(story: Story): Promise<void> {
   await sleep(900);
 
   // 5. ワークフローを動かしている子を開き、フロー図を見る
-  d.caption('ワークフローを動かしている子では、入力欄の上のトレイから、フロー図で段階ごとの進み具合を見られます');
+  d.caption('ワークフローを動かしている子では、入力欄の上のトレイから、フロー図で段階ごとの進み具合を見られます', d.byText('.session-row', 'アクセシビリティ'));
   await d.click(d.byText('.session-row', 'アクセシビリティ'), { ms: 800 });
   await sleep(1000);
   await d.click(d.byText('.task-tray .task-row', 'a11y-audit'), { ms: 900 });
@@ -193,7 +193,7 @@ export async function runParallel(story: Story): Promise<void> {
   await sleep(800);
 
   // 6. 親に戻り、使い終わった開発サーバー（バックグラウンドの Bash）を止める
-  d.caption('親に戻り、使い終わった開発サーバーを止めます。バックグラウンドの作業は、トレイの「止める」で止められます');
+  d.caption('親に戻り、使い終わった開発サーバーを止めます。バックグラウンドの作業は、トレイの「止める」で止められます', '.task-tray .task-row .task-stop');
   await d.click(d.byText('.session-row', 'メニューに税込価格'), { ms: 900 });
   await sleep(900);
   const stopped = new Promise<void>((resolve) => {
@@ -207,7 +207,7 @@ export async function runParallel(story: Story): Promise<void> {
   await sleep(1200);
 
   // 7. 子の作業が終わると、親に知らせが届き、親の Claude が結果をまとめる
-  d.caption('子の作業が終わると、親に知らせが届き、親の Claude が続きを始めます');
+  d.caption('子の作業が終わると、親に知らせが届き、親の Claude が続きを始めます', '.chat-notice');
   a11y.say('アクセシビリティの点検と修正が終わりました。コントラストと読み上げの 2 件を直しています。');
   backend.push(A11Y_CHILD, { type: 'turn-end' });
   backend.update(A11Y_CHILD, { unread: true });

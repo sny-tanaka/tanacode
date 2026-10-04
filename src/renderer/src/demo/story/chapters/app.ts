@@ -28,7 +28,7 @@ export async function runApp(story: Story): Promise<void> {
   const { backend, d } = story;
 
   // 1. ターミナルで始めた会話を取り込む
-  d.caption('ここからは、セッションの外の機能です。ターミナルで始めた会話は「既存の会話を開く…」で取り込めます');
+  d.caption('ここからは、セッションの外の機能です。ターミナルで始めた会話は「既存の会話を開く…」で取り込めます', '.import-session-button');
   backend.onImport = (session) => {
     const id = `imported-${session.claudeSessionId.slice(0, 8)}`;
     // 本物と同じく、取り込んだあとに Claude Code が会話を読み直して画面へ送る
@@ -48,23 +48,23 @@ export async function runApp(story: Story): Promise<void> {
   await sleep(1300);
   await d.click(d.byText('.import-dialog .import-item', 'WebP'), { ms: 800 });
   await sleep(1500);
-  d.caption('取り込んだ会話は一覧に並び、続きから指示できます');
+  d.caption('取り込んだ会話は一覧に並び、続きから指示できます', d.byText('.session-row', 'WebP'));
   await d.moveTo(d.byText('.session-row', 'WebP'), { ms: 700 });
   await sleep(2200);
 
   // 2. tanacode の新しいバージョン
-  d.caption('tanacode の新しいバージョンが出ると、タイトルバーのバージョンの右に青い印が出ます');
+  d.caption('tanacode の新しいバージョンが出ると、タイトルバーのバージョンの右に青い印が出ます', '.app-update');
   backend.setAppUpdate({ latest: '0.3.0', available: true, url: `${REPO_URL}/releases/latest` });
   await sleep(1800);
-  d.caption('印にマウスを乗せると、更新の手順が読めます。押すと、GitHub の Releases のページを開きます');
+  d.caption('印にマウスを乗せると、更新の手順が読めます。押すと、GitHub の Releases のページを開きます', '.app-update.available');
   await d.moveTo('.app-update.available', { ms: 900 });
   await sleep(3200);
 
   // 3. 動作確認済の Claude Code
-  d.caption('ステータスバーには、入っている Claude Code のバージョン。tanacode で動作確認済のバージョンには、チェックが付きます');
+  d.caption('ステータスバーには、入っている Claude Code のバージョン。tanacode で動作確認済のバージョンには、チェックが付きます', '.statusbar .claude-version');
   await d.moveTo('.statusbar .claude-version', { ms: 900 });
   await sleep(2800);
-  d.caption('Claude Code が更新されて、動作確認済のバージョンと違うと、印が変わります。理由もマウスを乗せると読めます');
+  d.caption('Claude Code が更新されて、動作確認済のバージョンと違うと、印が変わります。理由もマウスを乗せると読めます', '.statusbar .claude-version');
   await d.moveTo('.claude-header', { ms: 600 });
   backend.setClaudeVersion(newerClaudeCode());
   await sleep(1200);
@@ -72,12 +72,12 @@ export async function runApp(story: Story): Promise<void> {
   await sleep(3200);
 
   // 4. CPU とメモリ
-  d.caption('右下には、CPU とメモリの使用量。Claude の作業やビルドが重いときに、すぐ気づけます');
+  d.caption('右下には、CPU とメモリの使用量。Claude の作業やビルドが重いときに、すぐ気づけます', d.byText('.statusbar .system-stat', 'CPU'));
   await d.moveTo(d.byText('.statusbar .system-stat', 'CPU'), { ms: 900 });
   await sleep(2400);
 
   // 5. 通知
-  d.caption('見ていないセッションの完了や確認待ちは、macOS の通知で知らせます。タイトルバーのベルで、オン・オフを切り替えられます');
+  d.caption('見ていないセッションの完了や確認待ちは、macOS の通知で知らせます。タイトルバーのベルで、オン・オフを切り替えられます', '.titlebar [role="switch"]');
   await d.moveTo('.titlebar [role="switch"]', { ms: 900 });
   await sleep(2600);
   await d.click('.titlebar [role="switch"]', { ms: 300 });

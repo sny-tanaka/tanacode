@@ -32,6 +32,17 @@ html {
   overflow: hidden;
 }
 
+/* 狭い画面（スマホ）では、アプリの画面を帯のすぐ下に寄せる。下の空きには、説明の吹き出しを出す */
+.demo-compact .demo-site {
+  place-items: start center;
+  padding-top: calc(var(--demo-bar-height) + 12px);
+}
+
+/* アプリの画面と、説明の吹き出しを重ねる入れ物（大きさはアプリの画面と同じ。吹き出しは外にはみ出してよい） */
+.demo-frame-wrap {
+  position: relative;
+}
+
 /* アプリの画面の枠（ウインドウに見立てる）。縮小したあとの大きさ */
 .demo-frame {
   position: relative;
@@ -112,7 +123,6 @@ html {
 }
 .demo-caption-text {
   min-width: 0;
-  /* 説明は省略せず、収まらなければ折り返す（帯が高くなった分は、ScreenLayer がアプリの画面を縮めて合わせる） */
   overflow-wrap: anywhere;
   line-height: 1.45;
   color: var(--text-heading);
@@ -188,6 +198,57 @@ html {
   outline-offset: 2px;
 }
 
+/* 操作の説明の吹き出し（位置は DemoSite.tsx の Callout が決める。--arrow-x は矢印の横の位置） */
+.demo-callout {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  max-width: min(380px, calc(100vw - 16px));
+  padding: 10px 14px;
+  border: 1px solid #f0a35e;
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-heading);
+  font-size: 14px;
+  line-height: 1.6;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  transition:
+    left 0.3s ease-out,
+    top 0.3s ease-out;
+  pointer-events: none;
+}
+.demo-callout-text {
+  display: block;
+  animation: demo-caption-in 0.3s ease-out;
+}
+/* 指す場所への矢印（上向きは吹き出しの上に、下向きは下に付ける） */
+.demo-callout.up::before,
+.demo-callout.down::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--arrow-x) - 7px);
+  width: 12px;
+  height: 12px;
+  border: 1px solid #f0a35e;
+  background: var(--bg-surface);
+  transform: rotate(45deg);
+}
+.demo-callout.up::before {
+  top: -7px;
+  border-right: none;
+  border-bottom: none;
+}
+.demo-callout.down::before {
+  bottom: -7px;
+  border-left: none;
+  border-top: none;
+}
+/* スマホでは、アプリの画面の幅いっぱいに、すぐ下へ出す（位置は動かさない） */
+.demo-compact .demo-callout {
+  max-width: none;
+  transition: none;
+}
+
 /* 再生中に触ろうとしたときの知らせ */
 .demo-blocked {
   position: absolute;
@@ -214,10 +275,8 @@ html {
 .demo-layer.compact .demo-caption {
   order: 1;
   flex-basis: 100%;
-  /* 章の名前は説明の頭に並べ、説明はその後ろから折り返す（章の名前の横に細い列を作らない） */
+  /* 章の名前は状態の文言の頭に並べ、文言はその後ろから折り返す（章の名前の横に細い列を作らない） */
   display: block;
-  /* 説明の長さで帯の高さ（とアプリの画面の位置）が変わらないよう、3 行分を取っておく */
-  min-height: calc(13px * 1.45 * 3);
 }
 .demo-layer.compact .demo-tour-title {
   display: inline-block;

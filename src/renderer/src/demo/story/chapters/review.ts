@@ -95,25 +95,25 @@ export async function runReview(story: Story): Promise<void> {
   const id = MAIN;
 
   // 1. ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開く
-  d.caption('ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開きます。分岐したところからの変更が、PR のように並びます');
+  d.caption('ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開きます。分岐したところからの変更が、PR のように並びます', '.status-button[data-tip$="ソース管理を開く"]');
   await sleep(1000);
   await d.click('.status-button[data-tip$="ソース管理を開く"]', { ms: 900 });
   await sleep(1400);
 
   // 2. MenuCard.tsx の差分を開き、インラインにする
-  d.caption('変わったファイルを選ぶと、差分が開きます');
+  d.caption('変わったファイルを選ぶと、差分が開きます', '.scm-row[title^="src/components/MenuCard.tsx"]');
   await d.click('.scm-row[title^="src/components/MenuCard.tsx"]');
   await sleep(900);
   await d.click('.diff-pane-head [aria-label="インライン"]', { ms: 600 });
   await sleep(900);
 
   // 3. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）
-  d.caption('行番号の横の ＋ で、差分の行にコメントを付けます');
+  d.caption('行番号の横の ＋ で、差分の行にコメントを付けます', '.diff-pane');
   await comment(d, '<small>（税抜', COMMENT_CARD);
   await sleep(1000);
 
   // 4. ↓ で次のファイルへ移り、price.ts にもう 1 件
-  d.caption('↓ で次のファイルへ移り、もう 1 件。コメントは入力欄の上にたまります');
+  d.caption('↓ で次のファイルへ移り、もう 1 件。コメントは入力欄の上にたまります', '.diff-pane-head [aria-label="次のファイル"]');
   const next = '.diff-pane-head [aria-label="次のファイル"]';
   for (let i = 0; i < 4 && !document.querySelector('.diff-pane-head')?.textContent?.includes('price.ts'); i++) {
     await d.click(next, { ms: i === 0 ? 700 : 300 });
@@ -123,13 +123,13 @@ export async function runReview(story: Story): Promise<void> {
   await sleep(1200);
 
   // 5. コメントを添えて送る
-  d.caption('たまったコメントは、指示に添えてまとめて送れます');
+  d.caption('たまったコメントは、指示に添えてまとめて送れます', '.chat-input');
   await story.send(PROMPT);
   claude.startWorking();
 
   // 6. Claude が直す。開いている差分も書き換わる
   await sleep(1300);
-  d.caption('Claude が直すと、開いている差分もその場で書き換わります');
+  d.caption('Claude が直すと、開いている差分もその場で書き換わります', '.diff-pane');
   await claude.edit('src/lib/price.ts', PRICE_WITH_TAKEOUT, 900, [
     '-// 消費税率（10%）',
     '+// 消費税率（店内 10%・テイクアウトは軽減税率 8%）',
@@ -167,7 +167,7 @@ export async function runReview(story: Story): Promise<void> {
   await sleep(1200);
 
   // 7. 回答のコマンドを ▶ でターミナルで流す
-  d.caption('回答のコマンドは、▶ でそのままターミナルで流せます');
+  d.caption('回答のコマンドは、▶ でそのままターミナルで流せます', () => [...document.querySelectorAll('.markdown pre.runnable')].at(-1));
   let shell = '';
   backend.onShellWrite = (shellId, data) => {
     if (!data.includes('npm test')) return;
@@ -182,7 +182,7 @@ export async function runReview(story: Story): Promise<void> {
   await sleep(1500);
 
   // 8. 落ちたテストの出力を選んで「Claude へ送る」
-  d.caption('落ちたテストの出力を選んで「Claude へ送る」と、入力欄にそのまま貼られます');
+  d.caption('落ちたテストの出力を選んで「Claude へ送る」と、入力欄にそのまま貼られます', '.terminal-panel');
   await selectTerminal(d, 'src/lib/price.test.ts', 'expected 561');
   await sleep(500);
   await d.click('.terminal-panel [aria-label="Claude へ送る"]', { ms: 700 });
@@ -198,7 +198,7 @@ export async function runReview(story: Story): Promise<void> {
   claude.say('テストの期待値を 561 に直し、`npm test` で 3 件とも通ることを確かめました。');
   backend.push(id, { type: 'turn-end' });
   if (shell) backend.shellOutput(shell, '');
-  d.caption('直った差分は、そのまま確かめられます');
+  d.caption('直った差分は、そのまま確かめられます', '.diff-pane');
   await sleep(1000);
   await d.click('.terminal-panel [aria-label="パネルを閉じる"]', { ms: 700 });
   await sleep(500);

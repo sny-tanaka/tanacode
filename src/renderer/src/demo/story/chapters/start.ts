@@ -12,25 +12,25 @@ export async function runStart(story: Story): Promise<void> {
   const { backend, d } = story;
 
   // 1. 「新規セッション」を押す
-  d.caption('「新規セッション」から、作業を始めます');
+  d.caption('「新規セッション」から、作業を始めます', 'nav.sidebar .new-session-button');
   await sleep(900);
   await d.click('nav.sidebar .new-session-button', { ms: 900 });
   await sleep(900);
 
   // 2. フォルダを選ぶ
-  d.caption('作業するフォルダを、最近のフォルダから選びます');
+  d.caption('作業するフォルダを、最近のフォルダから選びます', '.new-session-chips .folder-picker > button.new-session-chip');
   await d.click('.new-session-chips .folder-picker > button.new-session-chip');
   await sleep(700);
   await d.click(`.folder-menu-item[title="${ROOT}"]`, { ms: 600 });
   await sleep(800);
 
   // 3. モデルと権限モードを選ぶ（このセッションだけに効く）
-  d.caption('モデル・エフォート・権限モードは、このセッションだけに効きます。Claude Code の既定値は変わりません');
+  d.caption('モデル・エフォート・権限モードは、このセッションだけに効きます。Claude Code の既定値は変わりません', '.chat-options');
   await story.choose('.chat-options select[title^="モデル"]', 'opus');
   await story.choose('.chat-options select[title^="権限モード"]', 'acceptEdits');
 
   // 4. worktree に分けて始める
-  d.caption('「worktree を使う」で、このセッション専用の作業フォルダとブランチに分けます。並行するほかの作業とぶつかりません');
+  d.caption('「worktree を使う」で、このセッション専用の作業フォルダとブランチに分けます。並行するほかの作業とぶつかりません', '.new-session-check');
   await d.click('.new-session-check input[type="checkbox"]', { ms: 700 });
   await sleep(900);
 
@@ -47,7 +47,7 @@ export async function runStart(story: Story): Promise<void> {
     backend.setScreen(MAIN, { mode: options.mode ?? 'manual' });
     return MAIN;
   };
-  d.caption('最初の指示を送ります');
+  d.caption('最初の指示を送ります', '.chat-input');
   const sent = story.nextSend();
   await d.click('.chat-input textarea');
   await d.type('.chat-input textarea', FIRST_PROMPT);
@@ -55,7 +55,7 @@ export async function runStart(story: Story): Promise<void> {
   await d.click('.chat-input-row [aria-label="送信"]');
   await sleep(1200);
 
-  d.caption('worktree を作り、node_modules を元のフォルダから複製します。準備が終わるまで、最初の指示は預かっておきます');
+  d.caption('worktree を作り、node_modules を元のフォルダから複製します。準備が終わるまで、最初の指示は預かっておきます', '.session-list .session-row');
   backend.update(MAIN, { worktree: { ...WORKTREE, preparing: 'copying' } });
   await sleep(2600);
   backend.update(MAIN, { worktree: { ...WORKTREE, preparing: null }, title: 'メニューに税込価格を出す' });
@@ -70,7 +70,7 @@ export async function runStart(story: Story): Promise<void> {
   story.claude().startWorking();
 
   // 6. 一覧の行の枝分かれの印
-  d.caption('一覧の行には、元のフォルダと worktree の名前が、枝分かれの印を挟んで並びます');
+  d.caption('一覧の行には、元のフォルダと worktree の名前が、枝分かれの印を挟んで並びます', '.session-row .session-worktree');
   await sleep(600);
   await d.moveTo('.session-row .session-worktree', { ms: 900 });
   await sleep(2200);

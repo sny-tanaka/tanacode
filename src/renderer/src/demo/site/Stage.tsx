@@ -60,6 +60,8 @@ export function Stage({ story, start }: { story: Story; start: number }) {
       else if (e.data.type === 'demo:next' && director) {
         skipTo = current + 1;
         setFastForward(true);
+        director.clearCaption();
+        post({ type: 'demo:caption', text: '', box: null });
       }
     };
     let current = 0;
@@ -75,12 +77,13 @@ export function Stage({ story, start }: { story: Story; start: number }) {
       story.d = d;
       story.showExport = (html) => post({ type: 'demo:export', html });
       story.hideExport = () => post({ type: 'demo:export', html: null });
-      // 早送りの間の説明は出さない（親のページは「手前まで進めています」と出す）
-      d.onCaption = (text) => !isFastForward() && post({ type: 'demo:caption', text });
+      // 早送りの間の説明は出さない（Director が出さない。親のページは「手前まで進めています」と出す）
+      d.onCaption = (text, box) => post({ type: 'demo:caption', text, box });
       try {
         for (current = 0; current < CHAPTERS.length && !cancelled; current++) {
           const ff = current < skipTo;
           setFastForward(ff);
+          d.clearCaption();
           post({ type: 'demo:chapter', index: current, preparing: ff });
           await CHAPTERS[current].run(story);
           if (!ff && !isFastForward()) post({ type: 'demo:watched', index: current });
@@ -92,6 +95,7 @@ export function Stage({ story, start }: { story: Story; start: number }) {
       } finally {
         setFastForward(false);
         d.dispose();
+        post({ type: 'demo:caption', text: '', box: null });
         enterFreeMode(story);
       }
     }, 600);

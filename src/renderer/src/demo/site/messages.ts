@@ -4,13 +4,16 @@
 
 export const STAGE = { width: 1440, height: 900 };
 
+// 操作の説明が指す場所（アプリの画面の座標。STAGE の大きさのうちのどこか）
+export type CaptionBox = { x: number; y: number; width: number; height: number };
+
 // playing: ツアーの再生中 / done: ツアーが終わった / failed: ツアーが途中で止まった / free: ツアーを流さずに触っている
 export type Phase = 'playing' | 'done' | 'failed' | 'free';
 
 // アプリの画面 → 親のページ
 export type StageMessage =
-  // いま見せている操作の説明
-  | { type: 'demo:caption'; text: string }
+  // いま見せている操作の説明（空なら消す）。box: 説明が指す場所（null は場所を指さない。吹き出しを画面の下に出す）
+  | { type: 'demo:caption'; text: string; box: CaptionBox | null }
   | { type: 'demo:phase'; phase: Phase }
   // いま流している章（chapterInfo.ts の順番）。preparing: 目次から飛んだ先の章の手前まで、早送りで流している
   | { type: 'demo:chapter'; index: number; preparing: boolean }

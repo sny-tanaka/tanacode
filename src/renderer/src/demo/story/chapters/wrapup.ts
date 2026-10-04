@@ -52,13 +52,13 @@ export async function runWrapup(story: Story): Promise<void> {
   backend.setContext(id, BEFORE);
 
   // 1. ヘッダーのメーターから、コンテキストの中身を開く
-  d.caption('ヘッダーのメーターを押すと、今のコンテキストの中身と、それぞれのおよその大きさが並びます');
+  d.caption('ヘッダーのメーターを押すと、今のコンテキストの中身と、それぞれのおよその大きさが並びます', '.claude-header button.context-meter');
   await sleep(900);
   await d.click('.claude-header button.context-meter', { ms: 900 });
   await sleep(1800);
 
   // 2. 残すもの・捨てるものに印を付ける
-  d.caption('圧縮のときに残したいものには「残す」、もう要らないものには「捨てる」の印を付けます');
+  d.caption('圧縮のときに残したいものには「残す」、もう要らないものには「捨てる」の印を付けます', '.context-list');
   const mark = async (label: string, kind: 'keep' | 'drop') => {
     await d.click(() => d.byText('.context-row', label)()?.querySelector(`.context-mark.${kind}`), { ms: 700 });
     await sleep(500);
@@ -70,7 +70,7 @@ export async function runWrapup(story: Story): Promise<void> {
   await sleep(600);
 
   // 3. 印から指示の文を組み立てて、圧縮する
-  d.caption('「この選び方で圧縮…」で、印から /compact に添える指示の文ができます。直してから送れます');
+  d.caption('「この選び方で圧縮…」で、印から /compact に添える指示の文ができます。直してから送れます', '.context-compact .send-button');
   await d.click('.context-compact .send-button', { ms: 800 });
   await sleep(2200);
   const sent = story.nextSend();
@@ -90,11 +90,11 @@ export async function runWrapup(story: Story): Promise<void> {
     ITEM('f-card-2', 'file', 'src/components/MenuCard.tsx', 6_800, 13, { edited: true }),
     ITEM('f-price-2', 'file', 'src/lib/price.ts', 2_400, 14, { edited: true }),
   ]);
-  d.caption('圧縮すると、前のものは要約に置き換わり、メーターが下がります。エクスプローラーの点は白抜き（圧縮前に読んだだけ）になります');
+  d.caption('圧縮すると、前のものは要約に置き換わり、メーターが下がります。エクスプローラーの点は白抜き（圧縮前に読んだだけ）になります', '.claude-header button.context-meter');
   await sleep(3200);
 
   // 4. 英語で返ってきた思考を、日本語に訳して読む
-  d.caption('思考や応答が英語で返ってきても、翻訳のボタンで日本語に訳して読めます（macOS の翻訳で、Mac の中で訳します）');
+  d.caption('思考や応答が英語で返ってきても、翻訳のボタンで日本語に訳して読めます（macOS の翻訳で、Mac の中で訳します）', () => [...document.querySelectorAll('.chat-translate')].at(-1));
   await story.send(PR_PROMPT);
   claude.startWorking();
   await sleep(1400);
@@ -121,7 +121,7 @@ export async function runWrapup(story: Story): Promise<void> {
   await sleep(2800);
 
   // 5. 作業の流れを 1 枚の HTML に書き出す
-  d.caption('「作業を書き出す」で、このセッションの流れを 1 枚の HTML に保存できます。チームへの共有や振り返りに使えます');
+  d.caption('「作業を書き出す」で、このセッションの流れを 1 枚の HTML に保存できます。チームへの共有や振り返りに使えます', '.claude-header button[aria-label="作業を書き出す…"]');
   await d.click('.claude-header button[aria-label="作業を書き出す…"]', { ms: 900 });
   await sleep(1800);
   const exported = new Promise<string>((resolve) => {

@@ -48,7 +48,7 @@ export async function runBrowser(story: Story): Promise<void> {
   };
 
   // 1. アクティビティバーの「ブラウザ」を開き、開発サーバーの URL を開く
-  d.caption('アプリ内のブラウザで、開発中のページを開きます');
+  d.caption('アプリ内のブラウザで、開発中のページを開きます', '.activity-bar [aria-label="ブラウザ"]');
   await sleep(800);
   await d.click('.activity-bar [aria-label="ブラウザ"]', { ms: 900 });
   await sleep(700);
@@ -59,7 +59,7 @@ export async function runBrowser(story: Story): Promise<void> {
   await sleep(2000);
 
   // 2. 表示幅をスマホにすると、価格の行が折り返して崩れている
-  d.caption('表示幅をスマホにすると、価格の行が途中で折り返して崩れています');
+  d.caption('表示幅をスマホにすると、価格の行が途中で折り返して崩れています', '.preview-width');
   await d.click('.preview-width', { ms: 700 });
   const select = document.querySelector('.preview-width') as HTMLSelectElement;
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, '390');
@@ -71,7 +71,7 @@ export async function runBrowser(story: Story): Promise<void> {
   await sleep(900);
 
   // 3. 「要素を選ぶ」で価格を選ぶ（入力欄にセレクタ・HTML と、切り出した画像が入る）
-  d.caption('「要素を選ぶ」で崩れた要素をクリック。セレクタ・HTML・切り出した画像が、入力欄に入ります');
+  d.caption('「要素を選ぶ」で崩れた要素をクリック。セレクタ・HTML・切り出した画像が、入力欄に入ります', '.preview-pane [aria-label="要素を選ぶ"]');
   await d.click('.preview-pane [aria-label="要素を選ぶ"]', { ms: 800 });
   await sleep(500);
   await moveInPage(d, '.menu-card:nth-child(2) .note', 600);
@@ -83,7 +83,7 @@ export async function runBrowser(story: Story): Promise<void> {
   await sleep(1400);
 
   // 4. 書き足して送る
-  d.caption('直してほしいことを書き足して送ります');
+  d.caption('直してほしいことを書き足して送ります', '.chat-input');
   await story.send(PROMPT);
   claude.startWorking();
 
@@ -92,11 +92,11 @@ export async function runBrowser(story: Story): Promise<void> {
   await claude.tool('Read', 'src/styles.css', 700, { filePath: `${ROOT}/src/styles.css` });
   await claude.edit('src/styles.css', CSS_PRICE_STACKED, 1000, ['+  display: block;', '-  margin-left: 6px;']);
   refreshDemoWebviews();
-  d.caption('Claude が CSS を直すと、ブラウザの表示もその場で直ります');
+  d.caption('Claude が CSS を直すと、ブラウザの表示もその場で直ります', '.preview-pane');
   await sleep(1500);
 
   // 6. Claude が自分でブラウザを使って確かめる（操作中の帯と、押す要素の枠）
-  d.caption('直したあとは、Claude 自身がアプリ内ブラウザでページを開いて確かめます。操作中は「Claude が操作中」の帯が出ます');
+  d.caption('直したあとは、Claude 自身がアプリ内ブラウザでページを開いて確かめます。操作中は「Claude が操作中」の帯が出ます', '.preview-claude');
   claude.say('直った見た目を、アプリ内ブラウザで確かめます。');
   activity('開く');
   const nav = claude.use(`${BROWSER}navigate`, `http://${DEV_URL}/`);
@@ -108,7 +108,7 @@ export async function runBrowser(story: Story): Promise<void> {
   await sleep(900);
   claude.result(shot, { images: [await screenshot()], output: 'スクリーンショットを撮りました' });
   await sleep(600);
-  d.caption('クリックの前には、押す要素に橙の枠が出ます');
+  d.caption('クリックの前には、押す要素に橙の枠が出ます', '.preview-pane');
   activity('クリック');
   const click = claude.use(`${BROWSER}click`, '.menu-card:nth-child(2) .price');
   await sleep(500);
@@ -119,7 +119,7 @@ export async function runBrowser(story: Story): Promise<void> {
   await sleep(800);
 
   // 7. ログインは Claude にさせず、あなたに頼む（「あなたの番です」）
-  d.caption('ログインなど Claude にさせない操作は、作業の途中であなたに頼みます');
+  d.caption('ログインなど Claude にさせない操作は、作業の途中であなたに頼みます', '.preview-ask');
   const admin = claude.use(`${BROWSER}navigate`, `http://${ADMIN_URL}`);
   backend.browserOpen(id, `http://${ADMIN_URL}`);
   await sleep(1300);
@@ -132,7 +132,7 @@ export async function runBrowser(story: Story): Promise<void> {
   backend.browserAsk(id, { id: 'ask-login', message: '管理画面で、税込価格の表示も確かめます。ログインしてから「終わった」を押してください。' });
   backend.update(id, { attention: 'browser' });
   await sleep(1800);
-  d.caption('ログインが済んだら「終わった」を押すと、Claude が続きから再開します');
+  d.caption('ログインが済んだら「終わった」を押すと、Claude が続きから再開します', d.byText('.preview-ask button', '終わった'));
   await moveInPage(d, '.login input', 800);
   await sleep(700);
   await d.click(d.byText('.preview-ask button', '終わった'), { ms: 800 });
@@ -161,7 +161,7 @@ export async function runBrowser(story: Story): Promise<void> {
     ].join('\n'),
   );
   backend.push(id, { type: 'turn-end' });
-  d.caption('Claude の操作は、チャットに「アプリ内ブラウザ」の操作として残り、スクリーンショットも見られます');
+  d.caption('Claude の操作は、チャットに「アプリ内ブラウザ」の操作として残り、スクリーンショットも見られます', () => [...document.querySelectorAll('.claude .tool-group')].at(-1));
   await sleep(800);
   await d.click(() => [...document.querySelectorAll('.tool-group-head')].at(-1), { ms: 800 });
   await sleep(600);
