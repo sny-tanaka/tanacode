@@ -309,16 +309,18 @@ function ChapterMenu({ current, watched, onClose }: { current: ChapterInfo | nul
           <button type="button" className="demo-button" onClick={onClose}>
             {current ? 'ツアーに戻る' : '自由に触る'}
           </button>
-          <span className="spacer" />
-          <a className="demo-link" href={`${REPO}#インストール`} target="_blank" rel="noopener noreferrer">
-            インストール
-          </a>
-          <a className="demo-link" href={`${REPO}/blob/develop/GUIDE.md`} target="_blank" rel="noopener noreferrer">
-            使い方
-          </a>
-          <a className="demo-link" href={REPO} target="_blank" rel="noopener noreferrer">
-            GitHub
-          </a>
+          {/* 狭い画面では、リンクはまとめて次の行へ送る */}
+          <span className="demo-menu-links">
+            <a className="demo-link" href={`${REPO}#インストール`} target="_blank" rel="noopener noreferrer">
+              インストール
+            </a>
+            <a className="demo-link" href={`${REPO}/blob/develop/GUIDE.md`} target="_blank" rel="noopener noreferrer">
+              使い方
+            </a>
+            <a className="demo-link" href={REPO} target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
+          </span>
         </div>
       </div>
     </div>

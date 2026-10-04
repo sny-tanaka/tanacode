@@ -112,9 +112,9 @@ html {
 }
 .demo-caption-text {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 説明は省略せず、収まらなければ折り返す（帯が高くなった分は、ScreenLayer がアプリの画面を縮めて合わせる） */
+  overflow-wrap: anywhere;
+  line-height: 1.45;
   color: var(--text-heading);
   font-size: 14px;
   animation: demo-caption-in 0.35s ease-out;
@@ -214,8 +214,18 @@ html {
 .demo-layer.compact .demo-caption {
   order: 1;
   flex-basis: 100%;
+  /* 章の名前は説明の頭に並べ、説明はその後ろから折り返す（章の名前の横に細い列を作らない） */
+  display: block;
+  /* 説明の長さで帯の高さ（とアプリの画面の位置）が変わらないよう、3 行分を取っておく */
+  min-height: calc(13px * 1.45 * 3);
+}
+.demo-layer.compact .demo-tour-title {
+  display: inline-block;
+  margin-right: 8px;
+  vertical-align: 1px;
 }
 .demo-layer.compact .demo-caption-text {
+  display: inline;
   font-size: 13px;
 }
 .demo-layer.compact .demo-bar > .demo-link {
@@ -335,9 +345,21 @@ html {
 }
 
 .demo-menu-foot {
-  margin-top: 16px;
+  /* 章が多くて目次がスクロールしても、ボタンはいつも下に見えるようにする（目次の下の余白 20px の分だけ下へずらして、端まで覆う） */
+  position: sticky;
+  bottom: -20px;
+  margin: 16px -22px -20px;
+  padding: 12px 22px 16px;
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg-panel);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 10px 14px;
+}
+.demo-menu-links {
+  margin-left: auto;
+  display: flex;
   gap: 14px;
 }
 
