@@ -21,10 +21,10 @@ storybook-static/
 design/Claude IDE.dc.html
 design/support.js
 design/.thumbnail
-# README のデモ動画（npm run demo:record の出力）
-demo-videos/
 # デモのサイト（npm run demo:build の出力）
 /demo-site/
+# ツアーが流れるかを確かめるための、待ち時間 0 のデモのサイト（npm run demo:check が使う）
+/demo-check/
 
 # オーナーだけの手順と運用（個人の環境に由来する内容を含むので、公開しない。手元にだけ置く）
 MAINTAINING.md

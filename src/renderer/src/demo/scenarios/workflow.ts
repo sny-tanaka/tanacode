@@ -2,32 +2,12 @@ import type { ChatEvent } from '@shared/chat';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import type { DemoBackend } from '../backend';
 import { ROOT } from '../data';
-import { sleep, type Director } from '../director';
-import { Claude, pastTurn, statusLine } from './claude';
 
-// 動画 3「ワークフローの図解」: Claude が動かしたワークフローを、GitHub Actions の実行の画面のように見る。
-// 指示 → ワークフローが入力欄の上のトレイに出る → 開くと概要のフロー図（点検 3 並列 → 修正 2 → 確認）が進むにつれて埋まる →
-// 一覧からエージェントを選んで会話を見る → 概要に戻って完了を見届ける → Claude が結果をまとめる
+// ワークフローの実行の作り物（章 6 で、子セッションが動かすアクセシビリティの点検）。
+// 概要のフロー図（点検 3 並列 → 修正 2 → 確認）を、台本の進みに合わせて埋めていく
 
-export const WORKFLOW_SESSION = 'demo-workflow';
-
-const PROMPT = 'メニューのページのアクセシビリティを点検して、見つかった問題を直して';
-const WORKFLOW_TOOL = 'wf-tool';
-
-export function setupWorkflow(backend: DemoBackend): void {
-  const hour = 3600_000;
-  backend.addSession('demo-tax', { title: 'メニューに税込価格を出す', updatedAt: Date.now() - 2 * hour });
-  backend.addSession('demo-readme', { title: 'README のセットアップ手順を見直す', updatedAt: Date.now() - 5 * hour });
-  backend.addSession(
-    WORKFLOW_SESSION,
-    { title: 'メニューのアクセシビリティを点検する' },
-    pastTurn('past', 'メニューのページの構成を教えて', [['Read', 'src/App.tsx', 600], ['Read', 'src/components/MenuList.tsx', 600], ['Read', 'src/components/MenuCard.tsx', 600]], [
-      '`App` が `MenuList` を置き、`MenuList` が品目ごとに `MenuCard` を並べる構成です。',
-      '価格の整形は `src/lib/price.ts` にまとまっています。',
-    ].join('\n'), 10 * 60_000),
-  );
-  backend.setStatusLine(WORKFLOW_SESSION, statusLine(12, 24_000));
-}
+// ワークフローを始めたツールの呼び出しの ID
+export const WORKFLOW_TOOL = 'wf-tool';
 
 // ---- ワークフローの実行（時間とともに進める） ----
 
@@ -48,7 +28,7 @@ const AGENTS: AgentPlan[] = [
   { id: 'verify', label: '確認役', phase: '確認', tools: 7, result: '2 件とも直っていることを確かめました。npm test も通ります。' },
 ];
 
-class WorkflowPlayer {
+export class WorkflowPlayer {
   private readonly agents = new Map<string, WorkflowAgent>();
   private seq = 0;
   private status: WorkflowRun['status'] = 'running';
@@ -126,7 +106,7 @@ class WorkflowPlayer {
 }
 
 // 「読み上げ」のエージェントの会話（選んだときに見せる）。少しずつ伸ばす
-function readerLog(step: number): ChatEvent[] {
+export function readerLog(step: number): ChatEvent[] {
   const events: ChatEvent[] = [
     { type: 'user', id: 'r-u', text: 'メニューのページを、スクリーンリーダーでの読み上げの観点で点検してください。直さず、問題と場所だけを報告してください。' },
   ];
@@ -155,137 +135,4 @@ function readerLog(step: number): ChatEvent[] {
     });
   }
   return events;
-}
-
-export async function runWorkflow(backend: DemoBackend, d: Director): Promise<void> {
-  const id = WORKFLOW_SESSION;
-  const claude = new Claude(backend, id);
-  const flow = new WorkflowPlayer(backend, id);
-  const sent = new Promise<void>((resolve) => {
-    backend.onUserMessage = (_sid, text) => {
-      claude.user(text);
-      resolve();
-    };
-  });
-  const log = (step: number) => backend.setAgentLog(id, `${WORKFLOW_TOOL}:reader`, readerLog(step));
-
-  // 1. 指示を送る
-  d.caption('点検と修正を、ワークフローで進めるよう頼みます');
-  await sleep(1000);
-  await d.click('.chat-input textarea');
-  await d.type('.chat-input textarea', PROMPT);
-  await sleep(300);
-  await d.click('.chat-input-row [aria-label="送信"]');
-  await sent;
-  claude.startWorking();
-
-  // 2. Claude がワークフローを起動する（入力欄の上のトレイに出る）
-  d.caption('Claude がワークフローを起動すると、入力欄の上のトレイに出ます');
-  await sleep(1500);
-  claude.say('観点ごとに並列で点検し、見つかった問題を直すワークフローを動かします。');
-  await sleep(500);
-  backend.push(id, {
-    type: 'tool-use',
-    id: WORKFLOW_TOOL,
-    name: 'Workflow',
-    target: 'a11y-audit',
-    input: 'a11y-audit',
-    description: 'アクセシビリティを点検して直す',
-    at: Date.now(),
-  });
-  log(0);
-  flow.start('contrast');
-  flow.start('reader');
-  flow.start('keyboard');
-  await sleep(600);
-  backend.push(id, { type: 'tool-result', id: WORKFLOW_TOOL, isError: false, output: 'ワークフロー a11y-audit をバックグラウンドで開始しました', at: Date.now() });
-  await sleep(400);
-  claude.stopWorking();
-  claude.say('点検・修正・確認の 3 段で進めます。終わったら結果をまとめます。');
-  backend.push(id, { type: 'turn-end' });
-
-  // 3. トレイの行を開くと、概要のフロー図が出る。サイドパネルもタスクに切り替わる
-  d.caption('トレイの行を開くと、フロー図で段階ごとの進み具合が見えます');
-  await sleep(900);
-  flow.tool('contrast', 'Read');
-  log(1);
-  await d.click(d.byText('.task-tray .task-row', 'a11y-audit'), { ms: 900 });
-  flow.tool('reader', 'Read');
-  flow.tool('keyboard', 'Read');
-  log(2);
-  await sleep(1200);
-  flow.tool('contrast', 'Grep');
-  flow.tool('reader', 'Grep');
-  log(3);
-  await sleep(1000);
-  flow.finish('keyboard');
-  flow.tool('reader', 'Read');
-  log(4);
-  await sleep(1200);
-  flow.finish('contrast');
-  await sleep(900);
-
-  // 4. 一覧から「読み上げ」を選び、その会話を見る
-  d.caption('エージェントを選ぶと、そのエージェントの会話を読めます');
-  await d.click(d.byText('.task-agent', '読み上げ'), { ms: 800 });
-  await sleep(1400);
-  log(5);
-  flow.finish('reader');
-  await sleep(1600);
-  // 点検が終わると修正が 2 並列で始まる
-  flow.start('fix-card');
-  flow.start('fix-css');
-  await sleep(1000);
-
-  // 5. 概要に戻る。修正が進み、確認に移る
-  d.caption('概要に戻ると、点検から修正・確認へと進んでいくのが分かります');
-  await d.click('.task-agent.task-overview', { ms: 800 });
-  flow.tool('fix-card', 'Read');
-  flow.tool('fix-css', 'Read');
-  await sleep(1300);
-  flow.tool('fix-card', 'Edit');
-  flow.tool('fix-css', 'Edit');
-  backend.writeFile('src/styles.css', backend.project.files['src/styles.css'].replace('#8a7f72', '#6f6458'));
-  await sleep(1300);
-  flow.finish('fix-css');
-  await sleep(900);
-  backend.writeFile(
-    'src/components/MenuCard.tsx',
-    backend.project.files['src/components/MenuCard.tsx'].replace(
-      '<p className="price">',
-      '<p className="price" aria-label={`税込 ${withTax(price)} 円（税抜 ${price} 円）`}>',
-    ),
-  );
-  flow.finish('fix-card');
-  await sleep(700);
-  flow.start('verify');
-  await sleep(900);
-  flow.tool('verify', 'Read');
-  await sleep(900);
-  flow.tool('verify', 'Bash');
-  await sleep(1400);
-  flow.finish('verify');
-  flow.complete();
-
-  // 6. 完了の知らせを受けて、Claude が結果をまとめる
-  d.caption('ワークフローが終わると、Claude が結果をまとめます');
-  await sleep(1200);
-  backend.push(id, { type: 'notice', id: 'wf-done', text: 'ワークフロー a11y-audit が終わりました' });
-  claude.startWorking();
-  await sleep(1600);
-  claude.stopWorking();
-  claude.say(
-    [
-      'アクセシビリティの点検と修正が終わりました。',
-      '',
-      '- **コントラスト**: 税抜の文字色を濃くし、3.9:1 → 5.2:1 に',
-      '- **読み上げ**: 価格に `aria-label` を付け、「税込 572 円（税抜 520 円）」と読まれるように',
-      '- **キーボード操作**: 問題なし',
-      '',
-      '確認役のエージェントが、2 件とも直っていることと `npm test` が通ることを確かめています。',
-    ].join('\n'),
-  );
-  backend.push(id, { type: 'turn-end' });
-  backend.setStatusLine(id, statusLine(16, 31_000));
-  await sleep(4000);
 }

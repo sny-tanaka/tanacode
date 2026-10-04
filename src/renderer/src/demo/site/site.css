@@ -1,12 +1,15 @@
 /* デモのサイトの親のページだけの見た目。色・文字はアプリ（global.css）の変数を使う */
 
-/* アプリの画面は iframe（app.html）の中で、どの端末・ブラウザでも同じ大きさ（1440×900。README の動画と同じ）で描く。
+/* アプリの画面は iframe（app.html）の中で、どの端末・ブラウザでも同じ大きさ（messages.ts の STAGE。README の紹介画像と同じ）で描く。
    ここでは iframe ごと、上の帯の下の残りに横も縦も収まるよう縮小して、真ん中に置く（倍率 --demo-scale は DemoSite.tsx の ScreenLayer が決める）。
    iframe の中には縮小がかからないので、アプリは PC で見るのと同じ見た目・動きになる */
 :root {
   /* 上の帯の高さ（ScreenLayer が測る）。アプリの画面は、この下に置く */
   --demo-bar-height: 48px;
   --demo-scale: 1;
+  /* アプリの画面の大きさ（messages.ts の STAGE。DemoSite.tsx が同じ値を入れ直す） */
+  --demo-stage-width: 1920px;
+  --demo-stage-height: 1080px;
   /* アプリの画面のまわりの地の色。アプリの外枠（--bg-chrome）と見分けられる色にする */
   --demo-backdrop: #1c1c1b;
   /* 置き場所（アーティファクトなど）がページの上下に付ける safe-area の余白は外す。上の帯が自分で空ける */
@@ -32,11 +35,22 @@ html {
   overflow: hidden;
 }
 
+/* 狭い画面（スマホ）では、アプリの画面を帯のすぐ下に寄せる。下の空きには、説明の吹き出しを出す */
+.demo-compact .demo-site {
+  place-items: start center;
+  padding-top: calc(var(--demo-bar-height) + 12px);
+}
+
+/* アプリの画面と、説明の吹き出しを重ねる入れ物（大きさはアプリの画面と同じ。吹き出しは外にはみ出してよい） */
+.demo-frame-wrap {
+  position: relative;
+}
+
 /* アプリの画面の枠（ウインドウに見立てる）。縮小したあとの大きさ */
 .demo-frame {
   position: relative;
-  width: calc(1440px * var(--demo-scale));
-  height: calc(900px * var(--demo-scale));
+  width: calc(var(--demo-stage-width) * var(--demo-scale));
+  height: calc(var(--demo-stage-height) * var(--demo-scale));
   border-radius: calc(10px * var(--demo-scale));
   overflow: hidden;
   background: var(--bg-chrome);
@@ -50,8 +64,8 @@ html {
   position: absolute;
   left: 0;
   top: 0;
-  width: 1440px;
-  height: 900px;
+  width: var(--demo-stage-width);
+  height: var(--demo-stage-height);
   border: 0;
   transform: scale(var(--demo-scale));
   transform-origin: 0 0;
@@ -112,9 +126,8 @@ html {
 }
 .demo-caption-text {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
   color: var(--text-heading);
   font-size: 14px;
   animation: demo-caption-in 0.35s ease-out;
@@ -188,6 +201,76 @@ html {
   outline-offset: 2px;
 }
 
+/* 操作の説明の吹き出し（位置と矢印の向きは DemoSite.tsx の Callout が決める） */
+.demo-callout {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  max-width: min(380px, calc(100vw - 16px));
+  padding: 10px 14px;
+  border: 1px solid #f0a35e;
+  border-radius: 10px;
+  background: var(--bg-surface);
+  color: var(--text-heading);
+  font-size: 14px;
+  line-height: 1.6;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  transition:
+    left 0.3s ease-out,
+    top 0.3s ease-out;
+  pointer-events: none;
+}
+.demo-callout-text {
+  display: block;
+  animation: demo-caption-in 0.3s ease-out;
+}
+/* 指す場所への矢印（up は吹き出しの上に付けて上を指す。--arrow-at は、上下の矢印なら横の位置、左右の矢印なら縦の位置） */
+.demo-callout.up::before,
+.demo-callout.down::before,
+.demo-callout.left::before,
+.demo-callout.right::before {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1px solid #f0a35e;
+  background: var(--bg-surface);
+  transform: rotate(45deg);
+}
+.demo-callout.up::before,
+.demo-callout.down::before {
+  left: calc(var(--arrow-at) - 7px);
+}
+.demo-callout.left::before,
+.demo-callout.right::before {
+  top: calc(var(--arrow-at) - 7px);
+}
+.demo-callout.up::before {
+  top: -7px;
+  border-right: none;
+  border-bottom: none;
+}
+.demo-callout.down::before {
+  bottom: -7px;
+  border-left: none;
+  border-top: none;
+}
+.demo-callout.left::before {
+  left: -7px;
+  border-top: none;
+  border-right: none;
+}
+.demo-callout.right::before {
+  right: -7px;
+  border-bottom: none;
+  border-left: none;
+}
+/* スマホでは、アプリの画面の幅いっぱいに、すぐ下へ出す（位置は動かさない） */
+.demo-compact .demo-callout {
+  max-width: none;
+  transition: none;
+}
+
 /* 再生中に触ろうとしたときの知らせ */
 .demo-blocked {
   position: absolute;
@@ -214,8 +297,16 @@ html {
 .demo-layer.compact .demo-caption {
   order: 1;
   flex-basis: 100%;
+  /* 章の名前は状態の文言の頭に並べ、文言はその後ろから折り返す（章の名前の横に細い列を作らない） */
+  display: block;
+}
+.demo-layer.compact .demo-tour-title {
+  display: inline-block;
+  margin-right: 8px;
+  vertical-align: 1px;
 }
 .demo-layer.compact .demo-caption-text {
+  display: inline;
   font-size: 13px;
 }
 .demo-layer.compact .demo-bar > .demo-link {
@@ -321,6 +412,9 @@ html {
   gap: 2px;
 }
 .demo-tour-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-heading);
   font-size: 14px;
   font-weight: 600;
@@ -332,8 +426,91 @@ html {
 }
 
 .demo-menu-foot {
-  margin-top: 16px;
+  /* 章が多くて目次がスクロールしても、ボタンはいつも下に見えるようにする（目次の下の余白 20px の分だけ下へずらして、端まで覆う） */
+  position: sticky;
+  bottom: -20px;
+  margin: 16px -22px -20px;
+  padding: 12px 22px 16px;
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.demo-menu-links {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+}
+
+/* 目次から途中の章へ飛んだとき、それまでの章を早送りで流している間、アプリの画面を覆う */
+.demo-preparing {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-chrome);
+  color: var(--text-heading);
+  font-size: 14px;
+}
+.demo-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--ide);
+  border-radius: 50%;
+  animation: demo-spin 0.8s linear infinite;
+}
+@keyframes demo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-spinner {
+    animation: none;
+  }
+}
+
+/* 目次の章の名前の横の印（新しく足した章・最後まで見た章） */
+.demo-tour-new {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--claude-tint);
+  color: var(--claude);
+  font-size: 11px;
+  font-weight: 600;
+}
+.demo-tour-watched {
+  display: inline-flex;
+  color: var(--ok);
+}
+
+/* 書き出した HTML を、アプリの画面の上に重ねて見せる（ツアーの最後の章） */
+.demo-export {
+  position: absolute;
+  inset: 6%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  animation: demo-caption-in 0.3s ease-out;
+}
+.demo-export-head {
+  flex: none;
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.demo-export-page {
+  flex: 1;
+  width: 100%;
+  border: 0;
 }

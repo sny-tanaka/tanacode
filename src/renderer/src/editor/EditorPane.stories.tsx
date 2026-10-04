@@ -69,7 +69,7 @@ export const バイナリ: Story = {
   render: () => <Pane files={[{ path: 'release/tanacode.dmg', content: { kind: 'binary' } }]} />,
 };
 export const 大きすぎる: Story = {
-  render: () => <Pane files={[{ path: 'demo-videos/基本.mp4', content: { kind: 'too-large', size: 14 * 1024 * 1024 } }]} />,
+  render: () => <Pane files={[{ path: 'public/intro.mp4', content: { kind: 'too-large', size: 14 * 1024 * 1024 } }]} />,
 };
 
 // Markdown はプレビューで開く。mermaid のコードブロックは図にする

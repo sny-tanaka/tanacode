@@ -19,7 +19,7 @@ const config: StorybookConfig = {
     // アプリのビルドの出力などは見張らない（録画の途中にアプリをビルドすると、ページが読み込み直されてしまう）
     server: {
       ...vite.server,
-      watch: { ...vite.server?.watch, ignored: ['**/out/**', '**/dist/**', '**/release/**', '**/demo-videos/**'] },
+      watch: { ...vite.server?.watch, ignored: ['**/out/**', '**/dist/**', '**/release/**'] },
     },
     resolve: {
       ...vite.resolve,
