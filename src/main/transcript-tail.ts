@@ -90,6 +90,8 @@ export class TranscriptTail {
       } finally {
         await handle.close();
       }
+    } catch {
+      // stat のあとに会話ログが消された（セッションの削除など）・読めなかったときは、offset を進めずに次の機会に読み直す
     } finally {
       this.reading = false;
       if (this.again && this.timer) void this.poll();

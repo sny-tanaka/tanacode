@@ -86,6 +86,7 @@ npm run dev
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
 - 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）の 3 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
+- 公開すると、`release-publish.yml` から呼ぶ `homebrew.yml` が、Homebrew の tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask の `version` と `sha256` を新しいバージョンにします。プッシュの前に、ランナーの Mac でその cask から実際に入れ、バージョンと、quarantine 属性が外れることを確かめます。tap への書き込みは GitHub App の token（tap の Contents の書き込みだけ・1 時間で失効）。App の Client ID と秘密鍵は、develop でしか使えない Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）と `HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）に置きます。失敗したときは、develop で `homebrew.yml` を手動で起動し直します。
 
 ## 見た目の確かめ方
 

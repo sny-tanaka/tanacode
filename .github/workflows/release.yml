@@ -150,7 +150,9 @@ jobs:
           | Apple Silicon（M1 以降） | \`tanacode-$version-mac-arm64.pkg\`（または \`.zip\`） |
           | Intel | \`tanacode-$version-mac-x64.pkg\`（または \`.zip\`） |
 
-          Apple の署名・公証をしていないため、初回は macOS の警告が出ます。開き方は [README](https://github.com/$GITHUB_REPOSITORY#ビルド済みのアプリreleases) に。
+          Homebrew なら \`brew install --cask sny-tanaka/tanacode/tanacode\`（更新は \`brew upgrade --cask tanacode\`）で、警告なしに入れられます。
+
+          ダウンロードした pkg・zip は、Apple の署名・公証をしていないため、初回に macOS の警告が出ます。開き方は [README](https://github.com/$GITHUB_REPOSITORY#ビルド済みのアプリreleases) に。
 
           <details>
           <summary>PR の一覧</summary>

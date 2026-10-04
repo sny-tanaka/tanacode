@@ -1,0 +1,140 @@
+# Homebrew の tap（sny-tanaka/homebrew-tanacode）の cask（Casks/tanacode.rb）の version と sha256 を、公開済みのリリースに合わせて書き換える。
+# release-publish.yml が公開のあとに呼ぶ。失敗したときのやり直しや、cask だけを確かめたいときは、develop で手動で起動する（workflow_dispatch）。
+# プッシュの前に、書き換えた cask で実際にインストールし、バージョンと、quarantine 属性が外れることを確かめる。cask に変わりがなければ、確かめるだけでプッシュしない。
+# tap への書き込みには GitHub App の token を使う（homebrew-tanacode の Contents の書き込みだけ・1 時間で失効）。
+# App の秘密鍵は Environment「homebrew」にあり、develop で動かしたときだけ使える
+name: homebrew
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: cask に書き込むバージョン（例 1.0.0）。公開済みのもの
+        required: true
+
+# 同時に動かして、tap へのプッシュがぶつからないようにする
+concurrency:
+  group: homebrew
+
+jobs:
+  cask:
+    runs-on: macos-latest
+    environment: homebrew
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+      TAG: v${{ inputs.version }}
+      DL: ${{ github.workspace }}/download
+    steps:
+      # 公開済み（下書きでもプレリリースでもない）のリリースで、zip の SHA-256 が SHA256SUMS.txt と合うこと
+      - name: リリースを確かめる
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "バージョンは X.Y.Z の形で入れてください（今は $VERSION）"
+
+          # 下書きはタグからは引けないので、ここで 404 になる
+          release=$(gh api "repos/sny-tanaka/tanacode/releases/tags/$TAG") || fail "$TAG の公開済みのリリースがありません"
+          [ "$(jq -r .draft <<< "$release")" = false ] || fail "$TAG は下書きです"
+          [ "$(jq -r .prerelease <<< "$release")" = false ] || fail "$TAG はプレリリースです"
+
+          mkdir -p "$DL"
+          gh release download "$TAG" -R sny-tanaka/tanacode -D "$DL" -p SHA256SUMS.txt -p "tanacode-$VERSION-mac-*.zip"
+          cd "$DL"
+          for arch in arm64 x64; do
+            test -f "tanacode-$VERSION-mac-$arch.zip" || fail "tanacode-$VERSION-mac-$arch.zip がありません"
+          done
+          grep '\.zip$' SHA256SUMS.txt | shasum -a 256 -c - || fail 'zip の SHA-256 が SHA256SUMS.txt と合いません'
+
+          sha_of() { awk -v f="tanacode-$VERSION-mac-$1.zip" '$2 == f { print $1 }' SHA256SUMS.txt; }
+          sha_arm=$(sha_of arm64)
+          sha_intel=$(sha_of x64)
+          for sha in "$sha_arm" "$sha_intel"; do
+            printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$' || fail "SHA256SUMS.txt から zip の SHA-256 を読めません"
+          done
+          echo "SHA_ARM=$sha_arm" >> "$GITHUB_ENV"
+          echo "SHA_INTEL=$sha_intel" >> "$GITHUB_ENV"
+      - name: tap の token を作る
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: sny-tanaka
+          repositories: homebrew-tanacode
+          permission-contents: write
+      - uses: actions/checkout@v4
+        with:
+          repository: sny-tanaka/homebrew-tanacode
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+      # 古いバージョンには戻さない（同じバージョンなら、書き換えずに確かめるだけ）
+      - name: cask を書き換える
+        working-directory: tap
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          cask=Casks/tanacode.rb
+          current=$(sed -nE 's/^  version "([^"]+)"$/\1/p' "$cask")
+          [ -n "$current" ] || fail "$cask から今のバージョンを読めません"
+          ruby -e 'exit(Gem::Version.new(ARGV[0]) >= Gem::Version.new(ARGV[1]))' "$VERSION" "$current" \
+            || fail "cask は $current で、$VERSION より新しいです"
+
+          perl -pi -e '
+            s/^(  version )"[^"]*"$/$1"$ENV{VERSION}"/;
+            s/^(  sha256 arm:   )"[0-9a-f]{64}"/$1"$ENV{SHA_ARM}"/;
+            s/^(         intel: )"[0-9a-f]{64}"/$1"$ENV{SHA_INTEL}"/;
+          ' "$cask"
+          grep -Fqx "  version \"$VERSION\"" "$cask" || fail "$cask の version を書き換えられません"
+          grep -Fq "arm:   \"$SHA_ARM\"" "$cask" || fail "$cask の sha256（arm）を書き換えられません"
+          grep -Fq "intel: \"$SHA_INTEL\"" "$cask" || fail "$cask の sha256（intel）を書き換えられません"
+          git diff
+      # tap はコミットした中身を clone するので、確かめる前に手元でコミットしておく（プッシュは確かめたあと）
+      - name: コミットする
+        working-directory: tap
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          if git diff --quiet; then
+            echo "cask はすでに $VERSION です"
+            exit 0
+          fi
+          user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "$user_id+${APP_SLUG}[bot]@users.noreply.github.com"
+          git commit -am "tanacode $VERSION"
+          echo PUSH=1 >> "$GITHUB_ENV"
+      # 書き換えた cask で入れて、バージョンと quarantine 属性を確かめる。ランナーの Mac（Apple Silicon）の zip で入る
+      - name: cask で入れて確かめる
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          brew tap sny-tanaka/tanacode "$GITHUB_WORKSPACE/tap"
+          brew install --cask sny-tanaka/tanacode/tanacode
+
+          app=/Applications/tanacode.app
+          installed=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+          [ "$installed" = "$VERSION" ] || fail "入ったアプリのバージョンが $installed です"
+
+          # Homebrew がダウンロードに quarantine 属性を付けていなければ、外れたことを確かめた意味がないので知らせる
+          cached=$(brew --cache --cask sny-tanaka/tanacode/tanacode)
+          xattr -p com.apple.quarantine "$cached" > /dev/null 2>&1 \
+            || echo "::warning::ダウンロードした zip に quarantine 属性が付いていません（外れたことを確かめられません）"
+          left=$(find "$app" -xattrname com.apple.quarantine | head -n 5)
+          [ -z "$left" ] || fail "quarantine 属性が残っています: $left"
+      - name: tap にプッシュする
+        working-directory: tap
+        run: |
+          if [ "${PUSH:-}" != 1 ]; then
+            echo 'プッシュするものはありません'
+            exit 0
+          fi
+          git push origin HEAD
+          echo "cask を $VERSION にしました: https://github.com/sny-tanaka/homebrew-tanacode/blob/HEAD/Casks/tanacode.rb"

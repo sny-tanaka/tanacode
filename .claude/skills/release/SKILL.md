@@ -314,7 +314,15 @@ disable-model-invocation: true
    curl -s https://img.shields.io/github/v/release/sny-tanaka/tanacode | grep -o '<title>[^<]*</title>'
    ```
 
-   1 つめが `vX.Y.Z`、2 つめが `<title>release: vX.Y.Z</title>` なら完了。README の「最新バージョン」のバッジはこの shields.io の画像。shields.io はキャッシュするので、古いバージョンのままなら数分おいて確かめ直します。
+   1 つめが `vX.Y.Z`、2 つめが `<title>release: vX.Y.Z</title>` なら公開は完了。README の「最新バージョン」のバッジはこの shields.io の画像。shields.io はキャッシュするので、古いバージョンのままなら数分おいて確かめ直します。
+
+4. Homebrew の tap の cask を新しいバージョンにします。手元の公開は `release-publish.yml` を通らないので、`homebrew.yml` を develop で起動し、4 と同じ要領で見守ります（10 分ほど）。
+
+   ```bash
+   gh workflow run homebrew.yml --ref develop -f version=X.Y.Z
+   ```
+
+   通れば、`https://github.com/sny-tanaka/homebrew-tanacode/blob/HEAD/Casks/tanacode.rb` の `version` が `X.Y.Z` になります。失敗したときは「Homebrew の cask」の表へ。
 
 **cloud では**
 
@@ -330,7 +338,19 @@ disable-model-invocation: true
    - ワークフローは、下書きであること・添付の 5 つ・説明が `## ダウンロード` から始まること・ダウンロードの表のファイル名・SHA-256 の一致を確かめてから、`notes` を先頭に足して公開し、最新のリリースにします。
    - どれかが合わなければ、何も変えずに止まります。ログの `::error::` の行を見て、公開せずにユーザーに伝え、AskUserQuestion でどうするか確かめます。
 2. 4 と同じ要領で run を見守ります（1 分ほどで終わります）。
-3. `mcp__github__get_latest_release` の `tag_name` が `vX.Y.Z` で、本文の先頭に変更点が入っていれば完了。shields.io のバッジは `curl` で 3 と同じく確かめます。
+3. `mcp__github__get_latest_release` の `tag_name` が `vX.Y.Z` で、本文の先頭に変更点が入っていれば公開は完了。shields.io のバッジは `curl` で 3 と同じく確かめます。
+4. `release-publish.yml` は、公開のあとに `homebrew` のジョブ（`homebrew.yml`）で Homebrew の tap の cask を新しいバージョンにします。このジョブは 10 分ほどかかるので、終わるまで見守ります。通れば、`mcp__github__get_file_contents`（`sny-tanaka/homebrew-tanacode` の `Casks/tanacode.rb`）の `version` が `X.Y.Z` になります。失敗したときは「Homebrew の cask」の表へ。
+
+### Homebrew の cask
+
+`homebrew.yml` は、公開済みのリリースの zip の SHA-256 を `SHA256SUMS.txt` と照らし、tap（`sny-tanaka/homebrew-tanacode`）の `Casks/tanacode.rb` の `version` と `sha256` を書き換えます。プッシュの前に、ランナーの Mac でその cask から入れて、バージョンと quarantine 属性を確かめます。リリースそのものは公開済みなので、ここで失敗しても公開は取り消しません。直してから、develop で `homebrew.yml` を `version` に `X.Y.Z` を渡して起動し直します（cloud では `mcp__github__actions_run_trigger`、`workflow_id` は `homebrew.yml`）。
+
+| 症状 | 原因と対処 |
+| --- | --- |
+| 「tap の token を作る」で止まる | GitHub App の設定。Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）・`HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）と、App が homebrew-tanacode にインストールされているかを、ユーザーに確かめてもらいます |
+| ジョブが始まらず、Environment の保護で止まる | develop 以外で起動した。develop で起動し直し |
+| 「cask で入れて確かめる」で止まる | ログの `::error::` の行を見ます。Homebrew の書き方の変更（`postflight_steps` など）なら、tap の `Casks/tanacode.rb` の直しをユーザーに伝え、AskUserQuestion でどうするか確かめます |
+| ダウンロードの一時的な失敗 | コードを変えずに、失敗したジョブを再実行 |
 
 ## 7. 失敗して作り直すとき
 
@@ -359,4 +379,5 @@ disable-model-invocation: true
 - バージョンを上げた PR の URL と、Actions の run の URL
 - 点検の結果（添付 5 つ・SHA-256 の一致・ファイル名）
 - 説明に足した変更点の有無
+- Homebrew の tap の cask が `X.Y.Z` になったか
 - 途中で起きた失敗と、その対処（あれば）

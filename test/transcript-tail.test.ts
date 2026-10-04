@@ -4,6 +4,17 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranscriptTail } from '../src/main/transcript-tail';
 
+// 会話ログを開けない（stat のあとに消された）ときを作るため、open だけを差し替えられるようにする
+const openFails = vi.hoisted(() => ({ on: false }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    open: (...args: Parameters<typeof actual.open>) =>
+      openFails.on ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })) : actual.open(...args),
+  };
+});
+
 // 会話ログの末尾読み（TranscriptTail）。親（parentUuid）の行より先に書かれた行を、親の後ろに並べ直す
 
 type Row = { uuid: string; parentUuid: string | null; type: string };
@@ -28,6 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  openFails.on = false;
   tail?.stop();
   tail = null;
   vi.useRealTimers();
@@ -35,6 +47,17 @@ afterEach(() => {
 });
 
 describe('TranscriptTail', () => {
+  // 失敗を投げたままにすると、どこでも受け取られないエラーになる（void this.poll() で呼ぶため）
+  it('stat のあとに会話ログを開けなくても、エラーにせず、次の機会に読み直す', async () => {
+    openFails.on = true;
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(uuids()).toEqual([]);
+    openFails.on = false;
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1']));
+  });
+
   it('同じ読み込みの中なら、親の行を先に出す', async () => {
     start();
     appendFileSync(file, line(row('a1', 'u1')) + line(row('u1', null, 'user')));
