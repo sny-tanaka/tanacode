@@ -1,67 +1,60 @@
-/* デモのサイトだけの見た目。色・文字はアプリ（global.css）の変数を使う */
+/* デモのサイトの親のページだけの見た目。色・文字はアプリ（global.css）の変数を使う */
 
-/* アプリはウインドウの中で隠すが、サイトはページごとスクロールさせる（スマホのピンチでの縮小も、ページの幅が広くないと効かない）。
-   作り物のカーソルが要素へ移るときのスクロールは、上の帯の下に隠れないようにする */
+/* アプリの画面は iframe（app.html）の中で、どの端末・ブラウザでも同じ大きさ（1440×900。README の動画と同じ）で描く。
+   ここでは iframe ごと、上の帯の下の残りに横も縦も収まるよう縮小して、真ん中に置く（倍率 --demo-scale は DemoSite.tsx の ScreenLayer が決める）。
+   iframe の中には縮小がかからないので、アプリは PC で見るのと同じ見た目・動きになる */
+:root {
+  /* 上の帯の高さ（ScreenLayer が測る）。アプリの画面は、この下に置く */
+  --demo-bar-height: 48px;
+  --demo-scale: 1;
+  /* アプリの画面のまわりの地の色。アプリの外枠（--bg-chrome）と見分けられる色にする */
+  --demo-backdrop: #1c1c1b;
+  /* 置き場所（アーティファクトなど）がページの上下に付ける safe-area の余白は外す。上の帯が自分で空ける */
+  padding: 0;
+}
+
 html,
 body,
 #root {
-  height: auto;
-  overflow: visible;
+  background: var(--demo-backdrop);
 }
+/* スマホのブラウザが文字を勝手に大きくしないようにする */
 html {
-  scroll-padding-top: var(--demo-bar-space);
-  /* スマホのブラウザが、縮小して描いたページの文字を勝手に大きくしないようにする */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-/* --demo-bar-height: 上の帯の高さ（帯の層の中の大きさ）。--demo-bar-space: ページの上に空ける高さ（ページの大きさ）。
-   スマホでは縮小して表示するので、帯がページの上で占める高さは、帯の高さより大きい（DemoSite.tsx の ScreenLayer が決める） */
-:root {
-  --demo-bar-height: 48px;
-  --demo-bar-space: 48px;
-}
-
-/* アプリの画面が崩れない大きさより狭いときは、この大きさのまま描いてスクロールさせる。
-   はみ出したポップアップでページが広がらないよう、外は切る（スクロールの箱にはしない。上の帯をページに貼り付けるため） */
-/* 高さは、見えている範囲の高さ（--demo-viewport-height。main.tsx が測る）。スマホではページの幅に合わせて
-   縦の基準（100%）まで広がってしまうため、% では決めない */
 .demo-site {
-  height: var(--demo-viewport-height, 100vh);
-  min-width: 1280px;
-  min-height: 640px;
-  /* 上の帯（.demo-layer）の下から描く */
-  padding-top: var(--demo-bar-space);
-  display: flex;
-  flex-direction: column;
-  overflow: clip;
+  height: 100%;
+  padding-top: var(--demo-bar-height);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
 }
 
-/* アプリの画面。上の帯の下の残りを使う */
-.demo-app {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ブラウザには macOS の信号機ボタンが無いので、タイトルバーの左の空きに飾りで描く */
-.demo-app .titlebar {
+/* アプリの画面の枠（ウインドウに見立てる）。縮小したあとの大きさ */
+.demo-frame {
   position: relative;
-}
-.demo-app .titlebar::before {
-  content: '';
-  position: absolute;
-  left: 20px;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  margin-top: -6px;
-  border-radius: 50%;
-  background: #ff5f57;
+  width: calc(1440px * var(--demo-scale));
+  height: calc(900px * var(--demo-scale));
+  border-radius: calc(10px * var(--demo-scale));
+  overflow: hidden;
+  background: var(--bg-chrome);
   box-shadow:
-    20px 0 #febc2e,
-    40px 0 #28c840;
+    0 0 0 1px var(--border-strong),
+    0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+/* アプリの画面を描く iframe。元の大きさで描いて、絵として縮める */
+.demo-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1440px;
+  height: 900px;
+  border: 0;
+  transform: scale(var(--demo-scale));
+  transform-origin: 0 0;
 }
 
 /* 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層（位置・大きさ・倍率は DemoSite.tsx の ScreenLayer が決める）。
@@ -78,13 +71,14 @@ html {
   pointer-events: auto;
 }
 
-/* 上の帯。機能一覧・いまの操作の説明・再生の操作 */
+/* 上の帯。機能一覧・いまの操作の説明・再生の操作。
+   上に、端末やアプリの見出しで隠れる分（safe-area）を空ける（Claude のアプリのアーティファクトなど。ふつうのブラウザでは 0） */
 .demo-bar {
-  min-height: 48px;
+  min-height: calc(48px + env(safe-area-inset-top, 0px));
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 14px;
+  padding: env(safe-area-inset-top, 0px) 14px 0;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-strong);
 }
@@ -215,7 +209,7 @@ html {
 .demo-layer.compact .demo-bar {
   flex-wrap: wrap;
   row-gap: 6px;
-  padding: 8px 12px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
 }
 .demo-layer.compact .demo-caption {
   order: 1;

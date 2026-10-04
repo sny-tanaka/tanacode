@@ -1,0 +1,32 @@
+/* デモのサイトの、iframe の中のアプリの画面だけの見た目。iframe は決まった大きさ（messages.ts の STAGE）で、縮小は親のページがかける */
+
+/* iPhone のブラウザが、画面より広いページの文字を読みやすくしようと勝手に大きくしないようにする */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.demo-app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ブラウザには macOS の信号機ボタンが無いので、タイトルバーの左の空きに飾りで描く */
+.demo-app .titlebar {
+  position: relative;
+}
+.demo-app .titlebar::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow:
+    20px 0 #febc2e,
+    40px 0 #28c840;
+}

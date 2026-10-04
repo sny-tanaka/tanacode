@@ -1,51 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { App } from '../../App';
 import logo from '../../assets/logo.png';
 import { CloseIcon } from '../../icons';
-import type { DemoBackend } from '../backend';
-import { Director, setPaused } from '../director';
-import { Claude } from '../scenarios/claude';
-import { type Tour, TOURS } from '../tours';
-import { INPUT_BLOCKED, setInputBlocked } from './inputGuard';
+import { TOUR_INFO, type TourInfo } from '../tourInfo';
+import { isStageMessage, type Phase, type ShellMessage, STAGE, stageUrl } from './messages';
 
-// デモのサイトの画面。上の帯（機能一覧・説明・再生の操作）と、その下のアプリの画面。
-// ツアーを選ぶと、台本どおりに作り物のカーソルが動き、帯に操作の説明が出る。終わったら、そのまま自由に触れる
+// デモのサイトの親のページ。上の帯（機能一覧・説明・再生の操作）と、アプリの画面を描く iframe。
+// アプリの画面は iframe の中で決まった大きさのまま描き（app.tsx）、ここでは iframe ごと縮小して画面に収めるだけにする。
+// ツアーを選ぶと、iframe の中で台本どおりに作り物のカーソルが動き、帯に操作の説明が出る。終わったら、そのまま自由に触れる
 
 const REPO = 'https://github.com/sny-tanaka/tanacode';
-
-// playing: ツアーの再生中 / done: ツアーが終わった / failed: ツアーが途中で止まった / free: ツアーを選ばずに触っている
-type Phase = 'playing' | 'done' | 'failed' | 'free';
-
-const FREE_REPLY = [
-  'これはデモです。本物の Claude には繋がっていないので、指示は実行されません。',
-  '',
-  '上の「機能一覧」から機能を選ぶと、実際の画面で操作の流れを紹介します。',
-].join('\n');
-
-// 自由に触るときの返事。送った発言には、デモであることを知らせる決まった返事をする（本物の Claude には繋がない）
-function enterFreeMode(backend: DemoBackend): void {
-  const claudes = new Map<string, Claude>();
-  backend.onUserMessage = (id, text, images) => {
-    let claude = claudes.get(id);
-    if (!claude) {
-      claude = new Claude(backend, id, 'free-');
-      claudes.set(id, claude);
-    }
-    const c = claude;
-    backend.push(id, { type: 'user', id: c.next('u'), text, images });
-    c.startWorking();
-    setTimeout(() => {
-      c.stopWorking();
-      c.say(FREE_REPLY);
-      backend.push(id, { type: 'turn-end' });
-    }, 1200);
-  };
-  // 質問のカードが残っていたら、答えたところで閉じる
-  backend.onChoose = (id) => {
-    backend.setScreen(id, { state: { kind: 'prompt' } });
-    backend.update(id, { attention: null });
-  };
-}
 
 function captionFor(phase: Phase, caption: string): string {
   switch (phase) {
@@ -60,76 +23,49 @@ function captionFor(phase: Phase, caption: string): string {
   }
 }
 
-export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBackend }) {
+export function DemoSite({ tour }: { tour: TourInfo | null }) {
   const [phase, setPhase] = useState<Phase>(tour ? 'playing' : 'free');
   const [caption, setCaption] = useState('');
-  const [paused, setPausedState] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [menu, setMenu] = useState(!tour);
   const [blocked, setBlocked] = useState(false);
   const closeMenu = useCallback(() => setMenu(false), []);
+  const frame = useRef<HTMLIFrameElement>(null);
 
-  // ツアーを流す（ツアーを選んでいなければ、最初のツアーの始まりの状態のまま触れるようにする）
-  useEffect(() => {
-    let director: Director | null = null;
-    let cancelled = false;
-    const start = setTimeout(() => {
-      if (!tour) {
-        backend.select(TOURS[0].session);
-        enterFreeMode(backend);
-        return;
-      }
-      backend.select(tour.session);
-      const d = new Director();
-      director = d;
-      d.onCaption = setCaption;
-      tour
-        .run(backend, d)
-        .then(
-          () => !cancelled && setPhase('done'),
-          (error: unknown) => {
-            console.error('demo failed', error);
-            if (!cancelled) setPhase('failed');
-          },
-        )
-        .finally(() => {
-          d.dispose();
-          enterFreeMode(backend);
-        });
-    }, 600);
-    return () => {
-      cancelled = true;
-      clearTimeout(start);
-      director?.dispose();
-    };
-  }, [backend, tour]);
-
-  // 再生中は見ている人の操作を止める。機能一覧を開いている間は、ツアーも止めておく
-  useEffect(() => {
-    setInputBlocked(phase === 'playing');
-    setPaused(phase === 'playing' && (paused || menu));
-  }, [phase, paused, menu]);
-
-  // 再生中に触ろうとしたら、しばらく知らせを出す
+  // アプリの画面からの知らせ（操作の説明・状態・再生中に触ろうとした）
   const hideBlocked = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const show = () => {
-      setBlocked(true);
-      if (hideBlocked.current) clearTimeout(hideBlocked.current);
-      hideBlocked.current = setTimeout(() => setBlocked(false), 2500);
+    const onMessage = (e: MessageEvent) => {
+      if (!frame.current || e.source !== frame.current.contentWindow || !isStageMessage(e.data)) return;
+      const message = e.data;
+      if (message.type === 'demo:caption') setCaption(message.text);
+      else if (message.type === 'demo:phase') setPhase(message.phase);
+      else {
+        setBlocked(true);
+        if (hideBlocked.current) clearTimeout(hideBlocked.current);
+        hideBlocked.current = setTimeout(() => setBlocked(false), 2500);
+      }
     };
-    window.addEventListener(INPUT_BLOCKED, show);
-    return () => window.removeEventListener(INPUT_BLOCKED, show);
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  const index = tour ? TOURS.indexOf(tour) : -1;
-  const next = index >= 0 ? TOURS[index + 1] : undefined;
+  // 一時停止。機能一覧を開いている間も、ツアーを止めておく（iframe を読み込み直したときにも送る）
+  const pauseNow = phase === 'playing' && (paused || menu);
+  const sendPause = useCallback(() => {
+    frame.current?.contentWindow?.postMessage({ type: 'demo:pause', paused: pauseNow } satisfies ShellMessage, '*');
+  }, [pauseNow]);
+  useEffect(sendPause, [sendPause]);
+
+  const index = tour ? TOUR_INFO.indexOf(tour) : -1;
+  const next = index >= 0 ? TOUR_INFO[index + 1] : undefined;
   const text = captionFor(phase, caption);
 
   return (
     <>
       <div className="demo-site">
-        <div className="demo-app">
-          <App />
+        <div className="demo-frame">
+          <iframe ref={frame} className="demo-stage" src={stageUrl(tour?.id ?? null)} title="tanacode の画面" onLoad={sendPause} />
         </div>
       </div>
       <ScreenLayer>
@@ -145,7 +81,7 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
             </span>
           </div>
           {phase === 'playing' && (
-            <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPausedState((p) => !p)}>
+            <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPaused((p) => !p)}>
               {paused ? '再開' : '一時停止'}
             </button>
           )}
@@ -175,10 +111,10 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
 }
 
 // ツアーの行き先（ハッシュが変わると main.tsx が読み込み直す）
-const tourHref = (tour: Tour) => `#${tour.id}`;
+const tourHref = (tour: TourInfo) => `#${tour.id}`;
 
 // 今と同じツアーを選んだときはハッシュが変わらないので、自分で読み込み直す
-function openTour(e: React.MouseEvent, tour: Tour): void {
+function openTour(e: React.MouseEvent, tour: TourInfo): void {
   if (location.hash !== tourHref(tour)) return;
   e.preventDefault();
   location.reload();
@@ -187,15 +123,20 @@ function openTour(e: React.MouseEvent, tour: Tour): void {
 // 帯をこの幅より狭く出すときは、2 段にする（上の段に操作、下の段に説明）
 const COMPACT_WIDTH = 760;
 
-// 画面の幅（ピンチで拡大・縮小しても変わらない、端末の画面の CSS ピクセル）
-function screenWidth(): number {
-  const vv = window.visualViewport;
-  return vv ? vv.width * vv.scale : document.documentElement.clientWidth;
+// アプリの画面のまわりに空ける幅
+const STAGE_MARGIN = 16;
+
+// アプリの画面を、上の帯の下の残りに横も縦も収める倍率（大きくはしない）。
+// ピンチでの拡大・縮小では変えないよう、見えている範囲ではなくページの大きさ（clientWidth・clientHeight）で求める
+function stageScale(barHeight: number): number {
+  const { clientWidth, clientHeight } = document.documentElement;
+  const margin = Math.min(STAGE_MARGIN, clientWidth * 0.02);
+  return Math.min(1, (clientWidth - margin * 2) / STAGE.width, (clientHeight - barHeight - margin * 2) / STAGE.height);
 }
 
-// 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。ページをスクロールしても、スマホでピンチで拡大・縮小しても、
-// 画面の上に同じ大きさで出す。スマホの Chrome はページの幅に合わせて fixed の基準ごと広げるので、
-// visualViewport（見えている範囲）の位置と倍率に合わせて動かす。描き直しを避けるため、React の状態にはせず直に書き換える
+// 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。スマホでピンチで拡大しても、画面の上に同じ大きさで出す。
+// ピンチで拡大すると fixed の要素は見えている範囲に付いてこないので、visualViewport（見えている範囲）の位置と倍率に合わせて動かす。
+// 描き直しを避けるため、React の状態にはせず直に書き換える
 function ScreenLayer({ children }: { children: React.ReactNode }) {
   const layer = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -212,16 +153,13 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
       el.classList.toggle('compact', width < COMPACT_WIDTH);
       space();
     };
-    // アプリの画面の上の余白と、作り物のカーソルが要素へ移るときのスクロールの余白を、帯の高さに合わせる。
-    // スマホではページ（幅 1280px）を画面の幅に縮小して見せるので、その倍率で割って、縮小したときに帯の下からアプリが始まるようにする。
-    // 倍率はピンチでは変えない（拡大・縮小のたびにアプリが動かないように）
+    // 帯の高さと、アプリの画面を帯の下に収める倍率
     const bar = el.querySelector<HTMLElement>('.demo-bar');
     const space = () => {
-      if (!bar) return;
-      const fit = Math.min(1, screenWidth() / document.documentElement.clientWidth);
+      const height = bar?.offsetHeight ?? 48;
       const root = document.documentElement.style;
-      root.setProperty('--demo-bar-height', `${bar.offsetHeight}px`);
-      root.setProperty('--demo-bar-space', `${Math.ceil(bar.offsetHeight / fit)}px`);
+      root.setProperty('--demo-bar-height', `${height}px`);
+      root.setProperty('--demo-scale', String(stageScale(height)));
     };
     place();
     const observer = new ResizeObserver(space);
@@ -246,7 +184,7 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
   );
 }
 
-function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => void }) {
+function TourMenu({ current, onClose }: { current: TourInfo | null; onClose: () => void }) {
   // 開いたら一覧にフォーカスを移す（最初の項目には移さない。選んである項目に見えないように）
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -255,10 +193,9 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  // アプリの画面は横に広いので、狭い画面では見え方と、全体・細かいところの見方を先に伝える。
-  // PC の狭いウインドウではページをスクロールさせ、スマホではページを縮小して見せる（index.html の viewport）
-  const narrowWindow = document.documentElement.clientWidth < 1280;
-  const shrunk = !narrowWindow && screenWidth() < document.documentElement.clientWidth;
+  // アプリの画面を縮小して見せているときは、細かいところの見方を先に伝える
+  const shrunk = stageScale(Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--demo-bar-height')) || 48) < 0.75;
+  const touch = window.matchMedia('(pointer: coarse)').matches;
   return (
     <div className="demo-menu-backdrop demo-ui" onClick={onClose}>
       <div ref={dialog} className="demo-menu" role="dialog" aria-modal="true" aria-label="機能一覧" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
@@ -274,10 +211,15 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
           Claude Code と IDE をひとつにした macOS アプリ、tanacode のデモ。見たい機能を選ぶと、実際の画面で操作の流れを紹介します。
         </p>
         <p className="demo-menu-note">作り物のデータで動くため、本物の Claude には繋がりません。ツアーが終わると、そのまま自由に触れます。</p>
-        {narrowWindow && <p className="demo-menu-warn">画面の幅が狭いため、アプリの画面の一部だけが見えています。スクロールすると全体を見られます。</p>}
-        {shrunk && <p className="demo-menu-warn">画面の幅に合わせて、アプリの画面を縮小しています。ピンチで拡大すると、細かいところまで読めます。</p>}
+        {shrunk && (
+          <p className="demo-menu-warn">
+            {touch
+              ? '画面に収まるよう、アプリの画面を縮小しています。ピンチで拡大すると、細かいところまで読めます。'
+              : 'ウインドウに収まるよう、アプリの画面を縮小しています。ウインドウを広げると、大きく表示されます。'}
+          </p>
+        )}
         <ol className="demo-tour-list">
-          {TOURS.map((t, i) => (
+          {TOUR_INFO.map((t, i) => (
             <li key={t.id}>
               <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={tourHref(t)} onClick={(e) => openTour(e, t)}>
                 <span className="demo-tour-num">{i + 1}</span>
