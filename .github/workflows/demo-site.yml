@@ -1,6 +1,6 @@
 # デモのサイト（ブラウザで動くデモ）を GitHub Pages に公開する。
 # - develop に入ったら、ビルドして公開する
-# - PR では、ビルドが通るかだけを確かめる（公開はしない）
+# - PR では、ビルドが通るかだけを確かめる（公開はしない）。どこを変えた PR でも動かす
 # - どちらでも、ツアーが最後まで止まらずに流れるかを確かめる（tour。待ち時間を 0 にしてビルドし、Electron で流す）
 # 公開には、リポジトリの Settings → Pages の Source を「GitHub Actions」にしておく
 name: demo-site
@@ -17,16 +17,8 @@ on:
       - 'scripts/third-party-notices.ts'
       - 'scripts/check-demo-tour.mjs'
       - '.github/workflows/demo-site.yml'
+  # build と tour は develop へのマージに必須のチェック。ワークフローが動かないと結果が届かずにマージできないので、PR では絞り込まずに毎回動かす
   pull_request:
-    paths:
-      - 'src/renderer/**'
-      - 'src/shared/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.demo.config.ts'
-      - 'scripts/third-party-notices.ts'
-      - 'scripts/check-demo-tour.mjs'
-      - '.github/workflows/demo-site.yml'
   workflow_dispatch:
 
 permissions:
