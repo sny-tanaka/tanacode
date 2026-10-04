@@ -1,14 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import logo from '../../assets/logo.png';
-import { CloseIcon } from '../../icons';
-import { TOUR_INFO, type TourInfo } from '../tourInfo';
+import { CheckIcon, CloseIcon } from '../../icons';
+import { CHAPTER_INFO, type ChapterInfo } from '../story/chapterInfo';
 import { isStageMessage, type Phase, type ShellMessage, STAGE, stageUrl } from './messages';
 
-// デモのサイトの親のページ。上の帯（機能一覧・説明・再生の操作）と、アプリの画面を描く iframe。
+// デモのサイトの親のページ。上の帯（目次・いまの章と操作の説明・再生の操作）と、アプリの画面を描く iframe。
 // アプリの画面は iframe の中で決まった大きさのまま描き（app.tsx）、ここでは iframe ごと縮小して画面に収めるだけにする。
-// ツアーを選ぶと、iframe の中で台本どおりに作り物のカーソルが動き、帯に操作の説明が出る。終わったら、そのまま自由に触れる
+// ツアーは 1 本で、章に分かれる。目次から章を選ぶと、iframe の中でそれまでの章を早送りで流し、その章から始める
 
 const REPO = 'https://github.com/sny-tanaka/tanacode';
+
+// 最後まで見た章（このブラウザにだけ覚える。目次にチェックの印を出す）
+const WATCHED_KEY = 'tanacode-demo.watched';
+
+function loadWatched(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(WATCHED_KEY) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveWatched(watched: Set<string>): void {
+  try {
+    localStorage.setItem(WATCHED_KEY, JSON.stringify([...watched]));
+  } catch {
+    // 覚えられなくても、印が出ないだけ
+  }
+}
 
 function captionFor(phase: Phase, caption: string): string {
   switch (phase) {
@@ -23,76 +42,120 @@ function captionFor(phase: Phase, caption: string): string {
   }
 }
 
-export function DemoSite({ tour }: { tour: TourInfo | null }) {
-  const [phase, setPhase] = useState<Phase>(tour ? 'playing' : 'free');
+// start: ツアーを始める章（ハッシュで選んだもの。無ければツアーを流さず、目次を出す）
+export function DemoSite({ start }: { start: ChapterInfo | null }) {
+  const [phase, setPhase] = useState<Phase>(start ? 'playing' : 'free');
   const [caption, setCaption] = useState('');
+  const [chapter, setChapter] = useState(start ? CHAPTER_INFO.indexOf(start) : -1);
+  const [preparing, setPreparing] = useState(!!start && CHAPTER_INFO.indexOf(start) > 0);
   const [paused, setPaused] = useState(false);
-  const [menu, setMenu] = useState(!tour);
+  const [menu, setMenu] = useState(!start);
   const [blocked, setBlocked] = useState(false);
+  const [watched, setWatched] = useState(loadWatched);
+  // 書き出した HTML（ツアーの最後の章で、アプリの画面の上に重ねて見せる）
+  const [exported, setExported] = useState<string | null>(null);
   const closeMenu = useCallback(() => setMenu(false), []);
   const frame = useRef<HTMLIFrameElement>(null);
 
-  // アプリの画面からの知らせ（操作の説明・状態・再生中に触ろうとした）
+  // アプリの画面からの知らせ（操作の説明・状態・章・再生中に触ろうとした）
   const hideBlocked = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if (!frame.current || e.source !== frame.current.contentWindow || !isStageMessage(e.data)) return;
       const message = e.data;
-      if (message.type === 'demo:caption') setCaption(message.text);
-      else if (message.type === 'demo:phase') setPhase(message.phase);
-      else {
-        setBlocked(true);
-        if (hideBlocked.current) clearTimeout(hideBlocked.current);
-        hideBlocked.current = setTimeout(() => setBlocked(false), 2500);
+      switch (message.type) {
+        case 'demo:caption':
+          setCaption(message.text);
+          break;
+        case 'demo:phase':
+          setPhase(message.phase);
+          if (message.phase !== 'playing') setPreparing(false);
+          break;
+        case 'demo:chapter':
+          setChapter(message.index);
+          setPreparing(message.preparing);
+          if (!message.preparing) setCaption('');
+          break;
+        case 'demo:watched':
+          setWatched((prev) => {
+            const next = new Set(prev).add(CHAPTER_INFO[message.index].id);
+            saveWatched(next);
+            return next;
+          });
+          break;
+        case 'demo:export':
+          setExported(message.html);
+          break;
+        case 'demo:blocked':
+          setBlocked(true);
+          if (hideBlocked.current) clearTimeout(hideBlocked.current);
+          hideBlocked.current = setTimeout(() => setBlocked(false), 2500);
+          break;
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  // 一時停止。機能一覧を開いている間も、ツアーを止めておく（iframe を読み込み直したときにも送る）
+  const send = useCallback((message: ShellMessage) => frame.current?.contentWindow?.postMessage(message, '*'), []);
+
+  // 一時停止。目次を開いている間も、ツアーを止めておく（iframe を読み込み直したときにも送る）
   const pauseNow = phase === 'playing' && (paused || menu);
-  const sendPause = useCallback(() => {
-    frame.current?.contentWindow?.postMessage({ type: 'demo:pause', paused: pauseNow } satisfies ShellMessage, '*');
-  }, [pauseNow]);
+  const sendPause = useCallback(() => send({ type: 'demo:pause', paused: pauseNow }), [send, pauseNow]);
   useEffect(sendPause, [sendPause]);
 
-  const index = tour ? TOUR_INFO.indexOf(tour) : -1;
-  const next = index >= 0 ? TOUR_INFO[index + 1] : undefined;
-  const text = captionFor(phase, caption);
+  const current = chapter >= 0 ? CHAPTER_INFO[chapter] : null;
+  const last = chapter === CHAPTER_INFO.length - 1;
+  const text = preparing ? `「${current?.title ?? ''}」の手前まで進めています…` : captionFor(phase, caption);
 
   return (
     <>
       <div className="demo-site">
         <div className="demo-frame">
-          <iframe ref={frame} className="demo-stage" src={stageUrl(tour?.id ?? null)} title="tanacode の画面" onLoad={sendPause} />
+          <iframe ref={frame} className="demo-stage" src={stageUrl(start?.id ?? null)} title="tanacode の画面" onLoad={sendPause} />
+          {exported !== null && (
+            <div className="demo-export">
+              <div className="demo-export-head">書き出した HTML（ブラウザで開いたところ）</div>
+              <iframe className="demo-export-page" srcDoc={exported} title="書き出した HTML" sandbox="" />
+            </div>
+          )}
+          {preparing && (
+            <div className="demo-preparing" role="status">
+              <span className="demo-spinner" />
+              <span>「{current?.title}」の手前まで進めています…</span>
+            </div>
+          )}
         </div>
       </div>
       <ScreenLayer>
         <header className="demo-bar demo-ui">
           <span className="demo-badge">デモ</span>
           <button type="button" className="demo-button" onClick={() => setMenu(true)}>
-            機能一覧
+            目次
           </button>
           <div className="demo-caption" aria-live="polite">
-            {tour && <span className="demo-tour-title">{tour.title}</span>}
+            {current && phase === 'playing' && (
+              <span className="demo-tour-title">
+                {chapter + 1} / {CHAPTER_INFO.length}　{current.title}
+              </span>
+            )}
             <span key={text} className="demo-caption-text">
               {text}
             </span>
           </div>
-          {phase === 'playing' && (
+          {phase === 'playing' && !preparing && (
             <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPaused((p) => !p)}>
               {paused ? '再開' : '一時停止'}
             </button>
           )}
-          {tour && (
-            <button type="button" className="demo-button" onClick={() => location.reload()}>
-              {phase === 'playing' ? '最初から' : 'もう一度'}
+          {phase === 'playing' && !preparing && !last && (
+            <button type="button" className="demo-button" onClick={() => send({ type: 'demo:next' })}>
+              次の章へ
             </button>
           )}
-          {(phase === 'done' || phase === 'failed') && next && (
-            <a className="demo-button primary" href={tourHref(next)} onClick={(e) => openTour(e, next)}>
-              次へ: {next.title}
+          {phase !== 'playing' && (
+            <a className="demo-button primary" href={chapterHref(CHAPTER_INFO[0])} onClick={(e) => openChapter(e, CHAPTER_INFO[0])}>
+              {phase === 'free' ? 'ツアーを見る' : 'もう一度'}
             </a>
           )}
           <a className="demo-link" href={REPO} target="_blank" rel="noopener noreferrer">
@@ -104,18 +167,18 @@ export function DemoSite({ tour }: { tour: TourInfo | null }) {
             ツアーの再生中は操作できません。終わると自由に触れます
           </div>
         )}
-        {menu && <TourMenu current={tour} onClose={closeMenu} />}
+        {menu && <ChapterMenu current={phase === 'playing' ? current : null} watched={watched} onClose={closeMenu} />}
       </ScreenLayer>
     </>
   );
 }
 
-// ツアーの行き先（ハッシュが変わると main.tsx が読み込み直す）
-const tourHref = (tour: TourInfo) => `#${tour.id}`;
+// 章の行き先（ハッシュが変わると main.tsx が読み込み直す）
+const chapterHref = (chapter: ChapterInfo) => `#${chapter.id}`;
 
-// 今と同じツアーを選んだときはハッシュが変わらないので、自分で読み込み直す
-function openTour(e: React.MouseEvent, tour: TourInfo): void {
-  if (location.hash !== tourHref(tour)) return;
+// 今と同じ章を選んだときはハッシュが変わらないので、自分で読み込み直す
+function openChapter(e: React.MouseEvent, chapter: ChapterInfo): void {
+  if (location.hash !== chapterHref(chapter)) return;
   e.preventDefault();
   location.reload();
 }
@@ -184,8 +247,8 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
   );
 }
 
-function TourMenu({ current, onClose }: { current: TourInfo | null; onClose: () => void }) {
-  // 開いたら一覧にフォーカスを移す（最初の項目には移さない。選んである項目に見えないように）
+function ChapterMenu({ current, watched, onClose }: { current: ChapterInfo | null; watched: Set<string>; onClose: () => void }) {
+  // 開いたら目次にフォーカスを移す（最初の項目には移さない。選んである項目に見えないように）
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialog.current?.focus();
@@ -198,7 +261,7 @@ function TourMenu({ current, onClose }: { current: TourInfo | null; onClose: () 
   const touch = window.matchMedia('(pointer: coarse)').matches;
   return (
     <div className="demo-menu-backdrop demo-ui" onClick={onClose}>
-      <div ref={dialog} className="demo-menu" role="dialog" aria-modal="true" aria-label="機能一覧" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+      <div ref={dialog} className="demo-menu" role="dialog" aria-modal="true" aria-label="目次" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <div className="demo-menu-head">
           <img className="demo-menu-logo" src={logo} alt="tanacode" />
           <span className="demo-badge">デモ</span>
@@ -208,7 +271,7 @@ function TourMenu({ current, onClose }: { current: TourInfo | null; onClose: () 
           </button>
         </div>
         <p className="demo-menu-lead">
-          Claude Code と IDE をひとつにした macOS アプリ、tanacode のデモ。見たい機能を選ぶと、実際の画面で操作の流れを紹介します。
+          Claude Code と IDE をひとつにした macOS アプリ、tanacode のデモ。ひとつのセッションの作業を通して、実際の画面で機能を紹介します。章を選ぶと、そこから始まります。
         </p>
         <p className="demo-menu-note">作り物のデータで動くため、本物の Claude には繋がりません。ツアーが終わると、そのまま自由に触れます。</p>
         {shrunk && (
@@ -219,19 +282,30 @@ function TourMenu({ current, onClose }: { current: TourInfo | null; onClose: () 
           </p>
         )}
         <ol className="demo-tour-list">
-          {TOUR_INFO.map((t, i) => (
-            <li key={t.id}>
-              <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={tourHref(t)} onClick={(e) => openTour(e, t)}>
+          {CHAPTER_INFO.map((c, i) => (
+            <li key={c.id}>
+              <a className={`demo-tour${current?.id === c.id ? ' current' : ''}`} href={chapterHref(c)} onClick={(e) => openChapter(e, c)}>
                 <span className="demo-tour-num">{i + 1}</span>
                 <span className="demo-tour-body">
-                  <span className="demo-tour-name">{t.title}</span>
-                  <span className="demo-tour-summary">{t.summary}</span>
+                  <span className="demo-tour-name">
+                    {c.title}
+                    {c.isNew && <span className="demo-tour-new">新</span>}
+                    {watched.has(c.id) && (
+                      <span className="demo-tour-watched" aria-label="見た章">
+                        <CheckIcon size={12} />
+                      </span>
+                    )}
+                  </span>
+                  <span className="demo-tour-summary">{c.summary}</span>
                 </span>
               </a>
             </li>
           ))}
         </ol>
         <div className="demo-menu-foot">
+          <a className="demo-button primary" href={chapterHref(CHAPTER_INFO[0])} onClick={(e) => openChapter(e, CHAPTER_INFO[0])}>
+            最初から見る
+          </a>
           <button type="button" className="demo-button" onClick={onClose}>
             {current ? 'ツアーに戻る' : '自由に触る'}
           </button>

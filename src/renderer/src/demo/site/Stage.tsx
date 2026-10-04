@@ -1,25 +1,26 @@
 import { useEffect, useState } from 'react';
 import { App } from '../../App';
-import type { DemoBackend } from '../backend';
-import { Director, setPaused } from '../director';
+import { Director, isFastForward, setFastForward, setPaused } from '../director';
 import { Claude } from '../scenarios/claude';
-import { type Tour, TOURS } from '../tours';
+import { CHAPTERS } from '../story/chapters';
+import type { Story } from '../story/story';
 import { setInputBlocked } from './inputGuard';
 import { isShellMessage, type Phase, type StageMessage } from './messages';
 
-// iframe の中のアプリの画面。ツアーを選んでいれば台本を流し、操作の説明と状態を親のページに知らせる。
-// 終わったら（ツアーを選んでいなければ初めから）、そのまま触れる
+// iframe の中のアプリの画面。ツアー（story/）を章の順に流し、操作の説明・章・状態を親のページに知らせる。
+// start より前の章は早送りで流す（目次から途中の章へ飛んだとき）。ツアーが終わったら（ツアーを流さないときは初めから）、そのまま触れる
 
 const FREE_REPLY = [
   'これはデモです。本物の Claude には繋がっていないので、指示は実行されません。',
   '',
-  '上の「機能一覧」から機能を選ぶと、実際の画面で操作の流れを紹介します。',
+  '上の「目次」から章を選ぶと、実際の画面で操作の流れを紹介します。',
 ].join('\n');
 
 const post = (message: StageMessage) => window.parent.postMessage(message, '*');
 
 // 自由に触るときの返事。送った発言には、デモであることを知らせる決まった返事をする（本物の Claude には繋がない）
-function enterFreeMode(backend: DemoBackend): void {
+function enterFreeMode(story: Story): void {
+  const { backend } = story;
   const claudes = new Map<string, Claude>();
   backend.onUserMessage = (id, text, images) => {
     let claude = claudes.get(id);
@@ -43,43 +44,64 @@ function enterFreeMode(backend: DemoBackend): void {
   };
 }
 
-export function Stage({ tour, backend }: { tour: Tour | null; backend: DemoBackend }) {
-  const [phase, setPhase] = useState<Phase>(tour ? 'playing' : 'free');
+// start: ツアーを始める章の番号（-1 ならツアーを流さない）
+export function Stage({ story, start }: { story: Story; start: number }) {
+  const [phase, setPhase] = useState<Phase>(start >= 0 ? 'playing' : 'free');
 
-  // ツアーを流す（ツアーを選んでいなければ、最初のツアーの始まりの状態のまま触れるようにする）
+  // ツアーを流す
   useEffect(() => {
     let director: Director | null = null;
     let cancelled = false;
-    const start = setTimeout(() => {
-      if (!tour) {
-        backend.select(TOURS[0].session);
-        enterFreeMode(backend);
+    // 「次の章へ」を押したら、この番号の章までを早送りで流す
+    let skipTo = start;
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== window.parent || !isShellMessage(e.data)) return;
+      if (e.data.type === 'demo:pause') setPaused(e.data.paused);
+      else if (e.data.type === 'demo:next' && director) {
+        skipTo = current + 1;
+        setFastForward(true);
+      }
+    };
+    let current = 0;
+    window.addEventListener('message', onMessage);
+    const timer = setTimeout(async () => {
+      if (start < 0) {
+        story.showStart();
+        enterFreeMode(story);
         return;
       }
-      backend.select(tour.session);
       const d = new Director();
       director = d;
-      d.onCaption = (text) => post({ type: 'demo:caption', text });
-      tour
-        .run(backend, d)
-        .then(
-          () => !cancelled && setPhase('done'),
-          (error: unknown) => {
-            console.error('demo failed', error);
-            if (!cancelled) setPhase('failed');
-          },
-        )
-        .finally(() => {
-          d.dispose();
-          enterFreeMode(backend);
-        });
+      story.d = d;
+      story.showExport = (html) => post({ type: 'demo:export', html });
+      story.hideExport = () => post({ type: 'demo:export', html: null });
+      // 早送りの間の説明は出さない（親のページは「手前まで進めています」と出す）
+      d.onCaption = (text) => !isFastForward() && post({ type: 'demo:caption', text });
+      try {
+        for (current = 0; current < CHAPTERS.length && !cancelled; current++) {
+          const ff = current < skipTo;
+          setFastForward(ff);
+          post({ type: 'demo:chapter', index: current, preparing: ff });
+          await CHAPTERS[current].run(story);
+          if (!ff && !isFastForward()) post({ type: 'demo:watched', index: current });
+        }
+        if (!cancelled) setPhase('done');
+      } catch (error) {
+        console.error('demo failed', error);
+        if (!cancelled) setPhase('failed');
+      } finally {
+        setFastForward(false);
+        d.dispose();
+        enterFreeMode(story);
+      }
     }, 600);
     return () => {
       cancelled = true;
-      clearTimeout(start);
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
       director?.dispose();
     };
-  }, [backend, tour]);
+  }, [story, start]);
 
   // 再生中は見ている人の操作を止める。状態は親のページにも知らせる（帯の文言とボタンが変わる）
   useEffect(() => {
@@ -87,15 +109,6 @@ export function Stage({ tour, backend }: { tour: Tour | null; backend: DemoBacke
     if (phase !== 'playing') setPaused(false);
     post({ type: 'demo:phase', phase });
   }, [phase]);
-
-  // 親のページの一時停止（帯のボタンと、機能一覧を開いている間）
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (e.source === window.parent && isShellMessage(e.data)) setPaused(e.data.paused);
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, []);
 
   return (
     <div className="demo-app">

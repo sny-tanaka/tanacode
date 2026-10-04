@@ -12,7 +12,7 @@ import { Claude, pastTurn, statusLine } from './claude';
 export const WORKFLOW_SESSION = 'demo-workflow';
 
 const PROMPT = 'メニューのページのアクセシビリティを点検して、見つかった問題を直して';
-const WORKFLOW_TOOL = 'wf-tool';
+export const WORKFLOW_TOOL = 'wf-tool';
 
 export function setupWorkflow(backend: DemoBackend): void {
   const hour = 3600_000;
@@ -48,7 +48,7 @@ const AGENTS: AgentPlan[] = [
   { id: 'verify', label: '確認役', phase: '確認', tools: 7, result: '2 件とも直っていることを確かめました。npm test も通ります。' },
 ];
 
-class WorkflowPlayer {
+export class WorkflowPlayer {
   private readonly agents = new Map<string, WorkflowAgent>();
   private seq = 0;
   private status: WorkflowRun['status'] = 'running';
@@ -126,7 +126,7 @@ class WorkflowPlayer {
 }
 
 // 「読み上げ」のエージェントの会話（選んだときに見せる）。少しずつ伸ばす
-function readerLog(step: number): ChatEvent[] {
+export function readerLog(step: number): ChatEvent[] {
   const events: ChatEvent[] = [
     { type: 'user', id: 'r-u', text: 'メニューのページを、スクリーンリーダーでの読み上げの観点で点検してください。直さず、問題と場所だけを報告してください。' },
   ];

@@ -2,17 +2,18 @@ import { createRoot } from 'react-dom/client';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '../../global.css';
-import { prepareTour, TOURS } from '../tours';
+import { CHAPTER_INFO } from '../story/chapterInfo';
+import { prepareStory } from '../story/story';
 import './app.css';
 import { installInputGuard } from './inputGuard';
 import { Stage } from './Stage';
 
-// デモのサイトの、iframe の中のアプリの画面（親のページは main.tsx）。#<id> でツアーを選ぶ。
-// 無ければ、最初のツアーの始まりの状態のまま触れるようにする
+// デモのサイトの、iframe の中のアプリの画面（親のページは main.tsx）。#<章の id> で、ツアーをその章から始める。
+// 無ければツアーを流さず、ツアーの始まりの状態のまま触れるようにする
 
 const id = location.hash.slice(1);
-const tour = TOURS.find((t) => t.id === id) ?? null;
-const backend = prepareTour(tour ?? TOURS[0]);
+const start = CHAPTER_INFO.findIndex((c) => c.id === id);
+const story = prepareStory();
 
 installInputGuard();
-createRoot(document.getElementById('root')!).render(<Stage tour={tour} backend={backend} />);
+createRoot(document.getElementById('root')!).render(<Stage story={story} start={start} />);
