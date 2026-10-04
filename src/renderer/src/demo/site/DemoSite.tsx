@@ -187,6 +187,12 @@ function openTour(e: React.MouseEvent, tour: Tour): void {
 // 帯をこの幅より狭く出すときは、2 段にする（上の段に操作、下の段に説明）
 const COMPACT_WIDTH = 760;
 
+// 画面の幅（ピンチで拡大・縮小しても変わらない、端末の画面の CSS ピクセル）
+function screenWidth(): number {
+  const vv = window.visualViewport;
+  return vv ? vv.width * vv.scale : document.documentElement.clientWidth;
+}
+
 // 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。ページをスクロールしても、スマホでピンチで拡大・縮小しても、
 // 画面の上に同じ大きさで出す。スマホの Chrome はページの幅に合わせて fixed の基準ごと広げるので、
 // visualViewport（見えている範囲）の位置と倍率に合わせて動かす。描き直しを避けるため、React の状態にはせず直に書き換える
@@ -204,13 +210,21 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
       el.style.height = `${height}px`;
       el.style.transform = `translate(${vv?.offsetLeft ?? 0}px, ${vv?.offsetTop ?? 0}px) scale(${1 / scale})`;
       el.classList.toggle('compact', width < COMPACT_WIDTH);
+      space();
+    };
+    // アプリの画面の上の余白と、作り物のカーソルが要素へ移るときのスクロールの余白を、帯の高さに合わせる。
+    // スマホではページ（幅 1280px）を画面の幅に縮小して見せるので、その倍率で割って、縮小したときに帯の下からアプリが始まるようにする。
+    // 倍率はピンチでは変えない（拡大・縮小のたびにアプリが動かないように）
+    const bar = el.querySelector<HTMLElement>('.demo-bar');
+    const space = () => {
+      if (!bar) return;
+      const fit = Math.min(1, screenWidth() / document.documentElement.clientWidth);
+      const root = document.documentElement.style;
+      root.setProperty('--demo-bar-height', `${bar.offsetHeight}px`);
+      root.setProperty('--demo-bar-space', `${Math.ceil(bar.offsetHeight / fit)}px`);
     };
     place();
-    // アプリの画面の上の余白と、作り物のカーソルが要素へ移るときのスクロールの余白を、帯の高さに合わせる
-    const bar = el.querySelector('.demo-bar');
-    const observer = new ResizeObserver(() => {
-      if (bar) document.documentElement.style.setProperty('--demo-bar-height', `${(bar as HTMLElement).offsetHeight}px`);
-    });
+    const observer = new ResizeObserver(space);
     if (bar) observer.observe(bar);
     const vv = window.visualViewport;
     vv?.addEventListener('resize', place);
@@ -241,8 +255,10 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  // アプリの画面は横に広いので、狭い画面では一部だけが見えていることと、全体の見方を先に伝える
-  const narrow = document.documentElement.clientWidth < 1280;
+  // アプリの画面は横に広いので、狭い画面では見え方と、全体・細かいところの見方を先に伝える。
+  // PC の狭いウインドウではページをスクロールさせ、スマホではページを縮小して見せる（index.html の viewport）
+  const narrowWindow = document.documentElement.clientWidth < 1280;
+  const shrunk = !narrowWindow && screenWidth() < document.documentElement.clientWidth;
   return (
     <div className="demo-menu-backdrop demo-ui" onClick={onClose}>
       <div ref={dialog} className="demo-menu" role="dialog" aria-modal="true" aria-label="機能一覧" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
@@ -258,11 +274,8 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
           Claude Code と IDE をひとつにした macOS アプリ、tanacode のデモ。見たい機能を選ぶと、実際の画面で操作の流れを紹介します。
         </p>
         <p className="demo-menu-note">作り物のデータで動くため、本物の Claude には繋がりません。ツアーが終わると、そのまま自由に触れます。</p>
-        {narrow && (
-          <p className="demo-menu-warn">
-            画面の幅が狭いため、アプリの画面の一部だけが見えています。スクロールするか、スマホではピンチで縮小すると全体を見られます。
-          </p>
-        )}
+        {narrowWindow && <p className="demo-menu-warn">画面の幅が狭いため、アプリの画面の一部だけが見えています。スクロールすると全体を見られます。</p>}
+        {shrunk && <p className="demo-menu-warn">画面の幅に合わせて、アプリの画面を縮小しています。ピンチで拡大すると、細かいところまで読めます。</p>}
         <ol className="demo-tour-list">
           {TOURS.map((t, i) => (
             <li key={t.id}>
