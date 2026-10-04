@@ -86,7 +86,7 @@ npm run dev
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
 - 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）の 3 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
-- 公開すると、`release-publish.yml` から呼ぶ `homebrew.yml` が、Homebrew の tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask の `version` と `sha256` を新しいバージョンにします。プッシュの前に、ランナーの Mac でその cask から実際に入れ、バージョンと、quarantine 属性が外れることを確かめます。tap への書き込みは GitHub App の token（tap の Contents の書き込みだけ・1 時間で失効）。App の Client ID と秘密鍵は、develop でしか使えない Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）と `HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）に置きます。失敗したときは、develop で `homebrew.yml` を手動で起動し直します。
+- 公開すると、`release-publish.yml` から呼ぶ `homebrew.yml` が、Homebrew の tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask の `version` と `sha256` を新しいバージョンにします。プッシュの前に、ランナーの Mac でその cask から実際に入れ、バージョンと、quarantine 属性が外れることを確かめます。tap への書き込みは GitHub App の token（tap の Contents の書き込みだけ・1 時間で失効）。同じ App を、動作確認済の Claude Code を上げる PR にも使います（下の「Claude Code との互換性の確かめ方」）。App の Client ID と秘密鍵は、develop でしか使えない Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）と `HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）に置きます。失敗したときは、develop で `homebrew.yml` を手動で起動し直します。
 
 ## 見た目の確かめ方
 
@@ -198,12 +198,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
 - GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
   - 定期の確認で失敗したら、Issue を立てます（同じバージョンの Issue が開いていれば立てない）。
-  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、そのまま squash マージし、ブランチを消します。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
+  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、PR の CI が通ったら squash マージし、ブランチを消します。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
     - PR を作ってマージするのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
-    - GitHub Actions が作った PR では、PR の CI が動きません。そのため、マージの条件は PR の CI ではなく、同じ確認（`check` ジョブの `npm test` と本物の claude での `npm run test:cli`、書き換えたあとの `npm test`）が通ったことです。確かめた実行へのリンクを PR の説明に載せます。
-    - マージできなかったときは、`update` ジョブが失敗して、PR は開いたまま残ります。人が見てマージします。
-    - マージしたあとの develop への push では、GitHub Actions のトークンの仕様で、ワークフローが動きません。
-    - リポジトリの設定（Settings → Actions → General）で「Allow GitHub Actions to create and approve pull requests」をオンにしておく必要があります。develop のルールセット（need-pr）は、PR を通すことだけを求めています（承認 0 人・squash のみ）。必須のチェックを足すと、PR の CI が動かないこの PR はマージできなくなります。
+    - GitHub Actions のトークン（`GITHUB_TOKEN`）で作った PR では、PR の CI が動きません。そのため、push・PR の作成・マージは、Homebrew の配信と同じ GitHub App の token でします。PR の CI（必須のチェックの `check`・`build`・`tour`）が普通の PR と同じく動き、`update` ジョブはそれが通るのを待ってからマージします。マージしたあとの develop への push でも、ワークフローが動きます。
+    - App には、tanacode の Contents と Pull requests の書き込みの権限を付けて、tanacode にもインストールしておきます。App の Client ID と秘密鍵は Environment「homebrew」にあるので、`update` ジョブは develop で動かしたときだけ動きます。
+    - PR の CI が通らなかったとき・マージできなかったときは、`update` ジョブが失敗して、PR は開いたまま残ります。人が見て直します。
+    - develop のルールセット（need-pr）は、PR を通すことと、必須のチェック（`check`・`build`・`tour`）が通ることを求めています（承認 0 人・squash のみ）。
   - 途中の控えは artifact（`claude-code-<バージョン>`）にも残します。
   - 「Run workflow」で、バージョンを指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古いバージョンでは作らない）。
 
