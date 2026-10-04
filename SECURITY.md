@@ -32,4 +32,4 @@ tanacode が信頼できない中身を扱う箇所。
 - Claude Code そのものの脆弱性。報告先は Anthropic の窓口（[Responsible Disclosure Policy](https://www.anthropic.com/responsible-disclosure-policy)）
 - ユーザー自身が明示的に実行したコマンドの結果
 - 同じユーザーの権限で動くプロセスが、アプリのソケット（自分だけが読み書きできる）につないで、セッションを名乗ること。Bash を実行できる Claude を含め、そのプロセスはもともと同じ権限で何でもできるため、新しくできることは増えません
-- Apple の署名が無いことそのもの（[README](README.md#インストール) に記載）
+- Apple の署名・公証が無いことそのもの（[README](README.md#インストール) に記載）

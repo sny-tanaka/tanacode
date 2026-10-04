@@ -42,7 +42,7 @@ npm run dev
 | `npm test` | 本物の Claude Code から取った控えで、画面・会話ログ・statusLine の読み取りを確かめる（読み取りの部品の単体の確認も） |
 | `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
-| `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名なし） |
+| `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名は下の「署名」） |
 | `npm run install-app` | `npm run dist` のあと、`/Applications/tanacode.app` に入れ替える（下の「ソースからビルドして使う」） |
 | `npm run screenshot` | README の紹介画像（`design/screenshot.png`）を撮る（下の「README の紹介画像」） |
 | `npm run demo:dev` / `npm run demo:build` | ブラウザで動くデモのサイトを開く（http://localhost:5180）/ `demo-site/` に書き出す（下の「デモのサイト」） |
@@ -54,6 +54,16 @@ npm run dev
 
 - 動いているアプリの上に上書きせず、隣にコピーしてから名前の付け替えで入れ替えます。動いているアプリと Claude Code は、そのまま動き続けます。
 - 終了のダイアログで「動かしたまま終了」を選んで起動し直すと、新しいバージョンになります。
+
+### 署名
+
+アプリの署名は、自己署名の証明書「tanacode Code Signing」です。ad-hoc で署名すると、アプリの要件がビルドごとの cdhash（`designated => cdhash H"…"`）になり、macOS がビルドのたびに別のアプリとして扱います（フォルダへのアクセス・通知・キーチェーンなどの許可を、毎回聞き直される）。証明書で署名すると、要件が `identifier "dev.tanacode.app" and certificate leaf = H"…"` になり、ビルドをまたいで同じアプリとして扱われます。
+
+- `npm run dist`・`npm run release` は、`scripts/electron-builder.mjs` を通して electron-builder を動かします。証明書がコード署名として信頼された状態でキーチェーンにあれば、その SHA-1 を `-c.mac.identity` に渡し、無ければ ad-hoc（`-`）で署名します。どちらで署名したかは、ビルドの最初に表示されます。
+- `npm run release` と `release.yml` は `--require` 付きで、証明書が無いと止まります（配布物を、うっかり ad-hoc で作らないため）。
+- `release.yml` は、環境 `release` の Secrets（`develop` のブランチと `v*` のタグからの実行だけに許している）の `MACOS_SIGNING_P12_BASE64`（p12 を base64 にしたもの）と `MACOS_SIGNING_P12_PASSWORD` から、証明書を一時のキーチェーンに取り込んで署名します。タグを付ける前に、アプリ（と翻訳の補助プログラム）の要件に証明書の SHA-1 が入っているかを確かめます。
+- Apple の署名・公証はしていません。ダウンロードしたアプリには macOS の警告が出ます（README の手順）。pkg は署名していません。
+- 自分の Mac で試すだけなら、証明書は要りません（ad-hoc で署名します）。ビルドしても許可を残したいときは、キーチェーンアクセスの「証明書アシスタント → 証明書を作成」で、名前を `tanacode Code Signing`・アイデンティティのタイプを「自己署名ルート」・証明書のタイプを「コード署名」にして作ります。信頼されていないと表示されたら、証明書を開き、「信頼」の「コード署名」を「常に信頼」にします。
 
 ### 開発版での注意
 
@@ -335,7 +345,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 元（`main.swift` とこのスクリプト）より新しいものがあれば、作り直しません。
   - macOS でない・`swiftc` が無い・作れないときは、警告だけ出して進めます（翻訳のボタンが出ないだけ）。`swiftc` があるかは、先に `xcode-select -p` で確かめます（Command Line Tools が無い Mac では、`xcrun` がインストールのダイアログを出すため）。`--require` を付けると失敗にします。
   - `package.json` の `predev`・`prebuild`・`predist` で呼び、`prerelease` では `--require` 付きで呼びます。`postinstall` には入れません（PR の CI は ubuntu で `npm ci` するため）。
-  - `build.extraResources` で `Contents/Resources/tanacode-translate` に入れます（electron-builder が ad-hoc で署名し直す）。electron-builder は元のファイルが無くても警告だけで進むので、`release.yml` で、パッケージしたあとに両方のアーキテクチャのアプリに入ったかを `test -x` で確かめます。
+  - `build.extraResources` で `Contents/Resources/tanacode-translate` に入れます（electron-builder が、アプリの署名に合わせて署名し直す）。electron-builder は元のファイルが無くても警告だけで進むので、`release.yml` で、パッケージしたあとに両方のアーキテクチャのアプリに入ったかを `test -x` で確かめます。
 
 ### コンテキストの中身と圧縮
 

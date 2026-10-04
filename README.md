@@ -111,7 +111,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 brew install --cask sny-tanaka/tanacode/tanacode
 ```
 
-[Homebrew](https://brew.sh/) で入れて、`brew upgrade` で更新できます。[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac（Apple Silicon・Intel）に合わせて入れます。署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
+[Homebrew](https://brew.sh/) で入れて、`brew upgrade` で更新できます。[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac（Apple Silicon・Intel）に合わせて入れます。Apple の署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
 
 ### ビルド済みのアプリ（Releases）
 
@@ -124,12 +124,14 @@ brew install --cask sny-tanaka/tanacode/tanacode
 
 > **署名について**
 >
-> 個人で作っているため、Apple の署名は未取得。初回だけ macOS の警告が出るので、次の手順で許可します。
+> 個人で作っているため、Apple の署名・公証は未取得（自己署名の証明書で署名）。初回だけ macOS の警告が出るので、次の手順で許可します。
+>
+> 署名はバージョンが変わっても同じ証明書です。更新しても同じアプリとして扱われるので、一度許したフォルダへのアクセスや通知などの許可は残ります。
 
 <details>
 <summary>インストーラー（pkg）で入れる場合</summary>
 
-1. pkg を開きます。署名していないので、初回は「開けません」「Apple は検証できませんでした」などと出るため、「完了」で閉じます
+1. pkg を開きます。Apple の署名・公証がないので、初回は「開けません」「Apple は検証できませんでした」などと出るため、「完了」で閉じます
 2. システム設定 →「プライバシーとセキュリティ」の下の方にある、tanacode の「このまま開く」を押します
 3. インストーラーの手順に沿って進めます（途中で Mac のパスワードを入力）。「アプリケーション」フォルダに入ります
 
@@ -141,7 +143,7 @@ brew install --cask sny-tanaka/tanacode/tanacode
 <summary>zip で入れる場合</summary>
 
 1. zip を開き、`tanacode.app` を「アプリケーション」フォルダへ移します
-2. 署名していないので、そのままでは「壊れているため開けません」などと出て起動できません。一度だけ、ターミナルで次のコマンドを実行してダウンロードの印を外します
+2. Apple の署名・公証がないので、そのままでは「壊れているため開けません」などと出て起動できません。一度だけ、ターミナルで次のコマンドを実行してダウンロードの印を外します
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/tanacode.app
@@ -153,7 +155,7 @@ brew install --cask sny-tanaka/tanacode/tanacode
 
 ### ソースからビルド
 
-手元でビルドしたアプリにはダウンロードの印が付かないので、署名が無くても macOS の警告は出ません。
+手元でビルドしたアプリにはダウンロードの印が付かないので、Apple の署名が無くても macOS の警告は出ません。
 
 必要なもの: Node.js 22・git・Xcode Command Line Tools（チャットの翻訳に使う `swiftc`。無くてもビルドでき、翻訳のボタンが出ないだけ）
 

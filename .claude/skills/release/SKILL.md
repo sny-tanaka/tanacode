@@ -37,7 +37,7 @@ disable-model-invocation: true
   - 点検（5）で、期待と違うものが見つかったとき（公開はしません）
   - 失敗の原因が 4 の表の中になく、どうするか決められないとき
   - タグの削除・下書きの削除など、取り消しにくい操作（7）
-- 署名・公証は無し。利用者には README の手順で開いてもらいます。
+- Apple の署名・公証は無し（自己署名の証明書で署名します。証明書は環境 release の Secrets に置いてあり、無いとワークフローが止まります）。利用者には README の手順で開いてもらいます。
 
 ## 1. 準備
 
@@ -367,7 +367,7 @@ disable-model-invocation: true
 
 ## 補足
 
-- 配布物を手元で作るなら `npm run release`。`release/` に Apple Silicon 用と Intel 用の zip と pkg を作ります（署名なし）。使っている `dist/` と `/Applications` には触れません。翻訳の補助プログラムを作るので、`swiftc`（Xcode Command Line Tools）が要ります（無いと止まる）。
+- 配布物を手元で作るなら `npm run release`。`release/` に Apple Silicon 用と Intel 用の zip と pkg を作ります（自己署名の証明書で署名。キーチェーンに無いと止まります）。使っている `dist/` と `/Applications` には触れません。翻訳の補助プログラムを作るので、`swiftc`（Xcode Command Line Tools）が要ります（無いと止まる）。
 - パッケージ版は本物の userData と Remote Control 付きで動くので、手元で作ったものを試しに起動しないでください。
 
 ## 最後の報告
