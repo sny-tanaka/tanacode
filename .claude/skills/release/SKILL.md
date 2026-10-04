@@ -11,6 +11,20 @@ disable-model-invocation: true
 
 以下の `X.Y.Z` は新しいバージョン（`/release 0.1.4` の引数。省いたときは 1 の 3 で決めたもの）、`<前のタグ>` は直前のリリースのタグ（例: `v0.1.2`）に置き換えます。リポジトリは `sny-tanaka/tanacode`。
 
+## 手元と cloud の違い
+
+手順は同じで、GitHub を操作する道具だけが違います。始める前に `gh auth status` を実行し、通らなければ cloud として進めます。
+
+| 場所 | GitHub の操作 | タグ付け・点検・公開 |
+| --- | --- | --- |
+| 手元（`gh` が使える） | この手順の `gh` のコマンド | 手元でタグをプッシュし、`gh` で点検・公開 |
+| Claude Code の cloud のセッション | MCP のツール（`mcp__github__*`）。`gh` は使えません | Actions を手動で起動して任せます（タグのプッシュは、セッションの中継が 403 で断るため） |
+
+- cloud では、各節の「cloud では」の手順に置き換えます。
+- cloud の Actions の起動は、どちらも develop で行います（`mcp__github__actions_run_trigger` の `run_workflow`、`ref` は `develop`）。
+  - `release.yml` に `version`: ビルドが通ってからタグを付け、下書きを作る
+  - `release-publish.yml` に `version`・`notes`: 下書きを点検し、変更点を足して公開する
+
 ## 決まり
 
 - **オーナーの操作は、なしにします**。確認を挟まず、バージョンを上げる PR のマージから公開まで進めます。`/release` を呼んだこと自体が、リリースしてよいという指示です。
@@ -47,6 +61,8 @@ disable-model-invocation: true
    ```
 
    PR の一覧は、前のタグの日付より後にマージされたものだけを拾います。
+
+   cloud では、PR の一覧を `mcp__github__search_pull_requests`（`repo:sny-tanaka/tanacode is:merged base:develop merged:>=<前のタグの日付>`）で拾います。本文まで取ると大きいので、`fields` で `number`・`title` に絞り、要る PR だけ本文を読みます。
 
 3. 新しいバージョン `X.Y.Z` を決めます。
    - 引数で渡されていれば、それを使います（聞きません）。
@@ -101,6 +117,11 @@ disable-model-invocation: true
   - 内容は一行（40 文字くらいまで）。使う人の言葉で、何ができるようになったか・どう変わったかを書きます。「〜できるようにする」より「〜できる」のように、今の状態で書きます。
   - PR は `#39` の形（GitHub がリンクにします）。
   - 載せないもの: バージョンを上げる PR、文書・CI・テスト・開発の道具だけの変更。これらは末尾の畳んだ「PR の一覧」に残るので、それで足ります。
+  - **前のリリースに無かった機能への直しは、行にしません**。同じバージョンの中で足した機能を、リリースの前に直した PR（不具合・見た目・動きの調整）は、使う人から見れば初めからその形の機能です。「修正」「変更」には載せず、その機能の行の PR に番号を足し（`#62・#75`）、内容と「詳しく」は直したあとの形で書きます。
+    - 例: コンテキストの圧縮を選べる機能を足し（#62）、リリースの前に見た目を直した（#75）→「追加 | コンテキストの中身を見て、圧縮で残すもの・捨てるものを選べる | #62・#75」の 1 行だけ
+    - 見分け方: 直した機能が前のタグにあったかを確かめます。その機能を足した PR が前のタグより後にマージされていれば新しい機能です。迷ったら `git grep <機能の言葉> <前のタグ> -- GUIDE.md src` で、前のタグの文書やソースにあるかを見ます。
+    - 1 つの PR が前からある機能と新しい機能の両方を直しているときは、前からある機能の分だけを「修正」に書きます。
+    - 新しい機能を広げる PR（新しい機能の上に、別の機能を足すもの）は、これまでどおり「追加」の行にしてかまいません。
 - **詳しく**
   - 表の一行で伝わらないものだけ。足りれば節ごと省きます。
   - 見出しは表の内容と同じ一行にして、表から探せるようにします。
@@ -155,6 +176,12 @@ disable-model-invocation: true
 
    `state` が `MERGED` になるまで先へ進みません。待っているあいだにオーナーが先にマージしていたときは、そのまま「3. タグを付けてプッシュ」へ進みます。閉じられた（`CLOSED`）ときは止めて、ユーザーに伝えます。
 
+**cloud では**
+
+- プッシュは `git push -u origin release/vX.Y.Z` のまま（ブランチは通ります）。PR は `mcp__github__create_pull_request` で作ります。
+- CI は `mcp__claude-code-remote__subscribe_pr_activity` で PR を見張り、終わった知らせを待ちます（Bash の `sleep` で待ちません）。知らせが来たら、`mcp__github__pull_request_read` の `get_check_runs` ですべて `success`（`skipped` は可）、`get` で `mergeable_state` が `clean` かを確かめます。
+- マージは `mcp__github__merge_pull_request`（`merge_method: squash`、`expectedHeadSha` に PR の head の SHA）。返事の `sha` がマージコミットです。マージしたら PR の見張りを外します（`unsubscribe_pr_activity`）。
+
 ## 3. タグを付けてプッシュ
 
 1. develop を最新にし、マージされたコミットにいることを確かめます。
@@ -181,6 +208,23 @@ disable-model-invocation: true
    ```bash
    git push origin vX.Y.Z
    ```
+
+**cloud では**
+
+タグは付けず（プッシュは 403 で断られます）、`release.yml` を手動で起動します。ワークフローがビルドの通ったコミットにタグを付けます。
+
+1. 1 と同じく develop を最新にし、`git rev-parse HEAD` がマージコミットと同じことを確かめます。違う（マージのあとに別のコミットが入った）ときは、そのコミットもリリースに入るので、止めてユーザーに伝えます。
+2. `mcp__github__actions_run_trigger` で起動します。
+
+   | 項目 | 値 |
+   | --- | --- |
+   | `method` | `run_workflow` |
+   | `workflow_id` | `release.yml` |
+   | `ref` | `develop` |
+   | `inputs` | `{"version": "X.Y.Z"}` |
+
+   - ワークフローは、develop から起動したか・`X.Y.Z` の形か・同じタグがまだ無いかを先に確かめ、合わなければビルドの前に止まります。
+   - 「バージョンを確かめる」で `package.json` の `version` と比べるのは、タグのプッシュのときと同じです。
 
 ## 4. Actions の見守り
 
@@ -248,6 +292,12 @@ disable-model-invocation: true
    gh release edit vX.Y.Z --notes-file <一時ファイル>
    ```
 
+**cloud では**
+
+- 説明は `mcp__github__list_releases`（`fields` は `tag_name`・`draft`・`html_url`・`body`）で読み、`tag_name` が `vX.Y.Z` のものを見ます。ここで `draft` が `true` か、説明の形が 2 のとおりかを確かめます。
+- 添付の名前と SHA-256 の一致は、MCP では見られません。6 の `release-publish.yml` が、公開の前に同じ点検をします（合わなければ何も変えずに止まります）。
+- 3 の変更点は、ここでは書き込まず、6 で `release-publish.yml` に渡します。
+
 ## 6. 公開
 
 1. 5 の点検がすべて通っていれば、確認を挟まず公開します。期待と違うものがあれば、公開せずに止めて、結果と下書きの URL を見せ、AskUserQuestion でどうするか確かめます。
@@ -266,6 +316,22 @@ disable-model-invocation: true
 
    1 つめが `vX.Y.Z`、2 つめが `<title>release: vX.Y.Z</title>` なら完了。README の「最新バージョン」のバッジはこの shields.io の画像。shields.io はキャッシュするので、古いバージョンのままなら数分おいて確かめ直します。
 
+**cloud では**
+
+1. `mcp__github__actions_run_trigger` で `release-publish.yml` を起動します。
+
+   | 項目 | 値 |
+   | --- | --- |
+   | `method` | `run_workflow` |
+   | `workflow_id` | `release-publish.yml` |
+   | `ref` | `develop` |
+   | `inputs` | `{"version": "X.Y.Z", "notes": "<1 の 4 でまとめた変更点（Markdown）>"}` |
+
+   - ワークフローは、下書きであること・添付の 5 つ・説明が `## ダウンロード` から始まること・ダウンロードの表のファイル名・SHA-256 の一致を確かめてから、`notes` を先頭に足して公開し、最新のリリースにします。
+   - どれかが合わなければ、何も変えずに止まります。ログの `::error::` の行を見て、公開せずにユーザーに伝え、AskUserQuestion でどうするか確かめます。
+2. 4 と同じ要領で run を見守ります（1 分ほどで終わります）。
+3. `mcp__github__get_latest_release` の `tag_name` が `vX.Y.Z` で、本文の先頭に変更点が入っていれば完了。shields.io のバッジは `curl` で 3 と同じく確かめます。
+
 ## 7. 失敗して作り直すとき
 
 - **公開する前**: タグを消し、直しを PR で develop に入れてから、3 の手順でタグを付け直します。タグの削除は AskUserQuestion で確かめてから。
@@ -276,6 +342,7 @@ disable-model-invocation: true
   ```
 
   失敗した run が作りかけの下書きを残していると、次の run の `gh release create` が止まります。5 の 1 のコマンドで下書きが残っていないか確かめ、残っていれば AskUserQuestion で確かめてから `gh release delete vX.Y.Z -R sny-tanaka/tanacode --yes` で消します（タグは別に消します）。
+- **cloud で公開する前**: タグと下書きは、cloud からは消せません。ユーザーに、手元で `git push origin :refs/tags/vX.Y.Z` を実行し、残った下書きを GitHub の Releases の画面で消してもらいます（どちらも AskUserQuestion で確かめてから頼みます）。消えたことを `git ls-remote --tags origin vX.Y.Z` と `mcp__github__list_releases` で確かめ、直しを PR で入れてから、3 の「cloud では」で起動し直します。
 - **公開したあと**: タグは付け直しません。直しを PR で入れ、バージョンを上げて（例: `X.Y.Z` の次の patch）、1 からやり直します。利用者がすでにダウンロードしているためです。
 
 ## 補足
