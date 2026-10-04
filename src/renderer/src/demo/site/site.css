@@ -16,6 +16,15 @@ body,
 #root {
   background: var(--demo-backdrop);
 }
+/* iPhone のブラウザは、幅の広い所の文字を読みやすくしようと勝手に大きくする（縮小したアプリの画面の文字だけが大きくなって崩れる）ので、止める */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+/* 置き場所（アーティファクトなど）がページの上下に付ける safe-area の余白は外す。上の帯が自分で空ける */
+:root {
+  padding: 0;
+}
 
 .demo-site {
   height: 100%;
@@ -88,13 +97,14 @@ body,
   pointer-events: auto;
 }
 
-/* 上の帯。機能一覧・いまの操作の説明・再生の操作 */
+/* 上の帯。機能一覧・いまの操作の説明・再生の操作。
+   上に、端末やアプリの見出しで隠れる分（safe-area）を空ける（Claude のアプリのアーティファクトなど。ふつうのブラウザでは 0） */
 .demo-bar {
-  min-height: 48px;
+  min-height: calc(48px + env(safe-area-inset-top, 0px));
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 14px;
+  padding: env(safe-area-inset-top, 0px) 14px 0;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-strong);
 }
@@ -225,7 +235,7 @@ body,
 .demo-layer.compact .demo-bar {
   flex-wrap: wrap;
   row-gap: 6px;
-  padding: 8px 12px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
 }
 .demo-layer.compact .demo-caption {
   order: 1;
