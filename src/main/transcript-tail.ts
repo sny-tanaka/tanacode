@@ -3,11 +3,17 @@ import { open, stat } from 'node:fs/promises';
 
 // 変更の通知（fs.watch）ですぐ読む。通知が来ないとき（ファイルがまだ無い・取りこぼし）に備えて、定期的にも見る
 const POLL_MS = 150;
+// 親の行がまだ届いていない行を待つ長さ。過ぎたら、親を待たずに書かれた順に出す
+const HOLD_MS = 1000;
 
 // isHistory: 追跡開始時点で既にファイルにあった行（再開したセッションの過去ログ）
 export type EntryHandler = (entry: unknown, isHistory: boolean) => void;
 
-// 書き込み途中の行やマルチバイト文字の分断に備え、改行までをバイト列のまま溜めてから parse する
+type Held = { entry: unknown; isHistory: boolean; parent: string; since: number };
+
+// 書き込み途中の行やマルチバイト文字の分断に備え、改行までをバイト列のまま溜めてから parse する。
+// 最初の応答の行が発言の行より先に書かれ（parentFirst を参照）、発言の行があとの読み込みで届くこともあるので、
+// 親（parentUuid）の行がまだ届いていない行は、親が届くまで（長くても HOLD_MS）出さずに待つ
 export class TranscriptTail {
   private offset = 0;
   private pending = Buffer.alloc(0);
@@ -18,6 +24,9 @@ export class TranscriptTail {
   private watcher: FSWatcher | null = null;
   private historyBytes = 0;
   private historySignaled = false;
+  // 出した行の uuid と、親を待っている行（届いた順）
+  private readonly seen = new Set<string>();
+  private held: Held[] = [];
 
   constructor(
     private readonly file: string,
@@ -34,6 +43,7 @@ export class TranscriptTail {
     }
     this.timer = setInterval(() => {
       this.watchFile();
+      this.releaseExpired();
       void this.poll();
     }, POLL_MS);
     this.watchFile();
@@ -105,13 +115,54 @@ export class TranscriptTail {
       }
       read.push({ entry, isHistory: lineEnd <= this.historyBytes });
     }
-    for (const { entry, isHistory } of parentFirst(read, (r) => r.entry)) this.onEntry(entry, isHistory);
+    for (const { entry, isHistory } of parentFirst(read, (r) => r.entry)) this.accept(entry, isHistory);
     this.pending = buffer;
     if (!this.historySignaled && this.historyBytes > 0 && this.offset >= this.historyBytes) {
       this.historySignaled = true;
       this.onHistoryLoaded?.();
     }
   }
+
+  // 追跡を始めた時点で既にあった行（過去ログ）は全部そろっているので待たない。親が届いていない行と、待っている行の子孫は待たせる
+  private accept(entry: unknown, isHistory: boolean): void {
+    const parent = parentUuidOf(entry);
+    if (!isHistory && parent !== null && !this.seen.has(parent)) {
+      this.held.push({ entry, isHistory, parent, since: Date.now() });
+      return;
+    }
+    this.emit(entry, isHistory);
+  }
+
+  // 出した行を親にして待っていた行も、続けて出す
+  private emit(entry: unknown, isHistory: boolean): void {
+    this.onEntry(entry, isHistory);
+    const uuid = uuidOf(entry);
+    if (uuid === null) return;
+    this.seen.add(uuid);
+    const children = this.held.filter((h) => h.parent === uuid);
+    if (children.length === 0) return;
+    this.held = this.held.filter((h) => h.parent !== uuid);
+    for (const child of children) this.emit(child.entry, child.isHistory);
+  }
+
+  // 親が来ないまま待ちすぎた行は、届いた順に出す（その子孫も続けて出る）
+  private releaseExpired(): void {
+    const now = Date.now();
+    while (this.held.length > 0 && now - this.held[0].since >= HOLD_MS) {
+      const [first] = this.held.splice(0, 1);
+      this.emit(first.entry, first.isHistory);
+    }
+  }
+}
+
+function uuidOf(entry: unknown): string | null {
+  const uuid = (entry as { uuid?: unknown } | null)?.uuid;
+  return typeof uuid === 'string' ? uuid : null;
+}
+
+function parentUuidOf(entry: unknown): string | null {
+  const parent = (entry as { parentUuid?: unknown } | null)?.parentUuid;
+  return typeof parent === 'string' ? parent : null;
 }
 
 // Claude Code は新しい会話ログを作るとき、最初の応答の行を、発言の行（とそれに続く attachment の行）より先に書くことがある。

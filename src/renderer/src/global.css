@@ -1992,6 +1992,7 @@ button.session-ref:hover {
 }
 .send-button {
   flex: none;
+  white-space: nowrap;
   padding: 4px 11px;
   border: 1px solid var(--send-border);
   border-radius: 7px;
@@ -4215,16 +4216,19 @@ details[open] > summary > .disclosure {
   padding: 8px;
   border-top: 1px solid var(--border-subtle);
 }
+/* サイドパネルが狭いときは、圧縮のボタンを次の行（右寄せ）に送る。印の数やボタンの文字を縦に割らない */
 .context-compact-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
 }
 .context-compact-row .send-button {
   margin-left: auto;
   font-size: 12px;
 }
 .context-mark-count {
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -4908,6 +4912,28 @@ body.resizing-rows webview {
   font-size: 11px;
   color: var(--text-secondary);
 }
+/* 狭いときは、状態の文字を先に、次に種類を省略して、かかった時間と止めるボタンを見せる。
+   もっと狭いときは状態の文字を出さない（丸の形と色で分かる） */
+.task-card {
+  container-type: inline-size;
+}
+.task-card-head .task-kind,
+.task-card-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-card-head .task-kind {
+  flex: 0 1 auto;
+}
+.task-card-state {
+  flex: 0 1000 auto;
+}
+@container (max-width: 199px) {
+  .task-card-state {
+    display: none;
+  }
+}
 
 .task-card-state.failed {
   color: var(--danger);
@@ -5188,10 +5214,13 @@ body.resizing-rows webview {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 狭いときは、件数や時間を切らずに次の行へ送る */
+  flex-wrap: wrap;
+  row-gap: 0;
   min-width: 0;
-  height: 28px;
+  min-height: 28px;
   /* 文字の左端を本文（.markdown の左 2px）にそろえ、ホバーの塗りだけ外にはみ出させる */
-  padding: 0 8px;
+  padding: 4px 8px;
   margin: 0 -6px;
   border: none;
   border-radius: 6px;

@@ -47,3 +47,13 @@ export const 止めている途中: StoryObj = {
     </div>
   ),
 };
+
+// サイドパネルをいちばん狭くしたとき（中身の幅 175px）。状態の文字を出さず、種類を省略して、かかった時間と止めるボタンを見せる
+export const 狭い幅: StoryObj = {
+  parameters: { width: 175 },
+  render: () => (
+    <div style={{ height: 520, display: 'flex', flexDirection: 'column' }}>
+      <TaskListPanel tasks={tasks} activeKey="bash:b1" onOpen={() => {}} onStop={() => {}} stopping={new Set()} />
+    </div>
+  ),
+};
