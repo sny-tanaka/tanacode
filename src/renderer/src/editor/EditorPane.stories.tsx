@@ -71,3 +71,30 @@ export const バイナリ: Story = {
 export const 大きすぎる: Story = {
   render: () => <Pane files={[{ path: 'demo-videos/基本.mp4', content: { kind: 'too-large', size: 14 * 1024 * 1024 } }]} />,
 };
+
+// Markdown はプレビューで開く。mermaid のコードブロックは図にする
+// （フローチャートは dagre-d3-es、円グラフは @mermaid-js/parser で描く。mermaid を上げたときの確かめ用）
+const markdown = `# 設計メモ
+
+起動からセッションの作成までの流れ。
+
+\`\`\`mermaid
+flowchart LR
+  A[アプリの起動] --> B{前回のセッション}
+  B -- あり --> C[セッションを戻す]
+  B -- なし --> D[新しいセッション]
+  C --> E[Claude Code]
+  D --> E
+\`\`\`
+
+\`\`\`mermaid
+pie title 変更したファイル
+  "src/main" : 5
+  "src/renderer" : 8
+  "src/shared" : 2
+\`\`\`
+`;
+
+export const Markdown: Story = {
+  render: () => <Pane files={[{ path: 'docs/設計メモ.md', content: { kind: 'text', text: markdown } }]} />,
+};
