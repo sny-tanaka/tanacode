@@ -1,6 +1,6 @@
 /* デモのサイトの親のページだけの見た目。色・文字はアプリ（global.css）の変数を使う */
 
-/* アプリの画面は iframe（app.html）の中で、どの端末・ブラウザでも同じ大きさ（1440×900。README の動画と同じ）で描く。
+/* アプリの画面は iframe（app.html）の中で、どの端末・ブラウザでも同じ大きさ（1440×900。README の紹介画像と同じ）で描く。
    ここでは iframe ごと、上の帯の下の残りに横も縦も収まるよう縮小して、真ん中に置く（倍率 --demo-scale は DemoSite.tsx の ScreenLayer が決める）。
    iframe の中には縮小がかからないので、アプリは PC で見るのと同じ見た目・動きになる */
 :root {
@@ -321,6 +321,9 @@ html {
   gap: 2px;
 }
 .demo-tour-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-heading);
   font-size: 14px;
   font-weight: 600;
@@ -336,4 +339,75 @@ html {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+/* 目次から途中の章へ飛んだとき、それまでの章を早送りで流している間、アプリの画面を覆う */
+.demo-preparing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-chrome);
+  color: var(--text-heading);
+  font-size: 14px;
+}
+.demo-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--ide);
+  border-radius: 50%;
+  animation: demo-spin 0.8s linear infinite;
+}
+@keyframes demo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-spinner {
+    animation: none;
+  }
+}
+
+/* 目次の章の名前の横の印（新しく足した章・最後まで見た章） */
+.demo-tour-new {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--claude-tint);
+  color: var(--claude);
+  font-size: 11px;
+  font-weight: 600;
+}
+.demo-tour-watched {
+  display: inline-flex;
+  color: var(--ok);
+}
+
+/* 書き出した HTML を、アプリの画面の上に重ねて見せる（ツアーの最後の章） */
+.demo-export {
+  position: absolute;
+  inset: 6%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  animation: demo-caption-in 0.3s ease-out;
+}
+.demo-export-head {
+  flex: none;
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.demo-export-page {
+  flex: 1;
+  width: 100%;
+  border: 0;
 }

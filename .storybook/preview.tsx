@@ -23,7 +23,7 @@ const preview: Preview = {
     controls: { expanded: true },
   },
   decorators: [
-    // デモ動画（parameters.bare）は、余白を付けずにアプリの画面いっぱいに出す
+    // README の紹介画像（parameters.bare）は、余白を付けずにアプリの画面いっぱいに出す
     (Story, context) =>
       context.parameters.bare ? (
         <Story />

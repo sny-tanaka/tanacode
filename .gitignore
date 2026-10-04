@@ -21,8 +21,6 @@ storybook-static/
 design/Claude IDE.dc.html
 design/support.js
 design/.thumbnail
-# README のデモ動画（npm run demo:record の出力）
-demo-videos/
 # デモのサイト（npm run demo:build の出力）
 /demo-site/
 

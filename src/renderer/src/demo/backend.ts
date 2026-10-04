@@ -1,12 +1,23 @@
 import type { ChatEvent } from '@shared/chat';
+import type { AppUpdate } from '@shared/app-update';
+import type { ContextItem } from '@shared/context';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type {
+  BrowserActivity,
+  BrowserAnswer,
+  BrowserAskChange,
+  BrowserOpenRequest,
   BranchChanges,
   DirEntry,
+  DiscoveredSession,
   FileChange,
   GitState,
   ScreenChoice,
   SessionSummary,
+  NewSessionOptions,
+  ShellData,
+  ShellExit,
+  ShellOpened,
   TanacodeApi,
   WorkspaceInfo,
 } from '@shared/ipc';
@@ -16,13 +27,13 @@ import type { Activity, ScreenInfo } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { SystemStats } from '@shared/system';
-import type { BashTask } from '@shared/task';
+import type { BashTask, TaskRef } from '@shared/task';
 import type { UsageLimits } from '@shared/usage';
 import type { WorkflowRun } from '@shared/workflow';
 
-// README のデモ動画とデモのサイト用の、アプリの API（window.tanacode）の作り物。
+// デモのサイトと Storybook の紹介画像用の、アプリの API（window.tanacode）の作り物。
 // 本物の Claude Code や git を動かさず、メモリに持ったファイル・会話・画面の状態を返す。
-// 台本（scenarios/）がこの状態を書き換えると、画面へ通知が飛んでアプリがそのまま描き直す
+// 台本（story/）がこの状態を書き換えると、画面へ通知が飛んでアプリがそのまま描き直す
 
 type Listener<T> = (value: T) => void;
 
@@ -50,6 +61,8 @@ export type DemoSession = {
   bash: BashTask[];
   // サブエージェント・ワークフローのエージェントの会話（キーは toolUseId か toolUseId:agentId）
   agentLogs: Record<string, ChatEvent[]>;
+  // コンテキストの中身（サイドパネルの「コンテキスト」）
+  context: ContextItem[];
 };
 
 export type DemoProject = {
@@ -71,6 +84,22 @@ export class DemoBackend {
   // images: 添付した画像の鍵（sessions.image で読める）。本文の中の画像のパスは [Image #n] に置き換えてある
   onUserMessage: (sessionId: string, text: string, images: string[]) => void = () => {};
   onChoose: (sessionId: string, choice: ScreenChoice) => void = () => {};
+  // アプリ内ブラウザの「あなたの番です」への返事・タスクの「止める」・ターミナルへの入力・作業の書き出し
+  onBrowserAnswer: (sessionId: string, askId: string, answer: BrowserAnswer) => void = () => {};
+  onStopTask: (sessionId: string, ref: TaskRef) => void = () => {};
+  onShellWrite: (id: string, data: string) => void = () => {};
+  onExport: (html: string, fileName: string) => void = () => {};
+  onCreate: (cwd: string, options: NewSessionOptions) => string = () => '';
+  // 「既存の会話を開く…」で選んだ会話を取り込み、セッションの ID を返す
+  onImport: (session: DiscoveredSession) => string = () => '';
+  // 「既存の会話を開く…」に出す、アプリの外（ターミナル）で作った会話
+  discovered: DiscoveredSession[] = [];
+  // 翻訳の対訳（原文の行 → 訳文）。null なら翻訳のボタンを出さない
+  translations: Record<string, string> | null = null;
+  // 入っている Claude Code のバージョンと、tanacode の新しいバージョン（null は、まだ分からない）
+  private claudeVersion = VERIFIED_CLAUDE_CODE_VERSION;
+  private appUpdate: AppUpdate | null = null;
+  private notificationsOn = true;
   // アプリで今見ているセッション（見ていないセッションの応答は「新しい応答」になる）
   focused: string | null = null;
 
@@ -88,7 +117,18 @@ export class DemoBackend {
     statusLine: new Channel<{ sessionId: string; info: StatusLineInfo }>(),
     knowledge: new Channel<{ sessionId: string; knowledge: { files: Record<string, FileKnowledge>; contextTokens: number | null } }>(),
     files: new Channel<{ root: string; paths: string[] }>(),
+    browserActivity: new Channel<BrowserActivity>(),
+    browserOpen: new Channel<BrowserOpenRequest>(),
+    browserAsk: new Channel<BrowserAskChange>(),
+    shellData: new Channel<ShellData>(),
+    shellOpened: new Channel<ShellOpened>(),
+    shellExit: new Channel<ShellExit>(),
+    claudeVersion: new Channel<string | null>(),
+    appUpdate: new Channel<AppUpdate | null>(),
   };
+  // 頼んでいる「あなたの番です」（セッション → 依頼）
+  private readonly asks = new Map<string, BrowserAskChange>();
+  private shells = 0;
   private readonly typed = new Map<string, string>();
   // 添付した画像（保存したパス → data URL）
   private readonly images = new Map<string, string>();
@@ -101,7 +141,8 @@ export class DemoBackend {
 
   // ---- 台本から使う ----
 
-  addSession(id: string, summary: Partial<SessionSummary> & { title: string }, events: ChatEvent[] = []): DemoSession {
+  // ready: Claude Code の起動が終わっている（false なら、台本があとで push(id, { type: 'ready' }) する。それまで最初の発言は預かりになる）
+  addSession(id: string, summary: Partial<SessionSummary> & { title: string | null }, events: ChatEvent[] = [], { ready = true }: { ready?: boolean } = {}): DemoSession {
     const now = Date.now();
     const session: DemoSession = {
       summary: {
@@ -122,7 +163,7 @@ export class DemoBackend {
         worktree: null,
         ...summary,
       },
-      events: [{ type: 'process-start' }, { type: 'ready' }, ...events],
+      events: ready ? [{ type: 'process-start' }, { type: 'ready' }, ...events] : [{ type: 'process-start' }, ...events],
       screen: { state: { kind: 'prompt' }, model: 'Opus 5.5', effort: 'high', mode: 'manual', draft: '', ready: true },
       activity: null,
       knowledge: {},
@@ -132,6 +173,7 @@ export class DemoBackend {
       subagents: [],
       bash: [],
       agentLogs: {},
+      context: [],
     };
     this.sessions.set(id, session);
     this.emitSessions();
@@ -200,10 +242,58 @@ export class DemoBackend {
     this.session(id).agentLogs[key] = events;
   }
 
+  // 入っている Claude Code が変わった（ステータスバーのバージョンの印が変わる）
+  setClaudeVersion(version: string): void {
+    this.claudeVersion = version;
+    this.ch.claudeVersion.emit(version);
+  }
+
+  // tanacode の新しいバージョンを確かめた（タイトルバーのバージョンの横の印が変わる）
+  setAppUpdate(update: AppUpdate | null): void {
+    this.appUpdate = update;
+    this.ch.appUpdate.emit(update);
+  }
+
   // Claude がファイルを書き換えた
   writeFile(path: string, text: string): void {
     this.project.files[path] = text;
-    this.ch.files.emit({ root: this.project.root, paths: [path] });
+    // worktree のセッションは別のフォルダで開いているので、セッションのフォルダごとに知らせる（開いているファイルを読み直させる）
+    const roots = new Set([this.project.root, ...[...this.sessions.values()].map((s) => s.summary.cwd)]);
+    for (const root of roots) this.ch.files.emit({ root, paths: [path] });
+  }
+
+  setContext(id: string, items: ContextItem[]): void {
+    this.session(id).context = items;
+    // 画面は、会話かファイルの知らせで読み直す
+    this.know(id, {});
+  }
+
+  // ツールの結果などに出す画像を登録する（鍵は sessions.image で読める。画面が鍵ごとに覚えるので、使い回さない）
+  addImage(key: string, dataUrl: string): void {
+    this.images.set(key, dataUrl);
+  }
+
+  // Claude によるアプリ内ブラウザの操作（「Claude が操作中」の帯と、押す要素の枠。box はページの中の位置）
+  browserActivity(activity: BrowserActivity): void {
+    this.ch.browserActivity.emit(activity);
+  }
+
+  // Claude がアプリ内ブラウザでページを開く（タブが無ければ作る）
+  browserOpen(sessionId: string, url: string): void {
+    this.ch.browserOpen.emit({ sessionId, url });
+  }
+
+  // Claude があなたに操作を頼む（null で取り下げる）
+  browserAsk(sessionId: string, ask: BrowserAskChange['ask']): void {
+    const change = { sessionId, ask };
+    if (ask) this.asks.set(sessionId, change);
+    else this.asks.delete(sessionId);
+    this.ch.browserAsk.emit(change);
+  }
+
+  // ターミナルに出力を流す（改行は \r\n）
+  shellOutput(id: string, data: string): void {
+    this.ch.shellData.emit({ id, data });
   }
 
   setUsage(usage: UsageLimits): void {
@@ -221,7 +311,8 @@ export class DemoBackend {
     return {
       sessions: {
         list: () => ok(this.summaries()),
-        create: () => ok(''),
+        // 新規セッションの画面から始めたとき。台本が一覧に足して ID を返す（返す前に一覧に流しておくと、画面がそのセッションに切り替わる）
+        create: (cwd, options) => ok(this.onCreate(cwd, options)),
         open: () => ok(undefined),
         archive: () => ok(null),
         unarchive: () => ok(undefined),
@@ -247,11 +338,15 @@ export class DemoBackend {
         worktreeLeftovers: () => ok(null),
         history: (id) => ok([...s(id).events]),
         image: (key) => ok(this.images.get(key) ?? null),
-        exportSource: (id) => ok({ events: [...s(id).events], branches: [], home: '/Users/demo' }),
-        saveExport: () => ok(null),
+        exportSource: (id) => ok({ events: [...s(id).events], branches: [p.branch], home: '/Users/demo' }),
+        // 書き出した HTML は台本に渡す（デモのサイトは、その場で開いて見せる）
+        saveExport: (html, fileName) => {
+          this.onExport(html, fileName);
+          return ok(`/Users/demo/Desktop/${fileName}`);
+        },
         revealExport: () => {},
-        discover: () => ok([]),
-        import: () => ok(''),
+        discover: () => ok([...this.discovered]),
+        import: (session) => ok(this.onImport(session)),
         onChanged: (l) => this.ch.sessions.on(l),
         onSelect: (l) => this.ch.select.on(l),
         onNew: () => () => {},
@@ -272,7 +367,13 @@ export class DemoBackend {
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },
-      notifications: { get: () => ok(true), set: () => ok(undefined) },
+      notifications: {
+        get: () => ok(this.notificationsOn),
+        set: (on) => {
+          this.notificationsOn = on;
+          return ok(undefined);
+        },
+      },
       system: {
         onStats: (l) => {
           const tick = () =>
@@ -282,12 +383,10 @@ export class DemoBackend {
           return () => clearInterval(timer);
         },
       },
-      // 動画に警告が映らないよう、動作確認済のバージョンにする
-      claudeVersion: { get: () => ok(VERIFIED_CLAUDE_CODE_VERSION), onChanged: () => () => {} },
-      // デモ動画には新しいバージョンの印を映さない
-      appUpdate: { get: () => ok(null), onChanged: () => () => {} },
+      claudeVersion: { get: () => ok(this.claudeVersion), onChanged: (l) => this.ch.claudeVersion.on(l) },
+      appUpdate: { get: () => ok(this.appUpdate), onChanged: (l) => this.ch.appUpdate.on(l) },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
-      // デモ動画では設定ファイルを登録しない（選択欄は「標準」のまま）
+      // 設定ファイルは登録しない（選択欄は「標準」のまま）
       settingsFiles: {
         list: () => ok([]),
         pick: () => ok(null),
@@ -297,18 +396,24 @@ export class DemoBackend {
         onChanged: () => () => {},
       },
       models: { get: () => ok(this.catalog), refresh: () => ok({ catalog: this.catalog }) },
-      // デモの動画には翻訳のボタンを出さない
-      translate: { available: () => ok(false), run: () => Promise.reject(new Error('デモでは訳せません')), openSettings: () => ok(undefined) },
+      translate: {
+        available: () => ok(this.translations !== null),
+        run: (texts) => ok({ ok: true as const, texts: texts.map((t) => this.translations?.[t] ?? t) }),
+        openSettings: () => ok(undefined),
+      },
       knowledge: {
         get: (id) => ok({ files: s(id).knowledge, contextTokens: s(id).contextTokens }),
         onChanged: (l) => this.ch.knowledge.on(l),
       },
-      context: { get: () => ok({ items: [] }) },
+      context: { get: (id) => ok({ items: [...s(id).context] }) },
       tasks: {
         bash: (id) => ok(s(id).bash),
         onBashChanged: (l) => this.ch.bash.on(l),
         agentLog: (id, ref) => ok(s(id).agentLogs[ref.kind === 'workflow' ? `${ref.toolUseId}:${ref.agentId}` : ref.toolUseId] ?? []),
-        stop: () => ok(null),
+        stop: (id, ref) => {
+          this.onStopTask(id, ref);
+          return ok(null);
+        },
       },
       pty: {
         // 送った発言は、文字のあとに Enter（\r）で届く
@@ -335,13 +440,14 @@ export class DemoBackend {
         onData: () => () => {},
       },
       shell: {
-        create: () => ok({ id: 'demo-shell', name: 'zsh' }),
-        write: () => {},
+        // 開くたびに別のシェル（タブ）にする。出力は台本が shellOutput で流す
+        create: () => ok({ id: `demo-shell-${++this.shells}`, name: 'zsh' }),
+        write: (id, data) => this.onShellWrite(id, data),
         resize: () => {},
         kill: () => {},
-        onData: () => () => {},
-        onExit: () => () => {},
-        onOpened: () => () => {},
+        onData: (l) => this.ch.shellData.on(l),
+        onExit: (l) => this.ch.shellExit.on(l),
+        onOpened: (l) => this.ch.shellOpened.on(l),
       },
       folders: {
         pick: () => ok(null),
@@ -386,19 +492,23 @@ export class DemoBackend {
       browser: {
         attach: () => {},
         activate: () => {},
-        onOpen: () => () => {},
+        onOpen: (l) => this.ch.browserOpen.on(l),
         onNewTab: () => () => {},
         onSelectTab: () => () => {},
         onCloseTab: () => () => {},
         openExternal: () => ok(undefined),
-        onActivity: () => () => {},
+        onActivity: (l) => this.ch.browserActivity.on(l),
         onViewport: () => () => {},
         hosts: () => ok([]),
         setHosts: (hosts) => ok(hosts),
         onHostsOpen: () => () => {},
-        onAsk: () => () => {},
-        asks: () => ok([]),
-        answer: () => {},
+        onAsk: (l) => this.ch.browserAsk.on(l),
+        asks: () => ok([...this.asks.values()]),
+        // 返事をしたら、本物と同じく依頼を取り下げる（帯はこれで消える）
+        answer: (sessionId, askId, answer) => {
+          this.browserAsk(sessionId, null);
+          this.onBrowserAnswer(sessionId, askId, answer);
+        },
         onShow: () => () => {},
       },
       pathForFile: () => '',

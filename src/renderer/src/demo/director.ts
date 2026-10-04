@@ -1,4 +1,4 @@
-// デモ動画とデモのサイトの操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
+// デモのサイトの操作係。画面の上に作り物のマウスカーソルを描いて動かし、ホバー・クリック・文字入力をする。
 // 録画は画面の外で描いたコマを撮るので OS のカーソルは映らない。代わりにこのカーソルを映す
 
 // デモのサイトの一時停止。止めている間は、台本の待ち時間を進めない
@@ -13,15 +13,28 @@ export function setPaused(value: boolean): void {
   else resume();
 }
 
-// 台本の待ち時間。止められるよう、100ms ずつ進める
+// デモのサイトの早送り。目次から途中の章へ飛ぶとき・「次の章へ」を押したときに、それまでの台本を手早く流す。
+// 待ち時間を短く切り詰め（画面が描き直す間だけ待つ）、カーソルは飛ばして動かし、文字は一度に入れる
+let fast = false;
+const FAST_STEP_MS = 30;
+
+export function setFastForward(value: boolean): void {
+  fast = value;
+}
+
+export function isFastForward(): boolean {
+  return fast;
+}
+
+// 台本の待ち時間。止められるよう、100ms ずつ進める。早送りの間は、1 回だけ短く待って終える
 export async function sleep(ms: number): Promise<void> {
   let left = ms;
   for (;;) {
     while (paused) await resumed;
     if (left <= 0) return;
-    const step = Math.min(left, 100);
+    const step = Math.min(left, fast ? FAST_STEP_MS : 100);
     await new Promise<void>((r) => setTimeout(r, step));
-    left -= step;
+    left = fast ? 0 : left - step;
   }
 }
 
@@ -37,7 +50,7 @@ export class Director {
   private x = 0;
   private y = 0;
   private hovered: Element | null = null;
-  // デモのサイトで、いま見せている操作の説明を出す（動画では何も出さない）
+  // デモのサイトで、いま見せている操作の説明を出す
   onCaption: (text: string) => void = () => {};
 
   constructor(start: { x: number; y: number } = { x: window.innerWidth * 0.6, y: window.innerHeight * 0.7 }) {
@@ -89,6 +102,7 @@ export class Director {
     const r = el.getBoundingClientRect();
     const x = r.left + r.width / 2 + dx;
     const y = r.top + r.height / 2 + dy;
+    if (fast) ms = 0;
     this.place(x, y, ms);
     await sleep(ms);
     this.hover(document.elementFromPoint(x, y) ?? el);
@@ -105,6 +119,7 @@ export class Director {
 
   // 画面の座標へ動かす（Monaco の行番号の横など、要素の中心ではないところ）
   async moveToPoint(x: number, y: number, ms = 700): Promise<void> {
+    if (fast) ms = 0;
     this.place(x, y, ms);
     await sleep(ms);
     const el = document.elementFromPoint(x, y);
@@ -137,6 +152,12 @@ export class Director {
     el.focus();
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
+    if (fast) {
+      setter.call(el, el.value + text);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(1);
+      return;
+    }
     for (const ch of text) {
       setter.call(el, el.value + ch);
       el.dispatchEvent(new Event('input', { bubbles: true }));
