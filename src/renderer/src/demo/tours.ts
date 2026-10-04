@@ -1,6 +1,7 @@
 import { DemoBackend, type DemoProject } from './backend';
 import { cafeProject, DEMO_CATALOG, demoUsage, taxedProject } from './data';
 import type { Director } from './director';
+import { TOUR_INFO, type TourInfo } from './tourInfo';
 import { BASIC_SESSION, runBasic, setupBasic } from './scenarios/basic';
 import { MULTI_SESSION, runMulti, setupMulti } from './scenarios/multi';
 import { PREVIEW_SESSION, runPreview, setupPreview } from './scenarios/preview';
@@ -11,12 +12,7 @@ import { runWorkflow, setupWorkflow, WORKFLOW_SESSION } from './scenarios/workfl
 // 機能紹介のツアー。README のデモ動画（Demo.stories.tsx）と、デモのサイト（site/）の両方で使う。
 // どれもアプリの画面全体を、作り物のデータ（DemoBackend）と台本（scenarios/）で動かす
 
-export type Tour = {
-  id: string;
-  // Storybook のストーリー名と、デモのサイトの機能一覧に出す名前
-  title: string;
-  // 機能一覧に出す、1〜2 文の説明
-  summary: string;
+export type Tour = TourInfo & {
   session: string;
   // 始まりのプロジェクト（省略すると、手を付ける前のもの）
   project?: () => DemoProject;
@@ -26,19 +22,17 @@ export type Tour = {
   run: (backend: DemoBackend, director: Director) => Promise<void>;
 };
 
+const info = (id: string): TourInfo => TOUR_INFO.find((t) => t.id === id)!;
+
 export const TOURS: Tour[] = [
   {
-    id: 'basic',
-    title: '基本',
-    summary: '指示を送ると、ツール・質問・書き換えたファイル・サブエージェントが、それぞれ見やすい形で並びます。',
+    ...info('basic'),
     session: BASIC_SESSION,
     setup: setupBasic,
     run: runBasic,
   },
   {
-    id: 'review',
-    title: 'レビュー',
-    summary: 'ブランチの変更を PR のように見て、差分の行にコメント。まとめて Claude に直してもらえます。',
+    ...info('review'),
     session: REVIEW_SESSION,
     project: taxedProject,
     columns: { sessions: 170, claude: 460, side: 240 },
@@ -46,9 +40,7 @@ export const TOURS: Tour[] = [
     run: runReview,
   },
   {
-    id: 'workflow',
-    title: 'ワークフロー',
-    summary: 'Claude が動かしたワークフローを図で表示。並列に動くエージェントの進み具合と会話を追えます。',
+    ...info('workflow'),
     session: WORKFLOW_SESSION,
     project: taxedProject,
     columns: { sessions: 200, claude: 410, side: 240 },
@@ -56,9 +48,7 @@ export const TOURS: Tour[] = [
     run: runWorkflow,
   },
   {
-    id: 'multi',
-    title: '複数のセッション',
-    summary: 'いくつものセッションを並行して動かし、一覧の印で「作業中」「回答待ち」「新しい応答」を見分けます。',
+    ...info('multi'),
     session: MULTI_SESSION,
     project: taxedProject,
     columns: { sessions: 270, claude: 540, side: 220 },
@@ -66,9 +56,7 @@ export const TOURS: Tour[] = [
     run: runMulti,
   },
   {
-    id: 'preview',
-    title: 'プレビュー',
-    summary: '開発中のページをアプリ内のブラウザで開き、崩れている要素をクリックで選んで直してもらいます。',
+    ...info('preview'),
     session: PREVIEW_SESSION,
     project: taxedProject,
     columns: { sessions: 180, claude: 440, side: 200 },
@@ -76,9 +64,7 @@ export const TOURS: Tour[] = [
     run: runPreview,
   },
   {
-    id: 'visibility',
-    title: '見える化',
-    summary: 'Claude が読んだファイル・コンテキストの量・hooks・利用枠を、作業に合わせて表示します。',
+    ...info('visibility'),
     session: VISIBILITY_SESSION,
     columns: { sessions: 200, claude: 560, side: 280 },
     setup: setupVisibility,

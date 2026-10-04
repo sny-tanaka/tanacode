@@ -1,51 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { App } from '../../App';
 import logo from '../../assets/logo.png';
 import { CloseIcon } from '../../icons';
-import type { DemoBackend } from '../backend';
-import { Director, setPaused } from '../director';
-import { Claude } from '../scenarios/claude';
-import { type Tour, TOURS } from '../tours';
-import { INPUT_BLOCKED, setInputBlocked } from './inputGuard';
+import { TOUR_INFO, type TourInfo } from '../tourInfo';
+import { isStageMessage, type Phase, type ShellMessage, STAGE, stageUrl } from './messages';
 
-// デモのサイトの画面。上の帯（機能一覧・説明・再生の操作）と、その下のアプリの画面。
-// ツアーを選ぶと、台本どおりに作り物のカーソルが動き、帯に操作の説明が出る。終わったら、そのまま自由に触れる
+// デモのサイトの親のページ。上の帯（機能一覧・説明・再生の操作）と、アプリの画面を描く iframe。
+// アプリの画面は iframe の中で決まった大きさのまま描き（app.tsx）、ここでは iframe ごと縮小して画面に収めるだけにする。
+// ツアーを選ぶと、iframe の中で台本どおりに作り物のカーソルが動き、帯に操作の説明が出る。終わったら、そのまま自由に触れる
 
 const REPO = 'https://github.com/sny-tanaka/tanacode';
-
-// playing: ツアーの再生中 / done: ツアーが終わった / failed: ツアーが途中で止まった / free: ツアーを選ばずに触っている
-type Phase = 'playing' | 'done' | 'failed' | 'free';
-
-const FREE_REPLY = [
-  'これはデモです。本物の Claude には繋がっていないので、指示は実行されません。',
-  '',
-  '上の「機能一覧」から機能を選ぶと、実際の画面で操作の流れを紹介します。',
-].join('\n');
-
-// 自由に触るときの返事。送った発言には、デモであることを知らせる決まった返事をする（本物の Claude には繋がない）
-function enterFreeMode(backend: DemoBackend): void {
-  const claudes = new Map<string, Claude>();
-  backend.onUserMessage = (id, text, images) => {
-    let claude = claudes.get(id);
-    if (!claude) {
-      claude = new Claude(backend, id, 'free-');
-      claudes.set(id, claude);
-    }
-    const c = claude;
-    backend.push(id, { type: 'user', id: c.next('u'), text, images });
-    c.startWorking();
-    setTimeout(() => {
-      c.stopWorking();
-      c.say(FREE_REPLY);
-      backend.push(id, { type: 'turn-end' });
-    }, 1200);
-  };
-  // 質問のカードが残っていたら、答えたところで閉じる
-  backend.onChoose = (id) => {
-    backend.setScreen(id, { state: { kind: 'prompt' } });
-    backend.update(id, { attention: null });
-  };
-}
 
 function captionFor(phase: Phase, caption: string): string {
   switch (phase) {
@@ -60,78 +23,49 @@ function captionFor(phase: Phase, caption: string): string {
   }
 }
 
-export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBackend }) {
+export function DemoSite({ tour }: { tour: TourInfo | null }) {
   const [phase, setPhase] = useState<Phase>(tour ? 'playing' : 'free');
   const [caption, setCaption] = useState('');
-  const [paused, setPausedState] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [menu, setMenu] = useState(!tour);
   const [blocked, setBlocked] = useState(false);
   const closeMenu = useCallback(() => setMenu(false), []);
+  const frame = useRef<HTMLIFrameElement>(null);
 
-  // ツアーを流す（ツアーを選んでいなければ、最初のツアーの始まりの状態のまま触れるようにする）
-  useEffect(() => {
-    let director: Director | null = null;
-    let cancelled = false;
-    const start = setTimeout(() => {
-      if (!tour) {
-        backend.select(TOURS[0].session);
-        enterFreeMode(backend);
-        return;
-      }
-      backend.select(tour.session);
-      const d = new Director();
-      director = d;
-      d.onCaption = setCaption;
-      tour
-        .run(backend, d)
-        .then(
-          () => !cancelled && setPhase('done'),
-          (error: unknown) => {
-            console.error('demo failed', error);
-            if (!cancelled) setPhase('failed');
-          },
-        )
-        .finally(() => {
-          d.dispose();
-          enterFreeMode(backend);
-        });
-    }, 600);
-    return () => {
-      cancelled = true;
-      clearTimeout(start);
-      director?.dispose();
-    };
-  }, [backend, tour]);
-
-  // 再生中は見ている人の操作を止める。機能一覧を開いている間は、ツアーも止めておく
-  useEffect(() => {
-    setInputBlocked(phase === 'playing');
-    setPaused(phase === 'playing' && (paused || menu));
-  }, [phase, paused, menu]);
-
-  // 再生中に触ろうとしたら、しばらく知らせを出す
+  // アプリの画面からの知らせ（操作の説明・状態・再生中に触ろうとした）
   const hideBlocked = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const show = () => {
-      setBlocked(true);
-      if (hideBlocked.current) clearTimeout(hideBlocked.current);
-      hideBlocked.current = setTimeout(() => setBlocked(false), 2500);
+    const onMessage = (e: MessageEvent) => {
+      if (!frame.current || e.source !== frame.current.contentWindow || !isStageMessage(e.data)) return;
+      const message = e.data;
+      if (message.type === 'demo:caption') setCaption(message.text);
+      else if (message.type === 'demo:phase') setPhase(message.phase);
+      else {
+        setBlocked(true);
+        if (hideBlocked.current) clearTimeout(hideBlocked.current);
+        hideBlocked.current = setTimeout(() => setBlocked(false), 2500);
+      }
     };
-    window.addEventListener(INPUT_BLOCKED, show);
-    return () => window.removeEventListener(INPUT_BLOCKED, show);
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  const index = tour ? TOURS.indexOf(tour) : -1;
-  const next = index >= 0 ? TOURS[index + 1] : undefined;
+  // 一時停止。機能一覧を開いている間も、ツアーを止めておく（iframe を読み込み直したときにも送る）
+  const pauseNow = phase === 'playing' && (paused || menu);
+  const sendPause = useCallback(() => {
+    frame.current?.contentWindow?.postMessage({ type: 'demo:pause', paused: pauseNow } satisfies ShellMessage, '*');
+  }, [pauseNow]);
+  useEffect(sendPause, [sendPause]);
+
+  const index = tour ? TOUR_INFO.indexOf(tour) : -1;
+  const next = index >= 0 ? TOUR_INFO[index + 1] : undefined;
   const text = captionFor(phase, caption);
 
   return (
     <>
       <div className="demo-site">
-        <div className="demo-stage">
-          <div className="demo-app">
-            <App />
-          </div>
+        <div className="demo-frame">
+          <iframe ref={frame} className="demo-stage" src={stageUrl(tour?.id ?? null)} title="tanacode の画面" onLoad={sendPause} />
         </div>
       </div>
       <ScreenLayer>
@@ -147,7 +81,7 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
             </span>
           </div>
           {phase === 'playing' && (
-            <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPausedState((p) => !p)}>
+            <button type="button" className="demo-button" aria-pressed={paused} onClick={() => setPaused((p) => !p)}>
               {paused ? '再開' : '一時停止'}
             </button>
           )}
@@ -177,10 +111,10 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
 }
 
 // ツアーの行き先（ハッシュが変わると main.tsx が読み込み直す）
-const tourHref = (tour: Tour) => `#${tour.id}`;
+const tourHref = (tour: TourInfo) => `#${tour.id}`;
 
 // 今と同じツアーを選んだときはハッシュが変わらないので、自分で読み込み直す
-function openTour(e: React.MouseEvent, tour: Tour): void {
+function openTour(e: React.MouseEvent, tour: TourInfo): void {
   if (location.hash !== tourHref(tour)) return;
   e.preventDefault();
   location.reload();
@@ -189,8 +123,7 @@ function openTour(e: React.MouseEvent, tour: Tour): void {
 // 帯をこの幅より狭く出すときは、2 段にする（上の段に操作、下の段に説明）
 const COMPACT_WIDTH = 760;
 
-// アプリの画面の大きさ（site.css の .demo-stage）と、まわりに空ける幅
-const STAGE = { width: 1440, height: 900 };
+// アプリの画面のまわりに空ける幅
 const STAGE_MARGIN = 16;
 
 // アプリの画面を、上の帯の下の残りに横も縦も収める倍率（大きくはしない）。
@@ -251,7 +184,7 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
   );
 }
 
-function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => void }) {
+function TourMenu({ current, onClose }: { current: TourInfo | null; onClose: () => void }) {
   // 開いたら一覧にフォーカスを移す（最初の項目には移さない。選んである項目に見えないように）
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -286,7 +219,7 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
           </p>
         )}
         <ol className="demo-tour-list">
-          {TOURS.map((t, i) => (
+          {TOUR_INFO.map((t, i) => (
             <li key={t.id}>
               <a className={`demo-tour${current?.id === t.id ? ' current' : ''}`} href={tourHref(t)} onClick={(e) => openTour(e, t)}>
                 <span className="demo-tour-num">{i + 1}</span>

@@ -106,20 +106,13 @@ class DemoWebview extends HTMLElement {
     return { isEmpty: () => false, toDataURL: () => url };
   }
 
-  // ページの中の座標 1 つが、画面の上で何ピクセルか（デモのサイトはアプリの画面を zoom で縮めるので、1 より小さくなる）
-  private zoom(): number {
-    const width = this.frame.contentWindow?.innerWidth;
-    return width ? this.frame.getBoundingClientRect().width / width : 1;
-  }
-
   // ページの中の要素（台本がマウスを動かす先）と、その画面上の位置
   pageElement(selector: string): { el: Element; x: number; y: number } | null {
     const el = this.frame.contentDocument?.querySelector(selector);
     if (!el) return null;
     const frame = this.frame.getBoundingClientRect();
     const r = el.getBoundingClientRect();
-    const zoom = this.zoom();
-    return { el, x: frame.left + (r.left + r.width / 2) * zoom, y: frame.top + (r.top + r.height / 2) * zoom };
+    return { el, x: frame.left + r.left + r.width / 2, y: frame.top + r.top + r.height / 2 };
   }
 
   // ページの中にマウスの出来事を送る（x, y は画面上の位置）
@@ -128,8 +121,7 @@ class DemoWebview extends HTMLElement {
     const win = this.frame.contentWindow as (Window & typeof globalThis) | null;
     if (!doc || !win) return;
     const frame = this.frame.getBoundingClientRect();
-    const zoom = this.zoom();
-    const init = { bubbles: true, cancelable: true, clientX: (x - frame.left) / zoom, clientY: (y - frame.top) / zoom, view: win };
+    const init = { bubbles: true, cancelable: true, clientX: x - frame.left, clientY: y - frame.top, view: win };
     const target = doc.elementFromPoint(init.clientX, init.clientY) ?? doc.body;
     target.dispatchEvent(new win.MouseEvent(type, init));
   }

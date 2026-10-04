@@ -6,7 +6,8 @@ import { defineConfig } from 'vite';
 import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
 
 // デモのサイト（GitHub Pages で公開する、ブラウザで動くデモ）。npm run demo:dev で開き、npm run demo:build で demo-site/ に書き出す。
-// 画面はアプリと同じ部品で、window.tanacode を作り物（src/renderer/src/demo/backend.ts）に差し替えて動かす
+// 画面はアプリと同じ部品で、window.tanacode を作り物（src/renderer/src/demo/backend.ts）に差し替えて動かす。
+// 親のページ（index.html）が、アプリの画面（app.html）を iframe で決まった大きさのまま描き、縮小して画面に収める
 
 const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string };
 const outDir = resolve('demo-site');
@@ -38,5 +39,11 @@ export default defineConfig({
     }),
   ],
   // アプリの部品をまるごと入れるので、ひとつめの塊は 5MB ほどになる（大きさの警告は出さない）
-  build: { outDir, emptyOutDir: true, chunkSizeWarningLimit: 8000 },
+  build: {
+    outDir,
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 8000,
+    // 親のページ（上の帯・機能一覧）と、iframe の中のアプリの画面
+    rollupOptions: { input: { index: resolve('src/renderer/src/demo/site/index.html'), app: resolve('src/renderer/src/demo/site/app.html') } },
+  },
 });
