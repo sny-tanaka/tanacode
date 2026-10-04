@@ -654,7 +654,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `inputGuard.ts`: ツアーの再生中は、見ている人のマウス・キーボードの操作をアプリに届けません（台本の操作とぶつからないように）。台本の操作は `isTrusted` が false なので通ります
   - `site.css` / `app.css`: 親のページ（上の帯・目次・吹き出し・準備中の幕・iframe の枠）と、アプリの画面（タイトルバーの飾りの信号機ボタン）だけの見た目
 - 作り物の API（`backend.ts`）は、ツアーが使う機能のぶんだけ作ってあります。セッションの作成（`onCreate`）・worktree の準備・コンテキストの中身・アプリ内ブラウザの Claude の操作と「あなたの番」の依頼・ターミナルの出力・バックグラウンドの作業の停止・翻訳・書き出しの保存など。ファイルを書き換えると、各セッションのフォルダ（worktree を含む）に変更を知らせ、開いているファイルを読み直させます。
-- 画面の大きさ: アプリの画面は、どの端末・ブラウザでも 1440×900（README の紹介画像と同じ。`messages.ts` の `STAGE`）で描きます。親のページが、上の帯の下の残りに横も縦も収まるよう iframe を `transform` で縮小して、真ん中に置きます（大きくはしません。倍率 `--demo-scale` は `DemoSite.tsx` の `ScreenLayer` が決めます）。
+- 画面の大きさ: アプリの画面は、どの端末・ブラウザでも 1920×1080（外付けのフル HD のモニターと同じ。README の紹介画像も同じ。`messages.ts` の `STAGE`）で描きます。親のページが、上の帯の下の残りに横も縦も収まるよう iframe を `transform` で縮小して、真ん中に置きます（大きくはしません。倍率 `--demo-scale` は `DemoSite.tsx` の `ScreenLayer` が決めます）。
   - アプリの画面そのものに `zoom` や `transform` をかけると、ブラウザによって文字の大きさや折り返し、固定の位置に出す部品（ツールチップなど）の位置がずれます。iframe ごと絵として縮めれば、中には影響しません。
   - スマホでは、ピンチで拡大して細かいところを読めます。上の帯・知らせ・目次は、いま見えている範囲（`visualViewport`）に重ねる層（`ScreenLayer`）に置き、拡大しても同じ大きさで画面の上に出します。幅が 760px より狭いと、帯を 2 段にします。
 - `vite.demo.config.ts`: サイトのビルドの設定。`@shared` の別名・バージョンの埋め込み・ライセンス表示（`demo-site/THIRD_PARTY_NOTICES.txt`）はアプリと同じ。どこに置いても読めるよう、パスは相対にします。
@@ -666,7 +666,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 
 - README の冒頭の画像（`design/screenshot.png`）は、デモのサイトのツアーを、画面の要素がいちばん多い場面まで早送りで流して止めたもの。場面は、章 6「並行して進める」の台本の目印（`story.mark('showcase')`）。子セッションが親の下で動き、親のトレイに開発サーバー、右にブランチの差分が並ぶところです。
 - `src/renderer/src/demo/Showcase.stories.tsx`: Storybook の「紹介画像」。`story/showcase.ts` がツアーを目印まで早送りで流し、そこで止めます。
-- 撮り方: 先に `npm run storybook` を起動し、`npm run screenshot` で `design/screenshot.png` を上書きします。`scripts/capture-screenshot.mjs` が、Storybook の「紹介画像」を Electron の画面の外で 1440×900 の 1.5 倍（2160×1350）で描いて撮ります。
+- 撮り方: 先に `npm run storybook` を起動し、`npm run screenshot` で `design/screenshot.png` を上書きします。`scripts/capture-screenshot.mjs` が、Storybook の「紹介画像」を Electron の画面の外で 1920×1080 の 1.5 倍（2880×1620）で描いて撮ります。
 - 画面を変えたときや、目印の前の台本を直したときに撮り直します。文字の形は撮る Mac のフォントになるので、Mac で撮ります。
 
 ## ライセンスの表示

@@ -2,7 +2,8 @@
 // アプリの画面は iframe の中で決まった大きさ（STAGE）のままふつうに描き、親のページが iframe ごと縮小して画面に収める。
 // アプリの中には縮小がかからないので、PC で見るのと同じ見た目・動きになる
 
-export const STAGE = { width: 1440, height: 900 };
+// 外付けのフル HD のモニターと同じ大きさ。ノートやスマホでは、親のページが縮小して収める
+export const STAGE = { width: 1920, height: 1080 };
 
 // 操作の説明が指す場所（アプリの画面の座標。STAGE の大きさのうちのどこか）
 export type CaptionBox = { x: number; y: number; width: number; height: number };

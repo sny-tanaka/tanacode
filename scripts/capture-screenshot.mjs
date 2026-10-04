@@ -1,6 +1,6 @@
 // README の紹介画像（design/screenshot.png）を撮る（npm run screenshot）。
 // Storybook（npm run storybook）の「紹介画像」のストーリーを Electron の画面の外で描き、場面ができたら（window.__showcaseReady）PNG に保存する。
-// 1440×900 の画面を 1.5 倍の解像度（2160×1350）で撮る。
+// 1920×1080（デモのサイトのアプリの画面と同じ）を 1.5 倍の解像度（2880×1620）で撮る。
 //
 // 例: npm run screenshot
 //     npm run screenshot -- --out design/screenshot.png --scale 1.5
@@ -14,8 +14,8 @@ const option = (name, fallback) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : fallback;
 };
-const width = Number(option('width', 1440));
-const height = Number(option('height', 900));
+const width = Number(option('width', 1920));
+const height = Number(option('height', 1080));
 const scale = Number(option('scale', 1.5));
 const base = option('storybook', 'http://localhost:6006');
 const out = resolve(option('out', 'design/screenshot.png'));
@@ -44,7 +44,7 @@ app.whenReady().then(async () => {
   });
   const url = `${base}/iframe.html?viewMode=story&id=${encodeURIComponent('紹介画像--紹介画像')}`;
   await win.loadURL(url);
-  // 拡大して描き、アプリの画面としては 1440×900 にする
+  // 拡大して描き、アプリの画面としては 1920×1080 にする
   win.webContents.setZoomFactor(scale);
   const started = Date.now();
   for (;;) {

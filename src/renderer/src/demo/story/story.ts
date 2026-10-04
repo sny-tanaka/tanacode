@@ -106,7 +106,7 @@ export function prepareStory(): Story {
   // 列の幅を決める（アプリは列の幅を localStorage から読む）。前に開いたファイルなど、アプリが保存した状態は持ち越さない
   try {
     for (const key of Object.keys(localStorage)) if (key.startsWith('tanacode.')) localStorage.removeItem(key);
-    localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 230, claude: 460, side: 250 }));
+    localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 270, claude: 580, side: 290 }));
   } catch {
     // 保存できなくても既定の幅で動く
   }

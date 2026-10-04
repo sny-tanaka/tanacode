@@ -230,6 +230,8 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
     const space = () => {
       const height = bar?.offsetHeight ?? 48;
       const root = document.documentElement.style;
+      root.setProperty('--demo-stage-width', `${STAGE.width}px`);
+      root.setProperty('--demo-stage-height', `${STAGE.height}px`);
       root.setProperty('--demo-bar-height', `${height}px`);
       root.setProperty('--demo-scale', String(stageScale(height)));
     };
@@ -259,7 +261,8 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
 // 操作の説明の吹き出し。アプリの画面の外（縮小しない親のページ）に描くので、スマホでも字が小さくならない。
 // 広い画面では、説明が指す場所（box。アプリの画面の座標）のそばに、矢印を向けて出す。場所が無ければ、アプリの画面の下の方に出す。
 // 狭い画面（スマホ）では、アプリの画面のすぐ下の空きに出し、矢印を指す場所の横の位置に向ける
-type CalloutPlace = { left: number; top: number; width?: number; arrow: 'up' | 'down' | 'none'; arrowX: number };
+// arrow: 矢印の向き（up は吹き出しの上に付けて上を指す）。arrowAt: 矢印の位置（上下の矢印は横の位置、左右の矢印は縦の位置）
+type CalloutPlace = { left: number; top: number; width?: number; arrow: 'up' | 'down' | 'left' | 'right' | 'none'; arrowAt: number };
 
 function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
   const bubble = useRef<HTMLDivElement>(null);
@@ -280,8 +283,8 @@ function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
     const centerX = target ? target.x + target.width / 2 : frameW / 2;
     if (compact) {
       // アプリの画面と同じ幅で、すぐ下に出す
-      const arrowX = Math.min(frameW - 18, Math.max(18, centerX));
-      setPlace({ left: 0, top: frameH + gap, width: frameW, arrow: target ? 'up' : 'none', arrowX });
+      const arrowAt = Math.min(frameW - 18, Math.max(18, centerX));
+      setPlace({ left: 0, top: frameH + gap, width: frameW, arrow: target ? 'up' : 'none', arrowAt });
       return;
     }
     const w = el.offsetWidth;
@@ -290,17 +293,24 @@ function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
     const minLeft = edge - rect.left;
     const maxLeft = pageW - edge - rect.left - w;
     const left = Math.min(maxLeft, Math.max(minLeft, centerX - w / 2));
-    const arrowX = Math.min(w - 18, Math.max(18, centerX - left));
+    const arrowAt = Math.min(w - 18, Math.max(18, centerX - left));
     if (!target) {
-      setPlace({ left, top: frameH - h - Math.max(36, 48 * scale), arrow: 'none', arrowX });
+      setPlace({ left, top: frameH - h - Math.max(36, 48 * scale), arrow: 'none', arrowAt });
       return;
     }
-    // 指す場所の下に入らなければ上、どちらにも入らなければ、指す場所の下の方に重ねる
+    // 指す場所の下、上の順に入るところへ出す。縦に長い場所（一覧・パネル）は、上下に出すとアプリの画面の端に寄ってしまうので、横に出す
     const below = target.y + target.height + gap;
     const above = target.y - gap - h;
-    if (below + h <= frameH - edge) setPlace({ left, top: below, arrow: 'up', arrowX });
-    else if (above >= edge) setPlace({ left, top: above, arrow: 'down', arrowX });
-    else setPlace({ left, top: Math.min(frameH - h - edge, target.y + target.height - h - edge), arrow: 'none', arrowX });
+    const tall = target.height > frameH * 0.4;
+    if (below + h <= frameH - edge) return setPlace({ left, top: below, arrow: 'up', arrowAt });
+    if (!tall && above >= edge) return setPlace({ left, top: above, arrow: 'down', arrowAt });
+    // 横に出すときは、指す場所の上の方にそろえる
+    const top = Math.min(frameH - h - edge, Math.max(edge, target.y + 12));
+    const side = { top, arrowAt: Math.min(h - 18, Math.max(18, target.y + 30 - top)) };
+    if (target.x + target.width + gap + w <= frameW - edge) return setPlace({ left: target.x + target.width + gap, arrow: 'left', ...side });
+    if (target.x - gap - w >= edge) return setPlace({ left: target.x - gap - w, arrow: 'right', ...side });
+    if (above >= edge) return setPlace({ left, top: above, arrow: 'down', arrowAt });
+    setPlace({ left, top: Math.min(frameH - h - edge, target.y + target.height - h - edge), arrow: 'none', arrowAt });
   }, [box]);
   useLayoutEffect(layout, [layout, text]);
   useEffect(() => {
@@ -323,7 +333,7 @@ function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
         top: place?.top ?? 0,
         width: place?.width,
         visibility: place ? 'visible' : 'hidden',
-        ['--arrow-x' as string]: `${place?.arrowX ?? 0}px`,
+        ['--arrow-at' as string]: `${place?.arrowAt ?? 0}px`,
       }}
     >
       <span key={text} className="demo-callout-text">
