@@ -22,7 +22,7 @@
     "test": "vitest run",
     "test:cli": "vitest run --config vitest.cli.config.ts",
     "predist": "node scripts/build-translate-helper.mjs",
-    "dist": "electron-vite build && electron-builder --mac",
+    "dist": "electron-vite build && node scripts/electron-builder.mjs --mac",
     "install-app": "npm run dist && node scripts/install-app.mjs",
     "icon": "electron scripts/make-icon.mjs",
     "storybook": "storybook dev -p 6006 --no-open",
@@ -31,8 +31,8 @@
     "demo:dev": "vite --config vite.demo.config.ts",
     "demo:build": "vite build --config vite.demo.config.ts",
     "demo:check": "electron --no-sandbox scripts/check-demo-tour.mjs",
-    "prerelease": "node scripts/build-translate-helper.mjs --require",
-    "release": "electron-vite build && electron-builder --mac zip pkg --publish never -c.directories.output=release --arm64 && electron-builder --mac zip pkg --publish never -c.directories.output=release --x64"
+    "prerelease": "node scripts/build-translate-helper.mjs --require && node scripts/electron-builder.mjs --require --check",
+    "release": "electron-vite build && node scripts/electron-builder.mjs --require --mac zip pkg --publish never -c.directories.output=release --arm64 && node scripts/electron-builder.mjs --require --mac zip pkg --publish never -c.directories.output=release --x64"
   },
   "dependencies": {
     "@xterm/addon-serialize": "^0.14.0",

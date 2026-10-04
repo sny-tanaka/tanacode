@@ -1,7 +1,9 @@
 # v から始まるタグ（v0.1.0 など）をプッシュすると、Apple Silicon 用と Intel 用の zip と pkg（インストーラー）を作って、GitHub Releases の下書きに置く。
 # タグをプッシュできない環境（Claude Code の cloud のセッション）からは、develop で手動で起動する（workflow_dispatch）。
 # そのときは、ビルドが通ったあとに、このワークフローがタグを付けてプッシュする。
-# 署名・公証はしていない。下書きの中身を確かめてから公開する（release-publish.yml か GitHub の画面で）
+# 自己署名の証明書（GitHub Secrets の MACOS_SIGNING_P12_BASE64・MACOS_SIGNING_P12_PASSWORD）で署名する。Apple の公証はしていない。
+# 署名の要件が証明書で決まるので、バージョンが変わっても同じアプリとして扱われる（許可が残る）。仕組みは CONTRIBUTING.md の「署名」
+# 下書きの中身を確かめてから公開する（release-publish.yml か GitHub の画面で）
 name: release
 
 on:
@@ -50,6 +52,30 @@ jobs:
       # タグとアプリのバージョンがずれていたら止める（package.json の version を上げ忘れないように）
       - name: バージョンを確かめる
         run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
+      # 署名の証明書を一時のキーチェーンに取り込み、コード署名として信頼する（ランナーに画面は無いので、sudo で管理者のドメインに入れる。
+      # sudo 無しだと、認証のダイアログを待って止まる）。取り込めなければ、ここで止める
+      - name: 署名の証明書を取り込む
+        env:
+          P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12_BASE64" ] || [ -z "$P12_PASSWORD" ]; then
+            echo "::error::署名の証明書の Secrets（MACOS_SIGNING_P12_BASE64・MACOS_SIGNING_P12_PASSWORD）がありません"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(uuidgen)
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-certificate -c 'tanacode Code Signing' -p "$keychain" > "$RUNNER_TEMP/signing-cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$RUNNER_TEMP/signing-cert.pem"
+          rm -f "$RUNNER_TEMP/signing.p12" "$RUNNER_TEMP/signing-cert.pem"
+          security find-identity -v -p codesigning
       # 画面側のビルドはメモリを 4GB ほど使う。ランナー（メモリ 7GB）では Node の既定の上限（約 2GB）で止まるため、上限を上げる
       - run: npm run release
         env:
@@ -59,6 +85,38 @@ jobs:
         run: |
           for app in release/mac-arm64/tanacode.app release/mac/tanacode.app; do
             test -x "$app/Contents/Resources/tanacode-translate"
+          done
+      # 署名を確かめる。ad-hoc のまま（要件が cdhash）や、別の証明書のものを、そのまま配らないため。
+      # アプリと翻訳の補助プログラムの要件に、取り込んだ証明書の SHA-1 が入っていること。zip に入れたあとも壊れていないこと
+      - name: 署名を確かめる
+        run: |
+          hash=$(security find-identity -v -p codesigning | sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) "tanacode Code Signing".*/\1/p' | tr 'A-F' 'a-f')
+          if [ -z "$hash" ]; then
+            echo "::error::署名の証明書が見つかりません"
+            exit 1
+          fi
+          check() {
+            codesign --verify --deep --strict "$1"
+            for target in "$1" "$1/Contents/Resources/tanacode-translate"; do
+              requirement=$(codesign -d -r- "$target" 2>&1 | grep '^designated' || true)
+              echo "$target: $requirement"
+              case "$requirement" in
+                *"certificate leaf = H\"$hash\""*) ;;
+                *)
+                  echo "::error::$target の署名の要件が、証明書 $hash になっていません"
+                  exit 1
+                  ;;
+              esac
+            done
+          }
+          for app in release/mac-arm64/tanacode.app release/mac/tanacode.app; do
+            check "$app"
+          done
+          for zip in release/*.zip; do
+            dir="$RUNNER_TEMP/unzip-$(basename "$zip" .zip)"
+            mkdir -p "$dir"
+            ditto -x -k "$zip" "$dir"
+            check "$dir/tanacode.app"
           done
       # zip と pkg の SHA-256 を SHA256SUMS.txt にまとめる（ファイル名だけで書き、ダウンロードした場所で shasum -c できるようにする）
       - name: チェックサムを計算する
@@ -89,7 +147,7 @@ jobs:
           | Apple Silicon（M1 以降） | \`tanacode-$version-mac-arm64.pkg\`（または \`.zip\`） |
           | Intel | \`tanacode-$version-mac-x64.pkg\`（または \`.zip\`） |
 
-          署名していないため、初回は macOS の警告が出ます。開き方は [README](https://github.com/$GITHUB_REPOSITORY#ビルド済みのアプリreleases) に。
+          Apple の署名・公証をしていないため、初回は macOS の警告が出ます。開き方は [README](https://github.com/$GITHUB_REPOSITORY#ビルド済みのアプリreleases) に。
 
           <details>
           <summary>PR の一覧</summary>
@@ -107,3 +165,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$TAG" release/*.zip release/*.pkg release/SHA256SUMS.txt --draft --notes-file "$RUNNER_TEMP/release-notes.md" --title "$TAG"
+      - name: 署名のキーチェーンを消す
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

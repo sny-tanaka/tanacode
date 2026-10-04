@@ -18,7 +18,7 @@ disable-model-invocation: true
 ## 仕組み
 
 - `npm run install-app` は、`npm run dist` でビルドしてから `node scripts/install-app.mjs` を実行します。
-  - `npm run dist`: `electron-vite build` と `electron-builder --mac` で、その Mac に合わせたアプリを作ります。Apple Silicon では `dist/mac-arm64/tanacode.app`、Intel では `dist/mac/tanacode.app`（署名なし）。
+  - `npm run dist`: `electron-vite build` と `scripts/electron-builder.mjs --mac`（署名の証明書を選んで electron-builder に渡すラッパー）で、その Mac に合わせたアプリを作ります。Apple Silicon では `dist/mac-arm64/tanacode.app`、Intel では `dist/mac/tanacode.app`（署名は CONTRIBUTING.md の「署名」）。
   - `scripts/install-app.mjs`: 動いているアプリの上に上書きせず、次の順で入れ替えます。
     1. 前回の途中で止まったときの残り（`/Applications/.tanacode.app.incoming`・`/Applications/.tanacode.app.outgoing`）の削除
     2. `ditto` で、新しいアプリを `/Applications/.tanacode.app.incoming` にコピー（シンボリックリンクや拡張属性ごと）
