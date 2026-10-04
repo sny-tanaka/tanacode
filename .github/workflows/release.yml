@@ -1,7 +1,7 @@
 # v から始まるタグ（v0.1.0 など）をプッシュすると、Apple Silicon 用と Intel 用の zip と pkg（インストーラー）を作って、GitHub Releases の下書きに置く。
 # タグをプッシュできない環境（Claude Code の cloud のセッション）からは、develop で手動で起動する（workflow_dispatch）。
 # そのときは、ビルドが通ったあとに、このワークフローがタグを付けてプッシュする。
-# 自己署名の証明書（GitHub Secrets の MACOS_SIGNING_P12_BASE64・MACOS_SIGNING_P12_PASSWORD）で署名する。Apple の公証はしていない。
+# 自己署名の証明書（環境 release の Secrets の MACOS_SIGNING_P12_BASE64・MACOS_SIGNING_P12_PASSWORD）で署名する。Apple の公証はしていない。
 # 署名の要件が証明書で決まるので、バージョンが変わっても同じアプリとして扱われる（許可が残る）。仕組みは CONTRIBUTING.md の「署名」
 # 下書きの中身を確かめてから公開する（release-publish.yml か GitHub の画面で）
 name: release
@@ -21,6 +21,9 @@ permissions:
 jobs:
   mac:
     runs-on: macos-latest
+    # 署名の証明書は、リポジトリではなく環境 release の Secrets に置く。環境は、develop のブランチと v* のタグからの実行だけを許す
+    # （ほかのブランチに置いたワークフローからは、読めない）
+    environment: release
     env:
       # 今回のタグ。タグのプッシュならそのタグ、手動の起動なら v<入力したバージョン>
       TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
