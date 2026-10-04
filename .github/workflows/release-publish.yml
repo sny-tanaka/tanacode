@@ -1,6 +1,6 @@
 # release.yml が作った Releases の下書きを点検し、説明の先頭に変更点を足して公開する。手動で起動する（workflow_dispatch）。
 # gh を使えない環境（Claude Code の cloud のセッション）から、/release の「5. 下書きの点検」と「6. 公開」を行うためのもの。
-# 点検で期待と違うものが見つかったら、何も変えずに止める
+# 点検で期待と違うものが見つかったら、何も変えずに止める。公開したら、homebrew.yml で Homebrew の tap の cask も新しいバージョンにする
 name: release-publish
 
 on:
@@ -70,3 +70,11 @@ jobs:
           latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
           [ "$latest" = "$TAG" ] || { echo "::error::最新のリリースが $latest のままです"; exit 1; }
           echo "公開しました: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+  # Homebrew の tap の cask を、公開したバージョンにする（homebrew.yml）
+  homebrew:
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      version: ${{ inputs.version }}

@@ -120,6 +120,14 @@ npm run install-app
 
 ビルドして `/Applications/tanacode.app` に入れます。Apple Silicon・Intel のどちらでも、その Mac に合わせて作ります。
 
+### Homebrew
+
+```bash
+brew install --cask sny-tanaka/tanacode/tanacode
+```
+
+[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac に合わせて入れます。署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
+
 ### ビルド済みのアプリ（Releases）
 
 [Releases](https://github.com/sny-tanaka/tanacode/releases) から、Mac に合ったものをダウンロード。
@@ -170,6 +178,12 @@ npm run install-app
   npm run install-app
   ```
 
+- **Homebrew で入れた場合**: メニューの「ファイル → Claude Code も止めて終了」で終了してから、次を実行します（tap の cask は、新しいバージョンの公開と同時に新しくなります）
+
+  ```bash
+  brew upgrade --cask tanacode
+  ```
+
 - **ビルド済みのアプリの場合**: 新しいバージョンを入れる前に、メニューの「ファイル → Claude Code も止めて終了」で終了します。アプリの入れ替えで、動いている Claude Code が途中で切れないようにするためです
 
 ### アンインストール
@@ -178,6 +192,8 @@ npm run install-app
 
 - `/Applications/tanacode.app`
 - `~/Library/Application Support/tanacode/`
+
+Homebrew で入れた場合は、終了してから `brew uninstall --cask --zap tanacode` で、両方を消せます。
 
 Claude Code の会話ログ（`~/.claude/`）は Claude Code のものなので残ります。
 
