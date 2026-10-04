@@ -1,48 +1,58 @@
 /* デモのサイトだけの見た目。色・文字はアプリ（global.css）の変数を使う */
 
-/* アプリはウインドウの中で隠すが、サイトはページごとスクロールさせる（スマホのピンチでの縮小も、ページの幅が広くないと効かない）。
-   作り物のカーソルが要素へ移るときのスクロールは、上の帯の下に隠れないようにする */
+/* アプリの画面は、どの端末・ブラウザでも同じ大きさ（1440×900。README の動画と同じ）で描き、
+   上の帯の下の残りに、横も縦も収まるよう縮小して真ん中に置く（倍率 --demo-scale は DemoSite.tsx の ScreenLayer が決める）。
+   縮小は zoom で行う（transform で縮めると、Monaco エディタのクリックの位置がずれる。Monaco は zoom を考えて位置を求める） */
+:root {
+  /* 上の帯の高さ（ScreenLayer が測る）。アプリの画面は、この下に置く */
+  --demo-bar-height: 48px;
+  --demo-scale: 1;
+  /* アプリの画面のまわりの地の色。アプリの外枠（--bg-chrome）と見分けられる色にする */
+  --demo-backdrop: #1c1c1b;
+}
+
 html,
 body,
 #root {
-  height: auto;
-  overflow: visible;
-}
-html {
-  scroll-padding-top: var(--demo-bar-space);
-  /* スマホのブラウザが、縮小して描いたページの文字を勝手に大きくしないようにする */
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
+  background: var(--demo-backdrop);
 }
 
-/* --demo-bar-height: 上の帯の高さ（帯の層の中の大きさ）。--demo-bar-space: ページの上に空ける高さ（ページの大きさ）。
-   スマホでは縮小して表示するので、帯がページの上で占める高さは、帯の高さより大きい（DemoSite.tsx の ScreenLayer が決める） */
-:root {
-  --demo-bar-height: 48px;
-  --demo-bar-space: 48px;
-}
-
-/* アプリの画面が崩れない大きさより狭いときは、この大きさのまま描いてスクロールさせる。
-   はみ出したポップアップでページが広がらないよう、外は切る（スクロールの箱にはしない。上の帯をページに貼り付けるため） */
-/* 高さは、見えている範囲の高さ（--demo-viewport-height。main.tsx が測る）。スマホではページの幅に合わせて
-   縦の基準（100%）まで広がってしまうため、% では決めない */
 .demo-site {
-  height: var(--demo-viewport-height, 100vh);
-  min-width: 1280px;
-  min-height: 640px;
-  /* 上の帯（.demo-layer）の下から描く */
-  padding-top: var(--demo-bar-space);
+  height: 100%;
+  padding-top: var(--demo-bar-height);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+/* アプリの画面（ウインドウに見立てる） */
+.demo-stage {
+  width: 1440px;
+  height: 900px;
+  zoom: var(--demo-scale);
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-chrome);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  /* はみ出したポップアップは切る。スクロールの箱にもしない（台本の scrollIntoView で中身がずれないように） */
   overflow: clip;
 }
 
-/* アプリの画面。上の帯の下の残りを使う */
+/* アプリの画面。アプリはウインドウいっぱいに描く */
 .demo-app {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* 作り物のカーソルも、アプリの画面と一緒に小さくする（小さすぎると見えないので、半分より小さくはしない）。
+   位置は外側の要素が持つので、中の絵だけを縮める。縮める中心はカーソルの先 */
+.demo-cursor > svg {
+  transform: scale(max(var(--demo-scale), 0.5));
+  transform-origin: 4px 2px;
 }
 
 /* ブラウザには macOS の信号機ボタンが無いので、タイトルバーの左の空きに飾りで描く */

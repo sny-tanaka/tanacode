@@ -128,8 +128,10 @@ export function DemoSite({ tour, backend }: { tour: Tour | null; backend: DemoBa
   return (
     <>
       <div className="demo-site">
-        <div className="demo-app">
-          <App />
+        <div className="demo-stage">
+          <div className="demo-app">
+            <App />
+          </div>
         </div>
       </div>
       <ScreenLayer>
@@ -187,15 +189,21 @@ function openTour(e: React.MouseEvent, tour: Tour): void {
 // 帯をこの幅より狭く出すときは、2 段にする（上の段に操作、下の段に説明）
 const COMPACT_WIDTH = 760;
 
-// 画面の幅（ピンチで拡大・縮小しても変わらない、端末の画面の CSS ピクセル）
-function screenWidth(): number {
-  const vv = window.visualViewport;
-  return vv ? vv.width * vv.scale : document.documentElement.clientWidth;
+// アプリの画面の大きさ（site.css の .demo-stage）と、まわりに空ける幅
+const STAGE = { width: 1440, height: 900 };
+const STAGE_MARGIN = 16;
+
+// アプリの画面を、上の帯の下の残りに横も縦も収める倍率（大きくはしない）。
+// ピンチでの拡大・縮小では変えないよう、見えている範囲ではなくページの大きさ（clientWidth・clientHeight）で求める
+function stageScale(barHeight: number): number {
+  const { clientWidth, clientHeight } = document.documentElement;
+  const margin = Math.min(STAGE_MARGIN, clientWidth * 0.02);
+  return Math.min(1, (clientWidth - margin * 2) / STAGE.width, (clientHeight - barHeight - margin * 2) / STAGE.height);
 }
 
-// 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。ページをスクロールしても、スマホでピンチで拡大・縮小しても、
-// 画面の上に同じ大きさで出す。スマホの Chrome はページの幅に合わせて fixed の基準ごと広げるので、
-// visualViewport（見えている範囲）の位置と倍率に合わせて動かす。描き直しを避けるため、React の状態にはせず直に書き換える
+// 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。スマホでピンチで拡大しても、画面の上に同じ大きさで出す。
+// ピンチで拡大すると fixed の要素は見えている範囲に付いてこないので、visualViewport（見えている範囲）の位置と倍率に合わせて動かす。
+// 描き直しを避けるため、React の状態にはせず直に書き換える
 function ScreenLayer({ children }: { children: React.ReactNode }) {
   const layer = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -212,16 +220,13 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
       el.classList.toggle('compact', width < COMPACT_WIDTH);
       space();
     };
-    // アプリの画面の上の余白と、作り物のカーソルが要素へ移るときのスクロールの余白を、帯の高さに合わせる。
-    // スマホではページ（幅 1280px）を画面の幅に縮小して見せるので、その倍率で割って、縮小したときに帯の下からアプリが始まるようにする。
-    // 倍率はピンチでは変えない（拡大・縮小のたびにアプリが動かないように）
+    // 帯の高さと、アプリの画面を帯の下に収める倍率
     const bar = el.querySelector<HTMLElement>('.demo-bar');
     const space = () => {
-      if (!bar) return;
-      const fit = Math.min(1, screenWidth() / document.documentElement.clientWidth);
+      const height = bar?.offsetHeight ?? 48;
       const root = document.documentElement.style;
-      root.setProperty('--demo-bar-height', `${bar.offsetHeight}px`);
-      root.setProperty('--demo-bar-space', `${Math.ceil(bar.offsetHeight / fit)}px`);
+      root.setProperty('--demo-bar-height', `${height}px`);
+      root.setProperty('--demo-scale', String(stageScale(height)));
     };
     place();
     const observer = new ResizeObserver(space);
@@ -255,10 +260,9 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  // アプリの画面は横に広いので、狭い画面では見え方と、全体・細かいところの見方を先に伝える。
-  // PC の狭いウインドウではページをスクロールさせ、スマホではページを縮小して見せる（index.html の viewport）
-  const narrowWindow = document.documentElement.clientWidth < 1280;
-  const shrunk = !narrowWindow && screenWidth() < document.documentElement.clientWidth;
+  // アプリの画面を縮小して見せているときは、細かいところの見方を先に伝える
+  const shrunk = stageScale(Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--demo-bar-height')) || 48) < 0.75;
+  const touch = window.matchMedia('(pointer: coarse)').matches;
   return (
     <div className="demo-menu-backdrop demo-ui" onClick={onClose}>
       <div ref={dialog} className="demo-menu" role="dialog" aria-modal="true" aria-label="機能一覧" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
@@ -274,8 +278,13 @@ function TourMenu({ current, onClose }: { current: Tour | null; onClose: () => v
           Claude Code と IDE をひとつにした macOS アプリ、tanacode のデモ。見たい機能を選ぶと、実際の画面で操作の流れを紹介します。
         </p>
         <p className="demo-menu-note">作り物のデータで動くため、本物の Claude には繋がりません。ツアーが終わると、そのまま自由に触れます。</p>
-        {narrowWindow && <p className="demo-menu-warn">画面の幅が狭いため、アプリの画面の一部だけが見えています。スクロールすると全体を見られます。</p>}
-        {shrunk && <p className="demo-menu-warn">画面の幅に合わせて、アプリの画面を縮小しています。ピンチで拡大すると、細かいところまで読めます。</p>}
+        {shrunk && (
+          <p className="demo-menu-warn">
+            {touch
+              ? '画面に収まるよう、アプリの画面を縮小しています。ピンチで拡大すると、細かいところまで読めます。'
+              : 'ウインドウに収まるよう、アプリの画面を縮小しています。ウインドウを広げると、大きく表示されます。'}
+          </p>
+        )}
         <ol className="demo-tour-list">
           {TOURS.map((t, i) => (
             <li key={t.id}>
