@@ -46,6 +46,7 @@ npm run dev
 | `npm run install-app` | `npm run dist` のあと、`/Applications/tanacode.app` に入れ替える（下の「ソースからビルドして使う」） |
 | `npm run screenshot` | README の紹介画像（`design/screenshot.png`）を撮る（下の「README の紹介画像」） |
 | `npm run demo:dev` / `npm run demo:build` | ブラウザで動くデモのサイトを開く（http://localhost:5180）/ `demo-site/` に書き出す（下の「デモのサイト」） |
+| `npm run demo:check` | デモのサイトのツアーが最後まで流れるかを確かめる（先に待ち時間 0 でビルドしておく。下の「デモのサイト」） |
 
 ### ソースからビルドして使う
 
@@ -658,9 +659,12 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - アプリの画面そのものに `zoom` や `transform` をかけると、ブラウザによって文字の大きさや折り返し、固定の位置に出す部品（ツールチップなど）の位置がずれます。iframe ごと絵として縮めれば、中には影響しません。
   - スマホでは、ピンチで拡大して細かいところを読めます。上の帯・知らせ・目次は、いま見えている範囲（`visualViewport`）に重ねる層（`ScreenLayer`）に置き、拡大しても同じ大きさで画面の上に出します。幅が 760px より狭いと、帯を 2 段にします。
 - `vite.demo.config.ts`: サイトのビルドの設定。`@shared` の別名・バージョンの埋め込み・ライセンス表示（`demo-site/THIRD_PARTY_NOTICES.txt`）はアプリと同じ。どこに置いても読めるよう、パスは相対にします。
-- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR ではビルドが通るかだけを確かめます）。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
+- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR ではビルドが通るかだけを確かめます）。どちらでも、ツアーが最後まで流れるか（`tour` のジョブ）も確かめ、流れなければ公開しません。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
 - 機能を足したとき: 物語の合うところに手順を足すか、`chapters/` に章を足して `chapterInfo.ts` と `chapters.ts` に並べます。手順ごとに `d.caption('説明', 場所)` で説明を付けます。足した章・手順を足した章の `chapterInfo.ts` に `isNew: true` を付けると、目次に「新」の印が出ます（次に機能を足すときに外します）。前の章で変えた画面の状態（開いたパネル・ファイルの中身）は、あとの章に引き継がれることに気をつけます。
-- 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。`npm run demo:dev` で、ツアーが最後まで流れるか確かめます。直した章だけを見るなら `#<章の id>` で開きます（前の章は早送りで流れるので、そこで止まっても分かります）。
+- 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。CI の `tour` のジョブで気づけますが、手元では次のように確かめます。
+  - 待ち時間の倍率は、環境変数 `VITE_DEMO_WAIT` で変えられます（台本の待ち時間・カーソルの移動・説明を読む間にかかります）。1 が既定で、0.5 なら半分。0 なら待たずに、ずっと早送りと同じ速さで流します。`npm run demo:dev` にも `npm run demo:build` にも効きます。
+  - `VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build` で待ち時間 0 のサイトを `demo-check/` に書き出し、`npm run demo:check` で流します（`scripts/check-demo-tour.mjs`。Electron の画面の外で #start から開き、終わったら成功、止まったら止まる前の説明とコンソールのエラーを出して失敗。Linux では `xvfb-run` の中で動かします）。8 章を 20 秒ほどで流し終わります。
+  - 見た目も見ながら確かめるなら、`npm run demo:dev` で開きます。直した章だけを見るなら `#<章の id>` で開きます（前の章は早送りで流れるので、そこで止まっても分かります）。
 
 ## README の紹介画像
 

@@ -30,6 +30,7 @@
     "screenshot": "electron scripts/capture-screenshot.mjs",
     "demo:dev": "vite --config vite.demo.config.ts",
     "demo:build": "vite build --config vite.demo.config.ts",
+    "demo:check": "electron --no-sandbox scripts/check-demo-tour.mjs",
     "prerelease": "node scripts/build-translate-helper.mjs --require",
     "release": "electron-vite build && electron-builder --mac zip pkg --publish never -c.directories.output=release --arm64 && electron-builder --mac zip pkg --publish never -c.directories.output=release --x64"
   },

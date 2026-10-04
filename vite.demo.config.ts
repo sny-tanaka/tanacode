@@ -10,7 +10,8 @@ import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
 // 親のページ（index.html）が、アプリの画面（app.html）を iframe で決まった大きさのまま描き、縮小して画面に収める
 
 const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string };
-const outDir = resolve('demo-site');
+// 書き出す先。ツアーが流れるかを確かめるときは、公開するものと分けて DEMO_OUT_DIR=demo-check に書き出す（npm run demo:check）
+const outDir = resolve(process.env.DEMO_OUT_DIR ?? 'demo-site');
 
 export default defineConfig({
   root: resolve('src/renderer/src/demo/site'),

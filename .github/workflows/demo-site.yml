@@ -1,6 +1,7 @@
 # デモのサイト（ブラウザで動くデモ）を GitHub Pages に公開する。
 # - develop に入ったら、ビルドして公開する
 # - PR では、ビルドが通るかだけを確かめる（公開はしない）
+# - どちらでも、ツアーが最後まで止まらずに流れるかを確かめる（tour。待ち時間を 0 にしてビルドし、Electron で流す）
 # 公開には、リポジトリの Settings → Pages の Source を「GitHub Actions」にしておく
 name: demo-site
 
@@ -14,6 +15,7 @@ on:
       - 'package-lock.json'
       - 'vite.demo.config.ts'
       - 'scripts/third-party-notices.ts'
+      - 'scripts/check-demo-tour.mjs'
       - '.github/workflows/demo-site.yml'
   pull_request:
     paths:
@@ -23,6 +25,7 @@ on:
       - 'package-lock.json'
       - 'vite.demo.config.ts'
       - 'scripts/third-party-notices.ts'
+      - 'scripts/check-demo-tour.mjs'
       - '.github/workflows/demo-site.yml'
   workflow_dispatch:
 
@@ -56,9 +59,30 @@ jobs:
         with:
           path: demo-site
 
+  # ツアーが最後まで流れるか。画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まるため。
+  # 待ち時間を 0（VITE_DEMO_WAIT=0）にしてビルドするので、数十秒で流れ終わる。公開するものとは分けて demo-check/ に書き出す
+  tour:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # ツアーは Electron の画面の外で流すので、Electron の本体も入れる
+      - run: npm ci
+      - run: npm run demo:build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          VITE_DEMO_WAIT: 0
+          DEMO_OUT_DIR: demo-check
+      # 画面の外で描いても、Linux では X のディスプレイが要る
+      - run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
+      - run: xvfb-run -a -s "-screen 0 2560x1440x24" npm run demo:check
+
   deploy:
     if: github.event_name != 'pull_request'
-    needs: build
+    needs: [build, tour]
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -26,15 +26,30 @@ export function isFastForward(): boolean {
   return fast;
 }
 
+// 待ち時間の倍率（環境変数 VITE_DEMO_WAIT。ビルドや開発サーバーの起動のときに渡す）。台本の待ち時間・カーソルの移動・説明を読む間にかける。
+// 1 がふだん（既定）、0.5 で半分。0 なら待たずに、ずっと早送りと同じ速さで流す（CI でツアーが最後まで流れるかを確かめるとき）
+const WAIT = waitScale(import.meta.env.VITE_DEMO_WAIT);
+
+function waitScale(value: unknown): number {
+  const n = Number(value ?? 1);
+  return Number.isFinite(n) && n >= 0 ? n : 1;
+}
+
+// 待たずに流すか（早送りの間か、倍率が 0）。待ち時間は飛ばしても、画面が描き直す間だけは待つ
+function quick(): boolean {
+  return fast || WAIT === 0;
+}
+
 // 台本の待ち時間。止められるよう、100ms ずつ進める。早送りの間は、1 回だけ短く待って終える
 export async function sleep(ms: number): Promise<void> {
-  let left = ms;
+  let left = quick() ? ms : ms * WAIT;
   for (;;) {
     while (paused) await resumed;
     if (left <= 0) return;
-    const step = Math.min(left, fast ? FAST_STEP_MS : 100);
+    const q = quick();
+    const step = Math.min(left, q ? FAST_STEP_MS : 100);
     await new Promise<void>((r) => setTimeout(r, step));
-    left = fast ? 0 : left - step;
+    left = q ? 0 : left - step;
   }
 }
 
@@ -116,7 +131,7 @@ export class Director {
     this.captionText = text;
     this.captionTarget = target;
     this.captionBox = null;
-    this.readUntil = Date.now() + readingMs(text);
+    this.readUntil = Date.now() + readingMs(text) * WAIT;
     this.spotlight.style.opacity = '0';
     this.onCaption(text, null);
     if (target && !this.tracking) this.tracking = requestAnimationFrame(this.track);
@@ -176,9 +191,10 @@ export class Director {
 
   // 説明を読む間が経つまで待つ（操作の前に呼ぶ）
   private async waitReading(): Promise<void> {
-    if (fast) return;
+    if (quick()) return;
+    // readUntil は倍率をかけたあとの時刻なので、sleep がかける倍率の分を戻して待つ
     const left = this.readUntil - Date.now();
-    if (left > 0) await sleep(left);
+    if (left > 0) await sleep(left / WAIT);
   }
 
   // 要素が出るまで待つ（最大 timeout ms。一時停止している間は数えない）
@@ -205,8 +221,8 @@ export class Director {
     const r = el.getBoundingClientRect();
     const x = r.left + r.width / 2 + dx;
     const y = r.top + r.height / 2 + dy;
-    if (fast) ms = 0;
-    this.place(x, y, ms);
+    if (quick()) ms = 0;
+    this.place(x, y, ms * WAIT);
     await sleep(ms);
     this.hover(document.elementFromPoint(x, y) ?? el);
     return el;
@@ -224,8 +240,8 @@ export class Director {
   async moveToPoint(x: number, y: number, ms = 700): Promise<void> {
     await this.waitReading();
     this.leaveSpotlight(document.elementFromPoint(x, y));
-    if (fast) ms = 0;
-    this.place(x, y, ms);
+    if (quick()) ms = 0;
+    this.place(x, y, ms * WAIT);
     await sleep(ms);
     const el = document.elementFromPoint(x, y);
     if (el) this.hover(el);
@@ -258,7 +274,7 @@ export class Director {
     el.focus();
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
-    if (fast) {
+    if (quick()) {
       setter.call(el, el.value + text);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       await sleep(1);
