@@ -116,6 +116,24 @@ export const 作業中: StoryObj = {
   ),
 };
 
+// サイドパネルをいちばん狭くしたとき（中身の幅 175px）。圧縮のボタンは次の行に回り、印の数やボタンの文字を縦に割らない
+export const 狭い幅: StoryObj = {
+  parameters: { width: 175 },
+  render: () => (
+    <Frame>
+      <WithMarks
+        sessionId="s6"
+        marks={[
+          [items[2].id, 'keep'],
+          [items[4].id, 'drop'],
+        ]}
+      >
+        <ContextPanel sessionId="s6" context={{ items }} tokens={84_000} limit={200_000} canCompact compacting={false} onCompact={noop} />
+      </WithMarks>
+    </Frame>
+  ),
+};
+
 export const まだ会話がない: StoryObj = {
   render: () => (
     <Frame>
