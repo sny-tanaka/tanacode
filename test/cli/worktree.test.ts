@@ -53,6 +53,9 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
   });
 
   it('リポジトリの .claude/worktrees/<名前> に worktree ができ、セッションのフォルダになる', async () => {
+    // startInWorktree は、worktree の .git ができた時点で返る。Claude Code はそのあとでロックを付け、.worktreeinclude のファイルを写し、
+    // 作り終えてから入力欄を出す。入力欄を待たずに読むと、遅いマシンではロックがまだ無い
+    await prompt();
     const { name, root } = summary().worktree!;
     expect(root).toBe(run.cwd);
     expect(path).toBe(join(run.cwd, '.claude', 'worktrees', name));
