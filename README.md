@@ -105,28 +105,13 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 
 ## インストール
 
-### ソースからビルド（おすすめ）
-
-手元でビルドしたアプリにはダウンロードの印が付かないので、署名が無くても macOS の警告は出ません。
-
-必要なもの: Node.js 22・git・Xcode Command Line Tools（チャットの翻訳に使う `swiftc`。無くてもビルドでき、翻訳のボタンが出ないだけ）
-
-```bash
-git clone https://github.com/sny-tanaka/tanacode.git
-cd tanacode
-npm install
-npm run install-app
-```
-
-ビルドして `/Applications/tanacode.app` に入れます。Apple Silicon・Intel のどちらでも、その Mac に合わせて作ります。
-
-### Homebrew
+### Homebrew（おすすめ）
 
 ```bash
 brew install --cask sny-tanaka/tanacode/tanacode
 ```
 
-[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac に合わせて入れます。署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
+[Homebrew](https://brew.sh/) で入れて、`brew upgrade` で更新できます。[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac（Apple Silicon・Intel）に合わせて入れます。署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
 
 ### ビルド済みのアプリ（Releases）
 
@@ -166,17 +151,24 @@ brew install --cask sny-tanaka/tanacode/tanacode
 
 </details>
 
+### ソースからビルド
+
+手元でビルドしたアプリにはダウンロードの印が付かないので、署名が無くても macOS の警告は出ません。
+
+必要なもの: Node.js 22・git・Xcode Command Line Tools（チャットの翻訳に使う `swiftc`。無くてもビルドでき、翻訳のボタンが出ないだけ）
+
+```bash
+git clone https://github.com/sny-tanaka/tanacode.git
+cd tanacode
+npm install
+npm run install-app
+```
+
+ビルドして `/Applications/tanacode.app` に入れます。Apple Silicon・Intel のどちらでも、その Mac に合わせて作ります。
+
 ### 更新
 
 自動アップデートは無し。新しいバージョンが出ると、タイトルバーのバージョンの右に青いダウンロードの印が出ます（GitHub の Releases を 1 時間ごとに確認）。リポジトリの Watch → Custom → Releases でも通知を受け取れます。
-
-- **ソースから入れた場合**: 次を実行してから tanacode を終了し、終了のダイアログで「動かしたまま終了」を選んで起動し直します。動いている Claude Code は止まらず、新しいバージョンがそのまま引き継ぎます
-
-  ```bash
-  git pull
-  npm install
-  npm run install-app
-  ```
 
 - **Homebrew で入れた場合**: メニューの「ファイル → Claude Code も止めて終了」で終了してから、次を実行します（tap の cask は、新しいバージョンの公開と同時に新しくなります）
 
@@ -185,6 +177,14 @@ brew install --cask sny-tanaka/tanacode/tanacode
   ```
 
 - **ビルド済みのアプリの場合**: 新しいバージョンを入れる前に、メニューの「ファイル → Claude Code も止めて終了」で終了します。アプリの入れ替えで、動いている Claude Code が途中で切れないようにするためです
+
+- **ソースから入れた場合**: 次を実行してから tanacode を終了し、終了のダイアログで「動かしたまま終了」を選んで起動し直します。動いている Claude Code は止まらず、新しいバージョンがそのまま引き継ぎます
+
+  ```bash
+  git pull
+  npm install
+  npm run install-app
+  ```
 
 ### アンインストール
 

@@ -20,9 +20,9 @@ export function useAppUpdate(): AppUpdate | null {
 // 新しいバージョンを入れる手順（README の「更新」と同じ）
 const STEPS = [
   '更新の手順',
-  '・ソースから入れた場合: git pull・npm install・npm run install-app を実行して、tanacode を起動し直します',
   '・Homebrew で入れた場合: 「ファイル → Claude Code も止めて終了」で終了してから、brew upgrade --cask tanacode を実行します',
   '・ビルド済みのアプリの場合: 「ファイル → Claude Code も止めて終了」で終了してから、新しいバージョンを入れます',
+  '・ソースから入れた場合: git pull・npm install・npm run install-app を実行して、tanacode を起動し直します',
 ].join('\n');
 
 // 新しいバージョンの印を見た（マウスを乗せた・押した）バージョン。見たバージョンでは、もう印を動かさない（このマシンだけの表示の状態なので localStorage に置く）
