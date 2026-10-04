@@ -80,18 +80,34 @@ jobs:
           - 失敗したテストのログに、そのときの Claude Code の画面が出ています
           - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
 
-  # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、そのままマージする。
-  # GitHub Actions が作った PR では PR の CI が動かないので、同じ確認（check ジョブと、書き換えたあとの npm test）が通ったことをマージの条件にする。
+  # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、PR の CI が通ったらマージする。
+  # GitHub Actions のトークン（GITHUB_TOKEN）で作った PR では PR の CI が動かないので、push・PR の作成・マージは GitHub App の token でする
+  # （Homebrew の配信と同じ App。App の秘密鍵は Environment「homebrew」にあり、develop で動かしたときだけ使える）。
   # 書き込める権限が要るので、確認とは別のジョブにする（PR のコードを、書き込める権限で動かさない）
   update:
     needs: check
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    environment: homebrew
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      # PR の CI の実行を探して、終わるのを待つ
+      actions: read
     steps:
+      - name: PR を作る token を作る
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: sny-tanaka
+          repositories: tanacode
+          permission-contents: write
+          permission-pull-requests: write
+      # push も App の token でする（GITHUB_TOKEN で push すると、PR の CI が動かない）
       - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -107,7 +123,9 @@ jobs:
       # 同じ版の PR が一度でもあれば（閉じたものも）、作り直さない
       - name: 動作確認済のバージョンを上げる PR を作る
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # PR の CI の実行を読む（App の token には Actions の権限を付けていない）
+          ACTIONS_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
           BASE: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -139,11 +157,29 @@ jobs:
 
           - 確かめた実行: $RUN_URL（\`npm test\` と、本物の claude での \`npm run test:cli\` が通っています）
           - \`test/fixtures/claude-code/$VERSION/\` は、その実行で取った控えです
-          - この PR は GitHub Actions が作ったので、PR の CI は動きません。上の確認が通ったので、そのまま squash マージします
+          - PR の CI が通ったら、そのまま squash マージします
           - マージしたあと、アプリのリリースで利用者に届きます"
+          # PR の CI（必須のチェックを出す claude-code-check と demo-site）が動き始めるのを待ってから、終わるまで待つ。
+          # 通らなかったときは、マージせずにジョブを失敗させる（PR は開いたまま残るので、人が見て直す）
+          for workflow in claude-code-check.yml demo-site.yml; do
+            id=''
+            for _ in $(seq 30); do
+              id=$(GH_TOKEN=$ACTIONS_TOKEN gh run list --workflow "$workflow" --branch "$branch" --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+              if [ -n "$id" ]; then break; fi
+              sleep 10
+            done
+            if [ -z "$id" ]; then
+              echo "$branch の PR の CI（$workflow）が始まりませんでした。PR を開いて確かめてください"
+              exit 1
+            fi
+            if ! GH_TOKEN=$ACTIONS_TOKEN gh run watch "$id" --exit-status --interval 30 > /dev/null; then
+              echo "$branch の PR の CI（$workflow）が通りませんでした: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+              exit 1
+            fi
+          done
           # 作ったばかりの PR は、マージできるかの判定が終わっていないことがあるので、数回やり直す。
           # マージできなかったときは、ジョブを失敗させる（PR は開いたまま残るので、人が見てマージする）。
-          # GitHub Actions がマージした PR は、リポジトリの設定の「ブランチの自動削除」が効かないので、マージしたらブランチを消す
+          # リポジトリの設定の「ブランチの自動削除」に頼らず、マージしたらブランチを消す
           for _ in 1 2 3; do
             if gh pr merge "$branch" --squash; then
               git push origin --delete "$branch"

@@ -172,11 +172,13 @@ npm run install-app
 
 自動アップデートは無し。新しいバージョンが出ると、タイトルバーのバージョンの右に青いダウンロードの印が出ます（GitHub の Releases を 1 時間ごとに確認）。リポジトリの Watch → Custom → Releases でも通知を受け取れます。
 
-- **Homebrew で入れた場合**: メニューの「ファイル → Claude Code も止めて終了」で終了してから、次を実行します（tap の cask は、新しいバージョンの公開と同時に新しくなります）
+- **Homebrew で入れた場合**: メニューの「ファイル → Claude Code も止めて終了」で終了してから、次を実行します
 
   ```bash
-  brew upgrade --cask tanacode
+  brew update && brew upgrade --cask tanacode
   ```
+
+  `brew update` は、手元の tap を新しくするためのもの。tap の cask は、新しいバージョンの公開の数分あとに新しくなります。Homebrew の自動更新は 24 時間に 1 回（`HOMEBREW_NO_AUTO_UPDATE` で止めていると、`brew update` を実行するまで新しくなりません）なので、公開の直後は、`brew upgrade` だけだと「最新です」と出ることがあります
 
 - **ビルド済みのアプリの場合**: 新しいバージョンを入れる前に、メニューの「ファイル → Claude Code も止めて終了」で終了します。アプリの入れ替えで、動いている Claude Code が途中で切れないようにするためです
 
