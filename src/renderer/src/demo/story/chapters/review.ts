@@ -49,10 +49,15 @@ async function comment(d: Director, text: string, body: string): Promise<void> {
   try {
     await d.find('.comment-box.draft textarea', 700);
   } catch {
-    const editor = monaco.editor.getEditors().find((e) => e.getDomNode()?.contains(line));
-    const model = editor?.getModel();
-    const lineNumber = model?.getLinesContent().findIndex((l) => squash(l).includes(squash(text)));
-    if (!editor || lineNumber === undefined || lineNumber < 0) throw new Error('demo: コメントを付ける行が見つかりません');
+    // 先に見つけた行は、Monaco が描き直して画面から外れていることがある（早送りのときなど）。
+    // そのため、いま画面にある差分の右側のエディタのうち、その行を含むものを探し直す
+    const lineNumberIn = (e: monaco.editor.ICodeEditor) => e.getModel()?.getLinesContent().findIndex((l) => squash(l).includes(squash(text))) ?? -1;
+    const editor = monaco.editor.getEditors().find((e) => {
+      const node = e.getDomNode();
+      return !!node?.isConnected && !!node.closest('.diff-pane .modified-in-monaco-diff-editor') && lineNumberIn(e) >= 0;
+    });
+    const lineNumber = editor ? lineNumberIn(editor) : -1;
+    if (!editor || lineNumber < 0) throw new Error('demo: コメントを付ける行が見つかりません');
     editor.setPosition({ lineNumber: lineNumber + 1, column: 1 });
     await editor.getAction('tanacode.addComment')?.run();
   }

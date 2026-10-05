@@ -31,6 +31,7 @@
     "demo:dev": "vite --config vite.demo.config.ts",
     "demo:build": "vite build --config vite.demo.config.ts",
     "demo:check": "electron --no-sandbox scripts/check-demo-tour.mjs",
+    "demo:check:sp": "node scripts/check-demo-tour-sp.mjs",
     "prerelease": "node scripts/build-translate-helper.mjs --require && node scripts/electron-builder.mjs --require --check",
     "release": "electron-vite build && node scripts/electron-builder.mjs --require --mac zip pkg --publish never -c.directories.output=release --arm64 && node scripts/electron-builder.mjs --require --mac zip pkg --publish never -c.directories.output=release --x64"
   },
@@ -58,6 +59,7 @@
     "marked-cjk-friendly": "^0.1.2",
     "mermaid": "^12.1.0",
     "monaco-editor": "^0.57.0",
+    "playwright": "^1.56.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "rollup-plugin-license": "^3.7.1",
