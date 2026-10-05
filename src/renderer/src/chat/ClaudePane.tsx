@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
+import type { ScheduledMessage } from '@shared/scheduled';
 import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode, ScreenInfo } from '@shared/screen';
@@ -26,6 +27,7 @@ import { DoneNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
 import type { ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
+import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { useCompactState } from './compactState';
 import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
@@ -81,6 +83,8 @@ type Props = {
   sending: PendingSend[];
   // 起動を待っている発言を取り下げる（入力欄に戻す）
   onTakePending: () => PendingSend | null;
+  // このセッションに予約したメッセージ（時刻の早い順）
+  scheduled: ScheduledMessage[];
 };
 
 // App はチャットのイベントなどで頻繁に描き直されるので、props が変わったときだけ描き直す
@@ -115,6 +119,7 @@ export const ClaudePane = memo(function ClaudePane({
   pending,
   sending,
   onTakePending,
+  scheduled,
 }: Props) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
@@ -164,7 +169,7 @@ export const ClaudePane = memo(function ClaudePane({
   useLayoutEffect(() => {
     const list = listRef.current;
     if (list && stickToBottom.current) list.scrollTop = list.scrollHeight;
-  }, [chat.items, chat.status, chat.queued, sending, session.id]);
+  }, [chat.items, chat.status, chat.queued, sending, scheduled, session.id]);
 
   // 最下部にいるか（40px 以内）を読み直す。最下部にいれば、新しい行を追いかける
   const updateBottom = (el: HTMLElement) => {
@@ -206,7 +211,8 @@ export const ClaudePane = memo(function ClaudePane({
   const rewinding = live && screen?.state.kind === 'rewind';
   // 選択メニューが出ている間に文字を送ると、メニューへのキー入力になってしまう
   const blocked = !!menu || rewinding || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
-  const canSend = !blocked && (input.trim().length > 0 || attachments.length > 0 || comments.length > 0);
+  const hasContent = input.trim().length > 0 || attachments.length > 0 || comments.length > 0;
+  const canSend = !blocked && hasContent;
   const canConfigure = !running && !menu && !rewinding;
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
   const { canCompact, compacting } = useCompactState(session, chat, screen);
@@ -305,16 +311,47 @@ export const ClaudePane = memo(function ClaudePane({
     [session.id],
   );
 
-  const send = () => {
-    if (!canSend) return;
-    const text = comments.length > 0 ? [input.trim(), formatComments(comments)].filter(Boolean).join('\n\n') : input;
-    onSend(text, attachments);
+  // 送る本文（コードへのコメントを添える）
+  const composed = () => (comments.length > 0 ? [input.trim(), formatComments(comments)].filter(Boolean).join('\n\n') : input);
+  const clearInput = () => {
     onCommentsChange([]);
     setInput('');
     setAttachments([]);
     stickToBottom.current = true;
     setAwayFromBottom(false);
   };
+
+  const send = () => {
+    if (!canSend) return;
+    onSend(composed(), attachments);
+    clearInput();
+  };
+
+  // 時刻を指定して送信（予約）。選択メニューが出ている間や、止まっているセッションにも予約できる（時刻になったら main が起動し直して送る）
+  const schedule = (at: number) => {
+    if (!hasContent) return;
+    void window.tanacode.scheduled.add(session.id, composed(), attachments, at).then(
+      () => clearInput(),
+      (error: unknown) => window.alert(`予約できませんでした: ${errorMessage(error)}`),
+    );
+  };
+  // 予約をやめて、入力欄に戻す。戻るまでにほかのセッションへ移っていたら、そのセッションの書きかけに戻す
+  const sessionIdRef = useRef(session.id);
+  sessionIdRef.current = session.id;
+  const takeScheduled = (id: string) => {
+    const owner = session.id;
+    void window.tanacode.scheduled.cancel(id).then((taken) => {
+      if (!taken) return;
+      if (sessionIdRef.current !== owner) {
+        const draft = drafts.current.get(owner) ?? { text: '', attachments: [] };
+        drafts.current.set(owner, { text: [taken.text, draft.text].filter((t) => t.trim()).join('\n'), attachments: [...taken.attachments, ...draft.attachments] });
+        return;
+      }
+      setInput((prev) => [taken.text, prev].filter((t) => t.trim()).join('\n'));
+      setAttachments((prev) => [...taken.attachments, ...prev]);
+    });
+  };
+  const reportError = (what: string) => (error: unknown) => window.alert(`${what}: ${errorMessage(error)}`);
 
   return (
     <section className="claude">
@@ -486,6 +523,15 @@ export const ClaudePane = memo(function ClaudePane({
               />
             </div>
           )}
+          {scheduled.map((message) => (
+            <ScheduledRow
+              key={message.id}
+              message={message}
+              onSendNow={() => void window.tanacode.scheduled.sendNow(message.id).catch(reportError('送れませんでした'))}
+              onReschedule={(at) => void window.tanacode.scheduled.reschedule(message.id, at).catch(reportError('時刻を変えられませんでした'))}
+              onTake={() => takeScheduled(message.id)}
+            />
+          ))}
           {starting && slowStart && !preparing && !menu && (
             <div className="chat-callout">
               <span>Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください</span>
@@ -558,6 +604,8 @@ export const ClaudePane = memo(function ClaudePane({
             placeholder={menu ? '上の選択肢から選んでください' : 'Claude Codeに指示する（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）'}
             blocked={blocked}
             onSend={send}
+            onSchedule={schedule}
+            canSchedule={hasContent}
             showInterrupt={running && !canSend && !menu}
             onInterrupt={() => window.tanacode.sessions.interrupt(session.id)}
           />

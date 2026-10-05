@@ -6,6 +6,7 @@ import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
 import { chatFromEvents, useSessionChats, type ChatState } from './chat/chatState';
 import { usePendingSends } from './chat/pendingSends';
+import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
@@ -84,6 +85,9 @@ export function App() {
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
   const { chatOf, load } = useSessionChats(selectedId);
   const pendingSends = usePendingSends(chatOf);
+  // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
+  const scheduled = useScheduledMessages();
+  const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
   const { screenOf, load: loadScreen } = useSessionScreens(selectedId);
   const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId);
   const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId);
@@ -591,6 +595,7 @@ export function App() {
           onRemove={removeSession}
           onArchive={archiveSession}
           onUnarchive={unarchiveSession}
+          scheduled={scheduled}
         />
         {resizer('sessions')}
         {composing && (
@@ -644,6 +649,7 @@ export function App() {
             pending={pendingSends.pendingOf(selected.id)}
             sending={pendingSends.sendingOf(selected.id)}
             onTakePending={takeSelectedPending}
+            scheduled={selectedScheduled}
           />
         )}
         {selected && resizer('claude')}

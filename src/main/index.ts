@@ -28,8 +28,9 @@ import type { PermissionMode } from '@shared/screen';
 import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
-import { menuNotice, snippet } from './notice-text';
+import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
+import { ScheduledMessages } from './scheduled-messages';
 import { DEFAULT_PTY_SIZE, SessionManager } from './session-manager';
 import { SettingsFiles } from './settings-files';
 import { SessionStore } from './session-store';
@@ -62,6 +63,8 @@ let browser: BrowserControl;
 // Claude によるほかのセッションの扱い（子セッションの起動・指示と、ほかのセッションを覗く）。中継からの呼び出しを、ソケットで受ける
 let sessionsBridge: McpBridge | null = null;
 let sessionsControl: SessionsControl | null = null;
+// 時刻を指定して送信（予約）したメッセージ
+let scheduled: ScheduledMessages;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
 // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -341,6 +344,14 @@ function registerIpc(): void {
     manager.submit(id, String(text ?? ''), Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : []),
   );
   ipcMain.on(IpcChannel.SessionsInterrupt, (_e, id: string) => manager.interrupt(id));
+  ipcMain.handle(IpcChannel.ScheduledList, () => scheduled.list());
+  ipcMain.handle(IpcChannel.ScheduledAdd, (_e, sessionId: string, text: string, attachments: string[], at: number) => {
+    const paths = Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : [];
+    scheduled.add(String(sessionId), String(text ?? ''), paths, Number(at));
+  });
+  ipcMain.handle(IpcChannel.ScheduledReschedule, (_e, id: string, at: number) => scheduled.reschedule(String(id), Number(at)));
+  ipcMain.handle(IpcChannel.ScheduledSendNow, (_e, id: string) => scheduled.sendNow(String(id)));
+  ipcMain.handle(IpcChannel.ScheduledCancel, (_e, id: string) => scheduled.cancel(String(id)));
   ipcMain.handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
   ipcMain.handle(IpcChannel.SessionsRemove, (_e, id: string, options?: ArchiveOptions) => {
     shells.killOwner(id);
@@ -768,12 +779,26 @@ app.whenReady().then(async () => {
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
   }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch);
   sessionsControl = new SessionsControl({ host: manager, enabled: () => settings.sessionsControlEnabled(), home: homedir() });
+  // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
+  scheduled = new ScheduledMessages(
+    join(app.getPath('userData'), 'scheduled-messages.json'),
+    manager,
+    (messages) => send(IpcChannel.ScheduledChanged, messages),
+    (message) => notify(message.sessionId, manager.summary(message.sessionId)?.title ?? null, scheduledNotice(message)),
+  );
+  // アーカイブした・一覧から消したセッションの予約は取り消す
+  manager.watchState((id) => {
+    const state = manager.stateOf(id);
+    if (state === null || state === 'archived') scheduled.dropSession(id);
+  });
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
   appUpdates = new AppUpdateMonitor(app.getVersion(), (update) => send(IpcChannel.AppUpdateChanged, update), (url, init) => net.fetch(url, init));
   // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
   await manager.adopt();
+  // 動き続けている Claude Code を引き継いでから、時刻を過ぎた予約を片付けて待ち始める
+  scheduled.start();
   registerIpc();
   buildMenu();
   createWindow();
@@ -802,6 +827,7 @@ app.on('before-quit', (event) => {
   ptyHost?.close();
   browserBridge?.close();
   sessionsControl?.dispose();
+  scheduled?.dispose();
   sessionsBridge?.close();
   shells.killAll();
 });

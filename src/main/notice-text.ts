@@ -1,3 +1,4 @@
+import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
 import type { Menu } from '@shared/screen';
 
 // 通知の本文に出す長さ（これを超えたら切る）
@@ -21,4 +22,11 @@ export function menuNotice(menu: Menu): string {
   }
   const title = snippet(menu.title);
   return title ? `確認: ${title}` : '確認を求めています';
+}
+
+// 予約したメッセージを送れなかった・時刻に送れなかったときの通知の本文
+export function scheduledNotice(message: ScheduledMessage, now: Date = new Date()): string {
+  const text = snippet(message.text) || `画像 ${message.attachments.length} 枚`;
+  if (message.state === 'missed') return `${formatScheduleTime(message.at, now)} に送る予約を、時刻に送れませんでした: ${text}`;
+  return `予約したメッセージを送れませんでした（${message.error ?? '理由は不明'}）: ${text}`;
 }

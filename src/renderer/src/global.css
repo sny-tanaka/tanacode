@@ -2674,6 +2674,18 @@ button.session-ref:hover {
 .session-settings-file {
   color: var(--warn);
 }
+/* 予約したメッセージの時刻。送れなかった予約があれば、人の対応待ちと同じ色にする */
+.session-scheduled {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.session-scheduled svg {
+  flex: none;
+}
+.session-scheduled.trouble {
+  color: var(--warn);
+}
 
 /* ツールカードの詳細（入力・出力・差分） */
 .tool-toggle {
@@ -4972,6 +4984,119 @@ body.resizing-rows webview {
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+/* 予約したメッセージ（時刻を指定して送信）。右上の操作（今すぐ送る・時刻を変える・取り消す）の下に、文字が潜らないようにする */
+.chat-user.scheduled {
+  padding-right: 72px;
+}
+.chat-user.scheduled.trouble {
+  border-color: var(--warn);
+}
+.chat-scheduled-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+/* 折り返しても、1 行目の文字の高さにそろえる */
+.chat-scheduled-note svg {
+  flex: none;
+  margin-top: 2px;
+}
+.chat-user.scheduled.trouble .chat-scheduled-note {
+  color: var(--warn);
+}
+.chat-scheduled-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+}
+
+/* 予約の時刻を選ぶメニュー（入力欄の時計のボタン・予約の「時刻を変える」）。位置は、開くときにボタンから決める */
+.schedule-picker {
+  position: relative;
+  display: flex;
+}
+.schedule-menu {
+  position: fixed;
+  z-index: 30;
+  width: 260px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.schedule-menu-heading {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.schedule-menu-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.schedule-menu-item:hover,
+.schedule-menu-item:focus-visible {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.schedule-menu-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.schedule-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-strong);
+}
+/* 日付と時刻の欄を並べ、「予約」はその下の右端に */
+.schedule-custom {
+  display: flex;
+  gap: 6px;
+  padding: 2px 8px 6px;
+}
+.schedule-custom-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 8px 6px;
+}
+.schedule-custom input {
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  color-scheme: dark;
+}
+.schedule-custom input {
+  flex: 1;
+}
+.schedule-custom input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+.schedule-menu-note {
+  flex: 1;
+  font-size: 11px;
+  color: var(--warn);
 }
 
 /* 新規セッション（チャット欄でフォルダを選んで始める） */

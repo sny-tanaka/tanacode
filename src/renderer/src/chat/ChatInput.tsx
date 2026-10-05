@@ -4,6 +4,7 @@ import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
 import { sessionName } from '../sessions/sessionLinks';
+import { SchedulePicker } from './SchedulePicker';
 
 const MAX_SUGGESTIONS = 40;
 // @ の候補に、ファイルより先に出すセッションの数
@@ -42,6 +43,10 @@ type Props = {
   autoFocus?: boolean;
   // Claude Code が作業中（枠のグラデーションを流す）
   working?: boolean;
+  // 時刻を指定して送信（予約）。無ければボタンを出さない（新規セッションの画面など）
+  onSchedule?: (at: number) => void;
+  // 予約できる（送る内容がある）
+  canSchedule?: boolean;
 };
 
 // session: @ で選ぶセッション（ファイルと見分けて出す）
@@ -79,6 +84,8 @@ export function ChatInput({
   onShowComment,
   autoFocus,
   working = false,
+  onSchedule,
+  canSchedule = false,
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
@@ -326,6 +333,7 @@ export function ChatInput({
             onSend();
           }}
         />
+        {onSchedule && <SchedulePicker label="時刻を指定して送信" tip="時刻を指定して送信（予約）" disabled={!canSchedule} onPick={onSchedule} />}
         {showInterrupt ? (
           <IconButton icon={StopIcon} danger label="中断" onClick={onInterrupt} />
         ) : (
