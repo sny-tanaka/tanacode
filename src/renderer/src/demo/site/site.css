@@ -2,11 +2,19 @@
 
 /* アプリの画面は iframe（app.html）の中で、どの端末・ブラウザでも同じ大きさ（messages.ts の STAGE。README の紹介画像と同じ）で描く。
    ここでは iframe ごと、上の帯の下の残りに横も縦も収まるよう縮小して、真ん中に置く（倍率 --demo-scale は DemoSite.tsx の ScreenLayer が決める）。
-   iframe の中には縮小がかからないので、アプリは PC で見るのと同じ見た目・動きになる */
+   iframe の中には縮小がかからないので、アプリは PC で見るのと同じ見た目・動きになる。
+   スマホでは、transform では縮めずに、ページの幅（viewport）を広げてブラウザのページのズームで縮める（DemoSite.tsx の fitViewport）。
+   そのときページの 1px は画面の --demo-unit px 分になるので、親のページに出す文字（吹き出し・早送りの知らせ）は --demo-unit 倍にして、字が小さくならないようにする */
 :root {
   /* 上の帯の高さ（ScreenLayer が測る）。アプリの画面は、この下に置く */
   --demo-bar-height: 48px;
+  /* 帯の分としてページの上に空ける高さ（ページの px。--demo-bar-height の --demo-unit 倍） */
+  --demo-bar-space: 48px;
   --demo-scale: 1;
+  /* ページの 1px が、画面の何 px 分か（viewport を広げたスマホでは 1 より大きい） */
+  --demo-unit: 1;
+  /* 画面の幅（画面の px） */
+  --demo-screen-width: 100vw;
   /* アプリの画面の大きさ（messages.ts の STAGE。DemoSite.tsx が同じ値を入れ直す） */
   --demo-stage-width: 1920px;
   --demo-stage-height: 1080px;
@@ -29,7 +37,7 @@ html {
 
 .demo-site {
   height: 100%;
-  padding-top: var(--demo-bar-height);
+  padding-top: var(--demo-bar-space);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -38,7 +46,7 @@ html {
 /* 狭い画面（スマホ）では、アプリの画面を帯のすぐ下に寄せる。下の空きには、説明の吹き出しを出す */
 .demo-compact .demo-site {
   place-items: start center;
-  padding-top: calc(var(--demo-bar-height) + 12px);
+  padding-top: calc(var(--demo-bar-space) + 12px * var(--demo-unit));
 }
 
 /* アプリの画面と、説明の吹き出しを重ねる入れ物（大きさはアプリの画面と同じ。吹き出しは外にはみ出してよい） */
@@ -55,8 +63,8 @@ html {
   overflow: hidden;
   background: var(--bg-chrome);
   box-shadow:
-    0 0 0 1px var(--border-strong),
-    0 24px 64px rgba(0, 0, 0, 0.5);
+    0 0 0 calc(1px * var(--demo-unit)) var(--border-strong),
+    0 calc(24px * var(--demo-unit)) calc(64px * var(--demo-unit)) rgba(0, 0, 0, 0.5);
 }
 
 /* アプリの画面を描く iframe。元の大きさで描いて、絵として縮める */
@@ -206,7 +214,9 @@ html {
   position: absolute;
   z-index: 2;
   box-sizing: border-box;
-  max-width: min(380px, calc(100vw - 16px));
+  max-width: min(380px, calc(var(--demo-screen-width) - 16px));
+  /* スマホでは、画面の px の大きさになるよう拡大する（DemoSite.tsx の Callout） */
+  transform-origin: 0 0;
   padding: 10px 14px;
   border: 1px solid #f0a35e;
   border-radius: 10px;
@@ -451,15 +461,15 @@ html {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: calc(10px * var(--demo-unit));
   background: var(--bg-chrome);
   color: var(--text-heading);
-  font-size: 14px;
+  font-size: calc(14px * var(--demo-unit));
 }
 .demo-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border-strong);
+  width: calc(16px * var(--demo-unit));
+  height: calc(16px * var(--demo-unit));
+  border: calc(2px * var(--demo-unit)) solid var(--border-strong);
   border-top-color: var(--ide);
   border-radius: 50%;
   animation: demo-spin 0.8s linear infinite;
@@ -504,10 +514,10 @@ html {
 }
 .demo-export-head {
   flex: none;
-  padding: 6px 12px;
+  padding: calc(6px * var(--demo-unit)) calc(12px * var(--demo-unit));
   background: var(--bg-surface);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: calc(12px * var(--demo-unit));
 }
 .demo-export-page {
   flex: 1;

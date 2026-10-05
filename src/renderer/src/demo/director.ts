@@ -81,6 +81,7 @@ export class Director {
   private captionBox: CaptionBox | null = null;
   private readUntil = 0;
   private readonly spotlight: HTMLDivElement;
+  private readonly dim: HTMLDivElement;
   private tracking = 0;
 
   constructor(start: { x: number; y: number } = { x: window.innerWidth * 0.6, y: window.innerHeight * 0.7 }) {
@@ -99,7 +100,22 @@ export class Director {
     document.body.appendChild(el);
     this.cursor = el;
     this.place(start.x, start.y, 0);
-    // 説明が指す場所を照らす枠。まわりを少し暗くして、場所だけを明るく残す（カーソルより下に出す）
+    // 説明が指す場所を照らす枠と、まわりを少し暗くする幕（場所の形に穴を開けて、場所だけを明るく残す）。カーソルより下に出す。
+    // 暗くするのに枠の影（box-shadow の 100vmax など）は使わない。影の分だけ画面の何倍もの大きさの層になり、
+    // 枠が動く間は iPhone の Safari がそれを端末の解像度で描き直すので、メモリを食ってページが落ちる。幕は画面と同じ大きさで済む
+    const dim = document.createElement('div');
+    dim.className = 'demo-spotlight-dim';
+    Object.assign(dim.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '9997',
+      pointerEvents: 'none',
+      background: 'rgba(0,0,0,0.32)',
+      opacity: '0',
+      transition: 'opacity 0.25s ease-out, clip-path 0.3s ease-out',
+    });
+    document.body.appendChild(dim);
+    this.dim = dim;
     const spot = document.createElement('div');
     spot.className = 'demo-spotlight';
     Object.assign(spot.style, {
@@ -110,7 +126,7 @@ export class Director {
       pointerEvents: 'none',
       borderRadius: '8px',
       border: '2px solid #f0a35e',
-      boxShadow: '0 0 0 3px rgba(240,163,94,0.35), 0 0 0 100vmax rgba(0,0,0,0.32)',
+      boxShadow: '0 0 0 3px rgba(240,163,94,0.35)',
       opacity: '0',
       transition: 'opacity 0.25s ease-out, transform 0.3s ease-out, width 0.3s ease-out, height 0.3s ease-out',
     });
@@ -122,6 +138,13 @@ export class Director {
     this.clearCaption();
     this.cursor.remove();
     this.spotlight.remove();
+    this.dim.remove();
+  }
+
+  // 照らす枠と幕を出す・消す
+  private light(on: boolean): void {
+    this.spotlight.style.opacity = on ? '1' : '0';
+    this.dim.style.opacity = on ? '1' : '0';
   }
 
   // 操作の説明。target を渡すと、その場所を照らし、デモのサイトは説明の吹き出しをそこに向けて出す
@@ -132,7 +155,7 @@ export class Director {
     this.captionTarget = target;
     this.captionBox = null;
     this.readUntil = Date.now() + readingMs(text) * WAIT;
-    this.spotlight.style.opacity = '0';
+    this.light(false);
     this.onCaption(text, null);
     if (target && !this.tracking) this.tracking = requestAnimationFrame(this.track);
     else if (!target) this.stopTracking();
@@ -144,7 +167,7 @@ export class Director {
     this.captionTarget = null;
     this.captionBox = null;
     this.readUntil = 0;
-    this.spotlight.style.opacity = '0';
+    this.light(false);
     this.stopTracking();
   }
 
@@ -170,9 +193,12 @@ export class Director {
           transform: `translate(${box.x - pad}px, ${box.y - pad}px)`,
           width: `${box.width + pad * 2}px`,
           height: `${box.height + pad * 2}px`,
-          opacity: '1',
         });
-      } else this.spotlight.style.opacity = '0';
+        // 幕に、枠の外側の線まで含めた穴を開ける（外から左の辺を通って穴を一周し、外へ戻る）
+        const [l, t, r, b] = [box.x - pad, box.y - pad, box.x + box.width + pad, box.y + box.height + pad];
+        this.dim.style.clipPath = `polygon(0 0, 0 100%, ${l}px 100%, ${l}px ${t}px, ${r}px ${t}px, ${r}px ${b}px, ${l}px ${b}px, ${l}px 100%, 100% 100%, 100% 0)`;
+        this.light(true);
+      } else this.light(false);
       this.onCaption(this.captionText, box);
     }
     this.tracking = requestAnimationFrame(this.track);
@@ -184,7 +210,7 @@ export class Director {
     const lit = resolve(this.captionTarget);
     // まだ出ていない場所は、出てきたところで照らすので、追いかけ続ける
     if (!lit?.isConnected || lit.contains(el) || el.contains(lit)) return;
-    this.spotlight.style.opacity = '0';
+    this.light(false);
     this.captionTarget = null;
     this.stopTracking();
   }
