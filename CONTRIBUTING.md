@@ -679,7 +679,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 
 ## README の紹介画像
 
-- README の冒頭の画像（`design/screenshot.png`）は、デモのサイトのツアーを、画面の要素がいちばん多い場面まで早送りで流して止めたもの。場面は、章 6「並行して進める」の台本の目印（`story.mark('showcase')`）。子セッションが親の下で動き、親のトレイに開発サーバー、右にブランチの差分が並ぶところです。
+- README の冒頭の画像（`design/screenshot.png`）は、デモのサイトのツアーを、README の見出し（Claude Code の中身が見える）をいちばんよく表す場面まで早送りで流して止めたもの。場面は、章 3「Claude が知っている範囲」の台本の目印（`story.mark('showcase')`）。エクスプローラーに読んだファイル（青）と書いたファイル（橙）の点、ヘッダーにコンテキストのメーター、チャットに hooks が止めた理由が並ぶところです。
 - `src/renderer/src/demo/Showcase.stories.tsx`: Storybook の「紹介画像」。`story/showcase.ts` がツアーを目印まで早送りで流し、そこで止めます。
 - 撮り方: 先に `npm run storybook` を起動し、`npm run screenshot` で `design/screenshot.png` を上書きします。`scripts/capture-screenshot.mjs` が、Storybook の「紹介画像」を Electron の画面の外で 1920×1080 の 1.5 倍（2880×1620）で描いて撮ります。
 - 画面を変えたときや、目印の前の台本を直したときに撮り直します。文字の形は撮る Mac のフォントになるので、Mac で撮ります。
