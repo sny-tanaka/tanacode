@@ -137,8 +137,6 @@ export async function runParallel(story: Story): Promise<void> {
   backend.push(A11Y_CHILD, { type: 'tool-result', id: WORKFLOW_TOOL, isError: false, output: 'ワークフロー a11y-audit をバックグラウンドで開始しました', at: Date.now() });
   a11y.stopWorking();
   backend.push(A11Y_CHILD, { type: 'turn-end' });
-  // README の紹介画像は、この場面（子が親の下で動き、親のトレイに開発サーバー、右にブランチの差分）
-  await story.mark('showcase');
   await d.moveTo(d.byText('.session-row', 'README に価格'), { ms: 900 });
   await sleep(1800);
 

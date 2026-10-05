@@ -50,7 +50,8 @@ export async function runKnowledge(story: Story): Promise<void> {
   await sleep(1000);
   for (const [path, tokens] of [
     ['src/types.ts', 52_000],
-    ['src/data/menu.ts', 57_000],
+    ['src/data/menu.ts', 56_000],
+    ['src/components/MenuList.tsx', 58_000],
   ] as const) {
     await claude.tool('Read', path, 600, { filePath: `${ROOT}/${path}` });
     backend.know(id, { [path]: 'read' });
@@ -88,6 +89,8 @@ export async function runKnowledge(story: Story): Promise<void> {
   await d.click('.hook-run.blocked .hook-chip', { ms: 700 });
   await sleep(200);
   story.toBottom();
+  // README の紹介画像は、この場面（エクスプローラーの読んだ・書いたファイルの点、コンテキストのメーター、hooks が止めた理由）
+  await story.mark('showcase');
   await sleep(2200);
   await d.click(() => [...document.querySelectorAll('.tool-group-head')].at(-1), { ms: 700 });
   story.toBottom();

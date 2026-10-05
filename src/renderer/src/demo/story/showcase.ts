@@ -2,7 +2,7 @@ import { Director, setFastForward } from '../director';
 import { CHAPTERS } from './chapters';
 import type { Story } from './story';
 
-// README の紹介画像の場面を作る。ツアーを早送りで流し、台本の目印 'showcase'（章 6 の、子セッションが並行して動いている場面）で止める。
+// README の紹介画像の場面を作る。ツアーを早送りで流し、台本の目印 'showcase'（章 3 の、Claude が読んだ・書いたファイルと hooks が止めた理由が見える場面）で止める。
 // 止めたあとは台本を先へ進めない（目印の待ちを解かない）。作り物のカーソルは消し、早送りも戻して、画面の動き（ぐるぐるなど）はふつうに描く
 export function runShowcase(story: Story): Promise<void> {
   const d = new Director();

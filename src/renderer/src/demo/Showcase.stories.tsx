@@ -5,7 +5,7 @@ import './site/app.css';
 import { runShowcase } from './story/showcase';
 import { prepareStory } from './story/story';
 
-// README の紹介画像（design/screenshot.png）。デモのサイトのツアーを、画面の要素がいちばん多い場面まで早送りで流して止める。
+// README の紹介画像（design/screenshot.png）。デモのサイトのツアーを、Claude が読んだ・書いたファイルと hooks が止めた理由が見える場面（章 3）まで早送りで流して止める。
 // scripts/capture-screenshot.mjs（npm run screenshot）が、この画面を 1920×1080（デモのサイトと同じ）の 1.5 倍で撮る。場面ができると window.__showcaseReady が true になる
 
 declare global {
