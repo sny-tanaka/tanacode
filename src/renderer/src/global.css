@@ -713,8 +713,8 @@ body.resizing * {
   font-size: 11px;
   color: var(--text-secondary);
 }
-.scm-branch-walk {
-  padding: 2px 12px 6px 26px;
+.scm-branch-base .scm-branch-walk {
+  margin: -3px 0 -3px auto;
 }
 .review-count {
   margin-left: auto;

@@ -352,6 +352,15 @@ export const TranslateIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// ウォークスルー: コードを説明する吹き出し（吹き出しの中に < >）
+export const WalkthroughIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+    <path d="m10 8.5-2.5 2 2.5 2" />
+    <path d="m14 8.5 2.5 2-2.5 2" />
+  </Svg>
+);
+
 // 要素を選ぶ: 点線の枠とカーソル
 export const PointerIcon: IconComponent = (p) => (
   <Svg {...p}>

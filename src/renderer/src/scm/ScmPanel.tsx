@@ -19,6 +19,7 @@ import {
   PushIcon,
   TreeViewIcon,
   UndoIcon,
+  WalkthroughIcon,
   type IconComponent,
 } from '../icons';
 import type { ScmView } from './scmView';
@@ -323,14 +324,17 @@ function BranchSection({
                 <span className="diff-del">−{total.removed}</span>
               </>
             )}
+            {paths.length > 0 && onWalkthrough && (
+              <IconButton
+                size="sm"
+                icon={WalkthroughIcon}
+                label="Claude にウォークスルーしてもらう"
+                tip={'Claude にウォークスルーしてもらう\nエディタでコードを示しながら、このブランチの変更を説明します'}
+                className="scm-branch-walk"
+                onClick={onWalkthrough}
+              />
+            )}
           </div>
-          {paths.length > 0 && onWalkthrough && (
-            <div className="scm-branch-walk">
-              <button className="ghost-button" onClick={onWalkthrough} data-tip="Claude がエディタでコードを示しながら、このブランチの変更を説明します">
-                Claude にウォークスルーしてもらう
-              </button>
-            </div>
-          )}
           {paths.length === 0 && <div className="scm-none">変更はありません</div>}
           <ChangeRows
             items={paths.map((path) => ({ path }))}
