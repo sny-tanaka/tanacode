@@ -84,24 +84,6 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
         <span className="card-pane-where">
           {list.name} #{card.number}
         </span>
-        {editingTitle !== null ? (
-          <input
-            className="card-pane-title-input"
-            autoFocus
-            value={editingTitle}
-            onChange={(e) => setEditingTitle(e.target.value)}
-            onBlur={saveTitle}
-            onKeyDown={(e) => {
-              if (e.nativeEvent.isComposing) return;
-              if (e.key === 'Enter') e.currentTarget.blur();
-              if (e.key === 'Escape') setEditingTitle(null);
-            }}
-          />
-        ) : (
-          <span className="diff-pane-title card-pane-title" title="ダブルクリックでタイトルを変える" onDoubleClick={() => setEditingTitle(card.title)}>
-            {card.title}
-          </span>
-        )}
         <div className="spacer" />
         <IconButton icon={CopyIcon} size="md" label="別のセッションへコピー" onClick={() => setCopying(true)} />
         <IconButton
@@ -115,6 +97,26 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
         <IconButton icon={CloseIcon} size="sm" label="閉じる" onClick={onClose} />
       </div>
       <div className="card-pane-scroll">
+        {editingTitle !== null ? (
+          <textarea
+            className="card-pane-title card-pane-title-input"
+            rows={1}
+            autoFocus
+            value={editingTitle}
+            // 1 行のタイトルなので、貼り付けた改行は空白にする
+            onChange={(e) => setEditingTitle(e.target.value.replace(/\s*\n\s*/g, ' '))}
+            onBlur={saveTitle}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') setEditingTitle(null);
+            }}
+          />
+        ) : (
+          <h2 className="card-pane-title" title="ダブルクリックでタイトルを変える" onDoubleClick={() => setEditingTitle(card.title)}>
+            {card.title}
+          </h2>
+        )}
         <div className="card-pane-meta">
           {withParticle(AUTHOR_LABEL[card.createdBy], 'が')}作成 · {formatTime(card.createdAt)}
           {card.checked && card.checkedAt && ` · ${withParticle(AUTHOR_LABEL[card.checkedBy ?? 'human'], 'が')}チェック（${formatTime(card.checkedAt)}）`}
@@ -213,7 +215,8 @@ function ThreadRow({ entry }: { entry: ThreadEntry }) {
     );
   }
   return (
-    <div className={`card-thread-reply ${entry.author}`}>
+    // 作者のクラスは by- を付ける。`claude` だけだと、Claude Code ペイン（.claude）の幅などが当たってしまう
+    <div className={`card-thread-reply by-${entry.author}`}>
       <div className="card-thread-reply-head">
         <span className="card-thread-author">{AUTHOR_LABEL[entry.author]}</span>
         <span className="card-thread-time">{formatTime(entry.at)}</span>
