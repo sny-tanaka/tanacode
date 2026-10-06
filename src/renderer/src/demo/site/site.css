@@ -80,17 +80,47 @@ html {
 }
 
 /* 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層（位置・大きさ・倍率は DemoSite.tsx の ScreenLayer が決める）。
-   作り物のカーソルより上に出す。層そのものは押せないようにして、下のアプリの画面を触れるようにする */
+   作り物のカーソルより上に出す。層そのものは押せないようにして、下のアプリの画面を触れるようにする。
+   外側（.demo-layer）は見えている範囲の位置に動かすだけ、内側（.demo-layer-body）は画面の px の大きさで描いて、zoom で見えている範囲の大きさに合わせる。
+   transform で拡大すると、iPhone の Safari は縮めたページの解像度で描いた絵を引き伸ばすので、字がぼやけて読めなくなる。
+   zoom なら、拡大したあとの大きさで描き直す。zoom は translate にもかかる（Chromium）ので、動かす層と分ける */
 .demo-layer {
   position: fixed;
   left: 0;
   top: 0;
   z-index: 20000;
+  pointer-events: none;
+}
+.demo-layer-body {
+  position: absolute;
+  left: 0;
+  top: 0;
   transform-origin: 0 0;
   pointer-events: none;
 }
-.demo-layer > * {
+.demo-layer-body > * {
   pointer-events: auto;
+}
+/* iPhone の Safari（WebKit）は、zoom の中の SVG の線の太さまで zoom 倍にしてしまい、アイコンが潰れる。
+   アイコンだけ zoom を打ち消し（--demo-layer-zoom は ScreenLayer が入れる）、大きさは同じだけ大きくする */
+.demo-layer-body .icon {
+  zoom: calc(1 / var(--demo-layer-zoom, 1));
+}
+.demo-layer-body .icon[width='12'] {
+  width: calc(12px * var(--demo-layer-zoom, 1));
+  height: calc(12px * var(--demo-layer-zoom, 1));
+}
+.demo-layer-body .icon[width='14'] {
+  width: calc(14px * var(--demo-layer-zoom, 1));
+  height: calc(14px * var(--demo-layer-zoom, 1));
+}
+.demo-layer-body .icon[width='16'] {
+  width: calc(16px * var(--demo-layer-zoom, 1));
+  height: calc(16px * var(--demo-layer-zoom, 1));
+}
+.demo-layer-body .icon[width='22'] {
+  width: calc(22px * var(--demo-layer-zoom, 1));
+  height: calc(22px * var(--demo-layer-zoom, 1));
 }
 
 /* 上の帯。機能一覧・いまの操作の説明・再生の操作。
@@ -214,17 +244,17 @@ html {
   position: absolute;
   z-index: 2;
   box-sizing: border-box;
-  max-width: min(380px, calc(var(--demo-screen-width) - 16px));
-  /* スマホでは、画面の px の大きさになるよう拡大する（DemoSite.tsx の Callout） */
-  transform-origin: 0 0;
-  padding: 10px 14px;
-  border: 1px solid #f0a35e;
-  border-radius: 10px;
+  /* スマホでは、画面の px の大きさになるよう、大きさを --demo-unit 倍にする。
+     transform で拡大すると、iPhone の Safari が縮めたページの解像度のまま引き伸ばして字がぼやけるため、大きさそのものを変える */
+  max-width: calc(min(380px, calc(var(--demo-screen-width) - 16px)) * var(--demo-unit));
+  padding: calc(10px * var(--demo-unit)) calc(14px * var(--demo-unit));
+  border: calc(1px * var(--demo-unit)) solid #f0a35e;
+  border-radius: calc(10px * var(--demo-unit));
   background: var(--bg-surface);
   color: var(--text-heading);
-  font-size: 14px;
+  font-size: calc(14px * var(--demo-unit));
   line-height: 1.6;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 calc(10px * var(--demo-unit)) calc(30px * var(--demo-unit)) rgba(0, 0, 0, 0.45);
   transition:
     left 0.3s ease-out,
     top 0.3s ease-out;
@@ -239,39 +269,40 @@ html {
 .demo-callout.down::before,
 .demo-callout.left::before,
 .demo-callout.right::before {
+  --arrow-edge: calc(-7px * var(--demo-unit));
   content: '';
   position: absolute;
-  width: 12px;
-  height: 12px;
-  border: 1px solid #f0a35e;
+  width: calc(12px * var(--demo-unit));
+  height: calc(12px * var(--demo-unit));
+  border: calc(1px * var(--demo-unit)) solid #f0a35e;
   background: var(--bg-surface);
   transform: rotate(45deg);
 }
 .demo-callout.up::before,
 .demo-callout.down::before {
-  left: calc(var(--arrow-at) - 7px);
+  left: calc(var(--arrow-at) + var(--arrow-edge));
 }
 .demo-callout.left::before,
 .demo-callout.right::before {
-  top: calc(var(--arrow-at) - 7px);
+  top: calc(var(--arrow-at) + var(--arrow-edge));
 }
 .demo-callout.up::before {
-  top: -7px;
+  top: var(--arrow-edge);
   border-right: none;
   border-bottom: none;
 }
 .demo-callout.down::before {
-  bottom: -7px;
+  bottom: var(--arrow-edge);
   border-left: none;
   border-top: none;
 }
 .demo-callout.left::before {
-  left: -7px;
+  left: var(--arrow-edge);
   border-top: none;
   border-right: none;
 }
 .demo-callout.right::before {
-  right: -7px;
+  right: var(--arrow-edge);
   border-bottom: none;
   border-left: none;
 }
