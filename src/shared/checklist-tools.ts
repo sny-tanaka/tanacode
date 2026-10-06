@@ -228,6 +228,25 @@ export function checklistEventText(cards: CardRef[], message: string): string {
   return `<${CHECKLIST_EVENT_TAG} cards="${refs}">${neutralizeTags(message).replace(/\s*\n\s*/g, ' ')}</${CHECKLIST_EVENT_TAG}>`;
 }
 
+// 知らせに入れる返信の長さ
+const NOTICE_REPLY_CHARS = 300;
+
+// 人がスレッドに「Claude に通知する」で返信した知らせ（1 件分）。返信が長ければ切る
+export function replyNoticeText(list: string, number: number, title: string, reply: string): string {
+  return `「${list}」#${number}「${title}」に人が返信しました: 「${clipNotice(reply, NOTICE_REPLY_CHARS)}」。`;
+}
+
+// Claude への知らせの本文。続けて届いた知らせを 1 つにまとめ、どうしてほしいかを添える
+export function noticeMessage(texts: string[]): string {
+  return `${texts.join(' ')} card_get で確かめて対応し、返事は card_reply で書いてください。`;
+}
+
+// 知らせに入れる文を 1 行にして、長ければ切る
+export function clipNotice(text: string, max: number): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > max ? `${line.slice(0, max)}…（続きは card_get で）` : line;
+}
+
 const CHECKLIST_EVENT = new RegExp(`^<${CHECKLIST_EVENT_TAG} cards="([0-9a-f:,-]*)">([\\s\\S]*?)</${CHECKLIST_EVENT_TAG}>`);
 
 export function parseChecklistEvent(text: string): { cards: CardRef[]; message: string } | null {

@@ -1,4 +1,7 @@
 import type { ChatEvent } from '@shared/chat';
+import { unreadCount, type ChecklistOp, type SessionChecklists } from '@shared/checklist';
+import { ChecklistBook } from '@shared/checklist-book';
+import { noticeMessage, replyNoticeText } from '@shared/checklist-tools';
 import type { AppUpdate } from '@shared/app-update';
 import type { ContextItem } from '@shared/context';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
@@ -125,7 +128,14 @@ export class DemoBackend {
     shellExit: new Channel<ShellExit>(),
     claudeVersion: new Channel<string | null>(),
     appUpdate: new Channel<AppUpdate | null>(),
+    checklist: new Channel<SessionChecklists>(),
   };
+  // チェックリスト。書き換えはアプリと同じもの（ChecklistBook）を使う。画面には写しを送る（同じ配列のままだと描き直されない）。
+  // 台本の Claude も、MCP のツールの代わりにこれを書き換える
+  readonly checklists = new ChecklistBook((sessionId, lists) => this.ch.checklist.emit({ sessionId, lists: structuredClone(lists) }));
+  // 人がスレッドに「Claude に通知する」で返信した（台本が待つ）。notice: アプリが Claude に送るのと同じ知らせ
+  onChecklistNotify: (sessionId: string, notice: Extract<ChatEvent, { type: 'notice' }>) => void = () => {};
+  private notices = 0;
   // 頼んでいる「あなたの番です」（セッション → 依頼）
   private readonly asks = new Map<string, BrowserAskChange>();
   private shells = 0;
@@ -178,6 +188,20 @@ export class DemoBackend {
     this.sessions.set(id, session);
     this.emitSessions();
     return session;
+  }
+
+  // スレッドへの返信の知らせ（アプリが Claude に送り、チャットに「Claude への知らせ」として出るもの）
+  private notifyReply(sessionId: string, op: Extract<ChecklistOp, { type: 'card-reply' }>): void {
+    const list = this.checklists.lists(sessionId).find((l) => l.id === op.listId);
+    const card = list?.cards.find((c) => c.id === op.cardId);
+    if (!list || !card) return;
+    this.notices += 1;
+    this.onChecklistNotify(sessionId, {
+      type: 'notice',
+      id: `checklist-notice-${this.notices}`,
+      text: noticeMessage([replyNoticeText(list.name, card.number, card.title, op.text)]),
+      cards: [{ listId: list.id, cardId: card.id }],
+    });
   }
 
   select(id: string): void {
@@ -498,13 +522,26 @@ export class DemoBackend {
           return ok(path);
         },
       },
-      // デモではチェックリストを使わない（空のまま）
+      // できない書き換えは、本物と同じく理由を添えて失敗する
       checklist: {
-        get: () => ok([]),
-        apply: () => ok(undefined),
-        copy: () => ok(undefined),
-        onChanged: () => () => {},
-        unread: () => ok({}),
+        get: (id) => ok(structuredClone(this.checklists.lists(id))),
+        apply: async (id, op) => {
+          this.checklists.apply(id, op);
+          if (op.type === 'card-reply' && op.notify) this.notifyReply(id, op);
+        },
+        copy: async (r) => {
+          const title = this.session(r.fromSession).summary.title ?? '（無題）';
+          this.checklists.copyCards({ sessionId: r.fromSession, title, listId: r.listId, cardIds: r.cardIds }, r.toSession, 'human', r.toList || undefined);
+        },
+        onChanged: (l) => this.ch.checklist.on(l),
+        unread: () => {
+          const counts: Record<string, number> = {};
+          for (const id of this.sessions.keys()) {
+            const n = unreadCount(this.checklists.lists(id));
+            if (n > 0) counts[id] = n;
+          }
+          return ok(counts);
+        },
       },
       browser: {
         attach: () => {},

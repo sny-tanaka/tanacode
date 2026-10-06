@@ -21,12 +21,14 @@ export const CHAPTER_INFO: ChapterInfo[] = [
   {
     id: 'delegate',
     title: '指示して任せる',
-    summary: 'ツールの操作は 1 行に畳まれ、質問にはボタンで答えます。書き換えたファイルとサブエージェントの動きも、その場で見えます。',
+    summary: 'ツールの操作は 1 行に畳まれ、質問にはボタンで答えます。書き換えたファイルとサブエージェントの動き、チェックリストに積んだ要件も、その場で見えます。',
+    isNew: true,
   },
   {
     id: 'knowledge',
     title: 'Claude が知っている範囲',
-    summary: 'Claude が読んだ・書いたファイルに点が付き、コンテキストの量と hooks の結果も見えます。',
+    summary: 'Claude が読んだ・書いたファイルに点が付き、コンテキストの量と hooks の結果も見えます。迷うところは、質問せずにチェックリストに残させます。',
+    isNew: true,
   },
   {
     id: 'browser',
@@ -36,7 +38,8 @@ export const CHAPTER_INFO: ChapterInfo[] = [
   {
     id: 'review',
     title: 'レビューして直す',
-    summary: 'ブランチの変更を PR のように見て、差分の行にコメント。テストはターミナルで流し、結果を Claude へ送ります。',
+    summary: 'Claude が残した確認事項にスレッドで答え、ブランチの変更を PR のように見て差分の行にコメント。テストはターミナルで流します。',
+    isNew: true,
   },
   {
     id: 'parallel',

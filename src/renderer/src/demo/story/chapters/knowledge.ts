@@ -3,12 +3,14 @@ import { demoUsage, ROOT } from '../../data';
 import { sleep } from '../../director';
 import { statusLine } from '../../scenarios/claude';
 import { MENU_WITH_ALLERGENS, menuCardWithAllergens, TYPES_WITH_ALLERGENS } from '../files';
+import { addCards, ASK_BODY, ASK_LIST, ASK_TITLE, checkCards, DONE_LIST, showPanel } from '../checklist';
 import { MAIN, type Story } from '../story';
 
 // 章 3「Claude が知っている範囲」: 次の指示（アレルギー表示）を進める間に、Claude が読んだ・書いたファイルの点、
-// コンテキストのメーター、hooks（型チェックが止めた理由）、利用枠を見る
+// コンテキストのメーター、hooks（型チェックが止めた理由）、利用枠を見る。
+// 迷うところは質問させずに決めさせ、チェックリストの「確認事項」に残させる（人は章 5 で答える）
 
-const PROMPT = 'メニューに、アレルギーの表示も足して';
+const PROMPT = 'メニューに、アレルギーの表示も足して。迷うところは質問せずに決めて、「確認事項」に残しておいて';
 const CHECK = 'npx tsc --noEmit';
 
 const hook = (toolUseId: string | null, event: string, patch: Partial<HookRun> = {}): HookRun => ({
@@ -102,7 +104,13 @@ export async function runKnowledge(story: Story): Promise<void> {
   await sleep(600);
   await edited('src/components/MenuCard.tsx', menuCardWithAllergens(true), ['-      {allergens.length > 0 && (', '+      {allergens && allergens.length > 0 && ('], 70_000);
 
-  // 7. 応答が届いて完了。ターンの終わりに Stop の hooks が動く。利用枠も進む
+  // 7. 完了前チェックにカードを足して確かめ、自分で決めたことを「確認事項」に残す
+  await sleep(500);
+  await addCards(story, DONE_LIST, [{ title: 'アレルギー物質の無い品目には、表示を出さない' }], 700);
+  await checkCards(story, DONE_LIST, [5], '`allergens` が無い品目で出ないことを、型チェックの hooks と表示で確かめました', 700);
+  await addCards(story, ASK_LIST, [{ title: ASK_TITLE, body: ASK_BODY }], 800);
+
+  // 8. 応答が届いて完了。ターンの終わりに Stop の hooks が動く。利用枠も進む
   await sleep(500);
   claude.stopWorking();
   claude.say(
@@ -112,6 +120,8 @@ export async function runKnowledge(story: Story): Promise<void> {
       '- `MenuItem` に `allergens`（省略できる）を追加',
       '- 3 品のデータに原材料を追加',
       '- カードの下に「アレルギー: 小麦・乳」の形で出します（無い品目では出しません）',
+      '',
+      '出すのを特定原材料の 8 品目だけにしたのは私の判断なので、「確認事項」に残しました。',
     ].join('\n'),
   );
   backend.push(id, { type: 'hook', id: claude.next('hook'), run: hook(null, 'Stop', { command: 'npm test', durationMs: 3200 }) });
@@ -122,4 +132,9 @@ export async function runKnowledge(story: Story): Promise<void> {
   await sleep(1000);
   await d.moveTo('.usage-panel', { ms: 900 });
   await sleep(2000);
+
+  // 9. 迷ったところは、作業を止めずに「確認事項」に残っている。人は手が空いたときに見る（章 5）
+  d.caption('Claude は迷ったところで作業を止めずに自分で決め、「確認事項」に残しました。人は手が空いたときに見て答えます', '.activity-bar [aria-label^="チェックリスト"]');
+  await showPanel(d, 'チェックリスト', 900);
+  await sleep(2600);
 }

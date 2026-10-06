@@ -1,14 +1,17 @@
 import { monaco } from '../../../editor/monaco';
 import { type Director, sleep } from '../../director';
 import { MENU_CARD_WITH_TAKEOUT, PRICE_TEST_WITH_TAKEOUT, PRICE_WITH_TAKEOUT } from '../files';
+import { ASK_LIST, ASK_TITLE, checkCards, readCard, showPanel } from '../checklist';
 import { MAIN, type Story } from '../story';
 
-// 章 5「レビューして直す」: ブランチの変更を PR のように見て、差分の行にコメントを付け、まとめて直してもらう。
+// 章 5「レビューして直す」: レビューの前に、章 3 で Claude が残した「確認事項」にカードのスレッドで答える（「Claude に通知する」で Claude に届く）。
+// ブランチの変更を PR のように見て、差分の行にコメントを付け、まとめて直してもらう。
 // 直したあと、回答のコマンドを ▶ でターミナルで流し、落ちたテストの出力を選んで「Claude へ送る」
 
 const COMMENT_CARD = 'テイクアウトの税込価格も、ここに並べて出してください';
 const COMMENT_PRICE = 'テイクアウトは軽減税率の 8% です。税率を引数で渡せるようにしてください';
 const PROMPT = 'コメントの点を直して';
+const ANSWER = '8 品目だけで大丈夫です。お店の表示もそうしています';
 
 // テストの期待値を間違えたもの（あとでターミナルで落ちる）
 const PRICE_TEST_WRONG = PRICE_TEST_WITH_TAKEOUT.replace('toBe(561)', 'toBe(562)');
@@ -99,25 +102,64 @@ export async function runReview(story: Story): Promise<void> {
   const claude = story.claude();
   const id = MAIN;
 
-  // 1. ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開く
+  // 1. Claude が残した確認事項のカードを開く。説明とスレッドは、エディタの場所に出る
+  d.caption('レビューの前に、Claude が残した「確認事項」を見ます。カードを押すと、説明とスレッドがエディタの場所に開きます', d.byText('.checklist-card', ASK_TITLE));
+  await showPanel(d, 'チェックリスト');
+  await sleep(600);
+  await d.click(d.byText('.checklist-card', ASK_TITLE), { ms: 900 });
+  await sleep(2000);
+
+  // 2. スレッドに返信する。「Claude に通知する」にチェックがあると、手の空いた Claude に知らせが届く
+  d.caption('スレッドに返信します。「Claude に通知する」にチェックがあれば、手の空いた Claude に返信の知らせが届きます', '.card-composer');
+  const notified = new Promise<void>((resolve) => {
+    backend.onChecklistNotify = (sessionId, notice) => {
+      backend.push(sessionId, notice);
+      resolve();
+    };
+  });
+  await d.click('.card-composer textarea', { ms: 800 });
+  await d.type('.card-composer textarea', ANSWER);
+  await sleep(500);
+  await d.moveTo('.card-composer .checklist-notify', { ms: 600 });
+  await sleep(1200);
+  await d.click('.card-composer-foot [aria-label="返信する"]', { ms: 600 });
+  await notified;
+  claude.startWorking();
+  await sleep(600);
+
+  // 3. Claude が知らせを受けてカードを読み、チェックを付けてスレッドで答える
+  d.caption('返信の知らせはチャットにも出て、「カードを開く」でカードに移れます。Claude はカードを読んで、スレッドで答えます', () => [...document.querySelectorAll('.claude .chat-notice')].at(-1));
+  story.toBottom();
+  await readCard(story, ASK_LIST, 1, `## ${ASK_LIST} #1「${ASK_TITLE}」\n\n人の返信（未読）: ${ANSWER}`);
+  await sleep(300);
+  await checkCards(story, ASK_LIST, [1], '了解しました。8 品目のままにします。');
+  await sleep(300);
+  claude.stopWorking();
+  claude.say('「確認事項」#1 は、8 品目のままにしてチェックを付けました。');
+  backend.push(id, { type: 'turn-end' });
+  story.toBottom();
+  d.caption('チェックとスレッドには、人と Claude のどちらが付けたかが残ります', '.card-thread');
+  await sleep(2800);
+
+  // 4. ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開く
   d.caption('ステータスバーのブランチ名から、ソース管理の「ブランチの変更」を開きます。分岐したところからの変更が、PR のように並びます', '.status-button[data-tip$="ソース管理を開く"]');
   await sleep(1000);
   await d.click('.status-button[data-tip$="ソース管理を開く"]', { ms: 900 });
   await sleep(1400);
 
-  // 2. MenuCard.tsx の差分を開き、インラインにする
+  // 5. MenuCard.tsx の差分を開き、インラインにする
   d.caption('変わったファイルを選ぶと、差分が開きます', '.scm-row[title^="src/components/MenuCard.tsx"]');
   await d.click('.scm-row[title^="src/components/MenuCard.tsx"]');
   await sleep(900);
   await d.click('.diff-pane-head [aria-label="インライン"]', { ms: 600 });
   await sleep(900);
 
-  // 3. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）
+  // 6. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）
   d.caption('行番号の横の ＋ で、差分の行にコメントを付けます', '.diff-pane');
   await comment(d, '<small>（税抜', COMMENT_CARD);
   await sleep(1000);
 
-  // 4. ↓ で次のファイルへ移り、price.ts にもう 1 件
+  // 7. ↓ で次のファイルへ移り、price.ts にもう 1 件
   d.caption('↓ で次のファイルへ移り、もう 1 件。コメントは入力欄の上にたまります', '.diff-pane-head [aria-label="次のファイル"]');
   const next = '.diff-pane-head [aria-label="次のファイル"]';
   for (let i = 0; i < 4 && !document.querySelector('.diff-pane-head')?.textContent?.includes('price.ts'); i++) {
@@ -127,12 +169,12 @@ export async function runReview(story: Story): Promise<void> {
   await comment(d, 'export const TAX_RATE', COMMENT_PRICE);
   await sleep(1200);
 
-  // 5. コメントを添えて送る
+  // 8. コメントを添えて送る
   d.caption('たまったコメントは、指示に添えてまとめて送れます', '.chat-input');
   await story.send(PROMPT);
   claude.startWorking();
 
-  // 6. Claude が直す。開いている差分も書き換わる
+  // 9. Claude が直す。開いている差分も書き換わる
   await sleep(1300);
   d.caption('Claude が直すと、開いている差分もその場で書き換わります', '.diff-pane');
   await claude.edit('src/lib/price.ts', PRICE_WITH_TAKEOUT, 900, [
@@ -171,7 +213,7 @@ export async function runReview(story: Story): Promise<void> {
   backend.push(id, { type: 'turn-end' });
   await sleep(1200);
 
-  // 7. 回答のコマンドを ▶ でターミナルで流す
+  // 10. 回答のコマンドを ▶ でターミナルで流す
   d.caption('回答のコマンドは、▶ でそのままターミナルで流せます', () => [...document.querySelectorAll('.markdown pre.runnable')].at(-1));
   let shell = '';
   backend.onShellWrite = (shellId, data) => {
@@ -186,7 +228,7 @@ export async function runReview(story: Story): Promise<void> {
   await d.find(() => terminalRow('expected 561'));
   await sleep(1500);
 
-  // 8. 落ちたテストの出力を選んで「Claude へ送る」
+  // 11. 落ちたテストの出力を選んで「Claude へ送る」
   d.caption('落ちたテストの出力を選んで「Claude へ送る」と、入力欄にそのまま貼られます', '.terminal-panel');
   await selectTerminal(d, 'src/lib/price.test.ts', 'expected 561');
   await sleep(500);

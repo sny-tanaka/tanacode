@@ -4,11 +4,12 @@ import { type Director, sleep } from '../../director';
 import { demoWebview, refreshDemoWebviews } from '../../webview';
 import { CSS_PRICE_STACKED } from '../files';
 import { ADMIN_URL, DEV_URL, setLoggedIn } from '../page';
+import { checkCards, DONE_LIST } from '../checklist';
 import { MAIN, type Story } from '../story';
 
 // 章 4「ブラウザで確かめる」: 開発中のページをアプリ内ブラウザで開き、スマホの幅で崩れている要素を指さして直してもらう。
 // 直したあとは Claude 自身がブラウザでページを確かめる（「Claude が操作中」の帯・押す要素の枠・スクリーンショット）。
-// ログインは Claude にさせず、作業の途中で「あなたの番です」と頼まれる
+// ログインは Claude にさせず、作業の途中で「あなたの番です」と頼まれる。最後に、章 2 で残った「完了前チェック」#3（スマホの幅）にチェックを付ける
 
 const PROMPT = 'スマホだと税抜の表示が途中で折り返して読みにくいので、税抜は価格の下の行に出して';
 const BROWSER = 'mcp__tanacode-browser__';
@@ -148,7 +149,11 @@ export async function runBrowser(story: Story): Promise<void> {
   claude.result(adminShot, { images: [await screenshot()], output: 'スクリーンショットを撮りました' });
   activity(null, null, false);
 
-  // 8. 応答が届いて完了。畳んだ操作を開くと、スクリーンショットも見られる
+  // 8. 章 2 で確かめられなかった「完了前チェック」#3（スマホの幅）を、確かめたのでチェックする
+  await sleep(600);
+  await checkCards(story, DONE_LIST, [3], 'スマホの幅（390px）で、価格と税抜がそれぞれ 1 行に収まることを、ブラウザで確かめました', 700);
+
+  // 9. 応答が届いて完了。畳んだ操作を開くと、スクリーンショットも見られる
   await sleep(600);
   claude.stopWorking();
   claude.say(
@@ -158,6 +163,7 @@ export async function runBrowser(story: Story): Promise<void> {
       '- `.price small` を `display: block` にし、左の余白を外しました',
       '- スマホの 2 列でも、価格と税抜がそれぞれ 1 行に収まることを、ブラウザで確かめました',
       '- 管理画面の税込価格も、表示に合っています',
+      '- 「完了前チェック」の #3（スマホの幅）にチェックを付けました',
     ].join('\n'),
   );
   backend.push(id, { type: 'turn-end' });

@@ -522,7 +522,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 人と Claude が一緒に見て、書き換えるリスト。セッションの中に名前の付いたリスト（`Checklist`）を持ち、リストはカード（`Card`。タイトル・説明文・チェック・スレッド）を並べます。型と、main・画面・MCP で使う読み方は `src/shared/checklist.ts`。
   - hooks（Stop など）で Claude を止めずに続けさせる仕組みは作りません。どこまで進めるかは人の指示で決め、ハーネスでは強制しません（残したまま進めたいこともあるため）。
   - Claude Code の ToDo（TaskCreate・TodoWrite。チャットの上の `TodoPanel`）とは別物で、そちらは止めません。
-- 保存は main の `ChecklistStore`（`checklist-store.ts`）。セッションごとに `checklists/<セッション ID>.json`（tmp に書いてから rename。500ms ずつまとめる。`0600`）。画面（IPC の `checklist:apply`）と Claude（MCP）の両方が、同じ `ChecklistStore` を書き換え、書き換えるたびに `checklist:changed` で画面に送ります。
+- 書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`（メモリの上だけで持つ。番号・ゴミ箱・未読・コピー・Claude に伝える人の書き換え）。保存は、それを継いだ main の `ChecklistStore`（`checklist-store.ts`）。セッションごとに `checklists/<セッション ID>.json`（tmp に書いてから rename。500ms ずつまとめる。`0600`）。画面（IPC の `checklist:apply`）と Claude（MCP）の両方が、同じ `ChecklistStore` を書き換え、書き換えるたびに `checklist:changed` で画面に送ります。デモのサイトの作り物の API も、`ChecklistBook` をそのまま使います。
   - 番号（`number`）はリストの `nextNumber` から振り、消しても戻しません。並び順は `cards` の順。別のリストへ移すと、移した先で振り直します。
   - 削除は `deletedAt` を付けるだけ（ゴミ箱）。リストを戻すときに同じ名前のリストがあれば、「名前 (2)」にします。ゴミ箱を空にしたら消します。セッションを一覧から削除したら、ファイルごと消します（アーカイブでは残す）。
   - リストの名前は、比べるときに全角半角・大文字小文字・前後の空白を区別しません（`nameKey`）。Claude はリストを名前で指すため。
@@ -623,7 +623,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `sessions-mcp.ts` / `sessions-bridge.ts`: セッションの中継の入り口と、中継に渡す環境変数・子セッションの起動の確認のフック・`--mcp-config` のエントリ
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ）
   - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信）を、手の空いたセッションの入力欄に打つ列
-  - `checklist-store.ts`: チェックリストの保存と書き換え（番号・ゴミ箱・未読・コピー・Claude に伝える人の書き換え）
+  - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト）の置き場所
@@ -664,7 +664,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの MCP のツールの一覧と説明・知らせの目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
@@ -705,6 +705,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `chapters.ts`: 章の名前と台本を合わせた一覧
   - `chapters/`: 章ごとの台本（`start`: セッションを始める、`delegate`: 指示して任せる、`knowledge`: Claude が知っている範囲、`browser`: ブラウザで確かめる、`review`: レビューして直す、`parallel`: 並行して進める、`wrapup`: 整理して振り返る、`app`: アプリのまわり。セッションの外の機能）
   - `story.ts`: 章をまたいで持つ状態（作り物の API・セッションごとの作り物の Claude）と、台本の手助け（発言を打って送る・選択肢を待つ・フォルダを開くなど）。`prepareStory()` が、アプリの最初の描画より前に作り物の API を用意します
+  - `checklist.ts`: 章をまたいで使うチェックリスト。章 2 で Claude が要件を「完了前チェック」に積んで確かめ、章 3 で迷うところを「確認事項」に残し、章 4 で残ったカードを確かめ、章 5 で人が確認事項のスレッドに答えます。Claude の操作は MCP のツールの呼び出しとして会話に足し、作り物の API のチェックリストを書き換えます
   - `files.ts`: Claude が書き換えるファイルの中身。章の順に、前の章の続きになるようにします（税込価格 → アレルギー表示 → スマホの表示 → テイクアウトの価格）
   - `page.ts`: アプリ内ブラウザで開く開発サーバーのページの作り物。いまのファイルの中身に合わせて表示が変わります
 - 操作の説明（`d.caption('説明', 場所)`）: 説明は、指す場所のそばに吹き出しで出します。場所（セレクタ・要素・要素を返す関数）を渡すと、アプリの画面ではその場所を枠で照らし、まわりを少し暗くします。まだ無い要素は、出てきたところで照らします。場所を渡さない説明は、画面の下の方に出します。
@@ -717,7 +718,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `messages.ts`: 2 つのページのやりとり（`postMessage`）。アプリの画面から親へ、操作の説明とその場所（アプリの画面の座標）・ツアーの状態・いまの章と早送り中か・見終わった章・再生中に触ろうとしたこと・書き出した HTML。親からアプリの画面へ、一時停止と次の章へ
   - `inputGuard.ts`: ツアーの再生中は、見ている人のマウス・キーボードの操作をアプリに届けません（台本の操作とぶつからないように）。台本の操作は `isTrusted` が false なので通ります
   - `site.css` / `app.css`: 親のページ（上の帯・目次・吹き出し・準備中の幕・iframe の枠）と、アプリの画面（タイトルバーの飾りの信号機ボタン）だけの見た目
-- 作り物の API（`backend.ts`）は、ツアーが使う機能のぶんだけ作ってあります。セッションの作成（`onCreate`）・worktree の準備・コンテキストの中身・アプリ内ブラウザの Claude の操作と「あなたの番」の依頼・ターミナルの出力・バックグラウンドの作業の停止・翻訳・書き出しの保存など。ファイルを書き換えると、各セッションのフォルダ（worktree を含む）に変更を知らせ、開いているファイルを読み直させます。
+- 作り物の API（`backend.ts`）は、ツアーが使う機能のぶんだけ作ってあります。セッションの作成（`onCreate`）・worktree の準備・コンテキストの中身・チェックリスト（書き換えはアプリと同じ `ChecklistBook`。「Claude に通知する」の返信は `onChecklistNotify` で台本に届く）・アプリ内ブラウザの Claude の操作と「あなたの番」の依頼・ターミナルの出力・バックグラウンドの作業の停止・翻訳・書き出しの保存など。ファイルを書き換えると、各セッションのフォルダ（worktree を含む）に変更を知らせ、開いているファイルを読み直させます。
 - 画面の大きさ: アプリの画面は、どの端末・ブラウザでも 1920×1080（外付けのフル HD のモニターと同じ。README の紹介画像も同じ。`messages.ts` の `STAGE`）で描きます。親のページが、上の帯の下の残りに横も縦も収まるよう iframe を `transform` で縮小して、真ん中に置きます（大きくはしません。倍率 `--demo-scale` は `DemoSite.tsx` の `ScreenLayer` が決めます）。
   - アプリの画面そのものに `zoom` や `transform` をかけると、ブラウザによって文字の大きさや折り返し、固定の位置に出す部品（ツールチップなど）の位置がずれます。iframe ごと絵として縮めれば、中には影響しません。
   - スマホでは `transform` では縮めず、ページの幅（`<meta name="viewport">`）をアプリの画面が収まる幅に広げて、ブラウザのページのズームで縮めます（`DemoSite.tsx` の `fitViewport`）。iPhone の Safari（WebKit）は、`transform` で縮めた iframe の中身を、縮める前の大きさのまま端末の解像度（3 倍）で描きます。ページの処理のメモリが数 GB に膨らんでページが落ち、白くなって読み込み直されてしまうためです。ページのズームなら、縮めた大きさに見合う解像度で描きます。PC のブラウザは viewport を見ないので、これまでどおり `transform` で縮めます。

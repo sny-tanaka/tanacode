@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ChatEvent } from '@shared/chat';
 import { App } from '../../App';
 import { Director, isFastForward, setFastForward, setPaused } from '../director';
 import { Claude } from '../scenarios/claude';
@@ -22,14 +23,14 @@ const post = (message: StageMessage) => window.parent.postMessage(message, '*');
 function enterFreeMode(story: Story): void {
   const { backend } = story;
   const claudes = new Map<string, Claude>();
-  backend.onUserMessage = (id, text, images) => {
+  const reply = (id: string, event: (c: Claude) => ChatEvent) => {
     let claude = claudes.get(id);
     if (!claude) {
       claude = new Claude(backend, id, 'free-');
       claudes.set(id, claude);
     }
     const c = claude;
-    backend.push(id, { type: 'user', id: c.next('u'), text, images });
+    backend.push(id, event(c));
     c.startWorking();
     setTimeout(() => {
       c.stopWorking();
@@ -37,6 +38,9 @@ function enterFreeMode(story: Story): void {
       backend.push(id, { type: 'turn-end' });
     }, 1200);
   };
+  backend.onUserMessage = (id, text, images) => reply(id, (c) => ({ type: 'user', id: c.next('u'), text, images }));
+  // チェックリストのスレッドに「Claude に通知する」で返信したときも、知らせを出して同じ返事をする
+  backend.onChecklistNotify = (id, notice) => reply(id, () => notice);
   // 質問のカードが残っていたら、答えたところで閉じる
   backend.onChoose = (id) => {
     backend.setScreen(id, { state: { kind: 'prompt' } });

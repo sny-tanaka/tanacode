@@ -1,4 +1,5 @@
 import type { ChatEvent } from '@shared/chat';
+import { checklistTarget, checklistToolId } from '@shared/checklist-tools';
 import type { MenuOption } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { DemoBackend } from '../backend';
@@ -87,6 +88,16 @@ export class Claude {
     this.backend.writeFile(path, text);
     this.backend.know(this.id, { [path]: 'edited' });
     await afterUse?.(id);
+    return id;
+  }
+
+  // チェックリストの MCP のツール（tanacode-checklist）を呼び、ms 後に結果を返す。
+  // run がチェックリスト（backend.checklists）を書き換えて、ツールの結果の文を返す
+  async checklist(tool: string, input: Record<string, unknown>, ms: number, run: () => string): Promise<string> {
+    const name = checklistToolId(tool);
+    const id = this.use(name, checklistTarget(name, input) ?? '', { input: JSON.stringify(input, null, 2) });
+    await sleep(ms);
+    this.result(id, { output: run() });
     return id;
   }
 
