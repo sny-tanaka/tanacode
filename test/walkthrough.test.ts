@@ -124,7 +124,9 @@ describe('MCP のツール', () => {
     expect(status).toContain('1. 税率を読む — src/tax.ts:3-5（見た）');
     expect(status).toContain('2. 切り捨て — src/tax.ts:12（今ここ）');
     expect(status).toContain('3. 呼び出し — src/tax.ts:3-5\n'.trimEnd());
-    control.end(ME);
+    control.close(ME);
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('人はウォークスルーを閉じています（最後に見たのは 2/3。');
+    control.discard(ME);
     expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('ウォークスルーはありません');
   });
 
@@ -137,16 +139,47 @@ describe('MCP のツール', () => {
 });
 
 describe('画面からの操作', () => {
-  it('go: 範囲に収めて、見たステップを覚える。end: 終えて画面に知らせる', async () => {
-    const { control, changes } = setup();
+  it('go: 範囲に収めて、見たステップを覚える', async () => {
+    const { control } = setup();
     await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step(), step(), step()] });
     control.go(ME, 9);
-    expect(control.get(ME)).toMatchObject({ current: 2, visited: [0, 2], seq: 2 });
+    expect(control.get(ME)).toMatchObject({ open: true, current: 2, visited: [0, 2], seq: 2 });
     control.go(ME, -1);
     expect(control.get(ME)).toMatchObject({ current: 0, visited: [0, 2], seq: 3 });
-    control.end(ME);
+  });
+
+  it('close: 手順は残し、go で開き直せる。Claude が作り直すと置き換わる', async () => {
+    const { control, changes } = setup();
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step(), step(), step()] });
+    control.go(ME, 1);
+    const id = control.get(ME)!.id;
+    control.close(ME);
+    expect(control.get(ME)).toMatchObject({ id, open: false, current: 1, visited: [0, 1], movedBy: 'human' });
+    expect(changes.at(-1)?.walkthrough?.open).toBe(false);
+    // 閉じたものを、もう一度閉じても変わらない
+    const count = changes.length;
+    control.close(ME);
+    expect(changes).toHaveLength(count);
+    control.go(ME, 2);
+    expect(control.get(ME)).toMatchObject({ id, open: true, current: 2 });
+    control.close(ME);
+    // 質問に答えて示すときは開く
+    await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    expect(control.get(ME)).toMatchObject({ id, open: true, aside: { startLine: 7 } });
+    await control.handle(ME, 'start_walkthrough', { title: '作り直し', steps: [step()] });
+    expect(control.get(ME)).toMatchObject({ title: '作り直し', open: true, current: 0, visited: [0] });
+    expect(control.get(ME)!.id).not.toBe(id);
+  });
+
+  it('寄り道だけのものは、閉じると捨てる。discard は捨てて画面に知らせる', async () => {
+    const { control, changes } = setup();
+    await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    control.close(ME);
     expect(control.get(ME)).toBeNull();
     expect(changes.at(-1)).toEqual({ sessionId: ME, walkthrough: null });
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step()] });
+    control.discard(ME);
+    expect(control.get(ME)).toBeNull();
     expect(control.list()).toEqual([]);
   });
 });

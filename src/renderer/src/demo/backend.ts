@@ -547,7 +547,7 @@ export class DemoBackend {
       walkthrough: {
         list: () => ok([]),
         go: async () => {},
-        end: async () => {},
+        close: async () => {},
         onChanged: () => () => {},
         draftComment: () => ok({ ok: false as const, reason: 'デモでは GitHub に載せられません。' }),
         postComment: () => Promise.reject(new Error('デモでは GitHub に載せられません。')),

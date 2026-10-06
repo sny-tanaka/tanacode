@@ -316,7 +316,7 @@ export function App() {
   useEffect(() => {
     setDiffView(viewId && browsedUnseen.current.delete(viewId) ? { source: 'preview' } : null);
     const walk = viewId && walkedUnseen.current.delete(viewId) ? walksRef.current[viewId] : null;
-    if (walk) showStepRef.current(shownStep(walk));
+    if (walk?.open) showStepRef.current(shownStep(walk));
   }, [viewId]);
 
   // Claude によるアプリ内ブラウザの操作。そのセッションを見ているときだけ、操作を始めたときにエディタの場所にブラウザを開く
@@ -655,8 +655,10 @@ export function App() {
   const compact = useCompactState(selected ?? null, chat, selected ? screenOf(selected.id) : null);
   const compactWith = useCallback((instructions: string) => sendToSelected(`/compact ${instructions}`, []), [sendToSelected]);
 
-  // ウォークスルー（選んでいるセッションのもの）。人が今、Claude の示している場所を見ているか
-  const walk = (selected && !selected.archived && walkthroughs[selected.id]) || null;
+  // ウォークスルー（選んでいるセッションのもの）。walkAll は閉じたものも含む（ソース管理の一覧に出し、もう一度開ける）。
+  // walk は開いているものだけ（吹き出し・帯・「ここを聞く」）。人が今、Claude の示している場所を見ているか
+  const walkAll = (selected && !selected.archived && walkthroughs[selected.id]) || null;
+  const walk = walkAll?.open ? walkAll : null;
   const walkShown = walk ? shownStep(walk) : null;
   const walkInDiff = !!walkShown && inBranchDiff(walkShown);
   const viewingWalk =
@@ -664,24 +666,37 @@ export function App() {
     (walkInDiff ? diffView?.source === 'branch' && diffView.path === walkShown.path : !diffView && editor.activePath === walkShown.path);
   viewingWalkRef.current = viewingWalk;
   const walkStale = !!walk && !walk.aside && staleWalkFiles.has(`${walk.id}:${walkShown!.path}`);
+  // ステップへ移る（閉じていれば開く）。先にエディタで開き、main に知らせる（範囲までのスクロールは、main から届いた変更で吹き出しが行う）
+  const goWalk = useCallback(
+    (index: number) => {
+      if (!walkAll || !selectedId) return;
+      const step = walkAll.steps[Math.min(Math.max(index, 0), walkAll.steps.length - 1)];
+      if (step) showStepRef.current(step);
+      void window.tanacode.walkthrough.go(selectedId, index);
+    },
+    [walkAll, selectedId],
+  );
+  const closeWalk = useCallback(() => selectedId && void window.tanacode.walkthrough.close(selectedId), [selectedId]);
+  const publishWalk = useCallback(() => selectedId && setCommenting(selectedId), [selectedId]);
   const walkControls = useMemo<WalkthroughControls | null>(() => {
     if (!walk || !selectedId) return null;
     const sessionId = selectedId;
     return {
       walkthrough: walk,
       stale: walkStale,
-      // 先にエディタで開き、main に知らせる（範囲までのスクロールは、main から届いた変更で吹き出しが行う）
-      onGo: (index) => {
-        const step = walk.steps[Math.min(Math.max(index, 0), walk.steps.length - 1)];
-        if (step) showStepRef.current(step);
-        void window.tanacode.walkthrough.go(sessionId, index);
-      },
-      onEnd: () => void window.tanacode.walkthrough.end(sessionId),
+      onGo: goWalk,
+      onClose: closeWalk,
       onAsk: (question) => pendingSends.send(sessionId, stepQuestionText(walk, question), []),
       onRestart: () => pendingSends.send(sessionId, restartRequestText(walk), []),
-      onPublish: () => setCommenting(sessionId),
+      onPublish: publishWalk,
+      onShowList: () => setSidePanel('scm'),
     };
-  }, [walk, walkStale, selectedId, pendingSends.send]);
+  }, [walk, walkStale, selectedId, goWalk, closeWalk, publishWalk, pendingSends.send]);
+  // ソース管理パネルの一覧（寄り道だけで、ステップが無いものは出さない）
+  const walkList = useMemo(
+    () => (walkAll && walkAll.steps.length > 0 ? { walkthrough: walkAll, onGo: goWalk, onPublish: publishWalk } : null),
+    [walkAll, goWalk, publishWalk],
+  );
   // ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」
   const requestWalkthrough = useCallback(() => sendToSelected(WALKTHROUGH_REQUEST, []), [sendToSelected]);
   const askRange = useCallback(
@@ -689,10 +704,12 @@ export function App() {
     [sendToSelected],
   );
   const showWalk = useCallback(() => walkShown && showStep(walkShown), [walkShown, showStep]);
-  const endWalk = useCallback(() => selectedId && void window.tanacode.walkthrough.end(selectedId), [selectedId]);
-  // チャットのウォークスルーのツールの行から。start_walkthrough は今の場所、show_code はその場所を開く
+  // チャットのウォークスルーのツールの行から。start_walkthrough は今の場所（閉じていれば、最後に見たステップから開き直す）、show_code はその場所を開く
   useOpenWalkthroughTarget((target) => {
-    if (target.kind === 'walkthrough') showWalk();
+    if (target.kind === 'walkthrough') {
+      if (walk) showWalk();
+      else if (walkAll && walkAll.steps.length > 0) goWalk(walkAll.current);
+    }
     else if (target.path.startsWith('/')) openAbsolute(target.path, target.line);
     else void openFile(target.path, target.line);
   });
@@ -854,6 +871,7 @@ export function App() {
                   onShowComment={showCommentOf}
                   onRemoveComment={removeComment}
                   onWalkthrough={selected && !selected.archived ? requestWalkthrough : undefined}
+                  walkthrough={walkList}
                 />
               </div>
               <div hidden={shownPanel !== 'tasks'} className="side-body">
@@ -928,7 +946,7 @@ export function App() {
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
         )}
         <div className="center">
-          {walk && !viewingWalk && <WalkthroughBand walkthrough={walk} onShow={showWalk} onEnd={endWalk} />}
+          {walk && !viewingWalk && <WalkthroughBand walkthrough={walk} onShow={showWalk} onClose={closeWalk} />}
           {selected && cwd && diffView?.source === 'task' && (
             <TaskView
               sessionId={selected.id}

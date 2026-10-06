@@ -5,8 +5,9 @@ import { walkthroughTool } from '@shared/walkthrough-tools';
 import { textResult, type ToolResult } from './mcp-bridge';
 import { Workspace } from './workspace';
 
-// ウォークスルー（MCP サーバー tanacode-walkthrough のツールの実行）と、画面からの「次へ」「戻る」・終える。
+// ウォークスルー（MCP サーバー tanacode-walkthrough のツールの実行）と、画面からの「次へ」「戻る」・閉じる。
 // 呼び出し元のセッションは中継の env で渡ってくる。保存はせず、セッションごとに今の 1 つだけをメモリに持つ。
+// 人が閉じても捨てず、Claude が作り直すまで、もう一度開ける（go）。
 // ツールは人の操作を待たずにすぐ返す（Claude Code は、120 秒たっても終わらない MCP のツールをバックグラウンドに移すため）
 
 type Deps = {
@@ -38,16 +39,25 @@ export class WalkthroughControl {
     return this.walks.get(sessionId) ?? null;
   }
 
-  // 人が見るステップを変えた。寄り道からも戻る
+  // 人が見るステップを変えた。寄り道からも戻る。閉じていれば開く
   go(sessionId: string, index: number): void {
     const w = this.walks.get(sessionId);
     if (!w || w.steps.length === 0 || !Number.isInteger(index)) return;
     const current = Math.min(Math.max(index, 0), w.steps.length - 1);
     const visited = w.visited.includes(current) ? w.visited : [...w.visited, current].sort((a, b) => a - b);
-    this.set(sessionId, { ...w, current, aside: null, visited, movedBy: 'human', seq: w.seq + 1 });
+    this.set(sessionId, { ...w, open: true, current, aside: null, visited, movedBy: 'human', seq: w.seq + 1 });
   }
 
-  end(sessionId: string): void {
+  // 人が閉じた。手順は残す（寄り道だけで、もう一度見るステップが無ければ捨てる）
+  close(sessionId: string): void {
+    const w = this.walks.get(sessionId);
+    if (!w) return;
+    if (w.steps.length === 0) return this.discard(sessionId);
+    if (w.open) this.set(sessionId, { ...w, open: false, aside: null, movedBy: 'human', seq: w.seq + 1 });
+  }
+
+  // 捨てる（セッションをアーカイブした・一覧から削除した）
+  discard(sessionId: string): void {
     if (!this.walks.delete(sessionId)) return;
     this.deps.onChange(sessionId, null);
   }
@@ -100,6 +110,7 @@ export class WalkthroughControl {
           id: randomUUID(),
           title,
           steps,
+          open: true,
           current: 0,
           aside: null,
           visited: [0],
@@ -119,8 +130,9 @@ export class WalkthroughControl {
         const aside = await readStep(new Workspace(cwd), args, false).catch((e: unknown) => {
           throw new WalkthroughError(errorOf(e, ''));
         });
-        const base: Walkthrough = prev ?? { id: randomUUID(), title: '', steps: [], current: 0, aside: null, visited: [], movedBy: 'claude', seq: 0, startedAt: now };
-        this.set(sessionId, { ...base, aside, movedBy: 'claude', seq: base.seq + 1 });
+        const base: Walkthrough = prev ?? { id: randomUUID(), title: '', steps: [], open: true, current: 0, aside: null, visited: [], movedBy: 'claude', seq: 0, startedAt: now };
+        // 人が閉じていても、質問に答えて示すときは開く
+        this.set(sessionId, { ...base, open: true, aside, movedBy: 'claude', seq: base.seq + 1 });
         const back = base.steps.length > 0 ? `人が「ウォークスルーに戻る」を押すと、${base.current + 1}/${base.steps.length} に戻ります。` : '';
         return `人のエディタに ${stepLocation(aside)} を示しました（寄り道）。${back}`;
       }
@@ -180,7 +192,9 @@ async function readStep(workspace: Workspace, raw: unknown, titled: boolean): Pr
 
 function statusText(w: Walkthrough): string {
   if (w.steps.length === 0) return `ウォークスルーは始めていません。寄り道で ${stepLocation(shownStep(w))} を示しています。`;
-  const now = w.aside
+  const now = !w.open
+    ? `人はウォークスルーを閉じています（最後に見たのは ${w.current + 1}/${w.steps.length}。ソース管理の一覧から、もう一度開けます）。`
+    : w.aside
     ? `人は寄り道で示した ${stepLocation(w.aside)} を見ています（戻ると ${w.current + 1}/${w.steps.length}）。`
     : `人は ${w.current + 1}/${w.steps.length}「${w.steps[w.current].title}」を見ています。`;
   const lines = w.steps.map((s, i) => {

@@ -1,6 +1,7 @@
 // ウォークスルー（Claude がエディタでコードを示しながら説明し、人が「次へ」で進めて、その場で質問する）の型と、
 // main・画面で使う文の組み立て。Claude は MCP サーバー tanacode-walkthrough で扱う（walkthrough-tools.ts）。
-// 保存はしない（コードが進むと行番号がずれて壊れるため）。main のメモリの上に、セッションごとに今の 1 つだけを持つ
+// 保存はしない（コードが進むと行番号がずれて壊れるため）。main のメモリの上に、セッションごとに今の 1 つだけを持つ。
+// 人が閉じても捨てず、Claude が作り直す（start_walkthrough）までは、ソース管理の一覧からもう一度見られる
 
 // 1 つのステップ。path: セッションのフォルダからの相対パス / startLine・endLine: 示す範囲（1 から。両端を含む）/
 // title: 見出し / body: 説明（Markdown）/ view: file はエディタ、diff はブランチの差分（基点 ↔ 作業ツリー）の変更後の側に出す
@@ -10,11 +11,12 @@ export type WalkthroughStep = { path: string; startLine: number; endLine: number
 
 // movedBy: 最後に示す場所を変えたのは誰か（Claude なら、人が前の場所を見ていれば画面を追従させる）/
 // seq: 示す場所が変わるたびに増える / current: 人が見ているステップ（0 から）/ aside: 質問に答えるための寄り道（show_code）/
-// visited: 人が開いたステップ
+// visited: 人が開いたステップ / open: 人が見ている（閉じたら false。エディタの吹き出し・帯・「ここを聞く」を出さない）
 export type Walkthrough = {
   id: string;
   title: string;
   steps: WalkthroughStep[];
+  open: boolean;
   current: number;
   aside: WalkthroughStep | null;
   visited: number[];
@@ -23,7 +25,7 @@ export type Walkthrough = {
   startedAt: number;
 };
 
-// main → 画面。walkthrough が null なら終わった
+// main → 画面。walkthrough が null なら無くなった（セッションをアーカイブ・一覧から削除した など）
 export type SessionWalkthrough = { sessionId: string; walkthrough: Walkthrough | null };
 
 // 上限（Claude が大きすぎる手順を渡さないように）

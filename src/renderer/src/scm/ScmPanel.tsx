@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useState } from 'react';
 import type { BranchChanges, FileChange, GitAction, GitBranches, GitEntry, GitState } from '@shared/ipc';
 import { buildTree, filesInTreeOrder, visibleRows } from '@shared/scm-tree';
 import { CommentList } from '../review/CommentList';
+import { WalkthroughList, type WalkthroughListProps } from '../walkthrough/WalkthroughList';
 import type { ReviewComment } from '../review/LineComments';
 import { Busy } from '../layout/Busy';
 import {
@@ -40,6 +41,8 @@ type Props = {
   onRemoveComment: (id: string) => void;
   // 「ブランチの変更」の「Claude にウォークスルーしてもらう」（セッションを見ているときだけ）
   onWalkthrough?: () => void;
+  // このセッションのウォークスルーの一覧（閉じたものも、Claude が作り直すまで出す）
+  walkthrough?: WalkthroughListProps | null;
 };
 
 // VSCode のソース管理のように、変更の確認・ステージ・コミット・プッシュ・プル・ブランチの切り替えをする。
@@ -58,6 +61,7 @@ export const ScmPanel = memo(function ScmPanel({
   onShowComment,
   onRemoveComment,
   onWalkthrough,
+  walkthrough,
 }: Props) {
   const [message, setMessage] = useState('');
   const [amend, setAmend] = useState(false);
@@ -208,6 +212,7 @@ export const ScmPanel = memo(function ScmPanel({
             { icon: AddIcon, title: 'ステージする', run: (paths) => void run({ kind: 'stage', paths }, 'ステージ中…') },
           ]}
         />
+        {walkthrough && <WalkthroughList {...walkthrough} />}
         <CommentList comments={comments} onShow={onShowComment} onRemove={onRemoveComment} />
       </div>
     </div>

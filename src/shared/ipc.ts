@@ -158,10 +158,10 @@ export const IpcChannel = {
   ChecklistCopy: 'checklist:copy',
   ChecklistChanged: 'checklist:changed',
   ChecklistUnread: 'checklist:unread',
-  // ウォークスルー。今のもの（画面を作り直したとき用）・人が見るステップを変えた・寄り道から戻った・終えた・変わった（main → 画面）
+  // ウォークスルー。今のもの（画面を作り直したとき用）・人が見るステップを変えた（寄り道から戻る・閉じたものを開くも）・閉じた・変わった（main → 画面）
   WalkthroughGet: 'walkthrough:get',
   WalkthroughGo: 'walkthrough:go',
-  WalkthroughEnd: 'walkthrough:end',
+  WalkthroughClose: 'walkthrough:close',
   WalkthroughChanged: 'walkthrough:changed',
   // ウォークスルーを GitHub の PR にコメントとして載せる。下見（本文と投稿先。載せられなければ理由）・投稿
   WalkthroughDraftComment: 'walkthrough:draft-comment',
@@ -583,9 +583,10 @@ export type TanacodeApi = {
   walkthrough: {
     // 今のウォークスルーがあるセッションの分
     list(): Promise<SessionWalkthrough[]>;
-    // 人が見るステップを変えた（「次へ」「戻る」・目次。寄り道からも戻る）
+    // 人が見るステップを変えた（「次へ」「戻る」・ソース管理の一覧。寄り道から戻る・閉じたものを開くも）
     go(sessionId: string, index: number): Promise<void>;
-    end(sessionId: string): Promise<void>;
+    // 閉じる（手順は残し、Claude が作り直すまで go でもう一度開ける）
+    close(sessionId: string): Promise<void>;
     onChanged(listener: (payload: SessionWalkthrough) => void): () => void;
     // GitHub の PR にコメントとして載せる。draftComment: 下見 / postComment: 投稿して、コメントの URL を返す（載せられなければ理由を添えて失敗する）。
     // attribution: 「Claude が書いた説明」の一言を添える

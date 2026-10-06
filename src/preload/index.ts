@@ -204,7 +204,7 @@ const api: TanacodeApi = {
   walkthrough: {
     list: () => ipcRenderer.invoke(IpcChannel.WalkthroughGet),
     go: (sessionId, index) => ipcRenderer.invoke(IpcChannel.WalkthroughGo, sessionId, index),
-    end: (sessionId) => ipcRenderer.invoke(IpcChannel.WalkthroughEnd, sessionId),
+    close: (sessionId) => ipcRenderer.invoke(IpcChannel.WalkthroughClose, sessionId),
     onChanged: (listener) => subscribe<SessionWalkthrough>(IpcChannel.WalkthroughChanged, listener),
     draftComment: (sessionId) => ipcRenderer.invoke(IpcChannel.WalkthroughDraftComment, sessionId),
     postComment: (sessionId, body, attribution) => ipcRenderer.invoke(IpcChannel.WalkthroughPostComment, sessionId, body, attribution),

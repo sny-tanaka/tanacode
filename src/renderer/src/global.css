@@ -3483,55 +3483,6 @@ details[open] > summary > .disclosure {
   font-size: 13px;
   line-height: 1.7;
 }
-.walk-toc {
-  list-style: none;
-  margin: 0 0 8px;
-  padding: 4px 0;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  max-height: 240px;
-  overflow-y: auto;
-}
-.walk-toc button {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
-  padding: 3px 6px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.walk-toc button:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-.walk-toc button.active {
-  color: var(--text-heading);
-}
-.walk-toc-number {
-  flex: none;
-  min-width: 1.5em;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-.walk-toc button.active .walk-toc-number {
-  color: var(--claude);
-}
-.walk-toc-title {
-  flex: 1;
-  min-width: 0;
-}
-.walk-toc-seen {
-  flex: none;
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
 .walk-stale {
   display: flex;
   align-items: center;
@@ -3710,6 +3661,77 @@ details[open] > summary > .disclosure {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ソース管理パネルのウォークスルーの一覧（Claude へのコメントの上） */
+.walk-list .review-comments-head .icon-button {
+  flex: none;
+  margin: -3px 0;
+}
+.walk-list-label {
+  flex: none;
+  white-space: nowrap;
+}
+.walk-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.walk-list-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.walk-list-step:hover {
+  background: var(--bg-hover);
+}
+.walk-list-number {
+  flex: none;
+  min-width: 1.4em;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.walk-list-step.active .walk-list-number {
+  color: var(--claude);
+}
+.walk-list-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.walk-list-step-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.walk-list-step.active .walk-list-step-title {
+  color: var(--text-heading);
+}
+.walk-list-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.walk-list-seen {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 /* 入力欄の上のタスク一覧（チャットが進んでも流れない） */

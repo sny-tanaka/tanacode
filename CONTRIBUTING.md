@@ -548,7 +548,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 ### ウォークスルー
 
 - Claude がエディタにコードを開いて示しながら説明し、人が「次へ」で進めて質問する機能。型と、main・画面で使う文の組み立ては `src/shared/walkthrough.ts`（`Walkthrough`・`WalkthroughStep`・質問の文）。
-- 保存しません。main の `WalkthroughControl`（`walkthrough-control.ts`）が、セッションごとに今の 1 つだけをメモリに持ちます。コードが進むと行番号がずれて壊れるため、残しても使えないからです。アーカイブ・一覧から削除したセッションのものは捨てます。
+- ファイルに保存しません。main の `WalkthroughControl`（`walkthrough-control.ts`）が、セッションごとに今の 1 つだけをメモリに持ちます。コードが進むと行番号がずれて壊れるため、アプリを終えたあとまで残しても使えないからです。
+  - 人が閉じても捨てず（`open` を false にするだけ）、Claude が作り直す（`start_walkthrough`）まで、ソース管理の一覧からもう一度開けます（`go`）。寄り道だけで、ステップが無いものは、閉じたら捨てます。
+  - アーカイブ・一覧から削除したセッションのものは捨てます（`discard`）。
 - Claude がまとめて手順を渡し、人が自分で進めます（`start_walkthrough`）。1 ステップごとに Claude のターンを回すと、毎回の待ちと料金がかかるためです。
   - ツールは人の操作を待たずに、すぐ返します。Claude Code は 120 秒たっても終わらない MCP のツールをバックグラウンドに移すので（アプリ内ブラウザの `ask_user_to_act` と同じ問題）、人のペースで進む説明を 1 回の呼び出しで待つことはしません。
   - 人の質問は、MCP ではなく、ふつうの発言としてチャットに送ります（`stepQuestionText`・`rangeQuestionText`。画面の `usePendingSends`）。作業中に送れば Claude Code の順番待ちに入るので、知らせの仕組み（`SessionNotices`）は使いません。
@@ -557,7 +559,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 確かめること（`readStep`）: パスはセッションのフォルダ（`manager.cwdOf`。エディタが開くのと同じ）の中だけ（フォルダの中の絶対パスは相対パスにする）、文字のファイルで、範囲がファイルの行数の中にあること。直せないステップがあれば、全部の理由をまとめて返し、始めません。手順は 40 ステップ・見出しは 120 文字・説明は 4000 文字まで。
   - 説明（`instructions`）で、頼まれたら手順を作って一度に渡すこと・説明はなぜこうしたかを中心にすること・渡したらターンを終えて待つこと・質問の届き方・別の場所は `show_code` で示すこと・直したら示し直すことを伝えます。
 - ステップの `view`: `file` はエディタ、`diff` はブランチの変更の差分（`App.tsx` の `DiffView` の `branch`。`DiffPane` の変更後の側）に出します。行番号はどちらも今のファイルのもの。ブランチの変更に無い・消したファイルは、画面がエディタに出します（`inBranchDiff`。main では確かめない）。
-- 状態: `current`（人が見ているステップ）・`aside`（`show_code` の寄り道。人がステップへ移ると消える）・`visited`（見たステップ）・`movedBy` と `seq`（示す場所を最後に変えたのは誰か。変わるたびに増える）。画面からは `walkthrough:go`（「次へ」「戻る」・目次・寄り道から戻る）と `walkthrough:end`、main からは `walkthrough:changed` で送ります。画面を作り直したときは `walkthrough:get` で読み直します。
+- 状態: `open`（人が見ているか。閉じると吹き出し・帯・「ここを聞く」を出さない。`go` と、Claude が示したとき（`start_walkthrough`・`show_code`）に開く）・`current`（人が見ているステップ）・`aside`（`show_code` の寄り道。人がステップへ移ると消える）・`visited`（見たステップ）・`movedBy` と `seq`（示す場所を最後に変えたのは誰か。変わるたびに増える）。画面からは `walkthrough:go`（「次へ」「戻る」・ソース管理の一覧・寄り道から戻る・閉じたものを開く）と `walkthrough:close`、main からは `walkthrough:changed` で送ります。
+- ステップの一覧は、ソース管理パネルの「Claude へのコメント」の上（`walkthrough/WalkthroughList.tsx`。`ScmPanel` の `walkthrough`）。閉じたものも出します。吹き出しには一覧を出さず、ソース管理パネルを開くボタンだけを置きます。画面を作り直したときは `walkthrough:get` で読み直します。
 - 画面: `App.tsx` が `useWalkthroughs` で全セッションの分を持ち、選んでいるセッションのものを `EditorPane` に渡します。示している場所のファイルのモデルをエディタに入れ終えたら、`walkthrough/WalkthroughZone.tsx` が範囲に色を付け、範囲の下の view zone に吹き出し（`WalkthroughBox`）を portal で描きます。示す場所が変わるたび（`id` と `seq`）に、範囲の頭を上の方へスクロールします。示す Markdown はソースで開きます。
   - 追従: Claude が場所を変えたとき（`movedBy` が `claude`）、見ているセッションで、始めたとき（`id` が変わった）か、人が前に示した場所を開いていたときだけ、エディタで開きます。人が別のファイル・差分・ブラウザなどを開いていたら動かさず、エディタの場所の上に `WalkthroughBand` を出します。見ていないセッションは、切り替えたときに開きます（アプリ内ブラウザと同じ）。
   - コードが変わった: 始めてからステップのファイルが変わった（`fs:changed`。始めて 3 秒のうちは、始める前の書き込みとみなす）ら、吹き出しに「Claude に示し直してもらう」を出し、押すと `restartRequestText` を送ります。
@@ -656,7 +659,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
-  - `walkthrough-control.ts`: Claude から届いたウォークスルーのツールを実行する（手順とファイルの範囲の確かめ・寄り道・今の場所）・画面からのステップの移動と終える（メモリの上だけで持つ）
+  - `walkthrough-control.ts`: Claude から届いたウォークスルーのツールを実行する（手順とファイルの範囲の確かめ・寄り道・今の場所）・画面からのステップの移動と閉じる（メモリの上だけで持つ。閉じても残す）
   - `walkthrough-mcp.ts` / `walkthrough-bridge.ts`: ウォークスルーの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `walkthrough-github.ts`: ウォークスルーを GitHub の PR にコメントとして載せる（PR・HEAD・ファイルの確かめと、下見・投稿）
   - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト）の置き場所
@@ -689,7 +692,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
-  - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
+  - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・ソース管理パネルのステップの一覧・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・「あなたの番です」の帯・Claude に許す先のダイアログ。画面では「ブラウザ」）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
@@ -718,7 +721,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
-  - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所）・画面からのステップの移動と終える・中継と起動の引数・設定・チャットのツールの行・質問の文）
+  - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
 

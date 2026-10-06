@@ -404,7 +404,7 @@ function registerIpc(): void {
   // ウォークスルー。今のもの・人が見るステップを変えた・終えた
   ipcMain.handle(IpcChannel.WalkthroughGet, () => walkthroughControl?.list() ?? []);
   ipcMain.handle(IpcChannel.WalkthroughGo, (_e, id: string, index: unknown) => walkthroughControl?.go(String(id), Number(index)));
-  ipcMain.handle(IpcChannel.WalkthroughEnd, (_e, id: string) => walkthroughControl?.end(String(id)));
+  ipcMain.handle(IpcChannel.WalkthroughClose, (_e, id: string) => walkthroughControl?.close(String(id)));
   // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
   const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
   ipcMain.handle(IpcChannel.WalkthroughDraftComment, async (_e, id: string) => {
@@ -898,8 +898,8 @@ app.whenReady().then(async () => {
   manager.watchState((id) => {
     const state = manager.stateOf(id);
     if (state === null || state === 'archived') scheduled.dropSession(id);
-    // アーカイブした・一覧から消したセッションのウォークスルーは終える
-    if (state === null || state === 'archived') walkthroughControl?.end(id);
+    // アーカイブした・一覧から消したセッションのウォークスルーは捨てる
+    if (state === null || state === 'archived') walkthroughControl?.discard(id);
   });
   walkthroughControl = new WalkthroughControl({
     cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),

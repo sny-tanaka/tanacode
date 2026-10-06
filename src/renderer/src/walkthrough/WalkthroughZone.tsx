@@ -12,20 +12,24 @@ export type WalkthroughControls = {
   stale: boolean;
   // 人が見るステップを変える（寄り道からも戻る）
   onGo: (index: number) => void;
-  onEnd: () => void;
+  // 閉じる（手順は残り、ソース管理の一覧からもう一度開ける）
+  onClose: () => void;
   // 「質問する」。見ている場所を添えて Claude に送る
   onAsk: (question: string) => void;
   // 「Claude に示し直してもらう」
   onRestart: () => void;
   // 「GitHub の PR に載せる」（下見のダイアログを開く）
   onPublish?: () => void;
+  // ステップの一覧（ソース管理パネル）を見せる
+  onShowList?: () => void;
 };
 
 type Props = WalkthroughControls & { editor: monaco.editor.IStandaloneCodeEditor };
 
 // Claude が示している範囲に色を付け、その直下（view zone）に吹き出しを出す。中身は React から portal で描く。
 // 示す場所が変わるたびに、範囲の頭が上の方に来るようにスクロールする
-export function WalkthroughZone({ editor, walkthrough, stale, onGo, onEnd, onAsk, onRestart, onPublish }: Props) {
+export function WalkthroughZone({ editor, ...controls }: Props) {
+  const { walkthrough } = controls;
   const step = shownStep(walkthrough);
   const [dom, setDom] = useState<HTMLElement | null>(null);
   // モデルを差し替えると差し込んだ領域と色が消えるので、作り直すきっかけにする
@@ -74,7 +78,7 @@ export function WalkthroughZone({ editor, walkthrough, stale, onGo, onEnd, onAsk
     };
   }, [editor, end, modelSeq]);
 
-  // 吹き出しを描いたあとで、中身の高さに合わせて領域の高さを変える（目次や質問の欄を開くと変わる）
+  // 吹き出しを描いたあとで、中身の高さに合わせて領域の高さを変える（質問の欄やコードが変わったときの知らせで変わる）
   useEffect(() => {
     const box = dom?.firstElementChild as HTMLElement | null | undefined;
     if (!box) return;
@@ -101,23 +105,21 @@ export function WalkthroughZone({ editor, walkthrough, stale, onGo, onEnd, onAsk
 
   return dom
     ? createPortal(
-        <WalkthroughBox walkthrough={walkthrough} stale={stale} onGo={onGo} onEnd={onEnd} onAsk={onAsk} onRestart={onRestart} onPublish={onPublish} />,
+        <WalkthroughBox {...controls} />,
         dom,
       )
     : null;
 }
 
 // 吹き出しの中身。Storybook でもこれを直接描く
-export function WalkthroughBox({ walkthrough, stale, onGo, onEnd, onAsk, onRestart, onPublish }: WalkthroughControls) {
+export function WalkthroughBox({ walkthrough, stale, onGo, onClose, onAsk, onRestart, onPublish, onShowList }: WalkthroughControls) {
   const { steps, current, aside } = walkthrough;
   const step = shownStep(walkthrough);
   const total = steps.length;
-  const [toc, setToc] = useState(false);
   const [asking, setAsking] = useState(false);
   const [question, setQuestion] = useState('');
-  // 場所が変わったら、目次と書きかけの質問の欄は閉じる（書いた文字は残す）
+  // 場所が変わったら、書きかけの質問の欄は閉じる（書いた文字は残す）
   useEffect(() => {
-    setToc(false);
     setAsking(false);
   }, [walkthrough.id, current, aside]);
   const send = () => {
@@ -134,23 +136,10 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onEnd, onAsk, onResta
         <span className="walk-mark">{aside ? '寄り道' : `ウォークスルー ${current + 1}/${total}`}</span>
         <span className="walk-title">{aside ? `${aside.path}:${lineRange(aside)}` : step.title}</span>
         <div className="spacer" />
-        {total > 0 && <IconButton size="sm" icon={ListViewIcon} label="目次" pressed={toc} onClick={() => setToc((v) => !v)} />}
+        {total > 0 && onShowList && <IconButton size="sm" icon={ListViewIcon} label="ステップの一覧（ソース管理）" onClick={onShowList} />}
         {total > 0 && onPublish && <IconButton size="sm" icon={ExportIcon} label="GitHub の PR にコメントとして載せる" onClick={onPublish} />}
-        <IconButton size="sm" icon={CloseIcon} label="ウォークスルーを終える" onClick={onEnd} />
+        <IconButton size="sm" icon={CloseIcon} label="閉じる（ソース管理の一覧から、もう一度開けます）" onClick={onClose} />
       </div>
-      {toc && (
-        <ol className="walk-toc">
-          {steps.map((s, i) => (
-            <li key={i}>
-              <button className={i === current && !aside ? 'active' : ''} onClick={() => onGo(i)}>
-                <span className="walk-toc-number">{i + 1}</span>
-                <span className="walk-toc-title">{s.title}</span>
-                {walkthrough.visited.includes(i) && i !== current && <span className="walk-toc-seen">見た</span>}
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
       {stale && (
         <div className="walk-stale">
           <span>コードが変わりました（位置がずれているかもしれません）</span>
@@ -196,7 +185,7 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onEnd, onAsk, onResta
             <>
               <IconButton icon={ArrowLeftIcon} label="戻る" disabled={current === 0} onClick={() => onGo(current - 1)} />
               {last ? (
-                <button className="send-button" onClick={onEnd}>
+                <button className="send-button" onClick={onClose}>
                   終える
                 </button>
               ) : (

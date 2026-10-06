@@ -17,6 +17,7 @@ const step = (path: string, startLine: number, endLine: number, title: string, b
 const WALK: Walkthrough = {
   id: 'w1',
   title: '税率を可変にした変更',
+  open: true,
   steps: [step('src/settings.ts', 1, 3, '税率を設定に持たせる', '管理画面から変えるため。\n'), step('src/tax.ts', 2, 2, '切り捨て', 'レシートと合わせる。')],
   current: 0,
   aside: { path: 'src/other.ts', startLine: 1, endLine: 1, title: '', body: '寄り道', view: 'file' },
