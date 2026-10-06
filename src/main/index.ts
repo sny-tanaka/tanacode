@@ -380,6 +380,21 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.SessionsImport, (_e, s: DiscoveredSession) => manager.importSession(s.claudeSessionId, s.cwd, s.title));
   ipcMain.handle(IpcChannel.SessionsConfigure, (_e, id: string, options: SessionOptions) => manager.configure(id, options));
   ipcMain.handle(IpcChannel.SessionsRestart, (_e, id: string) => manager.restart(id));
+  // チェックリスト。読む・書き換える（画面から届いた形を確かめる）・別のセッションへコピーする・セッションごとの未読の数
+  ipcMain.handle(IpcChannel.ChecklistGet, (_e, id: string) => (manager.summary(id) ? checklists.lists(id) : []));
+  ipcMain.handle(IpcChannel.ChecklistApply, (_e, id: string, op: unknown) => {
+    if (!manager.summary(id)) throw new Error('セッションが見つかりません');
+    checklistControl?.apply(id, checkOp(op));
+  });
+  ipcMain.handle(IpcChannel.ChecklistCopy, (_e, request: unknown) => checklistControl?.copy(checkCopyRequest(request)));
+  ipcMain.handle(IpcChannel.ChecklistUnread, () => {
+    const counts: Record<string, number> = {};
+    for (const s of manager.list()) {
+      const n = unreadCount(checklists.lists(s.id));
+      if (n > 0) counts[s.id] = n;
+    }
+    return counts;
+  });
   ipcMain.handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
   ipcMain.handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
   ipcMain.handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));
