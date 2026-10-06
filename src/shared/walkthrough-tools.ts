@@ -11,6 +11,12 @@ type Schema = Record<string, unknown>;
 const path: Schema = { type: 'string', description: 'ファイルのパス（セッションのフォルダからの相対パスか、フォルダの中の絶対パス）' };
 const startLine: Schema = { type: 'integer', minimum: 1, description: '示す範囲の最初の行（1 から）' };
 const endLine: Schema = { type: 'integer', minimum: 1, description: '示す範囲の最後の行（含む）。省くと start_line の 1 行' };
+const view: Schema = {
+  type: 'string',
+  enum: ['file', 'diff'],
+  description:
+    'file: エディタに出す（既定）。diff: ブランチの差分（分岐したところ ↔ 作業ツリー）の画面に出し、消した行も並べて見せる。行番号はどちらも今のファイルのもの。ブランチで変わっていないファイルは、diff でもエディタに出す',
+};
 const body: Schema = {
   type: 'string',
   description: '説明（Markdown。エディタの範囲の直下に吹き出しで出す）。何をしたかより、なぜこうしたか（意図・選ばなかった案・気をつけたこと）を 2〜6 文で',
@@ -40,6 +46,7 @@ export const WALKTHROUGH_TOOLS: McpTool[] = [
               end_line: endLine,
               title: { type: 'string', description: 'ステップの見出し（短く。例: 税率を設定から読む）' },
               body,
+              view,
             },
             required: ['path', 'start_line', 'title', 'body'],
             additionalProperties: false,
@@ -58,7 +65,7 @@ export const WALKTHROUGH_TOOLS: McpTool[] = [
       '質問に答えるときに、手順の外の場所を人のエディタに示す（寄り道）。人が「ウォークスルーに戻る」を押すと、元のステップに戻る。ウォークスルーを始めていなくても使える',
     inputSchema: {
       type: 'object',
-      properties: { path, start_line: startLine, end_line: endLine, body },
+      properties: { path, start_line: startLine, end_line: endLine, body, view },
       required: ['path', 'start_line', 'body'],
       additionalProperties: false,
     },
@@ -77,6 +84,7 @@ export const WALKTHROUGH_MCP_INSTRUCTIONS = [
   '人の tanacode のエディタにコードを開いて示しながら、変更や仕組みを説明する（ウォークスルー）ためのツール。画面共有でレビュイーがレビュワーにコードを見せて説明するのと同じことを、あなた（レビュイー）と人（レビュワー）でする。',
   '- 人が「ウォークスルーして」「説明して」「どう変えたか見せて」のように、コードを見ながらの説明を頼んだら使う。',
   '- 先にコードを読んで手順を組み立て、start_walkthrough で全部を一度に渡す。1 ステップに 1 つの意図。読む人が分かりやすい順に（全体の入口 → 中身、データの形 → 使う側）。範囲は説明に要る行だけに絞る（長くても 40 行ほど）。',
+  '- ブランチの変更を説明するときは view: "diff" にすると、消した行も並べて見せられる。変更の前後を比べる必要が無いところ（新しく作ったファイル・仕組みの説明）は file のままでよい。',
   '- 説明は、何をしたかより、なぜこうしたか（意図・選ばなかった案・気をつけたこと・気になっている点）を書く。コードを読めば分かることは繰り返さない。',
   '- 渡したら、チャットには短く「エディタで 1/N から見てください」とだけ書いてターンを終える。人は「次へ」「戻る」で自分のペースで進める。',
   '- 人の質問は、ふつうの発言としてチャットに届く（「ウォークスルー「…」の 3/7「…」（path:40-58）について質問です。」や「path:12-20 について質問です。」と、選んだコードが付く）。答えはチャットに書く。別の場所を見せたほうが早ければ、show_code で示してから答える。',

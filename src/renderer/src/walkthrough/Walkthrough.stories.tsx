@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { shownStep, type Walkthrough } from '@shared/walkthrough';
 import { EditorPane, type OpenFile } from '../editor/EditorPane';
+import { DiffPane } from '../scm/DiffPane';
 import { WalkthroughBand } from './WalkthroughBand';
 import { WalkthroughBox } from './WalkthroughZone';
 
@@ -51,6 +52,7 @@ const WALK: Walkthrough = {
       path: 'src/settings.ts',
       startLine: 1,
       endLine: 7,
+      view: 'file',
       title: '税率を設定に持たせる',
       body: '税率を定数から設定に移しました。**管理画面から変えられるようにする**ためです。\n\nファイルに保存するのは次の PR で、今はメモリの上だけです。',
     },
@@ -58,6 +60,7 @@ const WALK: Walkthrough = {
       path: 'src/tax.ts',
       startLine: 6,
       endLine: 10,
+      view: 'file',
       title: '品目で税率を選ぶ',
       body: '軽減税率の品目（食品・飲み物）とそれ以外で分けています。`category` を増やすときは、ここに足してください。',
     },
@@ -65,6 +68,7 @@ const WALK: Walkthrough = {
       path: 'src/tax.ts',
       startLine: 12,
       endLine: 15,
+      view: 'file',
       title: '1 円未満は切り捨てる',
       body: 'レシートの表示と合わせるため、四捨五入ではなく切り捨てにしました。合計ではなく 1 品ごとに切り捨てる点は、前の実装と同じです。',
     },
@@ -137,7 +141,7 @@ export const 寄り道: Story = {
     <Pane
       initial={{
         ...WALK,
-        aside: { path: 'src/settings.ts', startLine: 9, endLine: 11, title: '', body: '設定を変えるのはここだけです。管理画面の保存ボタンから呼びます。' },
+        aside: { path: 'src/settings.ts', startLine: 9, endLine: 11, view: 'file', title: '', body: '設定を変えるのはここだけです。管理画面の保存ボタンから呼びます。' },
       }}
     />
   ),
@@ -145,6 +149,25 @@ export const 寄り道: Story = {
 
 // 始めたあとで、ファイルがディスク側で変わった
 export const コードが変わった: Story = { render: () => <Pane initial={WALK} stale /> };
+
+// ブランチの変更の差分に出す（view: diff）。消した行も並べて見せる
+const before = tax.replace('  const { standardRate, reducedRate } = settings();\n  return price.category === \'goods\' ? standardRate : reducedRate;', '  return price.category === \'goods\' ? 0.1 : 0.08;');
+export const 差分で示す: Story = {
+  parameters: { width: 1000 },
+  render: () => (
+    <div style={{ height: 560, display: 'flex', flexDirection: 'column', border: '1px solid var(--border-subtle)' }}>
+      <DiffPane
+        path="src/tax.ts"
+        subtitle="main から"
+        load={async () => ({ original: before, modified: tax })}
+        reloadKey=""
+        onClose={noop}
+        onOpenFile={noop}
+        walkthrough={{ walkthrough: { ...WALK, steps: WALK.steps.map((s) => ({ ...s, view: 'diff' })) }, stale: false, onGo: noop, onEnd: noop, onAsk: noop, onRestart: noop }}
+      />
+    </div>
+  ),
+};
 
 // 吹き出しだけ（目次を開いたところ・質問を書いているところは、押して確かめる）
 export const 吹き出し: Story = {

@@ -3,8 +3,10 @@
 // 保存はしない（コードが進むと行番号がずれて壊れるため）。main のメモリの上に、セッションごとに今の 1 つだけを持つ
 
 // 1 つのステップ。path: セッションのフォルダからの相対パス / startLine・endLine: 示す範囲（1 から。両端を含む）/
-// title: 見出し / body: 説明（Markdown）
-export type WalkthroughStep = { path: string; startLine: number; endLine: number; title: string; body: string };
+// title: 見出し / body: 説明（Markdown）/ view: file はエディタ、diff はブランチの差分（基点 ↔ 作業ツリー）の変更後の側に出す
+// （ブランチで変わっていない・消したファイルは、エディタに出す）
+export type WalkthroughView = 'file' | 'diff';
+export type WalkthroughStep = { path: string; startLine: number; endLine: number; title: string; body: string; view: WalkthroughView };
 
 // movedBy: 最後に示す場所を変えたのは誰か（Claude なら、人が前の場所を見ていれば画面を追従させる）/
 // seq: 示す場所が変わるたびに増える / current: 人が見ているステップ（0 から）/ aside: 質問に答えるための寄り道（show_code）/

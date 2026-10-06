@@ -51,7 +51,7 @@ describe('MCP のツール', () => {
     expect(text(r)).toContain('1/2「税率を読む」（src/tax.ts:3-5）');
     const w = control.get(ME)!;
     // フォルダの中の絶対パスは相対パスに、end_line を省くと 1 行
-    expect(w.steps[1]).toEqual({ path: 'src/tax.ts', startLine: 10, endLine: 10, title: '切り捨て', body: '設定から読みます。' });
+    expect(w.steps[1]).toEqual({ path: 'src/tax.ts', startLine: 10, endLine: 10, title: '切り捨て', body: '設定から読みます。', view: 'file' });
     expect(w).toMatchObject({ title: '税率の変更', current: 0, aside: null, visited: [0], movedBy: 'claude', seq: 1, startedAt: 1000 });
     expect(changes).toHaveLength(1);
   });
@@ -83,6 +83,13 @@ describe('MCP のツール', () => {
     expect(message).not.toContain('ステップ 1:');
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
+  });
+
+  it('start_walkthrough: view は file（既定）か diff。ほかは断る', async () => {
+    const { control } = setup();
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ view: 'diff' }), step()] });
+    expect(control.get(ME)!.steps.map((s) => s.view)).toEqual(['diff', 'file']);
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ view: 'split' })] }))).toContain('view は "file" か "diff"');
   });
 
   it('start_walkthrough: ステップが無い・多すぎるときは断る', async () => {
@@ -198,7 +205,7 @@ describe('チャットの表示と質問の文', () => {
     control.go(ME, 1);
     const w = control.get(ME)!;
     expect(stepQuestionText(w, ' なぜ？ ')).toBe('ウォークスルー「税率の変更」の 2/2「切り捨て」（src/tax.ts:12）について質問です。\n\nなぜ？');
-    expect(stepQuestionText({ ...w, aside: { path: 'src/a.ts', startLine: 1, endLine: 2, title: '', body: '' } }, 'これは？')).toContain('寄り道で示した src/a.ts:1-2 について');
+    expect(stepQuestionText({ ...w, aside: { path: 'src/a.ts', startLine: 1, endLine: 2, title: '', body: '', view: 'file' } }, 'これは？')).toContain('寄り道で示した src/a.ts:1-2 について');
     expect(rangeQuestionText('src/a.ts', 4, 4, 'const x = 1;', 'なぜ 1？')).toBe('src/a.ts:4 について質問です。\n```\nconst x = 1;\n```\n\nなぜ 1？');
     // コードに ``` があれば、囲みを長くする
     expect(rangeQuestionText('a.md', 1, 3, '```js\nx\n```', '?')).toContain('````\n```js');

@@ -556,11 +556,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - ツールの種類は、示す `start_walkthrough`・`show_code` が `show`、`walkthrough_status` が `read`（`mcp-tools.ts`）。どちらも `--allowedTools` で許可済みにし、`readOnlyHint` も付けます。人のエディタに示すだけで、ファイルは書き換えないためです。
   - 確かめること（`readStep`）: パスはセッションのフォルダ（`manager.cwdOf`。エディタが開くのと同じ）の中だけ（フォルダの中の絶対パスは相対パスにする）、文字のファイルで、範囲がファイルの行数の中にあること。直せないステップがあれば、全部の理由をまとめて返し、始めません。手順は 40 ステップ・見出しは 120 文字・説明は 4000 文字まで。
   - 説明（`instructions`）で、頼まれたら手順を作って一度に渡すこと・説明はなぜこうしたかを中心にすること・渡したらターンを終えて待つこと・質問の届き方・別の場所は `show_code` で示すこと・直したら示し直すことを伝えます。
+- ステップの `view`: `file` はエディタ、`diff` はブランチの変更の差分（`App.tsx` の `DiffView` の `branch`。`DiffPane` の変更後の側）に出します。行番号はどちらも今のファイルのもの。ブランチの変更に無い・消したファイルは、画面がエディタに出します（`inBranchDiff`。main では確かめない）。
 - 状態: `current`（人が見ているステップ）・`aside`（`show_code` の寄り道。人がステップへ移ると消える）・`visited`（見たステップ）・`movedBy` と `seq`（示す場所を最後に変えたのは誰か。変わるたびに増える）。画面からは `walkthrough:go`（「次へ」「戻る」・目次・寄り道から戻る）と `walkthrough:end`、main からは `walkthrough:changed` で送ります。画面を作り直したときは `walkthrough:get` で読み直します。
 - 画面: `App.tsx` が `useWalkthroughs` で全セッションの分を持ち、選んでいるセッションのものを `EditorPane` に渡します。示している場所のファイルのモデルをエディタに入れ終えたら、`walkthrough/WalkthroughZone.tsx` が範囲に色を付け、範囲の下の view zone に吹き出し（`WalkthroughBox`）を portal で描きます。示す場所が変わるたび（`id` と `seq`）に、範囲の頭を上の方へスクロールします。示す Markdown はソースで開きます。
   - 追従: Claude が場所を変えたとき（`movedBy` が `claude`）、見ているセッションで、始めたとき（`id` が変わった）か、人が前に示した場所を開いていたときだけ、エディタで開きます。人が別のファイル・差分・ブラウザなどを開いていたら動かさず、エディタの場所の上に `WalkthroughBand` を出します。見ていないセッションは、切り替えたときに開きます（アプリ内ブラウザと同じ）。
   - コードが変わった: 始めてからステップのファイルが変わった（`fs:changed`。始めて 3 秒のうちは、始める前の書き込みとみなす）ら、吹き出しに「Claude に示し直してもらう」を出し、押すと `restartRequestText` を送ります。
-  - 「ここを聞く」: ウォークスルーの間だけ、`review/LineComments.tsx` に `onAsk` を渡します。選択の下の content widget と右クリックのメニューから、行コメントと同じ下書きの欄（`ask`）を開き、送るとすぐ発言にします。
+  - ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」は、決まった頼み方の文（`App.tsx` の `WALKTHROUGH_REQUEST`）を送るだけ。
+  - 「ここを聞く」: ウォークスルーの間だけ、`review/LineComments.tsx` に `onAsk` を渡します（エディタと差分の画面）。選択の下の content widget と右クリックのメニューから、行コメントと同じ下書きの欄（`ask`）を開き、送るとすぐ発言にします。
   - チャットのツールの行: 名前は「ウォークスルー · 始める」など（`toolLabel.ts`）、対象は `walkthroughTarget`（「税率の変更 · 7 ステップ」「src/tax.ts:12-20」）。押したときは `walkthrough/openWalkthrough.ts` で `App` に渡し、`start_walkthrough` は今の場所、`show_code` はその場所を開きます（`walkthroughOfTool`）。
   - Monaco の view zone は読み上げから隠れる（`aria-hidden`）ので、吹き出しのボタンは読み上げに出ません（行コメントと同じ）。帯とチャットの行は出ます。
   - ストーリーは `walkthrough/Walkthrough.stories.tsx`。

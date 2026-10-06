@@ -156,6 +156,8 @@ async function readStep(workspace: Workspace, raw: unknown, titled: boolean): Pr
   const endLine = s.end_line === undefined ? startLine : Number(s.end_line);
   if (!Number.isInteger(startLine) || startLine < 1) throw new WalkthroughError(`${path}: start_line は 1 以上の整数にしてください`);
   if (!Number.isInteger(endLine) || endLine < startLine) throw new WalkthroughError(`${path}: end_line は start_line 以上の整数にしてください`);
+  if (s.view !== undefined && s.view !== 'file' && s.view !== 'diff') throw new WalkthroughError(`${path}: view は "file" か "diff" にしてください`);
+  const view = s.view === 'diff' ? 'diff' : 'file';
   const title = titled ? text(s.title, 'title', MAX_TITLE_CHARS) : '';
   const body = text(s.body, 'body', MAX_BODY_CHARS);
   const content = await workspace.readFile(path).catch(() => null);
@@ -163,7 +165,7 @@ async function readStep(workspace: Workspace, raw: unknown, titled: boolean): Pr
   if (content.kind !== 'text') throw new WalkthroughError(`${path} は文字のファイルではないか、大きすぎてエディタで開けません`);
   const lineCount = content.text.endsWith('\n') ? content.text.split('\n').length - 1 : content.text.split('\n').length;
   if (endLine > Math.max(lineCount, 1)) throw new WalkthroughError(`${path} は ${lineCount} 行です（${endLine} 行目はありません）`);
-  return { path, startLine, endLine, title, body };
+  return { path, startLine, endLine, title, body, view };
 }
 
 function statusText(w: Walkthrough): string {

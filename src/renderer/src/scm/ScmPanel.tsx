@@ -37,6 +37,8 @@ type Props = {
   comments: ReviewComment[];
   onShowComment: (comment: ReviewComment) => void;
   onRemoveComment: (id: string) => void;
+  // 「ブランチの変更」の「Claude にウォークスルーしてもらう」（セッションを見ているときだけ）
+  onWalkthrough?: () => void;
 };
 
 // VSCode のソース管理のように、変更の確認・ステージ・コミット・プッシュ・プル・ブランチの切り替えをする。
@@ -54,6 +56,7 @@ export const ScmPanel = memo(function ScmPanel({
   comments,
   onShowComment,
   onRemoveComment,
+  onWalkthrough,
 }: Props) {
   const [message, setMessage] = useState('');
   const [amend, setAmend] = useState(false);
@@ -173,7 +176,7 @@ export const ScmPanel = memo(function ScmPanel({
 
       <div className="scm-lists">
         {state.branchChanges && (
-          <BranchSection changes={state.branchChanges} view={view} activePath={activeBranchPath} onOpen={onOpenBranchDiff} />
+          <BranchSection changes={state.branchChanges} view={view} activePath={activeBranchPath} onOpen={onOpenBranchDiff} onWalkthrough={onWalkthrough} />
         )}
         <Section
           title="ステージ済みの変更"
@@ -284,11 +287,13 @@ function BranchSection({
   view,
   activePath,
   onOpen,
+  onWalkthrough,
 }: {
   changes: BranchChanges;
   view: ScmView;
   activePath: string | null;
   onOpen: (path: string) => void;
+  onWalkthrough?: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const paths = branchPaths(changes, 'list');
@@ -319,6 +324,13 @@ function BranchSection({
               </>
             )}
           </div>
+          {paths.length > 0 && onWalkthrough && (
+            <div className="scm-branch-walk">
+              <button className="ghost-button" onClick={onWalkthrough} data-tip="Claude がエディタでコードを示しながら、このブランチの変更を説明します">
+                Claude にウォークスルーしてもらう
+              </button>
+            </div>
+          )}
           {paths.length === 0 && <div className="scm-none">変更はありません</div>}
           <ChangeRows
             items={paths.map((path) => ({ path }))}

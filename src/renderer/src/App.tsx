@@ -54,7 +54,7 @@ import { useAppUpdate } from './layout/AppUpdate';
 import { TooltipLayer } from './layout/Tooltip';
 import { useNotifications } from './notifications/useNotifications';
 import { setCursor } from './editor/cursorStore';
-import { rangeQuestionText, restartRequestText, shownStep, stepQuestionText, type Walkthrough } from '@shared/walkthrough';
+import { rangeQuestionText, restartRequestText, shownStep, stepQuestionText, type Walkthrough, type WalkthroughStep } from '@shared/walkthrough';
 import type { RangeQuestion } from './review/LineComments';
 import { useOpenWalkthroughTarget } from './walkthrough/openWalkthrough';
 import { useWalkthroughs } from './walkthrough/useWalkthroughs';
@@ -68,6 +68,7 @@ const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
 // ウォークスルーを始めてからこの間に届いたファイルの変更は、始める前の Claude の書き込みとみなす（変更の知らせは少し遅れて届く）
 const WALK_STALE_GRACE_MS = 3000;
+const WALKTHROUGH_REQUEST = 'このブランチの変更を、tanacode のウォークスルーで、コードを示しながら説明してください。';
 
 type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'checklist' | 'context';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）
@@ -302,7 +303,7 @@ export function App() {
       walkedUnseen.current.add(sessionId);
       return;
     }
-    if (!prev || prev.id !== walk.id || viewingWalkRef.current) void openFileRef.current(shownStep(walk).path);
+    if (!prev || prev.id !== walk.id || viewingWalkRef.current) showStepRef.current(shownStep(walk));
   });
   const walksRef = useRef(walkthroughs);
   walksRef.current = walkthroughs;
@@ -312,7 +313,7 @@ export function App() {
   useEffect(() => {
     setDiffView(viewId && browsedUnseen.current.delete(viewId) ? { source: 'preview' } : null);
     const walk = viewId && walkedUnseen.current.delete(viewId) ? walksRef.current[viewId] : null;
-    if (walk) void openFileRef.current(shownStep(walk).path);
+    if (walk) showStepRef.current(shownStep(walk));
   }, [viewId]);
 
   // Claude によるアプリ内ブラウザの操作。そのセッションを見ているときだけ、操作を始めたときにエディタの場所にブラウザを開く
@@ -483,6 +484,21 @@ export function App() {
     setDiffView({ source: 'branch', path });
   }, []);
 
+  // ウォークスルーのステップを出す場所。diff のステップは、ブランチで変わった（消していない）ファイルなら差分の画面、ほかはエディタ
+  const inBranchDiff = useCallback(
+    (step: WalkthroughStep) => step.view === 'diff' && !!branchChanges?.base.mergeBase && !!changes[step.path] && changes[step.path].kind !== 'deleted',
+    [branchChanges, changes],
+  );
+  const showStep = useCallback(
+    (step: WalkthroughStep) => {
+      if (inBranchDiff(step)) openBranchDiff(step.path);
+      else void openFile(step.path);
+    },
+    [inBranchDiff, openBranchDiff, openFile],
+  );
+  const showStepRef = useRef(showStep);
+  showStepRef.current = showStep;
+
   // コメントを付けた場所を見せる。ブランチの変更にあるファイルなら差分、無ければエディタで開く
   const showComment = useCallback(
     (path: string, line: number) => {
@@ -639,7 +655,10 @@ export function App() {
   // ウォークスルー（選んでいるセッションのもの）。人が今、Claude の示している場所を見ているか
   const walk = (selected && !selected.archived && walkthroughs[selected.id]) || null;
   const walkShown = walk ? shownStep(walk) : null;
-  const viewingWalk = !!walkShown && !diffView && editor.activePath === walkShown.path;
+  const walkInDiff = !!walkShown && inBranchDiff(walkShown);
+  const viewingWalk =
+    !!walkShown &&
+    (walkInDiff ? diffView?.source === 'branch' && diffView.path === walkShown.path : !diffView && editor.activePath === walkShown.path);
   viewingWalkRef.current = viewingWalk;
   const walkStale = !!walk && !walk.aside && staleWalkFiles.has(`${walk.id}:${walkShown!.path}`);
   const walkControls = useMemo<WalkthroughControls | null>(() => {
@@ -651,7 +670,7 @@ export function App() {
       // 先にエディタで開き、main に知らせる（範囲までのスクロールは、main から届いた変更で吹き出しが行う）
       onGo: (index) => {
         const step = walk.steps[Math.min(Math.max(index, 0), walk.steps.length - 1)];
-        if (step) void openFileRef.current(step.path);
+        if (step) showStepRef.current(step);
         void window.tanacode.walkthrough.go(sessionId, index);
       },
       onEnd: () => void window.tanacode.walkthrough.end(sessionId),
@@ -659,11 +678,13 @@ export function App() {
       onRestart: () => pendingSends.send(sessionId, restartRequestText(walk), []),
     };
   }, [walk, walkStale, selectedId, pendingSends.send]);
+  // ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」
+  const requestWalkthrough = useCallback(() => sendToSelected(WALKTHROUGH_REQUEST, []), [sendToSelected]);
   const askRange = useCallback(
     (q: RangeQuestion) => sendToSelected(rangeQuestionText(q.path, q.startLine, q.endLine, q.quote, q.text), []),
     [sendToSelected],
   );
-  const showWalk = useCallback(() => walkShown && void openFile(walkShown.path), [walkShown, openFile]);
+  const showWalk = useCallback(() => walkShown && showStep(walkShown), [walkShown, showStep]);
   const endWalk = useCallback(() => selectedId && void window.tanacode.walkthrough.end(selectedId), [selectedId]);
   // チャットのウォークスルーのツールの行から。start_walkthrough は今の場所、show_code はその場所を開く
   useOpenWalkthroughTarget((target) => {
@@ -828,6 +849,7 @@ export function App() {
                   comments={sessionComments}
                   onShowComment={showCommentOf}
                   onRemoveComment={removeComment}
+                  onWalkthrough={selected && !selected.archived ? requestWalkthrough : undefined}
                 />
               </div>
               <div hidden={shownPanel !== 'tasks'} className="side-body">
@@ -933,6 +955,8 @@ export function App() {
               onRemoveComment={removeComment}
               onChange={setDiffView}
               onOpenFile={(path) => void openFile(path)}
+              walkthrough={walkInDiff ? walkControls : null}
+              onAsk={walk ? askRange : undefined}
             />
           )}
           {viewId && cwd ? (
@@ -955,7 +979,7 @@ export function App() {
               comments={sessionComments}
               onAddComment={addComment}
               onRemoveComment={removeComment}
-              walkthrough={walkControls}
+              walkthrough={walkInDiff ? null : walkControls}
               onAsk={walk ? askRange : undefined}
             />
             </div>
@@ -1013,6 +1037,8 @@ function DiffView({
   onRemoveComment,
   onChange,
   onOpenFile,
+  walkthrough,
+  onAsk,
 }: {
   sessionId: string;
   view: DiffView;
@@ -1023,6 +1049,9 @@ function DiffView({
   onRemoveComment: (id: string) => void;
   onChange: (view: DiffView | null) => void;
   onOpenFile: (path: string) => void;
+  // ウォークスルー（diff のステップのときだけ。ブランチの変更の差分に出す）と「ここを聞く」
+  walkthrough: WalkthroughControls | null;
+  onAsk: ((question: RangeQuestion) => void) | undefined;
 }) {
   const lineComments = { list: comments.filter((c) => c.path === view.path), onAdd: onAddComment, onRemove: onRemoveComment };
   if (view.source === 'scm') {
@@ -1035,6 +1064,7 @@ function DiffView({
         onClose={() => onChange(null)}
         onOpenFile={onOpenFile}
         comments={lineComments}
+        onAsk={onAsk}
       />
     );
   }
@@ -1053,6 +1083,8 @@ function DiffView({
       onClose={() => onChange(null)}
       onOpenFile={change?.kind === 'deleted' ? null : onOpenFile}
       comments={change?.kind === 'deleted' ? undefined : lineComments}
+      walkthrough={walkthrough}
+      onAsk={onAsk}
       nav={{ position: index === -1 ? '—' : `${index + 1} / ${paths.length}`, onPrev: go(index - 1), onNext: index === -1 ? go(0) : go(index + 1) }}
     />
   );
