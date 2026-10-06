@@ -6344,25 +6344,29 @@ body.resizing-rows webview {
   font-size: 12px;
   white-space: nowrap;
 }
+/* タイトルは本文の先頭に、折り返して全文を出す（見た目と編集中で同じ大きさにして、切り替えでずれないようにする） */
 .card-pane-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: block;
+  width: calc(100% + 18px);
+  margin: -4px -9px 6px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  box-sizing: border-box;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
   color: var(--text-heading);
+  overflow-wrap: anywhere;
   cursor: text;
 }
 .card-pane-title-input {
-  flex: 1;
-  min-width: 0;
-  padding: 3px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-focus);
+  border-color: var(--border-focus);
   outline: none;
   background: var(--bg-input);
-  color: var(--text-heading);
-  font: inherit;
-  font-size: 13px;
+  resize: none;
+  field-sizing: content;
 }
 .card-pane-scroll {
   flex: 1;
@@ -6420,7 +6424,8 @@ body.resizing-rows webview {
   border: 1px solid var(--border-subtle);
   background: var(--bg-panel);
 }
-.card-thread-reply.claude {
+/* 作者のクラスに .claude は使えない（Claude Code ペインの幅・flex などが当たる） */
+.card-thread-reply.by-claude {
   border-color: var(--border-strong);
   background: var(--bg-surface);
 }
@@ -6438,7 +6443,7 @@ body.resizing-rows webview {
   color: var(--text-heading);
   font-weight: 600;
 }
-.card-thread-reply.claude .card-thread-author {
+.card-thread-reply.by-claude .card-thread-author {
   color: var(--claude);
 }
 .card-thread-time,
