@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=%E6%9C%80%E6%96%B0%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3&color=2ea043" alt="最新バージョン" /></a>
   <img src="https://img.shields.io/badge/macOS-13%20%E4%BB%A5%E9%99%8D-555555?logo=apple" alt="対応する macOS: 13 以降" />
-  <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/%E5%8B%95%E4%BD%9C%E7%A2%BA%E8%AA%8D%E6%B8%88%E3%81%AE%20Claude%20Code-2.1.289-d4835c" alt="動作確認済の Claude Code: 2.1.289" /></a>
+  <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/%E5%8B%95%E4%BD%9C%E7%A2%BA%E8%AA%8D%E6%B8%88%E3%81%AE%20Claude%20Code-2.1.290-d4835c" alt="動作確認済の Claude Code: 2.1.290" /></a>
   <img src="https://img.shields.io/badge/%E3%83%A9%E3%82%A4%E3%82%BB%E3%83%B3%E3%82%B9-MIT-2f6fd6" alt="ライセンス: MIT" />
 </p>
 
@@ -76,6 +76,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 - **任せている間の表示**: ツールの操作は 1 行に畳んで表示。質問や許可の確認には、チャットのボタンで回答（[デモ](https://sny-tanaka.github.io/tanacode/#delegate)）
 - **プッシュ前のレビュー**: ブランチが分岐したところからの変更（コミット済みも含む）を、プルリクエストのような一覧で確認。差分の行に付けたコメントは、次の指示に添えて Claude へ（[デモ](https://sny-tanaka.github.io/tanacode/#review)）
 - **並行して進める**: セッションの状態（作業中・完了待ち・質問への回答待ち・新しい応答）を一覧の印で区別し、見ていないセッションの完了や確認は macOS の通知で。セッションごとに `claude --worktree` で作業フォルダとブランチを分け、`node_modules` の準備まで tanacode が受け持ちます。親のセッションの Claude が、子のセッションに作業を分けて指示することも（[デモ](https://sny-tanaka.github.io/tanacode/#parallel)）
+- **Claude と一緒に使うチェックリスト**: やること・満たすべき条件・人のやること・確認事項など、名前を付けたリストをセッションごとに。会話とは別に残るので、圧縮されても消えません。Claude は MCP で読み書きし、確かめたものにチェック。カードへの返信はスレッドになり、Claude に知らせることも。別のセッションへのコピーも（[使い方](GUIDE.md#チェックリスト)）
 - **時刻を指定して送信**: 書いた指示を、決めた時刻に送る予約（Slack の予約投稿のように）。時刻になったら、Claude Code の手が空くのを待って送ります
 - **整理と振り返り**: 英語などで返ってきた思考と応答は、ボタン 1 つで日本語に翻訳（macOS 標準の翻訳で Mac の中で訳すので、外へは送りません。macOS 15 以降）。作業の流れは、チャットと同じ見た目の 1 枚の HTML に書き出せます（[デモ](https://sny-tanaka.github.io/tanacode/#wrapup)）
 - **利用枠とアプリのまわり**: 5 時間枠と週の枠の使用率とリセットまでの時間、この Mac の CPU とメモリの使用量を常に表示。tanacode の新しいバージョンが出たときは、タイトルバーの印で分かります（[デモ](https://sny-tanaka.github.io/tanacode/#app)）
@@ -88,7 +89,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
   - チャットの翻訳だけは macOS 15 以降（macOS 標準の翻訳を使うため）
 - [Claude Code](https://code.claude.com/docs)（`claude` CLI）
   - ターミナルで一度 `claude` を起動し、初回のセットアップ（テーマの選択とログイン）を済ませておきます
-  - tanacode で動作確認済のバージョンは 2.1.289。違うバージョンのときは、ステータスバーのバージョンに警告の印が付きます（マウスを乗せると理由を表示）
+  - tanacode で動作確認済のバージョンは 2.1.290。違うバージョンのときは、ステータスバーのバージョンに警告の印が付きます（マウスを乗せると理由を表示）
   - 最新の Claude Code で動くかも、毎日自動で確認。それでも Claude Code の更新で、一部の表示や操作が動かなくなる場合あり
 
 ## インストール

@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import type { PermissionMode } from '@shared/screen';
-import { findTaskRows, parseTasks } from '../src/main/screen-parser';
+import { findTaskRows, parseTasks, showsCommandSuggestion } from '../src/main/screen-parser';
 import { ScreenTracker } from '../src/main/screen-tracker';
 
 // 画面を読みながらキーを送る操作（権限モードの切り替え）
@@ -198,4 +198,16 @@ it('/tasks の画面を、一覧・詳細・ワークフローの詳細として
   expect(parseTasks(workflow('↑↓ select · esc back · s save'))).toMatchObject({ view: 'workflow', canStop: false });
   expect(parseTasks(lines(prompt('')))).toBeNull();
   expect(parseTasks(lines([TOP, '   something else', '   Esc to close']))).toBeNull();
+});
+
+it('/ の補完の候補の行を、入力欄の行と字下げで見分ける（選択中の候補の頭に ❯ が付く Claude Code 2.1.290 と、付かない 2.1.289）', () => {
+  const lines = (rows: string[]) => rows.map((text) => ({ text, full: false }));
+  // 打った直後で、まだ補完が出ていない（入力欄の行だけ）
+  expect(showsCommandSuggestion(lines(prompt('/tasks')), '/tasks')).toBe(false);
+  // 2.1.289
+  expect(showsCommandSuggestion(lines(['  /tasks          List and manage background tasks', ...prompt('/tasks')]), '/tasks')).toBe(true);
+  // 2.1.290
+  expect(showsCommandSuggestion(lines(['  ❯ /clear                      Start a new session with empty context', ...prompt('/clear')]), '/clear')).toBe(true);
+  // 名前が前だけ同じ別のコマンドは数えない
+  expect(showsCommandSuggestion(lines(['  ❯ /tasks-list   ほかのコマンド', ...prompt('/tasks')]), '/tasks')).toBe(false);
 });

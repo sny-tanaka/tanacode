@@ -17,6 +17,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('BranchIcon', 'ソース管理・今のブランチ'),
       item('TasksIcon', 'タスク'),
       item('ContextIcon', 'コンテキストの中身'),
+      item('ChecklistIcon', 'チェックリスト'),
     ],
   },
   {
@@ -42,6 +43,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('CloseIcon', '閉じる・外す・取り消す'),
       item('AddIcon', '追加・ステージする'),
       item('MinusIcon', 'ステージから外す'),
+      item('CopyIcon', '別のセッションへコピー'),
       item('TrashIcon', '削除'),
       item('ArchiveIcon', 'アーカイブ'),
       item('UnarchiveIcon', 'アーカイブから戻す'),

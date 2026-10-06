@@ -17,10 +17,13 @@ import {
 } from '@shared/ipc';
 import { AppSettings } from './app-settings';
 import { normalizeHostPattern } from '@shared/browser-tools';
+import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
+import { ChecklistControl } from './checklist-control';
+import { ChecklistStore } from './checklist-store';
 import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
@@ -65,6 +68,10 @@ let sessionsBridge: McpBridge | null = null;
 let sessionsControl: SessionsControl | null = null;
 // 時刻を指定して送信（予約）したメッセージ
 let scheduled: ScheduledMessages;
+// チェックリスト（人と Claude が一緒に見て、編集するリスト）。Claude からの呼び出しは、中継からソケットで受ける
+let checklists: ChecklistStore;
+let checklistBridge: McpBridge | null = null;
+let checklistControl: ChecklistControl | null = null;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
 // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -353,10 +360,14 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.ScheduledSendNow, (_e, id: string) => scheduled.sendNow(String(id)));
   ipcMain.handle(IpcChannel.ScheduledCancel, (_e, id: string) => scheduled.cancel(String(id)));
   ipcMain.handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
-  ipcMain.handle(IpcChannel.SessionsRemove, (_e, id: string, options?: ArchiveOptions) => {
+  ipcMain.handle(IpcChannel.SessionsRemove, async (_e, id: string, options?: ArchiveOptions) => {
     shells.killOwner(id);
-    for (const target of [id, ...manager.childrenOf(id)]) browser.forget(target);
-    return manager.remove(id, options);
+    const targets = [id, ...manager.childrenOf(id)];
+    for (const target of targets) browser.forget(target);
+    const removal = await manager.remove(id, options);
+    // 一覧から消したセッションのチェックリストも消す（アーカイブでは残す）
+    for (const target of targets) if (!manager.summary(target)) checklists.remove(target);
+    return removal;
   });
   ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
   ipcMain.handle(IpcChannel.ChatImage, (_e, key: string) => imageOf(key));
@@ -476,6 +487,12 @@ function sessionsLaunch(): McpLaunch | null {
   return { command: hostExecutable(), script: join(__dirname, 'sessions-mcp.js'), socketPath: sessionsBridge.socketPath, version: app.getVersion() };
 }
 
+// 起動する Claude Code に足す、チェックリストの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
+function checklistLaunch(): McpLaunch | null {
+  if (!checklistBridge || !settings.checklistControlEnabled()) return null;
+  return { command: hostExecutable(), script: join(__dirname, 'checklist-mcp.js'), socketPath: checklistBridge.socketPath, version: app.getVersion() };
+}
+
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
   try {
     switch (action.kind) {
@@ -535,6 +552,7 @@ function buildMenu(): void {
           { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
           { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
           { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+          { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
           {
             label: 'アプリ内ブラウザで Claude に許す先…',
             click: () => {
@@ -611,6 +629,17 @@ function setBrowserControl(item: MenuItem): void {
 function setSessionsControl(item: MenuItem): void {
   try {
     settings.setSessionsControlEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
+}
+
+// メニューの「Claude にチェックリストを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（checklist-control の handle）。画面のチェックリストは使える。
+// 保存できなかったら、チェックを元に戻す
+function setChecklistControl(item: MenuItem): void {
+  try {
+    settings.setChecklistControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -750,6 +779,17 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('セッションの待ち受けを始められませんでした', error);
   }
+  // チェックリスト。待ち受けを始められなくても、画面からは使える（Claude Code に MCP サーバーを足さない）
+  checklists = new ChecklistStore(join(app.getPath('userData'), 'checklists'), (id, lists) => send(IpcChannel.ChecklistChanged, { sessionId: id, lists }));
+  const checklistSocket = new McpBridge(socketPathIn(app.getPath('userData'), 'checklist', 'checklist'), (id, tool, args) =>
+    checklistControl ? checklistControl.handle(id, tool, args) : Promise.resolve(textResult('tanacode の起動が終わっていません。少し待ってから試してください', true)),
+  );
+  try {
+    await checklistSocket.start();
+    checklistBridge = checklistSocket;
+  } catch (error) {
+    console.error('チェックリストの待ち受けを始められませんでした', error);
+  }
   // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
   try {
     ptyHost = await PtyHost.start(app.getPath('userData'), join(__dirname, 'pty-host.js'));
@@ -777,7 +817,7 @@ app.whenReady().then(async () => {
     onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
     onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch);
+  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch, checklistLaunch);
   sessionsControl = new SessionsControl({ host: manager, enabled: () => settings.sessionsControlEnabled(), home: homedir() });
   // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
   scheduled = new ScheduledMessages(
@@ -791,6 +831,7 @@ app.whenReady().then(async () => {
     const state = manager.stateOf(id);
     if (state === null || state === 'archived') scheduled.dropSession(id);
   });
+  checklistControl = new ChecklistControl({ store: checklists, host: manager, enabled: () => settings.checklistControlEnabled() });
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
@@ -829,6 +870,9 @@ app.on('before-quit', (event) => {
   sessionsControl?.dispose();
   scheduled?.dispose();
   sessionsBridge?.close();
+  checklistControl?.dispose();
+  checklistBridge?.close();
+  checklists?.flush();
   shells.killAll();
 });
 

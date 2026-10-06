@@ -13,6 +13,7 @@ import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
 import type { TranslateResult } from './translate';
 import type { ScheduledMessage } from './scheduled';
+import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -149,6 +150,12 @@ export const IpcChannel = {
   BrowserAsksGet: 'browser:asks-get',
   BrowserAnswer: 'browser:answer',
   BrowserShow: 'browser:show',
+  // チェックリスト。読む・書き換える・別のセッションへコピーする・変わった（main → 画面）・セッションごとの未読の数
+  ChecklistGet: 'checklist:get',
+  ChecklistApply: 'checklist:apply',
+  ChecklistCopy: 'checklist:copy',
+  ChecklistChanged: 'checklist:changed',
+  ChecklistUnread: 'checklist:unread',
 } as const;
 
 // アプリ内ブラウザのページの中の位置と大きさ（CSS の px。見えている範囲の左上から）
@@ -551,6 +558,16 @@ export type TanacodeApi = {
   attachments: {
     // 貼り付け・ドロップされた画像を一時ファイルに保存し、そのパスを返す
     save(name: string, data: Uint8Array): Promise<string>;
+  };
+  // チェックリスト（人と Claude が一緒に見て、編集するリスト。Claude は MCP サーバー tanacode-checklist で扱う）
+  checklist: {
+    get(sessionId: string): Promise<Checklist[]>;
+    // 書き換える。できなければ理由を添えて失敗する
+    apply(sessionId: string, op: ChecklistOp): Promise<void>;
+    copy(request: ChecklistCopyRequest): Promise<void>;
+    onChanged(listener: (payload: SessionChecklists) => void): () => void;
+    // セッションごとの、見ていない Claude の返信の数（0 のセッションは入れない）
+    unread(): Promise<ChecklistUnread>;
   };
   // Claude によるアプリ内ブラウザの操作（Claude Code に足す MCP サーバー tanacode-browser）
   browser: {

@@ -196,12 +196,39 @@ const COMPACT_WIDTH = 760;
 // アプリの画面のまわりに空ける幅
 const STAGE_MARGIN = 16;
 
-// アプリの画面を、上の帯の下の残りに横も縦も収める倍率（大きくはしない）。
-// ピンチでの拡大・縮小では変えないよう、見えている範囲ではなくページの大きさ（clientWidth・clientHeight）で求める
+// 画面（端末の表示領域）の大きさ。ピンチで拡大・縮小しても変わらない（見えている範囲の大きさ × 倍率）
+function screenSize(): { width: number; height: number } {
+  const vv = window.visualViewport;
+  if (!vv) return { width: document.documentElement.clientWidth, height: window.innerHeight };
+  return { width: vv.width * vv.scale, height: vv.height * vv.scale };
+}
+
+// ページの 1px が、画面の何 px 分か（viewport を広げたスマホでは 1 より大きい。PC では 1）
+function pageUnit(): number {
+  return document.documentElement.clientWidth / screenSize().width;
+}
+
+// アプリの画面を、上の帯（barHeight。画面の px）の下の残りに横も縦も収める、見た目の倍率（大きくはしない）
 function stageScale(barHeight: number): number {
-  const { clientWidth, clientHeight } = document.documentElement;
-  const margin = Math.min(STAGE_MARGIN, clientWidth * 0.02);
-  return Math.min(1, (clientWidth - margin * 2) / STAGE.width, (clientHeight - barHeight - margin * 2) / STAGE.height);
+  const { width, height } = screenSize();
+  const margin = Math.min(STAGE_MARGIN, width * 0.02);
+  return Math.min(1, (width - margin * 2) / STAGE.width, (height - barHeight - margin * 2) / STAGE.height);
+}
+
+// 縮めて見せるときは、ページの幅（viewport）をアプリの画面が収まる幅に広げ、ブラウザのページのズームで縮める。
+// iframe を transform で縮めると、iPhone の Safari（WebKit）は中身を縮める前の大きさのまま端末の解像度で描くので、
+// メモリが数 GB に膨らんでページが落ち、読み込み直されてしまう。ページのズームなら、縮めた大きさに見合う解像度で描く。
+// PC のブラウザは viewport を見ないので、これまでどおり transform で縮める（--demo-scale）
+let viewportWidth = 0;
+
+function fitViewport(scale: number, screenWidth: number): void {
+  const meta = document.querySelector('meta[name="viewport"]');
+  if (!meta) return;
+  const width = scale < 1 ? Math.floor(screenWidth / scale) : 0;
+  // 端数で行ったり来たりしないよう、わずかな違いでは変えない（変えると resize が起き、また測り直すため）
+  if (Math.abs(width - viewportWidth) <= 2 && (width === 0) === (viewportWidth === 0)) return;
+  viewportWidth = width;
+  meta.setAttribute('content', width ? `width=${width}` : 'width=device-width, initial-scale=1');
 }
 
 // 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。スマホでピンチで拡大しても、画面の上に同じ大きさで出す。
@@ -225,15 +252,24 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
       document.documentElement.classList.toggle('demo-compact', width < COMPACT_WIDTH);
       space();
     };
-    // 帯の高さと、アプリの画面を帯の下に収める倍率
+    // 帯の高さと、アプリの画面を帯の下に収める倍率。
+    // 帯はこの層の中（画面の px）にあるので、ページの上に空ける分（--demo-bar-space）は、ページの px に直す
     const bar = el.querySelector<HTMLElement>('.demo-bar');
     const space = () => {
       const height = bar?.offsetHeight ?? 48;
+      const screen = screenSize();
+      const scale = stageScale(height);
+      fitViewport(scale, screen.width);
+      const unit = pageUnit();
       const root = document.documentElement.style;
       root.setProperty('--demo-stage-width', `${STAGE.width}px`);
       root.setProperty('--demo-stage-height', `${STAGE.height}px`);
+      root.setProperty('--demo-screen-width', `${screen.width}px`);
+      root.setProperty('--demo-unit', String(unit));
       root.setProperty('--demo-bar-height', `${height}px`);
-      root.setProperty('--demo-scale', String(stageScale(height)));
+      root.setProperty('--demo-bar-space', `${height * unit}px`);
+      // viewport を広げたあとは、ページのズームが縮めるので、transform では縮めない（1 になる）
+      root.setProperty('--demo-scale', String(Math.min(1, scale * unit)));
     };
     place();
     const observer = new ResizeObserver(space);
@@ -261,8 +297,9 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
 // 操作の説明の吹き出し。アプリの画面の外（縮小しない親のページ）に描くので、スマホでも字が小さくならない。
 // 広い画面では、説明が指す場所（box。アプリの画面の座標）のそばに、矢印を向けて出す。場所が無ければ、アプリの画面の下の方に出す。
 // 狭い画面（スマホ）では、アプリの画面のすぐ下の空きに出し、矢印を指す場所の横の位置に向ける
-// arrow: 矢印の向き（up は吹き出しの上に付けて上を指す）。arrowAt: 矢印の位置（上下の矢印は横の位置、左右の矢印は縦の位置）
-type CalloutPlace = { left: number; top: number; width?: number; arrow: 'up' | 'down' | 'left' | 'right' | 'none'; arrowAt: number };
+// arrow: 矢印の向き（up は吹き出しの上に付けて上を指す）。arrowAt: 矢印の位置（上下の矢印は横の位置、左右の矢印は縦の位置）。
+// unit: 吹き出しを拡大する倍率（ページの 1px が、画面の何 px 分か）
+type CalloutPlace = { left: number; top: number; width?: number; arrow: 'up' | 'down' | 'left' | 'right' | 'none'; arrowAt: number; unit?: number };
 
 function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
   const bubble = useRef<HTMLDivElement>(null);
@@ -276,41 +313,46 @@ function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
     const scale = frameW / STAGE.width;
     const rect = wrap.getBoundingClientRect();
     const pageW = document.documentElement.clientWidth;
-    const compact = pageW < COMPACT_WIDTH;
-    const gap = 12;
-    const edge = 8;
+    // 吹き出しは画面の px の大きさで出す（viewport を広げたスマホでは、ページの px の unit 倍に拡大して出す）。
+    // 位置はページの px で求め、矢印の位置（吹き出しの中の px）だけ unit で割って戻す
+    const unit = pageUnit();
+    const set = (p: CalloutPlace) => setPlace({ ...p, unit, arrowAt: p.arrowAt / unit });
+    const compact = pageW / unit < COMPACT_WIDTH;
+    const gap = 12 * unit;
+    const edge = 8 * unit;
+    const tip = 18 * unit;
     const target = box && { x: box.x * scale, y: box.y * scale, width: box.width * scale, height: box.height * scale };
     const centerX = target ? target.x + target.width / 2 : frameW / 2;
     if (compact) {
       // アプリの画面と同じ幅で、すぐ下に出す
-      const arrowAt = Math.min(frameW - 18, Math.max(18, centerX));
-      setPlace({ left: 0, top: frameH + gap, width: frameW, arrow: target ? 'up' : 'none', arrowAt });
+      const arrowAt = Math.min(frameW - tip, Math.max(tip, centerX));
+      set({ left: 0, top: frameH + gap, width: frameW / unit, arrow: target ? 'up' : 'none', arrowAt });
       return;
     }
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
+    const w = el.offsetWidth * unit;
+    const h = el.offsetHeight * unit;
     // 横はページからはみ出さない範囲で、指す場所の真ん中にそろえる
     const minLeft = edge - rect.left;
     const maxLeft = pageW - edge - rect.left - w;
     const left = Math.min(maxLeft, Math.max(minLeft, centerX - w / 2));
-    const arrowAt = Math.min(w - 18, Math.max(18, centerX - left));
+    const arrowAt = Math.min(w - tip, Math.max(tip, centerX - left));
     if (!target) {
-      setPlace({ left, top: frameH - h - Math.max(36, 48 * scale), arrow: 'none', arrowAt });
+      set({ left, top: frameH - h - Math.max(36 * unit, 48 * scale), arrow: 'none', arrowAt });
       return;
     }
     // 指す場所の下、上の順に入るところへ出す。縦に長い場所（一覧・パネル）は、上下に出すとアプリの画面の端に寄ってしまうので、横に出す
     const below = target.y + target.height + gap;
     const above = target.y - gap - h;
     const tall = target.height > frameH * 0.4;
-    if (below + h <= frameH - edge) return setPlace({ left, top: below, arrow: 'up', arrowAt });
-    if (!tall && above >= edge) return setPlace({ left, top: above, arrow: 'down', arrowAt });
+    if (below + h <= frameH - edge) return set({ left, top: below, arrow: 'up', arrowAt });
+    if (!tall && above >= edge) return set({ left, top: above, arrow: 'down', arrowAt });
     // 横に出すときは、指す場所の上の方にそろえる
-    const top = Math.min(frameH - h - edge, Math.max(edge, target.y + 12));
-    const side = { top, arrowAt: Math.min(h - 18, Math.max(18, target.y + 30 - top)) };
-    if (target.x + target.width + gap + w <= frameW - edge) return setPlace({ left: target.x + target.width + gap, arrow: 'left', ...side });
-    if (target.x - gap - w >= edge) return setPlace({ left: target.x - gap - w, arrow: 'right', ...side });
-    if (above >= edge) return setPlace({ left, top: above, arrow: 'down', arrowAt });
-    setPlace({ left, top: Math.min(frameH - h - edge, target.y + target.height - h - edge), arrow: 'none', arrowAt });
+    const top = Math.min(frameH - h - edge, Math.max(edge, target.y + 12 * unit));
+    const side = { top, arrowAt: Math.min(h - tip, Math.max(tip, target.y + 30 * unit - top)) };
+    if (target.x + target.width + gap + w <= frameW - edge) return set({ left: target.x + target.width + gap, arrow: 'left', ...side });
+    if (target.x - gap - w >= edge) return set({ left: target.x - gap - w, arrow: 'right', ...side });
+    if (above >= edge) return set({ left, top: above, arrow: 'down', arrowAt });
+    set({ left, top: Math.min(frameH - h - edge, target.y + target.height - h - edge), arrow: 'none', arrowAt });
   }, [box]);
   useLayoutEffect(layout, [layout, text]);
   useEffect(() => {
@@ -332,6 +374,7 @@ function Callout({ text, box }: { text: string; box: CaptionBox | null }) {
         left: place?.left ?? 0,
         top: place?.top ?? 0,
         width: place?.width,
+        transform: place?.unit && place.unit !== 1 ? `scale(${place.unit})` : undefined,
         visibility: place ? 'visible' : 'hidden',
         ['--arrow-at' as string]: `${place?.arrowAt ?? 0}px`,
       }}

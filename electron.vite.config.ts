@@ -12,7 +12,7 @@ export default defineConfig({
   main: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
-    // browser-mcp・sessions-mcp: アプリ内ブラウザ・セッションの MCP サーバー（Claude Code が起動し、アプリへ中継する）
+    // browser-mcp・sessions-mcp・checklist-mcp: アプリ内ブラウザ・セッション・チェックリストの MCP サーバー（Claude Code が起動し、アプリへ中継する）
     build: {
       rollupOptions: {
         input: {
@@ -20,6 +20,7 @@ export default defineConfig({
           'pty-host': resolve('src/main/pty-host.ts'),
           'browser-mcp': resolve('src/main/browser-mcp.ts'),
           'sessions-mcp': resolve('src/main/sessions-mcp.ts'),
+          'checklist-mcp': resolve('src/main/checklist-mcp.ts'),
         },
       },
     },

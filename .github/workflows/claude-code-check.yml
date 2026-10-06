@@ -1,6 +1,8 @@
 # Claude Code との互換性の確認。本物の claude をモックの API で動かし、画面・会話ログ・statusLine・フックを
 # アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
-# 毎日、その日の最新の Claude Code で確かめる。
+# 毎日の定期の確認（と手動の実行）は、その日の最新の Claude Code で確かめる。
+# PR と develop・main への push は、動作確認済のバージョン（src/shared/claude-code.ts）で確かめる
+# （新しい Claude Code が出ても、関係のない PR が落ちないように。新しい版への追従は、毎日の確認と、それが作る PR で行う）
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる。マージしたらブランチは消す
 # 途中の画面などの控えは artifact にも残す
@@ -46,8 +48,20 @@ jobs:
       - name: Claude Code を入れる
         id: claude
         env:
-          VERSION: ${{ inputs.version || 'latest' }}
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
+          # 毎日の確認と手動の実行は最新（手動では版を指定できる）。PR と push は動作確認済のバージョン
+          if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
+            VERSION="${INPUT_VERSION:-latest}"
+          else
+            VERSION=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
+            if [ -z "$VERSION" ]; then
+              echo "src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"
+              exit 1
+            fi
+          fi
+          echo "確かめる Claude Code: $VERSION"
           npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
           bin="$RUNNER_TEMP/claude/node_modules/.bin/claude"
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
@@ -179,10 +193,13 @@ jobs:
           done
           # 作ったばかりの PR は、マージできるかの判定が終わっていないことがあるので、数回やり直す。
           # マージできなかったときは、ジョブを失敗させる（PR は開いたまま残るので、人が見てマージする）。
-          # リポジトリの設定の「ブランチの自動削除」に頼らず、マージしたらブランチを消す
+          # マージしたらブランチを消す。リポジトリの設定の「ブランチの自動削除」がオンなら GitHub が先に消すので、
+          # 消せなくても、もう無ければよい（マージは済んでいるので、ジョブを失敗にしない）。残っていたら警告だけ出す
           for _ in 1 2 3; do
             if gh pr merge "$branch" --squash; then
-              git push origin --delete "$branch"
+              if ! git push origin --delete "$branch" 2> /dev/null && [ -n "$(git ls-remote --heads origin "$branch")" ]; then
+                echo "::warning::マージしましたが、$branch のブランチを消せませんでした。手で消してください"
+              fi
               exit 0
             fi
             sleep 10

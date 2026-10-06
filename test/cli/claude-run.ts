@@ -14,6 +14,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
+import { showsCommandSuggestion } from '../../src/main/screen-parser';
 import { ScreenTracker } from '../../src/main/screen-tracker';
 import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
@@ -68,6 +69,8 @@ type Options = {
   browser?: BrowserMcpLaunch;
   // セッションの MCP サーバー（中継）を足すときの材料（SessionManager の sessionsMcp）。無ければ足さない
   sessions?: McpLaunch;
+  // チェックリストの MCP サーバー（中継）を足すときの材料（SessionManager の checklistMcp）。無ければ足さない
+  checklist?: McpLaunch;
   // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
   mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
@@ -367,6 +370,7 @@ export class ClaudeRun {
       undefined,
       () => this.options.browser ?? null,
       () => this.options.sessions ?? null,
+      () => this.options.checklist ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);
@@ -434,7 +438,7 @@ export class ClaudeRun {
       () =>
         this.screen.current.state.kind === 'prompt' &&
         squash(this.screen.current.draft).endsWith(typed) &&
-        (!command || this.lines().some((line) => line.text.trimStart().startsWith(command) && !line.text.includes('❯'))),
+        (!command || showsCommandSuggestion(this.lines(), command)),
       DRAFT_MS,
     );
     this.type('\r');

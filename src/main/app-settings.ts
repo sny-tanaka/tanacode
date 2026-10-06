@@ -8,7 +8,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
 // browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
 // browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
-// sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）
+// sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）/
+// checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
@@ -16,6 +17,7 @@ type Values = {
   browserControl: boolean;
   browserHosts: string[];
   sessionsControl: boolean;
+  checklistControl: boolean;
 };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -70,6 +72,14 @@ export class AppSettings {
     this.update({ sessionsControl: on });
   }
 
+  checklistControlEnabled(): boolean {
+    return this.values.checklistControl;
+  }
+
+  setChecklistControlEnabled(on: boolean): void {
+    this.update({ checklistControl: on });
+  }
+
   setBrowserHosts(hosts: string[]): void {
     this.update({ browserHosts: hosts });
   }
@@ -104,6 +114,7 @@ function load(file: string): Values {
       browserControl?: unknown;
       browserHosts?: unknown;
       sessionsControl?: unknown;
+      checklistControl?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -112,9 +123,10 @@ function load(file: string): Values {
       browserControl: data.browserControl !== false,
       browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
       sessionsControl: data.sessionsControl !== false,
+      checklistControl: data.checklistControl !== false,
     };
   } catch {
-    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true };
+    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true };
   }
 }
 
