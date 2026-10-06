@@ -218,7 +218,10 @@ function stageScale(barHeight: number): number {
 // 縮めて見せるときは、ページの幅（viewport）をアプリの画面が収まる幅に広げ、ブラウザのページのズームで縮める。
 // iframe を transform で縮めると、iPhone の Safari（WebKit）は中身を縮める前の大きさのまま端末の解像度で描くので、
 // メモリが数 GB に膨らんでページが落ち、読み込み直されてしまう。ページのズームなら、縮めた大きさに見合う解像度で描く。
-// PC のブラウザは viewport を見ないので、これまでどおり transform で縮める（--demo-scale）
+// PC のブラウザは viewport を見ないので、これまでどおり transform で縮める（--demo-scale）。
+// 倍率（initial-scale）と縮小の下限（minimum-scale）も、横幅に合わせた全体の表示になる値で書く。
+// iPhone の Safari は、書かなければ 0.25 より小さくは縮めない（WebKit の ViewportConfiguration）。
+// 画面の幅の 4 倍より広いページ（いまは 2000px ほど）だと横幅に収まらず、右がはみ出して横にスクロールしてしまう。書けば 0.1 まで縮められる
 let viewportWidth = 0;
 
 function fitViewport(scale: number, screenWidth: number): void {
@@ -228,7 +231,13 @@ function fitViewport(scale: number, screenWidth: number): void {
   // 端数で行ったり来たりしないよう、わずかな違いでは変えない（変えると resize が起き、また測り直すため）
   if (Math.abs(width - viewportWidth) <= 2 && (width === 0) === (viewportWidth === 0)) return;
   viewportWidth = width;
-  meta.setAttribute('content', width ? `width=${width}` : 'width=device-width, initial-scale=1');
+  if (!width) {
+    meta.setAttribute('content', 'width=device-width, initial-scale=1');
+    return;
+  }
+  // 切り上げると、わずかに横幅からはみ出すので、切り下げる
+  const fit = Math.floor((screenWidth / width) * 10000) / 10000;
+  meta.setAttribute('content', `width=${width}, initial-scale=${fit}, minimum-scale=${fit}`);
 }
 
 // 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層。スマホでピンチで拡大しても、画面の上に同じ大きさで出す。
@@ -247,15 +256,8 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
     const place = () => {
       const vv = window.visualViewport;
       const scale = vv?.scale ?? 1;
-      // 見えている範囲の大きさ（ページの px）と、画面の px に直した大きさ
-      const pageWidth = vv?.width ?? document.documentElement.clientWidth;
-      const pageHeight = vv?.height ?? window.innerHeight;
-      const width = pageWidth * scale;
-      const height = pageHeight * scale;
-      // 外側の層も、見えている範囲と同じ大きさにする。iPhone の Safari は、ページの縦が画面に収まったところで縮小を止める。
-      // ページの縦の基準（ツールバーを除いた高さ）は見えている範囲より低いので、この層の大きさが無いと横幅まで縮小できず、横にスクロールしてしまう
-      el.style.width = `${pageWidth}px`;
-      el.style.height = `${pageHeight}px`;
+      const width = vv ? vv.width * scale : document.documentElement.clientWidth;
+      const height = vv ? vv.height * scale : window.innerHeight;
       el.style.transform = `translate(${vv?.offsetLeft ?? 0}px, ${vv?.offsetTop ?? 0}px)`;
       inner.style.width = `${width}px`;
       inner.style.height = `${height}px`;
