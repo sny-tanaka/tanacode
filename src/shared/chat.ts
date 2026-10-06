@@ -1,3 +1,4 @@
+import { CHECKLIST_EVENT_TAG, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
@@ -42,8 +43,9 @@ export type ChatEvent =
       at?: number;
     }
   // Claude への、ユーザーの発言ではない知らせ（バックグラウンドのタスクの完了・CI の自動修正・スケジュールタスク）。
-  // Claude はこれを受けて作業を始める。detail: 開くと読める全文 / sessions: 子セッションからの知らせなら、その子の ID（チャットから移れる）
-  | { type: 'notice'; id: string; text: string; detail?: string; sessions?: string[] }
+  // Claude はこれを受けて作業を始める。detail: 開くと読める全文 / sessions: 子セッションからの知らせなら、その子の ID（チャットから移れる）/
+  // cards: チェックリストの返信・コピーの知らせなら、そのカード（チャットから開ける）
+  | { type: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[] }
   // 別の Claude（サブエージェント・ほかのセッション）からの知らせで、待機中の Claude Code が続きを始める。
   // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
   | { type: 'turn-start' }
@@ -255,7 +257,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
           type: 'tool-use',
           id: block.id,
           name: block.name,
-          target: toolTarget(input, cwd),
+          target: checklistTarget(block.name, input) ?? toolTarget(input, cwd),
           filePath,
           input: toolInputDetail(block.name, input),
           todos: block.name === 'TodoWrite' && Array.isArray(input.todos) ? (input.todos as TodoItem[]) : undefined,
@@ -460,6 +462,9 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   // 子セッションの作業が終わった・人の対応待ちになった知らせ（アプリが、手の空いている親に送る）
   const event = parseSessionEvent(text);
   if (event) return [{ type: 'notice', id: entry.uuid ?? '', text: event.message, sessions: event.sessions }];
+  // チェックリストのスレッドへの返信・ほかのセッションから届いたカードの知らせ
+  const checklist = parseChecklistEvent(text);
+  if (checklist) return [{ type: 'notice', id: entry.uuid ?? '', text: checklist.message, cards: checklist.cards }];
   const special = specialUserText(entry.uuid ?? '', text.trimStart());
   if (special) return [special];
   if (text.includes('<task-notification>')) {
@@ -517,7 +522,12 @@ function specialUserText(id: string, text: string): ChatEvent | null {
 // 順番待ちの発言が、人（または親セッション）の発言か。完了通知や知らせは除く
 export function isHumanPrompt(text: string): boolean {
   const head = text.trimStart();
-  return !text.includes('<task-notification>') && !head.startsWith('<ci-monitor-event>') && !head.startsWith(`<${SESSION_EVENT_TAG}`);
+  return (
+    !text.includes('<task-notification>') &&
+    !head.startsWith('<ci-monitor-event>') &&
+    !head.startsWith(`<${SESSION_EVENT_TAG}`) &&
+    !head.startsWith(`<${CHECKLIST_EVENT_TAG}`)
+  );
 }
 
 // 順番待ちとして出す文字。親セッションからの指示は、囲みを外す
@@ -692,7 +702,7 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     typeof entry.message?.content === 'string'
   ) {
     const text = entry.message.content;
-    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text)) return null;
+    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text)) return null;
     // 親セッションからの指示は、囲みを外した本文の 1 行目
     const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];
     return firstLine ? { title: firstLine.slice(0, 80), priority: 1 } : null;

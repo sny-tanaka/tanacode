@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BranchChanges, FileChange, FileContent, NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import { listRecentFolders } from '@shared/recent-folders';
+import type { Checklist } from '@shared/checklist';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
@@ -35,7 +36,11 @@ import { SessionContextPanel } from './knowledge/ContextPanel';
 import { useCompactState } from './chat/compactState';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
-import { BranchIcon, ContextIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
+import { BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
+import { CardPane } from './checklist/CardPane';
+import { ChecklistPanel } from './checklist/ChecklistPanel';
+import { useOpenChecklistCard, type CardTarget } from './checklist/openCard';
+import { useChecklists } from './checklist/useChecklists';
 import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
@@ -55,13 +60,14 @@ const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
 
-type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'context';
+type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'checklist' | 'context';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）
 const SIDE_PANELS: { id: SidePanel; label: string; title: string; Icon: IconComponent }[] = [
   { id: 'files', label: 'エクスプローラー', title: 'エクスプローラー', Icon: FilesIcon },
   { id: 'search', label: '検索', title: '検索（⌘⇧F）', Icon: SearchIcon },
   { id: 'scm', label: 'ソース管理', title: 'ソース管理（git）。ブランチの変更を見て、行にコメントを付けて Claude に返す', Icon: BranchIcon },
   { id: 'tasks', label: 'タスク', title: 'タスク（サブエージェント・ワークフロー・バックグラウンドの Bash）', Icon: TasksIcon },
+  { id: 'checklist', label: 'チェックリスト', title: 'チェックリスト（Claude と一緒に見て、編集するリスト。会話が圧縮されても残る）', Icon: ChecklistIcon },
   { id: 'context', label: 'コンテキスト', title: 'コンテキスト（今の会話に入っているものと大きさ。圧縮で残すもの・捨てるものを選ぶ）', Icon: ContextIcon },
 ];
 
@@ -69,8 +75,8 @@ let revealSeq = 0;
 
 // エディタの代わりに出す差分。ステージ済み・未ステージの変更か、ブランチの変更（基点 ↔ 作業ツリー）
 type DiffView = { source: 'scm'; path: string; staged: boolean } | { source: 'branch'; path: string };
-// エディタの場所に出すもの。差分か、タスク（サブエージェントなど）の中身
-type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' };
+// エディタの場所に出すもの。差分か、タスク（サブエージェントなど）の中身か、チェックリストのカード
+type CenterView = DiffView | { source: 'task'; ref: TaskRef } | { source: 'preview' } | { source: 'card'; listId: string; cardId: string };
 
 function withFile(files: OpenFile[], path: string, content: FileContent): OpenFile[] {
   return files.some((f) => f.path === path)
@@ -90,6 +96,7 @@ export function App() {
   const { bashOf, load: loadBash } = useSessionBash(selectedId);
   const { knowledgeOf, load: loadKnowledge } = useSessionKnowledge(selectedId);
   const { statusLineOf, load: loadStatusLine } = useSessionStatusLine(selectedId);
+  const { listsOf: checklistsOf, load: loadChecklists, unread: checklistUnread } = useChecklists(selectedId);
   const columns = useColumnWidths();
   const [notifications, setNotifications] = useNotifications();
   const claudeVersion = useClaudeVersion();
@@ -162,6 +169,21 @@ export function App() {
     setDiffView({ source: 'task', ref });
     setSidePanel('tasks');
   }, []);
+  // 選択中のセッションのチェックリスト。カードを開いたら、サイドパネルも「チェックリスト」にする（チャットの知らせなど、どこから開いても同じ）
+  const checklists = checklistsOf(selectedId);
+  const activeCardId = diffView?.source === 'card' ? diffView.cardId : null;
+  const openCard = useCallback((listId: string, cardId: string) => {
+    setDiffView({ source: 'card', listId, cardId });
+    setSidePanel('checklist');
+  }, []);
+  useOpenChecklistCard((target: CardTarget) => {
+    if ('listId' in target) return openCard(target.listId, target.cardId);
+    const key = target.list.normalize('NFKC').trim().toLowerCase();
+    const list = checklists.find((l) => !l.deletedAt && l.name.normalize('NFKC').trim().toLowerCase() === key);
+    const card = list?.cards.find((c) => c.number === target.number);
+    if (list && card) openCard(list.id, card.id);
+    else setSidePanel('checklist');
+  });
   // 新規セッションの画面で付けたコメントは、最初の指示と一緒に送る
   const sessionComments = (viewId && comments[viewId]) || NO_COMMENTS;
   const setSessionComments = useCallback(
@@ -250,8 +272,9 @@ export function App() {
       loadBash(selectedId);
       loadKnowledge(selectedId);
       loadStatusLine(selectedId);
+      loadChecklists(selectedId);
     }
-  }, [selectedId, loadScreen, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine]);
+  }, [selectedId, loadScreen, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
 
   // Claude がアプリ内ブラウザを操作し始めたセッション（帯が消えるまで）と、見ていない間に操作したセッション
   const browsing = useRef(new Set<string>());
@@ -591,6 +614,7 @@ export function App() {
           onRemove={removeSession}
           onArchive={archiveSession}
           onUnarchive={unarchiveSession}
+          checklistUnread={checklistUnread}
         />
         {resizer('sessions')}
         {composing && (
@@ -651,7 +675,7 @@ export function App() {
           <aside className="explorer">
             <div className="activity-bar">
               {SIDE_PANELS.map(({ id, title, Icon }) => {
-                const badge = id === 'scm' ? gitCount : id === 'tasks' ? trayTasks.length : 0;
+                const badge = id === 'scm' ? gitCount : id === 'tasks' ? trayTasks.length : id === 'checklist' ? (selectedId ? (checklistUnread[selectedId] ?? 0) : 0) : 0;
                 return (
                   <button key={id} className={shownPanel === id ? 'on' : ''} onClick={() => setSidePanel(id)} data-tip={title} data-tip-side="right" aria-label={title}>
                     <Icon size={22} />
@@ -732,6 +756,19 @@ export function App() {
                   <div className="scm-empty">セッションで実行したバックグラウンドタスクが表示されます</div>
                 )}
               </div>
+              <div hidden={shownPanel !== 'checklist'} className="side-body">
+                {selected ? (
+                  <ChecklistPanel
+                    session={selected}
+                    lists={checklists}
+                    sessions={sessions ?? NO_SESSIONS}
+                    activeCardId={activeCardId}
+                    onOpen={openCard}
+                  />
+                ) : (
+                  <div className="scm-empty">セッションのチェックリストが表示されます</div>
+                )}
+              </div>
               <div hidden={shownPanel !== 'context'} className="side-body">
                 {selected ? (
                   <SessionContextPanel
@@ -792,7 +829,10 @@ export function App() {
               }}
             />
           )}
-          {viewId && cwd && diffView && diffView.source !== 'task' && diffView.source !== 'preview' && (
+          {selected && diffView?.source === 'card' && (
+            <CardView session={selected} sessions={sessions ?? NO_SESSIONS} lists={checklists} view={diffView} onClose={() => setDiffView(null)} />
+          )}
+          {viewId && cwd && diffView && diffView.source !== 'task' && diffView.source !== 'preview' && diffView.source !== 'card' && (
             <DiffView
               sessionId={viewId}
               view={diffView}
@@ -965,6 +1005,27 @@ function TaskView({
       onOpenFile={onOpenFile}
     />
   );
+}
+
+// チェックリストのカードの詳細。カードが消えた（ゴミ箱に入れた・ほかのセッションから消した）ら何も出さない
+function CardView({
+  session,
+  sessions,
+  lists,
+  view,
+  onClose,
+}: {
+  session: SessionSummary;
+  sessions: SessionSummary[];
+  lists: Checklist[];
+  view: { listId: string; cardId: string };
+  onClose: () => void;
+}) {
+  // 別のリストへ移したカードも追いかける
+  const list = lists.find((l) => !l.deletedAt && l.cards.some((c) => c.id === view.cardId && !c.deletedAt));
+  const card = list?.cards.find((c) => c.id === view.cardId);
+  if (!list || !card) return null;
+  return <CardPane session={session} sessions={sessions} list={list} card={card} onClose={onClose} />;
 }
 
 const renameSession = (id: string, title: string) => void window.tanacode.sessions.rename(id, title);

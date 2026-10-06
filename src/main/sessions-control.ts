@@ -19,6 +19,7 @@ import {
 } from '@shared/session-tools';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
+import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
 
 // Claude による、ほかのセッションの扱い（MCP サーバー tanacode-sessions のツールの実行）。中継からの呼び出しを、ソケットで受けて答える。
@@ -67,9 +68,6 @@ const SEND_IDLE_TIMEOUT_MS = 30_000;
 // get_session_diff で、未追跡のファイルを読む数と、1 つのファイルから読む大きさの上限
 const MAX_UNTRACKED_FILES = 100;
 const MAX_UNTRACKED_BYTES = 256 * 1024;
-// 親への知らせを、受け付けられるようになるまで待つ上限
-const NOTIFY_TIMEOUT_MS = 10_000;
-const NOTIFY_DELAY_MS = 1500;
 // 1 回の結果の文字数の上限（親のコンテキストを食いつぶさないため）
 const MAX_RESULT_CHARS = 60_000;
 const WAIT_DEFAULT_SECONDS = 300;
@@ -80,8 +78,6 @@ const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 // 親に知らせる、子の手が空いた状態。バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる。
 // 子セッションは人に通知しないので、人が答える許可の確認・ターミナルでの操作の待ちも、親に知らせて人に伝えさせる
 const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'exited']);
-// 親が知らせを受け取れる状態（ターンの外）
-const RECEIVE_STATES = new Set<SessionState>(['idle', 'background']);
 
 class ToolError extends Error {}
 
@@ -89,10 +85,9 @@ export class SessionsControl {
   // 子セッションの、前に見た状態（作業中から手が空いたことを知るため）
   private readonly lastState = new Map<string, SessionState | null>();
   // 親に知らせる子の出来事（親の ID → 子の ID → 状態と時刻）。親の手が空いたら送る
-  private readonly pending = new Map<string, Map<string, { state: SessionState; at: number }>>();
+  private readonly notices: SessionNotices<{ state: SessionState; at: number }>;
   // 親が子の状態を読んだ時刻（`親:子`）。読んだあとの知らせは送らない
   private readonly observedAt = new Map<string, number>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
   // 親が止めた子。止めてターンが終わったことは、親に知らせない
   private readonly stopped = new Set<string>();
   private readonly unwatch: () => void;
@@ -100,12 +95,17 @@ export class SessionsControl {
   constructor(private readonly deps: Deps) {
     for (const s of deps.host.list()) this.lastState.set(s.id, deps.host.stateOf(s.id));
     this.unwatch = deps.host.watchState((id) => this.stateChanged(id));
+    this.notices = new SessionNotices({
+      host: deps.host,
+      enabled: deps.enabled,
+      compose: (parentId, queue) => this.noticeFor(parentId, queue),
+      delayMs: deps.notifyDelayMs,
+    });
   }
 
   dispose(): void {
     this.unwatch();
-    this.timers.forEach((t) => clearTimeout(t));
-    this.timers.clear();
+    this.notices.dispose();
   }
 
   // signal: Claude Code が呼び出しを取り消した（Esc で中断した）。待っている wait_sessions をやめる
@@ -407,17 +407,15 @@ export class SessionsControl {
   // --- 親への知らせ ---
 
   // 子が作業中から手の空いた状態になったら、親に知らせる（親が待っていなくても）。
-  // 親が子に出した指示の作業だけ（人が子に直接出した指示の作業では、親を起こさない）
+  // 親が子に出した指示の作業だけ（人が子に直接出した指示の作業では、親を起こさない）。親の手が空いたら送るのは SessionNotices
   private stateChanged(id: string): void {
     const state = this.deps.host.stateOf(id);
     const before = this.lastState.get(id);
     this.lastState.set(id, state);
     const parentId = this.deps.host.parentOf(id);
-    if (parentId && state && isBusy(state)) this.pending.get(parentId)?.delete(id);
+    if (parentId && state && isBusy(state)) this.notices.remove(parentId, id);
     // 作業していた子のターンが終わったとき（起動中から手が空いたのは、作業を終えたのではない。アプリを起動し直して引き継いだときなど）
     if (parentId && before === 'working' && state && NOTIFY_STATES.has(state)) void this.queueNotice(id, parentId, state);
-    // 親の手が空いたら、溜まっている知らせを送る
-    if (state && RECEIVE_STATES.has(state) && this.pending.has(id)) this.scheduleDelivery(id);
   }
 
   private async queueNotice(childId: string, parentId: string, state: SessionState): Promise<void> {
@@ -428,50 +426,16 @@ export class SessionsControl {
     const reset = lastOf(events, (e): e is Extract<ChatEvent, { type: 'reset' }> => e.type === 'reset');
     const after = reset ? events.slice(events.lastIndexOf(reset) + 1) : events;
     if (lastOf(after, isUser)?.parent !== parentId) return;
-    const queue = this.pending.get(parentId) ?? new Map();
-    queue.set(childId, { state, at });
-    this.pending.set(parentId, queue);
-    this.scheduleDelivery(parentId);
+    this.notices.add(parentId, childId, { state, at });
   }
 
-  // 続けて手が空いた子の知らせは、1 つにまとめる
-  private scheduleDelivery(parentId: string): void {
-    clearTimeout(this.timers.get(parentId));
-    this.timers.set(
-      parentId,
-      setTimeout(() => {
-        this.timers.delete(parentId);
-        void this.deliver(parentId);
-      }, this.deps.notifyDelayMs ?? NOTIFY_DELAY_MS),
-    );
-  }
-
-  private async deliver(parentId: string): Promise<void> {
-    const { host } = this.deps;
-    const queue = this.pending.get(parentId);
-    if (!queue || queue.size === 0) return;
-    const parent = this.summary(parentId);
-    if (!this.deps.enabled() || !parent || parent.archived || host.stateOf(parentId) === 'exited') {
-      this.pending.delete(parentId);
-      return;
-    }
-    // 親が作業中なら、手が空いたときに送る（stateChanged）。入力欄に書きかけの文字があれば、少し待って試し直す
-    const parentState = host.stateOf(parentId);
-    if (!parentState || !RECEIVE_STATES.has(parentState)) return;
-    const screen = host.screen(parentId);
-    if (screen?.state.kind !== 'prompt' || screen.draft) {
-      this.timers.set(
-        parentId,
-        setTimeout(() => void this.deliver(parentId), 5000),
-      );
-      return;
-    }
-    this.pending.delete(parentId);
-    const all = host.list();
+  // 続けて手が空いた子の知らせを、1 つにまとめた文。親がもう読んだ出来事は除く
+  private noticeFor(parentId: string, queue: Map<string, { state: SessionState; at: number }>): string | null {
+    const all = this.deps.host.list();
     const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
-    if (notices.length === 0) return;
+    if (notices.length === 0) return null;
     const message = `${notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state)).join(' ')} get_session で確かめてください。`;
-    await host.submitWhenReady(parentId, sessionEventText(notices.map(([child]) => child), message), NOTIFY_TIMEOUT_MS).catch(() => {});
+    return sessionEventText(notices.map(([child]) => child), message);
   }
 
   private observe(parentId: string, childId: string): void {

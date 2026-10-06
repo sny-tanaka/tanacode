@@ -1,6 +1,6 @@
 import type { HookRun } from '@shared/chat';
 import type { ChatItem } from './chatState';
-import { isSessionTool, mcpParts, toolLabel } from './toolLabel';
+import { isChecklistTool, isSessionTool, mcpParts, toolLabel } from './toolLabel';
 
 export type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
@@ -68,6 +68,7 @@ const CATEGORIES: Category[] = [
   { label: 'ToDo', verb: '更新', done: '更新しました' },
   { label: 'ブラウザ', verb: '操作', done: '操作しました' },
   { label: 'セッション', verb: '', done: '' },
+  { label: 'チェックリスト', verb: '', done: '' },
   { label: 'MCP', verb: '実行', done: '実行しました' },
   { label: 'その他', verb: '実行', done: '実行しました' },
 ];
@@ -97,6 +98,7 @@ const CATEGORY_OF: Record<string, string> = {
 
 function categoryOf(tool: ToolItem): Category {
   if (isSessionTool(tool.name)) return CATEGORIES.find((c) => c.label === 'セッション')!;
+  if (isChecklistTool(tool.name)) return CATEGORIES.find((c) => c.label === 'チェックリスト')!;
   const mcp = mcpParts(tool.name);
   const label = mcp ? (mcp.server === 'Browser' || mcp.server === 'Chrome' || mcp.server === 'アプリ内ブラウザ' ? 'ブラウザ' : 'MCP') : (CATEGORY_OF[tool.name] ?? 'その他');
   return CATEGORIES.find((c) => c.label === label)!;
@@ -131,6 +133,11 @@ export function toolLine(tool: ToolItem): string {
   // セッションのツールは、対象の ID より、ツールの名前（「子セッションに指示」など）のほうが分かりやすい
   if (category.label === 'セッション') {
     const label = mcpParts(tool.name)?.tool ?? tool.name;
+    return tool.status === 'running' ? `${label}…` : tool.status === 'error' ? `${label}（失敗）` : label;
+  }
+  // チェックリストのツールは、ツールの名前と対象（「チェックする · やること #3」など）
+  if (category.label === 'チェックリスト') {
+    const label = [mcpParts(tool.name)?.tool ?? tool.name, tool.target].filter(Boolean).join(' · ');
     return tool.status === 'running' ? `${label}…` : tool.status === 'error' ? `${label}（失敗）` : label;
   }
   if (tool.description) {
