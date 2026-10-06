@@ -66,6 +66,7 @@ function Demo({ initial, state = STATE }: { initial: ScmView; state?: GitState }
         comments={[]}
         onShowComment={noop}
         onRemoveComment={noop}
+        onWalkthrough={noop}
       />
     </div>
   );

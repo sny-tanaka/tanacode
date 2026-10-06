@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { cardOfTool } from '@shared/checklist-tools';
 import { sessionIdOfTool } from '@shared/session-tools';
+import { walkthroughOfTool } from '@shared/walkthrough-tools';
 import { openChecklistCard } from '../checklist/openCard';
+import { openWalkthroughTarget } from '../walkthrough/openWalkthrough';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import { ChevronRightIcon, DisclosureIcon } from '../icons';
@@ -68,6 +70,9 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
   // チェックリストのツールは、カードのクリックで対象のカードを開く（別のセッションへのコピーは、このセッションのカードではないので開かない）
   const card = item.name.endsWith('__cards_copy') ? null : cardOfTool(item.name, item.input);
   const openCard = card ? () => openChecklistCard(card) : null;
+  // ウォークスルーのツールは、カードのクリックで今のウォークスルー（start_walkthrough）か、示した場所（show_code）を開く
+  const walk = walkthroughOfTool(item.name, item.input);
+  const openWalk = walk ? () => openWalkthroughTarget(walk) : null;
   // 入力の session_id がそのまま対象に出るツール（send_message など）は、ID の代わりに名前を出す
   const targetIsId = !!sessionKey && /^[0-9a-f-]{8,36}$/.test(item.target.trim());
   const target = targetIsId && session ? sessionName(session) : item.target;
@@ -81,7 +86,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
 
   return (
     <div
-      className={`tool-card${opensFile || hasDetail || onOpenTask || openSession || openCard ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
+      className={`tool-card${opensFile || hasDetail || onOpenTask || openSession || openCard || openWalk ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
       onClick={() =>
         onOpenTask
           ? onOpenTask()
@@ -89,6 +94,8 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
             ? openSession()
             : openCard
               ? openCard()
+              : openWalk
+              ? openWalk()
               : opensFile
               ? onOpenFile(item.filePath!, item.line)
               : hasDetail && setOpen((v) => !v)

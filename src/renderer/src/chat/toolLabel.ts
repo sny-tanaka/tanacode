@@ -1,6 +1,7 @@
 import { BROWSER_MCP_SERVER, browserTool } from '@shared/browser-tools';
 import { CHECKLIST_MCP_SERVER, checklistTool } from '@shared/checklist-tools';
 import { SESSIONS_MCP_SERVER, sessionTool } from '@shared/session-tools';
+import { WALKTHROUGH_MCP_SERVER, walkthroughTool } from '@shared/walkthrough-tools';
 
 // MCP のツールの内部名（mcp__<サーバー>__<ツール>）を、画面に出す短い名前にする。例: 「Browser · navigate」。
 // tanacode のアプリ内ブラウザ・セッションのツールは、日本語の名前にする（例: 「アプリ内ブラウザ · クリック」「セッション · 子セッションに指示」）
@@ -10,6 +11,7 @@ const SERVER_NAMES: Record<string, string> = {
   [BROWSER_MCP_SERVER]: 'アプリ内ブラウザ',
   [SESSIONS_MCP_SERVER]: 'セッション',
   [CHECKLIST_MCP_SERVER]: 'チェックリスト',
+  [WALKTHROUGH_MCP_SERVER]: 'ウォークスルー',
 };
 
 export function mcpParts(name: string): { server: string | null; tool: string } | null {
@@ -24,7 +26,9 @@ export function mcpParts(name: string): { server: string | null; tool: string } 
         ? (sessionTool(m[2])?.label ?? m[2])
         : m[1] === CHECKLIST_MCP_SERVER
           ? (checklistTool(m[2])?.label ?? m[2])
-          : m[2];
+          : m[1] === WALKTHROUGH_MCP_SERVER
+            ? (walkthroughTool(m[2])?.label ?? m[2])
+            : m[2];
   return { server, tool };
 }
 
@@ -42,4 +46,9 @@ export function isSessionTool(name: string): boolean {
 // チェックリストのツールか
 export function isChecklistTool(name: string): boolean {
   return name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`);
+}
+
+// ウォークスルーのツールか
+export function isWalkthroughTool(name: string): boolean {
+  return name.startsWith(`mcp__${WALKTHROUGH_MCP_SERVER}__`);
 }

@@ -9,7 +9,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
 // browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
 // sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）/
-// checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）
+// checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）/
+// walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
@@ -18,6 +19,7 @@ type Values = {
   browserHosts: string[];
   sessionsControl: boolean;
   checklistControl: boolean;
+  walkthroughControl: boolean;
 };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -80,6 +82,14 @@ export class AppSettings {
     this.update({ checklistControl: on });
   }
 
+  walkthroughControlEnabled(): boolean {
+    return this.values.walkthroughControl;
+  }
+
+  setWalkthroughControlEnabled(on: boolean): void {
+    this.update({ walkthroughControl: on });
+  }
+
   setBrowserHosts(hosts: string[]): void {
     this.update({ browserHosts: hosts });
   }
@@ -115,6 +125,7 @@ function load(file: string): Values {
       browserHosts?: unknown;
       sessionsControl?: unknown;
       checklistControl?: unknown;
+      walkthroughControl?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -124,9 +135,10 @@ function load(file: string): Values {
       browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
       sessionsControl: data.sessionsControl !== false,
       checklistControl: data.checklistControl !== false,
+      walkthroughControl: data.walkthroughControl !== false,
     };
   } catch {
-    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true };
+    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true };
   }
 }
 

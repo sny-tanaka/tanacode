@@ -1,4 +1,5 @@
 import { CHECKLIST_EVENT_TAG, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
+import { walkthroughTarget } from './walkthrough-tools';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
@@ -257,7 +258,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
           type: 'tool-use',
           id: block.id,
           name: block.name,
-          target: checklistTarget(block.name, input) ?? toolTarget(input, cwd),
+          target: checklistTarget(block.name, input) ?? walkthroughTarget(block.name, input, cwd) ?? toolTarget(input, cwd),
           filePath,
           input: toolInputDetail(block.name, input),
           todos: block.name === 'TodoWrite' && Array.isArray(input.todos) ? (input.todos as TodoItem[]) : undefined,

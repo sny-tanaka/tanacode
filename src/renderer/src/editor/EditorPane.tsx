@@ -1,6 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { FileBaseline, FileChange, FileContent } from '@shared/ipc';
-import { LineComments, type ReviewComment } from '../review/LineComments';
+import { shownStep } from '@shared/walkthrough';
+import { LineComments, type RangeQuestion, type ReviewComment } from '../review/LineComments';
+import { WalkthroughZone, type WalkthroughControls } from '../walkthrough/WalkthroughZone';
 import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, EyeIcon, IconButton, type IconComponent } from '../icons';
 import { DiffDecorations } from './diffDecorations';
 import { MarkdownPreview } from './MarkdownPreview';
@@ -39,6 +41,10 @@ type Props = {
   comments: ReviewComment[];
   onAddComment: (comment: ReviewComment) => void;
   onRemoveComment: (id: string) => void;
+  // このセッションのウォークスルー。示している場所のファイルを開いているときに、範囲に色を付けて吹き出しを出す
+  walkthrough?: WalkthroughControls | null;
+  // 行を選んで「ここを聞く」（ウォークスルーの間だけ渡す）
+  onAsk?: (question: RangeQuestion) => void;
 };
 
 // App はチャットのイベントなどで頻繁に描き直されるので、props が変わったときだけ描き直す
@@ -58,6 +64,8 @@ export const EditorPane = memo(function EditorPane({
   comments,
   onAddComment,
   onRemoveComment,
+  walkthrough = null,
+  onAsk,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -239,6 +247,18 @@ export const EditorPane = memo(function EditorPane({
     editor.revealLineInCenterIfOutsideViewport(line, monaco.editor.ScrollType.Smooth);
   }, [reveal, activePath, activeText]);
 
+  // ウォークスルーで示す Markdown は、プレビューではなくソースで出す（範囲と吹き出しはエディタに出すため）
+  const walkStep = walkthrough ? shownStep(walkthrough.walkthrough) : null;
+  const walkSeq = walkthrough ? `${walkthrough.walkthrough.id}:${walkthrough.walkthrough.seq}` : null;
+  useEffect(() => {
+    if (!walkStep || walkStep.path !== activePath || !isMarkdown(walkStep.path)) return;
+    if ((markdownModes.get(walkStep.path) ?? 'preview') === 'preview') setMarkdownMode(walkStep.path, 'source');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walkSeq, activePath]);
+  // 吹き出しは、示している場所のファイルのモデルをエディタに入れ終えてから出す（入れ替えの途中に、前のファイルに出さない）
+  const showWalk =
+    !!editorInstance && !!walkthrough && !!walkStep && walkStep.path === activePath && !!activeModel && activeModel === modelsRef.current.get(walkStep.path);
+
   // 基点での内容を読む（基点が変わる・コミットするなどで変わりうる）
   useEffect(() => {
     if (!activePath || !change || !mergeBase) return;
@@ -344,8 +364,10 @@ export const EditorPane = memo(function EditorPane({
             comments={comments.filter((c) => c.path === activePath)}
             onAdd={onAddComment}
             onRemove={onRemoveComment}
+            onAsk={onAsk}
           />
         )}
+        {showWalk && <WalkthroughZone editor={editorInstance!} {...walkthrough!} />}
         {!active && <div className="editor-placeholder">エクスプローラーからファイルを開いてください</div>}
         {active?.content.kind === 'binary' && <div className="editor-placeholder">バイナリファイルは表示できません</div>}
         {active?.content.kind === 'image' && (

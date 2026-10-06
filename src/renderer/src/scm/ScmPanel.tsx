@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useState } from 'react';
 import type { BranchChanges, FileChange, GitAction, GitBranches, GitEntry, GitState } from '@shared/ipc';
 import { buildTree, filesInTreeOrder, visibleRows } from '@shared/scm-tree';
 import { CommentList } from '../review/CommentList';
+import { WalkthroughList, type WalkthroughListProps } from '../walkthrough/WalkthroughList';
 import type { ReviewComment } from '../review/LineComments';
 import { Busy } from '../layout/Busy';
 import {
@@ -19,6 +20,7 @@ import {
   PushIcon,
   TreeViewIcon,
   UndoIcon,
+  WalkthroughIcon,
   type IconComponent,
 } from '../icons';
 import type { ScmView } from './scmView';
@@ -37,6 +39,10 @@ type Props = {
   comments: ReviewComment[];
   onShowComment: (comment: ReviewComment) => void;
   onRemoveComment: (id: string) => void;
+  // 「ブランチの変更」の「Claude にウォークスルーしてもらう」（セッションを見ているときだけ）
+  onWalkthrough?: () => void;
+  // このセッションのウォークスルーの一覧（閉じたものも、Claude が作り直すまで出す）
+  walkthrough?: WalkthroughListProps | null;
 };
 
 // VSCode のソース管理のように、変更の確認・ステージ・コミット・プッシュ・プル・ブランチの切り替えをする。
@@ -54,6 +60,8 @@ export const ScmPanel = memo(function ScmPanel({
   comments,
   onShowComment,
   onRemoveComment,
+  onWalkthrough,
+  walkthrough,
 }: Props) {
   const [message, setMessage] = useState('');
   const [amend, setAmend] = useState(false);
@@ -173,7 +181,7 @@ export const ScmPanel = memo(function ScmPanel({
 
       <div className="scm-lists">
         {state.branchChanges && (
-          <BranchSection changes={state.branchChanges} view={view} activePath={activeBranchPath} onOpen={onOpenBranchDiff} />
+          <BranchSection changes={state.branchChanges} view={view} activePath={activeBranchPath} onOpen={onOpenBranchDiff} onWalkthrough={onWalkthrough} />
         )}
         <Section
           title="ステージ済みの変更"
@@ -204,6 +212,7 @@ export const ScmPanel = memo(function ScmPanel({
             { icon: AddIcon, title: 'ステージする', run: (paths) => void run({ kind: 'stage', paths }, 'ステージ中…') },
           ]}
         />
+        {walkthrough && <WalkthroughList {...walkthrough} />}
         <CommentList comments={comments} onShow={onShowComment} onRemove={onRemoveComment} />
       </div>
     </div>
@@ -284,11 +293,13 @@ function BranchSection({
   view,
   activePath,
   onOpen,
+  onWalkthrough,
 }: {
   changes: BranchChanges;
   view: ScmView;
   activePath: string | null;
   onOpen: (path: string) => void;
+  onWalkthrough?: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const paths = branchPaths(changes, 'list');
@@ -317,6 +328,16 @@ function BranchSection({
                 <span className="diff-add">+{total.added}</span>
                 <span className="diff-del">−{total.removed}</span>
               </>
+            )}
+            {paths.length > 0 && onWalkthrough && (
+              <IconButton
+                size="sm"
+                icon={WalkthroughIcon}
+                label="Claude にウォークスルーしてもらう"
+                tip={'Claude にウォークスルーしてもらう\nエディタでコードを示しながら、このブランチの変更を説明します'}
+                className="scm-branch-walk"
+                onClick={onWalkthrough}
+              />
             )}
           </div>
           {paths.length === 0 && <div className="scm-none">変更はありません</div>}

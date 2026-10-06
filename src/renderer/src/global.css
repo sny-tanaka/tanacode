@@ -713,6 +713,9 @@ body.resizing * {
   font-size: 11px;
   color: var(--text-secondary);
 }
+.scm-branch-base .scm-branch-walk {
+  margin: -3px 0 -3px auto;
+}
 .review-count {
   margin-left: auto;
   display: flex;
@@ -3411,6 +3414,190 @@ details[open] > summary > .disclosure {
   gap: 8px;
   margin-top: 6px;
 }
+/* 「ここを聞く」（ウォークスルーの間に、エディタで範囲を選ぶと選択の下に浮かぶ） */
+.ask-widget {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--claude);
+  background: var(--bg-surface);
+  color: var(--claude);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ask-widget:hover {
+  background: var(--claude-tint);
+}
+.comment-box.ask {
+  border-left-color: var(--claude);
+}
+.comment-box.ask .comment-mark {
+  color: var(--claude);
+}
+
+/* ウォークスルー（Claude がエディタで示している範囲と、その下の吹き出し） */
+.walk-line {
+  background: var(--claude-tint);
+}
+.walk-gutter {
+  background: var(--claude);
+  width: 3px !important;
+  margin-left: 3px;
+}
+.walk-zone {
+  z-index: 10;
+}
+.walk-box {
+  max-width: min(720px, var(--walk-max-width, 720px));
+  margin: 6px 0 6px 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--claude);
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  white-space: normal;
+}
+.walk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.walk-head .icon-button {
+  margin: -3px -4px -3px 0;
+}
+.walk-mark {
+  flex: none;
+  color: var(--claude);
+}
+.walk-title {
+  min-width: 0;
+  color: var(--text-heading);
+  overflow-wrap: anywhere;
+}
+.walk-body .markdown {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.walk-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.walk-stale span {
+  flex: 1;
+}
+.walk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.walk-ask textarea {
+  width: 100%;
+  margin-top: 8px;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.walk-ask textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+/* ウォークスルーを PR に載せる下見 */
+.walk-comment-dialog {
+  width: min(760px, 92vw);
+  outline: none;
+}
+.walk-comment-body {
+  height: min(420px, 50vh);
+  margin: 12px 14px 0;
+  resize: vertical;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.walk-comment-body:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+.walk-comment-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 14px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.walk-comment-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.walk-comment-note span {
+  flex: 1;
+}
+.walk-comment-note.warn {
+  background: var(--warn-tint);
+}
+.walk-comment-note.ok {
+  background: var(--ok-tint);
+}
+/* 人が自分で別の場所を開いたときの帯（エディタの場所の上） */
+.walk-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  background: var(--claude-tint);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.walk-band-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--claude);
+}
+.walk-band-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
 /* 入力欄の上のコメント */
 .comment-chip {
   max-width: 100%;
@@ -3474,6 +3661,77 @@ details[open] > summary > .disclosure {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ソース管理パネルのウォークスルーの一覧（Claude へのコメントの上） */
+.walk-list .review-comments-head .icon-button {
+  flex: none;
+  margin: -3px 0;
+}
+.walk-list-label {
+  flex: none;
+  white-space: nowrap;
+}
+.walk-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.walk-list-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.walk-list-step:hover {
+  background: var(--bg-hover);
+}
+.walk-list-number {
+  flex: none;
+  min-width: 1.4em;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.walk-list-step.active .walk-list-number {
+  color: var(--claude);
+}
+.walk-list-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.walk-list-step-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.walk-list-step.active .walk-list-step-title {
+  color: var(--text-heading);
+}
+.walk-list-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.walk-list-seen {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 /* 入力欄の上のタスク一覧（チャットが進んでも流れない） */
