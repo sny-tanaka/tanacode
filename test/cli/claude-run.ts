@@ -14,6 +14,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
+import { showsCommandSuggestion } from '../../src/main/screen-parser';
 import { ScreenTracker } from '../../src/main/screen-tracker';
 import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
@@ -437,7 +438,7 @@ export class ClaudeRun {
       () =>
         this.screen.current.state.kind === 'prompt' &&
         squash(this.screen.current.draft).endsWith(typed) &&
-        (!command || this.lines().some((line) => line.text.trimStart().startsWith(command) && !line.text.includes('❯'))),
+        (!command || showsCommandSuggestion(this.lines(), command)),
       DRAFT_MS,
     );
     this.type('\r');
