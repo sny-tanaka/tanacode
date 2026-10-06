@@ -3411,6 +3411,188 @@ details[open] > summary > .disclosure {
   gap: 8px;
   margin-top: 6px;
 }
+/* 「ここを聞く」（ウォークスルーの間に、エディタで範囲を選ぶと選択の下に浮かぶ） */
+.ask-widget {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--claude);
+  background: var(--bg-surface);
+  color: var(--claude);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ask-widget:hover {
+  background: var(--claude-tint);
+}
+.comment-box.ask {
+  border-left-color: var(--claude);
+}
+.comment-box.ask .comment-mark {
+  color: var(--claude);
+}
+
+/* ウォークスルー（Claude がエディタで示している範囲と、その下の吹き出し） */
+.walk-line {
+  background: var(--claude-tint);
+}
+.walk-gutter {
+  background: var(--claude);
+  width: 3px !important;
+  margin-left: 3px;
+}
+.walk-zone {
+  z-index: 10;
+}
+.walk-box {
+  max-width: min(720px, var(--walk-max-width, 720px));
+  margin: 6px 0 6px 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--claude);
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  white-space: normal;
+}
+.walk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.walk-head .icon-button {
+  margin: -3px -4px -3px 0;
+}
+.walk-mark {
+  flex: none;
+  color: var(--claude);
+}
+.walk-title {
+  min-width: 0;
+  color: var(--text-heading);
+  overflow-wrap: anywhere;
+}
+.walk-body .markdown {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.walk-toc {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.walk-toc button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.walk-toc button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.walk-toc button.active {
+  color: var(--text-heading);
+}
+.walk-toc-number {
+  flex: none;
+  min-width: 1.5em;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.walk-toc button.active .walk-toc-number {
+  color: var(--claude);
+}
+.walk-toc-title {
+  flex: 1;
+  min-width: 0;
+}
+.walk-toc-seen {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.walk-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.walk-stale span {
+  flex: 1;
+}
+.walk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.walk-ask textarea {
+  width: 100%;
+  margin-top: 8px;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.walk-ask textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+/* 人が自分で別の場所を開いたときの帯（エディタの場所の上） */
+.walk-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  background: var(--claude-tint);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.walk-band-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--claude);
+}
+.walk-band-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
 /* 入力欄の上のコメント */
 .comment-chip {
   max-width: 100%;

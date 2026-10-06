@@ -54,12 +54,20 @@ import { useAppUpdate } from './layout/AppUpdate';
 import { TooltipLayer } from './layout/Tooltip';
 import { useNotifications } from './notifications/useNotifications';
 import { setCursor } from './editor/cursorStore';
+import { rangeQuestionText, restartRequestText, shownStep, stepQuestionText, type Walkthrough } from '@shared/walkthrough';
+import type { RangeQuestion } from './review/LineComments';
+import { useOpenWalkthroughTarget } from './walkthrough/openWalkthrough';
+import { useWalkthroughs } from './walkthrough/useWalkthroughs';
+import { WalkthroughBand } from './walkthrough/WalkthroughBand';
+import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 
 type EditorState = { files: OpenFile[]; activePath: string | null; reveal: RevealRequest | null };
 const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
+// ウォークスルーを始めてからこの間に届いたファイルの変更は、始める前の Claude の書き込みとみなす（変更の知らせは少し遅れて届く）
+const WALK_STALE_GRACE_MS = 3000;
 
 type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'checklist' | 'context';
 // サイドパネルの切り替え（左端に縦に並べるアイコン）
@@ -283,9 +291,29 @@ export function App() {
   // Claude がアプリ内ブラウザを操作し始めたセッション（帯が消えるまで）と、見ていない間に操作したセッション
   const browsing = useRef(new Set<string>());
   const browsedUnseen = useRef(new Set<string>());
+  // 見ていない間に、Claude がウォークスルーで場所を示したセッション
+  const walkedUnseen = useRef(new Set<string>());
+  // 人が、Claude が前に示した場所を見ているか（Claude が次を示したときに追従するか）。描くたびに決める
+  const viewingWalkRef = useRef(false);
+  // Claude がウォークスルーで場所を示した。見ているセッションで、始めたときか、人が前に示した場所を見ていたら、その場所を開く。
+  // 人が自分で別のファイルや画面を開いていたら動かさない（エディタの場所の上の帯から戻れる）
+  const walkthroughs = useWalkthroughs((sessionId: string, walk: Walkthrough, prev: Walkthrough | null) => {
+    if (sessionId !== selectedIdRef.current) {
+      walkedUnseen.current.add(sessionId);
+      return;
+    }
+    if (!prev || prev.id !== walk.id || viewingWalkRef.current) void openFileRef.current(shownStep(walk).path);
+  });
+  const walksRef = useRef(walkthroughs);
+  walksRef.current = walkthroughs;
 
-  // セッションを切り替えたら、エディタの場所は閉じる。見ていない間に Claude がブラウザを操作したセッションなら、ブラウザを開く
-  useEffect(() => setDiffView(viewId && browsedUnseen.current.delete(viewId) ? { source: 'preview' } : null), [viewId]);
+  // セッションを切り替えたら、エディタの場所は閉じる。見ていない間に Claude がブラウザを操作したセッションなら、ブラウザを開く。
+  // 見ていない間に Claude がウォークスルーで場所を示したセッションなら、その場所を開く
+  useEffect(() => {
+    setDiffView(viewId && browsedUnseen.current.delete(viewId) ? { source: 'preview' } : null);
+    const walk = viewId && walkedUnseen.current.delete(viewId) ? walksRef.current[viewId] : null;
+    if (walk) void openFileRef.current(shownStep(walk).path);
+  }, [viewId]);
 
   // Claude によるアプリ内ブラウザの操作。そのセッションを見ているときだけ、操作を始めたときにエディタの場所にブラウザを開く
   // （閉じても、続けて操作している間は開き直さない）。見ていないセッションは裏で動かし、戻ったときに開く
@@ -396,6 +424,9 @@ export function App() {
     [viewId, cwd, updateEditor],
   );
 
+  const openFileRef = useRef(openFile);
+  openFileRef.current = openFile;
+
   // フォルダの中のファイルは相対パスで、外のファイル（Claude が送ったものなど）は絶対パスのままエディタで開く
   const openAbsolute = useCallback(
     (absPath: string, line?: number) => {
@@ -429,6 +460,22 @@ export function App() {
   useEffect(
     () => window.tanacode.workspace.onFilesChanged(({ root, paths }) => reloadFiles(root, new Set(paths))),
     [reloadFiles],
+  );
+
+  // ウォークスルーを始めたあとで、ステップのファイルがディスク側で変わった（ウォークスルーの id:パス）。示している位置がずれているかもしれない
+  const [staleWalkFiles, setStaleWalkFiles] = useState<ReadonlySet<string>>(new Set());
+  useEffect(
+    () =>
+      window.tanacode.workspace.onFilesChanged(({ root, paths }) => {
+        const changed = new Set(paths);
+        const keys: string[] = [];
+        for (const [sessionId, walk] of Object.entries(walksRef.current)) {
+          if (sessionsRef.current?.find((s) => s.id === sessionId)?.cwd !== root || Date.now() - walk.startedAt < WALK_STALE_GRACE_MS) continue;
+          for (const step of walk.steps) if (changed.has(step.path)) keys.push(`${walk.id}:${step.path}`);
+        }
+        if (keys.length > 0) setStaleWalkFiles((prev) => new Set([...prev, ...keys]));
+      }),
+    [],
   );
 
   const openBranchDiff = useCallback((path: string) => {
@@ -588,6 +635,42 @@ export function App() {
   const showContext = useCallback(() => setSidePanel('context'), []);
   const compact = useCompactState(selected ?? null, chat, selected ? screenOf(selected.id) : null);
   const compactWith = useCallback((instructions: string) => sendToSelected(`/compact ${instructions}`, []), [sendToSelected]);
+
+  // ウォークスルー（選んでいるセッションのもの）。人が今、Claude の示している場所を見ているか
+  const walk = (selected && !selected.archived && walkthroughs[selected.id]) || null;
+  const walkShown = walk ? shownStep(walk) : null;
+  const viewingWalk = !!walkShown && !diffView && editor.activePath === walkShown.path;
+  viewingWalkRef.current = viewingWalk;
+  const walkStale = !!walk && !walk.aside && staleWalkFiles.has(`${walk.id}:${walkShown!.path}`);
+  const walkControls = useMemo<WalkthroughControls | null>(() => {
+    if (!walk || !selectedId) return null;
+    const sessionId = selectedId;
+    return {
+      walkthrough: walk,
+      stale: walkStale,
+      // 先にエディタで開き、main に知らせる（範囲までのスクロールは、main から届いた変更で吹き出しが行う）
+      onGo: (index) => {
+        const step = walk.steps[Math.min(Math.max(index, 0), walk.steps.length - 1)];
+        if (step) void openFileRef.current(step.path);
+        void window.tanacode.walkthrough.go(sessionId, index);
+      },
+      onEnd: () => void window.tanacode.walkthrough.end(sessionId),
+      onAsk: (question) => pendingSends.send(sessionId, stepQuestionText(walk, question), []),
+      onRestart: () => pendingSends.send(sessionId, restartRequestText(walk), []),
+    };
+  }, [walk, walkStale, selectedId, pendingSends.send]);
+  const askRange = useCallback(
+    (q: RangeQuestion) => sendToSelected(rangeQuestionText(q.path, q.startLine, q.endLine, q.quote, q.text), []),
+    [sendToSelected],
+  );
+  const showWalk = useCallback(() => walkShown && void openFile(walkShown.path), [walkShown, openFile]);
+  const endWalk = useCallback(() => selectedId && void window.tanacode.walkthrough.end(selectedId), [selectedId]);
+  // チャットのウォークスルーのツールの行から。start_walkthrough は今の場所、show_code はその場所を開く
+  useOpenWalkthroughTarget((target) => {
+    if (target.kind === 'walkthrough') showWalk();
+    else if (target.path.startsWith('/')) openAbsolute(target.path, target.line);
+    else void openFile(target.path, target.line);
+  });
 
   const activeFile = editor.files.find((f) => f.path === editor.activePath);
   const language = activeFile?.content.kind === 'text' ? languageLabel(languageFor(activeFile.path)) : null;
@@ -818,6 +901,7 @@ export function App() {
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
         )}
         <div className="center">
+          {walk && !viewingWalk && <WalkthroughBand walkthrough={walk} onShow={showWalk} onEnd={endWalk} />}
           {selected && cwd && diffView?.source === 'task' && (
             <TaskView
               sessionId={selected.id}
@@ -871,6 +955,8 @@ export function App() {
               comments={sessionComments}
               onAddComment={addComment}
               onRemoveComment={removeComment}
+              walkthrough={walkControls}
+              onAsk={walk ? askRange : undefined}
             />
             </div>
           ) : composing ? (

@@ -180,6 +180,8 @@ export class SessionManager {
     private readonly sessionsMcp: () => McpLaunch | null = () => null,
     // 起動する Claude Code に、チェックリストの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly checklistMcp: () => McpLaunch | null = () => null,
+    // 起動する Claude Code に、ウォークスルーの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
+    private readonly walkthroughMcp: () => McpLaunch | null = () => null,
   ) {}
 
   // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
@@ -894,6 +896,7 @@ export class SessionManager {
     const browser = adopted ? null : this.browser();
     const launch = adopted ? null : this.sessionsMcp();
     const checklist = adopted ? null : this.checklistMcp();
+    const walkthrough = adopted ? null : this.walkthroughMcp();
     // 子セッションには、子を動かすツールを見せない（孫は作れない）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions);
@@ -1025,6 +1028,7 @@ export class SessionManager {
         browser,
         sessions,
         checklist,
+        walkthrough,
         ...rt.size,
       },
       {

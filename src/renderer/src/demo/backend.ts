@@ -543,6 +543,13 @@ export class DemoBackend {
           return ok(counts);
         },
       },
+      // デモのツアーではウォークスルーを使わない
+      walkthrough: {
+        list: () => ok([]),
+        go: async () => {},
+        end: async () => {},
+        onChanged: () => () => {},
+      },
       browser: {
         attach: () => {},
         activate: () => {},

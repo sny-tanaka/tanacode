@@ -24,6 +24,7 @@ import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
 import { ChecklistControl } from './checklist-control';
 import { ChecklistStore } from './checklist-store';
+import { WalkthroughControl } from './walkthrough-control';
 import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
@@ -72,6 +73,8 @@ let scheduled: ScheduledMessages;
 let checklists: ChecklistStore;
 let checklistBridge: McpBridge | null = null;
 let checklistControl: ChecklistControl | null = null;
+let walkthroughBridge: McpBridge | null = null;
+let walkthroughControl: WalkthroughControl | null = null;
 // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
 const folderViews = new Map<string, string>();
 // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -367,6 +370,7 @@ function registerIpc(): void {
     const removal = await manager.remove(id, options);
     // 一覧から消したセッションのチェックリストも消す（アーカイブでは残す）
     for (const target of targets) if (!manager.summary(target)) checklists.remove(target);
+    for (const target of targets) if (!manager.summary(target)) walkthroughControl?.forget(target);
     return removal;
   });
   ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
@@ -395,6 +399,10 @@ function registerIpc(): void {
     }
     return counts;
   });
+  // ウォークスルー。今のもの・人が見るステップを変えた・終えた
+  ipcMain.handle(IpcChannel.WalkthroughGet, () => walkthroughControl?.list() ?? []);
+  ipcMain.handle(IpcChannel.WalkthroughGo, (_e, id: string, index: unknown) => walkthroughControl?.go(String(id), Number(index)));
+  ipcMain.handle(IpcChannel.WalkthroughEnd, (_e, id: string) => walkthroughControl?.end(String(id)));
   ipcMain.handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
   ipcMain.handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
   ipcMain.handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));
@@ -508,6 +516,12 @@ function checklistLaunch(): McpLaunch | null {
   return { command: hostExecutable(), script: join(__dirname, 'checklist-mcp.js'), socketPath: checklistBridge.socketPath, version: app.getVersion() };
 }
 
+// 起動する Claude Code に足す、ウォークスルーの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
+function walkthroughLaunch(): McpLaunch | null {
+  if (!walkthroughBridge || !settings.walkthroughControlEnabled()) return null;
+  return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: walkthroughBridge.socketPath, version: app.getVersion() };
+}
+
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
   try {
     switch (action.kind) {
@@ -568,6 +582,7 @@ function buildMenu(): void {
           { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
           { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
           { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+          { label: 'Claude にウォークスルーさせる', type: 'checkbox', checked: settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
           {
             label: 'アプリ内ブラウザで Claude に許す先…',
             click: () => {
@@ -655,6 +670,17 @@ function setSessionsControl(item: MenuItem): void {
 function setChecklistControl(item: MenuItem): void {
   try {
     settings.setChecklistControlEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
+}
+
+// メニューの「Claude にウォークスルーさせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（walkthrough-control の handle）。
+// 保存できなかったら、チェックを元に戻す
+function setWalkthroughControl(item: MenuItem): void {
+  try {
+    settings.setWalkthroughControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -805,6 +831,16 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('チェックリストの待ち受けを始められませんでした', error);
   }
+  // ウォークスルー。保存はせず、アプリのメモリの上だけで持つ
+  const walkthroughSocket = new McpBridge(socketPathIn(app.getPath('userData'), 'walkthrough', 'walkthrough'), (id, tool, args) =>
+    walkthroughControl ? walkthroughControl.handle(id, tool, args) : Promise.resolve(textResult('tanacode の起動が終わっていません。少し待ってから試してください', true)),
+  );
+  try {
+    await walkthroughSocket.start();
+    walkthroughBridge = walkthroughSocket;
+  } catch (error) {
+    console.error('ウォークスルーの待ち受けを始められませんでした', error);
+  }
   // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
   try {
     ptyHost = await PtyHost.start(app.getPath('userData'), join(__dirname, 'pty-host.js'));
@@ -832,7 +868,7 @@ app.whenReady().then(async () => {
     onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
     onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
     onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch, checklistLaunch);
+  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch, checklistLaunch, walkthroughLaunch);
   sessionsControl = new SessionsControl({ host: manager, enabled: () => settings.sessionsControlEnabled(), home: homedir() });
   // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
   scheduled = new ScheduledMessages(
@@ -845,6 +881,13 @@ app.whenReady().then(async () => {
   manager.watchState((id) => {
     const state = manager.stateOf(id);
     if (state === null || state === 'archived') scheduled.dropSession(id);
+    // アーカイブした・一覧から消したセッションのウォークスルーは終える
+    if (state === null || state === 'archived') walkthroughControl?.end(id);
+  });
+  walkthroughControl = new WalkthroughControl({
+    cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),
+    enabled: () => settings.walkthroughControlEnabled(),
+    onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
   });
   checklistControl = new ChecklistControl({ store: checklists, host: manager, enabled: () => settings.checklistControlEnabled() });
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
@@ -888,6 +931,7 @@ app.on('before-quit', (event) => {
   checklistControl?.dispose();
   checklistBridge?.close();
   checklists?.flush();
+  walkthroughBridge?.close();
   shells.killAll();
 });
 

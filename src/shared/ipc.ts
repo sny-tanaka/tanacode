@@ -14,6 +14,7 @@ import type { WorkflowRun } from './workflow';
 import type { TranslateResult } from './translate';
 import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
+import type { SessionWalkthrough } from './walkthrough';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -156,6 +157,11 @@ export const IpcChannel = {
   ChecklistCopy: 'checklist:copy',
   ChecklistChanged: 'checklist:changed',
   ChecklistUnread: 'checklist:unread',
+  // ウォークスルー。今のもの（画面を作り直したとき用）・人が見るステップを変えた・寄り道から戻った・終えた・変わった（main → 画面）
+  WalkthroughGet: 'walkthrough:get',
+  WalkthroughGo: 'walkthrough:go',
+  WalkthroughEnd: 'walkthrough:end',
+  WalkthroughChanged: 'walkthrough:changed',
 } as const;
 
 // アプリ内ブラウザのページの中の位置と大きさ（CSS の px。見えている範囲の左上から）
@@ -568,6 +574,15 @@ export type TanacodeApi = {
     onChanged(listener: (payload: SessionChecklists) => void): () => void;
     // セッションごとの、見ていない Claude の返信の数（0 のセッションは入れない）
     unread(): Promise<ChecklistUnread>;
+  };
+  // ウォークスルー（Claude がエディタでコードを示しながら説明する。Claude は MCP サーバー tanacode-walkthrough で扱う）
+  walkthrough: {
+    // 今のウォークスルーがあるセッションの分
+    list(): Promise<SessionWalkthrough[]>;
+    // 人が見るステップを変えた（「次へ」「戻る」・目次。寄り道からも戻る）
+    go(sessionId: string, index: number): Promise<void>;
+    end(sessionId: string): Promise<void>;
+    onChanged(listener: (payload: SessionWalkthrough) => void): () => void;
   };
   // Claude によるアプリ内ブラウザの操作（Claude Code に足す MCP サーバー tanacode-browser）
   browser: {
