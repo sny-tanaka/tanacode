@@ -3,7 +3,7 @@ import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import type { DemoBackend } from '../backend';
 import { ROOT } from '../data';
 
-// ワークフローの実行の作り物（章 6 で、子セッションが動かすアクセシビリティの点検）。
+// ワークフローの実行の作り物（章 7 で、子セッションが動かすアクセシビリティの点検）。
 // 概要のフロー図（点検 3 並列 → 修正 2 → 確認）を、台本の進みに合わせて埋めていく
 
 // ワークフローを始めたツールの呼び出しの ID

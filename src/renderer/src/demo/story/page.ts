@@ -79,7 +79,7 @@ ${cards}
   };
 }
 
-// 管理画面にログインしたか（章 4 で、あなたの番の操作が終わったところで true にする）
+// 管理画面にログインしたか（章 5 で、あなたの番の操作が終わったところで true にする）
 let loggedIn = false;
 export function setLoggedIn(value: boolean): void {
   loggedIn = value;

@@ -522,7 +522,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 人と Claude が一緒に見て、書き換えるリスト。セッションの中に名前の付いたリスト（`Checklist`）を持ち、リストはカード（`Card`。タイトル・説明文・チェック・スレッド）を並べます。型と、main・画面・MCP で使う読み方は `src/shared/checklist.ts`。
   - hooks（Stop など）で Claude を止めずに続けさせる仕組みは作りません。どこまで進めるかは人の指示で決め、ハーネスでは強制しません（残したまま進めたいこともあるため）。
   - Claude Code の ToDo（TaskCreate・TodoWrite。チャットの上の `TodoPanel`）とは別物で、そちらは止めません。
-- 保存は main の `ChecklistStore`（`checklist-store.ts`）。セッションごとに `checklists/<セッション ID>.json`（tmp に書いてから rename。500ms ずつまとめる。`0600`）。画面（IPC の `checklist:apply`）と Claude（MCP）の両方が、同じ `ChecklistStore` を書き換え、書き換えるたびに `checklist:changed` で画面に送ります。
+- 書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`（メモリの上だけで持つ。番号・ゴミ箱・未読・コピー・Claude に伝える人の書き換え）。保存は、それを継いだ main の `ChecklistStore`（`checklist-store.ts`）。セッションごとに `checklists/<セッション ID>.json`（tmp に書いてから rename。500ms ずつまとめる。`0600`）。画面（IPC の `checklist:apply`）と Claude（MCP）の両方が、同じ `ChecklistStore` を書き換え、書き換えるたびに `checklist:changed` で画面に送ります。デモのサイトの作り物の API も、`ChecklistBook` をそのまま使います。
   - 番号（`number`）はリストの `nextNumber` から振り、消しても戻しません。並び順は `cards` の順。別のリストへ移すと、移した先で振り直します。
   - 削除は `deletedAt` を付けるだけ（ゴミ箱）。リストを戻すときに同じ名前のリストがあれば、「名前 (2)」にします。ゴミ箱を空にしたら消します。セッションを一覧から削除したら、ファイルごと消します（アーカイブでは残す）。
   - リストの名前は、比べるときに全角半角・大文字小文字・前後の空白を区別しません（`nameKey`）。Claude はリストを名前で指すため。
@@ -623,7 +623,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `sessions-mcp.ts` / `sessions-bridge.ts`: セッションの中継の入り口と、中継に渡す環境変数・子セッションの起動の確認のフック・`--mcp-config` のエントリ
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ）
   - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信）を、手の空いたセッションの入力欄に打つ列
-  - `checklist-store.ts`: チェックリストの保存と書き換え（番号・ゴミ箱・未読・コピー・Claude に伝える人の書き換え）
+  - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト）の置き場所
@@ -664,7 +664,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの MCP のツールの一覧と説明・知らせの目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
@@ -696,14 +696,14 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `data.ts`: デモ用のプロジェクト（カフェのメニューを出す小さな React のアプリ）
   - `webview.ts`: アプリ内ブラウザの `<webview>` の代わり。ブラウザでは webview が動かないので、iframe で作り物のページを出します
   - `scenarios/`: 台本の部品。`claude.ts` は、ツールの呼び出しと結果を会話に足す作り物の Claude。`workflow.ts` は、ワークフローの実行の作り物
-- ツアーは 1 本（8 章）。カフェのメニューのサイト（`data.ts` の `cafeProject`）に機能を足していくひとつのセッションを、始めから終わりまで追います。tanacode の機能は、ひとつのセッションの中で必要になったときに使うものなので、機能ごとにツアーを分けません。
+- ツアーは 1 本（9 章）。カフェのメニューのサイト（`data.ts` の `cafeProject`）に機能を足していくひとつのセッションを、始めから終わりまで追います。tanacode の機能は、ひとつのセッションの中で必要になったときに使うものなので、機能ごとにツアーを分けません。
   - 章に分けてあり、目次から選んだ章の途中から見られます。それより前の章は、「準備しています」の幕の裏で早送りで流し、画面の状態をその章の始まりにそろえます。新しい機能を足したときも、見る人は最初から見直さずに済みます。
   - 上の帯の「次の章へ」で、いまの章の残りを早送りして次の章へ進みます。
   - 最後まで見た章は、目次に印が付きます（見る人のブラウザの `localStorage` の `tanacode-demo.watched`）。
 - `src/renderer/src/demo/story/`: ツアーの台本
   - `chapterInfo.ts`: 章の id・名前・目次に出す説明。親のページは台本を読み込まずに、これだけを使います（台本はアプリの部品や Monaco エディタまで読み込むため）
   - `chapters.ts`: 章の名前と台本を合わせた一覧
-  - `chapters/`: 章ごとの台本（`start`: セッションを始める、`delegate`: 指示して任せる、`knowledge`: Claude が知っている範囲、`browser`: ブラウザで確かめる、`review`: レビューして直す、`parallel`: 並行して進める、`wrapup`: 整理して振り返る、`app`: アプリのまわり。セッションの外の機能）
+  - `chapters/`: 章ごとの台本（`start`: セッションを始める、`delegate`: 指示して任せる、`knowledge`: Claude が知っている範囲、`checklist`: チェックリストで確かめる、`browser`: ブラウザで確かめる、`review`: レビューして直す、`parallel`: 並行して進める、`wrapup`: 整理して振り返る、`app`: アプリのまわり。セッションの外の機能）
   - `story.ts`: 章をまたいで持つ状態（作り物の API・セッションごとの作り物の Claude）と、台本の手助け（発言を打って送る・選択肢を待つ・フォルダを開くなど）。`prepareStory()` が、アプリの最初の描画より前に作り物の API を用意します
   - `files.ts`: Claude が書き換えるファイルの中身。章の順に、前の章の続きになるようにします（税込価格 → アレルギー表示 → スマホの表示 → テイクアウトの価格）
   - `page.ts`: アプリ内ブラウザで開く開発サーバーのページの作り物。いまのファイルの中身に合わせて表示が変わります
@@ -717,7 +717,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `messages.ts`: 2 つのページのやりとり（`postMessage`）。アプリの画面から親へ、操作の説明とその場所（アプリの画面の座標）・ツアーの状態・いまの章と早送り中か・見終わった章・再生中に触ろうとしたこと・書き出した HTML。親からアプリの画面へ、一時停止と次の章へ
   - `inputGuard.ts`: ツアーの再生中は、見ている人のマウス・キーボードの操作をアプリに届けません（台本の操作とぶつからないように）。台本の操作は `isTrusted` が false なので通ります
   - `site.css` / `app.css`: 親のページ（上の帯・目次・吹き出し・準備中の幕・iframe の枠）と、アプリの画面（タイトルバーの飾りの信号機ボタン）だけの見た目
-- 作り物の API（`backend.ts`）は、ツアーが使う機能のぶんだけ作ってあります。セッションの作成（`onCreate`）・worktree の準備・コンテキストの中身・アプリ内ブラウザの Claude の操作と「あなたの番」の依頼・ターミナルの出力・バックグラウンドの作業の停止・翻訳・書き出しの保存など。ファイルを書き換えると、各セッションのフォルダ（worktree を含む）に変更を知らせ、開いているファイルを読み直させます。
+- 作り物の API（`backend.ts`）は、ツアーが使う機能のぶんだけ作ってあります。セッションの作成（`onCreate`）・worktree の準備・コンテキストの中身・チェックリスト（書き換えはアプリと同じ `ChecklistBook`。「Claude に通知する」の返信は `onChecklistNotify` で台本に届く）・アプリ内ブラウザの Claude の操作と「あなたの番」の依頼・ターミナルの出力・バックグラウンドの作業の停止・翻訳・書き出しの保存など。ファイルを書き換えると、各セッションのフォルダ（worktree を含む）に変更を知らせ、開いているファイルを読み直させます。
 - 画面の大きさ: アプリの画面は、どの端末・ブラウザでも 1920×1080（外付けのフル HD のモニターと同じ。README の紹介画像も同じ。`messages.ts` の `STAGE`）で描きます。親のページが、上の帯の下の残りに横も縦も収まるよう iframe を `transform` で縮小して、真ん中に置きます（大きくはしません。倍率 `--demo-scale` は `DemoSite.tsx` の `ScreenLayer` が決めます）。
   - アプリの画面そのものに `zoom` や `transform` をかけると、ブラウザによって文字の大きさや折り返し、固定の位置に出す部品（ツールチップなど）の位置がずれます。iframe ごと絵として縮めれば、中には影響しません。
   - スマホでは `transform` では縮めず、ページの幅（`<meta name="viewport">`）をアプリの画面が収まる幅に広げて、ブラウザのページのズームで縮めます（`DemoSite.tsx` の `fitViewport`）。iPhone の Safari（WebKit）は、`transform` で縮めた iframe の中身を、縮める前の大きさのまま端末の解像度（3 倍）で描きます。ページの処理のメモリが数 GB に膨らんでページが落ち、白くなって読み込み直されてしまうためです。ページのズームなら、縮めた大きさに見合う解像度で描きます。PC のブラウザは viewport を見ないので、これまでどおり `transform` で縮めます。
@@ -730,7 +730,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - 機能を足したとき: 物語の合うところに手順を足すか、`chapters/` に章を足して `chapterInfo.ts` と `chapters.ts` に並べます。手順ごとに `d.caption('説明', 場所)` で説明を付けます。足した章・手順を足した章の `chapterInfo.ts` に `isNew: true` を付けると、目次に「新」の印が出ます（次に機能を足すときに外します）。前の章で変えた画面の状態（開いたパネル・ファイルの中身）は、あとの章に引き継がれることに気をつけます。
 - 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。CI の `tour` のジョブで気づけますが、手元では次のように確かめます。
   - 待ち時間の倍率は、環境変数 `VITE_DEMO_WAIT` で変えられます（台本の待ち時間・カーソルの移動・説明を読む間にかかります）。1 が既定で、0.5 なら半分。0 なら待たずに、ずっと早送りと同じ速さで流します。`npm run demo:dev` にも `npm run demo:build` にも効きます。
-  - `VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build` で待ち時間 0 のサイトを `demo-check/` に書き出し、`npm run demo:check` で流します（`scripts/check-demo-tour.mjs`。Electron の画面の外で #start から開き、終わったら成功、止まったら止まる前の説明とコンソールのエラーを出して失敗。Linux では `xvfb-run` の中で動かします）。8 章を 20 秒ほどで流し終わります。
+  - `VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build` で待ち時間 0 のサイトを `demo-check/` に書き出し、`npm run demo:check` で流します（`scripts/check-demo-tour.mjs`。Electron の画面の外で #start から開き、終わったら成功、止まったら止まる前の説明とコンソールのエラーを出して失敗。Linux では `xvfb-run` の中で動かします）。9 章を 20 秒ほどで流し終わります。
   - スマホで流す: 同じ `demo-check/` を `npm run demo:check:sp` で流します（`scripts/check-demo-tour-sp.mjs`。Linux だけ）。iPhone の Safari と同じ WebKit（Playwright）を iPhone 13 の画面の大きさ・倍率（390×664・3 倍）で開き、ツアーが最後まで流れるかに加えて、ページの処理のプロセス（`WPEWebProcess`）のメモリの最大が上限（既定 2048MB。`--max-memory` で変えられます）を超えないか、プロセスが落ちないかを見ます。WebKit は、先に `npx playwright install --with-deps webkit` で入れておきます。
     - Chromium（PC で流す `tour`）では、縮めた画面を端末の解像度のまま描くことは起きないので、この膨らみ方には気づけません。iPhone の Safari では、上限を超えたページは落とされ、白くなって読み込み直されます。
     - 測った値（待ち時間 0）: いまの作りで 1.4GB 前後。iframe を `transform` で縮めていたころは 2.8〜3.6GB でした。

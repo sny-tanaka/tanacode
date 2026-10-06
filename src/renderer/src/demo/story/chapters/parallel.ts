@@ -6,7 +6,7 @@ import { option, statusLine } from '../../scenarios/claude';
 import { readerLog, WORKFLOW_TOOL, WorkflowPlayer } from '../../scenarios/workflow';
 import { MAIN, type Story } from '../story';
 
-// 章 6「並行して進める」: 残りの作業を、親（このセッション）の Claude が子セッションに分けて任せる。
+// 章 7「並行して進める」: 残りの作業を、親（このセッション）の Claude が子セッションに分けて任せる。
 // 子の起動の許可 → 子が親の下に並ぶ → 一覧の印で状態を追う → 回答待ちの子に答える（子のチャットには「親セッションからの指示」）→
 // 別の子のワークフローのフロー図を見る → 親の開発サーバー（バックグラウンドの Bash）を止める → 子が終わると親に知らせが届く
 

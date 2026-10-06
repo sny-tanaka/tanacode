@@ -6,7 +6,7 @@ import { sleep } from '../../director';
 import { pastTurn, statusLine } from '../../scenarios/claude';
 import type { Story } from '../story';
 
-// 章 8「アプリのまわり」: セッションの外のこと。ターミナルで始めた会話を取り込む → tanacode の新しいバージョンの印 →
+// 章 9「アプリのまわり」: セッションの外のこと。ターミナルで始めた会話を取り込む → tanacode の新しいバージョンの印 →
 // 動作確認済の Claude Code のバージョン → CPU とメモリ → 通知のオン・オフ
 
 const HOUR = 3600_000;

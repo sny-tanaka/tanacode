@@ -3,7 +3,7 @@ import { isFastForward, sleep } from '../../director';
 import { statusLine } from '../../scenarios/claude';
 import { MAIN, type Story } from '../story';
 
-// 章 7「整理して振り返る」: コンテキストの中身を見て「残す」「捨てる」を選んで圧縮する →
+// 章 8「整理して振り返る」: コンテキストの中身を見て「残す」「捨てる」を選んで圧縮する →
 // 英語で返ってきた思考を日本語に訳して読む → 作業の流れを 1 枚の HTML に書き出して開く
 
 // 英語の思考（翻訳のボタンで日本語に訳す）。対訳は作り物の翻訳が返す
@@ -38,10 +38,11 @@ const BEFORE: ContextItem[] = [
   ITEM('t-allergen', 'topic', 'メニューに、アレルギーの表示も足して', 4_100, 5),
   ITEM('f-types', 'file', 'src/types.ts', 900, 6, { edited: true }),
   ITEM('f-menu', 'file', 'src/data/menu.ts', 1_300, 7, { edited: true }),
-  ITEM('i-shot', 'image', 'http://localhost:5173/', 9_600, 8, { tool: 'screenshot' }),
-  ITEM('f-css', 'file', 'src/styles.css', 1_700, 9, { edited: true }),
-  ITEM('b-test', 'tool', 'npm test', 7_400, 10, { tool: 'Bash' }),
-  ITEM('t-children', 'topic', '残りの作業を子セッションに分けて', 5_200, 11),
+  ITEM('t-checklist', 'topic', 'ここまでの要件を「完了前チェック」のリストにして', 2_600, 8),
+  ITEM('i-shot', 'image', 'http://localhost:5173/', 9_600, 9, { tool: 'screenshot' }),
+  ITEM('f-css', 'file', 'src/styles.css', 1_700, 10, { edited: true }),
+  ITEM('b-test', 'tool', 'npm test', 7_400, 11, { tool: 'Bash' }),
+  ITEM('t-children', 'topic', '残りの作業を子セッションに分けて', 5_200, 12),
 ];
 
 export async function runWrapup(story: Story): Promise<void> {

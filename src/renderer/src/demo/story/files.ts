@@ -49,7 +49,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
 }
 `;
 
-// 章 5: テイクアウトの価格も並べたカード
+// 章 6: テイクアウトの価格も並べたカード
 export const MENU_CARD_WITH_TAKEOUT = `import { formatPrice, TAKEOUT_TAX_RATE, withTax } from '../lib/price';
 import type { MenuItem } from '../types';
 

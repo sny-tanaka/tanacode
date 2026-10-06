@@ -1,5 +1,5 @@
 import { claudeUnread, withParticle, eventText, formatNumbers, liveCards, liveLists, parseNumbers, progressOf, type Card, type Checklist, type ChecklistCopyRequest, type ChecklistOp } from '@shared/checklist';
-import { checklistEventText, checklistTool, type CardRef } from '@shared/checklist-tools';
+import { checklistEventText, checklistTool, clipNotice, noticeMessage, replyNoticeText, type CardRef } from '@shared/checklist-tools';
 import type { SessionSummary } from '@shared/ipc';
 import { canSee } from '@shared/session-tools';
 import { ChecklistError, type ChecklistStore } from './checklist-store';
@@ -23,8 +23,6 @@ type Deps = {
 // 知らせの中身。ref: 開くカード
 type Notice = { text: string; refs: CardRef[] };
 
-// 知らせに入れる返信の長さ
-const NOTICE_REPLY_CHARS = 300;
 // 1 回の結果の文字数の上限
 const MAX_RESULT_CHARS = 60_000;
 
@@ -37,7 +35,7 @@ export class ChecklistControl {
       enabled: deps.enabled,
       compose: (_target, items) => {
         const all = [...items.values()];
-        const message = `${all.map((n) => n.text).join(' ')} card_get で確かめて対応し、返事は card_reply で書いてください。`;
+        const message = noticeMessage(all.map((n) => n.text));
         const refs = new Map(all.flatMap((n) => n.refs).map((r) => [r.cardId, r]));
         return checklistEventText([...refs.values()], message);
       },
@@ -58,7 +56,7 @@ export class ChecklistControl {
       const list = this.deps.store.lists(sessionId).find((l) => l.id === op.listId);
       const card = list?.cards.find((c) => c.id === op.cardId);
       if (!list || !card) return;
-      const text = `「${list.name}」#${card.number}「${card.title}」に人が返信しました: 「${clipLine(op.text, NOTICE_REPLY_CHARS)}」。`;
+      const text = replyNoticeText(list.name, card.number, card.title, op.text);
       // 返信ごとに 1 つ。続けて返信したものは、1 つの知らせにまとめて送る
       const reply = card.thread[card.thread.length - 1];
       this.notices.add(sessionId, `reply:${reply.id}`, { text, refs: [{ listId: list.id, cardId: card.id }] });
@@ -235,7 +233,7 @@ export class ChecklistControl {
 
   private notifyCopy(from: SessionSummary, to: string, list: Checklist, cards: Card[]): void {
     const text = `セッション「${nameOf(from)}」から「${list.name}」に ${formatNumbers(cards.map((c) => c.number))}（${cards.map((c) => `「${c.title}」`).join('、')}）が届きました。`;
-    this.notices.add(to, `copy:${cards[0]?.id ?? ''}`, { text: clipLine(text, 600), refs: cards.slice(0, 20).map((c) => ({ listId: list.id, cardId: c.id })) });
+    this.notices.add(to, `copy:${cards[0]?.id ?? ''}`, { text: clipNotice(text, 600), refs: cards.slice(0, 20).map((c) => ({ listId: list.id, cardId: c.id })) });
   }
 
   // --- 引数 ---
@@ -340,11 +338,6 @@ function stringArg(value: unknown, name: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
-}
-
-function clipLine(text: string, max: number): string {
-  const line = text.replace(/\s+/g, ' ').trim();
-  return line.length > max ? `${line.slice(0, max)}…（続きは card_get で）` : line;
 }
 
 function clip(text: string, max: number): string {

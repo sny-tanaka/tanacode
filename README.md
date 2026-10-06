@@ -30,7 +30,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 
 ## まずはブラウザで
 
-インストールせずに、[デモ](https://sny-tanaka.github.io/tanacode/)で実際の画面を操作できます。ひとつのセッションの作業を始めから終わりまで追う、8 章のツアー。1 章だけ見るなら、[Claude が知っている範囲](https://sny-tanaka.github.io/tanacode/#knowledge)がおすすめです。
+インストールせずに、[デモ](https://sny-tanaka.github.io/tanacode/)で実際の画面を操作できます。ひとつのセッションの作業を始めから終わりまで追う、9 章のツアー。1 章だけ見るなら、[Claude が知っている範囲](https://sny-tanaka.github.io/tanacode/#knowledge)がおすすめです。
 
 1. [セッションを始める](https://sny-tanaka.github.io/tanacode/#start)
 2. [指示して任せる](https://sny-tanaka.github.io/tanacode/#delegate)

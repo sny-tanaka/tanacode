@@ -3,7 +3,7 @@ import { type Director, sleep } from '../../director';
 import { MENU_CARD_WITH_TAKEOUT, PRICE_TEST_WITH_TAKEOUT, PRICE_WITH_TAKEOUT } from '../files';
 import { MAIN, type Story } from '../story';
 
-// 章 5「レビューして直す」: ブランチの変更を PR のように見て、差分の行にコメントを付け、まとめて直してもらう。
+// 章 6「レビューして直す」: ブランチの変更を PR のように見て、差分の行にコメントを付け、まとめて直してもらう。
 // 直したあと、回答のコマンドを ▶ でターミナルで流し、落ちたテストの出力を選んで「Claude へ送る」
 
 const COMMENT_CARD = 'テイクアウトの税込価格も、ここに並べて出してください';

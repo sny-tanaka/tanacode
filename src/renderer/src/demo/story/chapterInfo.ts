@@ -29,6 +29,12 @@ export const CHAPTER_INFO: ChapterInfo[] = [
     summary: 'Claude が読んだ・書いたファイルに点が付き、コンテキストの量と hooks の結果も見えます。',
   },
   {
+    id: 'checklist',
+    title: 'チェックリストで確かめる',
+    summary: '要件を Claude にチェックリストにまとめさせて確かめます。迷うところはリストに残させ、人はカードのスレッドで答えます。',
+    isNew: true,
+  },
+  {
     id: 'browser',
     title: 'ブラウザで確かめる',
     summary: '開発中のページを指さして直してもらい、Claude 自身にもブラウザで確かめさせます。ログインなどは途中で頼まれます。',
