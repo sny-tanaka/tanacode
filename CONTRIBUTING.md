@@ -668,13 +668,20 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - 作り物の API（`backend.ts`）は、ツアーが使う機能のぶんだけ作ってあります。セッションの作成（`onCreate`）・worktree の準備・コンテキストの中身・アプリ内ブラウザの Claude の操作と「あなたの番」の依頼・ターミナルの出力・バックグラウンドの作業の停止・翻訳・書き出しの保存など。ファイルを書き換えると、各セッションのフォルダ（worktree を含む）に変更を知らせ、開いているファイルを読み直させます。
 - 画面の大きさ: アプリの画面は、どの端末・ブラウザでも 1920×1080（外付けのフル HD のモニターと同じ。README の紹介画像も同じ。`messages.ts` の `STAGE`）で描きます。親のページが、上の帯の下の残りに横も縦も収まるよう iframe を `transform` で縮小して、真ん中に置きます（大きくはしません。倍率 `--demo-scale` は `DemoSite.tsx` の `ScreenLayer` が決めます）。
   - アプリの画面そのものに `zoom` や `transform` をかけると、ブラウザによって文字の大きさや折り返し、固定の位置に出す部品（ツールチップなど）の位置がずれます。iframe ごと絵として縮めれば、中には影響しません。
+  - スマホでは `transform` では縮めず、ページの幅（`<meta name="viewport">`）をアプリの画面が収まる幅に広げて、ブラウザのページのズームで縮めます（`DemoSite.tsx` の `fitViewport`）。iPhone の Safari（WebKit）は、`transform` で縮めた iframe の中身を、縮める前の大きさのまま端末の解像度（3 倍）で描きます。ページの処理のメモリが数 GB に膨らんでページが落ち、白くなって読み込み直されてしまうためです。ページのズームなら、縮めた大きさに見合う解像度で描きます。PC のブラウザは viewport を見ないので、これまでどおり `transform` で縮めます。
+    - viewport を広げると、親のページの 1px は画面の `--demo-unit` px 分になります。親のページに出す文字（吹き出し・早送りの間の幕・書き出した HTML の見出し）は `--demo-unit` 倍にして、字が小さくならないようにします。上の帯・知らせ・目次は `ScreenLayer` の中なので、そのままで同じ大きさに出ます。
+    - 画面の大きさ・倍率を変えたときは、メモリも確かめます（`npm run demo:check:sp`。下の「スマホで流す」）。CI の `tour-sp` のジョブでも確かめます。
+  - 照らす枠のまわりを暗くするのは、画面と同じ大きさの幕に `clip-path` で穴を開けて作ります（`director.ts`）。枠の影（`box-shadow` の `100vmax` など）で暗くすると、影の分だけ画面の何倍もの大きさの層になり、枠が動くたびにメモリを食います。
   - スマホでは、ピンチで拡大して細かいところを読めます。上の帯・知らせ・目次は、いま見えている範囲（`visualViewport`）に重ねる層（`ScreenLayer`）に置き、拡大しても同じ大きさで画面の上に出します。幅が 760px より狭いと、帯を 2 段にします。
 - `vite.demo.config.ts`: サイトのビルドの設定。`@shared` の別名・バージョンの埋め込み・ライセンス表示（`demo-site/THIRD_PARTY_NOTICES.txt`）はアプリと同じ。どこに置いても読めるよう、パスは相対にします。
-- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR ではビルドが通るかだけを確かめます）。`build` と `tour` は develop へのマージに必須のチェックなので、PR ではどこを変えたものでも動かします（develop への push は、デモのサイトに関わるファイルが変わったときだけ）。どちらでも、ツアーが最後まで流れるか（`tour` のジョブ）も確かめ、流れなければ公開しません。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
+- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR ではビルドが通るかだけを確かめます）。`build` と `tour` は develop へのマージに必須のチェックなので、PR ではどこを変えたものでも動かします（develop への push は、デモのサイトに関わるファイルが変わったときだけ）。どちらでも、ツアーが最後まで流れるかを PC（`tour` のジョブ）とスマホ（`tour-sp` のジョブ。メモリも見ます）で並べて確かめ、どちらかが通らなければ公開しません。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
 - 機能を足したとき: 物語の合うところに手順を足すか、`chapters/` に章を足して `chapterInfo.ts` と `chapters.ts` に並べます。手順ごとに `d.caption('説明', 場所)` で説明を付けます。足した章・手順を足した章の `chapterInfo.ts` に `isNew: true` を付けると、目次に「新」の印が出ます（次に機能を足すときに外します）。前の章で変えた画面の状態（開いたパネル・ファイルの中身）は、あとの章に引き継がれることに気をつけます。
 - 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。CI の `tour` のジョブで気づけますが、手元では次のように確かめます。
   - 待ち時間の倍率は、環境変数 `VITE_DEMO_WAIT` で変えられます（台本の待ち時間・カーソルの移動・説明を読む間にかかります）。1 が既定で、0.5 なら半分。0 なら待たずに、ずっと早送りと同じ速さで流します。`npm run demo:dev` にも `npm run demo:build` にも効きます。
   - `VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build` で待ち時間 0 のサイトを `demo-check/` に書き出し、`npm run demo:check` で流します（`scripts/check-demo-tour.mjs`。Electron の画面の外で #start から開き、終わったら成功、止まったら止まる前の説明とコンソールのエラーを出して失敗。Linux では `xvfb-run` の中で動かします）。8 章を 20 秒ほどで流し終わります。
+  - スマホで流す: 同じ `demo-check/` を `npm run demo:check:sp` で流します（`scripts/check-demo-tour-sp.mjs`。Linux だけ）。iPhone の Safari と同じ WebKit（Playwright）を iPhone 13 の画面の大きさ・倍率（390×664・3 倍）で開き、ツアーが最後まで流れるかに加えて、ページの処理のプロセス（`WPEWebProcess`）のメモリの最大が上限（既定 2048MB。`--max-memory` で変えられます）を超えないか、プロセスが落ちないかを見ます。WebKit は、先に `npx playwright install --with-deps webkit` で入れておきます。
+    - Chromium（PC で流す `tour`）では、縮めた画面を端末の解像度のまま描くことは起きないので、この膨らみ方には気づけません。iPhone の Safari では、上限を超えたページは落とされ、白くなって読み込み直されます。
+    - 測った値（待ち時間 0）: いまの作りで 1.4GB 前後。iframe を `transform` で縮めていたころは 2.8〜3.6GB でした。
   - 見た目も見ながら確かめるなら、`npm run demo:dev` で開きます。直した章だけを見るなら `#<章の id>` で開きます（前の章は早送りで流れるので、そこで止まっても分かります）。
 
 ## README の紹介画像

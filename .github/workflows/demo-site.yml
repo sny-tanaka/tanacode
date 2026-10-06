@@ -1,7 +1,8 @@
 # デモのサイト（ブラウザで動くデモ）を GitHub Pages に公開する。
 # - develop に入ったら、ビルドして公開する
 # - PR では、ビルドが通るかだけを確かめる（公開はしない）。どこを変えた PR でも動かす
-# - どちらでも、ツアーが最後まで止まらずに流れるかを確かめる（tour。待ち時間を 0 にしてビルドし、Electron で流す）
+# - どちらでも、ツアーが最後まで止まらずに流れるかを確かめる（待ち時間を 0 にしてビルドする）。
+#   PC（tour。Electron）と、スマホ（tour-sp。iPhone の Safari と同じ WebKit。メモリを食いすぎないかも見る）を並べて流す
 # 公開には、リポジトリの Settings → Pages の Source を「GitHub Actions」にしておく
 name: demo-site
 
@@ -16,6 +17,7 @@ on:
       - 'vite.demo.config.ts'
       - 'scripts/third-party-notices.ts'
       - 'scripts/check-demo-tour.mjs'
+      - 'scripts/check-demo-tour-sp.mjs'
       - '.github/workflows/demo-site.yml'
   # build と tour は develop へのマージに必須のチェック。ワークフローが動かないと結果が届かずにマージできないので、PR では絞り込まずに毎回動かす
   pull_request:
@@ -72,9 +74,32 @@ jobs:
       - run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
       - run: xvfb-run -a -s "-screen 0 2560x1440x24" npm run demo:check
 
+  # スマホ（iPhone 13 の画面の大きさ・倍率）でも、ツアーが最後まで流れるか。あわせて、ページの処理のメモリが上限を超えないか。
+  # iPhone の Safari は、ページの処理がメモリの上限を超えるとページを落として読み込み直す。WebKit は Chromium と描き方が違い、
+  # 縮めて見せている画面を端末の解像度のまま描いてメモリが膨らむことがあるので（PC の tour では気づけない）、Playwright の WebKit で流す
+  tour-sp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Electron の本体は使わないので落とさない
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npm run demo:build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          VITE_DEMO_WAIT: 0
+          DEMO_OUT_DIR: demo-check
+      - run: npx playwright install --with-deps webkit
+      - run: npm run demo:check:sp
+
   deploy:
     if: github.event_name != 'pull_request'
-    needs: [build, tour]
+    needs: [build, tour, tour-sp]
     runs-on: ubuntu-latest
     permissions:
       pages: write
