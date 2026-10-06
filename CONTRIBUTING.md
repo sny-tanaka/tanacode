@@ -196,7 +196,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`）
   - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
-- GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と、毎日の定期の確認で、その日の最新の Claude Code で両方を流します。
+- GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と develop・main への push、毎日の定期の確認で、両方を流します。
+  - 確かめる Claude Code は、毎日の定期の確認と「Run workflow」ではその日の最新、PR と push では動作確認済のバージョン（`VERIFIED_CLAUDE_CODE_VERSION`）。新しい Claude Code が出ても、関係のない PR が落ちないようにするためです。新しいバージョンへの追従は、毎日の確認と、それが作るバージョンを上げる PR で行います（その PR の CI は、上げたあとのバージョンで流れます）。
   - 定期の確認で失敗したら、Issue を立てます（同じバージョンの Issue が開いていれば立てない）。
   - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、PR の CI が通ったら squash マージし、ブランチを消します。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
     - PR を作ってマージするのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
