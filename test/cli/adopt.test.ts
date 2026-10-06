@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '@shared/chat';
+import { showsCommandSuggestion } from '../../src/main/screen-parser';
 import { ClaudeRun, claudeVersion, shown, sleep } from './claude-run';
 import { MockApi } from './mock-api';
 
@@ -127,7 +128,7 @@ describe(`Claude Code ${version} の引き継ぎ`, () => {
       // アプリを通さずに打つ。画面は pty ホストの仮想の端末で見る
       const shows = (text: string) => run.lines().some((l) => l.text.includes(text));
       run.typeWithoutApp('/clear');
-      await until(() => run.lines().some((l) => l.text.trimStart().startsWith('/clear') && !l.text.includes('❯')));
+      await until(() => showsCommandSuggestion(run.lines(), '/clear'));
       run.typeWithoutApp('\r');
       await until(() => !shows(AFTER_ADOPT));
       run.typeWithoutApp(WHILE_CLOSED);

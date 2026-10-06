@@ -250,6 +250,15 @@ function unwrapInPlace(lines: string[]): string[] {
 }
 
 // 通常の入力欄: 横線の直後に「❯」（シェルのコマンドを書いている間は「!」）で始まる行があり、その下にも横線がある
+// / の補完の候補の行に、command（/tasks など）が出ているか。入力欄の行（行頭の「❯ /tasks」）とは、字下げで見分ける。
+// 候補の行は字下げがあり、Claude Code 2.1.290 からは選択中の候補の頭にも「❯」が付く（「  ❯ /tasks   説明」。2.1.289 までは「  /tasks   説明」）
+export function showsCommandSuggestion(lines: ScreenLine[], command: string): boolean {
+  return lines.some((l) => {
+    const m = l.text.match(/^\s+(?:❯\s+)?(\S+)/);
+    return !!m && m[1] === command;
+  });
+}
+
 export function hasPrompt(lines: ScreenLine[]): boolean {
   return promptRange(lines) !== null;
 }
