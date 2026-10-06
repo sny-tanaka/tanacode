@@ -199,7 +199,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と develop・main への push、毎日の定期の確認で、両方を流します。
   - 確かめる Claude Code は、毎日の定期の確認と「Run workflow」ではその日の最新、PR と push では動作確認済のバージョン（`VERIFIED_CLAUDE_CODE_VERSION`）。新しい Claude Code が出ても、関係のない PR が落ちないようにするためです。新しいバージョンへの追従は、毎日の確認と、それが作るバージョンを上げる PR で行います（その PR の CI は、上げたあとのバージョンで流れます）。
   - 定期の確認で失敗したら、Issue を立てます（同じバージョンの Issue が開いていれば立てない）。
-  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、PR の CI が通ったら squash マージし、ブランチを消します。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
+  - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、PR の CI が通ったら squash マージし、ブランチを消します（リポジトリの設定の「ブランチの自動削除」で GitHub が先に消していれば、そのまま。消せずに残ったときは、ジョブは失敗にせず警告を出す）。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
     - PR を作ってマージするのは、確認とは別のジョブ（`update`）です。書き込める権限を、PR の CI で動くコードに渡さないためです。
     - GitHub Actions のトークン（`GITHUB_TOKEN`）で作った PR では、PR の CI が動きません。そのため、push・PR の作成・マージは、Homebrew の配信と同じ GitHub App の token でします。PR の CI（必須のチェックの `check`・`build`・`tour`）が普通の PR と同じく動き、`update` ジョブはそれが通るのを待ってからマージします。マージしたあとの develop への push でも、ワークフローが動きます。
     - App には、tanacode の Contents と Pull requests の書き込みの権限を付けて、tanacode にもインストールしておきます。App の Client ID と秘密鍵は Environment「homebrew」にあるので、`update` ジョブは develop で動かしたときだけ動きます。

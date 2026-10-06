@@ -193,10 +193,13 @@ jobs:
           done
           # 作ったばかりの PR は、マージできるかの判定が終わっていないことがあるので、数回やり直す。
           # マージできなかったときは、ジョブを失敗させる（PR は開いたまま残るので、人が見てマージする）。
-          # リポジトリの設定の「ブランチの自動削除」に頼らず、マージしたらブランチを消す
+          # マージしたらブランチを消す。リポジトリの設定の「ブランチの自動削除」がオンなら GitHub が先に消すので、
+          # 消せなくても、もう無ければよい（マージは済んでいるので、ジョブを失敗にしない）。残っていたら警告だけ出す
           for _ in 1 2 3; do
             if gh pr merge "$branch" --squash; then
-              git push origin --delete "$branch"
+              if ! git push origin --delete "$branch" 2> /dev/null && [ -n "$(git ls-remote --heads origin "$branch")" ]; then
+                echo "::warning::マージしましたが、$branch のブランチを消せませんでした。手で消してください"
+              fi
               exit 0
             fi
             sleep 10
