@@ -247,8 +247,15 @@ function ScreenLayer({ children }: { children: React.ReactNode }) {
     const place = () => {
       const vv = window.visualViewport;
       const scale = vv?.scale ?? 1;
-      const width = vv ? vv.width * scale : document.documentElement.clientWidth;
-      const height = vv ? vv.height * scale : window.innerHeight;
+      // 見えている範囲の大きさ（ページの px）と、画面の px に直した大きさ
+      const pageWidth = vv?.width ?? document.documentElement.clientWidth;
+      const pageHeight = vv?.height ?? window.innerHeight;
+      const width = pageWidth * scale;
+      const height = pageHeight * scale;
+      // 外側の層も、見えている範囲と同じ大きさにする。iPhone の Safari は、ページの縦が画面に収まったところで縮小を止める。
+      // ページの縦の基準（ツールバーを除いた高さ）は見えている範囲より低いので、この層の大きさが無いと横幅まで縮小できず、横にスクロールしてしまう
+      el.style.width = `${pageWidth}px`;
+      el.style.height = `${pageHeight}px`;
       el.style.transform = `translate(${vv?.offsetLeft ?? 0}px, ${vv?.offsetTop ?? 0}px)`;
       inner.style.width = `${width}px`;
       inner.style.height = `${height}px`;
