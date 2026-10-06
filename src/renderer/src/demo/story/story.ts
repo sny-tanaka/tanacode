@@ -127,7 +127,7 @@ export function prepareStory(): Story {
   installDemoWebview((url) => cafePage(backend, url));
   // 翻訳のボタンを出すかは、アプリが最初に 1 回だけ聞くので、始めから訳せるようにしておく（日本語の応答には出ない）
   backend.translations = TRANSLATIONS;
-  // tanacode は最新バージョン（章 9 で新しいバージョンが出る）。「既存の会話を開く…」には、ターミナルで始めた会話を並べておく
+  // tanacode は最新バージョン（章 8 で新しいバージョンが出る）。「既存の会話を開く…」には、ターミナルで始めた会話を並べておく
   backend.setAppUpdate({ latest: __APP_VERSION__, available: false, url: `${REPO_URL}/releases/latest` });
   backend.discovered = DISCOVERED;
   window.tanacode = backend.api();

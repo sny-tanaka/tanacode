@@ -1,7 +1,6 @@
 import { runApp } from './chapters/app';
 import { CHAPTER_INFO, type ChapterInfo } from './chapterInfo';
 import { runBrowser } from './chapters/browser';
-import { runChecklist } from './chapters/checklist';
 import { runDelegate } from './chapters/delegate';
 import { runKnowledge } from './chapters/knowledge';
 import { runParallel } from './chapters/parallel';
@@ -18,7 +17,6 @@ const RUNS: Record<string, (story: Story) => Promise<void>> = {
   start: runStart,
   delegate: runDelegate,
   knowledge: runKnowledge,
-  checklist: runChecklist,
   browser: runBrowser,
   review: runReview,
   parallel: runParallel,

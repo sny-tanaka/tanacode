@@ -224,7 +224,7 @@ export const DEMO_CATALOG: ModelCatalog = {
   updatedAt: Date.now(),
 };
 
-// レビューのコメントを受けて直したあと（章 6）
+// レビューのコメントを受けて直したあと（章 5）
 export const PRICE_WITH_TAKEOUT = `// 金額を「¥1,200」の形にする
 export function formatPrice(yen: number): string {
   return \`¥\${yen.toLocaleString('ja-JP')}\`;
@@ -261,7 +261,7 @@ describe('withTax', () => {
 });
 `;
 
-// スマホで税抜が価格の下の行に出るようにしたあと（章 5）
+// スマホで税抜が価格の下の行に出るようにしたあと（章 4）
 export const CSS_PRICE_STACKED = `.menu-card {
   display: grid;
   gap: 8px;

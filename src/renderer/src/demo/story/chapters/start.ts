@@ -6,7 +6,7 @@ import { MAIN, MAIN_CWD, type Story, WORKTREE } from '../story';
 // 章 1「セッションを始める」: 新規セッションの画面で、フォルダ・モデル・権限モードを選び、worktree に分けて始める。
 // worktree の準備（node_modules の複製）が終わるまで、最初の指示は預かっておき、終わったら送る
 
-export const FIRST_PROMPT = 'メニューの価格を税込みでも表示して。税率は 10%、1 円未満は切り捨てで。';
+export const FIRST_PROMPT = 'メニューの価格を税込みでも表示して。税率は 10%、1 円未満は切り捨てで。要件は「完了前チェック」に積んで、終わる前に確かめて';
 
 export async function runStart(story: Story): Promise<void> {
   const { backend, d } = story;
