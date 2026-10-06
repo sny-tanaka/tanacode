@@ -85,6 +85,17 @@ export const ContextIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// チェックリスト: 板の上に、チェックの付いた行と付いていない行が並ぶ
+export const ChecklistIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <rect x="4" y="3.5" width="16" height="17" rx="2.5" />
+    <path d="m7.5 9 1.5 1.5L11.5 8" />
+    <path d="M14 9.5h2.5" />
+    <rect x="7.5" y="13.5" width="3" height="3" rx="1.2" />
+    <path d="M14 15h2.5" />
+  </Svg>
+);
+
 // ---- Git ----
 
 // worktree: 1 つの幹から 2 つに分かれる（ブランチの印とは別の形）
@@ -200,6 +211,14 @@ export const CloseIcon: IconComponent = (p) => (
 export const AddIcon: IconComponent = (p) => (
   <Svg {...p}>
     <path d="M12 5v14M5 12h14" />
+  </Svg>
+);
+
+// 別の場所へ写す（チェックリストのカードを、別のセッションへコピーする）: 重なった 2 枚の紙
+export const CopyIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <rect x="9" y="9" width="11.5" height="11.5" rx="2" />
+    <path d="M15 5.5V5a1.5 1.5 0 0 0-1.5-1.5h-8A2 2 0 0 0 3.5 5.5v8A1.5 1.5 0 0 0 5 15h.5" />
   </Svg>
 );
 

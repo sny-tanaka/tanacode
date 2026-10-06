@@ -4,8 +4,9 @@
 // read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: 何かを動かす（Claude Code の許可の確認を通す）/
 // eval: ページで JavaScript を実行する（アプリ内ブラウザだけ。--settings の PreToolUse のフックが確認を出すか決める）/
 // ask: ユーザーに操作を頼む（アプリ内ブラウザだけ。何も動かさないので、読むだけのツールと同じく許可済みにする）/
-// instruct: 子セッションに指示する・質問に答える（セッションだけ。読むだけではないが、権限は広がらないので許可済みにする）
-export type McpToolKind = 'read' | 'act' | 'eval' | 'ask' | 'instruct';
+// instruct: 子セッションに指示する・質問に答える（セッションだけ。読むだけではないが、権限は広がらないので許可済みにする）/
+// note: チェックリストを書き換える（アプリのデータだけを変え、ゴミ箱から戻せるので許可済みにする）
+export type McpToolKind = 'read' | 'act' | 'eval' | 'ask' | 'instruct' | 'note';
 
 type Schema = Record<string, unknown>;
 
@@ -30,7 +31,7 @@ export function findTool(def: McpServerDef, name: string): McpTool | undefined {
   return def.tools.find((t) => t.name === name);
 }
 
-// Claude Code の起動の引数 --allowedTools で許可済みにするツール（読むだけ・ユーザーに操作を頼む・子セッションに指示する）
+// Claude Code の起動の引数 --allowedTools で許可済みにするツール（読むだけ・ユーザーに操作を頼む・子セッションに指示する・チェックリストを書き換える）
 export function allowedToolIds(def: McpServerDef): string[] {
-  return def.tools.filter((t) => t.kind === 'read' || t.kind === 'ask' || t.kind === 'instruct').map((t) => mcpToolId(def.name, t.name));
+  return def.tools.filter((t) => t.kind !== 'act' && t.kind !== 'eval').map((t) => mcpToolId(def.name, t.name));
 }

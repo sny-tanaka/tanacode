@@ -31,6 +31,7 @@ type Body = {
   stream?: boolean;
   tools?: { name?: string }[];
   messages?: Message[];
+  system?: string | { type?: string; text?: string }[];
 };
 
 export class MockApi {
@@ -44,6 +45,9 @@ export class MockApi {
   readonly tools = new Set<string>();
   // 受け取ったリクエストの、最後の user の発言の文章（/compact の要約の頼み方などを確かめる）
   readonly lastPrompts: string[] = [];
+  // 台本のある会話の、Claude に渡ったシステムの文（システムプロンプトと、会話の中の system の発言。
+  // 今の Claude Code は MCP サーバーの説明を後者に入れる）。圧縮のあとも MCP サーバーの説明が渡るかを確かめる
+  readonly systems: string[] = [];
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
@@ -83,6 +87,10 @@ export class MockApi {
       tools.length > 0 ? this.conversations.filter((c) => at(c) !== -1).sort((a, b) => at(b) - at(a))[0] : undefined;
     const index = body.messages?.filter((m) => m.role === 'assistant').length ?? 0;
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
+    if (conversation) {
+      const system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text ?? '').join('\n');
+      this.systems.push([system, ...messages.filter((m) => m.role === 'system').map(textOf)].join('\n'));
+    }
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
     const blocks: Block[] = conversation
       ? (conversation.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }])

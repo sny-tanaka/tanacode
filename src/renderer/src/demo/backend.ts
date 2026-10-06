@@ -489,6 +489,14 @@ export class DemoBackend {
           return ok(path);
         },
       },
+      // デモではチェックリストを使わない（空のまま）
+      checklist: {
+        get: () => ok([]),
+        apply: () => ok(undefined),
+        copy: () => ok(undefined),
+        onChanged: () => () => {},
+        unread: () => ok({}),
+      },
       browser: {
         attach: () => {},
         activate: () => {},
