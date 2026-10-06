@@ -566,6 +566,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - チャットのツールの行: 名前は「ウォークスルー · 始める」など（`toolLabel.ts`）、対象は `walkthroughTarget`（「税率の変更 · 7 ステップ」「src/tax.ts:12-20」）。押したときは `walkthrough/openWalkthrough.ts` で `App` に渡し、`start_walkthrough` は今の場所、`show_code` はその場所を開きます（`walkthroughOfTool`）。
   - Monaco の view zone は読み上げから隠れる（`aria-hidden`）ので、吹き出しのボタンは読み上げに出ません（行コメントと同じ）。帯とチャットの行は出ます。
   - ストーリーは `walkthrough/Walkthrough.stories.tsx`。
+- GitHub の PR に載せる（`walkthrough-github.ts`。本文は `src/shared/walkthrough-comment.ts`）: 吹き出しのボタンで下見のダイアログ（`walkthrough/CommentDialog.tsx`）を開き、`walkthrough:draft-comment` で本文と投稿先を、`walkthrough:post-comment` で投稿します。Claude は通しません（MCP のツールにしない）。
+  - インラインのレビューコメントにはしません。差分の行にしか付けられず、「Files changed」のファイル順に並び替わるので、ウォークスルーの良さ（説明の順番・差分の外のコード）が消えるためです。
+  - 本文: ステップの順に、見出し・パーマリンク（`<リポジトリ>/blob/<SHA>/<パス>#L1-L3`。前後を空行にして 1 行だけで置くと、GitHub がコードを埋め込む）・説明。リポジトリの URL は PR の URL から取ります。パスは、リポジトリのルートからセッションのフォルダまで（`repoPrefix`）を足したもの。質問と答え・寄り道は載せません。
+  - 確かめること（下見と、投稿の直前の 2 回）: ブランチの開いている PR（`gh pr list`。`pullRequestsOf`）があること・手元の HEAD が PR の `headRefOid` と同じこと・ステップのファイルが HEAD のコミットにあり、変更が無いこと。パーマリンクが手元の HEAD を指すためです。アプリが代わりにプッシュや PR の作成はしません。
+  - 投稿は `gh pr comment <番号> --body-file -`（本文は標準入力。`commentOnPullRequest`）。「Claude が書いた説明」の一言は既定で添えます（`finalCommentBody`）。GitHub のコメントの上限（65536 文字）を超える本文は断ります。
+  - 載せたウォークスルーは `WalkthroughControl` が覚え（メモリの上だけ）、もう一度載せようとすると、下見で前のコメントを知らせます。
 - オン・オフ: メニューの「tanacode → Claude にウォークスルーさせる」（`settings.json` の `walkthroughControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。
 
 ### 画面の上の帯
@@ -652,6 +658,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `walkthrough-control.ts`: Claude から届いたウォークスルーのツールを実行する（手順とファイルの範囲の確かめ・寄り道・今の場所）・画面からのステップの移動と終える（メモリの上だけで持つ）
   - `walkthrough-mcp.ts` / `walkthrough-bridge.ts`: ウォークスルーの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
+  - `walkthrough-github.ts`: ウォークスルーを GitHub の PR にコメントとして載せる（PR・HEAD・ファイルの確かめと、下見・投稿）
   - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト）の置き場所
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
@@ -682,7 +689,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
-  - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・全セッションの状態・チャットのツールの行から開く受け渡し）
+  - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・「あなたの番です」の帯・Claude に許す先のダイアログ。画面では「ブラウザ」）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
@@ -691,7 +698,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
@@ -710,6 +717,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
+  - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
   - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所）・画面からのステップの移動と終える・中継と起動の引数・設定・チャットのツールの行・質問の文）
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定

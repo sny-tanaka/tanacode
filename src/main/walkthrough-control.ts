@@ -23,6 +23,8 @@ class WalkthroughError extends Error {}
 
 export class WalkthroughControl {
   private readonly walks = new Map<string, Walkthrough>();
+  // PR に載せたウォークスルー（id → コメントの URL）。二重に載せる前に知らせる
+  private readonly posted = new Map<string, string>();
 
   constructor(private readonly deps: Deps) {}
 
@@ -48,6 +50,14 @@ export class WalkthroughControl {
   end(sessionId: string): void {
     if (!this.walks.delete(sessionId)) return;
     this.deps.onChange(sessionId, null);
+  }
+
+  postedUrl(walkthroughId: string): string | null {
+    return this.posted.get(walkthroughId) ?? null;
+  }
+
+  markPosted(walkthroughId: string, url: string): void {
+    this.posted.set(walkthroughId, url);
   }
 
   // セッションを一覧から消した

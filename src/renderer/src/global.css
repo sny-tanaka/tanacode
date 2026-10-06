@@ -3569,6 +3569,57 @@ details[open] > summary > .disclosure {
   outline: none;
   border-color: var(--border-focus);
 }
+/* ウォークスルーを PR に載せる下見 */
+.walk-comment-dialog {
+  width: min(760px, 92vw);
+  outline: none;
+}
+.walk-comment-body {
+  height: min(420px, 50vh);
+  margin: 12px 14px 0;
+  resize: vertical;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.walk-comment-body:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+.walk-comment-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 14px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.walk-comment-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.walk-comment-note span {
+  flex: 1;
+}
+.walk-comment-note.warn {
+  background: var(--warn-tint);
+}
+.walk-comment-note.ok {
+  background: var(--ok-tint);
+}
 /* 人が自分で別の場所を開いたときの帯（エディタの場所の上） */
 .walk-band {
   flex: none;

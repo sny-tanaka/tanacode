@@ -25,6 +25,8 @@ import { SessionsControl } from './sessions-control';
 import { ChecklistControl } from './checklist-control';
 import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
+import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
+import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
@@ -403,6 +405,21 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannel.WalkthroughGet, () => walkthroughControl?.list() ?? []);
   ipcMain.handle(IpcChannel.WalkthroughGo, (_e, id: string, index: unknown) => walkthroughControl?.go(String(id), Number(index)));
   ipcMain.handle(IpcChannel.WalkthroughEnd, (_e, id: string) => walkthroughControl?.end(String(id)));
+  // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
+  const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
+  ipcMain.handle(IpcChannel.WalkthroughDraftComment, async (_e, id: string) => {
+    const w = manager.summary(String(id)) ? walkthroughControl?.get(String(id)) : null;
+    if (!w || !walkthroughControl) return { ok: false, reason: 'ウォークスルーがありません。' };
+    return draftWalkthroughComment(cwdOf(String(id)), w, walkthroughControl.postedUrl(w.id), commentDeps);
+  });
+  ipcMain.handle(IpcChannel.WalkthroughPostComment, async (_e, id: string, body: unknown, attribution: unknown) => {
+    const w = manager.summary(String(id)) ? walkthroughControl?.get(String(id)) : null;
+    if (!w || !walkthroughControl) throw new Error('ウォークスルーがありません。');
+    if (typeof body !== 'string') throw new Error('本文がありません。');
+    const url = await postWalkthroughComment(cwdOf(String(id)), w, body, attribution !== false, commentDeps);
+    walkthroughControl.markPosted(w.id, url);
+    return url;
+  });
   ipcMain.handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
   ipcMain.handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
   ipcMain.handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { lineRange, shownStep, type Walkthrough } from '@shared/walkthrough';
 import { Markdown } from '../chat/Markdown';
 import { monaco } from '../editor/monaco';
-import { ArrowLeftIcon, ArrowRightIcon, CloseIcon, IconButton, ListViewIcon, SendIcon } from '../icons';
+import { ArrowLeftIcon, ArrowRightIcon, CloseIcon, ExportIcon, IconButton, ListViewIcon, SendIcon } from '../icons';
 
 // エディタの画面で、ウォークスルーを動かすもの（App が作って EditorPane に渡す）。
 // stale: 始めたあとで、示しているファイルがディスク側で変わった（位置がずれているかもしれない）
@@ -17,13 +17,15 @@ export type WalkthroughControls = {
   onAsk: (question: string) => void;
   // 「Claude に示し直してもらう」
   onRestart: () => void;
+  // 「GitHub の PR に載せる」（下見のダイアログを開く）
+  onPublish?: () => void;
 };
 
 type Props = WalkthroughControls & { editor: monaco.editor.IStandaloneCodeEditor };
 
 // Claude が示している範囲に色を付け、その直下（view zone）に吹き出しを出す。中身は React から portal で描く。
 // 示す場所が変わるたびに、範囲の頭が上の方に来るようにスクロールする
-export function WalkthroughZone({ editor, walkthrough, stale, onGo, onEnd, onAsk, onRestart }: Props) {
+export function WalkthroughZone({ editor, walkthrough, stale, onGo, onEnd, onAsk, onRestart, onPublish }: Props) {
   const step = shownStep(walkthrough);
   const [dom, setDom] = useState<HTMLElement | null>(null);
   // モデルを差し替えると差し込んだ領域と色が消えるので、作り直すきっかけにする
@@ -99,14 +101,14 @@ export function WalkthroughZone({ editor, walkthrough, stale, onGo, onEnd, onAsk
 
   return dom
     ? createPortal(
-        <WalkthroughBox walkthrough={walkthrough} stale={stale} onGo={onGo} onEnd={onEnd} onAsk={onAsk} onRestart={onRestart} />,
+        <WalkthroughBox walkthrough={walkthrough} stale={stale} onGo={onGo} onEnd={onEnd} onAsk={onAsk} onRestart={onRestart} onPublish={onPublish} />,
         dom,
       )
     : null;
 }
 
 // 吹き出しの中身。Storybook でもこれを直接描く
-export function WalkthroughBox({ walkthrough, stale, onGo, onEnd, onAsk, onRestart }: WalkthroughControls) {
+export function WalkthroughBox({ walkthrough, stale, onGo, onEnd, onAsk, onRestart, onPublish }: WalkthroughControls) {
   const { steps, current, aside } = walkthrough;
   const step = shownStep(walkthrough);
   const total = steps.length;
@@ -133,6 +135,7 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onEnd, onAsk, onResta
         <span className="walk-title">{aside ? `${aside.path}:${lineRange(aside)}` : step.title}</span>
         <div className="spacer" />
         {total > 0 && <IconButton size="sm" icon={ListViewIcon} label="目次" pressed={toc} onClick={() => setToc((v) => !v)} />}
+        {total > 0 && onPublish && <IconButton size="sm" icon={ExportIcon} label="GitHub の PR にコメントとして載せる" onClick={onPublish} />}
         <IconButton size="sm" icon={CloseIcon} label="ウォークスルーを終える" onClick={onEnd} />
       </div>
       {toc && (

@@ -15,6 +15,7 @@ import type { TranslateResult } from './translate';
 import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
 import type { SessionWalkthrough } from './walkthrough';
+import type { WalkthroughCommentDraft } from './walkthrough-comment';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -162,6 +163,9 @@ export const IpcChannel = {
   WalkthroughGo: 'walkthrough:go',
   WalkthroughEnd: 'walkthrough:end',
   WalkthroughChanged: 'walkthrough:changed',
+  // ウォークスルーを GitHub の PR にコメントとして載せる。下見（本文と投稿先。載せられなければ理由）・投稿
+  WalkthroughDraftComment: 'walkthrough:draft-comment',
+  WalkthroughPostComment: 'walkthrough:post-comment',
 } as const;
 
 // アプリ内ブラウザのページの中の位置と大きさ（CSS の px。見えている範囲の左上から）
@@ -583,6 +587,10 @@ export type TanacodeApi = {
     go(sessionId: string, index: number): Promise<void>;
     end(sessionId: string): Promise<void>;
     onChanged(listener: (payload: SessionWalkthrough) => void): () => void;
+    // GitHub の PR にコメントとして載せる。draftComment: 下見 / postComment: 投稿して、コメントの URL を返す（載せられなければ理由を添えて失敗する）。
+    // attribution: 「Claude が書いた説明」の一言を添える
+    draftComment(sessionId: string): Promise<WalkthroughCommentDraft>;
+    postComment(sessionId: string, body: string, attribution: boolean): Promise<string>;
   };
   // Claude によるアプリ内ブラウザの操作（Claude Code に足す MCP サーバー tanacode-browser）
   browser: {

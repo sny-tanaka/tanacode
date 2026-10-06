@@ -59,6 +59,7 @@ import type { RangeQuestion } from './review/LineComments';
 import { useOpenWalkthroughTarget } from './walkthrough/openWalkthrough';
 import { useWalkthroughs } from './walkthrough/useWalkthroughs';
 import { WalkthroughBand } from './walkthrough/WalkthroughBand';
+import { CommentDialog } from './walkthrough/CommentDialog';
 import type { WalkthroughControls } from './walkthrough/WalkthroughZone';
 
 type EditorState = { files: OpenFile[]; activePath: string | null; reveal: RevealRequest | null };
@@ -139,6 +140,8 @@ export function App() {
   const [diffView, setDiffView] = useState<CenterView | null>(null);
   // アプリ内ブラウザで Claude に許す先のダイアログ（メニューから開く）
   const [browserHostsOpen, setBrowserHostsOpen] = useState(false);
+  // ウォークスルーを GitHub の PR に載せる下見のダイアログ（どのセッションのものか）
+  const [commenting, setCommenting] = useState<string | null>(null);
   // セッションごとの、コードに付けた Claude へのコメント（次の送信で一緒に送る）
   const [comments, setComments] = useState<Record<string, ReviewComment[]>>({});
   const [quickOpen, setQuickOpen] = useState(false);
@@ -676,6 +679,7 @@ export function App() {
       onEnd: () => void window.tanacode.walkthrough.end(sessionId),
       onAsk: (question) => pendingSends.send(sessionId, stepQuestionText(walk, question), []),
       onRestart: () => pendingSends.send(sessionId, restartRequestText(walk), []),
+      onPublish: () => setCommenting(sessionId),
     };
   }, [walk, walkStale, selectedId, pendingSends.send]);
   // ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」
@@ -911,6 +915,7 @@ export function App() {
         )}
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
         {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
+        {commenting && <CommentDialog sessionId={commenting} onClose={() => setCommenting(null)} />}
         {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
           <WorktreeDialog
             session={sessions.find((s) => s.id === worktreeDialog.id)!}

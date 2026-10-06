@@ -3,6 +3,8 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { shownStep, type Walkthrough } from '@shared/walkthrough';
 import { EditorPane, type OpenFile } from '../editor/EditorPane';
 import { DiffPane } from '../scm/DiffPane';
+import { walkthroughCommentBody, type WalkthroughCommentDraft } from '@shared/walkthrough-comment';
+import { CommentDialog } from './CommentDialog';
 import { WalkthroughBand } from './WalkthroughBand';
 import { WalkthroughBox } from './WalkthroughZone';
 
@@ -173,7 +175,7 @@ export const 差分で示す: Story = {
 export const 吹き出し: Story = {
   render: () => (
     <div style={{ maxWidth: 640 }}>
-      <WalkthroughBox walkthrough={WALK} stale={false} onGo={noop} onEnd={noop} onAsk={noop} onRestart={noop} />
+      <WalkthroughBox walkthrough={WALK} stale={false} onGo={noop} onEnd={noop} onAsk={noop} onRestart={noop} onPublish={noop} />
     </div>
   ),
 };
@@ -181,4 +183,33 @@ export const 吹き出し: Story = {
 // 人が自分で別のファイルを開いたときの帯
 export const 戻る帯: Story = {
   render: () => <WalkthroughBand walkthrough={WALK} onShow={noop} onEnd={noop} />,
+};
+
+// GitHub の PR にコメントとして載せる前の下見。本文は手で直せる。「載せる」を押すと、作り物の API が URL を返す
+const SHA = '3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345';
+const draftOk: WalkthroughCommentDraft = {
+  ok: true,
+  prNumber: 42,
+  prUrl: 'https://github.com/me/cafe/pull/42',
+  sha: SHA,
+  body: walkthroughCommentBody(WALK, 'https://github.com/me/cafe', SHA, ''),
+  postedUrl: null,
+};
+const fakeApi = (draft: WalkthroughCommentDraft) => ({
+  draftComment: async () => draft,
+  postComment: async () => 'https://github.com/me/cafe/pull/42#issuecomment-1',
+});
+
+export const PRに載せる: Story = { render: () => <CommentDialog sessionId="s1" onClose={noop} api={fakeApi(draftOk)} /> };
+export const PRに載せる_載せたことがある: Story = {
+  render: () => <CommentDialog sessionId="s1" onClose={noop} api={fakeApi({ ...draftOk, postedUrl: 'https://github.com/me/cafe/pull/42#issuecomment-1' })} />,
+};
+export const PRに載せる_プッシュしていない: Story = {
+  render: () => (
+    <CommentDialog
+      sessionId="s1"
+      onClose={noop}
+      api={fakeApi({ ok: false, reason: '手元の HEAD（3f9c2a1）が、PR の最新のコミット（8e1d0c4）と違います。プッシュ（かプル）してから載せてください。' })}
+    />
+  ),
 };
