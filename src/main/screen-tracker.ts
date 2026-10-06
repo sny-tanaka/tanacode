@@ -12,6 +12,7 @@ import {
   parseSpinner,
   parseTasks,
   promptRange,
+  showsCommandSuggestion,
   type SeenOptions,
   type TasksDialog,
 } from './screen-parser';
@@ -332,7 +333,7 @@ export class ScreenTracker {
   private async stopInTasks(name: string): Promise<StopResult> {
     this.write('/tasks');
     // 打った直後は / の補完が出ている。出てから Enter（補完を出している途中の Enter は、送信にならないことがある）
-    await this.readUntil(() => this.lines().some((l) => l.text.trimStart().startsWith('/tasks') && !l.text.includes('❯')), 1500);
+    await this.readUntil(() => showsCommandSuggestion(this.lines(), '/tasks'), 1500);
     this.write('\r');
     await this.readUntil(() => parseTasks(this.lines()) !== null, 3000);
     // 一覧に出ている 1 つ（または、1 つだけのときの詳細）が name かを見る
