@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import type { SessionSummary } from '@shared/ipc';
+import type { ScheduledMessage } from '@shared/scheduled';
 import type { SessionStatus } from '../chat/chatState';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { SESSION_COLLAPSED_KEY, SESSION_LOCK_KEY, Sidebar } from './Sidebar';
@@ -49,6 +50,24 @@ const INITIAL: SessionSummary[] = [
   session(5, '古い調査', '/Users/me/work/notes', { archived: true }),
 ];
 
+// 予約したメッセージ。「README の更新」は今日の 18:30 に送る予約が 2 件、「社内 API の確認」は時刻に送れなかった予約がある
+const today = (hours: number, minutes: number) => new Date(new Date().setHours(hours, minutes, 0, 0)).getTime();
+const scheduled = (id: string, sessionId: string, at: number, state: ScheduledMessage['state'] = 'scheduled'): ScheduledMessage => ({
+  id,
+  sessionId,
+  text: '朝のうちに、昨日の変更のテストを流してください。',
+  attachments: [],
+  at,
+  createdAt: BASE,
+  state,
+  error: null,
+});
+const SCHEDULED: ScheduledMessage[] = [
+  scheduled('m1', 's3', today(18, 30)),
+  scheduled('m2', 's3', today(18, 30) + 24 * 3_600_000),
+  scheduled('m3', 's6', today(9, 0), 'missed'),
+];
+
 const noop = () => {};
 const statusOf = (id: string): SessionStatus => (id === 's1' ? 'running' : 'idle');
 
@@ -88,6 +107,7 @@ function Demo({ locked }: { locked: boolean }) {
           onUnarchive={noop}
           onRename={noop}
           onRemove={noop}
+          scheduled={SCHEDULED}
         />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
@@ -172,6 +192,7 @@ function Family({ collapsed }: { collapsed: boolean }) {
         onUnarchive={noop}
         onRename={noop}
         onRemove={noop}
+        scheduled={[]}
       />
     </div>
   );

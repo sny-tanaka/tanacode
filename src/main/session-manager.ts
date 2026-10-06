@@ -778,8 +778,14 @@ export class SessionManager {
   // 手が空く（ターンが終わり、入力を受け付けられる）のを待ってから送る（子セッションへの指示・親への知らせ）。
   // 作業中の Claude Code に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になってしまうことがある。
   // 手が空いていれば、新しい確認が急に出ることはない（ツールを使うには、まず応答が要る）。
-  // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する
-  async submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void> {
+  // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する。
+  // attachments: 画像のパス（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し。打ち込み始めたあとは止めない）
+  async submitWhenReady(
+    id: string,
+    text: string,
+    timeoutMs: number,
+    { attachments = [], signal }: { attachments?: string[]; signal?: AbortSignal } = {},
+  ): Promise<void> {
     const rt = this.runtimes.get(id);
     const process = rt?.process;
     if (!rt || !process) throw new Error('Claude Code が動いていません');
@@ -789,6 +795,7 @@ export class SessionManager {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         if (rt.process !== process) throw new Error('Claude Code が終了しました');
+        if (signal?.aborted) throw new Error('送るのを取りやめました');
         // 直前に送ったもの（まだ会話ログに出ていない）があれば、それが終わるまで待つ
         const sending = rt.submittedAt !== null && Date.now() - rt.submittedAt < SUBMIT_GRACE_MS;
         if (acceptsTyping(rt) && !sending) break;
@@ -802,7 +809,7 @@ export class SessionManager {
       }
       // 続けて待っているほかの送信が、同じ隙に打ち込まないよう、すぐに印を付ける
       rt.submittedAt = Date.now();
-      await this.submit(id, text, [], true);
+      await this.submit(id, text, attachments, true);
     } finally {
       rt.pendingSubmits -= 1;
       this.changed(id);

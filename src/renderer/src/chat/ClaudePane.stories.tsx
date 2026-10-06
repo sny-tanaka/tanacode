@@ -1,10 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
+import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
 import { ClaudePane } from './ClaudePane';
 import { EMPTY_CHAT, type ChatItem } from './chatState';
+import { insertIntoChat } from './insertInput';
 
 // チャットのペイン全体。長い会話を上へスクロールすると、下端に「最新のメッセージへ」のボタンが出る
 
@@ -41,18 +43,27 @@ function conversation(count: number): ChatItem[] {
   );
 }
 
-// worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示
+// worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示 /
+// scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）
 function Pane({
   items,
   settingsFile = null,
   worktree = null,
   pending = null,
+  scheduled = [],
+  input = '',
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
   worktree?: SessionWorktree | null;
   pending?: string | null;
+  scheduled?: ScheduledMessage[];
+  input?: string;
 }) {
+  // 入力欄の文字は ClaudePane が持つので、外から入れる口（ターミナルの出力を足すときと同じ）を使う
+  useEffect(() => {
+    if (input) insertIntoChat(session.id, input);
+  }, [input]);
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
@@ -86,6 +97,7 @@ function Pane({
         pending={pending === null ? null : { text: pending, attachments: [] }}
         sending={[]}
         onTakePending={() => null}
+        scheduled={scheduled}
       />
       <TooltipLayer />
     </div>
@@ -172,4 +184,18 @@ export const worktreeで始めた: Story = {
     ],
     worktree: WORKTREE,
   },
+};
+
+// 予約したメッセージ（時刻を指定して送信）。チャットの末尾に、点線の枠で出す。時刻を待っている・送っている途中（手が空くのを待っている）・
+// 時刻に送れなかった・送れなかった、の 4 つ。入力欄の時計のボタンで、時刻を選ぶメニューが開く
+const later = (minutes: number) => Date.now() + minutes * 60_000;
+const SCHEDULED: ScheduledMessage[] = [
+  { id: 'm1', sessionId: 's1', text: '昨日の変更のテストを流して、落ちたものを直してください。', attachments: [], at: later(90), createdAt: 0, state: 'scheduled', error: null },
+  { id: 'm2', sessionId: 's1', text: '/compact', attachments: [], at: later(-1), createdAt: 0, state: 'sending', error: null },
+  { id: 'm3', sessionId: 's1', text: 'PR の説明を書いてください。', attachments: ['/tmp/a.png'], at: later(-600), createdAt: 0, state: 'missed', error: null },
+  { id: 'm4', sessionId: 's1', text: 'ビルドしてください。', attachments: [], at: later(-30), createdAt: 0, state: 'failed', error: 'Claude Code が終了しました' },
+];
+
+export const 予約したメッセージ: Story = {
+  args: { items: conversation(4), scheduled: SCHEDULED, input: 'あしたの朝、依存を更新してください。' },
 };

@@ -1,11 +1,13 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { ChecklistUnread } from '@shared/checklist';
 import type { SessionSummary } from '@shared/ipc';
+import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
 import type { SettingsFile } from '@shared/settings-file';
 import { inLockedOrder, sessionTree, type SessionTreeRow } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
+import { needsAttention, scheduledOf } from '../chat/scheduled';
 import { useSettingsFiles } from '../chat/settingsFiles';
-import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
+import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, ScheduleIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
 import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
 import { PREPARING_LABEL } from './worktree';
@@ -48,6 +50,8 @@ type Props = {
   onUnarchive: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onRemove: (id: string) => void;
+  // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
+  scheduled: ScheduledMessage[];
   // セッションごとの、チェックリストの Claude からの未読の返信の数
   checklistUnread?: ChecklistUnread;
 };
@@ -64,6 +68,7 @@ export const Sidebar = memo(function Sidebar({
   onUnarchive,
   onRename,
   onRemove,
+  scheduled,
   checklistUnread = NO_UNREAD,
 }: Props) {
   const [showArchived, setShowArchived] = useState(false);
@@ -178,6 +183,7 @@ export const Sidebar = memo(function Sidebar({
                 {' · '}
               </>
             )}
+            <ScheduledMark messages={scheduledOf(scheduled, s.id)} />
             {/* 親の下に出せない子（親と区分が違うなど）は、親の名前を添える */}
             {depth === 0 && parent && (
               <>
@@ -336,6 +342,24 @@ function ChildrenToggle({
 type Activity = { kind: 'waiting' | 'running' | 'background' | 'starting' | 'unread' | 'exited'; label: string };
 
 // 一覧に出すセッションの状態。上ほど優先する（何もしていなければ null で、印も文言も出さない）
+// 予約したメッセージがあれば、いちばん早い時刻（送れなかったものがあれば、そのこと）を出す
+function ScheduledMark({ messages }: { messages: ScheduledMessage[] }) {
+  if (messages.length === 0) return null;
+  const trouble = messages.filter(needsAttention).length;
+  const waiting = messages.filter((m) => !needsAttention(m));
+  const others = messages.length - 1;
+  const label = trouble > 0 ? '予約を送れませんでした' : `${formatScheduleTime(waiting[0]!.at)} に送信${others > 0 ? ` ほか ${others} 件` : ''}`;
+  return (
+    <>
+      <span className={`session-scheduled${trouble > 0 ? ' trouble' : ''}`} title={`予約したメッセージ ${messages.length} 件`}>
+        <ScheduleIcon size={12} />
+        {label}
+      </span>
+      {' · '}
+    </>
+  );
+}
+
 // 行の末尾に出す、セッションが重ねている設定ファイルの名前。登録から外されていたら「（登録なし）」
 function SettingsFileName({ id, files }: { id: string; files: SettingsFile[] }) {
   const file = files.find((f) => f.id === id);

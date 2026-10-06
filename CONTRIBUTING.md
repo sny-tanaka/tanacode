@@ -318,6 +318,16 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - コンテキストの上限は、statusLine の値（1M かどうかも含めて正確な値）を使います。圧縮の直後は statusLine の使用量が次の応答まで 0 になるので、会話ログの圧縮後の量（`compactMetadata.postTokens`）を使います。
 - 引数が複数行・長い（800 文字を超える）`/compact` は、名前だけを打鍵し、引数をブラケットペーストで送ります（`promptKeys`）。丸ごと貼り付けると、Claude Code は入力を `[Pasted text #1 …]` の目印に置き換え、`/` で始まらない入力として、コマンドにせずにふつうの発言で送るためです（実測）。ほかの「/単語」で始まる複数行の発言（「/api のエンドポイントを…」など）は、今までどおり丸ごと貼り付けます。名前を打鍵すると、Claude Code がコマンドとして実行したり（`/clear` など）、知らないコマンドとして断ったりするためです。
 
+### 時刻を指定して送信（予約）
+
+- 予約は main の `ScheduledMessages`（`scheduled-messages.ts`）が持ち、`scheduled-messages.json` に保存します。画面（`chat/SchedulePicker.tsx`・`chat/ScheduledRow.tsx`）は IPC（`scheduled:*`）で予約・時刻の変更・今すぐ送る・取り消しを頼み、`scheduled:changed` で一覧を受け取るだけ。画面を閉じていても、時刻になれば送ります。
+- 時刻になったら、子セッションへの指示と同じ `SessionManager.submitWhenReady` で送ります。手が空く（ターンが終わり、入力を受け付けられる）のを待ってから打つので、作業中に出た許可の確認に、打った文字や Enter が選択として入ってしまうことがありません。待つ時間の上限は無し。待っている間に取り消したら、`AbortSignal` で待つのをやめます（打ち込み始めたあとは止めない）。画像は、チャットの入力欄からの送信と同じく、パスを貼り付けとして送ります。
+- 止まっているセッション（`exited`）は、`SessionManager.open` で再開してから送ります。起動が終わるまでは、`submitWhenReady` が待ちます。
+- 時刻を `SCHEDULE_LATE_MS`（5 分）より過ぎてから気づいたもの（アプリが閉じていた・Mac がスリープしていてタイマーが遅れて動いた）は、送らずに `missed` にします。何時間も前の指示が、急に動き出さないようにするためです。送っている途中（`sending`）でアプリを閉じたものは、まだ送っていないので、時刻を待っていたものと同じに扱います。
+- 送れなかったもの（`failed`）と `missed` は、macOS の通知で知らせます（`scheduledNotice`）。どちらも一覧に残し、人が今すぐ送る・時刻を変える・取り消すを選びます。
+- セッションがアーカイブされた・一覧から消えたら（`SessionManager.watchState` で状態が `archived` か、知らないセッションになったら）、そのセッションの予約を取り消します。
+- タイマーは、いちばん早い予約に 1 つだけ掛けます。`setTimeout` の上限（約 24.8 日）より先なら、途中で一度起きて測り直します。
+
 ### 翻訳
 
 - 画面は `src/renderer/src/translate/BlockTranslation.tsx` の `useBlockTranslation`。ボタンと訳文の部品を返し、`chat/ChatRow.tsx` の `ResponseBlock`・`ThinkingBlock` が使います（サブエージェントの会話の表示も同じ部品なので、そこにも出ます）。
@@ -577,6 +587,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
 | `usage.json` | 最後に分かった利用枠 |
+| `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
 
 作業を書き出したときは、保存のダイアログで選んだ場所に HTML ファイルを 1 つ書きます（`0600`）。
@@ -634,12 +645,13 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先、Claude にほかのセッションを扱わせるか）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
-  - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す）
+  - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す。予約を送れなかったときも）
+  - `scheduled-messages.ts`: 時刻を指定して送信（予約）。保存・時刻になったら手が空くのを待って送る・時刻を過ぎていたもの・取り消し
   - `translate.ts`: チャットの翻訳（補助プログラムのパスと使えるか・画面から来た値の検査・補助プログラムの起動と返事の読み取り・依頼を 1 つずつ動かす `Translator`）
 - `src/preload`: renderer に `window.tanacode` の API を公開する
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
-  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks）
+  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で localStorage に保つ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
@@ -652,7 +664,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの MCP のツールの一覧と説明・知らせの目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの MCP のツールの一覧と説明・知らせの目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
@@ -664,6 +676,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `export.test.ts`: 作業の書き出し（範囲・入れるものの数と外し方・`~` への置き換え・先頭に出すもの・ToDo の進み具合・HTML の中身・CSS の抜き出し）。画面の部品を読むので、型は `tsconfig.web.json` で見ます
   - `context.test.ts`: コンテキストの中身（まとめ方・大きさの直し方・圧縮の前後・巻き戻し）と、圧縮の指示の組み立て・スラッシュコマンドの送り方
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
+  - `scheduled-messages.test.ts`: 時刻を指定して送信（時刻になったら送る・止まったセッションの再開・取り消し・送れなかったとき・断るもの・保存と読み直し・時刻を過ぎていたもの・時刻の表示と選択肢・通知の本文）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）

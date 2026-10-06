@@ -367,6 +367,15 @@ export class DemoBackend {
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },
+      // デモでは予約しない（入力欄のボタンから選んでも、何も起きない）
+      scheduled: {
+        list: () => ok([]),
+        add: () => ok(undefined),
+        reschedule: () => ok(undefined),
+        sendNow: () => ok(undefined),
+        cancel: () => ok(null),
+        onChanged: () => () => {},
+      },
       notifications: {
         get: () => ok(this.notificationsOn),
         set: (on) => {

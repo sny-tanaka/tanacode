@@ -284,6 +284,14 @@ export const SendIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 予約: 時計（時刻を指定して送る）
+export const ScheduleIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3.5 2" />
+  </Svg>
+);
+
 // 圧縮: 上下から中心へ
 export const CompressIcon: IconComponent = (p) => (
   <Svg {...p}>

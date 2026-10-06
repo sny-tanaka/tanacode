@@ -12,6 +12,7 @@ import type { AgentLogRef, BashTask, TaskRef } from './task';
 import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
 import type { TranslateResult } from './translate';
+import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
 
 export const IpcChannel = {
@@ -26,6 +27,13 @@ export const IpcChannel = {
   SessionsSelect: 'sessions:select',
   SessionsSubmit: 'sessions:submit',
   SessionsInterrupt: 'sessions:interrupt',
+  // 時刻を指定して送信（予約）。一覧・変わった（main → 画面）・予約する・時刻を変える・今すぐ送る・取り消す
+  ScheduledList: 'scheduled:list',
+  ScheduledChanged: 'scheduled:changed',
+  ScheduledAdd: 'scheduled:add',
+  ScheduledReschedule: 'scheduled:reschedule',
+  ScheduledSendNow: 'scheduled:send-now',
+  ScheduledCancel: 'scheduled:cancel',
   // メニュー（⌘N）から。新規セッションの画面を開かせる
   SessionsNew: 'sessions:new',
   FolderPick: 'folders:pick',
@@ -403,6 +411,20 @@ export type TanacodeApi = {
     // Claude Code 自身の控え（/usage を開いたときのもの）の方が新しければ読み込む
     refresh(): Promise<void>;
     onChanged(listener: (usage: UsageLimits) => void): () => void;
+  };
+  // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って入力欄に打ち込む。
+  // アプリが閉じていた・Mac がスリープしていたなどで時刻を過ぎていたものは送らず、missed として残す
+  scheduled: {
+    list(): Promise<ScheduledMessage[]>;
+    // sessionId のセッションに、at（ミリ秒の時刻）に送る予約をする。過去の時刻・送る内容が無いときは、理由を添えて失敗する
+    add(sessionId: string, text: string, attachments: string[], at: number): Promise<void>;
+    // 時刻を変える（送れなかったもの・時刻を過ぎていたものは、もう一度待つ）
+    reschedule(id: string, at: number): Promise<void>;
+    // 時刻を待たずに送る（手が空くのは待つ）
+    sendNow(id: string): Promise<void>;
+    // 取り消す。取り消した予約を返す（入力欄に戻すため。もう無ければ null）
+    cancel(id: string): Promise<ScheduledMessage | null>;
+    onChanged(listener: (messages: ScheduledMessage[]) => void): () => void;
   };
   // macOS の通知（作業の完了・確認待ち）を出すか。ウインドウ右上のベルで切り替える。アプリ側に保存し、Claude Code の設定は変えない
   notifications: {

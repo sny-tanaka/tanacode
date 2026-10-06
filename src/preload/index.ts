@@ -24,6 +24,7 @@ import {
   type TanacodeApi,
 } from '@shared/ipc';
 import type { AppUpdate } from '@shared/app-update';
+import type { ScheduledMessage } from '@shared/scheduled';
 import type { SessionChecklists } from '@shared/checklist';
 import type { SettingsFile } from '@shared/settings-file';
 import type { SystemStats } from '@shared/system';
@@ -86,6 +87,14 @@ const api: TanacodeApi = {
     get: () => ipcRenderer.invoke(IpcChannel.UsageGet),
     refresh: () => ipcRenderer.invoke(IpcChannel.UsageRefresh),
     onChanged: (listener) => subscribe<UsageLimits>(IpcChannel.UsageChanged, listener),
+  },
+  scheduled: {
+    list: () => ipcRenderer.invoke(IpcChannel.ScheduledList),
+    add: (sessionId, text, attachments, at) => ipcRenderer.invoke(IpcChannel.ScheduledAdd, sessionId, text, attachments, at),
+    reschedule: (id, at) => ipcRenderer.invoke(IpcChannel.ScheduledReschedule, id, at),
+    sendNow: (id) => ipcRenderer.invoke(IpcChannel.ScheduledSendNow, id),
+    cancel: (id) => ipcRenderer.invoke(IpcChannel.ScheduledCancel, id),
+    onChanged: (listener) => subscribe<ScheduledMessage[]>(IpcChannel.ScheduledChanged, listener),
   },
   notifications: {
     get: () => ipcRenderer.invoke(IpcChannel.NotificationsGet),
