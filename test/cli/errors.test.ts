@@ -29,7 +29,7 @@ import {
   checkWaitInterrupt,
   conversationsFor,
 } from '../scenarios/errors';
-import { ClaudeRun, claudeVersion, type Seen } from './claude-run';
+import { ClaudeRun, claudeVersion, sleep, type Seen } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、失敗や中断を、アプリと同じ部品で読めるかを確かめる。
@@ -38,6 +38,8 @@ import { MockApi } from './mock-api';
 // 台本ごとに /clear で会話を分ける（モックは会話のはじめの発言で台本を選ぶため）
 
 const version = claudeVersion();
+// 入力欄を消したあと、空のままかを見る時間
+const DRAFT_SETTLE_MS = 1000;
 
 describe(`Claude Code ${version} の失敗と中断`, () => {
   let api: MockApi;
@@ -49,8 +51,9 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
   const has = (check: (e: ChatEvent) => boolean) => () => events().some(check);
   const idle = () => run.activities.at(-1) === null || run.activities.length === 0;
 
-  // 新しい会話にして、発言を送る
+  // 新しい会話にして、発言を送る。前の台本の文字が入力欄に残っていると、発言の頭に付いて送られるので、空なのを確かめてから打つ
   async function begin(prompt: string, { clear = true } = {}): Promise<void> {
+    await run.waitFor('入力欄が空', (info) => info.state.kind === 'prompt' && info.draft === '');
     if (clear) {
       const mark = run.seen.length;
       await run.send('/clear');
@@ -63,6 +66,20 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
     }
     from = run.seen.length;
     await run.send(prompt);
+  }
+
+  // 入力欄に戻った発言を、アプリと同じく Claude Code の入力欄から消す（Ctrl+U）。
+  // CI で、消して空になったのを見たすぐあとに、中断した発言がまた入力欄に入っていて、次の台本の発言の頭に付いて
+  // 送られたことがある。空になってからもしばらく空のままかを見て、また入ったら消し直す
+  async function clearDraft(): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      run.type('\x15'.repeat(run.screen.current.draft.split('\n').length));
+      await run.waitFor('入力欄が空になる', (info) => info.state.kind === 'prompt' && info.draft === '');
+      const until = Date.now() + DRAFT_SETTLE_MS;
+      while (Date.now() < until && run.screen.current.draft === '') await sleep(50);
+      if (run.screen.current.draft === '') return;
+    }
+    throw new Error(`入力欄が空のままになりません\n${run.dump()}`);
   }
 
   // 許可の確認が出たら「Yes」で答えながら、done になるまで待つ
@@ -90,15 +107,14 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
 
   it('応答の前に Esc で中断すると、発言が入力欄に戻り、ターンが終わる', async () => {
     await begin(EARLY_PROMPT, { clear: false });
-    await run.waitFor('応答を待つ', () => run.activities.at(-1)?.phase === 'waiting' && events().some((e) => e.type === 'user'));
+    // 何かの発言ではなく、送った発言そのものが会話ログに書かれ、応答を待っているところで中断する
+    await run.waitFor('応答を待つ', () => run.activities.at(-1)?.phase === 'waiting' && events().some((e) => e.type === 'user' && e.text === EARLY_PROMPT));
     run.type('\x1b');
     await run.waitFor('入力欄に戻る', (info) => idle() && info.state.kind === 'prompt' && info.draft === EARLY_PROMPT);
     run.capture('interrupt-draft');
     checkEarlyDraft(run.screen.current);
     checkEarlyInterrupt(events(), run.screen.current.draft);
-    // アプリと同じく、戻った発言を Claude Code の入力欄から消す
-    run.type('\x15');
-    await run.waitFor('入力欄が空になる', (info) => info.state.kind === 'prompt' && info.draft === '');
+    await clearDraft();
   });
 
   it('応答を待つ間に Esc で中断すると、中断の行でターンが終わり、入力欄に戻る', async () => {
