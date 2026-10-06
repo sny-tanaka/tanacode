@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import type { ChatEvent, HookRun, PullRequestLink, QuestionAnswer, SentFiles, TaskChange, TodoItem } from '@shared/chat';
+import type { CardRef } from '@shared/checklist-tools';
 import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
 import { useSessionValues } from '../sessionValues';
 
@@ -10,8 +11,8 @@ export type ChatItem =
   // parent: 親セッションの Claude からの指示なら、親セッションの ID
   | { kind: 'user'; id: string; text: string; images?: string[]; at?: number; parent?: string }
   | { kind: 'text'; id: string; text: string; at?: number }
-  // sessions: 子セッションからの知らせなら、その子の ID
-  | { kind: 'notice'; id: string; text: string; detail?: string; sessions?: string[] }
+  // sessions: 子セッションからの知らせなら、その子の ID / cards: チェックリストの知らせなら、そのカード
+  | { kind: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[] }
   | { kind: 'info'; id: string; text: string }
   | { kind: 'shell'; id: string; command: string; output: string }
   | { kind: 'thinking'; id: string; text: string }
@@ -190,7 +191,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ...state,
         status: turn(state, 'running'),
         inTurn: true,
-        items: [...state.items, { kind: 'notice', id: event.id, text: event.text, detail: event.detail, sessions: event.sessions }],
+        items: [...state.items, { kind: 'notice', id: event.id, text: event.text, detail: event.detail, sessions: event.sessions, cards: event.cards }],
       };
     case 'turn-start':
       return { ...state, status: turn(state, 'running'), inTurn: true };

@@ -14,6 +14,7 @@ import { ParentHeading, SessionLinkList, SessionRefText } from './SessionRefs';
 import { ToolCard } from './ToolCard';
 import type { ChatItem } from './chatState';
 import { isSessionTool } from './toolLabel';
+import { openChecklistCard } from '../checklist/openCard';
 import type { SubagentRuns } from './useSessionSubagents';
 
 type Props = {
@@ -110,8 +111,26 @@ export const ChatRow = memo(function ChatRow({
     return <ResponseBlock text={item.text} onRunCommand={onRunCommand} />;
   }
   if (item.kind === 'notice') {
-    // 子セッションからの知らせには、その子へ移るリンクを添える
-    const links = item.sessions && <SessionLinkList ids={item.sessions} sessions={sessions} onSelectSession={onSelectSession} />;
+    // 子セッションからの知らせには、その子へ移るリンクを、チェックリストの知らせには、そのカードを開くリンクを添える
+    const links = (
+      <>
+        {item.sessions && <SessionLinkList ids={item.sessions} sessions={sessions} onSelectSession={onSelectSession} />}
+        {item.cards && item.cards.length > 0 && (
+          <button
+            type="button"
+            className="session-ref"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openChecklistCard(item.cards![0]);
+            }}
+            data-tip="チェックリストのカードを開く"
+          >
+            カードを開く
+          </button>
+        )}
+      </>
+    );
     if (!item.detail) {
       return (
         <div className="chat-notice">

@@ -1,4 +1,5 @@
 import { BROWSER_MCP_SERVER, browserTool } from '@shared/browser-tools';
+import { CHECKLIST_MCP_SERVER, checklistTool } from '@shared/checklist-tools';
 import { SESSIONS_MCP_SERVER, sessionTool } from '@shared/session-tools';
 
 // MCP のツールの内部名（mcp__<サーバー>__<ツール>）を、画面に出す短い名前にする。例: 「Browser · navigate」。
@@ -8,6 +9,7 @@ const SERVER_NAMES: Record<string, string> = {
   'claude-in-chrome': 'Chrome',
   [BROWSER_MCP_SERVER]: 'アプリ内ブラウザ',
   [SESSIONS_MCP_SERVER]: 'セッション',
+  [CHECKLIST_MCP_SERVER]: 'チェックリスト',
 };
 
 export function mcpParts(name: string): { server: string | null; tool: string } | null {
@@ -16,7 +18,13 @@ export function mcpParts(name: string): { server: string | null; tool: string } 
   // コネクタ（Slack など）はサーバー名が UUID なので出さない
   const server = /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(m[1]) ? null : (SERVER_NAMES[m[1]] ?? m[1]);
   const tool =
-    m[1] === BROWSER_MCP_SERVER ? (browserTool(m[2])?.label ?? m[2]) : m[1] === SESSIONS_MCP_SERVER ? (sessionTool(m[2])?.label ?? m[2]) : m[2];
+    m[1] === BROWSER_MCP_SERVER
+      ? (browserTool(m[2])?.label ?? m[2])
+      : m[1] === SESSIONS_MCP_SERVER
+        ? (sessionTool(m[2])?.label ?? m[2])
+        : m[1] === CHECKLIST_MCP_SERVER
+          ? (checklistTool(m[2])?.label ?? m[2])
+          : m[2];
   return { server, tool };
 }
 
@@ -29,4 +37,9 @@ export function toolLabel(name: string): string {
 // tanacode のほかのセッションを扱うツール（子セッションの起動・指示、ほかのセッションを覗く）か
 export function isSessionTool(name: string): boolean {
   return name.startsWith(`mcp__${SESSIONS_MCP_SERVER}__`);
+}
+
+// チェックリストのツールか
+export function isChecklistTool(name: string): boolean {
+  return name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`);
 }

@@ -1,10 +1,11 @@
 import { memo, useEffect, useMemo, useState } from 'react';
+import type { ChecklistUnread } from '@shared/checklist';
 import type { SessionSummary } from '@shared/ipc';
 import type { SettingsFile } from '@shared/settings-file';
 import { inLockedOrder, sessionTree, type SessionTreeRow } from '@shared/session-order';
 import type { SessionStatus } from '../chat/chatState';
 import { useSettingsFiles } from '../chat/settingsFiles';
-import { AddIcon, ArchiveIcon, DisclosureIcon, IconButton, LockIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
+import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
 import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
 import { PREPARING_LABEL } from './worktree';
@@ -34,6 +35,8 @@ function loadCollapsed(): ReadonlySet<string> {
   }
 }
 
+const NO_UNREAD: ChecklistUnread = {};
+
 type Props = {
   sessions: SessionSummary[];
   selectedId: string | null;
@@ -45,6 +48,8 @@ type Props = {
   onUnarchive: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onRemove: (id: string) => void;
+  // セッションごとの、チェックリストの Claude からの未読の返信の数
+  checklistUnread?: ChecklistUnread;
 };
 
 // App はチャットのイベントなどで頻繁に描き直されるので、props が変わったときだけ描き直す
@@ -59,6 +64,7 @@ export const Sidebar = memo(function Sidebar({
   onUnarchive,
   onRename,
   onRemove,
+  checklistUnread = NO_UNREAD,
 }: Props) {
   const [showArchived, setShowArchived] = useState(false);
   const settingsFiles = useSettingsFiles();
@@ -202,6 +208,12 @@ export const Sidebar = memo(function Sidebar({
             )}
           </span>
         </div>
+        {(checklistUnread[s.id] ?? 0) > 0 && (
+          <span className="session-checklist-unread" data-tip={`チェックリストに Claude からの未読の返信 ${checklistUnread[s.id]} 件`}>
+            <ChecklistIcon size={12} />
+            {checklistUnread[s.id]}
+          </span>
+        )}
         {children.length > 0 && (
           <ChildrenToggle
             sessions={children}

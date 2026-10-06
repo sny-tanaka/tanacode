@@ -24,6 +24,7 @@ import {
   type TanacodeApi,
 } from '@shared/ipc';
 import type { AppUpdate } from '@shared/app-update';
+import type { SessionChecklists } from '@shared/checklist';
 import type { SettingsFile } from '@shared/settings-file';
 import type { SystemStats } from '@shared/system';
 import type { UsageLimits } from '@shared/usage';
@@ -182,6 +183,13 @@ const api: TanacodeApi = {
   },
   attachments: {
     save: (name, data) => ipcRenderer.invoke(IpcChannel.AttachmentSave, name, data),
+  },
+  checklist: {
+    get: (sessionId) => ipcRenderer.invoke(IpcChannel.ChecklistGet, sessionId),
+    apply: (sessionId, op) => ipcRenderer.invoke(IpcChannel.ChecklistApply, sessionId, op),
+    copy: (request) => ipcRenderer.invoke(IpcChannel.ChecklistCopy, request),
+    onChanged: (listener) => subscribe<SessionChecklists>(IpcChannel.ChecklistChanged, listener),
+    unread: () => ipcRenderer.invoke(IpcChannel.ChecklistUnread),
   },
   browser: {
     attach: (sessionId, tabId, webContentsId) => ipcRenderer.send(IpcChannel.BrowserAttach, sessionId, tabId, webContentsId),

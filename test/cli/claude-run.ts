@@ -68,6 +68,8 @@ type Options = {
   browser?: BrowserMcpLaunch;
   // セッションの MCP サーバー（中継）を足すときの材料（SessionManager の sessionsMcp）。無ければ足さない
   sessions?: McpLaunch;
+  // チェックリストの MCP サーバー（中継）を足すときの材料（SessionManager の checklistMcp）。無ければ足さない
+  checklist?: McpLaunch;
   // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
   mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
@@ -367,6 +369,7 @@ export class ClaudeRun {
       undefined,
       () => this.options.browser ?? null,
       () => this.options.sessions ?? null,
+      () => this.options.checklist ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);

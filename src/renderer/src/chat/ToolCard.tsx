@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { cardOfTool } from '@shared/checklist-tools';
 import { sessionIdOfTool } from '@shared/session-tools';
+import { openChecklistCard } from '../checklist/openCard';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import { ChevronRightIcon, DisclosureIcon } from '../icons';
@@ -63,6 +65,9 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
   const sessionKey = sessions ? sessionIdOfTool(item.name, item.input, item.output) : null;
   const session = sessionKey && sessions ? findSession(sessions, sessionKey) : null;
   const openSession = session && onSelectSession ? () => onSelectSession(session.id) : null;
+  // チェックリストのツールは、カードのクリックで対象のカードを開く（別のセッションへのコピーは、このセッションのカードではないので開かない）
+  const card = item.name.endsWith('__cards_copy') ? null : cardOfTool(item.name, item.input);
+  const openCard = card ? () => openChecklistCard(card) : null;
   // 入力の session_id がそのまま対象に出るツール（send_message など）は、ID の代わりに名前を出す
   const targetIsId = !!sessionKey && /^[0-9a-f-]{8,36}$/.test(item.target.trim());
   const target = targetIsId && session ? sessionName(session) : item.target;
@@ -76,13 +81,15 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
 
   return (
     <div
-      className={`tool-card${opensFile || hasDetail || onOpenTask || openSession ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
+      className={`tool-card${opensFile || hasDetail || onOpenTask || openSession || openCard ? ' clickable' : ''}${dot === 'running' ? ' running' : ''}${finishing ? ' finishing' : ''}`}
       onClick={() =>
         onOpenTask
           ? onOpenTask()
           : openSession
             ? openSession()
-            : opensFile
+            : openCard
+              ? openCard()
+              : opensFile
               ? onOpenFile(item.filePath!, item.line)
               : hasDetail && setOpen((v) => !v)
       }
