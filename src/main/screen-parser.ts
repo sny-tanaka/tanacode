@@ -112,6 +112,13 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   const texts = inPlace ? unwrapInPlace(raw.filter((t) => t !== tabLine)) : header.filter((t) => t !== tabLine);
   let title = boxed.length > 0 && !inPlace ? unwrap(boxed) : (texts.pop() ?? '');
   const kind = question ? 'question' : /Do you want to/.test(title) ? 'permission' : 'other';
+  // 許可の確認の選択肢には説明が無い。選択肢の下の行は、Claude Code が名前を端末の幅より手前で折り返した続き
+  // （例: 「Yes, and always allow access to <フォルダ>」の次の行の「from this project」）なので、名前につなぐ
+  if (kind === 'permission') {
+    for (const option of options) {
+      if (option.description) [option.label, option.description] = [joinWrapped(option.label, option.description), ''];
+    }
+  }
   // そのほかの確認（ワークフローを始める前の確認・/rewind の「何を戻すか」など）は、問いかけが説明の上にあることがある
   // （「Run a dynamic workflow?」「Confirm you want to restore …:」）。最後の行が問いかけでなければ、
   // ? で終わる行（無ければ : で終わる行）を見出しにして、最後の行は補足に回す
