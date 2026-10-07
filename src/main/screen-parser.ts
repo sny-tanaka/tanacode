@@ -287,14 +287,15 @@ export function parseSpinner(lines: ScreenLine[], promptStart: number): SpinnerL
 
 // 応答の文章が画面に流れている途中か。Claude Code は文章を書き始めるとタイマーの行を消すので、
 // 入力欄の枠から上へ見て、発言（❯）やタイマー・完了の行（✻ Churned for 12s など）より先に応答（⏺）が見つかるかで判断する。
-// 作業中に送った発言が順番待ちのときも、タイマーの行は消えて発言（❯）が出る
-export function isStreaming(lines: ScreenLine[], promptStart: number): boolean {
+// 作業中に送った発言が順番待ちのときも、タイマーの行は消えて発言（❯）が出る。中断すると、応答の下に「⎿  Interrupted · …」が出る。
+// 長い応答では ⏺ の行が画面の上へ流れて見えなくなるので、画面のいちばん上まで、どれも見つからなければ前に読んだとき（before）のままとする
+export function isStreaming(lines: ScreenLine[], promptStart: number, before = false): boolean {
   for (let i = promptStart - 2; i >= 0; i--) {
     const text = lines[i].text;
     if (text.startsWith('⏺')) return true;
-    if (text.startsWith('❯') || /^[·✢✳✶✻✽*]\s/.test(text)) return false;
+    if (text.startsWith('❯') || /^[·✢✳✶✻✽*]\s/.test(text) || /^\s+⎿\s+Interrupted\b/.test(text)) return false;
   }
-  return false;
+  return before;
 }
 
 // 入力欄の最初の行の目印。! を打ってシェルのコマンドを書いている間は「!」になる
