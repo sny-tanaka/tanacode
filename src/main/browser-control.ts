@@ -1031,7 +1031,7 @@ export class BrowserControl {
     if (!src) return undefined;
     const frame = await this.childFor(guest, src);
     const url = frame?.url ?? src;
-    if (!this.allowed(url)) throw new ToolError(`フォーカスが、許していない先の iframe（${url}）の中にあるので、入力できません`);
+    if (!this.allowed(url)) throw new ToolError(`フォーカスが、許していない先の iframe（${frameShown(url)}）の中にあるので、入力できません`);
     return frame?.child;
   }
 
@@ -1100,7 +1100,7 @@ export class BrowserControl {
     // 別オリジンの iframe。別プロセスで動いていれば、そのセッションに、iframe の中の位置で送る
     const frame = found.src ? await this.childFor(guest, found.src) : null;
     const url = frame?.url ?? found.src;
-    if (!url || !this.allowed(url)) throw new ToolError(`x=${x} y=${y} は、許していない先の iframe（${url || 'src なし'}）の中なので、押せません`);
+    if (!url || !this.allowed(url)) throw new ToolError(`x=${x} y=${y} は、許していない先の iframe（${url ? frameShown(url) : 'src なし'}）の中なので、押せません`);
     return {
       rect,
       description: `x=${x} y=${y}（別オリジンの iframe ${url} の中）`,
@@ -1161,6 +1161,12 @@ function originOf(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+// 断る文に出す、許していない先の iframe の URL。オリジンだけ（iframe の今の URL はページからは読めず、認証・決済の途中の値が入っていることがある）。
+// URL として読めないものは、ページに書いてある src そのものなので、そのまま
+function frameShown(url: string): string {
+  return originOf(url) ?? url;
 }
 
 // 空のタブ（「＋」で開いたもの・まだ何も開いていないもの）
