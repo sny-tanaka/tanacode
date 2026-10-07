@@ -103,6 +103,8 @@ export class E2EApp {
     }
     if (this.options.git) {
       this.git('init', '-q', '-b', 'main');
+      // コミットのあとに git が裏で片付け（gc --auto）を始めると、終わりに一時フォルダを消すのとぶつかるので動かさない
+      this.git('config', 'gc.auto', '0');
       this.git('add', '-A');
       this.git('commit', '-qm', 'init', '--allow-empty');
     }
