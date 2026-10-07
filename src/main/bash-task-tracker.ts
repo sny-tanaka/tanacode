@@ -107,17 +107,12 @@ export class BashTaskTracker {
     if (!t.outputFile) return false;
     const size = await stat(t.outputFile).then((s) => s.size, () => null);
     if (size === null || size === t.size) return false;
-    t.size = size;
     const start = Math.max(0, size - MAX_OUTPUT_BYTES);
-    const handle = await open(t.outputFile, 'r');
-    let text: string;
-    try {
-      const buf = Buffer.alloc(size - start);
-      await handle.read(buf, 0, buf.length, start);
-      text = buf.toString('utf8');
-    } finally {
-      await handle.close();
-    }
+    // 大きさを見たあとに消えた・読めないものに置き換わったときは、今回は読まない（例外にすると、完了通知が終わったことにできず、
+    // ほかのタスクの読み込みも止まる）
+    const text = await readRange(t.outputFile, start, size).catch(() => null);
+    if (text === null) return false;
+    t.size = size;
     // 終わると最後に「[exited with code N]」が書かれる。止められたとき（TaskStop など）は「[killed]」で、完了通知は届かない
     const exit = text.match(/\n?\[(?:exited with code (-?\d+)|killed)\]\s*$/);
     const exitCode = exit?.[1] !== undefined ? Number(exit[1]) : t.task.exitCode;
@@ -132,5 +127,17 @@ export class BashTaskTracker {
       truncated: start > 0,
     };
     return true;
+  }
+}
+
+// path の start から end の手前までを読む
+async function readRange(path: string, start: number, end: number): Promise<string> {
+  const handle = await open(path, 'r');
+  try {
+    const buf = Buffer.alloc(end - start);
+    await handle.read(buf, 0, buf.length, start);
+    return buf.toString('utf8');
+  } finally {
+    await handle.close();
   }
 }

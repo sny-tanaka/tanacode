@@ -1,7 +1,7 @@
 // pty ホスト。アプリとは別の常駐プロセスで claude を起動して持っておき、アプリを再起動しても止めない。
 // アプリが Electron を Node として（ELECTRON_RUN_AS_NODE）切り離して起動する。引数はソケットのパス。
 // Electron の API は使わない
-import { existsSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import * as pty from 'node-pty';
@@ -188,6 +188,8 @@ const server = createServer((socket) => {
 
 removeSocket();
 server.listen(socketPath, () => {
+  // 自分だけがつなげるようにする（つながれば、任意のコマンドを起動できるため。アプリ内ブラウザなどの中継のソケットと同じ）
+  chmodSync(socketPath, 0o600);
   log(`待ち受けています: ${socketPath} pid=${process.pid}`);
   checkIdle();
 });

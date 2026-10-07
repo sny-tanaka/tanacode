@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { monaco } from '../editor/monaco';
 import { AddIcon, CloseIcon, IconButton, SendIcon, TrashIcon } from '../icons';
+import type { ReviewComment } from './comments';
+
+// コメントの形と、送信する本文に付ける一覧は comments.ts（エディタを読み込まずに使えるよう分けてある）
+export { formatComments, type ReviewComment } from './comments';
 
 // コードの行・範囲に付けたコメント。Claude への指示として送るまで持っておく
-export type ReviewComment = { id: string; path: string; startLine: number; endLine: number; quote: string; text: string };
 
 const MAX_QUOTE_LINES = 12;
 let commentSeq = 0;
@@ -275,13 +278,4 @@ function quoteOf(editor: monaco.editor.ICodeEditor, { startLine, endLine }: Line
   for (let i = startLine; i <= last; i++) lines.push(model.getLineContent(i));
   if (last < endLine) lines.push('…');
   return lines.join('\n');
-}
-
-// 送信する本文に付ける、コメントの一覧
-export function formatComments(comments: ReviewComment[]): string {
-  const blocks = comments.map((c, i) => {
-    const lines = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
-    return `[${i + 1}] ${c.path}:${lines}\n\`\`\`\n${c.quote}\n\`\`\`\n${c.text}`;
-  });
-  return `以下はコードへのレビューコメントです。それぞれ対応してください。\n\n${blocks.join('\n\n')}`;
 }
