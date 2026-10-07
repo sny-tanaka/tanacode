@@ -29,8 +29,12 @@ export function mockApi(responses: Record<string, (...args: never[]) => unknown>
         },
       },
     );
+  // 名前空間は、読むたびに同じものを返す（本物の window.tanacode は contextBridge が一度だけ写したもので、
+  // window.tanacode.walkthrough などはいつも同じ。部品が既定の引数や依存の配列に使っても、描き直すたびに変わったことにならない）
+  const namespaces = new Map<string, object>();
+  const namespaceOf = (ns: string) => namespaces.get(ns) ?? namespaces.set(ns, namespace(ns)).get(ns)!;
   // pathForFile だけは名前空間でなく関数（responses の pathForFile で決める）
-  const api = new Proxy({}, { get: (_target, ns: string) => (ns === 'pathForFile' ? (responses.pathForFile ?? (() => '')) : namespace(ns)) }) as TanacodeApi;
+  const api = new Proxy({}, { get: (_target, ns: string) => (ns === 'pathForFile' ? (responses.pathForFile ?? (() => '')) : namespaceOf(ns)) }) as TanacodeApi;
   return {
     api,
     calls,

@@ -47,6 +47,7 @@ npm run dev
 | `npm run coverage` / `npm run coverage:cli` | `npm test` / `npm run test:cli` と同じテストで、カバレッジを測る（下の「テストと CI」） |
 | `npm run coverage:e2e` | `npm run test:e2e` と同じテストで、カバレッジを測る（先に `TANACODE_SOURCEMAP=1 npm run build`。下の「アプリの通しのテスト（E2E）」） |
 | `npm run coverage:report` | 測ったカバレッジを合わせて層ごとに出し、下限を下回っていないか確かめる |
+| `npm run coverage:unpressed` | 測ったカバレッジから、テストが一度も押していない画面のボタン・入力を出す（下の「押していないボタン・入力」） |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名は下の「署名」） |
 | `npm run install-app` | `npm run dist` のあと、`/Applications/tanacode.app` に入れ替える（下の「ソースからビルドして使う」） |
@@ -195,6 +196,8 @@ PR と develop・main への push で、次のものを流します。
   - happy-dom は使いません。DOMPurify（Markdown の無害化）の結果が、本物のブラウザと食い違ったためです。
 - `test/renderer/mock-api.ts`: `window.tanacode` の偽物。呼び出し（`argsOf('sessions.submit')` など）を控え、知らせ（`emit('sessions.onChat', …)`）をテストから送ります。返す値は `responses` に「名前空間.メソッド」で決めます。
 - `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。使う部品のテストの先頭で読み込みます。
+- 画面のボタン・入力は、テストでひとつ残らず押し、押した結果（IPC に渡った引数・表示・props の受け手に渡った値）まで確かめます。セッションまわり・ソース管理・エクスプローラー・検索・エディタは `press-sessions*.test.tsx`。
+  - Monaco エディタを使う部品（エディタ・差分）のボタンは、`editor/monaco.ts` を `vi.mock` で作り物（モデルの内容の読み書きと、内容が変わった知らせだけを持つ）に差し替えて押します（`press-sessions-editor.test.tsx`）。エディタそのものの動き（打ち込み・色付けなど）は E2E で確かめます。
 - 部品は Testing Library（`@testing-library/react`）で描き、押す・打つ操作をして、`window.tanacode` に渡ったもの（送ったキー・本文など）を確かめます。Monaco エディタ・xterm・webview を使う部品は、アプリ本体の E2E で確かめます。
 - 部品のテストを足したら、`npm run mutation:ui -- <部品のファイル>` で、その部品のボタン・入力が効かなくなったときに、テストが落ちるかを確かめます（下の「ミューテーションテスト」）。
 
@@ -218,6 +221,17 @@ PR と develop・main への push で、次のものを流します。
   - 合わせるときは、文・分岐・関数を src の位置で突き合わせます。単体のテスト（ファイルごとに変換したもの）と E2E（ビルドしてまとめたものを、ソースマップで戻したもの）では、同じ文でも位置が少しずれることがあり、そのときは別のものとして数えます。行の割合は、同じ行のうち通ったものを数えるので影響を受けません。分岐と関数の割合は、少し動くことがあります。
 - CI の `check` のジョブは、PR と push で 3 つとも測って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では、E2E を流さず、まとめもしません。その日の最新の Claude Code の互換性を見るためのものだからです。
 - カバレッジは、テストで実行された行の割合です。結果まで確かめたかは分かりません。テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（まとめて確かめるのが、下の「ミューテーションテスト」）。
+
+### 押していないボタン・入力
+
+画面のボタン・入力は、すべて一度はテストで押して、押した結果まで確かめます。行のカバレッジの割合は、押していないボタンがあっても上がってしまうので、別に数えます。
+
+- `npm run coverage:unpressed`（`scripts/unpressed.mjs`）が、画面の部品（`src/renderer/src` の .tsx。ストーリーとデモのサイトは除く）の操作の受け手（`onClick`・`onChange`・`onKeyDown` など）をソースから拾い、`coverage/` にあるカバレッジを全部合わせて、一度も呼ばれていないものを `ファイル:行` と要素で出します。
+  - 受け手がその場の関数か、同じファイルの名前の付いた関数（`useCallback` で包んだものも）なら、その関数が呼ばれたかで見ます。props から受け取ったもの（`onClick={onCancel}`）は、渡した側で数えます。
+  - 別の場所で測ったカバレッジ（CI の成果物など）を `coverage/<名前>/` に置いても、`src/renderer/` からのパスで突き合わせて合わせます。
+- CI の `check` のジョブは、PR と push で 3 つのカバレッジを合わせたあとに数え、1 つでもあれば失敗にします（`--max 0`）。ボタンや入力を足したら、押すテストも足します。
+  - 単体テストと E2E では、同じ関数でも位置が少しずれて別々に記録されるので、近くにある記録のうち、いちばん多く呼ばれたもので見ます。
+- 押すテストは、押したあとの IPC（正しいセッション・フォルダなどの ID で呼ばれたか）や表示の変化まで確かめます。対象（セッション・フォルダなど）を props で受け取る部品は、別の対象に描き直した直後に押しても、新しい対象に効くことも確かめます（下の「画面のテスト」）。Monaco・xterm・webview の中のものは E2E で押します。
 
 ### ミューテーションテスト
 
