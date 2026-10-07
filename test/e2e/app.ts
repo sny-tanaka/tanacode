@@ -151,10 +151,16 @@ export class E2EApp {
       if (message.type() === 'error') this.consoleErrors.push(message.text());
     });
     this.window.on('pageerror', (error) => this.consoleErrors.push(String(error)));
-    // 画面のカバレッジは、測り始めてから読み込んだスクリプトの分だけ取れる。測り始めてから読み込み直す
     if (COVERAGE) {
+      // 画面のカバレッジは、測り始めてから読み込んだスクリプトの分だけ取れる。測り始めてから読み込み直す
       await this.window.coverage.startJSCoverage({ resetOnNavigation: false });
       await this.window.reload();
+      // MCP の中継は、Claude Code が終わるときにシグナルで止められ、そのままではカバレッジを書かない。
+      // 受けたら process.exit で終えるスクリプト（coverage-exit.cjs）を読み込ませる。Playwright は起動するアプリに
+      // NODE_OPTIONS を渡さないので、メインプロセスの環境変数に足す（Claude Code はこれを引き継いで起動し、中継に渡す）
+      await this.electronApp.evaluate((_, options) => {
+        process.env.NODE_OPTIONS = options;
+      }, `--require ${JSON.stringify(join(__dirname, 'coverage-exit.cjs'))}`);
     }
     await this.window.waitForSelector('nav.sidebar');
     // フォルダを選ぶダイアログは、作業フォルダを選んだことにする

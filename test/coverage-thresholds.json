@@ -1,21 +1,21 @@
 {
   "main": {
-    "lines": 70,
-    "branches": 61,
-    "functions": 64
+    "lines": 84,
+    "branches": 67,
+    "functions": 77
   },
   "preload": {
-    "lines": 0,
-    "functions": 0
+    "lines": 69,
+    "functions": 68
   },
   "shared": {
-    "lines": 85,
-    "branches": 73,
+    "lines": 87,
+    "branches": 74,
     "functions": 93
   },
   "renderer": {
-    "lines": 17,
-    "branches": 15,
-    "functions": 16
+    "lines": 68,
+    "branches": 57,
+    "functions": 57
   }
 }
