@@ -302,7 +302,9 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
     addressRef.current?.focus();
   };
 
+  const pickRun = useRef(0);
   const cancelPick = () => {
+    pickRun.current++;
     setPicking(false);
     for (const wv of views.current.values()) void wv.executeJavaScript(CANCEL_PICKER_SCRIPT).catch(() => undefined);
   };
@@ -317,6 +319,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
     setPicking(true);
     wv.focus();
     const id = sessionId;
+    const run = ++pickRun.current;
     try {
       const picked = await wv.executeJavaScript<PickedElement | null>(pickerScript(), true);
       if (!picked) return;
@@ -325,7 +328,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
       if (shot) attachments.push(shot);
       insertIntoChat(id, describePicked(picked), attachments);
     } finally {
-      setPicking(false);
+      if (pickRun.current === run) setPicking(false);
     }
   };
 

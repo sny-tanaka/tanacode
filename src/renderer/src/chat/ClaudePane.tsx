@@ -251,11 +251,16 @@ export const ClaudePane = memo(function ClaudePane({
   const effortValue = session.effort ?? (efforts.find((e) => e === screen?.effort) ?? '');
 
   // Remote Control の切り替え。動いていれば /remote-control でその場でつなぐ・切るので、終わるまでぐるぐるを出す
-  const [switchingRemote, setSwitchingRemote] = useState(false);
+  const [switchingRemote, setSwitchingRemote] = useState<ReadonlySet<string>>(() => new Set());
   const setRemoteControl = async (on: boolean) => {
-    setSwitchingRemote(true);
-    const error = await window.tanacode.sessions.setRemoteControl(session.id, on);
-    setSwitchingRemote(false);
+    const id = session.id;
+    setSwitchingRemote((prev) => new Set(prev).add(id));
+    const error = await window.tanacode.sessions.setRemoteControl(id, on);
+    setSwitchingRemote((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     if (error) window.alert(error);
   };
 
@@ -356,7 +361,7 @@ export const ClaudePane = memo(function ClaudePane({
           <RemoteControlToggle
             on={session.remoteControl}
             connected={live ? !!chat.remoteControlUrl : null}
-            busy={switchingRemote}
+            busy={switchingRemote.has(session.id)}
             onChange={(on) => void setRemoteControl(on)}
           />
         )}
