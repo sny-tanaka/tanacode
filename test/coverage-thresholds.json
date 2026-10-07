@@ -1,8 +1,8 @@
 {
   "main": {
-    "lines": 63,
-    "branches": 57,
-    "functions": 56
+    "lines": 70,
+    "branches": 61,
+    "functions": 64
   },
   "preload": {
     "lines": 0,
