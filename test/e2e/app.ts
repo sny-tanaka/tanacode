@@ -189,11 +189,32 @@ export class E2EApp {
     await exited;
   }
 
-  // 失敗したときの手がかり（画面の写し・メインプロセスの出力・API の呼び出し）を test-results/e2e に残す
+  // 失敗したときの手がかりを test-results/e2e に残す。画面の写し・メインプロセスの出力・モックの API の呼び出し・
+  // セッションの一覧（状態・操作待ち）と、選んでいるセッションの Claude Code の画面（ターミナルのパネルを開いて読む）
   async keepEvidence(name: string): Promise<void> {
     mkdirSync(RESULTS, { recursive: true });
     const base = join(RESULTS, name.replace(/[^\p{L}\p{N}_-]+/gu, '-'));
-    await this.window?.screenshot({ path: `${base}.png` }).catch(() => {});
+    const page = this.window;
+    await page?.screenshot({ path: `${base}.png` }).catch(() => {});
+    const sessions = await page
+      ?.evaluate(() => (window as unknown as { tanacode: { sessions: { list(): Promise<unknown> } } }).tanacode.sessions.list())
+      .catch((error: unknown) => String(error));
+    let screen = '';
+    if (page) {
+      try {
+        const button = page.locator('.claude-header [aria-label="Claude Code の画面"]');
+        if ((await button.count()) > 0) {
+          if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click({ timeout: 2000 });
+          const rows = page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows');
+          await rows.waitFor({ timeout: 3000 });
+          await page.waitForTimeout(500);
+          screen = await rows.innerText();
+          await page.screenshot({ path: `${base}-screen.png` });
+        }
+      } catch (error) {
+        screen = `（読めませんでした: ${String(error)}）`;
+      }
+    }
     writeFileSync(
       `${base}.log`,
       [
@@ -203,6 +224,10 @@ export class E2EApp {
         ...this.consoleErrors,
         '# モックの API の呼び出し',
         ...this.api.requests,
+        '# セッションの一覧',
+        JSON.stringify(sessions, null, 2),
+        '# 選んでいるセッションの Claude Code の画面',
+        screen,
       ].join('\n'),
     );
   }
