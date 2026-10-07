@@ -1,5 +1,7 @@
 # ミューテーションテスト（npm run mutation）。読み取りの中核のコードを 1 か所ずつわざと壊し、単体テストが落ちるかを確かめる。
 # 落ちなかったもの（生き残り）は、テストがそこを通っても、結果まで確かめていない場所の候補。
+# あわせて、画面の部品のボタン・入力を効かなくする書き換え（npm run mutation:ui）も流す。生き残り・テストが通らないものは、
+# そのボタンが効かなくなっても、テストが気づかないもの。
 # 時間がかかるので、PR では流さず、週 1 回の定期実行と手動の実行だけ。スコアの下限はまだ設けない（生き残りがあっても失敗にしない）。
 # 結果の要約（ファイルごとのスコアと生き残りの数・生き残りの一覧）はジョブの概要に、詳しい結果（mutation.json）は artifact に残す。
 # 単体テストは OS に依らないので ubuntu で流す
@@ -14,6 +16,9 @@ on:
       targets:
         description: 対象のファイル（空白で区切る。空なら既定の対象）
         required: false
+      ui_targets:
+        description: 画面の操作の書き換えの対象のファイル・フォルダ（空白で区切る。空なら既定の画面の部品）
+        required: false
 
 permissions:
   contents: read
@@ -21,7 +26,7 @@ permissions:
 jobs:
   mutation:
     runs-on: ubuntu-latest
-    # 既定の対象で 35 分ほど（同時に 2）
+    # 既定の対象で 35 分ほど（同時に 2）。画面の操作は 1 分かからない
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -37,10 +42,17 @@ jobs:
       - run: npm run mutation -- $TARGETS
         env:
           TARGETS: ${{ inputs.targets }}
+      # 画面の操作（ボタン・入力を効かなくする・押せなくする）。上が失敗しても流す
+      - run: npm run mutation:ui -- $TARGETS
+        if: ${{ !cancelled() }}
+        env:
+          TARGETS: ${{ inputs.ui_targets }}
       - name: 結果を残す
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mutation
-          path: reports/mutation/
+          path: |
+            reports/mutation/
+            reports/mutation-ui/
           if-no-files-found: ignore
