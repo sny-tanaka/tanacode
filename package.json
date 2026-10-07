@@ -24,6 +24,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "coverage": "vitest run --coverage",
     "coverage:cli": "vitest run --config vitest.cli.config.ts --coverage",
+    "coverage:e2e": "TANACODE_E2E_COVERAGE=1 vitest run --config vitest.e2e.config.ts",
     "coverage:report": "node scripts/coverage-report.mjs",
     "mutation": "node scripts/mutation.mjs",
     "mutation:ui": "node scripts/mutation.mjs --ui",
@@ -49,6 +50,7 @@
   },
   "devDependencies": {
     "@babel/parser": "^7.29.9",
+    "@bcoe/v8-coverage": "^1.0.2",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@storybook/react-vite": "^10.6.0",
     "@testing-library/dom": "^10.4.2",
@@ -61,6 +63,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "ast-v8-to-istanbul": "^1.0.7",
     "dompurify": "^3.4.16",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
@@ -89,6 +92,7 @@
     },
     "files": [
       "out/**",
+      "!out/**/*.map",
       "package.json"
     ],
     "asarUnpack": [
