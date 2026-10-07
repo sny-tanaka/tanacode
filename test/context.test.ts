@@ -329,6 +329,11 @@ describe('compactInstructions', () => {
     // 上限ちょうどは切らない
     expect(clip('あ'.repeat(60), 60)).toBe('あ'.repeat(60));
     expect(toolDisplayName('Bash')).toBe('Bash');
+    // 先頭が mcp__ でなければ、MCP のツールとして読まない
+    expect(toolDisplayName('x_mcp__a__b')).toBe('x_mcp__a__b');
+    // 区切りの出来事の名前は、先頭にあるときだけ（発言の途中の「質問への答え:」「知らせ:」は、ふつうの発言）
+    const quoted = [at('topic', 'メモ: 質問への答え: A', 0), at('topic', '次の知らせ: B', 1)];
+    expect(compactInstructions(quoted, marks(quoted.map((t) => [t.id, 'keep'])))).toBe('「メモ: 質問への答え: A」から始まるやりとりと、「次の知らせ: B」から始まるやりとりは詳しく残す。');
     expect(toolDisplayName('mcp__tanacode-sessions__list_sessions')).toBe('tanacode-sessions の list_sessions');
   });
 });
