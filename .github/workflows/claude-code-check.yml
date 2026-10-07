@@ -7,6 +7,7 @@
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる。マージしたらブランチは消す
 # 途中の画面などの控えは artifact にも残す
+# アプリは macOS 専用なので、macOS のランナーで確かめる（Claude Code は OS で画面の描き方が違う。応答の印は macOS では ⏺、Linux では ●）
 name: claude-code-check
 
 on:
@@ -28,7 +29,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     permissions:
       contents: read
       issues: write
