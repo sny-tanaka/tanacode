@@ -301,7 +301,12 @@ function notableChange(prev: Entry | undefined, next: Entry): boolean {
 }
 
 // 全セッションのチャット。描き直すのは、選択中のセッションのチャットが変わったときと、ほかのセッションの状態が変わったときだけ
-export function useSessionChats(selectedId: string | null): { chatOf: (sessionId: string | null) => ChatState; load: (sessionId: string) => void } {
+export function useSessionChats(selectedId: string | null): {
+  chatOf: (sessionId: string | null) => ChatState;
+  load: (sessionId: string) => void;
+  // 動いていたときのチャットを捨てて、起動前に戻す
+  reset: (sessionId: string) => void;
+} {
   const { valueOf, peek, update } = useSessionValues<Entry | undefined, undefined>(selectedId, undefined, (prev, next) => !!next && notableChange(prev, next));
 
   const load = useCallback(
@@ -321,6 +326,8 @@ export function useSessionChats(selectedId: string | null): { chatOf: (sessionId
     [load, peek, update],
   );
 
+  const reset = useCallback((sessionId: string) => update(sessionId, () => undefined), [update]);
+
   const chatOf = useCallback((sessionId: string | null) => valueOf(sessionId)?.chat ?? EMPTY_CHAT, [valueOf]);
-  return { chatOf, load };
+  return { chatOf, load, reset };
 }
