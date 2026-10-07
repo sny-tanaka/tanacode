@@ -343,9 +343,10 @@ export function findMode(lines: ScreenLine[]): PermissionMode | null {
   return null;
 }
 
-// /rewind の巻き戻し先の一覧。過去の発言が番号なしで並び、❯ の付いた行が選択中（最後は「(current)」）
+// /rewind の巻き戻し先の一覧。過去の発言が番号なしで並び、❯ の付いた行が選択中（最後は「(current)」）。
+// 一覧は画面の下に重ねて出て、案内はそのいちばん下にある。上に残る会話の本文に同じ文字があっても取り違えないよう、下から探す
 export function parseRewind(lines: ScreenLine[]): { pointed: string } | null {
-  const footer = lines.findIndex((l) => /Enter to continue · Esc to cancel/.test(l.text));
+  const footer = findLastIndex(lines, (l) => /Enter to continue · Esc to cancel/.test(l.text));
   if (footer === -1 || !lines.slice(Math.max(0, footer - 40), footer).some((l) => l.text.trim() === 'Rewind')) return null;
   for (let i = footer - 1; i >= 0; i--) {
     const m = lines[i].text.match(/^\s*❯\s+(.*)$/);
