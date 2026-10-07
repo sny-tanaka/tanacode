@@ -160,8 +160,10 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onClose, onAsk, onRes
             placeholder="ここについて Claude に聞きたいこと（⌘Enter で送る）"
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => {
+              // 変換中のキー（変換の取り消しの Esc・確定の Enter）は、変換に任せる
+              if (e.nativeEvent.isComposing) return;
               if (e.key === 'Escape') setAsking(false);
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 send();
               }
