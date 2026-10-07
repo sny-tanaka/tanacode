@@ -1,0 +1,1020 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP サーバー tanacode-browser の定義 > ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す） 1`] = `
+{
+  "allowedTools": [
+    "mcp__tanacode-browser__screenshot",
+    "mcp__tanacode-browser__get_text",
+    "mcp__tanacode-browser__get_accessibility_tree",
+    "mcp__tanacode-browser__inspect",
+    "mcp__tanacode-browser__get_console_logs",
+    "mcp__tanacode-browser__get_failed_requests",
+    "mcp__tanacode-browser__list_tabs",
+    "mcp__tanacode-browser__ask_user_to_act",
+  ],
+  "tools": [
+    {
+      "inputSchema": {
+        "properties": {
+          "fullPage": {
+            "type": "boolean",
+          },
+          "selector": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "スクリーンショット",
+      "name": "screenshot",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "selector": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "ページの文字",
+      "name": "get_text",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "アクセシビリティのツリー",
+      "name": "get_accessibility_tree",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "properties": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "selector": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "selector",
+        ],
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "要素の HTML とスタイル",
+      "name": "inspect",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "clear": {
+            "type": "boolean",
+          },
+          "level": {
+            "enum": [
+              "all",
+              "error",
+              "warning",
+            ],
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "コンソール",
+      "name": "get_console_logs",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "clear": {
+            "type": "boolean",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "失敗した通信",
+      "name": "get_failed_requests",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "back",
+              "forward",
+              "reload",
+            ],
+            "type": "string",
+          },
+          "newTab": {
+            "type": "boolean",
+          },
+          "url": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "開く",
+      "name": "navigate",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "タブの一覧",
+      "name": "list_tabs",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "index": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "index",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "タブの切り替え",
+      "name": "select_tab",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "index": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "タブを閉じる",
+      "name": "close_tab",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "button": {
+            "enum": [
+              "left",
+              "right",
+              "middle",
+            ],
+            "type": "string",
+          },
+          "double": {
+            "type": "boolean",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "x": {
+            "type": "number",
+          },
+          "y": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "クリック",
+      "name": "click",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "clear": {
+            "type": "boolean",
+          },
+          "selector": {
+            "type": "string",
+          },
+          "submit": {
+            "type": "boolean",
+          },
+          "text": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "text",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "入力",
+      "name": "type",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "key": {
+            "type": "string",
+          },
+          "modifiers": {
+            "items": {
+              "enum": [
+                "shift",
+                "control",
+                "alt",
+                "meta",
+              ],
+              "type": "string",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "key",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "キー",
+      "name": "press_key",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "deltaX": {
+            "type": "number",
+          },
+          "deltaY": {
+            "type": "number",
+          },
+          "selector": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "スクロール",
+      "name": "scroll",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "selector": {
+            "type": "string",
+          },
+          "state": {
+            "enum": [
+              "visible",
+              "hidden",
+              "attached",
+            ],
+            "type": "string",
+          },
+          "text": {
+            "type": "string",
+          },
+          "timeoutMs": {
+            "type": "number",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "待つ",
+      "name": "wait_for",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "width": {
+            "enum": [
+              "full",
+              "mobile",
+              "tablet",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "width",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "表示幅",
+      "name": "set_viewport",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "expression": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "expression",
+        ],
+        "type": "object",
+      },
+      "kind": "eval",
+      "label": "JavaScript の実行",
+      "name": "evaluate",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "message": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "message",
+        ],
+        "type": "object",
+      },
+      "kind": "ask",
+      "label": "操作の依頼",
+      "name": "ask_user_to_act",
+    },
+  ],
+}
+`;
+
+exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す） 1`] = `
+{
+  "allowedTools": [
+    "mcp__tanacode-checklist__checklist_overview",
+    "mcp__tanacode-checklist__card_get",
+    "mcp__tanacode-checklist__list_create",
+    "mcp__tanacode-checklist__list_update",
+    "mcp__tanacode-checklist__list_delete",
+    "mcp__tanacode-checklist__card_add",
+    "mcp__tanacode-checklist__card_update",
+    "mcp__tanacode-checklist__card_check",
+    "mcp__tanacode-checklist__card_uncheck",
+    "mcp__tanacode-checklist__card_reply",
+    "mcp__tanacode-checklist__card_move",
+    "mcp__tanacode-checklist__card_delete",
+    "mcp__tanacode-checklist__card_restore",
+    "mcp__tanacode-checklist__cards_copy",
+  ],
+  "tools": [
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "一覧",
+      "name": "checklist_overview",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+        ],
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "カードを読む",
+      "name": "card_get",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "name",
+          "description",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "リストを作る",
+      "name": "list_create",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "type": "string",
+          },
+          "list": {
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "リストを変える",
+      "name": "list_update",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "リストを消す",
+      "name": "list_delete",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "cards": {
+            "items": {
+              "properties": {
+                "body": {
+                  "type": "string",
+                },
+                "title": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "title",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "list": {
+            "type": "string",
+          },
+          "list_description": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "cards",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "カードを足す",
+      "name": "card_add",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "type": "string",
+          },
+          "list": {
+            "type": "string",
+          },
+          "number": {
+            "type": "integer",
+          },
+          "title": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "number",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "カードを変える",
+      "name": "card_update",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "comment": {
+            "type": "string",
+          },
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "チェックする",
+      "name": "card_check",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+          "reason": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+          "reason",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "チェックを外す",
+      "name": "card_uncheck",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "number": {
+            "type": "integer",
+          },
+          "text": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "number",
+          "text",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "返信する",
+      "name": "card_reply",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+          "to_list": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+          "to_list",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "カードを移す",
+      "name": "card_move",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "カードを消す",
+      "name": "card_delete",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "カードを戻す",
+      "name": "card_restore",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "from_list": {
+            "type": "string",
+          },
+          "from_session": {
+            "type": "string",
+          },
+          "notify": {
+            "type": "boolean",
+          },
+          "numbers": {
+            "type": "string",
+          },
+          "to_list": {
+            "type": "string",
+          },
+          "to_session": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "from_list",
+          "numbers",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "別のセッションへコピー",
+      "name": "cards_copy",
+    },
+  ],
+}
+`;
+
+exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す） 1`] = `
+{
+  "allowedTools": [
+    "mcp__tanacode-sessions__list_sessions",
+    "mcp__tanacode-sessions__read_session",
+    "mcp__tanacode-sessions__get_session_diff",
+    "mcp__tanacode-sessions__get_session",
+    "mcp__tanacode-sessions__wait_sessions",
+    "mcp__tanacode-sessions__send_message",
+    "mcp__tanacode-sessions__answer_question",
+  ],
+  "tools": [
+    {
+      "inputSchema": {
+        "properties": {
+          "include_archived": {
+            "type": "boolean",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "セッションの一覧",
+      "name": "list_sessions",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+          "turns": {
+            "type": "integer",
+          },
+        },
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "セッションを読む",
+      "name": "read_session",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "type": "string",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "セッションの変更",
+      "name": "get_session_diff",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "セッションの状態",
+      "name": "get_session",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "session_ids": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "timeout_seconds": {
+            "type": "integer",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "子セッションを待つ",
+      "name": "wait_sessions",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
+            "type": "string",
+          },
+          "folder": {
+            "type": "string",
+          },
+          "model": {
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+          "permission_mode": {
+            "enum": [
+              "manual",
+              "acceptEdits",
+              "plan",
+              "auto",
+              "bypassPermissions",
+            ],
+            "type": "string",
+          },
+          "prompt": {
+            "type": "string",
+          },
+          "worktree": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "prompt",
+          "worktree",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "子セッションを始める",
+      "name": "start_session",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "message": {
+            "type": "string",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+          "message",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "子セッションに指示",
+      "name": "send_message",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "choices": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "other": {
+            "type": "string",
+          },
+          "question": {
+            "type": "string",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+          "question",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "子セッションの質問に答える",
+      "name": "answer_question",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "子セッションを中断",
+      "name": "stop_session",
+    },
+  ],
+}
+`;
+
+exports[`MCP サーバー tanacode-walkthrough の定義 > ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す） 1`] = `
+{
+  "allowedTools": [
+    "mcp__tanacode-walkthrough__start_walkthrough",
+    "mcp__tanacode-walkthrough__show_code",
+    "mcp__tanacode-walkthrough__walkthrough_status",
+  ],
+  "tools": [
+    {
+      "inputSchema": {
+        "properties": {
+          "steps": {
+            "items": {
+              "properties": {
+                "body": {
+                  "type": "string",
+                },
+                "end_line": {
+                  "type": "integer",
+                },
+                "path": {
+                  "type": "string",
+                },
+                "start_line": {
+                  "type": "integer",
+                },
+                "title": {
+                  "type": "string",
+                },
+                "view": {
+                  "enum": [
+                    "file",
+                    "diff",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "path",
+                "start_line",
+                "title",
+                "body",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "title": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "title",
+          "steps",
+        ],
+        "type": "object",
+      },
+      "kind": "show",
+      "label": "始める",
+      "name": "start_walkthrough",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "type": "string",
+          },
+          "end_line": {
+            "type": "integer",
+          },
+          "path": {
+            "type": "string",
+          },
+          "start_line": {
+            "type": "integer",
+          },
+          "view": {
+            "enum": [
+              "file",
+              "diff",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "path",
+          "start_line",
+          "body",
+        ],
+        "type": "object",
+      },
+      "kind": "show",
+      "label": "コードを示す",
+      "name": "show_code",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "今の場所",
+      "name": "walkthrough_status",
+    },
+  ],
+}
+`;

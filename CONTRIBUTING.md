@@ -163,6 +163,28 @@ PR と develop・main への push で、次のものを流します。
 - アプリは macOS 専用なので、アプリ本体と Claude Code との互換性の確認は macOS で流します。Linux で動くかは確かめません。Claude Code は OS で画面の描き方が違う（応答の印は macOS では ⏺、Linux では ●）ので、互換性の確認と控えの記録も macOS で行います。型チェック・Storybook・デモのサイトは OS に依らないので、ubuntu で流します。
 - public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
 
+### テストの部品
+
+- `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
+  - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
+- `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
+- テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（通るだけのテストにしない）。
+
+### 配線と契約
+
+型チェックとテストで、画面と main の間（IPC）と、Claude Code と tanacode の間（MCP のツール）の食い違いを止めます。
+
+- IPC: チャンネルを足すときは、`src/shared/ipc.ts` の `IpcChannel` と、3 つの表のどれか 1 つに足します。表の型は、それを呼ぶ・受ける `TanacodeApi` のメソッドから取ります。
+  - `IpcInvoke`: 画面 → main の呼び出し（preload の `invoke` ↔ main の `handle`）
+  - `IpcSend`: 画面 → main の知らせ（preload の `send` ↔ main の `listen`）
+  - `IpcEvent`: main → 画面の知らせ（main の `send` ↔ preload の `subscribe`）
+  - preload と main の両方がこの表で型を付けるので、引数の順番・型、戻り値、知らせの中身が食い違うと、型チェックで止まります。同じ型の引数どうしの入れ替え（`mergeBase` と `relPath` など）は止まりません。
+  - `test/ipc-wiring.test.ts` が、型では分からないものを確かめます。preload が使うチャンネルに main の受け口がちょうど 1 つあるか、main が送る知らせを画面が受けるか、使っていないチャンネル・どの表にも無いチャンネル（型チェックで止める）が無いか、です。
+- MCP: `test/mcp-contract.test.ts` が、4 つのサーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）について確かめます。
+  - 定義の形（名前・ラベルが重ならない、説明がある、引数に型と説明がある、必須の引数が properties にある）
+  - 名前・種類・引数の形・許可済みにするツールが、控え（`test/__snapshots__/mcp-contract.test.ts.snap`）と同じか。種類を変えると許可の確認の有無が変わるので、控えの差分で気づけるようにしています。説明の文は控えに入れません。定義を変えたら `npx vitest run test/mcp-contract.test.ts -u` で控えを書き直し、差分を見てからコミットします。
+  - 制御（`*-control.ts`）が、定義にあるツールを漏れなく振り分けるか（ソースから読む。セッション・チェックリスト・ウォークスルーは、動かしても確かめる）。制御が読む引数（`args.xxx`）が、どれかのツールのスキーマにあるか（無い引数は、Claude が渡せないので黙って動かない）
+
 ### 画面のテスト
 
 - 画面（renderer）のテストは `test/renderer/` に置き、ファイルの先頭の `// @vitest-environment jsdom` で DOM の代わり（jsdom）を使います。型は `tsconfig.web.json` で確かめます（DOM の型が要るため）。
@@ -253,7 +275,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - セッションごとに、node-pty で本物の `claude` を起動します。
   - 起動するのはアプリではなく、pty ホストという常駐プロセス。アプリを再起動しても Claude Code を止めないためです。
-    - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケットでやりとりします。パスが長すぎるときは一時フォルダに置きます。
+    - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケット（`pty-host.sock`。`0600`。つながれば任意のコマンドを起動できるため、自分だけにする）でやりとりします。パスが長すぎるときは一時フォルダに置きます。
     - ホストは Claude Code の画面を仮想の端末で持っています。起動し直したアプリは、その画面（`@xterm/addon-serialize`）と、Claude Code が起動した時刻を受け取って引き継ぎます。その時刻より後の会話ログの行は、今も動いている Claude Code が書いたものとして扱います。途中のターン・バックグラウンドのタスク・質問は、終わったことにせず、そのまま追いかけます。
     - 引き継いだときは、アプリが止まっている間に書かれた statusLine のファイルも、次の書き込みを待たずに読みます。止まっている間に `/clear` で会話が変わっていても、すぐ新しい会話ログに乗り換えます。
     - アプリも Claude Code も無くなって 10 秒たつと、ホストは自分で終わります。
@@ -647,7 +669,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 | ファイル | 中身 |
 | --- | --- |
-| `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など） |
+| `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
 | `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）） |
 | `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
@@ -722,7 +744,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す。予約を送れなかったときも）
   - `scheduled-messages.ts`: 時刻を指定して送信（予約）。保存・時刻になったら手が空くのを待って送る・時刻を過ぎていたもの・取り消し
   - `translate.ts`: チャットの翻訳（補助プログラムのパスと使えるか・画面から来た値の検査・補助プログラムの起動と返事の読み取り・依頼を 1 つずつ動かす `Translator`）
-- `src/preload`: renderer に `window.tanacode` の API を公開する
+- `src/preload`: renderer に `window.tanacode` の API を公開する。チャンネルごとの引数・戻り値・知らせの中身は、`src/shared/ipc.ts` の表（`IpcInvoke`・`IpcSend`・`IpcEvent`）で、main の受け口（`handle`・`listen`）・送り口（`send`）と一緒に型を付ける（下の「テストと CI」の「配線と契約」）
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行）
