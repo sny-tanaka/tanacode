@@ -194,6 +194,8 @@ PR と develop・main への push で、次のものを流します。
   - happy-dom は使いません。DOMPurify（Markdown の無害化）の結果が、本物のブラウザと食い違ったためです。
 - `test/renderer/mock-api.ts`: `window.tanacode` の偽物。呼び出し（`argsOf('sessions.submit')` など）を控え、知らせ（`emit('sessions.onChat', …)`）をテストから送ります。返す値は `responses` に「名前空間.メソッド」で決めます。
 - `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。使う部品のテストの先頭で読み込みます。
+- 画面のボタン・入力は、テストでひとつ残らず押し、押した結果（IPC に渡った引数・表示・props の受け手に渡った値）まで確かめます。セッションまわり・ソース管理・エクスプローラー・検索・エディタは `press-sessions*.test.tsx`。
+  - Monaco エディタを使う部品（エディタ・差分）のボタンは、`editor/monaco.ts` を `vi.mock` で作り物（モデルの内容の読み書きと、内容が変わった知らせだけを持つ）に差し替えて押します（`press-sessions-editor.test.tsx`）。エディタそのものの動き（打ち込み・色付けなど）は E2E で確かめます。
 - 部品は Testing Library（`@testing-library/react`）で描き、押す・打つ操作をして、`window.tanacode` に渡ったもの（送ったキー・本文など）を確かめます。Monaco エディタ・xterm・webview を使う部品は、アプリ本体の E2E で確かめます。
 
 ### カバレッジ
