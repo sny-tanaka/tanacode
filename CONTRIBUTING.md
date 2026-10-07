@@ -155,7 +155,7 @@ PR と develop・main への push で、次のものを流します。
 | ワークフロー | ジョブ | 内容 | ランナー |
 | --- | --- | --- | --- |
 | `ci.yml` | `typecheck` | 型チェック（`npm run typecheck`） | ubuntu |
-| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper）と署名も確かめる | macOS |
+| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる | macOS |
 | `ci.yml` | `storybook` | Storybook のビルド | ubuntu |
 | `claude-code-check.yml` | `check` | `npm test` と `npm run test:cli`（下の「Claude Code との互換性の確かめ方」）。カバレッジも測る | ubuntu |
 | `demo-site.yml` | `build`・`tour`・`tour-sp` | デモのサイトのビルドと、ツアーが最後まで流れるか（下の「デモのサイト」） | ubuntu |
@@ -821,3 +821,4 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - 画面に同梱した依存は rollup-plugin-license で集めます。CSS だけを読み込むフォントと、main が使う依存（node_modules ごと入るもの）は書き足します。
   - GPL 系のライセンスや、ライセンスの分からない依存が混ざると、ビルドが止まります。
 - アプリの `Contents/Resources/` には、この表示と一緒に、tanacode の `LICENSE.txt`、Electron と Chromium のライセンスも入れます。
+  - Electron と Chromium のライセンスは、Electron の本体（`node_modules/electron/dist/`）にあります。Electron は `npm install` では本体を取り込まず、初めて使うときに取り込むので、`scripts/electron-builder.mjs` がビルドの前に取り込みます。CI の `app` のジョブで、4 つとも入っているかを確かめます。

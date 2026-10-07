@@ -48,14 +48,21 @@ jobs:
       - run: npx electron-vite build
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-      # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）
+      # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）。
+      # electron-builder は PR のビルドでは署名を飛ばすので、CSC_FOR_PULL_REQUEST で署名させる
+      # （このジョブは証明書も Secrets も使わないので、PR のコードに署名させても漏れるものは無い）
       - run: node scripts/electron-builder.mjs --mac --publish never
+        env:
+          CSC_FOR_PULL_REQUEST: 'true'
       - name: できた .app を確かめる
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
           echo "できた .app: $app"
-          # 同梱するもの（翻訳の補助プログラム・pty を動かす node-pty・Dock に出ない Helper）
+          # 同梱するもの（翻訳の補助プログラム・pty を動かす node-pty・Dock に出ない Helper・ライセンスの表示）
           test -x "$app/Contents/Resources/tanacode-translate"
+          for file in LICENSE.txt LICENSE.electron.txt LICENSES.chromium.html THIRD_PARTY_NOTICES.txt; do
+            test -s "$app/Contents/Resources/$file" || { echo "::error::$file が .app に入っていません"; exit 1; }
+          done
           test -d "$app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"
           test -x "$app/Contents/Frameworks/tanacode Helper.app/Contents/MacOS/tanacode Helper"
           codesign --verify --deep --strict "$app"
