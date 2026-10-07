@@ -4,9 +4,12 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type MenuItem, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import {
   IpcChannel,
+  type IpcEvent,
+  type IpcInvoke,
+  type IpcSend,
   type ArchiveOptions,
   type DiscoveredSession,
   type GitAction,
@@ -124,9 +127,22 @@ function isPreviewDestination(url: string, isMainFrame: boolean): boolean {
   return !isMainFrame && (url === 'about:srcdoc' || /^(blob|data):/i.test(url));
 }
 
-function send(channel: string, payload: unknown): void {
+// 画面への知らせ・画面からの呼び出しと知らせの受け口。チャンネルごとの中身・引数・戻り値は、shared/ipc.ts の表（IpcEvent・IpcInvoke・IpcSend）で決まる。
+// preload も同じ表で型を付けるので、食い違うと型チェックで止まる
+function send<C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]): void {
   const contents = mainWindow?.webContents;
   if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+}
+
+function handle<C extends keyof IpcInvoke>(
+  channel: C,
+  listener: (event: IpcMainInvokeEvent, ...args: Parameters<IpcInvoke[C]>) => ReturnType<IpcInvoke[C]> | Awaited<ReturnType<IpcInvoke[C]>>,
+): void {
+  ipcMain.handle(channel, listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+}
+
+function listen<C extends keyof IpcSend>(channel: C, listener: (event: IpcMainEvent, ...args: Parameters<IpcSend[C]>) => void): void {
+  ipcMain.on(channel, listener as (event: IpcMainEvent, ...args: unknown[]) => void);
 }
 
 // 前に閉じたときのウインドウの位置と大きさ。次の起動で同じところに開く
@@ -288,7 +304,12 @@ const liveNotifications = new Set<Notification>();
 const MAX_LIVE_NOTIFICATIONS = 50;
 
 // 通知のタイトルはアプリの名前、サブタイトルはセッション名。clickChannel: クリックで画面に送る知らせ（既定はそのセッションを選ぶ）
-function notify(sessionId: string, sessionTitle: string | null, message: string, clickChannel: string = IpcChannel.SessionsSelect): void {
+function notify(
+  sessionId: string,
+  sessionTitle: string | null,
+  message: string,
+  clickChannel: typeof IpcChannel.SessionsSelect | typeof IpcChannel.BrowserShow = IpcChannel.SessionsSelect,
+): void {
   if (!settings.notificationsEnabled()) return;
   // 子セッションは人に通知しない。作業の終わり・質問・人の対応待ちは親に知らせ、人を呼ぶときは親から伝える（sessions-control.ts）
   if (manager?.parentOf(sessionId)) return;
@@ -314,17 +335,17 @@ function notify(sessionId: string, sessionTitle: string | null, message: string,
 }
 
 function registerIpc(): void {
-  ipcMain.handle(IpcChannel.SessionsList, () => manager.list());
+  handle(IpcChannel.SessionsList, () => manager.list());
   const isDirectory = (path: string) => stat(path).then((s) => s.isDirectory(), () => false);
-  ipcMain.handle(IpcChannel.SessionsCreate, async (_e, cwd: string, options: NewSessionOptions) => {
+  handle(IpcChannel.SessionsCreate, async (_e, cwd: string, options: NewSessionOptions) => {
     if (!(await isDirectory(cwd))) throw new Error(`フォルダが見つかりません: ${cwd}`);
     return options.worktree ? manager.createInWorktree(cwd, options) : manager.create(cwd, options);
   });
-  ipcMain.handle(IpcChannel.FolderPick, () => pickFolder());
-  ipcMain.handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
-  ipcMain.handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
-  ipcMain.handle(IpcChannel.FolderCommands, (_e, cwd: string) => listCommands(cwd, null));
-  ipcMain.handle(IpcChannel.FolderOpen, async (_e, cwd: string) => {
+  handle(IpcChannel.FolderPick, () => pickFolder());
+  handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
+  handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
+  handle(IpcChannel.FolderCommands, (_e, cwd: string) => listCommands(cwd, null));
+  handle(IpcChannel.FolderOpen, async (_e, cwd: string) => {
     const known = pickedFolders.has(cwd) || manager.list().some((s) => s.cwd === cwd || s.worktree?.root === cwd);
     if (!known || !(await isDirectory(cwd))) throw new Error(`フォルダを開けません: ${cwd}`);
     const id = `folder:${randomUUID()}`;
@@ -332,7 +353,7 @@ function registerIpc(): void {
     watchers.retain(cwd);
     return id;
   });
-  ipcMain.on(IpcChannel.FolderClose, (_e, id: string) => {
+  listen(IpcChannel.FolderClose, (_e, id: string) => {
     const cwd = folderViews.get(id);
     if (cwd === undefined) return;
     folderViews.delete(id);
@@ -341,31 +362,31 @@ function registerIpc(): void {
     shells.killOwner(id);
     browser.forget(id);
   });
-  ipcMain.handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
-  ipcMain.handle(IpcChannel.SessionsArchive, (_e, id: string, options?: ArchiveOptions) => {
+  handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
+  handle(IpcChannel.SessionsArchive, (_e, id: string, options?: ArchiveOptions) => {
     // 子セッションも一緒にアーカイブされる
     for (const target of [id, ...manager.childrenOf(id)]) browser.forget(target);
     // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
     if (options?.removeWorktree) shells.killOwner(id);
     return manager.archive(id, options);
   });
-  ipcMain.handle(IpcChannel.SessionsWorktreeLeftovers, (_e, id: string) => manager.worktreeLeftovers(id));
-  ipcMain.handle(IpcChannel.SessionsUnarchive, (_e, id: string) => manager.unarchive(id));
-  ipcMain.handle(IpcChannel.SessionsSnapshot, (_e, id: string) => manager.snapshot(id));
-  ipcMain.handle(IpcChannel.SessionsSubmit, (_e, id: string, text: string, attachments: string[]) =>
+  handle(IpcChannel.SessionsWorktreeLeftovers, (_e, id: string) => manager.worktreeLeftovers(id));
+  handle(IpcChannel.SessionsUnarchive, (_e, id: string) => manager.unarchive(id));
+  handle(IpcChannel.SessionsSnapshot, (_e, id: string) => manager.snapshot(id));
+  handle(IpcChannel.SessionsSubmit, (_e, id: string, text: string, attachments: string[]) =>
     manager.submit(id, String(text ?? ''), Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : []),
   );
-  ipcMain.on(IpcChannel.SessionsInterrupt, (_e, id: string) => manager.interrupt(id));
-  ipcMain.handle(IpcChannel.ScheduledList, () => scheduled.list());
-  ipcMain.handle(IpcChannel.ScheduledAdd, (_e, sessionId: string, text: string, attachments: string[], at: number) => {
+  listen(IpcChannel.SessionsInterrupt, (_e, id: string) => manager.interrupt(id));
+  handle(IpcChannel.ScheduledList, () => scheduled.list());
+  handle(IpcChannel.ScheduledAdd, (_e, sessionId: string, text: string, attachments: string[], at: number) => {
     const paths = Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : [];
     scheduled.add(String(sessionId), String(text ?? ''), paths, Number(at));
   });
-  ipcMain.handle(IpcChannel.ScheduledReschedule, (_e, id: string, at: number) => scheduled.reschedule(String(id), Number(at)));
-  ipcMain.handle(IpcChannel.ScheduledSendNow, (_e, id: string) => scheduled.sendNow(String(id)));
-  ipcMain.handle(IpcChannel.ScheduledCancel, (_e, id: string) => scheduled.cancel(String(id)));
-  ipcMain.handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
-  ipcMain.handle(IpcChannel.SessionsRemove, async (_e, id: string, options?: ArchiveOptions) => {
+  handle(IpcChannel.ScheduledReschedule, (_e, id: string, at: number) => scheduled.reschedule(String(id), Number(at)));
+  handle(IpcChannel.ScheduledSendNow, (_e, id: string) => scheduled.sendNow(String(id)));
+  handle(IpcChannel.ScheduledCancel, (_e, id: string) => scheduled.cancel(String(id)));
+  handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
+  handle(IpcChannel.SessionsRemove, async (_e, id: string, options?: ArchiveOptions) => {
     shells.killOwner(id);
     const targets = [id, ...manager.childrenOf(id)];
     for (const target of targets) browser.forget(target);
@@ -375,25 +396,25 @@ function registerIpc(): void {
     for (const target of targets) if (!manager.summary(target)) walkthroughControl?.forget(target);
     return removal;
   });
-  ipcMain.handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
-  ipcMain.handle(IpcChannel.ChatImage, (_e, key: string) => imageOf(key));
-  ipcMain.handle(IpcChannel.SessionsExportSource, (_e, id: string) => manager.exportSource(id));
-  ipcMain.handle(IpcChannel.SessionsExportSave, (_e, html: unknown, fileName: unknown) => saveExport(html, fileName));
-  ipcMain.on(IpcChannel.SessionsExportReveal, (_e, path: string) => {
+  handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
+  handle(IpcChannel.ChatImage, (_e, key: string) => imageOf(key));
+  handle(IpcChannel.SessionsExportSource, (_e, id: string) => manager.exportSource(id));
+  handle(IpcChannel.SessionsExportSave, (_e, html: unknown, fileName: unknown) => saveExport(html, fileName));
+  listen(IpcChannel.SessionsExportReveal, (_e, path: string) => {
     if (savedExports.has(path)) shell.showItemInFolder(path);
   });
-  ipcMain.handle(IpcChannel.SessionsDiscover, () => discoverSessions(manager.claudeSessionIds()));
-  ipcMain.handle(IpcChannel.SessionsImport, (_e, s: DiscoveredSession) => manager.importSession(s.claudeSessionId, s.cwd, s.title));
-  ipcMain.handle(IpcChannel.SessionsConfigure, (_e, id: string, options: SessionOptions) => manager.configure(id, options));
-  ipcMain.handle(IpcChannel.SessionsRestart, (_e, id: string) => manager.restart(id));
+  handle(IpcChannel.SessionsDiscover, () => discoverSessions(manager.claudeSessionIds()));
+  handle(IpcChannel.SessionsImport, (_e, s: DiscoveredSession) => manager.importSession(s.claudeSessionId, s.cwd, s.title));
+  handle(IpcChannel.SessionsConfigure, (_e, id: string, options: SessionOptions) => manager.configure(id, options));
+  handle(IpcChannel.SessionsRestart, (_e, id: string) => manager.restart(id));
   // チェックリスト。読む・書き換える（画面から届いた形を確かめる）・別のセッションへコピーする・セッションごとの未読の数
-  ipcMain.handle(IpcChannel.ChecklistGet, (_e, id: string) => (manager.summary(id) ? checklists.lists(id) : []));
-  ipcMain.handle(IpcChannel.ChecklistApply, (_e, id: string, op: unknown) => {
+  handle(IpcChannel.ChecklistGet, (_e, id: string) => (manager.summary(id) ? checklists.lists(id) : []));
+  handle(IpcChannel.ChecklistApply, (_e, id: string, op: unknown) => {
     if (!manager.summary(id)) throw new Error('セッションが見つかりません');
     checklistControl?.apply(id, checkOp(op));
   });
-  ipcMain.handle(IpcChannel.ChecklistCopy, (_e, request: unknown) => checklistControl?.copy(checkCopyRequest(request)));
-  ipcMain.handle(IpcChannel.ChecklistUnread, () => {
+  handle(IpcChannel.ChecklistCopy, (_e, request: unknown) => checklistControl?.copy(checkCopyRequest(request)));
+  handle(IpcChannel.ChecklistUnread, () => {
     const counts: Record<string, number> = {};
     for (const s of manager.list()) {
       const n = unreadCount(checklists.lists(s.id));
@@ -402,17 +423,17 @@ function registerIpc(): void {
     return counts;
   });
   // ウォークスルー。今のもの・人が見るステップを変えた・終えた
-  ipcMain.handle(IpcChannel.WalkthroughGet, () => walkthroughControl?.list() ?? []);
-  ipcMain.handle(IpcChannel.WalkthroughGo, (_e, id: string, index: unknown) => walkthroughControl?.go(String(id), Number(index)));
-  ipcMain.handle(IpcChannel.WalkthroughClose, (_e, id: string) => walkthroughControl?.close(String(id)));
+  handle(IpcChannel.WalkthroughGet, () => walkthroughControl?.list() ?? []);
+  handle(IpcChannel.WalkthroughGo, (_e, id: string, index: unknown) => walkthroughControl?.go(String(id), Number(index)));
+  handle(IpcChannel.WalkthroughClose, (_e, id: string) => walkthroughControl?.close(String(id)));
   // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
   const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
-  ipcMain.handle(IpcChannel.WalkthroughDraftComment, async (_e, id: string) => {
+  handle(IpcChannel.WalkthroughDraftComment, async (_e, id: string) => {
     const w = manager.summary(String(id)) ? walkthroughControl?.get(String(id)) : null;
     if (!w || !walkthroughControl) return { ok: false, reason: 'ウォークスルーがありません。' };
     return draftWalkthroughComment(cwdOf(String(id)), w, walkthroughControl.postedUrl(w.id), commentDeps);
   });
-  ipcMain.handle(IpcChannel.WalkthroughPostComment, async (_e, id: string, body: unknown, attribution: unknown) => {
+  handle(IpcChannel.WalkthroughPostComment, async (_e, id: string, body: unknown, attribution: unknown) => {
     const w = manager.summary(String(id)) ? walkthroughControl?.get(String(id)) : null;
     if (!w || !walkthroughControl) throw new Error('ウォークスルーがありません。');
     if (typeof body !== 'string') throw new Error('本文がありません。');
@@ -420,50 +441,50 @@ function registerIpc(): void {
     walkthroughControl.markPosted(w.id, url);
     return url;
   });
-  ipcMain.handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
-  ipcMain.handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
-  ipcMain.handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));
-  ipcMain.handle(IpcChannel.ScreenActivityGet, (_e, id: string) => manager.activity(id));
-  ipcMain.handle(IpcChannel.WorkflowsGet, (_e, id: string) => manager.workflows(id));
-  ipcMain.handle(IpcChannel.ScreenSetMode, (_e, id: string, mode: PermissionMode) => manager.setMode(id, mode));
-  ipcMain.handle(IpcChannel.ScreenRewind, (_e, id: string, text: string) => manager.rewind(id, text));
-  ipcMain.handle(IpcChannel.WriteFile, (_e, id: string, relPath: string, text: string) =>
+  handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
+  handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
+  handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));
+  handle(IpcChannel.ScreenActivityGet, (_e, id: string) => manager.activity(id));
+  handle(IpcChannel.WorkflowsGet, (_e, id: string) => manager.workflows(id));
+  handle(IpcChannel.ScreenSetMode, (_e, id: string, mode: PermissionMode) => manager.setMode(id, mode));
+  handle(IpcChannel.ScreenRewind, (_e, id: string, text: string) => manager.rewind(id, text));
+  handle(IpcChannel.WriteFile, (_e, id: string, relPath: string, text: string) =>
     new Workspace(cwdOf(id)).writeFile(relPath, text),
   );
   const scm = (id: string) => new SourceControl(cwdOf(id));
-  ipcMain.handle(IpcChannel.GitState, (_e, id: string) => scm(id).state());
-  ipcMain.handle(IpcChannel.GitBranches, (_e, id: string) => scm(id).branches());
-  ipcMain.handle(IpcChannel.GitDiffSides, (_e, id: string, relPath: string, staged: boolean) => scm(id).diffSides(relPath, staged));
-  ipcMain.handle(IpcChannel.GitBranchDiffSides, (_e, id: string, mergeBase: string, relPath: string) =>
+  handle(IpcChannel.GitState, (_e, id: string) => scm(id).state());
+  handle(IpcChannel.GitBranches, (_e, id: string) => scm(id).branches());
+  handle(IpcChannel.GitDiffSides, (_e, id: string, relPath: string, staged: boolean) => scm(id).diffSides(relPath, staged));
+  handle(IpcChannel.GitBranchDiffSides, (_e, id: string, mergeBase: string, relPath: string) =>
     scm(id).branchDiffSides(mergeBase, relPath),
   );
-  ipcMain.handle(IpcChannel.GitBaseline, (_e, id: string, mergeBase: string, relPath: string) => scm(id).baseline(mergeBase, relPath));
-  ipcMain.handle(IpcChannel.GitLastMessage, (_e, id: string) => scm(id).lastCommitMessage());
-  ipcMain.handle(IpcChannel.GitRun, (_e, id: string, action: GitAction) => runGit(scm(id), action));
-  ipcMain.handle(IpcChannel.Search, (_e, id: string, query: string, options: SearchOptions) =>
+  handle(IpcChannel.GitBaseline, (_e, id: string, mergeBase: string, relPath: string) => scm(id).baseline(mergeBase, relPath));
+  handle(IpcChannel.GitLastMessage, (_e, id: string) => scm(id).lastCommitMessage());
+  handle(IpcChannel.GitRun, (_e, id: string, action: GitAction) => runGit(scm(id), action));
+  handle(IpcChannel.Search, (_e, id: string, query: string, options: SearchOptions) =>
     new Workspace(cwdOf(id)).search(query, options),
   );
-  ipcMain.handle(IpcChannel.ListFiles, (_e, id: string) => new Workspace(cwdOf(id)).listFiles());
-  ipcMain.handle(IpcChannel.CommandsList, (_e, id: string) => listCommands(manager.cwdOf(id), manager.transcriptOf(id)));
-  ipcMain.handle(IpcChannel.AttachmentSave, (_e, name: string, data: Uint8Array) => saveAttachment(name, data));
-  ipcMain.handle(IpcChannel.SubagentsGet, (_e, id: string) => manager.subagents(id));
-  ipcMain.handle(IpcChannel.TasksBash, (_e, id: string) => manager.bashTasks(id));
-  ipcMain.handle(IpcChannel.KnowledgeGet, (_e, id: string) => manager.knowledge(id));
-  ipcMain.handle(IpcChannel.ContextGet, (_e, id: string) => manager.context(id));
-  ipcMain.handle(IpcChannel.SettingsFilesList, () => settingsFiles.list());
-  ipcMain.handle(IpcChannel.SettingsFilesPick, () => pickSettingsFile());
-  ipcMain.handle(IpcChannel.SettingsFilesAdd, (_e, path: string, name?: string) => settingsFiles.add(path, name));
-  ipcMain.handle(IpcChannel.SettingsFilesRename, (_e, id: string, name: string) => settingsFiles.rename(id, name));
-  ipcMain.handle(IpcChannel.SettingsFilesRemove, (_e, id: string) => settingsFiles.remove(id));
-  ipcMain.handle(IpcChannel.ModelsGet, () => readModelCatalog().catch(() => null));
-  ipcMain.handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
-  ipcMain.handle(IpcChannel.UsageGet, () => usage.get());
-  ipcMain.handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
-  ipcMain.handle(IpcChannel.AppUpdateGet, () => appUpdates.get());
-  ipcMain.handle(IpcChannel.UsageRefresh, () => usage.refresh());
-  ipcMain.handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
-  ipcMain.handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
-  ipcMain.handle(IpcChannel.ModelsRefresh, () =>
+  handle(IpcChannel.ListFiles, (_e, id: string) => new Workspace(cwdOf(id)).listFiles());
+  handle(IpcChannel.CommandsList, (_e, id: string) => listCommands(manager.cwdOf(id), manager.transcriptOf(id)));
+  handle(IpcChannel.AttachmentSave, (_e, name: string, data: Uint8Array) => saveAttachment(name, data));
+  handle(IpcChannel.SubagentsGet, (_e, id: string) => manager.subagents(id));
+  handle(IpcChannel.TasksBash, (_e, id: string) => manager.bashTasks(id));
+  handle(IpcChannel.KnowledgeGet, (_e, id: string) => manager.knowledge(id));
+  handle(IpcChannel.ContextGet, (_e, id: string) => manager.context(id));
+  handle(IpcChannel.SettingsFilesList, () => settingsFiles.list());
+  handle(IpcChannel.SettingsFilesPick, () => pickSettingsFile());
+  handle(IpcChannel.SettingsFilesAdd, (_e, path: string, name?: string) => settingsFiles.add(path, name));
+  handle(IpcChannel.SettingsFilesRename, (_e, id: string, name: string) => settingsFiles.rename(id, name));
+  handle(IpcChannel.SettingsFilesRemove, (_e, id: string) => settingsFiles.remove(id));
+  handle(IpcChannel.ModelsGet, () => readModelCatalog().catch(() => null));
+  handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
+  handle(IpcChannel.UsageGet, () => usage.get());
+  handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
+  handle(IpcChannel.AppUpdateGet, () => appUpdates.get());
+  handle(IpcChannel.UsageRefresh, () => usage.refresh());
+  handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
+  handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
+  handle(IpcChannel.ModelsRefresh, () =>
     readModelCatalog().then(
       (catalog) => (catalog ? { catalog } : { error: 'Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません' }),
       (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }),
@@ -472,37 +493,37 @@ function registerIpc(): void {
   // チャットの思考・応答の翻訳（同梱の補助プログラムで、macOS 標準の翻訳を呼ぶ）
   const translateHelper = translateHelperPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
   const translator = new Translator(translateHelper);
-  ipcMain.handle(IpcChannel.TranslateAvailable, () => translateAvailable(process.getSystemVersion(), existsSync(translateHelper)));
-  ipcMain.handle(IpcChannel.TranslateRun, (_e, texts: unknown) => translator.translate(translateTexts(texts)));
-  ipcMain.handle(IpcChannel.TranslateOpenSettings, () => shell.openExternal(LANGUAGE_SETTINGS_URL));
-  ipcMain.handle(IpcChannel.TasksAgentLog, (_e, id: string, ref: AgentLogRef) => manager.agentLog(id, ref));
-  ipcMain.handle(IpcChannel.TasksStop, (_e, id: string, ref: TaskRef) => manager.stopTask(id, ref));
-  ipcMain.handle(IpcChannel.ScreenChoose, (_e, id: string, choice: ScreenChoice) => manager.choose(id, choice));
-  ipcMain.on(IpcChannel.SessionsFocus, (_e, id: string | null) => manager.focus(id));
-  ipcMain.on(IpcChannel.PtyWrite, (_e, id: string, data: string) => manager.write(id, data));
-  ipcMain.on(IpcChannel.PtyResize, (_e, id: string, cols: number, rows: number) => manager.resize(id, cols, rows));
-  ipcMain.on(IpcChannel.PtyResetSize, (_e, id: string) => manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
-  ipcMain.handle(IpcChannel.ShellCreate, (_e, id: string, cols: number, rows: number) =>
+  handle(IpcChannel.TranslateAvailable, () => translateAvailable(process.getSystemVersion(), existsSync(translateHelper)));
+  handle(IpcChannel.TranslateRun, (_e, texts: unknown) => translator.translate(translateTexts(texts)));
+  handle(IpcChannel.TranslateOpenSettings, () => shell.openExternal(LANGUAGE_SETTINGS_URL));
+  handle(IpcChannel.TasksAgentLog, (_e, id: string, ref: AgentLogRef) => manager.agentLog(id, ref));
+  handle(IpcChannel.TasksStop, (_e, id: string, ref: TaskRef) => manager.stopTask(id, ref));
+  handle(IpcChannel.ScreenChoose, (_e, id: string, choice: ScreenChoice) => manager.choose(id, choice));
+  listen(IpcChannel.SessionsFocus, (_e, id: string | null) => manager.focus(id));
+  listen(IpcChannel.PtyWrite, (_e, id: string, data: string) => manager.write(id, data));
+  listen(IpcChannel.PtyResize, (_e, id: string, cols: number, rows: number) => manager.resize(id, cols, rows));
+  listen(IpcChannel.PtyResetSize, (_e, id: string) => manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
+  handle(IpcChannel.ShellCreate, (_e, id: string, cols: number, rows: number) =>
     shells.create(id, cwdOf(id), cols, rows),
   );
-  ipcMain.on(IpcChannel.ShellWrite, (_e, id: string, data: string) => shells.write(id, data));
-  ipcMain.on(IpcChannel.ShellResize, (_e, id: string, cols: number, rows: number) => shells.resize(id, cols, rows));
-  ipcMain.on(IpcChannel.ShellKill, (_e, id: string) => shells.kill(id));
-  ipcMain.handle(IpcChannel.WorkspaceInfo, (_e, id: string) => new Workspace(cwdOf(id)).info());
-  ipcMain.handle(IpcChannel.ListDir, (_e, id: string, relPath: string) => new Workspace(cwdOf(id)).listDir(relPath));
-  ipcMain.handle(IpcChannel.ReadFile, (_e, id: string, relPath: string) => new Workspace(cwdOf(id)).readFile(relPath));
-  ipcMain.handle(IpcChannel.ReadImage, (_e, id: string, relPath: string) =>
+  listen(IpcChannel.ShellWrite, (_e, id: string, data: string) => shells.write(id, data));
+  listen(IpcChannel.ShellResize, (_e, id: string, cols: number, rows: number) => shells.resize(id, cols, rows));
+  listen(IpcChannel.ShellKill, (_e, id: string) => shells.kill(id));
+  handle(IpcChannel.WorkspaceInfo, (_e, id: string) => new Workspace(cwdOf(id)).info());
+  handle(IpcChannel.ListDir, (_e, id: string, relPath: string) => new Workspace(cwdOf(id)).listDir(relPath));
+  handle(IpcChannel.ReadFile, (_e, id: string, relPath: string) => new Workspace(cwdOf(id)).readFile(relPath));
+  handle(IpcChannel.ReadImage, (_e, id: string, relPath: string) =>
     new Workspace(cwdOf(id)).readImage(relPath).catch(() => null),
   );
-  ipcMain.on(IpcChannel.BrowserAttach, (_e, id: string, tabId: string, webContentsId: number) => browser.attach(id, tabId, webContentsId));
-  ipcMain.on(IpcChannel.BrowserActivate, (_e, id: string, tabId: string | null) => browser.activate(id, tabId));
-  ipcMain.handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
+  listen(IpcChannel.BrowserAttach, (_e, id: string, tabId: string, webContentsId: number) => browser.attach(id, tabId, webContentsId));
+  listen(IpcChannel.BrowserActivate, (_e, id: string, tabId: string | null) => browser.activate(id, tabId));
+  handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) return shell.openExternal(url);
   });
-  ipcMain.handle(IpcChannel.BrowserAsksGet, () => browser.pendingAsks());
-  ipcMain.on(IpcChannel.BrowserAnswer, (_e, id: string, askId: string, answer: unknown) => browser.answerAsk(id, askId, answer));
-  ipcMain.handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
-  ipcMain.handle(IpcChannel.BrowserHostsSet, (_e, hosts: string[]) => setBrowserHosts(hosts));
+  handle(IpcChannel.BrowserAsksGet, () => browser.pendingAsks());
+  listen(IpcChannel.BrowserAnswer, (_e, id: string, askId: string, answer: unknown) => browser.answerAsk(id, askId, answer));
+  handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
+  handle(IpcChannel.BrowserHostsSet, (_e, hosts: string[]) => setBrowserHosts(hosts));
 }
 
 // アプリ内ブラウザで Claude に許す先を保存する。書き方をそろえ、重なりを除く。書き方が違うものがあれば、保存せずに断る

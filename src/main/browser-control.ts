@@ -1,6 +1,6 @@
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
 import { browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
-import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect } from '@shared/ipc';
+import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -132,8 +132,8 @@ type Tabs = {
 };
 
 type Deps = {
-  // 画面（renderer）へ送る
-  send: (channel: string, payload: unknown) => void;
+  // 画面（renderer）へ送る。チャンネルごとの中身は shared/ipc.ts の IpcEvent
+  send: <C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]) => void;
   // メニューで、Claude にアプリ内ブラウザを操作させるのがオンか
   enabled: () => boolean;
   // ユーザーが足した、Claude に許す先
@@ -144,7 +144,15 @@ type Deps = {
   hasSession: (id: string) => boolean;
   // ユーザーに操作を頼んだ・終わった（ask が null）。一覧の印と通知に使う（画面の帯は channels.ask で送る）
   onAsk: (sessionId: string, ask: BrowserAsk | null) => void;
-  channels: { open: string; activity: string; viewport: string; newTab: string; selectTab: string; closeTab: string; ask: string };
+  channels: {
+    open: typeof IpcChannel.BrowserOpen;
+    activity: typeof IpcChannel.BrowserActivity;
+    viewport: typeof IpcChannel.BrowserViewport;
+    newTab: typeof IpcChannel.BrowserNewTab;
+    selectTab: typeof IpcChannel.BrowserSelectTab;
+    closeTab: typeof IpcChannel.BrowserCloseTab;
+    ask: typeof IpcChannel.BrowserAsk;
+  };
 };
 
 class ToolError extends Error {}
