@@ -196,6 +196,7 @@ PR と develop・main への push で、次のものを流します。
 - `test/renderer/mock-api.ts`: `window.tanacode` の偽物。呼び出し（`argsOf('sessions.submit')` など）を控え、知らせ（`emit('sessions.onChat', …)`）をテストから送ります。返す値は `responses` に「名前空間.メソッド」で決めます。
 - `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。使う部品のテストの先頭で読み込みます。
 - 部品は Testing Library（`@testing-library/react`）で描き、押す・打つ操作をして、`window.tanacode` に渡ったもの（送ったキー・本文など）を確かめます。Monaco エディタ・xterm・webview を使う部品は、アプリ本体の E2E で確かめます。
+- 部品のテストを足したら、`npm run mutation:ui -- <部品のファイル>` で、その部品のボタン・入力が効かなくなったときに、テストが落ちるかを確かめます（下の「ミューテーションテスト」）。
 
 ### カバレッジ
 
@@ -222,23 +223,34 @@ PR と develop・main への push で、次のものを流します。
 
 コードを 1 か所ずつわざと壊し（ミュータント）、テストが落ちるかを確かめます。落ちなかったもの（生き残り）は、テストがそこを通っても、結果まで確かめていない場所の候補。カバレッジでは分からない、テストの確かめ漏れを探すためのものです。
 
-- 流し方: `npm run mutation`。対象は引数で変えられます（`npm run mutation -- src/shared/chat.ts`）。引数が無ければ、`scripts/mutation.mjs` の既定の対象（読み取りの中核の `src/main/screen-parser.ts` と `src/shared/chat.ts`）。
-  - `--concurrency <n>`: 同時に流す数（既定 2）。`--out <dir>`: 結果の置き場所（既定 `reports/mutation/`）。`--list`: ミュータントの一覧だけを出し、テストは流しません。
+- 流し方: `npm run mutation`。対象は引数で変えられます（`npm run mutation -- src/shared/chat.ts`）。フォルダを渡すと、中の .ts・.tsx を全部（ストーリーと型の宣言は除く。書き換えの無いファイルは結果に出しません）。引数が無ければ、`scripts/mutation.mjs` の既定の対象（読み取りの中核の `src/main/screen-parser.ts` と `src/shared/chat.ts`）。
+  - `--concurrency <n>`: 同時に流す数（既定 2）。`--out <dir>`: 結果の置き場所（既定 `reports/mutation/`。`--ui` では `reports/mutation-ui/`）。`--list`: ミュータントの一覧だけを出し、テストは流しません。`--mutators <名前,名前>`: 書き換えの種類を絞ります（例: `--mutators EventHandler,Disabled`）。
   - 既定の対象で、ミュータントは 2,300 個ほど。かかる時間は、同時に 2 で 35 分ほど（ほとんどが `screen-parser.ts`。画面を流し込むテストが、描画が落ち着くのを待つため）。
+- 画面の操作: `npm run mutation:ui`（`--ui`）。書き換えを、ボタン・入力を効かなくするもの（下の `EventHandler`・`CallbackProp`・`Disabled`）だけにして流します。「押しても何も起きない」「押せないまま」になっても、テストが気づくかを確かめるためのものです。
+  - 引数が無ければ、`scripts/mutation.mjs` の `UI_TARGETS`（新規セッション・入力欄・ソース管理・チャット・セッション一覧の 5 つの部品）。ほかの部品は、ファイルかフォルダで指定します（`npm run mutation:ui -- src/renderer/src/checklist`）。画面の部品を全部（`npm run mutation:ui -- src/renderer/src`）でも 600 個ほどで、1 分かかりません。
+  - 確かめられるのは、画面のテスト（`test/renderer/`）で描いて押したものだけ。どのテストも描かない部品は、全部「テストが通らない」になります。アプリの通しのテスト（E2E）では流しません（ミュータントごとに、アプリのビルドからやり直しになるため）。
 - 道具は自前のスクリプト（`scripts/mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）。Stryker（`@stryker-mutator/vitest-runner` 10.0.0）は、vitest 5 では正しく動きません。ミュータントごとに流すテストを名前で絞るとき、vitest 5 は名前を「describe > テスト」の形で照らし合わせるのに、Stryker は空白でつないだ名前を渡すため、テストが 1 つも流れず、全部が生き残りになります。
 - 仕組み
   - 書き換え（名前は Stryker に合わせる）: 比較（`===` と `!==`、`<` と `<=` など）・算術・論理（`&&` と `||`・`??`）・代入の演算子・`++` と `--`・符号・条件（if と三項演算子の条件を true / false に、ループの条件を false に）・真偽値と `!`・文字列（空に）・正規表現（`^` `$` を外す、`\d` を `\D` に、`[..]` を `[^..]` に、回数の指定を外す、先読みを逆に）・戻り値（`return` の値と、式のアロー関数の値を `undefined` に）・ブロック（空に）・`?.` を `.` に・配列（空に）・メソッド（`startsWith` と `endsWith`、`some` と `every` などの入れ替え、`filter`・`slice`・`trim` などを外す）。型の部分と、import・オブジェクトのキーは書き換えません。構文は `@babel/parser` で読みます。
-  - はじめに、対象のコードに印を付けて、対象を読み込むテストのファイル（`test/*.test.ts` から import をたどる）を流し、テストごとに、どの印を通ったかを調べます（`mutation-setup.mjs`）。印は、文の前と、あとで実行される式（式のアロー関数の値・フィールドの初期値・引数の既定値）に付けます。正規表現は、使ったとき（`exec`）に通ったとみなします。ここで落ちるテストがあれば止めます。
+  - 画面の操作の書き換え（.tsx の JSX。このスクリプトの独自）
+    - `EventHandler`: 人の操作の受け手（`onClick`・`onDoubleClick`・`onMouseDown`・`onContextMenu`・`onKeyDown`・`onChange`・`onInput`・`onSubmit`・`onDrop`・`onPaste`）を `undefined` に。素の要素（`button`・`input` など）に付けたものも、部品（`IconButton` など）に渡すものも。
+    - `CallbackProp`: 部品に渡す、ほかの `onXxx`（`onSend`・`onSelect`・`onPick` など）を `undefined` に。
+    - `Disabled`: `disabled={式}` を `disabled={true}` に。
+    - どのボタン・入力かを、結果に添えます（例: `IconButton「送信」`・`input[checkbox]「worktree を使う」`・`button.folder-menu-item「{dir}」`）。名前の手がかりは、属性（`aria-label`・`label`・`title`・`tip`・`data-tip`・`placeholder`・`alt`）、子の文字、（入力なら）囲んでいる `<label>` の文字の順。`{式}` しか手がかりの無い素の要素には、クラス名を添えます。
+    - 受け手が、その場の関数（`onClick={() => …}`）か、同じファイルの名前の付いた関数（`function send()`・`const send = …`・`useCallback(…)`）なら、その関数の中を通ったテスト（押したテスト）だけを流します。それ以外（props で受けた関数など）と `Disabled` は、その要素を描いたところを通ったテストを流します。
+  - はじめに、対象のコードに印を付けて、対象を読み込むテストのファイル（`test/*.test.ts` と、画面のテスト `test/renderer/*.test.{ts,tsx}` から import をたどる）を流し、テストごとに、どの印を通ったかを調べます（`mutation-setup.mjs`）。印は、文の前と、あとで実行される式（式のアロー関数の値・フィールドの初期値・引数の既定値）に付けます。正規表現は、使ったとき（`exec`）に通ったとみなします。ここで落ちるテストがあれば止めます。
   - ミュータントごとに、その場所を通ったテストだけを、速いファイルから流し、1 つ落ちたら止めます。読み込みや `beforeAll` で通った場所（ファイルの先頭の定数など）は、そのファイルのテストを全部流します。どのテストも通らない場所は、流さずに「テストが通らない」に数えます。
   - テストを絞って流すので、テストは 1 つだけでも通るように書きます（前のテストの結果に頼るテストは、壊していないのに落ちて「落ちた」に数えてしまいます）。`test.concurrent` は使いません（どのテストが通ったかを分けられないため）。
   - 壊したコードは、Vite のプラグインでテストに渡します。ソースのファイルは書き換えません。Vitest は、同時に流す数だけ立ち上げたままにして、使い回します。
   - 止まらなくなったもの（元のコードで流した時間の 1.5 倍 + 10 秒）は、Vitest ごと止めて「時間切れ」にします。テストが見つけたものとして数えます。
 - 結果の読み方
-  - `reports/mutation/summary.md`（要約と、生き残りの一覧）と `reports/mutation/mutation.json`（全部のミュータントと、流したテスト・落ちたテスト）。`reports/` は git に入れません。
+  - `reports/mutation/summary.md`（要約と、生き残りの一覧）と `reports/mutation/mutation.json`（全部のミュータントと、流したテスト・落ちたテスト）。`--ui` では `reports/mutation-ui/` に書きます。`reports/` は git に入れません。
   - スコアは、見つけた（落ちた・時間切れ）割合。分母は、落ちた・時間切れ・生き残り・テストが通らない。「通った場所でのスコア」は、テストが通らないものを除いた割合です。エラー（Vitest ごと落ちたもの）は数えません。
   - 生き残りは、行と書き換えの内容で出します（例: `42 行（EqualityOperator）: a === b → a !== b`）。書き換えても動きの変わらないもの（等価なミュータント。例: 結果に出ない並べ替え、`>=` と `>` の差が出ない値、`trim` してもしなくても同じ文字列）も混じるので、1 つずつ見て、意味のあるものにテストを足します。足したら、もう一度流して、その書き換えでテストが落ちるようになったかを確かめます。
   - 「テストが通らない」は、どのテストも実行しなかった場所。行のカバレッジより細かく、通った行の中の、呼ばれなかったコールバックなども入ります。テストを足す場所の目安です。
-- CI: `mutation.yml` が、週 1 回（月曜の朝）の定期実行と、手動の実行（Actions の画面から。対象のファイルを空白で区切って指定できる）で流します。毎回の PR では重いので流しません。ファイルごとのスコアと生き残りの数・一覧をジョブの概要に出し、詳しい結果（`reports/mutation/`）を artifact（`mutation`）に残します。スコアの下限はまだ設けません（生き残りがあっても失敗にしません）。
+  - 画面の操作は、どのボタン・入力かも出します（例: `336 行（Disabled） SchedulePicker「時刻を指定して送信」: disabled={!canSchedule} → disabled={true}`）。生き残りは、そのボタンが効かなくなっても（押せなくなっても）、落ちるテストが無いもの。押したあとに `window.tanacode` に渡ったものや、画面の変わり方を確かめるテストを足します。
+  - 画面の操作の「テストが通らない」は、行でなく、ボタン・入力ごとの一覧で出します。「押すテストが無い」（受け手の関数を通ったテストが無い）か、「描くテストが無い」（その要素を描いたところを通ったテストが無い）かを添えます。
+- CI: `mutation.yml` が、週 1 回（月曜の朝）の定期実行と、手動の実行（Actions の画面から。対象のファイルを空白で区切って指定できる）で流します。あわせて `npm run mutation:ui` も流します（手動の実行では、対象のファイル・フォルダを `ui_targets` で指定できる）。毎回の PR では重いので流しません。ファイルごとのスコアと生き残りの数・一覧をジョブの概要に出し、詳しい結果（`reports/mutation/`・`reports/mutation-ui/`）を artifact（`mutation`）に残します。スコアの下限はまだ設けません（生き残りがあっても失敗にしません）。
 
 ### アプリの通しのテスト（E2E）
 

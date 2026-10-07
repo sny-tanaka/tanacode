@@ -27,6 +27,7 @@
     "coverage:e2e": "TANACODE_E2E_COVERAGE=1 vitest run --config vitest.e2e.config.ts",
     "coverage:report": "node scripts/coverage-report.mjs",
     "mutation": "node scripts/mutation.mjs",
+    "mutation:ui": "node scripts/mutation.mjs --ui",
     "predist": "node scripts/build-translate-helper.mjs",
     "dist": "electron-vite build && node scripts/electron-builder.mjs --mac",
     "install-app": "npm run dist && node scripts/install-app.mjs",
