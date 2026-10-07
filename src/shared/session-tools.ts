@@ -243,9 +243,10 @@ export function parentMessageText(parentId: string, body: string): string {
   return `<${PARENT_MESSAGE_TAG} session="${parentId}">${neutralizeTags(body)}</${PARENT_MESSAGE_TAG}>`;
 }
 
-// Claude Code の入力欄に残った文字が、親からの指示（中断で戻ったもの）か
+// Claude Code の入力欄に残った文字が、親からの指示（中断で戻ったもの）か。
+// 入力欄は画面の幅で折り返し、画面から読むと折り返しが改行になる（タグ名の直後で折り返すと、空白が改行に変わる）
 export function isParentMessageDraft(draft: string): boolean {
-  return draft.trimStart().startsWith(`<${PARENT_MESSAGE_TAG} `);
+  return new RegExp(`^<${PARENT_MESSAGE_TAG}\\s`).test(draft.trimStart());
 }
 
 const PARENT_MESSAGE = new RegExp(`^<${PARENT_MESSAGE_TAG} session="([0-9a-f-]+)">([\\s\\S]*)</${PARENT_MESSAGE_TAG}>\\s*$`);

@@ -162,6 +162,9 @@ describe('会話ログの見分け', () => {
     expect(pulledBackPrompt(single, parentMessageText(PARENT, '続けて'))).toBe(0);
     expect(pulledBackPrompt(single, `<tanacode-parent-message session="${PARENT}">べつの指示`)).toBeNull();
     expect(isParentMessageDraft(parentMessageText(PARENT, 'x'))).toBe(true);
+    // 入力欄がタグ名の直後で折り返すと、画面から読んだ文字では空白が改行になる（120 桁の画面でも、session の ID が長いのでそうなる）
+    expect(isParentMessageDraft(`<tanacode-parent-message\nsession="${PARENT}">子の作業</tanacode-parent-message>`)).toBe(true);
+    expect(isParentMessageDraft('<tanacode-parent-messages の話')).toBe(false);
   });
 
   it('親からの指示の本文や知らせの名前に、目印の閉じタグを入れても、囲みの外に出られない', () => {
