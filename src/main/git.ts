@@ -17,7 +17,8 @@ export function git(cwd: string, args: string[], input?: string, env?: Record<st
       if (err) reject(new GitError((stderr || err.message).trim()));
       else resolve(stdout);
     });
-    if (input !== undefined) child.stdin?.end(input);
+    // 渡すものが無ければ、標準入力はすぐ閉じる（何かが標準入力からの入力を待っても、待ち続けずに失敗させる）
+    child.stdin?.end(input);
   });
 }
 

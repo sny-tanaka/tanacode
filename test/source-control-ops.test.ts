@@ -159,3 +159,10 @@ describe('SourceControl', () => {
     expect(await scm.baseline(base, 't.txt')).toEqual({ exists: false, text: '' });
   });
 });
+
+describe('git', () => {
+  it('渡すものが無ければ、標準入力をすぐ閉じる（標準入力からの入力を待つコマンドも、待ち続けずに終わる）', async () => {
+    // 空の内容のハッシュ。標準入力を閉じないと、入力を待ったまま返らない
+    expect((await git(repo, ['hash-object', '--stdin'])).trim()).toBe('e69de29bb2d1d6434b8b29ae775ad8c2e48c5391');
+  }, 5000);
+});
