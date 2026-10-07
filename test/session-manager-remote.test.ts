@@ -132,6 +132,21 @@ describe('setRemoteControl', () => {
     expect(app.manager.summary(id)?.attention).toBeNull();
   });
 
+  it('/remote-control のメニューに操作説明（Enter to select · Esc to cancel）が出ていても、選んだ直後の画面を操作待ちとして知らせない', async () => {
+    start();
+    const { id, pty } = app.create({ remoteControl: true });
+    await app.ready(id);
+    app.append(id, bridgeStatus('https://claude.ai/code/session_abc'));
+    await app.waitFor('つながり', () => remoteEvents(id).length > 0);
+    answerRemote(pty, () => [menu(' Remote Control', '', ' ❯ Disconnect this session', '   Continue', '', ' Enter to select · Esc to cancel'), DISCONNECTED]);
+    expect(await app.manager.setRemoteControl(id, false)).toBeNull();
+    await app.waitFor('入力欄', () => app.manager.screen(id)?.state.kind === 'prompt');
+    await sleep(200);
+    // アプリが自分で開いたメニューなので、人に操作を頼む知らせ（通知）は出さない
+    expect(app.attentions).toEqual([]);
+    expect(app.sessionLists.some((list) => list.find((s) => s.id === id)?.attention === 'other')).toBe(false);
+  });
+
   it('切るときは /remote-control のメニューで「Disconnect this session」を選ぶ', async () => {
     start();
     const { id, pty } = app.create({ remoteControl: true });

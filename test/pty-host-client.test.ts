@@ -252,6 +252,20 @@ describe('PtyHost', () => {
     expect(existsSync(join(dir, 'launched'))).toBe(true);
   }, 15_000);
 
+  it('hello に答えない古いホストを置き換えたら、新しいホストにつなぐ（答えない古いホストにつなぎ直さない）', async () => {
+    fake = await FakeHost.start(socketPath(), null);
+    const host = await PtyHost.start(dir, hostScript('good'));
+    hosts.push(host);
+    const pty = host.spawn({ ...request, tag: 'new' });
+    const data: string[] = [];
+    pty.onData((d) => data.push(d));
+    await waitFor('新しいホストの答え', () => data.length === 1, 5000);
+    expect(data).toEqual(['spawned:new']);
+    // 古いホストには、hello のほかは何も頼まない
+    expect(fake.received.map((m) => m.t)).toEqual(['hello']);
+    await host.shutdown();
+  }, 15_000);
+
   it('つながっていない間に起動を頼んだら、ホストを起動し直してから頼む', async () => {
     const { host } = await connect();
     // ホストが落ちた
