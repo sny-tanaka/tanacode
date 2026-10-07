@@ -163,6 +163,13 @@ PR と develop・main への push で、次のものを流します。
 - アプリは macOS 専用なので、アプリ本体と Claude Code との互換性の確認は macOS で流します。Linux で動くかは確かめません。Claude Code は OS で画面の描き方が違う（応答の印は macOS では ⏺、Linux では ●）ので、互換性の確認と控えの記録も macOS で行います。型チェック・Storybook・デモのサイトは OS に依らないので、ubuntu で流します。
 - public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
 
+### テストの部品
+
+- `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
+  - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
+- `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
+- テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（通るだけのテストにしない）。
+
 ### 配線と契約
 
 型チェックとテストで、画面と main の間（IPC）と、Claude Code と tanacode の間（MCP のツール）の食い違いを止めます。
@@ -177,6 +184,14 @@ PR と develop・main への push で、次のものを流します。
   - 定義の形（名前・ラベルが重ならない、説明がある、引数に型と説明がある、必須の引数が properties にある）
   - 名前・種類・引数の形・許可済みにするツールが、控え（`test/__snapshots__/mcp-contract.test.ts.snap`）と同じか。種類を変えると許可の確認の有無が変わるので、控えの差分で気づけるようにしています。説明の文は控えに入れません。定義を変えたら `npx vitest run test/mcp-contract.test.ts -u` で控えを書き直し、差分を見てからコミットします。
   - 制御（`*-control.ts`）が、定義にあるツールを漏れなく振り分けるか（ソースから読む。セッション・チェックリスト・ウォークスルーは、動かしても確かめる）。制御が読む引数（`args.xxx`）が、どれかのツールのスキーマにあるか（無い引数は、Claude が渡せないので黙って動かない）
+
+### 画面のテスト
+
+- 画面（renderer）のテストは `test/renderer/` に置き、ファイルの先頭の `// @vitest-environment jsdom` で DOM の代わり（jsdom）を使います。型は `tsconfig.web.json` で確かめます（DOM の型が要るため）。
+  - happy-dom は使いません。DOMPurify（Markdown の無害化）の結果が、本物のブラウザと食い違ったためです。
+- `test/renderer/mock-api.ts`: `window.tanacode` の偽物。呼び出し（`argsOf('sessions.submit')` など）を控え、知らせ（`emit('sessions.onChat', …)`）をテストから送ります。返す値は `responses` に「名前空間.メソッド」で決めます。
+- `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。使う部品のテストの先頭で読み込みます。
+- 部品は Testing Library（`@testing-library/react`）で描き、押す・打つ操作をして、`window.tanacode` に渡ったもの（送ったキー・本文など）を確かめます。Monaco エディタ・xterm・webview を使う部品は、アプリ本体の E2E で確かめます。
 
 ### カバレッジ
 
@@ -260,7 +275,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - セッションごとに、node-pty で本物の `claude` を起動します。
   - 起動するのはアプリではなく、pty ホストという常駐プロセス。アプリを再起動しても Claude Code を止めないためです。
-    - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケットでやりとりします。パスが長すぎるときは一時フォルダに置きます。
+    - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケット（`pty-host.sock`。`0600`。つながれば任意のコマンドを起動できるため、自分だけにする）でやりとりします。パスが長すぎるときは一時フォルダに置きます。
     - ホストは Claude Code の画面を仮想の端末で持っています。起動し直したアプリは、その画面（`@xterm/addon-serialize`）と、Claude Code が起動した時刻を受け取って引き継ぎます。その時刻より後の会話ログの行は、今も動いている Claude Code が書いたものとして扱います。途中のターン・バックグラウンドのタスク・質問は、終わったことにせず、そのまま追いかけます。
     - 引き継いだときは、アプリが止まっている間に書かれた statusLine のファイルも、次の書き込みを待たずに読みます。止まっている間に `/clear` で会話が変わっていても、すぐ新しい会話ログに乗り換えます。
     - アプリも Claude Code も無くなって 10 秒たつと、ホストは自分で終わります。
@@ -656,7 +671,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 | ファイル | 中身 |
 | --- | --- |
-| `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など） |
+| `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
 | `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）） |
 | `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |

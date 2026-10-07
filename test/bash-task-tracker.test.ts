@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -45,4 +45,26 @@ it('完了通知が、読んでいる途中の読み込みと重なっても、�
   for (let i = 0; i < 40 && tasks[0]?.exitCode == null; i++) await new Promise((resolve) => setTimeout(resolve, 25));
   tracker.dispose();
   expect(tasks[0]).toMatchObject({ state: 'completed', exitCode: 0, output: 'hello' });
+});
+
+it('出力ファイルが読めなくなっても（消えた・別のものに置き換わった）、完了通知で終わったことにし、ほかのタスクの読み込みも止めない', async () => {
+  dir = mkdtempSync(join(tmpdir(), 'tanacode-bash-'));
+  // 大きさは読めるが中身は読めないもの（フォルダ）。読み込みの途中でファイルが消えたときと同じく、読む段で失敗する
+  const unreadable = join(dir, 'b1.output');
+  mkdirSync(unreadable);
+  const other = join(dir, 'b2.output');
+  writeFileSync(other, 'ok\n[exited with code 0]\n');
+  let tasks: BashTask[] = [];
+  const tracker = new BashTaskTracker((next) => (tasks = next));
+  tracker.start('toolu_1', { command: 'npm run dev' }, { backgroundTaskId: 'b1' }, `Output is being written to: ${unreadable}`, false);
+  tracker.start('toolu_2', { command: 'echo ok' }, { backgroundTaskId: 'b2' }, `Output is being written to: ${other}`, false);
+  tracker.notified('toolu_1', 'completed');
+  tracker.notified('toolu_2', 'completed');
+  const find = (id: string) => tasks.find((t) => t.toolUseId === id);
+  for (let i = 0; i < 40 && (find('toolu_1')?.state === 'running' || find('toolu_2')?.state === 'running'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  tracker.dispose();
+  expect(find('toolu_1')).toMatchObject({ state: 'completed' });
+  expect(find('toolu_2')).toMatchObject({ state: 'completed', exitCode: 0, output: 'ok' });
 });
