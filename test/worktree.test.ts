@@ -13,6 +13,7 @@ import {
   removeWorktree,
   restoreWorktree,
   setAsideIgnoredDirs,
+  waitForWorktree,
   worktreeLeftovers,
   type WorktreePlan,
 } from '../src/main/worktree';
@@ -25,6 +26,19 @@ import {
 vi.mock('../src/main/github', () => ({ pullRequestsOf: vi.fn() }));
 const prs = vi.mocked(pullRequestsOf);
 
+// worktree の名前の乱数を決められるようにする（queue から順に。無ければ fixed、それも無ければ本物の乱数）
+const names = vi.hoisted(() => ({ queue: [] as number[][], fixed: null as number[] | null }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    randomBytes: (size: number) => {
+      const next = names.queue.shift() ?? names.fixed;
+      return next ? Buffer.from(next) : actual.randomBytes(size);
+    },
+  };
+});
+
 let root: string;
 let repo: string;
 
@@ -33,12 +47,16 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd,
 beforeEach(() => {
   // 既定は、gh で調べられない
   prs.mockReset().mockResolvedValue(null);
+  names.queue = [];
+  names.fixed = null;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-worktree-')));
   repo = join(root, 'repo');
   mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main');
   git(repo, 'config', 'user.email', 'me@example.com');
   git(repo, 'config', 'user.name', 'me');
+  // 裏の片付け（gc）が、一時フォルダの削除とぶつからないように
+  git(repo, 'config', 'gc.auto', '0');
   writeFileSync(join(repo, 'a.txt'), 'a\n');
   writeFileSync(join(repo, '.gitignore'), '.env\nnode_modules/\n');
   git(repo, 'add', '.');
@@ -73,6 +91,30 @@ describe('名前と場所', () => {
     await expect(planWorktree(plain)).rejects.toThrow('コミットが 1 つ以上');
   });
 
+  it('同じ名前のブランチかフォルダがあれば、別の名前にする。20 回とも重なれば断る', async () => {
+    const date = (() => {
+      const now = new Date();
+      return `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    })();
+    names.queue = [
+      [0, 1, 2, 3],
+      [0, 1, 2, 3],
+      [4, 5, 6, 39],
+    ];
+    const first = await planWorktree(repo);
+    expect(first.name).toBe(`tc-${date}-abcd`);
+    git(repo, 'branch', first.branch);
+    // 1 回目は重なるので、次の乱数の名前（39 % 32 = 7 → h）
+    expect((await planWorktree(repo)).name).toBe(`tc-${date}-efgh`);
+    names.fixed = [0, 1, 2, 3];
+    await expect(planWorktree(repo)).rejects.toThrow('worktree の名前を決められませんでした');
+    git(repo, 'branch', '-D', first.branch);
+    mkdirSync(first.path, { recursive: true });
+    await expect(planWorktree(repo)).rejects.toThrow('worktree の名前を決められませんでした');
+    rmSync(first.path, { recursive: true });
+    expect((await planWorktree(repo)).name).toBe(first.name);
+  });
+
   it('claude に --worktree を付けるのは新しい会話だけ', () => {
     const base = { claudeSessionId: 'id', remoteControlName: null, model: null, effort: null, permissionMode: null };
     expect(claudeArgs({ ...base, resume: false, worktree: 'tc-1' }).slice(0, 4)).toEqual(['--session-id', 'id', '--worktree', 'tc-1']);
@@ -92,6 +134,20 @@ describe('元のフォルダのソース管理', () => {
     // .gitignore は書き換えない
     expect(readFileSync(join(repo, '.gitignore'), 'utf8')).not.toContain('.claude');
     expect(existsSync(plan.path)).toBe(true);
+  });
+
+  it('exclude の最後に改行が無ければ改行してから足す。worktree の中から呼んでも、元のリポジトリの exclude に足す', async () => {
+    writeFileSync(join(repo, '.git', 'info', 'exclude'), '*.tmp');
+    const plan = await create();
+    await hideWorktrees(plan.path);
+    expect(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8')).toBe('*.tmp\n# tanacode: Claude Code の worktree（claude --worktree）\n/.claude/worktrees/\n');
+    expect(git(repo, 'status', '--porcelain')).toBe('');
+  });
+
+  it('.git/info が無ければ作って足す', async () => {
+    rmSync(join(repo, '.git', 'info'), { recursive: true, force: true });
+    await hideWorktrees(repo);
+    expect(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8')).toBe('# tanacode: Claude Code の worktree（claude --worktree）\n/.claude/worktrees/\n');
   });
 
   it('.gitignore で無視されていれば、何も足さない', async () => {
@@ -173,6 +229,20 @@ describe('残っているもの', () => {
       expect((await worktreeLeftovers(plan, plan.path)).pr).toEqual({ state: 'none' });
     });
 
+    it('ブランチが手元に無ければ、PR のあとに足したコミットは 0', async () => {
+      const plan = await planWorktree(repo);
+      prs.mockResolvedValue([pull({ number: 9, state: 'OPEN', headRefOid: git(repo, 'rev-parse', 'HEAD') })]);
+      expect(await worktreeLeftovers(plan, plan.path)).toEqual({
+        exists: false,
+        branch: plan.branch,
+        uncommitted: 0,
+        untracked: 0,
+        unpushed: 0,
+        contentIn: null,
+        pr: { state: 'open', number: 9, base: 'main', url: 'https://github.com/me/repo/pull/9', after: 0 },
+      });
+    });
+
     it('PR の head のコミットが手元に無ければ、PR で除かずに数える', async () => {
       const plan = await create();
       commitIn(plan.path, 'b.txt');
@@ -203,6 +273,61 @@ describe('残っているもの', () => {
       commitIn(plan.path, 'd.txt');
       expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 3, contentIn: null });
     });
+
+    it('上流に無いコミットでも、手元のデフォルトブランチに取り込んであれば数えない', async () => {
+      withOrigin();
+      const plan = await create();
+      git(plan.path, 'push', '-q', '-u', 'origin', plan.branch);
+      commitIn(plan.path, 'b.txt');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, contentIn: null });
+      // 手元で main に取り込んだ（プッシュはしていない）
+      git(repo, 'merge', '-q', '--ff-only', plan.branch);
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 0, contentIn: 'main' });
+    });
+
+    it('変えて戻しただけ（中身の差が無い）のブランチは、デフォルトブランチに入っているとみなす', async () => {
+      const plan = await create();
+      commitIn(plan.path, 'b.txt');
+      git(plan.path, 'rm', '-q', 'b.txt');
+      git(plan.path, 'commit', '-qm', 'revert');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 0, contentIn: 'main' });
+    });
+
+    it('デフォルトブランチと履歴のつながらないブランチは、中身を比べられないので数える', async () => {
+      const plan = await create();
+      git(plan.path, 'switch', '-q', '--orphan', 'lonely');
+      commitIn(plan.path, 'z.txt');
+      git(plan.path, 'switch', '-q', '-C', plan.branch);
+      git(repo, 'branch', '-D', 'lonely');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, contentIn: null });
+    });
+
+    it('デフォルトブランチが分からなければ、中身では比べずに数える', async () => {
+      git(repo, 'branch', '-m', 'work');
+      const plan = await create();
+      commitIn(plan.path, 'a.txt', 'b');
+      git(repo, 'merge', '-q', '--squash', plan.branch);
+      git(repo, 'commit', '-qm', 'squash');
+      expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 1, contentIn: null });
+    });
+  });
+});
+
+describe('worktree ができるのを待つ', () => {
+  it('.git ができたら true。Claude Code が終わったら false。時間が過ぎたら false', async () => {
+    const path = join(root, 'wt');
+    mkdirSync(path);
+    setTimeout(() => writeFileSync(join(path, '.git'), 'gitdir: x\n'), 300);
+    expect(await waitForWorktree(path, () => true, 5000)).toBe(true);
+    // 待つ時間を省いても、もうあればすぐ返す
+    expect(await waitForWorktree(path, () => true)).toBe(true);
+    const never = join(root, 'never');
+    let alive = true;
+    setTimeout(() => (alive = false), 300);
+    const started = Date.now();
+    expect(await waitForWorktree(never, () => alive, 5000)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(await waitForWorktree(never, () => true, 300)).toBe(false);
   });
 });
 
@@ -222,6 +347,7 @@ const squashMerge = (branch: string) => {
 // repo に origin（bare）を付ける
 const withOrigin = () => {
   git(root, 'clone', '-q', '--bare', repo, join(root, 'origin.git'));
+  git(join(root, 'origin.git'), 'config', 'gc.auto', '0');
   git(repo, 'remote', 'add', 'origin', join(root, 'origin.git'));
   git(repo, 'fetch', '-q', 'origin');
 };
@@ -381,6 +507,43 @@ describe('削除', () => {
     git(repo, 'worktree', 'lock', '--reason', '外付けのディスク', plan.path);
     await expect(removeWorktree(plan, plan.path)).rejects.toThrow('外付けのディスク');
     expect(existsSync(plan.path)).toBe(true);
+  });
+
+  it('ロックの理由は、git が囲んだ書き方（日本語・タブ・引用符・円記号・改行）から元に戻して添える。理由の無いロックでも断る', async () => {
+    const plan = await create();
+    git(repo, 'worktree', 'unlock', plan.path);
+    const reason = '外付け\tの "ディスク" C:\\data\n2 行目';
+    git(repo, 'worktree', 'lock', '--reason', reason, plan.path);
+    await expect(removeWorktree(plan, plan.path)).rejects.toThrow(`worktree がロックされているため、消しませんでした（${reason}）`);
+    git(repo, 'worktree', 'unlock', plan.path);
+    git(repo, 'worktree', 'lock', plan.path);
+    await expect(removeWorktree(plan, plan.path)).rejects.toThrow(/^worktree がロックされているため、消しませんでした$/);
+    expect(existsSync(plan.path)).toBe(true);
+  });
+
+  it('git worktree remove に失敗したら、動かしたフォルダを元に戻して、失敗を伝える', async () => {
+    mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true });
+    writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'a');
+    // 元のフォルダ（main の working tree）は、git worktree remove で消せない
+    await expect(removeWorktree({ name: 'main', branch: 'main', root: repo }, repo)).rejects.toThrow('main working tree');
+    expect(readFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'utf8')).toBe('a');
+    expect(readdirSync(join(repo, '.git', 'tanacode-trash'))).toEqual([]);
+  });
+
+  it('ブランチの無い worktree（ブランチから外れて作ったもの）は、消すだけでブランチは扱わない', async () => {
+    const plan = await planWorktree(repo);
+    git(repo, 'worktree', 'add', '-q', '--detach', plan.path);
+    expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: false });
+    expect(existsSync(plan.path)).toBe(false);
+  });
+
+  it('ごみ箱の場所が分からなければ（git でないなど）、何も動かさずに git worktree remove に任せる', async () => {
+    const plain = join(root, 'plain');
+    mkdirSync(join(plain, 'node_modules'), { recursive: true });
+    const aside = await setAsideIgnoredDirs({ name: 'x', branch: 'worktree-x', root: plain }, plain);
+    await aside.restore();
+    aside.discard();
+    expect(readdirSync(plain)).toEqual(['node_modules']);
   });
 
   it('フォルダをもう手で消していたら、git の登録を片付けて、ブランチの扱いは同じ', async () => {
@@ -561,6 +724,68 @@ describe('node_modules', () => {
     const { result, steps } = await prepare(plan);
     expect(result).toEqual({ cloned: [], failed: [], installs: [] });
     expect(steps).toEqual([]);
+  });
+
+  it('git で調べられないフォルダでは、いちばん上の package.json だけを見る', async () => {
+    pkg('');
+    modules('');
+    const plain = join(root, 'plain');
+    mkdirSync(plain);
+    writeFileSync(join(plain, 'package.json'), '{}');
+    writeFileSync(join(plain, 'package-lock.json'), '{"v":2}');
+    const installs: string[] = [];
+    const result = await prepareNodeModules(repo, plain, {
+      onStep: () => {},
+      install: (_cwd, dir, command) => (installs.push(`${command} @ ${dir || '.'}`), Promise.resolve(0)),
+      clone: copy,
+    });
+    expect(result).toEqual({ cloned: [''], failed: [], installs: [{ dir: '', command: 'npm install', exitCode: 0 }] });
+    expect(existsSync(join(plain, 'node_modules', 'left-pad', 'index.js'))).toBe(true);
+  });
+
+  it('node_modules の中で追跡している package.json は、パッケージの場所として見ない', async () => {
+    pkg('');
+    mkdirSync(join(repo, 'vendor', 'node_modules', 'x'), { recursive: true });
+    writeFileSync(join(repo, 'vendor', 'node_modules', 'x', 'package.json'), '{}');
+    // .gitignore の node_modules/ を越えて、無理に追跡した
+    git(repo, 'add', '-f', 'vendor/node_modules/x/package.json');
+    commit();
+    modules('');
+    modules('vendor/node_modules/x');
+    const plan = await create();
+    const { result } = await prepare(plan);
+    expect(result.cloned).toEqual(['']);
+    expect(existsSync(join(plan.path, 'vendor', 'node_modules', 'x', 'node_modules'))).toBe(false);
+  });
+
+  it('複製できなくても、受け持つ lock ファイルが無ければ install しない（複製しかけたものは消す）', async () => {
+    pkg('', null);
+    commit();
+    modules('');
+    const plan = await create();
+    const half = (_from: string, to: string) => {
+      mkdirSync(join(to, 'half'), { recursive: true });
+      return Promise.reject(new Error('cross-device'));
+    };
+    const { result, steps, installs } = await prepare(plan, half);
+    expect(result).toEqual({ cloned: [], failed: [''], installs: [] });
+    expect(steps).toEqual(['copying']);
+    expect(installs).toEqual([]);
+    expect(existsSync(join(plan.path, 'node_modules'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'darwin')('macOS 以外では APFS のクローンができないので、複製せずに install で用意する', async () => {
+    pkg('');
+    commit();
+    modules('');
+    const plan = await create();
+    const installs: string[] = [];
+    const result = await prepareNodeModules(repo, plan.path, {
+      onStep: () => {},
+      install: (_cwd, _dir, command) => (installs.push(command), Promise.resolve(0)),
+    });
+    expect(result).toEqual({ cloned: [], failed: [''], installs: [{ dir: '', command: 'npm install', exitCode: 0 }] });
+    await expect(apfsClone(join(repo, 'node_modules'), join(root, 'copy'))).rejects.toThrow('APFS のクローンは macOS だけ');
   });
 
   it('元のフォルダに node_modules が無ければ何もしない', async () => {
