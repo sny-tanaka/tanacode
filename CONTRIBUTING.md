@@ -163,6 +163,21 @@ PR と develop・main への push で、次のものを流します。
 - アプリは macOS 専用なので、アプリ本体の確認は macOS で流します。Linux で動くかは確かめません。型チェック・Storybook・デモのサイトは OS に依らないので、ubuntu で流します。
 - public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
 
+### 配線と契約
+
+型チェックとテストで、画面と main の間（IPC）と、Claude Code と tanacode の間（MCP のツール）の食い違いを止めます。
+
+- IPC: チャンネルを足すときは、`src/shared/ipc.ts` の `IpcChannel` と、3 つの表のどれか 1 つに足します。表の型は、それを呼ぶ・受ける `TanacodeApi` のメソッドから取ります。
+  - `IpcInvoke`: 画面 → main の呼び出し（preload の `invoke` ↔ main の `handle`）
+  - `IpcSend`: 画面 → main の知らせ（preload の `send` ↔ main の `listen`）
+  - `IpcEvent`: main → 画面の知らせ（main の `send` ↔ preload の `subscribe`）
+  - preload と main の両方がこの表で型を付けるので、引数の順番・型、戻り値、知らせの中身が食い違うと、型チェックで止まります。同じ型の引数どうしの入れ替え（`mergeBase` と `relPath` など）は止まりません。
+  - `test/ipc-wiring.test.ts` が、型では分からないものを確かめます。preload が使うチャンネルに main の受け口がちょうど 1 つあるか、main が送る知らせを画面が受けるか、使っていないチャンネル・どの表にも無いチャンネル（型チェックで止める）が無いか、です。
+- MCP: `test/mcp-contract.test.ts` が、4 つのサーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）について確かめます。
+  - 定義の形（名前・ラベルが重ならない、説明がある、引数に型と説明がある、必須の引数が properties にある）
+  - 名前・種類・引数の形・許可済みにするツールが、控え（`test/__snapshots__/mcp-contract.test.ts.snap`）と同じか。種類を変えると許可の確認の有無が変わるので、控えの差分で気づけるようにしています。説明の文は控えに入れません。定義を変えたら `npx vitest run test/mcp-contract.test.ts -u` で控えを書き直し、差分を見てからコミットします。
+  - 制御（`*-control.ts`）が、定義にあるツールを漏れなく振り分けるか（ソースから読む。セッション・チェックリスト・ウォークスルーは、動かしても確かめる）。制御が読む引数（`args.xxx`）が、どれかのツールのスキーマにあるか（無い引数は、Claude が渡せないので黙って動かない）
+
 ### カバレッジ
 
 - `npm run coverage`（`npm test` と同じテスト）と `npm run coverage:cli`（`npm run test:cli` と同じテスト）で測り、`coverage/unit/`・`coverage/cli/` の `coverage-final.json` に書きます。
@@ -714,7 +729,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す。予約を送れなかったときも）
   - `scheduled-messages.ts`: 時刻を指定して送信（予約）。保存・時刻になったら手が空くのを待って送る・時刻を過ぎていたもの・取り消し
   - `translate.ts`: チャットの翻訳（補助プログラムのパスと使えるか・画面から来た値の検査・補助プログラムの起動と返事の読み取り・依頼を 1 つずつ動かす `Translator`）
-- `src/preload`: renderer に `window.tanacode` の API を公開する
+- `src/preload`: renderer に `window.tanacode` の API を公開する。チャンネルごとの引数・戻り値・知らせの中身は、`src/shared/ipc.ts` の表（`IpcInvoke`・`IpcSend`・`IpcEvent`）で、main の受け口（`handle`・`listen`）・送り口（`send`）と一緒に型を付ける（下の「テストと CI」の「配線と契約」）
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行）
