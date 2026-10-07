@@ -874,7 +874,8 @@ export class BrowserControl {
   }
 
   private async setViewport(sessionId: string, guest: Guest, width: string): Promise<ToolResult> {
-    if (!(width in VIEWPORTS)) throw new ToolError(`表示幅は full・mobile・tablet のどれかです: ${width}`);
+    // in だと、Object の持ち物の名前（toString・constructor・__proto__）も通るので、自分の持つキーだけを受け付ける
+    if (!Object.hasOwn(VIEWPORTS, width)) throw new ToolError(`表示幅は full・mobile・tablet のどれかです: ${width}`);
     this.deps.send(this.deps.channels.viewport, { sessionId, width: VIEWPORTS[width] });
     // 画面が webview の幅を変えて、ページが描き直すのを待つ
     await sleep(400);
