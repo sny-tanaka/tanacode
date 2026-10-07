@@ -274,6 +274,32 @@ describe('SourceControl（ブランチ・リモート・読めないとき）', 
     expect(await scm.state()).toMatchObject({ branch: 'work' });
   });
 
+  it('switchToLatestDefault: リモートでデフォルトブランチが変わっていれば、取り直して新しいほうに切り替える', async () => {
+    await withOrigin();
+    await run(repo, ['remote', 'set-head', 'origin', 'main']);
+    await run(repo, ['push', '-q', 'origin', 'main:develop']);
+    await run(remote, ['symbolic-ref', 'HEAD', 'refs/heads/develop']);
+    await scm.switchToLatestDefault();
+    expect(await scm.state()).toMatchObject({ branch: 'develop', upstream: 'origin/develop' });
+  });
+
+  it('push: 上流があれば、origin でなくても、その上流に送る（上流は変えない）', async () => {
+    await withOrigin();
+    const backup = join(root, 'backup.git');
+    await run(root, ['init', '-q', '--bare', '-b', 'main', backup]);
+    await run(backup, ['config', 'gc.auto', '0']);
+    await run(repo, ['remote', 'add', 'backup', backup]);
+    await scm.checkout('feature', 'create');
+    await run(repo, ['push', '-q', '-u', 'backup', 'feature']);
+    write('f.txt', 'f\n');
+    await scm.stage(['f.txt']);
+    await scm.commit('f', false);
+    await scm.push();
+    expect(await sha(backup, 'feature')).toBe(await sha(repo));
+    await expect(run(remote, ['rev-parse', '--verify', '-q', 'feature'])).rejects.toThrow();
+    expect((await run(repo, ['rev-parse', '--abbrev-ref', 'feature@{upstream}'])).trim()).toBe('backup/feature');
+  });
+
   it('switchToLatestDefault: 手元にデフォルトブランチが無ければ、origin のものを追跡して作る', async () => {
     await withOrigin();
     await scm.checkout('topic', 'create');

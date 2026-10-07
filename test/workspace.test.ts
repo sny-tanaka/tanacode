@@ -39,6 +39,7 @@ describe('Workspace', () => {
     put('src/x.ts', 'x');
     put('node_modules/p/index.js', 'p');
     put('.next/cache.json', '{}');
+    for (const dir of ['out', 'dist', '.turbo']) put(`${dir}/x.js`, '');
     put('.DS_Store', '');
     mkdirSync(join(root, '.git'));
     expect(await ws.listDir('')).toEqual([
@@ -82,6 +83,21 @@ describe('Workspace', () => {
     expect((await ws.search('T[a-z]x', { caseSensitive: true, regex: false })).files).toEqual([]);
   });
 
+  it('search: 正規表現でないときは、. などの記号もその文字として探す。空の検索は、ファイルがあっても何も返さない', async () => {
+    put('a.txt', 'axb\na.b\n');
+    expect((await ws.search('a.b', { caseSensitive: true, regex: false })).files).toEqual([
+      { path: 'a.txt', matches: [{ line: 2, column: 1, text: 'a.b', matchStart: 0, matchLength: 3 }] },
+    ]);
+    expect(await ws.search('', { caseSensitive: false, regex: false })).toEqual({ files: [], truncated: false });
+  });
+
+  it('search: 1MB ちょうどまでのファイルは探す。リンク先の無いリンクは飛ばす', async () => {
+    put('limit.txt', `tax\n${'x'.repeat(1024 * 1024 - 4)}`);
+    symlinkSync(join(root, 'missing.txt'), join(root, 'broken'));
+    const result = await ws.search('tax', { caseSensitive: false, regex: false });
+    expect(result.files.map((f) => f.path)).toEqual(['limit.txt']);
+  });
+
   it('search: 正しくない正規表現は、理由を返す。空の検索は何も返さない', async () => {
     expect(await ws.search('(', { caseSensitive: false, regex: true })).toEqual({ files: [], truncated: false, error: '正規表現が正しくありません' });
     expect(await ws.search('', { caseSensitive: false, regex: false })).toEqual({ files: [], truncated: false });
@@ -111,6 +127,21 @@ describe('Workspace', () => {
     expect(await ws.readImage('huge.gif')).toBeNull();
     writeFileSync(join(root, '..', 'secret.png'), 'x');
     await expect(ws.readImage('../secret.png')).rejects.toThrow('outside workspace');
+  });
+
+  it('画像は 10MB ちょうどまで、絵として返す。拡張子ごとの種類', async () => {
+    put('limit.png', Buffer.alloc(10 * 1024 * 1024, 1));
+    expect((await ws.readFile('limit.png')).kind).toBe('image');
+    expect((await ws.readImage('limit.png'))?.startsWith('data:image/png;base64,')).toBe(true);
+    for (const [ext, mime] of [
+      ['jpeg', 'image/jpeg'],
+      ['webp', 'image/webp'],
+      ['avif', 'image/avif'],
+      ['ico', 'image/x-icon'],
+    ]) {
+      put(`a.${ext}`, Buffer.from([9]));
+      expect(await ws.readImage(`a.${ext}`)).toBe(`data:${mime};base64,${Buffer.from([9]).toString('base64')}`);
+    }
   });
 
   it('文字のファイルは 2MB ちょうどまで読む', async () => {

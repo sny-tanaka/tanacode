@@ -41,6 +41,9 @@ describe('defaultName', () => {
     expect(defaultName('/x/settings-.json')).toBe('settings-');
     // 名前が無ければ「設定ファイル」
     expect(defaultName('/x/.json')).toBe('設定ファイル');
+    // 外すのは、末尾の .json と、先頭の settings- だけ
+    expect(defaultName('/x/a.json.bak')).toBe('a.json.bak');
+    expect(defaultName('/x/my-settings-a.json')).toBe('my-settings-a');
   });
 });
 
@@ -59,7 +62,8 @@ describe('登録', () => {
     const files = make();
     const a = files.add(file('a.json', {}), '仕事');
     const b = files.add(file('b.json', {}), '仕事');
-    expect([a.name, b.name]).toEqual(['仕事', '仕事 2']);
+    const c = files.add(file('c.json', {}), '仕事');
+    expect([a.name, b.name, c.name]).toEqual(['仕事', '仕事 2', '仕事 3']);
   });
 
   it('同じファイルは二重に登録できない', () => {
@@ -74,6 +78,7 @@ describe('登録', () => {
     expect(() => files.add(join(root, 'missing.json'))).toThrow('ファイルが見つかりません');
     expect(() => files.add(file('broken.json', '{ not json'))).toThrow('JSON として読めません');
     expect(() => files.add(file('array.json', '[]'))).toThrow('JSON のオブジェクトではありません');
+    for (const value of ['"text"', '1', 'null']) expect(() => files.add(file(`v${value.length}.json`, value)), value).toThrow('JSON のオブジェクトではありません');
     expect(() => files.add('relative/settings.json')).toThrow('絶対パス');
     expect(files.list()).toEqual([]);
     expect(changes).toHaveLength(0);
@@ -93,7 +98,9 @@ describe('登録', () => {
     expect(files.list().map((f) => f.name)).toEqual(['two']);
     expect(statSync(path).isFile()).toBe(true);
     // 無い ID の削除は何もしない
+    const notified = changes.length;
     expect(() => files.remove(id)).not.toThrow();
+    expect(changes).toHaveLength(notified);
   });
 
   it('登録したあとでファイルが消えた・壊れたときは、一覧に理由を出す（登録は残す）', () => {
@@ -183,6 +190,31 @@ describe('起動の準備', () => {
     files.release('s');
     expect(() => statSync(settingsFile)).toThrow();
     expect(() => files.release('s')).not.toThrow();
+  });
+
+  it('model が文字でない・空なら、model は無いものとする', () => {
+    const files = make();
+    expect(files.add(file('a.json', { model: 123 })).model).toBeNull();
+    expect(files.add(file('b.json', { model: '' })).model).toBeNull();
+    const { id } = files.add(file('c.json', { model: '' }));
+    expect(files.prepare('s', id).model).toBeNull();
+  });
+
+  it('アプリ内ブラウザ・セッションの確認のフックは、使うときだけ足す', () => {
+    const files = make();
+    const { id } = files.add(file('a.json', {}));
+    const matchers = (sessionId: string, ...flags: boolean[]) =>
+      (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
+    expect(matchers('s1')).toEqual(['AskUserQuestion', 'Bash']);
+    expect(matchers('s2', true, true)).toHaveLength(4);
+  });
+
+  it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {
+    const files = make();
+    const path = file('a.json', {});
+    const { id } = files.add(path, 'one');
+    rmSync(path);
+    expect(() => files.check(id)).toThrow(`設定ファイル「one」（${path}）を使えません: ファイルが見つかりません`);
   });
 
   it('登録が外された・ファイルが消えた・壊れたときは、起動を断る理由を添えて投げる', () => {
