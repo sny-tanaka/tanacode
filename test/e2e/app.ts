@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -145,7 +145,15 @@ export class E2EApp {
     const child = this.electronApp.process();
     child.stdout?.on('data', (chunk: Buffer) => this.output.push(chunk.toString()));
     child.stderr?.on('data', (chunk: Buffer) => this.output.push(chunk.toString()));
-    this.window = await this.electronApp.firstWindow({ timeout: TIMEOUT_MS });
+    this.window = await this.electronApp.firstWindow({ timeout: TIMEOUT_MS }).catch((error: unknown) => {
+      // ウインドウが出ないと keepEvidence も画面を写せないので、メインプロセスの出力をエラーに付け、記録にも残す
+      // pty ホストを起動できないと、メインプロセスはエラーのダイアログを出したまま止まる。その理由は pty-host.log にある
+      const ptyLog = readFileIfAny(join(this.userData, 'pty-host.log'));
+      const output = `${this.output.join('')}${ptyLog ? `\n# pty-host.log\n${ptyLog}` : ''}`;
+      mkdirSync(RESULTS, { recursive: true });
+      writeFileSync(join(RESULTS, `launch-failed-${randomUUID()}.log`), output);
+      throw new Error(`${String(error)}\n# メインプロセスの出力（終わりの 4000 文字）\n${output.slice(-4000)}`);
+    });
     this.window.setDefaultTimeout(TIMEOUT_MS);
     this.window.on('console', (message) => {
       if (message.type() === 'error') this.consoleErrors.push(message.text());
@@ -338,6 +346,15 @@ async function saveRendererCoverage(page: Page): Promise<void> {
   const scripts = entries.filter((e) => /\/out\/(renderer|preload)\//.test(e.url)).map(({ url, functions }) => ({ url, functions }));
   mkdirSync(COVERAGE_RAW, { recursive: true });
   writeFileSync(join(COVERAGE_RAW, `renderer-${randomUUID()}.json`), JSON.stringify(scripts));
+}
+
+// ファイルがあれば中身。無ければ空
+function readFileIfAny(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
+  }
 }
 
 // 確かめる claude のパス
