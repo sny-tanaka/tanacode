@@ -43,7 +43,10 @@ for (const abs of map.files()) {
 function* tsxFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) yield* tsxFiles(path);
+    // デモのサイト（demo/）はアプリの画面ではなく、カバレッジも測らない（vitest.coverage.ts）ので数えない
+    if (entry.isDirectory()) {
+      if (path !== join(RENDERER, 'demo')) yield* tsxFiles(path);
+    }
     else if (entry.name.endsWith('.tsx') && !entry.name.endsWith('.stories.tsx')) yield path;
   }
 }
