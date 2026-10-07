@@ -80,15 +80,32 @@ describe('チャットから Claude Code を動かす', () => {
     await app.page.click('.claude-header [aria-label="Claude Code の画面"]');
     const rows = app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows');
     await rows.getByText('チェック完了', { exact: false }).waitFor();
-    // 打った文字は pty から claude に届き、claude の入力欄に出る
+    // 打った文字は pty から claude に届き、claude の入力欄に出る。人と同じ速さで 1 文字ずつ打つ
+    // （打っている途中の文字を、入力欄に残った文字としてチャットの入力欄に移さない）
     await app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-helper-textarea').focus();
-    await app.page.keyboard.type('typed-from-xterm');
+    await app.page.keyboard.type('typed-from-xterm', { delay: 80 });
     await rows.getByText('typed-from-xterm', { exact: false }).waitFor();
+    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
     // 書きかけは消しておく（Ctrl+U）
     await app.page.keyboard.press('Control+U');
     await app.page.waitForFunction(
       () => !document.querySelector('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows')?.textContent?.includes('typed-from-xterm'),
     );
+    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
+  });
+
+  it('Claude Code の画面で打ちかけたまま、チャットの入力欄に移ると、書きかけがチャットの入力欄に移る', async () => {
+    const rows = app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows');
+    await app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-helper-textarea').focus();
+    await app.page.keyboard.type('left-in-xterm', { delay: 80 });
+    await rows.getByText('left-in-xterm', { exact: false }).waitFor();
+    await app.page.click('.chat-input textarea');
+    // 書きかけはチャットの入力欄に移り、Claude Code の入力欄は空になる（チャットから送ったとき、書きかけの後ろにつながらない）
+    await app.page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>('.chat-input textarea')?.value === 'left-in-xterm');
+    await app.page.waitForFunction(
+      () => !document.querySelector('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows')?.textContent?.includes('left-in-xterm'),
+    );
+    await app.page.fill('.chat-input textarea', '');
   });
 
   it('ターミナルで、シェルのコマンドを動かせる', async () => {

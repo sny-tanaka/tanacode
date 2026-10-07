@@ -18,6 +18,7 @@ import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { ChatInput, type CompletionSource } from './ChatInput';
 import { ChatRow } from './ChatRow';
+import { useTakeClaudeDraft } from './claudeDraft';
 import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
@@ -217,19 +218,10 @@ export const ClaudePane = memo(function ClaudePane({
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
   const { canCompact, compacting } = useCompactState(session, chat, screen);
 
-  // Claude Code の入力欄に文字が残っていたら（巻き戻し直後は戻した発言が入る）、こちらの入力欄に移して向こうは消す。
-  // 残したまま送ると、送った文字がその後ろにつながってしまう
-  const draft = live && screen?.state.kind === 'prompt' ? screen.draft : '';
-  const movedDraft = useRef<string | null>(null);
-  useEffect(() => {
-    // 消えたら忘れる（同じ発言をもう一度中断して戻ったときも移す）
-    if (!draft) movedDraft.current = null;
-    if (!draft || movedDraft.current === draft) return;
-    // 送信中の文字（Claude Code の入力欄に打ち込んでいる途中のもの）は、main が draft から除いて知らせるので、ここには来ない
-    movedDraft.current = draft;
-    setInput((prev) => (prev ? `${prev}\n${draft}` : draft));
-    window.tanacode.pty.write(session.id, '\x15'.repeat(draft.split('\n').length + 1));
-  }, [draft, session.id]);
+  // Claude Code の入力欄に残った文字（巻き戻し・中断で戻った発言など）は、こちらの入力欄に移して向こうは消す
+  useTakeClaudeDraft(session.id, live && screen?.state.kind === 'prompt' ? screen.draft : '', (draft) =>
+    setInput((prev) => (prev ? `${prev}\n${draft}` : draft)),
+  );
 
   const rewindTo = useCallback(
     (text: string) => {
