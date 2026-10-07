@@ -62,7 +62,9 @@ describe('git', () => {
   it('失敗したら、標準エラーの文を持つ GitError で知らせる', async () => {
     const error = await git(repo, ['rev-parse', '--verify', 'no-such-ref']).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(GitError);
-    expect((error as Error).message).toContain('fatal');
+    // 実行したコマンドの行（Command failed: …）は付けず、git の出した文だけ
+    expect((error as Error).message).toMatch(/^fatal: /);
+    expect((error as Error).message).not.toContain('Command failed');
   });
 });
 
@@ -85,6 +87,21 @@ describe('status', () => {
     const plain = join(root, 'plain');
     mkdirSync(plain);
     expect(await status(plain)).toBeNull();
+  });
+
+  it('1 文字の名前のファイルも返す。コピーと見なされたもの（status.renames=copies）も、元のパスを返す', async () => {
+    commit(repo, 'a.txt', '1\n2\n3\n4\n5\n');
+    write(repo, 'b', 'b\n');
+    expect(await status(repo)).toEqual([{ path: 'b', index: '?', worktree: '?' }]);
+    run(repo, 'config', 'status.renames', 'copies');
+    write(repo, 'copy.txt', '1\n2\n3\n4\n5\n');
+    write(repo, 'a.txt', '1\n2\n3\n4\n5\n6\n');
+    run(repo, 'add', 'copy.txt', 'a.txt');
+    expect(await status(repo)).toEqual([
+      { path: 'a.txt', index: 'M', worktree: ' ' },
+      { path: 'copy.txt', from: 'a.txt', index: 'C', worktree: ' ' },
+      { path: 'b', index: '?', worktree: '?' },
+    ]);
   });
 
   it('isIgnored: .gitignore で無視されるファイルか', async () => {
@@ -143,6 +160,23 @@ describe('branches と defaultBranch', () => {
     mkdirSync(plain);
     expect(await defaultBranch(plain)).toBeNull();
   });
+
+  it('development・trunk もデフォルトブランチの名前として探す', async () => {
+    for (const name of ['development', 'trunk']) {
+      const dir = join(root, name);
+      init(dir, name);
+      commit(dir, 'a.txt');
+      expect(await defaultBranch(dir)).toBe(name);
+    }
+  });
+
+  it('origin/HEAD があれば、main などの名前のブランチがあっても、その指す先', async () => {
+    commit(repo, 'a.txt');
+    withOrigin();
+    run(repo, 'push', '-q', 'origin', 'main:release');
+    run(repo, 'remote', 'set-head', 'origin', 'release');
+    expect(await defaultBranch(repo)).toBe('release');
+  });
 });
 
 describe('branchBase', () => {
@@ -191,8 +225,20 @@ describe('branchBase', () => {
     run(work, 'push', '-q', '-u', 'origin', 'release');
     run(work, 'remote', 'set-head', 'origin', 'release');
     const pushed = sha(work);
+    // main もあるが、origin/HEAD の指す release にいるので、main とは比べない
+    run(work, 'branch', 'main');
     commit(work, 'b.txt');
     expect(await branchBase(work, await repoInfo(work))).toEqual({ ref: 'origin/release', mergeBase: pushed, kind: 'upstream' });
+  });
+
+  it('手元に無い基点のブランチ（origin/main だけ）とも比べる', async () => {
+    commit(repo, 'a.txt');
+    withOrigin();
+    const base = sha(repo);
+    run(repo, 'switch', '-q', '-c', 'feature');
+    commit(repo, 'f.txt');
+    run(repo, 'branch', '-D', 'main');
+    expect(await branchBase(repo, await repoInfo(repo))).toEqual({ ref: 'origin/main', mergeBase: base, kind: 'branch' });
   });
 
   it('履歴のつながらない基点のブランチは使わない。基点が無ければ上流と比べ、上流も無ければ null', async () => {
@@ -246,6 +292,16 @@ describe('branchFiles', () => {
       { path: 'keep.txt', kind: 'modified', added: 2, removed: 1, binary: false },
       { path: 'link.txt', kind: 'added', added: 0, removed: 0, binary: false },
       { path: 'new.txt', kind: 'added', added: 2, removed: 0, binary: false },
+    ]);
+  });
+
+  it('名前にタブのあるファイルの行数も数える。未追跡のファイルは 1MB ちょうどまで数える', async () => {
+    commit(repo, 'tab\tname.txt', 'a\n');
+    write(repo, 'tab\tname.txt', 'a\nb\nc\n');
+    write(repo, 'limit.txt', 'a\n'.repeat(512 * 1024));
+    expect(await branchFiles(repo, base)).toEqual([
+      { path: 'limit.txt', kind: 'added', added: 512 * 1024, removed: 0, binary: false },
+      { path: 'tab\tname.txt', kind: 'added', added: 3, removed: 0, binary: false },
     ]);
   });
 
