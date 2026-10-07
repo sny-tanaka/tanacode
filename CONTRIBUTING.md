@@ -390,6 +390,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 送った発言は、すぐチャットに出し、会話ログに書かれたら本物に置き換えます。Claude Code の作業中に送った発言は、今の作業が一区切りするまで会話ログに書かれません。
 - チャットの入力欄からの送信は、画面が pty に直接打たず、main の `SessionManager.submit`（IPC `sessions:submit`）が Claude Code の入力欄に打ち込みます。同じセッションへの送信は、親セッションからの指示・子の知らせも含めて、セッションごとの順番待ち（`sendChain`）で 1 つずつ打ちます。2 つの送信の文字が、入力欄で混ざらないようにするためです。
   - 打ち込んでいる途中の文字（送ってから 5 秒の間）は、main が画面に知らせる書きかけ（`draft`）から除きます（`shownScreen`）。Claude Code の入力欄に残った文字として、チャットの入力欄に移してしまわないためです。
+  - Enter は、打った文字が入力欄に出てから送ります（`untilTyped`・`typedShown`。空白を除いて末尾で比べ、貼り付けは `[Pasted text #1 …]` の目印が出たかで見る。3 秒たっても出なければ、そのまま送る）。決まった時間だけ待つと、Claude Code が忙しくて読むのが遅れたとき（起動の直後に MCP サーバーがつながる間など）、文字と Enter が 1 度に届きます。長い文字（親からの指示など）と一緒に届いた Enter は、貼り付けの中の改行として入力欄に入り、送られません（2.1.292 で実測）。
   - 中断（Esc）は `sessions:interrupt`。打ち込み中の控えを捨てるので、応答の前に中断して Claude Code が入力欄に戻した発言は、そのままチャットの入力欄に移ります。
 - 「作業中…」の横の進み具合は、Claude Code の画面のタイマーの行から読みます。順番待ちの発言があるあいだは、Claude Code がタイマーの行を出さないので、「作業中…」だけになります。
 - Claude の思考は、会話ログに空で記録されるので出せません。設定（`showThinkingSummaries`）で要約を残させることはできますが、英語なので使っていません。
@@ -590,6 +591,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `get_session_diff`: ソース管理と同じ `branchBase`・`branchFiles`（`git.ts`）で、分岐点から作業ツリーまで。未追跡のファイルは、新しいファイルの差分の形にします（256 KB を超えるもの・バイナリは中身を出さない）。読むのはふつうのファイルだけで（`lstat`。シンボリックリンクの先・デバイス・名前付きパイプは読まない）、数は 100 件、合計は結果の上限まで。`branchFiles` の行数の数え方も、同じくふつうのファイルだけ（`/dev/zero` へのリンクは読み終わらないため）。`path` はフォルダの外を指させません（`safeRelative`）。
   - `answer_question`: 画面から読んだ今の質問（`ScreenTracker` のメニュー）の文が、渡された `question` と同じで、AskUserQuestion で出した質問（フックが書いた質問。`isAskedQuestion`）に合うときだけ答えます。キーは `SessionManager.chooseIf`（`ScreenTracker.choose` の `expect`）で、キーを送る前に毎回、同じ質問が出ているか確かめ、変わっていたら何も押さずに失敗します（人が先に答えた・許可の確認に変わったときに、違うメニューへ答えないように）。複数選択は選択肢ごとに Space を送ってから確定します。自由記述は制御文字を除き、1 行にします。最後に、質問が閉じたのを確かめます。許可の確認のメニューには答えません。
   - `stop_session` は `SessionManager.interrupt`（Esc）。作業中のときだけで、人の対応待ちでは断ります。応答の前に止めると、親の指示が囲みごと子の入力欄に戻るので、`withdrawParentDraft` が消します（画面に知らせる `draft` からも、親の指示は除く）。止めたことは親に知らせません。
+    - 入力欄に戻った親の指示かは、先頭のタグ名と、そのあとの空白か改行で見ます（`isParentMessageDraft`）。入力欄はタグ名の直後で折り返すことがあり、画面から読むと、そこが改行になるためです。
   - `wait_sessions`: 状態の変化と 1 秒ごとの確認で、対象のどれかの手が空く（`starting`・`working` 以外になる）まで待ちます。バックグラウンドのタスクの完了待ちは、ターンが終わっているので手が空いたとみなします（開発サーバーのように終わらないものもあるため）。
 - 親への知らせ（`SessionsControl.stateChanged`）: 子の状態が `working` から `idle`・`background`・`question`・`permission`・`waiting`・`exited` に変わり、子の最後の発言（`/clear` よりあと）が親からの指示なら、親ごとに溜めます。親が止めた子（`stop_session`）は除きます。`starting` から手が空いたもの（アプリを起動し直して引き継いだときなど）は、作業を終えたのではないので数えません。子セッションは人に通知しないので（`index.ts` の `notify` が `parentOf` で除く）、親が答えられない許可の確認・ターミナルでの操作の待ちも親に知らせ、人に伝えさせます。
   - 親が `idle` か `background`（ターンの外）で入力欄が空なら、`<tanacode-session-event sessions="子の ID">文</tanacode-session-event>`（1 行。`sessionEventText`）を `submitWhenReady` で打ちます。親が作業中なら、ターンの外になったときに送ります。1.5 秒の間に続けて手が空いた子は、1 つにまとめます。待ちの列・まとめ・試し直しは `session-notices.ts` の `SessionNotices`（チェックリストの知らせと共通）。
@@ -809,6 +811,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
   - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
+  - `session-submit.test.ts`: Claude Code の入力欄に打って送る（`SessionManager.submit`。読むのが遅れて文字と Enter が 1 度に届くと Enter が改行になる偽の Claude Code で、打った文字が入力欄に出てから Enter を送るか）
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
 
