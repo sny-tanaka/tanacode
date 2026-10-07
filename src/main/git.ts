@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { lstat, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import type { GitBranches } from '@shared/ipc';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -58,7 +58,8 @@ export async function status(cwd: string): Promise<StatusEntry[] | null> {
     if (!path.startsWith(prefix)) continue;
     entries.push({
       path: path.slice(prefix.length),
-      from: from?.startsWith(prefix) ? from.slice(prefix.length) : from,
+      // 元のパスは cwd の外のこともある（../a.txt のようにする）。頭に / を付けて、プロセスの今のフォルダに頼らずに比べる
+      from: from === undefined ? undefined : posix.relative(`/${prefix}`, `/${from}`),
       index,
       worktree,
     });
