@@ -5,11 +5,17 @@ import { dirname, join } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import type { ChatBatch, NewSessionOptions, SessionSummary } from '@shared/ipc';
 import type { Activity, Menu, ScreenInfo } from '@shared/screen';
+import type { StatusLineInfo } from '@shared/statusline';
+import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
+import type { WorkflowRun } from '@shared/workflow';
+import type { BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
+import type { McpLaunch } from '../../src/main/mcp-bridge';
 import type { PtyHandle, PtyHostApi } from '../../src/main/pty-host-client';
 import type { HostedPtyInfo, SpawnRequest } from '../../src/main/pty-host-protocol';
-import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
+import { DEFAULT_PTY_SIZE, SessionManager, type RunTask } from '../../src/main/session-manager';
+import type { SettingsFiles } from '../../src/main/settings-files';
 import { SessionStore } from '../../src/main/session-store';
 import { StatusLineWatcher } from '../../src/main/statusline';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
@@ -29,6 +35,8 @@ export class ScriptedPty implements PtyHandle {
   readonly resizes: [number, number][] = [];
   killed = false;
   detached = false;
+  // 止めたら、すぐ終わる（終了を知らせる）。本物の claude は止めると終わる。ClaudeSession.stop は終わるのを待つ
+  exitOnKill = false;
   // キーを受けたときの claude の反応（テストが決める。画面を描き直すなど）
   onWrite: ((data: string) => void) | null = null;
   private readonly dataListeners: ((data: string) => void)[] = [];
@@ -63,6 +71,7 @@ export class ScriptedPty implements PtyHandle {
 
   kill(): void {
     this.killed = true;
+    if (this.exitOnKill) this.exit(0);
   }
 
   detach(): void {
@@ -133,6 +142,17 @@ export function fixtureScreen(name: ScreenName): string {
 
 export type Attention = { kind: 'menu'; menu: Menu } | { kind: 'unsupported' };
 
+// SessionManager の、アプリが組み立てるときに渡す残りの引数（省けば SessionManager の既定）
+export type ScriptedOptions = {
+  remoteControlAvailable?: boolean;
+  settingsFiles?: SettingsFiles | null;
+  runTask?: RunTask;
+  browser?: () => BrowserMcpLaunch | null;
+  sessionsMcp?: () => McpLaunch | null;
+  checklistMcp?: () => McpLaunch | null;
+  walkthroughMcp?: () => McpLaunch | null;
+};
+
 // SessionManager と、それが配信したもの
 export class ScriptedApp {
   readonly root = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-scripted-')));
@@ -147,12 +167,17 @@ export class ScriptedApp {
   readonly screens = new Map<string, ScreenInfo>();
   readonly activities = new Map<string, Activity | null>();
   readonly bashTasks = new Map<string, BashTask[]>();
+  readonly workflows = new Map<string, WorkflowRun[]>();
+  readonly subagents = new Map<string, SubagentRun[]>();
+  readonly statusLineInfos = new Map<string, StatusLineInfo>();
   sessions: SessionSummary[] = [];
+  // 一覧を知らせるたびの中身（途中の「準備中」なども見られるように）
+  readonly sessionLists: SessionSummary[][] = [];
   readonly manager: SessionManager;
   readonly statusLines: StatusLineWatcher;
   private readonly oldHome = process.env.HOME;
 
-  constructor() {
+  constructor(options: ScriptedOptions = {}) {
     mkdirSync(join(this.home, '.claude'), { recursive: true });
     mkdirSync(this.cwd, { recursive: true });
     // 会話ログのパス（transcriptPath）とユーザーの statusLine（sessionSettings）は homedir() を見る
@@ -164,25 +189,41 @@ export class ScriptedApp {
       (id, info) => this.manager.statusLineChanged(id, info),
       (id, input) => this.manager.askQuestionsChanged(id, input),
     );
-    this.manager = new SessionManager(this.host, new SessionStore(join(this.userData, 'sessions.json')), new WorkspaceWatchers(() => {}), this.statusLines, {
-      onSessionsChanged: (sessions) => (this.sessions = sessions),
-      onChat: (sent) => {
-        // アプリの IPC と同じく、送った時点の中身を写して受け取る
-        const batch = structuredClone(sent);
-        this.batches.push(batch);
-        this.chat.set(batch.sessionId, [...(this.chat.get(batch.sessionId) ?? []), ...batch.events]);
+    this.manager = new SessionManager(
+      this.host,
+      new SessionStore(join(this.userData, 'sessions.json')),
+      new WorkspaceWatchers(() => {}),
+      this.statusLines,
+      {
+        onSessionsChanged: (sessions) => {
+          this.sessions = sessions;
+          this.sessionLists.push(sessions);
+        },
+        onChat: (sent) => {
+          // アプリの IPC と同じく、送った時点の中身を写して受け取る
+          const batch = structuredClone(sent);
+          this.batches.push(batch);
+          this.chat.set(batch.sessionId, [...(this.chat.get(batch.sessionId) ?? []), ...batch.events]);
+        },
+        onPtyData: () => {},
+        onTurnCompleted: (session) => this.turnsCompleted.push(session),
+        onScreen: (id, info) => this.screens.set(id, info),
+        onActivity: (id, activity) => this.activities.set(id, activity),
+        onWorkflows: (id, runs) => this.workflows.set(id, runs),
+        onSubagents: (id, runs) => this.subagents.set(id, runs),
+        onBashTasks: (id, tasks) => this.bashTasks.set(id, tasks),
+        onKnowledge: () => {},
+        onStatusLine: (id, info) => this.statusLineInfos.set(id, info),
+        onAttention: (session, attention) => this.attentions.push({ id: session.id, attention }),
       },
-      onPtyData: () => {},
-      onTurnCompleted: (session) => this.turnsCompleted.push(session),
-      onScreen: (id, info) => this.screens.set(id, info),
-      onActivity: (id, activity) => this.activities.set(id, activity),
-      onWorkflows: () => {},
-      onSubagents: () => {},
-      onBashTasks: (id, tasks) => this.bashTasks.set(id, tasks),
-      onKnowledge: () => {},
-      onStatusLine: () => {},
-      onAttention: (session, attention) => this.attentions.push({ id: session.id, attention }),
-    });
+      options.remoteControlAvailable,
+      options.settingsFiles,
+      options.runTask,
+      options.browser,
+      options.sessionsMcp,
+      options.checklistMcp,
+      options.walkthroughMcp,
+    );
   }
 
   // 新しいセッションを作る（Claude Code を起動する）。起動した pty を返す

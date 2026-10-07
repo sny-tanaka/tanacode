@@ -172,6 +172,8 @@ PR と develop・main への push で、次のものを流します。
 
 - `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
   - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
+  - `new ScriptedApp({ … })` で、アプリが `SessionManager` に渡す残りの引数（Remote Control を使えるか・登録した設定ファイル・`runTask`・MCP サーバーの材料）を差し替えられます。`ScriptedPty.exitOnKill` を付けると、止めたらすぐ終わる（`ClaudeSession.stop` が終わるのを待つところを通せる）。
+  - `test/session-manager-*.test.ts` が、分かれ目ごと（状態・送信・Remote Control・worktree・引き継ぎ・起動のしかた・バックグラウンドのタスク）に使います。worktree は本物の git で確かめ、Claude Code が作るところは同じ形の worktree を git で作って代わりにします。
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
 - `test/helpers/fake-electron.ts`・`test/helpers/browser-control.ts`: Electron を起動せずに、アプリ内ブラウザの操作（`src/main/browser-control.ts`）を動かす。テストのファイルの `vi.mock('electron', …)` で、webview の中身（webContents）・CDP（debugger）・撮った画像（nativeImage）を、テストが決めた答えを返して受けたもの（CDP の命令・ページで動かすスクリプト・撮った範囲）を控える作り物に差し替えます。画面（`PreviewPane`）の代わりに、タブを開く知らせに応えて webview を知らせます。待ち・時間切れは `vi.useFakeTimers` で時間を進めて確かめます（`finish`）。`test/browser-control*.test.ts` が使います。
   - ページの中で動かすスクリプト（要素を探す・文字を読む・待つ）は、`test/browser-control-scripts.test.ts` が jsdom の文書の上で本当に動かします。jsdom は描かないので、要素の位置（`getBoundingClientRect`）と、その位置にある要素（`elementFromPoint`）はテストが決めます。
@@ -179,6 +181,8 @@ PR と develop・main への push で、次のものを流します。
   - `electron` を作り物（ウインドウ・ダイアログ・メニュー・通知・セッションの権限など）に差し替えます。`app.whenReady` はすぐに済むので、読み込むと起動の流れが最後まで進み、IPC の受け口・メニュー・ウインドウができます。テストは受け口を画面の代わりに呼び（`invoke`・`sendFromRenderer`）、メニューを押し、Electron のイベントを送ります。
   - Claude Code・pty ホスト・ソケット・監視など、重いものや外に出る部品は、呼ばれ方を控える作り物にします。作り物のメソッドは、既定では「呼ばれたメソッドと引数」をそのまま返すので、受け口が正しい相手に、引数を取り違えずに渡し、返事をそのまま返すかを、戻り値で確かめられます。アプリの設定・ウインドウの位置の保存・通知の文・shared は本物です。
   - index.ts は読み込むたびに状態（開いたフォルダ・終了の確認など）を持つので、`boot()` はテストごとに読み込み直します（userData とダウンロードは使い捨てのフォルダ）。読み込み直すと index.ts が使うモジュールも別のものになるので、本物の部品（`AppSettings` など）の失敗は `vi.spyOn` でなく、ファイルを書けなくするなどして起こします。
+  - 別のプロセスで動くホストは、単体のテストのカバレッジに入りません。`test/pty-host-server.test.ts` が、ホストをテストのプロセスの中で読み込んで（`process.exit`・`process.chdir` は差し替え）、同じやりとりを確かめます。
+  - アプリ側の接続の細かいところ（溜めておく出力・答えないホスト・つながっていない間の起動など）は、`test/pty-host-client.test.ts` が、決めたとおりに答える偽物のホストで確かめます。
 - テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（通るだけのテストにしない）。
 
 ### 配線と契約
