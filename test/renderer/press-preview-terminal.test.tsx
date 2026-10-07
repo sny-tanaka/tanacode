@@ -254,6 +254,41 @@ describe('TerminalPanel: Claude Code の画面のタブ', () => {
     expect(selectedTab()).toBe(0);
   });
 
+  it('上の縁をドラッグしてパネルの高さを変え、離すと覚える（次に開いたときもその高さ）', async () => {
+    // jsdom は押さえる（pointer capture）を持たない
+    Element.prototype.setPointerCapture ??= () => {};
+    Element.prototype.releasePointerCapture ??= () => {};
+    const { container, unmount } = render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    const panel = container.querySelector('.terminal-panel') as HTMLElement;
+    const edge = screen.getByRole('separator');
+    expect(panel.style.height).toBe('280px');
+    // 押していないときに動かしても変えない
+    fireEvent.pointerMove(edge, { clientY: 100 });
+    expect(panel.style.height).toBe('280px');
+
+    fireEvent.pointerDown(edge, { clientY: 500, pointerId: 1 });
+    expect(document.body.classList.contains('resizing-rows')).toBe(true);
+    fireEvent.pointerMove(edge, { clientY: 400, pointerId: 1 });
+    expect(panel.style.height).toBe('380px');
+    // 低くても 120px、高くても画面の高さ - 200px
+    fireEvent.pointerMove(edge, { clientY: 900, pointerId: 1 });
+    expect(panel.style.height).toBe('120px');
+    fireEvent.pointerMove(edge, { clientY: -2000, pointerId: 1 });
+    expect(panel.style.height).toBe(`${window.innerHeight - 200}px`);
+    fireEvent.pointerMove(edge, { clientY: 450, pointerId: 1 });
+    expect(localStorage.getItem('tanacode.terminalHeight')).toBeNull();
+    fireEvent.pointerUp(edge, { clientY: 450, pointerId: 1 });
+    expect(document.body.classList.contains('resizing-rows')).toBe(false);
+    expect(localStorage.getItem('tanacode.terminalHeight')).toBe('330');
+    fireEvent.pointerMove(edge, { clientY: 100 });
+    expect(panel.style.height).toBe('330px');
+
+    unmount();
+    const again = render(<Panel sessionId="s1" />);
+    expect((again.container.querySelector('.terminal-panel') as HTMLElement).style.height).toBe('330px');
+  });
+
   it('パネルを閉じるボタンで onClose を呼ぶ', async () => {
     const onClose = vi.fn();
     render(<Panel sessionId="s1" onClose={onClose} />);

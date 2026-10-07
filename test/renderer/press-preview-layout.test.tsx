@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { CSSProperties } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REPO_URL, type AppUpdate } from '@shared/app-update';
 import type { PullRequestLink } from '@shared/chat';
 import { StatusBar } from '../../src/renderer/src/StatusBar';
 import { AppUpdateMark, SEEN_KEY } from '../../src/renderer/src/layout/AppUpdate';
+import { Resizer, useColumnWidths } from '../../src/renderer/src/layout/columns';
 import { TitleBar } from '../../src/renderer/src/layout/TitleBar';
 import { Toggle } from '../../src/renderer/src/layout/Toggle';
 import './dom';
 import { mockApi } from './mock-api';
 
-// 上の帯（TitleBar・新しいバージョンの印・通知のスイッチ）と下のバー（StatusBar）のボタンを押して、効いたことを確かめる
+// 上の帯（TitleBar・新しいバージョンの印・通知のスイッチ）と下のバー（StatusBar）のボタン、カラムの幅のつまみを押して、効いたことを確かめる
 
 let api: ReturnType<typeof mockApi>;
 let opened: string[];
@@ -103,6 +105,14 @@ describe('新しいバージョンの印（AppUpdateMark）', () => {
     expect(localStorage.getItem(SEEN_KEY)).toBe('1.3.0');
   });
 
+  it('マウスを乗せただけでも、見たことにして動きを止める', () => {
+    render(<AppUpdateMark update={update('1.3.0')} />);
+    fireEvent.mouseEnter(mark('1.3.0'));
+    expect(mark('1.3.0').className).not.toContain('calling');
+    expect(localStorage.getItem(SEEN_KEY)).toBe('1.3.0');
+    expect(opened).toEqual([]);
+  });
+
   it('キーボードでフォーカスしただけでも、見たことにして動きを止める', () => {
     render(<AppUpdateMark update={update('1.3.0')} />);
     fireEvent.focus(mark('1.3.0'));
@@ -125,6 +135,75 @@ describe('新しいバージョンの印（AppUpdateMark）', () => {
   it('最新なら押すものは出さない', () => {
     render(<AppUpdateMark update={{ latest: '1.2.0', available: false, url: '' }} />);
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('カラムの幅のつまみ（Resizer・useColumnWidths）', () => {
+  // App と同じつなぎ方（幅の CSS 変数を持つ要素に mainRef を付け、つまみで左のカラムの幅を変える）
+  function Columns() {
+    const columns = useColumnWidths();
+    return (
+      <div ref={columns.mainRef} data-testid="main" style={{ '--w-sessions': `${columns.widths.sessions}px` } as CSSProperties}>
+        <span data-testid="state">{columns.widths.sessions}</span>
+        <Resizer
+          width={columns.widths.sessions}
+          onResize={(w) => columns.resize('sessions', w)}
+          onReset={() => columns.reset('sessions')}
+          onEnd={columns.save}
+        />
+      </div>
+    );
+  }
+  const main = () => screen.getByTestId('main');
+  const state = () => Number(screen.getByTestId('state').textContent);
+  const saved = () => JSON.parse(localStorage.getItem('tanacode.columns') ?? 'null') as Record<string, number> | null;
+  const width = window.innerWidth;
+  beforeEach(() => {
+    // jsdom は押さえる（pointer capture）を持たない
+    Element.prototype.setPointerCapture ??= () => {};
+    Element.prototype.releasePointerCapture ??= () => {};
+    window.innerWidth = 1600;
+  });
+  afterEach(() => {
+    window.innerWidth = width;
+  });
+
+  it('ドラッグで幅を変え（離すまでは CSS 変数だけを書き換える）、離すと覚える', () => {
+    render(<Columns />);
+    const handle = screen.getByRole('separator');
+    // 押していないときに動かしても変えない
+    fireEvent.pointerMove(handle, { clientX: 400 });
+    expect(main().style.getPropertyValue('--w-sessions')).toBe('248px');
+
+    fireEvent.pointerDown(handle, { clientX: 248, pointerId: 1 });
+    expect(document.body.classList.contains('resizing')).toBe(true);
+    fireEvent.pointerMove(handle, { clientX: 298, pointerId: 1 });
+    expect(main().style.getPropertyValue('--w-sessions')).toBe('298px');
+    expect(state()).toBe(248);
+    expect(saved()).toBeNull();
+    // いちばん広くても 440px
+    fireEvent.pointerMove(handle, { clientX: 1000, pointerId: 1 });
+    expect(main().style.getPropertyValue('--w-sessions')).toBe('440px');
+    fireEvent.pointerUp(handle, { clientX: 1000, pointerId: 1 });
+    expect(document.body.classList.contains('resizing')).toBe(false);
+    expect(state()).toBe(440);
+    expect(saved()).toEqual({ sessions: 440, claude: 400, side: 284 });
+    // 離したあとに動かしても変えない
+    fireEvent.pointerMove(handle, { clientX: 300 });
+    expect(state()).toBe(440);
+  });
+
+  it('ダブルクリックで元の幅に戻して覚える。次に開いたときは覚えた幅で出す', async () => {
+    localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 400 }));
+    const { unmount } = render(<Columns />);
+    expect(state()).toBe(400);
+    fireEvent.doubleClick(screen.getByRole('separator'));
+    expect(state()).toBe(248);
+    await waitFor(() => expect(saved()?.sessions).toBe(248));
+    unmount();
+    localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 300 }));
+    render(<Columns />);
+    expect(main().style.getPropertyValue('--w-sessions')).toBe('300px');
   });
 });
 
