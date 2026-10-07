@@ -251,11 +251,16 @@ export const ClaudePane = memo(function ClaudePane({
   const effortValue = session.effort ?? (efforts.find((e) => e === screen?.effort) ?? '');
 
   // Remote Control の切り替え。動いていれば /remote-control でその場でつなぐ・切るので、終わるまでぐるぐるを出す
-  const [switchingRemote, setSwitchingRemote] = useState(false);
+  const [switchingRemote, setSwitchingRemote] = useState<ReadonlySet<string>>(() => new Set());
   const setRemoteControl = async (on: boolean) => {
-    setSwitchingRemote(true);
-    const error = await window.tanacode.sessions.setRemoteControl(session.id, on);
-    setSwitchingRemote(false);
+    const id = session.id;
+    setSwitchingRemote((prev) => new Set(prev).add(id));
+    const error = await window.tanacode.sessions.setRemoteControl(id, on);
+    setSwitchingRemote((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     if (error) window.alert(error);
   };
 
@@ -356,7 +361,7 @@ export const ClaudePane = memo(function ClaudePane({
           <RemoteControlToggle
             on={session.remoteControl}
             connected={live ? !!chat.remoteControlUrl : null}
-            busy={switchingRemote}
+            busy={switchingRemote.has(session.id)}
             onChange={(on) => void setRemoteControl(on)}
           />
         )}
@@ -405,7 +410,8 @@ export const ClaudePane = memo(function ClaudePane({
         )}
       </header>
 
-      {showTodos && <TodoPanel todos={chat.todos!} />}
+      {/* セッションごとに作り直す（前のセッションで終わっていた項目を、移った先で「終わったばかり」と見なさない） */}
+      {showTodos && <TodoPanel key={session.id} todos={chat.todos!} />}
       <div className="chat-list-wrap">
         <div
           className="chat-list"
@@ -530,7 +536,8 @@ export const ClaudePane = memo(function ClaudePane({
               <IconButton icon={MonitorIcon} label="ターミナルで見る" onClick={onOpenTerminal} />
             </div>
           )}
-          {menu && <MenuCard key={`${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
+          {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
+          {menu && <MenuCard key={`${session.id}|${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
           {rewinding && (
             <div className="chat-callout">
               <span>巻き戻し先を選んでいます…</span>

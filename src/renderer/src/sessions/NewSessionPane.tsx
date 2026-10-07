@@ -84,7 +84,8 @@ export function NewSessionPane({
     setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
   });
-  const [starting, setStarting] = useState(false);
+  const [startingDirs, setStartingDirs] = useState<ReadonlySet<string>>(() => new Set());
+  const starting = !!cwd && startingDirs.has(cwd);
   // 最新のデフォルトブランチへ切り替えているフォルダと、うまくいかなかったときの理由。
   // 切り替えの途中でフォルダを変えても、変えた先のフォルダには持ち越さない（終わった結果も、選んでいるフォルダのものだけ出す）
   const [switchingDirs, setSwitchingDirs] = useState<ReadonlySet<string>>(() => new Set());
@@ -169,14 +170,22 @@ export function NewSessionPane({
 
   const send = async () => {
     if (!canSend || !cwd) return;
-    setStarting(true);
+    const dir = cwd;
+    setStartingDirs((prev) => new Set(prev).add(dir));
     const text = comments.length > 0 ? [input.trim(), formatComments(comments)].filter(Boolean).join('\n\n') : input;
     try {
-      await onStart(cwd, text, attachments, options);
-      onCommentsChange([]);
+      await onStart(dir, text, attachments, options);
+      // 始めている間にフォルダを変えていたら、変えた先で付けたコメントは残す（始めたセッションには、送ったときのものが入っている）
+      if (cwdRef.current === dir) onCommentsChange([]);
     } catch (err) {
       window.alert(`セッションを始められませんでした: ${errorMessage(err)}`);
-      setStarting(false);
+    } finally {
+      // 始められたら、ふつうはこの画面を閉じてそのセッションに移る。始めている間にフォルダを変えていたら画面は残るので、印を戻す
+      setStartingDirs((prev) => {
+        const next = new Set(prev);
+        next.delete(dir);
+        return next;
+      });
     }
   };
 

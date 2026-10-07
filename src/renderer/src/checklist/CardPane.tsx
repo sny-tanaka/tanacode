@@ -43,7 +43,10 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
   const [editingBody, setEditingBody] = useState<string | null>(null);
   const [reply, setReply] = useState('');
   const [notify, setNotify] = useState(loadNotify);
-  const [sending, setSending] = useState(false);
+  const [sendingCards, setSendingCards] = useState<ReadonlySet<string>>(() => new Set());
+  const sending = sendingCards.has(card.id);
+  const cardRef = useRef(card.id);
+  cardRef.current = card.id;
   const [copying, setCopying] = useState(false);
   const threadEnd = useRef<HTMLDivElement>(null);
   const unread = humanUnread(card);
@@ -66,9 +69,14 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
   const send = async () => {
     const text = reply.trim();
     if (!text || sending) return;
-    setSending(true);
-    if (await apply({ type: 'card-reply', listId: list.id, cardId: card.id, text, notify })) setReply('');
-    setSending(false);
+    const id = card.id;
+    setSendingCards((prev) => new Set(prev).add(id));
+    if ((await apply({ type: 'card-reply', listId: list.id, cardId: id, text, notify })) && cardRef.current === id) setReply('');
+    setSendingCards((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   const saveTitle = () => {

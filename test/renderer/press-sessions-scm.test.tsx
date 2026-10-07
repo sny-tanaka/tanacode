@@ -585,6 +585,52 @@ describe('QuickOpen（ファイル名で開く）', () => {
     fireEvent.click(button(/^guide\.md/));
     expect(onOpen).toHaveBeenCalledWith('docs/guide.md');
   });
+
+  // 開いたまま見ているセッションが変わることがある（通知を押して、そのセッションに移ったときなど）
+  describe('開いたまま別のセッションに変わったとき', () => {
+    // ファイルの一覧の返事を、セッションごとに、テストから好きなときに返す
+    const held = () => {
+      const lists = new Map<string, ReturnType<typeof deferred<string[]>>>();
+      const api = mockApi({
+        'workspace.listFiles': (id: never) => {
+          const list = deferred<string[]>();
+          lists.set(id, list);
+          return list.promise;
+        },
+      });
+      api.install();
+      return { api, resolve: (id: string) => act(async () => lists.get(id)!.resolve(files[id])) };
+    };
+    const shown = (names: string[]) => names.filter((name) => items().includes(name));
+
+    it('変えた直後（変えた先のファイルを読み終える前）は、前のセッションのファイルを出さず、押しても開かない', async () => {
+      const { resolve } = held();
+      const onOpen = vi.fn();
+      const view = render(<QuickOpen sessionId="A" onOpen={onOpen} onClose={vi.fn()} />);
+      await resolve('A');
+      expect(items()).toEqual(['app.ts', 'util.ts', 'README.md']);
+      view.rerender(<QuickOpen sessionId="B" onOpen={onOpen} onClose={vi.fn()} />);
+      expect(shown(['app.ts', 'util.ts', 'README.md'])).toEqual([]);
+      fireEvent.keyDown(box(), { key: 'Enter' });
+      document.querySelectorAll<HTMLElement>('.quick-open-item').forEach((item) => fireEvent.click(item));
+      expect(onOpen).not.toHaveBeenCalled();
+      await resolve('B');
+      expect(items()).toEqual(['guide.md', 'package.json']);
+    });
+
+    it('前のセッションのファイルの一覧が、変えた先の一覧より遅れて届いても、変えた先の候補を書き換えない', async () => {
+      const { api, resolve } = held();
+      const onOpen = vi.fn();
+      const view = render(<QuickOpen sessionId="A" onOpen={onOpen} onClose={vi.fn()} />);
+      view.rerender(<QuickOpen sessionId="B" onOpen={onOpen} onClose={vi.fn()} />);
+      expect(api.argsOf('workspace.listFiles')).toEqual([['A'], ['B']]);
+      await resolve('B');
+      await resolve('A');
+      expect(items()).toEqual(['guide.md', 'package.json']);
+      fireEvent.keyDown(box(), { key: 'Enter' });
+      expect(onOpen).toHaveBeenCalledWith('docs/guide.md');
+    });
+  });
 });
 
 describe('SearchPanel（全文検索）', () => {
