@@ -45,6 +45,7 @@ npm run dev
 | `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
 | `npm run test:e2e` | ビルドしたアプリを起動して、画面の操作から Claude Code・MCP・ターミナルまで通しで確かめる（先に `npm run build`。下の「アプリの通しのテスト（E2E）」） |
 | `npm run coverage` / `npm run coverage:cli` | `npm test` / `npm run test:cli` と同じテストで、カバレッジを測る（下の「テストと CI」） |
+| `npm run coverage:e2e` | `npm run test:e2e` と同じテストで、カバレッジを測る（先に `TANACODE_SOURCEMAP=1 npm run build`。下の「アプリの通しのテスト（E2E）」） |
 | `npm run coverage:report` | 測ったカバレッジを合わせて層ごとに出し、下限を下回っていないか確かめる |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名は下の「署名」） |
@@ -159,7 +160,7 @@ PR と develop・main への push で、次のものを流します。
 | `ci.yml` | `typecheck` | 型チェック（`npm run typecheck`） | ubuntu |
 | `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる。できた `.app` で E2E（`npm run test:e2e`）も流す | macOS |
 | `ci.yml` | `storybook` | Storybook のビルド | ubuntu |
-| `claude-code-check.yml` | `check` | `npm test` と `npm run test:cli`（下の「Claude Code との互換性の確かめ方」）。カバレッジも測る | macOS |
+| `claude-code-check.yml` | `check` | `npm test` と `npm run test:cli`（下の「Claude Code との互換性の確かめ方」）と、ソースマップ付きでビルドしたアプリでの E2E（`npm run coverage:e2e`）。どれもカバレッジを測り、合わせて下限を確かめる（下の「カバレッジ」） | macOS |
 | `demo-site.yml` | `build`・`tour`・`tour-sp` | デモのサイトのビルドと、ツアーが最後まで流れるか（下の「デモのサイト」） | ubuntu |
 
 - PR では流さず、週 1 回の定期実行と手動の実行だけで流すものに、`mutation.yml`（ubuntu。下の「ミューテーションテスト」）があります。
@@ -198,14 +199,23 @@ PR と develop・main への push で、次のものを流します。
 
 ### カバレッジ
 
-- `npm run coverage`（`npm test` と同じテスト）と `npm run coverage:cli`（`npm run test:cli` と同じテスト）で測り、`coverage/unit/`・`coverage/cli/` の `coverage-final.json` に書きます。
-  - 測る範囲は `vitest.coverage.ts`。`src` の .ts・.tsx で、ストーリーとデモのサイトの台本は除きます。テストで読み込まなかったファイルも 0% として数えます。
-  - 落ちたテストがあっても、ほかのテストで通ったところは数えます。手元で `npm run coverage:cli` を root で動かすと、`bypassPermissions` の台本は Claude Code が起動を断るので落ちます（CI では起きません）。
-- `npm run coverage:report` が、測ったものを合わせて、層（main・preload・shared・renderer）ごとに行・分岐・関数の割合を出します。1 行も通っていないファイルの一覧も出します。
+3 つのテストで測り、それぞれ `coverage/<名前>/coverage-final.json` に書きます。
+
+| コマンド | 同じテスト | 書く場所 |
+| --- | --- | --- |
+| `npm run coverage` | `npm test` | `coverage/unit/` |
+| `npm run coverage:cli` | `npm run test:cli` | `coverage/cli/` |
+| `npm run coverage:e2e` | `npm run test:e2e`（先に `TANACODE_SOURCEMAP=1 npm run build`。下の「アプリの通しのテスト（E2E）」） | `coverage/e2e/` |
+
+- 単体と本物の claude のテストで測る範囲は `vitest.coverage.ts`。`src` の .ts・.tsx で、ストーリーとデモのサイトの台本は除きます。テストで読み込まなかったファイルも 0% として数えます。E2E も同じ範囲のファイルだけを数えます。
+- 落ちたテストがあっても、ほかのテストで通ったところは数えます。手元で `npm run coverage:cli` を root で動かすと、`bypassPermissions` の台本は Claude Code が起動を断るので落ちます（CI では起きません）。
+- 単体のテストは main・shared の中核と画面の部品を、E2E は配線（IPC・preload・pty ホスト・MCP の中継）と、部品をつないだ画面を通します。E2E を合わせると、preload と画面の割合が大きく上がります。
+- `npm run coverage:report` が、`coverage/` にあるものを全部合わせて、層（main・preload・shared・renderer）ごとに行・分岐・関数の割合を出します。1 行も通っていないファイルの一覧も出します。
   - 下限は `test/coverage-thresholds.json`。下回った層があれば失敗にします。
-  - 下限は上げるだけで、下げません。テストを足して上がったら、`npm run coverage:report -- --update` で上げます。今の値から 1 ポイント下げて置きます。本物の claude を動かすテストは、待ち方しだいで通る行が少し変わるためです。
+  - 下限は上げるだけで、下げません。テストを足して上がったら、`npm run coverage:report -- --update` で上げます。今の値から 1 ポイント下げて置きます。本物の claude を動かすテストと E2E は、待ち方しだいで通る行が少し変わるためです。手元で上げるときは、CI と同じく 3 つとも測ってから流します（どれかが無いと、その分だけ低く出ます）。
   - `--diff <ref>` を付けると、`<ref>` から変えた行のうち、テストで通った行の割合と、通らなかった行も出します。
-- CI の `check` のジョブは、PR と push で両方を測って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では、まとめません。その日の最新の Claude Code の互換性を見るためのものだからです。
+  - 合わせるときは、文・分岐・関数を src の位置で突き合わせます。単体のテスト（ファイルごとに変換したもの）と E2E（ビルドしてまとめたものを、ソースマップで戻したもの）では、同じ文でも位置が少しずれることがあり、そのときは別のものとして数えます。行の割合は、同じ行のうち通ったものを数えるので影響を受けません。分岐と関数の割合は、少し動くことがあります。
+- CI の `check` のジョブは、PR と push で 3 つとも測って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では、E2E を流さず、まとめもしません。その日の最新の Claude Code の互換性を見るためのものだからです。
 - カバレッジは、テストで実行された行の割合です。結果まで確かめたかは分かりません。テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（まとめて確かめるのが、下の「ミューテーションテスト」）。
 
 ### ミューテーションテスト
@@ -234,12 +244,23 @@ PR と develop・main への push で、次のものを流します。
 
 `npm run test:e2e`（`test/e2e/`）は、アプリ本体を Playwright で起動し、人と同じように画面を操作して、Claude Code・MCP・ターミナルまで通しで確かめます。`claude` は本物（`TANACODE_CLAUDE_BIN`、無ければ PATH の `claude`）、API はモック（`test/cli/mock-api.ts`）なので、料金はかかりません。
 
-- 起動するのは、ビルドしたアプリ（`out/`。先に `npm run build`）か、`TANACODE_E2E_APP` に渡した実行ファイル（パッケージした `.app` の `Contents/MacOS/tanacode`）。CI の `app` のジョブは、作った `.app` で流します。
+- 起動するのは、ビルドしたアプリ（`out/`。先に `npm run build`）か、`TANACODE_E2E_APP` に渡した実行ファイル（パッケージした `.app` の `Contents/MacOS/tanacode`）。
+- CI では 2 か所で流します。どちらも PR と push だけで、`claude` は動作確認済のバージョンです。
+  - `ci.yml` の `app` のジョブ: 作った `.app` で流します（`npm run test:e2e`）。配る形のまま動くかを確かめるためです。
+  - `claude-code-check.yml` の `check` のジョブ: ソースマップ付きでビルドした `out/` で、カバレッジを測りながら流します（`npm run coverage:e2e`）。単体と本物の claude のテストと合わせて、下限を確かめます。Electron の本体は `npm ci` では入らないので、`node node_modules/electron/install.js` で入れます。
+  - 毎日の定期の確認（最新の Claude Code）では流しません。E2E はビルドを含めて数分かかり、画面の待ち方しだいで落ちることもあるので、互換性の確認（読み取りが壊れていないか）とは分けています。新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れ、通らなければマージしません。
 - userData（`--user-data-dir`）と HOME は使い捨てのフォルダにします。ふだんのアプリの設定や `~/.claude` には触りません。通知と更新の確認は切ります。フォルダを選ぶダイアログは、作業フォルダを選んだことにします。
 - 終わるときは、終了の確認で「Claude Code も止めて終了」を選んだことにして、pty ホストと `claude` が終わるのを待ってから、一時フォルダを消します。
 - 失敗したテストは、画面の写し・メインプロセスの出力・モックの API の呼び出し・セッションの一覧・選んでいるセッションの Claude Code の画面を `test-results/e2e/` に残します。CI では、ジョブの成果物（`e2e-results`）に入れます。
 - 画面の目印には、クラス名と `aria-label` を使います。画面を変えて目印が変わったら、`test/e2e/app.ts` の操作の部品か、テストの目印を直します。
 - Linux でも `xvfb-run -a npm run test:e2e` で流せます（手元で確かめる用。CI では流しません）。
+- カバレッジも測るときは、`TANACODE_SOURCEMAP=1 npm run build` でソースマップ付きでビルドしてから `npm run coverage:e2e`（Linux では `xvfb-run -a npm run coverage:e2e`）。`npm run coverage:report` は、ほかのカバレッジと合わせて数えます（上の「カバレッジ」）。
+  - 集め方: メインプロセス・pty ホスト・MCP の中継（どれも Node）は `NODE_V8_COVERAGE` で、画面と preload は Playwright の `page.coverage` で、`coverage/e2e-raw/` に集めます。
+  - 画面のカバレッジは、測り始めてから読み込んだスクリプトの分しか取れないので、起動したら画面を読み込み直します。
+  - MCP の中継は、Claude Code が終わるときにシグナル（SIGINT）で止められ、そのままでは `NODE_V8_COVERAGE` を書きません。測るときだけ、シグナルを受けたら `process.exit` で終える `test/e2e/coverage-exit.cjs` を、`NODE_OPTIONS` の `--require` で読み込ませます。Playwright は起動するアプリに `NODE_OPTIONS` を渡さないので、起動したあとメインプロセスの環境変数に足します（Claude Code がそれを引き継いで、中継に渡します）。
+  - 戻し方: 終わったら `scripts/e2e-coverage.mjs`（`test/e2e/global-setup.ts` から）が、同じスクリプトの記録（起動のたび・プロセスごと）を V8 の形のまま合わせてから、ソースマップで src の行に戻し（`ast-v8-to-istanbul`）、`coverage/e2e/coverage-final.json` に書きます。記録ごとに戻すと、大きなスクリプト（画面は 10MB ほど）を何十回も戻すことになり、遅いためです。
+  - ビルドは、ソースマップを書き出す分だけメモリを多く使います（手元の計測で、ソースマップなしの 4.5GB ほどに対して 5.5〜6GB ほど）。
+  - ソースマップ（`.map`）は、パッケージしたアプリには入れません（`package.json` の `build.files`）。
 
 | ファイル | 確かめること |
 | --- | --- |
@@ -821,7 +842,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
-- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）
+- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）
 - `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）と、カバレッジの下限（`coverage-thresholds.json`。上の「テストと CI」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
