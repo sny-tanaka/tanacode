@@ -18,6 +18,8 @@ dist/
 storybook-static/
 # カバレッジ（npm run coverage の出力）
 /coverage/
+# ミューテーションテスト（npm run mutation の出力）
+/reports/
 
 # Claude Design の書き出し（手元でだけ使う。ライセンスがはっきりしないので公開しない）
 design/Claude IDE.dc.html
