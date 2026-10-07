@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Checklist } from '@shared/checklist';
 import type { SessionSummary } from '@shared/ipc';
 import { canSee } from '@shared/session-tools';
@@ -26,6 +26,18 @@ export function CopyDialog({
   const [busy, setBusy] = useState(false);
   const cards = list.cards.filter((c) => cardIds.includes(c.id));
 
+  // Escape で閉じるには、ダイアログの中にフォーカスが要る。コピー先を選ぶ欄があればそこへ、無ければダイアログそのものへ移す。
+  // 閉じたら、開く前にいた場所に戻す
+  const dialog = useRef<HTMLDivElement>(null);
+  const select = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    const before = document.activeElement;
+    (select.current ?? dialog.current)?.focus();
+    return () => {
+      if (before instanceof HTMLElement) before.focus();
+    };
+  }, []);
+
   const copy = async () => {
     if (!to || !toList.trim()) return;
     setBusy(true);
@@ -42,8 +54,10 @@ export function CopyDialog({
     <div className="overlay" onMouseDown={() => !busy && onClose()}>
       <div
         className="quick-open checklist-dialog"
+        ref={dialog}
         role="dialog"
         aria-label="別のセッションへコピー"
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.nativeEvent.isComposing) return;
@@ -63,7 +77,7 @@ export function CopyDialog({
             <>
               <label className="checklist-field">
                 <span>コピー先のセッション</span>
-                <select value={to} onChange={(e) => setTo(e.target.value)} autoFocus>
+                <select ref={select} value={to} onChange={(e) => setTo(e.target.value)}>
                   {targets.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.title ?? '新しいセッション'}
