@@ -7,6 +7,11 @@ const POLL_MS = 1000;
 // 完了時の記録が起動より前に書かれたものか見るときの余裕（会話ログの時刻とファイルの更新時刻のずれ）
 const CLOCK_SLACK_MS = 1000;
 const PREVIEW_CHARS = 300;
+// ワークフローのエージェントの会話ログの、ハーネスの前置き（2.1.292）。最初の発言は元のユーザーの依頼を伝える前置き（user request）で、
+// 次の発言が、スクリプトが渡した仕事を伝える前置き（computed task）。どちらも 1 行目が前置きの文で、続く行は本文を 2 文字ずつ字下げしたもの。
+// 自動で始まった実行は、automated trigger の前置きの行のあとに、computed task の前置きが続く
+const HARNESS = '[Workflow harness — ';
+const COMPUTED_TASK = '[Workflow harness — computed task]';
 
 // 会話ログの toolUseResult（Workflow ツールがバックグラウンドで起動したとき）
 export type WorkflowLaunch = {
@@ -452,7 +457,7 @@ async function readAgentLog(file: string, log: AgentLog): Promise<void> {
     const e = line as { type?: string; timestamp?: string; message?: { content?: unknown } };
     if (log.startedAt === null && e.timestamp) log.startedAt = Date.parse(e.timestamp) || null;
     const content = e.message?.content;
-    if (e.type === 'user' && typeof content === 'string' && log.prompt === null) log.prompt = content.slice(0, PREVIEW_CHARS);
+    if (e.type === 'user' && typeof content === 'string' && log.prompt === null) log.prompt = taskPrompt(content)?.slice(0, PREVIEW_CHARS) ?? null;
     if (e.type === 'assistant' && Array.isArray(content)) {
       for (const block of content as { type?: string; name?: string }[]) {
         if (block.type !== 'tool_use') continue;
@@ -461,6 +466,22 @@ async function readAgentLog(file: string, log: AgentLog): Promise<void> {
       }
     }
   }
+}
+
+// エージェントの発言から、スクリプトが渡した仕事の文（完了時の記録の promptPreview と同じもの）を取り出す。
+// 前置きの無い発言は、そのまま。仕事の文の無い前置き（ユーザーの依頼を伝えるもの）は null（次の発言を見る）
+function taskPrompt(content: string): string | null {
+  if (!content.startsWith(HARNESS)) return content;
+  const lines = content.split('\n');
+  const at = lines.findIndex((line) => line.startsWith(COMPUTED_TASK));
+  if (at === -1) return null;
+  return (
+    lines
+      .slice(at + 1)
+      .map((line) => line.replace(/^ {2}/, ''))
+      .join('\n')
+      .trim() || null
+  );
 }
 
 function parseLines(buf: Buffer): unknown[] {
