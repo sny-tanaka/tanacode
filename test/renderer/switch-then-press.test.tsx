@@ -1,11 +1,19 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Card, Checklist } from '@shared/checklist';
 import type { GitState, SearchResult, SessionSummary } from '@shared/ipc';
 import type { WalkthroughCommentDraft } from '@shared/walkthrough-comment';
+import { CardPane } from '../../src/renderer/src/checklist/CardPane';
+import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
+import { EMPTY_CHAT } from '../../src/renderer/src/chat/chatState';
+import { CANCEL_PICKER_SCRIPT } from '../../src/renderer/src/preview/picker';
+import { PreviewPane } from '../../src/renderer/src/preview/PreviewPane';
 import { ScmPanel } from '../../src/renderer/src/scm/ScmPanel';
 import { useGitState } from '../../src/renderer/src/scm/useGitState';
 import { SearchPanel } from '../../src/renderer/src/search/SearchPanel';
+import { NewSessionPane } from '../../src/renderer/src/sessions/NewSessionPane';
 import { WorktreeDialog } from '../../src/renderer/src/sessions/WorktreeDialog';
 import { CommentDialog } from '../../src/renderer/src/walkthrough/CommentDialog';
 import './dom';
@@ -138,6 +146,133 @@ describe('ScmPanel（フォルダを切り替えた直後のプル）', () => {
   });
 });
 
+describe('ClaudePane（セッションを切り替えた直後の Remote Control）', () => {
+  function Pane({ current }: { current: SessionSummary }) {
+    return (
+      <ClaudePane
+        session={current}
+        sessions={[session('A'), session('B')]}
+        onSelectSession={noop}
+        chat={{ ...EMPTY_CHAT, status: 'idle' }}
+        screen={null}
+        workflows={new Map()}
+        subagents={new Map()}
+        bashTasks={new Map()}
+        contextTokens={null}
+        statusLine={null}
+        tasks={[]}
+        activeTaskKey={null}
+        onOpenTask={noop}
+        onStopTask={noop}
+        stoppingTasks={new Set()}
+        terminalOpen={false}
+        comments={[]}
+        onCommentsChange={noop}
+        onShowComment={noop}
+        onOpenTerminal={noop}
+        onShowContext={noop}
+        onShowShell={noop}
+        onToggleTerminal={noop}
+        onOpenFile={noop}
+        onResume={noop}
+        onUnarchive={noop}
+        onSend={noop}
+        pending={null}
+        sending={[]}
+        onTakePending={() => null}
+        scheduled={[]}
+      />
+    );
+  }
+  const toggle = () => screen.getByRole<HTMLButtonElement>('switch', { name: 'Remote Control' });
+
+  it('切り替えた先のトグルが押せて、切り替えた先の ID で切り替える。前のセッションの返事で、切り替えた先の「切り替え中」を消さない', async () => {
+    const switches = held<string | null>();
+    const api = mockApi({ 'sessions.setRemoteControl': (id: never) => switches.respond(id) });
+    api.install();
+    const view = render(<Pane current={session('A')} />);
+    fireEvent.click(toggle());
+    expect(api.argsOf('sessions.setRemoteControl')).toEqual([['A', true]]);
+    expect(toggle().disabled).toBe(true);
+    view.rerender(<Pane current={session('B')} />);
+    expect(toggle().disabled).toBe(false);
+    fireEvent.click(toggle());
+    expect(api.argsOf('sessions.setRemoteControl')).toEqual([
+      ['A', true],
+      ['B', true],
+    ]);
+    expect(toggle().disabled).toBe(true);
+    // A の返事が届いても、B はまだ切り替えの途中
+    await switches.resolve('A', null);
+    expect(toggle().disabled).toBe(true);
+    await switches.resolve('B', null);
+    expect(toggle().disabled).toBe(false);
+  });
+});
+
+describe('CardPane（カードを切り替えた直後の返信）', () => {
+  const card = (id: string, number: number): Card => ({
+    id,
+    number,
+    title: `カード ${id}`,
+    body: '',
+    checked: false,
+    createdBy: 'human',
+    createdAt: 0,
+    updatedAt: 0,
+    thread: [],
+    readByHuman: 0,
+    readByClaude: 0,
+  });
+  const cardA = card('card-a', 1);
+  const cardB = card('card-b', 2);
+  const list: Checklist = { id: 'list', name: '完了前チェック', description: '', nextNumber: 3, cards: [cardA, cardB], createdBy: 'human', createdAt: 0 };
+
+  function setup() {
+    const replies = held<void>();
+    const api = mockApi({
+      'checklist.apply': (_sessionId: never, op: never) => {
+        const { type, cardId } = op as { type: string; cardId?: string };
+        return type === 'card-reply' ? replies.respond(cardId!) : Promise.resolve();
+      },
+    });
+    api.install();
+    return { api, replies };
+  }
+  const composer = () => screen.getByPlaceholderText<HTMLTextAreaElement>('返信（Markdown。⌘Enter で送る）');
+  const write = (text: string) => fireEvent.change(composer(), { target: { value: text } });
+
+  // カード A に返信を送り、返事を待っている間にカード B へ切り替える
+  function sendThenSwitch() {
+    const view = render(<CardPane session={session('A')} sessions={[session('A')]} list={list} card={cardA} onClose={noop} />);
+    write('A への返信');
+    fireEvent.click(button('返信する'));
+    view.rerender(<CardPane session={session('A')} sessions={[session('A')]} list={list} card={cardB} onClose={noop} />);
+  }
+  const replyOps = (api: ReturnType<typeof mockApi>) =>
+    api.argsOf('checklist.apply').flatMap(([, op]) => ((op as { type: string }).type === 'card-reply' ? [op as { cardId: string; text: string }] : []));
+
+  it('切り替えた先の返信のボタンが押せて、切り替えた先のカードに返信する', () => {
+    const { api } = setup();
+    sendThenSwitch();
+    write('B への返信');
+    expect(button('返信する').disabled).toBe(false);
+    fireEvent.click(button('返信する'));
+    expect(replyOps(api).map(({ cardId, text }) => [cardId, text])).toEqual([
+      ['card-a', 'A への返信'],
+      ['card-b', 'B への返信'],
+    ]);
+  });
+
+  it('前のカードへの返信が終わっても、切り替えた先のカードの書きかけを消さない', async () => {
+    const { replies } = setup();
+    sendThenSwitch();
+    write('B の書きかけ');
+    await replies.resolve('card-a');
+    expect(composer().value).toBe('B の書きかけ');
+  });
+});
+
 describe('SearchPanel（検索の文字や対象を変えた直後）', () => {
   const found = (path: string): SearchResult => ({ files: [{ path, matches: [{ line: 1, column: 1, text: 'hit', matchStart: 0, matchLength: 3 }] }], truncated: false });
   // 検索は打ち終わって 250ms 待ってから
@@ -178,6 +313,18 @@ describe('SearchPanel（検索の文字や対象を変えた直後）', () => {
     expect(screen.queryByText('bar.ts')).not.toBeNull();
   });
 
+  it('検索中に文字を消すと「検索中…」を消し、前の文字の結果も出さない', async () => {
+    const { resolve } = setup();
+    render(<SearchPanel sessionId="A" onOpen={noop} />);
+    typed('foo');
+    expect(summary()).toBe('検索中…');
+    typed('');
+    expect(summary()).toBe('');
+    await resolve('A:foo', found('foo.ts'));
+    expect(summary()).toBe('');
+    expect(screen.queryByText('foo.ts')).toBeNull();
+  });
+
   it('同じフォルダの別のセッションに切り替えると、切り替えた先の ID で検索し直し、前のセッションの結果は出さない', async () => {
     const { api, resolve } = setup();
     const view = render(<SearchPanel sessionId="A" onOpen={noop} />);
@@ -189,6 +336,47 @@ describe('SearchPanel（検索の文字や対象を変えた直後）', () => {
     expect(screen.queryByText('from-a.ts')).toBeNull();
     await resolve('B:foo', found('from-b.ts'));
     expect(screen.queryByText('from-b.ts')).not.toBeNull();
+  });
+});
+
+describe('PreviewPane（セッションを切り替えた直後の「要素を選ぶ」）', () => {
+  // Electron の <webview> の代わり。要素選び（pickerScript）の返事は、ページ（URL）ごとに好きなときに返す
+  function fakeWebviews() {
+    const picks = held<unknown>();
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string, options?: ElementCreationOptions) => {
+      const element = create(tag, options);
+      if (tag !== 'webview') return element;
+      const view = element as HTMLElement & { src: string };
+      return Object.assign(view, {
+        getURL: () => view.src,
+        canGoBack: () => false,
+        canGoForward: () => false,
+        executeJavaScript: (code: string) => (code === CANCEL_PICKER_SCRIPT ? Promise.resolve() : picks.respond(view.src)),
+      });
+    }) as typeof document.createElement);
+    return picks;
+  }
+
+  it('切り替えた先の「要素を選ぶ」が押せて、切り替えた先のページで選ぶ。前のページの返事で、切り替えた先の要素選びを止めない', async () => {
+    const picks = fakeWebviews();
+    const api = mockApi({ 'browser.asks': () => Promise.resolve([]) });
+    api.install();
+    const view = render(<PreviewPane sessionId="A" visible liveSessionIds={['A', 'B']} onClose={noop} />);
+    act(() => {
+      api.emit('browser.onOpen', { sessionId: 'A', url: 'http://localhost:3000/a' });
+      api.emit('browser.onOpen', { sessionId: 'B', url: 'http://localhost:3000/b' });
+    });
+    fireEvent.click(button('要素を選ぶ'));
+    expect(button('選ぶのをやめる').getAttribute('aria-pressed')).toBe('true');
+    view.rerender(<PreviewPane sessionId="B" visible liveSessionIds={['A', 'B']} onClose={noop} />);
+    expect(button('要素を選ぶ').disabled).toBe(false);
+    fireEvent.click(button('要素を選ぶ'));
+    expect(button('選ぶのをやめる').getAttribute('aria-pressed')).toBe('true');
+    // A のページの要素選びは、切り替えたときにやめさせた（何も選ばずに終わる）
+    await picks.resolve('http://localhost:3000/a', null);
+    expect(button('選ぶのをやめる').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText('ページの要素をクリックしてください（Esc でやめる）')).not.toBeNull();
   });
 });
 
@@ -248,5 +436,44 @@ describe('WorktreeDialog（worktree を残すか消すかの確認）', () => {
     expect(onClose).not.toHaveBeenCalled();
     await act(async () => done.resolve());
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('NewSessionPane（始めている途中でフォルダを変えた直後の送信）', () => {
+  type Props = ComponentProps<typeof NewSessionPane>;
+  const props = (cwd: string, overrides: Partial<Props> = {}): Props => ({
+    folders: ['/work/a', '/work/b'],
+    onForgetFolder: noop,
+    cwd,
+    onCwdChange: noop,
+    sessions: [],
+    branch: 'feature',
+    onOpenScm: noop,
+    gitId: `folder:${cwd}`,
+    onGitChanged: noop,
+    comments: [],
+    onCommentsChange: noop,
+    onShowComment: noop,
+    onStart: () => Promise.resolve(),
+    onCancel: null,
+    ...overrides,
+  });
+
+  it('変えた先の送信が押せて、変えた先のフォルダで始める', async () => {
+    const starts = held<void>();
+    const onStart = vi.fn((cwd: string, _text: string, _attachments: string[], _options: unknown) => starts.respond(cwd));
+    mockApi({ 'folders.info': () => Promise.resolve({ branch: 'feature' }) }).install();
+    const view = render(<NewSessionPane {...props('/work/a', { onStart })} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'A で始めてください' } });
+    fireEvent.click(button('送信'));
+    expect(button('送信').disabled).toBe(true);
+    view.rerender(<NewSessionPane {...props('/work/b', { onStart })} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'B で始めてください' } });
+    expect(button('送信').disabled).toBe(false);
+    fireEvent.click(button('送信'));
+    expect(onStart.mock.calls.map(([cwd, text]) => [cwd, text])).toEqual([
+      ['/work/a', 'A で始めてください'],
+      ['/work/b', 'B で始めてください'],
+    ]);
   });
 });
