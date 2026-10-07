@@ -6,6 +6,7 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 - [始め方](#始め方)
 - [書き方の決まり](#書き方の決まり)
 - [見た目の確かめ方](#見た目の確かめ方)
+- [テストと CI](#テストと-ci)
 - [Claude Code との互換性の確かめ方](#claude-code-との互換性の確かめ方)
 - [仕組み](#仕組み)
 - [機能ごとの実装メモ](#機能ごとの実装メモ)
@@ -20,7 +21,7 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 - 不具合・要望は、まず Issue へ。大きな変更は、実装の前に Issue で相談
 - 脆弱性は Issue ではなく [SECURITY.md](SECURITY.md) の手順で
 - PR は `develop` ブランチへ
-- 出す前に `npm run typecheck` と `npm test`。画面を変えたときは Storybook で確かめ、PR にスクリーンショットを添付
+- 出す前に `npm run typecheck` と `npm test`（PR の CI で流すものは「テストと CI」）。画面を変えたときは Storybook で確かめ、PR にスクリーンショットを添付
 - 画面・会話ログ・statusLine の読み取りを変えたときは、`npm run test:cli` も（下の「Claude Code との互換性の確かめ方」）
 
 ## 始め方
@@ -41,6 +42,8 @@ npm run dev
 | `npm run typecheck` | 型チェック |
 | `npm test` | 本物の Claude Code から取った控えで、画面・会話ログ・statusLine の読み取りを確かめる（読み取りの部品の単体の確認も） |
 | `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
+| `npm run coverage` / `npm run coverage:cli` | `npm test` / `npm run test:cli` と同じテストで、カバレッジを測る（下の「テストと CI」） |
+| `npm run coverage:report` | 測ったカバレッジを合わせて層ごとに出し、下限を下回っていないか確かめる |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名は下の「署名」） |
 | `npm run install-app` | `npm run dist` のあと、`/Applications/tanacode.app` に入れ替える（下の「ソースからビルドして使う」） |
@@ -144,6 +147,33 @@ npm run dev
 - 線の太さが、画面の上で 1.0〜1.7px に収まり、大きいほど細い。
 - `iconHtml`（Markdown のコードブロックの実行ボタン用）が、`IconButton` などの描画と同じ文字列を返す。
 - `icons/` の外に、`<svg>` と、記号のアイコンが増えていない（例外は、図の `WorkflowFlow` とアニメーションの印の `CheckMark`）。
+
+## テストと CI
+
+PR と develop・main への push で、次のものを流します。
+
+| ワークフロー | ジョブ | 内容 | ランナー |
+| --- | --- | --- | --- |
+| `ci.yml` | `typecheck` | 型チェック（`npm run typecheck`） | ubuntu |
+| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる | macOS |
+| `ci.yml` | `storybook` | Storybook のビルド | ubuntu |
+| `claude-code-check.yml` | `check` | `npm test` と `npm run test:cli`（下の「Claude Code との互換性の確かめ方」）。カバレッジも測る | ubuntu |
+| `demo-site.yml` | `build`・`tour`・`tour-sp` | デモのサイトのビルドと、ツアーが最後まで流れるか（下の「デモのサイト」） | ubuntu |
+
+- アプリは macOS 専用なので、アプリ本体の確認は macOS で流します。Linux で動くかは確かめません。型チェック・Storybook・デモのサイトは OS に依らないので、ubuntu で流します。
+- public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
+
+### カバレッジ
+
+- `npm run coverage`（`npm test` と同じテスト）と `npm run coverage:cli`（`npm run test:cli` と同じテスト）で測り、`coverage/unit/`・`coverage/cli/` の `coverage-final.json` に書きます。
+  - 測る範囲は `vitest.coverage.ts`。`src` の .ts・.tsx で、ストーリーとデモのサイトの台本は除きます。テストで読み込まなかったファイルも 0% として数えます。
+  - 落ちたテストがあっても、ほかのテストで通ったところは数えます。手元で `npm run coverage:cli` を root で動かすと、`bypassPermissions` の台本は Claude Code が起動を断るので落ちます（CI では起きません）。
+- `npm run coverage:report` が、測ったものを合わせて、層（main・preload・shared・renderer）ごとに行・分岐・関数の割合を出します。1 行も通っていないファイルの一覧も出します。
+  - 下限は `test/coverage-thresholds.json`。下回った層があれば失敗にします。
+  - 下限は上げるだけで、下げません。テストを足して上がったら、`npm run coverage:report -- --update` で上げます。今の値から 1 ポイント下げて置きます。本物の claude を動かすテストは、待ち方しだいで通る行が少し変わるためです。
+  - `--diff <ref>` を付けると、`<ref>` から変えた行のうち、テストで通った行の割合と、通らなかった行も出します。
+- CI の `check` のジョブは、PR と push で両方を測って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では、まとめません。その日の最新の Claude Code の互換性を見るためのものだからです。
+- カバレッジは、テストで実行された行の割合です。結果まで確かめたかは分かりません。テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます。
 
 ## Claude Code との互換性の確かめ方
 
@@ -704,8 +734,8 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
-- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
-- `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）
+- `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）
+- `test/`: Claude Code との互換性の確認（上の「Claude Code との互換性の確かめ方」）と、カバレッジの下限（`coverage-thresholds.json`。上の「テストと CI」）
   - `scenario.ts`: 台本と、アプリが読み取れるべきもの
   - `scenarios/`: 基本でない台本と、アプリが読み取れるべきもの（`questions.ts`: AskUserQuestion、`errors.ts`: 失敗と中断、`input.ts`: 入力まわりと読み取り）
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser`・`sessions`・`checklist`・`stop` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザとセッションとチェックリストの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
@@ -772,7 +802,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - 機能を足したとき: 物語の合うところに手順を足すか、`chapters/` に章を足して `chapterInfo.ts` と `chapters.ts` に並べます。手順ごとに `d.caption('説明', 場所)` で説明を付けます。足した章・手順を足した章の `chapterInfo.ts` に `isNew: true` を付けると、目次に「新」の印が出ます（次に機能を足すときに外します）。前の章で変えた画面の状態（開いたパネル・ファイルの中身）は、あとの章に引き継がれることに気をつけます。
 - 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。CI の `tour` のジョブで気づけますが、手元では次のように確かめます。
   - 待ち時間の倍率は、環境変数 `VITE_DEMO_WAIT` で変えられます（台本の待ち時間・カーソルの移動・説明を読む間にかかります）。1 が既定で、0.5 なら半分。0 なら待たずに、ずっと早送りと同じ速さで流します。`npm run demo:dev` にも `npm run demo:build` にも効きます。
-  - `VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build` で待ち時間 0 のサイトを `demo-check/` に書き出し、`npm run demo:check` で流します（`scripts/check-demo-tour.mjs`。Electron の画面の外で #start から開き、終わったら成功、止まったら止まる前の説明とコンソールのエラーを出して失敗。Linux では `xvfb-run` の中で動かします）。8 章を 20 秒ほどで流し終わります。
+  - `VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build` で待ち時間 0 のサイトを `demo-check/` に書き出し、`npm run demo:check` で流します（`scripts/check-demo-tour.mjs`。Electron の画面の外で #start から開き、終わったら成功、止まったら止まる前の説明とコンソールのエラーを出して失敗。最後まで流れても、コンソールにエラーが出ていたら失敗（画面の部品が例外を出しても、台本は先へ進めてしまうため）。Linux では `xvfb-run` の中で動かします）。8 章を 20 秒ほどで流し終わります。
   - スマホで流す: 同じ `demo-check/` を `npm run demo:check:sp` で流します（`scripts/check-demo-tour-sp.mjs`。Linux だけ）。iPhone の Safari と同じ WebKit（Playwright）を iPhone 13 の画面の大きさ・倍率（390×664・3 倍）で開き、ツアーが最後まで流れるかに加えて、ページの処理のプロセス（`WPEWebProcess`）のメモリの最大が上限（既定 2048MB。`--max-memory` で変えられます）を超えないか、プロセスが落ちないかを見ます。WebKit は、先に `npx playwright install --with-deps webkit` で入れておきます。
     - Chromium（PC で流す `tour`）では、縮めた画面を端末の解像度のまま描くことは起きないので、この膨らみ方には気づけません。iPhone の Safari では、上限を超えたページは落とされ、白くなって読み込み直されます。
     - 測った値（待ち時間 0）: いまの作りで 1.4GB 前後。iframe を `transform` で縮めていたころは 2.8〜3.6GB でした。
@@ -791,3 +821,4 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - 画面に同梱した依存は rollup-plugin-license で集めます。CSS だけを読み込むフォントと、main が使う依存（node_modules ごと入るもの）は書き足します。
   - GPL 系のライセンスや、ライセンスの分からない依存が混ざると、ビルドが止まります。
 - アプリの `Contents/Resources/` には、この表示と一緒に、tanacode の `LICENSE.txt`、Electron と Chromium のライセンスも入れます。
+  - Electron と Chromium のライセンスは、Electron の本体（`node_modules/electron/dist/`）にあります。Electron は `npm install` では本体を取り込まず、初めて使うときに取り込むので、`scripts/electron-builder.mjs` がビルドの前に取り込みます。CI の `app` のジョブで、4 つとも入っているかを確かめます。

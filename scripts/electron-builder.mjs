@@ -41,6 +41,12 @@ if (hash) {
 }
 if (checkOnly) process.exit(0);
 
+// Electron は、npm install では本体（node_modules/electron/dist）を取り込まず、初めて使うときに取り込む。
+// 本体と一緒にあるライセンス（LICENSE・LICENSES.chromium.html）を .app に入れるので（package.json の extraResources）、
+// 先に取り込んでおく。取り込み済みなら何もしない（CI のように、npm ci のすぐあとにビルドすると、無いまま作ってしまう）
+const installed = spawnSync(process.execPath, [join(root, 'node_modules/electron/install.js')], { stdio: 'inherit' });
+if (installed.status !== 0) process.exit(installed.status ?? 1);
+
 // identity の "-" は ad-hoc。証明書は、名前の重なりを避けて SHA-1 で指す
 const result = spawnSync(join(root, 'node_modules/.bin/electron-builder'), [...builderArgs, `-c.mac.identity=${hash ?? '-'}`], { stdio: 'inherit' });
 process.exit(result.status ?? 1);

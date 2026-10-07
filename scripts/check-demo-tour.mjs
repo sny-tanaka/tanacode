@@ -1,6 +1,7 @@
 // デモのサイトのツアーが、最初から最後まで止まらずに流れるかを確かめる（npm run demo:check）。
 // ビルドしたデモのサイト（既定は demo-check/）をこのスクリプトの中の小さなサーバーで配り、Electron の画面の外で #start から開いて、
 // 上の帯に「ツアーが終わりました」が出たら成功、「ツアーが途中で止まりました」が出たか時間切れなら失敗にする。
+// 最後まで流れても、コンソールにエラーが出ていたら失敗にする（画面の部品が例外を出しても、台本は先へ進めてしまうため）。
 // 待ち時間を 0 にしてビルドしたもの（VITE_DEMO_WAIT=0）を使うと、数十秒で流れ終わる（CONTRIBUTING の「デモのサイト」）。
 //
 // 例: VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build && npm run demo:check
@@ -54,8 +55,8 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1920, height: 1080, show: false, webPreferences: { offscreen: true } });
   // iframe の中（アプリの画面）のエラーも拾う
   const errors = [];
-  win.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 3) errors.push(message);
+  win.webContents.on('console-message', (e) => {
+    if (e.level === 'error') errors.push(e.message);
   });
   await win.loadURL(url);
   console.log(`ツアーを流します: ${url}`);
@@ -88,8 +89,10 @@ app.whenReady().then(async () => {
   }
   server.close();
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  if (result === 'done') console.log(`ツアーが最後まで流れました（${seconds} 秒）`);
+  const ok = result === 'done' && errors.length === 0;
+  if (ok) console.log(`ツアーが最後まで流れました（${seconds} 秒）`);
+  else if (result === 'done') console.error(`ツアーは最後まで流れましたが、コンソールにエラーが出ました（${errors.length} 件。${seconds} 秒）`);
   else console.error(result === 'failed' ? `ツアーが途中で止まりました（${seconds} 秒）。直前の説明: ${step}` : `ツアーが ${LIMIT_MS / 1000} 秒で終わりませんでした。直前の説明: ${step}`);
   for (const message of errors) console.error(`コンソールのエラー: ${message}`);
-  app.exit(result === 'done' ? 0 : 1);
+  app.exit(ok ? 0 : 1);
 });

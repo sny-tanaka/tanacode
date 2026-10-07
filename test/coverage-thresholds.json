@@ -1,0 +1,21 @@
+{
+  "main": {
+    "lines": 63,
+    "branches": 57,
+    "functions": 56
+  },
+  "preload": {
+    "lines": 0,
+    "functions": 0
+  },
+  "shared": {
+    "lines": 83,
+    "branches": 72,
+    "functions": 92
+  },
+  "renderer": {
+    "lines": 8,
+    "branches": 7,
+    "functions": 8
+  }
+}
