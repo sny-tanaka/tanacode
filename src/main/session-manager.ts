@@ -1026,9 +1026,12 @@ export class SessionManager {
     rt.screen = screen;
     this.listeners.onActivity(id, null);
 
-    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする
+    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする。
+    // 前の起動が worktree を作ったあと、入力欄を出す前に終わって（起動し直して）いたら、その「作成中」は戻す
+    // （戻さないと、入力欄が出ても受け付けない。node_modules の用意の途中なら、終わるまで待たせたまま）
     const creating = !!record.worktree && !resume && !adopted && !existsSync(record.cwd);
     if (creating) runtime.preparing = 'creating';
+    else if (runtime.preparing === 'creating') runtime.preparing = null;
 
     rt.process = new ClaudeSession(
       this.host,
