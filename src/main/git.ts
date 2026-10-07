@@ -216,7 +216,8 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
     const info = await lstat(join(cwd, path)).catch(() => null);
     const text = info?.isFile() && info.size <= MAX_COUNT_BYTES ? await readFile(join(cwd, path)).catch(() => null) : null;
     const binary = !!text && text.includes(0);
-    const added = text && !binary ? text.toString('utf8').split('\n').length - (text.at(-1) === 10 ? 1 : 0) : 0;
+    // 空のファイルは 0 行（ステージしたときに git が数えるのと同じ）
+    const added = text && text.length > 0 && !binary ? text.toString('utf8').split('\n').length - (text.at(-1) === 10 ? 1 : 0) : 0;
     files.push({ path, kind: 'added', added, removed: 0, binary });
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));
