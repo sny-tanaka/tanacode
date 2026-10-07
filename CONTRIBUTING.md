@@ -172,7 +172,11 @@ PR と develop・main への push で、次のものを流します。
 
 - `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
   - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
+  - `new ScriptedApp({ … })` で、アプリが `SessionManager` に渡す残りの引数（Remote Control を使えるか・登録した設定ファイル・`runTask`・MCP サーバーの材料）を差し替えられます。`ScriptedPty.exitOnKill` を付けると、止めたらすぐ終わる（`ClaudeSession.stop` が終わるのを待つところを通せる）。
+  - `test/session-manager-*.test.ts` が、分かれ目ごと（状態・送信・Remote Control・worktree・引き継ぎ・起動のしかた・バックグラウンドのタスク）に使います。worktree は本物の git で確かめ、Claude Code が作るところは同じ形の worktree を git で作って代わりにします。
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
+  - 別のプロセスで動くホストは、単体のテストのカバレッジに入りません。`test/pty-host-server.test.ts` が、ホストをテストのプロセスの中で読み込んで（`process.exit`・`process.chdir` は差し替え）、同じやりとりを確かめます。
+  - アプリ側の接続の細かいところ（溜めておく出力・答えないホスト・つながっていない間の起動など）は、`test/pty-host-client.test.ts` が、決めたとおりに答える偽物のホストで確かめます。
 - テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（通るだけのテストにしない）。
 
 ### 配線と契約
