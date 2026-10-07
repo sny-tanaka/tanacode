@@ -410,7 +410,8 @@ export const ClaudePane = memo(function ClaudePane({
         )}
       </header>
 
-      {showTodos && <TodoPanel todos={chat.todos!} />}
+      {/* セッションごとに作り直す（前のセッションで終わっていた項目を、移った先で「終わったばかり」と見なさない） */}
+      {showTodos && <TodoPanel key={session.id} todos={chat.todos!} />}
       <div className="chat-list-wrap">
         <div
           className="chat-list"
@@ -535,7 +536,8 @@ export const ClaudePane = memo(function ClaudePane({
               <IconButton icon={MonitorIcon} label="ターミナルで見る" onClick={onOpenTerminal} />
             </div>
           )}
-          {menu && <MenuCard key={`${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
+          {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
+          {menu && <MenuCard key={`${session.id}|${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
           {rewinding && (
             <div className="chat-callout">
               <span>巻き戻し先を選んでいます…</span>
