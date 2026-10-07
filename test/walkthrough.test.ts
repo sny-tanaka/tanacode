@@ -184,6 +184,104 @@ describe('画面からの操作', () => {
   });
 });
 
+describe('引数と状態の細かいところ', () => {
+  it('start_walkthrough: title が無い・長すぎる、steps が配列でないときは断る', async () => {
+    const { control, changes } = setup();
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 5, steps: [step()] }))).toBe('title を渡してください');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 'あ'.repeat(121), steps: [step()] }))).toBe('title は 120 文字までです（121 文字あります）');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: 'src/tax.ts' }))).toContain('1 つ以上');
+    expect(changes).toEqual([]);
+  });
+
+  it('start_walkthrough: オブジェクトでない・path の無い・start_line が 1 以上の整数でない・本文が長すぎるステップは、理由を返す', async () => {
+    const { control } = setup();
+    const r = await control.handle(ME, 'start_walkthrough', {
+      title: 't',
+      steps: ['src/tax.ts', [step()], step({ path: undefined }), step({ start_line: 0 }), step({ start_line: 2.5 }), step({ start_line: 'abc' }), step({ body: 'x'.repeat(4001) })],
+    });
+    expect(r.isError).toBe(true);
+    expect(text(r).split('\n').slice(1)).toEqual([
+      'ステップ 1: path を渡してください',
+      'ステップ 2: path を渡してください',
+      'ステップ 3: path を渡してください',
+      'ステップ 4: src/tax.ts: start_line は 1 以上の整数にしてください',
+      'ステップ 5: src/tax.ts: start_line は 1 以上の整数にしてください',
+      'ステップ 6: src/tax.ts: start_line は 1 以上の整数にしてください',
+      'ステップ 7: body は 4000 文字までです（4001 文字あります）',
+    ]);
+  });
+
+  it('末尾に改行の無いファイルも、最後の行まで示せる', async () => {
+    writeFileSync(join(cwd, 'src', 'short.ts'), 'a\nb\nc');
+    const { control } = setup();
+    expect((await control.handle(ME, 'show_code', { path: 'src/short.ts', start_line: 3, body: '最後の行' })).isError).toBeUndefined();
+    expect(text(await control.handle(ME, 'show_code', { path: 'src/short.ts', start_line: 4, body: 'x' }))).toBe('src/short.ts は 3 行です（4 行目はありません）');
+  });
+
+  it('show_code: 示せないものは理由を返し、今の表示を変えない', async () => {
+    const { control, changes } = setup();
+    expect(text(await control.handle(ME, 'show_code', { path: '../outside.ts', start_line: 1, body: 'x' }))).toContain('このセッションのフォルダ');
+    expect(control.get(ME)).toBeNull();
+    expect(changes).toEqual([]);
+  });
+
+  it('思いがけない失敗（ツールの理由にできないもの）は、結果にせずに投げる', async () => {
+    const { control } = setup();
+    const broken = { valueOf: () => { throw new TypeError('壊れた値'); } };
+    await expect(control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ start_line: broken })] })).rejects.toThrow('壊れた値');
+    await expect(control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: broken, body: 'x' })).rejects.toThrow('壊れた値');
+    expect(control.get(ME)).toBeNull();
+  });
+
+  it('時計を渡さなければ、今の時刻で始める', async () => {
+    const control = new WalkthroughControl({ cwdOf: () => cwd, enabled: () => true, onChange: () => {} });
+    const before = Date.now();
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step()] });
+    expect(control.get(ME)!.startedAt).toBeGreaterThanOrEqual(before);
+    expect(control.get(ME)!.startedAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('walkthrough_status: 寄り道だけのとき・寄り道を見ているときは、示している場所を返す', async () => {
+    const { control } = setup();
+    await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toBe('ウォークスルーは始めていません。寄り道で src/tax.ts:7 を示しています。');
+    await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ start_line: 12, end_line: undefined, title: '切り捨て' })] });
+    await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 15, end_line: 16, body: '呼び出し元' });
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('人は寄り道で示した src/tax.ts:15-16 を見ています（戻ると 1/2）。');
+  });
+
+  it('画面からの操作は、ウォークスルーの無いセッション・ステップの無いもの・整数でない番号では何もしない', async () => {
+    const { control, changes } = setup();
+    control.go(ME, 0);
+    control.close(ME);
+    control.discard(ME);
+    expect(changes).toEqual([]);
+    // 寄り道だけ（ステップが無い）
+    await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
+    control.go(ME, 0);
+    expect(control.get(ME)).toMatchObject({ aside: { startLine: 7 }, seq: 1 });
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step(), step()] });
+    const count = changes.length;
+    control.go(ME, 1.5);
+    control.go(ME, Number.NaN);
+    expect(changes).toHaveLength(count);
+    expect(control.get(ME)).toMatchObject({ current: 0 });
+  });
+
+  it('PR に載せたものを覚える。forget は画面に知らせずに捨てる（セッションを一覧から消したとき）', async () => {
+    const { control, changes } = setup();
+    expect(control.postedUrl('w1')).toBeNull();
+    control.markPosted('w1', 'https://github.com/me/repo/pull/1#issuecomment-1');
+    expect(control.postedUrl('w1')).toBe('https://github.com/me/repo/pull/1#issuecomment-1');
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step()] });
+    const count = changes.length;
+    control.forget(ME);
+    expect(control.get(ME)).toBeNull();
+    expect(control.list()).toEqual([]);
+    expect(changes).toHaveLength(count);
+  });
+});
+
 describe('中継・起動の引数・設定', () => {
   it('tools/list: 示すツールと読むツールに readOnlyHint を付ける（ファイルは書き換えない）', async () => {
     const deps = { server: WALKTHROUGH_MCP, version: '1', call: async () => textResult('ok') };
