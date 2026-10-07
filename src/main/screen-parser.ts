@@ -312,12 +312,16 @@ export function promptRange(lines: ScreenLine[]): [number, number] | null {
 
 // 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort · Claude Max」など）。--resume ではバナーが出ない。
 // 会話の本文にもモデル名は出てくるので、バナーの行だけを見る。バナーは 2 つの形がある
-// - 枠の中（前の Claude Code）: 「│  Haiku 4.5 · Claude Max · …」
+// - 枠の中（前の Claude Code）: 「Claude Code v…」の見出しから下に、行頭が縦線の行（「│  Haiku 4.5 · Claude Max · …」）が続く
 // - ロゴの右（今の Claude Code）: 「▐▛███▜▌   Claude Code v2.1.286」の次の行の「▝▜█████▛▘  Opus 5.5 · Claude Max」
+// 行頭が縦線の行は、質問文の枠などにもあるので、見出しに続くものだけを見る
 // エフォートを指定して起動すると（--effort）、モデル名のあとに「with low effort」が入る
 export function findModel(lines: ScreenLine[]): string | null {
   const logo = lines.findIndex((l) => BANNER_TITLE.test(l.text));
-  const banner = [...lines.filter((l) => l.text.startsWith('│')), ...(logo === -1 ? [] : lines.slice(logo + 1, logo + 3))];
+  if (logo === -1) return null;
+  let boxEnd = logo + 1;
+  while (boxEnd < lines.length && lines[boxEnd].text.startsWith('│')) boxEnd++;
+  const banner = lines.slice(logo + 1, Math.max(boxEnd, logo + 3));
   for (const { text } of banner) {
     // 新しい系統名にも対応できるよう、名前は決め打ちしない
     const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?)(?: with \S+ effort)? ·/);
