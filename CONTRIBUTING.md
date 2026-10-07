@@ -163,6 +163,14 @@ PR と develop・main への push で、次のものを流します。
 - アプリは macOS 専用なので、アプリ本体の確認は macOS で流します。Linux で動くかは確かめません。型チェック・Storybook・デモのサイトは OS に依らないので、ubuntu で流します。
 - public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
 
+### 画面のテスト
+
+- 画面（renderer）のテストは `test/renderer/` に置き、ファイルの先頭の `// @vitest-environment jsdom` で DOM の代わり（jsdom）を使います。型は `tsconfig.web.json` で確かめます（DOM の型が要るため）。
+  - happy-dom は使いません。DOMPurify（Markdown の無害化）の結果が、本物のブラウザと食い違ったためです。
+- `test/renderer/mock-api.ts`: `window.tanacode` の偽物。呼び出し（`argsOf('sessions.submit')` など）を控え、知らせ（`emit('sessions.onChat', …)`）をテストから送ります。返す値は `responses` に「名前空間.メソッド」で決めます。
+- `test/renderer/dom.ts`: jsdom に無いもの（`scrollIntoView`・`requestAnimationFrame`）を補います。使う部品のテストの先頭で読み込みます。
+- 部品は Testing Library（`@testing-library/react`）で描き、押す・打つ操作をして、`window.tanacode` に渡ったもの（送ったキー・本文など）を確かめます。Monaco エディタ・xterm・webview を使う部品は、アプリ本体の E2E で確かめます。
+
 ### カバレッジ
 
 - `npm run coverage`（`npm test` と同じテスト）と `npm run coverage:cli`（`npm run test:cli` と同じテスト）で測り、`coverage/unit/`・`coverage/cli/` の `coverage-final.json` に書きます。
