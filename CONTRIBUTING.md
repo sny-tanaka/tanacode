@@ -173,6 +173,8 @@ PR と develop・main への push で、次のものを流します。
 - `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
   - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
+- `test/helpers/fake-electron.ts`・`test/helpers/browser-control.ts`: Electron を起動せずに、アプリ内ブラウザの操作（`src/main/browser-control.ts`）を動かす。テストのファイルの `vi.mock('electron', …)` で、webview の中身（webContents）・CDP（debugger）・撮った画像（nativeImage）を、テストが決めた答えを返して受けたもの（CDP の命令・ページで動かすスクリプト・撮った範囲）を控える作り物に差し替えます。画面（`PreviewPane`）の代わりに、タブを開く知らせに応えて webview を知らせます。待ち・時間切れは `vi.useFakeTimers` で時間を進めて確かめます（`finish`）。`test/browser-control*.test.ts` が使います。
+  - ページの中で動かすスクリプト（要素を探す・文字を読む・待つ）は、`test/browser-control-scripts.test.ts` が jsdom の文書の上で本当に動かします。jsdom は描かないので、要素の位置（`getBoundingClientRect`）と、その位置にある要素（`elementFromPoint`）はテストが決めます。
 - テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（通るだけのテストにしない）。
 
 ### 配線と契約
