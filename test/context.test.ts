@@ -326,6 +326,8 @@ describe('compactInstructions', () => {
       `「複数 行の 発言」から始まるやりとりと、「${'あ'.repeat(59)}…」から始まるやりとりは詳しく残す。`,
     );
     expect(clip('  前後の空白  ', 10)).toBe('前後の空白');
+    // 上限ちょうどは切らない
+    expect(clip('あ'.repeat(60), 60)).toBe('あ'.repeat(60));
     expect(toolDisplayName('Bash')).toBe('Bash');
     expect(toolDisplayName('mcp__tanacode-sessions__list_sessions')).toBe('tanacode-sessions の list_sessions');
   });

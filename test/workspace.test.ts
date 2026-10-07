@@ -38,6 +38,7 @@ describe('Workspace', () => {
     put('a.txt', 'a');
     put('src/x.ts', 'x');
     put('node_modules/p/index.js', 'p');
+    put('.next/cache.json', '{}');
     put('.DS_Store', '');
     mkdirSync(join(root, '.git'));
     expect(await ws.listDir('')).toEqual([
@@ -102,10 +103,19 @@ describe('Workspace', () => {
     expect(await ws.readImage('logo.svg')).toBe(`data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`);
     put('a.txt', 'x');
     expect(await ws.readImage('a.txt')).toBeNull();
+    put('anim.gif', Buffer.from([7]));
+    expect(await ws.readImage('anim.gif')).toBe(`data:image/gif;base64,${Buffer.from([7]).toString('base64')}`);
+    put('old.BMP', Buffer.from([8]));
+    expect(await ws.readImage('old.BMP')).toBe(`data:image/bmp;base64,${Buffer.from([8]).toString('base64')}`);
     put('huge.gif', Buffer.alloc(10 * 1024 * 1024 + 1));
     expect(await ws.readImage('huge.gif')).toBeNull();
     writeFileSync(join(root, '..', 'secret.png'), 'x');
     await expect(ws.readImage('../secret.png')).rejects.toThrow('outside workspace');
+  });
+
+  it('文字のファイルは 2MB ちょうどまで読む', async () => {
+    put('limit.txt', 'a'.repeat(2 * 1024 * 1024));
+    expect((await ws.readFile('limit.txt')).kind).toBe('text');
   });
 
   it('絶対パスは、フォルダの外のファイルでも読む（Claude が送ったファイルを、アプリの画面から開くとき）', async () => {

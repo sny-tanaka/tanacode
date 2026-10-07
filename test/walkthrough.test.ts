@@ -268,6 +268,12 @@ describe('引数と状態の細かいところ', () => {
     expect(control.get(ME)).toMatchObject({ current: 0 });
   });
 
+  it('list: ウォークスルーのあるセッションと、その中身を返す', async () => {
+    const { control } = setup();
+    await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step()] });
+    expect(control.list()).toEqual([{ sessionId: ME, walkthrough: control.get(ME) }]);
+  });
+
   it('PR に載せたものを覚える。forget は画面に知らせずに捨てる（セッションを一覧から消したとき）', async () => {
     const { control, changes } = setup();
     expect(control.postedUrl('w1')).toBeNull();

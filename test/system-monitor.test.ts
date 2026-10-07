@@ -19,7 +19,8 @@ vi.mock('node:child_process', async (importOriginal) => {
     execFile: (cmd: string, args: string[], options: Record<string, unknown>, callback: (err: Error | null, out: string) => void) => {
       fake.calls.push({ cmd, args, options });
       const out = fake.outputs[cmd];
-      if (out === null || out === undefined) callback(new Error(`${cmd}: command not found`), '');
+      // 失敗したときも、途中まで出た出力が渡ることがある（使ってはいけない）
+      if (out === null || out === undefined) callback(new Error(`${cmd}: timed out`), `${PS}\n${VM_STAT}`);
       else callback(null, out);
     },
   };
