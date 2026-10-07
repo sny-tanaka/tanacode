@@ -12,6 +12,8 @@ const PREVIEW_CHARS = 300;
 export type WorkflowLaunch = {
   toolUseId: string;
   runId: string;
+  // 起動ごとの ID（再開しても runId は同じだが、これは変わる）。完了時の記録にも書かれる
+  taskId: string | null;
   name: string;
   summary: string;
   // <セッション>/subagents/workflows/<runId>。journal.jsonl と各エージェントの会話ログがある
@@ -32,6 +34,7 @@ export function workflowLaunchOf(entry: unknown, scripts: Map<string, string>): 
   return {
     toolUseId: block.tool_use_id,
     runId: r.runId,
+    taskId: typeof r.taskId === 'string' ? r.taskId : null,
     name: typeof r.workflowName === 'string' ? r.workflowName : r.runId,
     summary: typeof r.summary === 'string' ? r.summary : '',
     transcriptDir: r.transcriptDir,
@@ -292,7 +295,9 @@ type FinalRecord = Pick<WorkflowRun, 'status' | 'phases' | 'agents' | 'durationM
 };
 
 // 完了時の記録: <セッション>/workflows/<runId>.json。起動より前に書かれたものは、再開する前の実行の記録なので使わない。
-// until（再開した起動の時刻）より後に書かれたものは、再開した実行の記録
+// until（再開した起動の時刻）より後に書かれたものは、再開した実行の記録。
+// 記録の taskId が起動のものと違えば、同じ runId の別の起動の記録なので使わない（完了の直後に再開すると、
+// 前の実行の記録が、再開した起動の時刻とほとんど同時に書かれていて、時刻では見分けられない）
 async function readFinal(launch: WorkflowLaunch, until: number | null): Promise<FinalRecord | null> {
   const sessionDir = dirname(dirname(dirname(launch.transcriptDir)));
   const file = join(sessionDir, 'workflows', `${launch.runId}.json`);
@@ -303,6 +308,7 @@ async function readFinal(launch: WorkflowLaunch, until: number | null): Promise<
   if (!text) return null;
   try {
     const d = JSON.parse(text) as {
+      taskId?: unknown;
       status?: string;
       summary?: string;
       phases?: { title?: string; detail?: string }[];
@@ -311,6 +317,7 @@ async function readFinal(launch: WorkflowLaunch, until: number | null): Promise<
       totalTokens?: number;
       totalToolCalls?: number;
     };
+    if (launch.taskId !== null && typeof d.taskId === 'string' && d.taskId !== launch.taskId) return null;
     const progress = (d.workflowProgress ?? []).filter((p) => p.type === 'workflow_agent' && typeof p.agentId === 'string');
     const agents = progress.map((p) => ({
       ...newAgent(p.agentId as string, str(p.label), str(p.phaseTitle), str(p.model)),
