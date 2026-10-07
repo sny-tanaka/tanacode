@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { IpcChannel, type IpcChannelName, type TanacodeApi } from '@shared/ipc';
+import { IpcChannel, type TanacodeApi } from '@shared/ipc';
+import { arity, EMPTY_EVENTS, emptyEventKeys, events, invokes, sends } from './helpers/ipc-tables';
 
 // preload（window.tanacode）の契約。electron の ipcRenderer・contextBridge・webUtils を作り物に差し替えて、preload を本当に読み込み、
 // どのメソッドが、どのチャンネルを、どの引数で呼ぶか・知らせの受け手が、どのチャンネルを購読し、どう解除するかを確かめる。
-// 正しい組み合わせは、src/shared/ipc.ts の表（IpcInvoke・IpcSend・IpcEvent。main の受け口も同じ表で型を付ける）から読む。
+// 正しい組み合わせは、src/shared/ipc.ts の表（IpcInvoke・IpcSend・IpcEvent。main の受け口も同じ表で型を付ける）から読む（test/helpers/ipc-tables.ts）。
 // 型チェックと test/ipc-wiring.test.ts（ソースの文字を読む）では、同じ型どうしの入れ替え（open と unarchive のチャンネル、
 // mergeBase と relPath の順番など）・省略できる引数の渡し忘れ・受け手に渡す中身の取り違えは止まらないので、ここで動かして止める
 
@@ -30,58 +30,6 @@ const methodOf = (path: string): Method => {
   const [ns, name] = path.split('.');
   return (api as unknown as Record<string, Record<string, Method>>)[ns][name];
 };
-
-// --- src/shared/ipc.ts の表を読む ---
-const ipcSource = readFileSync('src/shared/ipc.ts', 'utf8');
-const block = (head: string) => {
-  const start = ipcSource.indexOf(head);
-  if (start === -1) throw new Error(`${head} が見つかりません`);
-  return ipcSource.slice(start, ipcSource.indexOf('\n};', start));
-};
-type Entry = { key: keyof typeof IpcChannel; channel: IpcChannelName; method: string };
-const entries = (head: string): Entry[] =>
-  [...block(head).matchAll(/\[IpcChannel\.(\w+)\]: (?:Payload<)?Api\['(\w+)'\]\['(\w+)'\]/g)].map((m) => {
-    const key = m[1] as keyof typeof IpcChannel;
-    return { key, channel: IpcChannel[key], method: `${m[2]}.${m[3]}` };
-  });
-// 中身の無い知らせ（表では undefined）。受けるメソッドは表から分からないので、ここに書く。
-// 増えたら、下の「中身の無い知らせ」のテストが落ちるので、ここに足す
-const EMPTY_EVENTS: Record<string, string> = {
-  SessionsNew: 'sessions.onNew',
-  BrowserHostsOpen: 'browser.onHostsOpen',
-};
-const emptyEventKeys = [...block('export type IpcEvent = {').matchAll(/\[IpcChannel\.(\w+)\]: undefined;/g)].map((m) => m[1]);
-const invokes = entries('export type IpcInvoke = {');
-const sends = entries('export type IpcSend = {');
-const events: (Entry & { empty: boolean })[] = [
-  ...entries('export type IpcEvent = {').map((e) => ({ ...e, empty: false })),
-  ...emptyEventKeys.map((key) => ({
-    key: key as keyof typeof IpcChannel,
-    channel: IpcChannel[key as keyof typeof IpcChannel],
-    method: EMPTY_EVENTS[key] ?? `（${key} を受けるメソッドを EMPTY_EVENTS に足す）`,
-    empty: true,
-  })),
-];
-
-// TanacodeApi の、メソッドごとの引数の数（型の宣言から数える。省略できる引数も数える）
-const arity = new Map<string, number>();
-{
-  let ns = '';
-  for (const line of block('export type TanacodeApi = {').split('\n')) {
-    const space = line.match(/^ {2}(\w+): \{/);
-    if (space) ns = space[1];
-    const method = line.match(/^ {4}(\w+)\((.*)\): /);
-    if (!method) continue;
-    let depth = 0;
-    let count = method[2].trim() === '' ? 0 : 1;
-    for (const ch of method[2]) {
-      if ('(<[{'.includes(ch)) depth++;
-      else if (')>]}'.includes(ch)) depth--;
-      else if (ch === ',' && depth === 0) count++;
-    }
-    arity.set(`${ns}.${method[1]}`, count);
-  }
-}
 
 // 見分けのつく引数（どの引数がどこへ渡ったか分かるように）。どのメソッドより多く渡し、余分に渡したものが届かないことも確かめる
 const ARGS = ['引数1', '引数2', '引数3', '引数4', '引数5', '引数6'];

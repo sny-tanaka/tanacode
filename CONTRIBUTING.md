@@ -173,6 +173,10 @@ PR と develop・main への push で、次のものを流します。
 - `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
   - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
+- `test/helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`）を、Electron を起動せずに読み込んで動かす部品。`test/main-ipc.test.ts`・`test/main-app.test.ts` が使います。
+  - `electron` を作り物（ウインドウ・ダイアログ・メニュー・通知・セッションの権限など）に差し替えます。`app.whenReady` はすぐに済むので、読み込むと起動の流れが最後まで進み、IPC の受け口・メニュー・ウインドウができます。テストは受け口を画面の代わりに呼び（`invoke`・`sendFromRenderer`）、メニューを押し、Electron のイベントを送ります。
+  - Claude Code・pty ホスト・ソケット・監視など、重いものや外に出る部品は、呼ばれ方を控える作り物にします。作り物のメソッドは、既定では「呼ばれたメソッドと引数」をそのまま返すので、受け口が正しい相手に、引数を取り違えずに渡し、返事をそのまま返すかを、戻り値で確かめられます。アプリの設定・ウインドウの位置の保存・通知の文・shared は本物です。
+  - index.ts は読み込むたびに状態（開いたフォルダ・終了の確認など）を持つので、`boot()` はテストごとに読み込み直します（userData とダウンロードは使い捨てのフォルダ）。読み込み直すと index.ts が使うモジュールも別のものになるので、本物の部品（`AppSettings` など）の失敗は `vi.spyOn` でなく、ファイルを書けなくするなどして起こします。
 - テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（通るだけのテストにしない）。
 
 ### 配線と契約
@@ -185,6 +189,9 @@ PR と develop・main への push で、次のものを流します。
   - `IpcEvent`: main → 画面の知らせ（main の `send` ↔ preload の `subscribe`）
   - preload と main の両方がこの表で型を付けるので、引数の順番・型、戻り値、知らせの中身が食い違うと、型チェックで止まります。同じ型の引数どうしの入れ替え（`mergeBase` と `relPath` など）は止まりません。
   - `test/ipc-wiring.test.ts` が、型では分からないものを確かめます。preload が使うチャンネルに main の受け口がちょうど 1 つあるか、main が送る知らせを画面が受けるか、使っていないチャンネル・どの表にも無いチャンネル（型チェックで止める）が無いか、です。
+  - 同じ型どうしの入れ替え（2 つのメソッドのチャンネル、`mergeBase` と `relPath` の順番など）・省略できる引数の渡し忘れは、両側を動かして止めます。正しい組み合わせは、上の 3 つの表と `TanacodeApi` の型の宣言をソースから読んで決めます（`test/helpers/ipc-tables.ts`）。
+    - `test/preload-api.test.ts`: `electron` の `ipcRenderer`・`contextBridge` を作り物にして preload を読み込み、どのメソッドも表のチャンネルを、引数をそのままの順で呼ぶか・知らせの受け手が表のチャンネルを購読して中身だけを渡し、返した関数で同じ受け口を解除するかを、メソッドごとに確かめます。中身の無い知らせ（表で `undefined`）を足したら、受けるメソッドを `ipc-tables.ts` の `EMPTY_EVENTS` に足します。
+    - `test/main-ipc.test.ts`: main の受け口が、どれも 1 つずつ登録されるか・受け取った引数を正しい相手に渡すか・画面から届いた値を確かめるかを、受け口ごとに確かめます（上の「テストの部品」の `main-app.ts`）。
 - MCP: `test/mcp-contract.test.ts` が、4 つのサーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）について確かめます。
   - 定義の形（名前・ラベルが重ならない、説明がある、引数に型と説明がある、必須の引数が properties にある）
   - 名前・種類・引数の形・許可済みにするツールが、控え（`test/__snapshots__/mcp-contract.test.ts.snap`）と同じか。種類を変えると許可の確認の有無が変わるので、控えの差分で気づけるようにしています。説明の文は控えに入れません。定義を変えたら `npx vitest run test/mcp-contract.test.ts -u` で控えを書き直し、差分を見てからコミットします。
@@ -217,7 +224,7 @@ PR と develop・main への push で、次のものを流します。
 
 - 単体と本物の claude のテストで測る範囲は `vitest.coverage.ts`。`src` の .ts・.tsx で、ストーリーとデモのサイトの台本は除きます。テストで読み込まなかったファイルも 0% として数えます。E2E も同じ範囲のファイルだけを数えます。
 - 落ちたテストがあっても、ほかのテストで通ったところは数えます。手元で `npm run coverage:cli` を root で動かすと、`bypassPermissions` の台本は Claude Code が起動を断るので落ちます（CI では起きません）。
-- 単体のテストは main・shared の中核と画面の部品を、E2E は配線（IPC・preload・pty ホスト・MCP の中継）と、部品をつないだ画面を通します。E2E を合わせると、preload と画面の割合が大きく上がります。
+- 単体のテストは main・shared の中核と、Electron を作り物にした入り口（`src/main/index.ts`）と preload、画面の部品を、E2E は本物の Electron の上での配線（IPC・preload・pty ホスト・MCP の中継）と、部品をつないだ画面を通します。E2E を合わせると、画面の割合が大きく上がります。
 - `npm run coverage:report` が、`coverage/` にあるものを全部合わせて、層（main・preload・shared・renderer）ごとに行・分岐・関数の割合を出します。1 行も通っていないファイルの一覧も出します。
   - 下限は `test/coverage-thresholds.json`。下回った層があれば失敗にします。
   - 下限は上げるだけで、下げません。テストを足して上がったら、`npm run coverage:report -- --update` で上げます。今の値から 1 ポイント下げて置きます。本物の claude を動かすテストと E2E は、待ち方しだいで通る行が少し変わるためです。手元で上げるときは、CI と同じく 3 つとも測ってから流します（どれかが無いと、その分だけ低く出ます）。
@@ -893,6 +900,11 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `session-submit.test.ts`: Claude Code の入力欄に打って送る（`SessionManager.submit`。読むのが遅れて文字と Enter が 1 度に届くと Enter が改行になる偽の Claude Code で、打った文字が入力欄に出てから Enter を送るか）
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
+  - `main-ipc.test.ts` / `main-app.test.ts` / `helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`。Electron は作り物）。IPC の受け口（渡す相手と引数・画面から届いた値の検査・開けるフォルダ・書き出しのファイル名と権限・チェックリスト・ウォークスルーの投稿・Git の操作・添付の保存）と、起動の流れ（部品の組み立てと順番・MCP の中継・部品から画面への知らせ）・ウインドウ・権限・プレビューの移動先・メニュー・終了の確認・通知
+  - `preload-api.test.ts` / `helpers/ipc-tables.ts`: preload（`window.tanacode`）の契約（上の「配線と契約」）
+  - `github.test.ts`: gh で PR を調べる・コメントを書く（PATH に置いた偽の gh で、引数・作業フォルダ・標準入力・失敗したとき）
+  - `commands.test.ts`: `/` の補完候補（カスタムコマンド・スキル・会話ログのスキルの一覧と、ほかの会話ログから借りるとき・並びと優先）
+  - `session-discovery.test.ts`: アプリの外で作られた会話を探す（出さないもの・並び・件数・タイトルの優先・大きな会話ログの先頭と末尾の読み方）
 
 ## デモのサイト
 
