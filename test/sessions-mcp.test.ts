@@ -1107,7 +1107,9 @@ describe('ツールの実行（SessionsControl）', () => {
           // 見えない親の名前は出さない
           '### 2. 親セッション「新しいセッション」からの指示',
           '次',
+          // 応答もツールも無い指示には、何も足さない
           '',
+          '## このセッションの会話で編集したファイル',
         ].join('\n'),
       );
       expect(textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD, turns: 0.4 }))).toContain('新しいほうから 1 件）\n\n### 2. ');
@@ -1134,6 +1136,13 @@ describe('ツールの実行（SessionsControl）', () => {
         options: [{ label: 'A 案' }],
         accepts_other: false,
       });
+    });
+
+    it('wait_sessions: 待てるのは自分の子だけ。時間が過ぎるまでは、手が空くのを待ち続ける', async () => {
+      expect(textOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [PEER] }))).toContain('このセッションの子セッションではありません');
+      const started = Date.now();
+      expect(jsonOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD], timeout_seconds: 2 }))).toMatchObject({ timed_out: true, ready: [] });
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1900);
     });
 
     it('wait_sessions: 手の空いた子が指定されていれば待たずに返す。手の空いていない子は、最後の応答なしで返す', async () => {
@@ -1377,7 +1386,8 @@ describe('ツールの実行（SessionsControl）', () => {
         writeFileSync(join(repo, 'limit.txt'), `${'x'.repeat(256 * 1024 - 1)}\n`);
         const text = await diffOf();
         expect(text).not.toContain('大きなファイル');
-        expect(text).toContain('+++ b/limit.txt\n@@ -0,0 +1,1 @@\n+xxx');
+        // 追跡しているファイルの差分が無ければ、未追跡のファイルから始める
+        expect(text).toContain('## 差分\n```diff\ndiff --git a/limit.txt b/limit.txt\nnew file (untracked)\n--- /dev/null\n+++ b/limit.txt\n@@ -0,0 +1,1 @@\n+xxx');
       });
     });
   });
@@ -1444,6 +1454,26 @@ describe('会話のまとめ（read_session の中身）', () => {
         '/r',
       ),
     ).toEqual(['src/a.ts', '/elsewhere/b.ts']);
+  });
+
+  it('最後の応答は 4000 文字まで、途中の応答は 600 文字まで。ツールは 30 件ちょうどなら全部並べる', () => {
+    const tools = Array.from({ length: 30 }, (_, i): ChatEvent => ({ type: 'tool-use', id: `t${i}`, name: 'Read', target: `f${i}.ts`, input: '' }));
+    const text = testing
+      .conversationLines(
+        [
+          { type: 'user', id: '1', text: '直して' },
+          { type: 'assistant-text', id: '2', text: 'い'.repeat(700) },
+          ...tools,
+          { type: 'assistant-text', id: '3', text: 'う'.repeat(3000) },
+        ],
+        3,
+        () => '',
+      )
+      .join('\n');
+    expect(text).toContain('…（100 文字を省略）…');
+    expect(text).toContain(`\n\n${'う'.repeat(3000)}\n`);
+    expect(text).toContain('Read f29.ts');
+    expect(text).not.toContain('ほか');
   });
 
   it('編集したファイルとして数えるのは Edit・MultiEdit・Write・NotebookEdit。多すぎるときは 200 件まで', () => {
