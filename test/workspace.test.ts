@@ -33,6 +33,13 @@ describe('Workspace', () => {
     expect(readFileSync(join(root, '..', 'secret.txt'), 'utf8')).toBe('secret');
   });
 
+  it('名前が .. で始まるファイル（フォルダの中のもの）は、読み書きできる', async () => {
+    put('..notes.md', 'メモ\n');
+    expect(await ws.readFile('..notes.md')).toEqual({ kind: 'text', text: 'メモ\n' });
+    await ws.writeFile('..notes.md', '書き直し\n');
+    expect(readFileSync(join(root, '..notes.md'), 'utf8')).toBe('書き直し\n');
+  });
+
   it('listDir: フォルダを先に名前順で並べ、.git・node_modules などは出さない', async () => {
     put('b.txt', 'b');
     put('a.txt', 'a');

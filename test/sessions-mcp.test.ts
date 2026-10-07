@@ -718,6 +718,14 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(text.endsWith('\n`````')).toBe(true);
     });
 
+    it('空の未追跡のファイルは、行の無い新しいファイルとして書く（空の行を 1 行足したようにしない）', async () => {
+      initRepo();
+      writeFileSync(join(repo, 'empty.txt'), '');
+      const text = await diffOf();
+      expect(text).toContain('diff --git a/empty.txt b/empty.txt\nnew file (untracked)\n--- /dev/null\n+++ b/empty.txt\n```');
+      expect(text).not.toContain('+++ b/empty.txt\n@@');
+    });
+
     it('未追跡のファイルが 100 を超えたら、残りは数だけ書く', async () => {
       initRepo();
       for (let i = 0; i < 101; i++) writeFileSync(join(repo, `f${String(i).padStart(3, '0')}.txt`), `${i}\n`);
@@ -1486,6 +1494,10 @@ describe('会話のまとめ（read_session の中身）', () => {
     ]);
     const many = Array.from({ length: 205 }, (_, i): ChatEvent => ({ type: 'tool-use', id: `${i}`, name: 'Write', target: '', filePath: `/r/f${i}.txt`, input: '' }));
     expect(testing.editedFiles(many, '/r')).toHaveLength(200);
+  });
+
+  it('名前が .. で始まるファイル（フォルダの中のもの）も、フォルダからの相対パスで書く', () => {
+    expect(testing.editedFiles([{ type: 'tool-use', id: '1', name: 'Write', target: '', filePath: '/r/..env.local', input: '' }], '/r')).toEqual(['..env.local']);
   });
 
   it('path は、フォルダの外を指させない', () => {

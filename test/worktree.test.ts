@@ -623,6 +623,14 @@ describe('削除', () => {
     expect(existsSync(plan.path)).toBe(true);
   });
 
+  it('ロックの理由の制御文字のうち、git が \\r・\\v などの文字で書くものも元に戻す', async () => {
+    const plan = await create();
+    git(repo, 'worktree', 'unlock', plan.path);
+    const reason = 'a\rb\vc\fd\be\x07f';
+    git(repo, 'worktree', 'lock', '--reason', reason, plan.path);
+    await expect(removeWorktree(plan, plan.path)).rejects.toThrow(`（${reason}）`);
+  });
+
   it('git worktree remove に失敗したら、動かしたフォルダを元に戻して、失敗を伝える', async () => {
     mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true });
     writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'a');

@@ -216,6 +216,12 @@ describe('引数と状態の細かいところ', () => {
     ]);
   });
 
+  it('名前が .. で始まるファイル（フォルダの中のもの）も示せる', async () => {
+    writeFileSync(join(cwd, '..notes.md'), 'a\nb\n');
+    const { control } = setup();
+    expect(text(await control.handle(ME, 'show_code', { path: '..notes.md', start_line: 1, body: 'ここ' }))).toBe('人のエディタに ..notes.md:1 を示しました（寄り道）。');
+  });
+
   it('末尾に改行の無いファイルも、最後の行まで示せる', async () => {
     writeFileSync(join(cwd, 'src', 'short.ts'), 'a\nb\nc');
     const { control } = setup();
