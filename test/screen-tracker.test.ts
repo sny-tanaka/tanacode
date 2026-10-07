@@ -184,6 +184,13 @@ it('止めたいものを画面の名前から探すとき、同じ名前を先�
   expect(findTaskRows('sleep 9', ['sleep 1', 'sleep 2'])).toEqual([]);
 });
 
+it('省略された名前（…）が頭の合うものを先に選び、省略されていない短い名前とは取り違えない。省略された別の名前は、頭が合わなければ当たらない', () => {
+  // 「npm run dev」（そのままの名前）と、「npm run dev:api --port 3000」を省略した名前が並ぶ
+  expect(findTaskRows('npm run dev:api --port 3000', ['npm run dev', 'npm run dev:api --po…'])).toEqual([1]);
+  // 途中までしか出ない複数行のコマンドを探すとき、省略された別のコマンドは数えない
+  expect(findTaskRows('cd /tmp\nnpm test', ['cd /tmp', 'npm run build -- --wat…'])).toEqual([0]);
+});
+
 it('/tasks の画面を、一覧・詳細・ワークフローの詳細として読み、それ以外（入力欄・メニュー）は読まない', () => {
   const lines = (rows: string[]) => rows.map((text) => ({ text, full: false }));
   const list = parseTasks(lines(listScreen(['echo two', 'echo one'], 1)));
