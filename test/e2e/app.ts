@@ -85,6 +85,8 @@ export class E2EApp {
         ...(this.options.trusted ? { projects: { [this.work]: { hasTrustDialogAccepted: true } } } : {}),
       }),
     );
+    // アプリの画面からコミットするときの名前（HOME を差し替えるので、ふだんの ~/.gitconfig は読まれない）
+    writeFileSync(join(this.home, '.gitconfig'), '[user]\n\tname = tanacode\n\temail = tanacode@localhost\n');
     if (this.options.claudeSettings) writeFileSync(join(this.home, '.claude', 'settings.json'), JSON.stringify(this.options.claudeSettings));
     writeFileSync(
       join(this.userData, 'settings.json'),
@@ -95,11 +97,9 @@ export class E2EApp {
       writeFileSync(join(this.work, path), text);
     }
     if (this.options.git) {
-      const git = (...args: string[]) =>
-        execFileSync('git', ['-c', 'user.name=tanacode', '-c', 'user.email=tanacode@localhost', ...args], { cwd: this.work, stdio: 'ignore' });
-      git('init', '-q', '-b', 'main');
-      git('add', '-A');
-      git('commit', '-qm', 'init', '--allow-empty');
+      this.git('init', '-q', '-b', 'main');
+      this.git('add', '-A');
+      this.git('commit', '-qm', 'init', '--allow-empty');
     }
     // 確かめる claude だけを PATH の先頭に置く
     const bin = join(this.root, 'bin');
@@ -187,6 +187,20 @@ export class E2EApp {
 
   // --- 画面の操作 ---
 
+  // 作業フォルダで git を動かして、出力を返す
+  git(...args: string[]): string {
+    return execFileSync('git', args, { cwd: this.work, encoding: 'utf8', env: { ...process.env, HOME: this.home } });
+  }
+
+  // テストの側の条件（モックの API が受け取ったものなど）がそろうのを待つ
+  async waitUntil(what: string, check: () => boolean, timeoutMs = TIMEOUT_MS): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!check()) {
+      if (Date.now() > deadline) throw new Error(`${what}のを待ちましたが、${timeoutMs / 1000} 秒たっても来ません`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
   // 文字を含む要素
   byText(selector: string, text: string | RegExp): Locator {
     return this.page.locator(selector, { hasText: text });
@@ -215,6 +229,26 @@ export class E2EApp {
   async send(text: string): Promise<void> {
     await this.page.fill('.chat-input textarea', text);
     await this.page.click('.chat-input-row [aria-label="送信"]');
+  }
+
+  // 差分の画面（変更後の側）で、text を含む行にコメントを書き始める。行番号の横（グリフの余白）を押す。
+  // Monaco は描き直すと行の要素を作り直すので、位置が取れてコメント欄が開くまで繰り返す
+  async startComment(text: string): Promise<void> {
+    const editor = this.page.locator('.diff-pane .modified-in-monaco-diff-editor');
+    const draft = this.page.locator('.comment-box.draft textarea');
+    for (let i = 0; i < 20; i++) {
+      const glyph = await editor.locator('.glyph-margin').boundingBox().catch(() => null);
+      const row = await editor.locator('.view-line', { hasText: text }).boundingBox().catch(() => null);
+      if (glyph && row) {
+        const y = row.y + row.height / 2;
+        await this.page.mouse.move(row.x + 40, y);
+        await this.page.mouse.click(glyph.x + glyph.width / 2, y);
+        if (await draft.waitFor({ timeout: 1000 }).then(() => true, () => false)) return;
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+    throw new Error(`「${text}」の行にコメントを書き始められません`);
   }
 
   // チャットに出たメニューのカード（kind: other は信頼の確認など、permission は許可の確認、question は質問）
