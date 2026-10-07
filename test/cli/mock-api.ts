@@ -25,7 +25,7 @@ export type Conversation = { match: string; steps: Step[]; delayMs?: number; mod
 // times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）
 export type ApiFailure = { status: number; errorType: string; message: string; times?: number };
 
-type Message = { role?: string; content?: string | { type?: string; text?: string }[] };
+type Message = { role?: string; content?: string | { type?: string; text?: string; content?: string | { type?: string; text?: string }[] }[] };
 type Body = {
   model?: string;
   stream?: boolean;
@@ -48,6 +48,8 @@ export class MockApi {
   // 台本のある会話の、Claude に渡ったシステムの文（システムプロンプトと、会話の中の system の発言。
   // 今の Claude Code は MCP サーバーの説明を後者に入れる）。圧縮のあとも MCP サーバーの説明が渡るかを確かめる
   readonly systems: string[] = [];
+  // 受け取ったツールの結果（tool_result）の文章。質問への答えや許可の結果が、Claude まで届いたかを確かめる
+  readonly toolResults: string[] = [];
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
@@ -78,7 +80,9 @@ export class MockApi {
     // ツールの一覧が付いていないもの（タイトル作りなどの裏の呼び出し）には、台本を使わず短い文を返す
     const tools = body.tools ?? [];
     const messages = body.messages ?? [];
-    this.lastPrompts.push(textOf([...messages].reverse().find((m) => m.role === 'user')));
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    this.lastPrompts.push(textOf(lastUser));
+    if (Array.isArray(lastUser?.content)) for (const b of lastUser.content) if (b.type === 'tool_result') this.toolResults.push(resultText(b.content));
     const reply = messages.findIndex((m) => m.role === 'assistant');
     const opening = (reply === -1 ? messages : messages.slice(0, reply)).filter((m) => m.role === 'user');
     const first = opening.map(textOf).join('\n');
@@ -169,4 +173,9 @@ function textOf(message: Message | undefined): string {
   const content = message?.content;
   if (typeof content === 'string') return content;
   return (content ?? []).map((b) => (b.type === 'text' ? (b.text ?? '') : '')).join('\n');
+}
+
+function resultText(content: string | { type?: string; text?: string }[] | undefined): string {
+  if (typeof content === 'string') return content;
+  return (content ?? []).map((b) => b.text ?? '').join('\n');
 }
