@@ -30,6 +30,8 @@ if (sources.length === 0) {
 }
 const map = libCoverage.createCoverageMap({});
 for (const name of sources) map.merge(JSON.parse(readFileSync(join(coverageDir, name, 'coverage-final.json'), 'utf8')));
+// カバレッジのファイルは、測った場所の絶対パスで入っている（別の作業場所や CI で測ったものも使えるよう、src/ からのパスで引く）
+const byPath = new Map(map.files().map((abs) => [abs.slice(abs.lastIndexOf('/src/renderer/') + 1), map.fileCoverageFor(abs)]));
 
 function* tsxFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -58,8 +60,8 @@ let counted = 0;
 for (const file of tsxFiles(RENDERER)) {
   const code = readFileSync(file, 'utf8');
   const ast = parse(code, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
-  const fileCoverage = map.files().includes(file) ? map.fileCoverageFor(file) : null;
-  const rel = relative(root, file);
+  const rel = relative(root, file).split('\\').join('/');
+  const fileCoverage = byPath.get(rel) ?? null;
   traverse(ast, {
     JSXAttribute(path) {
       const name = path.node.name.name;
