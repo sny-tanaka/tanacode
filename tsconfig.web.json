@@ -11,5 +11,5 @@
     "types": ["vite/client"],
     "paths": { "@shared/*": ["./src/shared/*"] }
   },
-  "include": ["src/renderer/**/*", "src/preload/*.d.ts", "src/shared/**/*", ".storybook/mockApi.ts", "test/export.test.ts"]
+  "include": ["src/renderer/**/*", "src/preload/*.d.ts", "src/shared/**/*", ".storybook/mockApi.ts", "test/export.test.ts", "test/renderer/**/*"]
 }

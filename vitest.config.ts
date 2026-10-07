@@ -7,5 +7,6 @@ export default defineConfig({
   resolve: { alias: { '@shared': resolve('src/shared') } },
   // アイコン（tsx）を描いて確かめるテストがある。tsconfig と同じ、import 不要の JSX にする
   esbuild: { jsx: 'automatic' },
-  test: { include: ['test/*.test.ts'], coverage: coverage('unit') },
+  // 画面のテスト（test/renderer）は、ファイルの先頭の @vitest-environment jsdom で DOM の代わりを使う
+  test: { include: ['test/*.test.ts', 'test/renderer/*.test.{ts,tsx}'], coverage: coverage('unit') },
 });
