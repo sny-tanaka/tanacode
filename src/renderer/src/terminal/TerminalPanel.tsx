@@ -193,11 +193,15 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
     if (showShell && sessionId && tabs.length === 0) void newShell(sessionId);
   }, [showShell, sessionId, tabs.length, newShell]);
 
-  // 表示するシェルだけを出す
+  // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
+  // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）
   useEffect(() => {
     for (const [id, x] of xterms.current) x.element.hidden = !showShell || id !== activeShell?.id;
     const x = showShell && activeShell ? xterms.current.get(activeShell.id) : undefined;
-    if (!x) return;
+    if (!x) {
+      setHasSelection(false);
+      return;
+    }
     x.fit.fit();
     x.term.focus();
     setHasSelection(x.term.hasSelection());
