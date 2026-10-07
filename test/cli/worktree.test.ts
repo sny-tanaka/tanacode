@@ -154,7 +154,9 @@ describe(`Claude Code ${version} の worktree のセッション（大きなモ�
     try {
       await run.startInWorktree();
       await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 120_000);
-      const note = run.chatEvents.find((e) => e.type === 'info');
+      // アプリの知らせ（node_modules を用意した場所）。worktree を作るのに時間がかかると、Claude Code も自分の知らせ
+      // （「Worktree creation took 17s. …」）を出すので、それと取り違えない
+      const note = run.chatEvents.find((e) => e.type === 'info' && e.text.includes('node_modules'));
       // macOS 以外では APFS のクローンができないので「複製できませんでした」になり、いちばん上で npm install する。どちらでも場所は並ぶ
       for (const dir of ['packages/web/node_modules', 'packages/api/node_modules']) expect(note).toMatchObject({ text: expect.stringContaining(dir) });
     } finally {
