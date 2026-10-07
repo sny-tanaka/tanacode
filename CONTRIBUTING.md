@@ -45,6 +45,7 @@ npm run dev
 | `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
 | `npm run test:e2e` | ビルドしたアプリを起動して、画面の操作から Claude Code・MCP・ターミナルまで通しで確かめる（先に `npm run build`。下の「アプリの通しのテスト（E2E）」） |
 | `npm run coverage` / `npm run coverage:cli` | `npm test` / `npm run test:cli` と同じテストで、カバレッジを測る（下の「テストと CI」） |
+| `npm run coverage:e2e` | `npm run test:e2e` と同じテストで、カバレッジを測る（先に `TANACODE_SOURCEMAP=1 npm run build`。下の「アプリの通しのテスト（E2E）」） |
 | `npm run coverage:report` | 測ったカバレッジを合わせて層ごとに出し、下限を下回っていないか確かめる |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
 | `npm run dist` | ビルドする Mac に合わせて `dist/mac-arm64/tanacode.app`（Intel の Mac では `dist/mac/tanacode.app`）を作る（署名は下の「署名」） |
@@ -240,6 +241,9 @@ PR と develop・main への push で、次のものを流します。
 - 失敗したテストは、画面の写し・メインプロセスの出力・モックの API の呼び出し・セッションの一覧・選んでいるセッションの Claude Code の画面を `test-results/e2e/` に残します。CI では、ジョブの成果物（`e2e-results`）に入れます。
 - 画面の目印には、クラス名と `aria-label` を使います。画面を変えて目印が変わったら、`test/e2e/app.ts` の操作の部品か、テストの目印を直します。
 - Linux でも `xvfb-run -a npm run test:e2e` で流せます（手元で確かめる用。CI では流しません）。
+- カバレッジも測るときは、`TANACODE_SOURCEMAP=1 npm run build` でソースマップ付きでビルドしてから `npm run coverage:e2e`。メインプロセス・pty ホスト・MCP の中継は `NODE_V8_COVERAGE` で、画面と preload は Playwright の `page.coverage` で集め、終わったら `scripts/e2e-coverage.mjs` がソースマップで src の行に戻して `coverage/e2e/coverage-final.json` に書きます。`npm run coverage:report` は、ほかのカバレッジと合わせて数えます。
+  - 画面のカバレッジは、測り始めてから読み込んだスクリプトの分しか取れないので、起動したら画面を読み込み直します。
+  - ソースマップ（`.map`）は、パッケージしたアプリには入れません（`package.json` の `build.files`）。
 
 | ファイル | 確かめること |
 | --- | --- |

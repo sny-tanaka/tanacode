@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,9 @@ const API_KEY = 'sk-ant-api03-tanacode-e2e-check-00000000000000000000';
 export const RESULTS = join(REPO, 'test-results', 'e2e');
 // 画面の操作・表示を待つ時間の上限（claude の起動とモックの API の応答を含む）
 const TIMEOUT_MS = 30_000;
+// カバレッジを集めるか（npm run coverage:e2e）。集めたものは scripts/e2e-coverage.mjs が src の行に戻す
+const COVERAGE = process.env.TANACODE_E2E_COVERAGE === '1';
+export const COVERAGE_RAW = join(REPO, 'coverage', 'e2e-raw');
 
 type Options = {
   // モックの API の台本。作業フォルダのパスを入れるため、フォルダを受け取って返す
@@ -121,6 +125,8 @@ export class E2EApp {
       no_proxy: '127.0.0.1,localhost',
       DISABLE_AUTOUPDATER: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // メインプロセス・pty ホスト・MCP の中継（どれも Node）は、終わるときにカバレッジをここに書く
+      ...(COVERAGE ? { NODE_V8_COVERAGE: join(COVERAGE_RAW, 'v8') } : {}),
     };
   }
 
@@ -145,6 +151,11 @@ export class E2EApp {
       if (message.type() === 'error') this.consoleErrors.push(message.text());
     });
     this.window.on('pageerror', (error) => this.consoleErrors.push(String(error)));
+    // 画面のカバレッジは、測り始めてから読み込んだスクリプトの分だけ取れる。測り始めてから読み込み直す
+    if (COVERAGE) {
+      await this.window.coverage.startJSCoverage({ resetOnNavigation: false });
+      await this.window.reload();
+    }
     await this.window.waitForSelector('nav.sidebar');
     // フォルダを選ぶダイアログは、作業フォルダを選んだことにする
     await this.electronApp.evaluate(({ dialog }, folder) => {
@@ -176,8 +187,10 @@ export class E2EApp {
   // Linux では、アプリの記述子を引き継いだ pty ホストが動き続けるので、Claude Code を動かしたまま終えると戻ってこない）
   private async quit(response: number): Promise<void> {
     const app = this.app;
+    const page = this.window;
     this.electronApp = null;
     this.window = null;
+    if (COVERAGE && page) await saveRendererCoverage(page);
     const child = app.process();
     const exited = new Promise<void>((resolve) => (child.exitCode !== null || child.signalCode !== null ? resolve() : child.once('exit', () => resolve())));
     await app
@@ -311,6 +324,14 @@ export class E2EApp {
     await card.locator('.menu-option', { hasText: option }).first().click();
     await this.page.waitForFunction((element) => !element?.isConnected, handle);
   }
+}
+
+// 画面（と、画面の側で動く preload）のカバレッジを coverage/e2e-raw/renderer-*.json に書く（アプリのスクリプトの分だけ。中身は手元の out/ から読むので残さない）
+async function saveRendererCoverage(page: Page): Promise<void> {
+  const entries = await page.coverage.stopJSCoverage().catch(() => []);
+  const scripts = entries.filter((e) => /\/out\/(renderer|preload)\//.test(e.url)).map(({ url, functions }) => ({ url, functions }));
+  mkdirSync(COVERAGE_RAW, { recursive: true });
+  writeFileSync(join(COVERAGE_RAW, `renderer-${randomUUID()}.json`), JSON.stringify(scripts));
 }
 
 // 確かめる claude のパス
