@@ -14,6 +14,7 @@ export const SearchPanel = forwardRef<HTMLInputElement, Props>(function SearchPa
   useEffect(() => {
     if (!query) {
       setResult(null);
+      setSearching(false);
       return;
     }
     let cancelled = false;

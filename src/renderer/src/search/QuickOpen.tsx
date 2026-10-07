@@ -11,8 +11,15 @@ export function QuickOpen({ sessionId, onOpen, onClose }: Props) {
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // 開いたまま見ているセッションが変わったら（通知を押して移ったときなど）、前のセッションのファイルは出さない。
+  // 前のセッションの一覧の返事が遅れて届いても、今のセッションの候補を書き換えない
   useEffect(() => {
-    void window.tanacode.workspace.listFiles(sessionId).then(setFiles);
+    setFiles([]);
+    let alive = true;
+    void window.tanacode.workspace.listFiles(sessionId).then((list) => alive && setFiles(list));
+    return () => {
+      alive = false;
+    };
   }, [sessionId]);
 
   const results = useMemo(() => {
@@ -26,7 +33,7 @@ export function QuickOpen({ sessionId, onOpen, onClose }: Props) {
       .map((r) => r.path);
   }, [files, query]);
 
-  useEffect(() => setSelected(0), [query]);
+  useEffect(() => setSelected(0), [query, sessionId]);
   useEffect(() => {
     listRef.current?.children[selected]?.scrollIntoView({ block: 'nearest' });
   }, [selected]);

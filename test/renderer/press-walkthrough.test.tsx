@@ -203,6 +203,19 @@ describe('WalkthroughBox（エディタの吹き出し）', () => {
     expect(c.onAsk).not.toHaveBeenCalled();
   });
 
+  it('日本語の変換中に Esc（変換の取り消し）を押しても、質問の欄は閉じない', () => {
+    // macOS の Chromium では、変換中の Esc も key が Escape の keydown として届き、isComposing が付く
+    // （PR に載せる下見・書き出しの確認・チェックリストの欄は、変換中の Esc では閉じない）
+    const onAsk = vi.fn();
+    render(<WalkthroughBox walkthrough={walk()} stale={false} onGo={() => {}} onClose={() => {}} onAsk={onAsk} onRestart={() => {}} />);
+    fireEvent.click(screen.getByText('質問する'));
+    const box = screen.getByPlaceholderText('ここについて Claude に聞きたいこと（⌘Enter で送る）');
+    fireEvent.change(box, { target: { value: 'ぜいりつは' } });
+    fireEvent.keyDown(box, { key: 'Escape', isComposing: true });
+    expect(screen.queryByPlaceholderText('ここについて Claude に聞きたいこと（⌘Enter で送る）')).toBeTruthy();
+    expect(onAsk).not.toHaveBeenCalled();
+  });
+
   it('別のウォークスルーに描き直した直後に押しても、新しいウォークスルーの前後のステップへ動く。開いていた質問の欄は閉じる', () => {
     const c = controls();
     const { rerender } = render(<WalkthroughBox {...c} />);

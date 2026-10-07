@@ -501,6 +501,22 @@ describe('別のセッションへコピー（CopyDialog）', () => {
     expect(dialog.textContent).toContain('コピーできるセッションがありません');
     expect((within(dialog).getByText('コピー') as HTMLButtonElement).disabled).toBe(true);
   });
+
+  // 不具合: コピー先を選ぶ欄（autoFocus）が無いと、フォーカスはダイアログを開いたボタンに残り、Esc がダイアログに届かない。
+  // ほかのダイアログ（ExportDialog・BrowserHostsDialog など）は、開いたらダイアログの中にフォーカスを移している
+  it('コピーできるセッションが無いときも、Esc で閉じられる', () => {
+    render(<ChecklistPanel session={S1} lists={LISTS()} sessions={[S1]} activeCardId={null} onOpen={vi.fn()} />);
+    fireEvent.click(cardRow('税率を読む'), { metaKey: true });
+    fireEvent.click(cardRow('表示を差し替える'), { metaKey: true });
+    const open = within(document.querySelector('.checklist-selection') as HTMLElement).getByLabelText('別のセッションへコピー');
+    // 押したボタンにフォーカスが移る（jsdom の click では移らないので、移しておく）
+    open.focus();
+    fireEvent.click(open);
+    expect(screen.getByRole('dialog').textContent).toContain('コピーできるセッションがありません');
+    // キーは、フォーカスのある所に届く
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
 });
 
 describe('セッションを切り替えた直後', () => {

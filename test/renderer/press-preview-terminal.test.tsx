@@ -181,22 +181,23 @@ describe('TerminalPanel: シェルのタブ', () => {
     expect(api.argsOf('shell.kill')).toEqual([['sh1'], ['sh2']]);
   });
 
-  it('アプリが開いたコマンドのタブ: 動いている間の × は止め、終わったあとの × はタブを片付ける', async () => {
+  // 動いている間の ×（止めて閉じる）は、下の「押しても効かない（不具合）」で確かめる
+  it('アプリが開いたコマンドのタブ: ひとりでに終わってもタブは残し、終わったあとの × はタブを片付ける', async () => {
     render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
     act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install' }));
     expect(tabNames()).toEqual(['zsh 1', 'npm install（実行中）']);
     expect(selectedTab()).toBe(1);
     expect(closeOf(1).getAttribute('data-tip')).toBe('止めて閉じる');
-    fireEvent.click(closeOf(1));
-    expect(api.argsOf('shell.kill')).toEqual([['task1']]);
 
     act(() => api.emit('shell.onExit', { id: 'task1', exitCode: 1 }));
     // 出力を見られるよう、終わってもタブは残す
     expect(tabNames()).toEqual(['zsh 1', 'npm install（失敗 1）']);
+    expect(closeOf(1).getAttribute('data-tip')).toBe('このターミナルを閉じる');
     const task = termOf(1);
     fireEvent.click(closeOf(1));
-    expect(api.argsOf('shell.kill')).toEqual([['task1']]);
+    // もう止まっているので、止めずにタブだけを片付ける
+    expect(api.argsOf('shell.kill')).toEqual([]);
     expect(tabNames()).toEqual(['zsh 1']);
     expect(task.disposed).toBe(true);
     expect(task.element!.isConnected).toBe(false);
@@ -334,5 +335,42 @@ describe('TerminalPanel: セッションを切り替えた直後のボタン', (
     expect(inserted.at(-1)).toEqual({ sessionId: 's1', text: '```\ns1 の出力\n```' });
     fireEvent.click(closeOf(0));
     expect(api.argsOf('shell.kill').at(-1)).toEqual(['sh1']);
+  });
+});
+
+// いまのコードでは落ちる（押しても効かない）。あるべき動きを書いておく
+describe('TerminalPanel: 押しても効かない（不具合）', () => {
+  it('動いているコマンドのタブの ×（「止めて閉じる」）は、止めたあとタブも閉じる', async () => {
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install' }));
+    const task = termOf(1);
+    expect(closeOf(1).getAttribute('data-tip')).toBe('止めて閉じる');
+    fireEvent.click(closeOf(1));
+    expect(api.argsOf('shell.kill')).toEqual([['task1']]);
+    // main がコマンドを止め、終わったと知らせてくる
+    act(() => api.emit('shell.onExit', { id: 'task1', exitCode: 129 }));
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(task.disposed).toBe(true);
+    expect(task.element!.isConnected).toBe(false);
+  });
+
+  it('シェルを開いている途中のセッションに切り替えた直後は、前のセッションで選んでいた出力があっても「Claude へ送る」を押せない', async () => {
+    let created = 0;
+    // s1 のシェルはすぐ開き、s2 のシェルは開いている途中のまま（フォルダが無いなどで開けないときも同じ）
+    api = mockApi({ 'shell.create': () => (++created === 1 ? Promise.resolve({ id: 'sh1', name: 'zsh' }) : new Promise(() => {})) });
+    api.install();
+    const { rerender } = render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    act(() => termOf(0).select('s1 の出力'));
+    expect(sendButton().disabled).toBe(false);
+
+    rerender(<Panel sessionId="s2" />);
+    await waitFor(() => expect(api.argsOf('shell.create')).toHaveLength(2));
+    expect(tabs()).toEqual([]);
+    // 押せるように見えるが、押しても何も貼られない
+    fireEvent.click(sendButton());
+    expect(inserted).toEqual([]);
+    expect(sendButton().disabled).toBe(true);
   });
 });
