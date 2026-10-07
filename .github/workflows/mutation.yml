@@ -1,0 +1,46 @@
+# ミューテーションテスト（npm run mutation）。読み取りの中核のコードを 1 か所ずつわざと壊し、単体テストが落ちるかを確かめる。
+# 落ちなかったもの（生き残り）は、テストがそこを通っても、結果まで確かめていない場所の候補。
+# 時間がかかるので、PR では流さず、週 1 回の定期実行と手動の実行だけ。スコアの下限はまだ設けない（生き残りがあっても失敗にしない）。
+# 結果の要約（ファイルごとのスコアと生き残りの数・生き残りの一覧）はジョブの概要に、詳しい結果（mutation.json）は artifact に残す。
+# 単体テストは OS に依らないので ubuntu で流す
+name: mutation
+
+on:
+  schedule:
+    # 毎週月曜 4:23（日本時間）
+    - cron: '23 19 * * 0'
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 対象のファイル（空白で区切る。空なら既定の対象）
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    # 既定の対象で 35 分ほど（同時に 2）
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Electron の本体は使わないので落とさない
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # 対象は、手動の実行で指定したもの（無ければ scripts/mutation.mjs の既定の対象）
+      - run: npm run mutation -- $TARGETS
+        env:
+          TARGETS: ${{ inputs.targets }}
+      - name: 結果を残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation
+          path: reports/mutation/
+          if-no-files-found: ignore
