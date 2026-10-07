@@ -32,7 +32,8 @@ const TAX = ['export const TAX_RATE = 0.1;', '', 'export function withTax(price:
 
 describe('作業フォルダのファイルを、エディタと検索で扱う', () => {
   let app: E2EApp;
-  const editorText = () => app.page.locator('.editor .editor-monaco .view-lines').innerText();
+  // エディタに描かれた行（タブが切り替わってから、Monaco が行を描くまで少しかかるので待つ）
+  const editorLine = (text: string) => app.page.locator('.editor .editor-monaco .view-line', { hasText: text }).first();
 
   beforeAll(async () => {
     app = await E2EApp.launch({
@@ -72,7 +73,7 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
   it('プレビューの相対リンクで、ファイルの行を開ける', async () => {
     await app.byText('.markdown-preview a', '税の計算').click();
     await app.byText('.editor-tab.active', 'tax.ts').waitFor();
-    expect(await editorText()).toContain('TAX_RATE');
+    await editorLine('TAX_RATE').waitFor();
   });
 
   it('エディタで書き換えて ⌘S で保存すると、ディスクに書かれる', async () => {
