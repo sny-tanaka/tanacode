@@ -132,14 +132,37 @@ describe('setRemoteControl', () => {
     expect(app.manager.summary(id)?.attention).toBeNull();
   });
 
-  it('/remote-control のメニューに操作説明（Enter to select · Esc to cancel）が出ていても、選んだ直後の画面を操作待ちとして知らせない', async () => {
+  it('/remote-control のメニューに操作説明（Enter to select · Esc to continue）が出ていても、選んだ直後の画面を操作待ちとして知らせない', async () => {
     start();
     const { id, pty } = app.create({ remoteControl: true });
     await app.ready(id);
     app.append(id, bridgeStatus('https://claude.ai/code/session_abc'));
     await app.waitFor('つながり', () => remoteEvents(id).length > 0);
-    answerRemote(pty, () => [menu(' Remote Control', '', ' ❯ Disconnect this session', '   Continue', '', ' Enter to select · Esc to cancel'), DISCONNECTED]);
+    // つないだあとの /remote-control のメニュー。控えは無いので、Claude Code 2.1.292 の本体の作り（bridge-disconnect-dialog）から組み立てた形。
+    // 選択肢は 3 つで、カーソルははじめ最後の「Continue」にあり、↑ で上へ動く。下に操作説明が出るので、選択メニューとして読める
+    const rows = ['Disconnect this session', 'Show QR code  Scan with your phone to open this session', 'Continue'];
+    let pointed = rows.length - 1;
+    const connected = () =>
+      menu(
+        ' Remote Control',
+        '',
+        ' This session is available in the Claude mobile app and at https://claude.ai/code/session_abc.',
+        '',
+        ...rows.map((row, i) => `${i === pointed ? ' ❯ ' : '   '}${row}`),
+        '',
+        ' Enter to select · Esc to continue',
+      );
+    answerRemote(pty, () => [connected(), DISCONNECTED]);
+    const prev = pty.onWrite!;
+    pty.onWrite = (data) => {
+      prev(data);
+      if (data !== '\x1b[A') return;
+      pointed = (pointed + rows.length - 1) % rows.length;
+      setTimeout(() => pty.output(connected()), 10);
+    };
     expect(await app.manager.setRemoteControl(id, false)).toBeNull();
+    // カーソルを「Disconnect this session」まで上げて選んだ
+    expect(pty.writes.filter((w) => w === '\x1b[A')).toHaveLength(2);
     await app.waitFor('入力欄', () => app.manager.screen(id)?.state.kind === 'prompt');
     await sleep(200);
     // アプリが自分で開いたメニューなので、人に操作を頼む知らせ（通知）は出さない
