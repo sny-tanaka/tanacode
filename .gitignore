@@ -16,6 +16,8 @@ dist/
 /release/
 *.tsbuildinfo
 storybook-static/
+# カバレッジ（npm run coverage の出力）
+/coverage/
 
 # Claude Design の書き出し（手元でだけ使う。ライセンスがはっきりしないので公開しない）
 design/Claude IDE.dc.html

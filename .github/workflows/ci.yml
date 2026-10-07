@@ -1,0 +1,76 @@
+# PR と develop・main への push で、型チェックと、アプリ本体・Storybook がビルドできるかを確かめる。
+# - typecheck: 型チェック（npm run typecheck）。main・preload・画面の型の食い違いを見つける
+# - app: アプリ本体を、配布と同じ手順で .app まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）
+# - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）
+# アプリは配布するものと同じ macOS で作る。型チェックと Storybook は OS に依らないので ubuntu で流す
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+# PR は新しいものが来たら古いものを取りやめる
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Electron の本体は使わないので落とさない
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npm run typecheck
+
+  app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # 配布用のビルドと同じく、作れなければ失敗にする
+      - run: node scripts/build-translate-helper.mjs --require
+      # 画面側のビルドはメモリを 4GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
+      - run: npx electron-vite build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）
+      - run: node scripts/electron-builder.mjs --mac --publish never
+      - name: できた .app を確かめる
+        run: |
+          app=$(ls -d dist/mac*/tanacode.app)
+          echo "できた .app: $app"
+          # 同梱するもの（翻訳の補助プログラム・pty を動かす node-pty・Dock に出ない Helper）
+          test -x "$app/Contents/Resources/tanacode-translate"
+          test -d "$app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"
+          test -x "$app/Contents/Frameworks/tanacode Helper.app/Contents/MacOS/tanacode Helper"
+          codesign --verify --deep --strict "$app"
+
+  storybook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npm run build-storybook
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144

@@ -1,5 +1,6 @@
 # Claude Code との互換性の確認。本物の claude をモックの API で動かし、画面・会話ログ・statusLine・フックを
 # アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
+# PR と push では、2 つのテストのカバレッジを合わせて層ごとに出し、下限（test/coverage-thresholds.json）を下回ったら失敗にする。
 # 毎日の定期の確認（と手動の実行）は、その日の最新の Claude Code で確かめる。
 # PR と develop・main への push は、動作確認済のバージョン（src/shared/claude-code.ts）で確かめる
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しい版への追従は、毎日の確認と、それが作る PR で行う）
@@ -34,7 +35,10 @@ jobs:
     outputs:
       version: ${{ steps.claude.outputs.version }}
     steps:
+      # PR では、マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -43,8 +47,8 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      # 控えで読み取りを確かめる
-      - run: npm test
+      # 控えで読み取りを確かめる（カバレッジも測る）
+      - run: npm run coverage
       - name: Claude Code を入れる
         id: claude
         env:
@@ -66,11 +70,19 @@ jobs:
           bin="$RUNNER_TEMP/claude/node_modules/.bin/claude"
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
           echo "version=$("$bin" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" >> "$GITHUB_OUTPUT"
-      - name: 本物の claude で確かめる
-        run: npm run test:cli
+      - name: 本物の claude で確かめる（カバレッジも測る）
+        run: npm run coverage:cli
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
+      # 2 つのカバレッジを合わせて、層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
+      # 毎日の確認は、その日の最新の Claude Code の互換性を見るものなので、ここは PR と push だけ。
+      # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
+      - name: カバレッジをまとめる
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          DIFF_ARGS: ${{ github.event_name == 'pull_request' && '--diff HEAD^1' || '' }}
+        run: npm run coverage:report -- $DIFF_ARGS
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
         uses: actions/upload-artifact@v4
