@@ -23,6 +23,7 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 - PR は `develop` ブランチへ
 - 出す前に `npm run typecheck` と `npm test`（PR の CI で流すものは「テストと CI」）。画面を変えたときは Storybook で確かめ、PR にスクリーンショットを添付
 - 画面・会話ログ・statusLine の読み取りを変えたときは、`npm run test:cli` も（下の「Claude Code との互換性の確かめ方」）
+- 画面の操作や、Claude Code・MCP・ターミナルとのつなぎを変えたときは、`npm run build` してから `npm run test:e2e` も（下の「アプリの通しのテスト（E2E）」）
 
 ## 始め方
 
@@ -42,6 +43,7 @@ npm run dev
 | `npm run typecheck` | 型チェック |
 | `npm test` | 本物の Claude Code から取った控えで、画面・会話ログ・statusLine の読み取りを確かめる（読み取りの部品の単体の確認も） |
 | `npm run test:cli` | 本物の `claude` をモックの API で動かして、読み取りを確かめる（料金なし） |
+| `npm run test:e2e` | ビルドしたアプリを起動して、画面の操作から Claude Code・MCP・ターミナルまで通しで確かめる（先に `npm run build`。下の「アプリの通しのテスト（E2E）」） |
 | `npm run coverage` / `npm run coverage:cli` | `npm test` / `npm run test:cli` と同じテストで、カバレッジを測る（下の「テストと CI」） |
 | `npm run coverage:report` | 測ったカバレッジを合わせて層ごとに出し、下限を下回っていないか確かめる |
 | `npm run storybook` | 画面の部品を、アプリを起動せずにブラウザで見る（http://localhost:6006） |
@@ -155,7 +157,7 @@ PR と develop・main への push で、次のものを流します。
 | ワークフロー | ジョブ | 内容 | ランナー |
 | --- | --- | --- | --- |
 | `ci.yml` | `typecheck` | 型チェック（`npm run typecheck`） | ubuntu |
-| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる | macOS |
+| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる。できた `.app` で E2E（`npm run test:e2e`）も流す | macOS |
 | `ci.yml` | `storybook` | Storybook のビルド | ubuntu |
 | `claude-code-check.yml` | `check` | `npm test` と `npm run test:cli`（下の「Claude Code との互換性の確かめ方」）。カバレッジも測る | ubuntu |
 | `demo-site.yml` | `build`・`tour`・`tour-sp` | デモのサイトのビルドと、ツアーが最後まで流れるか（下の「デモのサイト」） | ubuntu |
@@ -174,6 +176,27 @@ PR と develop・main への push で、次のものを流します。
   - `--diff <ref>` を付けると、`<ref>` から変えた行のうち、テストで通った行の割合と、通らなかった行も出します。
 - CI の `check` のジョブは、PR と push で両方を測って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では、まとめません。その日の最新の Claude Code の互換性を見るためのものだからです。
 - カバレッジは、テストで実行された行の割合です。結果まで確かめたかは分かりません。テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます。
+
+### アプリの通しのテスト（E2E）
+
+`npm run test:e2e`（`test/e2e/`）は、アプリ本体を Playwright で起動し、人と同じように画面を操作して、Claude Code・MCP・ターミナルまで通しで確かめます。`claude` は本物（`TANACODE_CLAUDE_BIN`、無ければ PATH の `claude`）、API はモック（`test/cli/mock-api.ts`）なので、料金はかかりません。
+
+- 起動するのは、ビルドしたアプリ（`out/`。先に `npm run build`）か、`TANACODE_E2E_APP` に渡した実行ファイル（パッケージした `.app` の `Contents/MacOS/tanacode`）。CI の `app` のジョブは、作った `.app` で流します。
+- userData（`--user-data-dir`）と HOME は使い捨てのフォルダにします。ふだんのアプリの設定や `~/.claude` には触りません。通知と更新の確認は切ります。フォルダを選ぶダイアログは、作業フォルダを選んだことにします。
+- 終わるときは、終了の確認で「Claude Code も止めて終了」を選んだことにして、pty ホストと `claude` が終わるのを待ってから、一時フォルダを消します。
+- 失敗したテストは、画面の写し・メインプロセスの出力・モックの API の呼び出しを `test-results/e2e/` に残します。CI では、ジョブの成果物（`e2e-results`）に入れます。
+- 画面の目印には、クラス名と `aria-label` を使います。画面を変えて目印が変わったら、`test/e2e/app.ts` の操作の部品か、テストの目印を直します。
+- Linux でも `xvfb-run -a npm run test:e2e` で流せます（手元で確かめる用。CI では流しません）。
+
+| ファイル | 確かめること |
+| --- | --- |
+| `chat.test.ts` | 新規セッションの画面から始め、信頼の確認・Bash と Write の許可・質問に、チャットのカードで答える（答えがモックの API まで届くか）。チャットの並び・一覧のタイトル・Claude Code の画面（xterm）への描画と入力・ターミナルのシェル |
+| `mcp.test.ts` | Claude が MCP でチェックリスト・ウォークスルー・アプリ内ブラウザを操作すると、画面に出るか。許可や「終わった」の操作が、ツールの結果として Claude に戻るか |
+| `sessions.test.ts` | Claude がセッションの MCP で子セッションを始める（許可のカード・一覧に並ぶ・子が動き出す） |
+| `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
+| `restart.test.ts` | 「動かしたまま終了」で閉じて起動し直すと、Claude Code が引き継がれて続けられる。「再起動」のあとも同じ会話を続けられる |
+
+どのファイルも、最後に画面のコンソールにエラーが出ていないかを確かめます。
 
 ## Claude Code との互換性の確かめ方
 

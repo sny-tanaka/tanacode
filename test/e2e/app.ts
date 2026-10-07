@@ -127,7 +127,9 @@ export class E2EApp {
   // アプリを起動して、最初のウインドウを待つ
   private async start(): Promise<void> {
     const packaged = process.env.TANACODE_E2E_APP;
-    const args = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), `--user-data-dir=${this.userData}`];
+    // Linux の root ではサンドボックスを使えない。macOS では、Cookie の暗号化の鍵をキーチェーンに取りに行かない（CI で確認が出て止まらないように）
+    const platformArgs = process.platform === 'linux' ? ['--no-sandbox'] : process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
+    const args = [...platformArgs, `--user-data-dir=${this.userData}`];
     this.electronApp = await electron.launch({
       ...(packaged ? { executablePath: packaged, args } : { args: [...args, join(REPO, 'out', 'main', 'index.js')] }),
       cwd: this.root,
