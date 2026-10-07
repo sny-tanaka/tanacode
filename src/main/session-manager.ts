@@ -65,6 +65,9 @@ const USER_TITLE_PRIORITY = 4;
 const TYPING_MS = 5000;
 // 送ってから発言が会話ログに出るまで、作業中として扱う上限（スラッシュコマンドなど、発言として残らないものもある）
 const SUBMIT_GRACE_MS = 15_000;
+// 打った文字が入力欄に出るのを待つ上限と、画面を見直す間隔（submit の untilTyped）。TYPED_MS は TYPING_MS より短くする
+const TYPED_MS = 3000;
+const TYPED_POLL_MS = 20;
 
 // Claude Code の画面を見ていないときの pty サイズ。低いと、Claude Code は選択肢の一部だけを出す（↑/↓ で送る）ので、
 // 画面から読むメニューが欠ける。見ているあいだだけ、ターミナルパネルの大きさに合わせる
@@ -760,9 +763,16 @@ export class SessionManager {
         await sleep(300);
         process.write(' ');
       }
-      // 改行を含む入力は貼り付けとして送る（promptKeys）
-      if (text) process.write(promptKeys(text));
-      await sleep(50);
+      if (text) {
+        const before = rt.screen?.current.draft ?? '';
+        // 改行を含む入力は貼り付けとして送る（promptKeys）
+        process.write(promptKeys(text));
+        // 打った文字が入力欄に出てから Enter を送る。決まった時間だけ待つと、Claude Code が忙しくて読むのが遅れたとき
+        // （起動の直後に MCP サーバーがつながる間など）、文字と Enter が 1 度に届く。長い文字は貼り付けとみなされ、Enter は改行として入力欄に入る（送られない）
+        await this.untilTyped(rt, process, before, text);
+      } else {
+        await sleep(50);
+      }
       // Enter の直前にメニューが出ていたら、Enter はメニューの選択になってしまう
       if (guarded && (rt.screen?.current.state.kind !== 'prompt' || rt.attention !== null)) {
         throw new Error('質問や確認が出たため、送れませんでした');
@@ -775,6 +785,17 @@ export class SessionManager {
     const next = rt.sendChain.then(run, run);
     rt.sendChain = next.catch(() => {});
     return next;
+  }
+
+  // 打った文字が入力欄に出る（Claude Code が読み終える）のを待つ。メニューが出たらやめる（Enter を送るかは submit が決める）。
+  // TYPED_MS たっても出なければ、待つのをやめて Enter を送る（画面から読み取れない文字など）
+  private async untilTyped(rt: Runtime, process: ClaudeSession, before: string, text: string): Promise<void> {
+    const until = Date.now() + TYPED_MS;
+    while (rt.process === process && Date.now() < until) {
+      const info = rt.screen?.current;
+      if (!info || info.state.kind === 'menu' || typedShown(info.draft, before, text)) return;
+      await sleep(TYPED_POLL_MS);
+    }
   }
 
   // 手が空く（ターンが終わり、入力を受け付けられる）のを待ってから送る（子セッションへの指示・親への知らせ）。
@@ -1429,6 +1450,14 @@ function shownScreen(rt: Runtime, info: ScreenInfo): ScreenInfo {
   if (!typing || !info.draft || Date.now() - typing.at >= TYPING_MS) return info;
   const typed = info.draft.replace(/\[(?:Pasted text #\d+[^\]]*|Image #\d+)\]/g, '').replace(/\s/g, '');
   return typed === '' || typing.text.includes(typed) ? { ...info, draft: '' } : info;
+}
+
+// 打った文字（text）が、Claude Code の入力欄（画面の draft。打つ前は before）に出たか。画面の折り返しで空白が変わるので、空白を除いて比べる。
+// 貼り付けとみなされた入力（複数行・長い文字）は、入力欄では [Pasted text #1 +6 lines] の目印になるので、目印で終わるようになったかで見る
+export function typedShown(draft: string, before: string, text: string): boolean {
+  if (draft === before) return false;
+  if (/\[Pasted text #\d+[^\]]*\]\s*$/.test(draft)) return true;
+  return draft.replace(/\s/g, '').endsWith(text.replace(/\s/g, ''));
 }
 
 // 入力欄に打ってよい状態か。手が空いていて（ターンの外・操作待ちでない）、入力欄に書きかけが無く、画面の操作の途中でもない

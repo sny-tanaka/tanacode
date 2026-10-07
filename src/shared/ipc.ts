@@ -622,3 +622,159 @@ export type TanacodeApi = {
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;
 };
+
+// チャンネルごとの型。preload（src/preload/index.ts）と main の受け口・送り口（src/main/index.ts）は、どちらもこの表で型を付ける。
+// 引数の順番・型、戻り値、知らせの中身が食い違うと、型チェック（npm run typecheck）で止まる。
+// チャンネルを足したら、どれか 1 つの表に足す（足し忘れは test/ipc-wiring.test.ts の型の確認で止まる）
+type Api = TanacodeApi;
+// 知らせを受けるメソッド（onXxx(listener)）から、知らせの中身の型
+type Payload<F> = F extends (listener: (payload: infer P) => void) => unknown ? P : never;
+
+// 画面 → main の呼び出し（ipcRenderer.invoke ↔ ipcMain.handle）。引数と戻り値は、それを呼ぶ API のメソッドと同じ
+export type IpcInvoke = {
+  [IpcChannel.SessionsList]: Api['sessions']['list'];
+  [IpcChannel.SessionsCreate]: Api['sessions']['create'];
+  [IpcChannel.SessionsOpen]: Api['sessions']['open'];
+  [IpcChannel.SessionsArchive]: Api['sessions']['archive'];
+  [IpcChannel.SessionsUnarchive]: Api['sessions']['unarchive'];
+  [IpcChannel.SessionsSnapshot]: Api['sessions']['snapshot'];
+  [IpcChannel.SessionsSubmit]: Api['sessions']['submit'];
+  [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
+  [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
+  [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
+  [IpcChannel.RemoteControlAvailable]: Api['sessions']['remoteControlAvailable'];
+  [IpcChannel.SessionsRename]: Api['sessions']['rename'];
+  [IpcChannel.SessionsRemove]: Api['sessions']['remove'];
+  [IpcChannel.SessionsWorktreeLeftovers]: Api['sessions']['worktreeLeftovers'];
+  [IpcChannel.SessionsHistory]: Api['sessions']['history'];
+  [IpcChannel.ChatImage]: Api['sessions']['image'];
+  [IpcChannel.SessionsExportSource]: Api['sessions']['exportSource'];
+  [IpcChannel.SessionsExportSave]: Api['sessions']['saveExport'];
+  [IpcChannel.SessionsDiscover]: Api['sessions']['discover'];
+  [IpcChannel.SessionsImport]: Api['sessions']['import'];
+  [IpcChannel.ScreenGet]: Api['screen']['get'];
+  [IpcChannel.ScreenChoose]: Api['screen']['choose'];
+  [IpcChannel.ScreenSetMode]: Api['screen']['setMode'];
+  [IpcChannel.ScreenRewind]: Api['screen']['rewind'];
+  [IpcChannel.ScreenActivityGet]: Api['screen']['activity'];
+  [IpcChannel.WorkflowsGet]: Api['workflows']['get'];
+  [IpcChannel.SubagentsGet]: Api['subagents']['get'];
+  [IpcChannel.UsageGet]: Api['usage']['get'];
+  [IpcChannel.UsageRefresh]: Api['usage']['refresh'];
+  [IpcChannel.ScheduledList]: Api['scheduled']['list'];
+  [IpcChannel.ScheduledAdd]: Api['scheduled']['add'];
+  [IpcChannel.ScheduledReschedule]: Api['scheduled']['reschedule'];
+  [IpcChannel.ScheduledSendNow]: Api['scheduled']['sendNow'];
+  [IpcChannel.ScheduledCancel]: Api['scheduled']['cancel'];
+  [IpcChannel.NotificationsGet]: Api['notifications']['get'];
+  [IpcChannel.NotificationsSet]: Api['notifications']['set'];
+  [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
+  [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
+  [IpcChannel.StatusLineGet]: Api['statusLine']['get'];
+  [IpcChannel.SettingsFilesList]: Api['settingsFiles']['list'];
+  [IpcChannel.SettingsFilesPick]: Api['settingsFiles']['pick'];
+  [IpcChannel.SettingsFilesAdd]: Api['settingsFiles']['add'];
+  [IpcChannel.SettingsFilesRename]: Api['settingsFiles']['rename'];
+  [IpcChannel.SettingsFilesRemove]: Api['settingsFiles']['remove'];
+  [IpcChannel.ModelsGet]: Api['models']['get'];
+  [IpcChannel.ModelsRefresh]: Api['models']['refresh'];
+  [IpcChannel.TranslateAvailable]: Api['translate']['available'];
+  [IpcChannel.TranslateRun]: Api['translate']['run'];
+  [IpcChannel.TranslateOpenSettings]: Api['translate']['openSettings'];
+  [IpcChannel.KnowledgeGet]: Api['knowledge']['get'];
+  [IpcChannel.ContextGet]: Api['context']['get'];
+  [IpcChannel.TasksBash]: Api['tasks']['bash'];
+  [IpcChannel.TasksAgentLog]: Api['tasks']['agentLog'];
+  [IpcChannel.TasksStop]: Api['tasks']['stop'];
+  [IpcChannel.ShellCreate]: Api['shell']['create'];
+  [IpcChannel.FolderPick]: Api['folders']['pick'];
+  [IpcChannel.FolderInfo]: Api['folders']['info'];
+  [IpcChannel.FolderFiles]: Api['folders']['listFiles'];
+  [IpcChannel.FolderCommands]: Api['folders']['commands'];
+  [IpcChannel.FolderOpen]: Api['folders']['open'];
+  [IpcChannel.WorkspaceInfo]: Api['workspace']['info'];
+  [IpcChannel.ListDir]: Api['workspace']['listDir'];
+  [IpcChannel.ReadFile]: Api['workspace']['readFile'];
+  [IpcChannel.ReadImage]: Api['workspace']['readImage'];
+  [IpcChannel.WriteFile]: Api['workspace']['writeFile'];
+  [IpcChannel.ListFiles]: Api['workspace']['listFiles'];
+  [IpcChannel.Search]: Api['workspace']['search'];
+  [IpcChannel.GitState]: Api['git']['state'];
+  [IpcChannel.GitBranches]: Api['git']['branches'];
+  [IpcChannel.GitRun]: Api['git']['run'];
+  [IpcChannel.GitDiffSides]: Api['git']['diffSides'];
+  [IpcChannel.GitBranchDiffSides]: Api['git']['branchDiffSides'];
+  [IpcChannel.GitBaseline]: Api['git']['baseline'];
+  [IpcChannel.GitLastMessage]: Api['git']['lastCommitMessage'];
+  [IpcChannel.CommandsList]: Api['commands']['list'];
+  [IpcChannel.AttachmentSave]: Api['attachments']['save'];
+  [IpcChannel.ChecklistGet]: Api['checklist']['get'];
+  [IpcChannel.ChecklistApply]: Api['checklist']['apply'];
+  [IpcChannel.ChecklistCopy]: Api['checklist']['copy'];
+  [IpcChannel.ChecklistUnread]: Api['checklist']['unread'];
+  [IpcChannel.WalkthroughGet]: Api['walkthrough']['list'];
+  [IpcChannel.WalkthroughGo]: Api['walkthrough']['go'];
+  [IpcChannel.WalkthroughClose]: Api['walkthrough']['close'];
+  [IpcChannel.WalkthroughDraftComment]: Api['walkthrough']['draftComment'];
+  [IpcChannel.WalkthroughPostComment]: Api['walkthrough']['postComment'];
+  [IpcChannel.BrowserOpenExternal]: Api['browser']['openExternal'];
+  [IpcChannel.BrowserHostsGet]: Api['browser']['hosts'];
+  [IpcChannel.BrowserHostsSet]: Api['browser']['setHosts'];
+  [IpcChannel.BrowserAsksGet]: Api['browser']['asks'];
+};
+
+// 画面 → main の知らせ（ipcRenderer.send ↔ ipcMain.on。返事は無い）。引数は、それを呼ぶ API のメソッドと同じ
+export type IpcSend = {
+  [IpcChannel.SessionsFocus]: Api['sessions']['focus'];
+  [IpcChannel.SessionsInterrupt]: Api['sessions']['interrupt'];
+  [IpcChannel.SessionsExportReveal]: Api['sessions']['revealExport'];
+  [IpcChannel.PtyWrite]: Api['pty']['write'];
+  [IpcChannel.PtyResize]: Api['pty']['resize'];
+  [IpcChannel.PtyResetSize]: Api['pty']['resetSize'];
+  [IpcChannel.ShellWrite]: Api['shell']['write'];
+  [IpcChannel.ShellResize]: Api['shell']['resize'];
+  [IpcChannel.ShellKill]: Api['shell']['kill'];
+  [IpcChannel.FolderClose]: Api['folders']['close'];
+  [IpcChannel.BrowserAttach]: Api['browser']['attach'];
+  [IpcChannel.BrowserActivate]: Api['browser']['activate'];
+  [IpcChannel.BrowserAnswer]: Api['browser']['answer'];
+};
+
+// main → 画面の知らせ（webContents.send ↔ ipcRenderer.on）。中身の型は、それを受ける API のメソッドの listener の引数と同じ
+export type IpcEvent = {
+  [IpcChannel.SessionsChanged]: Payload<Api['sessions']['onChanged']>;
+  [IpcChannel.SessionsSelect]: Payload<Api['sessions']['onSelect']>;
+  [IpcChannel.SessionsNew]: undefined;
+  [IpcChannel.ChatEvents]: Payload<Api['sessions']['onChat']>;
+  [IpcChannel.ScreenChanged]: Payload<Api['screen']['onChanged']>;
+  [IpcChannel.ScreenActivity]: Payload<Api['screen']['onActivity']>;
+  [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
+  [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
+  [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;
+  [IpcChannel.ScheduledChanged]: Payload<Api['scheduled']['onChanged']>;
+  [IpcChannel.SystemStats]: Payload<Api['system']['onStats']>;
+  [IpcChannel.ClaudeVersionChanged]: Payload<Api['claudeVersion']['onChanged']>;
+  [IpcChannel.AppUpdateChanged]: Payload<Api['appUpdate']['onChanged']>;
+  [IpcChannel.StatusLineChanged]: Payload<Api['statusLine']['onChanged']>;
+  [IpcChannel.SettingsFilesChanged]: Payload<Api['settingsFiles']['onChanged']>;
+  [IpcChannel.KnowledgeChanged]: Payload<Api['knowledge']['onChanged']>;
+  [IpcChannel.TasksBashChanged]: Payload<Api['tasks']['onBashChanged']>;
+  [IpcChannel.PtyData]: Payload<Api['pty']['onData']>;
+  [IpcChannel.ShellData]: Payload<Api['shell']['onData']>;
+  [IpcChannel.ShellExit]: Payload<Api['shell']['onExit']>;
+  [IpcChannel.ShellOpened]: Payload<Api['shell']['onOpened']>;
+  [IpcChannel.FilesChanged]: Payload<Api['workspace']['onFilesChanged']>;
+  [IpcChannel.ChecklistChanged]: Payload<Api['checklist']['onChanged']>;
+  [IpcChannel.WalkthroughChanged]: Payload<Api['walkthrough']['onChanged']>;
+  [IpcChannel.BrowserOpen]: Payload<Api['browser']['onOpen']>;
+  [IpcChannel.BrowserNewTab]: Payload<Api['browser']['onNewTab']>;
+  [IpcChannel.BrowserSelectTab]: Payload<Api['browser']['onSelectTab']>;
+  [IpcChannel.BrowserCloseTab]: Payload<Api['browser']['onCloseTab']>;
+  [IpcChannel.BrowserActivity]: Payload<Api['browser']['onActivity']>;
+  [IpcChannel.BrowserViewport]: Payload<Api['browser']['onViewport']>;
+  [IpcChannel.BrowserHostsOpen]: undefined;
+  [IpcChannel.BrowserAsk]: Payload<Api['browser']['onAsk']>;
+  [IpcChannel.BrowserShow]: Payload<Api['browser']['onShow']>;
+};
+
+export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel];

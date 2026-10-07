@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
 
@@ -80,11 +80,26 @@ export class SessionStore {
   }
 }
 
+// 読めないファイル（壊れた JSON・形の違う中身）は空として始めるが、次の保存で上書きして一覧をすべて消してしまわないよう、
+// 元の中身を横（sessions.json.broken-<時刻>）に控えておく
 function load(file: string): SessionRecord[] {
+  let text: string;
   try {
-    const data = JSON.parse(readFileSync(file, 'utf8')) as { sessions?: SessionRecord[] };
-    return Array.isArray(data.sessions) ? data.sessions : [];
+    text = readFileSync(file, 'utf8');
   } catch {
+    // まだ無い
     return [];
   }
+  try {
+    const data = JSON.parse(text) as { sessions?: unknown };
+    if (Array.isArray(data.sessions)) return data.sessions as SessionRecord[];
+  } catch {
+    // 下で控える
+  }
+  try {
+    copyFileSync(file, `${file}.broken-${Date.now()}`);
+  } catch {
+    // 控えられなくても、アプリは起動する
+  }
+  return [];
 }
