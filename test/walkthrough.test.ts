@@ -232,6 +232,10 @@ describe('引数と状態の細かいところ', () => {
   it('show_code: 示せないものは理由を返し、今の表示を変えない', async () => {
     const { control, changes } = setup();
     expect(text(await control.handle(ME, 'show_code', { path: '../outside.ts', start_line: 1, body: 'x' }))).toContain('このセッションのフォルダ');
+    // .. そのもの、名前が .. で始まるフォルダを通って外に出るもの、.. を含む絶対パスも断る
+    for (const path of ['..', '..notes/../../outside.ts', `${cwd}/../outside.ts`]) {
+      expect(text(await control.handle(ME, 'show_code', { path, start_line: 1, body: 'x' }))).toBe(`${path} は、このセッションのフォルダ（${cwd}）の中のファイルではありません`);
+    }
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
   });

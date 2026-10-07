@@ -1500,6 +1500,11 @@ describe('会話のまとめ（read_session の中身）', () => {
     expect(testing.editedFiles([{ type: 'tool-use', id: '1', name: 'Write', target: '', filePath: '/r/..env.local', input: '' }], '/r')).toEqual(['..env.local']);
   });
 
+  it('フォルダの親（..）とその中（../）は、外のものとして絶対パスのまま書く', () => {
+    const write = (filePath: string): ChatEvent => ({ type: 'tool-use', id: filePath, name: 'Write', target: '', filePath, input: '' });
+    expect(testing.editedFiles([write('/r'), write('/r/a.ts'), write('/r/sub/..a.ts')], '/r/sub')).toEqual(['/r', '/r/a.ts', '..a.ts']);
+  });
+
   it('path は、フォルダの外を指させない', () => {
     expect(testing.safeRelative('src/a.ts')).toBe('src/a.ts');
     expect(() => testing.safeRelative('..')).toThrow();

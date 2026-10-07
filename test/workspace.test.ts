@@ -30,6 +30,10 @@ describe('Workspace', () => {
     await expect(ws.writeFile('../secret.txt', 'x')).rejects.toThrow('outside workspace');
     await expect(ws.listDir('..')).rejects.toThrow('outside workspace');
     await expect(ws.writeFile('sub/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
+    // .. そのもの、名前が .. で始まるフォルダを通って外に出るものも断る
+    await expect(ws.readFile('..')).rejects.toThrow('outside workspace');
+    await expect(ws.readFile('..notes/../../secret.txt')).rejects.toThrow('outside workspace');
+    await expect(ws.writeFile('..notes/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
     expect(readFileSync(join(root, '..', 'secret.txt'), 'utf8')).toBe('secret');
   });
 

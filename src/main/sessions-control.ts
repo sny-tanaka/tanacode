@@ -660,7 +660,8 @@ function editedFiles(events: ChatEvent[], cwd: string): string[] {
     if (e.type === 'reset') files.clear();
     if (e.type !== 'tool-use' || !EDIT_TOOLS.has(e.name) || !e.filePath) continue;
     const rel = relative(cwd, e.filePath);
-    files.add(rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : e.filePath);
+    // .. そのものか ../ で始まるものが外（..env.local のような名前のファイルは中）
+    files.add(rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? rel : e.filePath);
   }
   return [...files].slice(0, 200);
 }
