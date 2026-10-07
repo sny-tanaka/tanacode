@@ -1,0 +1,162 @@
+[
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": " ▐▛███▛█   Claude Code v2.1.292",
+  "full": false
+ },
+ {
+  "text": "▝▜██████▀  Opus 5.5 · API Usage Billing",
+  "full": false
+ },
+ {
+  "text": " ▝▝   ▝▝   /tmp/tanacode-cli/work",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ 確認を始めてください                                                                                                  ",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "● コマンドを実行します。",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "  Ran 1 shell command ",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "● User answered Claude's questions:",
+  "full": false
+ },
+ {
+  "text": "  ⎿  · どちらの書き方にしますか？ → です・ます",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "● Write(hello.txt)",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": " Create file",
+  "full": false
+ },
+ {
+  "text": " hello.txt",
+  "full": false
+ },
+ {
+  "text": "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  "full": true
+ },
+ {
+  "text": "  1 こんにちは",
+  "full": false
+ },
+ {
+  "text": "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  "full": true
+ },
+ {
+  "text": " Do you want to create hello.txt?",
+  "full": false
+ },
+ {
+  "text": " ❯ 1. Yes",
+  "full": false
+ },
+ {
+  "text": "   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+  "full": false
+ },
+ {
+  "text": "   3. No",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": " Esc to cancel · Tab to amend",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ }
+]

@@ -1,0 +1,37 @@
+[?1049h[H
+  [9C[1mClaude Code[1C[38;2;153;153;153;22mv2.1.292
+[0m   [8C[38;2;153;153;153mOpus 5.5 · API Usage Billing
+[0m   [8C[38;2;153;153;153m/tmp/tanacode-cli/work
+
+
+[48;2;55;55;55m❯ [38;2;255;255;255mバックグラウンドの作業を試してください[39m                                                                                
+[0m
+[38;2;78;186;101m●[1C[39;1mAgent[0m(調べもの)
+[38;2;153;153;153m  ⎿  [0mBackgrounded[1Cagent[38;2;153;153;153m (↓ to manage · ctrl+o to expand)
+
+[0m [1C[38;2;153;153;153mRan [1m1[22m shell command 
+
+●[1C[39;1mWorkflow[0m(確認のワークフロー)
+
+[38;2;177;185;249m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1C[1mRun a dynamic workflow?
+
+[2C[39m確認のワークフロー
+
+[2C[0mThis[1Cdynamic[1Cworkflow[1Cwill[1Cspin[1Cup[1Cmultiple[1Csubagents[1Cacross[1Cthe[1Cfollowing[1Cphases:
+[4C1.[1C調べる
+[2C[38;2;153;153;153m     · "ワークフローのエージェントです"
+
+[2C[38;2;255;193;7mDynamic workflows can use a lot of tokens quickly by running many subagents in parallel — which counts against your 
+[2Cusage limit. Stop a running workflow at any time with /workflows, or disable dynamic workflows in /config.
+
+[2C[38;2;177;185;249m❯[1C[38;2;153;153;153m1. [38;2;177;185;249mYes, run it
+[4C[38;2;153;153;153m2. [0mView[1Craw[1Cscript
+[4C[38;2;153;153;153m3. [0mNo
+
+[2C[38;2;153;153;153mEsc to cancel · Tab to amend
+[0m  [38;2;153;153;153mctrl+g to edit script in $EDITOR
+
+
+
+[0m  [9A[?2004h[?1004h[?1003h
