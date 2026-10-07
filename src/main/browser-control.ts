@@ -733,7 +733,8 @@ export class BrowserControl {
     const lines = [`${double ? 'ダブルクリック' : 'クリック'}しました: ${target.description}`];
     if (target.covered) lines.push(`（押した位置には、ほかの要素 ${target.covered} が重なっていました）`);
     const after = guest.contents.getURL();
-    if (after !== before) lines.push(`ページが移りました: ${after}${this.allowed(after) ? '' : '（Claude に許していない先なので、これ以上は読めず、操作もできません）'}`);
+    // 移る前に止められなかった形（ページの「戻る」ボタンの history.back など）で許していない先へ移ったときは、オリジンだけを伝える
+    if (after !== before) lines.push(`ページが移りました: ${this.shownUrl(after)}${this.allowed(after) ? '' : '（Claude に許していない先なので、これ以上は読めず、操作もできません）'}`);
     return textResult(lines.join('\n'));
   }
 
