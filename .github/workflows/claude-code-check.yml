@@ -1,6 +1,7 @@
 # Claude Code との互換性の確認。本物の claude をモックの API で動かし、画面・会話ログ・statusLine・フックを
 # アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
-# PR と push では、2 つのテストのカバレッジを合わせて層ごとに出し、下限（test/coverage-thresholds.json）を下回ったら失敗にする。
+# PR と push では、アプリ本体の通しのテスト（E2E）もカバレッジを測りながら流し、単体テスト・本物の claude のテストと合わせて
+# 層ごとに出し、下限（test/coverage-thresholds.json）を下回ったら失敗にする。
 # 毎日の定期の確認（と手動の実行）は、その日の最新の Claude Code で確かめる。
 # PR と develop・main への push は、動作確認済のバージョン（src/shared/claude-code.ts）で確かめる
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しい版への追従は、毎日の確認と、それが作る PR で行う）
@@ -35,6 +36,10 @@ jobs:
       issues: write
     outputs:
       version: ${{ steps.claude.outputs.version }}
+    env:
+      # PR と push では、E2E も流してカバレッジの下限を確かめる。毎日の確認（と手動の実行）は、その日の最新の Claude Code の
+      # 互換性を見るものなので流さない（新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れる）
+      COVERAGE_GATE: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
     steps:
       # PR では、マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
       - uses: actions/checkout@v4
@@ -44,7 +49,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # Electron の本体は使わないので落とさない
+      # Electron の本体は、E2E を流すときだけ下で入れる
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
@@ -76,14 +81,42 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
-      # 2 つのカバレッジを合わせて、層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
-      # 毎日の確認は、その日の最新の Claude Code の互換性を見るものなので、ここは PR と push だけ。
+      # ここから E2E（PR と push だけ）。Electron の本体は npm ci では入らないので、ここで入れる
+      - name: Electron の本体を入れる
+        if: env.COVERAGE_GATE == 'true'
+        run: node node_modules/electron/install.js
+      # E2E で起動するアプリを、ソースマップ付きでビルドする（集めたカバレッジを src の行に戻すのに使う）。
+      # 画面側のビルドは、ソースマップを書き出す分も含めてメモリを 5〜6GB ほど使う。Node の既定の上限（約 2GB）では止まるため、
+      # 上限を上げる（ci.yml の app のジョブと同じ）。翻訳の補助プログラムは E2E では使わないので作らない
+      - name: アプリをソースマップ付きでビルドする
+        if: env.COVERAGE_GATE == 'true'
+        run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
+          NODE_OPTIONS: --max-old-space-size=6144
+      # 動作確認済のバージョンの claude で、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（カバレッジも測る）。
+      # パッケージした .app での E2E は、ci.yml の app のジョブで流す
+      - name: アプリを画面の操作から通しで確かめる（E2E。カバレッジも測る）
+        if: env.COVERAGE_GATE == 'true'
+        run: npm run coverage:e2e
+        env:
+          TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+      # 3 つのカバレッジ（単体・本物の claude・E2E）を合わせて、層ごとの数字をジョブの概要に出す。
+      # 下限（test/coverage-thresholds.json）を下回ったら失敗にする。
       # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
       - name: カバレッジをまとめる
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        if: env.COVERAGE_GATE == 'true'
         env:
           DIFF_ARGS: ${{ github.event_name == 'pull_request' && '--diff HEAD^1' || '' }}
         run: npm run coverage:report -- $DIFF_ARGS
+      # 落ちた E2E の画面の写し・メインプロセスの出力・モックの API の呼び出し
+      - name: E2E の失敗の手がかりを残す
+        if: failure() && env.COVERAGE_GATE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: test-results/e2e/
+          if-no-files-found: ignore
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
         uses: actions/upload-artifact@v4

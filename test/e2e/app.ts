@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -20,6 +21,9 @@ const API_KEY = 'sk-ant-api03-tanacode-e2e-check-00000000000000000000';
 export const RESULTS = join(REPO, 'test-results', 'e2e');
 // 画面の操作・表示を待つ時間の上限（claude の起動とモックの API の応答を含む）
 const TIMEOUT_MS = 30_000;
+// カバレッジを集めるか（npm run coverage:e2e）。集めたものは scripts/e2e-coverage.mjs が src の行に戻す
+const COVERAGE = process.env.TANACODE_E2E_COVERAGE === '1';
+export const COVERAGE_RAW = join(REPO, 'coverage', 'e2e-raw');
 
 type Options = {
   // モックの API の台本。作業フォルダのパスを入れるため、フォルダを受け取って返す
@@ -121,6 +125,8 @@ export class E2EApp {
       no_proxy: '127.0.0.1,localhost',
       DISABLE_AUTOUPDATER: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // メインプロセス・pty ホスト・MCP の中継（どれも Node）は、終わるときにカバレッジをここに書く
+      ...(COVERAGE ? { NODE_V8_COVERAGE: join(COVERAGE_RAW, 'v8') } : {}),
     };
   }
 
@@ -131,7 +137,10 @@ export class E2EApp {
     const platformArgs = process.platform === 'linux' ? ['--no-sandbox'] : process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
     const args = [...platformArgs, `--user-data-dir=${this.userData}`];
     this.electronApp = await electron.launch({
-      ...(packaged ? { executablePath: packaged, args } : { args: [...args, join(REPO, 'out', 'main', 'index.js')] }),
+      // ビルドしたアプリは、リポジトリのフォルダを渡して起動する（package.json の main から out/main/index.js を読む。npm run dev と同じ）。
+      // out/main/index.js を直に渡すと、アプリのフォルダ（app.getAppPath()）が out/main になり、macOS では開発中のアイコン
+      // （build/icon.png）を読めずに起動が止まる
+      ...(packaged ? { executablePath: packaged, args } : { args: [...args, REPO] }),
       cwd: this.root,
       env: this.env,
       timeout: TIMEOUT_MS,
@@ -139,12 +148,31 @@ export class E2EApp {
     const child = this.electronApp.process();
     child.stdout?.on('data', (chunk: Buffer) => this.output.push(chunk.toString()));
     child.stderr?.on('data', (chunk: Buffer) => this.output.push(chunk.toString()));
-    this.window = await this.electronApp.firstWindow({ timeout: TIMEOUT_MS });
+    this.window = await this.electronApp.firstWindow({ timeout: TIMEOUT_MS }).catch((error: unknown) => {
+      // ウインドウが出ないと keepEvidence も画面を写せないので、メインプロセスの出力をエラーに付け、記録にも残す
+      // pty ホストを起動できないと、メインプロセスはエラーのダイアログを出したまま止まる。その理由は pty-host.log にある
+      const ptyLog = readFileIfAny(join(this.userData, 'pty-host.log'));
+      const output = `${this.output.join('')}${ptyLog ? `\n# pty-host.log\n${ptyLog}` : ''}`;
+      mkdirSync(RESULTS, { recursive: true });
+      writeFileSync(join(RESULTS, `launch-failed-${randomUUID()}.log`), output);
+      throw new Error(`${String(error)}\n# メインプロセスの出力（終わりの 4000 文字）\n${output.slice(-4000)}`);
+    });
     this.window.setDefaultTimeout(TIMEOUT_MS);
     this.window.on('console', (message) => {
       if (message.type() === 'error') this.consoleErrors.push(message.text());
     });
     this.window.on('pageerror', (error) => this.consoleErrors.push(String(error)));
+    if (COVERAGE) {
+      // 画面のカバレッジは、測り始めてから読み込んだスクリプトの分だけ取れる。測り始めてから読み込み直す
+      await this.window.coverage.startJSCoverage({ resetOnNavigation: false });
+      await this.window.reload();
+      // MCP の中継は、Claude Code が終わるときにシグナルで止められ、そのままではカバレッジを書かない。
+      // 受けたら process.exit で終えるスクリプト（coverage-exit.cjs）を読み込ませる。Playwright は起動するアプリに
+      // NODE_OPTIONS を渡さないので、メインプロセスの環境変数に足す（Claude Code はこれを引き継いで起動し、中継に渡す）
+      await this.electronApp.evaluate((_, options) => {
+        process.env.NODE_OPTIONS = options;
+      }, `--require ${JSON.stringify(join(__dirname, 'coverage-exit.cjs'))}`);
+    }
     await this.window.waitForSelector('nav.sidebar');
     // フォルダを選ぶダイアログは、作業フォルダを選んだことにする
     await this.electronApp.evaluate(({ dialog }, folder) => {
@@ -176,8 +204,10 @@ export class E2EApp {
   // Linux では、アプリの記述子を引き継いだ pty ホストが動き続けるので、Claude Code を動かしたまま終えると戻ってこない）
   private async quit(response: number): Promise<void> {
     const app = this.app;
+    const page = this.window;
     this.electronApp = null;
     this.window = null;
+    if (COVERAGE && page) await saveRendererCoverage(page);
     const child = app.process();
     const exited = new Promise<void>((resolve) => (child.exitCode !== null || child.signalCode !== null ? resolve() : child.once('exit', () => resolve())));
     await app
@@ -310,6 +340,23 @@ export class E2EApp {
     const handle = await card.elementHandle();
     await card.locator('.menu-option', { hasText: option }).first().click();
     await this.page.waitForFunction((element) => !element?.isConnected, handle);
+  }
+}
+
+// 画面（と、画面の側で動く preload）のカバレッジを coverage/e2e-raw/renderer-*.json に書く（アプリのスクリプトの分だけ。中身は手元の out/ から読むので残さない）
+async function saveRendererCoverage(page: Page): Promise<void> {
+  const entries = await page.coverage.stopJSCoverage().catch(() => []);
+  const scripts = entries.filter((e) => /\/out\/(renderer|preload)\//.test(e.url)).map(({ url, functions }) => ({ url, functions }));
+  mkdirSync(COVERAGE_RAW, { recursive: true });
+  writeFileSync(join(COVERAGE_RAW, `renderer-${randomUUID()}.json`), JSON.stringify(scripts));
+}
+
+// ファイルがあれば中身。無ければ空
+function readFileIfAny(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
   }
 }
 

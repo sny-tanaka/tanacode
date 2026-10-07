@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 
 // npm run test:e2e: アプリ本体を Playwright で起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（test/e2e）。
 // 先に npm run build でビルドしておく（パッケージした .app を確かめるときは TANACODE_E2E_APP にその実行ファイルを渡す）。
+// npm run coverage:e2e は、カバレッジも集めて coverage/e2e に書く（先に TANACODE_SOURCEMAP=1 でビルドしておく）。
 // アプリはひとつずつ起動する（同時に起動すると、画面のフォーカスや pty ホストの起動が取り合いになる）
 export default defineConfig({
   resolve: { alias: { '@shared': resolve('src/shared') } },
@@ -11,5 +12,6 @@ export default defineConfig({
     testTimeout: 120_000,
     hookTimeout: 120_000,
     fileParallelism: false,
+    globalSetup: ['test/e2e/global-setup.ts'],
   },
 });

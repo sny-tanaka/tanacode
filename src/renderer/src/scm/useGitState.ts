@@ -7,12 +7,18 @@ const POLL_MS = 5000;
 export function useGitState(sessionId: string | null, root: string | null): { state: GitState | null; refresh: () => void } {
   const [state, setState] = useState<GitState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // いま見ているビュー。読み直しの返事が来るまでにビューが変わっていたら、前のビューの結果なので入れない
+  const current = useRef(sessionId);
+  current.current = sessionId;
 
   // 5 秒ごとに読み直すので、変わっていなければ入れ替えない（入れ替えると App 全体とエディタの差分表示が作り直される）
   const update = useCallback((next: GitState) => setState((prev) => (prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)), []);
   const refresh = useCallback(() => {
     if (!sessionId) return;
-    void window.tanacode.git.state(sessionId).then(update, () => update({ isRepo: false }));
+    const apply = (next: GitState) => {
+      if (current.current === sessionId) update(next);
+    };
+    void window.tanacode.git.state(sessionId).then(apply, () => apply({ isRepo: false }));
   }, [sessionId, update]);
 
   useEffect(() => {
