@@ -630,6 +630,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 実行はメインプロセス（`browser-control.ts`）。そのセッションの webview の中身（`webContents`）を直接動かします。
   - アプリ内ブラウザは、セッションごとにタブ（1 つのタブに 1 つの webview）を持ちます。画面（`PreviewPane`）は、タブの webview の準備ができたら（`dom-ready`。それより前の `getWebContentsId` は例外になる）、その `webContents` の ID を main に知らせます（`browser.attach`）。今のタブが変わったときも知らせ（`browser.activate`）、Claude の操作は今のタブに対して行います。main は、アプリの画面の中の webview だけを受け付けます。
   - タブの番号は、画面がタブを作った順（タブの ID の番号）。画面の並びと Claude の `list_tabs` をそろえるため、新しいタブはいつも右端に足します。
+  - 空のタブ（「＋」で開いたもの。`about:blank`）は、許していない先ではなく空のタブとして Claude に伝えます（`list_tabs`・`select_tab`。`select_tab` では、`navigate` でそのタブに開けることも添える）。中は読ませず、操作もさせません。
   - まだタブの無いセッションで Claude が URL を開くときは、main が画面にタブを作らせ（`browser:open`）、知らせを待ちます。新しいタブで開くとき（`newTab`）は `browser:new-tab`。タブの切り替え・閉じるも、main が画面に頼みます。
   - 新しいウィンドウで開くもの（`target=_blank`・`window.open`）は、webview に `allowpopups` を付けて main の `setWindowOpenHandler` に届かせ、ウィンドウは作らずに、同じセッションの新しいタブで開かせます（`openFromPage`）。`allowpopups` が無いと、main に届かずに捨てられます。新しいタブのページは、開いたページ（`window.opener`）とつながりません。
   - コンソールの出力と失敗した通信は、webview ができたとき（`did-attach-webview` から `track`）から集めます。タブの知らせ（`dom-ready`）を待つと、ページの最初のスクリプトが出したものを取りこぼすためです。

@@ -478,8 +478,9 @@ export class BrowserControl {
     if (tabs.length === 0) return textResult('タブはありません（navigate で開けます）');
     const lines = tabs.map((guest, i) => {
       const url = guest.contents.getURL();
-      // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）
-      const title = this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
+      // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）。
+      // 空のタブ（「＋」で開いたもの）は、許していない先ではない（navigate で開ける）。タイトルは読まない
+      const title = isBlank(url) ? '（タイトルなし）' : this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
       return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '（空のタブ）' : this.shownUrl(url)}`;
     });
     return textResult(`タブ（* が今のタブ）:\n${lines.join('\n')}`);
@@ -515,6 +516,8 @@ export class BrowserControl {
   // 開いたあとのページの様子。許していない先に移っていたら、そう伝える（タイトルと URL の道筋は伏せる）
   private pageResult(guest: Guest, done: string): ToolResult {
     const url = guest.contents.getURL();
+    // 空のタブ（「＋」で開いたもの）は、許していない先ではない。navigate で、このタブに開けることを伝える
+    if (isBlank(url)) return textResult(`${done}: （空のタブ）\n今のタブは空です。navigate で、このタブにページを開けます`);
     const allowed = this.allowed(url);
     const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）'}`, `URL: ${this.shownUrl(url)}`];
     if (!allowed) lines.push('このページは Claude に許していない先なので、これ以上は読めず、操作もできません');
