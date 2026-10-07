@@ -99,7 +99,7 @@ export function App() {
   const sessions = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
-  const { chatOf, load } = useSessionChats(selectedId);
+  const { chatOf, load, reset: resetChat } = useSessionChats(selectedId);
   const pendingSends = usePendingSends(chatOf);
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   const scheduled = useScheduledMessages();
@@ -395,6 +395,13 @@ export function App() {
         window.alert(`セッションを開けませんでした: ${message}`);
       });
   }, []);
+
+  // アーカイブすると Claude Code は止まるが、終了の知らせ（process-exit）は届かない（main がランタイムを先に片付けるため）。
+  // 動いていたときのチャットのままだと、戻したあとも待機中に見え、送った指示が届かずに消える。
+  // アプリを起動し直したときと同じく起動前に戻し、アーカイブ中は会話ログから読み、戻したあとは選んだ時点で再開する
+  useEffect(() => {
+    for (const s of sessions ?? []) if (s.archived && chatOf(s.id).status !== 'not-started') resetChat(s.id);
+  }, [sessions, chatOf, resetChat]);
 
   // このアプリの起動後にまだ動かしていないセッションは、選んだ時点で再開する
   useEffect(() => {

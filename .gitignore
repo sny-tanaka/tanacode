@@ -35,3 +35,6 @@ MAINTAINING.md
 CLAUDE.local.md
 # 開発初期の検証メモ（ほかの製品の内部を調べた記録を含むので、公開しない）
 docs/architecture-verification.md
+
+# E2E の失敗の手がかり（npm run test:e2e が残す画面の写しと記録）
+/test-results/

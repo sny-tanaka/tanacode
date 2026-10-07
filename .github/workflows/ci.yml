@@ -1,6 +1,7 @@
 # PR と develop・main への push で、型チェックと、アプリ本体・Storybook がビルドできるかを確かめる。
 # - typecheck: 型チェック（npm run typecheck）。main・preload・画面の型の食い違いを見つける
-# - app: アプリ本体を、配布と同じ手順で .app まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）
+# - app: アプリ本体を、配布と同じ手順で .app まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。
+#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（npm run test:e2e）
 # - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）
 # アプリは配布するものと同じ macOS で作る。型チェックと Storybook は OS に依らないので ubuntu で流す
 name: ci
@@ -66,6 +67,28 @@ jobs:
           test -d "$app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"
           test -x "$app/Contents/Frameworks/tanacode Helper.app/Contents/MacOS/tanacode Helper"
           codesign --verify --deep --strict "$app"
+      # E2E で動かす claude は、動作確認済のバージョン（src/shared/claude-code.ts）。API はモックなので料金はかからない
+      - name: Claude Code を入れる
+        id: claude
+        run: |
+          VERSION=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
+          test -n "$VERSION" || { echo "::error::src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"; exit 1; }
+          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
+          echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
+      - name: できた .app を、画面の操作から通しで確かめる（E2E）
+        env:
+          TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+        run: |
+          app=$(ls -d dist/mac*/tanacode.app)
+          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run test:e2e
+      # 落ちたテストの画面の写し・メインプロセスの出力・モックの API の呼び出し
+      - name: E2E の失敗の手がかりを残す
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: test-results/e2e/
+          if-no-files-found: ignore
 
   storybook:
     runs-on: ubuntu-latest

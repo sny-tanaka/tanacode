@@ -11,6 +11,6 @@
     "types": ["node"],
     "paths": { "@shared/*": ["./src/shared/*"] }
   },
-  "include": ["electron.vite.config.ts", "vite.demo.config.ts", "vitest.config.ts", "vitest.cli.config.ts", "vitest.coverage.ts", "scripts/third-party-notices.ts", "test/**/*", "src/renderer/src/icons/icons.tsx", "src/renderer/src/icons/catalog.ts", "src/renderer/src/icons/iconHtml.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
+  "include": ["electron.vite.config.ts", "vite.demo.config.ts", "vitest.config.ts", "vitest.cli.config.ts", "vitest.e2e.config.ts", "vitest.coverage.ts", "scripts/third-party-notices.ts", "test/**/*", "src/renderer/src/icons/icons.tsx", "src/renderer/src/icons/catalog.ts", "src/renderer/src/icons/iconHtml.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
   "exclude": ["test/export.test.ts", "test/renderer/**/*"]
 }

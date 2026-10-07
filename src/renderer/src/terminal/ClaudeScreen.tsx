@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { enterClaudeScreen, leaveClaudeScreen } from './claudeScreenTyping';
 import { xtermOptions } from './xterm';
 
 type Term = { term: Terminal; fit: FitAddon; element: HTMLDivElement; opened: boolean };
@@ -14,6 +15,9 @@ function createTerm(sessionId: string, host: HTMLElement): Term {
   const element = document.createElement('div');
   element.className = 'terminal-instance';
   element.hidden = true;
+  // フォーカスがある間は、人が Claude Code の入力欄に打っている途中なので、書きかけをチャットの入力欄に移さない（離れたら移す）
+  element.addEventListener('focusin', () => enterClaudeScreen(sessionId));
+  element.addEventListener('focusout', () => leaveClaudeScreen(sessionId, element));
   host.appendChild(element);
   return { term, fit, element, opened: false };
 }
@@ -46,16 +50,21 @@ export function ClaudeScreen({ sessionId, open }: { sessionId: string | null; op
     return () => {
       observer.disconnect();
       offData();
-      for (const t of terms.values()) {
+      for (const [id, t] of terms) {
         t.term.dispose();
         t.element.remove();
+        leaveClaudeScreen(id, t.element);
       }
       terms.clear();
     };
   }, []);
 
   useEffect(() => {
-    for (const [id, t] of termsRef.current) t.element.hidden = !open || id !== sessionId;
+    for (const [id, t] of termsRef.current) {
+      t.element.hidden = !open || id !== sessionId;
+      // 隠した画面では打てない（フォーカスが残っていても、隠したことで離れたとは知らせが来ないことがある）
+      if (t.element.hidden) leaveClaudeScreen(id, t.element);
+    }
     if (fitted.current && (!open || fitted.current !== sessionId)) {
       window.tanacode.pty.resetSize(fitted.current);
       fitted.current = null;
