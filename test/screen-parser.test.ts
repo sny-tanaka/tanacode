@@ -161,7 +161,8 @@ it('/rewind の巻き戻し先の一覧で、選択中の発言を読む。会�
 });
 
 it('/rewind の巻き戻し先の一覧の上（会話の本文）に、一覧の案内と同じ文字が見えていても、一覧を読む', () => {
-  // 一覧は画面の下に重ねて出て、案内はそのいちばん下の行（本物の 2.1.292 でも同じ）。上に残る会話の応答の行だけを差し替える
+  // 一覧は画面の下に重ねて出て、案内はそのいちばん下の行（本物の 2.1.292 を Linux で動かして見ても同じ。控えには残していない）。
+  // 上に残る会話の応答の行だけを差し替える
   const quoted = replaced(rewindList('(current)'), /^⏺ 再開後の返事/, '⏺ 一覧の下に「Enter to continue · Esc to cancel」と出たら、Enter で選びます。');
   expect(parseRewind(quoted)).toEqual({ pointed: '(current)' });
   expect(parseRewind(replaced(rewindList('新しい会話を始めます'), /^⏺ 再開後の返事/, quoted.find((l) => /^⏺ 一覧の下に/.test(l.text))!))).toEqual({

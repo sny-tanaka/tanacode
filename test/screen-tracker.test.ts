@@ -47,8 +47,9 @@ it('権限モードを切り替えるとき、キーを送る前から描いて�
 
 // 長い応答を書いている途中の進み具合。動作確認済のバージョンの控え（作業が終わったあとの pasted-draft）を元に、
 // 入力欄より上の会話の行だけを差し替えて流し込む。
-// 本物の Claude Code（2.1.292）で長い応答を流すと、タイマーの行は消え、応答の始まり（⏺）の行は画面の上へ流れて見えなくなり、
-// 画面のいちばん上から入力欄の上まで、応答の本文（字下げ 2）の行だけが並ぶ。この画面は控えに無いので、応答の行は作ったもの
+// 本物の Claude Code 2.1.292 を Linux で動かし、長い応答を流して見ると、タイマーの行は消え、応答の始まり（Linux の印は ●）の行は
+// 画面の上へ流れて見えなくなり、画面のいちばん上から入力欄の上まで、応答の本文（字下げ 2）の行だけが並ぶ。
+// この画面は控えに無い（クラウドの環境で見たもので、控えには残していない）ので、応答の行は作ったもの
 const fixture = (name: string) =>
   JSON.parse(readFileSync(join(__dirname, 'fixtures', 'claude-code', VERIFIED_CLAUDE_CODE_VERSION, 'screens', `${name}.json`), 'utf8')) as ScreenLine[];
 // 1 行ずつ位置を決めて描く（端末の幅いっぱいの行で、次の行へ送られないように）
@@ -60,7 +61,7 @@ it('長い応答の始まり（⏺）が画面の外に流れても、書き終�
   const at = done.findIndex((text) => /^✻ \S+ for \d+s · done/.test(text));
   const below = done.slice(at + 1);
   const reply = (from: number) => Array.from({ length: at }, (_, i) => `  ${from + i}. 項目 ${from + i} を確かめました`);
-  // 中断の行は、控え（tool-interrupted）のもの。本物の 2.1.292 でも、応答の途中で中断すると、応答の下にこの行が出る
+  // 中断の行は、控え（tool-interrupted）のもの。上と同じく本物の 2.1.292 で見ると、応答の途中で中断したときも、応答の下にこの行が出る
   const interrupted = fixture('tool-interrupted').find((l) => /^\s+⎿\s+Interrupted/.test(l.text))!.text;
   tracker = new ScreenTracker(120, 40, () => {}, () => {});
   const phase = async (rows: string[]) => {
