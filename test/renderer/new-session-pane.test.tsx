@@ -89,8 +89,8 @@ describe('NewSessionPane の、最新のデフォルトブランチへの切り�
     fireEvent.click(button());
     view.rerender(<NewSessionPane {...props('/work/b')} />);
     fireEvent.click(button());
-    await act(async () => runs.get('folder:/work/a')!.resolve('リモートから 30 秒応答が無いため、止めました（git fetch）'));
-    expect(screen.queryByText(/応答が無い/)).toBeNull();
+    await act(async () => runs.get('folder:/work/a')!.resolve('fatal: unable to access origin'));
+    expect(screen.queryByText(/unable to access/)).toBeNull();
     // 変えた先の切り替えは、まだ続いている
     expect(button().disabled).toBe(true);
     await act(async () => runs.get('folder:/work/b')!.resolve(null));

@@ -1,43 +1,43 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
-// 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダ（リポジトリ）を切り替えた直後でも動き、
-// リモートが応答しなくても、いつまでも「切り替え中」のままにならない
+// 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダ（リポジトリ）を切り替えた直後に押しても効き、
+// あるフォルダの切り替え（フェッチ）に時間がかかっていても、ほかのフォルダのボタンと送信はすぐ使える
 
 describe('新規セッションの画面で、最新のデフォルトブランチへ切り替える', () => {
   let app: E2EApp;
-  // 応答しないリモート（つないでも何も返さない HTTP サーバー）
-  let silent: Server;
-  const sockets = new Set<import('node:net').Socket>();
   const button = () => app.page.locator('.new-session-chips [aria-label="最新のデフォルトブランチへ切り替える"]');
-  const branchChip = () => app.page.locator('.new-session-chips .new-session-chip.branch');
+  const branchChip = (name: string) => app.byText('.new-session-chips .new-session-chip.branch', new RegExp(`^${name}$`));
 
   const run = (cwd: string, ...args: string[]) =>
     execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, HOME: app.home } });
+  const branchOf = (dir: string) => run(dir, 'branch', '--show-current').trim();
 
-  // origin（手元の bare リポジトリ）を持ち、feature ブランチにいるリポジトリを作る
-  const repo = (name: string, origin?: string): string => {
+  // origin（手元の bare リポジトリ）を持ち、feature ブランチにいるリポジトリを作る。
+  // slow なら、origin は合図（release のファイル）があるまで答えない（時間のかかるフェッチ）
+  const repo = (name: string, { slow = false } = {}): string => {
     const dir = join(app.root, name);
+    const bare = join(app.root, `${name}.git`);
     mkdirSync(dir);
     run(dir, 'init', '-q', '-b', 'main');
     run(dir, 'commit', '-qm', 'init', '--allow-empty');
-    if (origin) {
-      run(dir, 'remote', 'add', 'origin', origin);
-    } else {
-      const bare = join(app.root, `${name}.git`);
-      run(app.root, 'init', '-q', '--bare', '-b', 'main', bare);
-      run(dir, 'remote', 'add', 'origin', bare);
-      run(dir, 'push', '-q', '-u', 'origin', 'main');
-      run(dir, 'remote', 'set-head', 'origin', 'main');
+    run(app.root, 'init', '-q', '--bare', '-b', 'main', bare);
+    run(dir, 'remote', 'add', 'origin', bare);
+    run(dir, 'push', '-q', '-u', 'origin', 'main');
+    run(dir, 'remote', 'set-head', 'origin', 'main');
+    if (slow) {
+      // git の ext:: で、release ができるまで待ってから、ふつうに upload-pack で答える
+      run(dir, 'config', 'protocol.ext.allow', 'always');
+      const wait = `while [ ! -e ${release(name)} ]; do sleep 0.1; done; exec git %s ${bare}`;
+      run(dir, 'remote', 'set-url', 'origin', `ext::sh -c ${wait.replaceAll(' ', '% ')}`);
     }
     run(dir, 'switch', '-q', '-c', 'feature');
     return dir;
   };
+  const release = (name: string) => join(app.root, `${name}.release`);
 
   // フォルダを選ぶ（ダイアログで dir を選んだことにする）
   const pick = async (dir: string) => {
@@ -52,19 +52,13 @@ describe('新規セッションの画面で、最新のデフォルトブラン�
 
   let a: string;
   let b: string;
-  let hung: string;
+  let slow: string;
 
   beforeAll(async () => {
-    silent = createServer(() => {});
-    silent.on('connection', (socket) => {
-      sockets.add(socket);
-      socket.on('close', () => sockets.delete(socket));
-    });
-    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
     app = await E2EApp.launch({ trusted: true });
     a = repo('repo-a');
     b = repo('repo-b');
-    hung = repo('repo-hung', `http://127.0.0.1:${(silent.address() as AddressInfo).port}/hung.git`);
+    slow = repo('repo-slow', { slow: true });
     await app.page.click('nav.sidebar .new-session-button');
   });
 
@@ -73,17 +67,17 @@ describe('新規セッションの画面で、最新のデフォルトブラン�
   });
 
   afterAll(async () => {
+    // 待たせたままのフェッチがあれば、終わらせてから閉じる
+    if (slow) writeFileSync(release('repo-slow'), '');
     await app?.close();
-    for (const socket of sockets) socket.destroy();
-    silent?.close();
   });
 
   it('押すと、デフォルトブランチへ切り替わる', async () => {
     await pick(a);
-    await app.byText('.new-session-chips .new-session-chip.branch', 'feature').waitFor();
+    await branchChip('feature').waitFor();
     await button().click();
-    await app.byText('.new-session-chips .new-session-chip.branch', /^main$/).waitFor();
-    expect(run(a, 'branch', '--show-current').trim()).toBe('main');
+    await branchChip('main').waitFor();
+    expect(branchOf(a)).toBe('main');
     await expect.poll(() => button().isDisabled()).toBe(false);
   });
 
@@ -91,38 +85,38 @@ describe('新規セッションの画面で、最新のデフォルトブラン�
     await pick(b);
     // ボタンが出たらすぐ押す
     await button().click();
-    await expect.poll(() => run(b, 'branch', '--show-current').trim(), { timeout: 20_000 }).toBe('main');
-    await app.byText('.new-session-chips .new-session-chip.branch', /^main$/).waitFor();
-    await expect.poll(() => button().isDisabled(), { timeout: 20_000 }).toBe(false);
+    await expect.poll(() => branchOf(b), { timeout: 20_000 }).toBe('main');
+    await branchChip('main').waitFor();
+    await expect.poll(() => button().isDisabled()).toBe(false);
   });
 
-  it('切り替え中にフォルダを変えると、変えた先のボタンは押せる', async () => {
+  it('フェッチに時間がかかっている間にフォルダを変えると、変えた先のボタンと送信はすぐ使え、押すと切り替わる', async () => {
     run(b, 'switch', '-q', 'feature');
-    await pick(hung);
-    await app.byText('.new-session-chips .new-session-chip.branch', 'feature').waitFor();
+    await pick(slow);
+    await branchChip('feature').waitFor();
     await button().click();
     await expect.poll(() => button().isDisabled()).toBe(true);
     await pick(b);
-    await app.byText('.new-session-chips .new-session-chip.branch', 'feature').waitFor();
+    await branchChip('feature').waitFor();
     await expect.poll(() => button().isDisabled(), { timeout: 5_000 }).toBe(false);
     // 前のフォルダの切り替えで、最初の指示も止めない
     await app.page.fill('.chat-input textarea', '始めてください');
     await expect.poll(() => app.page.locator('.chat-input-row [aria-label="送信"]').isDisabled()).toBe(false);
     await app.page.fill('.chat-input textarea', '');
     await button().click();
-    await expect.poll(() => run(b, 'branch', '--show-current').trim(), { timeout: 20_000 }).toBe('main');
+    await expect.poll(() => branchOf(b), { timeout: 20_000 }).toBe('main');
+    await branchChip('main').waitFor();
   });
 
-  it('リモートが応答しなくても、いつまでも「切り替え中」のままにならず、理由が出る', async () => {
-    // 前のテストで押した、応答しないリモートのフォルダの切り替えが、まだ続いている
-    await pick(hung);
-    await app.byText('.new-session-chips .new-session-chip.branch', 'feature').waitFor();
+  it('時間のかかっているフォルダに戻ると、まだ切り替え中のまま（止めない）。リモートが答えると切り替わる', async () => {
+    await pick(slow);
     await expect.poll(() => button().isDisabled()).toBe(true);
-    // 何も進まないまま 30 秒たつと止める
-    await expect.poll(() => button().isDisabled(), { timeout: 45_000 }).toBe(false);
-    await app.byText('.new-session-chips .new-session-warning', 'リモートから 30 秒応答が無いため、止めました').waitFor();
-    expect(run(hung, 'branch', '--show-current').trim()).toBe('feature');
-  }, 60_000);
+    expect(branchOf(slow)).toBe('feature');
+    writeFileSync(release('repo-slow'), '');
+    await expect.poll(() => branchOf(slow), { timeout: 20_000 }).toBe('main');
+    await branchChip('main').waitFor();
+    await expect.poll(() => button().isDisabled()).toBe(false);
+  });
 
   it('画面のコンソールにエラーが出ていない', () => {
     expect(app.consoleErrors).toEqual([]);
