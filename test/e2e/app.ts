@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from 'playwright';
 import type { PermissionMode } from '@shared/screen';
+import { type HostMessage, PROTOCOL } from '../../src/main/pty-host-protocol';
 import { socketPathIn } from '../../src/main/socket-path';
 import { type Conversation, MockApi } from '../cli/mock-api';
 
@@ -149,22 +150,41 @@ export class E2EApp {
     }, this.work);
   }
 
+  // アプリを終えて、起動し直す。終了の確認では「動かしたまま終了」を選ぶので、Claude Code は動き続け、次のアプリが引き継ぐ
+  async restart(): Promise<void> {
+    await this.quit(0);
+    await this.start();
+  }
+
   // 終了する。Claude Code と pty ホストも止める（終了の確認では「Claude Code も止めて終了」を選ぶ）
   async close(): Promise<void> {
-    if (this.electronApp) {
-      await this.electronApp
-        .evaluate(({ dialog }) => {
-          dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox;
-        })
-        .catch(() => {});
-      await this.electronApp.close().catch(() => {});
-      this.electronApp = null;
-      this.window = null;
-    }
+    const socketPath = socketPathIn(this.userData, 'pty-host', 'pty');
+    // 止めた claude は、終わるときに ~/.claude に書き込む。終わったのを確かめてから消すため、先に pid を聞いておく
+    const pids = await ptyPids(socketPath);
+    if (this.electronApp) await this.quit(1).catch(() => {});
     // 終了の確認を通らなかったときも、pty ホスト（と、その中の claude）を残さない
-    await shutdownPtyHost(socketPathIn(this.userData, 'pty-host', 'pty'));
+    await shutdownPtyHost(socketPath);
+    await waitGone(pids);
     await this.api.stop();
-    rmSync(this.root, { recursive: true, force: true });
+    rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+
+  // 終了の確認で response 番目のボタンを選んだことにして、アプリを終える。
+  // 終わるのは、プロセスが終わったことで確かめる（Playwright の close は、標準出力などがすべて閉じるのを待つ。
+  // Linux では、アプリの記述子を引き継いだ pty ホストが動き続けるので、Claude Code を動かしたまま終えると戻ってこない）
+  private async quit(response: number): Promise<void> {
+    const app = this.app;
+    this.electronApp = null;
+    this.window = null;
+    const child = app.process();
+    const exited = new Promise<void>((resolve) => (child.exitCode !== null || child.signalCode !== null ? resolve() : child.once('exit', () => resolve())));
+    await app
+      .evaluate(({ dialog }, button) => {
+        dialog.showMessageBox = (async () => ({ response: button, checkboxChecked: false })) as typeof dialog.showMessageBox;
+      }, response)
+      .catch(() => {});
+    void app.close().catch(() => {});
+    await exited;
   }
 
   // 失敗したときの手がかり（画面の写し・メインプロセスの出力・API の呼び出し）を test-results/e2e に残す
@@ -281,6 +301,44 @@ function inherited(): Record<string, string> {
     env[key] = value;
   }
   return env;
+}
+
+// pty ホストが持っている pty（claude）の pid。ホストがいなければ空
+function ptyPids(socketPath: string): Promise<number[]> {
+  return new Promise((done) => {
+    const socket = connect(socketPath);
+    let buffered = '';
+    const finish = (pids: number[]) => {
+      socket.destroy();
+      done(pids);
+    };
+    socket.setEncoding('utf8');
+    socket.setTimeout(2000, () => finish([]));
+    socket.on('error', () => finish([]));
+    socket.on('data', (chunk: string) => {
+      buffered += chunk;
+      for (const line of buffered.split('\n').slice(0, -1)) {
+        const message = JSON.parse(line) as HostMessage;
+        if (message.t === 'list') finish(message.ptys.filter((p) => p.exitCode === null).map((p) => p.pid));
+      }
+      buffered = buffered.slice(buffered.lastIndexOf('\n') + 1);
+    });
+    socket.on('connect', () => socket.write(`${JSON.stringify({ t: 'hello', protocol: PROTOCOL })}\n${JSON.stringify({ t: 'list', req: 1 })}\n`));
+  });
+}
+
+// プロセスが終わるのを待つ（最大 10 秒）
+async function waitGone(pids: number[]): Promise<void> {
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const deadline = Date.now() + 10_000;
+  while (pids.some(alive) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
 // pty ホストに、すべての pty を止めて終わるよう頼む。ホストがいなければ何もしない
