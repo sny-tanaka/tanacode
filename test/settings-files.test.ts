@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs } from '../src/main/claude-session';
 import { defaultName, mergeSettings, SettingsFiles } from '../src/main/settings-files';
@@ -39,6 +39,8 @@ describe('defaultName', () => {
     expect(defaultName('/x/work.json')).toBe('work');
     expect(defaultName('/x/settings.json')).toBe('settings');
     expect(defaultName('/x/settings-.json')).toBe('settings-');
+    // 名前が無ければ「設定ファイル」
+    expect(defaultName('/x/.json')).toBe('設定ファイル');
   });
 });
 
@@ -130,6 +132,17 @@ describe('mergeSettings', () => {
   it('登録した設定にフックが無くてもよい', () => {
     expect(mergeSettings({}, own).hooks).toEqual(own.hooks);
   });
+
+  it('フックの形が違うもの（配列でない・オブジェクトでない）は、無いものとして合わせる', () => {
+    const theirs = { PreToolUse: [{ matcher: 'Bash', hooks: [] }] };
+    // アプリの設定にフックが無い
+    expect(mergeSettings({ hooks: theirs }, { statusLine: own.statusLine }).hooks).toEqual(theirs);
+    // アプリの設定のフックの中身が配列でない
+    expect(mergeSettings({ hooks: theirs }, { hooks: { PreToolUse: 'x', Stop: null } }).hooks).toEqual({ PreToolUse: theirs.PreToolUse, Stop: [] });
+    // 登録した設定のフックの中身が配列でない・フックが配列
+    expect(mergeSettings({ hooks: { PreToolUse: 'x' } }, own).hooks).toEqual(own.hooks);
+    expect(mergeSettings({ hooks: [theirs] }, own).hooks).toEqual(own.hooks);
+  });
 });
 
 describe('起動の準備', () => {
@@ -184,6 +197,39 @@ describe('起動の準備', () => {
     files.remove(id);
     expect(() => files.check(id)).toThrow('登録から外されています');
     expect(() => files.prepare('s', id)).toThrow('登録から外されています');
+  });
+});
+
+describe('ホームのフォルダ', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('~/ から始まるパスはホームの下として登録する。読めない理由の文では、ホームを ~ と書く', () => {
+    vi.stubEnv('HOME', root);
+    const path = file('.claude/settings-work.json', { model: 'opus' });
+    const files = make();
+    const added = files.add('~/.claude/settings-work.json');
+    expect(added).toMatchObject({ name: 'work', path, model: 'opus' });
+    rmSync(path);
+    expect(() => files.check(added.id)).toThrow('設定ファイル「work」（~/.claude/settings-work.json）を使えません: ファイルが見つかりません');
+  });
+
+  it('登録した設定に statusLine が無ければ、ユーザー自身の設定の statusLine を包む。コマンドでない statusLine なら、どちらも使わない', () => {
+    vi.stubEnv('HOME', root);
+    file('.claude/settings.json', { statusLine: { type: 'command', command: 'user-line' } });
+    const files = make();
+    const plain = files.add(file('a.json', {}));
+    expect(JSON.parse(readFileSync(files.prepare('s1', plain.id).settingsFile, 'utf8')).statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | user-line');
+    const fixed = files.add(file('b.json', { statusLine: { type: 'static', command: 'their-line' } }));
+    expect(JSON.parse(readFileSync(files.prepare('s2', fixed.id).settingsFile, 'utf8')).statusLine.command).toBe('cat > "$TANACODE_STATUS_FILE"');
+  });
+
+  it('知らせる先を省いても、登録・名前の変更・削除ができる', () => {
+    const files = new SettingsFiles(new AppSettings(settingsPath), runDir);
+    const { id } = files.add(file('a.json', {}), 'one');
+    files.rename(id, 'two');
+    expect(files.list().map((f) => f.name)).toEqual(['two']);
+    files.remove(id);
+    expect(files.list()).toEqual([]);
   });
 });
 

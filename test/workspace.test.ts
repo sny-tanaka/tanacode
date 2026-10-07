@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -90,5 +90,43 @@ describe('Workspace', () => {
     expect(await ws.info()).toEqual({ root, name: 'repo', branch: null });
     execFileSync('git', ['init', '-q', '-b', 'topic'], { cwd: root });
     expect(await ws.info()).toMatchObject({ branch: 'topic' });
+    // ブランチから外れていれば、コミットの先頭 7 文字
+    writeFileSync(join(root, '.git', 'HEAD'), '0123456789abcdef0123456789abcdef01234567\n');
+    expect(await ws.info()).toMatchObject({ branch: '0123456' });
+  });
+
+  it('readImage: Markdown のプレビューの画像を data URL で返す（SVG も）。画像でない・大きすぎるものは null', async () => {
+    put('img/a.png', Buffer.from([1, 2, 3]));
+    expect(await ws.readImage('img/a.png')).toBe(`data:image/png;base64,${Buffer.from([1, 2, 3]).toString('base64')}`);
+    put('logo.svg', '<svg/>');
+    expect(await ws.readImage('logo.svg')).toBe(`data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`);
+    put('a.txt', 'x');
+    expect(await ws.readImage('a.txt')).toBeNull();
+    put('huge.gif', Buffer.alloc(10 * 1024 * 1024 + 1));
+    expect(await ws.readImage('huge.gif')).toBeNull();
+    writeFileSync(join(root, '..', 'secret.png'), 'x');
+    await expect(ws.readImage('../secret.png')).rejects.toThrow('outside workspace');
+  });
+
+  it('絶対パスは、フォルダの外のファイルでも読む（Claude が送ったファイルを、アプリの画面から開くとき）', async () => {
+    writeFileSync(join(root, '..', 'sent.md'), '# 送ったファイル\n');
+    expect(await ws.readFile(join(root, '..', 'sent.md'))).toEqual({ kind: 'text', text: '# 送ったファイル\n' });
+  });
+
+  it('search: フォルダを指すリンクと 1MB を超えるファイルは探さない', async () => {
+    put('src/a.ts', 'tax\n');
+    put('big.txt', `tax\n${'x'.repeat(1024 * 1024)}`);
+    symlinkSync(join(root, 'src'), join(root, 'link'));
+    const result = await ws.search('tax', { caseSensitive: false, regex: false });
+    expect(result).toEqual({ files: [{ path: 'src/a.ts', matches: [{ line: 1, column: 1, text: 'tax', matchStart: 0, matchLength: 3 }] }], truncated: false });
+  });
+
+  it('search: 見つけた行が 2000 を超えたら、そこで打ち切って truncated にする', async () => {
+    put('a.txt', 'tax\n'.repeat(2500));
+    put('b.txt', 'tax\n'.repeat(2500));
+    const result = await ws.search('tax', { caseSensitive: false, regex: false });
+    expect(result.truncated).toBe(true);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].matches).toHaveLength(2000);
   });
 });
