@@ -244,7 +244,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - AskUserQuestion の質問文・選択肢・説明・プレビューは、その入力から取ります。画面からは、カーソルの位置・チェック・「その他」に打った文字・どの質問のページかだけを読みます。画面が低いと Claude Code は選択肢の一部しか出さないためです。
   - 選択肢の説明が長く、メニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れて見えません。そのときは、見えている選択肢の名前がそろう質問として組み立てます。カーソルのある選択肢が切れて `❯` が見えないときは、カーソルは見えている選択肢より上にあります（見えていないのが 1 つめだけなら、1 つめ）。カードで選んだとき、カーソルが目的の選択肢まで来なければ、違う選択肢で答えないよう Enter などを送りません。
   - 今の Claude Code は、AskUserQuestion の行を答えたあとで会話ログに書きます。そこで、質問を出す前の PreToolUse のフックで、入力をセッションごとのファイルに書かせて読みます（下の `--settings`）。フックが無い（前のバージョンのアプリが起動した）Claude Code では、画面から組み立てます。質問文は縦線（│）の枠で端末の幅に折り返して出るので、縦線を外して行をつなぎ直します。
-- アプリ内ブラウザを Claude に操作させる設定・ほかのセッションを扱わせる設定がオンなら、`--mcp-config` でそれぞれの MCP サーバー（中継）を、`--allowedTools` で読むだけのツール（とアプリ内ブラウザの `ask_user_to_act`）の許可を足します（下の「アプリ内ブラウザ（Claude による操作）」「セッション間の連携（Claude による操作）」）。どちらも値をいくつも取る引数なので、次の `--` で終わるよう `--settings` より前に置きます。
+- アプリ内ブラウザを Claude に操作させる設定・ほかのセッションを扱わせる設定・チェックリストとウォークスルーの設定がオンなら、`--mcp-config` でそれぞれの MCP サーバー（中継）を、`--allowedTools` で許可済みにするツール（読むだけのもの・アプリ内ブラウザの `ask_user_to_act`・チェックリストとウォークスルーのすべて）の許可を足します（下の「アプリ内ブラウザ（Claude による操作）」「セッション間の連携（Claude による操作）」「チェックリスト」「ウォークスルー」）。どちらも値をいくつも取る引数なので、次の `--` で終わるよう `--settings` より前に置きます。
   - 2 つのサーバーを足すときも、`--mcp-config` と `--allowedTools` は 1 回ずつにまとめて渡します（`mcpArgs`）。2 回渡したときの扱いが決まっていないためです。
 - アプリが起動する Claude Code にだけ、`--settings` で statusLine を足します。
   - Claude Code は応答のたびに JSON を渡してきます。中身はモデル・コンテキストの上限と使用率・利用枠・今の会話ログのパス。これをセッションごとのファイルに書かせて読みます。
@@ -545,6 +545,38 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - ストーリーは `ChecklistPanel.stories.tsx`・`CardPane.stories.tsx`（作り物は `sampleChecklists.ts`）。
 - オン・オフ: メニューの「tanacode → Claude にチェックリストを扱わせる」（`settings.json` の `checklistControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断り、知らせも送りません。画面のチェックリストは使えます。
 
+### ウォークスルー
+
+- Claude がエディタにコードを開いて示しながら説明し、人が「次へ」で進めて質問する機能。型と、main・画面で使う文の組み立ては `src/shared/walkthrough.ts`（`Walkthrough`・`WalkthroughStep`・質問の文）。
+- ファイルに保存しません。main の `WalkthroughControl`（`walkthrough-control.ts`）が、セッションごとに今の 1 つだけをメモリに持ちます。コードが進むと行番号がずれて壊れるため、アプリを終えたあとまで残しても使えないからです。
+  - 人が閉じても捨てず（`open` を false にするだけ）、Claude が作り直す（`start_walkthrough`）まで、ソース管理の一覧からもう一度開けます（`go`）。寄り道だけで、ステップが無いものは、閉じたら捨てます。
+  - アーカイブ・一覧から削除したセッションのものは捨てます（`discard`）。
+- Claude がまとめて手順を渡し、人が自分で進めます（`start_walkthrough`）。1 ステップごとに Claude のターンを回すと、毎回の待ちと料金がかかるためです。
+  - ツールは人の操作を待たずに、すぐ返します。Claude Code は 120 秒たっても終わらない MCP のツールをバックグラウンドに移すので（アプリ内ブラウザの `ask_user_to_act` と同じ問題）、人のペースで進む説明を 1 回の呼び出しで待つことはしません。
+  - 人の質問は、MCP ではなく、ふつうの発言としてチャットに送ります（`stepQuestionText`・`rangeQuestionText`。画面の `usePendingSends`）。作業中に送れば Claude Code の順番待ちに入るので、知らせの仕組み（`SessionNotices`）は使いません。
+- MCP サーバー（`tanacode-walkthrough`）は、ほかと同じ形の stdio の中継（`src/main/walkthrough-mcp.ts` → `out/main/walkthrough-mcp.js`）。定義は `src/shared/walkthrough-tools.ts` の `WALKTHROUGH_MCP`、起動の材料は `index.ts` の `walkthroughLaunch` と `walkthrough-bridge.ts`（ソケットは userData の `walkthrough.sock`。env は `TANACODE_WALKTHROUGH_SOCKET`・`TANACODE_WALKTHROUGH_SESSION`）。
+  - ツールの種類は、示す `start_walkthrough`・`show_code` が `show`、`walkthrough_status` が `read`（`mcp-tools.ts`）。どちらも `--allowedTools` で許可済みにし、`readOnlyHint` も付けます。人のエディタに示すだけで、ファイルは書き換えないためです。
+  - 確かめること（`readStep`）: パスはセッションのフォルダ（`manager.cwdOf`。エディタが開くのと同じ）の中だけ（フォルダの中の絶対パスは相対パスにする）、文字のファイルで、範囲がファイルの行数の中にあること。直せないステップがあれば、全部の理由をまとめて返し、始めません。手順は 40 ステップ・見出しは 120 文字・説明は 4000 文字まで。
+  - 説明（`instructions`）で、頼まれたら手順を作って一度に渡すこと・説明はなぜこうしたかを中心にすること・渡したらターンを終えて待つこと・質問の届き方・別の場所は `show_code` で示すこと・直したら示し直すことを伝えます。
+- ステップの `view`: `file` はエディタ、`diff` はブランチの変更の差分（`App.tsx` の `DiffView` の `branch`。`DiffPane` の変更後の側）に出します。行番号はどちらも今のファイルのもの。ブランチの変更に無い・消したファイルは、画面がエディタに出します（`inBranchDiff`。main では確かめない）。
+- 状態: `open`（人が見ているか。閉じると吹き出し・帯・「ここを聞く」を出さない。`go` と、Claude が示したとき（`start_walkthrough`・`show_code`）に開く）・`current`（人が見ているステップ）・`aside`（`show_code` の寄り道。人がステップへ移ると消える）・`visited`（見たステップ）・`movedBy` と `seq`（示す場所を最後に変えたのは誰か。変わるたびに増える）。画面からは `walkthrough:go`（「次へ」「戻る」・ソース管理の一覧・寄り道から戻る・閉じたものを開く）と `walkthrough:close`、main からは `walkthrough:changed` で送ります。
+- ステップの一覧は、ソース管理パネルの「Claude へのコメント」の上（`walkthrough/WalkthroughList.tsx`。`ScmPanel` の `walkthrough`）。閉じたものも出します。吹き出しには一覧を出さず、ソース管理パネルを開くボタンだけを置きます。画面を作り直したときは `walkthrough:get` で読み直します。
+- 画面: `App.tsx` が `useWalkthroughs` で全セッションの分を持ち、選んでいるセッションのものを `EditorPane` に渡します。示している場所のファイルのモデルをエディタに入れ終えたら、`walkthrough/WalkthroughZone.tsx` が範囲に色を付け、範囲の下の view zone に吹き出し（`WalkthroughBox`）を portal で描きます。示す場所が変わるたび（`id` と `seq`）に、範囲の頭を上の方へスクロールします。示す Markdown はソースで開きます。
+  - 追従: Claude が場所を変えたとき（`movedBy` が `claude`）、見ているセッションで、始めたとき（`id` が変わった）か、人が前に示した場所を開いていたときだけ、エディタで開きます。人が別のファイル・差分・ブラウザなどを開いていたら動かさず、エディタの場所の上に `WalkthroughBand` を出します。見ていないセッションは、切り替えたときに開きます（アプリ内ブラウザと同じ）。
+  - コードが変わった: 始めてからステップのファイルが変わった（`fs:changed`。始めて 3 秒のうちは、始める前の書き込みとみなす）ら、吹き出しに「Claude に示し直してもらう」を出し、押すと `restartRequestText` を送ります。
+  - ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」のボタン（`WalkthroughIcon`）は、決まった頼み方の文（`App.tsx` の `WALKTHROUGH_REQUEST`）を送るだけ。
+  - 「ここを聞く」: ウォークスルーの間だけ、`review/LineComments.tsx` に `onAsk` を渡します（エディタと差分の画面）。選択の下の content widget と右クリックのメニューから、行コメントと同じ下書きの欄（`ask`）を開き、送るとすぐ発言にします。
+  - チャットのツールの行: 名前は「ウォークスルー · 始める」など（`toolLabel.ts`）、対象は `walkthroughTarget`（「税率の変更 · 7 ステップ」「src/tax.ts:12-20」）。押したときは `walkthrough/openWalkthrough.ts` で `App` に渡し、`start_walkthrough` は今の場所、`show_code` はその場所を開きます（`walkthroughOfTool`）。
+  - Monaco の view zone は読み上げから隠れる（`aria-hidden`）ので、吹き出しのボタンは読み上げに出ません（行コメントと同じ）。帯とチャットの行は出ます。
+  - ストーリーは `walkthrough/Walkthrough.stories.tsx`。
+- GitHub の PR に載せる（`walkthrough-github.ts`。本文は `src/shared/walkthrough-comment.ts`）: 吹き出しのボタンで下見のダイアログ（`walkthrough/CommentDialog.tsx`）を開き、`walkthrough:draft-comment` で本文と投稿先を、`walkthrough:post-comment` で投稿します。Claude は通しません（MCP のツールにしない）。
+  - インラインのレビューコメントにはしません。差分の行にしか付けられず、「Files changed」のファイル順に並び替わるので、ウォークスルーの良さ（説明の順番・差分の外のコード）が消えるためです。
+  - 本文: ステップの順に、見出し・パーマリンク（`<リポジトリ>/blob/<SHA>/<パス>#L1-L3`。前後を空行にして 1 行だけで置くと、GitHub がコードを埋め込む）・説明。リポジトリの URL は PR の URL から取ります。パスは、リポジトリのルートからセッションのフォルダまで（`repoPrefix`）を足したもの。質問と答え・寄り道は載せません。
+  - 確かめること（下見と、投稿の直前の 2 回）: ブランチの開いている PR（`gh pr list`。`pullRequestsOf`）があること・手元の HEAD が PR の `headRefOid` と同じこと・ステップのファイルが HEAD のコミットにあり、変更が無いこと。パーマリンクが手元の HEAD を指すためです。アプリが代わりにプッシュや PR の作成はしません。
+  - 投稿は `gh pr comment <番号> --body-file -`（本文は標準入力。`commentOnPullRequest`）。「Claude が書いた説明」の一言は既定で添えます（`finalCommentBody`）。GitHub のコメントの上限（65536 文字）を超える本文は断ります。
+  - 載せたウォークスルーは `WalkthroughControl` が覚え（メモリの上だけ）、もう一度載せようとすると、下見で前のコメントを知らせます。
+- オン・オフ: メニューの「tanacode → Claude にウォークスルーさせる」（`settings.json` の `walkthroughControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断ります。
+
 ### 画面の上の帯
 
 - 図案だけの元の画像は `design/logo-mark.png`（背景を透過したもの）。ロゴは、これと「tanacode」の文字を並べた `design/logo.png`。README は、どちらのテーマでも読める背景付きの `design/logo-banner.png` を使います。タイトルバーのロゴは `src/renderer/src/assets/logo.png`、アプリのアイコンは `build/icon-source.png` から `npm run icon` で作ります。新規セッションの画面に出す小さいアイコン（`src/renderer/src/assets/icon.png`）も、同じ `npm run icon` で作ります。
@@ -578,11 +610,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | ファイル | 中身 |
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など） |
-| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude にチェックリストを扱わせるか（`checklistControl`）） |
+| `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）） |
 | `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `sessions.sock` | ほかのセッションを扱う MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `checklist.sock` | チェックリストの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
+| `walkthrough.sock` | ウォークスルーの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
@@ -626,6 +659,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
+  - `walkthrough-control.ts`: Claude から届いたウォークスルーのツールを実行する（手順とファイルの範囲の確かめ・寄り道・今の場所）・画面からのステップの移動と閉じる（メモリの上だけで持つ。閉じても残す）
+  - `walkthrough-mcp.ts` / `walkthrough-bridge.ts`: ウォークスルーの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
+  - `walkthrough-github.ts`: ウォークスルーを GitHub の PR にコメントとして載せる（PR・HEAD・ファイルの確かめと、下見・投稿）
   - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト）の置き場所
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
@@ -656,6 +692,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
+  - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・ソース管理パネルのステップの一覧・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・「あなたの番です」の帯・Claude に許す先のダイアログ。画面では「ブラウザ」）
   - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
@@ -664,7 +701,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド
@@ -683,6 +720,8 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
+  - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
+  - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
 
@@ -722,9 +761,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - 画面の大きさ: アプリの画面は、どの端末・ブラウザでも 1920×1080（外付けのフル HD のモニターと同じ。README の紹介画像も同じ。`messages.ts` の `STAGE`）で描きます。親のページが、上の帯の下の残りに横も縦も収まるよう iframe を `transform` で縮小して、真ん中に置きます（大きくはしません。倍率 `--demo-scale` は `DemoSite.tsx` の `ScreenLayer` が決めます）。
   - アプリの画面そのものに `zoom` や `transform` をかけると、ブラウザによって文字の大きさや折り返し、固定の位置に出す部品（ツールチップなど）の位置がずれます。iframe ごと絵として縮めれば、中には影響しません。
   - スマホでは `transform` では縮めず、ページの幅（`<meta name="viewport">`）をアプリの画面が収まる幅に広げて、ブラウザのページのズームで縮めます（`DemoSite.tsx` の `fitViewport`）。iPhone の Safari（WebKit）は、`transform` で縮めた iframe の中身を、縮める前の大きさのまま端末の解像度（3 倍）で描きます。ページの処理のメモリが数 GB に膨らんでページが落ち、白くなって読み込み直されてしまうためです。ページのズームなら、縮めた大きさに見合う解像度で描きます。PC のブラウザは viewport を見ないので、これまでどおり `transform` で縮めます。
+    - viewport には、ページの幅（`width`）と一緒に、横幅に合わせた全体の表示になる倍率（`initial-scale`）と縮小の下限（`minimum-scale`）も書きます。iPhone の Safari は、書かなければ 0.25 倍より小さくは縮めません（WebKit の `ViewportConfiguration` の既定の下限）。画面の幅の 4 倍より広いページ（いまは 2000px ほど）だと横幅に収まらず、右がはみ出して横にスクロールしてしまいます。書けば 0.1 倍まで縮められます。Playwright の WebKit はこの下限を持たないので、`npm run demo:check:sp` では気づけません。
     - viewport を広げると、親のページの 1px は画面の `--demo-unit` px 分になります。親のページに出す文字（吹き出し・早送りの間の幕・書き出した HTML の見出し）は、大きさを `--demo-unit` 倍にして、字が小さくならないようにします。上の帯・知らせ・目次は `ScreenLayer` の中で、層ごと `zoom` で拡大して同じ大きさに出します。
     - どちらも `transform: scale()` では拡大しません。iPhone の Safari は、縮めたページの解像度で描いた絵をそのまま引き伸ばすので、字がぼやけて読めなくなります。大きさそのものを変えるか `zoom` なら、拡大したあとの大きさで描き直します。
-    - `ScreenLayer` の外側の層は、見えている範囲と同じ大きさにしておきます。iPhone の Safari は、ページの縦が画面に収まったところで縮小を止めます。ページの縦の基準（ツールバーを除いた高さ）は見えている範囲より低いため、この層の大きさが無いと横幅まで縮小できず、横にスクロールしてしまいます。
     - 画面の大きさ・倍率を変えたときは、メモリも確かめます（`npm run demo:check:sp`。下の「スマホで流す」）。CI の `tour-sp` のジョブでも確かめます。
   - 照らす枠のまわりを暗くするのは、画面と同じ大きさの幕に `clip-path` で穴を開けて作ります（`director.ts`）。枠の影（`box-shadow` の `100vmax` など）で暗くすると、影の分だけ画面の何倍もの大きさの層になり、枠が動くたびにメモリを食います。
   - スマホでは、ピンチで拡大して細かいところを読めます。上の帯・知らせ・目次は、いま見えている範囲（`visualViewport`）に重ねる層（`ScreenLayer`）に置き、拡大しても同じ大きさで画面の上に出します。幅が 760px より狭いと、帯を 2 段にします。

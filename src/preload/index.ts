@@ -26,6 +26,7 @@ import {
 import type { AppUpdate } from '@shared/app-update';
 import type { ScheduledMessage } from '@shared/scheduled';
 import type { SessionChecklists } from '@shared/checklist';
+import type { SessionWalkthrough } from '@shared/walkthrough';
 import type { SettingsFile } from '@shared/settings-file';
 import type { SystemStats } from '@shared/system';
 import type { UsageLimits } from '@shared/usage';
@@ -199,6 +200,14 @@ const api: TanacodeApi = {
     copy: (request) => ipcRenderer.invoke(IpcChannel.ChecklistCopy, request),
     onChanged: (listener) => subscribe<SessionChecklists>(IpcChannel.ChecklistChanged, listener),
     unread: () => ipcRenderer.invoke(IpcChannel.ChecklistUnread),
+  },
+  walkthrough: {
+    list: () => ipcRenderer.invoke(IpcChannel.WalkthroughGet),
+    go: (sessionId, index) => ipcRenderer.invoke(IpcChannel.WalkthroughGo, sessionId, index),
+    close: (sessionId) => ipcRenderer.invoke(IpcChannel.WalkthroughClose, sessionId),
+    onChanged: (listener) => subscribe<SessionWalkthrough>(IpcChannel.WalkthroughChanged, listener),
+    draftComment: (sessionId) => ipcRenderer.invoke(IpcChannel.WalkthroughDraftComment, sessionId),
+    postComment: (sessionId, body, attribution) => ipcRenderer.invoke(IpcChannel.WalkthroughPostComment, sessionId, body, attribution),
   },
   browser: {
     attach: (sessionId, tabId, webContentsId) => ipcRenderer.send(IpcChannel.BrowserAttach, sessionId, tabId, webContentsId),

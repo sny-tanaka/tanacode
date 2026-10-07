@@ -4,6 +4,7 @@ import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
 import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
 import { checklistMcpServer } from './checklist-bridge';
+import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
 import type { PtyHandle, PtyHostApi } from './pty-host-client';
@@ -44,6 +45,7 @@ type Options = {
   sessions?: SessionsMcpLaunch | null;
   // チェックリストの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）
   checklist?: McpLaunch | null;
+  walkthrough?: McpLaunch | null;
   cols: number;
   rows: number;
 };
@@ -159,7 +161,7 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'sessionId'>>,
+    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId'>>,
 ): string[] {
   const {
     claudeSessionId,
@@ -173,6 +175,7 @@ export function claudeArgs(
     browser = null,
     sessions = null,
     checklist = null,
+    walkthrough = null,
     sessionId = '',
   } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
@@ -184,11 +187,12 @@ export function claudeArgs(
   args.push('--model', model ?? settings?.model ?? 'default');
   if (effort) args.push('--effort', effort);
   if (permissionMode) args.push('--permission-mode', permissionMode);
-  // アプリ内ブラウザ・セッション・チェックリストの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
+  // アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
   const servers: McpServerEntry[] = [];
   if (browser) servers.push(browserMcpServer(browser, sessionId));
   if (sessions) servers.push(sessionsMcpServer(sessions, sessionId));
   if (checklist) servers.push(checklistMcpServer(checklist, sessionId));
+  if (walkthrough) servers.push(walkthroughMcpServer(walkthrough, sessionId));
   args.push(...mcpArgs(servers));
   // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す

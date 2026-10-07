@@ -3,7 +3,7 @@ import type { Readable, Writable } from 'node:stream';
 import { findTool, type McpServerDef } from '@shared/mcp-tools';
 import { textResult, type ToolResult } from './mcp-bridge';
 
-// tanacode が Claude Code に足す MCP サーバー（stdio。アプリ内ブラウザ・セッション）。Claude Code と JSON-RPC を 1 行ずつやりとりし、
+// tanacode が Claude Code に足す MCP サーバー（stdio。アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）。Claude Code と JSON-RPC を 1 行ずつやりとりし、
 // ツールの呼び出しをアプリへ中継する。MCP の SDK は使わず、使う分（initialize・tools/list・tools/call・ping と、取り消しの notifications/cancelled）だけを書く
 
 type Id = string | number | null;
@@ -45,7 +45,7 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
           title: t.label,
           description: t.description,
           inputSchema: t.inputSchema,
-          annotations: { title: t.label, readOnlyHint: t.kind === 'read' || t.kind === 'ask', openWorldHint: false },
+          annotations: { title: t.label, readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: false },
         })),
       });
     case 'tools/call': {

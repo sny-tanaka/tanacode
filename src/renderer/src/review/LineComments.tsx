@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { monaco } from '../editor/monaco';
-import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
+import { AddIcon, CloseIcon, IconButton, SendIcon, TrashIcon } from '../icons';
 
 // コードの行・範囲に付けたコメント。Claude への指示として送るまで持っておく
 export type ReviewComment = { id: string; path: string; startLine: number; endLine: number; quote: string; text: string };
@@ -15,13 +15,20 @@ type Props = {
   comments: ReviewComment[];
   onAdd: (comment: ReviewComment) => void;
   onRemove: (id: string) => void;
+  // 渡すと、行を選んだときに「ここを聞く」を出す（ウォークスルーの間）。コメントのようにためずに、すぐ Claude に送る
+  onAsk?: (question: RangeQuestion) => void;
 };
 
-type Draft = { startLine: number; endLine: number };
+// 「ここを聞く」で送る質問
+export type RangeQuestion = { path: string; startLine: number; endLine: number; quote: string; text: string };
+
+// mode: comment は次の送信に添えるコメント / ask はすぐ送る質問
+type Lines = { startLine: number; endLine: number };
+type Draft = Lines & { mode: 'comment' | 'ask' };
 
 // Monaco のエディタに、行番号の横の ＋ からコメントを付けられるようにする。
 // コメントは該当行の下に差し込んだ領域（view zone）に出す
-export function LineComments({ editor, path, comments, onAdd, onRemove }: Props) {
+export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }: Props) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [zones, setZones] = useState<Map<string, HTMLElement>>(new Map());
   // モデルを差し替えると差し込んだ領域が消えるので、作り直すきっかけにする
@@ -47,7 +54,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove }: Props)
         const line = lineOf(e);
         if (!line) return;
         e.event.preventDefault();
-        setDraft(rangeFor(editor, line));
+        setDraft({ ...rangeFor(editor, line), mode: 'comment' });
       }),
     ];
     const action = editor.addAction({
@@ -57,7 +64,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove }: Props)
       contextMenuOrder: 0,
       run: () => {
         const line = editor.getSelection()?.endLineNumber ?? editor.getPosition()?.lineNumber;
-        if (line) setDraft(rangeFor(editor, line));
+        if (line) setDraft({ ...rangeFor(editor, line), mode: 'comment' });
       },
     });
     return () => {
@@ -66,6 +73,53 @@ export function LineComments({ editor, path, comments, onAdd, onRemove }: Props)
       hover.clear();
     };
   }, [editor]);
+
+  // 「ここを聞く」。選んでいる範囲の終わりの下に、ボタンを浮かべる（右クリックのメニューにも足す）
+  const canAsk = !!onAsk;
+  useEffect(() => {
+    if (!canAsk) return;
+    const ask = () => {
+      const sel = editor.getSelection();
+      const line = sel && !sel.isEmpty() ? sel.endLineNumber : editor.getPosition()?.lineNumber;
+      if (line) setDraft({ ...rangeFor(editor, line), mode: 'ask' });
+    };
+    const node = document.createElement('button');
+    node.className = 'ask-widget';
+    node.textContent = 'ここを聞く';
+    // エディタの選択を外さずに押せるようにする
+    node.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    node.addEventListener('click', ask);
+    let position: monaco.IPosition | null = null;
+    const widget: monaco.editor.IContentWidget = {
+      getId: () => 'tanacode.askHere',
+      getDomNode: () => node,
+      getPosition: () =>
+        position && {
+          position,
+          preference: [monaco.editor.ContentWidgetPositionPreference.BELOW, monaco.editor.ContentWidgetPositionPreference.ABOVE],
+        },
+    };
+    editor.addContentWidget(widget);
+    const selection = editor.onDidChangeCursorSelection(({ selection: sel }) => {
+      position = sel.isEmpty() ? null : { lineNumber: sel.endLineNumber, column: sel.endColumn };
+      editor.layoutContentWidget(widget);
+    });
+    const action = editor.addAction({
+      id: 'tanacode.askHere',
+      label: 'ここを Claude に聞く',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 0.5,
+      run: ask,
+    });
+    return () => {
+      selection.dispose();
+      action.dispose();
+      editor.removeContentWidget(widget);
+    };
+  }, [editor, canAsk]);
 
   // ファイルが変わったら下書きは捨てる
   useEffect(() => setDraft(null), [path]);
@@ -150,9 +204,12 @@ export function LineComments({ editor, path, comments, onAdd, onRemove }: Props)
         createPortal(
           <CommentDraft
             label={label(draft.startLine, draft.endLine)}
+            ask={draft.mode === 'ask'}
             onCancel={() => setDraft(null)}
             onSubmit={(text) => {
-              onAdd({ id: `c${++commentSeq}`, path, ...draft, quote: quoteOf(editor, draft), text });
+              const { startLine, endLine } = draft;
+              if (draft.mode === 'ask') onAsk?.({ path, startLine, endLine, quote: quoteOf(editor, draft), text });
+              else onAdd({ id: `c${++commentSeq}`, path, startLine, endLine, quote: quoteOf(editor, draft), text });
               setDraft(null);
             }}
           />,
@@ -163,20 +220,21 @@ export function LineComments({ editor, path, comments, onAdd, onRemove }: Props)
   );
 }
 
-function CommentDraft({ label, onCancel, onSubmit }: { label: string; onCancel: () => void; onSubmit: (text: string) => void }) {
+// ask: 「ここを聞く」の質問（すぐ送る）。そうでなければ、次の送信に添えるコメント
+function CommentDraft({ label, ask, onCancel, onSubmit }: { label: string; ask: boolean; onCancel: () => void; onSubmit: (text: string) => void }) {
   const [text, setText] = useState('');
   const submit = () => text.trim() && onSubmit(text.trim());
   return (
-    <div className="comment-box draft">
+    <div className={`comment-box draft${ask ? ' ask' : ''}`}>
       <div className="comment-head">
-        <span className="comment-mark">Claude へのコメント</span>
+        <span className="comment-mark">{ask ? 'Claude に聞く' : 'Claude へのコメント'}</span>
         <span className="comment-lines">{label}</span>
       </div>
       <textarea
         autoFocus
         rows={3}
         value={text}
-        placeholder="直してほしいこと・気になること（⌘Enter で追加）"
+        placeholder={ask ? 'ここについて聞きたいこと（⌘Enter で送る）' : '直してほしいこと・気になること（⌘Enter で追加）'}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') onCancel();
@@ -188,14 +246,18 @@ function CommentDraft({ label, onCancel, onSubmit }: { label: string; onCancel: 
       />
       <div className="comment-actions">
         <IconButton icon={CloseIcon} label="キャンセル" onClick={onCancel} />
-        <IconButton primary icon={AddIcon} label="コメントを追加" tip="コメントを追加（⌘Enter）" disabled={!text.trim()} onClick={submit} />
+        {ask ? (
+          <IconButton primary icon={SendIcon} label="送る" tip="Claude に送る（⌘Enter）" disabled={!text.trim()} onClick={submit} />
+        ) : (
+          <IconButton primary icon={AddIcon} label="コメントを追加" tip="コメントを追加（⌘Enter）" disabled={!text.trim()} onClick={submit} />
+        )}
       </div>
     </div>
   );
 }
 
 // 複数行を選んでいて、その中の行で ＋ を押したら選択範囲に付ける
-function rangeFor(editor: monaco.editor.ICodeEditor, line: number): Draft {
+function rangeFor(editor: monaco.editor.ICodeEditor, line: number): Lines {
   const sel = editor.getSelection();
   if (sel && !sel.isEmpty() && sel.startLineNumber <= line && line <= sel.endLineNumber) {
     // 行頭で終わる選択（行を丸ごと選んだとき）は、その行を含めない
@@ -205,7 +267,7 @@ function rangeFor(editor: monaco.editor.ICodeEditor, line: number): Draft {
   return { startLine: line, endLine: line };
 }
 
-function quoteOf(editor: monaco.editor.ICodeEditor, { startLine, endLine }: Draft): string {
+function quoteOf(editor: monaco.editor.ICodeEditor, { startLine, endLine }: Lines): string {
   const model = editor.getModel();
   if (!model) return '';
   const last = Math.min(endLine, startLine + MAX_QUOTE_LINES - 1, model.getLineCount());

@@ -14,6 +14,8 @@ import type { WorkflowRun } from './workflow';
 import type { TranslateResult } from './translate';
 import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
+import type { SessionWalkthrough } from './walkthrough';
+import type { WalkthroughCommentDraft } from './walkthrough-comment';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -156,6 +158,14 @@ export const IpcChannel = {
   ChecklistCopy: 'checklist:copy',
   ChecklistChanged: 'checklist:changed',
   ChecklistUnread: 'checklist:unread',
+  // ウォークスルー。今のもの（画面を作り直したとき用）・人が見るステップを変えた（寄り道から戻る・閉じたものを開くも）・閉じた・変わった（main → 画面）
+  WalkthroughGet: 'walkthrough:get',
+  WalkthroughGo: 'walkthrough:go',
+  WalkthroughClose: 'walkthrough:close',
+  WalkthroughChanged: 'walkthrough:changed',
+  // ウォークスルーを GitHub の PR にコメントとして載せる。下見（本文と投稿先。載せられなければ理由）・投稿
+  WalkthroughDraftComment: 'walkthrough:draft-comment',
+  WalkthroughPostComment: 'walkthrough:post-comment',
 } as const;
 
 // アプリ内ブラウザのページの中の位置と大きさ（CSS の px。見えている範囲の左上から）
@@ -568,6 +578,20 @@ export type TanacodeApi = {
     onChanged(listener: (payload: SessionChecklists) => void): () => void;
     // セッションごとの、見ていない Claude の返信の数（0 のセッションは入れない）
     unread(): Promise<ChecklistUnread>;
+  };
+  // ウォークスルー（Claude がエディタでコードを示しながら説明する。Claude は MCP サーバー tanacode-walkthrough で扱う）
+  walkthrough: {
+    // 今のウォークスルーがあるセッションの分
+    list(): Promise<SessionWalkthrough[]>;
+    // 人が見るステップを変えた（「次へ」「戻る」・ソース管理の一覧。寄り道から戻る・閉じたものを開くも）
+    go(sessionId: string, index: number): Promise<void>;
+    // 閉じる（手順は残し、Claude が作り直すまで go でもう一度開ける）
+    close(sessionId: string): Promise<void>;
+    onChanged(listener: (payload: SessionWalkthrough) => void): () => void;
+    // GitHub の PR にコメントとして載せる。draftComment: 下見 / postComment: 投稿して、コメントの URL を返す（載せられなければ理由を添えて失敗する）。
+    // attribution: 「Claude が書いた説明」の一言を添える
+    draftComment(sessionId: string): Promise<WalkthroughCommentDraft>;
+    postComment(sessionId: string, body: string, attribution: boolean): Promise<string>;
   };
   // Claude によるアプリ内ブラウザの操作（Claude Code に足す MCP サーバー tanacode-browser）
   browser: {

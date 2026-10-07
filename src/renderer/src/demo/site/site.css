@@ -81,8 +81,7 @@ html {
 
 /* 上の帯・知らせ・機能一覧を、いま見えている範囲に重ねる層（位置・大きさ・倍率は DemoSite.tsx の ScreenLayer が決める）。
    作り物のカーソルより上に出す。層そのものは押せないようにして、下のアプリの画面を触れるようにする。
-   外側（.demo-layer）は見えている範囲の位置・大きさに合わせるだけ、内側（.demo-layer-body）は画面の px の大きさで描いて、zoom で見えている範囲の大きさに合わせる。
-   外側に大きさが無いと、iPhone の Safari で横幅まで縮小できず、横にスクロールしてしまう（DemoSite.tsx の ScreenLayer）。
+   外側（.demo-layer）は見えている範囲の位置に動かすだけ、内側（.demo-layer-body）は画面の px の大きさで描いて、zoom で見えている範囲の大きさに合わせる。
    transform で拡大すると、iPhone の Safari は縮めたページの解像度で描いた絵を引き伸ばすので、字がぼやけて読めなくなる。
    zoom なら、拡大したあとの大きさで描き直す。zoom は translate にもかかる（Chromium）ので、動かす層と分ける */
 .demo-layer {

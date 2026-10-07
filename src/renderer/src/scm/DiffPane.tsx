@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GitDiffSides } from '@shared/ipc';
 import { editorTheme, languageFor, monaco } from '../editor/monaco';
-import { LineComments, type ReviewComment } from '../review/LineComments';
+import { shownStep } from '@shared/walkthrough';
+import { LineComments, type RangeQuestion, type ReviewComment } from '../review/LineComments';
+import { WalkthroughZone, type WalkthroughControls } from '../walkthrough/WalkthroughZone';
 import { ArrowDownIcon, ArrowUpIcon, CloseIcon, ColumnsIcon, FileIcon, IconButton, RowsIcon } from '../icons';
 
 type Props = {
@@ -18,10 +20,14 @@ type Props = {
   nav?: { position: string; onPrev: (() => void) | null; onNext: (() => void) | null };
   // 変更後の側に付ける Claude へのコメント（このファイルのもの）
   comments?: { list: ReviewComment[]; onAdd: (comment: ReviewComment) => void; onRemove: (id: string) => void };
+  // ウォークスルー。示している場所がこのファイルなら、変更後の側に範囲の色と吹き出しを出す
+  walkthrough?: WalkthroughControls | null;
+  // 行を選んで「ここを聞く」（ウォークスルーの間だけ渡す）
+  onAsk?: (question: RangeQuestion) => void;
 };
 
 // 左右（またはインライン）の差分表示。ソース管理とレビューから開く
-export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile, nav, comments }: Props) {
+export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile, nav, comments, walkthrough = null, onAsk }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [inline, setInline] = useState(false);
   const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
@@ -29,6 +35,8 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
   const loadRef = useRef(load);
   loadRef.current = load;
   const loadedPath = useRef<string | null>(null);
+  // 読み込みを終えたファイル（吹き出しは、そのファイルのモデルを入れ終えてから出す）
+  const [loaded, setLoaded] = useState<string | null>(null);
 
   useEffect(() => {
     const editor = monaco.editor.createDiffEditor(containerRef.current!, {
@@ -78,6 +86,7 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
       });
       old?.original.dispose();
       old?.modified.dispose();
+      setLoaded(path);
     });
     return () => {
       cancelled = true;
@@ -110,8 +119,9 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
         <div className="editor-monaco" ref={containerRef} />
       </div>
       {modified && comments && (
-        <LineComments editor={modified} path={path} comments={comments.list} onAdd={comments.onAdd} onRemove={comments.onRemove} />
+        <LineComments editor={modified} path={path} comments={comments.list} onAdd={comments.onAdd} onRemove={comments.onRemove} onAsk={onAsk} />
       )}
+      {modified && walkthrough && loaded === path && shownStep(walkthrough.walkthrough).path === path && <WalkthroughZone editor={modified} {...walkthrough} />}
     </section>
   );
 }

@@ -371,7 +371,7 @@ function countCommits(root: string, args: string[]): Promise<number | null> {
 }
 
 // branch をプッシュした先の、リモートのブランチの名前（PR の head はこの名前）。上流が無ければ、同じ名前
-async function pushedBranchName(root: string, branch: string): Promise<string> {
+export async function pushedBranchName(root: string, branch: string): Promise<string> {
   const merge = await git(root, ['config', '--get', `branch.${branch}.merge`]).then(
     (out) => out.trim(),
     () => '',
