@@ -710,6 +710,14 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(text).toContain('+++ b/nested/\n（ふつうのファイルではないため、中身は読みません）');
     });
 
+    it('差分にバッククォートが続いていれば、それより長い囲みにする（囲みから抜けないように）', async () => {
+      initRepo();
+      writeFileSync(join(repo, 'README.md'), '````js\nx\n````\n');
+      const text = await diffOf();
+      expect(text).toContain('## 差分\n`````diff\n');
+      expect(text.endsWith('\n`````')).toBe(true);
+    });
+
     it('未追跡のファイルが 100 を超えたら、残りは数だけ書く', async () => {
       initRepo();
       for (let i = 0; i < 101; i++) writeFileSync(join(repo, `f${String(i).padStart(3, '0')}.txt`), `${i}\n`);

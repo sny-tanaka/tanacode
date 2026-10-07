@@ -185,6 +185,40 @@ describe('残っているもの', () => {
     expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ exists: false, uncommitted: 0, untracked: 0, unpushed: 0 });
   });
 
+  it('フォルダがあっても、worktree として登録されていなければ、無いものとして中を数えない', async () => {
+    const plan = await planWorktree(repo);
+    mkdirSync(plan.path, { recursive: true });
+    writeFileSync(join(plan.path, 'stray.txt'), 'x\n');
+    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ exists: false, uncommitted: 0, untracked: 0 });
+  });
+
+  it('worktree の場所を、シンボリックリンクを通した別の書き方で渡しても見つける（macOS の /tmp と /private/tmp）', async () => {
+    const plan = await create();
+    writeFileSync(join(plan.path, 'new.txt'), 'new\n');
+    const alias = join(root, 'alias');
+    symlinkSync(repo, alias);
+    const through = join(alias, '.claude', 'worktrees', plan.name);
+    expect(await worktreeLeftovers(plan, through)).toMatchObject({ exists: true, untracked: 1 });
+  });
+
+  it('コピーと見なされた変更（status.renames=copies）は、元のパスを別の変更として数えない', async () => {
+    writeFileSync(join(repo, 'a.txt'), '1\n2\n3\n4\n5\n');
+    git(repo, 'commit', '-qam', 'lines');
+    const plan = await create();
+    git(repo, 'config', 'status.renames', 'copies');
+    writeFileSync(join(plan.path, 'copy.txt'), '1\n2\n3\n4\n5\n');
+    writeFileSync(join(plan.path, 'a.txt'), '1\n2\n3\n4\n5\n6\n');
+    git(plan.path, 'add', 'copy.txt', 'a.txt');
+    expect(git(plan.path, 'status', '--porcelain')).toBe('M  a.txt\nC  a.txt -> copy.txt');
+    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ uncommitted: 2, untracked: 0 });
+  });
+
+  it('プッシュしていないコミットが 10 件以上あっても数える', async () => {
+    const plan = await create();
+    for (let i = 0; i < 12; i++) commitIn(plan.path, `f${i}.txt`);
+    expect(await worktreeLeftovers(plan, plan.path)).toMatchObject({ unpushed: 12 });
+  });
+
   describe('PR', () => {
     it('PR をスカッシュマージして、リモートのブランチを消していても、PR に入っているコミットはプッシュしていないと数えない', async () => {
       withOrigin();
@@ -225,6 +259,11 @@ describe('残っているもの', () => {
       expect((await worktreeLeftovers(plan, plan.path)).pr).toMatchObject({ state: 'merged', number: 2 });
       prs.mockResolvedValue([pull({ number: 4, state: 'OPEN', headRefOid: head }), pull({ number: 2, state: 'MERGED', headRefOid: head })]);
       expect((await worktreeLeftovers(plan, plan.path)).pr).toMatchObject({ state: 'open', number: 4 });
+      // 閉じたものしか無ければ閉じたもの。同じ状態のものが 2 つあれば、新しいほう（先に返るもの）
+      prs.mockResolvedValue([pull({ number: 6, state: 'CLOSED', headRefOid: head })]);
+      expect((await worktreeLeftovers(plan, plan.path)).pr).toMatchObject({ state: 'closed', number: 6 });
+      prs.mockResolvedValue([pull({ number: 5, state: 'OPEN', headRefOid: head }), pull({ number: 4, state: 'OPEN', headRefOid: head })]);
+      expect((await worktreeLeftovers(plan, plan.path)).pr).toMatchObject({ state: 'open', number: 5 });
       prs.mockResolvedValue([]);
       expect((await worktreeLeftovers(plan, plan.path)).pr).toEqual({ state: 'none' });
     });
@@ -441,7 +480,7 @@ describe('削除', () => {
     expect(git(repo, 'show', `${ref}:new.txt`)).toBe('new');
     // gitignore されたファイルは控えに入らない
     expect(git(repo, 'ls-tree', '--name-only', ref)).not.toContain('.env');
-    expect(git(repo, 'log', '-1', '--format=%an %s', ref)).toContain('tanacode');
+    expect(git(repo, 'log', '-1', '--format=%an <%ae>|%s', ref)).toBe(`tanacode <tanacode@localhost>|tanacode: worktree ${plan.name} を消す前の、未コミットの変更と未追跡のファイル`);
     // 控えの親は worktree の HEAD
     expect(git(repo, 'rev-parse', `${ref}^`)).toBe(git(repo, 'rev-parse', 'main'));
     // 控えのコミットはブランチに入っていないので、ブランチはマージ済みとして消える
@@ -544,6 +583,16 @@ describe('削除', () => {
     await aside.restore();
     aside.discard();
     expect(readdirSync(plain)).toEqual(['node_modules']);
+  });
+
+  it('フォルダをもう手で消していても、ユーザーが付けたロックは外さず、登録とブランチを残す', async () => {
+    const plan = await create();
+    git(repo, 'worktree', 'unlock', plan.path);
+    git(repo, 'worktree', 'lock', '--reason', '外付けのディスク', plan.path);
+    rmSync(plan.path, { recursive: true, force: true });
+    expect(await removeWorktree(plan, plan.path)).toEqual({ backupRef: null, branch: plan.branch, branchKept: true });
+    // ロックしたまま登録を残す（git worktree prune は、ロックしたものを片付けない）
+    expect(git(repo, 'worktree', 'list')).toMatch(new RegExp(`${plan.path} .* locked`));
   });
 
   it('フォルダをもう手で消していたら、git の登録を片付けて、ブランチの扱いは同じ', async () => {
