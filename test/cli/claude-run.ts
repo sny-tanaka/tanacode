@@ -154,6 +154,9 @@ export class ClaudeRun {
     if (options.git) {
       const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=tanacode', '-c', 'user.email=tanacode@localhost', ...args], { cwd: this.cwd, stdio: 'ignore' });
       git('init', '-q', '-b', 'main');
+      // ファイルの多いリポジトリでは、コミットのあとに git が裏で片付け（gc --auto）を始め、終わるまで .git に書き続ける。
+      // テストの終わりに一時フォルダを消すのとぶつかる（ENOTEMPTY）ので、このリポジトリでは動かさない
+      git('config', 'gc.auto', '0');
       git('add', '-A');
       git('commit', '-qm', 'init', '--allow-empty');
     }
