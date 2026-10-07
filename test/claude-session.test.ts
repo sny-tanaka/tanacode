@@ -213,6 +213,9 @@ describe('会話ログ', () => {
   it('followTranscript: statusLine が教えた、起動のあとにできた会話ログ（/clear）に乗り換える', async () => {
     const { claude, got } = session();
     claude.start();
+    // ファイルの作成時刻は粗い時計（数 ms 遅れる）で付くので、起動の直後に作ると、起動より前にできたように見える。
+    // 本物の /clear は起動のずっとあと
+    await sleep(50);
     const next = '22222222-0000-4000-8000-000000000002';
     mkdirSync(dirname(file(next)), { recursive: true });
     writeFileSync(file(next), `${line('新しい会話')}\n`);
