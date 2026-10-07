@@ -85,9 +85,13 @@ export function NewSessionPane({
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
   });
   const [starting, setStarting] = useState(false);
-  // 最新のデフォルトブランチへ切り替えている間と、うまくいかなかったときの理由
-  const [switching, setSwitching] = useState(false);
+  // 最新のデフォルトブランチへ切り替えているフォルダと、うまくいかなかったときの理由。
+  // 切り替えの途中でフォルダを変えても、変えた先のフォルダには持ち越さない（終わった結果も、選んでいるフォルダのものだけ出す）
+  const [switchingDirs, setSwitchingDirs] = useState<ReadonlySet<string>>(() => new Set());
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const switching = !!cwd && switchingDirs.has(cwd);
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
   const [options, setOptions] = useState<NewSessionOptions>(loadOptions);
   const models = useModelCatalog();
   const settingsFiles = useSettingsFiles();
@@ -142,15 +146,23 @@ export function NewSessionPane({
 
   // フェッチしてデフォルトブランチへ切り替え、リモートの最新まで進める（ソース管理のブランチ選択と同じ操作）
   const switchDefault = async () => {
-    if (!gitId || switching) return;
-    setSwitching(true);
+    if (!gitId || !cwd || switching) return;
+    const dir = cwd;
+    const failed = (message: string | null) => {
+      if (cwdRef.current === dir) setSwitchError(message);
+    };
+    setSwitchingDirs((prev) => new Set(prev).add(dir));
     setSwitchError(null);
     try {
-      setSwitchError(await window.tanacode.git.run(gitId, { kind: 'switch-default' }));
+      failed(await window.tanacode.git.run(gitId, { kind: 'switch-default' }));
     } catch (err) {
-      setSwitchError(errorMessage(err));
+      failed(errorMessage(err));
     } finally {
-      setSwitching(false);
+      setSwitchingDirs((prev) => {
+        const next = new Set(prev);
+        next.delete(dir);
+        return next;
+      });
       onGitChanged();
     }
   };
