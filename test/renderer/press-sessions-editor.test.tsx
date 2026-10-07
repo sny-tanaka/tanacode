@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EditorPane, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
+import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
 import './dom';
 import { mockApi } from './mock-api';
@@ -128,7 +129,7 @@ const fake = vi.hoisted(() => {
     KeyCode: { KeyS: 49 },
     languages: { getLanguages: () => [] },
   };
-  return { monaco, made };
+  return { monaco, made, lenient };
 });
 
 vi.mock('../../src/renderer/src/editor/monaco', () => ({
@@ -402,5 +403,68 @@ describe('DiffPane（差分）', () => {
     expect(second.load).toHaveBeenCalledTimes(1);
     expect(sides()).toEqual({ original: '', modified: '# ガイド\n' });
     expect(screen.queryByText('guide.md')).not.toBeNull();
+  });
+});
+
+describe('LineComments（エディタの行に付けるコメントの書きかけの欄）', () => {
+  beforeAll(() => {
+    // 欄の高さの変化を見張るもの。jsdom には無く、大きさも測らないので、知らせない
+    if (!window.ResizeObserver) {
+      window.ResizeObserver = class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      };
+    }
+  });
+
+  // 右クリックのメニューの項目を覚え、行の下に差し込む領域（view zone）を画面に置く偽物のエディタ
+  function commentEditor() {
+    const actions = new Map<string, () => void>();
+    let seq = 0;
+    const zones = new Map<string, HTMLElement>();
+    const editor = fake.lenient({
+      getModel: () => ({ getLineCount: () => 1, getLineContent: () => 'export const TAX_RATE = 0.1;' }),
+      getSelection: () => null,
+      getPosition: () => ({ lineNumber: 1, column: 1 }),
+      getLayoutInfo: () => ({ contentWidth: 800 }),
+      createDecorationsCollection: () => ({ set() {}, clear() {} }),
+      addAction(action: { id: string; run: () => void }) {
+        actions.set(action.id, action.run);
+        return { dispose: () => actions.delete(action.id) };
+      },
+      changeViewZones(change: (accessor: { addZone: (zone: { domNode: HTMLElement }) => string; removeZone: (id: string) => void; layoutZone: () => void }) => void) {
+        change({
+          addZone(zone) {
+            const id = `zone${++seq}`;
+            document.body.appendChild(zone.domNode);
+            zones.set(id, zone.domNode);
+            return id;
+          },
+          removeZone(id) {
+            zones.get(id)?.remove();
+            zones.delete(id);
+          },
+          layoutZone() {},
+        });
+      },
+    });
+    return { editor: editor as unknown as ComponentProps<typeof LineComments>['editor'], run: (id: string) => act(() => actions.get(id)!()) };
+  }
+  const draft = () => screen.queryByPlaceholderText('直してほしいこと・気になること（⌘Enter で追加）');
+
+  it('日本語の変換中に Esc（変換の取り消し）を押しても、書きかけの欄は閉じない。変換していない Esc では、何も付けずに閉じる', () => {
+    // macOS の Chromium では、変換中の Esc も key が Escape の keydown として届き、isComposing が付く
+    const { editor, run } = commentEditor();
+    const onAdd = vi.fn();
+    render(<LineComments editor={editor} path="src/tax.ts" comments={[]} onAdd={onAdd} onRemove={vi.fn()} />);
+    run('tanacode.addComment');
+    fireEvent.change(draft()!, { target: { value: 'ぜいりつを' } });
+    fireEvent.keyDown(draft()!, { key: 'Escape', isComposing: true });
+    expect(draft()).not.toBeNull();
+    expect((draft() as HTMLTextAreaElement).value).toBe('ぜいりつを');
+    fireEvent.keyDown(draft()!, { key: 'Escape' });
+    expect(draft()).toBeNull();
+    expect(onAdd).not.toHaveBeenCalled();
   });
 });
