@@ -51,18 +51,17 @@ function* tsxFiles(dir) {
   }
 }
 
-// カバレッジの関数の記録から、start の位置で始まる関数が呼ばれた回数（見つからなければ null）
+// カバレッジの関数の記録から、start の位置で始まる関数が呼ばれた回数（見つからなければ null）。
+// 単体テスト（ファイルごとに変換したもの）と E2E（ソースマップで戻したもの）では、同じ関数でも位置が少しずれて別々に入るので、
+// 近くにあるもののうち、いちばん多く呼ばれたものを使う
 function callsAt(fileCoverage, start) {
   const { fnMap, f } = fileCoverage.data;
-  let best = null;
+  let count = null;
   for (const [id, fn] of Object.entries(fnMap)) {
-    for (const pos of [fn.decl.start, fn.loc.start]) {
-      if (pos.line !== start.line) continue;
-      const distance = Math.abs((pos.column ?? 0) - start.column);
-      if (distance <= 2 && (!best || distance < best.distance)) best = { distance, count: f[id] };
-    }
+    const near = [fn.decl.start, fn.loc.start].some((pos) => pos.line === start.line && Math.abs((pos.column ?? 0) - start.column) <= 2);
+    if (near) count = Math.max(count ?? 0, f[id]);
   }
-  return best ? best.count : null;
+  return count;
 }
 
 const unpressed = [];

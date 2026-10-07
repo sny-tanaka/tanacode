@@ -110,10 +110,10 @@ jobs:
           DIFF_ARGS: ${{ github.event_name == 'pull_request' && '--diff HEAD^1' || '' }}
         run: npm run coverage:report -- $DIFF_ARGS
       # 画面のボタン・入力のうち、テストが一度も押していないもの（CONTRIBUTING.md の「押していないボタン・入力」）。
-      # 増えたら失敗にする。押すテストを足して減ったら、--max も下げる（0 を目指す）
-      - name: テストが押していないボタン・入力を数える
+      # 1 つでもあれば失敗にする（ボタンや入力を足したら、押すテストも足す）
+      - name: テストが押していないボタン・入力が無いか確かめる
         if: env.COVERAGE_GATE == 'true'
-        run: npm run coverage:unpressed -- --max 231
+        run: npm run coverage:unpressed -- --max 0
       # 落ちた E2E の画面の写し・メインプロセスの出力・モックの API の呼び出し
       - name: E2E の失敗の手がかりを残す
         if: failure() && env.COVERAGE_GATE == 'true'
