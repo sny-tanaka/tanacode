@@ -25,6 +25,7 @@
     "coverage": "vitest run --coverage",
     "coverage:cli": "vitest run --config vitest.cli.config.ts --coverage",
     "coverage:report": "node scripts/coverage-report.mjs",
+    "mutation": "node scripts/mutation.mjs",
     "predist": "node scripts/build-translate-helper.mjs",
     "dist": "electron-vite build && node scripts/electron-builder.mjs --mac",
     "install-app": "npm run dist && node scripts/install-app.mjs",
@@ -46,6 +47,7 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
+    "@babel/parser": "^7.29.9",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@storybook/react-vite": "^10.6.0",
     "@testing-library/dom": "^10.4.2",
