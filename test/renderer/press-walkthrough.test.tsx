@@ -337,6 +337,27 @@ describe('CommentDialog（PR にコメントとして載せる下見）', () => 
   });
 });
 
+// 不具合（いまのコードで落ちる）。直したら、上の WalkthroughBox の describe に移す
+describe('WalkthroughBox の質問の欄（不具合）', () => {
+  beforeEach(() => {
+    api = mockApi();
+    api.install();
+  });
+
+  it('日本語の変換中に Esc（変換の取り消し）を押しても、質問の欄は閉じない', () => {
+    // macOS の Chromium では、変換中の Esc も key が Escape の keydown として届き、isComposing が付く
+    // （PR に載せる下見・書き出しの確認・チェックリストの欄は、変換中の Esc では閉じない）
+    const onAsk = vi.fn();
+    render(<WalkthroughBox walkthrough={walk()} stale={false} onGo={() => {}} onClose={() => {}} onAsk={onAsk} onRestart={() => {}} />);
+    fireEvent.click(screen.getByText('質問する'));
+    const box = screen.getByPlaceholderText('ここについて Claude に聞きたいこと（⌘Enter で送る）');
+    fireEvent.change(box, { target: { value: 'ぜいりつは' } });
+    fireEvent.keyDown(box, { key: 'Escape', isComposing: true });
+    expect(screen.queryByPlaceholderText('ここについて Claude に聞きたいこと（⌘Enter で送る）')).toBeTruthy();
+    expect(onAsk).not.toHaveBeenCalled();
+  });
+});
+
 describe('ExportDialog（作業を書き出す前の確認）', () => {
   const session = (id: string, title: string): SessionSummary => ({
     id,
