@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { GitBranches } from '@shared/ipc';
@@ -17,8 +17,81 @@ export function git(cwd: string, args: string[], input?: string, env?: Record<st
       if (err) reject(new GitError((stderr || err.message).trim()));
       else resolve(stdout);
     });
-    if (input !== undefined) child.stdin?.end(input);
+    // 渡すものが無ければ、標準入力はすぐ閉じる（何かが標準入力を読もうとしても、待ち続けない）
+    child.stdin?.end(input);
   });
+}
+
+// リモートと話す git（fetch・pull・push など）で、この時間なにも進まなければ止める
+export const REMOTE_IDLE_MS = 30_000;
+
+// リモートと話す git を実行する。ネットワークが詰まったときや、認証の確認がどこにも出ないまま待っているときに、
+// いつまでも返らないことがあるので、進み具合（標準エラーの出力）が idleMs のあいだ途切れたら、git と、git が起動した
+// ssh などをまとめて止めて GitError にする。fetch・pull・push には --progress を付けて、転送中は進み具合を出させる
+export function gitRemote(cwd: string, args: string[], idleMs = REMOTE_IDLE_MS): Promise<string> {
+  const withProgress = ['fetch', 'pull', 'push'].includes(args[0]) ? [args[0], '--progress', ...args.slice(1)] : args;
+  return new Promise((resolve, reject) => {
+    // 止めるときに、git が起動したもの（ssh・git-remote-https など）も一緒に止められるよう、プロセスグループを分ける
+    const child = spawn('git', withProgress, {
+      cwd,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let idle = false;
+    let timer: NodeJS.Timeout | undefined;
+    const kill = (signal: NodeJS.Signals) => {
+      try {
+        if (child.pid) process.kill(-child.pid, signal);
+      } catch {
+        // もう終わっている
+      }
+    };
+    const wait = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        idle = true;
+        kill('SIGTERM');
+        // SIGTERM で終わらなければ、少し待って強制的に止める
+        setTimeout(() => kill('SIGKILL'), 2000).unref();
+      }, idleMs);
+    };
+    wait();
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout.push(chunk);
+      wait();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr.push(chunk);
+      wait();
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new GitError(err.message));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (idle) {
+        reject(new GitError(`リモートから ${Math.round(idleMs / 1000)} 秒応答が無いため、止めました（git ${args[0]}）`));
+      } else if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+      } else {
+        reject(new GitError(progressRemoved(Buffer.concat(stderr).toString('utf8')) || `git ${args[0]} が失敗しました（${code}）`));
+      }
+    });
+  });
+}
+
+// --progress の進み具合の行（\r で書き換えていくもの）を除いた、標準エラーのメッセージ
+function progressRemoved(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.split('\r').pop() ?? '')
+    .filter((line) => !/^(remote: )?(Enumerating|Counting|Compressing|Receiving|Resolving|Writing|Total|Delta compression)\b/.test(line))
+    .join('\n')
+    .trim();
 }
 
 // cwd がリポジトリの中なら、リポジトリのルートから cwd までの相対パス（ルートなら ''）。リポジトリでなければ null

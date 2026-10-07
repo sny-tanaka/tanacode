@@ -1,11 +1,15 @@
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BranchChanges, FileBaseline, GitBranches, GitDiffSides, GitState } from '@shared/ipc';
-import { branchBase, branchFiles, branches, defaultBranch, git, GitError, repoInfo, showAt, showHead, showIndex, status } from './git';
+import { branchBase, branchFiles, branches, defaultBranch, git, GitError, gitRemote, REMOTE_IDLE_MS, repoInfo, showAt, showHead, showIndex, status } from './git';
 
 // ソース管理パネルの操作。パスはすべて cwd（セッションのフォルダ）からの相対
 export class SourceControl {
-  constructor(private readonly cwd: string) {}
+  // remoteIdleMs: リモートと話す git（fetch・pull・push など）で、何も進まないまま待つ上限
+  constructor(
+    private readonly cwd: string,
+    private readonly remoteIdleMs = REMOTE_IDLE_MS,
+  ) {}
 
   async state(): Promise<GitState> {
     const entries = await status(this.cwd).catch(() => null);
@@ -76,15 +80,15 @@ export class SourceControl {
   async push(): Promise<void> {
     const { upstream } = await repoInfo(this.cwd);
     // 上流が無ければ origin に同じ名前で作る
-    await git(this.cwd, upstream ? ['push'] : ['push', '-u', 'origin', 'HEAD']);
+    await gitRemote(this.cwd, upstream ? ['push'] : ['push', '-u', 'origin', 'HEAD'], this.remoteIdleMs);
   }
 
   async pull(): Promise<void> {
-    await git(this.cwd, ['pull']);
+    await gitRemote(this.cwd, ['pull'], this.remoteIdleMs);
   }
 
   async fetch(): Promise<void> {
-    await git(this.cwd, ['fetch', '--prune']);
+    await gitRemote(this.cwd, ['fetch', '--prune'], this.remoteIdleMs);
   }
 
   // local: 既存のブランチへ / remote: origin/foo なら同じ名前のローカルブランチを作って追跡 / create: 新しいブランチ
@@ -102,9 +106,9 @@ export class SourceControl {
       () => false,
     );
     if (hasOrigin) {
-      await git(this.cwd, ['fetch', '--prune', 'origin']);
+      await gitRemote(this.cwd, ['fetch', '--prune', 'origin'], this.remoteIdleMs);
       // リモートでデフォルトブランチが変わっていることがあるので、origin/HEAD を取り直す（取れなければ手元の控えを使う）
-      await git(this.cwd, ['remote', 'set-head', 'origin', '--auto']).catch(() => {});
+      await gitRemote(this.cwd, ['remote', 'set-head', 'origin', '--auto'], this.remoteIdleMs).catch(() => {});
     }
     const name = await defaultBranch(this.cwd);
     if (!name) throw new GitError('デフォルトブランチが分かりません');
