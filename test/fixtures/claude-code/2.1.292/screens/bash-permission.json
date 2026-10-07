@@ -4,11 +4,11 @@
   "full": false
  },
  {
-  "text": "▗▟▛███▛█▄  Claude Code v2.1.292",
+  "text": " ▐▂███▂█   Claude Code v2.1.292",
   "full": false
  },
  {
-  "text": " ▜██████▘  Opus 5.5 · API Usage Billing",
+  "text": "▝▜██████▀  Opus 5.5 · API Usage Billing",
   "full": false
  },
  {
@@ -32,7 +32,7 @@
   "full": false
  },
  {
-  "text": "● コマンドを実行します。",
+  "text": "⏺ コマンドを実行します。",
   "full": false
  },
  {
@@ -40,7 +40,7 @@
   "full": false
  },
  {
-  "text": "● 確認のフォルダを作る",
+  "text": "  確認のフォルダを作る",
   "full": false
  },
  {
@@ -88,7 +88,11 @@
   "full": false
  },
  {
-  "text": "   2. Yes, and always allow access to /tmp/tanacode-cli/work from this project",
+  "text": "   2. Yes, and always allow access to /tmp/tanacode-cli/work",
+  "full": false
+ },
+ {
+  "text": "      from this project",
   "full": false
  },
  {
@@ -105,10 +109,6 @@
  },
  {
   "text": " Esc to cancel · Tab to amend",
-  "full": false
- },
- {
-  "text": "",
   "full": false
  },
  {
