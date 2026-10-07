@@ -11,6 +11,7 @@ import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { parseStatusLine } from '../src/main/statusline';
 import {
   FIXTURE_ROOT,
+  QUESTION,
   checkAskInput,
   checkChat,
   checkPermission,
@@ -98,6 +99,8 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
 
   it('Bash の許可の確認が読める', () => {
     checkPermission(parseMenu(screen('bash-permission')), 'mkdir checked');
+    // 操作の案内は、前後の空白を除いて読む
+    expect(parseMenu(screen('bash-permission'))?.hint).toBe('Esc to cancel · Tab to amend');
   });
 
   it('AskUserQuestion の質問が読める', () => {
@@ -143,6 +146,70 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
   it.skipIf(!has('question-tall'))('説明が長く、上が切れて見える質問が読める', () => {
     checkTall(question('question-tall', ASK_TALL));
     checkTall(question('question-tall-moved', ASK_TALL), '3');
+  });
+
+  // 質問のメニューは、アプリでは会話ログの質問で組み立て直す（applyQuestions）。
+  // 質問が届く前（と、質問ではないメニュー）は、画面だけから読んだものを出す
+  it('会話ログの質問で組み立て直す前に、画面だけから質問と選択肢（名前・説明・カーソル・自由記述）と操作の案内が読める', () => {
+    expect(parseMenu(screen('question'))).toEqual({
+      kind: 'question',
+      tabs: [{ label: QUESTION.header, answered: false }],
+      title: QUESTION.question,
+      context: [],
+      options: [
+        { id: '1', label: 'です・ます', description: '丁寧な書き方', pointed: true, checked: null, textInput: false },
+        { id: '2', label: 'だ・である', description: '言い切る書き方', pointed: false, checked: null, textInput: false },
+        { id: '3', label: 'Type something.', description: '', pointed: false, checked: null, textInput: true },
+        { id: '4', label: 'Chat about this', description: '', pointed: false, checked: null, textInput: false },
+      ],
+      multiSelect: false,
+      hint: expect.stringContaining('Esc to cancel'),
+      previewLayout: false,
+    });
+  });
+
+  it.skipIf(!has('question-multi'))('複数選択の質問は、画面だけからチェックと確定の行（最後の質問は Submit、途中の質問は Next）が読める', () => {
+    const menu = parseMenu(screen('question-multi'));
+    expect(menu?.multiSelect).toBe(true);
+    // 確定の行は、自由記述と「Chat about this」の間にある
+    expect(menu!.options).toEqual([
+      { id: '1', label: '型チェック', description: 'tsc で確かめる', pointed: false, checked: true, textInput: false },
+      { id: '2', label: '単体テスト', description: 'vitest で確かめる', pointed: false, checked: false, textInput: false },
+      { id: '3', label: 'リンター', description: 'eslint で確かめる', pointed: true, checked: true, textInput: false },
+      { id: '4', label: 'Type something', description: '', pointed: false, checked: false, textInput: true },
+      { id: 'submit', label: 'Submit', description: '', pointed: false, checked: null, textInput: false },
+      { id: '5', label: 'Chat about this', description: '', pointed: false, checked: null, textInput: false },
+    ]);
+    expect(parseMenu(screen('question-tabs-multi'))?.options.filter((o) => o.id === 'submit')).toEqual([
+      { id: 'submit', label: 'Next', description: '', pointed: false, checked: null, textInput: false },
+    ]);
+    // 回答の確認画面には、操作の案内が出ない
+    expect(parseMenu(screen('question-multi-review'))?.hint).toBe('');
+  });
+
+  it.skipIf(!has('question-preview'))('プレビュー付きの質問は、画面だけでも、プレビューの枠より左の列から選択肢の名前が読める（折り返した名前はつなぐ）', () => {
+    const menu = parseMenu(screen('question-preview'));
+    expect(menu).toMatchObject({ kind: 'question', previewLayout: true, hint: expect.stringContaining('Esc to cancel') });
+    // 縦線の枠の質問文は、折り返した行を空白でつなぐ
+    expect(menu!.title.replaceAll(' ', '')).toBe(ASK_PREVIEW[0].question);
+    // この形には、説明・自由記述・番号付きの「Chat about this」が出ない
+    expect(menu!.options).toEqual(
+      ASK_PREVIEW[0].options.map((o, i) => ({ id: String(i + 1), label: o.label, description: '', pointed: i === 0, checked: null, textInput: false })),
+    );
+  });
+
+  it.skipIf(!has('question-tall'))('上が切れて見える質問は、画面だけでは見えている選択肢を読み、何行にもわたる説明は行をつないで 1 つにする', () => {
+    const shown = (name: ScreenName) => parseMenu(screen(name))?.options.map((o) => ({ id: o.id, pointed: o.pointed, textInput: o.textInput }));
+    // カーソルのある 1 つめは画面の外。カーソルを 3 つめに送ると見える
+    expect(shown('question-tall')).toEqual(['2', '3', '4', '5', '6'].map((id) => ({ id, pointed: false, textInput: id === '5' })));
+    expect(shown('question-tall-moved')).toEqual(['2', '3', '4', '5', '6'].map((id) => ({ id, pointed: id === '3', textInput: id === '5' })));
+    const third = parseMenu(screen('question-tall'))!.options.find((o) => o.id === '3')!;
+    expect(third.label).toBe(ASK_TALL[0].options[2].label);
+    // 行と行の間は空白 1 つでつなぐ（行頭の字下げは除く）
+    const rows = third.description.split(' ');
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) expect(row).toMatch(/^(進め方3の説明です。)+$/);
+    expect(rows.join('')).toBe(ASK_TALL[0].options[2].description);
   });
 
   it.skipIf(!has('effort'))('--effort を付けた入力欄のエフォートとモデル名が読める', async () => {
