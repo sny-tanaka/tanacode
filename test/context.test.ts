@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
-import { compactInstructions, type CompactMark, type ContextItem } from '@shared/context';
+import { clip, compactInstructions, toolDisplayName, type CompactMark, type ContextItem } from '@shared/context';
 import { promptKeys } from '@shared/prompt-keys';
 import { ContextTracker, estimateTokens } from '../src/main/context-tracker';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
@@ -278,6 +278,56 @@ describe('compactInstructions', () => {
     expect(compactInstructions(topics, marks(topics.map((t) => [t.id, 'keep'])))).toBe(
       '質問に「在庫の数で持つ (推奨)」と答えたあとのやりとりと、「Agent "調査" finished」の知らせのあとのやりとりは詳しく残す。',
     );
+  });
+
+  it('種類ごとの言い方: 書いたファイル・要約・区切りの出来事・ツールの種類・MCP のツール・画像', () => {
+    const kinds = [
+      at('file', 'src/a.ts', 0, { edited: true }),
+      at('summary', '前回の要約', 1),
+      at('topic', '別の Claude からの知らせ', 2),
+      at('topic', '会話の始まり', 3),
+      // 起動した行が分からないタスクの完了の知らせ（ツールの名前が無い）
+      at('tool', 'タスク X が終わりました', 4),
+      at('tool', 'TODO', 5, { tool: 'Grep' }),
+      at('tool', 'tanacode 使い方', 6, { tool: 'WebSearch' }),
+      at('tool', 'src/**/*.ts', 7, { tool: 'Glob' }),
+      at('tool', 'https://example.com/', 8, { tool: 'WebFetch' }),
+      at('tool', 'review', 9, { tool: 'Skill' }),
+      at('tool', 'ui.tsx', 10, { tool: 'mcp__tanacode-browser__click' }),
+      at('tool', '', 11, { tool: 'TodoWrite' }),
+      at('image', '', 12, { tool: 'Read' }),
+      // 発言に添付した画像（ツールが無い）は、名前をそのまま
+      at('image', '「画面を見て」の画像 1', 13),
+    ];
+    expect(compactInstructions(kinds, marks(kinds.map((k) => [k.id, 'drop'])))).toBe(
+      [
+        '`src/a.ts` の内容と変更',
+        '前回の圧縮の要約',
+        '別の Claude からの知らせのやりとり',
+        '会話の始まりのやりとり',
+        '「タスク X が終わりました」の知らせ',
+        '「TODO」の検索結果',
+        '「tanacode 使い方」の検索結果',
+        '「src/**/*.ts」に合うファイルの一覧',
+        'https://example.com/ のページの内容',
+        'スキル「review」の内容',
+        'tanacode-browser の click（ui.tsx）の結果',
+        'TodoWrite の結果',
+        'Read の画像',
+        '「画面を見て」の画像 1',
+      ].join('、') + 'は捨ててよい。',
+    );
+  });
+
+  it('印は会話の順に並べる。長い名前・複数行の名前は、1 行にして 60 文字で切る', () => {
+    const long = at('topic', 'あ'.repeat(70), 2);
+    const multi = at('topic', '複数\n行の   発言', 1);
+    expect(compactInstructions([long, multi], marks([[long.id, 'keep'], [multi.id, 'keep']]))).toBe(
+      `「複数 行の 発言」から始まるやりとりと、「${'あ'.repeat(59)}…」から始まるやりとりは詳しく残す。`,
+    );
+    expect(clip('  前後の空白  ', 10)).toBe('前後の空白');
+    expect(toolDisplayName('Bash')).toBe('Bash');
+    expect(toolDisplayName('mcp__tanacode-sessions__list_sessions')).toBe('tanacode-sessions の list_sessions');
   });
 });
 
