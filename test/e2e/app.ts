@@ -137,7 +137,10 @@ export class E2EApp {
     const platformArgs = process.platform === 'linux' ? ['--no-sandbox'] : process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
     const args = [...platformArgs, `--user-data-dir=${this.userData}`];
     this.electronApp = await electron.launch({
-      ...(packaged ? { executablePath: packaged, args } : { args: [...args, join(REPO, 'out', 'main', 'index.js')] }),
+      // ビルドしたアプリは、リポジトリのフォルダを渡して起動する（package.json の main から out/main/index.js を読む。npm run dev と同じ）。
+      // out/main/index.js を直に渡すと、アプリのフォルダ（app.getAppPath()）が out/main になり、macOS では開発中のアイコン
+      // （build/icon.png）を読めずに起動が止まる
+      ...(packaged ? { executablePath: packaged, args } : { args: [...args, REPO] }),
       cwd: this.root,
       env: this.env,
       timeout: TIMEOUT_MS,
