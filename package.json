@@ -28,6 +28,7 @@
     "coverage:report": "node scripts/coverage-report.mjs",
     "coverage:unpressed": "node scripts/unpressed.mjs",
     "mutation": "node scripts/mutation.mjs",
+    "mutation:ui": "node scripts/mutation.mjs --ui",
     "predist": "node scripts/build-translate-helper.mjs",
     "dist": "electron-vite build && node scripts/electron-builder.mjs --mac",
     "install-app": "npm run dist && node scripts/install-app.mjs",

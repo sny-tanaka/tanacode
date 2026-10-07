@@ -2,11 +2,14 @@
 // テストが落ちる（killed）かを確かめる。落ちなかったもの（survived）は、テストがそこを通っていても、結果まで確かめていない場所。
 // - 対象: 引数のファイル（無ければ DEFAULT_TARGETS）。例: npm run mutation -- src/shared/chat.ts
 // - --concurrency <n>: 同時に流す数（既定 2）
-// - --out <dir>: 結果の置き場所（既定 reports/mutation）
+// - --out <dir>: 結果の置き場所（既定 reports/mutation。--ui のときは reports/mutation-ui）
 // - --list: ミュータントの一覧だけを出し、テストは流さない
+// - --mutators <名前,名前>: 書き換えの種類を絞る（例: --mutators EventHandler,Disabled）
+// - --ui: 画面の操作の書き換え（UI_MUTATORS）だけにする。対象が無ければ UI_TARGETS（npm run mutation:ui）
 // 流し方:
-// 1. 対象のコードの文（と、式のアロー関数の値・正規表現など）に印を付け、対象を読み込むテストのファイルを流して、
-//    テストごとに、どの印を通ったかを調べる（scripts/mutation-setup.mjs）。ここで落ちるテストがあれば止める
+// 1. 対象のコードの文（と、式のアロー関数の値・正規表現など）に印を付け、対象を読み込むテストのファイル（test/*.test.ts と、
+//    画面のテスト test/renderer/*.test.{ts,tsx}）を流して、テストごとに、どの印を通ったかを調べる（scripts/mutation-setup.mjs）。
+//    ここで落ちるテストがあれば止める
 // 2. ミュータントごとに、その場所を通ったテストだけを、速いファイルから流す（1 つ落ちたら止める）。
 //    読み込みや beforeAll で通った場所は、そのファイルのテストを全部流す。どのテストも通らない場所は流さない（no-coverage）
 // 書き換えたコードは Vite のプラグインで渡すので、ソースのファイルは書き換えない（scripts/mutation-worker.mjs）。
@@ -21,8 +24,21 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKER = join(root, 'scripts/mutation-worker.mjs');
 // 既定の対象: 読み取りの中核で、単体テストのよく通っているもの
 const DEFAULT_TARGETS = ['src/main/screen-parser.ts', 'src/shared/chat.ts'];
-// テストのファイル（vitest.config.ts の include と同じ test/*.test.ts）
-const TEST_DIR = join(root, 'test');
+// 画面の操作の書き換え（--ui）の既定の対象: ボタンの多い画面の部品
+const UI_TARGETS = [
+  'src/renderer/src/sessions/NewSessionPane.tsx',
+  'src/renderer/src/chat/ChatInput.tsx',
+  'src/renderer/src/scm/ScmPanel.tsx',
+  'src/renderer/src/chat/ClaudePane.tsx',
+  'src/renderer/src/sessions/Sidebar.tsx',
+];
+// 画面の操作の書き換えの種類（下の「書き換えの種類」）
+const UI_MUTATORS = ['EventHandler', 'CallbackProp', 'Disabled'];
+// テストのファイル（vitest.config.ts の include と同じ test/*.test.ts と test/renderer/*.test.{ts,tsx}）
+const TEST_DIRS = [
+  { dir: join(root, 'test'), pattern: /\.test\.ts$/ },
+  { dir: join(root, 'test/renderer'), pattern: /\.test\.tsx?$/ },
+];
 // 1 つのミュータントの待ち時間: 元のコードで流した時間の何倍と、足す時間
 const TIMEOUT_FACTOR = 1.5;
 const TIMEOUT_EXTRA_MS = 10_000;
@@ -41,13 +57,36 @@ const flag = (name) => {
   return i !== -1;
 };
 const concurrency = Math.max(1, Number(option('--concurrency', '2')) || 1);
-const outDir = resolve(root, option('--out', 'reports/mutation'));
+const ui = flag('--ui');
+const outDir = resolve(root, option('--out', ui ? 'reports/mutation-ui' : 'reports/mutation'));
 const listOnly = flag('--list');
+const mutatorOption = option('--mutators', null);
+// 使う書き換えの種類（null は全部）
+const mutatorFilter = mutatorOption ? new Set(mutatorOption.split(',').map((s) => s.trim()).filter(Boolean)) : ui ? new Set(UI_MUTATORS) : null;
 const toPath = (abs) => relative(root, abs).split('\\').join('/');
-const targets = [...new Set((argv.length > 0 ? argv : DEFAULT_TARGETS).map((t) => toPath(resolve(root, t))))];
+// フォルダを指定したときは、中の .ts・.tsx（--ui では .tsx だけ。ストーリーと型の宣言は除く）を全部。書き換えの無いファイルは結果に出さない
+const sourcesIn = (dir) =>
+  readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) return sourcesIn(abs);
+      return (ui ? /\.tsx$/ : /\.tsx?$/).test(entry.name) && !/\.(stories\.tsx|d\.ts)$/.test(entry.name) ? [abs] : [];
+    });
+const fromFolders = new Set();
+let targets = [];
+for (const arg of argv.length > 0 ? argv : ui ? UI_TARGETS : DEFAULT_TARGETS) {
+  const abs = resolve(root, arg);
+  if (existsSync(abs) && statSync(abs).isDirectory()) {
+    const files = sourcesIn(abs).map(toPath);
+    for (const file of files) fromFolders.add(file);
+    targets.push(...files);
+  } else targets.push(toPath(abs));
+}
+targets = [...new Set(targets)];
 for (const target of targets) {
   if (!/\.tsx?$/.test(target) || !existsSync(join(root, target))) {
-    console.error(`対象にできません（.ts・.tsx のファイルを指定してください）: ${target}`);
+    console.error(`対象にできません（.ts・.tsx のファイルか、フォルダを指定してください）: ${target}`);
     process.exit(1);
   }
 }
@@ -61,6 +100,39 @@ for (const target of targets) {
 // StringLiteral: 文字列を空に（空は空でなく） / Regex: 正規表現の ^ $ を外す・\d を \D に・[..] を [^..] に・回数の指定を外す・先読みを逆に
 // ReturnValue: return の値を undefined に / ArrowFunction: 式のアロー関数の値を undefined に / BlockStatement: ブロックを空に
 // OptionalChaining: ?. を . に / ArrayDeclaration: 配列を空に / MethodExpression: startsWith と endsWith の入れ替え・filter や slice を外す など
+// 画面の操作（.tsx の JSX。このスクリプトの独自）: 押しても効かない・押せない、を作る
+// EventHandler: 人の操作の受け手（EVENTS の onClick・onChange など）を undefined に。素の要素（button・input など）にも、
+//   部品（IconButton など）に渡すものにも / CallbackProp: 部品に渡す、ほかの onXxx（onSend・onSelect など）を undefined に /
+// Disabled: disabled={式} を disabled={true} に
+const EVENTS = new Set(['onClick', 'onDoubleClick', 'onMouseDown', 'onContextMenu', 'onKeyDown', 'onChange', 'onInput', 'onSubmit', 'onDrop', 'onPaste']);
+// どのボタン・入力かの説明に使う属性（先にあるものほど優先）
+const LABEL_ATTRIBUTES = ['aria-label', 'label', 'title', 'tip', 'data-tip', 'placeholder', 'alt'];
+const FORM_CONTROLS = new Set(['input', 'select', 'textarea', 'option']);
+const MUTATORS = [
+  'EqualityOperator',
+  'ArithmeticOperator',
+  'LogicalOperator',
+  'ConditionalExpression',
+  'BooleanLiteral',
+  'UnaryOperator',
+  'UpdateOperator',
+  'AssignmentOperator',
+  'StringLiteral',
+  'Regex',
+  'ReturnValue',
+  'ArrowFunction',
+  'BlockStatement',
+  'OptionalChaining',
+  'ArrayDeclaration',
+  'MethodExpression',
+  ...UI_MUTATORS,
+];
+for (const name of mutatorFilter ?? []) {
+  if (!MUTATORS.includes(name)) {
+    console.error(`書き換えの種類が違います: ${name}（${MUTATORS.join('・')}）`);
+    process.exit(1);
+  }
+}
 const BINARY = {
   '===': ['!=='],
   '!==': ['==='],
@@ -173,14 +245,143 @@ function regexVariants(pattern) {
   return out;
 }
 
+// ---- 画面の操作の書き換え（JSX）の補助 ----
+
+// 子のノード（位置などの情報は除く）
+function* childNodes(node) {
+  for (const key of Object.keys(node)) {
+    if (SKIP_KEYS.has(key)) continue;
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const child of value) if (child && typeof child.type === 'string') yield [key, child];
+    } else if (value && typeof value.type === 'string') yield [key, value];
+  }
+}
+
+// ファイルの中の、名前の付いた関数（function f() {}・const f = () => {}・const f = useCallback(() => {}, [])）と、それが見える範囲（ブロック）。
+// onClick={f} の f が、押したときに動いたかを、f の中の印で調べるために使う
+function namedFunctions(program) {
+  const out = [];
+  const go = (node, scope) => {
+    if (node.type === 'FunctionDeclaration' && node.id) out.push({ name: node.id.name, scope, fn: node });
+    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) {
+      let init = node.init;
+      while (TS_EXPRESSION.has(init.type)) init = init.expression;
+      if (init.type === 'CallExpression' && init.callee.type === 'Identifier' && init.callee.name === 'useCallback') init = init.arguments[0];
+      if (init && /^(ArrowFunctionExpression|FunctionExpression)$/.test(init.type)) out.push({ name: node.id.name, scope, fn: init });
+    }
+    const inner = /^(BlockStatement|Program|StaticBlock)$/.test(node.type) ? node : scope;
+    for (const [, child] of childNodes(node)) go(child, inner);
+  };
+  go(program, program);
+  // name の、位置 at から見える関数（いちばん内側のもの）
+  return (name, at) =>
+    out
+      .filter((f) => f.name === name && f.scope.start <= at && at < f.scope.end)
+      .sort((a, b) => a.scope.end - a.scope.start - (b.scope.end - b.scope.start))[0]?.fn ?? null;
+}
+
+// 関数が呼ばれたことの分かる印の場所（式の本体か、本体のはじめの文）。空の関数では null
+function entryOf(fn) {
+  if (fn.body.type !== 'BlockStatement') return fn.body;
+  return fn.body.body[0] ?? null;
+}
+
+function jsxName(name) {
+  if (name.type === 'JSXIdentifier') return name.name;
+  if (name.type === 'JSXMemberExpression') return `${jsxName(name.object)}.${name.property.name}`;
+  return `${name.namespace.name}:${name.name.name}`;
+}
+
+// JSX の要素（JSXElement）が「どのボタン・入力か」の説明。例: IconButton「送信」・button「別のフォルダを選ぶ…」・
+// input[checkbox]「worktree を使う」・span.attachment.comment-chip「{c.text}」。path は要素の外側の祖先（内側が後ろ）。
+// 名前の手がかりは、属性（aria-label・label・title など）→ 子の文字 →（入力は）囲んでいる <label> の文字の順。
+// 文字の決まっていないもの（{式}）しか無ければ、素の要素はクラス名を添える
+function describeElement(element, path, code) {
+  const opening = element.openingElement;
+  const tag = jsxName(opening.name);
+  const attribute = (name) => opening.attributes.find((a) => a.type === 'JSXAttribute' && a.name.type === 'JSXIdentifier' && a.name.name === name);
+  const src = (node) => code.slice(node.start, node.end);
+  const hasJsx = (node) => /^JSX(Element|Fragment)$/.test(node.type) || [...childNodes(node)].some(([, child]) => hasJsx(child));
+  // 式が取りうる文字（三項演算子の両方・?? の右など）。決まった文字が無ければ []
+  const textsOf = (node) => {
+    if (node.type === 'StringLiteral') return [node.value];
+    if (node.type === 'TemplateLiteral') {
+      const text = node.quasis.map((q) => q.value.cooked).join('…');
+      return /\p{L}/u.test(text) ? [text] : [];
+    }
+    if (TS_EXPRESSION.has(node.type)) return textsOf(node.expression);
+    if (node.type === 'ConditionalExpression') return [...textsOf(node.consequent), ...textsOf(node.alternate)];
+    if (node.type === 'LogicalExpression') return [...textsOf(node.left), ...textsOf(node.right)];
+    if (node.type === 'BinaryExpression' && node.operator === '+') return [[...textsOf(node.left), ...textsOf(node.right)].join('')].filter(Boolean);
+    return [];
+  };
+  // 文字と、それが決まった文字か（literal）
+  const textOf = (node) => {
+    const texts = textsOf(node).map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    return texts.length > 0 ? { text: [...new Set(texts)].join('／'), literal: true } : { text: `{${oneLine(src(node), 40)}}`, literal: false };
+  };
+  const valueOf = (attr) => {
+    if (!attr?.value) return null;
+    if (attr.value.type === 'StringLiteral') return { text: attr.value.value, literal: true };
+    if (attr.value.type !== 'JSXExpressionContainer' || attr.value.expression.type === 'JSXEmptyExpression') return null;
+    return textOf(attr.value.expression);
+  };
+  // 子の文字（入れ子の要素の中も。要素を出し分ける {式} の中は見ない）
+  const childrenText = (node) => {
+    let literal = false;
+    const parts = node.children.map((child) => {
+      if (child.type === 'JSXText') {
+        // 記号だけ（› など）は名前の手がかりにしない
+        if (/\p{L}/u.test(child.value)) literal = true;
+        return child.value;
+      }
+      if (child.type === 'JSXElement' || child.type === 'JSXFragment') {
+        const inner = childrenText(child);
+        literal ||= inner.literal;
+        return ` ${inner.text} `;
+      }
+      if (child.type !== 'JSXExpressionContainer' || child.expression.type === 'JSXEmptyExpression' || hasJsx(child.expression)) return '';
+      const value = textOf(child.expression);
+      literal ||= value.literal;
+      return ` ${value.text} `;
+    });
+    return { text: parts.join('').replace(/\s+/g, ' ').trim(), literal };
+  };
+  const candidates = [];
+  for (const name of LABEL_ATTRIBUTES) {
+    const value = valueOf(attribute(name));
+    if (value) candidates.push(value);
+  }
+  const inner = childrenText(element);
+  if (inner.text) candidates.push(inner);
+  if (FORM_CONTROLS.has(tag)) {
+    // 入力は、囲んでいる <label> の文字
+    const label = [...path].reverse().find((n) => n.type === 'JSXElement' && jsxName(n.openingElement.name) === 'label');
+    const text = label && childrenText(label);
+    if (text?.text) candidates.push(text);
+  }
+  const best = candidates.find((c) => c.literal) ?? candidates[0];
+  const type = FORM_CONTROLS.has(tag) ? valueOf(attribute('type')) : null;
+  let name = type?.literal ? `${tag}[${type.text}]` : tag;
+  if (!best?.literal && /^[a-z]/.test(tag)) {
+    const className = valueOf(attribute('className'));
+    const classes = className?.literal ? className.text.split(/[\s…／]+/).filter(Boolean) : [];
+    if (classes.length > 0) name += `.${classes.join('.')}`;
+  }
+  return best ? `${name}「${oneLine(best.text, 40)}」` : name;
+}
+
 // 印（probe）の番号。対象のファイルをまたいで通し番号にする
 let nextProbe = 0;
 
 // ミュータントと、テストごとに通った場所を調べるための印を作る
 function analyze(file) {
   const code = readFileSync(join(root, file), 'utf8');
+  const ast = parseCode(code, file);
   const at = locator(code);
   const src = (node) => code.slice(node.start, node.end);
+  const functionNamed = namedFunctions(ast.program);
   const found = [];
   // 印: statement は文の前に、expression は式を (印, 式) に、regexp は正規表現を、使ったときに知らせるものに置き換える
   const probes = [];
@@ -192,9 +393,12 @@ function analyze(file) {
     probeOf.set(node, id);
     return id;
   };
-  // probe: 書き換えが効くのは、その印を通ったとき（ノードを渡したときは、あとでそのノードの印にする）
-  const add = (mutator, node, replacement, probe = stack.at(-1)) =>
-    found.push({ mutator, start: node.start, end: node.end, replacement, probe, fallback: stack.at(-1) });
+  // probe: 書き換えが効くのは、その印を通ったとき（ノードを渡したときは、あとでそのノードの印にする）。
+  // extra: 画面の操作の書き換えで足すもの（target: どのボタン・入力か、trigger: 印が受け手の中（handler）か、描いたところ（render）か）
+  const add = (mutator, node, replacement, probe = stack.at(-1), extra = {}) => {
+    if (mutatorFilter && !mutatorFilter.has(mutator)) return;
+    found.push({ mutator, start: node.start, end: node.end, replacement, probe, fallback: stack.at(-1), ...extra });
+  };
   // 2 つの式の間にある演算子（間には空白・括弧・コメントだけがある）を差し替えた、式全体
   const swapOperator = (node, left, right, from, to) => {
     const gap = code.slice(left.end, right.start).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => ' '.repeat(c.length));
@@ -203,8 +407,37 @@ function analyze(file) {
     return code.slice(node.start, left.end + index) + to + code.slice(left.end + index + from.length, node.end);
   };
 
-  const visit = (node, parent) => {
+  const visit = (node, parent, path) => {
     switch (node.type) {
+      case 'JSXAttribute': {
+        if (node.name.type !== 'JSXIdentifier') break;
+        const name = node.name.name;
+        const element = path.at(-2);
+        const value = node.value?.type === 'JSXExpressionContainer' ? node.value.expression : null;
+        if (/^on[A-Z]/.test(name)) {
+          // 部品（大文字で始まる・a.B）に渡すものは、EVENTS 以外も CallbackProp に
+          const component = !/^[a-z]/.test(jsxName(parent.name));
+          const mutator = EVENTS.has(name) ? 'EventHandler' : component ? 'CallbackProp' : null;
+          if (!mutator || !value || value.type === 'JSXEmptyExpression' || (value.type === 'Identifier' && value.name === 'undefined')) break;
+          // 受け手の関数が分かるとき（その場の関数・名前の付いた関数）は、その中の印を通ったテスト（押したテスト）だけを流す。
+          // 分からないとき（props の関数など）は、描いたところの印
+          let handler = value;
+          while (TS_EXPRESSION.has(handler.type)) handler = handler.expression;
+          const fn = /^(ArrowFunctionExpression|FunctionExpression)$/.test(handler.type)
+            ? handler
+            : handler.type === 'Identifier'
+              ? functionNamed(handler.name, handler.start)
+              : null;
+          const entry = fn && entryOf(fn);
+          const extra = { target: describeElement(element, path.slice(0, -2), code), trigger: entry ? 'handler' : 'render' };
+          add(mutator, node, `${name}={undefined}`, entry ?? stack.at(-1), extra);
+        } else if (name === 'disabled') {
+          // disabled だけ（= true）と disabled={true} は、そのまま
+          if (!value || value.type === 'JSXEmptyExpression' || (value.type === 'BooleanLiteral' && value.value)) break;
+          add('Disabled', node, 'disabled={true}', stack.at(-1), { target: describeElement(element, path.slice(0, -2), code), trigger: 'render' });
+        }
+        break;
+      }
       case 'BinaryExpression':
         for (const to of BINARY[node.operator] ?? []) {
           const text = swapOperator(node, node.left, node.right, node.operator, to);
@@ -324,6 +557,8 @@ function analyze(file) {
     (parent?.type === 'ArrowFunctionExpression' && key === 'body' && parent.body.type !== 'BlockStatement') ||
     (/^Class(Private)?Property$/.test(parent?.type) && key === 'value') ||
     (parent?.type === 'AssignmentPattern' && key === 'right');
+  // path: 祖先のノード（内側が後ろ。JSX の要素の説明に使う）
+  const path = [];
   const walk = (node, parent, key) => {
     if (!node || typeof node.type !== 'string') return;
     if (node.type.startsWith('TS')) {
@@ -334,16 +569,13 @@ function analyze(file) {
     if (node.type === 'ImportDeclaration' || node.declare) return;
     const marked = isListed(parent, key) ? newProbe('statement', node) : isDeferred(parent, key) ? newProbe('expression', node) : null;
     if (marked !== null) stack.push(marked);
-    visit(node, parent);
-    for (const childKey of Object.keys(node)) {
-      if (SKIP_KEYS.has(childKey)) continue;
-      const value = node[childKey];
-      if (Array.isArray(value)) for (const child of value) walk(child, node, childKey);
-      else if (value && typeof value.type === 'string') walk(value, node, childKey);
-    }
+    visit(node, parent, path);
+    path.push(node);
+    for (const [childKey, child] of childNodes(node)) walk(child, node, childKey);
+    path.pop();
     if (marked !== null) stack.pop();
   };
-  walk(parseCode(code, file).program, null, null);
+  walk(ast.program, null, null);
 
   // 同じ書き換えは 1 つに。構文が壊れるもの（あれば）は外す
   const seen = new Set();
@@ -359,6 +591,7 @@ function analyze(file) {
       continue;
     }
     const start = at(m.start);
+    const probe = typeof m.probe === 'number' ? m.probe : probeOf.get(m.probe);
     mutants.push({
       id: `${file}#${mutants.length + 1}`,
       file,
@@ -367,7 +600,8 @@ function analyze(file) {
       column: start.column,
       original: code.slice(m.start, m.end),
       replacement: m.replacement,
-      probe: typeof m.probe === 'number' ? m.probe : (probeOf.get(m.probe) ?? m.fallback),
+      ...(m.target ? { target: m.target, trigger: probe === undefined ? 'render' : m.trigger } : {}),
+      probe: probe ?? m.fallback,
       code: mutated,
     });
   }
@@ -422,9 +656,13 @@ function importsOf(file) {
 function testFilesFor(targetPaths) {
   const wanted = targetPaths.map((t) => join(root, t));
   const result = [];
-  for (const name of readdirSync(TEST_DIR).sort()) {
-    if (!name.endsWith('.test.ts')) continue;
-    const testFile = join(TEST_DIR, name);
+  const testFiles = TEST_DIRS.flatMap(({ dir, pattern }) =>
+    readdirSync(dir)
+      .filter((name) => pattern.test(name))
+      .sort()
+      .map((name) => join(dir, name)),
+  );
+  for (const testFile of testFiles) {
     const visited = new Set([testFile]);
     const queue = [testFile];
     while (queue.length > 0) {
@@ -593,7 +831,7 @@ const duration = (ms) => {
 
 function summaryOf(results, elapsedMs) {
   const all = Object.values(results).flat();
-  const out = ['## ミューテーションテスト', ''];
+  const out = [ui ? '## ミューテーションテスト（画面の操作）' : '## ミューテーションテスト', ''];
   out.push(`対象 ${targets.length} ファイル・ミュータント ${all.length} 個・かかった時間 ${duration(elapsedMs)}（同時に ${concurrency}）`, '');
   out.push('| ファイル | スコア | 通った場所でのスコア | 落ちた | 時間切れ | 生き残り | テストが通らない | エラー |');
   out.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
@@ -604,14 +842,27 @@ function summaryOf(results, elapsedMs) {
   out.push('');
   out.push('- スコア: 落ちた・時間切れ ÷（落ちた・時間切れ・生き残り・テストが通らない）。通った場所でのスコアは、テストが通らないものを除いた割合');
   out.push('- 生き残り: テストがそこを通っても、結果まで確かめていない場所の候補（書き換えても動きの変わらない、等価なものも混じります）', '');
+  if (all.some((m) => m.target)) {
+    out.push('- 画面の操作（EventHandler・CallbackProp・Disabled）の生き残りは、そのボタン・入力が効かなくなっても（押せなくなっても）テストが落ちないもの');
+    out.push('- 画面の操作の「テストが通らない」は、押すテストが無い（受け手の関数を通ったテストが無い）か、描くテストが無い（その部品を描いたテストが無い）もの', '');
+  }
+  // 1 行の説明。画面の操作は、どのボタン・入力か（target）を添える
+  const describe = (m) => `- ${m.line} 行（${m.mutator}）${m.target ? ` ${m.target}` : ''}: ${inline(m.original)} → ${inline(m.replacement)}`;
   for (const [file, mutants] of Object.entries(results)) {
     const survived = mutants.filter((m) => m.status === 'survived');
     if (survived.length > 0) {
       out.push(`<details><summary>${file} の生き残り（${survived.length} 個）</summary>`, '');
-      for (const m of survived) out.push(`- ${m.line} 行（${m.mutator}）: ${inline(m.original)} → ${inline(m.replacement)}`);
+      for (const m of survived) out.push(describe(m));
       out.push('', '</details>', '');
     }
-    const uncovered = [...new Set(mutants.filter((m) => m.status === 'no-coverage').map((m) => m.line))];
+    // 画面の操作は、行でなく、どのボタン・入力かで出す
+    const untested = mutants.filter((m) => m.status === 'no-coverage' && m.target);
+    if (untested.length > 0) {
+      out.push(`<details><summary>${file} の、テストが押さない・描かない画面の操作（${untested.length} 個）</summary>`, '');
+      for (const m of untested) out.push(`${describe(m)}（${m.trigger === 'handler' ? '押すテストが無い' : '描くテストが無い'}）`);
+      out.push('', '</details>', '');
+    }
+    const uncovered = [...new Set(mutants.filter((m) => m.status === 'no-coverage' && !m.target).map((m) => m.line))];
     if (uncovered.length > 0) {
       out.push(`<details><summary>${file} の、テストが通らない行（${uncovered.length} 行）</summary>`, '', uncovered.join('、'), '', '</details>', '');
     }
@@ -622,12 +873,13 @@ function summaryOf(results, elapsedMs) {
 // ---- 本体 ----
 
 const started = Date.now();
-const analyses = targets.map(analyze);
+const analyses = targets.map(analyze).filter((a) => a.mutants.length > 0 || !fromFolders.has(a.file));
+targets = analyses.map((a) => a.file);
 const mutants = analyses.flatMap((a) => a.mutants);
 console.log(`ミュータント: ${analyses.map((a) => `${a.file} ${a.mutants.length} 個`).join('・')}`);
 
 if (listOnly) {
-  for (const m of mutants) console.log(`${m.file}:${m.line}:${m.column} ${m.mutator} ${inline(m.original)} → ${inline(m.replacement)}`);
+  for (const m of mutants) console.log(`${m.file}:${m.line}:${m.column} ${m.mutator}${m.target ? ` ${m.target}` : ''} ${inline(m.original)} → ${inline(m.replacement)}`);
   process.exit(0);
 }
 
