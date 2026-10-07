@@ -60,7 +60,7 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
   const activeShell = sessionId ? tabs.find((t) => t.id === active[sessionId]) ?? tabs[0] ?? null : null;
   const showShell = open && view === 'shell';
 
-  // アプリが開いたコマンドのタブ（終わってもタブを残す）
+  // アプリが開いたコマンドのタブのうち、終わってもタブを残すもの（× で止めたものは外し、終わったら閉じる）
   const taskIds = useRef(new Set<string>());
 
   // xterm を作ってパネルに置く（まだ見せない）
@@ -269,7 +269,11 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
                 onClick={(e) => {
                   e.stopPropagation();
                   if (t.task && t.exitCode !== undefined) closeTask(t.id);
-                  else window.tanacode.shell.kill(t.id);
+                  else {
+                    // 動いているコマンドを止めて閉じる。出力を見られるようタブを残すのは、ひとりでに終わったときだけ
+                    taskIds.current.delete(t.id);
+                    window.tanacode.shell.kill(t.id);
+                  }
                 }}
               />
             </div>

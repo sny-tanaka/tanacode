@@ -181,22 +181,23 @@ describe('TerminalPanel: シェルのタブ', () => {
     expect(api.argsOf('shell.kill')).toEqual([['sh1'], ['sh2']]);
   });
 
-  it('アプリが開いたコマンドのタブ: 動いている間の × は止め、終わったあとの × はタブを片付ける', async () => {
+  // 動いている間の ×（止めて閉じる）は、下の「押しても効かない（不具合）」で確かめる
+  it('アプリが開いたコマンドのタブ: ひとりでに終わってもタブは残し、終わったあとの × はタブを片付ける', async () => {
     render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
     act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install' }));
     expect(tabNames()).toEqual(['zsh 1', 'npm install（実行中）']);
     expect(selectedTab()).toBe(1);
     expect(closeOf(1).getAttribute('data-tip')).toBe('止めて閉じる');
-    fireEvent.click(closeOf(1));
-    expect(api.argsOf('shell.kill')).toEqual([['task1']]);
 
     act(() => api.emit('shell.onExit', { id: 'task1', exitCode: 1 }));
     // 出力を見られるよう、終わってもタブは残す
     expect(tabNames()).toEqual(['zsh 1', 'npm install（失敗 1）']);
+    expect(closeOf(1).getAttribute('data-tip')).toBe('このターミナルを閉じる');
     const task = termOf(1);
     fireEvent.click(closeOf(1));
-    expect(api.argsOf('shell.kill')).toEqual([['task1']]);
+    // もう止まっているので、止めずにタブだけを片付ける
+    expect(api.argsOf('shell.kill')).toEqual([]);
     expect(tabNames()).toEqual(['zsh 1']);
     expect(task.disposed).toBe(true);
     expect(task.element!.isConnected).toBe(false);
