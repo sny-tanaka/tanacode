@@ -51,6 +51,8 @@ const REMOTE_DISCONNECT = 'Disconnect this session';
 // つないだ・切ったあとに画面に出る知らせ
 const REMOTE_CONNECTED = '/remote-control is active';
 const REMOTE_DISCONNECTED = 'Remote Control disconnected';
+// /remote-control のメニューで選んだ・閉じたあと、メニューが閉じるのを待つ時間
+const REMOTE_MENU_CLOSE_MS = 1500;
 // トークン数が増えてからこれだけの間は、応答を受け取っている途中とみなす
 const WRITING_MS = 1500;
 // /tasks の画面で、目的の行を探して動かす回数の上限
@@ -398,16 +400,27 @@ export class ScreenTracker {
         if (!row) continue;
         if (row.includes('❯')) {
           this.write('\r');
+          await this.untilRemoteMenuClosed();
           return true;
         }
         this.write(KEY_UP);
       }
       // 思っていたのと違うメニュー（すでにつながっているなど）が出ていたら閉じる
-      if (this.lines().some((line) => line.text.includes(REMOTE_ENABLE) || line.text.includes(REMOTE_DISCONNECT))) this.write('\x1b');
+      if (this.lines().some((line) => line.text.includes(REMOTE_ENABLE) || line.text.includes(REMOTE_DISCONNECT))) {
+        this.write('\x1b');
+        await this.untilRemoteMenuClosed();
+      }
       return false;
     } finally {
       this.busy = false;
     }
+  }
+
+  // 選んだ・閉じた /remote-control のメニューが、画面の読み取りから消えるまで待つ。
+  // 消える前に返すと、呼び出し元が今の画面（まだメニュー）を、人の操作待ちとして知らせてしまう
+  private async untilRemoteMenuClosed(): Promise<void> {
+    const shown = () => !!this.menu()?.options.some((o) => o.label.includes(REMOTE_ENABLE) || o.label.includes(REMOTE_DISCONNECT));
+    await this.readUntil(() => !shown(), REMOTE_MENU_CLOSE_MS);
   }
 
   // バックグラウンドで動いているものを止める。本家の /tasks の画面を開き、name の行を選んで x を送る（人が押すのと同じ操作）。

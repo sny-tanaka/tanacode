@@ -7,11 +7,18 @@ const POLL_MS = 1000;
 // 完了時の記録が起動より前に書かれたものか見るときの余裕（会話ログの時刻とファイルの更新時刻のずれ）
 const CLOCK_SLACK_MS = 1000;
 const PREVIEW_CHARS = 300;
+// ワークフローのエージェントの会話ログの、ハーネスの前置き（2.1.292）。最初の発言は元のユーザーの依頼を伝える前置き（user request）で、
+// 次の発言が、スクリプトが渡した仕事を伝える前置き（computed task）。どちらも 1 行目が前置きの文で、続く行は本文を 2 文字ずつ字下げしたもの。
+// 自動で始まった実行は、automated trigger の前置きの行のあとに、computed task の前置きが続く
+const HARNESS = '[Workflow harness — ';
+const COMPUTED_TASK = '[Workflow harness — computed task]';
 
 // 会話ログの toolUseResult（Workflow ツールがバックグラウンドで起動したとき）
 export type WorkflowLaunch = {
   toolUseId: string;
   runId: string;
+  // 起動ごとの ID（再開しても runId は同じだが、これは変わる）。完了時の記録にも書かれる
+  taskId: string | null;
   name: string;
   summary: string;
   // <セッション>/subagents/workflows/<runId>。journal.jsonl と各エージェントの会話ログがある
@@ -32,6 +39,7 @@ export function workflowLaunchOf(entry: unknown, scripts: Map<string, string>): 
   return {
     toolUseId: block.tool_use_id,
     runId: r.runId,
+    taskId: typeof r.taskId === 'string' ? r.taskId : null,
     name: typeof r.workflowName === 'string' ? r.workflowName : r.runId,
     summary: typeof r.summary === 'string' ? r.summary : '',
     transcriptDir: r.transcriptDir,
@@ -292,7 +300,9 @@ type FinalRecord = Pick<WorkflowRun, 'status' | 'phases' | 'agents' | 'durationM
 };
 
 // 完了時の記録: <セッション>/workflows/<runId>.json。起動より前に書かれたものは、再開する前の実行の記録なので使わない。
-// until（再開した起動の時刻）より後に書かれたものは、再開した実行の記録
+// until（再開した起動の時刻）より後に書かれたものは、再開した実行の記録。
+// 記録の taskId が起動のものと違えば、同じ runId の別の起動の記録なので使わない（完了の直後に再開すると、
+// 前の実行の記録が、再開した起動の時刻とほとんど同時に書かれていて、時刻では見分けられない）
 async function readFinal(launch: WorkflowLaunch, until: number | null): Promise<FinalRecord | null> {
   const sessionDir = dirname(dirname(dirname(launch.transcriptDir)));
   const file = join(sessionDir, 'workflows', `${launch.runId}.json`);
@@ -303,6 +313,7 @@ async function readFinal(launch: WorkflowLaunch, until: number | null): Promise<
   if (!text) return null;
   try {
     const d = JSON.parse(text) as {
+      taskId?: unknown;
       status?: string;
       summary?: string;
       phases?: { title?: string; detail?: string }[];
@@ -311,6 +322,7 @@ async function readFinal(launch: WorkflowLaunch, until: number | null): Promise<
       totalTokens?: number;
       totalToolCalls?: number;
     };
+    if (launch.taskId !== null && typeof d.taskId === 'string' && d.taskId !== launch.taskId) return null;
     const progress = (d.workflowProgress ?? []).filter((p) => p.type === 'workflow_agent' && typeof p.agentId === 'string');
     const agents = progress.map((p) => ({
       ...newAgent(p.agentId as string, str(p.label), str(p.phaseTitle), str(p.model)),
@@ -445,7 +457,7 @@ async function readAgentLog(file: string, log: AgentLog): Promise<void> {
     const e = line as { type?: string; timestamp?: string; message?: { content?: unknown } };
     if (log.startedAt === null && e.timestamp) log.startedAt = Date.parse(e.timestamp) || null;
     const content = e.message?.content;
-    if (e.type === 'user' && typeof content === 'string' && log.prompt === null) log.prompt = content.slice(0, PREVIEW_CHARS);
+    if (e.type === 'user' && typeof content === 'string' && log.prompt === null) log.prompt = taskPrompt(content)?.slice(0, PREVIEW_CHARS) ?? null;
     if (e.type === 'assistant' && Array.isArray(content)) {
       for (const block of content as { type?: string; name?: string }[]) {
         if (block.type !== 'tool_use') continue;
@@ -454,6 +466,22 @@ async function readAgentLog(file: string, log: AgentLog): Promise<void> {
       }
     }
   }
+}
+
+// エージェントの発言から、スクリプトが渡した仕事の文（完了時の記録の promptPreview と同じもの）を取り出す。
+// 前置きの無い発言は、そのまま。仕事の文の無い前置き（ユーザーの依頼を伝えるもの）は null（次の発言を見る）
+function taskPrompt(content: string): string | null {
+  if (!content.startsWith(HARNESS)) return content;
+  const lines = content.split('\n');
+  const at = lines.findIndex((line) => line.startsWith(COMPUTED_TASK));
+  if (at === -1) return null;
+  return (
+    lines
+      .slice(at + 1)
+      .map((line) => line.replace(/^ {2}/, ''))
+      .join('\n')
+      .trim() || null
+  );
 }
 
 function parseLines(buf: Buffer): unknown[] {

@@ -177,6 +177,7 @@ describe('TaskRouter', () => {
       {
         toolUseId: 'toolu_wf',
         runId: 'wf_1',
+        taskId: 'wb7qvqa8p',
         name: 'tanacode-check',
         summary: '確認のワークフロー',
         transcriptDir: WF_DIR,
