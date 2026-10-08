@@ -137,13 +137,11 @@ disable-model-invocation: true
    git switch -c release/vX.Y.Z
    npm version X.Y.Z --no-git-tag-version
    git diff --stat
-   npm run typecheck
-   npm test
    ```
 
    確かめること
    - `git diff --stat` に出るのが `package.json` と `package-lock.json` の 2 つだけ
-   - `npm run typecheck` と `npm test` が通ること（タグを付けたあとの Actions で落ちて、作り直すのを防ぎます）。通らなければ止めてユーザーに伝えます（このブランチでは直しません。直しは別の PR で）
+   - 型チェックとテストは、手元では流しません。この PR の CI（4）で流れ、`release.yml` は流しません（develop に入っているかだけを見ます）
 
 2. コミットしてプッシュし、develop 向けの PR を作ります。コミットメッセージと PR は日本語。
 

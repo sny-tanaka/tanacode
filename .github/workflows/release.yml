@@ -28,7 +28,20 @@ jobs:
       # 今回のタグ。タグのプッシュならそのタグ、手動の起動なら v<入力したバージョン>
       TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
     steps:
+      # 下で、develop に入っているコミットかを確かめるため、履歴を取る（ファイルの中身は、作業に使うものだけ取る）
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      # develop に入っている（PR の CI を通った）コミットだけを配る。タグは手元から、どのコミットにも付けられるため。
+      # 型チェックとテストは、ここでは流さない。develop にはルールセットで PR を通したものしか入らず、その PR の CI
+      # （ci.yml。型チェック・単体テスト・本物の claude・.app での E2E）で確かめてあるため
+      - name: develop に入っているコミットか確かめる
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/develop; then
+            echo "::error::$GITHUB_SHA は develop に入っていません。develop に入ったコミットにタグを付けてください"
+            exit 1
+          fi
       # 手動の起動は develop から、まだ無いタグに限る（ビルドの前に止めて、時間を無駄にしない）
       - name: 手動の起動を確かめる
         if: github.event_name == 'workflow_dispatch'
@@ -50,8 +63,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
       # タグとアプリのバージョンがずれていたら止める（package.json の version を上げ忘れないように）
       - name: バージョンを確かめる
         run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
