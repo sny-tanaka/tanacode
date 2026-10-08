@@ -193,6 +193,22 @@ describe('BashTaskTracker の起動・完了・出力', () => {
     expect(calls).toBe(before + 1);
   });
 
+  it('完了通知が、出力ファイルの終わりの印より先に届いても、通知に書かれた終了コードで終わる。印が書かれていれば、印のほうを使う', async () => {
+    // Claude Code は、完了通知を出してから出力ファイルに終わりの印を書くことがある（CI の macOS で、印の無いまま完了になった）
+    const early = join(dir!, 'early.output');
+    const marked = join(dir!, 'marked.output');
+    writeFileSync(early, 'bg-done\n');
+    writeFileSync(marked, 'エラー\n[exited with code 2]\n');
+    tracker.start('toolu_early', { command: 'early' }, { backgroundTaskId: 'b1' }, text(early), false);
+    tracker.start('toolu_marked', { command: 'marked' }, { backgroundTaskId: 'b2' }, text(marked), false);
+    await waitFor(() => find('toolu_early')?.output === 'bg-done\n' && find('toolu_marked')?.state === 'failed');
+    tracker.notified('toolu_early', 'completed', 0);
+    tracker.notified('toolu_marked', 'failed', 1);
+    await waitFor(() => find('toolu_early')?.state === 'completed');
+    expect(find('toolu_early')).toMatchObject({ state: 'completed', exitCode: 0, output: 'bg-done\n' });
+    expect(find('toolu_marked')).toMatchObject({ state: 'failed', exitCode: 2 });
+  });
+
   it('1 秒ごとに出力を読み直し、動いているものが無くなったら読むのをやめる', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {

@@ -197,13 +197,24 @@ describe('TaskRouter', () => {
     router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: AGENT_NOTICE } }, false, false);
     expect(workflows.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed');
     expect(subagents.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', 'サブエージェントの結果', { durationMs: 1746, totalTokens: 120, toolUses: 2 });
-    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed');
+    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', null);
+    // Bash の通知は、要約に書かれた終了コードも渡す
+    router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: BASH_NOTICE } }, false, false);
+    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_bg', 'completed', 0);
     router.track({ type: 'user', message: { content: '<task-notification>\n<summary>なにか</summary>\n</task-notification>' } }, false, false);
-    expect(workflows.notified).toHaveBeenCalledTimes(1);
+    expect(workflows.notified).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('taskNotificationOf', () => {
+  it('Bash の要約に書かれた終了コード（exit code N）を読む。要約に無ければ null（結果の文の中の同じ文字は読まない）', () => {
+    // 失敗したときの要約の言い回しは控えに無いので、「exit code」に続く数字を読むことだけを確かめる
+    const failed = BASH_NOTICE.replace('<status>completed</status>', '<status>failed</status>').replace('completed (exit code 0)', 'failed with exit code 127');
+    expect(taskNotificationOf({ type: 'user', message: { content: failed } })).toMatchObject({ status: 'failed', exitCode: 127 });
+    const inResult = AGENT_NOTICE.replace('サブエージェントの結果', 'exit code 3 で終わりました');
+    expect(taskNotificationOf({ type: 'user', message: { content: inResult } })?.exitCode).toBeNull();
+  });
+
   it('待機中に届いた通知（発言の行）。使用量は本文の <usage> から読む', () => {
     expect(taskNotificationOf({ type: 'user', origin: { kind: 'task-notification' }, message: { content: AGENT_NOTICE } })).toEqual({
       text: AGENT_NOTICE,
@@ -211,6 +222,7 @@ describe('taskNotificationOf', () => {
       toolUseId: 'toolu_agent',
       status: 'completed',
       result: 'サブエージェントの結果',
+      exitCode: null,
     });
   });
 
@@ -221,6 +233,7 @@ describe('taskNotificationOf', () => {
       toolUseId: 'toolu_bg',
       status: 'completed',
       result: null,
+      exitCode: 0,
     });
     expect(taskNotificationOf({ type: 'queue-operation', operation: 'dequeue' } as TranscriptEntry)).toBeNull();
     expect(taskNotificationOf({ type: 'queue-operation', operation: 'enqueue', content: '追加の頼みです' } as TranscriptEntry)).toBeNull();
