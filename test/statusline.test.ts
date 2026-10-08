@@ -17,12 +17,15 @@ const askJson = readFileSync(join(FIXTURE, 'ask.json'), 'utf8');
 
 describe('parseStatusLine', () => {
   it('控えの statusLine から、モデル・バージョン・コンテキスト・料金・会話ログを読む', () => {
+    // 料金は、控えを取った実行ごとに違う（バージョンを上げると変わる）ので、控えの値を読む
+    const cost = JSON.parse(statusJson).cost.total_cost_usd;
+    expect(cost).toBeGreaterThan(0);
     expect(parseStatusLine(statusJson, 123)).toEqual({
       model: { id: 'claude-opus-5-5', name: 'Opus 5.5' },
       version: VERIFIED_CLAUDE_CODE_VERSION,
       context: { size: 1_000_000, usedPercent: 0, tokens: 100 },
       rateLimits: null,
-      costUsd: 0.0026,
+      costUsd: cost,
       transcriptPath: JSON.parse(statusJson).transcript_path,
       updatedAt: 123,
     });
