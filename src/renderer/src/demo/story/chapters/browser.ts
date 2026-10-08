@@ -14,8 +14,10 @@ import { MAIN, type Story } from '../story';
 const PROMPT = 'スマホだと税抜の表示が途中で折り返して読みにくいので、税抜は価格の下の行に出して';
 const BROWSER = 'mcp__tanacode-browser__';
 
-// ブラウザのページの中の要素へカーソルを動かす（ページには、動いた位置の出来事を送る）
+// ブラウザのページの中の要素へカーソルを動かす（ページには、動いた位置の出来事を送る）。
+// ページは開いてから描き終えるまでに間があり、待ち時間を 0 にして流すときや遅い端末では、まだ要素が無いことがある。出てくるまで待つ
 async function moveInPage(d: Director, selector: string, ms = 700): Promise<{ x: number; y: number }> {
+  await d.find(() => demoWebview()?.pageElement(selector)?.el).catch(() => null);
   const wv = demoWebview();
   const target = wv?.pageElement(selector);
   if (!wv || !target) throw new Error(`demo: ページの要素が見つかりません: ${selector}`);
