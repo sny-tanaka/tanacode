@@ -385,10 +385,12 @@ describe('ExportDialog（作業を書き出す前の確認）', () => {
   const select = (label: string) => screen.getByLabelText(label) as HTMLSelectElement;
   const option = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
   const exportButton = () => screen.getByText(/^書き出(す…|しています…)$/) as HTMLButtonElement;
-  // 書き出す…を押して、保存した HTML（saveExport に渡したもの）を返す
+  // 書き出す…を押して、保存した HTML（saveExport に渡したもの）を返す。
+  // HTML を組み立てる間は重く、テストを並べて流して手が詰まっていると 1 秒（findBy の既定）を超えることがあるので、長めに待つ。
+  // 待ち切れずにテストが終わると、書き出しの続きが次のテストの API の呼び出しに混ざる（読みにいく画像など）
   async function exportHtml(): Promise<string> {
     fireEvent.click(exportButton());
-    await screen.findByText(/保存しました/);
+    await screen.findByText(/保存しました/, undefined, { timeout: 10_000 });
     const [[html]] = api.argsOf('sessions.saveExport') as [string, string][];
     return html;
   }

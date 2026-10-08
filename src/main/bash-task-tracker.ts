@@ -50,15 +50,16 @@ export class BashTaskTracker {
   }
 
   // 完了通知（<task-notification>）。出力ファイルの最後（終了コード）を読んでから、終わったことにして知らせる
-  // （先に終わったことにすると、読んでいる途中の読み込みが、終了コードの無いまま「完了」を知らせてしまう）
-  notified(toolUseId: string, status: string): void {
+  // （先に終わったことにすると、読んでいる途中の読み込みが、終了コードの無いまま「完了」を知らせてしまう）。
+  // Claude Code は、通知を出してから終わりの印を書くことがあるので、印がまだ無ければ通知の要約に書かれた終了コード（exitCode）を使う
+  notified(toolUseId: string, status: string, exitCode: number | null = null): void {
     const t = this.tasks.get(toolUseId);
     if (!t) return;
     const state = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : status === 'killed' ? 'killed' : 'stopped';
     const notifiedAt = Date.now();
     t.size = -1;
     void this.poll().then(() => {
-      t.task = { ...t.task, state, endedAt: t.task.endedAt ?? (t.task.startedAt ? notifiedAt : null) };
+      t.task = { ...t.task, state, exitCode: t.task.exitCode ?? exitCode, endedAt: t.task.endedAt ?? (t.task.startedAt ? notifiedAt : null) };
       this.onChange(this.all());
     });
   }
