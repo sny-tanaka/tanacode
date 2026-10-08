@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -143,9 +144,12 @@ describe('McpBridge（アプリ側の待ち受け）', () => {
 describe('callBridge（中継の側）', () => {
   it('アプリが起動していない（ソケットが無い・待ち受けていない）なら、決めた文を返す', async () => {
     expect(await callBridge(join(root, 'none.sock'), request, 5000, CLOSED)).toEqual(textResult(CLOSED, true));
-    // 待ち受けていないファイル
-    writeFileSync(join(root, 'stale.sock'), '');
-    expect(await callBridge(join(root, 'stale.sock'), request, 5000, CLOSED)).toEqual(textResult(CLOSED, true));
+    // 待ち受けていたアプリが落ちて、ソケットのファイルだけ残ったもの（ふつうのファイルではなく、ソケットのファイル。
+    // ふつうのファイルにつなぐと、macOS では ENOTSOCK になる）
+    const stale = join(root, 'stale.sock');
+    spawnSync(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(stale)}, () => process.kill(process.pid, 'SIGKILL'))`]);
+    expect(statSync(stale).isSocket()).toBe(true);
+    expect(await callBridge(stale, request, 5000, CLOSED)).toEqual(textResult(CLOSED, true));
   });
 
   it('ほかの理由でつながらなければ、理由（エラーのコード）を添える', async () => {
