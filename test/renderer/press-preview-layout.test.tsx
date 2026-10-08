@@ -132,6 +132,23 @@ describe('新しいバージョンの印（AppUpdateMark）', () => {
     expect(localStorage.getItem(SEEN_KEY)).toBe('1.4.0');
   });
 
+  it('Homebrew でダウンロードしている途中は、印のまま（押すと Releases のページ）。ツールチップで知らせる', () => {
+    render(<AppUpdateMark update={{ ...update('1.3.0'), homebrew: { status: 'downloading' } }} />);
+    expect(mark('1.3.0').dataset.tip).toContain('Homebrew でダウンロードしています');
+    fireEvent.click(mark('1.3.0'));
+    expect(opened).toEqual(['https://github.com/sny-tanaka/tanacode/releases/tag/v1.3.0']);
+    expect(api.argsOf('appUpdate.install')).toEqual([]);
+  });
+
+  it('Homebrew でダウンロード済みなら「再起動して更新」を出し、押すと main に入れ替えを頼む', () => {
+    render(<AppUpdateMark update={{ ...update('1.3.0'), homebrew: { status: 'ready', version: '1.3.0' } }} />);
+    const button = screen.getByRole('button', { name: '再起動して v1.3.0 に更新' });
+    expect(button.textContent).toBe('再起動して更新');
+    fireEvent.click(button);
+    expect(api.argsOf('appUpdate.install')).toEqual([[]]);
+    expect(opened).toEqual([]);
+  });
+
   it('最新なら押すものは出さない', () => {
     render(<AppUpdateMark update={{ latest: '1.2.0', available: false, url: '' }} />);
     expect(screen.queryByRole('button')).toBeNull();

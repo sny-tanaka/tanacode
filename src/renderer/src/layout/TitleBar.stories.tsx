@@ -34,3 +34,16 @@ export const 新しいバージョンあり: Story = {
   beforeEach: () => localStorage.removeItem(SEEN_KEY),
   args: { update: { latest: '9.9.9', available: true, url: 'https://github.com/sny-tanaka/tanacode/releases/tag/v9.9.9' } },
 };
+
+// Homebrew で入れていて、新しいバージョンをダウンロードしている途中。印はそのままで、ツールチップで知らせる
+export const Homebrewでダウンロード中: Story = {
+  beforeEach: () => localStorage.setItem(SEEN_KEY, '9.9.9'),
+  args: { update: { latest: '9.9.9', available: true, url: 'https://github.com/sny-tanaka/tanacode/releases/tag/v9.9.9', homebrew: { status: 'downloading' } } },
+};
+
+// Homebrew で入れていて、新しいバージョンをダウンロードし終えた。押すと、終了して入れ替え、起動し直す
+export const Homebrewで更新できる: Story = {
+  args: {
+    update: { latest: '9.9.9', available: true, url: 'https://github.com/sny-tanaka/tanacode/releases/tag/v9.9.9', homebrew: { status: 'ready', version: '9.9.9' } },
+  },
+};

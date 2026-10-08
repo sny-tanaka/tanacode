@@ -20,7 +20,7 @@ export function useAppUpdate(): AppUpdate | null {
 // 新しいバージョンを入れる手順（README の「更新」と同じ）
 const STEPS = [
   '更新の手順',
-  '・Homebrew で入れた場合: 「ファイル → Claude Code も止めて終了」で終了してから、brew update && brew upgrade --cask tanacode を実行します',
+  '・Homebrew で入れた場合: 新しいバージョンを裏でダウンロードし、終わるとここに「再起動して更新」が出ます。手で入れるときは、「ファイル → Claude Code も止めて終了」で終了してから、brew update && brew upgrade --cask tanacode を実行します',
   '・ビルド済みのアプリの場合: 「ファイル → Claude Code も止めて終了」で終了してから、新しいバージョンを入れます',
   '・ソースから入れた場合: git pull・npm install・npm run install-app を実行して、tanacode を起動し直します',
 ].join('\n');
@@ -38,7 +38,8 @@ function seenVersion(): string | null {
 
 // タイトルバーのバージョンの横の印。最新なら控えめなチェック、新しいバージョンがあれば青いダウンロードの印。
 // 文字は出さず、マウスを乗せると「最新バージョンです」「v0.1.5 があります」と、更新の手順が出る。
-// 新しいバージョンの印を押すと、そのバージョンの Releases のページを開く
+// 新しいバージョンの印を押すと、そのバージョンの Releases のページを開く。
+// Homebrew で入れていて、新しいバージョンをダウンロードし終えたら、印の代わりに「再起動して更新」のボタンを出す
 export function AppUpdateMark({ update }: { update: AppUpdate | null }) {
   if (!update) return null;
   if (!update.available)
@@ -47,6 +48,7 @@ export function AppUpdateMark({ update }: { update: AppUpdate | null }) {
         <CheckCircleIcon size={14} />
       </span>
     );
+  if (update.homebrew?.status === 'ready') return <UpdateReady version={update.homebrew.version} />;
   return <UpdateAvailable key={update.latest} update={update} />;
 }
 
@@ -69,12 +71,39 @@ function UpdateAvailable({ update }: { update: AppUpdate }) {
     <button
       className={`app-update available${seen ? '' : ' calling'}`}
       aria-label={`v${update.latest} があります`}
-      data-tip={`v${update.latest} があります\n押すと、GitHub の Releases のページを開きます\n\n${STEPS}`}
+      data-tip={`v${update.latest} があります\n${homebrewNote(update)}押すと、GitHub の Releases のページを開きます\n\n${STEPS}`}
       onMouseEnter={markSeen}
       onFocus={markSeen}
       onClick={() => (markSeen(), window.open(update.url))}
     >
       <DownloadIcon size={14} />
+    </button>
+  );
+}
+
+// Homebrew で用意している途中・用意できなかったときに、ツールチップに足す一文
+function homebrewNote(update: AppUpdate): string {
+  if (update.homebrew?.status === 'downloading') return 'Homebrew でダウンロードしています。終わると、ここから更新できます\n';
+  if (update.homebrew?.status === 'failed') return 'Homebrew でダウンロードできませんでした。あとでやり直します\n';
+  return '';
+}
+
+// ダウンロード済みの新しいバージョン（Homebrew）。押すと、tanacode を終了し、入れ替えてから起動し直す。
+// Claude Code が動いていれば、止めるかを main が聞く
+function UpdateReady({ version }: { version: string }) {
+  return (
+    <button
+      className="app-update available ready"
+      aria-label={`再起動して v${version} に更新`}
+      data-tip={[
+        `v${version} をダウンロードしました`,
+        '押すと、tanacode を終了し、Homebrew で入れ替えてから起動し直します',
+        'メニューの「終了するときに新しいバージョンを入れる」がオンなら、ふつうに終了したときにも入れ替えます',
+      ].join('\n')}
+      onClick={() => void window.tanacode.appUpdate.install()}
+    >
+      <DownloadIcon size={14} />
+      <span>再起動して更新</span>
     </button>
   );
 }
