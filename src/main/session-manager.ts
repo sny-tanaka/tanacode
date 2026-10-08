@@ -21,7 +21,7 @@ import type {
   WorktreePreparing,
   WorktreeRemoval,
 } from '@shared/ipc';
-import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { Activity, AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
@@ -672,13 +672,14 @@ export class SessionManager {
     return (await this.runtimes.get(id)?.screen?.rewindTo(text)) ?? false;
   }
 
-  async choose(id: string, choice: ScreenChoice): Promise<void> {
-    await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text);
+  // カードの選択肢を選ぶ。選べなかったときは理由を返す（画面がカードに出す）
+  async choose(id: string, choice: ScreenChoice): Promise<ChooseResult> {
+    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text)) ?? 'gone';
   }
 
-  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。押せたら true
+  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。選べたら true
   async chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean> {
-    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) ?? false;
+    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) === 'chosen';
   }
 
   configure(id: string, options: SessionOptions): void {
@@ -1060,6 +1061,7 @@ export class SessionManager {
           screen.feed(data);
           this.listeners.onPtyData(id, data);
         },
+        onInput: () => screen.noteInput(),
         onExit: (exitCode) => {
           rt.process = null;
           this.settingsFiles?.release(id);

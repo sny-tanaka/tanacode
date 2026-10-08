@@ -76,7 +76,7 @@ export class TaskRouter {
     if (notice && notice.toolUseId !== null && notice.status !== null) {
       workflows.notified(notice.toolUseId, notice.status);
       subagents.notified(notice.toolUseId, notice.status, notice.result, notice.usage);
-      bashTasks.notified(notice.toolUseId, notice.status);
+      bashTasks.notified(notice.toolUseId, notice.status, notice.exitCode);
     }
   }
 }
@@ -88,13 +88,15 @@ function isTrue(value: unknown): boolean {
 
 export type TaskUsage = { durationMs: number | null; totalTokens: number | null; toolUses: number | null };
 
-// 完了通知の中身。toolUseId・status: どのタスクがどうなったか（無ければ null）。result: サブエージェントの結果の文
+// 完了通知の中身。toolUseId・status: どのタスクがどうなったか（無ければ null）。result: サブエージェントの結果の文。
+// exitCode: Bash の要約に書かれた終了コード（「Background command "…" completed (exit code 0)」。無ければ null）
 export type TaskNotification = {
   text: string;
   usage: TaskUsage | null;
   toolUseId: string | null;
   status: string | null;
   result: string | null;
+  exitCode: number | null;
 };
 
 // バックグラウンドのタスクの完了通知（<task-notification>）。書かれ方は 3 通りあり、同じ通知が複数の形で書かれることもある
@@ -125,7 +127,13 @@ export function taskNotificationOf(entry: TranscriptEntry): TaskNotification | n
     toolUseId: notified?.[1] ?? null,
     status: notified?.[2] ?? null,
     result: text.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim() ?? null,
+    exitCode: exitCodeOf(text.match(/<summary>([\s\S]*?)<\/summary>/)?.[1]),
   };
+}
+
+function exitCodeOf(summary: string | undefined): number | null {
+  const code = summary?.match(/\bexit code (-?\d+)/)?.[1];
+  return code === undefined ? null : Number(code);
 }
 
 // 本文の <usage>（例: <usage><subagent_tokens>120</subagent_tokens><tool_uses>1</tool_uses><duration_ms>395</duration_ms></usage>）。
