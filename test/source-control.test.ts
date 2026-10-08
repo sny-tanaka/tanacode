@@ -71,6 +71,8 @@ it('手元の main が origin 以外を追跡していても origin の最新ま
   const latest = await advanceRemote('second');
   await new SourceControl(local).switchToLatestDefault();
   expect(await head(local)).toBe(latest);
+  // 手元で決めた上流は、そのまま
+  expect((await run(local, ['rev-parse', '--abbrev-ref', 'main@{u}'])).trim()).toBe('upstream/main');
 });
 
 it('手元の main が分かれていたら、切り替えたうえで知らせる', async () => {

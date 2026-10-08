@@ -200,6 +200,137 @@ describe('ScheduledMessages', () => {
   });
 });
 
+describe('ScheduledMessages の断る・片付ける', () => {
+  it('送っている途中のものは、時刻を変えられない。今すぐ送るを押しても、二重に送らない', async () => {
+    const { scheduled, sent } = create({ s1: 'working' });
+    const message = scheduled.add('s1', '送る', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(scheduled.list()[0]?.state).toBe('sending');
+    expect(() => scheduled.reschedule(message.id, START + 10 * MINUTE)).toThrow('送っている途中のため、時刻を変えられません');
+    scheduled.sendNow(message.id);
+    await flush();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('過去の時刻・数でない時刻には変えられない。知らない予約は見つからない', () => {
+    const { scheduled } = create({ s1: 'idle' });
+    const message = scheduled.add('s1', '送る', [], START + MINUTE);
+    expect(() => scheduled.reschedule(message.id, START - 1)).toThrow('これから先の時刻を指定してください');
+    expect(() => scheduled.reschedule(message.id, Number.NaN)).toThrow('これから先の時刻を指定してください');
+    expect(() => scheduled.add('s1', '送る', [], Number.POSITIVE_INFINITY)).toThrow('これから先の時刻を指定してください');
+    expect(() => scheduled.reschedule('nope', START + MINUTE)).toThrow('予約が見つかりません');
+    expect(() => scheduled.sendNow('nope')).toThrow('予約が見つかりません');
+    expect(scheduled.cancel('nope')).toBeNull();
+    expect(scheduled.list().map((m) => m.at)).toEqual([START + MINUTE]);
+  });
+
+  it('画像だけの予約もできる', () => {
+    const { scheduled } = create({ s1: 'idle' });
+    expect(scheduled.add('s1', '', ['/tmp/a.png'], START + MINUTE).attachments).toEqual(['/tmp/a.png']);
+  });
+
+  it('予約の無いセッションを閉じても、保存し直さない', () => {
+    const { scheduled, changes } = create({ s1: 'idle', s2: 'idle' });
+    scheduled.add('s1', '送る', [], START + MINUTE);
+    const before = changes.length;
+    scheduled.dropSession('s2');
+    expect(changes).toHaveLength(before);
+  });
+
+  it('打ち込み始めたあとに取り消したものは、送られても一覧に戻さず、失敗にもしない', async () => {
+    const states: Record<string, SessionState> = { s1: 'idle' };
+    const done: (() => void)[] = [];
+    const host: ScheduleHost = {
+      stateOf: (id) => states[id] ?? null,
+      open: async () => {},
+      // 取り消し（signal）を見ない。打ち込み始めたあとは止められない
+      submitWhenReady: () => new Promise<void>((resolve) => done.push(resolve)),
+    };
+    const troubles: ScheduledMessage[] = [];
+    const scheduled = new ScheduledMessages(file, host, () => {}, (m) => troubles.push(m));
+    scheduled.start();
+    const message = scheduled.add('s1', '送る', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(scheduled.cancel(message.id)?.text).toBe('送る');
+    done[0]!();
+    await flush();
+    expect(scheduled.list()).toEqual([]);
+    expect(troubles).toEqual([]);
+  });
+
+  it('送れなかった理由が Error でなくても、文字にして残す。止まっているセッションを起動できなければ、送れなかったことにする', async () => {
+    const states: Record<string, SessionState> = { s1: 'idle', s2: 'exited' };
+    const host: ScheduleHost = {
+      stateOf: (id) => states[id] ?? null,
+      open: async () => {
+        throw new Error('起動できませんでした');
+      },
+      submitWhenReady: () => Promise.reject('手が空きません'),
+    };
+    const scheduled = new ScheduledMessages(file, host, () => {});
+    scheduled.start();
+    scheduled.add('s1', '一つ目', [], START + MINUTE);
+    scheduled.add('s2', '二つ目', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await flush();
+    expect(scheduled.list().map((m) => [m.text, m.state, m.error])).toEqual([
+      ['一つ目', 'failed', '手が空きません'],
+      ['二つ目', 'failed', '起動できませんでした'],
+    ]);
+  });
+
+  it('setTimeout で待てないほど先の予約（約 24.8 日より先）は、途中で起きて測り直す', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    const DAY = 24 * 60 * MINUTE;
+    scheduled.add('s1', 'ずっと先', [], START + 30 * DAY);
+    await vi.advanceTimersByTimeAsync(2 ** 31 - 1);
+    expect(sent).toEqual([]);
+    expect(scheduled.list()[0]?.state).toBe('scheduled');
+    await vi.advanceTimersByTimeAsync(30 * DAY - (2 ** 31 - 1));
+    expect(sent.map((s) => s.text)).toEqual(['ずっと先']);
+  });
+
+  it('保存できなくても、画面には知らせる（予約はアプリが動いている間は残る）', () => {
+    // 保存先のフォルダを作れない（ファイルの下）
+    writeFileSync(join(dir, 'blocker'), '');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const changes: ScheduledMessage[][] = [];
+    const scheduled = new ScheduledMessages(join(dir, 'blocker', 'scheduled.json'), fakeHost({ s1: 'idle' }).host, (m) => changes.push(m));
+    scheduled.add('s1', '残らない', [], START + MINUTE);
+    expect(errors).toHaveBeenCalledWith('予約したメッセージを保存できませんでした', expect.any(Error));
+    expect(changes.at(-1)?.map((m) => m.text)).toEqual(['残らない']);
+    errors.mockRestore();
+    scheduled.dispose();
+  });
+
+  it('保存したファイルの、形の違うものは読み飛ばす（壊れたファイル・一覧でない・欠けた項目）', () => {
+    const good = { id: 'm1', sessionId: 's1', text: '残る', attachments: [], at: START + MINUTE, createdAt: START, state: 'scheduled' };
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        messages: [good, { ...good, id: 'm2', attachments: [1] }, { ...good, id: 'm3', state: 'unknown' }, null, { ...good, id: 'm4', at: 'あした' }],
+      }),
+    );
+    // error の無い古い形は null にそろえる
+    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([{ ...good, error: null }]);
+    writeFileSync(file, JSON.stringify({ version: 1, messages: 'x' }));
+    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
+    writeFileSync(file, '{壊れた');
+    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
+  });
+
+  it('dispose のあとは、時刻になっても送らない', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    scheduled.add('s1', '送らない', [], START + MINUTE);
+    scheduled.dispose();
+    // 待っているものが無くても、dispose は失敗しない
+    scheduled.dispose();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(sent).toEqual([]);
+  });
+});
+
 describe('予約の時刻の表示', () => {
   const now = new Date(2026, 9, 5, 14, 0);
 

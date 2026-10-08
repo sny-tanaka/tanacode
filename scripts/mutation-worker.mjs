@@ -24,11 +24,13 @@ const replace = {
   },
 };
 
-// 流した結果を、落ちた（killed）・全部通った（survived）に分ける。落ちたときは、はじめに落ちたテストの名前を添える
-function judge({ testModules, unhandledErrors }) {
+// 流した結果を、落ちた（killed）・全部通った（survived）に分ける。落ちたときは、はじめに落ちたテストの名前を添える。
+// only: 今回流したテストのファイル。vitest は前に流したファイルの結果も持ち続けるので、それを数えない
+// （数えると、前のミュータントで落ちたテストが、今回のミュータントでも落ちたことになる）
+function judge({ testModules, unhandledErrors }, only) {
   let passed = 0;
   let failed = null;
-  for (const module of testModules) {
+  for (const module of only ? testModules.filter((m) => only.has(m.moduleId)) : testModules) {
     for (const test of module.children.allTests()) {
       const state = test.result().state;
       if (state === 'passed') passed++;
@@ -118,7 +120,7 @@ if (mode === 'host') {
     const started = Date.now();
     let result;
     try {
-      result = judge(await vitest.runTestSpecifications(specs));
+      result = judge(await vitest.runTestSpecifications(specs), new Set(specs.map((s) => s.moduleId)));
     } catch (error) {
       result = { status: 'error', passed: 0, failed: String(error?.stack ?? error).slice(0, 2000) };
     }
