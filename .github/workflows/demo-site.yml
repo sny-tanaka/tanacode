@@ -1,8 +1,9 @@
 # デモのサイト（ブラウザで動くデモ）を GitHub Pages に公開する。
 # - develop に入ったら、ビルドして公開する
 # - PR では公開しない。どこを変えた PR でも動かす
-# - どちらでも、ツアーが最後まで止まらずに流れるかを確かめる（待ち時間を 0 にしてビルドする）。
-#   PC（Electron）と、スマホ（iPhone の Safari と同じ WebKit。メモリを食いすぎないかも見る）を、1 回のビルドで並べて流す
+# - PR では、ツアーが最後まで止まらずに流れるかを確かめる（待ち時間を 0 にしてビルドする）。
+#   PC（Electron）と、スマホ（iPhone の Safari と同じ WebKit。メモリを食いすぎないかも見る）を、1 回のビルドで並べて流す。
+#   develop への push では流さない（develop にはルールセットで PR を通したものしか入らず、その PR で流しているため）
 # 公開には、リポジトリの Settings → Pages の Source を「GitHub Actions」にしておく
 name: demo-site
 
@@ -63,6 +64,7 @@ jobs:
   # ページを落として読み込み直す。WebKit は Chromium と描き方が違い、縮めて見せている画面を端末の解像度のまま描いてメモリが膨らむことが
   # あるので（PC のツアーでは気づけない）、Playwright の WebKit で流す
   tour:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +110,7 @@ jobs:
 
   deploy:
     if: github.event_name != 'pull_request'
-    needs: [build, tour]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       pages: write

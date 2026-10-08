@@ -1,4 +1,4 @@
-# PR と develop・main への push で流す確認。互いに関わりの無いものは、ジョブを分けて並べて流す（PR がマージできるまでの待ち時間を短くするため）。
+# PR で流す確認。互いに関わりの無いものは、ジョブを分けて並べて流す（PR がマージできるまでの待ち時間を短くするため）。
 # 同じものは 1 回だけ作り、1 回だけ流す。
 # - unit: 型チェックと単体テスト（カバレッジも測る）。OS に依らないので ubuntu
 # - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）。ubuntu
@@ -8,20 +8,19 @@
 # - check: ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（単体・本物の claude・E2E）を合わせて下限を確かめる。
 #          develop のルールセットの必須のチェック
 # 毎日の、最新の Claude Code での互換性の確認は claude-code-check.yml
+# develop への push では流さない。develop にはルールセットで PR を通したものしか入らず、その PR で同じものを流しているため
 name: ci
 
 on:
   pull_request:
-  push:
-    branches: [develop, main]
 
 permissions:
   contents: read
 
-# PR は新しいものが来たら古いものを取りやめる
+# 新しいものが来たら古いものを取りやめる
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   unit:
@@ -206,7 +205,7 @@ jobs:
             echo "::error::通っていないジョブがあります: $(echo "$failed" | paste -sd ' ' -)"
             exit 1
           fi
-      # PR では、マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
+      # マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
@@ -232,9 +231,7 @@ jobs:
       # 層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
       # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
       - name: カバレッジをまとめる
-        env:
-          DIFF_ARGS: ${{ github.event_name == 'pull_request' && '--diff HEAD^1' || '' }}
-        run: npm run coverage:report -- $DIFF_ARGS
+        run: npm run coverage:report -- --diff HEAD^1
       # 画面のボタン・入力のうち、テストが一度も押していないもの（CONTRIBUTING.md の「押していないボタン・入力」）。
       # 1 つでもあれば失敗にする（ボタンや入力を足したら、押すテストも足す）
       - name: テストが押していないボタン・入力が無いか確かめる
