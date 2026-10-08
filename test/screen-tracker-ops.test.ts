@@ -83,7 +83,7 @@ describe('choose（選択肢を選ぶ）', () => {
     const f = fake(permission, menuKeys);
     await menuShown();
     expect(pointedId()).toBe('1');
-    expect(await tracker!.choose('3', 'enter')).toBe(true);
+    expect(await tracker!.choose('3', 'enter')).toBe('chosen');
     expect(f.writes).toEqual([KEY_DOWN, KEY_DOWN, '\r']);
     expect(tracker!.operating).toBe(false);
   });
@@ -91,22 +91,22 @@ describe('choose（選択肢を選ぶ）', () => {
   it('上にある選択肢へは ↑ で動かす。Space で選ぶ・キーを送らない（none）こともできる', async () => {
     const f = fake(pointAt(permission, 4), menuKeys);
     await menuShown();
-    expect(await tracker!.choose('2', 'none')).toBe(true);
+    expect(await tracker!.choose('2', 'none')).toBe('chosen');
     expect(f.writes).toEqual([KEY_UP, KEY_UP]);
-    expect(await tracker!.choose('2', 'space')).toBe(true);
+    expect(await tracker!.choose('2', 'space')).toBe('chosen');
     expect(f.writes).toEqual([KEY_UP, KEY_UP, ' ']);
   });
 
-  it('無い選択肢・思っていたのと違うメニュー・操作の途中には、何も送らない', async () => {
+  it('無い選択肢・思っていたのと違うメニュー・操作の途中には、何も送らず、その理由を返す', async () => {
     const f = fake(permission, menuKeys);
     await menuShown();
-    expect(await tracker!.choose('9', 'enter')).toBe(false);
-    expect(await tracker!.choose('1', 'enter', undefined, (menu) => menu.kind === 'question')).toBe(false);
+    expect(await tracker!.choose('9', 'enter')).toBe('missing');
+    expect(await tracker!.choose('1', 'enter', undefined, (menu) => menu.kind === 'question')).toBe('gone');
     // 操作の途中に頼まれた
     const first = tracker!.choose('4', 'enter');
     expect(tracker!.operating).toBe(true);
-    expect(await tracker!.choose('2', 'enter')).toBe(false);
-    expect(await first).toBe(true);
+    expect(await tracker!.choose('2', 'enter')).toBe('busy');
+    expect(await first).toBe('chosen');
     expect(f.writes).toEqual([KEY_DOWN, KEY_DOWN, KEY_DOWN, '\r']);
   });
 
@@ -115,7 +115,7 @@ describe('choose（選択肢を選ぶ）', () => {
     const f = fake(permission, (data) => (data === KEY_DOWN ? question : undefined));
     await menuShown();
     const title = (tracker!.current.state as { menu: Menu }).menu.title;
-    expect(await tracker!.choose('3', 'enter', undefined, (menu) => menu.title === title)).toBe(false);
+    expect(await tracker!.choose('3', 'enter', undefined, (menu) => menu.title === title)).toBe('gone');
     expect(f.writes).toEqual([KEY_DOWN]);
   });
 
@@ -131,7 +131,7 @@ describe('choose（選択肢を選ぶ）', () => {
     tracker!.setQuestions(questions);
     expect(tracker!.askedQuestions).toEqual(questions);
     const typeSomething = (tracker!.current.state as { menu: Menu }).menu.options.find((o) => o.textInput)!;
-    expect(await tracker!.choose(typeSomething.id, 'enter', '自由な答え')).toBe(true);
+    expect(await tracker!.choose(typeSomething.id, 'enter', '自由な答え')).toBe('chosen');
     expect(f.writes).toEqual([KEY_DOWN, '\x15自由な答え', '\r']);
 
     // 打ったあとに、許可の確認に変わった
@@ -139,7 +139,7 @@ describe('choose（選択肢を選ぶ）', () => {
     await menuShown();
     tracker!.setQuestions(questions);
     const isQuestion = (menu: Menu) => menu.kind === 'question';
-    expect(await tracker!.choose(typeSomething.id, 'enter', '答え', isQuestion)).toBe(false);
+    expect(await tracker!.choose(typeSomething.id, 'enter', '答え', isQuestion)).toBe('gone');
     expect(g.writes).toEqual([KEY_DOWN, '\x15答え']);
   });
 });
