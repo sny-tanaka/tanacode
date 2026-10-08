@@ -199,6 +199,14 @@ input[type='checkbox'] {
 .app-update.available:hover {
   background: var(--bg-hover);
 }
+/* ダウンロード済みの新しいバージョン（Homebrew）。押せば済むことが分かるよう、文字も出す */
+.app-update.ready {
+  width: auto;
+  gap: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
 /* まだ見ていない新しいバージョン。矢印を受け皿へ落とす動きと、周りに広がる波紋を、マウスを乗せるまで繰り返す。画面を見ていないときでも、見たときに気づけるようにする。
    動きは 1.2 秒で、そのあと 1.8 秒休む（3 秒の周期。キーフレームの % は、1.2 秒の動きを 3 秒に引き伸ばした割合） */
 .app-update.calling .icon > path:first-child {

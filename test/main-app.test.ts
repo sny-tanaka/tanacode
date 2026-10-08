@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +11,9 @@ import {
   boot,
   cleanup,
   fakeEvent,
+  type Fake,
   FakeWebContents,
+  invoke,
   mainWindow,
   manager,
   menuItem,
@@ -773,6 +775,7 @@ describe('メニュー', () => {
       'about',
       'separator',
       '新しいバージョンが出たら通知する',
+      '終了するときに新しいバージョンを入れる（Homebrew）',
       'Claude にアプリ内ブラウザを操作させる',
       'Claude にほかのセッションを扱わせる',
       'Claude にチェックリストを扱わせる',
@@ -787,7 +790,7 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, false, true, false]);
+    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, true, false]);
     expect(fileMenu.label).toBe('ファイル');
     expect(fileMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual(['新規セッション', 'separator', 'close', 'separator', 'Claude Code も止めて終了']);
     expect(menuItem('新規セッション').accelerator).toBe('CmdOrCtrl+N');
@@ -817,6 +820,7 @@ describe('メニュー', () => {
   });
 
   it.each([
+    ['終了するときに新しいバージョンを入れる（Homebrew）', 'updateOnQuit'],
     ['Claude にほかのセッションを扱わせる', 'sessionsControl'],
     ['Claude にチェックリストを扱わせる', 'checklistControl'],
     ['Claude にウォークスルーさせる', 'walkthroughControl'],
@@ -830,6 +834,7 @@ describe('メニュー', () => {
 
   it.each([
     '新しいバージョンが出たら通知する',
+    '終了するときに新しいバージョンを入れる（Homebrew）',
     'Claude にアプリ内ブラウザを操作させる',
     'Claude にほかのセッションを扱わせる',
     'Claude にチェックリストを扱わせる',
@@ -1070,5 +1075,138 @@ describe('終了', () => {
     // 片付けは、作っていないものを飛ばす
     expect(() => quitOnce()).not.toThrow();
     host.resolve(state.ptyHost);
+  });
+});
+
+describe('Homebrew での更新', () => {
+  const live = [{ id: 's1', title: 'メニューを直す', state: '作業中' }];
+  const quitOnce = () => {
+    const event = fakeEvent();
+    state.app.emit('before-quit', event);
+    return event;
+  };
+  // Homebrew で入れたアプリの更新の作り物。既定は、新しいバージョンをダウンロード済み
+  const updater = (status: Record<string, unknown> | null = { status: 'ready', version: '9.9.0' }): Fake => ({
+    get: vi.fn(() => status),
+    want: vi.fn(),
+    stop: vi.fn(),
+    upgradeAfterExit: vi.fn(() => true),
+  });
+  const bootWith = async (u: Fake | null, settings?: Record<string, unknown>) => {
+    await boot({ packaged: true, settings, before: (s) => (s.homebrew = u) });
+    await vi.waitFor(() => expect(state.homebrewDetect).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const upgrade = () => state.homebrew!.upgradeAfterExit;
+
+  it('パッケージしたアプリなら、動いている .app と今のバージョンで、Homebrew で入れたかを確かめる', async () => {
+    await boot();
+    expect(state.homebrewDetect).not.toHaveBeenCalled();
+    await bootWith(updater());
+    const [options] = state.homebrewDetect.mock.calls[0] as [{ bundle: string; current: string }];
+    expect(options.bundle).toBe(resolve(process.execPath, '../../..'));
+    expect(options.current).toBe('9.8.7');
+  });
+
+  it('新しいバージョンが出たら用意を頼み、画面には用意の様子を足して知らせる（新しくなければ足さない）', async () => {
+    await bootWith(updater());
+    fnArg('AppUpdateMonitor', 1)({ latest: '9.9.0', available: true, url: 'u' });
+    fnArg('AppUpdateMonitor', 1)({ latest: '9.8.7', available: false, url: 'u' });
+    expect(state.homebrew!.want.mock.calls.slice(-2)).toEqual([['9.9.0'], ['9.8.7']]);
+    expect(sentToRenderer(IpcChannel.AppUpdateChanged)).toEqual([
+      { latest: '9.9.0', available: true, url: 'u', homebrew: { status: 'ready', version: '9.9.0' } },
+      { latest: '9.8.7', available: false, url: 'u' },
+    ]);
+  });
+
+  it('「再起動して更新」: Claude Code が動いていなければ、そのまま終了し、入れ替えてから起動し直す', async () => {
+    await bootWith(updater());
+    await invoke(IpcChannel.AppUpdateInstall);
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(state.quit).toHaveBeenCalledTimes(1);
+    expect(manager().closeAll).not.toHaveBeenCalledWith(true);
+    quitOnce();
+    expect(upgrade()).toHaveBeenCalledWith({
+      pid: process.pid,
+      log: join(state.userData, 'homebrew-update.log'),
+      result: join(state.userData, 'homebrew-update.result'),
+      relaunch: true,
+    });
+  });
+
+  it('「再起動して更新」: Claude Code が動いていれば、止めるかを聞く。キャンセルなら何もしない', async () => {
+    await bootWith(updater());
+    manager().liveSessions.mockReturnValue(live);
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 2 });
+    await invoke(IpcChannel.AppUpdateInstall);
+    const [, options] = state.dialog.showMessageBox.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(options.buttons).toEqual(['動かしたまま更新', 'Claude Code も止めて更新', 'キャンセル']);
+    expect(String(options.detail)).toContain('・メニューを直す（作業中）');
+    expect(state.quit).not.toHaveBeenCalled();
+
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+    await invoke(IpcChannel.AppUpdateInstall);
+    expect(manager().closeAll.mock.calls).toEqual([[true]]);
+    expect(state.ptyHost.shutdown).toHaveBeenCalledTimes(1);
+    expect(state.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it('「再起動して更新」: ダウンロードが済んでいない・Homebrew で入れていないなら、何もしない', async () => {
+    await bootWith(updater({ status: 'downloading' }));
+    await invoke(IpcChannel.AppUpdateInstall);
+    await bootWith(null);
+    await invoke(IpcChannel.AppUpdateInstall);
+    expect(state.quit).not.toHaveBeenCalled();
+  });
+
+  it('ダウンロード済みなら、ふつうの終了でも入れ替える（起動し直さない）。終了の確認にも書く', async () => {
+    await bootWith(updater());
+    manager().liveSessions.mockReturnValue(live);
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    quitOnce();
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
+    const [, options] = state.dialog.showMessageBox.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(String(options.detail)).toContain('終了すると、Homebrew で新しいバージョンに入れ替えます。');
+    quitOnce();
+    expect(upgrade()).toHaveBeenCalledWith(expect.objectContaining({ relaunch: false }));
+    expect(state.homebrew!.stop).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['「終了するときに新しいバージョンを入れる」がオフ', { updateOnQuit: false }],
+    ['「新しいバージョンが出たら通知する」がオフ', { updateCheck: false }],
+  ])('%sなら、ふつうの終了では入れ替えない', async (_label, settings) => {
+    await bootWith(updater(), settings);
+    quitOnce();
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
+    quitOnce();
+    expect(upgrade()).not.toHaveBeenCalled();
+  });
+
+  it('Mac の再起動・シャットダウンでは入れ替えない', async () => {
+    await bootWith(updater());
+    state.powerMonitor.emit('shutdown');
+    quitOnce();
+    expect(upgrade()).not.toHaveBeenCalled();
+  });
+
+  it('前回の入れ替えが失敗していたら、ログの終わりと手動の手順を知らせ、ログを開ける。結果は一度だけ見る', async () => {
+    const write = (result: string) => (s: typeof state) => {
+      mkdirSync(s.userData, { recursive: true });
+      writeFileSync(join(s.userData, 'homebrew-update.result'), `${result}\n`);
+      writeFileSync(join(s.userData, 'homebrew-update.log'), 'v9.9.0 に更新します\nError: Operation not permitted\n');
+    };
+    await boot({ before: (s) => (write('1')(s), s.dialog.showMessageBox.mockResolvedValue({ response: 1 })) });
+    await vi.waitFor(() => expect(state.shell.openPath).toHaveBeenCalledWith(join(state.userData, 'homebrew-update.log')));
+    const [, options] = state.dialog.showMessageBox.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(options.message).toBe('tanacode を更新できませんでした');
+    expect(String(options.detail)).toContain('Error: Operation not permitted');
+    expect(String(options.detail)).toContain('brew update && brew upgrade --cask sny-tanaka/tanacode/tanacode');
+    expect(existsSync(join(state.userData, 'homebrew-update.result'))).toBe(false);
+
+    await boot({ before: write('0') });
+    await vi.waitFor(() => expect(existsSync(join(state.userData, 'homebrew-update.result'))).toBe(false));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 });

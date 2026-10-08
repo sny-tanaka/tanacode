@@ -160,7 +160,7 @@ function freshState() {
       showMessageBox: vi.fn(async (..._args: unknown[]) => ({ response: 2 })),
       showErrorBox: vi.fn((..._args: unknown[]) => undefined),
     },
-    shell: { openExternal: vi.fn(async (_url: string) => undefined), showItemInFolder: vi.fn((_path: string) => undefined) },
+    shell: { openExternal: vi.fn(async (_url: string) => undefined), showItemInFolder: vi.fn((_path: string) => undefined), openPath: vi.fn(async (_path: string) => '') },
     netFetch: vi.fn((..._args: unknown[]): unknown => undefined),
     execFileSync: vi.fn((..._args: unknown[]): string => {
       throw new Error('ログインシェルは使えません');
@@ -178,6 +178,9 @@ function freshState() {
     // pty ホスト（の作り物）と、その起動（既定はすぐに済む）
     ptyHost: { shutdown: vi.fn(async () => undefined), close: vi.fn() } as Fake,
     ptyHostStart: vi.fn(async (..._args: unknown[]): Promise<Fake> => state.ptyHost),
+    // Homebrew で入れたアプリの更新（HomebrewUpdater.detect が返すもの。既定は、Homebrew で入れていない）
+    homebrew: null as Fake | null,
+    homebrewDetect: vi.fn(async (..._args: unknown[]): Promise<Fake | null> => state.homebrew),
     // 前に起動したアプリから動き続けている Claude Code の引き継ぎ（SessionManager.adopt。既定はすぐに済む）
     adopt: vi.fn(async () => undefined),
     // 作り物の関数（モジュールの関数）
@@ -282,6 +285,7 @@ export const electronModule = {
   shell: {
     openExternal: (url: string) => state.shell.openExternal(url),
     showItemInFolder: (path: string) => state.shell.showItemInFolder(path),
+    openPath: (path: string) => state.shell.openPath(path),
   },
 };
 
@@ -386,6 +390,7 @@ const modules: Record<string, Record<string, unknown>> = {
     postWalkthroughComment: (...args: unknown[]) => state.fn.postWalkthroughComment(...args),
   },
   github: githubModule,
+  'homebrew-update': { CASK: 'sny-tanaka/tanacode/tanacode', HomebrewUpdater: { detect: (...args: unknown[]) => state.homebrewDetect(...args) } },
   'app-update': { AppUpdateMonitor: fakeClass('AppUpdateMonitor', { get: echo('appUpdates.get'), start: () => undefined, stop: () => undefined }) },
   'session-discovery': { discoverSessions: (...args: unknown[]) => state.fn.discoverSessions(...args) },
   'source-control': {
@@ -484,6 +489,7 @@ vi.mock('../../src/main/walkthrough-control', () => modules['walkthrough-control
 vi.mock('../../src/main/walkthrough-github', () => modules['walkthrough-github']);
 vi.mock('../../src/main/github', () => modules.github);
 vi.mock('../../src/main/app-update', () => modules['app-update']);
+vi.mock('../../src/main/homebrew-update', () => modules['homebrew-update']);
 vi.mock('../../src/main/session-discovery', () => modules['session-discovery']);
 vi.mock('../../src/main/source-control', () => modules['source-control']);
 vi.mock('../../src/main/commands', () => modules.commands);

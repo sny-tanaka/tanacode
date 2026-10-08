@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 export type StoredSettingsFile = { id: string; name: string; path: string };
 
 // notifications: macOS の通知を出すか / updateCheck: GitHub の Releases で新しいバージョンが出たら通知するか /
+// updateOnQuit: Homebrew で入れたとき、終了するときに新しいバージョンを入れるか /
 // settingsFiles: セッションごとに選んで、標準の設定に重ねて起動する設定ファイル /
 // browserControl: Claude にアプリ内ブラウザを操作させるか（起動する Claude Code に MCP サーバーを足すか）/
 // browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
@@ -14,6 +15,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
+  updateOnQuit: boolean;
   settingsFiles: StoredSettingsFile[];
   browserControl: boolean;
   browserHosts: string[];
@@ -44,6 +46,14 @@ export class AppSettings {
 
   setUpdateCheckEnabled(on: boolean): void {
     this.update({ updateCheck: on });
+  }
+
+  updateOnQuitEnabled(): boolean {
+    return this.values.updateOnQuit;
+  }
+
+  setUpdateOnQuitEnabled(on: boolean): void {
+    this.update({ updateOnQuit: on });
   }
 
   settingsFiles(): StoredSettingsFile[] {
@@ -120,6 +130,7 @@ function load(file: string): Values {
     const data = JSON.parse(readFileSync(file, 'utf8')) as {
       notifications?: unknown;
       updateCheck?: unknown;
+      updateOnQuit?: unknown;
       settingsFiles?: unknown;
       browserControl?: unknown;
       browserHosts?: unknown;
@@ -130,6 +141,7 @@ function load(file: string): Values {
     return {
       notifications: data.notifications !== false,
       updateCheck: data.updateCheck !== false,
+      updateOnQuit: data.updateOnQuit !== false,
       settingsFiles: storedFiles(data.settingsFiles),
       browserControl: data.browserControl !== false,
       browserHosts: Array.isArray(data.browserHosts) ? data.browserHosts.filter((h): h is string => typeof h === 'string') : [],
@@ -138,7 +150,7 @@ function load(file: string): Values {
       walkthroughControl: data.walkthroughControl !== false,
     };
   } catch {
-    return { notifications: true, updateCheck: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true };
   }
 }
 
