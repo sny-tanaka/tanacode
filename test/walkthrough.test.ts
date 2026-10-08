@@ -216,6 +216,12 @@ describe('引数と状態の細かいところ', () => {
     ]);
   });
 
+  it('名前が .. で始まるファイル（フォルダの中のもの）も示せる', async () => {
+    writeFileSync(join(cwd, '..notes.md'), 'a\nb\n');
+    const { control } = setup();
+    expect(text(await control.handle(ME, 'show_code', { path: '..notes.md', start_line: 1, body: 'ここ' }))).toBe('人のエディタに ..notes.md:1 を示しました（寄り道）。');
+  });
+
   it('末尾に改行の無いファイルも、最後の行まで示せる', async () => {
     writeFileSync(join(cwd, 'src', 'short.ts'), 'a\nb\nc');
     const { control } = setup();
@@ -226,6 +232,10 @@ describe('引数と状態の細かいところ', () => {
   it('show_code: 示せないものは理由を返し、今の表示を変えない', async () => {
     const { control, changes } = setup();
     expect(text(await control.handle(ME, 'show_code', { path: '../outside.ts', start_line: 1, body: 'x' }))).toContain('このセッションのフォルダ');
+    // .. そのもの、名前が .. で始まるフォルダを通って外に出るもの、.. を含む絶対パスも断る
+    for (const path of ['..', '..notes/../../outside.ts', `${cwd}/../outside.ts`]) {
+      expect(text(await control.handle(ME, 'show_code', { path, start_line: 1, body: 'x' }))).toBe(`${path} は、このセッションのフォルダ（${cwd}）の中のファイルではありません`);
+    }
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
   });

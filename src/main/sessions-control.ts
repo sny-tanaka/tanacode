@@ -660,7 +660,8 @@ function editedFiles(events: ChatEvent[], cwd: string): string[] {
     if (e.type === 'reset') files.clear();
     if (e.type !== 'tool-use' || !EDIT_TOOLS.has(e.name) || !e.filePath) continue;
     const rel = relative(cwd, e.filePath);
-    files.add(rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : e.filePath);
+    // .. そのものか ../ で始まるものが外（..env.local のような名前のファイルは中）
+    files.add(rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? rel : e.filePath);
   }
   return [...files].slice(0, 200);
 }
@@ -683,7 +684,8 @@ async function untrackedDiff(cwd: string, file: string): Promise<string> {
   if (!info.isFile()) return `${head}\n（ふつうのファイルではないため、中身は読みません）`;
   if (info.size > MAX_UNTRACKED_BYTES) return `${head}\n（${Math.round(info.size / 1024)} KB の大きなファイルのため、中身は省きます）`;
   const data = await readHead(join(cwd, file), MAX_UNTRACKED_BYTES);
-  if (!data) return head;
+  // 空のファイルは、行の無い新しいファイル（git diff と同じく @@ の行を書かない）
+  if (!data || data.length === 0) return head;
   if (data.includes(0)) return `${head}\n（バイナリ）`;
   const lines = data.toString('utf8').replace(/\n$/, '').split('\n');
   return `${head}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}`;

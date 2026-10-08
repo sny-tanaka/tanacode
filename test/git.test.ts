@@ -104,6 +104,13 @@ describe('status', () => {
     ]);
   });
 
+  it('cwd の外から移したファイルの元のパスも、cwd からの相対パスにする（StatusEntry.from の決まり）', async () => {
+    commit(repo, 'a.txt');
+    mkdirSync(join(repo, 'sub'));
+    run(repo, 'mv', 'a.txt', 'sub/a.txt');
+    expect(await status(join(repo, 'sub'))).toEqual([{ path: 'a.txt', from: '../a.txt', index: 'R', worktree: ' ' }]);
+  });
+
   it('isIgnored: .gitignore で無視されるファイルか', async () => {
     write(repo, '.gitignore', '*.log\n');
     expect(await isIgnored(repo, 'debug.log')).toBe(true);
@@ -313,6 +320,15 @@ describe('branchFiles', () => {
       { path: 'a.txt', kind: 'added', added: 1, removed: 0, binary: false },
       { path: 'b.txt', kind: 'added', added: 1, removed: 0, binary: false },
     ]);
+  });
+
+  it('空の未追跡のファイルは、足した行を 0 と数える（ステージしたときに git が数えるのと同じ）', async () => {
+    write(repo, 'empty.txt', '');
+    const untracked = await branchFiles(repo, base);
+    run(repo, 'add', 'empty.txt');
+    const staged = await branchFiles(repo, base);
+    expect(staged).toEqual([{ path: 'empty.txt', kind: 'added', added: 0, removed: 0, binary: false }]);
+    expect(untracked).toEqual(staged);
   });
 
   it('showAt: 基点での内容。基点に無いファイルは null', async () => {

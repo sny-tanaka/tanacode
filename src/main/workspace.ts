@@ -135,7 +135,8 @@ export class Workspace {
     if (isAbsolute(relPath)) return relPath;
     const abs = resolve(this.root, relPath);
     const rel = relative(this.root, abs);
-    if (rel.startsWith('..') || rel.startsWith(sep)) throw new Error(`outside workspace: ${relPath}`);
+    // .. そのものか ../ で始まるものが外（..notes.md のような名前のファイルは中）
+    if (rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) throw new Error(`outside workspace: ${relPath}`);
     return abs;
   }
 

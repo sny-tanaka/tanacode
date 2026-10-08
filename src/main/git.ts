@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { lstat, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import type { GitBranches } from '@shared/ipc';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -58,7 +58,8 @@ export async function status(cwd: string): Promise<StatusEntry[] | null> {
     if (!path.startsWith(prefix)) continue;
     entries.push({
       path: path.slice(prefix.length),
-      from: from?.startsWith(prefix) ? from.slice(prefix.length) : from,
+      // 元のパスは cwd の外のこともある（../a.txt のようにする）。頭に / を付けて、プロセスの今のフォルダに頼らずに比べる
+      from: from === undefined ? undefined : posix.relative(`/${prefix}`, `/${from}`),
       index,
       worktree,
     });
@@ -215,7 +216,8 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
     const info = await lstat(join(cwd, path)).catch(() => null);
     const text = info?.isFile() && info.size <= MAX_COUNT_BYTES ? await readFile(join(cwd, path)).catch(() => null) : null;
     const binary = !!text && text.includes(0);
-    const added = text && !binary ? text.toString('utf8').split('\n').length - (text.at(-1) === 10 ? 1 : 0) : 0;
+    // 空のファイルは 0 行（ステージしたときに git が数えるのと同じ）
+    const added = text && text.length > 0 && !binary ? text.toString('utf8').split('\n').length - (text.at(-1) === 10 ? 1 : 0) : 0;
     files.push({ path, kind: 'added', added, removed: 0, binary });
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));

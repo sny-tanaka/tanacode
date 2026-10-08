@@ -30,7 +30,18 @@ describe('Workspace', () => {
     await expect(ws.writeFile('../secret.txt', 'x')).rejects.toThrow('outside workspace');
     await expect(ws.listDir('..')).rejects.toThrow('outside workspace');
     await expect(ws.writeFile('sub/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
+    // .. そのもの、名前が .. で始まるフォルダを通って外に出るものも断る
+    await expect(ws.readFile('..')).rejects.toThrow('outside workspace');
+    await expect(ws.readFile('..notes/../../secret.txt')).rejects.toThrow('outside workspace');
+    await expect(ws.writeFile('..notes/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
     expect(readFileSync(join(root, '..', 'secret.txt'), 'utf8')).toBe('secret');
+  });
+
+  it('名前が .. で始まるファイル（フォルダの中のもの）は、読み書きできる', async () => {
+    put('..notes.md', 'メモ\n');
+    expect(await ws.readFile('..notes.md')).toEqual({ kind: 'text', text: 'メモ\n' });
+    await ws.writeFile('..notes.md', '書き直し\n');
+    expect(readFileSync(join(root, '..notes.md'), 'utf8')).toBe('書き直し\n');
   });
 
   it('listDir: フォルダを先に名前順で並べ、.git・node_modules などは出さない', async () => {
