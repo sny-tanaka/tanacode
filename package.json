@@ -1,6 +1,6 @@
 {
   "name": "tanacode",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Claude Code の中身が、奥まで見える macOS アプリ",
   "license": "MIT",
