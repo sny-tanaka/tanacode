@@ -29,8 +29,8 @@ jobs:
     # 既定の対象で 35 分ほど（同時に 2）。画面の操作は 1 分かからない
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -49,7 +49,7 @@ jobs:
           TARGETS: ${{ inputs.ui_targets }}
       - name: 結果を残す
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mutation
           path: |

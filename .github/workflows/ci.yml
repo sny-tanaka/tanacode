@@ -1,30 +1,33 @@
-# PR と develop・main への push で、型チェックと、アプリ本体・Storybook がビルドできるかを確かめる。
-# - typecheck: 型チェック（npm run typecheck）。main・preload・画面の型の食い違いを見つける
-# - app: アプリ本体を、配布と同じ手順で .app まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。
-#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（npm run test:e2e）
-# - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）
-# アプリは配布するものと同じ macOS で作る。型チェックと Storybook は OS に依らないので ubuntu で流す
+# PR で流す確認。互いに関わりの無いものは、ジョブを分けて並べて流す（PR がマージできるまでの待ち時間を短くするため）。
+# 同じものは 1 回だけ作り、1 回だけ流す。
+# - unit: 型チェックと単体テスト（カバレッジも測る）。OS に依らないので ubuntu
+# - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）。ubuntu
+# - cli: 本物の claude（動作確認済のバージョン）での確認（カバレッジも測る）。Claude Code は OS で画面の描き方が違うので macOS
+# - app: アプリ本体を、配布と同じ手順で .app まで作り（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）、
+#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（E2E。カバレッジも測る）。macOS
+# - check: ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（単体・本物の claude・E2E）を合わせて下限を確かめる。
+#          develop のルールセットの必須のチェック
+# 毎日の、最新の Claude Code での互換性の確認は claude-code-check.yml
+# develop への push では流さない。develop にはルールセットで PR を通したものしか入らず、その PR で同じものを流しているため
 name: ci
 
 on:
   pull_request:
-  push:
-    branches: [develop, main]
 
 permissions:
   contents: read
 
-# PR は新しいものが来たら古いものを取りやめる
+# 新しいものが来たら古いものを取りやめる
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
-  typecheck:
+  unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -33,21 +36,105 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - run: npm run typecheck
+      # 型が合わなくても、単体テストの結果も出す
+      - if: ${{ !cancelled() }}
+        run: npm run coverage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-unit
+          path: coverage/unit/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+          # ジョブをやり直したときは、前の回のものを置き換える
+          overwrite: true
 
-  app:
-    runs-on: macos-latest
+  storybook:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      # 配布用のビルドと同じく、作れなければ失敗にする
-      - run: node scripts/build-translate-helper.mjs --require
-      # 画面側のビルドはメモリを 4GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
-      - run: npx electron-vite build
         env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npm run build-storybook
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+
+  cli:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # 確かめる claude は、動作確認済のバージョン（src/shared/claude-code.ts）。新しい Claude Code が出ても、関係のない PR が落ちないように。
+      # API はモックなので料金はかからない
+      - name: Claude Code を入れる
+        id: claude
+        run: |
+          VERSION=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
+          test -n "$VERSION" || { echo "::error::src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"; exit 1; }
+          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
+          echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: 本物の claude で確かめる（カバレッジも測る）
+        run: npm run coverage:cli
+        env:
+          TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          TANACODE_RECORD: 1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-cli
+          path: coverage/cli/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      # 落ちたときの手がかりに、そのときの画面などの控えを残す
+      - name: 控えを残す
+        if: failure() && steps.claude.outputs.version
+        uses: actions/upload-artifact@v7
+        with:
+          name: claude-code-${{ steps.claude.outputs.version }}
+          path: test/fixtures/claude-code/
+          if-no-files-found: ignore
+          overwrite: true
+
+  app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、npm ci と並べて作る。
+      # アプリのビルドとは並べない（3 コアのランナーで取り合いになり、画面側のビルドが 1 分半ほど遅くなった）。
+      # 補助プログラムは、配布用のビルドと同じく、作れなければ失敗にする
+      - name: 依存を入れる（あわせて翻訳の補助プログラムを作る）
+        run: |
+          log="$RUNNER_TEMP/translate-helper.log"
+          node scripts/build-translate-helper.mjs --require > "$log" 2>&1 &
+          helper=$!
+          npm ci
+          if ! wait "$helper"; then
+            cat "$log"
+            echo "::error::翻訳の補助プログラムを作れませんでした"
+            exit 1
+          fi
+          cat "$log"
+      # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
+      # 画面側のビルドはメモリを 5GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
+      - name: アプリをビルドする
+        run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
           NODE_OPTIONS: --max-old-space-size=6144
       # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）。
       # electron-builder は PR のビルドでは署名を飛ばすので、CSC_FOR_PULL_REQUEST で署名させる
@@ -75,32 +162,77 @@ jobs:
           test -n "$VERSION" || { echo "::error::src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"; exit 1; }
           npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
           echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
-      - name: できた .app を、画面の操作から通しで確かめる（E2E）
+      # 配る形のまま動くかを確かめるため、できた .app で流す。.app のスクリプト（…/app.asar/out/…）のカバレッジは、
+      # 同じビルドの手元の out/ とソースマップで src の行に戻す（scripts/e2e-coverage.mjs）
+      - name: できた .app を、画面の操作から通しで確かめる（E2E。カバレッジも測る）
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
-          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run test:e2e
+          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-e2e
+          path: coverage/e2e/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       # 落ちたテストの画面の写し・メインプロセスの出力・モックの API の呼び出し
       - name: E2E の失敗の手がかりを残す
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-results
           path: test-results/e2e/
           if-no-files-found: ignore
+          overwrite: true
 
-  storybook:
+  # develop のルールセットの必須のチェック。前のジョブが失敗して、このジョブが飛ばされると、必須のチェックは通ったことに
+  # なってしまうので、!cancelled() で必ず動かし、どれか 1 つでも通っていなければ失敗にする。
+  # カバレッジのファイルは、測ったランナー（ubuntu と macOS）の絶対パスで入っているが、
+  # scripts/coverage-report.mjs と scripts/unpressed.mjs が src からのパスで突き合わせるので、ここ（ubuntu）で合わせられる
+  check:
+    needs: [unit, storybook, cli, app]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: ほかのジョブが全部通ったか確かめる
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')
+          if [ -n "$failed" ]; then
+            echo "::error::通っていないジョブがあります: $(echo "$failed" | paste -sd ' ' -)"
+            exit 1
+          fi
+      # マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      - run: npm run build-storybook
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-unit
+          path: coverage/unit/
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-cli
+          path: coverage/cli/
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-e2e
+          path: coverage/e2e/
+      # 層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
+      # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
+      - name: カバレッジをまとめる
+        run: npm run coverage:report -- --diff HEAD^1
+      # 画面のボタン・入力のうち、テストが一度も押していないもの（CONTRIBUTING.md の「押していないボタン・入力」）。
+      # 1 つでもあれば失敗にする（ボタンや入力を足したら、押すテストも足す）
+      - name: テストが押していないボタン・入力が無いか確かめる
+        run: npm run coverage:unpressed -- --max 0

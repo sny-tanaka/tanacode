@@ -1,8 +1,9 @@
 # デモのサイト（ブラウザで動くデモ）を GitHub Pages に公開する。
 # - develop に入ったら、ビルドして公開する
-# - PR では、ビルドが通るかだけを確かめる（公開はしない）。どこを変えた PR でも動かす
-# - どちらでも、ツアーが最後まで止まらずに流れるかを確かめる（待ち時間を 0 にしてビルドする）。
-#   PC（tour。Electron）と、スマホ（tour-sp。iPhone の Safari と同じ WebKit。メモリを食いすぎないかも見る）を並べて流す
+# - PR では公開しない。どこを変えた PR でも動かす
+# - PR では、ツアーが最後まで止まらずに流れるかを確かめる（待ち時間を 0 にしてビルドする）。
+#   PC（Electron）と、スマホ（iPhone の Safari と同じ WebKit。メモリを食いすぎないかも見る）を、1 回のビルドで並べて流す。
+#   develop への push では流さない（develop にはルールセットで PR を通したものしか入らず、その PR で流しているため）
 # 公開には、リポジトリの Settings → Pages の Source を「GitHub Actions」にしておく
 name: demo-site
 
@@ -32,11 +33,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # 公開するもののビルド（develop への push と手動の実行だけ）。
+  # PR では、ビルドが通るかは tour のジョブのビルド（待ち時間の倍率のほかは同じ）で分かるので、作らない。
+  # build は develop へのマージに必須のチェック。PR で条件によって飛ばしたジョブは、通ったことになる
   build:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -48,58 +53,64 @@ jobs:
       - run: npm run demo:build
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-      - if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: demo-site
 
   # ツアーが最後まで流れるか。画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まるため。
-  # 待ち時間を 0（VITE_DEMO_WAIT=0）にしてビルドするので、数十秒で流れ終わる。公開するものとは分けて demo-check/ に書き出す
+  # 待ち時間を 0（VITE_DEMO_WAIT=0）にしてビルドするので、数十秒で流れ終わる。公開するものとは分けて demo-check/ に書き出す。
+  # 1 回のビルドで、PC（Electron の画面の外）とスマホ（iPhone 13 の画面の大きさ・倍率）を並べて流す。
+  # スマホでは、あわせて、ページの処理のメモリが上限を超えないかも見る。iPhone の Safari は、ページの処理がメモリの上限を超えると
+  # ページを落として読み込み直す。WebKit は Chromium と描き方が違い、縮めて見せている画面を端末の解像度のまま描いてメモリが膨らむことが
+  # あるので（PC のツアーでは気づけない）、Playwright の WebKit で流す
   tour:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-      # ツアーは Electron の画面の外で流すので、Electron の本体も入れる
+      # PC のツアーは Electron の画面の外で流すので、Electron の本体も入れる
       - run: npm ci
-      - run: npm run demo:build
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
-          VITE_DEMO_WAIT: 0
-          DEMO_OUT_DIR: demo-check
-      # 画面の外で描いても、Linux では X のディスプレイが要る
+      # 画面の外で描いても、Linux では X のディスプレイが要る（下で WebKit を入れるのと apt がぶつからないよう、先に済ませる）
       - run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
-      - run: xvfb-run -a -s "-screen 0 2560x1440x24" npm run demo:check
-
-  # スマホ（iPhone 13 の画面の大きさ・倍率）でも、ツアーが最後まで流れるか。あわせて、ページの処理のメモリが上限を超えないか。
-  # iPhone の Safari は、ページの処理がメモリの上限を超えるとページを落として読み込み直す。WebKit は Chromium と描き方が違い、
-  # 縮めて見せている画面を端末の解像度のまま描いてメモリが膨らむことがあるので（PC の tour では気づけない）、Playwright の WebKit で流す
-  tour-sp:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      # Electron の本体は使わないので落とさない
-      - run: npm ci
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      - run: npm run demo:build
+      # スマホのツアーで使う WebKit は、ビルドと関わりが無いので、ビルドと並べて入れる
+      - name: デモのサイトを待ち時間 0 でビルドする（あわせて WebKit を入れる）
         env:
           NODE_OPTIONS: --max-old-space-size=6144
           VITE_DEMO_WAIT: 0
           DEMO_OUT_DIR: demo-check
-      - run: npx playwright install --with-deps webkit
-      - run: npm run demo:check:sp
+        run: |
+          log="$RUNNER_TEMP/webkit.log"
+          npx playwright install --with-deps webkit > "$log" 2>&1 &
+          webkit=$!
+          npm run demo:build
+          if ! wait "$webkit"; then
+            cat "$log"
+            echo "::error::WebKit を入れられませんでした"
+            exit 1
+          fi
+      - name: ツアーを PC とスマホで並べて流す
+        run: |
+          xvfb-run -a -s "-screen 0 2560x1440x24" npm run demo:check > "$RUNNER_TEMP/tour-pc.log" 2>&1 &
+          pc=$!
+          npm run demo:check:sp > "$RUNNER_TEMP/tour-sp.log" 2>&1 &
+          sp=$!
+          status=0
+          wait "$pc" || status=$?
+          echo "::group::PC のツアー"; cat "$RUNNER_TEMP/tour-pc.log"; echo "::endgroup::"
+          [ "$status" -eq 0 ] || echo "::error::PC のツアーが最後まで流れませんでした"
+          sp_status=0
+          wait "$sp" || sp_status=$?
+          echo "::group::スマホのツアー"; cat "$RUNNER_TEMP/tour-sp.log"; echo "::endgroup::"
+          [ "$sp_status" -eq 0 ] || echo "::error::スマホのツアーが最後まで流れませんでした（メモリの上限を超えたときも）"
+          [ "$status" -eq 0 ] && [ "$sp_status" -eq 0 ]
 
   deploy:
     if: github.event_name != 'pull_request'
-    needs: [build, tour, tour-sp]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -109,4 +120,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
