@@ -112,6 +112,13 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   const texts = inPlace ? unwrapInPlace(raw.filter((t) => t !== tabLine)) : header.filter((t) => t !== tabLine);
   let title = boxed.length > 0 && !inPlace ? unwrap(boxed) : (texts.pop() ?? '');
   const kind = question ? 'question' : /Do you want to/.test(title) ? 'permission' : 'other';
+  // 許可の確認の選択肢には説明が無い。選択肢の下の行は、Claude Code が名前を端末の幅より手前で折り返した続き
+  // （例: 「Yes, and always allow access to <フォルダ>」の次の行の「from this project」）なので、名前につなぐ
+  if (kind === 'permission') {
+    for (const option of options) {
+      if (option.description) [option.label, option.description] = [joinWrapped(option.label, option.description), ''];
+    }
+  }
   // そのほかの確認（ワークフローを始める前の確認・/rewind の「何を戻すか」など）は、問いかけが説明の上にあることがある
   // （「Run a dynamic workflow?」「Confirm you want to restore …:」）。最後の行が問いかけでなければ、
   // ? で終わる行（無ければ : で終わる行）を見出しにして、最後の行は補足に回す
@@ -287,14 +294,15 @@ export function parseSpinner(lines: ScreenLine[], promptStart: number): SpinnerL
 
 // 応答の文章が画面に流れている途中か。Claude Code は文章を書き始めるとタイマーの行を消すので、
 // 入力欄の枠から上へ見て、発言（❯）やタイマー・完了の行（✻ Churned for 12s など）より先に応答（⏺）が見つかるかで判断する。
-// 作業中に送った発言が順番待ちのときも、タイマーの行は消えて発言（❯）が出る
-export function isStreaming(lines: ScreenLine[], promptStart: number): boolean {
+// 作業中に送った発言が順番待ちのときも、タイマーの行は消えて発言（❯）が出る。中断すると、応答の下に「⎿  Interrupted · …」が出る。
+// 長い応答では ⏺ の行が画面の上へ流れて見えなくなるので、画面のいちばん上まで、どれも見つからなければ前に読んだとき（before）のままとする
+export function isStreaming(lines: ScreenLine[], promptStart: number, before = false): boolean {
   for (let i = promptStart - 2; i >= 0; i--) {
     const text = lines[i].text;
     if (text.startsWith('⏺')) return true;
-    if (text.startsWith('❯') || /^[·✢✳✶✻✽*]\s/.test(text)) return false;
+    if (text.startsWith('❯') || /^[·✢✳✶✻✽*]\s/.test(text) || /^\s+⎿\s+Interrupted\b/.test(text)) return false;
   }
-  return false;
+  return before;
 }
 
 // 入力欄の最初の行の目印。! を打ってシェルのコマンドを書いている間は「!」になる
@@ -312,12 +320,16 @@ export function promptRange(lines: ScreenLine[]): [number, number] | null {
 
 // 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort · Claude Max」など）。--resume ではバナーが出ない。
 // 会話の本文にもモデル名は出てくるので、バナーの行だけを見る。バナーは 2 つの形がある
-// - 枠の中（前の Claude Code）: 「│  Haiku 4.5 · Claude Max · …」
+// - 枠の中（前の Claude Code）: 「Claude Code v…」の見出しから下に、行頭が縦線の行（「│  Haiku 4.5 · Claude Max · …」）が続く
 // - ロゴの右（今の Claude Code）: 「▐▛███▜▌   Claude Code v2.1.286」の次の行の「▝▜█████▛▘  Opus 5.5 · Claude Max」
+// 行頭が縦線の行は、質問文の枠などにもあるので、見出しに続くものだけを見る
 // エフォートを指定して起動すると（--effort）、モデル名のあとに「with low effort」が入る
 export function findModel(lines: ScreenLine[]): string | null {
   const logo = lines.findIndex((l) => BANNER_TITLE.test(l.text));
-  const banner = [...lines.filter((l) => l.text.startsWith('│')), ...(logo === -1 ? [] : lines.slice(logo + 1, logo + 3))];
+  if (logo === -1) return null;
+  let boxEnd = logo + 1;
+  while (boxEnd < lines.length && lines[boxEnd].text.startsWith('│')) boxEnd++;
+  const banner = lines.slice(logo + 1, Math.max(boxEnd, logo + 3));
   for (const { text } of banner) {
     // 新しい系統名にも対応できるよう、名前は決め打ちしない
     const m = text.match(/\b([A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?)(?: with \S+ effort)? ·/);
@@ -343,9 +355,10 @@ export function findMode(lines: ScreenLine[]): PermissionMode | null {
   return null;
 }
 
-// /rewind の巻き戻し先の一覧。過去の発言が番号なしで並び、❯ の付いた行が選択中（最後は「(current)」）
+// /rewind の巻き戻し先の一覧。過去の発言が番号なしで並び、❯ の付いた行が選択中（最後は「(current)」）。
+// 一覧は画面の下に重ねて出て、案内はそのいちばん下にある。上に残る会話の本文に同じ文字があっても取り違えないよう、下から探す
 export function parseRewind(lines: ScreenLine[]): { pointed: string } | null {
-  const footer = lines.findIndex((l) => /Enter to continue · Esc to cancel/.test(l.text));
+  const footer = findLastIndex(lines, (l) => /Enter to continue · Esc to cancel/.test(l.text));
   if (footer === -1 || !lines.slice(Math.max(0, footer - 40), footer).some((l) => l.text.trim() === 'Rewind')) return null;
   for (let i = footer - 1; i >= 0; i--) {
     const m = lines[i].text.match(/^\s*❯\s+(.*)$/);
