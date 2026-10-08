@@ -25,17 +25,17 @@ const UNKNOWN_AFTER_MS = 1200;
 const READY_AFTER_MS = 300;
 // Claude Code は、直前の入力（指示の送信・前のメニューへの Enter・文字の入力）から少しの間、出たばかりのメニューに届いたキーを、
 // 何も描かずに捨てる（続けて押したキーで、出たばかりの確認に答えてしまわないための仕組み。あとから効くこともない）。
-// 本物（2.1.293）をモックの API で動かして測ると、捨てるのは直前の入力から約 250ms。メニューの中で打つ ↑/↓ などは数えない。
-// メニューが出る前の最後の入力からこれだけたつまでは、選ぶキーを送らない（Claude Code が入力を読むのが遅れる分の余裕を足す）
-const INPUT_GRACE_MS = 400;
+// 本物（2.1.292・2.1.293）をモックの API で動かして測ると、捨てるのは直前の入力から約 250ms（重いときは 300ms ほどのことも）。
+// メニューの中で打つ ↑/↓ などは数えない。
+// メニューが出る前の最後の入力からこれだけたつまでは、選ぶキーを送らない（選ぶキーは送り直さないので、重いときの分の余裕を多めに足す）
+const INPUT_GRACE_MS = 700;
 // 出たばかりのメニューは、描き直されてカーソルが元に戻ることがある（起動直後のフォルダの信頼の確認は、出てから 0.13〜0.17 秒のうちに
 // ↓ を押すと、カーソルがいったん動いたあと「No, exit」に戻り、続けて送った Enter で No, exit が選ばれた。2.1.293 で実測）。
 // メニューを読み取ってからこれだけたつまでは、キーを送らない
 const MENU_SETTLE_MS = 300;
-// 選ぶキーを送ってから、メニューの画面が変わるのを待つ時間。少しも変わらなければ、Claude Code が受け付けなかったとみて送り直す
-const PRESS_CONFIRM_MS = 1000;
-// 選ぶキーを送る回数の上限（はじめの 1 回を含む）
-const MAX_PRESSES = 3;
+// 選ぶキーを送ってから、メニューの画面が変わるのを待つ時間。少しも変わらなければ、Claude Code が受け付けなかったとして ignored を返す
+// （送り直さない）。Claude Code が重くて描くのが遅れているだけのときに、早まって受け付けなかったとしないよう長めにする
+const PRESS_CONFIRM_MS = 3000;
 const KEY_UP = '\x1b[A';
 const KEY_DOWN = '\x1b[B';
 const KEY_SHIFT_TAB = '\x1b[Z';
@@ -215,7 +215,8 @@ export class ScreenTracker {
   // text があれば（自由記述）カーソルを合わせたあと、前に打った文字を消して入力してから key を送る。
   // expect: キーを送る前に毎回、今のメニューがこれを満たすか確かめる（途中で別のメニューに変わったら、何も送らずにやめる）。
   // 出たばかりのメニュー（MENU_SETTLE_MS）と、Claude Code が入力を捨てる間（INPUT_GRACE_MS）には送らずに待ち、
-  // 送った key が効いたかを画面で確かめる（press）。選べたら chosen。選べなかったときは、黙って捨てずに理由を返す（ChooseResult）
+  // 選ぶキー（key）は 1 回だけ送って、効いたかを画面で確かめる（press）。選べたら chosen。
+  // 選べなかったときは、黙って捨てずに理由を返す（ChooseResult）。押し直すかは、人（カードの知らせを見て）が決める
   async choose(optionId: string, key: 'enter' | 'space' | 'none', text?: string, expect?: (menu: Menu) => boolean): Promise<ChooseResult> {
     if (this.busy) return 'busy';
     this.busy = true;
@@ -230,7 +231,8 @@ export class ScreenTracker {
       if (!menu) return 'gone';
       if (!menu.options.some((o) => o.id === optionId)) return 'missing';
       await sleep(Math.max(this.menuSince + MENU_SETTLE_MS, this.menuInputAt + INPUT_GRACE_MS) - Date.now());
-      // 押す直前にカーソルが目的の選択肢から動いていたら（描き直しで戻った）、合わせ直す
+      // 押す直前にカーソルが目的の選択肢から動いていたら（描き直しで戻った）、合わせ直す。
+      // moved は選ぶキーを送る前に返るので、合わせ直しても、選ぶキーを送るのは 1 回だけ
       for (let attempt = 0; attempt < 3; attempt++) {
         const moved = await this.moveTo(optionId, shown);
         if (moved) return moved;
@@ -267,25 +269,22 @@ export class ScreenTracker {
     }
   }
 
-  // 選ぶキー（Enter・Space）を送り、メニューの画面が変わるのを待つ。変わったら chosen。
-  // 少しも変わらないまま PRESS_CONFIRM_MS たったら、Claude Code が受け付けなかった（入力を捨てる間に届いた）とみて、もう一度送る。
-  // 送り直すのは、送ってから届いた出力のどれを書き込んだときも、メニューの画面が送る前とまったく同じだったときだけ。
-  // 前のキーが効いていれば、メニューは一度閉じる（次の確認が出るのは、API の応答を待ったあと）ので、次の確認を勝手に選ぶことはない。
+  // 選ぶキー（Enter・Space）を 1 回だけ送り、メニューの画面が変わるのを待つ。変わったら chosen。
+  // 少しも変わらないまま PRESS_CONFIRM_MS たったら、Claude Code が受け付けなかった（入力を捨てる間に届いた）として ignored を返す。
+  // 送り直さない。Claude Code が固まっていて、あとから最初のキーを受け付けたとき、送り直したキーが次の許可の確認に当たり、
+  // 人が押していない許可を出してしまうおそれがあるため。
   // 送る直前に、カーソルが目的の選択肢に無かったら、何も送らずに moved を返す
   private async press(data: string, optionId: string, shown: () => Menu | null): Promise<ChooseResult | 'moved'> {
-    for (let press = 0; press < MAX_PRESSES; press++) {
-      await this.caughtUp();
-      const menu = shown();
-      if (!menu) return 'gone';
-      // 読み取りより新しい、端末の今の画面でも確かめる（画面より高い質問で、目的の選択肢が見えていなければ、読み取りに任せる）
-      const onScreen = parseMenu(this.lines())?.options.find((o) => o.id === optionId);
-      if (!menu.options.find((o) => o.id === optionId)?.pointed || (onScreen && !onScreen.pointed)) return 'moved';
-      const before = this.menuOnScreen();
-      this.write(data);
-      if (await this.untilMenuChanges(before, PRESS_CONFIRM_MS)) return 'chosen';
-      if (this.disposed) return 'gone';
-    }
-    return 'ignored';
+    await this.caughtUp();
+    const menu = shown();
+    if (!menu) return 'gone';
+    // 読み取りより新しい、端末の今の画面でも確かめる（画面より高い質問で、目的の選択肢が見えていなければ、読み取りに任せる）
+    const onScreen = parseMenu(this.lines())?.options.find((o) => o.id === optionId);
+    if (!menu.options.find((o) => o.id === optionId)?.pointed || (onScreen && !onScreen.pointed)) return 'moved';
+    const before = this.menuOnScreen();
+    this.write(data);
+    if (await this.untilMenuChanges(before, PRESS_CONFIRM_MS)) return 'chosen';
+    return this.disposed ? 'gone' : 'ignored';
   }
 
   // 書き込んだ出力を読み取り終えるまで待つ（出力が続いているときは、長くても 500ms）

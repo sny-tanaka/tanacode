@@ -4,9 +4,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
-import type { ChatBatch, SessionSummary } from '@shared/ipc';
+import type { ChatBatch, ScreenChoice, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
-import type { Activity, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
+import type { Activity, ChooseResult, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
@@ -29,6 +29,8 @@ const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
 const POLL_MS = 50;
 // 選べたあと、画面の読み取りがメニューの閉じたのに追いつくのを待つ時間
 const MENU_CLOSE_MS = 1500;
+// カードに「受け付けませんでした」と出たとき（ignored）に、人と同じく押し直す回数の上限（はじめの 1 回を含む）
+const PRESSES = 3;
 // 打った文字が入力欄に出るのを待つ時間。出なくても Enter は送る（そのあとの確かめで失敗する）
 const DRAFT_MS = 3000;
 // 入力欄でないところに打ったとき、Enter を送るまで待つ時間（打った文字を画面から読めないので、決まった時間だけ待つ）
@@ -450,14 +452,24 @@ export class ClaudeRun {
     await this.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
   }
 
-  // メニューで選ぶ。アプリのカードのボタンと同じく session-manager の choose を 1 回だけ呼ぶ
-  // （Claude Code が入力を捨てる間を待つのも、受け付けられなかったときに送り直すのも、アプリの側がする）。
-  // 選べなかったら、理由と画面を付けて失敗させる。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
+  // メニューで選ぶ（press）。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
   async answer(title: string, optionId: string): Promise<void> {
     const closed = this.menusClosed;
-    const result = await this.manager.choose(this.sessionId!, { optionId, key: 'enter' });
-    if (result !== 'chosen') throw new Error(`「${title}」で選べません（${result}）\n${this.dump()}`);
+    await this.press(title, { optionId, key: 'enter' });
     await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
+  }
+
+  // アプリのカードのボタンを押すのと同じく、session-manager の choose で選ぶ（Claude Code が入力を捨てる間を待つのは、アプリの側）。
+  // カードに「受け付けませんでした」と出たとき（ignored）だけ、人と同じく押し直す。黙って何度も押し直すことはしない。
+  // それ以外の理由で選べなかったら、理由と画面を付けて失敗させる。押した結果を順に返す
+  async press(label: string, choice: ScreenChoice, choose: (choice: ScreenChoice) => Promise<ChooseResult> = (c) => this.manager.choose(this.sessionId!, c)): Promise<ChooseResult[]> {
+    const results: ChooseResult[] = [];
+    for (let attempt = 1; ; attempt++) {
+      const result = await choose(choice);
+      results.push(result);
+      if (result === 'chosen') return results;
+      if (result !== 'ignored' || attempt >= PRESSES) throw new Error(`「${label}」で選べません（${results.join(' → ')}）\n${this.dump()}`);
+    }
   }
 
   // 条件が満たされるまで待つ。時間切れのときは、そのときの画面を付けて失敗させる

@@ -64,10 +64,11 @@ describe(`Claude Code ${version} の AskUserQuestion`, () => {
     return result?.type === 'tool-result' ? result.answers : undefined;
   };
 
-  // アプリのカードのボタンと同じ操作（ScreenTracker の choose）で 1 回だけ選び、check が満たされるまで待つ。
-  // 出たばかりの質問に Claude Code が入力を捨てる間を待つのも、受け付けられなかったときに送り直すのも、choose がする
+  // アプリのカードのボタンと同じ操作（ScreenTracker の choose）で選び、check が満たされるまで待つ。
+  // 出たばかりの質問に Claude Code が入力を捨てる間を待つのは choose。カードに「受け付けませんでした」と出たときだけ、
+  // 人と同じく押し直す（ClaudeRun.press）
   const choose = async <T>(label: string, [id, key, text]: Parameters<ClaudeRun['screen']['choose']>, check: (info: ScreenInfo) => T | null | undefined | false) => {
-    expect(await run.screen.choose(id, key, text), label).toBe('chosen');
+    await run.press(label, { optionId: id, key, text }, (c) => run.screen.choose(c.optionId, c.key, c.text));
     return run.waitFor(label, check);
   };
 
