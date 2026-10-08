@@ -158,19 +158,19 @@ PR と develop・main への push で、次のものを流します。
 
 | ワークフロー | ジョブ | 内容 | ランナー |
 | --- | --- | --- | --- |
-| `ci.yml` | `typecheck` | 型チェック（`npm run typecheck`） | ubuntu |
-| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる。できた `.app` で E2E（`npm run test:e2e`）も流す | macOS |
+| `ci.yml` | `unit` | 型チェック（`npm run typecheck`）と、単体テスト（`npm run coverage`。カバレッジも測る） | ubuntu |
 | `ci.yml` | `storybook` | Storybook のビルド | ubuntu |
-| `claude-code-check.yml` | `test` | `npm test` と `npm run test:cli`（下の「Claude Code との互換性の確かめ方」）。どちらもカバレッジを測る | macOS |
-| `claude-code-check.yml` | `e2e` | ソースマップ付きでビルドしたアプリでの E2E（`npm run coverage:e2e`）。カバレッジを測る | macOS |
-| `claude-code-check.yml` | `check` | `test`・`e2e` が通ったかを確かめ、3 つのカバレッジを合わせて下限を確かめる（下の「カバレッジ」） | macOS |
-| `demo-site.yml` | `build`・`tour`・`tour-sp` | デモのサイトのビルドと、ツアーが最後まで流れるか（下の「デモのサイト」） | ubuntu |
+| `ci.yml` | `cli` | 本物の claude（動作確認済のバージョン）での確認（`npm run coverage:cli`。下の「Claude Code との互換性の確かめ方」） | macOS |
+| `ci.yml` | `app` | アプリ本体を、配布と同じ手順で `.app` まで作る（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる。できた `.app` で E2E（`npm run coverage:e2e`。カバレッジも測る）を流す | macOS |
+| `ci.yml` | `check` | ほかの 4 つのジョブが全部通ったかを確かめ、3 つのカバレッジを合わせて下限を確かめる（下の「カバレッジ」） | ubuntu |
+| `demo-site.yml` | `tour`（PR では `build` は飛ばす） | デモのサイトをビルドし、ツアーが最後まで流れるかを PC とスマホで確かめる（下の「デモのサイト」） | ubuntu |
 
-- PR では流さず、週 1 回の定期実行と手動の実行だけで流すものに、`mutation.yml`（ubuntu。下の「ミューテーションテスト」）があります。
-- アプリは macOS 専用なので、アプリ本体と Claude Code との互換性の確認は macOS で流します。Linux で動くかは確かめません。Claude Code は OS で画面の描き方が違う（応答の印は macOS では ⏺、Linux では ●）ので、互換性の確認と控えの記録も macOS で行います。型チェック・Storybook・デモのサイトは OS に依らないので、ubuntu で流します。
+- PR では流さないものに、毎日の最新の Claude Code での互換性の確認（`claude-code-check.yml`。macOS。下の「Claude Code との互換性の確かめ方」）と、週 1 回の `mutation.yml`（ubuntu。下の「ミューテーションテスト」）があります。
+- アプリは macOS 専用なので、アプリ本体と Claude Code との互換性の確認は macOS で流します。Linux で動くかは確かめません。Claude Code は OS で画面の描き方が違う（応答の印は macOS では ⏺、Linux では ●）ので、互換性の確認と控えの記録も macOS で行います。型チェック・単体テスト・Storybook・デモのサイト・カバレッジのまとめは OS に依らないので、ubuntu で流します。
 - public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
-  - そのため、互いに関わりの無いものは、ジョブを分けて並べて流します。`claude-code-check.yml` の `test`（単体と本物の claude。5 分ほど）と `e2e`（ビルドと E2E。7 分ほど）は同時に動き、`check` が両方を待ってカバレッジを合わせます。
-  - `check` は develop のルールセットの必須のチェックです。前のジョブが失敗して飛ばされると、必須のチェックは通ったことになってしまうので、`check` は前のジョブの結果に関わらず動き、`test`・`e2e` のどちらかが失敗していたら失敗にします。
+  - そのため、互いに関わりの無いものは、ジョブを分けて並べて流します。ジョブの中でも、関わりの無いもの（翻訳の補助プログラムとアプリのビルド、WebKit を入れるのとデモのビルド、PC とスマホのツアー）は並べて動かします。いちばん長いのは `app`（ビルド・`.app` を作る・E2E）で、`check` がそれを待ってカバレッジを合わせます。
+  - 同じものは 1 回だけ作り、1 回だけ流します。E2E は、カバレッジを測るために作ったソースマップ付きのビルドから `.app` を作り、その `.app` で 1 回だけ流します（`.map` は `.app` に入りません）。デモのサイトも、PR では待ち時間 0 のビルド 1 回で、PC とスマホのツアーを流します。
+  - `check` は develop のルールセットの必須のチェックです。前のジョブが失敗して飛ばされると、必須のチェックは通ったことになってしまうので、`check` は前のジョブの結果に関わらず動き、どれか 1 つでも通っていなければ失敗にします。
 
 ### テストの部品
 
@@ -240,7 +240,8 @@ PR と develop・main への push で、次のものを流します。
   - 下限は上げるだけで、下げません。テストを足して上がったら、`npm run coverage:report -- --update` で上げます。今の値から 1 ポイント下げて置きます。本物の claude を動かすテストと E2E は、待ち方しだいで通る行が少し変わるためです。手元で上げるときは、CI と同じく 3 つとも測ってから流します（どれかが無いと、その分だけ低く出ます）。
   - `--diff <ref>` を付けると、`<ref>` から変えた行のうち、テストで通った行の割合と、通らなかった行も出します。
   - 合わせるときは、文・分岐・関数を src の位置で突き合わせます。単体のテスト（ファイルごとに変換したもの）と E2E（ビルドしてまとめたものを、ソースマップで戻したもの）では、同じ文でも位置が少しずれることがあり、そのときは別のものとして数えます。行の割合は、同じ行のうち通ったものを数えるので影響を受けません。分岐と関数の割合は、少し動くことがあります。
-- CI では、PR と push で 3 つとも測り（単体と本物の claude は `test`、E2E は `e2e` のジョブ）、`check` のジョブが成果物で受け取って合わせ、表をジョブの概要に出します。カバレッジのファイルは測った場所の絶対パスで入っているので、合わせる `check` も、測るのと同じ macOS のランナーで動かします。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では、E2E を流さず、まとめもしません。その日の最新の Claude Code の互換性を見るためのものだからです。
+- CI では、PR と push で 3 つとも測り（単体は `unit`、本物の claude は `cli`、E2E は `app` のジョブ）、`check` のジョブが成果物で受け取って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では測りません。その日の最新の Claude Code の互換性を見るためのものだからです。
+  - カバレッジのファイルは、測った場所の絶対パスで入っています。`coverage:report` は、`…/src/…` のうちここにあるファイルのパスに読み替えてから合わせるので、別の OS のランナー（ubuntu と macOS）や別の場所で測ったものも合わせられます。
 - カバレッジは、テストで実行された行の割合です。結果まで確かめたかは分かりません。テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（まとめて確かめるのが、下の「ミューテーションテスト」）。
 
 ### 押していないボタン・入力
@@ -292,9 +293,9 @@ PR と develop・main への push で、次のものを流します。
 `npm run test:e2e`（`test/e2e/`）は、アプリ本体を Playwright で起動し、人と同じように画面を操作して、Claude Code・MCP・ターミナルまで通しで確かめます。`claude` は本物（`TANACODE_CLAUDE_BIN`、無ければ PATH の `claude`）、API はモック（`test/cli/mock-api.ts`）なので、料金はかかりません。
 
 - 起動するのは、ビルドしたアプリ（`out/`。先に `npm run build`）か、`TANACODE_E2E_APP` に渡した実行ファイル（パッケージした `.app` の `Contents/MacOS/tanacode`）。
-- CI では 2 か所で流します。どちらも PR と push だけで、`claude` は動作確認済のバージョンです。
-  - `ci.yml` の `app` のジョブ: 作った `.app` で流します（`npm run test:e2e`）。配る形のまま動くかを確かめるためです。
-  - `claude-code-check.yml` の `e2e` のジョブ: ソースマップ付きでビルドした `out/` で、カバレッジを測りながら流します（`npm run coverage:e2e`）。測ったものは `check` のジョブで、単体と本物の claude のテストと合わせて、下限を確かめます。
+- CI では、`ci.yml` の `app` のジョブで、PR と push のときに 1 回だけ流します。`claude` は動作確認済のバージョンです。
+  - 配る形のまま動くかを確かめるため、作った `.app` で流します。あわせてカバレッジも測ります（`npm run coverage:e2e`）。`.app` は、ソースマップ付きでビルドした `out/` から作り（`.map` は `.app` に入らない）、`.app` のスクリプト（`…/app.asar/out/…`）のカバレッジは、手元の同じ `out/` とソースマップで src の行に戻します（`scripts/e2e-coverage.mjs`）。測ったものは `check` のジョブで、単体と本物の claude のテストと合わせて、下限を確かめます。
+  - ソースマップには元のソースを埋め込みません（`electron.vite.config.ts` の `sourcemapExcludeSources`）。戻すときは src のファイルを読むので要らず、埋め込むと画面側のビルドのメモリが 1GB ほど増えて、macOS のランナー（7GB）ではビルドが遅くなるためです。
   - 毎日の定期の確認（最新の Claude Code）では流しません。E2E はビルドを含めて数分かかり、画面の待ち方しだいで落ちることもあるので、互換性の確認（読み取りが壊れていないか）とは分けています。新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れ、通らなければマージしません。
 - userData（`--user-data-dir`）と HOME は使い捨てのフォルダにします。ふだんのアプリの設定や `~/.claude` には触りません。通知と更新の確認は切ります。フォルダを選ぶダイアログは、作業フォルダを選んだことにします。
 - 終わるときは、終了の確認で「Claude Code も止めて終了」を選んだことにして、pty ホストと `claude` が終わるのを待ってから、一時フォルダを消します。
@@ -377,7 +378,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`）
   - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
-- GitHub Actions（`.github/workflows/claude-code-check.yml`）: PR と develop・main への push、毎日の定期の確認で、両方を流します。
+- GitHub Actions: PR と develop・main への push では `ci.yml`（`npm test` は `unit`、`npm run test:cli` は `cli` のジョブ）、毎日の定期の確認と「Run workflow」では `claude-code-check.yml`（`npm run test:cli` だけ）で流します。
   - 確かめる Claude Code は、毎日の定期の確認と「Run workflow」ではその日の最新、PR と push では動作確認済のバージョン（`VERIFIED_CLAUDE_CODE_VERSION`）。新しい Claude Code が出ても、関係のない PR が落ちないようにするためです。新しいバージョンへの追従は、毎日の確認と、それが作るバージョンを上げる PR で行います（その PR の CI は、上げたあとのバージョンで流れます）。
   - 定期の確認で失敗したら、Issue を立てます（同じバージョンの Issue が開いていれば立てない）。
   - 定期の確認で通ったら、動作確認済のバージョンを上げる PR（ブランチは `claude-code/<バージョン>`）を作って、PR の CI が通ったら squash マージし、ブランチを消します（リポジトリの設定の「ブランチの自動削除」で GitHub が先に消していれば、そのまま。消せずに残ったときは、ジョブは失敗にせず警告を出す）。動作確認済のバージョンと同じバージョンで、その控えがまだコミットされていなければ、控えだけを足す PR を作って、同じようにマージします。同じバージョンの PR が一度でもあれば（閉じたものも）、作り直しません。
@@ -971,11 +972,11 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
     - viewport には、ページの幅（`width`）と一緒に、横幅に合わせた全体の表示になる倍率（`initial-scale`）と縮小の下限（`minimum-scale`）も書きます。iPhone の Safari は、書かなければ 0.25 倍より小さくは縮めません（WebKit の `ViewportConfiguration` の既定の下限）。画面の幅の 4 倍より広いページ（いまは 2000px ほど）だと横幅に収まらず、右がはみ出して横にスクロールしてしまいます。書けば 0.1 倍まで縮められます。Playwright の WebKit はこの下限を持たないので、`npm run demo:check:sp` では気づけません。
     - viewport を広げると、親のページの 1px は画面の `--demo-unit` px 分になります。親のページに出す文字（吹き出し・早送りの間の幕・書き出した HTML の見出し）は、大きさを `--demo-unit` 倍にして、字が小さくならないようにします。上の帯・知らせ・目次は `ScreenLayer` の中で、層ごと `zoom` で拡大して同じ大きさに出します。
     - どちらも `transform: scale()` では拡大しません。iPhone の Safari は、縮めたページの解像度で描いた絵をそのまま引き伸ばすので、字がぼやけて読めなくなります。大きさそのものを変えるか `zoom` なら、拡大したあとの大きさで描き直します。
-    - 画面の大きさ・倍率を変えたときは、メモリも確かめます（`npm run demo:check:sp`。下の「スマホで流す」）。CI の `tour-sp` のジョブでも確かめます。
+    - 画面の大きさ・倍率を変えたときは、メモリも確かめます（`npm run demo:check:sp`。下の「スマホで流す」）。CI の `tour` のジョブでも確かめます。
   - 照らす枠のまわりを暗くするのは、画面と同じ大きさの幕に `clip-path` で穴を開けて作ります（`director.ts`）。枠の影（`box-shadow` の `100vmax` など）で暗くすると、影の分だけ画面の何倍もの大きさの層になり、枠が動くたびにメモリを食います。
   - スマホでは、ピンチで拡大して細かいところを読めます。上の帯・知らせ・目次は、いま見えている範囲（`visualViewport`）に重ねる層（`ScreenLayer`）に置き、拡大しても同じ大きさで画面の上に出します。幅が 760px より狭いと、帯を 2 段にします。
 - `vite.demo.config.ts`: サイトのビルドの設定。`@shared` の別名・バージョンの埋め込み・ライセンス表示（`demo-site/THIRD_PARTY_NOTICES.txt`）はアプリと同じ。どこに置いても読めるよう、パスは相対にします。
-- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR ではビルドが通るかだけを確かめます）。`build` と `tour` は develop へのマージに必須のチェックなので、PR ではどこを変えたものでも動かします（develop への push は、デモのサイトに関わるファイルが変わったときだけ）。どちらでも、ツアーが最後まで流れるかを PC（`tour` のジョブ）とスマホ（`tour-sp` のジョブ。メモリも見ます）で並べて確かめ、どちらかが通らなければ公開しません。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
+- 公開: `.github/workflows/demo-site.yml` が、develop に入ったときにビルドして GitHub Pages に置きます（PR では公開しません）。`build` と `tour` は develop へのマージに必須のチェックなので、PR ではどこを変えたものでも動かします（develop への push は、デモのサイトに関わるファイルが変わったときだけ）。どちらでも、`tour` のジョブが待ち時間 0 のビルドを 1 回作り、ツアーが最後まで流れるかを PC とスマホ（メモリも見ます）で並べて確かめ、どちらかが通らなければ公開しません。公開するもののビルド（`build`）は、PR では作りません。ビルドが通るかは `tour` のビルド（待ち時間の倍率のほかは同じ）で分かるためです（条件で飛ばしたジョブは、必須のチェックとしては通ったことになります）。リポジトリの Settings → Pages の Source を「GitHub Actions」にしておきます。
 - 機能を足したとき: 物語の合うところに手順を足すか、`chapters/` に章を足して `chapterInfo.ts` と `chapters.ts` に並べます。手順ごとに `d.caption('説明', 場所)` で説明を付けます。足した章・手順を足した章の `chapterInfo.ts` に `isNew: true` を付けると、目次に「新」の印が出ます（次に機能を足すときに外します）。前の章で変えた画面の状態（開いたパネル・ファイルの中身）は、あとの章に引き継がれることに気をつけます。
 - 画面の部品のクラス名や文言を変えると、台本が要素を見つけられずに止まります（帯に「ツアーが途中で止まりました」と出て、コンソールに `demo failed`）。CI の `tour` のジョブで気づけますが、手元では次のように確かめます。
   - 待ち時間の倍率は、環境変数 `VITE_DEMO_WAIT` で変えられます（台本の待ち時間・カーソルの移動・説明を読む間にかかります）。1 が既定で、0.5 なら半分。0 なら待たずに、ずっと早送りと同じ速さで流します。`npm run demo:dev` にも `npm run demo:build` にも効きます。

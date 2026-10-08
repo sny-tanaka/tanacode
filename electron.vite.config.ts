@@ -8,6 +8,9 @@ import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
 // TANACODE_SOURCEMAP=1 でビルドすると、ソースマップ（.map）も書き出す。E2E のカバレッジを src の行に戻すのに使う
 // （npm run coverage:e2e。.map はアプリには入れない）
 const sourcemap = process.env.TANACODE_SOURCEMAP === '1';
+// ソースマップには元のソースを埋め込まない（カバレッジは src のファイルを読んで戻すので要らない）。
+// 埋め込むと、画面側のビルドのメモリが 1GB ほど増え、macOS のランナー（7GB）ではビルドが遅くなる
+const output = { sourcemapExcludeSources: true };
 
 // 画面に出すアプリのバージョン（__APP_VERSION__ として埋め込む）
 const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string };
@@ -20,6 +23,7 @@ export default defineConfig({
     build: {
       sourcemap,
       rollupOptions: {
+        output,
         input: {
           index: resolve('src/main/index.ts'),
           'pty-host': resolve('src/main/pty-host.ts'),
@@ -33,12 +37,12 @@ export default defineConfig({
   },
   preload: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
-    build: { sourcemap },
+    build: { sourcemap, rollupOptions: { output } },
   },
   renderer: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     define: { __APP_VERSION__: JSON.stringify(version) },
-    build: { sourcemap },
+    build: { sourcemap, rollupOptions: { output } },
     plugins: [
       react(),
       // アプリに入れて配る依存のライセンス表示を、アプリの中（out/renderer/THIRD_PARTY_NOTICES.txt）に書き出す。

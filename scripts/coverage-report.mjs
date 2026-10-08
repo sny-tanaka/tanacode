@@ -36,7 +36,16 @@ if (sources.length === 0) {
   process.exit(1);
 }
 const map = libCoverage.createCoverageMap({});
-for (const name of sources) map.merge(JSON.parse(readFileSync(join(coverageDir, name, 'coverage-final.json'), 'utf8')));
+for (const name of sources) {
+  // カバレッジのファイルは、測った場所の絶対パスで入っている。CI では OS の違うランナーで測ったもの（/home/runner/… と /Users/runner/…）を
+  // 合わせるので、ここの src のファイルのパスに置き換えてから合わせる
+  const local = {};
+  for (const [abs, fileCoverage] of Object.entries(JSON.parse(readFileSync(join(coverageDir, name, 'coverage-final.json'), 'utf8')))) {
+    const path = localPath(abs);
+    local[path] = { ...fileCoverage, path };
+  }
+  map.merge(local);
+}
 const files = map.files().map((abs) => ({ abs, path: relative(root, abs).split('\\').join('/') }));
 
 const pct = (n) => `${n.toFixed(1)}%`;
@@ -101,6 +110,17 @@ const text = out.join('\n');
 console.log(text);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${text}\n`);
 process.exit(failures.length > 0 ? 1 : 0);
+
+// 測った場所の絶対パスを、ここのファイルのパスにする（…/src/… のうち、ここにあるもの。無ければそのまま）。
+// 測った場所のパスに src が入っていることもあるので、前から順に試す
+function localPath(abs) {
+  const path = abs.split('\\').join('/');
+  for (let i = path.indexOf('/src/'); i >= 0; i = path.indexOf('/src/', i + 1)) {
+    const candidate = join(root, path.slice(i + 1));
+    if (existsSync(candidate)) return candidate;
+  }
+  return abs;
+}
 
 function label(metric) {
   return { lines: '行', branches: '分岐', functions: '関数' }[metric];
