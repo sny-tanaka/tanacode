@@ -26,8 +26,8 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -39,7 +39,7 @@ jobs:
       # 型が合わなくても、単体テストの結果も出す
       - if: ${{ !cancelled() }}
         run: npm run coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-unit
           path: coverage/unit/coverage-final.json
@@ -51,8 +51,8 @@ jobs:
   storybook:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -66,8 +66,8 @@ jobs:
   cli:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -89,7 +89,7 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-cli
           path: coverage/cli/coverage-final.json
@@ -99,7 +99,7 @@ jobs:
       # 落ちたときの手がかりに、そのときの画面などの控えを残す
       - name: 控えを残す
         if: failure() && steps.claude.outputs.version
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: claude-code-${{ steps.claude.outputs.version }}
           path: test/fixtures/claude-code/
@@ -109,8 +109,8 @@ jobs:
   app:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -170,7 +170,7 @@ jobs:
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
           TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-e2e
           path: coverage/e2e/coverage-final.json
@@ -180,7 +180,7 @@ jobs:
       # 落ちたテストの画面の写し・メインプロセスの出力・モックの API の呼び出し
       - name: E2E の失敗の手がかりを残す
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-results
           path: test-results/e2e/
@@ -206,25 +206,25 @@ jobs:
             exit 1
           fi
       # マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-unit
           path: coverage/unit/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-cli
           path: coverage/cli/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-e2e
           path: coverage/e2e/

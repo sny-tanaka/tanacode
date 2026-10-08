@@ -71,7 +71,7 @@ jobs:
           owner: sny-tanaka
           repositories: homebrew-tanacode
           permission-contents: write
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: sny-tanaka/homebrew-tanacode
           token: ${{ steps.app-token.outputs.token }}

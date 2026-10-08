@@ -31,8 +31,8 @@ jobs:
     outputs:
       version: ${{ steps.claude.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -60,7 +60,7 @@ jobs:
       # 次の update のジョブが控えを使う
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: claude-code-${{ steps.claude.outputs.version }}
           path: test/fixtures/claude-code/
@@ -105,10 +105,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
       # push も App の token でする（GITHUB_TOKEN で push すると、PR の CI が動かない）
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -116,7 +116,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       # 確認のジョブで取った控え
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: claude-code-${{ needs.compat.outputs.version }}
           path: test/fixtures/claude-code/

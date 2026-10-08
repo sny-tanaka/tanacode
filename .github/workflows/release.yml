@@ -29,7 +29,7 @@ jobs:
       TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
     steps:
       # 下で、develop に入っているコミットかを確かめるため、履歴を取る（ファイルの中身は、作業に使うものだけ取る）
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           filter: blob:none
@@ -58,7 +58,7 @@ jobs:
             echo "::error::$TAG のタグはもうあります"
             exit 1
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
