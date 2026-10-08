@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import type { PermissionMode } from '@shared/screen';
+import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
+import type { PermissionMode, ScreenLine } from '@shared/screen';
 import { findTaskRows, parseTasks, showsCommandSuggestion } from '../src/main/screen-parser';
 import { ScreenTracker } from '../src/main/screen-tracker';
 
@@ -40,6 +43,44 @@ it('権限モードを切り替えるとき、キーを送る前から描いて�
   await sleep(400);
   expect(writes).toEqual(['\x1b[Z']);
   expect(tracker.current.mode).toBe('acceptEdits');
+});
+
+// 長い応答を書いている途中の進み具合。動作確認済のバージョンの控え（作業が終わったあとの pasted-draft）を元に、
+// 入力欄より上の会話の行だけを差し替えて流し込む。
+// 本物の Claude Code 2.1.292 を Linux で動かし、長い応答を流して見ると、タイマーの行は消え、応答の始まり（Linux の印は ●）の行は
+// 画面の上へ流れて見えなくなり、画面のいちばん上から入力欄の上まで、応答の本文（字下げ 2）の行だけが並ぶ。
+// この画面は控えに無い（クラウドの環境で見たもので、控えには残していない）ので、応答の行は作ったもの
+const fixture = (name: string) =>
+  JSON.parse(readFileSync(join(__dirname, 'fixtures', 'claude-code', VERIFIED_CLAUDE_CODE_VERSION, 'screens', `${name}.json`), 'utf8')) as ScreenLine[];
+// 1 行ずつ位置を決めて描く（端末の幅いっぱいの行で、次の行へ送られないように）
+const draw = (rows: string[]) => `\x1b[2J${rows.map((row, y) => `\x1b[${y + 1};1H${row}`).join('')}`;
+
+it('長い応答の始まり（⏺）が画面の外に流れても、書き終わるまで「応答を書いている」のままにする。中断したら作業中でなくなる', async () => {
+  const done = fixture('pasted-draft').map((l) => l.text);
+  // 完了の行（✻ Worked for 0s · done …）。ここから下（入力欄まで）は控えのまま
+  const at = done.findIndex((text) => /^✻ \S+ for \d+s · done/.test(text));
+  const below = done.slice(at + 1);
+  const reply = (from: number) => Array.from({ length: at }, (_, i) => `  ${from + i}. 項目 ${from + i} を確かめました`);
+  // 中断の行は、控え（tool-interrupted）のもの。上と同じく本物の 2.1.292 で見ると、応答の途中で中断したときも、応答の下にこの行が出る
+  const interrupted = fixture('tool-interrupted').find((l) => /^\s+⎿\s+Interrupted/.test(l.text))!.text;
+  tracker = new ScreenTracker(120, 40, () => {}, () => {});
+  const phase = async (rows: string[]) => {
+    expect(rows).toHaveLength(done.length);
+    tracker!.feed(draw(rows));
+    await sleep(200);
+    return tracker!.currentActivity?.phase ?? null;
+  };
+  // 書き始め（⏺ が見えている）
+  expect(await phase(['⏺ 調べた結果です。', ...reply(1).slice(1), '', ...below])).toBe('writing');
+  // ⏺ が画面の外に流れた
+  expect(await phase([...reply(5), '', ...below])).toBe('writing');
+  expect(await phase([...reply(9), '', ...below])).toBe('writing');
+  // 書き終わると、完了の行が出る
+  expect(await phase(done)).toBeNull();
+  // もう一度、長い応答を書いている途中で中断する
+  expect(await phase(['⏺ 調べた結果です。', ...reply(1).slice(1), '', ...below])).toBe('writing');
+  expect(await phase([...reply(5), '', ...below])).toBe('writing');
+  expect(await phase([...reply(6).slice(1), interrupted, '', ...below])).toBeNull();
 });
 
 // バックグラウンドのタスクを、/tasks の画面で選んで x で止める操作（stopTask）。
