@@ -661,3 +661,15 @@ describe('貼り付け・ドロップした画像', () => {
     expect(existsSync(join(state.root, 'etc'))).toBe(false);
   });
 });
+
+describe('不具合（いまのコードで落ちる）', () => {
+  // 書き出しのファイル名は、先頭の . を除いて隠しファイルにしない（saveExport）。ところが、. を除いてから前後の空白を除くので、
+  // 先頭が空白・制御文字（空白に置き換える）のあとに . が来ると、. が先頭に残って隠しファイルの名前になる。
+  // ふだんは画面（exportFileName）が先に空白を詰めて trim するので起きない。main の守りの穴（実害は小さい）
+  it.each([' .zshrc', '\x01.env'])('名前（%j）の先頭が空白・制御文字でも、隠しファイル（. で始まる名前）にしない', async (name) => {
+    await boot();
+    await invoke(IpcChannel.SessionsExportSave, '<html></html>', name);
+    const { defaultPath } = state.dialog.showSaveDialog.mock.calls[0][1] as { defaultPath: string };
+    expect(defaultPath.slice(state.downloads.length + 1).startsWith('.')).toBe(false);
+  });
+});

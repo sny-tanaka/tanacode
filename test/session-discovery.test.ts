@@ -173,3 +173,17 @@ describe('ファイル名', () => {
     expect(found.claudeSessionId).toBe(basename(file, '.jsonl'));
   });
 });
+
+describe('不具合（いまのコードで落ちる）', () => {
+  // 会話ログの 1 行が、JSON としては読めてもオブジェクトでない（null）と、その行を読むところ（e.cwd・transcriptTitle の entry.type）で TypeError になり、
+  // discoverSessions 全体が失敗する（会話を取り込むダイアログ（ImportDialog）が、ほかの会話も含めて何も出せず、「ありません」も出ないままになる）。
+  // 「壊れた行は飛ばす」のつもりのところ。shared の isTranscriptEntry と同じく、オブジェクトでない行を飛ばすのがあるべき動き
+  it('JSON としては読めても、オブジェクトでない行（null）は飛ばす。その 1 行のせいで、ほかの会話まで探せなくならない', async () => {
+    save('-p', 'with-null', lines({ type: 'system', cwd: '/p' }, 'null', user('最初の発言', { cwd: '/p' })), 2000);
+    save('-p', 'ok', session('/p', 'ほかの会話'), 1000);
+    await expect(discoverSessions(new Set())).resolves.toMatchObject([
+      { claudeSessionId: 'with-null', cwd: '/p', title: '最初の発言' },
+      { claudeSessionId: 'ok', title: 'ほかの会話' },
+    ]);
+  });
+});
