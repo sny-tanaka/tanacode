@@ -3252,6 +3252,23 @@ details[open] > summary > .disclosure {
 .menu-option.chosen {
   border-color: var(--ide);
 }
+/* 押した選択肢を送っている間は、ほかの選択肢を押せない */
+.menu-option:disabled {
+  cursor: progress;
+}
+.menu-option:disabled:not(.chosen):hover {
+  border-color: var(--border-strong);
+  background: transparent;
+}
+/* 押した選択が Claude Code に届かなかったときの知らせ */
+.menu-card-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--danger-tint);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
 /* プレビューを出している選択肢 */
 .menu-option.previewed {
   border-color: var(--border-focus);

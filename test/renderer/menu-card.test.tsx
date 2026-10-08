@@ -26,7 +26,7 @@ describe('MenuCard', () => {
     expect(screen.getByText('何もしない')).toBeTruthy();
   });
 
-  it('複数選択のチェックは Space で付け外しし、確定の行は Enter で次へ進む', () => {
+  it('複数選択のチェックは Space で付け外しし、確定の行は Enter で次へ進む', async () => {
     render(
       <MenuCard
         sessionId="s1"
@@ -34,6 +34,8 @@ describe('MenuCard', () => {
       />,
     );
     fireEvent.click(screen.getByText('青'));
+    // 送り終えてから次を押す（送っている間は押せない）
+    await act(async () => {});
     fireEvent.click(screen.getByText('次の質問へ →'));
     expect(api.argsOf('screen.choose')).toEqual([
       ['s1', { optionId: '2', key: 'space', text: undefined }],

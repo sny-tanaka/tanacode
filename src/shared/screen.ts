@@ -39,6 +39,12 @@ export type Menu = {
   previewLayout?: boolean;
 };
 
+// メニューの選択肢を選んだ結果。chosen 以外は、選べていない（押したことを黙って捨てず、理由として返す）
+// chosen: 送ったキーで画面が変わった（自由記述を打つだけのときは、打ち終えた） / busy: ほかの画面の操作の途中で、何も送っていない /
+// gone: メニューが出ていない・別のメニューに変わったので、何も送っていない / missing: その選択肢が画面に無いので、何も送っていない /
+// stuck: 選択肢にカーソルを合わせられなかったので、選ぶキーは送っていない / ignored: 選ぶキーを送り直しても、Claude Code が受け付けなかった
+export type ChooseResult = 'chosen' | 'busy' | 'gone' | 'missing' | 'stuck' | 'ignored';
+
 // prompt: 通常の入力欄が出ている / menu: 選択メニュー / rewind: 巻き戻し先の一覧（/rewind）/
 // unknown: 認識できない対話画面（/config など）
 export type ScreenState =

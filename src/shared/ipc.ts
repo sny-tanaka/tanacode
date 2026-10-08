@@ -1,5 +1,5 @@
 import type { ChatEvent } from './chat';
-import type { Activity, PermissionMode, ScreenInfo } from './screen';
+import type { Activity, ChooseResult, PermissionMode, ScreenInfo } from './screen';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
@@ -397,7 +397,7 @@ export type TanacodeApi = {
   };
   screen: {
     get(sessionId: string): Promise<ScreenInfo | null>;
-    choose(sessionId: string, choice: ScreenChoice): Promise<void>;
+    choose(sessionId: string, choice: ScreenChoice): Promise<ChooseResult>;
     // 権限モードを Shift+Tab で切り替える（このセッションだけ）
     setMode(sessionId: string, mode: PermissionMode): Promise<boolean>;
     // text で始まる発言の直前まで巻き戻す（/rewind の一覧から選ぶ）

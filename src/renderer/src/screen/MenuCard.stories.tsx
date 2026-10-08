@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { Menu, MenuOption } from '@shared/screen';
+import { mockApi } from '../../../../.storybook/mockApi';
 import { MenuCard } from './MenuCard';
 
 const option = (id: string, label: string, extra: Partial<MenuOption> = {}): MenuOption => ({
@@ -74,6 +75,12 @@ export const 実行の許可: Story = {
       hint: 'Esc to cancel · Tab to amend',
     },
   },
+};
+
+// 押した選択が Claude Code に届かなかったとき（選択肢を押すと、カードの下に知らせが出る。押し直せる）
+export const 実行の許可_届かなかったとき: Story = {
+  args: 実行の許可.args,
+  beforeEach: () => mockApi({ 'screen.choose': () => Promise.resolve('ignored') }),
 };
 
 // 初めてのフォルダで出る、フォルダの信頼の確認（Claude Code の画面では番号の無い選択肢）

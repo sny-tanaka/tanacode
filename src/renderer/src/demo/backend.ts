@@ -381,6 +381,7 @@ export class DemoBackend {
         choose: async (id, choice) => {
           await sleep(250);
           this.onChoose(id, choice);
+          return 'chosen';
         },
         setMode: () => ok(true),
         rewind: () => ok(false),

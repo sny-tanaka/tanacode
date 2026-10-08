@@ -27,11 +27,7 @@ import { FakePtyHost } from './fake-pty-host';
 const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
 // 状態を待つときに見直す間隔
 const POLL_MS = 50;
-// Claude Code は、許可の確認などのメニューを出した直後の入力を受け付けないことがある（うっかり押しを防ぐ）。
-// 人が読んでから押すのと同じく、メニューが出てからこれだけたつまでは選ばない。
-// 足りなくても、メニューが閉じなければもう一度送る（MENU_CLOSE_MS）
-const MENU_GUARD_MS = 300;
-// 選んだあと、メニューが閉じるのを待つ時間。閉じなければもう一度送る
+// 選べたあと、画面の読み取りがメニューの閉じたのに追いつくのを待つ時間
 const MENU_CLOSE_MS = 1500;
 // 打った文字が入力欄に出るのを待つ時間。出なくても Enter は送る（そのあとの確かめで失敗する）
 const DRAFT_MS = 3000;
@@ -122,8 +118,8 @@ export class ClaudeRun {
   // 起動前に返す、何も映っていない画面
   private readonly blank = new ScreenTracker(DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows, () => {}, () => {});
   private readonly screens = new Map<ScreenName, { lines: ScreenLine[]; serialized: string }>();
-  // 今出ている選択メニューの見出しと、出た時刻。menusClosed: メニューが閉じた（別の画面になった）回数
-  private menuShown: { title: string; at: number } | null = null;
+  // 今出ている選択メニューの見出し。menusClosed: メニューが閉じた（別の画面になった）回数
+  private menuShown: string | null = null;
   private menusClosed = 0;
   private exited: number | null = null;
   private readonly oldHome = process.env.HOME;
@@ -399,12 +395,11 @@ export class ClaudeRun {
     return this.seen.some((s) => s.entry.type === 'user') || (readOrNull(this.transcript())?.includes('"type":"user"') ?? false);
   }
 
-  // 選択メニューが出た時刻と、閉じた回数を数える
+  // 選択メニューが閉じた回数を数える
   private noteScreen(info: ScreenInfo): void {
     const title = info.state.kind === 'menu' ? info.state.menu.title : null;
-    if (this.menuShown && this.menuShown.title !== title) this.menusClosed++;
-    if (title === null) this.menuShown = null;
-    else if (this.menuShown?.title !== title) this.menuShown = { title, at: Date.now() };
+    if (this.menuShown !== null && this.menuShown !== title) this.menusClosed++;
+    this.menuShown = title;
   }
 
   // フックが書いた AskUserQuestion の入力（StatusLineWatcher が読むファイル）
@@ -455,21 +450,14 @@ export class ClaudeRun {
     await this.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
   }
 
-  // メニューで選ぶ（アプリと同じく session-manager の choose で）。メニューが閉じなければもう一度送る
+  // メニューで選ぶ。アプリのカードのボタンと同じく session-manager の choose を 1 回だけ呼ぶ
+  // （Claude Code が入力を捨てる間を待つのも、受け付けられなかったときに送り直すのも、アプリの側がする）。
+  // 選べなかったら、理由と画面を付けて失敗させる。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
   async answer(title: string, optionId: string): Promise<void> {
-    const shown = () => {
-      const state = this.screen.current.state;
-      return state.kind === 'menu' && state.menu.title === title;
-    };
-    for (let attempt = 0; attempt < 3 && shown(); attempt++) {
-      // 出た直後の入力は受け付けられないので、出てから MENU_GUARD_MS たつまで待つ（人が読んでから押すのと同じ）
-      const since = this.menuShown?.title === title ? this.menuShown.at : Date.now();
-      await sleep(since + MENU_GUARD_MS - Date.now());
-      const closed = this.menusClosed;
-      await this.manager.choose(this.sessionId!, { optionId, key: 'enter' });
-      await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
-    }
-    if (shown()) throw new Error(`「${title}」で選んでもメニューが閉じません\n${this.dump()}`);
+    const closed = this.menusClosed;
+    const result = await this.manager.choose(this.sessionId!, { optionId, key: 'enter' });
+    if (result !== 'chosen') throw new Error(`「${title}」で選べません（${result}）\n${this.dump()}`);
+    await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
   }
 
   // 条件が満たされるまで待つ。時間切れのときは、そのときの画面を付けて失敗させる

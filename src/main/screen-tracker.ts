@@ -1,5 +1,5 @@
 import { Terminal } from '@xterm/headless';
-import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo, ScreenLine, ScreenState } from '@shared/screen';
+import type { Activity, AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo, ScreenLine, ScreenState } from '@shared/screen';
 import {
   applyQuestions,
   findEffort,
@@ -23,6 +23,19 @@ const SETTLE_MS = 60;
 const UNKNOWN_AFTER_MS = 1200;
 // 入力欄が出てから、打ち込んだ文字を受け付けるまでの余裕（描画のほうが先に出る）
 const READY_AFTER_MS = 300;
+// Claude Code は、直前の入力（指示の送信・前のメニューへの Enter・文字の入力）から少しの間、出たばかりのメニューに届いたキーを、
+// 何も描かずに捨てる（続けて押したキーで、出たばかりの確認に答えてしまわないための仕組み。あとから効くこともない）。
+// 本物（2.1.293）をモックの API で動かして測ると、捨てるのは直前の入力から約 250ms。メニューの中で打つ ↑/↓ などは数えない。
+// メニューが出る前の最後の入力からこれだけたつまでは、選ぶキーを送らない（Claude Code が入力を読むのが遅れる分の余裕を足す）
+const INPUT_GRACE_MS = 400;
+// 出たばかりのメニューは、描き直されてカーソルが元に戻ることがある（起動直後のフォルダの信頼の確認は、出てから 0.13〜0.17 秒のうちに
+// ↓ を押すと、カーソルがいったん動いたあと「No, exit」に戻り、続けて送った Enter で No, exit が選ばれた。2.1.293 で実測）。
+// メニューを読み取ってからこれだけたつまでは、キーを送らない
+const MENU_SETTLE_MS = 300;
+// 選ぶキーを送ってから、メニューの画面が変わるのを待つ時間。少しも変わらなければ、Claude Code が受け付けなかったとみて送り直す
+const PRESS_CONFIRM_MS = 1000;
+// 選ぶキーを送る回数の上限（はじめの 1 回を含む）
+const MAX_PRESSES = 3;
 const KEY_UP = '\x1b[A';
 const KEY_DOWN = '\x1b[B';
 const KEY_SHIFT_TAB = '\x1b[Z';
@@ -53,6 +66,16 @@ export class ScreenTracker {
   private readonly term: Terminal;
   private info: ScreenInfo = { state: { kind: 'starting' }, model: null, effort: null, mode: null, draft: '', ready: false };
   private settleTimer: NodeJS.Timeout | null = null;
+  // アプリが Claude Code に最後に入力を送った時刻と、今のメニューが出る前の最後の入力の時刻（Claude Code が入力を捨てる間を避ける）
+  private lastInputAt = 0;
+  private menuInputAt = 0;
+  // 今のメニューを読み取った時刻
+  private menuSince = 0;
+  // 出力を仮想端末に書き込むたびに呼ぶもの（選ぶキーを送ったあと、メニューの画面が一瞬でも変わったかを見る）
+  private readonly writtenWatchers = new Set<() => void>();
+  // 書き込んだ出力を、まだ読み取っていない（state が画面より古い）
+  private unread = false;
+  private disposed = false;
   private unknownTimer: NodeJS.Timeout | null = null;
   private readyTimer: NodeJS.Timeout | null = null;
   // 起動直後（入力欄が一度も出ていない間）は認識できない画面とみなさない
@@ -83,7 +106,7 @@ export class ScreenTracker {
   constructor(
     cols: number,
     rows: number,
-    private readonly write: (data: string) => void,
+    private readonly output: (data: string) => void,
     private readonly onChange: (info: ScreenInfo) => void,
     // 前に起動したときの表示で分かった 1M コンテキスト（今回の表示が読めなかったときに使う）
     oneMillion = false,
@@ -161,8 +184,15 @@ export class ScreenTracker {
     this.update({ ...this.info, ready: true });
   }
 
+  // アプリが Claude Code に入力を送った（チャットからの送信・ターミナルで打った文字など。このクラスが送るキーは write が数える）
+  noteInput(): void {
+    this.lastInputAt = Date.now();
+  }
+
   feed(data: string): void {
     this.term.write(data, () => {
+      this.unread = true;
+      for (const watch of [...this.writtenWatchers]) watch();
       if (this.settleTimer) clearTimeout(this.settleTimer);
       this.settleTimer = setTimeout(() => this.read(), SETTLE_MS);
     });
@@ -173,6 +203,8 @@ export class ScreenTracker {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.writtenWatchers.clear();
     if (this.settleTimer) clearTimeout(this.settleTimer);
     if (this.unknownTimer) clearTimeout(this.unknownTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
@@ -182,41 +214,110 @@ export class ScreenTracker {
   // メニューの選択肢を選ぶ。↑/↓ を 1 回ずつ送り、画面上のカーソルが目的の選択肢に来たら key を送る。
   // text があれば（自由記述）カーソルを合わせたあと、前に打った文字を消して入力してから key を送る。
   // expect: キーを送る前に毎回、今のメニューがこれを満たすか確かめる（途中で別のメニューに変わったら、何も送らずにやめる）。
-  // 最後のキーまで送れたら true
-  async choose(optionId: string, key: 'enter' | 'space' | 'none', text?: string, expect?: (menu: Menu) => boolean): Promise<boolean> {
-    if (this.busy) return false;
+  // 出たばかりのメニュー（MENU_SETTLE_MS）と、Claude Code が入力を捨てる間（INPUT_GRACE_MS）には送らずに待ち、
+  // 送った key が効いたかを画面で確かめる（press）。選べたら chosen。選べなかったときは、黙って捨てずに理由を返す（ChooseResult）
+  async choose(optionId: string, key: 'enter' | 'space' | 'none', text?: string, expect?: (menu: Menu) => boolean): Promise<ChooseResult> {
+    if (this.busy) return 'busy';
     this.busy = true;
     const shown = () => {
       const menu = this.menu();
       return menu && (!expect || expect(menu)) ? menu : null;
     };
     try {
-      for (let step = 0; ; step++) {
-        const menu = shown();
-        if (!menu) return false;
-        // カーソルが見えない（画面より高い質問で、上の切れた選択肢にある）ときは -1。↓ で見えるところまで送る
-        const current = menu.options.findIndex((o) => o.pointed);
-        const target = menu.options.findIndex((o) => o.id === optionId);
-        if (target === -1) return false;
-        if (current === target) break;
-        // 目的の選択肢にカーソルが来なかったら、違う選択肢で答えないよう何も送らない
-        if (step === 30) return false;
-        this.write(target > current ? KEY_DOWN : KEY_UP);
-        await this.readUntil(() => this.menu()?.options.findIndex((o) => o.pointed) !== current, 500);
+      // 押したのが、画面が変わる前のカードということがある。届いている出力を読み終えてから、今のメニューで確かめる
+      await this.caughtUp();
+      const menu = shown();
+      if (!menu) return 'gone';
+      if (!menu.options.some((o) => o.id === optionId)) return 'missing';
+      await sleep(Math.max(this.menuSince + MENU_SETTLE_MS, this.menuInputAt + INPUT_GRACE_MS) - Date.now());
+      // 押す直前にカーソルが目的の選択肢から動いていたら（描き直しで戻った）、合わせ直す
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const moved = await this.moveTo(optionId, shown);
+        if (moved) return moved;
+        if (text) {
+          if (!shown()) return 'gone';
+          this.write(KEY_CLEAR_LINE + text);
+          await this.nextRead(500);
+        }
+        if (key === 'none') return 'chosen';
+        const result = await this.press(key === 'space' ? ' ' : '\r', optionId, shown);
+        if (result !== 'moved') return result;
       }
-      if (text) {
-        if (!shown()) return false;
-        this.write(KEY_CLEAR_LINE + text);
-        await this.nextRead(500);
-      }
-      if (key !== 'none') {
-        if (!shown()) return false;
-        this.write(key === 'space' ? ' ' : '\r');
-      }
-      return true;
+      return 'stuck';
     } finally {
       this.busy = false;
     }
+  }
+
+  // カーソルを目的の選択肢に合わせる。合ったら null
+  private async moveTo(optionId: string, shown: () => Menu | null): Promise<ChooseResult | null> {
+    for (let step = 0; ; step++) {
+      await this.caughtUp();
+      const menu = shown();
+      if (!menu) return 'gone';
+      // カーソルが見えない（画面より高い質問で、上の切れた選択肢にある）ときは -1。↓ で見えるところまで送る
+      const current = menu.options.findIndex((o) => o.pointed);
+      const target = menu.options.findIndex((o) => o.id === optionId);
+      if (target === -1) return 'missing';
+      if (current === target) return null;
+      // 目的の選択肢にカーソルが来なかったら、違う選択肢で答えないよう何も送らない
+      if (step === 30) return 'stuck';
+      this.write(target > current ? KEY_DOWN : KEY_UP);
+      await this.readUntil(() => this.menu()?.options.findIndex((o) => o.pointed) !== current, 500);
+    }
+  }
+
+  // 選ぶキー（Enter・Space）を送り、メニューの画面が変わるのを待つ。変わったら chosen。
+  // 少しも変わらないまま PRESS_CONFIRM_MS たったら、Claude Code が受け付けなかった（入力を捨てる間に届いた）とみて、もう一度送る。
+  // 送り直すのは、送ってから届いた出力のどれを書き込んだときも、メニューの画面が送る前とまったく同じだったときだけ。
+  // 前のキーが効いていれば、メニューは一度閉じる（次の確認が出るのは、API の応答を待ったあと）ので、次の確認を勝手に選ぶことはない。
+  // 送る直前に、カーソルが目的の選択肢に無かったら、何も送らずに moved を返す
+  private async press(data: string, optionId: string, shown: () => Menu | null): Promise<ChooseResult | 'moved'> {
+    for (let press = 0; press < MAX_PRESSES; press++) {
+      await this.caughtUp();
+      const menu = shown();
+      if (!menu) return 'gone';
+      // 読み取りより新しい、端末の今の画面でも確かめる（画面より高い質問で、目的の選択肢が見えていなければ、読み取りに任せる）
+      const onScreen = parseMenu(this.lines())?.options.find((o) => o.id === optionId);
+      if (!menu.options.find((o) => o.id === optionId)?.pointed || (onScreen && !onScreen.pointed)) return 'moved';
+      const before = this.menuOnScreen();
+      this.write(data);
+      if (await this.untilMenuChanges(before, PRESS_CONFIRM_MS)) return 'chosen';
+      if (this.disposed) return 'gone';
+    }
+    return 'ignored';
+  }
+
+  // 書き込んだ出力を読み取り終えるまで待つ（出力が続いているときは、長くても 500ms）
+  private async caughtUp(): Promise<void> {
+    await this.readUntil(() => !this.unread, 500);
+  }
+
+  // 今の仮想端末に出ているメニュー（読み取りを待たずに、その場で読む）
+  private menuOnScreen(): string {
+    return JSON.stringify(parseMenu(this.lines()));
+  }
+
+  // 出力を書き込むたびに、メニューの画面が before から変わったかを見る。timeoutMs のうちに変わったら true
+  private untilMenuChanges(before: string, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const finish = (changed: boolean) => {
+        clearTimeout(timer);
+        this.writtenWatchers.delete(watch);
+        resolve(changed);
+      };
+      const watch = () => {
+        if (this.menuOnScreen() !== before) finish(true);
+      };
+      const timer = setTimeout(() => finish(!this.disposed && this.menuOnScreen() !== before), timeoutMs);
+      this.writtenWatchers.add(watch);
+    });
+  }
+
+  // キーを Claude Code に送る。送った時刻を覚えておく（Claude Code が入力を捨てる間を避けるため）
+  private write(data: string): void {
+    this.noteInput();
+    this.output(data);
   }
 
   // 権限モードを切り替える。Shift+Tab を 1 回ずつ送り、画面の表示が目的のモードになるまで繰り返す。
@@ -421,6 +522,7 @@ export class ScreenTracker {
   }
 
   private read(): void {
+    this.unread = false;
     if (this.holding) {
       this.wake();
       return;
@@ -462,6 +564,12 @@ export class ScreenTracker {
 
     if (this.unknownTimer) clearTimeout(this.unknownTimer);
     this.unknownTimer = null;
+    // 新しいメニュー（見出し・補足・選択肢の名前が変わったもの）が出たら、読み取った時刻と、それまでの最後の入力の時刻を覚える。
+    // カーソルやチェックが動いただけ（メニューの中で打ったキー）では変えない
+    if (state?.kind === 'menu' && menuIdentity(state.menu) !== (this.info.state.kind === 'menu' ? menuIdentity(this.info.state.menu) : null)) {
+      this.menuInputAt = this.lastInputAt;
+      this.menuSince = Date.now();
+    }
     if (state) {
       this.update({ state, model, effort, mode, draft, ready: this.info.ready });
     } else {
@@ -572,6 +680,15 @@ export class ScreenTracker {
     }
     return lines;
   }
+}
+
+// メニューを見分けるもの（カーソルの位置とチェックを除く）
+function menuIdentity(menu: Menu): string {
+  return JSON.stringify([menu.kind, menu.title, menu.context, menu.options.map((o) => o.label)]);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
 // 画面では長い発言が端末の幅で切れたり「…」で省略されたりするので、空白を詰めて前方一致で比べる
