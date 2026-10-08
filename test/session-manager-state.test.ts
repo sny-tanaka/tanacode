@@ -473,7 +473,8 @@ describe('画面の知らせ', () => {
     await app.waitFor('作業中の表示', () => !!app.activities.get(id));
     expect(app.activities.get(id)).toEqual({ phase: 'writing', elapsed: '5s', tokens: '1.2k' });
     expect(app.manager.activity(id)).toEqual(app.activities.get(id));
-    pty.output(fixtureScreen('prompt'));
+    // 終わると、タイマーの行が完了の行（✻ Worked for 5s）に変わる
+    pty.output(`${fixtureScreen('prompt')}\x1b[33;1H✻ Worked for 5s`);
     await app.waitFor('作業の終わり', () => app.activities.get(id) === null);
     expect(app.manager.activity(id)).toBeNull();
   });
