@@ -1027,9 +1027,12 @@ export class SessionManager {
     rt.screen = screen;
     this.listeners.onActivity(id, null);
 
-    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする
+    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする。
+    // 前の起動が worktree を作ったあと、入力欄を出す前に終わって（起動し直して）いたら、その「作成中」は戻す
+    // （戻さないと、入力欄が出ても受け付けない。node_modules の用意の途中なら、終わるまで待たせたまま）
     const creating = !!record.worktree && !resume && !adopted && !existsSync(record.cwd);
     if (creating) runtime.preparing = 'creating';
+    else if (runtime.preparing === 'creating') runtime.preparing = null;
 
     rt.process = new ClaudeSession(
       this.host,
@@ -1384,8 +1387,9 @@ export class SessionManager {
 // 会話ログの応答のモデル ID を表示名にする（例: claude-sonnet-5 → Sonnet 5、claude-fable-5-1 → Fable 5.1）
 function modelOf(entry: TranscriptEntry): string | null {
   const id = entry.type === 'assistant' ? entry.message?.model : undefined;
-  // 新しい系統名のモデルにも対応できるよう、名前は決め打ちしない
-  const m = id?.match(/^claude-([a-z]+)-(\d+)(?:-(\d))?(?:-\d{8})?/);
+  // 新しい系統名のモデルにも対応できるよう、名前は決め打ちしない。
+  // 小数点以下は 1 桁の数字だけ（claude-sonnet-5-20260101 の日付の先頭の 2 を、小数点以下と読まない）
+  const m = id?.match(/^claude-([a-z]+)-(\d+)(?:-(\d)(?!\d))?(?:-\d{8})?/);
   if (!m) return null;
   const name = m[1][0].toUpperCase() + m[1].slice(1);
   return `${name} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
