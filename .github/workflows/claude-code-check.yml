@@ -2,6 +2,7 @@
 # アプリと同じ読み取りにかける（API キーは使わず、料金もかからない）。
 # PR と push では、アプリ本体の通しのテスト（E2E）もカバレッジを測りながら流し、単体テスト・本物の claude のテストと合わせて
 # 層ごとに出し、下限（test/coverage-thresholds.json）を下回ったら失敗にする。
+# - test: 単体テストと本物の claude での確認。e2e: ビルドと E2E。互いに関わりが無いので並べて流し、check で合わせる
 # 毎日の定期の確認（と手動の実行）は、その日の最新の Claude Code で確かめる。
 # PR と develop・main への push は、動作確認済のバージョン（src/shared/claude-code.ts）で確かめる
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しい版への追従は、毎日の確認と、それが作る PR で行う）
@@ -29,27 +30,22 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # 単体テストと、本物の claude での確認（どちらもカバレッジを測る）。毎日の確認（と手動の実行）でも流す。
+  # E2E（ビルドを含めて 7 分ほど）とは関わりが無いので、別のジョブで並べて流す
+  test:
     runs-on: macos-latest
     permissions:
       contents: read
       issues: write
     outputs:
       version: ${{ steps.claude.outputs.version }}
-    env:
-      # PR と push では、E2E も流してカバレッジの下限を確かめる。毎日の確認（と手動の実行）は、その日の最新の Claude Code の
-      # 互換性を見るものなので流さない（新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れる）
-      COVERAGE_GATE: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
     steps:
-      # PR では、マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      # Electron の本体は、E2E を流すときだけ下で入れる
+      # Electron の本体は使わないので落とさない
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
@@ -81,47 +77,27 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
-      # ここから E2E（PR と push だけ）。Electron の本体は npm ci では入らないので、ここで入れる
-      - name: Electron の本体を入れる
-        if: env.COVERAGE_GATE == 'true'
-        run: node node_modules/electron/install.js
-      # E2E で起動するアプリを、ソースマップ付きでビルドする（集めたカバレッジを src の行に戻すのに使う）。
-      # 画面側のビルドは、ソースマップを書き出す分も含めてメモリを 5〜6GB ほど使う。Node の既定の上限（約 2GB）では止まるため、
-      # 上限を上げる（ci.yml の app のジョブと同じ）。翻訳の補助プログラムは E2E では使わないので作らない
-      - name: アプリをソースマップ付きでビルドする
-        if: env.COVERAGE_GATE == 'true'
-        run: npx electron-vite build
-        env:
-          TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
-      # 動作確認済のバージョンの claude で、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（カバレッジも測る）。
-      # パッケージした .app での E2E は、ci.yml の app のジョブで流す
-      - name: アプリを画面の操作から通しで確かめる（E2E。カバレッジも測る）
-        if: env.COVERAGE_GATE == 'true'
-        run: npm run coverage:e2e
-        env:
-          TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
-      # 3 つのカバレッジ（単体・本物の claude・E2E）を合わせて、層ごとの数字をジョブの概要に出す。
-      # 下限（test/coverage-thresholds.json）を下回ったら失敗にする。
-      # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
-      - name: カバレッジをまとめる
-        if: env.COVERAGE_GATE == 'true'
-        env:
-          DIFF_ARGS: ${{ github.event_name == 'pull_request' && '--diff HEAD^1' || '' }}
-        run: npm run coverage:report -- $DIFF_ARGS
-      # 画面のボタン・入力のうち、テストが一度も押していないもの（CONTRIBUTING.md の「押していないボタン・入力」）。
-      # 1 つでもあれば失敗にする（ボタンや入力を足したら、押すテストも足す）
-      - name: テストが押していないボタン・入力が無いか確かめる
-        if: env.COVERAGE_GATE == 'true'
-        run: npm run coverage:unpressed -- --max 0
-      # 落ちた E2E の画面の写し・メインプロセスの出力・モックの API の呼び出し
-      - name: E2E の失敗の手がかりを残す
-        if: failure() && env.COVERAGE_GATE == 'true'
+      # 測ったカバレッジは、check のジョブで E2E の分と合わせる（PR と push だけ）
+      - name: 単体テストのカバレッジを残す
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results
-          path: test-results/e2e/
-          if-no-files-found: ignore
+          name: coverage-unit
+          path: coverage/unit/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+          # ジョブをやり直したときは、前の回のものを置き換える
+          overwrite: true
+      - name: 本物の claude のカバレッジを残す
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-cli
+          path: coverage/cli/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+          # ジョブをやり直したときは、前の回のものを置き換える
+          overwrite: true
       # PR では、控えは手がかりとして残すだけなので、GitHub 側の都合で残せなくてもジョブを落とさない
       # （テストはもう通っている）。定期の確認では、次の update のジョブが控えを使うので落とす
       - name: 控えを残す
@@ -148,12 +124,115 @@ jobs:
           - 失敗したテストのログに、そのときの Claude Code の画面が出ています
           - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
 
+  # アプリの通しのテスト（E2E）を、カバレッジを測りながら流す（PR と push だけ）。毎日の確認（と手動の実行）は、
+  # その日の最新の Claude Code の互換性を見るものなので流さない（新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れる）
+  e2e:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # E2E で動かす claude は、動作確認済のバージョン（src/shared/claude-code.ts）。API はモックなので料金はかからない
+      - name: Claude Code を入れる
+        id: claude
+        run: |
+          VERSION=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
+          test -n "$VERSION" || { echo "::error::src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"; exit 1; }
+          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
+          echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
+      # E2E で起動するアプリを、ソースマップ付きでビルドする（集めたカバレッジを src の行に戻すのに使う）。
+      # 画面側のビルドは、ソースマップを書き出す分も含めてメモリを 5〜6GB ほど使う。Node の既定の上限（約 2GB）では止まるため、
+      # 上限を上げる（ci.yml の app のジョブと同じ）。翻訳の補助プログラムは E2E では使わないので作らない
+      - name: アプリをソースマップ付きでビルドする
+        run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
+          NODE_OPTIONS: --max-old-space-size=6144
+      # 動作確認済のバージョンの claude で、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（カバレッジも測る）。
+      # パッケージした .app での E2E は、ci.yml の app のジョブで流す
+      - name: アプリを画面の操作から通しで確かめる（E2E。カバレッジも測る）
+        run: npm run coverage:e2e
+        env:
+          TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+      - name: E2E のカバレッジを残す
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-e2e
+          path: coverage/e2e/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+          # ジョブをやり直したときは、前の回のものを置き換える
+          overwrite: true
+      # 落ちた E2E の画面の写し・メインプロセスの出力・モックの API の呼び出し
+      - name: E2E の失敗の手がかりを残す
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: test-results/e2e/
+          if-no-files-found: ignore
+
+  # 3 つのカバレッジ（単体・本物の claude・E2E）を合わせて、層ごとの数字をジョブの概要に出す（PR と push だけ）。
+  # develop のルールセットの必須のチェックなので、test・e2e のどちらかが失敗したら、このジョブも失敗にする
+  # （前のジョブが失敗して、このジョブが飛ばされると、必須のチェックは通ったことになるため、!cancelled() で必ず動かす）。
+  # カバレッジのファイルは、測った場所の絶対パスで入っているので、同じパスになる macOS のランナーで合わせる
+  check:
+    needs: [test, e2e]
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+    runs-on: macos-latest
+    steps:
+      - name: test・e2e のジョブが通ったか確かめる
+        if: needs.test.result != 'success' || needs.e2e.result != 'success'
+        env:
+          TEST: ${{ needs.test.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          echo "::error::test のジョブ: $TEST、e2e のジョブ: $E2E"
+          exit 1
+      # PR では、マージ先との差分（変えた行のカバレッジ）を出すため、マージ先の 1 つ前まで取る
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage/unit/
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-cli
+          path: coverage/cli/
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-e2e
+          path: coverage/e2e/
+      # 下限（test/coverage-thresholds.json）を下回ったら失敗にする。
+      # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
+      - name: カバレッジをまとめる
+        env:
+          DIFF_ARGS: ${{ github.event_name == 'pull_request' && '--diff HEAD^1' || '' }}
+        run: npm run coverage:report -- $DIFF_ARGS
+      # 画面のボタン・入力のうち、テストが一度も押していないもの（CONTRIBUTING.md の「押していないボタン・入力」）。
+      # 1 つでもあれば失敗にする（ボタンや入力を足したら、押すテストも足す）
+      - name: テストが押していないボタン・入力が無いか確かめる
+        run: npm run coverage:unpressed -- --max 0
+
   # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、PR の CI が通ったらマージする。
   # GitHub Actions のトークン（GITHUB_TOKEN）で作った PR では PR の CI が動かないので、push・PR の作成・マージは GitHub App の token でする
   # （Homebrew の配信と同じ App。App の秘密鍵は Environment「homebrew」にあり、develop で動かしたときだけ使える）。
   # 書き込める権限が要るので、確認とは別のジョブにする（PR のコードを、書き込める権限で動かさない）
   update:
-    needs: check
+    needs: test
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: homebrew
@@ -186,7 +265,7 @@ jobs:
       # 確認のジョブで取った控え
       - uses: actions/download-artifact@v4
         with:
-          name: claude-code-${{ needs.check.outputs.version }}
+          name: claude-code-${{ needs.test.outputs.version }}
           path: test/fixtures/claude-code/
       # 同じ版の PR が一度でもあれば（閉じたものも）、作り直さない
       - name: 動作確認済のバージョンを上げる PR を作る
@@ -194,7 +273,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           # PR の CI の実行を読む（App の token には Actions の権限を付けていない）
           ACTIONS_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.check.outputs.version }}
+          VERSION: ${{ needs.test.outputs.version }}
           BASE: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
