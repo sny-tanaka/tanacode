@@ -185,6 +185,20 @@ describe('createInWorktree', () => {
     expect(app.manager.stateOf(id)).toBe('archived');
   });
 
+  it('worktree ができたあと、入力欄が出る前に Claude Code が終わっても、開き直したら受け付ける（準備中のままにしない）', async () => {
+    start();
+    const { creating, pty, session } = await begin();
+    createWorktree(session);
+    const id = await creating;
+    // 入力欄が出る前に終わった
+    pty.exit(1);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await app.manager.open(id);
+    app.pty(id).output(fixtureScreen('prompt'));
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle', 3000);
+    expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+  });
+
   it('信頼していないフォルダでは、Claude Code が worktree を作らずに終わる。記録を消し、先に信頼の確認に答えるよう案内する', async () => {
     start();
     const { creating, pty } = await begin();

@@ -83,6 +83,7 @@ const writeFinal = (record: unknown, at = Date.now()) => {
 const launch = (extra: Partial<WorkflowLaunch> = {}): WorkflowLaunch => ({
   toolUseId: 'toolu_wf',
   runId: RUN_ID,
+  taskId: null,
   name: 'tanacode-check',
   summary: '確認のワークフロー',
   transcriptDir,
@@ -143,6 +144,7 @@ describe('workflowLaunchOf', () => {
     expect(workflowLaunchOf(entry(result), new Map([['toolu_wf', SCRIPT]]))).toEqual({
       toolUseId: 'toolu_wf',
       runId: RUN_ID,
+      taskId: 'wb7qvqa8p',
       name: 'tanacode-check',
       summary: '確認のワークフロー',
       transcriptDir: result.transcriptDir,
@@ -152,10 +154,10 @@ describe('workflowLaunchOf', () => {
     });
   });
 
-  it('名前・説明・スクリプトの場所が無ければ、runId・空・null。時刻が読めなければ今の時刻', () => {
+  it('名前・taskId・説明・スクリプトの場所が無ければ、runId・null・空・null。時刻が読めなければ今の時刻', () => {
     const before = Date.now();
     const launch = workflowLaunchOf(entry({ taskType: 'local_workflow', runId: RUN_ID, transcriptDir: '/t' }, { timestamp: 'いつか' }), new Map());
-    expect(launch).toMatchObject({ name: RUN_ID, summary: '', scriptPath: null, script: null });
+    expect(launch).toMatchObject({ name: RUN_ID, taskId: null, summary: '', scriptPath: null, script: null });
     expect(launch!.launchedAt).toBeGreaterThanOrEqual(before);
     expect(workflowLaunchOf(entry({ taskType: 'local_workflow', runId: RUN_ID, transcriptDir: '/t' }, { timestamp: undefined }), new Map())!.launchedAt).toBeGreaterThanOrEqual(before);
   });

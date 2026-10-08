@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join } from 'node:path';
 import { PROTOCOL, type ClientMessage, type HostMessage, type HostedPtyInfo, type SpawnRequest } from './pty-host-protocol';
@@ -178,9 +178,12 @@ export class PtyHost implements PtyHostApi {
     if (socket) {
       const protocol = await hello(socket);
       if (protocol === null) {
-        // 答えない。新しいホストに置き換える（新しいホストがソケットを作り直す）
+        // 答えない。新しいホストに置き換える（新しいホストがソケットを作り直す）。
+        // 答えないホストもまだ待ち受けているので、ソケットはここで消しておく
+        // （残すと、新しいホストが作り直す前につなぎにいき、答えないホストにつなぎ直してしまう）
         socket.destroy();
         socket = null;
+        removeSocket(this.socketPath);
       } else if (protocol !== PROTOCOL) {
         // 形の違う古いホスト。持っている claude ごと止めてもらい、今のアプリのホストを起動し直す
         socket.write(`${JSON.stringify({ t: 'shutdown' } satisfies ClientMessage)}\n`);
@@ -273,6 +276,15 @@ export function hostExecutable(): string {
   const name = `${basename(process.execPath)} Helper`;
   const helper = join(dirname(process.execPath), '..', 'Frameworks', `${name}.app`, 'Contents', 'MacOS', name);
   return existsSync(helper) ? helper : process.execPath;
+}
+
+// 待ち受けのソケットを消す（つながっている接続は切れない）
+function removeSocket(path: string): void {
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // 消せなければ、新しいホストが作り直す
+  }
 }
 
 function tryConnect(path: string): Promise<Socket | null> {

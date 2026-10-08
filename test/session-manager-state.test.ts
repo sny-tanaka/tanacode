@@ -423,6 +423,17 @@ describe('会話ログの読み取り', () => {
     expect(app.manager.screen(id)?.model).toBe('Fable 5.1');
   });
 
+  it('日付の付いたモデル ID でも、小数点の無い版を取り違えない（claude-sonnet-5-20260101 は Sonnet 5）', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const model = (name: string) => ({ ...line.text('はい'), message: { ...line.text('はい').message, model: name } });
+    app.append(id, line.user('はじめ'), model('claude-sonnet-5-20260101'));
+    await app.waitFor('応答', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    await sleep(200);
+    // 日付の先頭の数字（2）を、版の小数点以下と読まない
+    expect(app.manager.screen(id)?.model).toBe('Sonnet 5');
+  });
+
   it('会話ログの先頭に大きな行があっても、発言の行があれば --resume で再開する', async () => {
     const { id } = app.create();
     const file = app.transcript(id);
