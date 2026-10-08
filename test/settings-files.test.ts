@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs } from '../src/main/claude-session';
 import { defaultName, mergeSettings, SettingsFiles } from '../src/main/settings-files';
@@ -39,6 +39,11 @@ describe('defaultName', () => {
     expect(defaultName('/x/work.json')).toBe('work');
     expect(defaultName('/x/settings.json')).toBe('settings');
     expect(defaultName('/x/settings-.json')).toBe('settings-');
+    // 名前が無ければ「設定ファイル」
+    expect(defaultName('/x/.json')).toBe('設定ファイル');
+    // 外すのは、末尾の .json と、先頭の settings- だけ
+    expect(defaultName('/x/a.json.bak')).toBe('a.json.bak');
+    expect(defaultName('/x/my-settings-a.json')).toBe('my-settings-a');
   });
 });
 
@@ -57,7 +62,8 @@ describe('登録', () => {
     const files = make();
     const a = files.add(file('a.json', {}), '仕事');
     const b = files.add(file('b.json', {}), '仕事');
-    expect([a.name, b.name]).toEqual(['仕事', '仕事 2']);
+    const c = files.add(file('c.json', {}), '仕事');
+    expect([a.name, b.name, c.name]).toEqual(['仕事', '仕事 2', '仕事 3']);
   });
 
   it('同じファイルは二重に登録できない', () => {
@@ -72,6 +78,7 @@ describe('登録', () => {
     expect(() => files.add(join(root, 'missing.json'))).toThrow('ファイルが見つかりません');
     expect(() => files.add(file('broken.json', '{ not json'))).toThrow('JSON として読めません');
     expect(() => files.add(file('array.json', '[]'))).toThrow('JSON のオブジェクトではありません');
+    for (const value of ['"text"', '1', 'null']) expect(() => files.add(file(`v${value.length}.json`, value)), value).toThrow('JSON のオブジェクトではありません');
     expect(() => files.add('relative/settings.json')).toThrow('絶対パス');
     expect(files.list()).toEqual([]);
     expect(changes).toHaveLength(0);
@@ -91,7 +98,9 @@ describe('登録', () => {
     expect(files.list().map((f) => f.name)).toEqual(['two']);
     expect(statSync(path).isFile()).toBe(true);
     // 無い ID の削除は何もしない
+    const notified = changes.length;
     expect(() => files.remove(id)).not.toThrow();
+    expect(changes).toHaveLength(notified);
   });
 
   it('登録したあとでファイルが消えた・壊れたときは、一覧に理由を出す（登録は残す）', () => {
@@ -129,6 +138,17 @@ describe('mergeSettings', () => {
 
   it('登録した設定にフックが無くてもよい', () => {
     expect(mergeSettings({}, own).hooks).toEqual(own.hooks);
+  });
+
+  it('フックの形が違うもの（配列でない・オブジェクトでない）は、無いものとして合わせる', () => {
+    const theirs = { PreToolUse: [{ matcher: 'Bash', hooks: [] }] };
+    // アプリの設定にフックが無い
+    expect(mergeSettings({ hooks: theirs }, { statusLine: own.statusLine }).hooks).toEqual(theirs);
+    // アプリの設定のフックの中身が配列でない
+    expect(mergeSettings({ hooks: theirs }, { hooks: { PreToolUse: 'x', Stop: null } }).hooks).toEqual({ PreToolUse: theirs.PreToolUse, Stop: [] });
+    // 登録した設定のフックの中身が配列でない・フックが配列
+    expect(mergeSettings({ hooks: { PreToolUse: 'x' } }, own).hooks).toEqual(own.hooks);
+    expect(mergeSettings({ hooks: [theirs] }, own).hooks).toEqual(own.hooks);
   });
 });
 
@@ -172,6 +192,31 @@ describe('起動の準備', () => {
     expect(() => files.release('s')).not.toThrow();
   });
 
+  it('model が文字でない・空なら、model は無いものとする', () => {
+    const files = make();
+    expect(files.add(file('a.json', { model: 123 })).model).toBeNull();
+    expect(files.add(file('b.json', { model: '' })).model).toBeNull();
+    const { id } = files.add(file('c.json', { model: '' }));
+    expect(files.prepare('s', id).model).toBeNull();
+  });
+
+  it('アプリ内ブラウザ・セッションの確認のフックは、使うときだけ足す', () => {
+    const files = make();
+    const { id } = files.add(file('a.json', {}));
+    const matchers = (sessionId: string, ...flags: boolean[]) =>
+      (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
+    expect(matchers('s1')).toEqual(['AskUserQuestion', 'Bash']);
+    expect(matchers('s2', true, true)).toHaveLength(4);
+  });
+
+  it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {
+    const files = make();
+    const path = file('a.json', {});
+    const { id } = files.add(path, 'one');
+    rmSync(path);
+    expect(() => files.check(id)).toThrow(`設定ファイル「one」（${path}）を使えません: ファイルが見つかりません`);
+  });
+
   it('登録が外された・ファイルが消えた・壊れたときは、起動を断る理由を添えて投げる', () => {
     const files = make();
     const path = file('a.json', {});
@@ -184,6 +229,39 @@ describe('起動の準備', () => {
     files.remove(id);
     expect(() => files.check(id)).toThrow('登録から外されています');
     expect(() => files.prepare('s', id)).toThrow('登録から外されています');
+  });
+});
+
+describe('ホームのフォルダ', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('~/ から始まるパスはホームの下として登録する。読めない理由の文では、ホームを ~ と書く', () => {
+    vi.stubEnv('HOME', root);
+    const path = file('.claude/settings-work.json', { model: 'opus' });
+    const files = make();
+    const added = files.add('~/.claude/settings-work.json');
+    expect(added).toMatchObject({ name: 'work', path, model: 'opus' });
+    rmSync(path);
+    expect(() => files.check(added.id)).toThrow('設定ファイル「work」（~/.claude/settings-work.json）を使えません: ファイルが見つかりません');
+  });
+
+  it('登録した設定に statusLine が無ければ、ユーザー自身の設定の statusLine を包む。コマンドでない statusLine なら、どちらも使わない', () => {
+    vi.stubEnv('HOME', root);
+    file('.claude/settings.json', { statusLine: { type: 'command', command: 'user-line' } });
+    const files = make();
+    const plain = files.add(file('a.json', {}));
+    expect(JSON.parse(readFileSync(files.prepare('s1', plain.id).settingsFile, 'utf8')).statusLine.command).toBe('tee "$TANACODE_STATUS_FILE" | user-line');
+    const fixed = files.add(file('b.json', { statusLine: { type: 'static', command: 'their-line' } }));
+    expect(JSON.parse(readFileSync(files.prepare('s2', fixed.id).settingsFile, 'utf8')).statusLine.command).toBe('cat > "$TANACODE_STATUS_FILE"');
+  });
+
+  it('知らせる先を省いても、登録・名前の変更・削除ができる', () => {
+    const files = new SettingsFiles(new AppSettings(settingsPath), runDir);
+    const { id } = files.add(file('a.json', {}), 'one');
+    files.rename(id, 'two');
+    expect(files.list().map((f) => f.name)).toEqual(['two']);
+    files.remove(id);
+    expect(files.list()).toEqual([]);
   });
 });
 

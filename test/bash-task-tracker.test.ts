@@ -1,9 +1,13 @@
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TranscriptEntry } from '@shared/chat';
 import type { BashTask } from '@shared/task';
 import { BashTaskTracker } from '../src/main/bash-task-tracker';
+import type { SubagentTracker } from '../src/main/subagent-tracker';
+import { taskNotificationOf, TaskRouter } from '../src/main/task-router';
+import type { WorkflowTracker } from '../src/main/workflow-tracker';
 
 // バックグラウンドの Bash の追跡（出力ファイルの読み込みと、完了通知の重なり）
 
@@ -67,4 +71,205 @@ it('出力ファイルが読めなくなっても（消えた・別のものに�
   tracker.dispose();
   expect(find('toolu_1')).toMatchObject({ state: 'completed' });
   expect(find('toolu_2')).toMatchObject({ state: 'completed', exitCode: 0, output: 'ok' });
+});
+
+// 出力ファイルの中身は、Claude Code 2.1.292 をモックの API で動かして取ったもの（「出力\n\n[exited with code 0]\n」）に合わせた。
+// 止められたときの「[killed]」は、その会話ログに出なかったので、src の読み取りに合わせて組み立てた
+describe('BashTaskTracker の起動・完了・出力', () => {
+  let tasks: BashTask[];
+  let calls: number;
+  let tracker: BashTaskTracker;
+  const find = (id: string) => tasks.find((t) => t.toolUseId === id);
+  const text = (file: string) => `Command running in background with ID: b1. Output is being written to: ${file}. You will be notified when it completes.`;
+  const waitFor = async (check: () => boolean) => {
+    for (let i = 0; i < 80 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tanacode-bash-'));
+    tasks = [];
+    calls = 0;
+    tracker = new BashTaskTracker((next) => {
+      tasks = next;
+      calls++;
+    });
+  });
+  afterEach(() => tracker.dispose());
+
+  it('結果に backgroundTaskId がある Bash だけを、コマンドと説明と一緒に追う。同じものは 2 度追わない', () => {
+    tracker.start('toolu_fg', { command: 'ls' }, { stdout: 'a.ts', stderr: '' }, 'a.ts', false);
+    tracker.start('toolu_str', { command: 'ls' }, 'エラーの文', '', false);
+    tracker.start('toolu_null', { command: 'ls' }, null, '', false);
+    expect(calls).toBe(0);
+    const result = { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: 'blktx4qxr' };
+    tracker.start('toolu_bg', { command: 'echo bg-out && sleep 1 && echo bg-done', description: '裏で待つ' }, result, text(join(dir!, 'blktx4qxr.output')), false);
+    tracker.start('toolu_bg', { command: 'ほかのもの' }, result, '', false);
+    expect(tasks).toEqual([
+      {
+        toolUseId: 'toolu_bg',
+        taskId: 'blktx4qxr',
+        command: 'echo bg-out && sleep 1 && echo bg-done',
+        description: '裏で待つ',
+        state: 'running',
+        startedAt: expect.any(Number),
+        endedAt: null,
+        exitCode: null,
+        output: '',
+        truncated: false,
+      },
+    ]);
+    // コマンドが文字でない・説明が無い
+    tracker.start('toolu_odd', { command: 42 }, { backgroundTaskId: 'b2' }, '', false);
+    expect(find('toolu_odd')).toMatchObject({ command: '', description: null });
+  });
+
+  it('出力ファイルを読み、終わりの印で終了コードと状態を決める（0 は completed、ほかは failed、[killed] は killed）', async () => {
+    const ok = join(dir!, 'ok.output');
+    const ng = join(dir!, 'ng.output');
+    const killed = join(dir!, 'killed.output');
+    writeFileSync(ok, 'bg-out\nbg-done\n');
+    writeFileSync(ng, 'エラー\n[exited with code 1]\n');
+    writeFileSync(killed, '途中まで\n[killed]\n');
+    tracker.start('toolu_ok', { command: 'ok' }, { backgroundTaskId: 'b1' }, text(ok), false);
+    tracker.start('toolu_ng', { command: 'ng' }, { backgroundTaskId: 'b2' }, text(ng), false);
+    tracker.start('toolu_killed', { command: 'killed' }, { backgroundTaskId: 'b3' }, text(killed), false);
+    await waitFor(() => find('toolu_ok')?.output === 'bg-out\nbg-done\n' && find('toolu_killed')?.state !== 'running');
+    expect(find('toolu_ok')).toMatchObject({ state: 'running', exitCode: null, endedAt: null });
+    expect(find('toolu_ng')).toMatchObject({ state: 'failed', exitCode: 1, output: 'エラー' });
+    expect(find('toolu_ng')!.endedAt).not.toBeNull();
+    expect(find('toolu_killed')).toMatchObject({ state: 'killed', exitCode: null, output: '途中まで' });
+    // 終わると最後に終了コードが書かれる
+    appendFileSync(ok, '\n[exited with code 0]\n');
+    await waitFor(() => find('toolu_ok')?.state !== 'running');
+    expect(find('toolu_ok')).toMatchObject({ state: 'completed', exitCode: 0, output: 'bg-out\nbg-done\n' });
+  });
+
+  it('長い出力は末尾だけを読み、切り詰めたことを残す。変わっていなければ読み直さない', async () => {
+    const file = join(dir!, 'long.output');
+    writeFileSync(file, `${'x'.repeat(300 * 1024)}\n最後の行\n`);
+    tracker.start('toolu_long', { command: 'yes' }, { backgroundTaskId: 'b1' }, text(file), false);
+    await waitFor(() => !!find('toolu_long')?.truncated);
+    expect(Buffer.byteLength(find('toolu_long')!.output)).toBe(256 * 1024);
+    expect(find('toolu_long')!.output.endsWith('最後の行\n')).toBe(true);
+    const before = calls;
+    await (tracker as unknown as { poll: () => Promise<void> }).poll();
+    expect(calls).toBe(before);
+  });
+
+  it('出力ファイルの場所が分からないもの・まだ無いものは、出力なしのまま。完了通知の状態で終わる', async () => {
+    tracker.start('toolu_nofile', { command: 'x' }, { backgroundTaskId: 'b1' }, 'Command running in background with ID: b1.', false);
+    tracker.start('toolu_missing', { command: 'y' }, { backgroundTaskId: 'b2' }, text(join(dir!, 'missing.output')), false);
+    tracker.notified('toolu_nofile', 'failed');
+    tracker.notified('toolu_missing', 'killed');
+    await waitFor(() => find('toolu_nofile')?.state !== 'running' && find('toolu_missing')?.state !== 'running');
+    expect(find('toolu_nofile')).toMatchObject({ state: 'failed', output: '', exitCode: null });
+    expect(find('toolu_nofile')!.endedAt).not.toBeNull();
+    expect(find('toolu_missing')).toMatchObject({ state: 'killed' });
+    // そのほかの状態は stopped。知らないものの通知は無視する
+    tracker.start('toolu_other', { command: 'z' }, { backgroundTaskId: 'b3' }, '', false);
+    tracker.notified('toolu_other', 'stopped');
+    tracker.notified('toolu_unknown', 'completed');
+    await waitFor(() => find('toolu_other')?.state !== 'running');
+    expect(find('toolu_other')?.state).toBe('stopped');
+    expect(tasks.some((t) => t.toolUseId === 'toolu_unknown')).toBe(false);
+  });
+
+  it('過去の会話から読んだものは止まったものとして加え、時刻は分からない。完了通知が来ても終わりの時刻は付けない', async () => {
+    const file = join(dir!, 'old.output');
+    writeFileSync(file, 'old\n');
+    tracker.start('toolu_old', { command: 'old' }, { backgroundTaskId: 'b1' }, text(file), true);
+    expect(find('toolu_old')).toMatchObject({ state: 'stopped', startedAt: null });
+    expect((tracker as unknown as { timer: unknown }).timer).toBeNull();
+    tracker.notified('toolu_old', 'completed');
+    await waitFor(() => find('toolu_old')?.state === 'completed');
+    expect(find('toolu_old')).toMatchObject({ state: 'completed', endedAt: null, output: 'old\n' });
+  });
+
+  it('Claude Code が終わったら、動いているものを止まったことにする。動いているものが無ければ知らせない', () => {
+    tracker.start('toolu_a', { command: 'a' }, { backgroundTaskId: 'b1' }, '', false);
+    tracker.start('toolu_b', { command: 'b' }, { backgroundTaskId: 'b2' }, '', true);
+    const before = calls;
+    tracker.stopRunning();
+    expect(calls).toBe(before + 1);
+    expect(tasks.map((t) => t.state)).toEqual(['stopped', 'stopped']);
+    expect((tracker as unknown as { timer: unknown }).timer).toBeNull();
+    tracker.stopRunning();
+    expect(calls).toBe(before + 1);
+  });
+
+  it('1 秒ごとに出力を読み直し、動いているものが無くなったら読むのをやめる', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const file = join(dir!, 'tick.output');
+      writeFileSync(file, '1\n');
+      tracker.start('toolu_tick', { command: 'tick' }, { backgroundTaskId: 'b1' }, text(file), false);
+      await waitFor(() => find('toolu_tick')?.output === '1\n');
+      appendFileSync(file, '2\n[exited with code 0]\n');
+      vi.advanceTimersByTime(1000);
+      await waitFor(() => find('toolu_tick')?.state === 'completed');
+      expect(find('toolu_tick')).toMatchObject({ output: '1\n2', exitCode: 0 });
+      expect((tracker as unknown as { timer: unknown }).timer).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+it('完了通知が、出力ファイルの終わりの印より先に届いても、通知に書かれた終了コードで終わる。印が書かれていれば、印のほうを使う', async () => {
+  // Claude Code は、完了通知を出してから出力ファイルに終わりの印を書くことがある（CI の macOS の test:cli で、印の無いまま完了になった）
+  dir = mkdtempSync(join(tmpdir(), 'tanacode-bash-'));
+  const early = join(dir, 'early.output');
+  const marked = join(dir, 'marked.output');
+  writeFileSync(early, 'bg-done\n');
+  writeFileSync(marked, 'エラー\n[exited with code 2]\n');
+  let tasks: BashTask[] = [];
+  const tracker = new BashTaskTracker((next) => (tasks = next));
+  const find = (id: string) => tasks.find((t) => t.toolUseId === id);
+  const waitFor = async (check: () => boolean) => {
+    for (let i = 0; i < 80 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  };
+  tracker.start('toolu_early', { command: 'early' }, { backgroundTaskId: 'b1' }, `Output is being written to: ${early}`, false);
+  tracker.start('toolu_marked', { command: 'marked' }, { backgroundTaskId: 'b2' }, `Output is being written to: ${marked}`, false);
+  await waitFor(() => find('toolu_early')?.output === 'bg-done\n' && find('toolu_marked')?.state === 'failed');
+  tracker.notified('toolu_early', 'completed', 0);
+  tracker.notified('toolu_marked', 'failed', 1);
+  await waitFor(() => find('toolu_early')?.state === 'completed');
+  tracker.dispose();
+  expect(find('toolu_early')).toMatchObject({ state: 'completed', exitCode: 0, output: 'bg-done\n' });
+  expect(find('toolu_marked')).toMatchObject({ state: 'failed', exitCode: 2 });
+});
+
+// 完了通知の形は、Claude Code 2.1.292 をモックの API で動かして取った会話ログに合わせた（パスは短くした）
+const BASH_NOTICE = [
+  '<task-notification>',
+  '<task-id>blktx4qxr</task-id>',
+  '<tool-use-id>toolu_bg</tool-use-id>',
+  '<output-file>/tmp/claude-0/-work-app/s1/tasks/blktx4qxr.output</output-file>',
+  '<status>completed</status>',
+  '<summary>Background command "裏で待つ" completed (exit code 0)</summary>',
+  '</task-notification>',
+].join('\n');
+
+it('完了通知の要約に書かれた終了コード（exit code N）を読み、Bash の追跡に渡す。要約に無ければ null（結果の文の中の同じ文字は読まない）', () => {
+  expect(taskNotificationOf({ type: 'queue-operation', operation: 'enqueue', content: BASH_NOTICE } as TranscriptEntry)).toMatchObject({
+    toolUseId: 'toolu_bg',
+    status: 'completed',
+    exitCode: 0,
+  });
+  // 失敗したときの要約の言い回しは控えに無いので、「exit code」に続く数字を読むことだけを確かめる
+  const failed = BASH_NOTICE.replace('<status>completed</status>', '<status>failed</status>').replace('completed (exit code 0)', 'failed with exit code 127');
+  expect(taskNotificationOf({ type: 'user', message: { content: failed } })).toMatchObject({ status: 'failed', exitCode: 127 });
+  const agent = BASH_NOTICE.replace(/<summary>.*<\/summary>/, '<summary>Agent "調べもの" finished</summary>\n<result>exit code 3 で終わりました</result>');
+  expect(taskNotificationOf({ type: 'user', message: { content: agent } })?.exitCode).toBeNull();
+
+  const bashTasks = { start: vi.fn(), notified: vi.fn() };
+  const router = new TaskRouter({
+    workflows: { add: vi.fn(), notified: vi.fn() } as unknown as WorkflowTracker,
+    subagents: { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn() } as unknown as SubagentTracker,
+    bashTasks: bashTasks as unknown as BashTaskTracker,
+    screen: () => null,
+    sessionDir: () => '/home/me/.claude/projects/-work-app/s1',
+  });
+  router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: BASH_NOTICE } }, false, false);
+  expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_bg', 'completed', 0);
 });

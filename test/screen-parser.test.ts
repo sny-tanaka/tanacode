@@ -92,6 +92,26 @@ it('会話の本文に出てくるモデル名・バージョンは、バナー�
   expect(findModel([...reply, ...scrolled.slice(reply.length)])).toBeNull();
 });
 
+it('質問文の枠（行頭の │）にモデル名のような文字があっても、バナーのモデル名と取り違えない', () => {
+  // プレビュー付きの質問（控えの question-preview）は、質問文を行頭に縦線（│）の付いた枠で出す。枠の 2 行の質問文だけを差し替える
+  const asked = replaced(
+    replaced(screen('question-preview'), /^│ 画面の部品の並べ方/, '│ Opus 5 · Claude Max で作った画面と、Sonnet 5 (1M context) · Claude Pro で作った画面の、'),
+    /^│ 部品の並べ方/,
+    '│ どちらの並べ方にしますか？',
+  );
+  // 控えの画面は、バナーが画面の外に流れている。質問文のモデル名を読まない
+  expect(findModel(asked)).toBeNull();
+  // 会話が短く、バナーが見えているとき。上の 4 行を、同じバージョンの控え（question）のバナーの 4 行に差し替える
+  const banner = screen('question').slice(0, 4);
+  expect(banner.map((l) => l.text).join('\n')).toMatch(/Claude Code v[\d.]+\n.*Opus 5\.5 · /);
+  expect(findModel([...banner, ...asked.slice(banner.length)])).toBe('Opus 5.5');
+});
+
+it('/rewind の「何を戻すか」の引用の枠は字下げがあるので、モデル名のような文字があってもバナーと取り違えない（直す前から起きない）', () => {
+  const quoted = replaced(screen('rewind-restore'), /^ {3}│ 再開して続けてください/, '   │ Opus 5 · Claude Max で確かめてください');
+  expect(findModel(quoted)).toBe('Opus 5.5');
+});
+
 it('選択肢の名前が端末の幅で折り返されたら、次の行をつないで 1 つの名前にし、その下の行は説明にする', () => {
   // AskUserQuestion の選択肢に、端末の幅（120 文字）より長いファイルのパスが出る
   const path = 'packages/desktop-app/src/renderer/src/features/session-settings/components/permission-mode-selector/PermissionModeSelector.stories.tsx';
@@ -138,4 +158,14 @@ it('/rewind の巻き戻し先の一覧で、選択中の発言を読む。会�
   const quoted = replaced(screen('bash-permission'), /^⏺ コマンドを実行します。/, '⏺ 一覧の下に「Enter to continue · Esc to cancel」と出たら、Enter で選びます。');
   expect(parseRewind(quoted)).toBeNull();
   expect(parseMenu(quoted)?.kind).toBe('permission');
+});
+
+it('/rewind の巻き戻し先の一覧の上（会話の本文）に、一覧の案内と同じ文字が見えていても、一覧を読む', () => {
+  // 一覧は画面の下に重ねて出て、案内はそのいちばん下の行（本物の 2.1.292 を Linux で動かして見ても同じ。控えには残していない）。
+  // 上に残る会話の応答の行だけを差し替える
+  const quoted = replaced(rewindList('(current)'), /^⏺ 再開後の返事/, '⏺ 一覧の下に「Enter to continue · Esc to cancel」と出たら、Enter で選びます。');
+  expect(parseRewind(quoted)).toEqual({ pointed: '(current)' });
+  expect(parseRewind(replaced(rewindList('新しい会話を始めます'), /^⏺ 再開後の返事/, quoted.find((l) => /^⏺ 一覧の下に/.test(l.text))!))).toEqual({
+    pointed: '新しい会話を始めます',
+  });
 });

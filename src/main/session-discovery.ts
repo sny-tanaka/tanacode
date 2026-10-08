@@ -1,7 +1,7 @@
 import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { transcriptTitle, type TranscriptEntry } from '@shared/chat';
+import { isTranscriptEntry, transcriptTitle, type TranscriptEntry } from '@shared/chat';
 import type { DiscoveredSession } from '@shared/ipc';
 
 const MAX_SESSIONS = 200;
@@ -64,7 +64,9 @@ async function readLines(handle: Awaited<ReturnType<typeof open>>, position: num
   const out: unknown[] = [];
   for (const line of lines) {
     try {
-      out.push(JSON.parse(line));
+      const entry: unknown = JSON.parse(line);
+      // JSON としては読めても、オブジェクトでない行（null など）も飛ばす
+      if (isTranscriptEntry(entry)) out.push(entry);
     } catch {
       // 壊れた行は飛ばす
     }

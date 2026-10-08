@@ -29,7 +29,19 @@ async function init(dir: string): Promise<void> {
   await run(root, ['init', '-q', '-b', 'main', dir]);
   await run(dir, ['config', 'user.name', 'tanacode']);
   await run(dir, ['config', 'user.email', 'tanacode@example.com']);
+  // 裏の片付け（gc）が、一時フォルダの削除とぶつからないように
+  await run(dir, ['config', 'gc.auto', '0']);
 }
+
+// origin（bare）を作って main を送り、上流にする
+async function withOrigin(): Promise<void> {
+  await run(root, ['init', '-q', '--bare', '-b', 'main', remote]);
+  await run(remote, ['config', 'gc.auto', '0']);
+  await run(repo, ['remote', 'add', 'origin', remote]);
+  await run(repo, ['push', '-q', '-u', 'origin', 'main']);
+}
+
+const sha = async (cwd: string, ref = 'HEAD') => (await run(cwd, ['rev-parse', ref])).trim();
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'tanacode-scm-ops-'));
@@ -157,6 +169,143 @@ describe('SourceControl', () => {
     expect(await scm.branchDiffSides(base, 'a.txt')).toEqual({ original: 'one\n', modified: 'topic\n' });
     expect(await scm.baseline(base, 'a.txt')).toEqual({ exists: true, text: 'one\n' });
     expect(await scm.baseline(base, 't.txt')).toEqual({ exists: false, text: '' });
+  });
+});
+
+describe('SourceControl（ブランチ・リモート・読めないとき）', () => {
+  it('state: 別のブランチにいれば、基点からの変更（ブランチの変更）も返す。main にいて上流が無ければ null', async () => {
+    const base = await sha(repo);
+    await scm.checkout('topic', 'create');
+    write('t.txt', 't\n');
+    const state = await scm.state();
+    expect(state.isRepo && state.branchChanges).toEqual({
+      base: { ref: 'main', mergeBase: base, kind: 'branch' },
+      files: { 't.txt': { kind: 'added', added: 1, removed: 0, binary: false } },
+    });
+    await scm.checkout('main', 'local');
+    const onMain = await scm.state();
+    expect(onMain.isRepo && onMain.branchChanges).toBeNull();
+  });
+
+  it('branchDiffSides: 作業ツリーで消したファイルは右が空、基点に無いファイルは左が空', async () => {
+    const base = await sha(repo);
+    await scm.checkout('topic', 'create');
+    rmSync(join(repo, 'a.txt'));
+    write('n.txt', 'n\n');
+    expect(await scm.branchDiffSides(base, 'a.txt')).toEqual({ original: 'one\n', modified: '' });
+    expect(await scm.branchDiffSides(base, 'n.txt')).toEqual({ original: '', modified: 'n\n' });
+  });
+
+  it('diffSides: 新しくステージしたファイルは左が空。ステージして消したファイルは右が空（未ステージ側は HEAD と比べる）', async () => {
+    write('s.txt', 's\n');
+    await scm.stage(['s.txt']);
+    expect(await scm.diffSides('s.txt', true)).toEqual({ original: '', modified: 's\n' });
+    await run(repo, ['rm', '-q', 'a.txt']);
+    expect(await scm.diffSides('a.txt', true)).toEqual({ original: 'one\n', modified: '' });
+    expect(await scm.diffSides('a.txt', false)).toEqual({ original: 'one\n', modified: '' });
+  });
+
+  it('branches: 手元とリモートのブランチと、デフォルトブランチ', async () => {
+    await withOrigin();
+    await scm.checkout('topic', 'create');
+    const result = await scm.branches();
+    expect(result.local.sort()).toEqual(['main', 'topic']);
+    expect(result.remote).toEqual(['origin/main']);
+    expect(result.defaultBranch).toBe('main');
+  });
+
+  it('discard: 未追跡のファイルだけなら、追跡しているファイルの取り消し（git restore）はしない', async () => {
+    write('only-new.txt', 'new\n');
+    await scm.discard(['only-new.txt']);
+    expect(existsSync(join(repo, 'only-new.txt'))).toBe(false);
+  });
+
+  it('discard: リポジトリでないフォルダでは、未追跡のファイルとして消さない（git restore に任せて失敗する）', async () => {
+    const plain = join(root, 'plain');
+    mkdirSync(plain);
+    writeFileSync(join(plain, 'x.txt'), 'x\n');
+    await expect(new SourceControl(plain).discard(['x.txt'])).rejects.toThrow();
+    expect(readFileSync(join(plain, 'x.txt'), 'utf8')).toBe('x\n');
+  });
+
+  it('lastCommitMessage: コミットが無ければ空', async () => {
+    const fresh = join(root, 'fresh');
+    await init(fresh);
+    expect(await new SourceControl(fresh).lastCommitMessage()).toBe('');
+  });
+
+  it('fetch と pull: origin の変更を取り込む。fetch は消えたリモートのブランチも片付ける', async () => {
+    await withOrigin();
+    await run(repo, ['push', '-q', 'origin', 'main:old']);
+    const other = join(root, 'other');
+    await run(root, ['clone', '-q', remote, other]);
+    await run(other, ['config', 'user.name', 'other']);
+    await run(other, ['config', 'user.email', 'other@example.com']);
+    await run(other, ['config', 'gc.auto', '0']);
+    writeFileSync(join(other, 'b.txt'), 'b\n');
+    await run(other, ['add', 'b.txt']);
+    await run(other, ['commit', '-q', '-m', 'b']);
+    await run(other, ['push', '-q', 'origin', 'main']);
+    await run(other, ['push', '-q', 'origin', '--delete', 'old']);
+    await scm.fetch();
+    expect(await sha(repo, 'origin/main')).toBe(await sha(other));
+    expect((await run(repo, ['branch', '-r'])).includes('origin/old')).toBe(false);
+    expect(await sha(repo)).not.toBe(await sha(other));
+    await scm.pull();
+    expect(await sha(repo)).toBe(await sha(other));
+    expect(readFileSync(join(repo, 'b.txt'), 'utf8')).toBe('b\n');
+  });
+
+  it('switchToLatestDefault: origin が無ければ、手元のデフォルトブランチに切り替えるだけ', async () => {
+    await scm.checkout('topic', 'create');
+    write('t.txt', 't\n');
+    await scm.stage(['t.txt']);
+    await scm.commit('topic', false);
+    const main = await sha(repo, 'main');
+    await scm.switchToLatestDefault();
+    expect(await scm.state()).toMatchObject({ branch: 'main', upstream: null });
+    expect(await sha(repo)).toBe(main);
+  });
+
+  it('switchToLatestDefault: デフォルトブランチが分からなければ、切り替えずに断る', async () => {
+    await scm.checkout('work', 'create');
+    await run(repo, ['branch', '-D', 'main']);
+    await expect(scm.switchToLatestDefault()).rejects.toThrow('デフォルトブランチが分かりません');
+    expect(await scm.state()).toMatchObject({ branch: 'work' });
+  });
+
+  it('switchToLatestDefault: リモートでデフォルトブランチが変わっていれば、取り直して新しいほうに切り替える', async () => {
+    await withOrigin();
+    await run(repo, ['remote', 'set-head', 'origin', 'main']);
+    await run(repo, ['push', '-q', 'origin', 'main:develop']);
+    await run(remote, ['symbolic-ref', 'HEAD', 'refs/heads/develop']);
+    await scm.switchToLatestDefault();
+    expect(await scm.state()).toMatchObject({ branch: 'develop', upstream: 'origin/develop' });
+  });
+
+  it('push: 上流があれば、origin でなくても、その上流に送る（上流は変えない）', async () => {
+    await withOrigin();
+    const backup = join(root, 'backup.git');
+    await run(root, ['init', '-q', '--bare', '-b', 'main', backup]);
+    await run(backup, ['config', 'gc.auto', '0']);
+    await run(repo, ['remote', 'add', 'backup', backup]);
+    await scm.checkout('feature', 'create');
+    await run(repo, ['push', '-q', '-u', 'backup', 'feature']);
+    write('f.txt', 'f\n');
+    await scm.stage(['f.txt']);
+    await scm.commit('f', false);
+    await scm.push();
+    expect(await sha(backup, 'feature')).toBe(await sha(repo));
+    await expect(run(remote, ['rev-parse', '--verify', '-q', 'feature'])).rejects.toThrow();
+    expect((await run(repo, ['rev-parse', '--abbrev-ref', 'feature@{upstream}'])).trim()).toBe('backup/feature');
+  });
+
+  it('switchToLatestDefault: 手元にデフォルトブランチが無ければ、origin のものを追跡して作る', async () => {
+    await withOrigin();
+    await scm.checkout('topic', 'create');
+    await run(repo, ['branch', '-D', 'main']);
+    await scm.switchToLatestDefault();
+    expect(await scm.state()).toMatchObject({ branch: 'main', upstream: 'origin/main' });
   });
 });
 

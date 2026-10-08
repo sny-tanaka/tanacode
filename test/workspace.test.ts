@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -30,7 +30,18 @@ describe('Workspace', () => {
     await expect(ws.writeFile('../secret.txt', 'x')).rejects.toThrow('outside workspace');
     await expect(ws.listDir('..')).rejects.toThrow('outside workspace');
     await expect(ws.writeFile('sub/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
+    // .. そのもの、名前が .. で始まるフォルダを通って外に出るものも断る
+    await expect(ws.readFile('..')).rejects.toThrow('outside workspace');
+    await expect(ws.readFile('..notes/../../secret.txt')).rejects.toThrow('outside workspace');
+    await expect(ws.writeFile('..notes/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
     expect(readFileSync(join(root, '..', 'secret.txt'), 'utf8')).toBe('secret');
+  });
+
+  it('名前が .. で始まるファイル（フォルダの中のもの）は、読み書きできる', async () => {
+    put('..notes.md', 'メモ\n');
+    expect(await ws.readFile('..notes.md')).toEqual({ kind: 'text', text: 'メモ\n' });
+    await ws.writeFile('..notes.md', '書き直し\n');
+    expect(readFileSync(join(root, '..notes.md'), 'utf8')).toBe('書き直し\n');
   });
 
   it('listDir: フォルダを先に名前順で並べ、.git・node_modules などは出さない', async () => {
@@ -38,6 +49,8 @@ describe('Workspace', () => {
     put('a.txt', 'a');
     put('src/x.ts', 'x');
     put('node_modules/p/index.js', 'p');
+    put('.next/cache.json', '{}');
+    for (const dir of ['out', 'dist', '.turbo']) put(`${dir}/x.js`, '');
     put('.DS_Store', '');
     mkdirSync(join(root, '.git'));
     expect(await ws.listDir('')).toEqual([
@@ -81,6 +94,21 @@ describe('Workspace', () => {
     expect((await ws.search('T[a-z]x', { caseSensitive: true, regex: false })).files).toEqual([]);
   });
 
+  it('search: 正規表現でないときは、. などの記号もその文字として探す。空の検索は、ファイルがあっても何も返さない', async () => {
+    put('a.txt', 'axb\na.b\n');
+    expect((await ws.search('a.b', { caseSensitive: true, regex: false })).files).toEqual([
+      { path: 'a.txt', matches: [{ line: 2, column: 1, text: 'a.b', matchStart: 0, matchLength: 3 }] },
+    ]);
+    expect(await ws.search('', { caseSensitive: false, regex: false })).toEqual({ files: [], truncated: false });
+  });
+
+  it('search: 1MB ちょうどまでのファイルは探す。リンク先の無いリンクは飛ばす', async () => {
+    put('limit.txt', `tax\n${'x'.repeat(1024 * 1024 - 4)}`);
+    symlinkSync(join(root, 'missing.txt'), join(root, 'broken'));
+    const result = await ws.search('tax', { caseSensitive: false, regex: false });
+    expect(result.files.map((f) => f.path)).toEqual(['limit.txt']);
+  });
+
   it('search: 正しくない正規表現は、理由を返す。空の検索は何も返さない', async () => {
     expect(await ws.search('(', { caseSensitive: false, regex: true })).toEqual({ files: [], truncated: false, error: '正規表現が正しくありません' });
     expect(await ws.search('', { caseSensitive: false, regex: false })).toEqual({ files: [], truncated: false });
@@ -90,5 +118,67 @@ describe('Workspace', () => {
     expect(await ws.info()).toEqual({ root, name: 'repo', branch: null });
     execFileSync('git', ['init', '-q', '-b', 'topic'], { cwd: root });
     expect(await ws.info()).toMatchObject({ branch: 'topic' });
+    // ブランチから外れていれば、コミットの先頭 7 文字
+    writeFileSync(join(root, '.git', 'HEAD'), '0123456789abcdef0123456789abcdef01234567\n');
+    expect(await ws.info()).toMatchObject({ branch: '0123456' });
+  });
+
+  it('readImage: Markdown のプレビューの画像を data URL で返す（SVG も）。画像でない・大きすぎるものは null', async () => {
+    put('img/a.png', Buffer.from([1, 2, 3]));
+    expect(await ws.readImage('img/a.png')).toBe(`data:image/png;base64,${Buffer.from([1, 2, 3]).toString('base64')}`);
+    put('logo.svg', '<svg/>');
+    expect(await ws.readImage('logo.svg')).toBe(`data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`);
+    put('a.txt', 'x');
+    expect(await ws.readImage('a.txt')).toBeNull();
+    put('anim.gif', Buffer.from([7]));
+    expect(await ws.readImage('anim.gif')).toBe(`data:image/gif;base64,${Buffer.from([7]).toString('base64')}`);
+    put('old.BMP', Buffer.from([8]));
+    expect(await ws.readImage('old.BMP')).toBe(`data:image/bmp;base64,${Buffer.from([8]).toString('base64')}`);
+    put('huge.gif', Buffer.alloc(10 * 1024 * 1024 + 1));
+    expect(await ws.readImage('huge.gif')).toBeNull();
+    writeFileSync(join(root, '..', 'secret.png'), 'x');
+    await expect(ws.readImage('../secret.png')).rejects.toThrow('outside workspace');
+  });
+
+  it('画像は 10MB ちょうどまで、絵として返す。拡張子ごとの種類', async () => {
+    put('limit.png', Buffer.alloc(10 * 1024 * 1024, 1));
+    expect((await ws.readFile('limit.png')).kind).toBe('image');
+    expect((await ws.readImage('limit.png'))?.startsWith('data:image/png;base64,')).toBe(true);
+    for (const [ext, mime] of [
+      ['jpeg', 'image/jpeg'],
+      ['webp', 'image/webp'],
+      ['avif', 'image/avif'],
+      ['ico', 'image/x-icon'],
+    ]) {
+      put(`a.${ext}`, Buffer.from([9]));
+      expect(await ws.readImage(`a.${ext}`)).toBe(`data:${mime};base64,${Buffer.from([9]).toString('base64')}`);
+    }
+  });
+
+  it('文字のファイルは 2MB ちょうどまで読む', async () => {
+    put('limit.txt', 'a'.repeat(2 * 1024 * 1024));
+    expect((await ws.readFile('limit.txt')).kind).toBe('text');
+  });
+
+  it('絶対パスは、フォルダの外のファイルでも読む（Claude が送ったファイルを、アプリの画面から開くとき）', async () => {
+    writeFileSync(join(root, '..', 'sent.md'), '# 送ったファイル\n');
+    expect(await ws.readFile(join(root, '..', 'sent.md'))).toEqual({ kind: 'text', text: '# 送ったファイル\n' });
+  });
+
+  it('search: フォルダを指すリンクと 1MB を超えるファイルは探さない', async () => {
+    put('src/a.ts', 'tax\n');
+    put('big.txt', `tax\n${'x'.repeat(1024 * 1024)}`);
+    symlinkSync(join(root, 'src'), join(root, 'link'));
+    const result = await ws.search('tax', { caseSensitive: false, regex: false });
+    expect(result).toEqual({ files: [{ path: 'src/a.ts', matches: [{ line: 1, column: 1, text: 'tax', matchStart: 0, matchLength: 3 }] }], truncated: false });
+  });
+
+  it('search: 見つけた行が 2000 を超えたら、そこで打ち切って truncated にする', async () => {
+    put('a.txt', 'tax\n'.repeat(2500));
+    put('b.txt', 'tax\n'.repeat(2500));
+    const result = await ws.search('tax', { caseSensitive: false, regex: false });
+    expect(result.truncated).toBe(true);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].matches).toHaveLength(2000);
   });
 });

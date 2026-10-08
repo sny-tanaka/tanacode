@@ -478,8 +478,9 @@ export class BrowserControl {
     if (tabs.length === 0) return textResult('タブはありません（navigate で開けます）');
     const lines = tabs.map((guest, i) => {
       const url = guest.contents.getURL();
-      // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）
-      const title = this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
+      // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）。
+      // 空のタブ（「＋」で開いたもの）は、許していない先ではない（navigate で開ける）。タイトルは読まない
+      const title = isBlank(url) ? '（タイトルなし）' : this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
       return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '（空のタブ）' : this.shownUrl(url)}`;
     });
     return textResult(`タブ（* が今のタブ）:\n${lines.join('\n')}`);
@@ -515,6 +516,8 @@ export class BrowserControl {
   // 開いたあとのページの様子。許していない先に移っていたら、そう伝える（タイトルと URL の道筋は伏せる）
   private pageResult(guest: Guest, done: string): ToolResult {
     const url = guest.contents.getURL();
+    // 空のタブ（「＋」で開いたもの）は、許していない先ではない。navigate で、このタブに開けることを伝える
+    if (isBlank(url)) return textResult(`${done}: （空のタブ）\n今のタブは空です。navigate で、このタブにページを開けます`);
     const allowed = this.allowed(url);
     const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）'}`, `URL: ${this.shownUrl(url)}`];
     if (!allowed) lines.push('このページは Claude に許していない先なので、これ以上は読めず、操作もできません');
@@ -733,7 +736,8 @@ export class BrowserControl {
     const lines = [`${double ? 'ダブルクリック' : 'クリック'}しました: ${target.description}`];
     if (target.covered) lines.push(`（押した位置には、ほかの要素 ${target.covered} が重なっていました）`);
     const after = guest.contents.getURL();
-    if (after !== before) lines.push(`ページが移りました: ${after}${this.allowed(after) ? '' : '（Claude に許していない先なので、これ以上は読めず、操作もできません）'}`);
+    // 移る前に止められなかった形（ページの「戻る」ボタンの history.back など）で許していない先へ移ったときは、オリジンだけを伝える
+    if (after !== before) lines.push(`ページが移りました: ${this.shownUrl(after)}${this.allowed(after) ? '' : '（Claude に許していない先なので、これ以上は読めず、操作もできません）'}`);
     return textResult(lines.join('\n'));
   }
 
@@ -870,7 +874,8 @@ export class BrowserControl {
   }
 
   private async setViewport(sessionId: string, guest: Guest, width: string): Promise<ToolResult> {
-    if (!(width in VIEWPORTS)) throw new ToolError(`表示幅は full・mobile・tablet のどれかです: ${width}`);
+    // in だと、Object の持ち物の名前（toString・constructor・__proto__）も通るので、自分の持つキーだけを受け付ける
+    if (!Object.hasOwn(VIEWPORTS, width)) throw new ToolError(`表示幅は full・mobile・tablet のどれかです: ${width}`);
     this.deps.send(this.deps.channels.viewport, { sessionId, width: VIEWPORTS[width] });
     // 画面が webview の幅を変えて、ページが描き直すのを待つ
     await sleep(400);
@@ -1030,7 +1035,7 @@ export class BrowserControl {
     if (!src) return undefined;
     const frame = await this.childFor(guest, src);
     const url = frame?.url ?? src;
-    if (!this.allowed(url)) throw new ToolError(`フォーカスが、許していない先の iframe（${url}）の中にあるので、入力できません`);
+    if (!this.allowed(url)) throw new ToolError(`フォーカスが、許していない先の iframe（${frameShown(url)}）の中にあるので、入力できません`);
     return frame?.child;
   }
 
@@ -1099,7 +1104,7 @@ export class BrowserControl {
     // 別オリジンの iframe。別プロセスで動いていれば、そのセッションに、iframe の中の位置で送る
     const frame = found.src ? await this.childFor(guest, found.src) : null;
     const url = frame?.url ?? found.src;
-    if (!url || !this.allowed(url)) throw new ToolError(`x=${x} y=${y} は、許していない先の iframe（${url || 'src なし'}）の中なので、押せません`);
+    if (!url || !this.allowed(url)) throw new ToolError(`x=${x} y=${y} は、許していない先の iframe（${url ? frameShown(url) : 'src なし'}）の中なので、押せません`);
     return {
       rect,
       description: `x=${x} y=${y}（別オリジンの iframe ${url} の中）`,
@@ -1160,6 +1165,12 @@ function originOf(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+// 断る文に出す、許していない先の iframe の URL。オリジンだけ（iframe の今の URL はページからは読めず、認証・決済の途中の値が入っていることがある）。
+// URL として読めないものは、ページに書いてある src そのものなので、そのまま
+function frameShown(url: string): string {
+  return originOf(url) ?? url;
 }
 
 // 空のタブ（「＋」で開いたもの・まだ何も開いていないもの）

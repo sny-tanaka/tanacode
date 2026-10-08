@@ -21,7 +21,7 @@ import type {
   WorktreePreparing,
   WorktreeRemoval,
 } from '@shared/ipc';
-import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { Activity, AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
@@ -672,13 +672,14 @@ export class SessionManager {
     return (await this.runtimes.get(id)?.screen?.rewindTo(text)) ?? false;
   }
 
-  async choose(id: string, choice: ScreenChoice): Promise<void> {
-    await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text);
+  // カードの選択肢を選ぶ。選べなかったときは理由を返す（画面がカードに出す）
+  async choose(id: string, choice: ScreenChoice): Promise<ChooseResult> {
+    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text)) ?? 'gone';
   }
 
-  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。押せたら true
+  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。選べたら true
   async chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean> {
-    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) ?? false;
+    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) === 'chosen';
   }
 
   configure(id: string, options: SessionOptions): void {
@@ -1026,9 +1027,12 @@ export class SessionManager {
     rt.screen = screen;
     this.listeners.onActivity(id, null);
 
-    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする
+    // 新しい worktree で始めるときは、Claude Code が作り終えるまで準備中にする。
+    // 前の起動が worktree を作ったあと、入力欄を出す前に終わって（起動し直して）いたら、その「作成中」は戻す
+    // （戻さないと、入力欄が出ても受け付けない。node_modules の用意の途中なら、終わるまで待たせたまま）
     const creating = !!record.worktree && !resume && !adopted && !existsSync(record.cwd);
     if (creating) runtime.preparing = 'creating';
+    else if (runtime.preparing === 'creating') runtime.preparing = null;
 
     rt.process = new ClaudeSession(
       this.host,
@@ -1057,6 +1061,7 @@ export class SessionManager {
           screen.feed(data);
           this.listeners.onPtyData(id, data);
         },
+        onInput: () => screen.noteInput(),
         onExit: (exitCode) => {
           rt.process = null;
           this.settingsFiles?.release(id);
@@ -1382,8 +1387,9 @@ export class SessionManager {
 // 会話ログの応答のモデル ID を表示名にする（例: claude-sonnet-5 → Sonnet 5、claude-fable-5-1 → Fable 5.1）
 function modelOf(entry: TranscriptEntry): string | null {
   const id = entry.type === 'assistant' ? entry.message?.model : undefined;
-  // 新しい系統名のモデルにも対応できるよう、名前は決め打ちしない
-  const m = id?.match(/^claude-([a-z]+)-(\d+)(?:-(\d))?(?:-\d{8})?/);
+  // 新しい系統名のモデルにも対応できるよう、名前は決め打ちしない。
+  // 小数点以下は 1 桁の数字だけ（claude-sonnet-5-20260101 の日付の先頭の 2 を、小数点以下と読まない）
+  const m = id?.match(/^claude-([a-z]+)-(\d+)(?:-(\d)(?!\d))?(?:-\d{8})?/);
   if (!m) return null;
   const name = m[1][0].toUpperCase() + m[1].slice(1);
   return `${name} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;

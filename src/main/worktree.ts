@@ -269,7 +269,8 @@ function unquote(text: string): string {
   if (!text.startsWith('"') || !text.endsWith('"')) return text;
   const bytes: number[] = [];
   const body = text.slice(1, -1);
-  const escapes: Record<string, string> = { n: '\n', t: '\t', '"': '"', '\\': '\\' };
+  // git が文字で書く制御文字（quote.c の \a \b \t \n \v \f \r）と " \
+  const escapes: Record<string, string> = { a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', '"': '"', '\\': '\\' };
   for (let i = 0; i < body.length; i++) {
     const c = body[i];
     if (c !== '\\') {
