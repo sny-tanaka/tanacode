@@ -122,8 +122,11 @@ jobs:
           name: e2e-results
           path: test-results/e2e/
           if-no-files-found: ignore
+      # PR では、控えは手がかりとして残すだけなので、GitHub 側の都合で残せなくてもジョブを落とさない
+      # （テストはもう通っている）。定期の確認では、次の update のジョブが控えを使うので落とす
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: claude-code-${{ steps.claude.outputs.version }}
