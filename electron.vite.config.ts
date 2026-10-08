@@ -9,7 +9,7 @@ import { licenseOf, thirdPartyNotices } from './scripts/third-party-notices';
 // （npm run coverage:e2e。.map はアプリには入れない）
 const sourcemap = process.env.TANACODE_SOURCEMAP === '1';
 // ソースマップには元のソースを埋め込まない（カバレッジは src のファイルを読んで戻すので要らない）。
-// 埋め込むと、画面側のビルドのメモリが 1GB ほど増え、macOS のランナー（7GB）ではビルドが遅くなる
+// 埋め込むと、画面側のビルドの最大メモリが 0.7GB ほど増える（5.1GB → 5.8GB。CI の macOS のランナーは 7GB）
 const output = { sourcemapExcludeSources: true };
 
 // 画面に出すアプリのバージョン（__APP_VERSION__ として埋め込む）

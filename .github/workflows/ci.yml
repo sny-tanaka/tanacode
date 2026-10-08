@@ -115,26 +115,28 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      # 翻訳の補助プログラム（Swift）と、アプリの JavaScript（electron-vite build）は互いに関わりが無いので、並べて作る。
-      # 補助プログラムは、配布用のビルドと同じく、作れなければ失敗にする。
-      # アプリは、E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
-      # 画面側のビルドはメモリを 5GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
-      - name: 翻訳の補助プログラムとアプリをビルドする
-        env:
-          TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
+      # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、npm ci と並べて作る。
+      # アプリのビルドとは並べない（3 コアのランナーで取り合いになり、画面側のビルドが 1 分半ほど遅くなった）。
+      # 補助プログラムは、配布用のビルドと同じく、作れなければ失敗にする
+      - name: 依存を入れる（あわせて翻訳の補助プログラムを作る）
         run: |
           log="$RUNNER_TEMP/translate-helper.log"
           node scripts/build-translate-helper.mjs --require > "$log" 2>&1 &
           helper=$!
-          npx electron-vite build
+          npm ci
           if ! wait "$helper"; then
             cat "$log"
             echo "::error::翻訳の補助プログラムを作れませんでした"
             exit 1
           fi
           cat "$log"
+      # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
+      # 画面側のビルドはメモリを 5GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
+      - name: アプリをビルドする
+        run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
+          NODE_OPTIONS: --max-old-space-size=6144
       # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）。
       # electron-builder は PR のビルドでは署名を飛ばすので、CSC_FOR_PULL_REQUEST で署名させる
       # （このジョブは証明書も Secrets も使わないので、PR のコードに署名させても漏れるものは無い）
