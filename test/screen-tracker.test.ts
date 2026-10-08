@@ -354,3 +354,57 @@ it('押せなかったときは、黙って捨てずに理由を返す（メニ�
   // 画面が少しも変わらないのを確かめながら、3 回まで送る。それでも閉じなければ、受け付けられなかったと返す
   expect(writes).toEqual(['\r', '\r', '\r']);
 });
+
+// 起動直後のフォルダの信頼の確認の代わり。本物の Claude Code（2.1.293）で確かめた振る舞いをまねる:
+// 出てから少しの間（本物では 0.13〜0.17 秒。重いときはもっと遅い）に ↓ を押すと、カーソルはいったん動くが、そのあと描き直されて
+// 「No, exit」に戻る。その間に届いた Enter は、描き直したあとのメニュー（カーソルは No, exit）で選ばれる（claude は終わる）
+function fakeTrust({ resetMs = 200 }: { resetMs?: number } = {}) {
+  const rows = fixture('trust').map((l) => l.text);
+  const labels = ['No, exit', 'Yes, I trust this folder'];
+  const at = labels.map((label) => rows.findIndex((text) => text.trim().replace(/^❯\s+/, '') === label));
+  let pointed = 0;
+  let shownAt = 0;
+  let queued = false;
+  let answer: string | null = null;
+  const paint = () => {
+    if (answer !== null) return tracker?.feed('\x1b[2J\x1b[H');
+    const screen = [...rows];
+    at.forEach((row, i) => (screen[row] = `${i === pointed ? ' ❯ ' : '   '}${labels[i]}`));
+    tracker?.feed(draw(screen));
+  };
+  const write = (data: string) => {
+    if (answer !== null) return;
+    if (data === '\x1b[B' || data === '\x1b[A') {
+      pointed = data === '\x1b[B' ? Math.min(1, pointed + 1) : Math.max(0, pointed - 1);
+      setTimeout(paint, 10);
+    } else if (data === '\r') {
+      if (Date.now() < shownAt + resetMs) queued = true;
+      else {
+        answer = labels[pointed];
+        setTimeout(paint, 10);
+      }
+    }
+  };
+  const show = () => {
+    shownAt = Date.now();
+    paint();
+    setTimeout(() => {
+      pointed = 0;
+      if (queued) answer = labels[0];
+      paint();
+    }, resetMs);
+  };
+  return { write, show, answer: () => answer };
+}
+
+it('出たばかりのメニューが描き直されてカーソルが戻っても、押したのと違う選択肢を選ばない（起動直後のフォルダの信頼の確認）', async () => {
+  const claude = fakeTrust();
+  tracker = new ScreenTracker(120, 40, claude.write, () => {});
+  claude.show();
+  expect(await until(() => menuKind() === 'other')).toBe(true);
+  // カードが出てすぐに「Yes, I trust this folder」を押す
+  const result = await tracker.choose('2', 'enter');
+  await until(() => claude.answer() !== null);
+  expect(claude.answer()).toBe('Yes, I trust this folder');
+  expect(result).toBe('chosen');
+});

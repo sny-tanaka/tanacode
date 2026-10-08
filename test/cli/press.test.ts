@@ -8,7 +8,8 @@ import { MockApi } from './mock-api';
 // 本物の claude をモックの API で動かし、続けて出る質問・許可の確認を、カードが出てすぐに押しても答えられるかを確かめる。
 // 押すのは、アプリのカードのボタンと同じ session-manager の choose で、1 回だけ（テストの側では待たず、送り直さない）。
 // Claude Code は、直前の入力（指示の送信・前のメニューへの Enter）からしばらくの間にメニューに届いた Enter を捨てる。
-// モックの API はすぐに応答するので、前の答えのすぐあとに次の確認が出る（E2E で、カードが閉じずに止まった場面と同じ）
+// モックの API はすぐに応答するので、前の答えのすぐあとに次の確認が出る（E2E で、カードが閉じずに止まった場面と同じ）。
+// 起動直後のフォルダの信頼の確認は、出てすぐに ↓ を押すと、描き直されてカーソルが「No, exit」に戻ることがある
 
 const version = claudeVersion();
 const PROMPT = '続けて確かめてください';
@@ -69,5 +70,36 @@ describe(`Claude Code ${version} の続けて出るメニューを、出てす�
     expect(readFileSync(join(run.cwd, 'hello.txt'), 'utf8')).toBe('こんにちは\n');
     // 押した 1 回は 1 回のまま（次の確認を勝手に選んでいない）。どの答えも Yes（1 つ目）で、Claude に届いている
     expect(api.toolResults.filter((r) => /A 案/.test(r))).toHaveLength(1);
+  });
+});
+
+describe(`Claude Code ${version} の起動直後のフォルダの信頼の確認を、出てすぐ押す`, () => {
+  let api: MockApi;
+  const runs: ClaudeRun[] = [];
+
+  beforeAll(() => {
+    api = new MockApi();
+  });
+
+  afterAll(async () => {
+    for (const run of runs) await run.stop();
+    await api?.stop();
+  });
+
+  it('「Yes, I trust this folder」を出てすぐ 1 回押すと、その選択肢が選ばれて入力欄が出る（5 回起動して確かめる）', async () => {
+    const base = await api.start();
+    const results: unknown[] = [];
+    for (let i = 0; i < 5; i++) {
+      const run = new ClaudeRun(base);
+      runs.push(run);
+      run.start();
+      const trust = await run.waitFor('フォルダの信頼の確認', (info) => (info.state.kind === 'menu' && info.state.menu.kind === 'other' ? info.state.menu : null));
+      const yes = trust.options.find((o) => /^Yes/.test(o.label))!;
+      results.push(await run.manager.choose(run.sessionId!, { optionId: yes.id, key: 'enter' }));
+      // 違う選択肢（No, exit）が選ばれると、claude は終わる（waitFor が「終了しました」で失敗する）
+      await run.waitFor(`${i + 1} 回目の入力欄`, (info) => info.state.kind === 'prompt');
+      await run.stop();
+    }
+    expect(results).toEqual(Array(5).fill('chosen'));
   });
 });
