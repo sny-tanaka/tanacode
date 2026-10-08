@@ -101,6 +101,8 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
     checkPermission(parseMenu(screen('bash-permission')), 'mkdir checked');
     // 操作の案内は、前後の空白を除いて読む
     expect(parseMenu(screen('bash-permission'))?.hint).toBe('Esc to cancel · Tab to amend');
+    // 2.1.292 は、2 つめの選択肢の名前を、端末の幅より手前（フォルダのあと）で折り返す。続きの「from this project」も名前
+    expect(parseMenu(screen('bash-permission'))?.options.map((o) => o.label)).toContain(`Yes, and always allow access to ${cwd} from this project`);
   });
 
   it('AskUserQuestion の質問が読める', () => {

@@ -499,8 +499,9 @@ export class ScreenTracker {
     const spinner = parseSpinner(lines, promptStart);
     const now = Date.now();
     if (!spinner) {
-      // 文章を書いている間はタイマーの行が消える。経過時間は最後に読めた時刻から数える
-      const streaming = isStreaming(lines, promptStart);
+      // 文章を書いている間はタイマーの行が消える。経過時間は最後に読めた時刻から数える。
+      // 長い応答の始まり（⏺）が画面の外に流れたら、書いている途中のまま
+      const streaming = isStreaming(lines, promptStart, this.activity?.phase === 'writing');
       if (!streaming) this.elapsed = null;
       const elapsed = this.elapsed && formatElapsed(this.elapsed.seconds + Math.floor((now - this.elapsed.at) / 1000));
       this.setActivity(streaming ? { phase: 'writing', elapsed, tokens: null } : null);
