@@ -165,7 +165,8 @@ function text(value: unknown, key: string, max: number): string {
 export function relativePath(cwd: string, raw: string): string {
   const abs = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw);
   const rel = relative(cwd, abs);
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new WalkthroughError(`${raw} は、このセッションのフォルダ（${cwd}）の中のファイルではありません`);
+  // .. そのものか ../ で始まるものが外（..notes.md のような名前のファイルは中）
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new WalkthroughError(`${raw} は、このセッションのフォルダ（${cwd}）の中のファイルではありません`);
   return rel.split(sep).join('/');
 }
 
