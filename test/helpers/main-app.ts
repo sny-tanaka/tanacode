@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { vi, type Mock } from 'vitest';
 
@@ -535,7 +534,8 @@ export let systemVersion = '15.4.1';
 export async function boot(o: BootOptions = {}): Promise<typeof state> {
   cleanup();
   state = freshState();
-  state.root = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-main-')));
+  // macOS の tmpdir()（/var/folders/…/T）は長く、userData のソケットのパスが上限を超えて別の場所に作られてしまうので、短い /tmp に作る
+  state.root = realpathSync(mkdtempSync('/tmp/tanacode-main-'));
   state.userData = join(state.root, 'userData');
   state.downloads = join(state.root, 'Downloads');
   state.appPath = join(state.root, 'app');
