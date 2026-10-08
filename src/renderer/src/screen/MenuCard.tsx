@@ -1,10 +1,20 @@
 import { useState } from 'react';
-import type { Menu, MenuOption } from '@shared/screen';
+import type { ChooseResult, Menu, MenuOption } from '@shared/screen';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
 
 const KIND_LABEL = { question: 'Claude Code からの質問', permission: '実行の許可', other: '確認' } as const;
 // 自由記述の欄がまだ空のときの表示（「Type something.」。複数選択では末尾の . が無い）
 const TEXT_PLACEHOLDER = /^Type something\.?$/;
+
+// 選べなかったとき、カードに出す知らせ（押したことを黙って捨てない）
+const NOT_CHOSEN: Record<Exclude<ChooseResult, 'chosen'>, string> = {
+  busy: 'ほかの操作の途中だったため、送れませんでした。もう一度押してください',
+  gone: '画面が変わったため、送りませんでした',
+  missing: 'この選択肢が Claude Code の画面に見つからないため、送りませんでした',
+  stuck: '選択肢にカーソルを合わせられませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください',
+  ignored: 'Claude Code が受け付けませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください',
+};
+const SEND_FAILED = '送れませんでした。もう一度押してください';
 
 // 自由記述に入力済みの文字（空なら ''）
 function typedText(option: MenuOption): string {
@@ -31,8 +41,11 @@ type Props = {
 export function MenuCard({ sessionId, menu }: Props) {
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(false);
-  // 押した選択肢。ターミナルのカーソル（↑/↓ で目的の選択肢まで送る途中）は出さず、押したものだけを示す
+  // 押した選択肢。ターミナルのカーソル（↑/↓ で目的の選択肢まで送る途中）は出さず、押したものだけを示す。
+  // 送り終えるまでは、ほかの選択肢を押せない（続けて押したものを、黙って捨てないように）
   const [chosen, setChosen] = useState<string | null>(null);
+  // 選べなかったときの知らせ
+  const [failure, setFailure] = useState<string | null>(null);
   // プレビューを出す選択肢（ホバー・フォーカスしたもの。はじめはプレビューのある最初の選択肢）
   const [previewed, setPreviewed] = useState<string | null>(null);
   const hasPreview = menu.options.some((o) => o.preview);
@@ -40,7 +53,14 @@ export function MenuCard({ sessionId, menu }: Props) {
 
   const choose = (option: MenuOption, key: 'enter' | 'space' | 'none' = 'enter', input?: string) => {
     setChosen(option.id);
-    void window.tanacode.screen.choose(sessionId, { optionId: option.id, key, text: input }).finally(() => setChosen(null));
+    setFailure(null);
+    window.tanacode.screen
+      .choose(sessionId, { optionId: option.id, key, text: input })
+      .then(
+        (result) => setFailure(result && result !== 'chosen' ? NOT_CHOSEN[result] : null),
+        () => setFailure(SEND_FAILED),
+      )
+      .finally(() => setChosen(null));
   };
 
   const onClick = (option: MenuOption) => {
@@ -94,6 +114,7 @@ export function MenuCard({ sessionId, menu }: Props) {
             <button
               key={option.id}
               className={`menu-option${option.id === chosen ? ' chosen' : ''}${option.id === 'submit' ? ' submit' : ''}${hasPreview && option.id === shown?.id ? ' previewed' : ''}`}
+              disabled={chosen !== null}
               onClick={() => onClick(option)}
               onMouseEnter={() => isChoice(option) && setPreviewed(option.id)}
               onFocus={() => isChoice(option) && setPreviewed(option.id)}
@@ -107,6 +128,11 @@ export function MenuCard({ sessionId, menu }: Props) {
           ),
         )}
       </div>
+      {failure && (
+        <div className="menu-card-error" role="alert">
+          {failure}
+        </div>
+      )}
       {/* 選択肢のプレビュー（比べるための図や文章）。ホバーした選択肢のものを出す */}
       {shown && (
         <div className="menu-preview">

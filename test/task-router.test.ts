@@ -197,7 +197,7 @@ describe('TaskRouter', () => {
     router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: AGENT_NOTICE } }, false, false);
     expect(workflows.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed');
     expect(subagents.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', 'サブエージェントの結果', { durationMs: 1746, totalTokens: 120, toolUses: 2 });
-    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed');
+    expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', null);
     router.track({ type: 'user', message: { content: '<task-notification>\n<summary>なにか</summary>\n</task-notification>' } }, false, false);
     expect(workflows.notified).toHaveBeenCalledTimes(1);
   });
@@ -211,6 +211,7 @@ describe('taskNotificationOf', () => {
       toolUseId: 'toolu_agent',
       status: 'completed',
       result: 'サブエージェントの結果',
+      exitCode: null,
     });
   });
 
@@ -221,6 +222,7 @@ describe('taskNotificationOf', () => {
       toolUseId: 'toolu_bg',
       status: 'completed',
       result: null,
+      exitCode: 0,
     });
     expect(taskNotificationOf({ type: 'queue-operation', operation: 'dequeue' } as TranscriptEntry)).toBeNull();
     expect(taskNotificationOf({ type: 'queue-operation', operation: 'enqueue', content: '追加の頼みです' } as TranscriptEntry)).toBeNull();
