@@ -121,13 +121,28 @@ describe('StatusLineWatcher', () => {
     rmSync(join(dir, '..'), { recursive: true, force: true });
   });
 
+  // 見張りを始め、変更が届くようになるまで待つ。macOS の fs.watch（FSEvents）は、始めた直後の変更を取りこぼすことがあるので、
+  // 関係の無いセッションのファイル（probe.json。読んでも壊れていて知らせない）を書き直しながら、見張りが気づくのを待つ
+  async function live(w: StatusLineWatcher) {
+    await w.start();
+    const timers = (w as unknown as { timers: Map<string, unknown> }).timers;
+    for (let wrote = 0, end = Date.now() + 10_000; !timers.has('probe') && Date.now() < end; ) {
+      if (Date.now() - wrote >= 50) {
+        writeFileSync(join(dir, 'probe.json'), '{');
+        wrote = Date.now();
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(timers.has('probe')).toBe(true);
+  }
+
   it('セッションごとのファイルの場所', () => {
     expect(watcher!.fileFor('s1')).toBe(join(dir, 's1.json'));
     expect(watcher!.askFileFor('s1')).toBe(join(dir, 's1.ask.json'));
   });
 
   it('statusLine のファイルが書かれたら、少し待ってから読んで知らせる。続けて書かれたら最後の 1 回だけ読む', async () => {
-    await watcher!.start();
+    await live(watcher!);
     writeFileSync(watcher!.fileFor('s1'), '{"version":"0.0.1"}');
     writeFileSync(watcher!.fileFor('s1'), statusJson);
     await expect.poll(() => infos.length).toBe(1);
@@ -141,7 +156,7 @@ describe('StatusLineWatcher', () => {
   });
 
   it('AskUserQuestion のフックが書いた入力を読み、tool_input を渡す。書きかけ（壊れた JSON）は渡さない', async () => {
-    await watcher!.start();
+    await live(watcher!);
     writeFileSync(watcher!.askFileFor('s1'), '{"tool_input":');
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(asks).toEqual([]);
@@ -156,7 +171,7 @@ describe('StatusLineWatcher', () => {
     // 見張りの知らせは本物のまま、待ち時間（setTimeout）だけを進める
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      await watcher!.start();
+      await live(watcher!);
       const timers = (watcher as unknown as { timers: Map<string, unknown> }).timers;
       const until = async (done: () => boolean) => {
         for (const end = Date.now() + 3000; !done() && Date.now() < end; ) await new Promise((resolve) => setImmediate(resolve));
@@ -178,7 +193,7 @@ describe('StatusLineWatcher', () => {
   });
 
   it('見張りの知らせのあとにファイルが消えていたら、何も渡さない', async () => {
-    await watcher!.start();
+    await live(watcher!);
     writeFileSync(watcher!.askFileFor('gone'), askJson);
     writeFileSync(watcher!.fileFor('gone'), statusJson);
     rmSync(watcher!.askFileFor('gone'));
@@ -210,9 +225,9 @@ describe('StatusLineWatcher', () => {
   });
 
   it('閉じたら、待っている読み込みもやめる', async () => {
-    await watcher!.start();
+    await live(watcher!);
     writeFileSync(watcher!.fileFor('s1'), statusJson);
-    await expect.poll(() => (watcher as unknown as { timers: Map<string, unknown> }).timers.size).toBe(1);
+    await expect.poll(() => (watcher as unknown as { timers: Map<string, unknown> }).timers.has('s1')).toBe(true);
     watcher!.close();
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(infos).toEqual([]);
@@ -222,7 +237,7 @@ describe('StatusLineWatcher', () => {
 
   it('質問の受け手を渡さなくても、質問のファイルを読んで落ちない', async () => {
     const plain = new StatusLineWatcher(dir, (sessionId, info) => infos.push({ sessionId, info }));
-    await plain.start();
+    await live(plain);
     writeFileSync(plain.askFileFor('s1'), askJson);
     writeFileSync(plain.fileFor('s1'), statusJson);
     await expect.poll(() => infos.length).toBe(1);
