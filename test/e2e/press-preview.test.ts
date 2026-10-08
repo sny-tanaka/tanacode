@@ -26,6 +26,12 @@ describe('アクティビティバーのブラウザとターミナルのボタ�
   const servers: Server[] = [];
   const pressed = (label: string) => app.page.locator(`.activity-bar [aria-label="${label}"]`).getAttribute('aria-pressed');
   const tab = (title: string) => app.byText('.preview-pane .preview-tab', title);
+  // title のページの読み込みが終わるまで待つ。題はページの読み込みの途中で出るので、題が出ただけで次のページへ移ると、
+  // 前の読み込みが中断され、Electron の webview が画面のコンソールに中断（-3）の記録を出す
+  const loaded = async (title: string) => {
+    await tab(title).waitFor();
+    await app.page.locator('.preview-pane .preview-toolbar [aria-label="読み込み直す"]').waitFor();
+  };
   const address = '.preview-pane .preview-address input';
   const open = async (url: string) => {
     await app.page.fill(address, url);
@@ -66,14 +72,14 @@ describe('アクティビティバーのブラウザとターミナルのボタ�
     expect(await pressed('ブラウザ')).toBe('true');
 
     await open(one.url);
-    await tab('ページ 1').waitFor();
+    await loaded('ページ 1');
     await open(two.url);
-    await tab('ページ 2').waitFor();
+    await loaded('ページ 2');
     await app.page.click('.preview-pane [aria-label="戻る"]');
-    await tab('ページ 1').waitFor();
+    await loaded('ページ 1');
     expect(await app.page.inputValue(address)).toBe(one.url);
     await app.page.click('.preview-pane [aria-label="進む"]');
-    await tab('ページ 2').waitFor();
+    await loaded('ページ 2');
 
     await app.page.click('.activity-bar [aria-label="ブラウザ"]');
     await pane.waitFor({ state: 'hidden' });
