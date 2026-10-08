@@ -34,9 +34,6 @@ import { MockApi } from './mock-api';
 // 台本は test/scenarios/questions.ts（複数の質問・複数選択・プレビュー付き・説明の長い選択肢）
 
 const version = claudeVersion();
-// 選んでも画面が変わらないときに送り直す回数と、送り直すまで待つ時間
-const RETRIES = 3;
-const RETRY_AFTER_MS = 4000;
 
 describe(`Claude Code ${version} の AskUserQuestion`, () => {
   let api: MockApi;
@@ -68,17 +65,11 @@ describe(`Claude Code ${version} の AskUserQuestion`, () => {
   };
 
   // アプリのカードのボタンと同じ操作（ScreenTracker の choose）で選び、check が満たされるまで待つ。
-  // 質問を出した直後の Claude Code は、入力を取りこぼすことがある（ほかのテストと同時に流して重いときに起きた）ので、
-  // 画面がしばらく変わらなければ、人がもう一度押すのと同じく送り直す
+  // 出たばかりの質問に Claude Code が入力を捨てる間を待つのは choose。カードに「受け付けませんでした」と出たときだけ、
+  // 人と同じく押し直す（ClaudeRun.press）
   const choose = async <T>(label: string, [id, key, text]: Parameters<ClaudeRun['screen']['choose']>, check: (info: ScreenInfo) => T | null | undefined | false) => {
-    for (let attempt = 1; ; attempt++) {
-      await run.screen.choose(id, key, text);
-      try {
-        return await run.waitFor(label, check, attempt < RETRIES ? RETRY_AFTER_MS : undefined);
-      } catch (error) {
-        if (attempt >= RETRIES) throw error;
-      }
-    }
+    await run.press(label, { optionId: id, key, text }, (c) => run.screen.choose(c.optionId, c.key, c.text));
+    return run.waitFor(label, check);
   };
 
   // 複数選択のチェックを付け外し（space）して、画面のチェックが変わるまで待つ

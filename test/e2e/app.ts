@@ -21,6 +21,9 @@ const API_KEY = 'sk-ant-api03-tanacode-e2e-check-00000000000000000000';
 export const RESULTS = join(REPO, 'test-results', 'e2e');
 // 画面の操作・表示を待つ時間の上限（claude の起動とモックの API の応答を含む）
 const TIMEOUT_MS = 30_000;
+// カードの選択肢が Claude Code に届かなかったときの知らせ（MenuCard）と、そのとき人と同じく押し直す回数の上限（はじめの 1 回を含む）
+const NOT_ACCEPTED = 'Claude Code が受け付けませんでした';
+const PRESSES = 3;
 // カバレッジを集めるか（npm run coverage:e2e）。集めたものは scripts/e2e-coverage.mjs が src の行に戻す
 const COVERAGE = process.env.TANACODE_E2E_COVERAGE === '1';
 export const COVERAGE_RAW = join(REPO, 'coverage', 'e2e-raw');
@@ -337,11 +340,20 @@ export class E2EApp {
     return card;
   }
 
-  // カードの選択肢を選んで、カードが閉じるのを待つ
+  // カードの選択肢を選んで、カードが閉じるのを待つ。カードに「受け付けませんでした」と出たときだけ、人と同じく押し直す
+  // （黙って何度も押し直すことはしない）。それ以外の知らせが出たら、失敗にする
   async choose(card: Locator, option: string | RegExp): Promise<void> {
     const handle = await card.elementHandle();
-    await card.locator('.menu-option', { hasText: option }).first().click();
-    await this.page.waitForFunction((element) => !element?.isConnected, handle);
+    for (let attempt = 1; ; attempt++) {
+      await card.locator('.menu-option', { hasText: option }).first().click();
+      const outcome = await this.page.waitForFunction(
+        (element) => (!element?.isConnected ? 'closed' : (element.querySelector('.menu-card-error')?.textContent ?? false)),
+        handle,
+      );
+      const result = await outcome.jsonValue();
+      if (result === 'closed') return;
+      if (!String(result).includes(NOT_ACCEPTED) || attempt >= PRESSES) throw new Error(`カードで選べません（${attempt} 回目）: ${String(result)}`);
+    }
   }
 }
 

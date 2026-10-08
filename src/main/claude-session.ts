@@ -52,6 +52,8 @@ type Options = {
 
 type Handlers = {
   onData: (data: string) => void;
+  // Claude Code に入力を送った（画面の読み取りが、Claude Code が入力を捨てる間を避けるのに使う）
+  onInput?: () => void;
   onExit: (exitCode: number) => void;
   onEntry: EntryHandler;
   onHistoryLoaded: () => void;
@@ -111,7 +113,9 @@ export class ClaudeSession {
   }
 
   write(data: string): void {
-    this.process?.write(data);
+    if (!this.process) return;
+    this.process.write(data);
+    this.handlers.onInput?.();
   }
 
   // statusLine が教えてくれた今の会話ログ（/clear で変わる）
