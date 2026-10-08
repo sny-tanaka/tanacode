@@ -521,10 +521,13 @@ describe('削除', () => {
     git(plan.path, 'add', 'staged.txt');
     writeFileSync(join(plan.path, 'new.txt'), 'new\n');
     writeFileSync(join(plan.path, '.env'), 'SECRET=1\n');
-    // 控えに使う一時的なインデックスの名前を決めておき、消えたかを確かめる
-    names.queue = [[1, 2, 3, 4, 5, 6]];
+    // 控えに使う一時的なインデックスの名前を決めておき、消えたかを確かめる。
+    // インデックスはみんなで使う一時フォルダに作られるので、名前は毎回変える（決め打ちにすると、同じ機械で同時に流した
+    // ほかのテストの実行（別の作業場所など）と同じファイルを取り合い、git の .lock がぶつかったり、控えの中身が欠けたりする）
+    const bytes = [...globalThis.crypto.getRandomValues(new Uint8Array(6))];
+    names.queue = [bytes];
     const removal = await removeWorktree(plan, plan.path);
-    expect(existsSync(join(tmpdir(), 'tanacode-index-010203040506'))).toBe(false);
+    expect(existsSync(join(tmpdir(), `tanacode-index-${Buffer.from(bytes).toString('hex')}`))).toBe(false);
     expect(removal.backupRef).toBe(`refs/tanacode/backup/${plan.name}`);
     expect(existsSync(plan.path)).toBe(false);
     const ref = removal.backupRef!;
