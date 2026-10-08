@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Menu, MenuOption } from '@shared/screen';
 import { MenuCard } from '../../src/renderer/src/screen/MenuCard';
@@ -65,6 +65,26 @@ describe('MenuCard', () => {
     fireEvent.change(input, { target: { value: '金色' } });
     fireEvent.click(screen.getByText('決定'));
     expect(api.argsOf('screen.choose')).toEqual([['s1', { optionId: '3', key: 'none', text: '金色' }]]);
+  });
+
+  it('押した選択が届かなかったときは、カードにそう出して押し直せる。送っている間は、ほかの選択肢を押せない', async () => {
+    let finish!: (result: string) => void;
+    api = mockApi({ 'screen.choose': () => new Promise((resolve) => (finish = resolve)) });
+    api.install();
+    render(<MenuCard sessionId="s1" menu={menu({ kind: 'permission', options: [option('1', 'Yes'), option('2', 'No')] })} />);
+    fireEvent.click(screen.getByText('Yes'));
+    // 1 つ目を送っている間に押した 2 つ目は、送らない（押せない）
+    fireEvent.click(screen.getByText('No'));
+    expect(api.argsOf('screen.choose')).toEqual([['s1', { optionId: '1', key: 'enter', text: undefined }]]);
+    expect(screen.queryByRole('alert')).toBeNull();
+    await act(async () => finish('ignored'));
+    expect(screen.getByRole('alert').textContent).toContain('Claude Code が受け付けませんでした');
+    fireEvent.click(screen.getByText('Yes'));
+    expect(api.argsOf('screen.choose')).toHaveLength(2);
+    // 押し直したら、前の知らせは消す
+    expect(screen.queryByRole('alert')).toBeNull();
+    await act(async () => finish('chosen'));
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('キャンセルは Esc を送る', () => {

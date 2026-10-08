@@ -259,3 +259,98 @@ it('/ の補完の候補の行を、入力欄の行と字下げで見分ける�
   // 名前が前だけ同じ別のコマンドは数えない
   expect(showsCommandSuggestion(lines(['  ❯ /tasks-list   ほかのコマンド', ...prompt('/tasks')]), '/tasks')).toBe(false);
 });
+
+// 選択メニューを選ぶ操作（choose）。Claude Code の代わりに、控え（動作確認済のバージョンで取った画面）を描く偽物を使う。
+// 偽物は、本物の Claude Code（2.1.293）をモックの API で動かして確かめた振る舞いをまねる:
+// - 直前の入力（指示の送信・前のメニューへの Enter）から graceMs（本物では約 250ms）たたないうちにメニューに届いた Enter は、
+//   何も描かずに捨てる。あとから効くこともない（出たばかりの確認を、続けて押したキーで答えてしまわないための仕組み）
+// - 受け付けた Enter は、メニューを閉じて（入力欄の画面を描いて）、roundtripMs のあとに次の画面を出す（API の応答を待つ間）
+const screenAnsi = (name: string) => readFileSync(join(__dirname, 'fixtures', 'claude-code', VERIFIED_CLAUDE_CODE_VERSION, 'screens', `${name}.ansi`), 'utf8');
+const repaint = (name: string) => `\x1b[2J\x1b[H${screenAnsi(name)}`;
+
+function fakeMenus(screens: string[], { graceMs = 250, roundtripMs = 120 }: { graceMs?: number; roundtripMs?: number } = {}) {
+  let index = 0;
+  let lastInput = 0;
+  const accepted: string[] = [];
+  const ignored: string[] = [];
+  const write = (data: string) => {
+    const name = screens[index];
+    if (data !== '\r' || !name) return;
+    if (Date.now() - lastInput < graceMs) {
+      ignored.push(name);
+      return;
+    }
+    lastInput = Date.now();
+    accepted.push(name);
+    index++;
+    setTimeout(() => tracker?.feed(repaint('prompt')), 30);
+    const next = screens[index];
+    if (next) setTimeout(() => tracker?.feed(repaint(next)), roundtripMs);
+  };
+  return { write, accepted, ignored, shown: () => screens[index] ?? null };
+}
+
+const menuKind = () => (tracker?.current.state.kind === 'menu' ? tracker.current.state.menu.kind : null);
+const until = async (check: () => boolean, timeoutMs = 3000) => {
+  for (const end = Date.now() + timeoutMs; !check() && Date.now() < end; ) await sleep(20);
+  return check();
+};
+
+it('答えた直後に出た次の確認を、出てすぐ押しても、Claude Code が入力を受け付けない間に送って失わない', async () => {
+  const claude = fakeMenus(['question', 'write-permission']);
+  tracker = new ScreenTracker(120, 40, claude.write, () => {});
+  tracker.feed(screenAnsi('question'));
+  expect(await until(() => menuKind() === 'question')).toBe(true);
+  const first = await tracker.choose('1', 'enter');
+  expect(await until(() => menuKind() === 'permission')).toBe(true);
+  // カードが出てすぐに押す（前の答えの Enter から間もない。本物の Claude Code は、この間の Enter を捨てる）
+  const second = await tracker.choose('1', 'enter');
+  await until(() => claude.shown() === null);
+  expect(claude.accepted).toEqual(['question', 'write-permission']);
+  expect([first, second]).toEqual(['chosen', 'chosen']);
+});
+
+it('Claude Code が思ったより長く入力を受け付けないときは、画面が少しも変わらないのを確かめてから送り直す', async () => {
+  const claude = fakeMenus(['question', 'write-permission'], { graceMs: 900 });
+  tracker = new ScreenTracker(120, 40, claude.write, () => {});
+  tracker.feed(screenAnsi('question'));
+  expect(await until(() => menuKind() === 'question')).toBe(true);
+  await tracker.choose('1', 'enter');
+  expect(await until(() => menuKind() === 'permission')).toBe(true);
+  const result = await tracker.choose('1', 'enter');
+  await until(() => claude.shown() === null);
+  expect(claude.accepted).toEqual(['question', 'write-permission']);
+  expect(claude.ignored).toEqual(['write-permission']);
+  expect(result).toBe('chosen');
+});
+
+it('押した Enter が効いたあと、同じ確認がすぐまた出ても、もう一度は押さない（次の確認を勝手に選ばない）', async () => {
+  const claude = fakeMenus(['bash-permission', 'bash-permission']);
+  tracker = new ScreenTracker(120, 40, claude.write, () => {});
+  tracker.feed(screenAnsi('bash-permission'));
+  expect(await until(() => menuKind() === 'permission')).toBe(true);
+  const result = await tracker.choose('1', 'enter');
+  // 送り直すまで待つ時間より長く見る
+  await sleep(2500);
+  expect(claude.accepted).toEqual(['bash-permission']);
+  expect(claude.shown()).toBe('bash-permission');
+  expect(result).toBe('chosen');
+});
+
+it('押せなかったときは、黙って捨てずに理由を返す（メニューが無い・選択肢が無い・ほかの操作の途中・Claude Code が受け付けない）', async () => {
+  const writes: string[] = [];
+  tracker = new ScreenTracker(120, 40, (data) => writes.push(data), () => {});
+  tracker.feed(screenAnsi('prompt'));
+  expect(await until(() => tracker?.current.state.kind === 'prompt')).toBe(true);
+  expect(await tracker.choose('1', 'enter')).toBe('gone');
+  tracker.feed(repaint('bash-permission'));
+  expect(await until(() => menuKind() === 'permission')).toBe(true);
+  expect(await tracker.choose('9', 'enter')).toBe('missing');
+  expect(writes).toEqual([]);
+  // この偽物は Enter に何も描かない（Claude Code が受け付けない）。送っている間に押したものは、ほかの操作の途中として返す
+  const pending = tracker.choose('1', 'enter');
+  expect(await tracker.choose('4', 'enter')).toBe('busy');
+  expect(await pending).toBe('ignored');
+  // 画面が少しも変わらないのを確かめながら、3 回まで送る。それでも閉じなければ、受け付けられなかったと返す
+  expect(writes).toEqual(['\r', '\r', '\r']);
+});
