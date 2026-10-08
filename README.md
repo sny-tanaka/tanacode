@@ -101,7 +101,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 brew install --cask sny-tanaka/tanacode/tanacode
 ```
 
-[Homebrew](https://brew.sh/) で入れて、`brew upgrade` で更新できます。[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac（Apple Silicon・Intel）に合わせて入れます。Apple の署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
+[Homebrew](https://brew.sh/) で入れると、新しいバージョンをアプリが自分で入れられます（下の「更新」）。[Releases](https://github.com/sny-tanaka/tanacode/releases) の zip を、その Mac（Apple Silicon・Intel）に合わせて入れます。Apple の署名が無くても、macOS の警告は出ません。tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask が、インストールと更新のたびに tanacode.app だけからダウンロードの印（quarantine 属性）を外すため。下の zip の手順の `xattr` と同じことを、Homebrew が代わりに行います。
 
 ### ビルド済みのアプリ（Releases）
 
@@ -160,15 +160,20 @@ npm run install-app
 
 ### 更新
 
-自動アップデートは無し。新しいバージョンが出ると、タイトルバーのバージョンの右に青いダウンロードの印が出ます（GitHub の Releases を 1 時間ごとに確認）。リポジトリの Watch → Custom → Releases でも通知を受け取れます。
+新しいバージョンが出ると、タイトルバーのバージョンの右に青いダウンロードの印が出ます（GitHub の Releases を 1 時間ごとに確認）。リポジトリの Watch → Custom → Releases でも通知を受け取れます。
 
-- **Homebrew で入れた場合**: メニューの「ファイル → Claude Code も止めて終了」で終了してから、次を実行します
+- **Homebrew で入れた場合**: 自動で更新。新しいバージョンを見つけると、裏で `brew update` と `brew fetch` を実行してダウンロードだけを済ませ、タイトルバーに「再起動して更新」を出します。
+  - 「再起動して更新」を押すと、tanacode を終了し、Homebrew で入れ替えてから起動し直します。Claude Code が動いているセッションがあれば、動かしたまま更新するか、止めて更新するかを選べます。動かしたまま更新すると、新しいバージョンで増えた Claude のツールなどは、各セッションをチャットのヘッダーの「再起動」で起動し直してから使えます
+  - 押さなくても、ふつうに終了したときに入れ替えます（次に起動すると新しいバージョン）。止めるときは、メニューの「tanacode → 終了するときに新しいバージョンを入れる（Homebrew）」のチェックを外します
+  - 入れ替えるのは、tanacode が終わってから。動いているアプリの中身は入れ替えません。Homebrew の確認（y/n）は出さずに進めます
+  - 入れ替えられなかったときは、次の起動で理由を知らせます。macOS に止められた場合は、システム設定 →「プライバシーとセキュリティ」→「アプリケーションの管理」で tanacode を許可します
+  - 手で更新するときは、メニューの「ファイル → Claude Code も止めて終了」で終了してから、次を実行します
 
-  ```bash
-  brew update && brew upgrade --cask tanacode
-  ```
+    ```bash
+    brew update && brew upgrade --cask tanacode
+    ```
 
-  `brew update` は、手元の tap を新しくするためのもの。tap の cask は、新しいバージョンの公開の数分あとに新しくなります。Homebrew の自動更新は 24 時間に 1 回（`HOMEBREW_NO_AUTO_UPDATE` で止めていると、`brew update` を実行するまで新しくなりません）なので、公開の直後は、`brew upgrade` だけだと「最新です」と出ることがあります
+    `brew update` は、手元の tap を新しくするためのもの。tap の cask は、新しいバージョンの公開の数分あとに新しくなります。Homebrew の自動更新は 24 時間に 1 回（`HOMEBREW_NO_AUTO_UPDATE` で止めていると、`brew update` を実行するまで新しくなりません）なので、公開の直後は、`brew upgrade` だけだと「最新です」と出ることがあります
 
 - **ビルド済みのアプリの場合**: 新しいバージョンを入れる前に、メニューの「ファイル → Claude Code も止めて終了」で終了します。アプリの入れ替えで、動いている Claude Code が途中で切れないようにするためです
 

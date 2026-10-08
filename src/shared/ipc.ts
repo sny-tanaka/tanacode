@@ -128,6 +128,7 @@ export const IpcChannel = {
   ClaudeVersionChanged: 'claude:version-changed',
   AppUpdateGet: 'app-update:get',
   AppUpdateChanged: 'app-update:changed',
+  AppUpdateInstall: 'app-update:install',
   StatusLineChanged: 'statusline:changed',
   KnowledgeChanged: 'knowledge:changed',
   // アプリ内ブラウザを Claude が操作する（MCP）。main → 画面: 開く・操作中の様子・表示幅 / 画面 → main: webview を作った
@@ -454,6 +455,9 @@ export type TanacodeApi = {
   appUpdate: {
     get(): Promise<AppUpdate | null>;
     onChanged(listener: (update: AppUpdate | null) => void): () => void;
+    // Homebrew でダウンロード済みの新しいバージョンを入れる。tanacode を終了し、入れ替えてから起動し直す
+    // （Claude Code が動いていれば、止めるかを聞く。キャンセルしたら何もしない）
+    install(): Promise<void>;
   };
   // セッションごとの statusLine（モデル・コンテキスト・利用枠）
   statusLine: {
@@ -670,6 +674,7 @@ export type IpcInvoke = {
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
+  [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];
   [IpcChannel.StatusLineGet]: Api['statusLine']['get'];
   [IpcChannel.SettingsFilesList]: Api['settingsFiles']['list'];
   [IpcChannel.SettingsFilesPick]: Api['settingsFiles']['pick'];

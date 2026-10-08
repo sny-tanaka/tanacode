@@ -418,7 +418,7 @@ export class DemoBackend {
         },
       },
       claudeVersion: { get: () => ok(this.claudeVersion), onChanged: (l) => this.ch.claudeVersion.on(l) },
-      appUpdate: { get: () => ok(this.appUpdate), onChanged: (l) => this.ch.appUpdate.on(l) },
+      appUpdate: { get: () => ok(this.appUpdate), onChanged: (l) => this.ch.appUpdate.on(l), install: () => ok(undefined) },
       statusLine: { get: (id) => ok(this.sessions.get(id)?.statusLine ?? null), onChanged: (l) => this.ch.statusLine.on(l) },
       // 設定ファイルは登録しない（選択欄は「標準」のまま）
       settingsFiles: {

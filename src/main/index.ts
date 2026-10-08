@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import {
   IpcChannel,
@@ -31,6 +31,8 @@ import { WalkthroughControl } from './walkthrough-control';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
+import type { AppUpdate } from '@shared/app-update';
+import { CASK, HomebrewUpdater } from './homebrew-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
@@ -65,6 +67,12 @@ let settingsFiles: SettingsFiles;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
+// Homebrew で入れたときだけ作る（新しいバージョンを裏でダウンロードしておき、終了したあとに入れ替える）
+let homebrew: HomebrewUpdater | null = null;
+// タイトルバーの「再起動して更新」で終了する（入れ替えたあと起動し直す）
+let relaunchAfterUpdate = false;
+// Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
+let shuttingDown = false;
 let watchers: WorkspaceWatchers;
 // Claude によるアプリ内ブラウザの操作。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
 let browserBridge: McpBridge | null = null;
@@ -481,7 +489,8 @@ function registerIpc(): void {
   handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
   handle(IpcChannel.UsageGet, () => usage.get());
   handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
-  handle(IpcChannel.AppUpdateGet, () => appUpdates.get());
+  handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
+  handle(IpcChannel.AppUpdateInstall, () => installUpdate());
   handle(IpcChannel.UsageRefresh, () => usage.refresh());
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
@@ -618,6 +627,7 @@ function buildMenu(): void {
           { role: 'about' },
           { type: 'separator' },
           { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { label: '終了するときに新しいバージョンを入れる（Homebrew）', type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
           { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
           { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
           { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
@@ -678,6 +688,103 @@ function setUpdateCheck(item: MenuItem): void {
   }
   if (item.checked) appUpdates.start();
   else appUpdates.stop();
+}
+
+// メニューの「終了するときに新しいバージョンを入れる（Homebrew）」。保存できなかったら、チェックを元に戻す
+function setUpdateOnQuit(item: MenuItem): void {
+  try {
+    settings.setUpdateOnQuitEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
+}
+
+// 画面へ渡す新しいバージョン。Homebrew で入れていて、新しいバージョンがあれば、その用意（ダウンロード）の様子を足す
+function withHomebrew(update: AppUpdate | null): AppUpdate | null {
+  const prepared = update?.available ? homebrew?.get() : null;
+  return update && prepared ? { ...update, homebrew: prepared } : update;
+}
+
+function sendAppUpdate(update: AppUpdate | null = appUpdates.get()): void {
+  send(IpcChannel.AppUpdateChanged, withHomebrew(update));
+}
+
+// 終了したあとの Homebrew での入れ替えの、ログと結果（brew upgrade の終了コード）
+const updateLogPath = () => join(app.getPath('userData'), 'homebrew-update.log');
+const updateResultPath = () => join(app.getPath('userData'), 'homebrew-update.result');
+
+// 終了するときに入れ替えるか。ダウンロード済みで、「再起動して更新」を押したか、
+// メニューの「終了するときに新しいバージョンを入れる」と「新しいバージョンが出たら通知する」がどちらもオンのとき
+function updatesOnQuit(): boolean {
+  if (homebrew?.get()?.status !== 'ready' || shuttingDown) return false;
+  return relaunchAfterUpdate || (settings.updateOnQuitEnabled() && settings.updateCheckEnabled());
+}
+
+// タイトルバーの「再起動して更新」。Claude Code が動いているセッションがあれば、止めるかを聞いてから終了する。
+// 終了すると（before-quit）、brew upgrade のシェルを切り離して起動し、入れ替えたら起動し直す
+async function installUpdate(): Promise<void> {
+  if (homebrew?.get()?.status !== 'ready' || confirmingQuit) return;
+  confirmingQuit = true;
+  try {
+    const live = manager?.liveSessions() ?? [];
+    let stop = false;
+    if (live.length > 0) {
+      const { response } = await showDialog({
+        type: 'question',
+        message: 'Claude Code が動いているセッションがあります',
+        detail: [
+          ...live.map((s) => `・${s.title}（${s.state}）`),
+          '',
+          '動かしたまま更新すると、作業は切れずに、起動し直したアプリが引き継ぎます。新しいバージョンで増えた Claude のツールなどは、各セッションを「再起動」してから使えます。',
+          '止めて更新すると、作業は途中で切れますが、すべて新しいバージョンで動きます。',
+        ].join('\n'),
+        buttons: ['動かしたまま更新', 'Claude Code も止めて更新', 'キャンセル'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+      });
+      if (response === 2) return;
+      stop = response === 1;
+    }
+    relaunchAfterUpdate = true;
+    await quit(stop);
+  } finally {
+    confirmingQuit = false;
+  }
+}
+
+// 前回の終了のときの Homebrew での入れ替えが失敗していたら、理由と手動の手順を知らせる（結果は一度だけ見る）
+async function reportUpdateResult(): Promise<void> {
+  let code: string;
+  try {
+    code = (await readFile(updateResultPath(), 'utf8')).trim();
+  } catch {
+    return;
+  }
+  await rm(updateResultPath(), { force: true });
+  if (code === '0') return;
+  const log = await readFile(updateLogPath(), 'utf8').catch(() => '');
+  const { response } = await showDialog({
+    type: 'warning',
+    message: 'tanacode を更新できませんでした',
+    detail: [
+      log.trimEnd().split('\n').slice(-12).join('\n'),
+      '',
+      `終了してから、ターミナルで brew update && brew upgrade --cask ${CASK} を実行してください。`,
+      'macOS に止められたときは、システム設定 →「プライバシーとセキュリティ」→「アプリケーションの管理」で tanacode を許可すると、次から入れ替えられます。',
+    ].join('\n'),
+    buttons: ['OK', 'ログを開く'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  if (response === 1) void shell.openPath(updateLogPath());
+}
+
+// ウインドウがあれば、その上に出す
+function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
 }
 
 // メニューの「Claude にアプリ内ブラウザを操作させる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
@@ -750,14 +857,14 @@ async function confirmQuit(): Promise<void> {
         ...live.map((s) => `・${s.title}（${s.state}）`),
         '',
         '止めると、作業は途中で切れ、Remote Control からも続けられなくなります。動かしたまま終了すると、次に起動したときに引き継ぎます。',
+        ...(updatesOnQuit() ? ['', '終了すると、Homebrew で新しいバージョンに入れ替えます。'] : []),
       ].join('\n'),
       buttons: ['動かしたまま終了', 'Claude Code も止めて終了', 'キャンセル'],
       defaultId: 0,
       cancelId: 2,
       noLink: true,
     };
-    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-    const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+    const { response } = await showDialog(options);
     if (response === 2) return;
     await quit(response === 1);
   } finally {
@@ -932,7 +1039,14 @@ app.whenReady().then(async () => {
   usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
-  appUpdates = new AppUpdateMonitor(app.getVersion(), (update) => send(IpcChannel.AppUpdateChanged, update), (url, init) => net.fetch(url, init));
+  appUpdates = new AppUpdateMonitor(
+    app.getVersion(),
+    (update) => {
+      homebrew?.want(update?.latest ?? null);
+      sendAppUpdate(update);
+    },
+    (url, init) => net.fetch(url, init),
+  );
   // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
   await manager.adopt();
   // 動き続けている Claude Code を引き継いでから、時刻を過ぎた予約を片付けて待ち始める
@@ -945,6 +1059,14 @@ app.whenReady().then(async () => {
   system.start();
   claudeVersions.start();
   if (settings.updateCheckEnabled()) appUpdates.start();
+  // Homebrew で入れたアプリなら、新しいバージョンを裏でダウンロードしておく（入れ替えは終了したあと）
+  if (app.isPackaged) {
+    void HomebrewUpdater.detect({ bundle: resolve(process.execPath, '../../..'), current: app.getVersion(), onChange: () => sendAppUpdate() }).then((updater) => {
+      homebrew = updater;
+      homebrew?.want(appUpdates.get()?.latest ?? null);
+    });
+  }
+  void reportUpdateResult();
   // ターミナルで Claude Code を更新して戻ってきたときに、すぐ表示を変える
   app.on('browser-window-focus', () => void claudeVersions.refresh());
   app.on('activate', () => showWindow());
@@ -960,6 +1082,9 @@ app.on('before-quit', (event) => {
   system?.stop();
   claudeVersions?.stop();
   appUpdates?.stop();
+  // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える
+  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate });
+  homebrew?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   manager?.closeAll(false);
   ptyHost?.close();
@@ -983,5 +1108,6 @@ app.on('window-all-closed', () => {
 app.whenReady().then(() => {
   powerMonitor.on('shutdown', () => {
     quitDecided = true;
+    shuttingDown = true;
   });
 });

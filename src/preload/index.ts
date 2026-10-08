@@ -91,6 +91,7 @@ const api: TanacodeApi = {
   appUpdate: {
     get: () => invoke(IpcChannel.AppUpdateGet),
     onChanged: (listener) => subscribe(IpcChannel.AppUpdateChanged, listener),
+    install: () => invoke(IpcChannel.AppUpdateInstall),
   },
   statusLine: {
     get: (sessionId) => invoke(IpcChannel.StatusLineGet, sessionId),
