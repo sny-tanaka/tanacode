@@ -680,7 +680,8 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(inSrc).toContain('- ファイル: 2 件（src の中だけ）\n  - M src/b.txt（+1 −1）\n  - A src/new.txt（+1 −0）\n');
       expect(inSrc).toContain('+b2');
       expect(inSrc).toContain('+new');
-      expect(inSrc).not.toContain('a2');
+      expect(inSrc).not.toContain('a.txt');
+      expect(inSrc).not.toContain('+a2');
       expect(await diffOf({ path: '  ' })).toContain('- ファイル: 4 件\n');
       expect(await diffOf({ path: '.' })).toContain('- ファイル: 4 件\n');
       expect(await diffOf({ path: '../x' })).toBe('path は、セッションのフォルダからの相対パスで渡してください');
