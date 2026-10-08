@@ -4,9 +4,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
-import type { ChatBatch, SessionSummary } from '@shared/ipc';
+import type { ChatBatch, ScreenChoice, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
-import type { Activity, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
+import type { Activity, ChooseResult, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
@@ -27,12 +27,10 @@ import { FakePtyHost } from './fake-pty-host';
 const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
 // 状態を待つときに見直す間隔
 const POLL_MS = 50;
-// Claude Code は、許可の確認などのメニューを出した直後の入力を受け付けないことがある（うっかり押しを防ぐ）。
-// 人が読んでから押すのと同じく、メニューが出てからこれだけたつまでは選ばない。
-// 足りなくても、メニューが閉じなければもう一度送る（MENU_CLOSE_MS）
-const MENU_GUARD_MS = 300;
-// 選んだあと、メニューが閉じるのを待つ時間。閉じなければもう一度送る
+// 選べたあと、画面の読み取りがメニューの閉じたのに追いつくのを待つ時間
 const MENU_CLOSE_MS = 1500;
+// カードに「受け付けませんでした」と出たとき（ignored）に、人と同じく押し直す回数の上限（はじめの 1 回を含む）
+const PRESSES = 3;
 // 打った文字が入力欄に出るのを待つ時間。出なくても Enter は送る（そのあとの確かめで失敗する）
 const DRAFT_MS = 3000;
 // 入力欄でないところに打ったとき、Enter を送るまで待つ時間（打った文字を画面から読めないので、決まった時間だけ待つ）
@@ -122,8 +120,8 @@ export class ClaudeRun {
   // 起動前に返す、何も映っていない画面
   private readonly blank = new ScreenTracker(DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows, () => {}, () => {});
   private readonly screens = new Map<ScreenName, { lines: ScreenLine[]; serialized: string }>();
-  // 今出ている選択メニューの見出しと、出た時刻。menusClosed: メニューが閉じた（別の画面になった）回数
-  private menuShown: { title: string; at: number } | null = null;
+  // 今出ている選択メニューの見出し。menusClosed: メニューが閉じた（別の画面になった）回数
+  private menuShown: string | null = null;
   private menusClosed = 0;
   private exited: number | null = null;
   private readonly oldHome = process.env.HOME;
@@ -399,12 +397,11 @@ export class ClaudeRun {
     return this.seen.some((s) => s.entry.type === 'user') || (readOrNull(this.transcript())?.includes('"type":"user"') ?? false);
   }
 
-  // 選択メニューが出た時刻と、閉じた回数を数える
+  // 選択メニューが閉じた回数を数える
   private noteScreen(info: ScreenInfo): void {
     const title = info.state.kind === 'menu' ? info.state.menu.title : null;
-    if (this.menuShown && this.menuShown.title !== title) this.menusClosed++;
-    if (title === null) this.menuShown = null;
-    else if (this.menuShown?.title !== title) this.menuShown = { title, at: Date.now() };
+    if (this.menuShown !== null && this.menuShown !== title) this.menusClosed++;
+    this.menuShown = title;
   }
 
   // フックが書いた AskUserQuestion の入力（StatusLineWatcher が読むファイル）
@@ -455,21 +452,24 @@ export class ClaudeRun {
     await this.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
   }
 
-  // メニューで選ぶ（アプリと同じく session-manager の choose で）。メニューが閉じなければもう一度送る
+  // メニューで選ぶ（press）。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
   async answer(title: string, optionId: string): Promise<void> {
-    const shown = () => {
-      const state = this.screen.current.state;
-      return state.kind === 'menu' && state.menu.title === title;
-    };
-    for (let attempt = 0; attempt < 3 && shown(); attempt++) {
-      // 出た直後の入力は受け付けられないので、出てから MENU_GUARD_MS たつまで待つ（人が読んでから押すのと同じ）
-      const since = this.menuShown?.title === title ? this.menuShown.at : Date.now();
-      await sleep(since + MENU_GUARD_MS - Date.now());
-      const closed = this.menusClosed;
-      await this.manager.choose(this.sessionId!, { optionId, key: 'enter' });
-      await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
+    const closed = this.menusClosed;
+    await this.press(title, { optionId, key: 'enter' });
+    await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
+  }
+
+  // アプリのカードのボタンを押すのと同じく、session-manager の choose で選ぶ（Claude Code が入力を捨てる間を待つのは、アプリの側）。
+  // カードに「受け付けませんでした」と出たとき（ignored）だけ、人と同じく押し直す。黙って何度も押し直すことはしない。
+  // それ以外の理由で選べなかったら、理由と画面を付けて失敗させる。押した結果を順に返す
+  async press(label: string, choice: ScreenChoice, choose: (choice: ScreenChoice) => Promise<ChooseResult> = (c) => this.manager.choose(this.sessionId!, c)): Promise<ChooseResult[]> {
+    const results: ChooseResult[] = [];
+    for (let attempt = 1; ; attempt++) {
+      const result = await choose(choice);
+      results.push(result);
+      if (result === 'chosen') return results;
+      if (result !== 'ignored' || attempt >= PRESSES) throw new Error(`「${label}」で選べません（${results.join(' → ')}）\n${this.dump()}`);
     }
-    if (shown()) throw new Error(`「${title}」で選んでもメニューが閉じません\n${this.dump()}`);
   }
 
   // 条件が満たされるまで待つ。時間切れのときは、そのときの画面を付けて失敗させる

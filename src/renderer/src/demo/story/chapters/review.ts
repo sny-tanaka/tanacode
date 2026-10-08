@@ -38,8 +38,27 @@ function lineOf(text: string): () => Element | null {
     [...document.querySelectorAll('.diff-pane .modified-in-monaco-diff-editor .view-line')].find((e) => squash(e.textContent ?? '').includes(squash(text))) ?? null;
 }
 
+// 次のコマが描かれるまで待つ（描かれないときも、少し待って先へ進む）
+const nextFrame = () => Promise.race([new Promise<void>((r) => requestAnimationFrame(() => r())), sleep(100)]);
+
+// text を含むファイルの差分を開き終え、差分の計算が終わり、その結果が描かれるまで待つ。
+// インラインの差分は、計算が終わってから削除した行を見せる領域を差し込むので、それまでに測った行の位置は下へずれる
+async function diffSettled(d: Director, text: string): Promise<void> {
+  await d.find(() => {
+    const editor = monaco.editor.getDiffEditors().find((e) => !!e.getContainerDomNode().closest('.diff-pane'));
+    const lines = editor?.getModel()?.modified.getLinesContent() ?? [];
+    // ファイルを替えた直後は、前のファイルの差分が残っているので、text を含むファイルになるまで待つ
+    const ready = lines.some((l) => squash(l).includes(squash(text))) && !!editor?.getLineChanges();
+    return ready ? editor!.getContainerDomNode() : null;
+  });
+  await nextFrame();
+  await nextFrame();
+}
+
 // 行番号の横の ＋ を押してコメントを書く
 async function comment(d: Director, text: string, body: string): Promise<void> {
+  // 差分を開いた直後に測ると、押すまでの間に行がずれ、＋ ではなく削除した行の領域を押してしまう
+  await diffSettled(d, text);
   const line = await d.find(lineOf(text));
   const editorEl = line.closest('.monaco-editor')!;
   const glyph = editorEl.querySelector('.glyph-margin')!.getBoundingClientRect();

@@ -256,6 +256,13 @@ export class Director {
 
   async click(target: Target, opts: { ms?: number; dx?: number; dy?: number } = {}): Promise<void> {
     const el = await this.moveTo(target, opts);
+    // 押せるようになるまで待つ。無効のボタンを押しても何も起きず、台本は押したあとの知らせ（書き出し・送信など）を待ち続けてしまう。
+    // 待ち時間を 0 にして流すときや遅い端末では、ボタンが押せる状態になる前に押しに来ることがある
+    if (el.matches(':disabled')) {
+      await this.find(() => (el.matches(':disabled') ? null : el)).catch(() => {
+        throw new Error(`demo: 押せるようになりません: ${String(target)}`);
+      });
+    }
     await sleep(120);
     const at = document.elementFromPoint(this.x, this.y);
     this.pressAt(at && el.contains(at) ? at : el);
