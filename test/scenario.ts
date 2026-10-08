@@ -123,6 +123,8 @@ export function checkPermission(menu: Menu | null, target: string): void {
   expect(menu!.context.filter((line) => /^[╌┄┈─]{20,}$/.test(line))).toEqual([]);
   expect(menu!.options.some((o) => o.pointed)).toBe(true);
   expect(menu!.options[0].label).toMatch(/^Yes/);
+  // 許可の確認の選択肢には説明が無い。Claude Code が選択肢の名前を折り返しても、続きを説明として読まない
+  expect(menu!.options.filter((o) => o.description).map((o) => `${o.label} / ${o.description}`)).toEqual([]);
 }
 
 // questions を渡したあとの質問のメニュー（ScreenTracker が applyQuestions で組み立てたもの）
