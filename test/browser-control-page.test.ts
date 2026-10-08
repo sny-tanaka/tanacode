@@ -532,6 +532,22 @@ describe('クリック', () => {
     expect(textOf(await call('click', { selector: '#back' }))).toContain('（Claude に許していない先なので、これ以上は読めず、操作もできません）');
   });
 
+  it('押してページが許していない先へ移ったら、移った先はオリジンだけを伝える（URL の道筋・クエリは伏せる）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 }, 'button#back');
+    page.debugger.handler = (method, params) => {
+      // 履歴を戻るページのボタン（history.back）など、移る前に止められなかったもの
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') page.url = 'https://accounts.example.com/o/oauth2/auth?state=secret&code=abc';
+      return {};
+    };
+    const result = textOf(await call('click', { selector: '#back' }));
+    expect(result).toBe(
+      'クリックしました: button#back\nページが移りました: https://accounts.example.com（Claude に許していない先なので、これ以上は読めず、操作もできません）',
+    );
+    expect(result).not.toContain('secret');
+  });
+
   it('x・y: その位置の要素を押す（枠はその位置のまわり 20px）', async () => {
     const { call, open, activities } = setup();
     const page = open('http://localhost:3000/');
@@ -603,6 +619,30 @@ describe('クリック', () => {
     page.page.point = () => ({ cross: true, src: 'widget.html', frame: null, description: 'iframe' });
     expect(await call('click', { x: 10, y: 10 })).toEqual(textResult('x=10 y=10 は、許していない先の iframe（widget.html）の中なので、押せません', true));
     expect(page.debugger.sent('Target.getTargets')).toHaveLength(1);
+    expect(inputs(page)).toEqual([]);
+  });
+});
+
+describe('許していない先の iframe の中（不具合の確かめ）', () => {
+  it('click の x・y: 許していない先の iframe の今の URL は、オリジンだけを伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.point = () => ({ cross: true, src: 'https://pay.example.com/checkout', frame: { x: 0, y: 0 }, description: 'iframe#pay' });
+    answerCdp(page, {}, { C1: 'https://pay.example.com/confirm?token=secret' });
+    addChildFrame(page, 'C1');
+    const refused = await call('click', { x: 10, y: 10 });
+    expect(refused).toEqual(textResult('x=10 y=10 は、許していない先の iframe（https://pay.example.com）の中なので、押せません', true));
+    expect(inputs(page)).toEqual([]);
+  });
+
+  it('type: フォーカスのある、許していない先の iframe の今の URL は、オリジンだけを伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.focus = () => 'https://pay.example.com/card';
+    answerCdp(page, {}, { C1: 'https://pay.example.com/card/3ds?session=secret' });
+    addChildFrame(page, 'C1');
+    const refused = await call('type', { text: '4242' });
+    expect(refused).toEqual(textResult('フォーカスが、許していない先の iframe（https://pay.example.com）の中にあるので、入力できません', true));
     expect(inputs(page)).toEqual([]);
   });
 });
@@ -886,6 +926,15 @@ describe('表示幅（set_viewport）', () => {
       { sessionId: 'S1', width: 768 },
       { sessionId: 'S1', width: 0 },
     ]);
+  });
+
+  it('Object の持ち物の名前（toString・constructor・__proto__）は、表示幅として受け付けない', async () => {
+    const { call, open, sentOn } = setup();
+    open('http://localhost:3000/');
+    for (const width of ['toString', 'constructor', '__proto__']) {
+      expect(await call('set_viewport', { width }), width).toEqual(textResult(`表示幅は full・mobile・tablet のどれかです: ${width}`, true));
+    }
+    expect(sentOn(IpcChannel.BrowserViewport)).toEqual([]);
   });
 
   it('知らない幅・幅が無いときは、画面に送らない', async () => {

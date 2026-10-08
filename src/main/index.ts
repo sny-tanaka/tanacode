@@ -281,7 +281,8 @@ const savedExports = new Set<string>();
 // 会話の中身（社内の情報や API キーが入ることがある）なので、ほかのユーザーからは読めないようにする
 async function saveExport(html: unknown, fileName: unknown): Promise<string | null> {
   if (typeof html !== 'string' || typeof fileName !== 'string') throw new Error('書き出す中身がありません');
-  const name = fileName.replace(/[/\\:\x00-\x1f]/g, ' ').replace(/^\.+/, '').trim().slice(0, 120) || '作業';
+  // 先頭の . は除いて、隠しファイルにしない。先頭の空白（制御文字を置き換えたものも）と . はまとめて除く（空白のあとの . も残さない）
+  const name = fileName.replace(/[/\\:\x00-\x1f]/g, ' ').replace(/^[\s.]+/, '').trim().slice(0, 120) || '作業';
   const options: Electron.SaveDialogOptions = {
     title: '作業を書き出す',
     defaultPath: join(app.getPath('downloads'), name.endsWith('.html') ? name : `${name}.html`),

@@ -680,6 +680,19 @@ describe('タブ', () => {
     expect(lines).toHaveLength(5);
   });
 
+  it('空のタブ（「＋」で開いたもの）を、許していない先とは伝えない（list_tabs・select_tab）', async () => {
+    const { call, open } = setup();
+    open('http://localhost:3000/', { title: 'トップ' });
+    open('about:blank', { title: '', activate: false });
+    const line = textOf(await call('list_tabs')).split('\n')[2];
+    expect(line).toContain('（空のタブ）');
+    expect(line).not.toContain('許していない先');
+    const selected = textOf(await call('select_tab', { index: 2 }));
+    expect(selected).toContain('空のタブ');
+    expect(selected).not.toContain('許していない先');
+    expect(selected).not.toContain('読めない URL');
+  });
+
   it('select_tab: 画面のタブを切り替え、そのタブのページを返す。このあとの操作はそのタブに', async () => {
     const { control, call, open, sentOn } = setup();
     open('http://localhost:3000/', { title: 'トップ' });
