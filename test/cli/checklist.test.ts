@@ -98,7 +98,7 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
     // 確認が出ていれば、答えないかぎりここで止まる
     await run.waitFor('一覧の結果', () => resultOf('toolu_overview'));
     for (const tool of CHECKLIST_TOOLS) expect([...api.tools], tool.name).toContain(checklistToolId(tool.name));
-    expect(api.systems.every((s) => s.includes('## tanacode-checklist') && s.includes('圧縮されても消えない'))).toBe(true);
+    expect(api.systems.every((s) => s.includes('## tanacode-checklist') && s.includes('survive compaction'))).toBe(true);
     expect(tools).toEqual(['card_add', 'card_check', 'checklist_overview']);
     expect(resultOf('toolu_overview')).toContain('- [x] #1 税込表示が整数であること');
     const list = store.findList(run.sessionId!, '完了前チェック')!;
