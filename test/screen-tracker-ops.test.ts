@@ -110,6 +110,70 @@ describe('choose（選択肢を選ぶ）', () => {
     expect(f.writes).toEqual([KEY_DOWN, KEY_DOWN, KEY_DOWN, '\r']);
   });
 
+  // Claude Code は、出たばかりのメニューに届いたキーを捨てる。裏の作業（バックグラウンドの Bash・サブエージェント）が終わった知らせなどで、
+  // 同じメニューを描き直すことがあり、描き直しは何回かに分けて書かれる（Ink）。途中の画面や、描き直しでカーソルが戻ったのを、選べたことにしない
+  it('選ぶキーを捨てて同じメニューを描き直しただけ（分けて書く）なら、選べたことにせず ignored を返す', async () => {
+    const f = fake(permission, () => undefined);
+    await menuShown();
+    const half = permission.slice(0, Math.floor(permission.length / 2));
+    const result = tracker!.choose('1', 'enter');
+    await until(() => f.writes.includes('\r'), 3000);
+    await sleep(100);
+    // 上半分だけ書いてから、全体を書き直す（途中の画面はメニューに見えない）
+    tracker!.feed(paint(half));
+    tracker!.feed(paint(permission));
+    expect(await result).toBe('ignored');
+  });
+
+  it('選ぶキーを捨てて描き直したら、カーソルが元に戻った。それも選べたことにしない', async () => {
+    const half = permission.slice(0, Math.floor(permission.length / 2));
+    // 2 番を選んだのに、描き直しでカーソルが 1 番に戻った
+    const g = fake(permission, (data, view) => (data === KEY_DOWN ? pointAt(view, 2) : undefined));
+    await menuShown();
+    const second = tracker!.choose('2', 'enter');
+    await until(() => g.writes.includes('\r'), 3000);
+    await sleep(100);
+    tracker!.feed(paint(half));
+    tracker!.feed(paint(pointAt(permission, 1)));
+    expect(await second).toBe('ignored');
+    expect(g.writes).toEqual([KEY_DOWN, '\r']);
+  });
+
+  it('選ぶキーのあと、描き直しの途中で時間切れになっても、落ち着いてから決める。閉じたなら chosen。出力が続いても待ち続けない', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const f = fake(permission, () => undefined);
+    await vi.waitFor(() => expect(tracker!.current.state.kind).toBe('menu'));
+    const result = tracker!.choose('1', 'enter');
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.writes).toEqual(['\r']);
+    });
+    // 時間切れ（3 秒）の直前に、メニューを閉じる描き直しの途中までが届く
+    await vi.advanceTimersByTimeAsync(2950);
+    tracker!.feed(paint(permission.slice(0, 3)));
+    await vi.advanceTimersByTimeAsync(10);
+    tracker!.feed(paint(promptScreen()));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await result).toBe('chosen');
+
+    // 時間切れのあとも出力が途切れずに続いても、待ち続けずに決める（同じメニューのままなら ignored）
+    const g = fake(permission, () => undefined);
+    await vi.waitFor(() => expect(tracker!.current.state.kind).toBe('menu'));
+    const second = tracker!.choose('1', 'enter');
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(g.writes).toEqual(['\r']);
+    });
+    let settled = false;
+    void second.then(() => (settled = true));
+    for (let i = 0; i < 200 && !settled; i++) {
+      tracker!.feed(paint(permission));
+      await vi.advanceTimersByTimeAsync(30);
+    }
+    expect(settled).toBe(true);
+    expect(await second).toBe('ignored');
+  });
+
   it('動かしている途中で別のメニューに変わったら、それ以上送らない', async () => {
     const question = fixture('question');
     const f = fake(permission, (data) => (data === KEY_DOWN ? question : undefined));

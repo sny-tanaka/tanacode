@@ -272,7 +272,8 @@ export class ScreenTracker {
   }
 
   // 選ぶキー（Enter・Space）を 1 回だけ送り、メニューの画面が変わるのを待つ。変わったら chosen。
-  // 少しも変わらないまま PRESS_CONFIRM_MS たったら、Claude Code が受け付けなかった（入力を捨てる間に届いた）として ignored を返す。
+  // 変わらないまま PRESS_CONFIRM_MS たったら、Claude Code が受け付けなかった（入力を捨てる間に届いた）として ignored を返す。
+  // 変わったかは、描き直しが落ち着いてから、カーソルの位置を除いて比べる（untilMenuChanges）。
   // 送り直さない。Claude Code が固まっていて、あとから最初のキーを受け付けたとき、送り直したキーが次の許可の確認に当たり、
   // 人が押していない許可を出してしまうおそれがあるため。
   // 送る直前に、カーソルが目的の選択肢に無かったら、何も送らずに moved を返す
@@ -294,23 +295,44 @@ export class ScreenTracker {
     await this.readUntil(() => !this.unread, 500);
   }
 
-  // 今の仮想端末に出ているメニュー（読み取りを待たずに、その場で読む）
+  // 今の仮想端末に出ているメニュー（読み取りを待たずに、その場で読む）。選ぶキーが効いたかを見るためのものなので、カーソルの位置は除く
+  // （受け付けずに描き直しただけでカーソルが戻ることがある。選ぶキーが効けば、メニューが閉じるか、別のメニュー・チェックに変わる）
   private menuOnScreen(): string {
-    return JSON.stringify(parseMenu(this.lines()));
+    const menu = parseMenu(this.lines());
+    return JSON.stringify(menu && { ...menu, options: menu.options.map((o) => ({ ...o, pointed: false })) });
   }
 
-  // 出力を書き込むたびに、メニューの画面が before から変わったかを見る。timeoutMs のうちに変わったら true
+  // メニューの画面が before から変わったかを見る。timeoutMs のうちに変わったら true。
+  // 見るのは、出力が SETTLE_MS 途切れて描き直しが落ち着いたときだけ。Ink は 1 回の描き直しを何回かに分けて書くので、途中の画面では
+  // メニューが半分しか無く、変わったように見える。選ぶキーを捨てた Claude Code が、裏の作業の知らせなどで同じメニューを描き直しただけのときに、
+  // 選べたことにしないため（そうなると、カードに知らせが出ず、人は選べたと思ったまま待ってしまう）
   private untilMenuChanges(before: string, timeoutMs: number): Promise<boolean> {
     return new Promise((resolve) => {
+      let settle: NodeJS.Timeout | null = null;
+      let expired = false;
       const finish = (changed: boolean) => {
         clearTimeout(timer);
+        if (settle) clearTimeout(settle);
         this.writtenWatchers.delete(watch);
         resolve(changed);
       };
-      const watch = () => {
-        if (this.menuOnScreen() !== before) finish(true);
+      const check = () => {
+        settle = null;
+        if (this.disposed) finish(false);
+        else if (this.menuOnScreen() !== before) finish(true);
+        else if (expired) finish(false);
       };
-      const timer = setTimeout(() => finish(!this.disposed && this.menuOnScreen() !== before), timeoutMs);
+      const watch = () => {
+        // 時間切れのあとは、確かめを先へ延ばさない（出力が途切れずに続いても、SETTLE_MS で決める）
+        if (expired) return;
+        if (settle) clearTimeout(settle);
+        settle = setTimeout(check, SETTLE_MS);
+      };
+      // 時間切れのときに描き直しの途中なら、SETTLE_MS だけ待ってから決める
+      const timer = setTimeout(() => {
+        expired = true;
+        if (!settle) check();
+      }, timeoutMs);
       this.writtenWatchers.add(watch);
     });
   }
