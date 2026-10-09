@@ -432,6 +432,8 @@ const modules: Record<string, Record<string, unknown>> = {
   },
   'session-store': { SessionStore: fakeClass('SessionStore', {}) },
   'model-catalog': { readModelCatalog: () => state.fn.readModelCatalog() },
+  // ~/.claude.json を読む代わりに、呼ばれたことと引数を返す
+  'claude-account': { readClaudeAccount: (...args: unknown[]) => ({ call: 'readClaudeAccount', args }) },
   statusline: { StatusLineWatcher: fakeClass('StatusLineWatcher', { start: async () => undefined, close: () => undefined }) },
   'shell-terminals': {
     ShellTerminals: fakeClass('ShellTerminals', {
@@ -503,6 +505,7 @@ vi.mock('../../src/main/session-manager', async (importOriginal) => ({
 vi.mock('../../src/main/settings-files', () => modules['settings-files']);
 vi.mock('../../src/main/session-store', () => modules['session-store']);
 vi.mock('../../src/main/model-catalog', () => modules['model-catalog']);
+vi.mock('../../src/main/claude-account', () => modules['claude-account']);
 vi.mock('../../src/main/statusline', () => modules.statusline);
 vi.mock('../../src/main/shell-terminals', () => modules['shell-terminals']);
 vi.mock('../../src/main/system-monitor', () => modules['system-monitor']);

@@ -2,15 +2,17 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextItem } from '@shared/context';
+import type { ClaudeAccount } from '@shared/account';
 import type { UsageLimits } from '@shared/usage';
 import { ContextMeter } from '../../src/renderer/src/knowledge/ContextMeter';
 import { ContextPanel, SessionContextPanel } from '../../src/renderer/src/knowledge/ContextPanel';
-import { UsagePanel } from '../../src/renderer/src/usage/UsagePanel';
+import { AccountPanel } from '../../src/renderer/src/account/AccountPanel';
+import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from '../../src/renderer/src/chat/settingsFiles';
 import './dom';
 import { mockApi } from './mock-api';
 
 // サイドパネルの「コンテキスト」（並べ方・圧縮で置き換わったものの開け閉め・残す／捨てるの印・印から組み立てた指示での圧縮）と、
-// セッション一覧の下の利用枠（押すと取り直す）。押したら表示が変わること・圧縮に渡す指示の文が正しいことを確かめる
+// セッション一覧の下のアカウントと利用枠（押すとメニュー）。押したら表示が変わること・圧縮に渡す指示の文が正しいことを確かめる
 
 let api: ReturnType<typeof mockApi>;
 beforeEach(() => {
@@ -214,7 +216,7 @@ describe('セッションのコンテキストを取りに行く入れ物（Sess
   });
 });
 
-describe('利用枠（UsagePanel）', () => {
+describe('アカウントと利用枠（AccountPanel）', () => {
   const T = Date.parse('2026-10-07T10:00:00+09:00');
   const usage = (over: Partial<UsageLimits> = {}): UsageLimits => ({
     limits: [
@@ -225,32 +227,107 @@ describe('利用枠（UsagePanel）', () => {
     source: 'statusline',
     ...over,
   });
+  const TEAM: ClaudeAccount = { email: 'taro@corp.example', organization: 'Acme', plan: 'Claude Team' };
+  const summary = () => screen.getByRole('button', { name: /5時間/ });
+  const gauges = () => [...document.querySelectorAll('.usage-gauge')].map((g) => `${g.className}: ${g.textContent}`);
+  // 設定ファイルの管理のダイアログが開いているか（App が出すダイアログの代わり）
+  function DialogProbe() {
+    return useSettingsFilesDialogOpen() ? <span>ダイアログ</span> : null;
+  }
 
-  it('押すと取り直しを頼み、リセットまでの残り時間と、古い値の印を今の時刻で出し直す', async () => {
+  it('プラン・組織・利用枠を出し、メールアドレスはマウスを乗せたときとメニューの中にだけ出す', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T);
-    api = mockApi({ 'usage.get': () => Promise.resolve(usage()) });
+    api = mockApi({ 'usage.get': () => Promise.resolve(usage()), 'account.get': () => Promise.resolve(TEAM) });
     api.install();
-    render(<UsagePanel />);
-    await screen.findByText('あと 1時間30分');
+    render(<AccountPanel />);
+    await screen.findByText('Claude Team');
+    expect(screen.getByText('Acme')).toBeTruthy();
+    expect(screen.getByText('あと 1時間30分')).toBeTruthy();
     expect(screen.getByText('あと 3日0時間')).toBeTruthy();
-    expect(document.querySelector('.usage-status')).toBeNull();
+    expect(screen.queryByText('taro@corp.example')).toBeNull();
+    expect(summary().title).toMatch(/^taro@corp\.example\nプランの利用枠。/);
+    expect(document.querySelector('.account-stale')).toBeNull();
+
+    // 時間がたってから押すと、残り時間と古い値の印を今の時刻で出し直し、メニューを開いてアカウントを読み直す
     vi.setSystemTime(T + 60 * 60_000);
-    fireEvent.click(screen.getByRole('button'));
-    expect(api.argsOf('usage.refresh')).toEqual([[]]);
+    fireEvent.click(summary());
     expect(screen.getByText('あと 30分')).toBeTruthy();
-    expect(document.querySelector('.usage-status')?.textContent).toMatch(/時点の値$/);
-    // 取り直した値が届いたら出し直す
+    expect(document.querySelector('.account-stale')?.textContent).toMatch(/時点$/);
+    const menu = screen.getByRole('menu', { name: 'アカウント' });
+    expect(within(menu).getByText('taro@corp.example')).toBeTruthy();
+    expect(within(menu).getByText('Claude Team · Acme')).toBeTruthy();
+    expect(api.argsOf('account.get').length).toBe(2);
+
+    // 読み直すと、取り直しを頼んでメニューを閉じる。届いた値で出し直す
+    fireEvent.click(within(menu).getByRole('menuitem', { name: '利用枠とアカウントを読み直す' }));
+    expect(api.argsOf('usage.refresh')).toEqual([[]]);
+    expect(api.argsOf('account.get').length).toBe(3);
+    expect(screen.queryByRole('menu')).toBeNull();
     act(() => api.emit('usage.onChanged', usage({ limits: [{ label: '5時間', percent: 10, resetsAt: T + 61 * 60_000 }], updatedAt: T + 60 * 60_000 })));
     expect(screen.getByText('10%')).toBeTruthy();
     expect(screen.getByText('あと 1分')).toBeTruthy();
-    expect(document.querySelector('.usage-status')).toBeNull();
+    expect(document.querySelector('.account-stale')).toBeNull();
+    // 届いた値に無い枠（週）も消さず、灰色の 0% で残す
+    expect(gauges()[1]).toBe('usage-gauge unknown: 週0%未取得');
+    // 応答（利用枠が届く）をきっかけにアカウントを読み直すのは、前に読んでから 1 分たったときだけ
+    expect(api.argsOf('account.get').length).toBe(3);
+    vi.setSystemTime(T + 61 * 60_000);
+    act(() => api.emit('usage.onChanged', usage({ updatedAt: T + 61 * 60_000 })));
+    act(() => api.emit('usage.onChanged', usage({ updatedAt: T + 61 * 60_000 + 1 })));
+    expect(api.argsOf('account.get').length).toBe(4);
+    await screen.findByText('Claude Team');
   });
 
-  it('値がまだ無くても押せて、取り直しを頼む', () => {
-    render(<UsagePanel />);
-    expect(screen.getByText('利用枠はセッションが応答すると表示されます')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button'));
-    expect(api.argsOf('usage.refresh')).toEqual([[]]);
+  it('値もログインも無くても、2 つのゲージを灰色の 0% で出しておき、押すとメニューに理由を出す', async () => {
+    render(<AccountPanel />);
+    await screen.findByText('ログインしていません');
+    expect(gauges()).toEqual(['usage-gauge unknown: 5時間0%未取得', 'usage-gauge unknown: 週0%未取得']);
+    expect(summary().title).toBe('ログインしていません\nプランの利用枠は、セッションが応答すると出ます');
+    fireEvent.click(summary());
+    expect(within(screen.getByRole('menu')).getByText('Claude Code で /login すると、ここにアカウントが出ます')).toBeTruthy();
+    // もう一度押すと閉じる
+    fireEvent.click(summary());
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('リセット時刻を過ぎた枠は 0% にし、メールアドレスを含む組織の名前（個人のプラン）は欄に出さない', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T + 2 * 60 * 60_000);
+    const personal: ClaudeAccount = { email: 'taro@example.com', organization: "taro@example.com's Organization", plan: 'Claude Max' };
+    api = mockApi({ 'usage.get': () => Promise.resolve(usage({ updatedAt: T + 2 * 60 * 60_000 })), 'account.get': () => Promise.resolve(personal) });
+    api.install();
+    render(<AccountPanel />);
+    await screen.findByText('リセット済み');
+    expect(gauges()[0]).toBe('usage-gauge low: 5時間0%リセット済み');
+    expect(gauges()[1]).toBe('usage-gauge high: 週95%あと 2日22時間');
+    expect(document.querySelector('.account-org')).toBeNull();
+    expect(screen.queryByText(/example\.com/)).toBeNull();
+    fireEvent.click(summary());
+    expect(within(screen.getByRole('menu')).getByText('Claude Max')).toBeTruthy();
+  });
+
+  it('メニューから設定ファイルの管理を開く。Esc や欄の外を押すと閉じる', async () => {
+    api = mockApi({ 'account.get': () => Promise.resolve(TEAM) });
+    api.install();
+    render(
+      <>
+        <AccountPanel />
+        <DialogProbe />
+        <p>外</p>
+      </>,
+    );
+    await screen.findByText('Claude Team');
+    fireEvent.click(summary());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(summary());
+    fireEvent.mouseDown(screen.getByText('外'));
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(summary());
+    act(() => fireEvent.click(screen.getByRole('menuitem', { name: '設定ファイルの管理…' })));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.getByText('ダイアログ')).toBeTruthy();
+    act(() => closeSettingsFilesDialog());
   });
 });

@@ -32,6 +32,7 @@ import type { SubagentRun } from '@shared/subagent';
 import type { SystemStats } from '@shared/system';
 import type { BashTask, TaskRef } from '@shared/task';
 import type { UsageLimits } from '@shared/usage';
+import type { ClaudeAccount } from '@shared/account';
 import type { WorkflowRun } from '@shared/workflow';
 
 // デモのサイトと Storybook の紹介画像用の、アプリの API（window.tanacode）の作り物。
@@ -147,6 +148,7 @@ export class DemoBackend {
     readonly project: DemoProject,
     private usage: UsageLimits,
     private readonly catalog: ModelCatalog,
+    private readonly account: ClaudeAccount,
   ) {}
 
   // ---- 台本から使う ----
@@ -392,6 +394,7 @@ export class DemoBackend {
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },
+      account: { get: () => ok(this.account) },
       // デモでは予約しない（入力欄のボタンから選んでも、何も起きない）
       scheduled: {
         list: () => ok([]),

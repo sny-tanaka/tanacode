@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { UsageLimits } from '@shared/usage';
 
-// Claude Code が持っているもの（~/.claude.json の利用枠の控え・~/.claude/cache のモデルの一覧・claude --version）の読み取り。
+// Claude Code が持っているもの（~/.claude.json の利用枠の控えとログインしたアカウント・~/.claude/cache のモデルの一覧・claude --version）の読み取り。
 // どれも読み込んだときにホームを決めるので、使い捨てのホームに差し替えてから読み込む。claude は、版を答えるだけの偽物にする
 
 let home: string;
@@ -15,6 +15,7 @@ const oldPath = process.env.PATH;
 let catalog: typeof import('../src/main/model-catalog');
 let version: typeof import('../src/main/claude-version');
 let usage: typeof import('../src/main/usage-monitor');
+let account: typeof import('../src/main/claude-account');
 
 // 偽の claude。CLAUDE_FAKE_VERSION の版を答える（無ければ失敗する）
 function fakeClaude(): void {
@@ -33,6 +34,7 @@ beforeAll(async () => {
   catalog = await import('../src/main/model-catalog');
   version = await import('../src/main/claude-version');
   usage = await import('../src/main/usage-monitor');
+  account = await import('../src/main/claude-account');
 });
 afterAll(() => {
   process.env.HOME = oldHome;
@@ -159,5 +161,31 @@ describe('利用枠（UsageMonitor）', () => {
     writeFileSync(join(home, '.claude.json'), JSON.stringify({ cachedUsageUtilization: { fetchedAtMs: 1, utilization: { limits: [{ kind: 'session', percent: 1 }] } } }));
     await monitor.refresh();
     expect(monitor.get()?.updatedAt).toBe(3000);
+  });
+});
+
+describe('ログインしたアカウント（readClaudeAccount）', () => {
+  const write = (json: unknown) => writeFileSync(join(home, '.claude.json'), typeof json === 'string' ? json : JSON.stringify(json));
+
+  it('~/.claude.json の oauthAccount から、メールアドレス・組織・プランを読む', async () => {
+    write({
+      oauthAccount: { accountUuid: 'u', emailAddress: 'taro@corp.example', organizationName: 'Acme', planDisplayName: 'Claude Team', billingType: 'x' },
+    });
+    expect(await account.readClaudeAccount()).toEqual({ email: 'taro@corp.example', organization: 'Acme', plan: 'Claude Team' });
+    // 無い項目・空の項目・文字でない項目は null にする
+    write({ oauthAccount: { emailAddress: ' taro@example.com ', organizationName: '', planDisplayName: 3 } });
+    expect(await account.readClaudeAccount()).toEqual({ email: 'taro@example.com', organization: null, plan: null });
+  });
+
+  it('ログインしていない・形が違う・ファイルが無いときは null', async () => {
+    write({ numStartups: 1 });
+    expect(await account.readClaudeAccount()).toBeNull();
+    write({ oauthAccount: { organizationName: 'Acme' } });
+    expect(await account.readClaudeAccount()).toBeNull();
+    write({ oauthAccount: 'x' });
+    expect(await account.readClaudeAccount()).toBeNull();
+    write('{');
+    expect(await account.readClaudeAccount()).toBeNull();
+    expect(await account.readClaudeAccount(join(home, 'missing.json'))).toBeNull();
   });
 });

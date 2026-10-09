@@ -128,9 +128,9 @@ export async function runKnowledge(story: Story): Promise<void> {
   backend.push(id, { type: 'turn-end' });
   const usage = demoUsage();
   backend.setUsage({ ...usage, limits: usage.limits.map((l, i) => ({ ...l, percent: l.percent + (i === 0 ? 4 : 1) })) });
-  d.caption('応答が届いて完了。左下の利用枠も、使った分だけ進みます', '.usage-panel');
+  d.caption('応答が届いて完了。左下の利用枠も、使った分だけ進みます', '.account-panel');
   await sleep(1000);
-  await d.moveTo('.usage-panel', { ms: 900 });
+  await d.moveTo('.account-panel', { ms: 900 });
   await sleep(2000);
 
   // 9. 迷ったところは、作業を止めずに「確認事項」に残っている。人は手が空いたときに見る（章 5）

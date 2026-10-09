@@ -69,6 +69,9 @@ const api: TanacodeApi = {
     refresh: () => invoke(IpcChannel.UsageRefresh),
     onChanged: (listener) => subscribe(IpcChannel.UsageChanged, listener),
   },
+  account: {
+    get: () => invoke(IpcChannel.AccountGet),
+  },
   scheduled: {
     list: () => invoke(IpcChannel.ScheduledList),
     add: (sessionId, text, attachments, at) => invoke(IpcChannel.ScheduledAdd, sessionId, text, attachments, at),

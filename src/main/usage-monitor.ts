@@ -1,11 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { UsageLimit, UsageLimits } from '@shared/usage';
-
-// Claude Code が /usage を開いたときに書く控え（~/.claude.json の cachedUsageUtilization）
-const CLAUDE_JSON = join(homedir(), '.claude.json');
+import { CLAUDE_JSON } from './claude-account';
 
 // プランの利用枠（5 時間枠・週の枠）。アプリのセッションが応答するたびに statusLine から受け取る。
 // 裏で Claude Code を起動したりはしない。アプリを使っていない間の値は、Claude Code 自身の控えの方が新しければそちらを使う
@@ -55,6 +51,7 @@ export class UsageMonitor {
 
 type CachedLimit = { kind?: string; percent?: number; resets_at?: string | null };
 
+// Claude Code が /usage を開いたときに書く控え（~/.claude.json の cachedUsageUtilization）
 async function readClaudeCache(): Promise<UsageLimits | null> {
   try {
     const json = JSON.parse(await readFile(CLAUDE_JSON, 'utf8')) as {

@@ -53,6 +53,7 @@ import { SystemMonitor } from './system-monitor';
 import { ClaudeVersionMonitor } from './claude-version';
 import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, translateTexts, Translator } from './translate';
 import { UsageMonitor } from './usage-monitor';
+import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
 import { WorkspaceWatchers } from './workspace-watcher';
@@ -492,6 +493,7 @@ function registerIpc(): void {
   handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
   handle(IpcChannel.UsageRefresh, () => usage.refresh());
+  handle(IpcChannel.AccountGet, () => readClaudeAccount());
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, () =>
