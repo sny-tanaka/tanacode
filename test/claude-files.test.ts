@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { UsageLimits } from '@shared/usage';
 
@@ -16,6 +16,8 @@ let catalog: typeof import('../src/main/model-catalog');
 let version: typeof import('../src/main/claude-version');
 let usage: typeof import('../src/main/usage-monitor');
 let account: typeof import('../src/main/claude-account');
+let config: typeof import('../src/main/claude-config');
+let session: typeof import('../src/main/claude-session');
 
 // 偽の claude。CLAUDE_FAKE_VERSION の版を答える（無ければ失敗する）
 function fakeClaude(): void {
@@ -35,6 +37,8 @@ beforeAll(async () => {
   version = await import('../src/main/claude-version');
   usage = await import('../src/main/usage-monitor');
   account = await import('../src/main/claude-account');
+  config = await import('../src/main/claude-config');
+  session = await import('../src/main/claude-session');
 });
 afterAll(() => {
   process.env.HOME = oldHome;
@@ -187,5 +191,30 @@ describe('ログインしたアカウント（readClaudeAccount）', () => {
     write('{');
     expect(await account.readClaudeAccount()).toBeNull();
     expect(await account.readClaudeAccount(join(home, 'missing.json'))).toBeNull();
+  });
+});
+
+describe('Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）', () => {
+  afterEach(() => {
+    process.env.CLAUDE_CONFIG_DIR = '';
+  });
+
+  it('無ければ ~/.claude と ~/.claude.json。会話ログはフォルダの英数字以外を - にした名前の下', () => {
+    expect(config.claudeConfigDir()).toBe(join(home, '.claude'));
+    expect(config.claudeJsonPath()).toBe(join(home, '.claude.json'));
+    expect(session.transcriptPath('/Users/me/my app', 'abc')).toBe(join(home, '.claude', 'projects', '-Users-me-my-app', 'abc.jsonl'));
+  });
+
+  it('あれば、設定・会話ログ・.claude.json をすべてその中から読む（Claude Code と同じ）', async () => {
+    const dir = join(home, 'work-profile');
+    mkdirSync(dir, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    expect(config.claudeConfigDir()).toBe(dir);
+    expect(config.claudeJsonPath()).toBe(join(dir, '.claude.json'));
+    expect(session.transcriptPath('/w', 'abc')).toBe(join(dir, 'projects', '-w', 'abc.jsonl'));
+    // ホームの .claude.json ではなく、そのフォルダの中のものを読む
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'home@example.com' } }));
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'work@corp.example' } }));
+    expect((await account.readClaudeAccount())?.email).toBe('work@corp.example');
   });
 });

@@ -680,6 +680,7 @@ Claude は、そのセッションのアプリ内ブラウザを MCP のツー�
 
 - tanacode は、Claude Code が書く会話ログ（`~/.claude/projects/`）や設定を読んで、画面を組み立てます。
 - ログインしているアカウント（メールアドレス・組織・プラン）は、Claude Code が `~/.claude.json` に書いたものを読みます。認証情報（Keychain）は読みません。
+- tanacode を環境変数 `CLAUDE_CONFIG_DIR` 付きで起動したときは、`~/.claude` の代わりにそのフォルダを、`~/.claude.json` の代わりにその中の `.claude.json` を読みます（tanacode が起動する Claude Code と同じ場所）。
 - アプリのデータは、すべて `~/Library/Application Support/tanacode/` に置きます。セッションの一覧・チェックリスト（`checklists/<セッション ID>.json`）・最後に分かった利用枠・予約したメッセージなど。
 - 次のものは変更しません。
   - あなたのリポジトリ: エディタでの保存や、ソース管理パネルでの操作、worktree のセッションの作成・削除をしたときだけ書き込みます。

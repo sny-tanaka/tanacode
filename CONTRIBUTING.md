@@ -792,6 +792,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 ### 読むもの
 
+`~/.claude` と `~/.claude.json` は、アプリを `CLAUDE_CONFIG_DIR` 付きで起動したときは、そのフォルダと、その中の `.claude.json` を読みます。アプリが起動する Claude Code も同じ環境変数を受け継ぐので、Claude Code と同じ決め方（`src/main/claude-config.ts`）にそろえています。
+
 | 場所 | 使い道 |
 | --- | --- |
 | `~/.claude/projects/**/<id>.jsonl` | 会話・ツール・hooks・圧縮・読み書きしたファイル・作業したブランチ（作業の書き出し） |
@@ -880,6 +882,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `context-tracker.ts`: コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・やりとり）と、その大きさの見積もり
   - `statusline.ts` / `usage-monitor.ts` / `claude-account.ts` / `model-catalog.ts`: statusLine・利用枠・ログインしているアカウント・モデル一覧
+  - `claude-config.ts`: Claude Code の設定のフォルダ（`CLAUDE_CONFIG_DIR`。無ければ `~/.claude`）と `.claude.json`・会話ログの場所
   - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視

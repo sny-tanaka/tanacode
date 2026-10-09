@@ -8,5 +8,6 @@ export default defineConfig({
   // アイコン（tsx）を描いて確かめるテストがある。tsconfig と同じ、import 不要の JSX にする
   esbuild: { jsx: 'automatic' },
   // 画面のテスト（test/renderer）は、ファイルの先頭の @vitest-environment jsdom で DOM の代わりを使う
-  test: { include: ['test/*.test.ts', 'test/renderer/*.test.{ts,tsx}'], coverage: coverage('unit') },
+  // CLAUDE_CONFIG_DIR は空にする（Claude Code の中など、付いたシェルで流しても、使い捨てのホームの ~/.claude を見るように）
+  test: { include: ['test/*.test.ts', 'test/renderer/*.test.{ts,tsx}'], env: { CLAUDE_CONFIG_DIR: '' }, coverage: coverage('unit') },
 });

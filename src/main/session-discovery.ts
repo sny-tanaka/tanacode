@@ -1,16 +1,16 @@
 import { open, readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { isTranscriptEntry, transcriptTitle, type TranscriptEntry } from '@shared/chat';
 import type { DiscoveredSession } from '@shared/ipc';
+import { claudeConfigDir } from './claude-config';
 
 const MAX_SESSIONS = 200;
 // 先頭（cwd と最初の発言）と末尾（最新のタイトル）だけ読む
 const CHUNK_BYTES = 64 * 1024;
 
-// アプリの外（ターミナルの claude など）で作られた会話を ~/.claude/projects から探す。新しい順
+// アプリの外（ターミナルの claude など）で作られた会話を、Claude Code の設定のフォルダ（~/.claude）の projects から探す。新しい順
 export async function discoverSessions(known: ReadonlySet<string>): Promise<DiscoveredSession[]> {
-  const root = join(homedir(), '.claude', 'projects');
+  const root = join(claudeConfigDir(), 'projects');
   const files: { file: string; mtime: number }[] = [];
   for (const dir of await readdir(root).catch(() => [] as string[])) {
     for (const name of await readdir(join(root, dir)).catch(() => [] as string[])) {
