@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { visibleOrganization, type ClaudeAccount } from '@shared/account';
 import type { UsageLimit, UsageLimits } from '@shared/usage';
 import { openSettingsFilesDialog } from '../chat/settingsFiles';
+import { CheckIcon } from '../icons';
+import { runInTerminal } from '../terminal/runInTerminal';
+import { openProfilesDialog, useProfiles } from './profiles';
 
 // これより古い値は、いつの値かを添えて出す
 const STALE_MS = 30 * 60_000;
@@ -12,8 +15,10 @@ const ACCOUNT_REREAD_MS = 60_000;
 
 // セッション一覧の最下部に出す、Claude Code にログインしているアカウントと、そのプランの利用枠（5 時間枠・週の枠）。
 // 利用枠はアプリのセッションが応答するたびに更新される。アカウント（~/.claude.json）は、応答があったとき（1 分に 1 回まで）・アプリに戻ったとき・メニューを開いたときに読み直す。
-// メールアドレスは画面共有などに写らないよう、マウスを乗せたときとメニューの中にだけ出す。押すとメニューを開く
+// メールアドレスは画面共有などに写らないよう、マウスを乗せたときとメニューの中にだけ出す。押すとメニューを開く。
+// プロファイル（アカウントごとの環境）が 2 つ以上あれば、名前の前の色の点・欄の背景の色・ほかのアカウントの通知の点・メニューの切り替えも出す
 export function AccountPanel() {
+  const profiles = useProfiles();
   const [usage, setUsage] = useState<UsageLimits | null>(null);
   // undefined は、まだ読んでいない（そのあいだは名前の行を空けておく）。null は、ログインしていない
   const [account, setAccount] = useState<ClaudeAccount | null | undefined>(undefined);
@@ -36,8 +41,11 @@ export function AccountPanel() {
       if (Date.now() - readAt.current >= ACCOUNT_REREAD_MS) readAccount();
     });
     window.addEventListener('focus', readAccount);
+    // ターミナルで claude auth login を終えたら読み直す
+    const offShell = window.tanacode.shell.onExit(() => readAccount());
     return () => {
       off();
+      offShell();
       window.removeEventListener('focus', readAccount);
     };
   }, []);
@@ -88,11 +96,32 @@ export function AccountPanel() {
     setOpen(false);
     openSettingsFilesDialog();
   };
+  const manageProfiles = (mode: 'manage' | 'add') => {
+    setOpen(false);
+    openProfilesDialog(mode);
+  };
+  const switchTo = (id: string) => {
+    setOpen(false);
+    void window.tanacode.profiles.switch(id);
+  };
+  // このプロファイルの Claude Code の設定のフォルダで、今見ているもののターミナルから claude auth login を動かす
+  const login = () => {
+    setOpen(false);
+    if (!runInTerminal(null, 'claude auth login')) {
+      window.alert('ターミナルを開けるところがありません。セッションを開くか、新規セッションの画面でフォルダを選んでから、もう一度押してください。');
+    }
+  };
+
+  const list = profiles?.profiles ?? [];
+  const multiple = list.length > 1;
+  const current = list.find((p) => p.id === profiles?.current) ?? null;
+  const attention = multiple && !!profiles?.othersAttention;
 
   const at = usage ? new Date(usage.updatedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const stale = usage !== null && now - usage.updatedAt > STALE_MS;
   const organization = account ? visibleOrganization(account) : null;
   const tip = [
+    multiple && current ? `プロファイル: ${current.name}` : null,
     account ? account.email : account === null ? 'ログインしていません' : null,
     usage
       ? `プランの利用枠。${at} 時点（${usage.source === 'statusline' ? 'セッションの応答から' : 'Claude Code の /usage の控えから'}）`
@@ -100,16 +129,30 @@ export function AccountPanel() {
   ]
     .filter(Boolean)
     .join('\n');
+  const plan = account === undefined ? '' : account ? (account.plan ?? 'Claude') : 'ログインしていません';
 
   return (
-    <div className="account-panel" ref={ref}>
+    <div
+      className={`account-panel${multiple && current ? ' tinted' : ''}`}
+      ref={ref}
+      style={multiple && current ? ({ '--profile-color': current.color } as CSSProperties) : undefined}
+    >
       <button className="account-summary" aria-haspopup="menu" aria-expanded={open} title={open ? undefined : tip} onClick={toggle}>
         <div className="account-row">
-          <span className={`account-name${account === null ? ' none' : ''}`}>
-            {account === undefined ? '' : account ? (account.plan ?? 'Claude') : 'ログインしていません'}
-          </span>
-          {organization && <span className="account-org">{organization}</span>}
+          {multiple && current ? (
+            <>
+              <span className="profile-dot" style={{ background: current.color }} />
+              <span className="account-name">{current.name}</span>
+              <span className={`account-org${account === null ? ' none' : ''}`}>{plan}</span>
+            </>
+          ) : (
+            <>
+              <span className={`account-name${account === null ? ' none' : ''}`}>{plan}</span>
+              {organization && <span className="account-org">{organization}</span>}
+            </>
+          )}
           {stale && <span className="account-stale">{at} 時点</span>}
+          {attention && <span className="account-attention" role="img" aria-label="別のアカウントに通知あり" title="別のアカウントに通知あり" />}
         </div>
         {LIMITS.map((label) => (
           <Gauge key={label} label={label} limit={usage?.limits.find((l) => l.label === label) ?? null} now={now} />
@@ -128,17 +171,51 @@ export function AccountPanel() {
             ) : (
               <>
                 <span className="account-menu-email">ログインしていません</span>
-                <span className="account-menu-detail">Claude Code で /login すると、ここにアカウントが出ます</span>
+                <span className="account-menu-detail">「ログイン…」で、このプロファイルの Claude Code にログインできます</span>
               </>
             )}
           </div>
+          {multiple && (
+            <>
+              <div className="account-menu-sep" />
+              {list.map((p) => (
+                <button
+                  key={p.id}
+                  role="menuitemradio"
+                  aria-checked={p.id === profiles?.current}
+                  className="account-menu-item account-menu-profile"
+                  onClick={() => (p.id === profiles?.current ? setOpen(false) : switchTo(p.id))}
+                >
+                  <span className="profile-dot" style={{ background: p.color }} />
+                  <span className="account-menu-profile-name">{p.name}</span>
+                  {p.id === profiles?.current && (
+                    <span className="account-menu-check">
+                      <CheckIcon size={12} />
+                    </span>
+                  )}
+                </button>
+              ))}
+            </>
+          )}
           <div className="account-menu-sep" />
           <button role="menuitem" className="account-menu-item" onClick={reload}>
             利用枠とアカウントを読み直す
           </button>
+          <button role="menuitem" className="account-menu-item" onClick={login}>
+            {account ? 'ログインし直す…' : 'ログイン…'}
+          </button>
           <button role="menuitem" className="account-menu-item" onClick={manageSettingsFiles}>
             設定ファイルの管理…
           </button>
+          <div className="account-menu-sep" />
+          <button role="menuitem" className="account-menu-item" onClick={() => manageProfiles('add')}>
+            プロファイルを追加…
+          </button>
+          {multiple && (
+            <button role="menuitem" className="account-menu-item" onClick={() => manageProfiles('manage')}>
+              プロファイルの管理…
+            </button>
+          )}
         </div>
       )}
     </div>

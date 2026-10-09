@@ -285,7 +285,7 @@ describe('アカウントと利用枠（AccountPanel）', () => {
     expect(gauges()).toEqual(['usage-gauge unknown: 5時間0%未取得', 'usage-gauge unknown: 週0%未取得']);
     expect(summary().title).toBe('ログインしていません\nプランの利用枠は、セッションが応答すると出ます');
     fireEvent.click(summary());
-    expect(within(screen.getByRole('menu')).getByText('Claude Code で /login すると、ここにアカウントが出ます')).toBeTruthy();
+    expect(within(screen.getByRole('menu')).getByText('「ログイン…」で、このプロファイルの Claude Code にログインできます')).toBeTruthy();
     // もう一度押すと閉じる
     fireEvent.click(summary());
     expect(screen.queryByRole('menu')).toBeNull();
