@@ -27,7 +27,7 @@ tanacode をソースから動かす方法と、仕組み・ソースの構成�
 
 ## 始め方
 
-必要なもの: macOS 13 以降・Node.js 22・`claude` CLI（初回のセットアップを済ませたもの）・Xcode Command Line Tools（翻訳の補助プログラムを作る `swiftc`。無くてもビルドは進み、翻訳のボタンが出ないだけ）
+必要なもの: macOS 13 以降・Node.js 24・`claude` CLI（初回のセットアップを済ませたもの）・Xcode Command Line Tools（翻訳の補助プログラムを作る `swiftc`。無くてもビルドは進み、翻訳のボタンが出ないだけ）
 
 `npm run dev`・`npm run build`・`npm run dist` は、始める前に翻訳の補助プログラム（`build/native/tanacode-translate`）を作ります（`predev`・`prebuild`・`predist`。下の「翻訳」）。
 
@@ -1001,6 +1001,16 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/renderer/src/demo/Showcase.stories.tsx`: Storybook の「紹介画像」。`story/showcase.ts` がツアーを目印まで早送りで流し、そこで止めます。
 - 撮り方: 先に `npm run storybook` を起動し、`npm run screenshot` で `design/screenshot.png` を上書きします。`scripts/capture-screenshot.mjs` が、Storybook の「紹介画像」を Electron の画面の外で 1920×1080 の 1.5 倍（2880×1620）で描いて撮ります。
 - 画面を変えたときや、目印の前の台本を直したときに撮り直します。文字の形は撮る Mac のフォントになるので、Mac で撮ります。
+
+## 依存の更新
+
+- Node のバージョンは、アプリが動く Node（Electron の中の Node）に合わせます。今は Electron 44 の中の Node 24 なので、開発・CI（`actions/setup-node` の `node-version`）・`@types/node` を、どれも 24 にしています。Electron を上げて中の Node が変わったら、この 3 つと README・この文書の「必要なもの」をまとめて上げます。
+- 依存の更新の PR は、Dependabot が週 1 回（月曜の朝）作ります。設定は `.github/dependabot.yml`。
+  - 出てから 7 日たったバージョンだけにします（公開の直後に乗っ取られたパッケージを掴まないため）。
+  - 開発の道具のマイナー・パッチは、1 本の PR にまとめます。アプリに入るもの（electron・画面にまとめる依存・`dependencies`）は、1 つずつの PR にします。中身を見てからマージしてください。
+  - ほかの依存の対応の範囲に縛られるものは、`ignore` で止めています（`@types/node` は Node に合わせて 24 系まで。vite と `@vitejs/plugin-react` のメジャーは、electron-vite が対応するまで）。縛りが外れたら、`ignore` から外します。
+- 脆弱性の警告と、その修正の PR は、これとは別に Dependabot から届きます。対応の手順は `/security`。Chromium の脆弱性は Dependabot では警告されないので、Electron のリリース（https://releases.electronjs.org/）で、修正の取り込み（Backported fixes）を確かめます。
+- npm 11 は、インストールのときに動くスクリプトを、`package.json` の `allowScripts` に書いたものだけに絞ろうとしています（今は警告だけ）。node-pty（ネイティブのモジュール）と esbuild は許し、Windows の配布にだけ使う electron-winstaller は止めています。スクリプトを持つ依存が増えて警告が出たら、中身を確かめてから `npm approve-scripts <パッケージ> --no-allow-scripts-pin` で足します（バージョンを固定しないのは、Dependabot の更新のたびに書き直さずに済むようにするため）。
 
 ## ライセンスの表示
 

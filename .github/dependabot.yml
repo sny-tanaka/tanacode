@@ -1,0 +1,66 @@
+# 依存の更新の PR を、週 1 回まとめて作る（Dependabot のバージョン更新）。脆弱性の警告と、その修正の PR は、これとは別に届く（.claude/skills/security）。
+# - 出てから 7 日たったバージョンだけにする（公開の直後に乗っ取られたパッケージを掴まないため）
+# - 開発の道具のマイナー・パッチは 1 本の PR にまとめる。アプリに入るもの（electron・画面にまとめる依存・dependencies）は、1 つずつの PR にして中身を見る
+# - Electron の中の Node や、ほかの依存の対応の範囲に縛られるものは、ignore で止める（理由はそれぞれの行に）
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+    ignore:
+      # 型は、アプリが動く Node（Electron 44 の中の Node 24）に合わせる。Electron を上げて中の Node が変わったら、ここも上げる
+      - dependency-name: '@types/node'
+        versions: ['>=25']
+      # electron-vite 5 は vite 7 まで。vite 8 に対応した electron-vite 6 が正式に出たら、まとめて上げる
+      - dependency-name: vite
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@vitejs/plugin-react'
+        update-types: ['version-update:semver-major']
+    # 上から順に当てはめ、最初に合ったものに入る
+    groups:
+      storybook:
+        patterns: ['storybook', '@storybook/*']
+      vitest:
+        patterns: ['vitest', '@vitest/*']
+      xterm:
+        patterns: ['@xterm/*']
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      dev-tools:
+        patterns: ['*']
+        exclude-patterns:
+          # アプリに入るもの
+          - electron
+          - node-pty
+          - diff
+          - mermaid
+          - monaco-editor
+          - marked
+          - marked-cjk-friendly
+          - dompurify
+          - '@fontsource/*'
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ['*']

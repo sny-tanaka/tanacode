@@ -147,7 +147,7 @@ brew install --cask sny-tanaka/tanacode/tanacode
 
 手元でビルドしたアプリにはダウンロードの印が付かないので、Apple の署名が無くても macOS の警告は出ません。
 
-必要なもの: Node.js 22・git・Xcode Command Line Tools（チャットの翻訳に使う `swiftc`。無くてもビルドでき、翻訳のボタンが出ないだけ）
+必要なもの: Node.js 24・git・Xcode Command Line Tools（チャットの翻訳に使う `swiftc`。無くてもビルドでき、翻訳のボタンが出ないだけ）
 
 ```bash
 git clone https://github.com/sny-tanaka/tanacode.git
