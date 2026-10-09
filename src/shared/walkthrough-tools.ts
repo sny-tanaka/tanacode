@@ -1,4 +1,5 @@
 import { findTool, mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+import { PARENT_MESSAGE_TAG } from './session-tools';
 
 // Claude Code に MCP のツールとして渡す、ウォークスルー（Claude がエディタでコードを示しながら説明し、人が質問する）。
 // 中継のスクリプト（src/main/walkthrough-mcp.ts）が tools/list で返し、アプリ（src/main/walkthrough-control.ts）が実行する。
@@ -79,17 +80,20 @@ export const WALKTHROUGH_TOOLS: McpTool[] = [
   },
 ];
 
-// MCP の初期化で返す、サーバーの説明（Claude Code は会話の先頭に入れる）
+// MCP の初期化で返す、サーバーの説明（Claude Code は会話の先頭の system の発言に入れる。英語で書く理由は mcp-tools.ts の McpServerDef）
 export const WALKTHROUGH_MCP_INSTRUCTIONS = [
-  '人の tanacode のエディタにコードを開いて示しながら、変更や仕組みを説明する（ウォークスルー）ためのツール。画面共有でレビュイーがレビュワーにコードを見せて説明するのと同じことを、あなた（レビュイー）と人（レビュワー）でする。',
-  '- 人が「ウォークスルーして」「説明して」「どう変えたか見せて」のように、コードを見ながらの説明を頼んだら使う。',
-  '- 先にコードを読んで手順を組み立て、start_walkthrough で全部を一度に渡す。1 ステップに 1 つの意図。読む人が分かりやすい順に（全体の入口 → 中身、データの形 → 使う側）。範囲は説明に要る行だけに絞る（長くても 40 行ほど）。',
-  '- ブランチの変更を説明するときは view: "diff" にすると、消した行も並べて見せられる。変更の前後を比べる必要が無いところ（新しく作ったファイル・仕組みの説明）は file のままでよい。',
-  '- 説明は、何をしたかより、なぜこうしたか（意図・選ばなかった案・気をつけたこと・気になっている点）を書く。コードを読めば分かることは繰り返さない。',
-  '- 渡したら、チャットには短く「エディタで 1/N から見てください」とだけ書いてターンを終える。人は「次へ」「戻る」で自分のペースで進める。',
-  '- 人の質問は、ふつうの発言としてチャットに届く（「ウォークスルー「…」の 3/7「…」（path:40-58）について質問です。」や「path:12-20 について質問です。」と、選んだコードが付く）。答えはチャットに書く。別の場所を見せたほうが早ければ、show_code で示してから答える。',
-  '- 頼まれてコードを直したら、示している行がずれるので、直し終えたあとに start_walkthrough で、人が見ていたステップから先を示し直す。',
-  '- 人が今どこを見ているかは walkthrough_status で確かめられる。',
+  "Tools for walkthroughs: you open code in the user's tanacode editor and explain a change or how something works while showing it, the way a reviewee shares their screen with a reviewer. You are the reviewee and the user is the reviewer.",
+  '- The user may not know about walkthroughs, so do not wait to be asked:',
+  `  - When you finish a change that spans several files or contains design decisions worth reviewing, end your turn by starting a walkthrough of it instead of only summarizing it in the chat. Skip this for small or obvious edits, when the user said they do not need it, and when the task came from a parent session (<${PARENT_MESSAGE_TAG}>), since no one is watching your editor then.`,
+  '  - When you explain how existing code works or answer a question about specific code, show the place with show_code (or a walkthrough when it takes several places) instead of pasting the code into the chat.',
+  '  - Always use it when the user asks for a walkthrough, for an explanation along the code, or to be shown what was changed.',
+  '- Read the code first, plan the steps, and pass them all at once with start_walkthrough. One intent per step. Order the steps so they are easy to follow (the overall entry point before the details, the shape of the data before its users). Keep each range to the lines the explanation needs (about 40 lines at most).',
+  '- When you explain the changes of the branch, use view: "diff" to show the deleted lines next to the new ones. Where the before and after need no comparison (new files, explaining a mechanism), keep view: "file".',
+  '- In the explanations, write why rather than what: the intent, the alternatives you did not choose, what you were careful about and what still concerns you. Do not repeat what the code already says. Write the titles and explanations in the language the user is using.',
+  '- After passing the steps, write only a short line in the chat (e.g. "Please start from 1/N in the editor", in the language the user is using) and end your turn. The user moves through the steps with Next and Back at their own pace.',
+  '- The questions of the user arrive as ordinary chat messages with the selected code attached (e.g. 「ウォークスルー「…」の 3/7「…」（path:40-58）について質問です。」 or 「path:12-20 について質問です。」). Answer in the chat. If showing another place is faster, show it with show_code first.',
+  '- If you change code on request, the lines you showed shift. When you are done, restart with start_walkthrough from the step the user was viewing onward.',
+  '- walkthrough_status tells you where the user is looking now.',
 ].join('\n');
 
 export const WALKTHROUGH_MCP: McpServerDef = {

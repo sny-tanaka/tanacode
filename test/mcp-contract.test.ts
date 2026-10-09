@@ -78,6 +78,11 @@ describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def }) => {
     expect(def.tools.filter((t) => !t.description.trim() || !t.label.trim()).map((t) => t.name)).toEqual([]);
   });
 
+  it('説明（instructions）で、人に頼まれなくても使うことと、人が読むものは人が使っている言葉で書くことを伝える', () => {
+    expect(def.instructions).toContain('do not wait to be asked');
+    expect(def.instructions).toContain('in the language the user is using');
+  });
+
   it('引数のスキーマが、Claude Code に渡せる形（型・説明があり、必須の引数が properties にあり、ほかの引数を受け付けない）', () => {
     const problems = def.tools.flatMap((t: McpTool) => [
       ...(t.inputSchema.type !== 'object' ? [`${t.name}: type が object でない`] : []),

@@ -52,7 +52,7 @@ describe('中継（MCP の JSON-RPC）', () => {
       id: 1,
       result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'tanacode-browser', version: '9.9.9' } },
     });
-    expect((reply?.result as { instructions: string }).instructions).toContain('信用できない');
+    expect((reply?.result as { instructions: string }).instructions).toContain('untrusted');
     // 知らない版なら、知っているもので答える
     const other = await respond({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2099-01-01' } }, deps);
     expect((other?.result as { protocolVersion: string }).protocolVersion).toBe('2025-06-18');

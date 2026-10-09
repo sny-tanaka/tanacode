@@ -21,7 +21,9 @@ export type McpTool = {
 };
 
 // 1 つの MCP サーバー。name: Claude Code での名前（ツールは mcp__<name>__<ツール>）/ title: initialize で返す表示名 /
-// instructions: initialize で返す説明（Claude Code はシステムプロンプトに入れる）
+// instructions: initialize で返す説明（Claude Code は会話の先頭の system の発言に入れる）。Claude だけが読み、画面には出さないので、
+// Claude Code のシステムプロンプトにそろえて英語で書く。いつ使うかを書き、人が機能を知らなくても Claude が自分から使うようにする。
+// 人が読むもの（カード・説明・依頼の文など）は、人が使っている言葉で書くよう、それぞれの説明で伝える
 export type McpServerDef = { name: string; title: string; instructions: string; tools: McpTool[] };
 
 export function mcpToolId(server: string, name: string): string {

@@ -57,7 +57,7 @@ describe('中継と起動の引数', () => {
     const deps = { server: SESSIONS_MCP, version: '1', call: async (tool: string) => (calls.push(tool), textResult('ok')) };
     const init = await respond({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }, deps);
     expect(init?.result).toMatchObject({ serverInfo: { name: 'tanacode-sessions' } });
-    expect((init?.result as { instructions: string }).instructions).toContain('信用できない');
+    expect((init?.result as { instructions: string }).instructions).toContain('untrusted');
     const list = await respond({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, deps);
     const tools = (list?.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }).tools;
     const readOnly = tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
@@ -103,6 +103,7 @@ describe('中継と起動の引数', () => {
     expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name).sort()).toEqual(['get_session', 'get_session_diff', 'list_sessions', 'read_session']);
     expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('start_session');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('tanacode-parent-message');
+    expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('do not wait to be asked');
   });
 
   it('起動の確認のフックは、ask と、子も利用枠を使うことを書いた理由を出す', () => {
