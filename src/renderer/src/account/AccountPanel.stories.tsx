@@ -1,10 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { ClaudeAccount } from '@shared/account';
+import type { ProfilesState } from '@shared/profile';
 import type { UsageLimits } from '@shared/usage';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { SettingsFilesDialog } from '../chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from '../chat/settingsFiles';
 import { AccountPanel } from './AccountPanel';
+import { ProfilesDialog } from './ProfilesDialog';
+import { closeProfilesDialog, useProfilesDialog } from './profiles';
 
 // セッション一覧の最下部の、アカウントと利用枠。どの状態でも 3 行（名前・5 時間・週）で、高さは変わらない。
 // メールアドレスは、マウスを乗せたときと、押して開くメニューの中にだけ出る。メニューの「設定ファイルの管理…」で管理ダイアログが開く
@@ -22,24 +25,38 @@ const usage = (five: number | null, week: number | null, { ago = 0, fiveResetIn 
   source: 'statusline',
 });
 
+// プロファイルが 2 つあるとき（会社のプロファイルの画面から見たもの）
+const TWO: ProfilesState = {
+  profiles: [
+    { id: 'default', name: '会社', color: '#6d9ccf', claudeDir: null },
+    { id: 'p2', name: '個人', color: '#d4835c', claudeDir: '/Users/me/.claude-me' },
+  ],
+  current: 'default',
+  othersAttention: false,
+};
+
 // セッション一覧の下と同じ幅・地の色に置く。上の空きは、メニューが上に開く場所
 function Demo() {
   const open = useSettingsFilesDialogOpen();
+  const profilesDialog = useProfilesDialog();
   return (
     <>
       <div style={{ width: 248, height: 360, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: 'var(--bg-chrome)', border: '1px solid var(--border-subtle)' }}>
         <AccountPanel />
       </div>
       {open && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
+      {profilesDialog && <ProfilesDialog mode={profilesDialog} onClose={closeProfilesDialog} />}
     </>
   );
 }
 
-const story = (account: ClaudeAccount | null, value: UsageLimits | null): Story => ({
+// profiles: プロファイルの様子（無ければ、既定のプロファイル 1 つだけ）
+const story = (account: ClaudeAccount | null, value: UsageLimits | null, profiles: ProfilesState | null = null): Story => ({
   beforeEach: () =>
     mockApi({
       'account.get': () => Promise.resolve(account),
       'usage.get': () => Promise.resolve(value),
+      'profiles.get': () => Promise.resolve(profiles ?? { profiles: [TWO.profiles[0]!], current: 'default', othersAttention: false }),
     }),
 });
 
@@ -75,3 +92,12 @@ export const リセット済み: Story = story(TEAM, usage(88, 20, { ago: 20 * M
 
 // Claude Code にログインしていない（API キーだけで使っているときも、ここに入る）
 export const ログインしていない: Story = story(null, null);
+
+// プロファイルが 2 つ以上。名前の前の色の点と、欄の背景の色で、どのアカウントの画面かが分かる。メニューから切り替えられる
+export const プロファイルが2つ: Story = story(TEAM, usage(32, 10), TWO);
+
+// ほかのアカウントに確認待ち・新しい応答がある。どのアカウントかは出さず、右端の点だけ
+export const 別のアカウントに通知あり: Story = story(PERSONAL, usage(18, 37), { ...TWO, current: 'p2', othersAttention: true });
+
+// 足したばかりのプロファイル（まだログインしていない）。メニューの「ログイン…」で、ターミナルから claude auth login を動かす
+export const 足したばかり: Story = story(null, null, { ...TWO, current: 'p2' });

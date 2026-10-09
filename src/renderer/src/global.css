@@ -4654,6 +4654,119 @@ details[open] > summary > .disclosure {
   margin: 4px 0;
   background: var(--border-strong);
 }
+/* プロファイルが 2 つ以上あるとき。欄の背景をプロファイルの色でうっすら染める */
+.account-panel.tinted {
+  background: color-mix(in srgb, var(--profile-color) 9%, transparent);
+}
+.account-panel.tinted .account-summary:hover,
+.account-panel.tinted .account-summary[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--profile-color) 15%, transparent);
+}
+.profile-dot {
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.account-org.none {
+  color: var(--text-tertiary);
+}
+/* ほかのアカウントに通知あり（どのアカウントかは出さない） */
+.account-attention {
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.account-stale + .account-attention {
+  margin-left: 0;
+}
+.account-menu-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-menu-profile-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu-check {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+/* プロファイルの管理（設定ファイルの管理と同じ形） */
+.profile-row .profile-dot {
+  width: 10px;
+  height: 10px;
+}
+/* 標準のプロファイルの行の、削除のボタンの分の空き（色の選択の位置をそろえる） */
+.profile-row-spacer {
+  flex: none;
+  width: 20px;
+}
+.profile-colors {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+.profile-color {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.profile-color.selected {
+  border-color: var(--text-heading);
+}
+.profile-new {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.profile-new-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.profile-new-field > span:first-child {
+  flex: none;
+  width: 56px;
+}
+.profiles-dialog .profile-new-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.profiles-dialog .profile-new-field input:focus {
+  border-color: var(--border-focus);
+  outline: none;
+}
+.profile-new-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.profile-new .settings-files-foot {
+  margin: 0 -16px;
+}
 .usage-row {
   display: flex;
   align-items: baseline;

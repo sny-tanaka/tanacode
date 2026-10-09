@@ -179,13 +179,16 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
 
   // パネルを開き、新しいシェルのタブでコマンドを実行する。パネルが見えてから作る（隠れたままだと大きさを測れない）。
   // パネルを開いたことで「1 つも無ければ開く」が先にシェルを作っても、そちらで実行される
-  useRunInTerminal((owner, command) => {
-    if (owner !== sessionId) return;
+  useRunInTerminal((requested, command) => {
+    // null は今見ているもの
+    const owner = requested ?? sessionId;
+    if (!owner || owner !== sessionId) return false;
     queued.current = { owner, command };
     onView('shell');
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (queued.current) void newShell(owner);
     }));
+    return true;
   });
 
   // シェルを出すのに 1 つも無ければ開く

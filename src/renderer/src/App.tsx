@@ -10,6 +10,8 @@ import { usePendingSends } from './chat/pendingSends';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
+import { ProfilesDialog } from './account/ProfilesDialog';
+import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type OpenFile, type RevealRequest } from './editor/EditorPane';
 import { languageFor, languageLabel } from './editor/monaco';
@@ -150,6 +152,7 @@ export function App() {
   const [worktreeDialog, setWorktreeDialog] = useState<{ id: string; action: 'archive' | 'remove' } | null>(null);
   // 設定ファイルの管理ダイアログ（チャットの入力欄の下と新規セッションの画面の選択欄から開く）
   const settingsFilesOpen = useSettingsFilesDialogOpen();
+  const profilesDialog = useProfilesDialog();
   // アーカイブ済みセッションのチャット（再開せずに会話ログから作る）
   const [archivedChats, setArchivedChats] = useState<Record<string, ChatState>>({});
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -942,6 +945,7 @@ export function App() {
           />
         )}
         {settingsFilesOpen && <SettingsFilesDialog onClose={closeSettingsFilesDialog} />}
+        {profilesDialog && <ProfilesDialog mode={profilesDialog} onClose={closeProfilesDialog} />}
         {browserHostsOpen && <BrowserHostsDialog onClose={() => setBrowserHostsOpen(false)} />}
         {commenting && <CommentDialog sessionId={commenting} onClose={() => setCommenting(null)} />}
         {worktreeDialog && sessions?.some((s) => s.id === worktreeDialog.id && s.worktree) && (
