@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { visibleOrganization, type ClaudeAccount } from '@shared/account';
 import type { UsageLimit, UsageLimits } from '@shared/usage';
 import { openSettingsFilesDialog } from '../chat/settingsFiles';
+import { CheckIcon } from '../icons';
 import { runInTerminal } from '../terminal/runInTerminal';
 import { openProfilesDialog, useProfiles } from './profiles';
 
@@ -187,7 +188,11 @@ export function AccountPanel() {
                 >
                   <span className="profile-dot" style={{ background: p.color }} />
                   <span className="account-menu-profile-name">{p.name}</span>
-                  {p.id === profiles?.current && <span className="account-menu-check">✓</span>}
+                  {p.id === profiles?.current && (
+                    <span className="account-menu-check">
+                      <CheckIcon size={12} />
+                    </span>
+                  )}
                 </button>
               ))}
             </>

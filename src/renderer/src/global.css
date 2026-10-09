@@ -4697,6 +4697,7 @@ details[open] > summary > .disclosure {
   white-space: nowrap;
 }
 .account-menu-check {
+  display: flex;
   margin-left: auto;
   color: var(--text-secondary);
 }
