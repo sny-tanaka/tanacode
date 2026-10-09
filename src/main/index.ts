@@ -2,7 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import {
@@ -19,15 +18,8 @@ import {
   type SessionOptions,
 } from '@shared/ipc';
 import { AppSettings } from './app-settings';
-import { normalizeHostPattern } from '@shared/browser-tools';
+import { Profile } from './profile';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
-import type { BrowserMcpLaunch } from './browser-bridge';
-import { BrowserControl } from './browser-control';
-import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
-import { SessionsControl } from './sessions-control';
-import { ChecklistControl } from './checklist-control';
-import { ChecklistStore } from './checklist-store';
-import { WalkthroughControl } from './walkthrough-control';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -39,33 +31,21 @@ import type { PermissionMode } from '@shared/screen';
 import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
-import { menuNotice, scheduledNotice, snippet } from './notice-text';
-import { hostExecutable, PtyHost } from './pty-host-client';
-import { ScheduledMessages } from './scheduled-messages';
-import { DEFAULT_PTY_SIZE, SessionManager } from './session-manager';
-import { SettingsFiles } from './settings-files';
-import { SessionStore } from './session-store';
-import { socketPathIn } from './socket-path';
+import { DEFAULT_PTY_SIZE } from './session-manager';
 import { readModelCatalog } from './model-catalog';
-import { StatusLineWatcher } from './statusline';
-import { ShellTerminals } from './shell-terminals';
 import { SystemMonitor } from './system-monitor';
 import { ClaudeVersionMonitor } from './claude-version';
 import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, translateTexts, Translator } from './translate';
-import { UsageMonitor } from './usage-monitor';
 import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
-import { WorkspaceWatchers } from './workspace-watcher';
 import { claudeConfigDir } from './claude-config';
 
 let mainWindow: BrowserWindow | null = null;
-let manager: SessionManager;
-let ptyHost: PtyHost | null = null;
-let usage: UsageMonitor;
+// プロファイル（Claude Code のアカウントごとの環境）。今は既定のもの 1 つだけ
+let profile: Profile | null = null;
+// アプリ全体の設定（通知・新しいバージョンの確認）。既定のプロファイルの設定も同じファイルに入っている
 let settings: AppSettings;
-let statusLines: StatusLineWatcher;
-let settingsFiles: SettingsFiles;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
@@ -75,34 +55,9 @@ let homebrew: HomebrewUpdater | null = null;
 let relaunchAfterUpdate = false;
 // Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
 let shuttingDown = false;
-let watchers: WorkspaceWatchers;
-// Claude によるアプリ内ブラウザの操作。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
-let browserBridge: McpBridge | null = null;
-let browser: BrowserControl;
-// Claude によるほかのセッションの扱い（子セッションの起動・指示と、ほかのセッションを覗く）。中継からの呼び出しを、ソケットで受ける
-let sessionsBridge: McpBridge | null = null;
-let sessionsControl: SessionsControl | null = null;
-// 時刻を指定して送信（予約）したメッセージ
-let scheduled: ScheduledMessages;
-// チェックリスト（人と Claude が一緒に見て、編集するリスト）。Claude からの呼び出しは、中継からソケットで受ける
-let checklists: ChecklistStore;
-let checklistBridge: McpBridge | null = null;
-let checklistControl: ChecklistControl | null = null;
-let walkthroughBridge: McpBridge | null = null;
-let walkthroughControl: WalkthroughControl | null = null;
-// 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
-const folderViews = new Map<string, string>();
-// フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
-const pickedFolders = new Set<string>();
 // 終了のしかたが決まった（確認を済ませた・確認の要らない終了）。まだなら before-quit で止めて確認する
 let quitDecided = false;
 let confirmingQuit = false;
-const shells = new ShellTerminals({
-  onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
-  onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
-  onOpened: (owner, id, name) => send(IpcChannel.ShellOpened, { owner, id, name }),
-});
-
 // アプリ内プレビューの webview が使うセッション（renderer の PreviewPane の PARTITION と同じ名前）
 const PREVIEW_PARTITION = 'persist:tanacode-preview';
 // 主ウインドウ（アプリ自身の画面）にだけ許す権限。Monaco の右クリックメニューの「貼り付け」は、
@@ -142,6 +97,23 @@ function isPreviewDestination(url: string, isMainFrame: boolean): boolean {
 function send<C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]): void {
   const contents = mainWindow?.webContents;
   if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+}
+
+// 開いているプロファイル
+function profiles(): Profile[] {
+  return profile ? [profile] : [];
+}
+
+// Claude Code が動いているセッション（全プロファイル）。終了・更新のときに止めるかを聞く
+function liveSessions() {
+  // 起動の途中（pty ホストを待っている間）のプロファイルには、まだ動いているものが無い
+  return profiles().flatMap((p) => p.manager?.liveSessions() ?? []);
+}
+
+// 画面（呼び出し・知らせの送り元）のプロファイル。今は既定のもの 1 つだけ
+function profileOf(_contents: WebContents): Profile {
+  if (!profile) throw new Error('tanacode の起動が終わっていません');
+  return profile;
 }
 
 function handle<C extends keyof IpcInvoke>(
@@ -221,10 +193,11 @@ function createWindow(): void {
   });
   contents.on('did-attach-webview', (_e, guest) => {
     // コンソールと失敗した通信は、ページの最初のスクリプトから集める（Claude が読む）
-    browser?.track(guest);
+    profile?.browser.track(guest);
     // 新しいウィンドウで開くもの（target=_blank・window.open）は、アプリ内ブラウザの新しいタブで開く（ウィンドウは作らない）。
     // Claude の操作で、許していない先を開こうとしたものは開かない（browser-control の openFromPage）
     guest.setWindowOpenHandler(({ url, disposition }) => {
+      const browser = profile?.browser;
       if (/^https?:\/\//.test(url) && !browser?.openFromPage(guest, url, disposition) && !browser?.isOperating(guest)) void shell.openExternal(url);
       return { action: 'deny' };
     });
@@ -256,19 +229,14 @@ function showWindow(): BrowserWindow {
   return win;
 }
 
-// workspace・git に渡された id（セッションか、folders.open で開いたフォルダ）のフォルダ
-function cwdOf(id: string): string {
-  return folderViews.get(id) ?? manager.cwdOf(id);
-}
-
-async function pickFolder(): Promise<string | null> {
+async function pickFolder(p: Profile): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
     title: '作業するフォルダを選択',
     properties: ['openDirectory', 'createDirectory'],
   };
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
   const dir = result.canceled ? null : (result.filePaths[0] ?? null);
-  if (dir) pickedFolders.add(dir);
+  if (dir) p.pickedFolders.add(dir);
   return dir;
 }
 
@@ -316,6 +284,7 @@ const MAX_LIVE_NOTIFICATIONS = 50;
 
 // 通知のタイトルはアプリの名前、サブタイトルはセッション名。clickChannel: クリックで画面に送る知らせ（既定はそのセッションを選ぶ）
 function notify(
+  p: Profile,
   sessionId: string,
   sessionTitle: string | null,
   message: string,
@@ -323,9 +292,9 @@ function notify(
 ): void {
   if (!settings.notificationsEnabled()) return;
   // 子セッションは人に通知しない。作業の終わり・質問・人の対応待ちは親に知らせ、人を呼ぶときは親から伝える（sessions-control.ts）
-  if (manager?.parentOf(sessionId)) return;
+  if (p.manager?.parentOf(sessionId)) return;
   const windowActive = mainWindow?.isFocused() ?? false;
-  if (windowActive && manager.isFocused(sessionId)) return;
+  if (windowActive && p.manager.isFocused(sessionId)) return;
   if (!Notification.isSupported()) return;
   // 音は macOS のシステム音の Glass（指定しないと、既定の通知音が鳴る）
   const notification = new Notification({ title: 'tanacode', subtitle: sessionTitle ?? '新しいセッション', body: message, sound: 'Glass' });
@@ -346,154 +315,165 @@ function notify(
 }
 
 function registerIpc(): void {
-  handle(IpcChannel.SessionsList, () => manager.list());
+  // 送り元の画面のプロファイル
+  const P = (e: IpcMainEvent | IpcMainInvokeEvent) => profileOf(e.sender);
+  handle(IpcChannel.SessionsList, (e) => P(e).manager.list());
   const isDirectory = (path: string) => stat(path).then((s) => s.isDirectory(), () => false);
-  handle(IpcChannel.SessionsCreate, async (_e, cwd: string, options: NewSessionOptions) => {
+  handle(IpcChannel.SessionsCreate, async (e, cwd: string, options: NewSessionOptions) => {
+    const p = P(e);
     if (!(await isDirectory(cwd))) throw new Error(`フォルダが見つかりません: ${cwd}`);
-    return options.worktree ? manager.createInWorktree(cwd, options) : manager.create(cwd, options);
+    return options.worktree ? p.manager.createInWorktree(cwd, options) : p.manager.create(cwd, options);
   });
-  handle(IpcChannel.FolderPick, () => pickFolder());
+  handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
   handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
   handle(IpcChannel.FolderCommands, (_e, cwd: string) => listCommands(cwd, null));
-  handle(IpcChannel.FolderOpen, async (_e, cwd: string) => {
-    const known = pickedFolders.has(cwd) || manager.list().some((s) => s.cwd === cwd || s.worktree?.root === cwd);
+  handle(IpcChannel.FolderOpen, async (e, cwd: string) => {
+    const p = P(e);
+    const known = p.pickedFolders.has(cwd) || p.manager.list().some((s) => s.cwd === cwd || s.worktree?.root === cwd);
     if (!known || !(await isDirectory(cwd))) throw new Error(`フォルダを開けません: ${cwd}`);
     const id = `folder:${randomUUID()}`;
-    folderViews.set(id, cwd);
-    watchers.retain(cwd);
+    p.folderViews.set(id, cwd);
+    p.watchers.retain(cwd);
     return id;
   });
-  listen(IpcChannel.FolderClose, (_e, id: string) => {
-    const cwd = folderViews.get(id);
+  listen(IpcChannel.FolderClose, (e, id: string) => {
+    const p = P(e);
+    const cwd = p.folderViews.get(id);
     if (cwd === undefined) return;
-    folderViews.delete(id);
-    watchers.release(cwd);
+    p.folderViews.delete(id);
+    p.watchers.release(cwd);
     // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
-    shells.killOwner(id);
-    browser.forget(id);
+    p.shells.killOwner(id);
+    p.browser.forget(id);
   });
-  handle(IpcChannel.SessionsOpen, (_e, id: string) => manager.open(id));
-  handle(IpcChannel.SessionsArchive, (_e, id: string, options?: ArchiveOptions) => {
+  handle(IpcChannel.SessionsOpen, (e, id: string) => P(e).manager.open(id));
+  handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => {
+    const p = P(e);
     // 子セッションも一緒にアーカイブされる
-    for (const target of [id, ...manager.childrenOf(id)]) browser.forget(target);
+    for (const target of [id, ...p.manager.childrenOf(id)]) p.browser.forget(target);
     // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
-    if (options?.removeWorktree) shells.killOwner(id);
-    return manager.archive(id, options);
+    if (options?.removeWorktree) p.shells.killOwner(id);
+    return p.manager.archive(id, options);
   });
-  handle(IpcChannel.SessionsWorktreeLeftovers, (_e, id: string) => manager.worktreeLeftovers(id));
-  handle(IpcChannel.SessionsUnarchive, (_e, id: string) => manager.unarchive(id));
-  handle(IpcChannel.SessionsSnapshot, (_e, id: string) => manager.snapshot(id));
-  handle(IpcChannel.SessionsSubmit, (_e, id: string, text: string, attachments: string[]) =>
-    manager.submit(id, String(text ?? ''), Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : []),
+  handle(IpcChannel.SessionsWorktreeLeftovers, (e, id: string) => P(e).manager.worktreeLeftovers(id));
+  handle(IpcChannel.SessionsUnarchive, (e, id: string) => P(e).manager.unarchive(id));
+  handle(IpcChannel.SessionsSnapshot, (e, id: string) => P(e).manager.snapshot(id));
+  handle(IpcChannel.SessionsSubmit, (e, id: string, text: string, attachments: string[]) =>
+    P(e).manager.submit(id, String(text ?? ''), Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : []),
   );
-  listen(IpcChannel.SessionsInterrupt, (_e, id: string) => manager.interrupt(id));
-  handle(IpcChannel.ScheduledList, () => scheduled.list());
-  handle(IpcChannel.ScheduledAdd, (_e, sessionId: string, text: string, attachments: string[], at: number) => {
+  listen(IpcChannel.SessionsInterrupt, (e, id: string) => P(e).manager.interrupt(id));
+  handle(IpcChannel.ScheduledList, (e) => P(e).scheduled.list());
+  handle(IpcChannel.ScheduledAdd, (e, sessionId: string, text: string, attachments: string[], at: number) => {
     const paths = Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : [];
-    scheduled.add(String(sessionId), String(text ?? ''), paths, Number(at));
+    P(e).scheduled.add(String(sessionId), String(text ?? ''), paths, Number(at));
   });
-  handle(IpcChannel.ScheduledReschedule, (_e, id: string, at: number) => scheduled.reschedule(String(id), Number(at)));
-  handle(IpcChannel.ScheduledSendNow, (_e, id: string) => scheduled.sendNow(String(id)));
-  handle(IpcChannel.ScheduledCancel, (_e, id: string) => scheduled.cancel(String(id)));
-  handle(IpcChannel.SessionsRename, (_e, id: string, title: string) => manager.rename(id, title));
-  handle(IpcChannel.SessionsRemove, async (_e, id: string, options?: ArchiveOptions) => {
-    shells.killOwner(id);
-    const targets = [id, ...manager.childrenOf(id)];
-    for (const target of targets) browser.forget(target);
-    const removal = await manager.remove(id, options);
+  handle(IpcChannel.ScheduledReschedule, (e, id: string, at: number) => P(e).scheduled.reschedule(String(id), Number(at)));
+  handle(IpcChannel.ScheduledSendNow, (e, id: string) => P(e).scheduled.sendNow(String(id)));
+  handle(IpcChannel.ScheduledCancel, (e, id: string) => P(e).scheduled.cancel(String(id)));
+  handle(IpcChannel.SessionsRename, (e, id: string, title: string) => P(e).manager.rename(id, title));
+  handle(IpcChannel.SessionsRemove, async (e, id: string, options?: ArchiveOptions) => {
+    const p = P(e);
+    p.shells.killOwner(id);
+    const targets = [id, ...p.manager.childrenOf(id)];
+    for (const target of targets) p.browser.forget(target);
+    const removal = await p.manager.remove(id, options);
     // 一覧から消したセッションのチェックリストも消す（アーカイブでは残す）
-    for (const target of targets) if (!manager.summary(target)) checklists.remove(target);
-    for (const target of targets) if (!manager.summary(target)) walkthroughControl?.forget(target);
+    for (const target of targets) if (!p.manager.summary(target)) p.checklists.remove(target);
+    for (const target of targets) if (!p.manager.summary(target)) p.walkthroughControl?.forget(target);
     return removal;
   });
-  handle(IpcChannel.SessionsHistory, (_e, id: string) => manager.history(id));
+  handle(IpcChannel.SessionsHistory, (e, id: string) => P(e).manager.history(id));
   handle(IpcChannel.ChatImage, (_e, key: string) => imageOf(key));
-  handle(IpcChannel.SessionsExportSource, (_e, id: string) => manager.exportSource(id));
+  handle(IpcChannel.SessionsExportSource, (e, id: string) => P(e).manager.exportSource(id));
   handle(IpcChannel.SessionsExportSave, (_e, html: unknown, fileName: unknown) => saveExport(html, fileName));
   listen(IpcChannel.SessionsExportReveal, (_e, path: string) => {
     if (savedExports.has(path)) shell.showItemInFolder(path);
   });
-  handle(IpcChannel.SessionsDiscover, () => discoverSessions(manager.claudeSessionIds()));
-  handle(IpcChannel.SessionsImport, (_e, s: DiscoveredSession) => manager.importSession(s.claudeSessionId, s.cwd, s.title));
-  handle(IpcChannel.SessionsConfigure, (_e, id: string, options: SessionOptions) => manager.configure(id, options));
-  handle(IpcChannel.SessionsRestart, (_e, id: string) => manager.restart(id));
+  handle(IpcChannel.SessionsDiscover, (e) => discoverSessions(P(e).manager.claudeSessionIds()));
+  handle(IpcChannel.SessionsImport, (e, s: DiscoveredSession) => P(e).manager.importSession(s.claudeSessionId, s.cwd, s.title));
+  handle(IpcChannel.SessionsConfigure, (e, id: string, options: SessionOptions) => P(e).manager.configure(id, options));
+  handle(IpcChannel.SessionsRestart, (e, id: string) => P(e).manager.restart(id));
   // チェックリスト。読む・書き換える（画面から届いた形を確かめる）・別のセッションへコピーする・セッションごとの未読の数
-  handle(IpcChannel.ChecklistGet, (_e, id: string) => (manager.summary(id) ? checklists.lists(id) : []));
-  handle(IpcChannel.ChecklistApply, (_e, id: string, op: unknown) => {
-    if (!manager.summary(id)) throw new Error('セッションが見つかりません');
-    checklistControl?.apply(id, checkOp(op));
+  handle(IpcChannel.ChecklistGet, (e, id: string) => (P(e).manager.summary(id) ? P(e).checklists.lists(id) : []));
+  handle(IpcChannel.ChecklistApply, (e, id: string, op: unknown) => {
+    const p = P(e);
+    if (!p.manager.summary(id)) throw new Error('セッションが見つかりません');
+    p.checklistControl?.apply(id, checkOp(op));
   });
-  handle(IpcChannel.ChecklistCopy, (_e, request: unknown) => checklistControl?.copy(checkCopyRequest(request)));
-  handle(IpcChannel.ChecklistUnread, () => {
+  handle(IpcChannel.ChecklistCopy, (e, request: unknown) => P(e).checklistControl?.copy(checkCopyRequest(request)));
+  handle(IpcChannel.ChecklistUnread, (e) => {
+    const p = P(e);
     const counts: Record<string, number> = {};
-    for (const s of manager.list()) {
-      const n = unreadCount(checklists.lists(s.id));
+    for (const s of p.manager.list()) {
+      const n = unreadCount(p.checklists.lists(s.id));
       if (n > 0) counts[s.id] = n;
     }
     return counts;
   });
   // ウォークスルー。今のもの・人が見るステップを変えた・終えた
-  handle(IpcChannel.WalkthroughGet, () => walkthroughControl?.list() ?? []);
-  handle(IpcChannel.WalkthroughGo, (_e, id: string, index: unknown) => walkthroughControl?.go(String(id), Number(index)));
-  handle(IpcChannel.WalkthroughClose, (_e, id: string) => walkthroughControl?.close(String(id)));
+  handle(IpcChannel.WalkthroughGet, (e) => P(e).walkthroughControl?.list() ?? []);
+  handle(IpcChannel.WalkthroughGo, (e, id: string, index: unknown) => P(e).walkthroughControl?.go(String(id), Number(index)));
+  handle(IpcChannel.WalkthroughClose, (e, id: string) => P(e).walkthroughControl?.close(String(id)));
   // GitHub の PR にコメントとして載せる（人が下見で本文を確かめてから投稿する）
   const commentDeps: CommentDeps = { pullRequests: pullRequestsOf, comment: commentOnPullRequest };
-  handle(IpcChannel.WalkthroughDraftComment, async (_e, id: string) => {
-    const w = manager.summary(String(id)) ? walkthroughControl?.get(String(id)) : null;
-    if (!w || !walkthroughControl) return { ok: false, reason: 'ウォークスルーがありません。' };
-    return draftWalkthroughComment(cwdOf(String(id)), w, walkthroughControl.postedUrl(w.id), commentDeps);
+  handle(IpcChannel.WalkthroughDraftComment, async (e, id: string) => {
+    const p = P(e);
+    const w = p.manager.summary(String(id)) ? p.walkthroughControl?.get(String(id)) : null;
+    if (!w || !p.walkthroughControl) return { ok: false, reason: 'ウォークスルーがありません。' };
+    return draftWalkthroughComment(p.cwdOf(String(id)), w, p.walkthroughControl.postedUrl(w.id), commentDeps);
   });
-  handle(IpcChannel.WalkthroughPostComment, async (_e, id: string, body: unknown, attribution: unknown) => {
-    const w = manager.summary(String(id)) ? walkthroughControl?.get(String(id)) : null;
-    if (!w || !walkthroughControl) throw new Error('ウォークスルーがありません。');
+  handle(IpcChannel.WalkthroughPostComment, async (e, id: string, body: unknown, attribution: unknown) => {
+    const p = P(e);
+    const w = p.manager.summary(String(id)) ? p.walkthroughControl?.get(String(id)) : null;
+    if (!w || !p.walkthroughControl) throw new Error('ウォークスルーがありません。');
     if (typeof body !== 'string') throw new Error('本文がありません。');
-    const url = await postWalkthroughComment(cwdOf(String(id)), w, body, attribution !== false, commentDeps);
-    walkthroughControl.markPosted(w.id, url);
+    const url = await postWalkthroughComment(p.cwdOf(String(id)), w, body, attribution !== false, commentDeps);
+    p.walkthroughControl.markPosted(w.id, url);
     return url;
   });
-  handle(IpcChannel.SessionsSetRemoteControl, (_e, id: string, on: boolean) => manager.setRemoteControl(id, on));
-  handle(IpcChannel.RemoteControlAvailable, () => manager.remoteAvailable());
-  handle(IpcChannel.ScreenGet, (_e, id: string) => manager.screenForView(id));
-  handle(IpcChannel.ScreenActivityGet, (_e, id: string) => manager.activity(id));
-  handle(IpcChannel.WorkflowsGet, (_e, id: string) => manager.workflows(id));
-  handle(IpcChannel.ScreenSetMode, (_e, id: string, mode: PermissionMode) => manager.setMode(id, mode));
-  handle(IpcChannel.ScreenRewind, (_e, id: string, text: string) => manager.rewind(id, text));
-  handle(IpcChannel.WriteFile, (_e, id: string, relPath: string, text: string) =>
-    new Workspace(cwdOf(id)).writeFile(relPath, text),
+  handle(IpcChannel.SessionsSetRemoteControl, (e, id: string, on: boolean) => P(e).manager.setRemoteControl(id, on));
+  handle(IpcChannel.RemoteControlAvailable, (e) => P(e).manager.remoteAvailable());
+  handle(IpcChannel.ScreenGet, (e, id: string) => P(e).manager.screenForView(id));
+  handle(IpcChannel.ScreenActivityGet, (e, id: string) => P(e).manager.activity(id));
+  handle(IpcChannel.WorkflowsGet, (e, id: string) => P(e).manager.workflows(id));
+  handle(IpcChannel.ScreenSetMode, (e, id: string, mode: PermissionMode) => P(e).manager.setMode(id, mode));
+  handle(IpcChannel.ScreenRewind, (e, id: string, text: string) => P(e).manager.rewind(id, text));
+  handle(IpcChannel.WriteFile, (e, id: string, relPath: string, text: string) =>
+    new Workspace(P(e).cwdOf(id)).writeFile(relPath, text),
   );
-  const scm = (id: string) => new SourceControl(cwdOf(id));
-  handle(IpcChannel.GitState, (_e, id: string) => scm(id).state());
-  handle(IpcChannel.GitBranches, (_e, id: string) => scm(id).branches());
-  handle(IpcChannel.GitDiffSides, (_e, id: string, relPath: string, staged: boolean) => scm(id).diffSides(relPath, staged));
-  handle(IpcChannel.GitBranchDiffSides, (_e, id: string, mergeBase: string, relPath: string) =>
-    scm(id).branchDiffSides(mergeBase, relPath),
+  const scm = (e: IpcMainInvokeEvent, id: string) => new SourceControl(P(e).cwdOf(id));
+  handle(IpcChannel.GitState, (e, id: string) => scm(e, id).state());
+  handle(IpcChannel.GitBranches, (e, id: string) => scm(e, id).branches());
+  handle(IpcChannel.GitDiffSides, (e, id: string, relPath: string, staged: boolean) => scm(e, id).diffSides(relPath, staged));
+  handle(IpcChannel.GitBranchDiffSides, (e, id: string, mergeBase: string, relPath: string) =>
+    scm(e, id).branchDiffSides(mergeBase, relPath),
   );
-  handle(IpcChannel.GitBaseline, (_e, id: string, mergeBase: string, relPath: string) => scm(id).baseline(mergeBase, relPath));
-  handle(IpcChannel.GitLastMessage, (_e, id: string) => scm(id).lastCommitMessage());
-  handle(IpcChannel.GitRun, (_e, id: string, action: GitAction) => runGit(scm(id), action));
-  handle(IpcChannel.Search, (_e, id: string, query: string, options: SearchOptions) =>
-    new Workspace(cwdOf(id)).search(query, options),
+  handle(IpcChannel.GitBaseline, (e, id: string, mergeBase: string, relPath: string) => scm(e, id).baseline(mergeBase, relPath));
+  handle(IpcChannel.GitLastMessage, (e, id: string) => scm(e, id).lastCommitMessage());
+  handle(IpcChannel.GitRun, (e, id: string, action: GitAction) => runGit(scm(e, id), action));
+  handle(IpcChannel.Search, (e, id: string, query: string, options: SearchOptions) =>
+    new Workspace(P(e).cwdOf(id)).search(query, options),
   );
-  handle(IpcChannel.ListFiles, (_e, id: string) => new Workspace(cwdOf(id)).listFiles());
-  handle(IpcChannel.CommandsList, (_e, id: string) => listCommands(manager.cwdOf(id), manager.transcriptOf(id)));
+  handle(IpcChannel.ListFiles, (e, id: string) => new Workspace(P(e).cwdOf(id)).listFiles());
+  handle(IpcChannel.CommandsList, (e, id: string) => listCommands(P(e).manager.cwdOf(id), P(e).manager.transcriptOf(id)));
   handle(IpcChannel.AttachmentSave, (_e, name: string, data: Uint8Array) => saveAttachment(name, data));
-  handle(IpcChannel.SubagentsGet, (_e, id: string) => manager.subagents(id));
-  handle(IpcChannel.TasksBash, (_e, id: string) => manager.bashTasks(id));
-  handle(IpcChannel.KnowledgeGet, (_e, id: string) => manager.knowledge(id));
-  handle(IpcChannel.ContextGet, (_e, id: string) => manager.context(id));
-  handle(IpcChannel.SettingsFilesList, () => settingsFiles.list());
+  handle(IpcChannel.SubagentsGet, (e, id: string) => P(e).manager.subagents(id));
+  handle(IpcChannel.TasksBash, (e, id: string) => P(e).manager.bashTasks(id));
+  handle(IpcChannel.KnowledgeGet, (e, id: string) => P(e).manager.knowledge(id));
+  handle(IpcChannel.ContextGet, (e, id: string) => P(e).manager.context(id));
+  handle(IpcChannel.SettingsFilesList, (e) => P(e).settingsFiles.list());
   handle(IpcChannel.SettingsFilesPick, () => pickSettingsFile());
-  handle(IpcChannel.SettingsFilesAdd, (_e, path: string, name?: string) => settingsFiles.add(path, name));
-  handle(IpcChannel.SettingsFilesRename, (_e, id: string, name: string) => settingsFiles.rename(id, name));
-  handle(IpcChannel.SettingsFilesRemove, (_e, id: string) => settingsFiles.remove(id));
+  handle(IpcChannel.SettingsFilesAdd, (e, path: string, name?: string) => P(e).settingsFiles.add(path, name));
+  handle(IpcChannel.SettingsFilesRename, (e, id: string, name: string) => P(e).settingsFiles.rename(id, name));
+  handle(IpcChannel.SettingsFilesRemove, (e, id: string) => P(e).settingsFiles.remove(id));
   handle(IpcChannel.ModelsGet, () => readModelCatalog().catch(() => null));
-  handle(IpcChannel.StatusLineGet, (_e, id: string) => manager.statusLine(id));
-  handle(IpcChannel.UsageGet, () => usage.get());
+  handle(IpcChannel.StatusLineGet, (e, id: string) => P(e).manager.statusLine(id));
+  handle(IpcChannel.UsageGet, (e) => P(e).usage.get());
   handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
   handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
-  handle(IpcChannel.UsageRefresh, () => usage.refresh());
+  handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
   handle(IpcChannel.AccountGet, () => readClaudeAccount());
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
@@ -509,68 +489,34 @@ function registerIpc(): void {
   handle(IpcChannel.TranslateAvailable, () => translateAvailable(process.getSystemVersion(), existsSync(translateHelper)));
   handle(IpcChannel.TranslateRun, (_e, texts: unknown) => translator.translate(translateTexts(texts)));
   handle(IpcChannel.TranslateOpenSettings, () => shell.openExternal(LANGUAGE_SETTINGS_URL));
-  handle(IpcChannel.TasksAgentLog, (_e, id: string, ref: AgentLogRef) => manager.agentLog(id, ref));
-  handle(IpcChannel.TasksStop, (_e, id: string, ref: TaskRef) => manager.stopTask(id, ref));
-  handle(IpcChannel.ScreenChoose, (_e, id: string, choice: ScreenChoice) => manager.choose(id, choice));
-  listen(IpcChannel.SessionsFocus, (_e, id: string | null) => manager.focus(id));
-  listen(IpcChannel.PtyWrite, (_e, id: string, data: string) => manager.write(id, data));
-  listen(IpcChannel.PtyResize, (_e, id: string, cols: number, rows: number) => manager.resize(id, cols, rows));
-  listen(IpcChannel.PtyResetSize, (_e, id: string) => manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
-  handle(IpcChannel.ShellCreate, (_e, id: string, cols: number, rows: number) =>
-    shells.create(id, cwdOf(id), cols, rows),
+  handle(IpcChannel.TasksAgentLog, (e, id: string, ref: AgentLogRef) => P(e).manager.agentLog(id, ref));
+  handle(IpcChannel.TasksStop, (e, id: string, ref: TaskRef) => P(e).manager.stopTask(id, ref));
+  handle(IpcChannel.ScreenChoose, (e, id: string, choice: ScreenChoice) => P(e).manager.choose(id, choice));
+  listen(IpcChannel.SessionsFocus, (e, id: string | null) => P(e).manager.focus(id));
+  listen(IpcChannel.PtyWrite, (e, id: string, data: string) => P(e).manager.write(id, data));
+  listen(IpcChannel.PtyResize, (e, id: string, cols: number, rows: number) => P(e).manager.resize(id, cols, rows));
+  listen(IpcChannel.PtyResetSize, (e, id: string) => P(e).manager.resize(id, DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows));
+  handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
+    P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
   );
-  listen(IpcChannel.ShellWrite, (_e, id: string, data: string) => shells.write(id, data));
-  listen(IpcChannel.ShellResize, (_e, id: string, cols: number, rows: number) => shells.resize(id, cols, rows));
-  listen(IpcChannel.ShellKill, (_e, id: string) => shells.kill(id));
-  handle(IpcChannel.WorkspaceInfo, (_e, id: string) => new Workspace(cwdOf(id)).info());
-  handle(IpcChannel.ListDir, (_e, id: string, relPath: string) => new Workspace(cwdOf(id)).listDir(relPath));
-  handle(IpcChannel.ReadFile, (_e, id: string, relPath: string) => new Workspace(cwdOf(id)).readFile(relPath));
-  handle(IpcChannel.ReadImage, (_e, id: string, relPath: string) =>
-    new Workspace(cwdOf(id)).readImage(relPath).catch(() => null),
+  listen(IpcChannel.ShellWrite, (e, id: string, data: string) => P(e).shells.write(id, data));
+  listen(IpcChannel.ShellResize, (e, id: string, cols: number, rows: number) => P(e).shells.resize(id, cols, rows));
+  listen(IpcChannel.ShellKill, (e, id: string) => P(e).shells.kill(id));
+  handle(IpcChannel.WorkspaceInfo, (e, id: string) => new Workspace(P(e).cwdOf(id)).info());
+  handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
+  handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
+  handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
+    new Workspace(P(e).cwdOf(id)).readImage(relPath).catch(() => null),
   );
-  listen(IpcChannel.BrowserAttach, (_e, id: string, tabId: string, webContentsId: number) => browser.attach(id, tabId, webContentsId));
-  listen(IpcChannel.BrowserActivate, (_e, id: string, tabId: string | null) => browser.activate(id, tabId));
+  listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
+  listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
   handle(IpcChannel.BrowserOpenExternal, (_e, url: string) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) return shell.openExternal(url);
   });
-  handle(IpcChannel.BrowserAsksGet, () => browser.pendingAsks());
-  listen(IpcChannel.BrowserAnswer, (_e, id: string, askId: string, answer: unknown) => browser.answerAsk(id, askId, answer));
-  handle(IpcChannel.BrowserHostsGet, () => settings.browserHosts());
-  handle(IpcChannel.BrowserHostsSet, (_e, hosts: string[]) => setBrowserHosts(hosts));
-}
-
-// アプリ内ブラウザで Claude に許す先を保存する。書き方をそろえ、重なりを除く。書き方が違うものがあれば、保存せずに断る
-function setBrowserHosts(hosts: unknown): string[] {
-  const list = Array.isArray(hosts) ? hosts.filter((h): h is string => typeof h === 'string' && h.trim() !== '') : [];
-  const bad = list.filter((h) => !normalizeHostPattern(h));
-  if (bad.length > 0) throw new Error(`書き方が違います: ${bad.join('、')}（例: example.test・*.example.test・192.168.0.10）`);
-  const normalized = [...new Set(list.map((h) => normalizeHostPattern(h)!))];
-  settings.setBrowserHosts(normalized);
-  return normalized;
-}
-
-// 起動する Claude Code に足す、アプリ内ブラウザの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
-function browserLaunch(): BrowserMcpLaunch | null {
-  if (!browserBridge || !settings.browserControlEnabled()) return null;
-  return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: browserBridge.socketPath, version: app.getVersion() };
-}
-
-// 起動する Claude Code に足す、セッションの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
-function sessionsLaunch(): McpLaunch | null {
-  if (!sessionsBridge || !settings.sessionsControlEnabled()) return null;
-  return { command: hostExecutable(), script: join(__dirname, 'sessions-mcp.js'), socketPath: sessionsBridge.socketPath, version: app.getVersion() };
-}
-
-// 起動する Claude Code に足す、チェックリストの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
-function checklistLaunch(): McpLaunch | null {
-  if (!checklistBridge || !settings.checklistControlEnabled()) return null;
-  return { command: hostExecutable(), script: join(__dirname, 'checklist-mcp.js'), socketPath: checklistBridge.socketPath, version: app.getVersion() };
-}
-
-// 起動する Claude Code に足す、ウォークスルーの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
-function walkthroughLaunch(): McpLaunch | null {
-  if (!walkthroughBridge || !settings.walkthroughControlEnabled()) return null;
-  return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: walkthroughBridge.socketPath, version: app.getVersion() };
+  handle(IpcChannel.BrowserAsksGet, (e) => P(e).browser.pendingAsks());
+  listen(IpcChannel.BrowserAnswer, (e, id: string, askId: string, answer: unknown) => P(e).browser.answerAsk(id, askId, answer));
+  handle(IpcChannel.BrowserHostsGet, (e) => P(e).settings.browserHosts());
+  handle(IpcChannel.BrowserHostsSet, (e, hosts: string[]) => P(e).setBrowserHosts(hosts));
 }
 
 async function runGit(scm: SourceControl, action: GitAction): Promise<string | null> {
@@ -631,10 +577,10 @@ function buildMenu(): void {
           { type: 'separator' },
           { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
           { label: '終了するときに新しいバージョンを入れる（Homebrew）', type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
-          { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
-          { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-          { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-          { label: 'Claude にウォークスルーさせる', type: 'checkbox', checked: settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+          { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: !!profile?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+          { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: !!profile?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+          { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: !!profile?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+          { label: 'Claude にウォークスルーさせる', type: 'checkbox', checked: !!profile?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
           {
             label: 'アプリ内ブラウザで Claude に許す先…',
             click: () => {
@@ -729,7 +675,7 @@ async function installUpdate(): Promise<void> {
   if (homebrew?.get()?.status !== 'ready' || confirmingQuit) return;
   confirmingQuit = true;
   try {
-    const live = manager?.liveSessions() ?? [];
+    const live = liveSessions();
     let stop = false;
     if (live.length > 0) {
       const { response } = await showDialog({
@@ -794,12 +740,12 @@ function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.Messa
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。保存できなかったら、チェックを元に戻す
 function setBrowserControl(item: MenuItem): void {
   try {
-    settings.setBrowserControlEnabled(item.checked);
+    profile?.settings.setBrowserControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
     return;
   }
-  if (!item.checked) browser.cancelAsks();
+  if (!item.checked) profile?.browser.cancelAsks();
 }
 
 // メニューの「Claude にほかのセッションを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
@@ -807,7 +753,7 @@ function setBrowserControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setSessionsControl(item: MenuItem): void {
   try {
-    settings.setSessionsControlEnabled(item.checked);
+    profile?.settings.setSessionsControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -818,7 +764,7 @@ function setSessionsControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setChecklistControl(item: MenuItem): void {
   try {
-    settings.setChecklistControlEnabled(item.checked);
+    profile?.settings.setChecklistControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -829,7 +775,7 @@ function setChecklistControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setWalkthroughControl(item: MenuItem): void {
   try {
-    settings.setWalkthroughControlEnabled(item.checked);
+    profile?.settings.setWalkthroughControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -837,10 +783,7 @@ function setWalkthroughControl(item: MenuItem): void {
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
 async function quit(stop: boolean): Promise<void> {
-  if (stop) {
-    manager?.closeAll(true);
-    await ptyHost?.shutdown();
-  }
+  if (stop) for (const p of profiles()) await p.stop();
   quitDecided = true;
   app.quit();
 }
@@ -851,8 +794,8 @@ async function confirmQuit(): Promise<void> {
   if (confirmingQuit) return;
   confirmingQuit = true;
   try {
-    const live = manager?.liveSessions() ?? [];
-    if (live.length === 0) return await quit(!!manager);
+    const live = liveSessions();
+    if (live.length === 0) return await quit(profiles().length > 0);
     const options: Electron.MessageBoxOptions = {
       type: 'question',
       message: 'Claude Code が動いているセッションがあります',
@@ -895,7 +838,7 @@ app.on('web-contents-created', (_e, contents) => {
   // Claude の操作でトップのフレームが移るときは、Claude に許した先だけ（リンクやリダイレクトで、外のサイトを開かせない）
   const guard = (event: Electron.Event<{ url: string; isMainFrame: boolean }>) => {
     if (!isPreviewDestination(event.url, event.isMainFrame)) event.preventDefault();
-    else if (event.isMainFrame && browser?.blocksNavigation(contents, event.url)) event.preventDefault();
+    else if (event.isMainFrame && profile?.browser.blocksNavigation(contents, event.url)) event.preventDefault();
   };
   contents.on('will-navigate', guard);
   contents.on('will-frame-navigate', guard);
@@ -908,91 +851,22 @@ app.whenReady().then(async () => {
   restrictPermissions();
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
-  watchers = new WorkspaceWatchers((root, paths) => {
-    send(IpcChannel.FilesChanged, { root, paths });
-  });
-  const store = new SessionStore(join(app.getPath('userData'), 'sessions.json'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
-  // 以前のレビュー機能が作業フォルダを控えていた場所。もう使わないので消す
-  void rm(join(app.getPath('userData'), 'snapshots'), { recursive: true, force: true });
-  statusLines = new StatusLineWatcher(
-    join(app.getPath('userData'), 'statusline'),
-    (id, info) => {
-      manager.statusLineChanged(id, info);
-      usage.fromStatusLine(info);
-    },
-    (id, input) => manager.askQuestionsChanged(id, input),
-  );
-  await statusLines.start();
-  // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせたファイルは session-settings に置く
-  settingsFiles = new SettingsFiles(settings, join(app.getPath('userData'), 'session-settings'), (files) =>
-    send(IpcChannel.SettingsFilesChanged, files),
-  );
-  // Claude によるアプリ内ブラウザの操作。中継（MCP サーバー）からの呼び出しを、userData のソケットで受ける。
-  // 待ち受けを始められなくても、アプリはそのまま使う（Claude Code に MCP サーバーを足さない）
-  browser = new BrowserControl({
+  // 開発版（パッケージしていないもの）は Remote Control を使わない（起動するたびにスマホに通知が届くため）。
+  // 以前つないでいた会話を再開して Claude Code が勝手につなぎ直したときも、切る。使いたいときは TANACODE_REMOTE_CONTROL=1 で起動する
+  const remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
+  // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く
+  profile = new Profile({
+    dataDir: app.getPath('userData'),
+    settings,
     send,
-    enabled: () => settings.browserControlEnabled(),
-    extraHosts: () => settings.browserHosts(),
     host: () => mainWindow?.webContents ?? null,
-    hasSession: (id) => !!manager?.summary(id),
-    // 一覧は「ブラウザでの操作待ち」。見ていないセッションなら通知し、クリックでそのセッションのブラウザを開く
-    onAsk: (id, ask) => {
-      manager?.browserAskChanged(id, !!ask);
-      if (ask) notify(id, manager?.summary(id)?.title ?? null, `ブラウザでの操作の依頼: ${snippet(ask.message)}`, IpcChannel.BrowserShow);
-    },
-    channels: {
-      open: IpcChannel.BrowserOpen,
-      activity: IpcChannel.BrowserActivity,
-      viewport: IpcChannel.BrowserViewport,
-      newTab: IpcChannel.BrowserNewTab,
-      selectTab: IpcChannel.BrowserSelectTab,
-      closeTab: IpcChannel.BrowserCloseTab,
-      ask: IpcChannel.BrowserAsk,
-    },
+    notify,
+    preview: session.fromPartition(PREVIEW_PARTITION),
+    remoteControl,
   });
-  browser.watchNetwork(session.fromPartition(PREVIEW_PARTITION));
-  const bridge = new McpBridge(socketPathIn(app.getPath('userData'), 'browser', 'browser'), (id, tool, args, signal) => browser.handle(id, tool, args, signal));
   try {
-    await bridge.start();
-    browserBridge = bridge;
-  } catch (error) {
-    console.error('アプリ内ブラウザの待ち受けを始められませんでした', error);
-  }
-  // ほかのセッションの扱い。待ち受けを始められなくても、アプリはそのまま使う（Claude Code に MCP サーバーを足さない）
-  const sessions = new McpBridge(socketPathIn(app.getPath('userData'), 'sessions', 'sessions'), (id, tool, args, signal) =>
-    sessionsControl ? sessionsControl.handle(id, tool, args, signal) : Promise.resolve(textResult('tanacode の起動が終わっていません。少し待ってから試してください', true)),
-  );
-  try {
-    await sessions.start();
-    sessionsBridge = sessions;
-  } catch (error) {
-    console.error('セッションの待ち受けを始められませんでした', error);
-  }
-  // チェックリスト。待ち受けを始められなくても、画面からは使える（Claude Code に MCP サーバーを足さない）
-  checklists = new ChecklistStore(join(app.getPath('userData'), 'checklists'), (id, lists) => send(IpcChannel.ChecklistChanged, { sessionId: id, lists }));
-  const checklistSocket = new McpBridge(socketPathIn(app.getPath('userData'), 'checklist', 'checklist'), (id, tool, args) =>
-    checklistControl ? checklistControl.handle(id, tool, args) : Promise.resolve(textResult('tanacode の起動が終わっていません。少し待ってから試してください', true)),
-  );
-  try {
-    await checklistSocket.start();
-    checklistBridge = checklistSocket;
-  } catch (error) {
-    console.error('チェックリストの待ち受けを始められませんでした', error);
-  }
-  // ウォークスルー。保存はせず、アプリのメモリの上だけで持つ
-  const walkthroughSocket = new McpBridge(socketPathIn(app.getPath('userData'), 'walkthrough', 'walkthrough'), (id, tool, args) =>
-    walkthroughControl ? walkthroughControl.handle(id, tool, args) : Promise.resolve(textResult('tanacode の起動が終わっていません。少し待ってから試してください', true)),
-  );
-  try {
-    await walkthroughSocket.start();
-    walkthroughBridge = walkthroughSocket;
-  } catch (error) {
-    console.error('ウォークスルーの待ち受けを始められませんでした', error);
-  }
-  // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
-  try {
-    ptyHost = await PtyHost.start(app.getPath('userData'), join(__dirname, 'pty-host.js'));
+    await profile.start();
   } catch (error) {
     const log = join(app.getPath('userData'), 'pty-host.log');
     dialog.showErrorBox('Claude Code を動かす常駐プロセスを起動できませんでした', `${String(error)}\n\nログ: ${log}`);
@@ -1000,46 +874,6 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
-  // 開発版（パッケージしていないもの）は Remote Control を使わない（起動するたびにスマホに通知が届くため）。
-  // 以前つないでいた会話を再開して Claude Code が勝手につなぎ直したときも、切る。使いたいときは TANACODE_REMOTE_CONTROL=1 で起動する
-  const remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
-  manager = new SessionManager(ptyHost, store, watchers, statusLines, {
-    onSessionsChanged: (sessions) => send(IpcChannel.SessionsChanged, sessions),
-    onChat: (batch) => send(IpcChannel.ChatEvents, batch),
-    onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
-    onTurnCompleted: (session) => notify(session.id, session.title, '作業が完了しました'),
-    onAttention: (session, attention) =>
-      notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : 'ターミナルでの操作が必要です'),
-    onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
-    onActivity: (sessionId, activity) => send(IpcChannel.ScreenActivity, { sessionId, activity }),
-    onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
-    onSubagents: (sessionId, runs) => send(IpcChannel.SubagentsChanged, { sessionId, runs }),
-    onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
-    onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
-    onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
-  }, remoteControl, settingsFiles, (owner, cwd, command, name) => shells.run(owner, cwd, command, name), browserLaunch, sessionsLaunch, checklistLaunch, walkthroughLaunch);
-  sessionsControl = new SessionsControl({ host: manager, enabled: () => settings.sessionsControlEnabled(), home: homedir() });
-  // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
-  scheduled = new ScheduledMessages(
-    join(app.getPath('userData'), 'scheduled-messages.json'),
-    manager,
-    (messages) => send(IpcChannel.ScheduledChanged, messages),
-    (message) => notify(message.sessionId, manager.summary(message.sessionId)?.title ?? null, scheduledNotice(message)),
-  );
-  // アーカイブした・一覧から消したセッションの予約は取り消す
-  manager.watchState((id) => {
-    const state = manager.stateOf(id);
-    if (state === null || state === 'archived') scheduled.dropSession(id);
-    // アーカイブした・一覧から消したセッションのウォークスルーは捨てる
-    if (state === null || state === 'archived') walkthroughControl?.discard(id);
-  });
-  walkthroughControl = new WalkthroughControl({
-    cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),
-    enabled: () => settings.walkthroughControlEnabled(),
-    onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
-  });
-  checklistControl = new ChecklistControl({ store: checklists, host: manager, enabled: () => settings.checklistControlEnabled() });
-  usage = new UsageMonitor(join(app.getPath('userData'), 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
   appUpdates = new AppUpdateMonitor(
@@ -1050,14 +884,10 @@ app.whenReady().then(async () => {
     },
     (url, init) => net.fetch(url, init),
   );
-  // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
-  await manager.adopt();
-  // 動き続けている Claude Code を引き継いでから、時刻を過ぎた予約を片付けて待ち始める
-  scheduled.start();
   registerIpc();
   buildMenu();
   createWindow();
-  void usage.start();
+  void profile.usage.start();
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
   claudeVersions.start();
@@ -1081,7 +911,6 @@ app.on('before-quit', (event) => {
     void confirmQuit();
     return;
   }
-  statusLines?.close();
   system?.stop();
   claudeVersions?.stop();
   appUpdates?.stop();
@@ -1089,17 +918,7 @@ app.on('before-quit', (event) => {
   if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate });
   homebrew?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
-  manager?.closeAll(false);
-  ptyHost?.close();
-  browserBridge?.close();
-  sessionsControl?.dispose();
-  scheduled?.dispose();
-  sessionsBridge?.close();
-  checklistControl?.dispose();
-  checklistBridge?.close();
-  checklists?.flush();
-  walkthroughBridge?.close();
-  shells.killAll();
+  for (const p of profiles()) p.close();
 });
 
 app.on('window-all-closed', () => {

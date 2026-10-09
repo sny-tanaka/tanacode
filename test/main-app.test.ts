@@ -1001,7 +1001,7 @@ describe('終了', () => {
     state.powerMonitor.emit('shutdown');
     expect(() => quitOnce()).not.toThrow();
     expect(the('StatusLineWatcher').close).toHaveBeenCalledTimes(1);
-    expect(allOf('ChecklistStore')).toHaveLength(0);
+    expect(the('ChecklistStore').flush).toHaveBeenCalledTimes(1);
     expect(the('ShellTerminals').killAll).toHaveBeenCalledTimes(1);
   });
 
@@ -1013,7 +1013,8 @@ describe('終了', () => {
     expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(state.ptyHostStart).not.toHaveBeenCalled();
     expect(() => quitOnce()).not.toThrow();
-    expect(the('ShellTerminals').killAll).toHaveBeenCalledTimes(1);
+    // プロファイル（シェル・statusLine など）はまだ作っていないので、片付けるものも無い
+    expect(allOf('ShellTerminals')).toHaveLength(0);
     expect(allOf('StatusLineWatcher')).toHaveLength(0);
   });
 
