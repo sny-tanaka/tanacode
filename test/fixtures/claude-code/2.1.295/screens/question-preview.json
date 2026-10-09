@@ -1,0 +1,162 @@
+[
+ {
+  "text": "⏺ User answered Claude's questions:",
+  "full": false
+ },
+ {
+  "text": "  ⎿  · 文章はどちらの書き方にしますか？ → だ・である",
+  "full": false
+ },
+ {
+  "text": "     · どの言語を使いますか？（いくつでも） → TypeScript, Go, Zig",
+  "full": false
+ },
+ {
+  "text": "     · 画面の色はどうしますか？ → 目に優しい緑",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "⏺ 複数の質問の答えを受け取りました",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "✻ Churned for 0s · done 1:17 AM",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ 複数選択の質問をしてください                                                                                          ",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "⏺ User answered Claude's questions:",
+  "full": false
+ },
+ {
+  "text": "  ⎿  · どの確認を入れますか？ → 型チェック, リンター",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "⏺ 複数選択の答えを受け取りました",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "✻ Cooked for 0s · done 1:17 AM",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ プレビュー付きの質問をしてください                                                                                    ",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": " ☐ 並べ方 ",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "│ 画面の部品の並べ方を決めるための、少し長めの質問文です。画面の部品の並べ方を決めるための、少し長めの質問文です。画面の",
+  "full": false
+ },
+ {
+  "text": "│ 部品の並べ方を決めるための、少し長めの質問文です。どの並べ方にしますか？",
+  "full": false
+ },
+ {
+  "text": "   ",
+  "full": false
+ },
+ {
+  "text": "❯ 1. 縦に並べて、上から順に読     ┌──────────────────────────────────────────┐",
+  "full": false
+ },
+ {
+  "text": "    めるようにする並べ方          │ ┌────────┐                               │",
+  "full": false
+ },
+ {
+  "text": "  2. Side by side with a long     │ │ 部品 A │                               │",
+  "full": false
+ },
+ {
+  "text": "    English label                 │ ├────────┤                               │",
+  "full": false
+ },
+ {
+  "text": "  3. プレビュー無し               │ │ 部品 B │                               │",
+  "full": false
+ },
+ {
+  "text": "                                  │ └────────┘                               │",
+  "full": false
+ },
+ {
+  "text": "                                  └──────────────────────────────────────────┘",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "                                  Notes: press n to add notes",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": "  Chat about this",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel",
+  "full": false
+ }
+]
