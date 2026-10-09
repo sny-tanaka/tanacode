@@ -72,6 +72,15 @@ const api: TanacodeApi = {
   account: {
     get: () => invoke(IpcChannel.AccountGet),
   },
+  profiles: {
+    get: () => invoke(IpcChannel.ProfilesGet),
+    switch: (id) => invoke(IpcChannel.ProfilesSwitch, id),
+    add: (profile) => invoke(IpcChannel.ProfilesAdd, profile),
+    update: (id, patch) => invoke(IpcChannel.ProfilesUpdate, id, patch),
+    remove: (id) => invoke(IpcChannel.ProfilesRemove, id),
+    pickDir: () => invoke(IpcChannel.ProfilesPickDir),
+    onChanged: (listener) => subscribe(IpcChannel.ProfilesChanged, listener),
+  },
   scheduled: {
     list: () => invoke(IpcChannel.ScheduledList),
     add: (sessionId, text, attachments, at) => invoke(IpcChannel.ScheduledAdd, sessionId, text, attachments, at),

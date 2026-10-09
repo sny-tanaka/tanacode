@@ -64,6 +64,30 @@ export class FakeWebContents extends Emitter {
   setWindowOpenHandler = vi.fn((handler: FakeWebContents['windowOpenHandler']) => {
     this.windowOpenHandler = handler;
   });
+  focus = vi.fn(() => undefined);
+  close = vi.fn(() => {
+    this.destroyed = true;
+  });
+  loadURL = vi.fn((_url: string) => undefined);
+  loadFile = vi.fn((_path: string) => undefined);
+}
+
+// 足したプロファイルの画面（WebContentsView）。ウインドウに重ねて、見ているものだけを出す
+export class FakeView {
+  readonly webContents = new FakeWebContents();
+  visible = true;
+  bounds = { x: 0, y: 0, width: 0, height: 0 };
+  constructor(readonly options: Record<string, unknown>) {
+    this.webContents.type = 'browserView';
+    state.views.push(this);
+  }
+  setVisible = vi.fn((visible: boolean) => {
+    this.visible = visible;
+  });
+  setBounds = vi.fn((bounds: FakeView['bounds']) => {
+    this.bounds = bounds;
+  });
+  setBackgroundColor = vi.fn((_color: string) => undefined);
 }
 
 export class FakeWindow extends Emitter {
@@ -74,10 +98,21 @@ export class FakeWindow extends Emitter {
   fullScreen = false;
   focused = false;
   bounds = { x: 40, y: 30, width: 1400, height: 900 };
+  // ウインドウに重ねた画面（足したプロファイルのもの）
+  readonly contentView = {
+    children: [] as FakeView[],
+    addChildView: vi.fn((view: FakeView) => {
+      this.contentView.children.push(view);
+    }),
+    removeChildView: vi.fn((view: FakeView) => {
+      this.contentView.children = this.contentView.children.filter((v) => v !== view);
+    }),
+  };
   constructor(readonly options: Record<string, unknown>) {
     super();
     state.windows.push(this);
   }
+  getContentBounds = () => ({ x: 0, y: 0, width: this.bounds.width, height: this.bounds.height - 28 });
   isDestroyed = () => this.destroyed;
   isMaximized = () => this.maximized;
   isFullScreen = () => this.fullScreen;
@@ -147,6 +182,7 @@ function freshState() {
     // macOS 以外では無い
     dock: { setIcon: vi.fn((_path: string) => undefined) } as { setIcon: Mock } | undefined,
     windows: [] as FakeWindow[],
+    views: [] as FakeView[],
     displays: [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
     menu: null as MenuItem[] | null,
     defaultSession: new FakeSession(),
@@ -257,6 +293,7 @@ export const electronModule = {
     },
   },
   BrowserWindow: FakeWindow,
+  WebContentsView: FakeView,
   dialog: {
     showOpenDialog: (...args: unknown[]) => state.dialog.showOpenDialog(...args),
     showSaveDialog: (...args: unknown[]) => state.dialog.showSaveDialog(...args),
@@ -527,6 +564,8 @@ export type BootOptions = {
   settings?: Record<string, unknown>;
   // 前に閉じたときのウインドウの位置と大きさ（window-state.json の中身）
   windowState?: Record<string, unknown>;
+  // 登録したプロファイル（profiles.json の中身）
+  profiles?: Record<string, unknown>;
   // 起動の前に、状態を変える（作り物の返事を決めるなど）
   before?: (s: typeof state) => void;
   // 起動が最後まで進むのを待たない（pty ホストの起動を止めておくときなど）
@@ -553,6 +592,7 @@ export async function boot(o: BootOptions = {}): Promise<typeof state> {
   state.packaged = o.packaged ?? false;
   if (o.settings) writeFileSync(join(state.userData, 'settings.json'), JSON.stringify({ version: 1, ...o.settings }));
   if (o.windowState) writeFileSync(join(state.userData, 'window-state.json'), JSON.stringify(o.windowState));
+  if (o.profiles) writeFileSync(join(state.userData, 'profiles.json'), JSON.stringify(o.profiles));
   // Electron にだけあるもの
   Object.assign(process, { resourcesPath: state.resources, getSystemVersion: () => systemVersion });
   o.before?.(state);
@@ -590,17 +630,25 @@ export function cleanup(): void {
 
 // 画面からの呼び出し（ipcRenderer.invoke の代わり）。受け口の返事（約束なら、その結果）を返す
 export async function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+  return await invokeFrom(appContents(), channel, ...args);
+}
+
+// 画面 sender からの呼び出し（足したプロファイルの画面から呼ぶとき）
+export async function invokeFrom(sender: unknown, channel: string, ...args: unknown[]): Promise<unknown> {
   const handler = state.handlers.get(channel);
   if (!handler) throw new Error(`${channel} の受け口がありません`);
-  return await handler({ sender: 'renderer' }, ...args);
+  return await handler({ sender }, ...args);
 }
 
 // 画面からの知らせ（ipcRenderer.send の代わり）
 export function sendFromRenderer(channel: string, ...args: unknown[]): unknown {
   const listener = state.listeners.get(channel);
   if (!listener) throw new Error(`${channel} の受け口がありません`);
-  return listener({ sender: 'renderer' }, ...args);
+  return listener({ sender: appContents() }, ...args);
 }
+
+// 既定のプロファイルの画面（主ウインドウの画面）。ウインドウを作る前は、名前だけの送り元
+const appContents = () => state.windows.at(-1)?.webContents ?? 'renderer';
 
 // 主ウインドウ（最後に作ったもの）
 export function mainWindow(): FakeWindow {

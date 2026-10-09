@@ -35,6 +35,7 @@ export type Notify = (
 ) => void;
 
 export type ProfileOptions = {
+  id: string;
   // セッションの一覧・チェックリスト・ソケット・pty ホストなどを置くフォルダ
   dataDir: string;
   // Claude Code の設定のフォルダ（起動する Claude Code とシェルに CLAUDE_CONFIG_DIR として渡す）。null は既定のプロファイルで、アプリの環境変数のまま
@@ -48,12 +49,15 @@ export type ProfileOptions = {
   // アプリ内ブラウザの webview が使うセッション（失敗した通信を Claude に見せる）
   preview: Session;
   remoteControl: boolean;
+  // セッションの一覧が変わったとき（ほかのプロファイルの画面に「通知あり」を出し直す）
+  onSessionsChanged?: () => void;
 };
 
 // プロファイル（Claude Code のアカウントごとの環境）が持つもの。セッションの一覧と Claude Code（pty ホスト）・
 // statusLine・登録した設定ファイル・Claude が使う MCP の中継（ソケット）・チェックリスト・予約・ウォークスルー・利用枠・
 // 開いているフォルダとシェル。画面からの呼び出しは、送り元の画面のプロファイルに渡す（index.ts）
 export class Profile {
+  readonly id: string;
   readonly claudeDir: string | null;
   readonly settings: AppSettings;
   readonly watchers: WorkspaceWatchers;
@@ -82,6 +86,7 @@ export class Profile {
   // 作るだけ。待ち受けと pty ホストは start() で始める（途中で終われと言われても、作ったものは close() で片付けられるように）
   constructor(private readonly options: ProfileOptions) {
     const { dataDir, send, claudeDir } = options;
+    this.id = options.id;
     this.claudeDir = claudeDir;
     this.settings = options.settings;
     this.shells = new ShellTerminals(
@@ -163,7 +168,10 @@ export class Profile {
       this.watchers,
       this.statusLines,
       {
-        onSessionsChanged: (sessions) => send(IpcChannel.SessionsChanged, sessions),
+        onSessionsChanged: (sessions) => {
+          send(IpcChannel.SessionsChanged, sessions);
+          this.options.onSessionsChanged?.();
+        },
         onChat: (batch) => send(IpcChannel.ChatEvents, batch),
         onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
         onTurnCompleted: (session) => notify(session.id, session.title, '作業が完了しました'),

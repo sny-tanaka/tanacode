@@ -9,6 +9,7 @@ import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
 import type { UsageLimits } from './usage';
 import type { ClaudeAccount } from './account';
+import type { NewProfile, ProfileInfo, ProfilesState } from './profile';
 import type { AgentLogRef, BashTask, TaskRef } from './task';
 import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
@@ -122,6 +123,13 @@ export const IpcChannel = {
   UsageRefresh: 'usage:refresh',
   UsageChanged: 'usage:changed',
   AccountGet: 'account:get',
+  ProfilesGet: 'profiles:get',
+  ProfilesSwitch: 'profiles:switch',
+  ProfilesAdd: 'profiles:add',
+  ProfilesUpdate: 'profiles:update',
+  ProfilesRemove: 'profiles:remove',
+  ProfilesPickDir: 'profiles:pick-dir',
+  ProfilesChanged: 'profiles:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
   StatusLineGet: 'statusline:get',
@@ -429,6 +437,20 @@ export type TanacodeApi = {
   account: {
     get(): Promise<ClaudeAccount | null>;
   };
+  // プロファイル（Claude Code のアカウントごとの環境）。画面はプロファイルごとにあり、どれも「自分のプロファイル」から見た様子を受け取る
+  profiles: {
+    get(): Promise<ProfilesState>;
+    // 見るプロファイルを変える（ウインドウの中の画面を切り替える）
+    switch(id: string): Promise<void>;
+    // 足して開く。Claude Code の設定のフォルダが無ければ作る
+    add(profile: NewProfile): Promise<ProfileInfo>;
+    update(id: string, patch: { name?: string; color?: string }): Promise<ProfileInfo>;
+    // 登録から外す（Claude Code が動いているセッションがあれば断る）。設定のフォルダとデータは消さない
+    remove(id: string): Promise<void>;
+    // 既にある Claude Code の設定のフォルダを選ぶ（隠しフォルダも見せる）
+    pickDir(): Promise<string | null>;
+    onChanged(listener: (state: ProfilesState) => void): () => void;
+  };
   // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って入力欄に打ち込む。
   // アプリが閉じていた・Mac がスリープしていたなどで時刻を過ぎていたものは送らず、missed として残す
   scheduled: {
@@ -672,6 +694,12 @@ export type IpcInvoke = {
   [IpcChannel.UsageGet]: Api['usage']['get'];
   [IpcChannel.UsageRefresh]: Api['usage']['refresh'];
   [IpcChannel.AccountGet]: Api['account']['get'];
+  [IpcChannel.ProfilesGet]: Api['profiles']['get'];
+  [IpcChannel.ProfilesSwitch]: Api['profiles']['switch'];
+  [IpcChannel.ProfilesAdd]: Api['profiles']['add'];
+  [IpcChannel.ProfilesUpdate]: Api['profiles']['update'];
+  [IpcChannel.ProfilesRemove]: Api['profiles']['remove'];
+  [IpcChannel.ProfilesPickDir]: Api['profiles']['pickDir'];
   [IpcChannel.ScheduledList]: Api['scheduled']['list'];
   [IpcChannel.ScheduledAdd]: Api['scheduled']['add'];
   [IpcChannel.ScheduledReschedule]: Api['scheduled']['reschedule'];
@@ -763,6 +791,7 @@ export type IpcEvent = {
   [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
   [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;
+  [IpcChannel.ProfilesChanged]: Payload<Api['profiles']['onChanged']>;
   [IpcChannel.ScheduledChanged]: Payload<Api['scheduled']['onChanged']>;
   [IpcChannel.SystemStats]: Payload<Api['system']['onStats']>;
   [IpcChannel.ClaudeVersionChanged]: Payload<Api['claudeVersion']['onChanged']>;

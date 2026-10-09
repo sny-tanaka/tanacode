@@ -832,6 +832,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
+| `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
+| `profiles/<id>/` | 足したプロファイルのデータ。中身は上の表のうち、プロファイルごとのもの（`sessions.json`・`settings.json`（登録した設定ファイル・Claude に許す機能だけを使う）・`checklists/`・ソケット・`statusline/`・`session-settings/`・`usage.json`・`scheduled-messages.json`・pty ホストのソケットとログ）。既定のプロファイルのものは、今までどおり上の場所 |
 
 作業を書き出したときは、保存のダイアログで選んだ場所に HTML ファイルを 1 つ書きます（`0600`）。
 
@@ -854,8 +856,13 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 ## ソースの構成
 
 - `src/main`: Electron のメインプロセス
-  - `index.ts`: アプリの入り口。ウインドウ・メニュー・通知・終了の確認・新しいバージョンなど、アプリ全体のものを持ち、画面からの呼び出しを、送り元の画面のプロファイルに渡す（今は既定のプロファイル 1 つだけ）
-  - `profile.ts`: プロファイル（Claude Code のアカウントごとの環境）が持つもの。セッションの一覧と pty ホスト・statusLine・登録した設定ファイル・MCP の中継のソケット・チェックリスト・予約・ウォークスルー・利用枠・開いているフォルダとシェル
+  - `index.ts`: アプリの入り口。ウインドウ・メニュー・通知・終了の確認・新しいバージョンなど、アプリ全体のものを持ち、画面からの呼び出しを、送り元の画面のプロファイルに渡す。
+    - 既定のプロファイルの画面はウインドウ自身。足したプロファイルの画面は、ウインドウいっぱいに重ねた `WebContentsView`（見ているものだけを出す）で、プロファイルを切り替えても画面の状態はそのまま残る
+    - 足したプロファイルの画面のセッションは `persist:tanacode-profile-<id>`（localStorage などを分ける）、アプリ内ブラウザの webview は `persist:tanacode-preview-<id>`（Cookie を分ける。`will-attach-webview` で main が差し替える）
+    - 画面からの呼び出しは、画面を作るときに覚えた持ち主（`contentsProfile`）で振り分け、ほかのプロファイルのものは扱わせない
+    - 通知は、プロファイルが 2 つ以上ならサブタイトルにプロファイルの名前を付け、クリックでそのプロファイルに切り替える。ほかのプロファイルに確認待ち・新しい応答があれば、どのプロファイルかは言わずに `profiles:changed` の `othersAttention` で知らせる
+  - `profile-registry.ts`: 登録したプロファイル（`profiles.json`）。足すときに Claude Code の設定のフォルダを作る（`0700`）。外しても、設定のフォルダとデータは消さない
+  - `profile.ts`: プロファイル（Claude Code のアカウントごとの環境）が持つもの。pty ホストもプロファイルごとに別のプロセスで、引き継ぎ（`adopt`）がほかのプロファイルの Claude Code を止めない。セッションの一覧と pty ホスト・statusLine・登録した設定ファイル・MCP の中継のソケット・チェックリスト・予約・ウォークスルー・利用枠・開いているフォルダとシェル
   - `session-manager.ts` / `session-store.ts`: セッションの作成・再開・アーカイブ・再起動・通知と、一覧の保存。Claude Code の入力欄への送信（セッションごとの順番待ち）と、ツールで返す状態も
   - `claude-session.ts`: pty ホストに `claude` を起動させる・引き継ぐ（起動オプション・statusLine と質問のフック・アプリ内ブラウザとセッションとチェックリストの MCP の注入）
   - `worktree.ts`: worktree のセッション（名前と場所・`.git/info/exclude`・`node_modules` の用意・残っているもの・控えを残して消す・作り直す）
