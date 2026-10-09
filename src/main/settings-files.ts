@@ -71,10 +71,10 @@ export function mergeSettings(profile: Settings, own: Settings): Settings {
 }
 
 // 登録した設定の statusLine のコマンド。無ければ、ユーザー自身の設定（~/.claude/settings.json）のもの
-function statusLineCommandOf(profile: Settings): string | null {
+function statusLineCommandOf(profile: Settings, claudeDir: string | null): string | null {
   const line = profile.statusLine;
   if (isRecord(line)) return line.type === 'command' && typeof line.command === 'string' && line.command ? line.command : null;
-  return userStatusLineCommand();
+  return userStatusLineCommand(claudeDir);
 }
 
 // 名前の既定。settings-litellm.json → litellm、settings.json → settings、foo.json → foo
@@ -85,11 +85,13 @@ export function defaultName(path: string): string {
 }
 
 export class SettingsFiles {
-  // runDir: 起動中のセッションが使う、合わせた設定のファイルを置く場所。onChanged: 登録が変わったとき（画面に新しい一覧を知らせる）
+  // runDir: 起動中のセッションが使う、合わせた設定のファイルを置く場所。onChanged: 登録が変わったとき（画面に新しい一覧を知らせる）。
+  // claudeDir: プロファイルの Claude Code の設定のフォルダ（登録した設定に statusLine が無いとき、ユーザー自身のものを探す。null は既定のプロファイル）
   constructor(
     private readonly store: Store,
     private readonly runDir: string,
     private readonly onChanged: (files: SettingsFile[]) => void = () => {},
+    private readonly claudeDir: string | null = null,
   ) {}
 
   list(): SettingsFile[] {
@@ -146,7 +148,7 @@ export class SettingsFiles {
   // sessions: セッションの MCP サーバーを足すか（子セッションの起動の確認のフックを入れる）
   prepare(sessionId: string, id: string, browser = false, sessions = false): PreparedSettings {
     const profile = readSettings(this.find(id));
-    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile), browser, sessions));
+    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, sessions));
     mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
     chmodSync(this.runDir, 0o700);
     const settingsFile = join(this.runDir, `${sessionId}.json`);

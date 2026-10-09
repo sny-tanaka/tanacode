@@ -39,7 +39,7 @@ import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, transla
 import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
-import { claudeConfigDir } from './claude-config';
+import { claudeConfigDir, claudeJsonPath } from './claude-config';
 
 let mainWindow: BrowserWindow | null = null;
 // プロファイル（Claude Code のアカウントごとの環境）。今は既定のもの 1 つだけ
@@ -241,10 +241,10 @@ async function pickFolder(p: Profile): Promise<string | null> {
 }
 
 // 設定ファイルの選択。Claude Code の設定は隠しフォルダ（~/.claude）にあるので、そこから始めて、隠しファイルも見せる
-async function pickSettingsFile(): Promise<string | null> {
+async function pickSettingsFile(p: Profile): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
     title: '設定ファイルを選択',
-    defaultPath: claudeConfigDir(),
+    defaultPath: claudeConfigDir(p.claudeDir),
     properties: ['openFile', 'showHiddenFiles'],
     filters: [{ name: 'JSON', extensions: ['json'] }],
   };
@@ -327,7 +327,7 @@ function registerIpc(): void {
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
   handle(IpcChannel.FolderFiles, (_e, cwd: string) => new Workspace(cwd).listFiles().catch(() => []));
-  handle(IpcChannel.FolderCommands, (_e, cwd: string) => listCommands(cwd, null));
+  handle(IpcChannel.FolderCommands, (e, cwd: string) => listCommands(cwd, null, P(e).claudeDir));
   handle(IpcChannel.FolderOpen, async (e, cwd: string) => {
     const p = P(e);
     const known = p.pickedFolders.has(cwd) || p.manager.list().some((s) => s.cwd === cwd || s.worktree?.root === cwd);
@@ -390,7 +390,7 @@ function registerIpc(): void {
   listen(IpcChannel.SessionsExportReveal, (_e, path: string) => {
     if (savedExports.has(path)) shell.showItemInFolder(path);
   });
-  handle(IpcChannel.SessionsDiscover, (e) => discoverSessions(P(e).manager.claudeSessionIds()));
+  handle(IpcChannel.SessionsDiscover, (e) => discoverSessions(P(e).manager.claudeSessionIds(), P(e).claudeDir));
   handle(IpcChannel.SessionsImport, (e, s: DiscoveredSession) => P(e).manager.importSession(s.claudeSessionId, s.cwd, s.title));
   handle(IpcChannel.SessionsConfigure, (e, id: string, options: SessionOptions) => P(e).manager.configure(id, options));
   handle(IpcChannel.SessionsRestart, (e, id: string) => P(e).manager.restart(id));
@@ -456,29 +456,29 @@ function registerIpc(): void {
     new Workspace(P(e).cwdOf(id)).search(query, options),
   );
   handle(IpcChannel.ListFiles, (e, id: string) => new Workspace(P(e).cwdOf(id)).listFiles());
-  handle(IpcChannel.CommandsList, (e, id: string) => listCommands(P(e).manager.cwdOf(id), P(e).manager.transcriptOf(id)));
+  handle(IpcChannel.CommandsList, (e, id: string) => listCommands(P(e).manager.cwdOf(id), P(e).manager.transcriptOf(id), P(e).claudeDir));
   handle(IpcChannel.AttachmentSave, (_e, name: string, data: Uint8Array) => saveAttachment(name, data));
   handle(IpcChannel.SubagentsGet, (e, id: string) => P(e).manager.subagents(id));
   handle(IpcChannel.TasksBash, (e, id: string) => P(e).manager.bashTasks(id));
   handle(IpcChannel.KnowledgeGet, (e, id: string) => P(e).manager.knowledge(id));
   handle(IpcChannel.ContextGet, (e, id: string) => P(e).manager.context(id));
   handle(IpcChannel.SettingsFilesList, (e) => P(e).settingsFiles.list());
-  handle(IpcChannel.SettingsFilesPick, () => pickSettingsFile());
+  handle(IpcChannel.SettingsFilesPick, (e) => pickSettingsFile(P(e)));
   handle(IpcChannel.SettingsFilesAdd, (e, path: string, name?: string) => P(e).settingsFiles.add(path, name));
   handle(IpcChannel.SettingsFilesRename, (e, id: string, name: string) => P(e).settingsFiles.rename(id, name));
   handle(IpcChannel.SettingsFilesRemove, (e, id: string) => P(e).settingsFiles.remove(id));
-  handle(IpcChannel.ModelsGet, () => readModelCatalog().catch(() => null));
+  handle(IpcChannel.ModelsGet, (e) => readModelCatalog(P(e).claudeDir).catch(() => null));
   handle(IpcChannel.StatusLineGet, (e, id: string) => P(e).manager.statusLine(id));
   handle(IpcChannel.UsageGet, (e) => P(e).usage.get());
   handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
   handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
   handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
-  handle(IpcChannel.AccountGet, () => readClaudeAccount());
+  handle(IpcChannel.AccountGet, (e) => readClaudeAccount(claudeJsonPath(P(e).claudeDir)));
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
-  handle(IpcChannel.ModelsRefresh, () =>
-    readModelCatalog().then(
+  handle(IpcChannel.ModelsRefresh, (e) =>
+    readModelCatalog(P(e).claudeDir).then(
       (catalog) => (catalog ? { catalog } : { error: 'Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません' }),
       (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }),
     ),
@@ -858,6 +858,7 @@ app.whenReady().then(async () => {
   // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く
   profile = new Profile({
     dataDir: app.getPath('userData'),
+    claudeDir: null,
     settings,
     send,
     host: () => mainWindow?.webContents ?? null,

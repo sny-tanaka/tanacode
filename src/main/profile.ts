@@ -37,6 +37,8 @@ export type Notify = (
 export type ProfileOptions = {
   // セッションの一覧・チェックリスト・ソケット・pty ホストなどを置くフォルダ
   dataDir: string;
+  // Claude Code の設定のフォルダ（起動する Claude Code とシェルに CLAUDE_CONFIG_DIR として渡す）。null は既定のプロファイルで、アプリの環境変数のまま
+  claudeDir: string | null;
   // このプロファイルの設定（登録した設定ファイル・Claude に許す機能・アプリ内ブラウザの許す先）
   settings: AppSettings;
   // このプロファイルの画面への知らせと、画面（アプリ内ブラウザの webview を持つもの）
@@ -52,6 +54,7 @@ export type ProfileOptions = {
 // statusLine・登録した設定ファイル・Claude が使う MCP の中継（ソケット）・チェックリスト・予約・ウォークスルー・利用枠・
 // 開いているフォルダとシェル。画面からの呼び出しは、送り元の画面のプロファイルに渡す（index.ts）
 export class Profile {
+  readonly claudeDir: string | null;
   readonly settings: AppSettings;
   readonly watchers: WorkspaceWatchers;
   readonly shells: ShellTerminals;
@@ -78,13 +81,17 @@ export class Profile {
 
   // 作るだけ。待ち受けと pty ホストは start() で始める（途中で終われと言われても、作ったものは close() で片付けられるように）
   constructor(private readonly options: ProfileOptions) {
-    const { dataDir, send } = options;
+    const { dataDir, send, claudeDir } = options;
+    this.claudeDir = claudeDir;
     this.settings = options.settings;
-    this.shells = new ShellTerminals({
-      onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
-      onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
-      onOpened: (owner, id, name) => send(IpcChannel.ShellOpened, { owner, id, name }),
-    });
+    this.shells = new ShellTerminals(
+      {
+        onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
+        onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
+        onOpened: (owner, id, name) => send(IpcChannel.ShellOpened, { owner, id, name }),
+      },
+      claudeDir,
+    );
     this.watchers = new WorkspaceWatchers((root, paths) => {
       send(IpcChannel.FilesChanged, { root, paths });
     });
@@ -97,7 +104,7 @@ export class Profile {
       (id, input) => this.manager.askQuestionsChanged(id, input),
     );
     // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせたファイルは session-settings に置く
-    this.settingsFiles = new SettingsFiles(this.settings, join(dataDir, 'session-settings'), (files) => send(IpcChannel.SettingsFilesChanged, files));
+    this.settingsFiles = new SettingsFiles(this.settings, join(dataDir, 'session-settings'), (files) => send(IpcChannel.SettingsFilesChanged, files), claudeDir);
     this.browser = new BrowserControl({
       send,
       enabled: () => this.settings.browserControlEnabled(),
@@ -121,7 +128,7 @@ export class Profile {
     });
     this.browser.watchNetwork(options.preview);
     this.checklists = new ChecklistStore(join(dataDir, 'checklists'), (id, lists) => send(IpcChannel.ChecklistChanged, { sessionId: id, lists }));
-    this.usage = new UsageMonitor(join(dataDir, 'usage.json'), (value) => send(IpcChannel.UsageChanged, value));
+    this.usage = new UsageMonitor(join(dataDir, 'usage.json'), (value) => send(IpcChannel.UsageChanged, value), claudeDir);
   }
 
   // 待ち受けと pty ホストを始め、前に起動したアプリから動き続けている Claude Code を引き継ぐ。
@@ -177,6 +184,7 @@ export class Profile {
       () => this.sessionsLaunch(),
       () => this.checklistLaunch(),
       () => this.walkthroughLaunch(),
+      this.claudeDir,
     );
     const manager = this.manager;
     this.sessionsControl = new SessionsControl({ host: manager, enabled: () => this.settings.sessionsControlEnabled(), home: homedir() });

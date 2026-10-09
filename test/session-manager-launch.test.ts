@@ -1,8 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PreparedSettings, SettingsFiles } from '../src/main/settings-files';
 import { line, ScriptedApp, type ScriptedOptions } from './helpers/scripted-claude';
 
-// 起動のしかた: 登録した設定ファイル（--settings・--model）と、アプリが足す MCP サーバー（--mcp-config）（SessionManager）
+// 起動のしかた: 登録した設定ファイル（--settings・--model）と、アプリが足す MCP サーバー（--mcp-config）、プロファイルの設定のフォルダ（SessionManager）
 
 let app: ScriptedApp;
 const start = (options: ScriptedOptions = {}) => (app = new ScriptedApp(options));
@@ -198,5 +201,25 @@ describe('起動の権限モードと再開', () => {
   it('知らないセッションは開けない', async () => {
     start();
     await expect(app.manager.open('nope')).rejects.toThrow('unknown session: nope');
+  });
+});
+
+describe('プロファイルの Claude Code の設定のフォルダ', () => {
+  it('指定すると、Claude Code に CLAUDE_CONFIG_DIR として渡し、会話ログもそのフォルダの中から読む。既定のプロファイルは渡さない', async () => {
+    const claudeDir = mkdtempSync(join(tmpdir(), 'tanacode-profile-'));
+    try {
+      start({ claudeDir });
+      const { id, pty } = app.create();
+      expect(pty.request.env.CLAUDE_CONFIG_DIR).toBe(claudeDir);
+      expect(app.transcript(id).startsWith(join(claudeDir, 'projects'))).toBe(true);
+      await app.ready(id);
+      app.append(id, line.user('はじめ'), line.text('プロファイルの会話です'), line.turnEnd());
+      await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+      app.dispose();
+      start();
+      expect(app.create().pty.request.env.CLAUDE_CONFIG_DIR || null).toBeNull();
+    } finally {
+      rmSync(claudeDir, { recursive: true, force: true });
+    }
   });
 });

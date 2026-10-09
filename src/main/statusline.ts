@@ -22,8 +22,9 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる（browser-gate.ts）。
 // permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）。
 // sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
-export function sessionSettings(browser = false, sessions = false): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(), browser, sessions));
+// claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
+export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null): string {
+  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
@@ -46,10 +47,10 @@ export function ownSettings(inner: string | null, browser = false, sessions = fa
 // ユーザー自身の設定（~/.claude/settings.json）の statusLine だけを探す。
 // プロジェクトの設定（.claude/settings*.json）は見ない。clone したリポジトリのコマンドを --settings に写すと、
 // Claude Code のフォルダの信頼の確認や管理ポリシーを通らずに動くおそれがあるため
-export function userStatusLineCommand(): string | null {
+export function userStatusLineCommand(claudeDir: string | null = null): string | null {
   let settings: { statusLine?: { type?: string; command?: string } } | null = null;
   try {
-    settings = JSON.parse(readFileSync(join(claudeConfigDir(), 'settings.json'), 'utf8'));
+    settings = JSON.parse(readFileSync(join(claudeConfigDir(claudeDir), 'settings.json'), 'utf8'));
   } catch {
     // 無い・読めない設定は飛ばす
   }

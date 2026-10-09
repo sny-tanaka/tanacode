@@ -884,7 +884,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `context-tracker.ts`: コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・やりとり）と、その大きさの見積もり
   - `statusline.ts` / `usage-monitor.ts` / `claude-account.ts` / `model-catalog.ts`: statusLine・利用枠・ログインしているアカウント・モデル一覧
-  - `claude-config.ts`: Claude Code の設定のフォルダ（`CLAUDE_CONFIG_DIR`。無ければ `~/.claude`）と `.claude.json`・会話ログの場所
+  - `claude-config.ts`: Claude Code の設定のフォルダと `.claude.json`・会話ログの場所。プロファイルごとのフォルダ（`Profile.claudeDir`）があればそこ、既定のプロファイルは `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`。プロファイルのフォルダは、起動する Claude Code とシェルに `CLAUDE_CONFIG_DIR` として渡す（`childEnv`）
   - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視

@@ -112,10 +112,11 @@ const BORROW_FROM_LOGS = 3;
 // / で始まる入力の補完候補: カスタムコマンド（.claude/commands）・スキル・組み込みコマンド。
 // スキルは Claude Code が会話ログに書く一覧（skill_listing）に、組み込み・プラグインのものも含めて載っている。
 // まだ会話が無ければ、同じフォルダの前の会話とフォルダ（.claude/skills）から探す
-export async function listCommands(cwd: string, transcript: string | null): Promise<SlashCommand[]> {
-  const config = claudeConfigDir();
+// claudeDir: プロファイルの Claude Code の設定のフォルダ（null は既定のプロファイル）
+export async function listCommands(cwd: string, transcript: string | null, claudeDir: string | null = null): Promise<SlashCommand[]> {
+  const config = claudeConfigDir(claudeDir);
   let listed = transcript ? await skillsFromTranscript(transcript) : [];
-  if (listed.length === 0) listed = await skillsFromProjectLogs(cwd);
+  if (listed.length === 0) listed = await skillsFromProjectLogs(cwd, claudeDir);
   const custom = [
     ...(await commandsIn(join(cwd, '.claude', 'commands'), 'project')),
     ...(await commandsIn(join(config, 'commands'), 'user')),
@@ -149,8 +150,8 @@ async function skillsFromTranscript(file: string): Promise<SlashCommand[]> {
   }
 }
 
-async function skillsFromProjectLogs(cwd: string): Promise<SlashCommand[]> {
-  const dir = projectLogDir(cwd);
+async function skillsFromProjectLogs(cwd: string, claudeDir: string | null): Promise<SlashCommand[]> {
+  const dir = projectLogDir(cwd, claudeDir);
   const names = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.jsonl'));
   const files = await Promise.all(names.map(async (n) => ({ file: join(dir, n), at: (await stat(join(dir, n)).catch(() => null))?.mtimeMs ?? 0 })));
   for (const { file } of files.sort((a, b) => b.at - a.at).slice(0, BORROW_FROM_LOGS)) {

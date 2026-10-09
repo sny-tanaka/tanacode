@@ -6,7 +6,7 @@ import { claudeVersion } from './claude-version';
 import { claudeConfigDir } from './claude-config';
 
 // Claude Code が /model の一覧として持っている控え（~/.claude/cache/model-catalog/<組織>-<…>-cc.json）
-const catalogDir = () => join(claudeConfigDir(), 'cache', 'model-catalog');
+const catalogDir = (claudeDir: string | null) => join(claudeConfigDir(claudeDir), 'cache', 'model-catalog');
 
 type CatalogModel = {
   id?: string;
@@ -18,8 +18,9 @@ type CatalogModel = {
 };
 
 // 控えのうち、Claude Code 用（surface が cc）で一番新しいものを読む。/model の画面は開かない
-export async function readModelCatalog(): Promise<ModelCatalog | null> {
-  const dir = catalogDir();
+// claudeDir: プロファイルの Claude Code の設定のフォルダ（null は既定のプロファイル）
+export async function readModelCatalog(claudeDir: string | null = null): Promise<ModelCatalog | null> {
+  const dir = catalogDir(claudeDir);
   const names = await readdir(dir).catch(() => [] as string[]);
   const files = await Promise.all(
     names.filter((n) => n.endsWith('-cc.json')).map(async (n) => ({ path: join(dir, n), mtime: (await stat(join(dir, n))).mtimeMs })),

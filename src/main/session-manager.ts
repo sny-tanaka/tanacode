@@ -185,6 +185,8 @@ export class SessionManager {
     private readonly checklistMcp: () => McpLaunch | null = () => null,
     // 起動する Claude Code に、ウォークスルーの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly walkthroughMcp: () => McpLaunch | null = () => null,
+    // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡し、会話ログもその中を読む）。null は既定のプロファイル
+    private readonly claudeDir: string | null = null,
   ) {}
 
   // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
@@ -356,13 +358,13 @@ export class SessionManager {
   // 今の会話ログのパス
   transcriptOf(id: string): string | null {
     const record = this.store.get(id);
-    return record ? transcriptPath(record.cwd, record.claudeSessionId) : null;
+    return record ? transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir) : null;
   }
 
   history(id: string): Promise<ChatEvent[]> {
     const record = this.store.get(id);
     if (!record) return Promise.resolve([]);
-    return readChatLog(transcriptPath(record.cwd, record.claudeSessionId), record.cwd);
+    return readChatLog(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd);
   }
 
   // 作業の書き出しの材料。動いているセッションも、会話ログを最初から読み直す（画像も画像置き場に入れ直す）
@@ -370,7 +372,7 @@ export class SessionManager {
     const record = this.store.get(id);
     if (!record) throw new Error('セッションが見つかりません');
     const live = !!this.runtimes.get(id)?.process;
-    const { events, branches } = await readExportLog(transcriptPath(record.cwd, record.claudeSessionId), record.cwd, live);
+    const { events, branches } = await readExportLog(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd, live);
     return { events, branches, home: homedir() };
   }
 
@@ -598,7 +600,7 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     if (rt) return rt.context.current();
     const record = this.store.get(id);
-    return record ? readContext(transcriptPath(record.cwd, record.claudeSessionId), record.cwd) : { items: [] };
+    return record ? readContext(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd) : { items: [] };
   }
 
   bashTasks(id: string): BashTask[] {
@@ -924,7 +926,7 @@ export class SessionManager {
     const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
-    const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId));
+    const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir));
     if (!resume) this.store.update(id, { claudeSessionId: randomUUID() });
     const claudeSessionId = this.store.get(id)!.claudeSessionId;
 
@@ -1010,7 +1012,7 @@ export class SessionManager {
     runtime.remoteConnected = remote && !adopted ? null : false;
     runtime.remoteSwitching = false;
     // 読み直す会話ログが無ければ（新しい会話）、読み終わりの知らせは来ないので、はじめから読み終えたことにする
-    runtime.historyLoaded = fileSize(transcriptPath(record.cwd, claudeSessionId)) === 0;
+    runtime.historyLoaded = fileSize(transcriptPath(record.cwd, claudeSessionId, this.claudeDir)) === 0;
     runtime.lastBridgeUrl = undefined;
     runtime.remoteTried = null;
     // 引き継ぐときは、claude の今の画面の大きさで描き直してから、アプリの大きさに合わせる
@@ -1054,6 +1056,7 @@ export class SessionManager {
         sessions,
         checklist,
         walkthrough,
+        claudeDir: this.claudeDir,
         ...rt.size,
       },
       {
@@ -1116,7 +1119,7 @@ export class SessionManager {
     if (adopted) void this.catchUpStatusLine(id, rt.process);
     // 引き継いだ claude は前のアプリの頃から動いていて、会話もしている。画面から入力欄を読めるのを待たずに、起動済みとする
     // （入力欄を読むのは画面が描き直されたときなので、読み取りがずれたまま Claude Code が何も描かずに待っていると、いつまでも「起動中」になる）
-    if (adopted && hasConversation(transcriptPath(record.cwd, claudeSessionId))) screen.markReady();
+    if (adopted && hasConversation(transcriptPath(record.cwd, claudeSessionId, this.claudeDir))) screen.markReady();
     if (adopted && (adopted.cols !== rt.size.cols || adopted.rows !== rt.size.rows)) this.resize(id, rt.size.cols, rt.size.rows);
     this.emitSessions();
   }
@@ -1250,7 +1253,7 @@ export class SessionManager {
   // 今の会話ログのセッションのフォルダ（subagents/・workflows/ がある）
   private sessionDir(id: string): string {
     const record = this.store.get(id)!;
-    return join(dirname(transcriptPath(record.cwd, record.claudeSessionId)), record.claudeSessionId);
+    return join(dirname(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir)), record.claudeSessionId);
   }
 
   private handleScreen(id: string, screen: ScreenTracker, info: ScreenInfo): void {
