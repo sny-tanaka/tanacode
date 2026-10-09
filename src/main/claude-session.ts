@@ -46,6 +46,8 @@ type Options = {
   // チェックリストの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）
   checklist?: McpLaunch | null;
   walkthrough?: McpLaunch | null;
+  // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
+  claudeDir?: string | null;
   cols: number;
   rows: number;
 };
@@ -83,7 +85,7 @@ export class ClaudeSession {
     } else {
       const args = claudeArgs(this.options);
       // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）
-      const env = { ...childEnv(), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile, ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}) };
+      const env = { ...childEnv(this.options.claudeDir ?? null), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile, ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}) };
       const { worktree, worktreeRoot, resume } = this.options;
       const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
       proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd: spawnCwd, env, cols, rows });
@@ -100,7 +102,7 @@ export class ClaudeSession {
     this.process = proc;
 
     this.transcript = new TranscriptFollower(
-      transcriptPath(cwd, claudeSessionId),
+      transcriptPath(cwd, claudeSessionId, this.options.claudeDir ?? null),
       {
         onEntry: this.handlers.onEntry,
         onHistoryLoaded: this.handlers.onHistoryLoaded,
@@ -165,7 +167,7 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId'>>,
+    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir'>>,
 ): string[] {
   const {
     claudeSessionId,
@@ -181,6 +183,7 @@ export function claudeArgs(
     checklist = null,
     walkthrough = null,
     sessionId = '',
+    claudeDir = null,
   } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
   // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
@@ -202,16 +205,18 @@ export function claudeArgs(
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、
   // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、この設定に入れる
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions));
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir));
   return args;
 }
 
-// 会話ログのファイル（Claude Code の設定のフォルダの projects の下）
-export function transcriptPath(cwd: string, claudeSessionId: string): string {
-  return join(projectLogDir(cwd), `${claudeSessionId}.jsonl`);
+// 会話ログのファイル（Claude Code の設定のフォルダの projects の下）。claudeDir: プロファイルの設定のフォルダ（null は既定のプロファイル）
+export function transcriptPath(cwd: string, claudeSessionId: string, claudeDir: string | null = null): string {
+  return join(projectLogDir(cwd, claudeDir), `${claudeSessionId}.jsonl`);
 }
 
-export function childEnv(): Record<string, string> {
+// アプリが起動する Claude Code・シェルの環境変数。claudeDir: プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR にする。
+// null は既定のプロファイルで、アプリの環境変数のまま）
+export function childEnv(claudeDir: string | null = null): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
@@ -221,6 +226,7 @@ export function childEnv(): Record<string, string> {
   delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CLAUDE_CODE_CHILD_SESSION;
   delete env.ELECTRON_RUN_AS_NODE;
+  if (claudeDir) env.CLAUDE_CONFIG_DIR = claudeDir;
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
   return env;

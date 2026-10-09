@@ -151,6 +151,8 @@ export type ScriptedOptions = {
   sessionsMcp?: () => McpLaunch | null;
   checklistMcp?: () => McpLaunch | null;
   walkthroughMcp?: () => McpLaunch | null;
+  // プロファイルの Claude Code の設定のフォルダ（無ければ既定のプロファイル）
+  claudeDir?: string | null;
 };
 
 // SessionManager と、それが配信したもの
@@ -160,6 +162,7 @@ export class ScriptedApp {
   readonly cwd = join(this.root, 'work');
   readonly userData = join(this.root, 'userData');
   readonly host = new ScriptedHost();
+  readonly claudeDir: string | null;
   readonly chat = new Map<string, ChatEvent[]>();
   readonly batches: ChatBatch[] = [];
   readonly attentions: { id: string; attention: Attention }[] = [];
@@ -223,7 +226,9 @@ export class ScriptedApp {
       options.sessionsMcp,
       options.checklistMcp,
       options.walkthroughMcp,
+      options.claudeDir ?? null,
     );
+    this.claudeDir = options.claudeDir ?? null;
   }
 
   // 新しいセッションを作る（Claude Code を起動する）。起動した pty を返す
@@ -259,7 +264,7 @@ export class ScriptedApp {
     const pty = this.pty(id);
     const claudeId = pty.arg('--session-id') ?? pty.arg('--resume');
     if (!claudeId) throw new Error('会話の ID が起動の引数にありません');
-    return transcriptPath(this.cwd, claudeId);
+    return transcriptPath(this.cwd, claudeId, this.claudeDir);
   }
 
   // 会話ログに行を書き足す（claude が書いたことにする）

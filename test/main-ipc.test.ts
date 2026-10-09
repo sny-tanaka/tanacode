@@ -69,7 +69,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SettingsFilesRemove, ['f1'], call('settingsFiles.remove', 'f1')],
     [IpcChannel.UsageGet, [], call('usage.get')],
     [IpcChannel.UsageRefresh, [], call('usage.refresh')],
-    [IpcChannel.AccountGet, [], call('readClaudeAccount')],
+    // 既定のプロファイルは、アプリの環境変数のままの .claude.json を読む
+    [IpcChannel.AccountGet, [], call('readClaudeAccount', join(homedir(), '.claude.json'))],
     [IpcChannel.ClaudeVersionGet, [], call('claudeVersions.get')],
     [IpcChannel.AppUpdateGet, [], call('appUpdates.get')],
     [IpcChannel.BrowserAsksGet, [], call('browser.pendingAsks')],
@@ -87,9 +88,10 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.GitBranchDiffSides, ['s1', 'base-sha', 'src/a.ts'], callIn(cwdOf('s1'), 'scm.branchDiffSides', 'base-sha', 'src/a.ts')],
     [IpcChannel.GitBaseline, ['s1', 'base-sha', 'src/a.ts'], callIn(cwdOf('s1'), 'scm.baseline', 'base-sha', 'src/a.ts')],
     [IpcChannel.GitLastMessage, ['s1'], callIn(cwdOf('s1'), 'scm.lastCommitMessage')],
-    [IpcChannel.CommandsList, ['s1'], call('listCommands', cwdOf('s1'), '/transcripts/s1.jsonl')],
-    [IpcChannel.FolderCommands, ['/work/cafe'], call('listCommands', '/work/cafe', null)],
-    [IpcChannel.SessionsDiscover, [], call('discoverSessions', new Set(['known-1']))],
+    // 最後の引数は、プロファイルの Claude Code の設定のフォルダ（既定のプロファイルは null）
+    [IpcChannel.CommandsList, ['s1'], call('listCommands', cwdOf('s1'), '/transcripts/s1.jsonl', null)],
+    [IpcChannel.FolderCommands, ['/work/cafe'], call('listCommands', '/work/cafe', null, null)],
+    [IpcChannel.SessionsDiscover, [], call('discoverSessions', new Set(['known-1']), null)],
     [
       IpcChannel.SessionsImport,
       [{ claudeSessionId: 'c1', cwd: '/work/cafe', title: '外の会話', updatedAt: 1 }],

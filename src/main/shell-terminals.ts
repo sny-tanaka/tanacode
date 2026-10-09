@@ -16,11 +16,15 @@ export class ShellTerminals {
   private shells = new Map<string, Shell>();
   private seq = 0;
 
-  constructor(private readonly listeners: Listeners) {}
+  // claudeDir: プロファイルの Claude Code の設定のフォルダ（シェルで起動する claude も、そのプロファイルのアカウントを使う）。null は既定のプロファイル
+  constructor(
+    private readonly listeners: Listeners,
+    private readonly claudeDir: string | null = null,
+  ) {}
 
   create(owner: string, cwd: string, cols: number, rows: number): { id: string; name: string } {
     const shell = process.env.SHELL || '/bin/zsh';
-    const env = childEnv();
+    const env = childEnv(this.claudeDir);
     env.TERM_PROGRAM = 'tanacode';
     const proc = pty.spawn(shell, ['-l'], { name: 'xterm-256color', cols, rows, cwd, env });
     const id = `shell-${++this.seq}`;
@@ -37,7 +41,7 @@ export class ShellTerminals {
   // ログインシェルで実行する（Finder から起動したアプリでも、ふだんの PATH の npm を使うため）
   run(owner: string, cwd: string, command: string, name: string): Promise<number> {
     const shell = process.env.SHELL || '/bin/zsh';
-    const env = childEnv();
+    const env = childEnv(this.claudeDir);
     env.TERM_PROGRAM = 'tanacode';
     const proc = pty.spawn(shell, ['-l', '-c', command], { name: 'xterm-256color', cols: 100, rows: 24, cwd, env });
     const id = `task-${++this.seq}`;

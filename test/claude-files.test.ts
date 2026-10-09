@@ -217,4 +217,16 @@ describe('Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）', () => {
     writeFileSync(join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'work@corp.example' } }));
     expect((await account.readClaudeAccount())?.email).toBe('work@corp.example');
   });
+
+  it('プロファイルの設定のフォルダを渡すと、環境変数よりそちらを使い、起動する Claude Code・シェルにも CLAUDE_CONFIG_DIR として渡す', () => {
+    process.env.CLAUDE_CONFIG_DIR = join(home, 'from-env');
+    const dir = join(home, '.claude-work');
+    expect(config.claudeConfigDir(dir)).toBe(dir);
+    expect(config.claudeJsonPath(dir)).toBe(join(dir, '.claude.json'));
+    expect(session.transcriptPath('/w', 'abc', dir)).toBe(join(dir, 'projects', '-w', 'abc.jsonl'));
+    expect(session.childEnv(dir).CLAUDE_CONFIG_DIR).toBe(dir);
+    // 既定のプロファイル（null）は、アプリの環境変数のまま
+    expect(config.claudeConfigDir(null)).toBe(join(home, 'from-env'));
+    expect(session.childEnv().CLAUDE_CONFIG_DIR).toBe(join(home, 'from-env'));
+  });
 });

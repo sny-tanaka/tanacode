@@ -9,8 +9,9 @@ const MAX_SESSIONS = 200;
 const CHUNK_BYTES = 64 * 1024;
 
 // アプリの外（ターミナルの claude など）で作られた会話を、Claude Code の設定のフォルダ（~/.claude）の projects から探す。新しい順
-export async function discoverSessions(known: ReadonlySet<string>): Promise<DiscoveredSession[]> {
-  const root = join(claudeConfigDir(), 'projects');
+// claudeDir: プロファイルの Claude Code の設定のフォルダ（null は既定のプロファイル）
+export async function discoverSessions(known: ReadonlySet<string>, claudeDir: string | null = null): Promise<DiscoveredSession[]> {
+  const root = join(claudeConfigDir(claudeDir), 'projects');
   const files: { file: string; mtime: number }[] = [];
   for (const dir of await readdir(root).catch(() => [] as string[])) {
     for (const name of await readdir(join(root, dir)).catch(() => [] as string[])) {

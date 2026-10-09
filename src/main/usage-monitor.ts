@@ -8,9 +8,11 @@ import { claudeJsonPath } from './claude-config';
 export class UsageMonitor {
   private current: UsageLimits | null = null;
 
+  // claudeDir: プロファイルの Claude Code の設定のフォルダ（/usage の控えを読む .claude.json の場所。null は既定のプロファイル）
   constructor(
     private readonly file: string,
     private readonly onChange: (usage: UsageLimits) => void,
+    private readonly claudeDir: string | null = null,
   ) {}
 
   async start(): Promise<void> {
@@ -37,7 +39,7 @@ export class UsageMonitor {
 
   // Claude Code の控えの方が新しければ使う（本家で /usage を開いたあとなど）
   async refresh(): Promise<void> {
-    const cached = await readClaudeCache();
+    const cached = await readClaudeCache(this.claudeDir);
     if (cached) this.set(cached);
   }
 
@@ -52,9 +54,9 @@ export class UsageMonitor {
 type CachedLimit = { kind?: string; percent?: number; resets_at?: string | null };
 
 // Claude Code が /usage を開いたときに書く控え（.claude.json の cachedUsageUtilization）
-async function readClaudeCache(): Promise<UsageLimits | null> {
+async function readClaudeCache(claudeDir: string | null): Promise<UsageLimits | null> {
   try {
-    const json = JSON.parse(await readFile(claudeJsonPath(), 'utf8')) as {
+    const json = JSON.parse(await readFile(claudeJsonPath(claudeDir), 'utf8')) as {
       cachedUsageUtilization?: { fetchedAtMs?: number; utilization?: { limits?: CachedLimit[] } };
     };
     const cache = json.cachedUsageUtilization;
