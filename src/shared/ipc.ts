@@ -8,6 +8,7 @@ import type { SettingsFile } from './settings-file';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
 import type { UsageLimits } from './usage';
+import type { ClaudeAccount } from './account';
 import type { AgentLogRef, BashTask, TaskRef } from './task';
 import type { AppUpdate } from './app-update';
 import type { WorkflowRun } from './workflow';
@@ -120,6 +121,7 @@ export const IpcChannel = {
   UsageGet: 'usage:get',
   UsageRefresh: 'usage:refresh',
   UsageChanged: 'usage:changed',
+  AccountGet: 'account:get',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
   StatusLineGet: 'statusline:get',
@@ -423,6 +425,10 @@ export type TanacodeApi = {
     refresh(): Promise<void>;
     onChanged(listener: (usage: UsageLimits) => void): () => void;
   };
+  // Claude Code に /login したアカウント（~/.claude.json から読む。ログインしていなければ null）
+  account: {
+    get(): Promise<ClaudeAccount | null>;
+  };
   // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って入力欄に打ち込む。
   // アプリが閉じていた・Mac がスリープしていたなどで時刻を過ぎていたものは送らず、missed として残す
   scheduled: {
@@ -665,6 +671,7 @@ export type IpcInvoke = {
   [IpcChannel.SubagentsGet]: Api['subagents']['get'];
   [IpcChannel.UsageGet]: Api['usage']['get'];
   [IpcChannel.UsageRefresh]: Api['usage']['refresh'];
+  [IpcChannel.AccountGet]: Api['account']['get'];
   [IpcChannel.ScheduledList]: Api['scheduled']['list'];
   [IpcChannel.ScheduledAdd]: Api['scheduled']['add'];
   [IpcChannel.ScheduledReschedule]: Api['scheduled']['reschedule'];

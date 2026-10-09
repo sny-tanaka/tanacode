@@ -133,6 +133,7 @@ const meta = {
     mockApi({
       'settingsFiles.list': () =>
         Promise.resolve([{ id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' }]),
+      'account.get': () => Promise.resolve({ email: 'me@example.com', organization: "me@example.com's Organization", plan: 'Claude Max' }),
     }),
 } satisfies Meta<typeof Demo>;
 

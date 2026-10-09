@@ -69,6 +69,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SettingsFilesRemove, ['f1'], call('settingsFiles.remove', 'f1')],
     [IpcChannel.UsageGet, [], call('usage.get')],
     [IpcChannel.UsageRefresh, [], call('usage.refresh')],
+    [IpcChannel.AccountGet, [], call('readClaudeAccount')],
     [IpcChannel.ClaudeVersionGet, [], call('claudeVersions.get')],
     [IpcChannel.AppUpdateGet, [], call('appUpdates.get')],
     [IpcChannel.BrowserAsksGet, [], call('browser.pendingAsks')],

@@ -1,5 +1,6 @@
 import type { ModelCatalog } from '@shared/models';
 import type { UsageLimits } from '@shared/usage';
+import type { ClaudeAccount } from '@shared/account';
 import type { DemoProject } from './backend';
 
 // デモ用の作り物のプロジェクト（カフェのメニューを出す小さな React のアプリ）。実在の情報は含めない
@@ -202,6 +203,9 @@ export const CSS_WITH_TAX = `.menu-card {
   color: #8a7f72;
 }
 `;
+
+// デモのアカウント（セッション一覧の下のアカウント欄に出る）
+export const DEMO_ACCOUNT: ClaudeAccount = { email: 'you@example.com', organization: "you@example.com's Organization", plan: 'Claude Max' };
 
 export function demoUsage(): UsageLimits {
   const now = Date.now();

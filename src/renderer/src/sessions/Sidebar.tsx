@@ -11,7 +11,7 @@ import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIc
 import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
 import { PREPARING_LABEL } from './worktree';
-import { UsagePanel } from '../usage/UsagePanel';
+import { AccountPanel } from '../account/AccountPanel';
 
 // 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
 export const SESSION_LOCK_KEY = 'tanacode.sessionOrderLock';
@@ -298,7 +298,7 @@ export const Sidebar = memo(function Sidebar({
           </>
         )}
       </div>
-      <UsagePanel />
+      <AccountPanel />
     </nav>
   );
 });

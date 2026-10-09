@@ -1,7 +1,7 @@
 import { REPO_URL } from '@shared/app-update';
 import type { ChatEvent } from '@shared/chat';
 import { DemoBackend } from '../backend';
-import { cafeProject, DEMO_CATALOG, demoUsage, ROOT } from '../data';
+import { cafeProject, DEMO_ACCOUNT, DEMO_CATALOG, demoUsage, ROOT } from '../data';
 import { type Director, sleep } from '../director';
 import { Claude, pastTurn, statusLine } from '../scenarios/claude';
 import { installDemoWebview } from '../webview';
@@ -110,7 +110,7 @@ export function prepareStory(): Story {
   } catch {
     // 保存できなくても既定の幅で動く
   }
-  const backend = new DemoBackend(cafeProject(), demoUsage(), DEMO_CATALOG);
+  const backend = new DemoBackend(cafeProject(), demoUsage(), DEMO_CATALOG, DEMO_ACCOUNT);
   const hour = 3600_000;
   backend.addSession(
     README_SESSION,

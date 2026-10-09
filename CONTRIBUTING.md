@@ -798,6 +798,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude/projects/**/<id>/subagents/`、`.../tasks/*.output` | サブエージェントの会話、バックグラウンドの Bash の出力 |
 | `~/.claude/cache/model-catalog/*-cc.json` | モデルの一覧と、選べるエフォート |
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
+| `~/.claude.json` の `oauthAccount` | ログインしているアカウント（`emailAddress`・`organizationName`・`planDisplayName` だけ）。Claude Code の内部の形式なので、無い項目は出さない。認証情報（Keychain）は読まない |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
 | worktree のセッションのリポジトリ（`git worktree list`・`git status`・`git rev-list`・`git merge-tree`） | worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、Claude Code のロック |
 | GitHub の PR（`gh pr list`。`gh` のログインを使う） | worktree のブランチから作った PR がマージ済みか（アーカイブ・一覧から削除するときの確認と、worktree の削除） |
@@ -878,7 +879,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `context-tracker.ts`: コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・やりとり）と、その大きさの見積もり
-  - `statusline.ts` / `usage-monitor.ts` / `model-catalog.ts`: statusLine・利用枠・モデル一覧
+  - `statusline.ts` / `usage-monitor.ts` / `claude-account.ts` / `model-catalog.ts`: statusLine・利用枠・ログインしているアカウント・モデル一覧
   - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視
@@ -903,7 +904,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・ソース管理パネルのステップの一覧・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル・Claude Code の生の画面）
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・「あなたの番です」の帯・Claude に許す先のダイアログ。画面では「ブラウザ」）
-  - `sessions/`, `usage/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・利用枠・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
+  - `sessions/`, `account/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・アカウントと利用枠（一覧の最下部）・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
   - `icons/`: アプリのアイコン（自作の線画）・`IconButton`・`DisclosureIcon`・一覧（`catalog.ts`。Storybook の「カタログ/アイコン」と `test/icons.test.ts` が使う）
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）

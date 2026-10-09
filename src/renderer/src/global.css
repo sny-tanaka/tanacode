@@ -4555,35 +4555,104 @@ details[open] > summary > .disclosure {
   line-height: 1.5;
 }
 
-/* プランの利用枠（セッション一覧の最下部） */
-.usage-panel {
+/* アカウントとプランの利用枠（セッション一覧の最下部）。どの状態でも同じ 3 行（名前・5 時間・週）で、高さを変えない */
+.account-panel {
   flex: none;
+  border-top: 1px solid var(--border-subtle);
+}
+.account-summary {
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 100%;
   padding: 10px 14px 12px;
   border: none;
-  border-top: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.usage-panel:hover {
+.account-summary:hover,
+.account-summary[aria-expanded='true'] {
   background: var(--bg-hover);
 }
-.usage-panel:disabled {
-  cursor: progress;
+/* 名前の行。まだ読んでいなくても、組織の名前や古い値の印があっても、同じ高さにする */
+.account-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 16px;
+  line-height: 16px;
+  font-size: 12px;
+  white-space: nowrap;
 }
-.usage-empty,
-.usage-status {
+.account-name {
+  flex: none;
+  color: var(--text-heading);
+}
+.account-name.none {
+  color: var(--text-secondary);
+}
+.account-org {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+.account-stale {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* 押すと開くメニュー。位置は、開くときに欄から決める */
+.account-menu {
+  position: fixed;
+  z-index: 30;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.account-menu-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 4px;
+  font-size: 12px;
+}
+.account-menu-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-heading);
+}
+.account-menu-detail {
   font-size: 11px;
   color: var(--text-secondary);
 }
-.usage-status.error {
-  color: var(--warn);
+.account-menu-item {
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.account-menu-item:hover,
+.account-menu-item:focus-visible {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.account-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-strong);
 }
 .usage-row {
   display: flex;
@@ -4623,6 +4692,12 @@ details[open] > summary > .disclosure {
 }
 .usage-gauge.high .usage-bar span {
   background: var(--danger);
+}
+/* まだ値が無い利用枠は、灰色の 0% で場所だけ取っておく */
+.usage-gauge.unknown .usage-label,
+.usage-gauge.unknown .usage-percent,
+.usage-gauge.unknown .usage-reset {
+  color: var(--text-tertiary);
 }
 
 /* hooks の実行（ツールカードの中と、ツールに付かないものはチャットに 1 行） */
