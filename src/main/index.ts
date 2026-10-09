@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import {
   IpcChannel,
   type IpcEvent,
@@ -18,7 +19,9 @@ import {
   type SessionOptions,
 } from '@shared/ipc';
 import { AppSettings } from './app-settings';
-import { Profile } from './profile';
+import { Profile, type Send } from './profile';
+import { profileDataDir, ProfileRegistry } from './profile-registry';
+import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
@@ -42,8 +45,21 @@ import { Workspace } from './workspace';
 import { claudeConfigDir, claudeJsonPath } from './claude-config';
 
 let mainWindow: BrowserWindow | null = null;
-// プロファイル（Claude Code のアカウントごとの環境）。今は既定のもの 1 つだけ
-let profile: Profile | null = null;
+// 登録したプロファイル（Claude Code のアカウントごとの環境）
+let registry: ProfileRegistry;
+// 開いているプロファイル（id → プロファイル）。既定のプロファイルがいつも先頭
+const opened = new Map<string, Profile>();
+// 足したプロファイルの画面。ウインドウいっぱいに重ね、見ているものだけを出す（既定のプロファイルは、ウインドウ自身の画面）
+const views = new Map<string, WebContentsView>();
+// 見ているプロファイル
+let activeId: string = DEFAULT_PROFILE_ID;
+// アプリの画面（主ウインドウと足したプロファイルの画面）が、どのプロファイルのものか。画面からの呼び出しを振り分ける
+const contentsProfile = new WeakMap<WebContents, string>();
+// 画面に最後に知らせた「ほかのプロファイルに通知あり」（変わったときだけ知らせ直す）
+const lastOthersAttention = new Map<string, boolean>();
+// 開発版（パッケージしていないもの）は Remote Control を使わない（起動するたびにスマホに通知が届くため）。
+// 以前つないでいた会話を再開して Claude Code が勝手につなぎ直したときも、切る。使いたいときは TANACODE_REMOTE_CONTROL=1 で起動する
+let remoteControl = false;
 // アプリ全体の設定（通知・新しいバージョンの確認）。既定のプロファイルの設定も同じファイルに入っている
 let settings: AppSettings;
 let system: SystemMonitor;
@@ -58,8 +74,12 @@ let shuttingDown = false;
 // 終了のしかたが決まった（確認を済ませた・確認の要らない終了）。まだなら before-quit で止めて確認する
 let quitDecided = false;
 let confirmingQuit = false;
-// アプリ内プレビューの webview が使うセッション（renderer の PreviewPane の PARTITION と同じ名前）
+// アプリ内プレビューの webview が使うセッション（renderer の PreviewPane の PARTITION と同じ名前）。
+// 足したプロファイルは、ログイン（Cookie）が混ざらないよう別のものにする（webview を付けるときに main が差し替える）
 const PREVIEW_PARTITION = 'persist:tanacode-preview';
+const previewPartition = (id: string) => (id === DEFAULT_PROFILE_ID ? PREVIEW_PARTITION : `${PREVIEW_PARTITION}-${id}`);
+// 足したプロファイルの画面（アプリ自身）のセッション。localStorage などを分ける（既定のプロファイルは defaultSession）
+const appPartition = (id: string) => `persist:tanacode-profile-${id}`;
 // 主ウインドウ（アプリ自身の画面）にだけ許す権限。Monaco の右クリックメニューの「貼り付け」は、
 // execCommand('paste') が効かないとき navigator.clipboard.readText を使う（コピーも navigator.clipboard を使うことがある）。
 // 通知は main の Notification で出すので、画面側の notifications は要らない
@@ -69,19 +89,28 @@ const APP_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-read', 'clipboa
 // クリップボードの読み取り・外部プロトコルの起動など）を確認なしに許してしまう。
 // プレビューの webview（開発中の任意のページ）には何も許さない。主ウインドウには APP_PERMISSIONS だけを許す
 function restrictPermissions(): void {
-  const isApp = (contents: WebContents | null, isMainFrame: boolean) =>
-    !!contents && isMainFrame && contents === mainWindow?.webContents && contents.getType() === 'window';
-  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
-    callback(APP_PERMISSIONS.has(permission) && isApp(contents, details.isMainFrame)),
-  );
-  session.defaultSession.setPermissionCheckHandler(
-    (contents, permission, _origin, details) => APP_PERMISSIONS.has(permission) && isApp(contents, details.isMainFrame),
-  );
-  const preview = session.fromPartition(PREVIEW_PARTITION);
+  restrictAppSession(session.defaultSession);
+  restrictPreviewSession(session.fromPartition(PREVIEW_PARTITION));
+}
+
+// アプリの画面のセッション。アプリの画面（主ウインドウと、足したプロファイルの画面）にだけ APP_PERMISSIONS を許す
+function restrictAppSession(target: Electron.Session): void {
+  const isApp = (contents: WebContents | null, isMainFrame: boolean) => !!contents && isMainFrame && isAppContents(contents);
+  target.setPermissionRequestHandler((contents, permission, callback, details) => callback(APP_PERMISSIONS.has(permission) && isApp(contents, details.isMainFrame)));
+  target.setPermissionCheckHandler((contents, permission, _origin, details) => APP_PERMISSIONS.has(permission) && isApp(contents, details.isMainFrame));
+}
+
+function restrictPreviewSession(preview: Electron.Session): void {
   preview.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   preview.setPermissionCheckHandler(() => false);
   // ダウンロードも断る（Claude が操作したページが、勝手にファイルを保存させないように）
   preview.on('will-download', (event) => event.preventDefault());
+}
+
+// アプリ自身の画面か（主ウインドウか、足したプロファイルの画面）
+function isAppContents(contents: WebContents): boolean {
+  if (contents.getType() !== 'window' && contents.getType() !== 'browserView') return false;
+  return contents === mainWindow?.webContents || [...views.values()].some((view) => view.webContents === contents);
 }
 
 // プレビューの webview の中で移ってよい先。トップのフレームは http(s) のページと about:blank だけ（file: や
@@ -94,14 +123,32 @@ function isPreviewDestination(url: string, isMainFrame: boolean): boolean {
 
 // 画面への知らせ・画面からの呼び出しと知らせの受け口。チャンネルごとの中身・引数・戻り値は、shared/ipc.ts の表（IpcEvent・IpcInvoke・IpcSend）で決まる。
 // preload も同じ表で型を付けるので、食い違うと型チェックで止まる
+// アプリ全体の知らせ（新しいバージョン・CPU とメモリなど）は、どのプロファイルの画面にも送る
 function send<C extends keyof IpcEvent>(channel: C, payload: IpcEvent[C]): void {
-  const contents = mainWindow?.webContents;
-  if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+  for (const id of [DEFAULT_PROFILE_ID, ...views.keys()]) sendTo(id)(channel, payload);
+}
+
+// プロファイル id の画面への知らせ
+function sendTo(id: string): Send {
+  return (channel, payload) => {
+    const contents = contentsOf(id);
+    if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+  };
+}
+
+// プロファイル id の画面
+function contentsOf(id: string): WebContents | null {
+  return (id === DEFAULT_PROFILE_ID ? mainWindow?.webContents : views.get(id)?.webContents) ?? null;
 }
 
 // 開いているプロファイル
 function profiles(): Profile[] {
-  return profile ? [profile] : [];
+  return [...opened.values()];
+}
+
+// 見ているプロファイル
+function activeProfile(): Profile | null {
+  return opened.get(activeId) ?? opened.get(DEFAULT_PROFILE_ID) ?? null;
 }
 
 // Claude Code が動いているセッション（全プロファイル）。終了・更新のときに止めるかを聞く
@@ -110,10 +157,36 @@ function liveSessions() {
   return profiles().flatMap((p) => p.manager?.liveSessions() ?? []);
 }
 
-// 画面（呼び出し・知らせの送り元）のプロファイル。今は既定のもの 1 つだけ
-function profileOf(_contents: WebContents): Profile {
-  if (!profile) throw new Error('tanacode の起動が終わっていません');
-  return profile;
+// 画面（呼び出し・知らせの送り元）のプロファイル。ほかのプロファイルのものは扱わせない
+function profileOf(contents: WebContents): Profile {
+  const id = contentsProfile.get(contents);
+  const p = id === undefined ? undefined : opened.get(id);
+  if (!p) throw new Error('この画面のプロファイルが見つかりません');
+  return p;
+}
+
+// 画面に渡すプロファイルの様子（id のプロファイルの画面から見たもの）
+function profilesState(id: string): ProfilesState {
+  return { profiles: registry.list().filter((p) => opened.has(p.id)), current: id, othersAttention: othersAttention(id) };
+}
+
+// id 以外のプロファイルに、見てほしいもの（確認待ち・新しい応答）があるか
+function othersAttention(id: string): boolean {
+  for (const [other, p] of opened) {
+    if (other === id || !p.manager) continue;
+    if (p.manager.list().some((s) => !s.archived && (s.attention !== null || s.unread))) return true;
+  }
+  return false;
+}
+
+// プロファイルの様子を画面に知らせる。force でなければ、「ほかのプロファイルに通知あり」が変わった画面にだけ
+function broadcastProfiles(force = false): void {
+  for (const id of opened.keys()) {
+    const state = profilesState(id);
+    if (!force && lastOthersAttention.get(id) === state.othersAttention) continue;
+    lastOthersAttention.set(id, state.othersAttention);
+    sendTo(id)(IpcChannel.ProfilesChanged, state);
+  }
 }
 
 function handle<C extends keyof IpcInvoke>(
@@ -175,7 +248,39 @@ function createWindow(): void {
   win.on('enter-full-screen', remember);
   win.on('leave-full-screen', remember);
 
-  const contents = win.webContents;
+  setupAppContents(win.webContents, DEFAULT_PROFILE_ID);
+  // 足したプロファイルの画面は、ウインドウの大きさに合わせる
+  win.on('resize', layoutViews);
+  // バツボタンでウインドウを閉じたら、アプリも終了する（Claude Code を止めるかは quit の確認で決める）
+  win.on('close', (event) => {
+    rememberWindowState(win);
+    if (quitDecided) return;
+    event.preventDefault();
+    app.quit();
+  });
+  win.on('closed', () => {
+    if (mainWindow !== win) return;
+    mainWindow = null;
+    views.clear();
+  });
+
+  loadApp(win);
+  for (const id of opened.keys()) if (id !== DEFAULT_PROFILE_ID) attachView(id);
+}
+
+// アプリの画面を読み込む（主ウインドウか、足したプロファイルの画面）
+function loadApp(target: Pick<WebContents, 'loadURL' | 'loadFile'>): void {
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void target.loadURL(process.env.ELECTRON_RENDERER_URL);
+  } else {
+    void target.loadFile(join(__dirname, '../renderer/index.html'));
+  }
+}
+
+// アプリの画面（プロファイル id のもの）。外へのリンクは既定のブラウザで開き、画面は移らない。アプリ内ブラウザの webview には、
+// アプリの API（preload）や Node を渡さず、プロファイルのセッション（Cookie）を使わせる
+function setupAppContents(contents: WebContents, id: string): void {
+  contentsProfile.set(contents, id);
   contents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
@@ -189,35 +294,59 @@ function createWindow(): void {
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
+    if (id !== DEFAULT_PROFILE_ID) webPreferences.partition = previewPartition(id);
     if (!/^https?:\/\//.test(params.src) && params.src !== 'about:blank') event.preventDefault();
   });
   contents.on('did-attach-webview', (_e, guest) => {
+    const browser = opened.get(id)?.browser;
     // コンソールと失敗した通信は、ページの最初のスクリプトから集める（Claude が読む）
-    profile?.browser.track(guest);
+    browser?.track(guest);
     // 新しいウィンドウで開くもの（target=_blank・window.open）は、アプリ内ブラウザの新しいタブで開く（ウィンドウは作らない）。
     // Claude の操作で、許していない先を開こうとしたものは開かない（browser-control の openFromPage）
     guest.setWindowOpenHandler(({ url, disposition }) => {
-      const browser = profile?.browser;
       if (/^https?:\/\//.test(url) && !browser?.openFromPage(guest, url, disposition) && !browser?.isOperating(guest)) void shell.openExternal(url);
       return { action: 'deny' };
     });
   });
-  // バツボタンでウインドウを閉じたら、アプリも終了する（Claude Code を止めるかは quit の確認で決める）
-  win.on('close', (event) => {
-    rememberWindowState(win);
-    if (quitDecided) return;
-    event.preventDefault();
-    app.quit();
-  });
-  win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null;
-  });
+}
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'));
-  }
+// 足したプロファイルの画面を作って、ウインドウに重ねる（見ているプロファイルのものだけを出す）
+function attachView(id: string): void {
+  if (!mainWindow || views.has(id)) return;
+  const view = new WebContentsView({
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, partition: appPartition(id) },
+  });
+  view.setBackgroundColor('#121211');
+  setupAppContents(view.webContents, id);
+  views.set(id, view);
+  mainWindow.contentView.addChildView(view);
+  view.setVisible(id === activeId);
+  layoutViews();
+  loadApp(view.webContents);
+}
+
+function detachView(id: string): void {
+  const view = views.get(id);
+  if (!view) return;
+  views.delete(id);
+  mainWindow?.contentView.removeChildView(view);
+  view.webContents.close();
+}
+
+function layoutViews(): void {
+  if (!mainWindow) return;
+  const { width, height } = mainWindow.getContentBounds();
+  for (const view of views.values()) view.setBounds({ x: 0, y: 0, width, height });
+}
+
+// 見るプロファイルを変える。足したプロファイルの画面を出し入れし、メニュー（プロファイルごとの設定）も作り直す
+function showProfile(id: string): void {
+  if (!opened.has(id)) return;
+  activeId = id;
+  for (const [viewId, view] of views) view.setVisible(viewId === id);
+  // 既定のプロファイルの画面はウインドウ自身なので、ウインドウが前に出れば入力を受ける
+  if (id !== DEFAULT_PROFILE_ID) views.get(id)?.webContents.focus();
+  buildMenu();
 }
 
 function showWindow(): BrowserWindow {
@@ -294,15 +423,19 @@ function notify(
   // 子セッションは人に通知しない。作業の終わり・質問・人の対応待ちは親に知らせ、人を呼ぶときは親から伝える（sessions-control.ts）
   if (p.manager?.parentOf(sessionId)) return;
   const windowActive = mainWindow?.isFocused() ?? false;
-  if (windowActive && p.manager.isFocused(sessionId)) return;
+  if (windowActive && p.id === activeId && p.manager.isFocused(sessionId)) return;
   if (!Notification.isSupported()) return;
+  // プロファイルが 2 つ以上あれば、どのプロファイルのセッションかをサブタイトルの頭に付ける
+  const title = sessionTitle ?? '新しいセッション';
+  const subtitle = opened.size > 1 ? `${registry.get(p.id)?.name ?? ''} · ${title}` : title;
   // 音は macOS のシステム音の Glass（指定しないと、既定の通知音が鳴る）
-  const notification = new Notification({ title: 'tanacode', subtitle: sessionTitle ?? '新しいセッション', body: message, sound: 'Glass' });
+  const notification = new Notification({ title: 'tanacode', subtitle, body: message, sound: 'Glass' });
   const release = () => liveNotifications.delete(notification);
   notification.on('click', () => {
     release();
     showWindow();
-    send(clickChannel, sessionId);
+    showProfile(p.id);
+    sendTo(p.id)(clickChannel, sessionId);
   });
   notification.on('close', release);
   notification.on('failed', release);
@@ -312,6 +445,85 @@ function notify(
     if (oldest) liveNotifications.delete(oldest);
   }
   notification.show();
+}
+
+// プロファイルを開く（待ち受けと pty ホストを始め、動き続けている Claude Code を引き継ぐ）。開けなければ片付けてから投げる
+async function openProfile(info: ProfileInfo): Promise<Profile> {
+  const isDefault = info.id === DEFAULT_PROFILE_ID;
+  const dataDir = profileDataDir(app.getPath('userData'), info.id);
+  if (!isDefault) {
+    restrictAppSession(session.fromPartition(appPartition(info.id)));
+    restrictPreviewSession(session.fromPartition(previewPartition(info.id)));
+  }
+  const p = new Profile({
+    id: info.id,
+    dataDir,
+    claudeDir: info.claudeDir,
+    // 既定のプロファイルの設定は、アプリ全体の設定と同じファイル
+    settings: isDefault ? settings : new AppSettings(join(dataDir, 'settings.json')),
+    send: sendTo(info.id),
+    host: () => contentsOf(info.id),
+    notify,
+    preview: session.fromPartition(previewPartition(info.id)),
+    remoteControl,
+    onSessionsChanged: () => broadcastProfiles(),
+  });
+  // 起動の途中で終われと言われても、作ったものは片付けられるように、先に覚えておく
+  opened.set(info.id, p);
+  lastOthersAttention.set(info.id, false);
+  try {
+    await p.start();
+  } catch (error) {
+    if (!isDefault) {
+      opened.delete(info.id);
+      p.close();
+    }
+    throw error;
+  }
+  return p;
+}
+
+// 足したプロファイルを足して開き、画面を作る。開けなければ登録も戻す
+async function addProfile(input: NewProfile): Promise<ProfileInfo> {
+  const info = registry.add(input);
+  try {
+    const p = await openProfile(info);
+    void p.usage.start();
+  } catch (error) {
+    registry.remove(info.id);
+    throw error;
+  }
+  attachView(info.id);
+  broadcastProfiles(true);
+  return info;
+}
+
+// 足したプロファイルを登録から外し、閉じる。Claude Code が動いているセッションがあれば断る（止めるかは人が決める）
+async function removeProfile(id: string): Promise<void> {
+  const p = opened.get(id);
+  if (id === DEFAULT_PROFILE_ID) throw new Error('標準のプロファイルは外せません');
+  if (p?.manager?.liveSessions().length) throw new Error('Claude Code が動いているセッションがあります。止めてから外してください');
+  registry.remove(id);
+  if (activeId === id) showProfile(DEFAULT_PROFILE_ID);
+  detachView(id);
+  opened.delete(id);
+  lastOthersAttention.delete(id);
+  if (p) {
+    await p.stop();
+    p.close();
+  }
+  broadcastProfiles(true);
+}
+
+// 既にある Claude Code の設定のフォルダを選ぶ。隠しフォルダ（~/.claude-…）なので、ホームから始めて隠しファイルも見せる
+async function pickProfileDir(): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Claude Code の設定のフォルダを選択',
+    defaultPath: homedir(),
+    properties: ['openDirectory', 'createDirectory', 'showHiddenFiles'],
+  };
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
 function registerIpc(): void {
@@ -475,6 +687,16 @@ function registerIpc(): void {
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
   handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
   handle(IpcChannel.AccountGet, (e) => readClaudeAccount(claudeJsonPath(P(e).claudeDir)));
+  handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id));
+  handle(IpcChannel.ProfilesSwitch, (_e, id: string) => showProfile(String(id)));
+  handle(IpcChannel.ProfilesAdd, (_e, input: NewProfile) => addProfile(input));
+  handle(IpcChannel.ProfilesUpdate, (_e, id: string, patch: { name?: string; color?: string }) => {
+    const info = registry.update(String(id), { name: patch?.name, color: patch?.color });
+    broadcastProfiles(true);
+    return info;
+  });
+  handle(IpcChannel.ProfilesRemove, (_e, id: string) => removeProfile(String(id)));
+  handle(IpcChannel.ProfilesPickDir, () => pickProfileDir());
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, (e) =>
@@ -577,15 +799,15 @@ function buildMenu(): void {
           { type: 'separator' },
           { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
           { label: '終了するときに新しいバージョンを入れる（Homebrew）', type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
-          { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: !!profile?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
-          { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: !!profile?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-          { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: !!profile?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-          { label: 'Claude にウォークスルーさせる', type: 'checkbox', checked: !!profile?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+          { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+          { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+          { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+          { label: 'Claude にウォークスルーさせる', type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
           {
             label: 'アプリ内ブラウザで Claude に許す先…',
             click: () => {
               showWindow();
-              send(IpcChannel.BrowserHostsOpen, undefined);
+              sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
             },
           },
           { type: 'separator' },
@@ -606,7 +828,7 @@ function buildMenu(): void {
             accelerator: 'CmdOrCtrl+N',
             click: () => {
               showWindow();
-              send(IpcChannel.SessionsNew, undefined);
+              sendTo(activeId)(IpcChannel.SessionsNew, undefined);
             },
           },
           { type: 'separator' },
@@ -740,12 +962,12 @@ function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.Messa
 // オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。保存できなかったら、チェックを元に戻す
 function setBrowserControl(item: MenuItem): void {
   try {
-    profile?.settings.setBrowserControlEnabled(item.checked);
+    activeProfile()?.settings.setBrowserControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
     return;
   }
-  if (!item.checked) profile?.browser.cancelAsks();
+  if (!item.checked) activeProfile()?.browser.cancelAsks();
 }
 
 // メニューの「Claude にほかのセッションを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
@@ -753,7 +975,7 @@ function setBrowserControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setSessionsControl(item: MenuItem): void {
   try {
-    profile?.settings.setSessionsControlEnabled(item.checked);
+    activeProfile()?.settings.setSessionsControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -764,7 +986,7 @@ function setSessionsControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setChecklistControl(item: MenuItem): void {
   try {
-    profile?.settings.setChecklistControlEnabled(item.checked);
+    activeProfile()?.settings.setChecklistControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -775,7 +997,7 @@ function setChecklistControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setWalkthroughControl(item: MenuItem): void {
   try {
-    profile?.settings.setWalkthroughControlEnabled(item.checked);
+    activeProfile()?.settings.setWalkthroughControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }
@@ -838,7 +1060,8 @@ app.on('web-contents-created', (_e, contents) => {
   // Claude の操作でトップのフレームが移るときは、Claude に許した先だけ（リンクやリダイレクトで、外のサイトを開かせない）
   const guard = (event: Electron.Event<{ url: string; isMainFrame: boolean }>) => {
     if (!isPreviewDestination(event.url, event.isMainFrame)) event.preventDefault();
-    else if (event.isMainFrame && profile?.browser.blocksNavigation(contents, event.url)) event.preventDefault();
+    // どのプロファイルの Claude が操作しているページかは、それぞれのアプリ内ブラウザの操作が見分ける
+    else if (event.isMainFrame && profiles().some((p) => p.browser.blocksNavigation(contents, event.url))) event.preventDefault();
   };
   contents.on('will-navigate', guard);
   contents.on('will-frame-navigate', guard);
@@ -852,28 +1075,25 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
-  // 開発版（パッケージしていないもの）は Remote Control を使わない（起動するたびにスマホに通知が届くため）。
-  // 以前つないでいた会話を再開して Claude Code が勝手につなぎ直したときも、切る。使いたいときは TANACODE_REMOTE_CONTROL=1 で起動する
-  const remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
-  // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く
-  profile = new Profile({
-    dataDir: app.getPath('userData'),
-    claudeDir: null,
-    settings,
-    send,
-    host: () => mainWindow?.webContents ?? null,
-    notify,
-    preview: session.fromPartition(PREVIEW_PARTITION),
-    remoteControl,
-  });
+  registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));
+  remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
+  // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く。開けなければ、アプリは続けられない
   try {
-    await profile.start();
+    await openProfile(registry.list()[0]!);
   } catch (error) {
     const log = join(app.getPath('userData'), 'pty-host.log');
     dialog.showErrorBox('Claude Code を動かす常駐プロセスを起動できませんでした', `${String(error)}\n\nログ: ${log}`);
     quitDecided = true;
     app.quit();
     return;
+  }
+  // 足したプロファイル。開けなかったものは理由を出して飛ばす（ほかのプロファイルは使える）
+  for (const info of registry.list().slice(1)) {
+    try {
+      await openProfile(info);
+    } catch (error) {
+      dialog.showErrorBox(`プロファイル「${info.name}」を開けませんでした`, `${String(error)}\n\nログ: ${join(profileDataDir(app.getPath('userData'), info.id), 'pty-host.log')}`);
+    }
   }
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
   // 問い合わせは Chromium の通信（net.fetch）で行う。macOS のプロキシの設定がそのまま効く
@@ -888,7 +1108,7 @@ app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   createWindow();
-  void profile.usage.start();
+  for (const p of profiles()) void p.usage.start();
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
   claudeVersions.start();

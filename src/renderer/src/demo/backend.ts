@@ -33,6 +33,7 @@ import type { SystemStats } from '@shared/system';
 import type { BashTask, TaskRef } from '@shared/task';
 import type { UsageLimits } from '@shared/usage';
 import type { ClaudeAccount } from '@shared/account';
+import { DEFAULT_PROFILE_ID, PROFILE_COLORS } from '@shared/profile';
 import type { WorkflowRun } from '@shared/workflow';
 
 // デモのサイトと Storybook の紹介画像用の、アプリの API（window.tanacode）の作り物。
@@ -395,6 +396,16 @@ export class DemoBackend {
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },
       account: { get: () => ok(this.account) },
+      // デモはプロファイル 1 つだけ（足す・外すは受け付けない）
+      profiles: {
+        get: () => ok({ profiles: [{ id: DEFAULT_PROFILE_ID, name: '標準', color: PROFILE_COLORS[0], claudeDir: null }], current: DEFAULT_PROFILE_ID, othersAttention: false }),
+        switch: () => ok(undefined),
+        add: () => Promise.reject(new Error('デモでは使えません')),
+        update: () => Promise.reject(new Error('デモでは使えません')),
+        remove: () => Promise.reject(new Error('デモでは使えません')),
+        pickDir: () => ok(null),
+        onChanged: () => () => {},
+      },
       // デモでは予約しない（入力欄のボタンから選んでも、何も起きない）
       scheduled: {
         list: () => ok([]),
