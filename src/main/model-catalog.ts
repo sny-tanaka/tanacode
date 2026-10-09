@@ -1,12 +1,12 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { compareVersions } from '@shared/claude-code';
 import type { ModelCatalog, ModelChoice } from '@shared/models';
 import { claudeVersion } from './claude-version';
+import { claudeConfigDir } from './claude-config';
 
 // Claude Code が /model の一覧として持っている控え（~/.claude/cache/model-catalog/<組織>-<…>-cc.json）
-const CATALOG_DIR = join(homedir(), '.claude', 'cache', 'model-catalog');
+const catalogDir = () => join(claudeConfigDir(), 'cache', 'model-catalog');
 
 type CatalogModel = {
   id?: string;
@@ -19,9 +19,10 @@ type CatalogModel = {
 
 // 控えのうち、Claude Code 用（surface が cc）で一番新しいものを読む。/model の画面は開かない
 export async function readModelCatalog(): Promise<ModelCatalog | null> {
-  const names = await readdir(CATALOG_DIR).catch(() => [] as string[]);
+  const dir = catalogDir();
+  const names = await readdir(dir).catch(() => [] as string[]);
   const files = await Promise.all(
-    names.filter((n) => n.endsWith('-cc.json')).map(async (n) => ({ path: join(CATALOG_DIR, n), mtime: (await stat(join(CATALOG_DIR, n))).mtimeMs })),
+    names.filter((n) => n.endsWith('-cc.json')).map(async (n) => ({ path: join(dir, n), mtime: (await stat(join(dir, n))).mtimeMs })),
   );
   const newest = files.sort((a, b) => b.mtime - a.mtime)[0];
   if (!newest) return null;

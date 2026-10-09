@@ -1,6 +1,5 @@
 import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { gatedBrowserToolIds } from '@shared/browser-tools';
 import { ASK_FILE_ENV } from '@shared/chat';
@@ -8,6 +7,7 @@ import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { SESSIONS_GATE_COMMAND, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { WORKTREE_GUARD_COMMAND } from './worktree-guard';
+import { claudeConfigDir } from './claude-config';
 
 // Claude Code は statusLine のコマンドを応答のたびに実行し、モデル・コンテキスト・利用枠（rate_limits）の入った JSON を標準入力に渡す。
 // アプリが起動する Claude Code にだけ --settings で statusLine を足し、その JSON をセッションごとのファイルに書かせて読む。
@@ -49,7 +49,7 @@ export function ownSettings(inner: string | null, browser = false, sessions = fa
 export function userStatusLineCommand(): string | null {
   let settings: { statusLine?: { type?: string; command?: string } } | null = null;
   try {
-    settings = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8'));
+    settings = JSON.parse(readFileSync(join(claudeConfigDir(), 'settings.json'), 'utf8'));
   } catch {
     // 無い・読めない設定は飛ばす
   }

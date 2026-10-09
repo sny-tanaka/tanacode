@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { SlashCommand } from '@shared/ipc';
+import { claudeConfigDir, projectLogDir } from './claude-config';
 
 // Claude Code の組み込みコマンド（v2.1.283 の / メニューから）。[名前, 説明, 別名]。
 // /model・/effort・/config などは既定値を書き換えるので、アプリの画面（モデル・エフォートの切り替え）を使う前提で説明に書いておく
@@ -113,14 +113,14 @@ const BORROW_FROM_LOGS = 3;
 // スキルは Claude Code が会話ログに書く一覧（skill_listing）に、組み込み・プラグインのものも含めて載っている。
 // まだ会話が無ければ、同じフォルダの前の会話とフォルダ（.claude/skills）から探す
 export async function listCommands(cwd: string, transcript: string | null): Promise<SlashCommand[]> {
-  const home = homedir();
+  const config = claudeConfigDir();
   let listed = transcript ? await skillsFromTranscript(transcript) : [];
   if (listed.length === 0) listed = await skillsFromProjectLogs(cwd);
   const custom = [
     ...(await commandsIn(join(cwd, '.claude', 'commands'), 'project')),
-    ...(await commandsIn(join(home, '.claude', 'commands'), 'user')),
+    ...(await commandsIn(join(config, 'commands'), 'user')),
     ...(await skillsIn(join(cwd, '.claude', 'skills'), 'project')),
-    ...(await skillsIn(join(home, '.claude', 'skills'), 'user')),
+    ...(await skillsIn(join(config, 'skills'), 'user')),
     ...listed,
   ];
   const seen = new Set<string>();
@@ -150,7 +150,7 @@ async function skillsFromTranscript(file: string): Promise<SlashCommand[]> {
 }
 
 async function skillsFromProjectLogs(cwd: string): Promise<SlashCommand[]> {
-  const dir = join(homedir(), '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  const dir = projectLogDir(cwd);
   const names = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.jsonl'));
   const files = await Promise.all(names.map(async (n) => ({ file: join(dir, n), at: (await stat(join(dir, n)).catch(() => null))?.mtimeMs ?? 0 })));
   for (const { file } of files.sort((a, b) => b.at - a.at).slice(0, BORROW_FROM_LOGS)) {

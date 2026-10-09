@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
@@ -13,6 +12,7 @@ import { ASK_FILE_ENV } from '@shared/chat';
 import { STATUS_FILE_ENV, sessionSettings } from './statusline';
 import { TranscriptFollower } from './transcript-follower';
 import type { EntryHandler } from './transcript-tail';
+import { projectLogDir } from './claude-config';
 
 type Options = {
   // アプリのセッション ID（pty ホストで、どのセッションの claude かの目印にする）
@@ -206,9 +206,9 @@ export function claudeArgs(
   return args;
 }
 
-// Claude Code は cwd の英数字以外を '-' に置き換えたディレクトリに会話ログを書く
+// 会話ログのファイル（Claude Code の設定のフォルダの projects の下）
 export function transcriptPath(cwd: string, claudeSessionId: string): string {
-  return join(homedir(), '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${claudeSessionId}.jsonl`);
+  return join(projectLogDir(cwd), `${claudeSessionId}.jsonl`);
 }
 
 export function childEnv(): Record<string, string> {

@@ -57,6 +57,7 @@ import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
 import { WorkspaceWatchers } from './workspace-watcher';
+import { claudeConfigDir } from './claude-config';
 
 let mainWindow: BrowserWindow | null = null;
 let manager: SessionManager;
@@ -275,7 +276,7 @@ async function pickFolder(): Promise<string | null> {
 async function pickSettingsFile(): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
     title: '設定ファイルを選択',
-    defaultPath: join(homedir(), '.claude'),
+    defaultPath: claudeConfigDir(),
     properties: ['openFile', 'showHiddenFiles'],
     filters: [{ name: 'JSON', extensions: ['json'] }],
   };
