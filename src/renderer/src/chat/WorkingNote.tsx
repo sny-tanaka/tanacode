@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { Activity } from '@shared/screen';
 import { CheckMark } from '../layout/CheckMark';
 
-const PHASE_LABEL: Record<Activity['phase'], string | null> = {
-  waiting: '応答を待っています',
-  thinking: '考えています',
-  writing: '応答を書いています',
-  working: null,
-};
+// 進み具合の名前（working は出さない）
+function phaseLabel(phase: Activity['phase']): string | null {
+  return phase === 'working' ? null : t(`chat.working.${phase}`);
+}
 
-// 画面の表記（5s・1m 5s・1h 2m）を日本語にする
-function japaneseElapsed(elapsed: string): string {
-  return elapsed.replace(/(\d+)h/, '$1時間').replace(/(\d+)m/, '$1分').replace(/(\d+)s/, '$1秒').replace(/\s+/g, '');
+// 画面の表記（5s・1m 5s・1h 2m）を、今の言語の表記（日本語なら 5秒・1分5秒・1時間2分）にする
+function localElapsed(elapsed: string): string {
+  return elapsed
+    .replace(/(\d+)h/, (_, n: string) => t('chat.duration.hours', { count: n }))
+    .replace(/(\d+)m/, (_, n: string) => t('chat.duration.minutes', { count: n }))
+    .replace(/(\d+)s/, (_, n: string) => t('chat.duration.seconds', { count: n }))
+    .replace(/\s+/g, '');
 }
 
 // 進み具合は 1 秒ごとに変わるので、ここだけで受け取る（チャット全体を描き直さない）
@@ -36,10 +39,10 @@ function useActivity(sessionId: string | undefined): Activity | null {
 function activityText(activity: Activity | null): string[] {
   if (!activity) return [];
   return [
-    PHASE_LABEL[activity.phase],
-    activity.phase === 'writing' && activity.tokens ? `${activity.tokens} トークン` : null,
-    activity.elapsed ? japaneseElapsed(activity.elapsed) : null,
-  ].filter((t): t is string => !!t);
+    phaseLabel(activity.phase),
+    activity.phase === 'writing' && activity.tokens ? t('chat.working.tokens', { count: activity.tokens }) : null,
+    activity.elapsed ? localElapsed(activity.elapsed) : null,
+  ].filter((text): text is string => !!text);
 }
 
 // チャットの末尾に出す「作業中」。セッション一覧の作業中と同じ色と回る印にして、目に留まるようにする。
@@ -52,7 +55,7 @@ export function WorkingNote({ sessionId, activity: given, label }: { sessionId?:
   return (
     <div className="chat-note working">
       <span className="session-indicator running" />
-      <span className="working-label">{label ? `${label.replace(/[…。.]+$/, '')}…` : '作業中…'}</span>
+      <span className="working-label">{label ? `${label.replace(/[…。.]+$/, '')}…` : t('chat.working.inProgress')}</span>
       {details.length > 0 && <span className="working-detail">{details.join(' · ')}</span>}
     </div>
   );
@@ -63,7 +66,7 @@ export function DoneNote() {
   return (
     <div className="chat-note working-done">
       <CheckMark animate slot={9} />
-      完了
+      {t('chat.working.done')}
     </div>
   );
 }

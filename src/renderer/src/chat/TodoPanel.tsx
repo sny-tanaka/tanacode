@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { TodoItem } from '@shared/chat';
+import { t } from '@shared/i18n';
 import { DisclosureIcon } from '../icons';
 import { CheckMark } from '../layout/CheckMark';
 
@@ -26,7 +27,7 @@ export function TodoPanel({ todos }: { todos: TodoItem[] }) {
     <div className="todo-panel">
       <button className="todo-head" onClick={() => setOpen((v) => !v)}>
         <DisclosureIcon open={open} />
-        <span className="todo-title">Todo</span>
+        <span className="todo-title">{t('chat.todo.title')}</span>
         <span className="todo-count">
           {done}/{todos.length}
         </span>

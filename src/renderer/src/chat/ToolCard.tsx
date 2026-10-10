@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cardOfTool } from '@shared/checklist-tools';
+import { t } from '@shared/i18n';
 import { sessionIdOfTool } from '@shared/session-tools';
 import { walkthroughOfTool } from '@shared/walkthrough-tools';
 import { openChecklistCard } from '../checklist/openCard';
@@ -9,18 +10,32 @@ import type { BashTask } from '@shared/task';
 import { ChevronRightIcon, DisclosureIcon } from '../icons';
 import { StatusDot, type DotState } from '../layout/StatusDot';
 import { findSession, sessionName, type SessionLink } from '../sessions/sessionLinks';
-import { BASH_STATE_LABEL } from '../tasks/taskList';
+import { bashStateLabel } from '../tasks/taskList';
 import { ChatImages } from './ChatImages';
 import { HookRuns } from './HookRuns';
 import { toolLabel } from './toolLabel';
-import type { ChatItem } from './chatState';
+import type { ChatItem, ToolStatus } from './chatState';
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
 // 変えた行の数（+3 −1）を出すツール
 export const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
-export const STATUS_LABEL = { running: '実行中…', done: '完了', error: 'エラー / 中断' } as const;
-const SUBAGENT_LABEL = { running: '実行中…', done: '完了', failed: '失敗', stopped: '停止' } as const;
+// ツールの状態の名前
+export const statusLabel = (status: ToolStatus) => t(`chat.toolCard.${status}`);
+
+// 前からの表の形（作業の書き出しが使っている）。読んだときの言語で返すよう、値は getter にする。
+// ExportDocument を statusLabel に替えたら消す
+export const STATUS_LABEL: Readonly<Record<ToolStatus, string>> = {
+  get running() {
+    return statusLabel('running');
+  },
+  get done() {
+    return statusLabel('done');
+  },
+  get error() {
+    return statusLabel('error');
+  },
+};
 
 type Props = {
   item: ToolItem;
@@ -76,7 +91,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
   // 入力の session_id がそのまま対象に出るツール（send_message など）は、ID の代わりに名前を出す
   const targetIsId = !!sessionKey && /^[0-9a-f-]{8,36}$/.test(item.target.trim());
   const target = targetIsId && session ? sessionName(session) : item.target;
-  const status = subagent ? SUBAGENT_LABEL[subagent.state] : bash ? BASH_STATE_LABEL[bash.state] : STATUS_LABEL[item.status];
+  const status = subagent ? t(`chat.toolCard.${subagent.state}`) : bash ? bashStateLabel(bash.state) : statusLabel(item.status);
   const dot: DotState = subagent
     ? subagent.state === 'running' ? 'running' : subagent.state === 'done' ? 'done' : 'error'
     : bash
@@ -127,8 +142,8 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
               e.stopPropagation();
               setOpen((v) => !v);
             }}
-            aria-label={open ? '詳細を閉じる' : '詳細を開く'}
-            data-tip={open ? '詳細を閉じる' : '詳細を開く'}
+            aria-label={open ? t('chat.toolCard.closeDetail') : t('chat.toolCard.openDetail')}
+            data-tip={open ? t('chat.toolCard.closeDetail') : t('chat.toolCard.openDetail')}
           >
             <DisclosureIcon open={open} />
           </button>
@@ -137,17 +152,22 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
       <div className="tool-card-status">
         {dot === 'running' ? <span className="flow-text">{status}</span> : status}
         {subagent && <SubagentProgress run={subagent} />}
-        {bash && <span className="subagent-progress">バックグラウンド{bash.exitCode !== null ? ` · 終了コード ${bash.exitCode}` : ''}</span>}
+        {bash && (
+          <span className="subagent-progress">
+            {t('chat.toolCard.background')}
+            {bash.exitCode !== null ? ` · ${t('chat.toolCard.exitCode', { code: bash.exitCode })}` : ''}
+          </span>
+        )}
         {/* 対象のセッションの名前（対象の欄に名前を出していなければ） */}
         {session && !(targetIsId && !item.description) && <span className="subagent-progress tool-session">{sessionName(session)}</span>}
         {/* カード全体のクリックで開くので、ボタンにはせず、名前とツールチップだけ付けたアイコンを置く */}
         {onOpenTask ? (
-          <span className="tool-open" role="img" aria-label="開く" data-tip="開く">
+          <span className="tool-open" role="img" aria-label={t('common.open')} data-tip={t('common.open')}>
             <ChevronRightIcon size={12} />
           </span>
         ) : (
           openSession && (
-            <span className="tool-open" role="img" aria-label="セッションを開く" data-tip={`セッション「${sessionName(session!)}」を開く`}>
+            <span className="tool-open" role="img" aria-label={t('chat.toolCard.openSession')} data-tip={t('chat.toolCard.openSessionNamed', { name: sessionName(session!) })}>
               <ChevronRightIcon size={12} />
             </span>
           )
@@ -169,17 +189,17 @@ export function ToolDetail({ item, subagent }: { item: ToolItem; subagent?: Suba
   return (
     <>
       {subagent && subagent.recent.length > 0 && (
-        <Section label={subagent.state === 'running' ? '直近のツール' : '最後のツール'}>
+        <Section label={subagent.state === 'running' ? t('chat.toolCard.recentTools') : t('chat.toolCard.finalTools')}>
           <pre className="tool-pre">{subagent.recent.map((r) => `${toolLabel(r.name)}  ${r.target}`).join('\n')}</pre>
         </Section>
       )}
       {item.input && (
-        <Section label={item.name === 'Agent' || item.name === 'Task' ? 'プロンプト' : '入力'}>
+        <Section label={item.name === 'Agent' || item.name === 'Task' ? t('chat.toolCard.prompt') : t('chat.toolCard.input')}>
           <pre className="tool-pre">{item.input}</pre>
         </Section>
       )}
       {item.patch && (
-        <Section label="差分">
+        <Section label={t('chat.toolCard.diff')}>
           <pre className="tool-pre diff">
             {item.patch.map((line, i) => (
               <span key={i} className={line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('@@') ? 'hunk' : ''}>
@@ -191,12 +211,12 @@ export function ToolDetail({ item, subagent }: { item: ToolItem; subagent?: Suba
         </Section>
       )}
       {subagent?.result && (
-        <Section label="結果">
+        <Section label={t('chat.toolCard.result')}>
           <pre className="tool-pre">{subagent.result}</pre>
         </Section>
       )}
       {item.output && (
-        <Section label={item.status === 'error' ? 'エラー' : '結果'}>
+        <Section label={item.status === 'error' ? t('chat.toolCard.errorOutput') : t('chat.toolCard.result')}>
           <pre className={`tool-pre${item.status === 'error' ? ' error' : ''}`}>{item.output}</pre>
         </Section>
       )}
@@ -207,11 +227,11 @@ export function ToolDetail({ item, subagent }: { item: ToolItem; subagent?: Suba
 function SubagentProgress({ run }: { run: SubagentRun }) {
   const last = run.recent[run.recent.length - 1];
   const parts = [
-    run.background ? 'バックグラウンド' : null,
-    `ツール ${run.toolCalls}回`,
-    run.state === 'running' && last ? `直前: ${toolLabel(last.name)}` : null,
+    run.background ? t('chat.toolCard.background') : null,
+    t('chat.toolCard.toolCalls', { count: run.toolCalls }),
+    run.state === 'running' && last ? t('chat.toolCard.previousTool', { tool: toolLabel(last.name) }) : null,
     run.durationMs !== null ? formatDuration(run.durationMs) : null,
-    run.tokens !== null ? `${Math.round(run.tokens / 1000)}k tokens` : null,
+    run.tokens !== null ? t('chat.toolCard.tokens', { count: Math.round(run.tokens / 1000) }) : null,
   ].filter(Boolean);
   return <span className="subagent-progress">{parts.join(' · ')}</span>;
 }
@@ -227,5 +247,5 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 function formatDuration(ms: number): string {
   const s = Math.round(ms / 1000);
-  return s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`;
+  return s < 60 ? t('chat.duration.seconds', { count: s }) : t('chat.duration.minutesSeconds', { minutes: Math.floor(s / 60), seconds: s % 60 });
 }
