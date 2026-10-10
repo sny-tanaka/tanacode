@@ -232,7 +232,7 @@ export class ScreenTracker {
       const menu = shown();
       if (!menu) return 'gone';
       if (!menu.options.some((o) => o.id === optionId)) return 'missing';
-      await sleep(Math.max(this.menuSince + MENU_SETTLE_MS, this.menuInputAt + INPUT_GRACE_MS) - Date.now());
+      await sleepUntil(Math.max(this.menuSince + MENU_SETTLE_MS, this.menuInputAt + INPUT_GRACE_MS));
       // 押す直前にカーソルが目的の選択肢から動いていたら（描き直しで戻った）、合わせ直す。
       // moved は選ぶキーを送る前に返るので、合わせ直しても、選ぶキーを送るのは 1 回だけ
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -338,9 +338,10 @@ export class ScreenTracker {
   }
 
   // キーを Claude Code に送る。送った時刻を覚えておく（Claude Code が入力を捨てる間を避けるため）
+  // 入力の時刻は、送ったあとに覚える（送る前に覚えると、届いた時刻より早くなり、次のキーまでの間が少し短くなる）
   private write(data: string): void {
-    this.noteInput();
     this.output(data);
+    this.noteInput();
   }
 
   // 権限モードを切り替える。Shift+Tab を 1 回ずつ送り、画面の表示が目的のモードになるまで繰り返す。
@@ -723,6 +724,12 @@ function menuIdentity(menu: Menu): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+// 時刻（Date.now()）が deadline になるまで待つ。タイマーはイベントループが少し前に覚えた時刻から数えるので、
+// 実際の時刻では 1ms ほど早く起きることがある。起きたら確かめ、まだなら待ち直す
+async function sleepUntil(deadline: number): Promise<void> {
+  while (Date.now() < deadline) await sleep(deadline - Date.now());
 }
 
 // 画面では長い発言が端末の幅で切れたり「…」で省略されたりするので、空白を詰めて前方一致で比べる
