@@ -144,7 +144,7 @@ export function App() {
   // ターミナルモード（Claude Code ペインに、チャットの代わりに Claude Code の生の画面を出す）
   const [terminalMode, setTerminalMode] = useTerminalMode();
   const showClaudeScreen = useCallback(() => setTerminalMode(true), [setTerminalMode]);
-  const toggleClaudeScreen = useCallback(() => setTerminalMode((on) => !on), [setTerminalMode]);
+  const toggleClaudeScreen = useCallback(() => setTerminalMode(!terminalMode), [terminalMode, setTerminalMode]);
   // チャットを見ている間も、Claude Code の画面の出力を受け取っておく（ターミナルモードにしたとき、さかのぼって読める）
   useClaudeScreenOutput();
   // 左から 3 番目のペイン

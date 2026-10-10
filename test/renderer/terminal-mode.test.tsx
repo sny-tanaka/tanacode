@@ -10,6 +10,7 @@ import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
 import { useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
 import { LEAVE_MS } from '../../src/renderer/src/terminal/claudeScreenTyping';
+import { syncSharedPrefs } from '../../src/renderer/src/sharedPrefs';
 import { useTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
 import './dom';
 import { mockApi } from './mock-api';
@@ -312,18 +313,30 @@ describe('ターミナルモード: Claude Code の入力欄の書きかけ', ()
 });
 
 describe('ターミナルモードを覚える（useTerminalMode）', () => {
-  it('はじめはチャット。切り替えたら、次に起動したときもそのまま', () => {
+  it('はじめはチャット。切り替えたら、次に起動したときもそのまま。ほかのプロファイルの画面にも配る', () => {
     const first = renderHook(() => useTerminalMode());
     expect(first.result.current[0]).toBe(false);
     act(() => first.result.current[1](true));
     expect(first.result.current[0]).toBe(true);
+    expect(api.argsOf('prefs.set')).toEqual([['tanacode.terminalMode', 'on']]);
     first.unmount();
 
     const second = renderHook(() => useTerminalMode());
     expect(second.result.current[0]).toBe(true);
-    act(() => second.result.current[1]((on) => !on));
+    act(() => second.result.current[1](false));
     expect(second.result.current[0]).toBe(false);
+    expect(api.argsOf('prefs.set').at(-1)).toEqual(['tanacode.terminalMode', 'off']);
     second.unmount();
     expect(renderHook(() => useTerminalMode()).result.current[0]).toBe(false);
+  });
+
+  it('ほかのプロファイルの画面で切り替えたら、この画面も切り替わる', async () => {
+    const hook = renderHook(() => useTerminalMode());
+    api = mockApi({ 'prefs.sync': () => Promise.resolve({ 'tanacode.terminalMode': 'on' }) });
+    api.install();
+    await act(() => syncSharedPrefs());
+    expect(hook.result.current[0]).toBe(true);
+    act(() => api.emit('prefs.onChanged', { key: 'tanacode.terminalMode', value: 'off' }));
+    expect(hook.result.current[0]).toBe(false);
   });
 });

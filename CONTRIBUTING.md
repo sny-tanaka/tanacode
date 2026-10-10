@@ -676,7 +676,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 ### ターミナルモード
 
-- ヘッダーのモニターのアイコンで、Claude Code ペイン（`ClaudePane`）のヘッダーより下を、Claude Code の生の画面（pty の出力を xterm に流したもの。`terminal/ClaudeScreen.tsx`）に切り替えます。モードは App が持ち、localStorage に覚えます（`terminal/terminalMode.ts`。どのセッションにも効く）。アーカイブ済みのセッションには pty が無いので、チャットのまま。
+- ヘッダーのモニターのアイコンで、Claude Code ペイン（`ClaudePane`）のヘッダーより下を、Claude Code の生の画面（pty の出力を xterm に流したもの。`terminal/ClaudeScreen.tsx`）に切り替えます。モードは App が持ち、どのプロファイルの画面でも同じにする表示設定として覚えます（`terminal/terminalMode.ts`。どのセッションにも効く）。アーカイブ済みのセッションには pty が無いので、チャットのまま。
   - チャットと入力欄は、外さずに隠します（打ちかけの答えや入力欄の状態を保つため）。隠している間にスクロールの位置は失われるので、戻したときは最下部から見せます。
 - xterm は、部品の外にセッションごとに持ちます。画面を出していない間（チャット・ほかのセッション・新規セッションの画面を見ている間）も pty の出力を流しておき（`useClaudeScreenOutput`。App が呼ぶ）、出すときに xterm の要素を部品の中へ移します。部品に持たせると、出すたびに作り直すことになり、それまでの出力をさかのぼれないためです。
 - 出しているあいだだけ、pty の大きさをペインに合わせます。隠すと元の大きさ（120×40）に戻します。チャットに出す質問や確認は main が画面から読むので、読むのに向いた大きさにしておくためです。
@@ -884,7 +884,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
-| `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
+| `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ターミナルモード・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
 | `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
 | `profiles/<id>/` | 足したプロファイルのデータ。中身は上の表のうち、プロファイルごとのもの（`sessions.json`・`settings.json`（登録した設定ファイル・Claude に許す機能だけを使う）・`checklists/`・ソケット・`statusline/`・`session-settings/`・`usage.json`・`scheduled-messages.json`・pty ホストのソケットとログ）。既定のプロファイルのものは、今までどおり上の場所 |
 
