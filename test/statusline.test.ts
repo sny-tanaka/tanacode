@@ -100,6 +100,15 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(matchers(ownSettings(null, false, true))).toEqual(['AskUserQuestion', 'Bash', expect.any(String)]);
     expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(3);
   });
+
+  it('プロファイルの設定のフォルダで起動するときだけ、~/.claude の指示ファイルを読ませない設定を足す', () => {
+    expect(ownSettings(null)).not.toHaveProperty('claudeMdExcludes');
+    expect(JSON.parse(sessionSettings())).not.toHaveProperty('claudeMdExcludes');
+    const excludes = [join(home, '.claude', 'CLAUDE.md'), join(home, '.claude', 'rules', '**')];
+    const dir = join(home, '.claude-work');
+    expect(ownSettings(null, false, false, dir).claudeMdExcludes).toEqual(excludes);
+    expect(JSON.parse(sessionSettings(false, false, dir)).claudeMdExcludes).toEqual(excludes);
+  });
 });
 
 describe('StatusLineWatcher', () => {

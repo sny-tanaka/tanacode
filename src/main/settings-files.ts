@@ -56,6 +56,7 @@ function isRecord(value: unknown): value is Settings {
 
 // 登録した設定（profile）に、アプリの設定（own）を足す。
 // statusLine はアプリのもの（own の中で、登録した設定の statusLine を包んである）、フックは登録した設定のものとアプリのものを両方動かす。
+// claudeMdExcludes（読ませない指示ファイル）も、登録した設定のものとアプリのものを両方残す。
 // それ以外（env・model など）は登録した設定のまま
 export function mergeSettings(profile: Settings, own: Settings): Settings {
   const merged: Settings = { ...profile, ...own };
@@ -67,6 +68,9 @@ export function mergeSettings(profile: Settings, own: Settings): Settings {
     hooks[event] = [...(Array.isArray(before) ? before : []), ...(Array.isArray(entries) ? entries : [])];
   }
   merged.hooks = hooks;
+  const excludes = [profile.claudeMdExcludes, own.claudeMdExcludes].flatMap((list) => (Array.isArray(list) ? list : []));
+  if (excludes.length > 0) merged.claudeMdExcludes = excludes;
+  else delete merged.claudeMdExcludes;
   return merged;
 }
 
@@ -148,7 +152,7 @@ export class SettingsFiles {
   // sessions: セッションの MCP サーバーを足すか（子セッションの起動の確認のフックを入れる）
   prepare(sessionId: string, id: string, browser = false, sessions = false): PreparedSettings {
     const profile = readSettings(this.find(id));
-    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, sessions));
+    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, sessions, this.claudeDir));
     mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
     chmodSync(this.runDir, 0o700);
     const settingsFile = join(this.runDir, `${sessionId}.json`);

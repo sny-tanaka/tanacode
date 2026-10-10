@@ -7,7 +7,7 @@ import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { SESSIONS_GATE_COMMAND, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { WORKTREE_GUARD_COMMAND } from './worktree-guard';
-import { claudeConfigDir } from './claude-config';
+import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
 
 // Claude Code は statusLine のコマンドを応答のたびに実行し、モデル・コンテキスト・利用枠（rate_limits）の入った JSON を標準入力に渡す。
 // アプリが起動する Claude Code にだけ --settings で statusLine を足し、その JSON をセッションごとのファイルに書かせて読む。
@@ -22,15 +22,17 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる（browser-gate.ts）。
 // permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）。
 // sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
+// claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
 export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions));
+  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
 // 登録した設定ファイルを重ねるときは、そのファイルの statusLine を inner にして、settings-files.ts が合成する
-export function ownSettings(inner: string | null, browser = false, sessions = false): Record<string, unknown> {
+export function ownSettings(inner: string | null, browser = false, sessions = false, claudeDir: string | null = null): Record<string, unknown> {
   const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
+  const excludes = foreignClaudeMdExcludes(claudeDir);
   return {
     statusLine: { type: 'command', command },
     hooks: {
@@ -41,6 +43,7 @@ export function ownSettings(inner: string | null, browser = false, sessions = fa
         ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: SESSIONS_GATE_COMMAND, timeout: 10 }] }] : []),
       ],
     },
+    ...(excludes.length > 0 ? { claudeMdExcludes: excludes } : {}),
   };
 }
 

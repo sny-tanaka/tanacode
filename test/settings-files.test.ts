@@ -136,6 +136,17 @@ describe('mergeSettings', () => {
     expect(merged.hooks).toEqual({ PreToolUse: [theirs, own.hooks.PreToolUse[0]], Stop: [other] });
   });
 
+  it('読ませない指示ファイル（claudeMdExcludes）は、登録した設定のものとアプリのものを両方残す。どちらにも無ければ足さない', () => {
+    const ours = { ...own, claudeMdExcludes: ['/home/.claude/CLAUDE.md'] };
+    expect(mergeSettings({ claudeMdExcludes: ['/work/**/CLAUDE.md'] }, ours).claudeMdExcludes).toEqual(['/work/**/CLAUDE.md', '/home/.claude/CLAUDE.md']);
+    expect(mergeSettings({}, ours).claudeMdExcludes).toEqual(['/home/.claude/CLAUDE.md']);
+    expect(mergeSettings({ claudeMdExcludes: ['/work/**/CLAUDE.md'] }, own).claudeMdExcludes).toEqual(['/work/**/CLAUDE.md']);
+    // 配列でないものは、無いものとして合わせる
+    expect(mergeSettings({ claudeMdExcludes: 'x' }, ours).claudeMdExcludes).toEqual(['/home/.claude/CLAUDE.md']);
+    expect(mergeSettings({ claudeMdExcludes: 'x' }, own)).not.toHaveProperty('claudeMdExcludes');
+    expect(mergeSettings({}, own)).not.toHaveProperty('claudeMdExcludes');
+  });
+
   it('登録した設定にフックが無くてもよい', () => {
     expect(mergeSettings({}, own).hooks).toEqual(own.hooks);
   });

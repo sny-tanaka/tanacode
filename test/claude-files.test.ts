@@ -249,4 +249,17 @@ describe('Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）', () => {
     expect(config.claudeConfigDir(null)).toBe(join(home, 'from-env'));
     expect(session.childEnv().CLAUDE_CONFIG_DIR).toBe(join(home, 'from-env'));
   });
+
+  it('設定のフォルダが ~/.claude でなければ、~/.claude の指示ファイルを読ませない（プロジェクトの指示として拾われ、AGENTS.md が読まれなくなるため）', () => {
+    const excludes = [join(home, '.claude', 'CLAUDE.md'), join(home, '.claude', 'rules', '**')];
+    // ~/.claude のまま（既定のプロファイル・環境変数で同じ場所を指したとき）は、ユーザーの指示そのものなので外さない
+    expect(config.foreignClaudeMdExcludes()).toEqual([]);
+    process.env.CLAUDE_CONFIG_DIR = `${join(home, '.claude')}/`;
+    expect(config.foreignClaudeMdExcludes()).toEqual([]);
+    expect(config.foreignClaudeMdExcludes(join(home, '.claude'))).toEqual([]);
+    // プロファイルのフォルダ・環境変数のフォルダ
+    expect(config.foreignClaudeMdExcludes(join(home, '.claude-work'))).toEqual(excludes);
+    process.env.CLAUDE_CONFIG_DIR = join(home, 'from-env');
+    expect(config.foreignClaudeMdExcludes()).toEqual(excludes);
+  });
 });
