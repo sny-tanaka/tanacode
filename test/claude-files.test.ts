@@ -173,7 +173,7 @@ describe('ログインしたアカウント（readClaudeAccount）', () => {
 
   it('~/.claude.json の oauthAccount から、メールアドレス・組織・プランを読む', async () => {
     write({
-      oauthAccount: { accountUuid: 'u', emailAddress: 'taro@corp.example', organizationName: 'Acme', planDisplayName: 'Claude Team', billingType: 'x' },
+      oauthAccount: { accountUuid: 'u', emailAddress: 'taro@corp.example', organizationName: 'Acme', planDisplayName: 'Team', billingType: 'x' },
     });
     expect(await account.readClaudeAccount()).toEqual({ email: 'taro@corp.example', organization: 'Acme', plan: 'Claude Team' });
     // 無い項目・空の項目・文字でない項目は null にする
@@ -195,7 +195,8 @@ describe('ログインしたアカウント（readClaudeAccount）', () => {
     expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_raven' })).toBe('Claude Max');
     expect(await plan({ organizationType: 'claude_pro', organizationRateLimitTier: 'default_claude_ai' })).toBe('Claude Pro');
     expect(await plan({ organizationType: 'claude_enterprise' })).toBe('Claude Enterprise');
-    // planDisplayName があれば、そちらを使う
+    // planDisplayName があれば、そちらを使う（Claude Code と同じく、頭に Claude を付ける。もう付いていれば足さない）
+    expect(await plan({ organizationType: 'claude_max', planDisplayName: 'Team Premium' })).toBe('Claude Team Premium');
     expect(await plan({ organizationType: 'claude_max', planDisplayName: 'Claude Team' })).toBe('Claude Team');
     // プランとして読めない種類は出さない
     for (const organizationType of ['api', 'claude_', 'claude', '', 3, null]) expect(await plan({ organizationType }), String(organizationType)).toBeNull();

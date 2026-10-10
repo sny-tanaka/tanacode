@@ -804,7 +804,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `~/.claude/projects/**/<id>/subagents/`、`.../tasks/*.output` | サブエージェントの会話、バックグラウンドの Bash の出力 |
 | `~/.claude/cache/model-catalog/*-cc.json` | モデルの一覧と、選べるエフォート |
 | `~/.claude.json` の `cachedUsageUtilization` | 利用枠の控え（Claude Code で `/usage` を開いたときに残るもの。statusLine より新しいときだけ使う） |
-| `~/.claude.json` の `oauthAccount` | ログインしているアカウント（`emailAddress`・`organizationName` と、プランの名前を作る `organizationType`・`organizationRateLimitTier`・`planDisplayName` だけ）。プランは、`planDisplayName` があればそれ、無ければ（2.1.296 は書かない）`organizationType` から作る（`claude_max` → Claude Max。Max は段から倍率も付けて Claude Max 20x）。Claude Code の内部の形式なので、無い項目は出さない。認証情報（Keychain）は読まない |
+| `~/.claude.json` の `oauthAccount` | ログインしているアカウント（`emailAddress`・`organizationName` と、プランの名前を作る `organizationType`・`organizationRateLimitTier`・`planDisplayName` だけ）。プランは、`planDisplayName` があれば「Claude <その値>」、無ければ（2.1.296 は、一部のアカウントにしか書かない）`organizationType` から作る（`claude_max` → Claude Max。Max は段から倍率も付けて Claude Max 20x）。Claude Code の内部の形式なので、無い項目は出さない。認証情報（Keychain）は読まない |
 | `.claude/commands`・`.claude/skills`（プロジェクトとホーム）、会話ログのスキル一覧 | `/` の候補 |
 | worktree のセッションのリポジトリ（`git worktree list`・`git status`・`git rev-list`・`git merge-tree`） | worktree を消す前に、残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、Claude Code のロック |
 | GitHub の PR（`gh pr list`。`gh` のログインを使う） | worktree のブランチから作った PR がマージ済みか（アーカイブ・一覧から削除するときの確認と、worktree の削除） |
