@@ -199,23 +199,10 @@ function windowStateFile(): string {
   return join(app.getPath('userData'), 'window-state.json');
 }
 
-function rememberWindowState(win: BrowserWindow): void {
-  if (win.isDestroyed()) return;
-  try {
-    saveWindowState(windowStateFile(), {
-      bounds: win.getNormalBounds(),
-      maximized: win.isMaximized(),
-      fullScreen: win.isFullScreen(),
-    });
-  } catch {
-    // 覚えられなくても、次の起動が既定の大きさになるだけ
-  }
-}
-
 function createWindow(): void {
   const saved = loadWindowState(windowStateFile());
   const placement = placeWindow(
-    saved?.bounds ?? null,
+    saved,
     screen.getAllDisplays().map((display) => display.workArea),
     { width: 1600, height: 960 },
   );
@@ -232,9 +219,22 @@ function createWindow(): void {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, additionalArguments: [`${LANGUAGE_ARG}${language()}`] },
   });
   mainWindow = win;
+  // 最大化・フルスクリーンを解いたときの位置と大きさは、通常の状態のたびに自分で控える。macOS の getNormalBounds() は、
+  // ドラッグで動かしたあとを追わず、最後に API で決めた位置（起動したときの位置）を返す。それを覚えると、
+  // 別のディスプレイへ動かして最大化したウインドウが、次の起動で元のディスプレイに開いてしまう
+  let normalBounds = win.getNormalBounds();
   if (saved?.maximized && !saved.fullScreen) win.maximize();
-  // macOS の resized・moved は、動かし終えたときに一度だけ届く
-  const remember = () => rememberWindowState(win);
+  // macOS の resized・moved は、動かし終えたときに一度だけ届く。最大化のアニメーションの途中（resize）は、
+  // まだ通常の状態に見えるので、そこでは控えない
+  const remember = () => {
+    if (win.isDestroyed()) return;
+    if (win.isNormal()) normalBounds = win.getBounds();
+    try {
+      saveWindowState(windowStateFile(), { bounds: normalBounds, frame: win.getBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() });
+    } catch {
+      // 覚えられなくても、次の起動が既定の大きさになるだけ
+    }
+  };
   win.on('resized', remember);
   win.on('moved', remember);
   win.on('maximize', remember);
@@ -247,7 +247,7 @@ function createWindow(): void {
   win.on('resize', layoutViews);
   // バツボタンでウインドウを閉じたら、アプリも終了する（Claude Code を止めるかは quit の確認で決める）
   win.on('close', (event) => {
-    rememberWindowState(win);
+    remember();
     if (quitDecided) return;
     event.preventDefault();
     app.quit();
