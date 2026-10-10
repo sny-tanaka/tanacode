@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { compactInstructions, type CompactMark, type ContextItem, type SessionContext } from '@shared/context';
+import { t } from '@shared/i18n';
+import { tx } from '../i18n';
 import { DisclosureIcon } from '../icons';
 import { Busy } from '../layout/Busy';
 import { formatTokens } from '../workflow/WorkflowCard';
@@ -80,31 +82,34 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
   // 圧縮の直後は、全体の使用量が次の応答まで分からない（会話ログの圧縮後の量は、システムプロンプトなどを含まない）
   const known = tokens !== null && tokens >= listed;
 
-  if (!context) return <div className="scm-empty">読み込み中…</div>;
-  if (items.length === 0) return <div className="scm-empty">まだ会話がありません。Claude が読んだファイルやツールの結果が、ここに大きさと一緒に並びます</div>;
+  if (!context) return <div className="scm-empty">{t('context.panel.loading')}</div>;
+  if (items.length === 0) return <div className="scm-empty">{t('context.panel.empty')}</div>;
 
   return (
     <div className="context-panel">
       <div className="context-summary">
         {known ? (
           <div className="context-total">
-            全体 <strong>{formatTokens(tokens)}</strong> / {limit >= 1_000_000 ? `${limit / 1_000_000}M` : formatTokens(limit)}（
-            {Math.round((tokens / limit) * 100)}%）
+            {tx('context.panel.total', {
+              tokens: <strong>{formatTokens(tokens)}</strong>,
+              limit: limit >= 1_000_000 ? `${limit / 1_000_000}M` : formatTokens(limit),
+              percent: Math.round((tokens / limit) * 100),
+            })}
           </div>
         ) : (
-          <div className="context-total">全体の使用量は、次の応答のあとに出ます</div>
+          <div className="context-total">{t('context.panel.totalUnknown')}</div>
         )}
         <div className="context-breakdown">
-          一覧 約 {formatTokens(listed)}
-          {known && tokens > listed && <> · そのほか 約 {formatTokens(tokens - listed)}（システムプロンプト・ツールの定義・Claude Code が足す知らせなど）</>}
+          {t('context.panel.listed', { tokens: formatTokens(listed) })}
+          {known && tokens > listed && <> · {t('context.panel.other', { tokens: formatTokens(tokens - listed) })}</>}
         </div>
         <div className="context-toolbar">
-          <div className="segmented text" role="tablist" aria-label="並べ方">
+          <div className="segmented text" role="tablist" aria-label={t('context.panel.sort')}>
             <button role="tab" aria-selected={sort === 'size'} className={sort === 'size' ? 'active' : ''} onClick={() => changeSort('size')}>
-              大きい順
+              {t('context.panel.sortBySize')}
             </button>
             <button role="tab" aria-selected={sort === 'time'} className={sort === 'time' ? 'active' : ''} onClick={() => changeSort('time')}>
-              時間順
+              {t('context.panel.sortByTime')}
             </button>
           </div>
         </div>
@@ -118,7 +123,7 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
           <>
             <button className="context-compacted-head" aria-expanded={showCompacted} onClick={() => setShowCompacted((v) => !v)}>
               <DisclosureIcon open={showCompacted} />
-              圧縮で要約に置き換わったもの（{compacted.length} 件）
+              {t('context.panel.compacted', { count: compacted.length })}
             </button>
             {showCompacted && compacted.map((item) => <ContextRow key={item.id} item={item} max={compactedMax} />)}
           </>
@@ -129,12 +134,10 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
         {draft === null ? (
           <>
             <div className="context-compact-row">
-              <span className="context-mark-count">
-                残す {keep} · 捨てる {drop}
-              </span>
+              <span className="context-mark-count">{t('context.panel.marks', { keep, drop })}</span>
               {keep + drop > 0 && (
                 <button className="ghost-button" onClick={clear}>
-                  印を外す
+                  {t('context.panel.clearMarks')}
                 </button>
               )}
               <button
@@ -142,20 +145,20 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
                 disabled={!canCompact || keep + drop === 0}
                 onClick={() => setDraft(compactInstructions(current, marks))}
               >
-                この選び方で圧縮…
+                {t('context.panel.compactWithMarks')}
               </button>
             </div>
             <p className="context-note">
               {compacting ? (
-                <Busy>圧縮中…</Busy>
+                <Busy>{t('context.panel.compacting')}</Busy>
               ) : (
-                '印を付けないものは Claude に任せます。大きさは文字数と応答の使用量からの見積もりで、正確なトークン数ではありません'
+                t('context.panel.note')
               )}
             </p>
           </>
         ) : (
           <>
-            <div className="context-compact-title">/compact に添える指示（直してから送れます）</div>
+            <div className="context-compact-title">{t('context.panel.draftTitle')}</div>
             <textarea
               value={draft}
               rows={5}
@@ -170,13 +173,13 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
             />
             <div className="context-compact-row">
               <button className="ghost-button" onClick={() => setDraft(null)}>
-                戻る
+                {t('common.back')}
               </button>
               <button className="send-button" disabled={!canCompact || !draft.trim()} onClick={send}>
-                圧縮する
+                {t('context.panel.compact')}
               </button>
             </div>
-            {!canCompact && <p className="context-note">作業中・確認の画面が出ている間は圧縮できません</p>}
+            {!canCompact && <p className="context-note">{t('context.panel.cannotCompact')}</p>}
           </>
         )}
       </div>
@@ -212,10 +215,10 @@ function ContextRow({
         {onMark && (
           <span className="context-marks">
             <button className={`context-mark keep${mark === 'keep' ? ' on' : ''}`} aria-pressed={mark === 'keep'} onClick={() => onMark(item.id, 'keep')}>
-              残す
+              {t('context.row.keep')}
             </button>
             <button className={`context-mark drop${mark === 'drop' ? ' on' : ''}`} aria-pressed={mark === 'drop'} onClick={() => onMark(item.id, 'drop')}>
-              捨てる
+              {t('context.row.drop')}
             </button>
           </span>
         )}
@@ -236,17 +239,17 @@ function maxOf(items: ContextItem[]): number {
 function kindOf(item: ContextItem): string {
   switch (item.kind) {
     case 'file':
-      return item.edited ? '書いた' : '読んだ';
+      return item.edited ? t('context.kind.written') : t('context.kind.read');
     case 'tool':
-      return item.tool ? shortTool(item.tool) : '知らせ';
+      return item.tool ? shortTool(item.tool) : t('context.kind.notice');
     case 'image':
-      return '画像';
+      return t('context.kind.image');
     case 'agent':
-      return 'エージェント';
+      return t('context.kind.agent');
     case 'topic':
-      return 'やりとり';
+      return t('context.kind.topic');
     case 'summary':
-      return '要約';
+      return t('context.kind.summary');
   }
 }
 

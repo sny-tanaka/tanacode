@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AUTHOR_LABEL, eventText, humanUnread, withParticle, type Card, type Checklist, type ThreadEntry } from '@shared/checklist';
+import { authorLabel, humanUnread, type Author, type Card, type CardEvent, type Checklist, type ThreadEntry } from '@shared/checklist';
+import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { Markdown } from '../chat/Markdown';
 import { CloseIcon, CopyIcon, IconButton, SendIcon, TrashIcon } from '../icons';
@@ -93,16 +94,16 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
           {list.name} #{card.number}
         </span>
         <div className="spacer" />
-        <IconButton icon={CopyIcon} size="md" label="別のセッションへコピー" onClick={() => setCopying(true)} />
+        <IconButton icon={CopyIcon} size="md" label={t('checklist.action.copyToSession')} onClick={() => setCopying(true)} />
         <IconButton
           icon={TrashIcon}
           size="md"
           danger
-          label="ゴミ箱に入れる"
-          tip="ゴミ箱に入れる（サイドパネルのゴミ箱から戻せます）"
+          label={t('checklist.action.trash')}
+          tip={t('checklist.cardPane.trashTip')}
           onClick={() => void apply({ type: 'card-delete', listId: list.id, cardIds: [card.id] }).then((ok) => ok && onClose())}
         />
-        <IconButton icon={CloseIcon} size="sm" label="閉じる" onClick={onClose} />
+        <IconButton icon={CloseIcon} size="sm" label={t('common.close')} onClick={onClose} />
       </div>
       <div className="card-pane-scroll">
         {editingTitle !== null ? (
@@ -121,13 +122,13 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
             }}
           />
         ) : (
-          <h2 className="card-pane-title" title="ダブルクリックでタイトルを変える" onDoubleClick={() => setEditingTitle(card.title)}>
+          <h2 className="card-pane-title" title={t('checklist.cardPane.renameTip')} onDoubleClick={() => setEditingTitle(card.title)}>
             {card.title}
           </h2>
         )}
         <div className="card-pane-meta">
-          {withParticle(AUTHOR_LABEL[card.createdBy], 'が')}作成 · {formatTime(card.createdAt)}
-          {card.checked && card.checkedAt && ` · ${withParticle(AUTHOR_LABEL[card.checkedBy ?? 'human'], 'が')}チェック（${formatTime(card.checkedAt)}）`}
+          {t(card.createdBy === 'claude' ? 'checklist.cardPane.createdByClaude' : 'checklist.cardPane.createdByHuman')} · {formatTime(card.createdAt)}
+          {card.checked && card.checkedAt && ` · ${t(card.checkedBy === 'claude' ? 'checklist.cardPane.checkedByClaude' : 'checklist.cardPane.checkedByHuman', { time: formatTime(card.checkedAt) })}`}
         </div>
         <div className="card-pane-body">
           {editingBody !== null ? (
@@ -136,7 +137,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
                 autoFocus
                 rows={8}
                 value={editingBody}
-                placeholder="説明文（Markdown）"
+                placeholder={t('checklist.cardPane.bodyPlaceholder')}
                 onChange={(e) => setEditingBody(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.nativeEvent.isComposing) return;
@@ -149,7 +150,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
               />
               <div className="checklist-form-foot">
                 <button className="ghost-button" onClick={() => setEditingBody(null)}>
-                  キャンセル
+                  {t('common.cancel')}
                 </button>
                 <button
                   className="send-button"
@@ -158,21 +159,21 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
                     setEditingBody(null);
                   }}
                 >
-                  保存（⌘Enter）
+                  {t('checklist.cardPane.saveBody')}
                 </button>
               </div>
             </div>
           ) : (
             <>
-              {card.body ? <Markdown text={card.body} /> : <p className="card-pane-empty">説明文はありません</p>}
+              {card.body ? <Markdown text={card.body} /> : <p className="card-pane-empty">{t('checklist.cardPane.noBody')}</p>}
               <button className="ghost-button card-pane-edit" onClick={() => setEditingBody(card.body)}>
-                {card.body ? '説明文を編集' : '説明文を書く'}
+                {card.body ? t('checklist.cardPane.editBody') : t('checklist.cardPane.writeBody')}
               </button>
             </>
           )}
         </div>
         <div className="card-thread">
-          <div className="card-thread-head">スレッド</div>
+          <div className="card-thread-head">{t('checklist.cardPane.thread')}</div>
           {card.thread.map((entry) => (
             <ThreadRow key={entry.id} entry={entry} />
           ))}
@@ -183,7 +184,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
         <textarea
           rows={3}
           value={reply}
-          placeholder="返信（Markdown。⌘Enter で送る）"
+          placeholder={t('checklist.cardPane.replyPlaceholder')}
           onChange={(e) => setReply(e.target.value)}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return;
@@ -194,7 +195,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
           }}
         />
         <div className="card-composer-foot">
-          <label className="checklist-notify" data-tip={session.running ? '返信したことを、手が空いたら Claude に知らせます' : 'Claude Code が止まっているので、知らせは届きません。Claude は次にチェックリストを読んだとき、未読の返信として気づきます'}>
+          <label className="checklist-notify" data-tip={session.running ? t('checklist.cardPane.notifyTip') : t('checklist.cardPane.notifyTipStopped')}>
             <input
               type="checkbox"
               checked={notify}
@@ -203,10 +204,10 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
                 saveNotify(e.target.checked);
               }}
             />
-            Claude に通知する
+            {t('checklist.cardPane.notify')}
           </label>
           <div className="spacer" />
-          <IconButton icon={SendIcon} primary label="返信する" tip="返信する（⌘Enter）" busy={sending} disabled={!reply.trim()} onClick={() => void send()} />
+          <IconButton icon={SendIcon} primary label={t('checklist.cardPane.reply')} tip={t('checklist.cardPane.replyTip')} busy={sending} disabled={!reply.trim()} onClick={() => void send()} />
         </div>
       </div>
       {copying && <CopyDialog session={session} sessions={sessions} list={list} cardIds={[card.id]} onClose={() => setCopying(false)} />}
@@ -218,7 +219,7 @@ function ThreadRow({ entry }: { entry: ThreadEntry }) {
   if (entry.kind === 'event') {
     return (
       <div className="card-thread-event">
-        {eventText(entry.event, AUTHOR_LABEL[entry.author])} · {formatTime(entry.at)}
+        {eventLabel(entry.event, entry.author)} · {formatTime(entry.at)}
       </div>
     );
   }
@@ -226,13 +227,19 @@ function ThreadRow({ entry }: { entry: ThreadEntry }) {
     // 作者のクラスは by- を付ける。`claude` だけだと、Claude Code ペイン（.claude）の幅などが当たってしまう
     <div className={`card-thread-reply by-${entry.author}`}>
       <div className="card-thread-reply-head">
-        <span className="card-thread-author">{AUTHOR_LABEL[entry.author]}</span>
+        <span className="card-thread-author">{authorLabel(entry.author)}</span>
         <span className="card-thread-time">{formatTime(entry.at)}</span>
-        {entry.notify && <span className="card-thread-notified">Claude に通知</span>}
+        {entry.notify && <span className="card-thread-notified">{t('checklist.cardPane.notified')}</span>}
       </div>
       <Markdown text={entry.text} />
     </div>
   );
+}
+
+// 記録の行の文（「Claude がチェックしました」など）。言語によって主語で文の形が変わるので、書いた人ごとに別の文言にする。
+// 文言の {from}・{fromList} などには、記録の項目をそのまま埋め込む
+function eventLabel(event: CardEvent, author: Author): string {
+  return t(`checklist.${author === 'claude' ? 'eventByClaude' : 'eventByHuman'}.${event.type}`, event);
 }
 
 // 今日なら時刻だけ、それ以外は日付も

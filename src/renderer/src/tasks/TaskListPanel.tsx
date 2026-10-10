@@ -1,11 +1,9 @@
 import { memo, useEffect, useRef } from 'react';
+import { t } from '@shared/i18n';
 import { formatDuration } from '../workflow/WorkflowCard';
-import { elapsed, stoppable, useNow, type TaskEntry, type TaskState } from './taskList';
+import { elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
 import { IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
-
-const KIND_LABEL = { subagent: 'エージェント', workflow: 'ワークフロー', bash: 'Bash' } as const;
-const STATE_LABEL: Record<TaskState, string> = { running: '実行中', done: '完了', failed: '失敗', stopped: '停止' };
 
 type Props = {
   tasks: TaskEntry[];
@@ -30,16 +28,16 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
     if (visible) listRef.current?.querySelector('.task-card.active')?.scrollIntoView({ block: 'nearest' });
   }, [activeKey, visible]);
   if (tasks.length === 0) {
-    return <div className="scm-empty">このセッションでは、まだサブエージェント・ワークフロー・バックグラウンドの Bash を動かしていません</div>;
+    return <div className="scm-empty">{t('tasks.list.empty')}</div>;
   }
   const card = (task: TaskEntry) => {
     const ms = elapsed(task, now);
     return (
-      <div key={task.key} className={`task-card${task.key === activeKey ? ' active' : ''}`} onClick={() => onOpen(task)} title="開いて中身を見る">
+      <div key={task.key} className={`task-card${task.key === activeKey ? ' active' : ''}`} onClick={() => onOpen(task)} title={t('tasks.list.openTip')}>
         <div className="task-card-head">
           <StatusDot state={task.state === 'running' ? 'running' : task.state === 'done' ? 'done' : 'error'} />
-          <span className="task-kind">{KIND_LABEL[task.ref.kind]}</span>
-          <span className={`task-card-state ${task.state}`}>{STATE_LABEL[task.state]}</span>
+          <span className="task-kind">{t(`tasks.kind.${task.ref.kind}`)}</span>
+          <span className={`task-card-state ${task.state}`}>{taskStateLabel(task.state)}</span>
           <div className="spacer" />
           {ms !== null && <span className="task-time">{formatDuration(ms)}</span>}
           {stoppable(task) && (
@@ -49,8 +47,8 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
               size="sm"
               className="task-stop"
               busy={stopping.has(task.key)}
-              label={stopping.has(task.key) ? '止めています' : '止める'}
-              tip={stopping.has(task.key) ? '止めています…' : undefined}
+              label={stopping.has(task.key) ? t('tasks.stop.stopping') : t('tasks.stop.stop')}
+              tip={stopping.has(task.key) ? t('tasks.stop.stoppingTip') : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 onStop(task);
@@ -67,14 +65,14 @@ export const TaskListPanel = memo(function TaskListPanel({ tasks, activeKey, onO
     <div className="task-list" ref={listRef}>
       <div className="task-list-group">
         <div className="task-list-head">
-          実行中 <span className="scm-count">{running.length}</span>
+          {t('tasks.list.running')} <span className="scm-count">{running.length}</span>
         </div>
-        {running.length === 0 ? <div className="scm-none">動いているものはありません</div> : running.map(card)}
+        {running.length === 0 ? <div className="scm-none">{t('tasks.list.noneRunning')}</div> : running.map(card)}
       </div>
       {finished.length > 0 && (
         <div className="task-list-group">
           <div className="task-list-head">
-            終わったもの <span className="scm-count">{finished.length}</span>
+            {t('tasks.list.finished')} <span className="scm-count">{finished.length}</span>
           </div>
           {finished.map(card)}
         </div>

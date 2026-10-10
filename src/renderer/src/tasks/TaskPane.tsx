@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatEvent } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { SubagentRun } from '@shared/subagent';
 import type { AgentLogRef, BashTask } from '@shared/task';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
@@ -12,7 +13,7 @@ import { chatFromEvents } from '../chat/chatState';
 import { WorkingNote } from '../chat/WorkingNote';
 import { formatDuration, formatTokens, groupByPhase, shortModel } from '../workflow/WorkflowCard';
 import { WorkflowFlow } from '../workflow/WorkflowFlow';
-import { BASH_STATE_LABEL, elapsed, stoppable, useNow, type TaskEntry } from './taskList';
+import { bashStateLabel, elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
 import { Busy } from '../layout/Busy';
 import { CloseIcon, DisclosureIcon, FlowIcon, IconButton, StopIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';
@@ -34,9 +35,6 @@ type Props = {
   onOpenFile: (absPath: string, line?: number) => void;
 };
 
-const KIND_LABEL = { subagent: 'サブエージェント', workflow: 'ワークフロー', bash: 'バックグラウンドの Bash' } as const;
-const STATE_LABEL = { running: '実行中', done: '完了', failed: '失敗', stopped: '停止' } as const;
-
 // サブエージェント・ワークフロー・バックグラウンドの Bash の中身。エディタの場所に大きく出す
 export function TaskPane({ sessionId, task, subagent, workflow, bash, stopping, onStop, onClose, onOpenFile }: Props) {
   const subagentRef = useMemo<AgentLogRef>(() => ({ kind: 'subagent', toolUseId: task.ref.toolUseId }), [task.ref.toolUseId]);
@@ -44,7 +42,7 @@ export function TaskPane({ sessionId, task, subagent, workflow, bash, stopping, 
     <section className="editor task-pane">
       <div className="diff-pane-head">
         <StatusDot state={task.state === 'running' ? 'running' : task.state === 'done' ? 'done' : 'error'} />
-        <span className="task-pane-kind">{KIND_LABEL[task.ref.kind]}</span>
+        <span className="task-pane-kind">{t(`tasks.paneKind.${task.ref.kind}`)}</span>
         <span className="diff-pane-title task-pane-title" title={task.name}>
           {task.name}
         </span>
@@ -56,12 +54,12 @@ export function TaskPane({ sessionId, task, subagent, workflow, bash, stopping, 
             danger
             size="md"
             busy={stopping}
-            label={stopping ? '止めています' : '止める'}
-            tip={stopping ? '止めています…' : undefined}
+            label={stopping ? t('tasks.stop.stopping') : t('tasks.stop.stop')}
+            tip={stopping ? t('tasks.stop.stoppingTip') : undefined}
             onClick={onStop}
           />
         )}
-        <IconButton icon={CloseIcon} size="sm" label="閉じる" onClick={onClose} />
+        <IconButton icon={CloseIcon} size="sm" label={t('common.close')} onClick={onClose} />
       </div>
       {task.ref.kind === 'subagent' && (
         <AgentConversation
@@ -88,13 +86,13 @@ function TaskMeta({ task, subagent, workflow, bash }: Pick<Props, 'task' | 'suba
   return (
     <span className="diff-pane-kind">
       <span className={task.state === 'running' ? 'flow-text' : undefined}>
-        {task.ref.kind === 'bash' && bash ? BASH_STATE_LABEL[bash.state].replace('…', '') : STATE_LABEL[task.state]}
+        {task.ref.kind === 'bash' && bash ? bashStateLabel(bash.state).replace('…', '') : taskStateLabel(task.state)}
       </span>
       {[
-        task.background && task.ref.kind === 'subagent' ? 'バックグラウンド' : null,
+        task.background && task.ref.kind === 'subagent' ? t('tasks.pane.background') : null,
         subagent?.model ? shortModel(subagent.model) : null,
         ms !== null ? formatDuration(ms) : null,
-        tokens !== null ? `${formatTokens(tokens)} tokens` : null,
+        tokens !== null ? t('tasks.pane.tokens', { count: formatTokens(tokens) }) : null,
       ]
         .filter(Boolean)
         .map((part) => ` · ${part}`)
@@ -178,10 +176,10 @@ const AgentConversation = memo(function AgentConversation({
     >
       {events === null && (
         <div className="chat-note">
-          <Busy>読み込み中…</Busy>
+          <Busy>{t('tasks.pane.loading')}</Busy>
         </div>
       )}
-      {events !== null && items.length === 0 && <div className="chat-note">{live ? <Busy>起動を待っています…</Busy> : '会話ログがありません'}</div>}
+      {events !== null && items.length === 0 && <div className="chat-note">{live ? <Busy>{t('tasks.pane.starting')}</Busy> : t('tasks.pane.noLog')}</div>}
       {prompt?.kind === 'user' && <PromptDetails key={key} text={prompt.text} />}
       {rows.map((row) =>
         row.kind === 'tool-group' ? (
@@ -214,7 +212,7 @@ const AgentConversation = memo(function AgentConversation({
       {live && <WorkingNote />}
       {result && !sameAsLastText(items, result) && (
         <div className="task-result">
-          <div className="task-result-label">結果</div>
+          <div className="task-result-label">{t('tasks.pane.result')}</div>
           <Markdown text={result} />
         </div>
       )}
@@ -229,7 +227,7 @@ function PromptDetails({ text }: { text: string }) {
     <details className="task-prompt" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>
         <DisclosureIcon open={open} />
-        指示
+        {t('tasks.pane.prompt')}
       </summary>
       <Markdown text={text} />
     </details>
@@ -261,16 +259,16 @@ function WorkflowView({ sessionId, run, onOpenFile }: { sessionId: string; run: 
       <div className="task-agents">
         <button className={`task-agent task-overview${agent ? '' : ' active'}`} onClick={() => setSelected(null)}>
           <FlowIcon size={14} />
-          <span className="task-agent-name">概要</span>
+          <span className="task-agent-name">{t('tasks.workflow.overview')}</span>
         </button>
-        <div className="task-agents-label">すべてのエージェント</div>
+        <div className="task-agents-label">{t('tasks.workflow.allAgents')}</div>
         {groups.map((group) => (
           <div key={group.title} className="task-phase">
             <div className="task-phase-title">
               <span className="task-phase-name">{group.title}</span>
               {group.detail && <span className="workflow-phase-detail">{group.detail}</span>}
             </div>
-            {group.agents.length === 0 && <div className="workflow-empty">{run.status === 'running' ? '待機中' : 'エージェントなし'}</div>}
+            {group.agents.length === 0 && <div className="workflow-empty">{run.status === 'running' ? t('tasks.workflow.waiting') : t('tasks.workflow.noAgents')}</div>}
             {group.agents.map((a) => (
               <AgentItem key={a.agentId} agent={a} active={a.agentId === agentId} onClick={() => setSelected(a.agentId)} />
             ))}
@@ -301,8 +299,9 @@ function AgentItem({ agent, active, onClick }: { agent: WorkflowAgent; active: b
       <span className="task-agent-meta">
         {agent.model && <span>{shortModel(agent.model)}</span>}
         <span>
-          ツール {agent.toolCalls}
-          {agent.state === 'running' && agent.lastTool ? `・${agent.lastTool}` : ''}
+          {agent.state === 'running' && agent.lastTool
+            ? t('tasks.workflow.toolCallsRunning', { count: agent.toolCalls, tool: agent.lastTool })
+            : t('tasks.workflow.toolCalls', { count: agent.toolCalls })}
         </span>
         {agent.durationMs !== null && <span>{formatDuration(agent.durationMs)}</span>}
       </span>
@@ -332,17 +331,17 @@ function BashView({ task }: { task: BashTask }) {
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
       >
-        {task.truncated && <span className="bash-note">（先頭を省略しています）{'\n'}</span>}
-        {task.output || (task.state === 'running' ? '' : '（出力なし）')}
+        {task.truncated && <span className="bash-note">{t('tasks.bash.truncated')}{'\n'}</span>}
+        {task.output || (task.state === 'running' ? '' : t('tasks.bash.noOutput'))}
         {task.state === 'running' && <span className="bash-cursor">▍</span>}
       </pre>
       <div className="bash-foot">
         {task.state === 'running'
-          ? <span className="flow-text">実行中…</span>
+          ? <span className="flow-text">{bashStateLabel('running')}</span>
           : task.exitCode !== null
-            ? `終了コード ${task.exitCode}`
-            : BASH_STATE_LABEL[task.state]}
-        <span className="bash-id">タスク ID {task.taskId}</span>
+            ? t('tasks.bash.exitCode', { code: task.exitCode })
+            : bashStateLabel(task.state)}
+        <span className="bash-id">{t('tasks.bash.taskId', { id: task.taskId })}</span>
       </div>
     </div>
   );

@@ -1,1 +1,64 @@
-{}
+{
+  "panel": {
+    "loading": "読み込み中…",
+    "empty": "まだ会話がありません。Claude が読んだファイルやツールの結果が、ここに大きさと一緒に並びます",
+    "total": "全体 {tokens} / {limit}（{percent}%）",
+    "totalUnknown": "全体の使用量は、次の応答のあとに出ます",
+    "listed": "一覧 約 {tokens}",
+    "other": "そのほか 約 {tokens}（システムプロンプト・ツールの定義・Claude Code が足す知らせなど）",
+    "sort": "並べ方",
+    "sortBySize": "大きい順",
+    "sortByTime": "時間順",
+    "compacted": "圧縮で要約に置き換わったもの（{count} 件）",
+    "marks": "残す {keep} · 捨てる {drop}",
+    "clearMarks": "印を外す",
+    "compactWithMarks": "この選び方で圧縮…",
+    "compacting": "圧縮中…",
+    "note": "印を付けないものは Claude に任せます。大きさは文字数と応答の使用量からの見積もりで、正確なトークン数ではありません",
+    "draftTitle": "/compact に添える指示（直してから送れます）",
+    "compact": "圧縮する",
+    "cannotCompact": "作業中・確認の画面が出ている間は圧縮できません"
+  },
+  "row": {
+    "keep": "残す",
+    "drop": "捨てる"
+  },
+  "kind": {
+    "written": "書いた",
+    "read": "読んだ",
+    "notice": "知らせ",
+    "image": "画像",
+    "agent": "エージェント",
+    "topic": "やりとり",
+    "summary": "要約"
+  },
+  "meter": {
+    "label": "コンテキストの中身",
+    "tip": "コンテキスト {tokens} / {limit} tokens（直近の応答時点）\nいっぱいに近づくと自動で圧縮されます。押すと中身の一覧を出します"
+  },
+  "compact": {
+    "keep": "{items}は詳しく残す。",
+    "drop": "{items}は捨ててよい。",
+    "listTwo": "{first}と、{second}",
+    "separator": "、",
+    "file": "`{label}` の内容",
+    "fileEdited": "`{label}` の内容と変更",
+    "summary": "前回の圧縮の要約",
+    "agent": "サブエージェント「{label}」の結果",
+    "imageWithLabel": "{tool} の画像（{label}）",
+    "image": "{tool} の画像",
+    "topicAnswer": "質問に「{answer}」と答えたあとのやりとり",
+    "topicNotice": "「{notice}」の知らせのあとのやりとり",
+    "topicEvent": "{label}のやりとり",
+    "topic": "「{label}」から始まるやりとり",
+    "notice": "「{label}」の知らせ",
+    "bash": "`{label}` の出力",
+    "search": "「{label}」の検索結果",
+    "glob": "「{label}」に合うファイルの一覧",
+    "webFetch": "{label} のページの内容",
+    "skill": "スキル「{label}」の内容",
+    "toolWithLabel": "{tool}（{label}）の結果",
+    "tool": "{tool} の結果",
+    "mcpTool": "{server} の {tool}"
+  }
+}

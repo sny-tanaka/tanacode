@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import { CheckMark } from '../layout/CheckMark';
 import { formatDuration } from '../workflow/WorkflowCard';
 import { DisclosureIcon, IconButton, StopIcon } from '../icons';
-import { elapsed, stoppable, useNow, type TaskEntry } from './taskList';
+import { elapsed, stoppable, taskStateLabel, useNow, type TaskEntry } from './taskList';
 
-const KIND_LABEL = { subagent: 'エージェント', workflow: 'ワークフロー', bash: 'Bash' } as const;
 // これより多いときは折りたたむ
 const COLLAPSE_OVER = 3;
 // 終わったタスクを、チェックを描いてから消すまでの時間（CSS の task-row-leave と合わせる）
@@ -35,8 +35,8 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
     <div className="task-tray">
       <button className="task-tray-head" onClick={() => setCollapsed((v) => !v)}>
         <DisclosureIcon open={!collapsed} />
-        タスク
-        {running > 0 && <span className="task-tray-count running">実行中 {running}</span>}
+        {t('tasks.tray.title')}
+        {running > 0 && <span className="task-tray-count running">{t('tasks.tray.running', { count: running })}</span>}
       </button>
       {shown.map((task) => {
         const ms = elapsed(task, now);
@@ -46,16 +46,16 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
             key={task.key}
             className={`task-row${task.key === activeKey ? ' active' : ''}${left ? ' leaving' : ''}`}
             onClick={() => onOpen(task)}
-            title="開いて中身を見る"
+            title={t('tasks.list.openTip')}
           >
             {left ? (
               <CheckMark animate failed={task.state !== 'done'} slot={7} />
             ) : (
               <span className="tool-dot running" />
             )}
-            <span className="task-kind">{KIND_LABEL[task.ref.kind]}</span>
+            <span className="task-kind">{t(`tasks.kind.${task.ref.kind}`)}</span>
             <span className="task-name">{task.name}</span>
-            <span className="task-progress">{left ? LEFT_LABEL[task.state] : task.progress}</span>
+            <span className="task-progress">{left ? taskStateLabel(task.state) : task.progress}</span>
             {ms !== null && <span className="task-time">{formatDuration(ms)}</span>}
             {stoppable(task) && (
               <IconButton
@@ -64,8 +64,8 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
                 size="sm"
                 className="task-stop"
                 busy={stopping.has(task.key)}
-                label={stopping.has(task.key) ? '止めています' : '止める'}
-                tip={stopping.has(task.key) ? '止めています…' : undefined}
+                label={stopping.has(task.key) ? t('tasks.stop.stopping') : t('tasks.stop.stop')}
+                tip={stopping.has(task.key) ? t('tasks.stop.stoppingTip') : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   onStop(task);
@@ -77,14 +77,12 @@ export function TaskTray({ tasks, activeKey, onOpen, onStop, stopping }: Props) 
       })}
       {!collapsed && shown.length < rows.length && (
         <button className="task-more" onClick={() => setExpanded(true)}>
-          ほか {rows.length - shown.length} 件
+          {t('tasks.tray.more', { count: rows.length - shown.length })}
         </button>
       )}
     </div>
   );
 }
-
-const LEFT_LABEL: Record<TaskEntry['state'], string> = { running: '', done: '完了', failed: '失敗', stopped: '停止' };
 
 // 実行中から終わったものに変わったタスク（の key）。しばらく残して、チェックを描いてから消す
 function useLeaving(tasks: TaskEntry[]): ReadonlySet<string> {

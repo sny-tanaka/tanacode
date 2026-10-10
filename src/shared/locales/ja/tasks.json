@@ -1,1 +1,70 @@
-{}
+{
+  "bashState": {
+    "running": "実行中…",
+    "completed": "完了",
+    "failed": "失敗",
+    "killed": "停止",
+    "stopped": "停止"
+  },
+  "state": {
+    "running": "実行中",
+    "done": "完了",
+    "failed": "失敗",
+    "stopped": "停止"
+  },
+  "list": {
+    "untitledSubagent": "サブエージェント",
+    "toolCalls": "ツール {count}回",
+    "agents": "エージェント {done}/{total}",
+    "agentsRunning": "エージェント {done}/{total}（実行中 {count}）",
+    "empty": "このセッションでは、まだサブエージェント・ワークフロー・バックグラウンドの Bash を動かしていません",
+    "openTip": "開いて中身を見る",
+    "running": "実行中",
+    "noneRunning": "動いているものはありません",
+    "finished": "終わったもの"
+  },
+  "paneKind": {
+    "subagent": "サブエージェント",
+    "workflow": "ワークフロー",
+    "bash": "バックグラウンドの Bash"
+  },
+  "stop": {
+    "stopping": "止めています",
+    "stop": "止める",
+    "stoppingTip": "止めています…",
+    "failed": "止められませんでした: {error}"
+  },
+  "pane": {
+    "background": "バックグラウンド",
+    "tokens": "{count} tokens",
+    "loading": "読み込み中…",
+    "starting": "起動を待っています…",
+    "noLog": "会話ログがありません",
+    "result": "結果",
+    "prompt": "指示"
+  },
+  "workflow": {
+    "overview": "概要",
+    "allAgents": "すべてのエージェント",
+    "waiting": "待機中",
+    "noAgents": "エージェントなし",
+    "toolCalls": "ツール {count}",
+    "toolCallsRunning": "ツール {count}・{tool}"
+  },
+  "bash": {
+    "truncated": "（先頭を省略しています）",
+    "noOutput": "（出力なし）",
+    "exitCode": "終了コード {code}",
+    "taskId": "タスク ID {id}"
+  },
+  "kind": {
+    "subagent": "エージェント",
+    "workflow": "ワークフロー",
+    "bash": "Bash"
+  },
+  "tray": {
+    "title": "タスク",
+    "running": "実行中 {count}",
+    "more": "ほか {count} 件"
+  }
+}

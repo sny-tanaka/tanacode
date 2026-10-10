@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import { errorMessage } from '../errorMessage';
 import type { TaskEntry } from './taskList';
 
@@ -38,7 +39,7 @@ export function useStopTask(sessionId: string | null) {
         },
         (error: unknown) => {
           release(task.key);
-          window.alert(`止められませんでした: ${errorMessage(error)}`);
+          window.alert(t('tasks.stop.failed', { error: errorMessage(error) }));
         },
       );
     },

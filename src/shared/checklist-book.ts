@@ -9,10 +9,12 @@ import {
   type Checklist,
   type ChecklistOp,
 } from './checklist';
+import { t } from './i18n';
 
 // チェックリストの書き換え。画面（IPC）と Claude（MCP）の両方から、同じものを書き換える。
 // メモリの上だけで持ち、書き換えるたびに onChange で知らせる。ファイルへの保存は main の ChecklistStore が受け持つ
-// （デモのサイトの作り物の API は、これをそのまま使う）
+// （デモのサイトの作り物の API は、これをそのまま使う）。
+// 書き換えの記録（log）は Claude だけが読むので、日本語のまま。ChecklistError は画面（IPC）にも出るので、文言から作る
 
 // Claude に「前回から人が変えたもの」を伝えるための、書き換えの記録（新しいものだけ残す）
 type Activity = { at: number; author: Author; text: string };
@@ -159,7 +161,7 @@ export class ChecklistBook {
     const list = this.list(doc, listId);
     const added = cards.map(({ title, body }) => {
       const clean = cleanTitle(title);
-      if (!clean) throw new ChecklistError('タイトルが空のカードは作れません');
+      if (!clean) throw new ChecklistError(t('checklist.errors.emptyCardTitle'));
       const at = this.now();
       const card: Card = {
         id: crypto.randomUUID(),
@@ -189,7 +191,7 @@ export class ChecklistBook {
     const card = this.card(list, cardId);
     if (change.title !== undefined) {
       const title = cleanTitle(change.title);
-      if (!title) throw new ChecklistError('タイトルを空にはできません');
+      if (!title) throw new ChecklistError(t('checklist.errors.emptyTitle'));
       if (title !== card.title) {
         this.event(card, author, { type: 'title', from: card.title });
         card.title = title;
@@ -233,7 +235,7 @@ export class ChecklistBook {
 
   reply(sessionId: string, author: Author, listId: string, cardId: string, rawText: string, notify = false): Card {
     const text = rawText.trim();
-    if (!text) throw new ChecklistError('返信が空です');
+    if (!text) throw new ChecklistError(t('checklist.errors.emptyReply'));
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     const card = this.card(list, cardId);
@@ -282,7 +284,7 @@ export class ChecklistBook {
   restoreCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
     const doc = this.doc(sessionId);
     const list = doc.lists.find((l) => l.id === listId);
-    if (!list) throw new ChecklistError('リストが見つかりません');
+    if (!list) throw new ChecklistError(t('checklist.errors.listNotFound'));
     if (list.deletedAt) this.restoreList(sessionId, author, listId);
     const cards = cardIds.map((id) => list.cards.find((c) => c.id === id)).filter((c): c is Card => !!c?.deletedAt);
     for (const card of cards) {
@@ -380,7 +382,7 @@ export class ChecklistBook {
   protected save(_sessionId: string): void {}
 
   protected doc(sessionId: string): ChecklistDoc {
-    if (!/^[\w-]+$/.test(sessionId)) throw new ChecklistError('セッションの ID が正しくありません');
+    if (!/^[\w-]+$/.test(sessionId)) throw new ChecklistError(t('checklist.errors.badSessionId'));
     let doc = this.docs.get(sessionId);
     if (!doc) {
       doc = this.load(sessionId);
@@ -401,20 +403,20 @@ export class ChecklistBook {
 
   private list(doc: ChecklistDoc, listId: string): Checklist {
     const list = doc.lists.find((l) => l.id === listId && !l.deletedAt);
-    if (!list) throw new ChecklistError('リストが見つかりません（ゴミ箱に入れたか、消したものかもしれません）');
+    if (!list) throw new ChecklistError(t('checklist.errors.listGone'));
     return list;
   }
 
   private card(list: Checklist, cardId: string): Card {
     const card = list.cards.find((c) => c.id === cardId);
-    if (!card) throw new ChecklistError(`「${list.name}」にカードが見つかりません`);
+    if (!card) throw new ChecklistError(t('checklist.errors.cardNotFound', { list: list.name }));
     return card;
   }
 
   // 重ならない名前にする（重なれば「名前 (2)」）。except: 名前を変えるリスト自身
   private freeName(doc: ChecklistDoc, rawName: string, except?: string): string {
     const base = cleanName(rawName);
-    if (!base) throw new ChecklistError('リストの名前が空です');
+    if (!base) throw new ChecklistError(t('checklist.errors.emptyListName'));
     const taken = new Set(liveLists(doc.lists).filter((l) => l.id !== except).map((l) => nameKey(l.name)));
     if (!taken.has(nameKey(base))) return base;
     for (let n = 2; ; n++) {
