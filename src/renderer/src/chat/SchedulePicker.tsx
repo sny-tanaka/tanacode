@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { t } from '@shared/i18n';
 import { formatScheduleTime, schedulePresets } from '@shared/scheduled';
 import { IconButton, ScheduleIcon } from '../icons';
 
@@ -85,7 +86,7 @@ export function SchedulePicker({
       <IconButton icon={ScheduleIcon} size={size} label={label} tip={tip} pressed={open} disabled={disabled} onClick={toggle} />
       {open && (
         <div className="schedule-menu" style={position} role="dialog" aria-label={label}>
-          <div className="schedule-menu-heading">送信する時刻</div>
+          <div className="schedule-menu-heading">{t('schedule.picker.heading')}</div>
           {schedulePresets(now).map((preset) => (
             <button key={preset.label} className="schedule-menu-item" onClick={() => pick(preset.at)}>
               <span>{preset.label}</span>
@@ -93,15 +94,15 @@ export function SchedulePicker({
             </button>
           ))}
           <div className="schedule-menu-sep" />
-          <div className="schedule-menu-heading">日時を指定</div>
+          <div className="schedule-menu-heading">{t('schedule.picker.custom')}</div>
           <div className="schedule-custom">
-            <input type="date" aria-label="日付" value={date} min={dateValue(now)} onChange={(e) => setDate(e.target.value)} />
-            <input type="time" aria-label="時刻" value={time} onChange={(e) => setTime(e.target.value)} />
+            <input type="date" aria-label={t('schedule.picker.date')} value={date} min={dateValue(now)} onChange={(e) => setDate(e.target.value)} />
+            <input type="time" aria-label={t('schedule.picker.time')} value={time} onChange={(e) => setTime(e.target.value)} />
           </div>
           <div className="schedule-custom-actions">
-            {!valid && date && time && <span className="schedule-menu-note">これから先の時刻を指定してください</span>}
+            {!valid && date && time && <span className="schedule-menu-note">{t('schedule.picker.futureOnly')}</span>}
             <button className="send-button" disabled={!valid} onClick={() => pick(custom)}>
-              予約
+              {t('schedule.picker.submit')}
             </button>
           </div>
         </div>

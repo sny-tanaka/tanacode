@@ -2,6 +2,7 @@ import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { NewSessionOptions, ScreenChoice, SessionSummary } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
@@ -110,12 +111,12 @@ export class SessionsControl {
 
   // signal: Claude Code が呼び出しを取り消した（Esc で中断した）。待っている wait_sessions をやめる
   async handle(callerId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
-    if (!sessionTool(name)) return textResult(`知らないツールです: ${name}`, true);
+    if (!sessionTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
-      return textResult('ユーザーが tanacode のメニューで「Claude にほかのセッションを扱わせる」をオフにしています。使うには、ユーザーにオンにしてもらってください', true);
+      return textResult(`The user has turned off "${t('main.menu.sessionsControl')}" in the tanacode menu. Ask the user to turn it on.`, true);
     }
     const caller = this.summary(callerId);
-    if (!caller) return textResult('このセッションは tanacode にありません', true);
+    if (!caller) return textResult('This session is not in tanacode.', true);
     try {
       switch (name) {
         case 'list_sessions':
@@ -137,7 +138,7 @@ export class SessionsControl {
         case 'stop_session':
           return await this.stopSession(caller, args);
         default:
-          return textResult(`知らないツールです: ${name}`, true);
+          return textResult(`Unknown tool: ${name}`, true);
       }
     } catch (error) {
       return textResult(error instanceof Error ? error.message : String(error), true);
@@ -168,10 +169,10 @@ export class SessionsControl {
     this.observe(caller.id, target.id);
     const all = this.visible(caller);
     const titleOf = (id: string) => nameOf(all.find((s) => s.id === id));
-    const lines = [`# セッション「${nameOf(target)}」`, ...this.headerLines(target, caller, all), ''];
+    const lines = [`# Session "${nameOf(target)}"`, ...this.headerLines(target, caller, all), ''];
     lines.push(...conversationLines(events, turns, titleOf), '');
     const edited = editedFiles(events, target.cwd);
-    lines.push('## このセッションの会話で編集したファイル', ...(edited.length > 0 ? edited.map((f) => `- ${f}`) : ['（なし）']));
+    lines.push("## Files edited in this session's conversation", ...(edited.length > 0 ? edited.map((f) => `- ${f}`) : ['(none)']));
     return textResult(clip(lines.join('\n'), MAX_RESULT_CHARS));
   }
 
@@ -179,15 +180,15 @@ export class SessionsControl {
     const target = this.resolve(caller, args.session_id);
     this.observe(caller.id, target.id);
     const cwd = target.cwd;
-    if (!existsSync(cwd)) throw new ToolError(`「${nameOf(target)}」のフォルダがありません（worktree を消したセッションなど）`);
+    if (!existsSync(cwd)) throw new ToolError(`The folder of "${nameOf(target)}" does not exist (for example, its worktree was removed).`);
     const path = typeof args.path === 'string' && args.path.trim() ? safeRelative(args.path.trim()) : null;
     const info = await repoInfo(cwd).catch(() => null);
     const inRepo = await git(cwd, ['rev-parse', '--is-inside-work-tree']).then(
       () => true,
       () => false,
     );
-    if (!info || !inRepo) throw new ToolError(`「${nameOf(target)}」のフォルダは git のリポジトリではありません`);
-    if (info.empty) throw new ToolError(`「${nameOf(target)}」のリポジトリには、まだコミットがありません`);
+    if (!info || !inRepo) throw new ToolError(`The folder of "${nameOf(target)}" is not a git repository.`);
+    if (info.empty) throw new ToolError(`The repository of "${nameOf(target)}" has no commits yet.`);
     const base = await branchBase(cwd, info).catch(() => null);
     // 基点が決まらなければ、未コミットの変更だけを見せる
     const ref = base?.mergeBase ?? 'HEAD';
@@ -204,17 +205,18 @@ export class SessionsControl {
       added.push(part);
       size += part.length;
     }
-    if (untracked.length > added.length) added.push(`（ほかに未追跡のファイルが ${untracked.length - added.length} 件。path で絞ってください）`);
+    const rest = untracked.length - added.length;
+    if (rest > 0) added.push(`(${rest} more untracked ${rest === 1 ? 'file' : 'files'}. Narrow it down with path.)`);
     const diff = [tracked.trimEnd(), ...added].filter(Boolean).join('\n');
     const lines = [
-      `# セッション「${nameOf(target)}」のブランチの変更`,
-      `- ブランチ: ${info.branch ?? '（ブランチなし）'}`,
-      base ? `- 基点: ${base.ref}（分岐点 ${base.mergeBase.slice(0, 8)}）` : '- 基点: 分からないため、未コミットの変更だけ（HEAD との差分）',
-      `- ファイル: ${files.length} 件${path ? `（${path} の中だけ）` : ''}`,
-      ...files.map((f) => `  - ${KIND_MARK[f.kind]} ${f.path}${f.binary ? '（バイナリ）' : `（+${f.added} −${f.removed}）`}`),
+      `# Branch changes of session "${nameOf(target)}"`,
+      `- Branch: ${info.branch ?? '(no branch)'}`,
+      base ? `- Base: ${base.ref} (merge base ${base.mergeBase.slice(0, 8)})` : '- Base: unknown, so only uncommitted changes (diff against HEAD)',
+      `- Files: ${files.length}${path ? ` (only in ${path})` : ''}`,
+      ...files.map((f) => `  - ${KIND_MARK[f.kind]} ${f.path}${f.binary ? ' (binary)' : ` (+${f.added} −${f.removed})`}`),
       '',
-      '## 差分',
-      diff ? fence(diff, 'diff') : '（差分なし）',
+      '## Diff',
+      diff ? fence(diff, 'diff') : '(no changes)',
     ];
     return textResult(clip(lines.join('\n'), MAX_RESULT_CHARS));
   }
@@ -234,7 +236,7 @@ export class SessionsControl {
     if (targets.length === 0) {
       return json({
         timed_out: false,
-        note: children.length > 0 ? '作業中の子セッションはありません' : '子セッションはありません',
+        note: children.length > 0 ? 'No child session is working.' : 'There are no child sessions.',
         sessions: await Promise.all(children.map((s) => this.status(s, caller, false))),
       });
     }
@@ -253,17 +255,17 @@ export class SessionsControl {
 
   private async startSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
     const { host } = this.deps;
-    if (caller.parentId) throw new ToolError('子セッションは、さらに子セッションを作れません（親子は 1 段まで）');
+    if (caller.parentId) throw new ToolError('A child session cannot start child sessions of its own (only one level of children).');
     const prompt = stringArg(args.prompt);
-    if (!prompt) throw new ToolError('prompt（最初の指示）が空です');
-    if (typeof args.worktree !== 'boolean') throw new ToolError('worktree（新しい worktree に分けて始めるか）を true か false で渡してください');
+    if (!prompt) throw new ToolError('prompt (the first instruction) is empty.');
+    if (typeof args.worktree !== 'boolean') throw new ToolError('Pass worktree (whether to start in a new worktree) as true or false.');
     const folder = await this.folderFor(caller, args.folder, args.worktree);
     // 権限モードは、このセッションより強くできない（親を通じて、人が許していない操作を通さないため）
     const limit = host.modeOf(caller.id) ?? 'manual';
     const wanted = args.permission_mode === undefined ? (limit === 'plan' ? 'manual' : limit) : args.permission_mode;
-    if (!PERMISSION_MODES.includes(wanted as PermissionMode)) throw new ToolError(`知らない権限モードです: ${String(wanted)}`);
+    if (!PERMISSION_MODES.includes(wanted as PermissionMode)) throw new ToolError(`Unknown permission mode: ${String(wanted)}`);
     const mode = wanted as PermissionMode;
-    if (!modeWithin(mode, limit)) throw new ToolError(`権限モード ${mode} は、このセッション（${limit}）より強いため使えません`);
+    if (!modeWithin(mode, limit)) throw new ToolError(`Permission mode ${mode} cannot be used because it is more permissive than this session's (${limit}).`);
     const options: NewSessionOptions = {
       model: stringArg(args.model) || null,
       effort: stringArg(args.effort) || null,
@@ -289,7 +291,7 @@ export class SessionsControl {
       worktree: child?.worktree ? { name: child.worktree.name, branch: child.worktree.branch } : null,
       permission_mode: mode,
       state: host.stateOf(id),
-      note: '起動が終わりしだい、最初の指示を送ります。結果は wait_sessions で待ってください',
+      note: 'The first instruction will be sent as soon as the child has started. Wait for the result with wait_sessions.',
     });
   }
 
@@ -297,18 +299,18 @@ export class SessionsControl {
     const { host } = this.deps;
     const child = this.resolve(caller, args.session_id, true);
     const message = stringArg(args.message);
-    if (!message) throw new ToolError('message（送る指示）が空です');
+    if (!message) throw new ToolError('message (the instruction to send) is empty.');
     const state = host.stateOf(child.id);
-    const who = `「${nameOf(child)}」`;
-    if (state === 'archived') throw new ToolError(`${who}はアーカイブ済みです。続けるには、人に一覧から戻してもらってください`);
-    if (state === 'question') throw new ToolError(`${who}は質問への回答を待っています。answer_question で答えてください（質問は get_session で見られます）`);
-    if (state === 'permission') throw new ToolError(`${who}は実行の許可を待っています。許可の確認には人が答えます`);
-    if (state === 'waiting') throw new ToolError(`${who}はターミナルでの操作を待っています（人の対応が要ります）`);
+    const who = `"${nameOf(child)}"`;
+    if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
+    if (state === 'question') throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
+    if (state === 'permission') throw new ToolError(`${who} is waiting for permission. Only the user can answer permission prompts.`);
+    if (state === 'waiting') throw new ToolError(`${who} is waiting for an operation in its terminal (the user needs to handle it).`);
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ
     if (state === 'idle' || state === 'background') {
       await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS);
-      return json({ session_id: child.id, state: host.stateOf(child.id), note: '送りました' });
+      return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Sent.' });
     }
     // 作業中・起動中・止まっている子は、手が空くまでアプリが預かってから打つ（作業中に打つと、そのあいだに出た許可の確認で、
     // Enter や数字が選択になってしまうことがあるため）。待たずに返す
@@ -317,7 +319,10 @@ export class SessionsControl {
     return json({
       session_id: child.id,
       state: host.stateOf(child.id),
-      note: state === 'exited' ? '子を起動し直しました。起動が終わりしだい送ります' : '子は作業中なので、今の作業が終わりしだい送ります（順番待ち）',
+      note:
+        state === 'exited'
+          ? 'Restarted the child. The instruction will be sent as soon as it has started.'
+          : 'The child is working, so the instruction will be sent as soon as it finishes its current work (queued).',
     });
   }
 
@@ -328,38 +333,38 @@ export class SessionsControl {
     const choices = Array.isArray(args.choices) ? args.choices.filter((c): c is string => typeof c === 'string' && c.trim() !== '') : [];
     // 自由記述は子の画面に打つので、キー操作になる文字（ESC・改行など）を除き、1 行にする
     const other = stripControlChars(stringArg(args.other)).replace(/\s*\n\s*/g, ' ').trim();
-    if (choices.length === 0 && !other) throw new ToolError('choices（選ぶ選択肢）か other（自由記述）を渡してください');
+    if (choices.length === 0 && !other) throw new ToolError('Pass choices (the options to pick) or other (a free-text answer).');
     const current = () => {
       const screen = host.screen(child.id);
       return screen?.state.kind === 'menu' ? screen.state.menu : null;
     };
     const menu = current();
     // 許可の確認には答えさせない（人だけが答える）
-    if (menu?.kind === 'permission') throw new ToolError(`「${nameOf(child)}」が出しているのは実行の許可の確認です。許可の確認には人が答えます`);
-    if (menu?.kind !== 'question') throw new ToolError('質問は出ていません（人が先に答えたか、取り下げられました）。get_session で確かめてください');
+    if (menu?.kind === 'permission') throw new ToolError(`"${nameOf(child)}" is showing a permission prompt. Only the user can answer permission prompts.`);
+    if (menu?.kind !== 'question') throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
     // 質問と読めても、AskUserQuestion で出した質問でなければ答えない（コマンドの文字に ☐ があると、許可の確認が質問に見える）
     if (!isAskedQuestion(menu, host.askedQuestions(child.id))) {
-      throw new ToolError(`「${nameOf(child)}」が出しているのは、AskUserQuestion の質問ではありません。人が答えます`);
+      throw new ToolError(`"${nameOf(child)}" is not showing an AskUserQuestion question. The user answers it.`);
     }
     const same = (m: Menu | null) => m?.kind === 'question' && normalizeText(m.title) === normalizeText(menu.title);
     if (normalizeText(menu.title) !== normalizeText(asked)) {
-      throw new ToolError(`今出ている質問は「${menu.title}」です（人が先に答えたか、次の質問に進んでいます）。答えるなら、この質問の文を question に渡してください`);
+      throw new ToolError(`The question showing now is "${menu.title}" (the user answered first, or it has moved on to the next question). To answer it, pass this question text as question.`);
     }
     const selectable = menu.options.filter(isChoice);
     const picked = choices.map((label) => {
       const option = selectable.find((o) => normalizeText(o.label) === normalizeText(label));
-      if (!option) throw new ToolError(`選択肢「${label}」はありません。選べるのは: ${selectable.map((o) => `「${o.label}」`).join('・')}`);
+      if (!option) throw new ToolError(`There is no option "${label}". The options are: ${selectable.map((o) => `"${o.label}"`).join(', ')}.`);
       return option;
     });
     const textOption = menu.options.find((o) => o.textInput);
-    if (other && !textOption) throw new ToolError('この質問には、選択肢に無い答え（自由記述）を書く欄がありません');
-    const changed = () => new ToolError('答えている途中で、質問が変わったか、人が操作していたため、答えられませんでした。get_session で確かめてください');
+    if (other && !textOption) throw new ToolError('This question has no field for an answer that is not among the options (free text).');
+    const changed = () => new ToolError('Could not answer because the question changed or the user acted on it while answering. Check with get_session.');
     // キーを送る前に毎回、同じ質問が出ているかを確かめる（途中で許可の確認などに変わったら、何も押さない）
     const choose = async (choice: ScreenChoice) => {
       if (!(await host.chooseIf(child.id, choice, (m) => same(m) && isAskedQuestion(m, host.askedQuestions(child.id))))) throw changed();
     };
     if (!menu.multiSelect) {
-      if (picked.length + (other ? 1 : 0) !== 1) throw new ToolError('この質問は 1 つだけ選べます（choices に 1 つか、other だけを渡してください）');
+      if (picked.length + (other ? 1 : 0) !== 1) throw new ToolError('Only one option can be picked for this question (pass one choice, or only other).');
       const option = picked[0] ?? textOption!;
       await choose({ optionId: option.id, key: 'enter', text: other || undefined });
     } else {
@@ -373,12 +378,12 @@ export class SessionsControl {
         await choose({ optionId: textOption.id, key: 'none', text: other });
         await sleep(300);
       }
-      if (!current()?.options.some((o) => o.id === 'submit')) throw new ToolError('答えを確定する選択肢が見つかりません。ターミナルで確かめてください');
+      if (!current()?.options.some((o) => o.id === 'submit')) throw new ToolError('Could not find the option that submits the answers. Check the terminal.');
       await choose({ optionId: 'submit', key: 'enter' });
     }
     // 答えが受け付けられて、質問が閉じた（次の質問に進んだ）のを確かめる
     for (let i = 0; i < 20 && same(current()); i++) await sleep(100);
-    if (same(current())) throw new ToolError('答えを送りましたが、質問が閉じませんでした。get_session で確かめてください');
+    if (same(current())) throw new ToolError('Sent the answer, but the question did not close. Check with get_session.');
     this.observe(caller.id, child.id);
     const next = current();
     return json({
@@ -393,15 +398,17 @@ export class SessionsControl {
     const child = this.resolve(caller, args.session_id, true);
     const state = host.stateOf(child.id);
     if (state === 'question' || state === 'permission' || state === 'waiting') {
-      throw new ToolError(`「${nameOf(child)}」は人の対応待ち（${SESSION_STATE_LABEL[state]}）のため、中断できません`);
+      throw new ToolError(`"${nameOf(child)}" cannot be interrupted while it is ${SESSION_STATE_LABEL[state]}.`);
     }
-    if (state !== 'working') return json({ session_id: child.id, state, note: state === 'background' ? 'ターンは終わっていて、バックグラウンドのタスクの完了を待っています' : '作業していません' });
+    if (state !== 'working') {
+      return json({ session_id: child.id, state, note: state === 'background' ? 'Its turn has finished, and it is waiting for background tasks to finish.' : 'It is not working.' });
+    }
     // 止めて手が空いたことは、親に知らせない（親が止めたので）
     this.stopped.add(child.id);
     host.interrupt(child.id);
     // 応答の前に止めると、親の指示が子の入力欄に戻る。残すと次の指示を打てず、人の入力欄にも囲みのまま移るので消す
     await host.withdrawParentDraft(child.id);
-    return json({ session_id: child.id, state: host.stateOf(child.id), note: '中断しました' });
+    return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Interrupted.' });
   }
 
   // --- 親への知らせ ---
@@ -434,7 +441,7 @@ export class SessionsControl {
     const all = this.deps.host.list();
     const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
     if (notices.length === 0) return null;
-    const message = `${notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state)).join(' ')} get_session で確かめてください。`;
+    const message = [...notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state)), t('tools.notice.checkSessions')].join(' ');
     return sessionEventText(notices.map(([child]) => child), message);
   }
 
@@ -455,13 +462,13 @@ export class SessionsControl {
   // session_id（全体か、先頭 8 文字以上）を、見えるセッションに解決する。child: 自分の子セッションに限る
   private resolve(caller: SessionSummary, raw: unknown, child = false): SessionSummary {
     const id = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    if (id.length < 8) throw new ToolError('session_id には、セッションの ID（先頭 8 文字以上）を渡してください');
+    if (id.length < 8) throw new ToolError('Pass a session ID (at least its first 8 characters) as session_id.');
     const matches = this.visible(caller).filter((s) => s.id.startsWith(id));
-    if (matches.length === 0) throw new ToolError(`見えるセッションに、ID が ${id} のものはありません（list_sessions で確かめてください）`);
-    if (matches.length > 1) throw new ToolError(`ID が ${id} で始まるセッションが 2 つ以上あります。もっと長く渡してください`);
+    if (matches.length === 0) throw new ToolError(`No visible session has the ID ${id} (check with list_sessions).`);
+    if (matches.length > 1) throw new ToolError(`More than one session has an ID starting with ${id}. Pass a longer ID.`);
     const target = matches[0];
     if (child && target.parentId !== caller.id) {
-      throw new ToolError(`「${nameOf(target)}」は、このセッションの子セッションではありません。指示できるのは、start_session で起動した子だけです`);
+      throw new ToolError(`"${nameOf(target)}" is not a child session of this session. You can only instruct children you started with start_session.`);
     }
     return target;
   }
@@ -472,23 +479,23 @@ export class SessionsControl {
   private async folderFor(caller: SessionSummary, raw: unknown, worktree: boolean): Promise<string> {
     const root = projectRootOf(caller);
     const given = stringArg(raw);
-    if (given && !isAbsolute(given)) throw new ToolError('folder は絶対パスで渡してください');
+    if (given && !isAbsolute(given)) throw new ToolError('Pass folder as an absolute path.');
     const real = (path: string) => realpath(path).catch(() => null);
     let folder = await real(given ? normalize(given) : root);
-    if (!folder) throw new ToolError(`フォルダが見つかりません: ${given || root}`);
+    if (!folder) throw new ToolError(`Folder not found: ${given || root}`);
     const realRoot = (await real(root)) ?? root;
     const inside = folder === realRoot || (realRoot !== this.deps.home && realRoot !== '/' && folder.startsWith(`${realRoot}/`));
     const known = inside
       ? true
       : (await Promise.all(this.visible(caller).flatMap((s) => [real(s.cwd), real(projectRootOf(s))]))).includes(folder);
     if (!known) {
-      throw new ToolError(`${given} では始められません。選べるのは、このセッションのリポジトリ（${root}）の中か、ほかのセッションのフォルダだけです`);
+      throw new ToolError(`Cannot start in ${given}. Only a folder inside this session's repository (${root}) or the folder of another session can be chosen.`);
     }
     const isDirectory = await stat(folder).then(
       (s) => s.isDirectory(),
       () => false,
     );
-    if (!isDirectory) throw new ToolError(`フォルダではありません: ${folder}`);
+    if (!isDirectory) throw new ToolError(`Not a folder: ${folder}`);
     // worktree の中から worktree を作ると入れ子になるので、元のフォルダから作る
     if (worktree) folder = projectRootOf({ cwd: folder });
     return folder;
@@ -513,15 +520,15 @@ export class SessionsControl {
     // all は、呼び出し元から見えるセッション（見えない子の名前や ID は出さない）
     const parent = target.parentId ? all.find((s) => s.id === target.parentId) : undefined;
     const children = all.filter((s) => s.parentId === target.id);
-    const label = (s: SessionSummary) => `「${nameOf(s)}」（${s.id.slice(0, 8)}・${SESSION_STATE_LABEL[this.deps.host.stateOf(s.id) ?? 'exited']}）`;
+    const label = (s: SessionSummary) => `"${nameOf(s)}" (${s.id.slice(0, 8)}, ${SESSION_STATE_LABEL[this.deps.host.stateOf(s.id) ?? 'exited']})`;
     return [
       `- ID: ${target.id}`,
-      `- 関係: ${RELATION_LABEL[relationOf(target, caller)]}`,
-      `- 状態: ${SESSION_STATE_LABEL[state]}（${state}）`,
-      `- フォルダ: ${target.cwd}`,
-      ...(target.worktree ? [`- worktree: ${target.worktree.name}（ブランチ ${target.worktree.branch}）`] : []),
-      ...(parent ? [`- 親: ${label(parent)}`] : []),
-      ...(children.length > 0 ? [`- 子: ${children.map(label).join('、')}`] : []),
+      `- Relation: ${RELATION_LABEL[relationOf(target, caller)]}`,
+      `- State: ${SESSION_STATE_LABEL[state]} (${state})`,
+      `- Folder: ${target.cwd}`,
+      ...(target.worktree ? [`- Worktree: ${target.worktree.name} (branch ${target.worktree.branch})`] : []),
+      ...(parent ? [`- Parent: ${label(parent)}`] : []),
+      ...(children.length > 0 ? [`- Children: ${children.map(label).join(', ')}`] : []),
     ];
   }
 
@@ -567,11 +574,11 @@ export class SessionsControl {
 }
 
 const RELATION_LABEL = {
-  self: 'このセッション',
-  parent: 'このセッションの親',
-  child: 'このセッションの子',
-  sibling: '兄弟（同じ親の子）',
-  project: '同じリポジトリのセッション',
+  self: 'this session',
+  parent: 'the parent of this session',
+  child: 'a child of this session',
+  sibling: 'a sibling (a child of the same parent)',
+  project: 'a session in the same repository',
 } as const;
 
 function relationOf(s: SessionSummary, caller: SessionSummary): keyof typeof RELATION_LABEL {
@@ -584,18 +591,20 @@ function relationOf(s: SessionSummary, caller: SessionSummary): keyof typeof REL
 
 const KIND_MARK = { added: 'A', modified: 'M', deleted: 'D' } as const;
 
+// 名前の無いセッションは、画面の一覧と同じ名前（画面の言語）にする。Claude が利用者に伝える名前が、一覧の名前と合うように
 function nameOf(s: SessionSummary | undefined): string {
-  return s?.title ?? '新しいセッション';
+  return s?.title ?? t('main.session.untitled');
 }
 
+// 親への知らせの文。チャットに知らせとして出るので、画面の言語で書く
 function noticeText(child: SessionSummary | undefined, id: string, state: SessionState): string {
-  const who = `子セッション「${nameOf(child)}」（${id.slice(0, 8)}）`;
-  if (state === 'question') return `${who}が質問への回答を待っています（answer_question で答えられます）。`;
+  const params = { name: child?.title ?? t('tools.notice.untitledSession'), id: id.slice(0, 8) };
+  if (state === 'question') return t('tools.notice.childQuestion', params);
   // 子セッションは人に通知しないので、親から人に伝える
-  if (state === 'permission') return `${who}が実行の許可を待っています。許可の確認には人だけが答えるので、人に伝えてください。`;
-  if (state === 'waiting') return `${who}がターミナルでの操作を待っています。人に伝えてください。`;
-  if (state === 'exited') return `${who}が終了しました。`;
-  return `${who}の作業が終わりました。`;
+  if (state === 'permission') return t('tools.notice.childPermission', params);
+  if (state === 'waiting') return t('tools.notice.childWaiting', params);
+  if (state === 'exited') return t('tools.notice.childExited', params);
+  return t('tools.notice.childDone', params);
 }
 
 // 質問の選択肢そのもの（自由記述・確定・Chat about this 以外）
@@ -624,10 +633,10 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
       all = [];
       current = null;
     } else if (e.type === 'user') {
-      current = { who: e.parent ? `親セッション「${titleOf(e.parent)}」からの指示` : '人の発言', text: e.text, responses: [], tools: [] };
+      current = { who: e.parent ? `Instruction from the parent session "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], tools: [] };
       all.push(current);
     } else if (e.type === 'notice') {
-      current = { who: '知らせ', text: e.text, responses: [], tools: [] };
+      current = { who: 'Notice', text: e.text, responses: [], tools: [] };
       all.push(current);
     } else if (e.type === 'assistant-text' && current) {
       current.responses.push(e.text);
@@ -635,9 +644,9 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
       current.tools.push(e.target ? `${e.name} ${e.target}` : e.name);
     }
   }
-  if (all.length === 0) return ['## 最近の会話', '（まだ会話がありません）'];
+  if (all.length === 0) return ['## Recent conversation', '(no conversation yet)'];
   const shown = all.slice(-turns);
-  const lines = [`## 最近の会話（全 ${all.length} 件の指示のうち、新しいほうから ${shown.length} 件）`];
+  const lines = [`## Recent conversation (the latest ${shown.length} of ${all.length} ${all.length === 1 ? 'instruction' : 'instructions'})`];
   shown.forEach((turn, i) => {
     lines.push('', `### ${all.length - shown.length + i + 1}. ${turn.who}`, clip(turn.text, 3000));
     if (turn.responses.length > 0) {
@@ -646,8 +655,8 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
       lines.push('', 'Claude:', responses.join('\n\n'));
     }
     if (turn.tools.length > 0) {
-      const tools = turn.tools.slice(0, 30).join('、');
-      lines.push('', `ツール: ${tools}${turn.tools.length > 30 ? ` ほか ${turn.tools.length - 30} 件` : ''}`);
+      const tools = turn.tools.slice(0, 30).join(', ');
+      lines.push('', `Tools: ${tools}${turn.tools.length > 30 ? ` and ${turn.tools.length - 30} more` : ''}`);
     }
   });
   return lines;
@@ -680,13 +689,13 @@ async function untrackedDiff(cwd: string, file: string): Promise<string> {
   const head = `diff --git a/${file} b/${file}\nnew file (untracked)\n--- /dev/null\n+++ b/${file}`;
   const info = await lstat(join(cwd, file)).catch(() => null);
   if (!info) return head;
-  if (info.isSymbolicLink()) return `${head}\n（シンボリックリンクのため、中身は読みません）`;
-  if (!info.isFile()) return `${head}\n（ふつうのファイルではないため、中身は読みません）`;
-  if (info.size > MAX_UNTRACKED_BYTES) return `${head}\n（${Math.round(info.size / 1024)} KB の大きなファイルのため、中身は省きます）`;
+  if (info.isSymbolicLink()) return `${head}\n(symbolic link; contents not read)`;
+  if (!info.isFile()) return `${head}\n(not a regular file; contents not read)`;
+  if (info.size > MAX_UNTRACKED_BYTES) return `${head}\n(large file of ${Math.round(info.size / 1024)} KB; contents omitted)`;
   const data = await readHead(join(cwd, file), MAX_UNTRACKED_BYTES);
   // 空のファイルは、行の無い新しいファイル（git diff と同じく @@ の行を書かない）
   if (!data || data.length === 0) return head;
-  if (data.includes(0)) return `${head}\n（バイナリ）`;
+  if (data.includes(0)) return `${head}\n(binary)`;
   const lines = data.toString('utf8').replace(/\n$/, '').split('\n');
   return `${head}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}`;
 }
@@ -721,7 +730,7 @@ function isAskedQuestion(menu: Menu, asked: AskQuestion[] | null): boolean {
 // フォルダの外を指さない相対パスにする
 function safeRelative(path: string): string {
   const rel = normalize(path).replace(/\/+$/, '');
-  if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new ToolError('path は、セッションのフォルダからの相対パスで渡してください');
+  if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new ToolError('Pass path as a path relative to the session folder.');
   return rel === '.' ? '' : rel;
 }
 
@@ -735,7 +744,8 @@ function fence(content: string, lang: string): string {
 function clip(text: string, max: number): string {
   if (text.length <= max) return text;
   const head = Math.floor(max * 0.7);
-  return `${text.slice(0, head)}\n…（${text.length - max} 文字を省略）…\n${text.slice(text.length - (max - head))}`;
+  const omitted = text.length - max;
+  return `${text.slice(0, head)}\n…(${omitted} ${omitted === 1 ? 'character' : 'characters'} omitted)…\n${text.slice(text.length - (max - head))}`;
 }
 
 function normalizeText(text: string): string {

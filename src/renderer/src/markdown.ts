@@ -1,5 +1,6 @@
 import { marked } from 'marked';
 import markedCjkFriendly from 'marked-cjk-friendly';
+import { t } from '@shared/i18n';
 
 // CommonMark では「）**に」「」**です」のように、閉じる ** の前が記号で後ろが文字だと強調にならない。
 // 日本語は単語の間に空白を入れないので、隣が日本語・中国語・韓国語の文字のときだけこの決まりを緩める
@@ -27,9 +28,9 @@ export function replaceExternalImages(root: ParentNode): void {
     note.className = 'markdown-external-image';
     if (!inLink) {
       note.setAttribute('href', url);
-      note.title = '既定のブラウザで開く';
+      note.title = t('composer.markdown.openInBrowser');
     }
-    note.textContent = alt ? `外部の画像（${alt}）: ${url}` : `外部の画像: ${url}`;
+    note.textContent = alt ? t('composer.markdown.externalImageAlt', { alt, url }) : t('composer.markdown.externalImage', { url });
     img.replaceWith(note);
   }
 }

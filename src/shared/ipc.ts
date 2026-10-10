@@ -18,6 +18,7 @@ import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
 import type { SessionWalkthrough } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
+import type { Language } from './i18n';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -358,6 +359,9 @@ export type FileChange = { kind: 'added' | 'modified' | 'deleted'; added: number
 // 基点での内容。exists: false は基点の後に作られたファイル
 export type FileBaseline = { exists: boolean; text: string };
 
+// 画面の言語を渡す起動の引数（webPreferences.additionalArguments）。画面は待たずに読めるので、起動が遅くならない
+export const LANGUAGE_ARG = '--tanacode-language=';
+
 export type TanacodeApi = {
   sessions: {
     list(): Promise<SessionSummary[]>;
@@ -653,6 +657,8 @@ export type TanacodeApi = {
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;
+  // 画面の言語（起動したときに main が決めたもの。終わるまで変わらない）。IPC を使わず、ウインドウを作るときの起動の引数（LANGUAGE_ARG）から読む
+  language(): Language;
 };
 
 // チャンネルごとの型。preload（src/preload/index.ts）と main の受け口・送り口（src/main/index.ts）は、どちらもこの表で型を付ける。

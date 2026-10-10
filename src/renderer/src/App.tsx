@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BranchChanges, FileChange, FileContent, NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import { listRecentFolders } from '@shared/recent-folders';
 import type { Checklist } from '@shared/checklist';
+import { t } from '@shared/i18n';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
@@ -71,18 +72,19 @@ const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
 // ウォークスルーを始めてからこの間に届いたファイルの変更は、始める前の Claude の書き込みとみなす（変更の知らせは少し遅れて届く）
 const WALK_STALE_GRACE_MS = 3000;
-const WALKTHROUGH_REQUEST = 'このブランチの変更を、tanacode のウォークスルーで、コードを示しながら説明してください。';
 
 type SidePanel = 'files' | 'search' | 'scm' | 'tasks' | 'checklist' | 'context';
-// サイドパネルの切り替え（左端に縦に並べるアイコン）
-const SIDE_PANELS: { id: SidePanel; label: string; title: string; Icon: IconComponent }[] = [
-  { id: 'files', label: 'エクスプローラー', title: 'エクスプローラー', Icon: FilesIcon },
-  { id: 'search', label: '検索', title: '検索（⌘⇧F）', Icon: SearchIcon },
-  { id: 'scm', label: 'ソース管理', title: 'ソース管理（git）。ブランチの変更を見て、行にコメントを付けて Claude に返す', Icon: BranchIcon },
-  { id: 'tasks', label: 'タスク', title: 'タスク（サブエージェント・ワークフロー・バックグラウンドの Bash）', Icon: TasksIcon },
-  { id: 'checklist', label: 'チェックリスト', title: 'チェックリスト（Claude と一緒に見て、編集するリスト。会話が圧縮されても残る）', Icon: ChecklistIcon },
-  { id: 'context', label: 'コンテキスト', title: 'コンテキスト（今の会話に入っているものと大きさ。圧縮で残すもの・捨てるものを選ぶ）', Icon: ContextIcon },
+// サイドパネルの切り替え（左端に縦に並べるアイコン）。名前（パネルの上の見出し）と説明（ツールチップ）は panelLabel・panelTitle で読む
+const SIDE_PANELS: { id: SidePanel; Icon: IconComponent }[] = [
+  { id: 'files', Icon: FilesIcon },
+  { id: 'search', Icon: SearchIcon },
+  { id: 'scm', Icon: BranchIcon },
+  { id: 'tasks', Icon: TasksIcon },
+  { id: 'checklist', Icon: ChecklistIcon },
+  { id: 'context', Icon: ContextIcon },
 ];
+const panelLabel = (id: SidePanel) => t(`app.sidePanel.${id}Label`);
+const panelTitle = (id: SidePanel) => t(`app.sidePanel.${id}Title`);
 
 let revealSeq = 0;
 
@@ -395,7 +397,7 @@ export function App() {
         const message = errorMessage(error);
         if (openFailures.current.get(id) === message) return;
         openFailures.current.set(id, message);
-        window.alert(`セッションを開けませんでした: ${message}`);
+        window.alert(t('app.session.openFailed', { error: message }));
       });
   }, []);
 
@@ -606,8 +608,11 @@ export function App() {
       // 親をアーカイブすると、子セッションも一緒にアーカイブされる（子の worktree は残る）。アクティブな子があれば、先に確かめる
       const children = liveChildrenOf(list, id);
       const working = children.filter((c) => isWorking(c, statusOf(c.id))).length;
-      const detail = working > 0 ? `（うち ${working} 件は作業中です）` : '';
-      if (children.length > 0 && !window.confirm(`子セッション ${children.length} 件も一緒にアーカイブします${detail}。アーカイブしますか？`)) return;
+      const question =
+        working > 0
+          ? t('app.session.archiveChildrenWorking', { count: children.length, working })
+          : t('app.session.archiveChildren', { count: children.length });
+      if (children.length > 0 && !window.confirm(question)) return;
       if (list.find((s) => s.id === id)?.worktree) setWorktreeDialog({ id, action: 'archive' });
       else void window.tanacode.sessions.archive(id);
     },
@@ -622,10 +627,10 @@ export function App() {
           : await window.tanacode.sessions.remove(id, { removeWorktree });
       if (action === 'remove') forgetSession(id);
       const notes = [
-        removal?.backupRef && `未コミットの変更と未追跡のファイルの控えを ${removal.backupRef} に残しました（git show ${removal.backupRef} で見られます）。`,
-        removal?.branchKept && `ブランチ ${removal.branch} には、手元にしか無いコミットがあるので残しました。`,
+        removal?.backupRef && t('app.session.backupKept', { ref: removal.backupRef }),
+        removal?.branchKept && t('app.session.branchKept', { branch: removal.branch }),
       ].filter(Boolean);
-      if (notes.length > 0) window.alert(`worktree を削除しました。\n${notes.join('\n')}`);
+      if (notes.length > 0) window.alert(t('app.session.worktreeRemoved', { notes: notes.join('\n') }));
     },
     [forgetSession],
   );
@@ -711,7 +716,7 @@ export function App() {
     [walkAll, goWalk, publishWalk],
   );
   // ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」
-  const requestWalkthrough = useCallback(() => sendToSelected(WALKTHROUGH_REQUEST, []), [sendToSelected]);
+  const requestWalkthrough = useCallback(() => sendToSelected(t('app.walkthroughRequest'), []), [sendToSelected]);
   const askRange = useCallback(
     (q: RangeQuestion) => sendToSelected(rangeQuestionText(q.path, q.startLine, q.endLine, q.quote, q.text), []),
     [sendToSelected],
@@ -818,7 +823,8 @@ export function App() {
         {viewId && cwd && workspace && (
           <aside className="explorer">
             <div className="activity-bar">
-              {SIDE_PANELS.map(({ id, title, Icon }) => {
+              {SIDE_PANELS.map(({ id, Icon }) => {
+                const title = panelTitle(id);
                 const badge = id === 'scm' ? gitCount : id === 'tasks' ? trayTasks.length : id === 'checklist' ? (selectedId ? (checklistUnread[selectedId] ?? 0) : 0) : 0;
                 return (
                   <button key={id} className={shownPanel === id ? 'on' : ''} onClick={() => setSidePanel(id)} data-tip={title} data-tip-side="right" aria-label={title}>
@@ -834,9 +840,9 @@ export function App() {
                   <button
                     className={`activity-toggle${diffView?.source === 'preview' ? ' on' : ''}`}
                     onClick={() => setDiffView(diffView?.source === 'preview' ? null : { source: 'preview' })}
-                    data-tip={'ブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます'}
+                    data-tip={t('app.sidePanel.browserTip')}
                     data-tip-side="right"
-                    aria-label="ブラウザ"
+                    aria-label={t('app.sidePanel.browser')}
                     aria-pressed={diffView?.source === 'preview'}
                   >
                     <GlobeIcon size={22} />
@@ -844,9 +850,9 @@ export function App() {
                   <button
                     className={`activity-toggle${terminal.open && terminal.view === 'shell' ? ' on' : ''}`}
                     onClick={toggleShell}
-                    data-tip="ターミナルを開く・閉じる（⌃`）"
+                    data-tip={t('app.sidePanel.terminalTip')}
                     data-tip-side="right"
-                    aria-label="ターミナル"
+                    aria-label={t('app.sidePanel.terminal')}
                     aria-pressed={terminal.open && terminal.view === 'shell'}
                   >
                     <TerminalIcon size={22} />
@@ -855,7 +861,7 @@ export function App() {
               )}
             </div>
             <div className="side-panel">
-              <div className="side-panel-title">{SIDE_PANELS.find((p) => p.id === shownPanel)?.label}</div>
+              <div className="side-panel-title">{panelLabel(shownPanel)}</div>
               <div hidden={shownPanel !== 'files'} className="side-body">
                 <Explorer
                   key={cwd}
@@ -899,7 +905,7 @@ export function App() {
                   />
                 ) : (
                   // 新規セッションの画面にはセッションがない。ボタンは残して、開いたら何が見られるかを伝える
-                  <div className="scm-empty">セッションで実行したバックグラウンドタスクが表示されます</div>
+                  <div className="scm-empty">{t('app.sidePanel.tasksEmpty')}</div>
                 )}
               </div>
               <div hidden={shownPanel !== 'checklist'} className="side-body">
@@ -912,7 +918,7 @@ export function App() {
                     onOpen={openCard}
                   />
                 ) : (
-                  <div className="scm-empty">セッションのチェックリストが表示されます</div>
+                  <div className="scm-empty">{t('app.sidePanel.checklistEmpty')}</div>
                 )}
               </div>
               <div hidden={shownPanel !== 'context'} className="side-body">
@@ -928,7 +934,7 @@ export function App() {
                     onCompact={compactWith}
                   />
                 ) : (
-                  <div className="scm-empty">セッションのコンテキストの中身が表示されます</div>
+                  <div className="scm-empty">{t('app.sidePanel.contextEmpty')}</div>
                 )}
               </div>
               <div hidden={shownPanel !== 'search'} className="side-body">
@@ -1022,13 +1028,13 @@ export function App() {
             </div>
           ) : composing ? (
             <div className="empty-state">
-              <p>左のチャット欄でフォルダを選び、最初の指示を送るとセッションが始まります</p>
+              <p>{t('app.empty.composing')}</p>
             </div>
           ) : (
             <div className="empty-state">
-              <p>セッションがありません</p>
+              <p>{t('app.empty.noSessions')}</p>
               <button className="send-button" onClick={startComposing}>
-                新規セッション
+                {t('app.empty.newSession')}
               </button>
             </div>
           )}
@@ -1095,7 +1101,7 @@ function DiffView({
     return (
       <DiffPane
         path={view.path}
-        subtitle={view.staged ? 'ステージ済みの変更（HEAD ↔ インデックス）' : '変更（インデックス ↔ 作業ツリー）'}
+        subtitle={view.staged ? t('app.diff.staged') : t('app.diff.unstaged')}
         load={() => window.tanacode.git.diffSides(sessionId, view.path, view.staged)}
         reloadKey={String(view.staged)}
         onClose={() => onChange(null)}
@@ -1114,7 +1120,7 @@ function DiffView({
   return (
     <DiffPane
       path={view.path}
-      subtitle={`${branchChanges.base.ref} から`}
+      subtitle={t('app.diff.fromBase', { ref: branchChanges.base.ref })}
       load={() => window.tanacode.git.branchDiffSides(sessionId, mergeBase, view.path)}
       reloadKey={JSON.stringify([change ?? null, mergeBase])}
       onClose={() => onChange(null)}

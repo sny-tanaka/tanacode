@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { unreadCount, type Checklist, type ChecklistUnread } from '@shared/checklist';
+import { t } from '@shared/i18n';
 import { errorMessage } from '../errorMessage';
 import { useSessionValues } from '../sessionValues';
 
@@ -44,7 +45,7 @@ export function applyChecklist(sessionId: string, op: Parameters<typeof window.t
   return window.tanacode.checklist.apply(sessionId, op).then(
     () => true,
     (error: unknown) => {
-      window.alert(`チェックリストを変えられませんでした: ${errorMessage(error)}`);
+      window.alert(t('checklist.apply.failed', { error: errorMessage(error) }));
       return false;
     },
   );

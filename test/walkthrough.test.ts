@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setLanguage } from '../src/shared/i18n';
 import { allowedToolIds } from '../src/shared/mcp-tools';
 import { rangeQuestionText, restartRequestText, stepQuestionText, type Walkthrough } from '../src/shared/walkthrough';
 import { WALKTHROUGH_MCP, walkthroughOfTool, walkthroughTarget, walkthroughToolId } from '../src/shared/walkthrough-tools';
@@ -48,7 +49,7 @@ describe('MCP のツール', () => {
     const { control, changes } = setup();
     const r = await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ path: join(cwd, 'src/tax.ts'), start_line: 10, end_line: undefined, title: '切り捨て' })] });
     expect(r.isError).toBeUndefined();
-    expect(text(r)).toContain('1/2「税率を読む」（src/tax.ts:3-5）');
+    expect(text(r)).toContain('1/2 "税率を読む" (src/tax.ts:3-5)');
     const w = control.get(ME)!;
     // フォルダの中の絶対パスは相対パスに、end_line を省くと 1 行
     expect(w.steps[1]).toEqual({ path: 'src/tax.ts', startLine: 10, endLine: 10, title: '切り捨て', body: '設定から読みます。', view: 'file' });
@@ -73,14 +74,14 @@ describe('MCP のツール', () => {
     });
     expect(r.isError).toBe(true);
     const message = text(r);
-    expect(message).toContain('ステップ 2: ../outside.ts は、このセッションのフォルダ');
-    expect(message).toContain('ステップ 3:');
-    expect(message).toContain('ステップ 4: src/tax.ts は 20 行です（25 行目はありません）');
-    expect(message).toContain('ステップ 5: src/tax.ts: end_line は start_line 以上');
-    expect(message).toContain('ステップ 6: src/none.ts が見つかりません');
-    expect(message).toContain('ステップ 7: src/logo.png は文字のファイルではない');
-    expect(message).toContain('ステップ 8: body を渡してください');
-    expect(message).not.toContain('ステップ 1:');
+    expect(message).toContain('Step 2: ../outside.ts is not a file in the folder of this session');
+    expect(message).toContain('Step 3:');
+    expect(message).toContain('Step 4: src/tax.ts has 20 lines (there is no line 25).');
+    expect(message).toContain('Step 5: src/tax.ts: end_line must be an integer of start_line or more');
+    expect(message).toContain('Step 6: src/none.ts was not found');
+    expect(message).toContain('Step 7: src/logo.png is not a text file');
+    expect(message).toContain('Step 8: Pass body.');
+    expect(message).not.toContain('Step 1:');
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
   });
@@ -89,26 +90,27 @@ describe('MCP のツール', () => {
     const { control } = setup();
     await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ view: 'diff' }), step()] });
     expect(control.get(ME)!.steps.map((s) => s.view)).toEqual(['diff', 'file']);
-    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ view: 'split' })] }))).toContain('view は "file" か "diff"');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ view: 'split' })] }))).toContain('view must be "file" or "diff"');
   });
 
   it('start_walkthrough: ステップが無い・多すぎるときは断る', async () => {
     const { control } = setup();
-    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [] }))).toContain('1 つ以上');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [] }))).toContain('at least one step');
     const many = Array.from({ length: 41 }, () => step());
-    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: many }))).toContain('40 個まで');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: many }))).toContain('up to 40 steps (got 41)');
   });
 
   it('show_code: 寄り道として示し、人が戻ると元のステップに戻る。始めていなくても示せる', async () => {
     const { control } = setup();
     const alone = await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここです' });
-    expect(text(alone)).toBe('人のエディタに src/tax.ts:7 を示しました（寄り道）。');
+    expect(text(alone)).toBe("Showed src/tax.ts:7 in the user's editor (an aside).");
     expect(control.get(ME)).toMatchObject({ steps: [], aside: { path: 'src/tax.ts', startLine: 7, endLine: 7, title: '' } });
 
     await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ start_line: 12, end_line: undefined })] });
     control.go(ME, 1);
     const r = await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 15, end_line: 16, body: '呼び出し元です' });
-    expect(text(r)).toContain('2/2 に戻ります');
+    // 戻るボタンの名前は、画面の言語で入れる
+    expect(text(r)).toContain('When the user clicks "ウォークスルーに戻る（2/2）", the editor returns to 2/2.');
     expect(control.get(ME)).toMatchObject({ current: 1, aside: { startLine: 15, endLine: 16 }, movedBy: 'claude' });
     control.go(ME, 1);
     expect(control.get(ME)).toMatchObject({ current: 1, aside: null, movedBy: 'human' });
@@ -116,30 +118,33 @@ describe('MCP のツール', () => {
 
   it('walkthrough_status: 手順と、人が見ているステップ・見たステップを返す', async () => {
     const { control } = setup();
-    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('ウォークスルーはありません');
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('There is no walkthrough');
     await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ start_line: 12, end_line: undefined, title: '切り捨て' }), step({ title: '呼び出し' })] });
     control.go(ME, 1);
     const status = text(await control.handle(ME, 'walkthrough_status', {}));
     expect(status).toBe(
       [
-        'ウォークスルー「税率の変更」（3 ステップ）。人は 2/3「切り捨て」を見ています。',
-        '1. 税率を読む — src/tax.ts:3-5（見た）',
-        '2. 切り捨て — src/tax.ts:12（今ここ）',
+        'Walkthrough "税率の変更" (3 steps). The user is viewing 2/3 "切り捨て".',
+        '1. 税率を読む — src/tax.ts:3-5 (viewed)',
+        '2. 切り捨て — src/tax.ts:12 (current)',
         // 見ていないステップには印を付けない
         '3. 呼び出し — src/tax.ts:3-5',
       ].join('\n'),
     );
     control.close(ME);
-    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('人はウォークスルーを閉じています（最後に見たのは 2/3。');
+    // 開き直す場所（ソース管理）の名前は、画面の言語で入れる
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user has closed the walkthrough (last viewed 2/3; it can be reopened from the list in "ソース管理").');
     control.discard(ME);
-    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('ウォークスルーはありません');
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('There is no walkthrough');
   });
 
   it('メニューでオフ・知らないセッション・知らないツールは断る', async () => {
-    expect(text(await setup(false).control.handle(ME, 'walkthrough_status', {}))).toContain('オフにしています');
+    expect(text(await setup(false).control.handle(ME, 'walkthrough_status', {}))).toBe(
+      'The user has turned off "Claude にウォークスルーさせる" in the tanacode menu. Ask the user to turn it on.',
+    );
     const { control } = setup();
-    expect(text(await control.handle('other', 'walkthrough_status', {}))).toContain('tanacode にありません');
-    expect((await control.handle(ME, 'rm_rf', {})).isError).toBe(true);
+    expect(text(await control.handle('other', 'walkthrough_status', {}))).toContain('not in tanacode');
+    expect(await control.handle(ME, 'rm_rf', {})).toEqual(textResult('Unknown tool: rm_rf', true));
   });
 });
 
@@ -192,9 +197,9 @@ describe('画面からの操作', () => {
 describe('引数と状態の細かいところ', () => {
   it('start_walkthrough: title が無い・長すぎる、steps が配列でないときは断る', async () => {
     const { control, changes } = setup();
-    expect(text(await control.handle(ME, 'start_walkthrough', { title: 5, steps: [step()] }))).toBe('title を渡してください');
-    expect(text(await control.handle(ME, 'start_walkthrough', { title: 'あ'.repeat(121), steps: [step()] }))).toBe('title は 120 文字までです（121 文字あります）');
-    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: 'src/tax.ts' }))).toContain('1 つ以上');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 5, steps: [step()] }))).toBe('Pass title.');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 'あ'.repeat(121), steps: [step()] }))).toBe('title can be up to 120 characters (got 121).');
+    expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: 'src/tax.ts' }))).toContain('at least one step');
     expect(changes).toEqual([]);
   });
 
@@ -206,35 +211,35 @@ describe('引数と状態の細かいところ', () => {
     });
     expect(r.isError).toBe(true);
     expect(text(r).split('\n').slice(1)).toEqual([
-      'ステップ 1: path を渡してください',
-      'ステップ 2: path を渡してください',
-      'ステップ 3: path を渡してください',
-      'ステップ 4: src/tax.ts: start_line は 1 以上の整数にしてください',
-      'ステップ 5: src/tax.ts: start_line は 1 以上の整数にしてください',
-      'ステップ 6: src/tax.ts: start_line は 1 以上の整数にしてください',
-      'ステップ 7: body は 4000 文字までです（4001 文字あります）',
+      'Step 1: Pass path.',
+      'Step 2: Pass path.',
+      'Step 3: Pass path.',
+      'Step 4: src/tax.ts: start_line must be an integer of 1 or more.',
+      'Step 5: src/tax.ts: start_line must be an integer of 1 or more.',
+      'Step 6: src/tax.ts: start_line must be an integer of 1 or more.',
+      'Step 7: body can be up to 4000 characters (got 4001).',
     ]);
   });
 
   it('名前が .. で始まるファイル（フォルダの中のもの）も示せる', async () => {
     writeFileSync(join(cwd, '..notes.md'), 'a\nb\n');
     const { control } = setup();
-    expect(text(await control.handle(ME, 'show_code', { path: '..notes.md', start_line: 1, body: 'ここ' }))).toBe('人のエディタに ..notes.md:1 を示しました（寄り道）。');
+    expect(text(await control.handle(ME, 'show_code', { path: '..notes.md', start_line: 1, body: 'ここ' }))).toBe("Showed ..notes.md:1 in the user's editor (an aside).");
   });
 
   it('末尾に改行の無いファイルも、最後の行まで示せる', async () => {
     writeFileSync(join(cwd, 'src', 'short.ts'), 'a\nb\nc');
     const { control } = setup();
     expect((await control.handle(ME, 'show_code', { path: 'src/short.ts', start_line: 3, body: '最後の行' })).isError).toBeUndefined();
-    expect(text(await control.handle(ME, 'show_code', { path: 'src/short.ts', start_line: 4, body: 'x' }))).toBe('src/short.ts は 3 行です（4 行目はありません）');
+    expect(text(await control.handle(ME, 'show_code', { path: 'src/short.ts', start_line: 4, body: 'x' }))).toBe('src/short.ts has 3 lines (there is no line 4).');
   });
 
   it('show_code: 示せないものは理由を返し、今の表示を変えない', async () => {
     const { control, changes } = setup();
-    expect(text(await control.handle(ME, 'show_code', { path: '../outside.ts', start_line: 1, body: 'x' }))).toContain('このセッションのフォルダ');
+    expect(text(await control.handle(ME, 'show_code', { path: '../outside.ts', start_line: 1, body: 'x' }))).toContain('is not a file in the folder of this session');
     // .. そのもの、名前が .. で始まるフォルダを通って外に出るもの、.. を含む絶対パスも断る
     for (const path of ['..', '..notes/../../outside.ts', `${cwd}/../outside.ts`]) {
-      expect(text(await control.handle(ME, 'show_code', { path, start_line: 1, body: 'x' }))).toBe(`${path} は、このセッションのフォルダ（${cwd}）の中のファイルではありません`);
+      expect(text(await control.handle(ME, 'show_code', { path, start_line: 1, body: 'x' }))).toBe(`${path} is not a file in the folder of this session (${cwd}).`);
     }
     expect(control.get(ME)).toBeNull();
     expect(changes).toEqual([]);
@@ -259,10 +264,10 @@ describe('引数と状態の細かいところ', () => {
   it('walkthrough_status: 寄り道だけのとき・寄り道を見ているときは、示している場所を返す', async () => {
     const { control } = setup();
     await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
-    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toBe('ウォークスルーは始めていません。寄り道で src/tax.ts:7 を示しています。');
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toBe('No walkthrough has been started. Showing src/tax.ts:7 as an aside.');
     await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step(), step({ start_line: 12, end_line: undefined, title: '切り捨て' })] });
     await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 15, end_line: 16, body: '呼び出し元' });
-    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('人は寄り道で示した src/tax.ts:15-16 を見ています（戻ると 1/2）。');
+    expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('The user is viewing src/tax.ts:15-16, which you showed as an aside (going back returns to 1/2).');
   });
 
   it('画面からの操作は、ウォークスルーの無いセッション・ステップの無いもの・整数でない番号では何もしない', async () => {
@@ -283,6 +288,22 @@ describe('引数と状態の細かいところ', () => {
     expect(control.get(ME)).toMatchObject({ current: 0 });
   });
 
+  it('結果の文は英語で、画面の項目の名前（メニュー・ボタン・ソース管理）だけを画面の言語で入れる', async () => {
+    try {
+      setLanguage('en');
+      expect(text(await setup(false).control.handle(ME, 'walkthrough_status', {}))).toBe(
+        'The user has turned off "Let Claude Give Walkthroughs" in the tanacode menu. Ask the user to turn it on.',
+      );
+      const { control } = setup();
+      expect(text(await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step(), step()] }))).toContain('with "Next" and "Back" at their own pace');
+      expect(text(await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'x' }))).toContain('When the user clicks "Back to Walkthrough (1/2)", the editor returns to 1/2.');
+      control.close(ME);
+      expect(text(await control.handle(ME, 'walkthrough_status', {}))).toContain('it can be reopened from the list in "Source Control").');
+    } finally {
+      setLanguage('ja');
+    }
+  });
+
   it('断るときは isError を付ける', async () => {
     expect((await setup(false).control.handle(ME, 'walkthrough_status', {})).isError).toBe(true);
     expect((await setup().control.handle('other', 'walkthrough_status', {})).isError).toBe(true);
@@ -292,10 +313,11 @@ describe('引数と状態の細かいところ', () => {
     const { control } = setup();
     await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 7, body: 'ここ' });
     expect(text(await control.handle(ME, 'start_walkthrough', { title: '税率', steps: [step(), step({ start_line: 12, end_line: undefined, title: '切り捨て' })] }))).toBe(
-      'ウォークスルー「税率」を始めました（2 ステップ）。人の tanacode のエディタに 1/2「税率を読む」（src/tax.ts:3-5）を開きました。人は「次へ」「戻る」で自分のペースで進めます。チャットには短く書いてターンを終え、質問を待ってください。',
+      // 「次へ」「戻る」のボタンの名前は、画面の言語で入れる
+      'Started the walkthrough "税率" (2 steps). Opened 1/2 "税率を読む" (src/tax.ts:3-5) in the user\'s tanacode editor. The user moves through the steps with "次へ" and "戻る" at their own pace. Write only a short line in the chat, end your turn and wait for questions.',
     );
     expect(text(await control.handle(ME, 'start_walkthrough', { title: '作り直し', steps: [step()] }))).toContain(
-      '（1 ステップ）。前のウォークスルー「税率」は、これに置き換えました。人の tanacode',
+      '(1 step). It replaced the previous walkthrough "税率". Opened 1/1',
     );
   });
 
@@ -327,7 +349,7 @@ describe('引数と状態の細かいところ', () => {
     await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step({ path: ' src/tax.ts ', view: 'file' })] });
     expect(control.get(ME)!.steps[0]).toMatchObject({ path: 'src/tax.ts', view: 'file' });
     const r = await control.handle(ME, 'start_walkthrough', { title: 't', steps: [null, step({ title: undefined })] });
-    expect(text(r).split('\n').slice(1)).toEqual(['ステップ 1: path を渡してください', 'ステップ 2: title を渡してください']);
+    expect(text(r).split('\n').slice(1)).toEqual(['Step 1: Pass path.', 'Step 2: Pass title.']);
   });
 
   it('list: ウォークスルーのあるセッションと、その中身を返す', async () => {
@@ -369,7 +391,8 @@ describe('中継・起動の引数・設定', () => {
     expect(args.filter((a) => a === '--mcp-config')).toHaveLength(1);
     const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(Object.keys(config.mcpServers)).toEqual(['tanacode-checklist', 'tanacode-walkthrough']);
-    expect(config.mcpServers['tanacode-walkthrough'].env).toMatchObject({ TANACODE_WALKTHROUGH_SOCKET: '/u/walkthrough.sock', TANACODE_WALKTHROUGH_SESSION: 's1' });
+    // 言語は、中継が tools/list で返すツールの短い名前に使う
+    expect(config.mcpServers['tanacode-walkthrough'].env).toMatchObject({ TANACODE_WALKTHROUGH_SOCKET: '/u/walkthrough.sock', TANACODE_WALKTHROUGH_SESSION: 's1', TANACODE_LANGUAGE: 'ja' });
     const allowed = args[args.indexOf('--allowedTools') + 1].split(',');
     expect(allowed).toEqual(expect.arrayContaining(allowedToolIds(WALKTHROUGH_MCP)));
     expect(allowedToolIds(WALKTHROUGH_MCP)).toHaveLength(WALKTHROUGH_MCP.tools.length);

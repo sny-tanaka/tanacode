@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type RefObject } from 'react';
+import { t } from '@shared/i18n';
 
 // 幅を変えられるカラム。エディタ（残りの幅）は含めない
 export type Column = 'sessions' | 'claude' | 'side';
@@ -90,7 +91,7 @@ export function Resizer({
       className="resizer"
       role="separator"
       aria-orientation="vertical"
-      title="ドラッグで幅を変更（ダブルクリックで元に戻す）"
+      title={t('app.resizer.tip')}
       onPointerDown={(e) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);

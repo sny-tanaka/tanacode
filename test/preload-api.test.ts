@@ -56,14 +56,14 @@ describe('preload の読み込み', () => {
     expect(arity.get('sessions.list')).toBe(0);
   });
 
-  it('API のメソッドは、どれも表のどれか 1 つのチャンネルに対応する（pathForFile を除く）。表のメソッドは、どれも API にある', () => {
+  it('API のメソッドは、どれも表のどれか 1 つのチャンネルに対応する（IPC を使わない pathForFile・language を除く）。表のメソッドは、どれも API にある', () => {
     const inApi = Object.entries(api as unknown as Record<string, unknown>).flatMap(([ns, value]) =>
       typeof value === 'function' ? [ns] : Object.keys(value as object).map((name) => `${ns}.${name}`),
     );
     const inTable = [...invokes, ...sends, ...events].map((e) => e.method);
-    expect([...inApi].sort()).toEqual([...inTable, 'pathForFile'].sort());
+    expect([...inApi].sort()).toEqual([...inTable, 'pathForFile', 'language'].sort());
     // 型の宣言にあるメソッドと、実際の API が同じ
-    expect([...arity.keys()].sort()).toEqual(inApi.filter((m) => m !== 'pathForFile').sort());
+    expect([...arity.keys()].sort()).toEqual(inApi.filter((m) => m !== 'pathForFile' && m !== 'language').sort());
   });
 
   it('中身の無い知らせ（表で undefined）は、受けるメソッドが分かっているものだけ', () => {
@@ -157,6 +157,30 @@ describe('ファイルのパス', () => {
     const file = { name: '画像.png' } as unknown as File;
     expect(api.pathForFile(file)).toBe('/Users/me/画像.png');
     expect(electron.webUtils.getPathForFile.mock.calls).toEqual([[file]]);
+    expect(electron.ipcRenderer.invoke).not.toHaveBeenCalled();
+    expect(electron.ipcRenderer.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('画面の言語', () => {
+  // 起動の引数を変えて、preload を読み込み直す
+  const load = async (args: string[]): Promise<TanacodeApi> => {
+    const saved = process.argv;
+    process.argv = [...saved, ...args];
+    try {
+      vi.resetModules();
+      electron.contextBridge.exposeInMainWorld.mockClear();
+      await import('../src/preload/index');
+      return electron.contextBridge.exposeInMainWorld.mock.calls[0][1] as TanacodeApi;
+    } finally {
+      process.argv = saved;
+    }
+  };
+
+  it('language は、main がウインドウを作るときに渡した起動の引数から読む。無ければ・知らない値なら日本語（IPC は使わない）', async () => {
+    expect(api.language()).toBe('ja');
+    expect((await load(['--tanacode-language=en'])).language()).toBe('en');
+    expect((await load(['--tanacode-language=fr'])).language()).toBe('ja');
     expect(electron.ipcRenderer.invoke).not.toHaveBeenCalled();
     expect(electron.ipcRenderer.send).not.toHaveBeenCalled();
   });

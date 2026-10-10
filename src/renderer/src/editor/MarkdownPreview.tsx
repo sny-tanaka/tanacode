@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
+import { t } from '@shared/i18n';
 import { marked, replaceExternalImages } from '../markdown';
 import { token } from '../theme';
 import { editorTheme, monaco } from './monaco';
@@ -196,7 +197,7 @@ async function renderMermaid(code: HTMLElement, cancelled: () => boolean): Promi
     if (cancelled()) return;
     const note = document.createElement('div');
     note.className = 'markdown-mermaid-error';
-    note.textContent = `図を描けませんでした: ${err instanceof Error ? err.message : String(err)}`;
+    note.textContent = t('editor.markdownPreview.diagramFailed', { error: err instanceof Error ? err.message : String(err) });
     pre.after(note);
   }
 }

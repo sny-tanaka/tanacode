@@ -173,12 +173,16 @@ function freshState() {
     appPath: '',
     resources: '',
     packaged: false,
+    // Mac の優先する言語（app.getPreferredSystemLanguages）。言語の設定が「システムに合わせる」のときに使う
+    preferredLanguages: ['ja-JP'],
     handlers: new Map<string, (...args: unknown[]) => unknown>(),
     listeners: new Map<string, (...args: unknown[]) => unknown>(),
     app: new Emitter(),
     // Electron の準備ができる（app.whenReady。既定はすぐに済む）
     whenReady: vi.fn(async (): Promise<void> => undefined),
     quit: vi.fn((..._args: unknown[]) => undefined),
+    // 終わったあとに起動し直す（app.relaunch）
+    relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
     dock: { setIcon: vi.fn((_path: string) => undefined) } as { setIcon: Mock } | undefined,
     windows: [] as FakeWindow[],
@@ -275,8 +279,10 @@ export const electronModule = {
     },
     getAppPath: () => state.appPath,
     getVersion: () => '9.8.7',
+    getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
+    relaunch: () => state.relaunch(),
     get dock() {
       return state.dock;
     },

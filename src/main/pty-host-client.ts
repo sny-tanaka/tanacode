@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join } from 'node:path';
+import { t } from '@shared/i18n';
 import { PROTOCOL, type ClientMessage, type HostMessage, type HostedPtyInfo, type SpawnRequest } from './pty-host-protocol';
 import { socketPathIn } from './socket-path';
 
@@ -309,7 +310,7 @@ async function waitForHost(path: string): Promise<Socket> {
     if (socket) return socket;
     await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
   }
-  throw new Error(`pty ホストに繋がりません: ${path}`);
+  throw new Error(t('main.error.ptyHostUnreachable', { path }));
 }
 
 // ホストの形（PROTOCOL）を聞く。答えが無ければ null

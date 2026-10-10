@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { language, locale, t } from '@shared/i18n';
 import { applyTranslation, isMostlyForeign, planTranslation, type TranslateResult } from '@shared/translate';
 import { errorMessage } from '../errorMessage';
 import { ExternalLinkIcon, IconButton, TranslateIcon } from '../icons';
@@ -6,7 +7,8 @@ import { Busy } from '../layout/Busy';
 
 // チャットの思考・応答の翻訳。ブロックに出しておくボタンと、ブロックの下に出す訳文。
 // 訳すのは Mac の中だけ（main の translate.ts → 同梱の補助プログラム → macOS 標準の翻訳）。
-// ボタンは、ブロックが主に日本語でない文のときだけ出す（1 つのブロックの一部だけが英語、ということはないので、全体で見る）
+// ボタンは、ブロックが主に日本語でない文のときだけ出す（1 つのブロックの一部だけが英語、ということはないので、全体で見る）。
+// 訳す先は日本語だけなので、画面が日本語でないときは出さない
 
 // 使えるか（macOS 15 以降で、補助プログラムがある）。アプリの中で変わらないので、main には一度だけ聞く
 let availability: Promise<boolean> | null = null;
@@ -50,12 +52,16 @@ type Failure = { message: string; needsLanguage?: boolean };
 // 訳文を開いているか、訳している途中か、訳せなかったか（どれも、その原文に対してのもの）
 type State = { text: string } & ({ kind: 'open'; translated: string } | { kind: 'loading' } | { kind: 'failed'; failure: Failure });
 
-const LANGUAGE_NAMES = new Intl.DisplayNames(['ja'], { type: 'language' });
+// 言語の名前は、画面の言語で出す。作るのに時間がかかるので、ロケールごとに一度だけ作る
+const languageNames = new Map<string, Intl.DisplayNames>();
 
 function languageName(code: string | undefined): string {
-  if (!code) return '元の言語';
+  if (!code) return t('translate.failure.sourceLanguage');
   try {
-    return LANGUAGE_NAMES.of(code) ?? code;
+    const loc = locale();
+    let names = languageNames.get(loc);
+    if (!names) languageNames.set(loc, (names = new Intl.DisplayNames([loc], { type: 'language' })));
+    return names.of(code) ?? code;
   } catch {
     return code;
   }
@@ -65,13 +71,13 @@ function failureOf(result: Extract<TranslateResult, { ok: false }>): Failure {
   const language = languageName(result.source);
   switch (result.error) {
     case 'same-language':
-      return { message: '日本語の文なので、訳しませんでした。' };
+      return { message: t('translate.failure.sameLanguage') };
     case 'not-installed':
-      return { message: `翻訳データ（${language}・日本語）が入っていません。システム設定の「一般」→「言語と地域」→「翻訳言語…」から入れてください。`, needsLanguage: true };
+      return { message: t('translate.failure.notInstalled', { language }), needsLanguage: true };
     case 'unsupported':
-      return { message: result.source ? `${language}は、macOS の翻訳が対応していない言語です。` : '言語を判定できませんでした。' };
+      return { message: result.source ? t('translate.failure.unsupported', { language }) : t('translate.failure.undetected') };
     case 'failed':
-      return { message: `訳せませんでした（${result.message ?? 'わけは分かりません'}）。` };
+      return { message: t('translate.failure.failed', { reason: result.message ?? t('translate.failure.unknownReason') }) };
   }
 }
 
@@ -84,7 +90,7 @@ export type BlockTranslation = {
 
 // text: ブロックの原文 / renderText: 訳文の描き方（応答は Markdown、思考はそのままの文字）
 export function useBlockTranslation(text: string, renderText: (translated: string) => ReactNode): BlockTranslation {
-  const foreign = useMemo(() => isMostlyForeign(text), [text]);
+  const foreign = useMemo(() => language() === 'ja' && isMostlyForeign(text), [text]);
   const available = useTranslateAvailable(foreign);
   const [state, setState] = useState<State | null>(null);
   const alive = useRef(true);
@@ -129,7 +135,7 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
         }
       },
       (err: unknown) => {
-        if (alive.current) setState((s) => (s?.text === text ? { text, kind: 'failed', failure: { message: `訳せませんでした（${errorMessage(err)}）。` } } : s));
+        if (alive.current) setState((s) => (s?.text === text ? { text, kind: 'failed', failure: { message: t('translate.failure.failed', { reason: errorMessage(err) }) } } : s));
       },
     );
   };
@@ -140,8 +146,8 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
     <IconButton
       size="sm"
       icon={TranslateIcon}
-      label="日本語訳"
-      tip="日本語訳（macOS の翻訳で、Mac の中で訳します）"
+      label={t('translate.button.label')}
+      tip={t('translate.button.tip')}
       className="chat-translate"
       pressed={current?.kind === 'open'}
       busy={current?.kind === 'loading'}
@@ -153,14 +159,14 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
   if (current?.kind === 'open') {
     panel = (
       <div className="chat-translation">
-        <div className="chat-translation-label">日本語訳</div>
+        <div className="chat-translation-label">{t('translate.panel.label')}</div>
         {renderText(current.translated)}
       </div>
     );
   } else if (current?.kind === 'loading') {
     panel = (
       <div className="chat-translation-note">
-        <Busy>訳しています…</Busy>
+        <Busy>{t('translate.panel.loading')}</Busy>
       </div>
     );
   } else if (current?.kind === 'failed') {
@@ -168,7 +174,7 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
       <div className="chat-translation-note failed">
         <span>{current.failure.message}</span>
         {current.failure.needsLanguage && (
-          <IconButton size="sm" icon={ExternalLinkIcon} label="システム設定を開く" onClick={() => void window.tanacode.translate.openSettings()} />
+          <IconButton size="sm" icon={ExternalLinkIcon} label={t('translate.panel.openSettings')} onClick={() => void window.tanacode.translate.openSettings()} />
         )}
       </div>
     );

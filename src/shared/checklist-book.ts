@@ -9,10 +9,12 @@ import {
   type Checklist,
   type ChecklistOp,
 } from './checklist';
+import { t } from './i18n';
 
 // チェックリストの書き換え。画面（IPC）と Claude（MCP）の両方から、同じものを書き換える。
 // メモリの上だけで持ち、書き換えるたびに onChange で知らせる。ファイルへの保存は main の ChecklistStore が受け持つ
-// （デモのサイトの作り物の API は、これをそのまま使う）
+// （デモのサイトの作り物の API は、これをそのまま使う）。
+// 書き換えの記録（log）は Claude だけが読むので、英語で書く（画面の言語によらない）。ChecklistError は画面（IPC）にも出るので、文言から作る
 
 // Claude に「前回から人が変えたもの」を伝えるための、書き換えの記録（新しいものだけ残す）
 type Activity = { at: number; author: Author; text: string };
@@ -106,7 +108,7 @@ export class ChecklistBook {
     const name = this.freeName(doc, rawName);
     const list: Checklist = { id: crypto.randomUUID(), name, description: description.trim(), nextNumber: 1, cards: [], createdBy: author, createdAt: this.now() };
     doc.lists.push(list);
-    this.log(doc, author, `リスト「${name}」を作りました`);
+    this.log(doc, author, `created the list "${name}"`);
     this.changed(sessionId);
     return list;
   }
@@ -117,11 +119,11 @@ export class ChecklistBook {
     if (change.name !== undefined && nameKey(change.name) !== nameKey(list.name)) {
       const before = list.name;
       list.name = this.freeName(doc, change.name, list.id);
-      this.log(doc, author, `リスト「${before}」の名前を「${list.name}」に変えました`);
+      this.log(doc, author, `renamed the list "${before}" to "${list.name}"`);
     }
     if (change.description !== undefined && change.description.trim() !== list.description) {
       list.description = change.description.trim();
-      this.log(doc, author, `リスト「${list.name}」の説明を変えました: ${list.description}`);
+      this.log(doc, author, `changed the description of the list "${list.name}" to: ${list.description}`);
     }
     this.changed(sessionId);
     return list;
@@ -131,7 +133,7 @@ export class ChecklistBook {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     list.deletedAt = this.now();
-    this.log(doc, author, `リスト「${list.name}」をゴミ箱に入れました`);
+    this.log(doc, author, `moved the list "${list.name}" to the trash`);
     this.changed(sessionId);
   }
 
@@ -142,7 +144,7 @@ export class ChecklistBook {
     delete list.deletedAt;
     // 戻している間に同じ名前のリストを作っていれば、名前を変えて戻す
     list.name = this.freeName(doc, list.name, list.id);
-    this.log(doc, author, `リスト「${list.name}」をゴミ箱から戻しました`);
+    this.log(doc, author, `restored the list "${list.name}" from the trash`);
     this.changed(sessionId);
   }
 
@@ -159,7 +161,7 @@ export class ChecklistBook {
     const list = this.list(doc, listId);
     const added = cards.map(({ title, body }) => {
       const clean = cleanTitle(title);
-      if (!clean) throw new ChecklistError('タイトルが空のカードは作れません');
+      if (!clean) throw new ChecklistError(t('checklist.errors.emptyCardTitle'));
       const at = this.now();
       const card: Card = {
         id: crypto.randomUUID(),
@@ -178,7 +180,7 @@ export class ChecklistBook {
       list.cards.push(card);
       return card;
     });
-    this.log(doc, author, `「${list.name}」に ${added.map((c) => `#${c.number}「${c.title}」`).join('、')} を足しました`);
+    this.log(doc, author, `added ${cardRefs(added)} to "${list.name}"`);
     this.changed(sessionId);
     return added;
   }
@@ -189,17 +191,17 @@ export class ChecklistBook {
     const card = this.card(list, cardId);
     if (change.title !== undefined) {
       const title = cleanTitle(change.title);
-      if (!title) throw new ChecklistError('タイトルを空にはできません');
+      if (!title) throw new ChecklistError(t('checklist.errors.emptyTitle'));
       if (title !== card.title) {
         this.event(card, author, { type: 'title', from: card.title });
         card.title = title;
-        this.log(doc, author, `「${list.name}」#${card.number} のタイトルを「${title}」に変えました`);
+        this.log(doc, author, `changed the title of "${list.name}" #${card.number} to "${title}"`);
       }
     }
     if (change.body !== undefined && change.body.trim() !== card.body) {
       card.body = change.body.trim();
       this.event(card, author, { type: 'body' });
-      this.log(doc, author, `「${list.name}」#${card.number}「${card.title}」の説明文を変えました`);
+      this.log(doc, author, `edited the body of "${list.name}" #${card.number} "${card.title}"`);
     }
     this.changed(sessionId);
     return card;
@@ -224,8 +226,7 @@ export class ChecklistBook {
     }
     if (comment?.trim()) for (const card of cards) this.addReply(card, author, comment.trim(), false);
     if (changed.length > 0) {
-      const what = checked ? 'チェックしました' : 'チェックを外しました';
-      this.log(doc, author, `「${list.name}」の ${changed.map((c) => `#${c.number}「${c.title}」`).join('、')} を${what}${comment?.trim() ? `（${comment.trim()}）` : ''}`);
+      this.log(doc, author, `${checked ? 'checked' : 'unchecked'} ${cardRefs(changed)} in "${list.name}"${comment?.trim() ? ` (${comment.trim()})` : ''}`);
     }
     this.changed(sessionId);
     return changed;
@@ -233,12 +234,12 @@ export class ChecklistBook {
 
   reply(sessionId: string, author: Author, listId: string, cardId: string, rawText: string, notify = false): Card {
     const text = rawText.trim();
-    if (!text) throw new ChecklistError('返信が空です');
+    if (!text) throw new ChecklistError(t('checklist.errors.emptyReply'));
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     const card = this.card(list, cardId);
     this.addReply(card, author, text, notify);
-    this.log(doc, author, `「${list.name}」#${card.number}「${card.title}」に返信しました: ${clip(text, 200)}`);
+    this.log(doc, author, `replied to "${list.name}" #${card.number} "${card.title}": ${clip(text, 200)}`);
     this.changed(sessionId);
     return card;
   }
@@ -257,7 +258,7 @@ export class ChecklistBook {
         this.event(card, author, { type: 'moved', fromList: from.name, fromNumber: card.number });
         card.number = to.nextNumber++;
       }
-      this.log(doc, author, `「${from.name}」の ${cards.length} 枚のカードを「${to.name}」に移しました（${cards.map((c) => `#${c.number}「${c.title}」`).join('、')}）`);
+      this.log(doc, author, `moved ${cardCount(cards.length)} from "${from.name}" to "${to.name}" (${cardRefs(cards)})`);
     }
     const at = before ? to.cards.findIndex((c) => c.id === before) : -1;
     to.cards.splice(at < 0 ? to.cards.length : at, 0, ...cards);
@@ -273,7 +274,7 @@ export class ChecklistBook {
       card.deletedAt = this.now();
       this.event(card, author, { type: 'deleted' });
     }
-    if (cards.length > 0) this.log(doc, author, `「${list.name}」の ${cards.map((c) => `#${c.number}「${c.title}」`).join('、')} をゴミ箱に入れました`);
+    if (cards.length > 0) this.log(doc, author, `moved ${cardRefs(cards)} in "${list.name}" to the trash`);
     this.changed(sessionId);
     return cards;
   }
@@ -282,14 +283,14 @@ export class ChecklistBook {
   restoreCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
     const doc = this.doc(sessionId);
     const list = doc.lists.find((l) => l.id === listId);
-    if (!list) throw new ChecklistError('リストが見つかりません');
+    if (!list) throw new ChecklistError(t('checklist.errors.listNotFound'));
     if (list.deletedAt) this.restoreList(sessionId, author, listId);
     const cards = cardIds.map((id) => list.cards.find((c) => c.id === id)).filter((c): c is Card => !!c?.deletedAt);
     for (const card of cards) {
       delete card.deletedAt;
       this.event(card, author, { type: 'restored' });
     }
-    if (cards.length > 0) this.log(doc, author, `「${list.name}」の ${cards.map((c) => `#${c.number}「${c.title}」`).join('、')} をゴミ箱から戻しました`);
+    if (cards.length > 0) this.log(doc, author, `restored ${cardRefs(cards)} in "${list.name}" from the trash`);
     this.changed(sessionId);
     return cards;
   }
@@ -353,7 +354,7 @@ export class ChecklistBook {
       return copy;
     });
     list.cards.push(...copies);
-    this.log(doc, author, `セッション「${from.title}」の「${source.name}」から、${copies.map((c) => `#${c.number}「${c.title}」`).join('、')} を「${list.name}」にコピーしました`);
+    this.log(doc, author, `copied ${cardCount(copies.length)} from "${source.name}" in session "${from.title}" to "${list.name}" as ${cardRefs(copies)}`);
     this.changed(toSessionId);
     return { list, cards: copies, createdList };
   }
@@ -380,7 +381,7 @@ export class ChecklistBook {
   protected save(_sessionId: string): void {}
 
   protected doc(sessionId: string): ChecklistDoc {
-    if (!/^[\w-]+$/.test(sessionId)) throw new ChecklistError('セッションの ID が正しくありません');
+    if (!/^[\w-]+$/.test(sessionId)) throw new ChecklistError(t('checklist.errors.badSessionId'));
     let doc = this.docs.get(sessionId);
     if (!doc) {
       doc = this.load(sessionId);
@@ -401,20 +402,20 @@ export class ChecklistBook {
 
   private list(doc: ChecklistDoc, listId: string): Checklist {
     const list = doc.lists.find((l) => l.id === listId && !l.deletedAt);
-    if (!list) throw new ChecklistError('リストが見つかりません（ゴミ箱に入れたか、消したものかもしれません）');
+    if (!list) throw new ChecklistError(t('checklist.errors.listGone'));
     return list;
   }
 
   private card(list: Checklist, cardId: string): Card {
     const card = list.cards.find((c) => c.id === cardId);
-    if (!card) throw new ChecklistError(`「${list.name}」にカードが見つかりません`);
+    if (!card) throw new ChecklistError(t('checklist.errors.cardNotFound', { list: list.name }));
     return card;
   }
 
   // 重ならない名前にする（重なれば「名前 (2)」）。except: 名前を変えるリスト自身
   private freeName(doc: ChecklistDoc, rawName: string, except?: string): string {
     const base = cleanName(rawName);
-    if (!base) throw new ChecklistError('リストの名前が空です');
+    if (!base) throw new ChecklistError(t('checklist.errors.emptyListName'));
     const taken = new Set(liveLists(doc.lists).filter((l) => l.id !== except).map((l) => nameKey(l.name)));
     if (!taken.has(nameKey(base))) return base;
     for (let n = 2; ; n++) {
@@ -438,14 +439,24 @@ export class ChecklistBook {
     else card.readByClaude = at;
   }
 
+  // text: 主語に続ける文（"added #1 "A" to "To-do"" など）
   private log(doc: ChecklistDoc, author: Author, text: string): void {
-    doc.activity.push({ at: this.now(), author, text: `${author === 'human' ? '人が' : 'Claude が'}${text}` });
+    doc.activity.push({ at: this.now(), author, text: `${author === 'human' ? 'The user' : 'Claude'} ${text}` });
     if (doc.activity.length > MAX_ACTIVITY) doc.activity.splice(0, doc.activity.length - MAX_ACTIVITY);
   }
 }
 
 function lastReplyAt(card: Card, author: Author): number {
   return Math.max(0, ...card.thread.filter((e) => e.kind === 'reply' && e.author === author).map((e) => e.at));
+}
+
+// 記録に書くカード（#1 "A", #2 "B"）
+function cardRefs(cards: Card[]): string {
+  return cards.map((c) => `#${c.number} "${c.title}"`).join(', ');
+}
+
+function cardCount(count: number): string {
+  return `${count} ${count === 1 ? 'card' : 'cards'}`;
 }
 
 function clip(text: string, max: number): string {

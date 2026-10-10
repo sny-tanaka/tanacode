@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { TodoItem } from '@shared/chat';
+import { message, t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { chatFromEvents, todoSteps, type ChatItem } from '../chat/chatState';
 import { errorMessage } from '../errorMessage';
+import { tx } from '../i18n';
 import {
   countContents,
   DEFAULT_EXPORT_OPTIONS,
@@ -30,7 +32,7 @@ export function ExportDialog({ session, onClose }: { session: SessionSummary; on
   const [to, setTo] = useState(Number.MAX_SAFE_INTEGER);
   const [options, setOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
-  const title = session.title ?? '新しいセッション';
+  const title = session.title ?? t('export.dialog.untitled');
 
   // Escape で閉じるには、ダイアログの中にフォーカスが要る。閉じたら、開く前にいた場所に戻す
   const dialog = useRef<HTMLDivElement>(null);
@@ -93,7 +95,7 @@ export function ExportDialog({ session, onClose }: { session: SessionSummary; on
       }
       setPhase({ kind: 'saved', path, bytes: new Blob([html]).size });
     } catch (error) {
-      window.alert(`書き出せませんでした: ${errorMessage(error)}`);
+      window.alert(t('export.dialog.saveFailed', { error: errorMessage(error) }));
       setPhase({ kind: 'idle' });
     }
   };
@@ -107,7 +109,7 @@ export function ExportDialog({ session, onClose }: { session: SessionSummary; on
         className="quick-open export-dialog"
         ref={dialog}
         role="dialog"
-        aria-label="作業を書き出す"
+        aria-label={t('export.dialog.title')}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -116,91 +118,94 @@ export function ExportDialog({ session, onClose }: { session: SessionSummary; on
         }}
       >
         <div className="export-dialog-head">
-          <h2>作業を書き出す</h2>
-          <p>「{title}」の流れ（指示・応答・ツールの呼び出し・差分・画像）を、1 枚の HTML ファイルに保存します。ブラウザで開くだけで読めます。</p>
+          <h2>{t('export.dialog.title')}</h2>
+          <p>{t('export.dialog.description', { title })}</p>
         </div>
         {phase.kind === 'saved' ? (
           <>
             <div className="export-dialog-body">
-              <p className="export-dialog-status ok">保存しました（{formatBytes(phase.bytes)}）</p>
+              <p className="export-dialog-status ok">{t('export.dialog.saved', { size: formatBytes(phase.bytes) })}</p>
               <p className="export-dialog-path">{replaceHome(phase.path, source?.home ?? '')}</p>
-              <p className="export-dialog-note">人に渡す前に、ブラウザで開いて中身を確かめてください。</p>
+              <p className="export-dialog-note">{t('export.dialog.savedNote')}</p>
             </div>
             <div className="export-dialog-foot">
               <div className="spacer" />
               <button className="ghost-button" onClick={() => window.tanacode.sessions.revealExport(phase.path)}>
-                Finder で表示
+                {t('export.dialog.revealInFinder')}
               </button>
               <button className="send-button" onClick={onClose} autoFocus>
-                閉じる
+                {t('common.close')}
               </button>
             </div>
           </>
         ) : (
           <>
             <div className="export-dialog-body">
-              {source === undefined && <p className="export-dialog-status">会話ログを読んでいます…</p>}
-              {source === null && <p className="export-dialog-status error">会話ログを読めませんでした: {loadError}</p>}
-              {source && prompts.length === 0 && <p className="export-dialog-status">書き出す会話がまだありません</p>}
+              {source === undefined && <p className="export-dialog-status">{t('export.dialog.loading')}</p>}
+              {source === null && <p className="export-dialog-status error">{t('export.dialog.loadFailed', { error: loadError })}</p>}
+              {source && prompts.length === 0 && <p className="export-dialog-status">{t('export.dialog.empty')}</p>}
               {source && prompts.length > 0 && (
                 <>
                   <div className="export-range">
-                    <span className="export-dialog-label">範囲</span>
-                    <select value={start} disabled={busy} onChange={(e) => setFrom(Number(e.target.value))} aria-label="最初の発言">
-                      {prompts.map((p, i) => (
-                        <option key={p.index} value={i} disabled={i > end}>
-                          {promptLabel(i, p.text, p.at)}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="export-range-sep">から</span>
-                    <select value={end} disabled={busy} onChange={(e) => setTo(Number(e.target.value))} aria-label="最後の発言">
-                      {prompts.map((p, i) => (
-                        <option key={p.index} value={i} disabled={i < start}>
-                          {promptLabel(i, p.text, p.at)}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="export-range-sep">まで</span>
+                    <span className="export-dialog-label">{t('export.dialog.rangeLabel')}</span>
+                    {rangeParts({
+                      from: (
+                        <select value={start} disabled={busy} onChange={(e) => setFrom(Number(e.target.value))} aria-label={t('export.dialog.firstPrompt')}>
+                          {prompts.map((p, i) => (
+                            <option key={p.index} value={i} disabled={i > end}>
+                              {promptLabel(i, p.text, p.at)}
+                            </option>
+                          ))}
+                        </select>
+                      ),
+                      to: (
+                        <select value={end} disabled={busy} onChange={(e) => setTo(Number(e.target.value))} aria-label={t('export.dialog.lastPrompt')}>
+                          {prompts.map((p, i) => (
+                            <option key={p.index} value={i} disabled={i < start}>
+                              {promptLabel(i, p.text, p.at)}
+                            </option>
+                          ))}
+                        </select>
+                      ),
+                    })}
                   </div>
                   <p className="export-dialog-summary">
-                    発言 {counts.prompts} · 応答 {counts.replies} · 操作 {counts.tools}
-                    {counts.images > 0 && ` · 画像 ${counts.images} 枚`}
+                    {[
+                      t('export.dialog.summaryPrompts', { count: counts.prompts }),
+                      t('export.dialog.summaryReplies', { count: counts.replies }),
+                      t('export.dialog.summaryTools', { count: counts.tools }),
+                      ...(counts.images > 0 ? [t('export.dialog.summaryImages', { count: counts.images })] : []),
+                    ].join(' · ')}
                   </p>
                   <div className="export-options">
                     <Option checked={options.toolOutput} count={counts.outputs} disabled={busy} onChange={() => toggle('toolOutput')}>
-                      ツールの結果（コマンドの出力・読んだファイルの中身・検索の結果など）
+                      {t('export.dialog.toolOutput')}
                     </Option>
                     <Option checked={options.diffs} count={counts.diffs} disabled={busy} onChange={() => toggle('diffs')}>
-                      編集の差分
+                      {t('export.dialog.diffs')}
                     </Option>
-                    <Option checked={options.images} count={counts.images} unit="枚" disabled={busy} onChange={() => toggle('images')}>
-                      画像（添付・スクリーンショット）
+                    <Option checked={options.images} count={counts.images} unit="image" disabled={busy} onChange={() => toggle('images')}>
+                      {t('export.dialog.images')}
                     </Option>
                     <Option checked={options.thinking} count={counts.thinking} disabled={busy} onChange={() => toggle('thinking')}>
-                      思考
+                      {t('export.dialog.thinking')}
                     </Option>
                     <label className="export-option">
                       <input type="checkbox" checked={options.homeToTilde} disabled={busy} onChange={() => toggle('homeToTilde')} />
-                      <span>
-                        ホームフォルダのパス（<code>{source.home}</code>）を <code>~</code> に置き換える
-                      </span>
+                      <span>{tx('export.dialog.homeToTilde', { home: <code>{source.home}</code>, tilde: <code>~</code> })}</span>
                     </label>
                   </div>
                 </>
               )}
-              <div className="export-dialog-warning">
-                会話には、社内の情報・API キー・パスワードなどが入っていることがあります。書き出したファイルを人に渡す前に、ブラウザで開いて中身を確かめてください。tanacode
-                はファイルを保存するだけで、どこにも送りません。
-              </div>
+              <div className="export-dialog-warning">{t('export.dialog.warning')}</div>
             </div>
             <div className="export-dialog-foot">
               <button className="ghost-button" disabled={busy} onClick={close}>
-                キャンセル
+                {t('common.cancel')}
               </button>
               <div className="spacer" />
               <button className="send-button" disabled={busy || !source || prompts.length === 0} onClick={() => void save()}>
-                {busy ? '書き出しています…' : '書き出す…'}
+                {busy ? t('export.dialog.saving') : t('export.dialog.save')}
               </button>
             </div>
           </>
@@ -213,14 +218,15 @@ export function ExportDialog({ session, onClose }: { session: SessionSummary; on
 function Option({
   checked,
   count,
-  unit = '件',
+  unit = 'item',
   disabled,
   onChange,
   children,
 }: {
   checked: boolean;
   count: number;
-  unit?: string;
+  // 数の単位（件・枚）
+  unit?: 'item' | 'image';
   disabled: boolean;
   onChange: () => void;
   children: React.ReactNode;
@@ -230,9 +236,7 @@ function Option({
     <label className={`export-option${count === 0 ? ' empty' : ''}`}>
       <input type="checkbox" checked={checked && count > 0} disabled={disabled || count === 0} onChange={onChange} />
       <span>{children}</span>
-      <span className="export-option-count">
-        {count} {unit}
-      </span>
+      <span className="export-option-count">{t(unit === 'image' ? 'export.dialog.imageCount' : 'export.dialog.itemCount', { count })}</span>
     </label>
   );
 }
@@ -241,7 +245,21 @@ function Option({
 function promptLabel(index: number, text: string, at: number | undefined): string {
   const line = text.split('\n')[0].trim();
   const head = line.length > 40 ? `${line.slice(0, 39)}…` : line;
-  return `${index + 1}. ${head}${at !== undefined ? `（${formatDateTime(at).slice(5)}）` : ''}`;
+  return at !== undefined
+    ? t('export.dialog.promptLabelWithTime', { number: index + 1, text: head, time: formatDateTime(at).slice(5) })
+    : t('export.dialog.promptLabel', { number: index + 1, text: head });
+}
+
+// 範囲の行（「{from} から {to} まで」）。from・to に選択肢を入れ、間の文字は span に入れて色を変える（語順は言語ごとの文言に任せる）
+function rangeParts(parts: { from: ReactNode; to: ReactNode }): ReactNode[] {
+  return message('export.dialog.range')
+    .split(/(\{\w+\})/)
+    .flatMap((piece, i) => {
+      const name = /^\{(\w+)\}$/.exec(piece)?.[1];
+      if (name === 'from' || name === 'to') return [<Fragment key={i}>{parts[name]}</Fragment>];
+      const text = piece.trim();
+      return text ? [<span key={i} className="export-range-sep">{text}</span>] : [];
+    });
 }
 
 function formatBytes(bytes: number): string {

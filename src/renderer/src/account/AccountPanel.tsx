@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { visibleOrganization, type ClaudeAccount } from '@shared/account';
+import { locale, t } from '@shared/i18n';
 import type { UsageLimit, UsageLimits } from '@shared/usage';
 import { openSettingsFilesDialog } from '../chat/settingsFiles';
 import { CheckIcon } from '../icons';
@@ -8,8 +9,12 @@ import { openProfilesDialog, useProfiles } from './profiles';
 
 // これより古い値は、いつの値かを添えて出す
 const STALE_MS = 30 * 60_000;
-// いつも出す利用枠。値が無くても灰色の 0% で場所を取っておき、欄の高さを変えない（行が増減して、ゲージが上下しないように）
-const LIMITS = ['5時間', '週'] as const;
+// いつも出す利用枠。値が無くても灰色の 0% で場所を取っておき、欄の高さを変えない（行が増減して、ゲージが上下しないように）。
+// label は main が付ける利用枠の名前（UsageLimit.label）で、どの枠かを見分ける値として比べる。画面に出す名前は name のキーで読む
+const LIMITS = [
+  { label: '5時間', name: 'fiveHour' },
+  { label: '週', name: 'week' },
+] as const;
 // 応答のたびに届く利用枠をきっかけにアカウントを読み直すのは、この間隔に 1 回まで（~/.claude.json は大きくなることがあるため）
 const ACCOUNT_REREAD_MS = 60_000;
 
@@ -108,7 +113,7 @@ export function AccountPanel() {
   const login = () => {
     setOpen(false);
     if (!runInTerminal(null, 'claude auth login')) {
-      window.alert('ターミナルを開けるところがありません。セッションを開くか、新規セッションの画面でフォルダを選んでから、もう一度押してください。');
+      window.alert(t('account.panel.noTerminal'));
     }
   };
 
@@ -117,19 +122,19 @@ export function AccountPanel() {
   const current = list.find((p) => p.id === profiles?.current) ?? null;
   const attention = multiple && !!profiles?.othersAttention;
 
-  const at = usage ? new Date(usage.updatedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const at = usage ? new Date(usage.updatedAt).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const stale = usage !== null && now - usage.updatedAt > STALE_MS;
   const organization = account ? visibleOrganization(account) : null;
   const tip = [
-    multiple && current ? `プロファイル: ${current.name}` : null,
-    account ? account.email : account === null ? 'ログインしていません' : null,
+    multiple && current ? t('account.panel.profile', { name: current.name }) : null,
+    account ? account.email : account === null ? t('account.panel.notLoggedIn') : null,
     usage
-      ? `プランの利用枠。${at} 時点（${usage.source === 'statusline' ? 'セッションの応答から' : 'Claude Code の /usage の控えから'}）`
-      : 'プランの利用枠は、セッションが応答すると出ます',
+      ? t(usage.source === 'statusline' ? 'account.panel.usageFromStatusline' : 'account.panel.usageFromCache', { time: at })
+      : t('account.panel.usagePending'),
   ]
     .filter(Boolean)
     .join('\n');
-  const plan = account === undefined ? '' : account ? (account.plan ?? 'Claude') : 'ログインしていません';
+  const plan = account === undefined ? '' : account ? (account.plan ?? 'Claude') : t('account.panel.notLoggedIn');
 
   return (
     <div
@@ -151,15 +156,17 @@ export function AccountPanel() {
               {organization && <span className="account-org">{organization}</span>}
             </>
           )}
-          {stale && <span className="account-stale">{at} 時点</span>}
-          {attention && <span className="account-attention" role="img" aria-label="別のアカウントに通知あり" title="別のアカウントに通知あり" />}
+          {stale && <span className="account-stale">{t('account.panel.staleAt', { time: at })}</span>}
+          {attention && (
+            <span className="account-attention" role="img" aria-label={t('account.panel.othersAttention')} title={t('account.panel.othersAttention')} />
+          )}
         </div>
-        {LIMITS.map((label) => (
-          <Gauge key={label} label={label} limit={usage?.limits.find((l) => l.label === label) ?? null} now={now} />
+        {LIMITS.map(({ label, name }) => (
+          <Gauge key={label} label={t(`account.usage.${name}`)} limit={usage?.limits.find((l) => l.label === label) ?? null} now={now} />
         ))}
       </button>
       {open && (
-        <div className="account-menu" style={position} role="menu" aria-label="アカウント">
+        <div className="account-menu" style={position} role="menu" aria-label={t('account.panel.menu')}>
           <div className="account-menu-heading">
             {account ? (
               <>
@@ -170,8 +177,8 @@ export function AccountPanel() {
               </>
             ) : (
               <>
-                <span className="account-menu-email">ログインしていません</span>
-                <span className="account-menu-detail">「ログイン…」で、このプロファイルの Claude Code にログインできます</span>
+                <span className="account-menu-email">{t('account.panel.notLoggedIn')}</span>
+                <span className="account-menu-detail">{t('account.panel.loginHint')}</span>
               </>
             )}
           </div>
@@ -199,21 +206,21 @@ export function AccountPanel() {
           )}
           <div className="account-menu-sep" />
           <button role="menuitem" className="account-menu-item" onClick={reload}>
-            利用枠とアカウントを読み直す
+            {t('account.panel.reload')}
           </button>
           <button role="menuitem" className="account-menu-item" onClick={login}>
-            {account ? 'ログインし直す…' : 'ログイン…'}
+            {account ? t('account.panel.relogin') : t('account.panel.login')}
           </button>
           <button role="menuitem" className="account-menu-item" onClick={manageSettingsFiles}>
-            設定ファイルの管理…
+            {t('account.panel.manageSettingsFiles')}
           </button>
           <div className="account-menu-sep" />
           <button role="menuitem" className="account-menu-item" onClick={() => manageProfiles('add')}>
-            プロファイルを追加…
+            {t('account.panel.addProfile')}
           </button>
           {multiple && (
             <button role="menuitem" className="account-menu-item" onClick={() => manageProfiles('manage')}>
-              プロファイルの管理…
+              {t('account.panel.manageProfiles')}
             </button>
           )}
         </div>
@@ -230,7 +237,7 @@ function Gauge({ label, limit, now }: { label: string; limit: UsageLimit | null;
         <div className="usage-row">
           <span className="usage-label">{label}</span>
           <span className="usage-percent">0%</span>
-          <span className="usage-reset">未取得</span>
+          <span className="usage-reset">{t('account.usage.unknown')}</span>
         </div>
         <div className="usage-bar">
           <span style={{ width: 0 }} />
@@ -247,7 +254,7 @@ function Gauge({ label, limit, now }: { label: string; limit: UsageLimit | null;
       <div className="usage-row">
         <span className="usage-label">{label}</span>
         <span className="usage-percent">{percent}%</span>
-        <span className="usage-reset">{reset ? 'リセット済み' : remaining(limit.resetsAt, now)}</span>
+        <span className="usage-reset">{reset ? t('account.usage.reset') : remaining(limit.resetsAt, now)}</span>
       </div>
       <div className="usage-bar">
         <span style={{ width: `${reset ? 0 : Math.min(100, Math.max(percent, 1))}%` }} />
@@ -260,8 +267,8 @@ function Gauge({ label, limit, now }: { label: string; limit: UsageLimit | null;
 function remaining(resetsAt: number | null, now: number): string {
   if (resetsAt === null) return '';
   const minutes = Math.max(0, Math.round((resetsAt - now) / 60_000));
-  if (minutes < 60) return `あと ${minutes}分`;
+  if (minutes < 60) return t('account.usage.remainingMinutes', { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `あと ${hours}時間${minutes % 60}分`;
-  return `あと ${Math.floor(hours / 24)}日${hours % 24}時間`;
+  if (hours < 24) return t('account.usage.remainingHours', { hours, minutes: minutes % 60 });
+  return t('account.usage.remainingDays', { days: Math.floor(hours / 24), hours: hours % 24 });
 }

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import DOMPurify from 'dompurify';
+import { t } from '@shared/i18n';
 import { PlayIcon, iconHtml } from '../icons';
 import { marked, replaceExternalImages } from '../markdown';
 import { stripControlChars } from './sanitize';
@@ -78,8 +79,8 @@ export function Markdown({ text, onRunCommand }: { text: string; onRunCommand?: 
       button.className = 'code-run';
       // アイコンは React の外で作る DOM に入れるので、SVG を文字列にして入れる（名前とツールチップは IconButton と同じ属性）
       button.innerHTML = iconHtml(PlayIcon, 12);
-      button.setAttribute('aria-label', '実行');
-      button.dataset.tip = '実行';
+      button.setAttribute('aria-label', t('composer.markdown.run'));
+      button.dataset.tip = t('composer.markdown.run');
       // 画面の文字ではなく、描くときに控えたコマンドを実行する
       button.addEventListener('click', (e) => {
         e.stopPropagation();

@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { t } from '@shared/i18n';
 import type { SettingsFile } from '@shared/settings-file';
 
 // 登録した設定ファイルを選ぶ部品と、その一覧・管理ダイアログの開閉（チャットの入力欄の下と、新規セッションの画面で使う）
@@ -86,15 +87,15 @@ export function SettingsFileSelect({
         else onChange(e.target.value || null);
       }}
     >
-      <option value="">標準</option>
+      <option value="">{t('settingsFiles.select.default')}</option>
       {files.map((f) => (
         <option key={f.id} value={f.id} disabled={f.error !== null} title={f.error ?? f.path}>
-          {f.error !== null ? `${f.name}（読めません）` : f.name}
+          {f.error !== null ? t('settingsFiles.select.unreadable', { name: f.name }) : f.name}
         </option>
       ))}
-      {missing && <option value={value}>（登録なし）</option>}
+      {missing && <option value={value}>{t('settingsFiles.select.missing')}</option>}
       <option disabled>──────</option>
-      <option value={MANAGE}>管理…</option>
+      <option value={MANAGE}>{t('settingsFiles.select.manage')}</option>
     </select>
   );
 }

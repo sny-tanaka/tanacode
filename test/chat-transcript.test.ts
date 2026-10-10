@@ -55,6 +55,9 @@ describe('toChatEvents: system の行', () => {
     expect(events(system('compact_boundary', { content: 'Conversation compacted', compactMetadata: { trigger: 'manual', preTokens: 120_400, postTokens: 1313 } }))).toEqual([
       { type: 'divider', id: 's1', text: '会話を圧縮しました（120k tokens から）' },
     ]);
+    expect(events(system('compact_boundary', { compactMetadata: { trigger: 'auto', preTokens: 167_000 } }))).toEqual([
+      { type: 'divider', id: 's1', text: '会話を自動で圧縮しました（167k tokens から）' },
+    ]);
     expect(events(system('compact_boundary', { compactMetadata: { trigger: 'auto', preTokens: 0 } }))).toEqual([{ type: 'divider', id: 's1', text: '会話を自動で圧縮しました' }]);
     expect(events({ type: 'system', subtype: 'compact_boundary' })).toEqual([{ type: 'divider', id: '', text: '会話を圧縮しました' }]);
     expect(events(system('informational', { content: '  AGENTS.md を読み込みました\n' }))).toEqual([{ type: 'info', id: 's1', text: 'AGENTS.md を読み込みました' }]);

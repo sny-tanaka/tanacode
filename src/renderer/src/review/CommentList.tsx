@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n';
 import { IconButton, TrashIcon } from '../icons';
 import type { ReviewComment } from './LineComments';
 
@@ -12,10 +13,10 @@ export function CommentList({ comments, onShow, onRemove }: Props) {
   return (
     <div className="review-comments">
       <div className="review-comments-head">
-        Claude へのコメント <span className="scm-count">{comments.length}</span>
+        {t('review.list.title')} <span className="scm-count">{comments.length}</span>
       </div>
       {comments.length === 0 ? (
-        <div className="review-hint">差分やエディタの行番号の横の ＋ でコメントを付けると、次に送る指示に添えられます</div>
+        <div className="review-hint">{t('review.list.empty')}</div>
       ) : (
         <>
           {comments.map((c) => (
@@ -27,7 +28,7 @@ export function CommentList({ comments, onShow, onRemove }: Props) {
                   size="sm"
                   danger
                   icon={TrashIcon}
-                  label="削除"
+                  label={t('common.delete')}
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemove(c.id);
@@ -37,7 +38,7 @@ export function CommentList({ comments, onShow, onRemove }: Props) {
               <div className="review-comment-text">{c.text}</div>
             </div>
           ))}
-          <div className="review-hint">チャットの送信で、入力した文章と一緒に送られます</div>
+          <div className="review-hint">{t('review.list.hint')}</div>
         </>
       )}
     </div>

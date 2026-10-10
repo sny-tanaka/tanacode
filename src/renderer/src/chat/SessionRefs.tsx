@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
+import { t } from '@shared/i18n';
 import { SESSION_REF_PATTERN } from '@shared/session-tools';
+import { tx } from '../i18n';
 import { ChevronRightIcon } from '../icons';
 import { findSession, sessionName, type SessionLink } from '../sessions/sessionLinks';
 
@@ -25,11 +27,11 @@ export function SessionRefText({ text, sessions, onSelectSession }: Links & { te
     const name = session ? sessionName(session) : m[2] || m[1];
     parts.push(
       session && onSelectSession ? (
-        <button key={index} type="button" className="session-ref" onClick={() => onSelectSession(session.id)} data-tip={`セッション「${name}」を開く`}>
+        <button key={index} type="button" className="session-ref" onClick={() => onSelectSession(session.id)} data-tip={t('composer.sessionRef.open', { name })}>
           @{name}
         </button>
       ) : (
-        <span key={index} className={`session-ref${session ? '' : ' missing'}`} data-tip={session ? undefined : `一覧に無いセッション（ID ${m[1]}）`}>
+        <span key={index} className={`session-ref${session ? '' : ' missing'}`} data-tip={session ? undefined : t('composer.sessionRef.missing', { id: m[1] })}>
           @{name}
         </span>
       ),
@@ -44,11 +46,11 @@ export function SessionRefText({ text, sessions, onSelectSession }: Links & { te
 export function ParentHeading({ parentId, sessions, onSelectSession }: Links & { parentId: string }) {
   const parent = findSession(sessions, parentId);
   if (!parent || !onSelectSession) {
-    return <div className="chat-from-parent">親セッション{parent ? `「${sessionName(parent)}」` : ''}からの指示</div>;
+    return <div className="chat-from-parent">{parent ? t('composer.sessionRef.fromParentNamed', { name: sessionName(parent) }) : t('composer.sessionRef.fromParent')}</div>;
   }
   return (
-    <button type="button" className="chat-from-parent" onClick={() => onSelectSession(parent.id)} data-tip="親セッションを開く">
-      親セッション「<span className="chat-from-parent-name">{sessionName(parent)}</span>」からの指示
+    <button type="button" className="chat-from-parent" onClick={() => onSelectSession(parent.id)} data-tip={t('composer.sessionRef.openParent')}>
+      {tx('composer.sessionRef.fromParentNamed', { name: <span className="chat-from-parent-name">{sessionName(parent)}</span> })}
       <ChevronRightIcon size={12} />
     </button>
   );
@@ -65,7 +67,7 @@ export function SessionLinkList({ ids, sessions, onSelectSession }: Links & { id
           key={s.id}
           type="button"
           className="chat-session-link"
-          data-tip={`セッション「${sessionName(s)}」を開く`}
+          data-tip={t('composer.sessionRef.open', { name: sessionName(s) })}
           onClick={(e) => {
             // 開ける知らせ（details）の中でも、開閉せずに移る
             e.preventDefault();

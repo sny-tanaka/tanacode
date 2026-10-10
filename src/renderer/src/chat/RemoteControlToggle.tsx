@@ -1,9 +1,7 @@
+import { t } from '@shared/i18n';
 import { RemoteIcon } from '../icons';
 import { Toggle } from '../layout/Toggle';
 import { useRemoteControlAvailable } from './sessionOptions';
-
-const UNAVAILABLE = 'Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）';
-const ABOUT = 'スマホの Claude アプリや claude.ai/code から、このセッションを操作できるようにする（/remote-control）';
 
 // Remote Control を使うかのトグル（チャットのヘッダーと、新規セッションの画面）。
 // connected: 実際につながっているか（null は、まだ始めていないセッション）
@@ -22,13 +20,13 @@ export function RemoteControlToggle({
   const state =
     connected === null
       ? on
-        ? '始めるとつなぎます'
-        : '始めてもつなぎません'
+        ? t('chat.remoteControl.willConnect')
+        : t('chat.remoteControl.wontConnect')
       : connected
-        ? 'つながっています'
+        ? t('chat.remoteControl.connected')
         : on
-          ? 'リモートコントロールは有効です（起動やつながりが済むと、つながります）'
-          : 'つないでいません';
+          ? t('chat.remoteControl.enabled')
+          : t('chat.remoteControl.disconnected');
   return (
     <Toggle
       label={<RemoteIcon size={16} />}
@@ -36,7 +34,7 @@ export function RemoteControlToggle({
       on={available && on}
       disabled={!available}
       busy={busy}
-      title={`Remote Control\n${available ? `${ABOUT}\n${state}` : UNAVAILABLE}`}
+      title={`Remote Control\n${available ? `${t('chat.remoteControl.about')}\n${state}` : t('chat.remoteControl.unavailable')}`}
       onChange={onChange}
     />
   );

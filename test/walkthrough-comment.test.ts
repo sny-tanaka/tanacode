@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Walkthrough } from '../src/shared/walkthrough';
-import { finalCommentBody, MAX_COMMENT_CHARS, permalink, repoUrlOfPullRequest, WALKTHROUGH_ATTRIBUTION, walkthroughCommentBody } from '../src/shared/walkthrough-comment';
+import { finalCommentBody, MAX_COMMENT_CHARS, permalink, repoUrlOfPullRequest, walkthroughAttribution, walkthroughCommentBody } from '../src/shared/walkthrough-comment';
 import type { PullRequest } from '../src/main/github';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from '../src/main/walkthrough-github';
 
@@ -59,7 +59,7 @@ describe('本文', () => {
 
   it('一言は選んだときだけ最後に添える', () => {
     expect(finalCommentBody(' 本文 \n', false)).toBe('本文');
-    expect(finalCommentBody('本文', true)).toBe(`本文\n\n---\n${WALKTHROUGH_ATTRIBUTION}`);
+    expect(finalCommentBody('本文', true)).toBe(`本文\n\n---\n${walkthroughAttribution()}`);
   });
 });
 
@@ -132,7 +132,7 @@ describe('載せられるかの確かめと投稿', () => {
     const posted: string[] = [];
     const url = await postWalkthroughComment(app, WALK, '直した本文', true, deps([pr()], posted));
     expect(url).toBe(`${REPO}/pull/12#issuecomment-1`);
-    expect(posted).toEqual([`12:直した本文\n\n---\n${WALKTHROUGH_ATTRIBUTION}`]);
+    expect(posted).toEqual([`12:直した本文\n\n---\n${walkthroughAttribution()}`]);
     await expect(postWalkthroughComment(app, WALK, 'x'.repeat(MAX_COMMENT_CHARS + 1), false, deps([pr()]))).rejects.toThrow('長すぎます');
     await expect(postWalkthroughComment(app, WALK, '本文', false, deps([pr({ headRefOid: 'ffff' })]))).rejects.toThrow('プッシュ');
     expect(posted).toHaveLength(1);

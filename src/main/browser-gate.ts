@@ -1,4 +1,5 @@
 import { BROWSER_GATE_HOOK_ENV } from '@shared/chat';
+import { t } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_COMMAND_ENV, BROWSER_GATE_REQUEST, BROWSER_SCRIPT_ENV } from './browser-bridge';
 import { callBridge, type ToolResult } from './mcp-bridge';
 
@@ -34,9 +35,9 @@ export function readAnswer(result: ToolResult): GateAnswer | null {
 export function gateOutput(answer: GateAnswer | null): string {
   const decide = (permissionDecision: 'allow' | 'ask', permissionDecisionReason: string) =>
     JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason } });
-  if (!answer) return decide('ask', 'tanacode に今のページを確かめられなかったので、確認を求めています');
-  if (answer.local) return decide('allow', 'localhost のページなので、確認なしで実行します');
-  return decide('ask', `localhost 以外のページ（${answer.url}）なので、tanacode が確認を求めています`);
+  if (!answer) return decide('ask', t('main.hooks.browserGateUnknown'));
+  if (answer.local) return decide('allow', t('main.hooks.browserGateLocal'));
+  return decide('ask', t('main.hooks.browserGateRemote', { url: answer.url }));
 }
 
 // フックの本体。アプリに今のページを聞いて、標準出力に書く内容を返す

@@ -1,16 +1,9 @@
 import { memo, useId, useLayoutEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import { flowGroups } from './flow';
-import { formatDuration, formatTokens, shortModel } from './WorkflowCard';
+import { agentTools, formatDuration, formatTokens, shortModel, workflowStatusLabel } from './WorkflowCard';
 import { StatusDot } from '../layout/StatusDot';
-
-const STATUS_LABEL: Record<string, string> = {
-  running: '実行中',
-  completed: '完了',
-  failed: '失敗',
-  stopped: '停止',
-  killed: '停止',
-};
 
 type Props = { run: WorkflowRun; onOpenAgent: (agentId: string) => void };
 
@@ -20,7 +13,7 @@ export const WorkflowFlow = memo(function WorkflowFlow({ run, onOpenAgent }: Pro
   const edgeGradient = useId();
   const groups = flowGroups(run);
   const done = run.agents.filter((a) => a.state === 'done').length;
-  const waiting = run.status === 'running' ? '待機中' : '動いていません';
+  const waiting = run.status === 'running' ? t('workflow.phase.waiting') : t('workflow.flow.notRunning');
 
   // 線で繋ぐ組。フェーズの中は列のエージェントどうし、フェーズからフェーズへは箱どうし（エージェントが多いと線が多すぎるため）
   const links: Link[] = [];
@@ -41,16 +34,14 @@ export const WorkflowFlow = memo(function WorkflowFlow({ run, onOpenAgent }: Pro
       <div className="flow-summary">
         {run.summary && <div className="flow-summary-text">{run.summary}</div>}
         <div className="flow-stats">
-          <span className={`workflow-status ${run.status}`}>{STATUS_LABEL[run.status] ?? run.status}</span>
-          <span>
-            エージェント {done}/{run.agents.length}
-          </span>
-          {run.totalToolCalls !== null && <span>ツール {run.totalToolCalls}回</span>}
-          {run.totalTokens !== null && <span>{formatTokens(run.totalTokens)} tokens</span>}
+          <span className={`workflow-status ${run.status}`}>{workflowStatusLabel(run.status)}</span>
+          <span>{t('workflow.stats.agents', { done, total: run.agents.length })}</span>
+          {run.totalToolCalls !== null && <span>{t('workflow.stats.toolCalls', { count: run.totalToolCalls })}</span>}
+          {run.totalTokens !== null && <span>{t('workflow.stats.tokens', { count: formatTokens(run.totalTokens) })}</span>}
           {run.durationMs !== null && <span>{formatDuration(run.durationMs)}</span>}
         </div>
-        {run.resumedLater && <div className="workflow-note">このあと再開しました。続きは再開した実行に出ます</div>}
-        <div className="flow-hint">エージェントをクリックすると、その中のやりとりを開きます</div>
+        {run.resumedLater && <div className="workflow-note">{t('workflow.flow.resumedLater')}</div>}
+        <div className="flow-hint">{t('workflow.flow.hint')}</div>
       </div>
       <div className="flow-scroll">
         <div className="flow-board" ref={boardRef}>
@@ -72,11 +63,11 @@ export const WorkflowFlow = memo(function WorkflowFlow({ run, onOpenAgent }: Pro
               {group.phases.map((phase, i) => (
                 <section key={phase.key} className="flow-phase" data-phase={phase.key}>
                   <header className="flow-phase-head" data-align={i === 0 || undefined} title={phase.detail ?? undefined}>
-                    <span className="flow-phase-title">{phase.title ?? 'エージェント'}</span>
+                    <span className="flow-phase-title">{phase.title ?? t('workflow.phase.unphased')}</span>
                     {phase.detail && <span className="flow-phase-detail">{phase.detail}</span>}
-                    {[...new Set(phase.stages.map((s) => s.child).filter(Boolean))].map((child) => (
+                    {[...new Set(phase.stages.map((s) => s.child).filter((c): c is string => !!c))].map((child) => (
                       <span key={child} className="flow-child">
-                        子ワークフロー {child}
+                        {t('workflow.flow.childWorkflow', { name: child })}
                       </span>
                     ))}
                   </header>
@@ -122,10 +113,7 @@ function AgentNode({ agent, onClick }: { agent: WorkflowAgent; onClick: () => vo
       </span>
       <span className="flow-node-meta">
         {agent.model && <span>{shortModel(agent.model)}</span>}
-        <span>
-          ツール {agent.toolCalls}
-          {agent.state === 'running' && agent.lastTool ? `・${agent.lastTool}` : ''}
-        </span>
+        <span>{agentTools(agent)}</span>
         {agent.durationMs !== null && <span>{formatDuration(agent.durationMs)}</span>}
       </span>
     </button>

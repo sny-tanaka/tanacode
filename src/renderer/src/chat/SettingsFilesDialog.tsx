@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { SettingsFile } from '@shared/settings-file';
 import { errorMessage } from '../errorMessage';
 import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
@@ -43,7 +44,7 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
       const file = await window.tanacode.settingsFiles.add(path);
       setFocusId(file.id);
     } catch (error) {
-      window.alert(`登録できませんでした: ${errorMessage(error)}`);
+      window.alert(t('settingsFiles.dialog.addFailed', { error: errorMessage(error) }));
     } finally {
       setPicking(false);
     }
@@ -53,12 +54,12 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
     // 使っているセッションは、次に起動するときに理由を出して断られる
     const sessions = await window.tanacode.sessions.list();
     const used = Array.isArray(sessions) ? sessions.filter((s) => s.settingsFile === file.id).length : 0;
-    const note = used > 0 ? `\n使っているセッションが ${used} 件あります。次に起動するときに断られます。` : '';
-    if (!window.confirm(`「${file.name}」を登録から外します（ファイル自体は消えません）。${note}`)) return;
+    const note = used > 0 ? `\n${t('settingsFiles.dialog.usedBy', { count: used })}` : '';
+    if (!window.confirm(t('settingsFiles.dialog.removeConfirm', { name: file.name }) + note)) return;
     try {
       await window.tanacode.settingsFiles.remove(file.id);
     } catch (error) {
-      window.alert(`登録から外せませんでした: ${errorMessage(error)}`);
+      window.alert(t('settingsFiles.dialog.removeFailed', { error: errorMessage(error) }));
     }
     // 押した「削除」ごと行が消えて、フォーカスが外れる
     dialog.current?.focus();
@@ -70,7 +71,7 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
         className="quick-open settings-files-dialog"
         ref={dialog}
         role="dialog"
-        aria-label="設定ファイル"
+        aria-label={t('settingsFiles.dialog.title')}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -79,14 +80,11 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <div className="settings-files-head">
-          <h2>設定ファイル</h2>
-          <p>
-            {'Claude Code の設定ファイル（settings.json と同じ形）を登録すると、セッションごとに選んで、標準の設定に重ねて起動できます。' +
-              'ファイルの中身は預からず、パスだけ覚えます。'}
-          </p>
+          <h2>{t('settingsFiles.dialog.title')}</h2>
+          <p>{t('settingsFiles.dialog.description')}</p>
         </div>
         <div className="quick-open-list">
-          {files.length === 0 && <div className="quick-open-empty">登録した設定ファイルはありません</div>}
+          {files.length === 0 && <div className="quick-open-empty">{t('settingsFiles.dialog.empty')}</div>}
           {files.map((file) => (
             <SettingsFileRow
               key={file.id}
@@ -100,8 +98,8 @@ export function SettingsFilesDialog({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <div className="settings-files-foot">
-          <IconButton icon={AddIcon} label="追加" tip="追加…（ファイルを選ぶ）" disabled={picking} onClick={() => void add()} />
-          <IconButton icon={CloseIcon} label="閉じる" tip="閉じる（Esc）" onClick={close} />
+          <IconButton icon={AddIcon} label={t('common.add')} tip={t('settingsFiles.dialog.addTip')} disabled={picking} onClick={() => void add()} />
+          <IconButton icon={CloseIcon} label={t('common.close')} tip={t('settingsFiles.dialog.closeTip')} onClick={close} />
         </div>
       </div>
     </div>
@@ -136,7 +134,7 @@ function SettingsFileRow({
     if (name === file.name) return;
     window.tanacode.settingsFiles.rename(file.id, name).catch((error: unknown) => {
       setName(file.name);
-      window.alert(`名前を変えられませんでした: ${errorMessage(error)}`);
+      window.alert(t('settingsFiles.dialog.renameFailed', { error: errorMessage(error) }));
     });
   };
 
@@ -148,7 +146,7 @@ function SettingsFileRow({
           className="settings-file-name"
           value={name}
           spellCheck={false}
-          title="クリックして名前を変える"
+          title={t('settingsFiles.dialog.renameTip')}
           onChange={(e) => setName(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -168,7 +166,7 @@ function SettingsFileRow({
         </span>
         {file.error !== null && <span className="settings-file-error">{file.error}</span>}
       </div>
-      <IconButton size="sm" icon={TrashIcon} label="削除" tip="登録から外す（ファイル自体は消えません）" onClick={onRemove} />
+      <IconButton size="sm" icon={TrashIcon} label={t('settingsFiles.dialog.remove')} tip={t('settingsFiles.dialog.removeTip')} onClick={onRemove} />
     </div>
   );
 }

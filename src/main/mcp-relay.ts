@@ -1,10 +1,12 @@
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
-import { findTool, type McpServerDef } from '@shared/mcp-tools';
-import { textResult, type ToolResult } from './mcp-bridge';
+import { isLanguage, setLanguage } from '@shared/i18n';
+import { findTool, mcpToolLabel, type McpServerDef } from '@shared/mcp-tools';
+import { MCP_LANGUAGE_ENV, textResult, type ToolResult } from './mcp-bridge';
 
 // tanacode が Claude Code に足す MCP サーバー（stdio。アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）。Claude Code と JSON-RPC を 1 行ずつやりとりし、
-// ツールの呼び出しをアプリへ中継する。MCP の SDK は使わず、使う分（initialize・tools/list・tools/call・ping と、取り消しの notifications/cancelled）だけを書く
+// ツールの呼び出しをアプリへ中継する。MCP の SDK は使わず、使う分（initialize・tools/list・tools/call・ping と、取り消しの notifications/cancelled）だけを書く。
+// Claude に返す文は英語
 
 type Id = string | number | null;
 type Incoming = { jsonrpc?: string; id?: Id; method?: string; params?: Record<string, unknown> };
@@ -39,20 +41,21 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
     case 'ping':
       return ok({});
     case 'tools/list':
+      // title はツールの短い名前（人が見るかもしれない表示名なので、Claude Code を起動したときのアプリの言語。runRelay が環境変数で受け取る）
       return ok({
         tools: deps.server.tools.map((t) => ({
           name: t.name,
-          title: t.label,
+          title: mcpToolLabel(deps.server, t),
           description: t.description,
           inputSchema: t.inputSchema,
-          annotations: { title: t.label, readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: false },
+          annotations: { title: mcpToolLabel(deps.server, t), readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: false },
         })),
       });
     case 'tools/call': {
       const name = typeof params?.name === 'string' ? params.name : '';
       const raw = params?.arguments;
       const args = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-      if (!findTool(deps.server, name)) return ok(textResult(`知らないツールです: ${name}`, true));
+      if (!findTool(deps.server, name)) return ok(textResult(`Unknown tool: ${name}`, true));
       return ok(await deps.call(name, args, signal));
     }
     default:
@@ -61,8 +64,11 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
 }
 
 // 標準入力から読んで、標準出力に返事を書く。返事は届いた順でなくてよい（id で対応づく）。onClose: 標準入力が閉じたとき（Claude Code が終わった）。
-// Claude Code が取り消した呼び出し（notifications/cancelled）は、アプリに待つのをやめさせ、返事を書かない（MCP の決まり）
+// Claude Code が取り消した呼び出し（notifications/cancelled）は、アプリに待つのをやめさせ、返事を書かない（MCP の決まり）。
+// 言語は、アプリが --mcp-config の env で渡したもの（無い・知らない値なら既定の言語のまま）
 export function runRelay(input: Readable, output: Writable, deps: RelayDeps, onClose: () => void): void {
+  const lang = process.env[MCP_LANGUAGE_ENV];
+  if (isLanguage(lang)) setLanguage(lang);
   const write = (message: Outgoing) => output.write(`${JSON.stringify(message)}\n`);
   const lines = createInterface({ input, crlfDelay: Infinity });
   // 答えている途中の呼び出し（id → 取り消し）

@@ -1,5 +1,6 @@
 import { CHECKLIST_EVENT_TAG, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
+import { t } from './i18n';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
@@ -208,8 +209,12 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     if (entry.subtype === 'stop_hook_summary') return stopHookEvents(entry);
     if (entry.subtype === 'api_error') {
       const error = entry.error as { formatted?: string; message?: string } | undefined;
-      const retry = entry.retryAttempt && entry.maxRetries ? ` — 再試行中（${entry.retryAttempt}/${entry.maxRetries}）` : '';
-      return [{ type: 'api-error', id: entry.uuid ?? '', text: `API エラー: ${error?.formatted ?? error?.message ?? '不明なエラー'}${retry}`, retrying: true }];
+      const message = error?.formatted ?? error?.message ?? t('chat.transcript.unknownError');
+      const text =
+        entry.retryAttempt && entry.maxRetries
+          ? t('chat.transcript.apiErrorRetrying', { message, attempt: entry.retryAttempt, max: entry.maxRetries })
+          : t('chat.transcript.apiError', { message });
+      return [{ type: 'api-error', id: entry.uuid ?? '', text, retrying: true }];
     }
     return [];
   }
@@ -241,7 +246,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     }
     if (entry.isApiErrorMessage) {
       const text = blocks.map((b) => b.text ?? '').join('\n').trim();
-      return [{ type: 'api-error', id: entry.uuid ?? '', text: text || 'API エラー', retrying: false }];
+      return [{ type: 'api-error', id: entry.uuid ?? '', text: text || t('chat.transcript.apiErrorNoDetail'), retrying: false }];
     }
     const events: ChatEvent[] = [];
     blocks.forEach((block, i) => {
@@ -402,8 +407,8 @@ function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
 }
 
 function truncate(text: string, max: number): string {
-  const t = text.trimEnd();
-  return t.length > max ? `${t.slice(0, max)}\n…（${t.length - max} 文字省略）` : t;
+  const trimmed = text.trimEnd();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}\n${t('chat.transcript.charsOmitted', { count: trimmed.length - max })}` : trimmed;
 }
 
 // PreToolUse の hooks がツールを止めたときは、hooks の記録は残らず、ツールの結果が
@@ -450,9 +455,9 @@ function stopHookEvents(entry: TranscriptEntry): ChatEvent[] {
 
 function compactText(entry: TranscriptEntry): string {
   const { trigger, preTokens } = entry.compactMetadata ?? {};
-  const kind = trigger === 'auto' ? '自動で' : '';
-  const tokens = preTokens ? `（${Math.round(preTokens / 1000)}k tokens から）` : '';
-  return `会話を${kind}圧縮しました${tokens}`;
+  const auto = trigger === 'auto';
+  if (!preTokens) return t(auto ? 'chat.transcript.compactedAuto' : 'chat.transcript.compacted');
+  return t(auto ? 'chat.transcript.compactedAutoFrom' : 'chat.transcript.compactedFrom', { count: Math.round(preTokens / 1000) });
 }
 
 function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
@@ -470,7 +475,7 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   if (special) return [special];
   if (text.includes('<task-notification>')) {
     const summary = text.match(/<summary>(.*?)<\/summary>/s)?.[1]?.trim();
-    return [{ type: 'notice', id: entry.uuid ?? '', text: summary ?? 'バックグラウンドのタスクが終わりました' }];
+    return [{ type: 'notice', id: entry.uuid ?? '', text: summary ?? t('chat.transcript.taskFinished') }];
   }
   // ローカルコマンド（/model など）の出力。ターンは発生しない
   if (text.includes('<local-command-stdout>') || text.includes('<local-command-caveat>')) return [{ type: 'turn-end' }];
@@ -505,17 +510,19 @@ function specialUserText(id: string, text: string): ChatEvent | null {
     const found = body.split(/\n\s*\n/)[1]?.match(/^.*?\.(?=\s|$)/)?.[0];
     const comments = found?.match(/has (\d+) new review comments?/)?.[1];
     const what = /was just enabled/.test(body)
-      ? '有効になりました'
+      ? t('chat.transcript.ciEnabled')
       : comments
-        ? `新しいレビューコメント ${comments} 件`
-        : (found?.replace(/^\S+ PR #\d+ /, '') ?? '知らせが届きました');
-    return { type: 'notice', id, text: `CI の自動修正${pr ? `（PR #${pr}）` : ''}: ${what}`, detail: truncate(body, OUTPUT_CHARS) };
+        ? t('chat.transcript.ciNewComments', { count: Number(comments) })
+        : (found?.replace(/^\S+ PR #\d+ /, '') ?? t('chat.transcript.ciReceived'));
+    const notice = pr ? t('chat.transcript.ciNoticePr', { pr, what }) : t('chat.transcript.ciNotice', { what });
+    return { type: 'notice', id, text: notice, detail: truncate(body, OUTPUT_CHARS) };
   }
   // スケジュールタスクの起動
   if (text.startsWith('<scheduled-task')) {
     const name = text.match(/^<scheduled-task name="([^"]*)"/)?.[1];
     const body = text.replace(/^<scheduled-task[^>]*>/, '').replace(/<\/scheduled-task>\s*$/, '').trim();
-    return { type: 'notice', id, text: `スケジュールタスク${name ? `「${name}」` : ''}の実行`, detail: truncate(body, OUTPUT_CHARS) };
+    const notice = name ? t('chat.transcript.scheduledTaskNamed', { name }) : t('chat.transcript.scheduledTask');
+    return { type: 'notice', id, text: notice, detail: truncate(body, OUTPUT_CHARS) };
   }
   return null;
 }
@@ -582,7 +589,7 @@ function toolInputDetail(name: string, input: Record<string, unknown>): string {
   else if (name === 'Workflow' && typeof input.script === 'string') detail = input.script;
   else if (name === 'Edit' || name === 'Write' || name === 'MultiEdit') detail = '';
   else detail = JSON.stringify(input, null, 2);
-  return detail.length > INPUT_CHARS ? `${detail.slice(0, INPUT_CHARS)}\n…（省略）` : detail;
+  return detail.length > INPUT_CHARS ? `${detail.slice(0, INPUT_CHARS)}\n${t('chat.transcript.omitted')}` : detail;
 }
 
 // AskUserQuestion の結果（toolUseResult の questions と、質問文から答えへの answers）
@@ -592,7 +599,7 @@ function answersOf(result: unknown): QuestionAnswer[] | undefined {
   return r.questions.map((q) => {
     const question = typeof q?.question === 'string' ? q.question : '';
     const answer = r.answers![question];
-    return { header: typeof q?.header === 'string' ? q.header : '', question, answer: typeof answer === 'string' ? answer : '（回答なし）' };
+    return { header: typeof q?.header === 'string' ? q.header : '', question, answer: typeof answer === 'string' ? answer : t('chat.transcript.noAnswer') };
   });
 }
 
@@ -627,12 +634,12 @@ function resultText(content: unknown, withImages = true): string | undefined {
   if (typeof content === 'string') text = content;
   else if (Array.isArray(content)) {
     text = content
-      .map((b: { type?: string; text?: string }) => (b.type === 'text' ? (b.text ?? '') : b.type === 'image' && withImages ? '[画像]' : ''))
+      .map((b: { type?: string; text?: string }) => (b.type === 'text' ? (b.text ?? '') : b.type === 'image' && withImages ? t('chat.transcript.image') : ''))
       .join('\n');
   } else return undefined;
   text = text.trim();
   if (!text) return undefined;
-  return text.length > OUTPUT_CHARS ? `${text.slice(0, OUTPUT_CHARS)}\n…（${text.length - OUTPUT_CHARS} 文字省略）` : text;
+  return text.length > OUTPUT_CHARS ? `${text.slice(0, OUTPUT_CHARS)}\n${t('chat.transcript.charsOmitted', { count: text.length - OUTPUT_CHARS })}` : text;
 }
 
 function patchLines(result: unknown): string[] | undefined {
@@ -650,7 +657,7 @@ function patchLines(result: unknown): string[] | undefined {
   } else {
     return undefined;
   }
-  return lines.length > PATCH_LINES ? [...lines.slice(0, PATCH_LINES), `…（${lines.length - PATCH_LINES} 行省略）`] : lines;
+  return lines.length > PATCH_LINES ? [...lines.slice(0, PATCH_LINES), t('chat.transcript.linesOmitted', { count: lines.length - PATCH_LINES })] : lines;
 }
 
 function relativeTo(path: string, cwd: string): string {

@@ -1,4 +1,5 @@
 import { SESSIONS_GATE_HOOK_ENV } from '@shared/chat';
+import { t } from '@shared/i18n';
 import { SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD, sessionToolId } from '@shared/session-tools';
 import { mcpServerEntry, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 
@@ -14,7 +15,7 @@ export const SESSIONS_CHILD_ENV = 'TANACODE_SESSIONS_CHILD';
 export type SessionsMcpLaunch = McpLaunch & { child?: boolean };
 
 // アプリが起動していないとき、中継が Claude に返す文
-export const SESSIONS_CLOSED_MESSAGE = 'tanacode が起動していません。ほかのセッションを扱うには、ユーザーに tanacode を起動してもらってください';
+export const SESSIONS_CLOSED_MESSAGE = 'tanacode is not running. To work with other sessions, ask the user to start tanacode.';
 
 // 子セッションを待つ（wait_sessions）上限。アプリはこの時間で待つのをやめて、そのときの状態を返す
 export const WAIT_MAX_SECONDS = 600;
@@ -24,15 +25,14 @@ const CLAUDE_TIMEOUT_MS = SESSIONS_CALL_TIMEOUT_MS + 60_000;
 
 // 子セッションの起動（start_session）の前に、権限モードによらず人の許可の確認を出させるフック（--settings の PreToolUse）。
 // 許可の確認は auto・bypassPermissions では出ないので、フックで ask を返す（勝手にセッションを開かせない）。
-// 子も利用枠を使うことを、確認の理由に書く。目印の環境変数は、チャットのフックの一覧に出さないためのもの
-const GATE_OUTPUT = JSON.stringify({
-  hookSpecificOutput: {
-    hookEventName: 'PreToolUse',
-    permissionDecision: 'ask',
-    permissionDecisionReason: '子セッションを起動します。子は tanacode のセッションとして動き、Claude の利用枠を子の数だけ使います',
-  },
-});
-export const SESSIONS_GATE_COMMAND = `${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${GATE_OUTPUT}'`;
+// 子も利用枠を使うことを、確認の理由に書く（Claude Code を起動するときの言語で。シェルの単一引用符に埋め込むので、理由に ' を含めない）。
+// 目印の環境変数は、チャットのフックの一覧に出さないためのもの
+export function sessionsGateCommand(): string {
+  const output = JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: t('main.hooks.sessionsGate') },
+  });
+  return `${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${output}'`;
+}
 export const SESSIONS_GATED_TOOL = sessionToolId('start_session');
 
 // --mcp-config に入れるセッションのサーバー。sessionId: どのセッションの Claude Code か（中継の env で渡す）

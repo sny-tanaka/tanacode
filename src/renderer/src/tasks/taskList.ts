@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask, BashTaskState, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -7,15 +8,14 @@ import { toolLabel } from '../chat/toolLabel';
 import { useSessionValues } from '../sessionValues';
 import { stableRuns } from './stableRuns';
 
-export const BASH_STATE_LABEL: Record<BashTaskState, string> = {
-  running: '実行中…',
-  completed: '完了',
-  failed: '失敗',
-  killed: '停止',
-  stopped: '停止',
-};
+// バックグラウンドの Bash の状態の名前
+export const bashStateLabel = (state: BashTaskState) => t(`tasks.bashState.${state}`);
+
 
 export type TaskState = 'running' | 'done' | 'failed' | 'stopped';
+
+// タスクの状態の名前（サイドパネル・入力欄の上のトレイ・中身の見出し）
+export const taskStateLabel = (state: TaskState) => t(`tasks.state.${state}`);
 
 // サブエージェント・ワークフロー・バックグラウンドの Bash をまとめて扱うための形
 export type TaskEntry = {
@@ -49,12 +49,12 @@ export function buildTasks(
     entries.push({
       ref,
       key: taskKey(ref),
-      name: tools.get(run.toolUseId)?.target || 'サブエージェント',
+      name: tools.get(run.toolUseId)?.target || t('tasks.list.untitledSubagent'),
       state: run.state,
       background: run.background,
       startedAt: run.startedAt,
       durationMs: run.durationMs,
-      progress: [`ツール ${run.toolCalls}回`, run.state === 'running' && last ? `${toolLabel(last.name)} ${last.target}` : null].filter(Boolean).join(' · '),
+      progress: [t('tasks.list.toolCalls', { count: run.toolCalls }), run.state === 'running' && last ? `${toolLabel(last.name)} ${last.target}` : null].filter(Boolean).join(' · '),
     });
   }
   for (const run of workflows.values()) {
@@ -69,7 +69,9 @@ export function buildTasks(
       background: true,
       startedAt: run.startedAt,
       durationMs: run.durationMs,
-      progress: `エージェント ${done}/${run.agents.length}${running ? `（実行中 ${running}）` : ''}`,
+      progress: running
+        ? t('tasks.list.agentsRunning', { done, total: run.agents.length, count: running })
+        : t('tasks.list.agents', { done, total: run.agents.length }),
     });
   }
   for (const task of bash.values()) {
@@ -83,7 +85,7 @@ export function buildTasks(
       background: true,
       startedAt: task.startedAt,
       durationMs: task.startedAt && task.endedAt ? task.endedAt - task.startedAt : null,
-      progress: task.state === 'running' ? lastLine : task.exitCode !== null ? `終了コード ${task.exitCode}` : '',
+      progress: task.state === 'running' ? lastLine : task.exitCode !== null ? t('tasks.bash.exitCode', { code: task.exitCode }) : '',
     });
   }
   return entries.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));

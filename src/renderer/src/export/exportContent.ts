@@ -1,4 +1,5 @@
 import type { HookRun, TodoItem } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { ChatItem } from '../chat/chatState';
 import { DIFF_TOOLS } from '../chat/ToolCard';
 
@@ -13,7 +14,7 @@ export type ExportPrompt = { index: number; text: string; at?: number };
 export function promptsOf(items: ChatItem[]): ExportPrompt[] {
   const prompts: ExportPrompt[] = [];
   items.forEach((item, index) => {
-    if (item.kind === 'user') prompts.push({ index, text: item.text || '（画像）', at: item.at });
+    if (item.kind === 'user') prompts.push({ index, text: item.text || t('export.content.imagePrompt'), at: item.at });
   });
   return prompts;
 }
@@ -83,10 +84,10 @@ export function prepareExport(
   const cwd = tilde(session.cwd);
   const whole = span.start === 0 && span.end === span.total - 1;
   const omitted = [
-    !options.toolOutput && counts.outputs > 0 && 'ツールの結果',
-    !options.diffs && counts.diffs > 0 && '編集の差分',
-    !options.images && counts.images > 0 && '画像',
-    !options.thinking && counts.thinking > 0 && '思考',
+    !options.toolOutput && counts.outputs > 0 && t('export.content.omittedToolOutput'),
+    !options.diffs && counts.diffs > 0 && t('export.content.omittedDiffs'),
+    !options.images && counts.images > 0 && t('export.content.omittedImages'),
+    !options.thinking && counts.thinking > 0 && t('export.content.omittedThinking'),
   ].filter((v): v is string => !!v);
   return {
     items,
@@ -96,7 +97,9 @@ export function prepareExport(
       cwd,
       branches: tilde(session.branches),
       period: periodOf(range),
-      range: whole ? `全体（発言 ${span.total} 件）` : `発言 ${span.start + 1}〜${span.end + 1}（全 ${span.total} 件のうち ${span.end - span.start + 1} 件）`,
+      range: whole
+        ? t('export.content.rangeWhole', { count: span.total })
+        : t('export.content.rangePart', { from: span.start + 1, to: span.end + 1, total: span.total, count: span.end - span.start + 1 }),
       omitted,
       files: changedFiles(items, cwd),
       exportedAt: now,
@@ -192,7 +195,7 @@ export function imageKeys(items: ChatItem[]): string[] {
 
 // 保存のダイアログに出すファイル名。セッション名と日付（ファイル名に使えない文字は空白にする）
 export function exportFileName(title: string | null, date: Date): string {
-  const name = (title ?? '').replace(/[/\\:*?"<>|\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || '作業';
+  const name = (title ?? '').replace(/[/\\:*?"<>|\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || t('export.content.defaultFileName');
   return `${name} ${formatDate(date)}.html`;
 }
 
@@ -212,5 +215,5 @@ export function formatDateTime(ms: number): string {
 export function formatPeriod({ start, end }: { start: number; end: number }): string {
   const from = formatDateTime(start);
   const to = formatDateTime(end);
-  return from.slice(0, 10) === to.slice(0, 10) ? `${from} 〜 ${to.slice(11)}` : `${from} 〜 ${to}`;
+  return t('export.content.period', { start: from, end: from.slice(0, 10) === to.slice(0, 10) ? to.slice(11) : to });
 }

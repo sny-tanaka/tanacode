@@ -1,3 +1,5 @@
+import { t } from '@shared/i18n';
+
 // コードへのレビューコメント（エディタ・差分の行に付けて、チャットの送信と一緒に Claude に渡す）
 export type ReviewComment = { id: string; path: string; startLine: number; endLine: number; quote: string; text: string };
 
@@ -7,5 +9,5 @@ export function formatComments(comments: ReviewComment[]): string {
     const lines = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
     return `[${i + 1}] ${c.path}:${lines}\n\`\`\`\n${c.quote}\n\`\`\`\n${c.text}`;
   });
-  return `以下はコードへのレビューコメントです。それぞれ対応してください。\n\n${blocks.join('\n\n')}`;
+  return t('review.prompt.comments', { comments: blocks.join('\n\n') });
 }

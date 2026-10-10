@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { locale, t } from '@shared/i18n';
 import type { DiscoveredSession } from '@shared/ipc';
 
 type Props = { onImport: (session: DiscoveredSession) => void; onClose: () => void };
@@ -23,13 +24,13 @@ export function ImportDialog({ onImport, onClose }: Props) {
         <input
           autoFocus
           value={query}
-          placeholder="既存の Claude Code の会話を探す（タイトル・フォルダ）"
+          placeholder={t('sessions.import.placeholder')}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Escape' && onClose()}
         />
         <div className="quick-open-list">
-          {sessions === null && <div className="quick-open-empty">探しています…</div>}
-          {sessions !== null && shown.length === 0 && <div className="quick-open-empty">取り込める会話はありません</div>}
+          {sessions === null && <div className="quick-open-empty">{t('sessions.import.searching')}</div>}
+          {sessions !== null && shown.length === 0 && <div className="quick-open-empty">{t('sessions.import.empty')}</div>}
           {shown.map((s) => (
             <button
               key={s.claudeSessionId}
@@ -41,7 +42,7 @@ export function ImportDialog({ onImport, onClose }: Props) {
             >
               <span className="import-title">{s.title}</span>
               <span className="import-meta">
-                {s.cwd.replace(/^\/Users\/[^/]+/, '~')} · {new Date(s.updatedAt).toLocaleString('ja-JP')}
+                {s.cwd.replace(/^\/Users\/[^/]+/, '~')} · {new Date(s.updatedAt).toLocaleString(locale())}
               </span>
             </button>
           ))}

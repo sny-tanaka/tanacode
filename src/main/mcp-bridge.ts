@@ -1,12 +1,14 @@
 import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
+import { language } from '@shared/i18n';
 import { allowedToolIds, type McpServerDef } from '@shared/mcp-tools';
 
 // tanacode が Claude Code に足す MCP サーバーの中継（browser-mcp.ts・sessions-mcp.ts。Claude Code が起動する）とアプリのやりとり。
 // userData の Unix ソケット（自分だけが読み書きできる権限）に、JSON を 1 行ずつ書く。中継はツールの呼び出しのたびにつなぎ、返事を受け取ったら切る。
-// アプリを閉じている間はつながらないので、中継が「tanacode が起動していません」と返す。アプリが戻れば、そのまま使える
+// アプリを閉じている間はつながらないので、中継が Claude に、tanacode が起動していないと返す（*_CLOSED_MESSAGE）。アプリが戻れば、そのまま使える
 // （HTTP にしないのは、アプリを起動し直すたびにポートが変わり、動き続けている Claude Code からつながらなくなるため）。
-// MCP サーバーごとに、ソケットを分ける（ツールの名前が重なっても、どちらのツールか取り違えない）
+// MCP サーバーごとに、ソケットを分ける（ツールの名前が重なっても、どちらのツールか取り違えない）。
+// 中継が Claude に返す文（つながらない・返事が無いなど）は英語
 
 // MCP のツールの結果（tools/call の result）
 export type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -120,7 +122,7 @@ export function callBridge(
     const id = 1;
     let buffered = '';
     let done = false;
-    const cancel = () => finish(textResult('取り消されました', true));
+    const cancel = () => finish(textResult('Canceled.', true));
     const finish = (result: ToolResult) => {
       if (done) return;
       done = true;
@@ -132,7 +134,7 @@ export function callBridge(
     const socket = connect(socketPath);
     socket.setEncoding('utf8');
     const timer = setTimeout(
-      () => finish(textResult('tanacode から返事がありませんでした。アプリが止まっていないか確かめてください', true)),
+      () => finish(textResult('tanacode did not respond. Ask the user to check that the app is not frozen.', true)),
       timeoutMs,
     );
     socket.once('connect', () => socket.write(`${JSON.stringify({ id, ...request } satisfies BridgeRequest)}\n`));
@@ -142,21 +144,21 @@ export function callBridge(
       if (newline < 0) return;
       try {
         const response = JSON.parse(buffered.slice(0, newline)) as BridgeResponse;
-        finish(response.id === id && response.result ? response.result : textResult('tanacode の返事を読めませんでした', true));
+        finish(response.id === id && response.result ? response.result : textResult('Could not read the response from tanacode.', true));
       } catch {
-        finish(textResult('tanacode の返事を読めませんでした', true));
+        finish(textResult('Could not read the response from tanacode.', true));
       }
     });
     socket.on('error', (error: NodeJS.ErrnoException) => {
       const closed = error.code === 'ENOENT' || error.code === 'ECONNREFUSED';
       finish(
         textResult(
-          closed ? closedMessage : `tanacode につながりませんでした（${error.code ?? error.message}）`,
+          closed ? closedMessage : `Could not connect to tanacode (${error.code ?? error.message}).`,
           true,
         ),
       );
     });
-    socket.on('close', () => finish(textResult('tanacode との接続が切れました。もう一度試してください', true)));
+    socket.on('close', () => finish(textResult('The connection to tanacode was lost. Try again.', true)));
     if (signal?.aborted) cancel();
     else signal?.addEventListener('abort', cancel, { once: true });
   });
@@ -174,7 +176,11 @@ export type McpLaunch = {
 // --mcp-config に入れる 1 つのサーバーと、--allowedTools で許可済みにするツール
 export type McpServerEntry = { name: string; config: Record<string, unknown>; allowed: string[] };
 
-// env: 中継に渡す環境変数（ソケットのパスと、どのセッションの Claude Code か）。
+// 中継に渡す、Claude Code を起動したときのアプリの言語（中継は、tools/list で返すツールの短い名前をこの言語にする）。
+// アプリ内ブラウザの確認のフック（browser-mcp.ts の --gate）も、同じ名前の環境変数で受け取る
+export const MCP_LANGUAGE_ENV = 'TANACODE_LANGUAGE';
+
+// env: 中継に渡す環境変数（ソケットのパスと、どのセッションの Claude Code か）。アプリのバージョンと言語は、どのサーバーにも足す。
 // timeoutMs: 1 回のツールの呼び出しを Claude Code が待つ上限（省くと Claude Code の既定）
 export function mcpServerEntry(def: McpServerDef, launch: McpLaunch, env: Record<string, string>, timeoutMs?: number): McpServerEntry {
   return {
@@ -183,7 +189,7 @@ export function mcpServerEntry(def: McpServerDef, launch: McpLaunch, env: Record
       type: 'stdio',
       command: launch.command,
       args: [launch.script],
-      env: { ELECTRON_RUN_AS_NODE: '1', ...env, TANACODE_VERSION: launch.version },
+      env: { ELECTRON_RUN_AS_NODE: '1', ...env, TANACODE_VERSION: launch.version, [MCP_LANGUAGE_ENV]: language() },
       ...(timeoutMs ? { timeout: timeoutMs } : {}),
     },
     allowed: allowedToolIds(def),

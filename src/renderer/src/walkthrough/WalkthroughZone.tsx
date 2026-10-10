@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { t } from '@shared/i18n';
 import { lineRange, shownStep, type Walkthrough } from '@shared/walkthrough';
 import { Markdown } from '../chat/Markdown';
 import { monaco } from '../editor/monaco';
@@ -133,18 +134,18 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onClose, onAsk, onRes
   return (
     <div className="walk-box">
       <div className="walk-head">
-        <span className="walk-mark">{aside ? '寄り道' : `ウォークスルー ${current + 1}/${total}`}</span>
+        <span className="walk-mark">{aside ? t('walkthrough.box.aside') : t('walkthrough.box.progress', { step: current + 1, total })}</span>
         <span className="walk-title">{aside ? `${aside.path}:${lineRange(aside)}` : step.title}</span>
         <div className="spacer" />
-        {total > 0 && onShowList && <IconButton size="sm" icon={ListViewIcon} label="ステップの一覧（ソース管理）" onClick={onShowList} />}
-        {total > 0 && onPublish && <IconButton size="sm" icon={ExportIcon} label="GitHub の PR にコメントとして載せる" onClick={onPublish} />}
-        <IconButton size="sm" icon={CloseIcon} label="閉じる（ソース管理の一覧から、もう一度開けます）" onClick={onClose} />
+        {total > 0 && onShowList && <IconButton size="sm" icon={ListViewIcon} label={t('walkthrough.box.showList')} onClick={onShowList} />}
+        {total > 0 && onPublish && <IconButton size="sm" icon={ExportIcon} label={t('walkthrough.actions.publish')} onClick={onPublish} />}
+        <IconButton size="sm" icon={CloseIcon} label={t('walkthrough.actions.close')} onClick={onClose} />
       </div>
       {stale && (
         <div className="walk-stale">
-          <span>コードが変わりました（位置がずれているかもしれません）</span>
+          <span>{t('walkthrough.box.stale')}</span>
           <button className="ghost-button" onClick={onRestart}>
-            Claude に示し直してもらう
+            {t('walkthrough.box.restart')}
           </button>
         </div>
       )}
@@ -157,7 +158,7 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onClose, onAsk, onRes
             autoFocus
             rows={3}
             value={question}
-            placeholder="ここについて Claude に聞きたいこと（⌘Enter で送る）"
+            placeholder={t('walkthrough.box.askPlaceholder')}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => {
               // 変換中のキー（変換の取り消しの Esc・確定の Enter）は、変換に任せる
@@ -171,8 +172,8 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onClose, onAsk, onRes
           />
           <div className="walk-actions">
             <div className="spacer" />
-            <IconButton icon={CloseIcon} label="やめる" onClick={() => setAsking(false)} />
-            <IconButton primary icon={SendIcon} label="送る" tip="Claude に送る（⌘Enter）" disabled={!question.trim()} onClick={send} />
+            <IconButton icon={CloseIcon} label={t('walkthrough.box.cancelAsk')} onClick={() => setAsking(false)} />
+            <IconButton primary icon={SendIcon} label={t('walkthrough.box.send')} tip={t('walkthrough.box.sendTip')} disabled={!question.trim()} onClick={send} />
           </div>
         </div>
       ) : (
@@ -180,24 +181,24 @@ export function WalkthroughBox({ walkthrough, stale, onGo, onClose, onAsk, onRes
           {aside ? (
             total > 0 && (
               <button className="ghost-button" onClick={() => onGo(current)}>
-                ウォークスルーに戻る（{current + 1}/{total}）
+                {t('walkthrough.box.backToWalkthrough', { step: current + 1, total })}
               </button>
             )
           ) : (
             <>
-              <IconButton icon={ArrowLeftIcon} label="戻る" disabled={current === 0} onClick={() => onGo(current - 1)} />
+              <IconButton icon={ArrowLeftIcon} label={t('walkthrough.box.previous')} disabled={current === 0} onClick={() => onGo(current - 1)} />
               {last ? (
                 <button className="send-button" onClick={onClose}>
-                  終える
+                  {t('walkthrough.box.finish')}
                 </button>
               ) : (
-                <IconButton primary icon={ArrowRightIcon} label="次へ" onClick={() => onGo(current + 1)} />
+                <IconButton primary icon={ArrowRightIcon} label={t('walkthrough.box.next')} onClick={() => onGo(current + 1)} />
               )}
             </>
           )}
           <div className="spacer" />
           <button className="ghost-button" onClick={() => setAsking(true)}>
-            質問する
+            {t('walkthrough.box.ask')}
           </button>
         </div>
       )}

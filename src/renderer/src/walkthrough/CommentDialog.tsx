@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import { finalCommentBody, MAX_COMMENT_CHARS, type WalkthroughCommentDraft } from '@shared/walkthrough-comment';
 import { errorMessage } from '../errorMessage';
 
@@ -60,7 +61,7 @@ export function CommentDialog({ sessionId, onClose, api = window.tanacode.walkth
         className="quick-open walk-comment-dialog"
         ref={dialog}
         role="dialog"
-        aria-label="PR にコメントとして載せる"
+        aria-label={t('walkthrough.comment.title')}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -69,16 +70,16 @@ export function CommentDialog({ sessionId, onClose, api = window.tanacode.walkth
         }}
       >
         <div className="settings-files-head">
-          <h2>{draft?.ok ? `PR #${draft.prNumber} にコメントとして載せる` : 'PR にコメントとして載せる'}</h2>
-          <p>ステップの順に、見出し・コードへのリンク（コミットに固定）・説明を並べます。GitHub では、リンクの行がコードの埋め込みとして出ます。質問と答えは載せません。</p>
+          <h2>{draft?.ok ? t('walkthrough.comment.titleWithNumber', { number: draft.prNumber }) : t('walkthrough.comment.title')}</h2>
+          <p>{t('walkthrough.comment.description')}</p>
         </div>
-        {!draft && <div className="walk-comment-note">PR を調べています…</div>}
+        {!draft && <div className="walk-comment-note">{t('walkthrough.comment.checking')}</div>}
         {draft && !draft.ok && <div className="walk-comment-note warn">{draft.reason}</div>}
         {draft?.ok && postedUrl && (
           <div className="walk-comment-note ok">
-            <span>載せました。</span>
+            <span>{t('walkthrough.comment.posted')}</span>
             <button className="ghost-button" onClick={() => open(postedUrl)}>
-              GitHub で開く
+              {t('walkthrough.comment.openOnGitHub')}
             </button>
           </div>
         )}
@@ -86,28 +87,28 @@ export function CommentDialog({ sessionId, onClose, api = window.tanacode.walkth
           <>
             {draft.postedUrl && (
               <div className="walk-comment-note warn">
-                <span>このウォークスルーは、もう載せています。もう一度載せると、コメントが 2 つになります。</span>
+                <span>{t('walkthrough.comment.alreadyPosted')}</span>
                 <button className="ghost-button" onClick={() => open(draft.postedUrl!)}>
-                  前のコメントを開く
+                  {t('walkthrough.comment.openPrevious')}
                 </button>
               </div>
             )}
             <textarea className="walk-comment-body" value={body} spellCheck={false} onChange={(e) => setBody(e.target.value)} />
             <label className="walk-comment-check">
               <input type="checkbox" checked={attribution} onChange={(e) => setAttribution(e.target.checked)} />
-              最後に「Claude が書いた説明」と添える（あなたのアカウントで載るため）
+              {t('walkthrough.comment.attributionOption')}
             </label>
-            {tooLong && <div className="walk-comment-note warn">長すぎます（{length} 文字。GitHub のコメントは {MAX_COMMENT_CHARS} 文字まで）</div>}
+            {tooLong && <div className="walk-comment-note warn">{t('walkthrough.comment.tooLong', { count: length, max: MAX_COMMENT_CHARS })}</div>}
             {error && <div className="walk-comment-note warn">{error}</div>}
           </>
         )}
         <div className="settings-files-foot">
           <button className="ghost-button" onClick={onClose}>
-            {postedUrl ? '閉じる' : 'キャンセル'}
+            {postedUrl ? t('common.close') : t('common.cancel')}
           </button>
           {draft?.ok && !postedUrl && (
             <button className="send-button" disabled={posting || tooLong || !body.trim()} onClick={() => void post()}>
-              {posting ? '載せています…' : '載せる'}
+              {posting ? t('walkthrough.comment.posting') : t('walkthrough.comment.post')}
             </button>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { BashTask, TaskRef } from '@shared/task';
 import { DisclosureIcon } from '../icons';
 import { CheckMark } from '../layout/CheckMark';
@@ -88,7 +89,7 @@ export const ToolGroupRow = memo(function ToolGroupRow({
             · {part}
           </span>
         ))}
-        {summary.failed > 0 && <span className="tool-group-failed">· 失敗 {summary.failed}</span>}
+        {summary.failed > 0 && <span className="tool-group-failed">· {t('chat.toolGroup.failed', { count: summary.failed })}</span>}
         {summary.duration && <span className="tool-group-meta">· {summary.duration}</span>}
       </button>
       {live.length > 0 && (

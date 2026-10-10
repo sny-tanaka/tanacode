@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GitDiffSides } from '@shared/ipc';
+import { t } from '@shared/i18n';
 import { editorTheme, languageFor, monaco } from '../editor/monaco';
 import { shownStep } from '@shared/walkthrough';
 import { LineComments, type RangeQuestion, type ReviewComment } from '../review/LineComments';
@@ -105,15 +106,15 @@ export function DiffPane({ path, subtitle, load, reloadKey, onClose, onOpenFile,
         <div className="spacer" />
         {nav && (
           <>
-            <IconButton icon={ArrowUpIcon} label="前のファイル" disabled={!nav.onPrev} onClick={() => nav.onPrev?.()} />
+            <IconButton icon={ArrowUpIcon} label={t('scm.diff.prevFile')} disabled={!nav.onPrev} onClick={() => nav.onPrev?.()} />
             <span className="diff-pane-kind">{nav.position}</span>
-            <IconButton icon={ArrowDownIcon} label="次のファイル" disabled={!nav.onNext} onClick={() => nav.onNext?.()} />
+            <IconButton icon={ArrowDownIcon} label={t('scm.diff.nextFile')} disabled={!nav.onNext} onClick={() => nav.onNext?.()} />
           </>
         )}
         {/* 押すと切り替わる先のアイコンと名前を出す */}
-        <IconButton icon={inline ? ColumnsIcon : RowsIcon} label={inline ? '左右に並べる' : 'インライン'} onClick={() => setInline((v) => !v)} />
-        {onOpenFile && <IconButton icon={FileIcon} label="ファイルを開く" onClick={() => onOpenFile(path)} />}
-        <IconButton icon={CloseIcon} label="差分を閉じる" onClick={onClose} />
+        <IconButton icon={inline ? ColumnsIcon : RowsIcon} label={inline ? t('scm.diff.sideBySide') : t('scm.diff.inline')} onClick={() => setInline((v) => !v)} />
+        {onOpenFile && <IconButton icon={FileIcon} label={t('scm.diff.openFile')} onClick={() => onOpenFile(path)} />}
+        <IconButton icon={CloseIcon} label={t('scm.diff.close')} onClick={onClose} />
       </div>
       <div className="editor-body">
         <div className="editor-monaco" ref={containerRef} />

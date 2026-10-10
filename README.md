@@ -17,10 +17,13 @@
 <p align="center">
   <a href="https://sny-tanaka.github.io/tanacode/"><b>ブラウザでデモを試す</b></a> ・
   <a href="#インストール"><b>インストール</b></a> ・
-  <a href="GUIDE.md"><b>使い方</b></a>
+  <a href="GUIDE.md"><b>使い方</b></a> ・
+  <a href="README.en.md"><b>English</b></a>
 </p>
 
 Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップアプリ。Claude に任せている間も、何を読んで何を覚えているか、サブエージェントが中で何をしているか、画面で何を確かめたかを、チャットの横に表示します。コードを書くのは Claude に任せて、あなたは確認と小さな修正だけ。
+
+画面は日本語と英語（Japanese and English）。メニューの「tanacode → 言語（Language）」で切り替えられます。既定は Mac の言語に合わせます（[使い方](GUIDE.md#言語language)）。
 
 <sub>個人が作っている非公式のツール。Anthropic の公式製品ではなく、Anthropic の承認や支援も受けていません。</sub>
 
@@ -79,7 +82,8 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 - **Claude と一緒に使うチェックリスト**: やること・満たすべき条件・人のやること・確認事項など、名前を付けたリストをセッションごとに。会話とは別に残るので、圧縮されても消えません。手順のいくつもある作業では、頼まなくても Claude が MCP でやることを積み、確かめたものにチェック。カードへの返信はスレッドになり、Claude に知らせることも。別のセッションへのコピーも（[使い方](GUIDE.md#チェックリスト)）
 - **ウォークスルー**: 画面共有でのコードレビューのように、Claude がエディタにコードを開いて示しながら、変更の意図を説明。あなたは「次へ」で自分のペースで進め、気になった行を選んでその場で質問。説明は、コードを埋め込んだ 1 つのコメントとして GitHub の PR にも残せます（[使い方](GUIDE.md#ウォークスルーclaude-によるコードの説明)）
 - **時刻を指定して送信**: 書いた指示を、決めた時刻に送る予約（Slack の予約投稿のように）。時刻になったら、Claude Code の手が空くのを待って送ります
-- **整理と振り返り**: 英語などで返ってきた思考と応答は、ボタン 1 つで日本語に翻訳（macOS 標準の翻訳で Mac の中で訳すので、外へは送りません。macOS 15 以降）。作業の流れは、チャットと同じ見た目の 1 枚の HTML に書き出せます（[デモ](https://sny-tanaka.github.io/tanacode/#wrapup)）
+- **整理と振り返り**: 英語などで返ってきた思考と応答は、ボタン 1 つで日本語に翻訳（macOS 標準の翻訳で Mac の中で訳すので、外へは送りません。macOS 15 以降・日本語の画面のとき）。作業の流れは、チャットと同じ見た目の 1 枚の HTML に書き出せます（[デモ](https://sny-tanaka.github.io/tanacode/#wrapup)）
+- **日本語と英語**: 画面は日本語と英語（Japanese and English）。メニューの「tanacode → 言語（Language）」で切り替え。既定は Mac の言語に合わせます（[使い方](GUIDE.md#言語language)）
 - **アカウントと利用枠・アプリのまわり**: ログインしているアカウントのプランと、5 時間枠と週の枠の使用率とリセットまでの時間、この Mac の CPU とメモリの使用量を常に表示。会社と個人のように、Claude Code のアカウント（プロファイル）を分けて、1 つのウインドウで切り替えて使うこともできます。tanacode の新しいバージョンが出たときは、タイトルバーの印で分かります（[デモ](https://sny-tanaka.github.io/tanacode/#app)）
 
 このほか、会話を続けたまま Claude Code だけを再起動する機能、Monaco エディタ・ターミナル・git の操作など。詳しくは [GUIDE.md](GUIDE.md) へ。
@@ -202,10 +206,11 @@ Claude Code の会話ログ（`~/.claude/`）は Claude Code のものなので�
 | --- | --- |
 | [GUIDE.md](GUIDE.md) | はじめの一歩・画面の見方・機能ごとの使い方・ショートカット・データの扱い・制限・困ったとき |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | ソースからのビルド・貢献の流れ・仕組み・ソースの構成 |
+| [README.en.md](README.en.md) | 英語の README（English） |
 
 不具合・要望は [Issues](https://github.com/sny-tanaka/tanacode/issues) へ。
 
-画面と文書は日本語のみ。英語対応は検討中のため、要望があれば [Issues](https://github.com/sny-tanaka/tanacode/issues) へ。
+画面は日本語と英語。文書は日本語で、README だけ英語（[README.en.md](README.en.md)）もあります。
 
 ## ライセンス
 

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { t, type MessageKey } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { canSee } from '@shared/session-tools';
@@ -31,11 +32,11 @@ import type { PendingSend } from './pendingSends';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { useCompactState } from './compactState';
-import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
+import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 import { useSessionLinks } from '../sessions/sessionLinks';
-import { PREPARING_LABEL } from '../sessions/worktree';
+import { preparingLabel } from '../sessions/worktree';
 
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
 const SLOW_START_MS = 10_000;
@@ -226,7 +227,7 @@ export const ClaudePane = memo(function ClaudePane({
   const rewindTo = useCallback(
     (text: string) => {
       void window.tanacode.screen.rewind(session.id, text).then((ok) => {
-        if (!ok) window.alert('巻き戻し先の発言が見つかりませんでした。ターミナルで /rewind を操作してください。');
+        if (!ok) window.alert(t('chat.pane.rewindNotFound'));
       });
     },
     [session.id],
@@ -239,7 +240,7 @@ export const ClaudePane = memo(function ClaudePane({
   const runningModel = statusLine?.model?.name ?? screen?.model?.replace(' (1M context)', '') ?? null;
   const modelValue = session.model ?? choices.find((c) => !c.disabled && c.name === runningModel)?.value ?? '';
   const modelOptions: { value: string; label: string; disabled: boolean; detail: string }[] = [
-    ...(modelValue === '' ? [{ value: '', label: runningModel ?? 'モデル', disabled: false, detail: '' }] : []),
+    ...(modelValue === '' ? [{ value: '', label: runningModel ?? t('chat.pane.model'), disabled: false, detail: '' }] : []),
     ...(session.model && !choices.some((c) => c.value === session.model)
       ? [{ value: session.model, label: runningModel ?? session.model, disabled: false, detail: '' }]
       : []),
@@ -273,17 +274,11 @@ export const ClaudePane = memo(function ClaudePane({
         settingsFile: session.settingsFile,
         ...patch,
       })
-      .catch((error: unknown) => window.alert(`変更できませんでした: ${errorMessage(error)}`));
+      .catch((error: unknown) => window.alert(t('chat.pane.configureFailed', { error: errorMessage(error) })));
   // 設定ファイルを変えると、これまでの会話の内容が新しい設定の接続先に送られる（別の契約・別のアカウントに渡ることがある）ので、会話があれば確かめる
   const changeSettingsFile = (settingsFile: string | null) => {
-    const name = settingsFile === null ? '標準' : (settingsFiles.find((f) => f.id === settingsFile)?.name ?? '登録なし');
-    if (
-      chat.items.length > 0 &&
-      !window.confirm(
-        `設定ファイルを「${name}」に変えます。Claude Code を起動し直して会話を続けます。設定の内容（接続先の URL・API キーなど）によっては、これまでの会話の内容が新しい接続先に送られます。\n\n変えますか？`,
-      )
-    )
-      return;
+    const name = settingsFile === null ? t('chat.pane.settingsFileDefault') : (settingsFiles.find((f) => f.id === settingsFile)?.name ?? t('chat.pane.settingsFileMissing'));
+    if (chat.items.length > 0 && !window.confirm(t('chat.pane.confirmSettingsFile', { name }))) return;
     configure({ settingsFile });
   };
 
@@ -329,7 +324,7 @@ export const ClaudePane = memo(function ClaudePane({
     if (!hasContent) return;
     void window.tanacode.scheduled.add(session.id, composed(), attachments, at).then(
       () => clearInput(),
-      (error: unknown) => window.alert(`予約できませんでした: ${errorMessage(error)}`),
+      (error: unknown) => window.alert(t('chat.pane.scheduleFailed', { error: errorMessage(error) })),
     );
   };
   // 予約をやめて、入力欄に戻す。戻るまでにほかのセッションへ移っていたら、そのセッションの書きかけに戻す
@@ -348,7 +343,7 @@ export const ClaudePane = memo(function ClaudePane({
       setAttachments((prev) => [...taken.attachments, ...prev]);
     });
   };
-  const reportError = (what: string) => (error: unknown) => window.alert(`${what}: ${errorMessage(error)}`);
+  const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
 
   return (
     <section className="claude">
@@ -369,8 +364,8 @@ export const ClaudePane = memo(function ClaudePane({
           <IconButton
             size="md"
             icon={CompressIcon}
-            label="圧縮"
-            tip="会話を要約してコンテキストを空ける（/compact）。作業中は押せません"
+            label={t('chat.pane.compact')}
+            tip={t('chat.pane.compactTip')}
             busy={compacting}
             disabled={!canCompact}
             onClick={() => onSend('/compact', [])}
@@ -380,30 +375,30 @@ export const ClaudePane = memo(function ClaudePane({
           <IconButton
             size="md"
             icon={ReloadIcon}
-            label="再起動"
-            tip="Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます"
+            label={t('chat.pane.restart')}
+            tip={t('chat.pane.restartTip')}
             onClick={() => {
               const busy = running || tasks.some((t) => t.state === 'running');
-              if (busy && !window.confirm('作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？')) return;
+              if (busy && !window.confirm(t('chat.pane.confirmRestart'))) return;
               void window.tanacode.sessions
                 .restart(session.id)
-                .catch((error: unknown) => window.alert(`再起動できませんでした: ${errorMessage(error)}`));
+                .catch((error: unknown) => window.alert(t('chat.pane.restartFailed', { error: errorMessage(error) })));
             }}
           />
         )}
         <IconButton
           size="md"
           icon={ExportIcon}
-          label="作業を書き出す…"
-          tip="このセッションの流れを、1 枚の HTML ファイルに書き出す"
+          label={t('chat.pane.export')}
+          tip={t('chat.pane.exportTip')}
           onClick={() => setExporting(true)}
         />
         {!session.archived && (
           <IconButton
             size="md"
             icon={MonitorIcon}
-            label="Claude Code の画面"
-            tip="Claude Code をターミナルの画面のまま表示して操作する（エディタの下のパネル）"
+            label={t('chat.pane.terminal')}
+            tip={t('chat.pane.terminalTip')}
             pressed={terminalOpen}
             onClick={onToggleTerminal}
           />
@@ -439,14 +434,14 @@ export const ClaudePane = memo(function ClaudePane({
         >
           {starting && !preparing && !pending && chat.items.length === 0 && !slowStart && (
             <div className="chat-note">
-              <Busy>Claude Code を起動しています…</Busy>
+              <Busy>{t('chat.pane.starting')}</Busy>
             </div>
           )}
           {preparing && (
             <div className="chat-note worktree-preparing">
-              <Busy>{PREPARING_LABEL[preparing]}…</Busy>
+              <Busy>{preparingLabel(preparing)}…</Busy>
               {preparing === 'installing' && (
-                <IconButton icon={MonitorIcon} label="ターミナルで見る" onClick={onShowShell} />
+                <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onShowShell} />
               )}
             </div>
           )}
@@ -486,31 +481,31 @@ export const ClaudePane = memo(function ClaudePane({
           {running && !menu && !unknownScreen && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !menu && <DoneNote />}
           {chat.queued.map((text, i) => (
-            <UnsentUser key={`queued:${i}`} text={text} attachments={0} note="順番待ち — 今の作業が一区切りしたら Claude Code に渡されます" queued />
+            <UnsentUser key={`queued:${i}`} text={text} attachments={0} note={t('chat.pane.queued')} queued />
           ))}
           {sending.map((item, i) => (
-            <UnsentUser key={`sending:${i}`} text={item.text} attachments={item.attachments.length} note="送信中…" />
+            <UnsentUser key={`sending:${i}`} text={item.text} attachments={item.attachments.length} note={t('chat.pane.sending')} />
           ))}
           {pending && (
             <div className="chat-user pending">
               <span className="chat-prompt">›</span>
               <span className="chat-user-text">
                 {pending.text}
-                {pending.attachments.length > 0 && <span className="chat-user-meta">画像 {pending.attachments.length} 枚</span>}
+                {pending.attachments.length > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: pending.attachments.length })}</span>}
                 <span className="chat-user-meta">
                   {chat.status === 'exited'
-                    ? 'Claude Code を再開すると送ります'
+                    ? t('chat.pane.sendOnResume')
                     : preparing
-                      ? 'worktree の準備が終わるのを待って送ります…'
-                      : 'Claude Code の起動を待って送ります…'}
+                      ? t('chat.pane.sendAfterWorktree')
+                      : t('chat.pane.sendAfterStart')}
                 </span>
               </span>
               {/* 待っている発言の取り消しは、ホバーしなくても見えるようにする（reveal にしない） */}
               <IconButton
                 size="sm"
                 icon={CloseIcon}
-                label="取り消す"
-                tip="送るのをやめて入力欄に戻す"
+                label={t('chat.pane.takeBack')}
+                tip={t('chat.pane.takeBackTip')}
                 className="chat-rewind"
                 onClick={() => {
                   const taken = onTakePending();
@@ -525,49 +520,49 @@ export const ClaudePane = memo(function ClaudePane({
             <ScheduledRow
               key={message.id}
               message={message}
-              onSendNow={() => void window.tanacode.scheduled.sendNow(message.id).catch(reportError('送れませんでした'))}
-              onReschedule={(at) => void window.tanacode.scheduled.reschedule(message.id, at).catch(reportError('時刻を変えられませんでした'))}
+              onSendNow={() => void window.tanacode.scheduled.sendNow(message.id).catch(reportError('chat.pane.sendNowFailed'))}
+              onReschedule={(at) => void window.tanacode.scheduled.reschedule(message.id, at).catch(reportError('chat.pane.rescheduleFailed'))}
               onTake={() => takeScheduled(message.id)}
             />
           ))}
           {starting && slowStart && !preparing && !menu && (
             <div className="chat-callout">
-              <span>Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください</span>
-              <IconButton icon={MonitorIcon} label="ターミナルで見る" onClick={onOpenTerminal} />
+              <span>{t('chat.pane.slowStart')}</span>
+              <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onOpenTerminal} />
             </div>
           )}
           {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
           {menu && <MenuCard key={`${session.id}|${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
           {rewinding && (
             <div className="chat-callout">
-              <span>巻き戻し先を選んでいます…</span>
-              <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="キャンセル（Esc）" onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
+              <span>{t('chat.pane.rewinding')}</span>
+              <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} tip={t('chat.pane.cancelEsc')} onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
             </div>
           )}
           {unknownScreen && (
             <div className="chat-callout">
-              <span>Claude Code がチャットでは操作できない画面を表示しています</span>
+              <span>{t('chat.pane.unknownScreen')}</span>
               <div className="chat-callout-actions">
-                <IconButton icon={CloseIcon} size="md" label="閉じる" tip="閉じる（Esc）" onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
+                <IconButton icon={CloseIcon} size="md" label={t('common.close')} tip={t('chat.pane.closeEsc')} onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
                 <button className="send-button" onClick={onOpenTerminal}>
-                  ターミナルで操作
+                  {t('chat.pane.operateInTerminal')}
                 </button>
               </div>
             </div>
           )}
           {session.archived ? (
             <div className="chat-callout">
-              <span>このセッションはアーカイブされています</span>
+              <span>{t('chat.pane.archived')}</span>
               <button className="send-button" onClick={onUnarchive}>
-                アクティブに戻す
+                {t('chat.pane.unarchive')}
               </button>
             </div>
           ) : (
             chat.status === 'exited' && (
               <div className="chat-callout">
-                <span>Claude Code が終了しました（code {chat.exitCode}）</span>
+                <span>{t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
                 <button className="send-button" onClick={onResume}>
-                  再開
+                  {t('chat.pane.resume')}
                 </button>
               </div>
             )
@@ -577,9 +572,9 @@ export const ClaudePane = memo(function ClaudePane({
           <button
             className="chat-jump-bottom"
             onClick={jumpToBottom}
-            data-tip="最新のメッセージへ"
+            data-tip={t('chat.pane.jumpToLatest')}
             data-tip-side="top"
-            aria-label="最新のメッセージへ"
+            aria-label={t('chat.pane.jumpToLatest')}
           >
             <ArrowDownIcon size={14} />
           </button>
@@ -600,7 +595,7 @@ export const ClaudePane = memo(function ClaudePane({
             onChange={setInput}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
-            placeholder={menu ? '上の選択肢から選んでください' : 'Claude Codeに指示する（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）'}
+            placeholder={menu ? t('chat.pane.chooseAbove') : t('chat.pane.placeholder')}
             blocked={blocked}
             onSend={send}
             onSchedule={schedule}
@@ -614,13 +609,13 @@ export const ClaudePane = memo(function ClaudePane({
               files={settingsFiles}
               disabled={!canConfigure}
               onChange={changeSettingsFile}
-              title="設定ファイル（変更すると Claude Code を起動し直して会話を再開します。モデルとエフォートは設定ファイルの既定に戻ります）"
+              title={t('chat.pane.settingsFileTitle')}
             />
             <select
               value={modelValue}
               disabled={!canConfigure}
               onChange={(e) => configure({ model: e.target.value || null })}
-              title="モデル（変更すると Claude Code を起動し直して会話を再開します）"
+              title={t('chat.pane.modelTitle')}
             >
               {modelOptions.map((o) => (
                 <option key={o.value} value={o.value} disabled={o.disabled} title={o.detail}>
@@ -631,7 +626,7 @@ export const ClaudePane = memo(function ClaudePane({
             <IconButton
               size="md"
               icon={ReloadIcon}
-              label="モデル一覧を更新"
+              label={t('chat.pane.refreshModels')}
               tip={refreshTitle(models.catalog)}
               busy={models.refreshing}
               className="model-refresh"
@@ -641,9 +636,9 @@ export const ClaudePane = memo(function ClaudePane({
               value={efforts.length === 0 ? '' : effortValue}
               disabled={!canConfigure || efforts.length === 0}
               onChange={(e) => configure({ effort: e.target.value || null })}
-              title="エフォート（変更すると Claude Code を起動し直して会話を再開します）"
+              title={t('chat.pane.effortTitle')}
             >
-              {(effortValue === '' || efforts.length === 0) && <option value="">{efforts.length === 0 ? 'エフォートなし' : 'エフォート'}</option>}
+              {(effortValue === '' || efforts.length === 0) && <option value="">{efforts.length === 0 ? t('chat.pane.noEffort') : t('chat.pane.effort')}</option>}
               {efforts.map((effort) => (
                 <option key={effort} value={effort}>
                   {effort}
@@ -654,15 +649,15 @@ export const ClaudePane = memo(function ClaudePane({
               value={screen?.mode ?? ''}
               disabled={!live || screen?.state.kind !== 'prompt'}
               onChange={(e) => void window.tanacode.screen.setMode(session.id, e.target.value as PermissionMode)}
-              title="権限モード（このセッションだけ。Shift+Tab と同じ）"
+              title={t('chat.pane.modeTitle')}
             >
-              {!screen?.mode && <option value="">モード</option>}
-              {MODES.map(([mode, label]) => (
+              {!screen?.mode && <option value="">{t('chat.pane.mode')}</option>}
+              {modeChoices().map(([mode, label]) => (
                 <option key={mode} value={mode}>
                   {label}
                 </option>
               ))}
-              {screen?.mode === 'bypassPermissions' && <option value="bypassPermissions">すべて許可</option>}
+              {screen?.mode === 'bypassPermissions' && <option value="bypassPermissions">{t('chat.pane.bypassPermissions')}</option>}
             </select>
           </div>
         </div>
@@ -679,7 +674,7 @@ function UnsentUser({ text, attachments, note, queued = false }: { text: string;
       <span className="chat-prompt">›</span>
       <span className="chat-user-text">
         {text}
-        {attachments > 0 && <span className="chat-user-meta">画像 {attachments} 枚</span>}
+        {attachments > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: attachments })}</span>}
         <span className="chat-user-meta">{note}</span>
       </span>
     </div>

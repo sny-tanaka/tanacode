@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
 
 // 登録した Claude Code の設定ファイル。覚えるのは名前とパスだけ（中身は預からない）
 export type StoredSettingsFile = { id: string; name: string; path: string };
@@ -11,7 +12,8 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // browserHosts: アプリ内ブラウザで Claude に許す先（localhost などの既定に足すもの）/
 // sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）/
 // checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）/
-// walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）
+// walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）/
+// language: 画面の言語（system は Mac の言語の設定に合わせる）
 type Values = {
   notifications: boolean;
   updateCheck: boolean;
@@ -22,6 +24,7 @@ type Values = {
   sessionsControl: boolean;
   checklistControl: boolean;
   walkthroughControl: boolean;
+  language: LanguageSetting;
 };
 
 // アプリ自身の設定（Claude Code の設定ではない）
@@ -104,6 +107,14 @@ export class AppSettings {
     this.update({ browserHosts: hosts });
   }
 
+  languageSetting(): LanguageSetting {
+    return this.values.language;
+  }
+
+  setLanguageSetting(language: LanguageSetting): void {
+    this.update({ language });
+  }
+
   // 保存できなかったら、値を元に戻して例外を投げる（画面の表示と食い違わせない）
   private update(change: Partial<Values>): void {
     const before = this.values;
@@ -124,7 +135,7 @@ export class AppSettings {
   }
 }
 
-// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）。設定ファイルと許す先は、無ければ無し
+// 無い・読めない値は、オン（通知は、この設定ができる前のバージョンと同じく出す）。設定ファイルと許す先は、無ければ無し。言語は、無ければ Mac に合わせる
 function load(file: string): Values {
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as {
@@ -137,6 +148,7 @@ function load(file: string): Values {
       sessionsControl?: unknown;
       checklistControl?: unknown;
       walkthroughControl?: unknown;
+      language?: unknown;
     };
     return {
       notifications: data.notifications !== false,
@@ -148,9 +160,10 @@ function load(file: string): Values {
       sessionsControl: data.sessionsControl !== false,
       checklistControl: data.checklistControl !== false,
       walkthroughControl: data.walkthroughControl !== false,
+      language: isLanguageSetting(data.language) ? data.language : 'system',
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true, language: 'system' };
   }
 }
 

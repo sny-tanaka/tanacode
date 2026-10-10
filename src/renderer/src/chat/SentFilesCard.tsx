@@ -1,4 +1,5 @@
 import type { SentFiles } from '@shared/chat';
+import { t } from '@shared/i18n';
 
 type Props = {
   files: SentFiles;
@@ -13,8 +14,8 @@ export function SentFilesCard({ files, failed, onOpenFile }: Props) {
   return (
     <div className="sent-files">
       <div className="sent-files-head">
-        <span className="sent-files-label">Claude から届いたファイル</span>
-        {failed && <span className="sent-files-failed">送れませんでした</span>}
+        <span className="sent-files-label">{t('composer.sentFiles.label')}</span>
+        {failed && <span className="sent-files-failed">{t('composer.sentFiles.failed')}</span>}
       </div>
       {files.caption && <div className="sent-files-caption">{files.caption}</div>}
       {files.paths.map((path) => {
@@ -34,7 +35,7 @@ export function SentFilesCard({ files, failed, onOpenFile }: Props) {
           );
         }
         return (
-          <button key={path} className="sent-file" onClick={() => onOpenFile(path)} title={`${path}\nクリックでエディタに開く`}>
+          <button key={path} className="sent-file" onClick={() => onOpenFile(path)} title={t('composer.sentFiles.openTip', { path })}>
             {label}
           </button>
         );

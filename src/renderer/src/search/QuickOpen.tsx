@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 
 const MAX_RESULTS = 60;
 
@@ -44,7 +45,7 @@ export function QuickOpen({ sessionId, onOpen, onClose }: Props) {
         <input
           autoFocus
           value={query}
-          placeholder="ファイル名で探す"
+          placeholder={t('search.quickOpen.placeholder')}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return;
@@ -74,7 +75,7 @@ export function QuickOpen({ sessionId, onOpen, onClose }: Props) {
               <span className="quick-open-dir">{path.split('/').slice(0, -1).join('/')}</span>
             </button>
           ))}
-          {results.length === 0 && <div className="quick-open-empty">見つかりません</div>}
+          {results.length === 0 && <div className="quick-open-empty">{t('search.quickOpen.empty')}</div>}
         </div>
       </div>
     </div>

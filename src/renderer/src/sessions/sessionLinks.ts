@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 
 // チャット（親からの指示・子からの知らせ・@ の参照・セッションのツールのカード）から、ほかのセッションへ移るための控え。ID と名前だけ
@@ -22,5 +23,5 @@ export function findSession<T extends { id: string }>(sessions: readonly T[], id
 
 // 一覧と同じく、名前がまだ無いセッションは「新しいセッション」
 export function sessionName(session: { title: string | null }): string {
-  return session.title ?? '新しいセッション';
+  return session.title ?? t('sessions.untitled');
 }

@@ -1,4 +1,6 @@
+import { BROWSER_MCP_SERVER } from '@shared/browser-tools';
 import type { HookRun } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { ChatItem } from './chatState';
 import { isChecklistTool, isSessionTool, isWalkthroughTool, mcpParts, toolLabel } from './toolLabel';
 
@@ -53,69 +55,72 @@ export function reuseGroups(prev: ChatRowItem[], next: ChatRowItem[]): ChatRowIt
   });
 }
 
-type Category = { label: string; verb: string; done: string };
+// 要約に出す分類（この順に並べる）
+const CATEGORIES = ['edit', 'run', 'read', 'search', 'fetch', 'agent', 'workflow', 'question', 'todo', 'browser', 'session', 'checklist', 'walkthrough', 'mcp', 'other'] as const;
+type Category = (typeof CATEGORIES)[number];
 
-// 要約に出す分類（この順に並べる）と、実行中・完了の表示の言い方（verb は「〜中」「〜に失敗」、done は終わったとき）
-const CATEGORIES: Category[] = [
-  { label: '編集', verb: '編集', done: '編集しました' },
-  { label: '実行', verb: '実行', done: '実行しました' },
-  { label: '読込', verb: '読み込み', done: '読み込みました' },
-  { label: '検索', verb: '検索', done: '検索しました' },
-  { label: '取得', verb: '取得', done: '取得しました' },
-  { label: 'エージェント', verb: '依頼', done: '依頼しました' },
-  { label: 'ワークフロー', verb: '実行', done: '実行しました' },
-  { label: '質問', verb: '', done: '' },
-  { label: 'ToDo', verb: '更新', done: '更新しました' },
-  { label: 'ブラウザ', verb: '操作', done: '操作しました' },
-  { label: 'セッション', verb: '', done: '' },
-  { label: 'チェックリスト', verb: '', done: '' },
-  { label: 'ウォークスルー', verb: '', done: '' },
-  { label: 'MCP', verb: '実行', done: '実行しました' },
-  { label: 'その他', verb: '実行', done: '実行しました' },
-];
+// 1 つのツールの行を、ツールの名前などで言い表す分類（実行中・完了・失敗の言い方の動詞を持たない）
+type NamedCategory = 'question' | 'session' | 'checklist' | 'walkthrough';
 
-const CATEGORY_OF: Record<string, string> = {
-  Edit: '編集',
-  MultiEdit: '編集',
-  Write: '編集',
-  NotebookEdit: '編集',
-  Bash: '実行',
-  BashOutput: '実行',
-  KillShell: '実行',
-  KillBash: '実行',
-  Read: '読込',
-  NotebookRead: '読込',
-  Grep: '検索',
-  Glob: '検索',
-  ToolSearch: '検索',
-  WebSearch: '検索',
-  WebFetch: '取得',
-  Agent: 'エージェント',
-  Task: 'エージェント',
-  Workflow: 'ワークフロー',
-  AskUserQuestion: '質問',
-  TodoWrite: 'ToDo',
+// 実行中・完了・失敗の表示の言い方（「〜中」「〜に失敗」「〜しました」）の動詞
+type Verb = 'edit' | 'run' | 'read' | 'search' | 'fetch' | 'delegate' | 'update' | 'operate';
+const VERB_OF: Record<Exclude<Category, NamedCategory>, Verb> = {
+  edit: 'edit',
+  run: 'run',
+  read: 'read',
+  search: 'search',
+  fetch: 'fetch',
+  agent: 'delegate',
+  workflow: 'run',
+  todo: 'update',
+  browser: 'operate',
+  mcp: 'run',
+  other: 'run',
+};
+
+const CATEGORY_OF: Record<string, Category> = {
+  Edit: 'edit',
+  MultiEdit: 'edit',
+  Write: 'edit',
+  NotebookEdit: 'edit',
+  Bash: 'run',
+  BashOutput: 'run',
+  KillShell: 'run',
+  KillBash: 'run',
+  Read: 'read',
+  NotebookRead: 'read',
+  Grep: 'search',
+  Glob: 'search',
+  ToolSearch: 'search',
+  WebSearch: 'search',
+  WebFetch: 'fetch',
+  Agent: 'agent',
+  Task: 'agent',
+  Workflow: 'workflow',
+  AskUserQuestion: 'question',
+  TodoWrite: 'todo',
 };
 
 function categoryOf(tool: ToolItem): Category {
-  if (isSessionTool(tool.name)) return CATEGORIES.find((c) => c.label === 'セッション')!;
-  if (isChecklistTool(tool.name)) return CATEGORIES.find((c) => c.label === 'チェックリスト')!;
-  if (isWalkthroughTool(tool.name)) return CATEGORIES.find((c) => c.label === 'ウォークスルー')!;
+  if (isSessionTool(tool.name)) return 'session';
+  if (isChecklistTool(tool.name)) return 'checklist';
+  if (isWalkthroughTool(tool.name)) return 'walkthrough';
   const mcp = mcpParts(tool.name);
-  const label = mcp ? (mcp.server === 'Browser' || mcp.server === 'Chrome' || mcp.server === 'アプリ内ブラウザ' ? 'ブラウザ' : 'MCP') : (CATEGORY_OF[tool.name] ?? 'その他');
-  return CATEGORIES.find((c) => c.label === label)!;
+  // アプリ内ブラウザは、表示名（言語で変わる）ではなく内部名で見分ける
+  if (mcp) return tool.name.startsWith(`mcp__${BROWSER_MCP_SERVER}__`) || mcp.server === 'Browser' || mcp.server === 'Chrome' ? 'browser' : 'mcp';
+  return CATEGORY_OF[tool.name] ?? 'other';
 }
 
 // 畳んだときの要約。例: 8件の操作 · 編集 5 · 実行 2 · 読込 1 · 14秒
 export function groupSummary(group: ToolGroup): { count: string; parts: string[]; failed: number; duration: string | null } {
-  const counts = new Map<string, number>();
+  const counts = new Map<Category, number>();
   for (const tool of group.tools) {
-    const label = categoryOf(tool).label;
-    counts.set(label, (counts.get(label) ?? 0) + 1);
+    const category = categoryOf(tool);
+    counts.set(category, (counts.get(category) ?? 0) + 1);
   }
-  const parts = CATEGORIES.filter((c) => counts.has(c.label)).map((c) => `${c.label} ${counts.get(c.label)}`);
+  const parts = CATEGORIES.filter((c) => counts.has(c)).map((c) => t(`chat.toolGroup.${c}`, { count: counts.get(c)! }));
   const failed = group.tools.filter((t) => t.status === 'error').length;
-  return { count: `${group.tools.length}件の操作`, parts, failed, duration: groupDuration(group) };
+  return { count: t('chat.toolGroup.count', { count: group.tools.length }), parts, failed, duration: groupDuration(group) };
 }
 
 // 最初の呼び出しから最後の結果まで（会話ログの時刻が無い古い行では出さない）
@@ -131,25 +136,19 @@ function groupDuration(group: ToolGroup): string | null {
 // 無ければ、実行中は「brief.md を編集中…」、終わると「brief.md を編集しました」、失敗は「brief.md の編集に失敗しました」
 export function toolLine(tool: ToolItem): string {
   const category = categoryOf(tool);
-  if (category.label === '質問') return tool.status === 'running' ? '質問への回答を待っています…' : '質問に回答しました';
+  // 名前や説明で言い表すときの、実行中（…を付ける）・失敗の言い方
+  const named = (label: string) => (tool.status === 'running' ? `${label}…` : tool.status === 'error' ? t('chat.toolLine.failed', { text: label }) : label);
+  if (category === 'question') return tool.status === 'running' ? t('chat.toolLine.questionWaiting') : t('chat.toolLine.questionAnswered');
   // セッションのツールは、対象の ID より、ツールの名前（「子セッションに指示」など）のほうが分かりやすい
-  if (category.label === 'セッション') {
-    const label = mcpParts(tool.name)?.tool ?? tool.name;
-    return tool.status === 'running' ? `${label}…` : tool.status === 'error' ? `${label}（失敗）` : label;
-  }
+  if (category === 'session') return named(mcpParts(tool.name)?.tool ?? tool.name);
   // チェックリスト・ウォークスルーのツールは、ツールの名前と対象（「チェックする · やること #3」「コードを示す · src/tax.ts:12-20」など）
-  if (category.label === 'チェックリスト' || category.label === 'ウォークスルー') {
-    const label = [mcpParts(tool.name)?.tool ?? tool.name, tool.target].filter(Boolean).join(' · ');
-    return tool.status === 'running' ? `${label}…` : tool.status === 'error' ? `${label}（失敗）` : label;
-  }
-  if (tool.description) {
-    const text = shorten(tool.description.replace(/[。.…]+$/, ''));
-    return tool.status === 'running' ? `${text}…` : tool.status === 'error' ? `${text}（失敗）` : text;
-  }
-  const subject = category.label === 'ToDo' ? 'ToDo' : tool.filePath ? baseName(tool.filePath) : shorten(tool.target || toolLabel(tool.name));
-  if (tool.status === 'running') return `${subject} を${category.verb}中…`;
-  if (tool.status === 'error') return `${subject} の${category.verb}に失敗しました`;
-  return `${subject} を${category.done}`;
+  if (category === 'checklist' || category === 'walkthrough') return named([mcpParts(tool.name)?.tool ?? tool.name, tool.target].filter(Boolean).join(' · '));
+  if (tool.description) return named(shorten(tool.description.replace(/[。.…]+$/, '')));
+  const subject = category === 'todo' ? t('chat.toolLine.todo') : tool.filePath ? baseName(tool.filePath) : shorten(tool.target || toolLabel(tool.name));
+  const verb = VERB_OF[category];
+  if (tool.status === 'running') return t(`chat.toolLine.${verb}Running`, { subject });
+  if (tool.status === 'error') return t(`chat.toolLine.${verb}Failed`, { subject });
+  return t(`chat.toolLine.${verb}Done`, { subject });
 }
 
 function baseName(path: string): string {
@@ -162,9 +161,9 @@ function shorten(text: string): string {
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1000) return '1秒未満';
+  if (ms < 1000) return t('chat.duration.underSecond');
   const s = Math.round(ms / 1000);
-  return s < 60 ? `${s}秒` : `${Math.floor(s / 60)}分${s % 60}秒`;
+  return s < 60 ? t('chat.duration.seconds', { count: s }) : t('chat.duration.minutesSeconds', { minutes: Math.floor(s / 60), seconds: s % 60 });
 }
 
 // 畳んだ hooks の要約。例: フック 3件 · Stop · UserPromptSubmit · 失敗 1 · 1.2秒
@@ -172,7 +171,7 @@ export function hookSummary(group: HookGroup): { count: string; events: string[]
   const events = [...new Set(group.runs.map((r) => r.event))];
   const times = group.runs.map((r) => r.durationMs).filter((v): v is number => v !== null);
   return {
-    count: `フック ${group.runs.length}件`,
+    count: t('chat.hookGroup.count', { count: group.runs.length }),
     events,
     failed: group.runs.filter((r) => r.outcome === 'error').length,
     blocked: group.runs.filter((r) => r.outcome === 'blocked').length,

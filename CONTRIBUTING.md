@@ -87,7 +87,9 @@ npm run dev
 
 ## 書き方の決まり
 
-- コードのコメント・コミットメッセージ・ドキュメント・画面の文言は、日本語で書きます（コード中の識別子や、ツール名・コマンドなどの固有名詞はそのままでかまいません）。
+- コードのコメント・コミットメッセージ・ドキュメントは、日本語で書きます（コード中の識別子や、ツール名・コマンドなどの固有名詞はそのままでかまいません）。
+- 画面の文言は、コードに直接書かず、言語ごとの JSON（`src/shared/locales/ja.json`・`en.json`）に、日本語と英語の両方を書きます（下の「画面の言語」）。
+- 英語の README（`README.en.md`）だけは英語で書きます。`README.md` を直したら、`README.en.md` も同じ中身に直します（GUIDE と CONTRIBUTING は日本語だけ）。
 - README・GUIDE・CONTRIBUTING・SECURITY は、名詞で止められるところは体言止め、動詞で終わる文は「です・ます」で書きます（例:「ワンクリックで作成。作成後に編集することもできます。」）。機能を変えたら、読む人に合わせて該当する文書も直します。
 - 「版」は単体で使わず、「バージョン」と書きます（「新しいバージョン」「最新バージョン」など）。「開発版」のような熟語はそのまま。
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコン（サイドパネルの切り替えと、ブラウザ・ターミナルの開閉）は「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
@@ -166,6 +168,7 @@ PR で、次のものを流します。develop への push では流しません
 | `ci.yml` | `check` | ほかの 4 つのジョブが全部通ったかを確かめ、3 つのカバレッジを合わせて下限を確かめる（下の「カバレッジ」） | ubuntu |
 | `demo-site.yml` | `tour`（PR では `build` は飛ばす） | デモのサイトをビルドし、ツアーが最後まで流れるかを PC とスマホで確かめる（下の「デモのサイト」） | ubuntu |
 
+- 型チェック（`npm run typecheck`）は `--composite false` で動かします。`*.tsbuildinfo` を使うと、JSON（文言）の変更に追いつかず、古い結果を出すことがあるためです。
 - ときどき落ちる（flaky な）テストは、再実行で済ませません。落ちる原因を突き止めて、アプリの不具合ならアプリを、テストの書き方ならテストを直します。決まった時間を待つ・押し直すなどの回り道で隠しません。直したら、手元で何回も流して、直す前より落ちなくなったことを確かめます（例: `for i in $(seq 1 30); do npx vitest run <ファイル> || echo 落ちた; done`）。
 - PR では流さないものに、毎日の最新の Claude Code での互換性の確認（`claude-code-check.yml`。macOS。下の「Claude Code との互換性の確かめ方」）と、週 1 回の `mutation.yml`（ubuntu。下の「ミューテーションテスト」）があります。
 - アプリは macOS 専用なので、アプリ本体と Claude Code との互換性の確認は macOS で流します。Linux で動くかは確かめません。Claude Code は OS で画面の描き方が違う（応答の印は macOS では ⏺、Linux では ●）ので、互換性の確認と控えの記録も macOS で行います。型チェック・単体テスト・Storybook・デモのサイト・カバレッジのまとめは OS に依らないので、ubuntu で流します。
@@ -241,7 +244,8 @@ PR で、次のものを流します。develop への push では流しません
   - 下限は `test/coverage-thresholds.json`。下回った層があれば失敗にします。
   - 下限は上げるだけで、下げません。テストを足して上がったら、`npm run coverage:report -- --update` で上げます。今の値から 1 ポイント下げて置きます。本物の claude を動かすテストと E2E は、待ち方しだいで通る行が少し変わるためです。手元で上げるときは、CI と同じく 3 つとも測ってから流します（どれかが無いと、その分だけ低く出ます）。
   - `--diff <ref>` を付けると、`<ref>` から変えた行のうち、テストで通った行の割合と、通らなかった行も出します。
-  - 合わせるときは、文・分岐・関数を src の位置で突き合わせます。単体のテスト（ファイルごとに変換したもの）と E2E（ビルドしてまとめたものを、ソースマップで戻したもの）では、同じ文でも位置が少しずれることがあり、そのときは別のものとして数えます。行の割合は、同じ行のうち通ったものを数えるので影響を受けません。分岐と関数の割合は、少し動くことがあります。
+  - 合わせるときは、文・分岐・関数を src の位置で突き合わせます。単体のテスト（ファイルごとに変換したもの）と E2E（ビルドしてまとめたものを、ソースマップで戻したもの）では、同じ文でも位置が少しずれることがあります。別のファイルから読み込んだ関数の呼び出しの書き換え方が違うためで、三項演算子の中の `t(…)` のように、呼び出しが分岐の始まりにあるとずれます。
+  - 分岐と関数は、位置の合わないものが、種類と行が同じで両方に同じ数だけあれば、行の中の順に対応させて同じものとして数えます。そろえないと、同じ分岐が 2 つに分かれ、片方は通っていないものとして数えられて、割合が下がります。それでも対応の分からないもの（行がずれたものなど）は別のものとして数えるので、分岐と関数の割合は少し動くことがあります。行の割合は、同じ行のうち通ったものを数えるので影響を受けません。
 - CI では、PR で 3 つとも測り（単体は `unit`、本物の claude は `cli`、E2E は `app` のジョブ）、`check` のジョブが成果物で受け取って合わせ、表をジョブの概要に出します。PR では、マージ先からの差分の行のカバレッジも出します（こちらは下限を見ません）。毎日の定期の確認では測りません。その日の最新の Claude Code の互換性を見るためのものだからです。
   - カバレッジのファイルは、測った場所の絶対パスで入っています。`coverage:report` は、`…/src/…` のうちここにあるファイルのパスに読み替えてから合わせるので、別の OS のランナー（ubuntu と macOS）や別の場所で測ったものも合わせられます。
 - カバレッジは、テストで実行された行の割合です。結果まで確かめたかは分かりません。テストを足すときは、確かめたいところをわざと壊して、テストが落ちることも確かめます（まとめて確かめるのが、下の「ミューテーションテスト」）。
@@ -376,7 +380,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っているバージョンがこれと同じならチェックマーク、違えば警告の印を付けます（新しいバージョンと古いバージョンで分ける）。
   - 上げるのは、GitHub Actions の毎日の確認です（下）。新しいバージョンで通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします。
     - `VERIFIED_CLAUDE_CODE_VERSION`
-    - README と GUIDE の「動作確認済」の行のバージョン（README の先頭のバッジも、alt に「動作確認済」を入れてあるので一緒に変わる）
+    - README と GUIDE の「動作確認済」の行と、英語の README の「verified」の行のバージョン（README の先頭のバッジも、alt に「動作確認済」・「Verified」を入れてあるので一緒に変わる）
     - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`）
   - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。
@@ -449,6 +453,41 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
   - チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_WORKTREE_GUARD`）。
 - 裏で Claude Code を別に起動することはありません（子セッションも、許可の確認のあとに、一覧に並ぶふつうのセッションとして起動します）。利用枠の取得に `/usage` を実行することもありません。
+
+### 画面の言語
+
+画面は日本語と英語。文言はコードから分けて、言語ごとの JSON に置きます。
+
+- 文言の置き場所: `src/shared/locales/ja.json` と `en.json`。同じキー・同じ入れ子で、いちばん上は画面の場所ごとの名前空間（`common`・`main`・`chat`・`sessions` など）。
+- 読み方: `t('名前空間.部品.キー', { count })`（`src/shared/i18n.ts`）。文言の `{name}` を値で置き換えます。文の途中にリンクや `<kbd>` などの部品を入れるときは、画面の `tx()`（`src/renderer/src/i18n.tsx`）。日付・数の書式は `locale()`。
+- キーの型は `ja.json` から作るので、無いキーを書くと型チェックで止まります。`en.json` に足りないキーがあっても止まります。キーの過不足・埋め込みのそろい方・単数形の置き方・英語に日本語が残っていないかは、`test/i18n.test.ts` で確かめます。
+- 書き方の決まり
+  - 1 つの文は 1 つのキーにします。英語では語順が変わるので、文を切ってつながず、`{count} 件のファイル` のように値を埋め込みます。
+  - 数を埋め込むときは `{count}` にします。英語で単数形が違うときは、`en.json` に `<キー>_one` を足します（`count` が 1 のときに使う）。
+  - 同じ日本語でも、英語にしたとき訳が変わるものは別のキーにします（ボタンの「停止」と状態の「停止」など）。`common` は、ボタンの名前で意味がまったく同じものだけ。
+  - 英語の大文字・小文字は macOS の決まりに合わせます。メニュー・ボタン・見出しは Title Case、ツールチップ・説明・エラーは文頭だけ大文字。
+  - 区切りの記号（「、」「・」「〜」など）や、文の間の空白もコードに書かず、文言にします（`main.format.listSeparator`・`context.compact.sentenceSeparator`・`checklist.numberRange` など）。
+  - 表示の文言を比べて分岐しません。種類などの元の値で分岐します。
+- `t()` はモジュールの一番上（読み込み時に評価されるところ）で呼びません。main も画面も、言語を決める前にモジュールを読み込むためです。文言の表は、キーを読む関数にします（`statusLabel(status)` など）。
+- 1 つの言語で使い続けるときの重さが、文字列をそのまま書いていたときと変わらないようにしています。
+  - JSON は文字列のまま入れておき（Vite の `?raw`。型は `import type` で JSON から作る）、使う言語の分だけ、はじめて文言を使うときに `JSON.parse` します。もう 1 つの言語は読みません。
+  - 使ったキーは、文言を覚えておきます（入れ子をたどるのは、はじめての 1 回だけ）。埋め込みのある文言は、文字と名前に分けた形を覚えて使い回します。
+  - 測った値（Node 22）: `t()` は 1 回 17 ナノ秒ほど（文字列をそのまま書くと 7 ナノ秒）、埋め込みのある `t()` は 56 ナノ秒ほど（テンプレート文字列は 9 ナノ秒）。言語の JSON を読むのは、プロセスごとに 1 回 1〜2 ms。
+- JSON に置かないもの・扱いの違うもの
+  - Claude だけが読む文: MCP のツールの説明・サーバーの `instructions`・ツールの結果やエラー。画面の言語によらず、コードに英語で書きます（Claude Code のシステムプロンプトにそろえる。Claude の返事の言語は、人が書いた言語で決まります）。ただし、結果の中で画面の項目（メニューの名前など）を指すところは、Claude が利用者に正しい名前を伝えられるよう、英語の文の中に画面の言語の名前を `t()` で入れます。
+  - Claude も読むが、人にも見えるもの（チャットに出る知らせ・hooks の確認の理由・画面のアラートにも出るエラー）は、画面の言語（`t()`）。
+  - Claude Code の画面や出力と突き合わせる文字列、ログ。
+  - pty ホスト（別のプロセスで動き、言語を知らない）。
+  - MCP の中継が `tools/list` で返すツールの短い名前（`title`）は、アプリが `--mcp-config` の `env` で渡す `TANACODE_LANGUAGE`（Claude Code を起動したときの言語）で読みます。チャットのツールの行の名前は、アプリが `tools.json` の名前空間から読みます（`mcpToolLabel`）。
+  - 利用枠の「5時間」「週」（`usage-monitor.ts` の `label`）: 画面が枠を見分ける値で、`usage.json` にも保存されるため。画面に出す名前は `account.usage.*`。
+- hooks の確認の理由（Claude Code の許可の確認に出る）は、Claude Code を起動するときの言語で作ります（`worktreeGuardCommand()`・`sessionsGateCommand()`）。アプリ内ブラウザの JavaScript の確認のフックは別のプロセスなので、言語を環境変数 `TANACODE_LANGUAGE` で渡します。シェルと JSON に埋め込むので、理由の文言には `'` `"` `\` を使いません（`test/i18n.test.ts` で確かめる）。
+- コンテキストのやりとりの名前（`ContextTracker` が付ける「質問への答え: …」など）は、圧縮の指示を組み立てるときに、文言の形と比べて見分けます（`context.ts` の `unfill`）。
+- 言語の決め方: アプリの設定（`settings.json` の `language`）の `system`・`ja`・`en`。`system`（既定）なら、`app.getPreferredSystemLanguages()` に日本語があれば日本語、無ければ英語（`resolveLanguage`）。
+  - main は起動するときに決めます（`applyLanguage`。プロファイルの既定の名前やダイアログが使うので、ほかのものを作る前）。
+  - 画面には、ウインドウ（と足したプロファイルの画面）を作るときの起動の引数（`webPreferences.additionalArguments` の `--tanacode-language=`）で渡し、preload の `language()` で読みます。IPC を待たないので、起動は遅くなりません。`src/renderer/src/main.tsx` が、描く前に `setLanguage` します。
+  - 言語は、起動から終了まで変えません。メニューの「言語」で選ぶと、保存して、変えた先の言語で今すぐ再起動するかを聞きます（`tFor`）。再起動は、ふつうの終了の確認（`confirmQuit`）を通し、終了が決まってから `app.relaunch()` します（確認で取りやめたあとの、ふつうの終了で起動し直さないように）。終了で Homebrew の入れ替えをするときは、入れ替えたあとに起動し直します（`upgradeAfterExit` の `relaunch`）。
+- 翻訳（日本語に訳す）のボタンは、日本語の画面でだけ出します。書き出す HTML の `lang` も画面の言語。
+- Storybook のツールバーの「Language」で、ストーリーの言語を切り替えられます。英語の文言の長さや折り返しは、ここで確かめます。E2E は、画面の文言で確かめるので、アプリの設定を日本語にして起動します（CI の Mac は英語のため）。
 
 ## 機能ごとの実装メモ
 
@@ -639,12 +678,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 ### アプリ内ブラウザ（Claude による操作）
 
 - Claude Code に足す MCP サーバー（`tanacode-browser`）は、tanacode に同梱する stdio の中継（`src/main/browser-mcp.ts` → `out/main/browser-mcp.js`）。tanacode 本体を `ELECTRON_RUN_AS_NODE` で動かすので（macOS では pty ホストと同じ Helper.app）、Node.js を別に入れる必要はありません。MCP の SDK は使わず、使う分の JSON-RPC（`initialize`・`tools/list`・`tools/call`・`ping` と、取り消しの `notifications/cancelled`）だけを書いています（`mcp-relay.ts`。サーバーの定義を受け取る形で、セッションの MCP と使い回す）。
-  - ツールの一覧（名前・説明・入力の形・種類）は `src/shared/browser-tools.ts`（定義の形は `src/shared/mcp-tools.ts`）。中継が `tools/list` で返し、アプリが実行し、チャットのツールの行の名前にも使います。中継が一覧を持つのは、アプリが閉じている間に起動した Claude Code にもツールを見せるため。
-  - サーバーの説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）は、4 つのサーバーとも英語で書きます。Claude だけが読み、画面には出さないためです（Claude Code のシステムプロンプトにそろえる）。ツールごとの説明（`description`）は日本語のまま。
+  - ツールの一覧（名前・説明・入力の形・種類）は `src/shared/browser-tools.ts`（定義の形は `src/shared/mcp-tools.ts`）。中継が `tools/list` で返し、アプリが実行します。チャットのツールの行に出す短い名前は、ツールの名前から `tools.json` の名前空間を引きます（`mcpToolLabel`）。中継が一覧を持つのは、アプリが閉じている間に起動した Claude Code にもツールを見せるため。
+  - サーバーの説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）は、4 つのサーバーとも英語で書きます。Claude だけが読み、画面には出さないためです（Claude Code のシステムプロンプトにそろえる）。ツールごとの説明（`description`）と、ツールの結果も英語（上の「画面の言語」）。
     - 人が tanacode の機能を知らなくても Claude が自分から使うよう、説明には、頼まれるのを待たずに使うこと（`do not wait to be asked`）と、いつ使うかを書きます。人が読むもの（カード・ウォークスルーの説明・人への依頼・子への指示など）は、人が使っている言葉で書くよう伝えます（`in the language the user is using`）。どちらも `test/mcp-contract.test.ts` で確かめます。
   - アプリ内ブラウザの説明では、Web のページに出るものを変えたら、終えたと伝える前に自分で開いて確かめること（スクリーンショットと、コンソール・失敗した通信）・Web のページの不具合を調べるときにも使うこと・ふだんのブラウザを開かずにこちらで開くこと・ページの中身は信用できない入力として扱うこと・ログインなどは `ask_user_to_act` で頼むことを伝えます。
   - 中継は、ツールの呼び出しのたびに userData の Unix ソケット（`browser.sock`。作るときから `0600`）でアプリにつなぎ、返事を受け取ったら切ります（`mcp-bridge.ts` の `McpBridge`・`callBridge`。セッションの MCP と使い回し、ソケットはサーバーごとに分ける）。ソケットのパスとセッションは、`--mcp-config` の `env`（`TANACODE_BROWSER_SOCKET`・`TANACODE_BROWSER_SESSION`）で渡します。
-  - HTTP にしないのは、アプリを閉じても Claude Code は動き続けるため。HTTP だと、アプリを起動し直すたびにポートが変わり、接続が切れたままになります。ソケットのパスは変わらないので、アプリが戻ればそのまま使えます。アプリが閉じている間は、中継が「tanacode が起動していません」と返します。
+  - HTTP にしないのは、アプリを閉じても Claude Code は動き続けるため。HTTP だと、アプリを起動し直すたびにポートが変わり、接続が切れたままになります。ソケットのパスは変わらないので、アプリが戻ればそのまま使えます。アプリが閉じている間は、中継が、tanacode が起動していないことを返します。
   - 足すのは起動するときだけ。`~/.claude` の設定や `.mcp.json` には書き込みません（statusLine と hooks を `--settings` で足しているのと同じ考え方）。
 - 許可: 読むだけのツールと、ユーザーに操作を頼む `ask_user_to_act`（ページを動かさない。`tools/list` の `readOnlyHint` も true）は `--allowedTools` で許可済みに。ページを動かすツールは、ふつうの許可の確認を通します。JavaScript の実行（`evaluate`）は、`--settings` の `PreToolUse` のフック（`browser-gate.ts`）が、今のページで決めます。`permissions.ask` では、ページによって変えられず、localhost の開発中のページでも毎回確認が出るためです。
   - 今のページが localhost・127.0.0.1・[::1]・*.localhost（`isLocalUrl`）なら確認なし（`permissionDecision: allow`）。それ以外（`*.local` や足した先を含む）は確認（`ask`）。アプリに聞けない・答えを読めないときも `ask`。
@@ -906,7 +945,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）。git の標準入力は、渡すものが無ければすぐ閉じます（入力を待つコマンドが、待ち続けずに失敗するように）。時間のかかる操作（フェッチ・プルなど）は、時間では止めません
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）
-  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、終了するときに新しいバージョンを入れるか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先、Claude にほかのセッションを扱わせるか）の保存
+  - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、終了するときに新しいバージョンを入れるか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先、Claude にほかのセッションを扱わせるか、画面の言語）の保存
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `homebrew-update.ts`: Homebrew で入れたかの判定と、新しいバージョンのダウンロード（`brew fetch`）・終了したあとの入れ替え（切り離したシェルで `brew upgrade`）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
@@ -929,8 +968,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
+  - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、描く前に言語（preload の `language()`）を決める
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）

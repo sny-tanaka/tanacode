@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import { DEFAULT_PROFILE_ID, PROFILE_COLORS, type ProfileInfo } from '@shared/profile';
 import { errorMessage } from '../errorMessage';
+import { tx } from '../i18n';
 import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 import { defaultClaudeDir, useProfiles, type ProfilesDialogMode } from './profiles';
 
@@ -27,11 +29,11 @@ export function ProfilesDialog({ mode, onClose }: { mode: ProfilesDialogMode; on
   };
 
   const remove = async (profile: ProfileInfo) => {
-    if (!window.confirm(`「${profile.name}」を登録から外します。\nClaude Code の設定のフォルダ（${tilde(profile.claudeDir)}）とセッションのデータは消えません。もう一度足せば、同じログインのまま使えます。`)) return;
+    if (!window.confirm(t('account.profiles.confirmRemove', { name: profile.name, dir: tilde(profile.claudeDir) }))) return;
     try {
       await window.tanacode.profiles.remove(profile.id);
     } catch (error) {
-      window.alert(`外せませんでした: ${errorMessage(error)}`);
+      window.alert(t('account.profiles.removeFailed', { error: errorMessage(error) }));
     }
     dialog.current?.focus();
   };
@@ -42,7 +44,7 @@ export function ProfilesDialog({ mode, onClose }: { mode: ProfilesDialogMode; on
         className="quick-open settings-files-dialog profiles-dialog"
         ref={dialog}
         role="dialog"
-        aria-label="プロファイル"
+        aria-label={t('account.profiles.title')}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -51,11 +53,8 @@ export function ProfilesDialog({ mode, onClose }: { mode: ProfilesDialogMode; on
         }}
       >
         <div className="settings-files-head">
-          <h2>プロファイル</h2>
-          <p>
-            {'Claude Code のアカウントごとに、ログイン・セッション・設定を分けて使えます。' +
-              'プロファイルごとに Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）を持ち、ほかのプロファイルとは混ざりません。'}
-          </p>
+          <h2>{t('account.profiles.title')}</h2>
+          <p>{t('account.profiles.about')}</p>
         </div>
         <div className="quick-open-list">
           {profiles.map((profile) => (
@@ -66,8 +65,8 @@ export function ProfilesDialog({ mode, onClose }: { mode: ProfilesDialogMode; on
           <NewProfileForm profiles={profiles} onCancel={() => setAdding(false)} onAdded={close} />
         ) : (
           <div className="settings-files-foot">
-            <IconButton icon={AddIcon} label="追加" tip="プロファイルを追加…" onClick={() => setAdding(true)} />
-            <IconButton icon={CloseIcon} label="閉じる" tip="閉じる（Esc）" onClick={close} />
+            <IconButton icon={AddIcon} label={t('common.add')} tip={t('account.profiles.addTip')} onClick={() => setAdding(true)} />
+            <IconButton icon={CloseIcon} label={t('common.close')} tip={t('account.profiles.closeTip')} onClick={close} />
           </div>
         )}
       </div>
@@ -89,7 +88,7 @@ function ProfileRow({ profile, onRemove }: { profile: ProfileInfo; onRemove: () 
   const update = (patch: { name?: string; color?: string }) =>
     window.tanacode.profiles.update(profile.id, patch).catch((error: unknown) => {
       setName(profile.name);
-      window.alert(`変えられませんでした: ${errorMessage(error)}`);
+      window.alert(t('account.profiles.updateFailed', { error: errorMessage(error) }));
     });
   const commit = () => {
     if (cancelled.current) {
@@ -107,8 +106,8 @@ function ProfileRow({ profile, onRemove }: { profile: ProfileInfo; onRemove: () 
           className="settings-file-name"
           value={name}
           spellCheck={false}
-          aria-label="名前"
-          title="クリックして名前を変える"
+          aria-label={t('account.profiles.name')}
+          title={t('account.profiles.renameTip')}
           onChange={(e) => setName(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -124,12 +123,12 @@ function ProfileRow({ profile, onRemove }: { profile: ProfileInfo; onRemove: () 
           }}
         />
         <span className="settings-file-path" title={profile.claudeDir ?? undefined}>
-          {profile.claudeDir === null ? '~/.claude（標準）' : tilde(profile.claudeDir)}
+          {profile.claudeDir === null ? t('account.profiles.defaultDir') : tilde(profile.claudeDir)}
         </span>
       </div>
       <ColorPicker value={profile.color} onChange={(color) => void update({ color })} />
       {profile.id !== DEFAULT_PROFILE_ID ? (
-        <IconButton size="sm" icon={TrashIcon} label="削除" tip="登録から外す（設定のフォルダとデータは消えません）" onClick={onRemove} />
+        <IconButton size="sm" icon={TrashIcon} label={t('common.delete')} tip={t('account.profiles.removeTip')} onClick={onRemove} />
       ) : (
         <span className="profile-row-spacer" />
       )}
@@ -161,7 +160,7 @@ function NewProfileForm({ profiles, onCancel, onAdded }: { profiles: ProfileInfo
       await window.tanacode.profiles.switch(added.id);
       onAdded();
     } catch (error) {
-      window.alert(`追加できませんでした: ${errorMessage(error)}`);
+      window.alert(t('account.profiles.addFailed', { error: errorMessage(error) }));
     } finally {
       setBusy(false);
     }
@@ -176,30 +175,33 @@ function NewProfileForm({ profiles, onCancel, onAdded }: { profiles: ProfileInfo
       }}
     >
       <label className="profile-new-field">
-        <span>名前</span>
-        <input ref={nameInput} value={name} spellCheck={false} placeholder="例: 個人" onChange={(e) => setName(e.target.value)} />
+        <span>{t('account.profiles.name')}</span>
+        <input
+          ref={nameInput}
+          value={name}
+          spellCheck={false}
+          placeholder={t('account.profiles.namePlaceholder')}
+          onChange={(e) => setName(e.target.value)}
+        />
       </label>
       <div className="profile-new-field">
-        <span>色</span>
+        <span>{t('account.profiles.color')}</span>
         <ColorPicker value={color} onChange={setColor} />
       </div>
       <div className="profile-new-field">
-        <span>フォルダ</span>
-        <input aria-label="Claude Code の設定のフォルダ" value={claudeDir} spellCheck={false} onChange={(e) => setDir(e.target.value)} />
+        <span>{t('account.profiles.folder')}</span>
+        <input aria-label={t('account.profiles.folderLabel')} value={claudeDir} spellCheck={false} onChange={(e) => setDir(e.target.value)} />
         <button type="button" className="ghost-button" onClick={() => void pick()}>
-          選ぶ…
+          {t('account.profiles.pickFolder')}
         </button>
       </div>
-      <p className="profile-new-note">
-        Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）。無ければ作ります。ターミナルでも <code>CLAUDE_CONFIG_DIR={claudeDir} claude</code>{' '}
-        で同じアカウントを使えます。追加したら、アカウント欄のメニューの「ログイン…」でログインしてください。
-      </p>
+      <p className="profile-new-note">{tx('account.profiles.folderNote', { command: <code>CLAUDE_CONFIG_DIR={claudeDir} claude</code> })}</p>
       <div className="settings-files-foot">
         <button type="button" className="ghost-button" onClick={onCancel}>
-          キャンセル
+          {t('common.cancel')}
         </button>
         <button type="submit" className="send-button" disabled={!name.trim() || busy}>
-          追加
+          {t('common.add')}
         </button>
       </div>
     </form>
@@ -208,7 +210,7 @@ function NewProfileForm({ profiles, onCancel, onAdded }: { profiles: ProfileInfo
 
 function ColorPicker({ value, onChange }: { value: string; onChange: (color: string) => void }) {
   return (
-    <div className="profile-colors" role="radiogroup" aria-label="色">
+    <div className="profile-colors" role="radiogroup" aria-label={t('account.profiles.color')}>
       {PROFILE_COLORS.map((color) => (
         <button
           key={color}

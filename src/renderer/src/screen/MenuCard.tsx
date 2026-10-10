@@ -1,20 +1,15 @@
 import { useState } from 'react';
+import { t } from '@shared/i18n';
 import type { ChooseResult, Menu, MenuOption } from '@shared/screen';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
 
-const KIND_LABEL = { question: 'Claude Code からの質問', permission: '実行の許可', other: '確認' } as const;
+// メニューの種類の名前（見出しに出す）
+const kindLabel = (kind: Menu['kind']) => t(`screen.kind.${kind}`);
 // 自由記述の欄がまだ空のときの表示（「Type something.」。複数選択では末尾の . が無い）
 const TEXT_PLACEHOLDER = /^Type something\.?$/;
 
 // 選べなかったとき、カードに出す知らせ（押したことを黙って捨てない）
-const NOT_CHOSEN: Record<Exclude<ChooseResult, 'chosen'>, string> = {
-  busy: 'ほかの操作の途中だったため、送れませんでした。もう一度押してください',
-  gone: '画面が変わったため、送りませんでした',
-  missing: 'この選択肢が Claude Code の画面に見つからないため、送りませんでした',
-  stuck: '選択肢にカーソルを合わせられませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください',
-  ignored: 'Claude Code が受け付けませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください',
-};
-const SEND_FAILED = '送れませんでした。もう一度押してください';
+const notChosen = (result: Exclude<ChooseResult, 'chosen'>) => t(`screen.notChosen.${result}`);
 
 // 自由記述に入力済みの文字（空なら ''）
 function typedText(option: MenuOption): string {
@@ -22,8 +17,8 @@ function typedText(option: MenuOption): string {
 }
 
 function optionLabel(option: MenuOption): string {
-  if (option.id === 'submit') return option.label === 'Next' ? '次の質問へ →' : '回答の確認へ →';
-  if (option.textInput) return typedText(option) ? `その他: ${typedText(option)}` : 'その他（自由に入力）';
+  if (option.id === 'submit') return option.label === 'Next' ? t('screen.card.nextQuestion') : t('screen.card.reviewAnswers');
+  if (option.textInput) return typedText(option) ? t('screen.card.otherTyped', { text: typedText(option) }) : t('screen.card.other');
   return option.label;
 }
 
@@ -57,8 +52,8 @@ export function MenuCard({ sessionId, menu }: Props) {
     window.tanacode.screen
       .choose(sessionId, { optionId: option.id, key, text: input })
       .then(
-        (result) => setFailure(result && result !== 'chosen' ? NOT_CHOSEN[result] : null),
-        () => setFailure(SEND_FAILED),
+        (result) => setFailure(result && result !== 'chosen' ? notChosen(result) : null),
+        () => setFailure(t('screen.card.sendFailed')),
       )
       .finally(() => setChosen(null));
   };
@@ -74,8 +69,8 @@ export function MenuCard({ sessionId, menu }: Props) {
     <div className={`menu-card ${menu.kind}`}>
       {/* 見出しの行。キャンセルは右上に置く */}
       <div className="menu-card-head">
-        <div className="menu-card-kind">{KIND_LABEL[menu.kind]}</div>
-        <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="キャンセル（Esc）" onClick={() => window.tanacode.pty.write(sessionId, '\x1b')} />
+        <div className="menu-card-kind">{kindLabel(menu.kind)}</div>
+        <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} tip={t('screen.card.cancelTip')} onClick={() => window.tanacode.pty.write(sessionId, '\x1b')} />
       </div>
       {menu.tabs.length > 1 && (
         <div className="menu-tabs">
@@ -104,11 +99,11 @@ export function MenuCard({ sessionId, menu }: Props) {
                 setEditing(false);
               }}
             >
-              <input autoFocus value={text} placeholder="回答を入力" onChange={(e) => setText(e.target.value)} />
+              <input autoFocus value={text} placeholder={t('screen.card.answerPlaceholder')} onChange={(e) => setText(e.target.value)} />
               <button className="send-button" type="submit" disabled={!text.trim()}>
-                {menu.multiSelect ? '決定' : '送信'}
+                {menu.multiSelect ? t('screen.card.confirm') : t('screen.card.send')}
               </button>
-              <IconButton icon={CloseIcon} size="md" label="やめる" onClick={() => setEditing(false)} />
+              <IconButton icon={CloseIcon} size="md" label={t('screen.card.stopEditing')} onClick={() => setEditing(false)} />
             </form>
           ) : (
             <button
@@ -136,8 +131,8 @@ export function MenuCard({ sessionId, menu }: Props) {
       {/* 選択肢のプレビュー（比べるための図や文章）。ホバーした選択肢のものを出す */}
       {shown && (
         <div className="menu-preview">
-          <div className="menu-preview-label">プレビュー: {shown.label}</div>
-          {shown.preview ? <pre className="menu-preview-body">{shown.preview}</pre> : <div className="menu-preview-none">この選択肢にはプレビューがありません</div>}
+          <div className="menu-preview-label">{t('screen.card.preview', { label: shown.label })}</div>
+          {shown.preview ? <pre className="menu-preview-body">{shown.preview}</pre> : <div className="menu-preview-none">{t('screen.card.noPreview')}</div>}
         </div>
       )}
     </div>

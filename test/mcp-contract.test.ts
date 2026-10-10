@@ -6,7 +6,7 @@ import type { NewSessionOptions, SessionSummary } from '@shared/ipc';
 import type { ScreenInfo } from '@shared/screen';
 import { BROWSER_MCP } from '@shared/browser-tools';
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
-import { allowedToolIds, type McpServerDef, type McpTool } from '@shared/mcp-tools';
+import { allowedToolIds, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
 import { SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD } from '@shared/session-tools';
 import { WALKTHROUGH_MCP } from '@shared/walkthrough-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
@@ -68,14 +68,14 @@ describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def }) => {
   it('ツールの名前とラベルが重ならず、名前は英小文字と _ だけ', () => {
     const names = def.tools.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(new Set(def.tools.map((t) => t.label)).size).toBe(names.length);
+    expect(new Set(def.tools.map((t) => mcpToolLabel(def, t))).size).toBe(names.length);
     expect(names.filter((n) => !/^[a-z][a-z0-9_]*$/.test(n))).toEqual([]);
   });
 
   it('サーバーの説明（instructions）と、ツールごとの説明・ラベルがある', () => {
     expect(def.title.trim()).not.toBe('');
     expect(def.instructions.trim()).not.toBe('');
-    expect(def.tools.filter((t) => !t.description.trim() || !t.label.trim()).map((t) => t.name)).toEqual([]);
+    expect(def.tools.filter((t) => !t.description.trim() || !mcpToolLabel(def, t).trim()).map((t) => t.name)).toEqual([]);
   });
 
   it('説明（instructions）で、人に頼まれなくても使うことと、人が読むものは人が使っている言葉で書くことを伝える', () => {
@@ -94,7 +94,7 @@ describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def }) => {
 
   it('ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す）', () => {
     expect({
-      tools: def.tools.map((t) => ({ name: t.name, kind: t.kind, label: t.label, inputSchema: shape(t.inputSchema as Schema) })),
+      tools: def.tools.map((t) => ({ name: t.name, kind: t.kind, label: mcpToolLabel(def, t), inputSchema: shape(t.inputSchema as Schema) })),
       allowedTools: allowedToolIds(def),
     }).toMatchSnapshot();
   });
@@ -198,14 +198,14 @@ function fakeHost(cwd: string): SessionsHost {
 
 const textOf = (result: ToolResult) => result.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
-describe('どのツールも、制御が振り分けて実行する（「知らないツールです」にならない）', () => {
+describe('どのツールも、制御が振り分けて実行する（「Unknown tool」にならない）', () => {
   let dir: string;
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'tanacode-mcp-contract-'));
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  const unknown = (name: string) => `知らないツールです: ${name}`;
+  const unknown = (name: string) => `Unknown tool: ${name}`;
 
   it('セッション', async () => {
     const control = new SessionsControl({ host: fakeHost(dir), enabled: () => true, home: '/nonexistent-home', notifyDelayMs: 10 });

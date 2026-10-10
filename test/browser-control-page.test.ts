@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 // locate（セレクタに当たる要素を探して見える位置まで動かす）の答え
-const found = (rect: { x: number; y: number; width: number; height: number }, description = 'button#go「送る」', covered: string | null = null) => ({
+const found = (rect: { x: number; y: number; width: number; height: number }, description = 'button#go "送る"', covered: string | null = null) => ({
   rect,
   viewport: { width: 800, height: 600 },
   description,
@@ -37,12 +37,12 @@ describe('ページを読むツールの前に（今のページ）', () => {
   it('今のタブが空・許していない先なら、ページに触れずに断る（URL はオリジンだけ）', async () => {
     const { call, open } = setup();
     const page = open('about:blank');
-    expect(await call('screenshot')).toEqual(textResult('今のタブは空です。navigate で開いてください', true));
+    expect(await call('screenshot')).toEqual(textResult('The current tab is empty. Open a page with navigate.', true));
     page.url = 'https://accounts.example.com/signin?continue=secret';
     for (const tool of ['screenshot', 'get_text', 'get_accessibility_tree', 'get_console_logs', 'click', 'evaluate']) {
       const result = await call(tool, { selector: '#a', expression: '1' });
       expect(result.isError, tool).toBe(true);
-      expect(textOf(result), tool).toMatch(/^今のページ（https:\/\/accounts\.example\.com）は、Claude に許していない先です/);
+      expect(textOf(result), tool).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude\./);
       expect(textOf(result), tool).not.toContain('secret');
     }
     expect(page.scripts).toEqual([]);
@@ -62,7 +62,7 @@ describe('スクリーンショット', () => {
     expect(page.captures).toEqual([undefined]);
     expect(result.content).toEqual([
       { type: 'image', data: Buffer.from('shot（縮めた）:800x600').toString('base64'), mimeType: 'image/png' },
-      { type: 'text', text: '見えている範囲・http://localhost:3000/・画像 800×600' },
+      { type: 'text', text: 'Visible area, http://localhost:3000/, image 800×600' },
     ]);
   });
 
@@ -70,9 +70,9 @@ describe('スクリーンショット', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.shot = new FakeImage(4000, 1000);
-    expect(textOf(await call('screenshot'))).toContain('画像 1568×392');
+    expect(textOf(await call('screenshot'))).toContain('image 1568×392');
     page.shot = new FakeImage(1000, 4000);
-    expect(textOf(await call('screenshot'))).toContain('画像 392×1568');
+    expect(textOf(await call('screenshot'))).toContain('image 392×1568');
     page.shot = new FakeImage(800, 600);
     const same = await call('screenshot');
     expect(same.content[0]).toEqual({ type: 'image', data: Buffer.from('shot:800x600').toString('base64'), mimeType: 'image/png' });
@@ -82,7 +82,7 @@ describe('スクリーンショット', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 100.5, y: 50, width: 200, height: 40 });
-    expect(textOf(await call('screenshot', { selector: '#go' }))).toBe('#go（button#go「送る」）・http://localhost:3000/・画像 800×600');
+    expect(textOf(await call('screenshot', { selector: '#go' }))).toBe('#go (button#go "送る"), http://localhost:3000/, image 800×600');
     expect(page.captures).toEqual([{ x: 92, y: 42, width: 216, height: 56 }]);
     expect(page.scriptsOf('locate')[0]).toContain('__all("#go")');
     // 左上と右下の端では、見えている範囲で切る
@@ -98,9 +98,9 @@ describe('スクリーンショット', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 900, y: 10, width: 20, height: 20 });
-    expect(await call('screenshot', { selector: '#out' })).toEqual(textResult('「#out」は大きさが 0 で、撮れません', true));
+    expect(await call('screenshot', { selector: '#out' })).toEqual(textResult('"#out" has zero size and cannot be captured.', true));
     page.page.locate = () => found({ x: 10, y: 700, width: 20, height: 20 });
-    expect(await call('screenshot', { selector: '#below' })).toEqual(textResult('「#below」は大きさが 0 で、撮れません', true));
+    expect(await call('screenshot', { selector: '#below' })).toEqual(textResult('"#below" has zero size and cannot be captured.', true));
     expect(page.captures).toEqual([]);
   });
 
@@ -118,7 +118,7 @@ describe('スクリーンショット', () => {
       clip: { x: 0, y: 0, width: 800, height: 2000, scale: 1 },
     });
     expect(images.buffers.map((b) => b.toString())).toEqual(['PNG の中身']);
-    expect(textOf(result)).toBe('ページの上から 2000px（全体の高さは 5001px。続きは scroll してから撮る）・http://localhost:3000/・画像 627×1568');
+    expect(textOf(result)).toBe('Top 2000px of the page (full height 5001px; scroll and take another screenshot for the rest), http://localhost:3000/, image 627×1568');
     expect(page.captures).toEqual([]);
     // CDP で撮ったものは、はじめからページの大きさなので、dpr を聞かない
     expect(page.scriptsOf('viewport')).toEqual([]);
@@ -132,7 +132,7 @@ describe('スクリーンショット', () => {
       'Page.getLayoutMetrics': () => ({ cssContentSize: { width: 800, height: 1200 }, cssLayoutViewport: { clientWidth: 800 } }),
       'Page.captureScreenshot': () => ({ data: '' }),
     });
-    expect(textOf(await call('screenshot', { fullPage: true }))).toBe('ページ全体（800×1200）・http://localhost:3000/・画像 800×1200');
+    expect(textOf(await call('screenshot', { fullPage: true }))).toBe('Full page (800×1200), http://localhost:3000/, image 800×1200');
     expect(page.debugger.sent('Page.captureScreenshot')[0].params).toMatchObject({ clip: { height: 1200 } });
   });
 
@@ -140,7 +140,7 @@ describe('スクリーンショット', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.shot = new FakeImage(0, 0);
-    expect(await call('screenshot')).toEqual(textResult('スクリーンショットを撮れませんでした（ページがまだ描かれていないかもしれません）', true));
+    expect(await call('screenshot')).toEqual(textResult('Could not take a screenshot (the page may not have been rendered yet).', true));
   });
 });
 
@@ -188,15 +188,15 @@ describe('ページの文字（get_text）', () => {
     );
     expect(textOf(await call('get_text'))).toBe(
       [
-        'タイトル: トップ',
+        'Title: トップ',
         'URL: http://localhost:3000/',
         '',
         '見出し\n\n本文',
         '',
-        '--- iframe（http://localhost:3000/frame）の中 ---',
+        '--- inside iframe (http://localhost:3000/frame) ---',
         '中の文字',
         '',
-        '--- iframe（http://127.0.0.1:5173/widget）の中 ---',
+        '--- inside iframe (http://127.0.0.1:5173/widget) ---',
         'ウィジェットの文字',
       ].join('\n'),
     );
@@ -214,9 +214,9 @@ describe('ページの文字（get_text）', () => {
     const page = open('http://localhost:3000/');
     page.page.text = (code) =>
       code.includes('"#main"') ? { title: '', url: 'http://localhost:3000/', parts: [{ frame: 'http://localhost:3000/f', text: 'メイン' }] } : null;
-    expect(textOf(await call('get_text', { selector: '#main' }))).toBe('タイトル: （なし）\nURL: http://localhost:3000/\n\n--- iframe（http://localhost:3000/f）の中 ---\nメイン');
+    expect(textOf(await call('get_text', { selector: '#main' }))).toBe('Title: (none)\nURL: http://localhost:3000/\n\n--- inside iframe (http://localhost:3000/f) ---\nメイン');
     expect(page.debugger.commands).toEqual([]);
-    expect(await call('get_text', { selector: '#none' })).toEqual(textResult('「#none」に当たる要素がありません', true));
+    expect(await call('get_text', { selector: '#none' })).toEqual(textResult('No element matches "#none".', true));
   });
 
   it('長い文字は 20000 文字で切る', async () => {
@@ -224,7 +224,7 @@ describe('ページの文字（get_text）', () => {
     const page = open('http://localhost:3000/');
     page.page.text = () => ({ title: 'T', url: 'http://localhost:3000/', parts: [{ frame: null, text: 'あ'.repeat(25_000) }] });
     const text = textOf(await call('get_text', { selector: 'body' }));
-    expect(text).toBe(`タイトル: T\nURL: http://localhost:3000/\n\n${'あ'.repeat(20_000)}\n…（5000 文字を省きました）`);
+    expect(text).toBe(`Title: T\nURL: http://localhost:3000/\n\n${'あ'.repeat(20_000)}\n…(5000 more characters omitted)`);
   });
 });
 
@@ -293,15 +293,15 @@ describe('アクセシビリティのツリー', () => {
         'URL: http://localhost:3000/',
         '- RootWebArea "トップ"',
         '  - button "送る" [focused, level=2, expanded]',
-        '  - textbox "名前" 値="たなか"',
+        '  - textbox "名前" value="たなか"',
         '  - checkbox "同意" [checked=mixed]',
-        `  - textbox "メモ" 値="${'x'.repeat(100)}"`,
-        '--- iframe（http://localhost:3000/ad）の中 ---',
+        `  - textbox "メモ" value="${'x'.repeat(100)}"`,
+        '--- inside iframe (http://localhost:3000/ad) ---',
         '- link "広告"',
-        '--- iframe（http://localhost:3000/broken）の中 ---',
-        '--- iframe（http://127.0.0.1:5173/w）の中 ---',
+        '--- inside iframe (http://localhost:3000/broken) ---',
+        '--- inside iframe (http://127.0.0.1:5173/w) ---',
         '- heading "ウィジェット"',
-        '--- iframe（http://localhost:3000/slow）の中 ---',
+        '--- inside iframe (http://localhost:3000/slow) ---',
       ].join('\n'),
     );
     // 許していない先の iframe（同じプロセス・別プロセスとも）のツリーは読まない
@@ -325,7 +325,7 @@ describe('アクセシビリティのツリー', () => {
     expect(lines).toHaveLength(1 + 1500 + 1);
     expect(lines[1]).toBe('- RootWebArea');
     expect(lines[1500]).toBe('  - button "b1498"');
-    expect(lines.at(-1)).toBe('…（1500 行で切りました）');
+    expect(lines.at(-1)).toBe('…(truncated at 1500 lines)');
     expect(page.debugger.sent('Accessibility.getFullAXTree')).toHaveLength(1);
   });
 
@@ -391,23 +391,23 @@ describe('要素の HTML とスタイル（inspect）', () => {
     });
     expect(textOf(await call('inspect', { selector: 'button', properties: ['color', 7, 'margin-top'] }))).toBe(
       [
-        '「button」に当たる要素: 12 個',
+        'Elements matching "button": 12',
         '',
-        '## 1 つ目（見えている・x=10 y=20 100×30）',
+        '## Element 1 (visible, x=10 y=20 100×30)',
         '```html',
         '<button id="go">送る</button>',
         '```',
         '- color: rgb(0, 0, 0)',
         '- margin-top: 4px',
         '',
-        '## 2 つ目（見えていない・x=0 y=0 0×0・iframe（http://localhost:3000/f）の中）',
+        '## Element 2 (not visible, x=0 y=0 0×0, inside iframe (http://localhost:3000/f))',
         '```html',
         '<button hidden></button>',
         '```',
         '- color: red',
         '- margin-top: 0px',
         '',
-        '（ほかに 10 個あります）',
+        '(10 more not shown)',
       ].join('\n'),
     );
     const code = page.scriptsOf('inspect')[0];
@@ -419,7 +419,7 @@ describe('要素の HTML とスタイル（inspect）', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.inspect = () => ({ total: 1, items: [{ html: '<p></p>', rect: { x: 1, y: 2, width: 3, height: 4 }, visible: true, frame: null, styles: {} }] });
-    expect(textOf(await call('inspect', { selector: 'p' }))).toBe('「p」に当たる要素: 1 個\n\n## 1 つ目（見えている・x=1 y=2 3×4）\n```html\n<p></p>\n```');
+    expect(textOf(await call('inspect', { selector: 'p' }))).toBe('Elements matching "p": 1\n\n## Element 1 (visible, x=1 y=2 3×4)\n```html\n<p></p>\n```');
     await call('inspect', { selector: 'p', properties: [] });
     const defaults = [
       'display', 'position', 'box-sizing', 'width', 'height', 'margin', 'padding', 'border', 'border-radius',
@@ -433,10 +433,10 @@ describe('要素の HTML とスタイル（inspect）', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.inspect = (code) =>
-      code.includes('"[["') ? { error: "セレクタの書き方が違います: '[[' is not a valid selector" } : { total: 0, items: [] };
-    expect(await call('inspect', { selector: '.none' })).toEqual(textResult('「.none」に当たる要素がありません', true));
-    expect(await call('inspect', { selector: '[[' })).toEqual(textResult("セレクタの書き方が違います: '[[' is not a valid selector", true));
-    expect(await call('inspect', {})).toEqual(textResult('selector を渡してください', true));
+      code.includes('"[["') ? { error: "Invalid selector: '[[' is not a valid selector" } : { total: 0, items: [] };
+    expect(await call('inspect', { selector: '.none' })).toEqual(textResult('No element matches ".none".', true));
+    expect(await call('inspect', { selector: '[[' })).toEqual(textResult("Invalid selector: '[[' is not a valid selector", true));
+    expect(await call('inspect', {})).toEqual(textResult('Provide selector.', true));
     expect(page.scriptsOf('inspect')).toHaveLength(2);
   });
 });
@@ -447,7 +447,7 @@ describe('クリック', () => {
     const page = open('http://localhost:3000/');
     const rect = { x: 100, y: 50, width: 201, height: 40 };
     page.page.locate = () => found(rect);
-    expect(await call('click', { selector: '#go' })).toEqual(textResult('クリックしました: button#go「送る」'));
+    expect(await call('click', { selector: '#go' })).toEqual(textResult('Clicked: button#go "送る"'));
     expect(page.debugger.attachCount).toBe(1);
     expect(page.debugger.versions).toEqual(['1.3']);
     expect(page.debugger.commands[0]).toEqual({ method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, child: undefined });
@@ -470,7 +470,7 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 });
-    expect(textOf(await call('click', { selector: '#a', double: true, button: 'right' }))).toBe('ダブルクリックしました: button#go「送る」');
+    expect(textOf(await call('click', { selector: '#a', double: true, button: 'right' }))).toBe('Double-clicked: button#go "送る"');
     expect(inputs(page).map((i) => `${String(i.type)}:${String(i.button)}:${String(i.clickCount)}`)).toEqual([
       'mouseMoved:undefined:undefined',
       'mousePressed:right:1',
@@ -490,11 +490,13 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => ({ error: 'none' });
-    expect(await call('click', { selector: '#a' })).toEqual(textResult('「#a」に当たる要素がありません', true));
+    expect(await call('click', { selector: '#a' })).toEqual(textResult('No element matches "#a".', true));
     page.page.locate = () => ({ error: 'hidden', count: 3 });
-    expect(await call('click', { selector: '.item' })).toEqual(textResult('「.item」に当たる要素（3 個）は、どれも見えていません', true));
-    page.page.locate = () => ({ error: "セレクタの書き方が違います: '##' is not a valid selector" });
-    expect(await call('click', { selector: '##' })).toEqual(textResult("セレクタの書き方が違います: '##' is not a valid selector", true));
+    expect(await call('click', { selector: '.item' })).toEqual(textResult('None of the 3 elements matching ".item" is visible.', true));
+    page.page.locate = () => ({ error: 'hidden', count: 1 });
+    expect(await call('click', { selector: '#only' })).toEqual(textResult('The element matching "#only" is not visible.', true));
+    page.page.locate = () => ({ error: "Invalid selector: '##' is not a valid selector" });
+    expect(await call('click', { selector: '##' })).toEqual(textResult("Invalid selector: '##' is not a valid selector", true));
     expect(inputs(page)).toEqual([]);
   });
 
@@ -502,7 +504,7 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 0, y: 0, width: 10, height: 10 }, 'button#go', 'div.overlay');
-    expect(textOf(await call('click', { selector: '#go' }))).toBe('クリックしました: button#go\n（押した位置には、ほかの要素 div.overlay が重なっていました）');
+    expect(textOf(await call('click', { selector: '#go' }))).toBe('Clicked: button#go\n(another element, div.overlay, was covering the clicked position)');
   });
 
   it('押してページが移ったら、読み込みが終わるのを待って、移った先を添える', async () => {
@@ -516,7 +518,7 @@ describe('クリック', () => {
       }
       return {};
     };
-    expect(textOf(await call('click', { selector: '#next' }))).toBe('クリックしました: a#next\nページが移りました: http://localhost:3000/next');
+    expect(textOf(await call('click', { selector: '#next' }))).toBe('Clicked: a#next\nThe page navigated to http://localhost:3000/next');
     expect(page.loadingPolls).toBe(0);
   });
 
@@ -529,7 +531,7 @@ describe('クリック', () => {
       if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') page.url = 'https://accounts.example.com/';
       return {};
     };
-    expect(textOf(await call('click', { selector: '#back' }))).toContain('（Claude に許していない先なので、これ以上は読めず、操作もできません）');
+    expect(textOf(await call('click', { selector: '#back' }))).toContain(' (not allowed for Claude, so it can be neither read nor operated any further)');
   });
 
   it('押してページが許していない先へ移ったら、移った先はオリジンだけを伝える（URL の道筋・クエリは伏せる）', async () => {
@@ -543,7 +545,7 @@ describe('クリック', () => {
     };
     const result = textOf(await call('click', { selector: '#back' }));
     expect(result).toBe(
-      'クリックしました: button#back\nページが移りました: https://accounts.example.com（Claude に許していない先なので、これ以上は読めず、操作もできません）',
+      'Clicked: button#back\nThe page navigated to https://accounts.example.com (not allowed for Claude, so it can be neither read nor operated any further)',
     );
     expect(result).not.toContain('secret');
   });
@@ -552,7 +554,7 @@ describe('クリック', () => {
     const { call, open, activities } = setup();
     const page = open('http://localhost:3000/');
     page.page.point = () => ({ cross: false, src: null, frame: null, description: 'canvas#board' });
-    expect(textOf(await call('click', { x: 120, y: 80 }))).toBe('クリックしました: x=120 y=80 の canvas#board');
+    expect(textOf(await call('click', { x: 120, y: 80 }))).toBe('Clicked: canvas#board at x=120 y=80');
     expect(page.scriptsOf('point')[0]).toContain('const x = 120, y = 80;');
     expect(inputs(page)[1]).toEqual({ method: 'dispatchMouseEvent', type: 'mousePressed', x: 120, y: 80, button: 'left', clickCount: 1 });
     expect(activities()[1].box).toEqual({ x: 110, y: 70, width: 20, height: 20 });
@@ -562,7 +564,7 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     for (const args of [{}, { x: 1 }, { x: '1', y: 2 }, { x: Number.NaN, y: 2 }, { x: 1, y: Number.POSITIVE_INFINITY }, { selector: '  ' }]) {
-      expect(await call('click', args), JSON.stringify(args)).toEqual(textResult('selector か、x と y を渡してください', true));
+      expect(await call('click', args), JSON.stringify(args)).toEqual(textResult('Provide selector, or x and y.', true));
     }
     expect(page.scripts).toEqual([]);
   });
@@ -571,9 +573,9 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.point = () => ({ error: 'outside', width: 800, height: 600 });
-    expect(await call('click', { x: 900, y: 10 })).toEqual(textResult('x=900 y=10 は、見えている範囲（800×600）の外です', true));
+    expect(await call('click', { x: 900, y: 10 })).toEqual(textResult('x=900 y=10 is outside the visible area (800×600).', true));
     page.page.point = () => ({ error: 'none' });
-    expect(await call('click', { x: 5, y: 5 })).toEqual(textResult('x=5 y=5 には要素がありません', true));
+    expect(await call('click', { x: 5, y: 5 })).toEqual(textResult('There is no element at x=5 y=5.', true));
     expect(inputs(page)).toEqual([]);
   });
 
@@ -584,7 +586,7 @@ describe('クリック', () => {
     answerCdp(page, {}, { C9: 'http://localhost:4000/other', C1: 'http://127.0.0.1:5173/widget/page' });
     addChildFrame(page, 'C9');
     addChildFrame(page, 'C1');
-    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('クリックしました: x=350 y=260（別オリジンの iframe http://127.0.0.1:5173/widget/page の中）');
+    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('Clicked: x=350 y=260 (inside cross-origin iframe http://127.0.0.1:5173/widget/page)');
     expect(inputs(page)).toEqual([
       { method: 'dispatchMouseEvent', type: 'mouseMoved', x: 50, y: 60, child: 'C1' },
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 50, y: 60, button: 'left', clickCount: 1, child: 'C1' },
@@ -596,7 +598,7 @@ describe('クリック', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.point = () => ({ cross: true, src: 'http://127.0.0.1:5173/widget', frame: { x: 300, y: 200 }, description: 'iframe#w' });
-    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('クリックしました: x=350 y=260（別オリジンの iframe http://127.0.0.1:5173/widget の中）');
+    expect(textOf(await call('click', { x: 350, y: 260 }))).toBe('Clicked: x=350 y=260 (inside cross-origin iframe http://127.0.0.1:5173/widget)');
     expect(inputs(page)[0]).toEqual({ method: 'dispatchMouseEvent', type: 'mouseMoved', x: 350, y: 260 });
     page.debugger.commands.length = 0;
     page.page.point = () => ({ cross: true, src: 'http://127.0.0.1:5173/widget', frame: null, description: 'iframe#w' });
@@ -612,12 +614,12 @@ describe('クリック', () => {
     page.page.point = () => ({ cross: true, src: 'https://pay.example.com/checkout', frame: { x: 0, y: 0 }, description: 'iframe#pay' });
     const refused = await call('click', { x: 10, y: 10 });
     expect(refused.isError).toBe(true);
-    expect(textOf(refused)).toMatch(/^x=10 y=10 は、許していない先の iframe（https:\/\/pay\.example\.com.*）の中なので、押せません$/);
+    expect(textOf(refused)).toMatch(/^Cannot click x=10 y=10 because it is inside an iframe not allowed for Claude \(https:\/\/pay\.example\.com.*\)\.$/);
     page.page.point = () => ({ cross: true, src: null, frame: null, description: 'iframe' });
-    expect(await call('click', { x: 10, y: 10 })).toEqual(textResult('x=10 y=10 は、許していない先の iframe（src なし）の中なので、押せません', true));
+    expect(await call('click', { x: 10, y: 10 })).toEqual(textResult('Cannot click x=10 y=10 because it is inside an iframe not allowed for Claude (no src).', true));
     // src が URL として読めなければ、別プロセスの iframe を探さない
     page.page.point = () => ({ cross: true, src: 'widget.html', frame: null, description: 'iframe' });
-    expect(await call('click', { x: 10, y: 10 })).toEqual(textResult('x=10 y=10 は、許していない先の iframe（widget.html）の中なので、押せません', true));
+    expect(await call('click', { x: 10, y: 10 })).toEqual(textResult('Cannot click x=10 y=10 because it is inside an iframe not allowed for Claude (widget.html).', true));
     expect(page.debugger.sent('Target.getTargets')).toHaveLength(1);
     expect(inputs(page)).toEqual([]);
   });
@@ -631,7 +633,7 @@ describe('許していない先の iframe の中（不具合の確かめ）', ()
     answerCdp(page, {}, { C1: 'https://pay.example.com/confirm?token=secret' });
     addChildFrame(page, 'C1');
     const refused = await call('click', { x: 10, y: 10 });
-    expect(refused).toEqual(textResult('x=10 y=10 は、許していない先の iframe（https://pay.example.com）の中なので、押せません', true));
+    expect(refused).toEqual(textResult('Cannot click x=10 y=10 because it is inside an iframe not allowed for Claude (https://pay.example.com).', true));
     expect(inputs(page)).toEqual([]);
   });
 
@@ -642,7 +644,7 @@ describe('許していない先の iframe の中（不具合の確かめ）', ()
     answerCdp(page, {}, { C1: 'https://pay.example.com/card/3ds?session=secret' });
     addChildFrame(page, 'C1');
     const refused = await call('type', { text: '4242' });
-    expect(refused).toEqual(textResult('フォーカスが、許していない先の iframe（https://pay.example.com）の中にあるので、入力できません', true));
+    expect(refused).toEqual(textResult('Cannot type because the focus is inside an iframe not allowed for Claude (https://pay.example.com).', true));
     expect(inputs(page)).toEqual([]);
   });
 });
@@ -652,7 +654,7 @@ describe('入力（type）', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.locate = () => found({ x: 10, y: 20, width: 100, height: 20 }, 'input#name');
-    expect(await call('type', { selector: '#name', text: 'たなか', submit: true })).toEqual(textResult('input#nameに入力しました（Enter も押しました）'));
+    expect(await call('type', { selector: '#name', text: 'たなか', submit: true })).toEqual(textResult('Typed into input#name and pressed Enter'));
     expect(inputs(page)).toEqual([
       { method: 'dispatchMouseEvent', type: 'mousePressed', x: 60, y: 30, button: 'left', clickCount: 1 },
       { method: 'dispatchMouseEvent', type: 'mouseReleased', x: 60, y: 30, button: 'left', clickCount: 1 },
@@ -665,10 +667,10 @@ describe('入力（type）', () => {
   it('selector が無ければ、今フォーカスのある場所に入れる。文字が空なら入れない', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    expect(await call('type', { text: 'abc' })).toEqual(textResult('今フォーカスのある場所に入力しました'));
+    expect(await call('type', { text: 'abc' })).toEqual(textResult('Typed into the focused element'));
     expect(inputs(page)).toEqual([{ method: 'insertText', text: 'abc' }]);
     page.debugger.commands.length = 0;
-    expect(await call('type', { text: 123 })).toEqual(textResult('今フォーカスのある場所に入力しました'));
+    expect(await call('type', { text: 123 })).toEqual(textResult('Typed into the focused element'));
     expect(inputs(page)).toEqual([]);
   });
 
@@ -719,7 +721,7 @@ describe('入力（type）', () => {
     page.page.focus = () => 'https://pay.example.com/card';
     const refused = await call('type', { text: '4242' });
     expect(refused.isError).toBe(true);
-    expect(textOf(refused)).toMatch(/^フォーカスが、許していない先の iframe（https:\/\/pay\.example\.com.*）の中にあるので、入力できません$/);
+    expect(textOf(refused)).toMatch(/^Cannot type because the focus is inside an iframe not allowed for Claude \(https:\/\/pay\.example\.com.*\)\.$/);
     expect(inputs(page)).toEqual([]);
   });
 });
@@ -728,7 +730,7 @@ describe('キー（press_key）', () => {
   it('キーと一緒に押すキーを CDP で送る。Shift なら文字も入れる', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    expect(await call('press_key', { key: 'Enter', modifiers: ['shift'] })).toEqual(textResult('shift+Enter を押しました'));
+    expect(await call('press_key', { key: 'Enter', modifiers: ['shift'] })).toEqual(textResult('Pressed shift+Enter'));
     expect(inputs(page)).toEqual([
       { method: 'dispatchKeyEvent', type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 8, text: '\r', unmodifiedText: '\r' },
       { method: 'dispatchKeyEvent', type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 8 },
@@ -738,7 +740,7 @@ describe('キー（press_key）', () => {
   it('Ctrl・⌘ と一緒なら文字を入れない（rawKeyDown）。知らない修飾キーは数えない', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    expect(textOf(await call('press_key', { key: 'a', modifiers: ['control', 'meta', 'hyper', 3] }))).toBe('control+meta+hyper+a を押しました');
+    expect(textOf(await call('press_key', { key: 'a', modifiers: ['control', 'meta', 'hyper', 3] }))).toBe('Pressed control+meta+hyper+a');
     expect(inputs(page)[0]).toEqual({ method: 'dispatchKeyEvent', type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 6 });
     page.debugger.commands.length = 0;
     await call('press_key', { key: 'a', modifiers: ['alt'] });
@@ -761,8 +763,8 @@ describe('キー（press_key）', () => {
   it('知らないキー・key が無いときは押さない', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    expect(await call('press_key', { key: 'Hyper' })).toEqual(textResult('知らないキーです: Hyper', true));
-    expect(await call('press_key', {})).toEqual(textResult('key を渡してください', true));
+    expect(await call('press_key', { key: 'Hyper' })).toEqual(textResult('Unknown key: Hyper', true));
+    expect(await call('press_key', {})).toEqual(textResult('Provide key.', true));
     expect(inputs(page)).toEqual([]);
   });
 
@@ -818,27 +820,27 @@ describe('スクロール', () => {
   it('selector か deltaX・deltaY が無ければ断る', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    expect(await call('scroll', {})).toEqual(textResult('selector か deltaX・deltaY を渡してください', true));
-    expect(await call('scroll', { deltaY: 0, deltaX: '10' })).toEqual(textResult('selector か deltaX・deltaY を渡してください', true));
+    expect(await call('scroll', {})).toEqual(textResult('Provide selector, or deltaX or deltaY.', true));
+    expect(await call('scroll', { deltaY: 0, deltaX: '10' })).toEqual(textResult('Provide selector, or deltaX or deltaY.', true));
     expect(page.scripts).toEqual([]);
   });
 
   it('selector: その要素が見える位置まで動かし、動いた入れ物と位置を返す。当たらなければ断る', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    page.page.scroll = (code) => (code.includes('"#footer"') ? { x: 0, y: 640, where: 'ページ' } : null);
-    expect(await call('scroll', { selector: '#footer' })).toEqual(textResult('スクロールしました（ページの位置: x=0 y=640）'));
+    page.page.scroll = (code) => (code.includes('"#footer"') ? { x: 0, y: 640, where: 'page' } : null);
+    expect(await call('scroll', { selector: '#footer' })).toEqual(textResult('Scrolled (scroll position of the page: x=0 y=640)'));
     const code = page.scriptsOf('scroll')[0];
     expect(code).toContain("target.scrollIntoView({ block: 'center', inline: 'nearest' });");
     expect(code).toContain('const dx = 0, dy = 0;');
-    expect(await call('scroll', { selector: '#none' })).toEqual(textResult('「#none」に当たる要素がありません', true));
+    expect(await call('scroll', { selector: '#none' })).toEqual(textResult('No element matches "#none".', true));
   });
 
   it('deltaX・deltaY: その分だけ動かす（数でないものは 0）', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
-    page.page.scroll = () => ({ x: 0, y: 300, where: '中の入れ物' });
-    expect(await call('scroll', { deltaY: 300, deltaX: 'x' })).toEqual(textResult('スクロールしました（中の入れ物の位置: x=0 y=300）'));
+    page.page.scroll = () => ({ x: 0, y: 300, where: 'inner scroll container' });
+    expect(await call('scroll', { deltaY: 300, deltaX: 'x' })).toEqual(textResult('Scrolled (scroll position of the inner scroll container: x=0 y=300)'));
     const code = page.scriptsOf('scroll')[0];
     expect(code).toContain('const target = null;');
     expect(code).toContain('const dx = 0, dy = 300;');
@@ -850,7 +852,7 @@ describe('待つ（wait_for）', () => {
   it('selector か text が無ければ断る', async () => {
     const { call, open } = setup();
     open('http://localhost:3000/');
-    expect(await call('wait_for', { state: 'hidden' })).toEqual(textResult('selector か text を渡してください', true));
+    expect(await call('wait_for', { state: 'hidden' })).toEqual(textResult('Provide selector or text.', true));
   });
 
   it('出るまで 150ms ごとに確かめ、出たら待った時間を返す。確かめるスクリプトの失敗は「まだ」とみなす', async () => {
@@ -864,7 +866,7 @@ describe('待つ（wait_for）', () => {
       () => true,
     ];
     page.page.wait = () => answers.shift()!();
-    expect(await call('wait_for', { selector: '#done' })).toEqual(textResult('「#done」が出ました（300 ms）'));
+    expect(await call('wait_for', { selector: '#done' })).toEqual(textResult('"#done" appeared (300 ms)'));
     const code = page.scriptsOf('wait')[0];
     expect(code).toContain('const state = "visible";');
     expect(code).toContain('el = (__all("#done")[0] || {}).el || null;');
@@ -875,9 +877,9 @@ describe('待つ（wait_for）', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.page.wait = () => true;
-    expect(textOf(await call('wait_for', { selector: '#spinner', state: 'hidden' }))).toMatch(/^「#spinner」が消えました（\d+ ms）$/);
+    expect(textOf(await call('wait_for', { selector: '#spinner', state: 'hidden' }))).toMatch(/^"#spinner" disappeared \(\d+ ms\)$/);
     expect(page.scriptsOf('wait')[0]).toContain('const state = "hidden";');
-    expect(textOf(await call('wait_for', { text: '保存しました' }))).toMatch(/^「保存しました」が出ました/);
+    expect(textOf(await call('wait_for', { text: '保存しました' }))).toMatch(/^"保存しました" appeared/);
     const textOnly = page.scriptsOf('wait')[1];
     expect(textOnly).toContain('if (!false) {');
     expect(textOnly).toContain('const want = "保存しました";');
@@ -897,17 +899,17 @@ describe('待つ（wait_for）', () => {
       return { text: textOf(result), error: result.isError, ms: Date.now() - started };
     };
     const short = await waited({ selector: '#never', timeoutMs: 1000 });
-    expect(short).toMatchObject({ text: '1000 ms 待っても、「#never」が出ませんでした', error: true });
+    expect(short).toMatchObject({ text: '"#never" did not appear within 1000 ms.', error: true });
     expect(short.ms).toBeGreaterThan(1000);
     expect(short.ms).toBeLessThan(1300);
-    expect((await waited({ text: 'まだ', state: 'hidden', timeoutMs: 1000 })).text).toBe('1000 ms 待っても、「まだ」が消えませんでした');
+    expect((await waited({ text: 'まだ', state: 'hidden', timeoutMs: 1000 })).text).toBe('"まだ" did not disappear within 1000 ms.');
     const long = await waited({ selector: '#never', timeoutMs: 99_999 });
-    expect(long.text).toBe('30000 ms 待っても、「#never」が出ませんでした');
+    expect(long.text).toBe('"#never" did not appear within 30000 ms.');
     expect(long.ms).toBeLessThan(31_000);
-    expect((await waited({ selector: '#never', timeoutMs: -5 })).text).toBe('0 ms 待っても、「#never」が出ませんでした');
+    expect((await waited({ selector: '#never', timeoutMs: -5 })).text).toBe('"#never" did not appear within 0 ms.');
     const fallback = await waited({ selector: '#never', timeoutMs: '5' });
-    expect(fallback.text).toBe('10000 ms 待っても、「#never」が出ませんでした');
-    expect((await waited({ selector: '#never', timeoutMs: Number.NaN })).text).toBe('10000 ms 待っても、「#never」が出ませんでした');
+    expect(fallback.text).toBe('"#never" did not appear within 10000 ms.');
+    expect((await waited({ selector: '#never', timeoutMs: Number.NaN })).text).toBe('"#never" did not appear within 10000 ms.');
     expect(fallback.ms).toBeGreaterThan(10_000);
     expect(fallback.ms).toBeLessThan(10_500);
   });
@@ -918,7 +920,7 @@ describe('表示幅（set_viewport）', () => {
     const { call, open, sentOn } = setup();
     const page = open('http://localhost:3000/');
     page.page.viewport = () => ({ width: 390, height: 844, dpr: 3 });
-    expect(await call('set_viewport', { width: 'mobile' })).toEqual(textResult('表示幅を mobile にしました（ページの幅 390px・高さ 844px）'));
+    expect(await call('set_viewport', { width: 'mobile' })).toEqual(textResult('Set the viewport to mobile (page width 390px, height 844px)'));
     await call('set_viewport', { width: 'tablet' });
     await call('set_viewport', { width: 'full' });
     expect(sentOn(IpcChannel.BrowserViewport)).toEqual([
@@ -932,7 +934,7 @@ describe('表示幅（set_viewport）', () => {
     const { call, open, sentOn } = setup();
     open('http://localhost:3000/');
     for (const width of ['toString', 'constructor', '__proto__']) {
-      expect(await call('set_viewport', { width }), width).toEqual(textResult(`表示幅は full・mobile・tablet のどれかです: ${width}`, true));
+      expect(await call('set_viewport', { width }), width).toEqual(textResult(`width must be full, mobile or tablet: ${width}`, true));
     }
     expect(sentOn(IpcChannel.BrowserViewport)).toEqual([]);
   });
@@ -940,8 +942,8 @@ describe('表示幅（set_viewport）', () => {
   it('知らない幅・幅が無いときは、画面に送らない', async () => {
     const { call, open, sentOn } = setup();
     open('http://localhost:3000/');
-    expect(await call('set_viewport', { width: 'desktop' })).toEqual(textResult('表示幅は full・mobile・tablet のどれかです: desktop', true));
-    expect(await call('set_viewport', {})).toEqual(textResult('width を渡してください', true));
+    expect(await call('set_viewport', { width: 'desktop' })).toEqual(textResult('width must be full, mobile or tablet: desktop', true));
+    expect(await call('set_viewport', {})).toEqual(textResult('Provide width.', true));
     expect(sentOn(IpcChannel.BrowserViewport)).toEqual([]);
   });
 });
@@ -964,7 +966,7 @@ describe('JavaScript の実行（evaluate）', () => {
     loop.self = loop;
     expect(await run(loop)).toBe('[object Object]');
     expect(await run(10n)).toBe('10');
-    expect(await run('x'.repeat(25_000))).toBe(`"${'x'.repeat(19_999)}\n…（5002 文字を省きました）`);
+    expect(await run('x'.repeat(25_000))).toBe(`"${'x'.repeat(19_999)}\n…(5002 more characters omitted)`);
     expect(page.evaluated).toEqual(Array(7).fill('document.title'));
   });
 
@@ -979,15 +981,15 @@ describe('JavaScript の実行（evaluate）', () => {
       throw new Error('Script failed to execute');
     };
     expect(await call('evaluate', { expression: "document.querySelector('#x').click()" })).toEqual(
-      textResult("実行に失敗しました: Uncaught TypeError: Cannot read properties of null (reading 'click')\nUncaught (in promise) だめ", true),
+      textResult("Execution failed: Uncaught TypeError: Cannot read properties of null (reading 'click')\nUncaught (in promise) だめ", true),
     );
     page.evaluate = () => {
       throw new Error('Script failed to execute');
     };
-    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('実行に失敗しました: Script failed to execute', true));
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: Script failed to execute', true));
     page.evaluate = () => Promise.reject('こわれた');
-    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('実行に失敗しました: こわれた', true));
-    expect(await call('evaluate', {})).toEqual(textResult('expression を渡してください', true));
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: こわれた', true));
+    expect(await call('evaluate', {})).toEqual(textResult('Provide expression.', true));
   });
 });
 
@@ -997,10 +999,10 @@ describe('CDP のつなぎ方', () => {
     const page = open('http://localhost:3000/');
     page.debugger.attachError = new Error('Another debugger is already attached to the target');
     expect(await call('get_accessibility_tree')).toEqual(
-      textResult('ページを操作する準備ができませんでした（Another debugger is already attached to the target）', true),
+      textResult('Could not get ready to control the page (Another debugger is already attached to the target).', true),
     );
     page.debugger.attachError = 'だめ';
-    expect(await call('get_accessibility_tree')).toEqual(textResult('ページを操作する準備ができませんでした（だめ）', true));
+    expect(await call('get_accessibility_tree')).toEqual(textResult('Could not get ready to control the page (だめ).', true));
     expect(page.debugger.commands).toEqual([]);
   });
 
@@ -1014,7 +1016,7 @@ describe('CDP のつなぎ方', () => {
       if (method === 'Target.setAutoAttach') throw new Error('使えない命令です');
       return {};
     };
-    expect(textOf(await call('click', { selector: '#go' }))).toBe('クリックしました: button#go「送る」');
+    expect(textOf(await call('click', { selector: '#go' }))).toBe('Clicked: button#go "送る"');
     expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(1);
     await call('click', { selector: '#go' });
     expect(page.debugger.sent('Target.setAutoAttach')).toHaveLength(1);
@@ -1026,10 +1028,10 @@ describe('CDP のつなぎ方', () => {
     page.page.text = () => ({ title: 'T', url: 'http://localhost:3000/', parts: [{ frame: null, text: '本文' }] });
     answerCdp(page, { 'Runtime.evaluate': () => ({ result: { value: '中' } }) }, { C1: 'http://localhost:3000/frame' });
     addChildFrame(page, 'C1');
-    expect(textOf(await call('get_text'))).toContain('--- iframe（http://localhost:3000/frame）の中 ---\n中');
+    expect(textOf(await call('get_text'))).toContain('--- inside iframe (http://localhost:3000/frame) ---\n中');
     page.debugger.detachNow();
     page.debugger.commands.length = 0;
-    expect(textOf(await call('get_text'))).toBe('タイトル: T\nURL: http://localhost:3000/\n\n本文');
+    expect(textOf(await call('get_text'))).toBe('Title: T\nURL: http://localhost:3000/\n\n本文');
     expect(page.debugger.attachCount).toBe(2);
     expect(page.debugger.commands.map((c) => c.method)).toEqual(['Target.setAutoAttach', 'Target.getTargets']);
   });
@@ -1050,7 +1052,7 @@ describe('CDP のつなぎ方', () => {
     addChildFrame(page, 'C2');
     addChildFrame(page, 'C3');
     addChildFrame(page, 'C4');
-    expect(textOf(await call('get_text'))).toBe('タイトル: T\nURL: http://localhost:3000/\n\n本文');
+    expect(textOf(await call('get_text'))).toBe('Title: T\nURL: http://localhost:3000/\n\n本文');
     expect(page.debugger.sent('Runtime.evaluate').map((c) => c.child)).toEqual(['C1', 'C2', 'C3', 'C4']);
   });
 });

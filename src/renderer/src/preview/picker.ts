@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n';
 import { token } from '../theme';
 import { codeBlock, inlineCode, stripControlChars } from '../chat/sanitize';
 
@@ -101,9 +102,9 @@ const oneLine = (s: unknown) => stripControlChars(String(s ?? '')).replace(/\s+/
 
 // Claude への指示に添える文章
 export function describePicked(p: PickedElement): string {
-  const lines = [`アプリ内ブラウザ（${oneLine(p.url)}）で選んだ要素:`, `- セレクタ: ${inlineCode(oneLine(p.selector))}`];
+  const lines = [t('preview.picked.heading', { url: oneLine(p.url) }), t('preview.picked.selector', { selector: inlineCode(oneLine(p.selector)) })];
   const text = oneLine(p.text);
-  if (text) lines.push(`- テキスト: 「${text}」`);
+  if (text) lines.push(t('preview.picked.text', { text }));
   // html に ``` が入っていてもフェンスから抜けられないよう、フェンスは中身より長くする
   lines.push(codeBlock(stripControlChars(String(p.html ?? '')), 'html'), '');
   return lines.join('\n');

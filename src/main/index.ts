@@ -5,19 +5,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
-import {
-  IpcChannel,
-  type IpcEvent,
-  type IpcInvoke,
-  type IpcSend,
-  type ArchiveOptions,
-  type DiscoveredSession,
-  type GitAction,
-  type NewSessionOptions,
-  type ScreenChoice,
-  type SearchOptions,
-  type SessionOptions,
-} from '@shared/ipc';
+import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type ScreenChoice, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
@@ -43,6 +31,7 @@ import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
 import { claudeConfigDir, claudeJsonPath } from './claude-config';
+import { language, LANGUAGE_SETTINGS, resolveLanguage, setLanguage, t, tFor, type LanguageSetting } from '@shared/i18n';
 
 let mainWindow: BrowserWindow | null = null;
 // 登録したプロファイル（Claude Code のアカウントごとの環境）
@@ -69,6 +58,8 @@ let appUpdates: AppUpdateMonitor;
 let homebrew: HomebrewUpdater | null = null;
 // タイトルバーの「再起動して更新」で終了する（入れ替えたあと起動し直す）
 let relaunchAfterUpdate = false;
+// 言語を変えて「今すぐ再起動」を選んだ。終了したら起動し直す
+let relaunchForLanguage = false;
 // Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
 let shuttingDown = false;
 // 終了のしかたが決まった（確認を済ませた・確認の要らない終了）。まだなら before-quit で止めて確認する
@@ -161,7 +152,7 @@ function liveSessions() {
 function profileOf(contents: WebContents): Profile {
   const id = contentsProfile.get(contents);
   const p = id === undefined ? undefined : opened.get(id);
-  if (!p) throw new Error('この画面のプロファイルが見つかりません');
+  if (!p) throw new Error(t('main.error.profileOfViewNotFound'));
   return p;
 }
 
@@ -235,7 +226,7 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 15 },
     // webviewTag: アプリ内プレビュー（開発サーバーの画面）に使う
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, additionalArguments: [`${LANGUAGE_ARG}${language()}`] },
   });
   mainWindow = win;
   if (saved?.maximized && !saved.fullScreen) win.maximize();
@@ -314,7 +305,7 @@ function setupAppContents(contents: WebContents, id: string): void {
 function attachView(id: string): void {
   if (!mainWindow || views.has(id)) return;
   const view = new WebContentsView({
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, partition: appPartition(id) },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, partition: appPartition(id), additionalArguments: [`${LANGUAGE_ARG}${language()}`] },
   });
   view.setBackgroundColor('#121211');
   setupAppContents(view.webContents, id);
@@ -360,7 +351,7 @@ function showWindow(): BrowserWindow {
 
 async function pickFolder(p: Profile): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
-    title: '作業するフォルダを選択',
+    title: t('main.dialog.pickFolder'),
     properties: ['openDirectory', 'createDirectory'],
   };
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
@@ -372,7 +363,7 @@ async function pickFolder(p: Profile): Promise<string | null> {
 // 設定ファイルの選択。Claude Code の設定は隠しフォルダ（~/.claude）にあるので、そこから始めて、隠しファイルも見せる
 async function pickSettingsFile(p: Profile): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
-    title: '設定ファイルを選択',
+    title: t('main.dialog.pickSettingsFile'),
     defaultPath: claudeConfigDir(p.claudeDir),
     properties: ['openFile', 'showHiddenFiles'],
     filters: [{ name: 'JSON', extensions: ['json'] }],
@@ -387,11 +378,11 @@ const savedExports = new Set<string>();
 // 書き出した HTML を、保存のダイアログで選んだ場所に保存する（どこにも送らない）。ファイル名は画面が付けたもので、パスの区切りなどは除く。
 // 会話の中身（社内の情報や API キーが入ることがある）なので、ほかのユーザーからは読めないようにする
 async function saveExport(html: unknown, fileName: unknown): Promise<string | null> {
-  if (typeof html !== 'string' || typeof fileName !== 'string') throw new Error('書き出す中身がありません');
+  if (typeof html !== 'string' || typeof fileName !== 'string') throw new Error(t('main.error.nothingToExport'));
   // 先頭の . は除いて、隠しファイルにしない。先頭の空白（制御文字を置き換えたものも）と . はまとめて除く（空白のあとの . も残さない）
-  const name = fileName.replace(/[/\\:\x00-\x1f]/g, ' ').replace(/^[\s.]+/, '').trim().slice(0, 120) || '作業';
+  const name = fileName.replace(/[/\\:\x00-\x1f]/g, ' ').replace(/^[\s.]+/, '').trim().slice(0, 120) || t('main.dialog.exportDefaultName');
   const options: Electron.SaveDialogOptions = {
-    title: '作業を書き出す',
+    title: t('main.dialog.exportTitle'),
     defaultPath: join(app.getPath('downloads'), name.endsWith('.html') ? name : `${name}.html`),
     filters: [{ name: 'HTML', extensions: ['html'] }],
     properties: ['createDirectory', 'showOverwriteConfirmation'],
@@ -426,7 +417,7 @@ function notify(
   if (windowActive && p.id === activeId && p.manager.isFocused(sessionId)) return;
   if (!Notification.isSupported()) return;
   // プロファイルが 2 つ以上あれば、どのプロファイルのセッションかをサブタイトルの頭に付ける
-  const title = sessionTitle ?? '新しいセッション';
+  const title = sessionTitle ?? t('main.session.untitled');
   const subtitle = opened.size > 1 ? `${registry.get(p.id)?.name ?? ''} · ${title}` : title;
   // 音は macOS のシステム音の Glass（指定しないと、既定の通知音が鳴る）
   const notification = new Notification({ title: 'tanacode', subtitle, body: message, sound: 'Glass' });
@@ -501,8 +492,8 @@ async function addProfile(input: NewProfile): Promise<ProfileInfo> {
 // 足したプロファイルを登録から外し、閉じる。Claude Code が動いているセッションがあれば断る（止めるかは人が決める）
 async function removeProfile(id: string): Promise<void> {
   const p = opened.get(id);
-  if (id === DEFAULT_PROFILE_ID) throw new Error('標準のプロファイルは外せません');
-  if (p?.manager?.liveSessions().length) throw new Error('Claude Code が動いているセッションがあります。止めてから外してください');
+  if (id === DEFAULT_PROFILE_ID) throw new Error(t('main.profile.cannotRemoveDefault'));
+  if (p?.manager?.liveSessions().length) throw new Error(t('main.profile.hasLiveSessions'));
   registry.remove(id);
   if (activeId === id) showProfile(DEFAULT_PROFILE_ID);
   detachView(id);
@@ -518,7 +509,7 @@ async function removeProfile(id: string): Promise<void> {
 // 既にある Claude Code の設定のフォルダを選ぶ。隠しフォルダ（~/.claude-…）なので、ホームから始めて隠しファイルも見せる
 async function pickProfileDir(): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
-    title: 'Claude Code の設定のフォルダを選択',
+    title: t('main.dialog.pickProfileDir'),
     defaultPath: homedir(),
     properties: ['openDirectory', 'createDirectory', 'showHiddenFiles'],
   };
@@ -533,7 +524,7 @@ function registerIpc(): void {
   const isDirectory = (path: string) => stat(path).then((s) => s.isDirectory(), () => false);
   handle(IpcChannel.SessionsCreate, async (e, cwd: string, options: NewSessionOptions) => {
     const p = P(e);
-    if (!(await isDirectory(cwd))) throw new Error(`フォルダが見つかりません: ${cwd}`);
+    if (!(await isDirectory(cwd))) throw new Error(t('main.error.folderNotFound', { path: cwd }));
     return options.worktree ? p.manager.createInWorktree(cwd, options) : p.manager.create(cwd, options);
   });
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
@@ -543,7 +534,7 @@ function registerIpc(): void {
   handle(IpcChannel.FolderOpen, async (e, cwd: string) => {
     const p = P(e);
     const known = p.pickedFolders.has(cwd) || p.manager.list().some((s) => s.cwd === cwd || s.worktree?.root === cwd);
-    if (!known || !(await isDirectory(cwd))) throw new Error(`フォルダを開けません: ${cwd}`);
+    if (!known || !(await isDirectory(cwd))) throw new Error(t('main.error.folderCannotOpen', { path: cwd }));
     const id = `folder:${randomUUID()}`;
     p.folderViews.set(id, cwd);
     p.watchers.retain(cwd);
@@ -610,7 +601,7 @@ function registerIpc(): void {
   handle(IpcChannel.ChecklistGet, (e, id: string) => (P(e).manager.summary(id) ? P(e).checklists.lists(id) : []));
   handle(IpcChannel.ChecklistApply, (e, id: string, op: unknown) => {
     const p = P(e);
-    if (!p.manager.summary(id)) throw new Error('セッションが見つかりません');
+    if (!p.manager.summary(id)) throw new Error(t('main.session.notFound'));
     p.checklistControl?.apply(id, checkOp(op));
   });
   handle(IpcChannel.ChecklistCopy, (e, request: unknown) => P(e).checklistControl?.copy(checkCopyRequest(request)));
@@ -632,14 +623,14 @@ function registerIpc(): void {
   handle(IpcChannel.WalkthroughDraftComment, async (e, id: string) => {
     const p = P(e);
     const w = p.manager.summary(String(id)) ? p.walkthroughControl?.get(String(id)) : null;
-    if (!w || !p.walkthroughControl) return { ok: false, reason: 'ウォークスルーがありません。' };
+    if (!w || !p.walkthroughControl) return { ok: false, reason: t('main.walkthrough.missing') };
     return draftWalkthroughComment(p.cwdOf(String(id)), w, p.walkthroughControl.postedUrl(w.id), commentDeps);
   });
   handle(IpcChannel.WalkthroughPostComment, async (e, id: string, body: unknown, attribution: unknown) => {
     const p = P(e);
     const w = p.manager.summary(String(id)) ? p.walkthroughControl?.get(String(id)) : null;
-    if (!w || !p.walkthroughControl) throw new Error('ウォークスルーがありません。');
-    if (typeof body !== 'string') throw new Error('本文がありません。');
+    if (!w || !p.walkthroughControl) throw new Error(t('main.walkthrough.missing'));
+    if (typeof body !== 'string') throw new Error(t('main.walkthrough.noBody'));
     const url = await postWalkthroughComment(p.cwdOf(String(id)), w, body, attribution !== false, commentDeps);
     p.walkthroughControl.markPosted(w.id, url);
     return url;
@@ -701,7 +692,7 @@ function registerIpc(): void {
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, (e) =>
     readModelCatalog(P(e).claudeDir).then(
-      (catalog) => (catalog ? { catalog } : { error: 'Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません' }),
+      (catalog) => (catalog ? { catalog } : { error: t('main.model.noCatalog') }),
       (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }),
     ),
   );
@@ -797,18 +788,28 @@ function buildMenu(): void {
         submenu: [
           { role: 'about' },
           { type: 'separator' },
-          { label: '新しいバージョンが出たら通知する', type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
-          { label: '終了するときに新しいバージョンを入れる（Homebrew）', type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
-          { label: 'Claude にアプリ内ブラウザを操作させる', type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
-          { label: 'Claude にほかのセッションを扱わせる', type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
-          { label: 'Claude にチェックリストを扱わせる', type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
-          { label: 'Claude にウォークスルーさせる', type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+          { label: t('main.menu.notifyUpdates'), type: 'checkbox', checked: settings.updateCheckEnabled(), click: (item) => setUpdateCheck(item) },
+          { label: t('main.menu.updateOnQuit'), type: 'checkbox', checked: settings.updateOnQuitEnabled(), click: (item) => setUpdateOnQuit(item) },
+          { label: t('main.menu.browserControl'), type: 'checkbox', checked: !!activeProfile()?.settings.browserControlEnabled(), click: (item) => setBrowserControl(item) },
+          { label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
+          { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
+          { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
           {
-            label: 'アプリ内ブラウザで Claude に許す先…',
+            label: t('main.menu.browserHosts'),
             click: () => {
               showWindow();
               sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
             },
+          },
+          { type: 'separator' },
+          {
+            label: t('main.menu.language'),
+            submenu: LANGUAGE_SETTINGS.map((setting) => ({
+              label: languageSettingLabel(setting),
+              type: 'radio' as const,
+              checked: settings.languageSetting() === setting,
+              click: () => void changeLanguage(setting),
+            })),
           },
           { type: 'separator' },
           { role: 'services' },
@@ -821,10 +822,10 @@ function buildMenu(): void {
         ],
       },
       {
-        label: 'ファイル',
+        label: t('main.menu.file'),
         submenu: [
           {
-            label: '新規セッション',
+            label: t('main.menu.newSession'),
             accelerator: 'CmdOrCtrl+N',
             click: () => {
               showWindow();
@@ -836,7 +837,7 @@ function buildMenu(): void {
           { type: 'separator' },
           {
             // 確認を出さずに止める（ふだんの終了は、動いている Claude Code があれば止めるか確認する）
-            label: 'Claude Code も止めて終了',
+            label: t('main.menu.stopAndQuit'),
             click: () => void quit(true),
           },
         ],
@@ -902,14 +903,14 @@ async function installUpdate(): Promise<void> {
     if (live.length > 0) {
       const { response } = await showDialog({
         type: 'question',
-        message: 'Claude Code が動いているセッションがあります',
+        message: t('main.dialog.liveSessions'),
         detail: [
-          ...live.map((s) => `・${s.title}（${s.state}）`),
+          ...live.map((s) => t('main.dialog.liveSessionLine', { title: s.title, state: s.state })),
           '',
-          '動かしたまま更新すると、作業は切れずに、起動し直したアプリが引き継ぎます。新しいバージョンで増えた Claude のツールなどは、各セッションを「再起動」してから使えます。',
-          '止めて更新すると、作業は途中で切れますが、すべて新しいバージョンで動きます。',
+          t('main.dialog.updateKeepRunningDetail'),
+          t('main.dialog.updateStopDetail'),
         ].join('\n'),
-        buttons: ['動かしたまま更新', 'Claude Code も止めて更新', 'キャンセル'],
+        buttons: [t('main.dialog.updateKeepRunning'), t('main.dialog.updateStop'), t('common.cancel')],
         defaultId: 0,
         cancelId: 2,
         noLink: true,
@@ -937,14 +938,14 @@ async function reportUpdateResult(): Promise<void> {
   const log = await readFile(updateLogPath(), 'utf8').catch(() => '');
   const { response } = await showDialog({
     type: 'warning',
-    message: 'tanacode を更新できませんでした',
+    message: t('main.dialog.updateFailed'),
     detail: [
       log.trimEnd().split('\n').slice(-12).join('\n'),
       '',
-      `終了してから、ターミナルで brew update && brew upgrade --cask ${CASK} を実行してください。`,
-      'macOS に止められたときは、システム設定 →「プライバシーとセキュリティ」→「アプリケーションの管理」で tanacode を許可すると、次から入れ替えられます。',
+      t('main.dialog.updateManual', { cask: CASK }),
+      t('main.dialog.updateBlocked'),
     ].join('\n'),
-    buttons: ['OK', 'ログを開く'],
+    buttons: [t('main.dialog.ok'), t('main.dialog.openLog')],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -1003,6 +1004,46 @@ function setWalkthroughControl(item: MenuItem): void {
   }
 }
 
+// メニューの「言語」の項目の名前。日本語と English は、どの言語の画面でもその言語の書き方で出す（読めない言語の画面からでも選べるように）
+function languageSettingLabel(setting: LanguageSetting): string {
+  if (setting === 'ja') return '日本語';
+  if (setting === 'en') return 'English';
+  return t('main.menu.languageSystem');
+}
+
+// 使う言語を、設定と Mac の言語の設定から決める（起動するときだけ。終わるまで変えない）
+function applyLanguage(): void {
+  setLanguage(resolveLanguage(settings.languageSetting(), app.getPreferredSystemLanguages()));
+}
+
+// メニューの「言語」。保存して、次に起動したときから使う（動いている間の言語は変えない）。
+// 使う言語が変わるなら、変えた先の言語で、今すぐ再起動するかを聞く。再起動はふつうの終了と同じ確認（動いている Claude Code を止めるか）を通す。
+// 保存できなかったら、メニューを作り直して選んでいたものに戻す
+async function changeLanguage(setting: LanguageSetting): Promise<void> {
+  try {
+    settings.setLanguageSetting(setting);
+  } catch {
+    buildMenu();
+    return;
+  }
+  const next = resolveLanguage(setting, app.getPreferredSystemLanguages());
+  if (next === language() || confirmingQuit) return;
+  const { response } = await showDialog({
+    type: 'question',
+    message: tFor(next, 'main.dialog.languageRestart'),
+    detail: tFor(next, 'main.dialog.languageRestartDetail'),
+    buttons: [tFor(next, 'main.dialog.restartNow'), tFor(next, 'main.dialog.restartLater')],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response !== 0) return;
+  // 起動し直すのは、終了が決まったときだけ（終了の確認で取りやめたら、あとでふつうに終了したときに起動し直さない）
+  relaunchForLanguage = true;
+  await confirmQuit();
+  if (!quitDecided) relaunchForLanguage = false;
+}
+
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
 async function quit(stop: boolean): Promise<void> {
   if (stop) for (const p of profiles()) await p.stop();
@@ -1020,14 +1061,14 @@ async function confirmQuit(): Promise<void> {
     if (live.length === 0) return await quit(profiles().length > 0);
     const options: Electron.MessageBoxOptions = {
       type: 'question',
-      message: 'Claude Code が動いているセッションがあります',
+      message: t('main.dialog.liveSessions'),
       detail: [
-        ...live.map((s) => `・${s.title}（${s.state}）`),
+        ...live.map((s) => t('main.dialog.liveSessionLine', { title: s.title, state: s.state })),
         '',
-        '止めると、作業は途中で切れ、Remote Control からも続けられなくなります。動かしたまま終了すると、次に起動したときに引き継ぎます。',
-        ...(updatesOnQuit() ? ['', '終了すると、Homebrew で新しいバージョンに入れ替えます。'] : []),
+        t('main.dialog.quitDetail'),
+        ...(updatesOnQuit() ? ['', t('main.dialog.quitWillUpdate')] : []),
       ].join('\n'),
-      buttons: ['動かしたまま終了', 'Claude Code も止めて終了', 'キャンセル'],
+      buttons: [t('main.dialog.quitKeepRunning'), t('main.dialog.quitStop'), t('common.cancel')],
       defaultId: 0,
       cancelId: 2,
       noLink: true,
@@ -1075,6 +1116,8 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
+  // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
+  applyLanguage();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));
   remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
   // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く。開けなければ、アプリは続けられない
@@ -1082,7 +1125,7 @@ app.whenReady().then(async () => {
     await openProfile(registry.list()[0]!);
   } catch (error) {
     const log = join(app.getPath('userData'), 'pty-host.log');
-    dialog.showErrorBox('Claude Code を動かす常駐プロセスを起動できませんでした', `${String(error)}\n\nログ: ${log}`);
+    dialog.showErrorBox(t('main.dialog.ptyHostFailed'), t('main.dialog.errorWithLog', { error: String(error), log }));
     quitDecided = true;
     app.quit();
     return;
@@ -1092,7 +1135,10 @@ app.whenReady().then(async () => {
     try {
       await openProfile(info);
     } catch (error) {
-      dialog.showErrorBox(`プロファイル「${info.name}」を開けませんでした`, `${String(error)}\n\nログ: ${join(profileDataDir(app.getPath('userData'), info.id), 'pty-host.log')}`);
+      dialog.showErrorBox(
+        t('main.dialog.profileOpenFailed', { name: info.name }),
+        t('main.dialog.errorWithLog', { error: String(error), log: join(profileDataDir(app.getPath('userData'), info.id), 'pty-host.log') }),
+      );
     }
   }
   claudeVersions = new ClaudeVersionMonitor((version) => send(IpcChannel.ClaudeVersionChanged, version));
@@ -1135,8 +1181,10 @@ app.on('before-quit', (event) => {
   system?.stop();
   claudeVersions?.stop();
   appUpdates?.stop();
-  // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える
-  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate });
+  // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える。
+  // 言語を変えて起動し直すときも、入れ替えるなら入れ替えたあとに起動し直す（先に起動すると、入れ替える前のアプリが開くため）
+  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchForLanguage });
+  else if (relaunchForLanguage) app.relaunch();
   homebrew?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   for (const p of profiles()) p.close();

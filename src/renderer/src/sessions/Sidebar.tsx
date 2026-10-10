@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { ChecklistUnread } from '@shared/checklist';
+import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
 import type { SettingsFile } from '@shared/settings-file';
@@ -10,7 +11,7 @@ import { useSettingsFiles } from '../chat/settingsFiles';
 import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, ScheduleIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
 import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
-import { PREPARING_LABEL } from './worktree';
+import { preparingLabel } from './worktree';
 import { AccountPanel } from '../account/AccountPanel';
 
 // 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
@@ -171,9 +172,9 @@ export const Sidebar = memo(function Sidebar({
                 e.stopPropagation();
                 setRenaming({ id: s.id, title: s.title ?? '' });
               }}
-              title="ダブルクリックで名前を変更"
+              title={t('sessions.sidebar.renameTip')}
             >
-              {s.title ?? '新しいセッション'}
+              {sessionName(s)}
             </span>
           )}
           <span className="session-sub">
@@ -187,8 +188,8 @@ export const Sidebar = memo(function Sidebar({
             {/* 親の下に出せない子（親と区分が違うなど）は、親の名前を添える */}
             {depth === 0 && parent && (
               <>
-                <span className="session-parent" title={`親セッション「${sessionName(parent)}」から起動した子セッション`}>
-                  親: {sessionName(parent)}
+                <span className="session-parent" title={t('sessions.sidebar.parentTip', { name: sessionName(parent) })}>
+                  {t('sessions.sidebar.parent', { name: sessionName(parent) })}
                 </span>
                 {' · '}
               </>
@@ -196,7 +197,7 @@ export const Sidebar = memo(function Sidebar({
             {s.worktree ? (
               <span
                 className="session-worktree"
-                title={`worktree ${s.worktree.name}（ブランチ ${s.worktree.branch}）で動いています\n元のフォルダ: ${s.worktree.root}`}
+                title={t('sessions.sidebar.worktreeTip', { name: s.worktree.name, branch: s.worktree.branch, root: s.worktree.root })}
               >
                 {/* 親の下の子は字下げで幅が狭いので、親と同じリポジトリなら元のフォルダの名前を省く（親の行に出ている） */}
                 {!(depth === 1 && parent && (parent.worktree?.root ?? parent.cwd) === s.worktree.root) && s.worktree.root.split('/').pop()}
@@ -215,7 +216,7 @@ export const Sidebar = memo(function Sidebar({
           </span>
         </div>
         {(checklistUnread[s.id] ?? 0) > 0 && (
-          <span className="session-checklist-unread" data-tip={`チェックリストに Claude からの未読の返信 ${checklistUnread[s.id]} 件`}>
+          <span className="session-checklist-unread" data-tip={t('sessions.sidebar.checklistUnread', { count: checklistUnread[s.id] ?? 0 })}>
             <ChecklistIcon size={12} />
             {checklistUnread[s.id]}
           </span>
@@ -232,8 +233,8 @@ export const Sidebar = memo(function Sidebar({
           icon={s.archived ? UnarchiveIcon : ArchiveIcon}
           size="sm"
           reveal
-          label={s.archived ? 'アクティブに戻す' : 'アーカイブ'}
-          tip={archivedWith > 0 ? `アーカイブ\n子セッション ${archivedWith} 件も一緒にアーカイブします` : undefined}
+          label={s.archived ? t('sessions.sidebar.unarchive') : t('sessions.sidebar.archive')}
+          tip={archivedWith > 0 ? `${t('sessions.sidebar.archive')}\n${t('sessions.sidebar.archiveChildren', { count: archivedWith })}` : undefined}
           onClick={(e) => {
             e.stopPropagation();
             if (s.archived) onUnarchive(s.id);
@@ -246,11 +247,11 @@ export const Sidebar = memo(function Sidebar({
             size="sm"
             reveal
             danger
-            label="一覧から削除"
+            label={t('sessions.sidebar.remove')}
             onClick={(e) => {
               e.stopPropagation();
               // worktree のセッションは、worktree をどうするかを App のダイアログで聞く
-              if (s.worktree || window.confirm(`「${s.title ?? '新しいセッション'}」を一覧から削除しますか？\n（Claude Code の会話ログは残ります）`)) onRemove(s.id);
+              if (s.worktree || window.confirm(t('sessions.sidebar.confirmRemove', { title: sessionName(s) }))) onRemove(s.id);
             }}
           />
         )}
@@ -264,35 +265,31 @@ export const Sidebar = memo(function Sidebar({
         <span className="new-session-plus">
           <AddIcon size={14} />
         </span>
-        新規セッション
+        {t('sessions.sidebar.newSession')}
       </button>
       <button className="import-session-button" onClick={onImport}>
-        既存の会話を開く…
+        {t('sessions.sidebar.import')}
       </button>
       <div className="session-list">
         <div className="pane-heading session-heading">
-          アクティブ
+          {t('sessions.sidebar.active')}
           <IconButton
             icon={lock ? LockIcon : UnlockIcon}
             size="sm"
             className="session-lock"
             pressed={!!lock}
-            label="並びをロック"
-            tip={
-              lock
-                ? '並びをロック中\nクリックで解除すると、最終更新の新しい順に戻ります'
-                : '並びをロック\nロックすると、更新があっても並びが入れ替わりません'
-            }
+            label={t('sessions.sidebar.lock')}
+            tip={lock ? t('sessions.sidebar.lockedTip') : t('sessions.sidebar.unlockedTip')}
             onClick={() => setLock(lock ? null : sessions.map((s) => s.id))}
           />
         </div>
-        {active.length === 0 && <div className="session-empty">セッションはありません</div>}
+        {active.length === 0 && <div className="session-empty">{t('sessions.sidebar.empty')}</div>}
         {activeRows.map(row)}
         {archived.length > 0 && (
           <>
             <div className="pane-heading clickable" onClick={() => setShowArchived((v) => !v)}>
               <DisclosureIcon open={showArchived} />
-              アーカイブ済み（{archived.length}）
+              {t('sessions.sidebar.archived', { count: archived.length })}
             </div>
             {showArchived && archivedRows.map(row)}
           </>
@@ -318,8 +315,13 @@ function ChildrenToggle({
   const kinds = sessions.map((c) => activityOf(c, statusOf(c.id))?.kind);
   const waiting = kinds.filter((k) => k === 'waiting').length;
   const working = kinds.filter((k) => k === 'running' || k === 'starting' || k === 'background').length;
-  const breakdown = [working > 0 && `作業中 ${working}`, waiting > 0 && `操作待ち ${waiting}`].filter(Boolean).join('・');
-  const label = open ? '子セッションを畳む' : `子セッション ${sessions.length} 件を開く`;
+  const breakdown = [working > 0 && t('sessions.children.working', { count: working }), waiting > 0 && t('sessions.children.waiting', { count: waiting })]
+    .filter(Boolean)
+    .join(t('sessions.children.separator'));
+  const label = open ? t('sessions.children.collapse') : t('sessions.children.expand', { count: sessions.length });
+  const summary = breakdown
+    ? t('sessions.children.countWithBreakdown', { count: sessions.length, breakdown })
+    : t('sessions.children.count', { count: sessions.length });
   const tone = open ? '' : waiting > 0 ? ' waiting' : working > 0 ? ' running' : '';
   return (
     <button
@@ -327,7 +329,7 @@ function ChildrenToggle({
       className={`session-children${open ? '' : ' folded'}${tone}`}
       aria-expanded={open}
       aria-label={label}
-      data-tip={`子セッション ${sessions.length} 件${breakdown ? `（${breakdown}）` : ''}\nクリックで${open ? '畳む' : '開く'}`}
+      data-tip={`${summary}\n${open ? t('sessions.children.clickToCollapse') : t('sessions.children.clickToExpand')}`}
       onClick={(e) => {
         e.stopPropagation();
         onToggle();
@@ -348,10 +350,13 @@ function ScheduledMark({ messages }: { messages: ScheduledMessage[] }) {
   const trouble = messages.filter(needsAttention).length;
   const waiting = messages.filter((m) => !needsAttention(m));
   const others = messages.length - 1;
-  const label = trouble > 0 ? '予約を送れませんでした' : `${formatScheduleTime(waiting[0]!.at)} に送信${others > 0 ? ` ほか ${others} 件` : ''}`;
+  const label =
+    trouble > 0
+      ? t('sessions.scheduled.failed')
+      : t(others > 0 ? 'sessions.scheduled.sendAtWithOthers' : 'sessions.scheduled.sendAt', { time: formatScheduleTime(waiting[0]!.at), count: others });
   return (
     <>
-      <span className={`session-scheduled${trouble > 0 ? ' trouble' : ''}`} title={`予約したメッセージ ${messages.length} 件`}>
+      <span className={`session-scheduled${trouble > 0 ? ' trouble' : ''}`} title={t('sessions.scheduled.count', { count: messages.length })}>
         <ScheduleIcon size={12} />
         {label}
       </span>
@@ -366,24 +371,27 @@ function SettingsFileName({ id, files }: { id: string; files: SettingsFile[] }) 
   return (
     <span
       className="session-settings-file"
-      title={file ? `設定ファイル「${file.name}」を重ねています（${file.path}）` : '重ねている設定ファイルが、登録にありません'}
+      title={file ? t('sessions.settingsFile.layered', { name: file.name, path: file.path }) : t('sessions.settingsFile.missing')}
     >
-      {file?.name ?? '（登録なし）'}
+      {file?.name ?? t('sessions.settingsFile.missingName')}
     </span>
   );
 }
 
 function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
-  if (s.attention === 'question') return { kind: 'waiting', label: '質問への回答待ち' };
-  if (s.attention === 'permission') return { kind: 'waiting', label: '実行の許可待ち' };
-  if (s.attention === 'other') return { kind: 'waiting', label: '操作待ち' };
-  if (s.attention === 'browser') return { kind: 'waiting', label: 'ブラウザでの操作待ち' };
-  if (s.worktree?.preparing) return { kind: 'starting', label: PREPARING_LABEL[s.worktree.preparing] };
-  const background = s.backgroundTasks > 0 ? `バックグラウンド ${s.backgroundTasks}件` : null;
-  if (status === 'starting') return { kind: 'starting', label: '起動中' };
-  if (status === 'running') return { kind: 'running', label: background ? `作業中（${background}）` : '作業中' };
-  if (background) return { kind: 'background', label: `${background}の完了待ち` };
-  if (s.unread) return { kind: 'unread', label: '新しい応答' };
-  if (status === 'exited') return { kind: 'exited', label: '終了' };
+  if (s.attention === 'question') return { kind: 'waiting', label: t('sessions.activity.question') };
+  if (s.attention === 'permission') return { kind: 'waiting', label: t('sessions.activity.permission') };
+  if (s.attention === 'other') return { kind: 'waiting', label: t('sessions.activity.other') };
+  if (s.attention === 'browser') return { kind: 'waiting', label: t('sessions.activity.browser') };
+  if (s.worktree?.preparing) return { kind: 'starting', label: preparingLabel(s.worktree.preparing) };
+  const background = s.backgroundTasks;
+  if (status === 'starting') return { kind: 'starting', label: t('sessions.activity.starting') };
+  if (status === 'running') {
+    const label = background > 0 ? t('sessions.activity.runningWithBackground', { count: background }) : t('sessions.activity.running');
+    return { kind: 'running', label };
+  }
+  if (background > 0) return { kind: 'background', label: t('sessions.activity.background', { count: background }) };
+  if (s.unread) return { kind: 'unread', label: t('sessions.activity.unread') };
+  if (status === 'exited') return { kind: 'exited', label: t('sessions.activity.exited') };
   return null;
 }

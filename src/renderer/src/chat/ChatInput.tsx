@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { SessionSummary, SlashCommand } from '@shared/ipc';
 import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
@@ -148,7 +149,7 @@ export function ChatInput({
         .map(({ s }) => ({
           value: `${sessionRef(s.id, s.title)} `,
           label: sessionName(s),
-          detail: ['セッション', projectRootOf(s).split('/').pop(), s.worktree?.name, s.archived && 'アーカイブ済み'].filter(Boolean).join(' · '),
+          detail: [t('composer.input.suggestSession'), projectRootOf(s).split('/').pop(), s.worktree?.name, s.archived && t('composer.input.suggestArchived')].filter(Boolean).join(' · '),
           session: true,
         }));
       const scored = fileList
@@ -267,7 +268,7 @@ export function ChatInput({
               <IconButton
                 size="sm"
                 icon={CloseIcon}
-                label="外す"
+                label={t('composer.input.remove')}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemoveComment(c.id);
@@ -281,8 +282,8 @@ export function ChatInput({
         <div className="attachments">
           {attachments.map((path) => (
             <span key={path} className="attachment" title={path}>
-              画像 {path.split('/').pop()?.replace(/^[0-9a-f]{8}-/, '')}
-              <IconButton size="sm" icon={CloseIcon} label="外す" onClick={() => onAttachmentsChange(attachments.filter((p) => p !== path))} />
+              {t('composer.input.image', { name: path.split('/').pop()?.replace(/^[0-9a-f]{8}-/, '') ?? '' })}
+              <IconButton size="sm" icon={CloseIcon} label={t('composer.input.remove')} onClick={() => onAttachmentsChange(attachments.filter((p) => p !== path))} />
             </span>
           ))}
         </div>
@@ -333,11 +334,11 @@ export function ChatInput({
             onSend();
           }}
         />
-        {onSchedule && <SchedulePicker label="時刻を指定して送信" tip="時刻を指定して送信（予約）" disabled={!canSchedule} onPick={onSchedule} />}
+        {onSchedule && <SchedulePicker label={t('composer.input.schedule')} tip={t('composer.input.scheduleTip')} disabled={!canSchedule} onPick={onSchedule} />}
         {showInterrupt ? (
-          <IconButton icon={StopIcon} danger label="中断" onClick={onInterrupt} />
+          <IconButton icon={StopIcon} danger label={t('composer.input.interrupt')} onClick={onInterrupt} />
         ) : (
-          <IconButton primary icon={SendIcon} label="送信" tip="送信（⌘Enter）" onClick={onSend} disabled={blocked} />
+          <IconButton primary icon={SendIcon} label={t('composer.input.send')} tip={t('composer.input.sendTip')} onClick={onSend} disabled={blocked} />
         )}
       </div>
     </div>

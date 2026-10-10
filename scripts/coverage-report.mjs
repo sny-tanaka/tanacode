@@ -43,6 +43,7 @@ for (const name of sources) {
   for (const [abs, fileCoverage] of Object.entries(JSON.parse(readFileSync(join(coverageDir, name, 'coverage-final.json'), 'utf8')))) {
     const path = localPath(abs);
     local[path] = { ...fileCoverage, path };
+    if (map.data[path]) align(map.data[path].data, local[path]);
   }
   map.merge(local);
 }
@@ -120,6 +121,48 @@ function localPath(abs) {
     if (existsSync(candidate)) return candidate;
   }
   return abs;
+}
+
+// 測り方が違うと、同じ分岐・関数でも、src に戻した位置が数文字ずれることがある。単体テストは vitest が書き換えたモジュール、
+// E2E はビルドしたスクリプトから戻すが、別のファイルから読み込んだ関数の呼び出しの書き換え方が違うため
+// （例: 三項演算子の中の t(…) の始まりが、片方は「? 」の前、もう片方は t の位置になる）。
+// istanbul は位置で合わせるので、そのままでは同じ分岐が 2 つに分かれ、片方を通っていないものとして数えてしまう。
+// 先に合わせたもの（target）に同じ位置のものが無い分岐・関数は、種類と行が同じで位置の合わないものが両方に同じ数だけあれば、
+// 行の中の順に対応させて、先に合わせたものの位置にそろえる
+function align(target, incoming) {
+  realign(target.branchMap, incoming.branchMap, (m) => m.locations[0], (m) => [m.type, ...m.locations.map((l) => `${l.start.line}-${l.end.line}`)].join());
+  realign(target.fnMap, incoming.fnMap, (m) => m.loc, (m) => `${m.loc.start.line}-${m.loc.end.line}`);
+}
+
+// locOf は istanbul が合わせるのに使う位置、groupOf は対応させてよいものの組（種類と行）
+function realign(targetMap, incomingMap, locOf, groupOf) {
+  const key = (m) => {
+    const { start, end } = locOf(m);
+    return `${start.line}|${start.column}|${end.line}|${end.column}`;
+  };
+  const targetKeys = new Set(Object.values(targetMap).map(key));
+  const incomingKeys = new Set(Object.values(incomingMap).map(key));
+  // 相手に同じ位置のものが無いものを、組ごとに、行の中の順に並べる
+  const unmatched = (entries, otherKeys) => {
+    const groups = new Map();
+    for (const entry of entries) {
+      if (otherKeys.has(key(entry[1]))) continue;
+      const group = groupOf(entry[1]);
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push(entry);
+    }
+    for (const list of groups.values()) list.sort((a, b) => locOf(a[1]).start.column - locOf(b[1]).start.column);
+    return groups;
+  };
+  const targetGroups = unmatched(Object.entries(targetMap), incomingKeys);
+  for (const [group, list] of unmatched(Object.entries(incomingMap), targetKeys)) {
+    const candidates = targetGroups.get(group);
+    if (candidates?.length !== list.length) continue;
+    list.forEach(([id], i) => {
+      const { loc, locations, decl, line } = candidates[i][1];
+      incomingMap[id] = { ...incomingMap[id], loc, ...(locations && { locations }), ...(decl && { decl, line }) };
+    });
+  }
 }
 
 function label(metric) {

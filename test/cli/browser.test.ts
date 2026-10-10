@@ -171,9 +171,9 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     expect(menu.context.join('\n')).toContain('2 + 2');
     await run.answer(menu.title, menu.options[0].id);
     await run.waitFor('閉じている間の JavaScript の実行の結果', () => resultOf('toolu_eval_closed'));
-    expect(JSON.stringify(resultOf('toolu_eval_closed'))).toContain('tanacode が起動していません');
+    expect(JSON.stringify(resultOf('toolu_eval_closed'))).toContain('tanacode is not running.');
     await run.waitFor('閉じている間の結果', () => resultOf('toolu_closed'));
-    expect(JSON.stringify(resultOf('toolu_closed'))).toContain('tanacode が起動していません');
+    expect(JSON.stringify(resultOf('toolu_closed'))).toContain('tanacode is not running.');
     await bridge.start();
     await run.waitFor('返事', replied('閉じている間の確認をしました'));
     expect(JSON.stringify(resultOf('toolu_back'))).toContain('get_text をしました');
@@ -206,7 +206,7 @@ describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依�
     const socketPath = join(socketDir, 'browser.sock');
     bridge = new BrowserBridge(socketPath, (session, tool, args, signal) =>
       tool === BROWSER_ASK_TOOL
-        ? asks.wait(session, args.message, () => ['今のページ: ダッシュボード', 'URL: http://localhost:3000/'], signal)
+        ? asks.wait(session, args.message, () => ['Current page: ダッシュボード', 'URL: http://localhost:3000/'], signal)
         : Promise.resolve(textResult(`${tool} をしました`)),
     );
     await bridge.start();
@@ -246,7 +246,8 @@ describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依�
     expect(resultOf('toolu_ask_done')).toBeUndefined();
     asks.answer(run.sessionId!, first.id, { done: true, reason: '' });
     await run.waitFor('返事', replied('続きを確かめました'));
-    expect(JSON.stringify(resultOf('toolu_ask_done'))).toContain('ユーザーが「終わった」を押しました\\n今のページ: ダッシュボード\\nURL: http://localhost:3000/');
+    // 結果の文の " は、JSON にするとエスケープされる（\ の数は問わない）
+    expect(JSON.stringify(resultOf('toolu_ask_done'))).toMatch(/The user pressed \\*"終わった\\*"\.\\nCurrent page: ダッシュボード\\nURL: http:\/\/localhost:3000\//);
     expect(asking()).toBeNull();
   });
 
@@ -272,7 +273,7 @@ describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依�
     asks.answer(run.sessionId!, third.id, { done: false, reason: 'テスト用のアカウントがありません' });
     await run.waitFor('知らせのあとの返事', replied('返事が届きました'));
     const notified = run.entries.find(
-      (e) => e.type === 'user' && JSON.stringify((e as { message?: unknown }).message).includes('ユーザーが「できない」を押しました。理由: テスト用のアカウントがありません'),
+      (e) => e.type === 'user' && /The user pressed \\*"できない\\*"\. Reason: テスト用のアカウントがありません/.test(JSON.stringify((e as { message?: unknown }).message)),
     );
     expect(notified, 'task-notification の発言').toBeDefined();
   });

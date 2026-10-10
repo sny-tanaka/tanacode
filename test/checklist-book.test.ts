@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkCopyRequest, checkOp, cleanName, cleanTitle, eventText, formatNumbers, humanUnread, parseNumbers, withParticle, type Checklist, type ChecklistOp } from '../src/shared/checklist';
+import { checkCopyRequest, checkOp, claudeNumbers, cleanName, cleanTitle, eventText, formatNumbers, humanUnread, parseNumbers, type Checklist, type ChecklistOp } from '../src/shared/checklist';
 import { ChecklistBook, ChecklistError } from '../src/shared/checklist-book';
 
 // チェックリストの書き換え（ChecklistBook。画面と Claude が同じものをメモリの上で書き換える）と、
@@ -16,26 +16,23 @@ function make() {
 }
 
 describe('記録の行の文（eventText）', () => {
-  it('どの記録も、主語を付けた文にする。英字・数字で終わる名前は、助詞の前に空白を入れる', () => {
-    expect(eventText({ type: 'created' }, 'Claude')).toBe('Claude が作りました');
-    expect(eventText({ type: 'checked' }, 'あなた')).toBe('あなたがチェックしました');
-    expect(eventText({ type: 'unchecked' }, '人')).toBe('人がチェックを外しました');
-    expect(eventText({ type: 'title', from: '古い題' }, 'Claude')).toBe('Claude がタイトルを変えました（前: 古い題）');
-    expect(eventText({ type: 'body' }, '人')).toBe('人が説明文を変えました');
-    expect(eventText({ type: 'moved', fromList: 'やること', fromNumber: 3 }, '人')).toBe('人が「やること」#3 から移しました');
+  it('どの記録も、主語を付けた英語の文にする（Claude に返す文なので、画面の言語によらない）', () => {
+    expect(eventText({ type: 'created' }, 'Claude')).toBe('Claude created the card');
+    expect(eventText({ type: 'checked' }, 'The user')).toBe('The user checked the card');
+    expect(eventText({ type: 'unchecked' }, 'The user')).toBe('The user unchecked the card');
+    expect(eventText({ type: 'title', from: '古い題' }, 'Claude')).toBe('Claude changed the title from "古い題"');
+    expect(eventText({ type: 'body' }, 'The user')).toBe('The user edited the body');
+    expect(eventText({ type: 'moved', fromList: 'やること', fromNumber: 3 }, 'The user')).toBe('The user moved the card from "やること" #3');
     expect(eventText({ type: 'copied', fromSessionTitle: 'ログイン', fromList: '確認', fromNumber: 2 }, 'Claude')).toBe(
-      'Claude がセッション「ログイン」の「確認」#2 からコピーしました',
+      'Claude copied the card from "確認" #2 in session "ログイン"',
     );
-    expect(eventText({ type: 'deleted' }, '人')).toBe('人がゴミ箱に入れました');
-    expect(eventText({ type: 'restored' }, '人')).toBe('人がゴミ箱から戻しました');
-    expect(withParticle('tanacode2', 'の')).toBe('tanacode2 の');
-    // 英字があっても、最後が英字でなければ空白を入れない
-    expect(withParticle('Claude の人', 'が')).toBe('Claude の人が');
+    expect(eventText({ type: 'deleted' }, 'The user')).toBe('The user moved the card to the trash');
+    expect(eventText({ type: 'restored' }, 'The user')).toBe('The user restored the card from the trash');
   });
 
-  it('who を省くと主語を付けない', () => {
-    expect(eventText({ type: 'deleted' })).toBe('ゴミ箱に入れました');
-    expect(eventText({ type: 'title', from: 'A' }, '')).toBe('タイトルを変えました（前: A）');
+  it('who を省くと主語を付けず、文の頭を大文字にする', () => {
+    expect(eventText({ type: 'deleted' })).toBe('Moved the card to the trash');
+    expect(eventText({ type: 'title', from: 'A' }, '')).toBe('Changed the title from "A"');
   });
 
   it('番号の配列に読めないものが 1 つでもあれば、全体を読めないとする', () => {
@@ -54,9 +51,11 @@ describe('記録の行の文（eventText）', () => {
     expect(parseNumbers('5-8x')).toBeNull();
   });
 
-  it('番号を短く書く: 3 つ続けば範囲、2 つなら並べる', () => {
+  it('番号を短く書く: 3 つ続けば範囲、2 つなら並べる。Claude に返す文の範囲は、画面の言語によらず番号の指定と同じ "-"', () => {
     expect(formatNumbers([7, 5, 6])).toBe('#5〜7');
     expect(formatNumbers([1, 2, 4, 5, 6, 9])).toBe('#1, #2, #4〜6, #9');
+    expect(claudeNumbers([7, 5, 6])).toBe('#5-7');
+    expect(claudeNumbers([1, 2, 4, 5, 6, 9])).toBe('#1, #2, #4-6, #9');
   });
 
   it('名前とタイトルは、改行・タブの続きを 1 つの空白にし、前後の空白を除いて、長さを切る（名前 80 文字・タイトル 300 文字）', () => {
@@ -218,7 +217,7 @@ describe('ChecklistBook', () => {
     expect(a.name).toBe('メモ (3)');
     book.updateList(S, 'human', a.id, { description: ' 新しいルール ' });
     expect(a.description).toBe('新しいルール');
-    expect(book.takeHumanActivity(S)).toEqual(['人がリスト「ToDo」の名前を「メモ (3)」に変えました', '人がリスト「メモ (3)」の説明を変えました: 新しいルール']);
+    expect(book.takeHumanActivity(S)).toEqual(['The user renamed the list "ToDo" to "メモ (3)"', 'The user changed the description of the list "メモ (3)" to: 新しいルール']);
     expect(() => book.updateList(S, 'human', 'none', { name: 'x' })).toThrow(ChecklistError);
   });
 
@@ -341,10 +340,10 @@ describe('ChecklistBook', () => {
     for (let i = 0; i < 205; i++) book.reply(S, 'human', list.id, card.id, `返信 ${i}`);
     const activity = book.takeHumanActivity(S);
     expect(activity).toHaveLength(200);
-    expect(activity[0]).toBe('人が「やること」#1「A」に返信しました: 返信 5');
-    expect(activity.at(-1)).toBe('人が「やること」#1「A」に返信しました: 返信 204');
+    expect(activity[0]).toBe('The user replied to "やること" #1 "A": 返信 5');
+    expect(activity.at(-1)).toBe('The user replied to "やること" #1 "A": 返信 204');
     book.reply(S, 'human', list.id, card.id, `${'あ'.repeat(250)}\n続き`);
-    expect(book.takeHumanActivity(S)).toEqual([`人が「やること」#1「A」に返信しました: ${'あ'.repeat(200)}…`]);
+    expect(book.takeHumanActivity(S)).toEqual([`The user replied to "やること" #1 "A": ${'あ'.repeat(200)}…`]);
     // スレッドには、切らずに残す
     expect(card.thread.at(-1)).toMatchObject({ text: `${'あ'.repeat(250)}\n続き` });
   });
@@ -368,21 +367,36 @@ describe('ChecklistBook', () => {
     book.copyCards({ sessionId: S, title: 'ログイン', listId: other.id, cardIds: [b.id, c.id] }, S, 'human', '控え');
     book.emptyTrash(S);
     expect(book.takeHumanActivity(S)).toEqual([
-      '人がリスト「やること」を作りました',
-      '人が「やること」に #1「A」、#2「B」、#3「C」 を足しました',
-      '人が「やること」#1 のタイトルを「A2」に変えました',
-      '人が「やること」#1「A2」の説明文を変えました',
-      '人が「やること」の #1「A2」、#2「B」 をチェックしました（確かめた）',
-      '人が「やること」の #1「A2」 をチェックを外しました',
-      '人が「やること」#3「C」に返信しました: 複数 行の 返信',
-      '人がリスト「完了」を作りました',
-      '人が「やること」の 2 枚のカードを「完了」に移しました（#1「B」、#2「C」）',
-      '人が「完了」の #1「B」、#2「C」 をゴミ箱に入れました',
-      '人が「完了」の #1「B」、#2「C」 をゴミ箱から戻しました',
-      '人がリスト「完了」をゴミ箱に入れました',
-      '人がリスト「完了」をゴミ箱から戻しました',
-      '人がリスト「控え」を作りました',
-      '人がセッション「ログイン」の「完了」から、#1「B」、#2「C」 を「控え」にコピーしました',
+      'The user created the list "やること"',
+      'The user added #1 "A", #2 "B", #3 "C" to "やること"',
+      'The user changed the title of "やること" #1 to "A2"',
+      'The user edited the body of "やること" #1 "A2"',
+      'The user checked #1 "A2", #2 "B" in "やること" (確かめた)',
+      'The user unchecked #1 "A2" in "やること"',
+      'The user replied to "やること" #3 "C": 複数 行の 返信',
+      'The user created the list "完了"',
+      'The user moved 2 cards from "やること" to "完了" (#1 "B", #2 "C")',
+      'The user moved #1 "B", #2 "C" in "完了" to the trash',
+      'The user restored #1 "B", #2 "C" in "完了" from the trash',
+      'The user moved the list "完了" to the trash',
+      'The user restored the list "完了" from the trash',
+      'The user created the list "控え"',
+      'The user copied 2 cards from "完了" in session "ログイン" to "控え" as #1 "B", #2 "C"',
+    ]);
+  });
+
+  it('Claude に伝える人の書き換えの記録: 1 枚の移動・コピーは単数で書く', () => {
+    const { book } = make();
+    const list = book.createList(S, 'human', 'やること', '');
+    const other = book.createList(S, 'human', '完了', '');
+    const [a] = book.addCards(S, 'human', list.id, [{ title: 'A' }]);
+    book.takeHumanActivity(S);
+    book.moveCards(S, 'human', list.id, [a.id], other.id);
+    book.copyCards({ sessionId: S, title: 'ログイン', listId: other.id, cardIds: [a.id] }, S, 'human', '控え');
+    expect(book.takeHumanActivity(S)).toEqual([
+      'The user moved 1 card from "やること" to "完了" (#1 "A")',
+      'The user created the list "控え"',
+      'The user copied 1 card from "完了" in session "ログイン" to "控え" as #1 "A"',
     ]);
   });
 
@@ -455,7 +469,7 @@ describe('ChecklistBook', () => {
     const [card] = book.addCards(S, 'human', list.id, [{ title: 'A' }]);
     book.takeHumanActivity(S);
     book.reply(S, 'human', list.id, card.id, 'あ'.repeat(200));
-    expect(book.takeHumanActivity(S)).toEqual([`人が「やること」#1「A」に返信しました: ${'あ'.repeat(200)}`]);
+    expect(book.takeHumanActivity(S)).toEqual([`The user replied to "やること" #1 "A": ${'あ'.repeat(200)}`]);
   });
 
   it('セッションの ID に、英数字・_・- 以外が混じれば断る（保存先のパスの外に出ない）', () => {

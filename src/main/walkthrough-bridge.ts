@@ -8,7 +8,7 @@ export const WALKTHROUGH_SOCKET_ENV = 'TANACODE_WALKTHROUGH_SOCKET';
 export const WALKTHROUGH_SESSION_ENV = 'TANACODE_WALKTHROUGH_SESSION';
 
 // アプリが起動していないとき、中継が Claude に返す文
-export const WALKTHROUGH_CLOSED_MESSAGE = 'tanacode が起動していません。コードを示すには、ユーザーに tanacode を起動してもらってください';
+export const WALKTHROUGH_CLOSED_MESSAGE = 'tanacode is not running. To show code, ask the user to start tanacode.';
 
 // 中継が 1 回の呼び出しを待つ上限（ファイルの行数を確かめるだけで、人の操作は待たない）
 export const WALKTHROUGH_CALL_TIMEOUT_MS = 30_000;

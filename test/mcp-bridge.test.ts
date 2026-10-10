@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { language, setLanguage } from '@shared/i18n';
 import type { McpServerDef } from '@shared/mcp-tools';
-import { callBridge, McpBridge, mcpArgs, mcpServerEntry, textResult, type BridgeHandler } from '../src/main/mcp-bridge';
+import { callBridge, McpBridge, MCP_LANGUAGE_ENV, mcpArgs, mcpServerEntry, textResult, type BridgeHandler } from '../src/main/mcp-bridge';
 import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
 
 // MCP サーバーの中継とアプリのやりとり（McpBridge・callBridge）と、中継の JSON-RPC（respond・runRelay）の、
@@ -23,7 +24,7 @@ afterEach(() => {
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const CLOSED = 'tanacode が起動していません';
+const CLOSED = 'tanacode is not running.';
 
 // アプリ側の待ち受けを立てる
 async function bridge(handler: BridgeHandler, name = 'bridge.sock'): Promise<McpBridge> {
@@ -154,7 +155,7 @@ describe('callBridge（中継の側）', () => {
 
   it('ほかの理由でつながらなければ、理由（エラーのコード）を添える', async () => {
     writeFileSync(join(root, 'file'), '');
-    expect(await callBridge(join(root, 'file', 'x.sock'), request, 5000, CLOSED)).toEqual(textResult('tanacode につながりませんでした（ENOTDIR）', true));
+    expect(await callBridge(join(root, 'file', 'x.sock'), request, 5000, CLOSED)).toEqual(textResult('Could not connect to tanacode (ENOTDIR).', true));
   });
 
   it('返事が分かれて届いても、1 行そろってから読む', async () => {
@@ -170,15 +171,15 @@ describe('callBridge（中継の側）', () => {
   it('読めない返事・違う呼び出しへの返事・結果の無い返事は、読めなかったとして返す', async () => {
     const replies = ['{壊れた', JSON.stringify({ id: 99, result: textResult('ほかの') }), JSON.stringify({ id: 1 })];
     const path = await fakeApp((socket) => socket.write(`${replies.shift()}\n`));
-    for (let i = 0; i < 3; i++) expect(await callBridge(path, request, 5000, CLOSED)).toEqual(textResult('tanacode の返事を読めませんでした', true));
+    for (let i = 0; i < 3; i++) expect(await callBridge(path, request, 5000, CLOSED)).toEqual(textResult('Could not read the response from tanacode.', true));
   });
 
   it('返事が無ければ、待つ上限で諦める。返事の前に切れたら、切れたと返す', async () => {
     const silent = await fakeApp(() => {});
-    expect(await callBridge(silent, request, 100, CLOSED)).toEqual(textResult('tanacode から返事がありませんでした。アプリが止まっていないか確かめてください', true));
+    expect(await callBridge(silent, request, 100, CLOSED)).toEqual(textResult('tanacode did not respond. Ask the user to check that the app is not frozen.', true));
     servers.pop()?.close();
     const hangUp = await fakeApp((socket) => socket.end());
-    expect(await callBridge(hangUp, request, 5000, CLOSED)).toEqual(textResult('tanacode との接続が切れました。もう一度試してください', true));
+    expect(await callBridge(hangUp, request, 5000, CLOSED)).toEqual(textResult('The connection to tanacode was lost. Try again.', true));
   });
 
   it('取り消されたら、待つのをやめてソケットを閉じる（アプリは待つのをやめる）', async () => {
@@ -191,7 +192,7 @@ describe('callBridge（中継の側）', () => {
     const pending = callBridge(b.socketPath, request, 5000, CLOSED, cancel.signal);
     for (let i = 0; i < 50 && !signal; i++) await sleep(10);
     cancel.abort();
-    expect(await pending).toEqual(textResult('取り消されました', true));
+    expect(await pending).toEqual(textResult('Canceled.', true));
     for (let i = 0; i < 50 && !signal!.aborted; i++) await sleep(10);
     expect(signal!.aborted).toBe(true);
   });
@@ -200,27 +201,37 @@ describe('callBridge（中継の側）', () => {
 describe('起動の引数', () => {
   const def: McpServerDef = {
     name: 'tanacode-test',
+    labels: 'browser',
     title: 'テスト',
     instructions: '',
     tools: [
-      { name: 'look', kind: 'read', label: '見る', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'run', kind: 'act', label: '動かす', description: '動かす', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'look', kind: 'read', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'run', kind: 'act', description: '動かす', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     ],
   };
   const launch = { command: '/Apps/tanacode Helper', script: '/Apps/out/main/test-mcp.js', socketPath: '/u/test.sock', version: '1.2.0' };
 
-  it('mcpServerEntry: 中継を Node として動かし、ソケットと版を環境変数で渡す。待つ上限は指定したときだけ。許可済みは読むだけのツール', () => {
+  it('mcpServerEntry: 中継を Node として動かし、ソケットと版とアプリの言語を環境変数で渡す。待つ上限は指定したときだけ。許可済みは読むだけのツール', () => {
     expect(mcpServerEntry(def, launch, { TANACODE_TEST_SOCKET: '/u/test.sock' })).toEqual({
       name: 'tanacode-test',
       config: {
         type: 'stdio',
         command: '/Apps/tanacode Helper',
         args: ['/Apps/out/main/test-mcp.js'],
-        env: { ELECTRON_RUN_AS_NODE: '1', TANACODE_TEST_SOCKET: '/u/test.sock', TANACODE_VERSION: '1.2.0' },
+        env: { ELECTRON_RUN_AS_NODE: '1', TANACODE_TEST_SOCKET: '/u/test.sock', TANACODE_VERSION: '1.2.0', TANACODE_LANGUAGE: 'ja' },
       },
       allowed: ['mcp__tanacode-test__look'],
     });
     expect(mcpServerEntry(def, launch, {}, 1000).config.timeout).toBe(1000);
+  });
+
+  it('mcpServerEntry: 言語は、Claude Code を起動するときのアプリの言語', () => {
+    try {
+      setLanguage('en');
+      expect((mcpServerEntry(def, launch, {}).config.env as Record<string, string>)[MCP_LANGUAGE_ENV]).toBe('en');
+    } finally {
+      setLanguage('ja');
+    }
   });
 
   it('mcpArgs: サーバーが無ければ何も付けない', () => {
@@ -231,9 +242,10 @@ describe('起動の引数', () => {
 describe('中継の JSON-RPC', () => {
   const def: McpServerDef = {
     name: 'tanacode-test',
+    labels: 'browser',
     title: 'テスト',
     instructions: '説明',
-    tools: [{ name: 'look', kind: 'read', label: '見る', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }],
+    tools: [{ name: 'look', kind: 'read', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }],
   };
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   const deps: RelayDeps = {
@@ -258,7 +270,7 @@ describe('中継の JSON-RPC', () => {
   });
 
   it('respond: tools/call は、名前の無い・知らないツールを断り、引数がオブジェクトでなければ空で渡す。知らないメソッドはエラー', async () => {
-    expect(await respond({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} }, deps)).toEqual({ jsonrpc: '2.0', id: 1, result: textResult('知らないツールです: ', true) });
+    expect(await respond({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} }, deps)).toEqual({ jsonrpc: '2.0', id: 1, result: textResult('Unknown tool: ', true) });
     expect(await respond({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'look', arguments: ['x'] } }, deps)).toEqual({
       jsonrpc: '2.0',
       id: 2,
@@ -303,5 +315,35 @@ describe('中継の JSON-RPC', () => {
     input.end();
     await sleep(20);
     expect(closed).toBe(true);
+  });
+
+  it('runRelay: tools/list のツールの短い名前（title）は、アプリが env で渡した言語にする。無い・知らない値なら変えない（中継のプロセスでは既定の言語）', async () => {
+    const labeled: McpServerDef = { ...def, tools: [{ ...def.tools[0], name: 'screenshot' }] };
+    // 中継を動かし、tools/list の title を返す
+    const titles = async (lang: string | undefined) => {
+      if (lang === undefined) delete process.env[MCP_LANGUAGE_ENV];
+      else process.env[MCP_LANGUAGE_ENV] = lang;
+      const input = new PassThrough();
+      const output = new PassThrough();
+      output.setEncoding('utf8');
+      let text = '';
+      output.on('data', (chunk: string) => (text += chunk));
+      runRelay(input, output, { ...deps, server: labeled }, () => {});
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
+      for (let i = 0; i < 50 && !text.includes('\n'); i++) await sleep(10);
+      input.end();
+      const reply = JSON.parse(text.split('\n')[0]) as { result: { tools: { title: string; annotations: { title: string } }[] } };
+      return reply.result.tools.map((t) => [t.title, t.annotations.title]);
+    };
+    try {
+      expect(await titles(undefined)).toEqual([['スクリーンショット', 'スクリーンショット']]);
+      expect(await titles('en')).toEqual([['Screenshot', 'Screenshot']]);
+      expect(language()).toBe('en');
+      expect(await titles('fr')).toEqual([['Screenshot', 'Screenshot']]);
+      expect(await titles('ja')).toEqual([['スクリーンショット', 'スクリーンショット']]);
+    } finally {
+      delete process.env[MCP_LANGUAGE_ENV];
+      setLanguage('ja');
+    }
   });
 });

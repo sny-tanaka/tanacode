@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import type { PermissionMode } from '@shared/screen';
 import { canSee } from '@shared/session-tools';
@@ -7,7 +8,7 @@ import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { useInsertInput } from '../chat/insertInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
-import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
+import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
 import { BranchIcon, ChevronDownIcon, CloseIcon, DefaultBranchIcon, FolderIcon, IconButton, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
@@ -178,7 +179,7 @@ export function NewSessionPane({
       // 始めている間にフォルダを変えていたら、変えた先で付けたコメントは残す（始めたセッションには、送ったときのものが入っている）
       if (cwdRef.current === dir) onCommentsChange([]);
     } catch (err) {
-      window.alert(`セッションを始められませんでした: ${errorMessage(err)}`);
+      window.alert(t('sessions.newSession.startFailed', { error: errorMessage(err) }));
     } finally {
       // 始められたら、ふつうはこの画面を閉じてそのセッションに移る。始めている間にフォルダを変えていたら画面は残るので、印を戻す
       setStartingDirs((prev) => {
@@ -193,28 +194,28 @@ export function NewSessionPane({
     <section className="claude">
       <header className="claude-header">
         <span className="claude-mark" />
-        <span className="claude-title">新規セッション</span>
+        <span className="claude-title">{t('sessions.newSession.title')}</span>
         <div className="spacer" />
         <RemoteControlToggle on={options.remoteControl} connected={null} onChange={(remoteControl) => change({ remoteControl })} />
         {onCancel && (
-          <IconButton icon={CloseIcon} size="md" label="キャンセル" tip="前に見ていたセッションに戻る" onClick={onCancel} />
+          <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} tip={t('sessions.newSession.cancelTip')} onClick={onCancel} />
         )}
       </header>
       <div className="new-session-body">
         <span className="new-session-hero">
           <img className="new-session-icon" src={icon} alt="" draggable={false} />
         </span>
-        <p className="new-session-title">何から始めますか？</p>
+        <p className="new-session-title">{t('sessions.newSession.heading')}</p>
         <p className="new-session-sub">
-          <span>フォルダを選んで最初の指示を送ると、そのフォルダで Claude Code が起動します。</span>
-          <span>起動が終わるのを待ってから送るので、スラッシュコマンドもそのまま使えます。</span>
+          <span>{t('sessions.newSession.aboutFolder')}</span>
+          <span>{t('sessions.newSession.aboutCommands')}</span>
         </p>
       </div>
       <div className="chat-input-wrap">
         <div className="new-session-chips">
           <FolderPicker cwd={cwd} folders={folders} onChange={onCwdChange} onForget={onForgetFolder} />
           {currentBranch && (
-            <button className="new-session-chip branch" onClick={onOpenScm} title="今のブランチ。押すとソース管理を開き、ブランチを切り替えられる">
+            <button className="new-session-chip branch" onClick={onOpenScm} title={t('sessions.newSession.branchTip')}>
               <BranchIcon size={14} />
               {currentBranch}
             </button>
@@ -224,17 +225,17 @@ export function NewSessionPane({
               className={`new-session-chip icon-only${switching ? ' busy' : ''}`}
               disabled={switching}
               onClick={() => void switchDefault()}
-              data-tip="最新のデフォルトブランチへ切り替える（フェッチして、リモートの最新まで進めます）"
-              aria-label="最新のデフォルトブランチへ切り替える"
+              data-tip={t('sessions.newSession.switchDefaultTip')}
+              aria-label={t('sessions.newSession.switchDefault')}
             >
               <DefaultBranchIcon size={14} />
             </button>
           )}
-          <label className="new-session-check" data-tip={WORKTREE_ABOUT}>
+          <label className="new-session-check" data-tip={t('sessions.newSession.worktreeAbout')}>
             <input type="checkbox" checked={options.worktree} onChange={(e) => change({ worktree: e.target.checked })} />
-            worktree を使う
+            {t('sessions.newSession.useWorktree')}
           </label>
-          {missing && <span className="new-session-warning">フォルダが見つかりません</span>}
+          {missing && <span className="new-session-warning">{t('sessions.newSession.folderMissing')}</span>}
           {switchError && <span className="new-session-warning">{switchError}</span>}
         </div>
         <ChatInput
@@ -243,9 +244,7 @@ export function NewSessionPane({
           onChange={setInput}
           attachments={attachments}
           onAttachmentsChange={setAttachments}
-          placeholder={
-            cwd ? '最初の指示（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）' : '先に作業するフォルダを選んでください'
-          }
+          placeholder={cwd ? t('sessions.newSession.placeholder') : t('sessions.newSession.placeholderNoFolder')}
           blocked={blocked}
           onSend={() => void send()}
           showInterrupt={false}
@@ -260,14 +259,16 @@ export function NewSessionPane({
             value={options.settingsFile}
             files={settingsFiles}
             onChange={(value) => change({ settingsFile: value })}
-            title="設定ファイル（標準の設定に重ねて起動します。このセッションだけで、始めたあとも切り替えられます）"
+            title={t('sessions.newSession.settingsFileTitle')}
           />
           <select
             value={options.model ?? ''}
             onChange={(e) => change({ model: e.target.value || null })}
-            title="モデル（--model。このセッションだけで、既定値は変わりません）"
+            title={t('sessions.newSession.modelTitle')}
           >
-            <option value="">{settingsFile?.model ? `既定（${settingsFile.model}）` : '既定のモデル'}</option>
+            <option value="">
+              {settingsFile?.model ? t('sessions.newSession.defaultModelOf', { model: settingsFile.model }) : t('sessions.newSession.defaultModel')}
+            </option>
             {options.model && !models.choices.some((c) => c.value === options.model) && (
               <option value={options.model}>{options.model}</option>
             )}
@@ -279,7 +280,7 @@ export function NewSessionPane({
           </select>
           <IconButton
             icon={ReloadIcon}
-            label="モデル一覧を更新"
+            label={t('sessions.newSession.refreshModels')}
             tip={refreshTitle(models.catalog)}
             busy={models.refreshing}
             className="model-refresh"
@@ -289,9 +290,9 @@ export function NewSessionPane({
             value={efforts.length === 0 ? '' : (options.effort ?? '')}
             disabled={efforts.length === 0}
             onChange={(e) => change({ effort: e.target.value || null })}
-            title="エフォート（--effort。このセッションだけで、既定値は変わりません）"
+            title={t('sessions.newSession.effortTitle')}
           >
-            <option value="">{efforts.length === 0 ? 'エフォートなし' : '既定のエフォート'}</option>
+            <option value="">{efforts.length === 0 ? t('sessions.newSession.noEffort') : t('sessions.newSession.defaultEffort')}</option>
             {efforts.map((effort) => (
               <option key={effort} value={effort}>
                 {effort}
@@ -301,10 +302,10 @@ export function NewSessionPane({
           <select
             value={options.mode ?? ''}
             onChange={(e) => change({ mode: (e.target.value || null) as PermissionMode | null })}
-            title="権限モード（--permission-mode。このセッションだけで、既定値は変わりません）"
+            title={t('sessions.newSession.modeTitle')}
           >
-            <option value="">既定のモード</option>
-            {MODES.map(([mode, label]) => (
+            <option value="">{t('sessions.newSession.defaultMode')}</option>
+            {modeChoices().map(([mode, label]) => (
               <option key={mode} value={mode}>
                 {label}
               </option>
@@ -315,9 +316,6 @@ export function NewSessionPane({
     </section>
   );
 }
-
-const WORKTREE_ABOUT =
-  'claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。\n同じフォルダで並行して動かしても、変更がぶつかりません。\n場所はフォルダの .claude/worktrees/、ブランチは worktree-<名前>';
 
 // 作業フォルダの選択。最近使ったフォルダか、ダイアログで選んだフォルダ。使わなくなった最近のフォルダは、一覧から外せる
 function FolderPicker({
@@ -361,17 +359,17 @@ function FolderPicker({
       <button
         className={`new-session-chip${cwd ? '' : ' empty'}`}
         onClick={() => (folders.length > 0 ? setOpen((v) => !v) : void pick())}
-        title={cwd ?? '作業するフォルダを選ぶ'}
+        title={cwd ?? t('sessions.folderPicker.pickTip')}
       >
         <FolderIcon size={14} />
-        {cwd ? baseName(cwd) : 'フォルダを選ぶ'}
+        {cwd ? baseName(cwd) : t('sessions.folderPicker.pick')}
         {folders.length > 0 && <ChevronDownIcon size={12} />}
       </button>
       {open && (
         <div className="folder-menu">
           {folders.length > 0 && (
             <>
-              <div className="folder-menu-heading">最近のフォルダ</div>
+              <div className="folder-menu-heading">{t('sessions.folderPicker.recent')}</div>
               {folders.map((dir) => (
                 <div key={dir} className="folder-menu-row reveal-host">
                   <button
@@ -390,8 +388,8 @@ function FolderPicker({
                     size="sm"
                     reveal
                     className="folder-menu-forget"
-                    label={`${baseName(dir)} を最近のフォルダから外す`}
-                    tip="最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）"
+                    label={t('sessions.folderPicker.forget', { name: baseName(dir) })}
+                    tip={t('sessions.folderPicker.forgetTip')}
                     onClick={() => onForget(dir)}
                   />
                 </div>
@@ -400,7 +398,7 @@ function FolderPicker({
             </>
           )}
           <button className="folder-menu-item" onClick={() => void pick()}>
-            <span className="folder-menu-name">別のフォルダを選ぶ…</span>
+            <span className="folder-menu-name">{t('sessions.folderPicker.pickOther')}</span>
           </button>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { t } from '@shared/i18n';
 
 // 一度取った画像（data URL）。同じ画像を何度も取りに行かない
 const loaded = new Map<string, string | null>();
@@ -18,7 +19,7 @@ export function ChatImages({ keys }: { keys: string[] }) {
         <ChatImage key={key} imageKey={key} onZoom={setZoomed} />
       ))}
       {zoomed && (
-        <div className="image-zoom" onClick={() => setZoomed(null)} role="dialog" aria-label="画像を閉じる">
+        <div className="image-zoom" onClick={() => setZoomed(null)} role="dialog" aria-label={t('composer.images.closeZoom')}>
           <img src={zoomed} alt="" />
         </div>
       )}
@@ -40,10 +41,10 @@ function ChatImage({ imageKey, onZoom }: { imageKey: string; onZoom: (url: strin
     };
   }, [imageKey]);
 
-  if (url === undefined) return <div className="chat-image placeholder">画像を読み込み中…</div>;
-  if (url === null) return <div className="chat-image placeholder">画像（読み込めません）</div>;
+  if (url === undefined) return <div className="chat-image placeholder">{t('composer.images.loading')}</div>;
+  if (url === null) return <div className="chat-image placeholder">{t('composer.images.unreadable')}</div>;
   return (
-    <button className="chat-image" onClick={() => onZoom(url)} title="クリックで拡大">
+    <button className="chat-image" onClick={() => onZoom(url)} title={t('composer.images.zoom')}>
       <img src={url} alt="" />
     </button>
   );

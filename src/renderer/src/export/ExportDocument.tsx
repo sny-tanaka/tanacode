@@ -1,10 +1,11 @@
 import { Fragment } from 'react';
 import type { HookRun, TodoItem } from '@shared/chat';
+import { t } from '@shared/i18n';
 import { AnswersCard, ChatRow } from '../chat/ChatRow';
 import { HookChip, HookDetail } from '../chat/HookRuns';
 import { SentFilesCard } from '../chat/SentFilesCard';
 import { TodoList } from '../chat/TodoPanel';
-import { DIFF_TOOLS, STATUS_LABEL, ToolDetail } from '../chat/ToolCard';
+import { DIFF_TOOLS, statusLabel, ToolDetail } from '../chat/ToolCard';
 import type { ChatItem } from '../chat/chatState';
 import { toolLabel } from '../chat/toolLabel';
 import { groupSummary, groupTools, hookSummary, type HookGroup, type ToolGroup, type ToolItem } from '../chat/toolGroups';
@@ -34,21 +35,21 @@ export function ExportDocument({ meta, items, todoSteps, images, markdown }: Pro
       <header className="export-head">
         <div className="export-brand">
           <span className="claude-mark" />
-          tanacode の作業の書き出し
+          {t('export.document.brand')}
         </div>
         <h1 className="export-title">{meta.title}</h1>
         <dl className="export-facts">
-          <Fact label="フォルダ" value={meta.cwd} mono />
-          {meta.branches.length > 0 && <Fact label="ブランチ" value={meta.branches.join(' → ')} mono />}
-          {meta.period && <Fact label="期間" value={formatPeriod(meta.period)} />}
-          <Fact label="範囲" value={meta.range} />
-          {meta.omitted.length > 0 && <Fact label="入れていないもの" value={meta.omitted.join('・')} />}
+          <Fact label={t('export.document.folder')} value={meta.cwd} mono />
+          {meta.branches.length > 0 && <Fact label={t('export.document.branch')} value={meta.branches.join(' → ')} mono />}
+          {meta.period && <Fact label={t('export.document.period')} value={formatPeriod(meta.period)} />}
+          <Fact label={t('export.document.range')} value={meta.range} />
+          {meta.omitted.length > 0 && <Fact label={t('export.document.omitted')} value={meta.omitted.join(t('export.document.listSeparator'))} />}
         </dl>
         {meta.files.length > 0 && (
           <details className="export-files" open>
             <summary>
               <DisclosureIcon open={false} />
-              変えたファイル {meta.files.length}件
+              {t('export.document.changedFiles', { count: meta.files.length })}
             </summary>
             <ul>
               {meta.files.map((file) => (
@@ -94,7 +95,7 @@ export function ExportDocument({ meta, items, todoSteps, images, markdown }: Pro
           );
         })}
       </div>
-      <footer className="export-foot">{formatDateTime(meta.exportedAt)} に tanacode で書き出しました</footer>
+      <footer className="export-foot">{t('export.document.exportedAt', { time: formatDateTime(meta.exportedAt) })}</footer>
     </main>
   );
 }
@@ -147,7 +148,7 @@ function ExportToolGroup({ group, images }: { group: ToolGroup; images: Props['i
             · {part}
           </span>
         ))}
-        {summary.failed > 0 && <span className="tool-group-failed">· 失敗 {summary.failed}</span>}
+        {summary.failed > 0 && <span className="tool-group-failed">· {t('export.document.failed', { count: summary.failed })}</span>}
         {summary.duration && <span className="tool-group-meta">· {summary.duration}</span>}
       </summary>
       <div className="tool-group-list">
@@ -178,7 +179,7 @@ function ExportToolCard({ item, images }: { item: ToolItem; images: Props['image
           </span>
         )}
       </div>
-      <div className="tool-card-status">{STATUS_LABEL[item.status]}</div>
+      <div className="tool-card-status">{statusLabel(item.status)}</div>
     </>
   );
   return (
@@ -211,8 +212,8 @@ function ExportHookGroup({ group }: { group: HookGroup }) {
             · {event}
           </span>
         ))}
-        {summary.blocked > 0 && <span className="tool-group-failed">· 止めた {summary.blocked}</span>}
-        {summary.failed > 0 && <span className="tool-group-failed">· 失敗 {summary.failed}</span>}
+        {summary.blocked > 0 && <span className="tool-group-failed">· {t('export.document.blocked', { count: summary.blocked })}</span>}
+        {summary.failed > 0 && <span className="tool-group-failed">· {t('export.document.failed', { count: summary.failed })}</span>}
         {summary.duration && <span className="tool-group-meta">· {summary.duration}</span>}
       </summary>
       <div className="tool-group-list">
@@ -246,13 +247,13 @@ function ExportImages({ keys, images }: { keys: string[]; images: Props['images'
         if (!url) {
           return (
             <div key={key} className="chat-image placeholder">
-              画像（読み込めません）
+              {t('export.document.imageMissing')}
             </div>
           );
         }
         return (
           <details key={key} className="export-image">
-            <summary className="chat-image" aria-label="画像を拡大">
+            <summary className="chat-image" aria-label={t('export.document.zoomImage')}>
               <img src={url} alt="" />
             </summary>
           </details>
@@ -268,7 +269,7 @@ function ExportTodos({ todos }: { todos: TodoItem[] }) {
   return (
     <div className="todo-panel export-todos">
       <div className="todo-head">
-        <span className="todo-title">Todo</span>
+        <span className="todo-title">{t('export.document.todo')}</span>
         <span className="todo-count">
           {done}/{todos.length}
         </span>

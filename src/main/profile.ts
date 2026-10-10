@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { app, type Session, type WebContents } from 'electron';
 import { IpcChannel, type IpcEvent } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
+import { t } from '@shared/i18n';
 import type { AppSettings } from './app-settings';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
@@ -119,7 +120,7 @@ export class Profile {
       // 一覧は「ブラウザでの操作待ち」。見ていないセッションなら通知し、クリックでそのセッションのブラウザを開く
       onAsk: (id, ask) => {
         this.manager?.browserAskChanged(id, !!ask);
-        if (ask) options.notify(this, id, this.manager?.summary(id)?.title ?? null, `ブラウザでの操作の依頼: ${snippet(ask.message)}`, IpcChannel.BrowserShow);
+        if (ask) options.notify(this, id, this.manager?.summary(id)?.title ?? null, t('main.notification.browserAsk', { message: snippet(ask.message) }), IpcChannel.BrowserShow);
       },
       channels: {
         open: IpcChannel.BrowserOpen,
@@ -174,9 +175,9 @@ export class Profile {
         },
         onChat: (batch) => send(IpcChannel.ChatEvents, batch),
         onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
-        onTurnCompleted: (session) => notify(session.id, session.title, '作業が完了しました'),
+        onTurnCompleted: (session) => notify(session.id, session.title, t('main.notification.turnCompleted')),
         onAttention: (session, attention) =>
-          notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : 'ターミナルでの操作が必要です'),
+          notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : t('main.notification.needsTerminal')),
         onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
         onActivity: (sessionId, activity) => send(IpcChannel.ScreenActivity, { sessionId, activity }),
         onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
@@ -230,7 +231,7 @@ export class Profile {
   setBrowserHosts(hosts: unknown): string[] {
     const list = Array.isArray(hosts) ? hosts.filter((h): h is string => typeof h === 'string' && h.trim() !== '') : [];
     const bad = list.filter((h) => !normalizeHostPattern(h));
-    if (bad.length > 0) throw new Error(`書き方が違います: ${bad.join('、')}（例: example.test・*.example.test・192.168.0.10）`);
+    if (bad.length > 0) throw new Error(t('main.browserHosts.invalid', { hosts: bad.join(t('main.format.listSeparator')) }));
     const normalized = [...new Set(list.map((h) => normalizeHostPattern(h)!))];
     this.settings.setBrowserHosts(normalized);
     return normalized;
@@ -283,8 +284,9 @@ export class Profile {
   }
 }
 
+// 起動が終わる前に届いた呼び出しに、Claude に返すもの（英語）
 function notReady() {
-  return textResult('tanacode の起動が終わっていません。少し待ってから試してください', true);
+  return textResult('tanacode has not finished starting up. Wait a moment and try again.', true);
 }
 
 // MCP の中継からの呼び出しを、ソケットで待ち受ける。始められなければ null（Claude Code に MCP サーバーを足さない）

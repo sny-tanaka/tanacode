@@ -1,15 +1,16 @@
 import { useState } from 'react';
+import { t } from '@shared/i18n';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 import { StatusDot, type DotState } from '../layout/StatusDot';
 import { ChevronRightIcon, IconButton } from '../icons';
 
-const STATUS_LABEL: Record<string, string> = {
-  running: '実行中',
-  completed: '完了',
-  failed: '失敗',
-  stopped: '停止',
-  killed: '停止',
-};
+const STATUSES = ['running', 'completed', 'failed', 'stopped', 'killed'] as const;
+
+// 実行の状態の名前（知らない状態は、そのまま出す）
+export function workflowStatusLabel(status: string): string {
+  const known = STATUSES.find((s) => s === status);
+  return known ? t(`workflow.status.${known}`) : status;
+}
 
 // onOpen: 中身（エージェントごとの会話）を大きく開く
 type Props = { run: WorkflowRun | undefined; fallbackName: string; onOpen: (() => void) | null };
@@ -21,11 +22,11 @@ export function WorkflowCard({ run, fallbackName, onOpen }: Props) {
       <div className="workflow-card">
         <div className="workflow-head">
           <span className="tool-dot running" />
-          <span className="tool-name">ワークフロー</span>
+          <span className="tool-name">{t('workflow.card.name')}</span>
           <span className="tool-target">{fallbackName}</span>
         </div>
         <div className="tool-card-status">
-          <span className="flow-text">起動中…</span>
+          <span className="flow-text">{t('workflow.card.starting')}</span>
         </div>
       </div>
     );
@@ -40,22 +41,22 @@ export function WorkflowCard({ run, fallbackName, onOpen }: Props) {
     <div className="workflow-card">
       <div className="workflow-head">
         <StatusDot state={dotOf(run.status)} />
-        <span className="tool-name">ワークフロー</span>
+        <span className="tool-name">{t('workflow.card.name')}</span>
         <span className="tool-target" title={run.name}>
           {run.name}
         </span>
         {run.resumed && (
-          <span className="workflow-badge" title="前に止まった・終わった実行を再開したもの">
-            再開
+          <span className="workflow-badge" title={t('workflow.card.resumedTip')}>
+            {t('workflow.card.resumed')}
           </span>
         )}
-        <span className={`workflow-status ${run.status}`}>{STATUS_LABEL[run.status] ?? run.status}</span>
+        <span className={`workflow-status ${run.status}`}>{workflowStatusLabel(run.status)}</span>
         {onOpen && (
-          <IconButton icon={ChevronRightIcon} size="sm" label="開く" onClick={onOpen} />
+          <IconButton icon={ChevronRightIcon} size="sm" label={t('common.open')} onClick={onOpen} />
         )}
       </div>
       {run.summary && <div className="workflow-summary">{run.summary}</div>}
-      {run.resumedLater && <div className="workflow-note">このあと再開しました。続きは再開した実行のカードに出ます</div>}
+      {run.resumedLater && <div className="workflow-note">{t('workflow.card.resumedLater')}</div>}
       {!phased && (
         <>
           {run.phases.length > 0 && (
@@ -69,7 +70,7 @@ export function WorkflowCard({ run, fallbackName, onOpen }: Props) {
             </div>
           )}
           <div className="workflow-phase">
-            {run.agents.length === 0 && <div className="workflow-empty">エージェントの起動を待っています</div>}
+            {run.agents.length === 0 && <div className="workflow-empty">{t('workflow.card.waitingAgents')}</div>}
             {run.agents.map((agent) => (
               <AgentRow key={agent.agentId} agent={agent} />
             ))}
@@ -82,18 +83,16 @@ export function WorkflowCard({ run, fallbackName, onOpen }: Props) {
             {group.title}
             {group.detail && <span className="workflow-phase-detail">{group.detail}</span>}
           </div>
-          {group.agents.length === 0 && <div className="workflow-empty">{run.status === 'running' ? '待機中' : 'エージェントなし'}</div>}
+          {group.agents.length === 0 && <div className="workflow-empty">{run.status === 'running' ? t('workflow.phase.waiting') : t('workflow.card.noAgents')}</div>}
           {group.agents.map((agent) => (
             <AgentRow key={agent.agentId} agent={agent} />
           ))}
         </div>
       ))}
       <div className="workflow-foot">
-        <span>
-          エージェント {done}/{run.agents.length}
-        </span>
-        {run.totalToolCalls !== null && <span>ツール {run.totalToolCalls}回</span>}
-        {run.totalTokens !== null && <span>{formatTokens(run.totalTokens)} tokens</span>}
+        <span>{t('workflow.stats.agents', { done, total: run.agents.length })}</span>
+        {run.totalToolCalls !== null && <span>{t('workflow.stats.toolCalls', { count: run.totalToolCalls })}</span>}
+        {run.totalTokens !== null && <span>{t('workflow.stats.tokens', { count: formatTokens(run.totalTokens) })}</span>}
         {run.durationMs !== null && <span>{formatDuration(run.durationMs)}</span>}
       </div>
     </div>
@@ -113,22 +112,26 @@ function AgentRow({ agent }: { agent: WorkflowAgent }) {
         </span>
         <span className="workflow-agent-meta">
           {agent.model && <span>{shortModel(agent.model)}</span>}
-          <span>
-            ツール {agent.toolCalls}
-            {agent.state === 'running' && agent.lastTool ? `・${agent.lastTool}` : ''}
-          </span>
+          <span>{agentTools(agent)}</span>
           {agent.durationMs !== null && <span>{formatDuration(agent.durationMs)}</span>}
         </span>
       </button>
       {detail && (
         <pre className="workflow-agent-detail">
-          <span className="workflow-agent-detail-label">{agent.resultPreview ? '結果' : 'プロンプト'}</span>
+          <span className="workflow-agent-detail-label">{agent.resultPreview ? t('workflow.agent.result') : t('workflow.agent.prompt')}</span>
           {'\n'}
           {detail}
         </pre>
       )}
     </div>
   );
+}
+
+// エージェントのツールの呼び出し数（動いている間は、最後に使ったツールも添える）
+export function agentTools(agent: WorkflowAgent): string {
+  return agent.state === 'running' && agent.lastTool
+    ? t('workflow.agent.toolsWithLast', { count: agent.toolCalls, tool: agent.lastTool })
+    : t('workflow.agent.tools', { count: agent.toolCalls });
 }
 
 export type Group = { title: string; detail: string | null; agents: WorkflowAgent[] };
@@ -142,7 +145,7 @@ export function groupByPhase(run: WorkflowRun): Group[] {
     if (group) group.agents.push(agent);
     else unphased.push(agent);
   }
-  if (unphased.length > 0 || groups.length === 0) groups.push({ title: 'エージェント', detail: null, agents: unphased });
+  if (unphased.length > 0 || groups.length === 0) groups.push({ title: t('workflow.phase.unphased'), detail: null, agents: unphased });
   return groups;
 }
 
@@ -159,9 +162,9 @@ export function shortModel(model: string): string {
 
 export function formatDuration(ms: number): string {
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}秒`;
+  if (s < 60) return t('workflow.duration.seconds', { count: s });
   const m = Math.floor(s / 60);
-  return m < 60 ? `${m}分${s % 60}秒` : `${Math.floor(m / 60)}時間${m % 60}分`;
+  return m < 60 ? t('workflow.duration.minutes', { minutes: m, seconds: s % 60 }) : t('workflow.duration.hours', { hours: Math.floor(m / 60), minutes: m % 60 });
 }
 
 export function formatTokens(n: number): string {

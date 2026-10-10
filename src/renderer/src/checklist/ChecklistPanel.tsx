@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { humanUnread, liveCards, liveLists, progressOf, type Card, type Checklist } from '@shared/checklist';
+import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { AddIcon, CloseIcon, CopyIcon, DisclosureIcon, IconButton, TrashIcon } from '../icons';
 import { CardCheck } from './CardCheck';
@@ -115,13 +116,13 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
     <div className="checklist-panel">
       <div className="checklist-toolbar">
         <button className="ghost-button" onClick={() => setEditing({ id: null, name: '', description: '' })}>
-          リストを作る
+          {t('checklist.panel.createList')}
         </button>
       </div>
       {editing?.id === null && (
         <ListForm
           initial={editing}
-          submitLabel="作る"
+          submitLabel={t('checklist.panel.create')}
           onSubmit={async (name, description) => {
             if (await apply({ type: 'list-create', name, description })) setEditing(null);
           }}
@@ -130,9 +131,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
       )}
       <div className="checklist-scroll">
         {live.length === 0 && !editing && (
-          <div className="scm-empty">
-            リストはまだありません。「リストを作る」で作るか、Claude に「要件を整理して、やることリストにして」のように頼んでください。
-          </div>
+          <div className="scm-empty">{t('checklist.panel.empty')}</div>
         )}
         {live.map((list) => {
           const { done, total } = progressOf(list);
@@ -143,7 +142,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
               <ListForm
                 key={list.id}
                 initial={editing}
-                submitLabel="保存"
+                submitLabel={t('common.save')}
                 onSubmit={async (name, description) => {
                   if (await apply({ type: 'list-update', listId: list.id, name, description })) setEditing(null);
                 }}
@@ -160,7 +159,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                 onDragOver={(e) => dragOver(e, `end:${list.id}`)}
                 onDragLeave={() => setDropTarget(null)}
                 onDrop={(e) => drop(e, list.id, null)}
-                data-tip={`${list.description || '説明はありません'}\nダブルクリックで名前と説明を変える`}
+                data-tip={t('checklist.panel.listTip', { description: list.description || t('checklist.panel.noDescription') })}
                 data-tip-side="right"
               >
                 <DisclosureIcon open={open} />
@@ -173,7 +172,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                   icon={AddIcon}
                   size="sm"
                   reveal
-                  label="カードを足す"
+                  label={t('checklist.panel.addCard')}
                   onClick={(e) => {
                     e.stopPropagation();
                     setCollapsed((prev) => new Set([...prev].filter((id) => id !== list.id)));
@@ -185,10 +184,10 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                   size="sm"
                   reveal
                   danger
-                  label="リストをゴミ箱に入れる"
+                  label={t('checklist.panel.trashList')}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (window.confirm(`リスト「${list.name}」をゴミ箱に入れますか？\n（下の「ゴミ箱」から戻せます）`)) void apply({ type: 'list-delete', listId: list.id });
+                    if (window.confirm(t('checklist.panel.confirmTrashList', { name: list.name }))) void apply({ type: 'list-delete', listId: list.id });
                   }}
                 />
               </div>
@@ -217,11 +216,11 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                         />
                         <span className="checklist-number">#{card.number}</span>
                         <span className="checklist-title">{card.title}</span>
-                        {unread > 0 && <span className="checklist-unread" data-tip={`Claude からの未読の返信 ${unread} 件`} aria-label={`未読 ${unread} 件`} />}
+                        {unread > 0 && <span className="checklist-unread" data-tip={t('checklist.panel.unreadTip', { count: unread })} aria-label={t('checklist.panel.unreadLabel', { count: unread })} />}
                       </div>
                     );
                   })}
-                  {cards.length === 0 && adding !== list.id && <div className="scm-none">カードはありません</div>}
+                  {cards.length === 0 && adding !== list.id && <div className="scm-none">{t('checklist.panel.noCards')}</div>}
                   {adding === list.id && (
                     <NewCardInput
                       onSubmit={(title) => void apply({ type: 'card-add', listId: list.id, title })}
@@ -242,26 +241,26 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
             onRestoreList={(listId) => void apply({ type: 'list-restore', listId })}
             onRestoreCard={(listId, cardId) => void apply({ type: 'card-restore', listId, cardIds: [cardId] })}
             onEmpty={() => {
-              if (window.confirm(`ゴミ箱の ${trashCount} 件を消しますか？\n（もう戻せません）`)) void apply({ type: 'trash-empty' });
+              if (window.confirm(t('checklist.panel.confirmEmptyTrash', { count: trashCount }))) void apply({ type: 'trash-empty' });
             }}
           />
         )}
       </div>
       {selectedList && selected.length > 1 && (
         <div className="checklist-selection">
-          <span className="checklist-selection-count">{selected.length} 枚を選択中</span>
+          <span className="checklist-selection-count">{t('checklist.panel.selected', { count: selected.length })}</span>
           <div className="spacer" />
           {live.length > 1 && (
             <select
               className="checklist-move"
               value=""
-              aria-label="別のリストへ移す"
+              aria-label={t('checklist.panel.moveToList')}
               onChange={(e) => {
                 const toListId = e.target.value;
                 if (toListId) void apply({ type: 'card-move', listId: selectedList.id, cardIds: selected, toListId }).then(() => setSelection(null));
               }}
             >
-              <option value="">移す…</option>
+              <option value="">{t('checklist.panel.movePlaceholder')}</option>
               {live
                 .filter((l) => l.id !== selectedList.id)
                 .map((l) => (
@@ -271,15 +270,15 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                 ))}
             </select>
           )}
-          <IconButton icon={CopyIcon} size="sm" label="別のセッションへコピー" onClick={() => setCopying({ list: selectedList, cardIds: selected })} />
+          <IconButton icon={CopyIcon} size="sm" label={t('checklist.action.copyToSession')} onClick={() => setCopying({ list: selectedList, cardIds: selected })} />
           <IconButton
             icon={TrashIcon}
             size="sm"
             danger
-            label="ゴミ箱に入れる"
+            label={t('checklist.action.trash')}
             onClick={() => void apply({ type: 'card-delete', listId: selectedList.id, cardIds: selected }).then(() => setSelection(null))}
           />
-          <IconButton icon={CloseIcon} size="sm" label="選ぶのをやめる" onClick={() => setSelection(null)} />
+          <IconButton icon={CloseIcon} size="sm" label={t('checklist.panel.clearSelection')} onClick={() => setSelection(null)} />
         </div>
       )}
       {copying && <CopyDialog session={session} sessions={sessions} list={copying.list} cardIds={copying.cardIds} onClose={() => setCopying(null)} />}
@@ -294,7 +293,7 @@ function NewCardInput({ onSubmit, onClose }: { onSubmit: (title: string) => void
     <input
       className="checklist-new-card"
       autoFocus
-      placeholder="タイトル（Enter で足す）"
+      placeholder={t('checklist.panel.newCardPlaceholder')}
       value={title}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => setTitle(e.target.value)}
@@ -337,17 +336,15 @@ function Trash({
     <div className="checklist-trash">
       <button className="checklist-trash-head" onClick={onToggle}>
         <DisclosureIcon open={open} />
-        ゴミ箱 <span className="scm-count">{count}</span>
+        {t('checklist.trash.title')} <span className="scm-count">{count}</span>
       </button>
       {open && (
         <div className="checklist-trash-body">
           {trashedLists.map((list) => (
             <div key={list.id} className="checklist-trash-item">
-              <span className="checklist-trash-name">
-                リスト「{list.name}」（{liveCards(list).length} 枚）
-              </span>
+              <span className="checklist-trash-name">{t('checklist.trash.list', { name: list.name, count: liveCards(list).length })}</span>
               <button className="ghost-button" onClick={() => onRestoreList(list.id)}>
-                戻す
+                {t('checklist.trash.restore')}
               </button>
             </div>
           ))}
@@ -357,12 +354,12 @@ function Trash({
                 {list.name} #{card.number} {card.title}
               </span>
               <button className="ghost-button" onClick={() => onRestoreCard(list.id, card.id)}>
-                戻す
+                {t('checklist.trash.restore')}
               </button>
             </div>
           ))}
           <button className="ghost-button danger checklist-trash-empty" onClick={onEmpty}>
-            ゴミ箱を空にする
+            {t('checklist.trash.empty')}
           </button>
         </div>
       )}

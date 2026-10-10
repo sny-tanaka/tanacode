@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { t } from '@shared/i18n';
 import { monaco } from '../editor/monaco';
 import { AddIcon, CloseIcon, IconButton, SendIcon, TrashIcon } from '../icons';
 import type { ReviewComment } from './comments';
@@ -62,7 +63,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }:
     ];
     const action = editor.addAction({
       id: 'tanacode.addComment',
-      label: 'Claude へのコメントを追加',
+      label: t('review.lineComments.addAction'),
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 0,
       run: () => {
@@ -88,7 +89,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }:
     };
     const node = document.createElement('button');
     node.className = 'ask-widget';
-    node.textContent = 'ここを聞く';
+    node.textContent = t('review.lineComments.askButton');
     // エディタの選択を外さずに押せるようにする
     node.addEventListener('mousedown', (e) => {
       e.preventDefault();
@@ -112,7 +113,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }:
     });
     const action = editor.addAction({
       id: 'tanacode.askHere',
-      label: 'ここを Claude に聞く',
+      label: t('review.lineComments.askAction'),
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 0.5,
       run: ask,
@@ -180,7 +181,8 @@ export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }:
     };
   }, [editor, layoutKey, modelSeq]);
 
-  const label = (start: number, end: number) => (start === end ? `${start} 行目` : `${start}〜${end} 行目`);
+  const label = (start: number, end: number) =>
+    start === end ? t('review.lineComments.line', { line: start }) : t('review.lineComments.lines', { start, end });
   return (
     <>
       {comments.map((c) => {
@@ -190,10 +192,10 @@ export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }:
           createPortal(
             <div className="comment-box">
               <div className="comment-head">
-                <span className="comment-mark">Claude へのコメント</span>
+                <span className="comment-mark">{t('review.lineComments.commentMark')}</span>
                 <span className="comment-lines">{label(c.startLine, c.endLine)}</span>
                 <div className="spacer" />
-                <IconButton size="sm" danger icon={TrashIcon} label="削除" onClick={() => onRemove(c.id)} />
+                <IconButton size="sm" danger icon={TrashIcon} label={t('common.delete')} onClick={() => onRemove(c.id)} />
               </div>
               <div className="comment-text">{c.text}</div>
             </div>,
@@ -230,14 +232,14 @@ function CommentDraft({ label, ask, onCancel, onSubmit }: { label: string; ask: 
   return (
     <div className={`comment-box draft${ask ? ' ask' : ''}`}>
       <div className="comment-head">
-        <span className="comment-mark">{ask ? 'Claude に聞く' : 'Claude へのコメント'}</span>
+        <span className="comment-mark">{ask ? t('review.lineComments.askMark') : t('review.lineComments.commentMark')}</span>
         <span className="comment-lines">{label}</span>
       </div>
       <textarea
         autoFocus
         rows={3}
         value={text}
-        placeholder={ask ? 'ここについて聞きたいこと（⌘Enter で送る）' : '直してほしいこと・気になること（⌘Enter で追加）'}
+        placeholder={ask ? t('review.lineComments.askPlaceholder') : t('review.lineComments.commentPlaceholder')}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           // 変換中のキー（変換の取り消しの Esc・確定の Enter）は、変換に任せる
@@ -250,11 +252,11 @@ function CommentDraft({ label, ask, onCancel, onSubmit }: { label: string; ask: 
         }}
       />
       <div className="comment-actions">
-        <IconButton icon={CloseIcon} label="キャンセル" onClick={onCancel} />
+        <IconButton icon={CloseIcon} label={t('common.cancel')} onClick={onCancel} />
         {ask ? (
-          <IconButton primary icon={SendIcon} label="送る" tip="Claude に送る（⌘Enter）" disabled={!text.trim()} onClick={submit} />
+          <IconButton primary icon={SendIcon} label={t('review.lineComments.send')} tip={t('review.lineComments.sendTip')} disabled={!text.trim()} onClick={submit} />
         ) : (
-          <IconButton primary icon={AddIcon} label="コメントを追加" tip="コメントを追加（⌘Enter）" disabled={!text.trim()} onClick={submit} />
+          <IconButton primary icon={AddIcon} label={t('review.lineComments.addComment')} tip={t('review.lineComments.addCommentTip')} disabled={!text.trim()} onClick={submit} />
         )}
       </div>
     </div>

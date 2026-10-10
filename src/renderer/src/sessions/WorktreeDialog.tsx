@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { SessionSummary, WorktreeLeftovers, WorktreePr } from '@shared/ipc';
 import { errorMessage } from '../errorMessage';
+import { tx } from '../i18n';
+import { sessionName } from './sessionLinks';
 
 // worktree のセッションをアーカイブ・一覧から削除するときの確認。worktree を残すか消すかを選ぶ（既定は残す）。
 // 消す前に、worktree に残っているもの（未コミットの変更・未追跡のファイル・プッシュしていないコミット）と、ブランチから作った PR が
@@ -22,8 +25,7 @@ export function WorktreeDialog({
   const [leftovers, setLeftovers] = useState<WorktreeLeftovers | null | undefined>(undefined);
   const [busy, setBusy] = useState<'keep' | 'remove' | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
-  const verb = action === 'archive' ? 'アーカイブ' : '一覧から削除';
-  const title = session.title ?? '新しいセッション';
+  const title = sessionName(session);
 
   useEffect(() => {
     let alive = true;
@@ -42,7 +44,8 @@ export function WorktreeDialog({
       await onConfirm(remove);
       onClose();
     } catch (error) {
-      window.alert(`${remove ? 'worktree を削除できませんでした' : `${verb}できませんでした`}: ${errorMessage(error)}`);
+      const params = { error: errorMessage(error) };
+      window.alert(remove ? t('sessions.worktreeDialog.worktreeRemoveFailed', params) : t(`sessions.worktreeDialog.${action}Failed`, params));
       setBusy(null);
     }
   };
@@ -57,7 +60,7 @@ export function WorktreeDialog({
         className="quick-open worktree-dialog"
         ref={dialog}
         role="dialog"
-        aria-label={`worktree のセッションを${verb}`}
+        aria-label={t(`sessions.worktreeDialog.${action}Label`)}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -66,35 +69,33 @@ export function WorktreeDialog({
         }}
       >
         <div className="worktree-dialog-head">
-          <h2>
-            「{title}」を{verb}
-          </h2>
+          <h2>{t(`sessions.worktreeDialog.${action}Title`, { title })}</h2>
           <p>
-            このセッションは worktree <code>.claude/worktrees/{worktree.name}</code>（ブランチ <code>{worktree.branch}</code>）で動いています。
-            worktree を残すか、削除するかを選んでください。
+            {tx('sessions.worktreeDialog.about', {
+              path: <code>.claude/worktrees/{worktree.name}</code>,
+              branch: <code>{worktree.branch}</code>,
+            })}
           </p>
         </div>
         <div className="worktree-dialog-body">
           <LeftoverList leftovers={leftovers} />
           <ul className="worktree-dialog-notes">
-            <li>
-              削除しても、未コミットの変更と未追跡のファイルは <code>refs/tanacode/backup/{worktree.name}</code> に控えを残します。
-            </li>
-            <li>手元にしか無いコミットがあれば、ブランチごと残します。リモートや PR、デフォルトブランチに入っていれば、ブランチも消します。</li>
-            <li>gitignore されたファイル（worktree の中で書き換えた .env など）は、控えに入りません。</li>
-            {action === 'archive' && <li>削除したセッションをアーカイブから戻すと、残したブランチから worktree を作り直します。</li>}
+            <li>{tx('sessions.worktreeDialog.noteBackup', { ref: <code>refs/tanacode/backup/{worktree.name}</code> })}</li>
+            <li>{t('sessions.worktreeDialog.noteBranch')}</li>
+            <li>{t('sessions.worktreeDialog.noteIgnored')}</li>
+            {action === 'archive' && <li>{t('sessions.worktreeDialog.noteRestore')}</li>}
           </ul>
         </div>
         <div className="worktree-dialog-foot">
           <button className="ghost-button" disabled={!!busy} onClick={close}>
-            キャンセル
+            {t('common.cancel')}
           </button>
           <div className="spacer" />
           <button className="ghost-button danger" disabled={!!busy} onClick={() => void confirm(true)}>
-            {busy === 'remove' ? '削除しています…' : `worktree を削除して${verb}`}
+            {busy === 'remove' ? t('sessions.worktreeDialog.removingWorktree') : t(`sessions.worktreeDialog.${action}RemoveWorktree`)}
           </button>
           <button className="send-button" disabled={!!busy} onClick={() => void confirm(false)} autoFocus>
-            {busy === 'keep' ? `${verb}しています…` : `worktree を残して${verb}`}
+            {busy === 'keep' ? t(`sessions.worktreeDialog.${action}Busy`) : t(`sessions.worktreeDialog.${action}KeepWorktree`)}
           </button>
         </div>
       </div>
@@ -103,8 +104,8 @@ export function WorktreeDialog({
 }
 
 function LeftoverList({ leftovers }: { leftovers: WorktreeLeftovers | null | undefined }) {
-  if (leftovers === undefined) return <p className="worktree-dialog-status">残っているものを調べています…</p>;
-  if (leftovers === null) return <p className="worktree-dialog-status">残っているものを調べられませんでした</p>;
+  if (leftovers === undefined) return <p className="worktree-dialog-status">{t('sessions.worktreeDialog.checking')}</p>;
+  if (leftovers === null) return <p className="worktree-dialog-status">{t('sessions.worktreeDialog.checkFailed')}</p>;
   return (
     <>
       <Leftovers leftovers={leftovers} />
@@ -114,21 +115,21 @@ function LeftoverList({ leftovers }: { leftovers: WorktreeLeftovers | null | und
 }
 
 function Leftovers({ leftovers }: { leftovers: WorktreeLeftovers }) {
-  if (!leftovers.exists) return <p className="worktree-dialog-status">worktree のフォルダはもうありません（ブランチの扱いは同じです）</p>;
+  if (!leftovers.exists) return <p className="worktree-dialog-status">{t('sessions.worktreeDialog.worktreeGone')}</p>;
   const rows = [
-    { label: '未コミットの変更', count: leftovers.uncommitted },
-    { label: '未追跡のファイル', count: leftovers.untracked },
-    { label: 'プッシュしていないコミット', count: leftovers.unpushed },
+    { label: t('sessions.worktreeDialog.uncommitted'), count: leftovers.uncommitted },
+    { label: t('sessions.worktreeDialog.untracked'), count: leftovers.untracked },
+    { label: t('sessions.worktreeDialog.unpushed'), count: leftovers.unpushed },
   ];
   const left = rows.filter((row) => row.count > 0);
   // 手元にしか無いコミットはあるが、中身はデフォルトブランチに入っている（手元でのスカッシュマージ・cherry-pick など）
   const contentIn = leftovers.contentIn && (
-    <p className="worktree-dialog-status ok">コミットは手元にしかありませんが、中身は {leftovers.contentIn} に入っています</p>
+    <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.contentIn', { branch: leftovers.contentIn })}</p>
   );
   if (left.length === 0) {
     return (
       <>
-        <p className="worktree-dialog-status ok">残っている変更やコミットはありません</p>
+        <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.nothingLeft')}</p>
         {contentIn}
       </>
     );
@@ -139,7 +140,7 @@ function Leftovers({ leftovers }: { leftovers: WorktreeLeftovers }) {
         {left.map((row) => (
           <li key={row.label}>
             <span>{row.label}</span>
-            <span className="worktree-leftover-count">{row.count} 件</span>
+            <span className="worktree-leftover-count">{t('sessions.worktreeDialog.leftoverCount', { count: row.count })}</span>
           </li>
         ))}
       </ul>
@@ -150,17 +151,13 @@ function Leftovers({ leftovers }: { leftovers: WorktreeLeftovers }) {
 
 // ブランチから作った PR がマージ済みか
 function PrStatus({ pr }: { pr: WorktreePr }) {
-  if (pr.state === 'unknown') return <p className="worktree-dialog-status">PR は調べられませんでした（gh が無い・ログインしていないなど）</p>;
-  if (pr.state === 'none') return <p className="worktree-dialog-status">このブランチの PR はありません</p>;
-  const name = `PR #${pr.number}（${pr.base} へ）`;
+  if (pr.state === 'unknown') return <p className="worktree-dialog-status">{t('sessions.worktreeDialog.prUnknown')}</p>;
+  if (pr.state === 'none') return <p className="worktree-dialog-status">{t('sessions.worktreeDialog.prNone')}</p>;
+  const name = t('sessions.worktreeDialog.prName', { number: pr.number, base: pr.base });
   if (pr.state === 'merged' && pr.after) {
-    return (
-      <p className="worktree-dialog-status warn">
-        {name}はマージ済みです。そのあとに足したコミットが {pr.after} 件あります
-      </p>
-    );
+    return <p className="worktree-dialog-status warn">{t('sessions.worktreeDialog.prMergedWithAfter', { name, count: pr.after })}</p>;
   }
-  if (pr.state === 'merged') return <p className="worktree-dialog-status ok">{name}はマージ済みです</p>;
-  if (pr.state === 'open') return <p className="worktree-dialog-status warn">{name}は、まだマージされていません</p>;
-  return <p className="worktree-dialog-status warn">{name}は、マージされずに閉じられています</p>;
+  if (pr.state === 'merged') return <p className="worktree-dialog-status ok">{t('sessions.worktreeDialog.prMerged', { name })}</p>;
+  if (pr.state === 'open') return <p className="worktree-dialog-status warn">{t('sessions.worktreeDialog.prOpen', { name })}</p>;
+  return <p className="worktree-dialog-status warn">{t('sessions.worktreeDialog.prClosed', { name })}</p>;
 }

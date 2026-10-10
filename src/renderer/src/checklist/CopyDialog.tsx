@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Checklist } from '@shared/checklist';
+import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { canSee } from '@shared/session-tools';
 import { errorMessage } from '../errorMessage';
+import { sessionName } from '../sessions/sessionLinks';
 
 // カードを別のセッションへコピーするダイアログ。選べるのは、同じフォルダ（worktree は元のフォルダ）と親子・兄弟のセッション
 // （Claude がコピーできる範囲と同じ）。先に同じ名前のリストがあれば足し、無ければ作る
@@ -45,7 +47,7 @@ export function CopyDialog({
       await window.tanacode.checklist.copy({ fromSession: session.id, listId: list.id, cardIds, toSession: to, toList: toList.trim(), notify });
       onClose();
     } catch (error) {
-      window.alert(`コピーできませんでした: ${errorMessage(error)}`);
+      window.alert(t('checklist.copyDialog.failed', { error: errorMessage(error) }));
       setBusy(false);
     }
   };
@@ -56,7 +58,7 @@ export function CopyDialog({
         className="quick-open checklist-dialog"
         ref={dialog}
         role="dialog"
-        aria-label="別のセッションへコピー"
+        aria-label={t('checklist.action.copyToSession')}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -65,34 +67,32 @@ export function CopyDialog({
         }}
       >
         <div className="worktree-dialog-head">
-          <h2>別のセッションへコピー</h2>
-          <p>
-            「{list.name}」の {cards.map((c) => `#${c.number}`).join('・')} を、タイトル・説明文・チェック・スレッドごとコピーします。元のカードは残ります。
-          </p>
+          <h2>{t('checklist.action.copyToSession')}</h2>
+          <p>{t('checklist.copyDialog.description', { name: list.name, numbers: cards.map((c) => `#${c.number}`).join(t('checklist.copyDialog.numberSeparator')) })}</p>
         </div>
         <div className="worktree-dialog-body">
           {targets.length === 0 ? (
-            <p className="worktree-dialog-status">コピーできるセッションがありません（同じフォルダのセッションと、親子・兄弟のセッションに限ります）</p>
+            <p className="worktree-dialog-status">{t('checklist.copyDialog.noTargets')}</p>
           ) : (
             <>
               <label className="checklist-field">
-                <span>コピー先のセッション</span>
+                <span>{t('checklist.copyDialog.toSession')}</span>
                 <select ref={select} value={to} onChange={(e) => setTo(e.target.value)}>
                   {targets.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.title ?? '新しいセッション'}
-                      {s.worktree ? `（${s.worktree.name}）` : ''}
+                      {sessionName(s)}
+                      {s.worktree ? t('checklist.copyDialog.worktree', { name: s.worktree.name }) : ''}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="checklist-field">
-                <span>コピー先のリスト（同じ名前のリストが無ければ作ります）</span>
+                <span>{t('checklist.copyDialog.toList')}</span>
                 <input value={toList} onChange={(e) => setToList(e.target.value)} />
               </label>
               <label className="checklist-notify">
                 <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
-                コピー先の Claude に知らせる
+                {t('checklist.copyDialog.notify')}
               </label>
             </>
           )}
@@ -100,10 +100,10 @@ export function CopyDialog({
         <div className="worktree-dialog-foot">
           <div className="spacer" />
           <button className="ghost-button" disabled={busy} onClick={onClose}>
-            キャンセル
+            {t('common.cancel')}
           </button>
           <button className="send-button" disabled={busy || !to || !toList.trim()} onClick={() => void copy()}>
-            {busy ? 'コピーしています…' : 'コピー'}
+            {busy ? t('checklist.copyDialog.copying') : t('checklist.copyDialog.copy')}
           </button>
         </div>
       </div>

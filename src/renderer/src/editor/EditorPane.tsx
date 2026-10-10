@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { FileBaseline, FileChange, FileContent } from '@shared/ipc';
 import { shownStep } from '@shared/walkthrough';
+import { t } from '@shared/i18n';
 import { LineComments, type RangeQuestion, type ReviewComment } from '../review/LineComments';
 import { WalkthroughZone, type WalkthroughControls } from '../walkthrough/WalkthroughZone';
 import { CloseIcon, CodeIcon, ColumnsIcon, DiffIcon, EyeIcon, IconButton, type IconComponent } from '../icons';
@@ -11,12 +12,12 @@ import { editorTheme, languageFor, monaco } from './monaco';
 export type OpenFile = { path: string; content: FileContent };
 // seq が変わるたびに、その行を表示してカーソルを置く
 export type RevealRequest = { path: string; line: number; seq: number };
-// Markdown ファイルの表示のしかた。タブは絵だけなので、名前（label）は aria-label とツールチップに付ける
+// Markdown ファイルの表示のしかた。タブは絵だけなので、名前（editor.markdownMode.*）は aria-label とツールチップに付ける
 type MarkdownMode = 'preview' | 'split' | 'source';
-const MARKDOWN_MODES: { mode: MarkdownMode; label: string; icon: IconComponent }[] = [
-  { mode: 'preview', label: 'プレビュー', icon: EyeIcon },
-  { mode: 'split', label: '並べる', icon: ColumnsIcon },
-  { mode: 'source', label: 'ソース', icon: CodeIcon },
+const MARKDOWN_MODES: { mode: MarkdownMode; icon: IconComponent }[] = [
+  { mode: 'preview', icon: EyeIcon },
+  { mode: 'split', icon: ColumnsIcon },
+  { mode: 'source', icon: CodeIcon },
 ];
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
 
@@ -226,7 +227,7 @@ export const EditorPane = memo(function EditorPane({
   }
 
   const close = (path: string) => {
-    if (dirty.has(path) && !window.confirm(`${path.split('/').pop()} の変更を保存せずに閉じますか？`)) return;
+    if (dirty.has(path) && !window.confirm(t('editor.tabs.closeConfirm', { name: path.split('/').pop() ?? path }))) return;
     setDirty((prev) => {
       const next = new Set(prev);
       next.delete(path);
@@ -293,16 +294,16 @@ export const EditorPane = memo(function EditorPane({
           >
             <span>{f.path.split('/').pop()}</span>
             {dirty.has(f.path) ? (
-              <span className="editor-tab-dot dirty" title="未保存の変更があります（⌘S で保存）" />
+              <span className="editor-tab-dot dirty" title={t('editor.tabs.unsaved')} />
             ) : (
-              changes[f.path] && <span className="editor-tab-dot" title="このブランチで変わったファイル" />
+              changes[f.path] && <span className="editor-tab-dot" title={t('editor.tabs.changedInBranch')} />
             )}
             {/* 選んでいるタブでは、いつも出しておく */}
             <IconButton
               size="sm"
               reveal={f.path !== activePath}
               icon={CloseIcon}
-              label="閉じる"
+              label={t('common.close')}
               onClick={(e) => {
                 e.stopPropagation();
                 close(f.path);
@@ -314,14 +315,14 @@ export const EditorPane = memo(function EditorPane({
       <div className="editor-crumb">
         <span className="editor-crumb-path">{active ? active.path.split('/').join('  ›  ') : ''}</span>
         {markdownMode && activePath && (
-          <div className="segmented" role="tablist" aria-label="Markdown の表示">
-            {MARKDOWN_MODES.map(({ mode, label, icon: Icon }) => (
+          <div className="segmented" role="tablist" aria-label={t('editor.markdownMode.label')}>
+            {MARKDOWN_MODES.map(({ mode, icon: Icon }) => (
               <button
                 key={mode}
                 role="tab"
                 aria-selected={markdownMode === mode}
-                aria-label={label}
-                data-tip={label}
+                aria-label={t(`editor.markdownMode.${mode}`)}
+                data-tip={t(`editor.markdownMode.${mode}`)}
                 className={markdownMode === mode ? 'active' : ''}
                 onClick={() => setMarkdownMode(activePath, mode)}
               >
@@ -334,22 +335,22 @@ export const EditorPane = memo(function EditorPane({
       {activePath && conflicts.has(activePath) && (
         <div className="pending-banner">
           <span className="pending-dot" />
-          <span className="pending-text">未保存の変更があるうちに、ディスク上のファイルが変更されました</span>
+          <span className="pending-text">{t('editor.conflict.message')}</span>
           <button className="ghost-button" onClick={() => reloadFromDisk(activePath)}>
-            ディスクの内容を読み込む
+            {t('editor.conflict.reload')}
           </button>
           <button className="send-button" onClick={() => void save(activePath)}>
-            このまま保存
+            {t('editor.conflict.keep')}
           </button>
         </div>
       )}
       {change && activePath && (
         <div className="change-bar">
-          <span>このブランチで{change.kind === 'added' ? '新規作成' : '変更'}</span>
+          <span>{change.kind === 'added' ? t('editor.change.added') : t('editor.change.modified')}</span>
           <span className="diff-add">+{change.added}</span>
           <span className="diff-del">−{change.removed}</span>
           <div className="spacer" />
-          <IconButton icon={DiffIcon} label="差分を見る" onClick={() => onShowDiff(activePath)} />
+          <IconButton icon={DiffIcon} label={t('editor.change.showDiff')} onClick={() => onShowDiff(activePath)} />
         </div>
       )}
       <div className={`editor-body${markdownMode ? ` md-${markdownMode}` : ''}`}>
@@ -368,8 +369,8 @@ export const EditorPane = memo(function EditorPane({
           />
         )}
         {showWalk && <WalkthroughZone editor={editorInstance!} {...walkthrough!} />}
-        {!active && <div className="editor-placeholder">エクスプローラーからファイルを開いてください</div>}
-        {active?.content.kind === 'binary' && <div className="editor-placeholder">バイナリファイルは表示できません</div>}
+        {!active && <div className="editor-placeholder">{t('editor.placeholder.noFile')}</div>}
+        {active?.content.kind === 'binary' && <div className="editor-placeholder">{t('editor.placeholder.binary')}</div>}
         {active?.content.kind === 'image' && (
           <div className="editor-image">
             <img src={active.content.url} alt={active.path} draggable={false} />
@@ -377,7 +378,7 @@ export const EditorPane = memo(function EditorPane({
         )}
         {active?.content.kind === 'too-large' && (
           <div className="editor-placeholder">
-            ファイルが大きすぎるため表示できません（{Math.round(active.content.size / 1024 / 1024)}MB）
+            {t('editor.placeholder.tooLarge', { size: Math.round(active.content.size / 1024 / 1024) })}
           </div>
         )}
       </div>

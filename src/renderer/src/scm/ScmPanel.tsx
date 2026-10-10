@@ -1,6 +1,7 @@
 import { Fragment, memo, useEffect, useState } from 'react';
 import type { BranchChanges, FileChange, GitAction, GitBranches, GitEntry, GitState } from '@shared/ipc';
 import { buildTree, filesInTreeOrder, visibleRows } from '@shared/scm-tree';
+import { t } from '@shared/i18n';
 import { CommentList } from '../review/CommentList';
 import { WalkthroughList, type WalkthroughListProps } from '../walkthrough/WalkthroughList';
 import type { ReviewComment } from '../review/LineComments';
@@ -87,19 +88,19 @@ export const ScmPanel = memo(function ScmPanel({
   if (!state)
     return (
       <div className="scm-empty">
-        <Busy>読み込み中…</Busy>
+        <Busy>{t('scm.panel.loading')}</Busy>
       </div>
     );
-  if (!state.isRepo) return <div className="scm-empty">このフォルダは git リポジトリではありません</div>;
+  if (!state.isRepo) return <div className="scm-empty">{t('scm.panel.notRepo')}</div>;
 
   const staged = state.entries.filter((e) => e.index !== ' ' && e.index !== '?');
   const changes = state.entries.filter((e) => e.worktree !== ' ' || e.index === '?');
   const commit = async () => {
     if (staged.length === 0 && !amend) {
-      setError('コミットする変更がステージされていません');
+      setError(t('scm.commit.nothingStaged'));
       return;
     }
-    if (await run({ kind: 'commit', message, amend }, 'コミット中…')) {
+    if (await run({ kind: 'commit', message, amend }, t('scm.commit.committing'))) {
       setMessage('');
       setAmend(false);
     }
@@ -113,12 +114,12 @@ export const ScmPanel = memo(function ScmPanel({
           onClick={() =>
             branchMenu ? setBranchMenu(null) : void window.tanacode.git.branches(sessionId).then(setBranchMenu)
           }
-          title="ブランチを切り替える"
+          title={t('scm.branch.switch')}
         >
           <span className="scm-branch-icon">
             <BranchIcon size={14} />
           </span>
-          {state.branch ?? '(detached)'}
+          {state.branch ?? t('scm.branch.detached')}
           <span className="tree-chevron">
             <ChevronDownIcon size={12} />
           </span>
@@ -127,18 +128,18 @@ export const ScmPanel = memo(function ScmPanel({
         {/* 押すと切り替わる先のアイコンと名前を出す（VS Code と同じ） */}
         <IconButton
           icon={view === 'tree' ? ListViewIcon : TreeViewIcon}
-          label={view === 'tree' ? '一覧で表示' : 'ツリーで表示'}
+          label={view === 'tree' ? t('scm.view.list') : t('scm.view.tree')}
           onClick={() => onViewChange(view === 'tree' ? 'list' : 'tree')}
         />
-        <button className="scm-sync" disabled={!!busy} onClick={() => void run({ kind: 'pull' }, 'プル中…')} data-tip={state.upstream ? `${state.upstream} からプル` : 'プル'} aria-label="プル">
+        <button className="scm-sync" disabled={!!busy} onClick={() => void run({ kind: 'pull' }, t('scm.sync.pulling'))} data-tip={state.upstream ? t('scm.sync.pullFrom', { upstream: state.upstream }) : t('scm.sync.pull')} aria-label={t('scm.sync.pull')}>
           <PullIcon size={14} />
           {state.behind || ''}
         </button>
-        <button className="scm-sync" disabled={!!busy || state.empty} onClick={() => void run({ kind: 'push' }, 'プッシュ中…')} data-tip={state.upstream ? `${state.upstream} へプッシュ` : 'origin にプッシュ（上流を設定）'} aria-label="プッシュ">
+        <button className="scm-sync" disabled={!!busy || state.empty} onClick={() => void run({ kind: 'push' }, t('scm.sync.pushing'))} data-tip={state.upstream ? t('scm.sync.pushTo', { upstream: state.upstream }) : t('scm.sync.pushToOrigin')} aria-label={t('scm.sync.push')}>
           <PushIcon size={14} />
           {state.ahead || ''}
         </button>
-        <IconButton icon={FetchIcon} label="フェッチ" disabled={!!busy} onClick={() => void run({ kind: 'fetch' }, 'フェッチ中…')} />
+        <IconButton icon={FetchIcon} label={t('scm.sync.fetch')} disabled={!!busy} onClick={() => void run({ kind: 'fetch' }, t('scm.sync.fetching'))} />
       </div>
       {branchMenu && (
         <BranchMenu
@@ -146,11 +147,11 @@ export const ScmPanel = memo(function ScmPanel({
           current={state.branch}
           onPick={(branch, mode) => {
             setBranchMenu(null);
-            void run({ kind: 'checkout', branch, mode }, '切り替え中…');
+            void run({ kind: 'checkout', branch, mode }, t('scm.branch.switching'));
           }}
           onSwitchDefault={() => {
             setBranchMenu(null);
-            void run({ kind: 'switch-default' }, '最新のデフォルトブランチへ切り替え中…');
+            void run({ kind: 'switch-default' }, t('scm.branch.switchingDefault'));
           }}
           onClose={() => setBranchMenu(null)}
         />
@@ -160,7 +161,7 @@ export const ScmPanel = memo(function ScmPanel({
         <textarea
           value={message}
           rows={2}
-          placeholder={`メッセージ（⌘Enter でコミット · ${state.branch ?? 'HEAD'}）`}
+          placeholder={t('scm.commit.placeholder', { branch: state.branch ?? 'HEAD' })}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
@@ -172,9 +173,9 @@ export const ScmPanel = memo(function ScmPanel({
         <div className="scm-commit-row">
           <label className="scm-amend">
             <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} />
-            直前のコミットを修正
+            {t('scm.commit.amend')}
           </label>
-          <IconButton primary icon={CommitIcon} label="コミット" tip={amend ? '直前のコミットを修正（⌘Enter）' : 'コミット（⌘Enter）'} disabled={!!busy} onClick={() => void commit()} />
+          <IconButton primary icon={CommitIcon} label={t('scm.commit.commit')} tip={amend ? t('scm.commit.amendTip') : t('scm.commit.commitTip')} disabled={!!busy} onClick={() => void commit()} />
         </div>
       </div>
       {(busy || error) && <div className={`scm-message${error ? ' error' : ''}`}>{error ?? <Busy>{busy}</Busy>}</div>}
@@ -184,15 +185,22 @@ export const ScmPanel = memo(function ScmPanel({
           <BranchSection changes={state.branchChanges} view={view} activePath={activeBranchPath} onOpen={onOpenBranchDiff} onWalkthrough={onWalkthrough} />
         )}
         <Section
-          title="ステージ済みの変更"
+          title={t('scm.staged.title')}
           entries={staged}
           view={view}
           staged
           onOpen={(e) => onOpenDiff(e.path, true)}
-          actions={[{ icon: MinusIcon, title: 'ステージを取り消す', run: (paths) => void run({ kind: 'unstage', paths }, '取り消し中…') }]}
+          actions={[
+            {
+              icon: MinusIcon,
+              title: t('scm.staged.unstage'),
+              allTitle: t('scm.staged.unstageAll'),
+              run: (paths) => void run({ kind: 'unstage', paths }, t('scm.staged.unstaging')),
+            },
+          ]}
         />
         <Section
-          title="変更"
+          title={t('scm.changes.title')}
           entries={changes}
           view={view}
           staged={false}
@@ -200,16 +208,25 @@ export const ScmPanel = memo(function ScmPanel({
           actions={[
             {
               icon: UndoIcon,
-              title: '変更を破棄',
+              title: t('scm.changes.discard'),
+              allTitle: t('scm.changes.discardAll'),
               danger: true,
               run: (paths) => {
-                const what = paths.length === 1 ? paths[0] : `${paths.length} 件のファイル`;
-                if (window.confirm(`${what} の変更を破棄しますか？（未追跡のファイルは削除されます。元に戻せません）`)) {
-                  void run({ kind: 'discard', paths }, '破棄中…');
+                const question =
+                  paths.length === 1
+                    ? t('scm.changes.discardConfirmFile', { path: paths[0] })
+                    : t('scm.changes.discardConfirmFiles', { count: paths.length });
+                if (window.confirm(question)) {
+                  void run({ kind: 'discard', paths }, t('scm.changes.discarding'));
                 }
               },
             },
-            { icon: AddIcon, title: 'ステージする', run: (paths) => void run({ kind: 'stage', paths }, 'ステージ中…') },
+            {
+              icon: AddIcon,
+              title: t('scm.changes.stage'),
+              allTitle: t('scm.changes.stageAll'),
+              run: (paths) => void run({ kind: 'stage', paths }, t('scm.changes.staging')),
+            },
           ]}
         />
         {walkthrough && <WalkthroughList {...walkthrough} />}
@@ -219,7 +236,7 @@ export const ScmPanel = memo(function ScmPanel({
   );
 });
 
-const KIND_LABEL = { added: '新規', modified: '変更', deleted: '削除' } as const;
+const kindLabel = (kind: FileChange['kind']) => t(`scm.kind.${kind}`);
 const KIND_CODE = { added: 'A', modified: 'M', deleted: 'D' } as const;
 
 // 並べる順（一覧はパス順、ツリーは見えている順）。差分の「前へ / 次へ」もこの順で移る
@@ -274,7 +291,7 @@ function ChangeRows<T extends { path: string }>({
                 size="sm"
                 icon={a.icon}
                 danger={a.danger}
-                label={`${a.title}（フォルダ内すべて）`}
+                label={t('scm.changes.inFolder', { action: a.title })}
                 onClick={(e) => {
                   e.stopPropagation();
                   a.run(node.items.map((x) => x.path));
@@ -309,20 +326,22 @@ function BranchSection({
   );
   const { base } = changes;
   const from =
-    base.kind === 'branch' ? `${base.ref} から分岐したところ（${base.mergeBase.slice(0, 7)}）から` : `${base.ref} にまだ無い変更（未プッシュのコミットと作業中の変更）`;
+    base.kind === 'branch'
+      ? t('scm.branchChanges.fromBranch', { ref: base.ref, commit: base.mergeBase.slice(0, 7) })
+      : t('scm.branchChanges.notInUpstream', { ref: base.ref });
   return (
     <div className="scm-section">
       <div className="scm-section-head" onClick={() => setOpen((v) => !v)} title={from}>
         <span className="tree-chevron">
           <DisclosureIcon open={open} />
         </span>
-        <span className="scm-section-title">ブランチの変更</span>
+        <span className="scm-section-title">{t('scm.branchChanges.title')}</span>
         <span className="scm-count">{paths.length}</span>
       </div>
       {open && (
         <>
           <div className="scm-branch-base">
-            <span>{base.kind === 'branch' ? `${base.ref} から` : `${base.ref} から（未プッシュ・作業中）`}</span>
+            <span>{base.kind === 'branch' ? t('scm.branchChanges.baseBranch', { ref: base.ref }) : t('scm.branchChanges.baseUpstream', { ref: base.ref })}</span>
             {paths.length > 0 && (
               <>
                 <span className="diff-add">+{total.added}</span>
@@ -333,14 +352,14 @@ function BranchSection({
               <IconButton
                 size="sm"
                 icon={WalkthroughIcon}
-                label="Claude にウォークスルーしてもらう"
-                tip={'Claude にウォークスルーしてもらう\nエディタでコードを示しながら、このブランチの変更を説明します'}
+                label={t('scm.branchChanges.walkthrough')}
+                tip={t('scm.branchChanges.walkthroughTip')}
                 className="scm-branch-walk"
                 onClick={onWalkthrough}
               />
             )}
           </div>
-          {paths.length === 0 && <div className="scm-none">変更はありません</div>}
+          {paths.length === 0 && <div className="scm-none">{t('scm.panel.noChanges')}</div>}
           <ChangeRows
             items={paths.map((path) => ({ path }))}
             view={view}
@@ -373,12 +392,12 @@ function BranchRow({
       className={`scm-row${active ? ' active' : ''}`}
       style={depth === null ? undefined : { paddingLeft: filePadding(depth) }}
       onClick={() => onOpen(path)}
-      title={`${path}（${KIND_LABEL[change.kind]}）`}
+      title={t('scm.branchChanges.rowTitle', { path, kind: kindLabel(change.kind) })}
     >
       <span className={`scm-name${change.kind === 'deleted' ? ' deleted' : ''}`}>{path.split('/').pop()}</span>
       {depth === null && <span className="scm-dir">{path.split('/').slice(0, -1).join('/')}</span>}
       {change.binary ? (
-        <span className="review-count">バイナリ</span>
+        <span className="review-count">{t('scm.branchChanges.binary')}</span>
       ) : (
         <span className="review-count">
           <span className="diff-add">+{change.added}</span>
@@ -390,8 +409,8 @@ function BranchRow({
   );
 }
 
-// icon: ボタンの絵。title: ボタンの名前。danger: 元に戻せない操作（hover で赤くする）
-type Action = { icon: IconComponent; title: string; danger?: boolean; run: (paths: string[]) => void };
+// icon: ボタンの絵。title: ボタンの名前。allTitle: 見出しの「すべて〜」のボタンの名前。danger: 元に戻せない操作（hover で赤くする）
+type Action = { icon: IconComponent; title: string; allTitle: string; danger?: boolean; run: (paths: string[]) => void };
 
 function Section({
   title,
@@ -427,7 +446,7 @@ function Section({
                 size="sm"
                 icon={a.icon}
                 danger={a.danger}
-                label={`すべて${a.title}`}
+                label={a.allTitle}
                 onClick={(e) => {
                   e.stopPropagation();
                   a.run(entries.map((x) => x.path));
@@ -436,7 +455,7 @@ function Section({
             ))}
         </span>
       </div>
-      {open && entries.length === 0 && <div className="scm-none">変更はありません</div>}
+      {open && entries.length === 0 && <div className="scm-none">{t('scm.panel.noChanges')}</div>}
       {open && (
         <ChangeRows
           items={entries}
@@ -504,7 +523,7 @@ function BranchMenu({
       <input
         autoFocus
         value={query}
-        placeholder="ブランチを探す・新しい名前"
+        placeholder={t('scm.branchMenu.placeholder')}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') onClose();
@@ -519,29 +538,29 @@ function BranchMenu({
           <button
             className="scm-branch-default"
             onClick={onSwitchDefault}
-            title={`フェッチしてから ${branches.defaultBranch} に切り替え、リモートの最新まで進める`}
+            title={t('scm.branchMenu.switchDefaultTip', { branch: branches.defaultBranch })}
           >
             <DefaultBranchIcon size={14} />
-            最新のデフォルトブランチへ切り替える
+            {t('scm.branchMenu.switchDefault')}
             <span className="scm-branch-note">{branches.defaultBranch}</span>
           </button>
         )}
         {canCreate && (
           <button onClick={() => onPick(q, 'create')}>
             <AddIcon size={14} />
-            新しいブランチ「{q}」を作って切り替える
+            {t('scm.branchMenu.create', { name: q })}
           </button>
         )}
         {local.map((b) => (
           <button key={b} className={b === current ? 'current' : ''} onClick={() => b !== current && onPick(b, 'local')}>
             {b}
-            {b === current && <span className="scm-branch-note">現在</span>}
+            {b === current && <span className="scm-branch-note">{t('scm.branchMenu.current')}</span>}
           </button>
         ))}
         {remote.map((b) => (
           <button key={b} onClick={() => onPick(b, 'remote')}>
             {b}
-            <span className="scm-branch-note">リモート</span>
+            <span className="scm-branch-note">{t('scm.branchMenu.remote')}</span>
           </button>
         ))}
       </div>

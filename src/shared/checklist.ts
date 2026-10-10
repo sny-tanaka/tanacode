@@ -1,3 +1,5 @@
+import { t } from './i18n';
+
 // チェックリスト（人と Claude が一緒に見て、編集するリスト）のデータの形と、main・画面・MCP で使う読み方。
 // 1 つのセッションに名前の付いたリストをいくつも持ち、リストはカード（タイトル・説明文・チェック・スレッド）を並べる。
 // 保存と書き換えは main の ChecklistStore が受け持つ
@@ -158,48 +160,56 @@ function unique(numbers: number[]): number[] {
   return [...new Set(numbers)];
 }
 
-// 番号を短く書く（[5,6,7,8,10] → "#5〜8, #10"）
-export function formatNumbers(numbers: number[]): string {
+// 番号を短く書く（[5,6,7,8,10] → "#5〜8, #10"）。range: 範囲の書き方（既定は画面の言語による）
+export function formatNumbers(numbers: number[], range = (from: number, to: number) => t('checklist.numberRange', { from, to })): string {
   const sorted = unique(numbers).sort((a, b) => a - b);
   const parts: string[] = [];
   for (let i = 0; i < sorted.length; i++) {
     let j = i;
     while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
-    parts.push(j - i >= 2 ? `#${sorted[i]}〜${sorted[j]}` : j === i ? `#${sorted[i]}` : `#${sorted[i]}, #${sorted[j]}`);
+    parts.push(j - i >= 2 ? range(sorted[i], sorted[j]) : j === i ? `#${sorted[i]}` : `#${sorted[i]}, #${sorted[j]}`);
     i = j;
   }
   return parts.join(', ');
 }
 
-export const AUTHOR_LABEL: Record<Author, string> = { human: 'あなた', claude: 'Claude' };
-
-// 名前に助詞を続ける。英字で終わる名前（Claude）は空白を入れる（「Claude が」「あなたが」）
-export function withParticle(name: string, particle: string): string {
-  return /[A-Za-z0-9]$/.test(name) ? `${name} ${particle}` : `${name}${particle}`;
+// Claude に返す文の番号（[5,6,7,8,10] → "#5-8, #10"）。番号の指定（"5-8"）と同じ書き方で、画面の言語によらない
+export function claudeNumbers(numbers: number[]): string {
+  return formatNumbers(numbers, (from, to) => `#${from}-${to}`);
 }
 
-// 記録の行の文（「Claude がチェックしました」など）。who を省くと主語を付けない
+// 画面に出す、書いた人の名前
+export function authorLabel(author: Author): string {
+  return t(`checklist.author.${author}`);
+}
+
+// 記録の行の文（"Claude checked the card" など）。who を省くと主語を付けない（"Checked the card"）。
+// Claude に返す文（MCP の card_get）に使うので、英語で書く。画面の記録の行は、文言（checklist.eventByHuman・eventByClaude）から作る
 export function eventText(event: CardEvent, who?: string): string {
-  const subject = who ? withParticle(who, 'が') : '';
+  const phrase = eventPhrase(event);
+  return who ? `${who} ${phrase}` : `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}`;
+}
+
+function eventPhrase(event: CardEvent): string {
   switch (event.type) {
     case 'created':
-      return `${subject}作りました`;
+      return 'created the card';
     case 'checked':
-      return `${subject}チェックしました`;
+      return 'checked the card';
     case 'unchecked':
-      return `${subject}チェックを外しました`;
+      return 'unchecked the card';
     case 'title':
-      return `${subject}タイトルを変えました（前: ${event.from}）`;
+      return `changed the title from "${event.from}"`;
     case 'body':
-      return `${subject}説明文を変えました`;
+      return 'edited the body';
     case 'moved':
-      return `${subject}「${event.fromList}」#${event.fromNumber} から移しました`;
+      return `moved the card from "${event.fromList}" #${event.fromNumber}`;
     case 'copied':
-      return `${subject}セッション「${event.fromSessionTitle}」の「${event.fromList}」#${event.fromNumber} からコピーしました`;
+      return `copied the card from "${event.fromList}" #${event.fromNumber} in session "${event.fromSessionTitle}"`;
     case 'deleted':
-      return `${subject}ゴミ箱に入れました`;
+      return 'moved the card to the trash';
     case 'restored':
-      return `${subject}ゴミ箱から戻しました`;
+      return 'restored the card from the trash';
   }
 }
 
@@ -215,15 +225,15 @@ export function cleanTitle(title: string): string {
 // 画面から届いた書き換えを確かめる（形が違えば投げる）。main の IPC で使う
 export function checkOp(raw: unknown): ChecklistOp {
   const op = raw as Record<string, unknown> | null;
-  if (!op || typeof op !== 'object' || typeof op.type !== 'string') throw new Error('書き換えの形が違います');
+  if (!op || typeof op !== 'object' || typeof op.type !== 'string') throw new Error(t('checklist.errors.badOp'));
   const str = (key: string, optional = false) => {
     const value = op[key];
     if (value === undefined && optional) return;
-    if (typeof value !== 'string') throw new Error(`${key} が文字ではありません`);
+    if (typeof value !== 'string') throw new Error(t('checklist.errors.notString', { key }));
   };
   const ids = (key: string) => {
     const value = op[key];
-    if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) throw new Error(`${key} の形が違います`);
+    if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) throw new Error(t('checklist.errors.badShape', { key }));
   };
   switch (op.type) {
     case 'list-create':
@@ -253,19 +263,19 @@ export function checkOp(raw: unknown): ChecklistOp {
     case 'card-check':
       str('listId');
       ids('cardIds');
-      if (typeof op.checked !== 'boolean') throw new Error('checked の形が違います');
+      if (typeof op.checked !== 'boolean') throw new Error(t('checklist.errors.badShape', { key: 'checked' }));
       break;
     case 'card-reply':
       str('listId');
       str('cardId');
       str('text');
-      if (typeof op.notify !== 'boolean') throw new Error('notify の形が違います');
+      if (typeof op.notify !== 'boolean') throw new Error(t('checklist.errors.badShape', { key: 'notify' }));
       break;
     case 'card-move':
       str('listId');
       ids('cardIds');
       str('toListId');
-      if (op.before !== undefined && op.before !== null && typeof op.before !== 'string') throw new Error('before の形が違います');
+      if (op.before !== undefined && op.before !== null && typeof op.before !== 'string') throw new Error(t('checklist.errors.badShape', { key: 'before' }));
       break;
     case 'card-delete':
     case 'card-restore':
@@ -279,7 +289,7 @@ export function checkOp(raw: unknown): ChecklistOp {
     case 'trash-empty':
       break;
     default:
-      throw new Error(`知らない書き換えです: ${op.type}`);
+      throw new Error(t('checklist.errors.unknownOp', { type: op.type }));
   }
   return op as ChecklistOp;
 }
@@ -296,7 +306,7 @@ export function checkCopyRequest(raw: unknown): ChecklistCopyRequest {
     (r.toList !== undefined && typeof r.toList !== 'string') ||
     typeof r.notify !== 'boolean'
   ) {
-    throw new Error('コピーの指定の形が違います');
+    throw new Error(t('checklist.errors.badCopyRequest'));
   }
   return r as ChecklistCopyRequest;
 }

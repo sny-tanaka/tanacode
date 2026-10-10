@@ -590,6 +590,7 @@ export class DemoBackend {
         onShow: () => () => {},
       },
       pathForFile: () => '',
+      language: () => 'ja',
     };
   }
 

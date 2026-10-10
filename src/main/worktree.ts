@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { t } from '@shared/i18n';
 import type { WorktreeLeftovers, WorktreePr, WorktreeRemoval } from '@shared/ipc';
 import { defaultBranch, git } from './git';
 import { type PullRequest, pullRequestsOf } from './github';
@@ -51,12 +52,12 @@ export async function planWorktree(cwd: string): Promise<WorktreePlan> {
     (out) => out.trim(),
     () => null,
   );
-  if (!root) throw new Error('worktree で始めるには、git のリポジトリのフォルダを選んでください');
+  if (!root) throw new Error(t('main.worktree.notRepo'));
   const hasHead = await git(root, ['rev-parse', '--verify', '-q', 'HEAD']).then(
     () => true,
     () => false,
   );
-  if (!hasHead) throw new Error('worktree で始めるには、リポジトリにコミットが 1 つ以上必要です');
+  if (!hasHead) throw new Error(t('main.worktree.noCommit'));
   for (let i = 0; i < 20; i++) {
     const name = worktreeName();
     const path = worktreePath(root, name);
@@ -64,7 +65,7 @@ export async function planWorktree(cwd: string): Promise<WorktreePlan> {
     if (existsSync(path) || (await branchExists(root, branch))) continue;
     return { name, branch, root, path };
   }
-  throw new Error('worktree の名前を決められませんでした');
+  throw new Error(t('main.worktree.noName'));
 }
 
 // 名前は月日と短い乱数（例: tc-1002-k3x9）。ブランチ名にもなるので、英小文字と数字だけにする
@@ -469,7 +470,7 @@ export async function removeWorktree(ref: WorktreeRef, path: string): Promise<Wo
   if (listed && existsSync(path)) {
     if (listed.locked !== null) {
       if (!CLAUDE_LOCK.test(listed.locked)) {
-        throw new Error(`worktree がロックされているため、消しませんでした${listed.locked ? `（${listed.locked}）` : ''}`);
+        throw new Error(listed.locked ? t('main.worktree.lockedWithReason', { reason: listed.locked }) : t('main.worktree.locked'));
       }
       await git(ref.root, ['worktree', 'unlock', path]);
     }

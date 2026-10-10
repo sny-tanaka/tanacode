@@ -151,11 +151,11 @@ describe('保存と書き換え（ChecklistStore）', () => {
 
   it('Claude に伝える人の書き換えは、Claude が前に呼んだあとのものだけ', () => {
     const list = store.createList(ME, 'human', 'やること', '');
-    expect(store.takeHumanActivity(ME)).toEqual(['人がリスト「やること」を作りました']);
+    expect(store.takeHumanActivity(ME)).toEqual(['The user created the list "やること"']);
     store.addCards(ME, 'claude', list.id, [{ title: 'A' }]);
     expect(store.takeHumanActivity(ME)).toEqual([]);
     store.addCards(ME, 'human', list.id, [{ title: 'B' }]);
-    expect(store.takeHumanActivity(ME)).toEqual(['人が「やること」に #2「B」 を足しました']);
+    expect(store.takeHumanActivity(ME)).toEqual(['The user added #2 "B" to "やること"']);
   });
 });
 
@@ -228,13 +228,13 @@ describe('MCP のツール（ChecklistControl）', () => {
   afterEach(() => control.dispose());
 
   it('リストを作り、カードを足し、一覧で名前・説明・進み具合・番号を読める', async () => {
-    expect(textOf(await call('checklist_overview'))).toContain('まだチェックリストがありません');
+    expect(textOf(await call('checklist_overview'))).toContain('has no checklists yet');
     await call('list_create', { name: '完了前チェック', description: '作業を終える前に、すべて満たされているか確かめる' });
     const added = textOf(await call('card_add', { list: '完了前チェック', cards: [{ title: '税込表示が整数であること' }, { title: '税率0%でも壊れないこと', body: '0 除算に注意' }] }));
-    expect(added).toContain('#1「税込表示が整数であること」、#2「税率0%でも壊れないこと」');
+    expect(added).toContain('#1 "税込表示が整数であること", #2 "税率0%でも壊れないこと"');
     const overview = textOf(await call('checklist_overview'));
-    expect(overview).toContain('## 完了前チェック（0/2 チェック済み）');
-    expect(overview).toContain('説明: 作業を終える前に、すべて満たされているか確かめる');
+    expect(overview).toContain('## 完了前チェック (0/2 checked)');
+    expect(overview).toContain('Description: 作業を終える前に、すべて満たされているか確かめる');
     expect(overview).toContain('- [ ] #2 税率0%でも壊れないこと');
   });
 
@@ -242,39 +242,41 @@ describe('MCP のツール（ChecklistControl）', () => {
     await call('list_create', { name: 'やること', description: '' });
     const refused = await call('card_add', { list: '確認事項', cards: [{ title: 'x' }] });
     expect(refused.isError).toBe(true);
-    expect(textOf(refused)).toContain('あるのは「やること」');
+    expect(textOf(refused)).toContain('Existing lists: "やること"');
     const created = textOf(await call('card_add', { list: '確認事項', list_description: '判断を書く', cards: [{ title: 'x' }] }));
-    expect(created).toContain('リスト「確認事項」を作りました');
+    expect(created).toContain('Created the list "確認事項"');
   });
 
   it('チェック・外す（理由は必須）・返信・読む。読んだら Claude の未読は消える', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
-    expect(textOf(await call('card_check', { list: 'やること', numbers: '1-2', comment: 'テストが通った' }))).toContain('#1, #2 のチェックを付けました');
+    expect(textOf(await call('card_check', { list: 'やること', numbers: '1-2', comment: 'テストが通った' }))).toContain('Checked #1, #2 in "やること"');
     expect((await call('card_uncheck', { list: 'やること', numbers: '1' })).isError).toBe(true);
-    expect(textOf(await call('card_uncheck', { list: 'やること', numbers: '1', reason: '#3 の変更で崩れた' }))).toContain('#1 のチェックを外しました');
+    expect(textOf(await call('card_uncheck', { list: 'やること', numbers: '1', reason: '#3 の変更で崩れた' }))).toContain('Unchecked #1 in "やること"');
     const list = store.findList(ME, 'やること')!;
     store.reply(ME, 'human', list.id, list.cards[2].id, 'これは後回しで');
-    expect(textOf(await call('checklist_overview'))).toContain('#3 C（未読の返信 1 件）');
+    expect(textOf(await call('checklist_overview'))).toContain('#3 C (1 unread reply)');
+    store.reply(ME, 'human', list.id, list.cards[2].id, '理由は返信に');
+    expect(textOf(await call('checklist_overview'))).toContain('#3 C (2 unread replies)');
     const got = textOf(await call('card_get', { list: 'やること', numbers: '1,3' }));
     expect(got).toContain('テストが通った');
     expect(got).toContain('#3 の変更で崩れた');
-    expect(got).toContain('人の返信（未読）');
-    expect(textOf(await call('checklist_overview'))).not.toContain('未読');
+    expect(got).toContain('The user replied (unread)');
+    expect(textOf(await call('checklist_overview'))).not.toContain('unread');
   });
 
   it('無い番号・読めない番号・無いリストは、理由を返す', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
-    expect(textOf(await call('card_check', { list: 'やること', numbers: '1-3' }))).toContain('#2, #3 はありません');
+    expect(textOf(await call('card_check', { list: 'やること', numbers: '1-3' }))).toContain('#2, #3 are not in "やること"');
     expect(textOf(await call('card_check', { list: 'やること', numbers: 'ぜんぶ' }))).toContain('"5-8"');
-    expect(textOf(await call('card_get', { list: 'ないリスト', numbers: '1' }))).toContain('リスト「ないリスト」がありません');
+    expect(textOf(await call('card_get', { list: 'ないリスト', numbers: '1' }))).toContain('There is no list "ないリスト"');
   });
 
   it('移す・消す・戻す', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }] });
-    expect(textOf(await call('card_move', { list: 'やること', numbers: '2', to_list: '人のやること' }))).toContain('新しい番号: #1');
-    expect(textOf(await call('card_delete', { list: 'やること', numbers: '1' }))).toContain('ゴミ箱');
-    expect(textOf(await call('checklist_overview'))).toContain('（カードはありません）');
-    expect(textOf(await call('card_restore', { list: 'やること', numbers: '1' }))).toContain('#1 を戻しました');
+    expect(textOf(await call('card_move', { list: 'やること', numbers: '2', to_list: '人のやること' }))).toContain('new number: #1');
+    expect(textOf(await call('card_delete', { list: 'やること', numbers: '1' }))).toContain('to the trash');
+    expect(textOf(await call('checklist_overview'))).toContain('(no cards)');
+    expect(textOf(await call('card_restore', { list: 'やること', numbers: '1' }))).toContain('Restored #1');
   });
 
   it('結果の最後に、前回の呼び出しから人が変えたものを添える', async () => {
@@ -283,15 +285,15 @@ describe('MCP のツール（ChecklistControl）', () => {
     store.apply(ME, { type: 'card-check', listId: list.id, cardIds: [list.cards[0].id], checked: true });
     const result = await call('checklist_overview');
     expect(result.content).toHaveLength(2);
-    expect(textOf(result)).toContain('人が「やること」の #1「A」 をチェックしました');
+    expect(textOf(result)).toContain('The user checked #1 "A" in "やること"');
     expect((await call('checklist_overview')).content).toHaveLength(1);
   });
 
-  it('メニューでオフにしていれば断る', async () => {
+  it('メニューでオフにしていれば、メニューの項目の名前（画面の言語）を添えて断る', async () => {
     enabled = false;
     const result = await call('checklist_overview');
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('オフ');
+    expect(textOf(result)).toContain('turned off "Claude にチェックリストを扱わせる" in the tanacode menu');
   });
 
   describe('Claude への知らせ', () => {
@@ -341,8 +343,8 @@ describe('MCP のツール（ChecklistControl）', () => {
 
     it('渡す: 同じ名前のリストを作り、チェックとスレッドごと写し、先の Claude に知らせる。元は残る', async () => {
       const text = textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '2-3', to_session: PEER.slice(0, 8) }));
-      expect(text).toContain('#1, #2 としてコピーしました');
-      expect(text).toContain('作りました');
+      expect(text).toContain('as #1, #2.');
+      expect(text).toContain('so it was created');
       const copied = store.findList(PEER, '完了前チェック')!;
       expect(copied.description).toBe('終える前に確かめる');
       expect(copied.cards.map((c) => [c.number, c.title, c.checked])).toEqual([
@@ -360,16 +362,16 @@ describe('MCP のツール（ChecklistControl）', () => {
 
     it('持ってくる: from_session を渡して、このセッションへ。自分には知らせない', async () => {
       const text = textOf(await call('cards_copy', { from_session: ME, from_list: '完了前チェック', numbers: '1', to_list: '引き継ぎ' }, PEER));
-      expect(text).toContain('このセッションの「引き継ぎ」');
+      expect(text).toContain('to "引き継ぎ" in this session');
       expect(store.findList(PEER, '引き継ぎ')!.cards[0].title).toBe('A');
       await settle();
       expect(host.submitted).toEqual([]);
     });
 
     it('見えないセッション（別のリポジトリ）・アーカイブしたセッション・同じセッションへは断る', async () => {
-      expect(textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '1', to_session: OTHER_REPO }))).toContain('見えるセッションに');
-      expect(textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '1', to_session: ARCHIVED }))).toContain('アーカイブ');
-      expect(textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '1', to_session: ME }))).toContain('同じセッション');
+      expect(textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '1', to_session: OTHER_REPO }))).toContain('No visible session');
+      expect(textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '1', to_session: ARCHIVED }))).toContain('archived session');
+      expect(textOf(await call('cards_copy', { from_list: '完了前チェック', numbers: '1', to_session: ME }))).toContain('same session');
     });
 
     it('画面からのコピーも同じ。知らせるかは選べる', async () => {

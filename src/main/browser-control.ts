@@ -1,6 +1,8 @@
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
-import { browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
+import { BROWSER_MCP, browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
+import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
+import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -11,7 +13,8 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // クリックや入力は CDP（Input.*）で送る。ウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
 // ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
-// その間は、Claude にブラウザを使わせない（ユーザーの操作とぶつからないように）
+// その間は、Claude にブラウザを使わせない（ユーザーの操作とぶつからないように）。
+// Claude に返す文は英語。画面の項目（メニュー・帯のボタン）の名前だけ、Claude が利用者に伝えられるよう t() で画面の言語にする
 
 // 要素を探したり読んだりするスクリプトを動かす、ページとは別の JavaScript の世界（ページのスクリプトに書き換えられない）
 const WORLD = 1100;
@@ -90,7 +93,7 @@ const __label = (el) => {
   const v = el.type === 'password' ? '' : el.value;
   const t = (el.innerText || v || (el.getAttribute && el.getAttribute('aria-label')) || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
   const f = el.ownerDocument === document ? null : el.ownerDocument.location.href;
-  return __name(el) + (t ? '「' + t + '」' : '') + (f ? '（iframe ' + f + ' の中）' : '');
+  return __name(el) + (t ? ' "' + t + '"' : '') + (f ? ' (inside iframe ' + f + ')' : '');
 };
 `;
 
@@ -187,11 +190,11 @@ export class BrowserControl {
       if (logs.failed.length > MAX_FAILED) logs.failed.splice(0, logs.failed.length - MAX_FAILED);
     };
     session.webRequest.onCompleted(filter, (details) => {
-      if (details.statusCode >= 400) record(details.webContentsId, `${details.statusCode} ${details.method} ${details.url}（${details.resourceType}）`);
+      if (details.statusCode >= 400) record(details.webContentsId, `${details.statusCode} ${details.method} ${details.url} (${details.resourceType})`);
     });
     session.webRequest.onErrorOccurred(filter, (details) => {
       // 移ったための中断（ERR_ABORTED）は失敗にしない
-      if (details.error !== 'net::ERR_ABORTED') record(details.webContentsId, `${details.error} ${details.method} ${details.url}（${details.resourceType}）`);
+      if (details.error !== 'net::ERR_ABORTED') record(details.webContentsId, `${details.error} ${details.method} ${details.url} (${details.resourceType})`);
     });
   }
 
@@ -300,7 +303,7 @@ export class BrowserControl {
 
   // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）
   cancelAsks(): void {
-    this.asks.cancelAll('アプリ内ブラウザの操作がオフになったので、頼むのをやめました');
+    this.asks.cancelAll(`The request was withdrawn because the user turned off "${t('main.menu.browserControl')}" in the tanacode menu.`);
   }
 
   // セッションを消した・アーカイブしたとき
@@ -317,26 +320,26 @@ export class BrowserControl {
   async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId);
     const tool = browserTool(name);
-    if (!tool) return textResult(`知らないツールです: ${name}`, true);
-    if (!this.deps.enabled()) {
-      return textResult('アプリ内ブラウザの操作は、tanacode のメニュー（tanacode → Claude にアプリ内ブラウザを操作させる）でオフになっています', true);
-    }
-    if (!this.deps.hasSession(sessionId)) return textResult('このセッションは tanacode にありません', true);
+    if (!tool) return textResult(`Unknown tool: ${name}`, true);
+    if (!this.deps.enabled()) return textResult(`The user has turned off "${t('main.menu.browserControl')}" in the tanacode menu.`, true);
+    if (!this.deps.hasSession(sessionId)) return textResult('This session is not in tanacode.', true);
     if (tool.kind === 'ask') {
       this.yieldToUser(sessionId);
       return this.asks.wait(sessionId, args.message, () => this.askedPage(sessionId), signal);
     }
     if (this.asks.has(sessionId)) {
+      const done = t('preview.ask.done');
       return textResult(
-        'ユーザーに操作を頼んでいるところです。ユーザーが帯の「終わった」か「できない」を押すまで、ブラウザは使えません。操作せずに返事を待ってください（ユーザーがチャットで済んだと言ってきたら、帯の「終わった」を押してもらってください）',
+        `You have asked the user to act in the browser. The browser cannot be used until the user presses "${done}" or "${t('preview.ask.decline')}" in the banner. ` +
+          `Wait for the answer without operating the browser (if the user says in the chat that they are done, ask them to press "${done}" in the banner).`,
         true,
       );
     }
-    this.begin(sessionId, tool.label);
+    this.begin(sessionId, mcpToolLabel(BROWSER_MCP, tool));
     let timer: NodeJS.Timeout | undefined;
     try {
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ToolError(`${TOOL_TIMEOUT_MS / 1000} 秒たっても終わりませんでした`)), TOOL_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new ToolError(`Did not finish within ${TOOL_TIMEOUT_MS / 1000} seconds.`)), TOOL_TIMEOUT_MS);
       });
       return await Promise.race([this.run(sessionId, name, args), timeout]);
     } catch (error) {
@@ -353,9 +356,9 @@ export class BrowserControl {
     const session = this.sessions.get(sessionId);
     const guest = session?.active ? session.tabs.get(session.active) : undefined;
     const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
-    if (!guest || isBlank(url)) return ['今のタブ: （ページを開いていません）'];
-    if (!this.allowed(url)) return [`今のページは Claude に許していない先（${originOf(url) ?? '読めない URL'}）です。これ以上は読めず、操作もできません`];
-    return [`今のページ: ${guest.contents.getTitle() || '（タイトルなし）'}`, `URL: ${url}`];
+    if (!guest || isBlank(url)) return ['Current tab: (no page open)'];
+    if (!this.allowed(url)) return [`The current page is not allowed for Claude (${originOf(url) ?? 'invalid URL'}). It can be neither read nor operated any further.`];
+    return [`Current page: ${guest.contents.getTitle() || '(untitled)'}`, `URL: ${url}`];
   }
 
   // JavaScript の実行の確認のフック（browser-gate.ts）への答え。今のタブが localhost のページなら、確認を省いてよい。
@@ -374,7 +377,7 @@ export class BrowserControl {
     const result = await this.dispatch(sessionId, name, args);
     if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
-    if (session.blocked) result.content.push({ type: 'text', text: `許していない先（${this.shownUrl(session.blocked)}）へ移ろう（開こう）としたので、止めました` });
+    if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${this.shownUrl(session.blocked)}).` });
     // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
     if (session.opened.length > 0) {
       const guest = await this.activeGuest(sessionId).catch(() => null);
@@ -382,7 +385,7 @@ export class BrowserControl {
       const index = guest ? [...session.tabs.keys()].indexOf(guest.tabId) + 1 : 0;
       result.content.push({
         type: 'text',
-        text: `新しいタブ${index > 0 ? `（タブ ${index}）` : ''}で開きました: ${session.opened.join('、')}。このあとの操作は、このタブに対して行います（list_tabs・select_tab でタブを切り替えられます）`,
+        text: `Opened in a new tab${index > 0 ? ` (tab ${index})` : ''}: ${session.opened.join(', ')}. Further actions apply to this tab (switch tabs with list_tabs and select_tab).`,
       });
     }
     return result;
@@ -422,7 +425,7 @@ export class BrowserControl {
       case 'evaluate':
         return this.evaluate(guest, requiredString(args.expression, 'expression'));
     }
-    return textResult(`知らないツールです: ${name}`, true);
+    return textResult(`Unknown tool: ${name}`, true);
   }
 
   // ---- 開く ----
@@ -430,24 +433,24 @@ export class BrowserControl {
   private async navigate(sessionId: string, args: Record<string, unknown>): Promise<ToolResult> {
     const action = optionalString(args.action);
     const rawUrl = optionalString(args.url);
-    if (!action && !rawUrl) throw new ToolError('url か action を渡してください');
+    if (!action && !rawUrl) throw new ToolError('Provide url or action.');
     if (action) {
       const guest = await this.current(sessionId);
       const history = guest.contents.navigationHistory;
       if (action === 'reload') guest.contents.reload();
       else {
         const index = history.getActiveIndex() + (action === 'back' ? -1 : 1);
-        if (index < 0 || index >= history.length()) throw new ToolError(action === 'back' ? '戻る先がありません' : '進む先がありません');
+        if (index < 0 || index >= history.length()) throw new ToolError(action === 'back' ? 'There is no page to go back to.' : 'There is no page to go forward to.');
         const target = history.getEntryAtIndex(index).url;
-        this.checkUrl(target, '移る先');
+        this.checkUrl(target, 'The destination');
         if (action === 'back') history.goBack();
         else history.goForward();
       }
       await waitForLoad(guest.contents);
-      return this.pageResult(guest, action === 'reload' ? '読み込み直しました' : action === 'back' ? '戻りました' : '進みました');
+      return this.pageResult(guest, action === 'reload' ? 'Reloaded' : action === 'back' ? 'Went back' : 'Went forward');
     }
     const url = toUrl(rawUrl!);
-    this.checkUrl(url, '開く先');
+    this.checkUrl(url, 'The URL to open');
     const session = this.tabsOf(sessionId);
     let guest = await this.activeGuest(sessionId).catch(() => null);
     if (!guest || args.newTab === true) {
@@ -457,17 +460,17 @@ export class BrowserControl {
       else this.deps.send(this.deps.channels.open, { sessionId, url });
       guest = await attached;
       await waitForLoad(guest.contents);
-      if (session.blocked) throw new ToolError(`${url} は、許していない先（${this.shownUrl(session.blocked)}）へ移ろうとしたので、止めました`);
+      if (session.blocked) throw new ToolError(`Stopped ${url} because it tried to navigate to a page not allowed for Claude (${this.shownUrl(session.blocked)}).`);
     } else {
       const opened = guest;
       await opened.contents.loadURL(url).catch((error: unknown) => {
         // 許していない先へのリダイレクトを止めた
-        if (session.blocked) throw new ToolError(`${url} は、許していない先（${this.shownUrl(session.blocked)}）へ移ろうとしたので、止めました`);
+        if (session.blocked) throw new ToolError(`Stopped ${url} because it tried to navigate to a page not allowed for Claude (${this.shownUrl(session.blocked)}).`);
         // 移ったための中断（リダイレクトなど）は失敗にしない
-        if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`${url} を開けませんでした（${error instanceof Error ? error.message : String(error)}）`);
+        if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
       });
     }
-    return this.pageResult(guest, args.newTab === true ? `新しいタブ（タブ ${[...session.tabs.keys()].indexOf(guest.tabId) + 1}）で開きました` : '開きました');
+    return this.pageResult(guest, args.newTab === true ? `Opened in a new tab (tab ${[...session.tabs.keys()].indexOf(guest.tabId) + 1})` : 'Opened');
   }
 
   // ---- タブ ----
@@ -475,22 +478,22 @@ export class BrowserControl {
   private listTabs(sessionId: string): ToolResult {
     const session = this.tabsOf(sessionId);
     const tabs = [...session.tabs.values()].filter((g) => !g.contents.isDestroyed());
-    if (tabs.length === 0) return textResult('タブはありません（navigate で開けます）');
+    if (tabs.length === 0) return textResult('There are no tabs (open one with navigate).');
     const lines = tabs.map((guest, i) => {
       const url = guest.contents.getURL();
       // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）。
       // 空のタブ（「＋」で開いたもの）は、許していない先ではない（navigate で開ける）。タイトルは読まない
-      const title = isBlank(url) ? '（タイトルなし）' : this.allowed(url) ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）';
-      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '（空のタブ）' : this.shownUrl(url)}`;
+      const title = isBlank(url) ? '(untitled)' : this.allowed(url) ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)';
+      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '(empty tab)' : this.shownUrl(url)}`;
     });
-    return textResult(`タブ（* が今のタブ）:\n${lines.join('\n')}`);
+    return textResult(`Tabs (* marks the current tab):\n${lines.join('\n')}`);
   }
 
   // index: 1 から数えたタブの番号
   private tabAt(sessionId: string, index: unknown): Guest {
     const tabs = [...this.tabsOf(sessionId).tabs.values()].filter((g) => !g.contents.isDestroyed());
     const guest = typeof index === 'number' && Number.isInteger(index) ? tabs[index - 1] : undefined;
-    if (!guest) throw new ToolError(`タブ ${String(index)} はありません（タブは ${tabs.length} 個。list_tabs で確かめられます）`);
+    if (!guest) throw new ToolError(`There is no tab ${String(index)} (${count(tabs.length, 'tab')} open; check with list_tabs).`);
     return guest;
   }
 
@@ -499,7 +502,7 @@ export class BrowserControl {
     this.tabsOf(sessionId).active = guest.tabId;
     this.deps.send(this.deps.channels.selectTab, { sessionId, tabId: guest.tabId });
     await sleep(150);
-    return this.pageResult(guest, `タブ ${String(index)} に切り替えました`);
+    return this.pageResult(guest, `Switched to tab ${String(index)}`);
   }
 
   private async closeTab(sessionId: string, index: unknown): Promise<ToolResult> {
@@ -510,20 +513,20 @@ export class BrowserControl {
     session.tabs.delete(guest.tabId);
     // 今のタブを閉じたときは、画面が次のタブを今のタブにして知らせてくる
     await sleep(150);
-    return textResult(`タブ ${number} を閉じました（残りのタブ: ${session.tabs.size} 個）`);
+    return textResult(`Closed tab ${number} (${count(session.tabs.size, 'tab')} left)`);
   }
 
   // 開いたあとのページの様子。許していない先に移っていたら、そう伝える（タイトルと URL の道筋は伏せる）
   private pageResult(guest: Guest, done: string): ToolResult {
     const url = guest.contents.getURL();
     // 空のタブ（「＋」で開いたもの）は、許していない先ではない。navigate で、このタブに開けることを伝える
-    if (isBlank(url)) return textResult(`${done}: （空のタブ）\n今のタブは空です。navigate で、このタブにページを開けます`);
+    if (isBlank(url)) return textResult(`${done}: (empty tab)\nThe current tab is empty. Open a page in it with navigate.`);
     const allowed = this.allowed(url);
-    const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '（タイトルなし）' : '（Claude に許していない先）'}`, `URL: ${this.shownUrl(url)}`];
-    if (!allowed) lines.push('このページは Claude に許していない先なので、これ以上は読めず、操作もできません');
+    const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)'}`, `URL: ${this.shownUrl(url)}`];
+    if (!allowed) lines.push('This page is not allowed for Claude, so it can be neither read nor operated any further.');
     const errors = guest.logs.console.filter((l) => l.level === 'error').length;
-    if (errors > 0) lines.push(`コンソールにエラーが ${errors} 件あります（get_console_logs で読めます）`);
-    if (guest.logs.failed.length > 0) lines.push(`失敗した通信が ${guest.logs.failed.length} 件あります（get_failed_requests で読めます）`);
+    if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
+    if (guest.logs.failed.length > 0) lines.push(`${count(guest.logs.failed.length, 'request')} failed (read them with get_failed_requests).`);
     return textResult(lines.join('\n'));
   }
 
@@ -541,9 +544,9 @@ export class BrowserControl {
       const y = Math.max(0, Math.floor(target.rect.y - pad));
       const width = Math.min(target.viewport.width - x, Math.ceil(target.rect.width + pad * 2));
       const height = Math.min(target.viewport.height - y, Math.ceil(target.rect.height + pad * 2));
-      if (width <= 0 || height <= 0) throw new ToolError(`「${selector}」は大きさが 0 で、撮れません`);
+      if (width <= 0 || height <= 0) throw new ToolError(`"${selector}" has zero size and cannot be captured.`);
       image = await contents.capturePage({ x, y, width, height });
-      note = `${selector}（${target.description}）`;
+      note = `${selector} (${target.description})`;
     } else if (fullPage) {
       const metrics = (await this.cdp(guest, 'Page.getLayoutMetrics')) as { cssContentSize: { width: number; height: number }; cssLayoutViewport: { clientWidth: number } };
       const width = metrics.cssLayoutViewport.clientWidth;
@@ -555,18 +558,18 @@ export class BrowserControl {
         clip: { x: 0, y: 0, width, height, scale: 1 },
       })) as { data: string };
       image = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
-      note = height < total ? `ページの上から ${height}px（全体の高さは ${total}px。続きは scroll してから撮る）` : `ページ全体（${width}×${height}）`;
+      note = height < total ? `Top ${height}px of the page (full height ${total}px; scroll and take another screenshot for the rest)` : `Full page (${width}×${height})`;
     } else {
       image = await contents.capturePage();
-      note = '見えている範囲';
+      note = 'Visible area';
     }
-    if (image.isEmpty()) throw new ToolError('スクリーンショットを撮れませんでした（ページがまだ描かれていないかもしれません）');
+    if (image.isEmpty()) throw new ToolError('Could not take a screenshot (the page may not have been rendered yet).');
     image = shrink(image, fullPage ? 1 : (await this.viewport(guest)).dpr);
     const size = image.getSize();
     return {
       content: [
         { type: 'image', data: image.toPNG().toString('base64'), mimeType: 'image/png' },
-        { type: 'text', text: `${note}・${contents.getURL()}・画像 ${size.width}×${size.height}` },
+        { type: 'text', text: `${note}, ${contents.getURL()}, image ${size.width}×${size.height}` },
       ],
     };
   }
@@ -587,7 +590,7 @@ export class BrowserControl {
         return { title: document.title, url: location.href, parts };
       })()`,
     )) as { title: string; url: string; parts: { frame: string | null; text: string }[] } | null;
-    if (!result) throw new ToolError(`「${selector}」に当たる要素がありません`);
+    if (!result) throw new ToolError(`No element matches "${selector}".`);
     // ページ全体のときは、別プロセスの iframe（許す先のものだけ）の文字も読む
     if (!selector) {
       for (const frame of await this.childFrames(guest)) {
@@ -597,9 +600,9 @@ export class BrowserControl {
       }
     }
     const body = result.parts
-      .map((p) => `${p.frame ? `--- iframe（${p.frame}）の中 ---\n` : ''}${p.text.replace(/\n{3,}/g, '\n\n').trim()}`)
+      .map((p) => `${p.frame ? `--- inside iframe (${p.frame}) ---\n` : ''}${p.text.replace(/\n{3,}/g, '\n\n').trim()}`)
       .join('\n\n');
-    return textResult([`タイトル: ${result.title || '（なし）'}`, `URL: ${result.url}`, '', clip(body, MAX_TEXT)].join('\n'));
+    return textResult([`Title: ${result.title || '(none)'}`, `URL: ${result.url}`, '', clip(body, MAX_TEXT)].join('\n'));
   }
 
   private async tree(guest: Guest): Promise<ToolResult> {
@@ -617,7 +620,7 @@ export class BrowserControl {
       if (lines.length >= MAX_TREE_LINES) break;
       if (!frame.top) {
         if (!this.allowed(frame.url)) continue;
-        lines.push(`--- iframe（${frame.url}）の中 ---`);
+        lines.push(`--- inside iframe (${frame.url}) ---`);
       }
       const result = (await this.cdp(guest, 'Accessibility.getFullAXTree', { frameId: frame.id }).catch(() => null)) as { nodes: AXNode[] } | null;
       if (result) this.formatTree(result.nodes, lines);
@@ -625,11 +628,11 @@ export class BrowserControl {
     // 別プロセスの iframe（許す先のものだけ）
     for (const frame of await this.childFrames(guest)) {
       if (lines.length >= MAX_TREE_LINES || !this.allowed(frame.url)) continue;
-      lines.push(`--- iframe（${frame.url}）の中 ---`);
+      lines.push(`--- inside iframe (${frame.url}) ---`);
       const result = (await this.cdp(guest, 'Accessibility.getFullAXTree', {}, frame.child).catch(() => null)) as { nodes: AXNode[] } | null;
       if (result) this.formatTree(result.nodes, lines);
     }
-    if (lines.length >= MAX_TREE_LINES) lines.push(`…（${MAX_TREE_LINES} 行で切りました）`);
+    if (lines.length >= MAX_TREE_LINES) lines.push(`…(truncated at ${MAX_TREE_LINES} lines)`);
     return textResult([`URL: ${guest.contents.getURL()}`, ...lines].join('\n'));
   }
 
@@ -649,7 +652,7 @@ export class BrowserControl {
         const states = (node.properties ?? [])
           .filter((p) => STATES.includes(p.name) && p.value.value !== false && p.value.value !== 'false')
           .map((p) => (p.value.value === true || p.value.value === 'true' ? p.name : `${p.name}=${String(p.value.value)}`));
-        const value = node.value?.value !== undefined && node.value.value !== '' ? ` 値=${JSON.stringify(String(node.value.value).slice(0, 100))}` : '';
+        const value = node.value?.value !== undefined && node.value.value !== '' ? ` value=${JSON.stringify(String(node.value.value).slice(0, 100))}` : '';
         lines.push(`${'  '.repeat(depth)}- ${role}${name ? ` "${name.slice(0, 200)}"` : ''}${value}${states.length ? ` [${states.join(', ')}]` : ''}`);
         next = depth + 1;
       }
@@ -665,7 +668,7 @@ export class BrowserControl {
       `(() => {${FRAMES}
         const props = ${JSON.stringify(props)};
         let all;
-        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'セレクタの書き方が違います: ' + e.message }; }
+        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'Invalid selector: ' + e.message }; }
         return { total: all.length, items: all.slice(0, 10).map((hit) => {
           const el = hit.el;
           const r = __rect(el);
@@ -682,32 +685,32 @@ export class BrowserControl {
       })()`,
     )) as { error?: string; total: number; items: { html: string; rect: BrowserRect; visible: boolean; frame: string | null; styles: Record<string, string> }[] };
     if (found.error) throw new ToolError(found.error);
-    if (found.total === 0) throw new ToolError(`「${selector}」に当たる要素がありません`);
+    if (found.total === 0) throw new ToolError(`No element matches "${selector}".`);
     const parts = found.items.map((item, i) =>
       [
-        `## ${i + 1} つ目（${item.visible ? '見えている' : '見えていない'}・x=${item.rect.x} y=${item.rect.y} ${item.rect.width}×${item.rect.height}${item.frame ? `・iframe（${item.frame}）の中` : ''}）`,
+        `## Element ${i + 1} (${item.visible ? 'visible' : 'not visible'}, x=${item.rect.x} y=${item.rect.y} ${item.rect.width}×${item.rect.height}${item.frame ? `, inside iframe (${item.frame})` : ''})`,
         '```html',
         item.html,
         '```',
         ...Object.entries(item.styles).map(([k, v]) => `- ${k}: ${v}`),
       ].join('\n'),
     );
-    const more = found.total > found.items.length ? `\n\n（ほかに ${found.total - found.items.length} 個あります）` : '';
-    return textResult(`「${selector}」に当たる要素: ${found.total} 個\n\n${parts.join('\n\n')}${more}`);
+    const more = found.total > found.items.length ? `\n\n(${found.total - found.items.length} more not shown)` : '';
+    return textResult(`Elements matching "${selector}": ${found.total}\n\n${parts.join('\n\n')}${more}`);
   }
 
   private consoleLogs(guest: Guest, level: string, clear: boolean): ToolResult {
     const levels = level === 'error' ? ['error'] : level === 'warning' ? ['error', 'warning'] : null;
     const logs = guest.logs.console.filter((l) => !levels || levels.includes(l.level));
     if (clear) guest.logs.console.length = 0;
-    if (logs.length === 0) return textResult('コンソールに出たものはありません');
+    if (logs.length === 0) return textResult('No console messages.');
     return textResult(clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT));
   }
 
   private failedRequests(guest: Guest, clear: boolean): ToolResult {
     const failed = [...guest.logs.failed];
     if (clear) guest.logs.failed.length = 0;
-    return textResult(failed.length === 0 ? '失敗した通信はありません' : clip(failed.join('\n'), MAX_TEXT));
+    return textResult(failed.length === 0 ? 'No failed requests.' : clip(failed.join('\n'), MAX_TEXT));
   }
 
   // ---- 動かす ----
@@ -720,7 +723,7 @@ export class BrowserControl {
     let target: { rect: BrowserRect; description: string; covered: string | null; child?: { session: string; x: number; y: number } };
     if (selector) target = await this.locate(guest, selector);
     else if (typeof args.x === 'number' && typeof args.y === 'number' && Number.isFinite(args.x) && Number.isFinite(args.y)) target = await this.pointAt(guest, args.x, args.y);
-    else throw new ToolError('selector か、x と y を渡してください');
+    else throw new ToolError('Provide selector, or x and y.');
     const before = guest.contents.getURL();
     await this.highlight(sessionId, target.rect);
     // 別プロセスの iframe の中は、その iframe のセッションに、iframe の中の位置で送る
@@ -733,18 +736,18 @@ export class BrowserControl {
       await this.cdp(guest, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: pressButton, clickCount: count }, child);
     }
     await settle(guest.contents);
-    const lines = [`${double ? 'ダブルクリック' : 'クリック'}しました: ${target.description}`];
-    if (target.covered) lines.push(`（押した位置には、ほかの要素 ${target.covered} が重なっていました）`);
+    const lines = [`${double ? 'Double-clicked' : 'Clicked'}: ${target.description}`];
+    if (target.covered) lines.push(`(another element, ${target.covered}, was covering the clicked position)`);
     const after = guest.contents.getURL();
     // 移る前に止められなかった形（ページの「戻る」ボタンの history.back など）で許していない先へ移ったときは、オリジンだけを伝える
-    if (after !== before) lines.push(`ページが移りました: ${this.shownUrl(after)}${this.allowed(after) ? '' : '（Claude に許していない先なので、これ以上は読めず、操作もできません）'}`);
+    if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after)}${this.allowed(after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
     return textResult(lines.join('\n'));
   }
 
   private async type(sessionId: string, guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
     const text = typeof args.text === 'string' ? args.text : '';
     const selector = optionalString(args.selector);
-    let where = '今フォーカスのある場所';
+    let where = 'the focused element';
     if (selector) {
       const target = await this.locate(guest, selector);
       await this.highlight(sessionId, target.rect);
@@ -785,18 +788,18 @@ export class BrowserControl {
     if (text) await this.cdp(guest, 'Input.insertText', { text }, child);
     if (args.submit === true) await this.key(guest, 'Enter', [], child);
     await settle(guest.contents);
-    return textResult(`${where}に入力しました${args.submit === true ? '（Enter も押しました）' : ''}`);
+    return textResult(`Typed into ${where}${args.submit === true ? ' and pressed Enter' : ''}`);
   }
 
   private async pressKey(guest: Guest, key: string, modifiers: string[]): Promise<ToolResult> {
     await this.key(guest, key, modifiers, await this.focusedChild(guest));
     await settle(guest.contents);
-    return textResult(`${[...modifiers, key].join('+')} を押しました`);
+    return textResult(`Pressed ${[...modifiers, key].join('+')}`);
   }
 
   private async key(guest: Guest, name: string, modifiers: string[], child?: string): Promise<void> {
     const spec = keySpec(name);
-    if (!spec) throw new ToolError(`知らないキーです: ${name}`);
+    if (!spec) throw new ToolError(`Unknown key: ${name}`);
     const bits = modifiers.reduce((sum, m) => sum | (MODIFIER_BITS[m] ?? 0), 0);
     // Ctrl・⌘ と一緒に押すときは、文字を入れない
     const text = bits & (MODIFIER_BITS.control | MODIFIER_BITS.meta) ? undefined : spec.text;
@@ -806,7 +809,7 @@ export class BrowserControl {
   }
 
   private async scroll(guest: Guest, selector: string | undefined, deltaX: number, deltaY: number): Promise<ToolResult> {
-    if (!selector && !deltaX && !deltaY) throw new ToolError('selector か deltaX・deltaY を渡してください');
+    if (!selector && !deltaX && !deltaY) throw new ToolError('Provide selector, or deltaX or deltaY.');
     const position = (await this.world(
       guest,
       `(() => {${FRAMES}
@@ -830,17 +833,17 @@ export class BrowserControl {
           scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' });
         }
         const page = scroller === scroller.ownerDocument.scrollingElement;
-        return { x: Math.round(scroller.scrollLeft), y: Math.round(scroller.scrollTop), where: page ? (scroller.ownerDocument === document ? 'ページ' : 'iframe の中のページ') : '中の入れ物' };
+        return { x: Math.round(scroller.scrollLeft), y: Math.round(scroller.scrollTop), where: page ? (scroller.ownerDocument === document ? 'page' : 'page inside the iframe') : 'inner scroll container' };
       })()`,
     )) as { x: number; y: number; where: string } | null;
-    if (!position) throw new ToolError(`「${selector}」に当たる要素がありません`);
-    return textResult(`スクロールしました（${position.where}の位置: x=${position.x} y=${position.y}）`);
+    if (!position) throw new ToolError(`No element matches "${selector}".`);
+    return textResult(`Scrolled (scroll position of the ${position.where}: x=${position.x} y=${position.y})`);
   }
 
   private async waitFor(guest: Guest, args: Record<string, unknown>): Promise<ToolResult> {
     const selector = optionalString(args.selector);
     const text = optionalString(args.text);
-    if (!selector && !text) throw new ToolError('selector か text を渡してください');
+    if (!selector && !text) throw new ToolError('Provide selector or text.');
     const state = optionalString(args.state) ?? 'visible';
     const timeout = Math.min(Math.max(numberOr(args.timeoutMs, 10_000), 0), 30_000);
     const check = `(() => {${FRAMES}
@@ -866,21 +869,21 @@ export class BrowserControl {
     const started = Date.now();
     while (true) {
       if (await this.world(guest, check).catch(() => false)) {
-        return textResult(`${selector ? `「${selector}」` : `「${text}」`}が${state === 'hidden' ? '消えました' : '出ました'}（${Date.now() - started} ms）`);
+        return textResult(`"${selector ?? text}" ${state === 'hidden' ? 'disappeared' : 'appeared'} (${Date.now() - started} ms)`);
       }
-      if (Date.now() - started > timeout) throw new ToolError(`${timeout} ms 待っても、${selector ? `「${selector}」` : `「${text}」`}が${state === 'hidden' ? '消えませんでした' : '出ませんでした'}`);
+      if (Date.now() - started > timeout) throw new ToolError(`"${selector ?? text}" did not ${state === 'hidden' ? 'disappear' : 'appear'} within ${timeout} ms.`);
       await sleep(150);
     }
   }
 
   private async setViewport(sessionId: string, guest: Guest, width: string): Promise<ToolResult> {
     // in だと、Object の持ち物の名前（toString・constructor・__proto__）も通るので、自分の持つキーだけを受け付ける
-    if (!Object.hasOwn(VIEWPORTS, width)) throw new ToolError(`表示幅は full・mobile・tablet のどれかです: ${width}`);
+    if (!Object.hasOwn(VIEWPORTS, width)) throw new ToolError(`width must be full, mobile or tablet: ${width}`);
     this.deps.send(this.deps.channels.viewport, { sessionId, width: VIEWPORTS[width] });
     // 画面が webview の幅を変えて、ページが描き直すのを待つ
     await sleep(400);
     const viewport = await this.viewport(guest);
-    return textResult(`表示幅を ${width} にしました（ページの幅 ${viewport.width}px・高さ ${viewport.height}px）`);
+    return textResult(`Set the viewport to ${width} (page width ${viewport.width}px, height ${viewport.height}px)`);
   }
 
   private async evaluate(guest: Guest, expression: string): Promise<ToolResult> {
@@ -892,7 +895,7 @@ export class BrowserControl {
       // 投げられたエラーの中身は、例外には入らずコンソールに出る（届くのを少し待つ）
       await sleep(100);
       const thrown = guest.logs.console.slice(logged).filter((l) => l.level === 'error').map((l) => l.text);
-      throw new ToolError(`実行に失敗しました: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`);
+      throw new ToolError(`Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`);
     }
     let text: string;
     try {
@@ -909,8 +912,8 @@ export class BrowserControl {
   private async current(sessionId: string): Promise<Guest> {
     const guest = await this.activeGuest(sessionId);
     const url = guest.contents.getURL();
-    if (isBlank(url)) throw new ToolError('今のタブは空です。navigate で開いてください');
-    this.checkUrl(url, '今のページ');
+    if (isBlank(url)) throw new ToolError('The current tab is empty. Open a page with navigate.');
+    this.checkUrl(url, 'The current page');
     return guest;
   }
 
@@ -922,7 +925,7 @@ export class BrowserControl {
       const guest = session?.active ? session.tabs.get(session.active) : undefined;
       if (guest && !guest.contents.isDestroyed()) return guest;
       if (!session?.active || Date.now() - started > ACTIVE_WAIT_MS) {
-        throw new ToolError('このセッションのアプリ内ブラウザで、まだページを開いていません。navigate で開いてください');
+        throw new ToolError('No page has been opened in the in-app browser for this session yet. Open one with navigate.');
       }
       await sleep(50);
     }
@@ -956,19 +959,19 @@ export class BrowserControl {
 
   // Claude に見せる URL。許していない先は、オリジンだけ（ログインで外の認証のページへ移ったとき、URL に認証の途中の値が入っていることがある）
   private shownUrl(url: string): string {
-    return this.allowed(url) ? url : (originOf(url) ?? '読めない URL');
+    return this.allowed(url) ? url : (originOf(url) ?? 'invalid URL');
   }
 
   private checkUrl(url: string, what: string): void {
     if (this.allowed(url)) return;
     throw new ToolError(
-      `${what}（${this.shownUrl(url)}）は、Claude に許していない先です。Claude が開けるのは localhost・127.0.0.1・*.local と、ユーザーが tanacode のメニュー（tanacode → アプリ内ブラウザで Claude に許す先…）で足した先だけです。必要なら、ユーザーに足してもらってください`,
+      `${what} (${this.shownUrl(url)}) is not allowed for Claude. Claude can open only localhost, 127.0.0.1, *.local and the hosts the user added with "${t('main.menu.browserHosts')}" in the tanacode menu. If you need it, ask the user to add it.`,
     );
   }
 
   private waitAttach(sessionId: string): Promise<Guest> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new ToolError('アプリ内ブラウザを開けませんでした（tanacode の画面が応えませんでした）')), ATTACH_TIMEOUT_MS);
+      const timer = setTimeout(() => reject(new ToolError('Could not open the in-app browser (the tanacode window did not respond).')), ATTACH_TIMEOUT_MS);
       const list = this.waiters.get(sessionId) ?? [];
       list.push((guest) => {
         clearTimeout(timer);
@@ -989,7 +992,7 @@ export class BrowserControl {
       try {
         dbg.attach('1.3');
       } catch (error) {
-        if (!dbg.isAttached()) throw new ToolError(`ページを操作する準備ができませんでした（${error instanceof Error ? error.message : String(error)}）`);
+        if (!dbg.isAttached()) throw new ToolError(`Could not get ready to control the page (${error instanceof Error ? error.message : String(error)}).`);
       }
       guest.cdp = true;
       // 別プロセスの iframe にもつなぐ（つながると Target.attachedToTarget が届く）
@@ -1035,7 +1038,7 @@ export class BrowserControl {
     if (!src) return undefined;
     const frame = await this.childFor(guest, src);
     const url = frame?.url ?? src;
-    if (!this.allowed(url)) throw new ToolError(`フォーカスが、許していない先の iframe（${frameShown(url)}）の中にあるので、入力できません`);
+    if (!this.allowed(url)) throw new ToolError(`Cannot type because the focus is inside an iframe not allowed for Claude (${frameShown(url)}).`);
     return frame?.child;
   }
 
@@ -1049,7 +1052,7 @@ export class BrowserControl {
       guest,
       `(() => {${FRAMES}
         let all;
-        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'セレクタの書き方が違います: ' + e.message }; }
+        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'Invalid selector: ' + e.message }; }
         if (all.length === 0) return { error: 'none' };
         const hit = all.find((h) => __shown(h.el));
         if (!hit) return { error: 'hidden', count: all.length };
@@ -1066,8 +1069,10 @@ export class BrowserControl {
         };
       })()`,
     )) as { error?: string; count?: number; rect: BrowserRect; viewport: { width: number; height: number }; description: string; covered: string | null };
-    if (found.error === 'none') throw new ToolError(`「${selector}」に当たる要素がありません`);
-    if (found.error === 'hidden') throw new ToolError(`「${selector}」に当たる要素（${found.count} 個）は、どれも見えていません`);
+    if (found.error === 'none') throw new ToolError(`No element matches "${selector}".`);
+    if (found.error === 'hidden') {
+      throw new ToolError(found.count === 1 ? `The element matching "${selector}" is not visible.` : `None of the ${found.count} elements matching "${selector}" is visible.`);
+    }
     if (found.error) throw new ToolError(found.error);
     return found;
   }
@@ -1097,17 +1102,17 @@ export class BrowserControl {
         };
       })()`,
     )) as { error?: string; width?: number; height?: number; cross: boolean; src: string | null; frame: { x: number; y: number } | null; description: string };
-    if (found.error === 'outside') throw new ToolError(`x=${x} y=${y} は、見えている範囲（${found.width}×${found.height}）の外です`);
-    if (found.error) throw new ToolError(`x=${x} y=${y} には要素がありません`);
+    if (found.error === 'outside') throw new ToolError(`x=${x} y=${y} is outside the visible area (${found.width}×${found.height}).`);
+    if (found.error) throw new ToolError(`There is no element at x=${x} y=${y}.`);
     const rect = { x: x - 10, y: y - 10, width: 20, height: 20 };
-    if (!found.cross) return { rect, description: `x=${x} y=${y} の ${found.description}`, covered: null };
+    if (!found.cross) return { rect, description: `${found.description} at x=${x} y=${y}`, covered: null };
     // 別オリジンの iframe。別プロセスで動いていれば、そのセッションに、iframe の中の位置で送る
     const frame = found.src ? await this.childFor(guest, found.src) : null;
     const url = frame?.url ?? found.src;
-    if (!url || !this.allowed(url)) throw new ToolError(`x=${x} y=${y} は、許していない先の iframe（${url ? frameShown(url) : 'src なし'}）の中なので、押せません`);
+    if (!url || !this.allowed(url)) throw new ToolError(`Cannot click x=${x} y=${y} because it is inside an iframe not allowed for Claude (${url ? frameShown(url) : 'no src'}).`);
     return {
       rect,
-      description: `x=${x} y=${y}（別オリジンの iframe ${url} の中）`,
+      description: `x=${x} y=${y} (inside cross-origin iframe ${url})`,
       covered: null,
       child: frame && found.frame ? { session: frame.child, x: x - found.frame.x, y: y - found.frame.y } : undefined,
     };
@@ -1228,7 +1233,7 @@ function optionalString(value: unknown): string | undefined {
 
 function requiredString(value: unknown, name: string): string {
   const text = optionalString(value);
-  if (!text) throw new ToolError(`${name} を渡してください`);
+  if (!text) throw new ToolError(`Provide ${name}.`);
   return text;
 }
 
@@ -1238,6 +1243,11 @@ function stringList(value: unknown): string[] | undefined {
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+// Claude に返す文の数と名詞（1 tab・2 tabs）
+function count(n: number, noun: string): string {
+  return `${n} ${n === 1 ? noun : `${noun}s`}`;
 }
 
 // 「localhost:3000」のようにスキームが無ければ http:// を付ける
@@ -1251,7 +1261,7 @@ function center(rect: BrowserRect): { x: number; y: number } {
 }
 
 function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}\n…（${text.length - max} 文字を省きました）` : text;
+  return text.length > max ? `${text.slice(0, max)}\n…(${text.length - max} more characters omitted)` : text;
 }
 
 // Retina では、撮った画像はページの大きさ（CSS の px）の dpr 倍になる。ページの大きさに縮め、長い辺も上限までにする

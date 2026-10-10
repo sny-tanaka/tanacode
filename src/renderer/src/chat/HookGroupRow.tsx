@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { t } from '@shared/i18n';
 import { DisclosureIcon } from '../icons';
 import { HookRuns } from './HookRuns';
 import { hookSummary, type HookGroup } from './toolGroups';
@@ -18,8 +19,8 @@ export const HookGroupRow = memo(function HookGroupRow({ group, open, onToggle }
             · {event}
           </span>
         ))}
-        {summary.blocked > 0 && <span className="tool-group-failed">· 止めた {summary.blocked}</span>}
-        {summary.failed > 0 && <span className="tool-group-failed">· 失敗 {summary.failed}</span>}
+        {summary.blocked > 0 && <span className="tool-group-failed">· {t('chat.hookGroup.blocked', { count: summary.blocked })}</span>}
+        {summary.failed > 0 && <span className="tool-group-failed">· {t('chat.hookGroup.failed', { count: summary.failed })}</span>}
         {summary.duration && <span className="tool-group-meta">· {summary.duration}</span>}
       </button>
       {open && (

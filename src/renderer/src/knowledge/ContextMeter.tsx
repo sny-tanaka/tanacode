@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n';
 import { formatTokens } from '../workflow/WorkflowCard';
 
 // コンテキストの使用量。多くなると自動で圧縮され、読んだファイルの中身を忘れる。押すと、サイドパネルに中身の一覧を出す
@@ -10,8 +11,8 @@ export function ContextMeter({ tokens, limit, onClick }: { tokens: number | null
       type="button"
       className={`context-meter ${level}`}
       onClick={onClick}
-      aria-label="コンテキストの中身"
-      data-tip={`コンテキスト ${tokens.toLocaleString()} / ${limit.toLocaleString()} tokens（直近の応答時点）\nいっぱいに近づくと自動で圧縮されます。押すと中身の一覧を出します`}
+      aria-label={t('context.meter.label')}
+      data-tip={t('context.meter.tip', { tokens: tokens.toLocaleString(), limit: limit.toLocaleString() })}
     >
       <span className="context-meter-bar">
         <span style={{ width: `${Math.max(ratio * 100, 2)}%` }} />

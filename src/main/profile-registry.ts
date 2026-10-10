@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
+import { t } from '@shared/i18n';
 import { DEFAULT_PROFILE_ID, PROFILE_COLORS, type NewProfile, type ProfileInfo } from '@shared/profile';
 import { claudeConfigDir } from './claude-config';
 
@@ -11,7 +12,8 @@ type Stored = {
   profiles: ProfileInfo[];
 };
 
-const DEFAULT_NAME = '標準';
+// 既定のプロファイルの名前の既定（読み込んだときの言語で選ぶので、関数にする）
+const defaultName = () => t('main.profile.defaultName');
 const MAX_NAME = 40;
 
 // 登録したプロファイル（userData の profiles.json）。覚えるのは名前・色・Claude Code の設定のフォルダだけ。
@@ -36,14 +38,14 @@ export class ProfileRegistry {
     const name = checkName(input.name);
     const claudeDir = resolveDir(input.claudeDir);
     const taken = [claudeConfigDir(), ...this.stored.profiles.map((p) => p.claudeDir!)].map((d) => normalize(d));
-    if (taken.includes(claudeDir)) throw new Error(`ほかのプロファイルと同じフォルダです: ${claudeDir}`);
+    if (taken.includes(claudeDir)) throw new Error(t('main.profile.sameDir', { path: claudeDir }));
     let info: ReturnType<typeof statSync> | null = null;
     try {
       info = statSync(claudeDir);
     } catch {
       mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
     }
-    if (info && !info.isDirectory()) throw new Error(`フォルダではありません: ${claudeDir}`);
+    if (info && !info.isDirectory()) throw new Error(t('main.profile.notDir', { path: claudeDir }));
     const profile: ProfileInfo = { id: randomUUID(), name, color: checkColor(input.color), claudeDir };
     this.save({ ...this.stored, profiles: [...this.stored.profiles, profile] });
     return profile;
@@ -52,7 +54,7 @@ export class ProfileRegistry {
   // 名前と色を変える（設定のフォルダは変えない）
   update(id: string, patch: { name?: string; color?: string }): ProfileInfo {
     const current = this.get(id);
-    if (!current) throw new Error('プロファイルが見つかりません');
+    if (!current) throw new Error(t('main.profile.notFound'));
     const next = {
       name: patch.name === undefined ? current.name : checkName(patch.name),
       color: patch.color === undefined ? current.color : checkColor(patch.color),
@@ -64,7 +66,7 @@ export class ProfileRegistry {
 
   // 登録から外す。設定のフォルダとアプリのデータは消さない（もう一度足せば、同じフォルダのログインのまま使える）
   remove(id: string): void {
-    if (id === DEFAULT_PROFILE_ID) throw new Error('標準のプロファイルは外せません');
+    if (id === DEFAULT_PROFILE_ID) throw new Error(t('main.profile.cannotRemoveDefault'));
     this.save({ ...this.stored, profiles: this.stored.profiles.filter((p) => p.id !== id) });
   }
 
@@ -84,7 +86,7 @@ export function profileDataDir(userData: string, id: string): string {
 
 function checkName(name: unknown): string {
   const trimmed = typeof name === 'string' ? name.trim() : '';
-  if (!trimmed) throw new Error('名前を入れてください');
+  if (!trimmed) throw new Error(t('main.profile.nameRequired'));
   return trimmed.slice(0, MAX_NAME);
 }
 
@@ -96,12 +98,12 @@ function checkColor(color: unknown): string {
 function resolveDir(path: unknown): string {
   const raw = typeof path === 'string' ? path.trim() : '';
   const absolute = raw.startsWith('~/') ? join(homedir(), raw.slice(2)) : raw;
-  if (!absolute || !isAbsolute(absolute)) throw new Error('フォルダは絶対パスか ~/ で始まるパスで指定してください');
+  if (!absolute || !isAbsolute(absolute)) throw new Error(t('main.profile.dirNotAbsolute'));
   return normalize(absolute).replace(/\/+$/, '');
 }
 
 function load(file: string): Stored {
-  const fallback: Stored = { default: { name: DEFAULT_NAME, color: PROFILE_COLORS[0] }, profiles: [] };
+  const fallback: Stored = { default: { name: defaultName(), color: PROFILE_COLORS[0] }, profiles: [] };
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<Stored>;
     const def = raw.default;
@@ -112,7 +114,7 @@ function load(file: string): Stored {
         )
       : [];
     return {
-      default: { name: typeof def?.name === 'string' && def.name.trim() ? def.name : DEFAULT_NAME, color: checkColor(def?.color) },
+      default: { name: typeof def?.name === 'string' && def.name.trim() ? def.name : defaultName(), color: checkColor(def?.color) },
       profiles: profiles.map((p) => ({ id: p.id, name: p.name, color: checkColor(p.color), claudeDir: p.claudeDir })),
     };
   } catch {

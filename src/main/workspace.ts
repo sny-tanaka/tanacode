@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { t } from '@shared/i18n';
 import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo } from '@shared/ipc';
 
 // ツリーに出さず、変更の監視もしないもの
@@ -99,7 +100,7 @@ export class Workspace {
       const source = options.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       pattern = new RegExp(source, options.caseSensitive ? 'g' : 'gi');
     } catch {
-      return { files: [], truncated: false, error: '正規表現が正しくありません' };
+      return { files: [], truncated: false, error: t('main.search.invalidRegex') };
     }
     const result: SearchResult = { files: [], truncated: false };
     let total = 0;

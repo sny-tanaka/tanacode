@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { QuestionAnswer } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { BashTask, TaskRef } from '@shared/task';
 import { useBlockTranslation } from '../translate/BlockTranslation';
 import { DisclosureIcon, IconButton, RewindIcon } from '../icons';
@@ -98,8 +99,8 @@ export const ChatRow = memo(function ChatRow({
             reveal
             size="sm"
             icon={RewindIcon}
-            label="ここまで戻す"
-            tip="この発言の前まで会話やコードを戻す（/rewind）"
+            label={t('chat.row.rewind')}
+            tip={t('chat.row.rewindTip')}
             className="chat-rewind"
             onClick={() => onRewind(item.text)}
           />
@@ -124,9 +125,9 @@ export const ChatRow = memo(function ChatRow({
               e.stopPropagation();
               openChecklistCard(item.cards![0]);
             }}
-            data-tip="チェックリストのカードを開く"
+            data-tip={t('chat.row.openCardTip')}
           >
-            カードを開く
+            {t('chat.row.openCard')}
           </button>
         )}
       </>
@@ -160,7 +161,7 @@ export const ChatRow = memo(function ChatRow({
         <summary>
           <span className="chat-shell-prompt">!</span>
           <span className="chat-shell-command">{item.command}</span>
-          {item.output && <span className="chat-shell-toggle">出力</span>}
+          {item.output && <span className="chat-shell-toggle">{t('chat.row.shellOutput')}</span>}
         </summary>
         {item.output && <pre className="tool-pre">{item.output}</pre>}
       </details>
@@ -175,7 +176,7 @@ export const ChatRow = memo(function ChatRow({
   if (item.kind === 'hook') {
     return (
       <div className="chat-hooks">
-        <span className="chat-hooks-label">フック</span>
+        <span className="chat-hooks-label">{t('chat.row.hooks')}</span>
         <HookRuns runs={item.runs} />
       </div>
     );
@@ -234,7 +235,7 @@ function ThinkingBlock({ text }: { text: string }) {
     <details className="chat-thinking" open>
       <summary>
         <DisclosureIcon open={false} />
-        思考
+        {t('chat.row.thinking')}
         {translation.button}
       </summary>
       <div className="chat-thinking-text">{text}</div>
@@ -247,7 +248,7 @@ function ThinkingBlock({ text }: { text: string }) {
 export function AnswersCard({ answers }: { answers: QuestionAnswer[] }) {
   return (
     <div className="chat-answers">
-      <div className="chat-answers-label">質問への回答</div>
+      <div className="chat-answers-label">{t('chat.row.answers')}</div>
       {answers.map((a, i) => (
         <div key={i} className="chat-answer">
           <div className="chat-answer-question">

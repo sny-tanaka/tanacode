@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DirEntry } from '@shared/ipc';
 import type { FileKnowledge } from '@shared/knowledge';
 import type { FileChange } from '@shared/ipc';
+import { t } from '@shared/i18n';
 import type { GitMark } from '../scm/useGitState';
 import { DisclosureIcon } from '../icons';
 
@@ -116,10 +117,10 @@ export const Explorer = memo(function Explorer({ sessionId, root, rootName, acti
               {entry.isDir ? <DisclosureIcon open={expanded.has(entry.path)} /> : knowledge[entry.path] && <KnowledgeDot state={knowledge[entry.path]} />}
             </span>
             <span className={`tree-label${gitMark(entry, gitMarks)}`}>{entry.name}</span>
-            {entry.isDir && gitDirs.has(entry.path) && <span className="tree-git-dot" title="中に git の変更がある" />}
+            {entry.isDir && gitDirs.has(entry.path) && <span className="tree-git-dot" title={t('explorer.tree.gitChangesInside')} />}
             <span className="tree-fill" />
             {change && (
-              <span className="tree-mark" title={`このブランチで${change.kind === 'added' ? '新規作成' : '変更'}`}>
+              <span className="tree-mark" title={change.kind === 'added' ? t('explorer.tree.addedInBranch') : t('explorer.tree.modifiedInBranch')}>
                 {change.kind === 'added' ? 'A' : 'M'}
               </span>
             )}
@@ -144,14 +145,8 @@ export const Explorer = memo(function Explorer({ sessionId, root, rootName, acti
   );
 });
 
-const KNOWLEDGE_TITLE: Record<FileKnowledge, string> = {
-  read: 'Claude が読んだファイル（今の会話で中身を知っている）',
-  edited: 'Claude が書いたファイル（今の会話で中身を知っている）',
-  stale: '圧縮より前に Claude が読んだファイル（今は中身を覚えていない）',
-};
-
 function KnowledgeDot({ state }: { state: FileKnowledge }) {
-  return <span className={`tree-know ${state}`} title={KNOWLEDGE_TITLE[state]} />;
+  return <span className={`tree-know ${state}`} title={t(`explorer.knowledge.${state}`)} />;
 }
 
 // 名前の色を変えるのはファイルだけ。フォルダは名前の右に点を出す（gitDirs）
