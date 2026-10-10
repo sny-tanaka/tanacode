@@ -70,7 +70,6 @@ export class FakeWebContents extends Emitter {
   });
   loadURL = vi.fn((_url: string) => undefined);
   loadFile = vi.fn((_path: string) => undefined);
-  reload = vi.fn(() => undefined);
 }
 
 // 足したプロファイルの画面（WebContentsView）。ウインドウに重ねて、見ているものだけを出す
@@ -182,6 +181,8 @@ function freshState() {
     // Electron の準備ができる（app.whenReady。既定はすぐに済む）
     whenReady: vi.fn(async (): Promise<void> => undefined),
     quit: vi.fn((..._args: unknown[]) => undefined),
+    // 終わったあとに起動し直す（app.relaunch）
+    relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
     dock: { setIcon: vi.fn((_path: string) => undefined) } as { setIcon: Mock } | undefined,
     windows: [] as FakeWindow[],
@@ -281,6 +282,7 @@ export const electronModule = {
     getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
+    relaunch: () => state.relaunch(),
     get dock() {
       return state.dock;
     },

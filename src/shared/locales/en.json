@@ -39,7 +39,11 @@
       "quitStop": "Stop Claude Code and Quit",
       "ptyHostFailed": "Couldn't start the background process that runs Claude Code",
       "errorWithLog": "{error}\n\nLog: {log}",
-      "profileOpenFailed": "Couldn't open profile “{name}”"
+      "profileOpenFailed": "Couldn't open profile “{name}”",
+      "languageRestart": "Restart tanacode to switch to English?",
+      "languageRestartDetail": "The language changes when tanacode restarts. If you choose Later, tanacode will use English the next time it starts.",
+      "restartNow": "Restart Now",
+      "restartLater": "Later"
     },
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",

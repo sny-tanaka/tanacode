@@ -39,7 +39,11 @@
       "quitStop": "Claude Code も止めて終了",
       "ptyHostFailed": "Claude Code を動かす常駐プロセスを起動できませんでした",
       "errorWithLog": "{error}\n\nログ: {log}",
-      "profileOpenFailed": "プロファイル「{name}」を開けませんでした"
+      "profileOpenFailed": "プロファイル「{name}」を開けませんでした",
+      "languageRestart": "tanacode を再起動して、画面を日本語にしますか？",
+      "languageRestartDetail": "言語は、tanacode を起動し直したときに切り替わります。「あとで」を選んだときは、次に起動したときから日本語になります。",
+      "restartNow": "今すぐ再起動",
+      "restartLater": "あとで"
     },
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",

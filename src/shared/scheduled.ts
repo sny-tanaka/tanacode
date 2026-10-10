@@ -37,17 +37,30 @@ export function schedulePresets(now: Date): { label: string; at: number }[] {
   ];
 }
 
+// 時刻と曜日の書式。作るのに時間がかかるので、ロケールごとに一度だけ作る
+const formatsByLocale = new Map<string, { time: Intl.DateTimeFormat; weekday: Intl.DateTimeFormat }>();
+
+function scheduleFormats(loc: string): { time: Intl.DateTimeFormat; weekday: Intl.DateTimeFormat } {
+  let formats = formatsByLocale.get(loc);
+  if (!formats) {
+    formats = { time: new Intl.DateTimeFormat(loc, { hour: 'numeric', minute: '2-digit' }), weekday: new Intl.DateTimeFormat(loc, { weekday: 'short' }) };
+    formatsByLocale.set(loc, formats);
+  }
+  return formats;
+}
+
 // 予約の時刻の表示。今日は「15:00」、明日は「明日 9:00」、今年は「10/12（月）9:00」、それより先は年も付ける（英語では 3:00 PM のように 12 時間制）
 export function formatScheduleTime(at: number, now: Date = new Date()): string {
   const d = new Date(at);
-  const time = new Intl.DateTimeFormat(locale(), { hour: 'numeric', minute: '2-digit' }).format(d);
+  const formats = scheduleFormats(locale());
+  const time = formats.time.format(d);
   const day = (base: Date, days: number) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + days).getTime();
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   if (start === day(now, 0)) return time;
   if (start === day(now, 1)) return t('schedule.time.tomorrow', { time });
   if (start === day(now, -1)) return t('schedule.time.yesterday', { time });
   // 曜日の短い名前（日本語では「月」）
-  const weekday = new Intl.DateTimeFormat(locale(), { weekday: 'short' }).format(d);
+  const weekday = formats.weekday.format(d);
   const parts = { month: d.getMonth() + 1, day: d.getDate(), weekday, time };
   return d.getFullYear() === now.getFullYear() ? t('schedule.time.date', parts) : t('schedule.time.dateWithYear', { ...parts, year: d.getFullYear() });
 }

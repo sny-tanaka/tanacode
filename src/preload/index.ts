@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
-import { IpcChannel, type IpcEvent, type IpcInvoke, type IpcSend, type TanacodeApi } from '@shared/ipc';
+import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type TanacodeApi } from '@shared/ipc';
 
 // チャンネルごとの引数・戻り値・知らせの中身は、shared/ipc.ts の表（IpcInvoke・IpcSend・IpcEvent）で決まる。
 // main の受け口・送り口も同じ表で型を付けるので、食い違うと型チェックで止まる
@@ -16,6 +16,9 @@ function subscribe<C extends keyof IpcEvent>(channel: C, listener: (payload: Ipc
   ipcRenderer.on(channel, wrapped);
   return () => ipcRenderer.off(channel, wrapped);
 }
+
+// 画面の言語。main がウインドウを作るときに起動の引数で渡す（無ければ日本語）
+const language = process.argv.find((arg) => arg.startsWith(LANGUAGE_ARG))?.slice(LANGUAGE_ARG.length) === 'en' ? 'en' : 'ja';
 
 const api: TanacodeApi = {
   sessions: {
@@ -92,9 +95,6 @@ const api: TanacodeApi = {
   notifications: {
     get: () => invoke(IpcChannel.NotificationsGet),
     set: (on) => invoke(IpcChannel.NotificationsSet, on),
-  },
-  language: {
-    get: () => invoke(IpcChannel.LanguageGet),
   },
   system: {
     onStats: (listener) => subscribe(IpcChannel.SystemStats, listener),
@@ -224,6 +224,7 @@ const api: TanacodeApi = {
     onShow: (listener) => subscribe(IpcChannel.BrowserShow, listener),
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
+  language: () => language,
 };
 
 contextBridge.exposeInMainWorld('tanacode', api);

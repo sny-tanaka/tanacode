@@ -52,11 +52,16 @@ type Failure = { message: string; needsLanguage?: boolean };
 // 訳文を開いているか、訳している途中か、訳せなかったか（どれも、その原文に対してのもの）
 type State = { text: string } & ({ kind: 'open'; translated: string } | { kind: 'loading' } | { kind: 'failed'; failure: Failure });
 
-// 言語の名前は、画面の言語で出す（呼んだときの言語で作る）
+// 言語の名前は、画面の言語で出す。作るのに時間がかかるので、ロケールごとに一度だけ作る
+const languageNames = new Map<string, Intl.DisplayNames>();
+
 function languageName(code: string | undefined): string {
   if (!code) return t('translate.failure.sourceLanguage');
   try {
-    return new Intl.DisplayNames([locale()], { type: 'language' }).of(code) ?? code;
+    const loc = locale();
+    let names = languageNames.get(loc);
+    if (!names) languageNames.set(loc, (names = new Intl.DisplayNames([loc], { type: 'language' })));
+    return names.of(code) ?? code;
   } catch {
     return code;
   }

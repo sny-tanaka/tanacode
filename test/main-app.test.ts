@@ -555,7 +555,7 @@ describe('ウインドウ', () => {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 14, y: 15 },
     });
-    expect(win.options.webPreferences).toEqual({ preload: join(MAIN_DIR, '../preload/index.js'), webviewTag: true });
+    expect(win.options.webPreferences).toEqual({ preload: join(MAIN_DIR, '../preload/index.js'), webviewTag: true, additionalArguments: ['--tanacode-language=ja'] });
     expect(win.maximize).toHaveBeenCalledTimes(1);
   });
 
@@ -799,7 +799,7 @@ describe('メニュー', () => {
     expect(rest.map((i) => i.role)).toEqual(['editMenu', 'viewMenu', 'windowMenu']);
   });
 
-  it('「言語」: 既定は「システムに合わせる」で、Mac の優先する言語に日本語があれば日本語で出す', async () => {
+  it('「言語」: 既定は「システムに合わせる」で、Mac の優先する言語に日本語があれば日本語。画面には起動の引数で渡す', async () => {
     await boot({ before: (s) => (s.preferredLanguages = ['en-US', 'ja-JP']) });
     const languages = menuItem('言語（Language）').submenu!;
     expect(languages.map((i) => [i.label, i.type, i.checked])).toEqual([
@@ -807,73 +807,95 @@ describe('メニュー', () => {
       ['日本語', 'radio', false],
       ['English', 'radio', false],
     ]);
-    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('ja');
+    expect(mainWindow().options.webPreferences).toMatchObject({ additionalArguments: ['--tanacode-language=ja'] });
   });
 
-  it('「言語」: Mac の優先する言語に日本語が無ければ、英語で出す（メニューも英語）', async () => {
+  it('「言語」: Mac の優先する言語に日本語が無ければ、英語で出す（メニューも画面も）', async () => {
     await boot({ before: (s) => (s.preferredLanguages = ['en-US', 'fr-FR']) });
-    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
     expect(menuItem('Language').submenu!.map((i) => i.label)).toEqual(['System Default', '日本語', 'English']);
     expect(menuItem('File').submenu![0].label).toBe('New Session');
+    expect(mainWindow().options.webPreferences).toMatchObject({ additionalArguments: ['--tanacode-language=en'] });
   });
 
-  it('「言語」: 選んだ言語を保存し、言語が変わったらメニューを作り直して、アプリの画面を読み込み直す', async () => {
-    await boot();
-    const contents = mainWindow().webContents;
-    const choose = (label: string) => {
-      const item = menuItem(label);
-      item.click?.(item);
-    };
-    choose('English');
-    expect(savedSettings().language).toBe('en');
-    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
+  it('「言語」: 保存した言語で起動する（Mac の言語より優先）', async () => {
+    await boot({ settings: { language: 'en' } });
     expect(menuItem('Language').submenu!.find((i) => i.checked)?.label).toBe('English');
-    expect(contents.reload).toHaveBeenCalledTimes(1);
-    // 「システムに合わせる」は Mac の言語（日本語）になるので、また読み込み直す
-    choose('System Default');
-    expect(savedSettings().language).toBe('system');
-    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('ja');
-    expect(contents.reload).toHaveBeenCalledTimes(2);
-    // 言語が変わらなければ、保存だけで読み込み直さない
-    choose('日本語');
-    expect(savedSettings().language).toBe('ja');
-    expect(contents.reload).toHaveBeenCalledTimes(2);
+    expect(mainWindow().options.webPreferences).toMatchObject({ additionalArguments: ['--tanacode-language=en'] });
   });
 
-  it('「言語」: 読み込み直す前に、新規セッションの画面で開いていたフォルダを閉じる（画面からの後始末が届かないため）', async () => {
+  // 言語の項目を押す（Electron のラジオボタンと同じく、押すとチェックが移る）。聞いたダイアログが閉じるまで待つ
+  const chooseLanguage = async (label: string) => {
+    const languages = menuItem(label);
+    for (const item of state.menu![0].submenu!.find((i) => i.submenu?.includes(languages))!.submenu!) item.checked = item === languages;
+    languages.click?.(languages);
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it('「言語」: 選んだ言語を保存し、今の言語のまま動き続ける。言語が変わるなら、変えた先の言語で再起動するかを聞く（「あとで」なら何もしない）', async () => {
     await boot();
-    manager().list.mockReturnValue([{ id: 's1', cwd: state.root, worktree: null }]);
-    const id = (await invoke(IpcChannel.FolderOpen, state.root)) as string;
-    const item = menuItem('English');
-    item.click?.(item);
-    expect(the('WorkspaceWatchers').release.mock.calls).toEqual([[state.root]]);
-    expect(the('ShellTerminals').killOwner.mock.calls).toEqual([[id]]);
-    expect(the('BrowserControl').forget.mock.calls).toEqual([[id]]);
-    expect(mainWindow().webContents.reload).toHaveBeenCalledTimes(1);
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+    await chooseLanguage('English');
+    expect(savedSettings().language).toBe('en');
+    const [, options] = state.dialog.showMessageBox.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(options).toEqual({
+      type: 'question',
+      message: 'Restart tanacode to switch to English?',
+      detail: 'The language changes when tanacode restarts. If you choose Later, tanacode will use English the next time it starts.',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    expect(state.quit).not.toHaveBeenCalled();
+    expect(state.relaunch).not.toHaveBeenCalled();
+    // 動いている間は日本語のまま（メニューも）。チェックは選んだもの
+    expect(menuItem('言語（Language）').submenu!.find((i) => i.checked)?.label).toBe('English');
+    // 今の言語（日本語）に戻すなら、保存するだけで聞かない
+    await chooseLanguage('日本語');
+    expect(savedSettings().language).toBe('ja');
+    expect(state.dialog.showMessageBox).toHaveBeenCalledTimes(1);
   });
 
-  it('「言語」: 保存できなかったら、言語もメニューもそのままで、読み込み直さない', async () => {
+  it('「言語」: 「今すぐ再起動」なら、ふつうの終了の確認を通して終了し、終わったら起動し直す', async () => {
+    await boot();
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    await chooseLanguage('English');
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
+    expect(state.relaunch).not.toHaveBeenCalled();
+    const event = fakeEvent();
+    state.app.emit('before-quit', event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(state.relaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('「言語」: 終了の確認でキャンセルしたら、起動し直さない（あとでふつうに終了しても）', async () => {
+    await boot();
+    manager().liveSessions.mockReturnValue([{ id: 's1', title: 'メニューを直す', state: '作業中' }]);
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 }).mockResolvedValueOnce({ response: 2 });
+    await chooseLanguage('English');
+    await vi.waitFor(() => expect(state.dialog.showMessageBox).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(state.quit).not.toHaveBeenCalled();
+    // あとでふつうに終了する
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    const event = fakeEvent();
+    state.app.emit('before-quit', event);
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
+    state.app.emit('before-quit', fakeEvent());
+    expect(state.relaunch).not.toHaveBeenCalled();
+  });
+
+  it('「言語」: 保存できなかったら、メニューを選んでいたものに戻し、再起動も聞かない', async () => {
     await boot();
     // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
     mkdirSync(join(state.userData, 'settings.json.tmp'));
-    // Electron のラジオボタンと同じく、押すとチェックが移る
-    const item = menuItem('English');
-    menuItem('システムに合わせる').checked = false;
-    item.checked = true;
-    item.click?.(item);
-    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('ja');
+    await chooseLanguage('English');
     expect(menuItem('言語（Language）').submenu!.map((i) => [i.label, i.checked])).toEqual([
       ['システムに合わせる', true],
       ['日本語', false],
       ['English', false],
     ]);
-    expect(mainWindow().webContents.reload).not.toHaveBeenCalled();
-  });
-
-  it('「言語」: 保存した言語で起動する（Mac の言語より優先）', async () => {
-    await boot({ settings: { language: 'en' } });
-    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
-    expect(menuItem('Language').submenu!.find((i) => i.checked)?.label).toBe('English');
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
   it('「新しいバージョンが出たら通知する」: オンで問い合わせを始め、オフでやめる。設定に保存する', async () => {
@@ -1229,6 +1251,17 @@ describe('Homebrew での更新', () => {
     expect(manager().closeAll.mock.calls).toEqual([[true]]);
     expect(state.ptyHost.shutdown).toHaveBeenCalledTimes(1);
     expect(state.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it('言語を変えて「今すぐ再起動」したときも、終了で入れ替えるなら、入れ替えたあとに起動し直す（先に起動しない）', async () => {
+    await bootWith(updater());
+    state.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    const english = menuItem('English');
+    english.click?.(english);
+    await vi.waitFor(() => expect(state.quit).toHaveBeenCalledTimes(1));
+    quitOnce();
+    expect(upgrade()).toHaveBeenCalledWith(expect.objectContaining({ relaunch: true }));
+    expect(state.relaunch).not.toHaveBeenCalled();
   });
 
   it('「再起動して更新」: ダウンロードが済んでいない・Homebrew で入れていないなら、何もしない', async () => {

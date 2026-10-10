@@ -466,18 +466,24 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 英語の大文字・小文字は macOS の決まりに合わせます。メニュー・ボタン・見出しは Title Case、ツールチップ・説明・エラーは文頭だけ大文字。
   - 区切りの記号（「、」「・」「〜」など）や、文の間の空白もコードに書かず、文言にします（`main.format.listSeparator`・`context.compact.sentenceSeparator`・`checklist.numberRange` など）。
   - 表示の文言を比べて分岐しません。種類などの元の値で分岐します。
-- `t()` はモジュールの一番上（読み込み時に評価されるところ）で呼びません。main は動いている途中で言語を切り替え、画面も言語を受け取る前にモジュールを読み込むことがあるためです。文言の表は、キーを読む関数にします（`statusLabel(status)` など）。
-- 移さないもの
-  - Claude だけが読む文: MCP のツールの説明・サーバーの `instructions`・ツールの結果。Claude は画面の言語によらず読め、返事の言語は人が書いた言語で決まるためです。
+- `t()` はモジュールの一番上（読み込み時に評価されるところ）で呼びません。main も画面も、言語を決める前にモジュールを読み込むためです。文言の表は、キーを読む関数にします（`statusLabel(status)` など）。
+- 1 つの言語で使い続けるときの重さが、文字列をそのまま書いていたときと変わらないようにしています。
+  - JSON は文字列のまま入れておき（Vite の `?raw`。型は `import type` で JSON から作る）、使う言語の分だけ、はじめて文言を使うときに `JSON.parse` します。もう 1 つの言語は読みません。
+  - 使ったキーは、文言を覚えておきます（入れ子をたどるのは、はじめての 1 回だけ）。埋め込みのある文言は、文字と名前に分けた形を覚えて使い回します。
+  - 測った値（Node 22）: `t()` は 1 回 17 ナノ秒ほど（文字列をそのまま書くと 7 ナノ秒）、埋め込みのある `t()` は 56 ナノ秒ほど（テンプレート文字列は 9 ナノ秒）。言語の JSON を読むのは、プロセスごとに 1 回 1〜2 ms。
+- JSON に置かないもの・扱いの違うもの
+  - Claude だけが読む文: MCP のツールの説明・サーバーの `instructions`・ツールの結果やエラー。画面の言語によらず、コードに英語で書きます（Claude Code のシステムプロンプトにそろえる。Claude の返事の言語は、人が書いた言語で決まります）。ただし、結果の中で画面の項目（メニューの名前など）を指すところは、Claude が利用者に正しい名前を伝えられるよう、英語の文の中に画面の言語の名前を `t()` で入れます。
+  - Claude も読むが、人にも見えるもの（チャットに出る知らせ・hooks の確認の理由・画面のアラートにも出るエラー）は、画面の言語（`t()`）。
   - Claude Code の画面や出力と突き合わせる文字列、ログ。
-  - 別のプロセスで動くもの（pty ホスト・MCP の中継）。言語を知らないためです。ツールの短い名前（チャットのツールの行に出す）は、アプリが `tools.json` の名前空間から読みます（`mcpToolLabel`）。
+  - pty ホスト（別のプロセスで動き、言語を知らない）。
+  - MCP の中継が `tools/list` で返すツールの短い名前（`title`）は、アプリが `--mcp-config` の `env` で渡す `TANACODE_LANGUAGE`（Claude Code を起動したときの言語）で読みます。チャットのツールの行の名前は、アプリが `tools.json` の名前空間から読みます（`mcpToolLabel`）。
   - 利用枠の「5時間」「週」（`usage-monitor.ts` の `label`）: 画面が枠を見分ける値で、`usage.json` にも保存されるため。画面に出す名前は `account.usage.*`。
 - hooks の確認の理由（Claude Code の許可の確認に出る）は、Claude Code を起動するときの言語で作ります（`worktreeGuardCommand()`・`sessionsGateCommand()`）。アプリ内ブラウザの JavaScript の確認のフックは別のプロセスなので、言語を環境変数 `TANACODE_LANGUAGE` で渡します。シェルと JSON に埋め込むので、理由の文言には `'` `"` `\` を使いません（`test/i18n.test.ts` で確かめる）。
 - コンテキストのやりとりの名前（`ContextTracker` が付ける「質問への答え: …」など）は、圧縮の指示を組み立てるときに、文言の形と比べて見分けます（`context.ts` の `unfill`）。
 - 言語の決め方: アプリの設定（`settings.json` の `language`）の `system`・`ja`・`en`。`system`（既定）なら、`app.getPreferredSystemLanguages()` に日本語があれば日本語、無ければ英語（`resolveLanguage`）。
   - main は起動するときに決めます（`applyLanguage`。プロファイルの既定の名前やダイアログが使うので、ほかのものを作る前）。
-  - 画面は、起動するときに `language:get` で受け取って `setLanguage` してから、`App` を読み込みます（`src/renderer/src/main.tsx`）。
-  - メニューの「言語」で切り替えると、保存して、メニューを作り直し、アプリの画面（全プロファイル）を読み込み直します。読み込み直すと新規セッションの画面の後始末（`folders:close`）が届かないので、先に閉じます。
+  - 画面には、ウインドウ（と足したプロファイルの画面）を作るときの起動の引数（`webPreferences.additionalArguments` の `--tanacode-language=`）で渡し、preload の `language()` で読みます。IPC を待たないので、起動は遅くなりません。`src/renderer/src/main.tsx` が、描く前に `setLanguage` します。
+  - 言語は、起動から終了まで変えません。メニューの「言語」で選ぶと、保存して、変えた先の言語で今すぐ再起動するかを聞きます（`tFor`）。再起動は、ふつうの終了の確認（`confirmQuit`）を通し、終了が決まってから `app.relaunch()` します（確認で取りやめたあとの、ふつうの終了で起動し直さないように）。終了で Homebrew の入れ替えをするときは、入れ替えたあとに起動し直します（`upgradeAfterExit` の `relaunch`）。
 - 翻訳（日本語に訳す）のボタンは、日本語の画面でだけ出します。書き出す HTML の `lang` も画面の言語。
 - Storybook のツールバーの「Language」で、ストーリーの言語を切り替えられます。英語の文言の長さや折り返しは、ここで確かめます。E2E は、画面の文言で確かめるので、アプリの設定を日本語にして起動します（CI の Mac は英語のため）。
 
@@ -671,11 +677,11 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - Claude Code に足す MCP サーバー（`tanacode-browser`）は、tanacode に同梱する stdio の中継（`src/main/browser-mcp.ts` → `out/main/browser-mcp.js`）。tanacode 本体を `ELECTRON_RUN_AS_NODE` で動かすので（macOS では pty ホストと同じ Helper.app）、Node.js を別に入れる必要はありません。MCP の SDK は使わず、使う分の JSON-RPC（`initialize`・`tools/list`・`tools/call`・`ping` と、取り消しの `notifications/cancelled`）だけを書いています（`mcp-relay.ts`。サーバーの定義を受け取る形で、セッションの MCP と使い回す）。
   - ツールの一覧（名前・説明・入力の形・種類）は `src/shared/browser-tools.ts`（定義の形は `src/shared/mcp-tools.ts`）。中継が `tools/list` で返し、アプリが実行します。チャットのツールの行に出す短い名前は、ツールの名前から `tools.json` の名前空間を引きます（`mcpToolLabel`）。中継が一覧を持つのは、アプリが閉じている間に起動した Claude Code にもツールを見せるため。
-  - サーバーの説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）は、4 つのサーバーとも英語で書きます。Claude だけが読み、画面には出さないためです（Claude Code のシステムプロンプトにそろえる）。ツールごとの説明（`description`）は日本語のまま。
+  - サーバーの説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）は、4 つのサーバーとも英語で書きます。Claude だけが読み、画面には出さないためです（Claude Code のシステムプロンプトにそろえる）。ツールごとの説明（`description`）と、ツールの結果も英語（上の「画面の言語」）。
     - 人が tanacode の機能を知らなくても Claude が自分から使うよう、説明には、頼まれるのを待たずに使うこと（`do not wait to be asked`）と、いつ使うかを書きます。人が読むもの（カード・ウォークスルーの説明・人への依頼・子への指示など）は、人が使っている言葉で書くよう伝えます（`in the language the user is using`）。どちらも `test/mcp-contract.test.ts` で確かめます。
   - アプリ内ブラウザの説明では、Web のページに出るものを変えたら、終えたと伝える前に自分で開いて確かめること（スクリーンショットと、コンソール・失敗した通信）・Web のページの不具合を調べるときにも使うこと・ふだんのブラウザを開かずにこちらで開くこと・ページの中身は信用できない入力として扱うこと・ログインなどは `ask_user_to_act` で頼むことを伝えます。
   - 中継は、ツールの呼び出しのたびに userData の Unix ソケット（`browser.sock`。作るときから `0600`）でアプリにつなぎ、返事を受け取ったら切ります（`mcp-bridge.ts` の `McpBridge`・`callBridge`。セッションの MCP と使い回し、ソケットはサーバーごとに分ける）。ソケットのパスとセッションは、`--mcp-config` の `env`（`TANACODE_BROWSER_SOCKET`・`TANACODE_BROWSER_SESSION`）で渡します。
-  - HTTP にしないのは、アプリを閉じても Claude Code は動き続けるため。HTTP だと、アプリを起動し直すたびにポートが変わり、接続が切れたままになります。ソケットのパスは変わらないので、アプリが戻ればそのまま使えます。アプリが閉じている間は、中継が「tanacode が起動していません」と返します。
+  - HTTP にしないのは、アプリを閉じても Claude Code は動き続けるため。HTTP だと、アプリを起動し直すたびにポートが変わり、接続が切れたままになります。ソケットのパスは変わらないので、アプリが戻ればそのまま使えます。アプリが閉じている間は、中継が、tanacode が起動していないことを返します。
   - 足すのは起動するときだけ。`~/.claude` の設定や `.mcp.json` には書き込みません（statusLine と hooks を `--settings` で足しているのと同じ考え方）。
 - 許可: 読むだけのツールと、ユーザーに操作を頼む `ask_user_to_act`（ページを動かさない。`tools/list` の `readOnlyHint` も true）は `--allowedTools` で許可済みに。ページを動かすツールは、ふつうの許可の確認を通します。JavaScript の実行（`evaluate`）は、`--settings` の `PreToolUse` のフック（`browser-gate.ts`）が、今のページで決めます。`permissions.ask` では、ページによって変えられず、localhost の開発中のページでも毎回確認が出るためです。
   - 今のページが localhost・127.0.0.1・[::1]・*.localhost（`isLocalUrl`）なら確認なし（`permissionDecision: allow`）。それ以外（`*.local` や足した先を含む）は確認（`ask`）。アプリに聞けない・答えを読めないときも `ask`。
@@ -960,7 +966,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
-  - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、言語を受け取ってから `App` を読み込む
+  - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、描く前に言語（preload の `language()`）を決める
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
 - `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）

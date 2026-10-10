@@ -5,19 +5,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
-import {
-  IpcChannel,
-  type IpcEvent,
-  type IpcInvoke,
-  type IpcSend,
-  type ArchiveOptions,
-  type DiscoveredSession,
-  type GitAction,
-  type NewSessionOptions,
-  type ScreenChoice,
-  type SearchOptions,
-  type SessionOptions,
-} from '@shared/ipc';
+import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type ScreenChoice, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
@@ -43,7 +31,7 @@ import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
 import { claudeConfigDir, claudeJsonPath } from './claude-config';
-import { language, LANGUAGE_SETTINGS, resolveLanguage, setLanguage, t, type LanguageSetting } from '@shared/i18n';
+import { language, LANGUAGE_SETTINGS, resolveLanguage, setLanguage, t, tFor, type LanguageSetting } from '@shared/i18n';
 
 let mainWindow: BrowserWindow | null = null;
 // 登録したプロファイル（Claude Code のアカウントごとの環境）
@@ -70,6 +58,8 @@ let appUpdates: AppUpdateMonitor;
 let homebrew: HomebrewUpdater | null = null;
 // タイトルバーの「再起動して更新」で終了する（入れ替えたあと起動し直す）
 let relaunchAfterUpdate = false;
+// 言語を変えて「今すぐ再起動」を選んだ。終了したら起動し直す
+let relaunchForLanguage = false;
 // Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
 let shuttingDown = false;
 // 終了のしかたが決まった（確認を済ませた・確認の要らない終了）。まだなら before-quit で止めて確認する
@@ -236,7 +226,7 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 15 },
     // webviewTag: アプリ内プレビュー（開発サーバーの画面）に使う
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, additionalArguments: [`${LANGUAGE_ARG}${language()}`] },
   });
   mainWindow = win;
   if (saved?.maximized && !saved.fullScreen) win.maximize();
@@ -315,7 +305,7 @@ function setupAppContents(contents: WebContents, id: string): void {
 function attachView(id: string): void {
   if (!mainWindow || views.has(id)) return;
   const view = new WebContentsView({
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, partition: appPartition(id) },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, partition: appPartition(id), additionalArguments: [`${LANGUAGE_ARG}${language()}`] },
   });
   view.setBackgroundColor('#121211');
   setupAppContents(view.webContents, id);
@@ -550,7 +540,16 @@ function registerIpc(): void {
     p.watchers.retain(cwd);
     return id;
   });
-  listen(IpcChannel.FolderClose, (e, id: string) => closeFolderView(P(e), id));
+  listen(IpcChannel.FolderClose, (e, id: string) => {
+    const p = P(e);
+    const cwd = p.folderViews.get(id);
+    if (cwd === undefined) return;
+    p.folderViews.delete(id);
+    p.watchers.release(cwd);
+    // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
+    p.shells.killOwner(id);
+    p.browser.forget(id);
+  });
   handle(IpcChannel.SessionsOpen, (e, id: string) => P(e).manager.open(id));
   handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => {
     const p = P(e);
@@ -690,7 +689,6 @@ function registerIpc(): void {
   handle(IpcChannel.ProfilesRemove, (_e, id: string) => removeProfile(String(id)));
   handle(IpcChannel.ProfilesPickDir, () => pickProfileDir());
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
-  handle(IpcChannel.LanguageGet, () => language());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, (e) =>
     readModelCatalog(P(e).claudeDir).then(
@@ -771,17 +769,6 @@ async function runGit(scm: SourceControl, action: GitAction): Promise<string | n
   }
 }
 
-// 新規セッションの画面で開いたフォルダを閉じる
-function closeFolderView(p: Profile, id: string): void {
-  const cwd = p.folderViews.get(id);
-  if (cwd === undefined) return;
-  p.folderViews.delete(id);
-  p.watchers.release(cwd);
-  // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
-  p.shells.killOwner(id);
-  p.browser.forget(id);
-}
-
 // 貼り付け・ドロップされた画像。Claude Code にはパスを貼り付けとして渡すと画像として添付される
 async function saveAttachment(name: string, data: Uint8Array): Promise<string> {
   const dir = join(app.getPath('userData'), 'attachments');
@@ -821,7 +808,7 @@ function buildMenu(): void {
               label: languageSettingLabel(setting),
               type: 'radio' as const,
               checked: settings.languageSetting() === setting,
-              click: () => changeLanguage(setting),
+              click: () => void changeLanguage(setting),
             })),
           },
           { type: 'separator' },
@@ -1024,30 +1011,37 @@ function languageSettingLabel(setting: LanguageSetting): string {
   return t('main.menu.languageSystem');
 }
 
-// 使う言語を、設定と Mac の言語の設定から決める
+// 使う言語を、設定と Mac の言語の設定から決める（起動するときだけ。終わるまで変えない）
 function applyLanguage(): void {
   setLanguage(resolveLanguage(settings.languageSetting(), app.getPreferredSystemLanguages()));
 }
 
-// メニューの「言語」。保存して、言語が変わったら、メニューを作り直し、アプリの画面（全プロファイル）を読み込み直す。
-// 画面は起動するときに言語を読むので、読み込み直すと新しい言語で出る。動いている Claude Code はそのまま。
-// 読み込み直すと新規セッションの画面の後始末（folders.close）が届かないので、先に閉じておく。
-// 保存できなかったら、設定は前の値のままなので、言語は変わらず、作り直したメニューも選んでいたものに戻る
-function changeLanguage(setting: LanguageSetting): void {
-  const before = language();
+// メニューの「言語」。保存して、次に起動したときから使う（動いている間の言語は変えない）。
+// 使う言語が変わるなら、変えた先の言語で、今すぐ再起動するかを聞く。再起動はふつうの終了と同じ確認（動いている Claude Code を止めるか）を通す。
+// 保存できなかったら、メニューを作り直して選んでいたものに戻す
+async function changeLanguage(setting: LanguageSetting): Promise<void> {
   try {
     settings.setLanguageSetting(setting);
   } catch {
-    // 下で前の値から作り直す
+    buildMenu();
+    return;
   }
-  applyLanguage();
-  buildMenu();
-  if (language() === before) return;
-  for (const [id, p] of opened) {
-    for (const folder of [...p.folderViews.keys()]) closeFolderView(p, folder);
-    const contents = contentsOf(id);
-    if (contents && !contents.isDestroyed()) contents.reload();
-  }
+  const next = resolveLanguage(setting, app.getPreferredSystemLanguages());
+  if (next === language() || confirmingQuit) return;
+  const { response } = await showDialog({
+    type: 'question',
+    message: tFor(next, 'main.dialog.languageRestart'),
+    detail: tFor(next, 'main.dialog.languageRestartDetail'),
+    buttons: [tFor(next, 'main.dialog.restartNow'), tFor(next, 'main.dialog.restartLater')],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response !== 0) return;
+  // 起動し直すのは、終了が決まったときだけ（終了の確認で取りやめたら、あとでふつうに終了したときに起動し直さない）
+  relaunchForLanguage = true;
+  await confirmQuit();
+  if (!quitDecided) relaunchForLanguage = false;
 }
 
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
@@ -1187,8 +1181,10 @@ app.on('before-quit', (event) => {
   system?.stop();
   claudeVersions?.stop();
   appUpdates?.stop();
-  // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える
-  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate });
+  // ダウンロード済みの新しいバージョンを、このプロセスが終わってから入れ替える。
+  // 言語を変えて起動し直すときも、入れ替えるなら入れ替えたあとに起動し直す（先に起動すると、入れ替える前のアプリが開くため）
+  if (updatesOnQuit()) homebrew?.upgradeAfterExit({ pid: process.pid, log: updateLogPath(), result: updateResultPath(), relaunch: relaunchAfterUpdate || relaunchForLanguage });
+  else if (relaunchForLanguage) app.relaunch();
   homebrew?.stop();
   // Claude Code は止めずに、見るのをやめるだけ（止めるときは、先に quit(true) で止めてある）
   for (const p of profiles()) p.close();

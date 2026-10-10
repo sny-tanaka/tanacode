@@ -133,7 +133,6 @@ export const IpcChannel = {
   ProfilesChanged: 'profiles:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
-  LanguageGet: 'language:get',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
@@ -360,6 +359,9 @@ export type FileChange = { kind: 'added' | 'modified' | 'deleted'; added: number
 // 基点での内容。exists: false は基点の後に作られたファイル
 export type FileBaseline = { exists: boolean; text: string };
 
+// 画面の言語を渡す起動の引数（webPreferences.additionalArguments）。画面は待たずに読めるので、起動が遅くならない
+export const LANGUAGE_ARG = '--tanacode-language=';
+
 export type TanacodeApi = {
   sessions: {
     list(): Promise<SessionSummary[]>;
@@ -471,11 +473,6 @@ export type TanacodeApi = {
   notifications: {
     get(): Promise<boolean>;
     set(on: boolean): Promise<void>;
-  };
-  // 画面の言語（メニューの「言語」で選んだもの。「システムに合わせる」なら Mac の言語の設定から決めたもの）。
-  // 画面は起動するときに一度だけ読む（切り替えると、main が画面を読み込み直す）
-  language: {
-    get(): Promise<Language>;
   };
   // この Mac の CPU・メモリの使用状況（2 秒ごと）
   system: {
@@ -660,6 +657,8 @@ export type TanacodeApi = {
   };
   // ドロップされたファイルの実際のパス
   pathForFile(file: File): string;
+  // 画面の言語（起動したときに main が決めたもの。終わるまで変わらない）。IPC を使わず、ウインドウを作るときの起動の引数（LANGUAGE_ARG）から読む
+  language(): Language;
 };
 
 // チャンネルごとの型。preload（src/preload/index.ts）と main の受け口・送り口（src/main/index.ts）は、どちらもこの表で型を付ける。
@@ -714,7 +713,6 @@ export type IpcInvoke = {
   [IpcChannel.ScheduledCancel]: Api['scheduled']['cancel'];
   [IpcChannel.NotificationsGet]: Api['notifications']['get'];
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
-  [IpcChannel.LanguageGet]: Api['language']['get'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
   [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];
