@@ -160,14 +160,14 @@ function unique(numbers: number[]): number[] {
   return [...new Set(numbers)];
 }
 
-// 番号を短く書く（[5,6,7,8,10] → "#5〜8, #10"）
+// 番号を短く書く（[5,6,7,8,10] → "#5〜8, #10"。範囲のつなぎは言語による）
 export function formatNumbers(numbers: number[]): string {
   const sorted = unique(numbers).sort((a, b) => a - b);
   const parts: string[] = [];
   for (let i = 0; i < sorted.length; i++) {
     let j = i;
     while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
-    parts.push(j - i >= 2 ? `#${sorted[i]}〜${sorted[j]}` : j === i ? `#${sorted[i]}` : `#${sorted[i]}, #${sorted[j]}`);
+    parts.push(j - i >= 2 ? t('checklist.numberRange', { from: sorted[i], to: sorted[j] }) : j === i ? `#${sorted[i]}` : `#${sorted[i]}, #${sorted[j]}`);
     i = j;
   }
   return parts.join(', ');

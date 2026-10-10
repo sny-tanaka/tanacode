@@ -70,6 +70,7 @@ export class FakeWebContents extends Emitter {
   });
   loadURL = vi.fn((_url: string) => undefined);
   loadFile = vi.fn((_path: string) => undefined);
+  reload = vi.fn(() => undefined);
 }
 
 // 足したプロファイルの画面（WebContentsView）。ウインドウに重ねて、見ているものだけを出す
@@ -173,6 +174,8 @@ function freshState() {
     appPath: '',
     resources: '',
     packaged: false,
+    // Mac の優先する言語（app.getPreferredSystemLanguages）。言語の設定が「システムに合わせる」のときに使う
+    preferredLanguages: ['ja-JP'],
     handlers: new Map<string, (...args: unknown[]) => unknown>(),
     listeners: new Map<string, (...args: unknown[]) => unknown>(),
     app: new Emitter(),
@@ -275,6 +278,7 @@ export const electronModule = {
     },
     getAppPath: () => state.appPath,
     getVersion: () => '9.8.7',
+    getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
     get dock() {

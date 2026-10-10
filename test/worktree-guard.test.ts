@@ -1,14 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { setLanguage, t } from '@shared/i18n';
 import { toChatEvents, type TranscriptEntry } from '../src/shared/chat';
 import { ownSettings } from '../src/main/statusline';
-import { WORKTREE_GUARD_COMMAND } from '../src/main/worktree-guard';
+import { worktreeGuardCommand } from '../src/main/worktree-guard';
 
 // Claude が worktree やブランチを消す操作の歯止め（アプリが --settings で足す、Bash の PreToolUse のフック）。
 // macOS の awk（bwk awk）でも動くかは、TANACODE_AWK に入れた awk の場所で確かめられる（PATH の前に足す）
 
 const run = (command: string, cwd = '/r/proj') =>
-  execFileSync('sh', ['-c', WORKTREE_GUARD_COMMAND], {
+  execFileSync('sh', ['-c', worktreeGuardCommand()], {
     input: JSON.stringify({ session_id: 'x', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command, description: 'd' } }),
     encoding: 'utf8',
     env: { ...process.env, PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
@@ -56,17 +57,27 @@ describe('何もしないもの', () => {
   });
 });
 
+describe('確認の理由の言語', () => {
+  afterEach(() => setLanguage('ja'));
+
+  it('Claude Code を起動するときの言語で理由を書く（英語でも JSON として読める）', () => {
+    setLanguage('en');
+    const out = JSON.parse(run('git branch -D foo')) as { hookSpecificOutput: { permissionDecisionReason: string } };
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.worktreeGuard'));
+  });
+});
+
 describe('設定', () => {
   it('アプリが起動する Claude Code の Bash の PreToolUse に足す', () => {
     const hooks = (ownSettings(null) as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } }).hooks.PreToolUse;
-    expect(hooks.find((h) => h.matcher === 'Bash')?.hooks[0].command).toBe(WORKTREE_GUARD_COMMAND);
+    expect(hooks.find((h) => h.matcher === 'Bash')?.hooks[0].command).toBe(worktreeGuardCommand());
   });
 
   it('アプリが足したフックなので、チャットのフックの一覧に出さない', () => {
     const entry = {
       type: 'attachment',
       uuid: 'u',
-      attachment: { type: 'hook_success', hookName: 'PreToolUse:Bash', hookEvent: 'PreToolUse', command: WORKTREE_GUARD_COMMAND, stdout: '{}', toolUseID: 't' },
+      attachment: { type: 'hook_success', hookName: 'PreToolUse:Bash', hookEvent: 'PreToolUse', command: worktreeGuardCommand(), stdout: '{}', toolUseID: 't' },
     } as unknown as TranscriptEntry;
     expect(toChatEvents(entry, '/r', false, () => '')).toEqual([]);
   });

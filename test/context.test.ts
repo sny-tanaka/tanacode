@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
 import { clip, compactInstructions, toolDisplayName, type CompactMark, type ContextItem } from '@shared/context';
+import { setLanguage } from '@shared/i18n';
 import { promptKeys } from '@shared/prompt-keys';
 import { ContextTracker, estimateTokens } from '../src/main/context-tracker';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
@@ -230,6 +231,7 @@ describe('estimateTokens', () => {
 });
 
 describe('compactInstructions', () => {
+  afterEach(() => setLanguage('ja'));
   const at = (kind: ContextItem['kind'], label: string, order: number, extra: Partial<ContextItem> = {}): ContextItem => ({
     id: `${kind}:${label}`,
     kind,
@@ -264,6 +266,31 @@ describe('compactInstructions', () => {
     expect(text).toBe(
       '`src/main/session-manager.ts` の内容と、「親子の記録の決めごと」から始まるやりとりは詳しく残す。' +
         '`npm install` の出力、「ポートの衝突を調べて」から始まるやりとり、tanacode-browser の screenshot の画像（.menu）は捨ててよい。',
+    );
+  });
+
+  it('英語では、文の間に空白を入れ、3 つ以上は最後を and でつなぐ。発言に添付した画像の名前は、文の途中の形にする', () => {
+    setLanguage('en');
+    const english = [
+      at('file', 'src/a.ts', 0),
+      at('topic', 'Answered: Keep stock counts', 1),
+      at('tool', 'npm install', 2, { tool: 'Bash' }),
+      at('topic', 'Notice: Agent finished', 3),
+      at('image', 'Image 2 attached to “Fix this screen”', 4),
+    ];
+    const text = compactInstructions(
+      english,
+      marks([
+        ['file:src/a.ts', 'keep'],
+        ['topic:Answered: Keep stock counts', 'keep'],
+        ['tool:npm install', 'drop'],
+        ['topic:Notice: Agent finished', 'drop'],
+        ['image:Image 2 attached to “Fix this screen”', 'drop'],
+      ]),
+    );
+    expect(text).toBe(
+      'Keep the contents of `src/a.ts` and the exchange after I answered “Keep stock counts” in detail. ' +
+        'You can drop the output of `npm install`, the exchange after the notification “Agent finished”, and image 2 attached to “Fix this screen”.',
     );
   });
 

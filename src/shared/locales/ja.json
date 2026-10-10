@@ -48,6 +48,8 @@
       "sessionsControl": "Claude にほかのセッションを扱わせる",
       "checklistControl": "Claude にチェックリストを扱わせる",
       "walkthroughControl": "Claude にウォークスルーさせる",
+      "language": "言語（Language）",
+      "languageSystem": "システムに合わせる",
       "browserHosts": "アプリ内ブラウザで Claude に許す先…",
       "file": "ファイル",
       "newSession": "新規セッション",
@@ -70,7 +72,8 @@
     "format": {
       "listSeparator": "、",
       "shortListSeparator": "・",
-      "sentenceSeparator": "。"
+      "sentenceSeparator": "。",
+      "sentenceEnd": ""
     },
     "session": {
       "untitled": "新しいセッション",
@@ -171,12 +174,19 @@
       "compactSummary": "前回の圧縮の要約",
       "image": "「{topic}」に添付した画像",
       "imageNth": "「{topic}」に添付した画像 {index} 枚目",
-      "subagentReport": "知らせ: サブエージェント「{name}」の報告",
+      "subagentReport": "サブエージェント「{name}」の報告",
       "peerNotice": "別の Claude からの知らせ",
       "notice": "知らせ: {summary}",
       "taskFinished": "バックグラウンドのタスクが終わりました",
       "answer": "質問への答え: {answer}",
       "noAnswer": "（回答なし）"
+    },
+    "hooks": {
+      "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
+      "sessionsGate": "子セッションを起動します。子は tanacode のセッションとして動き、Claude の利用枠を子の数だけ使います",
+      "browserGateUnknown": "tanacode に今のページを確かめられなかったので、確認を求めています",
+      "browserGateLocal": "localhost のページなので、確認なしで実行します",
+      "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています"
     },
     "translate": {
       "invalidTexts": "訳す文字の形が違います",
@@ -391,7 +401,8 @@
       "cardReply": "「{list}」#{number}「{title}」に人が返信しました: 「{reply}」。",
       "checkCards": "card_get で確かめて対応し、返事は card_reply で書いてください。",
       "clipped": "{text}…（続きは card_get で）",
-      "cardsCopied": "セッション「{session}」から「{list}」に {numbers}（{titles}）が届きました。"
+      "cardsCopied": "セッション「{session}」から「{list}」に {numbers}（{titles}）が届きました。",
+      "cardTitle": "「{title}」"
     },
     "checklistCopy": {
       "sessionNotFound": "セッションが見つかりません",
@@ -1371,6 +1382,7 @@
       "human": "あなた",
       "claude": "Claude"
     },
+    "numberRange": "#{from}〜{to}",
     "errors": {
       "badOp": "書き換えの形が違います",
       "notString": "{key} が文字ではありません",
@@ -1498,14 +1510,18 @@
     "compact": {
       "keep": "{items}は詳しく残す。",
       "drop": "{items}は捨ててよい。",
+      "sentenceSeparator": "",
       "listTwo": "{first}と、{second}",
       "separator": "、",
+      "listLast": "{rest}、{last}",
       "file": "`{label}` の内容",
       "fileEdited": "`{label}` の内容と変更",
       "summary": "前回の圧縮の要約",
       "agent": "サブエージェント「{label}」の結果",
       "imageWithLabel": "{tool} の画像（{label}）",
       "image": "{tool} の画像",
+      "attachedImage": "「{topic}」に添付した画像",
+      "attachedImageNth": "「{topic}」に添付した画像 {index} 枚目",
       "topicAnswer": "質問に「{answer}」と答えたあとのやりとり",
       "topicNotice": "「{notice}」の知らせのあとのやりとり",
       "topicEvent": "{label}のやりとり",

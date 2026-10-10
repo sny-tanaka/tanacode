@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { locale, t } from '@shared/i18n';
+import { language, locale, t } from '@shared/i18n';
 import { applyTranslation, isMostlyForeign, planTranslation, type TranslateResult } from '@shared/translate';
 import { errorMessage } from '../errorMessage';
 import { ExternalLinkIcon, IconButton, TranslateIcon } from '../icons';
@@ -7,7 +7,8 @@ import { Busy } from '../layout/Busy';
 
 // チャットの思考・応答の翻訳。ブロックに出しておくボタンと、ブロックの下に出す訳文。
 // 訳すのは Mac の中だけ（main の translate.ts → 同梱の補助プログラム → macOS 標準の翻訳）。
-// ボタンは、ブロックが主に日本語でない文のときだけ出す（1 つのブロックの一部だけが英語、ということはないので、全体で見る）
+// ボタンは、ブロックが主に日本語でない文のときだけ出す（1 つのブロックの一部だけが英語、ということはないので、全体で見る）。
+// 訳す先は日本語だけなので、画面が日本語でないときは出さない
 
 // 使えるか（macOS 15 以降で、補助プログラムがある）。アプリの中で変わらないので、main には一度だけ聞く
 let availability: Promise<boolean> | null = null;
@@ -84,7 +85,7 @@ export type BlockTranslation = {
 
 // text: ブロックの原文 / renderText: 訳文の描き方（応答は Markdown、思考はそのままの文字）
 export function useBlockTranslation(text: string, renderText: (translated: string) => ReactNode): BlockTranslation {
-  const foreign = useMemo(() => isMostlyForeign(text), [text]);
+  const foreign = useMemo(() => language() === 'ja' && isMostlyForeign(text), [text]);
   const available = useTranslateAvailable(foreign);
   const [state, setState] = useState<State | null>(null);
   const alive = useRef(true);

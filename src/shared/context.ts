@@ -1,4 +1,4 @@
-import { t } from './i18n';
+import { message, t, type MessageKey, type Params } from './i18n';
 
 // コンテキストの中身。本体の会話ログから、今のコンテキストに入っているものを並べる（main の ContextTracker が作る）。
 // 圧縮で残すもの・捨てるものの印から、/compact に添える指示の文を組み立てる（compactInstructions）
@@ -43,12 +43,15 @@ export function compactInstructions(items: ContextItem[], marks: ReadonlyMap<str
       .map(phraseOf);
   const keep = marked('keep');
   const drop = marked('drop');
-  return [keep.length > 0 ? t('context.compact.keep', { items: list(keep) }) : '', drop.length > 0 ? t('context.compact.drop', { items: list(drop) }) : ''].join('');
+  const sentences = [keep.length > 0 ? t('context.compact.keep', { items: list(keep) }) : '', drop.length > 0 ? t('context.compact.drop', { items: list(drop) }) : ''];
+  return sentences.filter(Boolean).join(t('context.compact.sentenceSeparator'));
 }
 
-// 「A と、B」「A、B、C」
+// 「A と、B」「A、B、C」（英語は A and B・A, B, and C）
 function list(phrases: string[]): string {
-  return phrases.length === 2 ? t('context.compact.listTwo', { first: phrases[0], second: phrases[1] }) : phrases.join(t('context.compact.separator'));
+  if (phrases.length === 2) return t('context.compact.listTwo', { first: phrases[0], second: phrases[1] });
+  if (phrases.length < 2) return phrases.join('');
+  return t('context.compact.listLast', { rest: phrases.slice(0, -1).join(t('context.compact.separator')), last: phrases[phrases.length - 1] });
 }
 
 function phraseOf(item: ContextItem): string {
@@ -63,22 +66,46 @@ function phraseOf(item: ContextItem): string {
     case 'agent':
       return t('context.compact.agent', { label });
     case 'image':
-      if (!item.tool) return label;
+      if (!item.tool) return attachedImagePhrase(item.label);
       return label ? t('context.compact.imageWithLabel', { tool: toolDisplayName(item.tool), label }) : t('context.compact.image', { tool: toolDisplayName(item.tool) });
     case 'tool':
       return toolPhrase(item.tool ?? '', label);
   }
 }
 
+// 発言に添付した画像（ContextTracker が付けた名前）。名前の形が分からなければ、名前をそのまま
+function attachedImagePhrase(label: string): string {
+  const nth = unfill('main.context.imageNth', label);
+  if (nth) return shorten(t('context.compact.attachedImageNth', nth));
+  const one = unfill('main.context.image', label);
+  return shorten(one ? t('context.compact.attachedImage', one) : label);
+}
+
 // やりとりの名前は、発言の冒頭か、区切りになった出来事（ContextTracker が付ける。質問への答え・知らせ・会話の始まり）。
-// 区切りの出来事は、ContextTracker が付けた日本語の名前を読んで見分ける（名前を言語ごとにするなら、見分け方も変える）
+// 区切りの出来事は、ContextTracker が付けた名前（main.context.*）の形と比べて見分ける
 function topicPhrase(label: string): string {
-  const answer = /^質問への答え: (.*)$/.exec(label)?.[1];
+  const answer = unfill('main.context.answer', label)?.answer;
   if (answer !== undefined) return t('context.compact.topicAnswer', { answer });
-  const notice = /^知らせ: (.*)$/.exec(label)?.[1];
+  const notice = unfill('main.context.notice', label)?.summary;
   if (notice !== undefined) return t('context.compact.topicNotice', { notice });
-  if (label === '別の Claude からの知らせ' || label === '会話の始まり') return t('context.compact.topicEvent', { label });
+  if (label === t('main.context.peerNotice') || label === t('main.context.start')) return t('context.compact.topicEvent', { label });
   return t('context.compact.topic', { label });
+}
+
+// 文言（key）の {name} に埋め込まれた値を、text から取り出す（fill の逆）。形が違えば null
+function unfill(key: MessageKey, text: string): Params | null {
+  const names: string[] = [];
+  const pattern = message(key)
+    .split(/(\{\w+\})/)
+    .map((piece) => {
+      const name = /^\{(\w+)\}$/.exec(piece)?.[1];
+      if (name === undefined) return piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      names.push(name);
+      return '([\\s\\S]*)';
+    })
+    .join('');
+  const m = new RegExp(`^${pattern}$`).exec(text);
+  return m ? Object.fromEntries(names.map((name, i) => [name, m[i + 1]])) : null;
 }
 
 function toolPhrase(tool: string, label: string): string {

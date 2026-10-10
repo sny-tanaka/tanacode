@@ -5,8 +5,8 @@ import { gatedBrowserToolIds } from '@shared/browser-tools';
 import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
-import { SESSIONS_GATE_COMMAND, SESSIONS_GATED_TOOL } from './sessions-bridge';
-import { WORKTREE_GUARD_COMMAND } from './worktree-guard';
+import { sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
+import { worktreeGuardCommand } from './worktree-guard';
 import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
 
 // Claude Code は statusLine のコマンドを応答のたびに実行し、モデル・コンテキスト・利用枠（rate_limits）の入った JSON を標準入力に渡す。
@@ -38,9 +38,9 @@ export function ownSettings(inner: string | null, browser = false, sessions = fa
     hooks: {
       PreToolUse: [
         { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] },
-        { matcher: 'Bash', hooks: [{ type: 'command', command: WORKTREE_GUARD_COMMAND }] },
+        { matcher: 'Bash', hooks: [{ type: 'command', command: worktreeGuardCommand() }] },
         ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
-        ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: SESSIONS_GATE_COMMAND, timeout: 10 }] }] : []),
+        ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] }] : []),
       ],
     },
     ...(excludes.length > 0 ? { claudeMdExcludes: excludes } : {}),

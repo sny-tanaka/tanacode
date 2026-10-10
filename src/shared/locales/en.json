@@ -1,0 +1,1791 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "delete": "Delete",
+    "open": "Open",
+    "add": "Add",
+    "back": "Back",
+    "save": "Save"
+  },
+  "main": {
+    "error": {
+      "profileOfViewNotFound": "Couldn't find the profile for this window",
+      "nothingToExport": "Nothing to export",
+      "folderNotFound": "Folder not found: {path}",
+      "folderCannotOpen": "Can't open folder: {path}",
+      "ptyHostUnreachable": "Can't connect to the pty host: {path}"
+    },
+    "dialog": {
+      "pickFolder": "Choose a Working Folder",
+      "pickSettingsFile": "Choose a Settings File",
+      "exportDefaultName": "Session",
+      "exportTitle": "Export Session",
+      "pickProfileDir": "Choose a Claude Code Config Folder",
+      "liveSessions": "Claude Code is still running in some sessions",
+      "liveSessionLine": "• {title} ({state})",
+      "updateKeepRunningDetail": "If you update while Claude Code keeps running, work continues without interruption and the relaunched app takes over. New Claude tools and other additions in the new version become available after you restart each session.",
+      "updateStopDetail": "If you stop Claude Code and update, work is interrupted, but everything runs on the new version.",
+      "updateKeepRunning": "Update and Keep Running",
+      "updateStop": "Stop Claude Code and Update",
+      "updateFailed": "Couldn't update tanacode",
+      "updateManual": "Quit tanacode, then run brew update && brew upgrade --cask {cask} in a terminal.",
+      "updateBlocked": "If macOS blocked the update, allow tanacode in System Settings → Privacy & Security → App Management so it can be updated next time.",
+      "ok": "OK",
+      "openLog": "Open Log",
+      "quitDetail": "If you stop Claude Code, work is interrupted and can't be continued from Remote Control. If you quit and keep it running, tanacode picks up where it left off the next time it opens.",
+      "quitWillUpdate": "After tanacode quits, Homebrew will update it to the new version.",
+      "quitKeepRunning": "Quit and Keep Running",
+      "quitStop": "Stop Claude Code and Quit",
+      "ptyHostFailed": "Couldn't start the background process that runs Claude Code",
+      "errorWithLog": "{error}\n\nLog: {log}",
+      "profileOpenFailed": "Couldn't open profile “{name}”"
+    },
+    "menu": {
+      "notifyUpdates": "Notify When Updates Are Available",
+      "updateOnQuit": "Install Updates on Quit (Homebrew)",
+      "browserControl": "Let Claude Control the In-App Browser",
+      "sessionsControl": "Let Claude Manage Other Sessions",
+      "checklistControl": "Let Claude Manage Checklists",
+      "walkthroughControl": "Let Claude Give Walkthroughs",
+      "language": "Language",
+      "languageSystem": "System Default",
+      "browserHosts": "Allowed Sites for Claude in the In-App Browser…",
+      "file": "File",
+      "newSession": "New Session",
+      "stopAndQuit": "Stop Claude Code and Quit"
+    },
+    "notification": {
+      "browserAsk": "Request to act in the browser: {message}",
+      "turnCompleted": "Finished working",
+      "needsTerminal": "Action needed in the terminal",
+      "question": "Claude has a question",
+      "permission": "Permission needed: {detail}",
+      "permissionNoDetail": "Claude is asking for permission",
+      "confirm": "Confirmation needed: {title}",
+      "confirmNoTitle": "Claude is asking for confirmation",
+      "images": "{count} images",
+      "images_one": "{count} image",
+      "scheduledMissed": "Not sent at the scheduled time ({time}): {text}",
+      "scheduledFailed": "Couldn't send the scheduled message ({reason}): {text}",
+      "unknownReason": "unknown reason"
+    },
+    "format": {
+      "listSeparator": ", ",
+      "shortListSeparator": ", ",
+      "sentenceSeparator": ". ",
+      "sentenceEnd": "."
+    },
+    "session": {
+      "untitled": "New Session",
+      "notFound": "Session not found"
+    },
+    "state": {
+      "question": "Needs answer",
+      "permission": "Needs permission",
+      "other": "Needs input",
+      "browser": "Needs browser action",
+      "starting": "Starting",
+      "workingWithBackground": "Working ({count} in background)",
+      "working": "Working",
+      "waitingBackground": "Waiting on {count} background tasks",
+      "waitingBackground_one": "Waiting on {count} background task",
+      "idle": "Idle"
+    },
+    "remote": {
+      "unavailable": "Remote Control isn't available in development builds (launch with TANACODE_REMOTE_CONTROL=1 to enable it)",
+      "switching": "Remote Control is already switching. Wait a moment and try again.",
+      "waitingAnswer": "Can't switch right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then switch.",
+      "draft": "Can't switch because Claude Code's input in the terminal has unsent text",
+      "failed": "Couldn't switch Remote Control in Claude Code. Use /remote-control in the terminal."
+    },
+    "task": {
+      "notRunning": "Can't stop it because the session isn't running",
+      "nothingToStop": "Nothing to stop (no running background tasks found)",
+      "busy": "Another operation is in progress. Wait a moment and try again.",
+      "waitingAnswer": "Can't stop it right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then stop it.",
+      "draft": "Can't stop it because the input in the terminal has unsent text",
+      "notFound": "Couldn't find it on screen. It has already finished or been stopped.",
+      "ambiguous": "More than one task has the same name, so tanacode can't tell which one to stop. Open /tasks in the terminal and stop it there.",
+      "failed": "Couldn't stop it. Open /tasks in the terminal and stop it there."
+    },
+    "send": {
+      "notAccepting": "Couldn't send because Claude Code is no longer accepting input",
+      "menuAppeared": "Couldn't send because a question or confirmation appeared",
+      "notRunning": "Claude Code isn't running",
+      "exited": "Claude Code exited",
+      "cancelled": "Sending was canceled",
+      "waitingAnswer": "Couldn't send because Claude Code is waiting for an answer to a question or confirmation",
+      "draft": "Couldn't send because the input in the terminal has unsent text",
+      "busy": "Couldn't send because Claude Code is busy"
+    },
+    "worktree": {
+      "untrustedFolder": "Claude Code doesn't trust this folder yet. Start a session without a worktree once and accept the folder trust prompt, then start with a worktree.",
+      "createFailed": "Claude Code couldn't create the worktree",
+      "commandAt": "{command} ({dir})",
+      "started": "Started in worktree .claude/worktrees/{name} (branch {branch})",
+      "restored": "Recreated the deleted worktree .claude/worktrees/{name} (branch {branch})",
+      "cloned": "Copied {paths} from the original folder",
+      "cloneFailed": "Couldn't copy {paths}",
+      "topDir": "root",
+      "installed": "Ran {commands}",
+      "commandFailedAt": "{command} ({dir}, exit code {code})",
+      "installFailed": "{commands} failed. Check its tab in the Terminal panel",
+      "notRepo": "To start with a worktree, choose a folder in a git repository",
+      "noCommit": "To start with a worktree, the repository needs at least one commit",
+      "noName": "Couldn't choose a name for the worktree",
+      "locked": "The worktree is locked, so it wasn't deleted",
+      "lockedWithReason": "The worktree is locked ({reason}), so it wasn't deleted"
+    },
+    "settingsFile": {
+      "unusable": "Can't use settings file “{name}” ({path}): {reason}",
+      "fileNotFound": "File not found",
+      "invalidJson": "Can't parse as JSON (check the syntax)",
+      "notObject": "The content isn't a JSON object",
+      "defaultName": "Settings file",
+      "notAbsolute": "Enter the settings file path as an absolute path starting with /",
+      "duplicatePath": "This file is already registered as “{name}”",
+      "entryNotFound": "Entry not found",
+      "nameRequired": "Enter a name",
+      "duplicateName": "A settings file named “{name}” already exists",
+      "removed": "The settings file this session used has been removed from the list. Register it again with “Manage…” in the picker, or switch to another settings file.",
+      "unavailable": "Settings files aren't available"
+    },
+    "profile": {
+      "cannotRemoveDefault": "The default profile can't be removed",
+      "hasLiveSessions": "Claude Code is still running in some sessions. Stop them before removing the profile.",
+      "defaultName": "Default",
+      "sameDir": "Another profile already uses this folder: {path}",
+      "notDir": "Not a folder: {path}",
+      "notFound": "Profile not found",
+      "nameRequired": "Enter a name",
+      "dirNotAbsolute": "Enter the folder as an absolute path or a path starting with ~/"
+    },
+    "browserHosts": {
+      "invalid": "Invalid format: {hosts} (e.g., example.test, *.example.test, 192.168.0.10)"
+    },
+    "scheduled": {
+      "cannotSchedule": "Can't schedule messages for this session",
+      "empty": "Nothing to send",
+      "pastTime": "Choose a time in the future",
+      "sending": "Can't change the time while the message is being sent",
+      "notFound": "Scheduled message not found"
+    },
+    "context": {
+      "start": "Start of conversation",
+      "compactSummary": "Summary from the previous compaction",
+      "image": "Image attached to “{topic}”",
+      "imageNth": "Image {index} attached to “{topic}”",
+      "subagentReport": "Report from subagent “{name}”",
+      "peerNotice": "Notice from another Claude",
+      "notice": "Notice: {summary}",
+      "taskFinished": "Background task finished",
+      "answer": "Answered: {answer}",
+      "noAnswer": "(no answer)"
+    },
+    "hooks": {
+      "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
+      "sessionsGate": "This starts a child session. Each child runs as a tanacode session and uses your Claude usage limits.",
+      "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
+      "browserGateLocal": "The page is on localhost, so this runs without confirmation",
+      "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation"
+    },
+    "translate": {
+      "invalidTexts": "Invalid text to translate",
+      "tooLong": "Too long to translate",
+      "unreadable": "Couldn't read the response from the translation helper",
+      "timeout": "Translation timed out"
+    },
+    "git": {
+      "commitMessageRequired": "Enter a commit message",
+      "noDefaultBranch": "Couldn't determine the default branch",
+      "diverged": "Switched to {name}, but couldn't bring it up to date because your local {name} has diverged from {target}"
+    },
+    "search": {
+      "invalidRegex": "Invalid regular expression"
+    },
+    "subagent": {
+      "omitted": "… (truncated)"
+    },
+    "model": {
+      "noCatalog": "Claude Code's cached model list (~/.claude/cache/model-catalog) is missing",
+      "needsVersion": "Requires Claude Code {version} or later (installed: {installed})"
+    },
+    "walkthrough": {
+      "missing": "There's no walkthrough.",
+      "noBody": "The comment body is missing.",
+      "noSteps": "The walkthrough has no steps.",
+      "notRepo": "Not a git repository.",
+      "detached": "Not on a branch (detached HEAD).",
+      "prLookupFailed": "Couldn't look up pull requests on GitHub. Make sure gh is installed and you're logged in (gh auth status).",
+      "noOpenPr": "There's no open PR for branch {branch}. Create a PR first.",
+      "badPrUrl": "Couldn't read the PR URL ({url}).",
+      "headMismatch": "Your local HEAD ({local}) doesn't match the PR's latest commit ({remote}). Push (or pull) before posting.",
+      "missingFiles": "Some files aren't in the commit: {files}. Commit and push them before posting.",
+      "dirtyFiles": "Some files have uncommitted changes: {files}. Commit and push them before posting.",
+      "emptyBody": "The comment body is empty.",
+      "tooLong": "The comment is too long ({count} characters; GitHub comments can be up to {max}). Shorten the description."
+    }
+  },
+  "commands": {
+    "builtin": {
+      "add-dir": "Add a new working directory",
+      "advisor": "Have Claude consult a stronger model at key points",
+      "artifacts": "View your published and shared Artifacts",
+      "auto-mode-setup": "Tell auto mode about your environment",
+      "autocompact": "Set how much context triggers auto-compact",
+      "autofix-pr": "Watch the current PR and fix issues automatically",
+      "background": "Send this session to the background",
+      "branch": "Branch the conversation from this point",
+      "btw": "Ask a quick side question without stopping work",
+      "bug": "Report a bug",
+      "cd": "Change the working directory",
+      "chrome": "Claude in Chrome settings",
+      "clear": "Clear conversation history and start fresh",
+      "color": "Set the prompt bar color",
+      "compact": "Summarize the conversation to free up context",
+      "config": "Open the config panel (in the terminal)",
+      "context": "Show current context usage",
+      "copy": "Copy Claude's last response to the clipboard",
+      "design": "Set up access to Design projects",
+      "design-login": "Authorize access to your design system",
+      "desktop": "Continue in Claude Desktop",
+      "diff": "View uncommitted changes and per-turn diffs",
+      "effort": "Set the effort level (also changes the default; prefer the effort menu below)",
+      "exit": "Exit Claude Code",
+      "export": "Export the conversation to a file or the clipboard",
+      "fast": "Toggle fast mode",
+      "feedback": "Send feedback to Anthropic",
+      "focus": "Show only prompts, summaries, and responses",
+      "fork": "Fork this conversation into a new background session",
+      "goal": "Set a goal to verify before finishing",
+      "help": "Show help and available commands",
+      "hooks": "View hook configurations",
+      "ide": "Manage IDE integrations",
+      "import": "Import settings from other coding agents",
+      "import-memory": "Import memory from other AI assistants",
+      "install-github-app": "Set up Claude GitHub Actions",
+      "install-slack-app": "Install the Claude Slack app",
+      "keybindings": "Open your keyboard shortcut settings",
+      "list-agents": "List subagents and sessions you can message",
+      "login": "Sign in with your Anthropic account",
+      "logout": "Sign out",
+      "mcp": "Manage MCP servers",
+      "memory": "Edit CLAUDE.md and memory files",
+      "mobile": "Show a QR code for the mobile app",
+      "morning": "Create or set up your morning brief",
+      "model": "Set the model (also changes the default; prefer the model menu below)",
+      "output-style": "List or switch output styles",
+      "passes": "Share a free trial of Claude Code with friends",
+      "permissions": "Manage permission rules",
+      "plan": "Enter plan mode or view the current plan",
+      "plugin": "Manage plugins",
+      "powerup": "Discover features with quick lessons",
+      "privacy-settings": "View and update your privacy settings",
+      "radio": "Listen to Claude FM",
+      "recap": "Generate a one-line recap of the session",
+      "release-notes": "View release notes",
+      "reload-plugins": "Load plugin changes",
+      "reload-skills": "Load new and changed skills",
+      "remote-control": "Control this session from your phone or claude.ai/code",
+      "remote-env": "Choose the default environment for cloud agents",
+      "rename": "Rename the conversation",
+      "resume": "Resume a past conversation",
+      "rewind": "Restore the conversation or code to an earlier point",
+      "run": "Launch this project's app to check your changes",
+      "sandbox": "Configure the sandbox",
+      "scroll-speed": "Adjust the scroll speed",
+      "skill-doctor": "Find unused skills that take up context",
+      "skills": "List available skills",
+      "slides": "Create a slide deck",
+      "status": "Show version, model, account, and other status",
+      "stickers": "Order stickers",
+      "subtask": "Hand off to a subagent with the current context",
+      "tasks": "List background tasks",
+      "teleport": "Send to the cloud or resume from claude.ai",
+      "terminal-setup": "Set up Shift+Enter for newlines",
+      "theme": "Change the theme",
+      "tui": "Set how the terminal UI is rendered",
+      "ultrareview": "Find and verify bugs in the cloud",
+      "upgrade": "Upgrade your plan",
+      "usage": "Show usage and plan status",
+      "usage-credits": "Set up usage credits",
+      "voice": "Toggle voice mode",
+      "web-setup": "Set up Claude Code on the web",
+      "workflows": "List workflows",
+      "batch": "Research and plan a large change, then run it in parallel",
+      "code-review": "Review the current diff or a PR",
+      "debug": "Enable debug logging and diagnose issues",
+      "doctor": "Diagnose and fix your installation",
+      "fewer-permission-prompts": "Suggest settings that reduce permission prompts",
+      "init": "Create a CLAUDE.md file",
+      "insights": "Generate a report analyzing your sessions",
+      "loop": "Run a prompt or command on a recurring interval",
+      "schedule": "Schedule cloud agent runs",
+      "security-review": "Run a security review of the current changes",
+      "simplify": "Review changed code for reuse, simplicity, and efficiency",
+      "statusline": "Set up the status line",
+      "team-onboarding": "Create an onboarding guide for your team",
+      "verify": "Check that your changes really work as intended"
+    }
+  },
+  "tools": {
+    "server": {
+      "browser": "In-App Browser",
+      "sessions": "Sessions",
+      "checklist": "Checklist",
+      "walkthrough": "Walkthrough"
+    },
+    "browser": {
+      "screenshot": "Screenshot",
+      "get_text": "Page Text",
+      "get_accessibility_tree": "Accessibility Tree",
+      "inspect": "Inspect Element",
+      "get_console_logs": "Console",
+      "get_failed_requests": "Failed Requests",
+      "navigate": "Navigate",
+      "list_tabs": "List Tabs",
+      "select_tab": "Switch Tab",
+      "close_tab": "Close Tab",
+      "click": "Click",
+      "type": "Type",
+      "press_key": "Press Key",
+      "scroll": "Scroll",
+      "wait_for": "Wait",
+      "set_viewport": "Viewport Width",
+      "evaluate": "Run JavaScript",
+      "ask_user_to_act": "Request to Act"
+    },
+    "sessions": {
+      "list_sessions": "List Sessions",
+      "read_session": "Read Session",
+      "get_session_diff": "Session Changes",
+      "get_session": "Session Status",
+      "wait_sessions": "Wait for Child Sessions",
+      "start_session": "Start Child Session",
+      "send_message": "Send to Child Session",
+      "answer_question": "Answer Child's Question",
+      "stop_session": "Interrupt Child Session"
+    },
+    "checklist": {
+      "checklist_overview": "Overview",
+      "card_get": "Read Card",
+      "list_create": "Create List",
+      "list_update": "Edit List",
+      "list_delete": "Delete List",
+      "card_add": "Add Card",
+      "card_update": "Edit Card",
+      "card_check": "Check",
+      "card_uncheck": "Uncheck",
+      "card_reply": "Reply",
+      "card_move": "Move Card",
+      "card_delete": "Delete Card",
+      "card_restore": "Restore Card",
+      "cards_copy": "Copy to Another Session"
+    },
+    "walkthrough": {
+      "start_walkthrough": "Start",
+      "show_code": "Show Code",
+      "walkthrough_status": "Current Step"
+    },
+    "target": {
+      "cardCount": "{count} cards",
+      "cardCount_one": "{count} card",
+      "stepCount": "{count} steps",
+      "stepCount_one": "{count} step"
+    },
+    "notice": {
+      "untitledSession": "New Session",
+      "childQuestion": "Child session “{name}” ({id}) is waiting for an answer to its question (you can answer it with answer_question).",
+      "childPermission": "Child session “{name}” ({id}) is waiting for permission. Only the user can respond to permission prompts, so let them know.",
+      "childWaiting": "Child session “{name}” ({id}) is waiting for input in the terminal. Let the user know.",
+      "childExited": "Child session “{name}” ({id}) has exited.",
+      "childDone": "Child session “{name}” ({id}) has finished its work.",
+      "checkSessions": "Check it with get_session.",
+      "cardReply": "The user replied to “{list}” #{number} “{title}”: “{reply}”.",
+      "checkCards": "Read it with card_get, act on it, and write your reply with card_reply.",
+      "clipped": "{text}… (read the rest with card_get)",
+      "cardsCopied": "Session “{session}” sent {numbers} ({titles}) to “{list}”.",
+      "cardTitle": "“{title}”"
+    },
+    "checklistCopy": {
+      "sessionNotFound": "Session not found",
+      "notVisible": "You can only copy to sessions in the same folder or to parent, child, and sibling sessions",
+      "archived": "Can't copy to an archived session"
+    }
+  },
+  "chat": {
+    "pane": {
+      "rewindNotFound": "Couldn't find the message to rewind to. Use /rewind in the terminal instead.",
+      "model": "Model",
+      "configureFailed": "Couldn't apply the change: {error}",
+      "settingsFileDefault": "Default",
+      "settingsFileMissing": "Not registered",
+      "confirmSettingsFile": "This switches the settings file to “{name}” and restarts Claude Code to continue the conversation. Depending on its settings (such as the endpoint URL or API key), the conversation so far will be sent to the new endpoint.\n\nSwitch settings files?",
+      "scheduleFailed": "Couldn't schedule the message: {error}",
+      "compact": "Compact",
+      "compactTip": "Summarize the conversation to free up context (/compact). Not available while Claude is working.",
+      "restart": "Restart",
+      "restartTip": "Restart Claude Code and continue the same conversation. Picks up changes to skills, CLAUDE.md, settings, MCP servers, and more.",
+      "confirmRestart": "Any turn in progress and background tasks will stop. Restart Claude Code?",
+      "restartFailed": "Couldn't restart: {error}",
+      "export": "Export session…",
+      "exportTip": "Export this session's history to a single HTML file",
+      "terminal": "Claude Code terminal",
+      "terminalTip": "Show and use Claude Code in its terminal view (in the panel below the editor)",
+      "starting": "Starting Claude Code…",
+      "showInTerminal": "Show in terminal",
+      "queued": "Queued — will be sent to Claude Code once the current step finishes",
+      "sending": "Sending…",
+      "imageCount": "{count} images",
+      "imageCount_one": "{count} image",
+      "sendOnResume": "Will send when Claude Code resumes",
+      "sendAfterWorktree": "Will send once the worktree is ready…",
+      "sendAfterStart": "Will send once Claude Code starts…",
+      "takeBack": "Cancel",
+      "takeBackTip": "Cancel sending and move the message back to the input box",
+      "sendNowFailed": "Couldn't send: {error}",
+      "rescheduleFailed": "Couldn't change the time: {error}",
+      "slowStart": "Claude Code is taking a long time to start. Check the terminal to see whether it's stuck on a confirmation screen.",
+      "rewinding": "Choosing where to rewind to…",
+      "cancelEsc": "Cancel (Esc)",
+      "unknownScreen": "Claude Code is showing a screen that can't be used from the chat",
+      "closeEsc": "Close (Esc)",
+      "operateInTerminal": "Open Terminal",
+      "archived": "This session is archived",
+      "unarchive": "Unarchive",
+      "exited": "Claude Code exited (code {code})",
+      "resume": "Resume",
+      "jumpToLatest": "Jump to latest",
+      "chooseAbove": "Choose an option above",
+      "placeholder": "Message Claude Code (⌘Enter to send · @ for files and sessions · / for commands)",
+      "settingsFileTitle": "Settings file (changing it restarts Claude Code and resumes the conversation; model and effort reset to the settings file's defaults)",
+      "modelTitle": "Model (changing it restarts Claude Code and resumes the conversation)",
+      "refreshModels": "Refresh model list",
+      "effortTitle": "Effort (changing it restarts Claude Code and resumes the conversation)",
+      "noEffort": "No effort levels",
+      "effort": "Effort",
+      "modeTitle": "Permission mode (this session only; same as Shift+Tab)",
+      "mode": "Mode",
+      "bypassPermissions": "Bypass permissions"
+    },
+    "toolCard": {
+      "running": "Running…",
+      "done": "Done",
+      "error": "Error / interrupted",
+      "failed": "Failed",
+      "stopped": "Stopped",
+      "closeDetail": "Hide details",
+      "openDetail": "Show details",
+      "background": "Background",
+      "exitCode": "Exit code {code}",
+      "openSession": "Open session",
+      "openSessionNamed": "Open session “{name}”",
+      "recentTools": "Recent tools",
+      "finalTools": "Last tools used",
+      "prompt": "Prompt",
+      "input": "Input",
+      "diff": "Diff",
+      "result": "Result",
+      "errorOutput": "Error",
+      "toolCalls": "{count} tool calls",
+      "toolCalls_one": "{count} tool call",
+      "previousTool": "Latest: {tool}",
+      "tokens": "{count}k tokens"
+    },
+    "row": {
+      "rewind": "Rewind to here",
+      "rewindTip": "Rewind the conversation and code to before this message (/rewind)",
+      "openCardTip": "Open the checklist card",
+      "openCard": "Open Card",
+      "shellOutput": "Output",
+      "hooks": "Hooks",
+      "thinking": "Thinking",
+      "answers": "Answers"
+    },
+    "hookRuns": {
+      "success": "Succeeded",
+      "blocked": "Blocked",
+      "error": "Failed",
+      "context": "Passed context to Claude",
+      "exitCode": "Exit code {code}",
+      "contextSent": "Context passed to Claude",
+      "reason": "Reason",
+      "stdout": "Standard output",
+      "stderr": "Standard error"
+    },
+    "hookGroup": {
+      "blocked": "{count} blocked",
+      "failed": "{count} failed",
+      "count": "{count} hooks",
+      "count_one": "{count} hook"
+    },
+    "toolGroup": {
+      "failed": "{count} failed",
+      "count": "{count} tool calls",
+      "count_one": "{count} tool call",
+      "edit": "{count} edits",
+      "edit_one": "{count} edit",
+      "run": "{count} commands",
+      "run_one": "{count} command",
+      "read": "{count} reads",
+      "read_one": "{count} read",
+      "search": "{count} searches",
+      "search_one": "{count} search",
+      "fetch": "{count} fetches",
+      "fetch_one": "{count} fetch",
+      "agent": "{count} agents",
+      "agent_one": "{count} agent",
+      "workflow": "{count} workflows",
+      "workflow_one": "{count} workflow",
+      "question": "{count} questions",
+      "question_one": "{count} question",
+      "todo": "{count} todo updates",
+      "todo_one": "{count} todo update",
+      "browser": "{count} browser actions",
+      "browser_one": "{count} browser action",
+      "session": "{count} session actions",
+      "session_one": "{count} session action",
+      "checklist": "{count} checklist actions",
+      "checklist_one": "{count} checklist action",
+      "walkthrough": "{count} walkthrough actions",
+      "walkthrough_one": "{count} walkthrough action",
+      "mcp": "{count} MCP calls",
+      "mcp_one": "{count} MCP call",
+      "other": "{count} other"
+    },
+    "toolLine": {
+      "questionWaiting": "Waiting for your answer…",
+      "questionAnswered": "Question answered",
+      "failed": "{text} (failed)",
+      "todo": "todos",
+      "editRunning": "Editing {subject}…",
+      "editFailed": "Failed to edit {subject}",
+      "editDone": "Edited {subject}",
+      "runRunning": "Running {subject}…",
+      "runFailed": "Failed to run {subject}",
+      "runDone": "Ran {subject}",
+      "readRunning": "Reading {subject}…",
+      "readFailed": "Failed to read {subject}",
+      "readDone": "Read {subject}",
+      "searchRunning": "Searching for {subject}…",
+      "searchFailed": "Failed to search for {subject}",
+      "searchDone": "Searched for {subject}",
+      "fetchRunning": "Fetching {subject}…",
+      "fetchFailed": "Failed to fetch {subject}",
+      "fetchDone": "Fetched {subject}",
+      "delegateRunning": "Delegating {subject}…",
+      "delegateFailed": "Failed to delegate {subject}",
+      "delegateDone": "Delegated {subject}",
+      "updateRunning": "Updating {subject}…",
+      "updateFailed": "Failed to update {subject}",
+      "updateDone": "Updated {subject}",
+      "operateRunning": "Interacting with {subject}…",
+      "operateFailed": "Failed to interact with {subject}",
+      "operateDone": "Interacted with {subject}"
+    },
+    "duration": {
+      "underSecond": "<1s",
+      "seconds": "{count}s",
+      "minutesSeconds": "{minutes}m {seconds}s",
+      "minutes": "{count}m",
+      "hours": "{count}h"
+    },
+    "working": {
+      "waiting": "Waiting for response",
+      "thinking": "Thinking",
+      "writing": "Writing response",
+      "tokens": "{count} tokens",
+      "tokens_one": "{count} token",
+      "inProgress": "Working…",
+      "done": "Done"
+    },
+    "remoteControl": {
+      "unavailable": "Remote Control isn't available in development builds (launch with TANACODE_REMOTE_CONTROL=1 to use it)",
+      "about": "Control this session from the Claude app on your phone or from claude.ai/code (/remote-control)",
+      "willConnect": "Will connect when the session starts",
+      "wontConnect": "Won't connect when the session starts",
+      "connected": "Connected",
+      "enabled": "Remote Control is on (it connects once Claude Code has started and the connection is ready)",
+      "disconnected": "Not connected"
+    },
+    "todo": {
+      "title": "Todos"
+    },
+    "transcript": {
+      "apiError": "API error: {message}",
+      "apiErrorRetrying": "API error: {message} — retrying ({attempt}/{max})",
+      "unknownError": "Unknown error",
+      "apiErrorNoDetail": "API error",
+      "charsOmitted": "… ({count} characters omitted)",
+      "charsOmitted_one": "… ({count} character omitted)",
+      "compacted": "Conversation compacted",
+      "compactedAuto": "Conversation auto-compacted",
+      "compactedFrom": "Conversation compacted (from {count}k tokens)",
+      "compactedAutoFrom": "Conversation auto-compacted (from {count}k tokens)",
+      "taskFinished": "Background task finished",
+      "ciEnabled": "Enabled",
+      "ciNewComments": "{count} new review comments",
+      "ciNewComments_one": "{count} new review comment",
+      "ciReceived": "Notification received",
+      "ciNotice": "CI auto-fix: {what}",
+      "ciNoticePr": "CI auto-fix (PR #{pr}): {what}",
+      "scheduledTask": "Scheduled task started",
+      "scheduledTaskNamed": "Scheduled task “{name}” started",
+      "omitted": "… (truncated)",
+      "noAnswer": "(No answer)",
+      "image": "[Image]",
+      "linesOmitted": "… ({count} lines omitted)",
+      "linesOmitted_one": "… ({count} line omitted)"
+    }
+  },
+  "composer": {
+    "input": {
+      "suggestSession": "Session",
+      "suggestArchived": "Archived",
+      "remove": "Remove",
+      "image": "Image: {name}",
+      "schedule": "Schedule message",
+      "scheduleTip": "Schedule message (send at a set time)",
+      "interrupt": "Interrupt",
+      "send": "Send",
+      "sendTip": "Send (⌘Enter)"
+    },
+    "mode": {
+      "manual": "Manual mode",
+      "acceptEdits": "Accept edits",
+      "plan": "Plan mode",
+      "auto": "Auto mode"
+    },
+    "models": {
+      "loadFailed": "Couldn't load the model list: {error}",
+      "needsUpdate": "{name} (update required)",
+      "refresh": "Reload the model list (from Claude Code's cached copy)",
+      "refreshAsOf": "Reload the model list (from Claude Code's cached copy). Last updated {time}."
+    },
+    "sessionRef": {
+      "open": "Open session “{name}”",
+      "missing": "Session not in the list (ID {id})",
+      "fromParent": "Instructions from the parent session",
+      "fromParentNamed": "Instructions from parent session “{name}”",
+      "openParent": "Open parent session"
+    },
+    "images": {
+      "closeZoom": "Close image",
+      "loading": "Loading image…",
+      "unreadable": "Image (couldn't load)",
+      "zoom": "Click to enlarge"
+    },
+    "sentFiles": {
+      "label": "Files from Claude",
+      "failed": "Failed to send",
+      "openTip": "{path}\nClick to open in the editor"
+    },
+    "markdown": {
+      "run": "Run",
+      "openInBrowser": "Open in default browser",
+      "externalImageAlt": "External image ({alt}): {url}",
+      "externalImage": "External image: {url}"
+    }
+  },
+  "schedule": {
+    "row": {
+      "images": "{count} images",
+      "images_one": "{count} image",
+      "sendNow": "Send now",
+      "sendNowTip": "Send now instead of at the scheduled time (still waits until Claude Code is idle)",
+      "reschedule": "Reschedule",
+      "cancel": "Cancel",
+      "cancelSendingTip": "Stop sending and move the message back to the chat input",
+      "cancelTip": "Unschedule and move the message back to the chat input"
+    },
+    "note": {
+      "scheduled": "Scheduled: {time}",
+      "sending": "Scheduled time reached. Sending once Claude Code is idle…",
+      "missed": "Not sent at the scheduled time ({time}). The app may have been closed or your Mac asleep.",
+      "failed": "Couldn't send ({error})",
+      "unknownReason": "unknown reason"
+    },
+    "picker": {
+      "heading": "Schedule Message",
+      "custom": "Custom Time",
+      "date": "Date",
+      "time": "Time",
+      "futureOnly": "Choose a time in the future",
+      "submit": "Schedule"
+    },
+    "preset": {
+      "in30Minutes": "In 30 Minutes",
+      "in1Hour": "In 1 Hour",
+      "tomorrowMorning": "Tomorrow Morning",
+      "nextMondayMorning": "Next Monday Morning"
+    },
+    "time": {
+      "tomorrow": "Tomorrow {time}",
+      "yesterday": "Yesterday {time}",
+      "date": "{weekday}, {month}/{day} {time}",
+      "dateWithYear": "{weekday}, {month}/{day}/{year} {time}"
+    }
+  },
+  "settingsFiles": {
+    "select": {
+      "default": "Default",
+      "unreadable": "{name} (unreadable)",
+      "missing": "(removed)",
+      "manage": "Manage…"
+    },
+    "dialog": {
+      "addFailed": "Couldn't add the settings file: {error}",
+      "usedBy": "{count} sessions use this file and won't be able to start next time.",
+      "usedBy_one": "{count} session uses this file and won't be able to start next time.",
+      "removeConfirm": "Remove “{name}” from the list? The file itself won't be deleted.",
+      "removeFailed": "Couldn't remove the settings file: {error}",
+      "title": "Settings Files",
+      "description": "Add Claude Code settings files (same format as settings.json) and choose one per session. It's layered on top of your default settings when Claude Code starts. Only the file path is saved, not its contents.",
+      "empty": "No settings files added",
+      "addTip": "Add… (choose a file)",
+      "closeTip": "Close (Esc)",
+      "renameFailed": "Couldn't rename: {error}",
+      "renameTip": "Click to rename",
+      "remove": "Remove",
+      "removeTip": "Remove from list (doesn't delete the file)"
+    }
+  },
+  "translate": {
+    "failure": {
+      "sourceLanguage": "source language",
+      "sameLanguage": "This text is already in Japanese, so it wasn't translated.",
+      "notInstalled": "The translation languages ({language} and Japanese) aren't downloaded. Go to System Settings > General > Language & Region > Translation Languages… to download them.",
+      "unsupported": "macOS translation doesn't support {language}.",
+      "undetected": "Couldn't detect the language.",
+      "failed": "Couldn't translate ({reason}).",
+      "unknownReason": "unknown reason"
+    },
+    "button": {
+      "label": "Japanese translation",
+      "tip": "Japanese translation (translated on your Mac by macOS)"
+    },
+    "panel": {
+      "label": "Japanese translation",
+      "loading": "Translating…",
+      "openSettings": "Open System Settings"
+    }
+  },
+  "app": {
+    "walkthroughRequest": "Walk me through the changes on this branch with a tanacode walkthrough, showing the relevant code as you go.",
+    "sidePanel": {
+      "filesLabel": "Explorer",
+      "filesTitle": "Explorer",
+      "searchLabel": "Search",
+      "searchTitle": "Search (⌘⇧F)",
+      "scmLabel": "Source Control",
+      "scmTitle": "Source Control (git): review branch changes and send line comments back to Claude",
+      "tasksLabel": "Tasks",
+      "tasksTitle": "Tasks (subagents, workflows, and background Bash)",
+      "checklistLabel": "Checklist",
+      "checklistTitle": "Checklist (a list you and Claude view and edit together; it survives compaction)",
+      "contextLabel": "Context",
+      "contextTitle": "Context (what's in the current conversation and how much space it takes; choose what to keep or drop when compacting)",
+      "browserTip": "Toggle browser\nOpen the page you're developing, pick an element, and have Claude fix it",
+      "browser": "Browser",
+      "terminalTip": "Toggle terminal (⌃`)",
+      "terminal": "Terminal",
+      "tasksEmpty": "Background tasks run in the session will appear here",
+      "checklistEmpty": "The session's checklist will appear here",
+      "contextEmpty": "What's in the session's context will appear here"
+    },
+    "session": {
+      "openFailed": "Couldn't open the session: {error}",
+      "archiveChildren": "This will also archive {count} child sessions. Continue?",
+      "archiveChildren_one": "This will also archive {count} child session. Continue?",
+      "archiveChildrenWorking": "This will also archive {count} child sessions ({working} still working). Continue?",
+      "archiveChildrenWorking_one": "This will also archive {count} child session ({working} still working). Continue?",
+      "backupKept": "Backed up uncommitted changes and untracked files to {ref} (view them with git show {ref}).",
+      "branchKept": "Kept the branch {branch} because it has commits that exist only locally.",
+      "worktreeRemoved": "Deleted the worktree.\n{notes}"
+    },
+    "empty": {
+      "composing": "Choose a folder in the chat on the left and send your first prompt to start a session",
+      "noSessions": "No sessions",
+      "newSession": "New Session"
+    },
+    "diff": {
+      "staged": "Staged changes (HEAD ↔ index)",
+      "unstaged": "Changes (index ↔ working tree)",
+      "fromBase": "Changes since {ref}"
+    },
+    "status": {
+      "notStarted": "Claude Code not started",
+      "starting": "Claude Code starting",
+      "idle": "Claude Code idle",
+      "running": "Claude Code working",
+      "exited": "Claude Code exited",
+      "exitedWithCode": "Claude Code exited (code {code})",
+      "worktree": "Running in worktree {name} (original folder: {root})",
+      "openScm": "Open Source Control",
+      "openPr": "Open the pull request in {repository}\n{url}"
+    },
+    "update": {
+      "stepsTitle": "How to update",
+      "stepHomebrew": "• Installed with Homebrew: the new version downloads in the background, and “Restart to Update” appears here when it's ready. To update manually, quit with “File → Stop Claude Code and Quit”, then run brew update && brew upgrade --cask tanacode.",
+      "stepBuilt": "• Installed from a prebuilt app: quit with “File → Stop Claude Code and Quit”, then install the new version",
+      "stepSource": "• Installed from source: run git pull, npm install, and npm run install-app, then relaunch tanacode",
+      "latest": "You're on the latest version",
+      "available": "v{version} is available",
+      "openReleases": "Click to open the GitHub Releases page",
+      "homebrewDownloading": "Downloading with Homebrew. You can update from here when it's done.",
+      "homebrewFailed": "Couldn't download with Homebrew. tanacode will try again later.",
+      "readyLabel": "Restart and Update to v{version}",
+      "downloaded": "Downloaded v{version}",
+      "readyRestart": "Click to quit tanacode, install the update with Homebrew, and relaunch",
+      "readyOnQuit": "If “Install Updates on Quit” is on in the menu, the update is also installed when you quit normally",
+      "restart": "Restart to Update"
+    },
+    "titleBar": {
+      "openRepo": "Open tanacode on GitHub",
+      "notifications": "Notifications",
+      "notificationsAbout": "Get macOS notifications when work finishes or needs your attention",
+      "notificationsOn": "Notifications are on",
+      "notificationsOff": "Notifications are off"
+    },
+    "resizer": {
+      "tip": "Drag to resize (double-click to reset)"
+    },
+    "claudeVersion": {
+      "notFound": "Claude Code not found",
+      "same": "Claude Code {version} is the version tanacode is verified with",
+      "newer": "Claude Code {version} is newer than the version tanacode is verified with ({verified}).\nIf its screens or conversation log format have changed, some views or actions may not work.",
+      "older": "Claude Code {version} is older than the version tanacode is verified with ({verified}).\nIf it lacks features or screens tanacode relies on, some views or actions may not work.",
+      "missing": "The claude command wasn't found, or its version couldn't be read.\nInstall Claude Code and run claude once in a terminal."
+    },
+    "systemStats": {
+      "topCpu": "Top processes by CPU",
+      "topMemory": "Top processes by memory",
+      "memory": "Memory"
+    }
+  },
+  "sessions": {
+    "untitled": "New Session",
+    "sidebar": {
+      "renameTip": "Double-click to rename",
+      "parentTip": "Child session started from the parent session “{name}”",
+      "parent": "Parent: {name}",
+      "worktreeTip": "Running in worktree {name} (branch {branch})\nOriginal folder: {root}",
+      "checklistUnread": "{count} unread replies from Claude in the checklist",
+      "checklistUnread_one": "{count} unread reply from Claude in the checklist",
+      "unarchive": "Unarchive",
+      "archive": "Archive",
+      "archiveChildren": "Also archives {count} child sessions",
+      "archiveChildren_one": "Also archives {count} child session",
+      "remove": "Remove from list",
+      "confirmRemove": "Remove “{title}” from the list?\n(The Claude Code conversation log is kept.)",
+      "newSession": "New Session",
+      "import": "Open Existing Conversation…",
+      "active": "Active",
+      "lock": "Lock order",
+      "lockedTip": "Order locked\nClick to unlock and sort by most recently updated",
+      "unlockedTip": "Lock order\nWhile locked, sessions stay in place even when they update",
+      "empty": "No sessions",
+      "archived": "Archived ({count})"
+    },
+    "children": {
+      "working": "{count} working",
+      "waiting": "{count} waiting",
+      "separator": ", ",
+      "collapse": "Collapse child sessions",
+      "expand": "Expand {count} child sessions",
+      "expand_one": "Expand {count} child session",
+      "count": "{count} child sessions",
+      "count_one": "{count} child session",
+      "countWithBreakdown": "{count} child sessions ({breakdown})",
+      "countWithBreakdown_one": "{count} child session ({breakdown})",
+      "clickToCollapse": "Click to collapse",
+      "clickToExpand": "Click to expand"
+    },
+    "scheduled": {
+      "failed": "Scheduled message failed",
+      "sendAt": "Scheduled: {time}",
+      "sendAtWithOthers": "Scheduled: {time} (+{count} more)",
+      "count": "{count} scheduled messages",
+      "count_one": "{count} scheduled message"
+    },
+    "settingsFile": {
+      "layered": "Layered settings file “{name}” ({path})",
+      "missing": "The layered settings file has been removed from the list",
+      "missingName": "(removed)"
+    },
+    "activity": {
+      "question": "Needs answer",
+      "permission": "Needs permission",
+      "other": "Needs input",
+      "browser": "Needs browser action",
+      "starting": "Starting",
+      "runningWithBackground": "Working ({count} in background)",
+      "running": "Working",
+      "background": "Waiting on {count} background tasks",
+      "background_one": "Waiting on {count} background task",
+      "unread": "New response",
+      "exited": "Exited"
+    },
+    "worktreeDialog": {
+      "archiveFailed": "Couldn't archive the session: {error}",
+      "removeFailed": "Couldn't remove the session from the list: {error}",
+      "worktreeRemoveFailed": "Couldn't delete the worktree: {error}",
+      "archiveLabel": "Archive Worktree Session",
+      "removeLabel": "Remove Worktree Session from List",
+      "archiveTitle": "Archive “{title}”",
+      "removeTitle": "Remove “{title}” from List",
+      "about": "This session runs in worktree {path} (branch {branch}). Choose whether to keep or delete the worktree.",
+      "noteBackup": "If you delete it, uncommitted changes and untracked files are still backed up to {ref}.",
+      "noteBranch": "If there are commits that exist only locally, the branch is kept. If they're already on the remote, in a PR, or in the default branch, the branch is deleted too.",
+      "noteIgnored": "Gitignored files (such as a .env you edited in the worktree) aren't included in the backup.",
+      "noteRestore": "If you unarchive a session whose worktree was deleted, the worktree is recreated from the kept branch.",
+      "removingWorktree": "Deleting…",
+      "archiveRemoveWorktree": "Archive and Delete Worktree",
+      "removeRemoveWorktree": "Remove and Delete Worktree",
+      "archiveBusy": "Archiving…",
+      "removeBusy": "Removing…",
+      "archiveKeepWorktree": "Archive and Keep Worktree",
+      "removeKeepWorktree": "Remove and Keep Worktree",
+      "checking": "Checking what's left in the worktree…",
+      "checkFailed": "Couldn't check what's left in the worktree",
+      "worktreeGone": "The worktree folder no longer exists (the branch is handled the same way)",
+      "uncommitted": "Uncommitted changes",
+      "untracked": "Untracked files",
+      "unpushed": "Unpushed commits",
+      "contentIn": "These commits exist only locally, but their changes are already in {branch}",
+      "nothingLeft": "No leftover changes or commits",
+      "leftoverCount": "{count}",
+      "prUnknown": "Couldn't check for a PR (for example, gh isn't installed or you're not logged in)",
+      "prNone": "No PR for this branch",
+      "prName": "PR #{number} (into {base})",
+      "prMergedWithAfter": "{name} has been merged. {count} commits were added after that.",
+      "prMergedWithAfter_one": "{name} has been merged. {count} commit was added after that.",
+      "prMerged": "{name} has been merged",
+      "prOpen": "{name} hasn't been merged yet",
+      "prClosed": "{name} was closed without being merged"
+    },
+    "newSession": {
+      "startFailed": "Couldn't start the session: {error}",
+      "title": "New Session",
+      "cancelTip": "Back to the previous session",
+      "heading": "What would you like to work on?",
+      "aboutFolder": "Choose a folder and send your first prompt to launch Claude Code in that folder.",
+      "aboutCommands": "Your prompt is sent once Claude Code has started, so slash commands work as usual.",
+      "branchTip": "Current branch. Click to open Source Control and switch branches.",
+      "switchDefaultTip": "Switch to the latest default branch (fetches and fast-forwards to the remote)",
+      "switchDefault": "Switch to latest default branch",
+      "worktreeAbout": "Starts the session in its own worktree (a separate working folder and branch) with claude --worktree.\nSessions running in parallel in the same folder won't conflict.\nLocation: .claude/worktrees/ in the folder; branch: worktree-<name>",
+      "useWorktree": "Use worktree",
+      "folderMissing": "Folder not found",
+      "placeholder": "Your first prompt (⌘Enter to send · @ for files and sessions · / for commands)",
+      "placeholderNoFolder": "Choose a working folder first",
+      "settingsFileTitle": "Settings file (layered on top of your default settings at launch; this session only, and you can switch it after starting)",
+      "modelTitle": "Model (--model; this session only, doesn't change the default)",
+      "defaultModelOf": "Default ({model})",
+      "defaultModel": "Default model",
+      "refreshModels": "Refresh model list",
+      "effortTitle": "Effort (--effort; this session only, doesn't change the default)",
+      "noEffort": "No effort levels",
+      "defaultEffort": "Default effort",
+      "modeTitle": "Permission mode (--permission-mode; this session only, doesn't change the default)",
+      "defaultMode": "Default mode"
+    },
+    "folderPicker": {
+      "pickTip": "Choose a working folder",
+      "pick": "Choose Folder",
+      "recent": "Recent Folders",
+      "forget": "Remove {name} from recent folders",
+      "forgetTip": "Remove from recent folders (sessions aren't deleted; the folder comes back when you start a new session in it)",
+      "pickOther": "Choose Another Folder…"
+    },
+    "import": {
+      "placeholder": "Search existing Claude Code conversations (title, folder)",
+      "searching": "Searching…",
+      "empty": "No conversations to import"
+    },
+    "preparing": {
+      "creating": "Creating worktree",
+      "restoring": "Recreating worktree",
+      "copying": "Copying node_modules",
+      "installing": "Installing packages"
+    }
+  },
+  "account": {
+    "profiles": {
+      "confirmRemove": "Remove the profile “{name}”?\nIts Claude Code settings folder ({dir}) and session data won't be deleted. If you add it again, you'll still be logged in.",
+      "removeFailed": "Couldn't remove the profile: {error}",
+      "title": "Profiles",
+      "about": "Keep separate logins, sessions, and settings for each Claude Code account. Each profile has its own Claude Code settings folder (CLAUDE_CONFIG_DIR), so profiles never mix.",
+      "addTip": "Add profile…",
+      "closeTip": "Close (Esc)",
+      "updateFailed": "Couldn't update the profile: {error}",
+      "name": "Name",
+      "renameTip": "Click to rename",
+      "defaultDir": "~/.claude (default)",
+      "removeTip": "Remove profile (its settings folder and data are kept)",
+      "addFailed": "Couldn't add the profile: {error}",
+      "namePlaceholder": "e.g. Personal",
+      "color": "Color",
+      "folder": "Folder",
+      "folderLabel": "Claude Code settings folder",
+      "pickFolder": "Choose…",
+      "folderNote": "The Claude Code settings folder (CLAUDE_CONFIG_DIR), created if it doesn't exist. In a terminal, {command} uses the same account. After adding the profile, log in with “Log In…” in the account menu."
+    },
+    "panel": {
+      "noTerminal": "There's nowhere to open a terminal. Open a session, or choose a folder on the New Session screen, then try again.",
+      "profile": "Profile: {name}",
+      "notLoggedIn": "Not logged in",
+      "usageFromStatusline": "Plan usage as of {time} (from session responses)",
+      "usageFromCache": "Plan usage as of {time} (from Claude Code's cached /usage)",
+      "usagePending": "Plan usage appears once a session responds",
+      "staleAt": "As of {time}",
+      "othersAttention": "Another account needs attention",
+      "menu": "Account",
+      "loginHint": "Choose “Log In…” to log in to Claude Code for this profile",
+      "reload": "Reload Usage and Account",
+      "relogin": "Log In Again…",
+      "login": "Log In…",
+      "manageSettingsFiles": "Manage Settings Files…",
+      "addProfile": "Add Profile…",
+      "manageProfiles": "Manage Profiles…"
+    },
+    "usage": {
+      "fiveHour": "5-hour",
+      "week": "Weekly",
+      "unknown": "No data",
+      "reset": "Limit reset",
+      "remainingMinutes": "Resets in {count}m",
+      "remainingHours": "Resets in {hours}h {minutes}m",
+      "remainingDays": "Resets in {days}d {hours}h"
+    }
+  },
+  "scm": {
+    "panel": {
+      "loading": "Loading…",
+      "notRepo": "This folder is not a git repository",
+      "noChanges": "No changes"
+    },
+    "commit": {
+      "nothingStaged": "There are no staged changes to commit",
+      "committing": "Committing…",
+      "placeholder": "Message (⌘Enter to commit on “{branch}”)",
+      "amend": "Amend last commit",
+      "commit": "Commit",
+      "amendTip": "Amend last commit (⌘Enter)",
+      "commitTip": "Commit (⌘Enter)"
+    },
+    "branch": {
+      "switch": "Switch branch",
+      "detached": "(detached)",
+      "switching": "Switching branch…",
+      "switchingDefault": "Switching to the latest default branch…"
+    },
+    "view": {
+      "list": "View as list",
+      "tree": "View as tree"
+    },
+    "sync": {
+      "pulling": "Pulling…",
+      "pullFrom": "Pull from {upstream}",
+      "pull": "Pull",
+      "pushing": "Pushing…",
+      "pushTo": "Push to {upstream}",
+      "pushToOrigin": "Push to origin and set upstream",
+      "push": "Push",
+      "fetch": "Fetch",
+      "fetching": "Fetching…"
+    },
+    "staged": {
+      "title": "Staged Changes",
+      "unstage": "Unstage changes",
+      "unstageAll": "Unstage all changes",
+      "unstaging": "Unstaging…"
+    },
+    "changes": {
+      "title": "Changes",
+      "discard": "Discard changes",
+      "discardAll": "Discard all changes",
+      "discardConfirmFile": "Discard changes in “{path}”? If the file is untracked, it will be deleted. This can't be undone.",
+      "discardConfirmFiles": "Discard changes in {count} files? Untracked files will be deleted. This can't be undone.",
+      "discardConfirmFiles_one": "Discard changes in {count} file? If it is untracked, it will be deleted. This can't be undone.",
+      "discarding": "Discarding…",
+      "stage": "Stage changes",
+      "stageAll": "Stage all changes",
+      "staging": "Staging…",
+      "inFolder": "{action} in this folder"
+    },
+    "kind": {
+      "added": "Added",
+      "modified": "Modified",
+      "deleted": "Deleted"
+    },
+    "branchChanges": {
+      "fromBranch": "Changes since branching from {ref} ({commit})",
+      "notInUpstream": "Changes not yet in {ref} (unpushed commits and uncommitted changes)",
+      "title": "Branch Changes",
+      "baseBranch": "Since {ref}",
+      "baseUpstream": "Since {ref} (unpushed and uncommitted)",
+      "walkthrough": "Ask Claude for a walkthrough",
+      "walkthroughTip": "Ask Claude for a walkthrough\nClaude explains this branch's changes while showing the code in the editor",
+      "rowTitle": "{path} · {kind}",
+      "binary": "Binary"
+    },
+    "branchMenu": {
+      "placeholder": "Find a branch or type a new name",
+      "switchDefaultTip": "Fetch, switch to {branch}, and bring it up to date with the remote",
+      "switchDefault": "Switch to Latest Default Branch",
+      "create": "Create and Switch to Branch “{name}”",
+      "current": "Current",
+      "remote": "Remote"
+    },
+    "diff": {
+      "prevFile": "Previous file",
+      "nextFile": "Next file",
+      "sideBySide": "Side-by-side view",
+      "inline": "Inline view",
+      "openFile": "Open file",
+      "close": "Close diff"
+    }
+  },
+  "editor": {
+    "markdownMode": {
+      "preview": "Preview",
+      "split": "Side by side",
+      "source": "Source",
+      "label": "Markdown view"
+    },
+    "tabs": {
+      "closeConfirm": "Close “{name}” without saving your changes?",
+      "unsaved": "Unsaved changes (⌘S to save)",
+      "changedInBranch": "Changed in this branch"
+    },
+    "conflict": {
+      "message": "The file changed on disk while you had unsaved changes",
+      "reload": "Reload from Disk",
+      "keep": "Save Anyway"
+    },
+    "change": {
+      "added": "Added in this branch",
+      "modified": "Modified in this branch",
+      "showDiff": "Show diff"
+    },
+    "placeholder": {
+      "noFile": "Open a file from the Explorer",
+      "binary": "Binary files can't be displayed",
+      "tooLarge": "This file is too large to display ({size} MB)"
+    },
+    "markdownPreview": {
+      "diagramFailed": "Couldn't render the diagram: {error}"
+    }
+  },
+  "explorer": {
+    "tree": {
+      "gitChangesInside": "Contains git changes",
+      "addedInBranch": "Added in this branch",
+      "modifiedInBranch": "Modified in this branch"
+    },
+    "knowledge": {
+      "read": "Read by Claude (contents known in the current conversation)",
+      "edited": "Written by Claude (contents known in the current conversation)",
+      "stale": "Read by Claude before compaction (contents no longer remembered)"
+    }
+  },
+  "search": {
+    "panel": {
+      "placeholder": "Search",
+      "caseSensitive": "Match case",
+      "regex": "Use regular expression",
+      "searching": "Searching…",
+      "files": "{count} files",
+      "files_one": "{count} file",
+      "matches": "{count} results",
+      "matches_one": "{count} result",
+      "summary": "{matches} in {files}",
+      "summaryTruncated": "{matches} in {files} (truncated)"
+    },
+    "quickOpen": {
+      "placeholder": "Search files by name",
+      "empty": "No matching files"
+    }
+  },
+  "review": {
+    "prompt": {
+      "comments": "Here are review comments on the code. Please address each one.\n\n{comments}"
+    },
+    "lineComments": {
+      "addAction": "Add Comment for Claude",
+      "askButton": "Ask Claude",
+      "askAction": "Ask Claude About This",
+      "line": "Line {line}",
+      "lines": "Lines {start}–{end}",
+      "commentMark": "Comment for Claude",
+      "askMark": "Question for Claude",
+      "askPlaceholder": "What do you want to ask about this? (⌘Enter to send)",
+      "commentPlaceholder": "Something to fix or a concern (⌘Enter to add)",
+      "send": "Send",
+      "sendTip": "Send to Claude (⌘Enter)",
+      "addComment": "Add comment",
+      "addCommentTip": "Add comment (⌘Enter)"
+    },
+    "list": {
+      "title": "Comments for Claude",
+      "empty": "Click + next to a line number in a diff or the editor to add a comment. Comments are attached to your next prompt.",
+      "hint": "Sent along with your next chat message"
+    }
+  },
+  "terminal": {
+    "panel": {
+      "resize": "Drag to resize",
+      "sendToClaude": "Send to Claude",
+      "sendToClaudeTip": "Send to Claude\nPaste the selected terminal output into the chat input",
+      "claudeScreen": "Claude Code screen",
+      "claudeScreenTip": "Claude Code screen\nView and use Claude Code's own screen as is",
+      "close": "Close panel",
+      "closeTip": "Close panel (⌃`)"
+    },
+    "tabs": {
+      "close": "Close terminal",
+      "stopAndClose": "Stop and close",
+      "new": "New terminal"
+    },
+    "task": {
+      "running": "{name} (running)",
+      "done": "{name} (done)",
+      "failed": "{name} (failed, exit {code})"
+    }
+  },
+  "preview": {
+    "width": {
+      "full": "Full width",
+      "phone": "Phone",
+      "tablet": "Tablet"
+    },
+    "page": {
+      "loadFailed": "Couldn't load {url} ({error})"
+    },
+    "chat": {
+      "consoleErrors": "Errors logged to the in-app browser console ({url}):\n{errors}\n"
+    },
+    "toolbar": {
+      "forward": "Forward",
+      "stop": "Stop loading",
+      "reload": "Reload",
+      "address": "Address",
+      "width": "Viewport width",
+      "stopPicking": "Stop selecting",
+      "pick": "Select element",
+      "pickTip": "Click an element on the page to attach its details and an image to the chat input",
+      "errorCount": "{count} errors",
+      "errorCount_one": "{count} error",
+      "errorsTip": "Click to paste the console errors into the chat input\n\n{errors}",
+      "openExternal": "Open in default browser",
+      "devTools": "Developer tools",
+      "close": "Close browser"
+    },
+    "hint": {
+      "picking": "Click an element on the page (Esc to cancel)",
+      "retry": "Try again",
+      "empty": "Type a URL in the address bar above and press Enter to open it"
+    },
+    "tabs": {
+      "label": "Browser tabs",
+      "untitled": "New Tab",
+      "close": "Close tab",
+      "new": "New tab"
+    },
+    "claude": {
+      "operating": "Claude is using the browser"
+    },
+    "ask": {
+      "label": "Claude's request to act",
+      "title": "Your turn",
+      "reasonPlaceholder": "Reason (optional; don't include passwords)",
+      "reasonLabel": "Why you can't do it",
+      "send": "Send",
+      "done": "Done",
+      "decline": "Can't Do It"
+    },
+    "hosts": {
+      "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",
+      "empty": "(empty)",
+      "title": "Allowed Sites for Claude in the In-App Browser",
+      "description": "In the in-app browser, Claude can open, read, and interact with pages only on the sites listed here. The in-app browser shares sign-in state, so add only development sites you trust.",
+      "default": "Default",
+      "placeholder": "e.g., myapp.test, *.example.test",
+      "inputLabel": "Site to add",
+      "closeTip": "Close (Esc)"
+    },
+    "picked": {
+      "heading": "Element selected in the in-app browser ({url}):",
+      "selector": "- Selector: {selector}",
+      "text": "- Text: “{text}”"
+    }
+  },
+  "checklist": {
+    "panel": {
+      "createList": "New List",
+      "create": "Create",
+      "empty": "No lists yet. Click “New List” to create one, or ask Claude something like “Organize the requirements into a to-do list.”",
+      "noDescription": "No description",
+      "listTip": "{description}\nDouble-click to edit the name and description",
+      "addCard": "Add Card",
+      "trashList": "Move List to Trash",
+      "confirmTrashList": "Move the list “{name}” to the Trash?\nYou can restore it from the Trash below.",
+      "unreadTip": "{count} unread replies from Claude",
+      "unreadTip_one": "{count} unread reply from Claude",
+      "unreadLabel": "{count} unread",
+      "noCards": "No cards",
+      "confirmEmptyTrash": "Permanently delete {count} items in the Trash?\nYou can't undo this action.",
+      "confirmEmptyTrash_one": "Permanently delete {count} item in the Trash?\nYou can't undo this action.",
+      "selected": "{count} selected",
+      "moveToList": "Move to Another List",
+      "movePlaceholder": "Move to…",
+      "clearSelection": "Clear Selection",
+      "newCardPlaceholder": "Title (press Enter to add)"
+    },
+    "action": {
+      "copyToSession": "Copy to Another Session",
+      "trash": "Move to Trash"
+    },
+    "trash": {
+      "title": "Trash",
+      "list": "List “{name}” ({count} cards)",
+      "list_one": "List “{name}” ({count} card)",
+      "restore": "Restore",
+      "empty": "Empty Trash"
+    },
+    "cardPane": {
+      "trashTip": "Move to Trash (you can restore it from the Trash in the side panel)",
+      "renameTip": "Double-click to edit the title",
+      "createdByHuman": "Created by you",
+      "createdByClaude": "Created by Claude",
+      "checkedByHuman": "Checked by you ({time})",
+      "checkedByClaude": "Checked by Claude ({time})",
+      "bodyPlaceholder": "Description (Markdown)",
+      "saveBody": "Save (⌘Enter)",
+      "noBody": "No description",
+      "editBody": "Edit Description",
+      "writeBody": "Add Description",
+      "thread": "Thread",
+      "replyPlaceholder": "Reply (Markdown, ⌘Enter to send)",
+      "notifyTip": "Let Claude know about your reply once it's free",
+      "notifyTipStopped": "Claude Code isn't running, so the notification won't be delivered. Claude will see your reply as unread the next time it reads the checklist.",
+      "notify": "Notify Claude",
+      "reply": "Reply",
+      "replyTip": "Reply (⌘Enter)",
+      "notified": "Notified Claude"
+    },
+    "eventByHuman": {
+      "created": "You created this card",
+      "checked": "You checked this card",
+      "unchecked": "You unchecked this card",
+      "title": "You changed the title from “{from}”",
+      "body": "You edited the description",
+      "moved": "You moved this card from “{fromList}” #{fromNumber}",
+      "copied": "You copied this card from “{fromList}” #{fromNumber} in the session “{fromSessionTitle}”",
+      "deleted": "You moved this card to the Trash",
+      "restored": "You restored this card from the Trash"
+    },
+    "eventByClaude": {
+      "created": "Claude created this card",
+      "checked": "Claude checked this card",
+      "unchecked": "Claude unchecked this card",
+      "title": "Claude changed the title from “{from}”",
+      "body": "Claude edited the description",
+      "moved": "Claude moved this card from “{fromList}” #{fromNumber}",
+      "copied": "Claude copied this card from “{fromList}” #{fromNumber} in the session “{fromSessionTitle}”",
+      "deleted": "Claude moved this card to the Trash",
+      "restored": "Claude restored this card from the Trash"
+    },
+    "copyDialog": {
+      "failed": "Couldn't copy the cards: {error}",
+      "description": "Copies {numbers} from “{name}”, including title, description, check state, and thread. The original cards are kept.",
+      "numberSeparator": ", ",
+      "noTargets": "No sessions to copy to. You can copy only to sessions in the same folder, or to parent, child, and sibling sessions.",
+      "toSession": "Destination session",
+      "worktree": " ({name})",
+      "toList": "Destination list (created if it doesn't exist)",
+      "notify": "Notify Claude in the destination session",
+      "copying": "Copying…",
+      "copy": "Copy"
+    },
+    "listForm": {
+      "namePlaceholder": "Name (e.g., To-dos, Definition of done, Open questions)",
+      "descriptionPlaceholder": "Rules for using this list (e.g., before finishing the work, make sure every item is satisfied). Claude reads and follows these every time it reads the list."
+    },
+    "apply": {
+      "failed": "Couldn't update the checklist: {error}"
+    },
+    "check": {
+      "uncheck": "Uncheck",
+      "uncheckByClaude": "Uncheck (checked by Claude)",
+      "uncheckByHuman": "Uncheck (checked by you)",
+      "check": "Check"
+    },
+    "author": {
+      "human": "You",
+      "claude": "Claude"
+    },
+    "numberRange": "#{from}–{to}",
+    "errors": {
+      "badOp": "Invalid checklist operation",
+      "notString": "{key} must be a string",
+      "badShape": "Invalid value for {key}",
+      "unknownOp": "Unknown operation: {type}",
+      "badCopyRequest": "Invalid copy request",
+      "emptyCardTitle": "Can't create a card with an empty title",
+      "emptyTitle": "The title can't be empty",
+      "emptyReply": "The reply is empty",
+      "listNotFound": "List not found",
+      "badSessionId": "Invalid session ID",
+      "listGone": "List not found (it may have been moved to the Trash or deleted)",
+      "cardNotFound": "Card not found in “{list}”",
+      "emptyListName": "The list name is empty"
+    }
+  },
+  "tasks": {
+    "bashState": {
+      "running": "Running…",
+      "completed": "Done",
+      "failed": "Failed",
+      "killed": "Stopped",
+      "stopped": "Stopped"
+    },
+    "state": {
+      "running": "Running",
+      "done": "Done",
+      "failed": "Failed",
+      "stopped": "Stopped"
+    },
+    "list": {
+      "untitledSubagent": "Subagent",
+      "toolCalls": "{count} tool uses",
+      "toolCalls_one": "{count} tool use",
+      "agents": "{done}/{total} agents",
+      "agentsRunning": "{done}/{total} agents ({count} running)",
+      "empty": "No subagents, workflows, or background Bash commands have run in this session yet",
+      "openTip": "Click to view details",
+      "running": "Running",
+      "noneRunning": "Nothing running",
+      "finished": "Finished"
+    },
+    "paneKind": {
+      "subagent": "Subagent",
+      "workflow": "Workflow",
+      "bash": "Background Bash"
+    },
+    "stop": {
+      "stopping": "Stopping",
+      "stop": "Stop",
+      "stoppingTip": "Stopping…",
+      "failed": "Couldn't stop the task: {error}"
+    },
+    "pane": {
+      "background": "Background",
+      "tokens": "{count} tokens",
+      "loading": "Loading…",
+      "starting": "Waiting to start…",
+      "noLog": "No conversation log",
+      "result": "Result",
+      "prompt": "Prompt"
+    },
+    "workflow": {
+      "overview": "Overview",
+      "allAgents": "All Agents",
+      "waiting": "Waiting",
+      "noAgents": "No agents",
+      "toolCalls": "{count} tool uses",
+      "toolCalls_one": "{count} tool use",
+      "toolCallsRunning": "{count} tool uses · {tool}",
+      "toolCallsRunning_one": "{count} tool use · {tool}"
+    },
+    "bash": {
+      "truncated": "(Earlier output omitted)",
+      "noOutput": "(No output)",
+      "exitCode": "Exit code {code}",
+      "taskId": "Task ID {id}"
+    },
+    "kind": {
+      "subagent": "Agent",
+      "workflow": "Workflow",
+      "bash": "Bash"
+    },
+    "tray": {
+      "title": "Tasks",
+      "running": "{count} running",
+      "more": "{count} more"
+    }
+  },
+  "context": {
+    "panel": {
+      "loading": "Loading…",
+      "empty": "No conversation yet. Files Claude reads and tool results will appear here with their sizes.",
+      "total": "Total {tokens} / {limit} ({percent}%)",
+      "totalUnknown": "Total usage appears after the next response",
+      "listed": "Listed ~{tokens}",
+      "other": "Other ~{tokens} (system prompt, tool definitions, notices added by Claude Code, etc.)",
+      "sort": "Sort by",
+      "sortBySize": "Size",
+      "sortByTime": "Time",
+      "compacted": "Replaced by the compaction summary ({count})",
+      "marks": "Keep {keep} · Drop {drop}",
+      "clearMarks": "Clear Marks",
+      "compactWithMarks": "Compact with Marks…",
+      "compacting": "Compacting…",
+      "note": "Claude decides what to do with unmarked items. Sizes are estimates based on character counts and response usage, not exact token counts.",
+      "draftTitle": "Instructions for /compact (editable before sending)",
+      "compact": "Compact",
+      "cannotCompact": "Can't compact while Claude is working or asking for confirmation"
+    },
+    "row": {
+      "keep": "Keep",
+      "drop": "Drop"
+    },
+    "kind": {
+      "written": "Written",
+      "read": "Read",
+      "notice": "Notice",
+      "image": "Image",
+      "agent": "Agent",
+      "topic": "Exchange",
+      "summary": "Summary"
+    },
+    "meter": {
+      "label": "Context contents",
+      "tip": "Context: {tokens} / {limit} tokens (as of the last response)\nCompacts automatically when nearly full. Click to see what's in it."
+    },
+    "compact": {
+      "keep": "Keep {items} in detail.",
+      "drop": "You can drop {items}.",
+      "sentenceSeparator": " ",
+      "listTwo": "{first} and {second}",
+      "separator": ", ",
+      "listLast": "{rest}, and {last}",
+      "file": "the contents of `{label}`",
+      "fileEdited": "the contents of `{label}` (including your edits)",
+      "summary": "the summary from the previous compaction",
+      "agent": "the result of the subagent “{label}”",
+      "imageWithLabel": "the image from {tool} ({label})",
+      "image": "the image from {tool}",
+      "attachedImage": "the image attached to “{topic}”",
+      "attachedImageNth": "image {index} attached to “{topic}”",
+      "topicAnswer": "the exchange after I answered “{answer}”",
+      "topicNotice": "the exchange after the notification “{notice}”",
+      "topicEvent": "the exchange starting at “{label}”",
+      "topic": "the exchange starting with “{label}”",
+      "notice": "the notification “{label}”",
+      "bash": "the output of `{label}`",
+      "search": "the search results for “{label}”",
+      "glob": "the list of files matching `{label}`",
+      "webFetch": "the contents of the page at {label}",
+      "skill": "the contents of the “{label}” skill",
+      "toolWithLabel": "the result of {tool} ({label})",
+      "tool": "the result of {tool}",
+      "mcpTool": "{server}'s {tool}"
+    }
+  },
+  "export": {
+    "dialog": {
+      "untitled": "New Session",
+      "saveFailed": "Couldn't export the session: {error}",
+      "title": "Export Session",
+      "description": "Saves the history of “{title}” (prompts, responses, tool calls, diffs, and images) as a single HTML file. Anyone can read it by opening it in a browser.",
+      "saved": "Saved ({size})",
+      "savedNote": "Before sharing it, open it in a browser and check what's inside.",
+      "revealInFinder": "Show in Finder",
+      "loading": "Loading the conversation log…",
+      "loadFailed": "Couldn't load the conversation log: {error}",
+      "empty": "There's no conversation to export yet",
+      "rangeLabel": "Range",
+      "firstPrompt": "First prompt to include",
+      "lastPrompt": "Last prompt to include",
+      "range": "{from} to {to}",
+      "summaryPrompts": "{count} prompts",
+      "summaryPrompts_one": "{count} prompt",
+      "summaryReplies": "{count} responses",
+      "summaryReplies_one": "{count} response",
+      "summaryTools": "{count} tool calls",
+      "summaryTools_one": "{count} tool call",
+      "summaryImages": "{count} images",
+      "summaryImages_one": "{count} image",
+      "toolOutput": "Tool output (command output, contents of files read, search results, etc.)",
+      "diffs": "Edit diffs",
+      "images": "Images (attachments and screenshots)",
+      "thinking": "Thinking",
+      "homeToTilde": "Replace the home folder path ({home}) with {tilde}",
+      "warning": "Conversations can contain internal information, API keys, passwords, and more. Before sharing the exported file, open it in a browser and check what's inside. tanacode only saves the file and never sends it anywhere.",
+      "saving": "Exporting…",
+      "save": "Export…",
+      "itemCount": "{count} items",
+      "itemCount_one": "{count} item",
+      "imageCount": "{count} images",
+      "imageCount_one": "{count} image",
+      "promptLabel": "{number}. {text}",
+      "promptLabelWithTime": "{number}. {text} ({time})"
+    },
+    "document": {
+      "brand": "tanacode session export",
+      "folder": "Folder",
+      "branch": "Branch",
+      "period": "Time",
+      "range": "Range",
+      "omitted": "Not included",
+      "listSeparator": ", ",
+      "changedFiles": "{count} files changed",
+      "changedFiles_one": "{count} file changed",
+      "exportedAt": "Exported with tanacode on {time}",
+      "failed": "{count} failed",
+      "blocked": "{count} blocked",
+      "imageMissing": "Image unavailable",
+      "zoomImage": "Zoom image",
+      "todo": "Todos"
+    },
+    "content": {
+      "imagePrompt": "(Image)",
+      "omittedToolOutput": "Tool output",
+      "omittedDiffs": "Edit diffs",
+      "omittedImages": "Images",
+      "omittedThinking": "Thinking",
+      "rangeWhole": "Entire session ({count} prompts)",
+      "rangeWhole_one": "Entire session ({count} prompt)",
+      "rangePart": "Prompts {from}–{to} ({count} of {total})",
+      "defaultFileName": "Session",
+      "period": "{start} – {end}"
+    }
+  },
+  "walkthrough": {
+    "actions": {
+      "publish": "Post as a comment on the GitHub PR",
+      "close": "Close (you can reopen it from the list in Source Control)"
+    },
+    "box": {
+      "aside": "Aside",
+      "progress": "Walkthrough {step}/{total}",
+      "showList": "Show all steps (Source Control)",
+      "stale": "The code has changed (lines may have shifted)",
+      "restart": "Ask Claude to Update",
+      "askPlaceholder": "Ask Claude about this code (⌘Enter to send)",
+      "cancelAsk": "Cancel",
+      "send": "Send",
+      "sendTip": "Send to Claude (⌘Enter)",
+      "backToWalkthrough": "Back to Walkthrough ({step}/{total})",
+      "previous": "Back",
+      "finish": "Finish",
+      "next": "Next",
+      "ask": "Ask a Question"
+    },
+    "comment": {
+      "title": "Post as a PR Comment",
+      "titleWithNumber": "Post as a Comment on PR #{number}",
+      "description": "Lists the steps in order, each with its title, a link to the code (pinned to the commit), and the explanation. GitHub shows each link line as an embedded code snippet. Questions and answers aren't included.",
+      "checking": "Checking the PR…",
+      "posted": "Posted",
+      "openOnGitHub": "Open on GitHub",
+      "alreadyPosted": "This walkthrough has already been posted. Posting it again will add a second comment.",
+      "openPrevious": "Open Previous Comment",
+      "attributionOption": "Add a note at the end saying Claude wrote this (it's posted from your account)",
+      "tooLong": "Too long ({count} characters; GitHub comments are limited to {max})",
+      "posting": "Posting…",
+      "post": "Post"
+    },
+    "list": {
+      "label": "Walkthrough",
+      "seen": "Viewed",
+      "hintOpen": "Click a step to open it",
+      "hintClosed": "Closed. Click a step to view the walkthrough again from there (it stays until Claude creates a new one)."
+    },
+    "band": {
+      "aside": "Aside · {location}",
+      "progress": "Walkthrough {step}/{total}: {title}",
+      "backToClaude": "Back to What Claude Is Showing"
+    },
+    "prompt": {
+      "stepQuestion": "I have a question about step {step}/{total}, “{title}” ({location}), in the walkthrough “{walkthrough}”.",
+      "asideQuestion": "I have a question about {location}, which you showed as an aside during the walkthrough “{walkthrough}”.",
+      "rangeQuestion": "I have a question about {location}.",
+      "restart": "The code for the walkthrough “{title}” has changed, so the lines it shows may have shifted. Please use start_walkthrough to redo it from step {step}/{total} onward, based on the current code."
+    },
+    "postBody": {
+      "attribution": "This explanation was written by Claude in a tanacode walkthrough.",
+      "heading": "Walkthrough: {title}",
+      "summary": "{count} steps. Code as of commit {commit}.",
+      "summary_one": "{count} step. Code as of commit {commit}."
+    }
+  },
+  "workflow": {
+    "status": {
+      "running": "Running",
+      "completed": "Done",
+      "failed": "Failed",
+      "stopped": "Stopped",
+      "killed": "Stopped"
+    },
+    "card": {
+      "name": "Workflow",
+      "starting": "Starting…",
+      "resumedTip": "Resumed from an earlier run that stopped or finished",
+      "resumed": "Resumed",
+      "resumedLater": "This run was resumed later. Progress continues on the resumed run's card.",
+      "waitingAgents": "Waiting for agents to start",
+      "noAgents": "No agents"
+    },
+    "stats": {
+      "agents": "{done}/{total} agents",
+      "toolCalls": "{count} tool uses",
+      "toolCalls_one": "{count} tool use",
+      "tokens": "{count} tokens"
+    },
+    "agent": {
+      "tools": "{count} tool uses",
+      "tools_one": "{count} tool use",
+      "toolsWithLast": "{count} tool uses · {tool}",
+      "toolsWithLast_one": "{count} tool use · {tool}",
+      "result": "Result",
+      "prompt": "Prompt"
+    },
+    "phase": {
+      "waiting": "Waiting",
+      "unphased": "Agents"
+    },
+    "duration": {
+      "seconds": "{count}s",
+      "minutes": "{minutes}m {seconds}s",
+      "hours": "{hours}h {minutes}m"
+    },
+    "flow": {
+      "notRunning": "Not running",
+      "resumedLater": "This run was resumed later. Progress continues in the resumed run.",
+      "hint": "Click an agent to open its conversation",
+      "childWorkflow": "Child workflow: {name}"
+    }
+  },
+  "screen": {
+    "kind": {
+      "question": "Question from Claude Code",
+      "permission": "Permission Request",
+      "other": "Confirmation"
+    },
+    "notChosen": {
+      "busy": "Couldn't send because another action was in progress. Click again.",
+      "gone": "Not sent because the screen changed",
+      "missing": "Not sent because this option is no longer on the Claude Code screen",
+      "stuck": "Couldn't move the cursor to this option. Click again, or choose it in the Claude Code terminal.",
+      "ignored": "Claude Code didn't accept the choice. Click again, or choose it in the Claude Code terminal."
+    },
+    "card": {
+      "sendFailed": "Couldn't send. Click again.",
+      "nextQuestion": "Next Question →",
+      "reviewAnswers": "Review Answers →",
+      "otherTyped": "Other: {text}",
+      "other": "Other (type your own answer)",
+      "cancelTip": "Cancel (Esc)",
+      "answerPlaceholder": "Type your answer",
+      "confirm": "OK",
+      "send": "Send",
+      "stopEditing": "Stop editing",
+      "preview": "Preview: {label}",
+      "noPreview": "No preview for this option"
+    }
+  }
+}

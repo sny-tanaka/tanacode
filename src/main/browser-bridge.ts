@@ -1,4 +1,5 @@
 import { BROWSER_MCP } from '@shared/browser-tools';
+import { language } from '@shared/i18n';
 import { mcpArgs, mcpServerEntry, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 
 // アプリ内ブラウザの中継（browser-mcp.ts。Claude Code が起動する MCP サーバー）に渡すもの。ソケットのやりとりは mcp-bridge.ts
@@ -10,6 +11,8 @@ export const BROWSER_SESSION_ENV = 'TANACODE_BROWSER_SESSION';
 // フックは Claude Code の環境で動くので、起動する Claude Code の環境に足す（--mcp-config の env は、MCP サーバーにしか届かない）
 export const BROWSER_COMMAND_ENV = 'TANACODE_BROWSER_COMMAND';
 export const BROWSER_SCRIPT_ENV = 'TANACODE_BROWSER_SCRIPT';
+// フックが確認の理由を書く言語（Claude Code を起動したときのアプリの言語）
+export const BROWSER_LANGUAGE_ENV = 'TANACODE_LANGUAGE';
 // フックがアプリに、今のページで JavaScript を実行してよいか（localhost か）を聞く、中継の内部の呼び出し。MCP のツールではない
 export const BROWSER_GATE_REQUEST = 'gate:evaluate';
 
@@ -25,6 +28,7 @@ export function browserGateEnv(launch: BrowserMcpLaunch, sessionId: string): Rec
     [BROWSER_SESSION_ENV]: sessionId,
     [BROWSER_COMMAND_ENV]: launch.command,
     [BROWSER_SCRIPT_ENV]: launch.script,
+    [BROWSER_LANGUAGE_ENV]: language(),
   };
 }
 

@@ -238,7 +238,7 @@ export class ChecklistControl {
       session: from.title ?? t('tools.notice.untitledSession'),
       list: list.name,
       numbers: formatNumbers(cards.map((c) => c.number)),
-      titles: cards.map((c) => `「${c.title}」`).join('、'),
+      titles: cards.map((c) => t('tools.notice.cardTitle', { title: c.title })).join(t('main.format.listSeparator')),
     });
     this.notices.add(to, `copy:${cards[0]?.id ?? ''}`, { text: clipNotice(text, 600), refs: cards.slice(0, 20).map((c) => ({ listId: list.id, cardId: c.id })) });
   }
@@ -321,8 +321,9 @@ function listNames(lists: Checklist[]): string {
   return names.length > 0 ? `あるのは${names.join('、')}です。` : 'リストはまだありません。';
 }
 
+// 題名の無いセッションの名前は、画面の言語で（コピーしたカードのコピー元として保存され、スレッドに出る）
 function nameOf(s: SessionSummary): string {
-  return s.title ?? '新しいセッション';
+  return s.title ?? t('tools.notice.untitledSession');
 }
 
 function time(at: number): string {

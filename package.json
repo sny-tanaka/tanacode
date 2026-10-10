@@ -18,7 +18,7 @@
     "prebuild": "node scripts/build-translate-helper.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsc --noEmit --composite false -p tsconfig.node.json && tsc --noEmit --composite false -p tsconfig.web.json",
     "test": "vitest run",
     "test:cli": "vitest run --config vitest.cli.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",

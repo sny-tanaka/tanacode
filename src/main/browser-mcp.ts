@@ -3,7 +3,8 @@
 // ソケットのパスとセッションは、--mcp-config の env で受け取る
 // --gate を付けて動かしたときは、MCP サーバーではなく、JavaScript の実行の確認のフックとして働く（browser-gate.ts）
 import { BROWSER_ASK_TIMEOUT_MS, BROWSER_ASK_TOOL, BROWSER_MCP } from '@shared/browser-tools';
-import { BROWSER_CLOSED_MESSAGE, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV } from './browser-bridge';
+import { isLanguage, setLanguage } from '@shared/i18n';
+import { BROWSER_CLOSED_MESSAGE, BROWSER_LANGUAGE_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV } from './browser-bridge';
 import { BROWSER_GATE_ARG, runGate } from './browser-gate';
 import { callBridge } from './mcp-bridge';
 import { runRelay } from './mcp-relay';
@@ -20,6 +21,9 @@ const session = process.env[BROWSER_SESSION_ENV] ?? '';
 const GATE_TIMEOUT_MS = 5_000;
 
 if (process.argv.includes(BROWSER_GATE_ARG)) {
+  // 確認の理由は、Claude Code を起動したときのアプリの言語で書く
+  const lang = process.env[BROWSER_LANGUAGE_ENV];
+  if (isLanguage(lang)) setLanguage(lang);
   void runGate(socketPath, session, GATE_TIMEOUT_MS).then((output) => process.stdout.write(`${output}\n`, () => process.exit(0)));
 } else {
   runRelay(

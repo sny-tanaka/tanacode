@@ -37,10 +37,10 @@ export function schedulePresets(now: Date): { label: string; at: number }[] {
   ];
 }
 
-// 予約の時刻の表示。今日は「15:00」、明日は「明日 9:00」、今年は「10/12（月）9:00」、それより先は年も付ける
+// 予約の時刻の表示。今日は「15:00」、明日は「明日 9:00」、今年は「10/12（月）9:00」、それより先は年も付ける（英語では 3:00 PM のように 12 時間制）
 export function formatScheduleTime(at: number, now: Date = new Date()): string {
   const d = new Date(at);
-  const time = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const time = new Intl.DateTimeFormat(locale(), { hour: 'numeric', minute: '2-digit' }).format(d);
   const day = (base: Date, days: number) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + days).getTime();
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   if (start === day(now, 0)) return time;

@@ -415,6 +415,9 @@ export class DemoBackend {
         cancel: () => ok(null),
         onChanged: () => () => {},
       },
+      language: {
+        get: () => ok('ja'),
+      },
       notifications: {
         get: () => ok(this.notificationsOn),
         set: (on) => {

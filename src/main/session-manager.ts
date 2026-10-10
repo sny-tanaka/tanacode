@@ -1164,8 +1164,8 @@ export class SessionManager {
     });
     if (this.runtimes.get(id) !== rt) return;
     rt.preparing = null;
-    const notes = [t(how === 'created' ? 'main.worktree.started' : 'main.worktree.restored', { name, branch }), nodeModulesNote(result)];
-    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: notes.filter(Boolean).join(t('main.format.sentenceSeparator')) }]);
+    const notes = [t(how === 'created' ? 'main.worktree.started' : 'main.worktree.restored', { name, branch }), ...nodeModulesNotes(result)];
+    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: sentences(notes) }]);
     // 準備の間に入力欄が出ていたら、ここで受け付けられるようになったことにする
     if (!rt.ready && rt.screen?.current.ready) {
       rt.ready = true;
@@ -1406,8 +1406,14 @@ function fileSize(file: string): number {
   }
 }
 
-// node_modules の用意の結果の知らせ（チャットに出す）。場所は worktree からの相対（'' はいちばん上）
-function nodeModulesNote(result: NodeModulesResult): string | null {
+// 文をつないで 1 つの知らせにする。2 文以上なら、最後にも文の終わりの記号を付ける（日本語は付けない・英語はピリオド）
+function sentences(notes: string[]): string {
+  const text = notes.join(t('main.format.sentenceSeparator'));
+  return notes.length > 1 ? text + t('main.format.sentenceEnd') : text;
+}
+
+// node_modules の用意の結果の知らせ（チャットに出す。1 つずつの文）。場所は worktree からの相対（'' はいちばん上）
+function nodeModulesNotes(result: NodeModulesResult): string[] {
   const separator = t('main.format.shortListSeparator');
   const where = (dirs: string[]) => dirs.map((dir) => (dir ? `${dir}/node_modules` : 'node_modules')).join(separator);
   const notes: string[] = [];
@@ -1423,7 +1429,7 @@ function nodeModulesNote(result: NodeModulesResult): string | null {
     const commands = failed.map((i) => t('main.worktree.commandFailedAt', { command: i.command, dir: at(i.dir), code: i.exitCode })).join(separator);
     notes.push(t('main.worktree.installFailed', { commands }));
   }
-  return notes.length > 0 ? notes.join(t('main.format.sentenceSeparator')) : null;
+  return notes;
 }
 
 // ターミナルに出さずにコマンドを実行する（RunTask の既定。互換性の確認など）

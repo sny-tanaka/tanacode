@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { TodoItem } from '@shared/chat';
+import { language } from '@shared/i18n';
 import type { ChatItem } from '../chat/chatState';
 import { markdownHtml } from '../chat/Markdown';
 import appCss from '../global.css?raw';
@@ -36,7 +37,7 @@ export async function buildExportHtml({ meta, items, todoSteps, withImages }: Ex
   const css = collectCss(body);
   return [
     '<!doctype html>',
-    '<html lang="ja">',
+    `<html lang="${language()}">`,
     '<head>',
     '<meta charset="utf-8">',
     `<meta http-equiv="Content-Security-Policy" content="${CSP}">`,

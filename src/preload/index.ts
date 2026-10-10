@@ -93,6 +93,9 @@ const api: TanacodeApi = {
     get: () => invoke(IpcChannel.NotificationsGet),
     set: (on) => invoke(IpcChannel.NotificationsSet, on),
   },
+  language: {
+    get: () => invoke(IpcChannel.LanguageGet),
+  },
   system: {
     onStats: (listener) => subscribe(IpcChannel.SystemStats, listener),
   },

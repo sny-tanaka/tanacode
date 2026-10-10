@@ -33,7 +33,7 @@ type Options = {
   conversations?: (work: string) => Conversation[];
   // ユーザーの設定（~/.claude/settings.json）
   claudeSettings?: Record<string, unknown>;
-  // アプリの設定（userData/settings.json）に重ねるもの。既定では通知と更新の確認を切る
+  // アプリの設定（userData/settings.json）に重ねるもの。既定では通知と更新の確認を切り、言語を日本語にする（画面の文言で確かめるため。CI の Mac は英語）
   appSettings?: Record<string, unknown>;
   // 作業フォルダに置いておくファイル（パス → 中身）
   files?: Record<string, string>;
@@ -98,7 +98,7 @@ export class E2EApp {
     if (this.options.claudeSettings) writeFileSync(join(this.home, '.claude', 'settings.json'), JSON.stringify(this.options.claudeSettings));
     writeFileSync(
       join(this.userData, 'settings.json'),
-      JSON.stringify({ version: 1, notifications: false, updateCheck: false, ...this.options.appSettings }),
+      JSON.stringify({ version: 1, notifications: false, updateCheck: false, language: 'ja', ...this.options.appSettings }),
     );
     for (const [path, text] of Object.entries(this.options.files ?? {})) {
       mkdirSync(dirname(join(this.work, path)), { recursive: true });

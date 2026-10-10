@@ -782,6 +782,8 @@ describe('メニュー', () => {
       'Claude にウォークスルーさせる',
       'アプリ内ブラウザで Claude に許す先…',
       'separator',
+      '言語（Language）',
+      'separator',
       'services',
       'separator',
       'hide',
@@ -795,6 +797,53 @@ describe('メニュー', () => {
     expect(fileMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual(['新規セッション', 'separator', 'close', 'separator', 'Claude Code も止めて終了']);
     expect(menuItem('新規セッション').accelerator).toBe('CmdOrCtrl+N');
     expect(rest.map((i) => i.role)).toEqual(['editMenu', 'viewMenu', 'windowMenu']);
+  });
+
+  it('「言語」: 既定は「システムに合わせる」で、Mac の優先する言語に日本語があれば日本語で出す', async () => {
+    await boot({ before: (s) => (s.preferredLanguages = ['en-US', 'ja-JP']) });
+    const languages = menuItem('言語（Language）').submenu!;
+    expect(languages.map((i) => [i.label, i.type, i.checked])).toEqual([
+      ['システムに合わせる', 'radio', true],
+      ['日本語', 'radio', false],
+      ['English', 'radio', false],
+    ]);
+    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('ja');
+  });
+
+  it('「言語」: Mac の優先する言語に日本語が無ければ、英語で出す（メニューも英語）', async () => {
+    await boot({ before: (s) => (s.preferredLanguages = ['en-US', 'fr-FR']) });
+    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
+    expect(menuItem('Language').submenu!.map((i) => i.label)).toEqual(['System Default', '日本語', 'English']);
+    expect(menuItem('File').submenu![0].label).toBe('New Session');
+  });
+
+  it('「言語」: 選んだ言語を保存し、言語が変わったらメニューを作り直して、アプリの画面を読み込み直す', async () => {
+    await boot();
+    const contents = mainWindow().webContents;
+    const choose = (label: string) => {
+      const item = menuItem(label);
+      item.click?.(item);
+    };
+    choose('English');
+    expect(savedSettings().language).toBe('en');
+    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
+    expect(menuItem('Language').submenu!.find((i) => i.checked)?.label).toBe('English');
+    expect(contents.reload).toHaveBeenCalledTimes(1);
+    // 「システムに合わせる」は Mac の言語（日本語）になるので、また読み込み直す
+    choose('System Default');
+    expect(savedSettings().language).toBe('system');
+    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('ja');
+    expect(contents.reload).toHaveBeenCalledTimes(2);
+    // 言語が変わらなければ、保存だけで読み込み直さない
+    choose('日本語');
+    expect(savedSettings().language).toBe('ja');
+    expect(contents.reload).toHaveBeenCalledTimes(2);
+  });
+
+  it('「言語」: 保存した言語で起動する（Mac の言語より優先）', async () => {
+    await boot({ settings: { language: 'en' } });
+    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
+    expect(menuItem('Language').submenu!.find((i) => i.checked)?.label).toBe('English');
   });
 
   it('「新しいバージョンが出たら通知する」: オンで問い合わせを始め、オフでやめる。設定に保存する', async () => {

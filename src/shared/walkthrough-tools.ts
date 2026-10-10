@@ -90,7 +90,7 @@ export const WALKTHROUGH_MCP_INSTRUCTIONS = [
   '- When you explain the changes of the branch, use view: "diff" to show the deleted lines next to the new ones. Where the before and after need no comparison (new files, explaining a mechanism), keep view: "file".',
   '- In the explanations, write why rather than what: the intent, the alternatives you did not choose, what you were careful about and what still concerns you. Do not repeat what the code already says. Write the titles and explanations in the language the user is using.',
   '- After passing the steps, write only a short line in the chat (e.g. "Please start from 1/N in the editor", in the language the user is using) and end your turn. The user moves through the steps with Next and Back at their own pace.',
-  '- The questions of the user arrive as ordinary chat messages with the selected code attached (e.g. 「ウォークスルー「…」の 3/7「…」（path:40-58）について質問です。」 or 「path:12-20 について質問です。」). Answer in the chat. If showing another place is faster, show it with show_code first.',
+  `- The questions of the user arrive as ordinary chat messages with the selected code attached in the language of the user's tanacode (e.g. 「ウォークスルー「…」の 3/7「…」（path:40-58）について質問です。」 or "I have a question about step 3/7, “…” (path:40-58), in the walkthrough “…”.", and 「path:12-20 について質問です。」 or "I have a question about path:12-20."). Answer in the chat. If showing another place is faster, show it with show_code first.`,
   '- If you change code on request, the lines you showed shift. When you are done, restart with start_walkthrough from the step the user was viewing onward.',
   '- walkthrough_status tells you where the user is looking now.',
 ].join('\n');

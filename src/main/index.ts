@@ -43,7 +43,7 @@ import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
 import { claudeConfigDir, claudeJsonPath } from './claude-config';
-import { t } from '@shared/i18n';
+import { language, LANGUAGE_SETTINGS, resolveLanguage, setLanguage, t, type LanguageSetting } from '@shared/i18n';
 
 let mainWindow: BrowserWindow | null = null;
 // 登録したプロファイル（Claude Code のアカウントごとの環境）
@@ -550,16 +550,7 @@ function registerIpc(): void {
     p.watchers.retain(cwd);
     return id;
   });
-  listen(IpcChannel.FolderClose, (e, id: string) => {
-    const p = P(e);
-    const cwd = p.folderViews.get(id);
-    if (cwd === undefined) return;
-    p.folderViews.delete(id);
-    p.watchers.release(cwd);
-    // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
-    p.shells.killOwner(id);
-    p.browser.forget(id);
-  });
+  listen(IpcChannel.FolderClose, (e, id: string) => closeFolderView(P(e), id));
   handle(IpcChannel.SessionsOpen, (e, id: string) => P(e).manager.open(id));
   handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => {
     const p = P(e);
@@ -699,6 +690,7 @@ function registerIpc(): void {
   handle(IpcChannel.ProfilesRemove, (_e, id: string) => removeProfile(String(id)));
   handle(IpcChannel.ProfilesPickDir, () => pickProfileDir());
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
+  handle(IpcChannel.LanguageGet, () => language());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, (e) =>
     readModelCatalog(P(e).claudeDir).then(
@@ -779,6 +771,17 @@ async function runGit(scm: SourceControl, action: GitAction): Promise<string | n
   }
 }
 
+// 新規セッションの画面で開いたフォルダを閉じる
+function closeFolderView(p: Profile, id: string): void {
+  const cwd = p.folderViews.get(id);
+  if (cwd === undefined) return;
+  p.folderViews.delete(id);
+  p.watchers.release(cwd);
+  // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
+  p.shells.killOwner(id);
+  p.browser.forget(id);
+}
+
 // 貼り付け・ドロップされた画像。Claude Code にはパスを貼り付けとして渡すと画像として添付される
 async function saveAttachment(name: string, data: Uint8Array): Promise<string> {
   const dir = join(app.getPath('userData'), 'attachments');
@@ -810,6 +813,16 @@ function buildMenu(): void {
               showWindow();
               sendTo(activeId)(IpcChannel.BrowserHostsOpen, undefined);
             },
+          },
+          { type: 'separator' },
+          {
+            label: t('main.menu.language'),
+            submenu: LANGUAGE_SETTINGS.map((setting) => ({
+              label: languageSettingLabel(setting),
+              type: 'radio' as const,
+              checked: settings.languageSetting() === setting,
+              click: () => changeLanguage(setting),
+            })),
           },
           { type: 'separator' },
           { role: 'services' },
@@ -1004,6 +1017,40 @@ function setWalkthroughControl(item: MenuItem): void {
   }
 }
 
+// メニューの「言語」の項目の名前。日本語と English は、どの言語の画面でもその言語の書き方で出す（読めない言語の画面からでも選べるように）
+function languageSettingLabel(setting: LanguageSetting): string {
+  if (setting === 'ja') return '日本語';
+  if (setting === 'en') return 'English';
+  return t('main.menu.languageSystem');
+}
+
+// 使う言語を、設定と Mac の言語の設定から決める
+function applyLanguage(): void {
+  setLanguage(resolveLanguage(settings.languageSetting(), app.getPreferredSystemLanguages()));
+}
+
+// メニューの「言語」。保存して、言語が変わったら、メニューを作り直し、アプリの画面（全プロファイル）を読み込み直す。
+// 画面は起動するときに言語を読むので、読み込み直すと新しい言語で出る。動いている Claude Code はそのまま。
+// 読み込み直すと新規セッションの画面の後始末（folders.close）が届かないので、先に閉じておく。
+// 保存できなかったら、メニューを作り直して選んでいたものに戻す
+function changeLanguage(setting: LanguageSetting): void {
+  const before = language();
+  try {
+    settings.setLanguageSetting(setting);
+  } catch {
+    buildMenu();
+    return;
+  }
+  applyLanguage();
+  buildMenu();
+  if (language() === before) return;
+  for (const [id, p] of opened) {
+    for (const folder of [...p.folderViews.keys()]) closeFolderView(p, folder);
+    const contents = contentsOf(id);
+    if (contents && !contents.isDestroyed()) contents.reload();
+  }
+}
+
 // 終了する。stop: Claude Code と pty ホストも止める。false なら動かしたままにして、次に起動したアプリが引き継ぐ
 async function quit(stop: boolean): Promise<void> {
   if (stop) for (const p of profiles()) await p.stop();
@@ -1076,6 +1123,8 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
+  // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
+  applyLanguage();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));
   remoteControl = app.isPackaged || process.env.TANACODE_REMOTE_CONTROL === '1';
   // 既定のプロファイル。データは userData に、設定はアプリ全体の設定と同じファイルに置く。開けなければ、アプリは続けられない

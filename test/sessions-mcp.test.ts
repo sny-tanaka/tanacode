@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
 import type { NewSessionOptions, ScreenChoice, SessionSummary } from '../src/shared/ipc';
 import type { AskQuestion, Menu, PermissionMode, ScreenInfo } from '../src/shared/screen';
@@ -33,7 +34,7 @@ import { pulledBackPrompt } from '../src/main/chat-log';
 import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
 import { textResult } from '../src/main/mcp-bridge';
-import { SESSIONS_GATE_COMMAND, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
+import { sessionsGateCommand, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { ownSettings } from '../src/main/statusline';
 
@@ -90,7 +91,7 @@ describe('中継と起動の引数', () => {
     // 子セッションの起動には、権限モードによらず確認を出させるフック
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: Hook[] } };
     expect(settings.hooks.PreToolUse.filter((h) => h.matcher === SESSIONS_GATED_TOOL)).toEqual([
-      { matcher: sessionToolId('start_session'), hooks: [{ type: 'command', command: SESSIONS_GATE_COMMAND, timeout: 10 }] },
+      { matcher: sessionToolId('start_session'), hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] },
     ]);
     const off = ownSettings(null, true, false) as { hooks: { PreToolUse: Hook[] } };
     expect(off.hooks.PreToolUse.some((h) => h.matcher === SESSIONS_GATED_TOOL)).toBe(false);
@@ -107,10 +108,20 @@ describe('中継と起動の引数', () => {
   });
 
   it('起動の確認のフックは、ask と、子も利用枠を使うことを書いた理由を出す', () => {
-    const out = execFileSync('/bin/sh', ['-c', SESSIONS_GATE_COMMAND], { encoding: 'utf8' });
+    const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8' });
     const decision = (JSON.parse(out) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput;
     expect(decision.permissionDecision).toBe('ask');
     expect(decision.permissionDecisionReason).toContain('利用枠');
+  });
+
+  it('起動の確認の理由は、Claude Code を起動するときの言語で書く（英語でも JSON として読める）', () => {
+    setLanguage('en');
+    try {
+      const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8' });
+      expect((JSON.parse(out) as { hookSpecificOutput: { permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.sessionsGate'));
+    } finally {
+      setLanguage('ja');
+    }
   });
 
   it('メニューのオン・オフは既定でオンで、保存される', () => {
@@ -151,7 +162,7 @@ describe('会話ログの見分け', () => {
   });
 
   it('子セッションの起動の確認のフックは、チャットのフックの一覧に出さない', () => {
-    const hook = { type: 'attachment', uuid: 'h1', attachment: { type: 'hook_success', hookName: 'PreToolUse:x', hookEvent: 'PreToolUse', command: SESSIONS_GATE_COMMAND, content: '' } } as TranscriptEntry;
+    const hook = { type: 'attachment', uuid: 'h1', attachment: { type: 'hook_success', hookName: 'PreToolUse:x', hookEvent: 'PreToolUse', command: sessionsGateCommand(), content: '' } } as TranscriptEntry;
     expect(toChatEvents(hook, '/r')).toEqual([]);
   });
 

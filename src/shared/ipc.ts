@@ -18,6 +18,7 @@ import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
 import type { SessionWalkthrough } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
+import type { Language } from './i18n';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -132,6 +133,7 @@ export const IpcChannel = {
   ProfilesChanged: 'profiles:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
+  LanguageGet: 'language:get',
   StatusLineGet: 'statusline:get',
   SystemStats: 'system:stats',
   ClaudeVersionGet: 'claude:version-get',
@@ -470,6 +472,11 @@ export type TanacodeApi = {
     get(): Promise<boolean>;
     set(on: boolean): Promise<void>;
   };
+  // 画面の言語（メニューの「言語」で選んだもの。「システムに合わせる」なら Mac の言語の設定から決めたもの）。
+  // 画面は起動するときに一度だけ読む（切り替えると、main が画面を読み込み直す）
+  language: {
+    get(): Promise<Language>;
+  };
   // この Mac の CPU・メモリの使用状況（2 秒ごと）
   system: {
     onStats(listener: (stats: SystemStats) => void): () => void;
@@ -707,6 +714,7 @@ export type IpcInvoke = {
   [IpcChannel.ScheduledCancel]: Api['scheduled']['cancel'];
   [IpcChannel.NotificationsGet]: Api['notifications']['get'];
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
+  [IpcChannel.LanguageGet]: Api['language']['get'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
   [IpcChannel.AppUpdateGet]: Api['appUpdate']['get'];
   [IpcChannel.AppUpdateInstall]: Api['appUpdate']['install'];

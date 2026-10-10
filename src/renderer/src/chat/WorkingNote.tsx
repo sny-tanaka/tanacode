@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { t } from '@shared/i18n';
+import { language, t } from '@shared/i18n';
 import type { Activity } from '@shared/screen';
 import { CheckMark } from '../layout/CheckMark';
 
@@ -8,13 +8,13 @@ function phaseLabel(phase: Activity['phase']): string | null {
   return phase === 'working' ? null : t(`chat.working.${phase}`);
 }
 
-// 画面の表記（5s・1m 5s・1h 2m）を、今の言語の表記（日本語なら 5秒・1分5秒・1時間2分）にする
+// 画面の表記（5s・1m 5s・1h 2m）を、今の言語の表記（日本語なら 5秒・1分5秒・1時間2分。日本語だけ間を詰める）にする
 function localElapsed(elapsed: string): string {
   return elapsed
     .replace(/(\d+)h/, (_, n: string) => t('chat.duration.hours', { count: n }))
     .replace(/(\d+)m/, (_, n: string) => t('chat.duration.minutes', { count: n }))
     .replace(/(\d+)s/, (_, n: string) => t('chat.duration.seconds', { count: n }))
-    .replace(/\s+/g, '');
+    .replace(/\s+/g, language() === 'ja' ? '' : ' ');
 }
 
 // 進み具合は 1 秒ごとに変わるので、ここだけで受け取る（チャット全体を描き直さない）

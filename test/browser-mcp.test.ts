@@ -373,12 +373,13 @@ describe('起動の引数', () => {
     expect(gateHooks(JSON.parse(off[off.indexOf('--settings') + 1]) as { hooks?: { PreToolUse?: Hook[] } })).toEqual([]);
   });
 
-  it('フックは、起動する Claude Code の環境の変数（中継のコマンド・入口・ソケット・セッション）で中継の入口を --gate 付きで動かす', () => {
+  it('フックは、起動する Claude Code の環境の変数（中継のコマンド・入口・ソケット・セッション・確認の理由の言語）で中継の入口を --gate 付きで動かす', () => {
     expect(browserGateEnv(launch, 's1')).toEqual({
       TANACODE_BROWSER_SOCKET: launch.socketPath,
       TANACODE_BROWSER_SESSION: 's1',
       TANACODE_BROWSER_COMMAND: launch.command,
       TANACODE_BROWSER_SCRIPT: launch.script,
+      TANACODE_LANGUAGE: 'ja',
     });
     // パスに空白があっても分かれないよう、変数はクォートする。目印の変数は、チャットのフックの一覧に出さないためのもの
     expect(BROWSER_GATE_COMMAND).toBe('TANACODE_BROWSER_GATE=1 ELECTRON_RUN_AS_NODE=1 "$TANACODE_BROWSER_COMMAND" "$TANACODE_BROWSER_SCRIPT" --gate');

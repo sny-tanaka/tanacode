@@ -277,7 +277,7 @@ export class ContextTracker {
       const toolUseId = from ? this.agents.get(from) : undefined;
       const tool = toolUseId ? this.tools.get(toolUseId) : undefined;
       // 待機中に届いたものは、Claude Code がそれを受けて作業を始めるので、新しいやりとりにする
-      if (!origin.queued) this.startTopic(uuid, tool ? t('main.context.subagentReport', { name: clip(tool.label, LABEL_CHARS) }) : t('main.context.peerNotice'), 0);
+      if (!origin.queued) this.startTopic(uuid, tool ? t('main.context.notice', { summary: t('main.context.subagentReport', { name: clip(tool.label, LABEL_CHARS) }) }) : t('main.context.peerNotice'), 0);
       if (toolUseId && tool) return this.addResult(uuid, toolUseId, tool, tokens);
       return this.addToTopic(uuid, tokens);
     }
