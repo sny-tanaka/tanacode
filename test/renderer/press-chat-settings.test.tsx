@@ -40,13 +40,8 @@ afterEach(() => {
 
 // IPC の返事を待つ
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
-// 名前の欄。出たあと、一覧が届いて描いたときの後片付け（名前を一覧に合わせる effect）まで済ませてから返す。
-// 済む前に打つと、打った名前があとから一覧の名前に戻される
-const nameInput = async (name: string) => {
-  const input = (await screen.findByDisplayValue(name)) as HTMLInputElement;
-  await settle();
-  return input;
-};
+// 名前の欄。出たらすぐ打てる（届いた名前への合わせ直しが、あとから打った名前を戻さない）
+const nameInput = async (name: string) => (await screen.findByDisplayValue(name)) as HTMLInputElement;
 
 describe('設定ファイルの選択欄（SettingsFileSelect）', () => {
   function Harness({ value, onChange }: { value: string | null; onChange: (id: string | null) => void }) {
