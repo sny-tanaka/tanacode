@@ -4,6 +4,7 @@ import { t } from '@shared/i18n';
 import { tx } from '../i18n';
 import { DisclosureIcon } from '../icons';
 import { Busy } from '../layout/Busy';
+import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { formatTokens } from '../workflow/WorkflowCard';
 import { useCompactMarks, useSessionContext } from './useSessionContext';
 
@@ -11,11 +12,7 @@ type Sort = 'size' | 'time';
 const SORT_KEY = 'tanacode.contextSort';
 
 function loadSort(): Sort {
-  try {
-    return localStorage.getItem(SORT_KEY) === 'time' ? 'time' : 'size';
-  } catch {
-    return 'size';
-  }
+  return readSharedPref(SORT_KEY) === 'time' ? 'time' : 'size';
 }
 
 type Props = {
@@ -54,12 +51,9 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
 
   const changeSort = useCallback((next: Sort) => {
     setSort(next);
-    try {
-      localStorage.setItem(SORT_KEY, next);
-    } catch {
-      // 保存できなくても今の表示には影響しない
-    }
+    writeSharedPref(SORT_KEY, next);
   }, []);
+  useSharedPrefChange(SORT_KEY, () => setSort(loadSort()));
 
   const items = context?.items ?? [];
   const current = useMemo(() => sorted(items.filter((i) => !i.compacted), sort), [items, sort]);

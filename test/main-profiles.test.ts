@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
@@ -157,5 +157,41 @@ describe('プロファイルの追加と削除', () => {
     await invokeFrom(view().webContents, IpcChannel.ProfilesUpdate, 'p2', { name: '自分', color: '#5FB98A' });
     expect(sentTo(mainWindow().webContents, IpcChannel.ProfilesChanged).at(-1)).toMatchObject({ profiles: [{ name: '会社' }, { name: '自分', color: '#5fb98a' }] });
     expect(sentTo(view().webContents, IpcChannel.ProfilesChanged).at(-1)).toMatchObject({ current: 'p2' });
+  });
+});
+
+describe('プロファイルをまたいで同じにする表示設定', () => {
+  const COLUMNS = 'tanacode.columns';
+  const savedPrefs = () => (JSON.parse(readFileSync(join(state.userData, 'shared-prefs.json'), 'utf8')) as { values: Record<string, string> }).values;
+  const sendFrom = (sender: unknown, channel: string, ...args: unknown[]) => state.listeners.get(channel)!({ sender }, ...args);
+
+  it('起動したときは、先に聞いてきた画面の値を採り、あとの画面にはその値を返す（知らないキー・形の違う値は採らない）', async () => {
+    await boot({ profiles: PROFILES });
+    await expect(invoke(IpcChannel.PrefsSync, { [COLUMNS]: '{"sessions":300}', 'tanacode.sessionOrderLock': '["A"]', 'tanacode.scmView': 1 })).resolves.toEqual({ [COLUMNS]: '{"sessions":300}' });
+    await expect(invokeFrom(view().webContents, IpcChannel.PrefsSync, { [COLUMNS]: '{"sessions":200}', 'tanacode.scmView': 'tree' })).resolves.toEqual({
+      [COLUMNS]: '{"sessions":300}',
+      'tanacode.scmView': 'tree',
+    });
+    expect(savedPrefs()).toEqual({ [COLUMNS]: '{"sessions":300}', 'tanacode.scmView': 'tree' });
+    // あとの画面から採ったものは、先の画面に配る
+    expect(sentTo(mainWindow().webContents, IpcChannel.PrefsChanged)).toEqual([{ key: 'tanacode.scmView', value: 'tree' }]);
+    await expect(invokeFrom({}, IpcChannel.PrefsSync, {})).rejects.toThrow('この画面のプロファイルが見つかりません');
+  });
+
+  it('変えると覚えて、ほかのプロファイルの画面にだけ配る。次の起動でも同じ値を返す', async () => {
+    await boot({ profiles: PROFILES });
+    sendFrom(view().webContents, IpcChannel.PrefsSet, COLUMNS, '{"sessions":320}');
+    expect(sentTo(mainWindow().webContents, IpcChannel.PrefsChanged)).toEqual([{ key: COLUMNS, value: '{"sessions":320}' }]);
+    expect(sentTo(view().webContents, IpcChannel.PrefsChanged)).toEqual([]);
+    // 同じ値・知らないキー・長すぎる値では配らない
+    sendFrom(view().webContents, IpcChannel.PrefsSet, COLUMNS, '{"sessions":320}');
+    sendFrom(view().webContents, IpcChannel.PrefsSet, 'tanacode.newSessionOptions', '{}');
+    sendFrom(view().webContents, IpcChannel.PrefsSet, COLUMNS, 'x'.repeat(1001));
+    expect(sentTo(mainWindow().webContents, IpcChannel.PrefsChanged)).toHaveLength(1);
+    expect(savedPrefs()).toEqual({ [COLUMNS]: '{"sessions":320}' });
+
+    const saved = readFileSync(join(state.userData, 'shared-prefs.json'), 'utf8');
+    await boot({ profiles: PROFILES, before: (s) => writeFileSync(join(s.userData, 'shared-prefs.json'), saved) });
+    await expect(invoke(IpcChannel.PrefsSync, { [COLUMNS]: '{"sessions":200}' })).resolves.toEqual({ [COLUMNS]: '{"sessions":320}' });
   });
 });
