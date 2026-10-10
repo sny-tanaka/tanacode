@@ -8,7 +8,7 @@ import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { useInsertInput } from '../chat/insertInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
-import { EFFORTS, MODES, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
+import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
 import { BranchIcon, ChevronDownIcon, CloseIcon, DefaultBranchIcon, FolderIcon, IconButton, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
@@ -305,7 +305,7 @@ export function NewSessionPane({
             title={t('sessions.newSession.modeTitle')}
           >
             <option value="">{t('sessions.newSession.defaultMode')}</option>
-            {MODES.map(([mode, label]) => (
+            {modeChoices().map(([mode, label]) => (
               <option key={mode} value={mode}>
                 {label}
               </option>

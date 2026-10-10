@@ -23,19 +23,6 @@ export const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']
 // ツールの状態の名前
 export const statusLabel = (status: ToolStatus) => t(`chat.toolCard.${status}`);
 
-// 前からの表の形（作業の書き出しが使っている）。読んだときの言語で返すよう、値は getter にする。
-// ExportDocument を statusLabel に替えたら消す
-export const STATUS_LABEL: Readonly<Record<ToolStatus, string>> = {
-  get running() {
-    return statusLabel('running');
-  },
-  get done() {
-    return statusLabel('done');
-  },
-  get error() {
-    return statusLabel('error');
-  },
-};
 
 type Props = {
   item: ToolItem;

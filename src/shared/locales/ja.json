@@ -1,0 +1,1715 @@
+{
+  "common": {
+    "cancel": "キャンセル",
+    "close": "閉じる",
+    "delete": "削除",
+    "open": "開く",
+    "add": "追加",
+    "back": "戻る",
+    "save": "保存"
+  },
+  "main": {
+    "error": {
+      "profileOfViewNotFound": "この画面のプロファイルが見つかりません",
+      "nothingToExport": "書き出す中身がありません",
+      "folderNotFound": "フォルダが見つかりません: {path}",
+      "folderCannotOpen": "フォルダを開けません: {path}",
+      "ptyHostUnreachable": "pty ホストに繋がりません: {path}"
+    },
+    "dialog": {
+      "pickFolder": "作業するフォルダを選択",
+      "pickSettingsFile": "設定ファイルを選択",
+      "exportDefaultName": "作業",
+      "exportTitle": "作業を書き出す",
+      "pickProfileDir": "Claude Code の設定のフォルダを選択",
+      "liveSessions": "Claude Code が動いているセッションがあります",
+      "liveSessionLine": "・{title}（{state}）",
+      "updateKeepRunningDetail": "動かしたまま更新すると、作業は切れずに、起動し直したアプリが引き継ぎます。新しいバージョンで増えた Claude のツールなどは、各セッションを「再起動」してから使えます。",
+      "updateStopDetail": "止めて更新すると、作業は途中で切れますが、すべて新しいバージョンで動きます。",
+      "updateKeepRunning": "動かしたまま更新",
+      "updateStop": "Claude Code も止めて更新",
+      "updateFailed": "tanacode を更新できませんでした",
+      "updateManual": "終了してから、ターミナルで brew update && brew upgrade --cask {cask} を実行してください。",
+      "updateBlocked": "macOS に止められたときは、システム設定 →「プライバシーとセキュリティ」→「アプリケーションの管理」で tanacode を許可すると、次から入れ替えられます。",
+      "ok": "OK",
+      "openLog": "ログを開く",
+      "quitDetail": "止めると、作業は途中で切れ、Remote Control からも続けられなくなります。動かしたまま終了すると、次に起動したときに引き継ぎます。",
+      "quitWillUpdate": "終了すると、Homebrew で新しいバージョンに入れ替えます。",
+      "quitKeepRunning": "動かしたまま終了",
+      "quitStop": "Claude Code も止めて終了",
+      "ptyHostFailed": "Claude Code を動かす常駐プロセスを起動できませんでした",
+      "errorWithLog": "{error}\n\nログ: {log}",
+      "profileOpenFailed": "プロファイル「{name}」を開けませんでした"
+    },
+    "menu": {
+      "notifyUpdates": "新しいバージョンが出たら通知する",
+      "updateOnQuit": "終了するときに新しいバージョンを入れる（Homebrew）",
+      "browserControl": "Claude にアプリ内ブラウザを操作させる",
+      "sessionsControl": "Claude にほかのセッションを扱わせる",
+      "checklistControl": "Claude にチェックリストを扱わせる",
+      "walkthroughControl": "Claude にウォークスルーさせる",
+      "browserHosts": "アプリ内ブラウザで Claude に許す先…",
+      "file": "ファイル",
+      "newSession": "新規セッション",
+      "stopAndQuit": "Claude Code も止めて終了"
+    },
+    "notification": {
+      "browserAsk": "ブラウザでの操作の依頼: {message}",
+      "turnCompleted": "作業が完了しました",
+      "needsTerminal": "ターミナルでの操作が必要です",
+      "question": "質問しています",
+      "permission": "実行の許可: {detail}",
+      "permissionNoDetail": "実行の許可を求めています",
+      "confirm": "確認: {title}",
+      "confirmNoTitle": "確認を求めています",
+      "images": "画像 {count} 枚",
+      "scheduledMissed": "{time} に送る予約を、時刻に送れませんでした: {text}",
+      "scheduledFailed": "予約したメッセージを送れませんでした（{reason}）: {text}",
+      "unknownReason": "理由は不明"
+    },
+    "format": {
+      "listSeparator": "、",
+      "shortListSeparator": "・",
+      "sentenceSeparator": "。"
+    },
+    "session": {
+      "untitled": "新しいセッション",
+      "notFound": "セッションが見つかりません"
+    },
+    "state": {
+      "question": "質問への回答待ち",
+      "permission": "実行の許可待ち",
+      "other": "操作待ち",
+      "browser": "ブラウザでの操作待ち",
+      "starting": "起動中",
+      "workingWithBackground": "作業中（バックグラウンド {count}件）",
+      "working": "作業中",
+      "waitingBackground": "バックグラウンド {count}件の完了待ち",
+      "idle": "待機中"
+    },
+    "remote": {
+      "unavailable": "Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）",
+      "switching": "Remote Control を切り替えている途中です。少し待ってからもう一度押してください",
+      "waitingAnswer": "Claude Code が質問や確認の答えを待っているため、今は切り替えられません。答えてから切り替えてください",
+      "draft": "ターミナルの Claude Code の入力欄に書きかけの文字があるため、切り替えられません",
+      "failed": "Claude Code の画面で Remote Control を切り替えられませんでした。ターミナルで /remote-control を操作してください"
+    },
+    "task": {
+      "notRunning": "セッションが動いていないため、止められません",
+      "nothingToStop": "止められるもの（動いているバックグラウンドのタスク）が見つかりません",
+      "busy": "別の操作の途中です。少し待ってからもう一度押してください",
+      "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
+      "draft": "ターミナルの入力欄に書きかけの文字があるため、止められません",
+      "notFound": "画面に見つかりませんでした。すでに終わったか、止まっています",
+      "ambiguous": "同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください",
+      "failed": "止められませんでした。ターミナルで /tasks を開いて止めてください"
+    },
+    "send": {
+      "notAccepting": "入力を受け付けられる状態ではなくなったため、送れませんでした",
+      "menuAppeared": "質問や確認が出たため、送れませんでした",
+      "notRunning": "Claude Code が動いていません",
+      "exited": "Claude Code が終了しました",
+      "cancelled": "送るのを取りやめました",
+      "waitingAnswer": "質問や確認の答えを待っているため、送れませんでした",
+      "draft": "ターミナルの入力欄に書きかけの文字があるため、送れませんでした",
+      "busy": "Claude Code の手が空かないため、送れませんでした"
+    },
+    "worktree": {
+      "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
+      "createFailed": "Claude Code が worktree を作れませんでした",
+      "commandAt": "{command}（{dir}）",
+      "started": "worktree .claude/worktrees/{name}（ブランチ {branch}） で始めました",
+      "restored": "消していた worktree .claude/worktrees/{name}（ブランチ {branch}） を作り直しました",
+      "cloned": "{paths} を元のフォルダから複製しました",
+      "cloneFailed": "{paths} は複製できませんでした",
+      "topDir": "いちばん上",
+      "installed": "{commands} を実行しました",
+      "commandFailedAt": "{command}（{dir}・終了コード {code}）",
+      "installFailed": "{commands} が失敗しました。ターミナルのタブで確かめてください",
+      "notRepo": "worktree で始めるには、git のリポジトリのフォルダを選んでください",
+      "noCommit": "worktree で始めるには、リポジトリにコミットが 1 つ以上必要です",
+      "noName": "worktree の名前を決められませんでした",
+      "locked": "worktree がロックされているため、消しませんでした",
+      "lockedWithReason": "worktree がロックされているため、消しませんでした（{reason}）"
+    },
+    "settingsFile": {
+      "unusable": "設定ファイル「{name}」（{path}）を使えません: {reason}",
+      "fileNotFound": "ファイルが見つかりません",
+      "invalidJson": "JSON として読めません（書き方を確かめてください）",
+      "notObject": "中身が JSON のオブジェクトではありません",
+      "defaultName": "設定ファイル",
+      "notAbsolute": "設定ファイルのパスは、/ から始まる絶対パスで指定してください",
+      "duplicatePath": "同じファイルは、すでに「{name}」として登録されています",
+      "entryNotFound": "登録が見つかりません",
+      "nameRequired": "名前を入力してください",
+      "duplicateName": "「{name}」という名前の設定ファイルは、すでにあります",
+      "removed": "このセッションが使っていた設定ファイルは、登録から外されています。選択欄の「管理…」で登録し直すか、別の設定ファイルに切り替えてください",
+      "unavailable": "設定ファイルを使えない状態です"
+    },
+    "profile": {
+      "cannotRemoveDefault": "標準のプロファイルは外せません",
+      "hasLiveSessions": "Claude Code が動いているセッションがあります。止めてから外してください",
+      "defaultName": "標準",
+      "sameDir": "ほかのプロファイルと同じフォルダです: {path}",
+      "notDir": "フォルダではありません: {path}",
+      "notFound": "プロファイルが見つかりません",
+      "nameRequired": "名前を入れてください",
+      "dirNotAbsolute": "フォルダは絶対パスか ~/ で始まるパスで指定してください"
+    },
+    "browserHosts": {
+      "invalid": "書き方が違います: {hosts}（例: example.test・*.example.test・192.168.0.10）"
+    },
+    "scheduled": {
+      "cannotSchedule": "このセッションには予約できません",
+      "empty": "送る内容がありません",
+      "pastTime": "これから先の時刻を指定してください",
+      "sending": "送っている途中のため、時刻を変えられません",
+      "notFound": "予約が見つかりません"
+    },
+    "context": {
+      "start": "会話の始まり",
+      "compactSummary": "前回の圧縮の要約",
+      "image": "「{topic}」に添付した画像",
+      "imageNth": "「{topic}」に添付した画像 {index} 枚目",
+      "subagentReport": "知らせ: サブエージェント「{name}」の報告",
+      "peerNotice": "別の Claude からの知らせ",
+      "notice": "知らせ: {summary}",
+      "taskFinished": "バックグラウンドのタスクが終わりました",
+      "answer": "質問への答え: {answer}",
+      "noAnswer": "（回答なし）"
+    },
+    "translate": {
+      "invalidTexts": "訳す文字の形が違います",
+      "tooLong": "長すぎて訳せません",
+      "unreadable": "翻訳の補助プログラムの返事を読めませんでした",
+      "timeout": "時間内に訳し終わりませんでした"
+    },
+    "git": {
+      "commitMessageRequired": "コミットメッセージを入力してください",
+      "noDefaultBranch": "デフォルトブランチが分かりません",
+      "diverged": "{name} には切り替えましたが、手元の {name} が {target} と分かれているため最新まで進められませんでした"
+    },
+    "search": {
+      "invalidRegex": "正規表現が正しくありません"
+    },
+    "subagent": {
+      "omitted": "…（省略）"
+    },
+    "model": {
+      "noCatalog": "Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません",
+      "needsVersion": "Claude Code {version} 以上が必要（今は {installed}）"
+    },
+    "walkthrough": {
+      "missing": "ウォークスルーがありません。",
+      "noBody": "本文がありません。",
+      "noSteps": "ウォークスルーのステップがありません。",
+      "notRepo": "git のリポジトリではありません。",
+      "detached": "ブランチにいません（detached HEAD）。",
+      "prLookupFailed": "GitHub の PR を調べられませんでした。gh が入っていて、ログインしているか（gh auth status）確かめてください。",
+      "noOpenPr": "ブランチ {branch} の開いている PR がありません。先に PR を作ってください。",
+      "badPrUrl": "PR の URL を読めませんでした（{url}）。",
+      "headMismatch": "手元の HEAD（{local}）が、PR の最新のコミット（{remote}）と違います。プッシュ（かプル）してから載せてください。",
+      "missingFiles": "コミットに入っていないファイルがあります: {files}。コミットしてプッシュしてから載せてください。",
+      "dirtyFiles": "コミットしていない変更があるファイルがあります: {files}。コミットしてプッシュしてから載せてください。",
+      "emptyBody": "本文が空です。",
+      "tooLong": "本文が長すぎます（{count} 文字。GitHub のコメントは {max} 文字まで）。説明を短くしてください。"
+    }
+  },
+  "commands": {
+    "builtin": {
+      "add-dir": "作業フォルダを追加する",
+      "advisor": "要所でより強いモデルに相談させる",
+      "artifacts": "公開・共有した Artifact を見る",
+      "auto-mode-setup": "auto モードに環境を教える",
+      "autocompact": "自動圧縮するコンテキストの量を設定",
+      "autofix-pr": "今の PR の問題を見張って自動で直す",
+      "background": "このセッションをバックグラウンドに回す",
+      "branch": "この時点から会話を分岐する",
+      "btw": "作業を止めずにちょっと質問する",
+      "bug": "不具合を報告する",
+      "cd": "作業フォルダを移す",
+      "chrome": "Claude in Chrome の設定",
+      "clear": "会話をリセットして新しく始める",
+      "color": "入力欄の色を設定",
+      "compact": "会話を要約してコンテキストを空ける",
+      "config": "設定を開く（ターミナルで操作）",
+      "context": "コンテキストの使用量を表示",
+      "copy": "直前の返事をクリップボードにコピー",
+      "design": "Design プロジェクトへのアクセスを設定",
+      "design-login": "デザインシステムへのアクセスを認可",
+      "desktop": "Claude Desktop で続ける",
+      "diff": "未コミットの変更とターンごとの差分を見る",
+      "effort": "エフォートを変える（既定値も変わる。下の欄推奨）",
+      "exit": "Claude Code を終了",
+      "export": "会話をファイルやクリップボードに書き出す",
+      "fast": "高速モードの切り替え",
+      "feedback": "Anthropic にフィードバックを送る",
+      "focus": "発言・要約・返事だけの表示に切り替え",
+      "fork": "この会話を別のバックグラウンドセッションに複製",
+      "goal": "終える前に確かめるゴールを設定",
+      "help": "ヘルプとコマンド一覧",
+      "hooks": "フックの設定を見る",
+      "ide": "IDE 連携の管理",
+      "import": "ほかのコーディングエージェントの設定を取り込む",
+      "import-memory": "ほかの AI アシスタントのメモリを取り込む",
+      "install-github-app": "GitHub Actions を設定",
+      "install-slack-app": "Slack アプリを入れる",
+      "keybindings": "キーボードショートカットの設定を開く",
+      "list-agents": "メッセージを送れるサブエージェント・セッションの一覧",
+      "login": "Anthropic アカウントでログイン",
+      "logout": "ログアウト",
+      "mcp": "MCP サーバーの管理",
+      "memory": "CLAUDE.md とメモリの編集",
+      "mobile": "モバイルアプリの QR コードを表示",
+      "morning": "朝のまとめを作る・設定する",
+      "model": "モデルを変える（既定値も変わる。下のモデル欄推奨）",
+      "output-style": "出力スタイルの一覧・切り替え",
+      "passes": "Claude Code の無料体験を友達に共有",
+      "permissions": "権限ルールの管理",
+      "plan": "プランモードにする・今の計画を見る",
+      "plugin": "プラグインの管理",
+      "powerup": "機能を短いレッスンで知る",
+      "privacy-settings": "プライバシー設定",
+      "radio": "Claude FM を聴く",
+      "recap": "セッションの一行まとめを作る",
+      "release-notes": "リリースノート",
+      "reload-plugins": "プラグインの変更を読み込む",
+      "reload-skills": "スキルの追加・変更を読み込む",
+      "remote-control": "スマホや claude.ai/code から操作",
+      "remote-env": "クラウドエージェントの既定の環境を選ぶ",
+      "rename": "会話の名前を変える",
+      "resume": "過去の会話を再開",
+      "rewind": "会話やコードを以前の時点に戻す",
+      "run": "このプロジェクトのアプリを起動して変更を確かめる",
+      "sandbox": "サンドボックスの設定",
+      "scroll-speed": "スクロールの速さを調整",
+      "skill-doctor": "使われずにコンテキストを使っているスキルを調べる",
+      "skills": "使えるスキルの一覧",
+      "slides": "スライドを作る",
+      "status": "バージョン・モデル・アカウントなどの状態",
+      "stickers": "ステッカーを注文",
+      "subtask": "今の文脈ごとサブエージェントに任せる",
+      "tasks": "バックグラウンドで動いているものを見る",
+      "teleport": "クラウドに送る・claude.ai から再開する",
+      "terminal-setup": "Shift+Enter の改行を設定",
+      "theme": "テーマを変える",
+      "tui": "ターミナル UI の描画方式を設定",
+      "ultrareview": "クラウドでバグを探して検証する",
+      "upgrade": "プランをアップグレード",
+      "usage": "使用量・プランの状況",
+      "usage-credits": "利用クレジットの設定",
+      "voice": "音声モードの切り替え",
+      "web-setup": "Web 版の Claude Code を設定",
+      "workflows": "ワークフローの一覧",
+      "batch": "大きな変更を調べて計画し、並列で実行",
+      "code-review": "今の差分や PR をレビュー",
+      "debug": "デバッグログを有効にして問題を調べる",
+      "doctor": "インストールの診断と修正",
+      "fewer-permission-prompts": "許可の確認を減らす設定を提案",
+      "init": "CLAUDE.md を作る",
+      "insights": "セッションの分析レポートを作る",
+      "loop": "プロンプトやコマンドを一定間隔で繰り返す",
+      "schedule": "クラウドエージェントの予約実行",
+      "security-review": "今の変更のセキュリティレビュー",
+      "simplify": "変更したコードの重複・簡素化・効率を見直す",
+      "statusline": "ステータスラインを設定",
+      "team-onboarding": "チーム向けの導入ガイドを作る",
+      "verify": "変更が本当に意図どおり動くか確かめる"
+    }
+  },
+  "tools": {
+    "server": {
+      "browser": "アプリ内ブラウザ",
+      "sessions": "セッション",
+      "checklist": "チェックリスト",
+      "walkthrough": "ウォークスルー"
+    },
+    "browser": {
+      "screenshot": "スクリーンショット",
+      "get_text": "ページの文字",
+      "get_accessibility_tree": "アクセシビリティのツリー",
+      "inspect": "要素の HTML とスタイル",
+      "get_console_logs": "コンソール",
+      "get_failed_requests": "失敗した通信",
+      "navigate": "開く",
+      "list_tabs": "タブの一覧",
+      "select_tab": "タブの切り替え",
+      "close_tab": "タブを閉じる",
+      "click": "クリック",
+      "type": "入力",
+      "press_key": "キー",
+      "scroll": "スクロール",
+      "wait_for": "待つ",
+      "set_viewport": "表示幅",
+      "evaluate": "JavaScript の実行",
+      "ask_user_to_act": "操作の依頼"
+    },
+    "sessions": {
+      "list_sessions": "セッションの一覧",
+      "read_session": "セッションを読む",
+      "get_session_diff": "セッションの変更",
+      "get_session": "セッションの状態",
+      "wait_sessions": "子セッションを待つ",
+      "start_session": "子セッションを始める",
+      "send_message": "子セッションに指示",
+      "answer_question": "子セッションの質問に答える",
+      "stop_session": "子セッションを中断"
+    },
+    "checklist": {
+      "checklist_overview": "一覧",
+      "card_get": "カードを読む",
+      "list_create": "リストを作る",
+      "list_update": "リストを変える",
+      "list_delete": "リストを消す",
+      "card_add": "カードを足す",
+      "card_update": "カードを変える",
+      "card_check": "チェックする",
+      "card_uncheck": "チェックを外す",
+      "card_reply": "返信する",
+      "card_move": "カードを移す",
+      "card_delete": "カードを消す",
+      "card_restore": "カードを戻す",
+      "cards_copy": "別のセッションへコピー"
+    },
+    "walkthrough": {
+      "start_walkthrough": "始める",
+      "show_code": "コードを示す",
+      "walkthrough_status": "今の場所"
+    },
+    "target": {
+      "cardCount": "{count} 枚",
+      "stepCount": "{count} ステップ"
+    },
+    "notice": {
+      "untitledSession": "新しいセッション",
+      "childQuestion": "子セッション「{name}」（{id}）が質問への回答を待っています（answer_question で答えられます）。",
+      "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。許可の確認には人だけが答えるので、人に伝えてください。",
+      "childWaiting": "子セッション「{name}」（{id}）がターミナルでの操作を待っています。人に伝えてください。",
+      "childExited": "子セッション「{name}」（{id}）が終了しました。",
+      "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
+      "checkSessions": "get_session で確かめてください。",
+      "cardReply": "「{list}」#{number}「{title}」に人が返信しました: 「{reply}」。",
+      "checkCards": "card_get で確かめて対応し、返事は card_reply で書いてください。",
+      "clipped": "{text}…（続きは card_get で）",
+      "cardsCopied": "セッション「{session}」から「{list}」に {numbers}（{titles}）が届きました。"
+    },
+    "checklistCopy": {
+      "sessionNotFound": "セッションが見つかりません",
+      "notVisible": "コピーできるのは、同じフォルダのセッションと、親子・兄弟のセッションだけです",
+      "archived": "アーカイブしたセッションにはコピーできません"
+    }
+  },
+  "chat": {
+    "pane": {
+      "rewindNotFound": "巻き戻し先の発言が見つかりませんでした。ターミナルで /rewind を操作してください。",
+      "model": "モデル",
+      "configureFailed": "変更できませんでした: {error}",
+      "settingsFileDefault": "標準",
+      "settingsFileMissing": "登録なし",
+      "confirmSettingsFile": "設定ファイルを「{name}」に変えます。Claude Code を起動し直して会話を続けます。設定の内容（接続先の URL・API キーなど）によっては、これまでの会話の内容が新しい接続先に送られます。\n\n変えますか？",
+      "scheduleFailed": "予約できませんでした: {error}",
+      "compact": "圧縮",
+      "compactTip": "会話を要約してコンテキストを空ける（/compact）。作業中は押せません",
+      "restart": "再起動",
+      "restartTip": "Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます",
+      "confirmRestart": "作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？",
+      "restartFailed": "再起動できませんでした: {error}",
+      "export": "作業を書き出す…",
+      "exportTip": "このセッションの流れを、1 枚の HTML ファイルに書き出す",
+      "terminal": "Claude Code の画面",
+      "terminalTip": "Claude Code をターミナルの画面のまま表示して操作する（エディタの下のパネル）",
+      "starting": "Claude Code を起動しています…",
+      "showInTerminal": "ターミナルで見る",
+      "queued": "順番待ち — 今の作業が一区切りしたら Claude Code に渡されます",
+      "sending": "送信中…",
+      "imageCount": "画像 {count} 枚",
+      "sendOnResume": "Claude Code を再開すると送ります",
+      "sendAfterWorktree": "worktree の準備が終わるのを待って送ります…",
+      "sendAfterStart": "Claude Code の起動を待って送ります…",
+      "takeBack": "取り消す",
+      "takeBackTip": "送るのをやめて入力欄に戻す",
+      "sendNowFailed": "送れませんでした: {error}",
+      "rescheduleFailed": "時刻を変えられませんでした: {error}",
+      "slowStart": "Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください",
+      "rewinding": "巻き戻し先を選んでいます…",
+      "cancelEsc": "キャンセル（Esc）",
+      "unknownScreen": "Claude Code がチャットでは操作できない画面を表示しています",
+      "closeEsc": "閉じる（Esc）",
+      "operateInTerminal": "ターミナルで操作",
+      "archived": "このセッションはアーカイブされています",
+      "unarchive": "アクティブに戻す",
+      "exited": "Claude Code が終了しました（code {code}）",
+      "resume": "再開",
+      "jumpToLatest": "最新のメッセージへ",
+      "chooseAbove": "上の選択肢から選んでください",
+      "placeholder": "Claude Codeに指示する（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）",
+      "settingsFileTitle": "設定ファイル（変更すると Claude Code を起動し直して会話を再開します。モデルとエフォートは設定ファイルの既定に戻ります）",
+      "modelTitle": "モデル（変更すると Claude Code を起動し直して会話を再開します）",
+      "refreshModels": "モデル一覧を更新",
+      "effortTitle": "エフォート（変更すると Claude Code を起動し直して会話を再開します）",
+      "noEffort": "エフォートなし",
+      "effort": "エフォート",
+      "modeTitle": "権限モード（このセッションだけ。Shift+Tab と同じ）",
+      "mode": "モード",
+      "bypassPermissions": "すべて許可"
+    },
+    "toolCard": {
+      "running": "実行中…",
+      "done": "完了",
+      "error": "エラー / 中断",
+      "failed": "失敗",
+      "stopped": "停止",
+      "closeDetail": "詳細を閉じる",
+      "openDetail": "詳細を開く",
+      "background": "バックグラウンド",
+      "exitCode": "終了コード {code}",
+      "openSession": "セッションを開く",
+      "openSessionNamed": "セッション「{name}」を開く",
+      "recentTools": "直近のツール",
+      "finalTools": "最後のツール",
+      "prompt": "プロンプト",
+      "input": "入力",
+      "diff": "差分",
+      "result": "結果",
+      "errorOutput": "エラー",
+      "toolCalls": "ツール {count}回",
+      "previousTool": "直前: {tool}",
+      "tokens": "{count}k tokens"
+    },
+    "row": {
+      "rewind": "ここまで戻す",
+      "rewindTip": "この発言の前まで会話やコードを戻す（/rewind）",
+      "openCardTip": "チェックリストのカードを開く",
+      "openCard": "カードを開く",
+      "shellOutput": "出力",
+      "hooks": "フック",
+      "thinking": "思考",
+      "answers": "質問への回答"
+    },
+    "hookRuns": {
+      "success": "成功",
+      "blocked": "止めた",
+      "error": "失敗",
+      "context": "Claude に情報を渡した",
+      "exitCode": "終了コード {code}",
+      "contextSent": "Claude に渡した内容",
+      "reason": "理由",
+      "stdout": "標準出力",
+      "stderr": "標準エラー"
+    },
+    "hookGroup": {
+      "blocked": "止めた {count}",
+      "failed": "失敗 {count}",
+      "count": "フック {count}件"
+    },
+    "toolGroup": {
+      "failed": "失敗 {count}",
+      "count": "{count}件の操作",
+      "edit": "編集 {count}",
+      "run": "実行 {count}",
+      "read": "読込 {count}",
+      "search": "検索 {count}",
+      "fetch": "取得 {count}",
+      "agent": "エージェント {count}",
+      "workflow": "ワークフロー {count}",
+      "question": "質問 {count}",
+      "todo": "ToDo {count}",
+      "browser": "ブラウザ {count}",
+      "session": "セッション {count}",
+      "checklist": "チェックリスト {count}",
+      "walkthrough": "ウォークスルー {count}",
+      "mcp": "MCP {count}",
+      "other": "その他 {count}"
+    },
+    "toolLine": {
+      "questionWaiting": "質問への回答を待っています…",
+      "questionAnswered": "質問に回答しました",
+      "failed": "{text}（失敗）",
+      "todo": "ToDo",
+      "editRunning": "{subject} を編集中…",
+      "editFailed": "{subject} の編集に失敗しました",
+      "editDone": "{subject} を編集しました",
+      "runRunning": "{subject} を実行中…",
+      "runFailed": "{subject} の実行に失敗しました",
+      "runDone": "{subject} を実行しました",
+      "readRunning": "{subject} を読み込み中…",
+      "readFailed": "{subject} の読み込みに失敗しました",
+      "readDone": "{subject} を読み込みました",
+      "searchRunning": "{subject} を検索中…",
+      "searchFailed": "{subject} の検索に失敗しました",
+      "searchDone": "{subject} を検索しました",
+      "fetchRunning": "{subject} を取得中…",
+      "fetchFailed": "{subject} の取得に失敗しました",
+      "fetchDone": "{subject} を取得しました",
+      "delegateRunning": "{subject} を依頼中…",
+      "delegateFailed": "{subject} の依頼に失敗しました",
+      "delegateDone": "{subject} を依頼しました",
+      "updateRunning": "{subject} を更新中…",
+      "updateFailed": "{subject} の更新に失敗しました",
+      "updateDone": "{subject} を更新しました",
+      "operateRunning": "{subject} を操作中…",
+      "operateFailed": "{subject} の操作に失敗しました",
+      "operateDone": "{subject} を操作しました"
+    },
+    "duration": {
+      "underSecond": "1秒未満",
+      "seconds": "{count}秒",
+      "minutesSeconds": "{minutes}分{seconds}秒",
+      "minutes": "{count}分",
+      "hours": "{count}時間"
+    },
+    "working": {
+      "waiting": "応答を待っています",
+      "thinking": "考えています",
+      "writing": "応答を書いています",
+      "tokens": "{count} トークン",
+      "inProgress": "作業中…",
+      "done": "完了"
+    },
+    "remoteControl": {
+      "unavailable": "Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）",
+      "about": "スマホの Claude アプリや claude.ai/code から、このセッションを操作できるようにする（/remote-control）",
+      "willConnect": "始めるとつなぎます",
+      "wontConnect": "始めてもつなぎません",
+      "connected": "つながっています",
+      "enabled": "リモートコントロールは有効です（起動やつながりが済むと、つながります）",
+      "disconnected": "つないでいません"
+    },
+    "todo": {
+      "title": "Todo"
+    },
+    "transcript": {
+      "apiError": "API エラー: {message}",
+      "apiErrorRetrying": "API エラー: {message} — 再試行中（{attempt}/{max}）",
+      "unknownError": "不明なエラー",
+      "apiErrorNoDetail": "API エラー",
+      "charsOmitted": "…（{count} 文字省略）",
+      "compacted": "会話を圧縮しました",
+      "compactedAuto": "会話を自動で圧縮しました",
+      "compactedFrom": "会話を圧縮しました（{count}k tokens から）",
+      "compactedAutoFrom": "会話を自動で圧縮しました（{count}k tokens から）",
+      "taskFinished": "バックグラウンドのタスクが終わりました",
+      "ciEnabled": "有効になりました",
+      "ciNewComments": "新しいレビューコメント {count} 件",
+      "ciReceived": "知らせが届きました",
+      "ciNotice": "CI の自動修正: {what}",
+      "ciNoticePr": "CI の自動修正（PR #{pr}）: {what}",
+      "scheduledTask": "スケジュールタスクの実行",
+      "scheduledTaskNamed": "スケジュールタスク「{name}」の実行",
+      "omitted": "…（省略）",
+      "noAnswer": "（回答なし）",
+      "image": "[画像]",
+      "linesOmitted": "…（{count} 行省略）"
+    }
+  },
+  "composer": {
+    "input": {
+      "suggestSession": "セッション",
+      "suggestArchived": "アーカイブ済み",
+      "remove": "外す",
+      "image": "画像 {name}",
+      "schedule": "時刻を指定して送信",
+      "scheduleTip": "時刻を指定して送信（予約）",
+      "interrupt": "中断",
+      "send": "送信",
+      "sendTip": "送信（⌘Enter）"
+    },
+    "mode": {
+      "manual": "都度確認",
+      "acceptEdits": "編集は自動",
+      "plan": "プラン",
+      "auto": "auto"
+    },
+    "models": {
+      "loadFailed": "モデルの一覧を読み込めませんでした: {error}",
+      "needsUpdate": "{name}（要更新）",
+      "refresh": "モデル一覧を読み込み直す（Claude Code が持っている一覧の控えから）",
+      "refreshAsOf": "モデル一覧を読み込み直す（Claude Code が持っている一覧の控えから）。{time} 時点"
+    },
+    "sessionRef": {
+      "open": "セッション「{name}」を開く",
+      "missing": "一覧に無いセッション（ID {id}）",
+      "fromParent": "親セッションからの指示",
+      "fromParentNamed": "親セッション「{name}」からの指示",
+      "openParent": "親セッションを開く"
+    },
+    "images": {
+      "closeZoom": "画像を閉じる",
+      "loading": "画像を読み込み中…",
+      "unreadable": "画像（読み込めません）",
+      "zoom": "クリックで拡大"
+    },
+    "sentFiles": {
+      "label": "Claude から届いたファイル",
+      "failed": "送れませんでした",
+      "openTip": "{path}\nクリックでエディタに開く"
+    },
+    "markdown": {
+      "run": "実行",
+      "openInBrowser": "既定のブラウザで開く",
+      "externalImageAlt": "外部の画像（{alt}）: {url}",
+      "externalImage": "外部の画像: {url}"
+    }
+  },
+  "schedule": {
+    "row": {
+      "images": "画像 {count} 枚",
+      "sendNow": "今すぐ送る",
+      "sendNowTip": "時刻を待たずに送る（Claude Code の手が空くのは待ちます）",
+      "reschedule": "時刻を変える",
+      "cancel": "取り消す",
+      "cancelSendingTip": "送るのをやめて入力欄に戻す",
+      "cancelTip": "予約をやめて入力欄に戻す"
+    },
+    "note": {
+      "scheduled": "{time} に送ります",
+      "sending": "予約の時刻になりました。Claude Code の手が空いたら送ります…",
+      "missed": "{time} の予約を送っていません（アプリが閉じていた・Mac がスリープしていたなど）",
+      "failed": "送れませんでした（{error}）",
+      "unknownReason": "理由は不明"
+    },
+    "picker": {
+      "heading": "送信する時刻",
+      "custom": "日時を指定",
+      "date": "日付",
+      "time": "時刻",
+      "futureOnly": "これから先の時刻を指定してください",
+      "submit": "予約"
+    },
+    "preset": {
+      "in30Minutes": "30 分後",
+      "in1Hour": "1 時間後",
+      "tomorrowMorning": "明日の朝",
+      "nextMondayMorning": "次の月曜の朝"
+    },
+    "time": {
+      "tomorrow": "明日 {time}",
+      "yesterday": "昨日 {time}",
+      "date": "{month}/{day}（{weekday}）{time}",
+      "dateWithYear": "{year}/{month}/{day}（{weekday}）{time}"
+    }
+  },
+  "settingsFiles": {
+    "select": {
+      "default": "標準",
+      "unreadable": "{name}（読めません）",
+      "missing": "（登録なし）",
+      "manage": "管理…"
+    },
+    "dialog": {
+      "addFailed": "登録できませんでした: {error}",
+      "usedBy": "使っているセッションが {count} 件あります。次に起動するときに断られます。",
+      "removeConfirm": "「{name}」を登録から外します（ファイル自体は消えません）。",
+      "removeFailed": "登録から外せませんでした: {error}",
+      "title": "設定ファイル",
+      "description": "Claude Code の設定ファイル（settings.json と同じ形）を登録すると、セッションごとに選んで、標準の設定に重ねて起動できます。ファイルの中身は預からず、パスだけ覚えます。",
+      "empty": "登録した設定ファイルはありません",
+      "addTip": "追加…（ファイルを選ぶ）",
+      "closeTip": "閉じる（Esc）",
+      "renameFailed": "名前を変えられませんでした: {error}",
+      "renameTip": "クリックして名前を変える",
+      "remove": "削除",
+      "removeTip": "登録から外す（ファイル自体は消えません）"
+    }
+  },
+  "translate": {
+    "failure": {
+      "sourceLanguage": "元の言語",
+      "sameLanguage": "日本語の文なので、訳しませんでした。",
+      "notInstalled": "翻訳データ（{language}・日本語）が入っていません。システム設定の「一般」→「言語と地域」→「翻訳言語…」から入れてください。",
+      "unsupported": "{language}は、macOS の翻訳が対応していない言語です。",
+      "undetected": "言語を判定できませんでした。",
+      "failed": "訳せませんでした（{reason}）。",
+      "unknownReason": "わけは分かりません"
+    },
+    "button": {
+      "label": "日本語訳",
+      "tip": "日本語訳（macOS の翻訳で、Mac の中で訳します）"
+    },
+    "panel": {
+      "label": "日本語訳",
+      "loading": "訳しています…",
+      "openSettings": "システム設定を開く"
+    }
+  },
+  "app": {
+    "walkthroughRequest": "このブランチの変更を、tanacode のウォークスルーで、コードを示しながら説明してください。",
+    "sidePanel": {
+      "filesLabel": "エクスプローラー",
+      "filesTitle": "エクスプローラー",
+      "searchLabel": "検索",
+      "searchTitle": "検索（⌘⇧F）",
+      "scmLabel": "ソース管理",
+      "scmTitle": "ソース管理（git）。ブランチの変更を見て、行にコメントを付けて Claude に返す",
+      "tasksLabel": "タスク",
+      "tasksTitle": "タスク（サブエージェント・ワークフロー・バックグラウンドの Bash）",
+      "checklistLabel": "チェックリスト",
+      "checklistTitle": "チェックリスト（Claude と一緒に見て、編集するリスト。会話が圧縮されても残る）",
+      "contextLabel": "コンテキスト",
+      "contextTitle": "コンテキスト（今の会話に入っているものと大きさ。圧縮で残すもの・捨てるものを選ぶ）",
+      "browserTip": "ブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます",
+      "browser": "ブラウザ",
+      "terminalTip": "ターミナルを開く・閉じる（⌃`）",
+      "terminal": "ターミナル",
+      "tasksEmpty": "セッションで実行したバックグラウンドタスクが表示されます",
+      "checklistEmpty": "セッションのチェックリストが表示されます",
+      "contextEmpty": "セッションのコンテキストの中身が表示されます"
+    },
+    "session": {
+      "openFailed": "セッションを開けませんでした: {error}",
+      "archiveChildren": "子セッション {count} 件も一緒にアーカイブします。アーカイブしますか？",
+      "archiveChildrenWorking": "子セッション {count} 件も一緒にアーカイブします（うち {working} 件は作業中です）。アーカイブしますか？",
+      "backupKept": "未コミットの変更と未追跡のファイルの控えを {ref} に残しました（git show {ref} で見られます）。",
+      "branchKept": "ブランチ {branch} には、手元にしか無いコミットがあるので残しました。",
+      "worktreeRemoved": "worktree を削除しました。\n{notes}"
+    },
+    "empty": {
+      "composing": "左のチャット欄でフォルダを選び、最初の指示を送るとセッションが始まります",
+      "noSessions": "セッションがありません",
+      "newSession": "新規セッション"
+    },
+    "diff": {
+      "staged": "ステージ済みの変更（HEAD ↔ インデックス）",
+      "unstaged": "変更（インデックス ↔ 作業ツリー）",
+      "fromBase": "{ref} から"
+    },
+    "status": {
+      "notStarted": "Claude Code 未起動",
+      "starting": "Claude Code 起動中",
+      "idle": "Claude Code 待機中",
+      "running": "Claude Code 作業中",
+      "exited": "Claude Code 終了",
+      "exitedWithCode": "Claude Code 終了（code {code}）",
+      "worktree": "worktree {name} で動いています（元のフォルダ: {root}）",
+      "openScm": "ソース管理を開く",
+      "openPr": "{repository} のプルリクエストを開く\n{url}"
+    },
+    "update": {
+      "stepsTitle": "更新の手順",
+      "stepHomebrew": "・Homebrew で入れた場合: 新しいバージョンを裏でダウンロードし、終わるとここに「再起動して更新」が出ます。手で入れるときは、「ファイル → Claude Code も止めて終了」で終了してから、brew update && brew upgrade --cask tanacode を実行します",
+      "stepBuilt": "・ビルド済みのアプリの場合: 「ファイル → Claude Code も止めて終了」で終了してから、新しいバージョンを入れます",
+      "stepSource": "・ソースから入れた場合: git pull・npm install・npm run install-app を実行して、tanacode を起動し直します",
+      "latest": "最新バージョンです",
+      "available": "v{version} があります",
+      "openReleases": "押すと、GitHub の Releases のページを開きます",
+      "homebrewDownloading": "Homebrew でダウンロードしています。終わると、ここから更新できます",
+      "homebrewFailed": "Homebrew でダウンロードできませんでした。あとでやり直します",
+      "readyLabel": "再起動して v{version} に更新",
+      "downloaded": "v{version} をダウンロードしました",
+      "readyRestart": "押すと、tanacode を終了し、Homebrew で入れ替えてから起動し直します",
+      "readyOnQuit": "メニューの「終了するときに新しいバージョンを入れる」がオンなら、ふつうに終了したときにも入れ替えます",
+      "restart": "再起動して更新"
+    },
+    "titleBar": {
+      "openRepo": "GitHub の tanacode のページを開く",
+      "notifications": "通知",
+      "notificationsAbout": "作業の完了や確認待ちを、macOS の通知で知らせる",
+      "notificationsOn": "通知を出しています",
+      "notificationsOff": "通知を止めています"
+    },
+    "resizer": {
+      "tip": "ドラッグで幅を変更（ダブルクリックで元に戻す）"
+    },
+    "claudeVersion": {
+      "notFound": "Claude Code が見つかりません",
+      "same": "Claude Code {version} は、tanacode で動作確認済のバージョンです",
+      "newer": "Claude Code {version} は、tanacode で動作確認済のバージョン（{verified}）より新しいバージョンです。\n画面や会話ログの形が変わっていると、一部の表示や操作が動かない場合があります。",
+      "older": "Claude Code {version} は、tanacode で動作確認済のバージョン（{verified}）より古いバージョンです。\ntanacode が使う機能や表示が無いと、一部の表示や操作が動かない場合があります。",
+      "missing": "claude コマンドが見つからないか、バージョンを読めませんでした。\nClaude Code を入れて、ターミナルで一度 claude を起動してください。"
+    },
+    "systemStats": {
+      "topCpu": "CPU を多く使っているプロセス",
+      "topMemory": "メモリを多く使っているプロセス",
+      "memory": "メモリ"
+    }
+  },
+  "sessions": {
+    "untitled": "新しいセッション",
+    "sidebar": {
+      "renameTip": "ダブルクリックで名前を変更",
+      "parentTip": "親セッション「{name}」から起動した子セッション",
+      "parent": "親: {name}",
+      "worktreeTip": "worktree {name}（ブランチ {branch}）で動いています\n元のフォルダ: {root}",
+      "checklistUnread": "チェックリストに Claude からの未読の返信 {count} 件",
+      "unarchive": "アクティブに戻す",
+      "archive": "アーカイブ",
+      "archiveChildren": "子セッション {count} 件も一緒にアーカイブします",
+      "remove": "一覧から削除",
+      "confirmRemove": "「{title}」を一覧から削除しますか？\n（Claude Code の会話ログは残ります）",
+      "newSession": "新規セッション",
+      "import": "既存の会話を開く…",
+      "active": "アクティブ",
+      "lock": "並びをロック",
+      "lockedTip": "並びをロック中\nクリックで解除すると、最終更新の新しい順に戻ります",
+      "unlockedTip": "並びをロック\nロックすると、更新があっても並びが入れ替わりません",
+      "empty": "セッションはありません",
+      "archived": "アーカイブ済み（{count}）"
+    },
+    "children": {
+      "working": "作業中 {count}",
+      "waiting": "操作待ち {count}",
+      "separator": "・",
+      "collapse": "子セッションを畳む",
+      "expand": "子セッション {count} 件を開く",
+      "count": "子セッション {count} 件",
+      "countWithBreakdown": "子セッション {count} 件（{breakdown}）",
+      "clickToCollapse": "クリックで畳む",
+      "clickToExpand": "クリックで開く"
+    },
+    "scheduled": {
+      "failed": "予約を送れませんでした",
+      "sendAt": "{time} に送信",
+      "sendAtWithOthers": "{time} に送信 ほか {count} 件",
+      "count": "予約したメッセージ {count} 件"
+    },
+    "settingsFile": {
+      "layered": "設定ファイル「{name}」を重ねています（{path}）",
+      "missing": "重ねている設定ファイルが、登録にありません",
+      "missingName": "（登録なし）"
+    },
+    "activity": {
+      "question": "質問への回答待ち",
+      "permission": "実行の許可待ち",
+      "other": "操作待ち",
+      "browser": "ブラウザでの操作待ち",
+      "starting": "起動中",
+      "runningWithBackground": "作業中（バックグラウンド {count}件）",
+      "running": "作業中",
+      "background": "バックグラウンド {count}件の完了待ち",
+      "unread": "新しい応答",
+      "exited": "終了"
+    },
+    "worktreeDialog": {
+      "archiveFailed": "アーカイブできませんでした: {error}",
+      "removeFailed": "一覧から削除できませんでした: {error}",
+      "worktreeRemoveFailed": "worktree を削除できませんでした: {error}",
+      "archiveLabel": "worktree のセッションをアーカイブ",
+      "removeLabel": "worktree のセッションを一覧から削除",
+      "archiveTitle": "「{title}」をアーカイブ",
+      "removeTitle": "「{title}」を一覧から削除",
+      "about": "このセッションは worktree {path}（ブランチ {branch}）で動いています。 worktree を残すか、削除するかを選んでください。",
+      "noteBackup": "削除しても、未コミットの変更と未追跡のファイルは {ref} に控えを残します。",
+      "noteBranch": "手元にしか無いコミットがあれば、ブランチごと残します。リモートや PR、デフォルトブランチに入っていれば、ブランチも消します。",
+      "noteIgnored": "gitignore されたファイル（worktree の中で書き換えた .env など）は、控えに入りません。",
+      "noteRestore": "削除したセッションをアーカイブから戻すと、残したブランチから worktree を作り直します。",
+      "removingWorktree": "削除しています…",
+      "archiveRemoveWorktree": "worktree を削除してアーカイブ",
+      "removeRemoveWorktree": "worktree を削除して一覧から削除",
+      "archiveBusy": "アーカイブしています…",
+      "removeBusy": "一覧から削除しています…",
+      "archiveKeepWorktree": "worktree を残してアーカイブ",
+      "removeKeepWorktree": "worktree を残して一覧から削除",
+      "checking": "残っているものを調べています…",
+      "checkFailed": "残っているものを調べられませんでした",
+      "worktreeGone": "worktree のフォルダはもうありません（ブランチの扱いは同じです）",
+      "uncommitted": "未コミットの変更",
+      "untracked": "未追跡のファイル",
+      "unpushed": "プッシュしていないコミット",
+      "contentIn": "コミットは手元にしかありませんが、中身は {branch} に入っています",
+      "nothingLeft": "残っている変更やコミットはありません",
+      "leftoverCount": "{count} 件",
+      "prUnknown": "PR は調べられませんでした（gh が無い・ログインしていないなど）",
+      "prNone": "このブランチの PR はありません",
+      "prName": "PR #{number}（{base} へ）",
+      "prMergedWithAfter": "{name}はマージ済みです。そのあとに足したコミットが {count} 件あります",
+      "prMerged": "{name}はマージ済みです",
+      "prOpen": "{name}は、まだマージされていません",
+      "prClosed": "{name}は、マージされずに閉じられています"
+    },
+    "newSession": {
+      "startFailed": "セッションを始められませんでした: {error}",
+      "title": "新規セッション",
+      "cancelTip": "前に見ていたセッションに戻る",
+      "heading": "何から始めますか？",
+      "aboutFolder": "フォルダを選んで最初の指示を送ると、そのフォルダで Claude Code が起動します。",
+      "aboutCommands": "起動が終わるのを待ってから送るので、スラッシュコマンドもそのまま使えます。",
+      "branchTip": "今のブランチ。押すとソース管理を開き、ブランチを切り替えられる",
+      "switchDefaultTip": "最新のデフォルトブランチへ切り替える（フェッチして、リモートの最新まで進めます）",
+      "switchDefault": "最新のデフォルトブランチへ切り替える",
+      "worktreeAbout": "claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。\n同じフォルダで並行して動かしても、変更がぶつかりません。\n場所はフォルダの .claude/worktrees/、ブランチは worktree-<名前>",
+      "useWorktree": "worktree を使う",
+      "folderMissing": "フォルダが見つかりません",
+      "placeholder": "最初の指示（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）",
+      "placeholderNoFolder": "先に作業するフォルダを選んでください",
+      "settingsFileTitle": "設定ファイル（標準の設定に重ねて起動します。このセッションだけで、始めたあとも切り替えられます）",
+      "modelTitle": "モデル（--model。このセッションだけで、既定値は変わりません）",
+      "defaultModelOf": "既定（{model}）",
+      "defaultModel": "既定のモデル",
+      "refreshModels": "モデル一覧を更新",
+      "effortTitle": "エフォート（--effort。このセッションだけで、既定値は変わりません）",
+      "noEffort": "エフォートなし",
+      "defaultEffort": "既定のエフォート",
+      "modeTitle": "権限モード（--permission-mode。このセッションだけで、既定値は変わりません）",
+      "defaultMode": "既定のモード"
+    },
+    "folderPicker": {
+      "pickTip": "作業するフォルダを選ぶ",
+      "pick": "フォルダを選ぶ",
+      "recent": "最近のフォルダ",
+      "forget": "{name} を最近のフォルダから外す",
+      "forgetTip": "最近のフォルダから外す（セッションは消えません。このフォルダで新しいセッションを作ると、また出ます）",
+      "pickOther": "別のフォルダを選ぶ…"
+    },
+    "import": {
+      "placeholder": "既存の Claude Code の会話を探す（タイトル・フォルダ）",
+      "searching": "探しています…",
+      "empty": "取り込める会話はありません"
+    },
+    "preparing": {
+      "creating": "worktree を作っています",
+      "restoring": "worktree を作り直しています",
+      "copying": "node_modules を複製しています",
+      "installing": "パッケージをインストールしています"
+    }
+  },
+  "account": {
+    "profiles": {
+      "confirmRemove": "「{name}」を登録から外します。\nClaude Code の設定のフォルダ（{dir}）とセッションのデータは消えません。もう一度足せば、同じログインのまま使えます。",
+      "removeFailed": "外せませんでした: {error}",
+      "title": "プロファイル",
+      "about": "Claude Code のアカウントごとに、ログイン・セッション・設定を分けて使えます。プロファイルごとに Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）を持ち、ほかのプロファイルとは混ざりません。",
+      "addTip": "プロファイルを追加…",
+      "closeTip": "閉じる（Esc）",
+      "updateFailed": "変えられませんでした: {error}",
+      "name": "名前",
+      "renameTip": "クリックして名前を変える",
+      "defaultDir": "~/.claude（標準）",
+      "removeTip": "登録から外す（設定のフォルダとデータは消えません）",
+      "addFailed": "追加できませんでした: {error}",
+      "namePlaceholder": "例: 個人",
+      "color": "色",
+      "folder": "フォルダ",
+      "folderLabel": "Claude Code の設定のフォルダ",
+      "pickFolder": "選ぶ…",
+      "folderNote": "Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）。無ければ作ります。ターミナルでも {command} で同じアカウントを使えます。追加したら、アカウント欄のメニューの「ログイン…」でログインしてください。"
+    },
+    "panel": {
+      "noTerminal": "ターミナルを開けるところがありません。セッションを開くか、新規セッションの画面でフォルダを選んでから、もう一度押してください。",
+      "profile": "プロファイル: {name}",
+      "notLoggedIn": "ログインしていません",
+      "usageFromStatusline": "プランの利用枠。{time} 時点（セッションの応答から）",
+      "usageFromCache": "プランの利用枠。{time} 時点（Claude Code の /usage の控えから）",
+      "usagePending": "プランの利用枠は、セッションが応答すると出ます",
+      "staleAt": "{time} 時点",
+      "othersAttention": "別のアカウントに通知あり",
+      "menu": "アカウント",
+      "loginHint": "「ログイン…」で、このプロファイルの Claude Code にログインできます",
+      "reload": "利用枠とアカウントを読み直す",
+      "relogin": "ログインし直す…",
+      "login": "ログイン…",
+      "manageSettingsFiles": "設定ファイルの管理…",
+      "addProfile": "プロファイルを追加…",
+      "manageProfiles": "プロファイルの管理…"
+    },
+    "usage": {
+      "fiveHour": "5時間",
+      "week": "週",
+      "unknown": "未取得",
+      "reset": "リセット済み",
+      "remainingMinutes": "あと {count}分",
+      "remainingHours": "あと {hours}時間{minutes}分",
+      "remainingDays": "あと {days}日{hours}時間"
+    }
+  },
+  "scm": {
+    "panel": {
+      "loading": "読み込み中…",
+      "notRepo": "このフォルダは git リポジトリではありません",
+      "noChanges": "変更はありません"
+    },
+    "commit": {
+      "nothingStaged": "コミットする変更がステージされていません",
+      "committing": "コミット中…",
+      "placeholder": "メッセージ（⌘Enter でコミット · {branch}）",
+      "amend": "直前のコミットを修正",
+      "commit": "コミット",
+      "amendTip": "直前のコミットを修正（⌘Enter）",
+      "commitTip": "コミット（⌘Enter）"
+    },
+    "branch": {
+      "switch": "ブランチを切り替える",
+      "detached": "(detached)",
+      "switching": "切り替え中…",
+      "switchingDefault": "最新のデフォルトブランチへ切り替え中…"
+    },
+    "view": {
+      "list": "一覧で表示",
+      "tree": "ツリーで表示"
+    },
+    "sync": {
+      "pulling": "プル中…",
+      "pullFrom": "{upstream} からプル",
+      "pull": "プル",
+      "pushing": "プッシュ中…",
+      "pushTo": "{upstream} へプッシュ",
+      "pushToOrigin": "origin にプッシュ（上流を設定）",
+      "push": "プッシュ",
+      "fetch": "フェッチ",
+      "fetching": "フェッチ中…"
+    },
+    "staged": {
+      "title": "ステージ済みの変更",
+      "unstage": "ステージを取り消す",
+      "unstageAll": "すべてステージを取り消す",
+      "unstaging": "取り消し中…"
+    },
+    "changes": {
+      "title": "変更",
+      "discard": "変更を破棄",
+      "discardAll": "すべて変更を破棄",
+      "discardConfirmFile": "{path} の変更を破棄しますか？（未追跡のファイルは削除されます。元に戻せません）",
+      "discardConfirmFiles": "{count} 件のファイル の変更を破棄しますか？（未追跡のファイルは削除されます。元に戻せません）",
+      "discarding": "破棄中…",
+      "stage": "ステージする",
+      "stageAll": "すべてステージする",
+      "staging": "ステージ中…",
+      "inFolder": "{action}（フォルダ内すべて）"
+    },
+    "kind": {
+      "added": "新規",
+      "modified": "変更",
+      "deleted": "削除"
+    },
+    "branchChanges": {
+      "fromBranch": "{ref} から分岐したところ（{commit}）から",
+      "notInUpstream": "{ref} にまだ無い変更（未プッシュのコミットと作業中の変更）",
+      "title": "ブランチの変更",
+      "baseBranch": "{ref} から",
+      "baseUpstream": "{ref} から（未プッシュ・作業中）",
+      "walkthrough": "Claude にウォークスルーしてもらう",
+      "walkthroughTip": "Claude にウォークスルーしてもらう\nエディタでコードを示しながら、このブランチの変更を説明します",
+      "rowTitle": "{path}（{kind}）",
+      "binary": "バイナリ"
+    },
+    "branchMenu": {
+      "placeholder": "ブランチを探す・新しい名前",
+      "switchDefaultTip": "フェッチしてから {branch} に切り替え、リモートの最新まで進める",
+      "switchDefault": "最新のデフォルトブランチへ切り替える",
+      "create": "新しいブランチ「{name}」を作って切り替える",
+      "current": "現在",
+      "remote": "リモート"
+    },
+    "diff": {
+      "prevFile": "前のファイル",
+      "nextFile": "次のファイル",
+      "sideBySide": "左右に並べる",
+      "inline": "インライン",
+      "openFile": "ファイルを開く",
+      "close": "差分を閉じる"
+    }
+  },
+  "editor": {
+    "markdownMode": {
+      "preview": "プレビュー",
+      "split": "並べる",
+      "source": "ソース",
+      "label": "Markdown の表示"
+    },
+    "tabs": {
+      "closeConfirm": "{name} の変更を保存せずに閉じますか？",
+      "unsaved": "未保存の変更があります（⌘S で保存）",
+      "changedInBranch": "このブランチで変わったファイル"
+    },
+    "conflict": {
+      "message": "未保存の変更があるうちに、ディスク上のファイルが変更されました",
+      "reload": "ディスクの内容を読み込む",
+      "keep": "このまま保存"
+    },
+    "change": {
+      "added": "このブランチで新規作成",
+      "modified": "このブランチで変更",
+      "showDiff": "差分を見る"
+    },
+    "placeholder": {
+      "noFile": "エクスプローラーからファイルを開いてください",
+      "binary": "バイナリファイルは表示できません",
+      "tooLarge": "ファイルが大きすぎるため表示できません（{size}MB）"
+    },
+    "markdownPreview": {
+      "diagramFailed": "図を描けませんでした: {error}"
+    }
+  },
+  "explorer": {
+    "tree": {
+      "gitChangesInside": "中に git の変更がある",
+      "addedInBranch": "このブランチで新規作成",
+      "modifiedInBranch": "このブランチで変更"
+    },
+    "knowledge": {
+      "read": "Claude が読んだファイル（今の会話で中身を知っている）",
+      "edited": "Claude が書いたファイル（今の会話で中身を知っている）",
+      "stale": "圧縮より前に Claude が読んだファイル（今は中身を覚えていない）"
+    }
+  },
+  "search": {
+    "panel": {
+      "placeholder": "検索",
+      "caseSensitive": "大文字と小文字を区別",
+      "regex": "正規表現",
+      "searching": "検索中…",
+      "files": "{count} ファイル",
+      "matches": "{count} 件",
+      "summary": "{files} · {matches}",
+      "summaryTruncated": "{files} · {matches}（多すぎるため省略）"
+    },
+    "quickOpen": {
+      "placeholder": "ファイル名で探す",
+      "empty": "見つかりません"
+    }
+  },
+  "review": {
+    "prompt": {
+      "comments": "以下はコードへのレビューコメントです。それぞれ対応してください。\n\n{comments}"
+    },
+    "lineComments": {
+      "addAction": "Claude へのコメントを追加",
+      "askButton": "ここを聞く",
+      "askAction": "ここを Claude に聞く",
+      "line": "{line} 行目",
+      "lines": "{start}〜{end} 行目",
+      "commentMark": "Claude へのコメント",
+      "askMark": "Claude に聞く",
+      "askPlaceholder": "ここについて聞きたいこと（⌘Enter で送る）",
+      "commentPlaceholder": "直してほしいこと・気になること（⌘Enter で追加）",
+      "send": "送る",
+      "sendTip": "Claude に送る（⌘Enter）",
+      "addComment": "コメントを追加",
+      "addCommentTip": "コメントを追加（⌘Enter）"
+    },
+    "list": {
+      "title": "Claude へのコメント",
+      "empty": "差分やエディタの行番号の横の ＋ でコメントを付けると、次に送る指示に添えられます",
+      "hint": "チャットの送信で、入力した文章と一緒に送られます"
+    }
+  },
+  "terminal": {
+    "panel": {
+      "resize": "ドラッグで高さを変更",
+      "sendToClaude": "Claude へ送る",
+      "sendToClaudeTip": "Claude へ送る\nターミナルで選んだ出力を、チャットの入力欄に貼る",
+      "claudeScreen": "Claude Code の画面",
+      "claudeScreenTip": "Claude Code の画面\nClaude Code そのものの画面をそのまま表示して操作する",
+      "close": "パネルを閉じる",
+      "closeTip": "パネルを閉じる（⌃`）"
+    },
+    "tabs": {
+      "close": "このターミナルを閉じる",
+      "stopAndClose": "止めて閉じる",
+      "new": "新しいターミナル"
+    },
+    "task": {
+      "running": "{name}（実行中）",
+      "done": "{name}（完了）",
+      "failed": "{name}（失敗 {code}）"
+    }
+  },
+  "preview": {
+    "width": {
+      "full": "全幅",
+      "phone": "スマホ",
+      "tablet": "タブレット"
+    },
+    "page": {
+      "loadFailed": "{url} を読み込めませんでした（{error}）"
+    },
+    "chat": {
+      "consoleErrors": "アプリ内ブラウザ（{url}）のコンソールに出たエラー:\n{errors}\n"
+    },
+    "toolbar": {
+      "forward": "進む",
+      "stop": "読み込みを止める",
+      "reload": "読み込み直す",
+      "address": "開く URL",
+      "width": "表示幅",
+      "stopPicking": "選ぶのをやめる",
+      "pick": "要素を選ぶ",
+      "pickTip": "ページの要素をクリックして、その情報と画像をチャットの入力欄に添える",
+      "errorCount": "エラー {count} 件",
+      "errorsTip": "クリックで、コンソールのエラーをチャットの入力欄に貼る\n\n{errors}",
+      "openExternal": "ふだんのブラウザで開く",
+      "devTools": "開発者ツール",
+      "close": "ブラウザを閉じる"
+    },
+    "hint": {
+      "picking": "ページの要素をクリックしてください（Esc でやめる）",
+      "retry": "もう一度",
+      "empty": "上のアドレス欄に URL を入れて Enter で開きます"
+    },
+    "tabs": {
+      "label": "ブラウザのタブ",
+      "untitled": "新しいタブ",
+      "close": "タブを閉じる",
+      "new": "新しいタブ"
+    },
+    "claude": {
+      "operating": "Claude が操作中"
+    },
+    "ask": {
+      "label": "Claude からの操作の依頼",
+      "title": "あなたの番です",
+      "reasonPlaceholder": "理由（任意・パスワードは書かない）",
+      "reasonLabel": "できない理由",
+      "send": "送る",
+      "done": "終わった",
+      "decline": "できない"
+    },
+    "hosts": {
+      "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",
+      "empty": "（空）",
+      "title": "アプリ内ブラウザで Claude に許す先",
+      "description": "Claude がアプリ内ブラウザで開いて・読んで・操作できるのは、ここにある先のページだけです。アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。",
+      "default": "既定",
+      "placeholder": "例: myapp.test・*.example.test",
+      "inputLabel": "足す先",
+      "closeTip": "閉じる（Esc）"
+    },
+    "picked": {
+      "heading": "アプリ内ブラウザ（{url}）で選んだ要素:",
+      "selector": "- セレクタ: {selector}",
+      "text": "- テキスト: 「{text}」"
+    }
+  },
+  "checklist": {
+    "panel": {
+      "createList": "リストを作る",
+      "create": "作る",
+      "empty": "リストはまだありません。「リストを作る」で作るか、Claude に「要件を整理して、やることリストにして」のように頼んでください。",
+      "noDescription": "説明はありません",
+      "listTip": "{description}\nダブルクリックで名前と説明を変える",
+      "addCard": "カードを足す",
+      "trashList": "リストをゴミ箱に入れる",
+      "confirmTrashList": "リスト「{name}」をゴミ箱に入れますか？\n（下の「ゴミ箱」から戻せます）",
+      "unreadTip": "Claude からの未読の返信 {count} 件",
+      "unreadLabel": "未読 {count} 件",
+      "noCards": "カードはありません",
+      "confirmEmptyTrash": "ゴミ箱の {count} 件を消しますか？\n（もう戻せません）",
+      "selected": "{count} 枚を選択中",
+      "moveToList": "別のリストへ移す",
+      "movePlaceholder": "移す…",
+      "clearSelection": "選ぶのをやめる",
+      "newCardPlaceholder": "タイトル（Enter で足す）"
+    },
+    "action": {
+      "copyToSession": "別のセッションへコピー",
+      "trash": "ゴミ箱に入れる"
+    },
+    "trash": {
+      "title": "ゴミ箱",
+      "list": "リスト「{name}」（{count} 枚）",
+      "restore": "戻す",
+      "empty": "ゴミ箱を空にする"
+    },
+    "cardPane": {
+      "trashTip": "ゴミ箱に入れる（サイドパネルのゴミ箱から戻せます）",
+      "renameTip": "ダブルクリックでタイトルを変える",
+      "createdByHuman": "あなたが作成",
+      "createdByClaude": "Claude が作成",
+      "checkedByHuman": "あなたがチェック（{time}）",
+      "checkedByClaude": "Claude がチェック（{time}）",
+      "bodyPlaceholder": "説明文（Markdown）",
+      "saveBody": "保存（⌘Enter）",
+      "noBody": "説明文はありません",
+      "editBody": "説明文を編集",
+      "writeBody": "説明文を書く",
+      "thread": "スレッド",
+      "replyPlaceholder": "返信（Markdown。⌘Enter で送る）",
+      "notifyTip": "返信したことを、手が空いたら Claude に知らせます",
+      "notifyTipStopped": "Claude Code が止まっているので、知らせは届きません。Claude は次にチェックリストを読んだとき、未読の返信として気づきます",
+      "notify": "Claude に通知する",
+      "reply": "返信する",
+      "replyTip": "返信する（⌘Enter）",
+      "notified": "Claude に通知"
+    },
+    "eventByHuman": {
+      "created": "あなたが作りました",
+      "checked": "あなたがチェックしました",
+      "unchecked": "あなたがチェックを外しました",
+      "title": "あなたがタイトルを変えました（前: {from}）",
+      "body": "あなたが説明文を変えました",
+      "moved": "あなたが「{fromList}」#{fromNumber} から移しました",
+      "copied": "あなたがセッション「{fromSessionTitle}」の「{fromList}」#{fromNumber} からコピーしました",
+      "deleted": "あなたがゴミ箱に入れました",
+      "restored": "あなたがゴミ箱から戻しました"
+    },
+    "eventByClaude": {
+      "created": "Claude が作りました",
+      "checked": "Claude がチェックしました",
+      "unchecked": "Claude がチェックを外しました",
+      "title": "Claude がタイトルを変えました（前: {from}）",
+      "body": "Claude が説明文を変えました",
+      "moved": "Claude が「{fromList}」#{fromNumber} から移しました",
+      "copied": "Claude がセッション「{fromSessionTitle}」の「{fromList}」#{fromNumber} からコピーしました",
+      "deleted": "Claude がゴミ箱に入れました",
+      "restored": "Claude がゴミ箱から戻しました"
+    },
+    "copyDialog": {
+      "failed": "コピーできませんでした: {error}",
+      "description": "「{name}」の {numbers} を、タイトル・説明文・チェック・スレッドごとコピーします。元のカードは残ります。",
+      "numberSeparator": "・",
+      "noTargets": "コピーできるセッションがありません（同じフォルダのセッションと、親子・兄弟のセッションに限ります）",
+      "toSession": "コピー先のセッション",
+      "worktree": "（{name}）",
+      "toList": "コピー先のリスト（同じ名前のリストが無ければ作ります）",
+      "notify": "コピー先の Claude に知らせる",
+      "copying": "コピーしています…",
+      "copy": "コピー"
+    },
+    "listForm": {
+      "namePlaceholder": "名前（例: やること・完了前チェック・確認事項）",
+      "descriptionPlaceholder": "使い方のルール（例: 作業を終える前に、すべて満たされているか確かめる）。Claude はリストを読むたびに、これを読んで従います"
+    },
+    "apply": {
+      "failed": "チェックリストを変えられませんでした: {error}"
+    },
+    "check": {
+      "uncheck": "チェックを外す",
+      "uncheckByClaude": "チェックを外す（Claudeがチェック）",
+      "uncheckByHuman": "チェックを外す（あなたがチェック）",
+      "check": "チェックする"
+    },
+    "author": {
+      "human": "あなた",
+      "claude": "Claude"
+    },
+    "errors": {
+      "badOp": "書き換えの形が違います",
+      "notString": "{key} が文字ではありません",
+      "badShape": "{key} の形が違います",
+      "unknownOp": "知らない書き換えです: {type}",
+      "badCopyRequest": "コピーの指定の形が違います",
+      "emptyCardTitle": "タイトルが空のカードは作れません",
+      "emptyTitle": "タイトルを空にはできません",
+      "emptyReply": "返信が空です",
+      "listNotFound": "リストが見つかりません",
+      "badSessionId": "セッションの ID が正しくありません",
+      "listGone": "リストが見つかりません（ゴミ箱に入れたか、消したものかもしれません）",
+      "cardNotFound": "「{list}」にカードが見つかりません",
+      "emptyListName": "リストの名前が空です"
+    }
+  },
+  "tasks": {
+    "bashState": {
+      "running": "実行中…",
+      "completed": "完了",
+      "failed": "失敗",
+      "killed": "停止",
+      "stopped": "停止"
+    },
+    "state": {
+      "running": "実行中",
+      "done": "完了",
+      "failed": "失敗",
+      "stopped": "停止"
+    },
+    "list": {
+      "untitledSubagent": "サブエージェント",
+      "toolCalls": "ツール {count}回",
+      "agents": "エージェント {done}/{total}",
+      "agentsRunning": "エージェント {done}/{total}（実行中 {count}）",
+      "empty": "このセッションでは、まだサブエージェント・ワークフロー・バックグラウンドの Bash を動かしていません",
+      "openTip": "開いて中身を見る",
+      "running": "実行中",
+      "noneRunning": "動いているものはありません",
+      "finished": "終わったもの"
+    },
+    "paneKind": {
+      "subagent": "サブエージェント",
+      "workflow": "ワークフロー",
+      "bash": "バックグラウンドの Bash"
+    },
+    "stop": {
+      "stopping": "止めています",
+      "stop": "止める",
+      "stoppingTip": "止めています…",
+      "failed": "止められませんでした: {error}"
+    },
+    "pane": {
+      "background": "バックグラウンド",
+      "tokens": "{count} tokens",
+      "loading": "読み込み中…",
+      "starting": "起動を待っています…",
+      "noLog": "会話ログがありません",
+      "result": "結果",
+      "prompt": "指示"
+    },
+    "workflow": {
+      "overview": "概要",
+      "allAgents": "すべてのエージェント",
+      "waiting": "待機中",
+      "noAgents": "エージェントなし",
+      "toolCalls": "ツール {count}",
+      "toolCallsRunning": "ツール {count}・{tool}"
+    },
+    "bash": {
+      "truncated": "（先頭を省略しています）",
+      "noOutput": "（出力なし）",
+      "exitCode": "終了コード {code}",
+      "taskId": "タスク ID {id}"
+    },
+    "kind": {
+      "subagent": "エージェント",
+      "workflow": "ワークフロー",
+      "bash": "Bash"
+    },
+    "tray": {
+      "title": "タスク",
+      "running": "実行中 {count}",
+      "more": "ほか {count} 件"
+    }
+  },
+  "context": {
+    "panel": {
+      "loading": "読み込み中…",
+      "empty": "まだ会話がありません。Claude が読んだファイルやツールの結果が、ここに大きさと一緒に並びます",
+      "total": "全体 {tokens} / {limit}（{percent}%）",
+      "totalUnknown": "全体の使用量は、次の応答のあとに出ます",
+      "listed": "一覧 約 {tokens}",
+      "other": "そのほか 約 {tokens}（システムプロンプト・ツールの定義・Claude Code が足す知らせなど）",
+      "sort": "並べ方",
+      "sortBySize": "大きい順",
+      "sortByTime": "時間順",
+      "compacted": "圧縮で要約に置き換わったもの（{count} 件）",
+      "marks": "残す {keep} · 捨てる {drop}",
+      "clearMarks": "印を外す",
+      "compactWithMarks": "この選び方で圧縮…",
+      "compacting": "圧縮中…",
+      "note": "印を付けないものは Claude に任せます。大きさは文字数と応答の使用量からの見積もりで、正確なトークン数ではありません",
+      "draftTitle": "/compact に添える指示（直してから送れます）",
+      "compact": "圧縮する",
+      "cannotCompact": "作業中・確認の画面が出ている間は圧縮できません"
+    },
+    "row": {
+      "keep": "残す",
+      "drop": "捨てる"
+    },
+    "kind": {
+      "written": "書いた",
+      "read": "読んだ",
+      "notice": "知らせ",
+      "image": "画像",
+      "agent": "エージェント",
+      "topic": "やりとり",
+      "summary": "要約"
+    },
+    "meter": {
+      "label": "コンテキストの中身",
+      "tip": "コンテキスト {tokens} / {limit} tokens（直近の応答時点）\nいっぱいに近づくと自動で圧縮されます。押すと中身の一覧を出します"
+    },
+    "compact": {
+      "keep": "{items}は詳しく残す。",
+      "drop": "{items}は捨ててよい。",
+      "listTwo": "{first}と、{second}",
+      "separator": "、",
+      "file": "`{label}` の内容",
+      "fileEdited": "`{label}` の内容と変更",
+      "summary": "前回の圧縮の要約",
+      "agent": "サブエージェント「{label}」の結果",
+      "imageWithLabel": "{tool} の画像（{label}）",
+      "image": "{tool} の画像",
+      "topicAnswer": "質問に「{answer}」と答えたあとのやりとり",
+      "topicNotice": "「{notice}」の知らせのあとのやりとり",
+      "topicEvent": "{label}のやりとり",
+      "topic": "「{label}」から始まるやりとり",
+      "notice": "「{label}」の知らせ",
+      "bash": "`{label}` の出力",
+      "search": "「{label}」の検索結果",
+      "glob": "「{label}」に合うファイルの一覧",
+      "webFetch": "{label} のページの内容",
+      "skill": "スキル「{label}」の内容",
+      "toolWithLabel": "{tool}（{label}）の結果",
+      "tool": "{tool} の結果",
+      "mcpTool": "{server} の {tool}"
+    }
+  },
+  "export": {
+    "dialog": {
+      "untitled": "新しいセッション",
+      "saveFailed": "書き出せませんでした: {error}",
+      "title": "作業を書き出す",
+      "description": "「{title}」の流れ（指示・応答・ツールの呼び出し・差分・画像）を、1 枚の HTML ファイルに保存します。ブラウザで開くだけで読めます。",
+      "saved": "保存しました（{size}）",
+      "savedNote": "人に渡す前に、ブラウザで開いて中身を確かめてください。",
+      "revealInFinder": "Finder で表示",
+      "loading": "会話ログを読んでいます…",
+      "loadFailed": "会話ログを読めませんでした: {error}",
+      "empty": "書き出す会話がまだありません",
+      "rangeLabel": "範囲",
+      "firstPrompt": "最初の発言",
+      "lastPrompt": "最後の発言",
+      "range": "{from} から {to} まで",
+      "summaryPrompts": "発言 {count}",
+      "summaryReplies": "応答 {count}",
+      "summaryTools": "操作 {count}",
+      "summaryImages": "画像 {count} 枚",
+      "toolOutput": "ツールの結果（コマンドの出力・読んだファイルの中身・検索の結果など）",
+      "diffs": "編集の差分",
+      "images": "画像（添付・スクリーンショット）",
+      "thinking": "思考",
+      "homeToTilde": "ホームフォルダのパス（{home}）を {tilde} に置き換える",
+      "warning": "会話には、社内の情報・API キー・パスワードなどが入っていることがあります。書き出したファイルを人に渡す前に、ブラウザで開いて中身を確かめてください。tanacode はファイルを保存するだけで、どこにも送りません。",
+      "saving": "書き出しています…",
+      "save": "書き出す…",
+      "itemCount": "{count} 件",
+      "imageCount": "{count} 枚",
+      "promptLabel": "{number}. {text}",
+      "promptLabelWithTime": "{number}. {text}（{time}）"
+    },
+    "document": {
+      "brand": "tanacode の作業の書き出し",
+      "folder": "フォルダ",
+      "branch": "ブランチ",
+      "period": "期間",
+      "range": "範囲",
+      "omitted": "入れていないもの",
+      "listSeparator": "・",
+      "changedFiles": "変えたファイル {count}件",
+      "exportedAt": "{time} に tanacode で書き出しました",
+      "failed": "失敗 {count}",
+      "blocked": "止めた {count}",
+      "imageMissing": "画像（読み込めません）",
+      "zoomImage": "画像を拡大",
+      "todo": "Todo"
+    },
+    "content": {
+      "imagePrompt": "（画像）",
+      "omittedToolOutput": "ツールの結果",
+      "omittedDiffs": "編集の差分",
+      "omittedImages": "画像",
+      "omittedThinking": "思考",
+      "rangeWhole": "全体（発言 {count} 件）",
+      "rangePart": "発言 {from}〜{to}（全 {total} 件のうち {count} 件）",
+      "defaultFileName": "作業",
+      "period": "{start} 〜 {end}"
+    }
+  },
+  "walkthrough": {
+    "actions": {
+      "publish": "GitHub の PR にコメントとして載せる",
+      "close": "閉じる（ソース管理の一覧から、もう一度開けます）"
+    },
+    "box": {
+      "aside": "寄り道",
+      "progress": "ウォークスルー {step}/{total}",
+      "showList": "ステップの一覧（ソース管理）",
+      "stale": "コードが変わりました（位置がずれているかもしれません）",
+      "restart": "Claude に示し直してもらう",
+      "askPlaceholder": "ここについて Claude に聞きたいこと（⌘Enter で送る）",
+      "cancelAsk": "やめる",
+      "send": "送る",
+      "sendTip": "Claude に送る（⌘Enter）",
+      "backToWalkthrough": "ウォークスルーに戻る（{step}/{total}）",
+      "previous": "戻る",
+      "finish": "終える",
+      "next": "次へ",
+      "ask": "質問する"
+    },
+    "comment": {
+      "title": "PR にコメントとして載せる",
+      "titleWithNumber": "PR #{number} にコメントとして載せる",
+      "description": "ステップの順に、見出し・コードへのリンク（コミットに固定）・説明を並べます。GitHub では、リンクの行がコードの埋め込みとして出ます。質問と答えは載せません。",
+      "checking": "PR を調べています…",
+      "posted": "載せました。",
+      "openOnGitHub": "GitHub で開く",
+      "alreadyPosted": "このウォークスルーは、もう載せています。もう一度載せると、コメントが 2 つになります。",
+      "openPrevious": "前のコメントを開く",
+      "attributionOption": "最後に「Claude が書いた説明」と添える（あなたのアカウントで載るため）",
+      "tooLong": "長すぎます（{count} 文字。GitHub のコメントは {max} 文字まで）",
+      "posting": "載せています…",
+      "post": "載せる"
+    },
+    "list": {
+      "label": "ウォークスルー",
+      "seen": "見た",
+      "hintOpen": "押したステップを開きます",
+      "hintClosed": "閉じています。押すと、そのステップからもう一度見られます（Claude が作り直すまで残ります）"
+    },
+    "band": {
+      "aside": "寄り道 · {location}",
+      "progress": "ウォークスルー {step}/{total}「{title}」",
+      "backToClaude": "Claude が示している場所へ戻る"
+    },
+    "prompt": {
+      "stepQuestion": "ウォークスルー「{walkthrough}」の {step}/{total}「{title}」（{location}）について質問です。",
+      "asideQuestion": "ウォークスルー「{walkthrough}」の 寄り道で示した {location} について質問です。",
+      "rangeQuestion": "{location} について質問です。",
+      "restart": "ウォークスルー「{title}」のコードが変わり、示している位置がずれているかもしれません。今のコードで、{step}/{total} から先を start_walkthrough で示し直してください。"
+    },
+    "postBody": {
+      "attribution": "この説明は、tanacode のウォークスルーで Claude が書きました。",
+      "heading": "ウォークスルー: {title}",
+      "summary": "{count} ステップ。コミット {commit} の時点のコードです。"
+    }
+  },
+  "workflow": {
+    "status": {
+      "running": "実行中",
+      "completed": "完了",
+      "failed": "失敗",
+      "stopped": "停止",
+      "killed": "停止"
+    },
+    "card": {
+      "name": "ワークフロー",
+      "starting": "起動中…",
+      "resumedTip": "前に止まった・終わった実行を再開したもの",
+      "resumed": "再開",
+      "resumedLater": "このあと再開しました。続きは再開した実行のカードに出ます",
+      "waitingAgents": "エージェントの起動を待っています",
+      "noAgents": "エージェントなし"
+    },
+    "stats": {
+      "agents": "エージェント {done}/{total}",
+      "toolCalls": "ツール {count}回",
+      "tokens": "{count} tokens"
+    },
+    "agent": {
+      "tools": "ツール {count}",
+      "toolsWithLast": "ツール {count}・{tool}",
+      "result": "結果",
+      "prompt": "プロンプト"
+    },
+    "phase": {
+      "waiting": "待機中",
+      "unphased": "エージェント"
+    },
+    "duration": {
+      "seconds": "{count}秒",
+      "minutes": "{minutes}分{seconds}秒",
+      "hours": "{hours}時間{minutes}分"
+    },
+    "flow": {
+      "notRunning": "動いていません",
+      "resumedLater": "このあと再開しました。続きは再開した実行に出ます",
+      "hint": "エージェントをクリックすると、その中のやりとりを開きます",
+      "childWorkflow": "子ワークフロー {name}"
+    }
+  },
+  "screen": {
+    "kind": {
+      "question": "Claude Code からの質問",
+      "permission": "実行の許可",
+      "other": "確認"
+    },
+    "notChosen": {
+      "busy": "ほかの操作の途中だったため、送れませんでした。もう一度押してください",
+      "gone": "画面が変わったため、送りませんでした",
+      "missing": "この選択肢が Claude Code の画面に見つからないため、送りませんでした",
+      "stuck": "選択肢にカーソルを合わせられませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください",
+      "ignored": "Claude Code が受け付けませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください"
+    },
+    "card": {
+      "sendFailed": "送れませんでした。もう一度押してください",
+      "nextQuestion": "次の質問へ →",
+      "reviewAnswers": "回答の確認へ →",
+      "otherTyped": "その他: {text}",
+      "other": "その他（自由に入力）",
+      "cancelTip": "キャンセル（Esc）",
+      "answerPlaceholder": "回答を入力",
+      "confirm": "決定",
+      "send": "送信",
+      "stopEditing": "やめる",
+      "preview": "プレビュー: {label}",
+      "noPreview": "この選択肢にはプレビューがありません"
+    }
+  }
+}

@@ -1,6 +1,6 @@
-import ja from './locales/ja';
+import ja from './locales/ja.json';
 
-// 画面の文言。文言は言語ごとの JSON（src/shared/locales/）に置き、コードでは t('sidebar.newSession') のようにキーで読む。
+// 画面の文言。文言は言語ごとの JSON（src/shared/locales/ja.json など）に置き、コードでは t('sidebar.newSession') のようにキーで読む。
 // main と画面（renderer）で、それぞれのプロセスが今の言語を持つ。既定は日本語（テストもこのまま日本語で動く）
 
 export type Language = 'ja';

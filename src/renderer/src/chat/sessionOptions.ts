@@ -23,11 +23,6 @@ export function modeChoices(): [PermissionMode, string][] {
   return MODE_VALUES.map((mode): [PermissionMode, string] => [mode, modeLabel(mode)]);
 }
 
-// 移行の間だけ残す（ClaudePane・NewSessionPane が modeChoices() に移ったら消す）。
-// 読み込み時に文言を決めないよう、表示名（[1]）は読むたびに今の言語で返す
-export const MODES: [PermissionMode, string][] = MODE_VALUES.map(
-  (mode) => Object.defineProperty([mode], 1, { enumerable: true, get: () => modeLabel(mode) }) as unknown as [PermissionMode, string],
-);
 
 export type ModelCatalogState = {
   catalog: ModelCatalog | null;

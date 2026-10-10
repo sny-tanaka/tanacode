@@ -5,7 +5,7 @@ import { AnswersCard, ChatRow } from '../chat/ChatRow';
 import { HookChip, HookDetail } from '../chat/HookRuns';
 import { SentFilesCard } from '../chat/SentFilesCard';
 import { TodoList } from '../chat/TodoPanel';
-import { DIFF_TOOLS, STATUS_LABEL, ToolDetail } from '../chat/ToolCard';
+import { DIFF_TOOLS, statusLabel, ToolDetail } from '../chat/ToolCard';
 import type { ChatItem } from '../chat/chatState';
 import { toolLabel } from '../chat/toolLabel';
 import { groupSummary, groupTools, hookSummary, type HookGroup, type ToolGroup, type ToolItem } from '../chat/toolGroups';
@@ -179,7 +179,7 @@ function ExportToolCard({ item, images }: { item: ToolItem; images: Props['image
           </span>
         )}
       </div>
-      <div className="tool-card-status">{STATUS_LABEL[item.status]}</div>
+      <div className="tool-card-status">{statusLabel(item.status)}</div>
     </>
   );
   return (

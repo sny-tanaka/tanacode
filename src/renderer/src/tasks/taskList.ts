@@ -11,25 +11,6 @@ import { stableRuns } from './stableRuns';
 // バックグラウンドの Bash の状態の名前
 export const bashStateLabel = (state: BashTaskState) => t(`tasks.bashState.${state}`);
 
-// 前からの表の形（チャットのツールカードが使っている）。読んだときの言語で返すよう、値は getter にする。
-// ToolCard を bashStateLabel に替えたら消す
-export const BASH_STATE_LABEL: Readonly<Record<BashTaskState, string>> = {
-  get running() {
-    return bashStateLabel('running');
-  },
-  get completed() {
-    return bashStateLabel('completed');
-  },
-  get failed() {
-    return bashStateLabel('failed');
-  },
-  get killed() {
-    return bashStateLabel('killed');
-  },
-  get stopped() {
-    return bashStateLabel('stopped');
-  },
-};
 
 export type TaskState = 'running' | 'done' | 'failed' | 'stopped';
 

@@ -11,7 +11,7 @@ import { useSettingsFiles } from '../chat/settingsFiles';
 import { AddIcon, ArchiveIcon, ChecklistIcon, DisclosureIcon, IconButton, LockIcon, ScheduleIcon, TrashIcon, UnarchiveIcon, UnlockIcon, WorktreeIcon } from '../icons';
 import { liveChildrenOf } from './sessionTree';
 import { sessionName } from './sessionLinks';
-import { PREPARING_LABEL } from './worktree';
+import { preparingLabel } from './worktree';
 import { AccountPanel } from '../account/AccountPanel';
 
 // 並びのロック（このマシンだけの表示設定なので localStorage に置く）。ロック中は、ロックした時点の id の並びを入れる
@@ -383,7 +383,7 @@ function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.attention === 'permission') return { kind: 'waiting', label: t('sessions.activity.permission') };
   if (s.attention === 'other') return { kind: 'waiting', label: t('sessions.activity.other') };
   if (s.attention === 'browser') return { kind: 'waiting', label: t('sessions.activity.browser') };
-  if (s.worktree?.preparing) return { kind: 'starting', label: PREPARING_LABEL[s.worktree.preparing] };
+  if (s.worktree?.preparing) return { kind: 'starting', label: preparingLabel(s.worktree.preparing) };
   const background = s.backgroundTasks;
   if (status === 'starting') return { kind: 'starting', label: t('sessions.activity.starting') };
   if (status === 'running') {

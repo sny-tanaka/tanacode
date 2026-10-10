@@ -32,11 +32,11 @@ import type { PendingSend } from './pendingSends';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { useCompactState } from './compactState';
-import { EFFORTS, MODES, refreshTitle, useModelCatalog } from './sessionOptions';
+import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 import { useSessionLinks } from '../sessions/sessionLinks';
-import { PREPARING_LABEL } from '../sessions/worktree';
+import { preparingLabel } from '../sessions/worktree';
 
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
 const SLOW_START_MS = 10_000;
@@ -439,7 +439,7 @@ export const ClaudePane = memo(function ClaudePane({
           )}
           {preparing && (
             <div className="chat-note worktree-preparing">
-              <Busy>{PREPARING_LABEL[preparing]}…</Busy>
+              <Busy>{preparingLabel(preparing)}…</Busy>
               {preparing === 'installing' && (
                 <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onShowShell} />
               )}
@@ -652,7 +652,7 @@ export const ClaudePane = memo(function ClaudePane({
               title={t('chat.pane.modeTitle')}
             >
               {!screen?.mode && <option value="">{t('chat.pane.mode')}</option>}
-              {MODES.map(([mode, label]) => (
+              {modeChoices().map(([mode, label]) => (
                 <option key={mode} value={mode}>
                   {label}
                 </option>
