@@ -118,8 +118,13 @@ function SettingsFileRow({
   onRemove: () => void;
 }) {
   const [name, setName] = useState(file.name);
-  // 名前は main が決めて返す（空白を除くなど）ので、一覧が変わったら合わせる
-  useEffect(() => setName(file.name), [file.name]);
+  // 名前は main が決めて返す（空白を除くなど）ので、届いた名前が変わったら合わせる。
+  // useEffect で合わせると、表示したあとに遅れて走り、打ち始めた名前を元に戻してしまうことがあるので、描くときに変わったかを見る
+  const [shownName, setShownName] = useState(file.name);
+  if (file.name !== shownName) {
+    setShownName(file.name);
+    setName(file.name);
+  }
 
   // Escape で戻したときは、続く blur で確定しない
   const cancelled = useRef(false);
