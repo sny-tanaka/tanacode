@@ -44,7 +44,8 @@ describe('アカウント欄のプロファイル', () => {
   it('2 つ以上あれば、名前と色・ほかのアカウントの通知の点を出し、メニューから切り替える', async () => {
     render(<AccountPanel />);
     await screen.findByText('会社');
-    expect(screen.getByText('Claude Team')).toBeTruthy();
+    // 名前の隣に、プランと組織の名前
+    expect(screen.getByText('Claude Team · Acme')).toBeTruthy();
     const panel = document.querySelector<HTMLElement>('.account-panel')!;
     expect(panel.classList.contains('tinted')).toBe(true);
     expect(panel.style.getPropertyValue('--profile-color')).toBe('#6d9ccf');

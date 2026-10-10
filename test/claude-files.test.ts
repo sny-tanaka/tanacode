@@ -173,12 +173,33 @@ describe('ログインしたアカウント（readClaudeAccount）', () => {
 
   it('~/.claude.json の oauthAccount から、メールアドレス・組織・プランを読む', async () => {
     write({
-      oauthAccount: { accountUuid: 'u', emailAddress: 'taro@corp.example', organizationName: 'Acme', planDisplayName: 'Claude Team', billingType: 'x' },
+      oauthAccount: { accountUuid: 'u', emailAddress: 'taro@corp.example', organizationName: 'Acme', planDisplayName: 'Team', billingType: 'x' },
     });
     expect(await account.readClaudeAccount()).toEqual({ email: 'taro@corp.example', organization: 'Acme', plan: 'Claude Team' });
     // 無い項目・空の項目・文字でない項目は null にする
     write({ oauthAccount: { emailAddress: ' taro@example.com ', organizationName: '', planDisplayName: 3 } });
     expect(await account.readClaudeAccount()).toEqual({ email: 'taro@example.com', organization: null, plan: null });
+  });
+
+  it('planDisplayName が無ければ（今の Claude Code は書かない）、組織の種類からプランの名前を作る。Max は利用枠の段から倍率も付ける', async () => {
+    const plan = async (oauth: Record<string, unknown>) => {
+      write({ oauthAccount: { emailAddress: 'taro@example.com', ...oauth } });
+      return (await account.readClaudeAccount())?.plan;
+    };
+    // 2.1.296 の .claude.json の形（Max・Team）
+    expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_20x', userRateLimitTier: null })).toBe('Claude Max 20x');
+    expect(await plan({ organizationType: 'claude_team', organizationRateLimitTier: 'default_raven', userRateLimitTier: 'default_claude_max_5x', seatTier: 'team_tier_1' })).toBe('Claude Team');
+    expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_5x' })).toBe('Claude Max 5x');
+    // 段が無い・読めない形なら、倍率は付けない
+    expect(await plan({ organizationType: 'claude_max' })).toBe('Claude Max');
+    expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_raven' })).toBe('Claude Max');
+    expect(await plan({ organizationType: 'claude_pro', organizationRateLimitTier: 'default_claude_ai' })).toBe('Claude Pro');
+    expect(await plan({ organizationType: 'claude_enterprise' })).toBe('Claude Enterprise');
+    // planDisplayName があれば、そちらを使う（Claude Code と同じく、頭に Claude を付ける。もう付いていれば足さない）
+    expect(await plan({ organizationType: 'claude_max', planDisplayName: 'Team Premium' })).toBe('Claude Team Premium');
+    expect(await plan({ organizationType: 'claude_max', planDisplayName: 'Claude Team' })).toBe('Claude Team');
+    // プランとして読めない種類は出さない
+    for (const organizationType of ['api', 'claude_', 'claude', '', 3, null]) expect(await plan({ organizationType }), String(organizationType)).toBeNull();
   });
 
   it('ログインしていない・形が違う・ファイルが無いときは null', async () => {
@@ -228,5 +249,18 @@ describe('Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR）', () => {
     // 既定のプロファイル（null）は、アプリの環境変数のまま
     expect(config.claudeConfigDir(null)).toBe(join(home, 'from-env'));
     expect(session.childEnv().CLAUDE_CONFIG_DIR).toBe(join(home, 'from-env'));
+  });
+
+  it('設定のフォルダが ~/.claude でなければ、~/.claude の指示ファイルを読ませない（プロジェクトの指示として拾われ、AGENTS.md が読まれなくなるため）', () => {
+    const excludes = [join(home, '.claude', 'CLAUDE.md'), join(home, '.claude', 'rules', '**')];
+    // ~/.claude のまま（既定のプロファイル・環境変数で同じ場所を指したとき）は、ユーザーの指示そのものなので外さない
+    expect(config.foreignClaudeMdExcludes()).toEqual([]);
+    process.env.CLAUDE_CONFIG_DIR = `${join(home, '.claude')}/`;
+    expect(config.foreignClaudeMdExcludes()).toEqual([]);
+    expect(config.foreignClaudeMdExcludes(join(home, '.claude'))).toEqual([]);
+    // プロファイルのフォルダ・環境変数のフォルダ
+    expect(config.foreignClaudeMdExcludes(join(home, '.claude-work'))).toEqual(excludes);
+    process.env.CLAUDE_CONFIG_DIR = join(home, 'from-env');
+    expect(config.foreignClaudeMdExcludes()).toEqual(excludes);
   });
 });
