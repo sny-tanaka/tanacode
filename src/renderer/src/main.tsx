@@ -3,6 +3,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import { setLanguage } from '@shared/i18n';
 import { App } from './App';
+import { syncSharedPrefs } from './sharedPrefs';
 import './global.css';
 
 // 言語は、描く前に決める（部品はモジュールを読み込むときに文言を読まないので、ここで決めれば間に合う）。
@@ -11,4 +12,5 @@ const lang = window.tanacode.language();
 setLanguage(lang);
 document.documentElement.lang = lang;
 
-createRoot(document.getElementById('root')!).render(<App />);
+// プロファイルをまたいで同じにする表示設定（カラムの幅など）は、描く前にそろえる（描いてから幅が変わらないように）
+void syncSharedPrefs().then(() => createRoot(document.getElementById('root')!).render(<App />));

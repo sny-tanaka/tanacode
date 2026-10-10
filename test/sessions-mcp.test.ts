@@ -404,7 +404,7 @@ describe('ツールの実行（SessionsControl）', () => {
   });
 
   it('start_session: 子は孫を作れない。権限モードは親より強くできず、省くと親と同じ', async () => {
-    expect(textOf(await control.handle(CHILD, 'start_session', { prompt: 'x', worktree: false }))).toContain('cannot start child sessions of its own');
+    expect(textOf(await control.handle(CHILD, 'start_session', { prompt: 'x', worktree: false }))).toContain('A child session cannot start sessions');
     host.modes.set(PARENT, 'acceptEdits');
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'bypassPermissions' }))).toContain('more permissive');
     const started = jsonOf<{ session_id: string; permission_mode: string }>(await control.handle(PARENT, 'start_session', { prompt: '登録画面を作って', worktree: false, name: '登録画面' }));
@@ -416,11 +416,60 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
   });
 
-  it('start_session: 始められるのは、このセッションのリポジトリの中か、見えるセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
+  it('start_session: independent なら、親のないセッションとして始める。Remote Control は呼び出し元に合わせ、権限モードは強くできない。指示も待つこともできない', async () => {
+    // 子からは、独立したセッションも始められない
+    expect(textOf(await control.handle(CHILD, 'start_session', { prompt: 'x', worktree: false, independent: true }))).toContain('cannot start');
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent: 'yes' }))).toBe('Pass independent as true or false.');
+    host.modes.set(PARENT, 'acceptEdits');
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent: true, permission_mode: 'auto' }))).toContain('more permissive');
+    expect(host.created).toEqual([]);
+    host.sessions.find((s) => s.id === PARENT)!.remoteControl = true;
+    const started = jsonOf<{ session_id: string; independent: boolean; note: string }>(
+      await control.handle(PARENT, 'start_session', { prompt: 'README を見直して', worktree: false, independent: true }),
+    );
+    expect(started).toMatchObject({ independent: true, permission_mode: 'acceptEdits' });
+    expect(started.note).toContain('independent session');
+    expect(host.created[0]).toMatchObject({ cwd: repo, parentId: null, options: { mode: 'acceptEdits', remoteControl: true } });
+    // 最初の指示は、起動したセッションからのものと分かる囲みで送る
+    expect(host.submitted).toEqual([{ id: started.session_id, text: parentMessageText(PARENT, 'README を見直して') }]);
+    // 一覧では、子ではなく同じリポジトリのセッション
+    const listed = jsonOf<{ sessions: { id: string; relation: string; parent_id: string | null }[] }>(await control.handle(PARENT, 'list_sessions', {}));
+    expect(listed.sessions.find((s) => s.id === started.session_id)).toMatchObject({ relation: 'project', parent_id: null });
+    // 指示・待つ・中断は、子ではないので断る
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: started.session_id, message: '続けて' }))).toContain('is not a child session');
+    expect(textOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [started.session_id] }))).toContain('is not a child session');
+    expect(textOf(await control.handle(PARENT, 'stop_session', { session_id: started.session_id }))).toContain('is not a child session');
+    // 読める。最初の指示は、親からではなく、起動したセッションからのもの
+    host.events.set(started.session_id, [{ type: 'user', id: '1', text: 'README を見直して', parent: PARENT }]);
+    expect(textOf(await control.handle(PARENT, 'read_session', { session_id: started.session_id }))).toContain('Instruction from the session that started this one, "s-11"');
+    expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: started.session_id }))).toMatchObject({ last_prompt: { from: 'session' } });
+    // 作業が終わっても、起動したセッションには知らせない
+    host.set(started.session_id, 'working');
+    host.set(started.session_id, 'idle');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(host.submitted).toHaveLength(1);
+    // 子として始めるときは、Remote Control を使わない
+    await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true, independent: false });
+    expect(host.created[1]).toMatchObject({ parentId: PARENT, options: { remoteControl: false } });
+  });
+
+  it('start_session: 始められるのは、このセッションのリポジトリの中か、プロファイルのセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: '/etc' }))).toContain('Cannot start in');
-    // 見えないセッション（別のリポジトリ）のフォルダは選べない。見えるセッション（別のフォルダの子）のフォルダは選べる
-    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other') }))).toContain('Cannot start in');
+    // どのセッションも開いていないフォルダは選べない
+    mkdirSync(join(root, 'unknown'), { recursive: true });
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'unknown') }))).toContain('start_folders of list_sessions');
+    // 別のリポジトリでも、プロファイルのセッションのフォルダは選べる（アーカイブしたセッションのものも）。その中のフォルダは選べない
+    expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other') })).isError).toBeUndefined();
+    expect(host.created.at(-1)).toMatchObject({ cwd: realpathSync(join(root, 'other')), parentId: PARENT });
+    mkdirSync(join(root, 'other', 'sub'), { recursive: true });
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other', 'sub') }))).toContain('Cannot start in');
     expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'far') })).isError).toBeUndefined();
+    // 選べるフォルダは list_sessions で分かる（別のリポジトリのセッションそのものは見せない）。子には出さない
+    const listed = jsonOf<{ start_folders: string[]; sessions: { id: string }[] }>(await control.handle(PARENT, 'list_sessions', {}));
+    expect(listed.start_folders).toEqual(expect.arrayContaining([repo, realpathSync(join(root, 'other')), realpathSync(join(root, 'far'))]));
+    expect(new Set(listed.start_folders).size).toBe(listed.start_folders.length);
+    expect(listed.sessions.map((s) => s.id)).not.toContain(OTHER_REPO);
+    expect(jsonOf(await control.handle(CHILD, 'list_sessions', {}))).not.toHaveProperty('start_folders');
     // リポジトリの中のシンボリックリンクから、外のフォルダで始めさせない
     symlinkSync('/etc', join(repo, 'etc-link'));
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'etc-link') }))).toContain('Cannot start in');
@@ -669,6 +718,8 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(await diffOf()).toBe('The repository of "s-55" has no commits yet.');
     });
 
+    // 本物の git を 60 回ほど起動する（get_session_diff 1 回で 13 回）。ほかのテストと並んで流れると、起動 1 回に数十 ms かかり、
+    // 既定の 5 秒に収まらないことがあるので、長めに待つ
     it('基点からの変更を、ファイルの一覧（追加・変更・バイナリ）と差分で返す。path で絞れる（空・. は絞らない、外は断る）', async () => {
       initRepo();
       mkdirSync(join(repo, 'src'), { recursive: true });
@@ -697,7 +748,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(await diffOf({ path: '  ' })).toContain('- Files: 4\n');
       expect(await diffOf({ path: '.' })).toContain('- Files: 4\n');
       expect(await diffOf({ path: '../x' })).toBe('Pass path as a path relative to the session folder.');
-    });
+    }, 20_000);
 
     it('基点が分からなければ、未コミットの変更だけ。差分が無ければ「差分なし」。ブランチから外れていれば、そう書く', async () => {
       initRepo();

@@ -189,7 +189,7 @@
     },
     "hooks": {
       "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
-      "sessionsGate": "This starts a child session. Each child runs as a tanacode session and uses your Claude usage limits.",
+      "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
       "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
       "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation"
@@ -366,7 +366,7 @@
       "get_session_diff": "Session Changes",
       "get_session": "Session Status",
       "wait_sessions": "Wait for Child Sessions",
-      "start_session": "Start Child Session",
+      "start_session": "Start Session",
       "send_message": "Send to Child Session",
       "answer_question": "Answer Child's Question",
       "stop_session": "Interrupt Child Session"
@@ -674,7 +674,9 @@
       "missing": "Session not in the list (ID {id})",
       "fromParent": "Instructions from the parent session",
       "fromParentNamed": "Instructions from parent session “{name}”",
-      "openParent": "Open parent session"
+      "openParent": "Open parent session",
+      "fromSession": "Instructions from another session",
+      "fromSessionNamed": "Instructions from session “{name}”"
     },
     "images": {
       "closeZoom": "Close image",

@@ -19,6 +19,7 @@ import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, Ses
 import type { SessionWalkthrough } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
+import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from './prefs';
 
 export const IpcChannel = {
   SessionsList: 'sessions:list',
@@ -131,6 +132,10 @@ export const IpcChannel = {
   ProfilesRemove: 'profiles:remove',
   ProfilesPickDir: 'profiles:pick-dir',
   ProfilesChanged: 'profiles:changed',
+  // プロファイルをまたいで同じにする表示設定（shared/prefs.ts）
+  PrefsSync: 'prefs:sync',
+  PrefsSet: 'prefs:set',
+  PrefsChanged: 'prefs:changed',
   NotificationsGet: 'notifications:get',
   NotificationsSet: 'notifications:set',
   StatusLineGet: 'statusline:get',
@@ -474,6 +479,14 @@ export type TanacodeApi = {
     get(): Promise<boolean>;
     set(on: boolean): Promise<void>;
   };
+  // プロファイルをまたいで同じにする表示設定（カラムの幅など。shared/prefs.ts）。main が覚えて、どのプロファイルの画面にも同じ値を配る
+  prefs: {
+    // 起動したときにそろえる。この画面が持っている値を渡し、main がまだ覚えていないものはそれを採って、そろえた値を返す
+    sync(local: SharedPrefs): Promise<SharedPrefs>;
+    set(key: SharedPrefKey, value: string): void;
+    // ほかのプロファイルの画面で変わった
+    onChanged(listener: (change: SharedPrefChange) => void): () => void;
+  };
   // この Mac の CPU・メモリの使用状況（2 秒ごと）
   system: {
     onStats(listener: (stats: SystemStats) => void): () => void;
@@ -711,6 +724,7 @@ export type IpcInvoke = {
   [IpcChannel.ScheduledReschedule]: Api['scheduled']['reschedule'];
   [IpcChannel.ScheduledSendNow]: Api['scheduled']['sendNow'];
   [IpcChannel.ScheduledCancel]: Api['scheduled']['cancel'];
+  [IpcChannel.PrefsSync]: Api['prefs']['sync'];
   [IpcChannel.NotificationsGet]: Api['notifications']['get'];
   [IpcChannel.NotificationsSet]: Api['notifications']['set'];
   [IpcChannel.ClaudeVersionGet]: Api['claudeVersion']['get'];
@@ -774,6 +788,7 @@ export type IpcSend = {
   [IpcChannel.SessionsFocus]: Api['sessions']['focus'];
   [IpcChannel.SessionsInterrupt]: Api['sessions']['interrupt'];
   [IpcChannel.SessionsExportReveal]: Api['sessions']['revealExport'];
+  [IpcChannel.PrefsSet]: Api['prefs']['set'];
   [IpcChannel.PtyWrite]: Api['pty']['write'];
   [IpcChannel.PtyResize]: Api['pty']['resize'];
   [IpcChannel.PtyResetSize]: Api['pty']['resetSize'];
@@ -798,6 +813,7 @@ export type IpcEvent = {
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
   [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;
   [IpcChannel.ProfilesChanged]: Payload<Api['profiles']['onChanged']>;
+  [IpcChannel.PrefsChanged]: Payload<Api['prefs']['onChanged']>;
   [IpcChannel.ScheduledChanged]: Payload<Api['scheduled']['onChanged']>;
   [IpcChannel.SystemStats]: Payload<Api['system']['onStats']>;
   [IpcChannel.ClaudeVersionChanged]: Payload<Api['claudeVersion']['onChanged']>;

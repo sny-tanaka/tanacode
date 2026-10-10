@@ -33,6 +33,8 @@ type Props = {
   sessions?: readonly SessionLink[];
   // そのセッションへ移る。無ければ移れない（タスクの中身の表示の中など）
   onSelectSession?: (id: string) => void;
+  // このチャットのセッションの親（無ければ null）。ほかのセッションからの指示が、親からのものかを見分ける
+  parentId?: string | null;
 };
 
 const NO_SESSIONS: readonly SessionLink[] = [];
@@ -60,7 +62,7 @@ function sameRow(a: Props, b: Props): boolean {
     a.onOpenFile === b.onOpenFile &&
     a.onOpenTask === b.onOpenTask &&
     a.onRunCommand === b.onRunCommand &&
-    (!showsSessions(a.item) || (a.sessions === b.sessions && a.onSelectSession === b.onSelectSession)) &&
+    (!showsSessions(a.item) || (a.sessions === b.sessions && a.onSelectSession === b.onSelectSession && a.parentId === b.parentId)) &&
     sameTasks(a, b, a.item.kind === 'tool' ? [a.item.id] : [])
   );
 }
@@ -78,6 +80,7 @@ export const ChatRow = memo(function ChatRow({
   onRunCommand,
   sessions = NO_SESSIONS,
   onSelectSession,
+  parentId = null,
 }: Props) {
   if (item.kind === 'user') {
     // 親セッションの Claude からの指示は、人の発言と見分けて出す。
@@ -86,7 +89,7 @@ export const ChatRow = memo(function ChatRow({
       <div className={`chat-user reveal-host${item.parent ? ' from-parent' : ''}`}>
         <span className="chat-prompt">{item.parent ? '»' : '›'}</span>
         <div className="chat-user-body">
-          {item.parent && <ParentHeading parentId={item.parent} sessions={sessions} onSelectSession={onSelectSession} />}
+          {item.parent && <ParentHeading parentId={item.parent} isParent={item.parent === parentId} sessions={sessions} onSelectSession={onSelectSession} />}
           {item.text && (
             <span className="chat-user-text">
               <SessionRefText text={item.text} sessions={sessions} onSelectSession={onSelectSession} />

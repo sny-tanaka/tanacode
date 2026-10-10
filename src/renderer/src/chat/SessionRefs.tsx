@@ -42,15 +42,22 @@ export function SessionRefText({ text, sessions, onSelectSession }: Links & { te
   return <>{parts}</>;
 }
 
-// 親セッションの Claude からの指示に付ける見出し。押すと親セッションへ移る（親を一覧から削除していたら、名前を出さない）
-export function ParentHeading({ parentId, sessions, onSelectSession }: Links & { parentId: string }) {
+// 親セッションの Claude からの指示に付ける見出し。押すと親セッションへ移る（親を一覧から削除していたら、名前を出さない）。
+// isParent: 送ったのが、このセッションの親か。独立したセッションの最初の指示は、親ではなく、起動したセッションからのもの
+export function ParentHeading({ parentId, isParent, sessions, onSelectSession }: Links & { parentId: string; isParent: boolean }) {
   const parent = findSession(sessions, parentId);
+  const named = isParent ? 'composer.sessionRef.fromParentNamed' : 'composer.sessionRef.fromSessionNamed';
   if (!parent || !onSelectSession) {
-    return <div className="chat-from-parent">{parent ? t('composer.sessionRef.fromParentNamed', { name: sessionName(parent) }) : t('composer.sessionRef.fromParent')}</div>;
+    return (
+      <div className="chat-from-parent">
+        {parent ? t(named, { name: sessionName(parent) }) : t(isParent ? 'composer.sessionRef.fromParent' : 'composer.sessionRef.fromSession')}
+      </div>
+    );
   }
+  const tip = isParent ? t('composer.sessionRef.openParent') : t('composer.sessionRef.open', { name: sessionName(parent) });
   return (
-    <button type="button" className="chat-from-parent" onClick={() => onSelectSession(parent.id)} data-tip={t('composer.sessionRef.openParent')}>
-      {tx('composer.sessionRef.fromParentNamed', { name: <span className="chat-from-parent-name">{sessionName(parent)}</span> })}
+    <button type="button" className="chat-from-parent" onClick={() => onSelectSession(parent.id)} data-tip={tip}>
+      {tx(named, { name: <span className="chat-from-parent-name">{sessionName(parent)}</span> })}
       <ChevronRightIcon size={12} />
     </button>
   );

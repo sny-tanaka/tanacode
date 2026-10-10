@@ -3,28 +3,21 @@ import { authorLabel, humanUnread, type Author, type Card, type CardEvent, type 
 import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { Markdown } from '../chat/Markdown';
+import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { CloseIcon, CopyIcon, IconButton, SendIcon, TrashIcon } from '../icons';
 import { CardCheck } from './CardCheck';
 import { CopyDialog } from './CopyDialog';
 import { applyChecklist } from './useChecklists';
 
-// 「Claude に通知する」の前回の選択（画面ごとの使い勝手なので localStorage に持つ）
+// 「Claude に通知する」の前回の選択。どのプロファイルの画面でも同じにする（sharedPrefs）
 const NOTIFY_KEY = 'tanacode.checklist.notify';
 
 function loadNotify(): boolean {
-  try {
-    return localStorage.getItem(NOTIFY_KEY) !== '0';
-  } catch {
-    return true;
-  }
+  return readSharedPref(NOTIFY_KEY) !== '0';
 }
 
 function saveNotify(on: boolean): void {
-  try {
-    localStorage.setItem(NOTIFY_KEY, on ? '1' : '0');
-  } catch {
-    // 覚えられなくても、この画面のあいだは選べる
-  }
+  writeSharedPref(NOTIFY_KEY, on ? '1' : '0');
 }
 
 type Props = {
@@ -44,6 +37,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
   const [editingBody, setEditingBody] = useState<string | null>(null);
   const [reply, setReply] = useState('');
   const [notify, setNotify] = useState(loadNotify);
+  useSharedPrefChange(NOTIFY_KEY, () => setNotify(loadNotify()));
   const [sendingCards, setSendingCards] = useState<ReadonlySet<string>>(() => new Set());
   const sending = sendingCards.has(card.id);
   const cardRef = useRef(card.id);

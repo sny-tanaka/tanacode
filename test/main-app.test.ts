@@ -568,19 +568,65 @@ describe('ウインドウ', () => {
     expect(mainWindow().options.x).toBeUndefined();
   });
 
-  it.each(['resized', 'moved', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'close'])('%s で、位置と大きさを覚える', async (event) => {
+  const savedWindowState = () => JSON.parse(readFileSync(join(state.userData, 'window-state.json'), 'utf8'));
+
+  it.each(['resized', 'moved', 'unmaximize', 'leave-full-screen', 'close'])('%s で、位置と大きさを覚える', async (event) => {
     await boot();
     const win = mainWindow();
     win.bounds = { x: 5, y: 6, width: 1500, height: 900 };
-    win.maximized = event === 'maximize';
-    win.fullScreen = event === 'enter-full-screen';
     win.emit(event, fakeEvent());
-    expect(JSON.parse(readFileSync(join(state.userData, 'window-state.json'), 'utf8'))).toEqual({
+    expect(savedWindowState()).toEqual({
       version: 1,
       bounds: { x: 5, y: 6, width: 1500, height: 900 },
-      maximized: event === 'maximize',
-      fullScreen: event === 'enter-full-screen',
+      frame: { x: 5, y: 6, width: 1500, height: 900 },
+      maximized: false,
+      fullScreen: false,
     });
+  });
+
+  it.each([
+    ['maximize', 'maximized'],
+    ['enter-full-screen', 'fullScreen'],
+  ] as const)('%s で、画面いっぱいにしたことと、その前の位置と大きさを覚える（ドラッグで動かしたあとの位置）', async (event, flag) => {
+    await boot();
+    const win = mainWindow();
+    // ドラッグでもう一つの画面へ動かしてから、そこで画面いっぱいにする
+    win.bounds = { x: 2000, y: 100, width: 1500, height: 900 };
+    win.emit('moved');
+    win.bounds = { x: 1920, y: 0, width: 2560, height: 1440 };
+    win[flag] = true;
+    win.emit(event);
+    const expected = {
+      version: 1,
+      bounds: { x: 2000, y: 100, width: 1500, height: 900 },
+      frame: { x: 1920, y: 0, width: 2560, height: 1440 },
+      maximized: flag === 'maximized',
+      fullScreen: flag === 'fullScreen',
+    };
+    expect(savedWindowState()).toEqual(expected);
+    // そのまま閉じても、画面いっぱいの大きさや、起動したときの位置（Electron の getNormalBounds）で上書きしない
+    win.emit('close', fakeEvent());
+    expect(savedWindowState()).toEqual(expected);
+  });
+
+  it('最大化して開いたあと、何も動かさずに閉じたら、前に覚えた位置と大きさのまま', async () => {
+    await boot({ windowState: { bounds: { x: 100, y: 50, width: 1300, height: 800 }, maximized: true, fullScreen: false } });
+    const win = mainWindow();
+    // 作り物のウインドウは、指定した位置（options）ではなく既定の位置に出る
+    const opened = win.bounds;
+    win.bounds = { x: 0, y: 0, width: 1920, height: 1080 };
+    win.emit('close', fakeEvent());
+    expect(savedWindowState()).toMatchObject({ bounds: opened, frame: { x: 0, y: 0, width: 1920, height: 1080 }, maximized: true });
+  });
+
+  it('最大化したまま別の画面へ移して閉じたら、次はその画面に開く', async () => {
+    const displays = [{ workArea: { x: 0, y: 25, width: 1920, height: 1055 } }, { workArea: { x: 1920, y: 0, width: 2560, height: 1440 } }];
+    await boot({
+      windowState: { bounds: { x: 100, y: 50, width: 1300, height: 800 }, frame: { x: 1920, y: 0, width: 2560, height: 1440 }, maximized: true, fullScreen: false },
+      before: (s) => (s.displays = displays),
+    });
+    expect(mainWindow().options).toMatchObject({ x: 1920, y: 50, width: 1300, height: 800 });
+    expect(mainWindow().maximize).toHaveBeenCalledTimes(1);
   });
 
   it('壊れたウインドウの位置は覚えない。覚えられなくても止まらない', async () => {

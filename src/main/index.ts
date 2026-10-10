@@ -7,9 +7,11 @@ import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type ScreenChoice, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
+import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
+import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
@@ -51,6 +53,7 @@ const lastOthersAttention = new Map<string, boolean>();
 let remoteControl = false;
 // アプリ全体の設定（通知・新しいバージョンの確認）。既定のプロファイルの設定も同じファイルに入っている
 let settings: AppSettings;
+let sharedPrefs: SharedPrefStore;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
@@ -196,23 +199,10 @@ function windowStateFile(): string {
   return join(app.getPath('userData'), 'window-state.json');
 }
 
-function rememberWindowState(win: BrowserWindow): void {
-  if (win.isDestroyed()) return;
-  try {
-    saveWindowState(windowStateFile(), {
-      bounds: win.getNormalBounds(),
-      maximized: win.isMaximized(),
-      fullScreen: win.isFullScreen(),
-    });
-  } catch {
-    // 覚えられなくても、次の起動が既定の大きさになるだけ
-  }
-}
-
 function createWindow(): void {
   const saved = loadWindowState(windowStateFile());
   const placement = placeWindow(
-    saved?.bounds ?? null,
+    saved,
     screen.getAllDisplays().map((display) => display.workArea),
     { width: 1600, height: 960 },
   );
@@ -229,9 +219,22 @@ function createWindow(): void {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), webviewTag: true, additionalArguments: [`${LANGUAGE_ARG}${language()}`] },
   });
   mainWindow = win;
+  // 最大化・フルスクリーンを解いたときの位置と大きさは、通常の状態のたびに自分で控える。macOS の getNormalBounds() は、
+  // ドラッグで動かしたあとを追わず、最後に API で決めた位置（起動したときの位置）を返す。それを覚えると、
+  // 別のディスプレイへ動かして最大化したウインドウが、次の起動で元のディスプレイに開いてしまう
+  let normalBounds = win.getNormalBounds();
   if (saved?.maximized && !saved.fullScreen) win.maximize();
-  // macOS の resized・moved は、動かし終えたときに一度だけ届く
-  const remember = () => rememberWindowState(win);
+  // macOS の resized・moved は、動かし終えたときに一度だけ届く。最大化のアニメーションの途中（resize）は、
+  // まだ通常の状態に見えるので、そこでは控えない
+  const remember = () => {
+    if (win.isDestroyed()) return;
+    if (win.isNormal()) normalBounds = win.getBounds();
+    try {
+      saveWindowState(windowStateFile(), { bounds: normalBounds, frame: win.getBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() });
+    } catch {
+      // 覚えられなくても、次の起動が既定の大きさになるだけ
+    }
+  };
   win.on('resized', remember);
   win.on('moved', remember);
   win.on('maximize', remember);
@@ -244,7 +247,7 @@ function createWindow(): void {
   win.on('resize', layoutViews);
   // バツボタンでウインドウを閉じたら、アプリも終了する（Claude Code を止めるかは quit の確認で決める）
   win.on('close', (event) => {
-    rememberWindowState(win);
+    remember();
     if (quitDecided) return;
     event.preventDefault();
     app.quit();
@@ -688,6 +691,22 @@ function registerIpc(): void {
   });
   handle(IpcChannel.ProfilesRemove, (_e, id: string) => removeProfile(String(id)));
   handle(IpcChannel.ProfilesPickDir, () => pickProfileDir());
+  // プロファイルをまたいで同じにする表示設定。変わったら、ほかのプロファイルの画面に配る（送り元は、もうその値になっている）
+  const sharePrefs = (sender: WebContents, changes: SharedPrefChange[]) => {
+    for (const id of [DEFAULT_PROFILE_ID, ...views.keys()]) {
+      if (contentsOf(id) === sender) continue;
+      for (const change of changes) sendTo(id)(IpcChannel.PrefsChanged, change);
+    }
+  };
+  handle(IpcChannel.PrefsSync, (e, local: SharedPrefs) => {
+    P(e);
+    sharePrefs(e.sender, sharedPrefs.adopt(local));
+    return sharedPrefs.all();
+  });
+  listen(IpcChannel.PrefsSet, (e, key: SharedPrefKey, value: string) => {
+    P(e);
+    if (sharedPrefs.set(key, value)) sharePrefs(e.sender, [{ key, value }]);
+  });
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, (e) =>
@@ -1116,6 +1135,7 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
+  sharedPrefs = new SharedPrefStore(join(app.getPath('userData'), 'shared-prefs.json'));
   // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
   applyLanguage();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));

@@ -736,17 +736,18 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `--mcp-config` の `timeout`（1 回のツールの呼び出しを Claude Code が待つ上限）を長めに付けます。子を待つ `wait_sessions` が最大 600 秒待つためです。アプリの待ち（600 秒）＜中継の待ち（`SESSIONS_CALL_TIMEOUT_MS`。660 秒）＜ Claude Code の待ち（720 秒）の順にします。`timeout` を付ければ、75 秒かかる呼び出しも切られません（Claude Code 2.1.288 で実測）。
   - 起動に足す材料は `index.ts` の `sessionsLaunch`。`SessionManager` が起動のたびに聞き、`claudeArgs` がブラウザのサーバーと合わせて渡します（`sessions-bridge.ts` の `sessionsMcpServer`）。
 - 許可: 読むだけのツール（`kind: 'read'`）と、子への指示・質問への回答（`send_message`・`answer_question`。`kind: 'instruct'`）は `--allowedTools` で許可済みに。親が人の手を借りずに子を回すためで、子のツールの実行の許可は人だけが答え、子のモードは親より強くできないので、権限は広がりません。`instruct` は読むだけではないので、`readOnlyHint` は付けません。`stop_session` は、ふつうの許可の確認を通します。
-  - `start_session` だけは、`--settings` の `PreToolUse` のフック（`SESSIONS_GATE_COMMAND`）が `permissionDecision: "ask"` を返し、権限モードによらず確認を出させます。ふつうの許可の確認は、auto・bypassPermissions では出ないためです（フックの `ask` なら bypassPermissions でも出る。Claude Code 2.1.288 で実測）。確認の理由（`permissionDecisionReason`）に、子も利用枠を子の数だけ使うことを書きます。
+  - `start_session` だけは、`--settings` の `PreToolUse` のフック（`SESSIONS_GATE_COMMAND`）が `permissionDecision: "ask"` を返し、権限モードによらず確認を出させます。ふつうの許可の確認は、auto・bypassPermissions では出ないためです（フックの `ask` なら bypassPermissions でも出る。Claude Code 2.1.288 で実測）。確認の理由（`permissionDecisionReason`）に、起動したセッションも利用枠をその数だけ使うことを書きます。
   - フックは、決まった JSON を `printf` で書くだけ（Node も awk も使わない）。チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_SESSIONS_GATE`）。登録した設定ファイルを重ねるときは、登録した設定のフックと並べて足します（`mergeSettings`）。
 - 実行はメインプロセス（`sessions-control.ts` の `SessionsControl`）。`SessionManager` を `SessionsHost` の形で使います。
   - 見える範囲（`canSee`）: 自分・親子・兄弟（同じ親の子）と、同じフォルダのセッション。フォルダは `projectRootOf`（worktree のセッションは元のフォルダ。`.claude/worktrees/<名前>` のフォルダも元のフォルダに直す）。中のフォルダは同じとみなしません（`~/work` を開いたセッションに、その下の別々のリポジトリを見せないため）。入力欄の `@` の候補も同じ `canSee` で絞ります。一覧や `read_session` の見出しの子も、見えるものだけを出します。
-  - `session_id` は、全体か先頭 8 文字以上で、見えるセッションから探します（2 つ以上に当たったら断る）。`send_message`・`answer_question`・`stop_session` と、`wait_sessions` の `session_ids` は、`parentId` が呼び出し元のものだけ。子からの `start_session` は断ります（親子は 1 段まで）。
+  - `session_id` は、全体か先頭 8 文字以上で、見えるセッションから探します（2 つ以上に当たったら断る）。`send_message`・`answer_question`・`stop_session` と、`wait_sessions` の `session_ids` は、`parentId` が呼び出し元のものだけ。子からの `start_session` は断ります（親子は 1 段まで。独立したセッションも始めさせない）。
   - 状態は `SessionManager.stateOf`（`starting`・`working`・`background`・`question`・`permission`・`waiting`・`idle`・`exited`・`archived`）。送ってから発言が会話ログに出るまで（`submitWhenReady` で待っている間と、送ってから 15 秒）も `working` にします。送った直後の子を、`wait_sessions` が手の空いた子と読まないためです。変化は `watchState` で受けます。
     - 画面のメニューが質問と読めても、AskUserQuestion を出していなければ（`ScreenTracker.askedQuestions` が無い）`permission` にします。メニューを質問と見分けるのは ☐・☒ の行なので、コマンドの文字に ☐ があると、許可の確認が質問に見えるためです。
   - `start_session`: 権限モードは、親のモード（`modeOf`）より強ければ断ります（`modeWithin`。plan・manual ＜ acceptEdits ＜ auto ＜ bypassPermissions）。省けば親のモード（親が plan なら manual）。
+  - `start_session` の `independent: true`（独立したセッション）: `parentId` を付けずに作ります。親子の記録が無いので、指示・待ち・中断・親への知らせ・起動したときのモードの上限（`launchMode`）・人への通知の抑止は、どれも付きません（起動したあとは、人が動かすふつうのセッション）。フォルダと権限モードの確かめは子と同じ。Remote Control は、呼び出し元の指定（`SessionSummary.remoteControl`）に合わせます（子は付けない）。最初の指示は、子と同じ囲み（`parentMessageText`。`session` は起動したセッション）で送り、人の発言と見分けます。画面の見出しは、送り主がそのセッションの親でなければ「セッション「名前」からの指示」（`ParentHeading` の `isParent`）。
     - `modeOf` は、アプリが決めたモード（起動の引数・`setMode` での切り替え。`knownMode`。無ければ manual）と、画面から読んだモードの弱いほう（`weakerMode`）。画面のモードの行は、会話の中の文（「bypass permissions on」など）でも読めてしまうので、強くする向きには使いません。
     - 子の起動のモードは `launchMode` に残し、止まった子を開く（`open`）・起動し直す（`restart`）ときも、それより強くしません。
-    - フォルダは `folderFor`（シンボリックリンクを解いてから、親のリポジトリの中か、親から見えるセッションのフォルダだけ。worktree なら `projectRootOf` で元のフォルダに直す）。設定ファイルは親と同じにし、Remote Control は付けず、`create`・`createInWorktree` に `parentId` を渡します。最初の指示は `submitWhenReady`（worktree の準備を含めて最大 30 分）で送り、待たずに返します。
+    - フォルダは `folderFor`（シンボリックリンクを解いてから、親のリポジトリの中か、そのプロファイルのセッション（`host.list()`。アーカイブしたものも）のフォルダだけ。見える範囲（`canSee`）より広いので、別のリポジトリでも始められるが、そこの会話は読めないまま。選べるフォルダは、`list_sessions` の `start_folders`（`knownFolders`。新しい順に 30 件まで。子には出さない）で Claude に渡す。worktree なら `projectRootOf` で元のフォルダに直す）。設定ファイルは親と同じにし、Remote Control は付けず、`create`・`createInWorktree` に `parentId` を渡します。最初の指示は `submitWhenReady`（worktree の準備を含めて最大 30 分）で送り、待たずに返します。
   - 子への指示: `<tanacode-parent-message session="親の ID">本文</tanacode-parent-message>`（`parentMessageText`。本文の `<tanacode-`・`</tanacode-` は全角の `＜` にして、閉じタグで囲みの外に出られないようにする）を、`SessionManager.submitWhenReady` で子の入力欄に打ちます。
     - 打つのは、子の手が空いている（ターンの外・操作待ちでない・入力欄に書きかけが無い・画面の操作の途中でない。`acceptsTyping`）ときだけ。作業中の子に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になってしまうことがあるためです。手が空いていれば、新しい確認が急に出ることはありません（ツールを使うには、まず応答が要る）。
     - 打つ直前と Enter の直前にも確かめ直し、メニューが出ていたら打ちません（`submit` の `guarded`）。
@@ -796,7 +797,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 別のセッションへのコピー（`ChecklistStore.copyCards`）: タイトル・説明文・チェック・スレッドを写し（id は振り直す）、記録の行「〜からコピーしました」を足します。先に同じ名前のリストがあれば足し、無ければ元の説明ごと作ります。コピーできる範囲は `tanacode-sessions` と同じ `canSee`（同じフォルダ・親子・兄弟）。アーカイブしたセッションへは断ります。画面からは `checklist:copy`。
 - 画面: サイドパネルの `checklist/ChecklistPanel.tsx`（リストごとにタイトルだけを並べる。チェック欄・＋・ドラッグ・⌘ と ⇧ での選択・ゴミ箱）と、エディタの場所の `checklist/CardPane.tsx`（`App.tsx` の `CenterView` の `card`。カードの id で引くので、別のリストへ移しても追いかける）。値は `useChecklists`（選んでいるセッションのリストと、全セッションの未読の数。セッション一覧とアクティビティバーの印）。
   - チャットの知らせやツールの行からカードを開くときは、props を通さずに `checklist/openCard.ts` の `openChecklistCard` で `App` に渡します（知らせは id で、ツールの行はリストの名前と番号で指す。`cardOfTool`）。ツールの行の対象は `checklistTarget`（「やること #3」など）。
-  - 「Claude に通知する」の前回の選択は localStorage（`tanacode.checklist.notify`）。
+  - 「Claude に通知する」の前回の選択は localStorage（`tanacode.checklist.notify`。どのプロファイルの画面でも同じにする表示設定）。
   - ストーリーは `ChecklistPanel.stories.tsx`・`CardPane.stories.tsx`（作り物は `sampleChecklists.ts`）。
 - オン・オフ: メニューの「tanacode → Claude にチェックリストを扱わせる」（`settings.json` の `checklistControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断り、知らせも送りません。画面のチェックリストは使えます。
 
@@ -883,6 +884,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
+| `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
 | `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
 | `profiles/<id>/` | 足したプロファイルのデータ。中身は上の表のうち、プロファイルごとのもの（`sessions.json`・`settings.json`（登録した設定ファイル・Claude に許す機能だけを使う）・`checklists/`・ソケット・`statusline/`・`session-settings/`・`usage.json`・`scheduled-messages.json`・pty ホストのソケットとログ）。既定のプロファイルのものは、今までどおり上の場所 |
 
@@ -909,7 +911,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/main`: Electron のメインプロセス
   - `index.ts`: アプリの入り口。ウインドウ・メニュー・通知・終了の確認・新しいバージョンなど、アプリ全体のものを持ち、画面からの呼び出しを、送り元の画面のプロファイルに渡す。
     - 既定のプロファイルの画面はウインドウ自身。足したプロファイルの画面は、ウインドウいっぱいに重ねた `WebContentsView`（見ているものだけを出す）で、プロファイルを切り替えても画面の状態はそのまま残る
-    - 足したプロファイルの画面のセッションは `persist:tanacode-profile-<id>`（localStorage などを分ける）、アプリ内ブラウザの webview は `persist:tanacode-preview-<id>`（Cookie を分ける。`will-attach-webview` で main が差し替える）
+    - 足したプロファイルの画面のセッションは `persist:tanacode-profile-<id>`（localStorage などを分ける。カラムの幅などの表示設定だけは、下の `shared-prefs.ts` でそろえる）、アプリ内ブラウザの webview は `persist:tanacode-preview-<id>`（Cookie を分ける。`will-attach-webview` で main が差し替える）
     - 画面からの呼び出しは、画面を作るときに覚えた持ち主（`contentsProfile`）で振り分け、ほかのプロファイルのものは扱わせない
     - 通知は、プロファイルが 2 つ以上ならサブタイトルにプロファイルの名前を付け、クリックでそのプロファイルに切り替える。ほかのプロファイルに確認待ち・新しい応答があれば、どのプロファイルかは言わずに `profiles:changed` の `othersAttention` で知らせる
   - `profile-registry.ts`: 登録したプロファイル（`profiles.json`）。足すときに Claude Code の設定のフォルダを作る（`0700`）。外しても、設定のフォルダとデータは消さない
@@ -957,6 +959,10 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `homebrew-update.ts`: Homebrew で入れたかの判定と、新しいバージョンのダウンロード（`brew fetch`）・終了したあとの入れ替え（切り離したシェルで `brew upgrade`）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
+  - `shared-prefs.ts`: プロファイルをまたいで同じにする表示設定（`shared-prefs.json`）。キーは `src/shared/prefs.ts` の `SHARED_PREF_KEYS`（画面の localStorage のキーと同じ）
+    - 画面（`src/renderer/src/sharedPrefs.ts`）は、今までどおり localStorage から待たずに読み、書くときに main にも渡す（`prefs:set`）。main は覚えて、ほかのプロファイルの画面に配る（`prefs:changed`）。受け取った画面は localStorage に入れ、使っている部品が読み直す（`useSharedPrefChange`）
+    - 起動したときは、描く前にそろえる（`prefs:sync`。`main.tsx`）。main がまだ覚えていないものは、先に聞いてきた画面（ふつうは既定のプロファイル）の値を採る
+    - どのプロファイルでも同じにしたい表示設定を足すときは、`SHARED_PREF_KEYS` にキーを足し、`readSharedPref`・`writeSharedPref` で読み書きする。セッションの ID を持つもの（一覧の並びのロック・畳んだ親）や、アカウントで変わるもの（新規セッションで最後に選んだモデルなど）は、プロファイルごとのまま localStorage に置く
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す。予約を送れなかったときも）
   - `scheduled-messages.ts`: 時刻を指定して送信（予約）。保存・時刻になったら手が空くのを待って送る・時刻を過ぎていたもの・取り消し
   - `translate.ts`: チャットの翻訳（補助プログラムのパスと使えるか・画面から来た値の検査・補助プログラムの起動と返事の読み取り・依頼を 1 つずつ動かす `Translator`）
@@ -964,7 +970,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行）
-  - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で localStorage に保つ）
+  - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
