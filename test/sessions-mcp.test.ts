@@ -372,7 +372,7 @@ describe('ツールの実行（SessionsControl）', () => {
 
   it('メニューでオフなら断る。知らないセッションからの呼び出しも断る', async () => {
     enabled = false;
-    expect(textOf(await control.handle(PARENT, 'list_sessions', {}))).toContain('オフ');
+    expect(textOf(await control.handle(PARENT, 'list_sessions', {}))).toBe(`The user has turned off "${t('main.menu.sessionsControl')}" in the tanacode menu. Ask the user to turn it on.`);
     enabled = true;
     expect((await control.handle('nobody', 'list_sessions', {})).isError).toBe(true);
   });
@@ -387,26 +387,26 @@ describe('ツールの実行（SessionsControl）', () => {
       { type: 'notice', id: '6', text: 'バックグラウンドのタスクが終わりました' },
     ]);
     const text = textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD.slice(0, 8), turns: 2 }));
-    expect(text).toContain('全 3 件の指示のうち、新しいほうから 2 件');
-    expect(text).toContain('人の発言');
+    expect(text).toContain('the latest 2 of 3 instructions');
+    expect(text).toContain('User message');
     expect(text).toContain('方針を変えて');
-    expect(text).toContain('知らせ');
+    expect(text).toContain('Notice');
     expect(text).not.toContain('最初の指示');
     expect(text).toContain('- src/a.ts');
     const all = textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD }));
-    expect(all).toContain('親セッション「s-11」からの指示');
+    expect(all).toContain('Instruction from the parent session "s-11"');
   });
 
   it('session_id は先頭 8 文字以上。短い・重なる ID は断る', async () => {
-    expect(textOf(await control.handle(PARENT, 'get_session', { session_id: '2222' }))).toContain('8 文字以上');
+    expect(textOf(await control.handle(PARENT, 'get_session', { session_id: '2222' }))).toContain('at least its first 8 characters');
     host.add('22222222-ffff-4000-8000-00000000000f', repo);
-    expect(textOf(await control.handle(PARENT, 'get_session', { session_id: '22222222' }))).toContain('2 つ以上');
+    expect(textOf(await control.handle(PARENT, 'get_session', { session_id: '22222222' }))).toContain('More than one session');
   });
 
   it('start_session: 子は孫を作れない。権限モードは親より強くできず、省くと親と同じ', async () => {
-    expect(textOf(await control.handle(CHILD, 'start_session', { prompt: 'x', worktree: false }))).toContain('1 段');
+    expect(textOf(await control.handle(CHILD, 'start_session', { prompt: 'x', worktree: false }))).toContain('cannot start child sessions of its own');
     host.modes.set(PARENT, 'acceptEdits');
-    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'bypassPermissions' }))).toContain('より強い');
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'bypassPermissions' }))).toContain('more permissive');
     const started = jsonOf<{ session_id: string; permission_mode: string }>(await control.handle(PARENT, 'start_session', { prompt: '登録画面を作って', worktree: false, name: '登録画面' }));
     expect(started.permission_mode).toBe('acceptEdits');
     expect(host.created[0]).toMatchObject({ cwd: repo, parentId: PARENT, worktree: false, options: { mode: 'acceptEdits', remoteControl: false } });
@@ -417,13 +417,13 @@ describe('ツールの実行（SessionsControl）', () => {
   });
 
   it('start_session: 始められるのは、このセッションのリポジトリの中か、見えるセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
-    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: '/etc' }))).toContain('始められません');
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: '/etc' }))).toContain('Cannot start in');
     // 見えないセッション（別のリポジトリ）のフォルダは選べない。見えるセッション（別のフォルダの子）のフォルダは選べる
-    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other') }))).toContain('始められません');
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other') }))).toContain('Cannot start in');
     expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'far') })).isError).toBeUndefined();
     // リポジトリの中のシンボリックリンクから、外のフォルダで始めさせない
     symlinkSync('/etc', join(repo, 'etc-link'));
-    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'etc-link') }))).toContain('始められません');
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'etc-link') }))).toContain('Cannot start in');
     await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true, folder: join(repo, 'sub') });
     expect(host.created.at(-1)).toMatchObject({ worktree: true });
     // worktree のセッション（子）から見ても、元のフォルダ
@@ -436,14 +436,14 @@ describe('ツールの実行（SessionsControl）', () => {
   it('send_message: 作業中の子には、手が空いてから打つ（待たずに返す）', async () => {
     host.set(CHILD, 'working');
     const sent = jsonOf<{ note: string }>(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
-    expect(sent.note).toContain('順番待ち');
+    expect(sent.note).toContain('queued');
     expect(host.submitted).toEqual([{ id: CHILD, text: parentMessageText(PARENT, '続けて') }]);
   });
 
   it('send_message: 自分の子にだけ。質問・許可の確認を待っている子には送らない。止まっている子は起動してから送る', async () => {
-    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: PEER, message: 'x' }))).toContain('子セッションではありません');
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: PEER, message: 'x' }))).toContain('is not a child session');
     host.set(CHILD, 'permission');
-    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toContain('人が答えます');
+    expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toContain('Only the user can answer');
     host.set(CHILD, 'question');
     expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toContain('answer_question');
     host.set(CHILD, 'exited');
@@ -455,16 +455,16 @@ describe('ツールの実行（SessionsControl）', () => {
   it('answer_question: 許可の確認には答えない。人が先に答えて質問が変わっていたら答えない', async () => {
     host.set(CHILD, 'permission');
     host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', options: [option('1', 'Yes')] }));
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('人が答えます');
+    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('Only the user can answer');
     // コマンドの文字に ☐ があって質問と読めた許可の確認（AskUserQuestion を出していない）にも答えない
     host.screens.set(CHILD, menuScreen({ kind: 'question', tabs: [{ label: '☐ done', answered: false }], title: 'Do you want to proceed?', options: [option('1', 'Yes'), option('2', 'No')] }));
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('AskUserQuestion の質問ではありません');
+    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('is not showing an AskUserQuestion question');
     expect(host.chosen).toEqual([]);
     host.asked.set(CHILD, [asked('どちらの方式?')]);
     host.set(CHILD, 'question');
     host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案'), option('3', 'Type something.', { textInput: true })] }));
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: '前の質問', choices: ['A 案'] }))).toContain('今出ている質問は「どちらの方式?」');
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['C 案'] }))).toContain('「A 案」');
+    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: '前の質問', choices: ['A 案'] }))).toContain('The question showing now is "どちらの方式?"');
+    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['C 案'] }))).toContain('"A 案"');
     expect(host.chosen).toEqual([]);
     await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['B 案'] });
     expect(host.chosen).toEqual([{ id: CHILD, choice: { optionId: '2', key: 'enter', text: undefined } }]);
@@ -485,7 +485,7 @@ describe('ツールの実行（SessionsControl）', () => {
       host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', options: [option('1', 'Yes')] }));
       return chooseIf(id, choice, expect);
     };
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['A 案'] }))).toContain('答えられませんでした');
+    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['A 案'] }))).toContain('Could not answer');
     expect(host.chosen).toEqual([]);
   });
 
@@ -505,7 +505,7 @@ describe('ツールの実行（SessionsControl）', () => {
     host.set(CHILD, 'question');
     expect((await control.handle(PARENT, 'stop_session', { session_id: CHILD })).isError).toBe(true);
     host.set(CHILD, 'idle');
-    expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD })).note).toBe('作業していません');
+    expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD })).note).toBe('It is not working.');
     host.set(CHILD, 'working');
     await control.handle(PARENT, 'stop_session', { session_id: CHILD });
     expect(host.interrupted).toEqual([CHILD]);
@@ -524,7 +524,7 @@ describe('ツールの実行（SessionsControl）', () => {
     // 指定した子が手が空いていれば、すぐ返す
     expect(jsonOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [SIBLING] })).ready).toEqual([SIBLING]);
     // 作業中の子が無ければ、待たずに返す
-    expect(jsonOf(await control.handle(PARENT, 'wait_sessions', {})).note).toBe('作業中の子セッションはありません');
+    expect(jsonOf(await control.handle(PARENT, 'wait_sessions', {})).note).toBe('No child session is working.');
   });
 
   it('wait_sessions: Claude Code が呼び出しを取り消したら（Esc）、待つのをやめる', async () => {
@@ -559,7 +559,7 @@ describe('ツールの実行（SessionsControl）', () => {
     writeFileSync(join(repo, 'new.txt'), 'あたらしい\n');
     const text = textOf(await control.handle(PARENT, 'get_session_diff', { session_id: PEER }));
     expect(text).toContain('+あたらしい');
-    expect(text).toContain('シンボリックリンクのため');
+    expect(text).toContain('(symbolic link; contents not read)');
     expect(text).not.toContain('ひみつ');
   });
 
@@ -663,10 +663,10 @@ describe('ツールの実行（SessionsControl）', () => {
     const diffOf = async (args: Record<string, unknown> = {}) => textOf(await control.handle(PARENT, 'get_session_diff', { session_id: PEER, ...args }));
 
     it('フォルダが無い・git のリポジトリでない・コミットが無いときは、理由を返す', async () => {
-      expect(textOf(await control.handle(PARENT, 'get_session_diff', { session_id: CHILD }))).toBe('「s-22」のフォルダがありません（worktree を消したセッションなど）');
-      expect(await diffOf()).toBe('「s-55」のフォルダは git のリポジトリではありません');
+      expect(textOf(await control.handle(PARENT, 'get_session_diff', { session_id: CHILD }))).toBe('The folder of "s-22" does not exist (for example, its worktree was removed).');
+      expect(await diffOf()).toBe('The folder of "s-55" is not a git repository.');
       initRepo(false);
-      expect(await diffOf()).toBe('「s-55」のリポジトリには、まだコミットがありません');
+      expect(await diffOf()).toBe('The repository of "s-55" has no commits yet.');
     });
 
     it('基点からの変更を、ファイルの一覧（追加・変更・バイナリ）と差分で返す。path で絞れる（空・. は絞らない、外は断る）', async () => {
@@ -683,32 +683,32 @@ describe('ツールの実行（SessionsControl）', () => {
       writeFileSync(join(repo, 'img.bin'), Buffer.from([0, 1, 2]));
       writeFileSync(join(repo, 'src', 'new.txt'), 'new\n');
       const all = await diffOf();
-      expect(all).toContain('# セッション「s-55」のブランチの変更\n- ブランチ: feature\n');
-      expect(all).toContain(`- 基点: main（分岐点 ${base.slice(0, 8)}）`);
-      expect(all).toContain('- ファイル: 4 件\n  - M a.txt（+1 −1）\n  - M img.bin（バイナリ）\n  - M src/b.txt（+1 −1）\n  - A src/new.txt（+1 −0）\n');
+      expect(all).toContain('# Branch changes of session "s-55"\n- Branch: feature\n');
+      expect(all).toContain(`- Base: main (merge base ${base.slice(0, 8)})`);
+      expect(all).toContain('- Files: 4\n  - M a.txt (+1 −1)\n  - M img.bin (binary)\n  - M src/b.txt (+1 −1)\n  - A src/new.txt (+1 −0)\n');
       expect(all).toContain('+a2');
       expect(all).toContain('+++ b/src/new.txt\n@@ -0,0 +1,1 @@\n+new');
       const inSrc = await diffOf({ path: 'src/' });
-      expect(inSrc).toContain('- ファイル: 2 件（src の中だけ）\n  - M src/b.txt（+1 −1）\n  - A src/new.txt（+1 −0）\n');
+      expect(inSrc).toContain('- Files: 2 (only in src)\n  - M src/b.txt (+1 −1)\n  - A src/new.txt (+1 −0)\n');
       expect(inSrc).toContain('+b2');
       expect(inSrc).toContain('+new');
       expect(inSrc).not.toContain('a.txt');
       expect(inSrc).not.toContain('+a2');
-      expect(await diffOf({ path: '  ' })).toContain('- ファイル: 4 件\n');
-      expect(await diffOf({ path: '.' })).toContain('- ファイル: 4 件\n');
-      expect(await diffOf({ path: '../x' })).toBe('path は、セッションのフォルダからの相対パスで渡してください');
+      expect(await diffOf({ path: '  ' })).toContain('- Files: 4\n');
+      expect(await diffOf({ path: '.' })).toContain('- Files: 4\n');
+      expect(await diffOf({ path: '../x' })).toBe('Pass path as a path relative to the session folder.');
     });
 
     it('基点が分からなければ、未コミットの変更だけ。差分が無ければ「差分なし」。ブランチから外れていれば、そう書く', async () => {
       initRepo();
       const none = await diffOf();
-      expect(none).toContain('- 基点: 分からないため、未コミットの変更だけ（HEAD との差分）');
-      expect(none).toContain('- ファイル: 0 件\n');
-      expect(none).toContain('## 差分\n（差分なし）');
+      expect(none).toContain('- Base: unknown, so only uncommitted changes (diff against HEAD)');
+      expect(none).toContain('- Files: 0\n');
+      expect(none).toContain('## Diff\n(no changes)');
       g('switch', '-q', '--detach');
       writeFileSync(join(repo, 'a.txt'), 'changed\n');
       const detached = await diffOf();
-      expect(detached).toContain('- ブランチ: （ブランチなし）');
+      expect(detached).toContain('- Branch: (no branch)');
       expect(detached).toContain('+changed');
     });
 
@@ -718,16 +718,16 @@ describe('ツールの実行（SessionsControl）', () => {
       writeFileSync(join(repo, 'bin.dat'), Buffer.from([0, 1, 2]));
       g('init', '-q', 'nested');
       const text = await diffOf();
-      expect(text).toContain('+++ b/big.txt\n（300 KB の大きなファイルのため、中身は省きます）');
-      expect(text).toContain('+++ b/bin.dat\n（バイナリ）');
-      expect(text).toContain('+++ b/nested/\n（ふつうのファイルではないため、中身は読みません）');
+      expect(text).toContain('+++ b/big.txt\n(large file of 300 KB; contents omitted)');
+      expect(text).toContain('+++ b/bin.dat\n(binary)');
+      expect(text).toContain('+++ b/nested/\n(not a regular file; contents not read)');
     });
 
     it('差分にバッククォートが続いていれば、それより長い囲みにする（囲みから抜けないように）', async () => {
       initRepo();
       writeFileSync(join(repo, 'README.md'), '````js\nx\n````\n');
       const text = await diffOf();
-      expect(text).toContain('## 差分\n`````diff\n');
+      expect(text).toContain('## Diff\n`````diff\n');
       expect(text.endsWith('\n`````')).toBe(true);
     });
 
@@ -745,16 +745,16 @@ describe('ツールの実行（SessionsControl）', () => {
       const text = await diffOf();
       expect(text).toContain('+++ b/f099.txt');
       expect(text).not.toContain('+++ b/f100.txt');
-      expect(text).toContain('（ほかに未追跡のファイルが 1 件。path で絞ってください）');
+      expect(text).toContain('(1 more untracked file. Narrow it down with path.)');
     });
 
     it('差分が結果の上限を超えたら、残りの未追跡のファイルは読まない', async () => {
       initRepo();
       for (const name of ['u1.txt', 'u2.txt', 'u3.txt']) writeFileSync(join(repo, name), `${'x'.repeat(50_000)}\n`);
       const text = await diffOf();
-      expect(text).toContain('（ほかに未追跡のファイルが 1 件。path で絞ってください）');
+      expect(text).toContain('(1 more untracked file. Narrow it down with path.)');
       expect(text).not.toContain('+++ b/u3.txt');
-      expect(text).toContain('文字を省略');
+      expect(text).toContain('characters omitted');
     });
   });
 
@@ -764,7 +764,7 @@ describe('ツールの実行（SessionsControl）', () => {
         throw 'ログを読めない';
       };
       expect(await control.handle(PARENT, 'read_session', { session_id: CHILD })).toEqual(textResult('ログを読めない', true));
-      expect(textOf(await control.handle(PARENT, 'get_session', { session_id: 22222222 }))).toContain('8 文字以上');
+      expect(textOf(await control.handle(PARENT, 'get_session', { session_id: 22222222 }))).toContain('at least its first 8 characters');
     });
 
     it('list_sessions: git のリポジトリならブランチを返す。フォルダが無ければ worktree のブランチ（無ければ null）', async () => {
@@ -781,16 +781,16 @@ describe('ツールの実行（SessionsControl）', () => {
     it('read_session: 親の無いセッションの見出しには、見える子とその状態を書く。会話が無ければそう書く', async () => {
       host.states.delete(SIBLING);
       const text = textOf(await control.handle(PEER, 'read_session', { session_id: PARENT }));
-      expect(text).toContain(`- ID: ${PARENT}\n- 関係: 同じリポジトリのセッション\n- 状態: ${SESSION_STATE_LABEL.idle}（idle）\n- フォルダ: ${repo}\n- 子: `);
-      expect(text).toContain(`「s-22」（22222222・${SESSION_STATE_LABEL.working}）、「s-33」（33333333・${SESSION_STATE_LABEL.exited}）`);
+      expect(text).toContain(`- ID: ${PARENT}\n- Relation: a session in the same repository\n- State: ${SESSION_STATE_LABEL.idle} (idle)\n- Folder: ${repo}\n- Children: `);
+      expect(text).toContain(`"s-22" (22222222, ${SESSION_STATE_LABEL.working}), "s-33" (33333333, ${SESSION_STATE_LABEL.exited})`);
       // PEER からは、別のフォルダの子（FAR_CHILD）は見えない
       expect(text).not.toContain('77777777');
-      expect(text).not.toContain('- 親:');
-      expect(text).not.toContain('- worktree:');
-      expect(text).toContain('## 最近の会話\n（まだ会話がありません）');
-      expect(text).toContain('## このセッションの会話で編集したファイル\n（なし）');
+      expect(text).not.toContain('- Parent:');
+      expect(text).not.toContain('- Worktree:');
+      expect(text).toContain('## Recent conversation\n(no conversation yet)');
+      expect(text).toContain("## Files edited in this session's conversation\n(none)");
       // 状態の分からないセッションは、動いていないものとして書く
-      expect(textOf(await control.handle(PEER, 'read_session', { session_id: SIBLING }))).toContain(`- 状態: ${SESSION_STATE_LABEL.exited}（exited）`);
+      expect(textOf(await control.handle(PEER, 'read_session', { session_id: SIBLING }))).toContain(`- State: ${SESSION_STATE_LABEL.exited} (exited)`);
     });
 
     it('子に指示を送れなかったとき（起動に失敗したなど）は、ツールの結果はそのまま返し、ログに残す', async () => {
@@ -799,9 +799,9 @@ describe('ツールの実行（SessionsControl）', () => {
         host.submitWhenReady = async () => {
           throw new Error('起動できませんでした');
         };
-        expect(jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false })).note).toContain('最初の指示を送ります');
+        expect(jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false })).note).toContain('The first instruction will be sent');
         host.set(CHILD, 'working');
-        expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' })).note).toContain('順番待ち');
+        expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' })).note).toContain('queued');
         await vi.waitFor(() => expect(logged).toHaveBeenCalledTimes(2));
         expect(logged.mock.calls.map((c) => c[0])).toEqual(['子セッションに最初の指示を送れませんでした', '子セッションに指示を送れませんでした']);
       } finally {
@@ -840,9 +840,9 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('wait_sessions: 子が無ければそう返す。状態の分からない子は、手が空いたとみなす', async () => {
-      expect(jsonOf(await control.handle(PEER, 'wait_sessions', {}))).toEqual({ timed_out: false, note: '子セッションはありません', sessions: [] });
+      expect(jsonOf(await control.handle(PEER, 'wait_sessions', {}))).toEqual({ timed_out: false, note: 'There are no child sessions.', sessions: [] });
       host.states.delete(CHILD);
-      expect(jsonOf(await control.handle(PARENT, 'wait_sessions', {})).note).toBe('作業中の子セッションはありません');
+      expect(jsonOf(await control.handle(PARENT, 'wait_sessions', {})).note).toBe('No child session is working.');
       const result = jsonOf<{ timed_out: boolean; ready: string[]; sessions: { id: string; state: string }[] }>(await control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD] }));
       expect(result).toMatchObject({ timed_out: false, ready: [CHILD], sessions: [{ id: CHILD, state: 'exited' }] });
     });
@@ -862,8 +862,8 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('start_session: 最初の指示が空・知らない権限モードは断る。plan モードの親の子は、省くと manual。モデルと effort を渡せる', async () => {
-      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: '  ', worktree: false }))).toBe('prompt（最初の指示）が空です');
-      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'yolo' }))).toBe('知らない権限モードです: yolo');
+      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: '  ', worktree: false }))).toBe('prompt (the first instruction) is empty.');
+      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, permission_mode: 'yolo' }))).toBe('Unknown permission mode: yolo');
       expect(host.created).toEqual([]);
       host.modes.set(PARENT, 'plan');
       const started = jsonOf<{ permission_mode: string }>(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, model: ' opus ', effort: ' ' }));
@@ -872,10 +872,10 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('start_session: folder は絶対パスで、あるフォルダだけ', async () => {
-      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: 'repo/sub' }))).toBe('folder は絶対パスで渡してください');
-      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'none') }))).toBe(`フォルダが見つかりません: ${join(repo, 'none')}`);
+      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: 'repo/sub' }))).toBe('Pass folder as an absolute path.');
+      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'none') }))).toBe(`Folder not found: ${join(repo, 'none')}`);
       writeFileSync(join(repo, 'file.txt'), 'x');
-      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'file.txt') }))).toBe(`フォルダではありません: ${join(repo, 'file.txt')}`);
+      expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'file.txt') }))).toBe(`Not a folder: ${join(repo, 'file.txt')}`);
       expect(host.created).toEqual([]);
     });
 
@@ -886,7 +886,7 @@ describe('ツールの実行（SessionsControl）', () => {
       const far = realpathSync(join(root, 'far'));
       host.add(LOST, gone);
       host.add(LOST_CHILD, far, { parentId: LOST });
-      expect(textOf(await control.handle(LOST, 'start_session', { prompt: 'x', worktree: false }))).toBe(`フォルダが見つかりません: ${gone}`);
+      expect(textOf(await control.handle(LOST, 'start_session', { prompt: 'x', worktree: false }))).toBe(`Folder not found: ${gone}`);
       expect(jsonOf(await control.handle(LOST, 'start_session', { prompt: 'x', worktree: false, folder: far })).folder).toBe(far);
       expect(host.created).toMatchObject([{ cwd: far, parentId: LOST }]);
     });
@@ -902,18 +902,18 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('send_message: 空の指示・アーカイブ済み・ターミナルの操作待ちの子には送らない', async () => {
-      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: ' ' }))).toBe('message（送る指示）が空です');
-      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: FAR_CHILD, message: 'x' }))).toBe('「s-77」はアーカイブ済みです。続けるには、人に一覧から戻してもらってください');
+      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: ' ' }))).toBe('message (the instruction to send) is empty.');
+      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: FAR_CHILD, message: 'x' }))).toBe(`"s-77" is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
       host.set(CHILD, 'waiting');
-      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toBe('「s-22」はターミナルでの操作を待っています（人の対応が要ります）');
+      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toBe('"s-22" is waiting for an operation in its terminal (the user needs to handle it).');
       expect(host.submitted).toEqual([]);
     });
 
     it('send_message: 手の空いている子（バックグラウンドのタスクの完了待ちも）には、すぐ打って結果を返す', async () => {
       host.set(CHILD, 'idle');
-      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }))).toEqual({ session_id: CHILD, state: 'idle', note: '送りました' });
+      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }))).toEqual({ session_id: CHILD, state: 'idle', note: 'Sent.' });
       host.set(SIBLING, 'background');
-      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: SIBLING, message: '見て' })).note).toBe('送りました');
+      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: SIBLING, message: '見て' })).note).toBe('Sent.');
       expect(host.submitted).toEqual([
         { id: CHILD, text: parentMessageText(PARENT, '続けて') },
         { id: SIBLING, text: parentMessageText(PARENT, '見て') },
@@ -925,7 +925,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD }))).toEqual({
         session_id: CHILD,
         state: 'background',
-        note: 'ターンは終わっていて、バックグラウンドのタスクの完了を待っています',
+        note: 'Its turn has finished, and it is waiting for background tasks to finish.',
       });
       expect(host.interrupted).toEqual([]);
     });
@@ -958,17 +958,17 @@ describe('ツールの実行（SessionsControl）', () => {
       const answer = (args: Record<string, unknown>) => control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', ...args });
 
       it('choices も other も無い・質問が出ていないときは断る', async () => {
-        expect(textOf(await answer({ choices: [1, ' '] }))).toBe('choices（選ぶ選択肢）か other（自由記述）を渡してください');
+        expect(textOf(await answer({ choices: [1, ' '] }))).toBe('Pass choices (the options to pick) or other (a free-text answer).');
         host.screens.set(CHILD, prompt(''));
-        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('質問は出ていません（人が先に答えたか、取り下げられました）。get_session で確かめてください');
+        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
         expect(host.chosen).toEqual([]);
       });
 
       it('自由記述の欄が無い質問に other は渡せない。1 つだけ選ぶ質問で 2 つは選べない', async () => {
         host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案')] }));
-        expect(textOf(await answer({ other: 'C 案' }))).toBe('この質問には、選択肢に無い答え（自由記述）を書く欄がありません');
-        expect(textOf(await answer({ choices: ['A 案', 'B 案'] }))).toBe('この質問は 1 つだけ選べます（choices に 1 つか、other だけを渡してください）');
-        expect(textOf(await answer({ choices: ['A 案'], other: 'C 案' }))).toBe('この質問には、選択肢に無い答え（自由記述）を書く欄がありません');
+        expect(textOf(await answer({ other: 'C 案' }))).toBe('This question has no field for an answer that is not among the options (free text).');
+        expect(textOf(await answer({ choices: ['A 案', 'B 案'] }))).toBe('Only one option can be picked for this question (pass one choice, or only other).');
+        expect(textOf(await answer({ choices: ['A 案'], other: 'C 案' }))).toBe('This question has no field for an answer that is not among the options (free text).');
         expect(host.chosen).toEqual([]);
       });
 
@@ -985,7 +985,7 @@ describe('ツールの実行（SessionsControl）', () => {
         ]);
         host.chosen = [];
         host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', multiSelect: true, options: [option('1', 'テスト', { checked: false })] }));
-        expect(textOf(await answer({ choices: ['テスト'] }))).toBe('答えを確定する選択肢が見つかりません。ターミナルで確かめてください');
+        expect(textOf(await answer({ choices: ['テスト'] }))).toBe('Could not find the option that submits the answers. Check the terminal.');
         expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['1']);
       });
 
@@ -995,7 +995,7 @@ describe('ツールの実行（SessionsControl）', () => {
           host.chosen.push({ id, choice });
           return true;
         };
-        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('答えを送りましたが、質問が閉じませんでした。get_session で確かめてください');
+        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('Sent the answer, but the question did not close. Check with get_session.');
       });
 
       it('次の質問に進んだら、次の質問を返す', async () => {
@@ -1040,7 +1040,7 @@ describe('ツールの実行（SessionsControl）', () => {
         expect(host.chosen.map((c) => c.choice)).toEqual([{ optionId: '1', key: 'enter', text: undefined }]);
         host.chosen = [];
         host.screens.set(CHILD, menuScreen({ title: ' ', options: [option('1', 'A 案')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: ' ', choices: ['A 案'] }))).toContain('AskUserQuestion の質問ではありません');
+        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: ' ', choices: ['A 案'] }))).toContain('is not showing an AskUserQuestion question');
         expect(host.chosen).toEqual([]);
       });
     });
@@ -1049,13 +1049,13 @@ describe('ツールの実行（SessionsControl）', () => {
     const settle = () => new Promise((r) => setTimeout(r, 60));
 
     it('断るときは isError を付けて、決まった文を返す（知らないツール・オフ・知らないセッション・見えないセッション）', async () => {
-      expect(await control.handle(PARENT, 'rm', {})).toEqual(textResult('知らないツールです: rm', true));
+      expect(await control.handle(PARENT, 'rm', {})).toEqual(textResult('Unknown tool: rm', true));
       enabled = false;
       expect((await control.handle(PARENT, 'list_sessions', {})).isError).toBe(true);
       enabled = true;
-      expect(await control.handle('nobody', 'list_sessions', {})).toEqual(textResult('このセッションは tanacode にありません', true));
+      expect(await control.handle('nobody', 'list_sessions', {})).toEqual(textResult('This session is not in tanacode.', true));
       expect(await control.handle(PARENT, 'read_session', { session_id: OTHER_REPO })).toEqual(
-        textResult(`見えるセッションに、ID が ${OTHER_REPO} のものはありません（list_sessions で確かめてください）`, true),
+        textResult(`No visible session has the ID ${OTHER_REPO} (check with list_sessions).`, true),
       );
       // ID は前後の空白を除き、大文字でも探す
       host.add('abcdef12-0000-4000-8000-0000000000ab', repo);
@@ -1085,22 +1085,22 @@ describe('ツールの実行（SessionsControl）', () => {
       const header = async (caller: string, target: string) => textOf(await control.handle(caller, 'read_session', { session_id: target })).split('\n\n')[0];
       expect(await header(CHILD, CHILD)).toBe(
         [
-          '# セッション「s-22」',
+          '# Session "s-22"',
           `- ID: ${CHILD}`,
-          '- 関係: このセッション',
-          `- 状態: ${SESSION_STATE_LABEL.working}（working）`,
-          `- フォルダ: ${repo}/.claude/worktrees/tc-a`,
-          '- worktree: tc-a（ブランチ worktree-tc-a）',
-          `- 親: 「s-11」（11111111・${SESSION_STATE_LABEL.idle}）`,
+          '- Relation: this session',
+          `- State: ${SESSION_STATE_LABEL.working} (working)`,
+          `- Folder: ${repo}/.claude/worktrees/tc-a`,
+          '- Worktree: tc-a (branch worktree-tc-a)',
+          `- Parent: "s-11" (11111111, ${SESSION_STATE_LABEL.idle})`,
         ].join('\n'),
       );
-      expect(await header(CHILD, PARENT)).toContain('\n- 関係: このセッションの親\n');
-      expect(await header(PARENT, CHILD)).toContain('\n- 関係: このセッションの子\n');
-      expect(await header(CHILD, SIBLING)).toContain('\n- 関係: 兄弟（同じ親の子）\n');
-      expect(await header(PARENT, PEER)).toContain('\n- 関係: 同じリポジトリのセッション\n');
+      expect(await header(CHILD, PARENT)).toContain('\n- Relation: the parent of this session\n');
+      expect(await header(PARENT, CHILD)).toContain('\n- Relation: a child of this session\n');
+      expect(await header(CHILD, SIBLING)).toContain('\n- Relation: a sibling (a child of the same parent)\n');
+      expect(await header(PARENT, PEER)).toContain('\n- Relation: a session in the same repository\n');
       // 子の一覧は、そのセッションの子だけ（見えるもの）
       expect((await header(PEER, PARENT)).split('\n').at(-1)).toBe(
-        `- 子: 「s-22」（22222222・${SESSION_STATE_LABEL.working}）、「s-33」（33333333・${SESSION_STATE_LABEL.idle}）`,
+        `- Children: "s-22" (22222222, ${SESSION_STATE_LABEL.working}), "s-33" (33333333, ${SESSION_STATE_LABEL.idle})`,
       );
     });
 
@@ -1115,25 +1115,25 @@ describe('ツールの実行（SessionsControl）', () => {
       const text = textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD, turns: '1' }));
       expect(text).toContain(
         [
-          '## 最近の会話（全 2 件の指示のうち、新しいほうから 2 件）',
+          '## Recent conversation (the latest 2 of 2 instructions)',
           '',
-          '### 1. 親セッション「s-11」からの指示',
+          '### 1. Instruction from the parent session "s-11"',
           'あ'.repeat(3000),
           '',
           'Claude:',
           '途中の応答\n\n最後の応答',
           '',
-          'ツール: Read a.ts',
+          'Tools: Read a.ts',
           '',
           // 見えない親の名前は出さない
-          '### 2. 親セッション「新しいセッション」からの指示',
+          `### 2. Instruction from the parent session "${t('main.session.untitled')}"`,
           '次',
           // 応答もツールも無い指示には、何も足さない
           '',
-          '## このセッションの会話で編集したファイル',
+          "## Files edited in this session's conversation",
         ].join('\n'),
       );
-      expect(textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD, turns: 0.4 }))).toContain('新しいほうから 1 件）\n\n### 2. ');
+      expect(textOf(await control.handle(PARENT, 'read_session', { session_id: CHILD, turns: 0.4 }))).toContain('the latest 1 of 2 instructions)\n\n### 2. ');
     });
 
     it('get_session: 最後の指示のあとの応答だけを返す。質問・許可の確認は、その状態のときだけ返す。タブが 1 つなら tabs は無い', async () => {
@@ -1160,7 +1160,7 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('wait_sessions: 待てるのは自分の子だけ。時間が過ぎるまでは、手が空くのを待ち続ける', async () => {
-      expect(textOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [PEER] }))).toContain('このセッションの子セッションではありません');
+      expect(textOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [PEER] }))).toContain('is not a child session of this session');
       const started = Date.now();
       expect(jsonOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD], timeout_seconds: 2 }))).toMatchObject({ timed_out: true, ready: [] });
       expect(Date.now() - started).toBeGreaterThanOrEqual(1900);
@@ -1194,7 +1194,7 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('start_session: worktree を必ず選ばせる（断るときは何も作らない）。名前を省けば付けない。worktree で始めれば、その名前とブランチを返す', async () => {
-      expect(await control.handle(PARENT, 'start_session', { prompt: 'x' })).toEqual(textResult('worktree（新しい worktree に分けて始めるか）を true か false で渡してください', true));
+      expect(await control.handle(PARENT, 'start_session', { prompt: 'x' })).toEqual(textResult('Pass worktree (whether to start in a new worktree) as true or false.', true));
       expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: 'yes' })).isError).toBe(true);
       expect(host.created).toEqual([]);
       await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false });
@@ -1225,24 +1225,24 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toEqual({
         session_id: CHILD,
         state: 'working',
-        note: '子は作業中なので、今の作業が終わりしだい送ります（順番待ち）',
+        note: 'The child is working, so the instruction will be sent as soon as it finishes its current work (queued).',
       });
       expect(host.opened).toEqual([]);
       host.set(CHILD, 'exited');
-      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' })).note).toBe('子を起動し直しました。起動が終わりしだい送ります');
+      expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' })).note).toBe('Restarted the child. The instruction will be sent as soon as it has started.');
       expect(host.opened).toEqual([CHILD]);
     });
 
     it('answer_question・stop_session も自分の子にだけ。人の対応待ちの子は止めない。止めたら結果を返す', async () => {
-      expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: PEER, question: 'q', choices: ['a'] }))).toContain('このセッションの子セッションではありません');
-      expect(textOf(await control.handle(PARENT, 'stop_session', { session_id: PEER }))).toContain('このセッションの子セッションではありません');
+      expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: PEER, question: 'q', choices: ['a'] }))).toContain('is not a child session of this session');
+      expect(textOf(await control.handle(PARENT, 'stop_session', { session_id: PEER }))).toContain('is not a child session of this session');
       for (const state of ['permission', 'waiting'] as const) {
         host.set(CHILD, state);
-        expect(await control.handle(PARENT, 'stop_session', { session_id: CHILD })).toEqual(textResult(`「s-22」は人の対応待ち（${SESSION_STATE_LABEL[state]}）のため、中断できません`, true));
+        expect(await control.handle(PARENT, 'stop_session', { session_id: CHILD })).toEqual(textResult(`"s-22" cannot be interrupted while it is ${SESSION_STATE_LABEL[state]}.`, true));
       }
       expect(host.interrupted).toEqual([]);
       host.set(CHILD, 'working');
-      expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD }))).toEqual({ session_id: CHILD, state: 'working', note: '中断しました' });
+      expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD }))).toEqual({ session_id: CHILD, state: 'working', note: 'Interrupted.' });
     });
 
     it('親への知らせ: 名前と ID を書き、続けて手が空いた子は 1 つにまとめる。作業に戻った子の知らせは送らない', async () => {
@@ -1294,14 +1294,14 @@ describe('ツールの実行（SessionsControl）', () => {
           CHILD,
           menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案'), option('3', 'Type something.', { textInput: true }), option('4', 'Chat about this')] }),
         );
-        expect(textOf(await answer({ choices: ['Chat about this'] }))).toBe('選択肢「Chat about this」はありません。選べるのは: 「A 案」・「B 案」');
-        expect(textOf(await answer({ choices: ['Type something.'] }))).toBe('選択肢「Type something.」はありません。選べるのは: 「A 案」・「B 案」');
+        expect(textOf(await answer({ choices: ['Chat about this'] }))).toBe('There is no option "Chat about this". The options are: "A 案", "B 案".');
+        expect(textOf(await answer({ choices: ['Type something.'] }))).toBe('There is no option "Type something.". The options are: "A 案", "B 案".');
         expect(host.chosen).toEqual([]);
       });
 
       it('画面が読めないときは、質問が出ていないとして断る。自由記述は前後の空白を除く', async () => {
         host.screens.delete(CHILD);
-        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('質問は出ていません（人が先に答えたか、取り下げられました）。get_session で確かめてください');
+        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
         host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('3', 'Type something.', { textInput: true })] }));
         await answer({ other: '  どちらでも  ' });
         expect(host.chosen.map((c) => c.choice)).toEqual([{ optionId: '3', key: 'enter', text: 'どちらでも' }]);
@@ -1341,7 +1341,7 @@ describe('ツールの実行（SessionsControl）', () => {
           host.screens.set(CHILD, menuScreen({ title: 'いつまでに?', options: [option('1', 'A 案')] }));
           return chooseIf(id, choice, expect);
         };
-        expect(textOf(await answer({ choices: ['A 案'] }))).toContain('答えられませんでした');
+        expect(textOf(await answer({ choices: ['A 案'] }))).toContain('Could not answer');
         expect(host.chosen).toEqual([]);
       });
 
@@ -1349,14 +1349,14 @@ describe('ツールの実行（SessionsControl）', () => {
         host.asked.set(CHILD, [asked('別の質問')]);
         const review = 'Ready to submit your answers?';
         host.screens.set(CHILD, menuScreen({ title: review, tabs: [{ label: '✔ Submit', answered: false }], options: [option('1', 'Submit answers')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: review, choices: ['Submit answers'] }))).toContain('AskUserQuestion の質問ではありません');
+        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: review, choices: ['Submit answers'] }))).toContain('is not showing an AskUserQuestion question');
         // タブが 2 つ以上でも、回答の確認でなく、質問文にも合わなければ答えない
         const twoTabs = [
           { label: 'a', answered: false },
           { label: 'b', answered: false },
         ];
         host.screens.set(CHILD, menuScreen({ title: 'Do you want to proceed?', tabs: twoTabs, options: [option('1', 'Yes')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('AskUserQuestion の質問ではありません');
+        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('is not showing an AskUserQuestion question');
         expect(host.chosen).toEqual([]);
         // 画面の質問文が、質問文に続きを足したもの
         host.asked.set(CHILD, [asked('どちらの方式?')]);
@@ -1366,7 +1366,7 @@ describe('ツールの実行（SessionsControl）', () => {
         host.chosen = [];
         host.asked.set(CHILD, [asked('')]);
         host.screens.set(CHILD, menuScreen({ title: 'なにか', options: [option('1', 'A 案')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'なにか', choices: ['A 案'] }))).toContain('AskUserQuestion の質問ではありません');
+        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'なにか', choices: ['A 案'] }))).toContain('is not showing an AskUserQuestion question');
         expect(host.chosen).toEqual([]);
       });
     });
@@ -1389,7 +1389,7 @@ describe('ツールの実行（SessionsControl）', () => {
         g('rm', '-q', 'gone.txt');
         writeFileSync(join(repo, 'new.txt'), '1\n2\n');
         const text = await diffOf();
-        expect(text).toContain('- ファイル: 2 件\n  - D gone.txt（+0 −1）\n  - A new.txt（+2 −0）\n\n## 差分\n```diff\ndiff --git a/gone.txt b/gone.txt\n');
+        expect(text).toContain('- Files: 2\n  - D gone.txt (+0 −1)\n  - A new.txt (+2 −0)\n\n## Diff\n```diff\ndiff --git a/gone.txt b/gone.txt\n');
         expect(text).toContain('\n-g\ndiff --git a/new.txt b/new.txt\nnew file (untracked)\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,2 @@\n+1\n+2\n```');
       });
 
@@ -1398,7 +1398,7 @@ describe('ツールの実行（SessionsControl）', () => {
         mkdirSync(join(repo, 'src'));
         writeFileSync(join(repo, 'src', 's.txt'), 's\n');
         const text = await diffOf({ path: ' src ' });
-        expect(text).toContain('- ファイル: 1 件（src の中だけ）\n  - A src/s.txt（+1 −0）\n');
+        expect(text).toContain('- Files: 1 (only in src)\n  - A src/s.txt (+1 −0)\n');
         expect(text).toContain('+++ b/src/s.txt');
         expect(text).not.toContain('top.txt');
       });
@@ -1406,9 +1406,9 @@ describe('ツールの実行（SessionsControl）', () => {
       it('未追跡のファイルは 256KB ちょうどまで中身を出す', async () => {
         writeFileSync(join(repo, 'limit.txt'), `${'x'.repeat(256 * 1024 - 1)}\n`);
         const text = await diffOf();
-        expect(text).not.toContain('大きなファイル');
+        expect(text).not.toContain('large file');
         // 追跡しているファイルの差分が無ければ、未追跡のファイルから始める
-        expect(text).toContain('## 差分\n```diff\ndiff --git a/limit.txt b/limit.txt\nnew file (untracked)\n--- /dev/null\n+++ b/limit.txt\n@@ -0,0 +1,1 @@\n+xxx');
+        expect(text).toContain('## Diff\n```diff\ndiff --git a/limit.txt b/limit.txt\nnew file (untracked)\n--- /dev/null\n+++ b/limit.txt\n@@ -0,0 +1,1 @@\n+xxx');
       });
     });
   });
@@ -1430,7 +1430,7 @@ describe('会話のまとめ（read_session の中身）', () => {
     );
     const text = lines.join('\n');
     expect(text).not.toContain('前の会話');
-    expect(text).toContain('文字を省略');
+    expect(text).toContain('characters omitted');
     expect(text.length).toBeLessThan(6000);
   });
 
@@ -1453,10 +1453,10 @@ describe('会話のまとめ（read_session の中身）', () => {
       .join('\n');
     expect(text).not.toContain('指示の前の応答');
     expect(text).not.toContain('Bash');
-    expect(text).toContain('ツール: TodoWrite、Read f0.ts、');
-    expect(text).toContain('Read f28.ts ほか 3 件');
+    expect(text).toContain('Tools: TodoWrite, Read f0.ts, ');
+    expect(text).toContain('Read f28.ts and 3 more');
     expect(text).not.toContain('f29.ts');
-    expect(text).toContain('…（400 文字を省略）…');
+    expect(text).toContain('…(400 characters omitted)…');
     expect(text).toContain('\n\n終わりました');
   });
 
@@ -1491,10 +1491,10 @@ describe('会話のまとめ（read_session の中身）', () => {
         () => '',
       )
       .join('\n');
-    expect(text).toContain('…（100 文字を省略）…');
+    expect(text).toContain('…(100 characters omitted)…');
     expect(text).toContain(`\n\n${'う'.repeat(3000)}\n`);
     expect(text).toContain('Read f29.ts');
-    expect(text).not.toContain('ほか');
+    expect(text).not.toContain(' more');
   });
 
   it('編集したファイルとして数えるのは Edit・MultiEdit・Write・NotebookEdit。多すぎるときは 200 件まで', () => {

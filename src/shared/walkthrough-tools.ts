@@ -10,18 +10,18 @@ export const WALKTHROUGH_MCP_SERVER = 'tanacode-walkthrough';
 
 type Schema = Record<string, unknown>;
 
-const path: Schema = { type: 'string', description: 'ファイルのパス（セッションのフォルダからの相対パスか、フォルダの中の絶対パス）' };
-const startLine: Schema = { type: 'integer', minimum: 1, description: '示す範囲の最初の行（1 から）' };
-const endLine: Schema = { type: 'integer', minimum: 1, description: '示す範囲の最後の行（含む）。省くと start_line の 1 行' };
+const path: Schema = { type: 'string', description: 'File path (relative to the session folder, or an absolute path inside it)' };
+const startLine: Schema = { type: 'integer', minimum: 1, description: 'First line of the range to show (1-based)' };
+const endLine: Schema = { type: 'integer', minimum: 1, description: 'Last line of the range to show (inclusive). Omit it to show only start_line' };
 const view: Schema = {
   type: 'string',
   enum: ['file', 'diff'],
   description:
-    'file: エディタに出す（既定）。diff: ブランチの差分（分岐したところ ↔ 作業ツリー）の画面に出し、消した行も並べて見せる。行番号はどちらも今のファイルのもの。ブランチで変わっていないファイルは、diff でもエディタに出す',
+    'file: show it in the editor (default). diff: show it in the branch diff view (merge base ↔ working tree), with the deleted lines next to the new ones. In both, line numbers are those of the current file. A file that the branch did not change is shown in the editor even with diff',
 };
 const body: Schema = {
   type: 'string',
-  description: '説明（Markdown。エディタの範囲の直下に吹き出しで出す）。何をしたかより、なぜこうしたか（意図・選ばなかった案・気をつけたこと）を 2〜6 文で',
+  description: 'Explanation (Markdown, shown in a callout right below the range in the editor). In 2-6 sentences, write why rather than what: the intent, the alternatives you did not choose and what you were careful about',
 };
 
 // 名前は、短い名前の文言（tools.walkthrough.<名前>）があるもの
@@ -30,23 +30,23 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
     name: 'start_walkthrough',
     kind: 'show',
     description:
-      'ウォークスルーの手順を渡して始める（前のものは置き換える）。人の tanacode のエディタに 1 つ目のステップを開き、すぐ返る。人は「次へ」「戻る」で自分のペースで進め、質問はチャットに届く。渡したら、ターンを終えて待つ',
+      "Start a walkthrough by passing all its steps (replaces the previous one). Opens the first step in the user's tanacode editor and returns immediately. The user moves through the steps with Next and Back at their own pace, and their questions arrive in the chat. After passing the steps, end your turn and wait",
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'ウォークスルーの名前（例: 税率を可変にした変更）' },
+        title: { type: 'string', description: 'Name of the walkthrough (e.g. "Make the tax rate configurable")' },
         steps: {
           type: 'array',
           minItems: 1,
           maxItems: 40,
-          description: '見せる順のステップ。1 ステップに 1 つの意図',
+          description: 'Steps in the order to show them. One intent per step',
           items: {
             type: 'object',
             properties: {
               path,
               start_line: startLine,
               end_line: endLine,
-              title: { type: 'string', description: 'ステップの見出し（短く。例: 税率を設定から読む）' },
+              title: { type: 'string', description: 'Heading of the step (short, e.g. "Read the tax rate from the settings")' },
               body,
               view,
             },
@@ -63,7 +63,7 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
     name: 'show_code',
     kind: 'show',
     description:
-      '質問に答えるときに、手順の外の場所を人のエディタに示す（寄り道）。人が「ウォークスルーに戻る」を押すと、元のステップに戻る。ウォークスルーを始めていなくても使える',
+      "Show a place outside the steps in the user's editor while answering a question (an aside). When the user goes back to the walkthrough, the editor returns to the step they were on. Works even when no walkthrough has been started",
     inputSchema: {
       type: 'object',
       properties: { path, start_line: startLine, end_line: endLine, body, view },
@@ -74,7 +74,7 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
   {
     name: 'walkthrough_status',
     kind: 'read',
-    description: '今のウォークスルーの手順と、人が今どのステップを見ているか（見終えたステップ・寄り道）を返す。人が終えていれば、そう返す',
+    description: 'Return the steps of the current walkthrough and which step the user is viewing now (the steps already viewed, any aside). If the user has finished it, it says so',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
 ];
@@ -98,7 +98,7 @@ export const WALKTHROUGH_MCP_INSTRUCTIONS = [
 export const WALKTHROUGH_MCP: McpServerDef = {
   name: WALKTHROUGH_MCP_SERVER,
   labels: 'walkthrough',
-  title: 'tanacode のウォークスルー',
+  title: 'tanacode walkthroughs',
   instructions: WALKTHROUGH_MCP_INSTRUCTIONS,
   tools: WALKTHROUGH_TOOLS,
 };

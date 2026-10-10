@@ -198,14 +198,14 @@ function fakeHost(cwd: string): SessionsHost {
 
 const textOf = (result: ToolResult) => result.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
-describe('どのツールも、制御が振り分けて実行する（「知らないツールです」にならない）', () => {
+describe('どのツールも、制御が振り分けて実行する（「Unknown tool」にならない）', () => {
   let dir: string;
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'tanacode-mcp-contract-'));
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  const unknown = (name: string) => `知らないツールです: ${name}`;
+  const unknown = (name: string) => `Unknown tool: ${name}`;
 
   it('セッション', async () => {
     const control = new SessionsControl({ host: fakeHost(dir), enabled: () => true, home: '/nonexistent-home', notifyDelayMs: 10 });

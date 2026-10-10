@@ -8,7 +8,7 @@ export const CHECKLIST_SOCKET_ENV = 'TANACODE_CHECKLIST_SOCKET';
 export const CHECKLIST_SESSION_ENV = 'TANACODE_CHECKLIST_SESSION';
 
 // アプリが起動していないとき、中継が Claude に返す文
-export const CHECKLIST_CLOSED_MESSAGE = 'tanacode が起動していません。チェックリストを扱うには、ユーザーに tanacode を起動してもらってください';
+export const CHECKLIST_CLOSED_MESSAGE = 'tanacode is not running. To use checklists, ask the user to start tanacode.';
 
 // 中継が 1 回の呼び出しを待つ上限（チェックリストの読み書きはすぐ終わる）
 export const CHECKLIST_CALL_TIMEOUT_MS = 30_000;

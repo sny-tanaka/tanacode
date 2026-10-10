@@ -58,9 +58,9 @@ describe('中継（MCP サーバー）として動く', () => {
     expect(deps.version).toBe('1.2.3');
     expect(mocks.runGate).not.toHaveBeenCalled();
 
-    mocks.callBridge.mockResolvedValue(textResult('クリックしました'));
+    mocks.callBridge.mockResolvedValue(textResult('Clicked: button#go'));
     const signal = new AbortController().signal;
-    expect(await deps.call('click', { selector: '#go' }, signal)).toEqual(textResult('クリックしました'));
+    expect(await deps.call('click', { selector: '#go' }, signal)).toEqual(textResult('Clicked: button#go'));
     expect(mocks.callBridge).toHaveBeenLastCalledWith(
       '/u/Application Support/tanacode/browser.sock',
       { session: 'S1', tool: 'click', args: { selector: '#go' } },

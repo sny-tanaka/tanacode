@@ -13,13 +13,16 @@ export const CHECKLIST_EVENT_TAG = 'tanacode-checklist-event';
 
 type Schema = Record<string, unknown>;
 
-const list: Schema = { type: 'string', description: 'リストの名前（checklist_overview に出る名前）' };
+const list: Schema = { type: 'string', description: 'Name of the list (as shown by checklist_overview)' };
 const numbers: Schema = {
   type: 'string',
-  description: 'カードの番号。"3"・"5-8"・"5,7,9"・"5-8,10" のように書く（リストの中の #番号）',
+  description: 'Card numbers, written like "3", "5-8", "5,7,9" or "5-8,10" (the #numbers within the list)',
 };
-const number: Schema = { type: 'integer', minimum: 1, description: 'カードの番号（リストの中の #番号）' };
-const sessionId: Schema = { type: 'string', description: 'セッションの ID（tanacode-sessions の list_sessions の id。先頭の 8 文字でもよい）。省くとこのセッション' };
+const number: Schema = { type: 'integer', minimum: 1, description: 'Card number (the #number within the list)' };
+const sessionId: Schema = {
+  type: 'string',
+  description: 'Session ID (the id from list_sessions of tanacode-sessions; the first 8 characters are enough). Omit for this session',
+};
 
 // 名前は、短い名前の文言（tools.checklist.<名前>）があるもの
 export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
@@ -27,23 +30,26 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     name: 'checklist_overview',
     kind: 'read',
     description:
-      'このセッションのチェックリストを、すべてのリストの名前・説明（使い方のルール）・進み具合と、カードの番号・タイトル・チェック・未読の返信の数で返す。作業の区切りと、会話が圧縮されたあとには、まずこれを呼ぶ',
+      "Returns this session's checklists: the name, description (the rules for using the list) and progress of every list, and the number, title, check state and unread reply count of every card. Call this first at every break in the work and after the conversation was compacted.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'card_get',
     kind: 'read',
-    description: 'カードの全部（タイトル・説明文・チェック・スレッドの返信と記録）を返す。読んだカードには既読の印が付く',
+    description: 'Returns cards in full (title, body, check state, and the replies and history in the thread). Marks the cards as read.',
     inputSchema: { type: 'object', properties: { list, numbers }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
     name: 'list_create',
     kind: 'note',
     description:
-      'リストを作る。description には、そのリストの使い方のルール（何を並べるか・いつ確かめるか・誰がやるか）を書く。圧縮されたあとの自分も、これを読んで従う',
+      'Creates a list. In description, write the rules for using the list (what goes on it, when to verify it, who does it). After compaction, you will read and follow them too.',
     inputSchema: {
       type: 'object',
-      properties: { name: { type: 'string', description: 'リストの名前（例: やること・完了前チェック・人のやること・確認事項）' }, description: { type: 'string', description: '使い方のルール' } },
+      properties: {
+        name: { type: 'string', description: 'Name of the list (e.g. to-dos, conditions to meet before finishing, things only the user can do, decisions to review)' },
+        description: { type: 'string', description: 'The rules for using the list' },
+      },
       required: ['name', 'description'],
       additionalProperties: false,
     },
@@ -51,10 +57,10 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'list_update',
     kind: 'note',
-    description: 'リストの名前や説明を変える',
+    description: 'Changes the name or description of a list.',
     inputSchema: {
       type: 'object',
-      properties: { list, name: { type: 'string', description: '新しい名前' }, description: { type: 'string', description: '新しい説明' } },
+      properties: { list, name: { type: 'string', description: 'New name' }, description: { type: 'string', description: 'New description' } },
       required: ['list'],
       additionalProperties: false,
     },
@@ -62,14 +68,14 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'list_delete',
     kind: 'note',
-    description: 'リストをゴミ箱に入れる（人が画面から戻せる）',
+    description: 'Moves a list to the trash (the user can restore it in the app).',
     inputSchema: { type: 'object', properties: { list }, required: ['list'], additionalProperties: false },
   },
   {
     name: 'card_add',
     kind: 'note',
     description:
-      'リストの最後にカードを足す（まとめて足せる）。タイトルは短く、やること（「税率を可変にする」）か、満たすべき条件（「税込表示が整数であること」）で書く。詳しいことは body（Markdown）に書く。リストが無いときは、list_description を渡せば作る',
+      'Adds cards to the end of a list (several at once). Keep titles short, and write each one as a task ("Make the tax rate configurable") or as a condition to meet ("Prices including tax are integers"). Put the details in body (Markdown). If the list does not exist, pass list_description to create it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -79,12 +85,12 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
           minItems: 1,
           items: {
             type: 'object',
-            properties: { title: { type: 'string', description: 'タイトル（短く）' }, body: { type: 'string', description: '説明文（Markdown）' } },
+            properties: { title: { type: 'string', description: 'Title (short)' }, body: { type: 'string', description: 'Body (Markdown)' } },
             required: ['title'],
             additionalProperties: false,
           },
         },
-        list_description: { type: 'string', description: 'リストが無いときに作るリストの説明（使い方のルール）' },
+        list_description: { type: 'string', description: 'Description (the rules for using the list) of the list to create if it does not exist' },
       },
       required: ['list', 'cards'],
       additionalProperties: false,
@@ -93,10 +99,10 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'card_update',
     kind: 'note',
-    description: 'カードのタイトルや説明文を変える（変えたことはスレッドに記録が残る）',
+    description: 'Changes the title or body of a card (the change is recorded in the thread).',
     inputSchema: {
       type: 'object',
-      properties: { list, number, title: { type: 'string', description: '新しいタイトル' }, body: { type: 'string', description: '新しい説明文（Markdown。全体を置き換える）' } },
+      properties: { list, number, title: { type: 'string', description: 'New title' }, body: { type: 'string', description: 'New body (Markdown; replaces the whole body)' } },
       required: ['list', 'number'],
       additionalProperties: false,
     },
@@ -105,10 +111,10 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     name: 'card_check',
     kind: 'note',
     description:
-      'カードにチェックを付ける。条件のカードは、満たしていることを実際に確かめてから付ける。comment には、どう確かめたか（実行したコマンドと結果など）を書く（スレッドに返信として残る）',
+      'Checks cards. Check a condition card only after you have actually verified that the condition holds. In comment, write how you verified it (the commands you ran and their results, etc.); it is added to the thread as a reply.',
     inputSchema: {
       type: 'object',
-      properties: { list, numbers, comment: { type: 'string', description: 'どう確かめたか・何をしたか' } },
+      properties: { list, numbers, comment: { type: 'string', description: 'How you verified it, or what you did' } },
       required: ['list', 'numbers'],
       additionalProperties: false,
     },
@@ -116,10 +122,10 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'card_uncheck',
     kind: 'note',
-    description: 'カードのチェックを外す。あとの作業で条件が崩れたときなど。reason はスレッドに返信として残る',
+    description: 'Unchecks cards, e.g. when later work broke a condition. reason is added to the thread as a reply.',
     inputSchema: {
       type: 'object',
-      properties: { list, numbers, reason: { type: 'string', description: '外す理由' } },
+      properties: { list, numbers, reason: { type: 'string', description: 'Why you uncheck them' } },
       required: ['list', 'numbers', 'reason'],
       additionalProperties: false,
     },
@@ -127,10 +133,10 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'card_reply',
     kind: 'note',
-    description: 'カードのスレッドに返信する。カードについての判断・質問・報告は、メインのチャットではなくここに書く',
+    description: 'Replies in the thread of a card. Write judgments, questions and reports about a card here, not in the main chat.',
     inputSchema: {
       type: 'object',
-      properties: { list, number, text: { type: 'string', description: '返信（Markdown）' } },
+      properties: { list, number, text: { type: 'string', description: 'Reply (Markdown)' } },
       required: ['list', 'number', 'text'],
       additionalProperties: false,
     },
@@ -138,10 +144,10 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'card_move',
     kind: 'note',
-    description: 'カードを別のリストの最後へ移す（番号は移した先で振り直す。スレッドはそのまま）。to_list が無ければ作る',
+    description: 'Moves cards to the end of another list (they get new numbers there; the thread is kept). Creates to_list if it does not exist.',
     inputSchema: {
       type: 'object',
-      properties: { list, numbers, to_list: { type: 'string', description: '移す先のリストの名前' } },
+      properties: { list, numbers, to_list: { type: 'string', description: 'Name of the destination list' } },
       required: ['list', 'numbers', 'to_list'],
       additionalProperties: false,
     },
@@ -149,29 +155,29 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'card_delete',
     kind: 'note',
-    description: 'カードをゴミ箱に入れる（card_restore か、人が画面から戻せる）',
+    description: 'Moves cards to the trash (restore them with card_restore; the user can also restore them in the app).',
     inputSchema: { type: 'object', properties: { list, numbers }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
     name: 'card_restore',
     kind: 'note',
-    description: 'ゴミ箱に入れたカードを戻す',
+    description: 'Restores cards from the trash.',
     inputSchema: { type: 'object', properties: { list, numbers }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
     name: 'cards_copy',
     kind: 'note',
     description:
-      'カードを、別のセッションのリストへコピーする（タイトル・説明文・チェック・スレッドごと。元は残る）。「リストの 5〜8 を別のセッションに渡して」なら from_session を省いて to_session を、「セッション A の完了リストの 6〜10 を持ってきて」なら from_session を渡して to_session を省く。先に同じ名前のリストがあれば足し、無ければ作る。コピーできるのは、tanacode-sessions の list_sessions で見えるセッションのあいだだけ。移したいときは、コピーしてから card_delete で元を消す',
+      'Copies cards to a list in another session (with their title, body, check state and thread; the originals stay). For "give #5-8 of the list to another session", omit from_session and pass to_session; for "bring #6-10 of the done list from session A", pass from_session and omit to_session. Adds the cards to a list with the same name if there is one, or creates it. You can copy only between sessions that list_sessions of tanacode-sessions shows. To move cards, copy them and then delete the originals with card_delete.',
     inputSchema: {
       type: 'object',
       properties: {
         from_session: sessionId,
-        from_list: { type: 'string', description: 'コピー元のリストの名前' },
+        from_list: { type: 'string', description: 'Name of the source list' },
         numbers,
         to_session: sessionId,
-        to_list: { type: 'string', description: 'コピー先のリストの名前。省くと元と同じ名前' },
-        notify: { type: 'boolean', description: 'コピー先のセッションの Claude に知らせる（既定 true。コピー先がこのセッションなら知らせない）' },
+        to_list: { type: 'string', description: 'Name of the destination list. Omit to use the name of the source list' },
+        notify: { type: 'boolean', description: 'Notify Claude in the destination session (default true; never notifies when the destination is this session)' },
       },
       required: ['from_list', 'numbers'],
       additionalProperties: false,
@@ -198,7 +204,7 @@ export const CHECKLIST_MCP_INSTRUCTIONS = [
 export const CHECKLIST_MCP: McpServerDef = {
   name: CHECKLIST_MCP_SERVER,
   labels: 'checklist',
-  title: 'tanacode のチェックリスト',
+  title: 'tanacode checklists',
   instructions: CHECKLIST_MCP_INSTRUCTIONS,
   tools: CHECKLIST_TOOLS,
 };

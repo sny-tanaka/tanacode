@@ -15,7 +15,7 @@ export const SESSIONS_CHILD_ENV = 'TANACODE_SESSIONS_CHILD';
 export type SessionsMcpLaunch = McpLaunch & { child?: boolean };
 
 // アプリが起動していないとき、中継が Claude に返す文
-export const SESSIONS_CLOSED_MESSAGE = 'tanacode が起動していません。ほかのセッションを扱うには、ユーザーに tanacode を起動してもらってください';
+export const SESSIONS_CLOSED_MESSAGE = 'tanacode is not running. To work with other sessions, ask the user to start tanacode.';
 
 // 子セッションを待つ（wait_sessions）上限。アプリはこの時間で待つのをやめて、そのときの状態を返す
 export const WAIT_MAX_SECONDS = 600;

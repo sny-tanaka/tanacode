@@ -64,7 +64,7 @@ describe('ページの文字（get_text）', () => {
     document.title = 'トップ';
     document.body.innerHTML = '<p>本文</p>';
     addFrame('f', '<p>中の文字</p>');
-    expect(textOf(await call('get_text'))).toBe(['タイトル: トップ', `URL: ${location.href}`, '', '本文', '', '--- iframe（about:blank）の中 ---', '中の文字'].join('\n'));
+    expect(textOf(await call('get_text'))).toBe(['Title: トップ', `URL: ${location.href}`, '', '本文', '', '--- inside iframe (about:blank) ---', '中の文字'].join('\n'));
   });
 
   it('selector: iframe の中の要素も探して、その中だけを読む。当たらなければ断る', async () => {
@@ -72,9 +72,9 @@ describe('ページの文字（get_text）', () => {
     usePage(open('http://localhost:3000/'));
     document.body.innerHTML = '<p id="outer">外</p>';
     addFrame('f', '<section id="inner"><p>中の文字</p></section>');
-    expect(textOf(await call('get_text', { selector: '#inner' }))).toBe(`タイトル: （なし）\nURL: ${location.href}\n\n--- iframe（about:blank）の中 ---\n中の文字`);
-    expect(textOf(await call('get_text', { selector: '#outer' }))).toBe(`タイトル: （なし）\nURL: ${location.href}\n\n外`);
-    expect(await call('get_text', { selector: '#none' })).toEqual(textResult('「#none」に当たる要素がありません', true));
+    expect(textOf(await call('get_text', { selector: '#inner' }))).toBe(`Title: (none)\nURL: ${location.href}\n\n--- inside iframe (about:blank) ---\n中の文字`);
+    expect(textOf(await call('get_text', { selector: '#outer' }))).toBe(`Title: (none)\nURL: ${location.href}\n\n外`);
+    expect(await call('get_text', { selector: '#none' })).toEqual(textResult('No element matches "#none".', true));
   });
 });
 
@@ -87,7 +87,7 @@ describe('要素を探して押す（locate）', () => {
     const go = document.getElementById('go')!;
     place(go, { x: 100, y: 50, width: 200, height: 40 });
     document.elementFromPoint = () => go;
-    expect(await call('click', { selector: 'button' })).toEqual(textResult('クリックしました: button#go.primary.big「送る」'));
+    expect(await call('click', { selector: 'button' })).toEqual(textResult('Clicked: button#go.primary.big "送る"'));
     expect(page.debugger.sent('Input.dispatchMouseEvent')[1].params).toMatchObject({ type: 'mousePressed', x: 200, y: 70 });
   });
 
@@ -98,11 +98,11 @@ describe('要素を探して押す（locate）', () => {
     for (const el of document.querySelectorAll('input')) place(el, { x: 10, y: 10, width: 100, height: 20 });
     document.elementFromPoint = (x, y) => document.querySelector(y > 0 ? '#pw' : 'body');
     const user = textOf(await call('click', { selector: '#user' }));
-    expect(user).toContain('クリックしました: input#user「tanaka」');
+    expect(user).toContain('Clicked: input#user "tanaka"');
     const pw = textOf(await call('click', { selector: '#pw' }));
-    expect(pw).toBe('クリックしました: input#pw「パスワード」');
+    expect(pw).toBe('Clicked: input#pw "パスワード"');
     const pin = textOf(await call('click', { selector: '#pin' }));
-    expect(pin).toContain('クリックしました: input#pin\n');
+    expect(pin).toContain('Clicked: input#pin\n');
     for (const text of [pw, pin]) {
       expect(text).not.toContain('hunter2');
       expect(text).not.toContain('1234');
@@ -116,10 +116,10 @@ describe('要素を探して押す（locate）', () => {
     place(document.getElementById('go')!, { x: 0, y: 0, width: 100, height: 40 });
     let top: Element | null = document.querySelector('.overlay');
     document.elementFromPoint = () => top;
-    expect(textOf(await call('click', { selector: '#go' }))).toBe('クリックしました: button#go「送る」\n（押した位置には、ほかの要素 div.overlay.modal が重なっていました）');
+    expect(textOf(await call('click', { selector: '#go' }))).toBe('Clicked: button#go "送る"\n(another element, div.overlay.modal, was covering the clicked position)');
     for (const id of ['label', 'wrap']) {
       top = document.getElementById(id);
-      expect(textOf(await call('click', { selector: '#go' })), id).toBe('クリックしました: button#go「送る」');
+      expect(textOf(await call('click', { selector: '#go' })), id).toBe('Clicked: button#go "送る"');
     }
   });
 
@@ -128,11 +128,11 @@ describe('要素を探して押す（locate）', () => {
     usePage(open('http://localhost:3000/'));
     document.body.innerHTML = '<button class="item">a</button><button class="item" style="visibility: hidden">b</button>';
     place(document.querySelectorAll('.item')[1], { x: 0, y: 0, width: 10, height: 10 });
-    expect(await call('click', { selector: '.item' })).toEqual(textResult('「.item」に当たる要素（2 個）は、どれも見えていません', true));
-    expect(await call('click', { selector: '#none' })).toEqual(textResult('「#none」に当たる要素がありません', true));
+    expect(await call('click', { selector: '.item' })).toEqual(textResult('None of the 2 elements matching ".item" is visible.', true));
+    expect(await call('click', { selector: '#none' })).toEqual(textResult('No element matches "#none".', true));
     const bad = await call('click', { selector: '[[' });
     expect(bad.isError).toBe(true);
-    expect(textOf(bad)).toMatch(/^セレクタの書き方が違います: /);
+    expect(textOf(bad)).toMatch(/^Invalid selector: /);
   });
 
   it('iframe の中の要素: iframe の位置（枠と余白も）を足した位置を押し、iframe の中だと添える', async () => {
@@ -144,7 +144,7 @@ describe('要素を探して押す（locate）', () => {
     frame.style.paddingTop = '3px';
     place(frame, { x: 100, y: 50, width: 400, height: 300 });
     place(doc.getElementById('inner')!, { x: 10, y: 10, width: 20, height: 20 });
-    expect(textOf(await call('click', { selector: '#inner' }))).toBe('クリックしました: button#inner「中のボタン」（iframe about:blank の中）');
+    expect(textOf(await call('click', { selector: '#inner' }))).toBe('Clicked: button#inner "中のボタン" (inside iframe about:blank)');
     // 100 + 5 + 10 + 10、50 + 3 + 10 + 10
     expect(page.debugger.sent('Input.dispatchMouseEvent')[1].params).toMatchObject({ type: 'mousePressed', x: 125, y: 73 });
   });
@@ -156,11 +156,11 @@ describe('位置で押す（pointAt）', () => {
     usePage(open('http://localhost:3000/'));
     document.body.innerHTML = '<canvas id="board" aria-label="盤"></canvas>';
     document.elementFromPoint = () => document.getElementById('board');
-    expect(textOf(await call('click', { x: 5, y: 5 }))).toBe('クリックしました: x=5 y=5 の canvas#board「盤」');
-    expect(await call('click', { x: innerWidth, y: 5 })).toEqual(textResult(`x=${innerWidth} y=5 は、見えている範囲（${innerWidth}×${innerHeight}）の外です`, true));
-    expect(await call('click', { x: -1, y: 5 })).toEqual(textResult(`x=-1 y=5 は、見えている範囲（${innerWidth}×${innerHeight}）の外です`, true));
+    expect(textOf(await call('click', { x: 5, y: 5 }))).toBe('Clicked: canvas#board "盤" at x=5 y=5');
+    expect(await call('click', { x: innerWidth, y: 5 })).toEqual(textResult(`x=${innerWidth} y=5 is outside the visible area (${innerWidth}×${innerHeight}).`, true));
+    expect(await call('click', { x: -1, y: 5 })).toEqual(textResult(`x=-1 y=5 is outside the visible area (${innerWidth}×${innerHeight}).`, true));
     document.elementFromPoint = () => null;
-    expect(await call('click', { x: 5, y: 5 })).toEqual(textResult('x=5 y=5 には要素がありません', true));
+    expect(await call('click', { x: 5, y: 5 })).toEqual(textResult('There is no element at x=5 y=5.', true));
   });
 
   it('同じオリジンの iframe の中は、iframe の中の位置で中の要素を探す', async () => {
@@ -174,7 +174,7 @@ describe('位置で押す（pointAt）', () => {
       asked.push([x, y]);
       return doc.getElementById('link');
     };
-    expect(textOf(await call('click', { x: 130, y: 70 }))).toBe('クリックしました: x=130 y=70 の a#link「次へ」（iframe about:blank の中）');
+    expect(textOf(await call('click', { x: 130, y: 70 }))).toBe('Clicked: a#link "次へ" (inside iframe about:blank) at x=130 y=70');
     expect(asked).toEqual([[30, 20]]);
   });
 
@@ -192,7 +192,7 @@ describe('位置で押す（pointAt）', () => {
     let src = 'http://127.0.0.1:5173/widget';
     Object.defineProperty(frame, 'src', { get: () => src });
     document.elementFromPoint = () => frame;
-    expect(textOf(await call('click', { x: 150, y: 60 }))).toBe('クリックしました: x=150 y=60（別オリジンの iframe http://127.0.0.1:5173/widget の中）');
+    expect(textOf(await call('click', { x: 150, y: 60 }))).toBe('Clicked: x=150 y=60 (inside cross-origin iframe http://127.0.0.1:5173/widget)');
     expect(page.debugger.sent('Input.dispatchMouseEvent')[1].params).toMatchObject({ x: 150, y: 60 });
     src = 'https://pay.example.com/checkout';
     expect((await call('click', { x: 150, y: 60 })).isError).toBe(true);
@@ -210,11 +210,11 @@ describe('待つ（wait_for）', () => {
     await vi.advanceTimersByTimeAsync(400);
     place(document.getElementById('done')!, { x: 0, y: 0, width: 50, height: 20 });
     await vi.advanceTimersByTimeAsync(400);
-    expect(textOf(await pending)).toMatch(/^「#done」が出ました（\d+ ms）$/);
+    expect(textOf(await pending)).toMatch(/^"#done" appeared \(\d+ ms\)$/);
     document.body.innerHTML = '<p id="later">あとで</p>';
-    expect(textOf(await call('wait_for', { selector: '#later', state: 'attached' }))).toBe('「#later」が出ました（0 ms）');
-    expect(textOf(await call('wait_for', { selector: '#gone', state: 'hidden' }))).toBe('「#gone」が消えました（0 ms）');
-    expect(await call('wait_for', { selector: '#later', timeoutMs: 300 })).toEqual(textResult('300 ms 待っても、「#later」が出ませんでした', true));
+    expect(textOf(await call('wait_for', { selector: '#later', state: 'attached' }))).toBe('"#later" appeared (0 ms)');
+    expect(textOf(await call('wait_for', { selector: '#gone', state: 'hidden' }))).toBe('"#gone" disappeared (0 ms)');
+    expect(await call('wait_for', { selector: '#later', timeoutMs: 300 })).toEqual(textResult('"#later" did not appear within 300 ms.', true));
   });
 
   it('text: iframe の中も探し、その文字を持つ要素が見えれば出たとみなす。selector もあれば、要素が無いときだけ文字で探す', async () => {
@@ -222,9 +222,9 @@ describe('待つ（wait_for）', () => {
     usePage(open('http://localhost:3000/'));
     const { doc } = addFrame('f', '<div><span id="toast">保存しました</span></div>');
     place(doc.getElementById('toast')!, { x: 0, y: 0, width: 80, height: 20 });
-    expect(textOf(await call('wait_for', { text: '保存しました' }))).toBe('「保存しました」が出ました（0 ms）');
-    expect(textOf(await call('wait_for', { selector: '#none', text: '保存しました' }))).toBe('「#none」が出ました（0 ms）');
-    expect(await call('wait_for', { text: '失敗しました', timeoutMs: 0 })).toEqual(textResult('0 ms 待っても、「失敗しました」が出ませんでした', true));
+    expect(textOf(await call('wait_for', { text: '保存しました' }))).toBe('"保存しました" appeared (0 ms)');
+    expect(textOf(await call('wait_for', { selector: '#none', text: '保存しました' }))).toBe('"#none" appeared (0 ms)');
+    expect(await call('wait_for', { text: '失敗しました', timeoutMs: 0 })).toEqual(textResult('"失敗しました" did not appear within 0 ms.', true));
   });
 });
 
@@ -237,13 +237,13 @@ describe('要素の HTML とスタイル（inspect）', () => {
     const { doc } = addFrame('f', '<button id="hidden" style="display: none">隠れ</button>');
     place(doc.getElementById('hidden')!, { x: 0, y: 0, width: 10, height: 10 });
     expect(textOf(await call('inspect', { selector: '#go', properties: ['color'] }))).toBe(
-      '「#go」に当たる要素: 1 個\n\n## 1 つ目（見えている・x=10 y=21 100×30）\n```html\n<button id="go" style="color: rgb(255, 0, 0)">送る</button>\n```\n- color: rgb(255, 0, 0)',
+      'Elements matching "#go": 1\n\n## Element 1 (visible, x=10 y=21 100×30)\n```html\n<button id="go" style="color: rgb(255, 0, 0)">送る</button>\n```\n- color: rgb(255, 0, 0)',
     );
-    expect(textOf(await call('inspect', { selector: '#hidden', properties: ['display'] }))).toContain('## 1 つ目（見えていない・x=0 y=0 10×10・iframe（about:blank）の中）');
+    expect(textOf(await call('inspect', { selector: '#hidden', properties: ['display'] }))).toContain('## Element 1 (not visible, x=0 y=0 10×10, inside iframe (about:blank))');
     const long = textOf(await call('inspect', { selector: '.long', properties: ['color'] }));
     expect(long).toContain(`<p class="long">${'あ'.repeat(2000 - '<p class="long">'.length)}…\n\`\`\``);
     const bad = await call('inspect', { selector: '[[' });
-    expect(textOf(bad)).toMatch(/^セレクタの書き方が違います: /);
+    expect(textOf(bad)).toMatch(/^Invalid selector: /);
   });
 });
 
@@ -256,7 +256,7 @@ describe('入力（type）の clear', () => {
     const input = document.getElementById('name') as HTMLInputElement;
     input.focus();
     input.setSelectionRange(2, 2);
-    expect(await call('type', { text: '新しい名前', clear: true })).toEqual(textResult('今フォーカスのある場所に入力しました'));
+    expect(await call('type', { text: '新しい名前', clear: true })).toEqual(textResult('Typed into the focused element'));
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, '前の名前'.length]);
     expect(page.debugger.sent('Input.dispatchKeyEvent')[0].params).toMatchObject({ key: 'Backspace' });
     expect(page.debugger.sent('Input.insertText')[0].params).toEqual({ text: '新しい名前' });

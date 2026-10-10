@@ -284,8 +284,9 @@ export class Profile {
   }
 }
 
+// 起動が終わる前に届いた呼び出しに、Claude に返すもの（英語）
 function notReady() {
-  return textResult('tanacode の起動が終わっていません。少し待ってから試してください', true);
+  return textResult('tanacode has not finished starting up. Wait a moment and try again.', true);
 }
 
 // MCP の中継からの呼び出しを、ソケットで待ち受ける。始められなければ null（Claude Code に MCP サーバーを足さない）

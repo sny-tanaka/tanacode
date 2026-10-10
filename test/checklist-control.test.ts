@@ -83,30 +83,30 @@ const settle = () => new Promise((r) => setTimeout(r, 60));
 
 describe('MCP のツール（断るとき・結果の文）', () => {
   it('list_create: 説明を省くと空にする', async () => {
-    expect(first(await call('list_create', { name: 'やること' }))).toBe('リスト「やること」を作りました。');
+    expect(first(await call('list_create', { name: 'やること' }))).toBe('Created the list "やること".');
     expect(store.findList(ME, 'やること')!.description).toBe('');
   });
 
   it('list_update・list_delete: 名前と説明を変え、ゴミ箱に入れる。リストが 1 つも無ければ、そう返す', async () => {
-    expect(first(await call('list_update', { list: 'やること', name: 'x' }))).toBe('リスト「やること」がありません。リストはまだありません。');
+    expect(first(await call('list_update', { list: 'やること', name: 'x' }))).toBe('There is no list "やること". There are no lists yet.');
     await call('list_create', { name: 'やること', description: '上から' });
-    expect(first(await call('list_update', { list: 'やること', name: '完了前チェック', description: '終える前に確かめる' }))).toBe('リスト「完了前チェック」を変えました。');
+    expect(first(await call('list_update', { list: 'やること', name: '完了前チェック', description: '終える前に確かめる' }))).toBe('Updated the list "完了前チェック".');
     expect(store.findList(ME, '完了前チェック')).toMatchObject({ description: '終える前に確かめる' });
     // 文字でない値は、変えないものとして扱う
     await call('list_update', { list: '完了前チェック', name: 1, description: null });
     expect(store.findList(ME, '完了前チェック')).toMatchObject({ description: '終える前に確かめる' });
-    expect(first(await call('list_delete', { list: '完了前チェック' }))).toBe('リスト「完了前チェック」をゴミ箱に入れました（人が画面から戻せます）。');
+    expect(first(await call('list_delete', { list: '完了前チェック' }))).toBe('Moved the list "完了前チェック" to the trash (the user can restore it in the app).');
     expect(store.findList(ME, '完了前チェック')).toBeUndefined();
     expect(store.lists(ME)[0].deletedAt).toBeDefined();
   });
 
   it('card_update: タイトルと説明文を変える。省いたものは変えない', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A', body: '前' }] });
-    expect(first(await call('card_update', { list: 'やること', number: '#1', body: '後' }))).toBe('「やること」#1 を変えました。');
+    expect(first(await call('card_update', { list: 'やること', number: '#1', body: '後' }))).toBe('Updated "やること" #1.');
     expect(store.findList(ME, 'やること')!.cards[0]).toMatchObject({ title: 'A', body: '後' });
     await call('card_update', { list: 'やること', number: 1, title: 'B' });
     expect(store.findList(ME, 'やること')!.cards[0]).toMatchObject({ title: 'B', body: '後' });
-    expect(first(await call('card_update', { list: 'やること', number: 2, title: 'C' }))).toContain('#2 はありません');
+    expect(first(await call('card_update', { list: 'やること', number: 2, title: 'C' }))).toContain('#2 is not in "やること"');
   });
 
   it('card_add: cards が無い・空・配列でないときと、タイトルが文字でないカードは断る。本文が文字でなければ省く', async () => {
@@ -114,36 +114,37 @@ describe('MCP のツール（断るとき・結果の文）', () => {
     for (const cards of [undefined, [], 'A']) {
       const result = await call('card_add', { list: 'やること', cards });
       expect(result.isError).toBe(true);
-      expect(first(result)).toBe('cards に、足すカードを 1 つ以上渡してください');
+      expect(first(result)).toBe('Pass at least one card to add in cards.');
     }
     expect(first(await call('card_add', { list: 'やること', cards: [{ title: 1 }] }))).toBe('タイトルが空のカードは作れません');
     expect(first(await call('card_add', { list: 'やること', cards: [null] }))).toBe('タイトルが空のカードは作れません');
-    expect(first(await call('card_add', { list: 'やること', cards: [{ title: 'A', body: 3 }] }))).toBe('「やること」に #1「A」 を足しました。');
+    expect(first(await call('card_add', { list: 'やること', cards: [{ title: 'A', body: 3 }] }))).toBe('Added #1 "A" to "やること".');
     expect(store.findList(ME, 'やること')!.cards.map((c) => [c.number, c.title, c.body])).toEqual([[1, 'A', '']]);
   });
 
-  it('card_check・card_uncheck: もとからその状態のカードは、そう返す', async () => {
+  it('card_check・card_uncheck: もとからその状態のカードは、そう返す。枚数に合わせて単数・複数を書き分ける', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }] });
-    await call('card_check', { list: 'やること', numbers: '1' });
+    expect(first(await call('card_check', { list: 'やること', numbers: '1' }))).toBe('Checked #1 in "やること". 1 unchecked card left in "やること".');
     expect(first(await call('card_check', { list: 'やること', numbers: '1-2' }))).toBe(
-      '「やること」の #2 のチェックを付けました。#1 は、もとからチェック済みです。 「やること」の残りは 0 枚です。',
+      'Checked #2 in "やること". #1 was already checked. 0 unchecked cards left in "やること".',
     );
-    expect(first(await call('card_check', { list: 'やること', numbers: '1' }))).toBe('#1 は、もとからチェック済みです。 「やること」の残りは 0 枚です。');
-    expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: 'やり直す' }))).toBe('「やること」の #1 のチェックを外しました。');
-    expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: 'やり直す' }))).toBe('#1 は、もとからチェックなしです。');
+    expect(first(await call('card_check', { list: 'やること', numbers: '1' }))).toBe('#1 was already checked. 0 unchecked cards left in "やること".');
+    expect(first(await call('card_check', { list: 'やること', numbers: '1-2' }))).toBe('#1, #2 were already checked. 0 unchecked cards left in "やること".');
+    expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: 'やり直す' }))).toBe('Unchecked #1 in "やること".');
+    expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: 'やり直す' }))).toBe('#1 was already unchecked.');
   });
 
   it('card_move: 同じリスト（書き方が違うだけの名前も）へは移さない', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
     const result = await call('card_move', { list: 'やること', numbers: '1', to_list: ' やること ' });
     expect(result.isError).toBe(true);
-    expect(first(result)).toBe('移す先が同じリストです');
+    expect(first(result)).toBe('The destination is the same list.');
   });
 
   it('card_restore: ゴミ箱に無い番号は、ゴミ箱に無いと返す', async () => {
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }] });
     await call('card_delete', { list: 'やること', numbers: '1' });
-    expect(first(await call('card_restore', { list: 'やること', numbers: '1-2' }))).toBe('「やること」のゴミ箱に #2 はありません。checklist_overview で番号を確かめてください');
+    expect(first(await call('card_restore', { list: 'やること', numbers: '1-2' }))).toBe('#2 is not in the trash of "やること". Check the numbers with checklist_overview.');
     expect(store.findList(ME, 'やること')!.cards[0].deletedAt).toBeDefined();
   });
 
@@ -156,9 +157,9 @@ describe('MCP のツール（断るとき・結果の文）', () => {
     await call('card_reply', { list: 'やること', number: 1, text: '1 行目\n2 行目' });
     const got = first(await call('card_get', { list: 'やること', numbers: '1-2' }));
     const [one, two] = got.split('\n\n---\n\n');
-    expect(one).toMatch(/^## 「やること」#1 A\n- 状態: チェック済み（Claude・\d{4}-\d\d-\d\d \d\d:\d\d）\n- 作った人: Claude\n/);
-    expect(one).toMatch(/- \d{4}-\d\d-\d\d \d\d:\d\d Claude の返信:\n {2}1 行目\n {2}2 行目$/);
-    expect(two).toMatch(/- 状態: チェック済み（人・.+）\n- 作った人: 人\n\n### 説明文\n（なし）/);
+    expect(one).toMatch(/^## "やること" #1 A\n- Status: checked \(by Claude, \d{4}-\d\d-\d\d \d\d:\d\d\)\n- Created by: Claude\n/);
+    expect(one).toMatch(/- \d{4}-\d\d-\d\d \d\d:\d\d Claude replied:\n {2}1 行目\n {2}2 行目$/);
+    expect(two).toMatch(/- Status: checked \(by the user, .+\)\n- Created by: the user\n\n### Body\n\(none\)/);
   });
 
   it('card_get: 長すぎる結果は、上限で切って省いた文字数を書く', async () => {
@@ -170,17 +171,17 @@ describe('MCP のツール（断るとき・結果の文）', () => {
       Array.from({ length: 20 }, (_, i) => ({ title: `カード ${i + 1}`, body: 'あ'.repeat(4000) })),
     );
     const got = first(await call('card_get', { list: 'やること', numbers: '1-20' }));
-    expect(got).toMatch(/\n…（\d+ 文字を省略）$/);
+    expect(got).toMatch(/\n…\(\d+ characters omitted\)$/);
     expect(got.length).toBeLessThan(60_100);
-    expect(got).toContain('## 「やること」#1 カード 1');
-    expect(got).not.toContain('## 「やること」#20 カード 20');
+    expect(got).toContain('## "やること" #1 カード 1');
+    expect(got).not.toContain('## "やること" #20 カード 20');
   });
 
   it('cards_copy: 先に同じ名前のリストがあればそこに足す。notify: false なら知らせない', async () => {
     await call('card_add', { list: '確認', list_description: '', cards: [{ title: 'A' }] });
     store.createList(PEER, 'human', '確認', '');
     expect(first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: PEER, notify: false }))).toBe(
-      'セッション「s-11」の「確認」#1 を、セッション「s-22」（22222222）の「確認」に #1 としてコピーしました。',
+      'Copied #1 of "確認" in session "s-11" to "確認" in session "s-22" (22222222) as #1.',
     );
     expect(store.findList(PEER, '確認')!.cards.map((c) => c.title)).toEqual(['A']);
     await settle();
@@ -191,23 +192,23 @@ describe('MCP のツール（断るとき・結果の文）', () => {
     const list = store.createList(UNTITLED, 'human', '確認', '');
     store.addCards(UNTITLED, 'human', list.id, [{ title: 'A' }]);
     expect(first(await call('cards_copy', { from_session: UNTITLED, from_list: '確認', numbers: '1' }))).toBe(
-      'セッション「新しいセッション」の「確認」#1 を、このセッションの「確認」に #1 としてコピーしました。（「確認」は無かったので作りました）',
+      'Copied #1 of "確認" in session "新しいセッション" to "確認" in this session as #1. (The list "確認" did not exist, so it was created.)',
     );
   });
 
   it('cards_copy: 短い ID・先頭が重なる ID のセッションは断る', async () => {
     await call('card_add', { list: '確認', list_description: '', cards: [{ title: 'A' }] });
     host.add(TWIN);
-    expect(first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: '2222' }))).toBe('セッションの ID は、先頭 8 文字以上で渡してください');
+    expect(first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: '2222' }))).toBe('Pass at least the first 8 characters of the session ID.');
     expect(first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: '22222222' }))).toBe(
-      'ID が 22222222 で始まるセッションが 2 つ以上あります。もっと長く渡してください',
+      'More than one session has an ID starting with 22222222. Pass a longer ID.',
     );
     expect(store.lists(PEER)).toEqual([]);
   });
 
   it('知らないセッション・知らないツールは断る。思いがけない失敗は、ツールの結果にせずに投げる', async () => {
-    expect(first(await control.handle('nobody', 'checklist_overview', {}))).toBe('このセッションは tanacode にありません');
-    expect(first(await call('rm'))).toBe('知らないツールです: rm');
+    expect(first(await control.handle('nobody', 'checklist_overview', {}))).toBe('This session is not in tanacode.');
+    expect(first(await call('rm'))).toBe('Unknown tool: rm');
     vi.spyOn(store, 'lists').mockImplementation(() => {
       throw new Error('読めない');
     });
@@ -245,23 +246,23 @@ describe('画面からのコピー', () => {
 
 describe('結果の中身', () => {
   it('断るときは isError を付けて、決まった文を返す', async () => {
-    expect(await control.handle('nobody', 'checklist_overview', {})).toEqual(textResult('このセッションは tanacode にありません', true));
-    expect(await call('rm')).toEqual(textResult('知らないツールです: rm', true));
+    expect(await control.handle('nobody', 'checklist_overview', {})).toEqual(textResult('This session is not in tanacode.', true));
+    expect(await call('rm')).toEqual(textResult('Unknown tool: rm', true));
   });
 
   it('文字の引数が無い・空白だけのときは、どの引数かを添えて断る', async () => {
-    expect(first(await call('list_create', { name: '  ' }))).toBe('name を渡してください');
-    expect(first(await call('card_add', { cards: [{ title: 'A' }] }))).toBe('list を渡してください');
+    expect(first(await call('list_create', { name: '  ' }))).toBe('name is required.');
+    expect(first(await call('card_add', { cards: [{ title: 'A' }] }))).toBe('list is required.');
     await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
-    expect(first(await call('card_get', { numbers: '1' }))).toBe('list を渡してください');
-    expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: ' ' }))).toBe('reason を渡してください');
-    expect(first(await call('card_reply', { list: 'やること', number: 1 }))).toBe('text を渡してください');
-    expect(first(await call('card_move', { list: 'やること', numbers: '1' }))).toBe('to_list を渡してください');
+    expect(first(await call('card_get', { numbers: '1' }))).toBe('list is required.');
+    expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: ' ' }))).toBe('reason is required.');
+    expect(first(await call('card_reply', { list: 'やること', number: 1 }))).toBe('text is required.');
+    expect(first(await call('card_move', { list: 'やること', numbers: '1' }))).toBe('to_list is required.');
     // 無いリストは、あるリストを並べて教える
     await call('list_create', { name: '完了' });
-    expect(first(await call('card_get', { list: 'ない', numbers: '1' }))).toBe('リスト「ない」がありません。あるのは「やること」、「完了」です。');
+    expect(first(await call('card_get', { list: 'ない', numbers: '1' }))).toBe('There is no list "ない". Existing lists: "やること", "完了".');
     // 無い番号は、そのリストに無いと返す（ゴミ箱とは書かない）
-    expect(first(await call('card_check', { list: 'やること', numbers: '1-3' }))).toBe('「やること」の #2, #3 はありません。checklist_overview で番号を確かめてください');
+    expect(first(await call('card_check', { list: 'やること', numbers: '1-3' }))).toBe('#2, #3 are not in "やること". Check the numbers with checklist_overview.');
   });
 
   it('Claude のツールで書き換えたものは、書いた人を Claude にする', async () => {
@@ -290,11 +291,14 @@ describe('結果の中身', () => {
     expect([copied.readByHuman, copied.readByClaude > 0, copied.thread.at(-1)?.author]).toEqual([0, true, 'claude']);
   });
 
-  it('移す・消す・返信の結果の文', async () => {
-    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }] });
-    expect(first(await call('card_reply', { list: 'やること', number: 1, text: 'x' }))).toBe('「やること」#1 のスレッドに返信しました。');
-    expect(first(await call('card_move', { list: 'やること', numbers: '2', to_list: '移した先' }))).toBe('「やること」の #2 を「移した先」に移しました（新しい番号: #1）。');
-    expect(first(await call('card_delete', { list: 'やること', numbers: '1' }))).toBe('「やること」の #1 をゴミ箱に入れました（card_restore で戻せます）。');
+  it('移す・消す・返信の結果の文。枚数に合わせて単数・複数を書き分ける', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }, { title: 'D' }] });
+    expect(first(await call('card_reply', { list: 'やること', number: 1, text: 'x' }))).toBe('Replied in the thread of "やること" #1.');
+    expect(first(await call('card_move', { list: 'やること', numbers: '2', to_list: '移した先' }))).toBe('Moved #2 from "やること" to "移した先" (new number: #1).');
+    expect(first(await call('card_delete', { list: 'やること', numbers: '1' }))).toBe('Moved #1 in "やること" to the trash (restore it with card_restore).');
+    expect(first(await call('card_move', { list: 'やること', numbers: '3-4', to_list: '移した先' }))).toBe('Moved #3, #4 from "やること" to "移した先" (new numbers: #2, #3).');
+    expect(first(await call('card_delete', { list: '移した先', numbers: '1-3' }))).toBe('Moved #1-3 in "移した先" to the trash (restore them with card_restore).');
+    expect(first(await call('card_restore', { list: '移した先', numbers: '1-3' }))).toBe('Restored #1-3 in "移した先".');
   });
 
   it('checklist_overview: リストごとに進み具合・説明（無ければ「なし」）・チェックの印を書き、リストのあいだは空行で分ける', async () => {
@@ -302,7 +306,7 @@ describe('結果の中身', () => {
     await call('card_check', { list: 'やること', numbers: '1' });
     await call('list_create', { name: '完了', description: '終える前に' });
     expect(first(await call('checklist_overview'))).toBe(
-      ['## やること（1/2 チェック済み）', '説明: （なし）', '- [x] #1 A', '- [ ] #2 B', '', '## 完了（0/0 チェック済み）', '説明: 終える前に', '（カードはありません）'].join('\n'),
+      ['## やること (1/2 checked)', 'Description: (none)', '- [x] #1 A', '- [ ] #2 B', '', '## 完了 (0/0 checked)', 'Description: 終える前に', '(no cards)'].join('\n'),
     );
   });
 
@@ -318,24 +322,24 @@ describe('結果の中身', () => {
       const card = (r: ToolResult) => (r.content[0] as { text: string }).text;
       const expected = (mark: string) =>
         [
-          '## 「やること」#1 A',
-          '- 状態: チェック済み（Claude・2026-10-07 09:05）',
-          '- 作った人: Claude',
+          '## "やること" #1 A',
+          '- Status: checked (by Claude, 2026-10-07 09:05)',
+          '- Created by: Claude',
           '',
-          '### 説明文',
-          '（なし）',
+          '### Body',
+          '(none)',
           '',
-          '### スレッド',
-          '- 2026-10-07 09:05 Claude が作りました',
-          `- 2026-10-07 09:05 人の返信${mark}:`,
+          '### Thread',
+          '- 2026-10-07 09:05 Claude created the card',
+          `- 2026-10-07 09:05 The user replied${mark}:`,
           '  メモ',
           '  2 行目',
-          '- 2026-10-07 09:05 Claude がチェックしました',
+          '- 2026-10-07 09:05 Claude checked the card',
         ].join('\n');
-      expect(card(await c.handle(ME, 'card_get', { list: 'やること', numbers: '1' }))).toBe(expected('（未読）'));
+      expect(card(await c.handle(ME, 'card_get', { list: 'やること', numbers: '1' }))).toBe(expected(' (unread)'));
       expect(card(await c.handle(ME, 'card_get', { list: 'やること', numbers: '1' }))).toBe(expected(''));
       await c.handle(ME, 'card_uncheck', { list: 'やること', numbers: '1', reason: '戻す' });
-      expect(card(await c.handle(ME, 'card_get', { list: 'やること', numbers: '1' }))).toContain('\n- 状態: チェックなし\n');
+      expect(card(await c.handle(ME, 'card_get', { list: 'やること', numbers: '1' }))).toContain('\n- Status: not checked\n');
     } finally {
       c.dispose();
       timed.flush();
@@ -353,7 +357,7 @@ describe('結果の中身', () => {
     const each: string[] = [];
     for (let n = 1; n <= 20; n++) each.push(first(await call('card_get', { list: 'やること', numbers: String(n) })));
     const full = each.join('\n\n---\n\n');
-    expect(first(await call('card_get', { list: 'やること', numbers: '1-20' }))).toBe(`${full.slice(0, 60_000)}\n…（${full.length - 60_000} 文字を省略）`);
+    expect(first(await call('card_get', { list: 'やること', numbers: '1-20' }))).toBe(`${full.slice(0, 60_000)}\n…(${full.length - 60_000} characters omitted)`);
   });
 
   it('人の書き換えは、新しい 30 件までを 1 行ずつ添える', async () => {
@@ -362,17 +366,17 @@ describe('結果の中身', () => {
     for (let i = 1; i <= 35; i++) store.addCards(ME, 'human', list.id, [{ title: `c${i}` }]);
     const result = await call('checklist_overview');
     const lines = (result.content[1] as { text: string }).text.split('\n');
-    expect(lines[0]).toBe('（前回のツールの呼び出しから、人がチェックリストを変えました）');
+    expect(lines[0]).toBe('(Since your previous tool call, the user changed the checklists)');
     expect(lines.slice(1)).toHaveLength(30);
-    expect(lines[1]).toBe('- 人が「やること」に #6「c6」 を足しました');
-    expect(lines.at(-1)).toBe('- 人が「やること」に #35「c35」 を足しました');
+    expect(lines[1]).toBe('- The user added #6 "c6" to "やること"');
+    expect(lines.at(-1)).toBe('- The user added #35 "c35" to "やること"');
   });
 
   it('cards_copy: 結果に、作ったリストと、知らせることを書く。セッションの ID は前後の空白を除き、大文字でも探す', async () => {
     host.add(TWIN);
     await call('card_add', { list: '確認', list_description: '', cards: [{ title: 'A' }] });
     expect(first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: ' 22222222-FFFF ' }))).toBe(
-      `セッション「s-11」の「確認」#1 を、セッション「s-22」（22222222）の「確認」に #1 としてコピーしました。（「確認」は無かったので作りました）コピー先の Claude に、手が空いたら知らせます。`,
+      'Copied #1 of "確認" in session "s-11" to "確認" in session "s-22" (22222222) as #1. (The list "確認" did not exist, so it was created.) Claude in the destination session will be notified when it is idle.',
     );
     expect(store.findList(TWIN, '確認')!.cards).toHaveLength(1);
     expect(store.lists(PEER)).toEqual([]);

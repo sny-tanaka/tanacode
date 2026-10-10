@@ -284,7 +284,7 @@ describe('Claude Code に足す MCP サーバー', () => {
     await boot({ noWait: true, before: (s) => s.ptyHostStart.mockReturnValue(host.promise as never) });
     await vi.waitFor(() => expect(state.ptyHostStart).toHaveBeenCalled());
     const [, sessions, checklist, walkthrough] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
-    const notYet = textResult('tanacode の起動が終わっていません。少し待ってから試してください', true);
+    const notYet = textResult('tanacode has not finished starting up. Wait a moment and try again.', true);
     await expect(sessions('s1', 'list_sessions', {}, new AbortController().signal)).resolves.toEqual(notYet);
     await expect(checklist('s1', 'list_get', {})).resolves.toEqual(notYet);
     await expect(walkthrough('s1', 'walkthrough_start', {})).resolves.toEqual(notYet);

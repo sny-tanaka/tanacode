@@ -160,17 +160,22 @@ function unique(numbers: number[]): number[] {
   return [...new Set(numbers)];
 }
 
-// 番号を短く書く（[5,6,7,8,10] → "#5〜8, #10"。範囲のつなぎは言語による）
-export function formatNumbers(numbers: number[]): string {
+// 番号を短く書く（[5,6,7,8,10] → "#5〜8, #10"）。range: 範囲の書き方（既定は画面の言語による）
+export function formatNumbers(numbers: number[], range = (from: number, to: number) => t('checklist.numberRange', { from, to })): string {
   const sorted = unique(numbers).sort((a, b) => a - b);
   const parts: string[] = [];
   for (let i = 0; i < sorted.length; i++) {
     let j = i;
     while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
-    parts.push(j - i >= 2 ? t('checklist.numberRange', { from: sorted[i], to: sorted[j] }) : j === i ? `#${sorted[i]}` : `#${sorted[i]}, #${sorted[j]}`);
+    parts.push(j - i >= 2 ? range(sorted[i], sorted[j]) : j === i ? `#${sorted[i]}` : `#${sorted[i]}, #${sorted[j]}`);
     i = j;
   }
   return parts.join(', ');
+}
+
+// Claude に返す文の番号（[5,6,7,8,10] → "#5-8, #10"）。番号の指定（"5-8"）と同じ書き方で、画面の言語によらない
+export function claudeNumbers(numbers: number[]): string {
+  return formatNumbers(numbers, (from, to) => `#${from}-${to}`);
 }
 
 // 画面に出す、書いた人の名前
@@ -178,34 +183,33 @@ export function authorLabel(author: Author): string {
   return t(`checklist.author.${author}`);
 }
 
-// 名前に助詞を続ける。英字で終わる名前（Claude）は空白を入れる（「Claude が」「あなたが」）
-export function withParticle(name: string, particle: string): string {
-  return /[A-Za-z0-9]$/.test(name) ? `${name} ${particle}` : `${name}${particle}`;
+// 記録の行の文（"Claude checked the card" など）。who を省くと主語を付けない（"Checked the card"）。
+// Claude に返す文（MCP の card_get）に使うので、英語で書く。画面の記録の行は、文言（checklist.eventByHuman・eventByClaude）から作る
+export function eventText(event: CardEvent, who?: string): string {
+  const phrase = eventPhrase(event);
+  return who ? `${who} ${phrase}` : `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}`;
 }
 
-// 記録の行の文（「Claude がチェックしました」など）。who を省くと主語を付けない。
-// Claude に返す文（MCP の card_get）に使う。画面の記録の行は、文言（checklist.eventByHuman・eventByClaude）から作る
-export function eventText(event: CardEvent, who?: string): string {
-  const subject = who ? withParticle(who, 'が') : '';
+function eventPhrase(event: CardEvent): string {
   switch (event.type) {
     case 'created':
-      return `${subject}作りました`;
+      return 'created the card';
     case 'checked':
-      return `${subject}チェックしました`;
+      return 'checked the card';
     case 'unchecked':
-      return `${subject}チェックを外しました`;
+      return 'unchecked the card';
     case 'title':
-      return `${subject}タイトルを変えました（前: ${event.from}）`;
+      return `changed the title from "${event.from}"`;
     case 'body':
-      return `${subject}説明文を変えました`;
+      return 'edited the body';
     case 'moved':
-      return `${subject}「${event.fromList}」#${event.fromNumber} から移しました`;
+      return `moved the card from "${event.fromList}" #${event.fromNumber}`;
     case 'copied':
-      return `${subject}セッション「${event.fromSessionTitle}」の「${event.fromList}」#${event.fromNumber} からコピーしました`;
+      return `copied the card from "${event.fromList}" #${event.fromNumber} in session "${event.fromSessionTitle}"`;
     case 'deleted':
-      return `${subject}ゴミ箱に入れました`;
+      return 'moved the card to the trash';
     case 'restored':
-      return `${subject}ゴミ箱から戻しました`;
+      return 'restored the card from the trash';
   }
 }
 

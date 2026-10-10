@@ -119,7 +119,7 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
     expect(notice?.type === 'notice' && notice.text).toContain('0% のときは税込も同じ額にして');
     // 知らせを受けて Claude が読んだら、Claude の未読は消える
     await run.waitFor('カードを読んだ結果', () => resultOf('toolu_get'));
-    expect(resultOf('toolu_get')).toContain('人の返信（未読）');
+    expect(resultOf('toolu_get')).toContain('The user replied (unread)');
     expect(store.findList(run.sessionId!, '完了前チェック')!.cards[1].readByClaude).toBeGreaterThan(0);
   });
 
@@ -132,6 +132,6 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
     await run.send(AFTER_COMPACT);
     await run.waitFor('圧縮のあとの一覧', () => resultOf('toolu_after'), 30_000);
     expect(api.systems.slice(before).every((s) => s.includes('## tanacode-checklist') && s.includes('checklist_overview'))).toBe(true);
-    expect(resultOf('toolu_after')).toContain('## 完了前チェック（1/2 チェック済み）');
+    expect(resultOf('toolu_after')).toContain('## 完了前チェック (1/2 checked)');
   });
 });

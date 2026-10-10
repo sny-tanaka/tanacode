@@ -14,6 +14,7 @@ import {
   isLocalUrl,
   normalizeHostPattern,
 } from '../src/shared/browser-tools';
+import { setLanguage } from '../src/shared/i18n';
 import { AppSettings } from '../src/main/app-settings';
 import { BrowserAsks } from '../src/main/browser-asks';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from '../src/main/browser-bridge';
@@ -154,7 +155,7 @@ describe('アプリとのソケット', () => {
     const socketPath = join(root, 'browser.sock');
     const closed = await callBridge(socketPath, { session: 's1', tool: 'get_text', args: {} }, 5000);
     expect(closed.isError).toBe(true);
-    expect(closed.content[0]).toMatchObject({ text: expect.stringContaining('tanacode が起動していません') });
+    expect(closed.content[0]).toMatchObject({ text: expect.stringContaining('tanacode is not running.') });
     // 落ちたアプリが残したソケット
     const old = new BrowserBridge(socketPath, async () => textResult('古い'));
     await old.start();
@@ -182,12 +183,12 @@ describe('アプリとのソケット', () => {
       await vi.waitFor(() => expect(appSignals).toHaveLength(1));
       expect(appSignals[0].aborted).toBe(false);
       cancel.abort();
-      expect(await pending).toEqual(textResult('取り消されました', true));
+      expect(await pending).toEqual(textResult('Canceled.', true));
       await vi.waitFor(() => expect(appSignals[0].aborted).toBe(true));
       // はじめから取り消されていれば、すぐ返す
       const aborted = new AbortController();
       aborted.abort();
-      expect(await callBridge(socketPath, { session: 's1', tool: BROWSER_ASK_TOOL, args: {} }, 5000, aborted.signal)).toEqual(textResult('取り消されました', true));
+      expect(await callBridge(socketPath, { session: 's1', tool: BROWSER_ASK_TOOL, args: {} }, 5000, aborted.signal)).toEqual(textResult('Canceled.', true));
     } finally {
       bridge.close();
     }
@@ -195,7 +196,7 @@ describe('アプリとのソケット', () => {
 });
 
 describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
-  const page = () => ['今のページ: ログイン', 'URL: http://localhost:3000/login'];
+  const page = () => ['Current page: ログイン', 'URL: http://localhost:3000/login'];
   const make = (timeoutMs?: number) => {
     const changes: [string, { id: string; message: string } | null][] = [];
     const asks = new BrowserAsks((sessionId, ask) => changes.push([sessionId, ask]), timeoutMs);
@@ -215,7 +216,7 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     asks.answer('s1', id, null);
     expect(asks.has('s1')).toBe(true);
     asks.answer('s1', id, { done: true, reason: '' });
-    expect(await pending).toEqual(textResult('ユーザーが「終わった」を押しました\n今のページ: ログイン\nURL: http://localhost:3000/login'));
+    expect(await pending).toEqual(textResult('The user pressed "終わった".\nCurrent page: ログイン\nURL: http://localhost:3000/login'));
     expect(changes.at(-1)).toEqual(['s1', null]);
     expect(asks.has('s1')).toBe(false);
     expect(asks.list()).toEqual([]);
@@ -225,10 +226,22 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     const { asks, changes } = make();
     const first = asks.wait('s1', 'ログインして', page);
     asks.answer('s1', changes[0][1]!.id, { done: false, reason: ' テスト用の\n アカウントが ない ' });
-    expect((await first).content[0]).toEqual({ type: 'text', text: expect.stringMatching(/^ユーザーが「できない」を押しました。理由: テスト用の アカウントが ない\n今のページ/) });
+    expect((await first).content[0]).toEqual({ type: 'text', text: expect.stringMatching(/^The user pressed "できない"\. Reason: テスト用の アカウントが ない\nCurrent page/) });
     const second = asks.wait('s1', 'ログインして', page);
     asks.answer('s1', changes[2][1]!.id, { done: false, reason: '' });
-    expect((await second).content[0]).toMatchObject({ text: expect.stringContaining('理由: （書かれていません）') });
+    expect((await second).content[0]).toMatchObject({ text: expect.stringContaining('Reason: (none given)') });
+  });
+
+  it('ボタンの名前は、返事をしたときの画面の言語で伝える（Claude が利用者に正しい名前を言えるように）', async () => {
+    const { asks, changes } = make();
+    const pending = asks.wait('s1', 'ログインして', page);
+    setLanguage('en');
+    try {
+      asks.answer('s1', changes[0][1]!.id, { done: false, reason: '' });
+      expect((await pending).content[0]).toMatchObject({ text: expect.stringMatching(/^The user pressed "Can't Do It"\. Reason: \(none given\)\n/) });
+    } finally {
+      setLanguage('ja');
+    }
   });
 
   it('頼む内容が無ければ断る。頼んでいる途中に、同じセッションでもう一つ頼もうとしても断る（ほかのセッションは別）', async () => {
@@ -236,11 +249,11 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     expect(await asks.wait('s1', '  ', page)).toMatchObject({ isError: true });
     expect(await asks.wait('s1', 42, page)).toMatchObject({ isError: true });
     const pending = asks.wait('s1', 'ログインして', page);
-    expect(await asks.wait('s1', 'もう一つ', page)).toEqual(textResult('すでにユーザーに操作を頼んでいます。その返事を待ってください', true));
+    expect(await asks.wait('s1', 'もう一つ', page)).toEqual(textResult('You have already asked the user to act. Wait for that answer.', true));
     const other = asks.wait('s2', '色を見て', page);
     expect(changes.map(([sessionId]) => sessionId)).toEqual(['s1', 's2']);
     asks.cancel('s1');
-    expect(await pending).toEqual(textResult('セッションを閉じたので、頼むのをやめました', true));
+    expect(await pending).toEqual(textResult('The request was withdrawn because the session was closed.', true));
     expect(asks.has('s2')).toBe(true);
     // メニューでオフにしたときは、すべてやめる
     asks.cancelAll('オフになりました');
@@ -254,7 +267,7 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     const cancel = new AbortController();
     const pending = asks.wait('s1', 'ログインして', page, cancel.signal);
     cancel.abort();
-    expect(await pending).toEqual(textResult('取り消されました', true));
+    expect(await pending).toEqual(textResult('Canceled.', true));
     expect(changes.at(-1)).toEqual(['s1', null]);
     // はじめから取り消されていれば、帯を出さない
     const aborted = new AbortController();
@@ -267,7 +280,7 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     const { asks, changes } = make(30);
     const result = await asks.wait('s1', 'ログインして', page);
     expect(result.isError).toBeUndefined();
-    expect(result.content[0]).toMatchObject({ text: expect.stringMatching(/^時間切れです.*\n今のページ: ログイン/) });
+    expect(result.content[0]).toMatchObject({ text: expect.stringMatching(/^Timed out \(the user did not press "終わった" or "できない" within 1 minute\)\.\nCurrent page: ログイン/) });
     expect(changes.at(-1)).toEqual(['s1', null]);
   });
 });
@@ -344,7 +357,7 @@ describe('起動の引数', () => {
       type: 'stdio',
       command: launch.command,
       args: [launch.script],
-      env: { ELECTRON_RUN_AS_NODE: '1', TANACODE_BROWSER_SOCKET: launch.socketPath, TANACODE_BROWSER_SESSION: 's1', TANACODE_VERSION: '1.0.0' },
+      env: { ELECTRON_RUN_AS_NODE: '1', TANACODE_BROWSER_SOCKET: launch.socketPath, TANACODE_BROWSER_SESSION: 's1', TANACODE_VERSION: '1.0.0', TANACODE_LANGUAGE: 'ja' },
     });
     expect(args.slice(2)).toEqual(['--allowedTools', allowedBrowserToolIds().join(',')]);
     expect(allowedBrowserToolIds()).toContain(browserToolId('screenshot'));
@@ -417,7 +430,7 @@ describe('JavaScript の実行の確認のフック', () => {
     expect(readAnswer(textResult('{"local":true,"url":"http://localhost:3000/"}'))).toEqual({ local: true, url: 'http://localhost:3000/' });
     expect(readAnswer(textResult('{"local":true,"url":"http://localhost:3000/"}', true))).toBeNull();
     expect(readAnswer(textResult('{"local":"yes","url":1}'))).toBeNull();
-    expect(readAnswer(textResult('知らないツールです'))).toBeNull();
+    expect(readAnswer(textResult('Unknown tool: gate:evaluate'))).toBeNull();
     expect(readAnswer({ content: [{ type: 'image', data: 'x', mimeType: 'image/png' }] })).toBeNull();
   });
 
@@ -444,7 +457,7 @@ describe('JavaScript の実行の確認のフック', () => {
 
   it('アプリが答えられなかった（エラーの返事）ときも ask', async () => {
     const socketPath = join(root, 'gate-error.sock');
-    const bridge = new BrowserBridge(socketPath, async () => textResult('このセッションは tanacode にありません', true));
+    const bridge = new BrowserBridge(socketPath, async () => textResult('This session is not in tanacode.', true));
     await bridge.start();
     try {
       expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
