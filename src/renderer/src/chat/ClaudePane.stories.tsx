@@ -4,6 +4,7 @@ import type { SessionSummary, SessionWorktree } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { TooltipLayer } from '../layout/Tooltip';
+import type { ReviewComment } from '../review/comments';
 import { ClaudePane } from './ClaudePane';
 import { EMPTY_CHAT, type ChatItem } from './chatState';
 import { insertIntoChat } from './insertInput';
@@ -44,7 +45,9 @@ function conversation(count: number): ChatItem[] {
 }
 
 // worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示 /
-// scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）
+// scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）/
+// terminalMode: ターミナルモード（チャットの代わりに Claude Code の画面を出す）で始める。ヘッダーのボタンで切り替えられる /
+// comments: コードへのコメント / exited: Claude Code が終了している
 function Pane({
   items,
   settingsFile = null,
@@ -52,6 +55,9 @@ function Pane({
   pending = null,
   scheduled = [],
   input = '',
+  terminalMode = false,
+  comments = [],
+  exited = false,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -59,7 +65,12 @@ function Pane({
   pending?: string | null;
   scheduled?: ScheduledMessage[];
   input?: string;
+  terminalMode?: boolean;
+  comments?: ReviewComment[];
+  exited?: boolean;
 }) {
+  const [terminalOpen, setTerminalOpen] = useState(terminalMode);
+  const [shownComments, setShownComments] = useState(comments);
   // 入力欄の文字は ClaudePane が持つので、外から入れる口（ターミナルの出力を足すときと同じ）を使う
   useEffect(() => {
     if (input) insertIntoChat(session.id, input);
@@ -70,7 +81,7 @@ function Pane({
         session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing }}
         sessions={[session]}
         onSelectSession={noop}
-        chat={{ ...EMPTY_CHAT, status: worktree?.preparing ? 'starting' : 'idle', items }}
+        chat={{ ...EMPTY_CHAT, status: exited ? 'exited' : worktree?.preparing ? 'starting' : 'idle', exitCode: exited ? 0 : null, items }}
         screen={null}
         workflows={new Map()}
         subagents={new Map()}
@@ -82,14 +93,14 @@ function Pane({
         onOpenTask={noop}
         onStopTask={noop}
         stoppingTasks={new Set()}
-        terminalOpen={false}
-        comments={[]}
-        onCommentsChange={noop}
+        terminalOpen={terminalOpen}
+        comments={shownComments}
+        onCommentsChange={setShownComments}
         onShowComment={noop}
-        onOpenTerminal={noop}
+        onOpenTerminal={() => setTerminalOpen(true)}
         onShowContext={noop}
         onShowShell={noop}
-        onToggleTerminal={noop}
+        onToggleTerminal={() => setTerminalOpen((open) => !open)}
         onOpenFile={noop}
         onResume={noop}
         onUnarchive={noop}
@@ -198,4 +209,47 @@ const SCHEDULED: ScheduledMessage[] = [
 
 export const 予約したメッセージ: Story = {
   args: { items: conversation(4), scheduled: SCHEDULED, input: 'あしたの朝、依存を更新してください。' },
+};
+
+// ターミナルモード。ヘッダーは残し、チャットと入力欄の代わりに Claude Code そのものの画面を出す。モニターのアイコンでチャットに戻る
+const CLAUDE_SCREEN = [
+  '\x1b[38;5;208m✻\x1b[0m Welcome to \x1b[1mClaude Code\x1b[0m',
+  '',
+  '\x1b[2m>\x1b[0m ログイン画面のバグを直してください。',
+  '',
+  '\x1b[38;5;114m⏺\x1b[0m \x1b[1mRead\x1b[0m(src/Login.tsx)',
+  '  \x1b[2m⎿  Read 84 lines\x1b[0m',
+  '',
+  '\x1b[38;5;114m⏺\x1b[0m `useEffect` の依存の配列を直しました。テストも通っています。',
+  '',
+  '\x1b[2m────────────────────────────────────────────────\x1b[0m',
+  '❯ ',
+].join('\r\n');
+const showClaudeScreen = () =>
+  mockApi({
+    'pty.onData': (listener) => {
+      (listener as (payload: { sessionId: string; data: string }) => void)({ sessionId: session.id, data: CLAUDE_SCREEN });
+      return () => {};
+    },
+  });
+
+export const ターミナルモード: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true },
+};
+
+// コードへのコメントは、画面の下に出す。「入力欄に貼る」で Claude Code の入力欄に貼る
+const COMMENTS: ReviewComment[] = [
+  { id: 'c1', path: 'src/tax.ts', startLine: 3, endLine: 3, quote: 'const rate = 0.1;', text: '税率は引数で受け取るようにしてください' },
+  { id: 'c2', path: 'src/cart/total.ts', startLine: 12, endLine: 18, quote: 'function total() {}', text: '端数は切り捨てで' },
+];
+export const ターミナルモードでコメントがある: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true, comments: COMMENTS },
+};
+
+// Claude Code が終了したら、画面の下に「再開」を出す
+export const ターミナルモードで終了した: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true, exited: true },
 };

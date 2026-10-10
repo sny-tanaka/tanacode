@@ -76,40 +76,48 @@ describe('チャットから Claude Code を動かす', () => {
     expect(await app.page.locator('.claude-header .claude-title').textContent()).toBe(PROMPT);
   });
 
-  it('Claude Code の画面（ターミナル）に、claude の画面がそのまま描かれ、打った文字が届く', async () => {
-    await app.page.click('.claude-header [aria-label="Claude Code の画面"]');
-    const rows = app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows');
+  it('ターミナルモードにすると、チャットの代わりに claude の画面がそのまま描かれ、打った文字が届く', async () => {
+    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
+    const rows = app.page.locator('.claude .claude-screen .terminal-instance .xterm-rows');
     await rows.getByText('チェック完了', { exact: false }).waitFor();
+    // チャットと入力欄は隠す
+    expect(await app.page.locator('.chat-list-wrap').isVisible()).toBe(false);
+    expect(await app.page.locator('.chat-input-wrap').isVisible()).toBe(false);
     // 打った文字は pty から claude に届き、claude の入力欄に出る。人と同じ速さで 1 文字ずつ打つ
     // （打っている途中の文字を、入力欄に残った文字としてチャットの入力欄に移さない）
-    await app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-helper-textarea').focus();
+    await app.page.locator('.claude-screen .terminal-instance .xterm-helper-textarea').focus();
     await app.page.keyboard.type('typed-from-xterm', { delay: 80 });
     await rows.getByText('typed-from-xterm', { exact: false }).waitFor();
     expect(await app.page.inputValue('.chat-input textarea')).toBe('');
     // 書きかけは消しておく（Ctrl+U）
     await app.page.keyboard.press('Control+U');
     await app.page.waitForFunction(
-      () => !document.querySelector('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows')?.textContent?.includes('typed-from-xterm'),
+      () => !document.querySelector('.claude-screen .terminal-instance .xterm-rows')?.textContent?.includes('typed-from-xterm'),
     );
     expect(await app.page.inputValue('.chat-input textarea')).toBe('');
   });
 
-  it('Claude Code の画面で打ちかけたまま、チャットの入力欄に移ると、書きかけがチャットの入力欄に移る', async () => {
-    const rows = app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows');
-    await app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-helper-textarea').focus();
+  it('ターミナルモードで打ちかけたまま、エディタなどを触っても書きかけは画面に残る。チャットに戻すと、チャットの入力欄に移る', async () => {
+    const rows = app.page.locator('.claude .claude-screen .terminal-instance .xterm-rows');
+    await app.page.locator('.claude-screen .terminal-instance .xterm-helper-textarea').focus();
     await app.page.keyboard.type('left-in-xterm', { delay: 80 });
     await rows.getByText('left-in-xterm', { exact: false }).waitFor();
-    await app.page.click('.chat-input textarea');
-    // 書きかけはチャットの入力欄に移り、Claude Code の入力欄は空になる（チャットから送ったとき、書きかけの後ろにつながらない）
+    // 画面の外（ヘッダー）を押してフォーカスを外しても、書きかけは移さない（見えていないチャットの入力欄に入れない）
+    await app.page.click('.claude-header .claude-title');
+    // 移さないことを確かめるので、移すまでの待ち（隠してから 0.5 秒）より長く待つ
+    await app.page.waitForTimeout(1000);
+    expect(await rows.textContent()).toContain('left-in-xterm');
+    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
+    // チャットに戻すと、書きかけはチャットの入力欄に移り、Claude Code の入力欄は空になる（チャットから送ったとき、書きかけの後ろにつながらない）
+    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
+    await app.page.locator('.chat-list-wrap').waitFor();
     await app.page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>('.chat-input textarea')?.value === 'left-in-xterm');
-    await app.page.waitForFunction(
-      () => !document.querySelector('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows')?.textContent?.includes('left-in-xterm'),
-    );
+    expect(await app.page.locator('.claude-screen').count()).toBe(0);
     await app.page.fill('.chat-input textarea', '');
   });
 
   it('ターミナルで、シェルのコマンドを動かせる', async () => {
-    await app.page.click('.terminal-panel [aria-label="新しいターミナル"]');
+    await app.page.click('.activity-bar [aria-label="ターミナル"]');
     const shell = app.page.locator('.terminal-panel .terminal-host:not([hidden]) .terminal-instance:not([hidden])');
     await shell.locator('.xterm-rows').waitFor();
     await shell.locator('.xterm-helper-textarea').focus();

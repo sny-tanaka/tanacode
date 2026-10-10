@@ -15,9 +15,10 @@ import { contextUsage } from '../knowledge/useSessionKnowledge';
 import { MenuCard } from '../screen/MenuCard';
 import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
+import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
-import { ChatInput, type CompletionSource } from './ChatInput';
+import { ChatInput, CommentChips, type CompletionSource } from './ChatInput';
 import { ChatRow } from './ChatRow';
 import { useTakeClaudeDraft } from './claudeDraft';
 import { HookGroupRow } from './HookGroupRow';
@@ -27,10 +28,11 @@ import { TodoPanel } from './TodoPanel';
 import { useInsertInput } from './insertInput';
 import { DoneNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
-import type { ChatState } from './chatState';
+import { acceptsInput, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
+import { stripControlChars } from './sanitize';
 import { useCompactState } from './compactState';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
@@ -63,16 +65,19 @@ type Props = {
   // 動いているバックグラウンドのタスクを止める。stoppingTasks: 止めている途中のもの（key）
   onStopTask: (task: TaskEntry) => void;
   stoppingTasks: ReadonlySet<string>;
+  // ターミナルモード（チャットの代わりに、Claude Code そのものの画面を出す）にしている
   terminalOpen: boolean;
   // コードに付けたコメント。送信するとき本文に付ける
   comments: ReviewComment[];
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
+  // ターミナルモードにする（チャットで操作できない画面が出たときなど）
   onOpenTerminal: () => void;
   // サイドパネルにコンテキストの中身を出す（ヘッダーのメーターを押したとき）
   onShowContext: () => void;
   // ターミナルパネルのシェルのタブを出す（worktree の npm install などの進み具合を見る）
   onShowShell: () => void;
+  // ターミナルモードとチャットを切り替える（ヘッダーのボタン）
   onToggleTerminal: () => void;
   onOpenFile: (absPath: string, line?: number) => void;
   onResume: () => void;
@@ -127,11 +132,6 @@ export const ClaudePane = memo(function ClaudePane({
   const [attachments, setAttachments] = useState<string[]>([]);
   // 作業の書き出しの確認を出している
   const [exporting, setExporting] = useState(false);
-  // ターミナルで選んだ出力やアプリ内ブラウザで選んだ要素などを、入力欄の末尾に足す
-  useInsertInput(session.id, (text, added) => {
-    setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
-    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
-  });
   const drafts = useRef(new Map<string, { text: string; attachments: string[] }>());
   const listRef = useRef<HTMLDivElement>(null);
   // 開いているツール・hooks のまとまり（自動では開かない）
@@ -208,6 +208,28 @@ export const ClaudePane = memo(function ClaudePane({
     return () => clearTimeout(timer);
   }, [starting, preparing, session.id]);
   const live = !session.archived && chat.status !== 'exited' && chat.status !== 'not-started';
+  // ターミナルモード。チャット・入力欄の代わりに、Claude Code の画面を出す。アーカイブ済みのセッションには画面が無いので、チャットのまま
+  const screenMode = terminalOpen && !session.archived;
+  // ターミナルモードで、Claude Code の入力欄に貼れる（起動の途中に貼った文字は、Claude Code が取りこぼす）
+  const canPaste = screenMode && acceptsInput(chat.status);
+  // ターミナルで選んだ出力やアプリ内ブラウザで選んだ要素などを、入力欄の末尾に足す。
+  // ターミナルモードでは、見えていないチャットの入力欄ではなく、Claude Code の入力欄に貼る（貼れない間は、チャットの入力欄に取っておく）
+  useInsertInput(session.id, (text, added) => {
+    if (canPaste) {
+      void pasteIntoClaudeScreen(session.id, text, added);
+      return;
+    }
+    setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
+    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+  });
+  // ターミナルモードから戻ったら、最新のメッセージから見せる（隠している間に、スクロールの位置は失われる）
+  useLayoutEffect(() => {
+    if (screenMode) return;
+    stickToBottom.current = true;
+    setAwayFromBottom(false);
+    const list = listRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [screenMode]);
   const menu = live && screen?.state.kind === 'menu' ? screen.state.menu : null;
   const unknownScreen = live && screen?.state.kind === 'unknown';
   const rewinding = live && screen?.state.kind === 'rewind';
@@ -344,6 +366,28 @@ export const ClaudePane = memo(function ClaudePane({
     });
   };
   const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
+  const removeComment = (id: string) => onCommentsChange(comments.filter((c) => c.id !== id));
+  // コードへのコメントを、Claude Code の入力欄に貼る（ターミナルモード。送るのは、人が画面で Enter を押したとき）
+  const pasteComments = () => {
+    void pasteIntoClaudeScreen(session.id, stripControlChars(formatComments(comments)));
+    onCommentsChange([]);
+  };
+
+  // worktree の準備の途中と、Claude Code の終了。チャットにも、ターミナルモードの画面の下にも出す
+  const preparingNote = preparing && (
+    <div className="chat-note worktree-preparing">
+      <Busy>{preparingLabel(preparing)}…</Busy>
+      {preparing === 'installing' && <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onShowShell} />}
+    </div>
+  );
+  const exitedCallout = !session.archived && chat.status === 'exited' && (
+    <div className="chat-callout">
+      <span>{t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
+      <button className="send-button" onClick={onResume}>
+        {t('chat.pane.resume')}
+      </button>
+    </div>
+  );
 
   return (
     <section className="claude">
@@ -405,9 +449,29 @@ export const ClaudePane = memo(function ClaudePane({
         )}
       </header>
 
+      {screenMode && (
+        <>
+          <ClaudeScreen sessionId={session.id} />
+          {(preparingNote || exitedCallout || comments.length > 0) && (
+            <div className="claude-screen-notes">
+              {preparingNote}
+              {comments.length > 0 && (
+                <div className="claude-screen-comments">
+                  <CommentChips comments={comments} onRemove={removeComment} onShow={onShowComment} />
+                  <button className="send-button" disabled={!canPaste} onClick={pasteComments} data-tip={t('chat.pane.pasteCommentsTip')}>
+                    {t('chat.pane.pasteComments')}
+                  </button>
+                </div>
+              )}
+              {exitedCallout}
+            </div>
+          )}
+        </>
+      )}
       {/* セッションごとに作り直す（前のセッションで終わっていた項目を、移った先で「終わったばかり」と見なさない） */}
-      {showTodos && <TodoPanel key={session.id} todos={chat.todos!} />}
-      <div className="chat-list-wrap">
+      {showTodos && !screenMode && <TodoPanel key={session.id} todos={chat.todos!} />}
+      {/* ターミナルモードの間も、チャットと入力欄は隠して残す（打ちかけの答え・入力欄の状態を保つ） */}
+      <div className="chat-list-wrap" hidden={screenMode}>
         <div
           className="chat-list"
           ref={listRef}
@@ -437,14 +501,7 @@ export const ClaudePane = memo(function ClaudePane({
               <Busy>{t('chat.pane.starting')}</Busy>
             </div>
           )}
-          {preparing && (
-            <div className="chat-note worktree-preparing">
-              <Busy>{preparingLabel(preparing)}…</Busy>
-              {preparing === 'installing' && (
-                <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onShowShell} />
-              )}
-            </div>
-          )}
+          {preparingNote}
           {rows.map((row) =>
             row.kind === 'tool-group' ? (
               <ToolGroupRow
@@ -550,23 +607,15 @@ export const ClaudePane = memo(function ClaudePane({
               </div>
             </div>
           )}
-          {session.archived ? (
+          {session.archived && (
             <div className="chat-callout">
               <span>{t('chat.pane.archived')}</span>
               <button className="send-button" onClick={onUnarchive}>
                 {t('chat.pane.unarchive')}
               </button>
             </div>
-          ) : (
-            chat.status === 'exited' && (
-              <div className="chat-callout">
-                <span>{t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
-                <button className="send-button" onClick={onResume}>
-                  {t('chat.pane.resume')}
-                </button>
-              </div>
-            )
           )}
+          {exitedCallout}
         </div>
         {awayFromBottom && (
           <button
@@ -582,13 +631,13 @@ export const ClaudePane = memo(function ClaudePane({
       </div>
 
       {exporting && <ExportDialog key={session.id} session={session} onClose={() => setExporting(false)} />}
-      <TaskTray tasks={tasks} activeKey={activeTaskKey} onOpen={(t) => onOpenTask(t.ref)} onStop={onStopTask} stopping={stoppingTasks} />
+      {!screenMode && <TaskTray tasks={tasks} activeKey={activeTaskKey} onOpen={(t) => onOpenTask(t.ref)} onStop={onStopTask} stopping={stoppingTasks} />}
       {!session.archived && (
-        <div className="chat-input-wrap">
+        <div className="chat-input-wrap" hidden={screenMode}>
           <ChatInput
             working={running}
             comments={comments}
-            onRemoveComment={(id) => onCommentsChange(comments.filter((c) => c.id !== id))}
+            onRemoveComment={removeComment}
             onShowComment={onShowComment}
             completion={completion}
             value={input}

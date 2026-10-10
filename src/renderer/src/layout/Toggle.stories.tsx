@@ -44,7 +44,7 @@ function Demo() {
           <Toggle label={icon} name="Remote Control" on={on} onChange={setOn} />
           <IconButton icon={CompressIcon} label="圧縮" />
           <IconButton icon={ReloadIcon} label="再起動" />
-          <IconButton icon={MonitorIcon} label="Claude Code の画面" pressed />
+          <IconButton icon={MonitorIcon} label="ターミナルモード" pressed />
         </div>,
       )}
     </div>

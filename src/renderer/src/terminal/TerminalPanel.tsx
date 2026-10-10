@@ -4,14 +4,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
-import { AddIcon, CloseIcon, IconButton, MonitorIcon, SendIcon } from '../icons';
-import { ClaudeScreen } from './ClaudeScreen';
+import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
 import { useRunInTerminal } from './runInTerminal';
 import { xtermOptions } from './xterm';
-
-// パネルに出すもの: ユーザーのシェルか、Claude Code の生の画面か
-export type TerminalView = 'shell' | 'claude';
 
 // task: アプリが開いたコマンドのタブ（worktree の npm install・yarn install など）。終わってもタブは残し、exitCode に終了コードを入れる
 type ShellTab = { id: string; name: string; title: string | null; task?: boolean; exitCode?: number };
@@ -33,18 +29,15 @@ function loadHeight(): number {
 type Props = {
   // 持ち主（セッション。新規セッションの画面では、そこで開いているフォルダ）
   sessionId: string | null;
-  // Claude Code の画面のタブを出すか（新規セッションの画面には、画面を出す Claude Code がない）
-  claudeScreen?: boolean;
   open: boolean;
-  view: TerminalView;
-  onView: (view: TerminalView) => void;
+  // パネルを開く（チャットのコードブロックの「実行」など、閉じている間にコマンドを実行するとき）
+  onOpen: () => void;
   onClose: () => void;
 };
 
 // エディタの下のターミナル。セッションごとに、そのフォルダでシェルを好きなだけ開ける。
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
-export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requestedView, onView, onClose }: Props) {
-  const view: TerminalView = claudeScreen ? requestedView : 'shell';
+export function TerminalPanel({ sessionId, open, onOpen, onClose }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
   // xterm を用意する前に届いた出力
@@ -59,7 +52,6 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
 
   const tabs = sessionId ? (shells[sessionId] ?? []) : [];
   const activeShell = sessionId ? tabs.find((t) => t.id === active[sessionId]) ?? tabs[0] ?? null : null;
-  const showShell = open && view === 'shell';
 
   // アプリが開いたコマンドのタブのうち、終わってもタブを残すもの（× で止めたものは外し、終わったら閉じる）
   const taskIds = useRef(new Set<string>());
@@ -185,7 +177,7 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
     const owner = requested ?? sessionId;
     if (!owner || owner !== sessionId) return false;
     queued.current = { owner, command };
-    onView('shell');
+    onOpen();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (queued.current) void newShell(owner);
     }));
@@ -194,14 +186,14 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
 
   // シェルを出すのに 1 つも無ければ開く
   useEffect(() => {
-    if (showShell && sessionId && tabs.length === 0) void newShell(sessionId);
-  }, [showShell, sessionId, tabs.length, newShell]);
+    if (open && sessionId && tabs.length === 0) void newShell(sessionId);
+  }, [open, sessionId, tabs.length, newShell]);
 
   // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
   // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）
   useEffect(() => {
-    for (const [id, x] of xterms.current) x.element.hidden = !showShell || id !== activeShell?.id;
-    const x = showShell && activeShell ? xterms.current.get(activeShell.id) : undefined;
+    for (const [id, x] of xterms.current) x.element.hidden = !open || id !== activeShell?.id;
+    const x = open && activeShell ? xterms.current.get(activeShell.id) : undefined;
     if (!x) {
       setHasSelection(false);
       return;
@@ -209,7 +201,7 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
     x.fit.fit();
     x.term.focus();
     setHasSelection(x.term.hasSelection());
-  }, [showShell, activeShell, height]);
+  }, [open, activeShell, height]);
 
   const sendSelection = () => {
     const x = activeShell && xterms.current.get(activeShell.id);
@@ -260,12 +252,9 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
             <div
               key={tab.id}
               role="tab"
-              aria-selected={view === 'shell' && tab.id === activeShell?.id}
-              className={`terminal-tab${view === 'shell' && tab.id === activeShell?.id ? ' active' : ''}`}
-              onClick={() => {
-                if (sessionId) setActive((prev) => ({ ...prev, [sessionId]: tab.id }));
-                onView('shell');
-              }}
+              aria-selected={tab.id === activeShell?.id}
+              className={`terminal-tab${tab.id === activeShell?.id ? ' active' : ''}`}
+              onClick={() => sessionId && setActive((prev) => ({ ...prev, [sessionId]: tab.id }))}
               title={tab.title ?? tab.name}
             >
               <span>{tab.task ? taskLabel(tab) : (tab.title ?? `${tab.name} ${i + 1}`)}</span>
@@ -290,38 +279,20 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
             icon={AddIcon}
             size="sm"
             label={t('terminal.tabs.new')}
-            onClick={() => {
-              onView('shell');
-              if (sessionId) void newShell(sessionId);
-            }}
+            onClick={() => sessionId && void newShell(sessionId)}
           />
         </div>
-        {view === 'shell' && (
-          <IconButton
-            icon={SendIcon}
-            label={t('terminal.panel.sendToClaude')}
-            tip={t('terminal.panel.sendToClaudeTip')}
-            disabled={!hasSelection}
-            onClick={sendSelection}
-          />
-        )}
-        {claudeScreen && (
-        <button
-          role="tab"
-          aria-selected={view === 'claude'}
-          className={`terminal-tab claude-screen-tab${view === 'claude' ? ' active' : ''}`}
-          onClick={() => onView(view === 'claude' ? 'shell' : 'claude')}
-          aria-label={t('terminal.panel.claudeScreen')}
-          data-tip={t('terminal.panel.claudeScreenTip')}
-        >
-          <MonitorIcon size={14} />
-        </button>
-        )}
+        <IconButton
+          icon={SendIcon}
+          label={t('terminal.panel.sendToClaude')}
+          tip={t('terminal.panel.sendToClaudeTip')}
+          disabled={!hasSelection}
+          onClick={sendSelection}
+        />
         <IconButton icon={CloseIcon} label={t('terminal.panel.close')} tip={t('terminal.panel.closeTip')} onClick={onClose} />
       </div>
       <div className="terminal-panel-body">
-        <div className="terminal-host" hidden={view !== 'shell'} ref={hostRef} />
-        <ClaudeScreen sessionId={sessionId} open={open && view === 'claude'} />
+        <div className="terminal-host" ref={hostRef} />
       </div>
     </div>
   );

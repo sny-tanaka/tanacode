@@ -71,7 +71,7 @@ const TYPED_MS = 3000;
 const TYPED_POLL_MS = 20;
 
 // Claude Code の画面を見ていないときの pty サイズ。低いと、Claude Code は選択肢の一部だけを出す（↑/↓ で送る）ので、
-// 画面から読むメニューが欠ける。見ているあいだだけ、ターミナルパネルの大きさに合わせる
+// 画面から読むメニューが欠ける。ターミナルモードで見ているあいだだけ、Claude Code ペインの大きさに合わせる
 export const DEFAULT_PTY_SIZE = { cols: 120, rows: 40 };
 
 type Runtime = {

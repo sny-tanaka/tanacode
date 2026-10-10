@@ -1,87 +1,101 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { bracketedPaste } from '@shared/prompt-keys';
 import { enterClaudeScreen, leaveClaudeScreen } from './claudeScreenTyping';
 import { xtermOptions } from './xterm';
 
 type Term = { term: Terminal; fit: FitAddon; element: HTMLDivElement; opened: boolean };
 
-function createTerm(sessionId: string, host: HTMLElement): Term {
-  const term = new Terminal(xtermOptions());
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.onData((data) => window.tanacode.pty.write(sessionId, data));
-  term.onResize(({ cols, rows }) => window.tanacode.pty.resize(sessionId, cols, rows));
-  const element = document.createElement('div');
-  element.className = 'terminal-instance';
-  element.hidden = true;
-  // フォーカスがある間は、人が Claude Code の入力欄に打っている途中なので、書きかけをチャットの入力欄に移さない（離れたら移す）
-  element.addEventListener('focusin', () => enterClaudeScreen(sessionId));
-  element.addEventListener('focusout', () => leaveClaudeScreen(sessionId, element));
-  host.appendChild(element);
-  return { term, fit, element, opened: false };
+// セッションごとの xterm。画面を出していない間（チャットを見ている・ほかのセッションや新規セッションの画面を見ている）も
+// pty の出力を受け取っておくので、部品（ClaudeScreen）の外に持つ。element は、出すときに部品の中へ移す
+const terms = new Map<string, Term>();
+// 出力を受け取っているもの（App と、出ている ClaudeScreen）の数
+let holders = 0;
+let offData: (() => void) | null = null;
+
+function termFor(sessionId: string): Term {
+  let t = terms.get(sessionId);
+  if (!t) {
+    const term = new Terminal(xtermOptions());
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.onData((data) => window.tanacode.pty.write(sessionId, data));
+    term.onResize(({ cols, rows }) => window.tanacode.pty.resize(sessionId, cols, rows));
+    const element = document.createElement('div');
+    element.className = 'terminal-instance';
+    t = { term, fit, element, opened: false };
+    terms.set(sessionId, t);
+  }
+  return t;
 }
 
-// Claude Code の生の画面（デバッグ用。ターミナルパネルのタブのひとつ）。pty の出力はセッションごとに常に受け取り、
-// 開いたときに初めて DOM に描画する。開いた時点のサイズに pty をリサイズするので、Claude が画面全体を描き直す。
-// 閉じたら pty を既定の大きさに戻す（パネルの低さのままだと、質問の選択肢の一部が画面の外に出て読めない）
-export function ClaudeScreen({ sessionId, open }: { sessionId: string | null; open: boolean }) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const termsRef = useRef(new Map<string, Term>());
-  // pty をパネルの大きさに合わせているセッション
-  const fitted = useRef<string | null>(null);
-
-  const termFor = (id: string): Term => {
-    let t = termsRef.current.get(id);
-    if (!t) {
-      t = createTerm(id, hostRef.current!);
-      termsRef.current.set(id, t);
+// pty の出力を受け取り始める。返す関数で終える。最後の 1 つが終えたら、xterm も片付ける
+function hold(): () => void {
+  if (holders++ === 0) offData = window.tanacode.pty.onData(({ sessionId, data }) => termFor(sessionId).term.write(data));
+  return () => {
+    if (--holders > 0) return;
+    offData?.();
+    offData = null;
+    for (const [id, t] of terms) {
+      t.term.dispose();
+      t.element.remove();
+      leaveClaudeScreen(id);
     }
-    return t;
+    terms.clear();
   };
+}
+
+// アプリが動いている間、どのセッションの Claude Code の画面の出力も受け取っておく（App が呼ぶ）。
+// 画面を出したときに、それまでの出力をさかのぼって読める
+export function useClaudeScreenOutput(): void {
+  useEffect(hold, []);
+}
+
+const IMAGE_PASTE_MS = 300;
+
+// Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。
+// 画像は、パスを貼り付けとして送ると [Image #n] として添付される（main の submit と同じ）。制御文字は、呼ぶ側で取り除いておく
+export async function pasteIntoClaudeScreen(sessionId: string, text: string, attachments: string[] = []): Promise<void> {
+  for (const path of attachments) {
+    window.tanacode.pty.write(sessionId, bracketedPaste(path));
+    await new Promise((resolve) => setTimeout(resolve, IMAGE_PASTE_MS));
+    window.tanacode.pty.write(sessionId, ' ');
+  }
+  if (text) window.tanacode.pty.write(sessionId, bracketedPaste(text));
+  terms.get(sessionId)?.term.focus();
+}
+
+// Claude Code の生の画面。ターミナルモードで、チャットの代わりに Claude Code ペインに出す。
+// 出した時点の大きさに pty をリサイズするので、Claude が画面全体を描き直す。
+// 隠したら pty を既定の大きさに戻す（チャットに出す質問や確認は、main が画面から読む。読むのに向いた大きさにしておく）
+export function ClaudeScreen({ sessionId }: { sessionId: string }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  useClaudeScreenOutput();
 
   useEffect(() => {
-    const terms = termsRef.current;
-    const offData = window.tanacode.pty.onData(({ sessionId: id, data }) => termFor(id).term.write(data));
-    const observer = new ResizeObserver(() => {
-      for (const t of terms.values()) if (t.opened && !t.element.hidden) t.fit.fit();
-    });
-    observer.observe(hostRef.current!);
-    return () => {
-      observer.disconnect();
-      offData();
-      for (const [id, t] of terms) {
-        t.term.dispose();
-        t.element.remove();
-        leaveClaudeScreen(id, t.element);
-      }
-      terms.clear();
-    };
-  }, []);
-
-  useEffect(() => {
-    for (const [id, t] of termsRef.current) {
-      t.element.hidden = !open || id !== sessionId;
-      // 隠した画面では打てない（フォーカスが残っていても、隠したことで離れたとは知らせが来ないことがある）
-      if (t.element.hidden) leaveClaudeScreen(id, t.element);
-    }
-    if (fitted.current && (!open || fitted.current !== sessionId)) {
-      window.tanacode.pty.resetSize(fitted.current);
-      fitted.current = null;
-    }
-    if (!open || !sessionId) return;
+    const host = hostRef.current!;
     const t = termFor(sessionId);
-    t.element.hidden = false;
+    host.appendChild(t.element);
     if (!t.opened) {
       t.term.open(t.element);
       t.opened = true;
     }
     t.fit.fit();
-    // 大きさが前に開いたときと同じだと onResize が来ないので、ここでも pty に伝える
+    // 大きさが前に出したときと同じだと onResize が来ないので、ここでも pty に伝える
     window.tanacode.pty.resize(sessionId, t.term.cols, t.term.rows);
-    fitted.current = sessionId;
     t.term.focus();
-  }, [open, sessionId]);
+    // 出している間は、人が Claude Code の入力欄に打っているものとして、書きかけをチャットの入力欄に移さない（隠したら移す）
+    enterClaudeScreen(sessionId);
+    const observer = new ResizeObserver(() => t.fit.fit());
+    observer.observe(host);
+    return () => {
+      observer.disconnect();
+      t.element.remove();
+      window.tanacode.pty.resetSize(sessionId);
+      leaveClaudeScreen(sessionId);
+    };
+  }, [sessionId]);
 
-  return <div className="terminal-host" hidden={!open} ref={hostRef} />;
+  return <div className="claude-screen" ref={hostRef} />;
 }

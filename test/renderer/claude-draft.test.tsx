@@ -6,7 +6,7 @@ import { enterClaudeScreen, LEAVE_MS, leaveClaudeScreen } from '../../src/render
 import { mockApi } from './mock-api';
 
 // Claude Code の入力欄に残った文字（書きかけ）を、チャットの入力欄に移す（useTakeClaudeDraft）。
-// 人が Claude Code の画面（ターミナル）で打っている途中の文字は移さず、画面を離れたら移す（claudeScreenTyping）
+// ターミナルモードで Claude Code の画面を出している間は移さず、隠したら（チャットに戻したら）移す（claudeScreenTyping）
 
 let api: ReturnType<typeof mockApi>;
 beforeEach(() => {
@@ -24,15 +24,6 @@ function track(sessionId: string, initial = '') {
   const taken: string[] = [];
   const hook = renderHook(({ draft }) => useTakeClaudeDraft(sessionId, draft, (text) => taken.push(text)), { initialProps: { draft: initial } });
   return { taken, set: (draft: string) => hook.rerender({ draft }), writes: () => api.argsOf('pty.write') };
-}
-
-// Claude Code の画面の代わり（ClaudeScreen の .terminal-instance と、その中の xterm の入力欄）
-function screenElement() {
-  const element = document.createElement('div');
-  const textarea = document.createElement('textarea');
-  element.appendChild(textarea);
-  document.body.appendChild(element);
-  return { element, textarea };
 }
 
 describe('チャットの入力欄に移す', () => {
@@ -56,32 +47,24 @@ describe('チャットの入力欄に移す', () => {
     ]);
   });
 
-  it('Claude Code の画面で打っている途中の文字は移さない。Enter で送って消えれば、何も移さない', () => {
-    const { element, textarea } = screenElement();
-    textarea.focus();
+  it('Claude Code の画面を出している間は移さない。Enter で送って消えれば、何も移さない', () => {
     enterClaudeScreen('s2');
     const t = track('s2');
     for (const typed of ['t', 'ty', 'typ', 'typed-f', 'typed-from-xterm']) t.set(typed);
-    // しばらく手を止めても（考えている間も）移さない
+    // しばらく手を止めても（エディタなど、ほかの場所を触っている間も）移さない
     act(() => vi.advanceTimersByTime(60_000));
+    expect(t.taken).toEqual([]);
     t.set('');
-    textarea.blur();
-    leaveClaudeScreen('s2', element);
+    leaveClaudeScreen('s2');
     act(() => vi.advanceTimersByTime(LEAVE_MS));
     expect(t.taken).toEqual([]);
     expect(t.writes()).toEqual([]);
   });
 
-  it('打ちかけたまま画面を離れたら、少し待ってから移す（Enter の直後に離れたなら、書きかけが消えるのを待つ）', () => {
-    const { element, textarea } = screenElement();
-    textarea.focus();
+  it('打ちかけたまま画面を隠したら（チャットに戻したら）、少し待ってから移す（Enter の直後に隠したなら、書きかけが消えるのを待つ）', () => {
     enterClaudeScreen('s3');
     const t = track('s3', '打ちかけ');
-    // チャットの入力欄などに移った
-    const chat = document.createElement('textarea');
-    document.body.appendChild(chat);
-    chat.focus();
-    leaveClaudeScreen('s3', element);
+    leaveClaudeScreen('s3');
     act(() => vi.advanceTimersByTime(LEAVE_MS - 1));
     expect(t.taken).toEqual([]);
     act(() => vi.advanceTimersByTime(1));
@@ -89,37 +72,23 @@ describe('チャットの入力欄に移す', () => {
     expect(t.writes()).toEqual([['s3', '\x15\x15']]);
   });
 
-  it('離れてもすぐに画面へ戻れば、打っている途中のまま', () => {
-    const { element, textarea } = screenElement();
-    textarea.focus();
+  it('隠してもすぐに出し直せば、移さない', () => {
     enterClaudeScreen('s4');
     const t = track('s4', '打ちかけ');
-    textarea.blur();
-    leaveClaudeScreen('s4', element);
+    leaveClaudeScreen('s4');
     act(() => vi.advanceTimersByTime(LEAVE_MS / 2));
-    textarea.focus();
     enterClaudeScreen('s4');
     act(() => vi.advanceTimersByTime(LEAVE_MS * 2));
     expect(t.taken).toEqual([]);
-  });
-
-  it('ウィンドウごと離れた（フォーカスが画面に残っている）ときは移さない。画面を隠したら移す', () => {
-    const { element, textarea } = screenElement();
-    textarea.focus();
-    enterClaudeScreen('s5');
-    const t = track('s5', '打ちかけ');
-    // ほかのアプリに切り替えると、フォーカスは画面に残ったまま、離れたと知らせが来る
-    leaveClaudeScreen('s5', element);
-    act(() => vi.advanceTimersByTime(LEAVE_MS * 2));
-    expect(t.taken).toEqual([]);
-    // パネルを閉じた・別のタブにした
-    element.hidden = true;
-    leaveClaudeScreen('s5', element);
-    act(() => vi.advanceTimersByTime(LEAVE_MS));
+    // 続けて 2 度隠しても、待つのは最初に隠したときから
+    leaveClaudeScreen('s4');
+    act(() => vi.advanceTimersByTime(LEAVE_MS / 2));
+    leaveClaudeScreen('s4');
+    act(() => vi.advanceTimersByTime(LEAVE_MS / 2));
     expect(t.taken).toEqual(['打ちかけ']);
   });
 
-  it('ほかのセッションの画面で打っていても、このセッションの書きかけは移す', () => {
+  it('ほかのセッションの画面を出していても、このセッションの書きかけは移す', () => {
     enterClaudeScreen('other');
     const t = track('s6');
     t.set('戻した発言');
