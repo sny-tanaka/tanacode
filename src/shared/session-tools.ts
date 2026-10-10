@@ -1,5 +1,5 @@
 import type { PermissionMode } from './screen';
-import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
 
 // Claude Code に MCP のツールとして渡す、tanacode のほかのセッションの扱い（子セッションの起動・指示と、ほかのセッションを覗く）。
 // 中継のスクリプト（src/main/sessions-mcp.ts）が tools/list で返し、アプリ（src/main/sessions-control.ts）が実行する。
@@ -36,11 +36,11 @@ export function isBusy(state: SessionState): boolean {
   return state === 'starting' || state === 'working';
 }
 
-export const SESSION_TOOLS: McpTool[] = [
+// 名前は、短い名前の文言（tools.sessions.<名前>）があるもの
+export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
   {
     name: 'list_sessions',
     kind: 'read',
-    label: 'セッションの一覧',
     description:
       'tanacode のセッションの一覧を返す（名前・フォルダ・ブランチ・状態・親子の関係）。見えるのは、このセッションと同じフォルダ（worktree は元のフォルダ）のセッションと、親子・兄弟のセッションだけ。並行して動いているセッション（兄弟）の作業を知り、同じファイルを書き換えていないか・共通にできる実装が無いかを確かめるのに使う',
     inputSchema: {
@@ -52,7 +52,6 @@ export const SESSION_TOOLS: McpTool[] = [
   {
     name: 'read_session',
     kind: 'read',
-    label: 'セッションを読む',
     description:
       'セッションの状態・最近の会話・変えたファイルを読む。会話は新しいほうから turns 回分の指示とその応答（既定 3）。指示には、人の発言・親セッションからの指示・知らせの区別が付く。長い応答は途中を省く',
     inputSchema: {
@@ -65,7 +64,6 @@ export const SESSION_TOOLS: McpTool[] = [
   {
     name: 'get_session_diff',
     kind: 'read',
-    label: 'セッションの変更',
     description:
       'セッションのブランチの変更（基点のブランチとの分岐点から作業ツリーまで。コミット済み・未コミット・未追跡を含む）を、ファイルの一覧と unified diff で返す。path を渡すと、そのファイル（フォルダ）だけ',
     inputSchema: {
@@ -78,7 +76,6 @@ export const SESSION_TOOLS: McpTool[] = [
   {
     name: 'get_session',
     kind: 'read',
-    label: 'セッションの状態',
     description:
       'セッションの今の状態（starting: 起動中・working: 作業中・background: バックグラウンドのタスクの完了待ち・question: 質問への回答待ち・permission: 実行の許可待ち・waiting: ターミナルでの操作待ち・idle: 手が空いている・exited: 終了・archived: アーカイブ済み）と、最後の応答を返す。質問への回答待ちなら、質問と選択肢も返す',
     inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
@@ -86,7 +83,6 @@ export const SESSION_TOOLS: McpTool[] = [
   {
     name: 'wait_sessions',
     kind: 'read',
-    label: '子セッションを待つ',
     description:
       '子セッションのどれかの手が空く（作業を終える・質問や許可の確認で人を待つ・終了する）まで待ち、対象の子の状態を返す。ターンを終えてバックグラウンドのタスクの完了を待っている子も、手が空いたとみなす。session_ids を省くと、作業中の子すべてが対象。手の空いている子が対象に入っていれば、すぐ返す',
     inputSchema: {
@@ -101,7 +97,6 @@ export const SESSION_TOOLS: McpTool[] = [
   {
     name: 'start_session',
     kind: 'act',
-    label: '子セッションを始める',
     description:
       '子セッションを起動して、最初の指示を送る。子は tanacode のふつうのセッションとして一覧に並び、人もいつでも開いて指示を出したり、質問に答えたりできる。作業が終わっても会話を続けられる。起動するたびに、人の許可の確認が出る。子も Claude の利用枠を使う（子の数だけ使う）。子が子（孫）を作ることはできない。起動が終わるのを待たずに返すので、結果は wait_sessions で待つ',
     inputSchema: {
@@ -129,7 +124,6 @@ export const SESSION_TOOLS: McpTool[] = [
     name: 'send_message',
     // 子への指示は人の確認なしに送る（親が人の手を借りずに子を回すため）。子のツールの実行の許可は人だけが答えるので、権限は広がらない
     kind: 'instruct',
-    label: '子セッションに指示',
     description:
       '子セッションに指示を送る。子が作業中なら、今の作業が終わってから送る（待たずに返す。順番待ち）。子が質問への回答待ちなら answer_question を使う。許可の確認は人だけが答える',
     inputSchema: {
@@ -143,7 +137,6 @@ export const SESSION_TOOLS: McpTool[] = [
     name: 'answer_question',
     // 子の質問への回答も人の確認なしに（選べるのは AskUserQuestion の選択肢と自由記述だけ）
     kind: 'instruct',
-    label: '子セッションの質問に答える',
     description:
       '子セッションが出している質問（AskUserQuestion）に答える。question には、get_session で見た今の質問の文をそのまま渡す（人が先に答えていたら、答えずにそう返す）。choices に選ぶ選択肢のラベル（複数選択なら複数）を、選択肢に無い答えは other に書く。質問がいくつかあるときは、1 回に 1 つずつ答える。許可の確認には答えられない',
     inputSchema: {
@@ -161,7 +154,6 @@ export const SESSION_TOOLS: McpTool[] = [
   {
     name: 'stop_session',
     kind: 'act',
-    label: '子セッションを中断',
     description: '子セッションの作業を中断する（Esc と同じ）。質問や許可の確認が出ているときは中断できない（人が答える）',
     inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
   },
@@ -197,6 +189,7 @@ export const SESSIONS_MCP_INSTRUCTIONS = [...READ_INSTRUCTIONS, ...PARENT_INSTRU
 
 export const SESSIONS_MCP: McpServerDef = {
   name: SESSIONS_MCP_SERVER,
+  labels: 'sessions',
   title: 'tanacode のセッション',
   instructions: SESSIONS_MCP_INSTRUCTIONS,
   tools: SESSION_TOOLS,

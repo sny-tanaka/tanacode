@@ -200,11 +200,12 @@ describe('callBridge（中継の側）', () => {
 describe('起動の引数', () => {
   const def: McpServerDef = {
     name: 'tanacode-test',
+    labels: 'browser',
     title: 'テスト',
     instructions: '',
     tools: [
-      { name: 'look', kind: 'read', label: '見る', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'run', kind: 'act', label: '動かす', description: '動かす', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'look', kind: 'read', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'run', kind: 'act', description: '動かす', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     ],
   };
   const launch = { command: '/Apps/tanacode Helper', script: '/Apps/out/main/test-mcp.js', socketPath: '/u/test.sock', version: '1.2.0' };
@@ -231,9 +232,10 @@ describe('起動の引数', () => {
 describe('中継の JSON-RPC', () => {
   const def: McpServerDef = {
     name: 'tanacode-test',
+    labels: 'browser',
     title: 'テスト',
     instructions: '説明',
-    tools: [{ name: 'look', kind: 'read', label: '見る', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }],
+    tools: [{ name: 'look', kind: 'read', description: '見る', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }],
   };
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   const deps: RelayDeps = {

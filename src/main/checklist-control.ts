@@ -1,5 +1,6 @@
 import { claudeUnread, withParticle, eventText, formatNumbers, liveCards, liveLists, parseNumbers, progressOf, type Card, type Checklist, type ChecklistCopyRequest, type ChecklistOp } from '@shared/checklist';
 import { checklistEventText, checklistTool, clipNotice, noticeMessage, replyNoticeText, type CardRef } from '@shared/checklist-tools';
+import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { canSee } from '@shared/session-tools';
 import { ChecklistError, type ChecklistStore } from './checklist-store';
@@ -63,15 +64,15 @@ export class ChecklistControl {
     }
   }
 
-  // 画面からの、別のセッションへのコピー
+  // 画面からの、別のセッションへのコピー。断る理由は画面に出す
   copy(request: ChecklistCopyRequest): void {
     const sessions = this.deps.host.list();
     const from = sessions.find((s) => s.id === request.fromSession);
     const to = sessions.find((s) => s.id === request.toSession);
-    if (!from || !to) throw new ChecklistError('セッションが見つかりません');
+    if (!from || !to) throw new ChecklistError(t('tools.checklistCopy.sessionNotFound'));
     // Claude と同じく、同じフォルダと親子・兄弟のセッションのあいだだけ
-    if (!canSee(from, to)) throw new ChecklistError('コピーできるのは、同じフォルダのセッションと、親子・兄弟のセッションだけです');
-    if (to.archived) throw new ChecklistError('アーカイブしたセッションにはコピーできません');
+    if (!canSee(from, to)) throw new ChecklistError(t('tools.checklistCopy.notVisible'));
+    if (to.archived) throw new ChecklistError(t('tools.checklistCopy.archived'));
     const result = this.deps.store.copyCards(
       { sessionId: from.id, title: nameOf(from), listId: request.listId, cardIds: request.cardIds },
       to.id,
@@ -231,8 +232,14 @@ export class ChecklistControl {
       .join('');
   }
 
+  // 知らせはチャットにも出るので、画面の言語で書く
   private notifyCopy(from: SessionSummary, to: string, list: Checklist, cards: Card[]): void {
-    const text = `セッション「${nameOf(from)}」から「${list.name}」に ${formatNumbers(cards.map((c) => c.number))}（${cards.map((c) => `「${c.title}」`).join('、')}）が届きました。`;
+    const text = t('tools.notice.cardsCopied', {
+      session: from.title ?? t('tools.notice.untitledSession'),
+      list: list.name,
+      numbers: formatNumbers(cards.map((c) => c.number)),
+      titles: cards.map((c) => `「${c.title}」`).join('、'),
+    });
     this.notices.add(to, `copy:${cards[0]?.id ?? ''}`, { text: clipNotice(text, 600), refs: cards.slice(0, 20).map((c) => ({ listId: list.id, cardId: c.id })) });
   }
 

@@ -1,4 +1,5 @@
-import { findTool, mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+import { t } from './i18n';
+import { findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
 import { neutralizeTags } from './session-tools';
 
 // Claude Code に MCP のツールとして渡す、チェックリスト（人と Claude が一緒に見て、編集するリスト）の扱い。
@@ -20,11 +21,11 @@ const numbers: Schema = {
 const number: Schema = { type: 'integer', minimum: 1, description: 'カードの番号（リストの中の #番号）' };
 const sessionId: Schema = { type: 'string', description: 'セッションの ID（tanacode-sessions の list_sessions の id。先頭の 8 文字でもよい）。省くとこのセッション' };
 
-export const CHECKLIST_TOOLS: McpTool[] = [
+// 名前は、短い名前の文言（tools.checklist.<名前>）があるもの
+export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
   {
     name: 'checklist_overview',
     kind: 'read',
-    label: '一覧',
     description:
       'このセッションのチェックリストを、すべてのリストの名前・説明（使い方のルール）・進み具合と、カードの番号・タイトル・チェック・未読の返信の数で返す。作業の区切りと、会話が圧縮されたあとには、まずこれを呼ぶ',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -32,14 +33,12 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_get',
     kind: 'read',
-    label: 'カードを読む',
     description: 'カードの全部（タイトル・説明文・チェック・スレッドの返信と記録）を返す。読んだカードには既読の印が付く',
     inputSchema: { type: 'object', properties: { list, numbers }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
     name: 'list_create',
     kind: 'note',
-    label: 'リストを作る',
     description:
       'リストを作る。description には、そのリストの使い方のルール（何を並べるか・いつ確かめるか・誰がやるか）を書く。圧縮されたあとの自分も、これを読んで従う',
     inputSchema: {
@@ -52,7 +51,6 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'list_update',
     kind: 'note',
-    label: 'リストを変える',
     description: 'リストの名前や説明を変える',
     inputSchema: {
       type: 'object',
@@ -64,14 +62,12 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'list_delete',
     kind: 'note',
-    label: 'リストを消す',
     description: 'リストをゴミ箱に入れる（人が画面から戻せる）',
     inputSchema: { type: 'object', properties: { list }, required: ['list'], additionalProperties: false },
   },
   {
     name: 'card_add',
     kind: 'note',
-    label: 'カードを足す',
     description:
       'リストの最後にカードを足す（まとめて足せる）。タイトルは短く、やること（「税率を可変にする」）か、満たすべき条件（「税込表示が整数であること」）で書く。詳しいことは body（Markdown）に書く。リストが無いときは、list_description を渡せば作る',
     inputSchema: {
@@ -97,7 +93,6 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_update',
     kind: 'note',
-    label: 'カードを変える',
     description: 'カードのタイトルや説明文を変える（変えたことはスレッドに記録が残る）',
     inputSchema: {
       type: 'object',
@@ -109,7 +104,6 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_check',
     kind: 'note',
-    label: 'チェックする',
     description:
       'カードにチェックを付ける。条件のカードは、満たしていることを実際に確かめてから付ける。comment には、どう確かめたか（実行したコマンドと結果など）を書く（スレッドに返信として残る）',
     inputSchema: {
@@ -122,7 +116,6 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_uncheck',
     kind: 'note',
-    label: 'チェックを外す',
     description: 'カードのチェックを外す。あとの作業で条件が崩れたときなど。reason はスレッドに返信として残る',
     inputSchema: {
       type: 'object',
@@ -134,7 +127,6 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_reply',
     kind: 'note',
-    label: '返信する',
     description: 'カードのスレッドに返信する。カードについての判断・質問・報告は、メインのチャットではなくここに書く',
     inputSchema: {
       type: 'object',
@@ -146,7 +138,6 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_move',
     kind: 'note',
-    label: 'カードを移す',
     description: 'カードを別のリストの最後へ移す（番号は移した先で振り直す。スレッドはそのまま）。to_list が無ければ作る',
     inputSchema: {
       type: 'object',
@@ -158,21 +149,18 @@ export const CHECKLIST_TOOLS: McpTool[] = [
   {
     name: 'card_delete',
     kind: 'note',
-    label: 'カードを消す',
     description: 'カードをゴミ箱に入れる（card_restore か、人が画面から戻せる）',
     inputSchema: { type: 'object', properties: { list, numbers }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
     name: 'card_restore',
     kind: 'note',
-    label: 'カードを戻す',
     description: 'ゴミ箱に入れたカードを戻す',
     inputSchema: { type: 'object', properties: { list, numbers }, required: ['list', 'numbers'], additionalProperties: false },
   },
   {
     name: 'cards_copy',
     kind: 'note',
-    label: '別のセッションへコピー',
     description:
       'カードを、別のセッションのリストへコピーする（タイトル・説明文・チェック・スレッドごと。元は残る）。「リストの 5〜8 を別のセッションに渡して」なら from_session を省いて to_session を、「セッション A の完了リストの 6〜10 を持ってきて」なら from_session を渡して to_session を省く。先に同じ名前のリストがあれば足し、無ければ作る。コピーできるのは、tanacode-sessions の list_sessions で見えるセッションのあいだだけ。移したいときは、コピーしてから card_delete で元を消す',
     inputSchema: {
@@ -209,6 +197,7 @@ export const CHECKLIST_MCP_INSTRUCTIONS = [
 
 export const CHECKLIST_MCP: McpServerDef = {
   name: CHECKLIST_MCP_SERVER,
+  labels: 'checklist',
   title: 'tanacode のチェックリスト',
   instructions: CHECKLIST_MCP_INSTRUCTIONS,
   tools: CHECKLIST_TOOLS,
@@ -234,20 +223,21 @@ export function checklistEventText(cards: CardRef[], message: string): string {
 // 知らせに入れる返信の長さ
 const NOTICE_REPLY_CHARS = 300;
 
-// 人がスレッドに「Claude に通知する」で返信した知らせ（1 件分）。返信が長ければ切る
+// 人がスレッドに「Claude に通知する」で返信した知らせ（1 件分）。返信が長ければ切る。
+// 知らせはチャットにも出るので、画面の言語で書く
 export function replyNoticeText(list: string, number: number, title: string, reply: string): string {
-  return `「${list}」#${number}「${title}」に人が返信しました: 「${clipNotice(reply, NOTICE_REPLY_CHARS)}」。`;
+  return t('tools.notice.cardReply', { list, number, title, reply: clipNotice(reply, NOTICE_REPLY_CHARS) });
 }
 
 // Claude への知らせの本文。続けて届いた知らせを 1 つにまとめ、どうしてほしいかを添える
 export function noticeMessage(texts: string[]): string {
-  return `${texts.join(' ')} card_get で確かめて対応し、返事は card_reply で書いてください。`;
+  return [...texts, t('tools.notice.checkCards')].join(' ');
 }
 
 // 知らせに入れる文を 1 行にして、長ければ切る
 export function clipNotice(text: string, max: number): string {
   const line = text.replace(/\s+/g, ' ').trim();
-  return line.length > max ? `${line.slice(0, max)}…（続きは card_get で）` : line;
+  return line.length > max ? t('tools.notice.clipped', { text: line.slice(0, max) }) : line;
 }
 
 const CHECKLIST_EVENT = new RegExp(`^<${CHECKLIST_EVENT_TAG} cards="([0-9a-f:,-]*)">([\\s\\S]*?)</${CHECKLIST_EVENT_TAG}>`);
@@ -284,7 +274,7 @@ export function checklistTarget(name: string, input: Record<string, unknown>): s
   const listName = str('list') || str('from_list') || str('name');
   const raw = input.number ?? input.numbers;
   const nums = typeof raw === 'number' ? `#${raw}` : typeof raw === 'string' && raw.trim() ? `#${raw.trim().replace(/^#/, '')}` : '';
-  const cards = Array.isArray(input.cards) ? `${input.cards.length} 枚` : '';
+  const cards = Array.isArray(input.cards) ? t('tools.target.cardCount', { count: input.cards.length }) : '';
   const to = str('to_list') ? ` → ${str('to_list')}` : '';
   return [listName, nums, cards].filter(Boolean).join(' ') + to;
 }

@@ -1,6 +1,7 @@
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
-import { browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
+import { BROWSER_MCP, browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
+import { mcpToolLabel } from '@shared/mcp-tools';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -332,7 +333,7 @@ export class BrowserControl {
         true,
       );
     }
-    this.begin(sessionId, tool.label);
+    this.begin(sessionId, mcpToolLabel(BROWSER_MCP, tool));
     let timer: NodeJS.Timeout | undefined;
     try {
       const timeout = new Promise<never>((_, reject) => {

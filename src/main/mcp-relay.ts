@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
-import { findTool, type McpServerDef } from '@shared/mcp-tools';
+import { findTool, mcpToolLabel, type McpServerDef } from '@shared/mcp-tools';
 import { textResult, type ToolResult } from './mcp-bridge';
 
 // tanacode が Claude Code に足す MCP サーバー（stdio。アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）。Claude Code と JSON-RPC を 1 行ずつやりとりし、
@@ -39,13 +39,14 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
     case 'ping':
       return ok({});
     case 'tools/list':
+      // title はツールの短い名前（中継のプロセスは画面の言語を知らないので、既定の言語の文言）
       return ok({
         tools: deps.server.tools.map((t) => ({
           name: t.name,
-          title: t.label,
+          title: mcpToolLabel(deps.server, t),
           description: t.description,
           inputSchema: t.inputSchema,
-          annotations: { title: t.label, readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: false },
+          annotations: { title: mcpToolLabel(deps.server, t), readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: false },
         })),
       });
     case 'tools/call': {

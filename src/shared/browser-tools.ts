@@ -1,4 +1,4 @@
-import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
 
 // Claude Code に MCP のツールとして渡す、アプリ内ブラウザの操作。中継のスクリプト（src/main/browser-mcp.ts）が tools/list で返し、
 // アプリ（src/main/browser-control.ts）が実行する。Claude Code での名前は mcp__tanacode-browser__<name>
@@ -8,7 +8,8 @@ export const BROWSER_MCP_SERVER = 'tanacode-browser';
 // read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: ページを動かす（Claude Code の許可の確認を通す）/
 // eval: ページで JavaScript を実行する（--settings の PreToolUse のフックが、今のページが localhost なら確認なし、それ以外なら毎回許可の確認を通す）/
 // ask: ユーザーに操作を頼む（ページは動かさないので、読むだけのツールと同じく許可済みにする）
-export type BrowserTool = McpTool;
+// 名前は、短い名前の文言（tools.browser.<名前>）があるもの
+export type BrowserTool = McpTool<McpToolName<'browser'>>;
 
 // ユーザーに操作を頼むツールと、ユーザーの返事を待つ上限。過ぎたら帯を消して「時間切れ」を返す
 export const BROWSER_ASK_TOOL = 'ask_user_to_act';
@@ -22,7 +23,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'screenshot',
     kind: 'read',
-    label: 'スクリーンショット',
     description:
       'アプリ内ブラウザに表示しているページのスクリーンショットを撮る。既定は見えている範囲。selector を渡すとその要素だけ、fullPage を true にするとページ全体（縦に長いページは途中まで）',
     inputSchema: {
@@ -34,21 +34,18 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'get_text',
     kind: 'read',
-    label: 'ページの文字',
     description: 'ページのタイトル・URL と、表示されている文字を読む。selector を渡すと、その要素の中だけ',
     inputSchema: { type: 'object', properties: { selector: selector('読む範囲の要素') }, additionalProperties: false },
   },
   {
     name: 'get_accessibility_tree',
     kind: 'read',
-    label: 'アクセシビリティのツリー',
     description: 'ページのアクセシビリティのツリー（役割と名前）を、字下げした一覧で読む。ボタンやリンク・見出しの並びを知るのに使う',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'inspect',
     kind: 'read',
-    label: '要素の HTML とスタイル',
     description:
       'セレクタに当たる要素（最大 10 個）の HTML・位置と大きさ・計算済みのスタイルを読む。properties でスタイルの名前を選べる（省くと、よく使うもの）',
     inputSchema: {
@@ -64,7 +61,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'get_console_logs',
     kind: 'read',
-    label: 'コンソール',
     description: 'ページのコンソールに出たもの（今のページを開いてから。最大 200 件）を読む',
     inputSchema: {
       type: 'object',
@@ -78,14 +74,12 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'get_failed_requests',
     kind: 'read',
-    label: '失敗した通信',
     description: 'ページの通信のうち、失敗したもの（4xx・5xx と、つながらなかったもの。今のページを開いてから。最大 100 件）を読む',
     inputSchema: { type: 'object', properties: { clear: { type: 'boolean', description: '読んだあとに消す' } }, additionalProperties: false },
   },
   {
     name: 'navigate',
     kind: 'act',
-    label: '開く',
     description:
       'アプリ内ブラウザの今のタブで URL を開く（開けるのは localhost・127.0.0.1・*.local と、ユーザーがアプリで許した先だけ）。newTab で新しいタブに開く。action で戻る・進む・読み込み直すこともできる。読み込みが終わるまで待つ',
     inputSchema: {
@@ -101,14 +95,12 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'list_tabs',
     kind: 'read',
-    label: 'タブの一覧',
     description: 'アプリ内ブラウザのタブ（番号・タイトル・URL）と、今のタブを読む。ほかのツールは今のタブに対して動く',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'select_tab',
     kind: 'act',
-    label: 'タブの切り替え',
     description: '今のタブを切り替える（ユーザーの画面も切り替わる）。index は list_tabs の番号（1 から）',
     inputSchema: {
       type: 'object',
@@ -120,7 +112,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'close_tab',
     kind: 'act',
-    label: 'タブを閉じる',
     description: 'タブを閉じる。index を省くと今のタブ',
     inputSchema: {
       type: 'object',
@@ -131,7 +122,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'click',
     kind: 'act',
-    label: 'クリック',
     description:
       'セレクタに当たる要素（見えているもののうち最初のもの。同じオリジンの iframe の中も探す）を、見える位置までスクロールしてクリックする。' +
       'セレクタで探せないもの（別オリジンの iframe の中・canvas など）は、x・y（見えている範囲の左上からの位置。スクリーンショットの位置と同じ）で押す。' +
@@ -151,7 +141,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'type',
     kind: 'act',
-    label: '入力',
     description: '文字を入力する。selector を渡すと、その要素をクリックしてから（省くと、今フォーカスのある欄に。別オリジンの iframe の中の欄は、先に click の x・y で押してから）。clear で前の文字を消し、submit で最後に Enter を押す',
     inputSchema: {
       type: 'object',
@@ -168,7 +157,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'press_key',
     kind: 'act',
-    label: 'キー',
     description: 'キーを押す（例: Enter・Tab・Escape・ArrowDown・a）。modifiers で Shift などを一緒に押す',
     inputSchema: {
       type: 'object',
@@ -183,7 +171,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'scroll',
     kind: 'act',
-    label: 'スクロール',
     description: 'スクロールする。selector を渡すと、その要素が見える位置まで。deltaY（下へ正）・deltaX（右へ正）を渡すと、その分だけホイールで',
     inputSchema: {
       type: 'object',
@@ -198,7 +185,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'wait_for',
     kind: 'act',
-    label: '待つ',
     description: '要素が出る（または消える）まで待つ。selector か text（ページに出る文字）のどちらかを渡す。timeoutMs は最大 30000（既定 10000）',
     inputSchema: {
       type: 'object',
@@ -214,7 +200,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'set_viewport',
     kind: 'act',
-    label: '表示幅',
     description: '表示幅を切り替える。full（ペインの幅いっぱい）・mobile（390px）・tablet（768px）',
     inputSchema: {
       type: 'object',
@@ -226,7 +211,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: 'evaluate',
     kind: 'eval',
-    label: 'JavaScript の実行',
     description:
       'ページで JavaScript を実行し、最後の式の値（Promise なら待った値）を JSON にして返す。ほかのツールでできないときだけ使う。ページが localhost なら確認なしで実行する。それ以外のページでは、実行のたびにユーザーの許可が要る',
     inputSchema: {
@@ -239,7 +223,6 @@ export const BROWSER_TOOLS: BrowserTool[] = [
   {
     name: BROWSER_ASK_TOOL,
     kind: 'ask',
-    label: '操作の依頼',
     description:
       'ログイン・二段階認証・決済のテスト画面など、Claude にできない（させたくない）操作や、見た目の判断（この色で合っているか など）を、ユーザーに頼む。' +
       'アプリ内ブラウザに、頼む内容と「終わった」「できない」のボタンを出し、ユーザーが押すまで返らない（最大 10 分。過ぎたら時間切れ）。' +
@@ -270,6 +253,7 @@ export const BROWSER_MCP_INSTRUCTIONS = [
 
 export const BROWSER_MCP: McpServerDef = {
   name: BROWSER_MCP_SERVER,
+  labels: 'browser',
   title: 'tanacode のアプリ内ブラウザ',
   instructions: BROWSER_MCP_INSTRUCTIONS,
   tools: BROWSER_TOOLS,
@@ -279,7 +263,7 @@ export function browserToolId(name: string): string {
   return mcpToolId(BROWSER_MCP_SERVER, name);
 }
 
-export function browserTool(name: string): BrowserTool | undefined {
+export function browserTool(name: string): McpTool | undefined {
   return findTool(BROWSER_MCP, name);
 }
 

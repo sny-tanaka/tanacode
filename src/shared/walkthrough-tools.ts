@@ -1,4 +1,5 @@
-import { findTool, mcpToolId, type McpServerDef, type McpTool } from './mcp-tools';
+import { t } from './i18n';
+import { findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
 import { PARENT_MESSAGE_TAG } from './session-tools';
 
 // Claude Code に MCP のツールとして渡す、ウォークスルー（Claude がエディタでコードを示しながら説明し、人が質問する）。
@@ -23,11 +24,11 @@ const body: Schema = {
   description: '説明（Markdown。エディタの範囲の直下に吹き出しで出す）。何をしたかより、なぜこうしたか（意図・選ばなかった案・気をつけたこと）を 2〜6 文で',
 };
 
-export const WALKTHROUGH_TOOLS: McpTool[] = [
+// 名前は、短い名前の文言（tools.walkthrough.<名前>）があるもの
+export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
   {
     name: 'start_walkthrough',
     kind: 'show',
-    label: '始める',
     description:
       'ウォークスルーの手順を渡して始める（前のものは置き換える）。人の tanacode のエディタに 1 つ目のステップを開き、すぐ返る。人は「次へ」「戻る」で自分のペースで進め、質問はチャットに届く。渡したら、ターンを終えて待つ',
     inputSchema: {
@@ -61,7 +62,6 @@ export const WALKTHROUGH_TOOLS: McpTool[] = [
   {
     name: 'show_code',
     kind: 'show',
-    label: 'コードを示す',
     description:
       '質問に答えるときに、手順の外の場所を人のエディタに示す（寄り道）。人が「ウォークスルーに戻る」を押すと、元のステップに戻る。ウォークスルーを始めていなくても使える',
     inputSchema: {
@@ -74,7 +74,6 @@ export const WALKTHROUGH_TOOLS: McpTool[] = [
   {
     name: 'walkthrough_status',
     kind: 'read',
-    label: '今の場所',
     description: '今のウォークスルーの手順と、人が今どのステップを見ているか（見終えたステップ・寄り道）を返す。人が終えていれば、そう返す',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
@@ -98,6 +97,7 @@ export const WALKTHROUGH_MCP_INSTRUCTIONS = [
 
 export const WALKTHROUGH_MCP: McpServerDef = {
   name: WALKTHROUGH_MCP_SERVER,
+  labels: 'walkthrough',
   title: 'tanacode のウォークスルー',
   instructions: WALKTHROUGH_MCP_INSTRUCTIONS,
   tools: WALKTHROUGH_TOOLS,
@@ -128,7 +128,7 @@ export function walkthroughTarget(name: string, input: Record<string, unknown>, 
   if (!name.startsWith(`mcp__${WALKTHROUGH_MCP_SERVER}__`)) return null;
   if (name.endsWith('__start_walkthrough')) {
     const title = typeof input.title === 'string' ? input.title.trim() : '';
-    const count = Array.isArray(input.steps) ? `${input.steps.length} ステップ` : '';
+    const count = Array.isArray(input.steps) ? t('tools.target.stepCount', { count: input.steps.length }) : '';
     return [title, count].filter(Boolean).join(' · ');
   }
   if (name.endsWith('__show_code') && typeof input.path === 'string') return `${relativeTo(input.path, cwd)}${lines(input)}`;

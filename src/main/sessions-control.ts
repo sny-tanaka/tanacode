@@ -2,6 +2,7 @@ import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { NewSessionOptions, ScreenChoice, SessionSummary } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
@@ -434,7 +435,7 @@ export class SessionsControl {
     const all = this.deps.host.list();
     const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
     if (notices.length === 0) return null;
-    const message = `${notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state)).join(' ')} get_session で確かめてください。`;
+    const message = [...notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state)), t('tools.notice.checkSessions')].join(' ');
     return sessionEventText(notices.map(([child]) => child), message);
   }
 
@@ -588,14 +589,15 @@ function nameOf(s: SessionSummary | undefined): string {
   return s?.title ?? '新しいセッション';
 }
 
+// 親への知らせの文。チャットに知らせとして出るので、画面の言語で書く
 function noticeText(child: SessionSummary | undefined, id: string, state: SessionState): string {
-  const who = `子セッション「${nameOf(child)}」（${id.slice(0, 8)}）`;
-  if (state === 'question') return `${who}が質問への回答を待っています（answer_question で答えられます）。`;
+  const params = { name: child?.title ?? t('tools.notice.untitledSession'), id: id.slice(0, 8) };
+  if (state === 'question') return t('tools.notice.childQuestion', params);
   // 子セッションは人に通知しないので、親から人に伝える
-  if (state === 'permission') return `${who}が実行の許可を待っています。許可の確認には人だけが答えるので、人に伝えてください。`;
-  if (state === 'waiting') return `${who}がターミナルでの操作を待っています。人に伝えてください。`;
-  if (state === 'exited') return `${who}が終了しました。`;
-  return `${who}の作業が終わりました。`;
+  if (state === 'permission') return t('tools.notice.childPermission', params);
+  if (state === 'waiting') return t('tools.notice.childWaiting', params);
+  if (state === 'exited') return t('tools.notice.childExited', params);
+  return t('tools.notice.childDone', params);
 }
 
 // 質問の選択肢そのもの（自由記述・確定・Chat about this 以外）
