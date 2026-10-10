@@ -1,15 +1,16 @@
 ---
 name: security
-description: tanacode のセキュリティの対応の手順。Dependabot の警告・脆弱性の非公開の報告（Private vulnerability reporting）への対応や、セキュリティの観点でのコードの点検をするときに使います。
+description: tanacode のセキュリティの対応の手順。Dependabot の警告・脆弱性の非公開の報告（Private vulnerability reporting）・コードスキャンとシークレットスキャンの警告への対応や、セキュリティの観点でのコードの点検をするときに使います。
 ---
 
 # セキュリティの対応
 
-対象のリポジトリは `sny-tanaka/tanacode`（公開・既定のブランチは develop）。場面は 3 つ。
+対象のリポジトリは `sny-tanaka/tanacode`（公開・既定のブランチは develop）。場面は 4 つ。
 
 - A. Dependabot の警告
 - B. 脆弱性の非公開の報告（Private vulnerability reporting）
 - C. コードの点検（セキュリティの観点）
+- D. コードスキャン・シークレットスキャンの警告
 
 ## 共通の決まり
 
@@ -202,3 +203,51 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 4. どれを直すかを AskUserQuestion で聞きます（複数選べる形で）。見送るものは、理由と直し方をユーザーに伝えます。
 5. 直すときは、共通の決まりの流れで（ブランチ → typecheck・build・Storybook → 確認のうえでコミット・PR）。まだ知られていない重いものは、公開の PR に出す前に、B の非公開のアドバイザリの流れにするかをユーザーに聞きます。
 6. 直して決めたことは、このチェックリストに足します（足す前にユーザーに確認）。
+
+## D. コードスキャン・シークレットスキャンの警告
+
+どちらも GitHub の設定でオンにしています（2026-10-10 から。ワークフローのファイルは無し）。
+
+- コードスキャン: CodeQL の default setup。TypeScript とワークフローを、PR・develop への push・週 1 回で解析します。Swift（`native/translate/main.swift`）は、CodeQL の自動ビルドが通る形でないので対象外。
+- シークレットスキャン: リポジトリに入ったキーやトークンの警告。プッシュ保護はオフ。
+
+### 1. 一覧の取得
+
+```bash
+gh api repos/sny-tanaka/tanacode/code-scanning/alerts --paginate --jq '.[] | select(.state=="open") | {number, severity: (.rule.security_severity_level // .rule.severity), rule: .rule.id, path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line, message: .most_recent_instance.message.text}'
+gh api repos/sny-tanaka/tanacode/secret-scanning/alerts --jq '.[] | select(.state=="open") | {number, type: .secret_type_display_name, created_at, html_url}'
+```
+
+今の設定は `gh api repos/sny-tanaka/tanacode/code-scanning/default-setup` と `gh api repos/sny-tanaka/tanacode --jq .security_and_analysis`。
+
+### 2. コードスキャンの警告
+
+1. 指摘された場所を読み、外から来る値（SECURITY.md の「対象の例」）がそこへ届くか、届いたら何が起きるかを確かめます。ルールの説明は `gh api repos/sny-tanaka/tanacode/code-scanning/alerts/<number> --jq .rule.help`。
+2. 結果を「本物か・誤検知か」「その理由」「重大度」にまとめてユーザーに見せ、直すか却下するかを AskUserQuestion で聞きます。
+3. 本物なら、C の「点検の進め方」の 5 と同じ流れで直します。警告は、直しが develop に入ったあとの解析で自動で閉じます。
+4. 却下（ユーザーが選んだときだけ・書き込みの前に確認）:
+
+   ```bash
+   gh api -X PATCH repos/sny-tanaka/tanacode/code-scanning/alerts/<number> \
+     -f state=dismissed -f "dismissed_reason=false positive" -f dismissed_comment='<理由>'
+   ```
+
+   `dismissed_reason` は `false positive`・`won't fix`・`used in tests` のどれか。`dismissed_comment` は 280 文字まで。
+
+### 誤検知と決めたもの
+
+- `js/bad-code-sanitization`（`src/main/browser-control.ts`。2026-10-10 に 8 件を却下）: セレクタなどを `JSON.stringify` して、アプリ内ブラウザで動かすコードに埋めているところ。コードは `world()`（`executeJavaScriptInIsolatedWorld`）で V8 に直接渡し、HTML には埋めません。`JSON.stringify` の結果は正しい JavaScript の文字列なので、値が文字列の外に出ません。同じ書き方を足すと、その PR でまた出ます。次の 2 つを確かめてから却下します。
+  - 埋める文字列・配列は `JSON.stringify` を通しているか。数をそのまま埋めるところは、有限の数だと確かめたもの（`numberOr`）だけか。
+  - 組み立てたコードを、HTML（`<script>`）に埋めたり、`world()` のほかで評価したりしていないか。
+
+### 3. シークレットスキャンの警告
+
+1. 警告の出たキー・トークンが本物か（テスト用の作り物でないか）を、ユーザーに確かめます。
+2. 本物なら、**先に発行元で無効にします**（ユーザーの操作）。公開のリポジトリに入った時点で漏れたものとして扱い、コミットを消すだけでは済ませません。
+3. 無効にしたあと、ソースから取り除く直しを PR で入れます。履歴の書き換えは、ユーザーが求めたときだけ。
+4. 警告を閉じるのは確認のあと。`resolution` は `revoked`・`false_positive`・`used_in_tests`・`wont_fix` のどれか。
+
+   ```bash
+   gh api -X PATCH repos/sny-tanaka/tanacode/secret-scanning/alerts/<number> \
+     -f state=resolved -f resolution=revoked
+   ```
