@@ -74,6 +74,7 @@ Preview the page you're developing inside the app. Click an element to attach it
 - It **never writes** to your Claude Code settings (such as `~/.claude/settings.json`). tanacode itself has no way of sending your data anywhere
 - It's **checked automatically every day** against the latest Claude Code. If your Claude Code differs from the verified version, a mark in the status bar tells you
 - Conversations you started in the terminal **can be imported**
+- Instead of the chat, you can also **use Claude Code's own terminal screen**. The MCP servers tanacode adds, the side panel, and the editor all keep working
 
 ## And more
 

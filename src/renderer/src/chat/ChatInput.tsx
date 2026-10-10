@@ -50,6 +50,41 @@ type Props = {
   canSchedule?: boolean;
 };
 
+// 送るときに一緒に送る、コードへのコメント。入力欄の上と、ターミナルモードの画面の下に出す。押すと、そのコメントの場所を開く
+export function CommentChips({
+  comments,
+  onRemove,
+  onShow,
+}: {
+  comments: ReviewComment[];
+  onRemove: (id: string) => void;
+  onShow: (comment: ReviewComment) => void;
+}) {
+  if (comments.length === 0) return null;
+  return (
+    <div className="attachments">
+      {comments.map((c) => (
+        <span key={c.id} className="attachment comment-chip" title={`${c.path}:${c.startLine}\n${c.text}`} onClick={() => onShow(c)}>
+          <span className="comment-chip-where">
+            {c.path.split('/').pop()}:{c.startLine}
+            {c.endLine !== c.startLine ? `-${c.endLine}` : ''}
+          </span>
+          <span className="comment-chip-text">{c.text}</span>
+          <IconButton
+            size="sm"
+            icon={CloseIcon}
+            label={t('composer.input.remove')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(c.id);
+            }}
+          />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // session: @ で選ぶセッション（ファイルと見分けて出す）
 type Suggestion = { value: string; label: string; detail: string; session?: boolean };
 // 補完している語: @ファイル名、または先頭の /コマンド
@@ -256,28 +291,7 @@ export function ChatInput({
           ))}
         </div>
       )}
-      {comments.length > 0 && (
-        <div className="attachments">
-          {comments.map((c) => (
-            <span key={c.id} className="attachment comment-chip" title={`${c.path}:${c.startLine}\n${c.text}`} onClick={() => onShowComment(c)}>
-              <span className="comment-chip-where">
-                {c.path.split('/').pop()}:{c.startLine}
-                {c.endLine !== c.startLine ? `-${c.endLine}` : ''}
-              </span>
-              <span className="comment-chip-text">{c.text}</span>
-              <IconButton
-                size="sm"
-                icon={CloseIcon}
-                label={t('composer.input.remove')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemoveComment(c.id);
-                }}
-              />
-            </span>
-          ))}
-        </div>
-      )}
+      <CommentChips comments={comments} onRemove={onRemoveComment} onShow={onShowComment} />
       {attachments.length > 0 && (
         <div className="attachments">
           {attachments.map((path) => (

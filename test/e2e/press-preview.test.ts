@@ -112,8 +112,6 @@ describe('アクティビティバーのブラウザとターミナルのボタ�
     await app.page.click('.activity-bar [aria-label="ターミナル"]');
     await panel.waitFor({ state: 'visible' });
     expect(await pressed('ターミナル')).toBe('true');
-    // 新規セッションの画面には Claude Code の画面が無いので、そのタブは出さない
-    expect(await app.page.locator('.terminal-panel [aria-label="Claude Code の画面"]').count()).toBe(0);
     await shell.locator('.xterm-rows').waitFor();
     await shell.locator('.xterm-helper-textarea').focus();
     await app.page.keyboard.type('echo press-$((40+2))');
@@ -126,7 +124,7 @@ describe('アクティビティバーのブラウザとターミナルのボタ�
     await app.page.click('.activity-bar [aria-label="ターミナル"]');
     await panel.waitFor({ state: 'visible' });
     await shell.locator('.xterm-rows').getByText('press-42', { exact: false }).waitFor();
-    expect(await app.page.locator('.terminal-panel .terminal-tab:not(.claude-screen-tab)').count()).toBe(1);
+    expect(await app.page.locator('.terminal-panel .terminal-tab').count()).toBe(1);
   });
 
   it('画面のコンソールにエラーが出ていない（わざと読み込めなくしたページの、Electron の webview が出す記録を除く）', () => {

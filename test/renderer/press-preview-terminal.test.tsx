@@ -2,7 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
-import { TerminalPanel, type TerminalView } from '../../src/renderer/src/terminal/TerminalPanel';
+import { runInTerminal } from '../../src/renderer/src/terminal/runInTerminal';
+import { TerminalPanel } from '../../src/renderer/src/terminal/TerminalPanel';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -105,18 +106,18 @@ function Inbox({ sessionId }: { sessionId: string }) {
   return null;
 }
 
-type PanelProps = { sessionId: string | null; view?: TerminalView; claudeScreen?: boolean; onView?: (view: TerminalView) => void; onClose?: () => void };
-function Panel({ sessionId, view = 'shell', claudeScreen = true, onView = () => {}, onClose = () => {} }: PanelProps) {
+type PanelProps = { sessionId: string | null; onClose?: () => void };
+function Panel({ sessionId, onClose = () => {} }: PanelProps) {
   return (
     <>
-      <TerminalPanel sessionId={sessionId} claudeScreen={claudeScreen} open view={view} onView={onView} onClose={onClose} />
+      <TerminalPanel sessionId={sessionId} open onOpen={() => {}} onClose={onClose} />
       <Inbox sessionId="s1" />
       <Inbox sessionId="s2" />
     </>
   );
 }
 
-const tabs = () => screen.getAllByRole('tab').filter((t) => !t.classList.contains('claude-screen-tab'));
+const tabs = () => screen.queryAllByRole('tab');
 const tabNames = () => tabs().map((t) => t.querySelector('span')!.textContent);
 const selectedTab = () => tabs().findIndex((t) => t.getAttribute('aria-selected') === 'true');
 const closeOf = (index: number) => tabs()[index].querySelector('[aria-label="このターミナルを閉じる"]') as HTMLButtonElement;
@@ -132,45 +133,28 @@ async function newShell() {
 }
 
 describe('TerminalPanel: シェルのタブ', () => {
-  it('タブを押すと、そのシェルを出してシェルの表示にする', async () => {
-    const onView = vi.fn();
-    render(<Panel sessionId="s1" onView={onView} />);
+  it('タブを押すと、そのシェルを出す', async () => {
+    render(<Panel sessionId="s1" />);
     // 1 つも無ければ開く
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
     await newShell();
     expect(tabNames()).toEqual(['zsh 1', 'zsh 2']);
     expect(selectedTab()).toBe(1);
     expect([shown(termOf(0)), shown(termOf(1))]).toEqual([false, true]);
-    onView.mockClear();
 
     fireEvent.click(tabs()[0]);
     expect(selectedTab()).toBe(0);
     expect([shown(termOf(0)), shown(termOf(1))]).toEqual([true, false]);
-    expect(onView).toHaveBeenCalledWith('shell');
-  });
-
-  it('Claude Code の画面を出しているときにシェルのタブを押すと、シェルの表示に戻す', async () => {
-    const onView = vi.fn();
-    const { rerender } = render(<Panel sessionId="s1" onView={onView} />);
-    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
-    rerender(<Panel sessionId="s1" view="claude" onView={onView} />);
-    expect(selectedTab()).toBe(-1);
-    expect(shown(termOf(0))).toBe(false);
-    fireEvent.click(tabs()[0]);
-    expect(onView).toHaveBeenLastCalledWith('shell');
   });
 
   it('× はタブを選ばずに、そのシェルを止める（終わったという知らせでタブを閉じる）', async () => {
-    const onView = vi.fn();
-    render(<Panel sessionId="s1" onView={onView} />);
+    render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
     await newShell();
-    onView.mockClear();
     fireEvent.click(closeOf(0));
     expect(api.argsOf('shell.kill')).toEqual([['sh1']]);
     // 選んでいるタブは変えない
     expect(selectedTab()).toBe(1);
-    expect(onView).not.toHaveBeenCalled();
     act(() => api.emit('shell.onExit', { id: 'sh1', exitCode: 0 }));
     // 残ったのは sh2（タブの番号は並び順で付け直す）
     expect(tabNames()).toEqual(['zsh 1']);
@@ -231,30 +215,7 @@ describe('TerminalPanel: Claude へ送る', () => {
   });
 });
 
-describe('TerminalPanel: Claude Code の画面のタブ', () => {
-  it('押すと Claude Code の画面とシェルを切り替える。新規セッションの画面（claudeScreen なし）では出さない', async () => {
-    const onView = vi.fn();
-    const { rerender } = render(<Panel sessionId="s1" onView={onView} />);
-    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
-    const screenTab = () => screen.getByLabelText('Claude Code の画面');
-    expect(screenTab().getAttribute('aria-selected')).toBe('false');
-    fireEvent.click(screenTab());
-    expect(onView).toHaveBeenLastCalledWith('claude');
-
-    rerender(<Panel sessionId="s1" view="claude" onView={onView} />);
-    expect(screenTab().getAttribute('aria-selected')).toBe('true');
-    // Claude Code の画面を、そのセッションの pty の大きさで出す
-    expect(api.argsOf('pty.resize')).toEqual([['s1', 80, 24]]);
-    expect(screen.queryByLabelText('Claude へ送る')).toBeNull();
-    fireEvent.click(screenTab());
-    expect(onView).toHaveBeenLastCalledWith('shell');
-
-    rerender(<Panel sessionId="s1" claudeScreen={false} view="claude" onView={onView} />);
-    expect(screen.queryByLabelText('Claude Code の画面')).toBeNull();
-    // Claude Code の画面が無いところでは、シェルを出す
-    expect(selectedTab()).toBe(0);
-  });
-
+describe('TerminalPanel: パネルの高さ・閉じる', () => {
   it('上の縁をドラッグしてパネルの高さを変え、離すと覚える（次に開いたときもその高さ）', async () => {
     // jsdom は押さえる（pointer capture）を持たない
     Element.prototype.setPointerCapture ??= () => {};
@@ -299,14 +260,25 @@ describe('TerminalPanel: Claude Code の画面のタブ', () => {
   });
 });
 
+describe('TerminalPanel: チャットのコードブロックの「実行」（runInTerminal）', () => {
+  it('閉じているパネルを開かせ、新しいシェルのタブでコマンドを動かす。見ていないセッションのものは動かさない', async () => {
+    const onOpen = vi.fn();
+    render(<TerminalPanel sessionId="s1" open={false} onOpen={onOpen} onClose={() => {}} />);
+    expect(runInTerminal('s2', 'rm -rf dist')).toBe(false);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(runInTerminal('s1', 'npm test')).toBe(true);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.argsOf('shell.write')).toEqual([['sh1', 'npm test\r']]));
+  });
+});
+
 describe('TerminalPanel: セッションを切り替えた直後のボタン', () => {
-  it('タブ・×・Claude へ送る・Claude Code の画面は、切り替えた先のセッションに効く', async () => {
-    const onView = vi.fn();
-    const { rerender } = render(<Panel sessionId="s1" onView={onView} />);
+  it('タブ・×・Claude へ送るは、切り替えた先のセッションに効く', async () => {
+    const { rerender } = render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
     act(() => termOf(0).select('s1 の出力'));
 
-    rerender(<Panel sessionId="s2" onView={onView} />);
+    rerender(<Panel sessionId="s2" />);
     // s2 のシェルを開く（s1 のシェルは動かしたまま隠す）
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
     expect(api.argsOf('shell.create').map(([owner]) => owner)).toEqual(['s1', 's2']);
@@ -323,12 +295,8 @@ describe('TerminalPanel: セッションを切り替えた直後のボタン', (
     fireEvent.click(closeOf(1));
     expect(api.argsOf('shell.kill')).toEqual([['sh3']]);
 
-    fireEvent.click(screen.getByLabelText('Claude Code の画面'));
-    rerender(<Panel sessionId="s2" view="claude" onView={onView} />);
-    expect(api.argsOf('pty.resize').at(-1)).toEqual(['s2', 80, 24]);
-
     // s1 に戻ると、s1 のシェルと選んでいた出力がそのまま残っている
-    rerender(<Panel sessionId="s1" onView={onView} />);
+    rerender(<Panel sessionId="s1" />);
     expect(tabNames()).toEqual(['zsh 1']);
     expect(shown(termOf(0))).toBe(true);
     fireEvent.click(sendButton());

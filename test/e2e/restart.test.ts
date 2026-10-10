@@ -43,9 +43,9 @@ describe('アプリを起動し直しても、Claude Code の会話を続けら�
     await row.click();
     await app.byText('.chat-list', FIRST).waitFor();
     // 引き継いだ Claude Code の画面も、そのまま描ける
-    await app.page.click('.claude-header [aria-label="Claude Code の画面"]');
-    await app.page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows').getByText(FIRST).waitFor();
-    await app.page.click('.terminal-panel [aria-label="パネルを閉じる"]');
+    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
+    await app.page.locator('.claude-screen .terminal-instance .xterm-rows').getByText(FIRST).waitFor();
+    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
   });
 
   it('引き継いだ Claude Code に続きを送れる', async () => {

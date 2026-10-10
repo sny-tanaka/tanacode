@@ -73,6 +73,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 - Claude Code の設定（`~/.claude/settings.json` など）への**書き込みは無し**。tanacode 自身が情報を外へ送る仕組みも無し
 - 最新の Claude Code で動くかを**毎日自動で確認**。入っている Claude Code が動作確認済のバージョンと違えば、ステータスバーの印でお知らせ
 - ターミナルで始めた会話も**取り込み可能**
+- チャットの代わりに、**Claude Code そのものの画面（ターミナル）でも操作可能**。tanacode が足す MCP・サイドパネル・エディタは、そのまま使えます（[使い方](GUIDE.md#ターミナルモード)）
 
 ## ほかにも
 

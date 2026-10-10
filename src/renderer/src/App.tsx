@@ -49,7 +49,9 @@ import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
-import { TerminalPanel, type TerminalView } from './terminal/TerminalPanel';
+import { useClaudeScreenOutput } from './terminal/ClaudeScreen';
+import { TerminalPanel } from './terminal/TerminalPanel';
+import { useTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
@@ -134,11 +136,17 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceInfo>>({});
   // エディタのタブはフォルダ単位。同じフォルダのセッション間では共有する
   const [editors, setEditors] = useState<Record<string, EditorState>>({});
-  // エディタの下のターミナルパネル（シェル / Claude Code の生の画面）
-  const [terminal, setTerminal] = useState<{ open: boolean; view: TerminalView }>({ open: false, view: 'shell' });
-  const showClaudeScreen = useCallback(() => setTerminal({ open: true, view: 'claude' }), []);
-  const showShell = useCallback(() => setTerminal({ open: true, view: 'shell' }), []);
-  const toggleShell = useCallback(() => setTerminal((t) => (t.open && t.view === 'shell' ? { ...t, open: false } : { open: true, view: 'shell' })), []);
+  // エディタの下のターミナルパネル（シェル）を開いている
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const showShell = useCallback(() => setTerminalOpen(true), []);
+  const closeShell = useCallback(() => setTerminalOpen(false), []);
+  const toggleShell = useCallback(() => setTerminalOpen((open) => !open), []);
+  // ターミナルモード（Claude Code ペインに、チャットの代わりに Claude Code の生の画面を出す）
+  const [terminalMode, setTerminalMode] = useTerminalMode();
+  const showClaudeScreen = useCallback(() => setTerminalMode(true), [setTerminalMode]);
+  const toggleClaudeScreen = useCallback(() => setTerminalMode(!terminalMode), [terminalMode, setTerminalMode]);
+  // チャットを見ている間も、Claude Code の画面の出力を受け取っておく（ターミナルモードにしたとき、さかのぼって読める）
+  useClaudeScreenOutput();
   // 左から 3 番目のペイン
   const [sidePanel, setSidePanel] = useState<SidePanel>('files');
   const [diffView, setDiffView] = useState<CenterView | null>(null);
@@ -167,10 +175,6 @@ export function App() {
   // ブラウザとターミナルの持ち主。セッションを見ているときはそのセッション。新規セッションの画面では、いま開いているフォルダ（どのセッションにも紐づかず、画面を閉じると一緒に閉じる）
   const draftToolId = composing && draft && draft.cwd === composing.cwd ? draft.id : null;
   const toolId = selected ? (selected.archived ? null : selected.id) : draftToolId;
-  // 新規セッションの画面には、Claude Code の画面がない。ターミナルはシェルで開く
-  useEffect(() => {
-    if (!selected) setTerminal((t) => (t.view === 'claude' ? { ...t, view: 'shell' } : t));
-  }, [selected]);
   const cwd = selected?.cwd ?? draft?.cwd ?? null;
   const editor = (cwd && editors[cwd]) || EMPTY_EDITOR;
   const workspace = viewId ? workspaces[viewId] : undefined;
@@ -636,10 +640,6 @@ export function App() {
   );
   const replaceComments = useCallback((list: ReviewComment[]) => setSessionComments(() => list), [setSessionComments]);
   const showCommentOf = useCallback((c: ReviewComment) => showComment(c.path, c.startLine), [showComment]);
-  const toggleClaudeScreen = useCallback(
-    () => setTerminal((t) => (t.open && t.view === 'claude' ? { ...t, open: false } : { open: true, view: 'claude' })),
-    [],
-  );
   const openSelected = useCallback(() => {
     if (selectedIdRef.current) openSession(selectedIdRef.current);
   }, [openSession]);
@@ -801,7 +801,7 @@ export function App() {
             onOpenTask={openTask}
             onStopTask={stopTask}
             stoppingTasks={stoppingTasks}
-            terminalOpen={terminal.open && terminal.view === 'claude'}
+            terminalOpen={terminalMode}
             comments={sessionComments}
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}
@@ -848,12 +848,12 @@ export function App() {
                     <GlobeIcon size={22} />
                   </button>
                   <button
-                    className={`activity-toggle${terminal.open && terminal.view === 'shell' ? ' on' : ''}`}
+                    className={`activity-toggle${terminalOpen ? ' on' : ''}`}
                     onClick={toggleShell}
                     data-tip={t('app.sidePanel.terminalTip')}
                     data-tip-side="right"
                     aria-label={t('app.sidePanel.terminal')}
-                    aria-pressed={terminal.open && terminal.view === 'shell'}
+                    aria-pressed={terminalOpen}
                   >
                     <TerminalIcon size={22} />
                   </button>
@@ -1045,14 +1045,7 @@ export function App() {
             liveSessionIds={liveSessionIds}
             onClose={closeCenter}
           />
-          <TerminalPanel
-            sessionId={toolId}
-            claudeScreen={!!selected}
-            open={terminal.open}
-            view={terminal.view}
-            onView={(view) => setTerminal({ open: true, view })}
-            onClose={() => setTerminal((t) => ({ ...t, open: false }))}
-          />
+          <TerminalPanel sessionId={toolId} open={terminalOpen} onOpen={showShell} onClose={closeShell} />
         </div>
       </div>
       <StatusBar

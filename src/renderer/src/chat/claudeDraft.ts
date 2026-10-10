@@ -3,7 +3,7 @@ import { useTypingInClaudeScreen } from '../terminal/claudeScreenTyping';
 
 // Claude Code の入力欄に文字（draft）が残っていたら（巻き戻し直後は戻した発言が入る）、チャットの入力欄に移して（onTake）向こうは消す。
 // 残したまま送ると、送った文字がその後ろにつながってしまう。
-// 人が Claude Code の画面（ターミナル）で打っている途中の文字は移さない（打つそばから移して消すと、途中の文字が欠ける）。画面を離れたら移す
+// ターミナルモードで Claude Code の画面を出している間は移さない（そこにある文字は、人が画面で打っているもの）。チャットに戻したら移す
 export function useTakeClaudeDraft(sessionId: string, draft: string, onTake: (text: string) => void): void {
   const typingInTerminal = useTypingInClaudeScreen(sessionId);
   const take = useRef(onTake);

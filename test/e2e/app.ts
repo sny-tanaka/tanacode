@@ -225,7 +225,7 @@ export class E2EApp {
   }
 
   // 失敗したときの手がかりを test-results/e2e に残す。画面の写し・メインプロセスの出力・モックの API の呼び出し・
-  // セッションの一覧（状態・操作待ち）と、選んでいるセッションの Claude Code の画面（ターミナルのパネルを開いて読む）
+  // セッションの一覧（状態・操作待ち）と、選んでいるセッションの Claude Code の画面（ターミナルモードにして読む）
   async keepEvidence(name: string): Promise<void> {
     mkdirSync(RESULTS, { recursive: true });
     const base = join(RESULTS, name.replace(/[^\p{L}\p{N}_-]+/gu, '-'));
@@ -237,10 +237,10 @@ export class E2EApp {
     let screen = '';
     if (page) {
       try {
-        const button = page.locator('.claude-header [aria-label="Claude Code の画面"]');
+        const button = page.locator('.claude-header [aria-label="ターミナルモード"]');
         if ((await button.count()) > 0) {
           if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click({ timeout: 2000 });
-          const rows = page.locator('.terminal-panel .terminal-instance:not([hidden]) .xterm-rows');
+          const rows = page.locator('.claude-screen .terminal-instance .xterm-rows');
           await rows.waitFor({ timeout: 3000 });
           await page.waitForTimeout(500);
           screen = await rows.innerText();

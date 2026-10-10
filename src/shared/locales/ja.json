@@ -431,8 +431,10 @@
       "restartFailed": "再起動できませんでした: {error}",
       "export": "作業を書き出す…",
       "exportTip": "このセッションの流れを、1 枚の HTML ファイルに書き出す",
-      "terminal": "Claude Code の画面",
-      "terminalTip": "Claude Code をターミナルの画面のまま表示して操作する（エディタの下のパネル）",
+      "terminal": "ターミナルモード",
+      "terminalTip": "チャットの代わりに、Claude Code をターミナルの画面のまま表示して操作する",
+      "pasteComments": "入力欄に貼る",
+      "pasteCommentsTip": "コードへのコメントを、Claude Code の入力欄に貼る（Enter で送る）",
       "starting": "Claude Code を起動しています…",
       "showInTerminal": "ターミナルで見る",
       "queued": "順番待ち — 今の作業が一区切りしたら Claude Code に渡されます",
@@ -1203,9 +1205,7 @@
     "panel": {
       "resize": "ドラッグで高さを変更",
       "sendToClaude": "Claude へ送る",
-      "sendToClaudeTip": "Claude へ送る\nターミナルで選んだ出力を、チャットの入力欄に貼る",
-      "claudeScreen": "Claude Code の画面",
-      "claudeScreenTip": "Claude Code の画面\nClaude Code そのものの画面をそのまま表示して操作する",
+      "sendToClaudeTip": "Claude へ送る\nターミナルで選んだ出力を、チャットの入力欄に貼る（ターミナルモードでは、Claude Code の入力欄に）",
       "close": "パネルを閉じる",
       "closeTip": "パネルを閉じる（⌃`）"
     },

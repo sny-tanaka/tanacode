@@ -4,6 +4,7 @@
 export const SHARED_PREF_KEYS = [
   'tanacode.columns',
   'tanacode.terminalHeight',
+  'tanacode.terminalMode',
   'tanacode.scmView',
   'tanacode.contextSort',
   'tanacode.checklist.notify',

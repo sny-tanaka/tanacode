@@ -559,7 +559,7 @@ export type TanacodeApi = {
   pty: {
     write(sessionId: string, data: string): void;
     resize(sessionId: string, cols: number, rows: number): void;
-    // 既定の大きさに戻す（Claude Code の画面を閉じたとき）
+    // 既定の大きさに戻す（ターミナルモードの Claude Code の画面を隠したとき）
     resetSize(sessionId: string): void;
     onData(listener: (payload: PtyData) => void): () => void;
   };

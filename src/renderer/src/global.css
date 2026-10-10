@@ -1221,14 +1221,6 @@ body.resizing-rows {
   white-space: nowrap;
   cursor: pointer;
 }
-.terminal-tab.claude-screen-tab {
-  flex: none;
-  padding: 0 8px;
-  border: none;
-  background: none;
-  font: inherit;
-  font-size: 11px;
-}
 .terminal-tab:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
@@ -1281,6 +1273,40 @@ body.resizing-rows {
   flex-direction: column;
   background: var(--bg-panel);
   border-right: 1px solid var(--border-subtle);
+}
+/* ターミナルモード: チャットと入力欄の代わりに出す、Claude Code の生の画面。隠したチャットは残しておく */
+.claude-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+/* ターミナルパネルと同じく、上と左を空ける */
+.claude-screen .terminal-instance {
+  position: absolute;
+  inset: 6px 0 0 8px;
+  height: auto;
+}
+/* 画面の下に出す知らせ（worktree の準備・コードへのコメント・Claude Code の終了） */
+.claude-screen-notes {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.claude-screen-comments {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.claude-screen-comments .attachments {
+  flex: 1;
+  min-width: 0;
+}
+.chat-list-wrap[hidden],
+.chat-input-wrap[hidden] {
+  display: none;
 }
 .claude-header {
   height: 44px;

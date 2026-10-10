@@ -435,8 +435,10 @@
       "restartFailed": "Couldn't restart: {error}",
       "export": "Export session…",
       "exportTip": "Export this session's history to a single HTML file",
-      "terminal": "Claude Code terminal",
-      "terminalTip": "Show and use Claude Code in its terminal view (in the panel below the editor)",
+      "terminal": "Terminal mode",
+      "terminalTip": "Show and use Claude Code in its terminal view instead of the chat",
+      "pasteComments": "Paste into prompt",
+      "pasteCommentsTip": "Paste the code comments into Claude Code's prompt (press Enter to send)",
       "starting": "Starting Claude Code…",
       "showInTerminal": "Show in terminal",
       "queued": "Queued — will be sent to Claude Code once the current step finishes",
@@ -1244,9 +1246,7 @@
     "panel": {
       "resize": "Drag to resize",
       "sendToClaude": "Send to Claude",
-      "sendToClaudeTip": "Send to Claude\nPaste the selected terminal output into the chat input",
-      "claudeScreen": "Claude Code screen",
-      "claudeScreenTip": "Claude Code screen\nView and use Claude Code's own screen as is",
+      "sendToClaudeTip": "Send to Claude\nPaste the selected terminal output into the chat input (in terminal mode, into Claude Code's prompt)",
       "close": "Close panel",
       "closeTip": "Close panel (⌃`)"
     },
