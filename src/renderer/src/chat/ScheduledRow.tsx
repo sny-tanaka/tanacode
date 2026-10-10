@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n';
 import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
 import { CloseIcon, IconButton, ScheduleIcon, SendIcon } from '../icons';
 import { needsAttention } from './scheduled';
@@ -23,7 +24,7 @@ export function ScheduledRow({
       <span className="chat-prompt">›</span>
       <span className="chat-user-text">
         {message.text}
-        {message.attachments.length > 0 && <span className="chat-user-meta">画像 {message.attachments.length} 枚</span>}
+        {message.attachments.length > 0 && <span className="chat-user-meta">{t('schedule.row.images', { count: message.attachments.length })}</span>}
         <span className="chat-user-meta chat-scheduled-note">
           <ScheduleIcon size={12} />
           {noteOf(message)}
@@ -31,9 +32,9 @@ export function ScheduledRow({
       </span>
       {/* 予約の操作は、ホバーしなくても見えるようにする（reveal にしない） */}
       <div className="chat-scheduled-actions">
-        {!sending && <IconButton size="sm" icon={SendIcon} label="今すぐ送る" tip="時刻を待たずに送る（Claude Code の手が空くのは待ちます）" onClick={onSendNow} />}
-        {!sending && <SchedulePicker size="sm" label="時刻を変える" initial={trouble ? undefined : message.at} onPick={onReschedule} />}
-        <IconButton size="sm" icon={CloseIcon} label="取り消す" tip={sending ? '送るのをやめて入力欄に戻す' : '予約をやめて入力欄に戻す'} onClick={onTake} />
+        {!sending && <IconButton size="sm" icon={SendIcon} label={t('schedule.row.sendNow')} tip={t('schedule.row.sendNowTip')} onClick={onSendNow} />}
+        {!sending && <SchedulePicker size="sm" label={t('schedule.row.reschedule')} initial={trouble ? undefined : message.at} onPick={onReschedule} />}
+        <IconButton size="sm" icon={CloseIcon} label={t('schedule.row.cancel')} tip={sending ? t('schedule.row.cancelSendingTip') : t('schedule.row.cancelTip')} onClick={onTake} />
       </div>
     </div>
   );
@@ -43,12 +44,12 @@ function noteOf(message: ScheduledMessage): string {
   const time = formatScheduleTime(message.at);
   switch (message.state) {
     case 'scheduled':
-      return `${time} に送ります`;
+      return t('schedule.note.scheduled', { time });
     case 'sending':
-      return '予約の時刻になりました。Claude Code の手が空いたら送ります…';
+      return t('schedule.note.sending');
     case 'missed':
-      return `${time} の予約を送っていません（アプリが閉じていた・Mac がスリープしていたなど）`;
+      return t('schedule.note.missed', { time });
     case 'failed':
-      return `送れませんでした（${message.error ?? '理由は不明'}）`;
+      return t('schedule.note.failed', { error: message.error ?? t('schedule.note.unknownReason') });
   }
 }

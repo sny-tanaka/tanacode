@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { locale, t } from '@shared/i18n';
 import { applyTranslation, isMostlyForeign, planTranslation, type TranslateResult } from '@shared/translate';
 import { errorMessage } from '../errorMessage';
 import { ExternalLinkIcon, IconButton, TranslateIcon } from '../icons';
@@ -50,12 +51,11 @@ type Failure = { message: string; needsLanguage?: boolean };
 // 訳文を開いているか、訳している途中か、訳せなかったか（どれも、その原文に対してのもの）
 type State = { text: string } & ({ kind: 'open'; translated: string } | { kind: 'loading' } | { kind: 'failed'; failure: Failure });
 
-const LANGUAGE_NAMES = new Intl.DisplayNames(['ja'], { type: 'language' });
-
+// 言語の名前は、画面の言語で出す（呼んだときの言語で作る）
 function languageName(code: string | undefined): string {
-  if (!code) return '元の言語';
+  if (!code) return t('translate.failure.sourceLanguage');
   try {
-    return LANGUAGE_NAMES.of(code) ?? code;
+    return new Intl.DisplayNames([locale()], { type: 'language' }).of(code) ?? code;
   } catch {
     return code;
   }
@@ -65,13 +65,13 @@ function failureOf(result: Extract<TranslateResult, { ok: false }>): Failure {
   const language = languageName(result.source);
   switch (result.error) {
     case 'same-language':
-      return { message: '日本語の文なので、訳しませんでした。' };
+      return { message: t('translate.failure.sameLanguage') };
     case 'not-installed':
-      return { message: `翻訳データ（${language}・日本語）が入っていません。システム設定の「一般」→「言語と地域」→「翻訳言語…」から入れてください。`, needsLanguage: true };
+      return { message: t('translate.failure.notInstalled', { language }), needsLanguage: true };
     case 'unsupported':
-      return { message: result.source ? `${language}は、macOS の翻訳が対応していない言語です。` : '言語を判定できませんでした。' };
+      return { message: result.source ? t('translate.failure.unsupported', { language }) : t('translate.failure.undetected') };
     case 'failed':
-      return { message: `訳せませんでした（${result.message ?? 'わけは分かりません'}）。` };
+      return { message: t('translate.failure.failed', { reason: result.message ?? t('translate.failure.unknownReason') }) };
   }
 }
 
@@ -129,7 +129,7 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
         }
       },
       (err: unknown) => {
-        if (alive.current) setState((s) => (s?.text === text ? { text, kind: 'failed', failure: { message: `訳せませんでした（${errorMessage(err)}）。` } } : s));
+        if (alive.current) setState((s) => (s?.text === text ? { text, kind: 'failed', failure: { message: t('translate.failure.failed', { reason: errorMessage(err) }) } } : s));
       },
     );
   };
@@ -140,8 +140,8 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
     <IconButton
       size="sm"
       icon={TranslateIcon}
-      label="日本語訳"
-      tip="日本語訳（macOS の翻訳で、Mac の中で訳します）"
+      label={t('translate.button.label')}
+      tip={t('translate.button.tip')}
       className="chat-translate"
       pressed={current?.kind === 'open'}
       busy={current?.kind === 'loading'}
@@ -153,14 +153,14 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
   if (current?.kind === 'open') {
     panel = (
       <div className="chat-translation">
-        <div className="chat-translation-label">日本語訳</div>
+        <div className="chat-translation-label">{t('translate.panel.label')}</div>
         {renderText(current.translated)}
       </div>
     );
   } else if (current?.kind === 'loading') {
     panel = (
       <div className="chat-translation-note">
-        <Busy>訳しています…</Busy>
+        <Busy>{t('translate.panel.loading')}</Busy>
       </div>
     );
   } else if (current?.kind === 'failed') {
@@ -168,7 +168,7 @@ export function useBlockTranslation(text: string, renderText: (translated: strin
       <div className="chat-translation-note failed">
         <span>{current.failure.message}</span>
         {current.failure.needsLanguage && (
-          <IconButton size="sm" icon={ExternalLinkIcon} label="システム設定を開く" onClick={() => void window.tanacode.translate.openSettings()} />
+          <IconButton size="sm" icon={ExternalLinkIcon} label={t('translate.panel.openSettings')} onClick={() => void window.tanacode.translate.openSettings()} />
         )}
       </div>
     );

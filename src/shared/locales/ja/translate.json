@@ -1,1 +1,20 @@
-{}
+{
+  "failure": {
+    "sourceLanguage": "元の言語",
+    "sameLanguage": "日本語の文なので、訳しませんでした。",
+    "notInstalled": "翻訳データ（{language}・日本語）が入っていません。システム設定の「一般」→「言語と地域」→「翻訳言語…」から入れてください。",
+    "unsupported": "{language}は、macOS の翻訳が対応していない言語です。",
+    "undetected": "言語を判定できませんでした。",
+    "failed": "訳せませんでした（{reason}）。",
+    "unknownReason": "わけは分かりません"
+  },
+  "button": {
+    "label": "日本語訳",
+    "tip": "日本語訳（macOS の翻訳で、Mac の中で訳します）"
+  },
+  "panel": {
+    "label": "日本語訳",
+    "loading": "訳しています…",
+    "openSettings": "システム設定を開く"
+  }
+}

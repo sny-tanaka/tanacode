@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { locale, t } from '@shared/i18n';
 import type { ModelCatalog, ModelChoice } from '@shared/models';
 import type { PermissionMode } from '@shared/screen';
 
@@ -13,12 +14,20 @@ const FALLBACK_MODELS: ModelChoice[] = [
   { value: 'haiku', name: 'Haiku', detail: '', disabled: false, efforts: [] },
 ];
 // Shift+Tab で切り替わる権限モード（--permission-mode と同じ名前）
-export const MODES: [PermissionMode, string][] = [
-  ['manual', '都度確認'],
-  ['acceptEdits', '編集は自動'],
-  ['plan', 'プラン'],
-  ['auto', 'auto'],
-];
+const MODE_VALUES = ['manual', 'acceptEdits', 'plan', 'auto'] as const satisfies readonly PermissionMode[];
+
+const modeLabel = (mode: (typeof MODE_VALUES)[number]) => t(`composer.mode.${mode}`);
+
+// 権限モードの選択肢（値と表示名）。表示名は呼んだときの言語で作る
+export function modeChoices(): [PermissionMode, string][] {
+  return MODE_VALUES.map((mode): [PermissionMode, string] => [mode, modeLabel(mode)]);
+}
+
+// 移行の間だけ残す（ClaudePane・NewSessionPane が modeChoices() に移ったら消す）。
+// 読み込み時に文言を決めないよう、表示名（[1]）は読むたびに今の言語で返す
+export const MODES: [PermissionMode, string][] = MODE_VALUES.map(
+  (mode) => Object.defineProperty([mode], 1, { enumerable: true, get: () => modeLabel(mode) }) as unknown as [PermissionMode, string],
+);
 
 export type ModelCatalogState = {
   catalog: ModelCatalog | null;
@@ -39,16 +48,20 @@ export function useModelCatalog(): ModelCatalogState {
     const result = await window.tanacode.models.refresh();
     setRefreshing(false);
     if ('catalog' in result) setCatalog(result.catalog);
-    else window.alert(`モデルの一覧を読み込めませんでした: ${result.error}`);
+    else window.alert(t('composer.models.loadFailed', { error: result.error }));
   };
   const choices = catalog?.choices ?? FALLBACK_MODELS;
-  const labelOf = (c: ModelChoice) =>
-    `${c.name}${c.value.endsWith('[1m]') && choices.filter((o) => o.name === c.name).length > 1 ? ' 1M' : ''}${c.disabled ? '（要更新）' : ''}`;
+  const labelOf = (c: ModelChoice) => {
+    const name = `${c.name}${c.value.endsWith('[1m]') && choices.filter((o) => o.name === c.name).length > 1 ? ' 1M' : ''}`;
+    return c.disabled ? t('composer.models.needsUpdate', { name }) : name;
+  };
   return { catalog, choices, labelOf, refreshing, refresh };
 }
 
 export function refreshTitle(catalog: ModelCatalog | null): string {
-  return `モデル一覧を読み込み直す（Claude Code が持っている一覧の控えから）${catalog ? `。${new Date(catalog.updatedAt).toLocaleString('ja-JP')} 時点` : ''}`;
+  return catalog
+    ? t('composer.models.refreshAsOf', { time: new Date(catalog.updatedAt).toLocaleString(locale()) })
+    : t('composer.models.refresh');
 }
 
 // Remote Control を使えるか（開発版では、TANACODE_REMOTE_CONTROL=1 で起動したときだけ使える）。起動中に変わらないので一度だけ聞く

@@ -1,1 +1,23 @@
-{}
+{
+  "select": {
+    "default": "標準",
+    "unreadable": "{name}（読めません）",
+    "missing": "（登録なし）",
+    "manage": "管理…"
+  },
+  "dialog": {
+    "addFailed": "登録できませんでした: {error}",
+    "usedBy": "使っているセッションが {count} 件あります。次に起動するときに断られます。",
+    "removeConfirm": "「{name}」を登録から外します（ファイル自体は消えません）。",
+    "removeFailed": "登録から外せませんでした: {error}",
+    "title": "設定ファイル",
+    "description": "Claude Code の設定ファイル（settings.json と同じ形）を登録すると、セッションごとに選んで、標準の設定に重ねて起動できます。ファイルの中身は預からず、パスだけ覚えます。",
+    "empty": "登録した設定ファイルはありません",
+    "addTip": "追加…（ファイルを選ぶ）",
+    "closeTip": "閉じる（Esc）",
+    "renameFailed": "名前を変えられませんでした: {error}",
+    "renameTip": "クリックして名前を変える",
+    "remove": "削除",
+    "removeTip": "登録から外す（ファイル自体は消えません）"
+  }
+}
