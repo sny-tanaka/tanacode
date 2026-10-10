@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { CSSProperties } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REPO_URL, type AppUpdate } from '@shared/app-update';
@@ -9,6 +9,7 @@ import { AppUpdateMark, SEEN_KEY } from '../../src/renderer/src/layout/AppUpdate
 import { Resizer, useColumnWidths } from '../../src/renderer/src/layout/columns';
 import { TitleBar } from '../../src/renderer/src/layout/TitleBar';
 import { Toggle } from '../../src/renderer/src/layout/Toggle';
+import { syncSharedPrefs } from '../../src/renderer/src/sharedPrefs';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -221,6 +222,63 @@ describe('カラムの幅のつまみ（Resizer・useColumnWidths）', () => {
     localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 300 }));
     render(<Columns />);
     expect(main().style.getPropertyValue('--w-sessions')).toBe('300px');
+  });
+});
+
+describe('プロファイルをまたいで同じにする表示設定', () => {
+  function Sessions() {
+    return <span data-testid="sessions">{useColumnWidths().widths.sessions}</span>;
+  }
+  const sessions = () => Number(screen.getByTestId('sessions').textContent);
+  const UPDATE: AppUpdate = { latest: '1.3.0', available: true, url: `${REPO_URL}/releases/tag/v1.3.0` };
+
+  it('起動したときは、この画面の値を main に渡し、main が覚えている値にそろえる（覚えていないものは、この画面の値のまま）', async () => {
+    localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 300 }));
+    localStorage.setItem('tanacode.scmView', 'tree');
+    // 共有しないものは渡さない
+    localStorage.setItem('tanacode.sessionOrderLock', '["A"]');
+    api = mockApi({ 'prefs.sync': () => Promise.resolve({ 'tanacode.columns': JSON.stringify({ sessions: 360 }), 'tanacode.terminalHeight': '330' }) });
+    api.install();
+    await syncSharedPrefs();
+    expect(api.argsOf('prefs.sync')).toEqual([[{ 'tanacode.columns': JSON.stringify({ sessions: 300 }), 'tanacode.scmView': 'tree' }]]);
+    expect(localStorage.getItem('tanacode.columns')).toBe(JSON.stringify({ sessions: 360 }));
+    expect(localStorage.getItem('tanacode.terminalHeight')).toBe('330');
+    expect(localStorage.getItem('tanacode.scmView')).toBe('tree');
+    render(<Sessions />);
+    expect(sessions()).toBe(360);
+  });
+
+  it('main に聞けなくても、この画面の値で始める', async () => {
+    localStorage.setItem('tanacode.columns', JSON.stringify({ sessions: 300 }));
+    api = mockApi({ 'prefs.sync': () => Promise.reject(new Error('応答なし')) });
+    api.install();
+    await expect(syncSharedPrefs()).resolves.toBeUndefined();
+    expect(localStorage.getItem('tanacode.columns')).toBe(JSON.stringify({ sessions: 300 }));
+  });
+
+  it('変えると main に渡す。ほかのプロファイルの画面で変わったら、開いたままでもその値にする', async () => {
+    await syncSharedPrefs();
+    render(<Sessions />);
+    render(<AppUpdateMark update={UPDATE} />);
+    expect(sessions()).toBe(248);
+    const mark = () => document.querySelector('.app-update.available')!;
+    expect(mark().classList.contains('calling')).toBe(true);
+
+    act(() => api.emit('prefs.onChanged', { key: 'tanacode.columns', value: JSON.stringify({ sessions: 320 }) }));
+    expect(sessions()).toBe(320);
+    act(() => api.emit('prefs.onChanged', { key: 'tanacode.app-update.seen', value: '1.3.0' }));
+    expect(mark().classList.contains('calling')).toBe(false);
+    // 受け取った値は、main に送り返さない
+    expect(api.argsOf('prefs.set')).toEqual([]);
+    // 知らないキーは入れない
+    act(() => api.emit('prefs.onChanged', { key: 'tanacode.sessionOrderLock', value: '["A"]' }));
+    expect(localStorage.getItem('tanacode.sessionOrderLock')).toBeNull();
+  });
+
+  it('この画面で変えた値は、main に渡す', () => {
+    render(<AppUpdateMark update={UPDATE} />);
+    fireEvent.mouseEnter(document.querySelector('.app-update.available')!);
+    expect(api.argsOf('prefs.set')).toEqual([[SEEN_KEY, '1.3.0']]);
   });
 });
 

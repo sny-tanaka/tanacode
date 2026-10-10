@@ -415,6 +415,8 @@ export class DemoBackend {
         cancel: () => ok(null),
         onChanged: () => () => {},
       },
+      // デモはプロファイル 1 つだけなので、ほかの画面に配らない（値は localStorage にある）
+      prefs: { sync: (local) => ok(local), set: () => {}, onChanged: () => () => {} },
       notifications: {
         get: () => ok(this.notificationsOn),
         set: (on) => {
