@@ -453,11 +453,23 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.created[1]).toMatchObject({ parentId: PARENT, options: { remoteControl: false } });
   });
 
-  it('start_session: 始められるのは、このセッションのリポジトリの中か、見えるセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
+  it('start_session: 始められるのは、このセッションのリポジトリの中か、プロファイルのセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: '/etc' }))).toContain('Cannot start in');
-    // 見えないセッション（別のリポジトリ）のフォルダは選べない。見えるセッション（別のフォルダの子）のフォルダは選べる
-    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other') }))).toContain('Cannot start in');
+    // どのセッションも開いていないフォルダは選べない
+    mkdirSync(join(root, 'unknown'), { recursive: true });
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'unknown') }))).toContain('start_folders of list_sessions');
+    // 別のリポジトリでも、プロファイルのセッションのフォルダは選べる（アーカイブしたセッションのものも）。その中のフォルダは選べない
+    expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other') })).isError).toBeUndefined();
+    expect(host.created.at(-1)).toMatchObject({ cwd: realpathSync(join(root, 'other')), parentId: PARENT });
+    mkdirSync(join(root, 'other', 'sub'), { recursive: true });
+    expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'other', 'sub') }))).toContain('Cannot start in');
     expect((await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(root, 'far') })).isError).toBeUndefined();
+    // 選べるフォルダは list_sessions で分かる（別のリポジトリのセッションそのものは見せない）。子には出さない
+    const listed = jsonOf<{ start_folders: string[]; sessions: { id: string }[] }>(await control.handle(PARENT, 'list_sessions', {}));
+    expect(listed.start_folders).toEqual(expect.arrayContaining([repo, realpathSync(join(root, 'other')), realpathSync(join(root, 'far'))]));
+    expect(new Set(listed.start_folders).size).toBe(listed.start_folders.length);
+    expect(listed.sessions.map((s) => s.id)).not.toContain(OTHER_REPO);
+    expect(jsonOf(await control.handle(CHILD, 'list_sessions', {}))).not.toHaveProperty('start_folders');
     // リポジトリの中のシンボリックリンクから、外のフォルダで始めさせない
     symlinkSync('/etc', join(repo, 'etc-link'));
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, folder: join(repo, 'etc-link') }))).toContain('Cannot start in');

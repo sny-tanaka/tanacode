@@ -42,7 +42,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'list_sessions',
     kind: 'read',
     description:
-      "Lists the tanacode sessions (name, folder, branch, state and parent/child relations). Only the sessions in this session's folder (for a worktree, its original folder) and the parent, child and sibling sessions are visible. Use it to learn what the sessions running in parallel (siblings) are doing, and to check that you are not editing the same files and whether an implementation could be shared.",
+      "Lists the tanacode sessions (name, folder, branch, state and parent/child relations). Only the sessions in this session's folder (for a worktree, its original folder) and the parent, child and sibling sessions are visible. Also returns start_folders: the folders the user has opened in tanacode before (most recent first), where start_session can start a session. Use it to learn what the sessions running in parallel (siblings) are doing, and to check that you are not editing the same files and whether an implementation could be shared.",
     inputSchema: {
       type: 'object',
       properties: { include_archived: { type: 'boolean', description: 'Include archived sessions (for example, to look up what was decided in an earlier session)' } },
@@ -115,7 +115,8 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
         name: { type: 'string', description: 'Name shown in the list (short). If omitted, Claude Code names it from the first instruction' },
         folder: {
           type: 'string',
-          description: "Folder to start in (absolute path). If omitted, this session's repository folder. Only a folder inside this session's repository or the folder of another session can be chosen",
+          description:
+            "Folder to start in (absolute path). If omitted, this session's repository folder. Only a folder inside this session's repository or a folder the user has opened in tanacode before (start_folders of list_sessions, which also covers other repositories) can be chosen",
         },
         model: { type: 'string', description: 'Model (for example opus, sonnet or haiku). If omitted, the default' },
         effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: 'Effort. If omitted, the default' },

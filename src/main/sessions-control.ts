@@ -73,6 +73,8 @@ const MAX_UNTRACKED_BYTES = 256 * 1024;
 // 1 回の結果の文字数の上限（親のコンテキストを食いつぶさないため）
 const MAX_RESULT_CHARS = 60_000;
 const WAIT_DEFAULT_SECONDS = 300;
+// list_sessions で返す、セッションを始められるフォルダの数の上限
+const MAX_START_FOLDERS = 30;
 
 // 編集したファイルとして数えるツール
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
@@ -154,6 +156,8 @@ export class SessionsControl {
     const branches = await Promise.all(list.map((s) => branchOf(s)));
     return json({
       self: caller.id,
+      // start_session の folder に選べる、ほかのフォルダ（子は始められないので出さない）
+      ...(caller.parentId ? {} : { start_folders: this.knownFolders().slice(0, MAX_START_FOLDERS) }),
       sessions: list.map((s, i) => ({
         ...this.describe(s, caller),
         branch: branches[i],
@@ -482,8 +486,16 @@ export class SessionsControl {
     return target;
   }
 
-  // 子セッションを始めるフォルダ。省けば、このセッションのリポジトリのフォルダ。
-  // 選べるのは、このセッションのリポジトリの中か、このセッションから見えるセッションのフォルダだけ（勝手な場所で Claude Code を動かさせない）。
+  // このプロファイルが覚えているフォルダ（新規セッションの画面の「最近のフォルダ」の元。アーカイブしたセッションのものも）。
+  // 新しい順。worktree のセッションは元のフォルダ
+  private knownFolders(): string[] {
+    const sessions = [...this.deps.host.list()].sort((a, b) => b.updatedAt - a.updatedAt);
+    return [...new Set(sessions.map((s) => projectRootOf(s)))];
+  }
+
+  // セッションを始めるフォルダ。省けば、このセッションのリポジトリのフォルダ。
+  // 選べるのは、このセッションのリポジトリの中か、このプロファイルのセッションのフォルダだけ（人が開いたことのない場所で Claude Code を動かさせない）。
+  // 別のリポジトリのフォルダも選べるが、そこの会話が読めるようにはならない（見える範囲は canSee のまま）。
   // シンボリックリンクは解いてから比べる（リポジトリの中のリンクから、外のフォルダで始めさせない）
   private async folderFor(caller: SessionSummary, raw: unknown, worktree: boolean): Promise<string> {
     const root = projectRootOf(caller);
@@ -496,9 +508,11 @@ export class SessionsControl {
     const inside = folder === realRoot || (realRoot !== this.deps.home && realRoot !== '/' && folder.startsWith(`${realRoot}/`));
     const known = inside
       ? true
-      : (await Promise.all(this.visible(caller).flatMap((s) => [real(s.cwd), real(projectRootOf(s))]))).includes(folder);
+      : (await Promise.all(this.deps.host.list().flatMap((s) => [real(s.cwd), real(projectRootOf(s))]))).includes(folder);
     if (!known) {
-      throw new ToolError(`Cannot start in ${given}. Only a folder inside this session's repository (${root}) or the folder of another session can be chosen.`);
+      throw new ToolError(
+        `Cannot start in ${given}. Only a folder inside this session's repository (${root}) or a folder of another tanacode session (start_folders of list_sessions) can be chosen.`,
+      );
     }
     const isDirectory = await stat(folder).then(
       (s) => s.isDirectory(),
