@@ -91,6 +91,16 @@ export const 親セッションからの指示: Story = {
     },
     sessions: SESSIONS,
     onSelectSession: noop,
+    parentId: SESSIONS[0].id,
+  },
+};
+
+// 独立したセッション（親のないセッション）の最初の指示。起動したセッションは親ではないので、「セッション「…」からの指示」と出す
+export const ほかのセッションからの指示: Story = {
+  args: {
+    item: { kind: 'user', id: 'u5', text: 'README の英語を見直してください。', parent: SESSIONS[0].id },
+    sessions: SESSIONS,
+    onSelectSession: noop,
   },
 };
 
@@ -100,6 +110,7 @@ export const 親セッションからの指示_長い名前: Story = {
     item: { kind: 'user', id: 'u4', text: '1+1 の答えだけを 1 行で返してください。', parent: 'cccccccc-0000-4000-8000-00000000000c' },
     sessions: [...SESSIONS, { id: 'cccccccc-0000-4000-8000-00000000000c', title: 'tanacode-sessions で子セッションを起動して結果を待つ取りまとめ' }],
     onSelectSession: noop,
+    parentId: 'cccccccc-0000-4000-8000-00000000000c',
   },
 };
 
@@ -109,6 +120,7 @@ export const 親セッションからの指示_親が一覧に無い: Story = {
     item: { kind: 'user', id: 'u3', text: 'テストを追加してください。', parent: '00000000-0000-4000-8000-000000000000' },
     sessions: SESSIONS,
     onSelectSession: noop,
+    parentId: '00000000-0000-4000-8000-000000000000',
   },
 };
 

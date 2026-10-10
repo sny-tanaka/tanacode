@@ -26,7 +26,8 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // Claude による、ほかのセッションの扱い（MCP サーバー tanacode-sessions のツールの実行）。中継からの呼び出しを、ソケットで受けて答える。
 // 呼び出し元のセッションは中継の env で渡ってくるので、親子の関係や見えるセッションは、アプリの記録（SessionSummary.parentId）で判断する。
 // 読むだけのツールは、同じリポジトリのセッションと親子・兄弟だけを見せる（別のリポジトリの会話は読ませない）。
-// 指示・中断・質問への答えは、自分の子セッションにだけ。許可の確認には答えさせない（親を通じて、権限を広げられないように）
+// 指示・中断・質問への答えは、自分の子セッションにだけ。許可の確認には答えさせない（親を通じて、権限を広げられないように）。
+// start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ
 
 // SessionManager のうち、ツールが使うもの
 export type SessionsHost = {
@@ -170,7 +171,7 @@ export class SessionsControl {
     const all = this.visible(caller);
     const titleOf = (id: string) => nameOf(all.find((s) => s.id === id));
     const lines = [`# Session "${nameOf(target)}"`, ...this.headerLines(target, caller, all), ''];
-    lines.push(...conversationLines(events, turns, titleOf), '');
+    lines.push(...conversationLines(events, turns, titleOf, target.parentId ?? null), '');
     const edited = editedFiles(events, target.cwd);
     lines.push("## Files edited in this session's conversation", ...(edited.length > 0 ? edited.map((f) => `- ${f}`) : ['(none)']));
     return textResult(clip(lines.join('\n'), MAX_RESULT_CHARS));
@@ -255,10 +256,13 @@ export class SessionsControl {
 
   private async startSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
     const { host } = this.deps;
-    if (caller.parentId) throw new ToolError('A child session cannot start child sessions of its own (only one level of children).');
+    if (caller.parentId) throw new ToolError('A child session cannot start sessions (only one level of children, and no independent sessions).');
     const prompt = stringArg(args.prompt);
     if (!prompt) throw new ToolError('prompt (the first instruction) is empty.');
     if (typeof args.worktree !== 'boolean') throw new ToolError('Pass worktree (whether to start in a new worktree) as true or false.');
+    if (args.independent !== undefined && typeof args.independent !== 'boolean') throw new ToolError('Pass independent as true or false.');
+    // 独立したセッション: 親のない、ふつうのセッションとして始める（人が動かす。このセッションからは指示も中断もできない）
+    const independent = args.independent === true;
     const folder = await this.folderFor(caller, args.folder, args.worktree);
     // 権限モードは、このセッションより強くできない（親を通じて、人が許していない操作を通さないため）
     const limit = host.modeOf(caller.id) ?? 'manual';
@@ -272,10 +276,12 @@ export class SessionsControl {
       // 登録した設定ファイル（別のアカウントなど）は、親と同じものを使う
       settingsFile: caller.settingsFile,
       mode,
-      remoteControl: false,
+      // 独立したセッションは、Remote Control から頼まれて始めることがあるので、このセッションの指定に合わせる
+      remoteControl: independent && caller.remoteControl,
       worktree: args.worktree,
     };
-    const id = options.worktree ? await host.createInWorktree(folder, options, caller.id) : host.create(folder, options, caller.id);
+    const parentId = independent ? null : caller.id;
+    const id = options.worktree ? await host.createInWorktree(folder, options, parentId) : host.create(folder, options, parentId);
     const name = stringArg(args.name);
     if (name) host.rename(id, name);
     this.lastState.set(id, host.stateOf(id));
@@ -289,9 +295,12 @@ export class SessionsControl {
       name: name || null,
       folder: child?.cwd ?? folder,
       worktree: child?.worktree ? { name: child.worktree.name, branch: child.worktree.branch } : null,
+      independent,
       permission_mode: mode,
       state: host.stateOf(id),
-      note: 'The first instruction will be sent as soon as the child has started. Wait for the result with wait_sessions.',
+      note: independent
+        ? 'The first instruction will be sent as soon as the session has started. It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.'
+        : 'The first instruction will be sent as soon as the child has started. Wait for the result with wait_sessions.',
     });
   }
 
@@ -545,7 +554,7 @@ export class SessionsControl {
     return {
       ...base,
       last_prompt: lastPrompt
-        ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? 'parent' : 'human', text: clip(lastPrompt.text, 1000) }
+        ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
       last_response: response ? clip(response.text, 4000) : null,
       question: base.state === 'question' && menu?.kind === 'question' ? questionOf(menu) : undefined,
@@ -622,8 +631,9 @@ function questionOf(menu: Menu): Record<string, unknown> {
   };
 }
 
-// 会話を、新しいほうから turns 回分の指示とその応答にまとめる（長い応答は途中を省く）
-function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: string) => string): string[] {
+// 会話を、新しいほうから turns 回分の指示とその応答にまとめる（長い応答は途中を省く）。
+// parentId: そのセッションの親。親のないセッションへの指示（独立したセッションの最初の指示）は、親からの指示と書かない
+function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: string) => string, parentId: string | null = null): string[] {
   type Turn = { who: string; text: string; responses: string[]; tools: string[] };
   let all: Turn[] = [];
   let current: Turn | null = null;
@@ -633,7 +643,8 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
       all = [];
       current = null;
     } else if (e.type === 'user') {
-      current = { who: e.parent ? `Instruction from the parent session "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], tools: [] };
+      const from = parentId ? 'the parent session' : 'the session that started this one,';
+      current = { who: e.parent ? `Instruction from ${from} "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], tools: [] };
       all.push(current);
     } else if (e.type === 'notice') {
       current = { who: 'Notice', text: e.text, responses: [], tools: [] };

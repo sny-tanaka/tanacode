@@ -187,7 +187,7 @@
     },
     "hooks": {
       "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
-      "sessionsGate": "子セッションを起動します。子は tanacode のセッションとして動き、Claude の利用枠を子の数だけ使います",
+      "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
       "browserGateUnknown": "tanacode に今のページを確かめられなかったので、確認を求めています",
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
       "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています"
@@ -364,7 +364,7 @@
       "get_session_diff": "セッションの変更",
       "get_session": "セッションの状態",
       "wait_sessions": "子セッションを待つ",
-      "start_session": "子セッションを始める",
+      "start_session": "セッションを始める",
       "send_message": "子セッションに指示",
       "answer_question": "子セッションの質問に答える",
       "stop_session": "子セッションを中断"
@@ -646,7 +646,9 @@
       "missing": "一覧に無いセッション（ID {id}）",
       "fromParent": "親セッションからの指示",
       "fromParentNamed": "親セッション「{name}」からの指示",
-      "openParent": "親セッションを開く"
+      "openParent": "親セッションを開く",
+      "fromSession": "ほかのセッションからの指示",
+      "fromSessionNamed": "セッション「{name}」からの指示"
     },
     "images": {
       "closeZoom": "画像を閉じる",
