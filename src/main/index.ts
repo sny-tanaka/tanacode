@@ -1032,14 +1032,13 @@ function applyLanguage(): void {
 // メニューの「言語」。保存して、言語が変わったら、メニューを作り直し、アプリの画面（全プロファイル）を読み込み直す。
 // 画面は起動するときに言語を読むので、読み込み直すと新しい言語で出る。動いている Claude Code はそのまま。
 // 読み込み直すと新規セッションの画面の後始末（folders.close）が届かないので、先に閉じておく。
-// 保存できなかったら、メニューを作り直して選んでいたものに戻す
+// 保存できなかったら、設定は前の値のままなので、言語は変わらず、作り直したメニューも選んでいたものに戻る
 function changeLanguage(setting: LanguageSetting): void {
   const before = language();
   try {
     settings.setLanguageSetting(setting);
   } catch {
-    buildMenu();
-    return;
+    // 下で前の値から作り直す
   }
   applyLanguage();
   buildMenu();

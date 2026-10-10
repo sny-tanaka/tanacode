@@ -840,6 +840,36 @@ describe('メニュー', () => {
     expect(contents.reload).toHaveBeenCalledTimes(2);
   });
 
+  it('「言語」: 読み込み直す前に、新規セッションの画面で開いていたフォルダを閉じる（画面からの後始末が届かないため）', async () => {
+    await boot();
+    manager().list.mockReturnValue([{ id: 's1', cwd: state.root, worktree: null }]);
+    const id = (await invoke(IpcChannel.FolderOpen, state.root)) as string;
+    const item = menuItem('English');
+    item.click?.(item);
+    expect(the('WorkspaceWatchers').release.mock.calls).toEqual([[state.root]]);
+    expect(the('ShellTerminals').killOwner.mock.calls).toEqual([[id]]);
+    expect(the('BrowserControl').forget.mock.calls).toEqual([[id]]);
+    expect(mainWindow().webContents.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('「言語」: 保存できなかったら、言語もメニューもそのままで、読み込み直さない', async () => {
+    await boot();
+    // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
+    mkdirSync(join(state.userData, 'settings.json.tmp'));
+    // Electron のラジオボタンと同じく、押すとチェックが移る
+    const item = menuItem('English');
+    menuItem('システムに合わせる').checked = false;
+    item.checked = true;
+    item.click?.(item);
+    await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('ja');
+    expect(menuItem('言語（Language）').submenu!.map((i) => [i.label, i.checked])).toEqual([
+      ['システムに合わせる', true],
+      ['日本語', false],
+      ['English', false],
+    ]);
+    expect(mainWindow().webContents.reload).not.toHaveBeenCalled();
+  });
+
   it('「言語」: 保存した言語で起動する（Mac の言語より優先）', async () => {
     await boot({ settings: { language: 'en' } });
     await expect(invoke(IpcChannel.LanguageGet)).resolves.toBe('en');
