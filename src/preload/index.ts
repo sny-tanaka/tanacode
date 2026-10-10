@@ -92,6 +92,11 @@ const api: TanacodeApi = {
     cancel: (id) => invoke(IpcChannel.ScheduledCancel, id),
     onChanged: (listener) => subscribe(IpcChannel.ScheduledChanged, listener),
   },
+  prefs: {
+    sync: (local) => invoke(IpcChannel.PrefsSync, local),
+    set: (key, value) => send(IpcChannel.PrefsSet, key, value),
+    onChanged: (listener) => subscribe(IpcChannel.PrefsChanged, listener),
+  },
   notifications: {
     get: () => invoke(IpcChannel.NotificationsGet),
     set: (on) => invoke(IpcChannel.NotificationsSet, on),

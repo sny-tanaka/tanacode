@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppUpdate } from '@shared/app-update';
 import { t } from '@shared/i18n';
 import { CheckCircleIcon, DownloadIcon } from '../icons';
+import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 
 // tanacode の新しいバージョン（GitHub の Releases）。まだ分からない・確かめる設定がオフなら null
 export function useAppUpdate(): AppUpdate | null {
@@ -23,16 +24,10 @@ function steps(): string {
   return [t('app.update.stepsTitle'), t('app.update.stepHomebrew'), t('app.update.stepBuilt'), t('app.update.stepSource')].join('\n');
 }
 
-// 新しいバージョンの印を見た（マウスを乗せた・押した）バージョン。見たバージョンでは、もう印を動かさない（このマシンだけの表示の状態なので localStorage に置く）
+// 新しいバージョンの印を見た（マウスを乗せた・押した）バージョン。見たバージョンでは、もう印を動かさない。どのプロファイルの画面でも同じにする（sharedPrefs）
 export const SEEN_KEY = 'tanacode.app-update.seen';
 
-function seenVersion(): string | null {
-  try {
-    return localStorage.getItem(SEEN_KEY);
-  } catch {
-    return null;
-  }
-}
+const seenVersion = () => readSharedPref(SEEN_KEY);
 
 // タイトルバーのバージョンの横の印。最新なら控えめなチェック、新しいバージョンがあれば青いダウンロードの印。
 // 文字は出さず、マウスを乗せると「最新バージョンです」「v0.1.5 があります」と、更新の手順が出る。
@@ -58,12 +53,9 @@ function UpdateAvailable({ update }: { update: AppUpdate }) {
   const markSeen = () => {
     if (seen) return;
     setSeen(true);
-    try {
-      localStorage.setItem(SEEN_KEY, update.latest);
-    } catch {
-      // 保存できなくても、このあいだは止める
-    }
+    writeSharedPref(SEEN_KEY, update.latest);
   };
+  useSharedPrefChange(SEEN_KEY, () => setSeen(seenVersion() === update.latest));
 
   return (
     <button

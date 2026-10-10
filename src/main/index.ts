@@ -7,9 +7,11 @@ import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type ScreenChoice, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
+import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
+import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
@@ -51,6 +53,7 @@ const lastOthersAttention = new Map<string, boolean>();
 let remoteControl = false;
 // アプリ全体の設定（通知・新しいバージョンの確認）。既定のプロファイルの設定も同じファイルに入っている
 let settings: AppSettings;
+let sharedPrefs: SharedPrefStore;
 let system: SystemMonitor;
 let claudeVersions: ClaudeVersionMonitor;
 let appUpdates: AppUpdateMonitor;
@@ -688,6 +691,22 @@ function registerIpc(): void {
   });
   handle(IpcChannel.ProfilesRemove, (_e, id: string) => removeProfile(String(id)));
   handle(IpcChannel.ProfilesPickDir, () => pickProfileDir());
+  // プロファイルをまたいで同じにする表示設定。変わったら、ほかのプロファイルの画面に配る（送り元は、もうその値になっている）
+  const sharePrefs = (sender: WebContents, changes: SharedPrefChange[]) => {
+    for (const id of [DEFAULT_PROFILE_ID, ...views.keys()]) {
+      if (contentsOf(id) === sender) continue;
+      for (const change of changes) sendTo(id)(IpcChannel.PrefsChanged, change);
+    }
+  };
+  handle(IpcChannel.PrefsSync, (e, local: SharedPrefs) => {
+    P(e);
+    sharePrefs(e.sender, sharedPrefs.adopt(local));
+    return sharedPrefs.all();
+  });
+  listen(IpcChannel.PrefsSet, (e, key: SharedPrefKey, value: string) => {
+    P(e);
+    if (sharedPrefs.set(key, value)) sharePrefs(e.sender, [{ key, value }]);
+  });
   handle(IpcChannel.NotificationsGet, () => settings.notificationsEnabled());
   handle(IpcChannel.NotificationsSet, (_e, on: boolean) => settings.setNotificationsEnabled(on === true));
   handle(IpcChannel.ModelsRefresh, (e) =>
@@ -1116,6 +1135,7 @@ app.whenReady().then(async () => {
   // .app にしていない開発中の起動では Electron のアイコンになるので、アプリのアイコンに差し替える
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'));
   settings = new AppSettings(join(app.getPath('userData'), 'settings.json'));
+  sharedPrefs = new SharedPrefStore(join(app.getPath('userData'), 'shared-prefs.json'));
   // ダイアログ・メニュー・プロファイルの既定の名前などが使うので、ほかのものを作る前に決める
   applyLanguage();
   registry = new ProfileRegistry(join(app.getPath('userData'), 'profiles.json'));

@@ -7,6 +7,7 @@ import { insertIntoChat } from '../chat/insertInput';
 import { AddIcon, CloseIcon, IconButton, MonitorIcon, SendIcon } from '../icons';
 import { ClaudeScreen } from './ClaudeScreen';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
+import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { useRunInTerminal } from './runInTerminal';
 import { xtermOptions } from './xterm';
 
@@ -22,12 +23,8 @@ const DEFAULT_HEIGHT = 280;
 const MIN_HEIGHT = 120;
 
 function loadHeight(): number {
-  try {
-    const saved = Number(localStorage.getItem(HEIGHT_KEY));
-    return saved >= MIN_HEIGHT ? saved : DEFAULT_HEIGHT;
-  } catch {
-    return DEFAULT_HEIGHT;
-  }
+  const saved = Number(readSharedPref(HEIGHT_KEY));
+  return saved >= MIN_HEIGHT ? saved : DEFAULT_HEIGHT;
 }
 
 type Props = {
@@ -52,7 +49,9 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
   const [shells, setShells] = useState<Record<string, ShellTab[]>>({});
   const [active, setActive] = useState<Record<string, string>>({});
   const [hasSelection, setHasSelection] = useState(false);
+  // 高さは、どのプロファイルの画面でも同じにする（sharedPrefs）
   const [height, setHeight] = useState(loadHeight);
+  useSharedPrefChange(HEIGHT_KEY, () => setHeight(loadHeight()));
   const creating = useRef(false);
   // 次に開くシェルで実行するコマンド（チャットのコードブロックの「実行」）
   const queued = useRef<{ owner: string; command: string } | null>(null);
@@ -220,13 +219,7 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
   };
 
   const drag = useRef<{ y: number; height: number } | null>(null);
-  const saveHeight = () => {
-    try {
-      localStorage.setItem(HEIGHT_KEY, String(height));
-    } catch {
-      // 保存できなくても今の表示には影響しない
-    }
-  };
+  const saveHeight = () => writeSharedPref(HEIGHT_KEY, String(height));
 
   return (
     <div className="terminal-panel" hidden={!open || !sessionId} style={{ height }}>

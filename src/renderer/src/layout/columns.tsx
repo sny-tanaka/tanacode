@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type RefObject } from 'react';
 import { t } from '@shared/i18n';
+import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 
 // 幅を変えられるカラム。エディタ（残りの幅）は含めない
 export type Column = 'sessions' | 'claude' | 'side';
@@ -13,7 +14,7 @@ const STORAGE_KEY = 'tanacode.columns';
 
 function load(): ColumnWidths {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<ColumnWidths>;
+    const saved = JSON.parse(readSharedPref(STORAGE_KEY) ?? '{}') as Partial<ColumnWidths>;
     return { ...DEFAULTS, ...saved };
   } catch {
     return DEFAULTS;
@@ -27,7 +28,7 @@ function clamp(widths: ColumnWidths, column: Column, width: number): number {
   return Math.round(Math.max(min, Math.min(max, room, width)));
 }
 
-// カラムの幅。ドラッグで変え、次回起動時も保つ（このマシンだけの表示設定なので localStorage に置く）。
+// カラムの幅。ドラッグで変え、次回起動時も保つ。どのプロファイルの画面でも同じ幅にする（sharedPrefs）。
 // ドラッグ中は、幅の CSS 変数（--w-sessions など）を持つ要素（mainRef）を直接書き換え、離したときに状態に入れる。
 // ドラッグ中に状態を変えると、pointermove のたびに画面全体が描き直されるため
 export function useColumnWidths(): {
@@ -57,12 +58,9 @@ export function useColumnWidths(): {
       setWidths(draft.current);
       draft.current = null;
     }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(latest.current));
-    } catch {
-      // 保存できなくても今の表示には影響しない
-    }
+    writeSharedPref(STORAGE_KEY, JSON.stringify(latest.current));
   }, []);
+  useSharedPrefChange(STORAGE_KEY, () => setWidths(load()));
   const reset = useCallback(
     (column: Column) => {
       setWidths((prev) => ({ ...prev, [column]: DEFAULTS[column] }));

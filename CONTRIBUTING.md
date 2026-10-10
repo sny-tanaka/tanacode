@@ -789,7 +789,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 別のセッションへのコピー（`ChecklistStore.copyCards`）: タイトル・説明文・チェック・スレッドを写し（id は振り直す）、記録の行「〜からコピーしました」を足します。先に同じ名前のリストがあれば足し、無ければ元の説明ごと作ります。コピーできる範囲は `tanacode-sessions` と同じ `canSee`（同じフォルダ・親子・兄弟）。アーカイブしたセッションへは断ります。画面からは `checklist:copy`。
 - 画面: サイドパネルの `checklist/ChecklistPanel.tsx`（リストごとにタイトルだけを並べる。チェック欄・＋・ドラッグ・⌘ と ⇧ での選択・ゴミ箱）と、エディタの場所の `checklist/CardPane.tsx`（`App.tsx` の `CenterView` の `card`。カードの id で引くので、別のリストへ移しても追いかける）。値は `useChecklists`（選んでいるセッションのリストと、全セッションの未読の数。セッション一覧とアクティビティバーの印）。
   - チャットの知らせやツールの行からカードを開くときは、props を通さずに `checklist/openCard.ts` の `openChecklistCard` で `App` に渡します（知らせは id で、ツールの行はリストの名前と番号で指す。`cardOfTool`）。ツールの行の対象は `checklistTarget`（「やること #3」など）。
-  - 「Claude に通知する」の前回の選択は localStorage（`tanacode.checklist.notify`）。
+  - 「Claude に通知する」の前回の選択は localStorage（`tanacode.checklist.notify`。どのプロファイルの画面でも同じにする表示設定）。
   - ストーリーは `ChecklistPanel.stories.tsx`・`CardPane.stories.tsx`（作り物は `sampleChecklists.ts`）。
 - オン・オフ: メニューの「tanacode → Claude にチェックリストを扱わせる」（`settings.json` の `checklistControl`。既定はオン）。オフなら起動に足さず、動いている Claude Code から呼ばれても断り、知らせも送りません。画面のチェックリストは使えます。
 
@@ -876,6 +876,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
+| `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
 | `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
 | `profiles/<id>/` | 足したプロファイルのデータ。中身は上の表のうち、プロファイルごとのもの（`sessions.json`・`settings.json`（登録した設定ファイル・Claude に許す機能だけを使う）・`checklists/`・ソケット・`statusline/`・`session-settings/`・`usage.json`・`scheduled-messages.json`・pty ホストのソケットとログ）。既定のプロファイルのものは、今までどおり上の場所 |
 
@@ -902,7 +903,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/main`: Electron のメインプロセス
   - `index.ts`: アプリの入り口。ウインドウ・メニュー・通知・終了の確認・新しいバージョンなど、アプリ全体のものを持ち、画面からの呼び出しを、送り元の画面のプロファイルに渡す。
     - 既定のプロファイルの画面はウインドウ自身。足したプロファイルの画面は、ウインドウいっぱいに重ねた `WebContentsView`（見ているものだけを出す）で、プロファイルを切り替えても画面の状態はそのまま残る
-    - 足したプロファイルの画面のセッションは `persist:tanacode-profile-<id>`（localStorage などを分ける）、アプリ内ブラウザの webview は `persist:tanacode-preview-<id>`（Cookie を分ける。`will-attach-webview` で main が差し替える）
+    - 足したプロファイルの画面のセッションは `persist:tanacode-profile-<id>`（localStorage などを分ける。カラムの幅などの表示設定だけは、下の `shared-prefs.ts` でそろえる）、アプリ内ブラウザの webview は `persist:tanacode-preview-<id>`（Cookie を分ける。`will-attach-webview` で main が差し替える）
     - 画面からの呼び出しは、画面を作るときに覚えた持ち主（`contentsProfile`）で振り分け、ほかのプロファイルのものは扱わせない
     - 通知は、プロファイルが 2 つ以上ならサブタイトルにプロファイルの名前を付け、クリックでそのプロファイルに切り替える。ほかのプロファイルに確認待ち・新しい応答があれば、どのプロファイルかは言わずに `profiles:changed` の `othersAttention` で知らせる
   - `profile-registry.ts`: 登録したプロファイル（`profiles.json`）。足すときに Claude Code の設定のフォルダを作る（`0700`）。外しても、設定のフォルダとデータは消さない
@@ -950,6 +951,10 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
   - `homebrew-update.ts`: Homebrew で入れたかの判定と、新しいバージョンのダウンロード（`brew fetch`）・終了したあとの入れ替え（切り離したシェルで `brew upgrade`）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
+  - `shared-prefs.ts`: プロファイルをまたいで同じにする表示設定（`shared-prefs.json`）。キーは `src/shared/prefs.ts` の `SHARED_PREF_KEYS`（画面の localStorage のキーと同じ）
+    - 画面（`src/renderer/src/sharedPrefs.ts`）は、今までどおり localStorage から待たずに読み、書くときに main にも渡す（`prefs:set`）。main は覚えて、ほかのプロファイルの画面に配る（`prefs:changed`）。受け取った画面は localStorage に入れ、使っている部品が読み直す（`useSharedPrefChange`）
+    - 起動したときは、描く前にそろえる（`prefs:sync`。`main.tsx`）。main がまだ覚えていないものは、先に聞いてきた画面（ふつうは既定のプロファイル）の値を採る
+    - どのプロファイルでも同じにしたい表示設定を足すときは、`SHARED_PREF_KEYS` にキーを足し、`readSharedPref`・`writeSharedPref` で読み書きする。セッションの ID を持つもの（一覧の並びのロック・畳んだ親）や、アカウントで変わるもの（新規セッションで最後に選んだモデルなど）は、プロファイルごとのまま localStorage に置く
   - `notice-text.ts`: 通知の本文（確認待ちは、質問文や実行しようとしている内容を短くして出す。予約を送れなかったときも）
   - `scheduled-messages.ts`: 時刻を指定して送信（予約）。保存・時刻になったら手が空くのを待って送る・時刻を過ぎていたもの・取り消し
   - `translate.ts`: チャットの翻訳（補助プログラムのパスと使えるか・画面から来た値の検査・補助プログラムの起動と返事の読み取り・依頼を 1 つずつ動かす `Translator`）
@@ -957,7 +962,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行）
-  - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で localStorage に保つ）
+  - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
   - `editor/`, `explorer/`, `search/`: エディタ・Markdown プレビュー・ファイルツリー・検索
