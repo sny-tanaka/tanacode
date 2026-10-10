@@ -143,7 +143,7 @@ export function AccountPanel() {
             <>
               <span className="profile-dot" style={{ background: current.color }} />
               <span className="account-name">{current.name}</span>
-              <span className={`account-org${account === null ? ' none' : ''}`}>{plan}</span>
+              <span className={`account-org${account === null ? ' none' : ''}`}>{[plan, organization].filter(Boolean).join(' · ')}</span>
             </>
           ) : (
             <>

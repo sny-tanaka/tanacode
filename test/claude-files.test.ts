@@ -181,6 +181,26 @@ describe('ログインしたアカウント（readClaudeAccount）', () => {
     expect(await account.readClaudeAccount()).toEqual({ email: 'taro@example.com', organization: null, plan: null });
   });
 
+  it('planDisplayName が無ければ（今の Claude Code は書かない）、組織の種類からプランの名前を作る。Max は利用枠の段から倍率も付ける', async () => {
+    const plan = async (oauth: Record<string, unknown>) => {
+      write({ oauthAccount: { emailAddress: 'taro@example.com', ...oauth } });
+      return (await account.readClaudeAccount())?.plan;
+    };
+    // 2.1.296 の .claude.json の形（Max・Team）
+    expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_20x', userRateLimitTier: null })).toBe('Claude Max 20x');
+    expect(await plan({ organizationType: 'claude_team', organizationRateLimitTier: 'default_raven', userRateLimitTier: 'default_claude_max_5x', seatTier: 'team_tier_1' })).toBe('Claude Team');
+    expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_5x' })).toBe('Claude Max 5x');
+    // 段が無い・読めない形なら、倍率は付けない
+    expect(await plan({ organizationType: 'claude_max' })).toBe('Claude Max');
+    expect(await plan({ organizationType: 'claude_max', organizationRateLimitTier: 'default_raven' })).toBe('Claude Max');
+    expect(await plan({ organizationType: 'claude_pro', organizationRateLimitTier: 'default_claude_ai' })).toBe('Claude Pro');
+    expect(await plan({ organizationType: 'claude_enterprise' })).toBe('Claude Enterprise');
+    // planDisplayName があれば、そちらを使う
+    expect(await plan({ organizationType: 'claude_max', planDisplayName: 'Claude Team' })).toBe('Claude Team');
+    // プランとして読めない種類は出さない
+    for (const organizationType of ['api', 'claude_', 'claude', '', 3, null]) expect(await plan({ organizationType }), String(organizationType)).toBeNull();
+  });
+
   it('ログインしていない・形が違う・ファイルが無いときは null', async () => {
     write({ numStartups: 1 });
     expect(await account.readClaudeAccount()).toBeNull();

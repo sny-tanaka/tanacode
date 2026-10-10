@@ -4,7 +4,7 @@ export type ClaudeAccount = {
   email: string;
   // 組織の名前。個人のプランでは「<メールアドレス>'s Organization」のような名前になる
   organization: string | null;
-  // プランの表示名（例: Claude Max・Claude Team）
+  // プランの表示名（例: Claude Max 20x・Claude Team）
   plan: string | null;
 };
 
