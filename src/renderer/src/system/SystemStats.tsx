@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { t } from '@shared/i18n';
 import type { ProcessUsage, SystemStats as Stats } from '@shared/system';
 
 // フッターに出す CPU・メモリの使用率。マウスを乗せると多く使っているプロセスを出す
@@ -9,13 +10,13 @@ export function SystemStats() {
   const memPercent = Math.round((stats.memUsed / stats.memTotal) * 100);
   return (
     <>
-      <span className="system-stat" title={`CPU を多く使っているプロセス\n${list(stats.topCpu, (p) => `${p.cpu.toFixed(1)}%`)}`}>
+      <span className="system-stat" title={`${t('app.systemStats.topCpu')}\n${list(stats.topCpu, (p) => `${p.cpu.toFixed(1)}%`)}`}>
         CPU
         <Meter percent={stats.cpuPercent} />
         <Value text={`${stats.cpuPercent}%`} widest="100%" />
       </span>
-      <span className="system-stat" title={`メモリを多く使っているプロセス\n${list(stats.topMem, (p) => gb(p.memBytes))}`}>
-        メモリ
+      <span className="system-stat" title={`${t('app.systemStats.topMemory')}\n${list(stats.topMem, (p) => gb(p.memBytes))}`}>
+        {t('app.systemStats.memory')}
         <Meter percent={memPercent} />
         <span>
           <Value text={gb(stats.memUsed)} widest={gb(stats.memTotal)} /> / {gb(stats.memTotal)}

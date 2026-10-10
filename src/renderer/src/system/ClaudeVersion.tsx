@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { VERIFIED_CLAUDE_CODE_VERSION, versionMatch, type VersionMatch } from '@shared/claude-code';
+import { t } from '@shared/i18n';
 import { AlertCircleIcon, ArrowDownCircleIcon, ArrowUpCircleIcon, CheckCircleIcon, type IconComponent } from '../icons';
 
 // 入っている Claude Code のバージョン。undefined はまだ確かめていない、null は見つからない
@@ -26,7 +27,7 @@ export function ClaudeVersion({ version }: { version: string | null | undefined 
   return (
     <span className={`claude-version ${match}`} data-tip={reason(match, version)} data-tip-side="top">
       <Mark size={12} />
-      {version ? `v${version}` : 'Claude Code が見つかりません'}
+      {version ? `v${version}` : t('app.claudeVersion.notFound')}
     </span>
   );
 }
@@ -35,13 +36,13 @@ function reason(match: VersionMatch, version: string | null): string {
   const verified = VERIFIED_CLAUDE_CODE_VERSION;
   switch (match) {
     case 'same':
-      return `Claude Code ${version} は、tanacode で動作確認済のバージョンです`;
+      return t('app.claudeVersion.same', { version: version ?? '' });
     case 'newer':
-      return `Claude Code ${version} は、tanacode で動作確認済のバージョン（${verified}）より新しいバージョンです。\n画面や会話ログの形が変わっていると、一部の表示や操作が動かない場合があります。`;
+      return t('app.claudeVersion.newer', { version: version ?? '', verified });
     case 'older':
-      return `Claude Code ${version} は、tanacode で動作確認済のバージョン（${verified}）より古いバージョンです。\ntanacode が使う機能や表示が無いと、一部の表示や操作が動かない場合があります。`;
+      return t('app.claudeVersion.older', { version: version ?? '', verified });
     case 'missing':
-      return `claude コマンドが見つからないか、バージョンを読めませんでした。\nClaude Code を入れて、ターミナルで一度 claude を起動してください。`;
+      return t('app.claudeVersion.missing');
   }
 }
 

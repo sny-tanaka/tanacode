@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppUpdate } from '@shared/app-update';
+import { t } from '@shared/i18n';
 import { CheckCircleIcon, DownloadIcon } from '../icons';
 
 // tanacode の新しいバージョン（GitHub の Releases）。まだ分からない・確かめる設定がオフなら null
@@ -18,12 +19,9 @@ export function useAppUpdate(): AppUpdate | null {
 }
 
 // 新しいバージョンを入れる手順（README の「更新」と同じ）
-const STEPS = [
-  '更新の手順',
-  '・Homebrew で入れた場合: 新しいバージョンを裏でダウンロードし、終わるとここに「再起動して更新」が出ます。手で入れるときは、「ファイル → Claude Code も止めて終了」で終了してから、brew update && brew upgrade --cask tanacode を実行します',
-  '・ビルド済みのアプリの場合: 「ファイル → Claude Code も止めて終了」で終了してから、新しいバージョンを入れます',
-  '・ソースから入れた場合: git pull・npm install・npm run install-app を実行して、tanacode を起動し直します',
-].join('\n');
+function steps(): string {
+  return [t('app.update.stepsTitle'), t('app.update.stepHomebrew'), t('app.update.stepBuilt'), t('app.update.stepSource')].join('\n');
+}
 
 // 新しいバージョンの印を見た（マウスを乗せた・押した）バージョン。見たバージョンでは、もう印を動かさない（このマシンだけの表示の状態なので localStorage に置く）
 export const SEEN_KEY = 'tanacode.app-update.seen';
@@ -44,7 +42,7 @@ export function AppUpdateMark({ update }: { update: AppUpdate | null }) {
   if (!update) return null;
   if (!update.available)
     return (
-      <span className="app-update latest" data-tip="最新バージョンです">
+      <span className="app-update latest" data-tip={t('app.update.latest')}>
         <CheckCircleIcon size={14} />
       </span>
     );
@@ -70,8 +68,8 @@ function UpdateAvailable({ update }: { update: AppUpdate }) {
   return (
     <button
       className={`app-update available${seen ? '' : ' calling'}`}
-      aria-label={`v${update.latest} があります`}
-      data-tip={`v${update.latest} があります\n${homebrewNote(update)}押すと、GitHub の Releases のページを開きます\n\n${STEPS}`}
+      aria-label={t('app.update.available', { version: update.latest })}
+      data-tip={`${t('app.update.available', { version: update.latest })}\n${homebrewNote(update)}${t('app.update.openReleases')}\n\n${steps()}`}
       onMouseEnter={markSeen}
       onFocus={markSeen}
       onClick={() => (markSeen(), window.open(update.url))}
@@ -83,8 +81,8 @@ function UpdateAvailable({ update }: { update: AppUpdate }) {
 
 // Homebrew で用意している途中・用意できなかったときに、ツールチップに足す一文
 function homebrewNote(update: AppUpdate): string {
-  if (update.homebrew?.status === 'downloading') return 'Homebrew でダウンロードしています。終わると、ここから更新できます\n';
-  if (update.homebrew?.status === 'failed') return 'Homebrew でダウンロードできませんでした。あとでやり直します\n';
+  if (update.homebrew?.status === 'downloading') return `${t('app.update.homebrewDownloading')}\n`;
+  if (update.homebrew?.status === 'failed') return `${t('app.update.homebrewFailed')}\n`;
   return '';
 }
 
@@ -94,16 +92,12 @@ function UpdateReady({ version }: { version: string }) {
   return (
     <button
       className="app-update available ready"
-      aria-label={`再起動して v${version} に更新`}
-      data-tip={[
-        `v${version} をダウンロードしました`,
-        '押すと、tanacode を終了し、Homebrew で入れ替えてから起動し直します',
-        'メニューの「終了するときに新しいバージョンを入れる」がオンなら、ふつうに終了したときにも入れ替えます',
-      ].join('\n')}
+      aria-label={t('app.update.readyLabel', { version })}
+      data-tip={[t('app.update.downloaded', { version }), t('app.update.readyRestart'), t('app.update.readyOnQuit')].join('\n')}
       onClick={() => void window.tanacode.appUpdate.install()}
     >
       <DownloadIcon size={14} />
-      <span>再起動して更新</span>
+      <span>{t('app.update.restart')}</span>
     </button>
   );
 }

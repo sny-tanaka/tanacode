@@ -1,4 +1,5 @@
 import type { PullRequestLink } from '@shared/chat';
+import { t, type MessageKey } from '@shared/i18n';
 import type { SessionWorktree } from '@shared/ipc';
 import { WorktreeIcon } from './icons';
 import type { SessionStatus } from './chat/chatState';
@@ -6,15 +7,15 @@ import { SystemStats } from './system/SystemStats';
 import { ClaudeVersion } from './system/ClaudeVersion';
 import { useCursor } from './editor/cursorStore';
 
-// 点の色は global.css のトークン（くすませずそのまま使う）。warning は人の対応が必要な状態だけに使う
-const STATUS = {
-  'not-started': { label: 'Claude Code 未起動', color: 'var(--text-tertiary)' },
-  starting: { label: 'Claude Code 起動中', color: 'var(--blue)' },
-  idle: { label: 'Claude Code 待機中', color: 'var(--ok)' },
-  running: { label: 'Claude Code 作業中', color: 'var(--claude)' },
+// 点の色は global.css のトークン（くすませずそのまま使う）。warning は人の対応が必要な状態だけに使う。label は文言のキー
+const STATUS: Record<SessionStatus, { label: MessageKey; color: string }> = {
+  'not-started': { label: 'app.status.notStarted', color: 'var(--text-tertiary)' },
+  starting: { label: 'app.status.starting', color: 'var(--blue)' },
+  idle: { label: 'app.status.idle', color: 'var(--ok)' },
+  running: { label: 'app.status.running', color: 'var(--claude)' },
   // 正常な終了はエラーではない。異常終了（終了コードが 0 以外）だけ danger
-  exited: { label: 'Claude Code 終了', color: 'var(--text-tertiary)' },
-} as const;
+  exited: { label: 'app.status.exited', color: 'var(--text-tertiary)' },
+};
 
 type Props = {
   status: SessionStatus;
@@ -58,21 +59,21 @@ export function StatusBar({
     <footer className="statusbar">
       <div className="status-item">
         <span className={`status-dot${busy ? ' running' : ''}`} style={busy ? undefined : { background: failed ? 'var(--danger)' : s.color }} />
-        <span className={busy ? 'flow-text' : undefined}>{failed ? `${s.label}（code ${exitCode}）` : s.label}</span>
+        <span className={busy ? 'flow-text' : undefined}>{failed ? t('app.status.exitedWithCode', { code: exitCode }) : t(s.label)}</span>
       </div>
       <ClaudeVersion version={claudeVersion} />
       {branch && (
         <button
           className={`status-button${worktree ? ' with-icon' : ''}`}
           onClick={onOpenScm}
-          data-tip={worktree ? `worktree ${worktree.name} で動いています（元のフォルダ: ${worktree.root}）\nソース管理を開く` : 'ソース管理を開く'}
+          data-tip={worktree ? `${t('app.status.worktree', { name: worktree.name, root: worktree.root })}\n${t('app.status.openScm')}` : t('app.status.openScm')}
         >
           {worktree && <WorktreeIcon size={12} />}
           {branch}
         </button>
       )}
       {pr && (
-        <a className="status-link" href={pr.url} onClick={(e) => (e.preventDefault(), window.open(pr.url))} title={`${pr.repository} のプルリクエストを開く\n${pr.url}`}>
+        <a className="status-link" href={pr.url} onClick={(e) => (e.preventDefault(), window.open(pr.url))} title={t('app.status.openPr', { repository: pr.repository, url: pr.url })}>
           PR #{pr.number}
         </a>
       )}

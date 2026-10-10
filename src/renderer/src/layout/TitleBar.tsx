@@ -1,4 +1,5 @@
 import { REPO_URL, type AppUpdate } from '@shared/app-update';
+import { t } from '@shared/i18n';
 import logo from '../assets/logo.png';
 import { AppUpdateMark } from './AppUpdate';
 import { BellIcon } from '../icons';
@@ -20,7 +21,7 @@ export function TitleBar({
 }) {
   return (
     <header className="titlebar">
-      <button className="titlebar-logo-link" aria-label="GitHub の tanacode のページを開く" onClick={() => window.open(REPO_URL)}>
+      <button className="titlebar-logo-link" aria-label={t('app.titleBar.openRepo')} onClick={() => window.open(REPO_URL)}>
         <img className="titlebar-logo" src={logo} alt="tanacode" />
       </button>
       <span className="titlebar-version">v{__APP_VERSION__}</span>
@@ -30,9 +31,13 @@ export function TitleBar({
         <div className="titlebar-actions">
           <Toggle
             label={<BellIcon size={16} />}
-            name="通知"
+            name={t('app.titleBar.notifications')}
             on={notifications}
-            title={`通知\n作業の完了や確認待ちを、macOS の通知で知らせる\n${notifications ? '通知を出しています' : '通知を止めています'}`}
+            title={[
+              t('app.titleBar.notifications'),
+              t('app.titleBar.notificationsAbout'),
+              t(notifications ? 'app.titleBar.notificationsOn' : 'app.titleBar.notificationsOff'),
+            ].join('\n')}
             onChange={onNotificationsChange}
           />
         </div>
