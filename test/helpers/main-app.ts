@@ -98,6 +98,8 @@ export class FakeWindow extends Emitter {
   fullScreen = false;
   focused = false;
   bounds = { x: 40, y: 30, width: 1400, height: 900 };
+  // 作ったときの位置と大きさ（API で決めた最後のもの）
+  private readonly created = this.bounds;
   // ウインドウに重ねた画面（足したプロファイルのもの）
   readonly contentView = {
     children: [] as FakeView[],
@@ -118,7 +120,10 @@ export class FakeWindow extends Emitter {
   isFullScreen = () => this.fullScreen;
   isMinimized = () => this.minimized;
   isFocused = () => this.focused;
-  getNormalBounds = () => this.bounds;
+  isNormal = () => !this.maximized && !this.fullScreen && !this.minimized;
+  getBounds = () => this.bounds;
+  // macOS の Electron と同じく、最大化・フルスクリーンの間は、ドラッグで動かしたあとを追わず、API で決めた最後の位置を返す
+  getNormalBounds = () => (this.isNormal() ? this.bounds : this.created);
   maximize = vi.fn(() => {
     this.maximized = true;
   });

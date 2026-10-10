@@ -718,6 +718,8 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(await diffOf()).toBe('The repository of "s-55" has no commits yet.');
     });
 
+    // 本物の git を 60 回ほど起動する（get_session_diff 1 回で 13 回）。ほかのテストと並んで流れると、起動 1 回に数十 ms かかり、
+    // 既定の 5 秒に収まらないことがあるので、長めに待つ
     it('基点からの変更を、ファイルの一覧（追加・変更・バイナリ）と差分で返す。path で絞れる（空・. は絞らない、外は断る）', async () => {
       initRepo();
       mkdirSync(join(repo, 'src'), { recursive: true });
@@ -746,7 +748,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(await diffOf({ path: '  ' })).toContain('- Files: 4\n');
       expect(await diffOf({ path: '.' })).toContain('- Files: 4\n');
       expect(await diffOf({ path: '../x' })).toBe('Pass path as a path relative to the session folder.');
-    });
+    }, 20_000);
 
     it('基点が分からなければ、未コミットの変更だけ。差分が無ければ「差分なし」。ブランチから外れていれば、そう書く', async () => {
       initRepo();
