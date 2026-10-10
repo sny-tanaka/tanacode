@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
+import { t } from '@shared/i18n';
 import type { SettingsFile } from '@shared/settings-file';
 import type { AppSettings, StoredSettingsFile } from './app-settings';
 import { ownSettings, userStatusLineCommand } from './statusline';
@@ -25,25 +26,32 @@ function tilde(path: string): string {
   return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
-const UNUSABLE = 'を使えません: ';
+// 読めない設定ファイル。message はファイルの名前と場所を添えた文、reason は一覧に出す理由だけ
+class UnusableSettingsError extends Error {
+  constructor(
+    message: string,
+    readonly reason: string,
+  ) {
+    super(message);
+  }
+}
 
 function readSettings(file: StoredSettingsFile): Settings {
-  const fail = (reason: string) => new Error(`設定ファイル「${file.name}」（${tilde(file.path)}）${UNUSABLE}${reason}`);
+  const fail = (reason: string) => new UnusableSettingsError(t('main.settingsFile.unusable', { name: file.name, path: tilde(file.path), reason }), reason);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(file.path, 'utf8'));
   } catch (error) {
-    throw fail((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'ファイルが見つかりません' : 'JSON として読めません（書き方を確かめてください）');
+    throw fail((error as NodeJS.ErrnoException).code === 'ENOENT' ? t('main.settingsFile.fileNotFound') : t('main.settingsFile.invalidJson'));
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw fail('中身が JSON のオブジェクトではありません');
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw fail(t('main.settingsFile.notObject'));
   return parsed as Settings;
 }
 
-// 一覧に出す、読めない理由（「…を使えません: 」のあとの部分）
+// 一覧に出す、読めない理由（ファイルの名前と場所を除いた部分）
 function reasonOf(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  const at = text.indexOf(UNUSABLE);
-  return at < 0 ? text : text.slice(at + UNUSABLE.length);
+  if (error instanceof UnusableSettingsError) return error.reason;
+  return error instanceof Error ? error.message : String(error);
 }
 
 function modelOf(settings: Settings): string | null {
@@ -85,7 +93,7 @@ function statusLineCommandOf(profile: Settings, claudeDir: string | null): strin
 export function defaultName(path: string): string {
   const base = basename(path).replace(/\.json$/i, '');
   const trimmed = base.replace(/^settings-/, '');
-  return trimmed || base || '設定ファイル';
+  return trimmed || base || t('main.settingsFile.defaultName');
 }
 
 export class SettingsFiles {
@@ -111,10 +119,10 @@ export class SettingsFiles {
   // 登録する。読めないファイル（無い・JSON でない）は登録できない。name を省くとファイル名から付け、ほかと重なれば番号を足す
   add(path: string, name?: string): SettingsFile {
     const absolute = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
-    if (!isAbsolute(absolute)) throw new Error('設定ファイルのパスは、/ から始まる絶対パスで指定してください');
+    if (!isAbsolute(absolute)) throw new Error(t('main.settingsFile.notAbsolute'));
     const files = this.store.settingsFiles();
     const same = files.find((f) => f.path === absolute);
-    if (same) throw new Error(`同じファイルは、すでに「${same.name}」として登録されています`);
+    if (same) throw new Error(t('main.settingsFile.duplicatePath', { name: same.name }));
     const wanted = (name ?? '').trim() || defaultName(absolute);
     const entry: StoredSettingsFile = { id: randomUUID(), name: this.uniqueName(wanted, files), path: absolute };
     readSettings(entry);
@@ -125,10 +133,10 @@ export class SettingsFiles {
 
   rename(id: string, name: string): void {
     const files = this.store.settingsFiles();
-    if (!files.some((f) => f.id === id)) throw new Error('登録が見つかりません');
+    if (!files.some((f) => f.id === id)) throw new Error(t('main.settingsFile.entryNotFound'));
     const trimmed = name.trim();
-    if (!trimmed) throw new Error('名前を入力してください');
-    if (files.some((f) => f.id !== id && f.name === trimmed)) throw new Error(`「${trimmed}」という名前の設定ファイルは、すでにあります`);
+    if (!trimmed) throw new Error(t('main.settingsFile.nameRequired'));
+    if (files.some((f) => f.id !== id && f.name === trimmed)) throw new Error(t('main.settingsFile.duplicateName', { name: trimmed }));
     this.store.setSettingsFiles(files.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
     this.changed();
   }
@@ -170,7 +178,7 @@ export class SettingsFiles {
   private find(id: string): StoredSettingsFile {
     const file = this.store.settingsFiles().find((f) => f.id === id);
     if (!file) {
-      throw new Error('このセッションが使っていた設定ファイルは、登録から外されています。選択欄の「管理…」で登録し直すか、別の設定ファイルに切り替えてください');
+      throw new Error(t('main.settingsFile.removed'));
     }
     return file;
   }

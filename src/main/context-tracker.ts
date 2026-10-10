@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { toolTarget, type TranscriptEntry } from '@shared/chat';
 import { clip, type ContextItem, type ContextItemKind, type SessionContext } from '@shared/context';
+import { t } from '@shared/i18n';
 import { branchCut, readEntries, type ChainEntry } from './chat-log';
 import { EDIT_TOOLS, READ_TOOLS } from './knowledge-tracker';
 
@@ -51,8 +52,8 @@ type Usage = { at: number; input: number; output: number; remaining: number };
 type Topic = { key: string; label: string };
 type ResponseUsage = { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number; output_tokens?: number };
 
-// 最初の発言より前に入るもの（SessionStart の hooks が足した文など）
-const START: Topic = { key: 'topic:start', label: '会話の始まり' };
+// 最初の発言より前に入るもの（SessionStart の hooks が足した文など）。名前は作るときの言語で選ぶので、関数にする
+const conversationStart = (): Topic => ({ key: 'topic:start', label: t('main.context.start') });
 
 // 本体の会話ログから、今のコンテキストに入っているもの（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・
 // 発言ごとのやりとり）を集める。サブエージェントの会話は本体のコンテキストに入らないので数えない。
@@ -75,7 +76,7 @@ export class ContextTracker {
   // 今読んでいる行が、Claude の応答（出力）か
   private output = false;
   // 今のやりとり。小さな断片はここに足す
-  private topic: Topic = START;
+  private topic: Topic = conversationStart();
 
   constructor(private readonly cwd: string) {}
 
@@ -90,7 +91,7 @@ export class ContextTracker {
     this.responses = new Map();
     this.last = null;
     this.calibrated = 0;
-    this.topic = START;
+    this.topic = conversationStart();
   }
 
   handle(entry: TranscriptEntry): void {
@@ -142,7 +143,7 @@ export class ContextTracker {
     this.calibrated = Math.min(this.calibrated, eventCut);
     // 今のやりとりも、残った中の最後のものに戻す
     const topic = [...this.pieces].reverse().find((p): p is Piece => !('boundary' in p) && (p.kind === 'topic' || p.kind === 'summary'));
-    this.topic = topic ? { key: topic.key, label: topic.label } : START;
+    this.topic = topic ? { key: topic.key, label: topic.label } : conversationStart();
   }
 
   private add(uuid: string, piece: Omit<Piece, 'uuid' | 'input'>): void {
@@ -236,7 +237,7 @@ export class ContextTracker {
   private readUser(entry: TranscriptEntry, uuid: string): void {
     const content = entry.message?.content;
     if (entry.isCompactSummary) {
-      this.topic = { key: `summary:${uuid}`, label: '前回の圧縮の要約' };
+      this.topic = { key: `summary:${uuid}`, label: t('main.context.compactSummary') };
       this.add(uuid, { key: this.topic.key, kind: 'summary', label: this.topic.label, tokens: estimateTokens(textOf(content)) });
       return;
     }
@@ -257,7 +258,8 @@ export class ContextTracker {
     // 発言に添付した画像。指示の文でどれか分かるよう、発言の冒頭と何枚目かを名前に入れる
     const images = blocks.filter((b) => b.type === 'image');
     images.forEach((b, i) => {
-      const label = `「${clip(this.topic.label, 24)}」に添付した画像${images.length > 1 ? ` ${i + 1} 枚目` : ''}`;
+      const topic = clip(this.topic.label, 24);
+      const label = images.length > 1 ? t('main.context.imageNth', { topic, index: i + 1 }) : t('main.context.image', { topic });
       this.add(uuid, { key: `image:${uuid}:${i}`, kind: 'image', label, tokens: imageTokens(b) });
     });
   }
@@ -275,7 +277,7 @@ export class ContextTracker {
       const toolUseId = from ? this.agents.get(from) : undefined;
       const tool = toolUseId ? this.tools.get(toolUseId) : undefined;
       // 待機中に届いたものは、Claude Code がそれを受けて作業を始めるので、新しいやりとりにする
-      if (!origin.queued) this.startTopic(uuid, tool ? `知らせ: サブエージェント「${clip(tool.label, LABEL_CHARS)}」の報告` : '別の Claude からの知らせ', 0);
+      if (!origin.queued) this.startTopic(uuid, tool ? t('main.context.subagentReport', { name: clip(tool.label, LABEL_CHARS) }) : t('main.context.peerNotice'), 0);
       if (toolUseId && tool) return this.addResult(uuid, toolUseId, tool, tokens);
       return this.addToTopic(uuid, tokens);
     }
@@ -291,7 +293,7 @@ export class ContextTracker {
     const summary = /<summary>(.*?)<\/summary>/s.exec(text)?.[1]?.trim() ?? '';
     const toolUseId = /<tool-use-id>(.*?)<\/tool-use-id>/s.exec(text)?.[1]?.trim();
     const tool = toolUseId ? this.tools.get(toolUseId) : undefined;
-    if (starts) this.startTopic(uuid, `知らせ: ${clip(summary || 'バックグラウンドのタスクが終わりました', LABEL_CHARS)}`, 0);
+    if (starts) this.startTopic(uuid, t('main.context.notice', { summary: clip(summary || t('main.context.taskFinished'), LABEL_CHARS) }), 0);
     if (toolUseId && tool) this.addResult(uuid, toolUseId, tool, tokens);
     else if (tokens >= ITEM_TOKENS) this.add(uuid, { key: `tool:${uuid}`, kind: 'tool', tool: '', label: summary, tokens });
     else this.addToTopic(uuid, tokens);
@@ -401,7 +403,7 @@ function promptLabel(text: string): string | null {
 function answerLabel(result: unknown): string {
   const answers = (result as { answers?: Record<string, unknown> } | null)?.answers;
   const values = answers && typeof answers === 'object' ? Object.values(answers).filter((v): v is string => typeof v === 'string') : [];
-  return `質問への答え: ${clip(values.join(' / ') || '（回答なし）', LABEL_CHARS)}`;
+  return t('main.context.answer', { answer: clip(values.join(' / ') || t('main.context.noAnswer'), LABEL_CHARS) });
 }
 
 function textOf(content: unknown): string {

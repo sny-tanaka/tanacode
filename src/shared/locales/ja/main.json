@@ -1,1 +1,207 @@
-{}
+{
+  "error": {
+    "profileOfViewNotFound": "この画面のプロファイルが見つかりません",
+    "nothingToExport": "書き出す中身がありません",
+    "folderNotFound": "フォルダが見つかりません: {path}",
+    "folderCannotOpen": "フォルダを開けません: {path}",
+    "ptyHostUnreachable": "pty ホストに繋がりません: {path}"
+  },
+  "dialog": {
+    "pickFolder": "作業するフォルダを選択",
+    "pickSettingsFile": "設定ファイルを選択",
+    "exportDefaultName": "作業",
+    "exportTitle": "作業を書き出す",
+    "pickProfileDir": "Claude Code の設定のフォルダを選択",
+    "liveSessions": "Claude Code が動いているセッションがあります",
+    "liveSessionLine": "・{title}（{state}）",
+    "updateKeepRunningDetail": "動かしたまま更新すると、作業は切れずに、起動し直したアプリが引き継ぎます。新しいバージョンで増えた Claude のツールなどは、各セッションを「再起動」してから使えます。",
+    "updateStopDetail": "止めて更新すると、作業は途中で切れますが、すべて新しいバージョンで動きます。",
+    "updateKeepRunning": "動かしたまま更新",
+    "updateStop": "Claude Code も止めて更新",
+    "updateFailed": "tanacode を更新できませんでした",
+    "updateManual": "終了してから、ターミナルで brew update && brew upgrade --cask {cask} を実行してください。",
+    "updateBlocked": "macOS に止められたときは、システム設定 →「プライバシーとセキュリティ」→「アプリケーションの管理」で tanacode を許可すると、次から入れ替えられます。",
+    "ok": "OK",
+    "openLog": "ログを開く",
+    "quitDetail": "止めると、作業は途中で切れ、Remote Control からも続けられなくなります。動かしたまま終了すると、次に起動したときに引き継ぎます。",
+    "quitWillUpdate": "終了すると、Homebrew で新しいバージョンに入れ替えます。",
+    "quitKeepRunning": "動かしたまま終了",
+    "quitStop": "Claude Code も止めて終了",
+    "ptyHostFailed": "Claude Code を動かす常駐プロセスを起動できませんでした",
+    "errorWithLog": "{error}\n\nログ: {log}",
+    "profileOpenFailed": "プロファイル「{name}」を開けませんでした"
+  },
+  "menu": {
+    "notifyUpdates": "新しいバージョンが出たら通知する",
+    "updateOnQuit": "終了するときに新しいバージョンを入れる（Homebrew）",
+    "browserControl": "Claude にアプリ内ブラウザを操作させる",
+    "sessionsControl": "Claude にほかのセッションを扱わせる",
+    "checklistControl": "Claude にチェックリストを扱わせる",
+    "walkthroughControl": "Claude にウォークスルーさせる",
+    "browserHosts": "アプリ内ブラウザで Claude に許す先…",
+    "file": "ファイル",
+    "newSession": "新規セッション",
+    "stopAndQuit": "Claude Code も止めて終了"
+  },
+  "notification": {
+    "browserAsk": "ブラウザでの操作の依頼: {message}",
+    "turnCompleted": "作業が完了しました",
+    "needsTerminal": "ターミナルでの操作が必要です",
+    "question": "質問しています",
+    "permission": "実行の許可: {detail}",
+    "permissionNoDetail": "実行の許可を求めています",
+    "confirm": "確認: {title}",
+    "confirmNoTitle": "確認を求めています",
+    "images": "画像 {count} 枚",
+    "scheduledMissed": "{time} に送る予約を、時刻に送れませんでした: {text}",
+    "scheduledFailed": "予約したメッセージを送れませんでした（{reason}）: {text}",
+    "unknownReason": "理由は不明"
+  },
+  "format": {
+    "listSeparator": "、",
+    "shortListSeparator": "・",
+    "sentenceSeparator": "。"
+  },
+  "session": {
+    "untitled": "新しいセッション",
+    "notFound": "セッションが見つかりません"
+  },
+  "state": {
+    "question": "質問への回答待ち",
+    "permission": "実行の許可待ち",
+    "other": "操作待ち",
+    "browser": "ブラウザでの操作待ち",
+    "starting": "起動中",
+    "workingWithBackground": "作業中（バックグラウンド {count}件）",
+    "working": "作業中",
+    "waitingBackground": "バックグラウンド {count}件の完了待ち",
+    "idle": "待機中"
+  },
+  "remote": {
+    "unavailable": "Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）",
+    "switching": "Remote Control を切り替えている途中です。少し待ってからもう一度押してください",
+    "waitingAnswer": "Claude Code が質問や確認の答えを待っているため、今は切り替えられません。答えてから切り替えてください",
+    "draft": "ターミナルの Claude Code の入力欄に書きかけの文字があるため、切り替えられません",
+    "failed": "Claude Code の画面で Remote Control を切り替えられませんでした。ターミナルで /remote-control を操作してください"
+  },
+  "task": {
+    "notRunning": "セッションが動いていないため、止められません",
+    "nothingToStop": "止められるもの（動いているバックグラウンドのタスク）が見つかりません",
+    "busy": "別の操作の途中です。少し待ってからもう一度押してください",
+    "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
+    "draft": "ターミナルの入力欄に書きかけの文字があるため、止められません",
+    "notFound": "画面に見つかりませんでした。すでに終わったか、止まっています",
+    "ambiguous": "同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください",
+    "failed": "止められませんでした。ターミナルで /tasks を開いて止めてください"
+  },
+  "send": {
+    "notAccepting": "入力を受け付けられる状態ではなくなったため、送れませんでした",
+    "menuAppeared": "質問や確認が出たため、送れませんでした",
+    "notRunning": "Claude Code が動いていません",
+    "exited": "Claude Code が終了しました",
+    "cancelled": "送るのを取りやめました",
+    "waitingAnswer": "質問や確認の答えを待っているため、送れませんでした",
+    "draft": "ターミナルの入力欄に書きかけの文字があるため、送れませんでした",
+    "busy": "Claude Code の手が空かないため、送れませんでした"
+  },
+  "worktree": {
+    "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
+    "createFailed": "Claude Code が worktree を作れませんでした",
+    "commandAt": "{command}（{dir}）",
+    "started": "worktree .claude/worktrees/{name}（ブランチ {branch}） で始めました",
+    "restored": "消していた worktree .claude/worktrees/{name}（ブランチ {branch}） を作り直しました",
+    "cloned": "{paths} を元のフォルダから複製しました",
+    "cloneFailed": "{paths} は複製できませんでした",
+    "topDir": "いちばん上",
+    "installed": "{commands} を実行しました",
+    "commandFailedAt": "{command}（{dir}・終了コード {code}）",
+    "installFailed": "{commands} が失敗しました。ターミナルのタブで確かめてください",
+    "notRepo": "worktree で始めるには、git のリポジトリのフォルダを選んでください",
+    "noCommit": "worktree で始めるには、リポジトリにコミットが 1 つ以上必要です",
+    "noName": "worktree の名前を決められませんでした",
+    "locked": "worktree がロックされているため、消しませんでした",
+    "lockedWithReason": "worktree がロックされているため、消しませんでした（{reason}）"
+  },
+  "settingsFile": {
+    "unusable": "設定ファイル「{name}」（{path}）を使えません: {reason}",
+    "fileNotFound": "ファイルが見つかりません",
+    "invalidJson": "JSON として読めません（書き方を確かめてください）",
+    "notObject": "中身が JSON のオブジェクトではありません",
+    "defaultName": "設定ファイル",
+    "notAbsolute": "設定ファイルのパスは、/ から始まる絶対パスで指定してください",
+    "duplicatePath": "同じファイルは、すでに「{name}」として登録されています",
+    "entryNotFound": "登録が見つかりません",
+    "nameRequired": "名前を入力してください",
+    "duplicateName": "「{name}」という名前の設定ファイルは、すでにあります",
+    "removed": "このセッションが使っていた設定ファイルは、登録から外されています。選択欄の「管理…」で登録し直すか、別の設定ファイルに切り替えてください",
+    "unavailable": "設定ファイルを使えない状態です"
+  },
+  "profile": {
+    "cannotRemoveDefault": "標準のプロファイルは外せません",
+    "hasLiveSessions": "Claude Code が動いているセッションがあります。止めてから外してください",
+    "defaultName": "標準",
+    "sameDir": "ほかのプロファイルと同じフォルダです: {path}",
+    "notDir": "フォルダではありません: {path}",
+    "notFound": "プロファイルが見つかりません",
+    "nameRequired": "名前を入れてください",
+    "dirNotAbsolute": "フォルダは絶対パスか ~/ で始まるパスで指定してください"
+  },
+  "browserHosts": {
+    "invalid": "書き方が違います: {hosts}（例: example.test・*.example.test・192.168.0.10）"
+  },
+  "scheduled": {
+    "cannotSchedule": "このセッションには予約できません",
+    "empty": "送る内容がありません",
+    "pastTime": "これから先の時刻を指定してください",
+    "sending": "送っている途中のため、時刻を変えられません",
+    "notFound": "予約が見つかりません"
+  },
+  "context": {
+    "start": "会話の始まり",
+    "compactSummary": "前回の圧縮の要約",
+    "image": "「{topic}」に添付した画像",
+    "imageNth": "「{topic}」に添付した画像 {index} 枚目",
+    "subagentReport": "知らせ: サブエージェント「{name}」の報告",
+    "peerNotice": "別の Claude からの知らせ",
+    "notice": "知らせ: {summary}",
+    "taskFinished": "バックグラウンドのタスクが終わりました",
+    "answer": "質問への答え: {answer}",
+    "noAnswer": "（回答なし）"
+  },
+  "translate": {
+    "invalidTexts": "訳す文字の形が違います",
+    "tooLong": "長すぎて訳せません",
+    "unreadable": "翻訳の補助プログラムの返事を読めませんでした",
+    "timeout": "時間内に訳し終わりませんでした"
+  },
+  "git": {
+    "commitMessageRequired": "コミットメッセージを入力してください",
+    "noDefaultBranch": "デフォルトブランチが分かりません",
+    "diverged": "{name} には切り替えましたが、手元の {name} が {target} と分かれているため最新まで進められませんでした"
+  },
+  "search": {
+    "invalidRegex": "正規表現が正しくありません"
+  },
+  "subagent": {
+    "omitted": "…（省略）"
+  },
+  "model": {
+    "noCatalog": "Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません",
+    "needsVersion": "Claude Code {version} 以上が必要（今は {installed}）"
+  },
+  "walkthrough": {
+    "missing": "ウォークスルーがありません。",
+    "noBody": "本文がありません。",
+    "noSteps": "ウォークスルーのステップがありません。",
+    "notRepo": "git のリポジトリではありません。",
+    "detached": "ブランチにいません（detached HEAD）。",
+    "prLookupFailed": "GitHub の PR を調べられませんでした。gh が入っていて、ログインしているか（gh auth status）確かめてください。",
+    "noOpenPr": "ブランチ {branch} の開いている PR がありません。先に PR を作ってください。",
+    "badPrUrl": "PR の URL を読めませんでした（{url}）。",
+    "headMismatch": "手元の HEAD（{local}）が、PR の最新のコミット（{remote}）と違います。プッシュ（かプル）してから載せてください。",
+    "missingFiles": "コミットに入っていないファイルがあります: {files}。コミットしてプッシュしてから載せてください。",
+    "dirtyFiles": "コミットしていない変更があるファイルがあります: {files}。コミットしてプッシュしてから載せてください。",
+    "emptyBody": "本文が空です。",
+    "tooLong": "本文が長すぎます（{count} 文字。GitHub のコメントは {max} 文字まで）。説明を短くしてください。"
+  }
+}

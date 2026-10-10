@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
+import { t } from '@shared/i18n';
 import { MAX_TRANSLATE_CHARS, MAX_TRANSLATE_TEXTS, type TranslateError, type TranslateResult } from '@shared/translate';
 
 // チャットの思考・応答の翻訳。macOS 標準の翻訳を、同梱の補助プログラム（native/translate/main.swift）で呼ぶ。
@@ -25,9 +26,9 @@ export function translateAvailable(systemVersion: string, helperExists: boolean)
 
 // 画面から来た値が、訳せる文字の配列か。違えば例外（呼んだ画面に返る）
 export function translateTexts(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.every((t) => typeof t === 'string')) throw new Error('訳す文字の形が違います');
-  if (value.length > MAX_TRANSLATE_TEXTS || value.reduce((n: number, t: string) => n + t.length, 0) > MAX_TRANSLATE_CHARS) {
-    throw new Error('長すぎて訳せません');
+  if (!Array.isArray(value) || !value.every((text) => typeof text === 'string')) throw new Error(t('main.translate.invalidTexts'));
+  if (value.length > MAX_TRANSLATE_TEXTS || value.reduce((n: number, text: string) => n + text.length, 0) > MAX_TRANSLATE_CHARS) {
+    throw new Error(t('main.translate.tooLong'));
   }
   return value as string[];
 }
@@ -46,7 +47,7 @@ export function parseTranslateOutput(stdout: string, count: number): TranslateRe
   } catch {
     // 下で failed にする
   }
-  return { ok: false, error: 'failed', message: '翻訳の補助プログラムの返事を読めませんでした' };
+  return { ok: false, error: 'failed', message: t('main.translate.unreadable') };
 }
 
 // 補助プログラムを 1 回動かす。訳す文字は標準入力で渡す。
@@ -54,7 +55,7 @@ export function parseTranslateOutput(stdout: string, count: number): TranslateRe
 export function runTranslateHelper(path: string, texts: string[], timeoutMs = 30_000 + 150 * texts.length): Promise<TranslateResult> {
   return new Promise((resolve) => {
     const child = execFile(path, [], { timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: MAX_BUFFER }, (err, stdout) => {
-      if (err && !stdout) resolve({ ok: false, error: 'failed', message: err.killed ? '時間内に訳し終わりませんでした' : err.message });
+      if (err && !stdout) resolve({ ok: false, error: 'failed', message: err.killed ? t('main.translate.timeout') : err.message });
       else resolve(parseTranslateOutput(stdout, texts.length));
     });
     // 補助プログラムが先に終わっていたときの EPIPE は、上の結果で分かるので捨てる

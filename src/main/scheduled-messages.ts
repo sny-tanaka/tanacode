@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { t } from '@shared/i18n';
 import { SCHEDULE_LATE_MS, type ScheduledMessage } from '@shared/scheduled';
 import type { SessionState } from '@shared/session-tools';
 
@@ -51,9 +52,9 @@ export class ScheduledMessages {
   }
 
   add(sessionId: string, text: string, attachments: string[], at: number): ScheduledMessage {
-    if (!this.accepts(sessionId)) throw new Error('このセッションには予約できません');
-    if (!text.trim() && attachments.length === 0) throw new Error('送る内容がありません');
-    if (!Number.isFinite(at) || at <= this.now()) throw new Error('これから先の時刻を指定してください');
+    if (!this.accepts(sessionId)) throw new Error(t('main.scheduled.cannotSchedule'));
+    if (!text.trim() && attachments.length === 0) throw new Error(t('main.scheduled.empty'));
+    if (!Number.isFinite(at) || at <= this.now()) throw new Error(t('main.scheduled.pastTime'));
     const message: ScheduledMessage = { id: randomUUID(), sessionId, text, attachments, at, createdAt: this.now(), state: 'scheduled', error: null };
     this.messages = [...this.messages, message];
     this.changed();
@@ -63,8 +64,8 @@ export class ScheduledMessages {
   // 時刻を変える（送れなかったもの・時刻を過ぎていたものも、もう一度待つ）
   reschedule(id: string, at: number): void {
     const message = this.find(id);
-    if (message.state === 'sending') throw new Error('送っている途中のため、時刻を変えられません');
-    if (!Number.isFinite(at) || at <= this.now()) throw new Error('これから先の時刻を指定してください');
+    if (message.state === 'sending') throw new Error(t('main.scheduled.sending'));
+    if (!Number.isFinite(at) || at <= this.now()) throw new Error(t('main.scheduled.pastTime'));
     this.update(id, { at, state: 'scheduled', error: null });
   }
 
@@ -155,7 +156,7 @@ export class ScheduledMessages {
 
   private find(id: string): ScheduledMessage {
     const message = this.messages.find((m) => m.id === id);
-    if (!message) throw new Error('予約が見つかりません');
+    if (!message) throw new Error(t('main.scheduled.notFound'));
     return message;
   }
 

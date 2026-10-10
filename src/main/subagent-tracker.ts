@@ -2,11 +2,14 @@ import { statSync } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { toolTarget } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { SubagentRun } from '@shared/subagent';
 import type { TaskUsage } from './task-router';
 
 const POLL_MS = 1000;
 const RECENT_TOOLS = 5;
+// 結果をこの文字数で切る
+const MAX_RESULT = 3000;
 
 type Tracked = { run: SubagentRun; subagentsDir: string; offset: number };
 
@@ -159,7 +162,7 @@ export class SubagentTracker {
       durationMs: usage?.durationMs ?? t.run.durationMs ?? (t.run.startedAt ? Date.now() - t.run.startedAt : null),
       tokens: usage?.totalTokens ?? t.run.tokens,
       toolCalls: usage?.toolUses ?? t.run.toolCalls,
-      result: result && result.length > 3000 ? `${result.slice(0, 3000)}\n…（省略）` : result,
+      result: clipResult(result),
     };
     this.onChange(this.all());
   }
@@ -252,4 +255,9 @@ async function findAgent(dir: string, toolUseId: string): Promise<{ agentId: str
     if (meta?.toolUseId === toolUseId) return { agentId: m[1], model: meta.model ?? null };
   }
   return null;
+}
+
+// 長い結果は切って、省いたことを書き足す
+function clipResult(result: string | null): string | null {
+  return result && result.length > MAX_RESULT ? `${result.slice(0, MAX_RESULT)}\n${t('main.subagent.omitted')}` : result;
 }

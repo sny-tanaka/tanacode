@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { compareVersions } from '@shared/claude-code';
+import { t } from '@shared/i18n';
 import type { ModelCatalog, ModelChoice } from '@shared/models';
 import { claudeVersion } from './claude-version';
 import { claudeConfigDir } from './claude-config';
@@ -44,7 +45,7 @@ export async function readModelCatalog(claudeDir: string | null = null): Promise
       return {
         value: m.id,
         name: m.name ?? m.id,
-        detail: disabled ? `Claude Code ${needs} 以上が必要（今は ${installed}）` : (m.description ?? ''),
+        detail: disabled ? t('main.model.needsVersion', { version: String(needs), installed: String(installed) }) : (m.description ?? ''),
         disabled,
         efforts: m.thinking?.effort_options?.map((e) => e.id).filter((id): id is string => !!id) ?? [],
       };

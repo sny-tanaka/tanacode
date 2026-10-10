@@ -6,6 +6,7 @@ import { rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { bridgeUrlOf, isHumanPrompt, isTranscriptEntry, promptDisplayText, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import { bracketedPaste, promptKeys, stripControlChars } from '@shared/prompt-keys';
+import { t } from '@shared/i18n';
 import { isParentMessageDraft, modeWithin, weakerMode, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
@@ -239,7 +240,7 @@ export class SessionManager {
     return this.store
       .all()
       .filter((r) => !r.archived && this.runtimes.get(r.id)?.process)
-      .map((r) => ({ title: r.title ?? '新しいセッション', state: stateLabel(this.runtimes.get(r.id)!, this.browserAsks.has(r.id)) }));
+      .map((r) => ({ title: r.title ?? t('main.session.untitled'), state: stateLabel(this.runtimes.get(r.id)!, this.browserAsks.has(r.id)) }));
   }
 
   summary(id: string): SessionSummary | undefined {
@@ -279,9 +280,9 @@ export class SessionManager {
     this.emitSessions();
     // claude --worktree は、まだ信頼していないフォルダでは、信頼の確認を出さずに終わる（実測）
     if (/trust not yet accepted/i.test(screen)) {
-      throw new Error('このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください');
+      throw new Error(t('main.worktree.untrustedFolder'));
     }
-    throw new Error(`Claude Code が worktree を作れませんでした${screen ? `\n\n${screen.split('\n').slice(-8).join('\n')}` : ''}`);
+    throw new Error(`${t('main.worktree.createFailed')}${screen ? `\n\n${screen.split('\n').slice(-8).join('\n')}` : ''}`);
   }
 
   private addRecord(cwd: string, options: NewSessionOptions, worktree: SessionRecord['worktree'], parentId: string | null): string {
@@ -370,7 +371,7 @@ export class SessionManager {
   // 作業の書き出しの材料。動いているセッションも、会話ログを最初から読み直す（画像も画像置き場に入れ直す）
   async exportSource(id: string): Promise<ExportSource> {
     const record = this.store.get(id);
-    if (!record) throw new Error('セッションが見つかりません');
+    if (!record) throw new Error(t('main.session.notFound'));
     const live = !!this.runtimes.get(id)?.process;
     const { events, branches } = await readExportLog(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd, live);
     return { events, branches, home: homedir() };
@@ -530,9 +531,9 @@ export class SessionManager {
   // このセッションの Remote Control を切り替える。動いていれば /remote-control でその場でつなぐ・切る。
   // 止まっていれば、次に起動するときの指定だけ変える。切り替えられなかったら指定を戻して、理由を返す
   async setRemoteControl(id: string, on: boolean): Promise<string | null> {
-    if (!this.remoteControlAvailable) return 'Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）';
+    if (!this.remoteControlAvailable) return t('main.remote.unavailable');
     const record = this.store.get(id);
-    if (!record) return 'セッションが見つかりません';
+    if (!record) return t('main.session.notFound');
     const fail = (reason: string) => {
       this.store.update(id, { remoteControl: !on });
       this.emitSessions();
@@ -544,14 +545,14 @@ export class SessionManager {
     rt && (rt.remoteTried = null);
     // 止まっている・起動の途中・つながるのを待っているときは、起動やつながりが済んでから合わせる（reconcileRemote）
     if (!rt?.process || !rt.screen || !rt.ready || !rt.historyLoaded || rt.remoteConnected === null || rt.remoteConnected === on) return null;
-    if (rt.remoteSwitching) return fail('Remote Control を切り替えている途中です。少し待ってからもう一度押してください');
+    if (rt.remoteSwitching) return fail(t('main.remote.switching'));
     const screen = rt.screen.current;
-    if (screen.state.kind !== 'prompt') return fail('Claude Code が質問や確認の答えを待っているため、今は切り替えられません。答えてから切り替えてください');
-    if (screen.draft) return fail('ターミナルの Claude Code の入力欄に書きかけの文字があるため、切り替えられません');
+    if (screen.state.kind !== 'prompt') return fail(t('main.remote.waitingAnswer'));
+    if (screen.draft) return fail(t('main.remote.draft'));
     const ok = await this.switchRemote(id, rt, record.cwd, on);
     // 画面では分からなくても、会話ログで目的の状態になっていれば済んでいる
     if (ok || rt.remoteConnected === on) return null;
-    return fail('Claude Code の画面で Remote Control を切り替えられませんでした。ターミナルで /remote-control を操作してください');
+    return fail(t('main.remote.failed'));
   }
 
   remoteAvailable(): boolean {
@@ -611,24 +612,24 @@ export class SessionManager {
   // 本家と同じ操作（/tasks の画面で選んで x）を、画面にキーを送って行う。止まったかは、Claude Code が会話ログに書く完了通知で分かる
   async stopTask(id: string, ref: TaskRef): Promise<string | null> {
     const rt = this.runtimes.get(id);
-    if (!rt?.process || !rt.screen) return 'セッションが動いていないため、止められません';
+    if (!rt?.process || !rt.screen) return t('main.task.notRunning');
     const name = stopName(rt, ref);
-    if (name === null) return '止められるもの（動いているバックグラウンドのタスク）が見つかりません';
+    if (name === null) return t('main.task.nothingToStop');
     switch (await rt.screen.stopTask(name).catch((): StopResult => 'failed')) {
       case 'stopped':
         return null;
       case 'busy':
-        return '別の操作の途中です。少し待ってからもう一度押してください';
+        return t('main.task.busy');
       case 'not-prompt':
-        return '質問や確認の答えを待っているため、今は止められません。答えてから止めてください';
+        return t('main.task.waitingAnswer');
       case 'draft':
-        return 'ターミナルの入力欄に書きかけの文字があるため、止められません';
+        return t('main.task.draft');
       case 'not-found':
-        return '画面に見つかりませんでした。すでに終わったか、止まっています';
+        return t('main.task.notFound');
       case 'ambiguous':
-        return '同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください';
+        return t('main.task.ambiguous');
       case 'failed':
-        return '止められませんでした。ターミナルで /tasks を開いて止めてください';
+        return t('main.task.failed');
     }
   }
 
@@ -702,7 +703,7 @@ export class SessionManager {
   // 登録した設定ファイルを使えるか確かめる。使えなければ理由を添えて投げる
   private checkSettingsFile(settingsFile: string | null | undefined): void {
     if (!settingsFile) return;
-    if (!this.settingsFiles) throw new Error('設定ファイルを使えない状態です');
+    if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
     this.settingsFiles.check(settingsFile);
   }
 
@@ -715,7 +716,7 @@ export class SessionManager {
       this.settingsFiles?.release(id);
       return null;
     }
-    if (!this.settingsFiles) throw new Error('設定ファイルを使えない状態です');
+    if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
     return this.settingsFiles.prepare(id, settingsFile, browser, sessions);
   }
 
@@ -755,7 +756,7 @@ export class SessionManager {
     const run = async () => {
       const process = rt.process;
       if (!process) return;
-      if (guarded && !acceptsTyping(rt)) throw new Error('入力を受け付けられる状態ではなくなったため、送れませんでした');
+      if (guarded && !acceptsTyping(rt)) throw new Error(t('main.send.notAccepting'));
       // ESC などが残ると、貼り付けの外に出てキー操作（Enter・Shift+Tab など）として届いてしまうので取り除く
       const text = stripControlChars(rawText);
       // 画面の折り返しで空白が変わるので、空白を除いて覚える
@@ -778,7 +779,7 @@ export class SessionManager {
       }
       // Enter の直前にメニューが出ていたら、Enter はメニューの選択になってしまう
       if (guarded && (rt.screen?.current.state.kind !== 'prompt' || rt.attention !== null)) {
-        throw new Error('質問や確認が出たため、送れませんでした');
+        throw new Error(t('main.send.menuAppeared'));
       }
       process.write('\r');
       this.changed(id);
@@ -814,22 +815,22 @@ export class SessionManager {
   ): Promise<void> {
     const rt = this.runtimes.get(id);
     const process = rt?.process;
-    if (!rt || !process) throw new Error('Claude Code が動いていません');
+    if (!rt || !process) throw new Error(t('main.send.notRunning'));
     rt.pendingSubmits += 1;
     this.changed(id);
     try {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        if (rt.process !== process) throw new Error('Claude Code が終了しました');
-        if (signal?.aborted) throw new Error('送るのを取りやめました');
+        if (rt.process !== process) throw new Error(t('main.send.exited'));
+        if (signal?.aborted) throw new Error(t('main.send.cancelled'));
         // 直前に送ったもの（まだ会話ログに出ていない）があれば、それが終わるまで待つ
         const sending = rt.submittedAt !== null && Date.now() - rt.submittedAt < SUBMIT_GRACE_MS;
         if (acceptsTyping(rt) && !sending) break;
         if (Date.now() > deadline) {
           const screen = rt.screen?.current;
-          if (screen?.state.kind === 'menu') throw new Error('質問や確認の答えを待っているため、送れませんでした');
-          if (screen?.draft) throw new Error('ターミナルの入力欄に書きかけの文字があるため、送れませんでした');
-          throw new Error('Claude Code の手が空かないため、送れませんでした');
+          if (screen?.state.kind === 'menu') throw new Error(t('main.send.waitingAnswer'));
+          if (screen?.draft) throw new Error(t('main.send.draft'));
+          throw new Error(t('main.send.busy'));
         }
         await sleep(200);
       }
@@ -1156,16 +1157,15 @@ export class SessionManager {
     };
     const result = await prepareNodeModules(root, record.cwd, {
       onStep: step,
-      install: (cwd, dir, command) => this.runTask(id, cwd, command, dir ? `${command}（${dir}）` : command),
+      install: (cwd, dir, command) => this.runTask(id, cwd, command, dir ? t('main.worktree.commandAt', { command, dir }) : command),
     }).catch((error: unknown): NodeModulesResult => {
       console.error('node_modules を用意できませんでした', error);
       return { cloned: [], failed: [], installs: [] };
     });
     if (this.runtimes.get(id) !== rt) return;
     rt.preparing = null;
-    const where = `.claude/worktrees/${name}（ブランチ ${branch}）`;
-    const notes = [how === 'created' ? `worktree ${where} で始めました` : `消していた worktree ${where} を作り直しました`, nodeModulesNote(result)];
-    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: notes.filter(Boolean).join('。') }]);
+    const notes = [t(how === 'created' ? 'main.worktree.started' : 'main.worktree.restored', { name, branch }), nodeModulesNote(result)];
+    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: notes.filter(Boolean).join(t('main.format.sentenceSeparator')) }]);
     // 準備の間に入力欄が出ていたら、ここで受け付けられるようになったことにする
     if (!rt.ready && rt.screen?.current.ready) {
       rt.ready = true;
@@ -1408,18 +1408,22 @@ function fileSize(file: string): number {
 
 // node_modules の用意の結果の知らせ（チャットに出す）。場所は worktree からの相対（'' はいちばん上）
 function nodeModulesNote(result: NodeModulesResult): string | null {
-  const where = (dirs: string[]) => dirs.map((dir) => (dir ? `${dir}/node_modules` : 'node_modules')).join('・');
+  const separator = t('main.format.shortListSeparator');
+  const where = (dirs: string[]) => dirs.map((dir) => (dir ? `${dir}/node_modules` : 'node_modules')).join(separator);
   const notes: string[] = [];
-  if (result.cloned.length > 0) notes.push(`${where(result.cloned)} を元のフォルダから複製しました`);
-  if (result.failed.length > 0) notes.push(`${where(result.failed)} は複製できませんでした`);
-  const at = (dir: string) => dir || 'いちばん上';
+  if (result.cloned.length > 0) notes.push(t('main.worktree.cloned', { paths: where(result.cloned) }));
+  if (result.failed.length > 0) notes.push(t('main.worktree.cloneFailed', { paths: where(result.failed) }));
+  const at = (dir: string) => dir || t('main.worktree.topDir');
   const ok = result.installs.filter((i) => i.exitCode === 0);
   const failed = result.installs.filter((i) => i.exitCode !== 0);
-  if (ok.length > 0) notes.push(`${ok.map((i) => `${i.command}（${at(i.dir)}）`).join('・')} を実行しました`);
-  if (failed.length > 0) {
-    notes.push(`${failed.map((i) => `${i.command}（${at(i.dir)}・終了コード ${i.exitCode}）`).join('・')} が失敗しました。ターミナルのタブで確かめてください`);
+  if (ok.length > 0) {
+    notes.push(t('main.worktree.installed', { commands: ok.map((i) => t('main.worktree.commandAt', { command: i.command, dir: at(i.dir) })).join(separator) }));
   }
-  return notes.length > 0 ? notes.join('。') : null;
+  if (failed.length > 0) {
+    const commands = failed.map((i) => t('main.worktree.commandFailedAt', { command: i.command, dir: at(i.dir), code: i.exitCode })).join(separator);
+    notes.push(t('main.worktree.installFailed', { commands }));
+  }
+  return notes.length > 0 ? notes.join(t('main.format.sentenceSeparator')) : null;
 }
 
 // ターミナルに出さずにコマンドを実行する（RunTask の既定。互換性の確認など）
@@ -1490,15 +1494,15 @@ function remoteName(cwd: string): string {
 
 // 動いている Claude Code の状態の文言（セッション一覧の文言にそろえる）
 function stateLabel(rt: Runtime, browserAsk: boolean): string {
-  if (rt.attention === 'question') return '質問への回答待ち';
-  if (rt.attention === 'permission') return '実行の許可待ち';
-  if (rt.attention === 'other') return '操作待ち';
-  if (browserAsk) return 'ブラウザでの操作待ち';
-  if (!rt.ready) return '起動中';
-  const background = rt.background > 0 ? `バックグラウンド ${rt.background}件` : null;
-  if (rt.turnOpen) return background ? `作業中（${background}）` : '作業中';
-  if (background) return `${background}の完了待ち`;
-  return '待機中';
+  if (rt.attention === 'question') return t('main.state.question');
+  if (rt.attention === 'permission') return t('main.state.permission');
+  if (rt.attention === 'other') return t('main.state.other');
+  if (browserAsk) return t('main.state.browser');
+  if (!rt.ready) return t('main.state.starting');
+  const count = rt.background;
+  if (rt.turnOpen) return count > 0 ? t('main.state.workingWithBackground', { count }) : t('main.state.working');
+  if (count > 0) return t('main.state.waitingBackground', { count });
+  return t('main.state.idle');
 }
 
 

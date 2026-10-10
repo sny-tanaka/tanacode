@@ -1,5 +1,6 @@
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { t } from '@shared/i18n';
 import type { BranchChanges, FileBaseline, GitBranches, GitDiffSides, GitState } from '@shared/ipc';
 import { branchBase, branchFiles, branches, defaultBranch, git, GitError, repoInfo, showAt, showHead, showIndex, status } from './git';
 
@@ -60,7 +61,7 @@ export class SourceControl {
   }
 
   async commit(message: string, amend: boolean): Promise<void> {
-    if (!message.trim() && !amend) throw new GitError('コミットメッセージを入力してください');
+    if (!message.trim() && !amend) throw new GitError(t('main.git.commitMessageRequired'));
     const args = ['commit', '-F', '-'];
     if (amend) args.push('--amend');
     await git(this.cwd, args, message);
@@ -107,7 +108,7 @@ export class SourceControl {
       await git(this.cwd, ['remote', 'set-head', 'origin', '--auto']).catch(() => {});
     }
     const name = await defaultBranch(this.cwd);
-    if (!name) throw new GitError('デフォルトブランチが分かりません');
+    if (!name) throw new GitError(t('main.git.noDefaultBranch'));
     const hasRef = (ref: string) =>
       git(this.cwd, ['rev-parse', '--verify', '-q', ref]).then(
         () => true,
@@ -125,7 +126,7 @@ export class SourceControl {
     if (!upstream && remoteRef) await git(this.cwd, ['branch', `--set-upstream-to=${remoteRef}`]);
     await git(this.cwd, ['merge', '--ff-only', target]).catch((err: unknown) => {
       const detail = err instanceof Error ? err.message : String(err);
-      throw new GitError(`${name} には切り替えましたが、手元の ${name} が ${target} と分かれているため最新まで進められませんでした\n${detail}`);
+      throw new GitError(`${t('main.git.diverged', { name, target })}\n${detail}`);
     });
   }
 
