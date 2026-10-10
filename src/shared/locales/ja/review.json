@@ -1,1 +1,25 @@
-{}
+{
+  "prompt": {
+    "comments": "以下はコードへのレビューコメントです。それぞれ対応してください。\n\n{comments}"
+  },
+  "lineComments": {
+    "addAction": "Claude へのコメントを追加",
+    "askButton": "ここを聞く",
+    "askAction": "ここを Claude に聞く",
+    "line": "{line} 行目",
+    "lines": "{start}〜{end} 行目",
+    "commentMark": "Claude へのコメント",
+    "askMark": "Claude に聞く",
+    "askPlaceholder": "ここについて聞きたいこと（⌘Enter で送る）",
+    "commentPlaceholder": "直してほしいこと・気になること（⌘Enter で追加）",
+    "send": "送る",
+    "sendTip": "Claude に送る（⌘Enter）",
+    "addComment": "コメントを追加",
+    "addCommentTip": "コメントを追加（⌘Enter）"
+  },
+  "list": {
+    "title": "Claude へのコメント",
+    "empty": "差分やエディタの行番号の横の ＋ でコメントを付けると、次に送る指示に添えられます",
+    "hint": "チャットの送信で、入力した文章と一緒に送られます"
+  }
+}

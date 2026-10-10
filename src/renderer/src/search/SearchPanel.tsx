@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useState } from 'react';
 import type { SearchResult } from '@shared/ipc';
+import { t } from '@shared/i18n';
 
 type Props = { sessionId: string; onOpen: (path: string, line: number) => void };
 
@@ -36,17 +37,24 @@ export const SearchPanel = forwardRef<HTMLInputElement, Props>(function SearchPa
   return (
     <div className="search-panel">
       <div className="search-box">
-        <input ref={inputRef} value={query} placeholder="検索" onChange={(e) => setQuery(e.target.value)} />
-        <button className={`search-flag${caseSensitive ? ' on' : ''}`} onClick={() => setCaseSensitive((v) => !v)} data-tip="大文字と小文字を区別" aria-label="大文字と小文字を区別" aria-pressed={caseSensitive}>
+        <input ref={inputRef} value={query} placeholder={t('search.panel.placeholder')} onChange={(e) => setQuery(e.target.value)} />
+        <button className={`search-flag${caseSensitive ? ' on' : ''}`} onClick={() => setCaseSensitive((v) => !v)} data-tip={t('search.panel.caseSensitive')} aria-label={t('search.panel.caseSensitive')} aria-pressed={caseSensitive}>
           Aa
         </button>
-        <button className={`search-flag${regex ? ' on' : ''}`} onClick={() => setRegex((v) => !v)} data-tip="正規表現" aria-label="正規表現" aria-pressed={regex}>
+        <button className={`search-flag${regex ? ' on' : ''}`} onClick={() => setRegex((v) => !v)} data-tip={t('search.panel.regex')} aria-label={t('search.panel.regex')} aria-pressed={regex}>
           .*
         </button>
       </div>
       <div className="search-summary">
         {result?.error ??
-          (searching ? '検索中…' : result ? `${result.files.length} ファイル · ${count} 件${result.truncated ? '（多すぎるため省略）' : ''}` : '')}
+          (searching
+            ? t('search.panel.searching')
+            : result
+              ? t(result.truncated ? 'search.panel.summaryTruncated' : 'search.panel.summary', {
+                  files: t('search.panel.files', { count: result.files.length }),
+                  matches: t('search.panel.matches', { count }),
+                })
+              : '')}
       </div>
       <div className="search-results">
         {result?.files.map((file) => (

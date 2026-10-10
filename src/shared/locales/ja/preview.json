@@ -1,1 +1,66 @@
-{}
+{
+  "width": {
+    "full": "全幅",
+    "phone": "スマホ",
+    "tablet": "タブレット"
+  },
+  "page": {
+    "loadFailed": "{url} を読み込めませんでした（{error}）"
+  },
+  "chat": {
+    "consoleErrors": "アプリ内ブラウザ（{url}）のコンソールに出たエラー:\n{errors}\n"
+  },
+  "toolbar": {
+    "forward": "進む",
+    "stop": "読み込みを止める",
+    "reload": "読み込み直す",
+    "address": "開く URL",
+    "width": "表示幅",
+    "stopPicking": "選ぶのをやめる",
+    "pick": "要素を選ぶ",
+    "pickTip": "ページの要素をクリックして、その情報と画像をチャットの入力欄に添える",
+    "errorCount": "エラー {count} 件",
+    "errorsTip": "クリックで、コンソールのエラーをチャットの入力欄に貼る\n\n{errors}",
+    "openExternal": "ふだんのブラウザで開く",
+    "devTools": "開発者ツール",
+    "close": "ブラウザを閉じる"
+  },
+  "hint": {
+    "picking": "ページの要素をクリックしてください（Esc でやめる）",
+    "retry": "もう一度",
+    "empty": "上のアドレス欄に URL を入れて Enter で開きます"
+  },
+  "tabs": {
+    "label": "ブラウザのタブ",
+    "untitled": "新しいタブ",
+    "close": "タブを閉じる",
+    "new": "新しいタブ"
+  },
+  "claude": {
+    "operating": "Claude が操作中"
+  },
+  "ask": {
+    "label": "Claude からの操作の依頼",
+    "title": "あなたの番です",
+    "reasonPlaceholder": "理由（任意・パスワードは書かない）",
+    "reasonLabel": "できない理由",
+    "send": "送る",
+    "done": "終わった",
+    "decline": "できない"
+  },
+  "hosts": {
+    "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",
+    "empty": "（空）",
+    "title": "アプリ内ブラウザで Claude に許す先",
+    "description": "Claude がアプリ内ブラウザで開いて・読んで・操作できるのは、ここにある先のページだけです。アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。",
+    "default": "既定",
+    "placeholder": "例: myapp.test・*.example.test",
+    "inputLabel": "足す先",
+    "closeTip": "閉じる（Esc）"
+  },
+  "picked": {
+    "heading": "アプリ内ブラウザ（{url}）で選んだ要素:",
+    "selector": "- セレクタ: {selector}",
+    "text": "- テキスト: 「{text}」"
+  }
+}

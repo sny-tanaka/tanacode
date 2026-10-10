@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_BROWSER_HOSTS, normalizeHostPattern } from '@shared/browser-tools';
+import { t } from '@shared/i18n';
 import { errorMessage } from '../errorMessage';
 import { AddIcon, CloseIcon, IconButton, TrashIcon } from '../icons';
 
@@ -36,7 +37,7 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
   const add = async () => {
     const host = normalizeHostPattern(input);
     if (!host) {
-      setError(`書き方が違います: ${input.trim() || '（空）'}（例: example.test・*.example.test・192.168.0.10）`);
+      setError(t('preview.hosts.invalid', { input: input.trim() || t('preview.hosts.empty') }));
       return;
     }
     if (DEFAULT_BROWSER_HOSTS.includes(host) || hosts.includes(host)) {
@@ -58,7 +59,7 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
         className="quick-open settings-files-dialog"
         ref={dialog}
         role="dialog"
-        aria-label="アプリ内ブラウザで Claude に許す先"
+        aria-label={t('preview.hosts.title')}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -67,11 +68,8 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <div className="settings-files-head">
-          <h2>アプリ内ブラウザで Claude に許す先</h2>
-          <p>
-            {'Claude がアプリ内ブラウザで開いて・読んで・操作できるのは、ここにある先のページだけです。' +
-              'アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。'}
-          </p>
+          <h2>{t('preview.hosts.title')}</h2>
+          <p>{t('preview.hosts.description')}</p>
         </div>
         <div className="quick-open-list">
           {DEFAULT_BROWSER_HOSTS.map((host) => (
@@ -79,7 +77,7 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
               <div className="settings-file-body">
                 <span className="browser-host">{host}</span>
               </div>
-              <span className="browser-host-default">既定</span>
+              <span className="browser-host-default">{t('preview.hosts.default')}</span>
             </div>
           ))}
           {hosts.map((host) => (
@@ -87,7 +85,7 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
               <div className="settings-file-body">
                 <span className="browser-host">{host}</span>
               </div>
-              <IconButton icon={TrashIcon} danger label="削除" onClick={() => void remove(host)} />
+              <IconButton icon={TrashIcon} danger label={t('common.delete')} onClick={() => void remove(host)} />
             </div>
           ))}
         </div>
@@ -104,12 +102,12 @@ export function BrowserHostsDialog({ onClose }: { onClose: () => void }) {
             className="browser-hosts-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="例: myapp.test・*.example.test"
+            placeholder={t('preview.hosts.placeholder')}
             spellCheck={false}
-            aria-label="足す先"
+            aria-label={t('preview.hosts.inputLabel')}
           />
-          <IconButton icon={AddIcon} type="submit" label="追加" disabled={!input.trim()} />
-          <IconButton icon={CloseIcon} label="閉じる" tip="閉じる（Esc）" onClick={onClose} />
+          <IconButton icon={AddIcon} type="submit" label={t('common.add')} disabled={!input.trim()} />
+          <IconButton icon={CloseIcon} label={t('common.close')} tip={t('preview.hosts.closeTip')} onClick={onClose} />
         </form>
       </div>
     </div>

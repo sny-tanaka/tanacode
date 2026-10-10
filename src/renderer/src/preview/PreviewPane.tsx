@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserActivity, BrowserAnswer, BrowserAsk, BrowserRect } from '@shared/ipc';
+import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { Busy } from '../layout/Busy';
 import { AddIcon, ArrowLeftIcon, ArrowRightIcon, CloseIcon, CodeIcon, ExternalLinkIcon, IconButton, PointerIcon, ReloadIcon, StopIcon, WarningIcon } from '../icons';
@@ -36,11 +37,12 @@ type PageState = {
 
 const PARTITION = 'persist:tanacode-preview';
 const MAX_CONSOLE_ERRORS = 50;
+// 表示幅の選択肢。name は文言のキー（preview.width.*）
 const WIDTHS = [
-  { value: 0, label: '全幅' },
-  { value: 390, label: 'スマホ' },
-  { value: 768, label: 'タブレット' },
-];
+  { value: 0, name: 'full' },
+  { value: 390, name: 'phone' },
+  { value: 768, name: 'tablet' },
+] as const;
 const EMPTY_PAGE: PageState = { url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, consoleErrors: [] };
 
 type Props = {
@@ -149,7 +151,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         validatedURL: string;
       };
       // -3 は別のページへ移ったための中断
-      if (isMainFrame && errorCode !== -3) update(tabId, { error: `${validatedURL} を読み込めませんでした（${errorDescription}）`, loading: false });
+      if (isMainFrame && errorCode !== -3) update(tabId, { error: t('preview.page.loadFailed', { url: validatedURL, error: errorDescription }), loading: false });
     });
     wv.addEventListener('console-message', (e) => {
       const { level, message, sourceId, line } = e as unknown as { level: number | string; message: string; sourceId?: string; line?: number };
@@ -335,7 +337,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
   const sendErrors = () => {
     if (!page || !activeTab || !sessionId || page.consoleErrors.length === 0) return;
     // エラーの文はページが書けるので、中に ``` があってもブロックから抜けないようにする
-    insertIntoChat(sessionId, `アプリ内ブラウザ（${page.url}）のコンソールに出たエラー:\n${codeBlock(page.consoleErrors.join('\n'))}\n`);
+    insertIntoChat(sessionId, t('preview.chat.consoleErrors', { url: page.url, errors: codeBlock(page.consoleErrors.join('\n')) }));
     update(activeTab, { consoleErrors: [] });
   };
 
@@ -360,11 +362,11 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         />
       )}
       <div className="preview-toolbar">
-        <IconButton icon={ArrowLeftIcon} label="戻る" disabled={!page?.canGoBack} onClick={() => wv?.goBack()} />
-        <IconButton icon={ArrowRightIcon} label="進む" disabled={!page?.canGoForward} onClick={() => wv?.goForward()} />
+        <IconButton icon={ArrowLeftIcon} label={t('common.back')} disabled={!page?.canGoBack} onClick={() => wv?.goBack()} />
+        <IconButton icon={ArrowRightIcon} label={t('preview.toolbar.forward')} disabled={!page?.canGoForward} onClick={() => wv?.goForward()} />
         <IconButton
           icon={page?.loading ? StopIcon : ReloadIcon}
-          label={page?.loading ? '読み込みを止める' : '読み込み直す'}
+          label={page?.loading ? t('preview.toolbar.stop') : t('preview.toolbar.reload')}
           disabled={!shown}
           onClick={() => (page?.loading ? wv?.stop() : wv?.reload())}
         />
@@ -382,25 +384,25 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
             onFocus={(e) => e.target.select()}
             placeholder="http://localhost:3000"
             spellCheck={false}
-            aria-label="開く URL"
+            aria-label={t('preview.toolbar.address')}
           />
         </form>
         <select
           className="preview-width"
           value={width}
           onChange={(e) => sessionId && setWidths((prev) => ({ ...prev, [sessionId]: Number(e.target.value) }))}
-          title="表示幅"
+          title={t('preview.toolbar.width')}
         >
           {WIDTHS.map((w) => (
             <option key={w.value} value={w.value}>
-              {w.label}
+              {t(`preview.width.${w.name}`)}
             </option>
           ))}
         </select>
         <IconButton
           icon={PointerIcon}
-          label={picking ? '選ぶのをやめる' : '要素を選ぶ'}
-          tip={picking ? undefined : 'ページの要素をクリックして、その情報と画像をチャットの入力欄に添える'}
+          label={picking ? t('preview.toolbar.stopPicking') : t('preview.toolbar.pick')}
+          tip={picking ? undefined : t('preview.toolbar.pickTip')}
           pressed={picking}
           disabled={!shown}
           onClick={() => void pick()}
@@ -409,8 +411,8 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
           <button
             className="ghost-button preview-errors"
             onClick={sendErrors}
-            aria-label={`エラー ${page.consoleErrors.length} 件`}
-            data-tip={`クリックで、コンソールのエラーをチャットの入力欄に貼る\n\n${page.consoleErrors.slice(-5).join('\n')}`}
+            aria-label={t('preview.toolbar.errorCount', { count: page.consoleErrors.length })}
+            data-tip={t('preview.toolbar.errorsTip', { errors: page.consoleErrors.slice(-5).join('\n') })}
           >
             <WarningIcon size={14} />
             {page.consoleErrors.length}
@@ -418,23 +420,23 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         )}
         <IconButton
           icon={ExternalLinkIcon}
-          label="ふだんのブラウザで開く"
+          label={t('preview.toolbar.openExternal')}
           disabled={!shown}
           onClick={() => url && void window.tanacode.browser.openExternal(url)}
         />
-        <IconButton icon={CodeIcon} label="開発者ツール" disabled={!shown} onClick={() => wv?.openDevTools()} />
-        <IconButton icon={CloseIcon} label="ブラウザを閉じる" onClick={onClose} />
+        <IconButton icon={CodeIcon} label={t('preview.toolbar.devTools')} disabled={!shown} onClick={() => wv?.openDevTools()} />
+        <IconButton icon={CloseIcon} label={t('preview.toolbar.close')} onClick={onClose} />
       </div>
       {ask && sessionId ? (
         <AskBar key={ask.id} message={ask.message} onAnswer={(answer) => window.tanacode.browser.answer(sessionId, ask.id, answer)} />
       ) : (
         activity?.active && <ClaudeBar label={activity.label} />
       )}
-      {picking && <div className="preview-hint">ページの要素をクリックしてください（Esc でやめる）</div>}
+      {picking && <div className="preview-hint">{t('preview.hint.picking')}</div>}
       {page?.error && (
         <div className="preview-hint error">
           <span>{page.error}</span>
-          <IconButton icon={ReloadIcon} label="もう一度" onClick={() => wv?.reload()} />
+          <IconButton icon={ReloadIcon} label={t('preview.hint.retry')} onClick={() => wv?.reload()} />
         </div>
       )}
       <div className={`preview-body${width ? ' framed' : ''}`} style={{ '--preview-width': width ? `${width}px` : '100%' } as React.CSSProperties}>
@@ -443,7 +445,7 @@ export function PreviewPane({ sessionId, visible, liveSessionIds, onClose }: Pro
         </div>
         {!url && (
           <div className="preview-empty">
-            <p>上のアドレス欄に URL を入れて Enter で開きます</p>
+            <p>{t('preview.hint.empty')}</p>
           </div>
         )}
       </div>
@@ -468,9 +470,9 @@ export function TabStrip({
   onNew: () => void;
 }) {
   return (
-    <div className="preview-tabs" role="tablist" aria-label="ブラウザのタブ">
+    <div className="preview-tabs" role="tablist" aria-label={t('preview.tabs.label')}>
       {tabs.map((tab) => {
-        const label = tab.title || (tab.url && tab.url !== 'about:blank' ? tab.url.replace(/^https?:\/\//, '') : '新しいタブ');
+        const label = tab.title || (tab.url && tab.url !== 'about:blank' ? tab.url.replace(/^https?:\/\//, '') : t('preview.tabs.untitled'));
         return (
           <div
             key={tab.id}
@@ -487,11 +489,11 @@ export function TabStrip({
           >
             {tab.loading && <span className="tool-dot running" />}
             <span className="preview-tab-title">{label}</span>
-            <IconButton icon={CloseIcon} size="sm" reveal label="タブを閉じる" onMouseDown={(e) => e.stopPropagation()} onClick={() => onClose(tab.id)} />
+            <IconButton icon={CloseIcon} size="sm" reveal label={t('preview.tabs.close')} onMouseDown={(e) => e.stopPropagation()} onClick={() => onClose(tab.id)} />
           </div>
         );
       })}
-      <IconButton icon={AddIcon} size="sm" className="preview-tab-new" label="新しいタブ" onClick={onNew} />
+      <IconButton icon={AddIcon} size="sm" className="preview-tab-new" label={t('preview.tabs.new')} onClick={onNew} />
     </div>
   );
 }
@@ -500,7 +502,7 @@ export function TabStrip({
 export function ClaudeBar({ label }: { label: string | null }) {
   return (
     <div className="preview-claude" role="status">
-      <Busy>Claude が操作中</Busy>
+      <Busy>{t('preview.claude.operating')}</Busy>
       {label && <span className="preview-claude-label">{label}</span>}
     </div>
   );
@@ -512,9 +514,9 @@ export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answ
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
   return (
-    <div className="preview-ask" role="region" aria-label="Claude からの操作の依頼">
+    <div className="preview-ask" role="region" aria-label={t('preview.ask.label')}>
       <div className="preview-ask-text" role="status">
-        <span className="preview-ask-title">あなたの番です</span>
+        <span className="preview-ask-title">{t('preview.ask.title')}</span>
         <span className="preview-ask-message">{message}</span>
       </div>
       {declining ? (
@@ -533,24 +535,24 @@ export function AskBar({ message, onAnswer }: { message: string; onAnswer: (answ
               if (e.nativeEvent.isComposing) return;
               if (e.key === 'Escape') setDeclining(false);
             }}
-            placeholder="理由（任意・パスワードは書かない）"
-            aria-label="できない理由"
+            placeholder={t('preview.ask.reasonPlaceholder')}
+            aria-label={t('preview.ask.reasonLabel')}
             autoFocus
           />
           <button type="submit" className="send-button">
-            送る
+            {t('preview.ask.send')}
           </button>
           <button type="button" className="ghost-button" onClick={() => setDeclining(false)}>
-            戻る
+            {t('common.back')}
           </button>
         </form>
       ) : (
         <div className="preview-ask-actions">
           <button className="send-button" onClick={() => onAnswer({ done: true, reason: '' })}>
-            終わった
+            {t('preview.ask.done')}
           </button>
           <button className="ghost-button" onClick={() => setDeclining(true)}>
-            できない
+            {t('preview.ask.decline')}
           </button>
         </div>
       )}

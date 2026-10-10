@@ -1,1 +1,12 @@
-{}
+{
+  "tree": {
+    "gitChangesInside": "中に git の変更がある",
+    "addedInBranch": "このブランチで新規作成",
+    "modifiedInBranch": "このブランチで変更"
+  },
+  "knowledge": {
+    "read": "Claude が読んだファイル（今の会話で中身を知っている）",
+    "edited": "Claude が書いたファイル（今の会話で中身を知っている）",
+    "stale": "圧縮より前に Claude が読んだファイル（今は中身を覚えていない）"
+  }
+}

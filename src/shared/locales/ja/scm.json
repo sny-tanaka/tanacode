@@ -1,1 +1,87 @@
-{}
+{
+  "panel": {
+    "loading": "読み込み中…",
+    "notRepo": "このフォルダは git リポジトリではありません",
+    "noChanges": "変更はありません"
+  },
+  "commit": {
+    "nothingStaged": "コミットする変更がステージされていません",
+    "committing": "コミット中…",
+    "placeholder": "メッセージ（⌘Enter でコミット · {branch}）",
+    "amend": "直前のコミットを修正",
+    "commit": "コミット",
+    "amendTip": "直前のコミットを修正（⌘Enter）",
+    "commitTip": "コミット（⌘Enter）"
+  },
+  "branch": {
+    "switch": "ブランチを切り替える",
+    "detached": "(detached)",
+    "switching": "切り替え中…",
+    "switchingDefault": "最新のデフォルトブランチへ切り替え中…"
+  },
+  "view": {
+    "list": "一覧で表示",
+    "tree": "ツリーで表示"
+  },
+  "sync": {
+    "pulling": "プル中…",
+    "pullFrom": "{upstream} からプル",
+    "pull": "プル",
+    "pushing": "プッシュ中…",
+    "pushTo": "{upstream} へプッシュ",
+    "pushToOrigin": "origin にプッシュ（上流を設定）",
+    "push": "プッシュ",
+    "fetch": "フェッチ",
+    "fetching": "フェッチ中…"
+  },
+  "staged": {
+    "title": "ステージ済みの変更",
+    "unstage": "ステージを取り消す",
+    "unstageAll": "すべてステージを取り消す",
+    "unstaging": "取り消し中…"
+  },
+  "changes": {
+    "title": "変更",
+    "discard": "変更を破棄",
+    "discardAll": "すべて変更を破棄",
+    "discardConfirmFile": "{path} の変更を破棄しますか？（未追跡のファイルは削除されます。元に戻せません）",
+    "discardConfirmFiles": "{count} 件のファイル の変更を破棄しますか？（未追跡のファイルは削除されます。元に戻せません）",
+    "discarding": "破棄中…",
+    "stage": "ステージする",
+    "stageAll": "すべてステージする",
+    "staging": "ステージ中…",
+    "inFolder": "{action}（フォルダ内すべて）"
+  },
+  "kind": {
+    "added": "新規",
+    "modified": "変更",
+    "deleted": "削除"
+  },
+  "branchChanges": {
+    "fromBranch": "{ref} から分岐したところ（{commit}）から",
+    "notInUpstream": "{ref} にまだ無い変更（未プッシュのコミットと作業中の変更）",
+    "title": "ブランチの変更",
+    "baseBranch": "{ref} から",
+    "baseUpstream": "{ref} から（未プッシュ・作業中）",
+    "walkthrough": "Claude にウォークスルーしてもらう",
+    "walkthroughTip": "Claude にウォークスルーしてもらう\nエディタでコードを示しながら、このブランチの変更を説明します",
+    "rowTitle": "{path}（{kind}）",
+    "binary": "バイナリ"
+  },
+  "branchMenu": {
+    "placeholder": "ブランチを探す・新しい名前",
+    "switchDefaultTip": "フェッチしてから {branch} に切り替え、リモートの最新まで進める",
+    "switchDefault": "最新のデフォルトブランチへ切り替える",
+    "create": "新しいブランチ「{name}」を作って切り替える",
+    "current": "現在",
+    "remote": "リモート"
+  },
+  "diff": {
+    "prevFile": "前のファイル",
+    "nextFile": "次のファイル",
+    "sideBySide": "左右に並べる",
+    "inline": "インライン",
+    "openFile": "ファイルを開く",
+    "close": "差分を閉じる"
+  }
+}

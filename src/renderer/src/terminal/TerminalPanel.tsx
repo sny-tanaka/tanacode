@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { AddIcon, CloseIcon, IconButton, MonitorIcon, SendIcon } from '../icons';
 import { ClaudeScreen } from './ClaudeScreen';
@@ -233,7 +234,7 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
         className="terminal-resizer"
         role="separator"
         aria-orientation="horizontal"
-        title="ドラッグで高さを変更"
+        title={t('terminal.panel.resize')}
         onPointerDown={(e) => {
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -255,31 +256,31 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
       />
       <div className="terminal-panel-head">
         <div className="terminal-tabs" role="tablist">
-          {tabs.map((t, i) => (
+          {tabs.map((tab, i) => (
             <div
-              key={t.id}
+              key={tab.id}
               role="tab"
-              aria-selected={view === 'shell' && t.id === activeShell?.id}
-              className={`terminal-tab${view === 'shell' && t.id === activeShell?.id ? ' active' : ''}`}
+              aria-selected={view === 'shell' && tab.id === activeShell?.id}
+              className={`terminal-tab${view === 'shell' && tab.id === activeShell?.id ? ' active' : ''}`}
               onClick={() => {
-                if (sessionId) setActive((prev) => ({ ...prev, [sessionId]: t.id }));
+                if (sessionId) setActive((prev) => ({ ...prev, [sessionId]: tab.id }));
                 onView('shell');
               }}
-              title={t.title ?? t.name}
+              title={tab.title ?? tab.name}
             >
-              <span>{t.task ? taskLabel(t) : (t.title ?? `${t.name} ${i + 1}`)}</span>
+              <span>{tab.task ? taskLabel(tab) : (tab.title ?? `${tab.name} ${i + 1}`)}</span>
               <IconButton
                 icon={CloseIcon}
                 size="sm"
-                label="このターミナルを閉じる"
-                tip={t.task && t.exitCode === undefined ? '止めて閉じる' : 'このターミナルを閉じる'}
+                label={t('terminal.tabs.close')}
+                tip={tab.task && tab.exitCode === undefined ? t('terminal.tabs.stopAndClose') : t('terminal.tabs.close')}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (t.task && t.exitCode !== undefined) closeTask(t.id);
+                  if (tab.task && tab.exitCode !== undefined) closeTask(tab.id);
                   else {
                     // 動いているコマンドを止めて閉じる。出力を見られるようタブを残すのは、ひとりでに終わったときだけ
-                    taskIds.current.delete(t.id);
-                    window.tanacode.shell.kill(t.id);
+                    taskIds.current.delete(tab.id);
+                    window.tanacode.shell.kill(tab.id);
                   }
                 }}
               />
@@ -288,7 +289,7 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
           <IconButton
             icon={AddIcon}
             size="sm"
-            label="新しいターミナル"
+            label={t('terminal.tabs.new')}
             onClick={() => {
               onView('shell');
               if (sessionId) void newShell(sessionId);
@@ -298,8 +299,8 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
         {view === 'shell' && (
           <IconButton
             icon={SendIcon}
-            label="Claude へ送る"
-            tip={'Claude へ送る\nターミナルで選んだ出力を、チャットの入力欄に貼る'}
+            label={t('terminal.panel.sendToClaude')}
+            tip={t('terminal.panel.sendToClaudeTip')}
             disabled={!hasSelection}
             onClick={sendSelection}
           />
@@ -310,13 +311,13 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
           aria-selected={view === 'claude'}
           className={`terminal-tab claude-screen-tab${view === 'claude' ? ' active' : ''}`}
           onClick={() => onView(view === 'claude' ? 'shell' : 'claude')}
-          aria-label="Claude Code の画面"
-          data-tip={'Claude Code の画面\nClaude Code そのものの画面をそのまま表示して操作する'}
+          aria-label={t('terminal.panel.claudeScreen')}
+          data-tip={t('terminal.panel.claudeScreenTip')}
         >
           <MonitorIcon size={14} />
         </button>
         )}
-        <IconButton icon={CloseIcon} label="パネルを閉じる" tip="パネルを閉じる（⌃`）" onClick={onClose} />
+        <IconButton icon={CloseIcon} label={t('terminal.panel.close')} tip={t('terminal.panel.closeTip')} onClick={onClose} />
       </div>
       <div className="terminal-panel-body">
         <div className="terminal-host" hidden={view !== 'shell'} ref={hostRef} />
@@ -328,6 +329,6 @@ export function TerminalPanel({ sessionId, claudeScreen = true, open, view: requ
 
 // アプリが開いたコマンドのタブの名前。終わったら、うまくいったかを添える
 function taskLabel(tab: ShellTab): string {
-  if (tab.exitCode === undefined) return `${tab.name}（実行中）`;
-  return tab.exitCode === 0 ? `${tab.name}（完了）` : `${tab.name}（失敗 ${tab.exitCode}）`;
+  if (tab.exitCode === undefined) return t('terminal.task.running', { name: tab.name });
+  return tab.exitCode === 0 ? t('terminal.task.done', { name: tab.name }) : t('terminal.task.failed', { name: tab.name, code: tab.exitCode });
 }
