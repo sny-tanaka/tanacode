@@ -183,12 +183,23 @@ describe('ほかのセッションへのリンク（SessionRefs）', () => {
   it('親セッションからの指示の見出しを押すと、親セッションへ移る。移る先を受け取らないときは押せない', () => {
     const onSelectSession = vi.fn();
     const item: ChatItem = { kind: 'user', id: 'u1', text: 'テストを足してください', parent: PARENT };
-    const { rerender } = render(<ChatRow {...rowProps(item, { sessions, onSelectSession })} />);
+    const { rerender } = render(<ChatRow {...rowProps(item, { sessions, onSelectSession, parentId: PARENT })} />);
     fireEvent.click(screen.getByRole('button', { name: /親セッション「全体の計画」からの指示/ }));
     expect(onSelectSession).toHaveBeenCalledWith(PARENT);
-    rerender(<ChatRow {...rowProps(item, { sessions })} />);
+    rerender(<ChatRow {...rowProps(item, { sessions, parentId: PARENT })} />);
     expect(screen.queryByRole('button', { name: /親セッション/ })).toBeNull();
     expect(screen.getByText('親セッション「全体の計画」からの指示')).toBeTruthy();
+  });
+
+  it('親でないセッションからの指示（独立したセッションの最初の指示）は、親と書かずに出し、押すとそのセッションへ移る', () => {
+    const onSelectSession = vi.fn();
+    const item: ChatItem = { kind: 'user', id: 'u1', text: 'テストを足してください', parent: PARENT };
+    const { rerender } = render(<ChatRow {...rowProps(item, { sessions, onSelectSession })} />);
+    expect(screen.queryByText(/親セッション/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^セッション「全体の計画」からの指示/ }));
+    expect(onSelectSession).toHaveBeenCalledWith(PARENT);
+    rerender(<ChatRow {...rowProps(item, { sessions: [] })} />);
+    expect(screen.getByText('ほかのセッションからの指示')).toBeTruthy();
   });
 
   it('子セッションからの知らせのリンクを押すと、その子へ移り、知らせの詳細は開閉しない', () => {

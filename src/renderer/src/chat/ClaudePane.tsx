@@ -475,6 +475,7 @@ export const ClaudePane = memo(function ClaudePane({
                 onOpenTask={onOpenTask}
                 sessions={sessionLinks}
                 onSelectSession={onSelectSession}
+                parentId={session.parentId}
               />
             ),
           )}

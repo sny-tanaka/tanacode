@@ -809,6 +809,9 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
           "folder": {
             "type": "string",
           },
+          "independent": {
+            "type": "boolean",
+          },
           "model": {
             "type": "string",
           },
@@ -839,7 +842,7 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
         "type": "object",
       },
       "kind": "act",
-      "label": "子セッションを始める",
+      "label": "セッションを始める",
       "name": "start_session",
     },
     {
