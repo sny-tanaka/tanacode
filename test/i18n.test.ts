@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { fill, language, locale, message, resolveLanguage, setLanguage, t } from '@shared/i18n';
+import { fill, language, locale, message, resolveLanguage, setLanguage, t, tFor } from '@shared/i18n';
 import en from '../src/shared/locales/en.json';
 import ja from '../src/shared/locales/ja.json';
 
@@ -28,9 +28,17 @@ describe('文言を読む', () => {
     expect(locale()).toBe('ja-JP');
   });
 
-  it('無いキーは、キーのまま返す（型チェックを抜けてきたとき）', () => {
+  it('無いキーは、キーのまま返す（型チェックを抜けてきたとき）。英語でも同じ', () => {
     expect(message('common.nope' as never)).toBe('common.nope');
     expect(message('common.cancel.more' as never)).toBe('common.cancel.more');
+    setLanguage('en');
+    expect(message('common.nope' as never)).toBe('common.nope');
+  });
+
+  it('tFor は、今の言語によらず、指定した言語の文言に埋め込む', () => {
+    expect(tFor('en', 'main.notification.images', { count: 2 })).toBe(fill(enMap.get('main.notification.images')!, { count: 2 }));
+    expect(tFor('en', 'common.cancel')).toBe('Cancel');
+    expect(language()).toBe('ja');
   });
 
   it('count が 1 なら単数形（_one）を使う。無い言語やキーでは、ふつうの形', () => {

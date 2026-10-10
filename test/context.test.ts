@@ -277,6 +277,7 @@ describe('compactInstructions', () => {
       at('tool', 'npm install', 2, { tool: 'Bash' }),
       at('topic', 'Notice: Agent finished', 3),
       at('image', 'Image 2 attached to “Fix this screen”', 4),
+      at('image', 'Image attached to “Look here”', 5),
     ];
     const text = compactInstructions(
       english,
@@ -286,10 +287,11 @@ describe('compactInstructions', () => {
         ['tool:npm install', 'drop'],
         ['topic:Notice: Agent finished', 'drop'],
         ['image:Image 2 attached to “Fix this screen”', 'drop'],
+        ['image:Image attached to “Look here”', 'keep'],
       ]),
     );
     expect(text).toBe(
-      'Keep the contents of `src/a.ts` and the exchange after I answered “Keep stock counts” in detail. ' +
+      'Keep the contents of `src/a.ts`, the exchange after I answered “Keep stock counts”, and the image attached to “Look here” in detail. ' +
         'You can drop the output of `npm install`, the exchange after the notification “Agent finished”, and image 2 attached to “Fix this screen”.',
     );
   });
