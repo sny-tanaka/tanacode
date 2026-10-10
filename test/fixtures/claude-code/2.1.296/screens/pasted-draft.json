@@ -1,0 +1,162 @@
+[
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": " ▐▛███▛█   Claude Code v2.1.296",
+  "full": false
+ },
+ {
+  "text": "▝▜██████▀  Opus 5.5 with low effort · API Usage Billing",
+  "full": false
+ },
+ {
+  "text": " ▝▝   ▝▝   /tmp/tanacode-cli/work",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ /context ",
+  "full": false
+ },
+ {
+  "text": "  ⎿  Context Usage",
+  "full": false
+ },
+ {
+  "text": "     ⛀ ⛀ ⛀ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Opus 5.5",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   claude-opus-5-5",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   3.1k/1m tokens (0%)",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Estimated usage by category",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System prompt: 1k tokens (0.1%)",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Skills: 2k tokens (0.2%)",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Messages: 100 tokens (0.0%)",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛶ Free space: 963.9k (96.4%)",
+  "full": false
+ },
+ {
+  "text": "     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛝ Autocompact buffer: 33k tokens (3.3%)",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "     Auto-compact window: 1m tokens",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "     Skills · /skills",
+  "full": false
+ },
+ {
+  "text": "     └ 13 skills · 2k tokens",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "     /context all to expand",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "❯ 貼り付けの 1 行目                                                                                                     ",
+  "full": true
+ },
+ {
+  "text": "  2 行目                                                                                                                ",
+  "full": true
+ },
+ {
+  "text": "  3 行目                                                                                                                ",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "⏺ テスト",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "✻ Crunched for 0s · done 12:58 AM",
+  "full": false
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "                                                                                                       ○ low · /effort",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": "❯ [Pasted text #1 +29 lines] ",
+  "full": false
+ },
+ {
+  "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "full": true
+ },
+ {
+  "text": "",
+  "full": false
+ },
+ {
+  "text": "  paste again to expand",
+  "full": false
+ }
+]
