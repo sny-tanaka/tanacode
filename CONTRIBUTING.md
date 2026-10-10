@@ -89,6 +89,7 @@ npm run dev
 
 - コードのコメント・コミットメッセージ・ドキュメントは、日本語で書きます（コード中の識別子や、ツール名・コマンドなどの固有名詞はそのままでかまいません）。
 - 画面の文言は、コードに直接書かず、言語ごとの JSON（`src/shared/locales/ja.json`・`en.json`）に、日本語と英語の両方を書きます（下の「画面の言語」）。
+- 英語の README（`README.en.md`）だけは英語で書きます。`README.md` を直したら、`README.en.md` も同じ中身に直します（GUIDE と CONTRIBUTING は日本語だけ）。
 - README・GUIDE・CONTRIBUTING・SECURITY は、名詞で止められるところは体言止め、動詞で終わる文は「です・ます」で書きます（例:「ワンクリックで作成。作成後に編集することもできます。」）。機能を変えたら、読む人に合わせて該当する文書も直します。
 - 「版」は単体で使わず、「バージョン」と書きます（「新しいバージョン」「最新バージョン」など）。「開発版」のような熟語はそのまま。
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコン（サイドパネルの切り替えと、ブラウザ・ターミナルの開閉）は「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
@@ -378,7 +379,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っているバージョンがこれと同じならチェックマーク、違えば警告の印を付けます（新しいバージョンと古いバージョンで分ける）。
   - 上げるのは、GitHub Actions の毎日の確認です（下）。新しいバージョンで通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします。
     - `VERIFIED_CLAUDE_CODE_VERSION`
-    - README と GUIDE の「動作確認済」の行のバージョン（README の先頭のバッジも、alt に「動作確認済」を入れてあるので一緒に変わる）
+    - README と GUIDE の「動作確認済」の行と、英語の README の「verified」の行のバージョン（README の先頭のバッジも、alt に「動作確認済」・「Verified」を入れてあるので一緒に変わる）
     - そのバージョンの控え（`test/fixtures/claude-code/<バージョン>/`）
   - 控えがあれば、`npm test` は動作確認済のバージョンの控えがあるかも見ます。
   - 手で上げるときも、同じスクリプトを使います（`TANACODE_RECORD=1 npm run test:cli` で控えを取ってから `node scripts/update-verified-version.mjs <バージョン>`）。

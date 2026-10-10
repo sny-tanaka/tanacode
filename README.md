@@ -17,7 +17,8 @@
 <p align="center">
   <a href="https://sny-tanaka.github.io/tanacode/"><b>ブラウザでデモを試す</b></a> ・
   <a href="#インストール"><b>インストール</b></a> ・
-  <a href="GUIDE.md"><b>使い方</b></a>
+  <a href="GUIDE.md"><b>使い方</b></a> ・
+  <a href="README.en.md"><b>English</b></a>
 </p>
 
 Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップアプリ。Claude に任せている間も、何を読んで何を覚えているか、サブエージェントが中で何をしているか、画面で何を確かめたかを、チャットの横に表示します。コードを書くのは Claude に任せて、あなたは確認と小さな修正だけ。
@@ -203,10 +204,11 @@ Claude Code の会話ログ（`~/.claude/`）は Claude Code のものなので�
 | --- | --- |
 | [GUIDE.md](GUIDE.md) | はじめの一歩・画面の見方・機能ごとの使い方・ショートカット・データの扱い・制限・困ったとき |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | ソースからのビルド・貢献の流れ・仕組み・ソースの構成 |
+| [README.en.md](README.en.md) | 英語の README（English） |
 
 不具合・要望は [Issues](https://github.com/sny-tanaka/tanacode/issues) へ。
 
-画面と文書は日本語のみ。英語対応は検討中のため、要望があれば [Issues](https://github.com/sny-tanaka/tanacode/issues) へ。
+画面は日本語と英語。文書は日本語で、README だけ英語（[README.en.md](README.en.md)）もあります。
 
 ## ライセンス
 
