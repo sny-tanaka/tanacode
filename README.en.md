@@ -24,7 +24,7 @@
 
 A desktop app that brings Claude Code (the `claude` CLI) and an IDE together. While Claude works, it shows right next to the chat what Claude has read and remembers, what its subagents are doing, and what it checked on screen. Leave the coding to Claude; you just review and make small fixes.
 
-The app's UI is available in English and Japanese. The other documents ([GUIDE.md](GUIDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)) and the demo are in Japanese.
+The UI is available in English and Japanese. Switch it with **tanacode → Language** in the menu bar; by default it follows your Mac's language. The other documents ([GUIDE.md](GUIDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)) and the demo are in Japanese.
 
 <sub>An unofficial tool made by an individual. It is not an official Anthropic product, and it is not endorsed or supported by Anthropic.</sub>
 

@@ -23,6 +23,8 @@
 
 Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップアプリ。Claude に任せている間も、何を読んで何を覚えているか、サブエージェントが中で何をしているか、画面で何を確かめたかを、チャットの横に表示します。コードを書くのは Claude に任せて、あなたは確認と小さな修正だけ。
 
+画面は日本語と英語（Japanese and English）。メニューの「tanacode → 言語（Language）」で切り替えられます。既定は Mac の言語に合わせます（[使い方](GUIDE.md#言語language)）。
+
 <sub>個人が作っている非公式のツール。Anthropic の公式製品ではなく、Anthropic の承認や支援も受けていません。</sub>
 
 <p align="center">
