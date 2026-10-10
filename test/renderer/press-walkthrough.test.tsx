@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExportSource, SessionSummary } from '@shared/ipc';
 import type { Walkthrough, WalkthroughStep } from '@shared/walkthrough';
-import { MAX_COMMENT_CHARS, WALKTHROUGH_ATTRIBUTION, type WalkthroughCommentDraft } from '@shared/walkthrough-comment';
+import { MAX_COMMENT_CHARS, walkthroughAttribution, type WalkthroughCommentDraft } from '@shared/walkthrough-comment';
 import { ExportDialog } from '../../src/renderer/src/export/ExportDialog';
 import { SAMPLE_BRANCHES, SAMPLE_CWD, SAMPLE_EVENTS, SAMPLE_HOME, SAMPLE_IMAGES } from '../../src/renderer/src/export/sampleSession';
 import { CommentDialog } from '../../src/renderer/src/walkthrough/CommentDialog';
@@ -278,7 +278,7 @@ describe('CommentDialog（PR にコメントとして載せる下見）', () => 
     fireEvent.change(body(), { target: { value: '  \n ' } });
     expect(postButton().disabled).toBe(true);
     // 一言（区切りの行を含む）を添えると上限をちょうど超える長さ
-    const text = 'あ'.repeat(MAX_COMMENT_CHARS - `\n\n---\n${WALKTHROUGH_ATTRIBUTION}`.length + 1);
+    const text = 'あ'.repeat(MAX_COMMENT_CHARS - `\n\n---\n${walkthroughAttribution()}`.length + 1);
     fireEvent.change(body(), { target: { value: text } });
     expect(postButton().disabled).toBe(true);
     expect(screen.getByText(/長すぎます（65537 文字。GitHub のコメントは 65536 文字まで）/)).toBeTruthy();

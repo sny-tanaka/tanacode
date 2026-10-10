@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n';
 import { lineRange, type Walkthrough } from '@shared/walkthrough';
 import { ExportIcon, IconButton } from '../icons';
 
@@ -14,12 +15,12 @@ export function WalkthroughList({ walkthrough, onGo, onPublish }: WalkthroughLis
   return (
     <div className="review-comments walk-list">
       <div className="review-comments-head">
-        <span className="walk-list-label">ウォークスルー</span>
+        <span className="walk-list-label">{t('walkthrough.list.label')}</span>
         <span className="scm-count">{steps.length}</span>
         <span className="walk-list-title" title={walkthrough.title}>
           {walkthrough.title}
         </span>
-        <IconButton size="sm" icon={ExportIcon} label="GitHub の PR にコメントとして載せる" onClick={onPublish} />
+        <IconButton size="sm" icon={ExportIcon} label={t('walkthrough.actions.publish')} onClick={onPublish} />
       </div>
       {steps.map((s, i) => {
         const here = open && !aside && i === current;
@@ -32,12 +33,12 @@ export function WalkthroughList({ walkthrough, onGo, onPublish }: WalkthroughLis
                 {s.path}:{lineRange(s)}
               </span>
             </span>
-            {visited.includes(i) && !here && <span className="walk-list-seen">見た</span>}
+            {visited.includes(i) && !here && <span className="walk-list-seen">{t('walkthrough.list.seen')}</span>}
           </button>
         );
       })}
       <div className="review-hint">
-        {open ? '押したステップを開きます' : '閉じています。押すと、そのステップからもう一度見られます（Claude が作り直すまで残ります）'}
+        {open ? t('walkthrough.list.hintOpen') : t('walkthrough.list.hintClosed')}
       </div>
     </div>
   );

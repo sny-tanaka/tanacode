@@ -3,6 +3,8 @@
 // 保存はしない（コードが進むと行番号がずれて壊れるため）。main のメモリの上に、セッションごとに今の 1 つだけを持つ。
 // 人が閉じても捨てず、Claude が作り直す（start_walkthrough）までは、ソース管理の一覧からもう一度見られる
 
+import { t } from './i18n';
+
 // 1 つのステップ。path: セッションのフォルダからの相対パス / startLine・endLine: 示す範囲（1 から。両端を含む）/
 // title: 見出し / body: 説明（Markdown）/ view: file はエディタ、diff はブランチの差分（基点 ↔ 作業ツリー）の変更後の側に出す
 // （ブランチで変わっていない・消したファイルは、エディタに出す）
@@ -49,18 +51,21 @@ export function stepLocation(step: WalkthroughStep): string {
 // 画面の「質問する」から送る発言。どこを見ての質問かを添える（Claude は MCP の説明でこの形を知っている）
 export function stepQuestionText(w: Walkthrough, question: string): string {
   const step = shownStep(w);
-  // 寄り道はパスで終わるので空白を挟み、ステップは括弧で終わるので挟まない
-  const where = w.aside ? `寄り道で示した ${stepLocation(step)} ` : `${w.current + 1}/${w.steps.length}「${step.title}」（${stepLocation(step)}）`;
-  return `ウォークスルー「${w.title}」の ${where}について質問です。\n\n${question.trim()}`;
+  const location = stepLocation(step);
+  const head = w.aside
+    ? t('walkthrough.prompt.asideQuestion', { walkthrough: w.title, location })
+    : t('walkthrough.prompt.stepQuestion', { walkthrough: w.title, step: w.current + 1, total: w.steps.length, title: step.title, location });
+  return `${head}\n\n${question.trim()}`;
 }
 
 // エディタで範囲を選んで「ここを聞く」から送る発言。選んだコードを添える
 export function rangeQuestionText(path: string, startLine: number, endLine: number, quote: string, question: string): string {
   const fence = quote.includes('```') ? '````' : '```';
-  return `${path}:${lineRange({ startLine, endLine })} について質問です。\n${fence}\n${quote}\n${fence}\n\n${question.trim()}`;
+  const head = t('walkthrough.prompt.rangeQuestion', { location: `${path}:${lineRange({ startLine, endLine })}` });
+  return `${head}\n${fence}\n${quote}\n${fence}\n\n${question.trim()}`;
 }
 
 // 始めたあとで、ステップのファイルがディスク側で変わったときに「Claude に示し直してもらう」で送る発言
 export function restartRequestText(w: Walkthrough): string {
-  return `ウォークスルー「${w.title}」のコードが変わり、示している位置がずれているかもしれません。今のコードで、${w.current + 1}/${w.steps.length} から先を start_walkthrough で示し直してください。`;
+  return t('walkthrough.prompt.restart', { title: w.title, step: w.current + 1, total: w.steps.length });
 }

@@ -1,1 +1,28 @@
-{}
+{
+  "kind": {
+    "question": "Claude Code からの質問",
+    "permission": "実行の許可",
+    "other": "確認"
+  },
+  "notChosen": {
+    "busy": "ほかの操作の途中だったため、送れませんでした。もう一度押してください",
+    "gone": "画面が変わったため、送りませんでした",
+    "missing": "この選択肢が Claude Code の画面に見つからないため、送りませんでした",
+    "stuck": "選択肢にカーソルを合わせられませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください",
+    "ignored": "Claude Code が受け付けませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください"
+  },
+  "card": {
+    "sendFailed": "送れませんでした。もう一度押してください",
+    "nextQuestion": "次の質問へ →",
+    "reviewAnswers": "回答の確認へ →",
+    "otherTyped": "その他: {text}",
+    "other": "その他（自由に入力）",
+    "cancelTip": "キャンセル（Esc）",
+    "answerPlaceholder": "回答を入力",
+    "confirm": "決定",
+    "send": "送信",
+    "stopEditing": "やめる",
+    "preview": "プレビュー: {label}",
+    "noPreview": "この選択肢にはプレビューがありません"
+  }
+}

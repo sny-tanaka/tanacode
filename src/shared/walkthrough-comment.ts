@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import type { Walkthrough } from './walkthrough';
 
 // ウォークスルーを GitHub の PR にコメントとして載せるときの本文。ステップの順に、見出し・コードのパーマリンク・説明文を並べる。
@@ -8,8 +9,10 @@ import type { Walkthrough } from './walkthrough';
 // GitHub のコメントの長さの上限
 export const MAX_COMMENT_CHARS = 65536;
 
-// 「Claude が書いた説明」の一言（投稿するときに選べる。既定で添える）
-export const WALKTHROUGH_ATTRIBUTION = '_この説明は、tanacode のウォークスルーで Claude が書きました。_';
+// 「Claude が書いた説明」の一言（投稿するときに選べる。既定で添える）。呼んだときの言語で作る
+export function walkthroughAttribution(): string {
+  return `_${t('walkthrough.postBody.attribution')}_`;
+}
 
 // 投稿の下見。ok なら、投稿先の PR とコメントの本文（一言は含めない）。だめなら、その理由
 export type WalkthroughCommentDraft =
@@ -40,14 +43,14 @@ export function walkthroughCommentBody(w: Walkthrough, repoUrl: string, sha: str
       step.body.trim(),
     ].join('\n\n'),
   );
-  const head = `## ウォークスルー: ${w.title}\n\n${total} ステップ。コミット \`${sha.slice(0, 7)}\` の時点のコードです。`;
+  const head = `## ${t('walkthrough.postBody.heading', { title: w.title })}\n\n${t('walkthrough.postBody.summary', { count: total, commit: `\`${sha.slice(0, 7)}\`` })}`;
   return [head, ...steps].join('\n\n');
 }
 
 // 投稿する本文。attribution なら、最後に一言を添える
 export function finalCommentBody(body: string, attribution: boolean): string {
   const text = body.trim();
-  return attribution ? `${text}\n\n---\n${WALKTHROUGH_ATTRIBUTION}` : text;
+  return attribution ? `${text}\n\n---\n${walkthroughAttribution()}` : text;
 }
 
 // ステップの場所の一覧（下見の画面と、確かめるファイルの一覧に使う）

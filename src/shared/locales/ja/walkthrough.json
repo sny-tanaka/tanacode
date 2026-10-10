@@ -1,1 +1,58 @@
-{}
+{
+  "actions": {
+    "publish": "GitHub の PR にコメントとして載せる",
+    "close": "閉じる（ソース管理の一覧から、もう一度開けます）"
+  },
+  "box": {
+    "aside": "寄り道",
+    "progress": "ウォークスルー {step}/{total}",
+    "showList": "ステップの一覧（ソース管理）",
+    "stale": "コードが変わりました（位置がずれているかもしれません）",
+    "restart": "Claude に示し直してもらう",
+    "askPlaceholder": "ここについて Claude に聞きたいこと（⌘Enter で送る）",
+    "cancelAsk": "やめる",
+    "send": "送る",
+    "sendTip": "Claude に送る（⌘Enter）",
+    "backToWalkthrough": "ウォークスルーに戻る（{step}/{total}）",
+    "previous": "戻る",
+    "finish": "終える",
+    "next": "次へ",
+    "ask": "質問する"
+  },
+  "comment": {
+    "title": "PR にコメントとして載せる",
+    "titleWithNumber": "PR #{number} にコメントとして載せる",
+    "description": "ステップの順に、見出し・コードへのリンク（コミットに固定）・説明を並べます。GitHub では、リンクの行がコードの埋め込みとして出ます。質問と答えは載せません。",
+    "checking": "PR を調べています…",
+    "posted": "載せました。",
+    "openOnGitHub": "GitHub で開く",
+    "alreadyPosted": "このウォークスルーは、もう載せています。もう一度載せると、コメントが 2 つになります。",
+    "openPrevious": "前のコメントを開く",
+    "attributionOption": "最後に「Claude が書いた説明」と添える（あなたのアカウントで載るため）",
+    "tooLong": "長すぎます（{count} 文字。GitHub のコメントは {max} 文字まで）",
+    "posting": "載せています…",
+    "post": "載せる"
+  },
+  "list": {
+    "label": "ウォークスルー",
+    "seen": "見た",
+    "hintOpen": "押したステップを開きます",
+    "hintClosed": "閉じています。押すと、そのステップからもう一度見られます（Claude が作り直すまで残ります）"
+  },
+  "band": {
+    "aside": "寄り道 · {location}",
+    "progress": "ウォークスルー {step}/{total}「{title}」",
+    "backToClaude": "Claude が示している場所へ戻る"
+  },
+  "prompt": {
+    "stepQuestion": "ウォークスルー「{walkthrough}」の {step}/{total}「{title}」（{location}）について質問です。",
+    "asideQuestion": "ウォークスルー「{walkthrough}」の 寄り道で示した {location} について質問です。",
+    "rangeQuestion": "{location} について質問です。",
+    "restart": "ウォークスルー「{title}」のコードが変わり、示している位置がずれているかもしれません。今のコードで、{step}/{total} から先を start_walkthrough で示し直してください。"
+  },
+  "postBody": {
+    "attribution": "この説明は、tanacode のウォークスルーで Claude が書きました。",
+    "heading": "ウォークスルー: {title}",
+    "summary": "{count} ステップ。コミット {commit} の時点のコードです。"
+  }
+}
