@@ -4,9 +4,9 @@
   <img src="design/logo-banner.png" width="520" alt="tanacode" />
 </h1>
 
-<h3 align="center">A macOS app that lets you see deep inside Claude Code</h3>
+<h3 align="center">See inside Claude Code. Give it more to work with.</h3>
 
-<p align="center">From the files Claude has read and what it remembers, to the tools its subagents called and the pages it checked in the browser.<br />Under the hood, it runs the same <code>claude</code> CLI you already use.</p>
+<p align="center">The files Claude has read, what's in its context, and what its subagents are doing, right next to the chat.<br />Plus four MCP servers (nothing extra to install): browser checks, checklists, child sessions, and walkthroughs.<br />Under the hood, it runs the same <code>claude</code> CLI you already use.</p>
 
 <p align="center">
   <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=latest&color=2ea043" alt="Latest version" /></a>
@@ -22,7 +22,7 @@
   <a href="README.md"><b>日本語</b></a>
 </p>
 
-A desktop app that brings Claude Code (the `claude` CLI) and an IDE together. While Claude works, it shows right next to the chat what Claude has read and remembers, what its subagents are doing, and what it checked on screen. Leave the coding to Claude; you just review and make small fixes.
+A macOS desktop app that brings Claude Code (the `claude` CLI) and an IDE together. While Claude works, it shows right next to the chat what Claude has read and remembers, what its subagents are doing, and what it checked on screen. It also gives Claude four MCP servers: browser checks, checklists, child sessions, and walkthroughs. Leave the coding to Claude; you just review and make small fixes.
 
 The UI is available in English and Japanese. Switch it with **tanacode → Language** in the menu bar; by default it follows your Mac's language. The other documents ([GUIDE.md](GUIDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)) and the demo are in Japanese.
 
@@ -67,6 +67,15 @@ Preview the page you're developing inside the app. Click an element to attach it
 
 [See it in the demo →](https://sny-tanaka.github.io/tanacode/#browser)
 
+## Give Claude more to work with
+
+Four MCP servers that tanacode adds to Claude Code, with nothing extra to install.
+
+- **Browser checks**: after a fix, Claude opens the page in the in-app browser and checks it itself with screenshots, the console, and clicks. For things Claude can't do, like logging in, it asks you in the middle of its work (see "What Claude looked at and checked on screen" above; [demo](https://sny-tanaka.github.io/tanacode/#browser))
+- **Checklists shared with Claude**: named lists per session, such as to-dos, conditions to meet, things for you to do, or points to confirm. They live outside the conversation, so compaction doesn't erase them. For multi-step work, Claude adds items through MCP without being asked and checks off what it has verified. Replies to a card become a thread, and you can notify Claude. You can also copy cards to another session
+- **Child sessions**: Claude in a parent session starts child sessions, splits the work across them, instructs them, and checks their results. Children line up under the parent, and marks in the session list show their state ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
+- **Walkthroughs**: like a code review over screen share, Claude opens code in the editor and explains the intent of a change while showing it. You move on with Next at your own pace and ask about any lines right there. The explanation can also be posted to a GitHub PR as a single comment with the code embedded
+
 ## Still the Claude Code you know
 
 - It runs the `claude` CLI you've already installed. Your skills, CLAUDE.md, hooks, and MCP settings **all keep working**
@@ -80,9 +89,7 @@ Preview the page you're developing inside the app. Click an element to attach it
 
 - **While Claude works**: tool calls collapse into a single line. Answer questions and permission prompts with buttons in the chat ([demo](https://sny-tanaka.github.io/tanacode/#delegate))
 - **Review before you push**: see the changes since the branch point (including committed ones) in a pull-request-like list. Comments you leave on diff lines go to Claude with your next prompt ([demo](https://sny-tanaka.github.io/tanacode/#review))
-- **Work in parallel**: marks in the session list tell sessions apart by state (working, waiting for background tasks, waiting for an answer, new response), and macOS notifications tell you when a session you're not looking at finishes or needs you. Each session can get its own folder and branch with `claude --worktree`, and tanacode takes care of setting up `node_modules`. Claude in a parent session can also split work across child sessions ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
-- **Checklists shared with Claude**: named lists per session, such as to-dos, conditions to meet, things for you to do, or points to confirm. They live outside the conversation, so compaction doesn't erase them. For multi-step work, Claude adds items through MCP without being asked and checks off what it has verified. Replies to a card become a thread, and you can notify Claude. You can also copy cards to another session
-- **Walkthroughs**: like a code review over screen share, Claude opens code in the editor and explains the intent of a change while showing it. You move on with Next at your own pace and ask about any lines right there. The explanation can also be posted to a GitHub PR as a single comment with the code embedded
+- **Work in parallel**: marks in the session list tell sessions apart by state (working, waiting for background tasks, waiting for an answer, new response), and macOS notifications tell you when a session you're not looking at finishes or needs you. Each session can get its own folder and branch with `claude --worktree`, and tanacode takes care of setting up `node_modules` ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
 - **Scheduled messages**: send a prompt you've written at a set time (like Slack's scheduled messages). When the time comes, tanacode waits until Claude Code is free and then sends it
 - **Wrap up and look back**: export the session as a single HTML file that looks just like the chat ([demo](https://sny-tanaka.github.io/tanacode/#wrapup)). With the Japanese UI, you can also translate Claude's thinking and responses into Japanese with one button (on your Mac with macOS's built-in translation; nothing is sent out; macOS 15 or later)
 - **English and Japanese**: the UI is available in English and Japanese. Switch it with **tanacode → Language** in the menu bar. By default it follows your Mac: Japanese if Japanese is among your preferred languages, otherwise English. The new language takes effect when tanacode restarts
