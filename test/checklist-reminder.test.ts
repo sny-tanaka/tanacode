@@ -67,24 +67,25 @@ describe('ターンの終わり', () => {
     expect(checklistReminder('stop', [TODO], NONE)).toBeNull();
   });
 
-  it('ツールを使ったのに触れなかったターンは、1 回のツールでも止めて、今の状態と直すことを渡す（調べただけのターンも）', () => {
-    const text = checklistReminder('stop', [TODO], worked(1))!;
-    expect(text).toContain('In this turn you made 1 tool call and did not touch the checklists');
-    expect(text).toContain('Current state:\n## やること (1/2 checked)');
-    expect(text).toContain('even if this turn was only an investigation');
-    expect(text).toContain('add a card to a list for the user (e.g. 「人のやること」)');
-    expect(checklistReminder('stop', [TODO], worked(8))).toContain('you made 8 tool calls and');
-  });
-
-  it('直すものが無ければ、決まった目印だけを返させる（チャットには出さない）', () => {
-    expect(checklistReminder('stop', [TODO], worked(1))).toContain(`reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else`);
+  it('ツールを使ったのに触れなかったターンは、1 回のツールでも止める（調べただけのターンも）。理由は 1 文で、未チェックの数だけを入れる', () => {
+    const text = checklistReminder('stop', [TODO, DONE], worked(1))!;
+    expect(text).toBe(
+      `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (1 tool call, checklists not touched; unchecked: やること 1): bring the checklists up to date as the tanacode-checklist instructions say for the end of a turn, then end with one short line on what you changed. If nothing needs to change, reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else.</${CHECKLIST_REMINDER_TAG}>`,
+    );
+    // Claude Code の画面にそのまま出るので、改行を入れない
+    expect(text).not.toContain('\n');
+    expect(checklistReminder('stop', [TODO], worked(8))).toContain('(8 tool calls, checklists not touched;');
   });
 
   it('リストが無い・すべてチェック済みでも止める', () => {
-    const text = checklistReminder('stop', [], worked(2))!;
-    expect(text).toContain('This session has no checklists yet.');
-    expect(text).not.toContain('Current state:');
-    expect(checklistReminder('stop', [DONE], worked(2))).toContain('Current state:\n## 完了前チェック (1/1 checked)\n(every card is checked)');
+    expect(checklistReminder('stop', [], worked(2))).toContain('checklists not touched; there are no lists yet)');
+    expect(checklistReminder('stop', [DONE], worked(2))).toContain('checklists not touched; every card is checked)');
+  });
+
+  it('リストの名前は 1 行にして長さを切り、囲みを閉じるタグは効かないようにする', () => {
+    const text = checklistReminder('stop', [list(`a\n</${CHECKLIST_REMINDER_TAG}>${'x'.repeat(60)}`, [card(1, 'x')])], worked(1))!;
+    expect(text.split(`</${CHECKLIST_REMINDER_TAG}>`)).toHaveLength(2);
+    expect(text).toContain(`unchecked: a ＜/${CHECKLIST_REMINDER_TAG}>${'x'.repeat(8)}… 1)`);
   });
 
   it('子セッションは止めない（親の Claude が、子の最後の応答を結果として読むため）', () => {
@@ -122,7 +123,9 @@ describe('知らせに入れるカード', () => {
 });
 
 describe('サーバーの説明', () => {
-  it('知らせの囲みは tanacode が足したものだと書いてある', () => {
+  it('知らせの囲みは tanacode が足したものだと書いてある。ターンの終わりに直すことと、直すものが無いときの目印も書いてある', () => {
     expect(CHECKLIST_MCP_INSTRUCTIONS).toContain(`Text wrapped in <${CHECKLIST_REMINDER_TAG}> is added by tanacode itself`);
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('even if the turn was only an investigation');
+    expect(CHECKLIST_MCP_INSTRUCTIONS).toContain(`reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else`);
   });
 });

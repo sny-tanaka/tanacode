@@ -105,14 +105,14 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     // ターンの終わり: 会話ログから数えたツールがアプリに届き、止めた理由が Claude に渡った。止めたあとの続きの終わりでは、アプリに聞かない
     expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0 }]);
     const afterStop = api.contexts[api.contexts.length - 1];
-    expect(afterStop).toContain(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>\nYou are about to end your turn. In this turn you made 2 tool calls and did not touch the checklists`);
+    expect(afterStop).toContain(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched; there are no lists yet)`);
     expect(calls.map((c) => c.tool)).toEqual(['hook:prompt', 'hook:stop', 'card_add']);
     expect(store.findList(run.sessionId!, '人のやること')!.cards.map((c) => c.title)).toEqual(['設定画面で画像を選ぶ']);
   });
 
   it('次の発言では今のチェックリストが渡る。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない', async () => {
     await run.send(QUESTION);
-    await run.waitFor('止めたあとの続きが終わる', (info) => info.state.kind === 'prompt' && api.contexts.some((c) => c.includes('In this turn you made 1 tool call and')), 30_000);
+    await run.waitFor('止めたあとの続きが終わる', (info) => info.state.kind === 'prompt' && api.contexts.some((c) => c.includes('Before you end this turn (1 tool call, checklists not touched; unchecked: 人のやること 1)')), 30_000);
     expect(api.contexts.some((c) => c.includes('## 人のやること (0/1 checked)\nDescription: 人にやってもらうこと\n- [ ] #1 設定画面で画像を選ぶ'))).toBe(true);
     expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0 });
     // 目印の応答は会話ログにはあるが、チャットには出ない

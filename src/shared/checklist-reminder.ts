@@ -47,18 +47,12 @@ export function checklistReminder(event: ReminderEvent, lists: Checklist[], acti
   // 調べただけのターンでも、リストに積むものは出る（あとでやること・人に確かめること）ので、ツールの種類や数では分けない。
   // ツールを使っていないターン（返事だけ）は止めない。発言のときに今の状態を渡してあり、そのあとに起きたのは返事だけのため
   if (child || activity.checklist > 0 || activity.turn === 0) return null;
+  // 止めた理由は、Claude Code の画面（ターミナルモード）にそのまま出る。長いと画面を埋めるので、短い 1 文にして、
+  // 何を直すかはサーバーの説明（CHECKLIST_MCP_INSTRUCTIONS）に書いておく。今の状態は、未チェックの数だけを入れる（中身は発言のときに渡してある）
   const used = `${activity.turn} ${activity.turn === 1 ? 'tool call' : 'tool calls'}`;
-  return wrap([
-    `You are about to end your turn. In this turn you made ${used} and did not touch the checklists you share with the user (in the side panel of tanacode). ${live.length > 0 ? 'Current state:' : 'This session has no checklists yet.'}`,
-    ...(live.length > 0 ? [state(live, false)] : []),
-    `Check whether they are still true to the conversation, and bring them up to date with the ${CHECKLIST_MCP_SERVER} tools:`,
-    '- Check the cards you finished, and write how you verified it in comment.',
-    '- Add the work that is left to do, including what you found in this turn (follow-ups, things to look into, things to confirm), even if this turn was only an investigation.',
-    '- If your reply asks the user to do something only they can do (a manual step, a login, a decision), add a card to a list for the user (e.g. 「人のやること」), so that it is not left only in the chat.',
-    '- If you made a judgment call instead of asking, record it with the reason on a list for review (e.g. 「確認事項」). If the user corrected a recorded decision, update that card.',
-    'After updating, end with one short line in the language the user is using that says what you changed in the checklists. Do not repeat or summarize your previous reply.',
-    `If none of the above applies (a quick one-step task or a plain question), change nothing and reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else. tanacode hides that reply from the user.`,
-  ]);
+  const counts = live.map((list) => ({ name: clip(list.name, 40), open: liveCards(list).filter((c) => !c.checked).length })).filter((l) => l.open > 0);
+  const now = live.length === 0 ? 'there are no lists yet' : counts.length === 0 ? 'every card is checked' : `unchecked: ${counts.map((l) => `${l.name} ${l.open}`).join(', ')}`;
+  return `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (${used}, checklists not touched; ${now}): bring the checklists up to date as the ${CHECKLIST_MCP_SERVER} instructions say for the end of a turn, then end with one short line on what you changed. If nothing needs to change, reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else.</${CHECKLIST_REMINDER_TAG}>`;
 }
 
 function wrap(lines: string[]): string {

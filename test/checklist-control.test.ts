@@ -226,7 +226,7 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     const prompt = await call('hook:prompt', { turn: 0, checklist: 0 });
     expect(prompt.content).toHaveLength(1);
     expect(first(prompt)).toContain('- [ ] #1 税率を変える\n- [ ] #2 人が足したカード');
-    expect(first(await call('hook:stop', worked))).toContain('In this turn you made 4 tool calls');
+    expect(first(await call('hook:stop', worked))).toContain('Before you end this turn (4 tool calls, checklists not touched; unchecked: やること 2)');
     expect(first(await call('hook:compact', {}))).toContain('The conversation was just compacted.');
     expect((await call('checklist_overview')).content[1]).toMatchObject({ text: expect.stringContaining('user changed the checklists') });
   });
@@ -236,7 +236,7 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     expect(first(await call('hook:stop', { turn: 9, checklist: 1 }))).toBe('');
     expect(first(await call('hook:stop', { turn: '9', checklist: null }))).toBe('');
     expect(first(await call('hook:stop', { turn: -3 }))).toBe('');
-    expect(first(await call('hook:stop', { turn: 5.9, checklist: 0 }))).toContain('In this turn you made 5 tool calls');
+    expect(first(await call('hook:stop', { turn: 5.9, checklist: 0 }))).toContain('Before you end this turn (5 tool calls,');
   });
 
   it('子セッションのターンの終わりは止めない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
