@@ -2,7 +2,7 @@
   "name": "tanacode",
   "version": "1.4.0",
   "private": true,
-  "description": "Claude Code の中身が、奥まで見える macOS アプリ",
+  "description": "Claude Code の中身が見えて、できることが増える macOS アプリ",
   "license": "MIT",
   "author": "Shunya Tanaka",
   "homepage": "https://github.com/sny-tanaka/tanacode",

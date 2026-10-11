@@ -3,9 +3,9 @@
   <img src="design/logo-banner.png" width="520" alt="tanacode" />
 </h1>
 
-<h3 align="center">Claude Code の中身が、奥まで見える macOS アプリ</h3>
+<h3 align="center">Claude Code の中身が見える。できることが増える。</h3>
 
-<p align="center">読んだファイルと覚えているもの、サブエージェントが呼んだツール、ブラウザで確かめた画面まで。<br />中で動くのは、いつもの <code>claude</code> CLI そのもの。</p>
+<p align="center">読んだファイルとコンテキストの中身、サブエージェントの動きを、チャットの横に。<br />ブラウザでの確認・チェックリスト・子セッション・ウォークスルーの 4 つの MCP 付き（別に入れるものは無し）。<br />中で動くのは、いつもの <code>claude</code> CLI そのもの。</p>
 
 <p align="center">
   <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=%E6%9C%80%E6%96%B0%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3&color=2ea043" alt="最新バージョン" /></a>
@@ -21,7 +21,7 @@
   <a href="README.en.md"><b>English</b></a>
 </p>
 
-Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップアプリ。Claude に任せている間も、何を読んで何を覚えているか、サブエージェントが中で何をしているか、画面で何を確かめたかを、チャットの横に表示します。コードを書くのは Claude に任せて、あなたは確認と小さな修正だけ。
+Claude Code（`claude` CLI）と IDE をひとつにした、macOS のデスクトップアプリ。Claude に任せている間も、何を読んで何を覚えているか、サブエージェントが中で何をしているか、画面で何を確かめたかを、チャットの横に表示します。Claude には、ブラウザでの確認・チェックリスト・子セッション・ウォークスルーの 4 つの MCP を足します。コードを書くのは Claude に任せて、あなたは確認と小さな修正だけ。
 
 画面は日本語と英語（Japanese and English）。メニューの「tanacode → 言語（Language）」で切り替えられます。既定は Mac の言語に合わせます（[使い方](GUIDE.md#言語language)）。
 
@@ -66,6 +66,15 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 
 [デモで見る →](https://sny-tanaka.github.io/tanacode/#browser)
 
+## できることが増える
+
+tanacode が Claude Code に足す、4 つの MCP。別に入れるものは無し。
+
+- **ブラウザでの確認**: 直したあとは、Claude がアプリ内のブラウザでページを開き、スクリーンショット・コンソール・クリックで自分で確認。ログインなど Claude にできない操作は、作業の途中であなたに依頼（上の「画面で何を見て、何を確かめたか」。[デモ](https://sny-tanaka.github.io/tanacode/#browser)）
+- **Claude と一緒に使うチェックリスト**: やること・満たすべき条件・人のやること・確認事項など、名前を付けたリストをセッションごとに。会話とは別に残るので、圧縮されても消えません。手順のいくつもある作業では、頼まなくても Claude が MCP でやることを積み、確かめたものにチェック。カードへの返信はスレッドになり、Claude に知らせることも。別のセッションへのコピーも（[使い方](GUIDE.md#チェックリスト)）
+- **子セッション**: 親のセッションの Claude が、子のセッションを起動して作業を分け、指示と結果の確認まで。子は親の下に並び、一覧の印で状態を追えます（[デモ](https://sny-tanaka.github.io/tanacode/#parallel)）
+- **ウォークスルー**: 画面共有でのコードレビューのように、Claude がエディタにコードを開いて示しながら、変更の意図を説明。あなたは「次へ」で自分のペースで進め、気になった行を選んでその場で質問。説明は、コードを埋め込んだ 1 つのコメントとして GitHub の PR にも残せます（[使い方](GUIDE.md#ウォークスルーclaude-によるコードの説明)）
+
 ## いつもの Claude Code のまま
 
 - 中で動くのは、インストール済みの `claude` CLI そのもの。スキル・CLAUDE.md・hooks・MCP の設定が**そのまま有効**
@@ -79,9 +88,7 @@ Claude Code（`claude` CLI）と IDE をひとつにしたデスクトップア�
 
 - **任せている間の表示**: ツールの操作は 1 行に畳んで表示。質問や許可の確認には、チャットのボタンで回答（[デモ](https://sny-tanaka.github.io/tanacode/#delegate)）
 - **プッシュ前のレビュー**: ブランチが分岐したところからの変更（コミット済みも含む）を、プルリクエストのような一覧で確認。差分の行に付けたコメントは、次の指示に添えて Claude へ（[デモ](https://sny-tanaka.github.io/tanacode/#review)）
-- **並行して進める**: セッションの状態（作業中・完了待ち・質問への回答待ち・新しい応答）を一覧の印で区別し、見ていないセッションの完了や確認は macOS の通知で。セッションごとに `claude --worktree` で作業フォルダとブランチを分け、`node_modules` の準備まで tanacode が受け持ちます。親のセッションの Claude が、子のセッションに作業を分けて指示することも（[デモ](https://sny-tanaka.github.io/tanacode/#parallel)）
-- **Claude と一緒に使うチェックリスト**: やること・満たすべき条件・人のやること・確認事項など、名前を付けたリストをセッションごとに。会話とは別に残るので、圧縮されても消えません。手順のいくつもある作業では、頼まなくても Claude が MCP でやることを積み、確かめたものにチェック。カードへの返信はスレッドになり、Claude に知らせることも。別のセッションへのコピーも（[使い方](GUIDE.md#チェックリスト)）
-- **ウォークスルー**: 画面共有でのコードレビューのように、Claude がエディタにコードを開いて示しながら、変更の意図を説明。あなたは「次へ」で自分のペースで進め、気になった行を選んでその場で質問。説明は、コードを埋め込んだ 1 つのコメントとして GitHub の PR にも残せます（[使い方](GUIDE.md#ウォークスルーclaude-によるコードの説明)）
+- **並行して進める**: セッションの状態（作業中・完了待ち・質問への回答待ち・新しい応答）を一覧の印で区別し、見ていないセッションの完了や確認は macOS の通知で。セッションごとに `claude --worktree` で作業フォルダとブランチを分け、`node_modules` の準備まで tanacode が受け持ちます（[デモ](https://sny-tanaka.github.io/tanacode/#parallel)）
 - **時刻を指定して送信**: 書いた指示を、決めた時刻に送る予約（Slack の予約投稿のように）。時刻になったら、Claude Code の手が空くのを待って送ります
 - **整理と振り返り**: 英語などで返ってきた思考と応答は、ボタン 1 つで日本語に翻訳（macOS 標準の翻訳で Mac の中で訳すので、外へは送りません。macOS 15 以降・日本語の画面のとき）。作業の流れは、チャットと同じ見た目の 1 枚の HTML に書き出せます（[デモ](https://sny-tanaka.github.io/tanacode/#wrapup)）
 - **日本語と英語**: 画面は日本語と英語（Japanese and English）。メニューの「tanacode → 言語（Language）」で切り替え。既定は Mac の言語に合わせます（[使い方](GUIDE.md#言語language)）
