@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../../src/shared/checklist-tools';
 
 // Anthropic の Messages API のふりをするサーバー。ANTHROPIC_BASE_URL をここに向けると、
 // 本物の claude を API の料金なしで動かせる。返す応答は、決めておいた台本（Conversation）のとおり。
@@ -53,6 +54,11 @@ export class MockApi {
   // 受け取ったツールの結果（tool_result）の文章。質問への答えや許可の結果が、Claude まで届いたかを確かめる
   readonly toolResults: string[] = [];
 
+  // チェックリストを使い続けさせるフックがターンの終わりを止めたとき（Stop hook feedback）の応答も、台本から返すか。
+  // ふだんは、本物のモデルが直すものの無いときにするのと同じく、決まった目印だけを返して、台本を進めない
+  // （チェックリストを足して動かす台本が、ターンの終わりごとに 1 つずつずれないように）。フックそのものを確かめるときだけ true にする
+  scriptChecklistStops = false;
+
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
   // ツールの一覧が付いていない呼び出し（タイトル作りなど）への返事。match: その呼び出しの発言に含まれる文字。
@@ -91,7 +97,10 @@ export class MockApi {
     const at = (c: Conversation) => first.lastIndexOf(c.match);
     const conversation =
       tools.length > 0 ? this.conversations.filter((c) => at(c) !== -1).sort((a, b) => at(b) - at(a))[0] : undefined;
-    const index = body.messages?.filter((m) => m.role === 'assistant').length ?? 0;
+    // 目印だけの応答は、台本の応答に数えない
+    const scripted = (m: Message) => m.role === 'assistant' && (this.scriptChecklistStops || textOf(m).trim() !== CHECKLIST_UNCHANGED_MARK);
+    const index = messages.filter(scripted).length;
+    const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>`);
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
     if (conversation) {
       const system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text ?? '').join('\n');
@@ -99,7 +108,9 @@ export class MockApi {
       this.contexts.push(messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n'));
     }
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
-    const blocks: Block[] = conversation
+    const blocks: Block[] = stopped
+      ? [{ type: 'text', text: CHECKLIST_UNCHANGED_MARK }]
+      : conversation
       ? (conversation.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }])
       : [{ type: 'text', text: plain?.text ?? 'テスト' }];
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';

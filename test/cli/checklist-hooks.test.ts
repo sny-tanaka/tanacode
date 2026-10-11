@@ -51,6 +51,8 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     });
     await bridge.start();
     api = new MockApi();
+    // ターンの終わりを止められたあとの応答も、台本から返す
+    api.scriptChecklistStops = true;
     // ファイルを書くツールを、許可の確認なしに通す
     run = new ClaudeRun(await api.start(), { mode: 'acceptEdits', checklist: { command: process.execPath, script, socketPath: bridge.socketPath, version: 'test' } });
     await run.open();
