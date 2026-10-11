@@ -1,5 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents } from '@shared/chat';
@@ -24,8 +25,22 @@ const version = claudeVersion();
 
 describe(`Claude Code ${version}`, () => {
   it('アプリが付ける引数がある', () => {
-    const help = execFileSync(CLAUDE_BIN, ['--help'], { encoding: 'utf8' });
-    for (const flag of FLAGS) expect(help, flag).toContain(flag);
+    // ヘルプはファイルに書かせて読む。パイプで受けると、ほかのテストと並んで重いときに、claude が書き終える前に終わって
+    // 8192 バイトや 16384 バイトで切れる（2.1.296。同時に 16 個を動かして 400 回中 370 回あまり。ファイルなら 400 回とも切れない）
+    const dir = mkdtempSync(join(tmpdir(), 'tanacode-cli-help-'));
+    try {
+      const file = join(dir, 'help.txt');
+      const fd = openSync(file, 'w');
+      try {
+        spawnSync(CLAUDE_BIN, ['--help'], { stdio: ['ignore', fd, 'ignore'] });
+      } finally {
+        closeSync(fd);
+      }
+      const help = readFileSync(file, 'utf8');
+      for (const flag of FLAGS) expect(help, flag).toContain(flag);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   describe('モックの API で会話する', () => {
