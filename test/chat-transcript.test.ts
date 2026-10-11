@@ -1,3 +1,5 @@
+import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../src/shared/checklist-tools';
+import { CHECKLIST_HOOK_COMMAND } from '../src/main/checklist-hook';
 import { describe, expect, it } from 'vitest';
 import {
   ASK_FILE_ENV,
@@ -114,6 +116,9 @@ describe('toChatEvents: system の行', () => {
     const blocked = events({ ...summary, hookInfos: [{ command: 'check' }], hookErrors: ['x'], preventedContinuation: true, stopReason: 'テストが落ちています' });
     expect(blocked).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ outcome: 'blocked', message: 'テストが落ちています' }) }]);
     expect(events(system('stop_hook_summary'))).toEqual([]);
+    // アプリが足したフック（チェックリストを使い続けさせるもの）は出さない。ユーザーのフックと並んでいれば、ユーザーのものだけを出す
+    const withApp = events({ ...summary, hookInfos: [{ command: CHECKLIST_HOOK_COMMAND, durationMs: 40 }, { command: 'npm test', durationMs: 900 }] });
+    expect(withApp).toEqual([{ type: 'hook', id: 's1:0', run: expect.objectContaining({ command: 'npm test', durationMs: 900 }) }]);
   });
 
   it('API エラーの再試行中の行は、回数を添えて出す（今の Claude Code は会話ログに残さない）', () => {
@@ -241,6 +246,10 @@ describe('toChatEvents: attachment の行', () => {
     ]);
     // アプリが足したフック（AskUserQuestion の入力をファイルに書くもの）は出さない
     expect(events(attachment({ type: 'hook_success', hookEvent: 'PreToolUse', command: `cat > "$${ASK_FILE_ENV}"` }))).toEqual([]);
+    // チェックリストを使い続けさせるフック。Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）・ターンの終わりを止めた記録（コマンドは blockingError に入る）。2.1.296
+    const reminder = `<${CHECKLIST_REMINDER_TAG}>\n今のチェックリスト\n</${CHECKLIST_REMINDER_TAG}>`;
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'UserPromptSubmit', hookEvent: 'UserPromptSubmit', content: [reminder] }))).toEqual([]);
+    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
     // hooks でない attachment
     expect(events(attachment({ type: 'file', filename: `${CWD}/notes.txt` }))).toEqual([]);
     expect(events({ type: 'attachment' })).toEqual([]);
@@ -248,6 +257,11 @@ describe('toChatEvents: attachment の行', () => {
 });
 
 describe('toChatEvents: 応答の行', () => {
+  it('ターンの終わりの知らせに「直すものは無い」と答えた目印は出さない。目印を含むだけの文章は出す', () => {
+    expect(events(assistant([{ type: 'text', text: `\n${CHECKLIST_UNCHANGED_MARK}\n` }]))).toEqual([]);
+    expect(events(assistant([{ type: 'text', text: `${CHECKLIST_UNCHANGED_MARK} と返しました` }]))).toHaveLength(1);
+  });
+
   it('文章・思考・ツールの呼び出しを出す。空のものは出さない', () => {
     const entry = assistant([
       { type: 'text', text: 'コマンドを実行します。' },

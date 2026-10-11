@@ -1,8 +1,10 @@
 import { claudeNumbers, claudeUnread, eventText, formatNumbers, liveCards, liveLists, parseNumbers, progressOf, type Card, type Checklist, type ChecklistCopyRequest, type ChecklistOp } from '@shared/checklist';
+import { checklistReminder, type ReminderEvent } from '@shared/checklist-reminder';
 import { checklistEventText, checklistTool, clipNotice, noticeMessage, replyNoticeText, type CardRef } from '@shared/checklist-tools';
 import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { canSee } from '@shared/session-tools';
+import { checklistHookEvent } from './checklist-bridge';
 import { ChecklistError, type ChecklistStore } from './checklist-store';
 import { textResult, type ToolResult } from './mcp-bridge';
 import { SessionNotices, type NoticeHost } from './session-notices';
@@ -86,6 +88,8 @@ export class ChecklistControl {
   // --- MCP のツール ---
 
   async handle(callerId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const hook = checklistHookEvent(name);
+    if (hook) return textResult(this.reminder(callerId, hook, args));
     if (!checklistTool(name)) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) {
       return textResult(`The user has turned off "${t('main.menu.checklistControl')}" in the tanacode menu. Ask the user to turn it on.`, true);
@@ -106,6 +110,19 @@ export class ChecklistControl {
       result.content.push({ type: 'text', text: `(Since your previous tool call, the user changed the checklists)\n${lines.join('\n')}` });
     }
     return result;
+  }
+
+  // --- フック ---
+
+  // チェックリストを使い続けさせるフック（checklist-hook.ts）に返す、Claude に渡す文。渡すものが無ければ空。
+  // counts: Claude が使ったツールの数（フックが会話ログから数えたもの。ツールの引数ではない）
+  private reminder(callerId: string, event: ReminderEvent, counts: Record<string, unknown>): string {
+    if (!this.deps.enabled()) return '';
+    const caller = this.deps.host.list().find((s) => s.id === callerId);
+    if (!caller) return '';
+    const count = (value: unknown) => (typeof value === 'number' && value > 0 ? Math.floor(value) : 0);
+    const activity = { turn: count(counts.turn), checklist: count(counts.checklist) };
+    return checklistReminder(event, this.deps.store.lists(caller.id), activity, !!caller.parentId) ?? '';
   }
 
   private run(caller: SessionSummary, name: string, args: Record<string, unknown>): string {

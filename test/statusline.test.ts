@@ -101,6 +101,15 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(3);
   });
 
+  it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {
+    expect(Object.keys(ownSettings(null).hooks as object)).toEqual(['PreToolUse']);
+    const hooks = ownSettings(null, false, false, null, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
+    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart']);
+    expect(hooks.SessionStart[0].matcher).toBe('compact');
+    expect(hooks.Stop[0].hooks[0].command).toContain('--hook');
+    expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(1);
+  });
+
   it('プロファイルの設定のフォルダで起動するときだけ、~/.claude の指示ファイルを読ませない設定を足す', () => {
     expect(ownSettings(null)).not.toHaveProperty('claudeMdExcludes');
     expect(JSON.parse(sessionSettings())).not.toHaveProperty('claudeMdExcludes');

@@ -710,14 +710,15 @@ export class SessionManager {
   // 設定ファイルを選んでいるセッションの起動前に、アプリの設定と登録した設定を合わせたファイルを書く。選んでいなければ null
   // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行の確認のフックを入れる）
   // sessions: セッションの MCP サーバーを足すか（合わせる設定に、子セッションの起動の確認のフックを入れる）
-  private prepareSettings(id: string, settingsFile: string | null | undefined, browser: boolean, sessions: boolean): PreparedSettings | null {
+  // checklist: チェックリストの MCP サーバーを足すか（合わせる設定に、チェックリストを使い続けさせるフックを入れる）
+  private prepareSettings(id: string, settingsFile: string | null | undefined, browser: boolean, sessions: boolean, checklist: boolean): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
       this.settingsFiles?.release(id);
       return null;
     }
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, sessions);
+    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -924,7 +925,7 @@ export class SessionManager {
     const walkthrough = adopted ? null : this.walkthroughMcp();
     // 子セッションには、子を動かすツールを見せない（孫は作れない）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions);
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir));

@@ -178,6 +178,19 @@ describe('起動の準備', () => {
     expect(statSync(runDir).mode & 0o777).toBe(0o700);
   });
 
+  it('チェックリストを使うときは、チェックリストを使い続けさせるフックを、登録した設定のフックと並べて入れる', () => {
+    const files = make();
+    const mine = { hooks: [{ type: 'command', command: 'npm test' }] };
+    const { id } = files.add(file('a.json', { hooks: { Stop: [mine] } }));
+    const without = JSON.parse(readFileSync(files.prepare('s', id, false, false).settingsFile, 'utf8'));
+    expect(without.hooks.Stop).toEqual([mine]);
+    expect(without.hooks.UserPromptSubmit).toBeUndefined();
+    const written = JSON.parse(readFileSync(files.prepare('s', id, false, false, true).settingsFile, 'utf8'));
+    expect(written.hooks.Stop).toEqual([mine, { hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_CHECKLIST_HOOK=1') })] }]);
+    expect(written.hooks.UserPromptSubmit).toHaveLength(1);
+    expect(written.hooks.SessionStart[0].matcher).toBe('compact');
+  });
+
   it('登録した設定の statusLine は、アプリの statusLine が包んで動かす', () => {
     const files = make();
     const { id } = files.add(file('a.json', { statusLine: { type: 'command', command: 'my-line' } }));

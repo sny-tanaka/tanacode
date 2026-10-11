@@ -1,4 +1,4 @@
-import { CHECKLIST_EVENT_TAG, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
+import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
@@ -250,7 +250,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     }
     const events: ChatEvent[] = [];
     blocks.forEach((block, i) => {
-      if (block.type === 'text' && block.text?.trim()) {
+      // ターンの終わりの知らせに「直すものは無い」と答えた目印は、Claude とアプリのあいだのやりとりなので出さない
+      if (block.type === 'text' && block.text?.trim() && block.text.trim() !== CHECKLIST_UNCHANGED_MARK) {
         events.push({ type: 'assistant-text', id: `${entry.uuid}:${i}`, text: block.text, at });
       } else if (block.type === 'thinking' && block.thinking?.trim()) {
         // 多くの思考は本文が空（署名だけ）で記録される。本文があるときだけ出す。
@@ -381,17 +382,24 @@ export const GUARD_HOOK_ENV = 'TANACODE_WORKTREE_GUARD';
 export const BROWSER_GATE_HOOK_ENV = 'TANACODE_BROWSER_GATE';
 // アプリが足した、子セッションの起動で、権限モードによらず人の許可の確認を出させるフック（main の statusline.ts）の目印
 export const SESSIONS_GATE_HOOK_ENV = 'TANACODE_SESSIONS_GATE';
-const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV];
+// アプリが足した、Claude にチェックリストを使い続けさせるフック（main の checklist-hook.ts）の目印
+export const CHECKLIST_HOOK_ENV = 'TANACODE_CHECKLIST_HOOK';
+const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV, CHECKLIST_HOOK_ENV];
+
+function isAppHook(command: string): boolean {
+  return APP_HOOK_MARKS.some((mark) => command.includes(mark));
+}
 
 function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
   const type = typeof a?.type === 'string' ? a.type : '';
   if (!a || !type.startsWith('hook_')) return null;
-  // アプリが足したフックは、ユーザーのフックではないので出さない
-  if (typeof a.command === 'string' && APP_HOOK_MARKS.some((mark) => (a.command as string).includes(mark))) return null;
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
   const blocking = (a.blockingError ?? null) as { blockingError?: string; command?: string } | null;
   const content = Array.isArray(a.content) ? a.content.map(String).join('\n') : str(a.content);
+  // アプリが足したフックは、ユーザーのフックではないので出さない（止めたフックのコマンドは blockingError に入る。
+  // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせは囲みで見分ける）
+  if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || content.includes(`<${CHECKLIST_REMINDER_TAG}>`)) return null;
   return {
     event: str(a.hookEvent) || str(a.hookName).split(':')[0] || 'hook',
     name: str(a.hookName) || str(a.hookEvent),
@@ -430,11 +438,11 @@ function blockedByHook(toolUseId: string, text: string | undefined): HookRun | n
   };
 }
 
-// Stop の hooks の要約。出力の無かった hooks もコマンドと所要時間が載る（callback はアプリ内部の hooks なので出さない）
+// Stop の hooks の要約。出力の無かった hooks もコマンドと所要時間が載る（callback は Claude Code の内部の hooks、目印の付いたものはアプリが足した hooks なので出さない）
 function stopHookEvents(entry: TranscriptEntry): ChatEvent[] {
   const errors = (entry.hookErrors ?? []).map(String);
   return (entry.hookInfos ?? [])
-    .filter((h) => h.command && h.command !== 'callback')
+    .filter((h) => h.command && h.command !== 'callback' && !isAppHook(h.command))
     .map((h, i) => ({
       type: 'hook' as const,
       id: `${entry.uuid ?? ''}:${i}`,

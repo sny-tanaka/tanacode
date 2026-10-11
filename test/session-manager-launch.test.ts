@@ -19,8 +19,8 @@ function fakeSettingsFiles(model: string | null = 'opus') {
       calls.push(`check:${settingsId}`);
       if (settingsId === 'broken') throw new Error('設定ファイルを読めません: broken');
     },
-    prepare(sessionId: string, settingsId: string, browser = false, sessions = false): PreparedSettings {
-      calls.push(`prepare:${settingsId}:${browser}:${sessions}`);
+    prepare(sessionId: string, settingsId: string, browser = false, sessions = false, checklist = false): PreparedSettings {
+      calls.push(`prepare:${settingsId}:${browser}:${sessions}:${checklist}`);
       if (settingsId === 'broken') throw new Error('設定ファイルを読めません: broken');
       return { settingsFile: `/run/${sessionId}.json`, model };
     },
@@ -38,7 +38,7 @@ describe('登録した設定ファイル', () => {
     const { files, calls } = fakeSettingsFiles();
     start({ settingsFiles: files });
     const { id, pty } = app.create({ settingsFile: 'work' });
-    expect(calls).toEqual(['check:work', 'prepare:work:false:false']);
+    expect(calls).toEqual(['check:work', 'prepare:work:false:false:false']);
     expect(pty.arg('--settings')).toBe(`/run/${id}.json`);
     expect(pty.arg('--model')).toBe('opus');
     expect(app.manager.summary(id)?.settingsFile).toBe('work');
@@ -137,7 +137,7 @@ describe('アプリが足す MCP サーバー', () => {
   const mcpOf = (args: string[]) =>
     JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
 
-  it('アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーを 1 つの --mcp-config で足し、設定ファイルにブラウザとセッションの確認のフックを入れる', () => {
+  it('アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーを 1 つの --mcp-config で足し、設定ファイルにブラウザ・セッション・チェックリストのフックを入れる', () => {
     const { files, calls } = fakeSettingsFiles();
     start({
       settingsFiles: files,
@@ -147,7 +147,7 @@ describe('アプリが足す MCP サーバー', () => {
       walkthroughMcp: () => launch('walkthrough-mcp'),
     });
     const { id, pty } = app.create({ settingsFile: 'work' });
-    expect(calls).toContain('prepare:work:true:true');
+    expect(calls).toContain('prepare:work:true:true:true');
     const servers = mcpOf(pty.request.args).mcpServers;
     expect(Object.keys(servers)).toEqual(['tanacode-browser', 'tanacode-sessions', 'tanacode-checklist', 'tanacode-walkthrough']);
     expect(servers['tanacode-sessions'].env).toMatchObject({ TANACODE_SESSIONS_SESSION: id });
@@ -155,6 +155,8 @@ describe('アプリが足す MCP サーバー', () => {
     expect(servers['tanacode-checklist'].args).toEqual(['/Apps/out/main/checklist-mcp.js']);
     // JavaScript の実行の確認のフックは、Claude Code の環境で動くので、環境変数でも渡す
     expect(pty.request.env).toMatchObject({ TANACODE_BROWSER_SOCKET: '/u/browser-mcp.sock', TANACODE_BROWSER_SESSION: id });
+    // チェックリストを使い続けさせるフックも同じ
+    expect(pty.request.env).toMatchObject({ TANACODE_CHECKLIST_SOCKET: '/u/checklist-mcp.sock', TANACODE_CHECKLIST_SESSION: id, TANACODE_CHECKLIST_SCRIPT: '/Apps/out/main/checklist-mcp.js' });
   });
 
   it('子セッションには、子を動かすツールを見せない（読むだけのツール）。メニューでオフのものは足さない', () => {
