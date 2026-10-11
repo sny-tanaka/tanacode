@@ -1,4 +1,4 @@
-import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
+import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
@@ -250,7 +250,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     }
     const events: ChatEvent[] = [];
     blocks.forEach((block, i) => {
-      if (block.type === 'text' && block.text?.trim()) {
+      // ターンの終わりの知らせに「直すものは無い」と答えた目印は、Claude とアプリのあいだのやりとりなので出さない
+      if (block.type === 'text' && block.text?.trim() && block.text.trim() !== CHECKLIST_UNCHANGED_MARK) {
         events.push({ type: 'assistant-text', id: `${entry.uuid}:${i}`, text: block.text, at });
       } else if (block.type === 'thinking' && block.thinking?.trim()) {
         // 多くの思考は本文が空（署名だけ）で記録される。本文があるときだけ出す。

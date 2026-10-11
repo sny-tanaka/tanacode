@@ -218,29 +218,30 @@ describe('MCP のツール（断るとき・結果の文）', () => {
 
 describe('チェックリストを使い続けさせるフックへの返事', () => {
   const CHILD = '66666666-0000-4000-8000-000000000006';
-  const worked = { turn: 4, checklist: 0, actions: 4 };
+  const worked = { turn: 4, checklist: 0 };
 
   it('今のチェックリストから、Claude に渡す文を返す。人の書き換えは添えず、次のツールの結果に残す', async () => {
     await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
     control.apply(ME, { type: 'card-add', listId: store.findList(ME, 'やること')!.id, title: '人が足したカード' });
-    const prompt = await call('hook:prompt', { turn: 0, checklist: 0, actions: 0 });
+    const prompt = await call('hook:prompt', { turn: 0, checklist: 0 });
     expect(prompt.content).toHaveLength(1);
     expect(first(prompt)).toContain('- [ ] #1 税率を変える\n- [ ] #2 人が足したカード');
-    expect(first(await call('hook:stop', worked))).toContain('You have made 4 tool calls that change things');
+    expect(first(await call('hook:stop', worked))).toContain('In this turn you made 4 tool calls');
     expect(first(await call('hook:compact', {}))).toContain('The conversation was just compacted.');
     expect((await call('checklist_overview')).content[1]).toMatchObject({ text: expect.stringContaining('user changed the checklists') });
   });
 
   it('渡すものが無いとき・数が数字でないときは、空を返す', async () => {
     expect(first(await call('hook:compact', {}))).toBe('');
-    expect(first(await call('hook:stop', { turn: 9, checklist: 0, actions: 4 }))).toBe('');
-    expect(first(await call('hook:stop', { turn: '9', checklist: null, actions: -3 }))).toBe('');
-    expect(first(await call('hook:stop', { turn: 9.7, checklist: 0, actions: 5.9 }))).toContain('You have made 5 tool calls');
+    expect(first(await call('hook:stop', { turn: 9, checklist: 1 }))).toBe('');
+    expect(first(await call('hook:stop', { turn: '9', checklist: null }))).toBe('');
+    expect(first(await call('hook:stop', { turn: -3 }))).toBe('');
+    expect(first(await call('hook:stop', { turn: 5.9, checklist: 0 }))).toContain('In this turn you made 5 tool calls');
   });
 
   it('子セッションのターンの終わりは止めない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
     host.add(CHILD, { parentId: ME });
-    expect(first(await call('hook:stop', { turn: 9, checklist: 0, actions: 9 }, CHILD))).toBe('');
+    expect(first(await call('hook:stop', { turn: 9, checklist: 0 }, CHILD))).toBe('');
     expect(first(await call('hook:prompt', {}, CHILD))).toContain('This session has no checklists yet.');
     expect(first(await call('hook:prompt', {}, 'いないセッション'))).toBe('');
     const off = new ChecklistControl({ store, host, enabled: () => false });

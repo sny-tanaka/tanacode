@@ -2,8 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { STOP_ACTIONS_NONE, STOP_ACTIONS_OPEN } from '@shared/checklist-reminder';
-import { CHECKLIST_REMINDER_TAG, checklistToolId } from '@shared/checklist-tools';
+import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistToolId } from '@shared/checklist-tools';
 import { ChecklistControl } from '../../src/main/checklist-control';
 import { ChecklistStore } from '../../src/main/checklist-store';
 import { McpBridge } from '../../src/main/mcp-bridge';
@@ -15,15 +14,16 @@ import { MockApi, type Block } from './mock-api';
 // アプリと同じ起動の引数（--settings の hooks）と環境変数で起動し、フック（src/main/checklist-mcp.ts をビルドしたものを --hook で動かす）が、
 // アプリの代わりのソケットの先の ChecklistControl に聞いて、Claude Code に返すか。
 // - 人が発言すると、今のチェックリストが Claude に渡る（UserPromptSubmit）
-// - チェックリストに触れないまま作業がたまると、ターンの終わりが 1 回だけ止まり、理由が Claude に渡って続きが始まる（Stop）。
-//   止めたあとの続きは止まらない。読むだけのターン・触れてから間もないターンは止まらない
+// - ツールを使ったのにチェックリストに触れずにターンを終えようとすると、1 回だけ止まり、理由が Claude に渡って続きが始まる（Stop）。
+//   止めたあとの続きは止まらない。読んだだけのターンも止まる。チェックリストに触れたターン・ツールを使っていないターンは止まらない
+// - 直すものが無いと答えた目印は、チャットに出ない
 // - /compact で会話を圧縮すると、今のチェックリストが渡る（SessionStart の compact）
 // - どれも、チャットのフックの一覧には出ない
 
 const WORK = 'チェックリストに触れずに作業してください';
-const QUESTION = '質問に答えてください';
-const MORE = '続きの作業をしてください';
-const SMALL = '小さな直しをしてください';
+const QUESTION = '読んで質問に答えてください';
+const TOUCH = 'チェックリストを直しながら作業してください';
+const TALK = '返事だけしてください';
 const version = claudeVersion();
 const say = (text: string): Block[] => [{ type: 'text', text }];
 
@@ -51,33 +51,35 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     });
     await bridge.start();
     api = new MockApi();
-    // ファイルを書くツールを、許可の確認なしに通す（何かを変えうるツールとして数えられる）
+    // ファイルを書くツールを、許可の確認なしに通す
     run = new ClaudeRun(await api.start(), { mode: 'acceptEdits', checklist: { command: process.execPath, script, socketPath: bridge.socketPath, version: 'test' } });
     await run.open();
     let files = 0;
     const write = (): Block[] => [{ type: 'tool_use', id: `toolu_w${++files}`, name: 'Write', input: { file_path: join(run.cwd, `file-${files}.txt`), content: 'メモ\n' } }];
     const read = (): Block[] => [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: join(run.cwd, 'file-1.txt') } }];
+    const check = (): Block[] => [{ type: 'tool_use', id: 'toolu_check', name: checklistToolId('card_check'), input: { list: '人のやること', numbers: '1' } }];
     api.conversations = [
       {
         match: WORK,
         // 会話ログに書かれる前にターンが終わらないよう、本物の応答と同じくらいの間を空ける
         delayMs: 250,
         steps: [
-          ...Array.from({ length: STOP_ACTIONS_NONE }, write),
+          write(),
+          write(),
           say('作業を終えました'),
           // ここで止まる。理由を受けて、人にやってもらうことをカードにする
           [{ type: 'tool_use', id: 'toolu_add', name: checklistToolId('card_add'), input: { list: '人のやること', list_description: '人にやってもらうこと', cards: [{ title: '設定画面で画像を選ぶ' }] } }],
           say('チェックリストに 1 件足しました'),
-          // 2 つめの発言。読むだけなので止まらない
+          // 2 つめの発言。読んだだけでも止まる。直すものが無いので、目印だけを返す
           read(),
           say('質問に答えました'),
-          // 3 つめの発言。未チェックのカードがあるので、少ない作業で止まる
-          ...Array.from({ length: STOP_ACTIONS_OPEN }, write),
-          say('続きを終えました'),
-          say('直すものはありません'),
-          // 4 つめの発言。止められてから間もないので止まらない
+          say(CHECKLIST_UNCHANGED_MARK),
+          // 3 つめの発言。チェックリストに触れたので止まらない
           write(),
-          say('小さな直しを終えました'),
+          check(),
+          say('直しながら終えました'),
+          // 4 つめの発言。ツールを使っていないので止まらない
+          say('返事をしました'),
         ],
       },
     ];
@@ -92,45 +94,45 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('リストなしで作業がたまると、ターンの終わりが 1 回だけ止まり、理由を受けた Claude がチェックリストを直す', async () => {
+  it('ツールを使ってチェックリストに触れずに終えようとすると、1 回だけ止まり、理由を受けた Claude がチェックリストを直す', async () => {
     await run.send(WORK);
     await idle('チェックリストに 1 件足しました');
     // 発言のとき: リストが無いことが Claude に渡っている
     expect(hooks('hook:prompt')).toHaveLength(1);
     expect(api.contexts[0]).toContain(`<${CHECKLIST_REMINDER_TAG}>\nThis session has no checklists yet.`);
     // ターンの終わり: 会話ログから数えたツールがアプリに届き、止めた理由が Claude に渡った。止めたあとの続きの終わりでは、アプリに聞かない
-    expect(hooks('hook:stop')).toEqual([{ turn: STOP_ACTIONS_NONE, checklist: 0, actions: STOP_ACTIONS_NONE }]);
+    expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0 }]);
     const afterStop = api.contexts[api.contexts.length - 1];
-    expect(afterStop).toContain(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>\nYou are about to end your turn. You have made ${STOP_ACTIONS_NONE} tool calls that change things`);
+    expect(afterStop).toContain(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>\nYou are about to end your turn. In this turn you made 2 tool calls and did not touch the checklists`);
     expect(calls.map((c) => c.tool)).toEqual(['hook:prompt', 'hook:stop', 'card_add']);
     expect(store.findList(run.sessionId!, '人のやること')!.cards.map((c) => c.title)).toEqual(['設定画面で画像を選ぶ']);
   });
 
-  it('次の発言では今のチェックリストが渡る。読むだけのターンは止まらない', async () => {
+  it('次の発言では今のチェックリストが渡る。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない', async () => {
     await run.send(QUESTION);
-    await idle('質問に答えました');
-    expect(api.contexts[api.contexts.length - 1]).toContain('## 人のやること (0/1 checked)\nDescription: 人にやってもらうこと\n- [ ] #1 設定画面で画像を選ぶ');
-    // アプリには聞くが（ツールを使ったターン）、たまった作業が無いので止まらない
-    expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0, actions: 0 });
-    expect(said('続きを終えました')).toBe(false);
+    await run.waitFor('止めたあとの続きが終わる', (info) => info.state.kind === 'prompt' && api.contexts.some((c) => c.includes('In this turn you made 1 tool call and')), 30_000);
+    expect(api.contexts.some((c) => c.includes('## 人のやること (0/1 checked)\nDescription: 人にやってもらうこと\n- [ ] #1 設定画面で画像を選ぶ'))).toBe(true);
+    expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0 });
+    // 目印の応答は会話ログにはあるが、チャットには出ない
+    await run.waitFor('目印の応答', () => run.entries.some((e) => JSON.stringify(e.message?.content ?? '').includes(CHECKLIST_UNCHANGED_MARK) && e.type === 'assistant'));
+    expect(said('質問に答えました')).toBe(true);
+    expect(run.chatEvents.some((e) => e.type === 'assistant-text' && e.text.includes(CHECKLIST_UNCHANGED_MARK))).toBe(false);
   });
 
-  it('未チェックのカードがあれば、少ない作業で止まる。止められてから間もないターンは止まらない', async () => {
-    await run.send(MORE);
-    await idle('直すものはありません');
-    expect(hooks('hook:stop')[2]).toEqual({ turn: STOP_ACTIONS_OPEN, checklist: 0, actions: STOP_ACTIONS_OPEN });
-    await run.send(SMALL);
-    await idle('小さな直しを終えました');
-    // 数え直しは、止めた理由の行（会話ログに残る）から
-    expect(hooks('hook:stop')[3]).toEqual({ turn: 1, checklist: 0, actions: 1 });
-    expect(hooks('hook:stop')).toHaveLength(4);
+  it('チェックリストに触れたターンと、ツールを使っていないターンは止まらない', async () => {
+    await run.send(TOUCH);
+    await idle('直しながら終えました');
+    await run.send(TALK);
+    await idle('返事をしました');
+    // どちらも、アプリに聞かずに通す
+    expect(hooks('hook:stop')).toHaveLength(2);
+    expect(store.findList(run.sessionId!, '人のやること')!.cards[0].checked).toBe(true);
     expect(run.chatEvents.filter((e) => e.type === 'assistant-text').map((e) => e.type === 'assistant-text' && e.text)).toEqual([
       '作業を終えました',
       'チェックリストに 1 件足しました',
       '質問に答えました',
-      '続きを終えました',
-      '直すものはありません',
-      '小さな直しを終えました',
+      '直しながら終えました',
+      '返事をしました',
     ]);
   });
 

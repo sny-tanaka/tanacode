@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CHECKLIST_REMINDER_TAG, checklistToolId } from '../src/shared/checklist-tools';
+import { checklistToolId } from '../src/shared/checklist-tools';
 import { CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV, checklistHookEnv, checklistHookEvent, checklistHookRequest } from '../src/main/checklist-bridge';
 import { CHECKLIST_HOOK_COMMAND, checklistHooks, hookOutput, readTail, runHook, turnActivity } from '../src/main/checklist-hook';
 import { McpBridge, textResult } from '../src/main/mcp-bridge';
@@ -14,23 +14,11 @@ const prompt = (text: string, extra: Record<string, unknown> = {}) => JSON.strin
 const use = (...names: string[]) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'やります' }, ...names.map((name) => ({ type: 'tool_use', name }))] } });
 const result = () => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't' }] } });
 const CARD_CHECK = checklistToolId('card_check');
-// Stop のフックが止めた理由は、isMeta の user の行で残る（2.1.296）
-const reminded = () => prompt(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>\n…\n</${CHECKLIST_REMINDER_TAG}>`, { isMeta: true });
 
 describe('会話ログからツールを数える', () => {
-  it('このターン（最後の発言のあと）のツールと、そのうちチェックリストのツールを数える', () => {
-    const log = [prompt('前の依頼'), use('Edit'), result(), prompt('今の依頼'), use('Read', 'Bash'), result(), use(CARD_CHECK), result(), use('Edit')].join('\n');
-    expect(turnActivity(log)).toEqual({ turn: 3, checklist: 1, actions: 1 });
-  });
-
-  it('最後にチェックリストに触れてからの、何かを変えうるツールを、前のターンにさかのぼって数える。読むだけのツールは数えない', () => {
-    const log = [prompt('a'), use('Edit'), use(CARD_CHECK), use('Write'), result(), prompt('b'), use('Bash', 'Read', 'Grep'), result(), prompt('c'), use('Edit', 'mcp__tanacode-browser__click', 'Glob')].join('\n');
-    expect(turnActivity(log)).toEqual({ turn: 3, checklist: 0, actions: 4 });
-  });
-
-  it('ターンの終わりに知らせを受けたところも、チェックリストに触れたところとして数え直す', () => {
-    const log = [prompt('a'), use('Edit', 'Edit', 'Edit'), reminded(), use('Read'), prompt('b'), use('Bash')].join('\n');
-    expect(turnActivity(log)).toEqual({ turn: 1, checklist: 0, actions: 1 });
+  it('このターン（最後の発言のあと）のツールと、そのうちチェックリストのツールを数える。前のターンは数えない', () => {
+    const log = [prompt('前の依頼'), use('Edit', CARD_CHECK), result(), prompt('今の依頼'), use('Read', 'Bash'), result(), use(CARD_CHECK), result(), use('Edit')].join('\n');
+    expect(turnActivity(log)).toEqual({ turn: 3, checklist: 1 });
   });
 
   it('Claude Code が足した行（isMeta・圧縮の要約・会話ログだけの行）とサブエージェントの行は、発言にもツールにも数えない', () => {
@@ -41,15 +29,19 @@ describe('会話ログからツールを数える', () => {
       prompt('メタ', { isMeta: true }),
       prompt('ログだけ', { isVisibleInTranscriptOnly: true }),
       JSON.stringify({ type: 'assistant', isSidechain: true, message: { content: [{ type: 'tool_use', name: 'Bash' }] } }),
-      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '画像つきの発言' }] } }),
       use('Write'),
       '',
       '{ 壊れた行',
       JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use' }] } }),
       JSON.stringify({ type: 'system' }),
     ].join('\n');
-    expect(turnActivity(log)).toEqual({ turn: 1, checklist: 0, actions: 2 });
-    expect(turnActivity('')).toEqual({ turn: 0, checklist: 0, actions: 0 });
+    expect(turnActivity(log)).toEqual({ turn: 2, checklist: 0 });
+    expect(turnActivity('')).toEqual({ turn: 0, checklist: 0 });
+  });
+
+  it('文と画像の発言（ツールの結果を含まない配列）も、ターンのはじまりにする', () => {
+    const image = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '画像つきの発言' }] } });
+    expect(turnActivity([prompt('前'), use('Edit'), image, use('Read')].join('\n'))).toEqual({ turn: 1, checklist: 0 });
   });
 });
 
@@ -127,15 +119,15 @@ describe('フックの本体', () => {
     expect(JSON.parse(await run({ hook_event_name: 'UserPromptSubmit' }))).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: '今のチェックリスト' } });
     expect(JSON.parse(await run({ hook_event_name: 'SessionStart' }))).toEqual({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '今のチェックリスト' } });
     expect(calls).toEqual([
-      { session: 'S1', tool: 'hook:prompt', args: { turn: 0, checklist: 0, actions: 0 } },
-      { session: 'S1', tool: 'hook:compact', args: { turn: 0, checklist: 0, actions: 0 } },
+      { session: 'S1', tool: 'hook:prompt', args: { turn: 0, checklist: 0 } },
+      { session: 'S1', tool: 'hook:compact', args: { turn: 0, checklist: 0 } },
     ]);
   });
 
   it('ターンの終わりは、会話ログから数えたツールをアプリに渡し、返ってきた文で止める', async () => {
     const transcript_path = transcript(prompt('依頼'), use('Edit', 'Bash'), result());
     expect(JSON.parse(await run({ hook_event_name: 'Stop', transcript_path }))).toEqual({ decision: 'block', reason: '今のチェックリスト' });
-    expect(calls).toEqual([{ session: 'S1', tool: 'hook:stop', args: { turn: 2, checklist: 0, actions: 2 } }]);
+    expect(calls).toEqual([{ session: 'S1', tool: 'hook:stop', args: { turn: 2, checklist: 0 } }]);
   });
 
   it('止めたあとの続き・チェックリストに触れたターン・ツールを使っていないターンは、アプリに聞かずに通す', async () => {

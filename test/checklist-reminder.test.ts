@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Card, Checklist } from '../src/shared/checklist';
-import { STOP_ACTIONS_NONE, STOP_ACTIONS_OPEN, checklistReminder, type TurnActivity } from '../src/shared/checklist-reminder';
-import { CHECKLIST_MCP_INSTRUCTIONS, CHECKLIST_REMINDER_TAG } from '../src/shared/checklist-tools';
+import { checklistReminder, type TurnActivity } from '../src/shared/checklist-reminder';
+import { CHECKLIST_MCP_INSTRUCTIONS, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../src/shared/checklist-tools';
 
 // Claude にチェックリストを使い続けさせる知らせ（@shared/checklist-reminder）。どの時点で、何を渡すか
 
@@ -32,8 +32,8 @@ const list = (name: string, cards: Card[], description = '', deleted = false): C
 
 const TODO = list('やること', [card(1, '税率を変える', true), card(2, 'README を直す'), card(3, '消したカード', false, true)], '終えたらチェックする');
 const DONE = list('完了前チェック', [card(1, '税込が整数であること', true)]);
-const NONE: TurnActivity = { turn: 0, checklist: 0, actions: 0 };
-const worked = (actions: number, turn = actions): TurnActivity => ({ turn, checklist: 0, actions });
+const NONE: TurnActivity = { turn: 0, checklist: 0 };
+const worked = (turn: number): TurnActivity => ({ turn, checklist: 0 });
 
 describe('人が発言したとき', () => {
   it('リストがあれば、未チェックのカードだけを並べて、発言でリストが変わるかを先に確かめさせる', () => {
@@ -62,27 +62,29 @@ describe('人が発言したとき', () => {
 });
 
 describe('ターンの終わり', () => {
-  it('このターンでチェックリストに触れた・ツールを使っていないなら、止めない', () => {
-    expect(checklistReminder('stop', [TODO], { turn: 9, checklist: 1, actions: 9 })).toBeNull();
-    expect(checklistReminder('stop', [TODO], { turn: 0, checklist: 0, actions: 9 })).toBeNull();
+  it('このターンでチェックリストに触れた・ツールを使っていない（返事だけ）なら、止めない', () => {
+    expect(checklistReminder('stop', [TODO], { turn: 9, checklist: 1 })).toBeNull();
+    expect(checklistReminder('stop', [TODO], NONE)).toBeNull();
   });
 
-  it('未チェックのカードがあれば、触れないままの作業が少したまったところで止める', () => {
-    expect(checklistReminder('stop', [TODO], worked(STOP_ACTIONS_OPEN - 1))).toBeNull();
-    const text = checklistReminder('stop', [TODO], worked(STOP_ACTIONS_OPEN))!;
-    expect(text).toContain(`You have made ${STOP_ACTIONS_OPEN} tool calls that change things since you last touched the checklists`);
+  it('ツールを使ったのに触れなかったターンは、1 回のツールでも止めて、今の状態と直すことを渡す（調べただけのターンも）', () => {
+    const text = checklistReminder('stop', [TODO], worked(1))!;
+    expect(text).toContain('In this turn you made 1 tool call and did not touch the checklists');
     expect(text).toContain('Current state:\n## やること (1/2 checked)');
+    expect(text).toContain('even if this turn was only an investigation');
     expect(text).toContain('add a card to a list for the user (e.g. 「人のやること」)');
-    expect(text).toContain('end your turn without writing anything more');
+    expect(checklistReminder('stop', [TODO], worked(8))).toContain('you made 8 tool calls and');
   });
 
-  it('未チェックのカードが無ければ（リストが無い・すべてチェック済み）、もっとたまってから止める', () => {
-    expect(checklistReminder('stop', [], worked(STOP_ACTIONS_NONE - 1))).toBeNull();
-    expect(checklistReminder('stop', [DONE], worked(STOP_ACTIONS_NONE - 1))).toBeNull();
-    const text = checklistReminder('stop', [], worked(STOP_ACTIONS_NONE))!;
+  it('直すものが無ければ、決まった目印だけを返させる（チャットには出さない）', () => {
+    expect(checklistReminder('stop', [TODO], worked(1))).toContain(`reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else`);
+  });
+
+  it('リストが無い・すべてチェック済みでも止める', () => {
+    const text = checklistReminder('stop', [], worked(2))!;
     expect(text).toContain('This session has no checklists yet.');
     expect(text).not.toContain('Current state:');
-    expect(checklistReminder('stop', [DONE], worked(STOP_ACTIONS_NONE))).toContain('Current state:\n## 完了前チェック (1/1 checked)\n(every card is checked)');
+    expect(checklistReminder('stop', [DONE], worked(2))).toContain('Current state:\n## 完了前チェック (1/1 checked)\n(every card is checked)');
   });
 
   it('子セッションは止めない（親の Claude が、子の最後の応答を結果として読むため）', () => {

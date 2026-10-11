@@ -1,4 +1,4 @@
-import { CHECKLIST_REMINDER_TAG } from '../src/shared/checklist-tools';
+import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../src/shared/checklist-tools';
 import { CHECKLIST_HOOK_COMMAND } from '../src/main/checklist-hook';
 import { describe, expect, it } from 'vitest';
 import {
@@ -257,6 +257,11 @@ describe('toChatEvents: attachment の行', () => {
 });
 
 describe('toChatEvents: 応答の行', () => {
+  it('ターンの終わりの知らせに「直すものは無い」と答えた目印は出さない。目印を含むだけの文章は出す', () => {
+    expect(events(assistant([{ type: 'text', text: `\n${CHECKLIST_UNCHANGED_MARK}\n` }]))).toEqual([]);
+    expect(events(assistant([{ type: 'text', text: `${CHECKLIST_UNCHANGED_MARK} と返しました` }]))).toHaveLength(1);
+  });
+
   it('文章・思考・ツールの呼び出しを出す。空のものは出さない', () => {
     const entry = assistant([
       { type: 'text', text: 'コマンドを実行します。' },

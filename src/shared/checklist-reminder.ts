@@ -1,5 +1,5 @@
 import { liveCards, liveLists, progressOf, type Checklist } from './checklist';
-import { CHECKLIST_MCP_SERVER, CHECKLIST_REMINDER_TAG } from './checklist-tools';
+import { CHECKLIST_MCP_SERVER, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from './checklist-tools';
 import { neutralizeTags } from './session-tools';
 
 // Claude にチェックリストを使い続けさせるための知らせ。アプリが起動する Claude Code に足す hooks（src/main/checklist-hook.ts）が、
@@ -12,19 +12,8 @@ import { neutralizeTags } from './session-tools';
 // prompt: 人が発言した（UserPromptSubmit）/ stop: Claude がターンを終えようとしている（Stop）/ compact: 会話が圧縮された（SessionStart の compact）
 export type ReminderEvent = 'prompt' | 'stop' | 'compact';
 
-// Claude が使ったツールの数（フックが会話ログから数える）。
-// turn: このターン（最後の発言のあと）に使ったツール / checklist: そのうちチェックリストのツール /
-// actions: 最後にチェックリストに触れてから（ツールを使った・ターンの終わりに知らせを受けた）使った、何かを変えうるツール（READ_ONLY_TOOLS のほか）
-export type TurnActivity = { turn: number; checklist: number; actions: number };
-
-// 読むだけのツール。質問に答えるために何度使っても、チェックリストに書くことは増えないので、数えない
-export const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'ToolSearch', 'WebSearch', 'WebFetch', 'AskUserQuestion', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList']);
-
-// ターンの終わりを止める、actions の数。未チェックのカードがあるとき（終えたカードがあるかもしれない）と、
-// 無いとき（リストが無い・すべてチェック済み。手順の多い作業が、リストなしで進んでいるかもしれない）。
-// 毎ターン止めると、質問への答えのたびに 1 往復が増えて「チェックリストの変更はありません」と書かれる（実測）ので、作業がたまってから止める
-export const STOP_ACTIONS_OPEN = 3;
-export const STOP_ACTIONS_NONE = 5;
+// このターン（最後の発言のあと）に Claude が使ったツールの数（フックが会話ログから数える）。checklist: そのうちチェックリストのツール
+export type TurnActivity = { turn: number; checklist: number };
 
 // 知らせに入れるカードの数（リストごと）と、題名の長さ
 const MAX_CARDS = 40;
@@ -54,19 +43,21 @@ export function checklistReminder(event: ReminderEvent, lists: Checklist[], acti
       'Before you work on the latest message of the user, check whether it changes these lists: new work to add, a card it corrects or makes obsolete (update the card, not only your reply), or something the user reports as done. If so, update the lists first, then work, and check each card as you finish it. If the message changes nothing here, do not mention this reminder.',
     ]);
   }
-  // ターンの終わり。チェックリストに触れたターン・ツールを使っていないターン（質問への答えなど）は止めない
+  // ターンの終わり。ツールを使ったのにチェックリストに触れなかったターンは、毎回止める。
+  // 調べただけのターンでも、リストに積むものは出る（あとでやること・人に確かめること）ので、ツールの種類や数では分けない。
+  // ツールを使っていないターン（返事だけ）は止めない。発言のときに今の状態を渡してあり、そのあとに起きたのは返事だけのため
   if (child || activity.checklist > 0 || activity.turn === 0) return null;
-  if (activity.actions < (open ? STOP_ACTIONS_OPEN : STOP_ACTIONS_NONE)) return null;
+  const used = `${activity.turn} ${activity.turn === 1 ? 'tool call' : 'tool calls'}`;
   return wrap([
-    `You are about to end your turn. You have made ${activity.actions} tool calls that change things since you last touched the checklists you share with the user (in the side panel of tanacode). ${live.length > 0 ? 'Current state:' : 'This session has no checklists yet.'}`,
+    `You are about to end your turn. In this turn you made ${used} and did not touch the checklists you share with the user (in the side panel of tanacode). ${live.length > 0 ? 'Current state:' : 'This session has no checklists yet.'}`,
     ...(live.length > 0 ? [state(live, false)] : []),
-    `Bring them up to date now with the ${CHECKLIST_MCP_SERVER} tools:`,
-    '- Check the cards you have finished, and write how you verified it in comment.',
-    '- Add the work that is still left to do, including what came up since then.',
-    '- If you asked the user to do something only they can do (a manual step, a login, a decision), add a card to a list for the user (e.g. 「人のやること」), so that it is not left only in the chat.',
+    `Check whether they are still true to the conversation, and bring them up to date with the ${CHECKLIST_MCP_SERVER} tools:`,
+    '- Check the cards you finished, and write how you verified it in comment.',
+    '- Add the work that is left to do, including what you found in this turn (follow-ups, things to look into, things to confirm), even if this turn was only an investigation.',
+    '- If your reply asks the user to do something only they can do (a manual step, a login, a decision), add a card to a list for the user (e.g. 「人のやること」), so that it is not left only in the chat.',
     '- If you made a judgment call instead of asking, record it with the reason on a list for review (e.g. 「確認事項」). If the user corrected a recorded decision, update that card.',
     'After updating, end with one short line in the language the user is using that says what you changed in the checklists. Do not repeat or summarize your previous reply.',
-    'If none of the above applies (quick one-step tasks or plain questions), change nothing and end your turn without writing anything more.',
+    `If none of the above applies (a quick one-step task or a plain question), change nothing and reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else. tanacode hides that reply from the user.`,
   ]);
 }
 

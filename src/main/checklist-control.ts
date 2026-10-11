@@ -121,7 +121,7 @@ export class ChecklistControl {
     const caller = this.deps.host.list().find((s) => s.id === callerId);
     if (!caller) return '';
     const count = (value: unknown) => (typeof value === 'number' && value > 0 ? Math.floor(value) : 0);
-    const activity = { turn: count(counts.turn), checklist: count(counts.checklist), actions: count(counts.actions) };
+    const activity = { turn: count(counts.turn), checklist: count(counts.checklist) };
     return checklistReminder(event, this.deps.store.lists(caller.id), activity, !!caller.parentId) ?? '';
   }
 
