@@ -55,7 +55,8 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
     dir = mkdtempSync(join(tmpdir(), 'tanacode-checklist-'));
     store = new ChecklistStore(join(dir, 'checklists'));
     bridge = new McpBridge(join(dir, 'checklist.sock'), (session, tool, args) => {
-      tools.push(tool);
+      // フックからの呼び出し（hook:prompt など。checklist-hooks.test.ts で確かめる）は、ツールに数えない
+      if (!tool.startsWith('hook:')) tools.push(tool);
       return control!.handle(session, tool, args);
     });
     await bridge.start();

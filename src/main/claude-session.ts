@@ -2,7 +2,7 @@ import { basename, join } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
 import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
-import { checklistMcpServer } from './checklist-bridge';
+import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
 import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
@@ -84,8 +84,15 @@ export class ClaudeSession {
       if (this.adopted.screen) this.handlers.onData(this.adopted.screen);
     } else {
       const args = claudeArgs(this.options);
-      // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）
-      const env = { ...childEnv(this.options.claudeDir ?? null), [STATUS_FILE_ENV]: statusFile, [ASK_FILE_ENV]: askFile, ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}) };
+      // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
+      // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も
+      const env = {
+        ...childEnv(this.options.claudeDir ?? null),
+        [STATUS_FILE_ENV]: statusFile,
+        [ASK_FILE_ENV]: askFile,
+        ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}),
+        ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
+      };
       const { worktree, worktreeRoot, resume } = this.options;
       const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
       proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd: spawnCwd, env, cols, rows });
@@ -204,8 +211,9 @@ export function claudeArgs(
   // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、
-  // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、この設定に入れる
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir));
+  // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、
+  // チェックリストを足すときは、チェックリストを使い続けさせるフック（checklist-hook.ts）も、この設定に入れる
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist));
   return args;
 }
 

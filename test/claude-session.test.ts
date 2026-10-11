@@ -110,6 +110,17 @@ describe('起動', () => {
     expect(host.spawned[0].request.env).toMatchObject({ TANACODE_BROWSER_SOCKET: '/u/browser.sock', TANACODE_BROWSER_SESSION: 's1' });
   });
 
+  it('チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数を渡し、設定にフックを入れる', () => {
+    const checklist = { command: 'node', script: '/x/checklist-mcp.js', socketPath: '/u/checklist.sock', version: '1' };
+    session({ checklist }).claude.start();
+    const { env, args } = host.spawned[0].request;
+    expect(env).toMatchObject({ TANACODE_CHECKLIST_SOCKET: '/u/checklist.sock', TANACODE_CHECKLIST_SESSION: 's1', TANACODE_CHECKLIST_COMMAND: 'node', TANACODE_CHECKLIST_SCRIPT: '/x/checklist-mcp.js' });
+    expect(Object.keys(JSON.parse(args[args.indexOf('--settings') + 1]).hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart']);
+    session().claude.start();
+    expect(host.spawned[1].request.env.TANACODE_CHECKLIST_SOCKET).toBeUndefined();
+    expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse']);
+  });
+
   it('引き継ぐときは起動せず、今の画面を先に描き直してから、続きの出力を渡す', () => {
     const info: HostedPtyInfo = { id: 'p1', tag: 's1', pid: 1, startedAt: Date.now(), cols: 100, rows: 30, exitCode: null, screen: '画面' };
     const { claude, got } = session({ resume: true }, info);

@@ -11,6 +11,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
+import { CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV } from '../../src/main/checklist-bridge';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
@@ -174,7 +175,18 @@ export class ClaudeRun {
       // 台本ごとに足す環境変数（再試行の回数など）
       ...this.options.env,
     };
-    this.host = new FakePtyHost(CLAUDE_BIN, env, [STATUS_FILE_ENV, ASK_FILE_ENV, BROWSER_SOCKET_ENV, BROWSER_SESSION_ENV, BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV]);
+    this.host = new FakePtyHost(CLAUDE_BIN, env, [
+      STATUS_FILE_ENV,
+      ASK_FILE_ENV,
+      BROWSER_SOCKET_ENV,
+      BROWSER_SESSION_ENV,
+      BROWSER_COMMAND_ENV,
+      BROWSER_SCRIPT_ENV,
+      CHECKLIST_SOCKET_ENV,
+      CHECKLIST_SESSION_ENV,
+      CHECKLIST_COMMAND_ENV,
+      CHECKLIST_SCRIPT_ENV,
+    ]);
   }
 
   // 今の画面（起動のたびに session-manager が作り直す）
