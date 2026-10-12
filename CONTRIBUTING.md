@@ -382,7 +382,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）
     - `/usage` の利用枠
     - API エラーの再試行中の行（`system` の `api_error`）: 今の Claude Code は、再試行中にこの行を作って画面には出しますが、会話ログに残す前に飛ばします。チャットの「再試行中」の表示は、今は出ません
-    - 貼り付けの `<pasted_content>` の囲み: Claude Code の入力欄に貼り付けたものは囲まれません。囲まれるのは、claude.ai など外から送られた発言（Remote Control）の貼り付けです
+    - 貼り付けの `<pasted_content>` の囲み: モックの API で動かすテストでは、Claude Code の入力欄に貼り付けたものは囲まれません。ログインして使う実際のセッションでは、アプリが貼り付けで送る複数行の発言が、丸ごと `\n\n<pasted_content id="…">\n…\n</pasted_content id="…">\n` の形で会話ログに残ります（2026-10-12・Claude Code 2.1.296。Remote Control を使っていないセッションでも、親からの複数行の指示 5 件すべてがこの形）。claude.ai など外から送られた発言（Remote Control）の貼り付けも囲まれます。囲みの付いた形は、単体テスト（`sessions-mcp.test.ts`・`chat-transcript.test.ts`）で確かめます
   - hooks で止めたときの行（`hook_blocking_error` の attachment）は、PostToolUse・PostToolUseFailure の hooks でだけ書かれます。PreToolUse で止めたときは書かれず、ツールの結果の文章（「PreToolUse:Bash hook error: …」）から読みます。どちらも `errors.test.ts` で確かめます。
   - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます。
   - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
@@ -791,7 +791,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 子への指示: `<tanacode-parent-message session="親の ID">本文</tanacode-parent-message>`（`parentMessageText`。本文の `<tanacode-`・`</tanacode-` は全角の `＜` にして、閉じタグで囲みの外に出られないようにする）を、`SessionManager.submitWhenReady` で子の入力欄に打ちます。
     - 打つのは、子の手が空いている（ターンの外・操作待ちでない・入力欄に書きかけが無い・画面の操作の途中でない。`acceptsTyping`）ときだけ。作業中の子に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になってしまうことがあるためです。手が空いていれば、新しい確認が急に出ることはありません（ツールを使うには、まず応答が要る）。
     - 打つ直前と Enter の直前にも確かめ直し、メニューが出ていたら打ちません（`submit` の `guarded`）。
-    - 作業中の子への `send_message` は、手が空くまでアプリが預かり（最大 3 時間）、待たずに返します。本文が複数行なら貼り付けになり、会話ログでは本文が `<pasted_content>` に入ります。`chat.ts` が囲みを外し、`user` のイベントに `parent`（親の ID）を付けます。止まっている子には、起動してから送ります。
+    - 作業中の子への `send_message` は、手が空くまでアプリが預かり（最大 3 時間）、待たずに返します。本文が複数行なら貼り付けになり、会話ログでは、目印のタグ（`<tanacode-parent-message>`）ごと `<pasted_content>` の囲みに入ります（本文だけが囲みに入る形も読めます）。`session-tools.ts` の `unwrapWholePaste` が、目印を見分ける前に全体の囲みを外し、`chat.ts` が `user` のイベントに `parent`（親の ID）を付けます。外さないと、親からの指示が人の発言に見えて、下の「親への知らせ」が届きません（2026-10-12 まで、複数行の指示ではいつも届いていませんでした）。止まっている子には、起動してから送ります。
   - `read_session`: 会話（`SessionManager.conversation`。動かしたことがあれば直近の起動からのイベント、無ければ会話ログから）の `/clear` よりあとを、新しいほうから `turns` 回分の指示と応答にまとめます（`conversationLines`）。指示は 3000 文字、最後の応答は 4000 文字、途中の応答は 600 文字で途中を省き、全体は 6 万文字まで。チェックリストの知らせにターンの終わりを止められたあとの応答（チェックリストを直した報告）は、最後の応答に数えず、分けて 600 文字まで出します（`get_session`・`wait_sessions` の `last_response` にもしません。下の「チェックリストを使い続けさせる hooks」）。編集したファイルは、`Edit`・`MultiEdit`・`Write`・`NotebookEdit` の対象です。
   - `get_session_diff`: ソース管理と同じ `branchBase`・`branchFiles`（`git.ts`）で、分岐点から作業ツリーまで。未追跡のファイルは、新しいファイルの差分の形にします（256 KB を超えるもの・バイナリは中身を出さない）。読むのはふつうのファイルだけで（`lstat`。シンボリックリンクの先・デバイス・名前付きパイプは読まない）、数は 100 件、合計は結果の上限まで。`branchFiles` の行数の数え方も、同じくふつうのファイルだけ（`/dev/zero` へのリンクは読み終わらないため）。`path` はフォルダの外を指させません（`safeRelative`）。
   - `answer_question`: 画面から読んだ今の質問（`ScreenTracker` のメニュー）の文が、渡された `question` と同じで、AskUserQuestion で出した質問（フックが書いた質問。`isAskedQuestion`）に合うときだけ答えます。キーは `SessionManager.chooseIf`（`ScreenTracker.choose` の `expect`）で、キーを送る前に毎回、同じ質問が出ているか確かめ、変わっていたら何も押さずに失敗します（人が先に答えた・許可の確認に変わったときに、違うメニューへ答えないように）。複数選択は選択肢ごとに Space を送ってから確定します。自由記述は制御文字を除き、1 行にします。最後に、質問が閉じたのを確かめます。許可の確認のメニューには答えません。
@@ -800,6 +800,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `wait_sessions`: 状態の変化と 1 秒ごとの確認で、対象のどれかの手が空く（`starting`・`working` 以外になる）まで待ちます。バックグラウンドのタスクの完了待ちは、ターンが終わっているので手が空いたとみなします（開発サーバーのように終わらないものもあるため）。
 - 親への知らせ（`SessionsControl.stateChanged`）: 子の状態が `working` から `idle`・`background`・`question`・`permission`・`waiting`・`exited` に変わり、子の最後の発言（`/clear` よりあと）が親からの指示なら、親ごとに溜めます。親が止めた子（`stop_session`）は除きます。`starting` から手が空いたもの（アプリを起動し直して引き継いだときなど）は、作業を終えたのではないので数えません。子セッションは人に通知しないので（`index.ts` の `notify` が `parentOf` で除く）、親が答えられない許可の確認・ターミナルでの操作の待ちも親に知らせ、人に伝えさせます。
   - 親が `idle` か `background`（ターンの外）で入力欄が空なら、`<tanacode-session-event sessions="子の ID">文</tanacode-session-event>`（1 行。`sessionEventText`）を `submitWhenReady` で打ちます。親が作業中なら、ターンの外になったときに送ります。1.5 秒の間に続けて手が空いた子は、1 つにまとめます。待ちの列・まとめ・試し直しは `session-notices.ts` の `SessionNotices`（チェックリストの知らせと共通）。
+  - 知らせは、届かないことがあります（親が手の空かないまま・アプリの不具合）。MCP サーバーの説明と `start_session` の説明・結果で、親の Claude に「知らせだけを待たず、子の状況を定期的に確かめる（`wait_sessions`・`get_session`）」よう伝えています。
   - 親がその子を読んだ（`read_session`・`get_session`・`get_session_diff`・`wait_sessions`・`answer_question`）時刻より前の出来事は、送りません（`observedAt`）。
   - 会話ログでは、`chat.ts` が `notice` のイベント（`sessions` に子の ID）にします。順番待ちの行では、人の発言として数えません（`isHumanPrompt`）。
 - MCP の説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）で、Claude に次のことを伝えます。

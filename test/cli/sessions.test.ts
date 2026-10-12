@@ -83,6 +83,7 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
           call('toolu_start', 'start_session', { prompt: '登録画面を作って', worktree: false }),
           say('扱いました'),
           say('親からの指示を受け取りました'),
+          say('長い指示を受け取りました'),
           say('子の知らせを受け取りました'),
           say('人の発言に答えました'),
           say('あとから届いた親の指示に答えました'),
@@ -152,6 +153,18 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       const prompt = run.chatEvents.find((e) => e.type === 'user' && e.parent === PARENT);
       expect(prompt).toMatchObject({ type: 'user', text: '1 行目\n2 行目', parent: PARENT });
       expect(run.queue.some((q) => q.includes('tanacode-parent-message'))).toBe(false);
+    });
+
+    it('親からの長い指示（40 行）も、親の ID を持つ発言として読める', async () => {
+      // 人の発言に見えると、子が作業を終えても、親に知らせが届かない。
+      // ログインして使う Claude Code は、複数行の貼り付けを、目印のタグごと <pasted_content> の囲みに入れて会話ログに残す
+      // （2026-10-12 の実際の会話ログで、複数行の指示 5 件すべて）。モックの API で動かすここでは囲みが付かないので、
+      // 囲みの付いた形は test/sessions-mcp.test.ts と test/chat-transcript.test.ts が確かめる。ここは、長い指示がそのまま読めることだけを見る
+      const body = ['長い指示です', ...Array.from({ length: 40 }, (_, i) => `${i + 1} 行目: 目的・背景・終わりの条件を書いた、子セッションへの指示の本文`)].join('\n');
+      await run.manager.submit(run.sessionId!, parentMessageText(PARENT, body));
+      await run.waitFor('長い指示の返事', replied(run, '長い指示を受け取りました'));
+      const prompt = run.chatEvents.find((e) => e.type === 'user' && e.text.startsWith('長い指示です'));
+      expect(prompt).toMatchObject({ type: 'user', text: body, parent: PARENT });
     });
 
     it('子の知らせは「Claude への知らせ」として読め、Claude は続きを始める', async () => {

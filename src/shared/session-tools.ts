@@ -100,7 +100,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'start_session',
     kind: 'act',
     description:
-      "Starts a session and sends it the first instruction. By default it is a child session: it appears in the list under this session, the user can open it at any time to instruct it or answer its questions, and you manage it (send_message, wait_sessions). With independent: true it is an independent session instead: an ordinary top-level session next to this one, which the user runs. The conversation can continue after the work is done. Each start asks the user for permission. Started sessions also use the user's Claude usage limits (each one adds to the usage). A started session, child or independent, keeps the Remote Control setting of this session (on if it is on here). A child cannot start sessions. Returns without waiting for the start to finish; wait for a child's result with wait_sessions.",
+      "Starts a session and sends it the first instruction. By default it is a child session: it appears in the list under this session, the user can open it at any time to instruct it or answer its questions, and you manage it (send_message, wait_sessions). With independent: true it is an independent session instead: an ordinary top-level session next to this one, which the user runs. The conversation can continue after the work is done. Each start asks the user for permission. Started sessions also use the user's Claude usage limits (each one adds to the usage). A started session, child or independent, keeps the Remote Control setting of this session (on if it is on here). A child cannot start sessions. Returns without waiting for the start to finish; wait for a child's result with wait_sessions. After you start a child, check on it from this session at regular intervals until it is done (wait_sessions, get_session): a child can finish, or stop on a question or a permission prompt, without the notice reaching you, so never wait for the notice alone.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -192,6 +192,7 @@ const PARENT_INSTRUCTIONS = [
   '- The user can also open a child at any time and instruct it directly. read_session marks the instructions the user gave a child, so check whether the plan has changed.',
   "- You can answer a child's questions (AskUserQuestion) with answer_question. You cannot answer permission prompts (the user does).",
   `- When a child finishes its work, or waits for an answer or for the user, a notice arrives as <${SESSION_EVENT_TAG}>, even if you are not waiting for it.`,
+  '- Do not rely on that notice alone: it is sent only while you are idle, and it can be missed. While children are working, check on them yourself: at every break in your own work, and, when you have nothing else to do, wait with wait_sessions (call it again when it times out) instead of ending your turn and waiting for the notice.',
   "- Child sessions do not notify the user. Answer the children's questions yourself when you can. When a child waits for permission or for an operation in its terminal (only the user can do these), tell the user.",
   '- When the user asks you to open a new or separate session for them (for example, from Remote Control, where they cannot open one themselves), start it with start_session and independent: true. It is not a child: the user runs it, and you do not manage it.',
 ];
@@ -260,9 +261,21 @@ export function isParentMessageDraft(draft: string): boolean {
 
 const PARENT_MESSAGE = new RegExp(`^<${PARENT_MESSAGE_TAG} session="([0-9a-f-]+)">([\\s\\S]*)</${PARENT_MESSAGE_TAG}>\\s*$`);
 
-// 親から子への指示なら、親の ID と本文。会話ログでは本文が貼り付けの囲み（<pasted_content>）に入ることがあるので、外すのは呼ぶ側
+const WHOLE_PASTE = /^<pasted_content(?: id="[^"]*")?>\n?([\s\S]*?)\n?<\/pasted_content(?: id="[^"]*")?>$/;
+
+// 発言の全体が、1 つの貼り付けの囲み（<pasted_content id="…">…</pasted_content id="…">）に入っていれば、中身を返す。
+// Claude Code は、長い貼り付けを囲みに入れて会話ログに残す。アプリは複数行の発言を丸ごと貼り付けで送るので、
+// 親セッションからの長い指示は、目印のタグごと囲みに入る（短いものは、囲みが付かない）。目印を見分ける前に外す。
+// 外さないと、親からの指示が人の発言に見えて、子が終わっても親に知らせが届かない
+export function unwrapWholePaste(text: string): string {
+  const m = text.trim().match(WHOLE_PASTE);
+  return m && !m[1].includes('<pasted_content') ? m[1] : text;
+}
+
+// 親から子への指示なら、親の ID と本文。会話ログでは、全体が貼り付けの囲み（<pasted_content>）に入ることがあるので、先に外す。
+// 本文だけが囲みに入っていることもあるので、本文の囲みを外すのは呼ぶ側
 export function parseParentMessage(text: string): { parent: string; body: string } | null {
-  const m = text.trim().match(PARENT_MESSAGE);
+  const m = unwrapWholePaste(text).trim().match(PARENT_MESSAGE);
   return m ? { parent: m[1], body: m[2] } : null;
 }
 
@@ -274,7 +287,7 @@ export function sessionEventText(sessions: string[], message: string): string {
 const SESSION_EVENT = new RegExp(`^<${SESSION_EVENT_TAG} sessions="([0-9a-f,-]*)">([\\s\\S]*?)</${SESSION_EVENT_TAG}>`);
 
 export function parseSessionEvent(text: string): { sessions: string[]; message: string } | null {
-  const m = text.trim().match(SESSION_EVENT);
+  const m = unwrapWholePaste(text).trim().match(SESSION_EVENT);
   return m ? { sessions: m[1].split(',').filter(Boolean), message: m[2].trim() } : null;
 }
 

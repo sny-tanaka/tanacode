@@ -141,6 +141,13 @@ describe('会話ログの見分け', () => {
     expect(toChatEvents(user(parentMessageText(PARENT, '登録画面を作って')), '/r')).toEqual([{ type: 'user', id: 'u1', text: '登録画面を作って', parent: PARENT }]);
     const pasted = `<tanacode-parent-message session="${PARENT}"><pasted_content id="1">\n1 行目\n2 行目\n</pasted_content id="1"></tanacode-parent-message>`;
     expect(toChatEvents(user(pasted), '/r')).toEqual([{ type: 'user', id: 'u1', text: '1 行目\n2 行目', parent: PARENT }]);
+    // 長い指示は、目印のタグごと貼り付けの囲みに入る（Claude Code 2.1.296 の会話ログの形）。人の発言にしてしまうと、
+    // 子が作業を終えても、親に知らせが届かない
+    const whole = `\n\n<pasted_content id="3683">\n${parentMessageText(PARENT, '1 行目\n2 行目')}\n</pasted_content id="3683">\n`;
+    expect(toChatEvents(user(whole), '/r')).toEqual([{ type: 'user', id: 'u1', text: '1 行目\n2 行目', parent: PARENT }]);
+    // 貼り付けが 2 つある発言は、全体が 1 つの囲みではないので、そのまま人の発言
+    const two = `<pasted_content id="1">\n${parentMessageText(PARENT, '本文')}\n</pasted_content id="1">\nあいだの文\n<pasted_content id="2">\nもう 1 つ\n</pasted_content id="2">`;
+    expect(toChatEvents(user(two), '/r')[0]).not.toHaveProperty('parent');
     // 人の発言には付かない
     expect(toChatEvents(user('ふつうの発言'), '/r')).toEqual([{ type: 'user', id: 'u1', text: 'ふつうの発言' }]);
     // 作業中に差し込まれたもの（attachment の queued_command）も同じ

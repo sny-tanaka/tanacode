@@ -1,6 +1,6 @@
 import { t } from './i18n';
 import { findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
-import { neutralizeTags } from './session-tools';
+import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // Claude Code に MCP のツールとして渡す、チェックリスト（人と Claude が一緒に見て、編集するリスト）の扱い。
 // 中継のスクリプト（src/main/checklist-mcp.ts）が tools/list で返し、アプリ（src/main/checklist-control.ts）が実行する。
@@ -281,7 +281,7 @@ export function clipNotice(text: string, max: number): string {
 const CHECKLIST_EVENT = new RegExp(`^<${CHECKLIST_EVENT_TAG} cards="([0-9a-f:,-]*)">([\\s\\S]*?)</${CHECKLIST_EVENT_TAG}>`);
 
 export function parseChecklistEvent(text: string): { cards: CardRef[]; message: string } | null {
-  const m = text.trim().match(CHECKLIST_EVENT);
+  const m = unwrapWholePaste(text).trim().match(CHECKLIST_EVENT);
   if (!m) return null;
   const cards = m[1]
     .split(',')
