@@ -76,25 +76,39 @@ export function autoHandoffText(auto: AutoCompactTrigger): string {
   return `${text.slice(0, at)}${note}\n${closing}`;
 }
 
-// 再開の文の長さの上限（全体・カード・発言）と、1 つずつの長さ
-export const RESUME_MAX_CHARS = 30_000;
-const CARDS_CHARS = 14_000;
-const CARD_BODY_CHARS = 2000;
+// 再開の文の長さの上限（全体・カード・発言）と、1 つずつの長さ。
+// カードの分は、仕上げで詳しく書かせたリスト（試作では、長い会話で全体 6,500〜12,400 文字）が切られない大きさにする
+export const RESUME_MAX_CHARS = 40_000;
+const CARDS_CHARS = 24_000;
+const CARD_BODY_CHARS = 4000;
+// 仕上げの頼みで、1 枚のカードをこの長さまでにして、超えるなら分けるよう伝える（CARD_BODY_CHARS より小さく）
+const HANDOFF_CARD_CHARS = 3000;
 const MESSAGES_CHARS = 12_000;
 const MESSAGE_CHARS = 3000;
 const MAX_TASKS = 20;
 const TASK_CHARS = 200;
 
-// 仕上げの頼み。会話を消す前に、続きに要ることをチェックリストに書かせる
+// 仕上げの頼み。会話を消す前に、続きに要ることをチェックリストに書かせる。
+// 新しい会話の Claude が頼れるのは、ここで書かれたリストと、ユーザーの発言の原文だけ。ざっくり頼むと、リストが短くなり、
+// 正確な値（コマンドのオプション・関数の名前・タイムアウトの秒数など）が落ちる（長い会話 3 本・あとで要ったこと 48 問で測って、
+// リストだけで答えられたのが 57%。項目を分けて詳しく頼んだ試作は 82%）。そのため、
+// - 「いまの状態」のリストに書くものを、いまの状態・試してやめたこと・場所と手順の 3 つの項目に分けて、別々のカードに書かせる
+//   （再開の文にそのまま入るのは、決定事項と「いまの状態」のカードの本文だけなので、別のリストにはしない）
+// - 長さの上限は無いと伝える。長くなる話題は、削らずにカードを分けさせる（再開の文は、カードの本文を CARD_BODY_CHARS で切るため）
+// - ツールの呼び出しは少なく（呼び出しのたびに、長い会話を読み直す）。card_add は 1 回で何枚も足せる
 export function handoffText(): string {
   return [
     `<${HANDOFF_TAG}>`,
-    'tanacode is about to reset this conversation instead of compacting it (the user pressed the "optimized compaction" button). Nothing from this conversation will be kept, and no summary is made. After the reset you start like a new session: the project instructions are loaded again, and you are given only the checklists (tanacode-checklist), the messages of the user verbatim, and the list of background tasks. So bring the checklists up to date now, with the checklist tools, so that the work can continue without this conversation. Do not continue the task itself, and do not ask the user anything.',
+    'tanacode is about to reset this conversation instead of compacting it (the user pressed the "optimized compaction" button). Nothing from this conversation will be kept, and no summary is made. After the reset you start like a new session: the project instructions are loaded again, and you are given only the checklists (tanacode-checklist), the messages of the user verbatim, and the list of background tasks. So bring the checklists up to date now, with the checklist tools, and write down everything that is needed to continue the work without this conversation. Do not continue the task itself, and do not ask the user anything.',
     'Start by calling checklist_overview, even if you think the lists are already up to date or you read them a moment ago: if you do not use a checklist tool in this turn, tanacode cancels the reset. Then compare the lists with this conversation, and add what is missing and fix what is out of date.',
-    '- Decisions list (kind "decisions"): what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and why. Add what is missing, and revoke what no longer holds.',
-    '- State list (kind "state"; create one if there is none): rewrite it so that it is true now. What is being worked on and why; what is done and what is not; changes that are not committed or not pushed; what you were about to do next; what was tried and failed or was abandoned, and why; where things are (files, branch, PR number) and the commands used to build, test and verify; facts that would be costly to rediscover, with their exact values; anything still running in the background.',
+    'Use few tool calls, because every call re-reads this whole conversation: card_add takes many cards at once, and card_delete, card_check and card_revoke take several numbers at once. Write all the new cards of a list in one card_add call instead of one call per card. Do not write less to save calls.',
+    '- Decisions list (kind "decisions"): what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and why. Quote the user\'s own words where the wording matters. Add what is missing, and revoke what no longer holds.',
+    '- State list (kind "state"; create one if there is none): rewrite it so that it is true now (delete the cards that are out of date, and add the new ones). Its cards are handed to you in full after the reset, so the details go here, as separate cards, one topic per card:',
+    '  - State: what is being worked on right now and why; what is done and what is not; changes that are not committed or not pushed; what you were about to do next; anything still running in the background.',
+    '  - Tried: every approach that failed or was abandoned, and why, so that it is not repeated.',
+    '  - Pointers: where things are (files, functions, branches, PR and issue numbers, URLs); the commands used to build, test and verify, exactly as you ran them, with every option; and facts that would be costly to rediscover, with their exact values (names, numbers, versions, timeouts, scopes, settings).',
     '- To-do lists: check what is finished, and add the tasks that are left, in order.',
-    'Be specific and complete: exact names, numbers and commands matter more than prose. Do not copy file contents that can simply be read again from disk; point to them instead. Write in the language the user is using. When the lists are up to date, reply with one short line and end your turn. tanacode then resets the conversation by itself.',
+    `Be specific and complete: exact names, numbers and commands matter more than prose. There is no length limit, so do not shorten anything or leave anything out to keep the lists small. When one card would get long (more than about ${HANDOFF_CARD_CHARS.toLocaleString('en-US')} characters), split it into several cards by topic instead of cutting it. But do not copy file contents that can simply be read again from disk; point to them instead. Write in the language the user is using. When the lists are up to date, reply with one short line and end your turn. tanacode then resets the conversation by itself.`,
     `</${HANDOFF_TAG}>`,
   ].join('\n');
 }
