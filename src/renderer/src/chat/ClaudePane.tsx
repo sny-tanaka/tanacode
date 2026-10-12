@@ -243,6 +243,14 @@ export const ClaudePane = memo(function ClaudePane({
   const blocked = !!menu || rewinding || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
   const hasContent = input.trim().length > 0 || attachments.length > 0 || comments.length > 0;
   const canSend = !blocked && hasContent;
+  // 質問や確認のカードなどが出たときも、最下部にいれば追いかける。カードは会話ログでなく Claude Code の画面から来るので、上の追いかけ
+  // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
+  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）
+  const cardKey = menu ? `${menu.title}|${menu.options.length}` : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (cardKey && list && stickToBottom.current) list.scrollTop = list.scrollHeight;
+  }, [cardKey]);
   const canConfigure = !running && !menu && !rewinding;
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
   const { canCompact, compacting } = useCompactState(session, chat, screen);
