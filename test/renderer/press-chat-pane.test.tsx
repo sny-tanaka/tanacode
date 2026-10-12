@@ -247,6 +247,29 @@ describe('ヘッダー', () => {
     expect(onOpenTerminal).toHaveBeenCalledTimes(1);
   });
 
+  it('質問や確認のカードが出たとき、最下部にいれば追いかける（カードの選択肢が、見えている範囲の下に隠れない）。上を読んでいる間は動かさない', () => {
+    // カードは Claude Code の画面から来る。会話・送信中・予約は変わらない（変わると、そちらの追いかけが動く）
+    const base = props({ chat: chatOf({ status: 'running' }) });
+    const view = render(<ClaudePane {...base} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
+    list.scrollTop = 800;
+    const menuOf = (title: string): ScreenInfo =>
+      screenOf({ kind: 'menu', menu: { kind: 'permission', tabs: [], title, context: [], options: [{ id: '1', label: 'Yes', description: '', pointed: true, checked: null, textInput: false }], multiSelect: false, hint: '' } });
+    // カードの分だけ伸びる
+    height = 1400;
+    view.rerender(<ClaudePane {...base} screen={menuOf('Do you want to proceed?')} />);
+    expect(list.scrollTop).toBe(1400);
+    // 上を読んでいる間に次のカードが出ても、動かさない
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    height = 1600;
+    view.rerender(<ClaudePane {...base} screen={menuOf('Allow this command?')} />);
+    expect(list.scrollTop).toBe(100);
+  });
+
   it('上へスクロールすると「最新のメッセージへ」を出し、押すと最下部へ送ってボタンを消す（動きを減らす設定なら、なめらかにしない）', () => {
     const items: ChatItem[] = Array.from({ length: 20 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `${i} 番目の質問` }));
     render(<ClaudePane {...props({ chat: chatOf({ items }) })} />);
