@@ -58,6 +58,7 @@ export const IpcChannel = {
   SessionsConfigure: 'sessions:configure',
   SessionsRestart: 'sessions:restart',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
+  SessionsSetAutoCompact: 'sessions:set-auto-compact',
   RemoteControlAvailable: 'remote-control:available',
   SessionsRename: 'sessions:rename',
   SessionsRemove: 'sessions:remove',
@@ -238,6 +239,8 @@ export type SessionSummary = {
   settingsFile: string | null;
   // Remote Control を使うか（このセッションの指定。実際につながっているかは会話ログの bridge_status で分かる）
   remoteControl: boolean;
+  // 最適化圧縮を自動で始めるか（このセッションの指定。チャットのヘッダーの「自動」のトグル）。無いものはオン
+  autoCompact?: boolean;
   // worktree で始めたセッション（cwd は worktree のフォルダ）。null はふつうのセッション
   worktree: SessionWorktree | null;
   // 親セッションの ID（親の Claude が start_session で起動した子セッション）。無ければ親のないセッション
@@ -394,6 +397,8 @@ export type TanacodeApi = {
     restart(id: string): Promise<void>;
     // このセッションの Remote Control を切り替える。動いていればその場でつなぐ・切る。切り替えられなかったら理由を返す
     setRemoteControl(id: string, on: boolean): Promise<string | null>;
+    // このセッションで、最適化圧縮を自動で始めるかを切り替える
+    setAutoCompact(id: string, on: boolean): Promise<void>;
     // Remote Control を使えるか（開発版では、TANACODE_REMOTE_CONTROL=1 で起動したときだけ使える）
     remoteControlAvailable(): Promise<boolean>;
     rename(id: string, title: string): Promise<void>;
@@ -705,6 +710,7 @@ export type IpcInvoke = {
   [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
   [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
+  [IpcChannel.SessionsSetAutoCompact]: Api['sessions']['setAutoCompact'];
   [IpcChannel.RemoteControlAvailable]: Api['sessions']['remoteControlAvailable'];
   [IpcChannel.SessionsRename]: Api['sessions']['rename'];
   [IpcChannel.SessionsRemove]: Api['sessions']['remove'];

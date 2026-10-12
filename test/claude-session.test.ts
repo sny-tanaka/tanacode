@@ -115,7 +115,7 @@ describe('起動', () => {
     session({ checklist }).claude.start();
     const { env, args } = host.spawned[0].request;
     expect(env).toMatchObject({ TANACODE_CHECKLIST_SOCKET: '/u/checklist.sock', TANACODE_CHECKLIST_SESSION: 's1', TANACODE_CHECKLIST_COMMAND: 'node', TANACODE_CHECKLIST_SCRIPT: '/x/checklist-mcp.js' });
-    expect(Object.keys(JSON.parse(args[args.indexOf('--settings') + 1]).hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart']);
+    expect(Object.keys(JSON.parse(args[args.indexOf('--settings') + 1]).hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
     session().claude.start();
     expect(host.spawned[1].request.env.TANACODE_CHECKLIST_SOCKET).toBeUndefined();
     expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse']);

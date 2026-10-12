@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { t } from '@shared/i18n';
 import { IDLE_COMPACT_STATUS, type CompactFailure, type CompactPhase, type CompactStatus, type CompactUnavailable } from '@shared/optimized-compact';
 import { CloseIcon, IconButton, OptimizedCompressIcon } from '../icons';
+import { Toggle } from '../layout/Toggle';
 
 const PHASE_TEXT = {
   finalizing: 'chat.pane.compactPhase.finalizing',
@@ -46,10 +47,27 @@ export function useCompactStatus(sessionId: string | null): CompactStatus {
   return status;
 }
 
+// チャットのヘッダーの「自動」のトグル。コンテキストが設定の大きさを超えたら、最適化圧縮を自動で始めるか（セッションごと）。
+// 使えないとき（「Claude にチェックリストを扱わせる」がオフなど）は押せず、ボタンと同じ理由を出す。
+// on: このセッションの指定 / status: main から届く状態（始める大きさ・使えない理由）
+export function AutoCompactToggle({ on, status, onChange }: { on: boolean; status: CompactStatus; onChange: (on: boolean) => void }) {
+  const { unavailable, autoPercent } = status;
+  return (
+    <Toggle
+      label={t('chat.pane.autoCompact')}
+      name={t('chat.pane.autoCompactName')}
+      on={on && !unavailable}
+      disabled={!!unavailable}
+      title={unavailable ? t(UNAVAILABLE_TEXT[unavailable]) : t('chat.pane.autoCompactTip', { percent: autoPercent })}
+      onChange={onChange}
+    />
+  );
+}
+
 // チャットのヘッダーの「最適化圧縮」。押すと、Claude が続きに要ることをチェックリストに書き、アプリが会話を消して、チェックリストから再開させる。
-// canStart: 始められる（待機中で、確認の画面が出ていない）/ status: main から届く状態
-export function CompactButton({ canStart, status, onStart }: { canStart: boolean; status: CompactStatus; onStart: () => void }) {
-  const { phase, failure, unavailable } = status;
+// canStart: 始められる（待機中で、確認の画面が出ていない）/ status: main から届く状態 / auto: このセッションで「自動」がオンか
+export function CompactButton({ canStart, status, auto = false, onStart }: { canStart: boolean; status: CompactStatus; auto?: boolean; onStart: () => void }) {
+  const { phase, failure, unavailable, autoPaused } = status;
   // 取りやめた理由は、閉じるか、次に始めるまで出しておく
   const [dismissed, setDismissed] = useState<CompactFailure | null>(null);
   useEffect(() => {
@@ -63,6 +81,11 @@ export function CompactButton({ canStart, status, onStart }: { canStart: boolean
       {phase === 'waiting' && (
         <span className="compact-status" role="status" data-tip={t(PHASE_TEXT.waiting)}>
           {t('chat.pane.compactWaiting')}
+        </span>
+      )}
+      {auto && autoPaused && !phase && !shownFailure && (
+        <span className="compact-status" role="status" data-tip={t('chat.pane.autoCompactPausedTip')}>
+          {t('chat.pane.autoCompactPaused')}
         </span>
       )}
       {shownFailure && (

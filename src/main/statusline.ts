@@ -48,7 +48,8 @@ export function ownSettings(inner: string | null, browser = false, sessions = fa
         ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] }] : []),
       ],
       ...(sessions ? { PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }] } : {}),
-      ...(checklist ? checklistHooks() : {}),
+      // 自動の最適化圧縮（チェックリストの MCP を足すときだけ。リストが無ければ引き継げない）: ツールの切れ目で止める・Claude Code の自動の圧縮を止める
+      ...(checklist ? { ...checklistHooks(), PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: AUTO_COMPACT_STOP_COMMAND, timeout: 5 }] }] } : {}),
     },
     ...(excludes.length > 0 ? { claudeMdExcludes: excludes } : {}),
   };
@@ -118,11 +119,20 @@ export function parseStatusLine(text: string, updatedAt: number): StatusLineInfo
 
 const ASK_SUFFIX = '.ask.json';
 const PERMISSION_SUFFIX = '.permission.json';
+// 自動の最適化圧縮で、ターンの途中で止めるためのファイル。アプリが書き（止めるとき）、フックが名前を変えて中身を出す（止めた印）
+const STOP_SUFFIX = '.auto-compact.json';
+const STOP_HIT_SUFFIX = '.auto-compact.hit.json';
 
 // セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、AskUserQuestion の入力のファイル（<dir>/<セッション ID>.ask.json）を見張る
 // 許可の確認の入力を書かせるフックのコマンド。質問のファイル（<id>.ask.json）と同じフォルダの <id>.permission.json に書く
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
 export const PERMISSION_FILE_COMMAND = `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${PERMISSION_SUFFIX}"`;
+
+// ツールのあと（PostToolUse）のフック。アプリが止めるファイル（<id>.auto-compact.json）を書いていれば、名前を変えて（最初の 1 回だけ効く）、
+// 中身（{"continue": false, "stopReason": …}）を出す。Claude Code は、そこでターンを止める。ファイルが無ければ何もしない。
+// ツールの呼び出しのたびに動くので、アプリには聞かず、ファイルを見るだけにする（Node のプロセスを起こさない）。
+// （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
+export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; [ -f "$f" ] && mv "$f" "$h" 2>/dev/null && cat "$h"; exit 0`;
 
 export class StatusLineWatcher {
   private watcher: FSWatcher | null = null;
@@ -147,6 +157,15 @@ export class StatusLineWatcher {
 
   permissionFileFor(sessionId: string): string {
     return join(this.dir, `${sessionId}${PERMISSION_SUFFIX}`);
+  }
+
+  // 自動の最適化圧縮の、止めるファイルと、フックが止めた印のファイル
+  stopFileFor(sessionId: string): string {
+    return join(this.dir, `${sessionId}${STOP_SUFFIX}`);
+  }
+
+  stopHitFileFor(sessionId: string): string {
+    return join(this.dir, `${sessionId}${STOP_HIT_SUFFIX}`);
   }
 
   async start(): Promise<void> {

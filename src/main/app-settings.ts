@@ -1,3 +1,4 @@
+import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT } from '@shared/optimized-compact';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isLanguageSetting, type LanguageSetting } from '@shared/i18n';
@@ -13,6 +14,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // sessionsControl: Claude にほかのセッションを扱わせるか（起動する Claude Code に、セッションの MCP サーバーを足すか）/
 // checklistControl: Claude にチェックリストを扱わせるか（起動する Claude Code に、チェックリストの MCP サーバーを足すか）/
 // walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）/
+// autoCompactPercent: 最適化圧縮を自動で始める大きさ（コンテキストの割合。40・60・80）/
 // language: 画面の言語（system は Mac の言語の設定に合わせる）
 type Values = {
   notifications: boolean;
@@ -24,6 +26,7 @@ type Values = {
   sessionsControl: boolean;
   checklistControl: boolean;
   walkthroughControl: boolean;
+  autoCompactPercent: number;
   language: LanguageSetting;
 };
 
@@ -91,6 +94,15 @@ export class AppSettings {
     return this.values.checklistControl;
   }
 
+  // 最適化圧縮を自動で始める大きさ（コンテキストの割合）
+  autoCompactPercent(): number {
+    return this.values.autoCompactPercent;
+  }
+
+  setAutoCompactPercent(percent: number): void {
+    this.update({ autoCompactPercent: percent });
+  }
+
   setChecklistControlEnabled(on: boolean): void {
     this.update({ checklistControl: on });
   }
@@ -148,6 +160,7 @@ function load(file: string): Values {
       sessionsControl?: unknown;
       checklistControl?: unknown;
       walkthroughControl?: unknown;
+      autoCompactPercent?: unknown;
       language?: unknown;
     };
     return {
@@ -160,10 +173,11 @@ function load(file: string): Values {
       sessionsControl: data.sessionsControl !== false,
       checklistControl: data.checklistControl !== false,
       walkthroughControl: data.walkthroughControl !== false,
+      autoCompactPercent: (AUTO_COMPACT_PERCENTS as readonly unknown[]).includes(data.autoCompactPercent) ? (data.autoCompactPercent as number) : DEFAULT_AUTO_COMPACT_PERCENT,
       language: isLanguageSetting(data.language) ? data.language : 'system',
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, language: 'system' };
   }
 }
 

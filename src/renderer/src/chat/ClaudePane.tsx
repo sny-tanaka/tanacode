@@ -34,7 +34,7 @@ import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { stripControlChars } from './sanitize';
 import { useCanCompact } from './compactState';
-import { CompactButton, useCompactStatus } from './CompactButton';
+import { AutoCompactToggle, CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
@@ -415,7 +415,10 @@ export const ClaudePane = memo(function ClaudePane({
           />
         )}
         {live && (
-          <CompactButton canStart={canCompact} status={compactStatus} onStart={() => void window.tanacode.compact.start(session.id)} />
+          <AutoCompactToggle on={session.autoCompact !== false} status={compactStatus} onChange={(on) => void window.tanacode.sessions.setAutoCompact(session.id, on)} />
+        )}
+        {live && (
+          <CompactButton canStart={canCompact} status={compactStatus} auto={session.autoCompact !== false} onStart={() => void window.tanacode.compact.start(session.id)} />
         )}
         {live && (
           <IconButton

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { checklistToolId } from '../src/shared/checklist-tools';
 import { CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV, checklistHookEnv, checklistHookEvent, checklistHookRequest } from '../src/main/checklist-bridge';
-import { CHECKLIST_HOOK_COMMAND, checklistHooks, hasLine, hookOutput, readTail, runHook, settledScan, turnActivity } from '../src/main/checklist-hook';
+import { CHECKLIST_HOOK_COMMAND, checklistHooks, hasLine, hookOutput, readTail, runHook, settledScan, turnActivity, preCompactBlock } from '../src/main/checklist-hook';
 import { McpBridge, textResult } from '../src/main/mcp-bridge';
 
 // チェックリストを使い続けさせるフック（src/main/checklist-hook.ts）。会話ログからツールを数え、アプリに聞いて、Claude Code に返す。
@@ -190,7 +190,7 @@ describe('Claude Code に返すもの', () => {
 
   it('設定には、人の発言・ターンの終わり・圧縮のあとの 3 つを足す。コマンドには、チャットに出さないための目印を付ける', () => {
     const hooks = [{ type: 'command', command: CHECKLIST_HOOK_COMMAND, timeout: 10 }];
-    expect(checklistHooks()).toEqual({ UserPromptSubmit: [{ hooks }], Stop: [{ hooks }], SessionStart: [{ matcher: 'compact', hooks }] });
+    expect(checklistHooks()).toEqual({ UserPromptSubmit: [{ hooks }], Stop: [{ hooks }], SessionStart: [{ matcher: 'compact', hooks }], PreCompact: [{ matcher: 'auto', hooks }] });
     expect(CHECKLIST_HOOK_COMMAND).toBe('TANACODE_CHECKLIST_HOOK=1 ELECTRON_RUN_AS_NODE=1 "$TANACODE_CHECKLIST_COMMAND" "$TANACODE_CHECKLIST_SCRIPT" --hook');
   });
 
@@ -287,6 +287,27 @@ describe('フックの本体', () => {
     expect(await run({ hook_event_name: 'UserPromptSubmit' })).toBe('');
     socket = join(dir, 'ありません.sock');
     expect(await run({ hook_event_name: 'UserPromptSubmit' })).toBe('');
+  });
+
+  it('圧縮の前（PreCompact・auto）: アプリに聞いて、止める理由が返ったら、それを返す（入口が、終了コード 2 で圧縮を止める）', async () => {
+    answer = () => textResult('tanacode resets the conversation');
+    const ask = (input: Record<string, unknown>) => preCompactBlock(JSON.stringify(input), socket, 'S1', 2000);
+    expect(await ask({ hook_event_name: 'PreCompact', trigger: 'auto' })).toBe('tanacode resets the conversation');
+    expect(calls).toEqual([{ session: 'S1', tool: 'hook:precompact', args: {} }]);
+    // アプリが止めないと答えた（自動がオフ・使えない・休んでいる）
+    answer = () => textResult('');
+    expect(await ask({ hook_event_name: 'PreCompact', trigger: 'auto' })).toBeNull();
+    // 人が打った /compact は止めない。ほかのフック・読めない入力では、アプリに聞かない
+    calls = [];
+    expect(await ask({ hook_event_name: 'PreCompact', trigger: 'manual' })).toBeNull();
+    expect(await ask({ hook_event_name: 'Stop' })).toBeNull();
+    expect(await preCompactBlock('{ 壊れた入力', socket, 'S1', 2000)).toBeNull();
+    expect(calls).toEqual([]);
+    // アプリに聞けないときは、止めない（Claude Code の圧縮に任せる）
+    socket = join(dir, 'ありません.sock');
+    expect(await ask({ hook_event_name: 'PreCompact', trigger: 'auto' })).toBeNull();
+    // ふつうのフックの本体は、圧縮の前のフックでは何も出さない
+    expect(await run({ hook_event_name: 'PreCompact', trigger: 'auto' })).toBe('');
   });
 
   it('知らないイベント・読めない入力は、何も出さない', async () => {

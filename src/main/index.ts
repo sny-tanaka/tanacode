@@ -13,7 +13,7 @@ import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
-import { IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
+import { AUTO_COMPACT_PERCENTS, DEFAULT_AUTO_COMPACT_PERCENT, IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -662,6 +662,12 @@ function registerIpc(): void {
     return url;
   });
   handle(IpcChannel.SessionsSetRemoteControl, (e, id: string, on: boolean) => P(e).manager.setRemoteControl(id, on));
+  handle(IpcChannel.SessionsSetAutoCompact, (e, id: string, on: boolean) => {
+    const p = P(e);
+    p.manager.setAutoCompact(String(id), on === true);
+    p.autoCompact?.toggled(String(id));
+    p.compact?.refresh([String(id)]);
+  });
   handle(IpcChannel.RemoteControlAvailable, (e) => P(e).manager.remoteAvailable());
   handle(IpcChannel.ScreenGet, (e, id: string) => P(e).manager.screenForView(id));
   handle(IpcChannel.ScreenActivityGet, (e, id: string) => P(e).manager.activity(id));
@@ -838,6 +844,15 @@ function buildMenu(): void {
           { label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
           { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
           { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+          {
+            label: t('main.menu.autoCompactPercent'),
+            submenu: AUTO_COMPACT_PERCENTS.map((percent) => ({
+              label: `${percent}%`,
+              type: 'radio' as const,
+              checked: (activeProfile()?.settings.autoCompactPercent() ?? DEFAULT_AUTO_COMPACT_PERCENT) === percent,
+              click: () => setAutoCompactPercent(percent),
+            })),
+          },
           {
             label: t('main.menu.browserHosts'),
             click: () => {
@@ -1033,11 +1048,28 @@ function setChecklistControl(item: MenuItem): void {
   try {
     const profile = activeProfile();
     profile?.settings.setChecklistControlEnabled(item.checked);
-    // 最適化圧縮は、オフのあいだ使えない。ボタンの状態を知らせ直す
-    profile?.compact?.refresh(profile.manager.list().map((s) => s.id));
+    // 最適化圧縮は、オフのあいだ使えない。ボタンとトグルの状態を知らせ直す（自動で止めるファイルも片付ける）
+    const ids = profile?.manager.list().map((s) => s.id) ?? [];
+    profile?.compact?.refresh(ids);
+    for (const id of ids) profile?.autoCompact?.check(id);
   } catch {
     item.checked = !item.checked;
   }
+}
+
+// メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（トグルのツールチップの数字も変わる）
+function setAutoCompactPercent(percent: number): void {
+  const profile = activeProfile();
+  if (!profile) return;
+  try {
+    profile.settings.setAutoCompactPercent(percent);
+  } catch {
+    // 保存できなければ、メニューを作り直して元に戻す
+  }
+  const ids = profile.manager.list().map((s) => s.id);
+  profile.compact?.refresh(ids);
+  for (const id of ids) profile.autoCompact?.check(id);
+  buildMenu();
 }
 
 // メニューの「Claude にウォークスルーさせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。

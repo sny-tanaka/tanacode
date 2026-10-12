@@ -2,7 +2,7 @@ import { closeSync, fstatSync, openSync, readSync, statSync } from 'node:fs';
 import { CHECKLIST_HOOK_ENV } from '@shared/chat';
 import type { ReminderEvent, TurnActivity } from '@shared/checklist-reminder';
 import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
-import { CHECKLIST_CLOSED_MESSAGE, CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, checklistHookRequest } from './checklist-bridge';
+import { CHECKLIST_CLOSED_MESSAGE, CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, checklistHookRequest, PRECOMPACT_HOOK_REQUEST } from './checklist-bridge';
 import { callBridge } from './mcp-bridge';
 
 // Claude にチェックリストを使い続けさせる hooks。アプリが起動する Claude Code に、--settings で足す（statusline.ts の ownSettings）。
@@ -35,11 +35,13 @@ const HOOK_TIMEOUT_SECONDS = 10;
 // --settings の hooks に足すもの
 export function checklistHooks(): Record<string, unknown[]> {
   const hooks = [{ type: 'command', command: CHECKLIST_HOOK_COMMAND, timeout: HOOK_TIMEOUT_SECONDS }];
-  return { UserPromptSubmit: [{ hooks }], Stop: [{ hooks }], SessionStart: [{ matcher: 'compact', hooks }] };
+  // PreCompact（auto）: Claude Code の自動の圧縮が始まる前。自動の最適化圧縮がオンなら、止めて、アプリの流れに入る（preCompactBlock）
+  return { UserPromptSubmit: [{ hooks }], Stop: [{ hooks }], SessionStart: [{ matcher: 'compact', hooks }], PreCompact: [{ matcher: 'auto', hooks }] };
 }
 
 // Claude Code がフックの標準入力に渡す JSON のうち、使うもの。last_assistant_message: 最後の応答の文（Stop。無いこともある）
-type HookInput = { hook_event_name?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string };
+// trigger: 圧縮の始まり方（PreCompact。auto・manual）
+type HookInput = { hook_event_name?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string; trigger?: string };
 
 const EVENTS: Record<string, ReminderEvent> = { UserPromptSubmit: 'prompt', Stop: 'stop', SessionStart: 'compact' };
 
@@ -244,4 +246,21 @@ export async function runHook(stdin: string, socketPath: string, session: string
   const first = result.content[0];
   const text = !result.isError && first?.type === 'text' ? first.text : '';
   return text ? hookOutput(name, text) : '';
+}
+
+// 圧縮の前のフック（PreCompact）。Claude Code の自動の圧縮（要約）が始まろうとしたとき、アプリに聞いて、
+// 自動の最適化圧縮がオンで使えるセッションなら、止める理由を返す（入口が、標準エラーに書いて終了コード 2 で終える。要約は作られず、会話はそのまま続く）。
+// 止めないとき（ほかのフック・手動の /compact・オフのセッション・アプリに聞けない）は null
+export async function preCompactBlock(stdin: string, socketPath: string, session: string, timeoutMs: number): Promise<string | null> {
+  let input: HookInput;
+  try {
+    input = JSON.parse(stdin) as HookInput;
+  } catch {
+    return null;
+  }
+  if (input.hook_event_name !== 'PreCompact' || input.trigger !== 'auto') return null;
+  const result = await callBridge(socketPath, { session, tool: PRECOMPACT_HOOK_REQUEST, args: {} }, timeoutMs, CHECKLIST_CLOSED_MESSAGE);
+  const first = result.content[0];
+  const text = !result.isError && first?.type === 'text' ? first.text : '';
+  return text || null;
 }

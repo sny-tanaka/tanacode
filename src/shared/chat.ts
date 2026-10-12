@@ -1,7 +1,7 @@
 import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
-import { isCompactMessage, parseCompactMessage } from './optimized-compact';
+import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
@@ -497,7 +497,12 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   // 最適化圧縮でアプリが送った、仕上げの頼みと再開の文。開くと全文が読める
   const compact = parseCompactMessage(text);
   if (compact) {
-    const notice = t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoff' : 'chat.transcript.compactResume');
+    // 自動で始めたものは、そのときのコンテキストの割合と一緒に出して、手動と見分けられるようにする
+    const percent = autoPercentOf(compact.body);
+    const notice =
+      percent === null
+        ? t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoff' : 'chat.transcript.compactResume')
+        : t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoffAuto' : 'chat.transcript.compactResumeAuto', { percent });
     return [{ type: 'notice', id: entry.uuid ?? '', text: notice, detail: compact.body, compact: compact.kind }];
   }
   const special = specialUserText(entry.uuid ?? '', text.trimStart());

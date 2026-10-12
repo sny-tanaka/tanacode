@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { StatusLineInfo } from '@shared/statusline';
-import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand } from '../src/main/statusline';
+import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand, AUTO_COMPACT_STOP_COMMAND } from '../src/main/statusline';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
 // JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json・ask.json）を使う。
@@ -107,8 +107,15 @@ describe('アプリが Claude Code に渡す設定', () => {
   it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {
     expect(Object.keys(ownSettings(null).hooks as object)).toEqual(['PreToolUse']);
     const hooks = ownSettings(null, false, false, null, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
-    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart']);
+    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
     expect(hooks.SessionStart[0].matcher).toBe('compact');
+    // 自動の最適化圧縮: Claude Code の自動の圧縮の前に、アプリに聞く。ツールのあとは、止めるファイルを見るだけ（アプリには聞かない）
+    expect(hooks.PreCompact[0].matcher).toBe('auto');
+    expect(hooks.PreCompact[0].hooks[0].command).toContain('--hook');
+    expect(hooks.PostToolUse[0].matcher).toBe('*');
+    expect(hooks.PostToolUse[0].hooks[0].command).toBe(AUTO_COMPACT_STOP_COMMAND);
+    expect(AUTO_COMPACT_STOP_COMMAND).not.toContain('--hook');
+    expect(AUTO_COMPACT_STOP_COMMAND).toContain('TANACODE_ASK_FILE');
     expect(hooks.Stop[0].hooks[0].command).toContain('--hook');
     expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(1);
   });

@@ -2,10 +2,14 @@ import type { ChatEvent } from '@shared/chat';
 import type { Checklist } from '@shared/checklist';
 import { language } from '@shared/i18n';
 import {
+  IDLE_COMPACT_STATUS,
+  autoHandoffText,
   carriedMessages,
   carriedOmitted,
   handoffText,
   resumeText,
+  stoppedAt,
+  type AutoCompactTrigger,
   type CarriedTask,
   type CompactFailure,
   type CompactPhase,
@@ -60,6 +64,10 @@ type Deps = {
   lists: (id: string) => Checklist[];
   // その時刻よりあとに、Claude がチェックリストのツールを呼んだか（読むだけでも）
   usedSince: (id: string, at: number) => boolean;
+  // 自動の最適化圧縮の、始める大きさと、このセッションで休んでいるか（画面のトグルに出す。AutoCompact が持つ）
+  autoStatus?: (id: string) => { percent: number; paused: boolean };
+  // 流れが終わった（failure: 取りやめた・失敗した理由。auto: 自動で始めたもの）。AutoCompact が、続けて失敗したら休むために受ける
+  onFinish?: (id: string, failure: CompactFailure | null, auto: AutoCompactTrigger | null) => void;
   // メニューの「Claude にチェックリストを扱わせる」
   enabled: () => boolean;
   onChange: (id: string, status: CompactStatus) => void;
@@ -69,8 +77,9 @@ type Deps = {
 // ターンの外（発言を受け付けられる）
 const IDLE_STATES = new Set<SessionState>(['idle', 'background']);
 
-// 仕上げのターンの終わり方。done: 終わった / again: 終わったあとに別のターン（タスクの完了の知らせなど）が続いて、それも終わった
-type Finalized = 'done' | 'again' | CompactFailure;
+// 仕上げのターンの終わり方。done: 終わった / again: 終わったあとに別のターン（タスクの完了の知らせなど）が続いて、それも終わった /
+// api-error: API エラーで終わった（上限に当たったなど。Claude Code があきらめたもの）
+type Finalized = 'done' | 'again' | 'api-error' | CompactFailure;
 
 export class OptimizedCompact {
   private readonly phases = new Map<string, CompactPhase>();
@@ -87,7 +96,8 @@ export class OptimizedCompact {
   }
 
   status(id: string): CompactStatus {
-    return { phase: this.phases.get(id) ?? null, failure: this.failures.get(id) ?? null, unavailable: this.unavailable(id) };
+    const auto = this.deps.autoStatus?.(id) ?? { percent: IDLE_COMPACT_STATUS.autoPercent, paused: false };
+    return { phase: this.phases.get(id) ?? null, failure: this.failures.get(id) ?? null, unavailable: this.unavailable(id), autoPercent: auto.percent, autoPaused: auto.paused };
   }
 
   // 設定が変わった（メニューのオン・オフ）ときに、画面に知らせ直す
@@ -95,12 +105,18 @@ export class OptimizedCompact {
     for (const id of ids) this.deps.onChange(id, this.status(id));
   }
 
-  // 始める。使えない・もう進んでいるときは、何もしない。今の状態を返す
-  start(id: string): CompactStatus {
+  // 進んでいる途中か
+  running(id: string): boolean {
+    return this.phases.has(id);
+  }
+
+  // 始める。使えない・もう進んでいるときは、何もしない。今の状態を返す。
+  // auto: 自動で始めたとき（AutoCompact）。無ければ、人がボタンを押した
+  start(id: string, auto: AutoCompactTrigger | null = null): CompactStatus {
     if (this.unavailable(id) || this.phases.has(id)) return this.status(id);
     this.failures.delete(id);
     this.setPhase(id, 'finalizing');
-    void this.run(id)
+    void this.run(id, auto)
       .catch((error: unknown) => {
         console.error('[optimized-compact]', error);
         return 'busy' as const;
@@ -108,6 +124,7 @@ export class OptimizedCompact {
       .then((failure) => {
         this.phases.delete(id);
         if (failure) this.failures.set(id, failure);
+        this.deps.onFinish?.(id, failure, auto);
         this.deps.onChange(id, this.status(id));
       });
     return this.status(id);
@@ -125,15 +142,17 @@ export class OptimizedCompact {
   }
 
   // 終わりまで進める。取りやめた・失敗したときは、その理由を返す
-  private async run(id: string): Promise<CompactFailure | null> {
+  private async run(id: string, auto: AutoCompactTrigger | null): Promise<CompactFailure | null> {
     const { host } = this.deps;
+    // ターンの途中で止めたとき、止めた場所（仕上げの頼みを送る前の会話から、機械的に取り出す）
+    const stopped = auto?.midTurn ? stoppedAt(await host.conversation(id)) : undefined;
     // 仕上げのあと、/clear を打つ前に別のターンが挟まったら、仕上げを 1 回だけやり直す（リストが、そのターンの分だけ古くなるため）
     for (let attempt = 0; ; attempt++) {
       this.setPhase(id, 'finalizing');
       const startedAt = Date.now();
       const base = (await host.conversation(id)).length;
       try {
-        await host.submitWhenReady(id, handoffText(), this.timings.submitMs);
+        await host.submitWhenReady(id, auto ? autoHandoffText(auto) : handoffText(), this.timings.submitMs);
       } catch {
         return this.alive(id) ? 'busy' : 'exited';
       }
@@ -142,7 +161,10 @@ export class OptimizedCompact {
         if (attempt > 0) return 'interleaved';
         continue;
       }
-      if (finalized !== 'done') {
+      // 仕上げもできなかった（上限に当たったあとなど、仕上げのターンが API エラーで終わった）。自動のときは、仕上げを飛ばして、
+      // 今あるリストと発言の原文だけで再開する（再開の文に、そう書く）。手動のときは、飛ばさない（下の not-used で取りやめる）
+      const handoffSkipped = finalized === 'api-error' && !!auto;
+      if (finalized !== 'done' && finalized !== 'api-error') {
         // 応答の前に中断すると、Claude Code は仕上げの頼みを入力欄に戻す。Claude Code の入力欄に残さない（次の発言に混ざる）
         if (finalized === 'interrupted' || finalized === 'busy') await host.withdrawCompactDraft(id);
         return finalized;
@@ -150,7 +172,7 @@ export class OptimizedCompact {
       // Claude がチェックリストのツールを 1 回も呼ばなかったのに会話を消すと、何も引き継げない（チェックリストの MCP が足されていない
       // セッション・頼みを無視したとき）。読むだけでもよい: リストがもう最新なら、Claude は読んで「最新です」と答えるだけのことがある
       // （ふだんから書いているセッション・取りやめた直後の押し直し・仕上げのやり直し）。書き換えを求めると、押しても圧縮できなくなる
-      if (!this.deps.usedSince(id, startedAt)) return 'not-used';
+      if (!handoffSkipped && !this.deps.usedSince(id, startedAt)) return 'not-used';
 
       const conversation = await host.conversation(id);
       const resume = resumeText({
@@ -159,6 +181,7 @@ export class OptimizedCompact {
         omitted: carriedOmitted(conversation),
         tasks: host.runningTasks(id),
         language: language(),
+        ...(auto ? { auto, stopped, handoffSkipped } : {}),
       });
       this.setPhase(id, 'clearing');
       const before = host.claudeSessionOf(id);
@@ -223,7 +246,7 @@ export class OptimizedCompact {
         if (turn.prompted) return 'prompted';
         if (turn.interrupted) return 'interrupted';
         const state = host.stateOf(id);
-        if (turn.ended && state && IDLE_STATES.has(state)) return turn.followed ? 'again' : 'done';
+        if (turn.ended && state && IDLE_STATES.has(state)) return turn.followed ? 'again' : turn.apiError ? 'api-error' : 'done';
       }
       await sleep(this.timings.pollMs);
     }
@@ -267,7 +290,8 @@ function handoffIndex(events: ChatEvent[], base: number): number {
 
 // 仕上げの頼みのあとに起きたこと。ended: ターンが終わった（最後のターンまで）/ followed: 仕上げのターンのあとに、別のターンが続いた /
 // prompted: 人（または親セッション）が発言した・順番待ちに発言がある / interrupted: 人が中断した
-function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; prompted: boolean; interrupted: boolean } {
+function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; prompted: boolean; interrupted: boolean; apiError: boolean } {
+  let apiError = false;
   let ended = false;
   let followed = false;
   let prompted = false;
@@ -276,6 +300,9 @@ function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; pr
   for (const event of events) {
     if (event.type === 'user') prompted = true;
     else if (event.type === 'queue') queued = event.prompts.length;
+    // あきらめた API エラー（再試行中のものは数えない）。そのあとに応答が来たら、立ち直っている
+    else if (event.type === 'api-error') apiError = !event.retrying;
+    else if (event.type === 'assistant-text' && !ended) apiError = false;
     else if (event.type === 'turn-end') {
       ended = true;
       if (event.interrupted) interrupted = true;
@@ -288,7 +315,7 @@ function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; pr
       ended = false;
     }
   }
-  return { ended, followed, prompted: prompted || queued > 0, interrupted };
+  return { ended, followed, prompted: prompted || queued > 0, interrupted, apiError };
 }
 
 function sleep(ms: number): Promise<void> {

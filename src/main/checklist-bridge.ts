@@ -23,6 +23,9 @@ export function checklistHookEvent(tool: string): ReminderEvent | null {
 }
 
 // アプリが起動していないとき、中継が Claude に返す文
+// 圧縮の前のフック（PreCompact）が、アプリに「止めるか」を聞く呼び出し。チェックリストの中継を通るが、答えるのは自動の最適化圧縮（AutoCompact）
+export const PRECOMPACT_HOOK_REQUEST = 'hook:precompact';
+
 export const CHECKLIST_CLOSED_MESSAGE = 'tanacode is not running. To use checklists, ask the user to start tanacode.';
 
 // 中継が 1 回の呼び出しを待つ上限（チェックリストの読み書きはすぐ終わる）

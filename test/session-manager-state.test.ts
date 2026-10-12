@@ -376,6 +376,21 @@ describe('statusLine', () => {
   });
 });
 
+describe('最適化圧縮を自動で始めるか（セッションごと）', () => {
+  it('新しいセッションはオン。切り替えると覚えて、一覧と状態の変化を知らせる。知らないセッションでは何もしない', () => {
+    const { id } = app.create();
+    expect(app.manager.summary(id)?.autoCompact).toBe(true);
+    const changed: string[] = [];
+    app.manager.watchState((changedId) => changed.push(changedId));
+    app.manager.setAutoCompact(id, false);
+    expect(app.manager.summary(id)?.autoCompact).toBe(false);
+    expect(changed).toContain(id);
+    app.manager.setAutoCompact(id, true);
+    expect(app.manager.summary(id)?.autoCompact).toBe(true);
+    expect(() => app.manager.setAutoCompact('nope', false)).not.toThrow();
+  });
+});
+
 describe('送る・止める・大きさ', () => {
   it('write: 打った文字をそのまま送る。resize: pty と画面の大きさを変える', async () => {
     const { id, pty } = app.create();
