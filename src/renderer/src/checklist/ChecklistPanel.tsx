@@ -1,8 +1,8 @@
 import { memo, useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
-import { humanUnread, liveCards, liveLists, progressOf, type Card, type Checklist } from '@shared/checklist';
+import { activeCards, humanUnread, kindOf, liveCards, liveLists, progressOf, traitsOf, type Card, type Checklist, type ListKind } from '@shared/checklist';
 import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
-import { AddIcon, CloseIcon, CopyIcon, DisclosureIcon, IconButton, TrashIcon } from '../icons';
+import { AddIcon, CloseIcon, CopyIcon, DisclosureIcon, IconButton, PinIcon, TrashIcon } from '../icons';
 import { CardCheck } from './CardCheck';
 import { CopyDialog } from './CopyDialog';
 import { ListForm } from './ListForm';
@@ -22,7 +22,8 @@ type Props = {
 const DRAG_TYPE = 'application/x-tanacode-cards';
 
 // チェックリスト（サイドパネル）。リストごとに、カードのタイトルだけを縦に並べる。カードを押すと、エディタの場所に詳細を開く。
-// チェックはここで直接付け外しできる。⌘・⇧ クリックで複数選んで、別のセッションへのコピー・別のリストへの移動・削除ができる。
+// チェックはここで直接付け外しできる。決定事項のリスト（チェックで消えない）は、チェック欄の代わりにピンを出し、取り消したカードには印を付ける。
+//⌘・⇧ クリックで複数選んで、別のセッションへのコピー・別のリストへの移動・削除ができる。
 // ドラッグで並べ替えと、別のリストへの移動ができる
 export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, sessions, activeCardId, onOpen }: Props) {
   const sessionId = session.id;
@@ -31,7 +32,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
   // カードを足している（タイトルだけを打つ）リスト
   const [adding, setAdding] = useState<string | null>(null);
   // 作る・名前と説明を変えるリスト（id が null なら新しく作る）
-  const [editing, setEditing] = useState<{ id: string | null; name: string; description: string } | null>(null);
+  const [editing, setEditing] = useState<{ id: string | null; name: string; description: string; kind: ListKind } | null>(null);
   // 選んでいるカード（1 つのリストの中だけ）と、⇧ クリックの起点
   const [selection, setSelection] = useState<{ listId: string; ids: ReadonlySet<string>; anchor: string } | null>(null);
   const [copying, setCopying] = useState<{ list: Checklist; cardIds: string[] } | null>(null);
@@ -115,7 +116,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
   return (
     <div className="checklist-panel">
       <div className="checklist-toolbar">
-        <button className="ghost-button" onClick={() => setEditing({ id: null, name: '', description: '' })}>
+        <button className="ghost-button" onClick={() => setEditing({ id: null, name: '', description: '', kind: 'normal' })}>
           {t('checklist.panel.createList')}
         </button>
       </div>
@@ -123,8 +124,8 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
         <ListForm
           initial={editing}
           submitLabel={t('checklist.panel.create')}
-          onSubmit={async (name, description) => {
-            if (await apply({ type: 'list-create', name, description })) setEditing(null);
+          onSubmit={async (name, description, kind) => {
+            if (await apply({ type: 'list-create', name, description, kind })) setEditing(null);
           }}
           onCancel={() => setEditing(null)}
         />
@@ -137,36 +138,52 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
           const { done, total } = progressOf(list);
           const open = !collapsed.has(list.id);
           const cards = liveCards(list);
+          const traits = traitsOf(list);
+          const inForce = activeCards(list).length;
+          const tip = [
+            traits.pinned ? t('checklist.panel.kindDecisionsTip') : traits.approves ? t('checklist.panel.kindReviewTip') : '',
+            t('checklist.panel.listTip', { description: list.description || t('checklist.panel.noDescription') }),
+          ]
+            .filter(Boolean)
+            .join('\n');
           if (editing?.id === list.id) {
             return (
               <ListForm
                 key={list.id}
                 initial={editing}
                 submitLabel={t('common.save')}
-                onSubmit={async (name, description) => {
-                  if (await apply({ type: 'list-update', listId: list.id, name, description })) setEditing(null);
+                onSubmit={async (name, description, kind) => {
+                  if (await apply({ type: 'list-update', listId: list.id, name, description, kind })) setEditing(null);
                 }}
                 onCancel={() => setEditing(null)}
               />
             );
           }
           return (
-            <div key={list.id} className="checklist-list">
+            <div key={list.id} className={`checklist-list kind-${kindOf(list)}`}>
               <div
                 className={`checklist-list-head reveal-host${dropTarget === `end:${list.id}` ? ' drop' : ''}`}
                 onClick={() => toggleList(list.id)}
-                onDoubleClick={() => setEditing({ id: list.id, name: list.name, description: list.description })}
+                onDoubleClick={() => setEditing({ id: list.id, name: list.name, description: list.description, kind: kindOf(list) })}
                 onDragOver={(e) => dragOver(e, `end:${list.id}`)}
                 onDragLeave={() => setDropTarget(null)}
                 onDrop={(e) => drop(e, list.id, null)}
-                data-tip={t('checklist.panel.listTip', { description: list.description || t('checklist.panel.noDescription') })}
+                data-tip={tip}
                 data-tip-side="right"
               >
                 <DisclosureIcon open={open} />
                 <span className="checklist-list-name">{list.name}</span>
-                <span className={`checklist-progress${total > 0 && done === total ? ' done' : ''}`}>
-                  {done}/{total}
-                </span>
+                {traits.checkable ? (
+                  <span className={`checklist-progress${total > 0 && done === total ? ' done' : ''}`}>
+                    {done}/{total}
+                  </span>
+                ) : (
+                  // チェックで消えないリスト。進み具合の代わりに、ピンと有効なカードの数を出す
+                  <span className="checklist-progress pinned" aria-label={t('checklist.panel.inForceTip', { count: inForce })}>
+                    <PinIcon size={12} />
+                    {t('checklist.panel.inForce', { count: inForce })}
+                  </span>
+                )}
                 <div className="spacer" />
                 <IconButton
                   icon={AddIcon}
@@ -200,7 +217,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                     return (
                       <div
                         key={card.id}
-                        className={`checklist-card${card.id === activeCardId ? ' active' : ''}${isSelected ? ' selected' : ''}${card.checked ? ' checked' : ''}${dropTarget === card.id ? ' drop' : ''}`}
+                        className={`checklist-card${card.id === activeCardId ? ' active' : ''}${isSelected ? ' selected' : ''}${traits.checkable && card.checked ? ' checked' : ''}${card.revoked ? ' revoked' : ''}${dropTarget === card.id ? ' drop' : ''}`}
                         draggable
                         onDragStart={(e) => dragStart(e, list, card)}
                         onDragOver={(e) => dragOver(e, card.id)}
@@ -209,13 +226,24 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                         onDragEnd={dragEnd}
                         onClick={(e) => clickCard(e, list, card)}
                       >
-                        <CardCheck
-                          checked={card.checked}
-                          by={card.checkedBy}
-                          onToggle={() => void apply({ type: 'card-check', listId: list.id, cardIds: [card.id], checked: !card.checked })}
-                        />
+                        {traits.checkable ? (
+                          <CardCheck
+                            checked={card.checked}
+                            by={card.checkedBy}
+                            onToggle={() => void apply({ type: 'card-check', listId: list.id, cardIds: [card.id], checked: !card.checked })}
+                          />
+                        ) : (
+                          <span className="checklist-pin">
+                            <PinIcon size={12} />
+                          </span>
+                        )}
                         <span className="checklist-number">#{card.number}</span>
                         <span className="checklist-title">{card.title}</span>
+                        {card.revoked && (
+                          <span className="checklist-revoked" data-tip={t('checklist.panel.revokedTip', { reason: card.revoked.reason || t('checklist.panel.noReason') })}>
+                            {t('checklist.panel.revoked')}
+                          </span>
+                        )}
                         {unread > 0 && <span className="checklist-unread" data-tip={t('checklist.panel.unreadTip', { count: unread })} aria-label={t('checklist.panel.unreadLabel', { count: unread })} />}
                       </div>
                     );

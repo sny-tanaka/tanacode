@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { authorLabel, humanUnread, type Author, type Card, type CardEvent, type Checklist, type ThreadEntry } from '@shared/checklist';
+import { authorLabel, humanUnread, traitsOf, type Author, type Card, type CardEvent, type Checklist, type ThreadEntry } from '@shared/checklist';
 import { t } from '@shared/i18n';
 import type { SessionSummary } from '@shared/ipc';
 import { Markdown } from '../chat/Markdown';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
-import { CloseIcon, CopyIcon, IconButton, SendIcon, TrashIcon } from '../icons';
+import { CloseIcon, CopyIcon, IconButton, PinIcon, SendIcon, TrashIcon } from '../icons';
 import { CardCheck } from './CardCheck';
 import { CopyDialog } from './CopyDialog';
 import { applyChecklist } from './useChecklists';
@@ -29,6 +29,7 @@ type Props = {
 };
 
 // チェックリストのカードの詳細。エディタの場所に出す。上からタイトル・説明文・スレッドの順に並べ、返信欄は下に固定する。
+// 決定事項のリスト（チェックで消えない）のカードは、チェック欄の代わりに「取り消す」（理由を書ける）と「有効に戻す」を出す。
 // スレッドはメインのチャットとは別に残る。返信欄の「Claude に通知する」にチェックがあれば、返信したことを手の空いた Claude に知らせる
 export function CardPane({ session, sessions, list, card, onClose }: Props) {
   const sessionId = session.id;
@@ -36,6 +37,9 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editingBody, setEditingBody] = useState<string | null>(null);
   const [reply, setReply] = useState('');
+  // 取り消す理由を書いている（null なら書いていない）
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const traits = traitsOf(list);
   const [notify, setNotify] = useState(loadNotify);
   useSharedPrefChange(NOTIFY_KEY, () => setNotify(loadNotify()));
   const [sendingCards, setSendingCards] = useState<ReadonlySet<string>>(() => new Set());
@@ -56,6 +60,7 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
     setEditingTitle(null);
     setEditingBody(null);
     setReply('');
+    setRevoking(null);
   }, [card.id]);
   useLayoutEffect(() => {
     threadEnd.current?.scrollIntoView({ block: 'end' });
@@ -80,14 +85,37 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
     if (title && title !== card.title) void apply({ type: 'card-update', listId: list.id, cardId: card.id, title });
   };
 
+  const revoke = () => {
+    const reason = revoking?.trim() ?? '';
+    setRevoking(null);
+    void apply({ type: 'card-revoke', listId: list.id, cardIds: [card.id], reason });
+  };
+
   return (
     <section className="editor card-pane">
       <div className="diff-pane-head">
-        <CardCheck size="md" checked={card.checked} by={card.checkedBy} onToggle={() => void apply({ type: 'card-check', listId: list.id, cardIds: [card.id], checked: !card.checked })} />
+        {traits.checkable ? (
+          <CardCheck size="md" checked={card.checked} by={card.checkedBy} onToggle={() => void apply({ type: 'card-check', listId: list.id, cardIds: [card.id], checked: !card.checked })} />
+        ) : (
+          <span className="checklist-pin md">
+            <PinIcon size={16} />
+          </span>
+        )}
         <span className="card-pane-where">
           {list.name} #{card.number}
         </span>
+        {traits.locked && <span className={`card-pane-state${card.revoked ? ' revoked' : ''}`}>{card.revoked ? t('checklist.panel.revoked') : t('checklist.cardPane.inForce')}</span>}
         <div className="spacer" />
+        {traits.locked &&
+          (card.revoked ? (
+            <button className="ghost-button" data-tip={t('checklist.cardPane.reinstateTip')} onClick={() => void apply({ type: 'card-reinstate', listId: list.id, cardIds: [card.id] })}>
+              {t('checklist.cardPane.reinstate')}
+            </button>
+          ) : (
+            <button className="ghost-button" data-tip={t('checklist.cardPane.revokeTip')} onClick={() => setRevoking('')}>
+              {t('checklist.cardPane.revoke')}
+            </button>
+          ))}
         <IconButton icon={CopyIcon} size="md" label={t('checklist.action.copyToSession')} onClick={() => setCopying(true)} />
         <IconButton
           icon={TrashIcon}
@@ -99,7 +127,34 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
         />
         <IconButton icon={CloseIcon} size="sm" label={t('common.close')} onClick={onClose} />
       </div>
+      {revoking !== null && (
+        <div className="card-pane-revoke">
+          <input
+            autoFocus
+            value={revoking}
+            placeholder={t('checklist.cardPane.revokeReasonPlaceholder')}
+            onChange={(e) => setRevoking(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === 'Enter') revoke();
+              if (e.key === 'Escape') setRevoking(null);
+            }}
+          />
+          <button className="ghost-button" onClick={() => setRevoking(null)}>
+            {t('common.cancel')}
+          </button>
+          <button className="send-button" onClick={revoke}>
+            {t('checklist.cardPane.revoke')}
+          </button>
+        </div>
+      )}
       <div className="card-pane-scroll">
+        {card.revoked && (
+          <div className="card-pane-revoked">
+            <div>{t(card.revoked.by === 'claude' ? 'checklist.cardPane.revokedByClaude' : 'checklist.cardPane.revokedByHuman', { time: formatTime(card.revoked.at) })}</div>
+            <div>{card.revoked.reason ? t('checklist.cardPane.revokedReason', { reason: card.revoked.reason }) : t('checklist.cardPane.revokedNoReason')}</div>
+          </div>
+        )}
         {editingTitle !== null ? (
           <textarea
             className="card-pane-title card-pane-title-input"
@@ -116,13 +171,13 @@ export function CardPane({ session, sessions, list, card, onClose }: Props) {
             }}
           />
         ) : (
-          <h2 className="card-pane-title" title={t('checklist.cardPane.renameTip')} onDoubleClick={() => setEditingTitle(card.title)}>
+          <h2 className={`card-pane-title${card.revoked ? ' revoked' : ''}`} title={t('checklist.cardPane.renameTip')} onDoubleClick={() => setEditingTitle(card.title)}>
             {card.title}
           </h2>
         )}
         <div className="card-pane-meta">
           {t(card.createdBy === 'claude' ? 'checklist.cardPane.createdByClaude' : 'checklist.cardPane.createdByHuman')} · {formatTime(card.createdAt)}
-          {card.checked && card.checkedAt && ` · ${t(card.checkedBy === 'claude' ? 'checklist.cardPane.checkedByClaude' : 'checklist.cardPane.checkedByHuman', { time: formatTime(card.checkedAt) })}`}
+          {traits.checkable && card.checked && card.checkedAt && ` · ${t(card.checkedBy === 'claude' ? 'checklist.cardPane.checkedByClaude' : 'checklist.cardPane.checkedByHuman', { time: formatTime(card.checkedAt) })}`}
         </div>
         <div className="card-pane-body">
           {editingBody !== null ? (
@@ -233,7 +288,9 @@ function ThreadRow({ entry }: { entry: ThreadEntry }) {
 // 記録の行の文（「Claude がチェックしました」など）。言語によって主語で文の形が変わるので、書いた人ごとに別の文言にする。
 // 文言の {from}・{fromList} などには、記録の項目をそのまま埋め込む
 function eventLabel(event: CardEvent, author: Author): string {
-  return t(`checklist.${author === 'claude' ? 'eventByClaude' : 'eventByHuman'}.${event.type}`, event);
+  // 人は理由を書かずに取り消せる
+  const key = event.type === 'revoked' && !event.reason ? 'revokedNoReason' : event.type;
+  return t(`checklist.${author === 'claude' ? 'eventByClaude' : 'eventByHuman'}.${key}`, event);
 }
 
 // 今日なら時刻だけ、それ以外は日付も

@@ -99,7 +99,31 @@ export const humanList: Checklist = {
   cards: [card(1, '本番の設定ファイルの税率を、経理に確かめる')],
 };
 
+// 決定事項（チェックで消えないリスト）。#2 は Claude が理由つきで取り消した
+export const keptList: Checklist = {
+  id: id('l'),
+  name: '決定事項',
+  description: '決まったこと。作業が終わっても有効。変わったら取り消して、新しく書く',
+  kind: 'decisions',
+  nextNumber: 4,
+  createdBy: 'claude',
+  createdAt: at(0),
+  cards: [
+    card(1, '決済まわり（src/payment）には、この PR では触らない', {
+      body: 'ユーザーの発言:「決済は別の PR でやるので、今回は触らないで」',
+    }),
+    card(2, '端数は切り捨て', {
+      revoked: { by: 'claude', at: at(56), reason: '経理の指示で四捨五入に変わった（#3 に置き換え）' },
+      thread: [event('claude', 10, { type: 'created' }), event('claude', 56, { type: 'revoked', reason: '経理の指示で四捨五入に変わった（#3 に置き換え）' })],
+    }),
+    card(3, '端数は四捨五入（経理の指示）', {
+      thread: [event('claude', 10, { type: 'created' }), event('human', 60, { type: 'checked' }), event('human', 60, { type: 'moved', fromList: '確認事項', fromNumber: 1 })],
+    }),
+  ],
+};
+
 export const sampleLists: Checklist[] = [todoList, goalList, decisionList, humanList];
+export const listsWithDecisions: Checklist[] = [keptList, todoList, { ...decisionList, kind: 'review' }];
 
 // ゴミ箱に入れたカードとリスト
 export const trashedLists: Checklist[] = [

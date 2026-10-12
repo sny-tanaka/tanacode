@@ -1,13 +1,16 @@
 import {
   cleanName,
   cleanTitle,
+  kindOf,
   liveLists,
   nameKey,
+  traitsOf,
   type Author,
   type Card,
   type CardEvent,
   type Checklist,
   type ChecklistOp,
+  type ListKind,
 } from './checklist';
 import { t } from './i18n';
 
@@ -15,6 +18,7 @@ import { t } from './i18n';
 // メモリの上だけで持ち、書き換えるたびに onChange で知らせる。ファイルへの保存は main の ChecklistStore が受け持つ
 // （デモのサイトの作り物の API は、これをそのまま使う）。
 // 書き換えの記録（log）は Claude だけが読むので、英語で書く（画面の言語によらない）。ChecklistError は画面（IPC）にも出るので、文言から作る
+// （Claude だけを断るもの＝ Claude が書き換えられないリストの決まりは、Claude だけが読むので英語）
 
 // Claude に「前回から人が変えたもの」を伝えるための、書き換えの記録（新しいものだけ残す）
 type Activity = { at: number; author: Author; text: string };
@@ -60,7 +64,7 @@ export class ChecklistBook {
   apply(sessionId: string, op: ChecklistOp, author: Author = 'human'): void {
     switch (op.type) {
       case 'list-create':
-        this.createList(sessionId, author, op.name, op.description);
+        this.createList(sessionId, author, op.name, op.description, op.kind);
         return;
       case 'list-update':
         this.updateList(sessionId, author, op.listId, op);
@@ -95,6 +99,12 @@ export class ChecklistBook {
       case 'card-read':
         this.markRead(sessionId, author, op.listId, op.cardId);
         return;
+      case 'card-revoke':
+        this.revokeCards(sessionId, author, op.listId, op.cardIds, op.reason ?? '');
+        return;
+      case 'card-reinstate':
+        this.reinstateCards(sessionId, author, op.listId, op.cardIds);
+        return;
       case 'trash-empty':
         this.emptyTrash(sessionId);
         return;
@@ -103,19 +113,37 @@ export class ChecklistBook {
 
   // --- リスト ---
 
-  createList(sessionId: string, author: Author, rawName: string, description: string): Checklist {
+  createList(sessionId: string, author: Author, rawName: string, description: string, kind: ListKind = 'normal'): Checklist {
     const doc = this.doc(sessionId);
     const name = this.freeName(doc, rawName);
-    const list: Checklist = { id: crypto.randomUUID(), name, description: description.trim(), nextNumber: 1, cards: [], createdBy: author, createdAt: this.now() };
+    const list: Checklist = {
+      id: crypto.randomUUID(),
+      name,
+      description: description.trim(),
+      ...(kind === 'normal' ? {} : { kind }),
+      nextNumber: 1,
+      cards: [],
+      createdBy: author,
+      createdAt: this.now(),
+    };
     doc.lists.push(list);
-    this.log(doc, author, `created the list "${name}"`);
+    this.log(doc, author, `created the list "${name}"${kind === 'normal' ? '' : ` (${kindLabel(kind)})`}`);
     this.changed(sessionId);
     return list;
   }
 
-  updateList(sessionId: string, author: Author, listId: string, change: { name?: string; description?: string }): Checklist {
+  // 種類を変えられるのは人だけ（Claude が変えられると、決定事項をふつうのリストにして消せてしまう）
+  updateList(sessionId: string, author: Author, listId: string, change: { name?: string; description?: string; kind?: ListKind }): Checklist {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
+    if (change.kind !== undefined && change.kind !== kindOf(list)) {
+      if (author === 'claude') throw new ChecklistError('Only the user can change the kind of a list (in the side panel).');
+      if (change.kind === 'normal') delete list.kind;
+      else list.kind = change.kind;
+      // 取り消しは、Claude が書き換えられないリストだけのもの
+      if (!traitsOf(list).locked) for (const card of list.cards) delete card.revoked;
+      this.log(doc, author, `changed the kind of the list "${list.name}" to ${kindLabel(change.kind)}`);
+    }
     if (change.name !== undefined && nameKey(change.name) !== nameKey(list.name)) {
       const before = list.name;
       list.name = this.freeName(doc, change.name, list.id);
@@ -132,6 +160,7 @@ export class ChecklistBook {
   deleteList(sessionId: string, author: Author, listId: string): void {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
+    if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(lockedMessage(list, 'delete the list'));
     list.deletedAt = this.now();
     this.log(doc, author, `moved the list "${list.name}" to the trash`);
     this.changed(sessionId);
@@ -189,6 +218,7 @@ export class ChecklistBook {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     const card = this.card(list, cardId);
+    if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(lockedMessage(list, 'rewrite its cards'));
     if (change.title !== undefined) {
       const title = cleanTitle(change.title);
       if (!title) throw new ChecklistError(t('checklist.errors.emptyTitle'));
@@ -207,10 +237,18 @@ export class ChecklistBook {
     return card;
   }
 
-  // comment: チェックと一緒にスレッドに書く返信（どう確かめたか・なぜ外したか）
+  // comment: チェックと一緒にスレッドに書く返信（どう確かめたか・なぜ外したか）。
+  // 確認事項のリストで人がチェックした（承認した）カードは、決定事項のリストに移す（チェックで知らせから消えないように）
   setChecked(sessionId: string, author: Author, listId: string, cardIds: string[], checked: boolean, comment?: string): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
+    if (!traitsOf(list).checkable) {
+      throw new ChecklistError(
+        author === 'claude'
+          ? `The cards of "${list.name}" have no checks (it is ${kindLabel(kindOf(list))}). To withdraw one, use card_revoke with a reason.`
+          : t('checklist.errors.noChecks', { list: list.name }),
+      );
+    }
     const cards = cardIds.map((id) => this.card(list, id));
     const changed = cards.filter((c) => c.checked !== checked);
     for (const card of changed) {
@@ -228,8 +266,57 @@ export class ChecklistBook {
     if (changed.length > 0) {
       this.log(doc, author, `${checked ? 'checked' : 'unchecked'} ${cardRefs(changed)} in "${list.name}"${comment?.trim() ? ` (${comment.trim()})` : ''}`);
     }
+    if (checked && author === 'human' && traitsOf(list).approves && changed.length > 0) {
+      const to = this.decisionsList(sessionId);
+      this.moveCards(sessionId, author, list.id, changed.map((c) => c.id), to.id);
+      return changed;
+    }
     this.changed(sessionId);
     return changed;
+  }
+
+  // 承認したカードを移す先。セッションの最初の決定事項のリスト。無ければ作る（名前と説明は、承認した人の画面の言語で）
+  private decisionsList(sessionId: string): Checklist {
+    const found = liveLists(this.doc(sessionId).lists).find((l) => kindOf(l) === 'decisions');
+    return found ?? this.createList(sessionId, 'human', t('checklist.decisions.defaultName'), t('checklist.decisions.defaultDescription'), 'decisions');
+  }
+
+  // 取り消す。画面には残るが、有効なものとしては扱わない（知らせに出さない）。Claude は理由が要る
+  revokeCards(sessionId: string, author: Author, listId: string, cardIds: string[], rawReason: string): Card[] {
+    const doc = this.doc(sessionId);
+    const list = this.list(doc, listId);
+    const reason = rawReason.trim();
+    if (!traitsOf(list).locked) {
+      throw new ChecklistError(
+        author === 'claude'
+          ? `"${list.name}" is an ordinary list, so its cards cannot be revoked. Update or delete them instead (card_update, card_delete).`
+          : t('checklist.errors.notRevocable', { list: list.name }),
+      );
+    }
+    if (author === 'claude' && !reason) throw new ChecklistError('reason is required.');
+    const cards = cardIds.map((id) => this.card(list, id)).filter((c) => !c.revoked);
+    for (const card of cards) {
+      this.event(card, author, { type: 'revoked', reason });
+      card.revoked = { by: author, at: card.updatedAt, reason };
+    }
+    if (cards.length > 0) this.log(doc, author, `revoked ${cardRefs(cards)} in "${list.name}"${reason ? ` (${clip(reason, 200)})` : ''}`);
+    this.changed(sessionId);
+    return cards;
+  }
+
+  // 取り消しを戻す（人だけ）
+  reinstateCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
+    if (author === 'claude') throw new ChecklistError('Only the user can reinstate a revoked card. If the decision holds again, add it as a new card.');
+    const doc = this.doc(sessionId);
+    const list = this.list(doc, listId);
+    const cards = cardIds.map((id) => this.card(list, id)).filter((c) => c.revoked);
+    for (const card of cards) {
+      delete card.revoked;
+      this.event(card, author, { type: 'reinstated' });
+    }
+    if (cards.length > 0) this.log(doc, author, `reinstated ${cardRefs(cards)} in "${list.name}" (in force again)`);
+    this.changed(sessionId);
+    return cards;
   }
 
   reply(sessionId: string, author: Author, listId: string, cardId: string, rawText: string, notify = false): Card {
@@ -251,10 +338,12 @@ export class ChecklistBook {
     const from = this.list(doc, listId);
     const to = this.list(doc, toListId);
     const cards = cardIds.map((id) => this.card(from, id));
+    if (author === 'claude' && from !== to && traitsOf(from).locked) throw new ChecklistError(lockedMessage(from, 'move its cards out'));
     if (before && cards.some((c) => c.id === before)) return cards;
     from.cards = from.cards.filter((c) => !cards.includes(c));
     if (from !== to) {
       for (const card of cards) {
+        if (!traitsOf(to).locked) delete card.revoked;
         this.event(card, author, { type: 'moved', fromList: from.name, fromNumber: card.number });
         card.number = to.nextNumber++;
       }
@@ -269,6 +358,7 @@ export class ChecklistBook {
   deleteCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
+    if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(lockedMessage(list, 'delete its cards'));
     const cards = cardIds.map((id) => this.card(list, id)).filter((c) => !c.deletedAt);
     for (const card of cards) {
       card.deletedAt = this.now();
@@ -331,7 +421,8 @@ export class ChecklistBook {
     const name = cleanName(toListName ?? source.name) || source.name;
     let list = this.findList(toSessionId, name);
     const createdList = !list;
-    if (!list) list = this.createList(toSessionId, author, name, source.description);
+    if (!list) list = this.createList(toSessionId, author, name, source.description, kindOf(source));
+    const keepRevoked = traitsOf(list).locked;
     const doc = this.doc(toSessionId);
     const at = this.now();
     const copies = cards.map((card): Card => {
@@ -344,6 +435,7 @@ export class ChecklistBook {
         readByClaude: author === 'claude' ? at : 0,
       };
       delete copy.deletedAt;
+      if (!keepRevoked) delete copy.revoked;
       copy.thread.push({
         id: crypto.randomUUID(),
         at,
@@ -444,6 +536,17 @@ export class ChecklistBook {
     doc.activity.push({ at: this.now(), author, text: `${author === 'human' ? 'The user' : 'Claude'} ${text}` });
     if (doc.activity.length > MAX_ACTIVITY) doc.activity.splice(0, doc.activity.length - MAX_ACTIVITY);
   }
+}
+
+// 記録と、Claude に返す文に書く種類
+function kindLabel(kind: ListKind): string {
+  if (kind === 'decisions') return 'a decisions list: permanent, no checks';
+  return kind === 'review' ? 'a review list: cards the user checks move to the decisions list' : 'an ordinary list';
+}
+
+// Claude が書き換えられないリストで、Claude を断る文
+function lockedMessage(list: Checklist, what: string): string {
+  return `"${list.name}" is ${kindLabel(kindOf(list))}. You can add cards to it and revoke them with a reason (card_revoke), but you cannot ${what}; only the user can. To replace a decision, revoke the old card and add a new one.`;
 }
 
 function lastReplyAt(card: Card, author: Author): number {

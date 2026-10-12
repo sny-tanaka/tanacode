@@ -1,4 +1,22 @@
-import { claudeNumbers, claudeUnread, eventText, formatNumbers, liveCards, liveLists, parseNumbers, progressOf, type Card, type Checklist, type ChecklistCopyRequest, type ChecklistOp } from '@shared/checklist';
+import {
+  activeCards,
+  claudeNumbers,
+  claudeUnread,
+  eventText,
+  formatNumbers,
+  isListKind,
+  kindOf,
+  liveCards,
+  liveLists,
+  parseNumbers,
+  progressOf,
+  traitsOf,
+  type Card,
+  type Checklist,
+  type ChecklistCopyRequest,
+  type ChecklistOp,
+  type ListKind,
+} from '@shared/checklist';
 import { checklistReminder, type ReminderEvent } from '@shared/checklist-reminder';
 import { checklistEventText, checklistTool, clipNotice, noticeMessage, replyNoticeText, type CardRef } from '@shared/checklist-tools';
 import { t } from '@shared/i18n';
@@ -163,8 +181,8 @@ export class ChecklistControl {
         return text;
       }
       case 'list_create': {
-        const list = store.createList(id, 'claude', stringArg(args.name, 'name'), optionalString(args.description) ?? '');
-        return `Created the list "${list.name}".`;
+        const list = store.createList(id, 'claude', stringArg(args.name, 'name'), optionalString(args.description) ?? '', kindArg(args.kind, 'kind'));
+        return `Created the list "${list.name}"${kindNote(list)}.`;
       }
       case 'list_update': {
         const list = this.listArg(id, args.list);
@@ -187,8 +205,8 @@ export class ChecklistControl {
           if (description === undefined) {
             throw new ChecklistError(`There is no list "${args.list}". ${listNames(store.lists(id))} To create it, also pass list_description (the rules for using the list).`);
           }
-          list = store.createList(id, 'claude', String(args.list), description);
-          note = `Created the list "${list.name}".`;
+          list = store.createList(id, 'claude', String(args.list), description, kindArg(args.list_kind, 'list_kind'));
+          note = `Created the list "${list.name}"${kindNote(list)}.`;
         }
         const added = store.addCards(id, 'claude', list.id, cards);
         return [note, `Added ${added.map((c) => `#${c.number} "${c.title}"`).join(', ')} to "${list.name}".`].filter(Boolean).join(' ');
@@ -213,6 +231,16 @@ export class ChecklistControl {
         const rest = total - checked;
         const left = check ? `${rest} unchecked ${rest === 1 ? 'card' : 'cards'} left in "${list.name}".` : '';
         return [done, skipped, left].filter(Boolean).join(' ');
+      }
+      case 'card_revoke': {
+        const list = this.listArg(id, args.list);
+        const cards = this.cardsArg(list, args.numbers);
+        const revoked = store.revokeCards(id, 'claude', list.id, cards.map((c) => c.id), stringArg(args.reason, 'reason'));
+        const same = cards.filter((c) => !revoked.includes(c));
+        const done = revoked.length > 0 ? `Revoked ${claudeNumbers(revoked.map((c) => c.number))} in "${list.name}" (no longer in force; the user still sees ${revoked.length === 1 ? 'it' : 'them'}, marked as revoked).` : '';
+        const skipped = same.length > 0 ? `${claudeNumbers(same.map((c) => c.number))} ${same.length === 1 ? 'was' : 'were'} already revoked.` : '';
+        const rest = activeCards(list).length;
+        return [done, skipped, `${rest} ${rest === 1 ? 'card' : 'cards'} in force in "${list.name}".`].filter(Boolean).join(' ');
       }
       case 'card_reply': {
         const list = this.listArg(id, args.list);
@@ -327,18 +355,29 @@ function overview(lists: Checklist[]): string {
   if (live.length === 0) return 'This session has no checklists yet. You can create one with list_create.';
   return live
     .map((list) => {
+      const traits = traitsOf(list);
       const { done, total } = progressOf(list);
       const cards = liveCards(list).map((c) => {
         const unread = claudeUnread(c);
-        return `- [${c.checked ? 'x' : ' '}] #${c.number} ${c.title}${unread > 0 ? ` (${unread} unread ${unread === 1 ? 'reply' : 'replies'})` : ''}`;
+        // チェックの無いリストは、チェック欄の代わりに、取り消したかどうかを出す
+        const mark = traits.checkable ? `[${c.checked ? 'x' : ' '}] ` : c.revoked ? `(revoked${c.revoked.reason ? `: ${oneLine(c.revoked.reason, 200)}` : ''}) ` : '';
+        return `- ${mark}#${c.number} ${c.title}${unread > 0 ? ` (${unread} unread ${unread === 1 ? 'reply' : 'replies'})` : ''}`;
       });
-      return [`## ${list.name} (${done}/${total} checked)`, `Description: ${list.description || '(none)'}`, ...(cards.length > 0 ? cards : ['(no cards)'])].join('\n');
+      const inForce = activeCards(list).length;
+      const state = traits.checkable
+        ? `${done}/${total} checked${traits.approves ? '; review list: cards the user checks move to the decisions list' : ''}`
+        : `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked` : ''}`;
+      return [`## ${list.name} (${state})`, `Description: ${list.description || '(none)'}`, ...(cards.length > 0 ? cards : ['(no cards)'])].join('\n');
     })
     .join('\n\n');
 }
 
 function cardText(list: Checklist, card: Card): string {
-  const state = card.checked ? `checked (by ${card.checkedBy === 'claude' ? 'Claude' : 'the user'}, ${time(card.checkedAt ?? 0)})` : 'not checked';
+  const checked = card.checked ? `checked (by ${card.checkedBy === 'claude' ? 'Claude' : 'the user'}, ${time(card.checkedAt ?? 0)})` : 'not checked';
+  const revoked = card.revoked
+    ? `revoked, no longer in force (by ${card.revoked.by === 'claude' ? 'Claude' : 'the user'}, ${time(card.revoked.at)}${card.revoked.reason ? `: ${card.revoked.reason}` : ''})`
+    : 'in force';
+  const state = traitsOf(list).checkable ? checked : revoked;
   const thread = card.thread.map((e) => {
     const who = e.author === 'human' ? 'The user' : 'Claude';
     if (e.kind === 'event') return `- ${time(e.at)} ${eventText(e.event, who)}`;
@@ -356,6 +395,25 @@ function cardText(list: Checklist, card: Card): string {
     '### Thread',
     ...thread,
   ].join('\n');
+}
+
+// 作ったリストの種類（ふつうのリストでは何も足さない）
+function kindNote(list: Checklist): string {
+  const kind = kindOf(list);
+  if (kind === 'decisions') return ' as a decisions list (permanent, no checks; you can add cards and revoke them with card_revoke)';
+  return kind === 'review' ? ' as a review list (cards the user checks move to the decisions list)' : '';
+}
+
+// 種類の引数。省くと、ふつうのリスト
+function kindArg(value: unknown, name: string): ListKind {
+  if (value === undefined || value === null || value === '') return 'normal';
+  if (!isListKind(value)) throw new ChecklistError(`${name} must be "decisions" or "review" (omit it for an ordinary list).`);
+  return value;
+}
+
+function oneLine(text: string, max: number): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
 }
 
 function listNames(lists: Checklist[]): string {

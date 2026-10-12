@@ -367,6 +367,7 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
     "mcp__tanacode-checklist__card_update",
     "mcp__tanacode-checklist__card_check",
     "mcp__tanacode-checklist__card_uncheck",
+    "mcp__tanacode-checklist__card_revoke",
     "mcp__tanacode-checklist__card_reply",
     "mcp__tanacode-checklist__card_move",
     "mcp__tanacode-checklist__card_delete",
@@ -407,6 +408,13 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
       "inputSchema": {
         "properties": {
           "description": {
+            "type": "string",
+          },
+          "kind": {
+            "enum": [
+              "decisions",
+              "review",
+            ],
             "type": "string",
           },
           "name": {
@@ -485,6 +493,13 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
             "type": "string",
           },
           "list_description": {
+            "type": "string",
+          },
+          "list_kind": {
+            "enum": [
+              "decisions",
+              "review",
+            ],
             "type": "string",
           },
         },
@@ -570,6 +585,30 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
       "kind": "note",
       "label": "チェックを外す",
       "name": "card_uncheck",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "numbers": {
+            "type": "string",
+          },
+          "reason": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+          "numbers",
+          "reason",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "取り消す",
+      "name": "card_revoke",
     },
     {
       "inputSchema": {
