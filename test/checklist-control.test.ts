@@ -239,6 +239,34 @@ describe('チェックリストを使い続けさせるフックへの返事', (
     expect(first(await call('hook:stop', { turn: 5.9, checklist: 0 }))).toContain('Before you end this turn (5 tool calls,');
   });
 
+  it('会話ログがそろわなかったとき、このターンにチェックリストのツールを受けていれば止めない', async () => {
+    // 会話ログは遅れて書かれる。フックが待っても、最後に使ったツール（card_add）の行が見えなかった
+    const since = Date.now() - 1000;
+    await call('card_add', { list: 'やること', list_description: '作業', cards: [{ title: '税率を変える' }] });
+    expect(first(await call('hook:stop', { ...worked, since, settled: false }))).toBe('');
+    // 次のターン（はじまりが、最後に受けたときよりあと）では、触れていないので止める
+    expect(first(await call('hook:stop', { ...worked, since: Date.now() + 1000, settled: false }))).toContain('checklists not touched; unchecked: やること 1');
+    // 会話ログがそろったときは、会話ログだけで決める（アプリは、本体とサブエージェントの呼び出しを見分けられない）
+    expect(first(await call('hook:stop', { ...worked, since, settled: true }))).toContain('checklists not touched');
+    // ターンのはじまりが分からないとき・ほかのセッションが使っただけのときは、触れたことにしない
+    expect(first(await call('hook:stop', { ...worked, since: null, settled: false }))).toContain('checklists not touched');
+    expect(first(await call('hook:stop', worked))).toContain('checklists not touched');
+    expect(first(await call('hook:stop', { ...worked, since, settled: false }, PEER))).toContain('checklists not touched; there are no lists yet');
+  });
+
+  it('会話ログがそろわなかったとき、数えたのが前のターンなら止めない（このターンの行が、まだ 1 つも書かれていない）', async () => {
+    // 人の発言のフックを受けた時刻より、数えたターンのはじまりがずっと前
+    await call('hook:prompt', {});
+    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: false }))).toBe('');
+    // 発言の行の時刻と、フックが届く時刻の少しのずれ・知らせで始まったターン（発言のフックよりあと）は、このターンとして止める
+    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 1000, settled: false }))).toContain('checklists not touched');
+    expect(first(await call('hook:stop', { ...worked, since: Date.now() + 60_000, settled: false }))).toContain('checklists not touched');
+    // 会話ログがそろっていれば、作業の途中に人が発言していても（発言のフックのほうがあと）、会話ログで決める
+    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: true }))).toContain('checklists not touched');
+    // 発言のフックを受けていないセッション（アプリを起動し直した）では、数えたとおりに決める
+    expect(first(await call('hook:stop', { ...worked, since: Date.now() - 60_000, settled: false }, PEER))).toContain('checklists not touched');
+  });
+
   it('子セッションのターンの終わりは止めない。メニューでオフのとき・知らないセッションには、何も返さない', async () => {
     host.add(CHILD, { parentId: ME });
     expect(first(await call('hook:stop', { turn: 9, checklist: 0 }, CHILD))).toBe('');

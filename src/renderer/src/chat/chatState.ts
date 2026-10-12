@@ -195,6 +195,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       };
     case 'turn-start':
       return { ...state, status: turn(state, 'running'), inTurn: true };
+    // ほかのセッションに結果を返すときの目印。チャットには出さない
+    case 'checklist-stop':
+      return state;
     case 'info':
       return { ...state, items: [...state.items, { kind: 'info', id: event.id, text: event.text }] };
     case 'shell':

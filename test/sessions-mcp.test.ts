@@ -868,6 +868,22 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_prompt: { from: 'human', text: '人の指示' }, last_response: 'はい' });
       host.events.set(CHILD, [{ type: 'notice', id: '1', text: '知らせ' }]);
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_prompt: { from: 'notice', text: '知らせ' }, last_response: null });
+      // チェックリストの知らせにターンの終わりを止められたあとの応答（チェックリストを直した報告）は、最後の応答にしない
+      const stopped: ChatEvent[] = [
+        { type: 'user', id: '1', text: '人の指示' },
+        { type: 'assistant-text', id: '2', text: '調べた結果です' },
+        { type: 'checklist-stop' },
+        { type: 'tool-use', id: '3', name: 'mcp__tanacode-checklist__card_add', target: 'やること', input: '' },
+        { type: 'assistant-text', id: '4', text: 'チェックリストに 2 件足しました。' },
+      ];
+      host.events.set(CHILD, stopped);
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: '調べた結果です' });
+      // 次のターン（別の Claude からの知らせで始まったものも）の応答は、作業の応答に戻る
+      host.events.set(CHILD, [...stopped, { type: 'turn-start' }, { type: 'assistant-text', id: '5', text: '報告を読みました' }]);
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: '報告を読みました' });
+      // 作業の応答が無ければ、報告を返す
+      host.events.set(CHILD, [stopped[0], ...stopped.slice(2)]);
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: 'チェックリストに 2 件足しました。' });
       host.set(CHILD, 'permission');
       const context = Array.from({ length: 15 }, (_, i) => `行 ${i}`);
       host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Bash を実行しますか?', context, options: [option('1', 'Yes')] }));
@@ -1509,6 +1525,28 @@ describe('会話のまとめ（read_session の中身）', () => {
     expect(text).not.toContain('f29.ts');
     expect(text).toContain('…(400 characters omitted)…');
     expect(text).toContain('\n\n終わりました');
+  });
+
+  it('チェックリストの知らせに止められたあとの応答は、結果のまとめと分けて短く出す（結果のまとめを途中の応答として切らない）', () => {
+    const summary = 'け'.repeat(3000);
+    const text = testing
+      .conversationLines(
+        [
+          { type: 'user', id: '1', text: '調べて' },
+          { type: 'assistant-text', id: '2', text: '調べます' },
+          { type: 'assistant-text', id: '3', text: summary },
+          { type: 'checklist-stop' },
+          { type: 'assistant-text', id: '4', text: 'チェックリストに 2 件足しました。' },
+          { type: 'user', id: '5', text: '次も' },
+          { type: 'assistant-text', id: '6', text: 'はい' },
+        ],
+        3,
+        () => '',
+      )
+      .join('\n');
+    // 結果のまとめは、最後の応答として 4000 文字まで出る
+    expect(text).toContain(summary);
+    expect(text).toContain('\n\nClaude, after tanacode reminded it to update its checklists at the end of the turn:\nチェックリストに 2 件足しました。\n\n### 2. User message\n次も\n\nClaude:\nはい');
   });
 
   it('編集したファイルは、/clear より後のものだけ。フォルダの外のものは絶対パスのまま', () => {

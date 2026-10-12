@@ -249,7 +249,11 @@ describe('toChatEvents: attachment の行', () => {
     // チェックリストを使い続けさせるフック。Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）・ターンの終わりを止めた記録（コマンドは blockingError に入る）。2.1.296
     const reminder = `<${CHECKLIST_REMINDER_TAG}>\n今のチェックリスト\n</${CHECKLIST_REMINDER_TAG}>`;
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'UserPromptSubmit', hookEvent: 'UserPromptSubmit', content: [reminder] }))).toEqual([]);
-    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
+    // 止めた記録は、フックの一覧には出さず、目印だけを残す（このあとの応答は、チェックリストを直した報告。ほかのセッションに結果を返すときに見分ける）
+    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([{ type: 'checklist-stop' }]);
+    // ユーザーの Stop のフックが止めたとき・Stop でないときは、目印にしない
+    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: 'テストを流して', command: 'npm test' } }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
+    expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
     // hooks でない attachment
     expect(events(attachment({ type: 'file', filename: `${CWD}/notes.txt` }))).toEqual([]);
     expect(events({ type: 'attachment' })).toEqual([]);

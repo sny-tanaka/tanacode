@@ -562,7 +562,9 @@ export class SessionsControl {
     const events = await this.deps.host.conversation(s.id);
     const lastPrompt = lastOf(events, isPrompt);
     const promptAt = lastPrompt ? events.lastIndexOf(lastPrompt) : -1;
-    const response = lastOf(events.slice(promptAt + 1), isResponse);
+    // 作業の結果を返す。チェックリストを直した報告しか無ければ、それを返す
+    const { work, notes } = responsesOf(events.slice(promptAt + 1));
+    const response = work[work.length - 1] ?? notes[notes.length - 1];
     const screen = this.deps.host.screen(s.id);
     const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
     return {
@@ -570,7 +572,7 @@ export class SessionsControl {
       last_prompt: lastPrompt
         ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
-      last_response: response ? clip(response.text, 4000) : null,
+      last_response: response ? clip(response, 4000) : null,
       question: base.state === 'question' && menu?.kind === 'question' ? questionOf(menu) : undefined,
       permission: base.state === 'permission' && menu?.kind === 'permission' ? { title: menu.title, context: menu.context.slice(0, 12) } : undefined,
     };
@@ -648,23 +650,28 @@ function questionOf(menu: Menu): Record<string, unknown> {
 // 会話を、新しいほうから turns 回分の指示とその応答にまとめる（長い応答は途中を省く）。
 // parentId: そのセッションの親。親のないセッションへの指示（独立したセッションの最初の指示）は、親からの指示と書かない
 function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: string) => string, parentId: string | null = null): string[] {
-  type Turn = { who: string; text: string; responses: string[]; tools: string[] };
+  // notes: チェックリストの知らせにターンの終わりを止められたあとの応答（チェックリストを直した報告）
+  type Turn = { who: string; text: string; responses: string[]; notes: string[]; tools: string[] };
   let all: Turn[] = [];
   let current: Turn | null = null;
+  let stopped = false;
   for (const e of events) {
+    if (startsTurn(e)) stopped = false;
     if (e.type === 'reset') {
       // /clear で会話を始め直した
       all = [];
       current = null;
     } else if (e.type === 'user') {
       const from = parentId ? 'the parent session' : 'the session that started this one,';
-      current = { who: e.parent ? `Instruction from ${from} "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], tools: [] };
+      current = { who: e.parent ? `Instruction from ${from} "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], notes: [], tools: [] };
       all.push(current);
     } else if (e.type === 'notice') {
-      current = { who: 'Notice', text: e.text, responses: [], tools: [] };
+      current = { who: 'Notice', text: e.text, responses: [], notes: [], tools: [] };
       all.push(current);
+    } else if (e.type === 'checklist-stop') {
+      stopped = true;
     } else if (e.type === 'assistant-text' && current) {
-      current.responses.push(e.text);
+      (stopped ? current.notes : current.responses).push(e.text);
     } else if (e.type === 'tool-use' && current) {
       current.tools.push(e.target ? `${e.name} ${e.target}` : e.name);
     }
@@ -679,6 +686,8 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
       const responses = turn.responses.map((r, j) => clip(r, j === turn.responses.length - 1 ? 4000 : 600));
       lines.push('', 'Claude:', responses.join('\n\n'));
     }
+    // 結果のまとめのあとに続くので、結果と取り違えないように分けて、短く出す
+    if (turn.notes.length > 0) lines.push('', 'Claude, after tanacode reminded it to update its checklists at the end of the turn:', clip(turn.notes.join('\n\n'), 600));
     if (turn.tools.length > 0) {
       const tools = turn.tools.slice(0, 30).join(', ');
       lines.push('', `Tools: ${tools}${turn.tools.length > 30 ? ` and ${turn.tools.length - 30} more` : ''}`);
@@ -800,7 +809,23 @@ function lastOf<T, S extends T>(list: T[], match: (item: T) => item is S): S | u
 type Prompt = Extract<ChatEvent, { type: 'user' | 'notice' }>;
 const isPrompt = (e: ChatEvent): e is Prompt => e.type === 'user' || e.type === 'notice';
 const isUser = (e: ChatEvent): e is Extract<ChatEvent, { type: 'user' }> => e.type === 'user';
-const isResponse = (e: ChatEvent): e is Extract<ChatEvent, { type: 'assistant-text' }> => e.type === 'assistant-text';
+// ターンのはじまり（発言・知らせ・別の Claude からの知らせ）
+const startsTurn = (e: ChatEvent): boolean => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start';
+
+// 応答を、作業の応答（work）と、チェックリストを直した報告（notes）に分ける。
+// チェックリストを使い続けさせるフック（checklist-hook.ts）がターンの終わりを止めると、Claude はリストを直して 1 行で報告する。
+// それは作業の結果ではないので、ほかのセッションに「最後の応答」として返さない。次のターンのはじまりで、作業の応答に戻る
+function responsesOf(events: ChatEvent[]): { work: string[]; notes: string[] } {
+  const work: string[] = [];
+  const notes: string[] = [];
+  let stopped = false;
+  for (const e of events) {
+    if (startsTurn(e)) stopped = false;
+    else if (e.type === 'checklist-stop') stopped = true;
+    else if (e.type === 'assistant-text') (stopped ? notes : work).push(e.text);
+  }
+  return { work, notes };
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
