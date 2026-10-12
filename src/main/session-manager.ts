@@ -853,7 +853,10 @@ export class SessionManager {
         // （起動の直後に MCP サーバーがつながる間など）、文字と Enter が 1 度に届く。長い文字は貼り付けとみなされ、Enter は改行として入力欄に入る（送られない）
         // readable: 入力欄の文字を画面から読めている。読めなくなったら（時間切れ・メニューが出た）、残りは待たずに書く
         let readable = true;
-        for (const chunk of promptKeyChunks(text)) {
+        for (const [i, chunk] of promptKeyChunks(text).entries()) {
+          // 打っている途中に、質問や確認のメニューが出た（裏のタスクの知らせで始まったターンが、許可を求めたなど）・claude が終わったら、
+          // 残りは書かない。メニューに打つと、文字や数字が選択になることがある。Enter を送るかは、下で決める
+          if (i > 0 && (rt.process !== process || rt.screen?.current.state.kind === 'menu')) break;
           const before = rt.screen?.current.draft ?? '';
           process.write(chunk.keys);
           // 空白だけの分（空行）は、入力欄に出たかを見分けられないので待たない（合図も入っていない）

@@ -131,6 +131,23 @@ describe('submit', () => {
     expect(seen).toEqual(['', ...tails]);
   });
 
+  it('長い文を打っている途中に、確認のメニューが出たら、残りは書かず、Enter も送らない（guarded）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    const chunks = promptKeyChunks(text);
+    expect(chunks.length).toBeGreaterThan(3);
+    // 2 つめの分を書いたところで、許可の確認が出る（裏のタスクの知らせで始まったターンが、許可を求めた）
+    let typed = '';
+    pty.onWrite = (data) => {
+      typed += data.replace(/\x1b\[20[01]~/g, '');
+      const shown = typed.replace(/\n/g, ' ').slice(-60);
+      setTimeout(() => pty.output(pty.writes.length >= 2 ? fixtureScreen('bash-permission') : promptWith(shown)), 20);
+    };
+    await expect(app.manager.submit(id, text, [], true)).rejects.toThrow('質問や確認が出たため、送れませんでした');
+    expect(pty.writes).toEqual(chunks.slice(0, 2).map((c) => c.keys));
+  });
+
   it('打っている途中は、入力欄の文字を画面に知らせない（長い文が目印に置き換わって出ていても。チャットの入力欄に移すと、打っている途中の文字が消される）', async () => {
     const { id, pty } = app.create();
     await app.ready(id);
