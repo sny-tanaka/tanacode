@@ -5,7 +5,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { bridgeUrlOf, isHumanPrompt, isTranscriptEntry, promptDisplayText, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
-import { bracketedPaste, promptKeys, stripControlChars } from '@shared/prompt-keys';
+import { bracketedPaste, promptKeyChunks, stripControlChars } from '@shared/prompt-keys';
 import { t } from '@shared/i18n';
 import { isCompactMessage, type CarriedTask } from '@shared/optimized-compact';
 import { isParentMessageDraft, modeWithin, weakerMode, type PermissionRequest, type SessionState } from '@shared/session-tools';
@@ -141,8 +141,9 @@ type Runtime = {
   watched: string | null;
   // 送信の順番待ち。チャットの入力欄からの発言と、親セッションからの指示・知らせを、混ぜずに 1 つずつ打ち込む
   sendChain: Promise<void>;
-  // 打ち込んでいる途中の文字（空白を除く）と、打ち込み始めた時刻。画面の draft から除いて画面に知らせる（チャットの入力欄に移さないため）
-  typing: { text: string; at: number } | null;
+  // 打ち込んでいる途中の文字（空白を除く）と、打ち込み始めた（打ち終えた）時刻。画面の draft から除いて画面に知らせる（チャットの入力欄に移さないため）
+  // writing: まだ打っている途中（長い文は小分けに打つので、何秒もかかる）。そのあいだ入力欄にある文字は、どれも打っている途中のもの
+  typing: { text: string; at: number; writing: boolean } | null;
   // 中断で入力欄に戻った発言（空白を除いた draft）に添えてあった札の中身。入力欄では目印（[Pasted text #1 …]）になっていて、
   // 画面からは中身が読めないので、取り消した発言から取っておき、画面に知らせる ScreenInfo に添える（shownScreen）
   pulledBack: { draft: string; pastes: string[] } | null;
@@ -833,21 +834,29 @@ export class SessionManager {
       const text = stripControlChars(rawText);
       const pastes = rawPastes.map(stripControlChars).filter((p) => p.trim());
       // 画面の折り返しで空白が変わるので、空白を除いて覚える（目印にならなかった札は、文字のまま入力欄に入る）
-      rt.typing = { text: [text, ...pastes].join('').replace(/\s/g, ''), at: Date.now() };
+      const typing = { text: [text, ...pastes].join('').replace(/\s/g, ''), at: Date.now(), writing: true };
+      rt.typing = typing;
       rt.compactTyped = isCompactMessage(text) ? text.replace(/\s/g, '') : null;
       rt.submittedAt = Date.now();
+      try {
       for (const path of attachments) {
         process.write(bracketedPaste(stripControlChars(path)));
         await sleep(300);
         process.write(' ');
       }
       if (text) {
-        const before = rt.screen?.current.draft ?? '';
-        // 改行を含む入力・長い入力は、行ごとの短い貼り付けとして送る（promptKeys）
-        process.write(promptKeys(text));
+        // 改行を含む入力・長い入力は、行ごとの短い貼り付けとして送る（promptKeys）。長い文は、小さな分に分けて書き、
+        // 前の分が入力欄に出てから次を書く（promptKeyChunks。まとめて書くと、貼り付けの合図が読む区切りで割れることがある）。
         // 打った文字が入力欄に出てから Enter を送る。決まった時間だけ待つと、Claude Code が忙しくて読むのが遅れたとき
         // （起動の直後に MCP サーバーがつながる間など）、文字と Enter が 1 度に届く。長い文字は貼り付けとみなされ、Enter は改行として入力欄に入る（送られない）
-        await this.untilTyped(rt, process, before, text);
+        // readable: 入力欄の文字を画面から読めている。読めなくなったら（時間切れ・メニューが出た）、残りは待たずに書く
+        let readable = true;
+        for (const chunk of promptKeyChunks(text)) {
+          const before = rt.screen?.current.draft ?? '';
+          process.write(chunk.keys);
+          // 空白だけの分（空行）は、入力欄に出たかを見分けられないので待たない（合図も入っていない）
+          if (readable && chunk.shown.trim()) readable = await this.untilTyped(rt, process, before, chunk.shown);
+        }
       } else if (pastes.length === 0) {
         await sleep(50);
       }
@@ -856,6 +865,11 @@ export class SessionManager {
         process.write(bracketedPaste(paste));
         // 目印（か、短くて目印にならなかった文字）が入力欄に出てから、次を打つ（Claude Code が読み終えたのを、札ごとに確かめる）
         await this.untilTyped(rt, process, before, paste);
+      }
+      } finally {
+        // 打ち終えた。ここからしばらく（TYPING_MS）は、打った文字が入力欄に残っていても、チャットの入力欄に移さない
+        typing.writing = false;
+        typing.at = Date.now();
       }
       // Enter の直前にメニューが出ていたら、Enter はメニューの選択になってしまう
       if (guarded && (rt.screen?.current.state.kind !== 'prompt' || rt.attention !== null)) {
@@ -871,15 +885,17 @@ export class SessionManager {
     return next;
   }
 
-  // 打った文字が入力欄に出る（Claude Code が読み終える）のを待つ。メニューが出たらやめる（Enter を送るかは submit が決める）。
+  // 打った文字が入力欄に出る（Claude Code が読み終える）のを待つ。出たら true。メニューが出たらやめる（Enter を送るかは submit が決める）。
   // TYPED_MS たっても出なければ、待つのをやめて Enter を送る（画面から読み取れない文字など）
-  private async untilTyped(rt: Runtime, process: ClaudeSession, before: string, text: string): Promise<void> {
+  private async untilTyped(rt: Runtime, process: ClaudeSession, before: string, text: string): Promise<boolean> {
     const until = Date.now() + TYPED_MS;
     while (rt.process === process && Date.now() < until) {
       const info = rt.screen?.current;
-      if (!info || info.state.kind === 'menu' || typedShown(info.draft, before, text)) return;
+      if (!info || info.state.kind === 'menu') return false;
+      if (typedShown(info.draft, before, text)) return true;
       await sleep(TYPED_POLL_MS);
     }
+    return false;
   }
 
   // 手が空く（ターンが終わり、入力を受け付けられる）のを待ってから送る（子セッションへの指示・親への知らせ）。
@@ -1608,6 +1624,9 @@ function shownScreen(rt: Runtime, info: ScreenInfo): ScreenInfo {
   // 最適化圧縮の文も同じ（取りやめるときに、withdrawCompactDraft が消す）
   if (isParentMessageDraft(info.draft) || compactDraft(rt, info.draft)) return { ...info, draft: '' };
   const typing = rt.typing;
+  // 打っている途中に入力欄にある文字は、打った文字。長い文は [...Truncated text #1 +21 lines...] の目印に置き換わって出るので、
+  // 打った文字と比べても合わない。チャットの入力欄に移すと、Claude Code の入力欄を消して、打っている途中の文字が欠ける
+  if (typing?.writing && info.draft) return { ...info, draft: '' };
   if (typing && info.draft && Date.now() - typing.at < TYPING_MS) {
     const typed = info.draft.replace(/\[(?:Pasted text #\d+[^\]]*|Image #\d+)\]/g, '').replace(/\s/g, '');
     if (typed === '' || typing.text.includes(typed)) return { ...info, draft: '' };

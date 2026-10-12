@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { bracketedPaste } from '@shared/prompt-keys';
+import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
 import { handoffText } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
 import { fixtureScreen, line, ScriptedApp, type ScriptedPty } from './helpers/scripted-claude';
@@ -106,6 +106,57 @@ describe('submit', () => {
     ]);
     // 打ち込んでいる途中の文字と目印は、チャットの入力欄に移さない
     expect(app.manager.screenForView(id)?.draft).toBe('');
+  });
+
+  it('長い文は、小さな分に分けて書き、前の分が入力欄に出てから次を書く（貼り付けの合図が、読む区切りで割れないように）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    const chunks = promptKeyChunks(text);
+    expect(chunks.length).toBeGreaterThan(3);
+    // Claude Code の入力欄の代わり。打った文字の終わりのほうを、少し遅れて出す
+    let typed = '';
+    const seen: string[] = [];
+    pty.onWrite = (data) => {
+      // 書いた時点で、前の分までが入力欄に出ているか
+      seen.push((app.manager.screen(id)?.draft ?? '').replace(/\s/g, '').slice(-12));
+      if (data === '\r') return;
+      typed += data.replace(/\x1b\[20[01]~/g, '');
+      const shown = typed.replace(/\n/g, ' ').slice(-60);
+      setTimeout(() => pty.output(promptWith(shown)), 40);
+    };
+    await app.manager.submit(id, text);
+    expect(pty.writes).toEqual([...chunks.map((c) => c.keys), '\r']);
+    const tails = chunks.map((c) => c.shown.replace(/\s/g, '').slice(-12));
+    expect(seen).toEqual(['', ...tails]);
+  });
+
+  it('打っている途中は、入力欄の文字を画面に知らせない（長い文が目印に置き換わって出ていても。チャットの入力欄に移すと、打っている途中の文字が消される）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    // Claude Code は、長い入力の途中を目印に置き換えて出す（打った文字と比べても合わない）
+    const shown = '1 行目: 入力欄が高くなる[...Truncated text #1 +21 lines...]る発言です。';
+    pty.onWrite = (data) => {
+      if (data !== '\r') setTimeout(() => pty.output(promptWith(shown)), 20);
+    };
+    const sending = app.manager.submit(id, text);
+    await app.waitFor('入力欄', () => app.manager.screen(id)?.draft === shown);
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+    expect(app.screens.get(id)?.draft).toBe('');
+    await sending;
+    expect(pty.typed).toBe(`${promptKeys(text)}\r`);
+  });
+
+  it('入力欄の文字を読めないとき（打った分が出ないまま時間切れ）は、残りを待たずに書いて、Enter を送る', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    const started = Date.now();
+    await app.manager.submit(id, text);
+    expect(pty.typed).toBe(`${promptKeys(text)}\r`);
+    // 待つのは 1 回だけ（分ごとに時間切れを待たない）
+    expect(Date.now() - started).toBeLessThan(4500);
   });
 
   it('打った文が無く、札だけでも送る。札の中の制御文字は除き、空の札は打たない', async () => {
@@ -286,9 +337,12 @@ describe('最適化圧縮の仕上げの頼み', () => {
   async function pulledBack() {
     const { id, pty } = app.create();
     await app.ready(id);
+    // Claude Code の入力欄の代わり。長い文は入力欄に収まらないので、打った文字の終わりのほうだけを出す。Enter で空に戻す
+    let typed = '';
     pty.onWrite = (data) => {
-      if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('[Pasted text #1 +7 lines]')), 5);
-      if (data === '\r') setTimeout(() => pty.output(fixtureScreen('prompt')), 5);
+      typed = data === '\r' ? '' : typed + data.replace(/\x1b\[20[01]~/g, '');
+      const shown = typed.replace(/\n/g, ' ').slice(-60);
+      setTimeout(() => pty.output(shown ? promptWith(shown) : fixtureScreen('prompt')), 5);
     };
     await app.manager.submit(id, handoffText());
     pty.writes.length = 0;

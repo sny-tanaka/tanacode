@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents, type ChatEvent } from '@shared/chat';
-import { bracketedPaste, promptKeys } from '@shared/prompt-keys';
+import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
 import { readAgentLog } from '../../src/main/chat-log';
 import { KnowledgeTracker } from '../../src/main/knowledge-tracker';
 import { ContextTracker } from '../../src/main/context-tracker';
@@ -89,6 +89,16 @@ async function submit(run: ClaudeRun, text: string): Promise<void> {
   await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
 }
 
+// アプリ（SessionManager.submit）と同じく、長い文は小さな分に分けて打ち、前の分が入力欄に出てから次を打つ（promptKeyChunks）。
+// まとめて打つと、貼り付けの合図（ESC [200~）が Claude Code の読む区切りで割れ、マシンが重いと後半が文字として入力に混ざる
+async function typeLikeApp(run: ClaudeRun, text: string): Promise<void> {
+  for (const chunk of promptKeyChunks(text)) {
+    run.type(chunk.keys);
+    const tail = chunk.shown.replace(/\s/g, '').slice(-30);
+    if (tail) await run.waitFor('打った分が入力欄に出る', (info) => info.state.kind === 'prompt' && (/\[Pasted text/.test(info.draft) || info.draft.replace(/\s/g, '').endsWith(tail)));
+  }
+}
+
 describe(`Claude Code ${version} の入力欄`, () => {
   let api: MockApi;
   let run: ClaudeRun;
@@ -141,7 +151,7 @@ describe(`Claude Code ${version} の入力欄`, () => {
     const keys = promptKeys(LONG_LINES);
     // 貼り付け 1 つは 1 行の中だけ（4 行以上の貼り付けは目印になる）
     expect(keys.split('\x1b[201~').every((piece) => !piece.replace(/^\n+/, '').includes('\n'))).toBe(true);
-    run.type(keys);
+    await typeLikeApp(run, LONG_LINES);
     const tail = LONG_LINES.replace(/\s/g, '').slice(-30);
     await run.waitFor('入力欄の終わりに、打った文字の終わりが出る', (info) => info.state.kind === 'prompt' && info.draft.replace(/\s/g, '').endsWith(tail));
     expect(run.screen.current.draft).not.toMatch(/\[Pasted text/);
@@ -161,7 +171,7 @@ describe(`Claude Code ${version} の入力欄`, () => {
     const text = textOf();
     expect(Math.max(...text.split('\n').map((line) => line.length))).toBeGreaterThan(1400);
     const before = turnEnds(run);
-    run.type(promptKeys(text));
+    await typeLikeApp(run, text);
     const tail = text.replace(/\s/g, '').slice(-30);
     await run.waitFor('入力欄の終わりに、打った文字の終わりが出る', (info) => info.state.kind === 'prompt' && (/\[Pasted text/.test(info.draft) || info.draft.replace(/\s/g, '').endsWith(tail)));
     expect(run.screen.current.draft).not.toMatch(/\[Pasted text/);

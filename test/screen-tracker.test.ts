@@ -449,8 +449,19 @@ it('入力欄が画面より高く、先頭の行が画面の外に出た画面�
   expect(tracker.current.state).toEqual({ kind: 'prompt' });
   expect(tracker.current.draft.split('\n')).toHaveLength(37);
   expect(tracker.current.draft.endsWith('66 行目: 長い発言の続きです。')).toBe(true);
+  // 一度そうと決めたあとは、続きを打って画面が変わっても、すぐに読む（長い文を小分けに打つあいだ、そのつど待たない）
+  tracker.feed(draw([...Array.from({ length: 37 }, (_, i) => `  ${i + 40} 行目: 長い発言の続きです。`), RULE, '  ⏸ manual mode on (shift+tab to cycle)']));
+  await sleep(300);
+  expect(tracker.current.draft.endsWith('76 行目: 長い発言の続きです。')).toBe(true);
   // 入力欄でもメニューでもない画面
   tracker.feed(draw(['何かの画面', ...Array.from({ length: 30 }, (_, i) => `項目 ${i}`)]));
-  await sleep(1700);
+  await sleep(300);
+  // すぐには決めない
+  expect(tracker.current.state).toEqual({ kind: 'prompt' });
+  await sleep(1400);
+  expect(tracker.current.state).toEqual({ kind: 'unknown' });
+  // 認識できない画面のあとは、また続いたのを見てから決める
+  tracker.feed(tall);
+  await sleep(300);
   expect(tracker.current.state).toEqual({ kind: 'unknown' });
 });

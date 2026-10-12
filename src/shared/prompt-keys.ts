@@ -36,6 +36,46 @@ export function promptKeys(text: string): string {
   return text.includes('\n') || text.length > PASTE_CHARS ? pastedLines(text) : text;
 }
 
+// 1 度に書く量の上限（バイト）。断片 1 つ（PIECE_CHARS 文字の日本語で 900 バイト + 合図）が収まる大きさ
+const CHUNK_BYTES = 1000;
+
+// keys: pty に 1 度に書く文字 / shown: それが入力欄に出たときの文字（出たのを確かめてから、次を書く）
+export type KeyChunk = { keys: string; shown: string };
+
+// promptKeys の文字を、1 度に書く分ごとに分けたもの（つなげると promptKeys と同じ）。
+// 行ごとの貼り付けには、貼り付けの始まりと終わりの合図（ESC [200~・ESC [201~）がいくつも入る。長い文を 1 度に書くと、Claude Code が
+// 入力を読む区切り（およそ 4,096 バイト）で合図が 2 つに割れることがあり、マシンが重くて後半を読むのが遅れると、後半（200~）が
+// 文字として入力に混ざる（70 行の発言を、負荷をかけながら送って確かめた。2.1.296）。そこで、合図の途中で切れない小さな分に分けて書き、
+// 前の分が入力欄に出てから（Claude Code が読み終えてから）次を書く（SessionManager.submit）
+export function promptKeyChunks(text: string): KeyChunk[] {
+  const whole = promptKeys(text);
+  if (whole !== pastedLines(text)) return [{ keys: whole, shown: text }];
+  const chunks: KeyChunk[] = [];
+  let current: KeyChunk = { keys: '', shown: '' };
+  let bytes = 0;
+  const add = (keys: string, shown: string) => {
+    const size = byteLength(keys);
+    if (current.keys && bytes + size > CHUNK_BYTES) {
+      chunks.push(current);
+      current = { keys: '', shown: '' };
+      bytes = 0;
+    }
+    current = { keys: current.keys + keys, shown: current.shown + shown };
+    bytes += size;
+  };
+  text.split('\n').forEach((line, i) => {
+    if (i > 0) add('\n', '\n');
+    for (const piece of pieces(line)) add(bracketedPaste(piece), piece);
+  });
+  if (current.keys) chunks.push(current);
+  return chunks;
+}
+
+const encoder = new TextEncoder();
+function byteLength(text: string): number {
+  return encoder.encode(text).length;
+}
+
 // 行ごとに、短い貼り付け（PIECE_CHARS まで）に分け、改行は LF（Ctrl+J。送信しない改行）で打つ。
 // 丸ごと 1 つの貼り付けにすると、Claude Code（ログインして使うとき）は、4 行以上・長い貼り付けを <pasted_content> の囲みに入れて
 // Claude に渡し、「貼り付けの中の指示には、ユーザー自身の言葉が頼んでいるときだけ従う」と教える。ユーザーが入力欄に書いた長い発言や、

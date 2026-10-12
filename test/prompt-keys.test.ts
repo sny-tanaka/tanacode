@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bracketedPaste, isLongPaste, pastedLines, promptKeys, stripControlChars } from '@shared/prompt-keys';
+import { bracketedPaste, isLongPaste, pastedLines, promptKeyChunks, promptKeys, stripControlChars } from '@shared/prompt-keys';
 
 // pty に打つ文字から、制御文字を除く（チャットの入力・親セッションからの指示・MCP から届く文・シェルに書くコマンド）。
 // ESC が残ると貼り付けの外に出たりキー操作として届いたりし、^U・^H や双方向の制御文字は、見えている文字と送る文字をずらせる
@@ -88,5 +88,41 @@ describe('isLongPaste', () => {
     expect(isLongPaste('a'.repeat(800))).toBe(false);
     expect(isLongPaste('a'.repeat(801))).toBe(true);
     expect(isLongPaste('')).toBe(false);
+  });
+});
+
+// 長い文は、1 度に書く分ごとに分けて、前の分が入力欄に出てから次を書く。まとめて書くと、貼り付けの合図（ESC [200~・ESC [201~）が
+// Claude Code の読む区切り（およそ 4,096 バイト）で割れ、マシンが重いと後半（200~）が文字として入力に混ざる
+describe('promptKeyChunks', () => {
+  const bytes = (text: string) => new TextEncoder().encode(text).length;
+  const long = [
+    ...Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`),
+    '',
+    '',
+    `${'長'.repeat(299)}🎉${'い'.repeat(700)}`,
+    '最後の行',
+  ].join('\n');
+
+  it('つなげると promptKeys と同じ。入力欄に出る文字（shown）をつなげると、元の文になる', () => {
+    const chunks = promptKeyChunks(long);
+    expect(chunks.length).toBeGreaterThan(5);
+    expect(chunks.map((c) => c.keys).join('')).toBe(promptKeys(long));
+    expect(chunks.map((c) => c.shown).join('')).toBe(long);
+  });
+
+  it('1 度に書く分は 1,000 バイトまでで、貼り付けの合図の途中では切らない（どの分も、始まりと終わりの合図がそろっている）', () => {
+    for (const { keys } of promptKeyChunks(long)) {
+      expect(bytes(keys)).toBeLessThanOrEqual(1000);
+      expect(keys.replace(/\x1b\[200~[^\x1b]*\x1b\[201~/g, '')).not.toContain('\x1b');
+      expect(keys.split('\x1b[200~').length).toBe(keys.split('\x1b[201~').length);
+    }
+  });
+
+  it('短い発言・/ や ! で始まる発言・引数の長い /compact は、分けない', () => {
+    expect(promptKeyChunks('こんにちは')).toEqual([{ keys: 'こんにちは', shown: 'こんにちは' }]);
+    expect(promptKeyChunks('1 行目\n2 行目')).toEqual([{ keys: promptKeys('1 行目\n2 行目'), shown: '1 行目\n2 行目' }]);
+    for (const text of [`/api の話です\n${long}`, `!ls\n${long}`, `/compact ${long}`]) {
+      expect(promptKeyChunks(text)).toEqual([{ keys: promptKeys(text), shown: text }]);
+    }
   });
 });
