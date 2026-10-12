@@ -76,8 +76,12 @@ type Deps = {
   home: string;
   // 親への知らせをまとめるまでの待ち（テストでは短くする）
   notifyDelayMs?: number;
+  // 質問に答えたあと、子の次の質問を待つ上限（テストでは短くする）
+  followUpMs?: number;
 };
 
+// 質問に答えたあと、子が続けて出す次の質問を待つ上限。子は、答えを受け取ってから数秒で次の質問を出す
+const FOLLOW_UP_MS = 20_000;
 // 子セッションの最初の指示を、起動（worktree の準備も含む）が終わるまで待つ上限
 const FIRST_PROMPT_TIMEOUT_MS = 30 * 60_000;
 // 子セッションへの指示を、子の手が空くまで預かる上限（作業中の子には、ターンが終わってから打つ）
@@ -436,13 +440,34 @@ export class SessionsControl {
     // 答えが受け付けられて、質問が閉じた（次の質問に進んだ）のを確かめる
     for (let i = 0; i < 20 && same(current()); i++) await sleep(100);
     if (same(current())) throw new ToolError('Sent the answer, but the question did not close. Check with get_session.');
+    const next = await this.followUpQuestion(child.id, same);
     this.observe(caller.id, child.id);
-    const next = current();
     return json({
       answered: true,
       state: host.stateOf(child.id),
-      next_question: next?.kind === 'question' && !same(next) ? questionOf(next) : undefined,
+      next_question: next ? questionOf(next) : undefined,
+      note: next ? 'The child is showing another question (next_question). Answer it now with answer_question, and keep going until the result has no next_question.' : undefined,
     });
+  }
+
+  // 答えたあと、子が続けて出す次の質問を、少しのあいだ待つ。出たら、その質問のメニューを返す。
+  // 子は、決めることがいくつもあるとき、1 問ずつ別々の AskUserQuestion で聞くことが多い（「1/3」「2/3」…）。答えた直後の子は作業中でも、
+  // 数秒で次の質問を出す。待たずに返すと、親は「作業中」と見て離れ、次の質問が、親がもう一度見に来るまで待たされる
+  // （2026-10-12、3 問のうち 1 問ごとに、次の質問が 1 分以上待たされた）。
+  // 子の手が空いた・人の操作待ちになった・終了したら、次の質問は来ないので、待つのをやめる
+  private async followUpQuestion(id: string, same: (menu: Menu | null) => boolean): Promise<Menu | null> {
+    const { host } = this.deps;
+    const limit = this.deps.followUpMs ?? FOLLOW_UP_MS;
+    const deadline = Date.now() + limit;
+    for (;;) {
+      const screen = host.screen(id);
+      const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
+      if (menu?.kind === 'question' && !same(menu)) return menu;
+      const state = host.stateOf(id);
+      if (state !== 'working' && state !== 'starting' && state !== 'question') return null;
+      if (Date.now() >= deadline) return null;
+      await sleep(Math.min(200, Math.max(1, limit / 5)));
+    }
   }
 
   private async stopSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
