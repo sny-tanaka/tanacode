@@ -49,6 +49,13 @@ export const LONG_LINES = [
   ...Array.from({ length: 30 }, (_, i) => `${i + 18} 行目: 長い複数行の発言が、そのまま届くかを確かめる文です。`),
   '最後の行（このあとに改行は無い）',
 ].join('\n');
+// 改行なしで 800 文字を超える行（1 段落の長い発言）。行の中は 300 文字までの貼り付けに分けて打つ。続けて届いた断片を Claude Code が
+// 1 つの貼り付けにまとめると、800 文字を超えて目印（[Pasted text #1]）になり、囲みに入ってしまう
+const sentences = (count: number, label: string) => Array.from({ length: count }, (_, i) => `これは${label}の ${i + 1} 文めで、途中で欠けずに届くかを確かめます。`).join('');
+// 1 行だけで 2,000 文字ほど
+export const ONE_LONG_LINE = sentences(60, '改行のない長い段落');
+// 複数行の中に、1,500 文字ほどの行が 1 つ
+export const LINES_WITH_LONG_LINE = ['長い行を含む発言の 1 行目です。', sentences(48, '途中の長い行'), '', '最後の行です。'].join('\n');
 // 入力欄で ! を付けて実行するコマンドと、その出力
 export const SHELL_COMMAND = 'echo tanacode-shell';
 export const SHELL_OUTPUT = 'tanacode-shell';

@@ -854,7 +854,7 @@ export class SessionManager {
       for (const paste of pastes) {
         const before = rt.screen?.current.draft ?? '';
         process.write(bracketedPaste(paste));
-        // 目印（か、短くて目印にならなかった文字）が入力欄に出てから、次を打つ。続けて打つと、Claude Code が 1 つの貼り付けにまとめることがある
+        // 目印（か、短くて目印にならなかった文字）が入力欄に出てから、次を打つ（Claude Code が読み終えたのを、札ごとに確かめる）
         await this.untilTyped(rt, process, before, paste);
       }
       // Enter の直前にメニューが出ていたら、Enter はメニューの選択になってしまう

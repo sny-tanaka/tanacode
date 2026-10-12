@@ -16,9 +16,11 @@ import {
   DRAFT,
   EFFORT,
   IMAGE_FILE,
+  LINES_WITH_LONG_LINE,
   LONG_LINE,
   LONG_LINES,
   LONG_PASTE,
+  ONE_LONG_LINE,
   PASTE,
   PNG_BASE64,
   READ_FILES,
@@ -147,6 +149,24 @@ describe(`Claude Code ${version} の入力欄`, () => {
     checkPasted(eventsOf(run), LONG_LINES);
     // シェルのコマンドやスラッシュコマンドとして実行されていない
     expect(eventsOf(run).filter((e) => e.type === 'shell')).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it.each([
+    ['改行なしで 2,000 文字ほどの 1 行', () => ONE_LONG_LINE],
+    ['複数行の中の 1,500 文字ほどの行', () => LINES_WITH_LONG_LINE],
+  ])('%s は、入力欄で目印にならず、全文が欠けずに 1 つの発言になる', async (_, textOf) => {
+    // 1 行の中の断片（300 文字まで）が、続けて届いても 1 つの貼り付けにまとまらないこと
+    const text = textOf();
+    expect(Math.max(...text.split('\n').map((line) => line.length))).toBeGreaterThan(1400);
+    const before = turnEnds(run);
+    run.type(promptKeys(text));
+    const tail = text.replace(/\s/g, '').slice(-30);
+    await run.waitFor('入力欄の終わりに、打った文字の終わりが出る', (info) => info.state.kind === 'prompt' && (/\[Pasted text/.test(info.draft) || info.draft.replace(/\s/g, '').endsWith(tail)));
+    expect(run.screen.current.draft).not.toMatch(/\[Pasted text/);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    checkPasted(eventsOf(run), text);
     await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
   });
 
