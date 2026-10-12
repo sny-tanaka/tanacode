@@ -33,6 +33,17 @@ const CHILD_QUESTION: AskQuestion = {
     { label: 'B 案', description: '確実' },
   ],
 };
+// 子が、質問を 1 問ずつ、別々の AskUserQuestion で続けて出す
+const ASK_TWICE = '2 つのことを順に確認してください';
+const SECOND_QUESTION: AskQuestion = {
+  question: 'テストも書きますか?',
+  header: 'テスト',
+  multiSelect: false,
+  options: [
+    { label: '書く', description: '単体テストを足す' },
+    { label: '書かない', description: 'あとで足す' },
+  ],
+};
 const BYPASS = 'バイパスのモードで扱ってください';
 const END = '裏でサーバーを動かしてください';
 // 裏で動かし続ける Bash（ほかのテストの sleep と見分けられる秒数にする）
@@ -105,6 +116,15 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
         match: ASK,
         delayMs: 500,
         steps: [[{ type: 'tool_use', id: 'toolu_child_ask', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }], say('B 案で進めます')],
+      },
+      {
+        match: ASK_TWICE,
+        delayMs: 500,
+        steps: [
+          [{ type: 'tool_use', id: 'toolu_child_ask_1', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }],
+          [{ type: 'tool_use', id: 'toolu_child_ask_2', name: 'AskUserQuestion', input: { questions: [SECOND_QUESTION] } }],
+          say('A 案で、テストも書きます'),
+        ],
       },
       {
         match: END,
@@ -241,6 +261,44 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       const result = child.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_child_ask');
       expect(result).toMatchObject({ answers: [{ question: CHILD_QUESTION.question, answer: 'B 案' }] });
       expect(menu.title).toContain('どちらの方式');
+    });
+  });
+
+  // 台本は、会話のはじめの発言で選ばれるので、別の子で確かめる
+  describe('子が質問を 1 問ずつ続けて出す', () => {
+    let child: ClaudeRun;
+    let control: SessionsControl;
+    const parentId = randomUUID();
+
+    beforeAll(async () => {
+      child = await open();
+      const now = Date.now();
+      child.manager['store'].add({ id: parentId, claudeSessionId: randomUUID(), cwd: child.cwd, title: '取りまとめ', titlePriority: 4, archived: false, createdAt: now, updatedAt: now });
+      child.manager['store'].update(child.sessionId!, { parentId });
+      control = new SessionsControl({ host: child.manager, enabled: () => true, archive: (id, options) => child.manager.archive(id, options), home: child.home, notifyDelayMs: 10 });
+    });
+
+    afterAll(() => control?.dispose());
+
+    it('子が質問を 1 問ずつ続けて出すとき、1 問めに答えた結果に、2 問めが入って返る（親が 1 問答えて離れない）', async () => {
+      const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
+      await child.send(ASK_TWICE);
+      const first = await child.waitFor('子の 1 問め', menuOf('question'));
+      await child.waitFor('フックが書いた 1 問め', () => child.manager.askedQuestions(child.sessionId!)?.some((q) => q.question === CHILD_QUESTION.question));
+      const answered = await control.handle(parentId, 'answer_question', { session_id: child.sessionId, question: first.title, choices: ['A 案'] });
+      expect(answered.isError, textOf(answered)).toBeUndefined();
+      // 答えた直後の子は作業中で、2 問めは、次の応答（別の AskUserQuestion）で出る。その 2 問めが、同じ結果に入っている
+      const result = JSON.parse(textOf(answered)) as { answered: boolean; state: string; next_question?: { title: string; options: { label: string }[] }; note?: string };
+      expect(result).toMatchObject({ answered: true, state: 'question' });
+      expect(result.next_question?.title).toContain('テストも書きますか');
+      expect(result.next_question?.options.map((o) => o.label)).toEqual(['書く', '書かない']);
+      expect(result.note).toContain('next_question');
+      // 2 問めにも答えると、子が続きを始める。次の質問は無い
+      const second = await control.handle(parentId, 'answer_question', { session_id: child.sessionId, question: result.next_question!.title, choices: ['書く'] });
+      expect(second.isError, textOf(second)).toBeUndefined();
+      expect((JSON.parse(textOf(second)) as { next_question?: unknown }).next_question).toBeUndefined();
+      await child.waitFor('子の返事', replied(child, 'A 案で、テストも書きます'));
+      expect(child.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_child_ask_2')).toMatchObject({ answers: [{ question: SECOND_QUESTION.question, answer: '書く' }] });
     });
   });
 

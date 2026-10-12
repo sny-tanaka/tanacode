@@ -388,7 +388,7 @@ describe('ツールの実行（SessionsControl）', () => {
     host.add(OTHER_REPO, realpathSync(join(root, 'other')));
     host.add(FAR_CHILD, realpathSync(join(root, 'far')), { parentId: PARENT, archived: true }, 'archived');
     enabled = true;
-    control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10 });
+    control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 40 });
   });
   afterEach(() => control.dispose());
 
@@ -595,6 +595,79 @@ describe('ツールの実行（SessionsControl）', () => {
       { optionId: '1', key: 'space' },
       { optionId: 'submit', key: 'enter' },
     ]);
+  });
+
+  describe('answer_question: 答えたあと、子が続けて出す次の質問', () => {
+    const first = () => menuScreen({ title: '1/2 どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案')] });
+    const second = () => menuScreen({ title: '2/2 テストも書く?', options: [option('1', 'はい'), option('2', 'いいえ')] });
+    // 答えると、子は作業に戻る（本物と同じく、質問が閉じて作業中になる）。after: そのあとに起きること
+    const answering = (after: () => void) => {
+      const chooseIf = host.chooseIf;
+      host.chooseIf = async (id, choice, expect) => {
+        const pressed = await chooseIf(id, choice, expect);
+        if (pressed && choice.key === 'enter') {
+          host.set(id, 'working');
+          after();
+        }
+        return pressed;
+      };
+    };
+    const ask = () => {
+      host.asked.set(CHILD, [asked('1/2 どちらの方式?')]);
+      host.set(CHILD, 'question');
+      host.screens.set(CHILD, first());
+    };
+    const answer = (target: SessionsControl = control) => target.handle(PARENT, 'answer_question', { session_id: CHILD, question: '1/2 どちらの方式?', choices: ['A 案'] });
+
+    it('少しあとに出た次の質問を、結果に入れて返す（親が 1 問答えて離れないように）', async () => {
+      ask();
+      // 子は、答えを受け取ってから少しして、次の質問を別の AskUserQuestion で出す。
+      // このテストのホストにだけ効かせ、テストが終わったら取り消す（落ちたときに、あとのテストのホストを書き換えない）
+      const mine = host;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      answering(() => {
+        timer = setTimeout(() => {
+          mine.asked.set(CHILD, [asked('2/2 テストも書く?')]);
+          mine.screens.set(CHILD, second());
+          mine.set(CHILD, 'question');
+        }, 15);
+      });
+      try {
+        const result = jsonOf(await answer());
+        expect(result.answered).toBe(true);
+        expect(result.state).toBe('question');
+        expect(result.next_question).toMatchObject({ title: '2/2 テストも書く?', options: [{ label: 'はい' }, { label: 'いいえ' }] });
+        expect(result.note).toContain('Answer it now');
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
+    it('子が作業を続けて、上限まで次の質問が出なければ、次の質問なしで返す', async () => {
+      ask();
+      answering(() => {});
+      const result = jsonOf(await answer());
+      expect(result).toEqual({ answered: true, state: 'working' });
+    });
+
+    it('子の手が空いた・人の操作待ちになったら、上限まで待たずに返す', async () => {
+      // 上限を長くして、待たずに返ることを見る
+      const patient = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 60_000 });
+      const chooseIf = host.chooseIf;
+      try {
+        for (const state of ['idle', 'background', 'permission', 'waiting', 'exited'] as const) {
+          ask();
+          host.chooseIf = chooseIf;
+          answering(() => host.set(CHILD, state));
+          const started = Date.now();
+          const result = jsonOf(await answer(patient));
+          expect(result).toEqual({ answered: true, state });
+          expect(Date.now() - started).toBeLessThan(5000);
+        }
+      } finally {
+        patient.dispose();
+      }
+    });
   });
 
   it('stop_session: 作業中の子だけ中断する', async () => {
@@ -1368,6 +1441,7 @@ describe('ツールの実行（SessionsControl）', () => {
           answered: true,
           state: 'question',
           next_question: { title: 'いつまでに?', multi_select: false, tabs: tabs(true), options: [{ label: '今日', description: '急ぎ' }, { label: '明日' }], accepts_other: false },
+          note: 'The child is showing another question (next_question). Answer it now with answer_question, and keep going until the result has no next_question.',
         });
       });
 
