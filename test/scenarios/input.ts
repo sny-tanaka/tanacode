@@ -22,6 +22,43 @@ export const DRAFT = '書きかけの文 abc';
 // 複数行の貼り付け。短いものは入力欄にそのまま出て、長いものは [Pasted text #1 +29 lines] の目印になる
 export const PASTE = '貼り付けの 1 行目\n2 行目\n3 行目';
 export const LONG_PASTE = Array.from({ length: 30 }, (_, i) => `長い貼り付けの ${i + 1} 行目`).join('\n');
+// 入力欄の札（貼り付けた長い文）を添えた発言。アプリは、打った文のあとに、札を 1 つずつ丸ごと貼り付けとして打つ（SessionManager.submit の pastes）。
+// 1 行の長い貼り付け（800 文字より長い）は、行数の無い目印（[Pasted text #2]）になる
+export const CHIP_TEXT = '次のログを見て、原因を教えてください。';
+export const LONG_LINE = `1 行の長い貼り付け ${'x'.repeat(900)}`;
+// 長い複数行の発言。アプリは、行ごとの短い貼り付けに分けて送る（promptKeys）。入力欄で意味を持つ文字で始まる行（/ @ ! #）・空行・字下げ・
+// コードブロック・絵文字・長い行（300 文字の切れ目に絵文字が来る）を混ぜる。タブは、Claude Code が空白 4 つに直すので入れない
+export const LONG_LINES = [
+  '長い複数行の発言の 1 行目です。',
+  '',
+  '/api で始まる行は、コマンドではありません。',
+  '@src/main/index.ts で始まる行は、ファイルの指定ではありません。',
+  '!ls で始まる行は、シェルのコマンドではありません。',
+  '# で始まる行は、見出しのつもりです。',
+  '',
+  '- 箇条書き  ',
+  '  - 入れ子（行末に空白 2 つ）  ',
+  '```ts',
+  'function f(a: number) {',
+  '    return `${a}`; // 字下げは空白 4 つ',
+  '}',
+  '```',
+  '',
+  '',
+  `${'x'.repeat(299)}🎉${'y'.repeat(350)}👍${'z'.repeat(40)}`,
+  ...Array.from({ length: 30 }, (_, i) => `${i + 18} 行目: 長い複数行の発言が、そのまま届くかを確かめる文です。`),
+  '最後の行（このあとに改行は無い）',
+].join('\n');
+// 改行なしで 800 文字を超える行（1 段落の長い発言）。行の中は 300 文字までの貼り付けに分けて打つ。続けて届いた断片を Claude Code が
+// 1 つの貼り付けにまとめると、800 文字を超えて目印（[Pasted text #1]）になり、囲みに入ってしまう
+const sentences = (count: number, label: string) => Array.from({ length: count }, (_, i) => `これは${label}の ${i + 1} 文めで、途中で欠けずに届くかを確かめます。`).join('');
+// 1 行だけで 2,000 文字ほど
+export const ONE_LONG_LINE = sentences(60, '改行のない長い段落');
+// 複数行の中に、1,500 文字ほどの行が 1 つ
+export const LINES_WITH_LONG_LINE = ['長い行を含む発言の 1 行目です。', sentences(48, '途中の長い行'), '', '最後の行です。'].join('\n');
+// 入力欄が背の高くなる発言。行ごとに送ると、入力欄には文字のまま入る。Claude Code は、入力欄を画面の高さの半分ほどまで伸ばして
+// 終わりのほうを出す（40 行の画面で 15 行）。背の高い画面（アプリのペインが縦に長いとき）では、入力欄が 30 行を超える
+export const TALL_LINES = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
 // 入力欄で ! を付けて実行するコマンドと、その出力
 export const SHELL_COMMAND = 'echo tanacode-shell';
 export const SHELL_OUTPUT = 'tanacode-shell';
@@ -47,6 +84,14 @@ export function checkDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, typed: str
 export function checkPastedDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, lines: number): void {
   expect(info.state.kind).toBe('prompt');
   expect(info.draft).toMatch(new RegExp(`^\\[Pasted text #\\d+ \\+${lines - 1} lines\\]$`));
+}
+
+// 札を添えた発言の入力欄。打った文のあとに、札ごとの目印が並ぶ（中断で入力欄に戻ったときも同じ形。pulledBackPastes が、目印の数で札と突き合わせる）
+export function checkChipDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, text: string, lines: number): void {
+  expect(info.state.kind).toBe('prompt');
+  const draft = info.draft.replace(/\s/g, '');
+  expect(draft.startsWith(text.replace(/\s/g, ''))).toBe(true);
+  expect(draft.slice(text.replace(/\s/g, '').length)).toMatch(new RegExp(`^\\[Pastedtext#\\d+\\+${lines - 1}lines\\]\\[Pastedtext#\\d+\\]$`));
 }
 
 // 貼り付けた発言は、改行を含めてそのまま 1 つの発言になる（<pasted_content> の囲みや端末の制御文字を残さない）

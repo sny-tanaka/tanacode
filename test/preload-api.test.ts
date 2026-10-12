@@ -51,7 +51,7 @@ describe('preload の読み込み', () => {
     expect(sends.length).toBeGreaterThan(5);
     expect(events.length).toBeGreaterThan(20);
     expect(arity.size).toBeGreaterThan(100);
-    expect(arity.get('scheduled.add')).toBe(4);
+    expect(arity.get('scheduled.add')).toBe(5);
     expect(arity.get('sessions.archive')).toBe(2);
     expect(arity.get('sessions.list')).toBe(0);
   });

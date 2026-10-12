@@ -239,12 +239,11 @@ describe('promptKeys', () => {
     expect(promptKeys('/compact 短い指示')).toBe('/compact 短い指示');
   });
 
-  it('/compact 以外の「/単語」で始まる発言・パスで始まる発言・ふつうの発言は、今までどおり丸ごと貼り付ける', () => {
-    // 名前を打鍵すると、Claude Code がコマンドとして実行してしまう（/clear など）
+  it('/compact 以外の「/単語」で始まる複数行の発言・パスで始まる複数行の発言は、今までどおり丸ごと貼り付ける', () => {
+    // 名前を打鍵すると、Claude Code がコマンドとして実行してしまう（/clear など）。行ごとに分けても、1 行めがコマンドになる
     expect(promptKeys('/api のエンドポイントを直して\n詳しく')).toBe('\x1b[200~/api のエンドポイントを直して\n詳しく\x1b[201~');
     expect(promptKeys('/clear は何をしますか?\n詳しく')).toBe('\x1b[200~/clear は何をしますか?\n詳しく\x1b[201~');
     expect(promptKeys('/Users/me/a.ts を見て\n直して')).toBe('\x1b[200~/Users/me/a.ts を見て\n直して\x1b[201~');
-    expect(promptKeys('一行目\n二行目')).toBe('\x1b[200~一行目\n二行目\x1b[201~');
     expect(promptKeys('一行')).toBe('一行');
   });
 });

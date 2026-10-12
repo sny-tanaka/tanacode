@@ -1,6 +1,7 @@
 import { t } from '@shared/i18n';
 import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
 import { CloseIcon, IconButton, ScheduleIcon, SendIcon } from '../icons';
+import { PastedChips } from './PastedChips';
 import { needsAttention } from './scheduled';
 import { SchedulePicker } from './SchedulePicker';
 
@@ -24,6 +25,7 @@ export function ScheduledRow({
       <span className="chat-prompt">›</span>
       <span className="chat-user-text">
         {message.text}
+        <PastedChips pastes={message.pastes} />
         {message.attachments.length > 0 && <span className="chat-user-meta">{t('schedule.row.images', { count: message.attachments.length })}</span>}
         <span className="chat-user-meta chat-scheduled-note">
           <ScheduleIcon size={12} />

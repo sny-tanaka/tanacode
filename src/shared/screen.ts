@@ -66,6 +66,8 @@ export type ScreenInfo = {
   mode: PermissionMode | null;
   // Claude Code の入力欄に入っている文字（巻き戻し直後は戻した発言が入る）。灰色の入力例は含まない
   draft: string;
+  // draft の中の貼り付けの目印（[Pasted text #1 +30 lines]）の中身。中断で入力欄に戻った発言に、札が添えてあったときだけ付く（目印の順）
+  draftPastes?: string[];
   // 起動が終わって、打ち込んだ文字を受け付けられる（入力欄が出て少し経った）。起動し直すまで戻らない。
   // 入力欄が出る前に送った文字は Claude Code が取りこぼす（スラッシュコマンドは入力欄に打たれたまま送信されない）
   ready: boolean;

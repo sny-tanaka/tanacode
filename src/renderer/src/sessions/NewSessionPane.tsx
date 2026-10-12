@@ -6,6 +6,7 @@ import { canSee } from '@shared/session-tools';
 import icon from '../assets/icon.png';
 import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
+import { isLongPaste } from '@shared/prompt-keys';
 import { useInsertInput } from '../chat/insertInput';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
@@ -55,7 +56,8 @@ type Props = {
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
   // フォルダで Claude Code を起動し、最初の発言を送る（起動が終わるのを待って送られる）
-  onStart: (cwd: string, text: string, attachments: string[], options: NewSessionOptions) => Promise<void>;
+  // pastes: 入力欄の札（貼り付けた長い文）
+  onStart: (cwd: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[]) => Promise<void>;
   // 前に見ていたセッションに戻る。戻る先が無ければ null
   onCancel: (() => void) | null;
 };
@@ -80,9 +82,12 @@ export function NewSessionPane({
   const [info, setInfo] = useState<WorkspaceInfo | null | undefined>(undefined);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
+  // 貼り付けた長い文（札）
+  const [pastes, setPastes] = useState<string[]>([]);
   // この画面で開いたターミナルやブラウザで選んだ出力・要素を、入力欄の末尾に足す（セッションの画面と同じ）
   useInsertInput(gitId ?? '', (text, added) => {
-    setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
+    if (isLongPaste(text)) setPastes((prev) => [...prev, text]);
+    else setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
   });
   const [startingDirs, setStartingDirs] = useState<ReadonlySet<string>>(() => new Set());
@@ -143,7 +148,7 @@ export function NewSessionPane({
   const missing = !!cwd && info === null;
   // ブランチを切り替えている間は送らない（切り替え前のブランチで始まらないように）
   const blocked = !cwd || missing || starting || switching;
-  const canSend = !blocked && (input.trim().length > 0 || attachments.length > 0 || comments.length > 0);
+  const canSend = !blocked && (input.trim().length > 0 || attachments.length > 0 || pastes.length > 0 || comments.length > 0);
   const currentBranch = branch === undefined ? info?.branch : branch;
 
   // フェッチしてデフォルトブランチへ切り替え、リモートの最新まで進める（ソース管理のブランチ選択と同じ操作）
@@ -175,7 +180,7 @@ export function NewSessionPane({
     setStartingDirs((prev) => new Set(prev).add(dir));
     const text = comments.length > 0 ? [input.trim(), formatComments(comments)].filter(Boolean).join('\n\n') : input;
     try {
-      await onStart(dir, text, attachments, options);
+      await onStart(dir, text, attachments, options, pastes);
       // 始めている間にフォルダを変えていたら、変えた先で付けたコメントは残す（始めたセッションには、送ったときのものが入っている）
       if (cwdRef.current === dir) onCommentsChange([]);
     } catch (err) {
@@ -244,6 +249,8 @@ export function NewSessionPane({
           onChange={setInput}
           attachments={attachments}
           onAttachmentsChange={setAttachments}
+          pastes={pastes}
+          onPastesChange={setPastes}
           placeholder={cwd ? t('sessions.newSession.placeholder') : t('sessions.newSession.placeholderNoFolder')}
           blocked={blocked}
           onSend={() => void send()}

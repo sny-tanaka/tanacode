@@ -124,6 +124,12 @@ function ExportUser({ item, images }: { item: Extract<ChatItem, { kind: 'user' }
       <span className="chat-prompt">›</span>
       <div className="chat-user-body">
         {item.text && <span className="chat-user-text">{item.text}</span>}
+        {/* 貼り付けた長い文（チャットでは札に畳む）。書き出しでは、押して開けないので中身を出す */}
+        {item.pastes?.map((paste, i) => (
+          <pre key={i} className="export-pasted">
+            {paste}
+          </pre>
+        ))}
         {item.images && <ExportImages keys={item.images} images={images} />}
       </div>
       {item.at !== undefined && (

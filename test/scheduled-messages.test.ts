@@ -11,7 +11,7 @@ import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-mess
 const START = new Date(2026, 9, 5, 14, 0).getTime();
 const MINUTE = 60_000;
 
-type Sent = { id: string; text: string; attachments: string[]; signal?: AbortSignal; resolve: () => void; reject: (error: Error) => void };
+type Sent = { id: string; text: string; attachments: string[]; pastes: string[]; signal?: AbortSignal; resolve: () => void; reject: (error: Error) => void };
 
 // セッションの作り物。送った（打ち込もうとした）ものは、resolve・reject を呼ぶまで「手が空くのを待っている」
 function fakeHost(states: Record<string, SessionState>) {
@@ -24,10 +24,10 @@ function fakeHost(states: Record<string, SessionState>) {
       states[id] = 'starting';
       return Promise.resolve();
     },
-    submitWhenReady: (id, text, _timeout, { attachments = [], signal } = {}) =>
+    submitWhenReady: (id, text, _timeout, { attachments = [], pastes = [], signal } = {}) =>
       new Promise<void>((resolve, reject) => {
         signal?.addEventListener('abort', () => reject(new Error('送るのを取りやめました')));
-        sent.push({ id, text, attachments, signal, resolve, reject });
+        sent.push({ id, text, attachments, pastes, signal, resolve, reject });
       }),
   };
   return { host, sent, opened };
@@ -157,6 +157,7 @@ describe('ScheduledMessages', () => {
       sessionId: 's1',
       text: id,
       attachments: [],
+      pastes: [],
       at,
       createdAt: START - 120 * MINUTE,
       state,
@@ -227,6 +228,18 @@ describe('ScheduledMessages の断る・片付ける', () => {
   it('画像だけの予約もできる', () => {
     const { scheduled } = create({ s1: 'idle' });
     expect(scheduled.add('s1', '', ['/tmp/a.png'], START + MINUTE).attachments).toEqual(['/tmp/a.png']);
+  });
+
+  it('札（貼り付けた長い文）は、保存して、時刻になったら一緒に送る。札だけの予約もできる', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    const log = 'ログの 1 行目\n2 行目\n3 行目\n4 行目';
+    scheduled.add('s1', 'このログを見て', [], START + MINUTE, [log]);
+    expect(scheduled.add('s1', '', [], START + 2 * MINUTE, [log]).pastes).toEqual([log]);
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { messages: ScheduledMessage[] }).messages.map((m) => m.pastes)).toEqual([[log], [log]]);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(sent.map(({ text, pastes }) => ({ text, pastes }))).toEqual([{ text: 'このログを見て', pastes: [log] }]);
+    // 文も画像も札も無ければ、予約できない
+    expect(() => scheduled.add('s1', ' ', [], START + 3 * MINUTE, [])).toThrow();
   });
 
   it('予約の無いセッションを閉じても、保存し直さない', () => {
@@ -312,8 +325,11 @@ describe('ScheduledMessages の断る・片付ける', () => {
         messages: [good, { ...good, id: 'm2', attachments: [1] }, { ...good, id: 'm3', state: 'unknown' }, null, { ...good, id: 'm4', at: 'あした' }],
       }),
     );
-    // error の無い古い形は null にそろえる
-    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([{ ...good, error: null }]);
+    // error の無い古い形は null に、pastes（札）の無い古い形は空にそろえる
+    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([{ ...good, pastes: [], error: null }]);
+    // 札は、文字のものだけを読む
+    writeFileSync(file, JSON.stringify({ version: 1, messages: [{ ...good, pastes: ['ログ\n2 行目', 3] }, { ...good, id: 'm5', pastes: 'x' }] }));
+    expect(create({ s1: 'idle' }).scheduled.list().map((m) => m.pastes)).toEqual([['ログ\n2 行目'], []]);
     writeFileSync(file, JSON.stringify({ version: 1, messages: 'x' }));
     expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
     writeFileSync(file, '{壊れた');
@@ -361,6 +377,7 @@ describe('予約の時刻の表示', () => {
       sessionId: 's1',
       text: '# テストを\n直して',
       attachments: [],
+      pastes: [],
       at: new Date(2026, 9, 5, 9, 0).getTime(),
       createdAt: 0,
       state: 'missed',
@@ -372,6 +389,10 @@ describe('予約の時刻の表示', () => {
     );
     expect(scheduledNotice({ ...message, text: '', attachments: ['/tmp/a.png'], state: 'failed', error: 'x' }, now)).toBe(
       '予約したメッセージを送れませんでした（x）: 画像 1 枚',
+    );
+    // 文が無く、札（貼り付けた長い文）だけなら、札の冒頭を出す
+    expect(scheduledNotice({ ...message, text: '', pastes: ['ログの 1 行目\n2 行目'], state: 'failed', error: 'x' }, now)).toBe(
+      '予約したメッセージを送れませんでした（x）: ログの 1 行目 2 行目',
     );
   });
 });
