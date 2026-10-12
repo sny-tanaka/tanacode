@@ -4,6 +4,8 @@ export type RateLimit = { percent: number; resetsAt: number | null };
 
 export type StatusLineInfo = {
   model: { id: string; name: string } | null;
+  // 今のエフォート（low・high など）。渡してこない Claude Code では null
+  effort: string | null;
   version: string | null;
   context: { size: number; usedPercent: number; tokens: number } | null;
   rateLimits: { fiveHour: RateLimit | null; sevenDay: RateLimit | null } | null;
