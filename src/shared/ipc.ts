@@ -16,6 +16,7 @@ import type { WorkflowRun } from './workflow';
 import type { TranslateResult } from './translate';
 import type { ScheduledMessage } from './scheduled';
 import type { Checklist, ChecklistCopyRequest, ChecklistOp, ChecklistUnread, SessionChecklists } from './checklist';
+import type { CompactStatus } from './optimized-compact';
 import type { SessionWalkthrough } from './walkthrough';
 import type { WalkthroughCommentDraft } from './walkthrough-comment';
 import type { Language } from './i18n';
@@ -115,7 +116,9 @@ export const IpcChannel = {
   TasksStop: 'tasks:stop',
   KnowledgeGet: 'knowledge:get',
   ContextGet: 'context:get',
-  ContextOptimize: 'context:optimize',
+  CompactStart: 'compact:start',
+  CompactGet: 'compact:get',
+  CompactChanged: 'compact:changed',
   ModelsGet: 'models:get',
   ModelsRefresh: 'models:refresh',
   // チャットの思考・応答の翻訳（macOS 標準の翻訳）。使えるか・訳す・システム設定の「言語と地域」を開く
@@ -547,8 +550,6 @@ export type TanacodeApi = {
   // コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・発言ごとのやりとり）
   context: {
     get(sessionId: string): Promise<SessionContext>;
-    // 最適化圧縮。Haiku に残すもの・捨てるものを選ばせて、/compact に添える指示の文を返す（選ぶものが無ければ空）
-    optimize(sessionId: string): Promise<string>;
   };
   tasks: {
     // バックグラウンドで動かした Bash
@@ -630,6 +631,14 @@ export type TanacodeApi = {
     onChanged(listener: (payload: SessionChecklists) => void): () => void;
     // セッションごとの、見ていない Claude の返信の数（0 のセッションは入れない）
     unread(): Promise<ChecklistUnread>;
+  };
+  // 最適化圧縮（会話を要約にせず、会話を消して、チェックリストから再開する。流れは main の OptimizedCompact が動かす）
+  compact: {
+    // 始める。使えない・もう進んでいるときは何もしない。今の状態を返す
+    start(sessionId: string): Promise<CompactStatus>;
+    // 今の状態（進んでいる段階・取りやめた理由・使えない理由）
+    get(sessionId: string): Promise<CompactStatus>;
+    onChanged(listener: (payload: { sessionId: string; status: CompactStatus }) => void): () => void;
   };
   // ウォークスルー（Claude がエディタでコードを示しながら説明する。Claude は MCP サーバー tanacode-walkthrough で扱う）
   walkthrough: {
@@ -746,7 +755,8 @@ export type IpcInvoke = {
   [IpcChannel.TranslateOpenSettings]: Api['translate']['openSettings'];
   [IpcChannel.KnowledgeGet]: Api['knowledge']['get'];
   [IpcChannel.ContextGet]: Api['context']['get'];
-  [IpcChannel.ContextOptimize]: Api['context']['optimize'];
+  [IpcChannel.CompactStart]: Api['compact']['start'];
+  [IpcChannel.CompactGet]: Api['compact']['get'];
   [IpcChannel.TasksBash]: Api['tasks']['bash'];
   [IpcChannel.TasksAgentLog]: Api['tasks']['agentLog'];
   [IpcChannel.TasksStop]: Api['tasks']['stop'];
@@ -833,6 +843,7 @@ export type IpcEvent = {
   [IpcChannel.FilesChanged]: Payload<Api['workspace']['onFilesChanged']>;
   [IpcChannel.ChecklistChanged]: Payload<Api['checklist']['onChanged']>;
   [IpcChannel.WalkthroughChanged]: Payload<Api['walkthrough']['onChanged']>;
+  [IpcChannel.CompactChanged]: Payload<Api['compact']['onChanged']>;
   [IpcChannel.BrowserOpen]: Payload<Api['browser']['onOpen']>;
   [IpcChannel.BrowserNewTab]: Payload<Api['browser']['onNewTab']>;
   [IpcChannel.BrowserSelectTab]: Payload<Api['browser']['onSelectTab']>;

@@ -138,6 +138,12 @@ export class ChecklistControl {
     return result;
   }
 
+  // その時刻よりあとに、このセッションの Claude がチェックリストのツールを呼んだか（読むだけでも。最適化圧縮が、仕上げで使ったかを確かめる）
+  usedSince(sessionId: string, at: number): boolean {
+    const used = this.usedAt.get(sessionId);
+    return used !== undefined && used >= at;
+  }
+
   // --- フック ---
 
   // チェックリストを使い続けさせるフック（checklist-hook.ts）に返す、Claude に渡す文。渡すものが無ければ空。
@@ -366,7 +372,9 @@ function overview(lists: Checklist[]): string {
       const inForce = activeCards(list).length;
       const state = traits.checkable
         ? `${done}/${total} checked${traits.approves ? '; review list: cards the user checks move to the decisions list' : ''}`
-        : `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked` : ''}`;
+        : traits.locked
+          ? `decisions list: permanent, no checks; ${inForce} in force${total > inForce ? `, ${total - inForce} revoked` : ''}`
+          : `state list: no checks, keep it current by rewriting its cards; ${total} ${total === 1 ? 'card' : 'cards'}`;
       return [`## ${list.name} (${state})`, `Description: ${list.description || '(none)'}`, ...(cards.length > 0 ? cards : ['(no cards)'])].join('\n');
     })
     .join('\n\n');
@@ -377,7 +385,8 @@ function cardText(list: Checklist, card: Card): string {
   const revoked = card.revoked
     ? `revoked, no longer in force (by ${card.revoked.by === 'claude' ? 'Claude' : 'the user'}, ${time(card.revoked.at)}${card.revoked.reason ? `: ${card.revoked.reason}` : ''})`
     : 'in force';
-  const state = traitsOf(list).checkable ? checked : revoked;
+  const traits = traitsOf(list);
+  const state = traits.checkable ? checked : traits.locked ? revoked : 'no checks (state list: rewrite the card when it is no longer true)';
   const thread = card.thread.map((e) => {
     const who = e.author === 'human' ? 'The user' : 'Claude';
     if (e.kind === 'event') return `- ${time(e.at)} ${eventText(e.event, who)}`;
@@ -401,13 +410,14 @@ function cardText(list: Checklist, card: Card): string {
 function kindNote(list: Checklist): string {
   const kind = kindOf(list);
   if (kind === 'decisions') return ' as a decisions list (permanent, no checks; you can add cards and revoke them with card_revoke)';
+  if (kind === 'state') return ' as a state list (no checks; keep it current by rewriting its cards with card_update)';
   return kind === 'review' ? ' as a review list (cards the user checks move to the decisions list)' : '';
 }
 
 // 種類の引数。省くと、ふつうのリスト
 function kindArg(value: unknown, name: string): ListKind {
   if (value === undefined || value === null || value === '') return 'normal';
-  if (!isListKind(value)) throw new ChecklistError(`${name} must be "decisions" or "review" (omit it for an ordinary list).`);
+  if (!isListKind(value)) throw new ChecklistError(`${name} must be "decisions", "state" or "review" (omit it for an ordinary list).`);
   return value;
 }
 

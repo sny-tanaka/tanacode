@@ -33,8 +33,8 @@ import type { PendingSend } from './pendingSends';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { stripControlChars } from './sanitize';
-import { useCompactState } from './compactState';
-import { CompactButton, useCompactMode } from './CompactButton';
+import { useCanCompact } from './compactState';
+import { CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
@@ -85,9 +85,6 @@ type Props = {
   onUnarchive: () => void;
   // 送る。起動中なら、入力を受け付けられるようになるまで預かる
   onSend: (text: string, attachments: string[]) => void;
-  // 最適化圧縮を始める（Haiku に選ばせてから /compact を送る）と、Haiku が選んでいる途中か
-  onOptimizedCompact: () => void;
-  optimizing: boolean;
   // 起動を待っている発言
   pending: PendingSend | null;
   // 送ったが、まだ会話ログに出ていない発言
@@ -127,8 +124,6 @@ export const ClaudePane = memo(function ClaudePane({
   onResume,
   onUnarchive,
   onSend,
-  onOptimizedCompact,
-  optimizing,
   pending,
   sending,
   onTakePending,
@@ -253,8 +248,8 @@ export const ClaudePane = memo(function ClaudePane({
   }, [cardKey]);
   const canConfigure = !running && !menu && !rewinding;
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
-  const { canCompact, compacting } = useCompactState(session, chat, screen);
-  const [compactMode, setCompactMode] = useCompactMode();
+  const canCompact = useCanCompact(session, chat, screen);
+  const compactStatus = useCompactStatus(live ? session.id : null);
 
   // Claude Code の入力欄に残った文字（巻き戻し・中断で戻った発言など）は、こちらの入力欄に移して向こうは消す
   useTakeClaudeDraft(session.id, live && screen?.state.kind === 'prompt' ? screen.draft : '', (draft) =>
@@ -420,14 +415,7 @@ export const ClaudePane = memo(function ClaudePane({
           />
         )}
         {live && (
-          <CompactButton
-            mode={compactMode}
-            onModeChange={setCompactMode}
-            canCompact={canCompact}
-            compacting={compacting}
-            optimizing={optimizing}
-            onCompact={() => (compactMode === 'optimized' ? onOptimizedCompact() : onSend('/compact', []))}
-          />
+          <CompactButton canStart={canCompact} status={compactStatus} onStart={() => void window.tanacode.compact.start(session.id)} />
         )}
         {live && (
           <IconButton

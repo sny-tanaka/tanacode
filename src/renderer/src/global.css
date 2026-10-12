@@ -1317,88 +1317,42 @@ body.resizing-rows {
   padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--border-subtle);
 }
-/* ヘッダーの「圧縮」と、右の ▾（圧縮のしかたの切り替え）。メニューはボタンの下に右そろえで開く */
+/* ヘッダーの「最適化圧縮」。左に、再開の文を待っている・取りやめたことを短く出す（理由はツールチップ） */
 .compact-button {
-  position: relative;
   flex: none;
   display: flex;
   align-items: center;
+  gap: 6px;
 }
-.compact-mode-toggle {
-  width: 14px;
-  height: 26px;
+.compact-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.compact-status.failed {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.compact-status-close {
   display: inline-grid;
   place-items: center;
+  width: 14px;
+  height: 14px;
   padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: 3px;
   background: transparent;
-  color: var(--text-secondary);
+  color: inherit;
   cursor: pointer;
 }
-.compact-mode-toggle:hover,
-.compact-mode-toggle[aria-expanded='true'] {
+.compact-status-close:hover {
   background: var(--bg-hover);
-  color: var(--text-primary);
-}
-.compact-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  width: 300px;
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-.compact-menu-item {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-}
-.compact-menu-item:hover,
-.compact-menu-item:focus-visible {
-  background: var(--bg-selected);
-  color: var(--text-heading);
-}
-.compact-menu-icon {
-  flex: none;
-  display: flex;
-  margin-top: 1px;
-  color: var(--text-secondary);
-}
-.compact-menu-text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.compact-menu-name {
-  font-size: 12px;
-}
-.compact-menu-desc {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-  /* 日本語を文節で折り返す */
-  word-break: auto-phrase;
-}
-.compact-menu-check {
-  width: 12px;
-  flex: none;
-  display: flex;
-  margin: 2px 0 0 auto;
-  color: var(--text-secondary);
 }
 .claude-mark {
   width: 8px;
@@ -4499,13 +4453,6 @@ details[open] > summary > .disclosure {
 .context-row:hover {
   background: var(--bg-hover);
 }
-.context-row.keep {
-  border-left-color: var(--ok);
-}
-.context-row.drop .context-label {
-  color: var(--text-tertiary);
-  text-decoration: line-through;
-}
 .context-row.compacted {
   opacity: 0.55;
 }
@@ -4560,41 +4507,6 @@ details[open] > summary > .disclosure {
   border-radius: 2px;
   background: var(--gauge);
 }
-.context-row.keep .context-bar span {
-  background: var(--ok);
-}
-.context-row.drop .context-bar span {
-  background: var(--text-tertiary);
-}
-.context-marks {
-  flex: none;
-  display: flex;
-  gap: 4px;
-}
-.context-mark {
-  padding: 0 6px;
-  height: 18px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  background: none;
-  color: var(--text-tertiary);
-  font-size: 10px;
-  cursor: pointer;
-}
-.context-mark:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-.context-mark.keep.on {
-  border-color: var(--ok);
-  background: var(--ok-tint);
-  color: var(--ok);
-}
-.context-mark.drop.on {
-  border-color: var(--danger);
-  background: var(--danger-tint);
-  color: var(--danger);
-}
 .context-compacted-head {
   display: flex;
   align-items: center;
@@ -4614,53 +4526,11 @@ details[open] > summary > .disclosure {
 .context-compacted-head:hover {
   color: var(--text-primary);
 }
-.context-compact {
+.context-note {
   flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  margin: 0;
   padding: 8px;
   border-top: 1px solid var(--border-subtle);
-}
-/* サイドパネルが狭いときは、圧縮のボタンを次の行（右寄せ）に送る。印の数やボタンの文字を縦に割らない */
-.context-compact-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-}
-.context-compact-row .send-button {
-  margin-left: auto;
-  font-size: 12px;
-}
-.context-mark-count {
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.context-compact-title {
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-.context-compact textarea {
-  resize: vertical;
-  min-height: 90px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.5;
-  outline: none;
-}
-.context-compact textarea:focus {
-  border-color: var(--border-focus);
-}
-.context-note {
-  margin: 0;
   color: var(--text-tertiary);
   font-size: 10.5px;
   line-height: 1.5;

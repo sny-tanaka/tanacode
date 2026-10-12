@@ -81,7 +81,7 @@ describe('サイドパネル', () => {
     const form = document.querySelector('.checklist-form') as HTMLFormElement;
     const kind = within(form).getByLabelText('種類') as HTMLSelectElement;
     expect(kind.value).toBe('normal');
-    expect([...kind.options].map((o) => o.textContent)).toEqual(['ふつう（チェックして消していく）', '確認事項（承認したら決定事項に移す）', '決定事項（消えない。チェックなし）']);
+    expect([...kind.options].map((o) => o.textContent)).toEqual(['ふつう（チェックして消していく）', '確認事項（承認したら決定事項に移す）', '決定事項（消えない。チェックなし）', 'いまの状態（Claude が書き換える。チェックなし）']);
     fireEvent.change(within(form).getByPlaceholderText(/^名前/), { target: { value: '決定事項' } });
     fireEvent.change(kind, { target: { value: 'decisions' } });
     fireEvent.click(within(form).getByText('作る'));

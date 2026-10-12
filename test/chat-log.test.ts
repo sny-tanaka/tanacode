@@ -112,6 +112,24 @@ describe('pulledBackPrompt', () => {
     expect(pulledBackPrompt(events, parentMessageText(PARENT, '別の指示'))).toBeNull();
     expect(pulledBackPrompt(events, parentMessageText(PARENT, ''))).toBeNull();
   });
+
+  it('最適化圧縮の仕上げの頼み・再開の文は、丸ごと貼り付けで送るので、貼り付けの目印だけが入力欄に戻る', () => {
+    const events: ChatEvent[] = [u('前の発言'), { type: 'turn-end' }, { type: 'notice', id: 'h', text: '仕上げ', compact: 'handoff' }];
+    expect(pulledBackPrompt(events, '[Pasted text #1 +7 lines]')).toBe(2);
+    expect(pulledBackPrompt(events, '<tanacode-handoff> tanacode is about to reset')).toBe(2);
+    expect(pulledBackPrompt(events, '人の書きかけ')).toBeNull();
+    // 長い文は入力欄に収まらず、本文の途中の一部だけが見える（画面の折り返しで、空白と改行は変わる）
+    const body = 'tanacode is about to reset this conversation instead of compacting it.\n- Decisions list (kind "decisions"): what the user asked for';
+    const long: ChatEvent[] = [{ type: 'notice', id: 'h', text: '仕上げ', compact: 'handoff', detail: body }];
+    expect(pulledBackPrompt(long, 'conversation instead of\ncompacting it. - Decisions list (kind "decisions")')).toBe(0);
+    expect(pulledBackPrompt(long, 'asked for\n</tanacode-handoff>')).toBeNull();
+    expect(pulledBackPrompt(long, 'what the user asked for </tanacode-handoff>'.padStart(60, 'x'))).toBeNull();
+    // 短い文字・本文に無い文字は、人の書きかけ
+    expect(pulledBackPrompt(long, 'reset')).toBeNull();
+    expect(pulledBackPrompt(long, 'この会話を消さないでください。まだ続きがあります。もう少し待ってください。お願いします')).toBeNull();
+    // ほかの知らせ（タスクの完了など）は、入力欄に戻らない
+    expect(pulledBackPrompt([{ type: 'notice', id: 'n', text: 'タスクが終わりました' }], '[Pasted text #1 +7 lines]')).toBeNull();
+  });
 });
 
 describe('会話ログを読む', () => {

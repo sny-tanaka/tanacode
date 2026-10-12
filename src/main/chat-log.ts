@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { isTranscriptEntry, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { isCompactMessage } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
 import { rememberImage } from './image-cache';
 import { parentFirst } from './transcript-tail';
@@ -45,6 +46,13 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
       return typed === whole || (pasted !== typed && pasted === `${opening}${closing}`) ? i : null;
     }
     if (event.type === 'user') return event.text.replace(/\s/g, '') === typed ? i : null;
+    // 最適化圧縮の仕上げの頼み・再開の文。長い文は入力欄に収まらず、画面から読めるのは途中の一部だけなので、本文の一部かどうかで見る
+    // （貼り付けの目印だけが戻ることもある）
+    if (event.type === 'notice' && event.compact) {
+      const part = typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '').replace(/<\/?tanacode-(?:handoff|resume)>/g, '');
+      const body = (event.detail ?? '').replace(/\s/g, '');
+      return part === '' || isCompactMessage(draft) || (part.length >= 40 && body.includes(part)) ? i : null;
+    }
     if (!BEFORE_RESPONSE.has(event.type)) return null;
   }
   return null;

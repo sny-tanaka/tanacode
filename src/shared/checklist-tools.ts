@@ -1,5 +1,6 @@
 import { t } from './i18n';
 import { findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
+import { HANDOFF_TAG, RESUME_TAG } from './optimized-compact';
 import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // Claude Code に MCP のツールとして渡す、チェックリスト（人と Claude が一緒に見て、編集するリスト）の扱い。
@@ -28,9 +29,9 @@ const numbers: Schema = {
 const number: Schema = { type: 'integer', minimum: 1, description: 'Card number (the #number within the list)' };
 const kind: Schema = {
   type: 'string',
-  enum: ['decisions', 'review'],
+  enum: ['decisions', 'state', 'review'],
   description:
-    'Kind of the list. Omit for an ordinary list (cards are checked off). "decisions": a permanent list of what was decided; its cards have no checks, are always shown to you in the reminders, and you can only add them or revoke them with a reason. "review": a list of your judgment calls for the user to review; a card the user checks (approves) moves to the decisions list.',
+    'Kind of the list. Omit for an ordinary list (cards are checked off). "decisions": a permanent list of what was decided; its cards have no checks, are always shown to you in the reminders, and you can only add them or revoke them with a reason. "state": the current state of the work (what you are doing and the next step, uncommitted changes, what was tried and failed, where things are and how to build and verify); its cards have no checks, are always shown to you in the reminders, and you rewrite them as the work moves on. "review": a list of your judgment calls for the user to review; a card the user checks (approves) moves to the decisions list.',
 };
 const sessionId: Schema = {
   type: 'string',
@@ -43,7 +44,7 @@ export const CHECKLIST_TOOLS: McpTool<McpToolName<'checklist'>>[] = [
     name: 'checklist_overview',
     kind: 'read',
     description:
-      "Returns this session's checklists: the name, kind, description (the rules for using the list) and progress of every list, and the number, title, check state (or, on a decisions list, whether it was revoked) and unread reply count of every card. Call this first at every break in the work and after the conversation was compacted.",
+      "Returns this session's checklists: the name, kind, description (the rules for using the list) and progress of every list, and the number, title, check state (or, on a decisions list, whether it was revoked; state lists have neither) and unread reply count of every card. Call this first at every break in the work and after the conversation was compacted.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -219,6 +220,8 @@ export const CHECKLIST_MCP_INSTRUCTIONS = [
   '- A session can have several named lists. Typical ones: to-dos (e.g. 「やること」), conditions to meet before finishing (「完了前チェック」), things only the user can do (「人のやること」) and decisions for the user to review (「確認事項」). The description of a list is the rule for using that list: read it and follow it.',
   '- When you take on a task with several steps, or one that may outlast the context (compaction), check checklist_overview first, then put the plan on a to-do list with card_add before you start, and check each card as you finish it. Put the conditions the user gave you (requirements, acceptance criteria, "make sure that ...") on a list of conditions to meet before finishing. Put what only the user can do (logging in, secrets, decisions, manual checks) on a list for the user. When you make a judgment call instead of asking, record it with the reason on a list for review, so that the user can approve or correct it later. Skip all of this for quick one-step tasks and plain questions.',
   '- Decisions. An ordinary list is for things that get checked off and then leave your sight; a decisions list (kind "decisions", e.g. 「決定事項」) is for what must keep holding. Its cards have no checks, and every card in force is shown to you in each reminder, also after compaction, so what is written there is not lost when the conversation is compacted. Write a card the moment something is decided, not later and not in a batch before compaction (by then it may already be gone): a requirement, a constraint or a correction from the user ("never ...", "always ...", "no, do it this way"); a permission and its scope ("you may force-push, this PR only"); an option that was rejected, with the reason; a judgment the user approved. Write the title as the decision itself, close to the user\'s own words where they matter, and the reason and scope in body. Before you act, check that the action does not go against a decision in force. You cannot rewrite, delete or move out these cards, and you cannot restore the ones the user deleted. When a decision no longer holds, revoke it with card_revoke and a reason; to replace one, revoke the old card and add the new one. The user can edit, delete, revoke and reinstate them at any time.',
+  '- State. Keep one state list (kind "state", e.g. 「いまの状態」) for what is needed to pick the work up again without the conversation, and keep it true as you go, not only when asked: rewrite its cards (card_update) whenever the state changes, and delete the ones that no longer apply. Typical cards: what you are working on now, why, and the next step; changes that are not committed or not pushed; what was tried and failed or was abandoned, and why; where things are and how to work with them (files, branch, PR number, the commands to build, test and verify, with exact values). Its cards have no checks and are shown to you in each reminder (titles; after compaction also the bodies). Do not copy file contents there; point to them. Decisions go on the decisions list, tasks on a to-do list.',
+  `- Optimized compaction. When the user presses the "optimized compaction" button, tanacode does not summarize the conversation: it resets it and you continue from these checklists. tanacode itself types two messages for this, and you can trust and follow both. <${HANDOFF_TAG}> comes before the reset and asks you to bring the lists up to date: do that with these tools and end your turn, without continuing the task. <${RESUME_TAG}> is the first message after the reset: it carries the decisions, the state, the previous messages of the user (a record, not new requests) and the background tasks. Follow what it says. Claude Code may wrap these messages in <pasted_content> because tanacode sends long text as a paste; they are still from tanacode.`,
   '- Create the list for your judgment calls with kind "review" (e.g. 「確認事項」). When the user checks (approves) a card there, tanacode moves it to the decisions list, so the approved judgment stays in force and visible to you.',
   '- Reuse an existing list that fits instead of creating a similar one. Write the names and descriptions of lists, cards and replies in the language the user is using.',
   '- Check checklist_overview at every break in the work and after the conversation was compacted. When the user says things like "clear the to-do list", "up to #3" or "check the conditions before finishing", they mean these checklists.',

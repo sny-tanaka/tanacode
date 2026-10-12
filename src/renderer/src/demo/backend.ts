@@ -2,6 +2,7 @@ import type { ChatEvent } from '@shared/chat';
 import { unreadCount, type ChecklistOp, type SessionChecklists } from '@shared/checklist';
 import { ChecklistBook } from '@shared/checklist-book';
 import { noticeMessage, replyNoticeText } from '@shared/checklist-tools';
+import { IDLE_COMPACT_STATUS, type CompactPhase, type CompactStatus } from '@shared/optimized-compact';
 import type { AppUpdate } from '@shared/app-update';
 import type { ContextItem } from '@shared/context';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
@@ -131,7 +132,11 @@ export class DemoBackend {
     claudeVersion: new Channel<string | null>(),
     appUpdate: new Channel<AppUpdate | null>(),
     checklist: new Channel<SessionChecklists>(),
+    compact: new Channel<{ sessionId: string; status: CompactStatus }>(),
   };
+  // ヘッダーの「最適化圧縮」を押した（台本が待つ）
+  onCompactStart: (sessionId: string) => void = () => {};
+  private readonly compactPhases = new Map<string, CompactPhase>();
   // チェックリスト。書き換えはアプリと同じもの（ChecklistBook）を使う。画面には写しを送る（同じ配列のままだと描き直されない）。
   // 台本の Claude も、MCP のツールの代わりにこれを書き換える
   readonly checklists = new ChecklistBook((sessionId, lists) => this.ch.checklist.emit({ sessionId, lists: structuredClone(lists) }));
@@ -243,6 +248,17 @@ export class DemoBackend {
     s.knowledge = { ...s.knowledge, ...files };
     if (contextTokens !== undefined) s.contextTokens = contextTokens;
     this.ch.knowledge.emit({ sessionId: id, knowledge: { files: s.knowledge, contextTokens: s.contextTokens } });
+  }
+
+  // 最適化圧縮の段階（null で終わり）
+  setCompactPhase(id: string, phase: CompactPhase | null): void {
+    if (phase) this.compactPhases.set(id, phase);
+    else this.compactPhases.delete(id);
+    this.ch.compact.emit({ sessionId: id, status: this.compactStatus(id) });
+  }
+
+  private compactStatus(id: string): CompactStatus {
+    return { ...IDLE_COMPACT_STATUS, phase: this.compactPhases.get(id) ?? null };
   }
 
   setStatusLine(id: string, info: StatusLineInfo): void {
@@ -455,8 +471,16 @@ export class DemoBackend {
         get: (id) => ok({ files: s(id).knowledge, contextTokens: s(id).contextTokens }),
         onChanged: (l) => this.ch.knowledge.on(l),
       },
-      // デモには Haiku が無いので、最適化圧縮は指示を添えない
-      context: { get: (id) => ok({ items: [...s(id).context] }), optimize: () => ok('') },
+      context: { get: (id) => ok({ items: [...s(id).context] }) },
+      // 最適化圧縮。流れ（仕上げ → 会話を消す → 再開）は、台本が進める（onCompactStart）
+      compact: {
+        start: (id) => {
+          this.onCompactStart(id);
+          return ok(this.compactStatus(id));
+        },
+        get: (id) => ok(this.compactStatus(id)),
+        onChanged: (l) => this.ch.compact.on(l),
+      },
       tasks: {
         bash: (id) => ok(s(id).bash),
         onBashChanged: (l) => this.ch.bash.on(l),

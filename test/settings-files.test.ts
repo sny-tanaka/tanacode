@@ -216,21 +216,6 @@ describe('起動の準備', () => {
     expect(() => files.release('s')).not.toThrow();
   });
 
-  it('最適化圧縮の設定は、登録した設定に hooks を止める指定だけを足す（アプリのフック・statusLine は入れない）。自分だけが読めるファイルにし、releaseOptimizer で消す', () => {
-    const files = make();
-    const { id } = files.add(file('a.json', { env: { ANTHROPIC_BASE_URL: 'https://llm.example.com' }, hooks: { Stop: [] } }));
-    const settingsFile = files.prepareOptimizer('s', id);
-    expect(settingsFile).toBe(join(runDir, 's-optimizer.json'));
-    expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toEqual({ env: { ANTHROPIC_BASE_URL: 'https://llm.example.com' }, hooks: { Stop: [] }, disableAllHooks: true });
-    expect(statSync(settingsFile).mode & 0o777).toBe(0o600);
-    // セッションの起動の設定とは別のファイル
-    const { settingsFile: session } = files.prepare('s', id);
-    files.releaseOptimizer('s');
-    expect(() => statSync(settingsFile)).toThrow();
-    expect(statSync(session).isFile()).toBe(true);
-    expect(() => files.releaseOptimizer('s')).not.toThrow();
-  });
-
   it('model が文字でない・空なら、model は無いものとする', () => {
     const files = make();
     expect(files.add(file('a.json', { model: 123 })).model).toBeNull();

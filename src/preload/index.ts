@@ -140,7 +140,6 @@ const api: TanacodeApi = {
   },
   context: {
     get: (sessionId) => invoke(IpcChannel.ContextGet, sessionId),
-    optimize: (sessionId) => invoke(IpcChannel.ContextOptimize, sessionId),
   },
   tasks: {
     bash: (sessionId) => invoke(IpcChannel.TasksBash, sessionId),
@@ -202,6 +201,11 @@ const api: TanacodeApi = {
     copy: (request) => invoke(IpcChannel.ChecklistCopy, request),
     onChanged: (listener) => subscribe(IpcChannel.ChecklistChanged, listener),
     unread: () => invoke(IpcChannel.ChecklistUnread),
+  },
+  compact: {
+    start: (sessionId) => invoke(IpcChannel.CompactStart, sessionId),
+    get: (sessionId) => invoke(IpcChannel.CompactGet, sessionId),
+    onChanged: (listener) => subscribe(IpcChannel.CompactChanged, listener),
   },
   walkthrough: {
     list: () => invoke(IpcChannel.WalkthroughGet),
