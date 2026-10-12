@@ -1,7 +1,8 @@
 // ミューテーションテスト（npm run mutation）。対象のファイルのコードを 1 か所ずつわざと壊し（ミュータント）、関係するテストを流して、
 // テストが落ちる（killed）かを確かめる。落ちなかったもの（survived）は、テストがそこを通っていても、結果まで確かめていない場所。
 // - 対象: 引数のファイル（無ければ DEFAULT_TARGETS）。例: npm run mutation -- src/shared/chat.ts
-// - --concurrency <n>: 同時に流す数（既定 2）
+// - --concurrency <n>: 同時に流す数（既定は、コアの数。下の DEFAULT_CONCURRENCY）
+// - --time-limit <分>: この時間を過ぎたら、新しいミュータントを流すのをやめ、そこまでの結果を書いて終わる（終了コード 1）
 // - --out <dir>: 結果の置き場所（既定 reports/mutation。--ui のときは reports/mutation-ui）
 // - --list: ミュータントの一覧だけを出し、テストは流さない
 // - --mutators <名前,名前>: 書き換えの種類を絞る（例: --mutators EventHandler,Disabled）
@@ -13,9 +14,11 @@
 // 2. ミュータントごとに、その場所を通ったテストだけを、速いファイルから流す（1 つ落ちたら止める）。
 //    読み込みや beforeAll で通った場所は、そのファイルのテストを全部流す。どのテストも通らない場所は流さない（no-coverage）
 // 書き換えたコードは Vite のプラグインで渡すので、ソースのファイルは書き換えない（scripts/mutation-worker.mjs）。
-// 結果は <out>/mutation.json（全部）と <out>/summary.md（要約と、生き残ったものの一覧）。GitHub Actions では、要約をジョブの概要にも書く
+// 結果は <out>/mutation.json（全部）と <out>/summary.md（要約と、生き残ったものの一覧）。流している間も 30 秒ごとに書き直すので、
+// 途中で止めても（Ctrl+C・SIGTERM・CI の時間切れ）、そこまでの結果が残る。流していないものは pending（まだ流していない）
 import { fork } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '@babel/parser';
@@ -56,7 +59,16 @@ const flag = (name) => {
   if (i !== -1) argv.splice(i, 1);
   return i !== -1;
 };
-const concurrency = Math.max(1, Number(option('--concurrency', '2')) || 1);
+// 同時に流す数の既定: コアの数。時間のほとんどは、画面を流し込むテストが実時間で待つ分（CPU はほとんど使わない）なので、
+// コアの数まで増やしても、互いに遅くならない
+const DEFAULT_CONCURRENCY = Math.max(2, availableParallelism());
+const concurrency = Math.max(1, Number(option('--concurrency', String(DEFAULT_CONCURRENCY))) || 1);
+const timeLimitOption = option('--time-limit', null);
+const timeLimitMs = timeLimitOption === null ? null : Number(timeLimitOption) * 60_000;
+if (timeLimitMs !== null && !(timeLimitMs > 0)) {
+  console.error(`--time-limit には、分を正の数で指定してください: ${timeLimitOption}`);
+  process.exit(1);
+}
 const ui = flag('--ui');
 const outDir = resolve(root, option('--out', ui ? 'reports/mutation-ui' : 'reports/mutation'));
 const listOnly = flag('--list');
@@ -693,7 +705,12 @@ function killTree(child) {
 process.on('exit', () => {
   for (const child of [...children]) killTree(child);
 });
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(130));
+for (const signal of ['SIGINT', 'SIGTERM'])
+  process.on(signal, () => {
+    // そこまでの結果を書いてから終わる
+    writeReport(`${signal} で止めました`);
+    process.exit(130);
+  });
 
 function spawnWorker(args) {
   const child = fork(WORKER, args, { cwd: root, detached: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
@@ -767,12 +784,13 @@ function planOf(hits) {
   };
 }
 
-async function runMutants(mutants, onDone) {
+// stop() が true を返したら、新しいミュータントは流さない（流している途中のものは、終わるまで待つ）
+async function runMutants(mutants, onDone, stop) {
   const queue = [...mutants];
   await Promise.all(
     Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
       let host = null;
-      while (queue.length > 0) {
+      while (queue.length > 0 && !stop()) {
         const mutant = queue.shift();
         if (!host) {
           host = spawnWorker(['host']);
@@ -798,11 +816,12 @@ async function runMutants(mutants, onDone) {
 
 // ---- 結果をまとめる ----
 
-const STATUSES = ['killed', 'timeout', 'survived', 'no-coverage', 'error'];
+// pending: まだ流していない（途中で止めたときだけ）。スコアには数えない
+const STATUSES = ['killed', 'timeout', 'survived', 'no-coverage', 'error', 'pending'];
 
 function totalsOf(mutants) {
   const totals = Object.fromEntries(STATUSES.map((s) => [s, 0]));
-  for (const m of mutants) totals[m.status]++;
+  for (const m of mutants) totals[m.status ?? 'pending']++;
   const detected = totals.killed + totals.timeout;
   const valid = detected + totals.survived + totals['no-coverage'];
   return {
@@ -829,14 +848,21 @@ const duration = (ms) => {
   return s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`;
 };
 
-function summaryOf(results, elapsedMs) {
+// partial: 途中の結果のときの、止まった理由（全部流し終えたら null）
+function summaryOf(results, elapsedMs, partial) {
   const all = Object.values(results).flat();
+  const pending = totalsOf(all).pending;
   const out = [ui ? '## ミューテーションテスト（画面の操作）' : '## ミューテーションテスト', ''];
   out.push(`対象 ${targets.length} ファイル・ミュータント ${all.length} 個・かかった時間 ${duration(elapsedMs)}（同時に ${concurrency}）`, '');
-  out.push('| ファイル | スコア | 通った場所でのスコア | 落ちた | 時間切れ | 生き残り | テストが通らない | エラー |');
-  out.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+  if (partial) {
+    out.push(`> **途中の結果です**（${partial}）。${all.length} 個のうち ${pending} 個は、まだ流していません。スコアは、流し終えたものだけの値です。`, '');
+  }
+  // 「まだ」の列は、途中の結果のときだけ
+  const more = partial ? [['まだ', (t) => t.pending]] : [];
+  out.push(`| ファイル | スコア | 通った場所でのスコア | 落ちた | 時間切れ | 生き残り | テストが通らない | エラー |${more.map(([name]) => ` ${name} |`).join('')}`);
+  out.push(`| --- | --- | --- | --- | --- | --- | --- | --- |${more.map(() => ' --- |').join('')}`);
   const row = (name, t) =>
-    `| ${name} | ${pct(t.score)} | ${pct(t.coveredScore)} | ${t.killed} | ${t.timeout} | ${t.survived} | ${t['no-coverage']} | ${t.error} |`;
+    `| ${name} | ${pct(t.score)} | ${pct(t.coveredScore)} | ${t.killed} | ${t.timeout} | ${t.survived} | ${t['no-coverage']} | ${t.error} |${more.map(([, value]) => ` ${value(t)} |`).join('')}`;
   for (const [file, mutants] of Object.entries(results)) out.push(row(file, totalsOf(mutants)));
   if (targets.length > 1) out.push(row('合計', totalsOf(all)));
   out.push('');
@@ -873,6 +899,8 @@ function summaryOf(results, elapsedMs) {
 // ---- 本体 ----
 
 const started = Date.now();
+// テストごとに通った場所（調べ終えるまでは null）
+let hits = null;
 const analyses = targets.map(analyze).filter((a) => a.mutants.length > 0 || !fromFolders.has(a.file));
 targets = analyses.map((a) => a.file);
 const mutants = analyses.flatMap((a) => a.mutants);
@@ -890,7 +918,7 @@ if (testFiles.length === 0) {
   process.exit(1);
 }
 console.log(`元のコードで、対象を読み込むテストのファイル（${testFiles.length} 個）を流し、テストごとに通った場所を調べます`);
-const hits = await measureHits(analyses, testFiles);
+hits = await measureHits(analyses, testFiles);
 console.log(`  テスト ${hits.tests.length} 個（${duration(Date.now() - started)}）`);
 
 const plan = planOf(hits);
@@ -901,42 +929,68 @@ for (const mutant of mutants) {
   else toRun.push(mutant);
 }
 console.log(`ミュータントごとにテストを流します（${toRun.length} 個。テストが通らない ${mutants.length - toRun.length} 個は流しません）`);
+
+// 結果を書く。partial は、途中の結果のときの、止まった理由。流している間も呼ぶので、読む側（artifact に上げる手順など）が
+// 書きかけを読まないように、別の名前で書いてから置き換える
+function writeReport(partial = null) {
+  // テストごとに通った場所を調べ終える前は、書くものが無い
+  if (!hits) return null;
+  const elapsed = Date.now() - started;
+  const results = Object.fromEntries(targets.map((t) => [t, mutants.filter((m) => m.file === t)]));
+  const report = {
+    createdAt: new Date().toISOString(),
+    durationMs: elapsed,
+    concurrency,
+    // 途中の結果か（全部流し終えたら false）と、その理由
+    partial: partial !== null,
+    ...(partial ? { partialReason: partial } : {}),
+    testFiles: hits.modules.map((m) => ({ file: toPath(m.file), ms: Math.round(m.ms) })),
+    files: Object.fromEntries(
+      Object.entries(results).map(([file, list]) => [
+        file,
+        {
+          ...totalsOf(list),
+          mutants: list.map(({ code, probe, specs, ...m }) => ({
+            ...m,
+            status: m.status ?? 'pending',
+            // 流したテスト（ファイルと、絞ったときはテストの数）。pending では、流すはずだったテスト
+            tests: specs.map((s) => (s.testIds ? `${toPath(s.file)}（${s.testIds.length} 個）` : toPath(s.file))),
+          })),
+        },
+      ]),
+    ),
+  };
+  const write = (name, text) => {
+    writeFileSync(join(outDir, `${name}.tmp`), text);
+    renameSync(join(outDir, `${name}.tmp`), join(outDir, name));
+  };
+  write('mutation.json', `${JSON.stringify(report, null, 2)}\n`);
+  write('summary.md', `${summaryOf(results, elapsed, partial)}\n`);
+  return { results, elapsed };
+}
+
+// 合図の届かない止まり方（CI の時間切れなど）でも残るように、流している間は、進み具合を出すたびに書き直す
+const RUNNING = '流している途中に書いたもの';
+writeReport(RUNNING);
 let done = 0;
 let lastLog = Date.now();
-await runMutants(toRun, () => {
-  done++;
-  if (done === toRun.length || Date.now() - lastLog > 30_000) {
-    lastLog = Date.now();
-    const t = totalsOf(toRun.filter((m) => m.status));
-    console.log(`  ${done}/${toRun.length}  落ちた ${t.killed}・時間切れ ${t.timeout}・生き残り ${t.survived}・エラー ${t.error}（${duration(Date.now() - started)}）`);
-  }
-});
+const overTime = () => timeLimitMs !== null && Date.now() - started > timeLimitMs;
+await runMutants(
+  toRun,
+  () => {
+    done++;
+    if (done === toRun.length || Date.now() - lastLog > 30_000) {
+      lastLog = Date.now();
+      const t = totalsOf(toRun.filter((m) => m.status));
+      console.log(`  ${done}/${toRun.length}  落ちた ${t.killed}・時間切れ ${t.timeout}・生き残り ${t.survived}・エラー ${t.error}（${duration(Date.now() - started)}）`);
+      if (done < toRun.length) writeReport(RUNNING);
+    }
+  },
+  overTime,
+);
 
-const elapsed = Date.now() - started;
-const results = Object.fromEntries(targets.map((t) => [t, mutants.filter((m) => m.file === t)]));
-const report = {
-  createdAt: new Date().toISOString(),
-  durationMs: elapsed,
-  concurrency,
-  testFiles: hits.modules.map((m) => ({ file: toPath(m.file), ms: Math.round(m.ms) })),
-  files: Object.fromEntries(
-    Object.entries(results).map(([file, list]) => [
-      file,
-      {
-        ...totalsOf(list),
-        mutants: list.map(({ code, probe, specs, ...m }) => ({
-          ...m,
-          // 流したテスト（ファイルと、絞ったときはテストの数）
-          tests: specs.map((s) => (s.testIds ? `${toPath(s.file)}（${s.testIds.length} 個）` : toPath(s.file))),
-        })),
-      },
-    ]),
-  ),
-};
-writeFileSync(join(outDir, 'mutation.json'), `${JSON.stringify(report, null, 2)}\n`);
-const summary = summaryOf(results, elapsed);
-writeFileSync(join(outDir, 'summary.md'), `${summary}\n`);
-if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
+const unfinished = toRun.length - done;
+const { results, elapsed } = writeReport(unfinished > 0 ? `--time-limit の ${timeLimitOption} 分を過ぎたので止めました` : null);
 
 console.log('');
 for (const [file, list] of Object.entries(results)) {
@@ -946,3 +1000,7 @@ for (const [file, list] of Object.entries(results)) {
 console.log(`結果: ${toPath(join(outDir, 'summary.md'))}・${toPath(join(outDir, 'mutation.json'))}（${duration(elapsed)}）`);
 const errors = mutants.filter((m) => m.status === 'error');
 if (errors.length > 0) console.log(`エラーになったミュータントが ${errors.length} 個あります（mutation.json の failed）`);
+if (unfinished > 0) {
+  console.error(`--time-limit の ${timeLimitOption} 分を過ぎたので、${unfinished} 個を流さずに止めました（結果は、流し終えたものだけ）`);
+  process.exit(1);
+}
