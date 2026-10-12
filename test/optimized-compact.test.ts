@@ -58,6 +58,9 @@ describe('仕上げの頼み（handoffText）', () => {
     expect(text).toContain('reset this conversation instead of compacting it');
     expect(text).toContain('no summary is made');
     expect(text).toContain('Do not continue the task itself');
+    // もう最新だと思っていても、必ずツールを呼ばせる（1 回も呼ばないと、アプリは会話を消すのを取りやめる）
+    expect(text).toContain('Start by calling checklist_overview, even if you think the lists are already up to date');
+    expect(text).toContain('if you do not use a checklist tool in this turn, tanacode cancels the reset');
     expect(text).toContain('Decisions list (kind "decisions")');
     expect(text).toContain('State list (kind "state"; create one if there is none)');
     expect(text).toContain('changes that are not committed or not pushed');

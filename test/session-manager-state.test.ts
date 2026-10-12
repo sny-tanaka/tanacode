@@ -312,6 +312,29 @@ describe('statusLine', () => {
     app.manager.restart(id);
     expect(app.pty(id).arg('--resume')).toBe(next);
   });
+
+  it('新しい会話に切り替わったら、送信中の扱いをやめる（/clear は発言として会話ログに出ない。次の送信を待たせない）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    app.append(id, line.user('前の会話'), line.text('はい'), line.turnEnd());
+    await app.waitFor('前の会話', () => app.events(id).some((e) => e.type === 'turn-end'));
+    pty.onWrite = (data) => {
+      if (data.includes('/clear')) setTimeout(() => pty.output(`${fixtureScreen('prompt')}\x1b[37;3H/clear`), 10);
+      if (data === '\r') setTimeout(() => pty.output(fixtureScreen('prompt')), 10);
+    };
+    await app.manager.submitWhenReady(id, '/clear', 2000);
+    expect(app.manager.stateOf(id)).toBe('working');
+    const next = '55555555-0000-4000-8000-000000000005';
+    const file = transcriptPath(app.cwd, next);
+    // 新しい会話ログには、/clear のコマンドの記録だけがある（読み直した行として読まれる）
+    writeFileSync(file, `${JSON.stringify({ ...line.user('<command-name>/clear</command-name>'), sessionId: next, cwd: app.cwd })}\n`);
+    app.manager.statusLineChanged(id, info(file));
+    await app.waitFor('乗り換え', () => app.events(id).some((e) => e.type === 'reset'));
+    await app.waitFor('待機', () => app.manager.stateOf(id) === 'idle', 2000);
+    // 次の送信は、待たずに打ち始める（直す前は、15 秒たつまで「送信中」で、短い待ち時間では失敗した）
+    await app.manager.submitWhenReady(id, '次の発言', 500);
+    expect(pty.typed.endsWith('次の発言\r')).toBe(true);
+  });
 });
 
 describe('送る・止める・大きさ', () => {

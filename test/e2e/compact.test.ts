@@ -73,9 +73,14 @@ describe('最適化圧縮', () => {
     await app.page.click('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
     // 仕上げ: Claude が「いまの状態」を書く（サイドパネルのチェックリストにも出る）
     await app.waitUntil('仕上げの頼み', () => app.api.lastPrompts.some((p) => p.includes(`<${HANDOFF_TAG}>`)));
-    // 新しい会話: 再開の文が最初の発言になり、Claude がリストを読んで報告する
-    await app.byText('.chat-list', RESUMED).waitFor();
+    // 新しい会話になったら（前の会話がチャットから消える）、再開の文はすぐに届く。/clear は発言として会話ログに出ないので、
+    // 「送信中」の扱いが残ると、15 秒ほど待たされる
+    await app.byText('.chat-list', REPLY).waitFor({ state: 'detached' });
+    const cleared = Date.now();
     await app.byText('.chat-list', RESUME_NOTICE).waitFor();
+    expect(Date.now() - cleared).toBeLessThan(8000);
+    // 再開の文が最初の発言になり、Claude がリストを読んで報告する
+    await app.byText('.chat-list', RESUMED).waitFor();
     // 前の会話は消えている（仕上げの頼みも、前の会話のもの）
     expect(await app.byText('.chat-list', REPLY).count()).toBe(0);
     expect(await app.byText('.chat-list', HANDOFF_NOTICE).count()).toBe(0);

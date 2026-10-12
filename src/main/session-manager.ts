@@ -1162,6 +1162,11 @@ export class SessionManager {
         },
         onSwitch: (nextClaudeSessionId) => {
           this.store.update(id, { claudeSessionId: nextClaudeSessionId });
+          // 新しい会話になったのは、送った /clear が受け取られたということ。/clear は発言として会話ログに出ないので、ここで消さないと、
+          // 送ってから SUBMIT_GRACE_MS のあいだ「送信中」のままになり、次の送信（最適化圧縮の再開の文）が待たされる
+          rt.submittedAt = null;
+          rt.turnOpen = false;
+          this.changed(id);
           rt.chain = [];
           rt.knowledge.reset();
           rt.context.reset();
