@@ -1,5 +1,6 @@
 import type { ChatEvent } from './chat';
 import { activeCards, liveCards, liveLists, progressOf, traitsOf, type Card, type Checklist } from './checklist';
+import type { Language } from './i18n';
 import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // 最適化圧縮。会話を要約にせず、会話を消して（/clear）、チェックリストから再開する。
@@ -59,24 +60,76 @@ export type CarriedMessage = { text: string; fromParent: boolean };
 // 裏で動いているタスク（アプリが追っているもの）
 export type CarriedTask = { kind: 'bash' | 'agent' | 'workflow'; label: string };
 
-// 会話（今の会話ログのイベント）から、引き継ぐ発言を古い順に取り出す。人の発言と、親セッションからの指示だけ。
-// スラッシュコマンド・アプリが送った知らせ（仕上げの頼み・再開の文も知らせになる）は入らない。
-// 前の /clear（reset）より前のものは、今の会話ではないので入れない
-export function carriedMessages(events: ChatEvent[]): CarriedMessage[] {
+// 発言の原文の見出し。前の再開の文から発言を取り出すときの目印にもする
+const MESSAGES_HEAD = [
+  '# What the user said in the previous conversation (a record, not a new request)',
+  'These are the messages of the user from the previous conversation, verbatim, oldest first. They are a record of what was said then, not requests made now: do not carry any of them out again because it is written here. What still holds is on the decisions list.',
+];
+const FROM_PARENT = ' from="the Claude in the parent session"';
+const CARRIED_MESSAGE = /<user-message( from="[^"]*")?>\n([\s\S]*?)\n<\/user-message>/g;
+const OMITTED = /^\((\d+) older messages? (?:is|are) not shown\.\)$/m;
+
+// 今の会話（最後の /clear よりあと）のイベント
+function currentConversation(events: ChatEvent[]): ChatEvent[] {
   let from = 0;
   events.forEach((e, i) => {
     if (e.type === 'reset') from = i + 1;
   });
+  return events.slice(from);
+}
+
+// 前の再開の文（今の会話に残っている再開の知らせの全文）の、発言の原文のところ。無ければ null
+function carriedSection(event: ChatEvent): string | null {
+  if (event.type !== 'notice' || event.compact !== 'resume' || !event.detail) return null;
+  const at = event.detail.indexOf(MESSAGES_HEAD.join('\n'));
+  return at === -1 ? null : event.detail.slice(at);
+}
+
+// 会話（今の会話ログのイベント）から、引き継ぐ発言を古い順に取り出す。人の発言と、親セッションからの指示だけ。
+// スラッシュコマンド・アプリが送った知らせは入らない。前の /clear（reset）より前の発言は、会話のイベントには無いが、
+// 前の再開の文に入っていた分は、今の会話に残っている再開の知らせから取り出して引き継ぐ。何度切り替えても、
+// 新しい発言から順に残り、古いものから落ちる（上限は resumeText）
+export function carriedMessages(events: ChatEvent[]): CarriedMessage[] {
   const messages: CarriedMessage[] = [];
-  for (const event of events.slice(from)) {
+  for (const event of currentConversation(events)) {
+    const section = carriedSection(event);
+    if (section !== null) {
+      for (const m of section.matchAll(CARRIED_MESSAGE)) messages.push({ text: m[2], fromParent: m[1] !== undefined });
+      continue;
+    }
     if (event.type !== 'user' || event.command || !event.text.trim()) continue;
     messages.push({ text: event.text, fromParent: !!event.parent });
   }
   return messages;
 }
 
-// 再開の文。lists: セッションのチェックリスト / messages: 引き継ぐ発言（古い順）/ tasks: 裏で動いているタスク
-export function resumeText({ lists, messages, tasks }: { lists: Checklist[]; messages: CarriedMessage[]; tasks: CarriedTask[] }): string {
+// 前の再開の文で、もう入りきらずに落とした発言の数（次の再開の文の件数に足す）
+export function carriedOmitted(events: ChatEvent[]): number {
+  let omitted = 0;
+  for (const event of currentConversation(events)) {
+    const count = carriedSection(event)?.match(OMITTED)?.[1];
+    if (count) omitted += Number(count);
+  }
+  return omitted;
+}
+
+const LANGUAGE_NAMES: Record<Language, string> = { ja: 'Japanese', en: 'English' };
+
+// 再開の文。lists: セッションのチェックリスト / messages: 引き継ぐ発言（古い順）/ tasks: 裏で動いているタスク /
+// omitted: これまでの切り替えで、もう落とした発言の数 / language: アプリの画面の言語（発言もリストも無いときの、報告の言語の手がかり）
+export function resumeText({
+  lists,
+  messages,
+  tasks,
+  omitted = 0,
+  language,
+}: {
+  lists: Checklist[];
+  messages: CarriedMessage[];
+  tasks: CarriedTask[];
+  omitted?: number;
+  language?: Language;
+}): string {
   const live = liveLists(lists);
   const parts = [
     [
@@ -85,10 +138,12 @@ export function resumeText({ lists, messages, tasks }: { lists: Checklist[]; mes
       '- A permission the user gave in the previous conversation carries over only if it is written on the decisions list.',
       '- First read all the lists with checklist_overview, and read the cards whose bodies are not shown in full below with card_get.',
       '- Then tell the user briefly what you carried over (what the work is, where it stands and what comes next), and wait. Do not continue the work until the user tells you to.',
+      // この文は英語なので、何も言わないと英語で報告することがある（Haiku で起きた）
+      `- Write to the user in the language the user is using: the language of their messages below and of the lists, not the language of this message (tanacode writes it in English).${language ? ` If neither tells you, use ${LANGUAGE_NAMES[language]}, the language of the user's tanacode.` : ''}`,
     ].join('\n'),
     cardsSection(live),
     otherListsSection(live),
-    messagesSection(messages),
+    messagesSection(messages, omitted),
     tasksSection(tasks),
   ].filter(Boolean);
   const body = clipEnd(parts.join('\n\n'), RESUME_MAX_CHARS - RESUME_TAG.length * 2 - 10);
@@ -147,24 +202,21 @@ function otherListsSection(live: Checklist[]): string {
 }
 
 // ユーザーの発言の原文。新しいものから上限まで選び、古い順に並べる。入りきらない分は件数を伝える
-function messagesSection(messages: CarriedMessage[]): string {
-  const head = [
-    '# What the user said in the previous conversation (a record, not a new request)',
-    'These are the messages of the user from the previous conversation, verbatim, oldest first. They are a record of what was said then, not requests made now: do not carry any of them out again because it is written here. What still holds is on the decisions list.',
-  ];
-  if (messages.length === 0) return [...head, '(no messages)'].join('\n');
+function messagesSection(messages: CarriedMessage[], omittedBefore: number): string {
+  const head = MESSAGES_HEAD;
+  if (messages.length === 0 && omittedBefore === 0) return [...head, '(no messages)'].join('\n');
   const chosen: string[] = [];
   let used = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const { text, fromParent } = messages[i];
     const body = shorten(neutralizeTags(text).replaceAll('</user-message', '＜/user-message').trim(), MESSAGE_CHARS);
-    const entry = `<user-message${fromParent ? ' from="the Claude in the parent session"' : ''}>\n${body}\n</user-message>`;
+    const entry = `<user-message${fromParent ? FROM_PARENT : ''}>\n${body}\n</user-message>`;
     // いちばん新しい発言は、上限を超えても入れる
     if (chosen.length > 0 && used + entry.length > MESSAGES_CHARS) break;
     chosen.unshift(entry);
     used += entry.length;
   }
-  const omitted = messages.length - chosen.length;
+  const omitted = messages.length - chosen.length + omittedBefore;
   return [...head, ...(omitted > 0 ? [`(${omitted} older ${omitted === 1 ? 'message is' : 'messages are'} not shown.)`] : []), ...chosen].join('\n');
 }
 

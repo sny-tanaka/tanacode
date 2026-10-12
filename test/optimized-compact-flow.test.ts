@@ -122,6 +122,31 @@ describe('流れ', () => {
     expect(phases()).toEqual(['finalizing', 'clearing', 'resuming', null]);
   });
 
+  it('続けてもう一度切り替えても、前の会話の発言の原文を引き継ぐ（前の再開の文から取り出す）', async () => {
+    script({
+      onClear: () => {
+        host.claudeSession = `conv-${host.submitted.length}`;
+        host.events.push({ type: 'reset' }, { type: 'user', id: 'c', text: '/clear', command: true }, { type: 'turn-end' });
+      },
+    });
+    // 再開の文は、会話ログでは知らせになる（全文は detail）
+    const submit = host.onSubmit;
+    host.onSubmit = (text) => {
+      if (isResume(text)) host.events.push({ type: 'notice', id: 'r', text: '再開', compact: 'resume', detail: text.slice(`<${RESUME_TAG}>`.length, -`</${RESUME_TAG}>`.length).trim() }, { type: 'turn-end' });
+      else submit(text);
+    };
+    compact.start(ID);
+    await finished();
+    statuses = [];
+    host.events.push({ type: 'user', id: 'u2', text: '次は README' }, { type: 'turn-end' });
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    const second = host.submitted.filter(isResume)[1];
+    expect(second).toContain('<user-message>\n税率を可変にして\n</user-message>\n<user-message>\n次は README\n</user-message>');
+    // アプリの画面の言語を、報告の言語の手がかりとして添える
+    expect(second).toContain("use Japanese, the language of the user's tanacode.");
+  });
+
   it('進んでいる間にもう一度押しても、二重には始めない', async () => {
     script();
     compact.start(ID);

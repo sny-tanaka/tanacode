@@ -1,7 +1,9 @@
 import type { ChatEvent } from '@shared/chat';
 import type { Checklist } from '@shared/checklist';
+import { language } from '@shared/i18n';
 import {
   carriedMessages,
+  carriedOmitted,
   handoffText,
   resumeText,
   type CarriedTask,
@@ -150,7 +152,14 @@ export class OptimizedCompact {
       // （ふだんから書いているセッション・取りやめた直後の押し直し・仕上げのやり直し）。書き換えを求めると、押しても圧縮できなくなる
       if (!this.deps.usedSince(id, startedAt)) return 'not-used';
 
-      const resume = resumeText({ lists: this.deps.lists(id), messages: carriedMessages(await host.conversation(id)), tasks: host.runningTasks(id) });
+      const conversation = await host.conversation(id);
+      const resume = resumeText({
+        lists: this.deps.lists(id),
+        messages: carriedMessages(conversation),
+        omitted: carriedOmitted(conversation),
+        tasks: host.runningTasks(id),
+        language: language(),
+      });
       this.setPhase(id, 'clearing');
       const before = host.claudeSessionOf(id);
       try {

@@ -16,6 +16,7 @@ const WRITTEN = 'いまの状態に書きました';
 const RESUMED = '引き継ぎました。次は README です';
 // 長い再開の文（2 万文字ほど）も、貼り付けで欠けずに届くかを見るための、本文の長い決定事項
 const LONG_CARDS = Array.from({ length: 9 }, (_, i) => ({ title: `決定 ${i + 1}`, body: `${`理由 ${i + 1} `.repeat(300)}おわり${i + 1}` }));
+const UP_TO_DATE = 'チェックリストは最新です';
 const HANDOFF_NOTICE = '最適化圧縮: 続きに要ることを、チェックリストに書くよう頼みました';
 const RESUME_NOTICE = '最適化圧縮: 会話を消して、チェックリストから再開しました';
 
@@ -47,7 +48,13 @@ describe('最適化圧縮', () => {
         // /clear のあとの新しい会話。はじめの発言は再開の文（前の会話の発言の原文も入るので、それより後ろに出てくる文字で選ぶ）
         {
           match: '</user-message>',
-          steps: [[{ type: 'tool_use', id: 'toolu_overview', name: checklistToolId('checklist_overview'), input: {} }], [{ type: 'text', text: RESUMED }]],
+          steps: [
+            [{ type: 'tool_use', id: 'toolu_overview', name: checklistToolId('checklist_overview'), input: {} }],
+            [{ type: 'text', text: RESUMED }],
+            // 続けてもう一度押したときの、仕上げの頼みへの応答（リストはもう最新。読んで確かめるだけ）
+            [{ type: 'tool_use', id: 'toolu_again', name: checklistToolId('checklist_overview'), input: {} }],
+            [{ type: 'text', text: UP_TO_DATE }],
+          ],
         },
       ],
     });
@@ -111,6 +118,18 @@ describe('最適化圧縮', () => {
     await app.page.click('.activity-bar [aria-label^="チェックリスト"]');
     await app.page.locator('.checklist-list.kind-state .checklist-list-head', { hasText: STATE }).waitFor();
     await app.page.locator('.checklist-card', { hasText: STATE_CARD }).waitFor();
+  });
+
+  it('続けてもう一度押しても進む（リストがもう最新でも）。1 回めの会話の発言の原文は、2 回めの再開の文にも入る', async () => {
+    const before = app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`)).length;
+    await app.page.click('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
+    await app.waitUntil('2 回めの再開の文', () => app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`)).length > before, 60_000);
+    const second = app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`)).at(-1) ?? '';
+    expect(second).toContain(`<user-message>\n${PROMPT}\n</user-message>`);
+    expect(second).not.toContain('(no messages)');
+    expect(second).toContain(`## #1 ${STATE_CARD}\n${STATE_BODY}`);
+    await app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])').waitFor();
+    expect(await app.page.locator('.compact-status.failed').count()).toBe(0);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
