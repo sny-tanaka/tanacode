@@ -796,7 +796,7 @@ export class SessionsControl {
     if (!detail) return base;
     const all = await this.deps.host.conversation(s.id);
     // 最適化圧縮の仕上げの頼み・再開の文と、その返事（「リストを更新しました」「引き継ぎました」）は、指示と作業の応答に数えない
-    const events = withoutCompaction(all);
+    const events = withoutCompaction(all, this.deps.compacting?.(s.id) ?? false);
     const prompt = lastOf(events, isPrompt);
     const promptAt = prompt ? events.lastIndexOf(prompt) : -1;
     // 作業の結果を返す。チェックリストを直した報告しか無ければ、それを返す
@@ -996,22 +996,42 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
   let all: Turn[] = [];
   let current: Turn | null = null;
   let stopped = false;
-  // 最適化圧縮の仕上げのターン（頼みと、「リストを更新しました」の返事）は出さない
-  let handoff = false;
+  // 最適化圧縮の仕上げのターン（頼みと、「リストを更新しました」の返事）。そのあと切り替えたら、出さない。
+  // 取りやめになったときは出す（Claude が頼みに従わず、そのターンで元の作業を続けることがある）
+  let handoff: Turn | null = null;
+  // アプリが /clear を打って、まだ再開の文を送っていない
+  let cleared = false;
   for (const e of events) {
-    if (startsTurn(e)) {
-      stopped = false;
-      handoff = e.type === 'notice' && e.compact === 'handoff';
-    }
-    if (handoff) continue;
+    if (startsTurn(e)) stopped = false;
     if (e.type === 'reset') {
-      // 最適化圧縮の切り替えでは、前のターンも残す（下の知らせの 1 行を挟む）
-      if (e.compact) continue;
+      // 最適化圧縮の切り替えでは、前のターンも残す（下の知らせの 1 行を挟む）。仕上げのターンと、アプリが打った /clear は出さない
+      if (e.compact) {
+        const dropped = handoff;
+        all = all.filter((turn) => turn !== dropped);
+        handoff = null;
+        current = null;
+        cleared = true;
+        continue;
+      }
       // /clear で会話を始め直した
       all = [];
       current = null;
+    } else if (cleared && e.type === 'user' && e.command) {
+      current = null;
+    } else if (e.type === 'notice' && e.compact === 'handoff') {
+      const auto = autoPercentOf(detailOf(e));
+      current = {
+        who: 'Notice',
+        text: `tanacode asked this session to bring its checklists up to date for an optimized compaction${auto === null ? '' : ` (automatic at ${auto}% of the context)`}. The conversation was not reset after this: the compaction was cancelled, or is still in progress.`,
+        responses: [],
+        notes: [],
+        tools: [],
+      };
+      handoff = current;
+      all.push(current);
     } else if (e.type === 'notice' && e.compact === 'resume') {
       // 再開の文は長いので、切り替えたことだけを書く
+      cleared = false;
       const auto = autoPercentOf(detailOf(e));
       const text = [
         `tanacode reset the conversation of this session and resumed it from its checklists (optimized compaction${auto === null ? '' : `, automatic at ${auto}% of the context`}).`,
@@ -1191,26 +1211,40 @@ function responsesOf(events: ChatEvent[]): { work: string[]; notes: string[] } {
 }
 
 // 会話から、最適化圧縮のぶんを除く。仕上げの頼みと再開の文（知らせ）と、その返事。
-// 途中で止めて続きを進めた切り替えでは、再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
-function withoutCompaction(events: ChatEvent[]): ChatEvent[] {
+// - 途中で止めて続きを進めた切り替えでは、再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
+// - 仕上げのターンの応答は、そのあと会話を消した（切り替えた）ときだけ除く。取りやめになったときは残す。
+//   Claude が仕上げの頼みに従わず、そのターンで元の作業を続けることがある（実機の Haiku 5.5 で起きた。除くと、作業の結果が読めない）
+// flowing: 流れが進んでいる途中（最後の仕上げのターンは、まだ取りやめと決まっていないので除く）
+function withoutCompaction(events: ChatEvent[], flowing = false): ChatEvent[] {
   const kept: ChatEvent[] = [];
   let skipping = false;
   // アプリが /clear を打って、まだ再開の文を送っていない（新しい会話に残る /clear のコマンドの発言を除く）
   let cleared = false;
+  // 仕上げのターンのイベント（切り替えたら捨て、取りやめなら残す）
+  let handoff: ChatEvent[] | null = null;
   for (const e of events) {
     if (e.type === 'reset' && e.compact) {
       cleared = true;
+      handoff = null;
       continue;
     }
     if (e.type === 'notice' && e.compact) {
       cleared = false;
-      skipping = e.compact === 'handoff' || !compactMidTurn(detailOf(e));
+      if (handoff) kept.push(...handoff);
+      handoff = e.compact === 'handoff' ? [] : null;
+      skipping = e.compact === 'resume' && !compactMidTurn(detailOf(e));
       continue;
     }
     if (cleared && e.type === 'user' && e.command) continue;
-    if (startsTurn(e)) skipping = false;
-    if (!skipping) kept.push(e);
+    if (startsTurn(e)) {
+      skipping = false;
+      if (handoff) kept.push(...handoff);
+      handoff = null;
+    }
+    if (handoff) handoff.push(e);
+    else if (!skipping) kept.push(e);
   }
+  if (handoff && !flowing) kept.push(...handoff);
   return kept;
 }
 

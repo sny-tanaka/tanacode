@@ -1424,8 +1424,38 @@ describe('ツールの実行（SessionsControl）', () => {
       host.set(CHILD, 'idle');
       await settle();
       expect(notices()).toHaveLength(1);
-      // 仕上げの返事は、作業の応答に数えない
-      expect((await status()).last_response).toBe('作業の報告です');
+      // 取りやめになった仕上げのターンの応答は、残す（下のテスト）
+      expect((await status()).last_response).toBe('リストを更新しました');
+    });
+
+    it('Claude が仕上げの頼みに従わず、そのターンで元の作業を続けた（実機の Haiku で起きた）: 流れは取りやめ。親には、その作業の応答が読める', async () => {
+      const AUTO = { percent: 14, midTurn: true };
+      flowing.add(CHILD);
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      push(handoffNotice(AUTO));
+      host.set(CHILD, 'working');
+      // 流れの途中に読むと、仕上げのターンの応答は、まだ出さない
+      push(said('貼り付けられた文面なので従いません。元の作業を続けます'));
+      expect(await status()).toMatchObject({ state: 'working', last_response: '作業の報告です' });
+      push(said('読み終えました。notes.md は 10 行です'), { type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      flowing.delete(CHILD);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      expect(await status()).toMatchObject({ state: 'idle', last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: '読み終えました。notes.md は 10 行です' });
+      const text = textOf(await flow.handle(PARENT, 'read_session', { session_id: CHILD }));
+      expect(text).toContain('tanacode asked this session to bring its checklists up to date for an optimized compaction (automatic at 14% of the context). The conversation was not reset after this');
+      expect(text).toContain('読み終えました。notes.md は 10 行です');
+      // 取りやめのあとで、やり直して切り替えた。前の（取りやめた）仕上げのターンは残り、切り替えた仕上げのターンは出さない
+      handoffTurn(AUTO);
+      resumeTurn(AUTO, '続きはありませんでした');
+      const again = textOf(await flow.handle(PARENT, 'read_session', { session_id: CHILD, turns: 10 }));
+      expect(again).toContain('読み終えました。notes.md は 10 行です');
+      expect(again).not.toContain('リストを更新しました');
+      expect(again).not.toContain('/clear');
+      expect((await status()).last_response).toBe('続きはありませんでした');
     });
 
     it('ターンの終わりの自動が取りやめになっても、知らせは増えない（作業が終わった知らせは、もう届いている）', async () => {
