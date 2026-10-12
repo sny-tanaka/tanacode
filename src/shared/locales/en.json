@@ -387,6 +387,7 @@
       "card_update": "Edit Card",
       "card_check": "Check",
       "card_uncheck": "Uncheck",
+      "card_revoke": "Revoke",
       "card_reply": "Reply",
       "card_move": "Move Card",
       "card_delete": "Delete Card",
@@ -1363,7 +1364,16 @@
       "moveToList": "Move to Another List",
       "movePlaceholder": "Move to…",
       "clearSelection": "Clear Selection",
-      "newCardPlaceholder": "Title (press Enter to add)"
+      "newCardPlaceholder": "Title (press Enter to add)",
+      "inForce": "{count}",
+      "inForceTip": "{count} in force (revoked decisions aren’t counted)",
+      "kindDecisions": "Decisions",
+      "kindDecisionsTip": "A decisions list. Cards aren’t checked off, and the ones in force are always passed to Claude.",
+      "kindReview": "Review",
+      "kindReviewTip": "A review list. Cards you check (approve) move to the decisions list.",
+      "revoked": "Revoked",
+      "revokedTip": "Revoked decision (no longer in force): {reason}",
+      "noReason": "no reason given"
     },
     "action": {
       "copyToSession": "Copy to Another Session",
@@ -1395,7 +1405,17 @@
       "notify": "Notify Claude",
       "reply": "Reply",
       "replyTip": "Reply (⌘Enter)",
-      "notified": "Notified Claude"
+      "notified": "Notified Claude",
+      "revoke": "Revoke",
+      "revokeTip": "Revoke (the card stays here, but Claude no longer treats it as in force)",
+      "revokeReasonPlaceholder": "Reason for revoking (optional, Enter to revoke)",
+      "reinstate": "Reinstate",
+      "reinstateTip": "Put this decision back in force",
+      "inForce": "In force",
+      "revokedByHuman": "Revoked by you ({time})",
+      "revokedByClaude": "Revoked by Claude ({time})",
+      "revokedReason": "Reason for revoking: {reason}",
+      "revokedNoReason": "This decision was revoked (no reason given)"
     },
     "eventByHuman": {
       "created": "You created this card",
@@ -1406,7 +1426,10 @@
       "moved": "You moved this card from “{fromList}” #{fromNumber}",
       "copied": "You copied this card from “{fromList}” #{fromNumber} in the session “{fromSessionTitle}”",
       "deleted": "You moved this card to the Trash",
-      "restored": "You restored this card from the Trash"
+      "restored": "You restored this card from the Trash",
+      "revoked": "You revoked this card (reason: {reason})",
+      "revokedNoReason": "You revoked this card",
+      "reinstated": "You reinstated this card"
     },
     "eventByClaude": {
       "created": "Claude created this card",
@@ -1417,7 +1440,10 @@
       "moved": "Claude moved this card from “{fromList}” #{fromNumber}",
       "copied": "Claude copied this card from “{fromList}” #{fromNumber} in the session “{fromSessionTitle}”",
       "deleted": "Claude moved this card to the Trash",
-      "restored": "Claude restored this card from the Trash"
+      "restored": "Claude restored this card from the Trash",
+      "revoked": "Claude revoked this card (reason: {reason})",
+      "revokedNoReason": "Claude revoked this card",
+      "reinstated": "Claude reinstated this card"
     },
     "copyDialog": {
       "failed": "Couldn't copy the cards: {error}",
@@ -1433,7 +1459,11 @@
     },
     "listForm": {
       "namePlaceholder": "Name (e.g., To-dos, Definition of done, Open questions)",
-      "descriptionPlaceholder": "Rules for using this list (e.g., before finishing the work, make sure every item is satisfied). Claude reads and follows these every time it reads the list."
+      "descriptionPlaceholder": "Rules for using this list (e.g., before finishing the work, make sure every item is satisfied). Claude reads and follows these every time it reads the list.",
+      "kind": "Kind",
+      "kindNormal": "Ordinary (cards are checked off)",
+      "kindReview": "Review (approved cards move to decisions)",
+      "kindDecisions": "Decisions (permanent, no checks)"
     },
     "apply": {
       "failed": "Couldn't update the checklist: {error}"
@@ -1462,7 +1492,13 @@
       "badSessionId": "Invalid session ID",
       "listGone": "List not found (it may have been moved to the Trash or deleted)",
       "cardNotFound": "Card not found in “{list}”",
-      "emptyListName": "The list name is empty"
+      "emptyListName": "The list name is empty",
+      "noChecks": "Cards in “{list}” have no checks",
+      "notRevocable": "Cards in “{list}” can’t be revoked (only cards on a decisions list can)"
+    },
+    "decisions": {
+      "defaultName": "Decisions",
+      "defaultDescription": "What was decided (requirements, constraints, corrections, permissions and their scope, rejected options with the reason, approved judgments). In force even after the work is done. When one changes, revoke it and write a new one."
     }
   },
   "tasks": {

@@ -6751,6 +6751,51 @@ body.resizing-rows webview {
   text-decoration: line-through;
   text-decoration-color: var(--text-tertiary);
 }
+/* チェックで消えないリスト（決定事項）。進み具合の代わりにピンと有効な数、カードはチェック欄の代わりにピン */
+.checklist-progress.pinned {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-selected-ide);
+  color: var(--ide);
+}
+.checklist-pin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--ide);
+}
+.checklist-pin.md {
+  width: 18px;
+  height: 18px;
+}
+/* 取り消した決定。残すが、有効でないと分かるようにする */
+.checklist-card.revoked .checklist-pin {
+  color: var(--text-tertiary);
+}
+.checklist-card.revoked .checklist-title,
+.card-pane-title.revoked {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-tertiary);
+}
+.checklist-revoked,
+.card-pane-state {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.card-pane-state:not(.revoked) {
+  background: var(--bg-selected-ide);
+  color: var(--ide);
+}
 /* Claude からの未読の返信 */
 .checklist-unread {
   flex: none;
@@ -6846,6 +6891,29 @@ body.resizing-rows webview {
   gap: 6px;
 }
 
+.checklist-form-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.checklist-form-kind select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.checklist-form-kind select:focus {
+  border-color: var(--border-focus);
+}
+
 /* 複数選んだときの操作 */
 .checklist-selection {
   flex: none;
@@ -6926,6 +6994,38 @@ body.resizing-rows webview {
   color: var(--text-secondary);
   font-size: 12px;
   white-space: nowrap;
+}
+/* 取り消す理由を書く行（見出しのすぐ下）と、取り消した決定の知らせ */
+.card-pane-revoke {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.card-pane-revoke input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-focus);
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.card-pane-revoked {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 /* タイトルは本文の先頭に、折り返して全文を出す（見た目と編集中で同じ大きさにして、切り替えでずれないようにする） */
 .card-pane-title {

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { CardPane } from './CardPane';
 import { CopyDialog } from './CopyDialog';
-import { decisionList, goalList, rounding, sampleSession, sampleSessions } from './sampleChecklists';
+import { decisionList, goalList, keptList, rounding, sampleSession, sampleSessions } from './sampleChecklists';
 
 // チェックリストのカードの詳細（エディタの場所）。上からタイトル・説明文・スレッド。返信欄は下に固定し、
 // 「Claude に通知する」にチェックがあれば、返信したことを手の空いた Claude に知らせる
@@ -17,6 +17,16 @@ const frame = (children: React.ReactNode) => <div style={{ height: 620, display:
 // 確認事項: Claude が判断して進め、人が訂正し、Claude が直したあとに人がチェックした
 export const スレッドでのやりとり: StoryObj = {
   render: () => frame(<CardPane session={sampleSession} sessions={sampleSessions} list={decisionList} card={rounding} onClose={() => {}} />),
+};
+
+// 決定事項のカード。チェック欄は無く、「取り消す」で有効でなくする（理由を書ける）
+export const 決定事項: StoryObj = {
+  render: () => frame(<CardPane session={sampleSession} sessions={sampleSessions} list={keptList} card={keptList.cards[0]} onClose={() => {}} />),
+};
+
+// 取り消した決定。残るが、有効ではない。「有効に戻す」で戻せる
+export const 取り消した決定: StoryObj = {
+  render: () => frame(<CardPane session={sampleSession} sessions={sampleSessions} list={keptList} card={keptList.cards[1]} onClose={() => {}} />),
 };
 
 export const 説明文なし: StoryObj = {

@@ -77,7 +77,7 @@ describe('リストを作る・名前と説明を変える（ListForm）', () =>
     fireEvent.change(within(form).getByPlaceholderText(/^使い方のルール/), { target: { value: ' 終える前に確かめる ' } });
     expect(submit.disabled).toBe(false);
     fireEvent.click(submit);
-    expect(applied()).toEqual([['s1', { type: 'list-create', name: '確認事項', description: '終える前に確かめる' }]]);
+    expect(applied()).toEqual([['s1', { type: 'list-create', name: '確認事項', description: '終える前に確かめる', kind: 'normal' }]]);
     await settle();
     expect(document.querySelector('.checklist-form')).toBeNull();
   });
@@ -104,7 +104,7 @@ describe('リストを作る・名前と説明を変える（ListForm）', () =>
     fireEvent.keyDown(name, { key: 'Enter', metaKey: true, isComposing: true });
     expect(applied()).toEqual([]);
     fireEvent.keyDown(name, { key: 'Enter', metaKey: true });
-    expect(applied()).toEqual([['s1', { type: 'list-create', name: '確認事項', description: '' }]]);
+    expect(applied()).toEqual([['s1', { type: 'list-create', name: '確認事項', description: '', kind: 'normal' }]]);
   });
 
   it('Esc と「キャンセル」で、作らずにフォームを閉じる', () => {
@@ -128,7 +128,7 @@ describe('リストを作る・名前と説明を変える（ListForm）', () =>
     fireEvent.change(name, { target: { value: 'やることリスト' } });
     fireEvent.change(description, { target: { value: '' } });
     fireEvent.click(screen.getByText('保存'));
-    expect(applied()).toEqual([['s1', { type: 'list-update', listId: 'L1', name: 'やることリスト', description: '' }]]);
+    expect(applied()).toEqual([['s1', { type: 'list-update', listId: 'L1', name: 'やることリスト', description: '', kind: 'normal' }]]);
     await settle();
     expect(document.querySelector('.checklist-form')).toBeNull();
     expect(head('やること')).toBeTruthy();
@@ -138,7 +138,7 @@ describe('リストを作る・名前と説明を変える（ListForm）', () =>
     show();
     fireEvent.doubleClick(head('完了前チェック'));
     fireEvent.keyDown(screen.getByPlaceholderText(/^使い方のルール/), { key: 'Enter', metaKey: true });
-    expect(applied()).toEqual([['s1', { type: 'list-update', listId: 'L2', name: '完了前チェック', description: '' }]]);
+    expect(applied()).toEqual([['s1', { type: 'list-update', listId: 'L2', name: '完了前チェック', description: '', kind: 'normal' }]]);
     fireEvent.keyDown(screen.getByPlaceholderText(/^名前/), { key: 'Escape' });
     expect(document.querySelector('.checklist-form')).toBeNull();
   });
