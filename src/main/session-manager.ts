@@ -479,6 +479,18 @@ export class SessionManager {
     return shown ? weakerMode(shown, known) : known;
   }
 
+  // 今のモデル（--model に渡せる ID）とエフォート。start_session で省いたときに、呼んだセッションに合わせるために使う。
+  // statusLine（Claude Code が渡す今の値。/model・/effort で変えたあとも追える）があればそれ、無ければ起動の指定（アプリで選んだもの）。
+  // どちらも無ければ null（Claude Code の既定のまま）。画面のモデル名は表示名なので、--model には使わない
+  currentModel(id: string): string | null {
+    return this.runtimes.get(id)?.statusLine?.model?.id ?? this.store.get(id)?.model ?? null;
+  }
+
+  currentEffort(id: string): string | null {
+    const rt = this.runtimes.get(id);
+    return rt?.statusLine?.effort ?? rt?.screen?.current.effort ?? this.store.get(id)?.effort ?? null;
+  }
+
   // 今出している AskUserQuestion の質問。出していなければ null
   askedQuestions(id: string): AskQuestion[] | null {
     return this.runtimes.get(id)?.screen?.askedQuestions ?? null;

@@ -120,6 +120,7 @@ export const option = (id: string, label: string, description: string, preview?:
 export function statusLine(percent: number, tokens: number): StatusLineInfo {
   return {
     model: { id: 'claude-opus-5-5', name: 'Opus 5.5' },
+    effort: null,
     version: '2.1.283',
     context: { size: 200_000, usedPercent: percent, tokens },
     rateLimits: null,

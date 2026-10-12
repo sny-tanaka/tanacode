@@ -16,12 +16,13 @@ const statusJson = readFileSync(join(FIXTURE, 'statusline.json'), 'utf8');
 const askJson = readFileSync(join(FIXTURE, 'ask.json'), 'utf8');
 
 describe('parseStatusLine', () => {
-  it('控えの statusLine から、モデル・バージョン・コンテキスト・料金・会話ログを読む', () => {
+  it('控えの statusLine から、モデル・エフォート・バージョン・コンテキスト・料金・会話ログを読む', () => {
     // 料金は、控えを取った実行ごとに違う（バージョンを上げると変わる）ので、控えの値を読む
     const cost = JSON.parse(statusJson).cost.total_cost_usd;
     expect(cost).toBeGreaterThan(0);
     expect(parseStatusLine(statusJson, 123)).toEqual({
       model: { id: 'claude-opus-5-5', name: 'Opus 5.5' },
+      effort: 'medium',
       version: VERIFIED_CLAUDE_CODE_VERSION,
       context: { size: 1_000_000, usedPercent: 0, tokens: 100 },
       rateLimits: null,
@@ -42,7 +43,7 @@ describe('parseStatusLine', () => {
   });
 
   it('項目が欠けていれば null・0 にする。JSON でなければ null', () => {
-    expect(parseStatusLine('{}', 5)).toEqual({ model: null, version: null, context: null, rateLimits: null, costUsd: null, transcriptPath: null, updatedAt: 5 });
+    expect(parseStatusLine('{}', 5)).toEqual({ model: null, effort: null, version: null, context: null, rateLimits: null, costUsd: null, transcriptPath: null, updatedAt: 5 });
     // モデルの表示名が無ければ ID。使った量の内訳が無ければ 0
     const partial = parseStatusLine(JSON.stringify({ model: { id: 'claude-x' }, context_window: { context_window_size: 200_000, used_percentage: 12 } }), 5);
     expect(partial).toMatchObject({ model: { id: 'claude-x', name: 'claude-x' }, context: { size: 200_000, usedPercent: 12, tokens: 0 } });
@@ -51,6 +52,8 @@ describe('parseStatusLine', () => {
     expect(cache?.context?.tokens).toBe(7);
     // 割合の無いコンテキスト・ID の無いモデルは読まない
     expect(parseStatusLine(JSON.stringify({ model: { display_name: 'X' }, context_window: { context_window_size: 10 } }), 5)).toMatchObject({ model: null, context: null });
+    // レベルの無いエフォートは読まない
+    expect(parseStatusLine(JSON.stringify({ effort: {} }), 5)?.effort).toBeNull();
     expect(parseStatusLine('{"model":', 5)).toBeNull();
   });
 });

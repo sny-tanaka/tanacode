@@ -259,6 +259,7 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
 describe('statusLine', () => {
   const info = (transcript: string | null) => ({
     model: { id: 'claude-opus-5-5', name: 'Opus 5.5' },
+    effort: 'high',
     version: '2.1.292',
     context: null,
     rateLimits: null,
@@ -274,6 +275,21 @@ describe('statusLine', () => {
     app.manager.statusLineChanged(id, info(null));
     expect(app.manager.statusLine(id)).toEqual(info(null));
     expect(app.statusLineInfos.get(id)).toEqual(info(null));
+  });
+
+  it('今のモデルとエフォートは、statusLine があればその値、無ければ起動の指定。どちらも無ければ null', async () => {
+    expect(app.manager.currentModel('nope')).toBeNull();
+    expect(app.manager.currentEffort('nope')).toBeNull();
+    const plain = app.create().id;
+    expect([app.manager.currentModel(plain), app.manager.currentEffort(plain)]).toEqual([null, null]);
+    const { id } = app.create({ model: 'sonnet', effort: 'low' });
+    expect([app.manager.currentModel(id), app.manager.currentEffort(id)]).toEqual(['sonnet', 'low']);
+    // /model・/effort で変えたあとは、statusLine の値（--model に渡せるモデル ID）
+    app.manager.statusLineChanged(id, info(null));
+    expect([app.manager.currentModel(id), app.manager.currentEffort(id)]).toEqual(['claude-opus-5-5', 'high']);
+    // statusLine にモデルやエフォートが無ければ、起動の指定
+    app.manager.statusLineChanged(id, { ...info(null), model: null, effort: null });
+    expect([app.manager.currentModel(id), app.manager.currentEffort(id)]).toEqual(['sonnet', 'low']);
   });
 
   it('/clear で会話ログが変わったら、新しい会話ログに乗り換える（会話の ID を記録し直し、チャットを空にする）', async () => {

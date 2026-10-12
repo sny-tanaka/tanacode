@@ -67,6 +67,7 @@ export function userStatusLineCommand(claudeDir: string | null = null): string |
 type Raw = {
   transcript_path?: string;
   model?: { id?: string; display_name?: string };
+  effort?: { level?: string };
   version?: string;
   cost?: { total_cost_usd?: number };
   context_window?: {
@@ -94,6 +95,7 @@ export function parseStatusLine(text: string, updatedAt: number): StatusLineInfo
   const usage = cw?.current_usage;
   return {
     model: raw.model?.id ? { id: raw.model.id, name: raw.model.display_name ?? raw.model.id } : null,
+    effort: typeof raw.effort?.level === 'string' && raw.effort.level ? raw.effort.level : null,
     version: raw.version ?? null,
     context:
       typeof cw?.context_window_size === 'number' && typeof cw.used_percentage === 'number'

@@ -8,6 +8,7 @@ import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
 import {
   canSee,
+  EFFORTS,
   isBusy,
   modeWithin,
   parentMessageText,
@@ -36,6 +37,9 @@ export type SessionsHost = {
   parentOf(id: string): string | null;
   stateOf(id: string): SessionState | null;
   modeOf(id: string): PermissionMode | null;
+  // 今のモデル（--model に渡せる値）とエフォート。分からなければ null
+  currentModel(id: string): string | null;
+  currentEffort(id: string): string | null;
   conversation(id: string): Promise<ChatEvent[]>;
   screen(id: string): ScreenInfo | null;
   create(cwd: string, options: NewSessionOptions, parentId: string | null): string;
@@ -274,14 +278,16 @@ export class SessionsControl {
     if (!PERMISSION_MODES.includes(wanted as PermissionMode)) throw new ToolError(`Unknown permission mode: ${String(wanted)}`);
     const mode = wanted as PermissionMode;
     if (!modeWithin(mode, limit)) throw new ToolError(`Permission mode ${mode} cannot be used because it is more permissive than this session's (${limit}).`);
+    // モデルとエフォートは、省けばこのセッションの今のもの（途中で変えていれば、変えたあとのもの）。分からなければ Claude Code の既定
+    const callerEffort = host.currentEffort(caller.id);
     const options: NewSessionOptions = {
-      model: stringArg(args.model) || null,
-      effort: stringArg(args.effort) || null,
+      model: stringArg(args.model) || host.currentModel(caller.id),
+      effort: stringArg(args.effort) || (callerEffort && EFFORTS.includes(callerEffort) ? callerEffort : null),
       // 登録した設定ファイル（別のアカウントなど）は、親と同じものを使う
       settingsFile: caller.settingsFile,
       mode,
-      // 独立したセッションは、Remote Control から頼まれて始めることがあるので、このセッションの指定に合わせる
-      remoteControl: independent && caller.remoteControl,
+      // Remote Control も、このセッションの指定に合わせる（子も。Remote Control から頼まれて始めたセッションを、そのまま外から操作できるように）
+      remoteControl: caller.remoteControl,
       worktree: args.worktree,
     };
     const parentId = independent ? null : caller.id;
@@ -300,7 +306,10 @@ export class SessionsControl {
       folder: child?.cwd ?? folder,
       worktree: child?.worktree ? { name: child.worktree.name, branch: child.worktree.branch } : null,
       independent,
+      model: options.model,
+      effort: options.effort,
       permission_mode: mode,
+      remote_control: options.remoteControl,
       state: host.stateOf(id),
       note: independent
         ? 'The first instruction will be sent as soon as the session has started. It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.'

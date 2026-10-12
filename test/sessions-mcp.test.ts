@@ -232,6 +232,8 @@ class FakeHost implements SessionsHost {
   sessions: SessionSummary[] = [];
   states = new Map<string, SessionState>();
   modes = new Map<string, PermissionMode>();
+  models = new Map<string, string>();
+  efforts = new Map<string, string>();
   events = new Map<string, ChatEvent[]>();
   screens = new Map<string, ScreenInfo>();
   created: { cwd: string; options: NewSessionOptions; parentId: string | null; worktree: boolean }[] = [];
@@ -276,6 +278,8 @@ class FakeHost implements SessionsHost {
   parentOf = (id: string) => this.sessions.find((s) => s.id === id)?.parentId ?? null;
   stateOf = (id: string) => this.states.get(id) ?? null;
   modeOf = (id: string) => this.modes.get(id) ?? null;
+  currentModel = (id: string) => this.models.get(id) ?? null;
+  currentEffort = (id: string) => this.efforts.get(id) ?? null;
   conversation = async (id: string) => this.events.get(id) ?? [];
   screen = (id: string) => this.screens.get(id) ?? null;
   create = (cwd: string, options: NewSessionOptions, parentId: string | null) => {
@@ -448,9 +452,14 @@ describe('ツールの実行（SessionsControl）', () => {
     host.set(started.session_id, 'idle');
     await new Promise((r) => setTimeout(r, 50));
     expect(host.submitted).toHaveLength(1);
-    // 子として始めるときは、Remote Control を使わない
-    await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true, independent: false });
-    expect(host.created[1]).toMatchObject({ parentId: PARENT, options: { remoteControl: false } });
+    // 子として始めるときも、Remote Control は呼び出し元に合わせる（オンならオン、オフならオフ）
+    expect(jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true, independent: false }))).toMatchObject({ remote_control: true });
+    expect(host.created[1]).toMatchObject({ parentId: PARENT, options: { remoteControl: true } });
+    host.sessions.find((s) => s.id === PARENT)!.remoteControl = false;
+    for (const independent of [false, true]) {
+      expect(jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent }))).toMatchObject({ remote_control: false });
+      expect(host.created.at(-1)).toMatchObject({ parentId: independent ? null : PARENT, options: { remoteControl: false } });
+    }
   });
 
   it('start_session: 始められるのは、このセッションのリポジトリの中か、プロファイルのセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
@@ -936,6 +945,34 @@ describe('ツールの実行（SessionsControl）', () => {
       const started = jsonOf<{ permission_mode: string }>(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, model: ' opus ', effort: ' ' }));
       expect(started.permission_mode).toBe('manual');
       expect(host.created.at(-1)?.options).toMatchObject({ mode: 'manual', model: 'opus', effort: null, worktree: false });
+    });
+
+    it('start_session: モデル・エフォート・権限モードを省くと、呼んだセッションの今のものにする（子も、独立したセッションも）。指定したら、指定を使う', async () => {
+      host.models.set(PARENT, 'claude-sonnet-5-5');
+      host.efforts.set(PARENT, 'high');
+      host.modes.set(PARENT, 'acceptEdits');
+      for (const independent of [false, true]) {
+        const started = jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent }));
+        expect(started).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high', permission_mode: 'acceptEdits' });
+        expect(host.created.at(-1)).toMatchObject({ parentId: independent ? null : PARENT, options: { model: 'claude-sonnet-5-5', effort: 'high', mode: 'acceptEdits' } });
+        // 指定は、呼んだセッションのものより優先する
+        await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent, model: 'haiku', effort: 'low', permission_mode: 'manual' });
+        expect(host.created.at(-1)?.options).toMatchObject({ model: 'haiku', effort: 'low', mode: 'manual' });
+        // 片方だけ指定すれば、もう片方は呼んだセッションのもの
+        await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent, model: 'haiku' });
+        expect(host.created.at(-1)?.options).toMatchObject({ model: 'haiku', effort: 'high', mode: 'acceptEdits' });
+      }
+      // 呼んだセッションが途中で変えていれば、起動する時点のもの
+      host.models.set(PARENT, 'claude-opus-5-5');
+      host.efforts.set(PARENT, 'max');
+      await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false });
+      expect(host.created.at(-1)?.options).toMatchObject({ model: 'claude-opus-5-5', effort: 'max' });
+      // 今の値が分からなければ、Claude Code の既定（null）。--effort に渡せないエフォートも渡さない
+      host.models.delete(PARENT);
+      host.efforts.set(PARENT, 'turbo');
+      const unknown = jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false }));
+      expect(unknown).toMatchObject({ model: null, effort: null });
+      expect(host.created.at(-1)?.options).toMatchObject({ model: null, effort: null });
     });
 
     it('start_session: folder は絶対パスで、あるフォルダだけ', async () => {
