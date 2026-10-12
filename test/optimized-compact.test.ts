@@ -65,8 +65,43 @@ describe('仕上げの頼み（handoffText）', () => {
     expect(text).toContain('Decisions list (kind "decisions")');
     expect(text).toContain('State list (kind "state"; create one if there is none)');
     expect(text).toContain('changes that are not committed or not pushed');
-    expect(text).toContain('what was tried and failed or was abandoned');
-    expect(text).toContain('Do not copy file contents that can simply be read again from disk');
+    expect(text).toContain('do not copy file contents that can simply be read again from disk');
+    expect(text).toContain('do not ask the user anything');
+    expect(text).toContain('Write in the language the user is using');
+    expect(text).toContain('reply with one short line and end your turn');
+  });
+
+  it('「いまの状態」に書くものを、いまの状態・試してやめたこと・場所と手順の別々のカードに分けさせ、正確な値を書かせる', () => {
+    const lines = handoffText().split('\n');
+    const item = (head: string) => lines.find((l) => l.startsWith(head)) ?? '';
+    expect(item('- State list')).toContain('as separate cards, one topic per card');
+    // 再開の文にそのまま入るのは、決定事項と「いまの状態」のカードだけ
+    expect(item('- State list')).toContain('handed to you in full after the reset');
+    expect(item('  - State:')).toContain('what you were about to do next');
+    expect(item('  - Tried:')).toContain('every approach that failed or was abandoned, and why');
+    expect(item('  - Pointers:')).toContain('functions, branches, PR and issue numbers, URLs');
+    expect(item('  - Pointers:')).toContain('exactly as you ran them, with every option');
+    expect(item('  - Pointers:')).toContain('with their exact values');
+    expect(item('- Decisions list')).toContain("Quote the user's own words where the wording matters");
+  });
+
+  it('長さの上限は無いと伝え、長いカードは削らずに分けさせる。ツールの呼び出しは、まとめて少なくさせる', () => {
+    const text = handoffText();
+    expect(text).toContain('There is no length limit');
+    expect(text).toContain('split it into several cards by topic instead of cutting it');
+    expect(text).toContain('Use few tool calls, because every call re-reads this whole conversation');
+    expect(text).toContain('card_add takes many cards at once');
+    expect(text).toContain('Do not write less to save calls');
+  });
+
+  it('分けるよう伝える長さのカードは、再開の文で切られない。その長さのカードが 6 枚あっても、本文がすべて入る', () => {
+    const size = Number(handoffText().match(/more than about ([\d,]+) characters/)![1].replace(',', ''));
+    const cards = Array.from({ length: 6 }, (_, i) => card(i + 1, `話題${i + 1}`, `本文${i + 1} ${'あ'.repeat(size - 10)}`));
+    const text = resumeText({ lists: [list('いまの状態', 'state', cards)], messages: [said('続けて')], tasks: [] });
+    expect(text).not.toContain('(cut');
+    expect(text).not.toContain('body not shown');
+    for (let i = 1; i <= 6; i++) expect(text).toContain(`## #${i} 話題${i}\n本文${i} `);
+    expect(text.length).toBeLessThanOrEqual(RESUME_MAX_CHARS);
   });
 });
 
@@ -159,16 +194,16 @@ describe('再開の文（resumeText）', () => {
     expect(parseCompactMessage(text)?.kind).toBe('resume');
   });
 
-  it('全体は 30,000 文字まで。カードが多いときは、古いカードから題名だけにして、ツールで読ませる', () => {
-    const cards = Array.from({ length: 12 }, (_, i) => card(i + 1, `決定${i + 1}`, `本文${i + 1} ${'か'.repeat(1900)}`));
+  it('全体は 40,000 文字まで。カードが多いときは、古いカードから題名だけにして、ツールで読ませる', () => {
+    const cards = Array.from({ length: 12 }, (_, i) => card(i + 1, `決定${i + 1}`, `本文${i + 1} ${'か'.repeat(2900)}`));
     const text = resumeText({ lists: [list('決定事項', 'decisions', cards)], messages: Array.from({ length: 8 }, (_, i) => said(`発言${i} ${'さ'.repeat(2900)}`)), tasks: [] });
     expect(text.length).toBeLessThanOrEqual(RESUME_MAX_CHARS);
     expect(text).toContain('## #1 決定1\n(body not shown; read it with card_get)');
     expect(text).toContain('## #12 決定12\n本文12 ');
     // 題名は、どのカードも残す
     for (let i = 1; i <= 12; i++) expect(text).toContain(`## #${i} 決定${i}\n`);
-    const long = resumeText({ lists: [list('いまの状態', 'state', [card(1, '長い', 'た'.repeat(3000))])], messages: [], tasks: [] });
-    expect(long).toContain(`${'た'.repeat(2000)}… (cut; read the rest with card_get)`);
+    const long = resumeText({ lists: [list('いまの状態', 'state', [card(1, '長い', 'た'.repeat(5000))])], messages: [], tasks: [] });
+    expect(long).toContain(`${'た'.repeat(4000)}… (cut; read the rest with card_get)`);
   });
 });
 
