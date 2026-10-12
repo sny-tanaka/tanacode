@@ -56,8 +56,6 @@ export class ChecklistControl {
   // セッションごとの、チェックリストのツールを最後に受けた時刻と、人の発言のフックを最後に受けた時刻（ミリ秒）。
   // ターンの終わりのフックが読んだ会話ログが、最後の応答までそろっていなかったときに使う（reminder）
   private readonly usedAt = new Map<string, number>();
-  // セッションごとの、Claude がチェックリストを最後に書き換えた時刻（最適化圧縮が、仕上げで書いたかを確かめる）
-  private readonly wroteAt = new Map<string, number>();
   private readonly promptedAt = new Map<string, number>();
 
   constructor(private readonly deps: Deps) {
@@ -127,7 +125,6 @@ export class ChecklistControl {
     let result: ToolResult;
     try {
       result = textResult(this.run(caller, name, args));
-      if (checklistTool(name)?.kind === 'note') this.wroteAt.set(caller.id, Date.now());
     } catch (error) {
       if (!(error instanceof ChecklistError)) throw error;
       result = textResult(error.message, true);
@@ -141,10 +138,10 @@ export class ChecklistControl {
     return result;
   }
 
-  // その時刻よりあとに、このセッションの Claude がチェックリストを書き換えたか
-  wroteSince(sessionId: string, at: number): boolean {
-    const wrote = this.wroteAt.get(sessionId);
-    return wrote !== undefined && wrote >= at;
+  // その時刻よりあとに、このセッションの Claude がチェックリストのツールを呼んだか（読むだけでも。最適化圧縮が、仕上げで使ったかを確かめる）
+  usedSince(sessionId: string, at: number): boolean {
+    const used = this.usedAt.get(sessionId);
+    return used !== undefined && used >= at;
   }
 
   // --- フック ---

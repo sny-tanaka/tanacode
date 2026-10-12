@@ -443,7 +443,7 @@
       "compactFailure": {
         "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
         "prompted": "Optimized compact was canceled because a message was sent during the wrap-up. The conversation was not cleared",
-        "notWritten": "Optimized compact was canceled because Claude didn’t write to the checklists. The conversation was not cleared",
+        "notUsed": "Optimized compact was canceled because Claude didn’t use the checklists. The conversation was not cleared",
         "interleaved": "Optimized compact was canceled because other work kept starting after the wrap-up. The conversation was not cleared",
         "notCleared": "/clear was sent, but the conversation didn’t switch to a new one. The checklists are up to date",
         "exited": "Optimized compact was canceled because the session ended",

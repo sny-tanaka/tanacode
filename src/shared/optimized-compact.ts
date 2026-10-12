@@ -18,9 +18,9 @@ export const RESUME_TAG = 'tanacode-resume';
 export type CompactPhase = 'finalizing' | 'clearing' | 'resuming' | 'waiting';
 
 // 取りやめた・失敗した理由。interrupted: 仕上げを人が中断した / prompted: 仕上げの間に人が発言した /
-// not-written: Claude がチェックリストに書かなかった / interleaved: 仕上げのあとに別のターンが続いた /
+// not-used: Claude がチェックリストのツールを 1 回も使わなかった / interleaved: 仕上げのあとに別のターンが続いた /
 // not-cleared: /clear を送っても新しい会話にならなかった / exited: セッションが終了した / busy: 仕上げの頼みを送れなかった
-export type CompactFailure = 'interrupted' | 'prompted' | 'not-written' | 'interleaved' | 'not-cleared' | 'exited' | 'busy';
+export type CompactFailure = 'interrupted' | 'prompted' | 'not-used' | 'interleaved' | 'not-cleared' | 'exited' | 'busy';
 
 // 使えない理由。checklist-off: 「Claude にチェックリストを扱わせる」がオフ / no-checklist: このセッションの Claude Code にチェックリストの MCP が足されていない
 export type CompactUnavailable = 'checklist-off' | 'no-checklist';

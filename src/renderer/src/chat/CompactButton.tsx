@@ -18,7 +18,7 @@ const UNAVAILABLE_TEXT = {
 const FAILURE_TEXT = {
   interrupted: 'chat.pane.compactFailure.interrupted',
   prompted: 'chat.pane.compactFailure.prompted',
-  'not-written': 'chat.pane.compactFailure.notWritten',
+  'not-used': 'chat.pane.compactFailure.notUsed',
   interleaved: 'chat.pane.compactFailure.interleaved',
   'not-cleared': 'chat.pane.compactFailure.notCleared',
   exited: 'chat.pane.compactFailure.exited',

@@ -8,7 +8,7 @@ import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compac
 // 最適化圧縮の流れ（main の OptimizedCompact）。仕上げ → /clear → 再開の文、と進むこと・怪しいときは会話を消さずに取りやめること
 
 const ID = 's1';
-const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 60, clearMs: 60, retryMs: 5 };
+const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, pulledBackMs: 30 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // SessionManager の代わり。打ち込まれた文を控え、台本（onSubmit）で会話を進める
@@ -20,6 +20,8 @@ class FakeHost implements CompactHost {
   tasks: CarriedTask[] = [];
   submitted: string[] = [];
   withdrawn = 0;
+  // 仕上げの頼みが、Claude Code の入力欄に出ている
+  draftShown = false;
   // 打ち込みを断る理由（あれば、その回は失敗する）
   refuse: (text: string) => boolean = () => false;
   onSubmit: (text: string) => void = () => {};
@@ -29,6 +31,7 @@ class FakeHost implements CompactHost {
   claudeSessionOf = () => this.claudeSession;
   hasChecklistMcp = () => this.checklistMcp;
   runningTasks = () => this.tasks;
+  compactDraftShown = () => this.draftShown;
   async submitWhenReady(_id: string, text: string): Promise<void> {
     if (this.refuse(text)) throw new Error('busy');
     this.submitted.push(text);
@@ -41,7 +44,7 @@ class FakeHost implements CompactHost {
 
 let host: FakeHost;
 let statuses: CompactStatus[];
-let wrote: boolean;
+let used: boolean;
 let enabled: boolean;
 let lists: Checklist[];
 let compact: OptimizedCompact;
@@ -49,13 +52,13 @@ let compact: OptimizedCompact;
 beforeEach(() => {
   host = new FakeHost();
   statuses = [];
-  wrote = true;
+  used = true;
   enabled = true;
   lists = [];
   compact = new OptimizedCompact({
     host,
     lists: () => lists,
-    wroteSince: () => wrote,
+    usedSince: () => used,
     enabled: () => enabled,
     onChange: (_id, status) => statuses.push(status),
     timings: TIMINGS,
@@ -189,6 +192,28 @@ describe('会話を消さずに取りやめる', () => {
     expect(host.withdrawn).toBe(1);
   });
 
+  it('会話ログに書かれる前に中断して、会話に出ないまま入力欄に戻された。入力欄から消す', async () => {
+    host.onSubmit = () => setTimeout(() => (host.draftShown = true), 5);
+    compact.start(ID);
+    await cancelled('interrupted');
+    expect(host.withdrawn).toBe(1);
+  });
+
+  it('送った直後に、入力欄に一瞬出ているだけなら、中断とみなさない', async () => {
+    script();
+    const submit = host.onSubmit;
+    host.onSubmit = (text) => {
+      if (isHandoff(text)) {
+        host.draftShown = true;
+        setTimeout(() => (host.draftShown = false), 10);
+        // 会話に出るのは、入力欄から消えたあと
+        setTimeout(() => submit(text), 15);
+      } else submit(text);
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+  });
+
   it('仕上げの間に人が発言した（順番待ちの発言も）', async () => {
     script({ afterHandoff: () => host.events.push({ type: 'queue', prompts: ['ちょっと待って'] }) });
     compact.start(ID);
@@ -204,14 +229,14 @@ describe('会話を消さずに取りやめる', () => {
     await cancelled('prompted');
   });
 
-  it('Claude がチェックリストに書かなかった（何も引き継げない）', async () => {
+  it('Claude がチェックリストのツールを 1 回も使わなかった（何も引き継げない）', async () => {
     script();
-    wrote = false;
+    used = false;
     compact.start(ID);
-    await cancelled('not-written');
+    await cancelled('not-used');
   });
 
-  it('仕上げの頼みを送れなかった・送っても会話に出なかった', async () => {
+  it('仕上げの頼みを送れなかった・送っても会話に出なかった（入力欄に残っていれば消す）', async () => {
     host.refuse = isHandoff;
     compact.start(ID);
     await cancelled('busy');
@@ -220,6 +245,7 @@ describe('会話を消さずに取りやめる', () => {
     host.onSubmit = () => {};
     compact.start(ID);
     await cancelled('busy');
+    expect(host.withdrawn).toBe(1);
   });
 
   it('セッションが終了した', async () => {
@@ -230,11 +256,11 @@ describe('会話を消さずに取りやめる', () => {
 
   it('取りやめた理由は、次に始めるまで残す', async () => {
     script();
-    wrote = false;
+    used = false;
     compact.start(ID);
     await finished();
-    expect(compact.status(ID).failure).toBe('not-written');
-    wrote = true;
+    expect(compact.status(ID).failure).toBe('not-used');
+    used = true;
     statuses = [];
     expect(compact.start(ID).failure).toBeNull();
     expect((await finished()).failure).toBeNull();

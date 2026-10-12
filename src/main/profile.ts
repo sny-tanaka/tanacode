@@ -225,7 +225,7 @@ export class Profile {
     this.compact = new OptimizedCompact({
       host: manager,
       lists: (id) => this.checklists.lists(id),
-      wroteSince: (id, at) => checklistControl.wroteSince(id, at),
+      usedSince: (id, at) => checklistControl.usedSince(id, at),
       enabled: () => this.settings.checklistControlEnabled(),
       onChange: (sessionId, status) => send(IpcChannel.CompactChanged, { sessionId, status }),
     });

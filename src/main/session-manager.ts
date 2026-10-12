@@ -143,6 +143,9 @@ type Runtime = {
   submittedAt: number | null;
   // チェックリストの MCP サーバーを足して起動したか（引き継いだ claude は分からないので null）
   checklistMcp: boolean | null;
+  // 打ち込んだ最適化圧縮の文（仕上げの頼み・再開の文。空白を除く）。応答が始まるまで覚えておき、応答の前に中断されて
+  // Claude Code の入力欄に戻ったものを、人のチャットの入力欄に移さない（compactDraft）
+  compactTyped: string | null;
 };
 
 // アプリが開くコマンドのターミナル（worktree の npm install・yarn install など）。終了コードを返す。owner: セッションの id
@@ -799,6 +802,7 @@ export class SessionManager {
       const text = stripControlChars(rawText);
       // 画面の折り返しで空白が変わるので、空白を除いて覚える
       rt.typing = { text: text.replace(/\s/g, ''), at: Date.now() };
+      rt.compactTyped = isCompactMessage(text) ? rt.typing.text : null;
       rt.submittedAt = Date.now();
       for (const path of attachments) {
         process.write(bracketedPaste(stripControlChars(path)));
@@ -886,17 +890,33 @@ export class SessionManager {
     return this.withdrawDraft(id, isParentMessageDraft);
   }
 
-  // 中断で入力欄に戻った、最適化圧縮の仕上げの頼みを消す（取りやめたとき）
-  withdrawCompactDraft(id: string): Promise<void> {
-    return this.withdrawDraft(id, isCompactDraft);
+  // 中断で入力欄に戻った、最適化圧縮の文（仕上げの頼み）が、Claude Code の入力欄に出ているか
+  compactDraftShown(id: string): boolean {
+    const rt = this.runtimes.get(id);
+    return !!rt?.process && rt.screen?.current.state.kind === 'prompt' && compactDraft(rt, rt.screen.current.draft);
   }
 
-  private async withdrawDraft(id: string, matches: (draft: string) => boolean): Promise<void> {
+  // 中断で入力欄に戻った、最適化圧縮の仕上げの頼みを消す（取りやめたとき）。長い文は入力欄に収まらず、見えているのは一部なので、
+  // 入力欄が空になるまで繰り返し消す
+  async withdrawCompactDraft(id: string): Promise<void> {
     const rt = this.runtimes.get(id);
-    for (let i = 0; i < 15 && rt?.process; i++) {
+    if (!rt) return;
+    await this.withdrawDraft(id, (draft) => compactDraft(rt, draft), true);
+    rt.compactTyped = null;
+  }
+
+  // repeat: 消したあとも見張り、まだ残っていれば消し直す（出なくなって少したったら終える）
+  private async withdrawDraft(id: string, matches: (draft: string) => boolean, repeat = false): Promise<void> {
+    const rt = this.runtimes.get(id);
+    // 最後に消した回（まだ消していなければ -1）
+    let clearedAt = -1;
+    for (let i = 0; i < 60 && rt?.process; i++) {
       const draft = rt.screen?.current.draft ?? '';
       if (rt.screen?.current.state.kind === 'prompt' && matches(draft)) {
         rt.process.write('\x15'.repeat(draft.split('\n').length + 1));
+        if (!repeat) return;
+        clearedAt = i;
+      } else if (clearedAt === -1 ? i >= 14 : i - clearedAt >= 5) {
         return;
       }
       await sleep(100);
@@ -1035,6 +1055,7 @@ export class SessionManager {
         pendingSubmits: 0,
         submittedAt: null,
         checklistMcp: null,
+        compactTyped: null,
       };
       this.runtimes.set(id, rt);
     }
@@ -1393,6 +1414,8 @@ export class SessionManager {
         rt.submittedAt = null;
       }
       if (events.some((e) => e.type === 'turn-end')) rt.turnOpen = false;
+      // 応答が始まったら、打ち込んだ最適化圧縮の文は、もう入力欄には戻らない
+      if (events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use')) rt.compactTyped = null;
     }
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
@@ -1508,9 +1531,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// 入力欄に戻った、最適化圧縮の文か。丸ごと貼り付けで送るので、入力欄では貼り付けの目印（[Pasted text #1 +12 lines]）だけになることがある
-function isCompactDraft(draft: string): boolean {
-  return isCompactMessage(draft) || /^\[Pasted text #\d+[^\]]*\]$/.test(draft.trim());
+// 入力欄の文字が、打ち込んだ最適化圧縮の文（応答の前に中断されて戻ったもの）か。
+// 戻るのは本文そのもので、長い文は入力欄に収まらず、画面から読めるのは途中の一部だけ（2.1.296 で確かめた）。
+// そこで、打ち込んだ文の一部かどうかで見る。短い文字は、人の書きかけと取り違えないよう、当てはめない
+const COMPACT_DRAFT_MIN_CHARS = 40;
+
+function compactDraft(rt: Runtime, draft: string): boolean {
+  if (!draft.trim()) return false;
+  if (isCompactMessage(draft)) return true;
+  if (!rt.compactTyped) return false;
+  const typed = draft.replace(/\[Pasted text #\d+[^\]]*\]/g, '').replace(/\s/g, '');
+  return typed === '' || (typed.length >= COMPACT_DRAFT_MIN_CHARS && rt.compactTyped.includes(typed));
 }
 
 // 画面に知らせる ScreenInfo。打ち込んでいる途中の文字（送ったばかりで、まだ Claude Code の入力欄に残っているもの）は、
@@ -1518,7 +1549,8 @@ function isCompactDraft(draft: string): boolean {
 // 貼り付けた文字や画像は入力欄では [Pasted text #1 +6 lines]・[Image #1] の目印になるので、除いて比べる
 function shownScreen(rt: Runtime, info: ScreenInfo): ScreenInfo {
   // 親からの指示（中断で戻ったもの）は、人のチャットの入力欄に移さない（親が止めたら、withdrawParentDraft が消す）
-  if (isParentMessageDraft(info.draft) || isCompactMessage(info.draft)) return { ...info, draft: '' };
+  // 最適化圧縮の文も同じ（取りやめるときに、withdrawCompactDraft が消す）
+  if (isParentMessageDraft(info.draft) || compactDraft(rt, info.draft)) return { ...info, draft: '' };
   const typing = rt.typing;
   if (!typing || !info.draft || Date.now() - typing.at >= TYPING_MS) return info;
   const typed = info.draft.replace(/\[(?:Pasted text #\d+[^\]]*|Image #\d+)\]/g, '').replace(/\s/g, '');

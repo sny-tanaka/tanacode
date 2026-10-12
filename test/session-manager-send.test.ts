@@ -199,32 +199,79 @@ describe('親からの指示', () => {
 });
 
 describe('最適化圧縮の仕上げの頼み', () => {
-  it('中断で入力欄に戻った仕上げの頼み（貼り付けの目印だけになる）は、withdrawCompactDraft で入力欄から消す', async () => {
+  // 仕上げの頼みを打ち込んだあと、応答の前に中断されて、本文の途中の一部が入力欄に戻った（長い文は入力欄に収まらない）
+  const PART = handoffText().split('\n').slice(2, 4).join('\n');
+  async function pulledBack() {
     const { id, pty } = app.create();
     await app.ready(id);
-    const withdrawing = app.manager.withdrawCompactDraft(id);
-    await sleep(150);
-    pty.output(promptWith('[Pasted text #1 +7 lines]'));
-    await withdrawing;
-    expect(pty.writes).toEqual(['\x15\x15']);
+    pty.onWrite = (data) => {
+      if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('[Pasted text #1 +7 lines]')), 5);
+      if (data === '\r') setTimeout(() => pty.output(fixtureScreen('prompt')), 5);
+    };
+    await app.manager.submit(id, handoffText());
+    pty.writes.length = 0;
+    return { id, pty };
+  }
+
+  it('打ってから時間がたっていても、入力欄に戻った本文の一部を、チャットの入力欄に移さない。withdrawCompactDraft で、空になるまで消す', async () => {
+    const { id, pty } = await pulledBack();
+    // 画面から読むと、折り返しで行が変わる
+    pty.output(promptWith(PART.replace(/ /g, (m, i: number) => (i % 60 === 59 ? '\n' : m))));
+    await app.waitFor('入力欄', () => !!app.manager.screen(id)?.draft);
+    expect(app.manager.compactDraftShown(id)).toBe(true);
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+    expect(app.screens.get(id)?.draft).toBe('');
+    // 1 回消すと、隠れていた続きが出てくる。もう 1 回消すと空になる
+    let cleared = 0;
+    pty.onWrite = (data) => {
+      if (!data.startsWith('\x15')) return;
+      cleared += 1;
+      setTimeout(() => pty.output(cleared === 1 ? promptWith(handoffText().split('\n')[5].slice(0, 100)) : fixtureScreen('prompt')), 5);
+    };
+    await app.manager.withdrawCompactDraft(id);
+    expect(cleared).toBe(2);
+    expect(app.manager.screen(id)?.draft).toBe('');
+    expect(app.manager.compactDraftShown(id)).toBe(false);
   });
 
-  it('囲みのまま入力欄に戻ったときは、チャットの入力欄に移さない', async () => {
-    const { id, pty } = app.create();
-    await app.ready(id);
-    const head = handoffText().split('\n')[0];
-    pty.output(promptWith(`${head} tanacode is about to reset`));
+  it('貼り付けの目印だけ・囲みの頭から戻ったときも、同じく隠して消す', async () => {
+    const { id, pty } = await pulledBack();
+    pty.output(promptWith('[Pasted text #1 +7 lines]'));
     await app.waitFor('入力欄', () => !!app.manager.screen(id)?.draft);
     expect(app.manager.screenForView(id)?.draft).toBe('');
+    pty.output(fixtureScreen('prompt'));
+    await app.waitFor('空の入力欄', () => app.manager.screen(id)?.draft === '');
+    pty.output(promptWith(`${handoffText().split('\n')[0]} tanacode is about to reset`));
+    await app.waitFor('入力欄', () => app.manager.screen(id)?.draft.startsWith('<tanacode-handoff>') === true);
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+    pty.onWrite = (data) => {
+      if (data.startsWith('\x15')) setTimeout(() => pty.output(fixtureScreen('prompt')), 5);
+    };
     await app.manager.withdrawCompactDraft(id);
-    expect(pty.writes).toEqual(['\x15\x15']);
+    expect(pty.writes).toHaveLength(1);
   });
 
-  it('人の書きかけは消さない', async () => {
-    const { id, pty } = app.create();
-    await app.ready(id);
-    pty.output(promptWith('書きかけの発言'));
-    await app.waitFor('入力欄', () => app.manager.screen(id)?.draft === '書きかけの発言');
+  it('人の書きかけ（打ち込んだ文に無い文字・短い文字）は、隠さず、消さない', async () => {
+    const { id, pty } = await pulledBack();
+    for (const draft of ['書きかけの発言', 'the']) {
+      pty.output(fixtureScreen('prompt'));
+      await app.waitFor('空の入力欄', () => app.manager.screen(id)?.draft === '');
+      pty.output(promptWith(draft));
+      await app.waitFor('入力欄', () => app.manager.screen(id)?.draft === draft);
+      expect(app.manager.compactDraftShown(id)).toBe(false);
+    }
+    // 打った直後の 5 秒は、打ち込んだ文に含まれる文字を画面に知らせない（送ったばかりの文字を、入力欄に移さないため）。それより長くは隠さない
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+    await app.manager.withdrawCompactDraft(id);
+    expect(pty.writes).toEqual([]);
+  });
+
+  it('応答が始まったあとは、同じ文字が入力欄にあっても人の書きかけとして扱う（消さない）', async () => {
+    const { id, pty } = await pulledBack();
+    app.append(id, line.text('書きました'));
+    pty.output(promptWith(PART.slice(0, 80)));
+    await app.waitFor('入力欄', () => !!app.manager.screen(id)?.draft);
+    await app.waitFor('応答', () => !app.manager.compactDraftShown(id));
     await app.manager.withdrawCompactDraft(id);
     expect(pty.writes).toEqual([]);
   });

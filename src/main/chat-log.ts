@@ -46,9 +46,12 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
       return typed === whole || (pasted !== typed && pasted === `${opening}${closing}`) ? i : null;
     }
     if (event.type === 'user') return event.text.replace(/\s/g, '') === typed ? i : null;
-    // 最適化圧縮の仕上げの頼み・再開の文は、丸ごと貼り付けで送るので、入力欄には貼り付けの目印だけが戻る
+    // 最適化圧縮の仕上げの頼み・再開の文。長い文は入力欄に収まらず、画面から読めるのは途中の一部だけなので、本文の一部かどうかで見る
+    // （貼り付けの目印だけが戻ることもある）
     if (event.type === 'notice' && event.compact) {
-      return typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '') === '' || isCompactMessage(draft) ? i : null;
+      const part = typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '').replace(/<\/?tanacode-(?:handoff|resume)>/g, '');
+      const body = (event.detail ?? '').replace(/\s/g, '');
+      return part === '' || isCompactMessage(draft) || (part.length >= 40 && body.includes(part)) ? i : null;
     }
     if (!BEFORE_RESPONSE.has(event.type)) return null;
   }

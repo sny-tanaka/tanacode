@@ -17,7 +17,7 @@ import type { SessionState } from '@shared/session-tools';
 // 2. 切り替え: /clear を送り、新しい会話になるのを待つ（人の確認は待たない）
 // 3. 再開の文: 新しい会話の最初の発言として送る。仕上げが終わった時点（/clear の前）の会話とリストから組み立てておく
 // 画面を切り替えても・ウィンドウを閉じても進むよう、main で動かす。画面には、段階と、取りやめた理由だけを知らせる。
-// 会話を消すのは戻せないので、少しでも怪しいとき（人が中断した・人が発言した・Claude がリストに書かなかった）は、消さずに取りやめる
+// 会話を消すのは戻せないので、少しでも怪しいとき（人が中断した・人が発言した・Claude がチェックリストを使わなかった）は、消さずに取りやめる
 
 // SessionManager のうち、流れに使うもの
 export type CompactHost = {
@@ -27,6 +27,8 @@ export type CompactHost = {
   claudeSessionOf(id: string): string | null;
   hasChecklistMcp(id: string): boolean | null;
   runningTasks(id: string): CarriedTask[];
+  // 中断で戻った仕上げの頼みが、Claude Code の入力欄に出ているか
+  compactDraftShown(id: string): boolean;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   withdrawCompactDraft(id: string): Promise<void>;
 };
@@ -42,16 +44,20 @@ type Timings = {
   clearMs: number;
   // 再開の文を送れなかったときに、試し直すまでの待ち
   retryMs: number;
+  // 送った仕上げの頼みが、入力欄に出たままのとき、中断で戻されたとみなすまでの時間
+  pulledBackMs: number;
 };
 
-const TIMINGS: Timings = { pollMs: 300, submitMs: 10_000, appearMs: 30_000, clearMs: 20_000, retryMs: 2000 };
+// clearMs: /clear は SessionEnd・SessionStart の hooks を走らせるので、使う人の hooks が遅い・マシンが重いと時間がかかる。
+// 時間切れにすると、会話は消えたのに再開の文を送らないことになる（いちばん避けたい）。待っている間に失うものは無いので、長く待つ
+const TIMINGS: Timings = { pollMs: 300, submitMs: 10_000, appearMs: 30_000, clearMs: 120_000, retryMs: 2000, pulledBackMs: 2000 };
 
 type Deps = {
   host: CompactHost;
   // セッションのチェックリスト
   lists: (id: string) => Checklist[];
-  // その時刻よりあとに、Claude がチェックリストを書き換えたか
-  wroteSince: (id: string, at: number) => boolean;
+  // その時刻よりあとに、Claude がチェックリストのツールを呼んだか（読むだけでも）
+  usedSince: (id: string, at: number) => boolean;
   // メニューの「Claude にチェックリストを扱わせる」
   enabled: () => boolean;
   onChange: (id: string, status: CompactStatus) => void;
@@ -135,12 +141,14 @@ export class OptimizedCompact {
         continue;
       }
       if (finalized !== 'done') {
-        // 応答の前に中断すると、Claude Code は仕上げの頼みを入力欄に戻す。人の入力欄に残さない
-        if (finalized === 'interrupted') await host.withdrawCompactDraft(id);
+        // 応答の前に中断すると、Claude Code は仕上げの頼みを入力欄に戻す。Claude Code の入力欄に残さない（次の発言に混ざる）
+        if (finalized === 'interrupted' || finalized === 'busy') await host.withdrawCompactDraft(id);
         return finalized;
       }
-      // Claude がリストに書いていないのに会話を消すと、何も引き継げない（チェックリストの MCP が足されていないセッションなど）
-      if (!this.deps.wroteSince(id, startedAt)) return 'not-written';
+      // Claude がチェックリストのツールを 1 回も呼ばなかったのに会話を消すと、何も引き継げない（チェックリストの MCP が足されていない
+      // セッション・頼みを無視したとき）。読むだけでもよい: リストがもう最新なら、Claude は読んで「最新です」と答えるだけのことがある
+      // （ふだんから書いているセッション・取りやめた直後の押し直し・仕上げのやり直し）。書き換えを求めると、押しても圧縮できなくなる
+      if (!this.deps.usedSince(id, startedAt)) return 'not-used';
 
       const resume = resumeText({ lists: this.deps.lists(id), messages: carriedMessages(await host.conversation(id)), tasks: host.runningTasks(id) });
       this.setPhase(id, 'clearing');
@@ -183,6 +191,8 @@ export class OptimizedCompact {
     const { host } = this.deps;
     const sentAt = Date.now();
     let seen = false;
+    // 仕上げの頼みが、入力欄に出たままになった時刻
+    let shownSince: number | null = null;
     for (;;) {
       if (!this.alive(id)) return 'exited';
       const events = await host.conversation(id);
@@ -190,6 +200,13 @@ export class OptimizedCompact {
       if (at === -1) {
         // 会話に出たあとで消えたのは、応答の前に中断して、入力欄に戻されたとき
         if (seen) return 'interrupted';
+        // 会話ログに書かれる前に中断されると、会話には出ないまま、入力欄に戻る。送った直後に一瞬出ているのとは、続く長さで見分ける
+        if (host.compactDraftShown(id)) {
+          shownSince ??= Date.now();
+          if (Date.now() - shownSince > this.timings.pulledBackMs) return 'interrupted';
+        } else {
+          shownSince = null;
+        }
         if (Date.now() - sentAt > this.timings.appearMs) return 'busy';
       } else {
         seen = true;

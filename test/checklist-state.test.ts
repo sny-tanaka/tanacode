@@ -180,15 +180,16 @@ describe('MCP のツール', () => {
     );
   });
 
-  it('Claude がチェックリストを書き換えた時刻を覚える（最適化圧縮が、仕上げで書いたかを確かめる）。読んだだけ・断られた書き換えは数えない', async () => {
+  it('Claude がチェックリストのツールを呼んだ時刻を覚える（最適化圧縮が、仕上げで使ったかを確かめる）。読むだけでも数える。オフのときの呼び出しは数えない', async () => {
     const before = Date.now();
-    expect(control.wroteSince(ME, before)).toBe(false);
+    expect(control.usedSince(ME, before)).toBe(false);
     await call('checklist_overview');
-    await call('card_update', { list: '無いリスト', number: 1, title: 'x' });
-    expect(control.wroteSince(ME, before)).toBe(false);
-    await call('card_add', { list: 'いまの状態', list_description: '', list_kind: 'state', cards: [{ title: 'A' }] });
-    expect(control.wroteSince(ME, before)).toBe(true);
-    expect(control.wroteSince(ME, Date.now() + 1000)).toBe(false);
-    expect(control.wroteSince('ほかのセッション', before)).toBe(false);
+    expect(control.usedSince(ME, before)).toBe(true);
+    expect(control.usedSince(ME, Date.now() + 1000)).toBe(false);
+    expect(control.usedSince('ほかのセッション', before)).toBe(false);
+    const off = new ChecklistControl({ store, host: new FakeHost(), enabled: () => false, notifyDelayMs: 10 });
+    await off.handle(ME, 'checklist_overview', {});
+    expect(off.usedSince(ME, before)).toBe(false);
+    off.dispose();
   });
 });
