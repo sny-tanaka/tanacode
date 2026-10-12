@@ -128,6 +128,7 @@ describe('StatusLineWatcher', () => {
   let watcher: StatusLineWatcher | null = null;
   let infos: { sessionId: string; info: StatusLineInfo }[];
   let asks: { sessionId: string; input: unknown }[];
+  let permissions: { sessionId: string; request: unknown; at: number }[];
 
   beforeEach(() => {
     dir = join(mkdtempSync(join(tmpdir(), 'tanacode-statusline-')), 'statusline');
@@ -137,7 +138,9 @@ describe('StatusLineWatcher', () => {
       dir,
       (sessionId, info) => infos.push({ sessionId, info }),
       (sessionId, input) => asks.push({ sessionId, input }),
+      (sessionId, request, at) => permissions.push({ sessionId, request, at }),
     );
+    permissions = [];
   });
 
   afterEach(() => {
@@ -189,6 +192,25 @@ describe('StatusLineWatcher', () => {
     expect(asks).toEqual([{ sessionId: 's1', input: JSON.parse(askJson).tool_input }]);
     // statusLine のファイルとしては読まない
     expect(infos).toEqual([]);
+  });
+
+  it('許可の確認のフックが書いた入力を読み、書かれた時刻と一緒に渡す。書きかけ（壊れた JSON）は渡さない', async () => {
+    await live(watcher!);
+    expect(watcher!.permissionFileFor('s1')).toBe(join(dir, 's1.permission.json'));
+    writeFileSync(watcher!.permissionFileFor('s1'), '{"tool_name":');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(permissions).toEqual([]);
+    const request = { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'mkdir out' } };
+    const before = Date.now();
+    writeFileSync(watcher!.permissionFileFor('s1'), JSON.stringify(request));
+    await expect.poll(() => permissions.length).toBe(1);
+    expect(permissions[0]).toMatchObject({ sessionId: 's1', request });
+    // 時刻は、読んだ時刻ではなく、ファイルが書かれた時刻
+    expect(permissions[0].at).toBeGreaterThan(before - 2000);
+    expect(permissions[0].at).toBeLessThanOrEqual(Date.now());
+    // statusLine・質問のファイルとしては読まない
+    expect(infos).toEqual([]);
+    expect(asks).toEqual([]);
   });
 
   it('質問のファイルが続けて書かれたら、読むのは最後の 1 回だけ', async () => {

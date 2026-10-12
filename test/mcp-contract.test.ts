@@ -195,6 +195,7 @@ function fakeHost(cwd: string): SessionsHost {
     askedQuestions: () => null,
     chooseIf: async () => false,
     watchState: () => () => {},
+    pendingPermission: () => null,
     subagents: () => [],
     bashTasks: () => [],
     workflows: () => [],

@@ -8,7 +8,7 @@ import { bridgeUrlOf, isHumanPrompt, isTranscriptEntry, promptDisplayText, toCha
 import { bracketedPaste, promptKeys, stripControlChars } from '@shared/prompt-keys';
 import { t } from '@shared/i18n';
 import { isCompactMessage, type CarriedTask } from '@shared/optimized-compact';
-import { isParentMessageDraft, modeWithin, weakerMode, type SessionState } from '@shared/session-tools';
+import { isParentMessageDraft, modeWithin, weakerMode, type PermissionRequest, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
   ChatBatch,
@@ -101,6 +101,11 @@ type Runtime = {
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   background: number;
+  // 許可の確認を出す直前に、フックが書いた入力（親の Claude が子の許可の確認に答えるときに読む。pendingPermission）
+  permission: PermissionRequest | null;
+  // 許可の確認のメニューが出続けている間の、出はじめの時刻（出ていなければ null）と、その前に出ていたメニューの出はじめの時刻
+  permissionSince: number | null;
+  permissionBefore: number;
   // 今回の起動で入力を受け付けられるようになった（ready を配信した）
   ready: boolean;
   // 今回の起動で --permission-mode に渡したモード（画面からモードを読めるまでの間、起動し直すときに使う）
@@ -528,6 +533,27 @@ export class SessionManager {
     if (asking) this.browserAsks.add(id);
     else this.browserAsks.delete(id);
     this.emitSessions();
+  }
+
+  // 許可の確認を出す直前に、フックがそのツールの名前と入力をファイルに書いた
+  permissionRequested(id: string, raw: unknown, at: number): void {
+    const rt = this.runtimes.get(id);
+    const request = raw as { tool_name?: unknown; tool_input?: unknown; agent_type?: unknown; agent_id?: unknown } | null;
+    if (!rt || !request || typeof request.tool_name !== 'string' || !request.tool_input || typeof request.tool_input !== 'object') return;
+    const agent = typeof request.agent_type === 'string' ? request.agent_type : typeof request.agent_id === 'string' ? request.agent_id : null;
+    // ファイルの変化は、1 回の書き込みで何度か知らされることがある。同じ書き込み（同じ時刻）は数え直さない
+    if (rt.permission?.at === at) return;
+    rt.permission = { seq: (rt.permission?.seq ?? 0) + 1, at, tool: request.tool_name, input: request.tool_input as Record<string, unknown>, agent };
+    this.changed(id);
+  }
+
+  // 今出ている許可の確認の、ツールの名前と入力の全文。フックの入力が、今の確認のものと言えるときだけ返す:
+  // 許可の確認のメニューが出ていて、入力が書かれたのが、1 つ前に出ていたメニューの出はじめよりあと
+  // （前の確認の入力が残っているだけなら、その確認のメニューが出るより前に書かれている）
+  pendingPermission(id: string): PermissionRequest | null {
+    const rt = this.runtimes.get(id);
+    if (!rt?.process || !rt.permission || rt.permissionSince === null) return null;
+    return rt.permission.at > rt.permissionBefore ? rt.permission : null;
   }
 
   // AskUserQuestion を出す直前に、フックがその入力をファイルに書いた（説明・プレビューを質問のカードに出すため）
@@ -1035,6 +1061,9 @@ export class SessionManager {
         screen: null,
         attention: null,
         background: 0,
+        permission: null,
+        permissionSince: null,
+        permissionBefore: 0,
         ready: false,
         startMode: null,
         knownMode: null,
@@ -1346,6 +1375,12 @@ export class SessionManager {
     if (info.state.kind === 'prompt') this.reconcileRemote(id);
     if (info.state.kind === 'prompt' && rt.turnOpen && screen.currentActivity === null) this.withdrawPulledBack(id, rt, info.draft);
     const attention = info.state.kind === 'menu' ? info.state.menu.kind : info.state.kind === 'unknown' ? 'other' : null;
+    // 許可の確認のメニューの出はじめを覚える（pendingPermission が、フックの入力が今の確認のものかを見分ける）
+    if (attention === 'permission' && rt.permissionSince === null) rt.permissionSince = Date.now();
+    if (attention !== 'permission' && rt.permissionSince !== null) {
+      rt.permissionBefore = rt.permissionSince;
+      rt.permissionSince = null;
+    }
     if (attention === rt.attention) return;
     const before = rt.attention;
     rt.attention = attention;

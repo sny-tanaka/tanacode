@@ -18,6 +18,9 @@ import { MockApi, type Block } from './mock-api';
 // - 読むだけのツールと、子への指示・質問への回答・役目を終えた子の片付けは、許可の確認なしに通る / 子の起動と中断は、許可の確認が出る
 // - 子セッションの起動は、bypassPermissions でも許可の確認が出る（フックが ask を返す）
 // - 子が出した AskUserQuestion に、親（SessionsControl の answer_question）が答えられる
+// - 子が出した許可の確認に、親（SessionsControl の answer_permission）が答えられる。アプリが足した PermissionRequest のフックが書いた、
+//   ツールの入力の全文を読める。許すと動き、許可は覚えない（次の確認が出る）。断ると動かず、理由が親からの指示として届く。
+//   歯止め（ブランチを消す操作）の確認にも答えられる。親が読んだあとで別の確認に変わっていたら、答えない
 // - 役目を終えた worktree の子を、親（SessionsControl の end_session）が片付けられる。作業中の子は断り、
 //   裏のタスクの完了待ちの子は、Claude Code と一緒に裏の Bash も止めて、アーカイブし、worktree を消す（未追跡のファイルは控えに残す）
 // - 親からの指示（囲み＋複数行の本文の貼り付け）は、会話ログから「親セッションからの指示」として読める。子の知らせは「Claude への知らせ」
@@ -45,6 +48,10 @@ const SECOND_QUESTION: AskQuestion = {
   ],
 };
 const BYPASS = 'バイパスのモードで扱ってください';
+const PERMIT = '許可の確認の確かめをしてください';
+// 画面に収まらない長さのコマンド（全文を読めるかを見る）
+const LONG_COMMAND = `echo ${'x'.repeat(600)} > /dev/null && mkdir made-1`;
+const DENY_REASON = 'made-2 は作らずに、次へ進んでください';
 const END = '裏でサーバーを動かしてください';
 // 裏で動かし続ける Bash（ほかのテストの sleep と見分けられる秒数にする）
 const END_COMMAND = 'sleep 7411';
@@ -124,6 +131,19 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
           [{ type: 'tool_use', id: 'toolu_child_ask_1', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }],
           [{ type: 'tool_use', id: 'toolu_child_ask_2', name: 'AskUserQuestion', input: { questions: [SECOND_QUESTION] } }],
           say('A 案で、テストも書きます'),
+        ],
+      },
+      {
+        match: PERMIT,
+        delayMs: 300,
+        steps: [
+          [{ type: 'tool_use', id: 'toolu_pm1', name: 'Bash', input: { command: LONG_COMMAND, description: '一つめ' } }],
+          [{ type: 'tool_use', id: 'toolu_pm2', name: 'Bash', input: { command: 'mkdir made-2', description: '二つめ' } }],
+          // 断ったあと、親からの理由が届いてからの続き
+          [{ type: 'tool_use', id: 'toolu_pm3', name: 'Bash', input: { command: 'git branch -D no-such-branch', description: 'ブランチを消す' } }],
+          [{ type: 'tool_use', id: 'toolu_pm4', name: 'Bash', input: { command: 'mkdir made-4', description: '四つめ' } }],
+          [{ type: 'tool_use', id: 'toolu_pm5', name: 'Bash', input: { command: 'mkdir made-5', description: '五つめ' } }],
+          say('許可の確かめを終えました'),
         ],
       },
       {
@@ -299,6 +319,95 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       expect((JSON.parse(textOf(second)) as { next_question?: unknown }).next_question).toBeUndefined();
       await child.waitFor('子の返事', replied(child, 'A 案で、テストも書きます'));
       expect(child.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_child_ask_2')).toMatchObject({ answers: [{ question: SECOND_QUESTION.question, answer: '書く' }] });
+    });
+  });
+
+  describe('子の許可の確認に親が答える', () => {
+    let child: ClaudeRun;
+    let control: SessionsControl;
+    const parentId = randomUUID();
+    type View = { id: string; tool?: string; input?: { command?: string }; context: string[]; can_allow: boolean; cannot_allow_reason?: string; can_deny: boolean };
+    const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
+    const answer = (args: Record<string, unknown>) => control.handle(parentId, 'answer_permission', { session_id: child.sessionId, ...args });
+    // 許可の確認が出て、フックの入力を受け取り、command の確認として読めるまで待つ
+    const prompt = async (command: string): Promise<View> => {
+      await child.waitFor(`許可の確認（${command.slice(0, 20)}）`, (info) => (info.state.kind === 'menu' && info.state.menu.kind === 'permission' ? info.state.menu : null));
+      for (let i = 0; i < 100; i++) {
+        const got = JSON.parse(textOf(await control.handle(parentId, 'get_session', { session_id: child.sessionId }))) as { permission?: View };
+        if (got.permission?.input?.command === command) return got.permission;
+        await sleep(100);
+      }
+      throw new Error(`許可の確認の入力を読めませんでした: ${command.slice(0, 40)}\n${child.dump()}`);
+    };
+    const done = (toolUseId: string) => () => resultOf(child, toolUseId);
+
+    beforeAll(async () => {
+      child = await open();
+      // 親の記録を足し、子にする（親の Claude Code は動かさない。ツールは SessionsControl に直に頼む）
+      const now = Date.now();
+      child.manager['store'].add({ id: parentId, claudeSessionId: randomUUID(), cwd: child.cwd, title: '取りまとめ', titlePriority: 4, archived: false, createdAt: now, updatedAt: now });
+      child.manager['store'].update(child.sessionId!, { parentId });
+      // 親は動かしていないので、親の権限モードだけ auto と答えさせる（manual・plan の親は許せない）
+      const manager = child.manager;
+      const host = new Proxy(manager, {
+        get: (target, key) => (key === 'modeOf' ? (id: string) => (id === parentId ? 'auto' : target.modeOf(id)) : Reflect.get(target, key, target)),
+      });
+      control = new SessionsControl({ host, enabled: () => true, archive: (id, options) => manager.archive(id, options), home: child.home, notifyDelayMs: 10 });
+    });
+
+    afterAll(() => control?.dispose());
+
+    it('ツールの入力の全文を読んで許すと、子が動く。許可は覚えないので、次の確認が出る', async () => {
+      await child.send(PERMIT);
+      const permission = await prompt(LONG_COMMAND);
+      // 画面の文は途中までだが、フックの入力は全文
+      expect(permission).toMatchObject({ tool: 'Bash', can_allow: true, can_deny: true });
+      expect(permission.input?.command).toBe(LONG_COMMAND);
+      const result = await answer({ permission_id: permission.id, decision: 'allow' });
+      expect(result.isError, textOf(result)).toBeUndefined();
+      await child.waitFor('一つめの結果', done('toolu_pm1'));
+      expect(existsSync(join(child.cwd, 'made-1'))).toBe(true);
+      // 「次から聞かない」を選んでいれば、同じ mkdir の確認は出ない
+      const next = await prompt('mkdir made-2');
+      expect(next.id).not.toBe(permission.id);
+    });
+
+    it('断ると子は動かず、理由が親からの指示として届いて、子が続きを始める', async () => {
+      const permission = await prompt('mkdir made-2');
+      const result = await answer({ permission_id: permission.id, decision: 'deny', reason: DENY_REASON });
+      expect(result.isError, textOf(result)).toBeUndefined();
+      // 理由は、子の手が空いてから届く。届くと、子は次の操作（歯止めの確認が出る）へ進む
+      await child.waitFor('親からの理由', () => child.chatEvents.some((e) => e.type === 'user' && e.parent === parentId && e.text.includes(DENY_REASON)), 30_000);
+      expect(existsSync(join(child.cwd, 'made-2'))).toBe(false);
+    });
+
+    it('歯止め（ブランチを消す操作）の確認にも答えられる。選択肢は Yes と No だけ', async () => {
+      const permission = await prompt('git branch -D no-such-branch');
+      expect(permission.can_allow).toBe(true);
+      expect(permission.context.join('\n')).toContain('tanacode が確認を求めています');
+      const result = await answer({ permission_id: permission.id, decision: 'allow' });
+      expect(result.isError, textOf(result)).toBeUndefined();
+      await child.waitFor('ブランチを消す操作の結果', done('toolu_pm3'));
+    });
+
+    it('親が読んだあとで人が答えて、別の確認に変わっていたら、答えない', async () => {
+      const first = await prompt('mkdir made-4');
+      // 人が先に答える
+      const menu = await child.waitFor('四つめの確認', menuOf('permission'));
+      await child.answer(menu.title, menu.options[0].id);
+      await child.waitFor('四つめの結果', done('toolu_pm4'));
+      const second = await prompt('mkdir made-5');
+      // 見出しも選択肢も同じ別の確認に、前の ID では答えられない
+      const stale = await answer({ permission_id: first.id, decision: 'allow' });
+      expect(stale.isError).toBe(true);
+      expect(textOf(stale)).toContain('not the one you read');
+      expect(existsSync(join(child.cwd, 'made-5'))).toBe(false);
+      expect(child.screen.current.state.kind).toBe('menu');
+      // 読み直した ID なら答えられる
+      const result = await answer({ permission_id: second.id, decision: 'allow' });
+      expect(result.isError, textOf(result)).toBeUndefined();
+      await child.waitFor('返事', replied(child, '許可の確かめを終えました'));
+      expect(existsSync(join(child.cwd, 'made-5'))).toBe(true);
     });
   });
 

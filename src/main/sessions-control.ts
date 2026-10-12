@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
@@ -20,6 +21,7 @@ import {
   SESSION_STATE_LABEL,
   sessionEventText,
   sessionTool,
+  type PermissionRequest,
   type SessionState,
 } from '@shared/session-tools';
 import { branchBase, branchFiles, git, repoInfo } from './git';
@@ -30,7 +32,9 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // Claude による、ほかのセッションの扱い（MCP サーバー tanacode-sessions のツールの実行）。中継からの呼び出しを、ソケットで受けて答える。
 // 呼び出し元のセッションは中継の env で渡ってくるので、親子の関係や見えるセッションは、アプリの記録（SessionSummary.parentId）で判断する。
 // 読むだけのツールは、同じリポジトリのセッションと親子・兄弟だけを見せる（別のリポジトリの会話は読ませない）。
-// 指示・中断・質問への答えは、自分の子セッションにだけ。許可の確認には答えさせない（親を通じて、権限を広げられないように）。
+// 指示・中断・質問への答え・許可の確認への答えは、自分の子セッションにだけ。
+// 許可の確認（answer_permission）は、「今回だけ許す」と「断る」だけ。許せるのは、親が読んだ確認（permission_id）がそのまま出ていて、
+// ツールの入力の全文を親に渡せていて、親の権限モードが acceptEdits 以上のときだけ（manual・plan の親は、断ることだけ）。
 // start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ。
 // end_session は、役目を終えた自分の子を片付ける（アーカイブして、worktree も消す）。画面からのアーカイブと同じ処理を通す
 
@@ -57,6 +61,8 @@ export type SessionsHost = {
   // expect を満たすメニューのあいだだけ選ぶ。押せたら true
   chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean>;
   watchState(listener: (id: string) => void): () => void;
+  // 今出ている許可の確認の、ツールの名前と入力の全文（フックが書いたもの。今の確認のものと言えなければ null）
+  pendingPermission(id: string): PermissionRequest | null;
   // バックグラウンドで動かしたもの（終わったものも入っている）。end_session で、Claude Code と一緒に止まるものを伝えるために読む
   subagents(id: string): SubagentRun[];
   bashTasks(id: string): BashTask[];
@@ -93,6 +99,10 @@ const MAX_UNTRACKED_FILES = 100;
 const MAX_UNTRACKED_BYTES = 256 * 1024;
 // 1 回の結果の文字数の上限（親のコンテキストを食いつぶさないため）
 const MAX_RESULT_CHARS = 60_000;
+// 許可の確認で、親に渡すツールの入力（JSON）の文字数の上限。超えるものは全文を渡せないので、親には許させない
+const MAX_PERMISSION_INPUT_CHARS = 30_000;
+// 親が子の許可の確認を許せる、親の権限モード（manual・plan の親は、自分の操作も人が毎回許すので、子の操作も許せない）
+const MODES_ALLOWING_PERMISSION = new Set<PermissionMode>(['acceptEdits', 'auto', 'bypassPermissions']);
 const WAIT_DEFAULT_SECONDS = 300;
 // list_sessions で返す、セッションを始められるフォルダの数の上限
 const MAX_START_FOLDERS = 30;
@@ -114,7 +124,7 @@ const END_REFUSAL: Partial<Record<SessionState, string>> = {
   question:
     'is waiting for an answer to a question, so its work is not finished and it was not ended. Answer the question with answer_question (get_session shows it) and let it finish, or ask the user whether to end it.',
   permission:
-    'is waiting for the user to answer a permission prompt, so its work is not finished and it was not ended. Only the user can answer permission prompts: tell the user, and call end_session again once the child is idle.',
+    'is waiting for an answer to a permission prompt, so its work is not finished and it was not ended. Answer the prompt with answer_permission (get_session shows it) or ask the user, and call end_session again once the child is idle.',
   waiting:
     'is waiting for the user to act in its terminal, so it was not ended. Only the user can do that: tell the user, and call end_session again once the child is idle.',
 };
@@ -174,6 +184,8 @@ export class SessionsControl {
           return await this.sendMessage(caller, args);
         case 'answer_question':
           return await this.answerQuestion(caller, args);
+        case 'answer_permission':
+          return await this.answerPermission(caller, args);
         case 'stop_session':
           return await this.stopSession(caller, args);
         case 'end_session':
@@ -360,7 +372,7 @@ export class SessionsControl {
     const who = `"${nameOf(child)}"`;
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
     if (state === 'question') throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
-    if (state === 'permission') throw new ToolError(`${who} is waiting for permission. Only the user can answer permission prompts.`);
+    if (state === 'permission') throw new ToolError(`${who} is waiting for an answer to a permission prompt. Read it with get_session and answer it with answer_permission, or ask the user.`);
     if (state === 'waiting') throw new ToolError(`${who} is waiting for an operation in its terminal (the user needs to handle it).`);
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ
@@ -396,7 +408,7 @@ export class SessionsControl {
     };
     const menu = current();
     // 許可の確認には答えさせない（人だけが答える）
-    if (menu?.kind === 'permission') throw new ToolError(`"${nameOf(child)}" is showing a permission prompt. Only the user can answer permission prompts.`);
+    if (menu?.kind === 'permission') throw new ToolError(`"${nameOf(child)}" is showing a permission prompt, not a question. Answer it with answer_permission (get_session shows it).`);
     if (menu?.kind !== 'question') throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
     // 質問と読めても、AskUserQuestion で出した質問でなければ答えない（コマンドの文字に ☐ があると、許可の確認が質問に見える）
     if (!isAskedQuestion(menu, host.askedQuestions(child.id))) {
@@ -468,6 +480,72 @@ export class SessionsControl {
       if (Date.now() >= deadline) return null;
       await sleep(Math.min(200, Math.max(1, limit / 5)));
     }
+  }
+
+  // 子が出している許可の確認に、親が答える。選ぶのは「今回だけ許す」（Yes）か「断る」（No）だけで、
+  // 許可を覚えさせる選択肢・権限モードを変える選択肢は選ばない（permissionOf が、その 2 つの選択肢だけを見分ける）。
+  // 答えるのは、親が get_session で読んだ確認（permission_id）が、そのまま出ているときだけ。キーを送る直前にも確かめ直す
+  private async answerPermission(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
+    const { host } = this.deps;
+    const child = this.resolve(caller, args.session_id, true);
+    const who = `"${nameOf(child)}"`;
+    const id = stringArg(args.permission_id);
+    if (!id) throw new ToolError('Pass permission_id (permission.id from get_session) to say which permission prompt you are answering.');
+    if (args.decision !== 'allow' && args.decision !== 'deny') throw new ToolError('Pass decision as "allow" or "deny".');
+    const allow = args.decision === 'allow';
+    // 理由は子の入力欄に打つので、キー操作になる文字（ESC など）を除く
+    const reason = stripControlChars(stringArg(args.reason)).trim();
+    if (allow && reason) throw new ToolError('reason is only for decision "deny". To allow with a condition, allow it and then instruct the child with send_message.');
+    const current = async () => {
+      const screen = host.screen(child.id);
+      const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
+      return menu?.kind === 'permission' ? permissionOf(menu, host.pendingPermission(child.id), await host.conversation(child.id)) : null;
+    };
+    const shown = await current();
+    if (!shown) throw new ToolError(`${who} is not showing a permission prompt that can be answered here (the user answered it first, or it is another kind of screen). Check with get_session.`);
+    const changed = () => new ToolError('The permission prompt showing now is not the one you read (the user answered it, or the child moved on to another prompt). Nothing was answered. Read it again with get_session.');
+    if (shown.id !== id) throw changed();
+    if (allow) {
+      // 親が自分の操作を人に毎回許してもらうモードなら、子の操作も親には許させない（子を通じて、人の確認を省かせない）
+      const mode = host.modeOf(caller.id) ?? 'manual';
+      if (!MODES_ALLOWING_PERMISSION.has(mode)) {
+        throw new ToolError(`This session is in ${mode} mode, so it cannot allow a child's permission prompts (it can only deny them). Ask the user to answer it: show them exactly what the child wants to run.`);
+      }
+      if (shown.problem) throw new ToolError(`Cannot allow this prompt: ${shown.problem} Ask the user to answer it in the child session (you can still deny it).`);
+    }
+    const optionId = allow ? shown.allowOption : shown.denyOption;
+    if (!optionId) throw new ToolError(`Could not tell which option ${allow ? 'allows this once' : 'denies it'} (the options are: ${shown.labels.map((l) => `"${l}"`).join(', ')}). Nothing was answered. Ask the user to answer it.`);
+    // キーを送る直前に、同じ確認が出ているか確かめる（別の確認にすり替わっていたら、何も押さない）。
+    // 会話は先に読んでおく（expect は同期で確かめるため）
+    const events = await host.conversation(child.id);
+    const same = (menu: Menu) => menu.kind === 'permission' && permissionOf(menu, host.pendingPermission(child.id), events).id === id;
+    if (!(await host.chooseIf(child.id, { optionId, key: 'enter' }, same))) throw changed();
+    // 答えが受け付けられて、確認が閉じた（次の確認に進んだ）のを確かめる
+    let next = await current();
+    for (let i = 0; i < 20 && next?.id === id; i++) {
+      await sleep(100);
+      next = await current();
+    }
+    if (next?.id === id) throw new ToolError('Sent the answer, but the permission prompt did not close. Check with get_session.');
+    this.observe(caller.id, child.id);
+    // 断った理由は、子の手が空いてから、親からの指示として送る（確認の画面には文字を打たない）。待たずに返す
+    if (!allow && reason) {
+      const what = shown.view.tool ? ` to use ${String(shown.view.tool)}` : '';
+      const text = `The parent session denied your permission request${what}. Do not retry the same operation. Reason: ${reason}`;
+      void host.submitWhenReady(child.id, parentMessageText(caller.id, text), SEND_TIMEOUT_MS).catch((error: unknown) => console.error('子セッションに断った理由を送れませんでした', error));
+    }
+    return json({
+      session_id: child.id,
+      answered: true,
+      decision: allow ? 'allow' : 'deny',
+      state: host.stateOf(child.id),
+      note: allow
+        ? 'Allowed this once. Nothing was remembered: the same operation will ask again.'
+        : reason
+          ? 'Denied. The reason will be sent to the child as an instruction as soon as it is idle.'
+          : 'Denied. The child stops this operation and waits for an instruction: tell it what to do instead with send_message.',
+      next_permission: next ? next.view : undefined,
+    });
   }
 
   private async stopSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
@@ -708,7 +786,7 @@ export class SessionsControl {
         : null,
       last_response: response ? clip(response, 4000) : null,
       question: base.state === 'question' && menu?.kind === 'question' ? questionOf(menu) : undefined,
-      permission: base.state === 'permission' && menu?.kind === 'permission' ? { title: menu.title, context: menu.context.slice(0, 12) } : undefined,
+      permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), events).view : undefined,
     };
   }
 
@@ -779,6 +857,91 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   if (state === 'waiting') return t('tools.notice.childWaiting', params);
   if (state === 'exited') return t('tools.notice.childExited', params);
   return t('tools.notice.childDone', params);
+}
+
+// 許可の確認の選択肢のうち、「今回だけ許す」と「断る」。名前がちょうど Yes・No のものだけ（「Yes, and don't ask again …」のように
+// 許可を覚えさせるもの・権限モードを変えるものは、名前が Yes で終わらないので選ばれない）。断るほうは「No, and tell Claude …」の形も。
+// どちらも、ちょうど 1 つのときだけ決める（見分けられないメニューには答えない）
+function permissionOptions(menu: Menu): { allow: string | null; deny: string | null } {
+  const one = (match: (label: string) => boolean) => {
+    const found = menu.options.filter((o) => !o.textInput && match(normalizeText(o.label)));
+    return found.length === 1 ? found[0].id : null;
+  };
+  return { allow: one((label) => /^yes$/i.test(label)), deny: one((label) => /^no$/i.test(label) || /^no, /i.test(label)) };
+}
+
+// 画面の確認が、フックの入力と同じものを指しているか（画面に出ている範囲で確かめる）。Bash はコマンドのはじめか終わりが、
+// ファイルを書き換えるツールはファイルの名前が、画面に出ている。ほかのツールは、画面からは確かめない
+function shownOnScreen(menu: Menu, request: PermissionRequest): boolean {
+  const squash = (text: string) => text.replace(/\s+/g, '');
+  const screen = squash([menu.title, ...menu.context].join(' '));
+  const { input } = request;
+  if (request.tool === 'Bash' && typeof input.command === 'string') {
+    const command = squash(input.command);
+    return command !== '' && (screen.includes(command.slice(0, 40)) || screen.includes(command.slice(-40)));
+  }
+  const file = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : null;
+  if (file) return screen.includes(squash(basename(file)));
+  return true;
+}
+
+// 会話に、まだ結果の出ていない同じツールの呼び出しがあるか（答え終えた確認の入力が残っているだけでないことを確かめる）。
+// サブエージェントの中の呼び出しは、この会話には出ないので確かめられない
+function pendingInConversation(events: ChatEvent[], request: PermissionRequest): boolean {
+  const done = new Set<string>();
+  for (const e of events) if (e.type === 'tool-result') done.add(e.id);
+  const { input } = request;
+  const file = typeof input.file_path === 'string' ? input.file_path : null;
+  const head = (request.tool === 'Bash' && typeof input.command === 'string' ? input.command : JSON.stringify(input, null, 2)).slice(0, 200);
+  return events.some((e) => e.type === 'tool-use' && !done.has(e.id) && e.name === request.tool && (file ? e.filePath === file : e.input.includes(head)));
+}
+
+// 今出ている許可の確認を、親に渡す形にする。
+// id: この確認の目印（メニューの文と、フックの入力と、受け取った順番から作る。違う確認は、見た目が同じでも違う ID になる）。
+// 選択肢の名前は入れない（カーソルを動かすと、折り返した名前の読み取りが変わることがあり、選んでいる途中で別の確認に見えてしまう）。
+// problem: 親に許させない理由（全文を渡せない・今の確認のものと確かめられない）。あっても、断ることはできる
+function permissionOf(
+  menu: Menu,
+  request: PermissionRequest | null,
+  events: ChatEvent[],
+): { id: string; view: Record<string, unknown>; problem: string | null; allowOption: string | null; denyOption: string | null; labels: string[] } {
+  const options = permissionOptions(menu);
+  const labels = menu.options.map((o) => o.label);
+  const full = request ? JSON.stringify(request.input, null, 2) : '';
+  let problem: string | null = null;
+  if (!request) problem = 'tanacode could not capture what this prompt asks to run, so you cannot read all of it.';
+  else if (!shownOnScreen(menu, request)) problem = 'the prompt on the screen does not match the tool input tanacode captured, so it may be about something else.';
+  else if (request.agent === null && !pendingInConversation(events, request)) problem = "the tool input tanacode captured is not a pending tool call in the child's conversation, so it may belong to an earlier prompt.";
+  else if (full.length > MAX_PERMISSION_INPUT_CHARS) problem = `the tool input is too long to show in full (${full.length} characters), so you cannot read all of it.`;
+  else if (!options.allow) problem = 'tanacode could not tell which option allows it only this once.';
+  // 画面と合わない・前の確認のものかもしれない入力は、親に見せない（別の操作を読んで判断させないため）
+  const trusted = request !== null && (problem === null || full.length > MAX_PERMISSION_INPUT_CHARS || !options.allow) ? request : null;
+  const id = createHash('sha256')
+    .update(JSON.stringify([menu.title, menu.context, request ? [request.seq, request.tool, full] : null]))
+    .digest('hex')
+    .slice(0, 12);
+  return {
+    id,
+    problem,
+    allowOption: options.allow,
+    denyOption: options.deny,
+    labels,
+    view: {
+      id,
+      title: menu.title,
+      context: menu.context.slice(0, 12),
+      ...(trusted
+        ? {
+            tool: trusted.tool,
+            input: full.length > MAX_PERMISSION_INPUT_CHARS ? `${full.slice(0, MAX_PERMISSION_INPUT_CHARS)}\n…(truncated)` : trusted.input,
+            from_subagent: trusted.agent ?? undefined,
+          }
+        : {}),
+      can_allow: problem === null,
+      cannot_allow_reason: problem ?? undefined,
+      can_deny: options.deny !== null,
+    },
+  };
 }
 
 // 質問の選択肢そのもの（自由記述・確定・Chat about this 以外）

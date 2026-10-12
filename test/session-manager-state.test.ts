@@ -217,6 +217,45 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
     expect(app.manager.runningTasks('nope')).toEqual([]);
   });
 
+  it('pendingPermission: フックが書いた入力を、今出ている許可の確認のものと言えるときだけ返す', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const request = (command: string) => ({ tool_name: 'Bash', tool_input: { command }, agent_type: undefined as string | undefined });
+    // 確認が出ていなければ返さない
+    app.manager.permissionRequested(id, request('mkdir checked && echo tanacode-check'), Date.now());
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    // 入力が書かれたあとに確認が出た: 今の確認のもの
+    pty.output(fixtureScreen('bash-permission'));
+    await app.waitFor('許可の確認', () => app.manager.stateOf(id) === 'permission');
+    expect(app.manager.pendingPermission(id)).toMatchObject({ seq: 1, tool: 'Bash', input: { command: 'mkdir checked && echo tanacode-check' }, agent: null });
+    // 同じ書き込み（同じ時刻）がもう一度知らされても、数え直さない
+    const first = app.manager.pendingPermission(id)!;
+    app.manager.permissionRequested(id, request('mkdir checked && echo tanacode-check'), first.at);
+    expect(app.manager.pendingPermission(id)?.seq).toBe(1);
+    // 確認が閉じたら返さない
+    pty.output(fixtureScreen('prompt'));
+    await app.waitFor('入力欄', () => app.manager.stateOf(id) !== 'permission');
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    // 次の確認が、フックの入力なしに出た: 残っているのは前の確認の入力なので、返さない
+    await sleep(20);
+    pty.output(fixtureScreen('bash-permission'));
+    await app.waitFor('次の許可の確認', () => app.manager.stateOf(id) === 'permission');
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    // 確認が出ている間に書かれた入力（フックが少し遅れて届いた・続けて出た次の確認）は、今の確認のもの
+    app.manager.permissionRequested(id, { ...request('rm -rf build'), agent_type: 'general-purpose' }, Date.now());
+    expect(app.manager.pendingPermission(id)).toMatchObject({ seq: 2, input: { command: 'rm -rf build' }, agent: 'general-purpose' });
+    // 形の合わない入力は使わない
+    for (const bad of [null, {}, { tool_name: 'Bash' }, { tool_name: 1, tool_input: {} }, { tool_name: 'Bash', tool_input: 'x' }]) {
+      app.manager.permissionRequested(id, bad, Date.now() + 1000);
+    }
+    expect(app.manager.pendingPermission(id)?.seq).toBe(2);
+    // 知らないセッション・Claude Code が止まったセッションでは返さない
+    expect(app.manager.pendingPermission('nope')).toBeNull();
+    app.manager.permissionRequested('nope', request('x'), Date.now());
+    await app.manager.archive(id);
+    expect(app.manager.pendingPermission(id)).toBeNull();
+  });
+
   it('許可の確認・質問・操作できない画面は、それぞれの文言。質問は AskUserQuestion の入力が届くまで許可の確認として扱う', async () => {
     const { id, pty } = app.create();
     await app.ready(id);
