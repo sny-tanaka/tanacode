@@ -29,7 +29,7 @@ const api: TanacodeApi = {
     unarchive: (id) => invoke(IpcChannel.SessionsUnarchive, id),
     focus: (id) => send(IpcChannel.SessionsFocus, id),
     snapshot: (id) => invoke(IpcChannel.SessionsSnapshot, id),
-    submit: (id, text, attachments) => invoke(IpcChannel.SessionsSubmit, id, text, attachments),
+    submit: (id, text, attachments, pastes) => invoke(IpcChannel.SessionsSubmit, id, text, attachments, pastes),
     interrupt: (id) => send(IpcChannel.SessionsInterrupt, id),
     onChanged: (listener) => subscribe(IpcChannel.SessionsChanged, listener),
     onSelect: (listener) => subscribe(IpcChannel.SessionsSelect, listener),
@@ -87,7 +87,7 @@ const api: TanacodeApi = {
   },
   scheduled: {
     list: () => invoke(IpcChannel.ScheduledList),
-    add: (sessionId, text, attachments, at) => invoke(IpcChannel.ScheduledAdd, sessionId, text, attachments, at),
+    add: (sessionId, text, attachments, at, pastes) => invoke(IpcChannel.ScheduledAdd, sessionId, text, attachments, at, pastes),
     reschedule: (id, at) => invoke(IpcChannel.ScheduledReschedule, id, at),
     sendNow: (id) => invoke(IpcChannel.ScheduledSendNow, id),
     cancel: (id) => invoke(IpcChannel.ScheduledCancel, id),

@@ -168,6 +168,8 @@ export class ScriptedApp {
   readonly attentions: { id: string; attention: Attention }[] = [];
   readonly turnsCompleted: SessionSummary[] = [];
   readonly screens = new Map<string, ScreenInfo>();
+  // 画面への知らせを、届いた順に（screens は最後のものだけ）
+  private readonly screenLog = new Map<string, ScreenInfo[]>();
   readonly activities = new Map<string, Activity | null>();
   readonly bashTasks = new Map<string, BashTask[]>();
   readonly workflows = new Map<string, WorkflowRun[]>();
@@ -210,7 +212,10 @@ export class ScriptedApp {
         },
         onPtyData: () => {},
         onTurnCompleted: (session) => this.turnsCompleted.push(session),
-        onScreen: (id, info) => this.screens.set(id, info),
+        onScreen: (id, info) => {
+          this.screens.set(id, info);
+          this.screenLog.set(id, [...(this.screenLog.get(id) ?? []), info]);
+        },
         onActivity: (id, activity) => this.activities.set(id, activity),
         onWorkflows: (id, runs) => this.workflows.set(id, runs),
         onSubagents: (id, runs) => this.subagents.set(id, runs),
@@ -277,6 +282,10 @@ export class ScriptedApp {
 
   events(id: string): ChatEvent[] {
     return this.chat.get(id) ?? [];
+  }
+
+  screenUpdates(id: string): ScreenInfo[] {
+    return this.screenLog.get(id) ?? [];
   }
 
   async waitFor(label: string, check: () => boolean, timeoutMs = 5000): Promise<void> {

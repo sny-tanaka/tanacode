@@ -434,3 +434,34 @@ it('出たばかりのメニューが描き直されてカーソルが戻って�
   expect(claude.answer()).toBe('Yes, I trust this folder');
   expect(result).toBe('chosen');
 });
+
+it('入力欄が画面より高く、先頭の行が画面の外に出た画面が続いたら、入力欄として読み、見えている分を書きかけにする。入力欄でない画面が続いたら、認識できない画面にする', async () => {
+  tracker = new ScreenTracker(120, 40, () => {}, () => {});
+  tracker.feed(screen(0));
+  for (let i = 0; i < 40 && tracker.current.state.kind !== 'prompt'; i++) await sleep(25);
+  // ログインして使う Claude Code に、画面より長い文を行ごとに打ったときの画面: 入力の続きの行（字下げ 2 文字）で埋まり、下に罫線とモードの表示
+  const tall = draw([...Array.from({ length: 37 }, (_, i) => `  ${i + 30} 行目: 長い発言の続きです。`), RULE, '  ⏸ manual mode on (shift+tab to cycle)']);
+  tracker.feed(tall);
+  await sleep(400);
+  // すぐには決めない（描き直しの途中かもしれない）
+  expect(tracker.current).toMatchObject({ state: { kind: 'prompt' }, draft: '' });
+  await sleep(1300);
+  expect(tracker.current.state).toEqual({ kind: 'prompt' });
+  expect(tracker.current.draft.split('\n')).toHaveLength(37);
+  expect(tracker.current.draft.endsWith('66 行目: 長い発言の続きです。')).toBe(true);
+  // 一度そうと決めたあとは、続きを打って画面が変わっても、すぐに読む（長い文を小分けに打つあいだ、そのつど待たない）
+  tracker.feed(draw([...Array.from({ length: 37 }, (_, i) => `  ${i + 40} 行目: 長い発言の続きです。`), RULE, '  ⏸ manual mode on (shift+tab to cycle)']));
+  await sleep(300);
+  expect(tracker.current.draft.endsWith('76 行目: 長い発言の続きです。')).toBe(true);
+  // 入力欄でもメニューでもない画面
+  tracker.feed(draw(['何かの画面', ...Array.from({ length: 30 }, (_, i) => `項目 ${i}`)]));
+  await sleep(300);
+  // すぐには決めない
+  expect(tracker.current.state).toEqual({ kind: 'prompt' });
+  await sleep(1400);
+  expect(tracker.current.state).toEqual({ kind: 'unknown' });
+  // 認識できない画面のあとは、また続いたのを見てから決める
+  tracker.feed(tall);
+  await sleep(300);
+  expect(tracker.current.state).toEqual({ kind: 'unknown' });
+});

@@ -388,7 +388,8 @@ export type TanacodeApi = {
     snapshot(id: string): Promise<SessionSnapshot>;
     // Claude Code の入力欄に打ち込んで送る。画像はパスを貼り付けとして送ると [Image #n] として添付される。
     // 同じセッションへの送信（親セッションからの指示を含む）は、混ざらないよう 1 つずつ順に送る
-    submit(id: string, text: string, attachments: string[]): Promise<void>;
+    // pastes: 入力欄に貼り付けた長い文（札）。打った文のあとに、1 つずつ貼り付けとして送る（Claude Code が <pasted_content> の囲みに入れる）
+    submit(id: string, text: string, attachments: string[], pastes?: string[]): Promise<void>;
     // 作業を中断する（Esc を送る）
     interrupt(id: string): void;
     // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
@@ -474,7 +475,8 @@ export type TanacodeApi = {
   scheduled: {
     list(): Promise<ScheduledMessage[]>;
     // sessionId のセッションに、at（ミリ秒の時刻）に送る予約をする。過去の時刻・送る内容が無いときは、理由を添えて失敗する
-    add(sessionId: string, text: string, attachments: string[], at: number): Promise<void>;
+    // pastes: 入力欄に貼り付けた長い文（札）
+    add(sessionId: string, text: string, attachments: string[], at: number, pastes?: string[]): Promise<void>;
     // 時刻を変える（送れなかったもの・時刻を過ぎていたものは、もう一度待つ）
     reschedule(id: string, at: number): Promise<void>;
     // 時刻を待たずに送る（手が空くのは待つ）

@@ -312,10 +312,30 @@ export function promptRange(lines: ScreenLine[]): [number, number] | null {
   for (let i = lines.length - 1; i >= 1; i--) {
     const text = lines[i].text;
     if (!PROMPT_MARK.test(text) || OPTION.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
-    const end = lines.findIndex((l, j) => j > i && j < i + 30 && PROMPT_RULE.test(l.text));
+    // 下の罫線は、画面の終わりまで探す。Claude Code は、長い入力では入力欄を画面の高さの半分ほどまで伸ばす（90 行の画面で 40 行。
+    // 2.1.296 で確かめた）。複数行の発言は行ごとに打つので、入力欄に文字のまま入り、背の高い画面では何十行にもなる
+    const end = lines.findIndex((l, j) => j > i && PROMPT_RULE.test(l.text));
     if (end !== -1) return [i, end];
   }
   return null;
+}
+
+// 入力欄の下の罫線より下に出る行（モードの表示など）の数の上限
+const BELOW_PROMPT_LINES = 4;
+
+// 入力欄が画面より高く、先頭の行（❯）と上の罫線が画面の外に出ているときの、入力欄の行の範囲 [0, end)。そうでなければ null。
+// ログインして使う Claude Code（2.1.296）は、長い入力をすべて入力欄に出す。複数行の発言は行ごとに打つので、入力欄には文字のまま入り、
+// 画面（40 行）より長い文（親セッションからの長い指示・最適化圧縮の再開の文）では、画面が入力の続きの行（2 文字の字下げ）で埋まり、
+// いちばん下に罫線とモードの表示だけが残る。入力欄として読めないと「操作できない画面」になり、Enter を送れない。
+// ほかの画面（メニュー・巻き戻しの一覧）と取り違えないよう、それらに当てはまらなかったときだけ使う（ScreenTracker）
+export function tallPromptRange(lines: ScreenLine[]): [number, number] | null {
+  // 罫線は 1 本だけ（下の罫線）
+  const end = lines.findIndex((l) => PROMPT_RULE.test(l.text));
+  if (end < 1 || lines.slice(end + 1).some((l) => PROMPT_RULE.test(l.text))) return null;
+  if (lines.slice(end + 1).filter((l) => l.text.trim()).length > BELOW_PROMPT_LINES) return null;
+  const above = lines.slice(0, end);
+  // 画面のいちばん上から罫線まで、入力の続きの行（字下げ 2 文字。空行は入力の中の空行）
+  return above[0].text.trim() !== '' && above.every((l) => l.text.trim() === '' || /^ {2}\S/.test(l.text) || /^ {3,}/.test(l.text)) ? [0, end] : null;
 }
 
 // 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort · Claude Max」など）。--resume ではバナーが出ない。

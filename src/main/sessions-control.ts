@@ -1043,7 +1043,7 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
       all.push(current);
     } else if (e.type === 'user') {
       const from = parentId ? 'the parent session' : 'the session that started this one,';
-      current = { who: e.parent ? `Instruction from ${from} "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], notes: [], tools: [] };
+      current = { who: e.parent ? `Instruction from ${from} "${titleOf(e.parent)}"` : 'User message', text: [e.text, ...(e.pastes ?? [])].filter(Boolean).join('\n\n'), responses: [], notes: [], tools: [] };
       all.push(current);
     } else if (e.type === 'notice') {
       current = { who: 'Notice', text: e.text, responses: [], notes: [], tools: [] };

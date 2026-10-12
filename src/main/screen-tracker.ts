@@ -12,6 +12,7 @@ import {
   parseSpinner,
   parseTasks,
   promptRange,
+  tallPromptRange,
   showsCommandSuggestion,
   type SeenOptions,
   type TasksDialog,
@@ -100,6 +101,8 @@ export class ScreenTracker {
   private answered: string[] = [];
   private seen: SeenOptions = new Map();
   private activity: Activity | null = null;
+  // 入力欄が画面より高く、先頭の行が画面の外に出ている、と決めた（settleUnrecognized）
+  private tallPrompt = false;
   // 最後に見たトークン数と、それが変わった時刻
   private tokens: { value: string | null; changedAt: number } = { value: null, changedAt: 0 };
   // 最後に読めたタイマーの経過秒と、読んだ時刻（タイマーの行が消えている間の経過時間を数える）
@@ -596,6 +599,15 @@ export class ScreenTracker {
       const menu = parsed && !(parsed.kind === 'question' && this.isAnswered(parsed.title)) ? parsed : null;
       state = menu ? { kind: 'menu', menu: this.questions ? applyQuestions(menu, this.questions, this.seen) : menu } : null;
     }
+    // 画面より高い入力欄（先頭の行が画面の外）は、一度そうと決めたあと（settleUnrecognized）は、続く画面でもすぐに読む
+    // （長い文を小分けに打つあいだ、打った分が入力欄に出たのを、そのつど 1.2 秒待たずに読めるように）
+    const tall = state === null && this.tallPrompt ? tallPromptRange(lines) : null;
+    if (tall) {
+      state = { kind: 'prompt' };
+      draft = this.busy ? '' : this.draft(tall);
+    } else {
+      this.tallPrompt = false;
+    }
 
     if (this.unknownTimer) clearTimeout(this.unknownTimer);
     this.unknownTimer = null;
@@ -611,11 +623,22 @@ export class ScreenTracker {
       // 入力欄もメニューも無い。しばらく続いたら認識できない画面とする
       this.update({ state: this.info.state, model, effort, mode, draft, ready: this.info.ready });
       if (this.promptSeen) {
-        this.unknownTimer = setTimeout(() => this.update({ ...this.info, state: { kind: 'unknown' } }), UNKNOWN_AFTER_MS);
+        this.unknownTimer = setTimeout(() => this.settleUnrecognized(), UNKNOWN_AFTER_MS);
       }
     }
 
     this.wake();
+  }
+
+  // 入力欄もメニューも無い画面が続いた。入力欄が画面より高く、先頭の行が画面の外に出ているだけ（長い複数行の入力）なら、
+  // 入力欄として読み、見えている分を書きかけにする。そうでなければ、認識できない画面とする。
+  // すぐに決めず、続いたのを見てから決める（描き直しの途中の画面を、入力欄と取り違えないように）
+  private settleUnrecognized(): void {
+    this.unknownTimer = null;
+    const tall = tallPromptRange(this.lines());
+    this.tallPrompt = tall !== null;
+    if (tall) this.update({ ...this.info, state: { kind: 'prompt' }, draft: this.busy ? '' : this.draft(tall) });
+    else this.update({ ...this.info, state: { kind: 'unknown' } });
   }
 
   private wake(): void {

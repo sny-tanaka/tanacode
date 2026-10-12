@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent, TranscriptEntry } from '@shared/chat';
 import { parentMessageText } from '@shared/session-tools';
-import { branchCut, pulledBackPrompt, readAgentLog, readChatLog, readEntries, readExportLog, type ChainEntry } from '../src/main/chat-log';
+import { branchCut, pulledBackPastes, pulledBackPrompt, readAgentLog, readChatLog, readEntries, readExportLog, type ChainEntry } from '../src/main/chat-log';
 
 // 会話ログをチャットのイベントにする（アーカイブしたセッション・書き出し・エージェントの会話）。巻き戻しの枝分かれと、中断で入力欄に戻った発言
 
@@ -113,7 +113,7 @@ describe('pulledBackPrompt', () => {
     expect(pulledBackPrompt(events, parentMessageText(PARENT, ''))).toBeNull();
   });
 
-  it('最適化圧縮の仕上げの頼み・再開の文は、丸ごと貼り付けで送るので、貼り付けの目印だけが入力欄に戻る', () => {
+  it('最適化圧縮の仕上げの頼み・再開の文は、本文の一部（長い文は入力欄に収まらない）か、貼り付けの目印だけ（前の送り方）が入力欄に戻る', () => {
     const events: ChatEvent[] = [u('前の発言'), { type: 'turn-end' }, { type: 'notice', id: 'h', text: '仕上げ', compact: 'handoff' }];
     expect(pulledBackPrompt(events, '[Pasted text #1 +7 lines]')).toBe(2);
     expect(pulledBackPrompt(events, '<tanacode-handoff> tanacode is about to reset')).toBe(2);
@@ -129,6 +129,28 @@ describe('pulledBackPrompt', () => {
     expect(pulledBackPrompt(long, 'この会話を消さないでください。まだ続きがあります。もう少し待ってください。お願いします')).toBeNull();
     // ほかの知らせ（タスクの完了など）は、入力欄に戻らない
     expect(pulledBackPrompt([{ type: 'notice', id: 'n', text: 'タスクが終わりました' }], '[Pasted text #1 +7 lines]')).toBeNull();
+  });
+
+  it('札（貼り付けた長い文）を添えた発言は、札が目印になって入力欄に戻る。目印を除いた文と、目印の数で見分けて、札の中身を返す', () => {
+    const log = 'ログの 1 行目\n2 行目\n3 行目\n4 行目';
+    const long = 'a'.repeat(900);
+    const sent: ChatEvent = { type: 'user', id: 'u', text: 'このログを見て ください。', pastes: [log, long] };
+    // Claude Code 2.1.296 の入力欄に戻る形（目印の番号は、送ったときと変わることがある。画面の折り返しで空白も変わる）
+    const draft = 'このログを見てください。[Pasted text #3 +3\nlines][Pasted text #4]';
+    expect(pulledBackPrompt([sent], draft)).toBe(0);
+    expect(pulledBackPastes(sent, draft)).toEqual([log, long]);
+    // 目印の数・文が違えば、その発言ではない
+    expect(pulledBackPrompt([sent], 'このログを見てください。[Pasted text #3 +3 lines]')).toBeNull();
+    expect(pulledBackPrompt([sent], '別の文[Pasted text #3 +3 lines][Pasted text #4]')).toBeNull();
+    expect(pulledBackPastes(sent, 'このログを見てください。')).toEqual([]);
+    // 札 1 つだけの発言は、会話ログからは文として読んでいる。目印 1 つだけが戻ったら、発言の文が札の中身
+    const only = u(log);
+    expect(pulledBackPrompt([only], '[Pasted text #1 +3 lines]')).toBe(0);
+    expect(pulledBackPastes(only, '[Pasted text #1 +3 lines]')).toEqual([log]);
+    expect(pulledBackPastes(only, '文[Pasted text #1 +3 lines]')).toEqual([]);
+    // 札の無い発言は、今までどおり（札は返さない）。親からの指示は、札にしない
+    expect(pulledBackPastes(u('調べて'), '調べて')).toEqual([]);
+    expect(pulledBackPastes(u(log, PARENT), '[Pasted text #1 +3 lines]')).toEqual([]);
   });
 });
 

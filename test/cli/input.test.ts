@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents, type ChatEvent } from '@shared/chat';
-import { promptKeys } from '@shared/prompt-keys';
+import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
 import { readAgentLog } from '../../src/main/chat-log';
 import { KnowledgeTracker } from '../../src/main/knowledge-tracker';
 import { ContextTracker } from '../../src/main/context-tracker';
@@ -12,10 +12,15 @@ import {
   AI_TITLE,
   AI_TITLE_REPLY,
   ATTACHED,
+  CHIP_TEXT,
   DRAFT,
   EFFORT,
   IMAGE_FILE,
+  LINES_WITH_LONG_LINE,
+  LONG_LINE,
+  LONG_LINES,
   LONG_PASTE,
+  ONE_LONG_LINE,
   PASTE,
   PNG_BASE64,
   READ_FILES,
@@ -26,9 +31,11 @@ import {
   STOP_AGAIN,
   STOP_PROMPT,
   SUBAGENT_PROMPT,
+  TALL_LINES,
   agentSteps,
   checkAgentLog,
   checkAiTitle,
+  checkChipDraft,
   checkDiscovered,
   checkDraft,
   checkEffort,
@@ -82,6 +89,16 @@ async function submit(run: ClaudeRun, text: string): Promise<void> {
   await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
 }
 
+// アプリ（SessionManager.submit）と同じく、長い文は小さな分に分けて打ち、前の分が入力欄に出てから次を打つ（promptKeyChunks）。
+// まとめて打つと、貼り付けの合図（ESC [200~）が Claude Code の読む区切りで割れ、マシンが重いと後半が文字として入力に混ざる
+async function typeLikeApp(run: ClaudeRun, text: string): Promise<void> {
+  for (const chunk of promptKeyChunks(text)) {
+    run.type(chunk.keys);
+    const tail = chunk.shown.replace(/\s/g, '').slice(-30);
+    if (tail) await run.waitFor('打った分が入力欄に出る', (info) => info.state.kind === 'prompt' && (/\[Pasted text/.test(info.draft) || info.draft.replace(/\s/g, '').endsWith(tail)));
+  }
+}
+
 describe(`Claude Code ${version} の入力欄`, () => {
   let api: MockApi;
   let run: ClaudeRun;
@@ -127,15 +144,86 @@ describe(`Claude Code ${version} の入力欄`, () => {
     checkPasted(eventsOf(run), PASTE);
   });
 
-  it('長い貼り付けは入力欄で目印になり、送ると全文が発言になる', async () => {
+  it('長い複数行の発言は、行ごとの貼り付けで送ると、入力欄で目印にならず、全文がそのまま 1 つの発言になる', async () => {
+    // アプリの送り方（promptKeys）。丸ごと 1 つの貼り付けにすると、ログインして使う Claude Code は <pasted_content> の囲みに入れて
+    // Claude に渡す（モックの API で動かすここでは、囲みは付かない。打ち込んだ文字がそのまま届くことを見る）
     const before = turnEnds(run);
-    run.type(promptKeys(LONG_PASTE));
+    const keys = promptKeys(LONG_LINES);
+    // 貼り付け 1 つは 1 行の中だけ（4 行以上の貼り付けは目印になる）
+    expect(keys.split('\x1b[201~').every((piece) => !piece.replace(/^\n+/, '').includes('\n'))).toBe(true);
+    await typeLikeApp(run, LONG_LINES);
+    const tail = LONG_LINES.replace(/\s/g, '').slice(-30);
+    await run.waitFor('入力欄の終わりに、打った文字の終わりが出る', (info) => info.state.kind === 'prompt' && info.draft.replace(/\s/g, '').endsWith(tail));
+    expect(run.screen.current.draft).not.toMatch(/\[Pasted text/);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    checkPasted(eventsOf(run), LONG_LINES);
+    // シェルのコマンドやスラッシュコマンドとして実行されていない
+    expect(eventsOf(run).filter((e) => e.type === 'shell')).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it.each([
+    ['改行なしで 2,000 文字ほどの 1 行', () => ONE_LONG_LINE],
+    ['複数行の中の 1,500 文字ほどの行', () => LINES_WITH_LONG_LINE],
+  ])('%s は、入力欄で目印にならず、全文が欠けずに 1 つの発言になる', async (_, textOf) => {
+    // 1 行の中の断片（300 文字まで）が、続けて届いても 1 つの貼り付けにまとまらないこと
+    const text = textOf();
+    expect(Math.max(...text.split('\n').map((line) => line.length))).toBeGreaterThan(1400);
+    const before = turnEnds(run);
+    await typeLikeApp(run, text);
+    const tail = text.replace(/\s/g, '').slice(-30);
+    await run.waitFor('入力欄の終わりに、打った文字の終わりが出る', (info) => info.state.kind === 'prompt' && (/\[Pasted text/.test(info.draft) || info.draft.replace(/\s/g, '').endsWith(tail)));
+    expect(run.screen.current.draft).not.toMatch(/\[Pasted text/);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    checkPasted(eventsOf(run), text);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it('長い貼り付けは入力欄で目印になり、送ると全文が発言になる', async () => {
+    // 丸ごと 1 つの貼り付け（/ や ! で始まる複数行の発言・ターミナルモードでの貼り付け）
+    const before = turnEnds(run);
+    run.type(bracketedPaste(LONG_PASTE));
     await run.waitFor('貼り付けの目印', (info) => /^\[Pasted text/.test(info.draft));
     run.capture('pasted-draft');
     checkPastedDraft(run.screen.current, LONG_PASTE.split('\n').length);
     run.type('\r');
     await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
     checkPasted(eventsOf(run), LONG_PASTE);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it('打った文に札（長い貼り付け）を添えて送ると、札は入力欄で 1 つずつ目印になり、文と札の中身が 1 つの発言として届く', async () => {
+    // アプリの送り方（SessionManager.submit の pastes）。ログインして使う Claude Code は、札の中身だけを <pasted_content> の囲みに入れて
+    // 発言の文のあとに足す（モックの API で動かすここでは、囲みは付かず、文と札の中身がつながって届く）
+    const whole = `${CHIP_TEXT}${LONG_PASTE}${LONG_LINE}`.replace(/\s/g, '');
+    const lastUser = () => {
+      const last = eventsOf(run).filter((e): e is Extract<ChatEvent, { type: 'user' }> => e.type === 'user').at(-1)!;
+      expect(last.text).not.toMatch(/\[Pasted text|<\/?pasted_content|\x1b/);
+      return [last.text, ...(last.pastes ?? [])].join('').replace(/\s/g, '');
+    };
+    const marks = (draft: string) => (draft.match(/\[Pasted text #\d+[^\]]*\]/g) ?? []).length;
+    // 1 つずつ打って、入力欄の形を見る
+    let before = turnEnds(run);
+    run.type(promptKeys(CHIP_TEXT));
+    await run.waitFor('打った文', (info) => info.draft.replace(/\s/g, '') === CHIP_TEXT.replace(/\s/g, ''));
+    run.type(bracketedPaste(LONG_PASTE));
+    await run.waitFor('1 つめの目印', (info) => marks(info.draft) === 1);
+    run.type(bracketedPaste(LONG_LINE));
+    await run.waitFor('2 つめの目印', (info) => marks(info.draft) === 2);
+    checkChipDraft(run.screen.current, CHIP_TEXT, LONG_PASTE.split('\n').length);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    expect(lastUser()).toBe(whole);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+    // アプリの送信（札の目印が出るのを待って次を打ち、Enter を送る）でも、同じように届く
+    before = turnEnds(run);
+    const count = eventsOf(run).filter((e) => e.type === 'user').length;
+    await run.manager.submit(run.sessionId!, CHIP_TEXT, [], false, [LONG_PASTE, LONG_LINE]);
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    expect(eventsOf(run).filter((e) => e.type === 'user')).toHaveLength(count + 1);
+    expect(lastUser()).toBe(whole);
     await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
   });
 
@@ -169,6 +257,37 @@ describe(`Claude Code ${version} の入力欄`, () => {
 
   it('セッションの一覧に、/rename の名前と作業フォルダで出る', async () => {
     checkDiscovered(await discoverSessions(new Set()), run.claudeSessionId, run.cwd, RENAMED);
+  });
+});
+
+describe(`Claude Code ${version} の、背の高い入力欄`, () => {
+  let api: MockApi;
+  let run: ClaudeRun;
+
+  beforeAll(async () => {
+    api = new MockApi();
+    run = new ClaudeRun(await api.start());
+    await run.open();
+  });
+
+  afterAll(async () => {
+    record(run);
+    run?.stop();
+    await api?.stop();
+  });
+
+  it('背の高い画面（90 行）で、入力欄が 30 行より高くなる長い発言を打っても、入力欄として読めて、手が空くのを待つ送り方（最適化圧縮の再開の文・親からの指示・予約）で送れる', async () => {
+    // 行ごとに送ると、入力欄には文字のまま入る。Claude Code は、入力欄を画面の高さの半分ほどまで伸ばすので、背の高い画面では
+    // 入力欄が 30 行を超える。入力欄として読めないと「操作できない画面」になり、Enter の直前の確かめ（guarded）で送るのをやめて、
+    // 文字が入力欄に残る（実機で、最適化圧縮が「再開の文を送るのを待っています」のまま進まなくなった）
+    run.manager.resize(run.sessionId!, 120, 90);
+    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
+    const attentions = run.attentions.length;
+    await run.manager.submitWhenReady(run.sessionId!, TALL_LINES, 30_000);
+    await run.waitFor('発言が届く', () => eventsOf(run).some((e) => e.type === 'user' && e.text === TALL_LINES), 30_000);
+    checkPasted(eventsOf(run), TALL_LINES);
+    expect(run.attentions.slice(attentions)).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
   });
 });
 

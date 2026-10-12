@@ -288,25 +288,25 @@ describe('アーカイブ・一覧から消す', () => {
 });
 
 describe('送信と予約', () => {
-  it('送信: 本文が無ければ空の文字、添付は文字のものだけを渡す', async () => {
+  it('送信: 本文が無ければ空の文字、添付と札（貼り付けた長い文）は文字のものだけを渡す。画面からの送信は、打つ前の確かめ（guarded）をしない', async () => {
     await boot();
-    await invoke(IpcChannel.SessionsSubmit, 's1', 'こんにちは', ['/a.png', 3, null, '/b.png']);
-    await invoke(IpcChannel.SessionsSubmit, 's2', null, 'not-array');
+    await invoke(IpcChannel.SessionsSubmit, 's1', 'こんにちは', ['/a.png', 3, null, '/b.png'], ['ログ\n2 行目', 7, null]);
+    await invoke(IpcChannel.SessionsSubmit, 's2', null, 'not-array', 'not-array');
     await invoke(IpcChannel.SessionsSubmit, 's3', undefined, undefined);
     expect(manager().submit.mock.calls).toEqual([
-      ['s1', 'こんにちは', ['/a.png', '/b.png']],
-      ['s2', '', []],
-      ['s3', '', []],
+      ['s1', 'こんにちは', ['/a.png', '/b.png'], false, ['ログ\n2 行目']],
+      ['s2', '', [], false, []],
+      ['s3', '', [], false, []],
     ]);
   });
 
   it('予約: 画面から届いた値を、文字・数に直して渡す', async () => {
     await boot();
-    await expect(invoke(IpcChannel.ScheduledAdd, 's1', '明日の朝に', ['/a.png', 1], 1_700_000_000_000)).resolves.toBeUndefined();
+    await expect(invoke(IpcChannel.ScheduledAdd, 's1', '明日の朝に', ['/a.png', 1], 1_700_000_000_000, ['ログ', 2])).resolves.toBeUndefined();
     await invoke(IpcChannel.ScheduledAdd, 7, null, null, '1700000000000');
     expect(the('ScheduledMessages').add.mock.calls).toEqual([
-      ['s1', '明日の朝に', ['/a.png'], 1_700_000_000_000],
-      ['7', '', [], 1_700_000_000_000],
+      ['s1', '明日の朝に', ['/a.png'], 1_700_000_000_000, ['ログ']],
+      ['7', '', [], 1_700_000_000_000, []],
     ]);
     await expect(invoke(IpcChannel.ScheduledReschedule, 3, '42')).resolves.toEqual(call('scheduled.reschedule', '3', 42));
     await expect(invoke(IpcChannel.ScheduledSendNow, 3)).resolves.toEqual(call('scheduled.sendNow', '3'));

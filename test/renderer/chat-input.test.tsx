@@ -27,9 +27,10 @@ const COMMANDS: SlashCommand[] = [
 const session = (id: string, title: string, archived = false) => ({ id, title, archived, cwd: '/work/shop', worktree: null, parentId: null }) as unknown as SessionSummary;
 
 type Props = ComponentProps<typeof ChatInput>;
-function Harness({ initial = '', onValue, ...props }: Partial<Props> & { initial?: string; onValue?: (v: string) => void }) {
+function Harness({ initial = '', onValue, onPastes, ...props }: Partial<Props> & { initial?: string; onValue?: (v: string) => void; onPastes?: (p: string[]) => void }) {
   const [value, setValue] = useState(initial);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [pastes, setPastes] = useState<string[]>([]);
   const completion: CompletionSource = {
     key: 'k',
     listFiles: () => Promise.resolve(['src/app.ts', 'src/components/Toolbar.tsx', 'docs/top.md', 'README.md']),
@@ -46,6 +47,11 @@ function Harness({ initial = '', onValue, ...props }: Partial<Props> & { initial
       }}
       attachments={attachments}
       onAttachmentsChange={setAttachments}
+      pastes={pastes}
+      onPastesChange={(next) => {
+        setPastes(next);
+        onPastes?.(next);
+      }}
       placeholder="指示を入力"
       blocked={false}
       onSend={() => {}}
@@ -68,9 +74,13 @@ const type = (text: string) => {
 const suggestions = () => [...document.querySelectorAll('.suggest-item .suggest-label')].map((e) => e.textContent);
 
 describe('送信のキー', () => {
-  it('Claude Code へ送る（submitToClaude）: 本文と添付の画像を、そのまま main に渡す', async () => {
+  it('Claude Code へ送る（submitToClaude）: 本文・添付の画像・札（貼り付けた長い文）を、そのまま main に渡す', async () => {
     await submitToClaude('s1', '直して\n詳しく', ['/tmp/a.png']);
-    expect(api.argsOf('sessions.submit')).toEqual([['s1', '直して\n詳しく', ['/tmp/a.png']]]);
+    await submitToClaude('s1', 'このログを見て', [], ['ログ\n2 行目']);
+    expect(api.argsOf('sessions.submit')).toEqual([
+      ['s1', '直して\n詳しく', ['/tmp/a.png'], []],
+      ['s1', 'このログを見て', [], ['ログ\n2 行目']],
+    ]);
   });
 
   it('⌘Enter・Ctrl+Enter で送り、Enter は改行のまま。変換確定の Enter では送らない', () => {
@@ -148,6 +158,62 @@ describe('@ と / の補完', () => {
     type('a/b を直して');
     await act(() => Promise.resolve());
     expect(suggestions()).toEqual([]);
+  });
+});
+
+describe('貼り付けた長い文の札', () => {
+  const LOG = Array.from({ length: 30 }, (_, i) => `ログの ${i + 1} 行目`).join('\n');
+  const paste = (text: string) => fireEvent.paste(box(), { clipboardData: { files: [], getData: () => text } });
+
+  it('長い貼り付け（4 行以上・800 文字より長い）は、文字として入れずに札にする。札には冒頭の文字と行数を出す', () => {
+    const values: string[] = [];
+    const pastes: string[][] = [];
+    render(<Harness onValue={(v) => values.push(v)} onPastes={(p) => pastes.push(p)} />);
+    // 貼り付けの既定の動き（文字として入る）を止めたか
+    expect(paste(LOG)).toBe(false);
+    expect(paste('a'.repeat(801))).toBe(false);
+    expect(pastes.at(-1)).toEqual([LOG, 'a'.repeat(801)]);
+    expect(values).toEqual([]);
+    const chips = [...document.querySelectorAll('.chat-input .paste-chip')];
+    expect(chips.map((c) => c.querySelector('.paste-chip-head')?.textContent)).toEqual(['ログの 1 行目', 'a'.repeat(60)]);
+    expect(chips.map((c) => c.querySelector('.paste-chip-lines')?.textContent)).toEqual(['30 行', '1 行']);
+  });
+
+  it('短い貼り付けは、今までどおり文字のまま入る（札にしない）', () => {
+    const pastes: string[][] = [];
+    render(<Harness onPastes={(p) => pastes.push(p)} />);
+    expect(paste('1 行目\n2 行目\n3 行目')).toBe(true);
+    expect(paste('a'.repeat(800))).toBe(true);
+    expect(pastes).toEqual([]);
+    expect(document.querySelector('.paste-chip')).toBeNull();
+  });
+
+  it('貼り付けた文の制御文字は除く（ESC が残ると、送るときに貼り付けの外へ出る）', () => {
+    const pastes: string[][] = [];
+    render(<Harness onPastes={(p) => pastes.push(p)} />);
+    paste('1\r\n2\x1b[201~\n3\n4');
+    expect(pastes.at(-1)).toEqual(['1\n2[201~\n3\n4']);
+  });
+
+  it('札を押すと中身を確かめられ、Esc か、外を押すと閉じる。× でその札だけを外す', () => {
+    const pastes: string[][] = [];
+    render(<Harness onPastes={(p) => pastes.push(p)} />);
+    paste(LOG);
+    paste('a'.repeat(801));
+    fireEvent.click(screen.getByText('ログの 1 行目'));
+    const dialog = screen.getByRole('dialog', { name: '貼り付けた文' });
+    expect(dialog.querySelector('pre')?.textContent).toBe(LOG);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // 中を押しても閉じず、外（後ろの幕）を押すと閉じる
+    fireEvent.click(screen.getByText('ログの 1 行目'));
+    fireEvent.mouseDown(screen.getByRole('dialog'));
+    expect(screen.queryByRole('dialog')).not.toBeNull();
+    fireEvent.mouseDown(document.querySelector('.overlay')!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getAllByLabelText('外す')[0]);
+    expect(pastes.at(-1)).toEqual(['a'.repeat(801)]);
+    expect(screen.queryByText('ログの 1 行目')).toBeNull();
   });
 });
 

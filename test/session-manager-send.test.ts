@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { bracketedPaste } from '@shared/prompt-keys';
+import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
 import { handoffText } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
 import { fixtureScreen, line, ScriptedApp, type ScriptedPty } from './helpers/scripted-claude';
@@ -58,14 +58,115 @@ describe('submit', () => {
     expect(pty.typed).toBe('ひとつめ');
   });
 
-  it('改行を含む本文は貼り付けとして送り、入力欄に貼り付けの目印が出てから Enter を送る', async () => {
+  it('改行を含む本文は、行ごとの貼り付けとして送り、入力欄に文字が出てから Enter を送る', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    pty.onWrite = (data) => {
+      if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('1 行目\n  2 行目')), 5);
+    };
+    await app.manager.submit(id, '1 行目\n2 行目');
+    expect(pty.typed).toBe(`${bracketedPaste('1 行目')}\n${bracketedPaste('2 行目')}\r`);
+  });
+
+  it('/ で始まる複数行の本文は、丸ごと貼り付けとして送り、入力欄に貼り付けの目印が出てから Enter を送る', async () => {
     const { id, pty } = app.create();
     await app.ready(id);
     pty.onWrite = (data) => {
       if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('[Pasted text #1 +1 lines]')), 5);
     };
-    await app.manager.submit(id, '1 行目\n2 行目');
-    expect(pty.typed).toBe(`${bracketedPaste('1 行目\n2 行目')}\r`);
+    await app.manager.submit(id, '/api の話です\n2 行目');
+    expect(pty.typed).toBe(`${bracketedPaste('/api の話です\n2 行目')}\r`);
+  });
+
+  it('札（貼り付けた長い文）は、打った文のあとに、1 つずつ丸ごと貼り付けとして打つ。目印が入力欄に出てから次を打ち、最後に Enter を送る', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const log = 'ログの 1 行目\n2 行目\n3 行目\n4 行目';
+    const long = 'a'.repeat(900);
+    // Claude Code の入力欄の代わり。丸ごとの貼り付けは目印になり、ほかはそのまま入る
+    let draft = '';
+    let marks = 0;
+    const order: string[] = [];
+    pty.onWrite = (data) => {
+      order.push(`${data === '\r' ? 'Enter' : data.includes(log) ? '札 1' : data.includes(long) ? '札 2' : '文'} / 入力欄: ${app.manager.screen(id)?.draft ?? ''}`);
+      if (data === '\r') return;
+      draft += data.includes(log) || data.includes(long) ? `[Pasted text #${++marks}${data.includes(log) ? ' +3 lines' : ''}]` : data.replace(/\x1b\[20[01]~/g, '');
+      const shown = draft;
+      setTimeout(() => pty.output(promptWith(shown)), 30);
+    };
+    await app.manager.submit(id, 'このログを見てください。', [], false, [log, long]);
+    // 打った文は今までどおり（1 行なら打鍵。promptKeys）、札は丸ごと 1 つの貼り付け
+    expect(pty.typed).toBe(`このログを見てください。${bracketedPaste(log)}${bracketedPaste(long)}\r`);
+    // 前に打ったものが入力欄に出てから、次を打っている
+    expect(order).toEqual([
+      '文 / 入力欄: ',
+      '札 1 / 入力欄: このログを見てください。',
+      '札 2 / 入力欄: このログを見てください。[Pasted text #1 +3 lines]',
+      'Enter / 入力欄: このログを見てください。[Pasted text #1 +3 lines][Pasted text #2]',
+    ]);
+    // 打ち込んでいる途中の文字と目印は、チャットの入力欄に移さない
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+  });
+
+  it('長い文は、小さな分に分けて書き、前の分が入力欄に出てから次を書く（貼り付けの合図が、読む区切りで割れないように）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    const chunks = promptKeyChunks(text);
+    expect(chunks.length).toBeGreaterThan(3);
+    // Claude Code の入力欄の代わり。打った文字の終わりのほうを、少し遅れて出す
+    let typed = '';
+    const seen: string[] = [];
+    pty.onWrite = (data) => {
+      // 書いた時点で、前の分までが入力欄に出ているか
+      seen.push((app.manager.screen(id)?.draft ?? '').replace(/\s/g, '').slice(-12));
+      if (data === '\r') return;
+      typed += data.replace(/\x1b\[20[01]~/g, '');
+      const shown = typed.replace(/\n/g, ' ').slice(-60);
+      setTimeout(() => pty.output(promptWith(shown)), 40);
+    };
+    await app.manager.submit(id, text);
+    expect(pty.writes).toEqual([...chunks.map((c) => c.keys), '\r']);
+    const tails = chunks.map((c) => c.shown.replace(/\s/g, '').slice(-12));
+    expect(seen).toEqual(['', ...tails]);
+  });
+
+  it('打っている途中は、入力欄の文字を画面に知らせない（長い文が目印に置き換わって出ていても。チャットの入力欄に移すと、打っている途中の文字が消される）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    // Claude Code は、長い入力の途中を目印に置き換えて出す（打った文字と比べても合わない）
+    const shown = '1 行目: 入力欄が高くなる[...Truncated text #1 +21 lines...]る発言です。';
+    pty.onWrite = (data) => {
+      if (data !== '\r') setTimeout(() => pty.output(promptWith(shown)), 20);
+    };
+    const sending = app.manager.submit(id, text);
+    await app.waitFor('入力欄', () => app.manager.screen(id)?.draft === shown);
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+    expect(app.screens.get(id)?.draft).toBe('');
+    await sending;
+    expect(pty.typed).toBe(`${promptKeys(text)}\r`);
+  });
+
+  it('入力欄の文字を読めないとき（打った分が出ないまま時間切れ）は、残りを待たずに書いて、Enter を送る', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    const started = Date.now();
+    await app.manager.submit(id, text);
+    expect(pty.typed).toBe(`${promptKeys(text)}\r`);
+    // 待つのは 1 回だけ（分ごとに時間切れを待たない）
+    expect(Date.now() - started).toBeLessThan(4500);
+  });
+
+  it('打った文が無く、札だけでも送る。札の中の制御文字は除き、空の札は打たない', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    pty.onWrite = (data) => {
+      if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('[Pasted text #1 +3 lines]')), 5);
+    };
+    await app.manager.submit(id, '', [], false, ['1\n2\x1b[201~\r\n3\n4', ' \n ']);
+    expect(pty.typed).toBe(`${bracketedPaste('1\n2[201~\n3\n4')}\r`);
   });
 
   it('guarded: 入力を受け付けられない状態（質問や確認が出ている）なら、打たずに失敗する', async () => {
@@ -170,6 +271,38 @@ describe('submitWhenReady', () => {
     await app.manager.submitWhenReady(id, 'これを見て', 5000, { attachments: ['/tmp/a.png'] });
     expect(pty.typed).toBe(`${bracketedPaste('/tmp/a.png')} これを見て\r`);
   });
+
+  it('札（貼り付けた長い文）も一緒に送る（予約したメッセージ）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    pty.onWrite = (data) => {
+      if (data !== '\r') setTimeout(() => pty.output(promptWith(data.startsWith('\x1b[200~') ? 'これを見て[Pasted text #1 +3 lines]' : 'これを見て')), 5);
+    };
+    await app.manager.submitWhenReady(id, 'これを見て', 5000, { pastes: ['1\n2\n3\n4'] });
+    expect(pty.typed).toBe(`これを見て${bracketedPaste('1\n2\n3\n4')}\r`);
+  });
+});
+
+describe('中断で入力欄に戻った発言の札', () => {
+  it('札（貼り付けた長い文）を添えた発言が、応答の前の Esc で入力欄に戻ったら、発言を取り消し、目印の中身（札）を画面への知らせに添える', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const log = 'ログの 1 行目\n2 行目\n3 行目\n4 行目';
+    // Claude Code が会話ログに残す形（文のあとに、貼り付けの囲み）
+    app.append(id, line.user(`このログを見てください。\n\n<pasted_content id="c8a6">\n${log}\n</pasted_content id="c8a6">\n`));
+    await app.waitFor('発言', () => app.events(id).some((e) => e.type === 'user' && e.pastes?.length === 1));
+    const draft = 'このログを見てください。[Pasted text #2 +3 lines]';
+    pty.output(promptWith(draft));
+    await app.waitFor('取り消し', () => app.events(id).some((e) => e.type === 'replace'));
+    // 入力欄に戻ったのを知らせる最初の知らせから、札の中身が付いている（チャットの入力欄は、最初に見た draft を移す）
+    expect(app.screenUpdates(id).find((s) => s.draft === draft)?.draftPastes).toEqual([log]);
+    expect(app.manager.screenForView(id)).toMatchObject({ draft, draftPastes: [log] });
+    expect(app.manager.stateOf(id)).toBe('idle');
+    // 人が続きを打ったら（入力欄が変わったら）、札の中身は添えない
+    pty.output(promptWith(`${draft} 続き`));
+    await app.waitFor('続き', () => app.screens.get(id)?.draft.endsWith('続き') === true);
+    expect(app.screens.get(id)?.draftPastes).toBeUndefined();
+  });
 });
 
 describe('親からの指示', () => {
@@ -204,9 +337,12 @@ describe('最適化圧縮の仕上げの頼み', () => {
   async function pulledBack() {
     const { id, pty } = app.create();
     await app.ready(id);
+    // Claude Code の入力欄の代わり。長い文は入力欄に収まらないので、打った文字の終わりのほうだけを出す。Enter で空に戻す
+    let typed = '';
     pty.onWrite = (data) => {
-      if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('[Pasted text #1 +7 lines]')), 5);
-      if (data === '\r') setTimeout(() => pty.output(fixtureScreen('prompt')), 5);
+      typed = data === '\r' ? '' : typed + data.replace(/\x1b\[20[01]~/g, '');
+      const shown = typed.replace(/\n/g, ' ').slice(-60);
+      setTimeout(() => pty.output(shown ? promptWith(shown) : fixtureScreen('prompt')), 5);
     };
     await app.manager.submit(id, handoffText());
     pty.writes.length = 0;

@@ -12,7 +12,7 @@ export type ScheduleHost = {
   // 止まっているセッションを起動（再開）する
   open(id: string): Promise<void>;
   // 手が空くのを待ってから送る。signal で、待っている間に取りやめる
-  submitWhenReady(id: string, text: string, timeoutMs: number, options: { attachments?: string[]; signal?: AbortSignal }): Promise<void>;
+  submitWhenReady(id: string, text: string, timeoutMs: number, options: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal }): Promise<void>;
 };
 
 // setTimeout に渡せる待ち時間の上限（約 24.8 日）。それより先の予約は、途中で一度起きて測り直す
@@ -51,11 +51,11 @@ export class ScheduledMessages {
     return this.messages;
   }
 
-  add(sessionId: string, text: string, attachments: string[], at: number): ScheduledMessage {
+  add(sessionId: string, text: string, attachments: string[], at: number, pastes: string[] = []): ScheduledMessage {
     if (!this.accepts(sessionId)) throw new Error(t('main.scheduled.cannotSchedule'));
-    if (!text.trim() && attachments.length === 0) throw new Error(t('main.scheduled.empty'));
+    if (!text.trim() && attachments.length === 0 && pastes.length === 0) throw new Error(t('main.scheduled.empty'));
     if (!Number.isFinite(at) || at <= this.now()) throw new Error(t('main.scheduled.pastTime'));
-    const message: ScheduledMessage = { id: randomUUID(), sessionId, text, attachments, at, createdAt: this.now(), state: 'scheduled', error: null };
+    const message: ScheduledMessage = { id: randomUUID(), sessionId, text, attachments, pastes, at, createdAt: this.now(), state: 'scheduled', error: null };
     this.messages = [...this.messages, message];
     this.changed();
     return message;
@@ -136,6 +136,7 @@ export class ScheduledMessages {
       // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間・ターミナルの入力欄に書きかけがある間も、送らずに待つ
       await this.host.submitWhenReady(sessionId, message.text, Number.POSITIVE_INFINITY, {
         attachments: message.attachments,
+        pastes: message.pastes,
         signal: controller.signal,
       });
       this.remove(id);
@@ -199,10 +200,15 @@ export class ScheduledMessages {
 function load(file: string): ScheduledMessage[] {
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as { messages?: unknown };
-    return Array.isArray(data.messages) ? data.messages.filter(isMessage).map((m) => ({ ...m, error: m.error ?? null })) : [];
+    // pastes は、前のバージョンで保存した予約には無い
+    return Array.isArray(data.messages) ? data.messages.filter(isMessage).map((m) => ({ ...m, pastes: stringsOf(m.pastes), error: m.error ?? null })) : [];
   } catch {
     return [];
   }
+}
+
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
 function isMessage(value: unknown): value is ScheduledMessage {

@@ -666,6 +666,11 @@
       "send": "送信",
       "sendTip": "送信（⌘Enter）"
     },
+    "paste": {
+      "lines": "{count} 行",
+      "showTip": "貼り付けた文を確かめる",
+      "title": "貼り付けた文"
+    },
     "mode": {
       "manual": "都度確認",
       "acceptEdits": "編集は自動",

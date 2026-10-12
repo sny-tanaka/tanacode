@@ -282,7 +282,7 @@ describe('NewSessionPane（新規セッションの画面）', () => {
     expect(worktree().checked).toBe(true);
     fireEvent.change(select(MODE), { target: { value: 'plan' } });
     expect(select(MODE).value).toBe('plan');
-    expect(send(p)).toEqual(['/work/a', '始めてください', [], { ...DEFAULTS, mode: 'plan', remoteControl: false, worktree: true }]);
+    expect(send(p)).toEqual(['/work/a', '始めてください', [], { ...DEFAULTS, mode: 'plan', remoteControl: false, worktree: true }, []]);
     cleanup();
     // 開き直しても、前に選んだものから始まる。戻すと、戻した指定で始める
     const again = props();
@@ -458,7 +458,7 @@ describe('NewSessionPane（新規セッションの画面）', () => {
     const second = props({ cwd: '/work/b', gitId: 'folder:/work/b' });
     view.rerender(<NewSessionPane {...second} />);
     fireEvent.click(button('送信'));
-    expect(second.onStart).toHaveBeenCalledWith('/work/b', 'テストを足して', [], DEFAULTS);
+    expect(second.onStart).toHaveBeenCalledWith('/work/b', 'テストを足して', [], DEFAULTS, []);
     expect(first.onStart).not.toHaveBeenCalled();
     expect(api.argsOf('folders.info')).toEqual([['/work/a'], ['/work/b']]);
     fireEvent.click(document.querySelector('.folder-picker > button')!);

@@ -23,6 +23,9 @@ const RESUME_NOTICE = '最適化圧縮: 会話を消して、チェックリス�
 describe('最適化圧縮', () => {
   let app: E2EApp;
   const button = () => app.page.locator('.claude-header button[aria-label="最適化圧縮"]');
+  // Claude に届いた再開の文。タイトル作りの呼び出し（<session> で始まる）にも、再開の文の抜粋が入るので除く
+  // （どちらの呼び出しが先に届くかは、そのときどき）
+  const resumes = () => app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`) && !p.startsWith('<session>'));
 
   beforeAll(async () => {
     app = await E2EApp.launch({
@@ -101,7 +104,7 @@ describe('最適化圧縮', () => {
   });
 
   it('再開の文には、「いまの状態」の中身と、前の会話の発言の原文が入る。要約は頼まない', () => {
-    const resume = app.api.lastPrompts.find((p) => p.includes(`<${RESUME_TAG}>`)) ?? '';
+    const resume = resumes()[0] ?? '';
     expect(resume).toContain('No summary was made.');
     expect(resume).toContain(`# ${STATE} (state, as you last wrote it)`);
     expect(resume).toContain(`## #1 ${STATE_CARD}\n${STATE_BODY}`);
@@ -126,10 +129,10 @@ describe('最適化圧縮', () => {
   });
 
   it('続けてもう一度押しても進む（リストがもう最新でも）。1 回めの会話の発言の原文は、2 回めの再開の文にも入る', async () => {
-    const before = app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`)).length;
+    const before = resumes().length;
     await app.page.click('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
-    await app.waitUntil('2 回めの再開の文', () => app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`)).length > before, 60_000);
-    const second = app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`)).at(-1) ?? '';
+    await app.waitUntil('2 回めの再開の文', () => resumes().length > before, 60_000);
+    const second = resumes().at(-1) ?? '';
     expect(second).toContain(`<user-message>\n${PROMPT}\n</user-message>`);
     expect(second).not.toContain('(no messages)');
     expect(second).toContain(`## #1 ${STATE_CARD}\n${STATE_BODY}`);

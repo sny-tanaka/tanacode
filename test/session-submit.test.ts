@@ -189,4 +189,9 @@ it('打った文字が入力欄に出たかは、折り返しの空白を除い�
   // 複数行は貼り付けとして送るので、目印になる。打つ前から同じ目印だったら、まだ出ていない
   expect(typedShown('[Pasted text #1 +2 lines]', '', '1 行目\n2 行目\n3 行目')).toBe(true);
   expect(typedShown('[Pasted text #1 +2 lines]', '[Pasted text #1 +2 lines]', '1 行目\n2 行目\n3 行目')).toBe(false);
+  // 長い複数行の入力（行ごとの貼り付け）は、入力欄に全部は映らない。終わりの文字が入力欄の終わりに出ていれば、打ち終えている
+  const long = Array.from({ length: 60 }, (_, i) => `${i + 1} 行目: 長い複数行の発言の、${i + 1} 番目の行です。`).join('\n');
+  expect(typedShown(long.split('\n').slice(-8).join('\n'), '', long)).toBe(true);
+  expect(typedShown(long.split('\n').slice(0, 8).join('\n'), '', long)).toBe(false);
+  expect(typedShown(long.split('\n').slice(-8, -1).join('\n'), '', long)).toBe(false);
 });
