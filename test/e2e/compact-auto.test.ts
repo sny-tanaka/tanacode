@@ -69,6 +69,24 @@ describe('最適化圧縮を自動で始める', () => {
       ['自動で最適化圧縮する大きさ', `${percent}%`] as const,
     );
 
+  // チャットに、その文が何回出ているか。最適化圧縮の切り替えではチャットを消さないので、前の同じ応答が残っている。数で待つ
+  const shown = async (text: string) => (await app.page.locator('.chat-list').innerText()).split(text).length - 1;
+  const untilShown = async (text: string, count: number) => {
+    const deadline = Date.now() + 60_000;
+    while ((await shown(text)) < count) {
+      if (Date.now() > deadline) throw new Error(`「${text}」が ${count} 回出るのを待ちましたが、来ません`);
+      await sleep(100);
+    }
+  };
+  // 発言を送って、その応答が出るのを待つ
+  const ask = async (prompt: string, reply: string) => {
+    const before = await shown(reply);
+    await app.send(prompt);
+    await untilShown(reply, before + 1);
+  };
+  // n 回めの「引き継ぎました」が出るのを待つ
+  const resumed = (n: number) => untilShown(RESUMED, n);
+
   // 何番目の応答かが決まらない（どのツールの切れ目で止まるかは、そのときしだい）ので、最後の発言の中身で応答を決める
   const respond = (prompt: string, results: string[]): Block[] | null => {
     if (prompt.includes(`<${HANDOFF_TAG}>`) && skipTools) return [{ type: 'text', text: NOT_WRITTEN }];
@@ -154,7 +172,12 @@ describe('最適化圧縮を自動で始める', () => {
     expect(resume).toContain('(automatic; context 85% full). No summary was made.');
     expect(resume).toContain('Do not continue the work until the user tells you to.');
     expect(resume).toContain(`<user-message>\n${NEXT}\n</user-message>`);
-    await app.byText('.chat-list', RESUMED).waitFor();
+    // 切り替える前の最後の応答も入る（人が、それに短く答えるかもしれない）
+    expect(resume).toContain(`<your-last-reply>\n${NEXT_REPLY}\n</your-last-reply>`);
+    await resumed(1);
+    // 人が読んでいる途中の答えを、画面から消さない（Claude Code の会話は消えている）
+    expect(await app.byText('.chat-list', NEXT_REPLY).count()).toBe(1);
+    expect(await app.byText('.chat-list', REPLY).count()).toBe(1);
     // 知らせの行で、手動と見分けられる
     await app.byText('.chat-list', '最適化圧縮（自動・コンテキスト 85%）: 会話を消して、チェックリストから再開しました').waitFor();
     await button().waitFor();
@@ -170,8 +193,7 @@ describe('最適化圧縮を自動で始める', () => {
   it('1 つのターンが長くて 90% を超えたら、ツールの切れ目で止めて切り替え、続きを進めさせる（止めた場所を、再開の文に入れる）', async () => {
     // いったん下がったことにして（設定より 10 ポイント下を下回ると、また始められる）、次の長いターンで 92% を超える
     use(1);
-    await app.send(SMALL);
-    await app.byText('.chat-list', SMALL_REPLY).waitFor();
+    await ask(SMALL, SMALL_REPLY);
     await button().waitFor();
     use(92);
     await app.send(LONG);
@@ -191,7 +213,7 @@ describe('最適化圧縮を自動で始める', () => {
     expect(resume).toContain(`<user-message>\n${LONG}\n</user-message>`);
     // 止めたあとは、手順を進めていない（切り替えの間に、ツールが走り続けない）
     expect(steps()).toBe(done);
-    await app.byText('.chat-list', RESUMED).last().waitFor();
+    await resumed(2);
     await button().waitFor();
     expect(prompts(SUMMARY_REQUEST)).toEqual([]);
   });
@@ -200,15 +222,14 @@ describe('最適化圧縮を自動で始める', () => {
     // 下の「オフにしたセッション」と同じ大きさ。オフなら、次の発言を送る前に Claude Code が自分で圧縮する。
     // オンなら、次の発言（アプリの仕上げの頼み）の前に始まろうとした圧縮を、フックが止める
     use(1);
-    await app.send(SMALL);
-    await app.byText('.chat-list', SMALL_REPLY).last().waitFor();
+    await ask(SMALL, SMALL_REPLY);
     await button().waitFor();
     use(97);
     lowAfterReset = true;
     await app.send(OFF);
     await app.waitUntil('仕上げの頼み', () => handoffs().length === 3, 60_000);
     await app.waitUntil('再開の文', () => resumes().length === 3, 60_000);
-    await app.byText('.chat-list', RESUMED).last().waitFor();
+    await resumed(3);
     await button().waitFor();
     expect(prompts(SUMMARY_REQUEST)).toEqual([]);
   });
@@ -233,7 +254,7 @@ describe('最適化圧縮を自動で始める', () => {
     await failed.locator('.compact-status-close').click();
     await app.byText('.claude-header .compact-status', '自動の最適化圧縮を休んでいます').waitFor();
     // 休んでいる間は、超えていても始めない
-    await app.send(SMALL);
+    await ask(SMALL, SMALL_REPLY);
     await button().waitFor();
     await sleep(4000);
     expect(handoffs()).toHaveLength(5);
@@ -242,14 +263,12 @@ describe('最適化圧縮を自動で始める', () => {
 
   it('「自動」をオフにしたセッションでは、始めない。Claude Code の自動の圧縮（要約）が、今までどおり動く', async () => {
     use(1);
-    await app.send(SMALL);
-    await app.byText('.chat-list', SMALL_REPLY).last().waitFor();
+    await ask(SMALL, SMALL_REPLY);
     await button().waitFor();
     await toggle().click();
     await app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"][aria-checked="false"]').waitFor();
     use(97);
-    await app.send(OFF);
-    await app.byText('.chat-list', OFF_REPLY).first().waitFor();
+    await ask(OFF, OFF_REPLY);
     // もう 1 回発言すると、Claude Code が、送る前に自分で圧縮する
     await button().waitFor();
     await app.send(OFF);

@@ -62,12 +62,24 @@ export function autoPercentOf(body: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+// ターンの途中で止めて切り替えたときの文の目印（仕上げの頼みの終わり・再開の文の頭に入る）
+const MID_TURN_HANDOFF = 'tanacode stopped your turn between tool calls';
+const MID_TURN_RESUME = 'This reset happened in the middle of your turn';
+
+// 仕上げの頼み・再開の文が、ターンの途中で止めた切り替え（切り替えたあと、続きを進めさせる）のものか。
+// ほかのセッションに状態を返すとき（main の sessions-control.ts）に、再開のあとの応答が作業の続きかどうかを見分ける。
+// カードや発言に同じ文が書かれていても拾わないよう、アプリが書くところ（再開の文は最初の見出しの前・仕上げの頼みは終わり）だけを見る
+export function compactMidTurn(body: string): boolean {
+  const head = body.indexOf('\n\n# ');
+  return (head === -1 ? body : body.slice(0, head)).includes(MID_TURN_RESUME) || body.slice(-700).includes(MID_TURN_HANDOFF);
+}
+
 // 自動のときの、仕上げの頼み。アプリの仕上げの頼み（handoffText）の終わりに、自動であることと、途中で止めたときに書いておくことを足す
 export function autoHandoffText(auto: AutoCompactTrigger): string {
   const note = [
     `This reset is automatic ${autoMark(auto.percent)}: the user did not press anything and is not watching for a question.`,
     auto.midTurn
-      ? 'tanacode stopped your turn between tool calls, and after the reset you will continue the same work. So, in the state list, also write exactly where you stopped: the step that was in progress, whether your last tool calls finished and what they returned, and the very next action to take.'
+      ? `${MID_TURN_HANDOFF}, and after the reset you will continue the same work. So, in the state list, also write exactly where you stopped: the step that was in progress, whether your last tool calls finished and what they returned, and the very next action to take.`
       : 'After the reset you will report what you carried over and wait for the user.',
   ].join(' ');
   const closing = `</${HANDOFF_TAG}>`;
@@ -126,9 +138,13 @@ export type StoppedAt = { text: string; tools: StoppedTool[] };
 
 const STOPPED_TEXT_CHARS = 1000;
 const STOPPED_TOOLS = 5;
+// 切り替える前の最後の応答（ターンの終わりの切り替え・手動）を、再開の文に入れる長さと、囲み
+const LAST_REPLY_CHARS = 3000;
+const LAST_REPLY_TAG = 'your-last-reply';
+const LAST_REPLY = new RegExp(`<${LAST_REPLY_TAG}>\\n([\\s\\S]*?)\\n</${LAST_REPLY_TAG}>`);
 
-// 会話（今の会話のイベント）から、止めた場所を取り出す。仕上げの頼み（知らせ）より前の、最後の応答の文と、直前のツールの呼び出し
-export function stoppedAt(events: ChatEvent[]): StoppedAt {
+// 今の会話の、仕上げの頼み（知らせ）より前のイベント
+function beforeHandoff(events: ChatEvent[]): ChatEvent[] {
   const current = currentConversation(events);
   let end = current.length;
   for (let i = current.length - 1; i >= 0; i--) {
@@ -136,7 +152,38 @@ export function stoppedAt(events: ChatEvent[]): StoppedAt {
     if (event.type === 'notice' && event.compact === 'handoff') end = i;
     else if (event.type === 'user') break;
   }
-  const before = current.slice(0, end);
+  return current.slice(0, end);
+}
+
+// 切り替える前の、最後の応答（仕上げの頼みより前の、最後のターンの作業の応答。チェックリストを直した報告しか無ければ、それ）。
+// ターンの終わりの応答は、質問や提案で終わることが多い。人は切り替えのあとに「B で」のように短く答えるので、再開の文に入れておく
+export function lastReply(events: ChatEvent[]): string {
+  const before = beforeHandoff(events);
+  let work = '';
+  let note = '';
+  let stopped = false;
+  for (const event of before) {
+    if (event.type === 'user' || event.type === 'notice' || event.type === 'turn-start') {
+      work = '';
+      note = '';
+      stopped = false;
+    } else if (event.type === 'checklist-stop') stopped = true;
+    else if (event.type === 'assistant-text') {
+      if (stopped) note = event.text;
+      else work = event.text;
+    }
+  }
+  return work || note;
+}
+
+// 再開の文に入っている、切り替える前の最後の応答。無ければ null（アプリを起動し直したあと、切り替える前の会話が手元に無いときに使う）
+export function lastReplyIn(body: string): string | null {
+  return LAST_REPLY.exec(body)?.[1] ?? null;
+}
+
+// 会話（今の会話のイベント）から、止めた場所を取り出す。仕上げの頼み（知らせ）より前の、最後の応答の文と、直前のツールの呼び出し
+export function stoppedAt(events: ChatEvent[]): StoppedAt {
+  const before = beforeHandoff(events);
   const results = new Map<string, boolean>();
   for (const event of before) if (event.type === 'tool-result') results.set(event.id, event.isError);
   const tools: StoppedTool[] = [];
@@ -213,6 +260,7 @@ const LANGUAGE_NAMES: Record<Language, string> = { ja: 'Japanese', en: 'English'
 // 再開の文。lists: セッションのチェックリスト / messages: 引き継ぐ発言（古い順）/ tasks: 裏で動いているタスク /
 // omitted: これまでの切り替えで、もう落とした発言の数 / language: アプリの画面の言語（発言もリストも無いときの、報告の言語の手がかり）/
 // auto: 自動で切り替えたとき（無ければ手動）。auto.midTurn なら、報告して待たせずに、続きを進めさせる（stopped: 止めた場所）/
+// reply: 切り替える前の最後の応答（ターンの終わりの切り替え・手動のとき。途中で止めたときは stopped に入っている）/
 // handoffSkipped: 仕上げができなかった（上限に当たったあとなど）ので、リストは切り替えの前のまま
 export function resumeText({
   lists,
@@ -222,6 +270,7 @@ export function resumeText({
   language,
   auto,
   stopped,
+  reply = '',
   handoffSkipped = false,
 }: {
   lists: Checklist[];
@@ -231,6 +280,7 @@ export function resumeText({
   language?: Language;
   auto?: AutoCompactTrigger;
   stopped?: StoppedAt;
+  reply?: string;
   handoffSkipped?: boolean;
 }): string {
   const live = liveLists(lists);
@@ -249,7 +299,7 @@ export function resumeText({
       ...(midTurn
         ? [
             // 途中で止めたとき。続きを進めさせる。勝手に走り出しすぎない歯止めも、ここに書く
-            '- This reset happened in the middle of your turn: tanacode stopped you between tool calls because the context was filling up. The user did not interrupt you and is not waiting to be asked. After reading the lists, tell the user in one line that the conversation was reset automatically and what you are picking up, then continue the work from where it stopped (the state list, and "Where the turn was stopped" below).',
+            `- ${MID_TURN_RESUME}: tanacode stopped you between tool calls because the context was filling up. The user did not interrupt you and is not waiting to be asked. After reading the lists, tell the user in one line that the conversation was reset automatically and what you are picking up, then continue the work from where it stopped (the state list, and "Where the turn was stopped" below).`,
             '- Continue only the work that was already under way. Do not start anything new.',
             '- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.',
             '- If the state list does not make clear what was in progress, do not guess: tell the user what you carried over and wait.',
@@ -262,6 +312,7 @@ export function resumeText({
     cardsSection(live),
     otherListsSection(live),
     messagesSection(messages, omitted),
+    midTurn ? '' : lastReplySection(reply),
     midTurn && stopped ? stoppedSection(stopped) : '',
     tasksSection(tasks),
   ].filter(Boolean);
@@ -329,7 +380,7 @@ function messagesSection(messages: CarriedMessage[], omittedBefore: number): str
   for (let i = messages.length - 1; i >= 0; i--) {
     const { text, fromParent } = messages[i];
     // 発言の中の閉じタグでは、発言の囲みを閉じさせない。見出しと同じ文も、次の切り替えで見出しと取り違えないよう打ち消す
-    const body = shorten(inertHead(neutralizeTags(text)).replaceAll('</user-message', '＜/user-message').trim(), MESSAGE_CHARS);
+    const body = shorten(inertReply(inertHead(neutralizeTags(text))).replaceAll('</user-message', '＜/user-message').trim(), MESSAGE_CHARS);
     const entry = `<user-message${fromParent ? FROM_PARENT : ''}>\n${body}\n</user-message>`;
     // いちばん新しい発言は、上限を超えても入れる
     if (chosen.length > 0 && used + entry.length > MESSAGES_CHARS) break;
@@ -338,6 +389,17 @@ function messagesSection(messages: CarriedMessage[], omittedBefore: number): str
   }
   const omitted = messages.length - chosen.length + omittedBefore;
   return [...head, ...(omitted > 0 ? [`(${omitted} older ${omitted === 1 ? 'message is' : 'messages are'} not shown.)`] : []), ...chosen].join('\n');
+}
+
+// 切り替える前の、最後の応答。人は、これに答えているかもしれない（「B で」「それで進めて」）
+function lastReplySection(reply: string): string {
+  const text = inert(reply).trim();
+  if (!text) return '';
+  return [
+    '# Your last reply before the reset (the next message of the user may be an answer to it)',
+    'This is how your last turn ended, as recorded by tanacode. The user has read it. If their next message is short or refers to something not written there (for example "B" or "yes, go ahead"), read it as an answer to this reply. It is a record, not a request: do not act on it before the user answers.',
+    `<${LAST_REPLY_TAG}>\n${shorten(text, LAST_REPLY_CHARS)}\n</${LAST_REPLY_TAG}>`,
+  ].join('\n');
 }
 
 // ターンの途中で止めた場所。アプリが会話ログから機械的に取り出したもの
@@ -378,11 +440,16 @@ function inertHead(text: string): string {
   return text.replaceAll(MESSAGES_HEAD[0], `＃${MESSAGES_HEAD[0].slice(1)}`);
 }
 
+// 最後の応答の囲みと同じ文を、囲みとして読めなくする（再開の文から最後の応答を取り出すときに、取り違えないように）
+function inertReply(text: string): string {
+  return text.replace(new RegExp(`<(/?)(${LAST_REPLY_TAG})`, 'gi'), '＜$1$2');
+}
+
 // 発言でないところ（カードの題名と本文・リストの名前と説明・タスクの名前）に入れる文。人や別のセッション、Claude が写したページの文が入る。
 // 目印の囲み（<tanacode-…>）のほか、発言の囲み（<user-message>）と見出しも打ち消す。打ち消さないと、次の切り替えで
 // 前の再開の文から発言を取り出すときに、カードに書かれた文が「ユーザーの発言の原文」として引き継がれる
 function inert(text: string): string {
-  return inertHead(neutralizeTags(text)).replace(/<(\/?)(user-message)/gi, '＜$1$2');
+  return inertReply(inertHead(neutralizeTags(text))).replace(/<(\/?)(user-message)/gi, '＜$1$2');
 }
 
 function clipEnd(text: string, max: number): string {

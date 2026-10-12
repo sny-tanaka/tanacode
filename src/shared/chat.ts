@@ -70,7 +70,9 @@ export type ChatEvent =
   | { type: 'queue'; prompts: string[] }
   // このセッションで作った・紐づいた PR（会話ログの pr-link 行。同じものが何度も書かれる）
   | { type: 'pr-link'; pr: PullRequestLink }
-  | { type: 'reset' }
+  // 会話を始め直した（/clear）。compact: 最適化圧縮の流れの中でアプリが打った /clear（チャットの画面は消さない。
+  // ほかのセッションに状態を返すときも、作業の区切りにしない）
+  | { type: 'reset'; compact?: true }
   // 巻き戻し（/rewind）で会話が枝分かれした。events で表示し直す（それまでの表示は捨てる）
   | { type: 'replace'; events: ChatEvent[] }
   // Remote Control がつながった（url）・切れた（null）

@@ -352,6 +352,53 @@ describe('statusLine', () => {
     expect(app.pty(id).arg('--resume')).toBe(next);
   });
 
+  it('最適化圧縮の流れが打った /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）。人の /clear には付けない', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    app.append(id, line.user('前の会話'), line.text('はい'), line.turnEnd());
+    await app.waitFor('前の会話', () => app.events(id).some((e) => e.type === 'turn-end'));
+    const resets = () => app.events(id).filter((e) => e.type === 'reset');
+    const switchTo = async (next: string) => {
+      const file = transcriptPath(app.cwd, next);
+      writeFileSync(file, `${JSON.stringify({ ...line.user('新しい会話'), sessionId: next, cwd: app.cwd })}\n`);
+      const before = resets().length;
+      app.manager.statusLineChanged(id, info(file));
+      await app.waitFor('乗り換え', () => resets().length > before);
+    };
+    const asked: string[] = [];
+    app.manager.compactClearing = (session) => {
+      asked.push(session);
+      return true;
+    };
+    await switchTo('66666666-0000-4000-8000-000000000006');
+    expect(resets()).toEqual([{ type: 'reset', compact: true }]);
+    expect(asked).toEqual([id]);
+    app.manager.compactClearing = () => false;
+    await switchTo('77777777-0000-4000-8000-000000000007');
+    expect(resets()).toEqual([{ type: 'reset', compact: true }, { type: 'reset' }]);
+  });
+
+  it('最後に終わったターンが、人の中断で終わったかが分かる。外から見た状態が変わったことを、見張っている先に知らせられる', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    expect(app.manager.lastTurnInterrupted(id)).toBe(false);
+    expect(app.manager.lastTurnInterrupted('nope')).toBe(false);
+    app.append(id, line.user('頼み'), line.text('はい'), line.turnEnd());
+    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    expect(app.manager.lastTurnInterrupted(id)).toBe(false);
+    app.append(id, line.user('次の頼み'), line.user('[Request interrupted by user]'));
+    await app.waitFor('中断', () => app.events(id).some((e) => e.type === 'turn-end' && e.interrupted));
+    expect(app.manager.lastTurnInterrupted(id)).toBe(true);
+    app.append(id, line.user('その次'), line.text('はい'), line.turnEnd());
+    await app.waitFor('次のターンの終わり', () => app.events(id).filter((e) => e.type === 'turn-end').length >= 3);
+    expect(app.manager.lastTurnInterrupted(id)).toBe(false);
+    const seen: string[] = [];
+    const unwatch = app.manager.watchState((session) => seen.push(session));
+    app.manager.notifyState(id);
+    unwatch();
+    expect(seen).toEqual([id]);
+  });
+
   it('新しい会話に切り替わったら、送信中の扱いをやめる（/clear は発言として会話ログに出ない。次の送信を待たせない）', async () => {
     const { id, pty } = app.create();
     await app.ready(id);

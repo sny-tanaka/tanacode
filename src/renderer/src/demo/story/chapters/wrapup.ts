@@ -89,7 +89,7 @@ export async function runWrapup(story: Story): Promise<void> {
   // 3. 会話を消して、チェックリストから再開する
   backend.setCompactPhase(id, 'clearing');
   await sleep(900);
-  backend.push(id, { type: 'reset' });
+  backend.push(id, { type: 'reset', compact: true });
   const files = backend.sessions.get(id)!.knowledge;
   backend.know(id, Object.fromEntries(Object.keys(files).map((path) => [path, 'stale' as const])), 9_000);
   backend.setStatusLine(id, statusLine(5, 9_000));
@@ -104,7 +104,7 @@ export async function runWrapup(story: Story): Promise<void> {
     ['チェックリストを読んで、引き継ぎました。', '', '- 税込価格・アレルギー表示・テイクアウトの価格は実装済みで、テストも通っています', '- 残りは、PR の説明を書くことです', '', '続けてよければ、指示をください。'].join('\n'),
   );
   backend.push(id, { type: 'turn-end' });
-  d.caption('会話は空になり、メーターが下がります。決めたことと今の状態はチェックリストに残っているので、Claude はそこから続けます', '.claude-header button.context-meter');
+  d.caption('Claude の会話は空になり、メーターが下がります（チャットの表示は残ります）。決めたことと今の状態はチェックリストに残っているので、Claude はそこから続けます', '.claude-header button.context-meter');
   await sleep(3200);
 
   // 4. 英語で返ってきた思考を、日本語に訳して読む

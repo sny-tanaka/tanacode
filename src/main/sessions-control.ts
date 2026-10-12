@@ -3,6 +3,7 @@ import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
+import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@shared/optimized-compact';
 import { t } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
@@ -82,6 +83,9 @@ type Deps = {
   home: string;
   // 親への知らせをまとめるまでの待ち（テストでは短くする）
   notifyDelayMs?: number;
+  // そのセッションで、最適化圧縮の流れが進んでいるか（host の stateOf は、その間「作業中」を返す。outward-state.ts）。
+  // 流れで作業中に見えているだけの子では、親への知らせを取り下げない
+  compacting?: (id: string) => boolean;
   // 質問に答えたあと、子の次の質問を待つ上限（テストでは短くする）
   followUpMs?: number;
 };
@@ -138,6 +142,8 @@ export class SessionsControl {
   private readonly notices: SessionNotices<{ state: SessionState; at: number }>;
   // 親が子の状態を読んだ時刻（`親:子`）。読んだあとの知らせは送らない
   private readonly observedAt = new Map<string, number>();
+  // 最適化圧縮の流れが進んだ子（流れが始まってから、再開の文のターンが終わるまで）
+  private readonly compacted = new Set<string>();
   // 親が止めた子。止めてターンが終わったことは、親に知らせない
   private readonly stopped = new Set<string>();
   private readonly unwatch: () => void;
@@ -645,7 +651,13 @@ export class SessionsControl {
     const before = this.lastState.get(id);
     this.lastState.set(id, state);
     const parentId = this.deps.host.parentOf(id);
-    if (parentId && state && isBusy(state)) this.notices.remove(parentId, id);
+    // 子がまた動き出したら、まだ送っていない知らせは取り下げる。最適化圧縮の流れ（仕上げ・再開のターン）で作業中に見えているだけなら、
+    // 取り下げない（ターンの終わりの自動の切り替えは、子が作業を終えた直後に始まる。親が忙しくて、まだ送れていない知らせが消える）
+    // 流れは、再開の文のターンが始まったところで終わる。そのターン（「引き継ぎました」の報告）が終わるまでも、同じ扱いにする
+    if (this.deps.compacting?.(id)) this.compacted.add(id);
+    const busy = !!state && isBusy(state);
+    if (parentId && busy && !this.compacted.has(id)) this.notices.remove(parentId, id);
+    if (!busy) this.compacted.delete(id);
     // 作業していた子のターンが終わったとき（起動中から手が空いたのは、作業を終えたのではない。アプリを起動し直して引き継いだときなど）
     if (parentId && before === 'working' && state && NOTIFY_STATES.has(state)) void this.queueNotice(id, parentId, state);
   }
@@ -654,10 +666,19 @@ export class SessionsControl {
     const at = Date.now();
     if (this.stopped.delete(childId)) return;
     const events = await this.deps.host.conversation(childId);
-    // /clear のあとの会話だけを見る（最後の指示が親のものでも、/clear で会話を始め直していれば、親の作業ではない）
-    const reset = lastOf(events, (e): e is Extract<ChatEvent, { type: 'reset' }> => e.type === 'reset');
+    // /clear のあとの会話だけを見る（最後の指示が親のものでも、/clear で会話を始め直していれば、親の作業ではない）。
+    // 最適化圧縮の切り替え（アプリが打った /clear）は、区切りにしない（会話を消しても、だれの作業かは変わらない。手動も自動も同じ）
+    const reset = lastOf(events, (e): e is Extract<ChatEvent, { type: 'reset' }> => e.type === 'reset' && !e.compact);
     const after = reset ? events.slice(events.lastIndexOf(reset) + 1) : events;
-    if (lastOf(after, isUser)?.parent !== parentId) return;
+    // アプリが打った /clear（新しい会話に、コマンドの発言として残る）は、人の発言に数えない
+    const user = lastOf(withoutCompaction(after), isUser);
+    // アプリを起動し直したあとは、切り替える前の会話が手元に無い。再開の文に入っている発言の原文で見分ける
+    const fromParent = user ? user.parent === parentId : (carriedMessages(after).at(-1)?.fromParent ?? false);
+    if (!fromParent) return;
+    // 切り替えのあとの「引き継ぎました」の報告で終わったターン（ターンの終わりの自動・手動）と、取りやめた仕上げのターンは、
+    // 作業の終わりではない（作業の終わりは、切り替える前に知らせてある）。途中で止めて続きを進めたターンの終わりは、作業の終わり
+    const last = [...after].reverse().find(startsTurn);
+    if (last?.type === 'notice' && last.compact && !compactMidTurn(detailOf(last))) return;
     this.notices.add(parentId, childId, { state, at });
   }
 
@@ -671,6 +692,8 @@ export class SessionsControl {
   }
 
   private observe(parentId: string, childId: string): void {
+    // 最適化圧縮の流れの途中に読んだのは、「作業中」の状態。手が空いたことは、まだ読んでいない（そのあとの知らせを止めない）
+    if (this.deps.compacting?.(childId)) return;
     this.observedAt.set(`${parentId}:${childId}`, Date.now());
   }
 
@@ -771,12 +794,18 @@ export class SessionsControl {
   private async status(s: SessionSummary, caller: SessionSummary, detail: boolean): Promise<Record<string, unknown>> {
     const base = this.describe(s, caller);
     if (!detail) return base;
-    const events = await this.deps.host.conversation(s.id);
-    const lastPrompt = lastOf(events, isPrompt);
-    const promptAt = lastPrompt ? events.lastIndexOf(lastPrompt) : -1;
+    const all = await this.deps.host.conversation(s.id);
+    // 最適化圧縮の仕上げの頼み・再開の文と、その返事（「リストを更新しました」「引き継ぎました」）は、指示と作業の応答に数えない
+    const events = withoutCompaction(all);
+    const prompt = lastOf(events, isPrompt);
+    const promptAt = prompt ? events.lastIndexOf(prompt) : -1;
     // 作業の結果を返す。チェックリストを直した報告しか無ければ、それを返す
     const { work, notes } = responsesOf(events.slice(promptAt + 1));
-    const response = work[work.length - 1] ?? notes[notes.length - 1];
+    // アプリを起動し直したあとは、切り替える前の会話が手元に無い。再開の文に入っている、最後の発言と最後の応答で補う
+    const resume = prompt ? undefined : lastOf(all, isResume);
+    const carried = resume ? carriedMessages([resume]).at(-1) : undefined;
+    const lastPrompt: Prompt | undefined = prompt ?? (carried ? { type: 'user', id: '', text: carried.text, ...(carried.fromParent && s.parentId ? { parent: s.parentId } : {}) } : undefined);
+    const response = work[work.length - 1] ?? notes[notes.length - 1] ?? (resume ? (lastReplyIn(detailOf(resume)) ?? undefined) : undefined);
     const screen = this.deps.host.screen(s.id);
     const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
     return {
@@ -786,7 +815,7 @@ export class SessionsControl {
         : null,
       last_response: response ? clip(response, 4000) : null,
       question: base.state === 'question' && menu?.kind === 'question' ? questionOf(menu) : undefined,
-      permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), events).view : undefined,
+      permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), all).view : undefined,
     };
   }
 
@@ -967,12 +996,31 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
   let all: Turn[] = [];
   let current: Turn | null = null;
   let stopped = false;
+  // 最適化圧縮の仕上げのターン（頼みと、「リストを更新しました」の返事）は出さない
+  let handoff = false;
   for (const e of events) {
-    if (startsTurn(e)) stopped = false;
+    if (startsTurn(e)) {
+      stopped = false;
+      handoff = e.type === 'notice' && e.compact === 'handoff';
+    }
+    if (handoff) continue;
     if (e.type === 'reset') {
+      // 最適化圧縮の切り替えでは、前のターンも残す（下の知らせの 1 行を挟む）
+      if (e.compact) continue;
       // /clear で会話を始め直した
       all = [];
       current = null;
+    } else if (e.type === 'notice' && e.compact === 'resume') {
+      // 再開の文は長いので、切り替えたことだけを書く
+      const auto = autoPercentOf(detailOf(e));
+      const text = [
+        `tanacode reset the conversation of this session and resumed it from its checklists (optimized compaction${auto === null ? '' : `, automatic at ${auto}% of the context`}).`,
+        compactMidTurn(detailOf(e))
+          ? 'The reset was made in the middle of a turn, and the session then continued the same work: what follows is the rest of that work.'
+          : 'What follows is its report of what it carried over, not a result of its work.',
+      ].join(' ');
+      current = { who: 'Notice', text, responses: [], notes: [], tools: [] };
+      all.push(current);
     } else if (e.type === 'user') {
       const from = parentId ? 'the parent session' : 'the session that started this one,';
       current = { who: e.parent ? `Instruction from ${from} "${titleOf(e.parent)}"` : 'User message', text: e.text, responses: [], notes: [], tools: [] };
@@ -1012,7 +1060,7 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
 function editedFiles(events: ChatEvent[], cwd: string): string[] {
   const files = new Set<string>();
   for (const e of events) {
-    if (e.type === 'reset') files.clear();
+    if (e.type === 'reset' && !e.compact) files.clear();
     if (e.type !== 'tool-use' || !EDIT_TOOLS.has(e.name) || !e.filePath) continue;
     const rel = relative(cwd, e.filePath);
     // .. そのものか ../ で始まるものが外（..env.local のような名前のファイルは中）
@@ -1121,6 +1169,9 @@ function lastOf<T, S extends T>(list: T[], match: (item: T) => item is S): S | u
 type Prompt = Extract<ChatEvent, { type: 'user' | 'notice' }>;
 const isPrompt = (e: ChatEvent): e is Prompt => e.type === 'user' || e.type === 'notice';
 const isUser = (e: ChatEvent): e is Extract<ChatEvent, { type: 'user' }> => e.type === 'user';
+// 知らせの全文（最適化圧縮の仕上げの頼み・再開の文）
+const detailOf = (e: Extract<ChatEvent, { type: 'notice' }>): string => e.detail ?? '';
+const isResume = (e: ChatEvent): e is Extract<ChatEvent, { type: 'notice' }> => e.type === 'notice' && e.compact === 'resume';
 // ターンのはじまり（発言・知らせ・別の Claude からの知らせ）
 const startsTurn = (e: ChatEvent): boolean => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start';
 
@@ -1139,9 +1190,33 @@ function responsesOf(events: ChatEvent[]): { work: string[]; notes: string[] } {
   return { work, notes };
 }
 
+// 会話から、最適化圧縮のぶんを除く。仕上げの頼みと再開の文（知らせ）と、その返事。
+// 途中で止めて続きを進めた切り替えでは、再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
+function withoutCompaction(events: ChatEvent[]): ChatEvent[] {
+  const kept: ChatEvent[] = [];
+  let skipping = false;
+  // アプリが /clear を打って、まだ再開の文を送っていない（新しい会話に残る /clear のコマンドの発言を除く）
+  let cleared = false;
+  for (const e of events) {
+    if (e.type === 'reset' && e.compact) {
+      cleared = true;
+      continue;
+    }
+    if (e.type === 'notice' && e.compact) {
+      cleared = false;
+      skipping = e.compact === 'handoff' || !compactMidTurn(detailOf(e));
+      continue;
+    }
+    if (cleared && e.type === 'user' && e.command) continue;
+    if (startsTurn(e)) skipping = false;
+    if (!skipping) kept.push(e);
+  }
+  return kept;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
 // テストで使う
-export const testing = { conversationLines, editedFiles, safeRelative };
+export const testing = { conversationLines, editedFiles, safeRelative, withoutCompaction };

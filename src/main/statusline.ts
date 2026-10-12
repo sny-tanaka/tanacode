@@ -131,8 +131,11 @@ export const PERMISSION_FILE_COMMAND = `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}
 // ツールのあと（PostToolUse）のフック。アプリが止めるファイル（<id>.auto-compact.json）を書いていれば、名前を変えて（最初の 1 回だけ効く）、
 // 中身（{"continue": false, "stopReason": …}）を出す。Claude Code は、そこでターンを止める。ファイルが無ければ何もしない。
 // ツールの呼び出しのたびに動くので、アプリには聞かず、ファイルを見るだけにする（Node のプロセスを起こさない）。
+// サブエージェント（Agent ツール）の中のツールの呼び出しでも動く（実物の Claude Code 2.1.296 で確かめた。フックの入力に agent_id が付く）。
+// そこで掴むと、サブエージェントが止まるだけで本体のターンは止まらず、印のファイルだけが残る。止めるファイルがあるときだけ入力を読み、
+// agent_id があれば何もしない（本体の次のツールの切れ目まで待つ。入力の中の文字列は " が \" になるので、キーとしての agent_id だけに当たる）。
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; [ -f "$f" ] && mv "$f" "$h" 2>/dev/null && cat "$h"; exit 0`;
+export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; [ -f "$f" ] || exit 0; case "$(cat)" in *'"agent_id":"'*) exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h"; exit 0`;
 
 export class StatusLineWatcher {
   private watcher: FSWatcher | null = null;

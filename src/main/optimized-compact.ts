@@ -7,6 +7,7 @@ import {
   carriedMessages,
   carriedOmitted,
   handoffText,
+  lastReply,
   resumeText,
   stoppedAt,
   type AutoCompactTrigger,
@@ -52,11 +53,13 @@ type Timings = {
   retryMs: number;
   // 送った仕上げの頼みが、入力欄に出たままのとき、中断で戻されたとみなすまでの時間
   pulledBackMs: number;
+  // 再開の文を送ってから、そのターンが始まるのを待つ上限
+  startMs: number;
 };
 
 // clearMs: /clear は SessionEnd・SessionStart の hooks を走らせるので、使う人の hooks が遅い・マシンが重いと時間がかかる。
 // 時間切れにすると、会話は消えたのに再開の文を送らないことになる（いちばん避けたい）。待っている間に失うものは無いので、長く待つ
-const TIMINGS: Timings = { pollMs: 300, submitMs: 10_000, appearMs: 30_000, clearMs: 120_000, retryMs: 2000, pulledBackMs: 2000 };
+const TIMINGS: Timings = { pollMs: 300, submitMs: 10_000, appearMs: 30_000, clearMs: 120_000, retryMs: 2000, pulledBackMs: 2000, startMs: 15_000 };
 
 type Deps = {
   host: CompactHost;
@@ -105,7 +108,7 @@ export class OptimizedCompact {
     for (const id of ids) this.deps.onChange(id, this.status(id));
   }
 
-  // 進んでいる途中か
+  // 進んでいる途中か（再開の文のターンが始まるまで）。この間、ほかのセッションからは「作業中」に見せる（main の outward-state.ts）
   running(id: string): boolean {
     return this.phases.has(id);
   }
@@ -144,8 +147,10 @@ export class OptimizedCompact {
   // 終わりまで進める。取りやめた・失敗したときは、その理由を返す
   private async run(id: string, auto: AutoCompactTrigger | null): Promise<CompactFailure | null> {
     const { host } = this.deps;
-    // ターンの途中で止めたとき、止めた場所（仕上げの頼みを送る前の会話から、機械的に取り出す）
-    const stopped = auto?.midTurn ? stoppedAt(await host.conversation(id)) : undefined;
+    // ターンの途中で止めたときは、止めた場所。ほかは、最後の応答（どちらも、仕上げの頼みを送る前の会話から、機械的に取り出す）
+    const before = await host.conversation(id);
+    const stopped = auto?.midTurn ? stoppedAt(before) : undefined;
+    const reply = auto?.midTurn ? '' : lastReply(before);
     // 仕上げのあと、/clear を打つ前に別のターンが挟まったら、仕上げを 1 回だけやり直す（リストが、そのターンの分だけ古くなるため）
     for (let attempt = 0; ; attempt++) {
       this.setPhase(id, 'finalizing');
@@ -181,6 +186,7 @@ export class OptimizedCompact {
         omitted: carriedOmitted(conversation),
         tasks: host.runningTasks(id),
         language: language(),
+        reply,
         ...(auto ? { auto, stopped, handoffSkipped } : {}),
       });
       this.setPhase(id, 'clearing');
@@ -208,6 +214,9 @@ export class OptimizedCompact {
     for (;;) {
       try {
         await this.deps.host.submitWhenReady(id, text, this.timings.submitMs);
+        // 再開の文のターンが始まるまでを、流れのうちにする。送った直後は、まだ「待機」に見える。ここで流れを終えると、
+        // ほかのセッションから、手が空いたように見える（親に「終わった」と知らせが行く・wait_sessions が返る・end_session が通る）
+        await this.until(id, this.timings.startMs, () => !IDLE_STATES.has(this.deps.host.stateOf(id) ?? 'exited'));
         return null;
       } catch {
         if (!this.alive(id)) return 'exited';

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../src/shared/ipc';
 import { IDLE_COMPACT_STATUS, midTurnPercent, type AutoCompactTrigger, type CompactStatus } from '../src/shared/optimized-compact';
 import type { SessionState } from '../src/shared/session-tools';
+import type { ScreenInfo } from '../src/shared/screen';
 import type { StatusLineInfo } from '../src/shared/statusline';
 import { AppSettings } from '../src/main/app-settings';
 import { AutoCompact, type AutoCompactHost } from '../src/main/auto-compact';
@@ -27,6 +28,8 @@ let changes: string[];
 let threshold: number;
 let auto: AutoCompact;
 let clock: number;
+let draft: string | null;
+let interrupted: boolean;
 
 const statusLine = (): StatusLineInfo | null =>
   percent === null ? null : { model: null, effort: null, version: null, context: { size: 200_000, usedPercent: percent, tokens: percent * 2000 }, rateLimits: null, costUsd: null, transcriptPath: null, updatedAt: 0 };
@@ -43,12 +46,15 @@ beforeEach(() => {
   changes = [];
   threshold = 80;
   clock = 1_000_000;
+  draft = null;
+  interrupted = false;
   const host: AutoCompactHost = {
     summary: () => (summary ? ({ id: ID, archived: false, model: null, ...summary } as SessionSummary) : undefined),
     stateOf: () => state,
     statusLine,
     knowledge: () => ({ files: {}, contextTokens: null }),
-    screen: () => null,
+    screen: () => (draft === null ? null : ({ draft } as ScreenInfo)),
+    lastTurnInterrupted: () => interrupted,
   };
   auto = new AutoCompact({
     host,
@@ -86,7 +92,9 @@ function finish(failure: Parameters<AutoCompact['finished']>[1], trigger: AutoCo
 const stopFile = () => watcher.stopFileFor(ID);
 const hitFile = () => watcher.stopHitFileFor(ID);
 // ツールのあとのフックを、本物のコマンドで動かす
-const runHook = () => execFileSync('sh', ['-c', AUTO_COMPACT_STOP_COMMAND], { env: { ...process.env, TANACODE_ASK_FILE: watcher.askFileFor(ID) }, encoding: 'utf8' });
+// input: フックの標準入力（Claude Code が渡す JSON）
+const runHook = (input: Record<string, unknown> = { hook_event_name: 'PostToolUse', tool_name: 'Bash' }) =>
+  execFileSync('sh', ['-c', AUTO_COMPACT_STOP_COMMAND], { env: { ...process.env, TANACODE_ASK_FILE: watcher.askFileFor(ID) }, encoding: 'utf8', input: JSON.stringify(input) });
 
 describe('ターンの終わり', () => {
   it('待機に戻ったときに、設定の大きさを超えていたら始める（報告して待つ）。超えていなければ始めない', () => {
@@ -140,6 +148,28 @@ describe('ターンの終わり', () => {
     expect(started).toHaveLength(1);
   });
 
+  it('人が中断（Esc）して終わったターンでは、始めない（中断した人は、すぐ次の発言を打つ）。次のターンの終わりには始める', () => {
+    interrupted = true;
+    turn(85);
+    clock += 3000;
+    auto.check(ID);
+    expect(started).toEqual([]);
+    interrupted = false;
+    turn(85);
+    expect(started).toEqual([{ percent: 85, midTurn: false }]);
+  });
+
+  it('入力欄に書きかけの文字があるあいだは、始めない（仕上げの頼みを打てずに、失敗に数えられる）。使用量を待つ間に消えたら、始める', () => {
+    draft = '次の頼みを書いている途中';
+    turn(85);
+    expect(started).toEqual([]);
+    expect(changes).toEqual([]);
+    clock += 3000;
+    draft = '';
+    auto.check(ID);
+    expect(started).toEqual([{ percent: 85, midTurn: false }]);
+  });
+
   it('使用量が分からないあいだ（statusLine も会話ログの量も無い）は、始めない', () => {
     turn(null as unknown as number);
     expect(started).toEqual([]);
@@ -179,6 +209,48 @@ describe('ターンの途中', () => {
     auto.check(ID);
     expect(started).toEqual([{ percent: 92, midTurn: true }]);
     expect(existsSync(stopFile()) || existsSync(hitFile())).toBe(false);
+  });
+
+  it('サブエージェントの中のツールの呼び出し（フックの入力に agent_id がある）では、止めない。本体の次のツールの切れ目で止める', () => {
+    state = 'working';
+    percent = 91;
+    auto.check(ID);
+    expect(runHook({ hook_event_name: 'PostToolUse', agent_id: 'aeefce232d4dcd1bd', agent_type: 'general-purpose', tool_name: 'Bash' })).toBe('');
+    expect(existsSync(stopFile())).toBe(true);
+    expect(existsSync(hitFile())).toBe(false);
+    expect(auto.stopping(ID)).toBe(false);
+    // ツールの入力や結果に agent_id という文字があっても（JSON の中では " が \" になる）、本体のツールなら止める
+    expect(JSON.parse(runHook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: { content: '{"agent_id":"x"}' } }))).toMatchObject({ continue: false });
+    expect(existsSync(hitFile())).toBe(true);
+  });
+
+  it('フックが止めてから、流れが始まるまでは「止めている途中」（ほかのセッションからは、待機に戻っても作業中に見せる）', () => {
+    expect(auto.stopping(ID)).toBe(false);
+    state = 'working';
+    percent = 91;
+    auto.check(ID);
+    // 止めるファイルを書いただけでは、まだ
+    expect(auto.stopping(ID)).toBe(false);
+    runHook();
+    expect(auto.stopping(ID)).toBe(true);
+    // ターンが終わって待機に戻っても、流れを始めるまでは続く
+    state = 'idle';
+    expect(auto.stopping(ID)).toBe(true);
+    auto.check(ID);
+    expect(started).toEqual([{ percent: 91, midTurn: true }]);
+    expect(auto.stopping(ID)).toBe(false);
+  });
+
+  it('アプリが途中で止めたターンは、中断の印・入力欄の書きかけがあっても、流れを始める（止めたままにしない）', () => {
+    state = 'working';
+    percent = 91;
+    auto.check(ID);
+    runHook();
+    interrupted = true;
+    draft = '書きかけ';
+    state = 'idle';
+    auto.check(ID);
+    expect(started).toEqual([{ percent: 91, midTurn: true }]);
   });
 
   it('ツールの切れ目が来る前にターンが終わったら、ターンの終わりの切り替え（報告して待つ）にする', () => {

@@ -105,6 +105,11 @@ describe('チャットの行', () => {
     const before: ChatEvent[] = [{ type: 'user', id: 'u1', text: '一' }, { type: 'user', id: 'u2', text: '二' }];
     expect(run([...before, { type: 'replace', events: [{ type: 'user', id: 'u1', text: '一' }] }]).items.map((i) => i.id)).toEqual(['u1']);
     expect(run([...before, { type: 'reset' }]).items).toEqual([]);
+    // 最適化圧縮の切り替え（アプリが打った /clear）では、行を消さない（人が読んでいる途中の答えが消えないように）。ToDo は空にする
+    const kept = run([...before, { type: 'reset', compact: true }]);
+    expect(kept.items).toEqual(run(before).items);
+    expect(kept.items.length).toBeGreaterThan(0);
+    expect(kept.todos).toBeNull();
     const pr = { number: 7, url: 'https://github.com/o/r/pull/7', repository: 'o/r' };
     const chat = run([
       { type: 'queue', prompts: ['あとで'] },

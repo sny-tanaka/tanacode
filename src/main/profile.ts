@@ -14,6 +14,7 @@ import { ChecklistControl } from './checklist-control';
 import { AutoCompact } from './auto-compact';
 import { PRECOMPACT_HOOK_REQUEST } from './checklist-bridge';
 import { OptimizedCompact } from './optimized-compact';
+import { outwardHost } from './outward-state';
 import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
@@ -211,8 +212,14 @@ export class Profile {
       this.claudeDir,
     );
     const manager = this.manager;
+    // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
+    // ほかのセッションと、アプリが打つ知らせからは「作業中」に見せる（outward-state.ts）
+    const compacting = (id: string) => (this.compact?.running(id) ?? false) || (this.autoCompact?.stopping(id) ?? false);
+    const outward = outwardHost(manager, compacting);
+    manager.compactClearing = (id) => this.compact?.status(id).phase === 'clearing';
     this.sessionsControl = new SessionsControl({
-      host: manager,
+      host: outward,
+      compacting,
       enabled: () => this.settings.sessionsControlEnabled(),
       archive: (id, options) => this.archiveSession(id, options),
       home: homedir(),
@@ -235,14 +242,18 @@ export class Profile {
       enabled: () => this.settings.walkthroughControlEnabled(),
       onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
     });
-    const checklistControl = new ChecklistControl({ store: this.checklists, host: manager, enabled: () => this.settings.checklistControlEnabled() });
+    const checklistControl = new ChecklistControl({ store: this.checklists, host: outward, enabled: () => this.settings.checklistControlEnabled() });
     this.checklistControl = checklistControl;
     const compact = new OptimizedCompact({
       host: manager,
       lists: (id) => this.checklists.lists(id),
       usedSince: (id, at) => checklistControl.usedSince(id, at),
       enabled: () => this.settings.checklistControlEnabled(),
-      onChange: (sessionId, status) => send(IpcChannel.CompactChanged, { sessionId, status }),
+      onChange: (sessionId, status) => {
+        send(IpcChannel.CompactChanged, { sessionId, status });
+        // 流れが始まった・終わったので、外から見た状態が変わる（待っていた知らせを送る・親に知らせる）
+        manager.notifyState(sessionId);
+      },
       autoStatus: (id) => autoCompact.status(id),
       onFinish: (id, failure, auto) => autoCompact.finished(id, failure, auto),
     });

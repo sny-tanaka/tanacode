@@ -394,6 +394,8 @@ const SessionManager = fakeClass('SessionManager', {
   browserAskChanged: () => undefined,
   watchState: () => undefined,
   stateOf: () => 'idle',
+  notifyState: echo('manager.notifyState'),
+  lastTurnInterrupted: () => false,
   adopt: () => state.adopt(),
 });
 

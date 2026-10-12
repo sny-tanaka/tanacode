@@ -213,6 +213,25 @@ export class SessionManager {
     for (const listener of this.stateListeners) listener(id);
   }
 
+  // 外から見た状態が変わった（最適化圧縮の流れが始まった・終わった）ことを、見張っている先に知らせる
+  notifyState(id: string): void {
+    this.changed(id);
+  }
+
+  // 最適化圧縮の流れが、そのセッションに /clear を打って、新しい会話になるのを待っているか（profile.ts がつなぐ）。
+  // その /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）
+  compactClearing: (id: string) => boolean = () => false;
+
+  // 最後に終わったターンが、人の中断（Esc）で終わったか
+  lastTurnInterrupted(id: string): boolean {
+    const events = this.runtimes.get(id)?.events ?? [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event.type === 'turn-end') return event.interrupted === true;
+    }
+    return false;
+  }
+
   // 消した worktree を作り直している途中のセッション（まだ Claude Code を起動していない）
   private readonly restoring = new Set<string>();
   // Claude がアプリ内ブラウザでユーザーに操作を頼んでいるセッション（browser-control が知らせてくる）
@@ -1208,7 +1227,7 @@ export class SessionManager {
           rt.chain = [];
           rt.knowledge.reset();
           rt.context.reset();
-          this.pushEvents(id, [{ type: 'reset' }]);
+          this.pushEvents(id, [this.compactClearing(id) ? { type: 'reset', compact: true } : { type: 'reset' }]);
         },
       },
       adopted,

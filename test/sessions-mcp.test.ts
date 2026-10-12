@@ -10,6 +10,8 @@ import type { AskQuestion, Menu, PermissionMode, ScreenInfo } from '../src/share
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
 import type { WorkflowRun } from '../src/shared/workflow';
+import { HANDOFF_TAG, RESUME_TAG, autoHandoffText, handoffText, resumeText, type AutoCompactTrigger, type CarriedMessage } from '../src/shared/optimized-compact';
+import { outwardHost, outwardState } from '../src/main/outward-state';
 import {
   SESSIONS_MCP,
   SESSIONS_MCP_FOR_CHILD,
@@ -1302,6 +1304,248 @@ describe('ツールの実行（SessionsControl）', () => {
       host.set(PARENT, 'idle');
       await settle();
       expect(host.submitted).toEqual([]);
+    });
+  });
+
+  describe('子セッションで、最適化圧縮の流れが進む（自動は既定でオンなので、親が指示した子でも起きる）', () => {
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    // 流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）
+    let flowing: Set<string>;
+    let flow: SessionsControl;
+    let n = 0;
+    const strip = (text: string, tag: string) => text.slice(`<${tag}>`.length, -`</${tag}>`.length).trim();
+    const handoffNotice = (auto: AutoCompactTrigger | null): ChatEvent => ({ type: 'notice', id: `h${n++}`, text: '仕上げ', compact: 'handoff', detail: strip(auto ? autoHandoffText(auto) : handoffText(), HANDOFF_TAG) });
+    const resumeNotice = (auto: AutoCompactTrigger | null, over: { messages?: CarriedMessage[]; reply?: string } = {}): ChatEvent => ({
+      type: 'notice',
+      id: `r${n++}`,
+      text: '再開',
+      compact: 'resume',
+      detail: strip(resumeText({ lists: [], messages: over.messages ?? [], tasks: [], reply: over.reply, ...(auto ? { auto } : {}) }), RESUME_TAG),
+    });
+    const said = (text: string): ChatEvent => ({ type: 'assistant-text', id: `a${n++}`, text });
+    const push = (...events: ChatEvent[]) => host.events.set(CHILD, [...(host.events.get(CHILD) ?? []), ...events]);
+    const status = async () => jsonOf<{ state: string; last_prompt: { from: string; text: string } | null; last_response: string | null }>(await flow.handle(PARENT, 'get_session', { session_id: CHILD }));
+    const notices = () => host.submitted.filter((s) => s.id === PARENT);
+    // 流れ: 仕上げのターン → /clear → 再開の文のターン。start から、再開のターンが始まるまでが、流れの途中
+    const handoffTurn = (auto: AutoCompactTrigger | null) => {
+      flowing.add(CHILD);
+      push(handoffNotice(auto));
+      host.set(CHILD, 'working');
+      push(said('リストを更新しました'), { type: 'turn-end' });
+      host.set(CHILD, 'idle');
+    };
+    const resumeTurn = (auto: AutoCompactTrigger | null, reply: string) => {
+      // 新しい会話には、アプリが打った /clear が、コマンドの発言として残る
+      push({ type: 'reset', compact: true }, { type: 'user', id: `c${n++}`, text: '/clear', command: true }, { type: 'turn-end' }, resumeNotice(auto));
+      host.set(CHILD, 'working');
+      flowing.delete(CHILD);
+      host.set(CHILD, 'working');
+      push(said(reply), { type: 'turn-end' });
+      host.set(CHILD, 'idle');
+    };
+
+    beforeEach(() => {
+      control.dispose();
+      flowing = new Set();
+      const compacting = (id: string) => flowing.has(id);
+      flow = new SessionsControl({ host: outwardHost(host, compacting), compacting, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 40 });
+      host.screens.set(PARENT, prompt(''));
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: '税率を可変にして', parent: PARENT }, said('作業の報告です')]);
+    });
+    afterEach(() => flow.dispose());
+
+    it('ターンの終わりの自動: 親が忙しくても、作業が終わった知らせは消えない。流れの途中は「作業中」に見え、wait_sessions・end_session が反応しない', async () => {
+      const AUTO = { percent: 85, midTurn: false };
+      host.set(PARENT, 'working');
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      // 仕上げのターンが始まっても、まだ送っていない知らせを取り下げない
+      handoffTurn(AUTO);
+      // 仕上げのターンと /clear の間。子は待機に戻っているが、外からは作業中
+      expect(host.stateOf(CHILD)).toBe('idle');
+      expect((await status()).state).toBe('working');
+      const waiting = flow.handle(PARENT, 'wait_sessions', { session_ids: [CHILD], timeout_seconds: 1 });
+      const ended = await flow.handle(PARENT, 'end_session', { session_id: CHILD });
+      expect(ended.isError).toBe(true);
+      expect(textOf(ended)).toContain('is working, so it was not ended');
+      expect(jsonOf<{ timed_out: boolean }>(await waiting).timed_out).toBe(true);
+      resumeTurn(AUTO, '引き継ぎました。指示を待ちます');
+      await settle();
+      expect(notices()).toEqual([]);
+      host.set(PARENT, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      expect(parseSessionEvent(notices()[0].text)).toMatchObject({ sessions: [CHILD] });
+      // 親が読むのは、作業の応答と、本物の指示（仕上げの返事・「引き継ぎました」の報告ではない）
+      expect(await status()).toMatchObject({ state: 'idle', last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: '作業の報告です' });
+    });
+
+    it('ターンの終わりの自動: 親の手が空いていれば、作業が終わった知らせは 1 回だけ（「引き継ぎました」のターンの終わりでは、もう知らせない）', async () => {
+      const AUTO = { percent: 85, midTurn: false };
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      handoffTurn(AUTO);
+      await settle();
+      resumeTurn(AUTO, '引き継ぎました。指示を待ちます');
+      await settle();
+      expect(notices()).toHaveLength(1);
+    });
+
+    it('途中で止める自動: 止めた瞬間には知らせない。続きを終えたときに、親に知らせる。読めるのは、続きを終えたあとの応答', async () => {
+      const AUTO = { percent: 91, midTurn: true };
+      // フックが止めるファイルを掴んだ（このあと、ターンが止まって流れに入る）
+      flowing.add(CHILD);
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toEqual([]);
+      expect((await status()).state).toBe('working');
+      handoffTurn(AUTO);
+      await settle();
+      expect(notices()).toEqual([]);
+      resumeTurn(AUTO, '自動で切り替わりました。続きを終えました');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      expect(await status()).toMatchObject({ state: 'idle', last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: '自動で切り替わりました。続きを終えました' });
+    });
+
+    it('途中で止めたのに、流れが取りやめになった: 子は止まったままなので、親に知らせる（待ち続けさせない）', async () => {
+      flowing.add(CHILD);
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      handoffTurn({ percent: 91, midTurn: true });
+      await settle();
+      expect(notices()).toEqual([]);
+      // 流れが終わった（取りやめ）。アプリが、状態が変わったことを知らせる
+      flowing.delete(CHILD);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      // 仕上げの返事は、作業の応答に数えない
+      expect((await status()).last_response).toBe('作業の報告です');
+    });
+
+    it('ターンの終わりの自動が取りやめになっても、知らせは増えない（作業が終わった知らせは、もう届いている）', async () => {
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      handoffTurn({ percent: 85, midTurn: false });
+      flowing.delete(CHILD);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+    });
+
+    it('手動（子の画面で人がボタンを押した）も同じ: 切り替えは作業の区切りにしない。そのあとのターン（裏のタスクの完了など）が終わったら知らせる', async () => {
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      handoffTurn(null);
+      resumeTurn(null, '引き継ぎました');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      expect(await status()).toMatchObject({ last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: '作業の報告です' });
+      await settle();
+      // 裏のタスクが終わって、子がもう 1 ターン動いた
+      push({ type: 'turn-start' });
+      host.set(CHILD, 'working');
+      push(said('ビルドが通りました'), { type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(2);
+      // 人が打った /clear は、いまのとおり区切りにする
+      push({ type: 'reset' }, { type: 'turn-start' });
+      host.set(CHILD, 'working');
+      push(said('新しい会話です'), { type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(2);
+    });
+
+    it('アプリを起動し直したあと（切り替える前の会話が手元に無い）は、再開の文に入っている発言と最後の応答で補う', async () => {
+      const carried = [{ text: '人の発言', fromParent: false }, { text: '税率を可変にして', fromParent: true }];
+      // ターンの終わりの切り替え: 最後の応答は、再開の文の中
+      host.events.set(CHILD, [resumeNotice({ percent: 85, midTurn: false }, { messages: carried, reply: 'A 案と B 案があります' }), said('引き継ぎました'), { type: 'turn-end' }]);
+      expect(await status()).toMatchObject({ last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: 'A 案と B 案があります' });
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toEqual([]);
+      // 途中で止めた切り替え: 続きの応答は会話にある。親の指示の作業だと、発言の原文で分かる
+      host.set(CHILD, 'working');
+      host.events.set(CHILD, [resumeNotice({ percent: 91, midTurn: true }, { messages: carried }), said('続きを終えました'), { type: 'turn-end' }]);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      expect(await status()).toMatchObject({ last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: '続きを終えました' });
+      // 最後の発言が人のものなら、親には知らせない。発言も応答も無ければ、空
+      host.submitted = [];
+      host.set(CHILD, 'working');
+      host.events.set(CHILD, [resumeNotice({ percent: 91, midTurn: true }, { messages: [carried[0]] }), said('続き'), { type: 'turn-end' }]);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toEqual([]);
+      expect((await status()).last_prompt).toEqual({ from: 'human', text: '人の発言' });
+      host.events.set(CHILD, [resumeNotice(null), { type: 'turn-end' }]);
+      expect(await status()).toMatchObject({ last_prompt: null, last_response: null });
+    });
+
+    it('親が流れの途中のとき、子の知らせは流れが終わるまで待つ（仕上げと /clear の間・/clear と再開の文の間に割り込まない）', async () => {
+      // 親で流れが進んでいる。仕上げのターンが終わって、待機に戻ったところ
+      flowing.add(PARENT);
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toEqual([]);
+      // 流れが終わると、アプリが状態の変化を知らせて、待っていた知らせが届く
+      flowing.delete(PARENT);
+      host.set(PARENT, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+    });
+
+    it('流れの途中でも、人が答える待ち（許可の確認・質問）と、終了・アーカイブは、そのまま見せる', () => {
+      expect(outwardState('idle', true)).toBe('working');
+      expect(outwardState('background', true)).toBe('working');
+      expect(outwardState('idle', false)).toBe('idle');
+      for (const state of ['working', 'permission', 'question', 'waiting', 'exited', 'archived', 'starting', null] as const) expect(outwardState(state, true)).toBe(state);
+      // stateOf のほかは、元のものをそのまま呼ぶ
+      flowing.add(CHILD);
+      const outward = outwardHost(host, (id) => flowing.has(id));
+      expect(outward.stateOf(CHILD)).toBe('working');
+      host.set(CHILD, 'idle');
+      expect(outward.stateOf(CHILD)).toBe('working');
+      expect(outward.stateOf(SIBLING)).toBe('idle');
+      expect(outward.list()).toBe(host.sessions);
+      expect(outward.parentOf(CHILD)).toBe(PARENT);
+      expect(outward.sessions).toBe(host.sessions);
+    });
+
+    it('read_session: 切り替えの前のターンも読める。切り替えは知らせの 1 行。仕上げの頼みとその返事・再開の文の全文は出さない', async () => {
+      push({ type: 'tool-use', id: 't1', name: 'Edit', target: 'tax.ts', filePath: join(repo, '.claude/worktrees/tc-a/tax.ts') } as ChatEvent, { type: 'turn-end' });
+      handoffTurn({ percent: 85, midTurn: false });
+      resumeTurn({ percent: 85, midTurn: false }, '引き継ぎました');
+      const text = textOf(await flow.handle(PARENT, 'read_session', { session_id: CHILD }));
+      expect(text).toContain('税率を可変にして');
+      expect(text).toContain('作業の報告です');
+      expect(text).toContain('tanacode reset the conversation of this session and resumed it from its checklists (optimized compaction, automatic at 85% of the context). What follows is its report of what it carried over, not a result of its work.');
+      expect(text).toContain('引き継ぎました');
+      expect(text).not.toContain('リストを更新しました');
+      expect(text).not.toContain('checklist_overview');
+      // 編集したファイルも、切り替えの前のぶんを残す
+      expect(text).toContain('tax.ts');
+      // 途中で止めた切り替えと、手動
+      const lines = (auto: AutoCompactTrigger | null) => testing.conversationLines([{ type: 'user', id: 'u', text: '頼み' }, handoffNotice(auto), said('書きました'), { type: 'reset', compact: true }, resumeNotice(auto), said('続き')], 5, () => '').join('\n');
+      expect(lines({ percent: 91, midTurn: true })).toContain('(optimized compaction, automatic at 91% of the context). The reset was made in the middle of a turn, and the session then continued the same work');
+      expect(lines(null)).toContain('(optimized compaction). What follows is its report');
+      expect(lines(null)).toContain('latest 2 of 2 instructions');
+      // 全文の無い知らせ（古い記録など）・仕上げの頼みの無い切り替えでも、前のターンを残す
+      const bare = testing.conversationLines([{ type: 'user', id: 'u', text: '頼み' }, said('応答'), { type: 'reset', compact: true }, { type: 'notice', id: 'r', text: '再開', compact: 'resume' }, said('引き継ぎました')], 5, () => '').join('\n');
+      expect(bare).toContain('応答');
+      expect(bare).toContain('(optimized compaction). What follows is its report');
+      expect(testing.withoutCompaction([{ type: 'user', id: 'u', text: '頼み' }, { type: 'notice', id: 'r', text: '再開', compact: 'resume' }, said('引き継ぎました'), { type: 'turn-end' }])).toEqual([{ type: 'user', id: 'u', text: '頼み' }]);
     });
   });
 

@@ -20,6 +20,9 @@ import type { StatusLineInfo } from '@shared/statusline';
 // - 始めたら、割合が「設定より 10 ポイント下」を一度下回るまで、次は始めない（切り替えた直後にまだ超えていても、繰り返さない）
 // - 取りやめた・失敗したときは、次のターンの終わりにもう 1 回だけ試す。続けて 2 回だめなら、そのセッションでは休む
 //   （休んでいる間は、Claude Code の自動の圧縮を止めない。上限で詰まらないように）。手動で成功するか、トグルを入れ直すと戻る
+// 人のじゃまをしないための決まり（ターンの終わりの切り替えだけ。アプリが途中で止めたターンは、止めたままにしないよう、必ず始める）:
+// - 人が中断（Esc）して終わったターンでは、始めない（中断した人は、すぐ次の発言を打つ。仕上げが取りやめになるだけ）
+// - 入力欄に書きかけの文字があるあいだは、始めない（仕上げの頼みを打てずに、失敗に数えられる）
 const REARM_MARGIN = 10;
 const MAX_FAILURES = 2;
 // ターンが終わってから、最後の応答の使用量が届くまで待つ時間。statusLine は、ターンの終わりより少し遅れて書かれる
@@ -33,6 +36,8 @@ export type AutoCompactHost = {
   statusLine(id: string): StatusLineInfo | null;
   knowledge(id: string): SessionKnowledge;
   screen(id: string): ScreenInfo | null;
+  // 最後に終わったターンが、人の中断（Esc）で終わったか
+  lastTurnInterrupted(id: string): boolean;
 };
 
 type Deps = {
@@ -62,6 +67,8 @@ type State = {
   paused: boolean;
   // Claude Code の自動の圧縮を止めた。次の切れ目（かターンの終わり）で、割合に関係なく始める
   preCompact: boolean;
+  // 止めるファイルを書いた（フックが掴んだかを、ファイルで確かめるのは、この間だけ）
+  stopWritten: boolean;
 };
 
 const IDLE_STATES = new Set<SessionState>(['idle', 'background']);
@@ -114,6 +121,14 @@ export class AutoCompact {
     s.working = false;
     this.clearStop(id);
     if (!ended) return;
+    if (!stopped) {
+      if (host.lastTurnInterrupted(id)) {
+        s.endedAt = null;
+        return;
+      }
+      // 書きかけが消えたら（使用量を待つ間なら）始める
+      if (host.screen(id)?.draft) return;
+    }
     const over = s.armed && percent !== null && percent >= threshold;
     if (!stopped && !over && !s.preCompact) return;
     s.armed = false;
@@ -172,6 +187,12 @@ export class AutoCompact {
     this.clearStop(id);
   }
 
+  // アプリが止めたターンが、流れに入るのを待っている（フックが止めるファイルを掴んでから、ターンが終わって流れが始まるまで）。
+  // ターンが終わって「待機」に戻っても、このあと流れが始まるので、ほかのセッションからは「作業中」に見せる（outward-state.ts）
+  stopping(id: string): boolean {
+    return !!this.states.get(id)?.stopWritten && existsSync(this.deps.stopHitFile(id));
+  }
+
   // 自動で始めるセッションか。トグルがオン・チェックリストが使える・休んでいない
   private active(id: string): boolean {
     const summary = this.deps.host.summary(id);
@@ -188,7 +209,7 @@ export class AutoCompact {
   private state(id: string): State {
     let s = this.states.get(id);
     if (!s) {
-      s = { armed: true, working: false, endedAt: null, failures: 0, paused: false, preCompact: false };
+      s = { armed: true, working: false, endedAt: null, failures: 0, paused: false, preCompact: false, stopWritten: false };
       this.states.set(id, s);
     }
     return s;
@@ -206,12 +227,15 @@ export class AutoCompact {
     try {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, JSON.stringify({ continue: false, stopReason: reason }), { mode: 0o600 });
+      this.state(id).stopWritten = true;
     } catch {
       // 書けなければ、ターンの終わりを待つ
     }
   }
 
   private clearStop(id: string): void {
+    const s = this.states.get(id);
+    if (s) s.stopWritten = false;
     rmSync(this.deps.stopFile(id), { force: true });
     rmSync(this.deps.stopHitFile(id), { force: true });
   }

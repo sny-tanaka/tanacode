@@ -10,7 +10,7 @@ import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compac
 const ID = 's1';
 // 自動で始める大きさは、AutoCompact から届く（ここでは 60）
 const IDLE = { ...IDLE_COMPACT_STATUS, autoPercent: 60 };
-const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, pulledBackMs: 30 };
+const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, pulledBackMs: 30, startMs: 30 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // SessionManager の代わり。打ち込まれた文を控え、台本（onSubmit）で会話を進める
@@ -126,6 +126,47 @@ describe('流れ', () => {
     expect(host.submitted[2]).toContain('## #1 tax.ts の途中\n次はテスト');
     expect(host.submitted[2]).toContain('- Bash: npm run dev');
     expect(phases()).toEqual(['finalizing', 'clearing', 'resuming', null]);
+  });
+
+  it('再開の文に、切り替える前の最後の応答を入れる（人が、それに短く答えるかもしれない）。途中で止めたときは、止めた場所に入るので入れない', async () => {
+    script();
+    host.events = [{ type: 'user', id: 'u0', text: '税率を可変にして' }, { type: 'assistant-text', id: 'a0', text: 'A 案と B 案があります。どちらにしますか？' }, { type: 'turn-end' }];
+    compact.start(ID);
+    await finished();
+    expect(host.submitted[2]).toContain('# Your last reply before the reset');
+    expect(host.submitted[2]).toContain('<your-last-reply>\nA 案と B 案があります。どちらにしますか？\n</your-last-reply>');
+    // 仕上げの返事（「書きました」）ではない
+    expect(host.submitted[2]).not.toContain('書きました');
+    host.submitted = [];
+    statuses = [];
+    host.claudeSession = 'conv-1';
+    host.events = [{ type: 'user', id: 'u0', text: '税率を可変にして' }, { type: 'assistant-text', id: 'a0', text: '手順 3 まで進めました' }, { type: 'turn-end' }];
+    compact.start(ID, { percent: 91, midTurn: true });
+    await finished();
+    expect(host.submitted[2]).not.toContain('# Your last reply before the reset');
+    expect(host.submitted[2]).toContain('Your last words before the stop:\n手順 3 まで進めました');
+  });
+
+  it('再開の文を送ったあと、そのターンが始まるまでは、流れの途中（送った直後の「待機」を、手が空いたと見せない）', async () => {
+    script();
+    const long = new OptimizedCompact({
+      host,
+      lists: () => lists,
+      usedSince: () => used,
+      enabled: () => enabled,
+      onChange: (_id, status) => statuses.push(status),
+      timings: { ...TIMINGS, startMs: 10_000 },
+    });
+    long.start(ID);
+    for (let i = 0; i < 500 && host.submitted.length < 3; i++) await sleep(2);
+    expect(host.submitted).toHaveLength(3);
+    await sleep(30);
+    // 再開の文は送ったが、まだターンが始まっていない
+    expect(long.running(ID)).toBe(true);
+    host.state = 'working';
+    await finished();
+    expect(long.running(ID)).toBe(false);
+    long.dispose();
   });
 
   it('続けてもう一度切り替えても、前の会話の発言の原文を引き継ぐ（前の再開の文から取り出す）', async () => {

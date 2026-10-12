@@ -387,10 +387,16 @@ describe('部品から画面への知らせ', () => {
     expect(walkthrough.enabled()).toBe(false);
     const checklist = optionsOf('ChecklistControl');
     expect(checklist.store).toBe(the('ChecklistStore'));
-    expect(checklist.host).toBe(manager());
+    // 制御の部品には、最適化圧縮の流れの間は「作業中」に見える manager を渡す（outward-state.ts）。ほかは、manager をそのまま呼ぶ
+    const host = checklist.host as unknown as { cwdOf(id: string): string; stateOf(id: string): string };
+    expect(host.cwdOf('s1')).toBe('/sessions/s1');
+    expect(host.stateOf('s1')).toBe('idle');
     expect(checklist.enabled()).toBe(false);
     const sessions = optionsOf('SessionsControl');
-    expect(sessions.host).toBe(manager());
+    expect(sessions.host).toBe(checklist.host);
+    expect(sessions.compacting('s1')).toBe(false);
+    // 流れが /clear を打っているときだけ、reset に印を付ける
+    expect(manager().compactClearing('s1')).toBe(false);
     expect(sessions.home).toBe(homedir());
     expect(sessions.enabled()).toBe(true);
     const browser = optionsOf('BrowserControl');
