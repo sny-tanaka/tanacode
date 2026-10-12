@@ -313,7 +313,7 @@ export class SessionsControl {
       state: host.stateOf(id),
       note: independent
         ? 'The first instruction will be sent as soon as the session has started. It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.'
-        : 'The first instruction will be sent as soon as the child has started. Wait for the result with wait_sessions, and check on the child at regular intervals until it is done; do not wait for the notice alone.',
+        : 'The first instruction will be sent as soon as the child has started. Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (end your turn and come back with a background timer, so that the user can talk to you).',
     });
   }
 
