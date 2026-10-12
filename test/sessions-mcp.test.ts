@@ -5,8 +5,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
-import type { NewSessionOptions, ScreenChoice, SessionSummary } from '../src/shared/ipc';
+import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
 import type { AskQuestion, Menu, PermissionMode, ScreenInfo } from '../src/shared/screen';
+import type { SubagentRun } from '../src/shared/subagent';
+import type { BashTask } from '../src/shared/task';
+import type { WorkflowRun } from '../src/shared/workflow';
 import {
   SESSIONS_MCP,
   SESSIONS_MCP_FOR_CHILD,
@@ -82,9 +85,10 @@ describe('中継と起動の引数', () => {
     expect(config.mcpServers['tanacode-sessions'].timeout).toBeGreaterThan(600_000);
     expect(config.mcpServers['tanacode-browser'].timeout).toBeUndefined();
     expect(args[args.indexOf('--allowedTools') + 1].split(',')).toEqual([...allowedBrowserToolIds(), ...allowedSessionToolIds()]);
-    // 子への指示と質問への回答は許可済み。子の起動と中断は、人の確認を通す
+    // 子への指示・質問への回答・役目を終えた子の片付けは許可済み。子の起動と中断は、人の確認を通す
     expect(allowedSessionToolIds()).toContain(sessionToolId('send_message'));
     expect(allowedSessionToolIds()).toContain(sessionToolId('answer_question'));
+    expect(allowedSessionToolIds()).toContain(sessionToolId('end_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('start_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('stop_session'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
@@ -251,6 +255,13 @@ class FakeHost implements SessionsHost {
   renamed: { id: string; title: string }[] = [];
   asked = new Map<string, AskQuestion[]>();
   withdrawn: string[] = [];
+  // end_session: アーカイブの呼び出しと、その結果（worktree を消した結果か、消せなかった理由）
+  archives: { id: string; options: ArchiveOptions }[] = [];
+  removal: WorktreeRemoval | Error | null = null;
+  leftovers: WorktreeLeftovers | Error | null = null;
+  bash: BashTask[] = [];
+  agents: SubagentRun[] = [];
+  flows: WorkflowRun[] = [];
   private listeners = new Set<(id: string) => void>();
 
   add(id: string, cwd: string, patch: Partial<SessionSummary> = {}, state: SessionState = 'idle'): void {
@@ -318,6 +329,23 @@ class FakeHost implements SessionsHost {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+  subagents = () => this.agents;
+  bashTasks = () => this.bash;
+  workflows = () => this.flows;
+  worktreeLeftovers = async () => {
+    if (this.leftovers instanceof Error) throw this.leftovers;
+    return this.leftovers;
+  };
+  // 本物（SessionManager.archive）と同じく、アーカイブしてから worktree を消す（消せなければ、アーカイブしたうえで失敗する）
+  archive = async (id: string, options: ArchiveOptions) => {
+    this.archives.push({ id, options });
+    const session = this.sessions.find((s) => s.id === id);
+    if (session) session.archived = true;
+    this.set(id, 'archived');
+    if (!options.removeWorktree) return null;
+    if (this.removal instanceof Error) throw this.removal;
+    return this.removal;
+  };
 }
 
 const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
@@ -360,7 +388,7 @@ describe('ツールの実行（SessionsControl）', () => {
     host.add(OTHER_REPO, realpathSync(join(root, 'other')));
     host.add(FAR_CHILD, realpathSync(join(root, 'far')), { parentId: PARENT, archived: true }, 'archived');
     enabled = true;
-    control = new SessionsControl({ host, enabled: () => enabled, home: '/nonexistent-home', notifyDelayMs: 10 });
+    control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10 });
   });
   afterEach(() => control.dispose());
 
@@ -450,6 +478,9 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(textOf(await control.handle(PARENT, 'send_message', { session_id: started.session_id, message: '続けて' }))).toContain('is not a child session');
     expect(textOf(await control.handle(PARENT, 'wait_sessions', { session_ids: [started.session_id] }))).toContain('is not a child session');
     expect(textOf(await control.handle(PARENT, 'stop_session', { session_id: started.session_id }))).toContain('is not a child session');
+    host.set(started.session_id, 'idle');
+    expect(textOf(await control.handle(PARENT, 'end_session', { session_id: started.session_id }))).toContain('is not a child session');
+    expect(host.archives).toEqual([]);
     // 読める。最初の指示は、親からではなく、起動したセッションからのもの
     host.events.set(started.session_id, [{ type: 'user', id: '1', text: 'README を見直して', parent: PARENT }]);
     expect(textOf(await control.handle(PARENT, 'read_session', { session_id: started.session_id }))).toContain('Instruction from the session that started this one, "s-11"');
@@ -576,6 +607,218 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.interrupted).toEqual([CHILD]);
     // 入力欄に戻った親の指示を消す
     expect(host.withdrawn).toEqual([CHILD]);
+  });
+
+  describe('end_session', () => {
+    const leftovers = (patch: Partial<WorktreeLeftovers> = {}): WorktreeLeftovers => ({
+      exists: true,
+      branch: 'worktree-tc-a',
+      uncommitted: 0,
+      untracked: 0,
+      unpushed: 0,
+      contentIn: null,
+      pr: { state: 'merged', number: 12, base: 'develop', url: 'https://example.test/pr/12', after: 0 },
+      ...patch,
+    });
+    const end = (args: Record<string, unknown> = {}, caller = PARENT) => control.handle(caller, 'end_session', { session_id: CHILD, ...args });
+
+    it('手の空いた worktree の子: アーカイブして worktree も消し、したことと PR の状態を返す', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = leftovers();
+      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      const result = await end();
+      expect(result.isError).toBeFalsy();
+      expect(host.archives).toEqual([{ id: CHILD, options: { removeWorktree: true } }]);
+      const ended = jsonOf<{ note: string }>(result);
+      expect(ended).toMatchObject({
+        session_id: CHILD,
+        name: 's-22',
+        archived: true,
+        already_archived: false,
+        worktree: {
+          name: 'tc-a',
+          branch: 'worktree-tc-a',
+          folder: 'removed',
+          branch_kept: false,
+          backup_ref: null,
+          unpushed_commits: 0,
+          pull_request: { state: 'merged', number: 12, base: 'develop', url: 'https://example.test/pr/12' },
+        },
+      });
+      expect(ended).not.toHaveProperty('stopped_background_tasks');
+      expect(ended.note).toContain('Archived.');
+      expect(ended.note).toContain('Removed its worktree.');
+      expect(host.stateOf(CHILD)).toBe('archived');
+    });
+
+    it('未コミットの変更の控えと、残したブランチを返す', async () => {
+      host.set(CHILD, 'exited');
+      host.leftovers = leftovers({ uncommitted: 2, untracked: 1, unpushed: 3, pr: { state: 'none' } });
+      host.removal = { backupRef: 'refs/tanacode/backup/tc-a', branch: 'worktree-tc-a', branchKept: true };
+      const ended = jsonOf<{ note: string }>(await end());
+      expect(ended).toMatchObject({
+        worktree: { folder: 'removed', branch_kept: true, backup_ref: 'refs/tanacode/backup/tc-a', unpushed_commits: 3, pull_request: { state: 'none' } },
+      });
+      expect(ended.note).toContain('saved as a commit at refs/tanacode/backup/tc-a');
+      expect(ended.note).toContain('Kept the branch worktree-tc-a');
+    });
+
+    it('remove_worktree: false なら、worktree を残す（残っているものも調べない）', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = new Error('調べない');
+      const ended = jsonOf<{ note: string }>(await end({ remove_worktree: false }));
+      expect(host.archives).toEqual([{ id: CHILD, options: { removeWorktree: false } }]);
+      expect(ended).toMatchObject({ archived: true, worktree: { name: 'tc-a', branch: 'worktree-tc-a', folder: 'kept' } });
+      expect(ended.note).toContain('Kept its worktree');
+      expect((await end({ remove_worktree: 'no' })).isError).toBe(true);
+    });
+
+    it('worktree の無い子: アーカイブだけ。remove_worktree は無視する', async () => {
+      const ended = jsonOf<{ note: string }>(await control.handle(PARENT, 'end_session', { session_id: SIBLING, remove_worktree: true }));
+      expect(host.archives).toEqual([{ id: SIBLING, options: { removeWorktree: false } }]);
+      expect(ended).toMatchObject({ session_id: SIBLING, archived: true, worktree: null });
+      expect(ended.note).toContain('It has no worktree');
+    });
+
+    it('worktree を消せなかったとき（ユーザーが付けたロックなど）: アーカイブはしたうえで、理由を返す', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = leftovers();
+      host.removal = new Error('The worktree is locked (in use), so it was not deleted');
+      const result = await end();
+      expect(result.isError).toBeFalsy();
+      const ended = jsonOf<{ note: string }>(result);
+      expect(ended).toMatchObject({ archived: true, worktree: { folder: 'not_removed', error: 'The worktree is locked (in use), so it was not deleted' } });
+      expect(ended.note).toContain('Could not remove its worktree');
+      expect(host.stateOf(CHILD)).toBe('archived');
+    });
+
+    it('PR の状態を調べられなくても、片付けは続ける', async () => {
+      host.set(CHILD, 'idle');
+      host.leftovers = new Error('gh が無い');
+      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      const ended = jsonOf<{ worktree: Record<string, unknown> }>(await end());
+      expect(ended.worktree).toMatchObject({ folder: 'removed', branch_kept: false });
+      expect(ended.worktree).not.toHaveProperty('pull_request');
+    });
+
+    it('裏のタスクの完了待ちの子も終える。動いているタスクだけを、止めたものとして返す', async () => {
+      host.set(CHILD, 'background');
+      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      const task = (toolUseId: string, state: BashTask['state'], description: string | null): BashTask => ({
+        toolUseId,
+        taskId: toolUseId,
+        command: `npm run ${toolUseId}`,
+        description,
+        state,
+        startedAt: 0,
+        endedAt: null,
+        exitCode: null,
+        output: '',
+        truncated: false,
+      });
+      host.bash = [task('storybook', 'running', 'Storybook を起動'), task('dev', 'running', null), task('build', 'completed', 'ビルド')];
+      host.agents = [
+        { toolUseId: 'a1', description: '調べもの', background: true, state: 'running' },
+        { toolUseId: 'a2', description: '表の作業', background: false, state: 'running' },
+        { toolUseId: 'a3', description: '済んだもの', background: true, state: 'done' },
+      ] as SubagentRun[];
+      host.flows = [
+        { toolUseId: 'w1', name: 'review', status: 'running' },
+        { toolUseId: 'w2', name: 'old', status: 'completed' },
+      ] as WorkflowRun[];
+      const ended = jsonOf<{ note: string; stopped_background_tasks: unknown[] }>(await end());
+      expect(ended.stopped_background_tasks).toEqual([
+        { kind: 'bash', name: 'Storybook を起動' },
+        { kind: 'bash', name: 'npm run dev' },
+        { kind: 'subagent', name: '調べもの' },
+        { kind: 'workflow', name: 'review' },
+      ]);
+      expect(ended.note).toContain('Stopped its 4 background tasks');
+      expect(ended.note).toContain('nohup');
+      expect(host.archives).toHaveLength(1);
+    });
+
+    it.each([
+      ['starting', 'still starting up'],
+      ['working', 'stop_session'],
+      ['question', 'answer_question'],
+      ['permission', 'Only the user can answer permission prompts'],
+      ['waiting', 'act in its terminal'],
+    ] as [SessionState, string][])('%s の子は断り、理由と次にできることを返す', async (state, hint) => {
+      host.set(CHILD, state);
+      const result = await end();
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('"s-22"');
+      expect(textOf(result)).toContain(hint);
+      expect(host.archives).toEqual([]);
+      expect(host.stateOf(CHILD)).toBe(state);
+    });
+
+    it('残っているものを調べている間に子が動き出したら、終えない', async () => {
+      host.set(CHILD, 'idle');
+      host.worktreeLeftovers = async () => {
+        host.set(CHILD, 'working');
+        return leftovers();
+      };
+      const result = await end();
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('is working');
+      expect(host.archives).toEqual([]);
+    });
+
+    it('アーカイブ済みの子: 残っている worktree を消す。もう無ければ、そのことを返す', async () => {
+      host.set(CHILD, 'archived');
+      host.leftovers = leftovers();
+      host.removal = { backupRef: null, branch: 'worktree-tc-a', branchKept: false };
+      const first = jsonOf<{ note: string }>(await end());
+      expect(first).toMatchObject({ archived: true, already_archived: true, worktree: { folder: 'removed' } });
+      expect(first.note).toContain('It was already archived.');
+      host.leftovers = leftovers({ exists: false });
+      const second = jsonOf<{ note: string }>(await end());
+      expect(second).toMatchObject({ already_archived: true, worktree: { folder: 'already_removed' } });
+      expect(second.note).toContain('already gone');
+      expect(host.archives).toHaveLength(2);
+    });
+
+    it('自分の子だけ。ほかのセッション・親・見えないセッションは断る。子からも呼べない', async () => {
+      for (const id of [PEER, PARENT]) {
+        const result = await control.handle(PARENT, 'end_session', { session_id: id });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toContain('is not a child session');
+      }
+      // 別のリポジトリのセッションは、あるかどうかも答えない
+      expect(textOf(await control.handle(PARENT, 'end_session', { session_id: OTHER_REPO }))).toContain('No visible session');
+      // 子から親・兄弟へ
+      for (const id of [PARENT, SIBLING]) expect(textOf(await control.handle(CHILD, 'end_session', { session_id: id }))).toContain('is not a child session');
+      // 同じフォルダのセッションから、よその子へ
+      host.set(CHILD, 'idle');
+      expect(textOf(await end({}, PEER))).toContain('is not a child session');
+      expect(host.archives).toEqual([]);
+      expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name)).not.toContain('end_session');
+    });
+
+    it('アーカイブできなかったら、失敗として返す', async () => {
+      host.set(CHILD, 'idle');
+      host.archive = async () => {
+        throw new Error('boom');
+      };
+      const result = await end({ remove_worktree: false });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('Could not archive "s-22": boom');
+    });
+
+    it('終えた子の、まだ送っていない知らせは送らない', async () => {
+      host.screens.set(PARENT, prompt(''));
+      host.set(PARENT, 'working');
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: '直して', parent: PARENT }]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'idle');
+      await new Promise((r) => setTimeout(r, 20));
+      await end({ remove_worktree: false });
+      host.set(PARENT, 'idle');
+      await new Promise((r) => setTimeout(r, 80));
+      expect(host.submitted).toEqual([]);
+    });
   });
 
   it('wait_sessions: 作業中の子のどれかの手が空くまで待つ。手の空いた子が入っていれば、すぐ返す', async () => {

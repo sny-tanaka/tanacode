@@ -195,6 +195,10 @@ function fakeHost(cwd: string): SessionsHost {
     askedQuestions: () => null,
     chooseIf: async () => false,
     watchState: () => () => {},
+    subagents: () => [],
+    bashTasks: () => [],
+    workflows: () => [],
+    worktreeLeftovers: async () => null,
   };
 }
 
@@ -210,7 +214,7 @@ describe('どのツールも、制御が振り分けて実行する（「Unknown
   const unknown = (name: string) => `Unknown tool: ${name}`;
 
   it('セッション', async () => {
-    const control = new SessionsControl({ host: fakeHost(dir), enabled: () => true, home: '/nonexistent-home', notifyDelayMs: 10 });
+    const control = new SessionsControl({ host: fakeHost(dir), enabled: () => true, archive: async () => null, home: '/nonexistent-home', notifyDelayMs: 10 });
     try {
       for (const tool of SESSIONS_MCP.tools) {
         const result = await control.handle(ME, tool.name, sampleArgs(tool.inputSchema as Schema) as Record<string, unknown>);

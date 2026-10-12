@@ -373,7 +373,8 @@
       "start_session": "セッションを始める",
       "send_message": "子セッションに指示",
       "answer_question": "子セッションの質問に答える",
-      "stop_session": "子セッションを中断"
+      "stop_session": "子セッションを中断",
+      "end_session": "子セッションを終える"
     },
     "checklist": {
       "checklist_overview": "一覧",
