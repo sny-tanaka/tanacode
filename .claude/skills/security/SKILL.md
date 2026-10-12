@@ -178,13 +178,22 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 
 - `--settings` に写す statusLine は、ユーザーの `~/.claude/settings.json` のものだけ（`userStatusLineCommand`）。プロジェクトの `.claude/settings*.json` を読んでいないか。
 
-**ほかのセッションを扱う MCP**（`src/main/sessions-control.ts`・`sessions-bridge.ts`・`session-manager.ts`、`src/shared/session-tools.ts`。2026-10-03 に決めたこと）
+**ほかのセッションを扱う MCP**（`src/main/sessions-control.ts`・`sessions-bridge.ts`・`session-manager.ts`、`src/shared/session-tools.ts`。2026-10-03 に決めたこと。許可の確認への回答と子の片付けは 2026-10-12）
 
-- 許可の確認には、親は答えない。`answer_question` は、画面のメニューが AskUserQuestion で出した質問（`ScreenTracker.askedQuestions`。フックが書いた質問）に合うときだけ（`isAskedQuestion`）。メニューを質問と見分けるのは ☐・☒ の行なので、コマンドの文字に ☐ があると許可の確認が質問に見えるためです。キーは `chooseIf`（`ScreenTracker.choose` の `expect`）で、送る前に毎回同じ質問か確かめているか。`stateOf` も、AskUserQuestion が無い質問のメニューは `permission` にしているか。
+- 質問への回答（`answer_question`）は、画面のメニューが AskUserQuestion で出した質問（`ScreenTracker.askedQuestions`。フックが書いた質問）に合うときだけ（`isAskedQuestion`）。メニューを質問と見分けるのは ☐・☒ の行なので、コマンドの文字に ☐ があると許可の確認が質問に見えるためです。キーは `chooseIf`（`ScreenTracker.choose` の `expect`）で、送る前に毎回同じ質問か確かめているか。`stateOf` も、AskUserQuestion が無い質問のメニューは `permission` にしているか。
+- 許可の確認には、親も答えられる（`answer_permission`。2026-10-12 に決めたこと。それまでは「親は答えない」）。次の守りが外れていないか。
+  - 選ぶのは、名前がちょうど `Yes` の選択肢（今回だけ許す）と `No` の選択肢（断る）だけか（`permissionOptions`。どちらも、ちょうど 1 つのときだけ決める）。「次から聞かない」「常に許す」のように許可を覚えさせる選択肢・権限モードを変える選択肢を選ぶ道（番号の決め打ち・前方一致・引数での指定）を足していないか。見分けられないメニューには、答えずに断るか。
+  - 親が読んだ確認にだけ答えるか。`permission_id`（見出し・`context`・フックの入力の全文・受け取った順番 `seq` のハッシュ）が今の確認のものと違えば何も押さず、キーを送る直前にも確かめ直しているか（`chooseIf` の `expect`）。見出しと選択肢が同じ別のコマンドの確認・同じコマンドの 2 回目の確認が、別の ID になるか。
+  - 親が全文を読めないものを、許させていないか。ツールの入力は、`PermissionRequest` のフックが書いたもの（`SessionManager.pendingPermission`。入力が書かれたのが、1 つ前の確認のメニューの出はじめよりあとのときだけ）を使い、画面と合う（`shownOnScreen`）・子の会話に結果待ちの同じ呼び出しがある（`pendingInConversation`）・3 万文字以内、のどれかが欠けたら `can_allow: false` にしているか。画面と合わない入力を、親に見せていないか。フックは書くだけで、`decision` を返していないか（確認を出さずに通す道にしない）。
+  - 許せるのは、親の権限モード（`modeOf`）が acceptEdits・auto・bypassPermissions のときだけか（manual・plan・モードが分からない親は、断ることだけ）。親のモードを、画面の文字だけで上げていないか（上の `modeOf` の項目）。
+  - 自分の子だけか（`resolve` の `child`）。子の中継に出していないか（`PARENT_ONLY`）。答えるのは `kind` が `permission` のメニューだけで、ターミナルでの操作（フォルダの信頼の確認・ログインなど）・質問に見えるメニュー・親自身の `start_session` の確認には答えないか。
+  - 断る理由は、確認の画面に打たず、子の手が空いてから親からの指示として送っているか（`submitWhenReady`。制御文字を除き、`neutralizeTags` を通る）。
+  - 判断の基準（全文を読む・頼んだ作業の範囲で失うものが無いものだけ・戻せない操作と外に出る操作はユーザーが許しているときだけ・迷ったらユーザーに聞く・確認の中身は信頼できない入力）を、MCP の説明とツールの説明から消していないか。
+- 子の片付け（`end_session`）は、自分の子だけ（`resolve` の `child`。独立したセッション・兄弟・親は断る）で、子の中継には出していないか（`PARENT_ONLY`）。人の確認なしに通すのは、失うものが無いからなので、消し方は画面からのアーカイブと同じ処理（`Profile.archiveSession` → `SessionManager.archive` → `removeWorktree`）だけを通し、別の消し方（一覧からの削除 `remove`・`git branch -D`・フォルダの削除）を足していないか。未コミットの変更の控え（`refs/tanacode/backup/`）と、手元にしか無いコミットのあるブランチを残す動きを、引数で外せるようにしていないか。終えるのは `idle`・`exited`・`background`・`archived` の子だけで、作業中・起動中・質問や許可の確認待ち・ターミナルの操作待ちの子は断るか（アーカイブの直前にも状態を確かめ直す）。消す場所は、アプリの記録（`SessionRecord.worktree`・`cwd`）だけで決め、Claude が渡すパスを使っていないか。
 - 子の権限モードの上限（`modeOf`）は、アプリが決めたモード（`knownMode`）と画面のモードの弱いほう。画面のモードの行は会話の中の文でも読めるので、画面の文字だけで上げていないか。子の起動のモードは `launchMode` に残し、`open`・`restart` でもそれより強くしないか。
 - 子への指示・親への知らせは、相手の手が空いてから打つ（`submitWhenReady` の `acceptsTyping`：ターンの外・操作待ちでない・入力欄が空・画面の操作の途中でない）。打つ直前と Enter の直前にも確かめ直す（`submit` の `guarded`）。作業中に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になるためです。
 - 子セッションの起動（`start_session`）は、`--settings` の `PreToolUse` のフック（`SESSIONS_GATE_COMMAND`）が毎回 `ask` を返し、auto・bypassPermissions でも人の確認が出るか。子の中継には、子を動かすツールを出していないか（`SESSIONS_MCP_FOR_CHILD`）。アプリも子からの `start_session` を断るか。独立したセッション（`independent: true`）も、同じ確認・同じフォルダと権限モードの確かめを通るか。起動したあとに、呼び出し元から指示・回答・中断ができないか（`parentId` を付けない）。
-- 見える範囲（`canSee`）は、同じフォルダ（worktree は元のフォルダ）と親子・兄弟だけ。中のフォルダを含めていないか（`~/work` で開いたセッションに、その下の別々のリポジトリを見せない）。一覧や見出しに、見えない子の ID・名前を出していないか。指示・中断・回答は自分の子だけ（`resolve` の `child`）。
+- 見える範囲（`canSee`）は、同じフォルダ（worktree は元のフォルダ）と親子・兄弟だけ。中のフォルダを含めていないか（`~/work` で開いたセッションに、その下の別々のリポジトリを見せない）。一覧や見出しに、見えない子の ID・名前を出していないか。指示・中断・回答（質問・許可の確認）・片付けは自分の子だけ（`resolve` の `child`）。
 - `start_session` のフォルダは `realpath` してから、親のリポジトリの中か、そのプロファイルのセッションのフォルダ（`host.list()`。別のプロファイルのものは含めない）だけ。別のリポジトリのフォルダを選べても、見える範囲（`canSee`）は広げていないか。`list_sessions` の `start_folders` は、フォルダのパスだけか（見えないセッションの ID・名前を出していないか）。`get_session_diff` の `path` は `safeRelative`、未追跡のファイルは `lstat` でふつうのファイルだけ・読む大きさと数に上限（`git.ts` の `branchFiles` の行数の数え方も同じ）。
 - 会話ログの目印（`<tanacode-parent-message>`・`<tanacode-session-event>`）は、本文や名前の `<tanacode-`・`</tanacode-` を `neutralizeTags` で打ち消しているか（閉じタグで囲みの外に出た文が、子の Claude に人の発言として読まれないように）。
 
