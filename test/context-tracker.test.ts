@@ -335,6 +335,54 @@ describe('ContextTracker（使用量と圧縮）', () => {
   });
 });
 
+describe('ContextTracker（抜粋）', () => {
+  it('抜粋を覚えるときは、行ごとに中身を会話の順につなぐ。数え終えた応答の文章とツールの呼び出しも、大きさに数えずやりとりに入れる', () => {
+    last = null;
+    const entries = [
+      attachment({ type: 'instructions', files: [{ path: `${CWD}/AGENTS.md`, content: '日本語で書く' }] }),
+      prompt('ログインを直して'),
+      reply('m1', 30, 20_000, [{ type: 'text', text: '読みます' }, toolUse('t1', 'Read', { file_path: `${CWD}/src/login.ts` })]),
+      result('t1', 'export function login() {}'),
+      reply('m2', 30, 20_100, [toolUse('t2', 'Edit', { file_path: `${CWD}/src/login.ts`, old_string: 'login()', new_string: 'login(user)' })]),
+      result('t2', 'ok'),
+      reply('m3', 30, 20_200, [toolUse('t3', 'Bash', { command: 'npm test' })]),
+      result('t3', `${'PASS '.repeat(600)}おわり`),
+    ];
+    const tracker = new ContextTracker(CWD, true);
+    for (const e of entries) tracker.handle(e);
+    const plain = new ContextTracker(CWD);
+    for (const e of entries) plain.handle(e);
+    // 抜粋を覚えても、行・大きさ・並びは変わらない（order は断片の位置なので、抜粋だけの断片の分ずれる）
+    const shape = (t: ContextTracker) => t.current().items.sort((x, y) => x.order - y.order).map(({ order: _, ...rest }) => rest);
+    expect(shape(tracker)).toEqual(shape(plain));
+    expect(plain.excerpts()).toEqual(new Map());
+    const excerpts = tracker.excerpts();
+    expect(excerpts.get('file:AGENTS.md')).toBe('日本語で書く');
+    expect(excerpts.get('file:src/login.ts')).toBe(
+      `export function login() {}\n[Edit] ${JSON.stringify({ file_path: `${CWD}/src/login.ts`, old_string: 'login()', new_string: 'login(user)' })}\nok`,
+    );
+    expect(excerpts.get(`topic:${entries[1].uuid}`)).toBe('ログインを直して\n読みます\n[Read] src/login.ts\n[Bash] npm test');
+    // 大きな結果は、頭の 2,000 文字だけ
+    expect(excerpts.get('tool:t3')).toBe('PASS '.repeat(400));
+  });
+
+  it('圧縮より前の行の抜粋は、圧縮より前の id で返す', () => {
+    last = null;
+    const tracker = new ContextTracker(CWD, true);
+    const before = prompt('前の話');
+    for (const e of [
+      before,
+      row({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'manual' } } as never, null),
+      row({ type: 'user', isCompactSummary: true, message: { content: 'これまでの要約' } }),
+      prompt('次の話'),
+    ])
+      tracker.handle(e);
+    const excerpts = tracker.excerpts();
+    expect(excerpts.get(`compacted:topic:${before.uuid}`)).toBe('前の話');
+    expect([...excerpts.values()]).toEqual(['前の話', 'これまでの要約', '次の話']);
+  });
+});
+
 describe('readContext', () => {
   it('会話ログ全体を読んで、コンテキストの中身を集める。無いファイルは空', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tanacode-context-'));

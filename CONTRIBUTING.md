@@ -331,6 +331,7 @@ PR で、次のものを流します。develop への push では流しません
 | `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
 | `default-branch.test.ts` | 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダを切り替えた直後に押しても効くか。フェッチに時間がかかっている間（合図があるまで答えないリモート。git の `ext::`）にフォルダを変えると、変えた先のボタンと送信がすぐ使えるか。時間のかかっているフォルダは止めずに、リモートが答えたら切り替わるか |
 | `restart.test.ts` | 「動かしたまま終了」で閉じて起動し直すと、Claude Code が引き継がれて続けられる。「再起動」のあとも同じ会話を続けられる |
+| `compact.test.ts` | ヘッダーの「圧縮」の ▾ で最適化圧縮に切り替えて押すと、使い捨ての `claude -p`（Haiku）に今のコンテキストの行が渡り、返った印から作った指示が、セッションの要約の頼み（`Additional Instructions:`）に入るか |
 
 どのファイルも、最後に画面のコンソールにエラーが出ていないかを確かめます。
 
@@ -346,7 +347,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 13 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 15 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -363,7 +364,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `checklist.test.ts` | チェックリストの MCP。アプリと同じ起動の引数で起動し、ビルドした中継（`src/main/checklist-mcp.ts`）が、アプリの代わりのソケットの先の `ChecklistControl` まで呼び出しを運ぶか。書き換えるツールも確認なしに通る。サーバーの説明が Claude に渡り、`/compact` で圧縮したあとも渡り続ける。人がスレッドに「Claude に通知する」で返信すると、手の空いた Claude Code（本物の `SessionManager` で）の入力欄に知らせが打たれ、会話ログからカードの場所を持つ「Claude への知らせ」として読める |
     | `checklist-hooks.test.ts` | チェックリストを使い続けさせる hooks。アプリと同じ起動の引数（`--settings` の hooks）と環境変数で起動し、ビルドした中継を `--hook` で動かしたフックが、アプリの代わりのソケットの先の `ChecklistControl` に聞いて Claude Code に返すか。人の発言で今のチェックリストが Claude に渡る。ツールを使ってチェックリストに触れずに終えようとすると、1 回だけ止まって理由が Claude に渡り、続きが始まる（止めたあとの続きは止まらない）。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない。チェックリストに触れたターン・ツールを使っていないターンは止まらない。`/compact` のあとにも渡る。どれもチャットのフックの一覧に出ない |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備の知らせが ready より先 → 会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでは始まらず、理由を日本語で返す。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
-| `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・コンテキストの中身（`ContextTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
+    | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・コンテキストの中身（`ContextTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
+    | `compact-optimizer.test.ts` | 最適化圧縮の使い捨ての `claude`。アプリと同じ引数（`optimizerArgs`）で `-p` で起動し、標準入力の会話が渡り、`--json-schema` の答え（`StructuredOutput` のツールの入力）が `structured_output` で返るか。渡るツールは答えの形のものだけ・指示がシステムの文に入る・使う人の設定の hooks（`SessionStart`・`UserPromptSubmit`）が動かない |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
@@ -628,11 +630,21 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 最後の `compact_boundary` より前の行のものを、圧縮で要約に置き換わったもの（`compacted`）にします。ただし `compactMetadata.preservedMessages.allUuids` の行（要約せずにそのまま残された直前の応答など）は、今のものとして数えます。
   - 要約の行（`isCompactSummary`）は「前回の圧縮の要約」の行に。圧縮のあとに添付し直されたファイルは、今のファイルの行になります。
 - 圧縮の指示（`compactInstructions`・`src/shared/context.ts`）
-  - 印から決まった形の文を組み立てます。「A の内容と、「B」から始まるやりとりは詳しく残す。C の出力は捨ててよい。」のように、種類ごとの言い方（ファイルは内容、Bash は出力、検索は検索結果など）でつなぎます。裏で Claude Code を起動して文を作らせることはしません。
+  - 印から決まった形の文を組み立てます。「A の内容と、「B」から始まるやりとりは詳しく残す。C の出力は捨ててよい。」のように、種類ごとの言い方（ファイルは内容、Bash は出力、検索は検索結果など）でつなぎます。文そのものを Claude に作らせることはしません（最適化圧縮でも、Haiku が選ぶのは印だけ）。
   - Claude Code は、`/compact` の引数を要約のプロンプトの最後（`Additional Instructions:`）に、そのまま足します。長さの上限は無く、改行も残ります（Claude Code 2.1.288 の本体で確認）。
   - 指示は効きます。本物の Claude Code で、同じ会話を「設計を残し、インストールの出力とポートの調べものは捨てる」「指示なし」「逆の指示」で圧縮すると、残すとした目印はすべて要約に残り、捨ててよいとした目印は 0 件でした（指示なしでは全部残った）。
   - 印は、セッションごとに画面のメモリに持ちます（アプリを終了すると消える）。付けたときの要約の行（圧縮の区切り）と一緒に覚え、圧縮が進んで要約の行が変わったら使いません（ヘッダーの「圧縮」・自動の圧縮も）。送った時点では外しません。送れなかったときに、付け直さなくてよいようにするためです。
   - パネルは、セッションごとに作り直します（`key`）。書きかけの指示を、切り替えた先のセッションに送らないためです。
+- 最適化圧縮（`compact-optimizer.ts`）
+  - ヘッダーの「圧縮」の ▾（`CompactButton.tsx`）で、通常圧縮（`/compact` だけ）と最適化圧縮を切り替えます。選んだしかたは共有の表示設定（`tanacode.compactMode`）に覚えます。
+  - 最適化圧縮のボタンで、画面が `context:optimize` を呼び（`useOptimizedCompact`）、`SessionManager.optimizeCompact` が指示の文を返します。画面は、そのときセッションが待機中なら `/compact <文>`（文が空なら `/compact` だけ）を送り、作業が始まっていたら取りやめます。同じセッションで続けて頼まれたら、選んでいる途中のものを待ちます。
+  - 会話ログを読み直す使い捨ての `ContextTracker` を、抜粋を覚える設定（`new ContextTracker(cwd, true)`）で作ります。断片ごとに中身の頭（2,000 文字）を覚え、行ごとにつなぎます（`excerpts()`）。数え終えた応答の文章とツールの呼び出し（`[Bash] npm test` など）も、大きさ 0 の断片としてやりとりに入れます。動いているセッションの `ContextTracker` は、抜粋を覚えません（メモリを使うため）。
+  - Haiku には、圧縮より前でない行を古い順に、短い番号・種類・名前・大きさ・抜粋と一緒に渡します（`optimizerPrompt`）。抜粋は 1 行 1,500 文字、新しい 3 つのやりとりは 6,000 文字まで（長いものは頭 7 割と終わり 3 割）。合計が 40 万文字を超えるときは、ほかの行を短くします。答えは番号ごとの keep・drop・auto で、keep・drop だけを印にして `compactInstructions` で文にします（auto は印を付けない）。いちばん新しいやりとりに drop が付いたら外します（今の作業を捨てさせない。システムの文でも頼んでいる）。
+  - 起動は `claude -p --model haiku --tools "" --strict-mcp-config --settings '{"disableAllHooks":true}' --no-session-persistence --system-prompt … --output-format json --json-schema …`（`optimizerArgs`）。会話は標準入力で渡し、作業フォルダは一時フォルダにします（プロジェクトの設定・CLAUDE.md を読ませない）。答えは JSON の `structured_output`。`is_error` のときは、その `result` を失敗の理由にします。
+    - `--bare` は使いません。OAuth と Keychain を読まなくなり、サブスクリプションでログインしている人が使えなくなるためです。
+    - 環境変数は、セッションの Claude Code と同じ `childEnv`（プロファイルの `CLAUDE_CONFIG_DIR` を含む）。
+    - 設定ファイルを選んだセッションでは、登録した設定に `disableAllHooks: true` だけを足したファイル（`SettingsFiles.prepareOptimizer`。`session-settings/<セッション ID>-optimizer.json`、自分だけが読める権限）を `--settings` に渡し、終わったら消します。会話の中身を、セッションと違う接続先に送らないためです。`--settings` は 1 つしか効かないので、hooks を止める指定もこのファイルに入れます。
+  - 実測（2.1.296）: ツールの結果 30〜40 件ほどの会話で 10〜15 秒、0.5〜1.5 セント。`disableAllHooks` を付けないと、使う人の `SessionStart`・`UserPromptSubmit` の hooks が動くことを、`test/cli/compact-optimizer.test.ts` で確かめています。
 
 ### 作業の書き出し
 
@@ -901,6 +913,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
+| `session-settings/<id>-optimizer.json` | 設定ファイルを選んだセッションで最適化圧縮をするとき、登録した設定に hooks を止める指定を足したもの（`0600`。API キーを含むことがある。Haiku が答えたら消す） |
 | `usage.json` | 最後に分かった利用枠 |
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
@@ -965,6 +978,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `context-tracker.ts`: コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・やりとり）と、その大きさの見積もり
+  - `compact-optimizer.ts`: 最適化圧縮（会話ログから行と抜粋を集め、使い捨ての `claude -p` の Haiku に残すもの・捨てるものを選ばせて、`/compact` に添える指示の文にする）
   - `statusline.ts` / `usage-monitor.ts` / `claude-account.ts` / `model-catalog.ts`: statusLine・利用枠・ログインしているアカウント・モデル一覧
   - `claude-config.ts`: Claude Code の設定のフォルダと `.claude.json`・会話ログの場所。プロファイルごとのフォルダ（`Profile.claudeDir`）があればそこ、既定のプロファイルは `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`。プロファイルのフォルダは、起動する Claude Code とシェルに `CLAUDE_CONFIG_DIR` として渡す（`childEnv`）
     - 設定のフォルダが `~/.claude` でない Claude Code には、`--settings` の `claudeMdExcludes` で `~/.claude/CLAUDE.md` と `~/.claude/rules/**` を読ませません（`foreignClaudeMdExcludes`。`statusline.ts` の `ownSettings` が足す）。
@@ -991,7 +1005,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/preload`: renderer に `window.tanacode` の API を公開する。チャンネルごとの引数・戻り値・知らせの中身は、`src/shared/ipc.ts` の表（`IpcInvoke`・`IpcSend`・`IpcEvent`）で、main の受け口（`handle`・`listen`）・送り口（`send`）と一緒に型を付ける（下の「テストと CI」の「配線と契約」）
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
-  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行）
+  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・圧縮のボタンと最適化圧縮）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）

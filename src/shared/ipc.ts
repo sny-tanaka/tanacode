@@ -115,6 +115,7 @@ export const IpcChannel = {
   TasksStop: 'tasks:stop',
   KnowledgeGet: 'knowledge:get',
   ContextGet: 'context:get',
+  ContextOptimize: 'context:optimize',
   ModelsGet: 'models:get',
   ModelsRefresh: 'models:refresh',
   // チャットの思考・応答の翻訳（macOS 標準の翻訳）。使えるか・訳す・システム設定の「言語と地域」を開く
@@ -546,6 +547,8 @@ export type TanacodeApi = {
   // コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・発言ごとのやりとり）
   context: {
     get(sessionId: string): Promise<SessionContext>;
+    // 最適化圧縮。Haiku に残すもの・捨てるものを選ばせて、/compact に添える指示の文を返す（選ぶものが無ければ空）
+    optimize(sessionId: string): Promise<string>;
   };
   tasks: {
     // バックグラウンドで動かした Bash
@@ -743,6 +746,7 @@ export type IpcInvoke = {
   [IpcChannel.TranslateOpenSettings]: Api['translate']['openSettings'];
   [IpcChannel.KnowledgeGet]: Api['knowledge']['get'];
   [IpcChannel.ContextGet]: Api['context']['get'];
+  [IpcChannel.ContextOptimize]: Api['context']['optimize'];
   [IpcChannel.TasksBash]: Api['tasks']['bash'];
   [IpcChannel.TasksAgentLog]: Api['tasks']['agentLog'];
   [IpcChannel.TasksStop]: Api['tasks']['stop'];

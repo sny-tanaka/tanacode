@@ -1317,6 +1317,87 @@ body.resizing-rows {
   padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--border-subtle);
 }
+/* ヘッダーの「圧縮」と、右の ▾（圧縮のしかたの切り替え）。メニューはボタンの下に右そろえで開く */
+.compact-button {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+/* 最適化圧縮のときは、アイコンを送信のボタンと同じ色にして見分ける */
+.compact-button.optimized .icon-button:not(:disabled) {
+  color: var(--send-fg);
+}
+.compact-mode-toggle {
+  width: 14px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.compact-mode-toggle:hover,
+.compact-mode-toggle[aria-expanded='true'] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.compact-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 300px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.compact-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.compact-menu-item:hover,
+.compact-menu-item:focus-visible {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.compact-menu-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.compact-menu-name {
+  font-size: 12px;
+}
+.compact-menu-desc {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  /* 日本語を文節で折り返す */
+  word-break: auto-phrase;
+}
+.compact-menu-check {
+  width: 12px;
+  flex: none;
+  display: flex;
+  margin: 2px 0 0 auto;
+  color: var(--text-secondary);
+}
 .claude-mark {
   width: 8px;
   height: 8px;
@@ -1378,7 +1459,9 @@ body.resizing-rows {
   color: var(--text-tertiary);
   cursor: default;
 }
+/* 作業中はぐるぐるを真ん中に出す（Busy の .busy は横並びにするので、アイコンのボタンでは打ち消す） */
 .icon-button.busy {
+  display: inline-grid;
   cursor: default;
 }
 /* 主な操作（送信・コミット・コメントを追加）。文字の主要ボタン（.send-button）と同じ色と枠 */

@@ -8,6 +8,7 @@ import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
 import { chatFromEvents, useSessionChats, type ChatState } from './chat/chatState';
 import { usePendingSends } from './chat/pendingSends';
+import { useOptimizedCompact } from './chat/optimizedCompact';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
@@ -107,6 +108,7 @@ export function App() {
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
   const { chatOf, load, reset: resetChat } = useSessionChats(selectedId);
   const pendingSends = usePendingSends(chatOf);
+  const optimizedCompact = useOptimizedCompact(chatOf, pendingSends.send);
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   const scheduled = useScheduledMessages();
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
@@ -649,6 +651,9 @@ export function App() {
     },
     [pendingSends.send],
   );
+  const optimizeSelected = useCallback(() => {
+    if (selectedIdRef.current) optimizedCompact.run(selectedIdRef.current);
+  }, [optimizedCompact.run]);
   const takeSelectedPending = useCallback(
     () => (selectedIdRef.current ? pendingSends.take(selectedIdRef.current) : null),
     [pendingSends.take],
@@ -813,6 +818,8 @@ export function App() {
             onResume={openSelected}
             onUnarchive={openSelected}
             onSend={sendToSelected}
+            onOptimizedCompact={optimizeSelected}
+            optimizing={optimizedCompact.optimizing(selected.id)}
             pending={pendingSends.pendingOf(selected.id)}
             sending={pendingSends.sendingOf(selected.id)}
             onTakePending={takeSelectedPending}

@@ -37,6 +37,7 @@ import type { McpLaunch } from './mcp-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
 import { ContextTracker, readContext } from './context-tracker';
+import { optimizedInstructions } from './compact-optimizer';
 import type { PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
@@ -188,7 +189,12 @@ export class SessionManager {
     private readonly walkthroughMcp: () => McpLaunch | null = () => null,
     // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡し、会話ログもその中を読む）。null は既定のプロファイル
     private readonly claudeDir: string | null = null,
+    // 最適化圧縮で、Haiku に選ばせて指示の文を作る（テストでは Haiku を呼ばない作り物にする）
+    private readonly optimize: typeof optimizedInstructions = optimizedInstructions,
   ) {}
+
+  // 最適化圧縮で、Haiku に選ばせている途中のもの（セッションの ID → 指示の文）
+  private readonly optimizing = new Map<string, Promise<string>>();
 
   // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
   private readonly stateListeners = new Set<(id: string) => void>();
@@ -602,6 +608,27 @@ export class SessionManager {
     if (rt) return rt.context.current();
     const record = this.store.get(id);
     return record ? readContext(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd) : { items: [] };
+  }
+
+  // 最適化圧縮の指示の文（Haiku に選ばせる）。同じセッションで続けて頼まれたら、選んでいる途中のものを待つ。
+  // 設定ファイルを選んだセッションは、Haiku もその設定（接続先・API キー）で動かす（会話の中身を、セッションと違う接続先に送らない）
+  optimizeCompact(id: string): Promise<string> {
+    const running = this.optimizing.get(id);
+    if (running) return running;
+    const record = this.store.get(id);
+    if (!record) return Promise.resolve('');
+    const file = transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir);
+    const task = (async () => {
+      this.checkSettingsFile(record.settingsFile);
+      const settingsFile = record.settingsFile ? this.settingsFiles!.prepareOptimizer(id, record.settingsFile) : null;
+      try {
+        return await this.optimize(file, record.cwd, { claudeDir: this.claudeDir, settingsFile });
+      } finally {
+        if (settingsFile) this.settingsFiles?.releaseOptimizer(id);
+      }
+    })().finally(() => this.optimizing.delete(id));
+    this.optimizing.set(id, task);
+    return task;
   }
 
   bashTasks(id: string): BashTask[] {
