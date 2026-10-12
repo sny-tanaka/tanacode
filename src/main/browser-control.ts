@@ -28,6 +28,13 @@ const MAX_IMAGE_SIDE = 1568;
 const MAX_FULL_PAGE_RATIO = 2.5;
 // 1 回の操作の上限。中継の待ち（90 秒）より短くする
 const TOOL_TIMEOUT_MS = 60_000;
+// 撮るのを待つ上限。ふつうは数十ミリ秒で撮れる。返ってこないのは、ウインドウが描かれていないとき（capture のコメント）なので、
+// 1 回の操作の上限まで待たずに、理由の見当を添えて断る
+const CAPTURE_TIMEOUT_MS = 15_000;
+const CAPTURE_STALLED =
+  `Could not take a screenshot: nothing came back within ${CAPTURE_TIMEOUT_MS / 1000} seconds. The tanacode window is probably not being drawn ` +
+  '(for example, the screen is locked or the display is asleep). The tools that read the page as text (get_text, get_accessibility_tree, inspect) still work. ' +
+  'If you need the look of the page, tell the user and try again when they are back at the screen.';
 const LOAD_TIMEOUT_MS = 30_000;
 // 画面（renderer）が webview を作って知らせるまで待つ時間
 const ATTACH_TIMEOUT_MS = 10_000;
@@ -170,6 +177,8 @@ export class BrowserControl {
   private readonly running = new Map<string, number>();
   // 最後の呼び出しが終わった時刻（セッションごと）
   private readonly endedAt = new Map<string, number>();
+  // 撮る間、描かせ続けている webContents と、頼んでいる数（keepDrawing）
+  private readonly drawing = new Map<WebContents, number>();
   // ユーザーに頼んでいる操作
   private readonly asks: BrowserAsks;
 
@@ -532,6 +541,54 @@ export class BrowserControl {
 
   // ---- 読む ----
 
+  // 撮る。撮る間だけ、ウインドウに描かせ続ける（keepDrawing）。それでも返ってこなければ、理由の見当を添えて断る。
+  // capturePage も CDP の Page.captureScreenshot も、ウインドウが描いて合成した絵から撮るので、ウインドウが描かれていない間は返ってこない
+  // （エラーにもならない）。2026-10-12、Mac の画面をロックして 1 時間ほどたったアプリで、撮るたびに 60 秒の時間切れになった。
+  // ページの中の描画（requestAnimationFrame）は進んでいて、文字を読むツールは動いていた
+  private async capture<T>(guest: Guest, take: () => Promise<T>): Promise<T> {
+    const release = this.keepDrawing(guest);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ToolError(CAPTURE_STALLED)), CAPTURE_TIMEOUT_MS);
+      });
+      return await Promise.race([take(), stalled]);
+    } finally {
+      clearTimeout(timer);
+      release();
+    }
+  }
+
+  // タブとアプリの画面の backgroundThrottling を切り、戻す関数を返す。
+  // 画面のロックなどでウインドウが隠れると、Chromium はウインドウを描くのをやめる。backgroundThrottling を切った webContents が
+  // ウインドウに 1 つでもあると、ウインドウ全体が描かれ続ける（Electron の決まり）。切ったままだと、隠れている間も描き続けて電気を使うので、
+  // 撮る間だけにする。同じ画面のタブをいくつも同時に撮ることがあるので、頼んでいる数を数えて、最後の 1 つが終わったら戻す。
+  // もともと切ってあるものには触れない
+  private keepDrawing(guest: Guest): () => void {
+    const held: WebContents[] = [];
+    for (const contents of [guest.contents, guest.contents.hostWebContents]) {
+      if (!contents || contents.isDestroyed()) continue;
+      const count = this.drawing.get(contents) ?? 0;
+      if (count === 0) {
+        if (!contents.getBackgroundThrottling()) continue;
+        contents.setBackgroundThrottling(false);
+      }
+      this.drawing.set(contents, count + 1);
+      held.push(contents);
+    }
+    return () => {
+      for (const contents of held) {
+        const left = (this.drawing.get(contents) ?? 1) - 1;
+        if (left > 0) {
+          this.drawing.set(contents, left);
+          continue;
+        }
+        this.drawing.delete(contents);
+        if (!contents.isDestroyed()) contents.setBackgroundThrottling(true);
+      }
+    };
+  }
+
   private async screenshot(guest: Guest, selector: string | undefined, fullPage: boolean): Promise<ToolResult> {
     const { contents } = guest;
     let image: NativeImage;
@@ -545,22 +602,24 @@ export class BrowserControl {
       const width = Math.min(target.viewport.width - x, Math.ceil(target.rect.width + pad * 2));
       const height = Math.min(target.viewport.height - y, Math.ceil(target.rect.height + pad * 2));
       if (width <= 0 || height <= 0) throw new ToolError(`"${selector}" has zero size and cannot be captured.`);
-      image = await contents.capturePage({ x, y, width, height });
+      image = await this.capture(guest, () => contents.capturePage({ x, y, width, height }));
       note = `${selector} (${target.description})`;
     } else if (fullPage) {
       const metrics = (await this.cdp(guest, 'Page.getLayoutMetrics')) as { cssContentSize: { width: number; height: number }; cssLayoutViewport: { clientWidth: number } };
       const width = metrics.cssLayoutViewport.clientWidth;
       const total = Math.ceil(metrics.cssContentSize.height);
       const height = Math.min(total, Math.round(width * MAX_FULL_PAGE_RATIO));
-      const shot = (await this.cdp(guest, 'Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: true,
-        clip: { x: 0, y: 0, width, height, scale: 1 },
-      })) as { data: string };
+      const shot = (await this.capture(guest, () =>
+        this.cdp(guest, 'Page.captureScreenshot', {
+          format: 'png',
+          captureBeyondViewport: true,
+          clip: { x: 0, y: 0, width, height, scale: 1 },
+        }),
+      )) as { data: string };
       image = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
       note = height < total ? `Top ${height}px of the page (full height ${total}px; scroll and take another screenshot for the rest)` : `Full page (${width}×${height})`;
     } else {
-      image = await contents.capturePage();
+      image = await this.capture(guest, () => contents.capturePage());
       note = 'Visible area';
     }
     if (image.isEmpty()) throw new ToolError('Could not take a screenshot (the page may not have been rendered yet).');

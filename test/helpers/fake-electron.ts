@@ -121,6 +121,11 @@ export class FakeContents extends EventEmitter {
   // capturePage が返す画像と、受けた範囲
   shot: FakeImage = new FakeImage(800, 600);
   readonly captures: ({ x: number; y: number; width: number; height: number } | undefined)[] = [];
+  // capturePage の振る舞い（既定は、すぐ shot を返す）
+  capture: () => Promise<FakeImage> = async () => this.shot;
+  // 見ていない間も描かせるか（backgroundThrottling）と、切り替えの記録
+  backgroundThrottling = true;
+  readonly throttling: boolean[] = [];
   // loadURL の振る舞い（既定は、その URL に移って終わる）
   load: (url: string) => Promise<void> = async (url) => {
     this.url = url;
@@ -209,7 +214,16 @@ export class FakeContents extends EventEmitter {
 
   async capturePage(rect?: { x: number; y: number; width: number; height: number }): Promise<FakeImage> {
     this.captures.push(rect);
-    return this.shot;
+    return this.capture();
+  }
+
+  getBackgroundThrottling(): boolean {
+    return this.backgroundThrottling;
+  }
+
+  setBackgroundThrottling(allowed: boolean): void {
+    this.backgroundThrottling = allowed;
+    this.throttling.push(allowed);
   }
 
   // 送ったスクリプトのうち、種類が kind のもの
@@ -219,7 +233,21 @@ export class FakeContents extends EventEmitter {
 }
 
 // アプリの画面（webview を持っている webContents）
-export const HOST = { id: 1, name: 'アプリの画面' };
+// アプリの画面（webview を持つ側の webContents）。backgroundThrottling の切り替えだけを記録する
+export const HOST = {
+  id: 1,
+  name: 'アプリの画面',
+  backgroundThrottling: true,
+  throttling: [] as boolean[],
+  isDestroyed: () => false,
+  getBackgroundThrottling(): boolean {
+    return this.backgroundThrottling;
+  },
+  setBackgroundThrottling(allowed: boolean): void {
+    this.backgroundThrottling = allowed;
+    this.throttling.push(allowed);
+  },
+};
 
 // nativeImage.createFromBuffer に渡されたもの（fullPage のスクリーンショット）と、返す画像
 export const images = { buffers: [] as Buffer[], fromBuffer: new FakeImage(800, 2000, 'fullPage') };
