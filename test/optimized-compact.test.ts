@@ -139,6 +139,23 @@ describe('再開の文（resumeText）', () => {
     expect(text).not.toContain('README を直す');
   });
 
+  it('カードの無い決定事項・本文の無いカード・全体が長すぎるとき', () => {
+    const empty = resumeText({ lists: [list('決定事項', 'decisions', [])], messages: [], tasks: [] });
+    expect(empty).toContain('# 決定事項 (decisions in force)\n(no cards)');
+    // 本文の無いカードは、題名だけ。古いカードから題名だけにするときも、本文の無いカードは数えない
+    const cards = [card(1, '本文なし'), ...Array.from({ length: 14 }, (_, i) => card(i + 2, `決定${i + 2}`, 'か'.repeat(1900)))];
+    const text = resumeText({ lists: [list('決定事項', 'decisions', cards)], messages: [], tasks: [] });
+    expect(text).toContain('## #1 本文なし\n## #2 決定2\n');
+    expect(text).toContain('## #2 決定2\n(body not shown; read it with card_get)');
+    expect(text).toContain('## #15 決定15\nか');
+    // 題名だけで上限を超えるほど多いときは、上限で切る（囲みは閉じる）
+    const many = Array.from({ length: 400 }, (_, i) => card(i + 1, `決定 ${'さ'.repeat(280)}`));
+    const huge = resumeText({ lists: [list('決定事項', 'decisions', many)], messages: Array.from({ length: 6 }, (_, i) => said(`発言${i} ${'し'.repeat(2900)}`)), tasks: Array.from({ length: 20 }, () => ({ kind: 'bash' as const, label: 'す'.repeat(200) })) });
+    expect(huge.length).toBeLessThanOrEqual(RESUME_MAX_CHARS);
+    expect(huge).toContain('… (cut)');
+    expect(huge.endsWith(`\n</${RESUME_TAG}>`)).toBe(true);
+  });
+
   it('決定事項も「いまの状態」も無ければ、無いと伝える', () => {
     expect(resumeText({ lists: [TODO], messages: [], tasks: [] })).toContain('(There is no decisions list and no state list. Read what there is with checklist_overview.)');
   });
@@ -284,6 +301,17 @@ describe('自動で切り替えたとき', () => {
     );
     // 発言の原文のあと・タスクの前
     expect(text.indexOf('# What the user said')).toBeLessThan(text.indexOf('# Where the turn was stopped'));
+  });
+
+  it('止める直前の応答の文が長いときは、終わりの 1,000 文字を入れる。対象の無いツールは、名前だけ', () => {
+    const text = resumeText({ lists: [], messages: [], tasks: [], auto: { percent: 91, midTurn: true }, stopped: { text: `はじめ${'あ'.repeat(1200)}おわり`, tools: [{ name: 'TodoWrite', target: '', result: 'ok' }] } });
+    expect(text).toContain(`Your last words before the stop:\n…${'あ'.repeat(997)}おわり\nYour last tool calls`);
+    expect(text).not.toContain('はじめ');
+    expect(text).toContain('- TodoWrite → finished');
+  });
+
+  it('途中で止めたのに、止めた場所が渡されなければ、止めた場所は書かない', () => {
+    expect(resumeText({ lists: [], messages: [], tasks: [], auto: { percent: 91, midTurn: true } })).not.toContain('# Where the turn was stopped');
   });
 
   it('仕上げができなかったときは、リストが切り替えの前のままで、古いかもしれないと書く', () => {

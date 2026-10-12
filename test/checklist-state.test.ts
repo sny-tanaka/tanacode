@@ -126,6 +126,28 @@ describe('知らせ', () => {
     }
   });
 
+  it('「いまの状態」のカードが多くて収まらなければ、題名を切り、それでも収まらなければ古いカードを省いて、ツールで読むよう伝える', () => {
+    // 題名を 120 文字に切れば収まる
+    const long = withState(Array.from({ length: 30 }, (_, i) => ({ title: `状態${i + 1} ${'え'.repeat(290)}` })));
+    const cut = checklistReminder('prompt', long.book.lists(S), NONE)!;
+    expect(cut.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
+    expect(cut).toContain(`- #30 状態30 ${'え'.repeat(120 - '状態30 '.length)}…`);
+    expect(cut).not.toContain('older cards are not shown');
+    // 題名を切っても収まらない
+    const many = withState(Array.from({ length: 300 }, (_, i) => ({ title: `状態${i + 1} ${'お'.repeat(290)}` })));
+    const text = checklistReminder('prompt', many.book.lists(S), NONE)!;
+    expect(text.length).toBeLessThanOrEqual(MAX_REMINDER_CHARS);
+    expect(text).toMatch(/\(\d+ older cards are not shown here; read them with checklist_overview\)/);
+    expect(text).toContain('- #300 状態300');
+    expect(text).not.toContain('- #1 状態1 ');
+    expect(text.split(`</${CHECKLIST_REMINDER_TAG}>`)).toHaveLength(2);
+    // 1 枚だけ省くとき
+    const { book } = withState([{ title: 'あ' }]);
+    const empty = book.createList(S, 'claude', '空の状態', '', 'state');
+    expect(checklistReminder('prompt', book.lists(S), NONE)).toContain(`## 空の状態 (state; 0 cards)\n(no cards)`);
+    expect(empty.cards).toHaveLength(0);
+  });
+
   it('ターンの終わりに止める文は、有効な決定の数に「いまの状態」のカードを数えない', () => {
     const { book } = withState();
     const text = checklistReminder('stop', book.lists(S), { turn: 2, checklist: 0 })!;
