@@ -185,12 +185,6 @@
       "answer": "質問への答え: {answer}",
       "noAnswer": "（回答なし）"
     },
-    "compactOptimizer": {
-      "noResponse": "Claude Code から答えが返りませんでした",
-      "noMarks": "Haiku の答えに印がありませんでした",
-      "timedOut": "Haiku の答えが時間内に返りませんでした",
-      "exited": "Claude Code が終了しました（終了コード {code}）"
-    },
     "hooks": {
       "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
@@ -431,17 +425,30 @@
       "settingsFileMissing": "登録なし",
       "confirmSettingsFile": "設定ファイルを「{name}」に変えます。Claude Code を起動し直して会話を続けます。設定の内容（接続先の URL・API キーなど）によっては、これまでの会話の内容が新しい接続先に送られます。\n\n変えますか？",
       "scheduleFailed": "予約できませんでした: {error}",
-      "compact": "圧縮",
-      "compactTip": "会話を要約してコンテキストを空ける（/compact）。作業中は押せません",
-      "compactOptimizedTip": "Haiku が残すもの・捨てるものを選んでから、会話を要約してコンテキストを空ける。作業中は押せません",
-      "optimizing": "Haiku が残すものを選んでいます…",
-      "compactMode": "圧縮のしかたを選ぶ",
-      "compactModePlain": "通常圧縮",
-      "compactModePlainDesc": "/compact をそのまま送ります。何を残すかは Claude 任せ",
-      "compactModeOptimized": "最適化圧縮",
-      "compactModeOptimizedDesc": "Haiku が残すもの・捨てるものを選び、その指示を添えて /compact を送ります。Haiku の分の利用枠を少し使います",
-      "optimizeFailed": "最適化圧縮ができませんでした: {error}",
-      "optimizeCancelled": "Claude が作業を始めたので、最適化圧縮を取りやめました",
+      "optimizedCompact": "最適化圧縮",
+      "optimizedCompactTip": "会話を消して、チェックリストから再開する（要約は作りません）。先に、続きに要ることを Claude がチェックリストに書きます。作業中は押せません",
+      "compactPhase": {
+        "finalizing": "最適化圧縮: 続きに要ることを、Claude がチェックリストに書いています",
+        "clearing": "最適化圧縮: 会話を消しています",
+        "resuming": "最適化圧縮: 再開の文を送っています",
+        "waiting": "最適化圧縮: 再開の文を送るのを待っています（入力欄が空くと送ります）"
+      },
+      "compactUnavailable": {
+        "checklistOff": "メニューの「Claude にチェックリストを扱わせる」をオンにすると使えます",
+        "noChecklist": "このセッションの Claude Code はチェックリストを使えません。メニューの「Claude にチェックリストを扱わせる」をオンにして、セッションを起動し直すと使えます"
+      },
+      "compactFailure": {
+        "interrupted": "仕上げを中断したので、最適化圧縮を取りやめました。会話は消していません",
+        "prompted": "仕上げの間に発言があったので、最適化圧縮を取りやめました。会話は消していません",
+        "notUsed": "Claude がチェックリストを使わなかったので、最適化圧縮を取りやめました。会話は消していません",
+        "interleaved": "仕上げのあとに別の作業が続いたので、最適化圧縮を取りやめました。会話は消していません",
+        "notCleared": "/clear を送りましたが、新しい会話に切り替わりませんでした。チェックリストは更新してあります",
+        "exited": "セッションが終了したので、最適化圧縮を取りやめました",
+        "busy": "Claude Code に送れなかったので、最適化圧縮を取りやめました。会話は消していません"
+      },
+      "compactFailed": "最適化圧縮を取りやめました",
+      "compactWaiting": "再開の文を送るのを待っています",
+      "compactDismiss": "閉じる",
       "restart": "再起動",
       "restartTip": "Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます",
       "confirmRestart": "作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？",
@@ -622,6 +629,8 @@
       "compactedAuto": "会話を自動で圧縮しました",
       "compactedFrom": "会話を圧縮しました（{count}k tokens から）",
       "compactedAutoFrom": "会話を自動で圧縮しました（{count}k tokens から）",
+      "compactHandoff": "最適化圧縮: 続きに要ることを、チェックリストに書くよう頼みました",
+      "compactResume": "最適化圧縮: 会話を消して、チェックリストから再開しました",
       "taskFinished": "バックグラウンドのタスクが終わりました",
       "ciEnabled": "有効になりました",
       "ciNewComments": "新しいレビューコメント {count} 件",
@@ -1326,6 +1335,8 @@
       "inForceTip": "有効な決定 {count} 件（取り消したものは数えません）",
       "kindDecisions": "決定事項",
       "kindDecisionsTip": "決定事項のリスト。チェックで消えず、有効なカードを Claude にいつも渡します",
+      "kindStateTip": "いまの状態のリスト。チェックは無く、Claude が書き換えて最新にします。カードを Claude にいつも渡します",
+      "cardCountTip": "カード {count} 枚",
       "kindReview": "確認事項",
       "kindReviewTip": "確認事項のリスト。チェック（承認）したカードは、決定事項に移ります",
       "revoked": "取り消し",
@@ -1419,7 +1430,8 @@
       "kind": "種類",
       "kindNormal": "ふつう（チェックして消していく）",
       "kindReview": "確認事項（承認したら決定事項に移す）",
-      "kindDecisions": "決定事項（消えない。チェックなし）"
+      "kindDecisions": "決定事項（消えない。チェックなし）",
+      "kindState": "いまの状態（Claude が書き換える。チェックなし）"
     },
     "apply": {
       "failed": "チェックリストを変えられませんでした: {error}"
@@ -1539,18 +1551,7 @@
       "sortBySize": "大きい順",
       "sortByTime": "時間順",
       "compacted": "圧縮で要約に置き換わったもの（{count} 件）",
-      "marks": "残す {keep} · 捨てる {drop}",
-      "clearMarks": "印を外す",
-      "compactWithMarks": "この選び方で圧縮…",
-      "compacting": "圧縮中…",
-      "note": "印を付けないものは Claude に任せます。大きさは文字数と応答の使用量からの見積もりで、正確なトークン数ではありません",
-      "draftTitle": "/compact に添える指示（直してから送れます）",
-      "compact": "圧縮する",
-      "cannotCompact": "作業中・確認の画面が出ている間は圧縮できません"
-    },
-    "row": {
-      "keep": "残す",
-      "drop": "捨てる"
+      "note": "大きさは文字数と応答の使用量からの見積もりで、正確なトークン数ではありません"
     },
     "kind": {
       "written": "書いた",
@@ -1564,35 +1565,6 @@
     "meter": {
       "label": "コンテキストの中身",
       "tip": "コンテキスト {tokens} / {limit} tokens（直近の応答時点）\nいっぱいに近づくと自動で圧縮されます。押すと中身の一覧を出します"
-    },
-    "compact": {
-      "keep": "{items}は詳しく残す。",
-      "drop": "{items}は捨ててよい。",
-      "sentenceSeparator": "",
-      "listTwo": "{first}と、{second}",
-      "separator": "、",
-      "listLast": "{rest}、{last}",
-      "file": "`{label}` の内容",
-      "fileEdited": "`{label}` の内容と変更",
-      "summary": "前回の圧縮の要約",
-      "agent": "サブエージェント「{label}」の結果",
-      "imageWithLabel": "{tool} の画像（{label}）",
-      "image": "{tool} の画像",
-      "attachedImage": "「{topic}」に添付した画像",
-      "attachedImageNth": "「{topic}」に添付した画像 {index} 枚目",
-      "topicAnswer": "質問に「{answer}」と答えたあとのやりとり",
-      "topicNotice": "「{notice}」の知らせのあとのやりとり",
-      "topicEvent": "{label}のやりとり",
-      "topic": "「{label}」から始まるやりとり",
-      "notice": "「{label}」の知らせ",
-      "bash": "`{label}` の出力",
-      "search": "「{label}」の検索結果",
-      "glob": "「{label}」に合うファイルの一覧",
-      "webFetch": "{label} のページの内容",
-      "skill": "スキル「{label}」の内容",
-      "toolWithLabel": "{tool}（{label}）の結果",
-      "tool": "{tool} の結果",
-      "mcpTool": "{server} の {tool}"
     }
   },
   "export": {

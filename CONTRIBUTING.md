@@ -339,7 +339,8 @@ PR で、次のものを流します。develop への push では流しません
 | `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
 | `default-branch.test.ts` | 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダを切り替えた直後に押しても効くか。フェッチに時間がかかっている間（合図があるまで答えないリモート。git の `ext::`）にフォルダを変えると、変えた先のボタンと送信がすぐ使えるか。時間のかかっているフォルダは止めずに、リモートが答えたら切り替わるか |
 | `restart.test.ts` | 「動かしたまま終了」で閉じて起動し直すと、Claude Code が引き継がれて続けられる。「再起動」のあとも同じ会話を続けられる |
-| `compact.test.ts` | ヘッダーの「圧縮」の ▾ で最適化圧縮に切り替えて押すと、使い捨ての `claude -p`（Haiku）に今のコンテキストの行が渡り、返った印から作った指示が、セッションの要約の頼み（`Additional Instructions:`）に入るか |
+| `compact.test.ts` | ヘッダーの「最適化圧縮」を押すと、仕上げの頼み → Claude が MCP で「いまの状態」を書く → `/clear` → 再開の文（今の状態と、前の会話の発言の原文）→ Claude がリストを読んで報告、と進むか。要約を頼まないか |
+| `compact-interrupt.test.ts` | 最適化圧縮の仕上げの頼みを、応答の前に中断すると（打ってから 5 秒を過ぎてから）、入力欄に戻った文がチャットの入力欄に移らず、会話を消さずに取りやめて理由を出すか。次の発言に、仕上げの頼みが混ざらないか |
 
 どのファイルも、最後に画面のコンソールにエラーが出ていないかを確かめます。
 
@@ -373,7 +374,6 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `checklist-hooks.test.ts` | チェックリストを使い続けさせる hooks。アプリと同じ起動の引数（`--settings` の hooks）と環境変数で起動し、ビルドした中継を `--hook` で動かしたフックが、アプリの代わりのソケットの先の `ChecklistControl` に聞いて Claude Code に返すか。人の発言で今のチェックリストが Claude に渡る。ツールを使ってチェックリストに触れずに終えようとすると、1 回だけ止まって理由が Claude に渡り、続きが始まる（止めたあとの続きは止まらない）。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない。チェックリストに触れたターン・ツールを使っていないターンは止まらない。`/compact` のあとにも渡る（有効な決定事項も。取り消したものは渡らない）。どれもチャットのフックの一覧に出ない。モックの API はすぐに応答を返すので、フックが動いた時点では会話ログに最後の応答がまだ無く、フックがそろうのを待ってから数えることも確かめる（`settled`。Claude Code がフックに渡す `last_assistant_message` と、会話ログの最後の応答が同じ文であること）。止めた記録がチャットの目印（`checklist-stop`）になる |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備の知らせが ready より先 → 会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでは始まらず、理由を日本語で返す。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
     | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。入力欄: `--effort` の表示とバナーのモデル名 → 書きかけ → 会話の最初の `/context` → 複数行の貼り付け（短いもの・長いもの）→ `!` のコマンド → `/rename` と AI のタイトル → セッションの一覧。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・コンテキストの中身（`ContextTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
-    | `compact-optimizer.test.ts` | 最適化圧縮の使い捨ての `claude`。アプリと同じ引数（`optimizerArgs`）で `-p` で起動し、標準入力の会話が渡り、`--json-schema` の答え（`StructuredOutput` のツールの入力）が `structured_output` で返るか。渡るツールは答えの形のものだけ・指示がシステムの文に入る・使う人の設定の hooks（`SessionStart`・`UserPromptSubmit`）が動かない |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
@@ -481,7 +481,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 数を埋め込むときは `{count}` にします。英語で単数形が違うときは、`en.json` に `<キー>_one` を足します（`count` が 1 のときに使う）。
   - 同じ日本語でも、英語にしたとき訳が変わるものは別のキーにします（ボタンの「停止」と状態の「停止」など）。`common` は、ボタンの名前で意味がまったく同じものだけ。
   - 英語の大文字・小文字は macOS の決まりに合わせます。メニュー・ボタン・見出しは Title Case、ツールチップ・説明・エラーは文頭だけ大文字。
-  - 区切りの記号（「、」「・」「〜」など）や、文の間の空白もコードに書かず、文言にします（`main.format.listSeparator`・`context.compact.sentenceSeparator`・`checklist.numberRange` など）。
+  - 区切りの記号（「、」「・」「〜」など）や、文の間の空白もコードに書かず、文言にします（`main.format.listSeparator`・`checklist.numberRange` など）。
   - 表示の文言を比べて分岐しません。種類などの元の値で分岐します。
 - `t()` はモジュールの一番上（読み込み時に評価されるところ）で呼びません。main も画面も、言語を決める前にモジュールを読み込むためです。文言の表は、キーを読む関数にします（`statusLabel(status)` など）。
 - 1 つの言語で使い続けるときの重さが、文字列をそのまま書いていたときと変わらないようにしています。
@@ -496,7 +496,6 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - MCP の中継が `tools/list` で返すツールの短い名前（`title`）は、アプリが `--mcp-config` の `env` で渡す `TANACODE_LANGUAGE`（Claude Code を起動したときの言語）で読みます。チャットのツールの行の名前は、アプリが `tools.json` の名前空間から読みます（`mcpToolLabel`）。
   - 利用枠の「5時間」「週」（`usage-monitor.ts` の `label`）: 画面が枠を見分ける値で、`usage.json` にも保存されるため。画面に出す名前は `account.usage.*`。
 - hooks の確認の理由（Claude Code の許可の確認に出る）は、Claude Code を起動するときの言語で作ります（`worktreeGuardCommand()`・`sessionsGateCommand()`）。アプリ内ブラウザの JavaScript の確認のフックは別のプロセスなので、言語を環境変数 `TANACODE_LANGUAGE` で渡します。シェルと JSON に埋め込むので、理由の文言には `'` `"` `\` を使いません（`test/i18n.test.ts` で確かめる）。
-- コンテキストのやりとりの名前（`ContextTracker` が付ける「質問への答え: …」など）は、圧縮の指示を組み立てるときに、文言の形と比べて見分けます（`context.ts` の `unfill`）。
 - 言語の決め方: アプリの設定（`settings.json` の `language`）の `system`・`ja`・`en`。`system`（既定）なら、`app.getPreferredSystemLanguages()` に日本語があれば日本語、無ければ英語（`resolveLanguage`）。
   - main は起動するときに決めます（`applyLanguage`。プロファイルの既定の名前やダイアログが使うので、ほかのものを作る前）。
   - 画面には、ウインドウ（と足したプロファイルの画面）を作るときの起動の引数（`webPreferences.additionalArguments` の `--tanacode-language=`）で渡し、preload の `language()` で読みます。IPC を待たないので、起動は遅くなりません。`src/renderer/src/main.tsx` が、描く前に `setLanguage` します。
@@ -614,7 +613,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `package.json` の `predev`・`prebuild`・`predist` で呼び、`prerelease` では `--require` 付きで呼びます。`postinstall` には入れません（PR の CI は ubuntu で `npm ci` するため）。
   - `build.extraResources` で `Contents/Resources/tanacode-translate` に入れます（electron-builder が、アプリの署名に合わせて署名し直す）。electron-builder は元のファイルが無くても警告だけで進むので、`release.yml` で、パッケージしたあとに両方のアーキテクチャのアプリに入ったかを `test -x` で確かめます。
 
-### コンテキストの中身と圧縮
+### コンテキストの中身
 
 - 中身の一覧は、本体の会話ログから `ContextTracker`（`context-tracker.ts`）が集めます。`KnowledgeTracker` と同じく、`SessionManager` が行ごとに渡します。起動していないセッション（アーカイブ済みなど）は、取りに来たときに会話ログ全体を読みます（`readContext`）。
   - 画面は、パネルが見えている間だけ取りに行き（`context:get`）、使用量が変わったら（`knowledge:changed`）取り直します。
@@ -622,11 +621,11 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 並べるものと、まとめ方
   - ファイル: Read の結果・Edit や Write の入力（書いた中身）・`@` や圧縮のあとの添付（`file`）・変更に気づいた知らせ（`edited_text_file`）・CLAUDE.md や記憶（`instructions`・前の Claude Code の `nested_memory`）。同じファイルは 1 行に足します。
   - ツールの結果: 1,000 トークン以上のものだけ 1 行にし、小さいものはやりとりに足します。スキルの本文（`Skill` のすぐあとの isMeta の行。`sourceToolUseID` でつながる）は、そのツールの行に入れます。
-  - 画像: ツールの結果と発言の添付。画像のファイルを Read したときは、そのファイルの行に入れます。発言の添付は、指示の文でどれか分かるよう、発言の冒頭と何枚目かを名前にします。
+  - 画像: ツールの結果と発言の添付。画像のファイルを Read したときは、そのファイルの行に入れます。発言の添付は、一覧でどれか分かるよう、発言の冒頭と何枚目かを名前にします。
   - サブエージェント: Agent の結果と、完了の知らせ（`<task-notification>` の `<tool-use-id>`）・報告（`<agent-message from>` のサブエージェントの ID）を、起動した行にまとめます。
   - やりとり: 発言ごと。質問（AskUserQuestion）への答え・待機中に届いた完了の知らせや別の Claude からの知らせでも区切ります（発言だけで区切ると、1 つのまとまりが会話全体の半分以上になりがちなため。実測）。作業の途中に届いた知らせ（`queued_command`）では区切りません（作業の途中に送った人の発言では区切ります）。知らせかどうかは、出どころ（`origin.kind`）か、文の先頭の `<task-notification>` で見ます。圧縮を送った発言・コマンドの記録は、要約の行に入れます。
   - モデルに渡らない attachment（`prompt_snapshot`・`deferred_tools_record`・`compact_file_reference` など）は数えません。
-  - Claude Code が足す一覧や環境の知らせ（`skill_listing`・`*_delta`・`environment`・`total_tokens_reminder` など）は、一覧に出さず「そのほか」に入れます。圧縮のあとにも送り直され、`/compact` の指示では消せないためです。大きさの直し（下）には入れます。hooks が足した文（`hook_*`）は、そのやりとりに入れます。
+  - Claude Code が足す一覧や環境の知らせ（`skill_listing`・`*_delta`・`environment`・`total_tokens_reminder` など）は、一覧に出さず「そのほか」に入れます。圧縮のあとにも送り直され、会話の中身ではないためです。大きさの直し（下）には入れます。hooks が足した文（`hook_*`）は、そのやりとりに入れます。
 - 大きさの見積もり（会話ログ 129 本で実測）
   - 文章は文字数から。日本語（CJK の記号・かな・漢字・全角）は 1 文字 1.07 トークン、ほかの文字は 2.2 文字で 1 トークン（Bash の出力やコードが多く、よく言われる 4 文字より重い）。ツールの結果 1 つに 40 を足します。
   - Claude の応答は、`message.usage.output_tokens`。思考は会話ログに中身が残らない（署名だけ）のに、次の入力に残るためです。同じ応答（`message.id`）は中身のブロックごとに別の行に書かれるので、1 回だけ数えます。書いた中身（Edit・Write の入力）は、応答からファイルの行に移します（その応答の出力より多くは移さない）。
@@ -637,22 +636,50 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 圧縮の前と後
   - 最後の `compact_boundary` より前の行のものを、圧縮で要約に置き換わったもの（`compacted`）にします。ただし `compactMetadata.preservedMessages.allUuids` の行（要約せずにそのまま残された直前の応答など）は、今のものとして数えます。
   - 要約の行（`isCompactSummary`）は「前回の圧縮の要約」の行に。圧縮のあとに添付し直されたファイルは、今のファイルの行になります。
-- 圧縮の指示（`compactInstructions`・`src/shared/context.ts`）
-  - 印から決まった形の文を組み立てます。「A の内容と、「B」から始まるやりとりは詳しく残す。C の出力は捨ててよい。」のように、種類ごとの言い方（ファイルは内容、Bash は出力、検索は検索結果など）でつなぎます。文そのものを Claude に作らせることはしません（最適化圧縮でも、Haiku が選ぶのは印だけ）。
-  - Claude Code は、`/compact` の引数を要約のプロンプトの最後（`Additional Instructions:`）に、そのまま足します。長さの上限は無く、改行も残ります（Claude Code 2.1.288 の本体で確認）。
-  - 指示は効きます。本物の Claude Code で、同じ会話を「設計を残し、インストールの出力とポートの調べものは捨てる」「指示なし」「逆の指示」で圧縮すると、残すとした目印はすべて要約に残り、捨ててよいとした目印は 0 件でした（指示なしでは全部残った）。
-  - 印は、セッションごとに画面のメモリに持ちます（アプリを終了すると消える）。付けたときの要約の行（圧縮の区切り）と一緒に覚え、圧縮が進んで要約の行が変わったら使いません（ヘッダーの「圧縮」・自動の圧縮も）。送った時点では外しません。送れなかったときに、付け直さなくてよいようにするためです。
-  - パネルは、セッションごとに作り直します（`key`）。書きかけの指示を、切り替えた先のセッションに送らないためです。
-- 最適化圧縮（`compact-optimizer.ts`）
-  - ヘッダーの「圧縮」の ▾（`CompactButton.tsx`）で、通常圧縮（`/compact` だけ）と最適化圧縮を切り替えます。選んだしかたは共有の表示設定（`tanacode.compactMode`）に覚えます。
-  - 最適化圧縮のボタンで、画面が `context:optimize` を呼び（`useOptimizedCompact`）、`SessionManager.optimizeCompact` が指示の文を返します。画面は、そのときセッションが待機中なら `/compact <文>`（文が空なら `/compact` だけ）を送り、作業が始まっていたら取りやめます。同じセッションで続けて頼まれたら、選んでいる途中のものを待ちます。
-  - 会話ログを読み直す使い捨ての `ContextTracker` を、抜粋を覚える設定（`new ContextTracker(cwd, true)`）で作ります。断片ごとに中身の頭（2,000 文字）を覚え、行ごとにつなぎます（`excerpts()`）。数え終えた応答の文章とツールの呼び出し（`[Bash] npm test` など）も、大きさ 0 の断片としてやりとりに入れます。動いているセッションの `ContextTracker` は、抜粋を覚えません（メモリを使うため）。
-  - Haiku には、圧縮より前でない行を古い順に、短い番号・種類・名前・大きさ・抜粋と一緒に渡します（`optimizerPrompt`）。抜粋は 1 行 1,500 文字、新しい 3 つのやりとりは 6,000 文字まで（長いものは頭 7 割と終わり 3 割）。合計が 40 万文字を超えるときは、ほかの行を短くします。答えは番号ごとの keep・drop・auto で、keep・drop だけを印にして `compactInstructions` で文にします（auto は印を付けない）。いちばん新しいやりとりに drop が付いたら外します（今の作業を捨てさせない。システムの文でも頼んでいる）。
-  - 起動は `claude -p --model haiku --tools "" --strict-mcp-config --settings '{"disableAllHooks":true}' --no-session-persistence --system-prompt … --output-format json --json-schema …`（`optimizerArgs`）。会話は標準入力で渡し、作業フォルダは一時フォルダにします（プロジェクトの設定・CLAUDE.md を読ませない）。答えは JSON の `structured_output`。`is_error` のときは、その `result` を失敗の理由にします。
-    - `--bare` は使いません。OAuth と Keychain を読まなくなり、サブスクリプションでログインしている人が使えなくなるためです。
-    - 環境変数は、セッションの Claude Code と同じ `childEnv`（プロファイルの `CLAUDE_CONFIG_DIR` を含む）。
-    - 設定ファイルを選んだセッションでは、登録した設定に `disableAllHooks: true` だけを足したファイル（`SettingsFiles.prepareOptimizer`。`session-settings/<セッション ID>-optimizer.json`、自分だけが読める権限）を `--settings` に渡し、終わったら消します。会話の中身を、セッションと違う接続先に送らないためです。`--settings` は 1 つしか効かないので、hooks を止める指定もこのファイルに入れます。
-  - 実測（2.1.296）: ツールの結果 30〜40 件ほどの会話で 10〜15 秒、0.5〜1.5 セント。`disableAllHooks` を付けないと、使う人の `SessionStart`・`UserPromptSubmit` の hooks が動くことを、`test/cli/compact-optimizer.test.ts` で確かめています。
+
+### 最適化圧縮
+
+- 会話を要約にせず、会話を消して（`/clear`）、チェックリストから再開します。Claude Code の圧縮（`/compact`・自動）への不満の多くは、「会話を 1 つの要約の文章にする」ことから来ていました（要約の誤りが事実になる・重ねるほど薄まる・要約に付く「質問せずに続けろ」で勝手に走り出す・会話で伝えた決まりが要約に負ける）。そこで、残すべきことは圧縮で消えないチェックリストに書いておき、切り替えるときは会話を消して、セッションの始めと同じ状態（CLAUDE.md などが読み込まれた状態）から、チェックリストを読んで再開させます。
+  - 試作での測定（実際の会話ログ 3 本・同じ質問 48 問）では、「あとで要ったこと」の正答率が、通常の圧縮 74.5% に対して、リストから再開する形は 82.3%（ツールなし）・93.8%（ファイルを読み直せる）でした。細部（ファイルの中身など）は、場所が書いてあれば読み直して戻せます。
+  - これまでの最適化圧縮（Haiku に行ごとの「残す」「捨てる」を選ばせて `/compact` に指示を添える）と、コンテキストのパネルの印（「この選び方で圧縮」）は、要約を作る前提のものなので消しました。ヘッダーに通常の圧縮のボタンはありません（入力欄から `/compact` を打てる）。
+- 流れは main の `OptimizedCompact`（`src/main/optimized-compact.ts`。`Profile` が持つ）が動かします。画面を切り替えても・ウィンドウを閉じても進み、自動で始める仕組みも、あとからここに足せるためです。画面は `compact:start` で始め、`compact:get`・`compact:changed` で状態（`CompactStatus`。段階 `phase`・取りやめた理由 `failure`・使えない理由 `unavailable`）を受け取って、ボタン（`chat/CompactButton.tsx`）に出すだけです。`SessionManager` は、小さな形（`CompactHost`）で使います。
+  1. 仕上げ（`finalizing`）: `handoffText()` を `submitWhenReady` で送り、そのターンが終わるのを待ちます（`untilFinalized`）。会話のイベントから、送った仕上げの頼み（`notice` の `compact: 'handoff'`）を見つけ、そのあとにターンの終わりが来て、待機（`idle`・`background`）に戻ったら終わりです。
+  2. 切り替え（`clearing`）: 再開の文を組み立ててから、`/clear` を送ります。Claude Code の会話の ID（`SessionManager.claudeSessionOf`。`TranscriptFollower` が statusLine の会話ログのパスで乗り換えたときに変わる）が変わるのを、120 秒まで待ちます。`/clear` は SessionEnd・SessionStart の hooks を走らせるので、使う人の hooks が遅いと時間がかかります。時間切れにすると、会話は消えたのに再開の文を送らないことになる（いちばん避けたい）ので、長く待ちます。
+     - `/clear` は発言として会話ログに出ないので、送った印（`submittedAt`）が残ると、15 秒（`SUBMIT_GRACE_MS`）のあいだ「送信中」のままになり、再開の文が待たされます（実機で、会話が空のまま 15 秒あき、「入力欄が空くと送ります」と出た）。新しい会話に乗り換えた時点（`onSwitch`）で、`/clear` は受け取られたとして印を消します。
+  3. 再開の文（`resuming`）: 新しい会話に `submitWhenReady` で送ります。
+- 再開の文を、仕上げが終わった時点（`/clear` の前）に組み立てるのは、`/clear` のあとは、前の会話のイベントも、どの会話ログだったかも、手元から無くなるためです。
+- 会話を消すのは戻せないので、怪しいときは消さずに取りやめます（`CompactFailure`）。
+  - `interrupted`: 仕上げを人が中断した（ターンの終わりのイベントの `interrupted`）。応答の前に中断すると、Claude Code は発言を会話から外して入力欄に戻します。戻るのは貼り付けの目印ではなく本文そのもので、長い文は入力欄に収まらず、画面から読めるのは途中の一部だけです（2.1.296 で確かめた）。そのままだと、人のチャットの入力欄に本文の一部が移り（`useTakeClaudeDraft`）、Claude Code の入力欄に残った分は次の発言に混ざります。そこで、`SessionManager` は打ち込んだ最適化圧縮の文を、応答が始まるまで覚えておき（`compactTyped`）、入力欄の文字がその一部（40 文字以上）なら、画面には空の下書きとして知らせます（`compactDraft`・`shownScreen`。打ってからの時間では区切らない）。流れは、会話から仕上げの頼みが消えたとき・会話に出ないまま入力欄に 2 秒出続けたとき（会話ログに書かれる前の中断）を中断とみなし、入力欄が空になるまで消します（`withdrawCompactDraft`）。`pulledBackPrompt` も本文の一部で見分けて、ターンを終えます。
+  - `prompted`: 仕上げの間に、人（または親セッション）が発言した（順番待ちの発言も）。発言のあとに会話を消すと、その発言への応答ごと消えるためです。
+  - `not-used`: 仕上げのあいだに、Claude がチェックリストのツールを 1 回も呼ばなかった（`ChecklistControl.usedSince`。ツールを受けた時刻を覚える）。チェックリストの MCP が足されていないセッション（オフのときに起動した・引き継いだ）や、頼みを無視したときに、何も引き継げないまま会話を消すのを防ぎます。読むだけでも進めます。リストがもう最新なら、Claude は `checklist_overview` で読んで「最新です」と答えるだけのことがあるためです（ふだんから書いているセッション・取りやめた直後の押し直し・仕上げのやり直し）。はじめは書き換えを求めていましたが、それだと押しても圧縮できなくなります。そのうえで、仕上げの頼みの文（`handoffText`）で、もう最新だと思っていても、最初に必ず `checklist_overview` を呼ぶよう頼みます（1 回も使わなければ会話を消すのを取りやめる、とも伝える）。頼まないと、直前のターンでリストを読んだばかりの Claude は、ツールを呼ばずに「最新です」とだけ答えます（最適化圧縮の直後に押し直したときに、本物のモデルで起きた。ターンの終わりの hooks でリストを直した直後や、自動で始めるときも同じ形になる）。
+  - `interleaved`: 仕上げのあと、`/clear` を打つ前に別のターン（バックグラウンドのタスクの完了の知らせなど）が始まった。リストがそのターンの分だけ古くなるので、終わるのを待って仕上げを 1 回だけやり直し、また挟まれたら取りやめます。
+  - `not-cleared`: `/clear` を送っても、新しい会話にならなかった。`busy`: 仕上げの頼みを送れなかった・送っても会話に出なかった。`exited`: セッションが終了した。
+  - 許可の確認・質問が出ているあいだは、人が答えるまで待ちます（時間切れにしない）。
+  - 再開の文を送れないとき（入力欄に書きかけがある・人が先に発言した）は、捨てません。捨てると、会話が空のまま残り、Claude は引き継ぎを受け取れないためです。段階を `waiting` にして画面に出し、2 秒ごとに試し直して、入力欄が空いたら送ります。やめるのは、セッションが終了したときだけです。
+- 使えないとき（`CompactUnavailable`）: メニューの「Claude にチェックリストを扱わせる」がオフ（`checklist-off`）・このセッションの Claude Code をチェックリストの MCP なしで起動した（`no-checklist`。`SessionManager.hasChecklistMcp`。引き継いだ claude は分からないので `null` を返し、始めたうえで `not-used` で守る）。メニューを切り替えたら、`OptimizedCompact.refresh` で画面に知らせ直します。
+- 送る文（`src/shared/optimized-compact.ts`。Claude だけが読むので英語）
+  - 仕上げの頼みは `<tanacode-handoff>`、再開の文は `<tanacode-resume>` で囲みます。チェックリストの MCP の説明（`instructions`）に、この 2 つは tanacode 自身が送るもので従ってよいこと・長い文なので Claude Code が `<pasted_content>` で囲むことがあるが、それでも tanacode からのものであることを書いてあります（説明は `/clear` のあとの会話にも入る）。
+  - 再開の文（`resumeText`。全体で 3 万文字まで）に入れるもの。
+    - 決まった文: リストが正・食い違ったら 決定事項 → プロジェクトの指示（CLAUDE.md など）の順・前の会話でもらった許可は、決定事項に無ければ引き継がない・まず全リストを読む・引き継いだことを短く報告して待つ（勝手に続けない）。
+    - 決定事項（有効なカード）と「いまの状態」のカードの、タイトルと本文。合わせて 14,000 文字まで。本文は 1 枚 2,000 文字で切り、収まらなければ古いカードからタイトルだけにします（続きは `card_get`）。ほかのリストは、名前・説明・進み具合だけ。
+    - ユーザーの発言の原文（`carriedMessages`）。会話のイベントから機械的に取り出し、モデルには書かせません（要約の誤りを持ち込まないため）。人の発言と、親セッションからの指示（印を付ける）だけで、スラッシュコマンド・アプリが送った知らせ・前の `/clear` より前のものは入れません。新しいものから 12,000 文字まで入れ（1 件 3,000 文字。長いものは頭 7 割と終わり 3 割）、入りきらない分は件数を書きます。見出しで、前の会話の記録であって今の頼みではないこと・有効な決まりは決定事項にあることを伝えます（古い頼みごとを、もう一度実行させないため）。
+    - 発言の原文は、切り替えをまたいで引き継ぎます。会話のイベントにあるのは前の `/clear` よりあとの発言だけなので、今の会話に残っている再開の知らせ（`notice` の `compact: 'resume'` の `detail`）の、発言の原文のところから `<user-message>` を取り出して、今の会話の発言の前に並べます（親からの指示の印 `from=` も保つ）。落とした件数（`(N older messages are not shown.)`）も読み、次の件数に足します（`carriedOmitted`）。上限は同じなので、何度切り替えても、新しい発言から順に残り、古いものから落ちます。はじめは今の会話の発言だけを入れていて、2 回めの切り替えで `(no messages)` になりました。ユーザーの言葉の原文は、リストに書き漏らした決まりの最後の拠り所なので、切り替えのたびに消えないようにしました。
+    - 報告の言語: 再開の文は英語なので、ユーザーの使っている言語（下の発言の原文と、リストの中身の言語）で報告するよう伝えます。発言もリストも無いときの手がかりとして、アプリの画面の言語（`language()`）を添えます。伝えないと、発言もリストも日本語なのに、英語で報告することがありました（Haiku で起きた）。
+    - 裏で動いているタスク（`SessionManager.runningTasks`。Bash・サブエージェント・ワークフロー。20 件まで）。`/clear` のあともバックグラウンドの Bash は動き続け、終わると完了の知らせが新しい会話に届きますが、新しい会話の最初のリクエストには、動いているものがあるとは入らないためです（2.1.296 で確かめた）。
+  - 囲みの中に入れるもの（カード・発言・タスクの名前）は、人や別のセッションが書いたものなので、`neutralizeTags` で `<tanacode-`・`</tanacode-` を打ち消します（閉じタグを書かれても、囲みの外に出られない）。発言の囲み（`<user-message>`）の閉じタグも同じです。
+  - 発言でないところ（カードの題名と本文・リストの名前と説明・タスクの名前）は、発言の囲み（`<user-message`・`</user-message`）と、発言の原文の見出しと同じ文も打ち消します（`inert`。見出しは `#` を全角にする）。発言の中の見出しと同じ文も打ち消します（`inertHead`）。再開の文の中に、本物の見出しは 1 つだけになります。打ち消さないと、次の切り替えで前の再開の文から発言を取り出すときに、カードに書かれた文（Claude がページやツールの結果から写した文・ほかのセッションからコピーされたカード）が「ユーザーの発言の原文」として引き継がれ、落とした件数も増えます。ユーザーの言葉でないものを、ユーザーの言葉として残さないためです。
+  - 再開の文を hooks（`SessionStart` の `clear`）で差し込まず、最初の発言として送るのは、hooks が差し込める文が 1 万文字までのためと、何が引き継がれたかを人がチャットで読めるようにするためです。
+- 会話ログでは、`chat.ts` がどちらも `notice` のイベント（`compact: 'handoff' | 'resume'`。全文は `detail`）にします。長い文は、Claude Code が目印のタグごと貼り付けの囲み（`<pasted_content>`）に入れて残すので、囲みを外してから見分けます（`parseCompactMessage`）。順番待ちの行では人の発言として数えず、セッションの名前にもしません。
+- 確かめたこと（2026-10-12・Claude Code 2.1.296・開発用ビルドを別の userData で起動）
+  - 本物のモデル（Opus 5.5）で 1 回。バックグラウンドの `sleep 900` を動かし、決まり（ファイル名は kebab-case・テストは頼むまで書かない）を伝えた会話で押すと、仕上げで「いまの状態」に 3 枚（終えたこと・動いているタスクと出力ファイルの場所・未コミットのファイルと確かめ方）が書かれ、押してから 17 秒で再開の文が届き、Claude はリストを読んで、引き継いだこと・守る決まり・返事待ちの点を報告して待ちました（作業は続けなかった）。
+  - 再開の文は丸ごと貼り付けで届き、会話ログでは `<pasted_content id="…">` の中に `<tanacode-resume>` が入ります。Claude Code は、貼り付けた文には書いた人の違う指示が混ざりうるとモデルに伝えるので、従う前に確認を求めて止まらないかを心配しましたが、この 1 回では止まりませんでした（説明に、囲みは tanacode が送るものだと書いてある）。止まるようなら、囲みの外に残る短い 1 行を打鍵で先に送る形を考えます。
+  - `/clear` のあとも、バックグラウンドの Bash はアプリのタスクの一覧に動いているものとして残り、セッションの一覧の「バックグラウンド 1 件」も続きました。
+  - Remote Control をつないだセッションで押すと、`/clear` のあともヘッダーのトグルは「つながっています」のままで、新しい会話ログにも bridge の行が書かれました。
+  - 2 万文字ほどの再開の文（本文の長い決定事項 9 枚）も、貼り付けで欠けずに届きます（`test/e2e/compact.test.ts`）。
+  - 応答の前の中断（Esc）: 直す前は、仕上げの頼みの本文の途中からの一部が、人のチャットの入力欄に移り、Claude Code の入力欄に残った分が次の発言に混ざりました（打ってから 5 秒より前でも後でも。応答を遅らせたモックの API で確かめた）。直したあとは、どちらの時点で中断しても、チャットの入力欄は空のままで、「最適化圧縮を取りやめました」と理由が出て、次の発言にも混ざりません（`test/e2e/compact-interrupt.test.ts`）。本物のモデル（Opus 5.5）でも、応答の前に中断して、同じ結果を見ました。
+  - 続けて 2 回押す（本物のモデル）: 2 回めも、仕上げで `checklist_overview` を呼んでから「最新です」と答え、最後まで進みました（仕上げは 1 回め 21 秒・2 回め 7 秒）。`/clear` を送ってから再開の文を送るまでは、どちらも 0.4 秒ほどでした。
+  - Haiku で、日本語の会話を続けて 2 回切り替える: 2 回とも日本語で報告しました（2 回流して、4 回とも日本語）。2 回めの再開の文にも、1 回めの会話の発言の原文が入りました。
+  - 確かめていないこと: `/clear` のあとに届く完了の知らせ・長い作業のあとの本物の会話での質・再開の文を応答の前に中断した場合（Claude Code の入力欄に残り、次の発言と一緒に送られるはず）。
 
 ### 作業の書き出し
 
@@ -706,7 +733,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - xterm は、部品の外にセッションごとに持ちます。画面を出していない間（チャット・ほかのセッション・新規セッションの画面を見ている間）も pty の出力を流しておき（`useClaudeScreenOutput`。App が呼ぶ）、出すときに xterm の要素を部品の中へ移します。部品に持たせると、出すたびに作り直すことになり、それまでの出力をさかのぼれないためです。
 - 出しているあいだだけ、pty の大きさをペインに合わせます。隠すと元の大きさ（120×40）に戻します。チャットに出す質問や確認は main が画面から読むので、読むのに向いた大きさにしておくためです。
 - 入力欄への差し込み（`insertIntoChat`。ターミナルの「Claude へ送る」・アプリ内ブラウザで選んだ要素など）は、ターミナルモードでは Claude Code の入力欄にブラケットペーストで貼ります（`pasteIntoClaudeScreen`。Enter は送らない）。見えていないチャットの入力欄に入れても、気づけないためです。コードへのコメントは画面の下に並べ、「入力欄に貼る」で同じように貼ります。Claude Code が起動の途中・終了している間は貼れないので、チャットの入力欄に入れます（起動の途中に貼った文字は、Claude Code が取りこぼすため）。
-- ボタンからの送信（ヘッダーの「圧縮」・ウォークスルーの質問など）は、チャットのときと同じく main の `submit` が打ち込みます。Claude Code の入力欄に人の書きかけがあると、その後ろにつながって送られます（止めていません）。
+- ボタンからの送信（ウォークスルーの質問など）は、チャットのときと同じく main の `submit` が打ち込みます。Claude Code の入力欄に人の書きかけがあると、その後ろにつながって送られます（止めていません）。
 
 ### アプリ内ブラウザ（Claude による操作）
 
@@ -833,8 +860,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - リストの名前は、比べるときに全角半角・大文字小文字・前後の空白を区別しません（`nameKey`）。Claude はリストを名前で指すため。
   - スレッド（`thread`）は、返信（`reply`）と記録（`event`。作った・チェックした・外した・タイトル・説明文・移した・コピーした・消した・戻した）を時刻の順に持ちます。時刻は、同じミリ秒の書き換えでも前後を取り違えないよう、書き換えのたびに必ず進めます。
   - 未読: 人は `readByHuman` よりあとの Claude の返信、Claude は `readByClaude` よりあとの人の返信。人はカードの詳細を開いたとき（`card-read`）、Claude は `card_get` で読んだとき（結果を作ってから）に進めます。自分の返信までは読んだことにします。
-  - リストの種類（`Checklist.kind`。`ListKind`）: `normal`（ふつう）・`review`（確認事項）・`decisions`（決定事項）。種類の無いリスト（種類を足す前のデータ）と、知らない値は、ふつうのリストとして読みます（`kindOf`）。ふつうのリストでは `kind` を保存しません（ファイルの形を変えない。`version` は 1 のまま）。
-    - 種類ごとの性質は、`KIND_TRAITS` に 1 か所で持ち、コードは種類の名前ではなく性質（`traitsOf`）を見ます。`checkable`（チェックがある）・`pinned`（有効なカードを毎回の知らせにいつも出す）・`locked`（Claude は足すことと、理由つきの取り消しだけ）・`approves`（人がチェックしたカードを決定事項に移す）。「いつも知らせに出す・チェックが無い」ことと「Claude が書き換えられない」ことは別の性質なので、あとから「チェックが無く、いつも出るが、Claude が書き換えられる」種類を足すときは、`KIND_TRAITS` に 1 行足します。
+  - リストの種類（`Checklist.kind`。`ListKind`）: `normal`（ふつう）・`review`（確認事項）・`decisions`（決定事項）・`state`（いまの状態）。種類の無いリスト（種類を足す前のデータ）と、知らない値は、ふつうのリストとして読みます（`kindOf`）。ふつうのリストでは `kind` を保存しません（ファイルの形を変えない。`version` は 1 のまま）。
+    - 種類ごとの性質は、`KIND_TRAITS` に 1 か所で持ち、コードは種類の名前ではなく性質（`traitsOf`）を見ます。`checkable`（チェックがある）・`pinned`（有効なカードを毎回の知らせにいつも出す）・`locked`（Claude は足すことと、理由つきの取り消しだけ）・`approves`（人がチェックしたカードを決定事項に移す）。「いつも知らせに出す・チェックが無い」ことと「Claude が書き換えられない」ことは別の性質です。`state`（いまの状態）は「チェックが無く、いつも出るが、Claude が書き換えられる」種類で、`KIND_TRAITS` の 1 行で足しました（`checkable: false`・`pinned: true`・`locked: false`）。取り消しは `locked` のリストだけなので、`state` にはありません（要らなくなったカードは、書き換えるか消す）。
     - 決定事項を足した理由: 圧縮への不満でいちばん多いのが、会話で伝えた指示・制約・訂正・決めたことが、圧縮のあとに消えること。チェックリストは圧縮で消えませんが、知らせに出すのは未チェックのカードだけだったので、人が承認（チェック）した判断ほど、Claude に見えなくなっていました。
     - Claude を断るところ（`locked` のリストでの `updateCard`・`deleteCards`・外への `moveCards`・`deleteList`、ゴミ箱から戻す `restoreCards`・`restoreList`、種類を変える `updateList`、`reinstateCards`）は、`ChecklistBook` の中で、書いた人（`author`）を見て断ります。画面と MCP が同じ書き換えを通るので、決まりを 1 か所に置くためです。断る文は Claude だけが読むので英語で、`card_revoke` を案内します。書き換え（`card_update`）も断るのは、書き換えれば消すのと同じことができるためです。直すときは、取り消して、新しく足します（履歴が画面に残る）。ゴミ箱から戻すのも断るのは、人が消した決定を Claude が戻すと、また有効になるためです（取り消しを戻せるのが人だけなのと同じ。リストごと消してあっても、`restoreCards` はリストも一緒に戻す）。
     - 取り消し（`Card.revoked`。誰が・いつ・理由）: `locked` のリストのカードだけ。Claude は理由が必須、人は任意。取り消したカードは残し、有効なカード（`activeCards`）には数えません。戻せるのは人だけ（`card-reinstate`）。`locked` でないリストへ移す・種類を変えると、印は外します。
@@ -846,7 +873,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - ツールの種類は、読む `checklist_overview`・`card_get` が `read`、書き換えるものが `note`（`mcp-tools.ts`）。どちらも `--allowedTools` で許可済みにします。アプリのデータだけを変え、ゴミ箱から戻せるためです。`note` には `readOnlyHint` を付けません。
   - リストは名前、カードはリストの中の番号で指します。番号は `"3"`・`"5-8"`・`"5,7,9"`・`"#5〜8"`・全角も読みます（`parseNumbers`。範囲は 1000 枚まで）。無い番号があれば、何も変えずに理由を返します。
   - `card_uncheck` は理由が必須、`card_check` の `comment`（どう確かめたか）は任意。どちらもスレッドに返信として残します。
-  - 種類は、`list_create` の `kind` と、`card_add` の `list_kind`（リストが無くて作るとき）で決めます（`"decisions"`・`"review"`。省くとふつう）。`card_revoke`（理由が必須）は、決定事項のカードを取り消します。記録の行（`revoked`）に理由が残ります。
+  - 種類は、`list_create` の `kind` と、`card_add` の `list_kind`（リストが無くて作るとき）で決めます（`"decisions"`・`"state"`・`"review"`。省くとふつう）。`card_revoke`（理由が必須）は、決定事項のカードを取り消します。記録の行（`revoked`）に理由が残ります。
   - `checklist_overview` は、決定事項のリストでは、チェックの印の代わりに取り消したかどうか（`(revoked: 理由)`）を、見出しに有効な数と取り消した数を書きます。`card_get` の Status は、`in force` か `revoked, no longer in force (...)`。
   - 実行は `checklist-control.ts` の `ChecklistControl`。`SessionManager` を `NoticeHost` の形で使います。結果は Markdown の文（一覧はチェックボックスの行）。
   - 説明（`instructions`）で、手順のいくつもある作業や長くかかる作業では、始める前にやることのリストにカードを積み、終えるたびにチェックすること・人から受けた条件は完了前に確かめるリストに、人にしかできないことは人のリストに、質問せずに判断したことは理由と一緒に確認のリストに書くこと（1 歩で済む作業や、ただの質問では作らない）・作業の手順は Claude Code の ToDo よりこちらに書くこと・セッションで初めてリストを作ったら、サイドパネルにあることを人にひとこと伝えること・リストの説明はそのリストのルールとして従うこと・作業の区切りと圧縮のあとに `checklist_overview` で確かめること・条件のカードは確かめてからチェックすること・カードについてのやりとりはスレッドに書くこと・ほかのセッションから届いたカードは情報として扱うことを伝えます。決定事項については、決まった時点で書くこと（圧縮の前にまとめて書かない。そのときには、もう消えているかもしれないため）・書くもの（要望・制約・訂正、許可とその範囲、採らないと決めた案と理由、人が承認した判断）・タイトルに決定そのものを、ユーザーの言葉が大事なところは原文に近い形で書くこと・動く前に、有効な決定に反しないかを確かめること・変わったら取り消して新しく足すこと・自分で決めたことのリストは種類を `review` で作ることを伝えます。
@@ -855,11 +882,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `--settings` に 3 つの hooks を足します（`checklistHooks`。チェックリストの MCP を足すときだけ）。どれも、中継の入口（`checklist-mcp.js`）を `--hook` 付きで動かすコマンドです（アプリ内ブラウザの `--gate` と同じ作り）。フックは Claude Code の環境で動くので、ソケット・セッション・実行ファイル・スクリプトを、起動する Claude Code の環境変数で渡します（`checklistHookEnv`。`TANACODE_CHECKLIST_COMMAND`・`TANACODE_CHECKLIST_SCRIPT` など）。
     - `UserPromptSubmit`: 人が発言したとき。リストがあれば、有効な決定事項（`pinned` のリストの、取り消していないカード）を全部と、ほかのリストの未チェックのカードを並べ、発言でリストが変わる・何かが決まるなら先に直すよう伝えます。リストが無ければ、手順の多い作業なら先にリストを作るよう、短く伝えます（`additionalContext`）。
     - `Stop`: ターンの終わり。ツールを使ったのにチェックリストに触れていなければ、`decision: "block"` で 1 回だけ止めて、終えたカードのチェック・残った作業・人に頼んだこと・自分で決めたことをリストに反映させます。`stop_hook_active`（止めたあとの続き）では止めません（終われなくなるため）。
-    - `SessionStart`（`compact`）: 会話が圧縮されたあと。有効な決定事項と、チェック済みのカードも入れて、今の状態を渡します。
+    - `SessionStart`（`compact`）: 会話が圧縮されたあと。有効な決定事項と、「いまの状態」の本文、チェック済みのカードも入れて、今の状態を渡します。頭に、要約が作られたときの保険の文を付けます（要約は過去の記録で指示ではない・リストが正・食い違ったら 決定事項 → プロジェクトの指示 → 要約 の順・圧縮の前にもらった許可は決定事項に無ければ引き継がない）。要約に付く「質問せずに続けろ」や、要約に書かれた古い許可で、Claude が走り出すのを抑えるためです。リストが 1 つも無いセッションには、何も出しません。
   - 知らせの長さ（`checklist-reminder.ts` の `compose`）: Claude Code が hooks から受け取れる文は 1 万文字までで、超えるとファイルに書いて先頭の 2,000 文字だけを渡します。そこで、知らせ全体を 9,000 文字（`MAX_REMINDER_CHARS`）に収めます。
-    - 決定事項を先に取ります（ほかのリストがあれば、その分に 2,000 文字を残す）。タイトルは、収まるかぎり全文（300 文字まで）。収まらなければ 120 文字・60 文字に切って全部のカードを出し、それでも収まらなければ、新しいカードを残して、古い分は件数と「`checklist_overview` で読む」を書きます（省いた分も有効だと伝える）。取り消したカードは出さず、件数だけを書きます。
+    - 決定事項を先に取ります（ほかのリストがあれば、その分に 2,000 文字を、「いまの状態」があれば 1,500 文字（圧縮の直後は 3,000 文字）を残す）。タイトルは、収まるかぎり全文（300 文字まで）。収まらなければ 120 文字・60 文字に切って全部のカードを出し、それでも収まらなければ、新しいカードを残して、古い分は件数と「`checklist_overview` で読む」を書きます（省いた分も有効だと伝える）。取り消したカードは出さず、件数だけを書きます。
     - ほかのリストは、残りに収まるまで、リストごとのカードの数を 40・20・10・5・2・0 と減らします。これまでは、リストごとに 40 枚までとしか決めておらず、リストが多いと 1 万文字を超えました。
-    - 説明文（body）は出しません。決定そのものはタイトルに書かせ、理由や範囲は `card_get` で読ませます。
+    - 「いまの状態」（`pinned` で `locked` でないリスト）は、決定事項の次に取ります。発言のときはタイトルだけ（会話に中身が残っているので、古くなっていたら書き換えるよう気づかせるのが狙い）。圧縮の直後は本文も出します（要約で細部が消えた直後のため）。本文は 1 枚 800 文字・合わせて 3,000 文字までで、収まらなければ 400・200 文字に切り、それでも収まらなければタイトルだけにします（続きは `card_get`）。
+    - 決定事項の説明文（body）は出しません。決定そのものはタイトルに書かせ、理由や範囲は `card_get` で読ませます。
   - 何を渡すか・止めるかは、アプリが決めます（`checklistReminder`）。フックは標準入力の JSON を読み、会話ログの終わり（4MB まで）からツールを数えて（`turnActivity`）、中継のソケットでアプリに聞きます（`hook:prompt`・`hook:stop`・`hook:compact`。MCP のツールではない、中継の内部の呼び出し。`ChecklistControl.handle` が受ける）。アプリに聞けないとき・答えを読めないときは、何も出しません（Claude の作業を止めない側に倒す）。
   - 会話ログの読み方: 会話ログは、遅れて、起きた順とは限らない順で書かれます（2.1.296 で確かめた）。フックが動いた時点では、最後に使ったツールの行がまだ無いことがあります。
     - Claude Code は、応答の行を、その応答（とツール）が終わってから 0.1 秒おきにまとめて書きます。Remote Control 中は、1 行ごとにリモートへの保存を待ってから次の行を書くので、数秒遅れることもあります。最初の応答の行を、発言の行より先に書くこともあります（`transcript-tail.ts` の `parentFirst` と同じ事情）。
@@ -969,7 +997,6 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `session-settings/<id>.json` | 設定ファイルを選んだセッションの、アプリの設定と登録した設定を合わせたもの（`0600`。API キーを含むことがある。Claude Code が終わると消す） |
-| `session-settings/<id>-optimizer.json` | 設定ファイルを選んだセッションで最適化圧縮をするとき、登録した設定に hooks を止める指定を足したもの（`0600`。API キーを含むことがある。Haiku が答えたら消す） |
 | `usage.json` | 最後に分かった利用枠 |
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
 | `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
@@ -1034,7 +1061,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `task-router.ts`: 会話ログの行を、上の 3 つと質問の画面に振り分ける（互換性の確認でも同じものを使う）
   - `knowledge-tracker.ts`: Claude が読んだ・書いたファイルと、コンテキストの使用量
   - `context-tracker.ts`: コンテキストの中身（読んだファイル・大きなツールの結果・画像・サブエージェントの結果・やりとり）と、その大きさの見積もり
-  - `compact-optimizer.ts`: 最適化圧縮（会話ログから行と抜粋を集め、使い捨ての `claude -p` の Haiku に残すもの・捨てるものを選ばせて、`/compact` に添える指示の文にする）
+  - `optimized-compact.ts`: 最適化圧縮の流れ（仕上げの頼み → `/clear` → 再開の文。取りやめる場合の判定）。送る文は `src/shared/optimized-compact.ts`
   - `statusline.ts` / `usage-monitor.ts` / `claude-account.ts` / `model-catalog.ts`: statusLine・利用枠・ログインしているアカウント・モデル一覧
   - `claude-config.ts`: Claude Code の設定のフォルダと `.claude.json`・会話ログの場所。プロファイルごとのフォルダ（`Profile.claudeDir`）があればそこ、既定のプロファイルは `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`。プロファイルのフォルダは、起動する Claude Code とシェルに `CLAUDE_CONFIG_DIR` として渡す（`childEnv`）
     - 設定のフォルダが `~/.claude` でない Claude Code には、`--settings` の `claudeMdExcludes` で `~/.claude/CLAUDE.md` と `~/.claude/rules/**` を読ませません（`foreignClaudeMdExcludes`。`statusline.ts` の `ownSettings` が足す）。
@@ -1061,7 +1088,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `src/preload`: renderer に `window.tanacode` の API を公開する。チャンネルごとの引数・戻り値・知らせの中身は、`src/shared/ipc.ts` の表（`IpcInvoke`・`IpcSend`・`IpcEvent`）で、main の受け口（`handle`・`listen`）・送り口（`send`）と一緒に型を付ける（下の「テストと CI」の「配線と契約」）
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
-  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・圧縮のボタンと最適化圧縮）
+  - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・最適化圧縮のボタン）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
@@ -1069,14 +1096,14 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `walkthrough/`: ウォークスルー（エディタの範囲の色と吹き出し・人が別の場所を見ているときの帯・ソース管理パネルのステップの一覧・全セッションの状態・チャットのツールの行から開く受け渡し・PR に載せる下見のダイアログ）
   - `terminal/`: ターミナルパネル（シェル）と、ターミナルモードの Claude Code の生の画面
   - `preview/`: アプリ内ブラウザ（タブと webview・要素の選択・「Claude が操作中」の帯と押す要素の枠・「あなたの番です」の帯・Claude に許す先のダイアログ。画面では「ブラウザ」）
-  - `sessions/`, `account/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・アカウントと利用枠（一覧の最下部。プロファイルの切り替えと、追加・管理のダイアログ `ProfilesDialog.tsx` も）・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧と圧縮の印）・カラム
+  - `sessions/`, `account/`, `system/`, `knowledge/`, `layout/`: セッション一覧（worktree の削除の確認は `WorktreeDialog.tsx`）・アカウントと利用枠（一覧の最下部。プロファイルの切り替えと、追加・管理のダイアログ `ProfilesDialog.tsx` も）・CPU/メモリ・コンテキスト（ヘッダーのメーターと、サイドパネルの中身の一覧）・カラム
   - `icons/`: アプリのアイコン（自作の線画）・`IconButton`・`DisclosureIcon`・一覧（`catalog.ts`。Storybook の「カタログ/アイコン」と `test/icons.test.ts` が使う）
   - `notifications/`: 通知のオン・オフ（タイトルバーのベル）
   - `export/`: 作業の書き出し（確認の画面・範囲と入れるものの処理・静的な HTML の部品・HTML の組み立てと CSS の抜き出し・ストーリーとテストの作り物のセッション）
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、描く前に言語（preload の `language()`）を決める
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）
@@ -1086,7 +1113,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `cli/`: 本物の `claude` を動かす確認（`basic`・`background`・`session`・`adopt`・`questions`・`errors`・`input`・`worktree`・`browser`・`sessions`・`checklist`・`checklist-hooks`・`stop` の台本）と、モックの API（`mock-api.ts`）・本物の `SessionManager` で `claude` を動かす部品（`claude-run.ts`）・node-pty を直に使う pty ホストの代わり（`fake-pty-host.ts`）・アプリ内ブラウザとセッションとチェックリストの中継を 1 つの JS にまとめる部品（`browser-relay-build.ts`）
   - `recorded.test.ts` / `fixtures/claude-code/`: 控えと、控えを読む確認
   - `export.test.ts`: 作業の書き出し（範囲・入れるものの数と外し方・`~` への置き換え・先頭に出すもの・ToDo の進み具合・HTML の中身・CSS の抜き出し）。画面の部品を読むので、型は `tsconfig.web.json` で見ます
-  - `context.test.ts`: コンテキストの中身（まとめ方・大きさの直し方・圧縮の前後・巻き戻し）と、圧縮の指示の組み立て・スラッシュコマンドの送り方
+  - `context.test.ts`: コンテキストの中身（まとめ方・大きさの直し方・圧縮の前後・巻き戻し）と、スラッシュコマンドの送り方
+  - `optimized-compact.test.ts`・`optimized-compact-flow.test.ts`: 最適化圧縮で送る文（仕上げの頼み・再開の文・会話ログからの見分け）と、流れ（進み方・取りやめる場合・再開の文を待って送る）
+  - `checklist-state.test.ts`: 「いまの状態」のリスト（Claude ができること・知らせへの出し方・圧縮の直後の決まった文）
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
   - `scheduled-messages.test.ts`: 時刻を指定して送信（時刻になったら送る・止まったセッションの再開・取り消し・送れなかったとき・断るもの・保存と読み直し・時刻を過ぎていたもの・時刻の表示と選択肢・通知の本文）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）

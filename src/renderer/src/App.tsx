@@ -8,7 +8,6 @@ import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
 import { chatFromEvents, useSessionChats, type ChatState } from './chat/chatState';
 import { usePendingSends } from './chat/pendingSends';
-import { useOptimizedCompact } from './chat/optimizedCompact';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
@@ -38,7 +37,6 @@ import { StatusBar } from './StatusBar';
 import { useClaudeVersion } from './system/ClaudeVersion';
 import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { SessionContextPanel } from './knowledge/ContextPanel';
-import { useCompactState } from './chat/compactState';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
 import { BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
@@ -108,7 +106,6 @@ export function App() {
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
   const { chatOf, load, reset: resetChat } = useSessionChats(selectedId);
   const pendingSends = usePendingSends(chatOf);
-  const optimizedCompact = useOptimizedCompact(chatOf, pendingSends.send);
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   const scheduled = useScheduledMessages();
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
@@ -651,9 +648,6 @@ export function App() {
     },
     [pendingSends.send],
   );
-  const optimizeSelected = useCallback(() => {
-    if (selectedIdRef.current) optimizedCompact.run(selectedIdRef.current);
-  }, [optimizedCompact.run]);
   const takeSelectedPending = useCallback(
     () => (selectedIdRef.current ? pendingSends.take(selectedIdRef.current) : null),
     [pendingSends.take],
@@ -675,8 +669,6 @@ export function App() {
   const shownPanel = sidePanel;
   const openScm = useCallback(() => setSidePanel('scm'), []);
   const showContext = useCallback(() => setSidePanel('context'), []);
-  const compact = useCompactState(selected ?? null, chat, selected ? screenOf(selected.id) : null);
-  const compactWith = useCallback((instructions: string) => sendToSelected(`/compact ${instructions}`, []), [sendToSelected]);
 
   // ウォークスルー（選んでいるセッションのもの）。walkAll は閉じたものも含む（ソース管理の一覧に出し、もう一度開ける）。
   // walk は開いているものだけ（吹き出し・帯・「ここを聞く」）。人が今、Claude の示している場所を見ているか
@@ -818,8 +810,6 @@ export function App() {
             onResume={openSelected}
             onUnarchive={openSelected}
             onSend={sendToSelected}
-            onOptimizedCompact={optimizeSelected}
-            optimizing={optimizedCompact.optimizing(selected.id)}
             pending={pendingSends.pendingOf(selected.id)}
             sending={pendingSends.sendingOf(selected.id)}
             onTakePending={takeSelectedPending}
@@ -936,9 +926,6 @@ export function App() {
                     visible={shownPanel === 'context'}
                     revision={chat.items.length}
                     {...contextUsage(selected.model, screenOf(selected.id)?.model ?? null, statusLineOf(selected.id), knowledgeOf(selected.id).contextTokens)}
-                    canCompact={compact.canCompact}
-                    compacting={compact.compacting}
-                    onCompact={compactWith}
                   />
                 ) : (
                   <div className="scm-empty">{t('app.sidePanel.contextEmpty')}</div>

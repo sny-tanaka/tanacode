@@ -246,7 +246,7 @@ export class ChecklistBook {
     if (!traitsOf(list).checkable) {
       throw new ChecklistError(
         author === 'claude'
-          ? `The cards of "${list.name}" have no checks (it is ${kindLabel(kindOf(list))}). To withdraw one, use card_revoke with a reason.`
+          ? `The cards of "${list.name}" have no checks (it is ${kindLabel(kindOf(list))}). ${traitsOf(list).locked ? 'To withdraw one, use card_revoke with a reason.' : 'Rewrite a card with card_update, or delete it with card_delete, when it is no longer true.'}`
           : t('checklist.errors.noChecks', { list: list.name }),
       );
     }
@@ -290,7 +290,7 @@ export class ChecklistBook {
     if (!traitsOf(list).locked) {
       throw new ChecklistError(
         author === 'claude'
-          ? `"${list.name}" is an ordinary list, so its cards cannot be revoked. Update or delete them instead (card_update, card_delete).`
+          ? `"${list.name}" is ${kindLabel(kindOf(list))}, so its cards cannot be revoked. Update or delete them instead (card_update, card_delete).`
           : t('checklist.errors.notRevocable', { list: list.name }),
       );
     }
@@ -544,6 +544,7 @@ export class ChecklistBook {
 // 記録と、Claude に返す文に書く種類
 function kindLabel(kind: ListKind): string {
   if (kind === 'decisions') return 'a decisions list: permanent, no checks';
+  if (kind === 'state') return 'a state list: no checks, you keep it current by rewriting its cards';
   return kind === 'review' ? 'a review list: cards the user checks move to the decisions list' : 'an ordinary list';
 }
 

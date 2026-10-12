@@ -7,6 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import { bridgeUrlOf, isHumanPrompt, isTranscriptEntry, promptDisplayText, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import { bracketedPaste, promptKeys, stripControlChars } from '@shared/prompt-keys';
 import { t } from '@shared/i18n';
+import { isCompactMessage, type CarriedTask } from '@shared/optimized-compact';
 import { isParentMessageDraft, modeWithin, weakerMode, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
@@ -37,7 +38,6 @@ import type { McpLaunch } from './mcp-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
 import { ContextTracker, readContext } from './context-tracker';
-import { optimizedInstructions } from './compact-optimizer';
 import type { PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
@@ -141,6 +141,11 @@ type Runtime = {
   // 起動を待って送る発言の数と、送ってから発言が会話ログに出るまでの時刻（ツールで返す状態で、作業中として扱う）
   pendingSubmits: number;
   submittedAt: number | null;
+  // チェックリストの MCP サーバーを足して起動したか（引き継いだ claude は分からないので null）
+  checklistMcp: boolean | null;
+  // 打ち込んだ最適化圧縮の文（仕上げの頼み・再開の文。空白を除く）。応答が始まるまで覚えておき、応答の前に中断されて
+  // Claude Code の入力欄に戻ったものを、人のチャットの入力欄に移さない（compactDraft）
+  compactTyped: string | null;
 };
 
 // アプリが開くコマンドのターミナル（worktree の npm install・yarn install など）。終了コードを返す。owner: セッションの id
@@ -189,12 +194,7 @@ export class SessionManager {
     private readonly walkthroughMcp: () => McpLaunch | null = () => null,
     // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡し、会話ログもその中を読む）。null は既定のプロファイル
     private readonly claudeDir: string | null = null,
-    // 最適化圧縮で、Haiku に選ばせて指示の文を作る（テストでは Haiku を呼ばない作り物にする）
-    private readonly optimize: typeof optimizedInstructions = optimizedInstructions,
   ) {}
-
-  // 最適化圧縮で、Haiku に選ばせている途中のもの（セッションの ID → 指示の文）
-  private readonly optimizing = new Map<string, Promise<string>>();
 
   // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
   private readonly stateListeners = new Set<(id: string) => void>();
@@ -622,25 +622,26 @@ export class SessionManager {
     return record ? readContext(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir), record.cwd) : { items: [] };
   }
 
-  // 最適化圧縮の指示の文（Haiku に選ばせる）。同じセッションで続けて頼まれたら、選んでいる途中のものを待つ。
-  // 設定ファイルを選んだセッションは、Haiku もその設定（接続先・API キー）で動かす（会話の中身を、セッションと違う接続先に送らない）
-  optimizeCompact(id: string): Promise<string> {
-    const running = this.optimizing.get(id);
-    if (running) return running;
-    const record = this.store.get(id);
-    if (!record) return Promise.resolve('');
-    const file = transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir);
-    const task = (async () => {
-      this.checkSettingsFile(record.settingsFile);
-      const settingsFile = record.settingsFile ? this.settingsFiles!.prepareOptimizer(id, record.settingsFile) : null;
-      try {
-        return await this.optimize(file, record.cwd, { claudeDir: this.claudeDir, settingsFile });
-      } finally {
-        if (settingsFile) this.settingsFiles?.releaseOptimizer(id);
-      }
-    })().finally(() => this.optimizing.delete(id));
-    this.optimizing.set(id, task);
-    return task;
+  // 今の Claude Code の会話の ID（/clear で新しい会話になると変わる）。知らないセッションは null
+  claudeSessionOf(id: string): string | null {
+    return this.store.get(id)?.claudeSessionId ?? null;
+  }
+
+  // このセッションの Claude Code に、チェックリストの MCP サーバーを足して起動したか。動いていない・引き継いだもの（分からない）は null
+  hasChecklistMcp(id: string): boolean | null {
+    const rt = this.runtimes.get(id);
+    return rt?.process ? rt.checklistMcp : null;
+  }
+
+  // 裏で動いているもの（最適化圧縮の再開の文で、新しい会話に伝える）
+  runningTasks(id: string): CarriedTask[] {
+    const rt = this.runtimes.get(id);
+    if (!rt) return [];
+    return [
+      ...rt.bashTasks.all().filter((task) => task.state === 'running').map((task) => ({ kind: 'bash' as const, label: task.description ? `${task.command} (${task.description})` : task.command })),
+      ...rt.subagents.all().filter((r) => r.background && r.state === 'running').map((r) => ({ kind: 'agent' as const, label: r.description ?? r.agentId ?? '' })),
+      ...rt.workflows.all().filter((r) => r.status === 'running').map((r) => ({ kind: 'workflow' as const, label: r.name })),
+    ];
   }
 
   bashTasks(id: string): BashTask[] {
@@ -801,6 +802,7 @@ export class SessionManager {
       const text = stripControlChars(rawText);
       // 画面の折り返しで空白が変わるので、空白を除いて覚える
       rt.typing = { text: text.replace(/\s/g, ''), at: Date.now() };
+      rt.compactTyped = isCompactMessage(text) ? rt.typing.text : null;
       rt.submittedAt = Date.now();
       for (const path of attachments) {
         process.write(bracketedPaste(stripControlChars(path)));
@@ -884,12 +886,37 @@ export class SessionManager {
   }
 
   // 中断で入力欄に戻った親からの指示を消す（親が止めたとき。人のチャットの入力欄に、囲みのまま移さないため）
-  async withdrawParentDraft(id: string): Promise<void> {
+  withdrawParentDraft(id: string): Promise<void> {
+    return this.withdrawDraft(id, isParentMessageDraft);
+  }
+
+  // 中断で入力欄に戻った、最適化圧縮の文（仕上げの頼み）が、Claude Code の入力欄に出ているか
+  compactDraftShown(id: string): boolean {
     const rt = this.runtimes.get(id);
-    for (let i = 0; i < 15 && rt?.process; i++) {
+    return !!rt?.process && rt.screen?.current.state.kind === 'prompt' && compactDraft(rt, rt.screen.current.draft);
+  }
+
+  // 中断で入力欄に戻った、最適化圧縮の仕上げの頼みを消す（取りやめたとき）。長い文は入力欄に収まらず、見えているのは一部なので、
+  // 入力欄が空になるまで繰り返し消す
+  async withdrawCompactDraft(id: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    await this.withdrawDraft(id, (draft) => compactDraft(rt, draft), true);
+    rt.compactTyped = null;
+  }
+
+  // repeat: 消したあとも見張り、まだ残っていれば消し直す（出なくなって少したったら終える）
+  private async withdrawDraft(id: string, matches: (draft: string) => boolean, repeat = false): Promise<void> {
+    const rt = this.runtimes.get(id);
+    // 最後に消した回（まだ消していなければ -1）
+    let clearedAt = -1;
+    for (let i = 0; i < 60 && rt?.process; i++) {
       const draft = rt.screen?.current.draft ?? '';
-      if (rt.screen?.current.state.kind === 'prompt' && isParentMessageDraft(draft)) {
+      if (rt.screen?.current.state.kind === 'prompt' && matches(draft)) {
         rt.process.write('\x15'.repeat(draft.split('\n').length + 1));
+        if (!repeat) return;
+        clearedAt = i;
+      } else if (clearedAt === -1 ? i >= 14 : i - clearedAt >= 5) {
         return;
       }
       await sleep(100);
@@ -1027,9 +1054,12 @@ export class SessionManager {
         typing: null,
         pendingSubmits: 0,
         submittedAt: null,
+        checklistMcp: null,
+        compactTyped: null,
       };
       this.runtimes.set(id, rt);
     }
+    rt.checklistMcp = adopted ? null : !!checklist;
     // worktree は、Claude Code が作るまでフォルダが無い（作ったあとで見張る）
     this.watch(rt, record.cwd);
     rt.events = [];
@@ -1132,6 +1162,11 @@ export class SessionManager {
         },
         onSwitch: (nextClaudeSessionId) => {
           this.store.update(id, { claudeSessionId: nextClaudeSessionId });
+          // 新しい会話になったのは、送った /clear が受け取られたということ。/clear は発言として会話ログに出ないので、ここで消さないと、
+          // 送ってから SUBMIT_GRACE_MS のあいだ「送信中」のままになり、次の送信（最適化圧縮の再開の文）が待たされる
+          rt.submittedAt = null;
+          rt.turnOpen = false;
+          this.changed(id);
           rt.chain = [];
           rt.knowledge.reset();
           rt.context.reset();
@@ -1384,6 +1419,8 @@ export class SessionManager {
         rt.submittedAt = null;
       }
       if (events.some((e) => e.type === 'turn-end')) rt.turnOpen = false;
+      // 応答が始まったら、打ち込んだ最適化圧縮の文は、もう入力欄には戻らない
+      if (events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use')) rt.compactTyped = null;
     }
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
@@ -1499,12 +1536,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 入力欄の文字が、打ち込んだ最適化圧縮の文（応答の前に中断されて戻ったもの）か。
+// 戻るのは本文そのもので、長い文は入力欄に収まらず、画面から読めるのは途中の一部だけ（2.1.296 で確かめた）。
+// そこで、打ち込んだ文の一部かどうかで見る。短い文字は、人の書きかけと取り違えないよう、当てはめない
+const COMPACT_DRAFT_MIN_CHARS = 40;
+
+function compactDraft(rt: Runtime, draft: string): boolean {
+  if (!draft.trim()) return false;
+  if (isCompactMessage(draft)) return true;
+  if (!rt.compactTyped) return false;
+  const typed = draft.replace(/\[Pasted text #\d+[^\]]*\]/g, '').replace(/\s/g, '');
+  return typed === '' || (typed.length >= COMPACT_DRAFT_MIN_CHARS && rt.compactTyped.includes(typed));
+}
+
 // 画面に知らせる ScreenInfo。打ち込んでいる途中の文字（送ったばかりで、まだ Claude Code の入力欄に残っているもの）は、
 // 入力欄に残った文字として扱わない（チャットの入力欄に移すと、送った文字を消してしまう）。
 // 貼り付けた文字や画像は入力欄では [Pasted text #1 +6 lines]・[Image #1] の目印になるので、除いて比べる
 function shownScreen(rt: Runtime, info: ScreenInfo): ScreenInfo {
   // 親からの指示（中断で戻ったもの）は、人のチャットの入力欄に移さない（親が止めたら、withdrawParentDraft が消す）
-  if (isParentMessageDraft(info.draft)) return { ...info, draft: '' };
+  // 最適化圧縮の文も同じ（取りやめるときに、withdrawCompactDraft が消す）
+  if (isParentMessageDraft(info.draft) || compactDraft(rt, info.draft)) return { ...info, draft: '' };
   const typing = rt.typing;
   if (!typing || !info.draft || Date.now() - typing.at >= TYPING_MS) return info;
   const typed = info.draft.replace(/\[(?:Pasted text #\d+[^\]]*|Image #\d+)\]/g, '').replace(/\s/g, '');

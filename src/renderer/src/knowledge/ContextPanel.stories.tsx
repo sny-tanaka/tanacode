@@ -1,10 +1,9 @@
-import { useEffect, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import type { CompactMark, ContextItem } from '@shared/context';
+import type { ContextItem } from '@shared/context';
 import { ContextPanel } from './ContextPanel';
-import { useCompactMarks } from './useSessionContext';
 
-// サイドパネルの「コンテキスト」。今のコンテキストの中身を大きさの帯と一緒に並べ、圧縮で残す・捨てるの印を付ける
+// サイドパネルの「コンテキスト」。今のコンテキストの中身（何がどれだけ入っているか）を、大きさの帯と一緒に並べる
 let order = 0;
 const item = (kind: ContextItem['kind'], label: string, tokens: number, extra: Partial<ContextItem> = {}): ContextItem => ({
   id: `${kind}:${label}:${order}`,
@@ -45,45 +44,14 @@ const meta = {
 
 export default meta;
 
-const noop = () => {};
-
 function Frame({ children }: { children: ReactNode }) {
   return <div style={{ height: 640, display: 'flex', flexDirection: 'column' }}>{children}</div>;
-}
-
-// 印を付けた状態で開く（印はセッションごとに覚えている）
-function WithMarks({ sessionId, marks, children }: { sessionId: string; marks: [string, CompactMark][]; children: ReactNode }) {
-  const { toggle, clear } = useCompactMarks(sessionId, '');
-  useEffect(() => {
-    clear();
-    for (const [id, mark] of marks) toggle(id, mark);
-  }, []);
-  return <>{children}</>;
 }
 
 export const 一覧: StoryObj = {
   render: () => (
     <Frame>
-      <ContextPanel sessionId="s1" context={{ items }} tokens={84_000} limit={200_000} canCompact compacting={false} onCompact={noop} />
-    </Frame>
-  ),
-};
-
-// 残す・捨てるの印。印を付けると「この選び方で圧縮…」が押せる
-export const 印を付けた: StoryObj = {
-  render: () => (
-    <Frame>
-      <WithMarks
-        sessionId="s2"
-        marks={[
-          [items[2].id, 'keep'],
-          [items[6].id, 'keep'],
-          [items[4].id, 'drop'],
-          [items[10].id, 'drop'],
-        ]}
-      >
-        <ContextPanel sessionId="s2" context={{ items }} tokens={84_000} limit={200_000} canCompact compacting={false} onCompact={noop} />
-      </WithMarks>
+      <ContextPanel context={{ items }} tokens={84_000} limit={200_000} />
     </Frame>
   ),
 };
@@ -92,44 +60,17 @@ export const 印を付けた: StoryObj = {
 export const 圧縮のあと: StoryObj = {
   render: () => (
     <Frame>
-      <ContextPanel
-        sessionId="s3"
-        context={{ items: [...compacted, ...afterCompact] }}
-        tokens={52_000}
-        limit={200_000}
-        canCompact
-        compacting={false}
-        onCompact={noop}
-      />
+      <ContextPanel context={{ items: [...compacted, ...afterCompact] }} tokens={52_000} limit={200_000} />
     </Frame>
   ),
 };
 
-// 作業中は圧縮できない
-export const 作業中: StoryObj = {
-  render: () => (
-    <Frame>
-      <WithMarks sessionId="s4" marks={[[items[4].id, 'drop']]}>
-        <ContextPanel sessionId="s4" context={{ items }} tokens={84_000} limit={200_000} canCompact={false} compacting={false} onCompact={noop} />
-      </WithMarks>
-    </Frame>
-  ),
-};
-
-// サイドパネルをいちばん狭くしたとき（中身の幅 175px）。圧縮のボタンは次の行に回り、印の数やボタンの文字を縦に割らない
+// サイドパネルをいちばん狭くしたとき（中身の幅 175px）
 export const 狭い幅: StoryObj = {
   parameters: { width: 175 },
   render: () => (
     <Frame>
-      <WithMarks
-        sessionId="s6"
-        marks={[
-          [items[2].id, 'keep'],
-          [items[4].id, 'drop'],
-        ]}
-      >
-        <ContextPanel sessionId="s6" context={{ items }} tokens={84_000} limit={200_000} canCompact compacting={false} onCompact={noop} />
-      </WithMarks>
+      <ContextPanel context={{ items }} tokens={84_000} limit={200_000} />
     </Frame>
   ),
 };
@@ -137,7 +78,7 @@ export const 狭い幅: StoryObj = {
 export const まだ会話がない: StoryObj = {
   render: () => (
     <Frame>
-      <ContextPanel sessionId="s5" context={{ items: [] }} tokens={null} limit={200_000} canCompact={false} compacting={false} onCompact={noop} />
+      <ContextPanel context={{ items: [] }} tokens={null} limit={200_000} />
     </Frame>
   ),
 };

@@ -1,12 +1,14 @@
 import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
+import { isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 // parent: 親セッションの Claude からの指示（start_session・send_message）なら、親セッションの ID。人の発言には無い
+// command: スラッシュコマンド（/model など。発言ではない）
 export type ChatEvent =
-  | { type: 'user'; id: string; text: string; images?: string[]; at?: number; parent?: string }
+  | { type: 'user'; id: string; text: string; images?: string[]; at?: number; parent?: string; command?: true }
   | { type: 'assistant-text'; id: string; text: string; at?: number }
   | { type: 'thinking'; id: string; text: string }
   // input: 入力の詳細（Bash のコマンド全文など）。todos: TodoWrite の一覧。taskChange: TaskCreate・TaskUpdate の中身。at: 会話ログの時刻（ミリ秒）
@@ -46,8 +48,9 @@ export type ChatEvent =
     }
   // Claude への、ユーザーの発言ではない知らせ（バックグラウンドのタスクの完了・CI の自動修正・スケジュールタスク）。
   // Claude はこれを受けて作業を始める。detail: 開くと読める全文 / sessions: 子セッションからの知らせなら、その子の ID（チャットから移れる）/
-  // cards: チェックリストの返信・コピーの知らせなら、そのカード（チャットから開ける）
-  | { type: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[] }
+  // cards: チェックリストの返信・コピーの知らせなら、そのカード（チャットから開ける）/
+  // compact: 最適化圧縮でアプリが送った文（handoff: 仕上げの頼み / resume: 再開の文。全文は detail）
+  | { type: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[]; compact?: 'handoff' | 'resume' }
   // 別の Claude（サブエージェント・ほかのセッション）からの知らせで、待機中の Claude Code が続きを始める。
   // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
   | { type: 'turn-start' }
@@ -61,7 +64,8 @@ export type ChatEvent =
   | { type: 'divider'; id: string; text: string }
   // API エラー。retrying: Claude Code が自動で再試行している（応答が来れば消す）
   | { type: 'api-error'; id: string; text: string; retrying: boolean }
-  | { type: 'turn-end' }
+  // interrupted: 人が中断した（Esc）
+  | { type: 'turn-end'; interrupted?: true }
   // Claude Code の作業中に送って順番を待っている発言（今の全部）。受け取られたら減る
   | { type: 'queue'; prompts: string[] }
   // このセッションで作った・紐づいた PR（会話ログの pr-link 行。同じものが何度も書かれる）
@@ -480,7 +484,7 @@ function compactText(entry: TranscriptEntry): string {
 }
 
 function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
-  if (entry.interruptedMessageId || text.startsWith(INTERRUPTED_PREFIX)) return [{ type: 'turn-end' }];
+  if (entry.interruptedMessageId || text.startsWith(INTERRUPTED_PREFIX)) return [{ type: 'turn-end', interrupted: true }];
   // 親セッションの Claude からの指示。人の発言と見分けて出す
   const fromParent = parseParentMessage(text);
   if (fromParent) return [{ type: 'user', id: entry.uuid ?? '', text: unwrapPasted(fromParent.body), at: timeOf(entry), parent: fromParent.parent }];
@@ -490,6 +494,12 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   // チェックリストのスレッドへの返信・ほかのセッションから届いたカードの知らせ
   const checklist = parseChecklistEvent(text);
   if (checklist) return [{ type: 'notice', id: entry.uuid ?? '', text: checklist.message, cards: checklist.cards }];
+  // 最適化圧縮でアプリが送った、仕上げの頼みと再開の文。開くと全文が読める
+  const compact = parseCompactMessage(text);
+  if (compact) {
+    const notice = t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoff' : 'chat.transcript.compactResume');
+    return [{ type: 'notice', id: entry.uuid ?? '', text: notice, detail: compact.body, compact: compact.kind }];
+  }
   const special = specialUserText(entry.uuid ?? '', text.trimStart());
   if (special) return [special];
   if (text.includes('<task-notification>')) {
@@ -504,7 +514,7 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   if (command === '/compact') return [];
   if (command) {
     const args = text.match(/<command-args>(.*?)<\/command-args>/s)?.[1]?.trim();
-    return [{ type: 'user', id: entry.uuid ?? '', text: args ? `${command} ${args}` : command, at: timeOf(entry) }];
+    return [{ type: 'user', id: entry.uuid ?? '', text: args ? `${command} ${args}` : command, at: timeOf(entry), command: true }];
   }
   return [{ type: 'user', id: entry.uuid ?? '', text: unwrapPasted(text), at: timeOf(entry) }];
 }
@@ -554,7 +564,8 @@ export function isHumanPrompt(text: string): boolean {
     !text.includes('<task-notification>') &&
     !head.startsWith('<ci-monitor-event>') &&
     !head.startsWith(`<${SESSION_EVENT_TAG}`) &&
-    !head.startsWith(`<${CHECKLIST_EVENT_TAG}`)
+    !head.startsWith(`<${CHECKLIST_EVENT_TAG}`) &&
+    !isCompactMessage(text)
   );
 }
 
@@ -730,7 +741,7 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     typeof entry.message?.content === 'string'
   ) {
     const text = entry.message.content;
-    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text)) return null;
+    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text)) return null;
     // 親セッションからの指示は、囲みを外した本文の 1 行目
     const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];
     return firstLine ? { title: firstLine.slice(0, 80), priority: 1 } : null;

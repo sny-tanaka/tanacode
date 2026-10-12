@@ -26,8 +26,6 @@ const LABEL_CHARS = 80;
 // 応答の間に増えた量で、文字数からの見積もりを直す範囲（外れたら、ツールの定義の読み込みなど会話ログに無いものが混ざったとみなして直さない）
 const CALIBRATE_MIN = 0.25;
 const CALIBRATE_MAX = 4;
-// 抜粋（excerpts）で、断片 1 つから覚える長さ。大きな結果は頭だけ
-const PIECE_CHARS = 2000;
 
 // 会話ログの 1 行から取り出した、コンテキストに入るものの断片。同じ key の断片を足して 1 行にする
 type Piece = {
@@ -41,11 +39,9 @@ type Piece = {
   tokens: number;
   // 入力として増えたもの（ツールの結果・発言・添付）。Claude の応答（出力）でないもの
   input: boolean;
-  // 一覧に出さないもの（Claude Code が足す一覧や環境の知らせ）。/compact の指示では消せないので、「そのほか」に入る。
+  // 一覧に出さないもの（Claude Code が足す一覧や環境の知らせ）。会話の中身ではないので、「そのほか」に入る。
   // 見積もりの直し（calibrate）には入れる
   hidden?: boolean;
-  // 中身の抜粋（excerpts を有効にしたときだけ）
-  text?: string;
 };
 // 圧縮の境目。preserved: 境目より前で、要約せずにそのまま残された行
 type Boundary = { uuid: string; boundary: true; preserved: ReadonlySet<string> };
@@ -82,11 +78,7 @@ export class ContextTracker {
   // 今のやりとり。小さな断片はここに足す
   private topic: Topic = conversationStart();
 
-  // excerpts: 行ごとの中身の抜粋も覚える（最適化圧縮で Haiku に渡すため。会話ログを読み直す使い捨てのものだけで使う）
-  constructor(
-    private readonly cwd: string,
-    private readonly keepExcerpts = false,
-  ) {}
+  constructor(private readonly cwd: string) {}
 
   // 起動し直すと過去の会話を読み直す。/clear では会話が変わる
   reset(): void {
@@ -118,8 +110,16 @@ export class ContextTracker {
   }
 
   current(): SessionContext {
+    let last = -1;
+    this.pieces.forEach((p, i) => {
+      if ('boundary' in p) last = i;
+    });
+    const preserved = last === -1 ? new Set<string>() : (this.pieces[last] as Boundary).preserved;
     const items = new Map<string, ContextItem>();
-    this.grouped((p, id, order, compacted) => {
+    this.pieces.forEach((p, order) => {
+      if ('boundary' in p || p.hidden) return;
+      const compacted = order < last && !preserved.has(p.uuid);
+      const id = compacted ? `compacted:${p.key}` : p.key;
       const item = items.get(id);
       if (item) {
         item.tokens += p.tokens;
@@ -131,32 +131,6 @@ export class ContextTracker {
       items.set(id, { id, kind: p.kind, label: p.label, tool: p.tool, edited: p.edited, tokens: p.tokens, order, compacted });
     });
     return { items: [...items.values()].map((i) => ({ ...i, tokens: Math.max(0, Math.round(i.tokens)) })) };
-  }
-
-  // 行（current の id）ごとの中身の抜粋。断片の抜粋を会話の順につなぐ。excerpts を有効にしていなければ空
-  excerpts(): Map<string, string> {
-    const texts = new Map<string, string[]>();
-    this.grouped((p, id) => {
-      if (!p.text) return;
-      const list = texts.get(id);
-      if (list) list.push(p.text);
-      else texts.set(id, [p.text]);
-    });
-    return new Map([...texts].map(([id, list]) => [id, list.join('\n')]));
-  }
-
-  // 一覧に出す断片を、行の id と一緒に順に渡す。最後の圧縮の境目より前で、そのまま残されなかったものは compacted
-  private grouped(visit: (piece: Piece, id: string, order: number, compacted: boolean) => void): void {
-    let last = -1;
-    this.pieces.forEach((p, i) => {
-      if ('boundary' in p) last = i;
-    });
-    const preserved = last === -1 ? new Set<string>() : (this.pieces[last] as Boundary).preserved;
-    this.pieces.forEach((p, order) => {
-      if ('boundary' in p || p.hidden) return;
-      const compacted = order < last && !preserved.has(p.uuid);
-      visit(p, compacted ? `compacted:${p.key}` : p.key, order, compacted);
-    });
   }
 
   private cut(eventCut: number, chainCut: number): void {
@@ -172,26 +146,18 @@ export class ContextTracker {
     this.topic = topic ? { key: topic.key, label: topic.label } : conversationStart();
   }
 
-  // text: 中身（excerpts を有効にしたときだけ、頭を覚える）
-  private add(uuid: string, piece: Omit<Piece, 'uuid' | 'input' | 'text'>, text = ''): void {
-    const excerpt = this.keepExcerpts && text.trim() ? text.slice(0, PIECE_CHARS) : undefined;
-    this.pieces.push({ ...piece, uuid, input: !this.output, ...(excerpt ? { text: excerpt } : {}) });
+  private add(uuid: string, piece: Omit<Piece, 'uuid' | 'input'>): void {
+    this.pieces.push({ ...piece, uuid, input: !this.output });
   }
 
   // 今のやりとりに足す
-  private addToTopic(uuid: string, tokens: number, text = ''): void {
-    if (tokens !== 0) this.add(uuid, { key: this.topic.key, kind: 'topic', label: this.topic.label, tokens }, text);
-    else this.note(uuid, text);
+  private addToTopic(uuid: string, tokens: number): void {
+    if (tokens !== 0) this.add(uuid, { key: this.topic.key, kind: 'topic', label: this.topic.label, tokens });
   }
 
-  // 大きさに数えない中身を、今のやりとりの抜粋にだけ足す（数え終えた応答の文章・ツールの呼び出し）
-  private note(uuid: string, text: string): void {
-    if (this.keepExcerpts && text.trim()) this.add(uuid, { key: this.topic.key, kind: 'topic', label: this.topic.label, tokens: 0 }, text);
-  }
-
-  private startTopic(uuid: string, label: string, tokens: number, text = ''): void {
+  private startTopic(uuid: string, label: string, tokens: number): void {
     this.topic = { key: `topic:${uuid}`, label };
-    this.add(uuid, { key: this.topic.key, kind: 'topic', label, tokens }, text);
+    this.add(uuid, { key: this.topic.key, kind: 'topic', label, tokens });
   }
 
   private read(entry: TranscriptEntry, uuid: string): void {
@@ -250,27 +216,20 @@ export class ContextTracker {
     }
     const usage = counted ? this.responses.get(id) : undefined;
     for (const block of Array.isArray(message.content) ? message.content : []) {
-      if (block.type === 'text') {
-        if (counted) this.note(uuid, block.text ?? '');
-        else this.addToTopic(uuid, estimateTokens(block.text ?? ''), block.text ?? '');
-      }
+      if (!counted && block.type === 'text') this.addToTopic(uuid, estimateTokens(block.text ?? ''));
       if (block.type !== 'tool_use' || !block.id || !block.name) continue;
       const input = block.input ?? {};
       const path = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : null;
-      const label = toolTarget(input, this.cwd);
-      this.tools.set(block.id, { name: block.name, label, filePath: path });
-      const json = JSON.stringify(input);
-      const tokens = estimateTokens(json);
+      this.tools.set(block.id, { name: block.name, label: toolTarget(input, this.cwd), filePath: path });
+      const tokens = estimateTokens(JSON.stringify(input));
       // 書いた中身は、応答からそのファイルの行に移す（応答の出力より多くは移さない）
       if (EDIT_TOOLS.has(block.name) && path) {
         const moved = usage ? Math.min(tokens, usage.remaining) : tokens;
         if (usage) usage.remaining -= moved;
-        this.addFile(uuid, path, true, moved, `[${block.name}] ${json}`);
+        this.addFile(uuid, path, true, moved);
         if (usage) this.addToTopic(uuid, -moved);
       } else if (!counted) {
-        this.addToTopic(uuid, tokens, `[${block.name}] ${label}`);
-      } else {
-        this.note(uuid, `[${block.name}] ${label}`);
+        this.addToTopic(uuid, tokens);
       }
     }
   }
@@ -279,15 +238,14 @@ export class ContextTracker {
     const content = entry.message?.content;
     if (entry.isCompactSummary) {
       this.topic = { key: `summary:${uuid}`, label: t('main.context.compactSummary') };
-      const text = textOf(content);
-      this.add(uuid, { key: this.topic.key, kind: 'summary', label: this.topic.label, tokens: estimateTokens(text) }, text);
+      this.add(uuid, { key: this.topic.key, kind: 'summary', label: this.topic.label, tokens: estimateTokens(textOf(content)) });
       return;
     }
     const blocks = Array.isArray(content) ? content : [];
     if (blocks.some((b) => b.type === 'tool_result')) {
       for (const block of blocks) {
         if (block.type === 'tool_result' && block.tool_use_id) this.readToolResult(entry, block.tool_use_id, block.content, uuid);
-        else if (block.type === 'text') this.addToTopic(uuid, estimateTokens(block.text ?? ''), block.text ?? '');
+        else if (block.type === 'text') this.addToTopic(uuid, estimateTokens(block.text ?? ''));
       }
       return;
     }
@@ -295,7 +253,7 @@ export class ContextTracker {
     // スキルの本文（Skill のツールのすぐあとの isMeta の行）は、そのツールの行に入れる
     const source = (entry as { sourceToolUseID?: unknown }).sourceToolUseID;
     const tool = typeof source === 'string' ? this.tools.get(source) : undefined;
-    if (entry.isMeta && tool) this.addResult(uuid, source as string, tool, estimateTokens(text), text);
+    if (entry.isMeta && tool) this.addResult(uuid, source as string, tool, estimateTokens(text));
     else this.readMessage(entry, text, uuid, { kind: entry.origin?.kind ?? 'human', meta: !!entry.isMeta, queued: false });
     // 発言に添付した画像。指示の文でどれか分かるよう、発言の冒頭と何枚目かを名前に入れる
     const images = blocks.filter((b) => b.type === 'image');
@@ -320,13 +278,13 @@ export class ContextTracker {
       const tool = toolUseId ? this.tools.get(toolUseId) : undefined;
       // 待機中に届いたものは、Claude Code がそれを受けて作業を始めるので、新しいやりとりにする
       if (!origin.queued) this.startTopic(uuid, tool ? t('main.context.notice', { summary: t('main.context.subagentReport', { name: clip(tool.label, LABEL_CHARS) }) }) : t('main.context.peerNotice'), 0);
-      if (toolUseId && tool) return this.addResult(uuid, toolUseId, tool, tokens, text);
-      return this.addToTopic(uuid, tokens, text);
+      if (toolUseId && tool) return this.addResult(uuid, toolUseId, tool, tokens);
+      return this.addToTopic(uuid, tokens);
     }
     const prompt = !origin.meta && !entry.interruptedMessageId ? promptLabel(text.trimStart()) : null;
-    if (prompt) return this.startTopic(uuid, prompt, tokens, text);
+    if (prompt) return this.startTopic(uuid, prompt, tokens);
     // 圧縮のコマンドの記録・コマンドの出力・メタの行・中断の知らせなどは、今のやりとりに足す
-    this.addToTopic(uuid, tokens, text);
+    this.addToTopic(uuid, tokens);
   }
 
   // バックグラウンドのタスクの完了の知らせ。サブエージェントの結果は、起動したときの行にまとめる。
@@ -336,40 +294,39 @@ export class ContextTracker {
     const toolUseId = /<tool-use-id>(.*?)<\/tool-use-id>/s.exec(text)?.[1]?.trim();
     const tool = toolUseId ? this.tools.get(toolUseId) : undefined;
     if (starts) this.startTopic(uuid, t('main.context.notice', { summary: clip(summary || t('main.context.taskFinished'), LABEL_CHARS) }), 0);
-    if (toolUseId && tool) this.addResult(uuid, toolUseId, tool, tokens, text);
-    else if (tokens >= ITEM_TOKENS) this.add(uuid, { key: `tool:${uuid}`, kind: 'tool', tool: '', label: summary, tokens }, text);
-    else this.addToTopic(uuid, tokens, text);
+    if (toolUseId && tool) this.addResult(uuid, toolUseId, tool, tokens);
+    else if (tokens >= ITEM_TOKENS) this.add(uuid, { key: `tool:${uuid}`, kind: 'tool', tool: '', label: summary, tokens });
+    else this.addToTopic(uuid, tokens);
   }
 
   private readToolResult(entry: TranscriptEntry, toolUseId: string, content: unknown, uuid: string): void {
     const tool = this.tools.get(toolUseId);
     const blocks = Array.isArray(content) ? (content as { type?: string }[]) : [];
-    const text = textOf(content);
-    const tokens = estimateTokens(text) + RESULT_OVERHEAD;
+    const tokens = estimateTokens(textOf(content)) + RESULT_OVERHEAD;
     const images = blocks.filter((b) => b.type === 'image');
     // 画像のファイルを読んだときは、画像もそのファイルの行に入れる
     if (tool && (READ_TOOLS.has(tool.name) || EDIT_TOOLS.has(tool.name)) && tool.filePath) {
       const imageTotal = images.reduce((sum, b) => sum + imageTokens(b), 0);
-      return this.addFile(uuid, tool.filePath, EDIT_TOOLS.has(tool.name), tokens + imageTotal, text);
+      return this.addFile(uuid, tool.filePath, EDIT_TOOLS.has(tool.name), tokens + imageTotal);
     }
     images.forEach((b, i) => {
       this.add(uuid, { key: `image:${toolUseId}:${i}`, kind: 'image', tool: tool?.name ?? '', label: tool?.label ?? '', tokens: imageTokens(b) });
     });
-    if (!tool) return this.addToTopic(uuid, tokens, text);
+    if (!tool) return this.addToTopic(uuid, tokens);
     const agentId = (entry.toolUseResult as { agentId?: unknown } | undefined)?.agentId;
     if (AGENT_TOOLS.has(tool.name) && typeof agentId === 'string') this.agents.set(agentId, toolUseId);
     // 質問への答えは、人が決めたことなので、新しいやりとりにする
-    if (tool.name === 'AskUserQuestion') return this.startTopic(uuid, answerLabel(entry.toolUseResult), tokens, text);
-    this.addResult(uuid, toolUseId, tool, tokens, text);
+    if (tool.name === 'AskUserQuestion') return this.startTopic(uuid, answerLabel(entry.toolUseResult), tokens);
+    this.addResult(uuid, toolUseId, tool, tokens);
   }
 
   // ツールの結果。サブエージェントはいつも 1 行に、ほかは大きいものだけ 1 行にする
-  private addResult(uuid: string, toolUseId: string, tool: ToolUse, tokens: number, text: string): void {
-    if (AGENT_TOOLS.has(tool.name)) return this.add(uuid, { key: `agent:${toolUseId}`, kind: 'agent', label: tool.label, tokens }, text);
+  private addResult(uuid: string, toolUseId: string, tool: ToolUse, tokens: number): void {
+    if (AGENT_TOOLS.has(tool.name)) return this.add(uuid, { key: `agent:${toolUseId}`, kind: 'agent', label: tool.label, tokens });
     const key = `tool:${toolUseId}`;
-    if (!this.listed.has(key) && tokens < ITEM_TOKENS) return this.addToTopic(uuid, tokens, text);
+    if (!this.listed.has(key) && tokens < ITEM_TOKENS) return this.addToTopic(uuid, tokens);
     this.listed.add(key);
-    this.add(uuid, { key, kind: 'tool', tool: tool.name, label: tool.label, tokens }, text);
+    this.add(uuid, { key, kind: 'tool', tool: tool.name, label: tool.label, tokens });
   }
 
   private readAttachment(entry: TranscriptEntry, uuid: string): void {
@@ -378,17 +335,13 @@ export class ContextTracker {
     // CLAUDE.md・AGENTS.md・記憶（会話の始まりと圧縮のあと）
     if (a.type === 'instructions' && Array.isArray(a.files)) {
       for (const f of a.files as { path?: unknown; content?: unknown }[]) {
-        const content = typeof f?.content === 'string' ? f.content : '';
-        if (typeof f?.path === 'string') this.addFile(uuid, f.path, false, estimateTokens(content), content);
+        if (typeof f?.path === 'string') this.addFile(uuid, f.path, false, estimateTokens(typeof f.content === 'string' ? f.content : ''));
       }
       return;
     }
     // 発言で @ を付けたファイル・圧縮のあとに添付し直されたファイル・変更に気づいたファイル・サブフォルダの CLAUDE.md（前の Claude Code）
     const path = a.type === 'file' || a.type === 'edited_text_file' ? a.filename : a.type === 'nested_memory' ? a.path : null;
-    if (typeof path === 'string') {
-      const text = attachmentText(a);
-      return this.addFile(uuid, path, false, estimateTokens(text), text);
-    }
+    if (typeof path === 'string') return this.addFile(uuid, path, false, estimateTokens(attachmentText(a)));
     // 作業の途中に届いた発言・完了の知らせ（順番待ちから差し込まれたもの）
     if (a.type === 'queued_command' && typeof a.prompt === 'string') {
       const kind = (a.origin as { kind?: unknown } | undefined)?.kind;
@@ -398,18 +351,17 @@ export class ContextTracker {
         queued: true,
       });
     }
-    const text = attachmentText(a);
-    const tokens = estimateTokens(text);
+    const tokens = estimateTokens(attachmentText(a));
     // hooks が足した文は、そのやりとりに入れる
-    if (String(a.type).startsWith('hook_')) return this.addToTopic(uuid, tokens, text);
+    if (String(a.type).startsWith('hook_')) return this.addToTopic(uuid, tokens);
     // ほかは、Claude Code が足す一覧や環境の知らせ（skill_listing・*_delta・environment・total_tokens_reminder など）。
     // 圧縮のあとにも送り直されて、指示では消せないので、一覧に出さず「そのほか」に入れる
     if (tokens > 0) this.add(uuid, { key: 'claude-code', kind: 'topic', label: '', tokens, hidden: true });
   }
 
-  private addFile(uuid: string, path: string, edited: boolean, tokens: number, text: string): void {
+  private addFile(uuid: string, path: string, edited: boolean, tokens: number): void {
     const label = this.display(path);
-    this.add(uuid, { key: `file:${label}`, kind: 'file', label, edited, tokens }, text);
+    this.add(uuid, { key: `file:${label}`, kind: 'file', label, edited, tokens });
   }
 
   // フォルダの中ならフォルダからの相対パス、ホームの中なら ~ から

@@ -187,12 +187,6 @@
       "answer": "Answered: {answer}",
       "noAnswer": "(no answer)"
     },
-    "compactOptimizer": {
-      "noResponse": "Claude Code didn't respond",
-      "noMarks": "Haiku's response had no marks",
-      "timedOut": "Haiku didn't respond in time",
-      "exited": "Claude Code exited (exit code {code})"
-    },
     "hooks": {
       "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
@@ -435,17 +429,30 @@
       "settingsFileMissing": "Not registered",
       "confirmSettingsFile": "This switches the settings file to “{name}” and restarts Claude Code to continue the conversation. Depending on its settings (such as the endpoint URL or API key), the conversation so far will be sent to the new endpoint.\n\nSwitch settings files?",
       "scheduleFailed": "Couldn't schedule the message: {error}",
-      "compact": "Compact",
-      "compactTip": "Summarize the conversation to free up context (/compact). Not available while Claude is working.",
-      "compactOptimizedTip": "Have Haiku choose what to keep and what to drop, then summarize the conversation to free up context. Not available while Claude is working.",
-      "optimizing": "Haiku is choosing what to keep…",
-      "compactMode": "Choose how to compact",
-      "compactModePlain": "Standard compact",
-      "compactModePlainDesc": "Sends /compact as is. Claude decides what to keep.",
-      "compactModeOptimized": "Optimized compact",
-      "compactModeOptimizedDesc": "Haiku reads the context, chooses what to keep and what to drop, and sends /compact with those instructions. Uses a little of your usage limits for Haiku.",
-      "optimizeFailed": "Couldn't run optimized compact: {error}",
-      "optimizeCancelled": "Claude started working, so optimized compact was canceled",
+      "optimizedCompact": "Optimized compact",
+      "optimizedCompactTip": "Clear the conversation and resume from the checklists (no summary is made). Claude first writes what’s needed to continue on the checklists. Unavailable while Claude is working",
+      "compactPhase": {
+        "finalizing": "Optimized compact: Claude is writing what’s needed to continue on the checklists",
+        "clearing": "Optimized compact: clearing the conversation",
+        "resuming": "Optimized compact: sending the resume message",
+        "waiting": "Optimized compact: waiting to send the resume message (it is sent when the input is free)"
+      },
+      "compactUnavailable": {
+        "checklistOff": "Turn on “Let Claude Manage Checklists” in the menu to use this",
+        "noChecklist": "Claude Code in this session can’t use checklists. Turn on “Let Claude Manage Checklists” in the menu and restart the session to use this"
+      },
+      "compactFailure": {
+        "interrupted": "Optimized compact was canceled because the wrap-up was interrupted. The conversation was not cleared",
+        "prompted": "Optimized compact was canceled because a message was sent during the wrap-up. The conversation was not cleared",
+        "notUsed": "Optimized compact was canceled because Claude didn’t use the checklists. The conversation was not cleared",
+        "interleaved": "Optimized compact was canceled because other work kept starting after the wrap-up. The conversation was not cleared",
+        "notCleared": "/clear was sent, but the conversation didn’t switch to a new one. The checklists are up to date",
+        "exited": "Optimized compact was canceled because the session ended",
+        "busy": "Optimized compact was canceled because the message couldn’t be sent to Claude Code. The conversation was not cleared"
+      },
+      "compactFailed": "Optimized compact canceled",
+      "compactWaiting": "Waiting to send the resume message",
+      "compactDismiss": "Dismiss",
       "restart": "Restart",
       "restartTip": "Restart Claude Code and continue the same conversation. Picks up changes to skills, CLAUDE.md, settings, MCP servers, and more.",
       "confirmRestart": "Any turn in progress and background tasks will stop. Restart Claude Code?",
@@ -646,6 +653,8 @@
       "compactedAuto": "Conversation auto-compacted",
       "compactedFrom": "Conversation compacted (from {count}k tokens)",
       "compactedAutoFrom": "Conversation auto-compacted (from {count}k tokens)",
+      "compactHandoff": "Optimized compact: asked Claude to write what’s needed to continue on the checklists",
+      "compactResume": "Optimized compact: cleared the conversation and resumed from the checklists",
       "taskFinished": "Background task finished",
       "ciEnabled": "Enabled",
       "ciNewComments": "{count} new review comments",
@@ -1370,6 +1379,8 @@
       "inForceTip": "{count} in force (revoked decisions aren’t counted)",
       "kindDecisions": "Decisions",
       "kindDecisionsTip": "A decisions list. Cards aren’t checked off, and the ones in force are always passed to Claude.",
+      "kindStateTip": "A state list. Cards have no checks, Claude keeps them current by rewriting them, and they are always passed to Claude.",
+      "cardCountTip": "{count} cards",
       "kindReview": "Review",
       "kindReviewTip": "A review list. Cards you check (approve) move to the decisions list.",
       "revoked": "Revoked",
@@ -1464,7 +1475,8 @@
       "kind": "Kind",
       "kindNormal": "Ordinary (cards are checked off)",
       "kindReview": "Review (approved cards move to decisions)",
-      "kindDecisions": "Decisions (permanent, no checks)"
+      "kindDecisions": "Decisions (permanent, no checks)",
+      "kindState": "State (Claude keeps it current, no checks)"
     },
     "apply": {
       "failed": "Couldn't update the checklist: {error}"
@@ -1587,18 +1599,7 @@
       "sortBySize": "Size",
       "sortByTime": "Time",
       "compacted": "Replaced by the compaction summary ({count})",
-      "marks": "Keep {keep} · Drop {drop}",
-      "clearMarks": "Clear Marks",
-      "compactWithMarks": "Compact with Marks…",
-      "compacting": "Compacting…",
-      "note": "Claude decides what to do with unmarked items. Sizes are estimates based on character counts and response usage, not exact token counts.",
-      "draftTitle": "Instructions for /compact (editable before sending)",
-      "compact": "Compact",
-      "cannotCompact": "Can't compact while Claude is working or asking for confirmation"
-    },
-    "row": {
-      "keep": "Keep",
-      "drop": "Drop"
+      "note": "Sizes are estimates from character counts and response usage, not exact token counts."
     },
     "kind": {
       "written": "Written",
@@ -1612,35 +1613,6 @@
     "meter": {
       "label": "Context contents",
       "tip": "Context: {tokens} / {limit} tokens (as of the last response)\nCompacts automatically when nearly full. Click to see what's in it."
-    },
-    "compact": {
-      "keep": "Keep {items} in detail.",
-      "drop": "You can drop {items}.",
-      "sentenceSeparator": " ",
-      "listTwo": "{first} and {second}",
-      "separator": ", ",
-      "listLast": "{rest}, and {last}",
-      "file": "the contents of `{label}`",
-      "fileEdited": "the contents of `{label}` (including your edits)",
-      "summary": "the summary from the previous compaction",
-      "agent": "the result of the subagent “{label}”",
-      "imageWithLabel": "the image from {tool} ({label})",
-      "image": "the image from {tool}",
-      "attachedImage": "the image attached to “{topic}”",
-      "attachedImageNth": "image {index} attached to “{topic}”",
-      "topicAnswer": "the exchange after I answered “{answer}”",
-      "topicNotice": "the exchange after the notification “{notice}”",
-      "topicEvent": "the exchange starting at “{label}”",
-      "topic": "the exchange starting with “{label}”",
-      "notice": "the notification “{label}”",
-      "bash": "the output of `{label}`",
-      "search": "the search results for “{label}”",
-      "glob": "the list of files matching `{label}`",
-      "webFetch": "the contents of the page at {label}",
-      "skill": "the contents of the “{label}” skill",
-      "toolWithLabel": "the result of {tool} ({label})",
-      "tool": "the result of {tool}",
-      "mcpTool": "{server}'s {tool}"
     }
   },
   "export": {

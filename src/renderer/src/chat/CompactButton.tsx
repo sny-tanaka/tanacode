@@ -1,100 +1,79 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { t } from '@shared/i18n';
-import { CheckIcon, ChevronDownIcon, CompressIcon, IconButton, OptimizedCompressIcon } from '../icons';
-import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
+import { IDLE_COMPACT_STATUS, type CompactFailure, type CompactPhase, type CompactStatus, type CompactUnavailable } from '@shared/optimized-compact';
+import { CloseIcon, IconButton, OptimizedCompressIcon } from '../icons';
 
-// 圧縮のしかた。plain: /compact をそのまま送る / optimized: Haiku に残すもの・捨てるものを選ばせてから送る（最適化圧縮）
-export type CompactMode = 'plain' | 'optimized';
+const PHASE_TEXT = {
+  finalizing: 'chat.pane.compactPhase.finalizing',
+  clearing: 'chat.pane.compactPhase.clearing',
+  resuming: 'chat.pane.compactPhase.resuming',
+  waiting: 'chat.pane.compactPhase.waiting',
+} as const satisfies Record<CompactPhase, string>;
 
-const MODE_KEY = 'tanacode.compactMode';
-const MODES: CompactMode[] = ['plain', 'optimized'];
+const UNAVAILABLE_TEXT = {
+  'checklist-off': 'chat.pane.compactUnavailable.checklistOff',
+  'no-checklist': 'chat.pane.compactUnavailable.noChecklist',
+} as const satisfies Record<CompactUnavailable, string>;
 
-function loadMode(): CompactMode {
-  return readSharedPref(MODE_KEY) === 'optimized' ? 'optimized' : 'plain';
-}
+const FAILURE_TEXT = {
+  interrupted: 'chat.pane.compactFailure.interrupted',
+  prompted: 'chat.pane.compactFailure.prompted',
+  'not-used': 'chat.pane.compactFailure.notUsed',
+  interleaved: 'chat.pane.compactFailure.interleaved',
+  'not-cleared': 'chat.pane.compactFailure.notCleared',
+  exited: 'chat.pane.compactFailure.exited',
+  busy: 'chat.pane.compactFailure.busy',
+} as const satisfies Record<CompactFailure, string>;
 
-// 選んだ圧縮のしかた（プロファイルをまたいで同じ）
-export function useCompactMode(): [CompactMode, (mode: CompactMode) => void] {
-  const [mode, setMode] = useState<CompactMode>(loadMode);
-  useSharedPrefChange(MODE_KEY, () => setMode(loadMode()));
-  const change = (next: CompactMode) => {
-    setMode(next);
-    writeSharedPref(MODE_KEY, next);
-  };
-  return [mode, change];
-}
-
-// チャットのヘッダーの「圧縮」。右の ▾ で、通常圧縮と最適化圧縮を切り替える。
-// optimizing: 最適化圧縮で、Haiku が選んでいる途中 / compacting: /compact を送って、圧縮が終わるのを待っている
-export function CompactButton({
-  mode,
-  onModeChange,
-  canCompact,
-  compacting,
-  optimizing,
-  onCompact,
-}: {
-  mode: CompactMode;
-  onModeChange: (mode: CompactMode) => void;
-  canCompact: boolean;
-  compacting: boolean;
-  optimizing: boolean;
-  onCompact: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
+// セッションの最適化圧縮の状態（進んでいる段階・取りやめた理由・使えない理由）。流れは main が動かすので、画面は聞いて、変わったら受け取るだけ
+export function useCompactStatus(sessionId: string | null): CompactStatus {
+  const [status, setStatus] = useState<CompactStatus>(IDLE_COMPACT_STATUS);
   useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey);
+    setStatus(IDLE_COMPACT_STATUS);
+    if (!sessionId) return;
+    let alive = true;
+    void window.tanacode.compact.get(sessionId).then((value) => {
+      if (alive && value) setStatus(value);
+    });
+    const off = window.tanacode.compact.onChanged((payload) => {
+      if (payload.sessionId === sessionId) setStatus(payload.status);
+    });
     return () => {
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey);
+      alive = false;
+      off();
     };
-  }, [open]);
+  }, [sessionId]);
+  return status;
+}
 
-  const pick = (next: CompactMode) => {
-    setOpen(false);
-    if (next !== mode) onModeChange(next);
-  };
-  const name = mode === 'optimized' ? t('chat.pane.compactModeOptimized') : t('chat.pane.compact');
-  const tip = optimizing ? t('chat.pane.optimizing') : mode === 'optimized' ? t('chat.pane.compactOptimizedTip') : t('chat.pane.compactTip');
+// チャットのヘッダーの「最適化圧縮」。押すと、Claude が続きに要ることをチェックリストに書き、アプリが会話を消して、チェックリストから再開させる。
+// canStart: 始められる（待機中で、確認の画面が出ていない）/ status: main から届く状態
+export function CompactButton({ canStart, status, onStart }: { canStart: boolean; status: CompactStatus; onStart: () => void }) {
+  const { phase, failure, unavailable } = status;
+  // 取りやめた理由は、閉じるか、次に始めるまで出しておく
+  const [dismissed, setDismissed] = useState<CompactFailure | null>(null);
+  useEffect(() => {
+    if (!failure) setDismissed(null);
+  }, [failure]);
+  const tip = phase ? t(PHASE_TEXT[phase]) : unavailable ? t(UNAVAILABLE_TEXT[unavailable]) : t('chat.pane.optimizedCompactTip');
+  const shownFailure = !phase && failure && failure !== dismissed ? failure : null;
 
   return (
-    <div className="compact-button" ref={ref}>
-      <IconButton size="md" icon={mode === 'optimized' ? OptimizedCompressIcon : CompressIcon} label={name} tip={tip} busy={compacting || optimizing} disabled={!canCompact} onClick={onCompact} />
-      <button
-        type="button"
-        className="compact-mode-toggle"
-        aria-label={t('chat.pane.compactMode')}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        data-tip={open ? undefined : t('chat.pane.compactMode')}
-        onClick={() => setOpen(!open)}
-      >
-        <ChevronDownIcon size={12} />
-      </button>
-      {open && (
-        <div className="compact-menu" role="menu" aria-label={t('chat.pane.compactMode')}>
-          {MODES.map((m) => (
-            <button key={m} role="menuitemradio" aria-checked={m === mode} className="compact-menu-item" onClick={() => pick(m)}>
-              <span className="compact-menu-icon">{m === 'optimized' ? <OptimizedCompressIcon size={14} /> : <CompressIcon size={14} />}</span>
-              <span className="compact-menu-text">
-                <span className="compact-menu-name">{m === 'optimized' ? t('chat.pane.compactModeOptimized') : t('chat.pane.compactModePlain')}</span>
-                <span className="compact-menu-desc">{m === 'optimized' ? t('chat.pane.compactModeOptimizedDesc') : t('chat.pane.compactModePlainDesc')}</span>
-              </span>
-              <span className="compact-menu-check">{m === mode && <CheckIcon size={12} />}</span>
-            </button>
-          ))}
-        </div>
+    <div className="compact-button">
+      {phase === 'waiting' && (
+        <span className="compact-status" role="status" data-tip={t(PHASE_TEXT.waiting)}>
+          {t('chat.pane.compactWaiting')}
+        </span>
       )}
+      {shownFailure && (
+        <span className="compact-status failed" role="alert" data-tip={t(FAILURE_TEXT[shownFailure])}>
+          {t('chat.pane.compactFailed')}
+          <button type="button" className="compact-status-close" aria-label={t('chat.pane.compactDismiss')} onClick={() => setDismissed(shownFailure)}>
+            <CloseIcon size={12} />
+          </button>
+        </span>
+      )}
+      <IconButton size="md" icon={OptimizedCompressIcon} label={t('chat.pane.optimizedCompact')} tip={tip} busy={!!phase} disabled={!canStart || !!unavailable} onClick={onStart} />
     </div>
   );
 }

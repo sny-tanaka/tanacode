@@ -73,8 +73,6 @@ function props(over: Partial<Props> = {}): Props {
     onResume: noop,
     onUnarchive: noop,
     onSend: noop,
-    onOptimizedCompact: noop,
-    optimizing: false,
     pending: null,
     sending: [],
     onTakePending: () => null,
@@ -140,65 +138,56 @@ describe('ヘッダー', () => {
     expect(toggle().disabled).toBe(false);
   });
 
-  it('「圧縮」は /compact を送る。作業中・発言がまだ無いときは押せない', () => {
+  it('「最適化圧縮」は、main に流れを始めさせる（/compact は送らない）。作業中・会話がまだ無いときは押せない', async () => {
     const onSend = vi.fn();
     const view = render(<ClaudePane {...props({ onSend })} />);
-    const compact = () => screen.getByRole('button', { name: '圧縮' }) as HTMLButtonElement;
+    const compact = () => screen.getByRole('button', { name: '最適化圧縮' }) as HTMLButtonElement;
+    await act(async () => {});
+    expect(api.argsOf('compact.get')).toEqual([['s1']]);
     fireEvent.click(compact());
-    expect(onSend).toHaveBeenCalledWith('/compact', []);
-    view.rerender(<ClaudePane {...props({ onSend, chat: chatOf({ status: 'running', items: [USER, { kind: 'user', id: 'u2', text: '/compact' }] }) })} />);
-    // 圧縮の途中は、ぐるぐるを出して押せない
+    expect(api.argsOf('compact.start')).toEqual([['s1']]);
+    expect(onSend).not.toHaveBeenCalled();
+    view.rerender(<ClaudePane {...props({ onSend, chat: chatOf({ status: 'running' }) })} />);
     expect(compact().disabled).toBe(true);
-    expect(compact().getAttribute('aria-busy')).toBe('true');
     view.rerender(<ClaudePane {...props({ onSend, session: S2, chat: chatOf({ items: [] }) })} />);
     expect(compact().disabled).toBe(true);
-    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(api.argsOf('compact.start')).toHaveLength(1);
   });
 
-  it('「圧縮」の ▾ で最適化圧縮に切り替えると、押したときに最適化圧縮を始める。Haiku が選んでいる途中は押せない。しかたは覚えて、ほかのセッションでも同じ', () => {
-    const onSend = vi.fn();
-    const onOptimizedCompact = vi.fn();
-    const view = render(<ClaudePane {...props({ onSend, onOptimizedCompact })} />);
-    const toggle = () => screen.getByRole('button', { name: '圧縮のしかたを選ぶ' });
-    fireEvent.click(toggle());
-    expect(screen.getByRole('menuitemradio', { name: /通常圧縮/ }).getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /最適化圧縮/ }));
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(api.argsOf('prefs.set')).toContainEqual(['tanacode.compactMode', 'optimized']);
-    const optimized = () => screen.getByRole('button', { name: '最適化圧縮' }) as HTMLButtonElement;
-    fireEvent.click(optimized());
-    expect(onOptimizedCompact).toHaveBeenCalledTimes(1);
-    expect(onSend).not.toHaveBeenCalled();
-    view.rerender(<ClaudePane {...props({ onSend, onOptimizedCompact, optimizing: true })} />);
-    expect(optimized().disabled).toBe(true);
-    expect(optimized().getAttribute('aria-busy')).toBe('true');
-    // ほかのセッションに切り替えても最適化圧縮のまま。通常圧縮に戻すと /compact を送る
-    view.rerender(<ClaudePane {...props({ onSend, onOptimizedCompact, session: S2 })} />);
-    fireEvent.click(toggle());
-    expect(screen.getByRole('menuitemradio', { name: /最適化圧縮/ }).getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /通常圧縮/ }));
-    fireEvent.click(screen.getByRole('button', { name: '圧縮' }));
-    expect(onSend).toHaveBeenCalledWith('/compact', []);
-    expect(onOptimizedCompact).toHaveBeenCalledTimes(1);
-  });
-
-  it('「圧縮」の ▾ のメニューは、外を押すか Esc で閉じる。同じしかたを選び直しても覚え直さない', () => {
+  it('最適化圧縮が進んでいる間は、段階をツールチップに出して押せない。再開の文を待っている・取りやめたことは、ボタンの左に出す', async () => {
     render(<ClaudePane {...props()} />);
-    const toggle = () => screen.getByRole('button', { name: '圧縮のしかたを選ぶ' });
-    fireEvent.click(toggle());
-    fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.click(toggle());
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /通常圧縮/ }));
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(api.argsOf('prefs.set')).toEqual([]);
+    const compact = () => screen.getByRole('button', { name: '最適化圧縮' }) as HTMLButtonElement;
+    const status = (over: object) => act(async () => api.emit('compact.onChanged', { sessionId: 's1', status: { phase: null, failure: null, unavailable: null, ...over } }));
+    await status({ phase: 'finalizing' });
+    expect(compact().disabled).toBe(true);
+    expect(compact().getAttribute('aria-busy')).toBe('true');
+    expect(compact().getAttribute('data-tip')).toBe('最適化圧縮: 続きに要ることを、Claude がチェックリストに書いています');
+    await status({ phase: 'waiting' });
+    expect(screen.getByRole('status').textContent).toBe('再開の文を送るのを待っています');
+    // ほかのセッションの知らせでは変えない
+    await act(async () => api.emit('compact.onChanged', { sessionId: 's2', status: { phase: null, failure: 'busy', unavailable: null } }));
+    expect(compact().disabled).toBe(true);
+    await status({ failure: 'interrupted' });
+    expect(compact().disabled).toBe(false);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('最適化圧縮を取りやめました');
+    expect(alert.getAttribute('data-tip')).toBe('仕上げを中断したので、最適化圧縮を取りやめました。会話は消していません');
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }));
+    expect(screen.queryByRole('alert')).toBeNull();
   });
-});
 
-describe('チャットの中の案内', () => {
+  it('「Claude にチェックリストを扱わせる」がオフのときは、最適化圧縮を押せず、理由をツールチップに出す', async () => {
+    api = mockApi({ 'compact.get': () => Promise.resolve({ phase: null, failure: null, unavailable: 'checklist-off' }) });
+    api.install();
+    render(<ClaudePane {...props()} />);
+    const compact = () => screen.getByRole('button', { name: '最適化圧縮' }) as HTMLButtonElement;
+    await act(async () => {});
+    expect(compact().disabled).toBe(true);
+    expect(compact().getAttribute('data-tip')).toBe('メニューの「Claude にチェックリストを扱わせる」をオンにすると使えます');
+    fireEvent.click(compact());
+    expect(api.argsOf('compact.start')).toEqual([]);
+  });
+
   it('発言の「ここまで戻す」は、開いているセッションでその発言まで巻き戻す。描き直してセッションが変わったら、そのセッションで巻き戻す。見つからなければ、わけを出す', async () => {
     install({ 'screen.rewind': (id: never) => Promise.resolve(id === 's1') });
     const view = render(<ClaudePane {...props()} />);
@@ -256,6 +245,29 @@ describe('チャットの中の案内', () => {
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'ターミナルで操作' }));
     expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('質問や確認のカードが出たとき、最下部にいれば追いかける（カードの選択肢が、見えている範囲の下に隠れない）。上を読んでいる間は動かさない', () => {
+    // カードは Claude Code の画面から来る。会話・送信中・予約は変わらない（変わると、そちらの追いかけが動く）
+    const base = props({ chat: chatOf({ status: 'running' }) });
+    const view = render(<ClaudePane {...base} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
+    list.scrollTop = 800;
+    const menuOf = (title: string): ScreenInfo =>
+      screenOf({ kind: 'menu', menu: { kind: 'permission', tabs: [], title, context: [], options: [{ id: '1', label: 'Yes', description: '', pointed: true, checked: null, textInput: false }], multiSelect: false, hint: '' } });
+    // カードの分だけ伸びる
+    height = 1400;
+    view.rerender(<ClaudePane {...base} screen={menuOf('Do you want to proceed?')} />);
+    expect(list.scrollTop).toBe(1400);
+    // 上を読んでいる間に次のカードが出ても、動かさない
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    height = 1600;
+    view.rerender(<ClaudePane {...base} screen={menuOf('Allow this command?')} />);
+    expect(list.scrollTop).toBe(100);
   });
 
   it('上へスクロールすると「最新のメッセージへ」を出し、押すと最下部へ送ってボタンを消す（動きを減らす設定なら、なめらかにしない）', () => {

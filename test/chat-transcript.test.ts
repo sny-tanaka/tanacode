@@ -74,7 +74,7 @@ describe('toChatEvents: system の行', () => {
   it('ローカルのコマンド（会話の最初の /rename など）は発言として出し、出力の行はターンの終わりにする', () => {
     // 2.1.292 の /rename
     const command = '<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>控えの名前</command-args>';
-    expect(events(system('local_command', { content: command, level: 'info' }))).toEqual([{ type: 'user', id: 's1', text: '/rename 控えの名前', at }]);
+    expect(events(system('local_command', { content: command, level: 'info' }))).toEqual([{ type: 'user', id: 's1', text: '/rename 控えの名前', at, command: true }]);
     expect(events(system('local_command', { content: '<local-command-stdout>Session renamed to: 控えの名前</local-command-stdout>' }))).toEqual([{ type: 'turn-end' }]);
     // /clear の出力は空
     expect(events(system('local_command', { content: '<local-command-stdout></local-command-stdout>' }))).toEqual([{ type: 'turn-end' }]);
@@ -493,7 +493,7 @@ describe('toChatEvents: ツールの結果', () => {
   it('ツールの結果の行の文字のブロックは発言として出し、ツールの結果の行の画像は発言に付けない', () => {
     // 2.1.292 の、ツールの実行中に中断したときの行
     const interrupted = user([{ type: 'text', text: '[Request interrupted by user for tool use]' }], { interruptedMessageId: 'msg_mock_5' });
-    expect(events(interrupted)).toEqual([{ type: 'turn-end' }]);
+    expect(events(interrupted)).toEqual([{ type: 'turn-end', interrupted: true }]);
     const mixed = user([{ type: 'tool_result', tool_use_id: 't', content: 'ok' }, { type: 'text', text: '続けて' }, image()]);
     const images = new Map<string, string>();
     expect(events(mixed, false, images)).toEqual([
@@ -541,14 +541,14 @@ describe('toChatEvents: 発言の行', () => {
 
   it('中断・ローカルのコマンドの出力はターンの終わり。/compact は出さず、ほかのコマンドは名前と引数を発言にする', () => {
     // 2.1.292 の、応答を待つ間に中断したときの行
-    expect(events(user([{ type: 'text', text: '[Request interrupted by user]' }], { interruptedMessageId: 'msg_mock_3' }))).toEqual([{ type: 'turn-end' }]);
-    expect(events(user('[Request interrupted by user]'))).toEqual([{ type: 'turn-end' }]);
+    expect(events(user([{ type: 'text', text: '[Request interrupted by user]' }], { interruptedMessageId: 'msg_mock_3' }))).toEqual([{ type: 'turn-end', interrupted: true }]);
+    expect(events(user('[Request interrupted by user]'))).toEqual([{ type: 'turn-end', interrupted: true }]);
     // 2.1.292 の /compact と /clear の記録
     expect(events(user('<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>'))).toEqual([]);
     expect(events(user('<local-command-stdout>\u001b[2mCompacted (ctrl+o to see full summary)\u001b[22m</local-command-stdout>'))).toEqual([{ type: 'turn-end' }]);
     expect(events(user('<local-command-caveat>The command below was run directly in Claude Code…</local-command-caveat>'))).toEqual([{ type: 'turn-end' }]);
-    expect(events(user('<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>'))).toEqual([{ type: 'user', id: 'u1', text: '/clear', at }]);
-    expect(events(user('<command-name>/model</command-name><command-args> opus </command-args>'))).toEqual([{ type: 'user', id: 'u1', text: '/model opus', at }]);
+    expect(events(user('<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>'))).toEqual([{ type: 'user', id: 'u1', text: '/clear', at, command: true }]);
+    expect(events(user('<command-name>/model</command-name><command-args> opus </command-args>'))).toEqual([{ type: 'user', id: 'u1', text: '/model opus', at, command: true }]);
   });
 
   it('! のコマンドは、コマンドの行と出力の行に分けて出す（前の Claude Code の 1 行の形も読む）', () => {
@@ -614,7 +614,7 @@ describe('toChatEvents: uuid の無い行', () => {
     expect(plain(checklistEventText([], '知らせ'))).toMatchObject({ type: 'notice', id: '' });
     expect(plain('<bash-input>ls</bash-input>')).toMatchObject({ type: 'shell', id: '' });
     expect(plain('<task-notification><summary>済み</summary></task-notification>')).toEqual({ type: 'notice', id: '', text: '済み' });
-    expect(plain('<command-name>/clear</command-name>')).toEqual({ type: 'user', id: '', text: '/clear', at: undefined });
+    expect(plain('<command-name>/clear</command-name>')).toEqual({ type: 'user', id: '', text: '/clear', at: undefined, command: true });
     expect(plain('発言')).toEqual({ type: 'user', id: '', text: '発言', at: undefined });
   });
 });

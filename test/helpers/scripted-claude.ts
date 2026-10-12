@@ -153,8 +153,6 @@ export type ScriptedOptions = {
   walkthroughMcp?: () => McpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（無ければ既定のプロファイル）
   claudeDir?: string | null;
-  // 最適化圧縮で指示の文を作るもの（無ければ本物。Haiku を呼ぶ）
-  optimize?: ConstructorParameters<typeof SessionManager>[13];
 };
 
 // SessionManager と、それが配信したもの
@@ -229,7 +227,6 @@ export class ScriptedApp {
       options.checklistMcp,
       options.walkthroughMcp,
       options.claudeDir ?? null,
-      options.optimize,
     );
     this.claudeDir = options.claudeDir ?? null;
   }
