@@ -81,6 +81,7 @@ function currentConversation(events: ChatEvent[]): ChatEvent[] {
 // 前の再開の文（今の会話に残っている再開の知らせの全文）の、発言の原文のところ。無ければ null
 function carriedSection(event: ChatEvent): string | null {
   if (event.type !== 'notice' || event.compact !== 'resume' || !event.detail) return null;
+  // 見出しは 1 つだけ（中に入れる文の、見出しと同じ文は打ち消してある。inertHead）
   const at = event.detail.indexOf(MESSAGES_HEAD.join('\n'));
   return at === -1 ? null : event.detail.slice(at);
 }
@@ -182,7 +183,7 @@ function cardsSection(live: Checklist[]): string {
 
 function cardText(card: Card, withBody: boolean): string {
   const title = `## #${card.number} ${line(card.title, 300)}`;
-  const body = neutralizeTags(card.body).trim();
+  const body = inert(card.body).trim();
   if (!body) return title;
   if (!withBody) return `${title}\n(body not shown; read it with card_get)`;
   return `${title}\n${body.length > CARD_BODY_CHARS ? `${body.slice(0, CARD_BODY_CHARS)}… (cut; read the rest with card_get)` : body}`;
@@ -209,7 +210,8 @@ function messagesSection(messages: CarriedMessage[], omittedBefore: number): str
   let used = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const { text, fromParent } = messages[i];
-    const body = shorten(neutralizeTags(text).replaceAll('</user-message', '＜/user-message').trim(), MESSAGE_CHARS);
+    // 発言の中の閉じタグでは、発言の囲みを閉じさせない。見出しと同じ文も、次の切り替えで見出しと取り違えないよう打ち消す
+    const body = shorten(inertHead(neutralizeTags(text)).replaceAll('</user-message', '＜/user-message').trim(), MESSAGE_CHARS);
     const entry = `<user-message${fromParent ? FROM_PARENT : ''}>\n${body}\n</user-message>`;
     // いちばん新しい発言は、上限を超えても入れる
     if (chosen.length > 0 && used + entry.length > MESSAGES_CHARS) break;
@@ -240,13 +242,25 @@ function shorten(text: string, max: number): string {
   return `${text.slice(0, head)}\n[… ${text.length - max} characters cut …]\n${text.slice(text.length - (max - head))}`;
 }
 
+// 発言の原文の見出しと同じ文を、見出しとして読めなくする（# を全角にする）。再開の文の中に、本物の見出しを 1 つだけにする
+function inertHead(text: string): string {
+  return text.replaceAll(MESSAGES_HEAD[0], `＃${MESSAGES_HEAD[0].slice(1)}`);
+}
+
+// 発言でないところ（カードの題名と本文・リストの名前と説明・タスクの名前）に入れる文。人や別のセッション、Claude が写したページの文が入る。
+// 目印の囲み（<tanacode-…>）のほか、発言の囲み（<user-message>）と見出しも打ち消す。打ち消さないと、次の切り替えで
+// 前の再開の文から発言を取り出すときに、カードに書かれた文が「ユーザーの発言の原文」として引き継がれる
+function inert(text: string): string {
+  return inertHead(neutralizeTags(text)).replace(/<(\/?)(user-message)/gi, '＜$1$2');
+}
+
 function clipEnd(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 20)}\n… (cut)` : text;
 }
 
 // 人や別のセッションが書いたもの（リストの名前・題名・タスクの名前）を 1 行にして、囲みを閉じるタグを効かなくする
 function line(text: string, max: number): string {
-  const flat = neutralizeTags(text).replace(/\s+/g, ' ').trim();
+  const flat = inert(text).replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
