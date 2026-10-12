@@ -746,6 +746,7 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     "mcp__tanacode-sessions__wait_sessions",
     "mcp__tanacode-sessions__send_message",
     "mcp__tanacode-sessions__answer_question",
+    "mcp__tanacode-sessions__answer_permission",
     "mcp__tanacode-sessions__end_session",
   ],
   "tools": [
@@ -935,6 +936,37 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
       "kind": "instruct",
       "label": "子セッションの質問に答える",
       "name": "answer_question",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "allow",
+              "deny",
+            ],
+            "type": "string",
+          },
+          "permission_id": {
+            "type": "string",
+          },
+          "reason": {
+            "type": "string",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+          "permission_id",
+          "decision",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "子セッションの許可の確認に答える",
+      "name": "answer_permission",
     },
     {
       "inputSchema": {

@@ -22,7 +22,10 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。
 // browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる（browser-gate.ts）。
 // permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）。
-// sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
+// sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）。
+// 許可の確認を出す直前（PermissionRequest）に、そのツールの名前と入力の全文をセッションごとのファイルに書かせる。
+// 親の Claude が子の許可の確認に答える（sessions-control.ts の answer_permission）とき、画面に収まらない部分まで読ませるため。
+// フックは書くだけで、何も決めない（確認は今までどおり出る）。ファイルの名前は、質問のファイルの名前から作る
 // checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
@@ -44,6 +47,7 @@ export function ownSettings(inner: string | null, browser = false, sessions = fa
         ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
         ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] }] : []),
       ],
+      ...(sessions ? { PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }] } : {}),
       ...(checklist ? checklistHooks() : {}),
     },
     ...(excludes.length > 0 ? { claudeMdExcludes: excludes } : {}),
@@ -113,8 +117,13 @@ export function parseStatusLine(text: string, updatedAt: number): StatusLineInfo
 }
 
 const ASK_SUFFIX = '.ask.json';
+const PERMISSION_SUFFIX = '.permission.json';
 
 // セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、AskUserQuestion の入力のファイル（<dir>/<セッション ID>.ask.json）を見張る
+// 許可の確認の入力を書かせるフックのコマンド。質問のファイル（<id>.ask.json）と同じフォルダの <id>.permission.json に書く
+// （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
+export const PERMISSION_FILE_COMMAND = `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${PERMISSION_SUFFIX}"`;
+
 export class StatusLineWatcher {
   private watcher: FSWatcher | null = null;
   private readonly timers = new Map<string, NodeJS.Timeout>();
@@ -124,6 +133,8 @@ export class StatusLineWatcher {
     private readonly onChange: (sessionId: string, info: StatusLineInfo) => void,
     // input: AskUserQuestion の tool_input（質問の一覧）
     private readonly onAsk: (sessionId: string, input: unknown) => void = () => {},
+    // request: PermissionRequest のフックの入力（tool_name・tool_input・agent_type）/ at: ファイルが書かれた時刻
+    private readonly onPermission: (sessionId: string, request: unknown, at: number) => void = () => {},
   ) {}
 
   fileFor(sessionId: string): string {
@@ -134,6 +145,10 @@ export class StatusLineWatcher {
     return join(this.dir, `${sessionId}${ASK_SUFFIX}`);
   }
 
+  permissionFileFor(sessionId: string): string {
+    return join(this.dir, `${sessionId}${PERMISSION_SUFFIX}`);
+  }
+
   async start(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     this.watcher = watch(this.dir, (_event, name) => {
@@ -142,6 +157,13 @@ export class StatusLineWatcher {
         clearTimeout(this.timers.get(name));
         // 質問はすぐ画面に出るので、待つのは書き終わるまでの短い間だけ
         this.timers.set(name, setTimeout(() => void this.readAsk(sessionId), 50));
+        return;
+      }
+      if (name?.endsWith(PERMISSION_SUFFIX)) {
+        const sessionId = basename(name, PERMISSION_SUFFIX);
+        clearTimeout(this.timers.get(name));
+        // 確認はすぐ画面に出るので、待つのは書き終わるまでの短い間だけ
+        this.timers.set(name, setTimeout(() => void this.readPermission(sessionId), 50));
         return;
       }
       if (!name?.endsWith('.json')) return;
@@ -171,6 +193,17 @@ export class StatusLineWatcher {
     if (!text) return;
     try {
       this.onAsk(sessionId, (JSON.parse(text) as { tool_input?: unknown }).tool_input);
+    } catch {
+      // 書き込みの途中。次の変更で読み直す
+    }
+  }
+
+  private async readPermission(sessionId: string): Promise<void> {
+    const file = this.permissionFileFor(sessionId);
+    const [text, at] = await Promise.all([readFile(file, 'utf8').catch(() => null), stat(file).then((s) => s.mtimeMs, () => null)]);
+    if (!text || at === null) return;
+    try {
+      this.onPermission(sessionId, JSON.parse(text), at);
     } catch {
       // 書き込みの途中。次の変更で読み直す
     }

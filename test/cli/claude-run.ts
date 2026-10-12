@@ -342,6 +342,7 @@ export class ClaudeRun {
       statusDir,
       (id, info) => live() && manager.statusLineChanged(id, info),
       (id, input) => live() && manager.askQuestionsChanged(id, input),
+      (id, request, at) => live() && manager.permissionRequested(id, request, at),
     );
     const watchers = new WorkspaceWatchers(() => {});
     const store = new SessionStore(join(this.userData, 'sessions.json'));

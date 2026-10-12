@@ -369,6 +369,7 @@
       "start_session": "Start Session",
       "send_message": "Send to Child Session",
       "answer_question": "Answer Child's Question",
+      "answer_permission": "Answer Child's Permission Prompt",
       "stop_session": "Interrupt Child Session",
       "end_session": "End Child Session"
     },
@@ -403,7 +404,7 @@
     "notice": {
       "untitledSession": "New Session",
       "childQuestion": "Child session “{name}” ({id}) is waiting for an answer to its question (you can answer it with answer_question).",
-      "childPermission": "Child session “{name}” ({id}) is waiting for permission. Only the user can respond to permission prompts, so let them know.",
+      "childPermission": "Child session “{name}” ({id}) is waiting for permission. Read the prompt with get_session and answer it with answer_permission, or ask the user if you can't decide.",
       "childWaiting": "Child session “{name}” ({id}) is waiting for input in the terminal. Let the user know.",
       "childExited": "Child session “{name}” ({id}) has exited.",
       "childDone": "Child session “{name}” ({id}) has finished its work.",

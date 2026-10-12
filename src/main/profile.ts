@@ -112,6 +112,7 @@ export class Profile {
         this.usage.fromStatusLine(info);
       },
       (id, input) => this.manager.askQuestionsChanged(id, input),
+      (id, request, at) => this.manager.permissionRequested(id, request, at),
     );
     // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせたファイルは session-settings に置く
     this.settingsFiles = new SettingsFiles(this.settings, join(dataDir, 'session-settings'), (files) => send(IpcChannel.SettingsFilesChanged, files), claudeDir);

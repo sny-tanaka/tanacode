@@ -367,6 +367,7 @@
       "start_session": "セッションを始める",
       "send_message": "子セッションに指示",
       "answer_question": "子セッションの質問に答える",
+      "answer_permission": "子セッションの許可の確認に答える",
       "stop_session": "子セッションを中断",
       "end_session": "子セッションを終える"
     },
@@ -399,7 +400,7 @@
     "notice": {
       "untitledSession": "新しいセッション",
       "childQuestion": "子セッション「{name}」（{id}）が質問への回答を待っています（answer_question で答えられます）。",
-      "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。許可の確認には人だけが答えるので、人に伝えてください。",
+      "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。get_session で中身を読み、answer_permission で答えるか、判断できなければ人に聞いてください。",
       "childWaiting": "子セッション「{name}」（{id}）がターミナルでの操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
       "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
