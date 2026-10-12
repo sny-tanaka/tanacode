@@ -4,6 +4,7 @@
 # そのボタンが効かなくなっても、テストが気づかないもの。
 # 時間がかかるので、PR では流さず、週 1 回の定期実行と手動の実行だけ。スコアの下限はまだ設けない（生き残りがあっても失敗にしない）。
 # 結果の要約（ファイルごとのスコアと生き残りの数・生き残りの一覧）はジョブの概要に、詳しい結果（mutation.json）は artifact に残す。
+# 結果は流している間も 30 秒ごとに書き直されるので、途中で打ち切られても、そこまでの分が残る（要約に「途中の結果です」と出る）。
 # 単体テストは OS に依らないので ubuntu で流す
 name: mutation
 
@@ -26,7 +27,8 @@ permissions:
 jobs:
   mutation:
     runs-on: ubuntu-latest
-    # 既定の対象で 35 分ほど（同時に 2）。画面の操作は 1 分かからない
+    # 既定の対象で 40 分ほどの見込み（同時に 8）。画面の操作は 1 分かからない。
+    # 上限に届く前に、npm run mutation が自分で止まる（--time-limit）。ここの上限は、それも効かなかったときのためのもの
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -38,8 +40,10 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      # 対象は、手動の実行で指定したもの（無ければ scripts/mutation.mjs の既定の対象）
-      - run: npm run mutation -- $TARGETS
+      # 対象は、手動の実行で指定したもの（無ければ scripts/mutation.mjs の既定の対象）。
+      # --concurrency 8: ランナーは 4 コアだが、時間のほとんどは、テストが実時間で待つ分（CPU はほとんど使わない）なので、コアの数より多く並べる。
+      # --time-limit 90: 90 分を過ぎたら、残りを流さずに、そこまでの結果を書いて失敗で終わる（ジョブの上限で打ち切られる前に、自分で止まる）
+      - run: npm run mutation -- --concurrency 8 --time-limit 90 $TARGETS
         env:
           TARGETS: ${{ inputs.targets }}
       # 画面の操作（ボタン・入力を効かなくする・押せなくする）。上が失敗しても流す
@@ -47,6 +51,14 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           TARGETS: ${{ inputs.ui_targets }}
+      # 要約をジョブの概要に出す。スクリプトではなくここで出すのは、ジョブの上限で打ち切られたときにも、途中の結果を出すため
+      # （打ち切りではスクリプトに合図が届かないが、if: always() の手順は動く）
+      - name: 要約をジョブの概要に出す
+        if: always()
+        run: |
+          for file in reports/mutation/summary.md reports/mutation-ui/summary.md; do
+            if [ -f "$file" ]; then cat "$file" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
       - name: 結果を残す
         if: always()
         uses: actions/upload-artifact@v7
