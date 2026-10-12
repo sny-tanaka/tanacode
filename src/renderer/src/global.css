@@ -1324,10 +1324,6 @@ body.resizing-rows {
   display: flex;
   align-items: center;
 }
-/* 最適化圧縮のときは、アイコンを送信のボタンと同じ色にして見分ける */
-.compact-button.optimized .icon-button:not(:disabled) {
-  color: var(--send-fg);
-}
 .compact-mode-toggle {
   width: 14px;
   height: 26px;
@@ -1374,6 +1370,12 @@ body.resizing-rows {
 .compact-menu-item:focus-visible {
   background: var(--bg-selected);
   color: var(--text-heading);
+}
+.compact-menu-icon {
+  flex: none;
+  display: flex;
+  margin-top: 1px;
+  color: var(--text-secondary);
 }
 .compact-menu-text {
   min-width: 0;

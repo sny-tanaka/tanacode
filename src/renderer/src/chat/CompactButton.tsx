@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
-import { CheckIcon, ChevronDownIcon, CompressIcon, IconButton } from '../icons';
+import { CheckIcon, ChevronDownIcon, CompressIcon, IconButton, OptimizedCompressIcon } from '../icons';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 
 // 圧縮のしかた。plain: /compact をそのまま送る / optimized: Haiku に残すもの・捨てるものを選ばせてから送る（最適化圧縮）
@@ -68,8 +68,8 @@ export function CompactButton({
   const tip = optimizing ? t('chat.pane.optimizing') : mode === 'optimized' ? t('chat.pane.compactOptimizedTip') : t('chat.pane.compactTip');
 
   return (
-    <div className={`compact-button${mode === 'optimized' ? ' optimized' : ''}`} ref={ref}>
-      <IconButton size="md" icon={CompressIcon} label={name} tip={tip} busy={compacting || optimizing} disabled={!canCompact} onClick={onCompact} />
+    <div className="compact-button" ref={ref}>
+      <IconButton size="md" icon={mode === 'optimized' ? OptimizedCompressIcon : CompressIcon} label={name} tip={tip} busy={compacting || optimizing} disabled={!canCompact} onClick={onCompact} />
       <button
         type="button"
         className="compact-mode-toggle"
@@ -85,6 +85,7 @@ export function CompactButton({
         <div className="compact-menu" role="menu" aria-label={t('chat.pane.compactMode')}>
           {MODES.map((m) => (
             <button key={m} role="menuitemradio" aria-checked={m === mode} className="compact-menu-item" onClick={() => pick(m)}>
+              <span className="compact-menu-icon">{m === 'optimized' ? <OptimizedCompressIcon size={14} /> : <CompressIcon size={14} />}</span>
               <span className="compact-menu-text">
                 <span className="compact-menu-name">{m === 'optimized' ? t('chat.pane.compactModeOptimized') : t('chat.pane.compactModePlain')}</span>
                 <span className="compact-menu-desc">{m === 'optimized' ? t('chat.pane.compactModeOptimizedDesc') : t('chat.pane.compactModePlainDesc')}</span>

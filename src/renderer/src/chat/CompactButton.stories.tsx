@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
 import { CompactButton, type CompactMode } from './CompactButton';
 
-// チャットのヘッダーの「圧縮」。右の ▾ で通常圧縮と最適化圧縮を切り替える。最適化圧縮のときはアイコンの色を変える。
+// チャットのヘッダーの「圧縮」。右の ▾ で通常圧縮と最適化圧縮を切り替える。最適化圧縮のときは、右上にきらめきの付いたアイコンにする。
 // 押すと、最適化圧縮は Haiku が選ぶ間（ここでは 2 秒）、通常圧縮とどちらも圧縮が終わるまで（ここでは 2 秒）ぐるぐるを出す
 function Demo({ initial }: { initial: CompactMode }) {
   const [mode, setMode] = useState<CompactMode>(initial);
