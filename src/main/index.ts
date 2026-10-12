@@ -584,14 +584,7 @@ function registerIpc(): void {
     p.browser.forget(id);
   });
   handle(IpcChannel.SessionsOpen, (e, id: string) => P(e).manager.open(id));
-  handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => {
-    const p = P(e);
-    // 子セッションも一緒にアーカイブされる
-    for (const target of [id, ...p.manager.childrenOf(id)]) p.browser.forget(target);
-    // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
-    if (options?.removeWorktree) p.shells.killOwner(id);
-    return p.manager.archive(id, options);
-  });
+  handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => P(e).archiveSession(id, options));
   handle(IpcChannel.SessionsWorktreeLeftovers, (e, id: string) => P(e).manager.worktreeLeftovers(id));
   handle(IpcChannel.SessionsUnarchive, (e, id: string) => P(e).manager.unarchive(id));
   handle(IpcChannel.SessionsSnapshot, (e, id: string) => P(e).manager.snapshot(id));

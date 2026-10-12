@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { app, type Session, type WebContents } from 'electron';
-import { IpcChannel, type IpcEvent } from '@shared/ipc';
+import { IpcChannel, type ArchiveOptions, type IpcEvent, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
 import type { AppSettings } from './app-settings';
@@ -201,7 +201,12 @@ export class Profile {
       this.claudeDir,
     );
     const manager = this.manager;
-    this.sessionsControl = new SessionsControl({ host: manager, enabled: () => this.settings.sessionsControlEnabled(), home: homedir() });
+    this.sessionsControl = new SessionsControl({
+      host: manager,
+      enabled: () => this.settings.sessionsControlEnabled(),
+      archive: (id, options) => this.archiveSession(id, options),
+      home: homedir(),
+    });
     // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
     this.scheduled = new ScheduledMessages(
       join(dataDir, 'scheduled-messages.json'),
@@ -272,6 +277,15 @@ export class Profile {
   private walkthroughLaunch(): McpLaunch | null {
     if (!this.walkthroughBridge || !this.settings.walkthroughControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: this.walkthroughBridge.socketPath, version: app.getVersion() };
+  }
+
+  // セッションをアーカイブする。画面からのアーカイブも、親の Claude の end_session（sessions-control.ts）も、ここを通る
+  archiveSession(id: string, options?: ArchiveOptions): Promise<WorktreeRemoval | null> {
+    // 子セッションも一緒にアーカイブされる
+    for (const target of [id, ...this.manager.childrenOf(id)]) this.browser.forget(target);
+    // worktree を消すときは、そのフォルダで開いたシェルも閉じる（消したフォルダに残らないように）
+    if (options?.removeWorktree) this.shells.killOwner(id);
+    return this.manager.archive(id, options);
   }
 
   // Claude Code と pty ホストを止める（「Claude Code も止めて終了」など）

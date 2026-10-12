@@ -86,7 +86,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'wait_sessions',
     kind: 'read',
     description:
-      'Waits until one of the child sessions is free (it finishes its work, waits for the user on a question or permission prompt, or exits), then returns the states of the target children. A child that has finished its turn and is waiting for background tasks also counts as free. Without session_ids, all working children are targets. Returns immediately if a target child is already free.',
+      'Waits until one of the child sessions is free (it finishes its work, waits for the user on a question or permission prompt, or exits), then returns the states of the target children. A child that has finished its turn and is waiting for background tasks also counts as free. Without session_ids, all working children are targets. Returns immediately if a target child is already free. While it waits, the messages of the user do not reach you, so pass a short timeout_seconds (a few seconds to look at the states, at most about a minute); do not use it to sit and wait for children that will take long.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -100,7 +100,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'start_session',
     kind: 'act',
     description:
-      "Starts a session and sends it the first instruction. By default it is a child session: it appears in the list under this session, the user can open it at any time to instruct it or answer its questions, and you manage it (send_message, wait_sessions). With independent: true it is an independent session instead: an ordinary top-level session next to this one, which the user runs. The conversation can continue after the work is done. Each start asks the user for permission. Started sessions also use the user's Claude usage limits (each one adds to the usage). A started session, child or independent, keeps the Remote Control setting of this session (on if it is on here). A child cannot start sessions. Returns without waiting for the start to finish; wait for a child's result with wait_sessions. After you start a child, check on it from this session at regular intervals until it is done (wait_sessions, get_session): a child can finish, or stop on a question or a permission prompt, without the notice reaching you, so never wait for the notice alone.",
+      "Starts a session and sends it the first instruction. By default it is a child session: it appears in the list under this session, the user can open it at any time to instruct it or answer its questions, and you manage it (send_message, wait_sessions, end_session). With independent: true it is an independent session instead: an ordinary top-level session next to this one, which the user runs. The conversation can continue after the work is done. Each start asks the user for permission. Started sessions also use the user's Claude usage limits (each one adds to the usage). A started session, child or independent, keeps the Remote Control setting of this session (on if it is on here). A child cannot start sessions. Returns without waiting for the start to finish; wait for a child's result with wait_sessions. After you start a child, check on it from this session at regular intervals until it is done (get_session): a child can finish, or stop on a question or a permission prompt, without the notice reaching you, so never wait for the notice alone. Do not wait for it synchronously either: end your turn and come back with a background timer, so that the user can talk to you in the meantime. When a child has done its job, end it with end_session.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -169,10 +169,29 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     description: "Interrupts a child session's work (the same as Esc). Cannot interrupt while a question or permission prompt is showing (the user answers it).",
     inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
   },
+  {
+    name: 'end_session',
+    // 片付けは人の確認なしに（アーカイブは一覧から戻せ、worktree を消しても未コミットの変更の控えと、手元にしか無いコミットのあるブランチが残るので、失うものが無い）
+    kind: 'instruct',
+    description:
+      "Ends a child session that has done its job: archives it (Claude Code stops, and it leaves the session list) and, by default, removes its worktree. Use it when the child's work is no longer needed (its pull request was merged, or the user said so) and you have checked its result; never end a child whose result you have not checked. Nothing is lost: the user can restore an archived session from the session list, uncommitted changes in the worktree are saved as a commit under refs/tanacode/backup/, and a branch with commits that exist only locally is kept. Only works on a child that is idle, exited, or waiting for background tasks (those tasks are stopped with Claude Code; processes the child detached from Claude Code, such as with nohup or open, keep running, so have the child stop them first). A child that is starting, working, or waiting on a question, a permission prompt or its terminal is refused. Calling it again on an archived child removes a worktree that is still left. Returns what was done and what was kept.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: sessionId,
+        remove_worktree: {
+          type: 'boolean',
+          description: 'Whether to also remove the worktree (folder and branch) of a child started with worktree: true (default true). Ignored for a child without a worktree. Pass false to keep the folder, for example when the user still wants to look at it',
+        },
+      },
+      required: ['session_id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // 子セッションを動かす・セッションを始めるツール。子セッション（孫も、独立したセッションも作れない）には見せない
-const PARENT_ONLY = new Set(['wait_sessions', 'start_session', 'send_message', 'answer_question', 'stop_session']);
+const PARENT_ONLY = new Set(['wait_sessions', 'start_session', 'send_message', 'answer_question', 'stop_session', 'end_session']);
 
 // 親から子へ送る指示の囲み。子のチャットでは「親セッションからの指示」として、人の発言と見分けて出す。
 // 独立したセッション（start_session の independent）の最初の指示も、起動したセッションの ID を入れてこの囲みで送る
@@ -192,8 +211,10 @@ const PARENT_INSTRUCTIONS = [
   '- The user can also open a child at any time and instruct it directly. read_session marks the instructions the user gave a child, so check whether the plan has changed.',
   "- You can answer a child's questions (AskUserQuestion) with answer_question. You cannot answer permission prompts (the user does).",
   `- When a child finishes its work, or waits for an answer or for the user, a notice arrives as <${SESSION_EVENT_TAG}>, even if you are not waiting for it.`,
-  '- Do not rely on that notice alone: it is sent only while you are idle, and it can be missed. While children are working, check on them yourself: at every break in your own work, and, when you have nothing else to do, wait with wait_sessions (call it again when it times out) instead of ending your turn and waiting for the notice.',
+  '- Do not rely on that notice alone: it is sent only while you are idle, and it can be missed. While children are working, check on them yourself at regular intervals with get_session (it returns at once), and at every break in your own work.',
+  '- Never wait for children synchronously. While a tool call such as a long wait_sessions is running, the messages of the user do not reach you, so the user cannot talk to you. When you have nothing else to do, end your turn (tell the user in one line that the children are still working and when you will look again), and wake yourself to check: start a timer as a background command (for example `sleep 300` run in the background), look at the children with get_session when it finishes, and start the next timer until they are done.',
   "- Child sessions do not notify the user. Answer the children's questions yourself when you can. When a child waits for permission or for an operation in its terminal (only the user can do these), tell the user.",
+  "- Clean up after your children. When a child has done its job (its pull request was merged, or the user said it is no longer needed), end it with end_session: it archives the child and removes its worktree, so that neither Claude Code nor the worktree is left behind. Never end a child whose result you have not checked, and when you are not sure it is still needed, ask the user. Nothing is lost by ending one (the user can restore it from the session list), so do not ask for confirmation otherwise.",
   '- When the user asks you to open a new or separate session for them (for example, from Remote Control, where they cannot open one themselves), start it with start_session and independent: true. It is not a child: the user runs it, and you do not manage it.',
 ];
 const COMMON_INSTRUCTIONS = [
