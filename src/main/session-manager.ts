@@ -150,6 +150,8 @@ type Runtime = {
   // 起動を待って送る発言の数と、送ってから発言が会話ログに出るまでの時刻（ツールで返す状態で、作業中として扱う）
   pendingSubmits: number;
   submittedAt: number | null;
+  // 手が空くのを待っている送信（submitWhenReady）の列。待ち始めた順。先頭だけが打てる（送った順に届ける）
+  submitQueue: symbol[];
   // チェックリストの MCP サーバーを足して起動したか（引き継いだ claude は分からないので null）
   checklistMcp: boolean | null;
   // 打ち込んだ最適化圧縮の文（仕上げの頼み・再開の文。空白を除く）。応答が始まるまで覚えておき、応答の前に中断されて
@@ -902,6 +904,7 @@ export class SessionManager {
   // 作業中の Claude Code に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になってしまうことがある。
   // 手が空いていれば、新しい確認が急に出ることはない（ツールを使うには、まず応答が要る）。
   // 待っている間も、ツールで返す状態は作業中にする。待ちきれない・終わったときは、理由を添えて失敗する。
+  // 待っている送信がいくつもあるときは、待ち始めた順に 1 つずつ打つ（続けて送った指示が、入れ替わって届かないように）。
   // attachments: 画像のパス・pastes: 入力欄の札（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し。打ち込み始めたあとは止めない）
   async submitWhenReady(
     id: string,
@@ -913,6 +916,8 @@ export class SessionManager {
     const process = rt?.process;
     if (!rt || !process) throw new Error(t('main.send.notRunning'));
     rt.pendingSubmits += 1;
+    const ticket = Symbol('submit');
+    rt.submitQueue.push(ticket);
     this.changed(id);
     try {
       const deadline = Date.now() + timeoutMs;
@@ -921,7 +926,9 @@ export class SessionManager {
         if (signal?.aborted) throw new Error(t('main.send.cancelled'));
         // 直前に送ったもの（まだ会話ログに出ていない）があれば、それが終わるまで待つ
         const sending = rt.submittedAt !== null && Date.now() - rt.submittedAt < SUBMIT_GRACE_MS;
-        if (acceptsTyping(rt) && !sending) break;
+        // 先に待ち始めた送信があれば、それが打ち終わる（か、待つのをやめる）まで待つ。それぞれが別々に手が空くのを見ているので、
+        // 順番を決めておかないと、手が空いた瞬間に先に見たほうが打ち、あとから送った指示が先に届く
+        if (rt.submitQueue[0] === ticket && acceptsTyping(rt) && !sending) break;
         if (Date.now() > deadline) {
           const screen = rt.screen?.current;
           if (screen?.state.kind === 'menu') throw new Error(t('main.send.waitingAnswer'));
@@ -934,6 +941,7 @@ export class SessionManager {
       rt.submittedAt = Date.now();
       await this.submit(id, text, attachments, true, pastes);
     } finally {
+      rt.submitQueue.splice(rt.submitQueue.indexOf(ticket), 1);
       rt.pendingSubmits -= 1;
       this.changed(id);
     }
@@ -1112,6 +1120,7 @@ export class SessionManager {
         pulledBack: null,
         pendingSubmits: 0,
         submittedAt: null,
+        submitQueue: [],
         checklistMcp: null,
         compactTyped: null,
       };

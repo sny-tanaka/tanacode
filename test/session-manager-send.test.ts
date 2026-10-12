@@ -212,6 +212,49 @@ describe('submitWhenReady', () => {
     expect(pty.typed).toBe('ひとつめ\rふたつめ\r');
   });
 
+  it('待っている送信がいくつもあるときは、待ち始めた順に 1 つずつ送る（あとから送ったものが、先に届かない）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    echo(pty);
+    app.append(id, line.user('はじめ'));
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    // 手が空くのを見る間隔（200 ミリ秒）の中で、2 つめが先に見る順になるよう、ずらして待ち始める
+    // （1 つめは 200・400 ミリ秒…、2 つめは 150 ミリ秒遅れて 350・550 ミリ秒… に見る）
+    const first = app.manager.submitWhenReady(id, 'ひとつめ', 10_000);
+    await sleep(150);
+    const second = app.manager.submitWhenReady(id, 'ふたつめ', 10_000);
+    // 1 つめが見た直後（200 ミリ秒）に、手が空く。次に見るのは 2 つめ（350 ミリ秒）
+    await sleep(70);
+    app.append(id, line.text('はい'), line.turnEnd());
+    await app.waitFor('はじめの送信', () => pty.typed.endsWith('\r'));
+    expect(pty.typed).toBe('ひとつめ\r');
+    await first;
+    // 1 つめのターンが終わってから、2 つめを送る
+    await sleep(400);
+    expect(pty.typed).toBe('ひとつめ\r');
+    app.append(id, line.user('ひとつめ'), line.text('はい'), line.turnEnd());
+    await second;
+    expect(pty.typed).toBe('ひとつめ\rふたつめ\r');
+  });
+
+  it('先に待ち始めた送信が、待つのをやめたら（取りやめ・時間切れ）、次の送信が送られる', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    echo(pty);
+    app.append(id, line.user('はじめ'));
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    const controller = new AbortController();
+    const cancelled = app.manager.submitWhenReady(id, 'やめる', 10_000, { signal: controller.signal });
+    const timedOut = app.manager.submitWhenReady(id, '間に合わない', 300);
+    const last = app.manager.submitWhenReady(id, 'のこり', 10_000);
+    controller.abort();
+    await expect(cancelled).rejects.toThrow('送るのを取りやめました');
+    await expect(timedOut).rejects.toThrow('Claude Code の手が空かないため、送れませんでした');
+    app.append(id, line.text('はい'), line.turnEnd());
+    await last;
+    expect(pty.typed).toBe('のこり\r');
+  });
+
   it('動いていないセッションには送れない', async () => {
     await expect(app.manager.submitWhenReady('nope', 'x', 1000)).rejects.toThrow('Claude Code が動いていません');
     const { id, pty } = app.create();
