@@ -314,7 +314,6 @@ function attachView(id: string): void {
   setupAppContents(view.webContents, id);
   views.set(id, view);
   mainWindow.contentView.addChildView(view);
-  view.setVisible(id === activeId);
   layoutViews();
   loadApp(view.webContents);
 }
@@ -323,21 +322,50 @@ function detachView(id: string): void {
   const view = views.get(id);
   if (!view) return;
   views.delete(id);
+  drawn.delete(id);
   mainWindow?.contentView.removeChildView(view);
   view.webContents.close();
 }
 
+// 足したプロファイルの画面の出し方を決め直す。見ているプロファイルのものだけを、ウインドウいっぱいに出す。
+// 見ていないもののうち、Claude がアプリ内ブラウザを操作する間だけ描かせるもの（drawn）は、表示にして、ウインドウの右下の隅に 1px だけ残して置く
+// （大きさはそのまま。ウインドウの外へ出しきると、描かれない。全体を重ねると、見ている画面を覆ってしまう）
 function layoutViews(): void {
   if (!mainWindow) return;
   const { width, height } = mainWindow.getContentBounds();
-  for (const view of views.values()) view.setBounds({ x: 0, y: 0, width, height });
+  for (const [id, view] of views) {
+    const drawnAside = id !== activeId && drawn.has(id);
+    view.setBounds(drawnAside ? { x: width - 1, y: height - 1, width, height } : { x: 0, y: 0, width, height });
+    view.setVisible(id === activeId || drawnAside);
+  }
+}
+
+// Claude がアプリ内ブラウザを操作する間だけ描かせている、見ていないプロファイルの画面と、頼んでいる数
+const drawn = new Map<string, number>();
+
+// プロファイルの画面を、描かれる状態にする（戻す関数を返す）。Claude がアプリ内ブラウザのツールを動かす間だけ頼む（browser-control.ts の drawHost）。
+// 非表示の画面の中のタブ（webview）は、置き場所が決まらず、撮っても返ってこない（Chromium が、その画面を描かないため）。
+// 既定のプロファイルの画面はウインドウ自身で、いつも描かれているので、何もしない
+function drawView(id: string): () => void {
+  if (!views.has(id)) return () => {};
+  drawn.set(id, (drawn.get(id) ?? 0) + 1);
+  layoutViews();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (drawn.get(id) ?? 1) - 1;
+    if (left > 0) drawn.set(id, left);
+    else drawn.delete(id);
+    layoutViews();
+  };
 }
 
 // 見るプロファイルを変える。足したプロファイルの画面を出し入れし、メニュー（プロファイルごとの設定）も作り直す
 function showProfile(id: string): void {
   if (!opened.has(id)) return;
   activeId = id;
-  for (const [viewId, view] of views) view.setVisible(viewId === id);
+  layoutViews();
   // 既定のプロファイルの画面はウインドウ自身なので、ウインドウが前に出れば入力を受ける
   if (id !== DEFAULT_PROFILE_ID) views.get(id)?.webContents.focus();
   buildMenu();
@@ -457,6 +485,7 @@ async function openProfile(info: ProfileInfo): Promise<Profile> {
     settings: isDefault ? settings : new AppSettings(join(dataDir, 'settings.json')),
     send: sendTo(info.id),
     host: () => contentsOf(info.id),
+    drawHost: () => drawView(info.id),
     notify,
     preview: session.fromPartition(previewPartition(info.id)),
     remoteControl,

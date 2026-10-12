@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '../src/shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
 import { keySpec } from '../src/main/browser-control';
-import { FakeImage, images } from './helpers/fake-electron';
+import { FakeImage, HOST, images } from './helpers/fake-electron';
 import { addChildFrame, answerCdp, logConsole, setup, textOf } from './helpers/browser-control';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
@@ -14,6 +14,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   images.buffers.length = 0;
   images.fromBuffer = new FakeImage(800, 2000, 'fullPage');
+  HOST.backgroundThrottling = true;
+  HOST.throttling.length = 0;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -104,6 +106,175 @@ describe('スクリーンショット', () => {
     expect(page.captures).toEqual([]);
   });
 
+  it('ツールを動かす間、アプリの画面を描かれる状態にする（非表示の画面を表示にさせ、backgroundThrottling を切って、終えたら戻す）。撮る間は、タブの分も切る', async () => {
+    // アプリの画面が隠れている扱い（見ていないプロファイルの画面・画面のロック）だと、タブの大きさが決まらず、撮っても返ってこない
+    const { call, open, state } = setup();
+    const page = open('http://localhost:3000/');
+    const during: unknown[][] = [];
+    page.capture = async () => {
+      during.push([page.backgroundThrottling, HOST.backgroundThrottling, [...state.draws]]);
+      return page.shot;
+    };
+    await call('screenshot');
+    page.page.locate = () => found({ x: 100, y: 50, width: 200, height: 40 });
+    await call('screenshot', { selector: '#go' });
+    expect(during).toEqual([
+      [false, false, ['頼む']],
+      [false, false, ['頼む', '戻す', '頼む']],
+    ]);
+    expect(page.throttling).toEqual([false, true, false, true]);
+    expect(HOST.throttling).toEqual([false, true, false, true]);
+    expect(state.draws).toEqual(['頼む', '戻す', '頼む', '戻す']);
+    // 撮らないツールでも、アプリの画面は描かせる（要素の位置を取るには、タブの大きさが決まっている必要がある）。タブの分は切らない
+    page.page.text = () => {
+      during.push([page.backgroundThrottling, HOST.backgroundThrottling, state.draws.length]);
+      return { title: 'ページ', url: 'http://localhost:3000/', parts: [{ frame: null, text: '本文' }] };
+    };
+    await call('get_text');
+    expect(during.at(-1)).toEqual([true, false, 5]);
+    expect(state.draws).toHaveLength(6);
+    expect(page.throttling).toHaveLength(4);
+    expect(HOST.throttling).toEqual([false, true, false, true, false, true]);
+    // ページ全体（CDP）も、撮る間はタブの分を切る
+    answerCdp(page, {
+      'Page.getLayoutMetrics': () => ({ cssContentSize: { width: 800, height: 900 }, cssLayoutViewport: { clientWidth: 800 } }),
+      'Page.captureScreenshot': () => {
+        during.push([page.backgroundThrottling, HOST.backgroundThrottling]);
+        return { data: '' };
+      },
+    });
+    await call('screenshot', { fullPage: true });
+    expect(during.at(-1)).toEqual([false, false]);
+    expect([page.backgroundThrottling, HOST.backgroundThrottling]).toEqual([true, true]);
+  });
+
+  it('タブの大きさが決まっていない（0）ときは、同じ大きさが 2 回続くまで待ってから撮る', async () => {
+    // アプリの画面を描かせ始めた直後は、タブの置き場所がまだ決まっていない。そのまま撮ると、空の絵や、途中の大きさの絵になる
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    const sizes = [
+      [0, 0],
+      [0, 0],
+      [471, 115],
+      [952, 851],
+      [952, 851],
+    ];
+    let asked = 0;
+    page.page.size = () => {
+      const [laidOutWidth, laidOutHeight] = sizes[Math.min(asked++, sizes.length - 1)];
+      return { laidOutWidth, laidOutHeight };
+    };
+    const capturedAfter: number[] = [];
+    page.capture = async () => {
+      capturedAfter.push(asked);
+      return page.shot;
+    };
+    expect((await call('screenshot')).isError).toBeFalsy();
+    expect(capturedAfter).toEqual([5]);
+    // 決まっているときは、1 回聞くだけで待たない。要素を探す前（selector）にも聞く
+    page.page.locate = () => found({ x: 100, y: 50, width: 200, height: 40 });
+    await call('screenshot', { selector: '#go' });
+    expect(capturedAfter).toEqual([5, 6]);
+    expect(page.scripts.map((s) => s.kind).slice(-3)).toEqual(['size', 'locate', 'viewport']);
+  });
+
+  it('待ってもタブの大きさが決まらなければ、そのまま進める', async () => {
+    const { control, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.page.size = () => ({ laidOutWidth: 0, laidOutHeight: 0 });
+    const pending = control.handle('S1', 'screenshot', {});
+    await vi.advanceTimersByTimeAsync(2_900);
+    expect(page.captures).toEqual([]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect((await pending).isError).toBeFalsy();
+    expect(page.captures).toHaveLength(1);
+  });
+
+  it('空の絵が返ったら、少しの間、撮り直す', async () => {
+    // 描かせ始めた直後は、まだ 1 枚も描かれていないことがある
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    let taken = 0;
+    page.capture = async () => (++taken < 3 ? new FakeImage(0, 0) : page.shot);
+    expect(textOf(await call('screenshot'))).toBe('Visible area, http://localhost:3000/, image 800×600');
+    expect(taken).toBe(3);
+  });
+
+  it('撮れなかったときも戻す。もともと切ってあるものには触れない', async () => {
+    const { call, open, state } = setup();
+    const page = open('http://localhost:3000/');
+    page.capture = async () => {
+      throw new Error('Current display surface not available for capture');
+    };
+    expect(await call('screenshot')).toEqual(textResult('Current display surface not available for capture', true));
+    expect(page.throttling).toEqual([false, true]);
+    expect(HOST.throttling).toEqual([false, true]);
+    expect(state.draws).toEqual(['頼む', '戻す']);
+    // アプリの画面は、もともと描かせ続ける設定だった
+    HOST.backgroundThrottling = false;
+    HOST.throttling.length = 0;
+    page.capture = async () => page.shot;
+    await call('screenshot');
+    expect(HOST.throttling).toEqual([]);
+    expect(HOST.backgroundThrottling).toBe(false);
+    expect(page.throttling).toEqual([false, true, false, true]);
+  });
+
+  it('同じ画面のタブを同時に撮っている間は、最後の 1 つが終わるまで戻さない', async () => {
+    const { control, open } = setup();
+    const first = open('http://localhost:3000/', { sessionId: 'S1' });
+    const second = open('http://localhost:3001/', { sessionId: 'S2' });
+    let finishFirst: () => void = () => {};
+    let finishSecond: () => void = () => {};
+    first.capture = () => new Promise((resolve) => (finishFirst = () => resolve(first.shot)));
+    second.capture = () => new Promise((resolve) => (finishSecond = () => resolve(second.shot)));
+    const a = control.handle('S1', 'screenshot', {});
+    const b = control.handle('S2', 'screenshot', {});
+    await vi.advanceTimersByTimeAsync(10);
+    expect(HOST.throttling).toEqual([false]);
+    finishFirst();
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await a).isError).toBeFalsy();
+    // 1 つめのタブは戻すが、アプリの画面は、2 つめが撮り終えるまで描かせ続ける
+    expect(first.throttling).toEqual([false, true]);
+    expect(HOST.throttling).toEqual([false]);
+    finishSecond();
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await b).isError).toBeFalsy();
+    expect(second.throttling).toEqual([false, true]);
+    expect(HOST.throttling).toEqual([false, true]);
+  });
+
+  it('15 秒たっても撮れなければ、1 回の操作の上限（60 秒）を待たずに、理由の見当を添えて断る', async () => {
+    const { control, open, state } = setup();
+    const page = open('http://localhost:3000/');
+    // ウインドウが描かれていないと、capturePage は返ってこない（エラーにもならない）
+    page.capture = () => new Promise(() => {});
+    const pending = control.handle('S1', 'screenshot', {});
+    await vi.advanceTimersByTimeAsync(14_000);
+    let settled = false;
+    void pending.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Could not take a screenshot: nothing came back within 15 seconds.');
+    expect(textOf(result)).toContain('the window is hidden, or the screen is locked');
+    // 描かれる状態にしたものは戻す
+    expect(page.throttling).toEqual([false, true]);
+    expect(HOST.throttling).toEqual([false, true]);
+    expect(state.draws).toEqual(['頼む', '戻す']);
+    // ページ全体（CDP）も同じ
+    answerCdp(page, {
+      'Page.getLayoutMetrics': () => ({ cssContentSize: { width: 800, height: 900 }, cssLayoutViewport: { clientWidth: 800 } }),
+      'Page.captureScreenshot': () => new Promise(() => {}),
+    });
+    const full = control.handle('S1', 'screenshot', { fullPage: true });
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(textOf(await full)).toContain('Could not take a screenshot: nothing came back within 15 seconds.');
+  });
+
   it('fullPage: CDP でページ全体を撮る。幅の 2.5 倍より長いページは、上から切ったことを伝える', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
@@ -136,11 +307,13 @@ describe('スクリーンショット', () => {
     expect(page.debugger.sent('Page.captureScreenshot')[0].params).toMatchObject({ clip: { height: 1200 } });
   });
 
-  it('撮れなかった（空の画像）ときは、そう返す', async () => {
+  it('撮り直しても撮れなかった（空の画像）ときは、そう返す', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
     page.shot = new FakeImage(0, 0);
     expect(await call('screenshot')).toEqual(textResult('Could not take a screenshot (the page may not have been rendered yet).', true));
+    // 3 秒の間、0.1 秒おきに撮り直した
+    expect(page.captures.length).toBeGreaterThan(20);
   });
 });
 
