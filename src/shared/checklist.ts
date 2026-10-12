@@ -17,7 +17,10 @@ export type CardEvent =
   | { type: 'moved'; fromList: string; fromNumber: number }
   | { type: 'copied'; fromSessionTitle: string; fromList: string; fromNumber: number }
   | { type: 'deleted' }
-  | { type: 'restored' };
+  | { type: 'restored' }
+  // 取り消した（決定事項。理由つき）・取り消しを戻した
+  | { type: 'revoked'; reason: string }
+  | { type: 'reinstated' };
 
 // スレッドの 1 つ。reply: 返信（notify: Claude に知らせた）/ event: 記録の行
 export type ThreadEntry =
@@ -39,11 +42,42 @@ export type Card = {
   updatedAt: number;
   // ゴミ箱に入れた時刻。無いものは表示中
   deletedAt?: number;
+  // 取り消し（Claude が書き換えられないリストのカードだけ）。画面には残るが、有効なものとしては扱わない
+  revoked?: { by: Author; at: number; reason: string };
   thread: ThreadEntry[];
   // 人が最後にスレッドを開いた時刻・Claude が最後に card_get で読んだ時刻（未読の判定）
   readByHuman: number;
   readByClaude: number;
 };
+
+// リストの種類。normal: ふつう（チェックして消していく）/ review: 確認事項（人がチェック＝承認したカードを、決定事項に移す）/
+// decisions: 決定事項（チェックが無く、消えない。Claude は足すことと、理由つきの取り消しだけができる）
+export type ListKind = 'normal' | 'review' | 'decisions';
+
+// 種類ごとの性質。種類をあとから足せるよう、種類の名前ではなく、性質ごとに別々に見る
+// （「いつも知らせに出す・チェックが無い」と「Claude が書き換えられない」を、1 つの判定にしない）
+export type KindTraits = {
+  // チェックがある（進み具合を数える）
+  checkable: boolean;
+  // 有効なカードを、毎回の知らせにいつも出す（チェックで消えない）
+  pinned: boolean;
+  // Claude は、カードを足すことと、理由つきの取り消しだけができる（書き換え・削除・外への移動はできない）。人は何でもできる
+  locked: boolean;
+  // 人がチェックしたカードを、決定事項のリストに移す
+  approves: boolean;
+};
+
+const KIND_TRAITS: Record<ListKind, KindTraits> = {
+  normal: { checkable: true, pinned: false, locked: false, approves: false },
+  review: { checkable: true, pinned: false, locked: false, approves: true },
+  decisions: { checkable: false, pinned: true, locked: true, approves: false },
+};
+
+export const LIST_KINDS = Object.keys(KIND_TRAITS) as ListKind[];
+
+export function isListKind(value: unknown): value is ListKind {
+  return typeof value === 'string' && (LIST_KINDS as string[]).includes(value);
+}
 
 export type Checklist = {
   id: string;
@@ -51,6 +85,8 @@ export type Checklist = {
   name: string;
   // 使い方のルール（「作業を終える前に、すべて満たされているか確かめる」など）。Claude はリストを読むたびに一緒に読む
   description: string;
+  // 種類。無いもの（種類を足す前のデータ）と、知らない値は、ふつうのリスト（kindOf で読む）
+  kind?: ListKind;
   // 次に振る番号
   nextNumber: number;
   // 並び順のまま（ゴミ箱のカードも含む）
@@ -68,8 +104,8 @@ export type ChecklistUnread = Record<string, number>;
 
 // 画面からの書き換え。どれも書いた人は human
 export type ChecklistOp =
-  | { type: 'list-create'; name: string; description: string }
-  | { type: 'list-update'; listId: string; name?: string; description?: string }
+  | { type: 'list-create'; name: string; description: string; kind?: ListKind }
+  | { type: 'list-update'; listId: string; name?: string; description?: string; kind?: ListKind }
   | { type: 'list-delete'; listId: string }
   | { type: 'list-restore'; listId: string }
   | { type: 'card-add'; listId: string; title: string; body?: string }
@@ -81,6 +117,9 @@ export type ChecklistOp =
   | { type: 'card-delete'; listId: string; cardIds: string[] }
   | { type: 'card-restore'; listId: string; cardIds: string[] }
   | { type: 'card-read'; listId: string; cardId: string }
+  // 取り消す（理由は書かなくてもよい）・取り消しを戻す
+  | { type: 'card-revoke'; listId: string; cardIds: string[]; reason?: string }
+  | { type: 'card-reinstate'; listId: string; cardIds: string[] }
   // ゴミ箱を空にする（戻せなくなる）
   | { type: 'trash-empty' };
 
@@ -109,6 +148,20 @@ export function liveCards(list: Checklist): Card[] {
   return list.cards.filter((c) => !c.deletedAt);
 }
 
+export function kindOf(list: Pick<Checklist, 'kind'>): ListKind {
+  return isListKind(list.kind) ? list.kind : 'normal';
+}
+
+export function traitsOf(list: Pick<Checklist, 'kind'>): KindTraits {
+  return KIND_TRAITS[kindOf(list)];
+}
+
+// 取り消していない、有効なカード（ゴミ箱のものも除く）
+export function activeCards(list: Checklist): Card[] {
+  return liveCards(list).filter((c) => !c.revoked);
+}
+
+// チェックのあるリストの進み具合
 export function progressOf(list: Checklist): { done: number; total: number } {
   const cards = liveCards(list);
   return { done: cards.filter((c) => c.checked).length, total: cards.length };
@@ -210,6 +263,10 @@ function eventPhrase(event: CardEvent): string {
       return 'moved the card to the trash';
     case 'restored':
       return 'restored the card from the trash';
+    case 'revoked':
+      return event.reason ? `revoked the card (${event.reason})` : 'revoked the card';
+    case 'reinstated':
+      return 'reinstated the card (it is in force again)';
   }
 }
 
@@ -235,15 +292,20 @@ export function checkOp(raw: unknown): ChecklistOp {
     const value = op[key];
     if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) throw new Error(t('checklist.errors.badShape', { key }));
   };
+  const kind = () => {
+    if (op.kind !== undefined && !isListKind(op.kind)) throw new Error(t('checklist.errors.badShape', { key: 'kind' }));
+  };
   switch (op.type) {
     case 'list-create':
       str('name');
       str('description');
+      kind();
       break;
     case 'list-update':
       str('listId');
       str('name', true);
       str('description', true);
+      kind();
       break;
     case 'list-delete':
     case 'list-restore':
@@ -279,8 +341,14 @@ export function checkOp(raw: unknown): ChecklistOp {
       break;
     case 'card-delete':
     case 'card-restore':
+    case 'card-reinstate':
       str('listId');
       ids('cardIds');
+      break;
+    case 'card-revoke':
+      str('listId');
+      ids('cardIds');
+      str('reason', true);
       break;
     case 'card-read':
       str('listId');

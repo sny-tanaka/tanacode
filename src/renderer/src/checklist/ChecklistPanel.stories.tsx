@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { ChecklistPanel } from './ChecklistPanel';
-import { decisionList, sampleLists, sampleSession, sampleSessions, trashedLists } from './sampleChecklists';
+import { decisionList, keptList, listsWithDecisions, sampleLists, sampleSession, sampleSessions, trashedLists } from './sampleChecklists';
 
 // サイドパネルの「チェックリスト」。リストごとに、カードのタイトルだけを並べる。チェックはここで直接付け外しできる。
 // Claude が付けたチェックは青、人が付けたものは緑。Claude からの未読の返信があるカードには、青い点が付く
@@ -16,6 +16,12 @@ const frame = (children: React.ReactNode) => <div style={{ height: 560, display:
 export const いくつものリスト: StoryObj = {
   render: () =>
     frame(<ChecklistPanel session={sampleSession} lists={sampleLists} sessions={sampleSessions} activeCardId={decisionList.cards[0].id} onOpen={() => {}} />),
+};
+
+// 決定事項のリストは、チェックで消えない。チェック欄の代わりにピン、進み具合の代わりに有効な数。取り消したカードは残して印を付ける
+export const 決定事項: StoryObj = {
+  render: () =>
+    frame(<ChecklistPanel session={sampleSession} lists={listsWithDecisions} sessions={sampleSessions} activeCardId={keptList.cards[0].id} onOpen={() => {}} />),
 };
 
 export const まだ無い: StoryObj = {

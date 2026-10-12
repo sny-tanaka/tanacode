@@ -102,6 +102,7 @@ export const ICON_GROUPS: IconGroup[] = [
       item('BellIcon', '通知'),
       item('LockIcon', 'ロック中'),
       item('UnlockIcon', 'ロックしていない'),
+      item('PinIcon', '決定事項（消えない）'),
     ],
   },
 ];

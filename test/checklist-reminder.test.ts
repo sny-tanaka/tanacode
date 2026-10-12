@@ -70,7 +70,7 @@ describe('ターンの終わり', () => {
   it('ツールを使ったのに触れなかったターンは、1 回のツールでも止める（調べただけのターンも）。理由は 1 文で、未チェックの数だけを入れる', () => {
     const text = checklistReminder('stop', [TODO, DONE], worked(1))!;
     expect(text).toBe(
-      `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (1 tool call, checklists not touched; unchecked: やること 1): bring the checklists up to date as the tanacode-checklist instructions say for the end of a turn, then end with one short line on what you changed. If nothing needs to change, reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else.</${CHECKLIST_REMINDER_TAG}>`,
+      `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (1 tool call, checklists not touched; unchecked: やること 1): bring the checklists up to date as the tanacode-checklist instructions say for the end of a turn (that includes recording what was decided in this turn on the decisions list), then end with one short line on what you changed. If nothing needs to change, reply with exactly ${CHECKLIST_UNCHANGED_MARK} and nothing else.</${CHECKLIST_REMINDER_TAG}>`,
     );
     // Claude Code の画面にそのまま出るので、改行を入れない
     expect(text).not.toContain('\n');

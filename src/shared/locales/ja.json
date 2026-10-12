@@ -385,6 +385,7 @@
       "card_update": "カードを変える",
       "card_check": "チェックする",
       "card_uncheck": "チェックを外す",
+      "card_revoke": "取り消す",
       "card_reply": "返信する",
       "card_move": "カードを移す",
       "card_delete": "カードを消す",
@@ -1319,7 +1320,16 @@
       "moveToList": "別のリストへ移す",
       "movePlaceholder": "移す…",
       "clearSelection": "選ぶのをやめる",
-      "newCardPlaceholder": "タイトル（Enter で足す）"
+      "newCardPlaceholder": "タイトル（Enter で足す）",
+      "inForce": "{count} 件",
+      "inForceTip": "有効な決定 {count} 件（取り消したものは数えません）",
+      "kindDecisions": "決定事項",
+      "kindDecisionsTip": "決定事項のリスト。チェックで消えず、有効なカードを Claude にいつも渡します",
+      "kindReview": "確認事項",
+      "kindReviewTip": "確認事項のリスト。チェック（承認）したカードは、決定事項に移ります",
+      "revoked": "取り消し",
+      "revokedTip": "取り消した決定（有効ではありません）: {reason}",
+      "noReason": "理由なし"
     },
     "action": {
       "copyToSession": "別のセッションへコピー",
@@ -1350,7 +1360,17 @@
       "notify": "Claude に通知する",
       "reply": "返信する",
       "replyTip": "返信する（⌘Enter）",
-      "notified": "Claude に通知"
+      "notified": "Claude に通知",
+      "revoke": "取り消す",
+      "revokeTip": "取り消す（画面には残りますが、Claude は有効な決定として扱いません）",
+      "revokeReasonPlaceholder": "取り消す理由（書かなくてもかまいません。Enter で取り消す）",
+      "reinstate": "有効に戻す",
+      "reinstateTip": "取り消しをやめて、有効な決定に戻す",
+      "inForce": "有効",
+      "revokedByHuman": "あなたが取り消し（{time}）",
+      "revokedByClaude": "Claude が取り消し（{time}）",
+      "revokedReason": "取り消した理由: {reason}",
+      "revokedNoReason": "取り消した決定です（理由は書かれていません）"
     },
     "eventByHuman": {
       "created": "あなたが作りました",
@@ -1361,7 +1381,10 @@
       "moved": "あなたが「{fromList}」#{fromNumber} から移しました",
       "copied": "あなたがセッション「{fromSessionTitle}」の「{fromList}」#{fromNumber} からコピーしました",
       "deleted": "あなたがゴミ箱に入れました",
-      "restored": "あなたがゴミ箱から戻しました"
+      "restored": "あなたがゴミ箱から戻しました",
+      "revoked": "あなたが取り消しました（理由: {reason}）",
+      "revokedNoReason": "あなたが取り消しました",
+      "reinstated": "あなたが有効に戻しました"
     },
     "eventByClaude": {
       "created": "Claude が作りました",
@@ -1372,7 +1395,10 @@
       "moved": "Claude が「{fromList}」#{fromNumber} から移しました",
       "copied": "Claude がセッション「{fromSessionTitle}」の「{fromList}」#{fromNumber} からコピーしました",
       "deleted": "Claude がゴミ箱に入れました",
-      "restored": "Claude がゴミ箱から戻しました"
+      "restored": "Claude がゴミ箱から戻しました",
+      "revoked": "Claude が取り消しました（理由: {reason}）",
+      "revokedNoReason": "Claude が取り消しました",
+      "reinstated": "Claude が有効に戻しました"
     },
     "copyDialog": {
       "failed": "コピーできませんでした: {error}",
@@ -1388,7 +1414,11 @@
     },
     "listForm": {
       "namePlaceholder": "名前（例: やること・完了前チェック・確認事項）",
-      "descriptionPlaceholder": "使い方のルール（例: 作業を終える前に、すべて満たされているか確かめる）。Claude はリストを読むたびに、これを読んで従います"
+      "descriptionPlaceholder": "使い方のルール（例: 作業を終える前に、すべて満たされているか確かめる）。Claude はリストを読むたびに、これを読んで従います",
+      "kind": "種類",
+      "kindNormal": "ふつう（チェックして消していく）",
+      "kindReview": "確認事項（承認したら決定事項に移す）",
+      "kindDecisions": "決定事項（消えない。チェックなし）"
     },
     "apply": {
       "failed": "チェックリストを変えられませんでした: {error}"
@@ -1417,7 +1447,13 @@
       "badSessionId": "セッションの ID が正しくありません",
       "listGone": "リストが見つかりません（ゴミ箱に入れたか、消したものかもしれません）",
       "cardNotFound": "「{list}」にカードが見つかりません",
-      "emptyListName": "リストの名前が空です"
+      "emptyListName": "リストの名前が空です",
+      "noChecks": "「{list}」のカードには、チェックがありません",
+      "notRevocable": "「{list}」のカードは取り消せません（取り消せるのは、決定事項のリストのカードだけです）"
+    },
+    "decisions": {
+      "defaultName": "決定事項",
+      "defaultDescription": "決まったこと（要望・制約・訂正、許可とその範囲、採らないと決めた案と理由、承認した判断）。作業が終わっても有効。変わったら取り消して、新しく書く"
     }
   },
   "tasks": {

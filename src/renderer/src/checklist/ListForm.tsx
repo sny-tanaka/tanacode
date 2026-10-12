@@ -1,22 +1,26 @@
 import { useState } from 'react';
+import { LIST_KINDS, type ListKind } from '@shared/checklist';
 import { t } from '@shared/i18n';
 
-// リストを作る・名前と説明を変えるフォーム（サイドパネルの中）
+const KIND_LABELS = { normal: 'checklist.listForm.kindNormal', review: 'checklist.listForm.kindReview', decisions: 'checklist.listForm.kindDecisions' } as const;
+
+// リストを作る・名前と説明と種類を変えるフォーム（サイドパネルの中）。種類を変えられるのは人だけ（Claude は作るときに決める）
 export function ListForm({
   initial,
   submitLabel,
   onSubmit,
   onCancel,
 }: {
-  initial: { name: string; description: string };
+  initial: { name: string; description: string; kind: ListKind };
   submitLabel: string;
-  onSubmit: (name: string, description: string) => void | Promise<void>;
+  onSubmit: (name: string, description: string, kind: ListKind) => void | Promise<void>;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
+  const [kind, setKind] = useState<ListKind>(initial.kind);
   const submit = () => {
-    if (name.trim()) void onSubmit(name.trim(), description.trim());
+    if (name.trim()) void onSubmit(name.trim(), description.trim(), kind);
   };
   return (
     <form
@@ -38,6 +42,16 @@ export function ListForm({
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
+      <label className="checklist-form-kind">
+        {t('checklist.listForm.kind')}
+        <select value={kind} onChange={(e) => setKind(e.target.value as ListKind)}>
+          {LIST_KINDS.map((k) => (
+            <option key={k} value={k}>
+              {t(KIND_LABELS[k])}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="checklist-form-foot">
         <button type="button" className="ghost-button" onClick={onCancel}>
           {t('common.cancel')}

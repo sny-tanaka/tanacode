@@ -556,6 +556,14 @@ export const BellIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// ピン: 留めてある（チェックで消えない、決定事項のリストとカード）
+export const PinIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M9 3.5h6l-1 6.5 3.5 3.5v1.5h-11v-1.5L10 10z" />
+    <path d="M12 15v5.5" />
+  </Svg>
+);
+
 // 錠: 閉じた錠（ロック中）と、開いた錠
 export const LockIcon: IconComponent = (p) => (
   <Svg {...p}>

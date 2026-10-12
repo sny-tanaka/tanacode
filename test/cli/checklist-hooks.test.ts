@@ -148,14 +148,24 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     expect(run.chat().filter((e) => e.type === 'hook')).toEqual([]);
   });
 
-  it('/compact で会話を圧縮すると、今のチェックリストが渡る', async () => {
+  it('/compact で会話を圧縮すると、今のチェックリストが渡る。有効な決定（チェックで消えないリストのカード）も渡り、取り消したものは渡らない', async () => {
+    const decisions = store.createList(run.sessionId!, 'human', '決定事項', '決まったこと', 'decisions');
+    const [kept, dropped] = store.addCards(run.sessionId!, 'human', decisions.id, [{ title: '決済には触らない' }, { title: '端数は切り捨て' }]);
+    store.revokeCards(run.sessionId!, 'human', decisions.id, [dropped.id], '四捨五入に変わった');
     await run.send('/compact');
     await run.waitFor('圧縮の区切り', () => run.chatEvents.some((e) => e.type === 'divider'), 30_000);
     await run.waitFor('圧縮のあとのフック', () => hooks('hook:compact').length > 0, 30_000);
     await run.waitFor('Claude に渡した記録', () =>
       run.entries.some((e) => {
         const a = e.attachment;
-        return a?.type === 'hook_additional_context' && a.hookEvent === 'SessionStart' && JSON.stringify(a.content).includes('The conversation was just compacted.');
+        const content = JSON.stringify(a?.content ?? '');
+        return (
+          a?.type === 'hook_additional_context' &&
+          a.hookEvent === 'SessionStart' &&
+          content.includes('The conversation was just compacted.') &&
+          content.includes(`- #${kept.number} 決済には触らない`) &&
+          !content.includes('端数は切り捨て')
+        );
       }),
     );
     expect(run.chatEvents.filter((e) => e.type === 'hook')).toEqual([]);
