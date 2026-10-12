@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents, type ChatEvent } from '@shared/chat';
-import { promptKeys } from '@shared/prompt-keys';
+import { bracketedPaste, promptKeys } from '@shared/prompt-keys';
 import { readAgentLog } from '../../src/main/chat-log';
 import { KnowledgeTracker } from '../../src/main/knowledge-tracker';
 import { ContextTracker } from '../../src/main/context-tracker';
@@ -15,6 +15,7 @@ import {
   DRAFT,
   EFFORT,
   IMAGE_FILE,
+  LONG_LINES,
   LONG_PASTE,
   PASTE,
   PNG_BASE64,
@@ -127,9 +128,29 @@ describe(`Claude Code ${version} の入力欄`, () => {
     checkPasted(eventsOf(run), PASTE);
   });
 
-  it('長い貼り付けは入力欄で目印になり、送ると全文が発言になる', async () => {
+  it('長い複数行の発言は、行ごとの貼り付けで送ると、入力欄で目印にならず、全文がそのまま 1 つの発言になる', async () => {
+    // アプリの送り方（promptKeys）。丸ごと 1 つの貼り付けにすると、ログインして使う Claude Code は <pasted_content> の囲みに入れて
+    // Claude に渡す（モックの API で動かすここでは、囲みは付かない。打ち込んだ文字がそのまま届くことを見る）
     const before = turnEnds(run);
-    run.type(promptKeys(LONG_PASTE));
+    const keys = promptKeys(LONG_LINES);
+    // 貼り付け 1 つは 1 行の中だけ（4 行以上の貼り付けは目印になる）
+    expect(keys.split('\x1b[201~').every((piece) => !piece.replace(/^\n+/, '').includes('\n'))).toBe(true);
+    run.type(keys);
+    const tail = LONG_LINES.replace(/\s/g, '').slice(-30);
+    await run.waitFor('入力欄の終わりに、打った文字の終わりが出る', (info) => info.state.kind === 'prompt' && info.draft.replace(/\s/g, '').endsWith(tail));
+    expect(run.screen.current.draft).not.toMatch(/\[Pasted text/);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    checkPasted(eventsOf(run), LONG_LINES);
+    // シェルのコマンドやスラッシュコマンドとして実行されていない
+    expect(eventsOf(run).filter((e) => e.type === 'shell')).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it('長い貼り付けは入力欄で目印になり、送ると全文が発言になる', async () => {
+    // 丸ごと 1 つの貼り付け（/ や ! で始まる複数行の発言・ターミナルモードでの貼り付け）
+    const before = turnEnds(run);
+    run.type(bracketedPaste(LONG_PASTE));
     await run.waitFor('貼り付けの目印', (info) => /^\[Pasted text/.test(info.draft));
     run.capture('pasted-draft');
     checkPastedDraft(run.screen.current, LONG_PASTE.split('\n').length);

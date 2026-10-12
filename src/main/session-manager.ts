@@ -837,7 +837,7 @@ export class SessionManager {
       }
       if (text) {
         const before = rt.screen?.current.draft ?? '';
-        // 改行を含む入力は貼り付けとして送る（promptKeys）
+        // 改行を含む入力・長い入力は、行ごとの短い貼り付けとして送る（promptKeys）
         process.write(promptKeys(text));
         // 打った文字が入力欄に出てから Enter を送る。決まった時間だけ待つと、Claude Code が忙しくて読むのが遅れたとき
         // （起動の直後に MCP サーバーがつながる間など）、文字と Enter が 1 度に届く。長い文字は貼り付けとみなされ、Enter は改行として入力欄に入る（送られない）
@@ -1597,12 +1597,20 @@ function shownScreen(rt: Runtime, info: ScreenInfo): ScreenInfo {
   return typed === '' || typing.text.includes(typed) ? { ...info, draft: '' } : info;
 }
 
+// 長い入力で、入力欄の終わりと比べる文字の数（typedShown）
+const TYPED_TAIL_CHARS = 40;
+
 // 打った文字（text）が、Claude Code の入力欄（画面の draft。打つ前は before）に出たか。画面の折り返しで空白が変わるので、空白を除いて比べる。
-// 貼り付けとみなされた入力（複数行・長い文字）は、入力欄では [Pasted text #1 +6 lines] の目印になるので、目印で終わるようになったかで見る
+// - 丸ごと貼り付けた入力（/ や ! で始まる複数行・/compact の長い引数）は、入力欄では [Pasted text #1 +6 lines] の目印になるので、
+//   目印で終わるようになったかで見る
+// - 長い複数行の入力は、行ごとの短い貼り付けで送る（promptKeys の pastedLines）。入力欄には文字のまま入るが、長いと全部は映らないので、
+//   終わりの TYPED_TAIL_CHARS 文字が入力欄の終わりに出たかで見る（カーソルは終わりにあるので、終わりの行は映っている）
 export function typedShown(draft: string, before: string, text: string): boolean {
   if (draft === before) return false;
   if (/\[Pasted text #\d+[^\]]*\]\s*$/.test(draft)) return true;
-  return draft.replace(/\s/g, '').endsWith(text.replace(/\s/g, ''));
+  const shown = draft.replace(/\s/g, '');
+  const typed = text.replace(/\s/g, '');
+  return shown.endsWith(typed) || (typed.length > TYPED_TAIL_CHARS && shown.endsWith(typed.slice(-TYPED_TAIL_CHARS)));
 }
 
 // 入力欄に打ってよい状態か。手が空いていて（ターンの外・操作待ちでない）、入力欄に書きかけが無く、画面の操作の途中でもない

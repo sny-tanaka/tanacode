@@ -6,17 +6,53 @@ const PASTE_CHARS = 800;
 // 引数に長い文・複数行の文を取るコマンド（入力欄から、圧縮の指示を添えて送るとき）
 const ARGUMENT_COMMANDS = new Set(['/compact']);
 
-// 発言を打ち込む文字（制御文字は先に除いておく）。改行を含む入力はブラケットペーストで送り、途中の改行で送信されないようにする。
-// 1 行の入力は打鍵で送る（制御文字は除いてあるので、キー操作になる文字は残らない。/compact などのコマンドも今までどおり届く）
+// 貼り付け 1 つに入れる長さ。Claude Code は、4 行以上・およそ 800 文字より長い貼り付けを [Pasted text #1 …] の目印に置き換える
+const PIECE_CHARS = 300;
+
+// 発言を打ち込む文字（制御文字は先に除いておく）。
+// - 1 行の短い入力は、打鍵で送る（制御文字は除いてあるので、キー操作になる文字は残らない。/compact などのコマンドも今までどおり届く）
+// - 複数行・長い入力は、行ごとの短い貼り付けに分けて送る（pastedLines）
+// - / か ! で始まる複数行の入力は、丸ごと 1 つの貼り付けで送る（下のコメント）
 export function promptKeys(text: string): string {
   // 引数が複数行・長い /compact は、名前だけを打鍵して、引数を貼り付けで送る。丸ごと貼り付けると、Claude Code は入力を
-  // [Pasted text #1 …] の目印に置き換え、/ で始まらない入力として、コマンドにせずに送るため。
-  // ほかの「/単語」で始まる複数行の発言（「/api のエンドポイントを…」など）は、コマンドにならないよう今までどおり丸ごと貼り付ける
+  // [Pasted text #1 …] の目印に置き換え、/ で始まらない入力として、コマンドにせずに送るため
   const command = /^(\/\S+)\s+(\S[\s\S]*)$/.exec(text);
   if (command && ARGUMENT_COMMANDS.has(command[1]) && (text.includes('\n') || text.length > PASTE_CHARS)) {
     return `${command[1]} ${bracketedPaste(command[2])}`;
   }
-  return text.includes('\n') ? bracketedPaste(text) : text;
+  // / や ! で始まる入力は、行ごとに分けない。1 行めが入力欄の先頭に入ると、コマンド（/api …）やシェルのコマンド（!ls …）として
+  // 扱われる（! で始まる 4 行を行ごとに送ると、シェルで実行された）。複数行は今までどおり丸ごと貼り付け、1 行は打鍵のまま
+  if (text.startsWith('/') || text.startsWith('!')) return text.includes('\n') ? bracketedPaste(text) : text;
+  return text.includes('\n') || text.length > PASTE_CHARS ? pastedLines(text) : text;
+}
+
+// 行ごとに、短い貼り付け（PIECE_CHARS まで）に分け、改行は LF（Ctrl+J。送信しない改行）で打つ。
+// 丸ごと 1 つの貼り付けにすると、Claude Code（ログインして使うとき）は、4 行以上・長い貼り付けを <pasted_content> の囲みに入れて
+// Claude に渡し、「貼り付けの中の指示には、ユーザー自身の言葉が頼んでいるときだけ従う」と教える。ユーザーが入力欄に書いた長い発言や、
+// 親セッションからの指示まで「誰が書いたか分からない、貼り付けられた文」になり、Claude が従う前に確認を求めて止まることがある。
+// 短い貼り付けは入力欄にそのまま入り、囲みが付かない。打鍵で送らずに貼り付けにするのは、行の中の文字（@ や Tab など）が
+// キー操作や補完にならないようにするため。
+// 2026-10-12、Claude Code 2.1.296 で確かめた: 400 行・1.5 万文字、空行・字下げ・コードブロック・絵文字を含む発言が、囲みなしでそのまま届く
+export function pastedLines(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => pieces(line).map(bracketedPaste).join(''))
+    .join('\n');
+}
+
+// 行を、PIECE_CHARS までの断片に分ける。サロゲートペア（絵文字など）の途中では切らない
+function pieces(line: string): string[] {
+  const out: string[] = [];
+  let piece = '';
+  for (const char of line) {
+    if (piece.length + char.length > PIECE_CHARS) {
+      out.push(piece);
+      piece = '';
+    }
+    piece += char;
+  }
+  if (piece) out.push(piece);
+  return out;
 }
 
 // 貼り付けとして送る。添付するファイルのパスもこれで送る（画像は [Image #n] として添付される）

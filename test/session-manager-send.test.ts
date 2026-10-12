@@ -58,14 +58,24 @@ describe('submit', () => {
     expect(pty.typed).toBe('ひとつめ');
   });
 
-  it('改行を含む本文は貼り付けとして送り、入力欄に貼り付けの目印が出てから Enter を送る', async () => {
+  it('改行を含む本文は、行ごとの貼り付けとして送り、入力欄に文字が出てから Enter を送る', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    pty.onWrite = (data) => {
+      if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('1 行目\n  2 行目')), 5);
+    };
+    await app.manager.submit(id, '1 行目\n2 行目');
+    expect(pty.typed).toBe(`${bracketedPaste('1 行目')}\n${bracketedPaste('2 行目')}\r`);
+  });
+
+  it('/ で始まる複数行の本文は、丸ごと貼り付けとして送り、入力欄に貼り付けの目印が出てから Enter を送る', async () => {
     const { id, pty } = app.create();
     await app.ready(id);
     pty.onWrite = (data) => {
       if (data.startsWith('\x1b[200~')) setTimeout(() => pty.output(promptWith('[Pasted text #1 +1 lines]')), 5);
     };
-    await app.manager.submit(id, '1 行目\n2 行目');
-    expect(pty.typed).toBe(`${bracketedPaste('1 行目\n2 行目')}\r`);
+    await app.manager.submit(id, '/api の話です\n2 行目');
+    expect(pty.typed).toBe(`${bracketedPaste('/api の話です\n2 行目')}\r`);
   });
 
   it('guarded: 入力を受け付けられない状態（質問や確認が出ている）なら、打たずに失敗する', async () => {

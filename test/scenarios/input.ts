@@ -22,6 +22,29 @@ export const DRAFT = '書きかけの文 abc';
 // 複数行の貼り付け。短いものは入力欄にそのまま出て、長いものは [Pasted text #1 +29 lines] の目印になる
 export const PASTE = '貼り付けの 1 行目\n2 行目\n3 行目';
 export const LONG_PASTE = Array.from({ length: 30 }, (_, i) => `長い貼り付けの ${i + 1} 行目`).join('\n');
+// 長い複数行の発言。アプリは、行ごとの短い貼り付けに分けて送る（promptKeys）。入力欄で意味を持つ文字で始まる行（/ @ ! #）・空行・字下げ・
+// コードブロック・絵文字・長い行（300 文字の切れ目に絵文字が来る）を混ぜる。タブは、Claude Code が空白 4 つに直すので入れない
+export const LONG_LINES = [
+  '長い複数行の発言の 1 行目です。',
+  '',
+  '/api で始まる行は、コマンドではありません。',
+  '@src/main/index.ts で始まる行は、ファイルの指定ではありません。',
+  '!ls で始まる行は、シェルのコマンドではありません。',
+  '# で始まる行は、見出しのつもりです。',
+  '',
+  '- 箇条書き  ',
+  '  - 入れ子（行末に空白 2 つ）  ',
+  '```ts',
+  'function f(a: number) {',
+  '    return `${a}`; // 字下げは空白 4 つ',
+  '}',
+  '```',
+  '',
+  '',
+  `${'x'.repeat(299)}🎉${'y'.repeat(350)}👍${'z'.repeat(40)}`,
+  ...Array.from({ length: 30 }, (_, i) => `${i + 18} 行目: 長い複数行の発言が、そのまま届くかを確かめる文です。`),
+  '最後の行（このあとに改行は無い）',
+].join('\n');
 // 入力欄で ! を付けて実行するコマンドと、その出力
 export const SHELL_COMMAND = 'echo tanacode-shell';
 export const SHELL_OUTPUT = 'tanacode-shell';
