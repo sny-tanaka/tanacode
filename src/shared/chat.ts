@@ -73,6 +73,9 @@ export type ChatEvent =
   | { type: 'remote-control'; url: string | null }
   // hooks の実行（出力のあったものと、Stop の要約に載ったもの）
   | { type: 'hook'; id: string; run: HookRun }
+  // チェックリストを使い続けさせるフック（main の checklist-hook.ts）が、ターンの終わりを止めた。チャットには何も出さない。
+  // このあとの応答は、チェックリストを直した報告で、作業の結果ではない（ほかのセッションに結果を返すときに見分ける。main の sessions-control.ts）
+  | { type: 'checklist-stop' }
   | { type: 'process-start' }
   // 起動が終わって入力を受け付けられるようになった（入力欄が出た）
   | { type: 'ready' }
@@ -234,6 +237,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
       const images = Array.isArray(blocks) ? takeImages(entry, blocks, 'q', onImage) : [];
       return withImages(prompt ? userTextEvents(entry, prompt) : [], entry, images);
     }
+    if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
     const run = hookRunOf(entry.attachment);
     return run ? [{ type: 'hook', id: entry.uuid ?? '', run }] : [];
   }
@@ -388,6 +392,13 @@ const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SES
 
 function isAppHook(command: string): boolean {
   return APP_HOOK_MARKS.some((mark) => command.includes(mark));
+}
+
+// チェックリストを使い続けさせるフックが、ターンの終わりを止めた記録（止めたフックのコマンドは blockingError に入る）
+function isChecklistStop(a: Record<string, unknown> | undefined): boolean {
+  if (a?.type !== 'hook_blocking_error' || a.hookEvent !== 'Stop') return false;
+  const command = (a.blockingError as { command?: unknown } | null | undefined)?.command;
+  return typeof command === 'string' && command.includes(CHECKLIST_HOOK_ENV);
 }
 
 function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {

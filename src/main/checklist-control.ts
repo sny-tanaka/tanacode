@@ -30,8 +30,15 @@ type Notice = { text: string; refs: CardRef[] };
 // 1 回の結果の文字数の上限
 const MAX_RESULT_CHARS = 60_000;
 
+// 発言の行の時刻（Claude Code が会話ログに書く）と、人の発言のフックがアプリに届いた時刻の、ずれの見込み
+const PROMPT_SLACK_MS = 5000;
+
 export class ChecklistControl {
   private readonly notices: SessionNotices<Notice>;
+  // セッションごとの、チェックリストのツールを最後に受けた時刻と、人の発言のフックを最後に受けた時刻（ミリ秒）。
+  // ターンの終わりのフックが読んだ会話ログが、最後の応答までそろっていなかったときに使う（reminder）
+  private readonly usedAt = new Map<string, number>();
+  private readonly promptedAt = new Map<string, number>();
 
   constructor(private readonly deps: Deps) {
     this.notices = new SessionNotices({
@@ -96,6 +103,7 @@ export class ChecklistControl {
     }
     const caller = this.deps.host.list().find((s) => s.id === callerId);
     if (!caller) return textResult('This session is not in tanacode.', true);
+    this.usedAt.set(caller.id, Date.now());
     let result: ToolResult;
     try {
       result = textResult(this.run(caller, name, args));
@@ -115,13 +123,28 @@ export class ChecklistControl {
   // --- フック ---
 
   // チェックリストを使い続けさせるフック（checklist-hook.ts）に返す、Claude に渡す文。渡すものが無ければ空。
-  // counts: Claude が使ったツールの数（フックが会話ログから数えたもの。ツールの引数ではない）
+  // counts: フックが会話ログから読んだもの（ツールの引数ではない）。turn・checklist: Claude が使ったツールの数 /
+  // since: このターンのはじまりの時刻 / settled: 会話ログが最後の応答までそろっているのを、フックが確かめた
   private reminder(callerId: string, event: ReminderEvent, counts: Record<string, unknown>): string {
     if (!this.deps.enabled()) return '';
     const caller = this.deps.host.list().find((s) => s.id === callerId);
     if (!caller) return '';
+    if (event === 'prompt') this.promptedAt.set(caller.id, Date.now());
     const count = (value: unknown) => (typeof value === 'number' && value > 0 ? Math.floor(value) : 0);
-    const activity = { turn: count(counts.turn), checklist: count(counts.checklist) };
+    let checklist = count(counts.checklist);
+    // 会話ログは遅れて書かれるので、フックが待っても、最後の応答までそろわないことがある（checklist-hook.ts の冒頭）。
+    // そのときフックが数えたのは、読めた分だけ。アプリが自分で受けたもので補う（会話ログがそろったときは、会話ログだけで決める。
+    // アプリは、本体の呼び出しとサブエージェントの呼び出しを見分けられないため）
+    if (event === 'stop' && counts.settled !== true && typeof counts.since === 'number') {
+      // このターンの行がまだ 1 つも書かれていなければ、数えたのは前のターン。人の発言のフックを受けた時刻より、
+      // はじまりがずっと前なら、止めない（発言の行の時刻と、フックがアプリに届く時刻は、少しずれる）
+      const prompted = this.promptedAt.get(caller.id);
+      if (prompted !== undefined && counts.since < prompted - PROMPT_SLACK_MS) return '';
+      // このターンのはじまりよりあとにチェックリストのツールを受けていれば、その行がまだ書かれていないだけ。触れたものとして止めない
+      const used = this.usedAt.get(caller.id);
+      if (used !== undefined && used >= counts.since) checklist++;
+    }
+    const activity = { turn: count(counts.turn), checklist };
     return checklistReminder(event, this.deps.store.lists(caller.id), activity, !!caller.parentId) ?? '';
   }
 

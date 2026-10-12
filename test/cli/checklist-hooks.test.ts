@@ -15,7 +15,9 @@ import { MockApi, type Block } from './mock-api';
 // アプリの代わりのソケットの先の ChecklistControl に聞いて、Claude Code に返すか。
 // - 人が発言すると、今のチェックリストが Claude に渡る（UserPromptSubmit）
 // - ツールを使ったのにチェックリストに触れずにターンを終えようとすると、1 回だけ止まり、理由が Claude に渡って続きが始まる（Stop）。
-//   止めたあとの続きは止まらない。読んだだけのターンも止まる。チェックリストに触れたターン・ツールを使っていないターンは止まらない
+//   止めたあとの続きは止まらない。読んだだけのターンも止まる。チェックリストに触れたターン・ツールを使っていないターンは止まらない。
+//   モックの API はすぐに応答を返すので、フックが動いた時点では、会話ログに最後の応答（とその前のツール）がまだ書かれていない。
+//   フックが、最後の応答（last_assistant_message）まで書かれるのを待ってから数えることも、ここで確かめている
 // - 直すものが無いと答えた目印は、チャットに出ない
 // - /compact で会話を圧縮すると、今のチェックリストが渡る（SessionStart の compact）
 // - どれも、チャットのフックの一覧には出ない
@@ -63,8 +65,6 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     api.conversations = [
       {
         match: WORK,
-        // 会話ログに書かれる前にターンが終わらないよう、本物の応答と同じくらいの間を空ける
-        delayMs: 250,
         steps: [
           write(),
           write(),
@@ -102,19 +102,24 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     // 発言のとき: リストが無いことが Claude に渡っている
     expect(hooks('hook:prompt')).toHaveLength(1);
     expect(api.contexts[0]).toContain(`<${CHECKLIST_REMINDER_TAG}>\nThis session has no checklists yet.`);
-    // ターンの終わり: 会話ログから数えたツールがアプリに届き、止めた理由が Claude に渡った。止めたあとの続きの終わりでは、アプリに聞かない
-    expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0 }]);
+    // ターンの終わり: 会話ログから数えたツールがアプリに届き、止めた理由が Claude に渡った。止めたあとの続きの終わりでは、アプリに聞かない。
+    // settled: フックが、会話ログが最後の応答まで書かれているのを確かめた（Claude Code がフックに渡す last_assistant_message と、会話ログの最後の応答が同じ）
+    expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0, since: expect.any(Number), settled: true }]);
     const afterStop = api.contexts[api.contexts.length - 1];
     expect(afterStop).toContain(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched; there are no lists yet)`);
     expect(calls.map((c) => c.tool)).toEqual(['hook:prompt', 'hook:stop', 'card_add']);
     expect(store.findList(run.sessionId!, '人のやること')!.cards.map((c) => c.title)).toEqual(['設定画面で画像を選ぶ']);
+    // 止めた記録は、チャットの目印になる。このあとの応答（チェックリストを直した報告）を、作業の結果と見分けるため
+    await run.waitFor('止めた目印', () => run.chatEvents.some((e) => e.type === 'checklist-stop'));
+    const types = run.chatEvents.filter((e) => e.type === 'assistant-text' || e.type === 'checklist-stop').map((e) => (e.type === 'assistant-text' ? e.text : e.type));
+    expect(types).toEqual(['作業を終えました', 'checklist-stop', 'チェックリストに 1 件足しました']);
   });
 
   it('次の発言では今のチェックリストが渡る。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない', async () => {
     await run.send(QUESTION);
     await run.waitFor('止めたあとの続きが終わる', (info) => info.state.kind === 'prompt' && api.contexts.some((c) => c.includes('Before you end this turn (1 tool call, checklists not touched; unchecked: 人のやること 1)')), 30_000);
     expect(api.contexts.some((c) => c.includes('## 人のやること (0/1 checked)\nDescription: 人にやってもらうこと\n- [ ] #1 設定画面で画像を選ぶ'))).toBe(true);
-    expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0 });
+    expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0, since: expect.any(Number), settled: true });
     // 目印の応答は会話ログにはあるが、チャットには出ない
     await run.waitFor('目印の応答', () => run.entries.some((e) => JSON.stringify(e.message?.content ?? '').includes(CHECKLIST_UNCHANGED_MARK) && e.type === 'assistant'));
     expect(said('質問に答えました')).toBe(true);
