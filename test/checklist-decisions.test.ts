@@ -125,6 +125,44 @@ describe('決定事項のリスト（Claude ができること）', () => {
     expect(book.takeHumanActivity(S)).toEqual(['The user reinstated #1 "決済には触らない" in "決定事項" (in force again)']);
   });
 
+  // 人が消した決定を Claude が戻せると、その決定がまた有効になる（取り消しを戻せるのが人だけなのと同じ）
+  it('人がゴミ箱に入れたカードを、Claude は戻せない。人は戻せる', () => {
+    const { book, list, cards } = withDecisions();
+    book.apply(S, { type: 'card-delete', listId: list.id, cardIds: [cards[0].id] });
+    const message = denied(() => book.restoreCards(S, 'claude', list.id, [cards[0].id]));
+    expect(message).toContain('cannot restore its cards from the trash; only the user can');
+    expect(message).toContain('If the decision holds again, add it as a new card.');
+    expect(cards[0].deletedAt).toBeDefined();
+    expect(activeCards(list).map((c) => c.title)).toEqual(['端数は切り捨て']);
+    book.apply(S, { type: 'card-restore', listId: list.id, cardIds: [cards[0].id] });
+    expect(cards[0].deletedAt).toBeUndefined();
+  });
+
+  it('人がリストごとゴミ箱に入れたとき、Claude はカードを戻せない（リストも一緒に戻ってしまう）・リストも戻せない。人は戻せる', () => {
+    const { book, list, cards } = withDecisions();
+    book.apply(S, { type: 'card-delete', listId: list.id, cardIds: [cards[0].id] });
+    book.apply(S, { type: 'list-delete', listId: list.id });
+    expect(denied(() => book.restoreCards(S, 'claude', list.id, [cards[0].id]))).toContain('cannot restore its cards from the trash');
+    expect(denied(() => book.restoreList(S, 'claude', list.id))).toContain('cannot restore the list from the trash; only the user can');
+    expect(list.deletedAt).toBeDefined();
+    expect(cards[0].deletedAt).toBeDefined();
+    expect(book.findList(S, '決定事項')).toBeUndefined();
+    book.apply(S, { type: 'card-restore', listId: list.id, cardIds: [cards[0].id] });
+    expect(list.deletedAt).toBeUndefined();
+    expect(cards[0].deletedAt).toBeUndefined();
+  });
+
+  it('ふつうのリストでは、これまでどおり Claude もゴミ箱から戻せる', () => {
+    const book = make();
+    const list = book.createList(S, 'claude', 'やること', '');
+    const [card] = book.addCards(S, 'claude', list.id, [{ title: 'A' }]);
+    book.deleteCards(S, 'claude', list.id, [card.id]);
+    expect(book.restoreCards(S, 'claude', list.id, [card.id])).toHaveLength(1);
+    book.deleteList(S, 'claude', list.id);
+    book.restoreList(S, 'claude', list.id);
+    expect(list.deletedAt).toBeUndefined();
+  });
+
   it('ふつうのリストのカードは取り消せない', () => {
     const book = make();
     const list = book.createList(S, 'claude', 'やること', '');
@@ -486,6 +524,17 @@ describe('MCP のツール', () => {
     }
     const list = store.findList(ME, '決定事項')!;
     expect(activeCards(list).map((c) => c.title)).toEqual(['決済には触らない']);
+  });
+
+  it('card_restore: 人がゴミ箱に入れた決定事項のカードは、Claude のツールでは戻せない', async () => {
+    await call('card_add', { list: '決定事項', list_description: '', list_kind: 'decisions', cards: [{ title: '決済には触らない' }] });
+    const list = store.findList(ME, '決定事項')!;
+    control.apply(ME, { type: 'card-delete', listId: list.id, cardIds: [list.cards[0].id] });
+    const result = await call('card_restore', { list: '決定事項', numbers: '1' });
+    expect(result.isError).toBe(true);
+    expect(first(result)).toContain('you cannot restore its cards from the trash; only the user can');
+    expect(list.cards[0].deletedAt).toBeDefined();
+    expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).not.toContain('決済には触らない');
   });
 
   it('card_revoke: 理由つきで取り消す。理由が無ければ断る。一覧とカードに、取り消したことと理由が出る', async () => {

@@ -170,6 +170,7 @@ export class ChecklistBook {
     const doc = this.doc(sessionId);
     const list = doc.lists.find((l) => l.id === listId);
     if (!list?.deletedAt) return;
+    if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(`${lockedMessage(list, 'restore the list from the trash')} ${ADD_AGAIN}`);
     delete list.deletedAt;
     // 戻している間に同じ名前のリストを作っていれば、名前を変えて戻す
     list.name = this.freeName(doc, list.name, list.id);
@@ -306,7 +307,7 @@ export class ChecklistBook {
 
   // 取り消しを戻す（人だけ）
   reinstateCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
-    if (author === 'claude') throw new ChecklistError('Only the user can reinstate a revoked card. If the decision holds again, add it as a new card.');
+    if (author === 'claude') throw new ChecklistError(`Only the user can reinstate a revoked card. ${ADD_AGAIN}`);
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     const cards = cardIds.map((id) => this.card(list, id)).filter((c) => c.revoked);
@@ -369,11 +370,13 @@ export class ChecklistBook {
     return cards;
   }
 
-  // ゴミ箱から戻す。リストもゴミ箱にあれば、一緒に戻す
+  // ゴミ箱から戻す。リストもゴミ箱にあれば、一緒に戻す。
+  // Claude が書き換えられないリストでは、戻せるのも人だけ（人が消した決定を Claude が戻すと、また有効になってしまう。取り消しを戻すのと同じ）
   restoreCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
     const doc = this.doc(sessionId);
     const list = doc.lists.find((l) => l.id === listId);
     if (!list) throw new ChecklistError(t('checklist.errors.listNotFound'));
+    if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(`${lockedMessage(list, 'restore its cards from the trash')} ${ADD_AGAIN}`);
     if (list.deletedAt) this.restoreList(sessionId, author, listId);
     const cards = cardIds.map((id) => list.cards.find((c) => c.id === id)).filter((c): c is Card => !!c?.deletedAt);
     for (const card of cards) {
@@ -548,6 +551,9 @@ function kindLabel(kind: ListKind): string {
 function lockedMessage(list: Checklist, what: string): string {
   return `"${list.name}" is ${kindLabel(kindOf(list))}. You can add cards to it and revoke them with a reason (card_revoke), but you cannot ${what}; only the user can. To replace a decision, revoke the old card and add a new one.`;
 }
+
+// 消した・取り消した決定がまた成り立つとき、Claude にしてもらうこと（人に見える形で、新しく足す）
+const ADD_AGAIN = 'If the decision holds again, add it as a new card.';
 
 function lastReplyAt(card: Card, author: Author): number {
   return Math.max(0, ...card.thread.filter((e) => e.kind === 'reply' && e.author === author).map((e) => e.at));
