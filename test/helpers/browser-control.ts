@@ -50,6 +50,8 @@ export function setup() {
     attachDelay: 50,
     // 画面の代わりが webview を知らせたあと（読み込みの途中で起きることを差し込む）
     afterAttach: null as ((page: Tab) => void) | null,
+    // アプリの画面を描かれる状態にするよう頼まれた・戻された（drawHost）
+    draws: [] as ('頼む' | '戻す')[],
   };
   let tabs = 0;
   // 画面の代わりが作ったタブ
@@ -72,6 +74,10 @@ export function setup() {
     enabled: () => state.enabled,
     extraHosts: () => state.hosts,
     host: () => state.host as WebContents | null,
+    drawHost: () => {
+      state.draws.push('頼む');
+      return () => state.draws.push('戻す');
+    },
     hasSession: (id) => state.sessions.has(id),
     onAsk: (id, ask) => asked.push([id, ask]),
     channels: {

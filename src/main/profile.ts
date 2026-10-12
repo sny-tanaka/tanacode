@@ -46,6 +46,8 @@ export type ProfileOptions = {
   // このプロファイルの画面への知らせと、画面（アプリ内ブラウザの webview を持つもの）
   send: Send;
   host: () => WebContents | null;
+  // このプロファイルの画面を、描かれる状態にする（戻す関数を返す）。見ていないプロファイルの画面は非表示なので、Claude がアプリ内ブラウザのツールを動かす間だけ頼む
+  drawHost: () => () => void;
   notify: Notify;
   // アプリ内ブラウザの webview が使うセッション（失敗した通信を Claude に見せる）
   preview: Session;
@@ -116,6 +118,7 @@ export class Profile {
       enabled: () => this.settings.browserControlEnabled(),
       extraHosts: () => this.settings.browserHosts(),
       host: options.host,
+      drawHost: options.drawHost,
       hasSession: (id) => !!this.manager?.summary(id),
       // 一覧は「ブラウザでの操作待ち」。見ていないセッションなら通知し、クリックでそのセッションのブラウザを開く
       onAsk: (id, ask) => {
