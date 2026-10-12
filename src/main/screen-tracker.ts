@@ -12,6 +12,7 @@ import {
   parseSpinner,
   parseTasks,
   promptRange,
+  tallPromptRange,
   showsCommandSuggestion,
   type SeenOptions,
   type TasksDialog,
@@ -611,11 +612,21 @@ export class ScreenTracker {
       // 入力欄もメニューも無い。しばらく続いたら認識できない画面とする
       this.update({ state: this.info.state, model, effort, mode, draft, ready: this.info.ready });
       if (this.promptSeen) {
-        this.unknownTimer = setTimeout(() => this.update({ ...this.info, state: { kind: 'unknown' } }), UNKNOWN_AFTER_MS);
+        this.unknownTimer = setTimeout(() => this.settleUnrecognized(), UNKNOWN_AFTER_MS);
       }
     }
 
     this.wake();
+  }
+
+  // 入力欄もメニューも無い画面が続いた。入力欄が画面より高く、先頭の行が画面の外に出ているだけ（長い複数行の入力）なら、
+  // 入力欄として読み、見えている分を書きかけにする。そうでなければ、認識できない画面とする。
+  // すぐに決めず、続いたのを見てから決める（描き直しの途中の画面を、入力欄と取り違えないように）
+  private settleUnrecognized(): void {
+    this.unknownTimer = null;
+    const tall = tallPromptRange(this.lines());
+    if (tall) this.update({ ...this.info, state: { kind: 'prompt' }, draft: this.busy ? '' : this.draft(tall) });
+    else this.update({ ...this.info, state: { kind: 'unknown' } });
   }
 
   private wake(): void {

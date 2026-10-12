@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { ScreenLine } from '@shared/screen';
-import { findMode, findModel, isStreaming, parseMenu, parseRewind, parseSpinner, promptRange } from '../src/main/screen-parser';
+import { findMode, findModel, isStreaming, parseMenu, parseRewind, parseSpinner, promptRange, tallPromptRange } from '../src/main/screen-parser';
 
 // 画面の読み取り（screen-parser.ts）のうち、控えの画面のままでは出てこない場面。
 // 動作確認済のバージョンの控え（test/fixtures/claude-code/<バージョン>/screens）を元に、その場面で変わる行だけを差し替えて読む
@@ -168,4 +168,48 @@ it('/rewind の巻き戻し先の一覧の上（会話の本文）に、一覧�
   expect(parseRewind(replaced(rewindList('新しい会話を始めます'), /^⏺ 再開後の返事/, quoted.find((l) => /^⏺ 一覧の下に/.test(l.text))!))).toEqual({
     pointed: '新しい会話を始めます',
   });
+});
+
+it('入力欄が 30 行より高くても（長い複数行の入力・背の高い画面）、下の罫線まで入力欄として読む', () => {
+  const RULE = '─'.repeat(120);
+  const tall = (rows: number) => [
+    line(''),
+    line(RULE),
+    line('❯ 31 行目: 長い発言'),
+    ...Array.from({ length: rows - 1 }, (_, i) => line(`  ${i + 32} 行目: 長い発言`)),
+    line(RULE),
+    line('  ⏸ manual mode on'),
+  ];
+  expect(promptRange(tall(15))).toEqual([2, 17]);
+  // Claude Code は、90 行の画面で入力欄を 40 行まで伸ばす
+  expect(promptRange(tall(40))).toEqual([2, 42]);
+  // 下の罫線が無ければ、入力欄ではない
+  expect(promptRange(tall(40).slice(0, 42))).toBeNull();
+});
+
+it('入力欄が画面より高く、先頭の行（❯）が画面の外に出ているときも、下の罫線までを入力欄として読める（tallPromptRange）', () => {
+  // ログインして使う Claude Code 2.1.296 に、画面（40 行）より長い文を行ごとに打ったときの画面（最適化圧縮の再開の文の終わり）
+  const RULE = '─'.repeat(120);
+  const screen = [
+    ...Array.from({ length: 20 }, (_, i) => line(`  ${i + 1} 行目: これは入力欄に自分で打った長い発言です。`)),
+    line(''),
+    line('  # What the user said in the previous conversation (a record, not a new request)'),
+    line('  <user-message>'),
+    line('    字下げのある行'),
+    line('  </user-message>'),
+    line('  </tanacode-resume>'),
+    line(RULE),
+    line('  ⏵⏵ auto mode on (shift+tab to cycle)'),
+    line(''),
+  ];
+  expect(promptRange(screen)).toBeNull();
+  expect(tallPromptRange(screen)).toEqual([0, 26]);
+  // ふつうの入力欄（上の罫線が見えている）・応答の途中（字下げの無い行がある）・罫線の下に何行も続く画面は、当てはめない
+  expect(tallPromptRange([line(RULE), line('❯ 書きかけ'), line(RULE), line('  ⏸ manual mode on')])).toBeNull();
+  expect(tallPromptRange([line('⏺ 応答の文'), ...screen])).toBeNull();
+  expect(tallPromptRange(replaced(screen, /^ {2}3 行目/, '⏺ 応答の文'))).toBeNull();
+  expect(tallPromptRange([...screen, ...Array.from({ length: 5 }, (_, i) => line(` ${i + 1}. 選択肢`))])).toBeNull();
+  // 罫線が無い・罫線がいちばん上
+  expect(tallPromptRange(screen.filter((l) => l.text !== RULE))).toBeNull();
+  expect(tallPromptRange([line(RULE), line('  ⏸ manual mode on')])).toBeNull();
 });

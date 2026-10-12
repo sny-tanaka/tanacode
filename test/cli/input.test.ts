@@ -31,6 +31,7 @@ import {
   STOP_AGAIN,
   STOP_PROMPT,
   SUBAGENT_PROMPT,
+  TALL_LINES,
   agentSteps,
   checkAgentLog,
   checkAiTitle,
@@ -246,6 +247,37 @@ describe(`Claude Code ${version} の入力欄`, () => {
 
   it('セッションの一覧に、/rename の名前と作業フォルダで出る', async () => {
     checkDiscovered(await discoverSessions(new Set()), run.claudeSessionId, run.cwd, RENAMED);
+  });
+});
+
+describe(`Claude Code ${version} の、背の高い入力欄`, () => {
+  let api: MockApi;
+  let run: ClaudeRun;
+
+  beforeAll(async () => {
+    api = new MockApi();
+    run = new ClaudeRun(await api.start());
+    await run.open();
+  });
+
+  afterAll(async () => {
+    record(run);
+    run?.stop();
+    await api?.stop();
+  });
+
+  it('背の高い画面（90 行）で、入力欄が 30 行より高くなる長い発言を打っても、入力欄として読めて、手が空くのを待つ送り方（最適化圧縮の再開の文・親からの指示・予約）で送れる', async () => {
+    // 行ごとに送ると、入力欄には文字のまま入る。Claude Code は、入力欄を画面の高さの半分ほどまで伸ばすので、背の高い画面では
+    // 入力欄が 30 行を超える。入力欄として読めないと「操作できない画面」になり、Enter の直前の確かめ（guarded）で送るのをやめて、
+    // 文字が入力欄に残る（実機で、最適化圧縮が「再開の文を送るのを待っています」のまま進まなくなった）
+    run.manager.resize(run.sessionId!, 120, 90);
+    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
+    const attentions = run.attentions.length;
+    await run.manager.submitWhenReady(run.sessionId!, TALL_LINES, 30_000);
+    await run.waitFor('発言が届く', () => eventsOf(run).some((e) => e.type === 'user' && e.text === TALL_LINES), 30_000);
+    checkPasted(eventsOf(run), TALL_LINES);
+    expect(run.attentions.slice(attentions)).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
   });
 });
 

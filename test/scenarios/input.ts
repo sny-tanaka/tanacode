@@ -56,6 +56,9 @@ const sentences = (count: number, label: string) => Array.from({ length: count }
 export const ONE_LONG_LINE = sentences(60, '改行のない長い段落');
 // 複数行の中に、1,500 文字ほどの行が 1 つ
 export const LINES_WITH_LONG_LINE = ['長い行を含む発言の 1 行目です。', sentences(48, '途中の長い行'), '', '最後の行です。'].join('\n');
+// 入力欄が背の高くなる発言。行ごとに送ると、入力欄には文字のまま入る。Claude Code は、入力欄を画面の高さの半分ほどまで伸ばして
+// 終わりのほうを出す（40 行の画面で 15 行）。背の高い画面（アプリのペインが縦に長いとき）では、入力欄が 30 行を超える
+export const TALL_LINES = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
 // 入力欄で ! を付けて実行するコマンドと、その出力
 export const SHELL_COMMAND = 'echo tanacode-shell';
 export const SHELL_OUTPUT = 'tanacode-shell';
