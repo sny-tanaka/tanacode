@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createVitest } from 'vitest/node';
 
 const SETUP = join(fileURLToPath(new URL('.', import.meta.url)), 'mutation-setup.mjs');
+const CLEAN_ENV = join(fileURLToPath(new URL('..', import.meta.url)), 'test/clean-env.ts');
 const [mode, workers] = process.argv.slice(2);
 const send = (message) => new Promise((done) => process.send(message, done));
 const nextMessage = () => new Promise((done) => process.once('message', done));
@@ -52,7 +53,9 @@ if (mode === 'hits') {
       silent: true,
       reporters: [quiet],
       maxWorkers: Number(workers) || 1,
-      setupFiles: [SETUP],
+      // 指定すると vitest.config.ts の setupFiles を置き換えるので、そちらのもの（clean-env.ts）も並べる。外すと、tanacode や
+      // Claude Code の中のシェルで流したときに、セッションの環境変数がテストに漏れて、元のコードのままで落ちる
+      setupFiles: [CLEAN_ENV, SETUP],
       coverage: { enabled: false },
     },
     { plugins: [replace] },
