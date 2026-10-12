@@ -113,7 +113,7 @@ describe('pulledBackPrompt', () => {
     expect(pulledBackPrompt(events, parentMessageText(PARENT, ''))).toBeNull();
   });
 
-  it('最適化圧縮の仕上げの頼み・再開の文は、丸ごと貼り付けで送るので、貼り付けの目印だけが入力欄に戻る', () => {
+  it('最適化圧縮の仕上げの頼み・再開の文は、本文の一部（長い文は入力欄に収まらない）か、貼り付けの目印だけ（前の送り方）が入力欄に戻る', () => {
     const events: ChatEvent[] = [u('前の発言'), { type: 'turn-end' }, { type: 'notice', id: 'h', text: '仕上げ', compact: 'handoff' }];
     expect(pulledBackPrompt(events, '[Pasted text #1 +7 lines]')).toBe(2);
     expect(pulledBackPrompt(events, '<tanacode-handoff> tanacode is about to reset')).toBe(2);

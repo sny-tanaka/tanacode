@@ -112,10 +112,19 @@ export function carriedMessages(events: ChatEvent[]): CarriedMessage[] {
       for (const m of section.matchAll(CARRIED_MESSAGE)) messages.push({ text: m[2], fromParent: m[1] !== undefined });
       continue;
     }
-    if (event.type !== 'user' || event.command || !event.text.trim()) continue;
-    messages.push({ text: event.text, fromParent: !!event.parent });
+    if (event.type !== 'user' || event.command) continue;
+    const text = carriedText(event);
+    if (text) messages.push({ text, fromParent: !!event.parent });
   }
   return messages;
+}
+
+// 引き継ぐ発言の文。入力欄に貼り付けた長い文（札）の中身は入れず、あったことだけを残す。貼り付けはユーザーの言葉とは限らない
+// （ログや Web の文章）ので、「ユーザーの発言の原文」に混ぜない。全体が 1 つの貼り付けだった発言（札だけを送ったもの）も同じ
+function carriedText(event: Extract<ChatEvent, { type: 'user' }>): string {
+  const pastes = event.pasted ? [event.text] : (event.pastes ?? []);
+  const notes = pastes.map((paste) => `[pasted text: ${paste.length} characters, not shown]`);
+  return [event.pasted ? '' : event.text.trim(), ...notes].filter(Boolean).join('\n');
 }
 
 // 前の再開の文で、もう入りきらずに落とした発言の数（次の再開の文の件数に足す）
@@ -281,7 +290,8 @@ function line(text: string, max: number): string {
 const COMPACT_MESSAGE = new RegExp(`^<(${HANDOFF_TAG}|${RESUME_TAG})>([\\s\\S]*)</\\1>$`);
 
 // 会話ログの発言が、仕上げの頼みか再開の文なら、どちらかと中身。
-// 長い文は、Claude Code が目印のタグごと貼り付けの囲み（<pasted_content>）に入れて残すので、先に外す
+// 前のアプリは長い文を丸ごと貼り付けで送っていたので、前の会話ログでは、目印のタグごと貼り付けの囲み（<pasted_content>）に
+// 入っている。先に外す（今は行ごとの短い貼り付けで送るので、囲みは付かない。promptKeys）
 export function parseCompactMessage(text: string): { kind: 'handoff' | 'resume'; body: string } | null {
   const m = unwrapWholePaste(text).trim().match(COMPACT_MESSAGE);
   return m ? { kind: m[1] === HANDOFF_TAG ? 'handoff' : 'resume', body: m[2].trim() } : null;

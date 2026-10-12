@@ -8,8 +8,9 @@ import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePa
 // parent: 親セッションの Claude からの指示（start_session・send_message）なら、親セッションの ID。人の発言には無い
 // command: スラッシュコマンド（/model など。発言ではない）
 // pastes: 発言に添えた長い貼り付け（入力欄の札）の中身。text には入らない（splitPasted を参照）
+// pasted: 発言の全体が 1 つの貼り付けだった（text は、その貼り付けの中身。札だけを送った発言か、前のアプリが丸ごと貼り付けで送った複数行の発言）
 export type ChatEvent =
-  | { type: 'user'; id: string; text: string; pastes?: string[]; images?: string[]; at?: number; parent?: string; command?: true }
+  | { type: 'user'; id: string; text: string; pastes?: string[]; pasted?: true; images?: string[]; at?: number; parent?: string; command?: true }
   | { type: 'assistant-text'; id: string; text: string; at?: number }
   | { type: 'thinking'; id: string; text: string }
   // input: 入力の詳細（Bash のコマンド全文など）。todos: TodoWrite の一覧。taskChange: TaskCreate・TaskUpdate の中身。at: 会話ログの時刻（ミリ秒）
@@ -488,7 +489,11 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   if (entry.interruptedMessageId || text.startsWith(INTERRUPTED_PREFIX)) return [{ type: 'turn-end', interrupted: true }];
   // 親セッションの Claude からの指示。人の発言と見分けて出す
   const fromParent = parseParentMessage(text);
-  if (fromParent) return [{ type: 'user', id: entry.uuid ?? '', ...pastedParts(fromParent.body), at: timeOf(entry), parent: fromParent.parent }];
+  if (fromParent) {
+    // 親からの指示の本文は、アプリが打った文。本文が丸ごと貼り付けの囲みに入っていても（前の送り方）、貼り付けの印は付けない
+    const { pasted: _, ...parts } = pastedParts(fromParent.body);
+    return [{ type: 'user', id: entry.uuid ?? '', ...parts, at: timeOf(entry), parent: fromParent.parent }];
+  }
   // 子セッションの作業が終わった・人の対応待ちになった知らせ（アプリが、手の空いている親に送る）
   const event = parseSessionEvent(text);
   if (event) return [{ type: 'notice', id: entry.uuid ?? '', text: event.message, sessions: event.sessions }];
@@ -521,9 +526,9 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
 }
 
 // user イベントに入れる形（札が無ければ pastes を持たない）
-function pastedParts(raw: string): { text: string; pastes?: string[] } {
-  const { text, pastes } = splitPasted(raw);
-  return pastes.length > 0 ? { text, pastes } : { text };
+function pastedParts(raw: string): { text: string; pastes?: string[]; pasted?: true } {
+  const { text, pastes, whole } = splitPasted(raw);
+  return pastes.length > 0 ? { text, pastes } : whole ? { text, pasted: true } : { text };
 }
 
 function timeOf(entry: TranscriptEntry): number | undefined {
@@ -588,18 +593,19 @@ const PASTED_BLOCK = /<pasted_content( id="[^"]*")?>\n?([\s\S]*?)\n?<\/pasted_co
 // Claude Code は、長い貼り付けの中身を、発言の文のあとに \n\n<pasted_content id="…">\n…\n</pasted_content id="…">\n の形で足して会話ログに残す。
 // - 全体が 1 つの囲みだけなら、札にせず、中身を文として返す。前のアプリは複数行の発言を丸ごと貼り付けで送っていたので、
 //   前の会話の複数行の発言は、すべてこの形で残っている（札にすると、どれも畳まれてしまう）
+//   whole: この形だった（文は、貼り付けの中身。ユーザーが打った文とは限らない）
 // - 囲みのあとに文が続くなど、この形でないものは、囲みを外して全部を文にする
-export function splitPasted(raw: string): { text: string; pastes: string[] } {
+export function splitPasted(raw: string): { text: string; pastes: string[]; whole: boolean } {
   const start = raw.indexOf('<pasted_content');
-  if (start === -1) return { text: raw, pastes: [] };
+  if (start === -1) return { text: raw, pastes: [], whole: false };
   const pastes: string[] = [];
   const rest = raw.slice(start).replace(PASTED_BLOCK, (_, _id: string, body: string) => {
     pastes.push(body);
     return '';
   });
   const text = raw.slice(0, start).trim();
-  if (pastes.length === 0 || rest.trim() !== '') return { text: unwrapPasted(raw), pastes: [] };
-  return text === '' && pastes.length === 1 ? { text: pastes[0].trim(), pastes: [] } : { text, pastes };
+  if (pastes.length === 0 || rest.trim() !== '') return { text: unwrapPasted(raw), pastes: [], whole: false };
+  return text === '' && pastes.length === 1 ? { text: pastes[0].trim(), pastes: [], whole: true } : { text, pastes, whole: false };
 }
 
 // 貼り付けた文字は <pasted_content id="…">…</pasted_content id="…"> で囲まれて会話ログに残る。囲みだけを外す
