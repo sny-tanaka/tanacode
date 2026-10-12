@@ -140,6 +140,7 @@ const api: TanacodeApi = {
   },
   context: {
     get: (sessionId) => invoke(IpcChannel.ContextGet, sessionId),
+    optimize: (sessionId) => invoke(IpcChannel.ContextOptimize, sessionId),
   },
   tasks: {
     bash: (sessionId) => invoke(IpcChannel.TasksBash, sessionId),

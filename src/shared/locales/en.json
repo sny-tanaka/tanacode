@@ -187,6 +187,12 @@
       "answer": "Answered: {answer}",
       "noAnswer": "(no answer)"
     },
+    "compactOptimizer": {
+      "noResponse": "Claude Code didn't respond",
+      "noMarks": "Haiku's response had no marks",
+      "timedOut": "Haiku didn't respond in time",
+      "exited": "Claude Code exited (exit code {code})"
+    },
     "hooks": {
       "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
@@ -429,6 +435,15 @@
       "scheduleFailed": "Couldn't schedule the message: {error}",
       "compact": "Compact",
       "compactTip": "Summarize the conversation to free up context (/compact). Not available while Claude is working.",
+      "compactOptimizedTip": "Have Haiku choose what to keep and what to drop, then summarize the conversation to free up context. Not available while Claude is working.",
+      "optimizing": "Haiku is choosing what to keep…",
+      "compactMode": "Choose how to compact",
+      "compactModePlain": "Standard compact",
+      "compactModePlainDesc": "Sends /compact as is. Claude decides what to keep.",
+      "compactModeOptimized": "Optimized compact",
+      "compactModeOptimizedDesc": "Haiku reads the context, chooses what to keep and what to drop, and sends /compact with those instructions. Uses a little of your usage limits for Haiku.",
+      "optimizeFailed": "Couldn't run optimized compact: {error}",
+      "optimizeCancelled": "Claude started working, so optimized compact was canceled",
       "restart": "Restart",
       "restartTip": "Restart Claude Code and continue the same conversation. Picks up changes to skills, CLAUDE.md, settings, MCP servers, and more.",
       "confirmRestart": "Any turn in progress and background tasks will stop. Restart Claude Code?",

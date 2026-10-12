@@ -7,6 +7,7 @@ export const SHARED_PREF_KEYS = [
   'tanacode.terminalMode',
   'tanacode.scmView',
   'tanacode.contextSort',
+  'tanacode.compactMode',
   'tanacode.checklist.notify',
   'tanacode.app-update.seen',
 ] as const;

@@ -697,6 +697,7 @@ function registerIpc(): void {
   handle(IpcChannel.TasksBash, (e, id: string) => P(e).manager.bashTasks(id));
   handle(IpcChannel.KnowledgeGet, (e, id: string) => P(e).manager.knowledge(id));
   handle(IpcChannel.ContextGet, (e, id: string) => P(e).manager.context(id));
+  handle(IpcChannel.ContextOptimize, (e, id: string) => P(e).manager.optimizeCompact(id));
   handle(IpcChannel.SettingsFilesList, (e) => P(e).settingsFiles.list());
   handle(IpcChannel.SettingsFilesPick, (e) => pickSettingsFile(P(e)));
   handle(IpcChannel.SettingsFilesAdd, (e, path: string, name?: string) => P(e).settingsFiles.add(path, name));

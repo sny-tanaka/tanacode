@@ -177,6 +177,8 @@ describe('ClaudePane（セッションを切り替えた直後の Remote Control
         onResume={noop}
         onUnarchive={noop}
         onSend={noop}
+        onOptimizedCompact={noop}
+        optimizing={false}
         pending={null}
         sending={[]}
         onTakePending={() => null}

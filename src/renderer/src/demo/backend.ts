@@ -455,7 +455,8 @@ export class DemoBackend {
         get: (id) => ok({ files: s(id).knowledge, contextTokens: s(id).contextTokens }),
         onChanged: (l) => this.ch.knowledge.on(l),
       },
-      context: { get: (id) => ok({ items: [...s(id).context] }) },
+      // デモには Haiku が無いので、最適化圧縮は指示を添えない
+      context: { get: (id) => ok({ items: [...s(id).context] }), optimize: () => ok('') },
       tasks: {
         bash: (id) => ok(s(id).bash),
         onBashChanged: (l) => this.ch.bash.on(l),

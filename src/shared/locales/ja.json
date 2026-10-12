@@ -185,6 +185,12 @@
       "answer": "質問への答え: {answer}",
       "noAnswer": "（回答なし）"
     },
+    "compactOptimizer": {
+      "noResponse": "Claude Code から答えが返りませんでした",
+      "noMarks": "Haiku の答えに印がありませんでした",
+      "timedOut": "Haiku の答えが時間内に返りませんでした",
+      "exited": "Claude Code が終了しました（終了コード {code}）"
+    },
     "hooks": {
       "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
@@ -425,6 +431,15 @@
       "scheduleFailed": "予約できませんでした: {error}",
       "compact": "圧縮",
       "compactTip": "会話を要約してコンテキストを空ける（/compact）。作業中は押せません",
+      "compactOptimizedTip": "Haiku が残すもの・捨てるものを選んでから、会話を要約してコンテキストを空ける。作業中は押せません",
+      "optimizing": "Haiku が残すものを選んでいます…",
+      "compactMode": "圧縮のしかたを選ぶ",
+      "compactModePlain": "通常圧縮",
+      "compactModePlainDesc": "/compact をそのまま送ります。何を残すかは Claude 任せ",
+      "compactModeOptimized": "最適化圧縮",
+      "compactModeOptimizedDesc": "Haiku が残すもの・捨てるものを選び、その指示を添えて /compact を送ります。Haiku の分の利用枠を少し使います",
+      "optimizeFailed": "最適化圧縮ができませんでした: {error}",
+      "optimizeCancelled": "Claude が作業を始めたので、最適化圧縮を取りやめました",
       "restart": "再起動",
       "restartTip": "Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます",
       "confirmRestart": "作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？",
