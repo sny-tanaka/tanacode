@@ -1,7 +1,7 @@
 import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
-import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG } from './session-tools';
+import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 // parent: 親セッションの Claude からの指示（start_session・send_message）なら、親セッションの ID。人の発言には無い
@@ -548,7 +548,8 @@ function specialUserText(id: string, text: string): ChatEvent | null {
 
 // 順番待ちの発言が、人（または親セッション）の発言か。完了通知や知らせは除く
 export function isHumanPrompt(text: string): boolean {
-  const head = text.trimStart();
+  // 知らせの全体が貼り付けの囲みに入っていることがある（長いとき）
+  const head = unwrapWholePaste(text).trimStart();
   return (
     !text.includes('<task-notification>') &&
     !head.startsWith('<ci-monitor-event>') &&

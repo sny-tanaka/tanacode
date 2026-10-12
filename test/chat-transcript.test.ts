@@ -577,6 +577,18 @@ describe('toChatEvents: 発言の行', () => {
     ]);
     const cards = [{ listId: 'ab12', cardId: 'cd34' }];
     expect(events(user(checklistEventText(cards, '「やること」#1 に人が返信しました')))).toEqual([{ type: 'notice', id: 'u1', text: '「やること」#1 に人が返信しました', cards }]);
+    // 長いものは、目印のタグごと貼り付けの囲みに入って会話ログに残る。囲みを外して見分ける
+    const wrap = (text: string) => `\n\n<pasted_content id="7">\n${text}\n</pasted_content id="7">\n`;
+    expect(events(user(wrap(parentMessageText(parent, '一行目\n二行目'))))).toEqual([{ type: 'user', id: 'u1', text: '一行目\n二行目', at, parent }]);
+    expect(events(user(wrap(sessionEventText([child], '子のセッションの作業が終わりました'))))).toEqual([
+      { type: 'notice', id: 'u1', text: '子のセッションの作業が終わりました', sessions: [child] },
+    ]);
+    expect(events(user(wrap(checklistEventText(cards, '「やること」#1 に人が返信しました'))))).toEqual([
+      { type: 'notice', id: 'u1', text: '「やること」#1 に人が返信しました', cards },
+    ]);
+    expect(isHumanPrompt(wrap(sessionEventText([child], '知らせ')))).toBe(false);
+    expect(isHumanPrompt(wrap(parentMessageText(parent, '親からの指示')))).toBe(true);
+    expect(transcriptTitle(user(wrap(parentMessageText(parent, '子への長い指示\n二行目'))))).toEqual({ title: '子への長い指示', priority: 1 });
   });
 
   it('CI の自動修正の知らせ・スケジュールタスクの起動は、お知らせにして全文を添える', () => {
