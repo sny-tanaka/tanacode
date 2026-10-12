@@ -178,6 +178,8 @@ function fakeHost(cwd: string): SessionsHost {
     parentOf: () => null,
     stateOf: () => 'idle',
     modeOf: () => 'manual',
+    currentModel: () => null,
+    currentEffort: () => null,
     conversation: async () => [],
     screen: () => promptScreen,
     create: (dir: string, _options: NewSessionOptions, parentId: string | null) => {

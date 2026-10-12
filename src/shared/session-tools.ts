@@ -12,6 +12,8 @@ type Schema = Record<string, unknown>;
 const sessionId: Schema = { type: 'string', description: 'Session ID (the id from list_sessions; the first 8 characters are enough)' };
 
 export const PERMISSION_MODES: PermissionMode[] = ['manual', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
+// start_session の effort に渡せる値（--effort の値）
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // ツールで返すセッションの状態。starting: 起動中（worktree の準備も）/ working: 作業中（送った指示を受け取るまでも）/
 // background: ターンは終わり、バックグラウンドのタスクの完了を待っている / question: 質問への回答待ち / permission: 実行の許可待ち /
@@ -98,7 +100,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'start_session',
     kind: 'act',
     description:
-      "Starts a session and sends it the first instruction. By default it is a child session: it appears in the list under this session, the user can open it at any time to instruct it or answer its questions, and you manage it (send_message, wait_sessions). With independent: true it is an independent session instead: an ordinary top-level session next to this one, which the user runs. The conversation can continue after the work is done. Each start asks the user for permission. Started sessions also use the user's Claude usage limits (each one adds to the usage). A child cannot start sessions. Returns without waiting for the start to finish; wait for a child's result with wait_sessions.",
+      "Starts a session and sends it the first instruction. By default it is a child session: it appears in the list under this session, the user can open it at any time to instruct it or answer its questions, and you manage it (send_message, wait_sessions). With independent: true it is an independent session instead: an ordinary top-level session next to this one, which the user runs. The conversation can continue after the work is done. Each start asks the user for permission. Started sessions also use the user's Claude usage limits (each one adds to the usage). A started session, child or independent, keeps the Remote Control setting of this session (on if it is on here). A child cannot start sessions. Returns without waiting for the start to finish; wait for a child's result with wait_sessions.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -110,7 +112,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
         independent: {
           type: 'boolean',
           description:
-            'If true, start an independent session instead of a child (default false). Use it when the user asks for a new or separate session of their own (for example, from Remote Control) rather than parallel work you manage. It notifies the user itself and keeps the Remote Control setting of this session. You cannot instruct, wait for or stop it, and no notice arrives when it finishes; you can still read it like any other visible session',
+            'If true, start an independent session instead of a child (default false). Use it when the user asks for a new or separate session of their own (for example, from Remote Control) rather than parallel work you manage. It notifies the user itself. You cannot instruct, wait for or stop it, and no notice arrives when it finishes; you can still read it like any other visible session',
         },
         name: { type: 'string', description: 'Name shown in the list (short). If omitted, Claude Code names it from the first instruction' },
         folder: {
@@ -118,9 +120,13 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
           description:
             "Folder to start in (absolute path). If omitted, this session's repository folder. Only a folder inside this session's repository or a folder the user has opened in tanacode before (start_folders of list_sessions, which also covers other repositories) can be chosen",
         },
-        model: { type: 'string', description: 'Model (for example opus, sonnet or haiku). If omitted, the default' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: 'Effort. If omitted, the default' },
-        permission_mode: { type: 'string', enum: PERMISSION_MODES, description: "Permission mode. Cannot be more permissive than this session's. If omitted, the same as this session" },
+        model: { type: 'string', description: 'Model (for example opus, sonnet or haiku). If omitted, the same as this session (its current model, even if it was changed along the way)' },
+        effort: { type: 'string', enum: EFFORTS, description: 'Effort. If omitted, the same as this session (its current effort)' },
+        permission_mode: {
+          type: 'string',
+          enum: PERMISSION_MODES,
+          description: "Permission mode. Cannot be more permissive than this session's. If omitted, the same as this session (manual if this session is in plan mode)",
+        },
       },
       required: ['prompt', 'worktree'],
       additionalProperties: false,
