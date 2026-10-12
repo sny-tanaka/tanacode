@@ -195,7 +195,7 @@ describe('貼り付けた長い文の札', () => {
     expect(pastes.at(-1)).toEqual(['1\n2[201~\n3\n4']);
   });
 
-  it('札を押すと中身を確かめられ、Esc で閉じる。× でその札だけを外す', () => {
+  it('札を押すと中身を確かめられ、Esc か、外を押すと閉じる。× でその札だけを外す', () => {
     const pastes: string[][] = [];
     render(<Harness onPastes={(p) => pastes.push(p)} />);
     paste(LOG);
@@ -204,6 +204,12 @@ describe('貼り付けた長い文の札', () => {
     const dialog = screen.getByRole('dialog', { name: '貼り付けた文' });
     expect(dialog.querySelector('pre')?.textContent).toBe(LOG);
     fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // 中を押しても閉じず、外（後ろの幕）を押すと閉じる
+    fireEvent.click(screen.getByText('ログの 1 行目'));
+    fireEvent.mouseDown(screen.getByRole('dialog'));
+    expect(screen.queryByRole('dialog')).not.toBeNull();
+    fireEvent.mouseDown(document.querySelector('.overlay')!);
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getAllByLabelText('外す')[0]);
     expect(pastes.at(-1)).toEqual(['a'.repeat(801)]);
