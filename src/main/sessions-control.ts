@@ -3,9 +3,12 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import { t } from '@shared/i18n';
-import type { NewSessionOptions, ScreenChoice, SessionSummary } from '@shared/ipc';
+import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { SubagentRun } from '@shared/subagent';
+import type { BashTask } from '@shared/task';
+import type { WorkflowRun } from '@shared/workflow';
 import {
   canSee,
   EFFORTS,
@@ -28,7 +31,8 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // 呼び出し元のセッションは中継の env で渡ってくるので、親子の関係や見えるセッションは、アプリの記録（SessionSummary.parentId）で判断する。
 // 読むだけのツールは、同じリポジトリのセッションと親子・兄弟だけを見せる（別のリポジトリの会話は読ませない）。
 // 指示・中断・質問への答えは、自分の子セッションにだけ。許可の確認には答えさせない（親を通じて、権限を広げられないように）。
-// start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ
+// start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ。
+// end_session は、役目を終えた自分の子を片付ける（アーカイブして、worktree も消す）。画面からのアーカイブと同じ処理を通す
 
 // SessionManager のうち、ツールが使うもの
 export type SessionsHost = {
@@ -53,12 +57,21 @@ export type SessionsHost = {
   // expect を満たすメニューのあいだだけ選ぶ。押せたら true
   chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean>;
   watchState(listener: (id: string) => void): () => void;
+  // バックグラウンドで動かしたもの（終わったものも入っている）。end_session で、Claude Code と一緒に止まるものを伝えるために読む
+  subagents(id: string): SubagentRun[];
+  bashTasks(id: string): BashTask[];
+  workflows(id: string): WorkflowRun[];
+  // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
+  worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null>;
 };
 
 type Deps = {
   host: SessionsHost;
   // メニューの「Claude にほかのセッションを扱わせる」
   enabled: () => boolean;
+  // セッションをアーカイブする。画面からのアーカイブと同じ処理（アプリ内ブラウザ・シェルの後始末も）。worktree を消せなければ、
+  // アーカイブはしたうえで、理由を添えて失敗する
+  archive: (id: string, options: ArchiveOptions) => Promise<WorktreeRemoval | null>;
   // ホームのフォルダ（ここを開いたセッションに、ホームの下のすべてのセッションを見せないため）
   home: string;
   // 親への知らせをまとめるまでの待ち（テストでは短くする）
@@ -86,6 +99,21 @@ const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 // 親に知らせる、子の手が空いた状態。バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる。
 // 子セッションは人に通知しないので、人が答える許可の確認・ターミナルでの操作の待ちも、親に知らせて人に伝えさせる
 const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'exited']);
+
+// end_session で終えられる状態。手が空いている・Claude Code が動いていない・裏のタスクの完了待ち（ターンは終わっている）・アーカイブ済み（残った worktree を消す）
+const ENDABLE_STATES = new Set<SessionState>(['idle', 'exited', 'background', 'archived']);
+// 終えられない状態ごとの、断る理由と次にできること（子の名前に続ける）
+const END_REFUSAL: Partial<Record<SessionState, string>> = {
+  starting: 'is still starting up, so it cannot be ended yet. Wait until it is idle (check with get_session), then call end_session again.',
+  working:
+    'is working, so it was not ended. Wait for it to finish (check with get_session), or, if its work is no longer needed, interrupt it with stop_session first and then call end_session again. If you are not sure whether its work is still needed, ask the user.',
+  question:
+    'is waiting for an answer to a question, so its work is not finished and it was not ended. Answer the question with answer_question (get_session shows it) and let it finish, or ask the user whether to end it.',
+  permission:
+    'is waiting for the user to answer a permission prompt, so its work is not finished and it was not ended. Only the user can answer permission prompts: tell the user, and call end_session again once the child is idle.',
+  waiting:
+    'is waiting for the user to act in its terminal, so it was not ended. Only the user can do that: tell the user, and call end_session again once the child is idle.',
+};
 
 class ToolError extends Error {}
 
@@ -144,6 +172,8 @@ export class SessionsControl {
           return await this.answerQuestion(caller, args);
         case 'stop_session':
           return await this.stopSession(caller, args);
+        case 'end_session':
+          return await this.endSession(caller, args);
         default:
           return textResult(`Unknown tool: ${name}`, true);
       }
@@ -433,6 +463,76 @@ export class SessionsControl {
     return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Interrupted.' });
   }
 
+  // 役目を終えた子を片付ける。アーカイブして、worktree の子なら worktree も消す（remove_worktree: false なら残す）。
+  // 人の確認は出さない: アーカイブは一覧から戻せ、worktree を消しても、未コミットの変更は控えの ref に、手元にしか無いコミットはブランチに残る。
+  // 手が空いている・終了している・裏のタスクの完了待ちの子だけ（裏のタスクは Claude Code と一緒に止まる）。
+  // アーカイブ済みの子に呼んだら、残っている worktree を消す（何度呼んでも同じ結果になる）
+  private async endSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
+    const { host } = this.deps;
+    const child = this.resolve(caller, args.session_id, true);
+    if (args.remove_worktree !== undefined && typeof args.remove_worktree !== 'boolean') throw new ToolError('Pass remove_worktree as true or false.');
+    const who = `"${nameOf(child)}"`;
+    const check = () => {
+      const state = host.stateOf(child.id) ?? 'exited';
+      if (!ENDABLE_STATES.has(state)) throw new ToolError(`${who} ${END_REFUSAL[state] ?? `cannot be ended while it is ${SESSION_STATE_LABEL[state]}.`}`);
+      return state;
+    };
+    const before = check();
+    const removeWorktree = args.remove_worktree !== false && !!child.worktree;
+    // PR の状態は GitHub に問い合わせるので、少しかかる。調べられなくても、片付けは続ける
+    const leftovers = removeWorktree ? await host.worktreeLeftovers(child.id).catch(() => null) : null;
+    // 調べている間に、子が動き出していないか（人が子に直接指示したなど）
+    const state = check();
+    const tasks = state === 'background' ? runningTasks(host, child.id) : [];
+    let removal: WorktreeRemoval | null = null;
+    let failure: string | null = null;
+    try {
+      removal = await this.deps.archive(child.id, { removeWorktree });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    // worktree を消せなかったときも、アーカイブは済んでいる。アーカイブもできていなければ、そのまま失敗として返す
+    if (host.stateOf(child.id) !== 'archived') throw new ToolError(`Could not archive ${who}: ${failure ?? 'unknown error'}`);
+    this.notices.remove(caller.id, child.id);
+    this.stopped.delete(child.id);
+    const alreadyArchived = before === 'archived';
+    const notes = [alreadyArchived ? 'It was already archived.' : `Archived. The user can restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`];
+    if (tasks.length > 0) {
+      notes.push(
+        `Stopped its ${tasks.length} background ${tasks.length === 1 ? 'task' : 'tasks'} together with Claude Code. Processes it detached from Claude Code (for example with nohup or open) are not tracked and may still be running.`,
+      );
+    }
+    let worktree: Record<string, unknown> | null = null;
+    if (child.worktree) {
+      const folder = !removeWorktree ? 'kept' : failure !== null ? 'not_removed' : leftovers && !leftovers.exists ? 'already_removed' : 'removed';
+      worktree = {
+        name: child.worktree.name,
+        branch: child.worktree.branch,
+        folder,
+        ...(removal ? { branch_kept: removal.branchKept, backup_ref: removal.backupRef } : {}),
+        ...(failure !== null ? { error: failure } : {}),
+        ...(leftovers ? { unpushed_commits: leftovers.unpushed, pull_request: pullRequestOf(leftovers) } : {}),
+      };
+      if (!removeWorktree) notes.push('Kept its worktree (remove_worktree was false). Call end_session again without it to remove the worktree.');
+      else if (failure !== null) notes.push('Could not remove its worktree (see worktree.error), so the folder and the branch are still there. Tell the user, or call end_session again once the cause is gone.');
+      else if (folder === 'already_removed') notes.push('Its worktree folder was already gone.');
+      else notes.push('Removed its worktree. If the user restores the session, the worktree is recreated.');
+      if (removal?.backupRef) notes.push(`It had uncommitted changes or untracked files. They are saved as a commit at ${removal.backupRef} (gitignored files are not included).`);
+      if (removal?.branchKept) notes.push(`Kept the branch ${removal.branch} because it has commits that exist only locally.`);
+    } else if (args.remove_worktree === true) {
+      notes.push('It has no worktree, so no folder was removed.');
+    }
+    return json({
+      session_id: child.id,
+      name: nameOf(child),
+      archived: true,
+      already_archived: alreadyArchived,
+      ...(tasks.length > 0 ? { stopped_background_tasks: tasks } : {}),
+      worktree,
+      note: notes.join(' '),
+    });
+  }
+
   // --- 親への知らせ ---
 
   // 子が作業中から手の空いた状態になったら、親に知らせる（親が待っていなくても）。
@@ -621,6 +721,21 @@ function relationOf(s: SessionSummary, caller: SessionSummary): keyof typeof REL
   if (s.parentId === caller.id) return 'child';
   if (caller.parentId && s.parentId === caller.parentId) return 'sibling';
   return 'project';
+}
+
+// 動いている裏のタスク（一覧の数え方と同じ: SessionManager の countBackground）
+function runningTasks(host: SessionsHost, id: string): { kind: string; name: string }[] {
+  return [
+    ...host.bashTasks(id).filter((task) => task.state === 'running').map((task) => ({ kind: 'bash', name: clip(task.description || task.command, 200) })),
+    ...host.subagents(id).filter((run) => run.background && run.state === 'running').map((run) => ({ kind: 'subagent', name: clip(run.description ?? '', 200) })),
+    ...host.workflows(id).filter((run) => run.status === 'running').map((run) => ({ kind: 'workflow', name: clip(run.name, 200) })),
+  ];
+}
+
+function pullRequestOf(leftovers: WorktreeLeftovers): Record<string, unknown> {
+  const { pr } = leftovers;
+  if (pr.state === 'none' || pr.state === 'unknown') return { state: pr.state };
+  return { state: pr.state, number: pr.number, base: pr.base, url: pr.url };
 }
 
 const KIND_MARK = { added: 'A', modified: 'M', deleted: 'D' } as const;

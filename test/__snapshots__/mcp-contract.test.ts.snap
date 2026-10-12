@@ -744,6 +744,7 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     "mcp__tanacode-sessions__wait_sessions",
     "mcp__tanacode-sessions__send_message",
     "mcp__tanacode-sessions__answer_question",
+    "mcp__tanacode-sessions__end_session",
   ],
   "tools": [
     {
@@ -948,6 +949,25 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
       "kind": "act",
       "label": "子セッションを中断",
       "name": "stop_session",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "remove_worktree": {
+            "type": "boolean",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "子セッションを終える",
+      "name": "end_session",
     },
   ],
 }

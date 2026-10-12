@@ -375,7 +375,8 @@
       "start_session": "Start Session",
       "send_message": "Send to Child Session",
       "answer_question": "Answer Child's Question",
-      "stop_session": "Interrupt Child Session"
+      "stop_session": "Interrupt Child Session",
+      "end_session": "End Child Session"
     },
     "checklist": {
       "checklist_overview": "Overview",
