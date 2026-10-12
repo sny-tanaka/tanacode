@@ -176,22 +176,6 @@ export class SettingsFiles {
     rmSync(join(this.runDir, `${sessionId}.json`), { force: true });
   }
 
-  // 最適化圧縮で起動する使い捨ての Claude Code（Haiku）の設定。セッションと同じ接続先・API キーで動かすため、登録した設定に、
-  // hooks を止める指定だけを足す（アプリのフック・statusLine は入れない）。書き方は prepare と同じく、自分だけが読めるファイル
-  prepareOptimizer(sessionId: string, id: string): string {
-    const settings = { ...readSettings(this.find(id)), disableAllHooks: true };
-    mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
-    chmodSync(this.runDir, 0o700);
-    const settingsFile = join(this.runDir, `${sessionId}-optimizer.json`);
-    writeFileSync(settingsFile, JSON.stringify(settings), { mode: 0o600 });
-    chmodSync(settingsFile, 0o600);
-    return settingsFile;
-  }
-
-  releaseOptimizer(sessionId: string): void {
-    rmSync(join(this.runDir, `${sessionId}-optimizer.json`), { force: true });
-  }
-
   private find(id: string): StoredSettingsFile {
     const file = this.store.settingsFiles().find((f) => f.id === id);
     if (!file) {

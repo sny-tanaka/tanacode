@@ -211,6 +211,10 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
     expect(live('サーバーを起動して')).toBe('バックグラウンド 1件の完了待ち');
     expect(app.manager.bashTasks(id).map((t) => [t.command, t.state])).toEqual([['npm run dev', 'running']]);
     expect(app.bashTasks.get(id)).toEqual(app.manager.bashTasks(id));
+    // 最適化圧縮の再開の文に入れる、裏で動いているもの
+    expect(app.manager.runningTasks(id).map((t) => t.kind)).toEqual(['bash']);
+    expect(app.manager.runningTasks(id)[0].label).toContain('npm run dev');
+    expect(app.manager.runningTasks('nope')).toEqual([]);
   });
 
   it('許可の確認・質問・操作できない画面は、それぞれの文言。質問は AskUserQuestion の入力が届くまで許可の確認として扱う', async () => {

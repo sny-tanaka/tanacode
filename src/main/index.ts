@@ -13,6 +13,7 @@ import { profileDataDir, ProfileRegistry } from './profile-registry';
 import { DEFAULT_PROFILE_ID, type NewProfile, type ProfileInfo, type ProfilesState } from '@shared/profile';
 import type { SharedPrefChange, SharedPrefKey, SharedPrefs } from '@shared/prefs';
 import { checkCopyRequest, checkOp, unreadCount } from '@shared/checklist';
+import { IDLE_COMPACT_STATUS } from '@shared/optimized-compact';
 import { draftWalkthroughComment, postWalkthroughComment, type CommentDeps } from './walkthrough-github';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { AppUpdateMonitor } from './app-update';
@@ -697,7 +698,8 @@ function registerIpc(): void {
   handle(IpcChannel.TasksBash, (e, id: string) => P(e).manager.bashTasks(id));
   handle(IpcChannel.KnowledgeGet, (e, id: string) => P(e).manager.knowledge(id));
   handle(IpcChannel.ContextGet, (e, id: string) => P(e).manager.context(id));
-  handle(IpcChannel.ContextOptimize, (e, id: string) => P(e).manager.optimizeCompact(id));
+  handle(IpcChannel.CompactStart, (e, id: string) => P(e).compact?.start(String(id)) ?? IDLE_COMPACT_STATUS);
+  handle(IpcChannel.CompactGet, (e, id: string) => P(e).compact?.status(String(id)) ?? IDLE_COMPACT_STATUS);
   handle(IpcChannel.SettingsFilesList, (e) => P(e).settingsFiles.list());
   handle(IpcChannel.SettingsFilesPick, (e) => pickSettingsFile(P(e)));
   handle(IpcChannel.SettingsFilesAdd, (e, path: string, name?: string) => P(e).settingsFiles.add(path, name));
@@ -1036,7 +1038,10 @@ function setSessionsControl(item: MenuItem): void {
 // 保存できなかったら、チェックを元に戻す
 function setChecklistControl(item: MenuItem): void {
   try {
-    activeProfile()?.settings.setChecklistControlEnabled(item.checked);
+    const profile = activeProfile();
+    profile?.settings.setChecklistControlEnabled(item.checked);
+    // 最適化圧縮は、オフのあいだ使えない。ボタンの状態を知らせ直す
+    profile?.compact?.refresh(profile.manager.list().map((s) => s.id));
   } catch {
     item.checked = !item.checked;
   }

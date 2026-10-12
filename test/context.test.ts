@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
-import { clip, compactInstructions, toolDisplayName, type CompactMark, type ContextItem } from '@shared/context';
+import { clip, type ContextItem } from '@shared/context';
 import { setLanguage } from '@shared/i18n';
 import { promptKeys } from '@shared/prompt-keys';
 import { ContextTracker, estimateTokens } from '../src/main/context-tracker';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 
-// コンテキストの中身（ContextTracker）と、圧縮の指示の組み立て（compactInstructions）
+// コンテキストの中身（ContextTracker）
 
 const CWD = '/work/app';
 let seq = 0;
@@ -227,143 +227,6 @@ describe('estimateTokens', () => {
   it('日本語はおよそ 1 文字 1 トークン、英数字はおよそ 2.2 文字で 1 トークン', () => {
     expect(estimateTokens('あいうえお')).toBeCloseTo(5.35);
     expect(estimateTokens('a'.repeat(22))).toBeCloseTo(10);
-  });
-});
-
-describe('compactInstructions', () => {
-  afterEach(() => setLanguage('ja'));
-  const at = (kind: ContextItem['kind'], label: string, order: number, extra: Partial<ContextItem> = {}): ContextItem => ({
-    id: `${kind}:${label}`,
-    kind,
-    label,
-    tokens: 100,
-    order,
-    compacted: false,
-    ...extra,
-  });
-  const items = [
-    at('file', 'src/main/session-manager.ts', 0),
-    at('topic', '親子の記録の決めごと', 1),
-    at('tool', 'npm install', 2, { tool: 'Bash' }),
-    at('topic', 'ポートの衝突を調べて', 3),
-    at('agent', '在庫の持ち方を調査', 4),
-    at('image', '.menu', 5, { tool: 'mcp__tanacode-browser__screenshot' }),
-    at('file', 'old.ts', 6, { compacted: true }),
-  ];
-  const marks = (entries: [string, CompactMark][]) => new Map(entries);
-
-  it('残す・捨てるの印を、決まった形の文にする', () => {
-    const text = compactInstructions(
-      items,
-      marks([
-        ['file:src/main/session-manager.ts', 'keep'],
-        ['topic:親子の記録の決めごと', 'keep'],
-        ['tool:npm install', 'drop'],
-        ['topic:ポートの衝突を調べて', 'drop'],
-        ['image:.menu', 'drop'],
-      ]),
-    );
-    expect(text).toBe(
-      '`src/main/session-manager.ts` の内容と、「親子の記録の決めごと」から始まるやりとりは詳しく残す。' +
-        '`npm install` の出力、「ポートの衝突を調べて」から始まるやりとり、tanacode-browser の screenshot の画像（.menu）は捨ててよい。',
-    );
-  });
-
-  it('英語では、文の間に空白を入れ、3 つ以上は最後を and でつなぐ。発言に添付した画像の名前は、文の途中の形にする', () => {
-    setLanguage('en');
-    const english = [
-      at('file', 'src/a.ts', 0),
-      at('topic', 'Answered: Keep stock counts', 1),
-      at('tool', 'npm install', 2, { tool: 'Bash' }),
-      at('topic', 'Notice: Agent finished', 3),
-      at('image', 'Image 2 attached to “Fix this screen”', 4),
-      at('image', 'Image attached to “Look here”', 5),
-    ];
-    const text = compactInstructions(
-      english,
-      marks([
-        ['file:src/a.ts', 'keep'],
-        ['topic:Answered: Keep stock counts', 'keep'],
-        ['tool:npm install', 'drop'],
-        ['topic:Notice: Agent finished', 'drop'],
-        ['image:Image 2 attached to “Fix this screen”', 'drop'],
-        ['image:Image attached to “Look here”', 'keep'],
-      ]),
-    );
-    expect(text).toBe(
-      'Keep the contents of `src/a.ts`, the exchange after I answered “Keep stock counts”, and the image attached to “Look here” in detail. ' +
-        'You can drop the output of `npm install`, the exchange after the notification “Agent finished”, and image 2 attached to “Fix this screen”.',
-    );
-  });
-
-  it('印が無ければ空。圧縮より前のものの印は使わない', () => {
-    expect(compactInstructions(items, marks([]))).toBe('');
-    expect(compactInstructions(items, marks([['file:old.ts', 'keep']]))).toBe('');
-    expect(compactInstructions(items, marks([['agent:在庫の持ち方を調査', 'keep']]))).toBe('サブエージェント「在庫の持ち方を調査」の結果は詳しく残す。');
-  });
-
-  it('質問への答え・知らせで区切ったやりとりは、その出来事のあとのやりとりと書く', () => {
-    const topics = [at('topic', '質問への答え: 在庫の数で持つ (推奨)', 0), at('topic', '知らせ: Agent "調査" finished', 1)];
-    expect(compactInstructions(topics, marks(topics.map((t) => [t.id, 'keep'])))).toBe(
-      '質問に「在庫の数で持つ (推奨)」と答えたあとのやりとりと、「Agent "調査" finished」の知らせのあとのやりとりは詳しく残す。',
-    );
-  });
-
-  it('種類ごとの言い方: 書いたファイル・要約・区切りの出来事・ツールの種類・MCP のツール・画像', () => {
-    const kinds = [
-      at('file', 'src/a.ts', 0, { edited: true }),
-      at('summary', '前回の要約', 1),
-      at('topic', '別の Claude からの知らせ', 2),
-      at('topic', '会話の始まり', 3),
-      // 起動した行が分からないタスクの完了の知らせ（ツールの名前が無い）
-      at('tool', 'タスク X が終わりました', 4),
-      at('tool', 'TODO', 5, { tool: 'Grep' }),
-      at('tool', 'tanacode 使い方', 6, { tool: 'WebSearch' }),
-      at('tool', 'src/**/*.ts', 7, { tool: 'Glob' }),
-      at('tool', 'https://example.com/', 8, { tool: 'WebFetch' }),
-      at('tool', 'review', 9, { tool: 'Skill' }),
-      at('tool', 'ui.tsx', 10, { tool: 'mcp__tanacode-browser__click' }),
-      at('tool', '', 11, { tool: 'TodoWrite' }),
-      at('image', '', 12, { tool: 'Read' }),
-      // 発言に添付した画像（ツールが無い）は、名前をそのまま
-      at('image', '「画面を見て」の画像 1', 13),
-    ];
-    expect(compactInstructions(kinds, marks(kinds.map((k) => [k.id, 'drop'])))).toBe(
-      [
-        '`src/a.ts` の内容と変更',
-        '前回の圧縮の要約',
-        '別の Claude からの知らせのやりとり',
-        '会話の始まりのやりとり',
-        '「タスク X が終わりました」の知らせ',
-        '「TODO」の検索結果',
-        '「tanacode 使い方」の検索結果',
-        '「src/**/*.ts」に合うファイルの一覧',
-        'https://example.com/ のページの内容',
-        'スキル「review」の内容',
-        'tanacode-browser の click（ui.tsx）の結果',
-        'TodoWrite の結果',
-        'Read の画像',
-        '「画面を見て」の画像 1',
-      ].join('、') + 'は捨ててよい。',
-    );
-  });
-
-  it('印は会話の順に並べる。長い名前・複数行の名前は、1 行にして 60 文字で切る', () => {
-    const long = at('topic', 'あ'.repeat(70), 2);
-    const multi = at('topic', '複数\n行の   発言', 1);
-    expect(compactInstructions([long, multi], marks([[long.id, 'keep'], [multi.id, 'keep']]))).toBe(
-      `「複数 行の 発言」から始まるやりとりと、「${'あ'.repeat(59)}…」から始まるやりとりは詳しく残す。`,
-    );
-    expect(clip('  前後の空白  ', 10)).toBe('前後の空白');
-    // 上限ちょうどは切らない
-    expect(clip('あ'.repeat(60), 60)).toBe('あ'.repeat(60));
-    expect(toolDisplayName('Bash')).toBe('Bash');
-    // 先頭が mcp__ でなければ、MCP のツールとして読まない
-    expect(toolDisplayName('x_mcp__a__b')).toBe('x_mcp__a__b');
-    // 区切りの出来事の名前は、先頭にあるときだけ（発言の途中の「質問への答え:」「知らせ:」は、ふつうの発言）
-    const quoted = [at('topic', 'メモ: 質問への答え: A', 0), at('topic', '次の知らせ: B', 1)];
-    expect(compactInstructions(quoted, marks(quoted.map((t) => [t.id, 'keep'])))).toBe('「メモ: 質問への答え: A」から始まるやりとりと、「次の知らせ: B」から始まるやりとりは詳しく残す。');
-    expect(toolDisplayName('mcp__tanacode-sessions__list_sessions')).toBe('tanacode-sessions の list_sessions');
   });
 });
 

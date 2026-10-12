@@ -123,8 +123,6 @@ function props(over: Partial<Props> = {}): Props {
     onResume: noop,
     onUnarchive: noop,
     onSend: noop,
-    onOptimizedCompact: noop,
-    optimizing: false,
     pending: null,
     sending: [],
     onTakePending: () => null,

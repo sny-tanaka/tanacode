@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bracketedPaste } from '@shared/prompt-keys';
+import { handoffText } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
 import { fixtureScreen, line, ScriptedApp, type ScriptedPty } from './helpers/scripted-claude';
 
@@ -193,6 +194,38 @@ describe('親からの指示', () => {
     pty.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     await app.manager.withdrawParentDraft(id);
+    expect(pty.writes).toEqual([]);
+  });
+});
+
+describe('最適化圧縮の仕上げの頼み', () => {
+  it('中断で入力欄に戻った仕上げの頼み（貼り付けの目印だけになる）は、withdrawCompactDraft で入力欄から消す', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const withdrawing = app.manager.withdrawCompactDraft(id);
+    await sleep(150);
+    pty.output(promptWith('[Pasted text #1 +7 lines]'));
+    await withdrawing;
+    expect(pty.writes).toEqual(['\x15\x15']);
+  });
+
+  it('囲みのまま入力欄に戻ったときは、チャットの入力欄に移さない', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const head = handoffText().split('\n')[0];
+    pty.output(promptWith(`${head} tanacode is about to reset`));
+    await app.waitFor('入力欄', () => !!app.manager.screen(id)?.draft);
+    expect(app.manager.screenForView(id)?.draft).toBe('');
+    await app.manager.withdrawCompactDraft(id);
+    expect(pty.writes).toEqual(['\x15\x15']);
+  });
+
+  it('人の書きかけは消さない', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    pty.output(promptWith('書きかけの発言'));
+    await app.waitFor('入力欄', () => app.manager.screen(id)?.draft === '書きかけの発言');
+    await app.manager.withdrawCompactDraft(id);
     expect(pty.writes).toEqual([]);
   });
 });

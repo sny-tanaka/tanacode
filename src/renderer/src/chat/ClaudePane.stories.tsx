@@ -105,8 +105,6 @@ function Pane({
         onResume={noop}
         onUnarchive={noop}
         onSend={noop}
-        onOptimizedCompact={noop}
-        optimizing={false}
         pending={pending === null ? null : { text: pending, attachments: [] }}
         sending={[]}
         onTakePending={() => null}

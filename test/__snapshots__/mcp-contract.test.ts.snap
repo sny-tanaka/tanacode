@@ -413,6 +413,7 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "kind": {
             "enum": [
               "decisions",
+              "state",
               "review",
             ],
             "type": "string",
@@ -498,6 +499,7 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "list_kind": {
             "enum": [
               "decisions",
+              "state",
               "review",
             ],
             "type": "string",

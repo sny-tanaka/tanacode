@@ -301,7 +301,7 @@ export const CompressIcon: IconComponent = (p) => (
   </Svg>
 );
 
-// 最適化して圧縮（Haiku が残すもの・捨てるものを選んでから圧縮する）: 圧縮の絵を左に寄せ、右上にきらめき（4 つの角の星）を足す
+// 最適化圧縮（会話を消して、チェックリストから再開する）: 圧縮の絵を左に寄せ、右上にきらめき（4 つの角の星）を足す
 export const OptimizedCompressIcon: IconComponent = (p) => (
   <Svg {...p}>
     <path d="M8 3v5M5.5 5.5 8 8l2.5-2.5" />

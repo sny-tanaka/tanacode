@@ -11,6 +11,7 @@ import { BrowserControl } from './browser-control';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
 import { ChecklistControl } from './checklist-control';
+import { OptimizedCompact } from './optimized-compact';
 import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
@@ -75,6 +76,7 @@ export class Profile {
   scheduled!: ScheduledMessages;
   sessionsControl: SessionsControl | null = null;
   checklistControl: ChecklistControl | null = null;
+  compact: OptimizedCompact | null = null;
   walkthroughControl: WalkthroughControl | null = null;
   // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
   private browserBridge: McpBridge | null = null;
@@ -218,7 +220,15 @@ export class Profile {
       enabled: () => this.settings.walkthroughControlEnabled(),
       onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
     });
-    this.checklistControl = new ChecklistControl({ store: this.checklists, host: manager, enabled: () => this.settings.checklistControlEnabled() });
+    const checklistControl = new ChecklistControl({ store: this.checklists, host: manager, enabled: () => this.settings.checklistControlEnabled() });
+    this.checklistControl = checklistControl;
+    this.compact = new OptimizedCompact({
+      host: manager,
+      lists: (id) => this.checklists.lists(id),
+      wroteSince: (id, at) => checklistControl.wroteSince(id, at),
+      enabled: () => this.settings.checklistControlEnabled(),
+      onChange: (sessionId, status) => send(IpcChannel.CompactChanged, { sessionId, status }),
+    });
     // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
     await manager.adopt();
     // 動き続けている Claude Code を引き継いでから、時刻を過ぎた予約を片付けて待ち始める
@@ -280,6 +290,7 @@ export class Profile {
     this.scheduled?.dispose();
     this.sessionsBridge?.close();
     this.checklistControl?.dispose();
+    this.compact?.dispose();
     this.checklistBridge?.close();
     this.checklists.flush();
     this.walkthroughBridge?.close();

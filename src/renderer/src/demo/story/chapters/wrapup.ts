@@ -3,7 +3,7 @@ import { isFastForward, sleep } from '../../director';
 import { statusLine } from '../../scenarios/claude';
 import { MAIN, type Story } from '../story';
 
-// 章 7「整理して振り返る」: コンテキストの中身を見て「残す」「捨てる」を選んで圧縮する →
+// 章 7「整理して振り返る」: コンテキストの中身を見て、最適化圧縮（会話を消して、チェックリストから再開）する →
 // 英語で返ってきた思考を日本語に訳して読む → 作業の流れを 1 枚の HTML に書き出して開く
 
 // 英語の思考（翻訳のボタンで日本語に訳す）。対訳は作り物の翻訳が返す
@@ -19,6 +19,16 @@ export const TRANSLATIONS: Record<string, string> = {
 };
 
 const PR_PROMPT = 'このブランチの PR の説明を書いて';
+
+const COMPACT_BUTTON = '.claude-header button[aria-label="最適化圧縮"]';
+
+// 最適化圧縮の仕上げで、Claude が書く「いまの状態」
+const STATE_LIST = 'いまの状態';
+const STATE_DESCRIPTION = '会話が無くても続きができるように、今の状態を書く。変わったら書き換える。';
+const STATE_CARDS = [
+  { title: '税込価格・アレルギー表示・テイクアウトの価格まで実装済み。次は PR の説明', body: '`npm test` は通っている。' },
+  { title: '場所: src/lib/price.ts（withTax）・src/components/MenuCard.tsx', body: '確かめ方: `npm test`、`npm run dev` で http://localhost:5173/' },
+];
 
 // 今のコンテキストの中身（大きさは見積もり。合計は全体の使用量より小さくする）
 const ITEM = (id: string, kind: ContextItem['kind'], label: string, tokens: number, order: number, extra: Partial<ContextItem> = {}): ContextItem => ({
@@ -57,40 +67,44 @@ export async function runWrapup(story: Story): Promise<void> {
   await d.click('.claude-header button.context-meter', { ms: 900 });
   await sleep(1800);
 
-  // 2. 残すもの・捨てるものに印を付ける
-  d.caption('圧縮のときに残したいものには「残す」、もう要らないものには「捨てる」の印を付けます', '.context-list');
-  const mark = async (label: string, kind: 'keep' | 'drop') => {
-    await d.click(() => d.byText('.context-row', label)()?.querySelector(`.context-mark.${kind}`), { ms: 700 });
-    await sleep(500);
-  };
-  await mark('MenuCard.tsx', 'keep');
-  await mark('price.ts', 'keep');
-  await mark('npm test', 'drop');
-  await mark('localhost:5173', 'drop');
-  await sleep(600);
-
-  // 3. 印から指示の文を組み立てて、圧縮する
-  d.caption('「この選び方で圧縮…」で、印から /compact に添える指示の文ができます。直してから送れます', '.context-compact .send-button');
-  await d.click('.context-compact .send-button', { ms: 800 });
-  await sleep(2200);
-  const sent = story.nextSend();
-  await d.click('.context-compact .send-button', { ms: 800 });
-  await sent;
+  // 2. 最適化圧縮。要約は作らず、続きに要ることを Claude がチェックリストに書いてから、会話を消して再開する
+  d.caption('「最適化圧縮」は、会話を要約にしません。続きに要ることを Claude がチェックリストに書いてから、会話を消して、チェックリストから再開します', COMPACT_BUTTON);
+  const started = new Promise<void>((resolve) => {
+    backend.onCompactStart = () => resolve();
+  });
+  await d.click(COMPACT_BUTTON, { ms: 900 });
+  await started;
+  backend.setCompactPhase(id, 'finalizing');
+  backend.push(id, { type: 'notice', id: claude.next('handoff'), text: '最適化圧縮: 続きに要ることを、チェックリストに書くよう頼みました', compact: 'handoff' });
   claude.startWorking();
-  await sleep(2400);
+  await sleep(1400);
+  const state = backend.checklists.createList(id, 'claude', STATE_LIST, STATE_DESCRIPTION, 'state');
+  backend.checklists.addCards(id, 'claude', state.id, STATE_CARDS);
+  await sleep(1600);
   claude.stopWorking();
-  backend.push(id, { type: 'divider', id: claude.next('compact'), text: '会話を圧縮しました（92k tokens から）' });
+  claude.say('続きに要ることを「いまの状態」に書きました。');
   backend.push(id, { type: 'turn-end' });
+  await sleep(900);
+
+  // 3. 会話を消して、チェックリストから再開する
+  backend.setCompactPhase(id, 'clearing');
+  await sleep(900);
+  backend.push(id, { type: 'reset' });
   const files = backend.sessions.get(id)!.knowledge;
-  backend.know(id, Object.fromEntries(Object.keys(files).map((path) => [path, 'stale' as const])), 21_000);
-  backend.setStatusLine(id, statusLine(11, 21_000));
-  backend.setContext(id, [
-    ...BEFORE.map((item) => ({ ...item, compacted: true })),
-    ITEM('s-1', 'summary', '会話の要約', 6_500, 12),
-    ITEM('f-card-2', 'file', 'src/components/MenuCard.tsx', 6_800, 13, { edited: true }),
-    ITEM('f-price-2', 'file', 'src/lib/price.ts', 2_400, 14, { edited: true }),
-  ]);
-  d.caption('圧縮すると、前のものは要約に置き換わり、メーターが下がります。エクスプローラーの点は白抜き（圧縮前に読んだだけ）になります', '.claude-header button.context-meter');
+  backend.know(id, Object.fromEntries(Object.keys(files).map((path) => [path, 'stale' as const])), 9_000);
+  backend.setStatusLine(id, statusLine(5, 9_000));
+  backend.setContext(id, [ITEM('t-resume', 'topic', '最適化圧縮: 会話を消して、チェックリストから再開しました', 4_200, 1)]);
+  backend.setCompactPhase(id, 'resuming');
+  backend.push(id, { type: 'notice', id: claude.next('resume'), text: '最適化圧縮: 会話を消して、チェックリストから再開しました', compact: 'resume' });
+  claude.startWorking();
+  await sleep(1600);
+  claude.stopWorking();
+  backend.setCompactPhase(id, null);
+  claude.say(
+    ['チェックリストを読んで、引き継ぎました。', '', '- 税込価格・アレルギー表示・テイクアウトの価格は実装済みで、テストも通っています', '- 残りは、PR の説明を書くことです', '', '続けてよければ、指示をください。'].join('\n'),
+  );
+  backend.push(id, { type: 'turn-end' });
+  d.caption('会話は空になり、メーターが下がります。決めたことと今の状態はチェックリストに残っているので、Claude はそこから続けます', '.claude-header button.context-meter');
   await sleep(3200);
 
   // 4. 英語で返ってきた思考を、日本語に訳して読む

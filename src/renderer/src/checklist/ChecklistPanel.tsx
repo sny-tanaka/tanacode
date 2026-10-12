@@ -141,7 +141,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
           const traits = traitsOf(list);
           const inForce = activeCards(list).length;
           const tip = [
-            traits.pinned ? t('checklist.panel.kindDecisionsTip') : traits.approves ? t('checklist.panel.kindReviewTip') : '',
+            traits.locked ? t('checklist.panel.kindDecisionsTip') : traits.pinned ? t('checklist.panel.kindStateTip') : traits.approves ? t('checklist.panel.kindReviewTip') : '',
             t('checklist.panel.listTip', { description: list.description || t('checklist.panel.noDescription') }),
           ]
             .filter(Boolean)
@@ -179,7 +179,7 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
                   </span>
                 ) : (
                   // チェックで消えないリスト。進み具合の代わりに、ピンと有効なカードの数を出す
-                  <span className="checklist-progress pinned" aria-label={t('checklist.panel.inForceTip', { count: inForce })}>
+                  <span className="checklist-progress pinned" aria-label={t(traits.locked ? 'checklist.panel.inForceTip' : 'checklist.panel.cardCountTip', { count: inForce })}>
                     <PinIcon size={12} />
                     {t('checklist.panel.inForce', { count: inForce })}
                   </span>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { LIST_KINDS, type ListKind } from '@shared/checklist';
 import { t } from '@shared/i18n';
 
-const KIND_LABELS = { normal: 'checklist.listForm.kindNormal', review: 'checklist.listForm.kindReview', decisions: 'checklist.listForm.kindDecisions' } as const;
+const KIND_LABELS = { normal: 'checklist.listForm.kindNormal', review: 'checklist.listForm.kindReview', decisions: 'checklist.listForm.kindDecisions', state: 'checklist.listForm.kindState' } as const;
 
 // リストを作る・名前と説明と種類を変えるフォーム（サイドパネルの中）。種類を変えられるのは人だけ（Claude は作るときに決める）
 export function ListForm({

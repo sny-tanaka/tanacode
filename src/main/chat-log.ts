@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { isTranscriptEntry, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { isCompactMessage } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
 import { rememberImage } from './image-cache';
 import { parentFirst } from './transcript-tail';
@@ -45,6 +46,10 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
       return typed === whole || (pasted !== typed && pasted === `${opening}${closing}`) ? i : null;
     }
     if (event.type === 'user') return event.text.replace(/\s/g, '') === typed ? i : null;
+    // 最適化圧縮の仕上げの頼み・再開の文は、丸ごと貼り付けで送るので、入力欄には貼り付けの目印だけが戻る
+    if (event.type === 'notice' && event.compact) {
+      return typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '') === '' || isCompactMessage(draft) ? i : null;
+    }
     if (!BEFORE_RESPONSE.has(event.type)) return null;
   }
   return null;

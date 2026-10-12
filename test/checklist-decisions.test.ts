@@ -48,7 +48,7 @@ const denied = (run: () => unknown) => {
 describe('リストの種類', () => {
   it('種類の無いリスト（種類を足す前のデータ）と、知らない種類は、ふつうのリストとして読む', () => {
     expect(kindOf({})).toBe('normal');
-    expect(kindOf({ kind: 'state' as never })).toBe('normal');
+    expect(kindOf({ kind: 'unknown' as never })).toBe('normal');
     expect(traitsOf({})).toEqual({ checkable: true, pinned: false, locked: false, approves: false });
   });
 
@@ -504,7 +504,7 @@ describe('MCP のツール', () => {
     expect(store.findList(ME, '確認事項')!.kind).toBe('review');
     const bad = await call('list_create', { name: 'X', description: '', kind: 'permanent' });
     expect(bad.isError).toBe(true);
-    expect(first(bad)).toBe('kind must be "decisions" or "review" (omit it for an ordinary list).');
+    expect(first(bad)).toBe('kind must be "decisions", "state" or "review" (omit it for an ordinary list).');
     expect(store.findList(ME, 'X')).toBeUndefined();
   });
 
@@ -590,8 +590,8 @@ describe('MCP のツール', () => {
     expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('card_revoke');
     const tool = (name: string) => CHECKLIST_TOOLS.find((t) => t.name === name)!;
     expect(tool('card_revoke').inputSchema.required).toEqual(['list', 'numbers', 'reason']);
-    expect(tool('list_create').inputSchema.properties.kind).toMatchObject({ enum: ['decisions', 'review'] });
-    expect(tool('card_add').inputSchema.properties.list_kind).toMatchObject({ enum: ['decisions', 'review'] });
+    expect(tool('list_create').inputSchema.properties.kind).toMatchObject({ enum: ['decisions', 'state', 'review'] });
+    expect(tool('card_add').inputSchema.properties.list_kind).toMatchObject({ enum: ['decisions', 'state', 'review'] });
   });
 });
 

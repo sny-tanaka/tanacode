@@ -51,8 +51,9 @@ export type Card = {
 };
 
 // リストの種類。normal: ふつう（チェックして消していく）/ review: 確認事項（人がチェック＝承認したカードを、決定事項に移す）/
-// decisions: 決定事項（チェックが無く、消えない。Claude は足すことと、理由つきの取り消しだけができる）
-export type ListKind = 'normal' | 'review' | 'decisions';
+// decisions: 決定事項（チェックが無く、消えない。Claude は足すことと、理由つきの取り消しだけができる）/
+// state: いまの状態（チェックが無く、いつも知らせに出る。Claude がその場で書き換える。今やっていること・未コミットの変更・試してだめだったこと・場所と手順）
+export type ListKind = 'normal' | 'review' | 'decisions' | 'state';
 
 // 種類ごとの性質。種類をあとから足せるよう、種類の名前ではなく、性質ごとに別々に見る
 // （「いつも知らせに出す・チェックが無い」と「Claude が書き換えられない」を、1 つの判定にしない）
@@ -71,6 +72,7 @@ const KIND_TRAITS: Record<ListKind, KindTraits> = {
   normal: { checkable: true, pinned: false, locked: false, approves: false },
   review: { checkable: true, pinned: false, locked: false, approves: true },
   decisions: { checkable: false, pinned: true, locked: true, approves: false },
+  state: { checkable: false, pinned: true, locked: false, approves: false },
 };
 
 export const LIST_KINDS = Object.keys(KIND_TRAITS) as ListKind[];

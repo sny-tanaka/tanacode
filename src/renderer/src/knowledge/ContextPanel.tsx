@@ -1,12 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
-import { compactInstructions, type CompactMark, type ContextItem, type SessionContext } from '@shared/context';
+import type { ContextItem, SessionContext } from '@shared/context';
 import { t } from '@shared/i18n';
 import { tx } from '../i18n';
 import { DisclosureIcon } from '../icons';
-import { Busy } from '../layout/Busy';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { formatTokens } from '../workflow/WorkflowCard';
-import { useCompactMarks, useSessionContext } from './useSessionContext';
+import { useSessionContext } from './useSessionContext';
 
 type Sort = 'size' | 'time';
 const SORT_KEY = 'tanacode.contextSort';
@@ -16,38 +15,28 @@ function loadSort(): Sort {
 }
 
 type Props = {
-  sessionId: string;
   // 中身の一覧（取りに行っている間は null）
   context: SessionContext | null;
   // 全体の使用量と上限（statusLine の値。応答がまだ無ければ null）
   tokens: number | null;
   limit: number;
-  canCompact: boolean;
-  compacting: boolean;
-  // 組み立てた指示を添えて /compact を送る
-  onCompact: (instructions: string) => void;
 };
 
-// サイドパネルの「コンテキスト」のセッションごとの入れ物。中身を取りに行く（App で key にセッションの id を付け、
-// 切り替えたら作り直す。書きかけの指示を別のセッションに送らないため）
+// サイドパネルの「コンテキスト」のセッションごとの入れ物。中身を取りに行く（App で key にセッションの id を付け、切り替えたら作り直す）
 export function SessionContextPanel({
+  sessionId,
   visible,
   revision,
   ...props
-}: Omit<Props, 'context'> & { visible: boolean; revision: number }) {
-  const context = useSessionContext(props.sessionId, visible, revision);
+}: Omit<Props, 'context'> & { sessionId: string; visible: boolean; revision: number }) {
+  const context = useSessionContext(sessionId, visible, revision);
   return <ContextPanel {...props} context={context} />;
 }
 
-// 今のコンテキストの中身を、大きさの帯と一緒に並べる。行ごとに「残す」「捨てる」の印を付け、印から組み立てた指示を添えて圧縮する
-export function ContextPanel({ sessionId, context, tokens, limit, canCompact, compacting, onCompact }: Props) {
+// 今のコンテキストの中身（何がどれだけ入っているか）を、大きさの帯と一緒に並べる
+export function ContextPanel({ context, tokens, limit }: Props) {
   const [sort, setSort] = useState<Sort>(loadSort);
   const [showCompacted, setShowCompacted] = useState(false);
-  // 送る前に見せる指示の文（直せる）。null なら一覧の操作中
-  const [draft, setDraft] = useState<string | null>(null);
-  // 印は今の要約の行（圧縮の区切り）ごと。圧縮が進んだら、前の印は使わない
-  const epoch = context?.items.find((i) => i.kind === 'summary' && !i.compacted)?.id ?? '';
-  const { marks, toggle, clear } = useCompactMarks(sessionId, epoch);
 
   const changeSort = useCallback((next: Sort) => {
     setSort(next);
@@ -62,17 +51,6 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
   // 帯の長さは、いちばん大きいものに対する割合
   const max = maxOf(current);
   const compactedMax = maxOf(compacted);
-  // 印は、今のコンテキストにあるものだけ数える（圧縮のあとは、前の印は要約に置き換わったものに付いている）
-  const keep = current.filter((i) => marks.get(i.id) === 'keep').length;
-  const drop = current.filter((i) => marks.get(i.id) === 'drop').length;
-
-  // 印は、圧縮が終わって要約の行が変わるまで残す（送れなかったときに、付け直さなくてよいように）
-  const send = () => {
-    const text = draft?.trim();
-    if (!text || !canCompact) return;
-    onCompact(text);
-    setDraft(null);
-  };
   // 圧縮の直後は、全体の使用量が次の応答まで分からない（会話ログの圧縮後の量は、システムプロンプトなどを含まない）
   const known = tokens !== null && tokens >= listed;
 
@@ -111,7 +89,7 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
 
       <div className="context-list">
         {current.map((item) => (
-          <ContextRow key={item.id} item={item} max={max} mark={marks.get(item.id)} onMark={toggle} />
+          <ContextRow key={item.id} item={item} max={max} />
         ))}
         {compacted.length > 0 && (
           <>
@@ -124,59 +102,7 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
         )}
       </div>
 
-      <div className="context-compact">
-        {draft === null ? (
-          <>
-            <div className="context-compact-row">
-              <span className="context-mark-count">{t('context.panel.marks', { keep, drop })}</span>
-              {keep + drop > 0 && (
-                <button className="ghost-button" onClick={clear}>
-                  {t('context.panel.clearMarks')}
-                </button>
-              )}
-              <button
-                className="send-button"
-                disabled={!canCompact || keep + drop === 0}
-                onClick={() => setDraft(compactInstructions(current, marks))}
-              >
-                {t('context.panel.compactWithMarks')}
-              </button>
-            </div>
-            <p className="context-note">
-              {compacting ? (
-                <Busy>{t('context.panel.compacting')}</Busy>
-              ) : (
-                t('context.panel.note')
-              )}
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="context-compact-title">{t('context.panel.draftTitle')}</div>
-            <textarea
-              value={draft}
-              rows={5}
-              autoFocus
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-            />
-            <div className="context-compact-row">
-              <button className="ghost-button" onClick={() => setDraft(null)}>
-                {t('common.back')}
-              </button>
-              <button className="send-button" disabled={!canCompact || !draft.trim()} onClick={send}>
-                {t('context.panel.compact')}
-              </button>
-            </div>
-            {!canCompact && <p className="context-note">{t('context.panel.cannotCompact')}</p>}
-          </>
-        )}
-      </div>
+      <p className="context-note">{t('context.panel.note')}</p>
     </div>
   );
 }
@@ -184,17 +110,13 @@ export function ContextPanel({ sessionId, context, tokens, limit, canCompact, co
 function ContextRow({
   item,
   max,
-  mark,
-  onMark,
 }: {
   item: ContextItem;
   max: number;
-  mark?: CompactMark;
-  onMark?: (itemId: string, mark: CompactMark) => void;
 }) {
   const name = nameOf(item);
   return (
-    <div className={`context-row${item.compacted ? ' compacted' : ''}${mark ? ` ${mark}` : ''}`}>
+    <div className={`context-row${item.compacted ? ' compacted' : ''}`}>
       <div className="context-row-head">
         <span className="context-kind">{kindOf(item)}</span>
         <span className="context-label" data-tip={name}>
@@ -206,16 +128,6 @@ function ContextRow({
         <span className="context-bar">
           <span style={{ width: `${max > 0 ? Math.max((item.tokens / max) * 100, 1) : 0}%` }} />
         </span>
-        {onMark && (
-          <span className="context-marks">
-            <button className={`context-mark keep${mark === 'keep' ? ' on' : ''}`} aria-pressed={mark === 'keep'} onClick={() => onMark(item.id, 'keep')}>
-              {t('context.row.keep')}
-            </button>
-            <button className={`context-mark drop${mark === 'drop' ? ' on' : ''}`} aria-pressed={mark === 'drop'} onClick={() => onMark(item.id, 'drop')}>
-              {t('context.row.drop')}
-            </button>
-          </span>
-        )}
       </div>
     </div>
   );
