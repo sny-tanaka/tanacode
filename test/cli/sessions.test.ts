@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -8,15 +9,17 @@ import { SESSION_TOOLS, parentMessageText, sessionEventText, sessionToolId } fro
 import { McpBridge, textResult } from '../../src/main/mcp-bridge';
 import { SessionsControl } from '../../src/main/sessions-control';
 import { buildRelay } from './browser-relay-build';
-import { ClaudeRun, claudeVersion, menuOf } from './claude-run';
+import { ClaudeRun, claudeVersion, menuOf, sleep } from './claude-run';
 import { MockApi, type Block } from './mock-api';
 
 // 本物の claude をモックの API で動かし、セッションの MCP サーバー（中継）を確かめる。
 // アプリと同じ起動の引数（--mcp-config の timeout を含む・--allowedTools・--settings の PreToolUse のフック）で起動し、
 // 中継（src/main/sessions-mcp.ts をビルドしたもの）が、アプリの代わりのソケットまでツールの呼び出しを運ぶか。
-// - 読むだけのツールと、子への指示・質問への回答は、許可の確認なしに通る / 子の起動と中断は、許可の確認が出る
+// - 読むだけのツールと、子への指示・質問への回答・役目を終えた子の片付けは、許可の確認なしに通る / 子の起動と中断は、許可の確認が出る
 // - 子セッションの起動は、bypassPermissions でも許可の確認が出る（フックが ask を返す）
 // - 子が出した AskUserQuestion に、親（SessionsControl の answer_question）が答えられる
+// - 役目を終えた worktree の子を、親（SessionsControl の end_session）が片付けられる。作業中の子は断り、
+//   裏のタスクの完了待ちの子は、Claude Code と一緒に裏の Bash も止めて、アーカイブし、worktree を消す（未追跡のファイルは控えに残す）
 // - 親からの指示（囲み＋複数行の本文の貼り付け）は、会話ログから「親セッションからの指示」として読める。子の知らせは「Claude への知らせ」
 
 const SESSIONS = 'ほかのセッションを扱ってください';
@@ -31,6 +34,9 @@ const CHILD_QUESTION: AskQuestion = {
   ],
 };
 const BYPASS = 'バイパスのモードで扱ってください';
+const END = '裏でサーバーを動かしてください';
+// 裏で動かし続ける Bash（ほかのテストの sleep と見分けられる秒数にする）
+const END_COMMAND = 'sleep 7411';
 const PARENT = '11111111-0000-4000-8000-000000000001';
 const CHILD = '22222222-0000-4000-8000-000000000002';
 
@@ -79,6 +85,7 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
           call('toolu_list', 'list_sessions'),
           call('toolu_send', 'send_message', { session_id: CHILD, message: 'テストも書いて' }),
           call('toolu_answer', 'answer_question', { session_id: CHILD, question: 'どちら?', choices: ['A 案'] }),
+          call('toolu_end', 'end_session', { session_id: CHILD }),
           call('toolu_stop', 'stop_session', { session_id: CHILD }),
           call('toolu_start', 'start_session', { prompt: '登録画面を作って', worktree: false }),
           say('扱いました'),
@@ -98,6 +105,12 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
         match: ASK,
         delayMs: 500,
         steps: [[{ type: 'tool_use', id: 'toolu_child_ask', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }], say('B 案で進めます')],
+      },
+      {
+        match: END,
+        // 送ってから返事までを、作業中として見られるように遅らせる（sleep は、許可の確認なしに通る）
+        delayMs: 3000,
+        steps: [[{ type: 'tool_use', id: 'toolu_end_bg', name: 'Bash', input: { command: END_COMMAND, description: 'サーバーを起動', run_in_background: true } }], say('裏で動かしました')],
       },
     ];
   });
@@ -132,19 +145,20 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       expect(calls[0]).toEqual({ session: run.sessionId, tool: 'list_sessions', args: {} });
     });
 
-    it('子への指示と質問への回答は確認なしに届き、子の中断と起動は許可の確認を通る', async () => {
+    it('子への指示・質問への回答・子の片付けは確認なしに届き、子の中断と起動は許可の確認を通る', async () => {
       // 確認が出ていれば、答えないかぎりここで止まる
-      await run.waitFor('回答の結果', () => resultOf(run, 'toolu_answer'));
+      await run.waitFor('片付けの結果', () => resultOf(run, 'toolu_end'));
       expect(calls[1]).toEqual({ session: run.sessionId, tool: 'send_message', args: { session_id: CHILD, message: 'テストも書いて' } });
       expect(calls[2]).toMatchObject({ tool: 'answer_question', args: { choices: ['A 案'] } });
+      expect(calls[3]).toEqual({ session: run.sessionId, tool: 'end_session', args: { session_id: CHILD } });
       const stop = await run.waitFor('中断の許可の確認', menuOf('permission'));
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(4);
       await run.answer(stop.title, stop.options[0].id);
       await run.waitFor('中断の結果', () => resultOf(run, 'toolu_stop'));
       const start = await run.waitFor('起動の許可の確認', menuOf('permission'));
       await run.answer(start.title, start.options[0].id);
       await run.waitFor('返事', replied(run, '扱いました'));
-      expect(calls[4]).toMatchObject({ tool: 'start_session', args: { prompt: '登録画面を作って', worktree: false } });
+      expect(calls[5]).toMatchObject({ tool: 'start_session', args: { prompt: '登録画面を作って', worktree: false } });
     });
 
     it('親からの指示（複数行）は、会話ログから親の ID と本文の発言として読める。順番待ちにも本文だけを出す', async () => {
@@ -204,7 +218,7 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       const now = Date.now();
       child.manager['store'].add({ id: parentId, claudeSessionId: randomUUID(), cwd: child.cwd, title: '取りまとめ', titlePriority: 4, archived: false, createdAt: now, updatedAt: now });
       child.manager['store'].update(child.sessionId!, { parentId });
-      control = new SessionsControl({ host: child.manager, enabled: () => true, home: child.home, notifyDelayMs: 10 });
+      control = new SessionsControl({ host: child.manager, enabled: () => true, archive: (id, options) => child.manager.archive(id, options), home: child.home, notifyDelayMs: 10 });
     });
 
     afterAll(() => control?.dispose());
@@ -227,6 +241,95 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       const result = child.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_child_ask');
       expect(result).toMatchObject({ answers: [{ question: CHILD_QUESTION.question, answer: 'B 案' }] });
       expect(menu.title).toContain('どちらの方式');
+    });
+  });
+
+  describe('役目を終えた子を親が終える', () => {
+    let child: ClaudeRun;
+    let control: SessionsControl;
+    let path = '';
+    let branch = '';
+    const parentId = randomUUID();
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: child.cwd, encoding: 'utf8' }).trim();
+    const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
+    const end = () => control.handle(parentId, 'end_session', { session_id: child.sessionId });
+    const state = () => child.manager.stateOf(child.sessionId!);
+    // 裏の Bash のプロセス（このテストが動かしたものだけ: 作業フォルダが、この worktree）
+    const serverPids = () => {
+      const pids = (() => {
+        try {
+          return execFileSync('pgrep', ['-f', END_COMMAND], { encoding: 'utf8' }).split('\n').filter(Boolean);
+        } catch {
+          return [];
+        }
+      })();
+      return pids.filter((pid) => {
+        try {
+          return execFileSync('lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'], { encoding: 'utf8' }).includes(path);
+        } catch {
+          return false;
+        }
+      });
+    };
+
+    beforeAll(async () => {
+      child = new ClaudeRun(await api.start(), { git: true, trusted: true, files: { 'a.txt': 'a\n' } });
+      runs.push(child);
+      await child.startInWorktree();
+      path = child.summary()!.cwd;
+      branch = child.summary()!.worktree!.branch;
+      await child.waitFor('準備の終わり', () => child.chatEvents.some((e) => e.type === 'ready'), 30_000);
+      // 親の記録を足し、子にする（親の Claude Code は動かさない。ツールは SessionsControl に直に頼む）
+      const now = Date.now();
+      child.manager['store'].add({ id: parentId, claudeSessionId: randomUUID(), cwd: child.cwd, title: '取りまとめ', titlePriority: 4, archived: false, createdAt: now, updatedAt: now });
+      child.manager['store'].update(child.sessionId!, { parentId });
+      control = new SessionsControl({ host: child.manager, enabled: () => true, archive: (id, options) => child.manager.archive(id, options), home: child.home, notifyDelayMs: 10 });
+    });
+
+    afterAll(() => {
+      control?.dispose();
+      for (const pid of path ? serverPids() : []) process.kill(Number(pid));
+    });
+
+    it('作業中の子は断る（何も消さない）', async () => {
+      await child.send(END);
+      await child.waitFor('作業中', () => state() === 'working' || null);
+      const working = await end();
+      expect(working.isError).toBe(true);
+      expect(textOf(working)).toContain('is working');
+      expect(textOf(working)).toContain('stop_session');
+      expect(child.summary()!.archived).toBe(false);
+      expect(existsSync(path)).toBe(true);
+    });
+
+    it('裏のタスクの完了待ちの子を終えると、裏の Bash も止まり、アーカイブして worktree を消す。未追跡のファイルは控えに残る', async () => {
+      await child.waitFor('返事', replied(child, '裏で動かしました'));
+      await child.waitFor('裏のタスクの完了待ち', () => state() === 'background' || null, 30_000);
+      expect(serverPids().length).toBeGreaterThan(0);
+      writeFileSync(join(path, 'note.txt'), 'メモ\n');
+      const name = child.summary()!.worktree!.name;
+      const result = await end();
+      expect(result.isError, textOf(result)).toBeUndefined();
+      const ended = JSON.parse(textOf(result)) as { note: string; worktree: Record<string, unknown>; stopped_background_tasks: unknown[] };
+      expect(ended).toMatchObject({ session_id: child.sessionId, archived: true, already_archived: false });
+      expect(ended.stopped_background_tasks).toEqual([{ kind: 'bash', name: 'サーバーを起動' }]);
+      expect(ended.worktree).toMatchObject({ name, branch, folder: 'removed', branch_kept: false, backup_ref: `refs/tanacode/backup/${name}` });
+      // 一覧でアーカイブ済みになり、worktree のフォルダとブランチが消える
+      expect(child.summary()).toMatchObject({ archived: true, running: false });
+      expect(state()).toBe('archived');
+      expect(existsSync(path)).toBe(false);
+      expect(git('worktree', 'list')).not.toContain(path);
+      expect(git('branch', '--list', branch)).toBe('');
+      expect(git('show', `refs/tanacode/backup/${name}:note.txt`)).toBe('メモ');
+      // 裏の Bash は、Claude Code が終わるときに止める
+      for (let i = 0; i < 100 && serverPids().length > 0; i++) await sleep(100);
+      expect(serverPids()).toEqual([]);
+    });
+
+    it('アーカイブ済みの子にもう一度呼ぶと、すでに片付いていることを返す', async () => {
+      const result = await end();
+      expect(result.isError, textOf(result)).toBeUndefined();
+      expect(JSON.parse(textOf(result))).toMatchObject({ archived: true, already_archived: true, worktree: { folder: 'already_removed' } });
     });
   });
 
