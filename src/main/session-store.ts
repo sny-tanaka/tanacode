@@ -17,6 +17,8 @@ export type SessionRecord = {
   settingsFile?: string | null;
   // Remote Control を使うか。無いもの（この指定ができる前のセッション）は使う
   remoteControl?: boolean;
+  // 最適化圧縮を自動で始めるか。無いもの（新しいセッション・この指定ができる前のセッション）はオン
+  autoCompact?: boolean;
   // worktree で始めたセッション（claude --worktree）。cwd は worktree のフォルダ（root/.claude/worktrees/<name>）、
   // root は元のフォルダ（リポジトリのいちばん上）、branch は Claude Code が作ったブランチ。無いものはふつうのセッション
   worktree?: { name: string; branch: string; root: string } | null;

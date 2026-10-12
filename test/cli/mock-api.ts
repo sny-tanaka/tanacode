@@ -59,6 +59,13 @@ export class MockApi {
   // （チェックリストを足して動かす台本が、ターンの終わりごとに 1 つずつずれないように）。フックそのものを確かめるときだけ true にする
   scriptChecklistStops = false;
 
+  // 応答に付ける入力のトークン数（コンテキストの使用量として statusLine と会話ログに出る。上限は 20 万）。
+  // 大きくすると、コンテキストが埋まってきたときの動き（自動の最適化圧縮）を確かめられる
+  inputTokens = 100;
+  // 台本より先に、最後の user の発言から応答を決める（何番目の応答かが決まらない場面で使う）。
+  // prompt: 最後の user の発言の文章（ツールの結果だけなら空）/ results: その発言に入っているツールの結果の文章。null を返すと台本に任せる
+  intercept: ((prompt: string, results: string[]) => Block[] | null) | null = null;
+
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
   // ツールの一覧が付いていない呼び出し（タイトル作りなど）への返事。match: その呼び出しの発言に含まれる文字。
@@ -108,7 +115,11 @@ export class MockApi {
       this.contexts.push(messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n'));
     }
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
-    const blocks: Block[] = stopped
+    const lastResults = Array.isArray(lastUser?.content) ? lastUser.content.filter((b) => b.type === 'tool_result').map((b) => resultText(b.content)) : [];
+    const intercepted = tools.length > 0 && !stopped ? (this.intercept?.(textOf(lastUser), lastResults) ?? null) : null;
+    const blocks: Block[] = intercepted
+      ? intercepted
+      : stopped
       ? [{ type: 'text', text: CHECKLIST_UNCHANGED_MARK }]
       : conversation
       ? (conversation.steps[index] ?? [{ type: 'text', text: '（台本の続きはありません）' }])
@@ -124,7 +135,7 @@ export class MockApi {
       return fail(res, failure);
     }
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
-    const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason };
+    const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason, inputTokens: this.inputTokens };
     if (body.stream) stream(res, answer);
     else json(res, message(answer));
   }
@@ -133,9 +144,9 @@ export class MockApi {
 // 思考の署名（本物の API が付ける暗号の署名の代わり）
 const MOCK_SIGNATURE = 'bW9jay1zaWduYXR1cmU=';
 
-type Reply = { id: string; model: string; content: Block[]; stopReason: string };
+type Reply = { id: string; model: string; content: Block[]; stopReason: string; inputTokens: number };
 
-function message({ id, model, content, stopReason }: Reply) {
+function message({ id, model, content, stopReason, inputTokens }: Reply) {
   return {
     id,
     type: 'message',
@@ -144,7 +155,7 @@ function message({ id, model, content, stopReason }: Reply) {
     content,
     stop_reason: stopReason,
     stop_sequence: null,
-    usage: { input_tokens: 100, output_tokens: 20 },
+    usage: { input_tokens: inputTokens, output_tokens: 20 },
   };
 }
 
@@ -163,7 +174,7 @@ function json(res: ServerResponse, value: unknown): void {
 function stream(res: ServerResponse, reply: Reply): void {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const send = (type: string, data: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
-  send('message_start', { message: { ...message({ ...reply, content: [] }), stop_reason: null, usage: { input_tokens: 100, output_tokens: 0 } } });
+  send('message_start', { message: { ...message({ ...reply, content: [] }), stop_reason: null, usage: { input_tokens: reply.inputTokens, output_tokens: 0 } } });
   reply.content.forEach((block, index) => {
     if (block.type === 'text') {
       send('content_block_start', { index, content_block: { type: 'text', text: '' } });

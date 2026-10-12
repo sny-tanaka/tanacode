@@ -56,7 +56,7 @@ describe('セッションを始めている途中で、新規セッションの�
     run(other, 'commit', '-qm', 'init', '--allow-empty');
     await app.page.click('nav.sidebar .new-session-button');
     // Remote Control は使わない（パッケージしたアプリでは既定でオン。モックの API ではつながらない）
-    const remote = app.page.locator('.claude-header [role="switch"]');
+    const remote = app.page.locator('.claude-header [role="switch"][aria-label="Remote Control"]');
     if ((await remote.count()) > 0 && (await remote.getAttribute('aria-checked')) === 'true') await remote.click();
   });
 

@@ -302,7 +302,7 @@ export class E2EApp {
     await chosen.waitFor();
     if (mode) await page.selectOption('.chat-options select[title^="権限モード"]', mode);
     // Remote Control は使わない（パッケージしたアプリでは既定でオン。モックの API ではつながらない）
-    const remote = page.locator('.claude-header [role="switch"]');
+    const remote = page.locator('.claude-header [role="switch"][aria-label="Remote Control"]');
     if ((await remote.count()) > 0 && (await remote.getAttribute('aria-checked')) === 'true') await remote.click();
     await this.send(prompt);
   }

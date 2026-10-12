@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '../src/shared/chat';
 import type { Checklist } from '../src/shared/checklist';
-import { HANDOFF_TAG, RESUME_TAG, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
+import { HANDOFF_TAG, IDLE_COMPACT_STATUS, RESUME_TAG, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
 import type { SessionState } from '../src/shared/session-tools';
 import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compact';
 
 // 最適化圧縮の流れ（main の OptimizedCompact）。仕上げ → /clear → 再開の文、と進むこと・怪しいときは会話を消さずに取りやめること
 
 const ID = 's1';
-const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, pulledBackMs: 30 };
+// 自動で始める大きさは、AutoCompact から届く（ここでは 60）
+const IDLE = { ...IDLE_COMPACT_STATUS, autoPercent: 60 };
+const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, pulledBackMs: 30, startMs: 30 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // SessionManager の代わり。打ち込まれた文を控え、台本（onSubmit）で会話を進める
@@ -48,10 +50,12 @@ let used: boolean;
 let enabled: boolean;
 let lists: Checklist[];
 let compact: OptimizedCompact;
+let finishes: { failure: string | null; auto: AutoCompactTrigger | null }[];
 
 beforeEach(() => {
   host = new FakeHost();
   statuses = [];
+  finishes = [];
   used = true;
   enabled = true;
   lists = [];
@@ -61,6 +65,8 @@ beforeEach(() => {
     usedSince: () => used,
     enabled: () => enabled,
     onChange: (_id, status) => statuses.push(status),
+    autoStatus: () => ({ percent: 60, paused: false }),
+    onFinish: (_id, failure, auto) => finishes.push({ failure, auto }),
     timings: TIMINGS,
   });
 });
@@ -110,8 +116,8 @@ describe('流れ', () => {
     script();
     host.tasks = [{ kind: 'bash', label: 'npm run dev' }];
     lists = [{ id: 'l', name: 'いまの状態', description: '', kind: 'state', nextNumber: 2, cards: [{ id: 'c', number: 1, title: 'tax.ts の途中', body: '次はテスト', checked: false, createdBy: 'claude', createdAt: 1, updatedAt: 1, thread: [], readByClaude: 0, readByHuman: 0 }], createdBy: 'claude', createdAt: 0 }];
-    expect(compact.start(ID)).toEqual({ phase: 'finalizing', failure: null, unavailable: null });
-    expect(await finished()).toEqual({ phase: null, failure: null, unavailable: null });
+    expect(compact.start(ID)).toEqual({ ...IDLE, phase: 'finalizing' });
+    expect(await finished()).toEqual(IDLE);
     expect(host.submitted).toHaveLength(3);
     expect(isHandoff(host.submitted[0])).toBe(true);
     expect(host.submitted[1]).toBe('/clear');
@@ -120,6 +126,47 @@ describe('流れ', () => {
     expect(host.submitted[2]).toContain('## #1 tax.ts の途中\n次はテスト');
     expect(host.submitted[2]).toContain('- Bash: npm run dev');
     expect(phases()).toEqual(['finalizing', 'clearing', 'resuming', null]);
+  });
+
+  it('再開の文に、切り替える前の最後の応答を入れる（人が、それに短く答えるかもしれない）。途中で止めたときは、止めた場所に入るので入れない', async () => {
+    script();
+    host.events = [{ type: 'user', id: 'u0', text: '税率を可変にして' }, { type: 'assistant-text', id: 'a0', text: 'A 案と B 案があります。どちらにしますか？' }, { type: 'turn-end' }];
+    compact.start(ID);
+    await finished();
+    expect(host.submitted[2]).toContain('# Your last reply before the reset');
+    expect(host.submitted[2]).toContain('<your-last-reply>\nA 案と B 案があります。どちらにしますか？\n</your-last-reply>');
+    // 仕上げの返事（「書きました」）ではない
+    expect(host.submitted[2]).not.toContain('書きました');
+    host.submitted = [];
+    statuses = [];
+    host.claudeSession = 'conv-1';
+    host.events = [{ type: 'user', id: 'u0', text: '税率を可変にして' }, { type: 'assistant-text', id: 'a0', text: '手順 3 まで進めました' }, { type: 'turn-end' }];
+    compact.start(ID, { percent: 91, midTurn: true });
+    await finished();
+    expect(host.submitted[2]).not.toContain('# Your last reply before the reset');
+    expect(host.submitted[2]).toContain('Your last words before the stop:\n手順 3 まで進めました');
+  });
+
+  it('再開の文を送ったあと、そのターンが始まるまでは、流れの途中（送った直後の「待機」を、手が空いたと見せない）', async () => {
+    script();
+    const long = new OptimizedCompact({
+      host,
+      lists: () => lists,
+      usedSince: () => used,
+      enabled: () => enabled,
+      onChange: (_id, status) => statuses.push(status),
+      timings: { ...TIMINGS, startMs: 10_000 },
+    });
+    long.start(ID);
+    for (let i = 0; i < 500 && host.submitted.length < 3; i++) await sleep(2);
+    expect(host.submitted).toHaveLength(3);
+    await sleep(30);
+    // 再開の文は送ったが、まだターンが始まっていない
+    expect(long.running(ID)).toBe(true);
+    host.state = 'working';
+    await finished();
+    expect(long.running(ID)).toBe(false);
+    long.dispose();
   });
 
   it('続けてもう一度切り替えても、前の会話の発言の原文を引き継ぐ（前の再開の文から取り出す）', async () => {
@@ -183,6 +230,96 @@ describe('流れ', () => {
     compact.start(ID);
     expect((await finished()).failure).toBeNull();
     expect(host.submitted).toHaveLength(3);
+  });
+});
+
+describe('自動で始めた流れ', () => {
+  it('ターンの終わり: 仕上げの頼みと再開の文に、自動であることが入る。再開のあとは報告して待たせる。終わったら知らせる', async () => {
+    script();
+    const auto = { percent: 83, midTurn: false };
+    compact.start(ID, auto);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted[0]).toContain('This reset is automatic (automatic; context 83% full)');
+    expect(host.submitted[2]).toContain('(automatic; context 83% full). No summary was made.');
+    expect(host.submitted[2]).toContain('Do not continue the work until the user tells you to.');
+    expect(finishes).toEqual([{ failure: null, auto }]);
+  });
+
+  it('ターンの途中で止めた: 止めた場所（仕上げの頼みを送る前の会話から）を再開の文に入れ、続きを進めさせる', async () => {
+    host.events = [
+      { type: 'user', id: 'u0', text: '税率を可変にして' },
+      { type: 'assistant-text', id: 'a0', text: 'テストを流します' },
+      { type: 'tool-use', id: 't1', name: 'Bash', target: 'npm test', input: '' },
+      { type: 'tool-result', id: 't1', isError: false },
+      { type: 'turn-end' },
+    ];
+    script();
+    compact.start(ID, { percent: 91, midTurn: true });
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted[0]).toContain('tanacode stopped your turn between tool calls');
+    const resume = host.submitted[2];
+    expect(resume).toContain('continue the work from where it stopped');
+    expect(resume).toContain('Your last words before the stop:\nテストを流します\nYour last tool calls, oldest first:\n- Bash: npm test → finished');
+    expect(resume).not.toContain('Do not continue the work until the user tells you to.');
+  });
+
+  it('仕上げのターンが API エラーで終わった（上限に当たったなど）ら、仕上げを飛ばして切り替え、再開の文にそう書く。チェックリストを使っていなくても取りやめない', async () => {
+    used = false;
+    script({
+      afterHandoff: () => {
+        host.events.push({ type: 'api-error', id: 'e', text: 'Prompt is too long', retrying: false }, { type: 'turn-end' });
+        host.state = 'idle';
+      },
+    });
+    compact.start(ID, { percent: 97, midTurn: true });
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted[1]).toBe('/clear');
+    expect(host.submitted[2]).toContain('The wrap-up before this reset could not run');
+  });
+
+  it('再試行中の API エラー・立ち直った API エラーでは、飛ばさない', async () => {
+    script({
+      afterHandoff: () => {
+        host.events.push({ type: 'api-error', id: 'e', text: 'Overloaded', retrying: true }, { type: 'api-error', id: 'e2', text: 'Overloaded', retrying: false }, { type: 'assistant-text', id: 'a1', text: '書きました' }, { type: 'turn-end' });
+        host.state = 'idle';
+      },
+    });
+    compact.start(ID, { percent: 85, midTurn: false });
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted[2]).not.toContain('could not run');
+  });
+
+  it('手動では、仕上げが API エラーで終わっても飛ばさない（会話を消さずに取りやめる）', async () => {
+    used = false;
+    script({
+      afterHandoff: () => {
+        host.events.push({ type: 'api-error', id: 'e', text: 'Prompt is too long', retrying: false }, { type: 'turn-end' });
+        host.state = 'idle';
+      },
+    });
+    compact.start(ID);
+    expect((await finished()).failure).toBe('not-used');
+    expect(host.submitted).not.toContain('/clear');
+    expect(finishes).toEqual([{ failure: 'not-used', auto: null }]);
+  });
+
+  it('自動でも、取りやめるときは手動と同じ（会話を消さない）。理由と、自動だったことを知らせる', async () => {
+    script();
+    used = false;
+    const auto = { percent: 83, midTurn: false };
+    compact.start(ID, auto);
+    expect((await finished()).failure).toBe('not-used');
+    expect(host.submitted).not.toContain('/clear');
+    expect(finishes).toEqual([{ failure: 'not-used', auto }]);
+  });
+
+  it('進んでいる途中かを答える。状態には、自動で始める大きさと、休んでいるかが入る', async () => {
+    script();
+    expect(compact.running(ID)).toBe(false);
+    expect(compact.start(ID)).toMatchObject({ autoPercent: 60, autoPaused: false });
+    expect(compact.running(ID)).toBe(true);
+    await finished();
+    expect(compact.running(ID)).toBe(false);
   });
 });
 
@@ -377,10 +514,10 @@ describe('/clear のあと', () => {
 describe('使えないとき', () => {
   it('「Claude にチェックリストを扱わせる」がオフなら、始めない。理由を返す', () => {
     enabled = false;
-    expect(compact.start(ID)).toEqual({ phase: null, failure: null, unavailable: 'checklist-off' });
+    expect(compact.start(ID)).toEqual({ ...IDLE, unavailable: 'checklist-off' });
     expect(host.submitted).toEqual([]);
     compact.refresh([ID]);
-    expect(statuses).toEqual([{ phase: null, failure: null, unavailable: 'checklist-off' }]);
+    expect(statuses).toEqual([{ ...IDLE, unavailable: 'checklist-off' }]);
   });
 
   it('このセッションの Claude Code にチェックリストの MCP が足されていなければ、始めない。引き継いだ claude（分からない）は始める', async () => {

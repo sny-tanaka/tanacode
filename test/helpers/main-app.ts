@@ -359,6 +359,7 @@ const SessionManager = fakeClass('SessionManager', {
   rename: echo('manager.rename'),
   remove: echo('manager.remove'),
   summary: () => undefined,
+  screen: () => null,
   history: echo('manager.history'),
   exportSource: echo('manager.exportSource'),
   claudeSessionIds: () => new Set(['known-1']),
@@ -393,6 +394,8 @@ const SessionManager = fakeClass('SessionManager', {
   browserAskChanged: () => undefined,
   watchState: () => undefined,
   stateOf: () => 'idle',
+  notifyState: echo('manager.notifyState'),
+  lastTurnInterrupted: () => false,
   adopt: () => state.adopt(),
 });
 
@@ -482,7 +485,7 @@ const modules: Record<string, Record<string, unknown>> = {
   'model-catalog': { readModelCatalog: () => state.fn.readModelCatalog() },
   // ~/.claude.json を読む代わりに、呼ばれたことと引数を返す
   'claude-account': { readClaudeAccount: (...args: unknown[]) => ({ call: 'readClaudeAccount', args }) },
-  statusline: { StatusLineWatcher: fakeClass('StatusLineWatcher', { start: async () => undefined, close: () => undefined }) },
+  statusline: { StatusLineWatcher: fakeClass('StatusLineWatcher', { start: async () => undefined, close: () => undefined, stopFileFor: (_self: unknown, id: string) => `/nowhere/${id}.auto-compact.json`, stopHitFileFor: (_self: unknown, id: string) => `/nowhere/${id}.auto-compact.hit.json` }) },
   'shell-terminals': {
     ShellTerminals: fakeClass('ShellTerminals', {
       create: echo('shells.create'),

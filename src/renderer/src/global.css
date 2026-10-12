@@ -1316,9 +1316,22 @@ body.resizing-rows {
   gap: 8px;
   padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--border-subtle);
+  /* 幅が狭いときに、中の部品を詰める（下の @container） */
+  container-type: inline-size;
+  /* 狭いときにヘッダーの下に浮かせる札（.compact-status）を、チャットより手前に出す */
+  position: relative;
+  z-index: 1;
+}
+/* チャットの欄が狭いと、ヘッダーの右端のボタン（書き出す・ターミナルモード）が欄の外に出て押せなくなる。
+   狭いときは、コンテキストのメーターの帯を畳んで、数字だけにする */
+@container (max-width: 470px) {
+  .claude-header .context-meter-bar {
+    display: none;
+  }
 }
 /* ヘッダーの「最適化圧縮」。左に、再開の文を待っている・取りやめたことを短く出す（理由はツールチップ） */
 .compact-button {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
@@ -1338,6 +1351,16 @@ body.resizing-rows {
 .compact-status.failed {
   background: var(--danger-tint);
   color: var(--danger);
+}
+/* 札は長いので、ヘッダーに並べると、狭いときに右端のボタン（札の閉じるボタンも）が欄の外に出て押せなくなる。
+   狭いときは、ボタンの下に浮かせて、ヘッダーの幅を使わない */
+@container (max-width: 680px) {
+  .claude-header .compact-status {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    border: 1px solid var(--border-subtle);
+  }
 }
 .compact-status-close {
   display: inline-grid;

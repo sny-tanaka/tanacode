@@ -1,7 +1,7 @@
 import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
-import { isCompactMessage, parseCompactMessage } from './optimized-compact';
+import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
@@ -72,7 +72,9 @@ export type ChatEvent =
   | { type: 'queue'; prompts: string[] }
   // このセッションで作った・紐づいた PR（会話ログの pr-link 行。同じものが何度も書かれる）
   | { type: 'pr-link'; pr: PullRequestLink }
-  | { type: 'reset' }
+  // 会話を始め直した（/clear）。compact: 最適化圧縮の流れの中でアプリが打った /clear（チャットの画面は消さない。
+  // ほかのセッションに状態を返すときも、作業の区切りにしない）
+  | { type: 'reset'; compact?: true }
   // 巻き戻し（/rewind）で会話が枝分かれした。events で表示し直す（それまでの表示は捨てる）
   | { type: 'replace'; events: ChatEvent[] }
   // Remote Control がつながった（url）・切れた（null）
@@ -503,7 +505,12 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   // 最適化圧縮でアプリが送った、仕上げの頼みと再開の文。開くと全文が読める
   const compact = parseCompactMessage(text);
   if (compact) {
-    const notice = t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoff' : 'chat.transcript.compactResume');
+    // 自動で始めたものは、そのときのコンテキストの割合と一緒に出して、手動と見分けられるようにする
+    const percent = autoPercentOf(compact.body);
+    const notice =
+      percent === null
+        ? t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoff' : 'chat.transcript.compactResume')
+        : t(compact.kind === 'handoff' ? 'chat.transcript.compactHandoffAuto' : 'chat.transcript.compactResumeAuto', { percent });
     return [{ type: 'notice', id: entry.uuid ?? '', text: notice, detail: compact.body, compact: compact.kind }];
   }
   const special = specialUserText(entry.uuid ?? '', text.trimStart());

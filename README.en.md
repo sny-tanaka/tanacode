@@ -51,7 +51,7 @@ Without installing anything, you can use the real UI in the [demo](https://sny-t
 
 ### What Claude has read and what it remembers
 
-In the Explorer, files Claude has read in the current conversation get a blue dot, and files it wrote get an orange dot. Files that compaction replaced with a summary get a hollow dot. The header shows how much of the context is in use. The context is listed by kind (files read, tool results, subagent results, and so on), each with a bar showing its approximate size. When the context grows, optimized compact clears the conversation and resumes from the checklists instead of summarizing it, so decisions aren't lost or watered down in a summary. Hook output and the reasons hooks blocked something appear under the edit card.
+In the Explorer, files Claude has read in the current conversation get a blue dot, and files it wrote get an orange dot. Files that compaction replaced with a summary get a hollow dot. The header shows how much of the context is in use. The context is listed by kind (files read, tool results, subagent results, and so on), each with a bar showing its approximate size. When the context grows, optimized compact clears the conversation and resumes from the checklists instead of summarizing it, so decisions aren't lost or watered down in a summary. It runs automatically once the context passes the size you choose (80% by default). Hook output and the reasons hooks blocked something appear under the edit card.
 
 [See it in the demo →](https://sny-tanaka.github.io/tanacode/#knowledge)
 

@@ -262,7 +262,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ),
       };
     case 'reset':
-      return { ...state, items: [], todos: null, pendingTasks: {} };
+      // 最適化圧縮の切り替え（アプリが打った /clear）では、チャットを消さない。人が読んでいる途中の答えが、画面から消えないように
+      // （前の会話はそのまま残り、再開の知らせの行が区切りになる。ふつうの圧縮と同じ見え方）。人が打った /clear は消す
+      return { ...state, items: event.compact ? state.items : [], todos: null, pendingTasks: {} };
     case 'replace':
       return event.events.reduce(apply, EMPTY_CHAT);
     case 'hook':

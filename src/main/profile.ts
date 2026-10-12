@@ -11,7 +11,10 @@ import { BrowserControl } from './browser-control';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
 import { ChecklistControl } from './checklist-control';
+import { AutoCompact } from './auto-compact';
+import { PRECOMPACT_HOOK_REQUEST } from './checklist-bridge';
 import { OptimizedCompact } from './optimized-compact';
+import { outwardHost } from './outward-state';
 import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
@@ -77,6 +80,7 @@ export class Profile {
   sessionsControl: SessionsControl | null = null;
   checklistControl: ChecklistControl | null = null;
   compact: OptimizedCompact | null = null;
+  autoCompact: AutoCompact | null = null;
   walkthroughControl: WalkthroughControl | null = null;
   // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
   private browserBridge: McpBridge | null = null;
@@ -110,6 +114,7 @@ export class Profile {
       (id, info) => {
         this.manager.statusLineChanged(id, info);
         this.usage.fromStatusLine(info);
+        this.autoCompact?.check(id);
       },
       (id, input) => this.manager.askQuestionsChanged(id, input),
       (id, request, at) => this.manager.permissionRequested(id, request, at),
@@ -158,9 +163,11 @@ export class Profile {
       this.sessionsControl ? this.sessionsControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),
     );
     // チェックリストは、待ち受けを始められなくても画面からは使える
-    this.checklistBridge = await listen('チェックリスト', socketPathIn(dataDir, 'checklist', 'checklist'), (id, tool, args) =>
-      this.checklistControl ? this.checklistControl.handle(id, tool, args) : Promise.resolve(notReady()),
-    );
+    this.checklistBridge = await listen('チェックリスト', socketPathIn(dataDir, 'checklist', 'checklist'), (id, tool, args) => {
+      // 圧縮の前のフック（Claude Code の自動の圧縮を止めるか）は、自動の最適化圧縮が答える
+      if (tool === PRECOMPACT_HOOK_REQUEST) return Promise.resolve(textResult(this.autoCompact?.preCompact(id) ?? ''));
+      return this.checklistControl ? this.checklistControl.handle(id, tool, args) : Promise.resolve(notReady());
+    });
     // ウォークスルーは保存せず、アプリのメモリの上だけで持つ
     this.walkthroughBridge = await listen('ウォークスルー', socketPathIn(dataDir, 'walkthrough', 'walkthrough'), (id, tool, args) =>
       this.walkthroughControl ? this.walkthroughControl.handle(id, tool, args) : Promise.resolve(notReady()),
@@ -189,7 +196,10 @@ export class Profile {
         onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
         onSubagents: (sessionId, runs) => send(IpcChannel.SubagentsChanged, { sessionId, runs }),
         onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
-        onKnowledge: (sessionId, knowledge) => send(IpcChannel.KnowledgeChanged, { sessionId, knowledge }),
+        onKnowledge: (sessionId, knowledge) => {
+          send(IpcChannel.KnowledgeChanged, { sessionId, knowledge });
+          this.autoCompact?.check(sessionId);
+        },
         onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
       },
       this.options.remoteControl,
@@ -202,8 +212,14 @@ export class Profile {
       this.claudeDir,
     );
     const manager = this.manager;
+    // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
+    // ほかのセッションと、アプリが打つ知らせからは「作業中」に見せる（outward-state.ts）
+    const compacting = (id: string) => (this.compact?.running(id) ?? false) || (this.autoCompact?.stopping(id) ?? false);
+    const outward = outwardHost(manager, compacting);
+    manager.compactClearing = (id) => this.compact?.status(id).phase === 'clearing';
     this.sessionsControl = new SessionsControl({
-      host: manager,
+      host: outward,
+      compacting,
       enabled: () => this.settings.sessionsControlEnabled(),
       archive: (id, options) => this.archiveSession(id, options),
       home: homedir(),
@@ -226,19 +242,43 @@ export class Profile {
       enabled: () => this.settings.walkthroughControlEnabled(),
       onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
     });
-    const checklistControl = new ChecklistControl({ store: this.checklists, host: manager, enabled: () => this.settings.checklistControlEnabled() });
+    const checklistControl = new ChecklistControl({ store: this.checklists, host: outward, enabled: () => this.settings.checklistControlEnabled() });
     this.checklistControl = checklistControl;
-    this.compact = new OptimizedCompact({
+    const compact = new OptimizedCompact({
       host: manager,
       lists: (id) => this.checklists.lists(id),
       usedSince: (id, at) => checklistControl.usedSince(id, at),
       enabled: () => this.settings.checklistControlEnabled(),
-      onChange: (sessionId, status) => send(IpcChannel.CompactChanged, { sessionId, status }),
+      onChange: (sessionId, status) => {
+        send(IpcChannel.CompactChanged, { sessionId, status });
+        // 流れが始まった・終わったので、外から見た状態が変わる（待っていた知らせを送る・親に知らせる）
+        manager.notifyState(sessionId);
+      },
+      autoStatus: (id) => autoCompact.status(id),
+      onFinish: (id, failure, auto) => autoCompact.finished(id, failure, auto),
     });
+    this.compact = compact;
+    // 最適化圧縮を、自動で始める（ターンの終わり・ツールの切れ目・Claude Code の自動の圧縮の前）
+    const autoCompact = new AutoCompact({
+      host: manager,
+      compact,
+      percent: () => this.autoCompactPercent(),
+      stopFile: (id) => this.statusLines.stopFileFor(id),
+      stopHitFile: (id) => this.statusLines.stopHitFileFor(id),
+      onChange: (id) => compact.refresh([id]),
+    });
+    this.autoCompact = autoCompact;
+    manager.watchState((id) => autoCompact.check(id));
     // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
     await manager.adopt();
     // 動き続けている Claude Code を引き継いでから、時刻を過ぎた予約を片付けて待ち始める
     this.scheduled.start();
+  }
+
+  // 最適化圧縮を自動で始める大きさ（コンテキストの割合）。確かめやすいよう、環境変数（TANACODE_AUTO_COMPACT_PERCENT）で任意の数にできる
+  autoCompactPercent(): number {
+    const forced = Number(process.env.TANACODE_AUTO_COMPACT_PERCENT);
+    return forced > 0 && forced <= 100 ? forced : this.settings.autoCompactPercent();
   }
 
   // workspace・git に渡された id（セッションか、folders.open で開いたフォルダ）のフォルダ
