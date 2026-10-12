@@ -25,11 +25,14 @@ import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
 import { TodoPanel } from './TodoPanel';
+import { splitPasted } from '@shared/chat';
+import { isLongPaste } from '@shared/prompt-keys';
 import { useInsertInput } from './insertInput';
 import { DoneNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
 import { acceptsInput, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
+import { PastedChips } from './PastedChips';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { stripControlChars } from './sanitize';
@@ -83,8 +86,8 @@ type Props = {
   onOpenFile: (absPath: string, line?: number) => void;
   onResume: () => void;
   onUnarchive: () => void;
-  // 送る。起動中なら、入力を受け付けられるようになるまで預かる
-  onSend: (text: string, attachments: string[]) => void;
+  // 送る。起動中なら、入力を受け付けられるようになるまで預かる。pastes: 入力欄の札（貼り付けた長い文）
+  onSend: (text: string, attachments: string[], pastes?: string[]) => void;
   // 起動を待っている発言
   pending: PendingSend | null;
   // 送ったが、まだ会話ログに出ていない発言
@@ -131,9 +134,11 @@ export const ClaudePane = memo(function ClaudePane({
 }: Props) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
+  // 貼り付けた長い文（札）
+  const [pastes, setPastes] = useState<string[]>([]);
   // 作業の書き出しの確認を出している
   const [exporting, setExporting] = useState(false);
-  const drafts = useRef(new Map<string, { text: string; attachments: string[] }>());
+  const drafts = useRef(new Map<string, { text: string; attachments: string[]; pastes: string[] }>());
   const listRef = useRef<HTMLDivElement>(null);
   // 開いているツール・hooks のまとまり（自動では開かない）
   const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(new Set());
@@ -157,11 +162,12 @@ export const ClaudePane = memo(function ClaudePane({
 
   const [draftSessionId, setDraftSessionId] = useState(session.id);
   if (draftSessionId !== session.id) {
-    drafts.current.set(draftSessionId, { text: input, attachments });
+    drafts.current.set(draftSessionId, { text: input, attachments, pastes });
     setDraftSessionId(session.id);
     const draft = drafts.current.get(session.id);
     setInput(draft?.text ?? '');
     setAttachments(draft?.attachments ?? []);
+    setPastes(draft?.pastes ?? []);
     stickToBottom.current = true;
     setAwayFromBottom(false);
     jumping.current = false;
@@ -214,13 +220,15 @@ export const ClaudePane = memo(function ClaudePane({
   // ターミナルモードで、Claude Code の入力欄に貼れる（起動の途中に貼った文字は、Claude Code が取りこぼす）
   const canPaste = screenMode && acceptsInput(chat.status);
   // ターミナルで選んだ出力やアプリ内ブラウザで選んだ要素などを、入力欄の末尾に足す。
-  // ターミナルモードでは、見えていないチャットの入力欄ではなく、Claude Code の入力欄に貼る（貼れない間は、チャットの入力欄に取っておく）
+  // ターミナルモードでは、見えていないチャットの入力欄ではなく、Claude Code の入力欄に貼る（貼れない間は、チャットの入力欄に取っておく）。
+  // 外から来た文なので、長ければ札にする（入力欄に貼り付けたときと同じ）
   useInsertInput(session.id, (text, added) => {
     if (canPaste) {
       void pasteIntoClaudeScreen(session.id, text, added);
       return;
     }
-    setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
+    if (isLongPaste(text)) setPastes((prev) => [...prev, text]);
+    else setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
   });
   // ターミナルモードから戻ったら、最新のメッセージから見せる（隠している間に、スクロールの位置は失われる）
@@ -236,7 +244,7 @@ export const ClaudePane = memo(function ClaudePane({
   const rewinding = live && screen?.state.kind === 'rewind';
   // 選択メニューが出ている間に文字を送ると、メニューへのキー入力になってしまう
   const blocked = !!menu || rewinding || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
-  const hasContent = input.trim().length > 0 || attachments.length > 0 || comments.length > 0;
+  const hasContent = input.trim().length > 0 || attachments.length > 0 || pastes.length > 0 || comments.length > 0;
   const canSend = !blocked && hasContent;
   // 質問や確認のカードなどが出たときも、最下部にいれば追いかける。カードは会話ログでなく Claude Code の画面から来るので、上の追いかけ
   // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
@@ -252,9 +260,11 @@ export const ClaudePane = memo(function ClaudePane({
   const compactStatus = useCompactStatus(live ? session.id : null);
 
   // Claude Code の入力欄に残った文字（巻き戻し・中断で戻った発言など）は、こちらの入力欄に移して向こうは消す
-  useTakeClaudeDraft(session.id, live && screen?.state.kind === 'prompt' ? screen.draft : '', (draft) =>
-    setInput((prev) => (prev ? `${prev}\n${draft}` : draft)),
-  );
+  // 中断で戻った発言に札が添えてあったら、札は札として戻す
+  useTakeClaudeDraft(session.id, live && screen?.state.kind === 'prompt' ? screen.draft : '', screen?.draftPastes, (draft, back) => {
+    if (draft) setInput((prev) => (prev ? `${prev}\n${draft}` : draft));
+    if (back.length > 0) setPastes((prev) => [...prev, ...back]);
+  });
 
   const rewindTo = useCallback(
     (text: string) => {
@@ -341,20 +351,21 @@ export const ClaudePane = memo(function ClaudePane({
     onCommentsChange([]);
     setInput('');
     setAttachments([]);
+    setPastes([]);
     stickToBottom.current = true;
     setAwayFromBottom(false);
   };
 
   const send = () => {
     if (!canSend) return;
-    onSend(composed(), attachments);
+    onSend(composed(), attachments, pastes);
     clearInput();
   };
 
   // 時刻を指定して送信（予約）。選択メニューが出ている間や、止まっているセッションにも予約できる（時刻になったら main が起動し直して送る）
   const schedule = (at: number) => {
     if (!hasContent) return;
-    void window.tanacode.scheduled.add(session.id, composed(), attachments, at).then(
+    void window.tanacode.scheduled.add(session.id, composed(), attachments, at, pastes).then(
       () => clearInput(),
       (error: unknown) => window.alert(t('chat.pane.scheduleFailed', { error: errorMessage(error) })),
     );
@@ -367,12 +378,17 @@ export const ClaudePane = memo(function ClaudePane({
     void window.tanacode.scheduled.cancel(id).then((taken) => {
       if (!taken) return;
       if (sessionIdRef.current !== owner) {
-        const draft = drafts.current.get(owner) ?? { text: '', attachments: [] };
-        drafts.current.set(owner, { text: [taken.text, draft.text].filter((t) => t.trim()).join('\n'), attachments: [...taken.attachments, ...draft.attachments] });
+        const draft = drafts.current.get(owner) ?? { text: '', attachments: [], pastes: [] };
+        drafts.current.set(owner, {
+          text: [taken.text, draft.text].filter((t) => t.trim()).join('\n'),
+          attachments: [...taken.attachments, ...draft.attachments],
+          pastes: [...taken.pastes, ...draft.pastes],
+        });
         return;
       }
       setInput((prev) => [taken.text, prev].filter((t) => t.trim()).join('\n'));
       setAttachments((prev) => [...taken.attachments, ...prev]);
+      setPastes((prev) => [...taken.pastes, ...prev]);
     });
   };
   const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
@@ -540,17 +556,19 @@ export const ClaudePane = memo(function ClaudePane({
           )}
           {running && !menu && !unknownScreen && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !menu && <DoneNote />}
-          {chat.queued.map((text, i) => (
-            <UnsentUser key={`queued:${i}`} text={text} attachments={0} note={t('chat.pane.queued')} queued />
-          ))}
+          {chat.queued.map((raw, i) => {
+            const { text, pastes } = splitPasted(raw);
+            return <UnsentUser key={`queued:${i}`} text={text} pastes={pastes} attachments={0} note={t('chat.pane.queued')} queued />;
+          })}
           {sending.map((item, i) => (
-            <UnsentUser key={`sending:${i}`} text={item.text} attachments={item.attachments.length} note={t('chat.pane.sending')} />
+            <UnsentUser key={`sending:${i}`} text={item.text} pastes={item.pastes} attachments={item.attachments.length} note={t('chat.pane.sending')} />
           ))}
           {pending && (
             <div className="chat-user pending">
               <span className="chat-prompt">›</span>
               <span className="chat-user-text">
                 {pending.text}
+                <PastedChips pastes={pending.pastes} />
                 {pending.attachments.length > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: pending.attachments.length })}</span>}
                 <span className="chat-user-meta">
                   {chat.status === 'exited'
@@ -572,6 +590,7 @@ export const ClaudePane = memo(function ClaudePane({
                   if (!taken) return;
                   setInput((prev) => [taken.text, prev].filter((t) => t.trim()).join('\n'));
                   setAttachments((prev) => [...taken.attachments, ...prev]);
+                  setPastes((prev) => [...taken.pastes, ...prev]);
                 }}
               />
             </div>
@@ -647,6 +666,8 @@ export const ClaudePane = memo(function ClaudePane({
             onChange={setInput}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
+            pastes={pastes}
+            onPastesChange={setPastes}
             placeholder={menu ? t('chat.pane.chooseAbove') : t('chat.pane.placeholder')}
             blocked={blocked}
             onSend={send}
@@ -720,12 +741,13 @@ export const ClaudePane = memo(function ClaudePane({
 
 // 会話ログにまだ発言として出ていない、送った発言（送信中・順番待ち）
 // 送信中のものは、すぐに本物の発言に置き換わるので、見た目は発言と同じにする（点線にすると置き換わるときにちらつく）
-function UnsentUser({ text, attachments, note, queued = false }: { text: string; attachments: number; note: string; queued?: boolean }) {
+function UnsentUser({ text, pastes, attachments, note, queued = false }: { text: string; pastes: string[]; attachments: number; note: string; queued?: boolean }) {
   return (
     <div className={`chat-user${queued ? ' pending' : ''}`}>
       <span className="chat-prompt">›</span>
       <span className="chat-user-text">
         {text}
+        <PastedChips pastes={pastes} />
         {attachments > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: attachments })}</span>}
         <span className="chat-user-meta">{note}</span>
       </span>

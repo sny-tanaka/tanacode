@@ -22,11 +22,32 @@ afterEach(() => {
 // セッション id ごとに、Claude Code の入力欄の文字（draft）を変えながら、移された文字と pty に書いたものを控える
 function track(sessionId: string, initial = '') {
   const taken: string[] = [];
-  const hook = renderHook(({ draft }) => useTakeClaudeDraft(sessionId, draft, (text) => taken.push(text)), { initialProps: { draft: initial } });
-  return { taken, set: (draft: string) => hook.rerender({ draft }), writes: () => api.argsOf('pty.write') };
+  // 移された札（中断で戻った発言に添えてあったもの）
+  const takenPastes: string[][] = [];
+  const hook = renderHook(
+    ({ draft, pastes }: { draft: string; pastes?: string[] }) =>
+      useTakeClaudeDraft(sessionId, draft, pastes, (text, back) => {
+        taken.push(text);
+        takenPastes.push(back);
+      }),
+    { initialProps: { draft: initial } as { draft: string; pastes?: string[] } },
+  );
+  return { taken, takenPastes, set: (draft: string, pastes?: string[]) => hook.rerender({ draft, pastes }), writes: () => api.argsOf('pty.write') };
 }
 
 describe('チャットの入力欄に移す', () => {
+  it('中断で戻った発言に札（貼り付けた長い文）が添えてあったら、目印を除いた文と、札に分けて移す。札の中身が分からなければ、目印の文字のまま移す', () => {
+    const t = track('s1');
+    t.set('このログを見て[Pasted text #3 +29 lines][Pasted text #4]', ['ログ\n2 行目', 'a'.repeat(900)]);
+    expect(t.taken).toEqual(['このログを見て']);
+    expect(t.takenPastes).toEqual([['ログ\n2 行目', 'a'.repeat(900)]]);
+    expect(t.writes().at(-1)).toEqual(['s1', '\x15\x15']);
+    t.set('');
+    t.set('[Pasted text #5 +29 lines]');
+    expect(t.taken.at(-1)).toBe('[Pasted text #5 +29 lines]');
+    expect(t.takenPastes.at(-1)).toEqual([]);
+  });
+
   it('巻き戻し・中断で戻った文字は移し、Claude Code の入力欄は行の数より 1 つ多い Ctrl+U で消す', () => {
     const t = track('s1');
     t.set('戻した発言');

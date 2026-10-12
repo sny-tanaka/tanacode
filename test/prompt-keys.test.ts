@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bracketedPaste, pastedLines, promptKeys, stripControlChars } from '@shared/prompt-keys';
+import { bracketedPaste, isLongPaste, pastedLines, promptKeys, stripControlChars } from '@shared/prompt-keys';
 
 // pty に打つ文字から、制御文字を除く（チャットの入力・親セッションからの指示・MCP から届く文・シェルに書くコマンド）。
 // ESC が残ると貼り付けの外に出たりキー操作として届いたりし、^U・^H や双方向の制御文字は、見えている文字と送る文字をずらせる
@@ -77,5 +77,16 @@ describe('promptKeys', () => {
     expect(promptKeys('/clear')).toBe('/clear');
     const long = `/${'a'.repeat(900)}`;
     expect(promptKeys(long)).toBe(long);
+  });
+});
+
+// 入力欄に貼り付けた文を、札にするか（Claude Code の CLI が、入力欄で [Pasted text #1 …] の目印に置き換える貼り付けと同じ境目）
+describe('isLongPaste', () => {
+  it('4 行以上か、800 文字より長い貼り付けは、札にする。それより短いものは、文字のまま入れる', () => {
+    expect(isLongPaste('1 行目\n2 行目\n3 行目')).toBe(false);
+    expect(isLongPaste('1 行目\n2 行目\n3 行目\n4 行目')).toBe(true);
+    expect(isLongPaste('a'.repeat(800))).toBe(false);
+    expect(isLongPaste('a'.repeat(801))).toBe(true);
+    expect(isLongPaste('')).toBe(false);
   });
 });

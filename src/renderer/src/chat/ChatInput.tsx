@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SlashCommand } from '@shared/ipc';
+import { isLongPaste, stripControlChars } from '@shared/prompt-keys';
 import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
 import { sessionName } from '../sessions/sessionLinks';
+import { PastedChips } from './PastedChips';
 import { SchedulePicker } from './SchedulePicker';
 
 const MAX_SUGGESTIONS = 40;
@@ -30,6 +32,9 @@ type Props = {
   onChange: (value: string) => void;
   attachments: string[];
   onAttachmentsChange: (paths: string[]) => void;
+  // 貼り付けた長い文（札）。文字としては入れず、送るときに 1 つずつ貼り付けとして送る
+  pastes: string[];
+  onPastesChange: (pastes: string[]) => void;
   placeholder: string;
   // 送れない状態（選択メニューが出ている間など）。入力が空なだけなら false（ボタンはふだんの色のまま、押しても何もしない）
   blocked: boolean;
@@ -99,9 +104,10 @@ function tokenAt(text: string, caret: number): Token | null {
   return null;
 }
 
-// Claude Code に送る。打ち込みは main が行う（同じセッションへの送信が混ざらないよう、親セッションからの指示と同じ順番待ちに並ぶ）
-export function submitToClaude(sessionId: string, text: string, attachments: string[]): Promise<void> {
-  return window.tanacode.sessions.submit(sessionId, text, attachments);
+// Claude Code に送る。打ち込みは main が行う（同じセッションへの送信が混ざらないよう、親セッションからの指示と同じ順番待ちに並ぶ）。
+// pastes: 入力欄の札（貼り付けた長い文）
+export function submitToClaude(sessionId: string, text: string, attachments: string[], pastes: string[] = []): Promise<void> {
+  return window.tanacode.sessions.submit(sessionId, text, attachments, pastes);
 }
 
 export function ChatInput({
@@ -110,6 +116,8 @@ export function ChatInput({
   onChange,
   attachments,
   onAttachmentsChange,
+  pastes,
+  onPastesChange,
   placeholder,
   blocked,
   onSend,
@@ -302,6 +310,7 @@ export function ChatInput({
           ))}
         </div>
       )}
+      <PastedChips pastes={pastes} onRemove={(index) => onPastesChange(pastes.filter((_, i) => i !== index))} />
       <div className="chat-input-row">
         <span className="chat-prompt">›</span>
         <textarea
@@ -318,9 +327,17 @@ export function ChatInput({
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onPaste={(e) => {
             const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
-            if (images.length === 0) return;
+            if (images.length > 0) {
+              e.preventDefault();
+              void addFiles(images);
+              return;
+            }
+            // 長い貼り付けは、文字として入れずに札にする（Claude Code の CLI と同じ境目）。自分で打った文と分けて送り、
+            // Claude Code が「貼り付けられた文」として Claude に渡せるようにする。短い貼り付けは、今までどおり文字のまま入る
+            const text = stripControlChars(e.clipboardData.getData('text/plain'));
+            if (!isLongPaste(text)) return;
             e.preventDefault();
-            void addFiles(images);
+            onPastesChange([...pastes, text]);
           }}
           onKeyDown={(e) => {
             const composing = e.nativeEvent.isComposing || e.keyCode === 229;

@@ -57,6 +57,7 @@ const scheduled = (id: string, sessionId: string, at: number, state: ScheduledMe
   sessionId,
   text: '朝のうちに、昨日の変更のテストを流してください。',
   attachments: [],
+  pastes: [],
   at,
   createdAt: BASE,
   state,

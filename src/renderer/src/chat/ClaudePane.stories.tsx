@@ -105,7 +105,7 @@ function Pane({
         onResume={noop}
         onUnarchive={noop}
         onSend={noop}
-        pending={pending === null ? null : { text: pending, attachments: [] }}
+        pending={pending === null ? null : { text: pending, attachments: [], pastes: [] }}
         sending={[]}
         onTakePending={() => null}
         scheduled={scheduled}
@@ -201,14 +201,30 @@ export const worktreeで始めた: Story = {
 // 時刻に送れなかった・送れなかった、の 4 つ。入力欄の時計のボタンで、時刻を選ぶメニューが開く
 const later = (minutes: number) => Date.now() + minutes * 60_000;
 const SCHEDULED: ScheduledMessage[] = [
-  { id: 'm1', sessionId: 's1', text: '昨日の変更のテストを流して、落ちたものを直してください。', attachments: [], at: later(90), createdAt: 0, state: 'scheduled', error: null },
-  { id: 'm2', sessionId: 's1', text: '/compact', attachments: [], at: later(-1), createdAt: 0, state: 'sending', error: null },
-  { id: 'm3', sessionId: 's1', text: 'PR の説明を書いてください。', attachments: ['/tmp/a.png'], at: later(-600), createdAt: 0, state: 'missed', error: null },
-  { id: 'm4', sessionId: 's1', text: 'ビルドしてください。', attachments: [], at: later(-30), createdAt: 0, state: 'failed', error: 'Claude Code が終了しました' },
+  { id: 'm1', sessionId: 's1', text: '昨日の変更のテストを流して、落ちたものを直してください。', attachments: [], pastes: [], at: later(90), createdAt: 0, state: 'scheduled', error: null },
+  { id: 'm2', sessionId: 's1', text: '/compact', attachments: [], pastes: [], at: later(-1), createdAt: 0, state: 'sending', error: null },
+  { id: 'm3', sessionId: 's1', text: 'PR の説明を書いてください。', attachments: ['/tmp/a.png'], pastes: [], at: later(-600), createdAt: 0, state: 'missed', error: null },
+  { id: 'm4', sessionId: 's1', text: 'ビルドしてください。', attachments: [], pastes: [], at: later(-30), createdAt: 0, state: 'failed', error: 'Claude Code が終了しました' },
 ];
 
 export const 予約したメッセージ: Story = {
   args: { items: conversation(4), scheduled: SCHEDULED, input: 'あしたの朝、依存を更新してください。' },
+};
+
+// 貼り付けた長い文（4 行以上・800 文字より長いもの）は、入力欄で札になる（Claude Code の CLI の [Pasted text #1 +30 lines] と同じ）。
+// 札には冒頭の文字と行数を出し、押すと中身を確かめられ、× で外せる。送った発言・予約したメッセージにも、同じ札で出す
+const PASTED_LOG = Array.from({ length: 30 }, (_, i) => `2026-10-12T09:${String(i).padStart(2, '0')}:00Z ERROR request ${i + 1} failed: connect ECONNREFUSED 127.0.0.1:5432`).join('\n');
+const PASTED_ARTICLE = 'セッションは、作業フォルダごとに会話を分けて持ちます。'.repeat(40);
+export const 貼り付けた長い文の札: Story = {
+  args: {
+    items: [
+      { kind: 'user', id: 'u1', text: 'このログを見て、原因を教えてください。', pastes: [PASTED_LOG, PASTED_ARTICLE] },
+      { kind: 'text', id: 'a1', text: 'データベースに接続できていません。5432 番で PostgreSQL が動いているかを確かめてください。' },
+    ],
+    scheduled: [{ id: 'm1', sessionId: 's1', text: 'あとで、このログも見てください。', attachments: [], pastes: [PASTED_LOG], at: later(90), createdAt: 0, state: 'scheduled', error: null }],
+    // ターミナルの「Claude へ送る」などで差し込んだ長い文も、札になる
+    input: PASTED_LOG,
+  },
 };
 
 // ターミナルモード。ヘッダーは残し、チャットと入力欄の代わりに Claude Code そのものの画面を出す。モニターのアイコンでチャットに戻る

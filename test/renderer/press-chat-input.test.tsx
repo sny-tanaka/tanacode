@@ -35,6 +35,8 @@ function inputProps(over: Partial<InputProps> = {}): InputProps {
     onChange: () => {},
     attachments: [],
     onAttachmentsChange: () => {},
+    pastes: [],
+    onPastesChange: () => {},
     placeholder: '指示を入力',
     blocked: false,
     onSend: () => {},

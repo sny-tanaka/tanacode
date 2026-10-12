@@ -45,7 +45,7 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
       const pasted = typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '');
       return typed === whole || (pasted !== typed && pasted === `${opening}${closing}`) ? i : null;
     }
-    if (event.type === 'user') return event.text.replace(/\s/g, '') === typed ? i : null;
+    if (event.type === 'user') return event.text.replace(/\s/g, '') === typed || pulledBackPastes(event, draft).length > 0 ? i : null;
     // 最適化圧縮の仕上げの頼み・再開の文。長い文は入力欄に収まらず、画面から読めるのは途中の一部だけなので、本文の一部かどうかで見る
     // （貼り付けの目印だけが戻ることもある）
     if (event.type === 'notice' && event.compact) {
@@ -56,6 +56,23 @@ export function pulledBackPrompt(events: ChatEvent[], draft: string): number | n
     if (!BEFORE_RESPONSE.has(event.type)) return null;
   }
   return null;
+}
+
+// 入力欄の、貼り付けの目印（空白を除いたあとの形。[Pasted text #1 +30 lines]）
+const PASTE_MARK = /\[Pastedtext#\d+[^\]]*\]/g;
+
+// 入力欄に戻った文字（draft）が、札を添えた発言（event）なら、その札の中身（目印の順）。そうでなければ空。
+// 札は、入力欄では目印になって戻る。目印を除いた文が発言の文と同じで、目印の数が札の数と同じなら、その発言。
+// 札 1 つだけの発言は、会話ログからは文として読んでいる（splitPasted）ので、目印 1 つだけが戻ったら、発言の文が札の中身
+export function pulledBackPastes(event: ChatEvent, draft: string): string[] {
+  if (event.type !== 'user' || event.parent) return [];
+  const typed = draft.replace(/\s/g, '');
+  const marks = typed.match(PASTE_MARK)?.length ?? 0;
+  if (marks === 0) return [];
+  const rest = typed.replace(PASTE_MARK, '');
+  const pastes = event.pastes ?? [];
+  if (pastes.length === marks && event.text.replace(/\s/g, '') === rest) return pastes;
+  return pastes.length === 0 && marks === 1 && rest === '' && event.text ? [event.text] : [];
 }
 
 // 発言のあと、応答が来る前にも出るイベント（UserPromptSubmit の hooks など）

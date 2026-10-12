@@ -684,6 +684,12 @@
       "send": "Send",
       "sendTip": "Send (⌘Enter)"
     },
+    "paste": {
+      "lines": "{count} lines",
+      "lines_one": "{count} line",
+      "showTip": "View the pasted text",
+      "title": "Pasted text"
+    },
     "mode": {
       "manual": "Manual mode",
       "acceptEdits": "Accept edits",

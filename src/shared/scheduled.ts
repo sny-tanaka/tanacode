@@ -10,6 +10,8 @@ export type ScheduledMessage = {
   text: string;
   // 画像のパス（貼り付けとして送る。チャットの入力欄の添付と同じ）
   attachments: string[];
+  // 入力欄に貼り付けた長い文（札）。打った文のあとに、1 つずつ貼り付けとして送る
+  pastes: string[];
   at: number;
   createdAt: number;
   state: 'scheduled' | 'sending' | 'missed' | 'failed';

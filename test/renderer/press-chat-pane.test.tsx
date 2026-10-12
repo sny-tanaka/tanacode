@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
 import type { ScreenInfo, ScreenState } from '@shared/screen';
 import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
+import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import { EMPTY_CHAT, type ChatItem, type ChatState } from '../../src/renderer/src/chat/chatState';
 import { closeSettingsFilesDialog } from '../../src/renderer/src/chat/settingsFiles';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
@@ -205,9 +206,9 @@ describe('ヘッダー', () => {
   });
 
   it('起動を待っている発言の「取り消す」は、その発言と画像を入力欄に戻す（打ちかけの文字の前に）。取り下げられなかったら何もしない', async () => {
-    let taken: { text: string; attachments: string[] } | null = { text: 'テストも足して', attachments: ['/tmp/attachments/0123abcd-shot.png'] };
+    let taken: { text: string; attachments: string[]; pastes: string[] } | null = { text: 'テストも足して', attachments: ['/tmp/attachments/0123abcd-shot.png'], pastes: [] };
     const onTakePending = vi.fn(() => taken);
-    render(<ClaudePane {...props({ chat: chatOf({ status: 'starting', items: [] }), pending: { text: 'テストも足して', attachments: [] }, onTakePending })} />);
+    render(<ClaudePane {...props({ chat: chatOf({ status: 'starting', items: [] }), pending: { text: 'テストも足して', attachments: [], pastes: [] }, onTakePending })} />);
     fireEvent.change(box(), { target: { value: '書きかけ' } });
     fireEvent.click(screen.getByRole('button', { name: '取り消す' }));
     expect(onTakePending).toHaveBeenCalledTimes(1);
@@ -435,7 +436,7 @@ describe('入力欄', () => {
     fireEvent.click(schedule());
     fireEvent.click(screen.getByText('1 時間後'));
     await settle();
-    expect(api.argsOf('scheduled.add')).toEqual([['s1', '朝になったらテストを流して', [], now.getTime() + 60 * 60_000]]);
+    expect(api.argsOf('scheduled.add')).toEqual([['s1', '朝になったらテストを流して', [], now.getTime() + 60 * 60_000, []]]);
     expect(box().value).toBe('');
 
     view.rerender(<ClaudePane {...props({ session: S2 })} />);
@@ -443,7 +444,7 @@ describe('入力欄', () => {
     fireEvent.click(schedule());
     fireEvent.click(screen.getByText('30 分後'));
     await settle();
-    expect(api.argsOf('scheduled.add').at(-1)).toEqual(['s2', '夜にまとめて', [], now.getTime() + 30 * 60_000]);
+    expect(api.argsOf('scheduled.add').at(-1)).toEqual(['s2', '夜にまとめて', [], now.getTime() + 30 * 60_000, []]);
   });
 
   it('予約できなかったら、わけを出して入力欄の文字は残す', async () => {
@@ -454,5 +455,100 @@ describe('入力欄', () => {
     fireEvent.click(screen.getByText('30 分後'));
     await waitFor(() => expect(alerts).toEqual(['予約できませんでした: 過去の時刻には予約できません']));
     expect(box().value).toBe('あとで流して');
+  });
+});
+
+describe('貼り付けた長い文の札', () => {
+  const LOG = Array.from({ length: 30 }, (_, i) => `ログの ${i + 1} 行目`).join('\n');
+  const paste = (text: string) => fireEvent.paste(box(), { clipboardData: { files: [], getData: () => text } });
+  const chips = (root: string) => [...document.querySelectorAll(`${root} .paste-chip-head`)].map((e) => e.textContent);
+  const sendButton = () => screen.getByRole('button', { name: '送信' }) as HTMLButtonElement;
+
+  it('入力欄に貼り付けた長い文は札になり、送ると、打った文とは別に（札として）渡して、入力欄を空にする', () => {
+    const onSend = vi.fn();
+    render(<ClaudePane {...props({ onSend })} />);
+    fireEvent.change(box(), { target: { value: 'このログを見てください' } });
+    paste(LOG);
+    expect(box().value).toBe('このログを見てください');
+    expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
+    fireEvent.click(sendButton());
+    expect(onSend).toHaveBeenCalledWith('このログを見てください', [], [LOG]);
+    expect(box().value).toBe('');
+    expect(chips('.chat-input')).toEqual([]);
+  });
+
+  it('打った文が無く、札だけでも送れる・予約できる', async () => {
+    const onSend = vi.fn();
+    render(<ClaudePane {...props({ onSend })} />);
+    paste(LOG);
+    fireEvent.click(sendButton());
+    expect(onSend).toHaveBeenCalledWith('', [], [LOG]);
+    paste(LOG);
+    fireEvent.click(screen.getByRole('button', { name: '時刻を指定して送信' }));
+    fireEvent.click(screen.getByText('30 分後'));
+    await settle();
+    expect(api.argsOf('scheduled.add').at(-1)?.slice(0, 3)).toEqual(['s1', '', []]);
+    expect(api.argsOf('scheduled.add').at(-1)?.[4]).toEqual([LOG]);
+    expect(chips('.chat-input')).toEqual([]);
+  });
+
+  it('ほかのパネルから差し込んだ文（ターミナルの出力・アプリ内ブラウザで選んだ要素）も、長ければ札に、短ければ文字にする', () => {
+    render(<ClaudePane {...props()} />);
+    act(() => insertIntoChat('s1', '短い出力'));
+    act(() => insertIntoChat('s1', LOG));
+    // ほかのセッションへの差し込みは、入れない
+    act(() => insertIntoChat('s2', LOG));
+    expect(box().value).toBe('短い出力');
+    expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
+  });
+
+  it('札は、セッションを切り替えても、そのセッションの書きかけとして残る', () => {
+    const view = render(<ClaudePane {...props()} />);
+    paste(LOG);
+    view.rerender(<ClaudePane {...props({ session: S2 })} />);
+    expect(chips('.chat-input')).toEqual([]);
+    view.rerender(<ClaudePane {...props()} />);
+    expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
+  });
+
+  it('中断で Claude Code の入力欄に戻った発言は、文は文字として、札は札として入力欄に戻す', () => {
+    const draft = 'このログを見て[Pasted text #2 +29 lines]';
+    render(<ClaudePane {...props({ screen: screenOf({ kind: 'prompt' }, { draft, draftPastes: [LOG] }) })} />);
+    expect(box().value).toBe('このログを見て');
+    expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
+    expect(api.argsOf('pty.write')).toEqual([['s1', '\x15\x15']]);
+  });
+
+  it('送った発言・送信中・順番待ち・起動待ち・予約の行に、札を畳んで出す。起動待ち・予約を取り消すと、札も入力欄に戻る', async () => {
+    const pending = { text: '起動したら見て', attachments: [], pastes: [LOG] };
+    const scheduled = [{ id: 'm1', sessionId: 's1', text: 'あとで見て', attachments: [], pastes: [LOG], at: Date.now() + 60_000, createdAt: 0, state: 'scheduled' as const, error: null }];
+    install({ 'scheduled.cancel': () => Promise.resolve(scheduled[0]) });
+    const block = `<pasted_content id="c8a6">\n${LOG}\n</pasted_content id="c8a6">\n`;
+    render(
+      <ClaudePane
+        {...props({
+          chat: chatOf({ items: [{ kind: 'user', id: 'u1', text: 'このログを見て', pastes: [LOG] }], queued: [`順番待ちの文\n\n${block}`] }),
+          sending: [{ text: '送信中の文', attachments: [], pastes: [LOG] }],
+          pending,
+          onTakePending: () => pending,
+          scheduled,
+        })}
+      />,
+    );
+    // 発言・順番待ち・送信中・起動待ち・予約
+    expect(chips('.chat-list')).toEqual(Array(5).fill('ログの 1 行目'));
+    expect(screen.getByText('順番待ちの文', { exact: false }).textContent).not.toContain('pasted_content');
+    // チャットの札には × が無く、押すと中身が出る
+    expect(document.querySelector('.chat-list .paste-chip .icon-button')).toBeNull();
+    fireEvent.click(document.querySelector('.chat-list .paste-chip-open')!);
+    expect(screen.getByRole('dialog', { name: '貼り付けた文' }).querySelector('pre')?.textContent).toBe(LOG);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '閉じる' }));
+    fireEvent.click(document.querySelector('.chat-user.pending:not(.scheduled) .chat-rewind')!);
+    expect(box().value).toBe('起動したら見て');
+    expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
+    fireEvent.click(within(document.querySelector('.chat-scheduled-actions') as HTMLElement).getByRole('button', { name: '取り消す' }));
+    await settle();
+    expect(box().value).toBe('あとで見て\n起動したら見て');
+    expect(chips('.chat-input')).toEqual(['ログの 1 行目', 'ログの 1 行目']);
   });
 });

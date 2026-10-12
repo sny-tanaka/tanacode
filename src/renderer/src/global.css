@@ -2023,6 +2023,72 @@ button.session-ref:hover {
   color: var(--text-primary);
   font-size: 11px;
 }
+/* 貼り付けた長い文の札（入力欄と、チャットの発言）。冒頭の文字と行数を出し、押すと中身を出す */
+.paste-chip {
+  min-width: 0;
+  border-left: 2px solid var(--border-strong);
+}
+/* 外すボタンの無い札（チャットの発言）は、右の余白を左にそろえる */
+.paste-chip:not(:has(.icon-button)) {
+  padding-right: 8px;
+}
+.paste-chip-open {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.paste-chip-head {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paste-chip-lines {
+  flex: none;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.pasted-dialog {
+  width: min(760px, 90vw);
+  max-height: calc(100vh - 160px);
+  outline: none;
+}
+.pasted-dialog-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.pasted-dialog-head h2 {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+.pasted-dialog-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
 .chat-input:focus-within {
   /* 選んでいる間だけ、枠 1px をグラデーションにする（内側は bg-surface） */
   border-color: transparent;
@@ -6338,6 +6404,19 @@ body.resizing-rows webview {
   flex: none;
   overflow: visible;
   padding: 0;
+}
+/* 貼り付けた長い文（チャットでは札に畳むもの） */
+.export-pasted {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-hover);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .export-time {
   flex: none;

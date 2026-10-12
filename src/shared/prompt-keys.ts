@@ -3,13 +3,23 @@
 
 // これより長い文字が 1 度に届くと、Claude Code は打鍵でも貼り付けとみなす
 const PASTE_CHARS = 800;
+// 貼り付けがこの行数以上なら、Claude Code は入力欄で [Pasted text #1 +3 lines] の目印に置き換える
+const PASTE_LINES = 4;
+
+// 長い貼り付けか（Claude Code の CLI が、入力欄で目印に置き換える貼り付けと同じ境目）。チャットの入力欄では、文字として入れずに札にして、
+// 送るときに丸ごと 1 つの貼り付けで打つ（SessionManager.submit の pastes）。Claude Code は、その中身を <pasted_content> の囲みに入れて Claude に渡す。
+// 2026-10-12、Claude Code 2.1.296 で確かめた: 3 行・767 文字の貼り付けは文字のまま、4 行・1,569 文字の貼り付けは目印になる
+export function isLongPaste(text: string): boolean {
+  return text.length > PASTE_CHARS || text.split('\n').length >= PASTE_LINES;
+}
 // 引数に長い文・複数行の文を取るコマンド（入力欄から、圧縮の指示を添えて送るとき）
 const ARGUMENT_COMMANDS = new Set(['/compact']);
 
 // 貼り付け 1 つに入れる長さ。Claude Code は、4 行以上・およそ 800 文字より長い貼り付けを [Pasted text #1 …] の目印に置き換える
 const PIECE_CHARS = 300;
 
-// 発言を打ち込む文字（制御文字は先に除いておく）。
+// 自分で打った発言・アプリが作る文（親から子への指示・知らせなど）を打ち込む文字（制御文字は先に除いておく）。
+// 入力欄に外から貼り付けた長い文（札）は、これを通さず、bracketedPaste で丸ごと打つ（SessionManager.submit）。
 // - 1 行の短い入力は、打鍵で送る（制御文字は除いてあるので、キー操作になる文字は残らない。/compact などのコマンドも今までどおり届く）
 // - 複数行・長い入力は、行ごとの短い貼り付けに分けて送る（pastedLines）
 // - / か ! で始まる複数行の入力は、丸ごと 1 つの貼り付けで送る（下のコメント）

@@ -10,6 +10,7 @@ import type { SessionLink } from '../sessions/sessionLinks';
 import { HookRuns } from './HookRuns';
 import { ChatImages } from './ChatImages';
 import { Markdown } from './Markdown';
+import { PastedChips } from './PastedChips';
 import { SentFilesCard } from './SentFilesCard';
 import { ParentHeading, SessionLinkList, SessionRefText } from './SessionRefs';
 import { ToolCard } from './ToolCard';
@@ -95,6 +96,7 @@ export const ChatRow = memo(function ChatRow({
               <SessionRefText text={item.text} sessions={sessions} onSelectSession={onSelectSession} />
             </span>
           )}
+          {item.pastes && <PastedChips pastes={item.pastes} />}
           {item.images && <ChatImages keys={item.images} />}
         </div>
         {onRewind && !item.parent && item.text && !item.text.startsWith('/') && (

@@ -12,9 +12,11 @@ import {
   AI_TITLE,
   AI_TITLE_REPLY,
   ATTACHED,
+  CHIP_TEXT,
   DRAFT,
   EFFORT,
   IMAGE_FILE,
+  LONG_LINE,
   LONG_LINES,
   LONG_PASTE,
   PASTE,
@@ -30,6 +32,7 @@ import {
   agentSteps,
   checkAgentLog,
   checkAiTitle,
+  checkChipDraft,
   checkDiscovered,
   checkDraft,
   checkEffort,
@@ -157,6 +160,39 @@ describe(`Claude Code ${version} の入力欄`, () => {
     run.type('\r');
     await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
     checkPasted(eventsOf(run), LONG_PASTE);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it('打った文に札（長い貼り付け）を添えて送ると、札は入力欄で 1 つずつ目印になり、文と札の中身が 1 つの発言として届く', async () => {
+    // アプリの送り方（SessionManager.submit の pastes）。ログインして使う Claude Code は、札の中身だけを <pasted_content> の囲みに入れて
+    // 発言の文のあとに足す（モックの API で動かすここでは、囲みは付かず、文と札の中身がつながって届く）
+    const whole = `${CHIP_TEXT}${LONG_PASTE}${LONG_LINE}`.replace(/\s/g, '');
+    const lastUser = () => {
+      const last = eventsOf(run).filter((e): e is Extract<ChatEvent, { type: 'user' }> => e.type === 'user').at(-1)!;
+      expect(last.text).not.toMatch(/\[Pasted text|<\/?pasted_content|\x1b/);
+      return [last.text, ...(last.pastes ?? [])].join('').replace(/\s/g, '');
+    };
+    const marks = (draft: string) => (draft.match(/\[Pasted text #\d+[^\]]*\]/g) ?? []).length;
+    // 1 つずつ打って、入力欄の形を見る
+    let before = turnEnds(run);
+    run.type(promptKeys(CHIP_TEXT));
+    await run.waitFor('打った文', (info) => info.draft.replace(/\s/g, '') === CHIP_TEXT.replace(/\s/g, ''));
+    run.type(bracketedPaste(LONG_PASTE));
+    await run.waitFor('1 つめの目印', (info) => marks(info.draft) === 1);
+    run.type(bracketedPaste(LONG_LINE));
+    await run.waitFor('2 つめの目印', (info) => marks(info.draft) === 2);
+    checkChipDraft(run.screen.current, CHIP_TEXT, LONG_PASTE.split('\n').length);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    expect(lastUser()).toBe(whole);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+    // アプリの送信（札の目印が出るのを待って次を打ち、Enter を送る）でも、同じように届く
+    before = turnEnds(run);
+    const count = eventsOf(run).filter((e) => e.type === 'user').length;
+    await run.manager.submit(run.sessionId!, CHIP_TEXT, [], false, [LONG_PASTE, LONG_LINE]);
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    expect(eventsOf(run).filter((e) => e.type === 'user')).toHaveLength(count + 1);
+    expect(lastUser()).toBe(whole);
     await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
   });
 

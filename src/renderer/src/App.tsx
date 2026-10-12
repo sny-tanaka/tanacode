@@ -566,9 +566,9 @@ export function App() {
   const composingRef = useRef(composing);
   composingRef.current = composing;
   const startSession = useCallback(
-    async (dir: string, text: string, attachments: string[], options: NewSessionOptions) => {
+    async (dir: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[] = []) => {
       const id = await window.tanacode.sessions.create(dir, options);
-      pendingSends.send(id, text, attachments);
+      pendingSends.send(id, text, attachments, pastes);
       // 始めている間に、新規セッションの画面でフォルダを変えた・画面を離れたなら、移らない（始めたセッションは一覧に出る）
       if (composingRef.current?.cwd === dir) select(id);
     },
@@ -643,8 +643,8 @@ export function App() {
     if (selectedIdRef.current) openSession(selectedIdRef.current);
   }, [openSession]);
   const sendToSelected = useCallback(
-    (text: string, attachments: string[]) => {
-      if (selectedIdRef.current) pendingSends.send(selectedIdRef.current, text, attachments);
+    (text: string, attachments: string[], pastes?: string[]) => {
+      if (selectedIdRef.current) pendingSends.send(selectedIdRef.current, text, attachments, pastes);
     },
     [pendingSends.send],
   );

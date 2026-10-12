@@ -5,7 +5,8 @@ import { acceptsInput, arrivedCount as arrived, type ChatState } from './chatSta
 const NO_SENDING: PendingSend[] = [];
 
 // Claude Code の起動が終わるのを待っている発言（新規セッションの最初の発言や、再起動の直後に送ったもの）
-export type PendingSend = { text: string; attachments: string[] };
+// pastes: 入力欄に貼り付けた長い文（札）
+export type PendingSend = { text: string; attachments: string[]; pastes: string[] };
 
 // 送ったが、まだ会話ログに発言（または順番待ち）として出ていないもの。出るまで、チャットに仮に出しておく。
 // expected: 発言と順番待ちの数がこの数に達したら、会話ログに出た
@@ -21,7 +22,7 @@ export function usePendingSends(chatOf: (sessionId: string | null) => ChatState)
   pendingOf: (sessionId: string) => PendingSend | null;
   // 送ったが、まだ会話ログに出ていない発言
   sendingOf: (sessionId: string) => PendingSend[];
-  send: (sessionId: string, text: string, attachments: string[]) => void;
+  send: (sessionId: string, text: string, attachments: string[], pastes?: string[]) => void;
   // 預かっている発言を取り下げて返す
   take: (sessionId: string) => PendingSend | null;
   drop: (sessionId: string) => void;
@@ -33,14 +34,14 @@ export function usePendingSends(chatOf: (sessionId: string | null) => ChatState)
   chatOfRef.current = chatOf;
   const [sending, setSending] = useState<Record<string, Sending[]>>({});
 
-  const submit = useCallback((sessionId: string, text: string, attachments: string[]) => {
-    void submitToClaude(sessionId, text, attachments);
+  const submit = useCallback((sessionId: string, text: string, attachments: string[], pastes: string[]) => {
+    void submitToClaude(sessionId, text, attachments, pastes);
     // スラッシュコマンドは発言として残らないものが多いので、仮には出さない
     if (text.trimStart().startsWith('/')) return;
     const chat = chatOfRef.current(sessionId);
     setSending((prev) => {
       const list = prev[sessionId] ?? [];
-      const item = { text, attachments, expected: arrived(chat) + list.length + 1, at: Date.now() };
+      const item = { text, attachments, pastes, expected: arrived(chat) + list.length + 1, at: Date.now() };
       return { ...prev, [sessionId]: [...list, item] };
     });
   }, []);
@@ -53,17 +54,17 @@ export function usePendingSends(chatOf: (sessionId: string | null) => ChatState)
     });
   }, []);
 
-  const send = useCallback((sessionId: string, text: string, attachments: string[]) => {
+  const send = useCallback((sessionId: string, text: string, attachments: string[], pastes: string[] = []) => {
     if (!pendingRef.current[sessionId] && acceptsInput(chatOfRef.current(sessionId).status)) {
-      submit(sessionId, text, attachments);
+      submit(sessionId, text, attachments, pastes);
       return;
     }
     // 起動を待つ間に続けて送ったものは、ひとつの発言にまとめる
     setPending((prev) => {
       const before = prev[sessionId];
       const next = before
-        ? { text: [before.text, text].filter((t) => t.trim()).join('\n\n'), attachments: [...before.attachments, ...attachments] }
-        : { text, attachments };
+        ? { text: [before.text, text].filter((t) => t.trim()).join('\n\n'), attachments: [...before.attachments, ...attachments], pastes: [...before.pastes, ...pastes] }
+        : { text, attachments, pastes };
       return { ...prev, [sessionId]: next };
     });
   }, [submit]);
@@ -81,7 +82,7 @@ export function usePendingSends(chatOf: (sessionId: string | null) => ChatState)
     for (const [sessionId, item] of Object.entries(pending)) {
       if (!acceptsInput(chatOf(sessionId).status)) continue;
       drop(sessionId);
-      submit(sessionId, item.text, item.attachments);
+      submit(sessionId, item.text, item.attachments, item.pastes);
     }
   }, [pending, chatOf, drop, submit]);
 

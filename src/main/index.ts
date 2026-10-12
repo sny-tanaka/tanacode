@@ -588,14 +588,14 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsWorktreeLeftovers, (e, id: string) => P(e).manager.worktreeLeftovers(id));
   handle(IpcChannel.SessionsUnarchive, (e, id: string) => P(e).manager.unarchive(id));
   handle(IpcChannel.SessionsSnapshot, (e, id: string) => P(e).manager.snapshot(id));
-  handle(IpcChannel.SessionsSubmit, (e, id: string, text: string, attachments: string[]) =>
-    P(e).manager.submit(id, String(text ?? ''), Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : []),
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+  handle(IpcChannel.SessionsSubmit, (e, id: string, text: string, attachments: string[], pastes?: string[]) =>
+    P(e).manager.submit(id, String(text ?? ''), strings(attachments), false, strings(pastes)),
   );
   listen(IpcChannel.SessionsInterrupt, (e, id: string) => P(e).manager.interrupt(id));
   handle(IpcChannel.ScheduledList, (e) => P(e).scheduled.list());
-  handle(IpcChannel.ScheduledAdd, (e, sessionId: string, text: string, attachments: string[], at: number) => {
-    const paths = Array.isArray(attachments) ? attachments.filter((a): a is string => typeof a === 'string') : [];
-    P(e).scheduled.add(String(sessionId), String(text ?? ''), paths, Number(at));
+  handle(IpcChannel.ScheduledAdd, (e, sessionId: string, text: string, attachments: string[], at: number, pastes?: string[]) => {
+    P(e).scheduled.add(String(sessionId), String(text ?? ''), strings(attachments), Number(at), strings(pastes));
   });
   handle(IpcChannel.ScheduledReschedule, (e, id: string, at: number) => P(e).scheduled.reschedule(String(id), Number(at)));
   handle(IpcChannel.ScheduledSendNow, (e, id: string) => P(e).scheduled.sendNow(String(id)));

@@ -12,6 +12,7 @@ import {
   transcriptTitle,
   type ChatEvent,
   type TranscriptEntry,
+  splitPasted,
 } from '@shared/chat';
 import { checklistEventText } from '@shared/checklist-tools';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
@@ -589,6 +590,29 @@ describe('toChatEvents: 発言の行', () => {
     expect(isHumanPrompt(wrap(sessionEventText([child], '知らせ')))).toBe(false);
     expect(isHumanPrompt(wrap(parentMessageText(parent, '親からの指示')))).toBe(true);
     expect(transcriptTitle(user(wrap(parentMessageText(parent, '子への長い指示\n二行目'))))).toEqual({ title: '子への長い指示', priority: 1 });
+  });
+
+  it('打った文に添えた長い貼り付け（入力欄の札）は、発言の文と分けて pastes に入れる', () => {
+    // Claude Code 2.1.296 が会話ログに残す形（札 2 つ。囲みの id は、同じ会話の中では同じ）
+    const block = (text: string) => `<pasted_content id="c8a6">\n${text}\n</pasted_content id="c8a6">\n`;
+    const log = 'ログの 1 行目\n2 行目\n3 行目\n4 行目';
+    const long = 'a'.repeat(900);
+    expect(events(user(`このログを見てください。\n\n${block(log)}\n\n${block(long)}`))).toEqual([
+      { type: 'user', id: 'u1', text: 'このログを見てください。', pastes: [log, long], at },
+    ]);
+    expect(splitPasted(`文\n\n${block(log)}`)).toEqual({ text: '文', pastes: [log] });
+    // 札だけを 2 つ送った発言
+    expect(splitPasted(`\n\n${block(log)}\n\n${block(long)}`)).toEqual({ text: '', pastes: [log, long] });
+    // 貼り付けの無い発言は、そのまま
+    expect(splitPasted('ふつうの発言\n2 行目')).toEqual({ text: 'ふつうの発言\n2 行目', pastes: [] });
+  });
+
+  it('全体が 1 つの貼り付けだけの発言は、札にせず、文として出す（前のアプリが丸ごと貼り付けで送った、複数行の発言）', () => {
+    const whole = '\n\n<pasted_content id="7">\n1 行目\n2 行目\n3 行目\n4 行目\n</pasted_content id="7">\n';
+    expect(events(user(whole))).toEqual([{ type: 'user', id: 'u1', text: '1 行目\n2 行目\n3 行目\n4 行目', at }]);
+    // 囲みのあとに文が続くなど、決まった形でないものは、囲みだけを外して全部を文にする
+    expect(splitPasted('前\n\n<pasted_content id="7">\n中\n</pasted_content id="7">\nあと')).toEqual({ text: '前\n\n中\nあと', pastes: [] });
+    expect(splitPasted('前 <pasted_content id="7"> 閉じていない')).toEqual({ text: '前  閉じていない', pastes: [] });
   });
 
   it('CI の自動修正の知らせ・スケジュールタスクの起動は、お知らせにして全文を添える', () => {
