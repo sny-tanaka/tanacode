@@ -73,6 +73,8 @@ function props(over: Partial<Props> = {}): Props {
     onResume: noop,
     onUnarchive: noop,
     onSend: noop,
+    onOptimizedCompact: noop,
+    optimizing: false,
     pending: null,
     sending: [],
     onTakePending: () => null,
@@ -91,6 +93,7 @@ function install(responses: Parameters<typeof mockApi>[0] = {}) {
 }
 beforeEach(() => {
   install();
+  localStorage.removeItem('tanacode.compactMode');
   alerts = [];
   confirms = [];
   confirmAnswer = true;
@@ -150,6 +153,48 @@ describe('ヘッダー', () => {
     view.rerender(<ClaudePane {...props({ onSend, session: S2, chat: chatOf({ items: [] }) })} />);
     expect(compact().disabled).toBe(true);
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('「圧縮」の ▾ で最適化圧縮に切り替えると、押したときに最適化圧縮を始める。Haiku が選んでいる途中は押せない。しかたは覚えて、ほかのセッションでも同じ', () => {
+    const onSend = vi.fn();
+    const onOptimizedCompact = vi.fn();
+    const view = render(<ClaudePane {...props({ onSend, onOptimizedCompact })} />);
+    const toggle = () => screen.getByRole('button', { name: '圧縮のしかたを選ぶ' });
+    fireEvent.click(toggle());
+    expect(screen.getByRole('menuitemradio', { name: /通常圧縮/ }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /最適化圧縮/ }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(api.argsOf('prefs.set')).toContainEqual(['tanacode.compactMode', 'optimized']);
+    const optimized = () => screen.getByRole('button', { name: '最適化圧縮' }) as HTMLButtonElement;
+    fireEvent.click(optimized());
+    expect(onOptimizedCompact).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    view.rerender(<ClaudePane {...props({ onSend, onOptimizedCompact, optimizing: true })} />);
+    expect(optimized().disabled).toBe(true);
+    expect(optimized().getAttribute('aria-busy')).toBe('true');
+    // ほかのセッションに切り替えても最適化圧縮のまま。通常圧縮に戻すと /compact を送る
+    view.rerender(<ClaudePane {...props({ onSend, onOptimizedCompact, session: S2 })} />);
+    fireEvent.click(toggle());
+    expect(screen.getByRole('menuitemradio', { name: /最適化圧縮/ }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /通常圧縮/ }));
+    fireEvent.click(screen.getByRole('button', { name: '圧縮' }));
+    expect(onSend).toHaveBeenCalledWith('/compact', []);
+    expect(onOptimizedCompact).toHaveBeenCalledTimes(1);
+  });
+
+  it('「圧縮」の ▾ のメニューは、外を押すか Esc で閉じる。同じしかたを選び直しても覚え直さない', () => {
+    render(<ClaudePane {...props()} />);
+    const toggle = () => screen.getByRole('button', { name: '圧縮のしかたを選ぶ' });
+    fireEvent.click(toggle());
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(toggle());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /通常圧縮/ }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(api.argsOf('prefs.set')).toEqual([]);
   });
 });
 

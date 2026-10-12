@@ -301,6 +301,16 @@ export const CompressIcon: IconComponent = (p) => (
   </Svg>
 );
 
+// 最適化して圧縮（Haiku が残すもの・捨てるものを選んでから圧縮する）: 圧縮の絵を左に寄せ、右上にきらめき（4 つの角の星）を足す
+export const OptimizedCompressIcon: IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M8 3v5M5.5 5.5 8 8l2.5-2.5" />
+    <path d="M8 21v-5M5.5 18.5 8 16l2.5 2.5" />
+    <path d="M3 12h10" />
+    <path d="M17.5 2.5Q18.6 5.4 21.5 6.5 18.6 7.6 17.5 10.5 16.4 7.6 13.5 6.5 16.4 5.4 17.5 2.5z" />
+  </Svg>
+);
+
 // ここまで戻す: 反時計回りの矢印と時計
 export const RewindIcon: IconComponent = (p) => (
   <Svg {...p}>

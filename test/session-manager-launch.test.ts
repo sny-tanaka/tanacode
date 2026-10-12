@@ -27,6 +27,13 @@ function fakeSettingsFiles(model: string | null = 'opus') {
     release(sessionId: string) {
       calls.push(`release:${sessionId}`);
     },
+    prepareOptimizer(sessionId: string, settingsId: string): string {
+      calls.push(`prepareOptimizer:${settingsId}`);
+      return `/run/${sessionId}-optimizer.json`;
+    },
+    releaseOptimizer(sessionId: string) {
+      calls.push(`releaseOptimizer:${sessionId}`);
+    },
   };
   return { files: files as unknown as SettingsFiles, calls };
 }
@@ -223,5 +230,67 @@ describe('プロファイルの Claude Code の設定のフォルダ', () => {
     } finally {
       rmSync(claudeDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('最適化圧縮', () => {
+  // Haiku の代わり。呼ばれた引数を控え、done で答えを返す
+  function fakeOptimize() {
+    const calls: { file: string; cwd: string; options: { claudeDir?: string | null; settingsFile?: string | null } }[] = [];
+    let done: (text: string) => void = () => {};
+    const optimize = (file: string, cwd: string, options: { claudeDir?: string | null; settingsFile?: string | null } = {}) => {
+      calls.push({ file, cwd, options });
+      return new Promise<string>((resolve) => (done = resolve));
+    };
+    return { optimize, calls, answer: (text: string) => done(text) };
+  }
+
+  it('今の会話ログとプロファイルの設定のフォルダで選ばせる。選んでいる途中にもう一度頼まれたら、同じ答えを待つ', async () => {
+    const claudeDir = mkdtempSync(join(tmpdir(), 'tanacode-profile-'));
+    try {
+      const fake = fakeOptimize();
+      start({ claudeDir, optimize: fake.optimize as never });
+      const { id } = app.create();
+      const first = app.manager.optimizeCompact(id);
+      const second = app.manager.optimizeCompact(id);
+      fake.answer('指示');
+      expect(await first).toBe('指示');
+      expect(await second).toBe('指示');
+      expect(fake.calls).toEqual([{ file: app.transcript(id), cwd: app.cwd, options: { claudeDir, settingsFile: null } }]);
+      // 終わったら、次はまた選ばせる
+      const third = app.manager.optimizeCompact(id);
+      fake.answer('次');
+      expect(await third).toBe('次');
+      expect(fake.calls).toHaveLength(2);
+    } finally {
+      rmSync(claudeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('設定ファイルを選んだセッションは、その設定で Haiku を動かし、終わったら消す。読めない設定ファイルなら選ばせない', async () => {
+    const fake = fakeOptimize();
+    const { files, calls } = fakeSettingsFiles();
+    start({ settingsFiles: files, optimize: fake.optimize as never });
+    const { id } = app.create({ settingsFile: 'work' });
+    calls.length = 0;
+    const text = app.manager.optimizeCompact(id);
+    fake.answer('指示');
+    expect(await text).toBe('指示');
+    expect(fake.calls[0].options.settingsFile).toBe(`/run/${id}-optimizer.json`);
+    expect(calls).toEqual(['check:work', 'prepareOptimizer:work', `releaseOptimizer:${id}`]);
+
+    // 起動したあとで、設定ファイルが読めなくなった
+    (files as unknown as { check: () => void }).check = () => {
+      throw new Error('設定ファイルを読めません: work');
+    };
+    await expect(app.manager.optimizeCompact(id)).rejects.toThrow('設定ファイルを読めません: work');
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it('知らないセッションは、選ばせずに空を返す', async () => {
+    const fake = fakeOptimize();
+    start({ optimize: fake.optimize as never });
+    expect(await app.manager.optimizeCompact('missing')).toBe('');
+    expect(fake.calls).toEqual([]);
   });
 });
