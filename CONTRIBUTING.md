@@ -800,7 +800,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `wait_sessions`: 状態の変化と 1 秒ごとの確認で、対象のどれかの手が空く（`starting`・`working` 以外になる）まで待ちます。バックグラウンドのタスクの完了待ちは、ターンが終わっているので手が空いたとみなします（開発サーバーのように終わらないものもあるため）。
 - 親への知らせ（`SessionsControl.stateChanged`）: 子の状態が `working` から `idle`・`background`・`question`・`permission`・`waiting`・`exited` に変わり、子の最後の発言（`/clear` よりあと）が親からの指示なら、親ごとに溜めます。親が止めた子（`stop_session`）は除きます。`starting` から手が空いたもの（アプリを起動し直して引き継いだときなど）は、作業を終えたのではないので数えません。子セッションは人に通知しないので（`index.ts` の `notify` が `parentOf` で除く）、親が答えられない許可の確認・ターミナルでの操作の待ちも親に知らせ、人に伝えさせます。
   - 親が `idle` か `background`（ターンの外）で入力欄が空なら、`<tanacode-session-event sessions="子の ID">文</tanacode-session-event>`（1 行。`sessionEventText`）を `submitWhenReady` で打ちます。親が作業中なら、ターンの外になったときに送ります。1.5 秒の間に続けて手が空いた子は、1 つにまとめます。待ちの列・まとめ・試し直しは `session-notices.ts` の `SessionNotices`（チェックリストの知らせと共通）。
-  - 知らせは、届かないことがあります（親が手の空かないまま・アプリの不具合）。MCP サーバーの説明と `start_session` の説明・結果で、親の Claude に「知らせだけを待たず、子の状況を定期的に確かめる（`wait_sessions`・`get_session`）」よう伝えています。
+  - 知らせは、届かないことがあります（親が手の空かないまま・アプリの不具合）。MCP サーバーの説明と `start_session` の説明・結果で、親の Claude に「知らせだけを待たず、子の状況を定期的に確かめる（`get_session`）」「同期で待たない」と伝えています。`wait_sessions` などの長いツールの呼び出しの間は、ユーザーの発言が親に届かないためです（2026-10-12、親が `wait_sessions` を 600 秒で呼んで待ち、ユーザーが話しかけられなかった）。ほかにやることが無いときは、ターンを終えて、バックグラウンドのコマンドのタイマー（`sleep 300` など）で起きてから見るよう伝えています。
   - 親がその子を読んだ（`read_session`・`get_session`・`get_session_diff`・`wait_sessions`・`answer_question`）時刻より前の出来事は、送りません（`observedAt`）。
   - 会話ログでは、`chat.ts` が `notice` のイベント（`sessions` に子の ID）にします。順番待ちの行では、人の発言として数えません（`isHumanPrompt`）。
 - MCP の説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）で、Claude に次のことを伝えます。
