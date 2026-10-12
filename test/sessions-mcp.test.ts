@@ -232,6 +232,8 @@ class FakeHost implements SessionsHost {
   sessions: SessionSummary[] = [];
   states = new Map<string, SessionState>();
   modes = new Map<string, PermissionMode>();
+  models = new Map<string, string>();
+  efforts = new Map<string, string>();
   events = new Map<string, ChatEvent[]>();
   screens = new Map<string, ScreenInfo>();
   created: { cwd: string; options: NewSessionOptions; parentId: string | null; worktree: boolean }[] = [];
@@ -276,6 +278,8 @@ class FakeHost implements SessionsHost {
   parentOf = (id: string) => this.sessions.find((s) => s.id === id)?.parentId ?? null;
   stateOf = (id: string) => this.states.get(id) ?? null;
   modeOf = (id: string) => this.modes.get(id) ?? null;
+  currentModel = (id: string) => this.models.get(id) ?? null;
+  currentEffort = (id: string) => this.efforts.get(id) ?? null;
   conversation = async (id: string) => this.events.get(id) ?? [];
   screen = (id: string) => this.screens.get(id) ?? null;
   create = (cwd: string, options: NewSessionOptions, parentId: string | null) => {
@@ -448,9 +452,14 @@ describe('ツールの実行（SessionsControl）', () => {
     host.set(started.session_id, 'idle');
     await new Promise((r) => setTimeout(r, 50));
     expect(host.submitted).toHaveLength(1);
-    // 子として始めるときは、Remote Control を使わない
-    await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true, independent: false });
-    expect(host.created[1]).toMatchObject({ parentId: PARENT, options: { remoteControl: false } });
+    // 子として始めるときも、Remote Control は呼び出し元に合わせる（オンならオン、オフならオフ）
+    expect(jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true, independent: false }))).toMatchObject({ remote_control: true });
+    expect(host.created[1]).toMatchObject({ parentId: PARENT, options: { remoteControl: true } });
+    host.sessions.find((s) => s.id === PARENT)!.remoteControl = false;
+    for (const independent of [false, true]) {
+      expect(jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent }))).toMatchObject({ remote_control: false });
+      expect(host.created.at(-1)).toMatchObject({ parentId: independent ? null : PARENT, options: { remoteControl: false } });
+    }
   });
 
   it('start_session: 始められるのは、このセッションのリポジトリの中か、プロファイルのセッションのフォルダだけ。worktree は元のフォルダから作る', async () => {
@@ -868,6 +877,22 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_prompt: { from: 'human', text: '人の指示' }, last_response: 'はい' });
       host.events.set(CHILD, [{ type: 'notice', id: '1', text: '知らせ' }]);
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_prompt: { from: 'notice', text: '知らせ' }, last_response: null });
+      // チェックリストの知らせにターンの終わりを止められたあとの応答（チェックリストを直した報告）は、最後の応答にしない
+      const stopped: ChatEvent[] = [
+        { type: 'user', id: '1', text: '人の指示' },
+        { type: 'assistant-text', id: '2', text: '調べた結果です' },
+        { type: 'checklist-stop' },
+        { type: 'tool-use', id: '3', name: 'mcp__tanacode-checklist__card_add', target: 'やること', input: '' },
+        { type: 'assistant-text', id: '4', text: 'チェックリストに 2 件足しました。' },
+      ];
+      host.events.set(CHILD, stopped);
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: '調べた結果です' });
+      // 次のターン（別の Claude からの知らせで始まったものも）の応答は、作業の応答に戻る
+      host.events.set(CHILD, [...stopped, { type: 'turn-start' }, { type: 'assistant-text', id: '5', text: '報告を読みました' }]);
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: '報告を読みました' });
+      // 作業の応答が無ければ、報告を返す
+      host.events.set(CHILD, [stopped[0], ...stopped.slice(2)]);
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: 'チェックリストに 2 件足しました。' });
       host.set(CHILD, 'permission');
       const context = Array.from({ length: 15 }, (_, i) => `行 ${i}`);
       host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Bash を実行しますか?', context, options: [option('1', 'Yes')] }));
@@ -920,6 +945,34 @@ describe('ツールの実行（SessionsControl）', () => {
       const started = jsonOf<{ permission_mode: string }>(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, model: ' opus ', effort: ' ' }));
       expect(started.permission_mode).toBe('manual');
       expect(host.created.at(-1)?.options).toMatchObject({ mode: 'manual', model: 'opus', effort: null, worktree: false });
+    });
+
+    it('start_session: モデル・エフォート・権限モードを省くと、呼んだセッションの今のものにする（子も、独立したセッションも）。指定したら、指定を使う', async () => {
+      host.models.set(PARENT, 'claude-sonnet-5-5');
+      host.efforts.set(PARENT, 'high');
+      host.modes.set(PARENT, 'acceptEdits');
+      for (const independent of [false, true]) {
+        const started = jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent }));
+        expect(started).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high', permission_mode: 'acceptEdits' });
+        expect(host.created.at(-1)).toMatchObject({ parentId: independent ? null : PARENT, options: { model: 'claude-sonnet-5-5', effort: 'high', mode: 'acceptEdits' } });
+        // 指定は、呼んだセッションのものより優先する
+        await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent, model: 'haiku', effort: 'low', permission_mode: 'manual' });
+        expect(host.created.at(-1)?.options).toMatchObject({ model: 'haiku', effort: 'low', mode: 'manual' });
+        // 片方だけ指定すれば、もう片方は呼んだセッションのもの
+        await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false, independent, model: 'haiku' });
+        expect(host.created.at(-1)?.options).toMatchObject({ model: 'haiku', effort: 'high', mode: 'acceptEdits' });
+      }
+      // 呼んだセッションが途中で変えていれば、起動する時点のもの
+      host.models.set(PARENT, 'claude-opus-5-5');
+      host.efforts.set(PARENT, 'max');
+      await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false });
+      expect(host.created.at(-1)?.options).toMatchObject({ model: 'claude-opus-5-5', effort: 'max' });
+      // 今の値が分からなければ、Claude Code の既定（null）。--effort に渡せないエフォートも渡さない
+      host.models.delete(PARENT);
+      host.efforts.set(PARENT, 'turbo');
+      const unknown = jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: false }));
+      expect(unknown).toMatchObject({ model: null, effort: null });
+      expect(host.created.at(-1)?.options).toMatchObject({ model: null, effort: null });
     });
 
     it('start_session: folder は絶対パスで、あるフォルダだけ', async () => {
@@ -1509,6 +1562,28 @@ describe('会話のまとめ（read_session の中身）', () => {
     expect(text).not.toContain('f29.ts');
     expect(text).toContain('…(400 characters omitted)…');
     expect(text).toContain('\n\n終わりました');
+  });
+
+  it('チェックリストの知らせに止められたあとの応答は、結果のまとめと分けて短く出す（結果のまとめを途中の応答として切らない）', () => {
+    const summary = 'け'.repeat(3000);
+    const text = testing
+      .conversationLines(
+        [
+          { type: 'user', id: '1', text: '調べて' },
+          { type: 'assistant-text', id: '2', text: '調べます' },
+          { type: 'assistant-text', id: '3', text: summary },
+          { type: 'checklist-stop' },
+          { type: 'assistant-text', id: '4', text: 'チェックリストに 2 件足しました。' },
+          { type: 'user', id: '5', text: '次も' },
+          { type: 'assistant-text', id: '6', text: 'はい' },
+        ],
+        3,
+        () => '',
+      )
+      .join('\n');
+    // 結果のまとめは、最後の応答として 4000 文字まで出る
+    expect(text).toContain(summary);
+    expect(text).toContain('\n\nClaude, after tanacode reminded it to update its checklists at the end of the turn:\nチェックリストに 2 件足しました。\n\n### 2. User message\n次も\n\nClaude:\nはい');
   });
 
   it('編集したファイルは、/clear より後のものだけ。フォルダの外のものは絶対パスのまま', () => {

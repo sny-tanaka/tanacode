@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { expect } from 'vitest';
 import type { ChatEvent, TranscriptEntry } from '@shared/chat';
 import type { Menu, ScreenInfo } from '@shared/screen';
+import { EFFORTS } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import { askQuestionsOf } from '../src/main/screen-parser';
 import type { Step } from './cli/mock-api';
@@ -164,6 +165,8 @@ export function checkStatusLine(info: StatusLineInfo | null, version: string, tr
   expect(info).not.toBeNull();
   expect(info!.version).toBe(version);
   expect(info!.model).not.toBeNull();
+  // start_session が、省いたエフォートを呼んだセッションに合わせるのに使う（--effort に渡せる値）
+  expect(EFFORTS).toContain(info!.effort);
   expect(info!.context).not.toBeNull();
   expect(info!.transcriptPath).toBe(transcriptPath);
 }

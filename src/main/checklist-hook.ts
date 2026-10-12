@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync, statSync } from 'node:fs';
 import { CHECKLIST_HOOK_ENV } from '@shared/chat';
 import type { ReminderEvent, TurnActivity } from '@shared/checklist-reminder';
 import { CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
@@ -12,6 +12,16 @@ import { callBridge } from './mcp-bridge';
 // 渡す文と、止めるかどうかは、アプリが決める（@shared/checklist-reminder）。フックは、Claude が使ったツールを会話ログから数えて、アプリに聞く。
 // フックは中継の入口（checklist-mcp.js）を --hook 付きで動かす。環境変数は checklistHookEnv（checklist-bridge.ts）が、起動する Claude Code に足す。
 // アプリに聞けなかったとき・答えを読めなかったときは、何も出さない（Claude の作業を止めない側に倒す）
+//
+// 会話ログは、遅れて、起きた順とは限らない順で書かれる（Claude Code 2.1.296 で確かめた）。
+// - 応答の行は、その応答（とツール）が終わってから、0.1 秒おきにまとめて書かれる
+// - Remote Control 中は、1 行ごとにリモートへの保存を待ってから次の行を書くので、数秒遅れることもある
+// - 最初の応答の行を、発言の行（とそれに続く attachment の行）より先に書くことがある（transcript-tail.ts の parentFirst と同じ事情）
+// そのため、ターンの終わりのフックが動いた時点で、最後に使ったツールの行がまだ無いことがある。ファイルの終わりから順に数えると、
+// チェックリストを直した直後でも「触れていない」と止めたり、ツールを使ったターンを止め損なったりする。そこで、
+// - 行の順番ではなく、親（parentUuid）をたどって数える（turnActivity）。最後の応答から、ターンのはじまりまで
+// - フックの入力の last_assistant_message（最後の応答の文）と同じ応答が書かれ、そこからターンのはじまりまで親がつながるのを待ってから数える（settledScan）
+// - 待ってもそろわなかったときは、そろわなかったことをアプリに伝え、アプリが自分の受けた呼び出しでも確かめる（ChecklistControl の reminder）
 
 // 入口に付けると、中継（MCP サーバー）ではなくフックとして動く
 export const CHECKLIST_HOOK_ARG = '--hook';
@@ -28,13 +38,18 @@ export function checklistHooks(): Record<string, unknown[]> {
   return { UserPromptSubmit: [{ hooks }], Stop: [{ hooks }], SessionStart: [{ matcher: 'compact', hooks }] };
 }
 
-// Claude Code がフックの標準入力に渡す JSON のうち、使うもの
-type HookInput = { hook_event_name?: string; stop_hook_active?: boolean; transcript_path?: string };
+// Claude Code がフックの標準入力に渡す JSON のうち、使うもの。last_assistant_message: 最後の応答の文（Stop。無いこともある）
+type HookInput = { hook_event_name?: string; stop_hook_active?: boolean; transcript_path?: string; last_assistant_message?: string };
 
 const EVENTS: Record<string, ReminderEvent> = { UserPromptSubmit: 'prompt', Stop: 'stop', SessionStart: 'compact' };
 
 // 会話ログの終わりから読む大きさ。1 ターンがこれより長ければ、読めた分だけを数える（ツールを使ったことは分かる）
 const TAIL_BYTES = 4 * 1024 * 1024;
+
+// 会話ログが最後の応答まで書かれるのを待つ上限と、確かめる間隔。ふつうは 0.1 秒ほどで書かれる。
+// 過ぎたら、読めた分で数える（フックの上限の 10 秒に、アプリを待つ 5 秒と合わせて収まる長さにする）
+const SETTLE_TIMEOUT_MS = 2000;
+const SETTLE_POLL_MS = 25;
 
 // 会話ログの終わりの部分（途中から始まる 1 行めは捨てる）。読めなければ空
 export function readTail(path: string, maxBytes = TAIL_BYTES): string {
@@ -56,39 +71,144 @@ export function readTail(path: string, maxBytes = TAIL_BYTES): string {
 
 type Line = {
   type?: string;
+  uuid?: string;
+  parentUuid?: string | null;
+  timestamp?: string;
   isMeta?: boolean;
   isSidechain?: boolean;
   isCompactSummary?: boolean;
   isVisibleInTranscriptOnly?: boolean;
-  message?: { content?: string | { type?: string; name?: string }[] };
+  origin?: { kind?: string };
+  message?: { content?: string | { type?: string; name?: string; text?: string }[] };
 };
 
-// このターン（最後の発言のあと）に使ったツールを、会話ログ（JSONL）の終わりから数える。
-// 発言: user の行で、ツールの結果でも、Claude Code が足した行（isMeta・圧縮の要約）でもないもの
-export function turnActivity(transcript: string): TurnActivity {
-  const activity: TurnActivity = { turn: 0, checklist: 0 };
-  const lines = transcript.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i]) continue;
-    let line: Line;
+// 会話ログから読んだ、このターンのこと。since: ターンのはじまりの時刻（ミリ秒。はじまりまでたどれなければ、たどれたいちばん前の行の時刻。
+// 時刻が無ければ null）。settled: 最後の応答（last）が書かれていて、そこからターンのはじまりまで、親がつながっているのを確かめた
+export type TurnScan = TurnActivity & { since: number | null; settled: boolean };
+
+// ターンのはじまりの行か。user の行で、ツールの結果でも、Claude Code が足した行（isMeta・圧縮の要約）でもないもの（発言・完了通知など）と、
+// 別の Claude（サブエージェント・ほかのセッション）からの知らせ（isMeta で origin が peer。待機中の Claude Code は、これで続きを始める。
+// @shared/chat の toChatEvents と同じ見分け方）
+function startsTurn(line: Line): boolean {
+  if (line.type !== 'user' || line.isCompactSummary || line.isVisibleInTranscriptOnly) return false;
+  if (line.isMeta) return line.origin?.kind === 'peer';
+  const content = line.message?.content;
+  return typeof content === 'string' || (Array.isArray(content) && !content.some((b) => b.type === 'tool_result'));
+}
+
+// 応答の行の文。Claude Code が last_assistant_message を作るのと同じく、文のブロックを空白でつなぐ
+function textOf(line: Line): string {
+  const content = line.message?.content;
+  if (line.type !== 'assistant' || !Array.isArray(content)) return '';
+  return content
+    .filter((b) => b.type === 'text' && b.text)
+    .map((b) => b.text)
+    .join(' ');
+}
+
+// 空白の違いを除いて比べるための形
+function flat(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+// このターン（最後の発言のあと）に使ったツールを、会話ログ（JSONL）から数える。
+// 最後の応答の行から、親（parentUuid）をたどって、ターンのはじまりの行まで数える。サブエージェントの行は、このつながりに入らない。
+// last: 最後の応答の文（フックの入力の last_assistant_message）。あれば、その文の応答（同じ文がいくつもあれば、いちばん新しいもの）から、
+// 無ければ（古い Claude Code・文の無い応答）、ファイルのいちばん後ろの行からたどる。
+// earlier: その uuid の行が、読んだ範囲（会話ログの終わりの部分。readTail）より前にあるか。前にあるのは、まだ書かれていないのではないので、
+// そこまでで数え終える（1 ターンが読んだ範囲より長いとき）
+export function turnActivity(transcript: string, last?: string, earlier: (uuid: string) => boolean = () => false): TurnScan {
+  const scan: TurnScan = { turn: 0, checklist: 0, since: null, settled: false };
+  const lines: Line[] = [];
+  for (const text of transcript.split('\n')) {
+    if (!text) continue;
     try {
-      line = JSON.parse(lines[i]) as Line;
+      const line = JSON.parse(text) as Line;
+      if (line.uuid && !line.isSidechain) lines.push(line);
     } catch {
-      continue;
+      // 書きかけの行
     }
-    if (line.isSidechain) continue;
+  }
+  const byUuid = new Map(lines.map((line) => [line.uuid, line]));
+  const wanted = last === undefined ? null : flat(last);
+  const answers = wanted === null ? [] : lines.filter((line) => textOf(line) !== '' && flat(textOf(line)) === wanted);
+  const newest = answers.reduce<Line | undefined>((a, b) => (a && (a.timestamp ?? '') > (b.timestamp ?? '') ? a : b), undefined);
+  const seen = new Set<Line>();
+  let first: Line | undefined;
+  for (let line: Line | undefined = newest ?? lines[lines.length - 1]; line && !seen.has(line); line = line.parentUuid ? byUuid.get(line.parentUuid) : undefined) {
+    seen.add(line);
+    first = line;
     const content = line.message?.content;
     if (line.type === 'assistant' && Array.isArray(content)) {
       for (const block of content) {
         if (block.type !== 'tool_use' || !block.name) continue;
-        if (block.name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`)) activity.checklist++;
-        else activity.turn++;
+        if (block.name.startsWith(`mcp__${CHECKLIST_MCP_SERVER}__`)) scan.checklist++;
+        else scan.turn++;
       }
     }
-    if (line.type !== 'user' || line.isMeta || line.isCompactSummary || line.isVisibleInTranscriptOnly) continue;
-    if (typeof content === 'string' || (Array.isArray(content) && !content.some((b) => b.type === 'tool_result'))) break;
+    if (startsTurn(line)) break;
   }
-  return activity;
+  scan.since = (first?.timestamp && Date.parse(first.timestamp)) || null;
+  scan.settled = newest !== undefined && first !== undefined && (startsTurn(first) || (!!first.parentUuid && earlier(first.parentUuid)));
+  return scan;
+}
+
+function fileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return -1;
+  }
+}
+
+// 会話ログのどこかに、その uuid の行があるか。大きいファイルなので、少しずつ読んで探す
+export function hasLine(path: string, uuid: string): boolean {
+  const needle = Buffer.from(`"uuid":${JSON.stringify(uuid)}`);
+  const chunk = Buffer.alloc(1024 * 1024 + needle.length);
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, 'r');
+    // kept: 読んだものの終わりに残した長さ（つなぎ目にまたがるものを見落とさないため）
+    for (let position = 0, kept = 0; ; ) {
+      const read = readSync(fd, chunk, kept, chunk.length - kept, position);
+      if (read === 0) return false;
+      const filled = kept + read;
+      if (chunk.subarray(0, filled).includes(needle)) return true;
+      kept = Math.min(needle.length - 1, filled);
+      chunk.copy(chunk, 0, filled - kept, filled);
+      position += read;
+    }
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+// 会話ログが最後の応答（last）まで書かれるのを待って、数える。
+// last が無いときは、確かめようがないので、待たずに今あるものを数える（settled は false）。
+// そろう前に数えたものは、前のターンのものかもしれない（このターンの行がまだ 1 つも書かれていないとき）ので、そろうまでは何も決めない
+export async function settledScan(path: string, last: string | undefined, timeoutMs = SETTLE_TIMEOUT_MS): Promise<TurnScan> {
+  const until = Date.now() + timeoutMs;
+  let size = fileSize(path);
+  // 読んだ範囲に親が無いとき、それより前にあるか。同じ行は 1 回だけ探す（まだ書かれていない行は、書かれれば読んだ範囲に入る）
+  const found = new Map<string, boolean>();
+  const earlier = (uuid: string) => {
+    if (size <= TAIL_BYTES) return false;
+    if (!found.has(uuid)) found.set(uuid, hasLine(path, uuid));
+    return found.get(uuid) === true;
+  };
+  const read = () => turnActivity(readTail(path), last, earlier);
+  let scan = read();
+  while (!scan.settled && last !== undefined && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    // 書き足されたときだけ読み直す
+    const now = fileSize(path);
+    if (now === size) continue;
+    size = now;
+    scan = read();
+  }
+  return scan;
 }
 
 // フックが標準出力に書く JSON。Stop はターンの終わりを止めて、理由を Claude に渡す。ほかは、文を Claude のコンテキストに足す
@@ -97,8 +217,9 @@ export function hookOutput(hookEventName: string, text: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } });
 }
 
-// フックの本体。標準入力の JSON を読み、アプリに聞いて、標準出力に書く内容を返す（何も出さないときは空）
-export async function runHook(stdin: string, socketPath: string, session: string, timeoutMs: number): Promise<string> {
+// フックの本体。標準入力の JSON を読み、アプリに聞いて、標準出力に書く内容を返す（何も出さないときは空）。
+// settleMs: 会話ログが最後の応答まで書かれるのを待つ上限（テストでは短くする）
+export async function runHook(stdin: string, socketPath: string, session: string, timeoutMs: number, settleMs = SETTLE_TIMEOUT_MS): Promise<string> {
   let input: HookInput;
   try {
     input = JSON.parse(stdin) as HookInput;
@@ -108,15 +229,18 @@ export async function runHook(stdin: string, socketPath: string, session: string
   const name = input.hook_event_name ?? '';
   const event = EVENTS[name];
   if (!event) return '';
-  let activity: TurnActivity = { turn: 0, checklist: 0 };
+  let args: Record<string, unknown> = { turn: 0, checklist: 0 };
   if (event === 'stop') {
     // 止めたあとの続きは、もう止めない（終われなくなる）
-    if (input.stop_hook_active) return '';
-    activity = turnActivity(input.transcript_path ? readTail(input.transcript_path) : '');
-    // 止めないと分かっているターンは、アプリに聞かない
-    if (activity.checklist > 0 || activity.turn === 0) return '';
+    if (input.stop_hook_active || !input.transcript_path) return '';
+    const last = typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim() ? input.last_assistant_message : undefined;
+    const { turn, checklist, since, settled } = await settledScan(input.transcript_path, last, settleMs);
+    // 止めないと分かっているターンは、アプリに聞かない。そろわなかったときにツールが 1 つも見えないのは、まだ書かれていないだけかもしれないが、
+    // 使ったと言い切れないので止めない
+    if (checklist > 0 || turn === 0) return '';
+    args = { turn, checklist, since, settled };
   }
-  const result = await callBridge(socketPath, { session, tool: checklistHookRequest(event), args: activity }, timeoutMs, CHECKLIST_CLOSED_MESSAGE);
+  const result = await callBridge(socketPath, { session, tool: checklistHookRequest(event), args }, timeoutMs, CHECKLIST_CLOSED_MESSAGE);
   const first = result.content[0];
   const text = !result.isError && first?.type === 'text' ? first.text : '';
   return text ? hookOutput(name, text) : '';
