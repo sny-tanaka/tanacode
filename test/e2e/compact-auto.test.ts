@@ -9,6 +9,7 @@ import { E2EApp } from './app';
 // - ターンの終わりに、設定の大きさ（既定は 80%）を超えていたら、仕上げ → /clear → 再開の文、と進む（Claude は報告して待つ）
 // - 1 つのターンが長くて 90% を超えたら、ツールの切れ目で止めて（PostToolUse のフック）切り替え、続きを進めさせる
 // - 「自動」のトグルをオフにしたセッションでは始めず、Claude Code の自動の圧縮（要約）が今までどおり動く
+// - 始める大きさは、メニューで選ぶ。続けて 2 回取りやめになったら、そのセッションでは休む
 
 const PROMPT = '税率を可変にしてください';
 const REPLY = '税率を引数にしました';
@@ -21,6 +22,7 @@ const OFF = 'トグルを切ったあとの頼みです';
 const OFF_REPLY = 'トグルを切ったあとの答えです';
 const WRITTEN = 'いまの状態に書きました';
 const RESUMED = '引き継ぎました';
+const NOT_WRITTEN = '書くことはありません';
 const SUMMARY_REQUEST = 'Your task is to create a detailed summary';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,6 +30,8 @@ describe('最適化圧縮を自動で始める', () => {
   let app: E2EApp;
   let stateCards = 0;
   let lowAfterReset = false;
+  // 仕上げの頼みに、チェックリストのツールを使わずに答える（取りやめになる）
+  let skipTools = false;
   // コンテキストの上限（トークン）。ヘッダーのメーター（「2% · 20.0k」）から求める
   let limit = 0;
   const use = (percent: number) => {
@@ -40,9 +44,34 @@ describe('最適化圧縮を自動で始める', () => {
   const steps = () => app.api.toolResults.filter((r) => /step-\d/.test(r)).length;
   const button = () => app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
   const toggle = () => app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"]');
+  // メニューの「tanacode → 自動で最適化圧縮する大きさ」の項目を選ぶ。選ばれている項目の名前を返す
+  const pickPercent = (percent: number) =>
+    app.app.evaluate(
+      ({ Menu }, [parent, label]) => {
+        type Item = { label: string; checked: boolean; click(): void; submenu?: { items: Item[] } | null };
+        const find = (items: Item[]): Item | null => {
+          for (const item of items) {
+            if (item.label === parent) return item;
+            const found = item.submenu ? find(item.submenu.items) : null;
+            if (found) return found;
+          }
+          return null;
+        };
+        const sizes = () => find((Menu.getApplicationMenu()?.items ?? []) as unknown as Item[])?.submenu?.items ?? [];
+        sizes()
+          .find((item) => item.label === label)
+          ?.click();
+        // 選ぶと、メニューを作り直す
+        return sizes()
+          .filter((item) => item.checked)
+          .map((item) => item.label);
+      },
+      ['自動で最適化圧縮する大きさ', `${percent}%`] as const,
+    );
 
   // 何番目の応答かが決まらない（どのツールの切れ目で止まるかは、そのときしだい）ので、最後の発言の中身で応答を決める
   const respond = (prompt: string, results: string[]): Block[] | null => {
+    if (prompt.includes(`<${HANDOFF_TAG}>`) && skipTools) return [{ type: 'text', text: NOT_WRITTEN }];
     if (prompt.includes(`<${HANDOFF_TAG}>`)) {
       stateCards += 1;
       return [{ type: 'tool_use', id: `toolu_state_${stateCards}`, name: checklistToolId('card_add'), input: { list: 'いまの状態', list_description: '変わったら書き換える', list_kind: 'state', cards: [{ title: `状態 ${stateCards}`, body: '手順の途中' }] } }];
@@ -102,6 +131,14 @@ describe('最適化圧縮を自動で始める', () => {
     expect(await toggle().getAttribute('aria-checked')).toBe('true');
     expect(await toggle().getAttribute('data-tip')).toContain('コンテキストが 80% を超えたら');
     await sleep(1500);
+    expect(handoffs()).toEqual([]);
+  });
+
+  it('始める大きさは、メニューで選ぶ。選んだら、すぐトグルの説明に出る', async () => {
+    expect(await pickPercent(60)).toEqual(['60%']);
+    await app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"][data-tip*="コンテキストが 60% を超えたら"]').waitFor();
+    expect(await pickPercent(80)).toEqual(['80%']);
+    await app.page.locator('.claude-header [role="switch"][aria-label="自動の最適化圧縮"][data-tip*="コンテキストが 80% を超えたら"]').waitFor();
     expect(handoffs()).toEqual([]);
   });
 
@@ -176,6 +213,33 @@ describe('最適化圧縮を自動で始める', () => {
     expect(prompts(SUMMARY_REQUEST)).toEqual([]);
   });
 
+  it('続けて 2 回取りやめになったら、このセッションでは休む（ボタンの左に出す）。休んでいる間は、始めない', async () => {
+    const failed = app.page.locator('.claude-header .compact-status.failed');
+    lowAfterReset = false;
+    skipTools = true;
+    use(85);
+    // 1 回め: 仕上げでチェックリストのツールを使わなかったので、取りやめ（会話は消さない）
+    await app.send(SMALL);
+    await app.waitUntil('1 回めの仕上げの頼み', () => handoffs().length === 4, 60_000);
+    await failed.waitFor();
+    await button().waitFor();
+    // 2 回め: 次のターンの終わりに、もう 1 回だけ試す
+    await app.send(SMALL);
+    await app.waitUntil('2 回めの仕上げの頼み', () => handoffs().length === 5, 60_000);
+    await failed.waitFor();
+    await button().waitFor();
+    expect(resumes()).toHaveLength(3);
+    // 取りやめの知らせを閉じると、休んでいることが出る
+    await failed.locator('.compact-status-close').click();
+    await app.byText('.claude-header .compact-status', '自動の最適化圧縮を休んでいます').waitFor();
+    // 休んでいる間は、超えていても始めない
+    await app.send(SMALL);
+    await button().waitFor();
+    await sleep(4000);
+    expect(handoffs()).toHaveLength(5);
+    skipTools = false;
+  });
+
   it('「自動」をオフにしたセッションでは、始めない。Claude Code の自動の圧縮（要約）が、今までどおり動く', async () => {
     use(1);
     await app.send(SMALL);
@@ -190,7 +254,7 @@ describe('最適化圧縮を自動で始める', () => {
     await button().waitFor();
     await app.send(OFF);
     await app.waitUntil('Claude Code の自動の圧縮（要約の頼み）', () => prompts(SUMMARY_REQUEST).length > 0, 60_000);
-    expect(handoffs()).toHaveLength(3);
+    expect(handoffs()).toHaveLength(5);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

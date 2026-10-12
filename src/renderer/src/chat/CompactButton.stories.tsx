@@ -33,6 +33,21 @@ function Demo() {
       <CompactButton canStart={canStart} auto={auto} status={{ ...IDLE_COMPACT_STATUS, ...over }} onStart={() => {}} />
     </>
   );
+  // チャットの欄が狭いとき（ヘッダーの全体）。札はボタンの下に浮かせて、右端のボタンを欄の外に出さない
+  const narrow = (title: string, over: Partial<CompactStatus>) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, height: 80 }}>
+      <div style={{ width: 200, fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>{title}</div>
+      <div className="claude-header" style={{ width: 400, flex: 'none', border: '1px solid var(--border-subtle)' }}>
+        <span className="claude-mark" />
+        <span className="claude-title">税率を可変にしてください</span>
+        <div className="spacer" />
+        {fixed(over)}
+        <IconButton size="md" icon={ReloadIcon} label="再起動" />
+        <IconButton size="md" icon={ExportIcon} label="書き出す" />
+        <IconButton size="md" icon={MonitorIcon} label="ターミナルモード" />
+      </div>
+    </div>
+  );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {row(
@@ -51,13 +66,16 @@ function Demo() {
       {row('自動で始める大きさが 40%', fixed({ autoPercent: 40 }))}
       {row('自動を休んでいる', fixed({ autoPaused: true }))}
       {row('チェックリストがオフ（押せない）', fixed({ unavailable: 'checklist-off' }))}
+      {narrow('狭い幅: 取りやめた', { failure: 'interrupted' })}
+      {narrow('狭い幅: 自動を休んでいる', { autoPaused: true })}
+      {narrow('狭い幅: 再開の文を待っている', { phase: 'waiting' })}
     </div>
   );
 }
 
 const meta = {
   title: 'チャット/最適化圧縮のボタンと自動のトグル',
-  parameters: { width: 640, background: '--bg-panel' },
+  parameters: { width: 940, background: '--bg-panel' },
 } satisfies Meta;
 
 export default meta;
