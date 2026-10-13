@@ -37,6 +37,7 @@ function Demo() {
       {row('使えない（開発版）', <Toggle label={icon} name="Remote Control" on={false} disabled title={'Remote Control\n押せないときも、ホバーで理由を出す'} onChange={() => {}} />)}
       {row('切り替えの途中', <Toggle label={icon} name="Remote Control" on busy onChange={() => {}} />)}
       {row('文字のとき', <Toggle label="Remote Control" on={on} onChange={setOn} />)}
+      {row('スイッチだけ（枠の中に置くとき）', <Toggle name="Remote Control" on={on} onChange={setOn} />)}
       {row(
         'ヘッダーのボタンと並べる',
         <div className="claude-header" style={{ borderBottom: 'none', padding: 0, flex: 1 }}>

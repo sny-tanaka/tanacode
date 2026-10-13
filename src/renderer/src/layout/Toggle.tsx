@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 // オン・オフを切り替えるスイッチ（ヘッダーのボタンと並べる大きさ）。label は文字かアイコン（アイコンなら name に名前を渡す）。
+// label を渡さなければ、スイッチだけを出す（ほかの部品の枠の中に置くとき。name に名前を渡す）。
 // busy のあいだは切り替えの途中なので、つまみの横にぐるぐるを出して押せなくする
 export function Toggle({
   label,
@@ -11,8 +12,8 @@ export function Toggle({
   title,
   onChange,
 }: {
-  label: ReactNode;
-  // 読み上げる名前（label がアイコンのとき）
+  label?: ReactNode;
+  // 読み上げる名前（label がアイコンのとき・label が無いとき）
   name?: string;
   on: boolean;
   disabled?: boolean;
@@ -31,7 +32,7 @@ export function Toggle({
       data-tip={title}
       onClick={() => onChange(!on)}
     >
-      <span className={`toggle-label${busy && typeof label === 'string' ? ' flow-text' : ''}`}>{label}</span>
+      {label !== undefined && <span className={`toggle-label${busy && typeof label === 'string' ? ' flow-text' : ''}`}>{label}</span>}
       <span className="toggle-track">
         <span className="toggle-thumb" />
       </span>

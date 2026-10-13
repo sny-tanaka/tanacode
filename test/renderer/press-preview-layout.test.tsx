@@ -301,4 +301,13 @@ describe('Toggle', () => {
     fireEvent.click(toggle());
     expect(onChange).toHaveBeenCalledTimes(2);
   });
+
+  it('label を渡さなければ、スイッチだけを出す（ほかの部品の枠の中に置くとき）。名前は name で読み上げる', () => {
+    const { container, rerender } = render(<Toggle name="自動の最適化圧縮" on onChange={() => {}} />);
+    expect(screen.getByRole('switch', { name: '自動の最適化圧縮' }).textContent).toBe('');
+    expect(container.querySelector('.toggle-label')).toBeNull();
+    expect(container.querySelector('.toggle-track')).not.toBeNull();
+    rerender(<Toggle label="Remote Control" on onChange={() => {}} />);
+    expect(container.querySelector('.toggle-label')?.textContent).toBe('Remote Control');
+  });
 });
