@@ -52,6 +52,11 @@ const lastOthersAttention = new Map<string, boolean>();
 // 開発版（パッケージしていないもの）は Remote Control を使わない（起動するたびにスマホに通知が届くため）。
 // 以前つないでいた会話を再開して Claude Code が勝手につなぎ直したときも、切る。使いたいときは TANACODE_REMOTE_CONTROL=1 で起動する
 let remoteControl = false;
+// 裏で起動する（TANACODE_BACKGROUND=1）。ウインドウを画面に出さず、Dock にも出さない。画面は描かれ続けるので、Playwright などからは操作できる。
+// 手元で E2E を流す間、作業中のアプリから前面を奪わないためのもの（Electron は、ウインドウを出すときにアプリを最前面にする）
+const background = process.env.TANACODE_BACKGROUND === '1';
+// Dock のアイコンは、起動が済む前に消す。それでも、起動の直後の 0.3 秒ほどは Dock に出る種類のアプリとして見えることがある（実測。20 回のうち 2 回）
+if (background) app.dock?.hide();
 // アプリ全体の設定（通知・新しいバージョンの確認）。既定のプロファイルの設定も同じファイルに入っている
 let settings: AppSettings;
 let sharedPrefs: SharedPrefStore;
@@ -209,7 +214,9 @@ function createWindow(): void {
   );
   const win = new BrowserWindow({
     ...placement,
-    fullscreen: saved?.fullScreen ?? false,
+    show: !background,
+    // 裏で起動したときは、フルスクリーン・最大化にしない（どちらも、ウインドウを画面に出す）
+    fullscreen: !background && (saved?.fullScreen ?? false),
     minWidth: 1180,
     minHeight: 600,
     // global.css の --bg-chrome と同じ（CSS が読み込まれる前に出る色）
@@ -224,11 +231,12 @@ function createWindow(): void {
   // ドラッグで動かしたあとを追わず、最後に API で決めた位置（起動したときの位置）を返す。それを覚えると、
   // 別のディスプレイへ動かして最大化したウインドウが、次の起動で元のディスプレイに開いてしまう
   let normalBounds = win.getNormalBounds();
-  if (saved?.maximized && !saved.fullScreen) win.maximize();
+  if (saved?.maximized && !saved.fullScreen && !background) win.maximize();
   // macOS の resized・moved は、動かし終えたときに一度だけ届く。最大化のアニメーションの途中（resize）は、
   // まだ通常の状態に見えるので、そこでは控えない
   const remember = () => {
-    if (win.isDestroyed()) return;
+    // 裏で起動したときは覚えない（最大化・フルスクリーンにしていないので、覚えていたものを書き換えてしまう）
+    if (background || win.isDestroyed()) return;
     if (win.isNormal()) normalBounds = win.getBounds();
     try {
       saveWindowState(windowStateFile(), { bounds: normalBounds, frame: win.getBounds(), maximized: win.isMaximized(), fullScreen: win.isFullScreen() });
@@ -375,6 +383,8 @@ function showProfile(id: string): void {
 function showWindow(): BrowserWindow {
   if (!mainWindow) createWindow();
   const win = mainWindow!;
+  // 裏で起動したときは、前に出さない
+  if (background) return win;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();

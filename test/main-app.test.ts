@@ -115,6 +115,7 @@ describe('起動', () => {
   it('開発中の起動では、Dock のアイコンをアプリのものにし、Remote Control を使わない。ログインシェルの PATH は使わない', async () => {
     await boot();
     expect(state.dock!.setIcon.mock.calls).toEqual([[join(state.appPath, 'build/icon.png')]]);
+    expect(state.dock!.hide).not.toHaveBeenCalled();
     expect(managerArgs()[managerArg.remoteControl]).toBe(false);
     expect(state.execFileSync).not.toHaveBeenCalled();
   });
@@ -594,6 +595,7 @@ describe('ウインドウ', () => {
       y: 50,
       width: 1300,
       height: 800,
+      show: true,
       fullscreen: false,
       minWidth: 1180,
       minHeight: 600,
@@ -684,6 +686,61 @@ describe('ウインドウ', () => {
     mainWindow().destroyed = false;
     mkdirSync(join(state.userData, 'window-state.json.tmp'));
     expect(() => mainWindow().emit('resized')).not.toThrow();
+  });
+
+  const inBackground = () => (process.env.TANACODE_BACKGROUND = '1');
+
+  it('TANACODE_BACKGROUND=1 なら裏で起動する。Dock に出さず、ウインドウを画面に出さない。Dock や通知から前に出そうとしても、出さない', async () => {
+    await boot({ before: inBackground });
+    expect(state.dock!.hide).toHaveBeenCalledTimes(1);
+    const win = mainWindow();
+    expect(win.options.show).toBe(false);
+    win.minimized = true;
+    state.app.emit('activate');
+    callbacks().onTurnCompleted({ id: 's1', title: '税率の計算' });
+    state.notifications[0].emit('click');
+    expect(win.restore).not.toHaveBeenCalled();
+    expect(win.show).not.toHaveBeenCalled();
+    expect(win.focus).not.toHaveBeenCalled();
+    // 前に出さないだけで、通知のクリックの続き（セッションを選ばせる）は動く
+    expect(sentToRenderer(IpcChannel.SessionsSelect)).toEqual(['s1']);
+    // ウインドウを閉じていれば作るが、それも出さない
+    win.emit('closed');
+    state.app.emit('activate');
+    expect(state.windows).toHaveLength(2);
+    expect(mainWindow().options.show).toBe(false);
+    expect(mainWindow().show).not.toHaveBeenCalled();
+  });
+
+  it('TANACODE_BACKGROUND が 1 でなければ、ふだんどおり前に出す', async () => {
+    await boot({ before: () => (process.env.TANACODE_BACKGROUND = '0') });
+    expect(state.dock!.hide).not.toHaveBeenCalled();
+    expect(mainWindow().options.show).toBe(true);
+    state.app.emit('activate');
+    expect(mainWindow().show).toHaveBeenCalledTimes(1);
+  });
+
+  it('Dock の無い環境でも、裏での起動は止まらない', async () => {
+    await boot({
+      before: (s) => {
+        inBackground();
+        s.dock = undefined;
+      },
+    });
+    expect(mainWindow().options.show).toBe(false);
+  });
+
+  it('裏で起動したときは、最大化・フルスクリーンにしない（どちらも、ウインドウを画面に出す）。ウインドウの位置と大きさも覚え直さない', async () => {
+    const maximized = { version: 1, bounds: { x: 100, y: 50, width: 1300, height: 800 }, maximized: true, fullScreen: false };
+    await boot({ windowState: maximized, before: inBackground });
+    expect(mainWindow().options).toMatchObject({ x: 100, y: 50, width: 1300, height: 800, fullscreen: false });
+    expect(mainWindow().maximize).not.toHaveBeenCalled();
+    // 最大化していないまま覚えると、次にふだんどおり起動したとき、最大化が解けてしまう
+    for (const event of ['resized', 'moved', 'close']) mainWindow().emit(event, fakeEvent());
+    expect(savedWindowState()).toEqual(maximized);
+    await boot({ windowState: { ...maximized, fullScreen: true }, before: inBackground });
+    expect(mainWindow().options.fullscreen).toBe(false);
+    expect(mainWindow().maximize).not.toHaveBeenCalled();
   });
 
   it('開発サーバーがあれば、その URL を開く。無ければ、ビルドした画面のファイル', async () => {

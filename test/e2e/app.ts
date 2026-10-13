@@ -27,6 +27,9 @@ const PRESSES = 3;
 // カバレッジを集めるか（npm run coverage:e2e）。集めたものは scripts/e2e-coverage.mjs が src の行に戻す
 const COVERAGE = process.env.TANACODE_E2E_COVERAGE === '1';
 export const COVERAGE_RAW = join(REPO, 'coverage', 'e2e-raw');
+// 手元の Mac では、アプリを裏で起動する（TANACODE_BACKGROUND=1。ウインドウを画面に出さない）。前に出すと、起動のたびに
+// 作業中のアプリから前面を奪う。画面を見ながら確かめるときは TANACODE_E2E_SHOW=1。CI では、配る形のまま前に出す
+const BACKGROUND = process.platform === 'darwin' && !process.env.CI && process.env.TANACODE_E2E_SHOW !== '1';
 
 type Options = {
   // モックの API の台本。作業フォルダのパスを入れるため、フォルダを受け取って返す
@@ -130,6 +133,7 @@ export class E2EApp {
       no_proxy: '127.0.0.1,localhost',
       DISABLE_AUTOUPDATER: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      ...(BACKGROUND ? { TANACODE_BACKGROUND: '1' } : {}),
       // メインプロセス・pty ホスト・MCP の中継（どれも Node）は、終わるときにカバレッジをここに書く
       ...(COVERAGE ? { NODE_V8_COVERAGE: join(COVERAGE_RAW, 'v8') } : {}),
     };
