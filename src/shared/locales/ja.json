@@ -805,7 +805,7 @@
       "checklistLabel": "チェックリスト",
       "checklistTitle": "チェックリスト（Claude と一緒に見て、編集するリスト。会話が圧縮されても残る）",
       "contextLabel": "コンテキスト",
-      "contextTitle": "コンテキスト（今の会話に入っているものと大きさ。圧縮で残すもの・捨てるものを選ぶ）",
+      "contextTitle": "コンテキスト（今の会話に入っているものと大きさ）",
       "browserTip": "ブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます",
       "browser": "ブラウザ",
       "terminalTip": "ターミナルを開く・閉じる（⌃`）",
