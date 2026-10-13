@@ -4,6 +4,7 @@ import { t } from '@shared/i18n';
 import { lineRange, shownStep, type Walkthrough } from '@shared/walkthrough';
 import { Markdown } from '../chat/Markdown';
 import { monaco } from '../editor/monaco';
+import { keepZoneEvents } from '../editor/zoneEvents';
 import { ArrowLeftIcon, ArrowRightIcon, CloseIcon, ExportIcon, IconButton, ListViewIcon, SendIcon } from '../icons';
 
 // エディタの画面で、ウォークスルーを動かすもの（App が作って EditorPane に渡す）。
@@ -58,8 +59,7 @@ export function WalkthroughZone({ editor, ...controls }: Props) {
   useEffect(() => {
     const node = document.createElement('div');
     node.className = 'walk-zone';
-    // エディタにクリックやキー入力を取られないようにする
-    for (const type of ['mousedown', 'mouseup', 'click', 'keydown', 'wheel'] as const) node.addEventListener(type, (e) => e.stopPropagation());
+    keepZoneEvents(node);
     const zone: monaco.editor.IViewZone = { afterLineNumber: end, heightInPx: 120, domNode: node };
     let id = '';
     editor.changeViewZones((accessor) => {
@@ -85,8 +85,10 @@ export function WalkthroughZone({ editor, ...controls }: Props) {
     if (!box) return;
     const observer = new ResizeObserver(() => {
       const current = zoneRef.current;
+      // 見えている範囲から外れると、Monaco は領域を隠す（高さは 0 になる）。そこで縮めると、戻ってきても領域の上端まで吹き出しが描かれない
+      if (!current || !box.offsetHeight) return;
       const height = box.offsetHeight + 12;
-      if (!current || current.zone.heightInPx === height) return;
+      if (current.zone.heightInPx === height) return;
       current.zone.heightInPx = height;
       editor.changeViewZones((a) => a.layoutZone(current.id));
     });

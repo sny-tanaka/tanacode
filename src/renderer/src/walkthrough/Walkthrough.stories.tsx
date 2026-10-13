@@ -89,7 +89,7 @@ const noop = () => {};
 
 // エディタに吹き出しを出す。「次へ」「戻る」で、ステップのファイルに移る。
 // 左はソース管理パネルの「ウォークスルー」の一覧。閉じたあとも、ここから押したステップを開き直せる
-function Pane({ initial, stale = false }: { initial: Walkthrough; stale?: boolean }) {
+function Pane({ initial, stale = false, files = FILES }: { initial: Walkthrough; stale?: boolean; files?: OpenFile[] }) {
   const [walk, setWalk] = useState<Walkthrough>(initial);
   const [activePath, setActivePath] = useState(shownStep(initial).path);
   const [asked, setAsked] = useState<string | null>(null);
@@ -109,7 +109,7 @@ function Pane({ initial, stale = false }: { initial: Walkthrough; stale?: boolea
         {open && shownStep(open).path !== activePath && <WalkthroughBand walkthrough={open} onShow={() => setActivePath(shownStep(open).path)} onClose={close} />}
         <EditorPane
           sessionId="s1"
-          files={FILES}
+          files={files}
           activePath={activePath}
           changes={{}}
           mergeBase={null}
@@ -151,6 +151,31 @@ export const 寄り道: Story = {
       initial={{
         ...WALK,
         aside: { path: 'src/settings.ts', startLine: 9, endLine: 11, view: 'file', title: '', body: '設定を変えるのはここだけです。管理画面の保存ボタンから呼びます。' },
+      }}
+    />
+  ),
+};
+
+// 長いファイル。吹き出しを画面の外までスクロールして戻すと、下の端から見えてくる（吹き出しの場所は、見えていない間も空いたまま）
+const values = `${Array.from({ length: 200 }, (_, i) => `export const value${i + 1} = ${i + 1};`).join('\n')}\n`;
+export const 長いファイル: Story = {
+  render: () => (
+    <Pane
+      files={[{ path: 'src/values.ts', content: { kind: 'text', text: values } }]}
+      initial={{
+        ...WALK,
+        steps: [
+          {
+            path: 'src/values.ts',
+            startLine: 30,
+            endLine: 45,
+            view: 'file',
+            title: '値を並べる',
+            body: ['値は 1 行に 1 つずつ並べました。', '別の案（配列にまとめる）も考えましたが、**差分が読みにくくなる**ので採りませんでした。', '- 名前で探せる\n- 並べ替えても差分が小さい', '数が増えたら、ファイルを分けます。'].join('\n\n'),
+          },
+        ],
+        current: 0,
+        visited: [0],
       }}
     />
   ),

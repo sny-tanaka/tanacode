@@ -1052,6 +1052,8 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 「ここを聞く」: ウォークスルーの間だけ、`review/LineComments.tsx` に `onAsk` を渡します（エディタと差分の画面）。選択の下の content widget と右クリックのメニューから、行コメントと同じ下書きの欄（`ask`）を開き、送るとすぐ発言にします。
   - チャットのツールの行: 名前は「ウォークスルー · 始める」など（`toolLabel.ts`）、対象は `walkthroughTarget`（「税率の変更 · 7 ステップ」「src/tax.ts:12-20」）。押したときは `walkthrough/openWalkthrough.ts` で `App` に渡し、`start_walkthrough` は今の場所、`show_code` はその場所を開きます（`walkthroughOfTool`）。
   - Monaco の view zone は読み上げから隠れる（`aria-hidden`）ので、吹き出しのボタンは読み上げに出ません（行コメントと同じ）。帯とチャットの行は出ます。
+  - view zone の高さは、吹き出しの中身に合わせます（`ResizeObserver`）。見えている範囲から外れると Monaco が領域を隠し、中身の高さは 0 になります。そのときは高さを変えません（縮めると、戻ってきても領域の上端まで吹き出しが描かれず、下のコードも飛ぶ）。
+  - view zone の中のクリックとキー入力は、エディタに渡しません。ホイールは、ポインタの下にその向きへスクロールできるもの（あふれた質問の欄・横に長いコード）があるときだけ止め、ほかはエディタに渡します（`editor/zoneEvents.ts`。行コメントと同じ）。吹き出しの上でも、エディタをスクロールできます。
   - ストーリーは `walkthrough/Walkthrough.stories.tsx`。
 - GitHub の PR に載せる（`walkthrough-github.ts`。本文は `src/shared/walkthrough-comment.ts`）: 吹き出しのボタンで下見のダイアログ（`walkthrough/CommentDialog.tsx`）を開き、`walkthrough:draft-comment` で本文と投稿先を、`walkthrough:post-comment` で投稿します。Claude は通しません（MCP のツールにしない）。
   - インラインのレビューコメントにはしません。差分の行にしか付けられず、「Files changed」のファイル順に並び替わるので、ウォークスルーの良さ（説明の順番・差分の外のコード）が消えるためです。
