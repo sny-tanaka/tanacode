@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { t } from '@shared/i18n';
 import { insertIntoChat } from '../chat/insertInput';
 import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
+import { Busy } from '../layout/Busy';
 import { codeBlock, stripControlChars } from '../chat/sanitize';
 import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
 import { useRunInTerminal } from './runInTerminal';
@@ -26,6 +27,8 @@ function loadHeight(): number {
 type Props = {
   // 持ち主（セッション。新規セッションの画面では、そこで開いているフォルダ）
   sessionId: string | null;
+  // フォルダがまだ無い（worktree を作っている）あいだの文言。シェルは開かずに、これを出して待つ。null なら待っていない
+  waiting?: string | null;
   open: boolean;
   // パネルを開く（チャットのコードブロックの「実行」など、閉じている間にコマンドを実行するとき）
   onOpen: () => void;
@@ -34,7 +37,7 @@ type Props = {
 
 // エディタの下のターミナル。セッションごとに、そのフォルダでシェルを好きなだけ開ける。
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
-export function TerminalPanel({ sessionId, open, onOpen, onClose }: Props) {
+export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
   // xterm を用意する前に届いた出力
@@ -183,10 +186,10 @@ export function TerminalPanel({ sessionId, open, onOpen, onClose }: Props) {
     return true;
   });
 
-  // シェルを出すのに 1 つも無ければ開く
+  // シェルを出すのに 1 つも無ければ開く。フォルダがまだ無ければ、できるまで待つ（無いフォルダではシェルがすぐ終わり、開き直しを繰り返してしまう）
   useEffect(() => {
-    if (open && sessionId && tabs.length === 0) void newShell(sessionId);
-  }, [open, sessionId, tabs.length, newShell]);
+    if (open && sessionId && !waiting && tabs.length === 0) void newShell(sessionId);
+  }, [open, sessionId, waiting, tabs.length, newShell]);
 
   // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
   // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）
@@ -272,6 +275,7 @@ export function TerminalPanel({ sessionId, open, onOpen, onClose }: Props) {
             icon={AddIcon}
             size="sm"
             label={t('terminal.tabs.new')}
+            disabled={!!waiting}
             onClick={() => sessionId && void newShell(sessionId)}
           />
         </div>
@@ -285,6 +289,11 @@ export function TerminalPanel({ sessionId, open, onOpen, onClose }: Props) {
         <IconButton icon={CloseIcon} label={t('terminal.panel.close')} tip={t('terminal.panel.closeTip')} onClick={onClose} />
       </div>
       <div className="terminal-panel-body">
+        {waiting && tabs.length === 0 && (
+          <div className="terminal-waiting">
+            <Busy>{waiting}…</Busy>
+          </div>
+        )}
         <div className="terminal-host" ref={hostRef} />
       </div>
     </div>

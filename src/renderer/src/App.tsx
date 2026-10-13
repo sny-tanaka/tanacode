@@ -7,7 +7,7 @@ import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
 import { chatFromEvents, useSessionChats, type ChatState } from './chat/chatState';
-import { usePendingSends } from './chat/pendingSends';
+import { usePendingSends, type PendingSend } from './chat/pendingSends';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
 import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/settingsFiles';
@@ -31,6 +31,7 @@ import { NewSessionPane } from './sessions/NewSessionPane';
 import { Sidebar } from './sessions/Sidebar';
 import { WorktreeDialog } from './sessions/WorktreeDialog';
 import { isWorking, liveChildrenOf } from './sessions/sessionTree';
+import { pendingFolder, preparingLabel } from './sessions/worktree';
 import { useHiddenFolders } from './sessions/useHiddenFolders';
 import { useSessions } from './sessions/useSessions';
 import { StatusBar } from './StatusBar';
@@ -38,6 +39,7 @@ import { useClaudeVersion } from './system/ClaudeVersion';
 import { contextUsage, useSessionKnowledge } from './knowledge/useSessionKnowledge';
 import { SessionContextPanel } from './knowledge/ContextPanel';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
+import { Busy } from './layout/Busy';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
 import { BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
 import { CardPane } from './checklist/CardPane';
@@ -129,7 +131,8 @@ export function App() {
     />
   );
   // 新規セッションの画面を出している。back: キャンセルで戻るセッション / cwd: 最初に選んでおくフォルダ
-  const [composing, setComposing] = useState<{ back: string | null; cwd: string | null } | null>(null);
+  // restore: 始められなかった指示（worktree を作れなかった）。新規セッションの画面の入力欄に戻す
+  const [composing, setComposing] = useState<{ back: string | null; cwd: string | null; restore?: PendingSend } | null>(null);
   // 新規セッションの画面で選んでいるフォルダを、右パネルとエディタで開いたもの（id はセッションの id と同じように使える）
   const [draft, setDraft] = useState<{ id: string; cwd: string } | null>(null);
   const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceInfo>>({});
@@ -175,6 +178,9 @@ export function App() {
   const draftToolId = composing && draft && draft.cwd === composing.cwd ? draft.id : null;
   const toolId = selected ? (selected.archived ? null : selected.id) : draftToolId;
   const cwd = selected?.cwd ?? draft?.cwd ?? null;
+  // worktree で始めたセッションには、worktree のフォルダができる前に移る。できるまで、フォルダを読むもの（エクスプローラー・ソース管理・検索・ターミナル）は待つ
+  const folderWait = pendingFolder(selected);
+  const folderWaitLabel = folderWait && preparingLabel(folderWait);
   const editor = (cwd && editors[cwd]) || EMPTY_EDITOR;
   const workspace = viewId ? workspaces[viewId] : undefined;
   // 選択中のセッションのタスク。ほかのセッションのタスクが動いても、ここは変わらない（stableRuns で参照が保たれる）
@@ -218,7 +224,7 @@ export function App() {
   );
   const addComment = useCallback((c: ReviewComment) => setSessionComments((list) => [...list, c]), [setSessionComments]);
   const removeComment = useCallback((id: string) => setSessionComments((list) => list.filter((c) => c.id !== id)), [setSessionComments]);
-  const git = useGitState(viewId, cwd);
+  const git = useGitState(folderWait ? null : viewId, cwd);
   const [scmView, setScmView] = useScmView();
   // このブランチの基点から作業ツリーまでの変更（エディタ・エクスプローラーの印と、ソース管理の「ブランチの変更」）
   const branchChanges = git.state?.isRepo ? git.state.branchChanges : null;
@@ -562,18 +568,45 @@ export function App() {
     [cwd, updateEditor],
   );
 
-  // 選んだフォルダで Claude Code を起動し、最初の発言は起動が終わるのを待って送る
+  // 選んだフォルダで Claude Code を起動し、最初の発言は起動が終わるのを待って送る。
+  // worktree で始めるときも、Claude Code が worktree を作るのを待たずにそのセッションに移る（作っている間は、移った先に準備の段階が出る）
   const composingRef = useRef(composing);
   composingRef.current = composing;
+  // 最後に worktree で始めたセッションと、そのときの新規セッションの画面の戻り先（作れなかったときに、画面を元に戻す）
+  const worktreeStart = useRef<{ id: string; back: string | null } | null>(null);
   const startSession = useCallback(
     async (dir: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[] = []) => {
       const id = await window.tanacode.sessions.create(dir, options);
       pendingSends.send(id, text, attachments, pastes);
+      if (options.worktree) worktreeStart.current = { id, back: composingRef.current?.back ?? null };
       // 始めている間に、新規セッションの画面でフォルダを変えた・画面を離れたなら、移らない（始めたセッションは一覧に出る）
       if (composingRef.current?.cwd === dir) select(id);
     },
     [pendingSends.send, select],
   );
+  // worktree で始めたが、Claude Code が worktree を作れなかった（まだ信頼していないフォルダなど）。セッションは、もう一覧から消えている。
+  // 新規セッションの画面に戻し、送るはずだった指示を入力欄に戻して、理由を出す（worktree なしで始め直すなど、その場でやり直せるように）
+  const [startFailure, setStartFailure] = useState<string | null>(null);
+  useEffect(
+    () =>
+      window.tanacode.sessions.onCreateFailed(({ id, cwd: dir, error }) => {
+        const restore = pendingSends.take(id) ?? undefined;
+        const viewing = selectedIdRef.current;
+        const started = worktreeStart.current?.id === id ? worktreeStart.current : null;
+        // 戻り先は、ほかのセッションを見ていればそのセッション、始めたセッションを見ていれば、始める前の戻り先
+        const back = viewing && viewing !== id ? viewing : (started?.back ?? null);
+        setComposing((prev) => ({ back: prev ? prev.back : back, cwd: dir, restore }));
+        setSelectedId(null);
+        setStartFailure(error);
+      }),
+    [pendingSends.take],
+  );
+  // 理由のダイアログは、画面を戻してから出す（ダイアログが出ている間は、画面が描き直されない）
+  useEffect(() => {
+    if (startFailure === null) return;
+    window.alert(t('sessions.newSession.startFailed', { error: startFailure }));
+    setStartFailure(null);
+  }, [startFailure]);
   // 最近使ったフォルダ（新しい順）。新規セッションの画面から外したフォルダは出さない
   const [hiddenFolders, hideFolder] = useHiddenFolders();
   const recentFolders = useMemo(() => listRecentFolders(sessions ?? [], hiddenFolders), [sessions, hiddenFolders]);
@@ -731,6 +764,12 @@ export function App() {
 
   const activeFile = editor.files.find((f) => f.path === editor.activePath);
   const language = activeFile?.content.kind === 'text' ? languageLabel(languageFor(activeFile.path)) : null;
+  // worktree のフォルダができるのを待っている間、フォルダを読むパネル（エクスプローラー・ソース管理・検索）の代わりに出す
+  const folderWaitNote = folderWaitLabel ? (
+    <div className="scm-empty">
+      <Busy>{folderWaitLabel}…</Busy>
+    </div>
+  ) : null;
 
   return (
     <div className="app">
@@ -777,6 +816,7 @@ export function App() {
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}
             onStart={startSession}
+            restore={composing.restore ?? null}
             onCancel={composing.back ? () => select(composing.back) : null}
           />
         )}
@@ -860,35 +900,39 @@ export function App() {
             <div className="side-panel">
               <div className="side-panel-title">{panelLabel(shownPanel)}</div>
               <div hidden={shownPanel !== 'files'} className="side-body">
-                <Explorer
-                  key={cwd}
-                  sessionId={viewId}
-                  root={cwd}
-                  rootName={workspace.name}
-                  activePath={editor.activePath}
-                  changes={changes}
-                  knowledge={knowledgeOf(selectedId).files}
-                  gitMarks={marks}
-                  onOpenFile={openPath}
-                />
+                {folderWaitNote ?? (
+                  <Explorer
+                    key={cwd}
+                    sessionId={viewId}
+                    root={cwd}
+                    rootName={workspace.name}
+                    activePath={editor.activePath}
+                    changes={changes}
+                    knowledge={knowledgeOf(selectedId).files}
+                    gitMarks={marks}
+                    onOpenFile={openPath}
+                  />
+                )}
               </div>
               <div hidden={shownPanel !== 'scm'} className="side-body">
-                <ScmPanel
-                  key={cwd}
-                  sessionId={viewId}
-                  state={git.state}
-                  view={scmView}
-                  onViewChange={setScmView}
-                  onRefresh={git.refresh}
-                  onOpenDiff={openScmDiff}
-                  onOpenBranchDiff={openBranchDiff}
-                  activeBranchPath={diffView?.source === 'branch' ? diffView.path : null}
-                  comments={sessionComments}
-                  onShowComment={showCommentOf}
-                  onRemoveComment={removeComment}
-                  onWalkthrough={selected && !selected.archived ? requestWalkthrough : undefined}
-                  walkthrough={walkList}
-                />
+                {folderWaitNote ?? (
+                  <ScmPanel
+                    key={cwd}
+                    sessionId={viewId}
+                    state={git.state}
+                    view={scmView}
+                    onViewChange={setScmView}
+                    onRefresh={git.refresh}
+                    onOpenDiff={openScmDiff}
+                    onOpenBranchDiff={openBranchDiff}
+                    activeBranchPath={diffView?.source === 'branch' ? diffView.path : null}
+                    comments={sessionComments}
+                    onShowComment={showCommentOf}
+                    onRemoveComment={removeComment}
+                    onWalkthrough={selected && !selected.archived ? requestWalkthrough : undefined}
+                    walkthrough={walkList}
+                  />
+                )}
               </div>
               <div hidden={shownPanel !== 'tasks'} className="side-body">
                 {selected ? (
@@ -932,7 +976,7 @@ export function App() {
                 )}
               </div>
               <div hidden={shownPanel !== 'search'} className="side-body">
-                <SearchPanel key={cwd} ref={searchInputRef} sessionId={viewId} onOpen={openPath} />
+                {folderWaitNote ?? <SearchPanel key={cwd} ref={searchInputRef} sessionId={viewId} onOpen={openPath} />}
               </div>
             </div>
           </aside>
@@ -1039,7 +1083,7 @@ export function App() {
             liveSessionIds={liveSessionIds}
             onClose={closeCenter}
           />
-          <TerminalPanel sessionId={toolId} open={terminalOpen} onOpen={showShell} onClose={closeShell} />
+          <TerminalPanel sessionId={toolId} waiting={folderWaitLabel} open={terminalOpen} onOpen={showShell} onClose={closeShell} />
         </div>
       </div>
       <StatusBar

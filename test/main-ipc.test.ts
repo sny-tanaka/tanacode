@@ -6,7 +6,7 @@ import { IpcChannel } from '@shared/ipc';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
-import { argsOf, boot, cleanup, githubModule, invoke, mainWindow, manager, sendFromRenderer, setSystemVersion, state, the } from './helpers/main-app';
+import { argsOf, boot, cleanup, githubModule, invoke, mainWindow, manager, sendFromRenderer, sentToRenderer, setSystemVersion, state, the } from './helpers/main-app';
 
 // アプリの入り口（src/main/index.ts）の、画面からの呼び出し・知らせの受け口（registerIpc）。
 // Electron と重い部品を作り物にして index.ts を読み込み（test/helpers/main-app.ts）、受け口を画面の代わりに呼んで、
@@ -136,12 +136,44 @@ describe('セッションを始める', () => {
     writeFileSync(join(state.root, 'file'), '');
     await expect(invoke(IpcChannel.SessionsCreate, join(state.root, 'file'), {})).rejects.toThrow('フォルダが見つかりません');
     expect(manager().create).not.toHaveBeenCalled();
-    expect(manager().createInWorktree).not.toHaveBeenCalled();
+    expect(manager().startInWorktree).not.toHaveBeenCalled();
 
     const options = { worktree: false, model: 'opus' };
     await expect(invoke(IpcChannel.SessionsCreate, state.root, options)).resolves.toEqual(call('manager.create', state.root, options));
     const inWorktree = { worktree: true, model: null };
-    await expect(invoke(IpcChannel.SessionsCreate, state.root, inWorktree)).resolves.toEqual(call('manager.createInWorktree', state.root, inWorktree));
+    await expect(invoke(IpcChannel.SessionsCreate, state.root, inWorktree)).resolves.toBe('in-worktree');
+    expect(manager().startInWorktree.mock.calls).toEqual([[state.root, inWorktree]]);
+    // worktree を作り終えたら、画面には何も知らせない
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sentToRenderer(IpcChannel.SessionsCreateFailed)).toEqual([]);
+  });
+
+  it('worktree で始めるときは、Claude Code が worktree を作るのを待たずに id を返す。作れなかったら、理由を画面に知らせる', async () => {
+    await boot();
+    let fail!: (error: unknown) => void;
+    const created = new Promise<boolean>((_resolve, reject) => (fail = reject));
+    manager().startInWorktree.mockResolvedValueOnce({ id: 'w1', created });
+    // 作っている途中でも返る
+    await expect(invoke(IpcChannel.SessionsCreate, state.root, { worktree: true })).resolves.toBe('w1');
+    expect(sentToRenderer(IpcChannel.SessionsCreateFailed)).toEqual([]);
+    fail(new Error('Claude Code が worktree を作れませんでした'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sentToRenderer(IpcChannel.SessionsCreateFailed)).toEqual([{ id: 'w1', cwd: state.root, error: 'Claude Code が worktree を作れませんでした' }]);
+  });
+
+  it('worktree を作っている途中で人がアーカイブした・一覧から消したとき（created が false）は、知らせない', async () => {
+    await boot();
+    manager().startInWorktree.mockResolvedValueOnce({ id: 'w2', created: Promise.resolve(false) });
+    await expect(invoke(IpcChannel.SessionsCreate, state.root, { worktree: true })).resolves.toBe('w2');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sentToRenderer(IpcChannel.SessionsCreateFailed)).toEqual([]);
+  });
+
+  it('worktree で始める前に断られたら（git のリポジトリでないなど）、呼び出しがそのまま失敗する', async () => {
+    await boot();
+    manager().startInWorktree.mockRejectedValueOnce(new Error('git のリポジトリのフォルダを選んでください'));
+    await expect(invoke(IpcChannel.SessionsCreate, state.root, { worktree: true })).rejects.toThrow('git のリポジトリのフォルダを選んでください');
+    expect(sentToRenderer(IpcChannel.SessionsCreateFailed)).toEqual([]);
   });
 });
 

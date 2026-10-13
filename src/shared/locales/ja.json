@@ -127,6 +127,7 @@
     "worktree": {
       "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
       "createFailed": "Claude Code が worktree を作れませんでした",
+      "closedWhileCreating": "worktree を作っている途中で、セッションがアーカイブされたか、一覧から消されました",
       "commandAt": "{command}（{dir}）",
       "started": "worktree .claude/worktrees/{name}（ブランチ {branch}） で始めました",
       "restored": "消していた worktree .claude/worktrees/{name}（ブランチ {branch}） を作り直しました",

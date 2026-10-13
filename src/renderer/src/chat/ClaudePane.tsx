@@ -42,7 +42,7 @@ import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOp
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 import { useSessionLinks } from '../sessions/sessionLinks';
-import { preparingLabel } from '../sessions/worktree';
+import { pendingFolder, preparingLabel } from '../sessions/worktree';
 
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
 const SLOW_START_MS = 10_000;
@@ -328,9 +328,11 @@ export const ClaudePane = memo(function ClaudePane({
   const sessionLinks = useSessionLinks(sessions);
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  // worktree のフォルダができる前に読んだファイルの候補（空）は、できたら読み直す（鍵を変える）
+  const folderPending = pendingFolder(session) !== null;
   const completion = useMemo<CompletionSource>(
     () => ({
-      key: session.id,
+      key: folderPending ? `${session.id}:pending` : session.id,
       listFiles: () => window.tanacode.workspace.listFiles(session.id),
       listCommands: () => window.tanacode.commands.list(session.id),
       // @ の候補に出すセッション。このセッションから見えるもの（Claude が read_session で読めるもの）だけ。
@@ -342,7 +344,7 @@ export const ClaudePane = memo(function ClaudePane({
     }),
     // session は id が同じなら、フォルダも親も同じ
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session.id],
+    [session.id, folderPending],
   );
 
   // 送る本文（コードへのコメントを添える）

@@ -339,6 +339,7 @@ PR で、次のものを流します。develop への push では流しません
 | `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
 | `default-branch.test.ts` | 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダを切り替えた直後に押しても効くか。フェッチに時間がかかっている間（合図があるまで答えないリモート。git の `ext::`）にフォルダを変えると、変えた先のボタンと送信がすぐ使えるか。時間のかかっているフォルダは止めずに、リモートが答えたら切り替わるか |
 | `restart.test.ts` | 「動かしたまま終了」で閉じて起動し直すと、Claude Code が引き継がれて続けられる。「再起動」のあとも同じ会話を続けられる |
+| `worktree-start.test.ts` | worktree で始めると、Claude Code が worktree を作っている間（合図があるまで `git worktree add` を待たせる）でも、送ってすぐセッションの画面に移るか。できるまで、チャット・エクスプローラー・ソース管理・ターミナルが準備の段階を出して待ち（ターミナルはシェルを開かない）、できたら預かっていた指示を送って worktree を開くか。作れなかったとき（信頼していないフォルダ）は、新規セッションの画面に戻って、指示が入力欄に戻り、理由が出るか。worktree なしで送り直せるか |
 | `compact.test.ts` | ヘッダーの「最適化圧縮」を押すと、仕上げの頼み → Claude が MCP で「いまの状態」を書く → `/clear` → 再開の文（今の状態と、前の会話の発言の原文）→ Claude がリストを読んで報告、と進むか。要約を頼まないか |
 | `compact-interrupt.test.ts` | 最適化圧縮の仕上げの頼みを、応答の前に中断すると（打ってから 5 秒を過ぎてから）、入力欄に戻った文がチャットの入力欄に移らず、会話を消さずに取りやめて理由を出すか。次の発言に、仕上げの頼みが混ざらないか |
 | `compact-auto.test.ts` | 最適化圧縮を自動で始める。モックの API が返す入力のトークン数を大きくして、ターンの終わりに 80% を超えたら切り替えるか・切り替えた直後に繰り返さないか・長いターンの途中（90% 超）でツールの切れ目で止めて、止めた場所を再開の文に入れるか・Claude Code の自動の圧縮が始まる大きさでも要約を作らせないか・「自動」をオフにしたセッションでは Claude Code の圧縮が動くか |
@@ -518,14 +519,21 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - 終了のダイアログの「Claude Code も止めて終了」は、pty ホストも止めます。動いているセッションが無いときも、聞かずに pty ホストまで止めて終わります。
 - kill（SIGTERM）で止めたときも、ふつうの終了と同じく聞きます。もう一度送ると、聞かずに強制的に終わります（Claude Code は止まらない）。
 - macOS の通知（`notify`）は、出したものをクリック・閉じる・失敗のどれかまで main で持っておきます（上限 50 件）。持っていないと、Electron が回収してしまい、クリックしても `click` が届きません（アプリは前に出ても、セッションが移らない）。
-- worktree のセッション（`worktree.ts`・`SessionManager.createInWorktree`）
+- worktree のセッション（`worktree.ts`・`SessionManager.startInWorktree`）
   - 名前は `tc-<月日>-<乱数 4 文字>`。場所は `<リポジトリのいちばん上>/.claude/worktrees/<名前>`、ブランチは `worktree-<名前>`（どちらも Claude Code の決まり。サブフォルダから始めても、いちばん上に作る。実測）。`SessionRecord.cwd` は worktree のフォルダ、`SessionRecord.worktree` に名前・ブランチ・元のフォルダを持ちます。
   - worktree を作るのは Claude Code（`claude --worktree`）。アプリが `git worktree add` して、ふつうに `claude` を起動する形にしないのは、Claude Code の隔離のチェックが効かないためです。
-  - `sessions.create` は、Claude Code が worktree を作る（`.git` ができる）まで待ってから返します。右パネルとエディタが、すぐ worktree を開けるようにするためです。作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて断ります。
+  - `sessions.create`（`SessionManager.startInWorktree`）は、Claude Code が worktree を作る（`.git` ができる）のを待たずに id を返します。画面は、すぐそのセッションに移り、準備の段階（creating）を出して待ちます。作るまでには、Claude Code の起動のぶんの時間がかかります（実測: 小さなリポジトリで、送ってから `.git` ができるまで 1.3〜1.8 秒）。2026-10-13 までは、作るまで待ってから返していたので、そのあいだ新規セッションの画面が、送ったあとも変わらないままでした。
+    - 結果は `startInWorktree` の返す `created` で分かります。作り終えたら `true`。作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて失敗します。作っている途中に人がアーカイブした・一覧から消したときは、作れなかったとは扱わず `false`（記録はそのまま）。止めた Claude Code からは終了の知らせが来ないので、アーカイブしたら待つのをやめます（起動ごとの `alive`）。作っている途中に再起動したら、新しい起動のほうを待ちます。
+    - 作れなかったときは、`Profile.startInWorktree` が理由を `sessions:create-failed`（`sessions.onCreateFailed`）で画面に知らせます。画面（`App.tsx`）は新規セッションの画面に戻し、預かっていた最初の指示（`pendingSends.take`）を入力欄に戻して（`NewSessionPane` の `restore`）、理由をダイアログで出します。
     - `claude --worktree` は、まだ信頼していないフォルダでは、信頼の確認を出さずに「Workspace trust not yet accepted」で終わります（実測）。そのときは、日本語の理由にして返します。
+    - 親の Claude が子セッションを始めるとき（`start_session`）は、`SessionManager.createInWorktree` で作るまで待ちます（作れなかった理由を、ツールの結果として返すため）。
+  - 画面は、worktree のフォルダができる前にセッションを開きます。`preparing` が creating・restoring の間（`sessions/worktree.ts` の `pendingFolder`）は、フォルダを読むもの（エクスプローラー・ソース管理・検索・ターミナル）を出さずに、準備の段階を出して待ちます。
+    - ターミナルは、無いフォルダで開くと、シェルがすぐ終了コード 1 で終わります（node-pty で実測: 13 ミリ秒）。「1 つも無ければ開く」が開き直しを繰り返すので、できるまで開きません。
+    - creating は、Claude Code が入力欄を出す（worktree を作り終える）まで続きます。`.git` ができた直後は、git がまだファイルを書き出していて、ソース管理に大量の「削除」が出るので、そこでは開きません。
+    - 入力欄の `@` のファイルの候補は、フォルダができたら読み直します（できる前に読んだ空の一覧を、30 秒のあいだ使い回さないよう、候補の鍵を変える）。
   - ファイルの監視は、worktree ができてから始めます（無いフォルダは見張れない）。
   - `node_modules` の用意は、Claude Code が入力欄を出してから始めます。`git worktree add` は `.git` を先に書き、そのあとでファイルを書き出すので、`.git` ができた時点では、大きなリポジトリだと `git ls-files` が空になります（実測。サブフォルダの `package.json` を見落とす）。Claude Code は worktree を作り終えてから入力欄を出します。
-  - 準備の段階（`SessionWorktree.preparing`: creating・restoring・copying・installing）は、一覧とチャットに出します。準備が終わるまで `ready` を配信しないので、最初の指示はその後に送られます（`pendingSends` の今の形のまま）。終わったら、何をしたかを `info` のイベントでチャットに出します。
+  - 準備の段階（`SessionWorktree.preparing`: creating・restoring・copying・installing）は、一覧とチャットに出します（creating・restoring は、右パネルとターミナルにも）。準備が終わるまで `ready` を配信しないので、最初の指示はその後に送られます（`pendingSends` の今の形のまま）。終わったら、何をしたかを `info` のイベントでチャットに出します。
   - `node_modules`: モノレポのため、worktree で `git ls-files` した `package.json` のフォルダごとに見ます（node_modules の中は除く）。元のフォルダにあって worktree に無い `node_modules` を、ディレクトリ丸ごと 1 回の `clonefile(2)`（APFS のクローン）で複製し、`.vite`・`.cache` を消します。
     - `cp -c -R` はファイル 1 つごとにクローンするので、ファイルの多い `node_modules` では遅くなります（実測: 15 万ファイルで 44 秒。丸ごとの `clonefile` なら 3 秒）。`clonefile` を呼べるコマンドは無いので、macOS 標準の `osascript`（JXA の `ObjC.bindFunction`）から呼びます（`apfsClone`）。
     - 別のボリューム・APFS 以外などで `clonefile` が失敗したときは `cp -c -R` に切り替えます（こちらはクローンできなければ通常のコピーになります）。
