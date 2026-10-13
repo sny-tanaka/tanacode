@@ -74,16 +74,17 @@ export function compactMidTurn(body: string): boolean {
   return (head === -1 ? body : body.slice(0, head)).includes(MID_TURN_RESUME) || body.slice(-700).includes(MID_TURN_HANDOFF);
 }
 
-// 自動のときの、仕上げの頼み。アプリの仕上げの頼み（handoffText）の終わりに、自動であることと、途中で止めたときに書いておくことを足す
+// 自動のときの、仕上げの頼み。アプリの仕上げの頼み（handoffText）の書き出しを「自動で始めた」に替え（「ボタンが押された」と書いたまま、
+// 終わりで「誰も押していない」と言うと、食い違う）、終わりに、自動であることと、途中で止めたときに書いておくことを足す
 export function autoHandoffText(auto: AutoCompactTrigger): string {
   const note = [
-    `This reset is automatic ${autoMark(auto.percent)}: the user did not press anything and is not watching for a question.`,
+    'This reset is automatic: the user did not press anything and is not watching for a question.',
     auto.midTurn
       ? `${MID_TURN_HANDOFF}, and after the reset you will continue the same work. So, in the state list, also write exactly where you stopped: the step that was in progress, whether your last tool calls finished and what they returned, and the very next action to take.`
       : 'After the reset you will report what you carried over and wait for the user.',
   ].join(' ');
   const closing = `</${HANDOFF_TAG}>`;
-  const text = handoffText();
+  const text = handoffText(autoMark(auto.percent));
   const at = text.lastIndexOf(closing);
   return `${text.slice(0, at)}${note}\n${closing}`;
 }
@@ -108,10 +109,11 @@ const TASK_CHARS = 200;
 //   （再開の文にそのまま入るのは、決定事項と「いまの状態」のカードの本文だけなので、別のリストにはしない）
 // - 長さの上限は無いと伝える。長くなる話題は、削らずにカードを分けさせる（再開の文は、カードの本文を CARD_BODY_CHARS で切るため）
 // - ツールの呼び出しは少なく（呼び出しのたびに、長い会話を読み直す）。card_add は 1 回で何枚も足せる
-export function handoffText(): string {
+// trigger: 何で始まったか（手動はボタン。自動は autoHandoffText が、そのときのコンテキストの割合の目印に替える）
+export function handoffText(trigger = '(the user pressed the "optimized compaction" button)'): string {
   return [
     `<${HANDOFF_TAG}>`,
-    'tanacode is about to reset this conversation instead of compacting it (the user pressed the "optimized compaction" button). Nothing from this conversation will be kept, and no summary is made. After the reset you start like a new session: the project instructions are loaded again, and you are given only the checklists (tanacode-checklist), the messages of the user verbatim, and the list of background tasks. So bring the checklists up to date now, with the checklist tools, and write down everything that is needed to continue the work without this conversation. Do not continue the task itself, and do not ask the user anything.',
+    `tanacode is about to reset this conversation instead of compacting it ${trigger}. Nothing from this conversation will be kept, and no summary is made. After the reset you start like a new session: the project instructions are loaded again, and you are given only the checklists (tanacode-checklist), the messages of the user verbatim, and the list of background tasks. So bring the checklists up to date now, with the checklist tools, and write down everything that is needed to continue the work without this conversation. Do not continue the task itself, and do not ask the user anything.`,
     'Start by calling checklist_overview, even if you think the lists are already up to date or you read them a moment ago: if you do not use a checklist tool in this turn, tanacode cancels the reset. Then compare the lists with this conversation, and add what is missing and fix what is out of date.',
     'Use few tool calls, because every call re-reads this whole conversation: card_add takes many cards at once, and card_delete, card_check and card_revoke take several numbers at once. Write all the new cards of a list in one card_add call instead of one call per card. Do not write less to save calls.',
     '- Decisions list (kind "decisions"): what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and why. Quote the user\'s own words where the wording matters. Add what is missing, and revoke what no longer holds.',
