@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
+import type { TurnNotice } from '../src/main/compact-notice';
 import { QUESTION } from './scenario';
 import { fixtureScreen, line, ScriptedApp } from './helpers/scripted-claude';
 
@@ -376,6 +377,46 @@ describe('statusLine', () => {
     app.manager.compactClearing = () => false;
     await switchTo('77777777-0000-4000-8000-000000000007');
     expect(resets()).toEqual([{ type: 'reset', compact: true }, { type: 'reset' }]);
+  });
+
+  it('ターンの終わりごとに、出す通知の種類を 1 回だけ聞く。null なら完了を知らせず、種類はそのまま知らせに渡す（最適化圧縮の流れの途中では鳴らさない）', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const asked: string[] = [];
+    let notice: TurnNotice | null = null;
+    app.manager.turnNotice = (session) => {
+      asked.push(session);
+      return notice;
+    };
+    const turn = async (count: number) => {
+      app.append(id, line.user('頼み'), line.text('はい'), line.turnEnd());
+      await app.waitFor('ターンの終わり', () => app.events(id).filter((e) => e.type === 'turn-end').length === count);
+    };
+    // 流れの途中のターン（仕上げ。このあと /clear）: 聞くが、完了は知らせない
+    await turn(1);
+    expect(asked).toEqual([id]);
+    expect(app.turnsCompleted).toEqual([]);
+    // 流れの最後のターン・ふつうのターン: 種類を渡す
+    notice = 'compact';
+    await turn(2);
+    notice = 'work';
+    await turn(3);
+    expect(asked).toEqual([id, id, id]);
+    expect(app.turnsCompleted.map((s) => s.id)).toEqual([id, id]);
+    expect(app.turnNotices).toEqual(['compact', 'work']);
+    // 完了を知らせないとき（ブラウザでの操作待ち）も聞く（流れの最後のターンの印を、そのターンの終わりで使い切らせる）
+    app.manager.browserAskChanged(id, true);
+    await turn(4);
+    expect(asked).toHaveLength(4);
+    expect(app.turnNotices).toHaveLength(2);
+  });
+
+  it('何もつながなければ、ターンの終わりは、ふつうの完了として知らせる', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    app.append(id, line.user('頼み'), line.text('はい'), line.turnEnd());
+    await app.waitFor('完了の知らせ', () => app.turnsCompleted.length === 1);
+    expect(app.turnNotices).toEqual(['work']);
   });
 
   it('最後に終わったターンが、人の中断で終わったかが分かる。外から見た状態が変わったことを、見張っている先に知らせられる', async () => {

@@ -445,6 +445,46 @@ describe('通知', () => {
     ]);
   });
 
+  it('最適化圧縮の流れの最後のターン（引き継いで、報告して待つ）が終わったら、コンテキストの最適化の完了として知らせる', async () => {
+    await boot();
+    callbacks().onTurnCompleted(session, 'compact');
+    callbacks().onTurnCompleted(session, 'work');
+    expect(state.notifications.map((n) => n.options.body)).toEqual(['コンテキストの最適化が完了しました', '作業が完了しました']);
+  });
+
+  it('最適化圧縮の流れの途中でターンが終わっても、完了を知らせない。そのあと切り替えられなかったら、取りやめたことを知らせる', async () => {
+    await boot();
+    // 流れの外では、ふつうの完了
+    expect(manager().turnNotice('s1')).toBe('work');
+    manager().summary.mockImplementation((id: string) => (id === 's1' ? { id, title: 'メニューを直す' } : undefined));
+    let fail = (): void => undefined;
+    Object.assign(manager(), {
+      hasChecklistMcp: vi.fn(() => true),
+      conversation: vi.fn(async () => []),
+      // 仕上げの頼みを打っている途中で止めておく
+      submitWhenReady: vi.fn(() => new Promise<void>((_resolve, reject) => (fail = () => reject(new Error('busy'))))),
+    });
+    await invoke(IpcChannel.CompactStart, 's1');
+    await vi.waitFor(() => expect(manager().submitWhenReady).toHaveBeenCalledTimes(1));
+    // 流れの途中のターンの終わり（アプリが止めたターン・仕上げのターン）
+    expect(manager().turnNotice('s1')).toBeNull();
+    expect(manager().turnNotice('s2')).toBe('work');
+    expect(state.notifications).toHaveLength(0);
+    fail();
+    await vi.waitFor(() => expect(state.notifications).toHaveLength(1));
+    expect(state.notifications[0].options).toEqual({ title: 'tanacode', subtitle: 'メニューを直す', body: 'コンテキストの最適化を取りやめました', sound: 'Glass' });
+    // 流れが終わったあとのターンは、ふつうの完了（取りやめたので、最適化の完了にはしない）
+    expect(manager().turnNotice('s1')).toBe('work');
+  });
+
+  it('流れの途中で出さなかった通知が無ければ、取りやめても知らせない（ボタンの左の札だけ）', async () => {
+    await boot();
+    Object.assign(manager(), { hasChecklistMcp: vi.fn(() => true), conversation: vi.fn(async () => []), submitWhenReady: vi.fn(async () => Promise.reject(new Error('busy'))) });
+    await invoke(IpcChannel.CompactStart, 's1');
+    await vi.waitFor(() => expect(sentToRenderer(IpcChannel.CompactChanged).some((p) => (p as { status: { failure: string | null } }).status.failure === 'busy')).toBe(true));
+    expect(state.notifications).toHaveLength(0);
+  });
+
   it('操作を待っているときは、確認の中身を知らせる', async () => {
     await boot();
     const menu = { kind: 'question', title: 'どちらにしますか？', options: [] };

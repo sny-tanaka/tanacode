@@ -33,6 +33,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, pulledBackPastes, pulledBackPrompt, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
+import type { TurnNotice } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
@@ -166,7 +167,7 @@ type Listeners = {
   onSessionsChanged: (sessions: SessionSummary[]) => void;
   onChat: (batch: ChatBatch) => void;
   onPtyData: (sessionId: string, data: string) => void;
-  onTurnCompleted: (session: SessionSummary) => void;
+  onTurnCompleted: (session: SessionSummary, notice: TurnNotice) => void;
   onScreen: (sessionId: string, info: ScreenInfo) => void;
   onActivity: (sessionId: string, activity: Activity | null) => void;
   onWorkflows: (sessionId: string, runs: WorkflowRun[]) => void;
@@ -227,6 +228,10 @@ export class SessionManager {
   // 最適化圧縮の流れが、そのセッションに /clear を打って、新しい会話になるのを待っているか（profile.ts がつなぐ）。
   // その /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）
   compactClearing: (id: string) => boolean = () => false;
+
+  // ターンが終わったときに、人に出す通知の種類（null なら出さない。profile.ts がつなぐ）。最適化圧縮の流れの途中のターンでは出さず、
+  // 流れの最後のターンでは「コンテキストの最適化が完了しました」にする（compact-notice.ts）。ターンの終わりごとに、1 回だけ呼ぶ
+  turnNotice: (id: string) => TurnNotice | null = () => 'work';
 
   // 最後に終わったターンが、人の中断（Esc）で終わったか
   lastTurnInterrupted(id: string): boolean {
@@ -1552,10 +1557,12 @@ export class SessionManager {
         if (rt && !this.isFocused(id)) rt.unread = true;
         changed = true;
         const summary = this.summary(id);
+        // 通知を出さないときも聞く（最適化圧縮の流れの最後のターンの印を、そのターンの終わりで使い切らせる）
+        const notice = this.turnNotice(id);
         // バックグラウンドのタスクが動いているあいだは、まだ完了ではない（一覧も「完了待ち」）。
         // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す。
         // ブラウザでの操作を頼んでいるあいだも同じ（2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、Claude はターンを終えて返事を待つ）
-        if (summary && summary.backgroundTasks === 0 && summary.attention !== 'browser') this.listeners.onTurnCompleted(summary);
+        if (notice && summary && summary.backgroundTasks === 0 && summary.attention !== 'browser') this.listeners.onTurnCompleted(summary, notice);
       }
     }
     if (changed) this.emitSessions();

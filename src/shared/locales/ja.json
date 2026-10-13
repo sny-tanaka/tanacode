@@ -63,6 +63,8 @@
     "notification": {
       "browserAsk": "ブラウザでの操作の依頼: {message}",
       "turnCompleted": "作業が完了しました",
+      "compactCompleted": "コンテキストの最適化が完了しました",
+      "compactFailed": "コンテキストの最適化を取りやめました",
       "needsTerminal": "ターミナルでの操作が必要です",
       "question": "質問しています",
       "permission": "実行の許可: {detail}",

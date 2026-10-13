@@ -11,6 +11,7 @@ import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
+import type { TurnNotice } from '../../src/main/compact-notice';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
 import type { PtyHandle, PtyHostApi } from '../../src/main/pty-host-client';
 import type { HostedPtyInfo, SpawnRequest } from '../../src/main/pty-host-protocol';
@@ -167,6 +168,8 @@ export class ScriptedApp {
   readonly batches: ChatBatch[] = [];
   readonly attentions: { id: string; attention: Attention }[] = [];
   readonly turnsCompleted: SessionSummary[] = [];
+  // 完了の知らせの種類を、届いた順に（turnsCompleted と同じ並び）
+  readonly turnNotices: TurnNotice[] = [];
   readonly screens = new Map<string, ScreenInfo>();
   // 画面への知らせを、届いた順に（screens は最後のものだけ）
   private readonly screenLog = new Map<string, ScreenInfo[]>();
@@ -211,7 +214,10 @@ export class ScriptedApp {
           this.chat.set(batch.sessionId, [...(this.chat.get(batch.sessionId) ?? []), ...batch.events]);
         },
         onPtyData: () => {},
-        onTurnCompleted: (session) => this.turnsCompleted.push(session),
+        onTurnCompleted: (session, notice) => {
+          this.turnsCompleted.push(session);
+          this.turnNotices.push(notice);
+        },
         onScreen: (id, info) => {
           this.screens.set(id, info);
           this.screenLog.set(id, [...(this.screenLog.get(id) ?? []), info]);
