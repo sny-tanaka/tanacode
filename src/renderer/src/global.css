@@ -4488,7 +4488,7 @@ details[open] > summary > .disclosure {
   font-variant-numeric: tabular-nums;
 }
 
-/* サイドパネルの「コンテキスト」。中身の一覧と、圧縮で残す・捨てるの印 */
+/* サイドパネルの「コンテキスト」。中身の一覧 */
 .context-panel {
   flex: 1;
   min-height: 0;
