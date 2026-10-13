@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
 import { handoffText } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
@@ -10,7 +10,10 @@ let app: ScriptedApp;
 beforeEach(() => {
   app = new ScriptedApp();
 });
-afterEach(() => app.dispose());
+afterEach(() => {
+  vi.restoreAllMocks();
+  app.dispose();
+});
 
 const PARENT = '11111111-0000-4000-8000-000000000001';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -129,6 +132,40 @@ describe('submit', () => {
     expect(pty.writes).toEqual([...chunks.map((c) => c.keys), '\r']);
     const tails = chunks.map((c) => c.shown.replace(/\s/g, '').slice(-12));
     expect(seen).toEqual(['', ...tails]);
+  });
+
+  it('打つのに時間がかかる長い文でも、打っている間と、Enter を送ってから猶予の間は、作業中のまま（猶予は Enter から数える）', async () => {
+    // 送ってから発言が会話ログに出るまでは、作業中として扱う（15 秒）。これを打ち始めから数えると、打つのに 15 秒を超える文
+    // （4.9 万文字ほど。親からの指示やチャットの発言には、長さの上限が無い）では、Enter の直後に手が空いたように見える
+    const { id, pty } = app.create();
+    await app.ready(id);
+    const text = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+    expect(promptKeyChunks(text).length).toBeGreaterThan(3);
+    // 時計を進める（分を書くたびに 6 秒。3 つめの分で、打ち始めから 15 秒を超える）
+    let ahead = 0;
+    const now = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => now() + ahead);
+    let typed = '';
+    const states: (string | null)[] = [];
+    pty.onWrite = (data) => {
+      states.push(app.manager.stateOf(id));
+      if (data === '\r') return;
+      ahead += 6000;
+      typed += data.replace(/\x1b\[20[01]~/g, '');
+      const shown = typed.replace(/\n/g, ' ').slice(-60);
+      setTimeout(() => pty.output(promptWith(shown)), 5);
+    };
+    await app.manager.submit(id, text);
+    expect(pty.writes.at(-1)).toBe('\r');
+    expect(ahead).toBeGreaterThan(15_000);
+    // 打っている間も、Enter を書いたときも、作業中
+    expect([...new Set(states)]).toEqual(['working']);
+    // Enter のあと、猶予の間は作業中のまま。猶予が過ぎたら（発言が会話ログに出なかった）、待機に戻る
+    expect(app.manager.stateOf(id)).toBe('working');
+    ahead += 14_000;
+    expect(app.manager.stateOf(id)).toBe('working');
+    ahead += 2000;
+    expect(app.manager.stateOf(id)).toBe('idle');
   });
 
   it('長い文を打っている途中に、確認のメニューが出たら、残りは書かず、Enter も送らない（guarded）', async () => {

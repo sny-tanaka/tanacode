@@ -2,6 +2,8 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents, type ChatEvent } from '@shared/chat';
+import type { Card, Checklist, ListKind } from '@shared/checklist';
+import { RESUME_MAX_CHARS, RESUME_TAG, resumeText } from '@shared/optimized-compact';
 import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
 import { readAgentLog } from '../../src/main/chat-log';
 import { KnowledgeTracker } from '../../src/main/knowledge-tracker';
@@ -61,6 +63,7 @@ import { MockApi } from './mock-api';
 // 本物の claude をモックの API で動かし、入力まわりと、まだ確かめていなかった読み取りをアプリと同じ部品で確かめる。
 // 台本ごとに別の claude を起動する（台本は test/scenarios/input.ts）
 // - 入力欄: --effort・書きかけ・会話の最初の /context・複数行の貼り付け・! のコマンド・/rename と AI のタイトル・セッションの一覧
+// - 上限いっぱい（4 万文字）の再開の文: 手が空くのを待つ送り方で、欠けず・囲みなしで届く
 // - 読み取り: @ の添付・Read・サブフォルダの CLAUDE.md・思考・画像（KnowledgeTracker と toChatEvents）
 // - サブエージェント: 実行中の直近のツールと、終わったあとの会話ログ（readAgentLog）
 // - バックグラウンドの Bash を止める（TaskStop）
@@ -289,6 +292,129 @@ describe(`Claude Code ${version} の、背の高い入力欄`, () => {
     expect(run.attentions.slice(attentions)).toEqual([]);
     await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
   });
+});
+
+// 上限いっぱいの再開の文（最適化圧縮で、新しい会話の最初に送る文）。アプリの resumeText で、どの部分も上限まで埋める:
+// 決定事項と「いまの状態」のカード（24,000 文字）・発言の原文（12,000 文字）・切り替える前の最後の応答（3,000 文字）。
+// 合わせると上限を超えるので、終わり（最後の応答の途中）は上限で切られる。
+// 日本語で埋める（1 文字 3 バイトなので、打つバイト数がいちばん大きくなる）。行の長さは、短い行から、断片に分かれる長い行（300 文字超）まで混ぜる
+function fullResumeText(): string {
+  const SENTENCES = [
+    '税率を設定から読むようにして、決済のモジュールには触らない。',
+    '確かめ方: `npm run test:cli -- input` を 3 回続けて流して、どれも通ること（落ちたら再実行で済ませず原因を追う）。',
+    '- 試してやめたこと: 丸ごと 1 つの貼り付けで送る（Claude Code が貼り付けの囲みに入れる）',
+    '場所: src/main/session-manager.ts の submit（打つ直前と Enter の直前に、入力欄の状態を確かめる）',
+    '',
+    '数字と記号: 1,000 バイト・40,000 文字・[x](y)・{a: 1}・<b>・\\n・"引用"・$HOME・100%・🎉',
+    `長い 1 行: ${'入力欄で折り返される長い行です。'.repeat(24)}`,
+  ];
+  // n 文字ちょうどの本文（行の終わりに空白を残さない）
+  const prose = (seed: number, chars: number) => {
+    let text = '';
+    for (let i = seed; text.length < chars; i++) text += `${i} ${SENTENCES[i % SENTENCES.length]}\n`;
+    return `${text.slice(0, chars - 1).trimEnd()}。`;
+  };
+  let at = 0;
+  const card = (number: number, title: string, body: string): Card => ({
+    id: `c${number}-${title}`,
+    number,
+    title,
+    body,
+    checked: false,
+    createdBy: 'claude',
+    createdAt: ++at,
+    updatedAt: at,
+    thread: [],
+    readByClaude: 0,
+    readByHuman: 0,
+  });
+  const list = (name: string, kind: ListKind, cards: Card[]): Checklist => ({ id: name, name, description: `${name}の決まり`, kind, nextNumber: cards.length + 1, cards, createdBy: 'claude', createdAt: 0 });
+  return resumeText({
+    lists: [
+      list('決定事項', 'decisions', Array.from({ length: 4 }, (_, i) => card(i + 1, `決定 ${i + 1}`, prose(i * 100, 2900)))),
+      list('いまの状態', 'state', Array.from({ length: 4 }, (_, i) => card(i + 1, `状態 ${i + 1}`, prose(1000 + i * 100, 2900)))),
+      list('やること', 'normal', [card(1, 'テストを足す', '')]),
+    ],
+    messages: Array.from({ length: 4 }, (_, i) => ({ text: prose(2000 + i * 100, 2900), fromParent: i === 1 })),
+    tasks: [],
+    reply: prose(3000, 3000),
+    language: 'ja',
+  });
+}
+
+describe(`Claude Code ${version} に、上限いっぱいの再開の文を送る`, () => {
+  let api: MockApi;
+  let run: ClaudeRun;
+
+  beforeAll(async () => {
+    api = new MockApi();
+    run = new ClaudeRun(await api.start());
+    await run.open();
+  });
+
+  afterAll(async () => {
+    run?.stop();
+    await api?.stop();
+  });
+
+  it('上限（4 万文字）の再開の文が、手が空くのを待つ送り方（最適化圧縮と同じ道）で、1 文字も欠けず・囲みなしで Claude に届く', async () => {
+    const text = fullResumeText();
+    const bytes = new TextEncoder().encode(text).length;
+    // 上限まで埋まっている（どの部分も入っていて、終わりは上限で切られている）
+    expect(text.length).toBeGreaterThan(RESUME_MAX_CHARS - 20);
+    expect(text.length).toBeLessThanOrEqual(RESUME_MAX_CHARS);
+    for (const part of ['# 決定事項', '# いまの状態', '# What the user said', '# Your last reply before the reset']) expect(text).toContain(part);
+    expect(bytes).toBeGreaterThan(90_000);
+    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
+    // pty に書いた時刻（1 つの分を書いてから次を書くまでが、打った分が入力欄に出るのを待った時間）
+    const pty = run.manager['runtimes'].get(run.sessionId!)!.process!;
+    const write = pty.write.bind(pty);
+    const writes: number[] = [];
+    pty.write = (data: string) => {
+      writes.push(Date.now());
+      write(data);
+    };
+    const attentions = run.attentions.length;
+    const started = Date.now();
+    await run.manager.submitWhenReady(run.sessionId!, text, 10_000);
+    const typedMs = Date.now() - started;
+    pty.write = write;
+    // 会話の呼び出し（発言で終わる）を見る。タイトル作りの呼び出しにも、発言の文が入っている（あとに頼みの文が続く）
+    const sent = () => api.lastPrompts.find((prompt) => prompt.includes(`<${RESUME_TAG}>`) && prompt.trimEnd().endsWith(`</${RESUME_TAG}>`));
+    await run.waitFor('Claude に届く', () => sent() !== undefined, 60_000);
+    const arrivedMs = Date.now() - started;
+    const waits = writes.slice(1).map((time, i) => time - writes[i]);
+    console.info(
+      `再開の文 ${text.length} 文字・${bytes} バイト・${text.split('\n').length} 行: 打ち終えるまで ${typedMs} ms・Claude に届くまで ${arrivedMs} ms・` +
+        `書いた回数 ${writes.length}・1 つの分を待った時間は最大 ${Math.max(...waits)} ms`,
+    );
+    // Claude（モックの API）が受け取った発言。送った文と 1 文字も違わない
+    const got = sent()!;
+    const received = got.slice(got.indexOf(`<${RESUME_TAG}>`));
+    // 違うときは、全文（4 万文字）ではなく、はじめに違うところの前後を出す
+    let diff = 0;
+    while (diff < text.length && text[diff] === received[diff]) diff++;
+    const around = (whole: string) => `${diff} 文字目: ${whole.slice(Math.max(0, diff - 40), diff + 40)}`;
+    if (received !== text) expect(around(received)).toBe(around(text));
+    expect(received).toHaveLength(text.length);
+    // 貼り付けの囲み・入力欄の目印・貼り付けの合図のかけら（ESC [200~ が割れて残った 200~ など）が混ざっていない
+    expect(got).not.toMatch(/<\/?pasted_content|\[Pasted text|Truncated text|\x1b|\[?20[01]~/);
+    // 会話ログの発言も同じ（アプリは、ここから再開の知らせを作る）
+    const logged = () =>
+      run.entries
+        .filter((e) => e.type === 'user')
+        .map((e) => e.message?.content)
+        .map((content) => (typeof content === 'string' ? content : (content ?? []).map((block) => (block.type === 'text' ? (block.text ?? '') : '')).join('')))
+        .filter((content) => content.includes(`<${RESUME_TAG}>`));
+    await run.waitFor('会話ログに出る', () => logged().length > 0, 30_000);
+    expect(logged()).toEqual([text]);
+    expect(eventsOf(run).filter((e) => e.type === 'notice' && e.compact === 'resume')).toHaveLength(1);
+    // 1 つの分が入力欄に出るのを待ちきれなかった（TYPED_MS = 3 秒。そのあとは、残りを待たずに書く）ことが無い
+    expect(Math.max(...waits)).toBeLessThan(3000);
+    // 操作できない画面・メニューの知らせが出ていない
+    expect(run.attentions.slice(attentions)).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '', 30_000);
+  }, 180_000);
 });
 
 describe(`Claude Code ${version} の読み取り`, () => {

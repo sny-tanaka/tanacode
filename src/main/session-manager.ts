@@ -886,6 +886,8 @@ export class SessionManager {
           // 残りは書かない。メニューに打つと、文字や数字が選択になることがある。Enter を送るかは、下で決める
           if (i > 0 && (rt.process !== process || rt.screen?.current.state.kind === 'menu')) break;
           const before = rt.screen?.current.draft ?? '';
+          // 長い文は、打つのに SUBMIT_GRACE_MS より長くかかることがある（4 万文字で 12 秒ほど）。打っている間も、作業中に見せ続ける
+          rt.submittedAt = Date.now();
           process.write(chunk.keys);
           // 空白だけの分（空行）は、入力欄に出たかを見分けられないので待たない（合図も入っていない）
           if (readable && chunk.shown.trim()) readable = await this.untilTyped(rt, process, before, chunk.shown);
@@ -908,6 +910,9 @@ export class SessionManager {
       if (guarded && (rt.screen?.current.state.kind !== 'prompt' || rt.attention !== null)) {
         throw new Error(t('main.send.menuAppeared'));
       }
+      // 送ってから発言が会話ログに出るまでの猶予（SUBMIT_GRACE_MS）は、Enter から数える。打ち始めから数えると、打つのに時間のかかる
+      // 長い文では、Enter の直後に猶予が切れて、手が空いたように見える（wait_sessions が返る・親に知らせが行く・次の送信が打ち始める）
+      rt.submittedAt = Date.now();
       process.write('\r');
       this.changed(id);
       // 発言として残らなかったとき（スラッシュコマンドなど）も、作業中として扱う時間が過ぎたら知らせ直す
