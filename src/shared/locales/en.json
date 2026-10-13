@@ -63,6 +63,8 @@
     "notification": {
       "browserAsk": "Request to act in the browser: {message}",
       "turnCompleted": "Finished working",
+      "compactCompleted": "Finished optimizing the context",
+      "compactFailed": "Context optimization was canceled",
       "needsTerminal": "Action needed in the terminal",
       "question": "Claude has a question",
       "permission": "Permission needed: {detail}",

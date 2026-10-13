@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
+import type { TurnStarter } from '../src/main/compact-notice';
+import { handoffText, resumeText } from '../src/shared/optimized-compact';
 import { QUESTION } from './scenario';
 import { fixtureScreen, line, ScriptedApp } from './helpers/scripted-claude';
 
@@ -376,6 +378,58 @@ describe('statusLine', () => {
     app.manager.compactClearing = () => false;
     await switchTo('77777777-0000-4000-8000-000000000007');
     expect(resets()).toEqual([{ type: 'reset', compact: true }, { type: 'reset' }]);
+  });
+
+  it('ターンの終わりごとに、出す通知の種類を 1 回だけ聞く（そのターンを始めたものを渡す）。null なら完了を知らせず、種類はそのまま知らせに渡す', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const asked: [string, TurnStarter][] = [];
+    // 最適化圧縮の流れの途中のターン（仕上げ）では出さず、流れの最後のターン（報告して待つ再開）では、最適化の完了にする
+    app.manager.turnNotice = (session, starter) => {
+      asked.push([session, starter]);
+      return starter === 'handoff' ? null : starter === 'resume' ? 'compact' : 'work';
+    };
+    let turns = 0;
+    const turn = async (...lines: Parameters<typeof app.append>[1][]) => {
+      turns += 1;
+      app.append(id, ...lines, line.text('はい'), line.turnEnd());
+      await app.waitFor('ターンの終わり', () => app.events(id).filter((e) => e.type === 'turn-end').length === turns);
+    };
+    const RESUME = { lists: [], messages: [], tasks: [] };
+    await turn(line.user('税率を可変にして'));
+    // 仕上げのターン（このあと /clear）: 聞くが、完了は知らせない。途中で届いた知らせ（タスクの完了など）では、仕上げのターンのまま
+    await turn(line.user(handoffText()), line.user('<task-notification><summary>ビルドが終わりました</summary></task-notification>'));
+    expect(app.turnNotices).toEqual(['work']);
+    // 報告して待つ再開のターン
+    await turn(line.user(resumeText(RESUME)));
+    // ターンの途中で止めた切り替えの再開は、作業の続き
+    await turn(line.user(resumeText({ ...RESUME, auto: { percent: 92, midTurn: true } })));
+    // 仕上げの間に人が発言したら、その発言のターン
+    await turn(line.user(handoffText()), line.user('やっぱり先に README を直して'));
+    // ターンが終わったら、始めたものは持ち越さない（発言の行が無いまま終わったターン）
+    await turn();
+    expect(asked).toEqual([
+      [id, 'other'],
+      [id, 'handoff'],
+      [id, 'resume'],
+      [id, 'other'],
+      [id, 'other'],
+      [id, 'other'],
+    ]);
+    expect(app.turnNotices).toEqual(['work', 'compact', 'work', 'work', 'work']);
+    // 完了を知らせないとき（ブラウザでの操作待ち）も聞く（流れの途中で出さなかったことを、覚えさせる）
+    app.manager.browserAskChanged(id, true);
+    await turn(line.user(handoffText()));
+    expect(asked).toHaveLength(7);
+    expect(app.turnNotices).toHaveLength(5);
+  });
+
+  it('何もつながなければ、ターンの終わりは、ふつうの完了として知らせる', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    app.append(id, line.user('頼み'), line.text('はい'), line.turnEnd());
+    await app.waitFor('完了の知らせ', () => app.turnsCompleted.length === 1);
+    expect(app.turnNotices).toEqual(['work']);
   });
 
   it('最後に終わったターンが、人の中断で終わったかが分かる。外から見た状態が変わったことを、見張っている先に知らせられる', async () => {
