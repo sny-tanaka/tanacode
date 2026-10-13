@@ -455,7 +455,8 @@ describe('通知', () => {
   it('最適化圧縮の流れの途中でターンが終わっても、完了を知らせない。そのあと切り替えられなかったら、取りやめたことを知らせる', async () => {
     await boot();
     // 流れの外では、ふつうの完了
-    expect(manager().turnNotice('s1')).toBe('work');
+    expect(manager().turnNotice('s1', 'other')).toBe('work');
+    expect(manager().turnNotice('s1', 'resume')).toBe('compact');
     manager().summary.mockImplementation((id: string) => (id === 's1' ? { id, title: 'メニューを直す' } : undefined));
     let fail = (): void => undefined;
     Object.assign(manager(), {
@@ -466,15 +467,15 @@ describe('通知', () => {
     });
     await invoke(IpcChannel.CompactStart, 's1');
     await vi.waitFor(() => expect(manager().submitWhenReady).toHaveBeenCalledTimes(1));
-    // 流れの途中のターンの終わり（アプリが止めたターン・仕上げのターン）
-    expect(manager().turnNotice('s1')).toBeNull();
-    expect(manager().turnNotice('s2')).toBe('work');
+    // 流れの途中の、仕上げのターンの終わり（このあと /clear）
+    expect(manager().turnNotice('s1', 'handoff')).toBeNull();
+    expect(manager().turnNotice('s2', 'other')).toBe('work');
     expect(state.notifications).toHaveLength(0);
     fail();
     await vi.waitFor(() => expect(state.notifications).toHaveLength(1));
     expect(state.notifications[0].options).toEqual({ title: 'tanacode', subtitle: 'メニューを直す', body: 'コンテキストの最適化を取りやめました', sound: 'Glass' });
-    // 流れが終わったあとのターンは、ふつうの完了（取りやめたので、最適化の完了にはしない）
-    expect(manager().turnNotice('s1')).toBe('work');
+    // 流れが終わったあとのターンは、作業の完了
+    expect(manager().turnNotice('s1', 'other')).toBe('work');
   });
 
   it('流れの途中で出さなかった通知が無ければ、取りやめても知らせない（ボタンの左の札だけ）', async () => {

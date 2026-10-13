@@ -1,101 +1,109 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CompactNotice } from '../src/main/compact-notice';
+import type { ChatEvent } from '../src/shared/chat';
+import { autoHandoffText, handoffText, resumeText } from '../src/shared/optimized-compact';
+import { CompactNotice, turnStarterOf } from '../src/main/compact-notice';
 
 // 最適化圧縮の流れの間の、人への完了の通知（main の CompactNotice）。流れの途中のターンの終わりでは鳴らさず、
 // 流れが最後まで終わったときに 1 回だけ知らせる
 
 const ID = 's1';
-const AT_TURN_END = { percent: 83, midTurn: false };
-const MID_TURN = { percent: 92, midTurn: true };
-let compacting: Set<string>;
+// アプリがターンの途中で止めたターンが、終わるところのセッション
+let stopped: Set<string>;
 let notice: CompactNotice;
 
 beforeEach(() => {
-  compacting = new Set();
-  notice = new CompactNotice((id) => compacting.has(id));
+  stopped = new Set();
+  notice = new CompactNotice((id) => stopped.has(id));
+});
+
+describe('turnStarterOf', () => {
+  const compact = (kind: 'handoff' | 'resume', detail: string): ChatEvent => ({ type: 'notice', id: 'n1', text: '最適化圧縮', detail, compact: kind });
+  const RESUME = { lists: [], messages: [], tasks: [] };
+
+  it('仕上げの頼みは handoff（手動も、自動も、ターンの途中で止めたものも）', () => {
+    expect(turnStarterOf(compact('handoff', handoffText()))).toBe('handoff');
+    expect(turnStarterOf(compact('handoff', autoHandoffText({ percent: 83, midTurn: false })))).toBe('handoff');
+    expect(turnStarterOf(compact('handoff', autoHandoffText({ percent: 92, midTurn: true })))).toBe('handoff');
+  });
+
+  it('報告して待つ再開の文（手動・ターンの終わりの自動）は resume。続きを進めさせる再開の文（ターンの途中で止めた自動）は、作業の続きなので other', () => {
+    expect(turnStarterOf(compact('resume', resumeText(RESUME)))).toBe('resume');
+    expect(turnStarterOf(compact('resume', resumeText({ ...RESUME, auto: { percent: 83, midTurn: false } })))).toBe('resume');
+    expect(turnStarterOf(compact('resume', resumeText({ ...RESUME, auto: { percent: 92, midTurn: true } })))).toBe('other');
+    // 全文が無い再開の知らせは、報告して待つものとして扱う
+    expect(turnStarterOf({ type: 'notice', id: 'n1', text: '最適化圧縮', compact: 'resume' })).toBe('resume');
+  });
+
+  it('人の発言・ほかの知らせ・ほかのセッションからの知らせは other', () => {
+    expect(turnStarterOf({ type: 'user', id: 'u1', text: '税率を可変にして' })).toBe('other');
+    expect(turnStarterOf({ type: 'notice', id: 'n1', text: 'バックグラウンドのタスクが終わりました' })).toBe('other');
+    expect(turnStarterOf({ type: 'turn-start' })).toBe('other');
+  });
 });
 
 describe('CompactNotice', () => {
-  it('流れの外のターンの終わりは、ふつうの完了', () => {
-    expect(notice.turnEnded(ID)).toBe('work');
-    expect(notice.turnEnded(ID)).toBe('work');
+  it('ふつうのターンの終わりは、作業の完了', () => {
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
   });
 
   it('手動: 仕上げのターンの終わり（このあと /clear）では出さず、再開のターンの終わりに、最適化の完了を 1 回だけ出す', () => {
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    // 再開の文のターンが始まると、流れは終わる
-    compacting.delete(ID);
-    expect(notice.finished(ID, null, null)).toBe(false);
-    expect(notice.turnEnded(ID)).toBe('compact');
-    // 次のターンからは、ふつうの完了
-    expect(notice.turnEnded(ID)).toBe('work');
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    expect(notice.finished(ID, null)).toBe(false);
+    expect(notice.turnEnded(ID, 'resume')).toBe('compact');
+    // 次のターンからは、作業の完了
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
   });
 
-  it('ターンの終わりの自動: 手動と同じく、再開のターンの終わりに最適化の完了を出す', () => {
-    // 作業のターンの終わり（まだ流れは始まっていない）は、ふつうの完了
-    expect(notice.turnEnded(ID)).toBe('work');
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    compacting.delete(ID);
-    expect(notice.finished(ID, null, AT_TURN_END)).toBe(false);
-    expect(notice.turnEnded(ID)).toBe('compact');
+  it('ターンの終わりの自動: 作業のターンの終わりは、流れが始まったあとに届いても、作業の完了として出す', () => {
+    // 流れは、作業のターンが終わってすぐに始まる。会話ログのターンの終わりは、そのあとに届くことがある
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    expect(notice.finished(ID, null)).toBe(false);
+    expect(notice.turnEnded(ID, 'resume')).toBe('compact');
   });
 
-  it('ターンの途中で止めた自動: 止めたターンと仕上げのターンでは出さず、続きのターンの終わりに、ふつうの完了を出す', () => {
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    expect(notice.turnEnded(ID)).toBeNull();
-    compacting.delete(ID);
-    expect(notice.finished(ID, null, MID_TURN)).toBe(false);
-    expect(notice.turnEnded(ID)).toBe('work');
+  it('ターンの途中で止めた自動: 止めたターンと仕上げのターンでは出さず、続きのターンの終わりに、作業の完了を出す', () => {
+    stopped.add(ID);
+    expect(notice.turnEnded(ID, 'other')).toBeNull();
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    // 再開の文のターンが始まると、流れは終わる。続きを進めさせる再開の文は other
+    stopped.delete(ID);
+    expect(notice.finished(ID, null)).toBe(false);
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
   });
 
   it('取りやめた・失敗した: 途中で出さなかった通知があれば、取りやめたことを知らせる。無ければ知らせない', () => {
     // 仕上げのターンは終わったのに、切り替えられなかった
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    compacting.delete(ID);
-    expect(notice.finished(ID, 'not-used', null)).toBe(true);
-    // 取りやめたあとのターンは、ふつうの完了（最適化の完了にはしない）
-    expect(notice.turnEnded(ID)).toBe('work');
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    expect(notice.finished(ID, 'not-used')).toBe(true);
+    // 取りやめたあとのターンは、作業の完了
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
     // 仕上げの頼みを送れなかった（ターンは終わっていない）
-    expect(notice.finished(ID, 'busy', AT_TURN_END)).toBe(false);
-    // 仕上げの間に人が発言した（仕上げのターンは、流れが終わったあとに終わる）
-    compacting.add(ID);
-    compacting.delete(ID);
-    expect(notice.finished(ID, 'prompted', null)).toBe(false);
-    expect(notice.turnEnded(ID)).toBe('work');
+    expect(notice.finished(ID, 'busy')).toBe(false);
+    // アプリが止めたターンは終わったのに、仕上げの頼みを送れなかった（作業が、止まったままになる）
+    stopped.add(ID);
+    expect(notice.turnEnded(ID, 'other')).toBeNull();
+    stopped.delete(ID);
+    expect(notice.finished(ID, 'busy')).toBe(true);
   });
 
   it('出さなかった印は、1 回の流れで使い切る（次の流れの取りやめに持ち越さない）', () => {
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    compacting.delete(ID);
-    expect(notice.finished(ID, null, null)).toBe(false);
-    expect(notice.turnEnded(ID)).toBe('compact');
-    expect(notice.finished(ID, 'busy', null)).toBe(false);
-    // アプリが止めたターンが、流れに入らなかった（止めた直後に「自動」をオフにしたなど）ときも、次のターンで印を消す
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    compacting.delete(ID);
-    expect(notice.turnEnded(ID)).toBe('work');
-    expect(notice.finished(ID, 'busy', null)).toBe(false);
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    expect(notice.finished(ID, null)).toBe(false);
+    expect(notice.finished(ID, 'busy')).toBe(false);
+    // 仕上げの間に人が発言して取りやめたあとに、仕上げのターンが終わった（流れは、もう終わっている）。次のターンの終わりで、印を消す
+    expect(notice.finished(ID, 'prompted')).toBe(false);
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    expect(notice.turnEnded(ID, 'other')).toBe('work');
+    expect(notice.finished(ID, 'busy')).toBe(false);
   });
 
   it('セッションごとに別々に数える。終了したセッションの印は捨てる', () => {
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    expect(notice.turnEnded('s2')).toBe('work');
-    compacting.delete(ID);
-    expect(notice.finished(ID, null, null)).toBe(false);
-    expect(notice.turnEnded('s2')).toBe('work');
+    expect(notice.turnEnded(ID, 'handoff')).toBeNull();
+    expect(notice.turnEnded('s2', 'other')).toBe('work');
+    expect(notice.finished('s2', 'busy')).toBe(false);
     notice.forget(ID);
-    expect(notice.turnEnded(ID)).toBe('work');
-    compacting.add(ID);
-    expect(notice.turnEnded(ID)).toBeNull();
-    notice.forget(ID);
-    compacting.delete(ID);
-    expect(notice.finished(ID, 'exited', null)).toBe(false);
+    expect(notice.finished(ID, 'exited')).toBe(false);
   });
 });

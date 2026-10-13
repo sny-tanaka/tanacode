@@ -220,8 +220,8 @@ export class Profile {
     const outward = outwardHost(manager, compacting);
     manager.compactClearing = (id) => this.compact?.status(id).phase === 'clearing';
     // 流れの途中のターンの終わりでは「作業が完了しました」を出さず、流れが最後まで終わったときに 1 回知らせる
-    const compactNotice = new CompactNotice(compacting);
-    manager.turnNotice = (id) => compactNotice.turnEnded(id);
+    const compactNotice = new CompactNotice((id) => (this.autoCompact?.stopping(id) ?? false) || (this.compact?.stoppedMidTurn(id) ?? false));
+    manager.turnNotice = (id, starter) => compactNotice.turnEnded(id, starter);
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,
@@ -264,7 +264,7 @@ export class Profile {
       onFinish: (id, failure, auto) => {
         autoCompact.finished(id, failure, auto);
         // 仕上げのターン・アプリが止めたターンは終わっているのに、切り替えられなかった（そのターンの終わりでは、通知を出していない）
-        if (compactNotice.finished(id, failure, auto)) notify(id, manager.summary(id)?.title ?? null, t('main.notification.compactFailed'));
+        if (compactNotice.finished(id, failure)) notify(id, manager.summary(id)?.title ?? null, t('main.notification.compactFailed'));
       },
     });
     this.compact = compact;

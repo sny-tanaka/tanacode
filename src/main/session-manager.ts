@@ -33,7 +33,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, pulledBackPastes, pulledBackPrompt, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
-import type { TurnNotice } from './compact-notice';
+import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
@@ -119,6 +119,8 @@ type Runtime = {
   aliveSince: number | null;
   // ターンの途中（Claude Code が作業中）。引き継いだ claude では、読み直した会話の時点でターンの途中だったかも表す
   turnOpen: boolean;
+  // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
+  turnStarter: TurnStarter;
   // Claude Code の入力の順番待ち（会話ログの queue-operation）。完了通知も入る。human: ユーザーが送った発言
   queue: { text: string; human: boolean }[];
   // Remote Control が実際につながっているか（会話ログの bridge_status・空の bridge-session で分かる）。
@@ -230,8 +232,9 @@ export class SessionManager {
   compactClearing: (id: string) => boolean = () => false;
 
   // ターンが終わったときに、人に出す通知の種類（null なら出さない。profile.ts がつなぐ）。最適化圧縮の流れの途中のターンでは出さず、
-  // 流れの最後のターンでは「コンテキストの最適化が完了しました」にする（compact-notice.ts）。ターンの終わりごとに、1 回だけ呼ぶ
-  turnNotice: (id: string) => TurnNotice | null = () => 'work';
+  // 流れの最後のターンでは「コンテキストの最適化が完了しました」にする（compact-notice.ts）。ターンの終わりごとに、1 回だけ呼ぶ。
+  // starter: 終わったターンを始めたもの
+  turnNotice: (id: string, starter: TurnStarter) => TurnNotice | null = () => 'work';
 
   // 最後に終わったターンが、人の中断（Esc）で終わったか
   lastTurnInterrupted(id: string): boolean {
@@ -1147,6 +1150,7 @@ export class SessionManager {
         size: DEFAULT_PTY_SIZE,
         aliveSince: null,
         turnOpen: false,
+        turnStarter: 'other',
         queue: [],
         remoteConnected: false,
         remoteSwitching: false,
@@ -1531,7 +1535,12 @@ export class SessionManager {
         rt.remoteConnected = remote.url !== null;
         this.reconcileRemote(id);
       }
-      if (events.some((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start')) {
+      const starter = events.find((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start');
+      if (starter) {
+        // ターンを始めたもの。人の発言と、最適化圧縮の文（仕上げの頼み・再開の文）は、いつもターンの始まり。
+        // ほかの知らせは、開いているターンの途中に届くことがあるので、ターンが開いていないときだけ見る
+        const compact = starter.type === 'notice' && !!starter.compact;
+        if (!rt.turnOpen || starter.type === 'user' || compact) rt.turnStarter = turnStarterOf(starter);
         rt.turnOpen = true;
         rt.submittedAt = null;
       }
@@ -1557,8 +1566,9 @@ export class SessionManager {
         if (rt && !this.isFocused(id)) rt.unread = true;
         changed = true;
         const summary = this.summary(id);
-        // 通知を出さないときも聞く（最適化圧縮の流れの最後のターンの印を、そのターンの終わりで使い切らせる）
-        const notice = this.turnNotice(id);
+        // 通知を出さないとき（下の、バックグラウンドのタスクが動いているあいだなど）も聞く。流れの途中で出さなかったことを、覚えさせる
+        const notice = this.turnNotice(id, rt?.turnStarter ?? 'other');
+        if (rt) rt.turnStarter = 'other';
         // バックグラウンドのタスクが動いているあいだは、まだ完了ではない（一覧も「完了待ち」）。
         // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す。
         // ブラウザでの操作を頼んでいるあいだも同じ（2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、Claude はターンを終えて返事を待つ）
