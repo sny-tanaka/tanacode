@@ -241,6 +241,99 @@ describe('createInWorktree', () => {
   });
 });
 
+describe('startInWorktree', () => {
+  // worktree で始める。Claude Code が worktree を作るのを待たずに返る
+  async function begun(): Promise<{ id: string; created: Promise<boolean>; pty: ScriptedPty; session: SessionSummary }> {
+    const { id, created } = await app.manager.startInWorktree(app.cwd, NEW);
+    return { id, created, pty: app.pty(id), session: app.manager.summary(id)! };
+  }
+  // 決まったか（成功でも失敗でも）
+  const settledOf = (promise: Promise<unknown>) => {
+    const state = { settled: false };
+    const mark = () => void (state.settled = true);
+    promise.then(mark, mark);
+    return state;
+  };
+
+  it('Claude Code が worktree を作るのを待たずに id を返す。作り終えたら、created が true になる', async () => {
+    start();
+    prepare.mockResolvedValueOnce(EMPTY);
+    const { id, created, pty, session } = await begun();
+    // 起動しただけで、worktree はまだ無い。一覧には「作成中」で出ている
+    expect(pty.arg('--worktree')).toBe(session.worktree!.name);
+    expect(existsSync(session.cwd)).toBe(false);
+    expect(session.worktree?.preparing).toBe('creating');
+    expect(app.manager.stateOf(id)).toBe('starting');
+    expect(app.sessions.map((s) => s.id)).toEqual([id]);
+    const state = settledOf(created);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(state.settled).toBe(false);
+    createWorktree(session);
+    expect(await created).toBe(true);
+    pty.output(fixtureScreen('prompt'));
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+  });
+
+  it('作れずに Claude Code が終わったら、記録を消して、created が理由を添えて失敗する', async () => {
+    start();
+    const { created, pty } = await begun();
+    pty.output('\x1b[H\x1b[2JError: Workspace trust not yet accepted for this folder');
+    await new Promise((r) => setTimeout(r, 200));
+    pty.exit(1);
+    await expect(created).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
+    expect(app.manager.list()).toEqual([]);
+    expect(app.sessions).toEqual([]);
+  });
+
+  it('作っている途中でアーカイブしたら、すぐ created が false になる。作れなかったとは扱わず、記録は残す', async () => {
+    start();
+    const { id, created } = await begun();
+    await app.manager.archive(id);
+    // 止めた Claude Code からは終了の知らせが来ないが、待ち続けない
+    const started = Date.now();
+    expect(await created).toBe(false);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(app.manager.stateOf(id)).toBe('archived');
+    expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+  });
+
+  it('作っている途中で一覧から消しても、created は false になる（失敗にしない）', async () => {
+    start();
+    const { id, created } = await begun();
+    await app.manager.remove(id);
+    expect(await created).toBe(false);
+    expect(app.manager.list()).toEqual([]);
+  });
+
+  it('createInWorktree は、作っている途中でアーカイブされたら、理由を添えて失敗する（記録は残す）', async () => {
+    start();
+    const { creating, session } = await begin();
+    await app.manager.archive(session.id);
+    await expect(creating).rejects.toThrow('worktree を作っている途中で、セッションがアーカイブされたか、一覧から消されました');
+    expect(app.manager.stateOf(session.id)).toBe('archived');
+  });
+
+  it('作っている途中に起動し直しても（再起動）、新しい起動が作るのを待つ。前の起動の待ちが終わっても「作成中」のまま', async () => {
+    start();
+    prepare.mockResolvedValueOnce(EMPTY);
+    const { id, created, pty, session } = await begun();
+    const state = settledOf(created);
+    app.manager.restart(id);
+    const next = app.pty(id);
+    expect(next).not.toBe(pty);
+    expect(next.arg('--worktree')).toBe(session.worktree!.name);
+    // 前の起動の待ち（200 ミリ秒ごとに確かめている）が終わるまで待つ
+    await new Promise((r) => setTimeout(r, 500));
+    expect(state.settled).toBe(false);
+    expect(app.manager.summary(id)?.worktree?.preparing).toBe('creating');
+    createWorktree(session);
+    expect(await created).toBe(true);
+    next.output(fixtureScreen('prompt'));
+    await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
+    expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+  });
+});
+
 describe('worktree の片付けと作り直し', () => {
   // worktree で始めて、受け付けるまで進める
   async function ready(): Promise<{ id: string; pty: ScriptedPty; session: SessionSummary }> {

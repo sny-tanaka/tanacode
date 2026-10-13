@@ -8,6 +8,7 @@ import { errorMessage } from '../errorMessage';
 import { ChatInput, type CompletionSource } from '../chat/ChatInput';
 import { isLongPaste } from '@shared/prompt-keys';
 import { useInsertInput } from '../chat/insertInput';
+import type { PendingSend } from '../chat/pendingSends';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
@@ -55,9 +56,11 @@ type Props = {
   comments: ReviewComment[];
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
-  // フォルダで Claude Code を起動し、最初の発言を送る（起動が終わるのを待って送られる）
+  // フォルダで Claude Code を起動し、最初の発言を送る（起動が終わるのを待って送られる）。始めたら、すぐそのセッションに移る
   // pastes: 入力欄の札（貼り付けた長い文）
   onStart: (cwd: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[]) => Promise<void>;
+  // 始められなかった指示（worktree で始めて、セッションに移ったあとで worktree を作れなかった）。入力欄に戻す
+  restore?: PendingSend | null;
   // 前に見ていたセッションに戻る。戻る先が無ければ null
   onCancel: (() => void) | null;
 };
@@ -77,6 +80,7 @@ export function NewSessionPane({
   onCommentsChange,
   onShowComment,
   onStart,
+  restore = null,
   onCancel,
 }: Props) {
   const [info, setInfo] = useState<WorkspaceInfo | null | undefined>(undefined);
@@ -90,6 +94,15 @@ export function NewSessionPane({
     else setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
   });
+  // 始められなかった指示を、入力欄に戻す（書きかけがあれば、その前に足す）。同じものは 1 回だけ
+  const restored = useRef<PendingSend | null>(null);
+  useEffect(() => {
+    if (!restore || restored.current === restore) return;
+    restored.current = restore;
+    setInput((prev) => [restore.text, prev].filter((text) => text.trim()).join('\n'));
+    setAttachments((prev) => [...restore.attachments, ...prev]);
+    setPastes((prev) => [...restore.pastes, ...prev]);
+  }, [restore]);
   const [startingDirs, setStartingDirs] = useState<ReadonlySet<string>>(() => new Set());
   const starting = !!cwd && startingDirs.has(cwd);
   // 最新のデフォルトブランチへ切り替えているフォルダと、うまくいかなかったときの理由。

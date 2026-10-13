@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { app, type Session, type WebContents } from 'electron';
-import { IpcChannel, type ArchiveOptions, type IpcEvent, type WorktreeRemoval } from '@shared/ipc';
+import { IpcChannel, type ArchiveOptions, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
 import type { AppSettings } from './app-settings';
@@ -328,6 +328,16 @@ export class Profile {
   private walkthroughLaunch(): McpLaunch | null {
     if (!this.walkthroughBridge || !this.settings.walkthroughControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: this.walkthroughBridge.socketPath, version: app.getVersion() };
+  }
+
+  // 新規セッションの画面から、worktree で始める。Claude Code が worktree を作るのを待たずに id を返す（画面は、すぐそのセッションに移って待つ）。
+  // 作れなかったら（セッションは、もう一覧から消えている）、理由を画面に知らせる
+  async startInWorktree(cwd: string, options: NewSessionOptions): Promise<string> {
+    const { id, created } = await this.manager.startInWorktree(cwd, options);
+    created.catch((error: unknown) => {
+      this.options.send(IpcChannel.SessionsCreateFailed, { id, cwd, error: error instanceof Error ? error.message : String(error) });
+    });
+    return id;
   }
 
   // セッションをアーカイブする。画面からのアーカイブも、親の Claude の end_session（sessions-control.ts）も、ここを通る

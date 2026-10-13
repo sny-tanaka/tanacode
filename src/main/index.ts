@@ -558,7 +558,7 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsCreate, async (e, cwd: string, options: NewSessionOptions) => {
     const p = P(e);
     if (!(await isDirectory(cwd))) throw new Error(t('main.error.folderNotFound', { path: cwd }));
-    return options.worktree ? p.manager.createInWorktree(cwd, options) : p.manager.create(cwd, options);
+    return options.worktree ? p.startInWorktree(cwd, options) : p.manager.create(cwd, options);
   });
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));

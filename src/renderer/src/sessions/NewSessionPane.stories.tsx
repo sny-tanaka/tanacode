@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { userEvent, within } from 'storybook/test';
 import type { SessionSummary } from '@shared/ipc';
 import { mockApi } from '../../../../.storybook/mockApi';
+import type { PendingSend } from '../chat/pendingSends';
 import { NewSessionPane } from './NewSessionPane';
 
 // 新規セッションの画面。アイコンと見出しを中央に置き、下にフォルダ・ブランチと入力欄を並べる
@@ -36,8 +37,8 @@ const SESSIONS = [
   session('a9c3b5d7-0000-4000-8000-000000000003', '古い調査', '/Users/me/work/tanacode', true),
 ];
 
-// width は、チャットの列の幅（アプリでは列の境目を動かして変える）
-function Pane({ width }: { width: number }) {
+// width は、チャットの列の幅（アプリでは列の境目を動かして変える）。restore は、始められずに入力欄へ戻す指示
+function Pane({ width, restore = null }: { width: number; restore?: PendingSend | null }) {
   // 最近のフォルダ。「外す」を押すと、アプリと同じように一覧から消える
   const [folders, setFolders] = useState(FOLDERS);
   return (
@@ -56,6 +57,7 @@ function Pane({ width }: { width: number }) {
         onCommentsChange={noop}
         onShowComment={noop}
         onStart={() => Promise.resolve()}
+        restore={restore}
         onCancel={noop}
       />
     </div>
@@ -144,6 +146,23 @@ export const 設定ファイルを選んでいる: Story = {
 
 // 前に「worktree を使う」にチェックを入れていたとき。フォルダ・ブランチの横のチェックが入った状態で開く
 export const worktreeで始める: Story = {
+  beforeEach: () => {
+    localStorage.setItem('tanacode.newSessionOptions', JSON.stringify({ worktree: true }));
+    mockApi({ 'settingsFiles.list': () => Promise.resolve([]) });
+    return () => localStorage.removeItem('tanacode.newSessionOptions');
+  },
+};
+
+// worktree で始めてセッションの画面に移ったあとで、Claude Code が worktree を作れなかったとき（まだ信頼していないフォルダなど）。
+// 新規セッションの画面に戻り、送るはずだった指示（貼り付けた札も）が入力欄に戻っている。理由は、アプリがダイアログで出す
+export const 始められなかった指示が戻る: Story = {
+  args: {
+    restore: {
+      text: 'メニューの一覧に、税込価格を出してください。',
+      attachments: [],
+      pastes: [Array.from({ length: 40 }, (_, i) => `品目 ${i + 1}: 税抜 ${(i + 1) * 100} 円`).join('\n')],
+    },
+  },
   beforeEach: () => {
     localStorage.setItem('tanacode.newSessionOptions', JSON.stringify({ worktree: true }));
     mockApi({ 'settingsFiles.list': () => Promise.resolve([]) });

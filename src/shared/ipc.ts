@@ -26,6 +26,7 @@ export const IpcChannel = {
   SessionsList: 'sessions:list',
   SessionsChanged: 'sessions:changed',
   SessionsCreate: 'sessions:create',
+  SessionsCreateFailed: 'sessions:create-failed',
   SessionsOpen: 'sessions:open',
   SessionsArchive: 'sessions:archive',
   SessionsUnarchive: 'sessions:unarchive',
@@ -338,6 +339,9 @@ export type SessionOptions = { model: string | null; effort: string | null; sett
 // 新規セッションを始めるときの指定。どれも null なら Claude Code の既定値（ユーザー設定）
 // worktree: claude --worktree で、新しい worktree に分けて始める
 export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean };
+// worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
+// cwd: 始めようとしたフォルダ / error: 理由
+export type SessionCreateFailed = { id: string; cwd: string; error: string };
 export type SessionScreen = { sessionId: string; info: ScreenInfo };
 export type SessionActivity = { sessionId: string; activity: Activity | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
@@ -377,7 +381,9 @@ export const LANGUAGE_ARG = '--tanacode-language=';
 export type TanacodeApi = {
   sessions: {
     list(): Promise<SessionSummary[]>;
-    // cwd のフォルダで新しいセッションを始める。作ったセッションの id を返す
+    // cwd のフォルダで新しいセッションを始める。作ったセッションの id を返す。
+    // worktree で始めるときも、Claude Code が worktree を作るのを待たずに返す（そのあいだは SessionWorktree.preparing が creating）。
+    // 作れなかったら、セッションを一覧から消して onCreateFailed で知らせる
     create(cwd: string, options: NewSessionOptions): Promise<string>;
     open(id: string): Promise<void>;
     // worktree のセッションで removeWorktree を指定すると、Claude Code が終わるのを待ってから worktree も消す（消せなければ理由を添えて失敗する）
@@ -421,6 +427,7 @@ export type TanacodeApi = {
     // 既存の会話を取り込み、再開する。作ったセッションの id を返す
     import(session: DiscoveredSession): Promise<string>;
     onChanged(listener: (sessions: SessionSummary[]) => void): () => void;
+    onCreateFailed(listener: (failure: SessionCreateFailed) => void): () => void;
     onSelect(listener: (id: string) => void): () => void;
     onNew(listener: () => void): () => void;
     onChat(listener: (batch: ChatBatch) => void): () => void;
@@ -826,6 +833,7 @@ export type IpcSend = {
 // main → 画面の知らせ（webContents.send ↔ ipcRenderer.on）。中身の型は、それを受ける API のメソッドの listener の引数と同じ
 export type IpcEvent = {
   [IpcChannel.SessionsChanged]: Payload<Api['sessions']['onChanged']>;
+  [IpcChannel.SessionsCreateFailed]: Payload<Api['sessions']['onCreateFailed']>;
   [IpcChannel.SessionsSelect]: Payload<Api['sessions']['onSelect']>;
   [IpcChannel.SessionsNew]: undefined;
   [IpcChannel.ChatEvents]: Payload<Api['sessions']['onChat']>;

@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
-// 新規セッションの画面で、セッションを始めている途中（worktree を作っている間など）にフォルダを変える。
-// 変えた先の送信はすぐ使え、前のフォルダのセッションができても、変えた先の画面から勝手に移らない
+// 新規セッションの画面で、セッションを始めている途中（worktree で始める前の、git の確かめの間など）にフォルダを変える。
+// 変えた先の送信はすぐ使え、前のフォルダのセッションができても、変えた先の画面から勝手に移らない。
+// worktree で始めるときも、Claude Code が worktree を作るのは待たずにセッションの画面に移る（worktree-start.test.ts）ので、
+// 始めている途中になるのは、その前（セッションを一覧に足すまで）だけ
 
 const SLOW = '時間のかかるフォルダで始めてください';
 const OTHER = '変えた先のフォルダで始めてください';
@@ -13,7 +15,7 @@ const OTHER = '変えた先のフォルダで始めてください';
 describe('セッションを始めている途中で、新規セッションの画面のフォルダを変える', () => {
   let app: E2EApp;
   let other: string;
-  const release = () => join(app.root, 'worktree.release');
+  const release = () => join(app.root, 'start.release');
   // 新規セッションの画面の送信（セッションの画面に移ると無くなる）
   const send = () => app.page.locator('section.claude:has(.new-session-body) .chat-input-row [aria-label="送信"]');
   const folderChip = (dir: string) => app.page.locator(`.new-session-chips .folder-picker > button.new-session-chip[title="${dir}"]`);
@@ -41,13 +43,13 @@ describe('セッションを始めている途中で、新規セッションの�
         { match: OTHER, steps: [[{ type: 'text', text: '変えた先のフォルダの返事です' }]] },
       ],
     });
-    // worktree を作るのを、合図（release のファイル）があるまで待たせる。アプリの PATH の先頭（root/bin）に git の代わりを置き、
-    // worktree add のときだけ待ってから本物の git に渡す（Claude Code が worktree を作るのに使う git も、この PATH から探される）
+    // セッションを始めるのを、合図（release のファイル）があるまで待たせる。アプリの PATH の先頭（root/bin）に git の代わりを置き、
+    // worktree で始める前の確かめ（.claude/worktrees が無視されているかの check-ignore）のときだけ、待ってから本物の git に渡す
     const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
     const wrapper = join(app.root, 'bin', 'git');
     writeFileSync(
       wrapper,
-      `#!/bin/sh\ncase " $* " in *" worktree add "*) while [ ! -e ${JSON.stringify(release())} ]; do sleep 0.1; done ;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`,
+      `#!/bin/sh\ncase " $* " in *" check-ignore "*".claude/worktrees/x "*) while [ ! -e ${JSON.stringify(release())} ]; do sleep 0.1; done ;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`,
     );
     chmodSync(wrapper, 0o755);
     other = join(app.root, 'other');
@@ -69,7 +71,7 @@ describe('セッションを始めている途中で、新規セッションの�
     await app?.close();
   });
 
-  it('worktree で始めている途中にフォルダを変えると、変えた先の送信はすぐ使える', async () => {
+  it('始めている途中にフォルダを変えると、変えた先の送信はすぐ使える', async () => {
     await pick(app.work);
     await app.page.check('.new-session-chips .new-session-check input[type="checkbox"]');
     await app.page.fill('.chat-input textarea', SLOW);
@@ -77,8 +79,8 @@ describe('セッションを始めている途中で、新規セッションの�
     // 始めている間は、同じフォルダからは送れない
     await expect.poll(() => send().isDisabled()).toBe(true);
     await pick(other);
-    // 前のフォルダのセッションは、まだ worktree を作っている（作るのを待たせている）
-    await app.byText('.session-list .session-row', 'worktree を作っています').waitFor();
+    // 前のフォルダのセッションは、まだ始まっていない（始めるのを待たせている）
+    expect(await app.page.locator('.session-list .session-row').count()).toBe(0);
     await expect.poll(() => send().isDisabled(), { timeout: 2_000 }).toBe(false);
     await app.page.uncheck('.new-session-chips .new-session-check input[type="checkbox"]');
     await app.page.fill('section.claude:has(.new-session-body) .chat-input textarea', OTHER);

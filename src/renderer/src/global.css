@@ -1241,6 +1241,12 @@ body.resizing-rows {
 .terminal-host[hidden] {
   display: none;
 }
+/* フォルダ（worktree）ができるのを待っている間 */
+.terminal-waiting {
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
 .status-button {
   border: none;
   background: none;

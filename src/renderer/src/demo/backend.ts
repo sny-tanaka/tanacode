@@ -393,6 +393,8 @@ export class DemoBackend {
         discover: () => ok([...this.discovered]),
         import: (session) => ok(this.onImport(session)),
         onChanged: (l) => this.ch.sessions.on(l),
+        // デモでは、セッションを始められないことは起きない
+        onCreateFailed: () => () => {},
         onSelect: (l) => this.ch.select.on(l),
         onNew: () => () => {},
         onChat: (l) => this.ch.chat.on(l),
