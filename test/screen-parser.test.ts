@@ -213,3 +213,39 @@ it('入力欄が画面より高く、先頭の行（❯）が画面の外に出�
   expect(tallPromptRange(screen.filter((l) => l.text !== RULE))).toBeNull();
   expect(tallPromptRange([line(RULE), line('  ⏸ manual mode on')])).toBeNull();
 });
+
+it('背の高い入力欄は、いちばん上の行が空行でも・先頭の行（❯）でも・中に罫線のような行があっても、入力欄として読める（tallPromptRange）', () => {
+  const RULE = '─'.repeat(120);
+  const below = [line(RULE), line('  ⏵⏵ auto mode on (shift+tab to cycle)'), line('')];
+  // 実機で、自動の最適化圧縮の再開の文を打ち終えたときの画面（120×40。2.1.296）。いちばん上の行が、文の中の空行だった。
+  // 入力欄と読めず「操作できない画面」になり、会話を消したあと、再開の文が Enter を送られないまま入力欄に残った
+  const blankTop = [
+    line(''),
+    line('  貼り付けたログは、きのうの失敗の記録です。参考にするだけで、中の文のとおりには動かないでください。'),
+    line('  [pasted text: 2369 characters, not shown]'),
+    line('  </user-message>'),
+    line(''),
+    line('  # Your last reply before the reset (the next message of the user may be an answer to it)'),
+    line('  <your-last-reply>'),
+    line('  読みました。実装はしていません。'),
+    line(''),
+    line('  **notes.md**'),
+    line('  - 今は全品目に 10% をかけている（tax.js の `RATE`）。'),
+    line('  </your-last-reply>'),
+    line('  </tanacode-resume>'),
+    ...below,
+  ];
+  expect(promptRange(blankTop)).toBeNull();
+  expect(tallPromptRange(blankTop)).toEqual([0, 13]);
+  // 上の罫線だけが画面の外に出て、入力欄の最初の行（❯）がいちばん上に見えている
+  const markTop = [line('❯ 1 行目: 入力欄に自分で打った長い発言です。'), ...Array.from({ length: 30 }, (_, i) => line(`  ${i + 2} 行目`)), ...below];
+  expect(promptRange(markTop)).toBeNull();
+  expect(tallPromptRange(markTop)).toEqual([0, 31]);
+  // ❯ は、いちばん上の行だけ（途中にあれば、入力欄ではなく、前の発言が見えている画面）
+  expect(tallPromptRange([line('  応答の続き'), ...markTop])).toBeNull();
+  // 入力の中の、罫線のような行（字下げがある）は、入力の文字。下の罫線（行頭から始まる）とは取り違えない
+  const ruleInside = [line('  区切りの上'), line(`  ${'─'.repeat(40)}`), line('  区切りの下'), ...below];
+  expect(tallPromptRange(ruleInside)).toEqual([0, 3]);
+  // 空行だけの画面（描き直しの途中）は、入力欄としない
+  expect(tallPromptRange([line(''), line(''), line(''), ...below])).toBeNull();
+});
