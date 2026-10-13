@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -92,9 +92,19 @@ function finish(failure: Parameters<AutoCompact['finished']>[1], trigger: AutoCo
 const stopFile = () => watcher.stopFileFor(ID);
 const hitFile = () => watcher.stopHitFileFor(ID);
 // ツールのあとのフックを、本物のコマンドで動かす
-// input: フックの標準入力（Claude Code が渡す JSON）
-const runHook = (input: Record<string, unknown> = { hook_event_name: 'PostToolUse', tool_name: 'Bash' }) =>
-  execFileSync('sh', ['-c', AUTO_COMPACT_STOP_COMMAND], { env: { ...process.env, TANACODE_ASK_FILE: watcher.askFileFor(ID) }, encoding: 'utf8', input: JSON.stringify(input) });
+// input: フックの標準入力（Claude Code が渡す JSON）。パイプに書かず、ファイルから読ませる。止めるファイルが無いとき、フックは入力を
+// 読まずに終わる。パイプ（execFileSync の input）だと、sh が先に終わったときに書き込みが EPIPE になり、execFileSync が投げる
+// （Linux の sh は起動が速く、CI で 100 回に 1 回ほど起きた。Claude Code は、入力を読まずに終わるフックを問題にしない）
+const runHook = (input: Record<string, unknown> = { hook_event_name: 'PostToolUse', tool_name: 'Bash' }) => {
+  const file = join(dir, 'hook-input.json');
+  writeFileSync(file, JSON.stringify(input));
+  const stdin = openSync(file, 'r');
+  try {
+    return execFileSync('sh', ['-c', AUTO_COMPACT_STOP_COMMAND], { env: { ...process.env, TANACODE_ASK_FILE: watcher.askFileFor(ID) }, encoding: 'utf8', stdio: [stdin, 'pipe', 'pipe'] });
+  } finally {
+    closeSync(stdin);
+  }
+};
 
 describe('ターンの終わり', () => {
   it('待機に戻ったときに、設定の大きさを超えていたら始める（報告して待つ）。超えていなければ始めない', () => {
