@@ -63,6 +63,8 @@
     "notification": {
       "browserAsk": "ブラウザでの操作の依頼: {message}",
       "turnCompleted": "作業が完了しました",
+      "compactCompleted": "コンテキストの最適化が完了しました",
+      "compactFailed": "コンテキストの最適化を取りやめました",
       "needsTerminal": "ターミナルでの操作が必要です",
       "question": "質問しています",
       "permission": "実行の許可: {detail}",
@@ -804,7 +806,7 @@
       "checklistLabel": "チェックリスト",
       "checklistTitle": "チェックリスト（Claude と一緒に見て、編集するリスト。会話が圧縮されても残る）",
       "contextLabel": "コンテキスト",
-      "contextTitle": "コンテキスト（今の会話に入っているものと大きさ。圧縮で残すもの・捨てるものを選ぶ）",
+      "contextTitle": "コンテキスト（今の会話に入っているものと大きさ）",
       "browserTip": "ブラウザを開く・閉じる\n開発中のページを開いて、要素を選んで Claude に直してもらえます",
       "browser": "ブラウザ",
       "terminalTip": "ターミナルを開く・閉じる（⌃`）",

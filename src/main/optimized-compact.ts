@@ -87,6 +87,8 @@ type Finalized = 'done' | 'again' | 'api-error' | CompactFailure;
 export class OptimizedCompact {
   private readonly phases = new Map<string, CompactPhase>();
   private readonly failures = new Map<string, CompactFailure>();
+  // アプリがターンの途中で止めて始めた流れが、進んでいるセッション
+  private readonly midTurns = new Set<string>();
   private readonly timings: Timings;
   private disposed = false;
 
@@ -113,11 +115,18 @@ export class OptimizedCompact {
     return this.phases.has(id);
   }
 
+  // アプリがターンの途中（ツールの切れ目）で止めて始めた流れが、進んでいるか。止めたターンの終わりは、作業の完了ではない
+  // （会話ログに書かれるのが、流れが始まったあとになることがある。main の compact-notice.ts）
+  stoppedMidTurn(id: string): boolean {
+    return this.midTurns.has(id);
+  }
+
   // 始める。使えない・もう進んでいるときは、何もしない。今の状態を返す。
   // auto: 自動で始めたとき（AutoCompact）。無ければ、人がボタンを押した
   start(id: string, auto: AutoCompactTrigger | null = null): CompactStatus {
     if (this.unavailable(id) || this.phases.has(id)) return this.status(id);
     this.failures.delete(id);
+    if (auto?.midTurn) this.midTurns.add(id);
     this.setPhase(id, 'finalizing');
     void this.run(id, auto)
       .catch((error: unknown) => {
@@ -126,6 +135,7 @@ export class OptimizedCompact {
       })
       .then((failure) => {
         this.phases.delete(id);
+        this.midTurns.delete(id);
         if (failure) this.failures.set(id, failure);
         this.deps.onFinish?.(id, failure, auto);
         this.deps.onChange(id, this.status(id));

@@ -19,6 +19,8 @@ const LONG_CARDS = Array.from({ length: 9 }, (_, i) => ({ title: `決定 ${i + 1
 const UP_TO_DATE = 'チェックリストは最新です';
 const HANDOFF_NOTICE = '最適化圧縮: 続きに要ることを、チェックリストに書くよう頼みました';
 const RESUME_NOTICE = '最適化圧縮: 会話を消して、チェックリストから再開しました';
+const WORK_DONE = '作業が完了しました';
+const COMPACT_DONE = 'コンテキストの最適化が完了しました';
 
 describe('最適化圧縮', () => {
   let app: E2EApp;
@@ -27,9 +29,22 @@ describe('最適化圧縮', () => {
   // （どちらの呼び出しが先に届くかは、そのときどき）
   const resumes = () => app.api.lastPrompts.filter((p) => p.includes(`<${RESUME_TAG}>`) && !p.startsWith('<session>'));
 
+  // main が出そうとした macOS の通知の本文（count 件になるまで待つ）
+  const notified = async (count: number) => {
+    const read = () => app.app.evaluate(() => (globalThis as { shownNotifications?: string[] }).shownNotifications ?? []);
+    const deadline = Date.now() + 30_000;
+    let shown = await read();
+    while (shown.length < count && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      shown = await read();
+    }
+    return shown;
+  };
+
   beforeAll(async () => {
     app = await E2EApp.launch({
       trusted: true,
+      appSettings: { notifications: true },
       conversations: () => [
         {
           match: PROMPT,
@@ -60,6 +75,15 @@ describe('最適化圧縮', () => {
           ],
         },
       ],
+    });
+    // 通知は出さずに、出そうとした本文を控える。見ているセッションの通知は、ウインドウが前にあると出さないので、後ろにあることにする
+    await app.app.evaluate(({ BrowserWindow, Notification }) => {
+      const shown: string[] = [];
+      (globalThis as { shownNotifications?: string[] }).shownNotifications = shown;
+      BrowserWindow.prototype.isFocused = () => false;
+      Notification.prototype.show = function show(this: { body: string }) {
+        shown.push(this.body);
+      };
     });
   });
 
@@ -101,6 +125,8 @@ describe('最適化圧縮', () => {
     expect(order.indexOf(RESUME_NOTICE)).toBeLessThan(order.indexOf(RESUMED));
     // 流れが終わると、ボタンがまた押せる
     await app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])').waitFor();
+    // 通知は、流れが最後まで終わったときの 1 回。仕上げのターンの終わり（このあと /clear）では、「作業が完了しました」を出さない
+    expect(await notified(2)).toEqual([WORK_DONE, COMPACT_DONE]);
   });
 
   it('再開の文には、「いまの状態」の中身と、前の会話の発言の原文が入る。要約は頼まない', () => {
@@ -138,6 +164,7 @@ describe('最適化圧縮', () => {
     expect(second).toContain(`## #1 ${STATE_CARD}\n${STATE_BODY}`);
     await app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])').waitFor();
     expect(await app.page.locator('.compact-status.failed').count()).toBe(0);
+    expect(await notified(3)).toEqual([WORK_DONE, COMPACT_DONE, COMPACT_DONE]);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

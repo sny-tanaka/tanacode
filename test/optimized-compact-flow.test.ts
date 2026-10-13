@@ -322,6 +322,25 @@ describe('自動で始めた流れ', () => {
     await finished();
     expect(compact.running(ID)).toBe(false);
   });
+
+  it('アプリがターンの途中で止めて始めた流れが進んでいるかを答える（止めたターンの終わりを、作業の完了として知らせないため）', async () => {
+    script();
+    expect(compact.stoppedMidTurn(ID)).toBe(false);
+    // 手動・ターンの終わりの自動では、止めたターンは無い
+    compact.start(ID);
+    expect(compact.stoppedMidTurn(ID)).toBe(false);
+    await finished();
+    script();
+    compact.start(ID, { percent: 85, midTurn: false });
+    expect(compact.stoppedMidTurn(ID)).toBe(false);
+    await finished();
+    script();
+    compact.start(ID, { percent: 91, midTurn: true });
+    expect(compact.stoppedMidTurn(ID)).toBe(true);
+    expect(compact.stoppedMidTurn('other')).toBe(false);
+    await finished();
+    expect(compact.stoppedMidTurn(ID)).toBe(false);
+  });
 });
 
 describe('会話を消さずに取りやめる', () => {

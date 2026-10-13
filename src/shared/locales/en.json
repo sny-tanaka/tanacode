@@ -63,6 +63,8 @@
     "notification": {
       "browserAsk": "Request to act in the browser: {message}",
       "turnCompleted": "Finished working",
+      "compactCompleted": "Finished optimizing the context",
+      "compactFailed": "Context optimization was canceled",
       "needsTerminal": "Action needed in the terminal",
       "question": "Claude has a question",
       "permission": "Permission needed: {detail}",
@@ -833,7 +835,7 @@
       "checklistLabel": "Checklist",
       "checklistTitle": "Checklist (a list you and Claude view and edit together; it survives compaction)",
       "contextLabel": "Context",
-      "contextTitle": "Context (what's in the current conversation and how much space it takes; choose what to keep or drop when compacting)",
+      "contextTitle": "Context (what's in the current conversation and how much space it takes)",
       "browserTip": "Toggle browser\nOpen the page you're developing, pick an element, and have Claude fix it",
       "browser": "Browser",
       "terminalTip": "Toggle terminal (⌃`)",

@@ -12,6 +12,7 @@ import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
 import { ChecklistControl } from './checklist-control';
 import { AutoCompact } from './auto-compact';
+import { CompactNotice } from './compact-notice';
 import { PRECOMPACT_HOOK_REQUEST } from './checklist-bridge';
 import { OptimizedCompact } from './optimized-compact';
 import { outwardHost } from './outward-state';
@@ -188,7 +189,8 @@ export class Profile {
         },
         onChat: (batch) => send(IpcChannel.ChatEvents, batch),
         onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
-        onTurnCompleted: (session) => notify(session.id, session.title, t('main.notification.turnCompleted')),
+        onTurnCompleted: (session, notice) =>
+          notify(session.id, session.title, t(notice === 'compact' ? 'main.notification.compactCompleted' : 'main.notification.turnCompleted')),
         onAttention: (session, attention) =>
           notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : t('main.notification.needsTerminal')),
         onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
@@ -217,6 +219,9 @@ export class Profile {
     const compacting = (id: string) => (this.compact?.running(id) ?? false) || (this.autoCompact?.stopping(id) ?? false);
     const outward = outwardHost(manager, compacting);
     manager.compactClearing = (id) => this.compact?.status(id).phase === 'clearing';
+    // 流れの途中のターンの終わりでは「作業が完了しました」を出さず、流れが最後まで終わったときに 1 回知らせる
+    const compactNotice = new CompactNotice((id) => (this.autoCompact?.stopping(id) ?? false) || (this.compact?.stoppedMidTurn(id) ?? false));
+    manager.turnNotice = (id, starter) => compactNotice.turnEnded(id, starter);
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,
@@ -236,6 +241,7 @@ export class Profile {
       const state = manager.stateOf(id);
       if (state === null || state === 'archived') this.scheduled.dropSession(id);
       if (state === null || state === 'archived') this.walkthroughControl?.discard(id);
+      if (state === null || state === 'archived' || state === 'exited') compactNotice.forget(id);
     });
     this.walkthroughControl = new WalkthroughControl({
       cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),
@@ -255,7 +261,11 @@ export class Profile {
         manager.notifyState(sessionId);
       },
       autoStatus: (id) => autoCompact.status(id),
-      onFinish: (id, failure, auto) => autoCompact.finished(id, failure, auto),
+      onFinish: (id, failure, auto) => {
+        autoCompact.finished(id, failure, auto);
+        // 仕上げのターン・アプリが止めたターンは終わっているのに、切り替えられなかった（そのターンの終わりでは、通知を出していない）
+        if (compactNotice.finished(id, failure)) notify(id, manager.summary(id)?.title ?? null, t('main.notification.compactFailed'));
+      },
     });
     this.compact = compact;
     // 最適化圧縮を、自動で始める（ターンの終わり・ツールの切れ目・Claude Code の自動の圧縮の前）
