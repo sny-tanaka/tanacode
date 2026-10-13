@@ -308,18 +308,41 @@ export class SessionManager {
   }
 
   // claude --worktree で、新しい worktree に分けて始める。名前はアプリが決め、セッションのフォルダは worktree のフォルダにする。
-  // Claude Code が worktree を作るのを待ってから返す（右パネルやエディタが、すぐ worktree を開けるように）。
+  // Claude Code が worktree を作るのは待たずに返す（起動してから作るまでに何秒かかかる。そのあいだ、新規セッションの画面を
+  // 止めないため。画面はすぐそのセッションに移り、準備の段階を出して待つ）。
+  // created: 作り終えたら true。作っている途中に人がアーカイブした・一覧から消したら false（記録はそのまま）。
   // 作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて失敗する
-  async createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null = null): Promise<string> {
+  async startInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null = null): Promise<{ id: string; created: Promise<boolean> }> {
     this.checkSettingsFile(options.settingsFile);
     const plan = await planWorktree(cwd);
     // 元のフォルダのソース管理に、worktree が未追跡として出ないようにする
     await hideWorktrees(plan.root).catch(() => {});
     const id = this.addRecord(plan.path, options, { name: plan.name, branch: plan.branch, root: plan.root }, parentId);
     this.start(id, options.mode);
-    const rt = this.runtimes.get(id);
-    if (rt?.worktreeCreated && (await rt.worktreeCreated)) return id;
-    const screen = rt?.screen?.text() ?? '';
+    return { id, created: this.untilWorktreeCreated(id) };
+  }
+
+  // worktree で始めて、Claude Code が worktree を作るまで待ってから返す（親の Claude が子セッションを始めるとき。
+  // 作れなかった理由を、ツールの結果として返せるように）
+  async createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null = null): Promise<string> {
+    const { id, created } = await this.startInWorktree(cwd, options, parentId);
+    if (!(await created)) throw new Error(t('main.worktree.closedWhileCreating'));
+    return id;
+  }
+
+  private async untilWorktreeCreated(id: string): Promise<boolean> {
+    let waiting = this.runtimes.get(id)?.worktreeCreated ?? null;
+    while (waiting) {
+      if (await waiting) return true;
+      // 作っている途中に起動し直していたら（再起動）、新しい起動のほうを待つ
+      const next = this.runtimes.get(id)?.worktreeCreated ?? null;
+      if (next === waiting) break;
+      waiting = next;
+    }
+    // 人がアーカイブした・一覧から消したのは、作れなかったのではない
+    const record = this.store.get(id);
+    if (!record || record.archived) return false;
+    const screen = this.runtimes.get(id)?.screen?.text() ?? '';
     await this.archive(id).catch(() => null);
     this.store.remove(id);
     this.emitSessions();
@@ -1290,19 +1313,23 @@ export class SessionManager {
     rt.process.start();
     if (creating) {
       const process = rt.process;
-      runtime.worktreeCreated = waitForWorktree(record.cwd, () => runtime.process === process).then((created) => {
-        if (created && runtime.process === process) {
+      // この起動が続いているか。終わった・起動し直した・アーカイブした（止めたときは、終了の知らせが来ない）ら、待つのをやめる
+      const alive = () => runtime.process === process && this.runtimes.get(id) === runtime;
+      const waiting: Promise<boolean> = waitForWorktree(record.cwd, alive).then((created) => {
+        if (created && alive()) {
           this.watch(runtime, record.cwd);
           // .git ができた時点では、git worktree add がまだファイルを書き出している（大きなリポジトリでは、git ls-files が空になる。実測）。
           // Claude Code は worktree を作り終えてから入力欄を出すので、それを待ってから node_modules を用意する
-          void this.untilScreenReady(runtime, process).then((ready) => {
+          void this.untilScreenReady(runtime, alive).then((ready) => {
             if (ready) void this.prepareWorktree(id, 'created');
           });
-        } else if (runtime.preparing === 'creating') {
+        } else if (runtime.worktreeCreated === waiting && runtime.preparing === 'creating') {
+          // 作っている途中に起動し直していたら、「作成中」は新しい起動のもの（消さない）
           runtime.preparing = null;
         }
         return created;
       });
+      runtime.worktreeCreated = waiting;
     }
     if (adopted) void this.catchUpStatusLine(id, rt.process);
     // 引き継いだ claude は前のアプリの頃から動いていて、会話もしている。画面から入力欄を読めるのを待たずに、起動済みとする
@@ -1312,10 +1339,10 @@ export class SessionManager {
     this.emitSessions();
   }
 
-  // Claude Code が入力欄を出すまで待つ。その前に終わった・起動し直したら false
-  private async untilScreenReady(rt: Runtime, process: ClaudeSession): Promise<boolean> {
+  // Claude Code が入力欄を出すまで待つ。その前に終わった・起動し直した・アーカイブしたら（alive が false）false
+  private async untilScreenReady(rt: Runtime, alive: () => boolean): Promise<boolean> {
     for (;;) {
-      if (rt.process !== process) return false;
+      if (!alive()) return false;
       if (rt.screen?.current.ready) return true;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

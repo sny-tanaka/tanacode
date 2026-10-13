@@ -347,6 +347,8 @@ const SessionManager = fakeClass('SessionManager', {
   list: () => [],
   create: echo('manager.create'),
   createInWorktree: echo('manager.createInWorktree'),
+  // worktree を作るのを待たずに返す。作り終えたことにする（作れなかった場合は、テストが created を差し替える）
+  startInWorktree: async () => ({ id: 'in-worktree', created: Promise.resolve(true) }),
   cwdOf: (_self, id: string) => `/sessions/${id}`,
   open: echo('manager.open'),
   childrenOf: () => [],

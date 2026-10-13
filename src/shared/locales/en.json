@@ -129,6 +129,7 @@
     "worktree": {
       "untrustedFolder": "Claude Code doesn't trust this folder yet. Start a session without a worktree once and accept the folder trust prompt, then start with a worktree.",
       "createFailed": "Claude Code couldn't create the worktree",
+      "closedWhileCreating": "The session was archived or removed from the list while its worktree was being created",
       "commandAt": "{command} ({dir})",
       "started": "Started in worktree .claude/worktrees/{name} (branch {branch})",
       "restored": "Recreated the deleted worktree .claude/worktrees/{name} (branch {branch})",
