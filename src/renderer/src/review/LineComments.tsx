@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { t } from '@shared/i18n';
 import { monaco } from '../editor/monaco';
+import { keepZoneEvents } from '../editor/zoneEvents';
 import { AddIcon, CloseIcon, IconButton, SendIcon, TrashIcon } from '../icons';
 import type { ReviewComment } from './comments';
 
@@ -150,10 +151,7 @@ export function LineComments({ editor, path, comments, onAdd, onRemove, onAsk }:
       for (const item of items) {
         const dom = document.createElement('div');
         dom.className = 'comment-zone';
-        // エディタにクリックやキー入力を取られないようにする
-        for (const type of ['mousedown', 'mouseup', 'click', 'keydown', 'wheel'] as const) {
-          dom.addEventListener(type, (e) => e.stopPropagation());
-        }
+        keepZoneEvents(dom);
         const zone: monaco.editor.IViewZone = { afterLineNumber: item.afterLine, heightInPx: 60, domNode: dom };
         const id = accessor.addZone(zone);
         zoneIds.current.set(item.key, id);
