@@ -275,12 +275,17 @@ describe('自動で切り替えたとき', () => {
   const tool = (id: string, name: string, target: string): ChatEvent => ({ type: 'tool-use', id, name, target, input: '' });
   const result = (id: string, isError = false): ChatEvent => ({ type: 'tool-result', id, isError });
 
-  it('仕上げの頼みは、アプリの仕上げの頼みの終わりに、自動であることを足す。ターンの途中で止めたときは、止めた場所を書くよう頼む', () => {
+  it('仕上げの頼みは、アプリの仕上げの頼みの書き出しを「自動」に替え、終わりに、自動であることを足す。ターンの途中で止めたときは、止めた場所を書くよう頼む', () => {
     const base = handoffText();
     const end = autoHandoffText({ percent: 83.4, midTurn: false });
-    expect(end.startsWith(base.slice(0, base.lastIndexOf(`</${HANDOFF_TAG}>`)))).toBe(true);
+    // 書き出しの「何で始まったか」だけが違う。「ボタンが押された」と書いたまま、終わりで「誰も押していない」と言わない（食い違う）
+    const PRESSED = '(the user pressed the "optimized compaction" button)';
+    expect(base).toContain(`instead of compacting it ${PRESSED}. Nothing from this conversation will be kept`);
+    expect(end).toContain('instead of compacting it (automatic; context 83% full). Nothing from this conversation will be kept');
+    expect(end).not.toContain('the user pressed');
+    expect(end.startsWith(base.slice(0, base.lastIndexOf(`</${HANDOFF_TAG}>`)).replace(PRESSED, '(automatic; context 83% full)'))).toBe(true);
     expect(end.endsWith(`\n</${HANDOFF_TAG}>`)).toBe(true);
-    expect(end).toContain('This reset is automatic (automatic; context 83% full): the user did not press anything');
+    expect(end).toContain('This reset is automatic: the user did not press anything and is not watching for a question.');
     expect(end).toContain('After the reset you will report what you carried over and wait for the user.');
     const mid = autoHandoffText({ percent: 91, midTurn: true });
     expect(mid).toContain('tanacode stopped your turn between tool calls, and after the reset you will continue the same work.');

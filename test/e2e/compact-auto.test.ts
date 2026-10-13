@@ -165,7 +165,8 @@ describe('最適化圧縮を自動で始める', () => {
     use(85);
     await app.send(NEXT);
     await app.waitUntil('自動の仕上げの頼み', () => handoffs().length === 1, 60_000);
-    expect(handoffs()[0]).toContain('This reset is automatic (automatic; context 85% full)');
+    expect(handoffs()[0]).toContain('instead of compacting it (automatic; context 85% full).');
+    expect(handoffs()[0]).toContain('This reset is automatic: the user did not press anything');
     expect(handoffs()[0]).toContain('After the reset you will report what you carried over and wait for the user.');
     await app.waitUntil('再開の文', () => resumes().length === 1, 60_000);
     const resume = resumes()[0];

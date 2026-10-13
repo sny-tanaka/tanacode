@@ -239,7 +239,8 @@ describe('自動で始めた流れ', () => {
     const auto = { percent: 83, midTurn: false };
     compact.start(ID, auto);
     expect((await finished()).failure).toBeNull();
-    expect(host.submitted[0]).toContain('This reset is automatic (automatic; context 83% full)');
+    expect(host.submitted[0]).toContain('instead of compacting it (automatic; context 83% full).');
+    expect(host.submitted[0]).toContain('This reset is automatic: the user did not press anything');
     expect(host.submitted[2]).toContain('(automatic; context 83% full). No summary was made.');
     expect(host.submitted[2]).toContain('Do not continue the work until the user tells you to.');
     expect(finishes).toEqual([{ failure: null, auto }]);
