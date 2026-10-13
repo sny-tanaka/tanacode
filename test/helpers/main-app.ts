@@ -189,7 +189,7 @@ function freshState() {
     // 終わったあとに起動し直す（app.relaunch）
     relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
-    dock: { setIcon: vi.fn((_path: string) => undefined) } as { setIcon: Mock } | undefined,
+    dock: { setIcon: vi.fn((_path: string) => undefined), hide: vi.fn(() => undefined) } as { setIcon: Mock; hide: Mock } | undefined,
     windows: [] as FakeWindow[],
     views: [] as FakeView[],
     displays: [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
