@@ -84,8 +84,11 @@ export class MockApi {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
+    // 本文は、かたまり（Buffer）を集めてから 1 度に文字にする。かたまりごとに文字にすると、かたまりの区切り（およそ 64 KiB ごと）に
+    // またがった 1 文字（日本語は 3 バイト）が、U+FFFD に化ける（4 万文字の再開の文で、Claude に届いた発言の 1 文字が化けて見えた）
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString('utf8');
     this.requests.push(`${req.method} ${req.url}`);
     const path = (req.url ?? '').split('?')[0];
     if (path === '/v1/messages/count_tokens') return json(res, { input_tokens: 100 });
