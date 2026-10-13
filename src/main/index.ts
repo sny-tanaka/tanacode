@@ -1057,7 +1057,7 @@ function setChecklistControl(item: MenuItem): void {
   }
 }
 
-// メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（トグルのツールチップの数字も変わる）
+// メニューの「自動で最適化圧縮する大きさ」。アプリ全体で 1 つ。選んだら、すぐ効く（自動のスイッチのツールチップの数字も変わる）
 function setAutoCompactPercent(percent: number): void {
   const profile = activeProfile();
   if (!profile) return;

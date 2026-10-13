@@ -177,7 +177,7 @@ describe('ヘッダー', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('「自動」のトグルで、このセッションの自動の最適化圧縮を切り替える。ツールチップに、始める大きさを出す', async () => {
+  it('最適化圧縮の枠の中のスイッチで、このセッションの自動の最適化圧縮を切り替える。ツールチップに、始める大きさを出す', async () => {
     api = mockApi({ 'compact.get': () => Promise.resolve({ phase: null, failure: null, unavailable: null, autoPercent: 60, autoPaused: false }) });
     api.install();
     const view = render(<ClaudePane {...props()} />);
@@ -185,23 +185,30 @@ describe('ヘッダー', () => {
     await act(async () => {});
     // 指定の無いセッション（新しいセッション）はオン
     expect(toggle().getAttribute('aria-checked')).toBe('true');
-    expect(toggle().textContent).toBe('自動');
-    expect(toggle().getAttribute('data-tip')).toContain('コンテキストが 60% を超えたら、自動で最適化圧縮する');
+    // スイッチに文字は出さない（何のスイッチかは、ツールチップと読み上げの名前で伝える）
+    expect(toggle().textContent).toBe('');
+    expect(toggle().getAttribute('data-tip')).toContain('自動: コンテキストが 60% を超えたら、自動で最適化圧縮する');
+    // 今すぐ始めるボタンと、同じ 1 つの枠に入っている
+    const capsule = screen.getByRole('group', { name: '最適化圧縮' });
+    expect(capsule.contains(toggle())).toBe(true);
+    expect(capsule.contains(screen.getByRole('button', { name: '最適化圧縮' }))).toBe(true);
+    expect(capsule.className).toBe('compact-capsule on');
     expect(toggle().getAttribute('data-tip')).toContain('オフにすると、Claude Code の自動の圧縮（要約）が動きます');
     fireEvent.click(toggle());
     expect(api.argsOf('sessions.setAutoCompact')).toEqual([['s1', false]]);
     view.rerender(<ClaudePane {...props({ session: { ...S1, autoCompact: false } })} />);
     expect(toggle().getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByRole('group', { name: '最適化圧縮' }).className).toBe('compact-capsule');
     fireEvent.click(toggle());
     expect(api.argsOf('sessions.setAutoCompact')).toEqual([['s1', false], ['s1', true]]);
   });
 
-  it('自動を休んでいるときは、ボタンの左に出す。オフのセッションでは出さない', async () => {
+  it('自動を休んでいるときは、枠の左に出す。オフのセッションでは出さない', async () => {
     render(<ClaudePane {...props()} />);
     await act(async () => api.emit('compact.onChanged', { sessionId: 's1', status: { phase: null, failure: null, unavailable: null, autoPercent: 80, autoPaused: true } }));
     const status = screen.getByRole('status');
     expect(status.textContent).toBe('自動の最適化圧縮を休んでいます');
-    expect(status.getAttribute('data-tip')).toContain('「自動」を入れ直すと戻ります');
+    expect(status.getAttribute('data-tip')).toContain('右のスイッチ（自動）を入れ直すと戻ります');
     cleanup();
     render(<ClaudePane {...props({ session: { ...S1, autoCompact: false } })} />);
     await act(async () => api.emit('compact.onChanged', { sessionId: 's1', status: { phase: null, failure: null, unavailable: null, autoPercent: 80, autoPaused: true } }));
@@ -218,7 +225,7 @@ describe('ヘッダー', () => {
     expect(compact().getAttribute('data-tip')).toBe('メニューの「Claude にチェックリストを扱わせる」をオンにすると使えます');
     fireEvent.click(compact());
     expect(api.argsOf('compact.start')).toEqual([]);
-    // 「自動」のトグルも押せず、同じ理由を出す（オンの指定でも、オフに見せる）
+    // 自動のスイッチも押せず、同じ理由を出す（オンの指定でも、オフに見せる）
     const toggle = screen.getByRole('switch', { name: '自動の最適化圧縮' }) as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
     expect(toggle.getAttribute('aria-checked')).toBe('false');

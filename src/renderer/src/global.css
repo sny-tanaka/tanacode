@@ -1337,6 +1337,36 @@ body.resizing-rows {
   align-items: center;
   gap: 6px;
 }
+/* 「最適化圧縮」の枠。今すぐ始めるボタン（左のアイコン）と、自動で始めるかのスイッチ（右）を、1 つの部品に見せる。
+   中は細い線で分ける。自動がオンなら、枠と線にも、スイッチと同じ色を付ける。高さは、並ぶアイコンのボタン（26px）にそろえる */
+.compact-capsule {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  transition: border-color 0.15s;
+}
+.compact-capsule.on {
+  border-color: var(--send-border);
+}
+.compact-capsule .icon-button.md {
+  width: 28px;
+  height: 24px;
+  border-radius: 6px 0 0 6px;
+}
+.compact-capsule .toggle {
+  padding: 0 7px;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0 6px 6px 0;
+  transition: border-color 0.15s;
+}
+.compact-capsule.on .toggle {
+  border-left-color: var(--send-border);
+}
+.compact-capsule .toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
 .compact-status {
   display: inline-flex;
   align-items: center;
