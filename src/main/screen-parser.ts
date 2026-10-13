@@ -323,19 +323,24 @@ export function promptRange(lines: ScreenLine[]): [number, number] | null {
 // 入力欄の下の罫線より下に出る行（モードの表示など）の数の上限
 const BELOW_PROMPT_LINES = 4;
 
-// 入力欄が画面より高く、先頭の行（❯）と上の罫線が画面の外に出ているときの、入力欄の行の範囲 [0, end)。そうでなければ null。
+// 入力欄が画面より高く、上の罫線（と、たいていは先頭の行 ❯ も）が画面の外に出ているときの、入力欄の行の範囲 [0, end)。そうでなければ null。
 // ログインして使う Claude Code（2.1.296）は、長い入力をすべて入力欄に出す。複数行の発言は行ごとに打つので、入力欄には文字のまま入り、
 // 画面（40 行）より長い文（親セッションからの長い指示・最適化圧縮の再開の文）では、画面が入力の続きの行（2 文字の字下げ）で埋まり、
 // いちばん下に罫線とモードの表示だけが残る。入力欄として読めないと「操作できない画面」になり、Enter を送れない。
 // ほかの画面（メニュー・巻き戻しの一覧）と取り違えないよう、それらに当てはまらなかったときだけ使う（ScreenTracker）
 export function tallPromptRange(lines: ScreenLine[]): [number, number] | null {
+  // 下の罫線は、行頭から始まる。入力の中の罫線のような行（「  ────…」。字下げがある）は、入力の文字
+  const rule = (l: ScreenLine) => l.text.startsWith('─') && PROMPT_RULE.test(l.text);
   // 罫線は 1 本だけ（下の罫線）
-  const end = lines.findIndex((l) => PROMPT_RULE.test(l.text));
-  if (end < 1 || lines.slice(end + 1).some((l) => PROMPT_RULE.test(l.text))) return null;
+  const end = lines.findIndex(rule);
+  if (end < 1 || lines.slice(end + 1).some(rule)) return null;
   if (lines.slice(end + 1).filter((l) => l.text.trim()).length > BELOW_PROMPT_LINES) return null;
   const above = lines.slice(0, end);
-  // 画面のいちばん上から罫線まで、入力の続きの行（字下げ 2 文字。空行は入力の中の空行）
-  return above[0].text.trim() !== '' && above.every((l) => l.text.trim() === '' || /^ {2}\S/.test(l.text) || /^ {3,}/.test(l.text)) ? [0, end] : null;
+  // 画面のいちばん上から罫線まで、入力の行。続きの行は字下げ 2 文字。空行は、入力の中の空行（いちばん上の行が空行のこともある。
+  // 再開の文は、4 行に 1 行ほどが空行）。いちばん上の行だけは、入力欄の最初の行（❯）でもよい（上の罫線だけが画面の外に出たとき）
+  const input = (l: ScreenLine, i: number) => l.text.trim() === '' || /^ {2}\S/.test(l.text) || /^ {3,}/.test(l.text) || (i === 0 && PROMPT_MARK.test(l.text));
+  // 空行だけの画面（描き直しの途中）は、入力欄としない
+  return above.some((l) => l.text.trim() !== '') && above.every(input) ? [0, end] : null;
 }
 
 // 起動時のバナー（「Opus 5 (1M context) · Claude Max」「Sonnet 5 with medium effort · Claude Max」など）。--resume ではバナーが出ない。
