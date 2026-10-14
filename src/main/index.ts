@@ -720,6 +720,7 @@ function registerIpc(): void {
   handle(IpcChannel.ClaudeVersionGet, () => claudeVersions.get());
   handle(IpcChannel.AppUpdateGet, () => withHomebrew(appUpdates.get()));
   handle(IpcChannel.AppUpdateInstall, () => installUpdate());
+  handle(IpcChannel.AppUpdateCheck, () => appUpdates.refresh());
   handle(IpcChannel.UsageRefresh, (e) => P(e).usage.refresh());
   handle(IpcChannel.AccountGet, (e) => readClaudeAccount(claudeJsonPath(P(e).claudeDir)));
   handle(IpcChannel.ProfilesGet, (e) => profilesState(P(e).id));

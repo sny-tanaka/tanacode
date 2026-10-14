@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
+import { mockApi } from '../../../../.storybook/mockApi';
 import { SEEN_KEY } from './AppUpdate';
 import { TitleBar } from './TitleBar';
 
@@ -26,8 +27,21 @@ export const 通知オフ: Story = { render: () => <Demo initial={false} /> };
 // 設定を読み込むまでは、ベルを出さない
 export const 読み込み中: Story = { args: { notifications: null } };
 
-// バージョンの横の印。最新ならチェック、新しいバージョンがあればダウンロードの印。マウスを乗せると説明が出る
-export const 最新バージョン: Story = { args: { update: { latest: __APP_VERSION__, available: false, url: '' } } };
+// 押したときの確かめ（main への問い合わせ）。GitHub に問い合わせるくらいの間をおいて、ok を返す
+const checkAnswers = (ok: boolean) => () => mockApi({ 'appUpdate.check': () => new Promise((resolve) => setTimeout(() => resolve(ok), 800)) });
+
+// バージョンの横の印。最新ならチェック、新しいバージョンがあればダウンロードの印。マウスを乗せると説明が出る。
+// チェックを押すと今すぐ確かめ、確かめている間はぐるぐる、最新のままならチェックを描き直す
+export const 最新バージョン: Story = {
+  beforeEach: checkAnswers(true),
+  args: { update: { latest: __APP_VERSION__, available: false, url: '' } },
+};
+
+// チェックを押して確かめられなかった（オフラインなど）ときは、失敗の印になる。もう一度押すと、また確かめる
+export const 最新バージョンで確かめられない: Story = {
+  beforeEach: checkAnswers(false),
+  args: { update: { latest: __APP_VERSION__, available: false, url: '' } },
+};
 
 // まだ見ていない新しいバージョンは、印が動き続ける（マウスを乗せると止まる。見るたびに動くよう、見た記録を消してから出す）
 export const 新しいバージョンあり: Story = {

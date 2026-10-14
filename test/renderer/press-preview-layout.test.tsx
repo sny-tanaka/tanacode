@@ -150,9 +150,63 @@ describe('新しいバージョンの印（AppUpdateMark）', () => {
     expect(opened).toEqual([]);
   });
 
-  it('最新なら押すものは出さない', () => {
-    render(<AppUpdateMark update={{ latest: '1.2.0', available: false, url: '' }} />);
-    expect(screen.queryByRole('button')).toBeNull();
+  describe('最新のチェック', () => {
+    const LATEST: AppUpdate = { latest: '1.2.0', available: false, url: '' };
+    // main の確かめ（appUpdate.check）の返事を、テストから決める
+    let answer: (ok: boolean) => void;
+    beforeEach(() => {
+      api = mockApi({ 'appUpdate.check': () => new Promise<boolean>((resolve) => (answer = resolve)) });
+      api.install();
+    });
+
+    it('押すと、今すぐ確かめる。確かめている間はぐるぐるで押せず、最新のままならチェックを描き直す', async () => {
+      render(<AppUpdateMark update={LATEST} />);
+      const button = screen.getByRole('button', { name: '最新バージョンです' });
+      expect(button.dataset.tip).toBe('最新バージョンです\n押すと、今すぐ確かめます');
+      fireEvent.click(button);
+      expect(api.argsOf('appUpdate.check')).toEqual([[]]);
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(button.getAttribute('aria-label')).toBe('新しいバージョンを確かめています');
+      expect(button.querySelector('.spinner')).not.toBeNull();
+
+      await act(async () => answer(true));
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+      expect(button.className).toContain('confirmed');
+      expect(button.querySelector('.spinner')).toBeNull();
+      expect(button.getAttribute('aria-label')).toBe('最新バージョンです');
+    });
+
+    it('確かめられなかったら失敗の印にし、押すともう一度確かめる', async () => {
+      render(<AppUpdateMark update={LATEST} />);
+      fireEvent.click(screen.getByRole('button', { name: '最新バージョンです' }));
+      await act(async () => answer(false));
+      const failed = screen.getByRole('button', { name: '新しいバージョンを確かめられませんでした（オフラインなど）' });
+      expect(failed.className).toContain('failed');
+      expect(failed.dataset.tip).toContain('押すと、もう一度確かめます');
+
+      fireEvent.click(failed);
+      expect(api.argsOf('appUpdate.check')).toEqual([[], []]);
+      await act(async () => answer(true));
+      expect(screen.getByRole('button', { name: '最新バージョンです' }).className).toContain('confirmed');
+    });
+
+    it('main に聞けなかったときも、確かめられなかったことにする', async () => {
+      api = mockApi({ 'appUpdate.check': () => Promise.reject(new Error('応答なし')) });
+      api.install();
+      render(<AppUpdateMark update={LATEST} />);
+      fireEvent.click(screen.getByRole('button', { name: '最新バージョンです' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: '新しいバージョンを確かめられませんでした（オフラインなど）' })).toBeTruthy());
+    });
+
+    it('確かめて新しいバージョンが見つかれば、ダウンロードの印に変わる', async () => {
+      const { rerender } = render(<AppUpdateMark update={LATEST} />);
+      fireEvent.click(screen.getByRole('button', { name: '最新バージョンです' }));
+      // main は、返事より先に新しい結果を知らせる
+      rerender(<AppUpdateMark update={update('1.3.0')} />);
+      await act(async () => answer(true));
+      expect(mark('1.3.0').className).toContain('calling');
+      expect(screen.queryByRole('button', { name: '最新バージョンです' })).toBeNull();
+    });
   });
 });
 
