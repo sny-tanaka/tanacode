@@ -16,7 +16,8 @@ import type { NoticeHost } from '../src/main/session-notices';
 
 // 決定事項（チェックで消えないリスト）。会話の圧縮で消えると困る「決まったこと」を残す場所。
 // - ふつうのリストは、チェックしたカードが毎回の知らせから消える。人が承認（チェック）した判断ほど、Claude に見えなくなっていた
-// - 決定事項のリストのカードはチェックが無く、有効なかぎり、毎回の知らせに出る。Claude は足すことと、理由つきの取り消しだけができる
+// - 決定事項のリストのカードはチェックが無く、有効なかぎり、毎回の知らせに出る。Claude は足すことと、理由つきの取り消し（ゴミ箱に入る）と、
+//   取り消したカードの削除だけができる
 // - 確認事項のリストで人がチェックしたカードは、決定事項に移る
 
 const S = 'session-1';
@@ -65,7 +66,8 @@ describe('リストの種類', () => {
 
   it('種類を変えられるのは人だけ。ふつうのリストに戻すと、取り消しの印は外す', () => {
     const { book, list, cards } = withDecisions();
-    book.revokeCards(S, 'claude', list.id, [cards[1].id], '四捨五入に変わった');
+    // 人が取り消したもの（Claude が取り消したものはゴミ箱に入るので、画面に残るのはこちら）
+    book.revokeCards(S, 'human', list.id, [cards[1].id], '四捨五入に変わった');
     expect(denied(() => book.updateList(S, 'claude', list.id, { kind: 'normal' }))).toBe('Only the user can change the kind of a list (in the side panel).');
     expect(list.kind).toBe('decisions');
     // 同じ種類を渡すだけなら断らない（名前だけを変える呼び出し）
@@ -78,13 +80,13 @@ describe('リストの種類', () => {
 });
 
 describe('決定事項のリスト（Claude ができること）', () => {
-  it('足すことはできる。チェック・書き換え・削除・外への移動・リストの削除は断り、取り消しを案内する', () => {
+  it('足すことはできる。チェック・書き換え・有効なカードの削除・外への移動・リストの削除は断り、取り消しを案内する', () => {
     const { book, list, cards } = withDecisions();
     const other = book.createList(S, 'claude', 'やること', '');
     const id = cards[0].id;
     expect(denied(() => book.setChecked(S, 'claude', list.id, [id], true))).toContain('have no checks');
     expect(denied(() => book.updateCard(S, 'claude', list.id, id, { title: '決済に触ってよい' }))).toContain('cannot rewrite its cards; only the user can');
-    expect(denied(() => book.deleteCards(S, 'claude', list.id, [id]))).toContain('cannot delete its cards');
+    expect(denied(() => book.deleteCards(S, 'claude', list.id, [id]))).toContain('You can delete only revoked cards from it, and #1 "決済には触らない" is in force.');
     expect(denied(() => book.moveCards(S, 'claude', list.id, [id], other.id))).toContain('cannot move its cards out');
     expect(denied(() => book.deleteList(S, 'claude', list.id))).toContain('cannot delete the list');
     expect(denied(() => book.updateCard(S, 'claude', list.id, id, { body: 'x' }))).toContain('card_revoke');
@@ -100,29 +102,57 @@ describe('決定事項のリスト（Claude ができること）', () => {
     expect(liveCards(list)).toHaveLength(3);
   });
 
-  it('取り消しは理由が要る。取り消したカードは残るが、有効なカードには数えない', () => {
+  // 直す前: Claude が取り消したカードは画面に残り続け、人が 1 枚ずつ消すしかなかった
+  it('取り消しは理由が要る。Claude が取り消したカードは、理由をスレッドに残してゴミ箱に入る（画面にたまらない）', () => {
     const { book, list, cards } = withDecisions();
     expect(denied(() => book.revokeCards(S, 'claude', list.id, [cards[1].id], '  '))).toBe('reason is required.');
     const revoked = book.revokeCards(S, 'claude', list.id, [cards[1].id], '経理の指示で四捨五入に変わった');
     expect(revoked).toHaveLength(1);
     expect(cards[1].revoked).toMatchObject({ by: 'claude', reason: '経理の指示で四捨五入に変わった' });
-    expect(liveCards(list)).toHaveLength(2);
+    expect(cards[1].deletedAt).toBeDefined();
+    expect(liveCards(list).map((c) => c.title)).toEqual(['決済には触らない']);
     expect(activeCards(list).map((c) => c.title)).toEqual(['決済には触らない']);
-    expect(cards[1].thread.at(-1)).toMatchObject({ kind: 'event', author: 'claude', event: { type: 'revoked', reason: '経理の指示で四捨五入に変わった' } });
+    expect(cards[1].thread.slice(-2)).toMatchObject([
+      { kind: 'event', author: 'claude', event: { type: 'revoked', reason: '経理の指示で四捨五入に変わった' } },
+      { kind: 'event', author: 'claude', event: { type: 'deleted' } },
+    ]);
     // 取り消し済みのものは、もう一度取り消さない
     expect(book.revokeCards(S, 'claude', list.id, [cards[1].id], '別の理由')).toEqual([]);
     expect(cards[1].revoked!.reason).toBe('経理の指示で四捨五入に変わった');
   });
 
-  it('取り消しを戻せるのは人だけ', () => {
+  it('Claude は、画面に残っている取り消したカード（人が取り消したもの・前のバージョンで取り消したもの）を消せる。有効なカードが混じれば、どれも消さない', () => {
+    const { book, list, cards } = withDecisions(['A', 'B', 'C']);
+    book.apply(S, { type: 'card-revoke', listId: list.id, cardIds: [cards[0].id, cards[1].id] });
+    expect(denied(() => book.deleteCards(S, 'claude', list.id, [cards[1].id, cards[2].id]))).toBe(
+      '"決定事項" is a decisions list: permanent, no checks. You can delete only revoked cards from it, and #3 "C" is in force. If a decision no longer holds, revoke it with card_revoke and a reason; that also moves it to the trash.',
+    );
+    expect(liveCards(list)).toHaveLength(3);
+    expect(book.deleteCards(S, 'claude', list.id, [cards[0].id, cards[1].id])).toHaveLength(2);
+    expect(liveCards(list).map((c) => c.title)).toEqual(['C']);
+    expect(cards[0].thread.at(-1)).toMatchObject({ author: 'claude', event: { type: 'deleted' } });
+    // 人は、ゴミ箱から戻せる（取り消したまま戻る）
+    book.apply(S, { type: 'card-restore', listId: list.id, cardIds: [cards[0].id] });
+    expect(cards[0].deletedAt).toBeUndefined();
+    expect(cards[0].revoked).toMatchObject({ by: 'human' });
+  });
+
+  it('取り消しを戻せるのは人だけ。Claude が取り消してゴミ箱に入ったカードは、人がゴミ箱から戻して、有効に戻す', () => {
     const { book, list, cards } = withDecisions();
     book.revokeCards(S, 'claude', list.id, [cards[0].id], '間違い');
     expect(denied(() => book.reinstateCards(S, 'claude', list.id, [cards[0].id]))).toContain('Only the user can reinstate');
+    expect(denied(() => book.restoreCards(S, 'claude', list.id, [cards[0].id]))).toContain('cannot restore its cards from the trash; only the user can');
     book.takeHumanActivity(S);
+    book.apply(S, { type: 'card-restore', listId: list.id, cardIds: [cards[0].id] });
     book.apply(S, { type: 'card-reinstate', listId: list.id, cardIds: [cards[0].id] });
+    expect(cards[0].deletedAt).toBeUndefined();
     expect(cards[0].revoked).toBeUndefined();
+    expect(activeCards(list).map((c) => c.title)).toEqual(['決済には触らない', '端数は切り捨て']);
     expect(cards[0].thread.at(-1)).toMatchObject({ author: 'human', event: { type: 'reinstated' } });
-    expect(book.takeHumanActivity(S)).toEqual(['The user reinstated #1 "決済には触らない" in "決定事項" (in force again)']);
+    expect(book.takeHumanActivity(S)).toEqual([
+      'The user restored #1 "決済には触らない" in "決定事項" from the trash',
+      'The user reinstated #1 "決済には触らない" in "決定事項" (in force again)',
+    ]);
   });
 
   // 人が消した決定を Claude が戻せると、その決定がまた有効になる（取り消しを戻せるのが人だけなのと同じ）
@@ -180,6 +210,8 @@ describe('決定事項のリスト（人ができること）', () => {
     expect(cards[0].title).toBe('A（直した）');
     book.apply(S, { type: 'card-revoke', listId: list.id, cardIds: [cards[1].id] });
     expect(cards[1].revoked).toMatchObject({ by: 'human', reason: '' });
+    // 人が取り消したものは、ゴミ箱に入れず、画面に残す
+    expect(cards[1].deletedAt).toBeUndefined();
     book.apply(S, { type: 'card-delete', listId: list.id, cardIds: [cards[2].id] });
     expect(cards[2].deletedAt).toBeDefined();
     // 外へ移すと、取り消しの印は外す（ふつうのリストに、取り消しは無い）
@@ -508,7 +540,7 @@ describe('MCP のツール', () => {
     expect(store.findList(ME, 'X')).toBeUndefined();
   });
 
-  it('決定事項のカードは、Claude のツールでは消せない・書き換えられない・チェックできない。断る文で card_revoke を案内する', async () => {
+  it('決定事項の有効なカードは、Claude のツールでは消せない・書き換えられない・チェックできない。断る文で card_revoke を案内する', async () => {
     await call('card_add', { list: '決定事項', list_description: '', list_kind: 'decisions', cards: [{ title: '決済には触らない' }] });
     for (const [name, args] of [
       ['card_delete', { list: '決定事項', numbers: '1' }],
@@ -537,22 +569,32 @@ describe('MCP のツール', () => {
     expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).not.toContain('決済には触らない');
   });
 
-  it('card_revoke: 理由つきで取り消す。理由が無ければ断る。一覧とカードに、取り消したことと理由が出る', async () => {
-    await call('card_add', { list: '決定事項', list_description: '決まったこと', list_kind: 'decisions', cards: [{ title: '決済には触らない' }, { title: '端数は切り捨て' }] });
+  it('card_revoke: 理由つきで取り消して、ゴミ箱に入れる。理由が無ければ断る。人が取り消して残っているものは、一覧とカードに理由が出て、card_delete で消せる', async () => {
+    await call('card_add', {
+      list: '決定事項',
+      list_description: '決まったこと',
+      list_kind: 'decisions',
+      cards: [{ title: '決済には触らない' }, { title: '端数は切り捨て' }, { title: '税率は 10%' }],
+    });
+    const list = store.findList(ME, '決定事項')!;
+    control.apply(ME, { type: 'card-revoke', listId: list.id, cardIds: [list.cards[2].id], reason: '税率は別の PR で' });
     const noReason = await call('card_revoke', { list: '決定事項', numbers: '2' });
     expect(noReason.isError).toBe(true);
     expect(first(noReason)).toBe('reason is required.');
-    expect(first(await call('card_revoke', { list: '決定事項', numbers: '2', reason: '経理の指示で\n四捨五入に変わった' }))).toBe(
-      'Revoked #2 in "決定事項" (no longer in force; the user still sees it, marked as revoked). 1 card in force in "決定事項".',
+    expect(first(await call('card_revoke', { list: '決定事項', numbers: '2,3', reason: '経理の指示で\n四捨五入に変わった' }))).toBe(
+      'Revoked #2 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). #3 was already revoked. 1 card in force in "決定事項".',
     );
-    expect(first(await call('card_revoke', { list: '決定事項', numbers: '2', reason: 'もう一度' }))).toBe('#2 was already revoked. 1 card in force in "決定事項".');
+    expect(list.cards[1]).toMatchObject({ revoked: { by: 'claude', reason: '経理の指示で\n四捨五入に変わった' }, deletedAt: expect.any(Number) });
     expect(first(await call('checklist_overview'))).toBe(
-      '## 決定事項 (decisions list: permanent, no checks; 1 in force, 1 revoked)\nDescription: 決まったこと\n- #1 決済には触らない\n- (revoked: 経理の指示で 四捨五入に変わった) #2 端数は切り捨て',
+      '## 決定事項 (decisions list: permanent, no checks; 1 in force, 1 revoked)\nDescription: 決まったこと\n- #1 決済には触らない\n- (revoked: 税率は別の PR で) #3 税率は 10%',
     );
-    const got = first(await call('card_get', { list: '決定事項', numbers: '1,2' }));
+    const got = first(await call('card_get', { list: '決定事項', numbers: '1,3' }));
     expect(got).toContain('## "決定事項" #1 決済には触らない\n- Status: in force');
-    expect(got).toMatch(/## "決定事項" #2 端数は切り捨て\n- Status: revoked, no longer in force \(by Claude, [\d: -]+: 経理の指示で\n四捨五入に変わった\)/);
-    expect(got).toContain('Claude revoked the card (経理の指示で\n四捨五入に変わった)');
+    expect(got).toMatch(/## "決定事項" #3 税率は 10%\n- Status: revoked, no longer in force \(by the user, [\d: -]+: 税率は別の PR で\)/);
+    expect(got).toContain('The user revoked the card (税率は別の PR で)');
+    // 人が取り消したものは、Claude が消せる。戻せるのは人だけ
+    expect(first(await call('card_delete', { list: '決定事項', numbers: '3' }))).toBe('Moved #3 in "決定事項" to the trash (the user can restore it in the app).');
+    expect(first(await call('checklist_overview'))).toBe('## 決定事項 (decisions list: permanent, no checks; 1 in force)\nDescription: 決まったこと\n- #1 決済には触らない');
   });
 
   it('ふつうのリストでの card_revoke は断る。確認事項の一覧には、承認で移ることを書く', async () => {
@@ -577,8 +619,9 @@ describe('MCP のツール', () => {
     // Claude が取り消すと、有効な決定としては出なくなる
     await call('card_revoke', { list: '決定事項', numbers: '1', reason: 'ユーザーが切り捨てに戻した' });
     expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).not.toContain('端数は四捨五入にした');
-    // 人が戻すと、また出る
+    // 人がゴミ箱から戻して、有効に戻すと、また出る
     const decisions = store.findList(ME, '決定事項')!;
+    control.apply(ME, { type: 'card-restore', listId: decisions.id, cardIds: [decisions.cards[0].id] });
     control.apply(ME, { type: 'card-reinstate', listId: decisions.id, cardIds: [decisions.cards[0].id] });
     expect(first(await call('hook:prompt', { turn: 0, checklist: 0 }))).toContain('- #1 端数は四捨五入にした');
   });
@@ -590,6 +633,8 @@ describe('MCP のツール', () => {
     expect(CHECKLIST_MCP_INSTRUCTIONS).toContain('card_revoke');
     const tool = (name: string) => CHECKLIST_TOOLS.find((t) => t.name === name)!;
     expect(tool('card_revoke').inputSchema.required).toEqual(['list', 'numbers', 'reason']);
+    expect(tool('card_revoke').description).toContain('move to the trash');
+    expect(tool('card_delete').description).toContain('On a decisions list, you can delete only revoked cards');
     expect(tool('list_create').inputSchema.properties.kind).toMatchObject({ enum: ['decisions', 'state', 'review'] });
     expect(tool('card_add').inputSchema.properties.list_kind).toMatchObject({ enum: ['decisions', 'state', 'review'] });
   });
