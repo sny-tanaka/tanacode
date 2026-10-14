@@ -162,6 +162,7 @@ export class ChecklistBook {
     const list = this.list(doc, listId);
     if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(lockedMessage(list, 'delete the list'));
     list.deletedAt = this.now();
+    list.deletedBy = author;
     this.log(doc, author, `moved the list "${list.name}" to the trash`);
     this.changed(sessionId);
   }
@@ -172,6 +173,7 @@ export class ChecklistBook {
     if (!list?.deletedAt) return;
     if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(`${lockedMessage(list, 'restore the list from the trash')} ${ADD_AGAIN}`);
     delete list.deletedAt;
+    delete list.deletedBy;
     // 戻している間に同じ名前のリストを作っていれば、名前を変えて戻す
     list.name = this.freeName(doc, list.name, list.id);
     this.log(doc, author, `restored the list "${list.name}" from the trash`);
@@ -238,9 +240,9 @@ export class ChecklistBook {
     return card;
   }
 
-  // comment: チェックと一緒にスレッドに書く返信（どう確かめたか・なぜ外したか）。
+  // comment: チェックと一緒にスレッドに書く返信（どう確かめたか・なぜ外したか）。read は reply と同じ。
   // 確認事項のリストで人がチェックした（承認した）カードは、決定事項のリストに移す（チェックで知らせから消えないように）
-  setChecked(sessionId: string, author: Author, listId: string, cardIds: string[], checked: boolean, comment?: string): Card[] {
+  setChecked(sessionId: string, author: Author, listId: string, cardIds: string[], checked: boolean, comment?: string, read = true): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     if (!traitsOf(list).checkable) {
@@ -263,7 +265,7 @@ export class ChecklistBook {
       }
       this.event(card, author, { type: checked ? 'checked' : 'unchecked' });
     }
-    if (comment?.trim()) for (const card of cards) this.addReply(card, author, comment.trim(), false);
+    if (comment?.trim()) for (const card of cards) this.addReply(card, author, comment.trim(), false, read);
     if (changed.length > 0) {
       this.log(doc, author, `${checked ? 'checked' : 'unchecked'} ${cardRefs(changed)} in "${list.name}"${comment?.trim() ? ` (${comment.trim()})` : ''}`);
     }
@@ -325,13 +327,15 @@ export class ChecklistBook {
     return cards;
   }
 
-  reply(sessionId: string, author: Author, listId: string, cardId: string, rawText: string, notify = false): Card {
+  // read: 書いた人が、それまでの返信を読んだことにする。親の Claude が子のカードに書くときは false
+  // （そのセッションの Claude は、人の返信をまだ読んでいない）
+  reply(sessionId: string, author: Author, listId: string, cardId: string, rawText: string, notify = false, read = true): Card {
     const text = rawText.trim();
     if (!text) throw new ChecklistError(t('checklist.errors.emptyReply'));
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
     const card = this.card(list, cardId);
-    this.addReply(card, author, text, notify);
+    this.addReply(card, author, text, notify, read);
     this.log(doc, author, `replied to "${list.name}" #${card.number} "${card.title}": ${clip(text, 200)}`);
     this.changed(sessionId);
     return card;
@@ -538,13 +542,13 @@ export class ChecklistBook {
     card.updatedAt = at;
   }
 
-  private addReply(card: Card, author: Author, text: string, notify: boolean): void {
+  private addReply(card: Card, author: Author, text: string, notify: boolean, read: boolean): void {
     const at = this.now();
     card.thread.push({ id: crypto.randomUUID(), at, author, kind: 'reply', text, ...(notify ? { notify } : {}) });
     card.updatedAt = at;
     // 自分の返信までは読んでいる
     if (author === 'human') card.readByHuman = at;
-    else card.readByClaude = at;
+    else if (read) card.readByClaude = at;
   }
 
   // text: 主語に続ける文（"added #1 "A" to "To-do"" など）

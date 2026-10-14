@@ -393,6 +393,8 @@
       "card_move": "Move Card",
       "card_delete": "Delete Card",
       "card_restore": "Restore Card",
+      "checklist_trash": "Read Trash",
+      "list_restore": "Restore List",
       "cards_copy": "Copy to Another Session"
     },
     "walkthrough": {

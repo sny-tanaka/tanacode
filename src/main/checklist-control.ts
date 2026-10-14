@@ -8,9 +8,12 @@ import {
   kindOf,
   liveCards,
   liveLists,
+  nameKey,
   parseNumbers,
   progressOf,
   traitsOf,
+  trashOf,
+  type Author,
   type Card,
   type Checklist,
   type ChecklistCopyRequest,
@@ -31,6 +34,8 @@ import { SessionNotices, type NoticeHost } from './session-notices';
 // 呼び出し元のセッションは中継の env で渡ってくる。リストは名前で、カードはリストの中の番号で指す。
 // 人がスレッドに「Claude に通知する」で返信したとき・ほかのセッションからカードが届いたときは、手の空いた Claude に知らせる。
 // 別のセッションとのコピーは、tanacode-sessions と同じく見えるセッション（同じフォルダ・親子・兄弟）のあいだだけ。
+// ほかのセッションのチェックリストも、session_id で、見えるセッションのものは読めて、自分の子のものは書き換えられる。
+// 書き換えても、そのセッションの Claude には知らせない（要れば親が send_message で伝える）。
 // Claude に返す結果とエラーは英語で書く（画面の言語によらない）。人も見る知らせと、画面からのコピーを断る理由は画面の言語（t()）
 
 type Deps = {
@@ -124,7 +129,7 @@ export class ChecklistControl {
     this.usedAt.set(caller.id, Date.now());
     let result: ToolResult;
     try {
-      result = textResult(this.run(caller, name, args));
+      result = textResult(this.runFor(caller, name, args));
     } catch (error) {
       if (!(error instanceof ChecklistError)) throw error;
       result = textResult(error.message, true);
@@ -172,20 +177,39 @@ export class ChecklistControl {
     return checklistReminder(event, this.deps.store.lists(caller.id), activity, !!caller.parentId) ?? '';
   }
 
-  private run(caller: SessionSummary, name: string, args: Record<string, unknown>): string {
+  // 対象のセッション（session_id）を決めてから実行する。ほかのセッションのものは、結果と断る文の頭にセッションを書く
+  private runFor(caller: SessionSummary, name: string, args: Record<string, unknown>): string {
+    const target = this.targetArg(caller, name, args.session_id);
+    if (target.id === caller.id) return this.run(caller, target, name, args);
+    const where = `Session "${nameOf(target)}" (${target.id.slice(0, 8)})`;
+    try {
+      const text = this.run(caller, target, name, args);
+      return checklistTool(name)?.kind === 'read' ? `# ${where}\n\n${text}` : `${where}: ${text}`;
+    } catch (error) {
+      if (error instanceof ChecklistError) throw new ChecklistError(`${where}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // target: チェックリストを読む・書き換えるセッション（ほとんどは呼び出し元）
+  private run(caller: SessionSummary, target: SessionSummary, name: string, args: Record<string, unknown>): string {
     const { store } = this.deps;
-    const id = caller.id;
+    const id = target.id;
+    // ほかのセッションのものを読んでも書いても、そのセッションの Claude が読んだことにはしない（未読の数も出さない）
+    const own = id === caller.id;
     switch (name) {
       case 'checklist_overview':
-        return overview(store.lists(id));
+        return overview(store.lists(id), own);
       case 'card_get': {
         const list = this.listArg(id, args.list);
         const cards = this.cardsArg(list, args.numbers);
         // 未読の印を付けて返してから、読んだことにする
-        const text = clip(cards.map((c) => cardText(list, c)).join('\n\n---\n\n'), MAX_RESULT_CHARS);
-        for (const card of cards) store.markRead(id, 'claude', list.id, card.id);
+        const text = clip(cards.map((c) => cardText(list, c, own)).join('\n\n---\n\n'), MAX_RESULT_CHARS);
+        if (own) for (const card of cards) store.markRead(id, 'claude', list.id, card.id);
         return text;
       }
+      case 'checklist_trash':
+        return clip(trashText(store.lists(id)), MAX_RESULT_CHARS);
       case 'list_create': {
         const list = store.createList(id, 'claude', stringArg(args.name, 'name'), optionalString(args.description) ?? '', kindArg(args.kind, 'kind'));
         return `Created the list "${list.name}"${kindNote(list)}.`;
@@ -198,7 +222,25 @@ export class ChecklistControl {
       case 'list_delete': {
         const list = this.listArg(id, args.list);
         store.deleteList(id, 'claude', list.id);
-        return `Moved the list "${list.name}" to the trash (the user can restore it in the app).`;
+        return `Moved the list "${list.name}" to the trash (restore it with list_restore).`;
+      }
+      case 'list_restore': {
+        const list = this.trashedListArg(id, args.list);
+        const before = list.name;
+        // 決定事項のリストは、book が断る（戻せるのは人だけ）
+        store.restoreList(id, 'claude', list.id);
+        const cards = liveCards(list);
+        // リストより前に 1 枚ずつ消したカードは、ゴミ箱に残る
+        const left = list.cards.length - cards.length;
+        return [
+          `Restored the list "${list.name}" from the trash with ${cardCount(cards.length)}${cards.length > 0 ? ` (${claudeNumbers(cards.map((c) => c.number))})` : ''}.`,
+          list.name !== before ? `A list named "${before}" already exists, so the restored list is named "${list.name}".` : '',
+          left > 0
+            ? `${cardCount(left)} deleted before the list ${left === 1 ? 'stays' : 'stay'} in the trash (restore ${left === 1 ? 'it' : 'them'} with card_restore; checklist_trash shows ${left === 1 ? 'it' : 'them'}).`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
       }
       case 'card_add': {
         const raw = Array.isArray(args.cards) ? (args.cards as { title?: unknown; body?: unknown }[]) : [];
@@ -229,7 +271,7 @@ export class ChecklistControl {
         const list = this.listArg(id, args.list);
         const cards = this.cardsArg(list, args.numbers);
         const comment = check ? optionalString(args.comment) : stringArg(args.reason, 'reason');
-        const changed = store.setChecked(id, 'claude', list.id, cards.map((c) => c.id), check, comment);
+        const changed = store.setChecked(id, 'claude', list.id, cards.map((c) => c.id), check, comment, own);
         const same = cards.filter((c) => !changed.includes(c));
         const done = changed.length > 0 ? `${check ? 'Checked' : 'Unchecked'} ${claudeNumbers(changed.map((c) => c.number))} in "${list.name}".` : '';
         const skipped = same.length > 0 ? `${claudeNumbers(same.map((c) => c.number))} ${same.length === 1 ? 'was' : 'were'} already ${check ? 'checked' : 'unchecked'}.` : '';
@@ -255,18 +297,25 @@ export class ChecklistControl {
       case 'card_reply': {
         const list = this.listArg(id, args.list);
         const [card] = this.cardsArg(list, args.number);
-        store.reply(id, 'claude', list.id, card.id, stringArg(args.text, 'text'));
+        store.reply(id, 'claude', list.id, card.id, stringArg(args.text, 'text'), false, own);
         return `Replied in the thread of "${list.name}" #${card.number}.`;
       }
       case 'card_move': {
         const list = this.listArg(id, args.list);
+        // numbers に書いた順に並べる（parseNumbers は順番を保つ）
         const cards = this.cardsArg(list, args.numbers);
-        const toName = stringArg(args.to_list, 'to_list');
-        const to = store.findList(id, toName) ?? store.createList(id, 'claude', toName, '');
-        if (to.id === list.id) throw new ChecklistError('The destination is the same list.');
-        const before = cards.map((c) => c.number);
-        const moved = store.moveCards(id, 'claude', list.id, cards.map((c) => c.id), to.id);
-        return `Moved ${claudeNumbers(before)} from "${list.name}" to "${to.name}" (new ${moved.length === 1 ? 'number' : 'numbers'}: ${claudeNumbers(moved.map((c) => c.number))}).`;
+        // to_list を省くと、同じリストの中で並べ替える（番号はそのまま）
+        const toName = optionalString(args.to_list)?.trim() || null;
+        const found = toName === null ? list : store.findList(id, toName);
+        const anchor = this.beforeArg(found, toName, args.before, cards);
+        const to = found ?? store.createList(id, 'claude', toName ?? '', '');
+        const from = cards.map((c) => c.number);
+        const moved = store.moveCards(id, 'claude', list.id, cards.map((c) => c.id), to.id, anchor?.id ?? null);
+        const where = anchor ? `before #${anchor.number}` : 'at the end';
+        const order = `Order of "${to.name}" now: ${sequence(liveCards(to).map((c) => c.number))}.`;
+        if (to.id === list.id) return `Put ${sequence(from)} in "${list.name}" ${where} (the numbers stay). ${order}`;
+        const numbers = `new ${moved.length === 1 ? 'number' : 'numbers'}: ${sequence(moved.map((c) => c.number))}`;
+        return `Moved ${sequence(from)} from "${list.name}" to "${to.name}"${anchor ? ` ${where}` : ''} (${numbers}).${anchor ? ` ${order}` : ''}`;
       }
       case 'card_delete': {
         const list = this.listArg(id, args.list);
@@ -331,8 +380,46 @@ export class ChecklistControl {
   private listArg(sessionId: string, raw: unknown): Checklist {
     const name = stringArg(raw, 'list');
     const list = this.deps.store.findList(sessionId, name);
-    if (!list) throw new ChecklistError(`There is no list "${name}". ${listNames(this.deps.store.lists(sessionId))}`);
-    return list;
+    if (list) return list;
+    const lists = this.deps.store.lists(sessionId);
+    // ゴミ箱にあるリストなら、先に戻すよう伝える（決定事項のリストを戻せるのは人だけ）
+    const trashed = trashOf(lists).lists.find((l) => nameKey(l.name) === nameKey(name));
+    const hint = !trashed
+      ? ''
+      : traitsOf(trashed).locked
+        ? ` The list "${trashed.name}" is in the trash, and only the user can restore it.`
+        : ` The list "${trashed.name}" is in the trash: restore it first with list_restore.`;
+    throw new ChecklistError(`There is no list "${name}".${hint} ${listNames(lists)}`);
+  }
+
+  // ゴミ箱のリスト。名前か、checklist_trash の id（頭の 8 文字から）で指す。同じ名前のものがいくつもあれば、id を頼む
+  private trashedListArg(sessionId: string, raw: unknown): Checklist {
+    const ref = stringArg(raw, 'list').trim();
+    const lists = this.deps.store.lists(sessionId);
+    const trashed = trashOf(lists).lists;
+    const byName = trashed.filter((l) => nameKey(l.name) === nameKey(ref));
+    const byId = /^[0-9a-f-]{8,}$/i.test(ref) ? trashed.filter((l) => l.id.startsWith(ref.toLowerCase())) : [];
+    const found = byName.length > 0 ? byName : byId;
+    if (found.length === 1) return found[0];
+    if (found.length > 1) {
+      throw new ChecklistError(`More than one list in the trash matches "${ref}" (ids: ${found.map((l) => l.id.slice(0, 8)).join(', ')}). Pass the id from checklist_trash.`);
+    }
+    if (this.deps.store.findList(sessionId, ref)) throw new ChecklistError(`The list "${ref}" is not in the trash.`);
+    const names = trashed.map((l) => `"${l.name}" (${l.id.slice(0, 8)})`);
+    throw new ChecklistError(`There is no list "${ref}" in the trash. ${names.length > 0 ? `Lists in the trash: ${names.join(', ')}.` : 'The trash has no lists.'}`);
+  }
+
+  // card_move の before（移す先のリストの番号）のカード。省くと null（最後に入れる）。
+  // 移すカードそのものを指したら、そこから後ろの、移さない最初のカードの前に入れる（無ければ最後）
+  private beforeArg(to: Checklist | undefined, toName: string | null, raw: unknown, moving: Card[]): Card | null {
+    if (raw === undefined || raw === null) return null;
+    const [number, ...rest] = parseNumbers(raw) ?? [];
+    if (number === undefined || rest.length > 0) throw new ChecklistError('before must be one card number, like 3.');
+    if (!to) throw new ChecklistError(`There is no list "${toName}" yet, so there is no #${number} to put the cards before. Omit before to create the list.`);
+    const live = liveCards(to);
+    const at = live.findIndex((c) => c.number === number);
+    if (at < 0) throw new ChecklistError(`#${number} is not in "${to.name}". Check the numbers with checklist_overview.`);
+    return live.slice(at).find((c) => !moving.includes(c)) ?? null;
   }
 
   // 番号の指定から、カード（ゴミ箱のものは trashed のときだけ）。無い番号があれば、そう返す
@@ -359,19 +446,36 @@ export class ChecklistControl {
     if (matches.length > 1) throw new ChecklistError(`More than one session has an ID starting with ${id}. Pass a longer ID.`);
     return matches[0];
   }
+
+  // ツールの対象のセッション（session_id を受けるツールだけ。cards_copy は、コピー元と先を自分で決める）。
+  // 読めるのは見えるセッション（tanacode-sessions と同じ）、書き換えられるのは自分の子だけ（アーカイブしたものは除く）
+  private targetArg(caller: SessionSummary, name: string, raw: unknown): SessionSummary {
+    const tool = checklistTool(name);
+    if (!tool?.inputSchema.properties.session_id) return caller;
+    const target = this.sessionArg(caller, raw);
+    if (target.id === caller.id || tool.kind === 'read') return target;
+    if (target.parentId !== caller.id) {
+      throw new ChecklistError(
+        `You can read the checklists of session "${nameOf(target)}" (${target.id.slice(0, 8)}), but you can change only those of this session and of your child sessions.`,
+      );
+    }
+    if (target.archived) throw new ChecklistError(`Can't change the checklists of "${nameOf(target)}" because it is an archived session.`);
+    return target;
+  }
 }
 
 // --- 結果の文 ---
 
-function overview(lists: Checklist[]): string {
+// own: 呼び出し元のセッションのもの（ほかのセッションのものには、未読の数を出さない。未読は、そのセッションの Claude にとってのもの）
+function overview(lists: Checklist[], own: boolean): string {
   const live = liveLists(lists);
-  if (live.length === 0) return 'This session has no checklists yet. You can create one with list_create.';
+  if (live.length === 0) return own ? 'This session has no checklists yet. You can create one with list_create.' : 'No checklists yet.';
   return live
     .map((list) => {
       const traits = traitsOf(list);
       const { done, total } = progressOf(list);
       const cards = liveCards(list).map((c) => {
-        const unread = claudeUnread(c);
+        const unread = own ? claudeUnread(c) : 0;
         // チェックの無いリストは、チェック欄の代わりに、取り消したかどうかを出す
         const mark = traits.checkable ? `[${c.checked ? 'x' : ' '}] ` : c.revoked ? `(revoked${c.revoked.reason ? `: ${oneLine(c.revoked.reason, 200)}` : ''}) ` : '';
         return `- ${mark}#${c.number} ${c.title}${unread > 0 ? ` (${unread} unread ${unread === 1 ? 'reply' : 'replies'})` : ''}`;
@@ -387,7 +491,8 @@ function overview(lists: Checklist[]): string {
     .join('\n\n');
 }
 
-function cardText(list: Checklist, card: Card): string {
+// own は overview と同じ（ほかのセッションのカードには、未読の印を付けない）
+function cardText(list: Checklist, card: Card, own: boolean): string {
   const checked = card.checked ? `checked (by ${card.checkedBy === 'claude' ? 'Claude' : 'the user'}, ${time(card.checkedAt ?? 0)})` : 'not checked';
   const revoked = card.revoked
     ? `revoked, no longer in force (by ${card.revoked.by === 'claude' ? 'Claude' : 'the user'}, ${time(card.revoked.at)}${card.revoked.reason ? `: ${card.revoked.reason}` : ''})`
@@ -397,7 +502,7 @@ function cardText(list: Checklist, card: Card): string {
   const thread = card.thread.map((e) => {
     const who = e.author === 'human' ? 'The user' : 'Claude';
     if (e.kind === 'event') return `- ${time(e.at)} ${eventText(e.event, who)}`;
-    const unread = e.author === 'human' && e.at > card.readByClaude ? ' (unread)' : '';
+    const unread = own && e.author === 'human' && e.at > card.readByClaude ? ' (unread)' : '';
     return `- ${time(e.at)} ${who} replied${unread}:\n${indent(e.text)}`;
   });
   return [
@@ -411,6 +516,61 @@ function cardText(list: Checklist, card: Card): string {
     '### Thread',
     ...thread,
   ].join('\n');
+}
+
+// ゴミ箱の中身（画面のゴミ箱と同じもの）。決定事項のものには、戻せるのは人だけと添える
+function trashText(lists: Checklist[]): string {
+  const trash = trashOf(lists);
+  if (trash.lists.length === 0 && trash.cards.length === 0) return 'The trash is empty.';
+  const sections: string[] = [];
+  if (trash.lists.length > 0) {
+    const items = trash.lists.map((list) => {
+      const cards = liveCards(list);
+      // リストより前に 1 枚ずつ消したカード。リストを戻しても、ゴミ箱に残る
+      const earlier = list.cards.length - cards.length;
+      const restore = traitsOf(list).locked ? 'only the user can restore it' : 'restore it with list_restore';
+      const head = `- "${list.name}" (id ${list.id.slice(0, 8)}; ${kindName(list)}; deleted${deleted(list.deletedBy, list.deletedAt)}; ${restore}): ${cardCount(cards.length)}`;
+      const rest = earlier > 0 ? [`  - (${cardCount(earlier)} deleted before the list ${earlier === 1 ? 'stays' : 'stay'} in the trash after list_restore)`] : [];
+      return [head, ...cards.map((c) => `  - #${c.number} ${c.title}`), ...rest].join('\n');
+    });
+    sections.push(['## Lists in the trash', ...items].join('\n'));
+  }
+  if (trash.cards.length > 0) {
+    const items = trash.cards.map(({ list, card }) => {
+      // 消した人は、スレッドの最後の「消した」の記録
+      const by = card.thread.filter((e) => e.kind === 'event' && e.event.type === 'deleted').at(-1)?.author;
+      const notes = [`deleted${deleted(by, card.deletedAt)}`, ...(card.revoked ? ['revoked'] : []), ...(traitsOf(list).locked ? ['only the user can restore it'] : [])];
+      return `- "${list.name}" #${card.number} ${card.title} (${notes.join('; ')})`;
+    });
+    sections.push(['## Cards in the trash (restore them with card_restore)', ...items].join('\n'));
+  }
+  return sections.join('\n\n');
+}
+
+// 「deleted by Claude, 2026-10-15 10:00」の「 by Claude, 2026-10-15 10:00」（消した人が分からないものは時刻だけ）
+function deleted(by: Author | undefined, at: number | undefined): string {
+  return `${by ? ` by ${by === 'claude' ? 'Claude' : 'the user'},` : ''} ${time(at ?? 0)}`;
+}
+
+function kindName(list: Checklist): string {
+  const kind = kindOf(list);
+  return kind === 'normal' ? 'ordinary list' : `${kind} list`;
+}
+
+function cardCount(count: number): string {
+  return `${count} ${count === 1 ? 'card' : 'cards'}`;
+}
+
+// 番号を並びのまま書く（[5, 6, 7, 2] → "#5-7, #2"）。並べ替えの結果に使う（claudeNumbers は小さい順に並べ直す）
+function sequence(numbers: number[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < numbers.length; i++) {
+    let j = i;
+    while (j + 1 < numbers.length && numbers[j + 1] === numbers[j] + 1) j++;
+    parts.push(j - i >= 2 ? `#${numbers[i]}-${numbers[j]}` : numbers.slice(i, j + 1).map((n) => `#${n}`).join(', '));
+    i = j;
+  }
+  return parts.join(', ');
 }
 
 // 作ったリストの種類（ふつうのリストでは何も足さない）

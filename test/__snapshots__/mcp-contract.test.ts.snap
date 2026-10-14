@@ -372,12 +372,18 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
     "mcp__tanacode-checklist__card_move",
     "mcp__tanacode-checklist__card_delete",
     "mcp__tanacode-checklist__card_restore",
+    "mcp__tanacode-checklist__checklist_trash",
+    "mcp__tanacode-checklist__list_restore",
     "mcp__tanacode-checklist__cards_copy",
   ],
   "tools": [
     {
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+        },
         "type": "object",
       },
       "kind": "read",
@@ -391,6 +397,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
             "type": "string",
           },
           "numbers": {
+            "type": "string",
+          },
+          "session_id": {
             "type": "string",
           },
         },
@@ -421,6 +430,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "name": {
             "type": "string",
           },
+          "session_id": {
+            "type": "string",
+          },
         },
         "required": [
           "name",
@@ -444,6 +456,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "name": {
             "type": "string",
           },
+          "session_id": {
+            "type": "string",
+          },
         },
         "required": [
           "list",
@@ -458,6 +473,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
       "inputSchema": {
         "properties": {
           "list": {
+            "type": "string",
+          },
+          "session_id": {
             "type": "string",
           },
         },
@@ -504,6 +522,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
             ],
             "type": "string",
           },
+          "session_id": {
+            "type": "string",
+          },
         },
         "required": [
           "list",
@@ -526,6 +547,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           },
           "number": {
             "type": "integer",
+          },
+          "session_id": {
+            "type": "string",
           },
           "title": {
             "type": "string",
@@ -553,6 +577,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "numbers": {
             "type": "string",
           },
+          "session_id": {
+            "type": "string",
+          },
         },
         "required": [
           "list",
@@ -574,6 +601,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
             "type": "string",
           },
           "reason": {
+            "type": "string",
+          },
+          "session_id": {
             "type": "string",
           },
         },
@@ -600,6 +630,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "reason": {
             "type": "string",
           },
+          "session_id": {
+            "type": "string",
+          },
         },
         "required": [
           "list",
@@ -621,6 +654,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "number": {
             "type": "integer",
           },
+          "session_id": {
+            "type": "string",
+          },
           "text": {
             "type": "string",
           },
@@ -639,10 +675,16 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
     {
       "inputSchema": {
         "properties": {
+          "before": {
+            "type": "integer",
+          },
           "list": {
             "type": "string",
           },
           "numbers": {
+            "type": "string",
+          },
+          "session_id": {
             "type": "string",
           },
           "to_list": {
@@ -652,7 +694,6 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
         "required": [
           "list",
           "numbers",
-          "to_list",
         ],
         "type": "object",
       },
@@ -667,6 +708,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
             "type": "string",
           },
           "numbers": {
+            "type": "string",
+          },
+          "session_id": {
             "type": "string",
           },
         },
@@ -689,6 +733,9 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
           "numbers": {
             "type": "string",
           },
+          "session_id": {
+            "type": "string",
+          },
         },
         "required": [
           "list",
@@ -699,6 +746,38 @@ exports[`MCP サーバー tanacode-checklist の定義 > ツールの名前・�
       "kind": "note",
       "label": "カードを戻す",
       "name": "card_restore",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "ゴミ箱を見る",
+      "name": "checklist_trash",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "list": {
+            "type": "string",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "list",
+        ],
+        "type": "object",
+      },
+      "kind": "note",
+      "label": "リストを戻す",
+      "name": "list_restore",
     },
     {
       "inputSchema": {
