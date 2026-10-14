@@ -208,6 +208,10 @@ function fakeHost(cwd: string): SessionsHost {
     bashTasks: () => [],
     workflows: () => [],
     worktreeLeftovers: async () => null,
+    browserAsking: () => false,
+    setRemoteControl: async () => null,
+    remoteAvailable: () => true,
+    remoteConnectedOf: () => false,
   };
 }
 

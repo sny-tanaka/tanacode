@@ -285,6 +285,13 @@ class FakeHost implements SessionsHost {
   modeSwitchFails = false;
   configured: { id: string; options: SessionOptions }[] = [];
   configureError: Error | null = null;
+  // アプリ内ブラウザで人に操作を頼んでいるセッション
+  browserAsks = new Set<string>();
+  // Remote Control: 使えるか（開発版では false）・切り替えの呼び出し・切り替えられないときの理由（画面の言語）・今つながっているか
+  remoteOk = true;
+  remoteSwitches: { id: string; on: boolean }[] = [];
+  remoteRefusal: string | null = null;
+  remoteConnections = new Map<string, boolean | null>();
   private listeners = new Set<(id: string) => void>();
 
   add(id: string, cwd: string, patch: Partial<SessionSummary> = {}, state: SessionState = 'idle'): void {
@@ -370,6 +377,27 @@ class FakeHost implements SessionsHost {
   worktreeLeftovers = async () => {
     if (this.leftovers instanceof Error) throw this.leftovers;
     return this.leftovers;
+  };
+  browserAsking = (id: string) => this.browserAsks.has(id);
+  // 本物（SessionManager.browserAskChanged）と同じく、状態の見張りにも知らせる
+  askInBrowser(id: string, asking: boolean): void {
+    if (asking) this.browserAsks.add(id);
+    else this.browserAsks.delete(id);
+    this.listeners.forEach((l) => l(id));
+  }
+  // 本物と同じく、指定を変えてから切り替える（切り替えられなければ、指定を戻して理由を返す）
+  setRemoteControl = async (id: string, on: boolean) => {
+    if (this.remoteRefusal) return this.remoteRefusal;
+    this.remoteSwitches.push({ id, on });
+    const session = this.sessions.find((s) => s.id === id);
+    if (session) session.remoteControl = on;
+    return null;
+  };
+  remoteAvailable = () => this.remoteOk;
+  // つながるのを待っている間の null は、そのまま返す
+  remoteConnectedOf = (id: string) => {
+    const connected = this.remoteConnections.get(id);
+    return connected === undefined ? false : connected;
   };
   // 本物（SessionManager.archive）と同じく、アーカイブしてから worktree を消す（消せなければ、アーカイブしたうえで失敗する）
   archive = async (id: string, options: ArchiveOptions) => {
@@ -1111,6 +1139,211 @@ describe('ツールの実行（SessionsControl）', () => {
       host.sessions.find((s) => s.id === SIBLING)!.model = 'haiku';
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: SIBLING }))).toMatchObject({ permission_mode: null, model: 'haiku', effort: null });
     });
+
+    describe('remote_control', () => {
+      const parent = () => host.sessions.find((s) => s.id === PARENT)!;
+      beforeEach(() => {
+        parent().remoteControl = true;
+      });
+
+      it('親の Remote Control がオンなら、手の空いた子のをオンにできる。つながるのは待たず、get_session で確かめるよう添える', async () => {
+        const result = await configure({ remote_control: true });
+        expect(result.isError).toBeFalsy();
+        expect(jsonOf(result)).toMatchObject({ session_id: SIBLING, changed: { remote_control: true }, state: 'idle', note: expect.stringContaining('get_session') });
+        expect(host.remoteSwitches).toEqual([{ id: SIBLING, on: true }]);
+        expect(host.modeSwitches).toEqual([]);
+        expect(host.configured).toEqual([]);
+      });
+
+      it('親の Remote Control がオフなら、オンは断って何も変えない。オフにするのはいつでもできる', async () => {
+        parent().remoteControl = false;
+        host.modes.set(PARENT, 'auto');
+        const refused = await configure({ remote_control: true, permission_mode: 'auto' });
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toContain("only while this session's Remote Control is on");
+        expect(host.modeSwitches).toEqual([]);
+        expect(host.remoteSwitches).toEqual([]);
+        expect(jsonOf(await configure({ remote_control: false }))).toMatchObject({ changed: { remote_control: false }, note: 'Turned Remote Control off.' });
+        expect(host.remoteSwitches).toEqual([{ id: SIBLING, on: false }]);
+      });
+
+      it('開発版（Remote Control を使えない）では、オンもオフも断る', async () => {
+        host.remoteOk = false;
+        for (const on of [true, false]) {
+          const result = await configure({ remote_control: on });
+          expect(result.isError).toBe(true);
+          expect(textOf(result)).toContain('not available');
+        }
+        expect(host.remoteSwitches).toEqual([]);
+      });
+
+      it('変えられるのは、権限モードと同じく、手の空いた・裏のタスクの完了待ち・動いていない子だけ', async () => {
+        host.set(SIBLING, 'background');
+        expect((await configure({ remote_control: true })).isError).toBeFalsy();
+        host.set(SIBLING, 'exited');
+        expect(jsonOf(await configure({ remote_control: true }))).toMatchObject({ note: expect.stringContaining('when it starts next') });
+        expect(host.remoteSwitches).toHaveLength(2);
+        host.remoteSwitches.length = 0;
+        const cases: [SessionState, string][] = [
+          ['working', 'stop_session'],
+          ['starting', 'starting up'],
+          ['question', 'answer_question'],
+          ['permission', 'answer_permission'],
+          ['waiting', 'Only the user'],
+          ['archived', t('sessions.sidebar.unarchive')],
+        ];
+        for (const [state, hint] of cases) {
+          host.set(SIBLING, state);
+          const result = await configure({ remote_control: true });
+          expect(result.isError, state).toBe(true);
+          expect(textOf(result), state).toContain(hint);
+        }
+        host.set(SIBLING, 'working');
+        host.askInBrowser(SIBLING, true);
+        expect(textOf(await configure({ remote_control: true }))).toContain('in-app browser');
+        expect(host.remoteSwitches).toEqual([]);
+      });
+
+      it('切り替えられなかった理由（画面の言語）は、英語の文にして返す。先に変えた権限モードは伝え、モデルは変えない', async () => {
+        host.modes.set(PARENT, 'auto');
+        host.remoteRefusal = t('main.remote.draft');
+        const result = await configure({ permission_mode: 'auto', remote_control: true, model: 'sonnet' });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toContain('Switched the permission mode of "s-33" to auto, but could not turn the Remote Control of "s-33" on (its model and effort were not changed)');
+        expect(textOf(result)).toContain('unsent text');
+        expect(textOf(result)).not.toContain(t('main.remote.draft'));
+        expect(host.modeSwitches).toEqual([{ id: SIBLING, mode: 'auto' }]);
+        expect(host.configured).toEqual([]);
+        // 知らない理由も、画面の言語のまま返さない
+        host.remoteRefusal = '知らない理由';
+        const unknown = await configure({ remote_control: false });
+        expect(textOf(unknown)).toMatch(/^Could not turn the Remote Control of "s-33" off: /);
+        expect(textOf(unknown)).not.toContain('知らない理由');
+      });
+
+      it('Remote Control と一緒にモデルを変えて、起動し直せなければ、Remote Control は変わったと伝える。remote_control は true か false だけ', async () => {
+        host.configureError = new Error('設定ファイルが読めません');
+        const failed = await configure({ remote_control: true, effort: 'low' });
+        expect(textOf(failed)).toContain('Turned the Remote Control of "s-33" on, but could not change its model or effort: 設定ファイルが読めません');
+        expect(textOf(await configure({ remote_control: 'yes' }))).toContain('Pass remote_control as true or false');
+        expect(host.remoteSwitches).toEqual([{ id: SIBLING, on: true }]);
+      });
+
+      it('get_session は、Remote Control の指定と、つながっているか（つながるのを待っている間は null）を返す。開発版では出さない。list_sessions には出さない', async () => {
+        const get = async () => jsonOf(await control.handle(PARENT, 'get_session', { session_id: SIBLING }));
+        expect(await get()).toMatchObject({ remote_control: { on: false, connected: false } });
+        host.sessions.find((s) => s.id === SIBLING)!.remoteControl = true;
+        host.remoteConnections.set(SIBLING, null);
+        expect(await get()).toMatchObject({ remote_control: { on: true, connected: null } });
+        host.remoteConnections.set(SIBLING, true);
+        expect(await get()).toMatchObject({ remote_control: { on: true, connected: true } });
+        const list = jsonOf<{ sessions: Record<string, unknown>[] }>(await control.handle(PARENT, 'list_sessions', {}));
+        expect(list.sessions.some((s) => 'remote_control' in s)).toBe(false);
+        host.remoteOk = false;
+        expect(await get()).not.toHaveProperty('remote_control');
+      });
+    });
+  });
+
+  describe('アプリ内ブラウザでの人の操作待ち（状態 browser）', () => {
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    const get = async (id = CHILD) => jsonOf<{ state: string; state_label: string }>(await control.handle(PARENT, 'get_session', { session_id: id }));
+    beforeEach(() => {
+      host.screens.set(PARENT, prompt(''));
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
+    });
+
+    it('作業中・裏のタスクの完了待ちの子が頼んでいる間は browser。質問などの人の待ち・手の空いた子・動いていない子は、そのまま', async () => {
+      host.askInBrowser(CHILD, true);
+      expect(await get()).toMatchObject({ state: 'browser', state_label: 'waiting for the user to act in the in-app browser' });
+      const list = jsonOf<{ sessions: { id: string; state: string }[] }>(await control.handle(PARENT, 'list_sessions', {}));
+      expect(list.sessions.find((s) => s.id === CHILD)?.state).toBe('browser');
+      host.set(CHILD, 'background');
+      expect((await get()).state).toBe('browser');
+      for (const state of ['question', 'permission', 'waiting', 'idle', 'exited'] as SessionState[]) {
+        host.set(CHILD, state);
+        expect((await get()).state, state).toBe(state);
+      }
+      host.set(CHILD, 'working');
+      host.askInBrowser(CHILD, false);
+      expect((await get()).state).toBe('working');
+    });
+
+    it('子が頼んだら、親に知らせて人に伝えさせる（子は人に通知しない）', async () => {
+      host.askInBrowser(CHILD, true);
+      await settle();
+      expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+      expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: [CHILD] });
+      expect(host.submitted[0].text).toContain(t('tools.notice.childBrowser', { name: 's-22', id: '22222222' }));
+    });
+
+    it('親が忙しいうちに頼み終わって作業に戻ったら、まだ送っていない知らせは送らない', async () => {
+      host.set(PARENT, 'working');
+      host.askInBrowser(CHILD, true);
+      await settle();
+      host.askInBrowser(CHILD, false);
+      host.set(PARENT, 'idle');
+      await settle();
+      expect(host.submitted).toEqual([]);
+    });
+
+    it('wait_sessions は、子が頼んだら返す（人の操作を待ち続けない）', async () => {
+      const waiting = control.handle(PARENT, 'wait_sessions', { session_ids: [CHILD], timeout_seconds: 5 });
+      setTimeout(() => host.askInBrowser(CHILD, true), 20);
+      expect(jsonOf(await waiting)).toMatchObject({ timed_out: false, ready: [CHILD], sessions: [{ id: CHILD, state: 'browser' }] });
+    });
+
+    it('stop_session は、作業中と同じに止める。裏のタスクが頼んでいるだけなら（ターンは終わっている）、止めない', async () => {
+      host.askInBrowser(CHILD, true);
+      expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD }))).toMatchObject({ note: 'Interrupted.' });
+      expect(host.interrupted).toEqual([CHILD]);
+      host.set(CHILD, 'background');
+      expect(jsonOf(await control.handle(PARENT, 'stop_session', { session_id: CHILD }))).toMatchObject({ state: 'browser', note: expect.stringContaining('background tasks') });
+      expect(host.interrupted).toEqual([CHILD]);
+    });
+
+    it('end_session は、理由と次にできることを添えて断る', async () => {
+      host.askInBrowser(CHILD, true);
+      const ended = await control.handle(PARENT, 'end_session', { session_id: CHILD });
+      expect(ended.isError).toBe(true);
+      expect(textOf(ended)).toContain('"s-22" is waiting for the user to act in the in-app browser');
+      expect(textOf(ended)).toContain('Tell the user');
+      expect(host.archives).toEqual([]);
+    });
+  });
+
+  it('get_session: 動いている裏のタスクだけを返す。無ければ出さない。list_sessions には出さない', async () => {
+    const get = async () => jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+    expect(await get()).not.toHaveProperty('background_tasks');
+    host.set(CHILD, 'background');
+    host.bash = [
+      { toolUseId: 'dev', taskId: 'dev', command: 'npm run dev', description: '開発サーバー', state: 'running', startedAt: 0, endedAt: null, exitCode: null, output: '', truncated: false },
+      { toolUseId: 'build', taskId: 'build', command: 'npm run build', description: null, state: 'completed', startedAt: 0, endedAt: 1, exitCode: 0, output: '', truncated: false },
+    ];
+    host.agents = [{ toolUseId: 'a1', description: '調べもの', background: true, state: 'running' }] as SubagentRun[];
+    host.flows = [{ toolUseId: 'w1', name: 'review', status: 'completed' }] as WorkflowRun[];
+    expect(await get()).toMatchObject({
+      background_tasks: [
+        { kind: 'bash', name: '開発サーバー' },
+        { kind: 'subagent', name: '調べもの' },
+      ],
+    });
+    const list = jsonOf<{ sessions: Record<string, unknown>[] }>(await control.handle(PARENT, 'list_sessions', {}));
+    expect(list.sessions.some((s) => 'background_tasks' in s)).toBe(false);
+  });
+
+  it('worktree の準備の段階（preparing）は、準備中のときだけ出す（list_sessions・get_session）', async () => {
+    const child = host.sessions.find((s) => s.id === CHILD)!;
+    child.worktree = { ...child.worktree!, preparing: 'installing' };
+    host.set(CHILD, 'starting');
+    const listed = async () => jsonOf<{ sessions: { id: string; worktree: unknown }[] }>(await control.handle(PARENT, 'list_sessions', {})).sessions.find((s) => s.id === CHILD)?.worktree;
+    const got = async () => jsonOf<{ worktree: unknown }>(await control.handle(PARENT, 'get_session', { session_id: CHILD })).worktree;
+    expect(await listed()).toEqual({ name: 'tc-a', branch: 'worktree-tc-a', preparing: 'installing' });
+    expect(await got()).toEqual({ name: 'tc-a', branch: 'worktree-tc-a', preparing: 'installing' });
+    child.worktree = { ...child.worktree, preparing: null };
+    host.set(CHILD, 'idle');
+    expect(await listed()).toEqual({ name: 'tc-a', branch: 'worktree-tc-a' });
+    expect(await got()).toEqual({ name: 'tc-a', branch: 'worktree-tc-a' });
   });
 
   describe('end_session', () => {

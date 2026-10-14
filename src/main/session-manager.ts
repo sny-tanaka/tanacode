@@ -584,12 +584,19 @@ export class SessionManager {
     return this.runtimes.get(id)?.statusLine ?? null;
   }
 
-  // Claude がアプリ内ブラウザでユーザーに操作を頼んだ・頼み終わった（一覧は「ブラウザでの操作待ち」）
+  // Claude がアプリ内ブラウザでユーザーに操作を頼んだ・頼み終わった（一覧は「ブラウザでの操作待ち」）。
+  // 状態の見張りにも知らせる（親の Claude には、子の状態 browser として見せて知らせる。sessions-control.ts）
   browserAskChanged(id: string, asking: boolean): void {
     if (asking === this.browserAsks.has(id)) return;
     if (asking) this.browserAsks.add(id);
     else this.browserAsks.delete(id);
     this.emitSessions();
+    this.changed(id);
+  }
+
+  // Claude がアプリ内ブラウザでユーザーに操作を頼んでいるか
+  browserAsking(id: string): boolean {
+    return this.browserAsks.has(id);
   }
 
   // 許可の確認を出す直前に、フックがそのツールの名前と入力をファイルに書いた
@@ -666,6 +673,12 @@ export class SessionManager {
 
   remoteAvailable(): boolean {
     return this.remoteControlAvailable;
+  }
+
+  // Remote Control が今つながっているか。null: つながるのを待っている。Claude Code が動いていなければ false
+  remoteConnectedOf(id: string): boolean | null {
+    const rt = this.runtimes.get(id);
+    return rt?.process ? rt.remoteConnected : false;
   }
 
   // このセッションで Remote Control を使うか（開発版では使わない）

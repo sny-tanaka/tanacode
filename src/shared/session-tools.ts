@@ -19,8 +19,9 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // ツールで返すセッションの状態。starting: 起動中（worktree の準備も）/ working: 作業中（送った指示を受け取るまでも）/
 // background: ターンは終わり、バックグラウンドのタスクの完了を待っている / question: 質問への回答待ち / permission: 実行の許可待ち /
-// waiting: ターミナルでの操作待ち（フォルダの信頼の確認など）/ idle: 手が空いている / exited: Claude Code が動いていない / archived: アーカイブ済み
-export type SessionState = 'starting' | 'working' | 'background' | 'question' | 'permission' | 'waiting' | 'idle' | 'exited' | 'archived';
+// waiting: ターミナルでの操作待ち（フォルダの信頼の確認など）/ browser: アプリ内ブラウザでの人の操作待ち（ask_user_to_act。ツールで返す状態だけで、
+// SessionManager.stateOf は返さない。sessions-control.ts）/ idle: 手が空いている / exited: Claude Code が動いていない / archived: アーカイブ済み
+export type SessionState = 'starting' | 'working' | 'background' | 'question' | 'permission' | 'waiting' | 'browser' | 'idle' | 'exited' | 'archived';
 
 export const SESSION_STATE_LABEL: Record<SessionState, string> = {
   starting: 'starting up',
@@ -29,6 +30,7 @@ export const SESSION_STATE_LABEL: Record<SessionState, string> = {
   question: 'waiting for an answer to a question',
   permission: 'waiting for an answer to a permission prompt',
   waiting: 'waiting for the user to act in its terminal',
+  browser: 'waiting for the user to act in the in-app browser',
   idle: 'idle',
   exited: 'Claude Code is not running',
   archived: 'archived',
@@ -85,7 +87,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'get_session',
     kind: 'read',
     description:
-      "Returns a session's current state and its last response. States: starting (starting up), working, background (turn finished, waiting for background tasks), question (waiting for an answer to a question), permission (waiting for permission), waiting (waiting for an operation in its terminal), idle, exited (Claude Code is not running) and archived. When it is waiting for an answer to a question, also returns the question and its options. When it is waiting on a permission prompt, also returns permission: its id (pass it to answer_permission), the tool and its full input (what the child wants to run or write), what the screen shows, and whether you can allow it (can_allow, with the reason when you cannot).",
+      "Returns a session's current state and its last response. States: starting (starting up), working, background (turn finished, waiting for background tasks), question (waiting for an answer to a question), permission (waiting for permission), waiting (waiting for an operation in its terminal), browser (waiting for the user to act in the in-app browser; a child does not notify the user, so tell the user), idle, exited (Claude Code is not running) and archived. When it is waiting for an answer to a question, also returns the question and its options. When it is waiting on a permission prompt, also returns permission: its id (pass it to answer_permission), the tool and its full input (what the child wants to run or write), what the screen shows, and whether you can allow it (can_allow, with the reason when you cannot). Also returns background_tasks (the background tasks that are running, only when there are any) and remote_control: on (its Remote Control setting) and connected (whether it is connected now; null while it is connecting).",
     inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
   },
   {
@@ -193,10 +195,11 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
   {
     name: 'configure_session',
     // 子の設定の変更も人の確認なしに。権限モードは親より強くできないので、親に許している範囲を超えない。
+    // Remote Control は、親がオンのときだけオンにできる（人が外から使っていない親に、外から操作できる子を作らせない）。
     // 切り替えは手の空いた子だけ（作業中に Shift+Tab を送ると、その間に出た許可の確認で「許して accept edits に切り替える」を選んでしまう）
     kind: 'instruct',
     description:
-      "Changes the permission mode, model or effort of a child session after it has started. Pass only what to change. The permission mode cannot be more permissive than this session's (lowering it is always allowed). Changes are made only while the child is idle (a new permission mode also while it is waiting for background tasks): interrupt a working child with stop_session first, and answer a question or permission prompt it is showing first (answer_question, answer_permission, or the user), then call this and tell the child to continue with send_message. A new model or effort restarts the child's Claude Code and continues the same conversation (its background tasks would stop, so not while it is waiting for them). If the child's Claude Code is not running (exited), the new settings are used when it starts next (send_message starts it). The child keeps the new settings when it is restarted. get_session shows its current permission mode, model and effort.",
+      "Changes the permission mode, model, effort or Remote Control of a child session after it has started. Pass only what to change. The permission mode cannot be more permissive than this session's (lowering it is always allowed). Remote Control: turning it on lets the user operate the child from the Claude app or claude.ai; it can be turned on only while this session's Remote Control is on (turning it off is always allowed). Changes are made only while the child is idle (a new permission mode or Remote Control also while it is waiting for background tasks): interrupt a working child with stop_session first, and answer a question or permission prompt it is showing first (answer_question, answer_permission, or the user), then call this and tell the child to continue with send_message. A new model or effort restarts the child's Claude Code and continues the same conversation (its background tasks would stop, so not while it is waiting for them). If the child's Claude Code is not running (exited), the new settings are used when it starts next (send_message starts it). The child keeps the new settings when it is restarted. get_session shows its current permission mode, model, effort and Remote Control.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -204,6 +207,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
         permission_mode: { type: 'string', enum: SWITCHABLE_MODES, description: "New permission mode. Cannot be more permissive than this session's" },
         model: { type: 'string', description: 'New model (for example opus, sonnet or haiku)' },
         effort: { type: 'string', enum: EFFORTS, description: 'New effort' },
+        remote_control: { type: 'boolean', description: "Turn the child's Remote Control on or off. On only while this session's Remote Control is on" },
       },
       required: ['session_id'],
       additionalProperties: false,

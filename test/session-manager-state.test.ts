@@ -284,9 +284,16 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
     const { id } = app.create();
     await app.ready(id);
     const lists = app.sessionLists.length;
+    // 状態の見張りにも知らせる（親の Claude に、子の状態 browser として見せて知らせるため。sessions-control.ts）
+    const changed: string[] = [];
+    const unwatch = app.manager.watchState((session) => changed.push(session));
     app.manager.browserAskChanged(id, true);
     app.manager.browserAskChanged(id, true);
     expect(app.sessionLists.length).toBe(lists + 1);
+    expect(changed).toEqual([id]);
+    expect(app.manager.browserAsking(id)).toBe(true);
+    // stateOf は変えない（ほかの部品も使う）
+    expect(app.manager.stateOf(id)).toBe('idle');
     expect(app.manager.summary(id)?.attention).toBe('browser');
     expect(live()).toBe('ブラウザでの操作待ち');
     app.append(id, line.user('ログインして'), line.text('ブラウザで操作してください'), line.turnEnd());
@@ -294,10 +301,14 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
     await sleep(100);
     expect(app.turnsCompleted).toEqual([]);
     const before = app.sessionLists.length;
+    changed.length = 0;
     app.manager.browserAskChanged(id, false);
     app.manager.browserAskChanged(id, false);
+    unwatch();
     expect(app.manager.summary(id)?.attention).toBeNull();
     expect(app.sessionLists.length).toBe(before + 1);
+    expect(changed).toEqual([id]);
+    expect(app.manager.browserAsking(id)).toBe(false);
   });
 });
 

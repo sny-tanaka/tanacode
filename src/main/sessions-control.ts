@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@shared/optimized-compact';
-import { t } from '@shared/i18n';
+import { t, type MessageKey } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
@@ -39,7 +39,9 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // ツールの入力の全文を親に渡せていて、親の権限モードが acceptEdits 以上のときだけ（manual・plan の親は、断ることだけ）。
 // start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ。
 // end_session は、役目を終えた自分の子を片付ける（アーカイブして、worktree も消す）。画面からのアーカイブと同じ処理を通す。
-// configure_session は、自分の子の権限モード（親より強くできない）・モデル・エフォートを変える。画面のモード欄・モデル欄と同じ処理を通す
+// configure_session は、自分の子の権限モード（親より強くできない）・モデル・エフォート・Remote Control（親がオンのときだけオンにできる）を変える。
+// 画面のモード欄・モデル欄・ヘッダーの Remote Control のトグルと同じ処理を通す。
+// アプリ内ブラウザでの人の操作待ちは、ツールでは状態 browser として見せる（SessionManager.stateOf は作業中のまま。withBrowserState）
 
 // SessionManager のうち、ツールが使うもの
 export type SessionsHost = {
@@ -76,6 +78,14 @@ export type SessionsHost = {
   workflows(id: string): WorkflowRun[];
   // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
   worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null>;
+  // Claude がアプリ内ブラウザで人に操作を頼んでいるか（ask_user_to_act）
+  browserAsking(id: string): boolean;
+  // Remote Control を切り替える（チャットのヘッダーのトグルと同じ）。切り替えられなければ、理由（画面の言語）
+  setRemoteControl(id: string, on: boolean): Promise<string | null>;
+  // Remote Control を使えるか（開発版では使えない）
+  remoteAvailable(): boolean;
+  // Remote Control が今つながっているか（null: つながるのを待っている。Claude Code が動いていなければ false）
+  remoteConnectedOf(id: string): boolean | null;
 };
 
 type Deps = {
@@ -121,8 +131,8 @@ const MAX_START_FOLDERS = 30;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
 // 親に知らせる、子の手が空いた状態。バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる。
-// 子セッションは人に通知しないので、人が答える許可の確認・ターミナルでの操作の待ちも、親に知らせて人に伝えさせる
-const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'exited']);
+// 子セッションは人に通知しないので、人が答える許可の確認・ターミナルとアプリ内ブラウザでの操作の待ちも、親に知らせて人に伝えさせる
+const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'browser', 'exited']);
 
 // end_session で終えられる状態。手が空いている・Claude Code が動いていない・裏のタスクの完了待ち（ターンは終わっている）・アーカイブ済み（残った worktree を消す）
 const ENDABLE_STATES = new Set<SessionState>(['idle', 'exited', 'background', 'archived']);
@@ -137,6 +147,8 @@ const END_REFUSAL: Partial<Record<SessionState, string>> = {
     'is waiting for an answer to a permission prompt, so its work is not finished and it was not ended. Answer the prompt with answer_permission (get_session shows it) or ask the user, and call end_session again once the child is idle.',
   waiting:
     'is waiting for the user to act in its terminal, so it was not ended. Only the user can do that: tell the user, and call end_session again once the child is idle.',
+  browser:
+    'is waiting for the user to act in the in-app browser, so its work is not finished and it was not ended. Tell the user, and call end_session again once the child is idle. If its work is no longer needed, interrupt it with stop_session first.',
 };
 
 // configure_session で、権限モードを切り替えられる状態。手が空いている・裏のタスクの完了待ち（ターンは終わっている）・動いていない（次の起動のモード）。
@@ -150,12 +162,22 @@ const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
   working:
     'is working, so nothing was changed. Wait for it to finish (check with get_session), or interrupt it with stop_session, then call configure_session again and tell it to continue with send_message.',
   background:
-    "is waiting for background tasks to finish, and a new model or effort restarts its Claude Code, which would stop them. Nothing was changed. Wait until it is idle, or change only the permission mode.",
+    "is waiting for background tasks to finish, and a new model or effort restarts its Claude Code, which would stop them. Nothing was changed. Wait until it is idle, or change only the permission mode or Remote Control.",
   question: 'is waiting for an answer to a question, so nothing was changed. Answer it with answer_question (get_session shows it) or let the user answer it, then call configure_session again.',
   permission:
     'is waiting for an answer to a permission prompt, so nothing was changed. Answer it with answer_permission (get_session shows it) or ask the user, then call configure_session again.',
   waiting: 'is waiting for the user to act in its terminal, so nothing was changed. Only the user can do that: tell the user, and call configure_session again once the child is idle.',
+  browser:
+    'is waiting for the user to act in the in-app browser, so nothing was changed. Tell the user, and call configure_session again once the child is idle (or interrupt it with stop_session first).',
 };
+
+// setRemoteControl が返す理由（画面の言語）を置き換える、Claude に返す英語の文
+const REMOTE_REFUSAL: [MessageKey, string][] = [
+  ['main.remote.switching', 'it is in the middle of switching Remote Control. Try again in a moment.'],
+  ['main.remote.waitingAnswer', 'its Claude Code is waiting for an answer to a prompt. Check it with get_session, and try again once the child is idle.'],
+  ['main.remote.draft', 'there is unsent text in the input field of its Claude Code (the user may be typing in it). Try again later, or ask the user.'],
+  ['main.remote.failed', 'tanacode could not switch it on the screen of its Claude Code. Ask the user to switch it with /remote-control in its terminal.'],
+];
 
 class ToolError extends Error {}
 
@@ -171,12 +193,19 @@ export class SessionsControl {
   // 親が止めた子。止めてターンが終わったことは、親に知らせない
   private readonly stopped = new Set<string>();
   private readonly unwatch: () => void;
+  private readonly deps: Deps;
+  // 元の host（アプリ内ブラウザでの人の操作待ちを、browser に置き換えない）
+  private readonly raw: SessionsHost;
 
-  constructor(private readonly deps: Deps) {
-    for (const s of deps.host.list()) this.lastState.set(s.id, deps.host.stateOf(s.id));
-    this.unwatch = deps.host.watchState((id) => this.stateChanged(id));
+  constructor(deps: Deps) {
+    // ツールで返す状態・親への知らせ・断る理由では、アプリ内ブラウザでの人の操作待ちを、状態 browser として見せる
+    this.deps = { ...deps, host: withBrowserState(deps.host) };
+    this.raw = deps.host;
+    for (const s of deps.host.list()) this.lastState.set(s.id, this.deps.host.stateOf(s.id));
+    this.unwatch = this.deps.host.watchState((id) => this.stateChanged(id));
     this.notices = new SessionNotices({
-      host: deps.host,
+      // 知らせを受け取れるか（親の手が空いているか）は、元の状態で見る
+      host: this.raw,
       enabled: deps.enabled,
       compose: (parentId, queue) => this.noticeFor(parentId, queue),
       delayMs: deps.notifyDelayMs,
@@ -590,7 +619,9 @@ export class SessionsControl {
     const who = `"${nameOf(child)}"`;
     const model = stringArg(args.model);
     const effort = stringArg(args.effort);
-    if (args.permission_mode === undefined && !model && !effort) throw new ToolError('Pass what to change: permission_mode, model or effort.');
+    if (args.remote_control !== undefined && typeof args.remote_control !== 'boolean') throw new ToolError('Pass remote_control as true or false.');
+    const remote = typeof args.remote_control === 'boolean' ? args.remote_control : null;
+    if (args.permission_mode === undefined && !model && !effort && remote === null) throw new ToolError('Pass what to change: permission_mode, model, effort or remote_control.');
     // 確かめられるものは、何かを変える前に確かめる（一部だけ変わって終わらないように）
     let mode: PermissionMode | null = null;
     if (args.permission_mode !== undefined) {
@@ -603,6 +634,11 @@ export class SessionsControl {
       if (!modeWithin(mode, limit)) throw new ToolError(`Permission mode ${mode} cannot be used because it is more permissive than this session's (${limit}).`);
     }
     if (effort && !EFFORTS.includes(effort)) throw new ToolError(`Unknown effort: ${effort}. Choose one of ${EFFORTS.join(', ')}.`);
+    if (remote !== null && !host.remoteAvailable()) throw new ToolError('Remote Control is not available in this build of tanacode (a development build), so nothing was changed.');
+    // Remote Control をオンにできるのは、このセッションがオンのときだけ（人が外から使っていないのに、外から操作できる子を作らせない）。オフにはいつでもできる
+    if (remote && !caller.remoteControl) {
+      throw new ToolError("Remote Control can be turned on for a child only while this session's Remote Control is on, so nothing was changed. The user can turn it on in the header of the child's chat in tanacode.");
+    }
     const restart = !!model || !!effort;
     const state = host.stateOf(child.id) ?? 'exited';
     if (state === 'archived') throw new ToolError(`${who} is archived. To change it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
@@ -616,27 +652,41 @@ export class SessionsControl {
         `Could not switch ${who} to ${mode}${now ? ` (its permission mode is now ${now})` : ''}. Its screen may have changed (for example, a prompt appeared). Check it with get_session, and call configure_session again once it is idle.`,
       );
     }
+    // 途中で失敗したときに伝える、それまでに変えたもの
+    const done: string[] = [];
+    const failed = (what: string, reason: string) => {
+      const before = done.join(' and ');
+      return new ToolError(`${before ? `${before.charAt(0).toUpperCase()}${before.slice(1)}, but could` : 'Could'} not ${what}: ${reason}`);
+    };
+    if (mode) done.push(`switched the permission mode of ${who} to ${mode}`);
+    if (remote !== null) {
+      // ヘッダーのトグルと同じ。つながるのは待たない（get_session の remote_control.connected で確かめさせる）
+      const reason = await host.setRemoteControl(child.id, remote);
+      const what = `turn the Remote Control of ${who} ${remote ? 'on' : 'off'}`;
+      if (reason !== null) throw failed(`${what}${restart ? ' (its model and effort were not changed)' : ''}`, remoteRefusal(reason));
+      done.push(`turned the Remote Control of ${who} ${remote ? 'on' : 'off'}`);
+    }
     if (restart) {
       // 変えないものは、今の指定のまま（画面のモデル欄・エフォート欄で変えたときと同じ）。設定ファイルは変えない
       const options: SessionOptions = { model: model || (child.model ?? null), effort: effort || (child.effort ?? null), settingsFile: child.settingsFile ?? null };
       try {
         host.configure(child.id, options);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        throw new ToolError(`${mode ? `Switched the permission mode of ${who} to ${mode}, but could` : 'Could'} not change its model or effort: ${reason}`);
+        throw failed('change its model or effort', error instanceof Error ? error.message : String(error));
       }
     }
-    const changed = { ...(mode ? { permission_mode: mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
-    return json({
-      session_id: child.id,
-      changed,
-      state: host.stateOf(child.id),
-      note: !running
-        ? 'Its Claude Code is not running, so the new settings are used when it starts next (send_message starts it).'
-        : restart
-          ? 'Restarted its Claude Code with the new settings; it continues the same conversation. An instruction you send with send_message now is held until it has restarted.'
-          : 'Switched. It keeps this permission mode when it is restarted.',
-    });
+    const changed = { ...(mode ? { permission_mode: mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(remote !== null ? { remote_control: remote } : {}) };
+    const notes = !running
+      ? ['Its Claude Code is not running, so the new settings are used when it starts next (send_message starts it).']
+      : [
+          restart
+            ? 'Restarted its Claude Code with the new settings; it continues the same conversation. An instruction you send with send_message now is held until it has restarted.'
+            : mode
+              ? 'Switched. It keeps this permission mode when it is restarted.'
+              : null,
+          remote === true ? 'Turned Remote Control on. Connecting takes a moment: check remote_control.connected with get_session.' : remote === false ? 'Turned Remote Control off.' : null,
+        ];
+    return json({ session_id: child.id, changed, state: host.stateOf(child.id), note: notes.filter(Boolean).join(' ') });
   }
 
   private async stopSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
@@ -646,8 +696,11 @@ export class SessionsControl {
     if (state === 'question' || state === 'permission' || state === 'waiting') {
       throw new ToolError(`"${nameOf(child)}" cannot be interrupted while it is ${SESSION_STATE_LABEL[state]}.`);
     }
-    if (state !== 'working') {
-      return json({ session_id: child.id, state, note: state === 'background' ? 'Its turn has finished, and it is waiting for background tasks to finish.' : 'It is not working.' });
+    // アプリ内ブラウザでの人の操作待ちは、ターンの途中（ask_user_to_act の呼び出しの途中）なら、作業中と同じに止める。
+    // 裏のタスクが頼んでいるだけなら、ターンは終わっている
+    const raw = this.raw.stateOf(child.id);
+    if (raw !== 'working') {
+      return json({ session_id: child.id, state, note: raw === 'background' ? 'Its turn has finished, and it is waiting for background tasks to finish.' : 'It is not working.' });
     }
     // 止めて手が空いたことは、親に知らせない（親が止めたので）
     this.stopped.add(child.id);
@@ -853,7 +906,8 @@ export class SessionsControl {
       state,
       state_label: SESSION_STATE_LABEL[state],
       folder: s.cwd,
-      worktree: s.worktree ? { name: s.worktree.name, branch: s.worktree.branch } : null,
+      // preparing: worktree の準備の段階（準備中のときだけ。そのあいだ状態は starting）
+      worktree: s.worktree ? { name: s.worktree.name, branch: s.worktree.branch, ...(s.worktree.preparing ? { preparing: s.worktree.preparing } : {}) } : null,
       parent_id: s.parentId ?? null,
     };
   }
@@ -896,11 +950,16 @@ export class SessionsControl {
     // 今の権限モード・モデル・エフォート（configure_session で変える前に確かめるため）。動いていなければ、次に起動するときの指定
     // （null は Claude Code の既定。権限モードは画面から読むので、動いていなければ null）
     const running = base.state !== 'exited' && base.state !== 'archived';
+    // 動いている裏のタスク（無ければ出さない）
+    const tasks = runningTasks(this.deps.host, s.id);
     return {
       ...base,
       permission_mode: running ? (screen?.mode ?? null) : null,
       model: running ? this.deps.host.currentModel(s.id) : (s.model ?? null),
       effort: running ? this.deps.host.currentEffort(s.id) : (s.effort ?? null),
+      // Remote Control の指定と、実際につながっているか（configure_session で変えたあとに確かめるため）。使えない開発版では出さない
+      remote_control: this.deps.host.remoteAvailable() ? { on: s.remoteControl, connected: this.deps.host.remoteConnectedOf(s.id) } : undefined,
+      background_tasks: tasks.length > 0 ? tasks : undefined,
       last_prompt: lastPrompt
         ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
@@ -946,6 +1005,30 @@ function relationOf(s: SessionSummary, caller: SessionSummary): keyof typeof REL
   return 'project';
 }
 
+// stateOf だけを差し替えた host（ほかは、そのまま元を呼ぶ）。アプリ内ブラウザで人に操作を頼んでいる（ask_user_to_act）セッションの
+// 作業中・裏のタスクの完了待ちを、状態 browser として見せる。子は人に通知しない（index.ts の notify）ので、子の頼みは人に届かない。
+// 親に知らせて人に伝えさせ、wait_sessions も返す。SessionManager.stateOf は変えない（一覧・知らせの受け取りなど、ほかの部品も使う）。
+// 質問・許可の確認・ターミナルでの操作の待ちは、そちらを見せる（ブラウザの頼みより先に、人が画面で答えるもの）
+function withBrowserState(host: SessionsHost): SessionsHost {
+  return new Proxy(host, {
+    get(target, prop) {
+      if (prop === 'stateOf') {
+        return (id: string): SessionState | null => {
+          const state = target.stateOf(id);
+          return (state === 'working' || state === 'background') && target.browserAsking(id) ? 'browser' : state;
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+// Remote Control を切り替えられなかった理由（setRemoteControl が返す、画面の言語の文）を、英語の文にする
+function remoteRefusal(reason: string): string {
+  return REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1] ?? 'tanacode could not switch it. Check it with get_session.';
+}
+
 // 動いている裏のタスク（一覧の数え方と同じ: SessionManager の countBackground）
 function runningTasks(host: SessionsHost, id: string): { kind: string; name: string }[] {
   return [
@@ -975,6 +1058,7 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   // 子セッションは人に通知しないので、親から人に伝える
   if (state === 'permission') return t('tools.notice.childPermission', params);
   if (state === 'waiting') return t('tools.notice.childWaiting', params);
+  if (state === 'browser') return t('tools.notice.childBrowser', params);
   if (state === 'exited') return t('tools.notice.childExited', params);
   return t('tools.notice.childDone', params);
 }

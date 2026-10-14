@@ -994,6 +994,9 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
             ],
             "type": "string",
           },
+          "remote_control": {
+            "type": "boolean",
+          },
           "session_id": {
             "type": "string",
           },

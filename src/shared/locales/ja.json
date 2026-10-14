@@ -408,6 +408,7 @@
       "childQuestion": "子セッション「{name}」（{id}）が質問への回答を待っています（answer_question で答えられます）。",
       "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。get_session で中身を読み、answer_permission で答えるか、判断できなければ人に聞いてください。",
       "childWaiting": "子セッション「{name}」（{id}）がターミナルでの操作を待っています。人に伝えてください。",
+      "childBrowser": "子セッション「{name}」（{id}）がアプリ内ブラウザで人の操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
       "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
       "checkSessions": "get_session で確かめてください。",
