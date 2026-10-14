@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
-import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
+import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
 import type { AskQuestion, Menu, PermissionMode, ScreenInfo } from '../src/shared/screen';
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
@@ -93,6 +93,7 @@ describe('中継と起動の引数', () => {
     expect(allowedSessionToolIds()).toContain(sessionToolId('send_message'));
     expect(allowedSessionToolIds()).toContain(sessionToolId('answer_question'));
     expect(allowedSessionToolIds()).toContain(sessionToolId('end_session'));
+    expect(allowedSessionToolIds()).toContain(sessionToolId('configure_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('start_session'));
     expect(allowedSessionToolIds()).not.toContain(sessionToolId('stop_session'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
@@ -279,6 +280,11 @@ class FakeHost implements SessionsHost {
   bash: BashTask[] = [];
   agents: SubagentRun[] = [];
   flows: WorkflowRun[] = [];
+  // configure_session: 権限モードの切り替えと、モデル・エフォートの変更の呼び出し。modeSwitchFails なら切り替えに失敗する
+  modeSwitches: { id: string; mode: PermissionMode }[] = [];
+  modeSwitchFails = false;
+  configured: { id: string; options: SessionOptions }[] = [];
+  configureError: Error | null = null;
   private listeners = new Set<(id: string) => void>();
 
   add(id: string, cwd: string, patch: Partial<SessionSummary> = {}, state: SessionState = 'idle'): void {
@@ -329,6 +335,17 @@ class FakeHost implements SessionsHost {
     return id;
   };
   rename = (id: string, title: string) => void this.renamed.push({ id, title });
+  setMode = async (id: string, mode: PermissionMode) => {
+    if (this.modeSwitchFails) return false;
+    this.modeSwitches.push({ id, mode });
+    const screen = this.screens.get(id);
+    if (screen) this.screens.set(id, { ...screen, mode });
+    return true;
+  };
+  configure = (id: string, options: SessionOptions) => {
+    if (this.configureError) throw this.configureError;
+    this.configured.push({ id, options });
+  };
   open = async (id: string) => void this.opened.push(id);
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
   interrupt = (id: string) => void this.interrupted.push(id);
@@ -962,6 +979,137 @@ describe('ツールの実行（SessionsControl）', () => {
       const { id } = await read();
       host.chooseIf = async () => true;
       expect(textOf(await answer({ permission_id: id, decision: 'allow' }))).toContain('did not close');
+    });
+  });
+
+  describe('configure_session', () => {
+    const configure = (args: Record<string, unknown>, caller = PARENT) => control.handle(caller, 'configure_session', { session_id: SIBLING, ...args });
+
+    it('手の空いた子の権限モードを切り替える。親のモードまで上げられ、下げるのはいつでもできる', async () => {
+      host.modes.set(PARENT, 'auto');
+      const result = await configure({ permission_mode: 'auto' });
+      expect(result.isError).toBeFalsy();
+      expect(jsonOf(result)).toMatchObject({ session_id: SIBLING, changed: { permission_mode: 'auto' }, state: 'idle', note: expect.stringContaining('Switched') });
+      host.modes.set(PARENT, 'manual');
+      expect((await configure({ permission_mode: 'plan' })).isError).toBeFalsy();
+      expect(host.modeSwitches).toEqual([
+        { id: SIBLING, mode: 'auto' },
+        { id: SIBLING, mode: 'plan' },
+      ]);
+      expect(host.configured).toEqual([]);
+    });
+
+    it('親より強いモード・Shift+Tab で回らないモード・知らないモードは断り、何も変えない', async () => {
+      host.modes.set(PARENT, 'acceptEdits');
+      expect(textOf(await configure({ permission_mode: 'auto', effort: 'max' }))).toContain("more permissive than this session's (acceptEdits)");
+      // 親のモードが分からなければ manual とみなす
+      host.modes.delete(PARENT);
+      expect(textOf(await configure({ permission_mode: 'acceptEdits' }))).toContain("this session's (manual)");
+      host.modes.set(PARENT, 'bypassPermissions');
+      expect(textOf(await configure({ permission_mode: 'bypassPermissions' }))).toContain('cannot be set');
+      expect(textOf(await configure({ permission_mode: 'yolo' }))).toContain('cannot be set');
+      expect(host.modeSwitches).toEqual([]);
+      expect(host.configured).toEqual([]);
+    });
+
+    it('モデル・エフォートは、変えないほうを今の指定のまま、設定ファイルも変えずに変える（Claude Code を起動し直す）', async () => {
+      host.sessions.find((s) => s.id === SIBLING)!.model = 'opus';
+      host.sessions.find((s) => s.id === SIBLING)!.effort = 'high';
+      host.sessions.find((s) => s.id === SIBLING)!.settingsFile = 'work';
+      const result = await configure({ effort: 'max' });
+      expect(jsonOf(result)).toMatchObject({ changed: { effort: 'max' }, note: expect.stringContaining('Restarted') });
+      await configure({ model: 'haiku' });
+      expect(host.configured).toEqual([
+        { id: SIBLING, options: { model: 'opus', effort: 'max', settingsFile: 'work' } },
+        { id: SIBLING, options: { model: 'haiku', effort: 'high', settingsFile: 'work' } },
+      ]);
+      expect(host.modeSwitches).toEqual([]);
+    });
+
+    it('権限モードとモデルを一緒に変えるときは、先にモードを切り替えてから起動し直す。起動し直せなければ、モードは変わったと伝える', async () => {
+      host.modes.set(PARENT, 'auto');
+      const order: string[] = [];
+      const { setMode, configure: reconfigure } = host;
+      host.setMode = async (id, mode) => (order.push('mode'), setMode(id, mode));
+      host.configure = (id, options) => (order.push('configure'), reconfigure(id, options));
+      expect(jsonOf(await configure({ permission_mode: 'auto', model: 'sonnet' }))).toMatchObject({ changed: { permission_mode: 'auto', model: 'sonnet' } });
+      expect(order).toEqual(['mode', 'configure']);
+      host.configureError = new Error('設定ファイルが読めません');
+      const failed = await configure({ permission_mode: 'manual', model: 'haiku' });
+      expect(failed.isError).toBe(true);
+      expect(textOf(failed)).toContain('Switched the permission mode');
+      expect(textOf(failed)).toContain('設定ファイルが読めません');
+    });
+
+    it('切り替えられなかったら、今のモードを添えて失敗として返し、モデルは変えない', async () => {
+      host.modes.set(PARENT, 'auto');
+      host.screens.set(SIBLING, { ...prompt(''), mode: 'acceptEdits' });
+      host.modeSwitchFails = true;
+      const result = await configure({ permission_mode: 'auto', model: 'sonnet' });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('its permission mode is now acceptEdits');
+      expect(host.configured).toEqual([]);
+    });
+
+    it('作業中・起動中・質問や許可の確認・ターミナルでの操作の待ち・アーカイブ済みの子は、理由と次にできることを添えて断る', async () => {
+      host.modes.set(PARENT, 'auto');
+      const cases: [SessionState, string][] = [
+        ['working', 'stop_session'],
+        ['starting', 'starting up'],
+        ['question', 'answer_question'],
+        ['permission', 'answer_permission'],
+        ['waiting', 'Only the user'],
+        ['archived', t('sessions.sidebar.unarchive')],
+      ];
+      for (const [state, hint] of cases) {
+        host.set(SIBLING, state);
+        const result = await configure({ permission_mode: 'auto' });
+        expect(result.isError, state).toBe(true);
+        expect(textOf(result), state).toContain(hint);
+      }
+      expect(host.modeSwitches).toEqual([]);
+    });
+
+    it('裏のタスクの完了待ちの子は、権限モードだけ切り替えられる（起動し直すとタスクが止まるので、モデル・エフォートは断る）', async () => {
+      host.modes.set(PARENT, 'auto');
+      host.set(SIBLING, 'background');
+      expect((await configure({ permission_mode: 'auto' })).isError).toBeFalsy();
+      expect(textOf(await configure({ model: 'sonnet' }))).toContain('background tasks');
+      expect(host.modeSwitches).toEqual([{ id: SIBLING, mode: 'auto' }]);
+      expect(host.configured).toEqual([]);
+    });
+
+    it('Claude Code が動いていない子は、次に起動するときの指定として変える', async () => {
+      host.modes.set(PARENT, 'acceptEdits');
+      host.set(SIBLING, 'exited');
+      const result = await configure({ permission_mode: 'acceptEdits', effort: 'low' });
+      expect(jsonOf(result)).toMatchObject({ changed: { permission_mode: 'acceptEdits', effort: 'low' }, state: 'exited', note: expect.stringContaining('when it starts next') });
+      expect(host.modeSwitches).toEqual([{ id: SIBLING, mode: 'acceptEdits' }]);
+      expect(host.configured).toEqual([{ id: SIBLING, options: { model: null, effort: 'low', settingsFile: null } }]);
+    });
+
+    it('変えるものが無い・知らないエフォートは断る。変えられるのは自分の子だけ', async () => {
+      expect(textOf(await configure({}))).toContain('Pass what to change');
+      expect(textOf(await configure({ effort: 'extreme' }))).toContain('Unknown effort');
+      expect(textOf(await configure({ session_id: PEER, effort: 'low' }))).toContain('is not a child session');
+      for (const id of [PARENT, SIBLING]) expect(textOf(await control.handle(CHILD, 'configure_session', { session_id: id, effort: 'low' }))).toContain('is not a child session');
+      expect(host.configured).toEqual([]);
+      expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name)).not.toContain('configure_session');
+      expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('configure_session');
+    });
+
+    it('get_session は、子の今の権限モード・モデル・エフォートを返す。動いていなければ、次に起動するときの指定（モードは null）', async () => {
+      host.screens.set(SIBLING, { ...prompt(''), mode: 'acceptEdits' });
+      host.models.set(SIBLING, 'claude-opus-5-5');
+      host.efforts.set(SIBLING, 'xhigh');
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: SIBLING }))).toMatchObject({
+        permission_mode: 'acceptEdits',
+        model: 'claude-opus-5-5',
+        effort: 'xhigh',
+      });
+      host.set(SIBLING, 'exited');
+      host.sessions.find((s) => s.id === SIBLING)!.model = 'haiku';
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: SIBLING }))).toMatchObject({ permission_mode: null, model: 'haiku', effort: null });
     });
   });
 

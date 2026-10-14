@@ -343,7 +343,7 @@ PR で、次のものを流します。develop への push では流しません
 | `checklist-decisions.test.ts` | 決定事項（チェックで消えないリスト）を、画面と Claude の両方から使う。Claude が MCP で決定事項と確認事項のリストを作ると、ピンと有効な数で出る。確認事項のカードを人がチェックすると、決定事項に移る。次の発言で、有効な決定（承認したものも）が Claude に渡る。Claude は取り消せるが、消せない。人は取り消しを戻せて、自分でも取り消せる。取り消したものは、次の発言から渡らない |
 | `checklist.test.ts` | 人がチェックリストを画面で使う（リストとカードを作ってチェックを付ける）。カードのスレッドに「Claude に通知する」で返信すると、手の空いた Claude に知らせが届くか。Claude が MCP でスレッドに返信すると、画面に出るか |
 | `tasks.test.ts` | Claude がバックグラウンドで動かすもの（サブエージェント・バックグラウンドの Bash・ワークフロー）が、タスクの一覧に出るか。開くと中身（サブエージェントの会話・ワークフローのフェーズとエージェント）が見え、動いている Bash を画面から止められるか。ワークフローを始める前の確認には、チャットのカードで答える |
-| `sessions.test.ts` | Claude がセッションの MCP で子セッションを始める（許可のカード・一覧に並ぶ・子が動き出す） |
+| `sessions.test.ts` | Claude がセッションの MCP で子セッションを始める（許可のカード・一覧に並ぶ・子が動き出す）。アプリを起動し直して引き継いだ親から始めた子も、親の権限モードで始まる。親が `configure_session` で子の権限モードとエフォートを変える（確認は出ない。子は新しいエフォートと、切り替えたモードで起動し直す。起動の引数は `E2EApp.claudeArgs` で読む） |
 | `session-ops.test.ts` | 一覧とチャットの見出しからの、セッションの操作。名前の変更（見出しと記録にも出る）・作業の HTML への書き出し（本人だけが読めるファイル）・アーカイブ。一覧の「アクティブに戻す」で戻して送ると、Claude Code を再開して同じ会話を続けられるか |
 | `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
 | `default-branch.test.ts` | 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダを切り替えた直後に押しても効くか。フェッチに時間がかかっている間（合図があるまで答えないリモート。git の `ext::`）にフォルダを変えると、変えた先のボタンと送信がすぐ使えるか。時間のかかっているフォルダは止めずに、リモートが答えたら切り替わるか |
@@ -923,7 +923,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `--mcp-config` の `env` で渡すのは、ソケットのパス（`TANACODE_SESSIONS_SOCKET`）と呼び出し元のセッション（`TANACODE_SESSIONS_SESSION`）。子セッションには `TANACODE_SESSIONS_CHILD=1` も渡し、子を動かすツールを `tools/list` に出しません（`SESSIONS_MCP_FOR_CHILD`）。親子の関係と見える範囲は、env ではなくアプリの記録（`sessions.json` の `parentId`）で判断します。
   - `--mcp-config` の `timeout`（1 回のツールの呼び出しを Claude Code が待つ上限）を長めに付けます。子を待つ `wait_sessions` が最大 600 秒待つためです。アプリの待ち（600 秒）＜中継の待ち（`SESSIONS_CALL_TIMEOUT_MS`。660 秒）＜ Claude Code の待ち（720 秒）の順にします。`timeout` を付ければ、75 秒かかる呼び出しも切られません（Claude Code 2.1.288 で実測）。
   - 起動に足す材料は `index.ts` の `sessionsLaunch`。`SessionManager` が起動のたびに聞き、`claudeArgs` がブラウザのサーバーと合わせて渡します（`sessions-bridge.ts` の `sessionsMcpServer`）。
-- 許可: 読むだけのツール（`kind: 'read'`）と、子への指示・質問への回答・許可の確認への回答・役目を終えた子の片付け（`send_message`・`answer_question`・`answer_permission`・`end_session`。`kind: 'instruct'`）は `--allowedTools` で許可済みに。親が人の手を借りずに子を回すためです。子のモードは親より強くできません。子のツールの実行の許可には、人のほかに親も答えられますが（`answer_permission`）、親が許せるのは、親のモードが acceptEdits 以上のときに「今回だけ許す」だけです（下の `answer_permission`）。`end_session` も、アーカイブは一覧から戻せ、worktree を消しても控えとブランチが残る（失うものが無い）ので、確認を出しません。`instruct` は読むだけではないので、`readOnlyHint` は付けません。`stop_session` は、ふつうの許可の確認を通します。
+- 許可: 読むだけのツール（`kind: 'read'`）と、子への指示・質問への回答・許可の確認への回答・子の設定の変更・役目を終えた子の片付け（`send_message`・`answer_question`・`answer_permission`・`configure_session`・`end_session`。`kind: 'instruct'`）は `--allowedTools` で許可済みに。親が人の手を借りずに子を回すためです。子のモードは親より強くできません（始めるときも、`configure_session` で変えるときも）。子のツールの実行の許可には、人のほかに親も答えられますが（`answer_permission`）、親が許せるのは、親のモードが acceptEdits 以上のときに「今回だけ許す」だけです（下の `answer_permission`）。`end_session` も、アーカイブは一覧から戻せ、worktree を消しても控えとブランチが残る（失うものが無い）ので、確認を出しません。`instruct` は読むだけではないので、`readOnlyHint` は付けません。`stop_session` は、ふつうの許可の確認を通します。
   - `start_session` だけは、`--settings` の `PreToolUse` のフック（`SESSIONS_GATE_COMMAND`）が `permissionDecision: "ask"` を返し、権限モードによらず確認を出させます。ふつうの許可の確認は、auto・bypassPermissions では出ないためです（フックの `ask` なら bypassPermissions でも出る。Claude Code 2.1.288 で実測）。確認の理由（`permissionDecisionReason`）に、起動したセッションも利用枠をその数だけ使うことを書きます。
   - フックは、決まった JSON を `printf` で書くだけ（Node も awk も使わない）。チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_SESSIONS_GATE`）。登録した設定ファイルを重ねるときは、登録した設定のフックと並べて足します（`mergeSettings`）。
 - 実行はメインプロセス（`sessions-control.ts` の `SessionsControl`）。`SessionManager` を `SessionsHost` の形で使います。
@@ -936,7 +936,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `start_session` の `independent: true`（独立したセッション）: `parentId` を付けずに作ります。親子の記録が無いので、指示・待ち・中断・親への知らせ・起動したときのモードの上限（`launchMode`）・人への通知の抑止は、どれも付きません（起動したあとは、人が動かすふつうのセッション）。フォルダと権限モードの確かめは子と同じ。Remote Control は、子と同じく、呼び出し元の指定に合わせます。最初の指示は、子と同じ囲み（`parentMessageText`。`session` は起動したセッション）で送り、人の発言と見分けます。画面の見出しは、送り主がそのセッションの親でなければ「セッション「名前」からの指示」（`ParentHeading` の `isParent`）。
     - `modeOf` は、アプリが決めたモード（起動の引数・`setMode` での切り替え。`knownMode`。無ければ manual）と、画面から読んだモードの弱いほう（`weakerMode`）。画面のモードの行は、会話の中の文（「bypass permissions on」など）でも読めてしまうので、強くする向きには使いません。
       - `knownMode` は記録（`SessionRecord.knownMode`）にも残し、アプリを起動し直して動いている claude を引き継ぐ（`adopt`）ときに戻します。戻さないと、モードの変わっていない親が manual 扱いになり、そのあとに始めた子が manual になります（実際に起きた）。この記録ができる前に起動した claude は、引き継いでも manual 扱いのまま（モード欄で選び直すか、起動し直すと戻る）。
-    - 子の起動のモードは `launchMode` に残し、止まった子を開く（`open`）・起動し直す（`restart`）ときも、それより強くしません。
+    - 子の起動のモードは `launchMode` に残し、止まった子を開く（`open`）・起動し直す（`restart`）ときも、それより強くしません。`SessionManager.setMode`（画面のモード欄・`configure_session`）で切り替えたら、`launchMode` も変えます（起動し直すと、切り替える前のモードに戻ってしまうため）。Claude Code が動いていない子の `setMode` は、`launchMode` だけを変えます（次の起動から効く）。
     - フォルダは `folderFor`（シンボリックリンクを解いてから、親のリポジトリの中か、そのプロファイルのセッション（`host.list()`。アーカイブしたものも）のフォルダだけ。見える範囲（`canSee`）より広いので、別のリポジトリでも始められるが、そこの会話は読めないまま。選べるフォルダは、`list_sessions` の `start_folders`（`knownFolders`。新しい順に 30 件まで。子には出さない）で Claude に渡す。worktree なら `projectRootOf` で元のフォルダに直す）。設定ファイルと Remote Control は親と同じにし（Remote Control は `SessionSummary.remoteControl`。開発版では、親も子も使わない。結果の `remote_control` で返す）、`create`・`createInWorktree` に `parentId` を渡します。最初の指示は `submitWhenReady`（worktree の準備を含めて最大 30 分）で送り、待たずに返します。
     - worktree の子（`worktree: true`）: worktree を作る・`.worktreeinclude` のファイルを写す（どちらも Claude Code）・`node_modules` を用意する（アプリ）のは、最初の指示を送る前に済みます。それを `worktree` の説明と結果の `note` で Claude に伝え、子への指示に準備の手順（作る・確かめる・rebase・npm の install）を書かせないようにします。書いておかないと、親はサブエージェントの worktree（Agent ツールの `isolation: "worktree"`。依存が入らない）向けの手順を、子への指示に書き足します（実測）。
     - Claude Code は、既定（設定の `worktree.baseRef` が `fresh`）では `origin/<既定のブランチ>` から worktree を作り、最後の fetch から 1 日を過ぎていれば、先に fetch します。手元の HEAD から作るのは `head` のときだけです（Claude Code 2.1.296 の中身で確かめた）。アプリは `worktree.baseRef` を指定しません。
@@ -967,6 +967,12 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - 結果: `archived`・`already_archived`・`worktree`（`folder` は `removed`・`already_removed`・`kept`・`not_removed`。消したときは `branch_kept`・`backup_ref`、調べられたときは `unpushed_commits`・`pull_request`）・`note`。worktree を消せなかったとき（ユーザーが付けたロックなど）は、`SessionManager.archive` がアーカイブを済ませてから失敗するので、失敗にせず `folder: 'not_removed'` と `error`（理由）を返します。理由の文は `removeWorktree` のもの（ロックの文は画面の言語）。
     - アーカイブ済みの子に呼ぶと、同じ処理をもう一度通します（`removeWorktree` は、フォルダが無ければ git の登録とブランチだけを片付ける）。何度呼んでも同じ結果になります。
     - まだ送っていない、その子の親への知らせは捨てます。
+  - `configure_session`: 自分の子の権限モード・モデル・エフォートを変えます。画面のモード欄・モデル欄・エフォート欄と同じ処理（`SessionManager.setMode`・`configure`）を通し、新しい変え方は持ちません。人の確認は出しません（ユーザーと決めたこと）。
+    - 権限モードは、親の `modeOf` より強ければ断ります（`start_session` と同じ）。選べるのは Shift+Tab で回るもの（`SWITCHABLE_MODES`。bypassPermissions は、起動のときに許していないと回ってこないので除く）。
+    - 変えるのは、手の空いた子だけ。権限モードは `idle`・`background`・`exited`、モデル・エフォートは `idle`・`exited`（Claude Code を起動し直すので、裏のタスクの完了待ちは除く）。ほかは断り、状態ごとの理由と次にできること（`stop_session` で止めてから変えて `send_message` で続けさせる・答えてから変える・人に伝える）を返します（`CONFIGURE_REFUSAL`）。作業中の子に Shift+Tab を送ると、そのあいだに出た書き込みの許可の確認で「Yes, and switch to accept edits … (shift+tab)」を選んでしまうためです（Claude Code 2.1.296 の控え `write-permission`）。`ScreenTracker.setMode` も、Shift+Tab を送る前に、毎回画面が入力欄のままかを確かめ、メニューに変わっていたらやめます（画面のモード欄から切り替えるときも同じ）。
+    - 確かめられるもの（モード・親の上限・エフォートの値・状態）は、何かを変える前にすべて確かめます。両方を変えるときは、先に権限モードを切り替えてから `configure` で起動し直します（`restart` は画面のモードと `launchMode` で起動する）。起動し直せなかったときは、モードは切り替えたことを添えて失敗にします。
+    - モデル・エフォートのうち変えないほうと、設定ファイルは、今の指定（`SessionSummary` の `model`・`effort`・`settingsFile`）のまま渡します（画面の欄で変えたときと同じ）。
+    - 結果: `changed`（変えたもの）・`state`・`note`。`get_session` は、子の今の `permission_mode`（画面から読む。動いていなければ `null`）・`model`・`effort`（動いていなければ、次に起動するときの指定）も返します。
   - `wait_sessions`: 状態の変化と 1 秒ごとの確認で、対象のどれかの手が空く（`starting`・`working` 以外になる）まで待ちます。バックグラウンドのタスクの完了待ちは、ターンが終わっているので手が空いたとみなします（開発サーバーのように終わらないものもあるため）。
 - 親への知らせ（`SessionsControl.stateChanged`）: 子の状態が `working` から `idle`・`background`・`question`・`permission`・`waiting`・`exited` に変わり、子の最後の発言（`/clear` よりあと）が親からの指示なら、親ごとに溜めます。親が止めた子（`stop_session`）は除きます。`starting` から手が空いたもの（アプリを起動し直して引き継いだときなど）は、作業を終えたのではないので数えません。子セッションは人に通知しないので（`index.ts` の `notify` が `parentOf` で除く）、親が答えられない許可の確認・ターミナルでの操作の待ちも親に知らせ、人に伝えさせます。
   - 親が `idle` か `background`（ターンの外）で入力欄が空なら、`<tanacode-session-event sessions="子の ID">文</tanacode-session-event>`（1 行。`sessionEventText`）を `submitWhenReady` で打ちます。親が作業中なら、ターンの外になったときに送ります。1.5 秒の間に続けて手が空いた子は、1 つにまとめます。待ちの列・まとめ・試し直しは `session-notices.ts` の `SessionNotices`（チェックリストの知らせと共通）。
@@ -1256,7 +1262,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `optimized-compact.test.ts`・`optimized-compact-flow.test.ts`: 最適化圧縮で送る文（仕上げの頼み・再開の文・会話ログからの見分け）と、流れ（進み方・取りやめる場合・再開の文を待って送る）
   - `auto-compact.test.ts`: 自動の最適化圧縮（いつ始めるか・止めるファイルと本物のフックのコマンド・続けて起きないこと・圧縮の前のフックへの答え・大きさの設定）
   - `checklist-state.test.ts`: 「いまの状態」のリスト（Claude ができること・知らせへの出し方・圧縮の直後の決まった文）
-  - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
+  - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー（途中で許可の確認が出たらやめる）、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
   - `scheduled-messages.test.ts`: 時刻を指定して送信（時刻になったら送る・止まったセッションの再開・取り消し・送れなかったとき・断るもの・保存と読み直し・時刻を過ぎていたもの・時刻の表示と選択肢・通知の本文）
   - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
   - `homebrew-update.test.ts`: Homebrew での更新（brew の返事の読み取り・Homebrew で入れたかの判定・ダウンロードとやり直し・入れ替えのシェル。シェルは本物の sh で、作り物の brew を動かす）
@@ -1270,7 +1276,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
   - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
   - `session-submit.test.ts`: Claude Code の入力欄に打って送る（`SessionManager.submit`。読むのが遅れて文字と Enter が 1 度に届くと Enter が改行になる偽の Claude Code で、打った文字が入力欄に出てから Enter を送るか）
-  - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行（`answer_permission` の、選ぶ選択肢・すり替えの防止・全文を渡せないときの断り方・親のモード も。`end_session` の、自分の子だけ・状態ごとの断り方・worktree を消した結果と残したもの も）・親への知らせ・`read_session` の会話のまとめ）
+  - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行（`answer_permission` の、選ぶ選択肢・すり替えの防止・全文を渡せないときの断り方・親のモード も。`end_session` の、自分の子だけ・状態ごとの断り方・worktree を消した結果と残したもの も。`configure_session` の、親の上限・状態ごとの断り方・変える順番 も）・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
   - `main-ipc.test.ts` / `main-app.test.ts` / `helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`。Electron は作り物）。IPC の受け口（渡す相手と引数・画面から届いた値の検査・開けるフォルダ・書き出しのファイル名と権限・チェックリスト・ウォークスルーの投稿・Git の操作・添付の保存）と、起動の流れ（部品の組み立てと順番・MCP の中継・部品から画面への知らせ）・ウインドウ・権限・プレビューの移動先・メニュー・終了の確認・通知
   - `preload-api.test.ts` / `helpers/ipc-tables.ts`: preload（`window.tanacode`）の契約（上の「配線と契約」）

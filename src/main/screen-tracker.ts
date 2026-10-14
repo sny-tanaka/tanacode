@@ -355,6 +355,8 @@ export class ScreenTracker {
     try {
       for (let step = 0; step <= MODE_CYCLE; step++) {
         if (this.info.mode === target) return true;
+        // 途中で許可の確認などに変わったら、そこでやめる（書き込みの許可の確認では、Shift+Tab が「許して accept edits に切り替える」になる）
+        if (this.info.state.kind !== 'prompt') return false;
         const before = this.info.mode;
         this.write(KEY_SHIFT_TAB);
         await this.readUntil(() => this.info.mode !== before, 800);

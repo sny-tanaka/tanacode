@@ -195,6 +195,19 @@ export class E2EApp {
     await this.start();
   }
 
+  // pty ホストで動いている Claude Code の、起動の引数（1 つの文字列）。起動し直したときに渡した引数を確かめるため
+  async claudeArgs(): Promise<string[]> {
+    const pids = await ptyPids(socketPathIn(this.userData, 'pty-host', 'pty'));
+    return pids.map((pid) => {
+      try {
+        return execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+      } catch {
+        // 調べている間に終わった
+        return '';
+      }
+    });
+  }
+
   // 終了する。Claude Code と pty ホストも止める（終了の確認では「Claude Code も止めて終了」を選ぶ）
   async close(): Promise<void> {
     const socketPath = socketPathIn(this.userData, 'pty-host', 'pty');

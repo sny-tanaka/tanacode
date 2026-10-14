@@ -45,6 +45,21 @@ it('権限モードを切り替えるとき、キーを送る前から描いて�
   expect(tracker.current.mode).toBe('acceptEdits');
 });
 
+it('権限モードを切り替えている途中で許可の確認が出たら、そこでやめる（確認に Shift+Tab を送ると「許して accept edits に切り替える」を選んでしまう）', async () => {
+  const writes: string[] = [];
+  // Claude Code の代わり。Shift+Tab を受け取った直後に、作業の続きで書き込みの許可の確認を出す
+  const write = (data: string) => {
+    writes.push(data);
+    setTimeout(() => tracker!.feed(draw(fixture('write-permission').map((l) => l.text))), 50);
+  };
+  tracker = new ScreenTracker(120, 40, write, () => {});
+  tracker.feed(screen(0));
+  for (let i = 0; i < 40 && tracker.current.mode !== 'manual'; i++) await sleep(25);
+  expect(await tracker.setMode('auto')).toBe(false);
+  expect(tracker.current.state).toMatchObject({ kind: 'menu', menu: { kind: 'permission' } });
+  expect(writes).toEqual(['\x1b[Z']);
+});
+
 // 長い応答を書いている途中の進み具合。動作確認済のバージョンの控え（作業が終わったあとの pasted-draft）を元に、
 // 入力欄より上の会話の行だけを差し替えて流し込む。
 // 本物の Claude Code 2.1.292 を Linux で動かし、長い応答を流して見ると、タイマーの行は消え、応答の始まり（Linux の印は ●）の行は

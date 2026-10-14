@@ -135,6 +135,33 @@ describe('権限モードと起動し直し', () => {
     expect(app.pty(id).arg('--permission-mode')).toBeNull();
   });
 
+  it('setMode: 子セッションで切り替えたモードは、起動し直しても保つ。Claude Code が動いていない子は、次に起動するときのモードを変える', async () => {
+    const parent = app.create();
+    const child = app.create({ mode: 'manual' }, parent.id);
+    await app.ready(child.id);
+    let current = 0;
+    child.pty.onWrite = (data) => {
+      if (data !== '\x1b[Z') return;
+      current = (current + 1) % CYCLE.length;
+      setTimeout(() => app.showMode(child.id, MODE_TEXT[CYCLE[current]]), 10);
+    };
+    expect(await app.manager.setMode(child.id, 'acceptEdits')).toBe(true);
+    // 起動したときのモード（manual）に戻さない
+    app.manager.restart(child.id);
+    expect(app.pty(child.id).arg('--permission-mode')).toBe('acceptEdits');
+    app.pty(child.id).exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(child.id) === 'exited');
+    expect(await app.manager.setMode(child.id, 'plan')).toBe(true);
+    await app.manager.open(child.id);
+    expect(app.pty(child.id).arg('--permission-mode')).toBe('plan');
+    // 子でないセッションは、動いていなければ切り替えない（次の起動は、これまでどおり既定のモード）
+    parent.pty.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(parent.id) === 'exited');
+    expect(await app.manager.setMode(parent.id, 'auto')).toBe(false);
+    await app.manager.open(parent.id);
+    expect(app.pty(parent.id).arg('--permission-mode')).toBeNull();
+  });
+
   it('restart: 子セッションは、画面の表示を偽っても、起動したときのモードより強いモードで起動し直さない', async () => {
     const parent = app.create();
     const child = app.create({ mode: 'manual' }, parent.id);

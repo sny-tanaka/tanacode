@@ -5,7 +5,7 @@ import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import type { ChatEvent } from '@shared/chat';
 import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@shared/optimized-compact';
 import { t } from '@shared/i18n';
-import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
+import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
@@ -22,6 +22,7 @@ import {
   SESSION_STATE_LABEL,
   sessionEventText,
   sessionTool,
+  SWITCHABLE_MODES,
   type PermissionRequest,
   type SessionState,
 } from '@shared/session-tools';
@@ -37,7 +38,8 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // 許可の確認（answer_permission）は、「今回だけ許す」と「断る」だけ。許せるのは、親が読んだ確認（permission_id）がそのまま出ていて、
 // ツールの入力の全文を親に渡せていて、親の権限モードが acceptEdits 以上のときだけ（manual・plan の親は、断ることだけ）。
 // start_session は、子セッションのほかに、独立したセッション（親のない、人が動かすセッション）も始められる。こちらには最初の指示を送るだけ。
-// end_session は、役目を終えた自分の子を片付ける（アーカイブして、worktree も消す）。画面からのアーカイブと同じ処理を通す
+// end_session は、役目を終えた自分の子を片付ける（アーカイブして、worktree も消す）。画面からのアーカイブと同じ処理を通す。
+// configure_session は、自分の子の権限モード（親より強くできない）・モデル・エフォートを変える。画面のモード欄・モデル欄と同じ処理を通す
 
 // SessionManager のうち、ツールが使うもの
 export type SessionsHost = {
@@ -54,6 +56,10 @@ export type SessionsHost = {
   create(cwd: string, options: NewSessionOptions, parentId: string | null): string;
   createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null): Promise<string>;
   rename(id: string, title: string): void;
+  // 権限モードを切り替える（Shift+Tab。動いていない子は、次に起動するときのモード）。切り替えられたら true
+  setMode(id: string, mode: PermissionMode): Promise<boolean>;
+  // モデル・エフォート・設定ファイルを変える。動いていれば、Claude Code を起動し直して同じ会話を続ける
+  configure(id: string, options: SessionOptions): void;
   open(id: string): Promise<void>;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   interrupt(id: string): void;
@@ -133,6 +139,24 @@ const END_REFUSAL: Partial<Record<SessionState, string>> = {
     'is waiting for the user to act in its terminal, so it was not ended. Only the user can do that: tell the user, and call end_session again once the child is idle.',
 };
 
+// configure_session で、権限モードを切り替えられる状態。手が空いている・裏のタスクの完了待ち（ターンは終わっている）・動いていない（次の起動のモード）。
+// 作業中は切り替えない（Shift+Tab を送るあいだに許可の確認が出ると、「許して accept edits に切り替える」を選んでしまう）
+const MODE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
+// モデル・エフォートを変えられる状態。Claude Code を起動し直すので、裏のタスクの完了待ちは除く（タスクが止まる）
+const RESTARTABLE_STATES = new Set<SessionState>(['idle', 'exited']);
+// 変えられない状態ごとの、断る理由と次にできること（子の名前に続ける）
+const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
+  starting: 'is still starting up. Wait until it is idle (check with get_session), then call configure_session again.',
+  working:
+    'is working, so nothing was changed. Wait for it to finish (check with get_session), or interrupt it with stop_session, then call configure_session again and tell it to continue with send_message.',
+  background:
+    "is waiting for background tasks to finish, and a new model or effort restarts its Claude Code, which would stop them. Nothing was changed. Wait until it is idle, or change only the permission mode.",
+  question: 'is waiting for an answer to a question, so nothing was changed. Answer it with answer_question (get_session shows it) or let the user answer it, then call configure_session again.',
+  permission:
+    'is waiting for an answer to a permission prompt, so nothing was changed. Answer it with answer_permission (get_session shows it) or ask the user, then call configure_session again.',
+  waiting: 'is waiting for the user to act in its terminal, so nothing was changed. Only the user can do that: tell the user, and call configure_session again once the child is idle.',
+};
+
 class ToolError extends Error {}
 
 export class SessionsControl {
@@ -192,6 +216,8 @@ export class SessionsControl {
           return await this.answerQuestion(caller, args);
         case 'answer_permission':
           return await this.answerPermission(caller, args);
+        case 'configure_session':
+          return await this.configureSession(caller, args);
         case 'stop_session':
           return await this.stopSession(caller, args);
         case 'end_session':
@@ -558,6 +584,61 @@ export class SessionsControl {
     });
   }
 
+  private async configureSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
+    const { host } = this.deps;
+    const child = this.resolve(caller, args.session_id, true);
+    const who = `"${nameOf(child)}"`;
+    const model = stringArg(args.model);
+    const effort = stringArg(args.effort);
+    if (args.permission_mode === undefined && !model && !effort) throw new ToolError('Pass what to change: permission_mode, model or effort.');
+    // 確かめられるものは、何かを変える前に確かめる（一部だけ変わって終わらないように）
+    let mode: PermissionMode | null = null;
+    if (args.permission_mode !== undefined) {
+      if (!SWITCHABLE_MODES.includes(args.permission_mode as PermissionMode)) {
+        throw new ToolError(`Permission mode ${String(args.permission_mode)} cannot be set. Choose one of ${SWITCHABLE_MODES.join(', ')}.`);
+      }
+      mode = args.permission_mode as PermissionMode;
+      // 権限モードは、このセッションより強くできない（start_session と同じ。親を通じて、人が許していない操作を通さないため）
+      const limit = host.modeOf(caller.id) ?? 'manual';
+      if (!modeWithin(mode, limit)) throw new ToolError(`Permission mode ${mode} cannot be used because it is more permissive than this session's (${limit}).`);
+    }
+    if (effort && !EFFORTS.includes(effort)) throw new ToolError(`Unknown effort: ${effort}. Choose one of ${EFFORTS.join(', ')}.`);
+    const restart = !!model || !!effort;
+    const state = host.stateOf(child.id) ?? 'exited';
+    if (state === 'archived') throw new ToolError(`${who} is archived. To change it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
+    if (!(restart ? RESTARTABLE_STATES : MODE_SWITCHABLE_STATES).has(state)) {
+      throw new ToolError(`${who} ${CONFIGURE_REFUSAL[state] ?? `cannot be changed while it is ${SESSION_STATE_LABEL[state]}.`}`);
+    }
+    const running = state !== 'exited';
+    if (mode && !(await host.setMode(child.id, mode))) {
+      const now = host.screen(child.id)?.mode;
+      throw new ToolError(
+        `Could not switch ${who} to ${mode}${now ? ` (its permission mode is now ${now})` : ''}. Its screen may have changed (for example, a prompt appeared). Check it with get_session, and call configure_session again once it is idle.`,
+      );
+    }
+    if (restart) {
+      // 変えないものは、今の指定のまま（画面のモデル欄・エフォート欄で変えたときと同じ）。設定ファイルは変えない
+      const options: SessionOptions = { model: model || (child.model ?? null), effort: effort || (child.effort ?? null), settingsFile: child.settingsFile ?? null };
+      try {
+        host.configure(child.id, options);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new ToolError(`${mode ? `Switched the permission mode of ${who} to ${mode}, but could` : 'Could'} not change its model or effort: ${reason}`);
+      }
+    }
+    const changed = { ...(mode ? { permission_mode: mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+    return json({
+      session_id: child.id,
+      changed,
+      state: host.stateOf(child.id),
+      note: !running
+        ? 'Its Claude Code is not running, so the new settings are used when it starts next (send_message starts it).'
+        : restart
+          ? 'Restarted its Claude Code with the new settings; it continues the same conversation. An instruction you send with send_message now is held until it has restarted.'
+          : 'Switched. It keeps this permission mode when it is restarted.',
+    });
+  }
+
   private async stopSession(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
     const { host } = this.deps;
     const child = this.resolve(caller, args.session_id, true);
@@ -812,8 +893,14 @@ export class SessionsControl {
     const response = work[work.length - 1] ?? notes[notes.length - 1] ?? (resume ? (lastReplyIn(detailOf(resume)) ?? undefined) : undefined);
     const screen = this.deps.host.screen(s.id);
     const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
+    // 今の権限モード・モデル・エフォート（configure_session で変える前に確かめるため）。動いていなければ、次に起動するときの指定
+    // （null は Claude Code の既定。権限モードは画面から読むので、動いていなければ null）
+    const running = base.state !== 'exited' && base.state !== 'archived';
     return {
       ...base,
+      permission_mode: running ? (screen?.mode ?? null) : null,
+      model: running ? this.deps.host.currentModel(s.id) : (s.model ?? null),
+      effort: running ? this.deps.host.currentEffort(s.id) : (s.effort ?? null),
       last_prompt: lastPrompt
         ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
