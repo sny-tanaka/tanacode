@@ -1,7 +1,7 @@
 // アプリ内ブラウザの MCP サーバーの入り口。Claude Code が --mcp-config に従って起動する（stdio）。
 // tanacode 本体を Node として（ELECTRON_RUN_AS_NODE）動かすので、Node.js を別に入れる必要はない。Electron の API は使わない。
 // ソケットのパスとセッションは、--mcp-config の env で受け取る
-// --gate を付けて動かしたときは、MCP サーバーではなく、JavaScript の実行の確認のフックとして働く（browser-gate.ts）
+// --gate を付けて動かしたときは、MCP サーバーではなく、JavaScript の実行と開く先の確認のフックとして働く（browser-gate.ts）
 import { BROWSER_ASK_TIMEOUT_MS, BROWSER_ASK_TOOL, BROWSER_MCP } from '@shared/browser-tools';
 import { isLanguage, setLanguage } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_LANGUAGE_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV } from './browser-bridge';
@@ -19,12 +19,31 @@ const session = process.env[BROWSER_SESSION_ENV] ?? '';
 
 // フックが待つ上限。確認を出させる側に倒せばよいので、短くてよい
 const GATE_TIMEOUT_MS = 5_000;
+// フックの標準入力（ツールの名前と入力）を待つ上限。Claude Code は書いたらすぐ閉じる。来なければ、ツールが分からないものとして確認を出させる
+const GATE_INPUT_TIMEOUT_MS = 2_000;
+
+// 標準入力を閉じられるまで読む（上限を過ぎたら、そこまでのもの）
+function readInput(): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const done = () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    };
+    const timer = setTimeout(done, GATE_INPUT_TIMEOUT_MS);
+    process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+    process.stdin.on('end', done);
+    process.stdin.on('error', done);
+  });
+}
 
 if (process.argv.includes(BROWSER_GATE_ARG)) {
   // 確認の理由は、Claude Code を起動したときのアプリの言語で書く
   const lang = process.env[BROWSER_LANGUAGE_ENV];
   if (isLanguage(lang)) setLanguage(lang);
-  void runGate(socketPath, session, GATE_TIMEOUT_MS).then((output) => process.stdout.write(`${output}\n`, () => process.exit(0)));
+  void readInput()
+    .then((input) => runGate(socketPath, session, GATE_TIMEOUT_MS, input))
+    .then((output) => process.stdout.write(`${output}\n`, () => process.exit(0)));
 } else {
   runRelay(
     process.stdin,

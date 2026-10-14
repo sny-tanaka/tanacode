@@ -924,6 +924,45 @@ describe('ツールの実行（SessionsControl）', () => {
       }
     });
 
+    it('人だけが答えられる確認（アプリ内ブラウザで、許す先の外を開く）は、許さない。何の確認かは見せ、断ることはできる', async () => {
+      const NAVIGATE = 'mcp__tanacode-browser__navigate';
+      const asked: [string, PermissionRequest][] = [];
+      control.dispose();
+      control = new SessionsControl({
+        host,
+        enabled: () => enabled,
+        archive: (id, options) => host.archive(id, options),
+        humanOnly: (id, request) => {
+          asked.push([id, request]);
+          return request.tool === NAVIGATE ? 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.' : null;
+        },
+        home: '/nonexistent-home',
+        notifyDelayMs: 10,
+        followUpMs: 40,
+      });
+      const request: PermissionRequest = { seq: 1, at: 100, tool: NAVIGATE, input: { url: 'https://example.com/' }, agent: null };
+      host.set(CHILD, 'permission');
+      host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', context: ['tanacode-browser - navigate(url: "https://example.com/") (MCP)'], options: [YES, NO] }));
+      host.permissions.set(CHILD, request);
+      host.events.set(CHILD, [{ type: 'tool-use', id: 'toolu_1', name: NAVIGATE, target: '', input: JSON.stringify(request.input, null, 2) }]);
+      const permission = await read();
+      expect(permission).toMatchObject({ tool: NAVIGATE, input: { url: 'https://example.com/' }, can_allow: false, can_deny: true });
+      expect(permission.cannot_allow_reason).toContain('only the user can answer');
+      expect(asked[0]).toEqual([CHILD, request]);
+      const result = await answer({ permission_id: permission.id, decision: 'allow' });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toBe(
+        'Cannot allow this prompt: it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt. Ask the user to answer it in the child session (you can still deny it).',
+      );
+      expect(host.chosen).toEqual([]);
+      expect((await answer({ permission_id: permission.id, decision: 'deny' })).isError).toBeFalsy();
+      expect(host.chosen.map((c) => c.choice.optionId)).toEqual([NO.id]);
+      // ほかの確認は、今までどおり許せる
+      host.chosen = [];
+      show(bash('mkdir out', { seq: 2 }));
+      expect((await answer({ permission_id: (await read()).id, decision: 'allow' })).isError).toBeFalsy();
+    });
+
     it('画面と合わない入力は、親に見せない（別の操作を読んで判断させない）', async () => {
       show(bash('mkdir out'), { context: ['Bash command', 'rm -rf ~'] });
       const permission = await read();

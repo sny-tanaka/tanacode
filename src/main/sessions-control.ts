@@ -104,6 +104,8 @@ type Deps = {
   // セッションをアーカイブする。画面からのアーカイブと同じ処理（アプリ内ブラウザ・シェルの後始末も）。worktree を消せなければ、
   // アーカイブはしたうえで、理由を添えて失敗する
   archive: (id: string, options: ArchiveOptions) => Promise<WorktreeRemoval | null>;
+  // 子の許可の確認のうち、人だけが答えられるもの（アプリ内ブラウザで、許す先の外を開く）。当たれば、親に許させない理由（英語）
+  humanOnly?: (sessionId: string, request: PermissionRequest) => string | null;
   // ホームのフォルダ（ここを開いたセッションに、ホームの下のすべてのセッションを見せないため）
   home: string;
   // 予約したメッセージ（自分への予約に使う）。予約は SessionsControl より後で作るので、取り出す関数で渡す
@@ -591,7 +593,7 @@ export class SessionsControl {
     const current = async () => {
       const screen = host.screen(child.id);
       const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
-      return menu?.kind === 'permission' ? permissionOf(menu, host.pendingPermission(child.id), await host.conversation(child.id)) : null;
+      return menu?.kind === 'permission' ? permissionOf(menu, host.pendingPermission(child.id), await host.conversation(child.id), (r) => this.deps.humanOnly?.(child.id, r) ?? null) : null;
     };
     const shown = await current();
     if (!shown) throw new ToolError(`${who} is not showing a permission prompt that can be answered here (the user answered it first, or it is another kind of screen). Check with get_session.`);
@@ -610,7 +612,7 @@ export class SessionsControl {
     // キーを送る直前に、同じ確認が出ているか確かめる（別の確認にすり替わっていたら、何も押さない）。
     // 会話は先に読んでおく（expect は同期で確かめるため）
     const events = await host.conversation(child.id);
-    const same = (menu: Menu) => menu.kind === 'permission' && permissionOf(menu, host.pendingPermission(child.id), events).id === id;
+    const same = (menu: Menu) => menu.kind === 'permission' && permissionOf(menu, host.pendingPermission(child.id), events, (r) => this.deps.humanOnly?.(child.id, r) ?? null).id === id;
     if (!(await host.chooseIf(child.id, { optionId, key: 'enter' }, same))) throw changed();
     // 答えが受け付けられて、確認が閉じた（次の確認に進んだ）のを確かめる
     let next = await current();
@@ -1072,7 +1074,7 @@ export class SessionsControl {
         : null,
       last_response: response ? clip(response, 4000) : null,
       question: base.state === 'question' && menu?.kind === 'question' ? questionOf(menu) : undefined,
-      permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), all).view : undefined,
+      permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), all, (r) => this.deps.humanOnly?.(s.id, r) ?? null).view : undefined,
     };
   }
 
@@ -1239,11 +1241,13 @@ function pendingInConversation(events: ChatEvent[], request: PermissionRequest):
 // 今出ている許可の確認を、親に渡す形にする。
 // id: この確認の目印（メニューの文と、フックの入力と、受け取った順番から作る。違う確認は、見た目が同じでも違う ID になる）。
 // 選択肢の名前は入れない（カーソルを動かすと、折り返した名前の読み取りが変わることがあり、選んでいる途中で別の確認に見えてしまう）。
-// problem: 親に許させない理由（全文を渡せない・今の確認のものと確かめられない）。あっても、断ることはできる
+// problem: 親に許させない理由（全文を渡せない・今の確認のものと確かめられない・人だけが答えられる）。あっても、断ることはできる。
+// humanOnly: 人だけが答えられる確認なら、その理由（Deps の humanOnly）
 function permissionOf(
   menu: Menu,
   request: PermissionRequest | null,
   events: ChatEvent[],
+  humanOnly: (request: PermissionRequest) => string | null,
 ): { id: string; view: Record<string, unknown>; problem: string | null; allowOption: string | null; denyOption: string | null; labels: string[] } {
   const options = permissionOptions(menu);
   const labels = menu.options.map((o) => o.label);
@@ -1256,6 +1260,8 @@ function permissionOf(
   else if (!options.allow) problem = 'tanacode could not tell which option allows it only this once.';
   // 画面と合わない・前の確認のものかもしれない入力は、親に見せない（別の操作を読んで判断させないため）
   const trusted = request !== null && (problem === null || full.length > MAX_PERMISSION_INPUT_CHARS || !options.allow) ? request : null;
+  // 人だけが答えられる確認は、入力は見せたうえで（何の確認かを人に伝えられるように）、許させない
+  if (request && problem === null) problem = humanOnly(request);
   const id = createHash('sha256')
     .update(JSON.stringify([menu.title, menu.context, request ? [request.seq, request.tool, full] : null]))
     .digest('hex')

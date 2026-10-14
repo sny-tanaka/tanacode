@@ -1030,7 +1030,8 @@ function showDialog(options: Electron.MessageBoxOptions): Promise<Electron.Messa
 }
 
 // メニューの「Claude にアプリ内ブラウザを操作させる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
-// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。保存できなかったら、チェックを元に戻す
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（browser-control の handle）。
+// 人が許した、許す先の外のオリジンも捨てる（browser-control の turnOff）。保存できなかったら、チェックを元に戻す
 function setBrowserControl(item: MenuItem): void {
   try {
     activeProfile()?.settings.setBrowserControlEnabled(item.checked);
@@ -1038,7 +1039,7 @@ function setBrowserControl(item: MenuItem): void {
     item.checked = !item.checked;
     return;
   }
-  if (!item.checked) activeProfile()?.browser.cancelAsks();
+  if (!item.checked) activeProfile()?.browser.turnOff();
 }
 
 // メニューの「Claude にほかのセッションを扱わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。

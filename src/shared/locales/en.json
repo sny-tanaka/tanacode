@@ -198,6 +198,7 @@
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
       "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
+      "browserGateOutside": "This opens a page outside the sites allowed for Claude ({origin}). If you allow it, Claude reads and operates pages on {origin} in this tab without asking again",
       "browserGateRemote": "The page is not on localhost ({url}), so tanacode is asking for confirmation"
     },
     "translate": {
@@ -1377,7 +1378,7 @@
       "invalid": "Invalid site: {input} (e.g., example.test, *.example.test, 192.168.0.10)",
       "empty": "(empty)",
       "title": "Allowed Sites for Claude in the In-App Browser",
-      "description": "In the in-app browser, Claude can open, read, and interact with pages only on the sites listed here. The in-app browser shares sign-in state, so add only development sites you trust.",
+      "description": "In the in-app browser, Claude can open, read, and interact with pages on the sites listed here without asking. For any other site, Claude asks for your permission every time it opens one. The in-app browser shares sign-in state, so add only development sites you trust.",
       "default": "Default",
       "placeholder": "e.g., myapp.test, *.example.test",
       "inputLabel": "Site to add",

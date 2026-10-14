@@ -196,6 +196,7 @@
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
       "browserGateUnknown": "tanacode に今のページを確かめられなかったので、確認を求めています",
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
+      "browserGateOutside": "Claude に許す先の外のページ（{origin}）を開きます。許すと、Claude はこのタブで {origin} のページを確認なしで読んだり操作したりします",
       "browserGateRemote": "localhost 以外のページ（{url}）なので、tanacode が確認を求めています"
     },
     "translate": {
@@ -1334,7 +1335,7 @@
       "invalid": "書き方が違います: {input}（例: example.test・*.example.test・192.168.0.10）",
       "empty": "（空）",
       "title": "アプリ内ブラウザで Claude に許す先",
-      "description": "Claude がアプリ内ブラウザで開いて・読んで・操作できるのは、ここにある先のページだけです。アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。",
+      "description": "ここにある先のページは、Claude がアプリ内ブラウザで確認なしで開いて・読んで・操作できます。ほかの先は、Claude が開くたびにあなたの許可を求めます。アプリ内ブラウザはログイン状態を共有するので、信頼できる開発用の先だけを足してください。",
       "default": "既定",
       "placeholder": "例: myapp.test・*.example.test",
       "inputLabel": "足す先",

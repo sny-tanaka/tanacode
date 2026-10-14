@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BROWSER_ASK_TOOL, BROWSER_TOOLS, browserToolId, isLocalUrl } from '@shared/browser-tools';
+import { BROWSER_ASK_TOOL, BROWSER_TOOLS, browserToolId, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import type { BrowserAsk } from '@shared/ipc';
 import { BrowserAsks } from '../../src/main/browser-asks';
 import { BROWSER_GATE_REQUEST } from '../../src/main/browser-bridge';
@@ -276,5 +276,102 @@ describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依�
       (e) => e.type === 'user' && /The user pressed \\*"できない\\*"\. Reason: テスト用のアカウントがありません/.test(JSON.stringify((e as { message?: unknown }).message)),
     );
     expect(notified, 'task-notification の発言').toBeDefined();
+  });
+});
+
+// 許す先の外を開く確認。アプリの代わりのソケットが、開く確認のフック（browser-gate.ts）に、許す先の外ならオリジンを答える
+// （人に確認した印を控えて、navigate で使い切るところは、アプリの browser-control が持つ。test/browser-control.test.ts・test/e2e/browser-outside.test.ts）
+describe.each([
+  { mode: 'bypassPermissions' as const, title: 'bypassPermissions でも' },
+  { mode: 'manual' as const, title: '「次から聞かない」で navigate を許したあとでも' },
+])(`Claude Code ${version} とアプリ内ブラウザで、許す先の外を開く: $title確認が出る`, ({ mode }) => {
+  const OPEN = '許す先の外を開いてください';
+  const LOCAL = 'http://localhost:3000/';
+  const LOCAL_AGAIN = 'http://localhost:3000/b';
+  const OUTSIDE = 'https://example.com/path?q=1';
+  const OTHER = 'https://example.org/';
+  let api: MockApi;
+  let run: ClaudeRun;
+  let bridge: BrowserBridge;
+  let socketDir: string;
+  // アプリに届いた呼び出しと、フックが聞いてきたもの
+  const calls: { tool: string; args: Record<string, unknown> }[] = [];
+  const gates: Record<string, unknown>[] = [];
+  const replied = (text: string) => () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
+  const resultOf = (toolUseId: string) => toolResult(run, toolUseId);
+  const opened = () => calls.map((c) => c.args.url);
+
+  beforeAll(async () => {
+    const script = await buildRelay();
+    socketDir = mkdtempSync(join(tmpdir(), 'tanacode-browser-outside-'));
+    const socketPath = join(socketDir, 'browser.sock');
+    bridge = new BrowserBridge(socketPath, async (_session, tool, args): Promise<ToolResult> => {
+      if (tool === BROWSER_GATE_REQUEST) {
+        gates.push(args);
+        const url = String((args.input as { url?: unknown } | undefined)?.url ?? '');
+        return textResult(JSON.stringify({ outside: isClaudeAllowedUrl(url, []) ? null : new URL(url).origin }));
+      }
+      calls.push({ tool, args });
+      return textResult(`${tool} をしました`);
+    });
+    await bridge.start();
+    api = new MockApi();
+    api.conversations = [
+      {
+        match: OPEN,
+        delayMs: 1500,
+        steps: [
+          call('toolu_local', 'navigate', { url: LOCAL }),
+          call('toolu_outside', 'navigate', { url: OUTSIDE }),
+          call('toolu_other', 'navigate', { url: OTHER, newTab: true }),
+          call('toolu_local_again', 'navigate', { url: LOCAL_AGAIN }),
+          [{ type: 'text', text: '開き終えました' }],
+        ],
+      },
+    ];
+    run = new ClaudeRun(await api.start(), { mode, browser: { command: process.execPath, script, socketPath, version: 'test' } });
+    await run.open();
+  });
+
+  afterAll(async () => {
+    await run?.stop();
+    await api?.stop();
+    bridge?.close();
+    if (socketDir) rmSync(socketDir, { recursive: true, force: true });
+  });
+
+  it('許す先は、今までどおり開く（manual では、ふつうの許可の確認が出る。「次から聞かない」で許す）', async () => {
+    await run.send(OPEN);
+    if (mode === 'manual') {
+      const menu = await run.waitFor('localhost を開く許可の確認', menuOf('permission'));
+      const always = menu.options.find((o) => /don.t ask again/i.test(o.label));
+      expect(always, '「次から聞かない」の選択肢').toBeDefined();
+      await run.answer(menu.title, always!.id);
+    }
+    await run.waitFor('localhost を開いた結果', () => resultOf('toolu_local'));
+    expect(calls).toEqual([{ tool: 'navigate', args: { url: LOCAL } }]);
+    // フックは、ツールの名前と入力をアプリに渡す
+    expect(gates[0]).toEqual({ tool: browserToolId('navigate'), input: { url: LOCAL } });
+  });
+
+  it('許す先の外は、開くたびに確認が出る。確認には開く先のオリジンが出る', async () => {
+    const first = await run.waitFor('許す先の外を開く確認', menuOf('permission'));
+    expect(first.context.join('\n')).toContain('https://example.com');
+    expect(calls).toHaveLength(1);
+    await run.answer(first.title, first.options[0].id);
+    await run.waitFor('許す先の外を開いた結果', () => resultOf('toolu_outside'));
+    // 2 つ目の外の先も、また確認が出る
+    const second = await run.waitFor('2 つ目の許す先の外を開く確認', menuOf('permission'));
+    expect(second.context.join('\n')).toContain('https://example.org');
+    expect(calls).toHaveLength(2);
+    await run.answer(second.title, second.options[0].id);
+    await run.waitFor('2 つ目の許す先の外を開いた結果', () => resultOf('toolu_other'));
+  });
+
+  it('外を開いたあとも、許す先は確認なしで開く', async () => {
+    await run.waitFor('返事', replied('開き終えました'));
+    expect(opened()).toEqual([LOCAL, OUTSIDE, OTHER, LOCAL_AGAIN]);
+    expect(gates.map((g) => (g.input as { url: string }).url)).toEqual([LOCAL, OUTSIDE, OTHER, LOCAL_AGAIN]);
+    if (mode === 'manual') expect(readFileSync(join(run.cwd, '.claude', 'settings.local.json'), 'utf8')).toContain(browserToolId('navigate'));
   });
 });

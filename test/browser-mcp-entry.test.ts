@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BROWSER_ASK_TIMEOUT_MS, BROWSER_ASK_TOOL, BROWSER_MCP } from '../src/shared/browser-tools';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV } from '../src/main/browser-bridge';
@@ -97,25 +98,55 @@ describe('中継（MCP サーバー）として動く', () => {
   });
 });
 
-describe('--gate を付けると、JavaScript の実行の確認のフックとして動く', () => {
-  it('アプリに今のページを聞いた答えを標準出力に書き、書き終えたら終わる。中継は動かさない', async () => {
+describe('--gate を付けると、JavaScript の実行と開く先の確認のフックとして動く', () => {
+  // フックの標準入力（Claude Code が JSON を書いて閉じる）
+  let stdin: PassThrough;
+  let written: string[];
+  let flushed: (() => void) | undefined;
+  beforeEach(() => {
     process.argv = [...process.argv, '--gate'];
-    const output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } });
-    mocks.runGate.mockResolvedValue(output);
-    const written: string[] = [];
-    let flushed: (() => void) | undefined;
+    stdin = new PassThrough();
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(stdin as unknown as typeof process.stdin);
+    written = [];
+    flushed = undefined;
     vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown, callback?: () => void) => {
       written.push(String(chunk));
       flushed = callback;
       return true;
     }) as typeof process.stdout.write);
+  });
+
+  it('標準入力を読み終えてから、アプリに聞いた答えを標準出力に書き、書き終えたら終わる。中継は動かさない', async () => {
+    const output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } });
+    mocks.runGate.mockResolvedValue(output);
     await start();
+    const input = JSON.stringify({ tool_name: 'mcp__tanacode-browser__evaluate', tool_input: { expression: '1' } });
+    stdin.write(input.slice(0, 10));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // 閉じるまでは聞かない
+    expect(mocks.runGate).not.toHaveBeenCalled();
+    stdin.end(input.slice(10));
     await vi.waitFor(() => expect(written).toEqual([`${output}\n`]));
-    expect(mocks.runGate).toHaveBeenCalledWith('/u/Application Support/tanacode/browser.sock', 'S1', 5_000);
+    expect(mocks.runGate).toHaveBeenCalledWith('/u/Application Support/tanacode/browser.sock', 'S1', 5_000, input);
     expect(mocks.runRelay).not.toHaveBeenCalled();
     // 書き終える前には終わらない（答えが途中で切れないように）
     expect(exit).not.toHaveBeenCalled();
     flushed?.();
     expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('標準入力が 2 秒たっても閉じなければ、そこまでのもので聞く', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      mocks.runGate.mockResolvedValue('{}');
+      await start();
+      stdin.write('{"tool_name"');
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(mocks.runGate).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mocks.runGate).toHaveBeenCalledWith('/u/Application Support/tanacode/browser.sock', 'S1', 5_000, '{"tool_name"');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
