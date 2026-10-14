@@ -159,6 +159,13 @@ export const ClaudePane = memo(function ClaudePane({
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   // ボタンで最下部へなめらかに送っている途中。途中の位置では、最下部から離れたと見なさない
   const jumping = useRef(false);
+  // 前に読んだ（か、送った）スクロールの位置。上へ動いたか（上を読み始めたか）を見分ける
+  const lastScrollTop = useRef(0);
+  // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）
+  const toBottom = (list: HTMLElement) => {
+    list.scrollTop = list.scrollHeight;
+    lastScrollTop.current = list.scrollTop;
+  };
 
   const [draftSessionId, setDraftSessionId] = useState(session.id);
   if (draftSessionId !== session.id) {
@@ -177,8 +184,31 @@ export const ClaudePane = memo(function ClaudePane({
 
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (list && stickToBottom.current) list.scrollTop = list.scrollHeight;
+    if (list && stickToBottom.current) toBottom(list);
   }, [chat.items, chat.status, chat.queued, sending, scheduled, session.id]);
+
+  // 行の中身や一覧の高さが、上の追いかけと関係なく変わったときも、最下部にいれば追いかける
+  // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const resize = new ResizeObserver(() => {
+      if (stickToBottom.current) toBottom(list);
+    });
+    resize.observe(list);
+    for (const row of list.children) resize.observe(row);
+    const rows = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node);
+        for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node);
+      }
+    });
+    rows.observe(list, { childList: true });
+    return () => {
+      resize.disconnect();
+      rows.disconnect();
+    };
+  }, []);
 
   // 最下部にいるか（40px 以内）を読み直す。最下部にいれば、新しい行を追いかける
   const updateBottom = (el: HTMLElement) => {
@@ -237,7 +267,7 @@ export const ClaudePane = memo(function ClaudePane({
     stickToBottom.current = true;
     setAwayFromBottom(false);
     const list = listRef.current;
-    if (list) list.scrollTop = list.scrollHeight;
+    if (list) toBottom(list);
   }, [screenMode]);
   const menu = live && screen?.state.kind === 'menu' ? screen.state.menu : null;
   const unknownScreen = live && screen?.state.kind === 'unknown';
@@ -254,7 +284,7 @@ export const ClaudePane = memo(function ClaudePane({
   const cardKey = menu ? JSON.stringify(menu) : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (cardKey && list && stickToBottom.current) list.scrollTop = list.scrollHeight;
+    if (cardKey && list && stickToBottom.current) toBottom(list);
   }, [cardKey]);
   const canConfigure = !running && !menu && !rewinding;
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
@@ -505,9 +535,18 @@ export const ClaudePane = memo(function ClaudePane({
           ref={listRef}
           onScroll={(e) => {
             const el = e.currentTarget;
+            const movedUp = el.scrollTop < lastScrollTop.current - 1;
+            lastScrollTop.current = el.scrollTop;
             // ボタンで送っている途中は、着くまで（か、送り終わるまで）追いかける状態のままにする
             if (jumping.current && el.scrollHeight - el.scrollTop - el.clientHeight >= 40) return;
             jumping.current = false;
+            // 最下部を追いかけている間は、上へのスクロールでだけやめる。それ以外（下に隠れた選択肢を見ようと下へスクロールした・
+            // 追いかけたスクロールの知らせが、そのあと伸びてから届いた）では、最下部へ送り直す。最下部から離れたことにすると、
+            // 「最新のメッセージへ」のボタンが、見ようとした選択肢の上に出る（押した選択肢の代わりに、ボタンを押してしまう）
+            if (stickToBottom.current && !movedUp) {
+              toBottom(el);
+              return;
+            }
             updateBottom(el);
           }}
           onScrollEnd={(e) => {

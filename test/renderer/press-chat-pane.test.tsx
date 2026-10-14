@@ -337,6 +337,95 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(1500);
   });
 
+  // 一覧の高さ（中身・見えている範囲）を決める。scrollTop は、ブラウザと同じく 0 から（中身 − 見えている範囲）までに収める
+  const sizeList = (list: HTMLElement, content: () => number, view = 200) => {
+    let top = 0;
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: content });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => view });
+    Object.defineProperty(list, 'scrollTop', { configurable: true, get: () => top, set: (value: number) => (top = Math.max(0, Math.min(value, content() - view))) });
+  };
+
+  it('最下部を追いかけている間に、下に隠れた選択肢を見ようと下へスクロールしても、「最新のメッセージへ」を出さずに最下部へ送る', () => {
+    // 追いかけない伸び方で、カードの選択肢が見えている範囲の下に隠れたとき。見ようとして下へスクロールしたところで
+    // 最下部から離れたことにすると、ボタンが選択肢の上に出て、選択肢の代わりにボタンを押してしまう
+    render(<ClaudePane {...props()} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    sizeList(list, () => height);
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    height = 1300;
+    list.scrollTop = 900;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(1100);
+    expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeNull();
+  });
+
+  it('追いかけたスクロールの知らせが、そのあと伸びてから届いても、追いかけをやめない', () => {
+    // 追いかけ（scrollTop を変える）の知らせは、次に描くときに届く。CPU が忙しいと、その前に行が伸びて、届いたときには最下部から離れている
+    render(<ClaudePane {...props()} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    sizeList(list, () => height);
+    list.scrollTop = 800;
+    height = 1300;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(1100);
+    expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeNull();
+    // 上へスクロールしたら、追いかけをやめる
+    list.scrollTop = 600;
+    fireEvent.scroll(list);
+    height = 1600;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(600);
+    expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeTruthy();
+  });
+
+  it('行の中身や一覧の高さが変わったら（会話や画面は変わらない）、最下部にいれば追いかける。上を読んでいる間は動かさない', () => {
+    // 大きさの変化の知らせを、テストから送る
+    const callbacks: (() => void)[] = [];
+    const observed = new Set<Element>();
+    const original = window.ResizeObserver;
+    window.ResizeObserver = class {
+      constructor(callback: () => void) {
+        callbacks.push(callback);
+      }
+      observe(target: Element) {
+        observed.add(target);
+      }
+      unobserve(target: Element) {
+        observed.delete(target);
+      }
+      disconnect() {
+        observed.clear();
+      }
+    } as unknown as typeof ResizeObserver;
+    try {
+      const view = render(<ClaudePane {...props()} />);
+      const list = document.querySelector('.chat-list') as HTMLDivElement;
+      // 一覧と、その行を見張る（あとから足した行も）
+      expect(observed.has(list)).toBe(true);
+      expect([...list.children].every((row) => observed.has(row))).toBe(true);
+      let height = 1000;
+      sizeList(list, () => height);
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      height = 1300;
+      callbacks.forEach((callback) => callback());
+      expect(list.scrollTop).toBe(1100);
+
+      list.scrollTop = 500;
+      fireEvent.scroll(list);
+      height = 1500;
+      callbacks.forEach((callback) => callback());
+      expect(list.scrollTop).toBe(500);
+      view.unmount();
+      expect(observed.size).toBe(0);
+    } finally {
+      window.ResizeObserver = original;
+    }
+  });
+
   it('上へスクロールすると「最新のメッセージへ」を出し、押すと最下部へ送ってボタンを消す（動きを減らす設定なら、なめらかにしない）', () => {
     const items: ChatItem[] = Array.from({ length: 20 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `${i} 番目の質問` }));
     render(<ClaudePane {...props({ chat: chatOf({ items }) })} />);
