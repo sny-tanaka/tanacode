@@ -36,8 +36,14 @@ const xterm = vi.hoisted(() => {
     onResize(_listener: Listener<{ cols: number; rows: number }>) {
       return { dispose() {} };
     }
-    onTitleChange(_listener: Listener<string>) {
+    private titleListeners: Listener<string>[] = [];
+    onTitleChange(listener: Listener<string>) {
+      this.titleListeners.push(listener);
       return { dispose() {} };
+    }
+    // シェルがタイトルを付けたことにする
+    emitTitle(title: string) {
+      this.titleListeners.forEach((listener) => listener(title));
     }
     onSelectionChange(listener: Listener<void>) {
       this.selectionListeners.push(listener);
@@ -169,7 +175,7 @@ describe('TerminalPanel: シェルのタブ', () => {
   it('アプリが開いたコマンドのタブ: ひとりでに終わってもタブは残し、終わったあとの × はタブを片付ける', async () => {
     render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
-    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install' }));
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install', task: true }));
     expect(tabNames()).toEqual(['zsh 1', 'npm install（実行中）']);
     expect(selectedTab()).toBe(1);
     expect(closeOf(1).getAttribute('data-tip')).toBe('止めて閉じる');
@@ -180,11 +186,29 @@ describe('TerminalPanel: シェルのタブ', () => {
     expect(closeOf(1).getAttribute('data-tip')).toBe('このターミナルを閉じる');
     const task = termOf(1);
     fireEvent.click(closeOf(1));
-    // もう止まっているので、止めずにタブだけを片付ける
-    expect(api.argsOf('shell.kill')).toEqual([]);
+    // もう止まっているので、タブを片付け、main に出力の控え（Claude が読むもの）を捨てさせる
+    expect(api.argsOf('shell.kill')).toEqual([['task1']]);
     expect(tabNames()).toEqual(['zsh 1']);
     expect(task.disposed).toBe(true);
     expect(task.element!.isConnected).toBe(false);
+  });
+
+  it('Claude が打つために開いたシェル: 人が開いたシェルと同じタブとして出し、選ぶ。タイトルを追い、終わったらタブを閉じる', async () => {
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'shell-9', name: 'zsh', task: false }));
+    expect(tabNames()).toEqual(['zsh 1', 'zsh 2']);
+    expect(selectedTab()).toBe(1);
+    expect(closeOf(1).getAttribute('data-tip')).toBe('このターミナルを閉じる');
+    const opened = termOf(1);
+    act(() => opened.emitTitle('npm run dev'));
+    expect(tabNames()).toEqual(['zsh 1', 'npm run dev']);
+    // 出力は、そのタブの xterm に書く
+    act(() => api.emit('shell.onData', { id: 'shell-9', data: 'ready' }));
+    expect(opened.written).toEqual(['ready']);
+    act(() => api.emit('shell.onExit', { id: 'shell-9', exitCode: 0 }));
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(opened.disposed).toBe(true);
   });
 });
 
@@ -311,7 +335,7 @@ describe('TerminalPanel: 押しても効かない（不具合）', () => {
   it('動いているコマンドのタブの ×（「止めて閉じる」）は、止めたあとタブも閉じる', async () => {
     render(<Panel sessionId="s1" />);
     await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
-    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install' }));
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install', task: true }));
     const task = termOf(1);
     expect(closeOf(1).getAttribute('data-tip')).toBe('止めて閉じる');
     fireEvent.click(closeOf(1));

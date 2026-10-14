@@ -8,25 +8,29 @@ import { BROWSER_MCP } from '@shared/browser-tools';
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
 import { allowedToolIds, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
 import { SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD } from '@shared/session-tools';
+import { TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD } from '@shared/terminal-tools';
 import { WALKTHROUGH_MCP } from '@shared/walkthrough-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
 import { ChecklistStore } from '../src/main/checklist-store';
 import type { ToolResult } from '../src/main/mcp-bridge';
 import { SessionsControl, type SessionsHost } from '../src/main/sessions-control';
+import { TerminalControl } from '../src/main/terminal-control';
 import { WalkthroughControl } from '../src/main/walkthrough-control';
 
-// Claude Code に足す MCP サーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）の、ツールの定義と制御の契約。
+// Claude Code に足す MCP サーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナル）の、ツールの定義と制御の契約。
 // - 定義の形（名前・説明・引数のスキーマ）が、Claude Code に渡せる形になっているか
 // - 定義の形（名前・種類・外に書き込むか・引数・許可済みにするか）が変わったら、控え（__snapshots__）との差分で気づけるか
 // - 定義にあるツールを、制御（*-control.ts）が漏れなく振り分けるか。制御が読む引数が、スキーマにあるか
 //   （スキーマに無い引数は、Claude が渡せないので、その機能は黙って動かない）
 
-const SERVERS: { def: McpServerDef; control: string; dispatch: string }[] = [
+// onlyWhenAsked: 人に頼まれたときだけ使うサーバー（人のターミナル。Claude がひとりで完結する操作は Bash を使う）
+const SERVERS: { def: McpServerDef; control: string; dispatch: string; onlyWhenAsked?: true }[] = [
   // ask_user_to_act は振り分けの前（handle）で扱う
   { def: BROWSER_MCP, control: 'src/main/browser-control.ts', dispatch: 'private async dispatch(' },
   { def: SESSIONS_MCP, control: 'src/main/sessions-control.ts', dispatch: 'async handle(' },
   { def: CHECKLIST_MCP, control: 'src/main/checklist-control.ts', dispatch: 'private run(' },
   { def: WALKTHROUGH_MCP, control: 'src/main/walkthrough-control.ts', dispatch: 'private async run(' },
+  { def: TERMINAL_MCP, control: 'src/main/terminal-control.ts', dispatch: 'private async run(', onlyWhenAsked: true },
 ];
 
 type Schema = { type?: string; enum?: unknown[]; description?: string; items?: Schema; properties?: Record<string, Schema>; required?: string[] };
@@ -64,7 +68,7 @@ function methodBody(source: string, method: string): string {
   return source.slice(start, end);
 }
 
-describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def }) => {
+describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def, onlyWhenAsked }) => {
   it('ツールの名前とラベルが重ならず、名前は英小文字と _ だけ', () => {
     const names = def.tools.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
@@ -78,8 +82,13 @@ describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def }) => {
     expect(def.tools.filter((t) => !t.description.trim() || !mcpToolLabel(def, t).trim()).map((t) => t.name)).toEqual([]);
   });
 
-  it('説明（instructions）で、人に頼まれなくても使うことと、人が読むものは人が使っている言葉で書くことを伝える', () => {
-    expect(def.instructions).toContain('do not wait to be asked');
+  it('説明（instructions）で、人に頼まれなくても使う（人のターミナルは、頼まれたときだけ使う）ことと、人が読むものは人が使っている言葉で書くことを伝える', () => {
+    if (onlyWhenAsked) {
+      expect(def.instructions).not.toContain('do not wait to be asked');
+      expect(def.instructions).toContain('only when the user asks');
+    } else {
+      expect(def.instructions).toContain('do not wait to be asked');
+    }
     expect(def.instructions).toContain('in the language the user is using');
   });
 
@@ -130,6 +139,16 @@ describe('子セッションに渡すセッションの MCP サーバー', () =>
   it('ツールは、親に渡すものの一部で、定義も同じ', () => {
     for (const tool of SESSIONS_MCP_FOR_CHILD.tools) expect(SESSIONS_MCP.tools.find((t) => t.name === tool.name)).toEqual(tool);
     expect(SESSIONS_MCP_FOR_CHILD.name).toBe(SESSIONS_MCP.name);
+  });
+});
+
+describe('子セッションに渡すターミナルの MCP サーバー', () => {
+  it('読むツールだけで、定義は親に渡すものと同じ。説明にも打つ話を入れない', () => {
+    expect(TERMINAL_MCP_FOR_CHILD.tools.map((t) => t.name)).toEqual(['list_terminals', 'read_terminal']);
+    for (const tool of TERMINAL_MCP_FOR_CHILD.tools) expect(TERMINAL_MCP.tools.find((t) => t.name === tool.name)).toEqual(tool);
+    expect(TERMINAL_MCP_FOR_CHILD.name).toBe(TERMINAL_MCP.name);
+    expect(TERMINAL_MCP_FOR_CHILD.instructions).not.toContain('type_in_terminal');
+    expect(TERMINAL_MCP_FOR_CHILD.instructions).toContain('in the language the user is using');
   });
 });
 
@@ -266,6 +285,29 @@ describe('どのツールも、制御が振り分けて実行する（「Unknown
       clock: () => 0,
     });
     for (const tool of WALKTHROUGH_MCP.tools) {
+      const result = await control.handle(ME, tool.name, sampleArgs(tool.inputSchema as Schema) as Record<string, unknown>);
+      expect(textOf(result), tool.name).not.toBe(unknown(tool.name));
+    }
+    expect(textOf(await control.handle(ME, 'no_such_tool', {}))).toBe(unknown('no_such_tool'));
+  });
+
+  it('ターミナル', async () => {
+    const control = new TerminalControl({
+      terminals: {
+        list: () => [],
+        info: () => null,
+        flush: async () => {},
+        tail: () => null,
+        cursorLine: () => null,
+        markCursor: () => null,
+        applicationCursor: () => false,
+        write: () => {},
+        openShell: () => ({ id: 'shell-1', name: 'zsh' }),
+      },
+      sessions: { exists: () => true, cwdOf: () => dir, parentOf: () => null, childrenOf: () => [] },
+      enabled: () => true,
+    });
+    for (const tool of TERMINAL_MCP.tools) {
       const result = await control.handle(ME, tool.name, sampleArgs(tool.inputSchema as Schema) as Record<string, unknown>);
       expect(textOf(result), tool.name).not.toBe(unknown(tool.name));
     }

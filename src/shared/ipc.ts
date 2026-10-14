@@ -357,8 +357,9 @@ export type PtyData = { sessionId: string; data: string };
 // ユーザーが開いたシェル（統合ターミナル）
 export type ShellData = { id: string; data: string };
 export type ShellExit = { id: string; exitCode: number };
-// アプリが開いたコマンドのターミナル（worktree の npm install など）。owner: セッションの id
-export type ShellOpened = { owner: string; id: string; name: string };
+// アプリが開いたターミナル。owner: セッションの id / task: コマンドのタブ（worktree の npm install など。終わってもタブを残す）。
+// false は、Claude が人のターミナルに打つために開いたシェル（type_in_terminal の new_tab。人が開いたシェルと同じに扱う）
+export type ShellOpened = { owner: string; id: string; name: string; task: boolean };
 
 export type WorkspaceInfo = { root: string; name: string; branch: string | null };
 export type DirEntry = { name: string; path: string; isDir: boolean };
@@ -593,7 +594,7 @@ export type TanacodeApi = {
     kill(id: string): void;
     onData(listener: (payload: ShellData) => void): () => void;
     onExit(listener: (payload: ShellExit) => void): () => void;
-    // アプリがコマンドのターミナルを開いた（終わってもタブは残す）
+    // アプリがターミナルを開いた（コマンドのタブは、終わってもタブを残す。task でないものは、Claude が打つために開いたシェル）
     onOpened(listener: (payload: ShellOpened) => void): () => void;
   };
   // まだセッションが無いフォルダ（新規セッションの画面で選んだもの）

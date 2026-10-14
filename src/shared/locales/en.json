@@ -52,6 +52,7 @@
       "sessionsControl": "Let Claude Manage Other Sessions",
       "checklistControl": "Let Claude Manage Checklists",
       "walkthroughControl": "Let Claude Give Walkthroughs",
+      "terminalControl": "Let Claude Use the Terminal",
       "autoCompactPercent": "Auto Optimized Compact At",
       "language": "Language",
       "languageSystem": "System Default",
@@ -195,6 +196,8 @@
     },
     "hooks": {
       "worktreeGuard": "This command deletes a worktree or branch, so tanacode is asking for confirmation",
+      "terminalGate": "tanacode asks every time before Claude types into a terminal, regardless of the permission mode. Typing into “{tab}”: {typed}",
+      "terminalGateUnknown": "tanacode could not check the terminal, so it is asking for confirmation. Typing: {typed}",
       "sessionsGate": "This starts a session (a child session or an independent one). Each started session runs as a tanacode session and uses your Claude usage limits.",
       "browserGateUnknown": "tanacode could not check the current page, so it is asking for confirmation",
       "browserGateLocal": "The page is on localhost, so this runs without confirmation",
@@ -345,7 +348,8 @@
       "browser": "In-App Browser",
       "sessions": "Sessions",
       "checklist": "Checklist",
-      "walkthrough": "Walkthrough"
+      "walkthrough": "Walkthrough",
+      "terminal": "Terminal"
     },
     "browser": {
       "screenshot": "Screenshot",
@@ -409,6 +413,11 @@
       "show_code": "Show Code",
       "walkthrough_status": "Current Step",
       "post_walkthrough": "Post to PR"
+    },
+    "terminal": {
+      "list_terminals": "List",
+      "read_terminal": "Read Output",
+      "type_in_terminal": "Type"
     },
     "target": {
       "cardCount": "{count} cards",

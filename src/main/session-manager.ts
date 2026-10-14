@@ -36,6 +36,7 @@ import { ClaudeSession, transcriptPath } from './claude-session';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
+import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
 import { ContextTracker, readContext } from './context-tracker';
@@ -208,6 +209,8 @@ export class SessionManager {
     private readonly walkthroughMcp: () => McpLaunch | null = () => null,
     // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡し、会話ログもその中を読む）。null は既定のプロファイル
     private readonly claudeDir: string | null = null,
+    // 起動する Claude Code に、人のターミナルの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
+    private readonly terminalMcp: () => McpLaunch | null = () => null,
   ) {}
 
   // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
@@ -869,14 +872,22 @@ export class SessionManager {
   // browser: アプリ内ブラウザの MCP サーバーを足すか（合わせる設定に、JavaScript の実行の確認のフックを入れる）
   // sessions: セッションの MCP サーバーを足すか（合わせる設定に、子セッションの起動の確認のフックを入れる）
   // checklist: チェックリストの MCP サーバーを足すか（合わせる設定に、チェックリストを使い続けさせるフックを入れる）
-  private prepareSettings(id: string, settingsFile: string | null | undefined, browser: boolean, sessions: boolean, checklist: boolean): PreparedSettings | null {
+  // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（合わせる設定に、打つ前の確認のフックを入れる）
+  private prepareSettings(
+    id: string,
+    settingsFile: string | null | undefined,
+    browser: boolean,
+    sessions: boolean,
+    checklist: boolean,
+    terminal: boolean,
+  ): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
       this.settingsFiles?.release(id);
       return null;
     }
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist);
+    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -1145,9 +1156,11 @@ export class SessionManager {
     const launch = adopted ? null : this.sessionsMcp();
     const checklist = adopted ? null : this.checklistMcp();
     const walkthrough = adopted ? null : this.walkthroughMcp();
-    // 子セッションには、子を動かすツールを見せない（孫は作れない）
+    const terminalLaunch = adopted ? null : this.terminalMcp();
+    // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist);
+    const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir));
@@ -1291,6 +1304,7 @@ export class SessionManager {
         sessions,
         checklist,
         walkthrough,
+        terminal,
         claudeDir: this.claudeDir,
         ...rt.size,
       },

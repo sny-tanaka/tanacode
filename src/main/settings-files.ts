@@ -159,9 +159,10 @@ export class SettingsFiles {
   // browser: アプリ内ブラウザの MCP サーバーを足すか（JavaScript の実行の確認のフックを入れる）
   // sessions: セッションの MCP サーバーを足すか（子セッションの起動の確認のフックを入れる）
   // checklist: チェックリストの MCP サーバーを足すか（チェックリストを使い続けさせるフックを入れる）
-  prepare(sessionId: string, id: string, browser = false, sessions = false, checklist = false): PreparedSettings {
+  // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（打つ前の確認のフックを入れる）
+  prepare(sessionId: string, id: string, browser = false, sessions = false, checklist = false, terminal = false): PreparedSettings {
     const profile = readSettings(this.find(id));
-    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, sessions, this.claudeDir, checklist));
+    const merged = mergeSettings(profile, ownSettings(statusLineCommandOf(profile, this.claudeDir), browser, sessions, this.claudeDir, checklist, terminal));
     mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
     chmodSync(this.runDir, 0o700);
     const settingsFile = join(this.runDir, `${sessionId}.json`);

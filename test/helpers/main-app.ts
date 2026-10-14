@@ -422,6 +422,7 @@ const modules: Record<string, Record<string, unknown>> = {
   'checklist-control': {
     ChecklistControl: fakeClass('ChecklistControl', { apply: echo('checklistControl.apply'), copy: echo('checklistControl.copy'), handle: echo('checklistControl.handle'), dispose: () => undefined }),
   },
+  'terminal-control': { TerminalControl: fakeClass('TerminalControl', { handle: echo('terminalControl.handle') }) },
   'checklist-store': {
     ChecklistStore: fakeClass('ChecklistStore', { lists: (_self, id: string) => state.checklists.get(id) ?? [], remove: () => undefined, flush: () => undefined }),
   },
@@ -542,6 +543,7 @@ vi.mock('../../src/main/sessions-control', () => modules['sessions-control']);
 vi.mock('../../src/main/checklist-control', () => modules['checklist-control']);
 vi.mock('../../src/main/checklist-store', () => modules['checklist-store']);
 vi.mock('../../src/main/walkthrough-control', () => modules['walkthrough-control']);
+vi.mock('../../src/main/terminal-control', () => modules['terminal-control']);
 vi.mock('../../src/main/walkthrough-github', () => modules['walkthrough-github']);
 vi.mock('../../src/main/github', () => modules.github);
 vi.mock('../../src/main/app-update', () => modules['app-update']);

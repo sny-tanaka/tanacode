@@ -49,6 +49,8 @@ const managerArg = {
   sessionsLaunch: 9,
   checklistLaunch: 10,
   walkthroughLaunch: 11,
+  claudeDir: 12,
+  terminalLaunch: 13,
 } as const;
 const managerArgs = () => argsOf('SessionManager');
 type Callbacks = Record<string, (...args: unknown[]) => unknown>;
@@ -96,7 +98,7 @@ describe('起動', () => {
     expect(argsOf('ScheduledMessages')[0]).toBe(u('scheduled-messages.json'));
     expect(argsOf('ScheduledMessages')[1]).toBe(manager());
     expect(argsOf('UsageMonitor')[0]).toBe(u('usage.json'));
-    expect(allOf('McpBridge').map((c) => c.args[0])).toEqual([u('browser.sock'), u('sessions.sock'), u('checklist.sock'), u('walkthrough.sock')]);
+    expect(allOf('McpBridge').map((c) => c.args[0])).toEqual([u('browser.sock'), u('sessions.sock'), u('checklist.sock'), u('walkthrough.sock'), u('terminal.sock')]);
     expect(state.ptyHostStart.mock.calls).toEqual([[state.userData, join(MAIN_DIR, 'pty-host.js')]]);
     // SessionManager には、pty ホスト・会話の一覧・監視を渡す
     const args = managerArgs();
@@ -133,12 +135,13 @@ describe('起動', () => {
       },
     });
     const sockets = allOf('McpBridge').map((c) => String(c.args[0]));
-    expect(sockets.map((path) => path.startsWith(`${tmpdir()}/`))).toEqual([true, true, true, true]);
+    expect(sockets.map((path) => path.startsWith(`${tmpdir()}/`))).toEqual([true, true, true, true, true]);
     expect(sockets.map((path) => path.slice(tmpdir().length + 1).replace(/-[0-9a-f]{12}\.sock$/, ''))).toEqual([
       'tanacode-browser',
       'tanacode-sessions',
       'tanacode-checklist',
       'tanacode-walkthrough',
+      'tanacode-terminal',
     ]);
   });
 
@@ -224,20 +227,20 @@ describe('起動', () => {
 });
 
 describe('Claude Code に足す MCP サーバー', () => {
-  const launches = ['browserLaunch', 'sessionsLaunch', 'checklistLaunch', 'walkthroughLaunch'] as const;
+  const launches = ['browserLaunch', 'sessionsLaunch', 'checklistLaunch', 'walkthroughLaunch', 'terminalLaunch'] as const;
   const launch = (name: (typeof launches)[number]) => (managerArgs()[managerArg[name]] as () => unknown)();
 
   it('どれも、同梱の Node で中継のスクリプトを動かし、userData のソケットにつなぐ', async () => {
     await boot();
-    const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js'];
-    const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock'];
+    const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js'];
+    const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
     launches.forEach((name, i) => {
       expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7' });
     });
   });
 
   it('メニューでオフにしているものは足さない（次に起動する Claude Code から）', async () => {
-    await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false } });
+    await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false, terminalControl: false } });
     for (const name of launches) expect(launch(name)).toBeNull();
     menuItem('Claude にチェックリストを扱わせる').checked = true;
     menuItem('Claude にチェックリストを扱わせる').click?.(menuItem('Claude にチェックリストを扱わせる'));
@@ -246,25 +249,27 @@ describe('Claude Code に足す MCP サーバー', () => {
 
   it('待ち受けを始められなかったものは足さず、理由を出す。アプリはそのまま使える', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await boot({ before: (s) => ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock'].forEach((f) => s.failingSockets.add(f)) });
+    await boot({ before: (s) => ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'].forEach((f) => s.failingSockets.add(f)) });
     for (const name of launches) expect(launch(name)).toBeNull();
     expect(error.mock.calls.map((c) => c[0])).toEqual([
       'アプリ内ブラウザの待ち受けを始められませんでした',
       'セッションの待ち受けを始められませんでした',
       'チェックリストの待ち受けを始められませんでした',
       'ウォークスルーの待ち受けを始められませんでした',
+      'ターミナルの待ち受けを始められませんでした',
     ]);
     expect(state.windows).toHaveLength(1);
   });
 
   it('中継からの呼び出しは、それぞれの制御に渡す（中断の合図も）', async () => {
     await boot();
-    const [browser, sessions, checklist, walkthrough] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
+    const [browser, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
     const signal = new AbortController().signal;
     expect(browser('s1', 'navigate', { url: 'http://localhost' }, signal)).toEqual({ call: 'browser.handle', args: ['s1', 'navigate', { url: 'http://localhost' }, signal] });
     expect(sessions('s1', 'start_session', { prompt: 'x' }, signal)).toEqual({ call: 'sessionsControl.handle', args: ['s1', 'start_session', { prompt: 'x' }, signal] });
     expect(checklist('s1', 'card_add', { title: 'x' })).toEqual({ call: 'checklistControl.handle', args: ['s1', 'card_add', { title: 'x' }] });
     expect(walkthrough('s1', 'walkthrough_start', { steps: [] })).toEqual({ call: 'walkthrough.handle', args: ['s1', 'walkthrough_start', { steps: [] }] });
+    expect(terminal('s1', 'read_terminal', { id: 'shell-1' }, signal)).toEqual({ call: 'terminalControl.handle', args: ['s1', 'read_terminal', { id: 'shell-1' }, signal] });
   });
 
   it('起動が終わる前（セッションの一覧を読む前）に、アプリ内ブラウザから届いた問い合わせ・依頼も扱える', async () => {
@@ -284,11 +289,12 @@ describe('Claude Code に足す MCP サーバー', () => {
     const host = pending<Record<string, unknown>>();
     await boot({ noWait: true, before: (s) => s.ptyHostStart.mockReturnValue(host.promise as never) });
     await vi.waitFor(() => expect(state.ptyHostStart).toHaveBeenCalled());
-    const [, sessions, checklist, walkthrough] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
+    const [, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
     const notYet = textResult('tanacode has not finished starting up. Wait a moment and try again.', true);
     await expect(sessions('s1', 'list_sessions', {}, new AbortController().signal)).resolves.toEqual(notYet);
     await expect(checklist('s1', 'list_get', {})).resolves.toEqual(notYet);
     await expect(walkthrough('s1', 'walkthrough_start', {})).resolves.toEqual(notYet);
+    await expect(terminal('s1', 'list_terminals', {}, new AbortController().signal)).resolves.toEqual(notYet);
     host.resolve(state.ptyHost);
     await started();
   });
@@ -326,7 +332,8 @@ describe('部品から画面への知らせ', () => {
     const shells = optionsOf('ShellTerminals');
     shells.onData('sh1', 'ls');
     shells.onExit('sh1', 0);
-    shells.onOpened('s1', 'sh2', 'zsh');
+    shells.onOpened('s1', 'task-2', 'npm install', true);
+    shells.onOpened('s1', 'shell-3', 'zsh', false);
     expect(sentToRenderer()).toEqual([
       [IpcChannel.FilesChanged, { root: '/work', paths: ['a.ts'] }],
       [IpcChannel.SettingsFilesChanged, [{ id: 'f1' }]],
@@ -339,7 +346,8 @@ describe('部品から画面への知らせ', () => {
       [IpcChannel.SystemStats, { cpu: 1 }],
       [IpcChannel.ShellData, { id: 'sh1', data: 'ls' }],
       [IpcChannel.ShellExit, { id: 'sh1', exitCode: 0 }],
-      [IpcChannel.ShellOpened, { owner: 's1', id: 'sh2', name: 'zsh' }],
+      [IpcChannel.ShellOpened, { owner: 's1', id: 'task-2', name: 'npm install', task: true }],
+      [IpcChannel.ShellOpened, { owner: 's1', id: 'shell-3', name: 'zsh', task: false }],
     ]);
   });
 
@@ -1017,7 +1025,7 @@ describe('メニュー', () => {
   };
 
   it('アプリのメニューに、設定の切り替えと、許す先・新規セッション・止めて終了を並べる', async () => {
-    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, checklistControl: true, walkthroughControl: false } });
+    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, checklistControl: true, walkthroughControl: false, terminalControl: true } });
     const [appMenu, fileMenu, ...rest] = state.menu!;
     expect(appMenu.label).toBe('tanacode');
     expect(appMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual([
@@ -1029,6 +1037,7 @@ describe('メニュー', () => {
       'Claude にほかのセッションを扱わせる',
       'Claude にチェックリストを扱わせる',
       'Claude にウォークスルーさせる',
+      'Claude にターミナルを使わせる',
       '自動で最適化圧縮する大きさ',
       'アプリ内ブラウザで Claude に許す先…',
       'separator',
@@ -1042,7 +1051,7 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, true, false]);
+    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, true, false, true]);
     expect(fileMenu.label).toBe('ファイル');
     expect(fileMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual(['新規セッション', 'separator', 'close', 'separator', 'Claude Code も止めて終了']);
     expect(menuItem('新規セッション').accelerator).toBe('CmdOrCtrl+N');
@@ -1175,6 +1184,7 @@ describe('メニュー', () => {
     ['Claude にほかのセッションを扱わせる', 'sessionsControl'],
     ['Claude にチェックリストを扱わせる', 'checklistControl'],
     ['Claude にウォークスルーさせる', 'walkthroughControl'],
+    ['Claude にターミナルを使わせる', 'terminalControl'],
   ])('「%s」: 設定（%s）に保存する', async (label, key) => {
     await boot();
     toggle(label);
@@ -1190,6 +1200,7 @@ describe('メニュー', () => {
     'Claude にほかのセッションを扱わせる',
     'Claude にチェックリストを扱わせる',
     'Claude にウォークスルーさせる',
+    'Claude にターミナルを使わせる',
   ])('「%s」: 保存できなかったら、チェックを元に戻し、ほかは何もしない', async (label) => {
     await boot();
     // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない
@@ -1338,7 +1349,7 @@ describe('終了', () => {
 
   it('待ち受けを始められなかったものがあっても、終了の片付けは止まらない', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await boot({ before: (s) => ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock'].forEach((f) => s.failingSockets.add(f)) });
+    await boot({ before: (s) => ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'].forEach((f) => s.failingSockets.add(f)) });
     state.powerMonitor.emit('shutdown');
     expect(() => quitOnce()).not.toThrow();
     expect(the('ShellTerminals').killAll).toHaveBeenCalledTimes(1);

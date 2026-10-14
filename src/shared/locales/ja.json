@@ -52,6 +52,7 @@
       "sessionsControl": "Claude にほかのセッションを扱わせる",
       "checklistControl": "Claude にチェックリストを扱わせる",
       "walkthroughControl": "Claude にウォークスルーさせる",
+      "terminalControl": "Claude にターミナルを使わせる",
       "autoCompactPercent": "自動で最適化圧縮する大きさ",
       "language": "言語（Language）",
       "languageSystem": "システムに合わせる",
@@ -193,6 +194,8 @@
     },
     "hooks": {
       "worktreeGuard": "worktree やブランチを消す操作なので、tanacode が確認を求めています",
+      "terminalGate": "tanacode は、Claude がターミナルに打つ前に、権限モードによらず毎回確認を求めます。「{tab}」に打つもの: {typed}",
+      "terminalGateUnknown": "tanacode にターミナルを確かめられなかったので、確認を求めています。打つもの: {typed}",
       "sessionsGate": "セッションを起動します（子セッションか、独立したセッション）。起動したセッションは tanacode のセッションとして動き、Claude の利用枠をその数だけ使います",
       "browserGateUnknown": "tanacode に今のページを確かめられなかったので、確認を求めています",
       "browserGateLocal": "localhost のページなので、確認なしで実行します",
@@ -343,7 +346,8 @@
       "browser": "アプリ内ブラウザ",
       "sessions": "セッション",
       "checklist": "チェックリスト",
-      "walkthrough": "ウォークスルー"
+      "walkthrough": "ウォークスルー",
+      "terminal": "ターミナル"
     },
     "browser": {
       "screenshot": "スクリーンショット",
@@ -407,6 +411,11 @@
       "show_code": "コードを示す",
       "walkthrough_status": "今の場所",
       "post_walkthrough": "PR に載せる"
+    },
+    "terminal": {
+      "list_terminals": "一覧",
+      "read_terminal": "出力を読む",
+      "type_in_terminal": "打ち込む"
     },
     "target": {
       "cardCount": "{count} 枚",

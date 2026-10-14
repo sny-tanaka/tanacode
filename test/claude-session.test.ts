@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
+import { TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
 import { childEnv, ClaudeSession, transcriptPath } from '../src/main/claude-session';
 import type { HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { STATUS_FILE_ENV } from '../src/main/statusline';
@@ -119,6 +120,21 @@ describe('起動', () => {
     session().claude.start();
     expect(host.spawned[1].request.env.TANACODE_CHECKLIST_SOCKET).toBeUndefined();
     expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse']);
+  });
+
+  it('人のターミナルを足すときは、打つ前の確認のフックが使う環境変数を渡し、設定にフックを入れる。子セッションには、どちらも渡さない', () => {
+    const terminal = { command: 'node', script: '/x/terminal-mcp.js', socketPath: '/u/terminal.sock', version: '1' };
+    const gateHooks = (args: string[]) =>
+      (JSON.parse(args[args.indexOf('--settings') + 1]) as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL);
+    session({ terminal }).claude.start();
+    const parent = host.spawned[0].request;
+    expect(parent.env).toMatchObject({ TANACODE_TERMINAL_SOCKET: '/u/terminal.sock', TANACODE_TERMINAL_SESSION: 's1', TANACODE_TERMINAL_COMMAND: 'node', TANACODE_TERMINAL_SCRIPT: '/x/terminal-mcp.js' });
+    expect(gateHooks(parent.args)).toHaveLength(1);
+    session({ terminal: { ...terminal, child: true } }).claude.start();
+    const child = host.spawned[1].request;
+    expect(child.env.TANACODE_TERMINAL_SOCKET).toBeUndefined();
+    expect(gateHooks(child.args)).toEqual([]);
+    expect(child.args[child.args.indexOf('--mcp-config') + 1]).toContain('"TANACODE_TERMINAL_CHILD":"1"');
   });
 
   it('引き継ぐときは起動せず、今の画面を先に描き直してから、続きの出力を渡す', () => {

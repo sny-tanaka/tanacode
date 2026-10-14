@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { t } from '@shared/i18n';
+import { terminalLabel } from '@shared/terminal-tools';
 import { insertIntoChat } from '../chat/insertInput';
 import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
 import { Busy } from '../layout/Busy';
@@ -96,6 +97,15 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
     [makeXterm],
   );
 
+  // シェルが付けたタイトルを、タブの名前にする
+  const followTitle = useCallback(
+    (owner: string, id: string, term: Terminal) =>
+      term.onTitleChange((title) =>
+        setShells((prev) => ({ ...prev, [owner]: (prev[owner] ?? []).map((t) => (t.id === id ? { ...t, title: title || null } : t)) })),
+      ),
+    [],
+  );
+
   useEffect(() => {
     const offData = window.tanacode.shell.onData(({ id, data }) => {
       const x = xterms.current.get(id);
@@ -117,11 +127,13 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
       pending.current.delete(id);
       setShells((prev) => Object.fromEntries(Object.entries(prev).map(([owner, list]) => [owner, list.filter((t) => t.id !== id)])));
     });
-    // アプリがコマンドのタブを開いた。そのセッションで選んでおく（「ターミナルで見る」で出す）
-    const offOpened = window.tanacode.shell.onOpened(({ owner, id, name }) => {
-      taskIds.current.add(id);
-      attachXterm(id);
-      setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null, task: true }] }));
+    // アプリがタブを開いた。そのセッションで選んでおく（「ターミナルで見る」で出す）。
+    // コマンドのタブ（task）のほかに、Claude が打つために開いたシェルがある。こちらは、人が開いたシェルと同じに扱う（終わったらタブを閉じる）
+    const offOpened = window.tanacode.shell.onOpened(({ owner, id, name, task }) => {
+      if (task) taskIds.current.add(id);
+      const { term } = attachXterm(id);
+      if (!task) followTitle(owner, id, term);
+      setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null, ...(task ? { task: true } : {}) }] }));
       setActive((prev) => ({ ...prev, [owner]: id }));
     });
     const observer = new ResizeObserver(() => {
@@ -147,9 +159,7 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
       const { term } = x;
       const { id, name } = await window.tanacode.shell.create(owner, term.cols, term.rows);
       attachXterm(id, x);
-      term.onTitleChange((title) =>
-        setShells((prev) => ({ ...prev, [owner]: (prev[owner] ?? []).map((t) => (t.id === id ? { ...t, title: title || null } : t)) })),
-      );
+      followTitle(owner, id, term);
       if (queued.current?.owner === owner) {
         // 見えない制御文字で、見えているコマンドと違うものが動かないようにする
         window.tanacode.shell.write(id, `${stripControlChars(queued.current.command)}\r`);
@@ -160,10 +170,11 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
     } finally {
       creating.current = false;
     }
-  }, [makeXterm, attachXterm]);
+  }, [makeXterm, attachXterm, followTitle]);
 
-  // 終わったコマンドのタブを閉じる（pty はもう無いので、画面のタブだけを片付ける）
+  // 終わったコマンドのタブを閉じる。pty はもう無いので、画面のタブを片付け、メインプロセスに出力の控え（Claude が読むもの）を捨てさせる
   const closeTask = (id: string) => {
+    window.tanacode.shell.kill(id);
     const x = xterms.current.get(id);
     x?.term.dispose();
     x?.element.remove();
@@ -253,7 +264,7 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
               onClick={() => sessionId && setActive((prev) => ({ ...prev, [sessionId]: tab.id }))}
               title={tab.title ?? tab.name}
             >
-              <span>{tab.task ? taskLabel(tab) : (tab.title ?? `${tab.name} ${i + 1}`)}</span>
+              <span>{terminalLabel({ task: !!tab.task, name: tab.name, title: tab.title, exitCode: tab.exitCode ?? null, position: i + 1 })}</span>
               <IconButton
                 icon={CloseIcon}
                 size="sm"
@@ -298,10 +309,4 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
       </div>
     </div>
   );
-}
-
-// アプリが開いたコマンドのタブの名前。終わったら、うまくいったかを添える
-function taskLabel(tab: ShellTab): string {
-  if (tab.exitCode === undefined) return t('terminal.task.running', { name: tab.name });
-  return tab.exitCode === 0 ? t('terminal.task.done', { name: tab.name }) : t('terminal.task.failed', { name: tab.name, code: tab.exitCode });
 }
