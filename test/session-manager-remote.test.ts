@@ -47,10 +47,13 @@ describe('起動の引数', () => {
     expect(pty.arg('--remote-control')).toBe('tanacode-work');
     expect(app.manager.summary(id)?.remoteControl).toBe(true);
     expect(app.manager.remoteAvailable()).toBe(true);
+    // つながるまでは null（親の Claude が get_session で読む）
+    expect(app.manager.remoteConnectedOf(id)).toBeNull();
     await app.ready(id);
     app.append(id, bridgeStatus('https://claude.ai/code/session_abc'));
     await app.waitFor('つながり', () => remoteEvents(id).length > 0);
     expect(remoteEvents(id)).toEqual([{ type: 'remote-control', url: 'https://claude.ai/code/session_abc' }]);
+    expect(app.manager.remoteConnectedOf(id)).toBe(true);
     // もうつながっているので、切り替えても何も打たない
     expect(await app.manager.setRemoteControl(id, true)).toBeNull();
     expect(pty.typed).toBe('');
@@ -61,6 +64,7 @@ describe('起動の引数', () => {
     const { id, pty } = app.create({ remoteControl: false });
     expect(pty.arg('--remote-control')).toBeNull();
     expect(app.manager.summary(id)?.remoteControl).toBe(false);
+    expect(app.manager.remoteConnectedOf(id)).toBe(false);
   });
 
   it('開発版（Remote Control を使えない）では、指定があっても付けず、切り替えも断る', async () => {
@@ -98,6 +102,9 @@ describe('setRemoteControl', () => {
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     expect(await app.manager.setRemoteControl(id, true)).toBeNull();
     expect(app.manager.summary(id)?.remoteControl).toBe(true);
+    // 動いていなければ、つながっていない
+    expect(app.manager.remoteConnectedOf(id)).toBe(false);
+    expect(app.manager.remoteConnectedOf('nope')).toBe(false);
     await app.manager.open(id);
     expect(app.pty(id).arg('--remote-control')).toBe('tanacode-work');
   });
@@ -110,8 +117,11 @@ describe('setRemoteControl', () => {
     expect(await app.manager.setRemoteControl(id, true)).toBeNull();
     expect(commands).toEqual(['/remote-control tanacode-work']);
     expect(app.manager.summary(id)?.remoteControl).toBe(true);
+    // 打ったあとは、bridge_status が届くまで、つながるのを待っている
+    expect(app.manager.remoteConnectedOf(id)).toBeNull();
     app.append(id, bridgeStatus('https://claude.ai/code/session_new'));
     await app.waitFor('つながり', () => remoteEvents(id).length > 0);
+    expect(app.manager.remoteConnectedOf(id)).toBe(true);
     expect(remoteEvents(id).at(-1)).toEqual({ type: 'remote-control', url: 'https://claude.ai/code/session_new' });
     // つながったので、もう一度押しても何も打たない
     expect(await app.manager.setRemoteControl(id, true)).toBeNull();
