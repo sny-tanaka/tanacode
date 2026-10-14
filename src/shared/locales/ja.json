@@ -74,6 +74,8 @@
       "images": "画像 {count} 枚",
       "scheduledMissed": "{time} に送る予約を、時刻に送れませんでした: {text}",
       "scheduledFailed": "予約したメッセージを送れませんでした（{reason}）: {text}",
+      "wakeupMissed": "{time} の Claude の予約を、時刻に送れませんでした: {text}",
+      "wakeupFailed": "Claude の予約を送れませんでした（{reason}）: {text}",
       "unknownReason": "理由は不明"
     },
     "format": {
@@ -374,7 +376,11 @@
       "answer_permission": "子セッションの許可の確認に答える",
       "configure_session": "子セッションの設定を変える",
       "stop_session": "子セッションを中断",
-      "end_session": "子セッションを終える"
+      "end_session": "子セッションを終える",
+      "schedule_wakeup": "自分に予約",
+      "list_wakeups": "予約を読む",
+      "cancel_wakeup": "予約を取り消す",
+      "report_result": "結果を報告"
     },
     "checklist": {
       "checklist_overview": "一覧",
@@ -655,6 +661,7 @@
       "ciNoticePr": "CI の自動修正（PR #{pr}）: {what}",
       "scheduledTask": "スケジュールタスクの実行",
       "scheduledTaskNamed": "スケジュールタスク「{name}」の実行",
+      "wakeup": "Claude の予約の時刻になりました",
       "omitted": "…（省略）",
       "noAnswer": "（回答なし）",
       "image": "[画像]",
@@ -724,6 +731,8 @@
       "sendNowTip": "時刻を待たずに送る（Claude Code の手が空くのは待ちます）",
       "reschedule": "時刻を変える",
       "cancel": "取り消す",
+      "claude": "Claude の予約",
+      "claudeTip": "Claude が自分に入れた予約です。時刻になると、このセッションの Claude に知らせとして送ります",
       "cancelSendingTip": "送るのをやめて入力欄に戻す",
       "cancelTip": "予約をやめて入力欄に戻す"
     },

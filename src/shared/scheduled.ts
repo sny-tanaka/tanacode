@@ -1,4 +1,5 @@
 import { locale, t } from './i18n';
+import { neutralizeTags, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
 
 // 予約したメッセージ（時刻を指定して送信）。main が保存して、時刻になったら Claude Code の入力欄に打ち込む
 // state: scheduled: 時刻を待っている / sending: 時刻になり、Claude Code の手が空くのを待って送っている /
@@ -16,10 +17,26 @@ export type ScheduledMessage = {
   createdAt: number;
   state: 'scheduled' | 'sending' | 'missed' | 'failed';
   error: string | null;
+  // Claude が自分に入れた予約（tanacode-sessions の schedule_wakeup）。人の予約には無い。
+  // 時刻になると、本文を囲み（WAKEUP_TAG）に入れて送り、チャットでは「Claude への知らせ」として出す
+  by?: 'claude';
 };
 
 // 予定の時刻をこれより過ぎてから気づいたものは、送らずに missed にする。何時間も前の指示が、急に動き出さないように
 export const SCHEDULE_LATE_MS = 5 * 60_000;
+
+// Claude の予約を、Claude Code の入力欄に打ち込む形にする（囲みは WAKEUP_TAG）。本文は Claude が書いたものなので、囲みを閉じさせない
+export function wakeupText(body: string): string {
+  return `<${WAKEUP_TAG}>${neutralizeTags(body)}</${WAKEUP_TAG}>`;
+}
+
+const WAKEUP = new RegExp(`^<${WAKEUP_TAG}>([\\s\\S]*)</${WAKEUP_TAG}>\\s*$`);
+
+// Claude の予約の知らせなら、本文。会話ログでは、全体が貼り付けの囲み（<pasted_content>）に入ることがあるので、先に外す
+export function parseWakeup(text: string): { body: string } | null {
+  const m = unwrapWholePaste(text).trim().match(WAKEUP);
+  return m ? { body: m[1].trim() } : null;
+}
 
 // 予約の選択肢（Slack の予約投稿と同じく、すぐ選べるもの）。now からの時刻
 export function schedulePresets(now: Date): { label: string; at: number }[] {

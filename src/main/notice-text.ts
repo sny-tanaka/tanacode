@@ -25,10 +25,11 @@ export function menuNotice(menu: Menu): string {
   return title ? t('main.notification.confirm', { title }) : t('main.notification.confirmNoTitle');
 }
 
-// 予約したメッセージを送れなかった・時刻に送れなかったときの通知の本文
+// 予約したメッセージを送れなかった・時刻に送れなかったときの通知の本文。Claude が自分に入れた予約は、人の予約と見分けて伝える
 export function scheduledNotice(message: ScheduledMessage, now: Date = new Date()): string {
   // 文が無ければ、貼り付けた文（札）の冒頭を出す
   const text = snippet(message.text) || snippet(message.pastes[0] ?? '') || t('main.notification.images', { count: message.attachments.length });
-  if (message.state === 'missed') return t('main.notification.scheduledMissed', { time: formatScheduleTime(message.at, now), text });
-  return t('main.notification.scheduledFailed', { reason: message.error ?? t('main.notification.unknownReason'), text });
+  const claude = message.by === 'claude';
+  if (message.state === 'missed') return t(claude ? 'main.notification.wakeupMissed' : 'main.notification.scheduledMissed', { time: formatScheduleTime(message.at, now), text });
+  return t(claude ? 'main.notification.wakeupFailed' : 'main.notification.scheduledFailed', { reason: message.error ?? t('main.notification.unknownReason'), text });
 }

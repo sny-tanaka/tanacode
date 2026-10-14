@@ -545,6 +545,105 @@ describe('通知', () => {
     expect(state.notifications).toHaveLength(1);
   });
 
+  describe('Claude の報告（report_result）と、自分への予約', () => {
+    // SessionsControl に渡した、報告を預ける関数
+    const report = (id: string, text: string) => optionsOf('SessionsControl').report(id, text);
+    const bodies = () => state.notifications.map((n) => n.options.body);
+    // セッションの状態が変わったことを、見張っている先に知らせる（profile.ts の manager.watchState）
+    const stateChanges = (id: string, ...states: string[]) => {
+      for (const s of states) {
+        manager().stateOf.mockReturnValue(s);
+        for (const [listener] of manager().watchState.mock.calls as [(id: string) => void][]) listener(id);
+      }
+    };
+
+    it('報告があれば、ふつうの完了の通知の代わりに、報告を本文にして知らせる。使ったら捨てる', async () => {
+      await boot();
+      report('s1', 'ログイン画面を直しました。テストも通っています。');
+      callbacks().onTurnCompleted(session, 'work');
+      callbacks().onTurnCompleted(session, 'work');
+      expect(state.notifications.map((n) => n.options)).toEqual([
+        { title: 'tanacode', subtitle: 'メニューを直す', body: 'ログイン画面を直しました。テストも通っています。', sound: 'Glass' },
+        { title: 'tanacode', subtitle: 'メニューを直す', body: '作業が完了しました', sound: 'Glass' },
+      ]);
+    });
+
+    it('長い報告は、通知の長さで切る。最適化圧縮の流れの最後のターンでも、報告があれば報告にする。ほかのセッションの報告は使わない', async () => {
+      await boot();
+      report('s1', `${'あ'.repeat(150)}`);
+      report('s2', 'ほかのセッションの報告');
+      callbacks().onTurnCompleted(session, 'compact');
+      callbacks().onTurnCompleted(session, 'compact');
+      expect(bodies()).toEqual([`${'あ'.repeat(100)}…`, 'コンテキストの最適化が完了しました']);
+    });
+
+    it('出さないとき（通知をオフ・子セッション・見ているセッション）も、報告は使って捨てる', async () => {
+      await boot({ settings: { notifications: false } });
+      report('s1', '報告');
+      callbacks().onTurnCompleted(session, 'work');
+      expect(state.notifications).toHaveLength(0);
+
+      await boot();
+      manager().parentOf.mockImplementation((id: string) => (id === 'child' ? 'parent' : null));
+      report('child', '子の報告');
+      callbacks().onTurnCompleted({ id: 'child', title: '子' }, 'work');
+      expect(state.notifications).toHaveLength(0);
+
+      manager().isFocused.mockImplementation((id: string) => id === 's1');
+      mainWindow().focused = true;
+      report('s1', '見ている間の報告');
+      callbacks().onTurnCompleted(session, 'work');
+      expect(state.notifications).toHaveLength(0);
+      mainWindow().focused = false;
+      callbacks().onTurnCompleted(session, 'work');
+      expect(bodies()).toEqual(['作業が完了しました']);
+    });
+
+    it('新しいターンが始まったら、前のターンの報告は捨てる。質問・許可の確認から作業に戻ったのは同じターンなので捨てない', async () => {
+      await boot();
+      stateChanges('s1', 'working');
+      report('s1', '同じターンの報告');
+      stateChanges('s1', 'permission', 'working', 'browser', 'working');
+      callbacks().onTurnCompleted(session, 'work');
+      // 使われずに残った報告（通知を出さないターンの終わりなど）は、次のターンが始まったら捨てる
+      report('s1', '古い報告');
+      stateChanges('s1', 'idle', 'working');
+      callbacks().onTurnCompleted(session, 'work');
+      // Claude Code が終わった・アーカイブしたときも捨てる
+      report('s1', '終わる前の報告');
+      stateChanges('s1', 'exited');
+      callbacks().onTurnCompleted(session, 'work');
+      expect(bodies()).toEqual(['同じターンの報告', '作業が完了しました', '作業が完了しました']);
+    });
+
+    it('報告を預けたかを SessionManager に伝える（バックグラウンドのタスクが動いていても、報告があれば通知させる）', async () => {
+      await boot();
+      expect(manager().turnReported('s1')).toBe(false);
+      report('s1', '報告');
+      expect(manager().turnReported('s1')).toBe(true);
+      expect(manager().turnReported('s2')).toBe(false);
+      callbacks().onTurnCompleted(session, 'work');
+      expect(manager().turnReported('s1')).toBe(false);
+    });
+
+    it('自分への予約が待っている間は、報告が無ければ、作業の完了を知らせない（最適化の完了は知らせる）', async () => {
+      await boot();
+      the('ScheduledMessages').hasClaudeWakeup.mockImplementation((id: string) => id === 's1');
+      callbacks().onTurnCompleted(session, 'work');
+      callbacks().onTurnCompleted({ id: 's2', title: 'ほか' }, 'work');
+      callbacks().onTurnCompleted(session, 'compact');
+      report('s1', '子を待っています。5 分後に見に行きます。');
+      callbacks().onTurnCompleted(session, 'work');
+      expect(bodies()).toEqual(['作業が完了しました', 'コンテキストの最適化が完了しました', '子を待っています。5 分後に見に行きます。']);
+      expect(state.notifications[0]!.options.subtitle).toBe('ほか');
+    });
+
+    it('SessionsControl に、予約（あとから作る）を取り出す関数を渡す', async () => {
+      await boot();
+      expect(optionsOf('SessionsControl').scheduled()).toBe(the('ScheduledMessages'));
+    });
+  });
+
   it('予約を送れなかったら、予約の中身を知らせる', async () => {
     await boot();
     manager().summary.mockImplementation((id: string) => (id === 's1' ? { id, title: '予約したセッション' } : undefined));

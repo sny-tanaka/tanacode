@@ -15,6 +15,9 @@ import {
   canSee,
   EFFORTS,
   isBusy,
+  MAX_REPORT_CHARS,
+  MAX_WAKEUP_MINUTES,
+  MAX_WAKEUPS,
   modeWithin,
   parentMessageText,
   PERMISSION_MODES,
@@ -28,6 +31,7 @@ import {
 } from '@shared/session-tools';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
+import type { ScheduledMessages } from './scheduled-messages';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
 
@@ -42,6 +46,8 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // configure_session は、自分の子の権限モード（親より強くできない）・モデル・エフォート・Remote Control（親がオンのときだけオンにできる）を変える。
 // 画面のモード欄・モデル欄・ヘッダーの Remote Control のトグルと同じ処理を通す。
 // アプリ内ブラウザでの人の操作待ちは、ツールでは状態 browser として見せる（SessionManager.stateOf は作業中のまま。withBrowserState）
+// schedule_wakeup・list_wakeups・cancel_wakeup は、自分のセッションへの予約（時刻を指定して送信と同じ流れ。scheduled-messages.ts）。子も使える。
+// report_result は、ターンの終わりの通知に載せる報告を預ける（子は人に通知しないので、子でないセッションだけ）
 
 // SessionManager のうち、ツールが使うもの
 export type SessionsHost = {
@@ -88,6 +94,9 @@ export type SessionsHost = {
   remoteConnectedOf(id: string): boolean | null;
 };
 
+// 予約したメッセージ（ScheduledMessages）のうち、自分への予約のツールが使うもの
+export type WakeupHost = Pick<ScheduledMessages, 'list' | 'add' | 'cancel' | 'claudeWakeups'>;
+
 type Deps = {
   host: SessionsHost;
   // メニューの「Claude にほかのセッションを扱わせる」
@@ -97,6 +106,10 @@ type Deps = {
   archive: (id: string, options: ArchiveOptions) => Promise<WorktreeRemoval | null>;
   // ホームのフォルダ（ここを開いたセッションに、ホームの下のすべてのセッションを見せないため）
   home: string;
+  // 予約したメッセージ（自分への予約に使う）。予約は SessionsControl より後で作るので、取り出す関数で渡す
+  scheduled?: () => WakeupHost | null;
+  // ターンの終わりの通知に載せる報告を預ける（turn-reports.ts）
+  report?: (id: string, text: string) => void;
   // 親への知らせをまとめるまでの待ち（テストでは短くする）
   notifyDelayMs?: number;
   // そのセッションで、最適化圧縮の流れが進んでいるか（host の stateOf は、その間「作業中」を返す。outward-state.ts）。
@@ -124,6 +137,12 @@ const MAX_PERMISSION_INPUT_CHARS = 30_000;
 // 親が子の許可の確認を許せる、親の権限モード（manual・plan の親は、自分の操作も人が毎回許すので、子の操作も許せない）
 const MODES_ALLOWING_PERMISSION = new Set<PermissionMode>(['acceptEdits', 'auto', 'bypassPermissions']);
 const WAIT_DEFAULT_SECONDS = 300;
+// list_wakeups で返す、予約の本文の文字数の上限
+const MAX_WAKEUP_TEXT_CHARS = 300;
+// schedule_wakeup の at の形（ISO 8601。時差の無い時刻は、どこの時刻か分からないので受けない）
+const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
+// 起動が終わる前（予約・報告の受け手を作る前）に届いた呼び出しに返すもの
+const NOT_READY = 'tanacode has not finished starting up. Wait a moment and try again.';
 // list_sessions で返す、セッションを始められるフォルダの数の上限
 const MAX_START_FOLDERS = 30;
 
@@ -251,6 +270,14 @@ export class SessionsControl {
           return await this.stopSession(caller, args);
         case 'end_session':
           return await this.endSession(caller, args);
+        case 'schedule_wakeup':
+          return this.scheduleWakeup(caller, args);
+        case 'list_wakeups':
+          return this.listWakeups(caller);
+        case 'cancel_wakeup':
+          return this.cancelWakeup(caller, args);
+        case 'report_result':
+          return this.reportResult(caller, args);
         default:
           return textResult(`Unknown tool: ${name}`, true);
       }
@@ -424,7 +451,7 @@ export class SessionsControl {
       state: host.stateOf(id),
       note: independent
         ? `The first instruction will be sent as soon as the session has started.${setup} It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.`
-        : `The first instruction will be sent as soon as the child has started.${setup} Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (end your turn and come back with a background timer, so that the user can talk to you).`,
+        : `The first instruction will be sent as soon as the child has started.${setup} Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (schedule a wake-up with schedule_wakeup and end your turn, so that the user can talk to you).`,
     });
   }
 
@@ -780,6 +807,86 @@ export class SessionsControl {
     });
   }
 
+  // --- 自分への予約と、人への報告 ---
+
+  // 自分のセッションに予約を入れる。時刻になると、手が空いてから、囲み（<tanacode-wakeup>）に入れて送る（scheduled-messages.ts）。
+  // 人の予約と同じ一覧に入るので、人は一覧の時計とチャットの末尾で見て、今すぐ送る・時刻を変える・取り消すができる
+  private scheduleWakeup(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    const scheduled = this.wakeups();
+    const message = stringArg(args.message);
+    if (!message) throw new ToolError('message (what to do when it arrives) is empty.');
+    const now = Date.now();
+    const at = wakeupTime(args, now);
+    const waiting = scheduled.claudeWakeups(caller.id);
+    if (waiting.length >= MAX_WAKEUPS) {
+      throw new ToolError(
+        `${MAX_WAKEUPS} of your wake-ups are already waiting in this session (${waiting.map((m) => `${m.id.slice(0, 8)} at ${localIso(m.at)}`).join(', ')}). Cancel one you no longer need with cancel_wakeup, or wait until one has been sent.`,
+      );
+    }
+    const added = scheduled.add(caller.id, message, [], at, [], 'claude');
+    return json({
+      id: added.id,
+      at: new Date(added.at).toISOString(),
+      local_time: localIso(added.at),
+      note: 'Scheduled. End your turn now: at that time, it is sent back to you as soon as this session is idle.',
+    });
+  }
+
+  // このセッションの予約（Claude のものも、人のものも）
+  private listWakeups(caller: SessionSummary): ToolResult {
+    const messages = this.wakeups()
+      .list()
+      .filter((m) => m.sessionId === caller.id)
+      .sort((a, b) => a.at - b.at);
+    return json({
+      now: localIso(Date.now()),
+      messages: messages.map((m) => ({
+        id: m.id,
+        by: m.by === 'claude' ? 'claude' : 'user',
+        state: m.state,
+        at: new Date(m.at).toISOString(),
+        local_time: localIso(m.at),
+        text: clip(m.text, MAX_WAKEUP_TEXT_CHARS),
+        ...(m.attachments.length > 0 ? { images: m.attachments.length } : {}),
+        ...(m.pastes.length > 0 ? { pasted_texts: m.pastes.length } : {}),
+        ...(m.error ? { error: m.error } : {}),
+      })),
+      ...(messages.length === 0 ? { note: 'No messages are scheduled in this session.' } : {}),
+    });
+  }
+
+  // Claude が入れた予約だけを取り消す。人の予約は、人が画面で扱う
+  private cancelWakeup(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    const scheduled = this.wakeups();
+    const id = stringArg(args.id).toLowerCase();
+    if (id.length < 8) throw new ToolError('Pass the ID of the wake-up (at least its first 8 characters) as id.');
+    const matches = scheduled.list().filter((m) => m.sessionId === caller.id && m.id.startsWith(id));
+    if (matches.length === 0) throw new ToolError(`No scheduled message of this session has the ID ${id}. It may have been sent or cancelled already (check with list_wakeups).`);
+    if (matches.length > 1) throw new ToolError(`More than one scheduled message has an ID starting with ${id}. Pass a longer ID.`);
+    const target = matches[0];
+    if (target.by !== 'claude') throw new ToolError('This message was scheduled by the user. Only the user can cancel or change it.');
+    scheduled.cancel(target.id);
+    return json({ id: target.id, cancelled: true });
+  }
+
+  // ターンの終わりの通知に載せる報告を預ける。通知を出すか・いつ捨てるかは、預かる側（turn-reports.ts と profile.ts）が決める
+  private reportResult(caller: SessionSummary, args: Record<string, unknown>): ToolResult {
+    if (caller.parentId) throw new ToolError('A child session does not notify the user, so it has no report to save. Put the result in your reply: your parent session reads it.');
+    // 通知の本文にするので、1 行にする（キー操作になる文字も除く）
+    const text = stripControlChars(stringArg(args.message).replace(/\s*\n\s*/g, ' ')).trim();
+    if (!text) throw new ToolError('message (the report) is empty.');
+    if (text.length > MAX_REPORT_CHARS) throw new ToolError(`message is too long (${text.length} characters). Keep it within ${MAX_REPORT_CHARS} characters: one or two sentences.`);
+    if (!this.deps.report) throw new ToolError(NOT_READY);
+    this.deps.report(caller.id, text);
+    return textResult('Saved. It is shown in the notification when this turn ends (not while the user is looking at this session, and not if notifications are off).');
+  }
+
+  private wakeups(): WakeupHost {
+    const scheduled = this.deps.scheduled?.();
+    if (!scheduled) throw new ToolError(NOT_READY);
+    return scheduled;
+  }
+
   // --- 親への知らせ ---
 
   // 子が作業中から手の空いた状態になったら、親に知らせる（親が待っていなくても）。
@@ -1045,6 +1152,35 @@ function pullRequestOf(leftovers: WorktreeLeftovers): Record<string, unknown> {
 }
 
 const KIND_MARK = { added: 'A', modified: 'M', deleted: 'D' } as const;
+
+// schedule_wakeup の時刻。in_minutes（今から何分後）か at（時差の付いた ISO 8601）の、どちらか 1 つ。1 分後から 24 時間後まで
+function wakeupTime(args: Record<string, unknown>, now: number): number {
+  const hasMinutes = args.in_minutes !== undefined;
+  if (hasMinutes === (args.at !== undefined)) throw new ToolError('Pass either in_minutes (minutes from now) or at (an ISO 8601 time), not both.');
+  if (hasMinutes) {
+    const minutes = args.in_minutes;
+    if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > MAX_WAKEUP_MINUTES) {
+      throw new ToolError(`in_minutes must be a whole number from 1 to ${MAX_WAKEUP_MINUTES}.`);
+    }
+    return now + minutes * 60_000;
+  }
+  const text = stringArg(args.at);
+  const at = ISO_WITH_OFFSET.test(text) ? Date.parse(text) : Number.NaN;
+  if (Number.isNaN(at)) throw new ToolError(`at must be an ISO 8601 time with a time zone offset, such as ${localIso(now + 30 * 60_000)}. It is now ${localIso(now)}.`);
+  if (at < now + 60_000 || at > now + MAX_WAKEUP_MINUTES * 60_000) {
+    throw new ToolError(`at must be from 1 minute to ${MAX_WAKEUP_MINUTES / 60} hours from now. It is now ${localIso(now)}.`);
+  }
+  return at;
+}
+
+// この Mac の時刻と時差で書いた ISO 8601（例: 2026-10-15T15:00:00+09:00）。Claude が人に時刻を伝えるときに使う
+function localIso(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const offset = -d.getTimezoneOffset();
+  const zone = `${offset >= 0 ? '+' : '-'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${zone}`;
+}
 
 // 名前の無いセッションは、画面の一覧と同じ名前（画面の言語）にする。Claude が利用者に伝える名前が、一覧の名前と合うように
 function nameOf(s: SessionSummary | undefined): string {

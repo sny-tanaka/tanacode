@@ -54,6 +54,37 @@ describe('バックグラウンドのタスクの数', () => {
   });
 });
 
+describe('バックグラウンドのタスクが動いている間のターンの終わり', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('ふつうは完了を知らせないが、Claude が報告（report_result）を預けていれば知らせる', async () => {
+    const reported = new Set<string>();
+    app.manager.turnReported = (id) => reported.has(id);
+    const { id } = app.create();
+    await app.ready(id);
+    app.append(id, line.user('サーバーを起動して'), ...backgroundBash('toolu_b', 'npm run dev'), line.text('起動しました'), line.turnEnd());
+    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end') && app.manager.summary(id)?.backgroundTasks === 1);
+    await sleep(100);
+    expect(app.turnsCompleted).toEqual([]);
+    reported.add(id);
+    app.append(id, line.user('もう一つ起動して'), ...backgroundBash('toolu_c', 'npm run watch'), line.text('起動しました'), line.turnEnd());
+    await app.waitFor('報告つきのターンの終わり', () => app.turnsCompleted.length === 1);
+    expect(app.manager.summary(id)?.backgroundTasks).toBe(2);
+    expect(app.turnNotices).toEqual(['work']);
+  });
+
+  it('ブラウザでの操作を頼んでいる間は、報告があっても知らせない（返事を待っている）', async () => {
+    app.manager.turnReported = () => true;
+    const { id } = app.create();
+    await app.ready(id);
+    app.manager.browserAskChanged(id, true);
+    app.append(id, line.user('ログインして'), line.text('ブラウザで操作してください'), line.turnEnd());
+    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end') && app.manager.stateOf(id) === 'idle');
+    await sleep(100);
+    expect(app.turnsCompleted).toEqual([]);
+  });
+});
+
 describe('stopTask', () => {
   const stopTask = () => vi.spyOn(ScreenTracker.prototype, 'stopTask');
 

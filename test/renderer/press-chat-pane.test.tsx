@@ -683,6 +683,29 @@ describe('入力欄', () => {
     expect(api.argsOf('scheduled.add').at(-1)).toEqual(['s2', '夜にまとめて', [], now.getTime() + 30 * 60_000, []]);
   });
 
+  it('Claude が自分に入れた予約は「Claude の予約」の印を付けて出す。取り消しても入力欄には戻さない（取り消すだけ）', async () => {
+    const wakeup = { id: 'w1', sessionId: 's1', text: '子の状態を確かめる', attachments: [], pastes: [], at: Date.now() + 5 * 60_000, createdAt: 0, state: 'scheduled' as const, error: null, by: 'claude' as const };
+    const human = { ...wakeup, id: 'm1', text: '人の予約', by: undefined };
+    install({ 'scheduled.cancel': (id: unknown) => Promise.resolve(id === 'w1' ? wakeup : human) });
+    render(<ClaudePane {...props({ scheduled: [wakeup, human] })} />);
+    const rows = [...document.querySelectorAll<HTMLElement>('.chat-user.scheduled')];
+    expect(rows.map((r) => r.classList.contains('by-claude'))).toEqual([true, false]);
+    expect(within(rows[0]!).getByText('Claude の予約').getAttribute('data-tip')).toContain('Claude が自分に入れた予約です');
+    expect(within(rows[1]!).queryByText('Claude の予約')).toBeNull();
+    const cancel = (row: HTMLElement) => within(row.querySelector('.chat-scheduled-actions') as HTMLElement).getByRole('button', { name: '取り消す' });
+    // Claude の予約の取り消しのツールチップは「取り消す」だけ（入力欄には戻らない）
+    expect(cancel(rows[0]!).getAttribute('data-tip')).toBe('取り消す');
+    expect(cancel(rows[1]!).getAttribute('data-tip')).toBe('予約をやめて入力欄に戻す');
+    fireEvent.change(box(), { target: { value: '書きかけ' } });
+    fireEvent.click(cancel(rows[0]!));
+    await settle();
+    expect(api.argsOf('scheduled.cancel')).toEqual([['w1']]);
+    expect(box().value).toBe('書きかけ');
+    fireEvent.click(cancel(rows[1]!));
+    await settle();
+    expect(box().value).toBe('人の予約\n書きかけ');
+  });
+
   it('予約できなかったら、わけを出して入力欄の文字は残す', async () => {
     install({ 'scheduled.add': () => Promise.reject(new Error("Error invoking remote method 'scheduled:add': Error: 過去の時刻には予約できません")) });
     render(<ClaudePane {...props()} />);

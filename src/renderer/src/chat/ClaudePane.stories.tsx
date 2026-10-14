@@ -198,13 +198,26 @@ export const worktreeで始めた: Story = {
 };
 
 // 予約したメッセージ（時刻を指定して送信）。チャットの末尾に、点線の枠で出す。時刻を待っている・送っている途中（手が空くのを待っている）・
-// 時刻に送れなかった・送れなかった、の 4 つ。入力欄の時計のボタンで、時刻を選ぶメニューが開く
+// 時刻に送れなかった・送れなかった、の 4 つ。入力欄の時計のボタンで、時刻を選ぶメニューが開く。
+// Claude が自分に入れた予約（schedule_wakeup）は、「Claude の予約」の印を付けて、Claude の色で出す
 const later = (minutes: number) => Date.now() + minutes * 60_000;
 const SCHEDULED: ScheduledMessage[] = [
   { id: 'm1', sessionId: 's1', text: '昨日の変更のテストを流して、落ちたものを直してください。', attachments: [], pastes: [], at: later(90), createdAt: 0, state: 'scheduled', error: null },
   { id: 'm2', sessionId: 's1', text: '/compact', attachments: [], pastes: [], at: later(-1), createdAt: 0, state: 'sending', error: null },
   { id: 'm3', sessionId: 's1', text: 'PR の説明を書いてください。', attachments: ['/tmp/a.png'], pastes: [], at: later(-600), createdAt: 0, state: 'missed', error: null },
   { id: 'm4', sessionId: 's1', text: 'ビルドしてください。', attachments: [], pastes: [], at: later(-30), createdAt: 0, state: 'failed', error: 'Claude Code が終了しました' },
+  {
+    id: 'm5',
+    sessionId: 's1',
+    text: '子セッション「登録画面」と「一覧画面」の状態を get_session で確かめる。終わっていなければ、次の予約を入れる。',
+    attachments: [],
+    pastes: [],
+    at: later(5),
+    createdAt: 0,
+    state: 'scheduled',
+    error: null,
+    by: 'claude',
+  },
 ];
 
 export const 予約したメッセージ: Story = {

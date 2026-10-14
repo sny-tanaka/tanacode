@@ -475,6 +475,7 @@ const modules: Record<string, Record<string, unknown>> = {
       reschedule: echo('scheduled.reschedule'),
       sendNow: echo('scheduled.sendNow'),
       cancel: echo('scheduled.cancel'),
+      hasClaudeWakeup: () => false,
       start: () => undefined,
       dispose: () => undefined,
       dropSession: () => undefined,

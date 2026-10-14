@@ -12,7 +12,7 @@ import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
 import { ChecklistControl } from './checklist-control';
 import { AutoCompact } from './auto-compact';
-import { CompactNotice } from './compact-notice';
+import { CompactNotice, type TurnNotice } from './compact-notice';
 import { PRECOMPACT_HOOK_REQUEST } from './checklist-bridge';
 import { OptimizedCompact } from './optimized-compact';
 import { outwardHost } from './outward-state';
@@ -28,6 +28,7 @@ import { SessionStore } from './session-store';
 import { socketPathIn } from './socket-path';
 import { StatusLineWatcher } from './statusline';
 import { ShellTerminals } from './shell-terminals';
+import { TurnReports } from './turn-reports';
 import { UsageMonitor } from './usage-monitor';
 import { WorkspaceWatchers } from './workspace-watcher';
 
@@ -84,6 +85,8 @@ export class Profile {
   compact: OptimizedCompact | null = null;
   autoCompact: AutoCompact | null = null;
   walkthroughControl: WalkthroughControl | null = null;
+  // Claude がターンの終わりの通知に載せる報告（tanacode-sessions の report_result）
+  private readonly reports = new TurnReports();
   // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
   private browserBridge: McpBridge | null = null;
   private sessionsBridge: McpBridge | null = null;
@@ -190,8 +193,10 @@ export class Profile {
         },
         onChat: (batch) => send(IpcChannel.ChatEvents, batch),
         onPtyData: (sessionId, data) => send(IpcChannel.PtyData, { sessionId, data }),
-        onTurnCompleted: (session, notice) =>
-          notify(session.id, session.title, t(notice === 'compact' ? 'main.notification.compactCompleted' : 'main.notification.turnCompleted')),
+        onTurnCompleted: (session, notice) => {
+          const message = this.turnMessage(session.id, notice);
+          if (message) notify(session.id, session.title, message);
+        },
         onAttention: (session, attention) =>
           notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : t('main.notification.needsTerminal')),
         onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
@@ -223,12 +228,16 @@ export class Profile {
     // 流れの途中のターンの終わりでは「作業が完了しました」を出さず、流れが最後まで終わったときに 1 回知らせる
     const compactNotice = new CompactNotice((id) => (this.autoCompact?.stopping(id) ?? false) || (this.compact?.stoppedMidTurn(id) ?? false));
     manager.turnNotice = (id, starter) => compactNotice.turnEnded(id, starter);
+    // Claude の報告があれば、バックグラウンドのタスクが動いていても、ターンの終わりに通知する（報告は、どう終わったかを伝えるもの）
+    manager.turnReported = (id) => this.reports.has(id);
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,
       enabled: () => this.settings.sessionsControlEnabled(),
       archive: (id, options) => this.archiveSession(id, options),
       home: homedir(),
+      scheduled: () => this.scheduled ?? null,
+      report: (id, text) => this.reports.set(id, text),
     });
     // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
     this.scheduled = new ScheduledMessages(
@@ -243,6 +252,8 @@ export class Profile {
       if (state === null || state === 'archived') this.scheduled.dropSession(id);
       if (state === null || state === 'archived') this.walkthroughControl?.discard(id);
       if (state === null || state === 'archived' || state === 'exited') compactNotice.forget(id);
+      // 新しいターンが始まったら、前のターンの報告は捨てる
+      this.reports.stateChanged(id, state);
     });
     this.walkthroughControl = new WalkthroughControl({
       cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),
@@ -285,6 +296,15 @@ export class Profile {
     await manager.adopt();
     // 動き続けている Claude Code を引き継いでから、時刻を過ぎた予約を片付けて待ち始める
     this.scheduled.start();
+  }
+
+  // ターンが終わったときの通知の本文（null なら出さない）。Claude の報告があれば、その文にする（使ったら捨てる）。
+  // 無くて、Claude が自分に入れた予約が待っていれば、作業の完了は知らせない（時刻になると Claude が続きを始めるので、まだ終わっていない）
+  private turnMessage(id: string, notice: TurnNotice): string | null {
+    const report = this.reports.take(id);
+    if (report) return snippet(report);
+    if (notice === 'work' && this.scheduled?.hasClaudeWakeup(id)) return null;
+    return t(notice === 'compact' ? 'main.notification.compactCompleted' : 'main.notification.turnCompleted');
   }
 
   // 最適化圧縮を自動で始める大きさ（コンテキストの割合）。確かめやすいよう、環境変数（TANACODE_AUTO_COMPACT_PERCENT）で任意の数にできる

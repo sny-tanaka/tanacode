@@ -5610,6 +5610,20 @@ body.resizing-rows webview {
 .chat-user.scheduled.trouble .chat-scheduled-note {
   color: var(--warn);
 }
+/* Claude が自分に入れた予約。親セッションからの指示と同じく Claude の色にして、人の予約と見分ける */
+.chat-user.scheduled.by-claude {
+  background: var(--claude-tint);
+}
+.chat-user.scheduled.by-claude .chat-prompt {
+  color: var(--claude);
+}
+.chat-scheduled-by {
+  display: block;
+  width: fit-content;
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--claude);
+}
 .chat-scheduled-actions {
   position: absolute;
   top: 6px;

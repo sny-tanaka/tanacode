@@ -41,6 +41,7 @@ import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
 import { textResult } from '../src/main/mcp-bridge';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
+import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 
@@ -68,7 +69,7 @@ describe('中継と起動の引数', () => {
     const list = await respond({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, deps);
     const tools = (list?.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }).tools;
     const readOnly = tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
-    expect(readOnly.sort()).toEqual(['get_session', 'get_session_diff', 'list_sessions', 'read_session', 'wait_sessions']);
+    expect(readOnly.sort()).toEqual(['get_session', 'get_session_diff', 'list_sessions', 'list_wakeups', 'read_session', 'wait_sessions']);
     await respond({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'rm', arguments: {} } }, deps);
     expect(calls).toEqual([]);
   });
@@ -117,11 +118,20 @@ describe('中継と起動の引数', () => {
     expect(readFileSync(join(root, 'abc.permission.json'), 'utf8')).toBe('{"tool_name":"Bash"}');
   });
 
-  it('子セッションには、読むだけのツールだけを見せる（子は孫を作れず、指示できる子もいない）', () => {
+  it('子セッションには、読むだけのツールと自分への予約だけを見せる（子は孫を作れず、指示できる子もいない。人に通知しないので、報告もしない）', () => {
     const args = claudeArgs({ ...base, sessions: { ...launch, child: true }, sessionId: 's2' });
     const config = JSON.parse(args[args.indexOf('--mcp-config') + 1]) as { mcpServers: Record<string, { env: Record<string, string> }> };
     expect(config.mcpServers['tanacode-sessions'].env.TANACODE_SESSIONS_CHILD).toBe('1');
-    expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name).sort()).toEqual(['get_session', 'get_session_diff', 'list_sessions', 'read_session']);
+    expect(SESSIONS_MCP_FOR_CHILD.tools.map((t) => t.name).sort()).toEqual([
+      'cancel_wakeup',
+      'get_session',
+      'get_session_diff',
+      'list_sessions',
+      'list_wakeups',
+      'read_session',
+      'schedule_wakeup',
+    ]);
+    expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('report_result');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('start_session');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('tanacode-parent-message');
     expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('do not wait to be asked');
@@ -2779,6 +2789,194 @@ describe('ツールの実行（SessionsControl）', () => {
     });
   });
 
+});
+
+describe('自分への予約と、人への報告（SessionsControl）', () => {
+  let host: FakeHost;
+  let control: SessionsControl;
+  let scheduled: ScheduledMessages | null;
+  let reports: { id: string; text: string }[];
+  // 予約が送ったもの
+  let delivered: { id: string; text: string }[];
+
+  // 予約の作り物のセッション。送ろうとしたものは、手が空くのを待ったまま（時刻になったかを見るときだけ、すぐ送り終える）
+  const scheduleHost = (finish = false): ScheduleHost => ({
+    stateOf: (id) => host.stateOf(id),
+    open: async () => undefined,
+    submitWhenReady: (id, text) => {
+      delivered.push({ id, text });
+      return finish ? Promise.resolve() : new Promise<void>(() => undefined);
+    },
+  });
+
+  beforeEach(() => {
+    host = new FakeHost();
+    host.add(PARENT, root);
+    host.add(CHILD, root, { parentId: PARENT }, 'working');
+    host.add(PEER, root);
+    delivered = [];
+    scheduled = new ScheduledMessages(join(root, 'scheduled-messages.json'), scheduleHost(), () => undefined);
+    reports = [];
+    control = new SessionsControl({
+      host,
+      enabled: () => true,
+      archive: async () => null,
+      home: '/nonexistent-home',
+      scheduled: () => scheduled,
+      report: (id, text) => reports.push({ id, text }),
+    });
+  });
+  afterEach(() => {
+    control.dispose();
+    scheduled?.dispose();
+  });
+
+  const schedule = (args: Record<string, unknown>, caller = PARENT) => control.handle(caller, 'schedule_wakeup', args);
+  const NOT_READY = 'tanacode has not finished starting up. Wait a moment and try again.';
+  type Listed = { now: string; messages: { id: string; by: string; state: string; at: string; local_time: string; text: string; images?: number }[]; note?: string };
+
+  it('schedule_wakeup: 自分のセッションに Claude の予約を入れ、ID と時刻（UTC とこの Mac の時刻）を返す。子も入れられる', async () => {
+    const before = Date.now();
+    const result = jsonOf<{ id: string; at: string; local_time: string; note: string }>(await schedule({ message: '子の状態を get_session で確かめる', in_minutes: 5 }));
+    const at = Date.parse(result.at);
+    expect(at - before).toBeGreaterThanOrEqual(5 * 60_000);
+    expect(at - Date.now()).toBeLessThanOrEqual(5 * 60_000);
+    // この Mac の時差の付いた ISO 8601 で、同じ時刻（秒まで）
+    expect(result.local_time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
+    expect(Date.parse(result.local_time)).toBe(Math.floor(at / 1000) * 1000);
+    expect(result.note).toContain('End your turn');
+    expect(scheduled!.list()).toMatchObject([{ id: result.id, sessionId: PARENT, text: '子の状態を get_session で確かめる', by: 'claude', state: 'scheduled' }]);
+    // 子も、自分への予約を入れられる
+    expect((await schedule({ message: 'ビルドを見る', in_minutes: 1 }, CHILD)).isError).toBeFalsy();
+    expect(scheduled!.claudeWakeups(CHILD)).toHaveLength(1);
+  });
+
+  it('schedule_wakeup: at は時差の付いた ISO 8601 で、1 分後から 24 時間後まで。in_minutes とどちらか 1 つ', async () => {
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const at = Date.now() + 90 * 60_000;
+    expect(Date.parse(jsonOf<{ at: string }>(await schedule({ message: 'x', at: iso(at) })).at)).toBe(at);
+    // +00:00 の形も
+    expect((await schedule({ message: 'x', at: iso(at).replace('Z', '+00:00') })).isError).toBeFalsy();
+    // 時差の無い時刻は、どこの時刻か分からない
+    expect(textOf(await schedule({ message: 'x', at: iso(at).replace('Z', '') }))).toContain('with a time zone offset');
+    expect(textOf(await schedule({ message: 'x', at: 'あした' }))).toContain('It is now');
+    expect(textOf(await schedule({ message: 'x', at: iso(Date.now() + 30_000) }))).toContain('from 1 minute to 24 hours from now');
+    expect(textOf(await schedule({ message: 'x', at: iso(Date.now() + 25 * 60 * 60_000) }))).toContain('from 1 minute to 24 hours from now');
+    for (const in_minutes of [0, 1441, 2.5, '5']) expect(textOf(await schedule({ message: 'x', in_minutes }))).toBe('in_minutes must be a whole number from 1 to 1440.');
+    expect(textOf(await schedule({ message: 'x' }))).toBe('Pass either in_minutes (minutes from now) or at (an ISO 8601 time), not both.');
+    expect(textOf(await schedule({ message: 'x', in_minutes: 5, at: iso(at) }))).toBe('Pass either in_minutes (minutes from now) or at (an ISO 8601 time), not both.');
+    expect(textOf(await schedule({ message: '  ', in_minutes: 5 }))).toBe('message (what to do when it arrives) is empty.');
+    expect(scheduled!.list()).toHaveLength(2);
+  });
+
+  it('schedule_wakeup: 待っている Claude の予約は、セッションごとに 3 つまで。人の予約・ほかのセッションの予約は数えない', async () => {
+    scheduled!.add(PARENT, '人の予約', [], Date.now() + 10 * 60_000);
+    for (let i = 0; i < 3; i++) expect((await schedule({ message: `${i + 1} つめ`, in_minutes: 10 + i })).isError).toBeFalsy();
+    const refused = await schedule({ message: '4 つめ', in_minutes: 20 });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toContain('3 of your wake-ups are already waiting in this session');
+    expect(textOf(refused)).toContain('cancel_wakeup');
+    // ほかのセッションは、別に数える
+    expect((await schedule({ message: 'ほか', in_minutes: 10 }, PEER)).isError).toBeFalsy();
+    // 1 つ取り消せば、また入れられる
+    await control.handle(PARENT, 'cancel_wakeup', { id: scheduled!.claudeWakeups(PARENT)[0]!.id });
+    expect((await schedule({ message: '4 つめ', in_minutes: 20 })).isError).toBeFalsy();
+  });
+
+  it('時刻になったら、囲みに入れて、このセッションに送る', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      scheduled!.dispose();
+      scheduled = new ScheduledMessages(join(root, 'timed.json'), scheduleHost(true), () => undefined);
+      scheduled.start();
+      await schedule({ message: '子を見に行く', in_minutes: 5 });
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+      expect(delivered).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(delivered).toEqual([{ id: PARENT, text: '<tanacode-wakeup>子を見に行く</tanacode-wakeup>' }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('list_wakeups: このセッションの予約を、Claude のものも人のものも、時刻の順に返す。本文は 300 文字まで', async () => {
+    const human = scheduled!.add(PARENT, `人の予約${'あ'.repeat(400)}`, ['/tmp/a.png'], Date.now() + 60 * 60_000);
+    await schedule({ message: 'Claude の予約', in_minutes: 5 });
+    await schedule({ message: '子の予約', in_minutes: 5 }, CHILD);
+    const listed = jsonOf<Listed>(await control.handle(PARENT, 'list_wakeups', {}));
+    expect(listed.now).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(listed.messages.map((m) => [m.by, m.state, m.text.slice(0, 7)])).toEqual([
+      ['claude', 'scheduled', 'Claude '],
+      ['user', 'scheduled', '人の予約あああ'],
+    ]);
+    expect(listed.messages[1]).toMatchObject({ id: human.id, images: 1 });
+    expect(listed.messages[1]!.text).toContain('characters omitted');
+    expect(listed.messages[1]!.text.length).toBeLessThan(360);
+    expect(Date.parse(listed.messages[0]!.local_time)).toBe(Math.floor(Date.parse(listed.messages[0]!.at) / 1000) * 1000);
+    expect(jsonOf<Listed>(await control.handle(PEER, 'list_wakeups', {}))).toMatchObject({ messages: [], note: 'No messages are scheduled in this session.' });
+  });
+
+  it('cancel_wakeup: 取り消せるのは、このセッションの Claude の予約だけ。人の予約は人だけが取り消せる', async () => {
+    const human = scheduled!.add(PARENT, '人の予約', [], Date.now() + 60 * 60_000);
+    const mine = jsonOf<{ id: string }>(await schedule({ message: '取り消す予約', in_minutes: 5 }));
+    const peer = jsonOf<{ id: string }>(await schedule({ message: 'ほかのセッションの予約', in_minutes: 5 }, PEER));
+    expect(textOf(await control.handle(PARENT, 'cancel_wakeup', { id: human.id }))).toBe('This message was scheduled by the user. Only the user can cancel or change it.');
+    expect(textOf(await control.handle(PARENT, 'cancel_wakeup', { id: peer.id }))).toContain('No scheduled message of this session has the ID');
+    expect(textOf(await control.handle(PARENT, 'cancel_wakeup', { id: 'abc' }))).toContain('at least its first 8 characters');
+    // 先頭 8 文字でもよい（大文字でも）
+    expect(jsonOf(await control.handle(PARENT, 'cancel_wakeup', { id: mine.id.slice(0, 8).toUpperCase() }))).toEqual({ id: mine.id, cancelled: true });
+    expect(scheduled!.list().map((m) => m.text).sort()).toEqual(['ほかのセッションの予約', '人の予約'].sort());
+    expect(textOf(await control.handle(PARENT, 'cancel_wakeup', { id: mine.id }))).toContain('sent or cancelled already');
+  });
+
+  it('予約・報告の受け手がまだ無い（起動の途中）ときは、少し待つよう返す', async () => {
+    scheduled!.dispose();
+    scheduled = null;
+    const early = new SessionsControl({ host, enabled: () => true, archive: async () => null, home: '/nonexistent-home' });
+    try {
+      expect(textOf(await schedule({ message: 'x', in_minutes: 5 }))).toBe(NOT_READY);
+      expect(textOf(await control.handle(PARENT, 'list_wakeups', {}))).toBe(NOT_READY);
+      expect(textOf(await early.handle(PARENT, 'report_result', { message: 'x' }))).toBe(NOT_READY);
+    } finally {
+      early.dispose();
+    }
+  });
+
+  it('report_result: 報告を 1 行にして預ける。300 文字を超えたら断る。子は人に通知しないので断る', async () => {
+    const saved = await control.handle(PARENT, 'report_result', { message: '  ログイン画面を直しました。\n  テストも通っています。 ' });
+    expect(textOf(saved)).toBe('Saved. It is shown in the notification when this turn ends (not while the user is looking at this session, and not if notifications are off).');
+    expect(reports).toEqual([{ id: PARENT, text: 'ログイン画面を直しました。 テストも通っています。' }]);
+    // 独立したセッション（親の無い、人が動かすセッション）も報告できる
+    expect((await control.handle(PEER, 'report_result', { message: '終わりました' })).isError).toBeFalsy();
+    expect(textOf(await control.handle(PARENT, 'report_result', { message: 'あ'.repeat(301) }))).toBe('message is too long (301 characters). Keep it within 300 characters: one or two sentences.');
+    expect((await control.handle(PARENT, 'report_result', { message: 'あ'.repeat(300) })).isError).toBeFalsy();
+    expect(textOf(await control.handle(PARENT, 'report_result', { message: ' \n ' }))).toBe('message (the report) is empty.');
+    expect(textOf(await control.handle(CHILD, 'report_result', { message: '終わりました' }))).toContain('A child session does not notify the user');
+    expect(reports.map((r) => r.id)).toEqual([PARENT, PEER, PARENT]);
+  });
+
+  it('メニューでオフなら、予約も報告も断る', async () => {
+    const off = new SessionsControl({ host, enabled: () => false, archive: async () => null, home: '/nonexistent-home', scheduled: () => scheduled, report: (id, text) => reports.push({ id, text }) });
+    try {
+      expect((await off.handle(PARENT, 'schedule_wakeup', { message: 'x', in_minutes: 5 })).isError).toBe(true);
+      expect((await off.handle(PARENT, 'report_result', { message: 'x' })).isError).toBe(true);
+      expect(scheduled!.list()).toEqual([]);
+      expect(reports).toEqual([]);
+    } finally {
+      off.dispose();
+    }
+  });
+
+  it('説明: 親は裏の sleep の代わりに予約で子を見に行く。報告の決まりは子でないセッションにだけ渡す。どれも確認なしに通す', () => {
+    expect(SESSIONS_MCP.instructions).toContain('schedule a wake-up with schedule_wakeup');
+    expect(SESSIONS_MCP.instructions).toContain('When <tanacode-wakeup> arrives');
+    expect(SESSIONS_MCP.instructions).not.toContain('sleep 300');
+    expect(SESSIONS_MCP.instructions).toContain('call report_result as your last tool call');
+    expect(SESSIONS_MCP_FOR_CHILD.instructions).not.toContain('report_result');
+    expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).toContain('schedule_wakeup');
+    expect(SESSIONS_MCP.tools.find((t) => t.name === 'start_session')?.description).not.toContain('background timer');
+    for (const name of ['schedule_wakeup', 'cancel_wakeup', 'report_result', 'list_wakeups']) expect(allowedSessionToolIds()).toContain(sessionToolId(name));
+  });
 });
 
 describe('会話のまとめ（read_session の中身）', () => {

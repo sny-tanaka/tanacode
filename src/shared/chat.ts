@@ -2,7 +2,8 @@ import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, 
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
 import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
-import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste } from './session-tools';
+import { parseWakeup } from './scheduled';
+import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 // parent: 親セッションの Claude からの指示（start_session・send_message）なら、親セッションの ID。人の発言には無い
@@ -499,6 +500,9 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   // 子セッションの作業が終わった・人の対応待ちになった知らせ（アプリが、手の空いている親に送る）
   const event = parseSessionEvent(text);
   if (event) return [{ type: 'notice', id: entry.uuid ?? '', text: event.message, sessions: event.sessions }];
+  // Claude が自分に入れた予約の時刻になった知らせ（アプリが、手が空いてから送る）。開くと、Claude が書いた本文が読める
+  const wakeup = parseWakeup(text);
+  if (wakeup) return [{ type: 'notice', id: entry.uuid ?? '', text: t('chat.transcript.wakeup'), detail: unwrapPasted(wakeup.body) }];
   // チェックリストのスレッドへの返信・ほかのセッションから届いたカードの知らせ
   const checklist = parseChecklistEvent(text);
   if (checklist) return [{ type: 'notice', id: entry.uuid ?? '', text: checklist.message, cards: checklist.cards }];
@@ -583,6 +587,7 @@ export function isHumanPrompt(text: string): boolean {
     !text.includes('<task-notification>') &&
     !head.startsWith('<ci-monitor-event>') &&
     !head.startsWith(`<${SESSION_EVENT_TAG}`) &&
+    !head.startsWith(`<${WAKEUP_TAG}`) &&
     !head.startsWith(`<${CHECKLIST_EVENT_TAG}`) &&
     !isCompactMessage(text)
   );
@@ -780,7 +785,7 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     typeof entry.message?.content === 'string'
   ) {
     const text = entry.message.content;
-    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text)) return null;
+    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseWakeup(text)) return null;
     // 親セッションからの指示は、囲みを外した本文の 1 行目
     const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];
     return firstLine ? { title: firstLine.slice(0, 80), priority: 1 } : null;
