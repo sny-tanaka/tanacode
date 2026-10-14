@@ -372,6 +372,7 @@
       "send_message": "子セッションに指示",
       "answer_question": "子セッションの質問に答える",
       "answer_permission": "子セッションの許可の確認に答える",
+      "configure_session": "子セッションの設定を変える",
       "stop_session": "子セッションを中断",
       "end_session": "子セッションを終える"
     },

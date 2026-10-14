@@ -188,6 +188,8 @@ function fakeHost(cwd: string): SessionsHost {
     },
     createInWorktree: async () => '22222222-0000-4000-8000-000000000002',
     rename: () => {},
+    setMode: async () => true,
+    configure: () => {},
     open: async () => {},
     submitWhenReady: async () => {},
     interrupt: () => {},

@@ -466,7 +466,7 @@ export class SessionManager {
       void this.prepareWorktree(id, 'restored');
       return;
     }
-    // 子セッションは起動したときのモードで（ほかのセッションは、これまでどおり既定のまま）
+    // 子セッションは起動のモードで（ほかのセッションは、これまでどおり既定のまま）
     this.start(id, record?.launchMode ?? null);
   }
 
@@ -795,12 +795,19 @@ export class SessionManager {
     return this.runtimes.get(id)?.screen?.currentActivity ?? null;
   }
 
+  // 権限モードを切り替える（画面のモード欄・親の configure_session）。子セッションは、起動し直しても切り替えたモードで起動するよう、
+  // 起動のモード（launchMode）も変える。Claude Code が動いていない子は、次に起動するときのモードだけを変える
   async setMode(id: string, mode: PermissionMode): Promise<boolean> {
     const rt = this.runtimes.get(id);
-    const ok = (await rt?.screen?.setMode(mode)) ?? false;
-    if (ok && rt) {
+    const child = !!this.store.get(id)?.parentId;
+    if (!rt?.process) {
+      if (child) this.store.update(id, { launchMode: mode });
+      return child;
+    }
+    const ok = (await rt.screen?.setMode(mode)) ?? false;
+    if (ok) {
       rt.knownMode = mode;
-      this.store.update(id, { knownMode: mode });
+      this.store.update(id, { knownMode: mode, ...(child ? { launchMode: mode } : {}) });
     }
     return ok;
   }

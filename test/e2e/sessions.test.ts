@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { sessionToolId } from '@shared/session-tools';
+import type { Step } from '../cli/mock-api';
 import { NUMBERED_PROMPT } from '../scenarios/input';
 import { E2EApp } from './app';
 
@@ -146,6 +147,92 @@ describe('アプリを起動し直したあとに始めた子も、親の権限�
     await app.byText('.session-list .session-row', ADOPTED_CHILD_NAME).click();
     await app.byText('.chat-list', ADOPTED_CHILD_REPLY).waitFor();
     await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('acceptEdits');
+  });
+
+  it('画面のコンソールにエラーが出ていない', () => {
+    expect(app.consoleErrors).toEqual([]);
+  });
+});
+
+// 親が、始めたあとの子の権限モードとエフォートを変える（configure_session）。権限モードは、Claude Code を起動し直さずに切り替え、
+// エフォートは、子の Claude Code を起動し直して同じ会話を続ける。切り替えたモードは、起動し直しても保つ
+const CONFIG_PARENT = '子の設定をあとから変えます';
+const CONFIG_CHILD = 'あとで設定を変える子の作業として、返事だけしてください';
+const CONFIG_CHILD_NAME = '設定を変える子';
+const CONFIG_CHILD_REPLY = '設定を変える前の子の返事です';
+const CONFIG_STARTED = '設定を変える子を始めました';
+const CONFIG_ASK = '子を acceptEdits にして、エフォートを low にしてください';
+const CONFIG_DONE = '子の設定を変えました';
+
+describe('親が、始めたあとの子の権限モードとエフォートを変える', () => {
+  let app: E2EApp;
+  // 親の台本。子の ID は始めてから分かるので、設定を変える手順は、あとで足す
+  const parentSteps: Step[] = [
+    [
+      {
+        type: 'tool_use',
+        id: 'toolu_config_start',
+        name: sessionToolId('start_session'),
+        input: { prompt: CONFIG_CHILD, worktree: false, name: CONFIG_CHILD_NAME, permission_mode: 'manual' },
+      },
+    ],
+    [{ type: 'text', text: CONFIG_STARTED }],
+  ];
+  const modeSelect = () => app.page.locator('.chat-options select[title^="権限モード"]');
+  const effortSelect = () => app.page.locator('.chat-options select[title^="エフォート"]');
+
+  beforeAll(async () => {
+    app = await E2EApp.launch({
+      trusted: true,
+      conversations: () => [
+        { match: CONFIG_PARENT, steps: parentSteps },
+        { match: CONFIG_CHILD, steps: [[{ type: 'text', text: CONFIG_CHILD_REPLY }]] },
+      ],
+    });
+  });
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state === 'fail') await app?.keepEvidence(`sessions-configure-${task.name}`);
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('acceptEdits の親が、manual の子を始める', async () => {
+    await app.startSession(CONFIG_PARENT, { mode: 'acceptEdits' });
+    await app.choose(await app.menuCard('permission'), /^Yes/);
+    await app.byText('.chat-list', CONFIG_STARTED).waitFor();
+    await app.byText('.session-list .session-row', CONFIG_CHILD_NAME).click();
+    await app.byText('.chat-list', CONFIG_CHILD_REPLY).waitFor();
+    await expect.poll(() => modeSelect().inputValue()).toBe('manual');
+  });
+
+  it('親が configure_session で子を acceptEdits・エフォート low にすると、確認なしに変わり、起動し直した子もそのモードで動く', async () => {
+    const started = app.api.toolResults.find((r) => r.includes(CONFIG_CHILD_NAME));
+    const childId = (JSON.parse(started ?? '{}') as { session_id?: string }).session_id;
+    expect(childId).toBeTruthy();
+    parentSteps.push(
+      [{ type: 'tool_use', id: 'toolu_configure', name: sessionToolId('configure_session'), input: { session_id: childId, permission_mode: 'acceptEdits', effort: 'low' } }],
+      [{ type: 'text', text: CONFIG_DONE }],
+    );
+    await app.byText('.session-list .session-row', CONFIG_PARENT).click();
+    await app.send(CONFIG_ASK);
+    await app.byText('.chat-list', CONFIG_DONE).waitFor();
+    const result = app.api.toolResults.find((r) => r.includes('"changed"'));
+    expect(result).toMatch(/"permission_mode":\s*"acceptEdits"/);
+    expect(result).toMatch(/"effort":\s*"low"/);
+    // 許可の確認は出ない（親に許している範囲の中の変更）
+    expect(await app.page.locator('.chat-list .menu-card').count()).toBe(0);
+    // 子は、エフォートを変えるために起動し直したあとも、切り替えた acceptEdits のまま
+    await app.byText('.session-list .session-row', CONFIG_CHILD_NAME).click();
+    await app.byText('.chat-list', CONFIG_CHILD_REPLY).waitFor();
+    await expect.poll(() => effortSelect().inputValue()).toBe('low');
+    await expect.poll(() => modeSelect().inputValue(), { timeout: 30_000 }).toBe('acceptEdits');
+    // 子の Claude Code は、新しいエフォートと、切り替えたモードで起動し直している（同じ会話を続ける）
+    const child = (await app.claudeArgs()).find((args) => args.includes('--effort low'));
+    expect(child).toMatch(/--permission-mode acceptEdits\b/);
+    expect(child).toContain('--resume');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
