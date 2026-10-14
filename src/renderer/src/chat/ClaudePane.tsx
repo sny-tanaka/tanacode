@@ -47,6 +47,10 @@ import { pendingFolder, preparingLabel } from '../sessions/worktree';
 // 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
 const SLOW_START_MS = 10_000;
 
+// チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
+const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
+const SCROLL_DOWN_KEYS = new Set(['ArrowDown', 'PageDown', 'End']);
+
 type Props = {
   session: SessionSummary;
   // 一覧のすべてのセッション。チャットに出るほかのセッション（親・子・@ の参照）の名前と、入力欄の @ の候補に使う
@@ -161,11 +165,27 @@ export const ClaudePane = memo(function ClaudePane({
   const jumping = useRef(false);
   // 前に読んだ（か、送った）スクロールの位置。上へ動いたか（上を読み始めたか）を見分ける
   const lastScrollTop = useRef(0);
+  // 人が上へスクロールしようとしている（ホイール・トラックパッドで上へ・上へ送るキー・スクロールバーを押した）。スクロールが止まるまで立てておく。
+  // 最下部を追いかけるのをやめるのは、人が上へ動かしたときだけ。一覧が縮んで位置が押し戻された（位置を保つ調整も）知らせが、
+  // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
+  // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
+  const userScrollingUp = useRef(false);
   // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）
   const toBottom = (list: HTMLElement) => {
     list.scrollTop = list.scrollHeight;
     lastScrollTop.current = list.scrollTop;
   };
+
+  // キーでのスクロール。一覧の中を押したあとは、入力欄の外で押したキーが一覧を動かす（キーの知らせは一覧に届かないので、ウインドウで聞く）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (SCROLL_UP_KEYS.has(e.key) || (e.key === ' ' && e.shiftKey)) userScrollingUp.current = true;
+      else if (SCROLL_DOWN_KEYS.has(e.key) || e.key === ' ') userScrollingUp.current = false;
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   const [draftSessionId, setDraftSessionId] = useState(session.id);
   if (draftSessionId !== session.id) {
@@ -540,16 +560,25 @@ export const ClaudePane = memo(function ClaudePane({
             // ボタンで送っている途中は、着くまで（か、送り終わるまで）追いかける状態のままにする
             if (jumping.current && el.scrollHeight - el.scrollTop - el.clientHeight >= 40) return;
             jumping.current = false;
-            // 最下部を追いかけている間は、上へのスクロールでだけやめる。それ以外（下に隠れた選択肢を見ようと下へスクロールした・
-            // 追いかけたスクロールの知らせが、そのあと伸びてから届いた）では、最下部へ送り直す。最下部から離れたことにすると、
-            // 「最新のメッセージへ」のボタンが、見ようとした選択肢の上に出る（押した選択肢の代わりに、ボタンを押してしまう）
-            if (stickToBottom.current && !movedUp) {
+            // 最下部を追いかけている間は、人が上へスクロールしたときだけやめる。それ以外（下に隠れた選択肢を見ようと下へスクロールした・
+            // 追いかけたスクロールの知らせが、そのあと伸びてから届いた・一覧が縮んで押し戻された知らせが、そのあと伸びてから届いた）では、
+            // 最下部へ送り直す。最下部から離れたことにすると、「最新のメッセージへ」のボタンが、見ようとした選択肢の上に出る
+            if (stickToBottom.current && !(movedUp && userScrollingUp.current)) {
               toBottom(el);
               return;
             }
             updateBottom(el);
           }}
+          onWheel={(e) => {
+            if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
+          }}
+          onPointerDown={(e) => {
+            // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない
+            // （選択肢を押して離す間に、ほかのわけで上へ動いたのを、人のスクロールと取り違えない）
+            if (e.target === e.currentTarget) userScrollingUp.current = true;
+          }}
           onScrollEnd={(e) => {
+            userScrollingUp.current = false;
             // 送っている途中に上へスクロールして止めたときは、止まった位置で読み直す
             if (!jumping.current) return;
             jumping.current = false;

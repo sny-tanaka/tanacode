@@ -306,7 +306,8 @@ describe('ヘッダー', () => {
     height = 1400;
     view.rerender(<ClaudePane {...base} screen={menuOf('Do you want to proceed?')} />);
     expect(list.scrollTop).toBe(1400);
-    // 上を読んでいる間に次のカードが出ても、動かさない
+    // 上を読んでいる間に次のカードが出ても、動かさない（人がホイールで上へ動かした）
+    fireEvent.wheel(list, { deltaY: -100 });
     list.scrollTop = 100;
     fireEvent.scroll(list);
     height = 1600;
@@ -372,13 +373,91 @@ describe('ヘッダー', () => {
     fireEvent.scroll(list);
     expect(list.scrollTop).toBe(1100);
     expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeNull();
-    // 上へスクロールしたら、追いかけをやめる
+    // 人が上へスクロールしたら、追いかけをやめる
+    fireEvent.wheel(list, { deltaY: -100 });
     list.scrollTop = 600;
     fireEvent.scroll(list);
     height = 1600;
     fireEvent.scroll(list);
     expect(list.scrollTop).toBe(600);
     expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeTruthy();
+  });
+
+  // 直す前: 一覧が縮んで位置が押し戻された知らせを、人が上へスクロールしたものと取り違えて、追いかけをやめていた。
+  // CI の E2E（browser-shot）で、許可のカードの選択肢が下に隠れ、その上に「最新のメッセージへ」が出て、「Yes」を押せずに落ちていた
+  it('一覧が縮んで押し戻された知らせが、そのあと伸びてから届いても、追いかけをやめない（人が上へスクロールしたのではない）', () => {
+    render(<ClaudePane {...props()} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    sizeList(list, () => height);
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    // 上の行が縮む（最下部にいるので、位置が 700 に押し戻される）→ 知らせが届く前に、カードが伸びる
+    height = 900;
+    list.scrollTop = list.scrollTop + 0;
+    expect(list.scrollTop).toBe(700);
+    height = 1200;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(1000);
+    expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeNull();
+  });
+
+  it('人が上へスクロールしたとき（ホイール・上へ送るキー・スクロールバー）だけ、追いかけをやめる。下へのホイールや、入力欄で押したキーでは、やめない', () => {
+    render(<ClaudePane {...props({ chat: chatOf({ items: [{ kind: 'user', id: 'u1', text: '質問' }] }) })} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    sizeList(list, () => height);
+    const jump = () => screen.queryByRole('button', { name: '最新のメッセージへ' });
+    // 最下部から 300px 上へ動いたところで、知らせを届ける。止まったら、人の操作の印を消す
+    const pushedUp = () => {
+      list.scrollTop = height - 200 - 300;
+      fireEvent.scroll(list);
+      fireEvent(list, new Event('scrollend'));
+    };
+    const backToBottom = () => {
+      fireEvent.click(jump()!);
+      list.scrollTop = height;
+      fireEvent.scroll(list);
+      fireEvent(list, new Event('scrollend'));
+      expect(jump()).toBeNull();
+    };
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    list.scrollTo = (() => {}) as typeof list.scrollTo;
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia;
+
+    // 人の操作でないもの・下へのホイール・入力欄で押したキーでは、最下部へ送り直す
+    for (const before of [
+      () => {},
+      () => fireEvent.wheel(list, { deltaY: 100 }),
+      () => fireEvent.keyDown(document.querySelector('.chat-input textarea, textarea')!, { key: 'PageUp' }),
+      // 行の中（カードの選択肢など）を押したとき
+      () => fireEvent.pointerDown(list.firstElementChild!),
+    ]) {
+      before();
+      pushedUp();
+      expect(list.scrollTop).toBe(800);
+      expect(jump()).toBeNull();
+    }
+
+    // ホイールで上へ・上へ送るキー（入力欄の外）・スクロールバーを押したときは、やめる
+    for (const before of [
+      () => fireEvent.wheel(list, { deltaY: -100 }),
+      () => fireEvent.keyDown(document.body, { key: 'PageUp' }),
+      () => fireEvent.keyDown(document.body, { key: ' ', shiftKey: true }),
+      () => fireEvent.pointerDown(list),
+    ]) {
+      before();
+      pushedUp();
+      expect(list.scrollTop).toBe(500);
+      expect(jump()).toBeTruthy();
+      backToBottom();
+    }
+    // 下へ送るキーのあとは、上へ動いても人のスクロールとは見なさない
+    fireEvent.keyDown(document.body, { key: 'PageUp' });
+    fireEvent.keyDown(document.body, { key: 'End' });
+    pushedUp();
+    expect(list.scrollTop).toBe(800);
   });
 
   it('行の中身や一覧の高さが変わったら（会話や画面は変わらない）、最下部にいれば追いかける。上を読んでいる間は動かさない', () => {
@@ -414,6 +493,7 @@ describe('ヘッダー', () => {
       callbacks.forEach((callback) => callback());
       expect(list.scrollTop).toBe(1100);
 
+      fireEvent.wheel(list, { deltaY: -100 });
       list.scrollTop = 500;
       fireEvent.scroll(list);
       height = 1500;
@@ -442,6 +522,7 @@ describe('ヘッダー', () => {
     list.scrollTop = 780;
     fireEvent.scroll(list);
     expect(jump()).toBeNull();
+    fireEvent.wheel(list, { deltaY: -100 });
     list.scrollTop = 100;
     fireEvent.scroll(list);
     fireEvent.click(jump()!);
