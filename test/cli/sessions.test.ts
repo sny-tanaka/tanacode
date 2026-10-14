@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AskQuestion } from '@shared/screen';
+import { wakeupText } from '@shared/scheduled';
 import { SESSION_TOOLS, parentMessageText, sessionEventText, sessionToolId } from '@shared/session-tools';
 import { McpBridge, textResult } from '../../src/main/mcp-bridge';
 import { SessionsControl } from '../../src/main/sessions-control';
@@ -15,7 +16,7 @@ import { MockApi, type Block } from './mock-api';
 // 本物の claude をモックの API で動かし、セッションの MCP サーバー（中継）を確かめる。
 // アプリと同じ起動の引数（--mcp-config の timeout を含む・--allowedTools・--settings の PreToolUse のフック）で起動し、
 // 中継（src/main/sessions-mcp.ts をビルドしたもの）が、アプリの代わりのソケットまでツールの呼び出しを運ぶか。
-// - 読むだけのツールと、子への指示・質問への回答・役目を終えた子の片付けは、許可の確認なしに通る / 子の起動と中断は、許可の確認が出る
+// - 読むだけのツールと、子への指示・質問への回答・役目を終えた子の片付け・自分への予約・人への報告は、許可の確認なしに通る / 子の起動と中断は、許可の確認が出る
 // - 子セッションの起動は、bypassPermissions でも許可の確認が出る（フックが ask を返す）
 // - 子が出した AskUserQuestion に、親（SessionsControl の answer_question）が答えられる
 // - 子が出した許可の確認に、親（SessionsControl の answer_permission）が答えられる。アプリが足した PermissionRequest のフックが書いた、
@@ -23,7 +24,7 @@ import { MockApi, type Block } from './mock-api';
 //   歯止め（ブランチを消す操作）の確認にも答えられる。親が読んだあとで別の確認に変わっていたら、答えない
 // - 役目を終えた worktree の子を、親（SessionsControl の end_session）が片付けられる。作業中の子は断り、
 //   裏のタスクの完了待ちの子は、Claude Code と一緒に裏の Bash も止めて、アーカイブし、worktree を消す（未追跡のファイルは控えに残す）
-// - 親からの指示（囲み＋複数行の本文の貼り付け）は、会話ログから「親セッションからの指示」として読める。子の知らせは「Claude への知らせ」
+// - 親からの指示（囲み＋複数行の本文の貼り付け）は、会話ログから「親セッションからの指示」として読める。子の知らせと予約の知らせは「Claude への知らせ」
 
 const SESSIONS = 'ほかのセッションを扱ってください';
 const ASK = '子の質問の確認をしてください';
@@ -104,12 +105,17 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
           call('toolu_send', 'send_message', { session_id: CHILD, message: 'テストも書いて' }),
           call('toolu_answer', 'answer_question', { session_id: CHILD, question: 'どちら?', choices: ['A 案'] }),
           call('toolu_end', 'end_session', { session_id: CHILD }),
+          call('toolu_wake', 'schedule_wakeup', { message: '子を見に行く', in_minutes: 5 }),
+          call('toolu_wakes', 'list_wakeups'),
+          call('toolu_unwake', 'cancel_wakeup', { id: '0123456789abcdef' }),
+          call('toolu_report', 'report_result', { message: '子を片付けました。' }),
           call('toolu_stop', 'stop_session', { session_id: CHILD }),
           call('toolu_start', 'start_session', { prompt: '登録画面を作って', worktree: false }),
           say('扱いました'),
           say('親からの指示を受け取りました'),
           say('長い指示を受け取りました'),
           say('子の知らせを受け取りました'),
+          say('予約の知らせを受け取りました'),
           say('人の発言に答えました'),
           say('あとから届いた親の指示に答えました'),
         ],
@@ -185,20 +191,26 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       expect(calls[0]).toEqual({ session: run.sessionId, tool: 'list_sessions', args: {} });
     });
 
-    it('子への指示・質問への回答・子の片付けは確認なしに届き、子の中断と起動は許可の確認を通る', async () => {
+    it('子への指示・質問への回答・子の片付け・自分への予約・人への報告は確認なしに届き、子の中断と起動は許可の確認を通る', async () => {
       // 確認が出ていれば、答えないかぎりここで止まる
-      await run.waitFor('片付けの結果', () => resultOf(run, 'toolu_end'));
+      await run.waitFor('報告の結果', () => resultOf(run, 'toolu_report'));
       expect(calls[1]).toEqual({ session: run.sessionId, tool: 'send_message', args: { session_id: CHILD, message: 'テストも書いて' } });
       expect(calls[2]).toMatchObject({ tool: 'answer_question', args: { choices: ['A 案'] } });
       expect(calls[3]).toEqual({ session: run.sessionId, tool: 'end_session', args: { session_id: CHILD } });
+      expect(calls.slice(4).map((c) => [c.tool, c.args])).toEqual([
+        ['schedule_wakeup', { message: '子を見に行く', in_minutes: 5 }],
+        ['list_wakeups', {}],
+        ['cancel_wakeup', { id: '0123456789abcdef' }],
+        ['report_result', { message: '子を片付けました。' }],
+      ]);
       const stop = await run.waitFor('中断の許可の確認', menuOf('permission'));
-      expect(calls).toHaveLength(4);
+      expect(calls).toHaveLength(8);
       await run.answer(stop.title, stop.options[0].id);
       await run.waitFor('中断の結果', () => resultOf(run, 'toolu_stop'));
       const start = await run.waitFor('起動の許可の確認', menuOf('permission'));
       await run.answer(start.title, start.options[0].id);
       await run.waitFor('返事', replied(run, '扱いました'));
-      expect(calls[5]).toMatchObject({ tool: 'start_session', args: { prompt: '登録画面を作って', worktree: false } });
+      expect(calls[9]).toMatchObject({ tool: 'start_session', args: { prompt: '登録画面を作って', worktree: false } });
     });
 
     it('親からの指示（複数行）は、会話ログから親の ID と本文の発言として読める。順番待ちにも本文だけを出す', async () => {
@@ -225,6 +237,18 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       await run.manager.submit(run.sessionId!, sessionEventText([CHILD], '子セッション「A」の作業が終わりました。'));
       await run.waitFor('知らせの返事', replied(run, '子の知らせを受け取りました'));
       expect(run.chatEvents.find((e) => e.type === 'notice' && e.sessions?.includes(CHILD))).toMatchObject({ text: '子セッション「A」の作業が終わりました。' });
+    });
+
+    it('自分への予約の知らせは「Claude の予約の時刻になりました」の知らせとして読め、Claude は続きを始める', async () => {
+      // 予約は時刻になると、アプリ（scheduled-messages.ts）がこの形で打つ。本文が複数行でも、知らせのまま
+      await run.manager.submit(run.sessionId!, wakeupText('子の状態を get_session で確かめる\n終わっていなければ、次の予約を入れる'));
+      await run.waitFor('予約の知らせの返事', replied(run, '予約の知らせを受け取りました'));
+      expect(run.chatEvents.find((e) => e.type === 'notice' && e.text === 'Claude の予約の時刻になりました')).toMatchObject({
+        detail: '子の状態を get_session で確かめる\n終わっていなければ、次の予約を入れる',
+      });
+      // 人の発言としては出さない（順番待ちにも出さない）
+      expect(run.chatEvents.some((e) => e.type === 'user' && e.text.includes('tanacode-wakeup'))).toBe(false);
+      expect(run.queue.some((q) => q.includes('tanacode-wakeup'))).toBe(false);
     });
 
     it('作業中に頼んだ親の指示は、ターンが終わってから打つ（作業中に出た許可の確認に、打った文字が入らないように）', async () => {

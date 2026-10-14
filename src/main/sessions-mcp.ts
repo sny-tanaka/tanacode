@@ -13,7 +13,7 @@ runRelay(
   process.stdin,
   process.stdout,
   {
-    // 子セッションには、読むだけのツールだけを見せる
+    // 子セッションには、読むだけのツールと自分への予約だけを見せる
     server: process.env[SESSIONS_CHILD_ENV] === '1' ? SESSIONS_MCP_FOR_CHILD : SESSIONS_MCP,
     version: process.env.TANACODE_VERSION ?? '0.0.0',
     call: (tool, args, signal) => callBridge(socketPath, { session, tool, args }, SESSIONS_CALL_TIMEOUT_MS, SESSIONS_CLOSED_MESSAGE, signal),

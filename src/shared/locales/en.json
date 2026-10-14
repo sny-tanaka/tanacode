@@ -75,6 +75,8 @@
       "images_one": "{count} image",
       "scheduledMissed": "Not sent at the scheduled time ({time}): {text}",
       "scheduledFailed": "Couldn't send the scheduled message ({reason}): {text}",
+      "wakeupMissed": "Claude's wake-up wasn't sent at the scheduled time ({time}): {text}",
+      "wakeupFailed": "Couldn't send Claude's wake-up ({reason}): {text}",
       "unknownReason": "unknown reason"
     },
     "format": {
@@ -376,7 +378,11 @@
       "answer_permission": "Answer Child's Permission Prompt",
       "configure_session": "Configure Child Session",
       "stop_session": "Interrupt Child Session",
-      "end_session": "End Child Session"
+      "end_session": "End Child Session",
+      "schedule_wakeup": "Schedule a Wake-up",
+      "list_wakeups": "List Wake-ups",
+      "cancel_wakeup": "Cancel a Wake-up",
+      "report_result": "Report the Result"
     },
     "checklist": {
       "checklist_overview": "Overview",
@@ -680,6 +686,7 @@
       "ciNoticePr": "CI auto-fix (PR #{pr}): {what}",
       "scheduledTask": "Scheduled task started",
       "scheduledTaskNamed": "Scheduled task “{name}” started",
+      "wakeup": "Claude's wake-up time has come",
       "omitted": "… (truncated)",
       "noAnswer": "(No answer)",
       "image": "[Image]",
@@ -752,6 +759,8 @@
       "sendNowTip": "Send now instead of at the scheduled time (still waits until Claude Code is idle)",
       "reschedule": "Reschedule",
       "cancel": "Cancel",
+      "claude": "Claude's wake-up",
+      "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",
       "cancelSendingTip": "Stop sending and move the message back to the chat input",
       "cancelTip": "Unschedule and move the message back to the chat input"
     },

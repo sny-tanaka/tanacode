@@ -15,6 +15,7 @@ import {
   splitPasted,
 } from '@shared/chat';
 import { checklistEventText } from '@shared/checklist-tools';
+import { wakeupText } from '@shared/scheduled';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
 
 // 会話ログの行をチャットの出来事に変える（toChatEvents）と、そのまわりの読み取り（shared/chat.ts）。
@@ -588,8 +589,23 @@ describe('toChatEvents: 発言の行', () => {
       { type: 'notice', id: 'u1', text: '「やること」#1 に人が返信しました', cards },
     ]);
     expect(isHumanPrompt(wrap(sessionEventText([child], '知らせ')))).toBe(false);
+    expect(isHumanPrompt(wrap(wakeupText('予約')))).toBe(false);
     expect(isHumanPrompt(wrap(parentMessageText(parent, '親からの指示')))).toBe(true);
     expect(transcriptTitle(user(wrap(parentMessageText(parent, '子への長い指示\n二行目'))))).toEqual({ title: '子への長い指示', priority: 1 });
+  });
+
+  it('Claude が自分に入れた予約の知らせは「Claude の予約の時刻になりました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {
+    const notice = { type: 'notice', id: 'u1', text: 'Claude の予約の時刻になりました', detail: '子の状態を get_session で確かめる\n終わっていなければ、次の予約を入れる' };
+    const body = '子の状態を get_session で確かめる\n終わっていなければ、次の予約を入れる';
+    expect(events(user(wakeupText(body)))).toEqual([notice]);
+    // 長いものは、全体が貼り付けの囲みに入ることがある。本文だけが囲みに入っていることもある
+    expect(events(user(`<pasted_content id="7">\n${wakeupText(body)}\n</pasted_content id="7">`))).toEqual([notice]);
+    expect(events(user(wakeupText(`<pasted_content id="8">\n${body}\n</pasted_content id="8">`)))).toEqual([notice]);
+    expect(events({ type: 'user', message: { content: wakeupText('x') } })[0]).toMatchObject({ type: 'notice', id: '' });
+    expect(isHumanPrompt(wakeupText('x'))).toBe(false);
+    expect(transcriptTitle(user(wakeupText('x')))).toBeNull();
+    // 囲みの外に文が続くもの（人が打った文）は、人の発言のまま
+    expect(events(user(`${wakeupText('x')} これは人の発言`))[0]).toMatchObject({ type: 'user' });
   });
 
   it('打った文に添えた長い貼り付け（入力欄の札）は、発言の文と分けて pastes に入れる', () => {

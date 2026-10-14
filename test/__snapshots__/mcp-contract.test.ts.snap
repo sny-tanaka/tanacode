@@ -828,6 +828,10 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
     "mcp__tanacode-sessions__answer_permission",
     "mcp__tanacode-sessions__configure_session",
     "mcp__tanacode-sessions__end_session",
+    "mcp__tanacode-sessions__schedule_wakeup",
+    "mcp__tanacode-sessions__list_wakeups",
+    "mcp__tanacode-sessions__cancel_wakeup",
+    "mcp__tanacode-sessions__report_result",
   ],
   "tools": [
     {
@@ -1123,6 +1127,69 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
       "kind": "instruct",
       "label": "子セッションを終える",
       "name": "end_session",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "at": {
+            "type": "string",
+          },
+          "in_minutes": {
+            "type": "integer",
+          },
+          "message": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "message",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "自分に予約",
+      "name": "schedule_wakeup",
+    },
+    {
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "予約を読む",
+      "name": "list_wakeups",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "予約を取り消す",
+      "name": "cancel_wakeup",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "message": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "message",
+        ],
+        "type": "object",
+      },
+      "kind": "instruct",
+      "label": "結果を報告",
+      "name": "report_result",
     },
   ],
 }

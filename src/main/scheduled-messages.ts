@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { t } from '@shared/i18n';
-import { SCHEDULE_LATE_MS, type ScheduledMessage } from '@shared/scheduled';
+import { SCHEDULE_LATE_MS, wakeupText, type ScheduledMessage } from '@shared/scheduled';
 import type { SessionState } from '@shared/session-tools';
 
 // 予約を送るのに使う、セッションの操作（SessionManager）
@@ -20,7 +20,8 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 // 予約したメッセージ。ファイルに保存し、アプリを起動し直しても残す。
 // 時刻になったら、Claude Code の手が空くのを待って送る（子セッションへの指示と同じ送り方。作業中に打つと、許可の確認の選択になってしまうことがある）。
-// アプリが閉じていた・Mac がスリープしていたなどで、時刻を SCHEDULE_LATE_MS より過ぎてから気づいたものは、送らずに missed にする
+// アプリが閉じていた・Mac がスリープしていたなどで、時刻を SCHEDULE_LATE_MS より過ぎてから気づいたものは、送らずに missed にする。
+// Claude が自分に入れた予約（by: 'claude'。sessions-control.ts の schedule_wakeup）も同じ流れに乗せ、送るときだけ囲み（WAKEUP_TAG）に入れる
 export class ScheduledMessages {
   private messages: ScheduledMessage[];
   private timer: NodeJS.Timeout | null = null;
@@ -51,11 +52,23 @@ export class ScheduledMessages {
     return this.messages;
   }
 
-  add(sessionId: string, text: string, attachments: string[], at: number, pastes: string[] = []): ScheduledMessage {
+  // by: Claude が自分に入れる予約（数と時刻の決まりは、呼ぶ側の sessions-control.ts が確かめる）
+  add(sessionId: string, text: string, attachments: string[], at: number, pastes: string[] = [], by?: 'claude'): ScheduledMessage {
     if (!this.accepts(sessionId)) throw new Error(t('main.scheduled.cannotSchedule'));
     if (!text.trim() && attachments.length === 0 && pastes.length === 0) throw new Error(t('main.scheduled.empty'));
     if (!Number.isFinite(at) || at <= this.now()) throw new Error(t('main.scheduled.pastTime'));
-    const message: ScheduledMessage = { id: randomUUID(), sessionId, text, attachments, pastes, at, createdAt: this.now(), state: 'scheduled', error: null };
+    const message: ScheduledMessage = {
+      id: randomUUID(),
+      sessionId,
+      text,
+      attachments,
+      pastes,
+      at,
+      createdAt: this.now(),
+      state: 'scheduled',
+      error: null,
+      ...(by ? { by } : {}),
+    };
     this.messages = [...this.messages, message];
     this.changed();
     return message;
@@ -83,6 +96,17 @@ export class ScheduledMessages {
     this.sending.get(id)?.abort();
     this.remove(id);
     return message;
+  }
+
+  // そのセッションで待っている、Claude が自分に入れた予約（時刻を待っている・送っている途中。送れなかったもの・時刻を過ぎていたものは、もう待っていない）
+  claudeWakeups(sessionId: string): ScheduledMessage[] {
+    return this.messages.filter((m) => m.sessionId === sessionId && m.by === 'claude' && (m.state === 'scheduled' || m.state === 'sending'));
+  }
+
+  // Claude が自分に入れた予約が待っているか。待っている間のターンの終わりは、作業の完了ではない（時刻になると Claude が続きを始める）ので、
+  // ふつうの完了の通知を出さない（profile.ts）
+  hasClaudeWakeup(sessionId: string): boolean {
+    return this.claudeWakeups(sessionId).length > 0;
   }
 
   // アーカイブした・一覧から消したセッションの予約を取り消す
@@ -134,7 +158,9 @@ export class ScheduledMessages {
       // 止まっているセッションは、起動し直してから送る（起動が終わるまでは、submitWhenReady が待つ）
       if (this.host.stateOf(sessionId) === 'exited') await this.host.open(sessionId);
       // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間・ターミナルの入力欄に書きかけがある間も、送らずに待つ
-      await this.host.submitWhenReady(sessionId, message.text, Number.POSITIVE_INFINITY, {
+      // Claude の予約は、人の発言と見分けられるよう、囲みに入れて送る
+      const text = message.by === 'claude' ? wakeupText(message.text) : message.text;
+      await this.host.submitWhenReady(sessionId, text, Number.POSITIVE_INFINITY, {
         attachments: message.attachments,
         pastes: message.pastes,
         signal: controller.signal,
@@ -200,8 +226,10 @@ export class ScheduledMessages {
 function load(file: string): ScheduledMessage[] {
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as { messages?: unknown };
-    // pastes は、前のバージョンで保存した予約には無い
-    return Array.isArray(data.messages) ? data.messages.filter(isMessage).map((m) => ({ ...m, pastes: stringsOf(m.pastes), error: m.error ?? null })) : [];
+    // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約だけに付ける（ほかの値は読み捨てる）
+    return Array.isArray(data.messages)
+      ? data.messages.filter(isMessage).map(({ by, ...m }) => ({ ...m, pastes: stringsOf(m.pastes), error: m.error ?? null, ...(by === 'claude' ? { by } : {}) }))
+      : [];
   } catch {
     return [];
   }

@@ -236,6 +236,10 @@ export class SessionManager {
   // starter: 終わったターンを始めたもの
   turnNotice: (id: string, starter: TurnStarter) => TurnNotice | null = () => 'work';
 
+  // 終わったターンで、Claude が人への報告（report_result）を預けたか（profile.ts がつなぐ）。報告があれば、バックグラウンドのタスクが
+  // 動いていても、ターンの終わりに通知する（報告は、どう終わったかを伝えるもの）
+  turnReported: (id: string) => boolean = () => false;
+
   // 最後に終わったターンが、人の中断（Esc）で終わったか
   lastTurnInterrupted(id: string): boolean {
     const events = this.runtimes.get(id)?.events ?? [];
@@ -1623,8 +1627,9 @@ export class SessionManager {
         if (rt) rt.turnStarter = 'other';
         // バックグラウンドのタスクが動いているあいだは、まだ完了ではない（一覧も「完了待ち」）。
         // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す。
-        // ブラウザでの操作を頼んでいるあいだも同じ（2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、Claude はターンを終えて返事を待つ）
-        if (notice && summary && summary.backgroundTasks === 0 && summary.attention !== 'browser') this.listeners.onTurnCompleted(summary, notice);
+        // ブラウザでの操作を頼んでいるあいだも同じ（2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、Claude はターンを終えて返事を待つ）。
+        // ただし Claude が報告を預けていれば、タスクが動いていても出す（タスクを残したまま、作業を終えたと報告している）
+        if (notice && summary && summary.attention !== 'browser' && (summary.backgroundTasks === 0 || this.turnReported(id))) this.listeners.onTurnCompleted(summary, notice);
       }
     }
     if (changed) this.emitSessions();

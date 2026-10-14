@@ -5,7 +5,8 @@ import { PastedChips } from './PastedChips';
 import { needsAttention } from './scheduled';
 import { SchedulePicker } from './SchedulePicker';
 
-// チャットの末尾に出す、予約したメッセージ（時刻を指定して送信）。送るまでは点線の枠で、今すぐ送る・時刻を変える・取り消す（入力欄に戻す）ができる
+// チャットの末尾に出す、予約したメッセージ（時刻を指定して送信）。送るまでは点線の枠で、今すぐ送る・時刻を変える・取り消す（入力欄に戻す）ができる。
+// Claude が自分に入れた予約（by: 'claude'）は、親セッションからの指示と同じく Claude の色で出して、人の予約と見分ける。取り消しても入力欄には戻さない
 export function ScheduledRow({
   message,
   onSendNow,
@@ -15,15 +16,23 @@ export function ScheduledRow({
   message: ScheduledMessage;
   onSendNow: () => void;
   onReschedule: (at: number) => void;
-  // 予約をやめて、入力欄に戻す
+  // 予約をやめて、入力欄に戻す（Claude の予約は、取り消すだけ）
   onTake: () => void;
 }) {
   const sending = message.state === 'sending';
   const trouble = needsAttention(message);
+  const claude = message.by === 'claude';
+  // Claude の予約は、取り消しても入力欄に戻らないので、ツールチップも「取り消す」だけにする
+  const cancelTip = claude ? t('schedule.row.cancel') : sending ? t('schedule.row.cancelSendingTip') : t('schedule.row.cancelTip');
   return (
-    <div className={`chat-user pending scheduled${trouble ? ' trouble' : ''}`}>
-      <span className="chat-prompt">›</span>
+    <div className={`chat-user pending scheduled${claude ? ' by-claude' : ''}${trouble ? ' trouble' : ''}`}>
+      <span className="chat-prompt">{claude ? '»' : '›'}</span>
       <span className="chat-user-text">
+        {claude && (
+          <span className="chat-scheduled-by" data-tip={t('schedule.row.claudeTip')}>
+            {t('schedule.row.claude')}
+          </span>
+        )}
         {message.text}
         <PastedChips pastes={message.pastes} />
         {message.attachments.length > 0 && <span className="chat-user-meta">{t('schedule.row.images', { count: message.attachments.length })}</span>}
@@ -36,7 +45,7 @@ export function ScheduledRow({
       <div className="chat-scheduled-actions">
         {!sending && <IconButton size="sm" icon={SendIcon} label={t('schedule.row.sendNow')} tip={t('schedule.row.sendNowTip')} onClick={onSendNow} />}
         {!sending && <SchedulePicker size="sm" label={t('schedule.row.reschedule')} initial={trouble ? undefined : message.at} onPick={onReschedule} />}
-        <IconButton size="sm" icon={CloseIcon} label={t('schedule.row.cancel')} tip={sending ? t('schedule.row.cancelSendingTip') : t('schedule.row.cancelTip')} onClick={onTake} />
+        <IconButton size="sm" icon={CloseIcon} label={t('schedule.row.cancel')} tip={cancelTip} onClick={onTake} />
       </div>
     </div>
   );
