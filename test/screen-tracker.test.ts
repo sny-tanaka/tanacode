@@ -465,3 +465,18 @@ it('入力欄が画面より高く、先頭の行が画面の外に出た画面�
   await sleep(300);
   expect(tracker.current.state).toEqual({ kind: 'unknown' });
 });
+
+it('画面より高い入力欄のいちばん上の行が、番号で始まる先頭の行（❯ 1. …）でも、選択メニューにせず、入力欄として読む', async () => {
+  const kinds: string[] = [];
+  tracker = new ScreenTracker(120, 40, () => {}, (info) => kinds.push(info.state.kind));
+  tracker.feed(screen(0));
+  for (let i = 0; i < 40 && tracker.current.state.kind !== 'prompt'; i++) await sleep(25);
+  // 番号付きの行で始まる長い発言を行ごとに打って、上の罫線だけが画面の外に出たときの画面
+  const rows = (from: number) => Array.from({ length: 36 }, (_, i) => `  ${from + i}. 手順 ${from + i}: 該当するファイルを読む`);
+  tracker.feed(draw(['❯ 1. 手順 1: 該当するファイルを読む', ...rows(2), RULE, '  ⏸ manual mode on (shift+tab to cycle)']));
+  await sleep(1700);
+  expect(tracker.current.state).toEqual({ kind: 'prompt' });
+  expect(tracker.current.draft.startsWith('1. 手順 1: 該当するファイルを読む\n2. 手順 2')).toBe(true);
+  expect(tracker.current.draft.endsWith('37. 手順 37: 該当するファイルを読む')).toBe(true);
+  expect(kinds).not.toContain('menu');
+});

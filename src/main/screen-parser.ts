@@ -35,6 +35,9 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   const clipped =
     pointer === -1 && footer !== -1 && lines.slice(0, footer).some((l) => l.text.match(OPTION)?.[3].trim() === CHAT_ABOUT_THIS);
   if (pointer === -1 && !clipped) return parsePlainMenu(lines, footer);
+  // 画面より高い入力欄（tallPromptRange）の中の ❯ と番号は、入力の文字。番号付きの行で始まる発言は、上の罫線だけが画面の外に出たとき、
+  // いちばん上の行が「❯ 1. …」になる
+  if (pointer !== -1 && tallPromptRange(lines)) return null;
   const end = footer > pointer ? footer : lines.length;
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
 
@@ -311,13 +314,32 @@ const PROMPT_MARK = /^[❯!](\s|$)/;
 export function promptRange(lines: ScreenLine[]): [number, number] | null {
   for (let i = lines.length - 1; i >= 1; i--) {
     const text = lines[i].text;
-    if (!PROMPT_MARK.test(text) || OPTION.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
+    if (!PROMPT_MARK.test(text) || !PROMPT_RULE.test(lines[i - 1].text)) continue;
     // 下の罫線は、画面の終わりまで探す。Claude Code は、長い入力では入力欄を画面の高さの半分ほどまで伸ばす（90 行の画面で 40 行。
     // 2.1.296 で確かめた）。複数行の発言は行ごとに打つので、入力欄に文字のまま入り、背の高い画面では何十行にもなる
     const end = lines.findIndex((l, j) => j > i && PROMPT_RULE.test(l.text));
-    if (end !== -1) return [i, end];
+    if (end === -1) continue;
+    if (OPTION.test(text) && !isNumberedDraft(lines, i, end)) continue;
+    return [i, end];
   }
   return null;
+}
+
+// 入力欄の 2 行目から下の行: 入力の続き（字下げ 2 文字）か空行
+function isDraftRow(line: ScreenLine): boolean {
+  return line.text.trim() === '' || line.text.startsWith('  ');
+}
+
+// 番号で始まる先頭の行（「❯ 6. 手順 6…」）が、入力欄の行か、メニューのカーソルのある選択肢か。
+// 番号付きの行で始まる発言を打つと、入力欄の先頭の行がこの形になる。入力欄の高さに上限のあるとき（モックの API で動かす
+// Claude Code 2.1.296 は、40 行の画面で 15 行）は、長い入力が入力欄の中でスクロールし、見えているいちばん上の行に ❯ が付くので、
+// 番号付きの手順を含む長い発言なら、途中の行でもこの形になる。メニューと読むと、残りを打つのも Enter もやめて、発言が入力欄に残る
+// （SessionManager.submit。2026-10-14、実機で、親セッションが始めた子への最初の指示が打ちかけのまま止まり、チャットに、指示の中の
+// 番号付きの行が選択肢のカードとして出た）。
+// メニューでは、質問の「Chat about this」にカーソルがあるとき、罫線のすぐ下に「❯ 4. Chat about this」が来る。
+// 入力欄は、下の罫線まで入力の行だけで、罫線の下にメニューの操作説明（Esc to cancel など）が無い
+function isNumberedDraft(lines: ScreenLine[], start: number, end: number): boolean {
+  return lines.slice(start + 1, end).every(isDraftRow) && !lines.slice(end + 1).some((l) => FOOTER.test(l.text));
 }
 
 // 入力欄の下の罫線より下に出る行（モードの表示など）の数の上限
@@ -334,11 +356,14 @@ export function tallPromptRange(lines: ScreenLine[]): [number, number] | null {
   // 罫線は 1 本だけ（下の罫線）
   const end = lines.findIndex(rule);
   if (end < 1 || lines.slice(end + 1).some(rule)) return null;
-  if (lines.slice(end + 1).filter((l) => l.text.trim()).length > BELOW_PROMPT_LINES) return null;
+  const below = lines.slice(end + 1);
+  if (below.filter((l) => l.text.trim()).length > BELOW_PROMPT_LINES) return null;
+  // 罫線の下にメニューの操作説明があれば、上の切れた質問（選択肢と説明の字下げが、入力の続きの行と同じ。罫線の下は「Chat about this」）
+  if (below.some((l) => FOOTER.test(l.text))) return null;
   const above = lines.slice(0, end);
   // 画面のいちばん上から罫線まで、入力の行。続きの行は字下げ 2 文字。空行は、入力の中の空行（いちばん上の行が空行のこともある。
   // 再開の文は、4 行に 1 行ほどが空行）。いちばん上の行だけは、入力欄の最初の行（❯）でもよい（上の罫線だけが画面の外に出たとき）
-  const input = (l: ScreenLine, i: number) => l.text.trim() === '' || /^ {2}\S/.test(l.text) || /^ {3,}/.test(l.text) || (i === 0 && PROMPT_MARK.test(l.text));
+  const input = (l: ScreenLine, i: number) => isDraftRow(l) || (i === 0 && PROMPT_MARK.test(l.text));
   // 空行だけの画面（描き直しの途中）は、入力欄としない
   return above.some((l) => l.text.trim() !== '') && above.every(input) ? [0, end] : null;
 }
