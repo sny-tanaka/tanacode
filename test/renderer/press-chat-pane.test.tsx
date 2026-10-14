@@ -314,6 +314,29 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(100);
   });
 
+  it('カードが出たあとで中身が増えて伸びても（見出しと選択肢の数は同じ）、最下部にいれば追いかける', () => {
+    // 遅い Mac では、Claude Code が確認の画面を描き終える前に読み、あとから説明の行（context）が増える。
+    // 追いかけないと、選択肢が見えている範囲の下にずれ、スクロールすると「最新のメッセージへ」のボタンが選択肢に重なる
+    const base = props({ chat: chatOf({ status: 'running' }) });
+    const view = render(<ClaudePane {...base} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
+    list.scrollTop = 800;
+    const menuOf = (context: string[]): ScreenInfo =>
+      screenOf({
+        kind: 'menu',
+        menu: { kind: 'permission', tabs: [], title: 'Do you want to proceed?', context, options: [{ id: '1', label: 'Yes', description: '', pointed: true, checked: null, textInput: false }], multiSelect: false, hint: '' },
+      });
+    height = 1200;
+    view.rerender(<ClaudePane {...base} screen={menuOf(['Tool use'])} />);
+    expect(list.scrollTop).toBe(1200);
+    height = 1500;
+    view.rerender(<ClaudePane {...base} screen={menuOf(['Tool use', 'prompt: …', 'worktree: false', 'name: "子の作業"'])} />);
+    expect(list.scrollTop).toBe(1500);
+  });
+
   it('上へスクロールすると「最新のメッセージへ」を出し、押すと最下部へ送ってボタンを消す（動きを減らす設定なら、なめらかにしない）', () => {
     const items: ChatItem[] = Array.from({ length: 20 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `${i} 番目の質問` }));
     render(<ClaudePane {...props({ chat: chatOf({ items }) })} />);

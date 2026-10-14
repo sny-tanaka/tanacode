@@ -136,6 +136,29 @@ describe('adopt', () => {
     expect(app.manager.statusLine(id)).toMatchObject({ model: { id: 'claude-opus-5-5', name: 'Opus 5.5' }, version: '2.1.292' });
     expect(app.statusLineInfos.get(id)).toEqual(app.manager.statusLine(id));
   });
+
+  it('前のアプリが決めた権限モード（起動の引数・アプリでの切り替え）を引き継ぐ。決めていなければ manual のまま', async () => {
+    // 起動の引数で決めた
+    const launched = app.create({ mode: 'auto' });
+    // アプリで切り替えた（claude の代わりに、Shift+Tab を受けたら次のモードを描く）
+    const switched = app.create();
+    await app.ready(switched.id);
+    switched.pty.onWrite = (data) => {
+      if (data === '\x1b[Z') setTimeout(() => app.showMode(switched.id, '⏵⏵ accept edits on'), 10);
+    };
+    expect(await app.manager.setMode(switched.id, 'acceptEdits')).toBe(true);
+    const plain = app.create();
+    for (const { id, pty } of [launched, switched, plain]) {
+      pty.exit(0);
+      await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    }
+    app.host.hosted = [hosted(launched.id), hosted(switched.id), hosted(plain.id)];
+    await app.manager.adopt();
+    // 引き継いだ claude はモードを変えずに動き続けている。戻さないと manual 扱いになり、そのあとに始める子の上限が下がる
+    expect(app.manager.modeOf(launched.id)).toBe('auto');
+    expect(app.manager.modeOf(switched.id)).toBe('acceptEdits');
+    expect(app.manager.modeOf(plain.id)).toBe('manual');
+  });
 });
 
 describe('closeAll', () => {

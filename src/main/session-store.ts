@@ -28,6 +28,9 @@ export type SessionRecord = {
   parentId?: string | null;
   // 子セッションを起動したときの権限モード。止まった子を起動し直すときも、このモードで起動する（ユーザーの既定のモードが親より強くても、上げないため）
   launchMode?: PermissionMode | null;
+  // アプリが決めた権限モード（起動の引数か、アプリでの切り替え。Runtime.knownMode）。アプリを起動し直して、動いている claude を
+  // 引き継ぐときに戻す（claude のモードは変わっていないのに、戻さないと manual 扱いになり、そのあとに始める子の上限が下がる）
+  knownMode?: PermissionMode | null;
   createdAt: number;
   updatedAt: number;
 };

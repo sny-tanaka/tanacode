@@ -248,8 +248,10 @@ export const ClaudePane = memo(function ClaudePane({
   const canSend = !blocked && hasContent;
   // 質問や確認のカードなどが出たときも、最下部にいれば追いかける。カードは会話ログでなく Claude Code の画面から来るので、上の追いかけ
   // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
-  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）
-  const cardKey = menu ? `${menu.title}|${menu.options.length}` : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
+  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）。
+  // 出たあとで中身が変わったときも追いかける。遅い Mac では、Claude Code が確認の画面を描き終える前に読み、あとから説明の行が増えて
+  // カードが伸びる（見出しと選択肢の数は同じまま）
+  const cardKey = menu ? JSON.stringify(menu) : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
   useLayoutEffect(() => {
     const list = listRef.current;
     if (cardKey && list && stickToBottom.current) list.scrollTop = list.scrollHeight;
