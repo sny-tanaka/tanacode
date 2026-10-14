@@ -282,7 +282,9 @@ export class ChecklistBook {
     return found ?? this.createList(sessionId, 'human', t('checklist.decisions.defaultName'), t('checklist.decisions.defaultDescription'), 'decisions');
   }
 
-  // 取り消す。画面には残るが、有効なものとしては扱わない（知らせに出さない）。Claude は理由が要る
+  // 取り消す。有効なものとしては扱わない（知らせに出さない）。Claude は理由が要る。
+  // 人が取り消したものは画面に残す。Claude が取り消したものは、そのままゴミ箱に入れる（取り消したカードが画面にたまらないように。
+  // 理由はスレッドに残り、人はゴミ箱から戻して有効に戻せる）
   revokeCards(sessionId: string, author: Author, listId: string, cardIds: string[], rawReason: string): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
@@ -299,8 +301,11 @@ export class ChecklistBook {
     for (const card of cards) {
       this.event(card, author, { type: 'revoked', reason });
       card.revoked = { by: author, at: card.updatedAt, reason };
+      if (author === 'claude') this.trash(card, author);
     }
-    if (cards.length > 0) this.log(doc, author, `revoked ${cardRefs(cards)} in "${list.name}"${reason ? ` (${clip(reason, 200)})` : ''}`);
+    if (cards.length > 0) {
+      this.log(doc, author, `revoked ${cardRefs(cards)} in "${list.name}"${reason ? ` (${clip(reason, 200)})` : ''}${author === 'claude' ? ' and moved them to the trash' : ''}`);
+    }
     this.changed(sessionId);
     return cards;
   }
@@ -356,15 +361,18 @@ export class ChecklistBook {
     return cards;
   }
 
+  // Claude が書き換えられないリストでは、Claude が消せるのは取り消したカードだけ（有効な決定を、理由を残さずに消さないように）
   deleteCards(sessionId: string, author: Author, listId: string, cardIds: string[]): Card[] {
     const doc = this.doc(sessionId);
     const list = this.list(doc, listId);
-    if (author === 'claude' && traitsOf(list).locked) throw new ChecklistError(lockedMessage(list, 'delete its cards'));
     const cards = cardIds.map((id) => this.card(list, id)).filter((c) => !c.deletedAt);
-    for (const card of cards) {
-      card.deletedAt = this.now();
-      this.event(card, author, { type: 'deleted' });
+    const inForce = cards.filter((c) => !c.revoked);
+    if (author === 'claude' && traitsOf(list).locked && inForce.length > 0) {
+      throw new ChecklistError(
+        `"${list.name}" is ${kindLabel(kindOf(list))}. You can delete only revoked cards from it, and ${cardRefs(inForce)} ${inForce.length === 1 ? 'is' : 'are'} in force. If a decision no longer holds, revoke it with card_revoke and a reason; that also moves it to the trash.`,
+      );
     }
+    for (const card of cards) this.trash(card, author);
     if (cards.length > 0) this.log(doc, author, `moved ${cardRefs(cards)} in "${list.name}" to the trash`);
     this.changed(sessionId);
     return cards;
@@ -519,6 +527,11 @@ export class ChecklistBook {
     }
   }
 
+  private trash(card: Card, author: Author): void {
+    card.deletedAt = this.now();
+    this.event(card, author, { type: 'deleted' });
+  }
+
   private event(card: Card, author: Author, event: CardEvent): void {
     const at = this.now();
     card.thread.push({ id: crypto.randomUUID(), at, author, kind: 'event', event });
@@ -550,7 +563,7 @@ function kindLabel(kind: ListKind): string {
 
 // Claude が書き換えられないリストで、Claude を断る文
 function lockedMessage(list: Checklist, what: string): string {
-  return `"${list.name}" is ${kindLabel(kindOf(list))}. You can add cards to it and revoke them with a reason (card_revoke), but you cannot ${what}; only the user can. To replace a decision, revoke the old card and add a new one.`;
+  return `"${list.name}" is ${kindLabel(kindOf(list))}. You can add cards to it, revoke them with a reason (card_revoke, which also moves them to the trash) and delete revoked ones, but you cannot ${what}; only the user can. To replace a decision, revoke the old card and add a new one.`;
 }
 
 // 消した・取り消した決定がまた成り立つとき、Claude にしてもらうこと（人に見える形で、新しく足す）

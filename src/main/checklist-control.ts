@@ -243,7 +243,11 @@ export class ChecklistControl {
         const cards = this.cardsArg(list, args.numbers);
         const revoked = store.revokeCards(id, 'claude', list.id, cards.map((c) => c.id), stringArg(args.reason, 'reason'));
         const same = cards.filter((c) => !revoked.includes(c));
-        const done = revoked.length > 0 ? `Revoked ${claudeNumbers(revoked.map((c) => c.number))} in "${list.name}" (no longer in force; the user still sees ${revoked.length === 1 ? 'it' : 'them'}, marked as revoked).` : '';
+        const them = revoked.length === 1 ? 'it' : 'them';
+        const done =
+          revoked.length > 0
+            ? `Revoked ${claudeNumbers(revoked.map((c) => c.number))} in "${list.name}" and moved ${them} to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate ${them}).`
+            : '';
         const skipped = same.length > 0 ? `${claudeNumbers(same.map((c) => c.number))} ${same.length === 1 ? 'was' : 'were'} already revoked.` : '';
         const rest = activeCards(list).length;
         return [done, skipped, `${rest} ${rest === 1 ? 'card' : 'cards'} in force in "${list.name}".`].filter(Boolean).join(' ');
@@ -268,7 +272,10 @@ export class ChecklistControl {
         const list = this.listArg(id, args.list);
         const cards = this.cardsArg(list, args.numbers);
         store.deleteCards(id, 'claude', list.id, cards.map((c) => c.id));
-        return `Moved ${claudeNumbers(cards.map((c) => c.number))} in "${list.name}" to the trash (restore ${cards.length === 1 ? 'it' : 'them'} with card_restore).`;
+        const them = cards.length === 1 ? 'it' : 'them';
+        // 決定事項のカードを戻せるのは人だけ
+        const restore = traitsOf(list).locked ? `the user can restore ${them} in the app` : `restore ${them} with card_restore`;
+        return `Moved ${claudeNumbers(cards.map((c) => c.number))} in "${list.name}" to the trash (${restore}).`;
       }
       case 'card_restore': {
         const list = this.listArg(id, args.list);
