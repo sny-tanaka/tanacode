@@ -398,7 +398,8 @@
     "walkthrough": {
       "start_walkthrough": "Start",
       "show_code": "Show Code",
-      "walkthrough_status": "Current Step"
+      "walkthrough_status": "Current Step",
+      "post_walkthrough": "Post to PR"
     },
     "target": {
       "cardCount": "{count} cards",

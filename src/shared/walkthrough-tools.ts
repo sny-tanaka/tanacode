@@ -2,7 +2,7 @@ import { t } from './i18n';
 import { findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
 import { PARENT_MESSAGE_TAG } from './session-tools';
 
-// Claude Code に MCP のツールとして渡す、ウォークスルー（Claude がエディタでコードを示しながら説明し、人が質問する）。
+// Claude Code に MCP のツールとして渡す、ウォークスルー（Claude がエディタでコードを示しながら説明し、人が質問する。GitHub の PR にも載せられる）。
 // 中継のスクリプト（src/main/walkthrough-mcp.ts）が tools/list で返し、アプリ（src/main/walkthrough-control.ts）が実行する。
 // Claude Code での名前は mcp__tanacode-walkthrough__<name>
 
@@ -77,6 +77,21 @@ export const WALKTHROUGH_TOOLS: McpTool<McpToolName<'walkthrough'>>[] = [
     description: 'Return the steps of the current walkthrough and which step the user is viewing now (the steps already viewed, any aside). If the user has finished it, it says so',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  // GitHub に書き込むので、許可済みにせず、Claude Code の許可の確認を通す
+  {
+    name: 'post_walkthrough',
+    kind: 'act',
+    openWorld: true,
+    description:
+      "Post the current walkthrough to the open GitHub PR of this branch as one comment, the same comment as the post button in the user's tanacode editor makes: the steps in order, each with its title, a permalink to the code at the PR's latest commit (GitHub embeds the code) and its explanation, followed by a line saying that Claude wrote it. Asides, questions and answers are not included. Use it only when the user asks you to post the walkthrough. It can be posted only when the branch has an open PR, the local HEAD is the latest commit of the PR, and the files of the steps have no uncommitted changes; otherwise it returns the reason. Returns the URL of the comment",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repost: { type: 'boolean', description: 'Post it again even though this walkthrough has already been posted. Only when the user asks you to post it again' },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 // MCP の初期化で返す、サーバーの説明（Claude Code は会話の先頭の system の発言に入れる。英語で書く理由は mcp-tools.ts の McpServerDef）
@@ -93,6 +108,7 @@ export const WALKTHROUGH_MCP_INSTRUCTIONS = [
   `- The questions of the user arrive as ordinary chat messages with the selected code attached in the language of the user's tanacode (e.g. 「ウォークスルー「…」の 3/7「…」（path:40-58）について質問です。」 or "I have a question about step 3/7, “…” (path:40-58), in the walkthrough “…”.", and 「path:12-20 について質問です。」 or "I have a question about path:12-20."). Answer in the chat. If showing another place is faster, show it with show_code first.`,
   '- If you change code on request, the lines you showed shift. When you are done, restart with start_walkthrough from the step the user was viewing onward.',
   '- walkthrough_status tells you where the user is looking now.',
+  '- When the user asks you to post the walkthrough to the PR (or to GitHub), post it with post_walkthrough. Never write a comment of your own about it instead (e.g. with gh pr comment), even when post_walkthrough fails: tell the user the reason. Do not post unless the user asks.',
 ].join('\n');
 
 export const WALKTHROUGH_MCP: McpServerDef = {

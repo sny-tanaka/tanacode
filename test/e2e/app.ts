@@ -44,6 +44,8 @@ type Options = {
   git?: boolean;
   // フォルダの信頼の確認を済ませておく
   trusted?: boolean;
+  // PATH の先頭に置くコマンド（名前 → スクリプトの中身）。gh など、外とやりとりするコマンドの代わり
+  commands?: Record<string, string>;
 };
 
 export class E2EApp {
@@ -114,10 +116,11 @@ export class E2EApp {
       this.git('add', '-A');
       this.git('commit', '-qm', 'init', '--allow-empty');
     }
-    // 確かめる claude だけを PATH の先頭に置く
+    // 確かめる claude（と、渡されたコマンド）だけを PATH の先頭に置く
     const bin = join(this.root, 'bin');
     mkdirSync(bin);
     execFileSync('ln', ['-s', claudePath(), join(bin, 'claude')]);
+    for (const [name, script] of Object.entries(this.options.commands ?? {})) writeFileSync(join(bin, name), script, { mode: 0o755 });
     const path = `${bin}:${process.env.PATH ?? ''}`;
     // パッケージしたアプリは、ログインシェルの PATH を使う（useLoginShellPath）。そのシェルにも同じ PATH を渡す
     writeFileSync(join(this.home, '.zshrc'), `export PATH=${JSON.stringify(path)}\n`);

@@ -17,7 +17,7 @@ import { WalkthroughControl } from '../src/main/walkthrough-control';
 
 // Claude Code に足す MCP サーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）の、ツールの定義と制御の契約。
 // - 定義の形（名前・説明・引数のスキーマ）が、Claude Code に渡せる形になっているか
-// - 定義の形（名前・種類・引数・許可済みにするか）が変わったら、控え（__snapshots__）との差分で気づけるか
+// - 定義の形（名前・種類・外に書き込むか・引数・許可済みにするか）が変わったら、控え（__snapshots__）との差分で気づけるか
 // - 定義にあるツールを、制御（*-control.ts）が漏れなく振り分けるか。制御が読む引数が、スキーマにあるか
 //   （スキーマに無い引数は、Claude が渡せないので、その機能は黙って動かない）
 
@@ -94,7 +94,13 @@ describe.each(SERVERS)('MCP サーバー $def.name の定義', ({ def }) => {
 
   it('ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す）', () => {
     expect({
-      tools: def.tools.map((t) => ({ name: t.name, kind: t.kind, label: mcpToolLabel(def, t), inputSchema: shape(t.inputSchema as Schema) })),
+      tools: def.tools.map((t) => ({
+        name: t.name,
+        kind: t.kind,
+        ...(t.openWorld ? { openWorld: true } : {}),
+        label: mcpToolLabel(def, t),
+        inputSchema: shape(t.inputSchema as Schema),
+      })),
       allowedTools: allowedToolIds(def),
     }).toMatchSnapshot();
   });
@@ -245,7 +251,13 @@ describe('どのツールも、制御が振り分けて実行する（「Unknown
   });
 
   it('ウォークスルー', async () => {
-    const control = new WalkthroughControl({ cwdOf: () => dir, enabled: () => true, onChange: () => {}, clock: () => 0 });
+    const control = new WalkthroughControl({
+      cwdOf: () => dir,
+      enabled: () => true,
+      onChange: () => {},
+      comment: { pullRequests: async () => [], comment: async () => '' },
+      clock: () => 0,
+    });
     for (const tool of WALKTHROUGH_MCP.tools) {
       const result = await control.handle(ME, tool.name, sampleArgs(tool.inputSchema as Schema) as Record<string, unknown>);
       expect(textOf(result), tool.name).not.toBe(unknown(tool.name));

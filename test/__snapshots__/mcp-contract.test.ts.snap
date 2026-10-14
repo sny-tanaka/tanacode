@@ -1150,6 +1150,20 @@ exports[`MCP サーバー tanacode-walkthrough の定義 > ツールの名前・
       "label": "今の場所",
       "name": "walkthrough_status",
     },
+    {
+      "inputSchema": {
+        "properties": {
+          "repost": {
+            "type": "boolean",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "PR に載せる",
+      "name": "post_walkthrough",
+      "openWorld": true,
+    },
   ],
 }
 `;

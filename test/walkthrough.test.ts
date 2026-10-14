@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,15 +6,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setLanguage } from '../src/shared/i18n';
 import { allowedToolIds } from '../src/shared/mcp-tools';
 import { rangeQuestionText, restartRequestText, stepQuestionText, type Walkthrough } from '../src/shared/walkthrough';
+import { finalCommentBody } from '../src/shared/walkthrough-comment';
 import { WALKTHROUGH_MCP, walkthroughOfTool, walkthroughTarget, walkthroughToolId } from '../src/shared/walkthrough-tools';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs } from '../src/main/claude-session';
+import type { PullRequest } from '../src/main/github';
 import { textResult, type ToolResult } from '../src/main/mcp-bridge';
 import { respond } from '../src/main/mcp-relay';
 import { WalkthroughControl } from '../src/main/walkthrough-control';
+import { draftWalkthroughComment, type CommentDeps } from '../src/main/walkthrough-github';
 
 // ウォークスルー（Claude がエディタでコードを示しながら説明し、人が「次へ」で進めて質問する）。
-// MCP のツール（手順の確かめ・寄り道・今の場所）・画面からの操作・起動の引数・チャットの表示・質問の文
+// MCP のツール（手順の確かめ・寄り道・今の場所・PR への投稿）・画面からの操作・起動の引数・チャットの表示・質問の文
 
 let dir: string;
 let cwd: string;
@@ -29,12 +33,16 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const ME = '11111111-0000-4000-8000-000000000001';
 
-function setup(enabled = true) {
+// PR を探す・コメントを書く代わり（PR は無い）
+const noPullRequests: CommentDeps = { pullRequests: async () => [], comment: async () => '' };
+
+function setup(enabled = true, comment = noPullRequests) {
   const changes: { sessionId: string; walkthrough: Walkthrough | null }[] = [];
   const control = new WalkthroughControl({
     cwdOf: (id) => (id === ME ? cwd : null),
     enabled: () => enabled,
     onChange: (sessionId, walkthrough) => changes.push({ sessionId, walkthrough }),
+    comment,
     clock: () => 1000,
   });
   return { control, changes };
@@ -148,6 +156,93 @@ describe('MCP のツール', () => {
   });
 });
 
+describe('PR への投稿（post_walkthrough）', () => {
+  const REPO = 'https://github.com/me/cafe';
+  const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  let posted: string[];
+  beforeEach(() => {
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'me');
+    git('config', 'user.email', 'me@example.com');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    git('switch', '-qc', 'feature');
+    posted = [];
+  });
+
+  const pr = (over: Partial<PullRequest> = {}): PullRequest => ({ number: 12, state: 'OPEN', headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: `${REPO}/pull/12`, ...over });
+  // 書いたコメントは posted に残し、何件目かを URL に入れて返す
+  const github = (prs: PullRequest[]): CommentDeps => ({
+    pullRequests: async (_cwd, branch) => (branch === 'feature' ? prs : []),
+    comment: async (_cwd, number, body) => {
+      posted.push(`${number}:${body}`);
+      return `${REPO}/pull/${number}#issuecomment-${posted.length}\n`;
+    },
+  });
+  const started = async (comment: CommentDeps) => {
+    const { control } = setup(true, comment);
+    await control.handle(ME, 'start_walkthrough', { title: '税率の変更', steps: [step()] });
+    return control;
+  };
+
+  it('ボタンで下見の本文のまま投稿するのと同じコメントを載せ、URL を返す。画面の下見にも投稿済みと出す', async () => {
+    const deps = github([pr()]);
+    const control = await started(deps);
+    const r = await control.handle(ME, 'post_walkthrough', {});
+    expect(r.isError).toBeUndefined();
+    expect(text(r)).toBe(`Posted the walkthrough "税率の変更" (1 step) to PR #12 as a comment: ${REPO}/pull/12#issuecomment-1`);
+    const w = control.get(ME)!;
+    const draft = await draftWalkthroughComment(cwd, w, control.postedUrl(w.id), deps);
+    if (!draft.ok) throw new Error(draft.reason);
+    expect(posted).toEqual([`12:${finalCommentBody(draft.body, true)}`]);
+    expect(draft.postedUrl).toBe(`${REPO}/pull/12#issuecomment-1`);
+  });
+
+  it('投稿済みなら、そのコメントの URL を返して断る。repost: true のときだけ載せ直す', async () => {
+    const control = await started(github([pr()]));
+    await control.handle(ME, 'post_walkthrough', {});
+    const again = await control.handle(ME, 'post_walkthrough', { repost: false });
+    expect(again.isError).toBe(true);
+    expect(text(again)).toContain(`has already been posted: ${REPO}/pull/12#issuecomment-1. Post it again only if the user asks you to, with repost: true.`);
+    expect(posted).toHaveLength(1);
+    expect(text(await control.handle(ME, 'post_walkthrough', { repost: true }))).toContain(`${REPO}/pull/12#issuecomment-2`);
+    expect(posted).toHaveLength(2);
+    // 作り直したウォークスルーは、まだ載せていない
+    await control.handle(ME, 'start_walkthrough', { title: '作り直し', steps: [step()] });
+    expect(text(await control.handle(ME, 'post_walkthrough', {}))).toContain(`${REPO}/pull/12#issuecomment-3`);
+  });
+
+  it('載せられない理由は、画面が日本語でも英語で返し、自分でコメントを書かないよう伝える。投稿済みにはしない', async () => {
+    const control = await started(github([pr({ headRefOid: '0123456789abcdef' })]));
+    const r = await control.handle(ME, 'post_walkthrough', {});
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain(`Could not post the walkthrough "税率の変更". Your local HEAD (`);
+    expect(text(r)).toContain('Push (or pull) before posting. Tell the user the reason instead of posting a comment of your own.');
+    const dirty = await started(github([pr()]));
+    writeFileSync(join(cwd, 'src', 'tax.ts'), 'changed\n'.repeat(20));
+    expect(text(await dirty.handle(ME, 'post_walkthrough', {}))).toContain('Some files have uncommitted changes: src/tax.ts.');
+    expect(posted).toEqual([]);
+    expect(control.postedUrl(control.get(ME)!.id)).toBeNull();
+  });
+
+  it('gh が書けなかったときは、gh のエラーの文を返す', async () => {
+    const control = await started({ ...github([pr()]), comment: async () => Promise.reject(new Error('HTTP 403: Resource not accessible')) });
+    const r = await control.handle(ME, 'post_walkthrough', {});
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('HTTP 403: Resource not accessible');
+    expect(control.postedUrl(control.get(ME)!.id)).toBeNull();
+  });
+
+  it('ウォークスルーが無い（寄り道だけ）ときは断り、GitHub に問い合わせない', async () => {
+    const asked: string[] = [];
+    const { control } = setup(true, { pullRequests: async (_cwd, branch) => (asked.push(branch), []), comment: async () => '' });
+    expect(text(await control.handle(ME, 'post_walkthrough', {}))).toBe('There is no walkthrough to post. Start one with start_walkthrough first.');
+    await control.handle(ME, 'show_code', { path: 'src/tax.ts', start_line: 1, body: 'x' });
+    expect((await control.handle(ME, 'post_walkthrough', {})).isError).toBe(true);
+    expect(asked).toEqual([]);
+  });
+});
+
 describe('画面からの操作', () => {
   it('go: 範囲に収めて、見たステップを覚える', async () => {
     const { control } = setup();
@@ -254,7 +349,7 @@ describe('引数と状態の細かいところ', () => {
   });
 
   it('時計を渡さなければ、今の時刻で始める', async () => {
-    const control = new WalkthroughControl({ cwdOf: () => cwd, enabled: () => true, onChange: () => {} });
+    const control = new WalkthroughControl({ cwdOf: () => cwd, enabled: () => true, onChange: () => {}, comment: noPullRequests });
     const before = Date.now();
     await control.handle(ME, 'start_walkthrough', { title: 't', steps: [step()] });
     expect(control.get(ME)!.startedAt).toBeGreaterThanOrEqual(before);
@@ -373,17 +468,22 @@ describe('引数と状態の細かいところ', () => {
 });
 
 describe('中継・起動の引数・設定', () => {
-  it('tools/list: 示すツールと読むツールに readOnlyHint を付ける（ファイルは書き換えない）', async () => {
+  it('tools/list: 示すツールと読むツールに readOnlyHint を付ける（ファイルは書き換えない）。PR への投稿は、外に書き込むことを示す', async () => {
     const deps = { server: WALKTHROUGH_MCP, version: '1', call: async () => textResult('ok') };
     const init = await respond({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }, deps);
     expect(init?.result).toMatchObject({ serverInfo: { name: 'tanacode-walkthrough' } });
     expect((init?.result as { instructions: string }).instructions).toContain('start_walkthrough');
     const list = await respond({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, deps);
-    const tools = (list?.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }).tools;
-    expect(tools.every((t) => t.annotations.readOnlyHint)).toBe(true);
+    const tools = (list?.result as { tools: { name: string; annotations: { readOnlyHint: boolean; openWorldHint: boolean } }[] }).tools;
+    expect(Object.fromEntries(tools.map((t) => [t.name, t.annotations]))).toMatchObject({
+      start_walkthrough: { readOnlyHint: true, openWorldHint: false },
+      show_code: { readOnlyHint: true, openWorldHint: false },
+      walkthrough_status: { readOnlyHint: true, openWorldHint: false },
+      post_walkthrough: { readOnlyHint: false, openWorldHint: true },
+    });
   });
 
-  it('起動の引数に足し、ツールはすべて許可済みにする', () => {
+  it('起動の引数に足し、PR への投稿のほかは許可済みにする（投稿は Claude Code の許可の確認を通す）', () => {
     const launch = { command: '/Apps/tanacode Helper', script: '/Apps/out/main/walkthrough-mcp.js', socketPath: '/u/walkthrough.sock', version: '1.0.0' };
     const checklist = { ...launch, script: '/Apps/out/main/checklist-mcp.js', socketPath: '/u/checklist.sock' };
     const args = claudeArgs({ claudeSessionId: 'c1', resume: false, remoteControlName: null, model: null, effort: null, permissionMode: null, checklist, walkthrough: launch, sessionId: 's1' });
@@ -395,8 +495,9 @@ describe('中継・起動の引数・設定', () => {
     expect(config.mcpServers['tanacode-walkthrough'].env).toMatchObject({ TANACODE_WALKTHROUGH_SOCKET: '/u/walkthrough.sock', TANACODE_WALKTHROUGH_SESSION: 's1', TANACODE_LANGUAGE: 'ja' });
     const allowed = args[args.indexOf('--allowedTools') + 1].split(',');
     expect(allowed).toEqual(expect.arrayContaining(allowedToolIds(WALKTHROUGH_MCP)));
-    expect(allowedToolIds(WALKTHROUGH_MCP)).toHaveLength(WALKTHROUGH_MCP.tools.length);
+    expect(allowedToolIds(WALKTHROUGH_MCP)).toHaveLength(WALKTHROUGH_MCP.tools.length - 1);
     expect(allowed).toContain(walkthroughToolId('start_walkthrough'));
+    expect(allowed).not.toContain(walkthroughToolId('post_walkthrough'));
   });
 
   it('メニューのオン・オフは既定でオンで、保存される', () => {

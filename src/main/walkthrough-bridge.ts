@@ -10,8 +10,9 @@ export const WALKTHROUGH_SESSION_ENV = 'TANACODE_WALKTHROUGH_SESSION';
 // アプリが起動していないとき、中継が Claude に返す文
 export const WALKTHROUGH_CLOSED_MESSAGE = 'tanacode is not running. To show code, ask the user to start tanacode.';
 
-// 中継が 1 回の呼び出しを待つ上限（ファイルの行数を確かめるだけで、人の操作は待たない）
-export const WALKTHROUGH_CALL_TIMEOUT_MS = 30_000;
+// 中継が 1 回の呼び出しを待つ上限。人の操作は待たないが、PR への投稿は gh を待つので、gh を待つ上限（github.ts）の合計より長くする。
+// Claude Code が MCP のツールをバックグラウンドに移す 120 秒よりは短く
+export const WALKTHROUGH_CALL_TIMEOUT_MS = 90_000;
 
 // --mcp-config に入れるウォークスルーのサーバー。sessionId: どのセッションの Claude Code か（中継の env で渡す）
 export function walkthroughMcpServer(launch: McpLaunch, sessionId: string): McpServerEntry {
