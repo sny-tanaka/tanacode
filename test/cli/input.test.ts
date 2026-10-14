@@ -5,6 +5,7 @@ import { toChatEvents, type ChatEvent } from '@shared/chat';
 import type { Card, Checklist, ListKind } from '@shared/checklist';
 import { RESUME_MAX_CHARS, RESUME_TAG, resumeText } from '@shared/optimized-compact';
 import { bracketedPaste, promptKeyChunks, promptKeys } from '@shared/prompt-keys';
+import { parentMessageText } from '@shared/session-tools';
 import { readAgentLog } from '../../src/main/chat-log';
 import { KnowledgeTracker } from '../../src/main/knowledge-tracker';
 import { ContextTracker } from '../../src/main/context-tracker';
@@ -22,6 +23,9 @@ import {
   LONG_LINE,
   LONG_LINES,
   LONG_PASTE,
+  NUMBERED_FIRST,
+  NUMBERED_LINES,
+  NUMBERED_PROMPT,
   ONE_LONG_LINE,
   PASTE,
   PNG_BASE64,
@@ -46,6 +50,7 @@ import {
   checkKnowledge,
   checkContext,
   checkLocalCommand,
+  checkNumberedDraft,
   checkPasted,
   checkPastedDraft,
   checkRecent,
@@ -63,6 +68,7 @@ import { MockApi } from './mock-api';
 // 本物の claude をモックの API で動かし、入力まわりと、まだ確かめていなかった読み取りをアプリと同じ部品で確かめる。
 // 台本ごとに別の claude を起動する（台本は test/scenarios/input.ts）
 // - 入力欄: --effort・書きかけ・会話の最初の /context・複数行の貼り付け・! のコマンド・/rename と AI のタイトル・セッションの一覧
+// - 番号付きの行で始まる入力欄: 選択メニューと読み違えずに、打った文が全文届く
 // - 上限いっぱい（4 万文字）の再開の文: 手が空くのを待つ送り方で、欠けず・囲みなしで届く
 // - 読み取り: @ の添付・Read・サブフォルダの CLAUDE.md・思考・画像（KnowledgeTracker と toChatEvents）
 // - サブエージェント: 実行中の直近のツールと、終わったあとの会話ログ（readAgentLog）
@@ -291,6 +297,62 @@ describe(`Claude Code ${version} の、背の高い入力欄`, () => {
     checkPasted(eventsOf(run), TALL_LINES);
     expect(run.attentions.slice(attentions)).toEqual([]);
     await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+});
+
+describe(`Claude Code ${version} の、番号付きの行で始まる入力欄`, () => {
+  let api: MockApi;
+  let run: ClaudeRun;
+  // 親セッションの ID（親からの指示の目印に入れる）
+  const PARENT = '11111111-2222-4333-8444-555555555555';
+
+  beforeAll(async () => {
+    api = new MockApi();
+    run = new ClaudeRun(await api.start());
+    await run.open();
+  });
+
+  afterAll(async () => {
+    record(run);
+    run?.stop();
+    await api?.stop();
+  });
+
+  // 入力欄の最初の行（❯ の行）が番号付きの行になると、メニューのカーソルのある選択肢（❯ 1. Yes）と同じ形になる。選択メニューと読むと、
+  // 残りを打つのも Enter もやめて、発言が入力欄に残る（実機で、親セッションが始めた子への最初の指示が、打ちかけのまま止まった。
+  // チャットには、指示の中の番号付きの行が選択肢として出て、押しても何も起きなかった）
+  it('番号付きの行で終わる長い発言を打つと、入力欄の見えているいちばん上の行が番号付きになるが、選択メニューではなく入力欄として読める', async () => {
+    const before = turnEnds(run);
+    const attentions = run.attentions.length;
+    await typeLikeApp(run, NUMBERED_LINES);
+    // 入力欄の高さには上限があり（40 行の画面で 15 行）、中身がスクロールして、見えているいちばん上の行に ❯ が付く
+    expect(run.lines().some((l) => /^❯\s\d+\.\s/.test(l.text))).toBe(true);
+    run.capture('numbered-draft');
+    checkNumberedDraft(run.screen.current, NUMBERED_LINES);
+    run.type('\r');
+    await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
+    checkPasted(eventsOf(run), NUMBERED_LINES);
+    expect(run.attentions.slice(attentions)).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '');
+  });
+
+  it('番号付きの手順が続く長い指示が、手が空くのを待つ送り方（親セッションからの指示）で、打っている途中で止まらずに届く', async () => {
+    const attentions = run.attentions.length;
+    await run.manager.submitWhenReady(run.sessionId!, parentMessageText(PARENT, NUMBERED_PROMPT), 30_000);
+    await run.waitFor('指示が届く', () => run.chatEvents.some((e) => e.type === 'user' && e.parent === PARENT), 30_000);
+    expect(run.chatEvents.find((e) => e.type === 'user' && e.parent === PARENT)).toMatchObject({ text: NUMBERED_PROMPT });
+    expect(run.attentions.slice(attentions)).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '', 30_000);
+  });
+
+  it('1 行めから番号で始まる長い発言が、チャットの入力欄からの送り方で、途中で切れずに全文届く', async () => {
+    // 手が空くのを待たない送り方は、メニューが出ても Enter を送る。選択メニューと読むと、打つのをやめたところまでの文が送られる
+    const attentions = run.attentions.length;
+    await run.manager.submit(run.sessionId!, NUMBERED_FIRST);
+    await run.waitFor('発言が届く', () => eventsOf(run).some((e) => e.type === 'user' && e.text.startsWith('1. 手順 1')), 30_000);
+    checkPasted(eventsOf(run), NUMBERED_FIRST);
+    expect(run.attentions.slice(attentions)).toEqual([]);
+    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && info.draft === '', 30_000);
   });
 });
 

@@ -249,3 +249,47 @@ it('背の高い入力欄は、いちばん上の行が空行でも・先頭の�
   // 空行だけの画面（描き直しの途中）は、入力欄としない
   expect(tallPromptRange([line(''), line(''), line(''), ...below])).toBeNull();
 });
+
+it('番号付きの行で始まる入力欄（❯ 10. 手順 10…）を、入力欄として読む。質問の「Chat about this」にカーソルがあるとき（罫線のすぐ下の ❯ 4. Chat about this）は、入力欄と読まない', () => {
+  const RULE = '─'.repeat(120);
+  // 番号付きの行を含む長い発言を打ったときの控え。入力欄の中身がスクロールして、見えているいちばん上の行（❯ の付く行）が番号付きの行。
+  // メニューと読むと、残りを打つのも Enter もやめて、発言が入力欄に残る（親セッションが始めた子への最初の指示が、打ちかけのまま止まった）
+  const draft = screen('numbered-draft');
+  const start = draft.findIndex((l) => /^❯\s10\. 手順 10/.test(l.text));
+  expect(start).not.toBe(-1);
+  expect(promptRange(draft)).toEqual([start, start + 15]);
+  // 1 行だけの発言
+  expect(promptRange([line(RULE), line('❯ 1. これを直す'), line(RULE), line('  ⏸ manual mode on')])).toEqual([1, 2]);
+  // 質問で「Chat about this」にカーソルを動かした画面。罫線のすぐ下にカーソルのある選択肢が来て、下に罫線は無い
+  const chat = replaced(replaced(screen('question'), /^❯\s1\. です・ます/, '  1. です・ます'), /^ {2}4\. Chat about this/, '❯ 4. Chat about this');
+  expect(promptRange(chat)).toBeNull();
+  expect(parseMenu(chat)?.options.find((o) => o.pointed)?.label).toBe('Chat about this');
+  // 罫線のすぐ下が選択肢で、その下にも罫線があるメニューは、罫線の下の操作説明で見分ける（控えの質問から、タブと質問文の行を抜いた形）
+  const asked = screen('question');
+  const first = asked.findIndex((l) => /^❯\s1\. です・ます/.test(l.text));
+  const bare = [...asked.slice(0, first - 4), ...asked.slice(first)];
+  expect(bare[first - 5].text).toBe(RULE);
+  expect(promptRange(bare)).toBeNull();
+  expect(parseMenu(bare)?.options.map((o) => o.label)).toEqual(['です・ます', 'だ・である', 'Type something.', 'Chat about this']);
+  // 下の罫線までに、入力の続きの行（字下げ 2 文字）でない行があれば、入力欄ではない
+  expect(promptRange([line(RULE), line('❯ 1. Yes'), line(' 2. No'), line(RULE), line('  ⏸ manual mode on')])).toBeNull();
+});
+
+it('画面より高い入力欄の中の ❯ と番号（上の罫線だけが画面の外に出たときの、番号で始まる先頭の行など）を、選択肢と読まない。上の切れた質問は、入力欄と読まない', () => {
+  const RULE = '─'.repeat(120);
+  const below = [line(RULE), line('  ⏵⏵ auto mode on (shift+tab to cycle)'), line('')];
+  // 番号付きの行で始まる発言で、入力欄の最初の行（❯）がいちばん上に見えている
+  const numbered = [line('❯ 1. 手順 1: 該当するファイルを読む'), ...Array.from({ length: 30 }, (_, i) => line(`  ${i + 2}. 手順 ${i + 2}: 該当するファイルを読む`)), ...below];
+  expect(promptRange(numbered)).toBeNull();
+  expect(parseMenu(numbered)).toBeNull();
+  expect(tallPromptRange(numbered)).toEqual([0, 31]);
+  // 入力の中に、メニューの画面を写した行（❯ と番号）がある
+  const quoted = [...Array.from({ length: 10 }, (_, i) => line(`  ${i + 1} 行目`)), line('  ❯ 1. Yes'), line('    2. No'), ...below];
+  expect(parseMenu(quoted)).toBeNull();
+  expect(tallPromptRange(quoted)).toEqual([0, 12]);
+  // 画面より高い質問（控え）は、上が切れて、選択肢と説明の字下げが入力の続きの行と同じ。罫線の下の操作説明で見分ける
+  for (const name of ['question-tall', 'question-tall-moved']) {
+    expect(tallPromptRange(screen(name))).toBeNull();
+    expect(parseMenu(screen(name))?.kind).toBe('question');
+  }
+});

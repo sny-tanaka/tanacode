@@ -59,6 +59,27 @@ export const LINES_WITH_LONG_LINE = ['長い行を含む発言の 1 行目です
 // 入力欄が背の高くなる発言。行ごとに送ると、入力欄には文字のまま入る。Claude Code は、入力欄を画面の高さの半分ほどまで伸ばして
 // 終わりのほうを出す（40 行の画面で 15 行）。背の高い画面（アプリのペインが縦に長いとき）では、入力欄が 30 行を超える
 export const TALL_LINES = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
+// 番号付きの行（Markdown の番号付きの箇条書き）を含む発言。入力欄の先頭の行が「❯ 1. …」の形になると、メニューのカーソルのある選択肢と
+// 同じ形になる。入力欄の高さに上限のある Claude Code（40 行の画面で 15 行）では、長い入力は入力欄の中でスクロールし、見えている
+// いちばん上の行に ❯ が付くので、発言の途中の番号付きの行でも、打っている途中にこの形になる
+const steps = (count: number) => Array.from({ length: count }, (_, i) => `${i + 1}. 手順 ${i + 1}: 該当するファイルを読んで、直すところを洗い出す`);
+// 番号付きの行で終わる発言（打ち終えた入力欄の、見えているいちばん上の行が番号付きになる）
+export const NUMBERED_LINES = ['次の順に進めてください。', '', '## 進め方', ...steps(24)].join('\n');
+// 親セッションから子への指示の形（見出し・番号付きの手順・箇条書き）。番号付きの行が入力欄の高さより長く続き、そのあとにも文が続く
+export const NUMBERED_PROMPT = [
+  'あなたは worktree で動く子セッションです。次の作業を 1 件だけ担当します。',
+  '',
+  '## 進め方',
+  ...steps(40),
+  '',
+  '## 禁止事項',
+  '- 担当のファイルのほかは編集しない',
+  '- 開発用のサーバーを、決まったポートで起動しない',
+  '',
+  '終わったら、変えたファイルと確かめた結果を報告してください。',
+].join('\n');
+// 1 行めから番号で始まる発言（人がチャットの入力欄に書く、番号付きの箇条書き）。小分けに打つ長さ（1,000 バイトより長い）
+export const NUMBERED_FIRST = [...steps(30), '', '上から順にお願いします。'].join('\n');
 // 入力欄で ! を付けて実行するコマンドと、その出力
 export const SHELL_COMMAND = 'echo tanacode-shell';
 export const SHELL_OUTPUT = 'tanacode-shell';
@@ -78,6 +99,13 @@ export function checkEffort(info: Pick<ScreenInfo, 'effort' | 'model'>, effort: 
 export function checkDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, typed: string): void {
   expect(info.state.kind).toBe('prompt');
   expect(info.draft).toBe(typed);
+}
+
+// 番号付きの行で始まる入力欄（「❯ 9. 手順 9…」）。選択メニューではなく入力欄として読み、見えている分（打った文の終わり）を書きかけにする
+export function checkNumberedDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, typed: string): void {
+  expect(info.state.kind).toBe('prompt');
+  expect(info.draft).toMatch(/^\d+\. /);
+  expect(typed.replace(/\s/g, '').endsWith(info.draft.replace(/\s/g, ''))).toBe(true);
 }
 
 // 長い貼り付けは入力欄で目印になる（ClaudePane は、この目印を除いて送った文字と比べる）

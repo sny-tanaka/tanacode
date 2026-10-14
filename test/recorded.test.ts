@@ -24,7 +24,7 @@ import {
   type ScreenName,
 } from './scenario';
 import { checkEarlyDraft, checkPromptBack } from './scenarios/errors';
-import { DRAFT, EFFORT, LONG_PASTE, SHELL_COMMAND, checkDraft, checkEffort, checkPastedDraft } from './scenarios/input';
+import { DRAFT, EFFORT, LONG_PASTE, NUMBERED_LINES, SHELL_COMMAND, checkDraft, checkEffort, checkNumberedDraft, checkPastedDraft } from './scenarios/input';
 import {
   ASK_MULTI,
   ASK_PREVIEW,
@@ -222,6 +222,12 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
     checkDraft(await replay('draft'), DRAFT);
     checkPastedDraft(await replay('pasted-draft'), LONG_PASTE.split('\n').length);
     checkDraft(await replay('shell-draft'), `!${SHELL_COMMAND}`);
+  });
+
+  it.skipIf(!has('numbered-draft'))('番号付きの行で始まる入力欄を、選択メニューではなく入力欄として読める', async () => {
+    // 入力欄の最初の行が「❯ 10. 手順 10…」（メニューのカーソルのある選択肢と同じ形）
+    expect(screen('numbered-draft').some((l) => /^❯\s\d+\.\s/.test(l.text))).toBe(true);
+    checkNumberedDraft(await replay('numbered-draft'), NUMBERED_LINES);
   });
 
   it.skipIf(!has('interrupt-draft'))('中断のあとの入力欄が読める', async () => {

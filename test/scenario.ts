@@ -52,6 +52,7 @@ export function stepsFor(cwd: string): Step[] {
 // question- で始まるもの（question を除く）は、AskUserQuestion の台本（questions.test.ts）で取る
 // interrupt-draft・tool-interrupted は失敗と中断の台本（errors.test.ts）で取る
 // effort・draft・pasted-draft・shell-draft（input.test.ts）は、--effort を付けた入力欄・書きかけ・長い貼り付けの目印・! のコマンドを書いている入力欄
+// numbered-draft（input.test.ts）は、番号付きの行を含む長い発言を打って、見えているいちばん上の行が番号付きになった入力欄
 export type ScreenName =
   | 'trust'
   | 'prompt'
@@ -77,7 +78,7 @@ export type QuestionScreenName =
   | 'question-tall'
   | 'question-tall-moved';
 
-type InputScreenName = 'effort' | 'draft' | 'pasted-draft' | 'shell-draft';
+type InputScreenName = 'effort' | 'draft' | 'pasted-draft' | 'shell-draft' | 'numbered-draft';
 
 // /rewind で戻す先の発言（session.test.ts）
 export const REWOUND = '再開して続けてください';
