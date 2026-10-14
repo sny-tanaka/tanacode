@@ -18,6 +18,7 @@ import { OptimizedCompact } from './optimized-compact';
 import { outwardHost } from './outward-state';
 import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
+import { commentOnPullRequest, pullRequestsOf } from './github';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
 import { ScheduledMessages } from './scheduled-messages';
@@ -247,6 +248,7 @@ export class Profile {
       cwdOf: (id) => (manager.summary(id) ? manager.cwdOf(id) : null),
       enabled: () => this.settings.walkthroughControlEnabled(),
       onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
+      comment: { pullRequests: pullRequestsOf, comment: commentOnPullRequest },
     });
     const checklistControl = new ChecklistControl({ store: this.checklists, host: outward, enabled: () => this.settings.checklistControlEnabled() });
     this.checklistControl = checklistControl;

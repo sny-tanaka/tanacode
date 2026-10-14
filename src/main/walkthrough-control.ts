@@ -4,9 +4,10 @@ import { t } from '@shared/i18n';
 import { MAX_BODY_CHARS, MAX_STEPS, MAX_TITLE_CHARS, shownStep, stepLocation, type SessionWalkthrough, type Walkthrough, type WalkthroughStep } from '@shared/walkthrough';
 import { walkthroughTool } from '@shared/walkthrough-tools';
 import { textResult, type ToolResult } from './mcp-bridge';
+import { postWalkthroughAsDrafted, type CommentDeps } from './walkthrough-github';
 import { Workspace } from './workspace';
 
-// ウォークスルー（MCP サーバー tanacode-walkthrough のツールの実行）と、画面からの「次へ」「戻る」・閉じる。
+// ウォークスルー（MCP サーバー tanacode-walkthrough のツールの実行。PR への投稿も）と、画面からの「次へ」「戻る」・閉じる。
 // 呼び出し元のセッションは中継の env で渡ってくる。保存はせず、セッションごとに今の 1 つだけをメモリに持つ。
 // 人が閉じても捨てず、Claude が作り直すまで、もう一度開ける（go）。
 // ツールは人の操作を待たずにすぐ返す（Claude Code は、120 秒たっても終わらない MCP のツールをバックグラウンドに移すため）。
@@ -19,6 +20,8 @@ type Deps = {
   enabled: () => boolean;
   // 変わった（終えたら null）。画面に送る
   onChange: (sessionId: string, walkthrough: Walkthrough | null) => void;
+  // PR を探す・コメントを書く（post_walkthrough）
+  comment: CommentDeps;
   clock?: () => number;
 };
 
@@ -145,6 +148,20 @@ export class WalkthroughControl {
       }
       case 'walkthrough_status':
         return prev ? statusText(prev) : 'There is no walkthrough (the user has finished it, or none has been started).';
+      case 'post_walkthrough': {
+        if (!prev || prev.steps.length === 0) throw new WalkthroughError('There is no walkthrough to post. Start one with start_walkthrough first.');
+        // 同じものを何度も載せないよう、載せたものは、人に頼まれたときだけ載せ直す
+        const before = this.posted.get(prev.id);
+        if (before && args.repost !== true) {
+          throw new WalkthroughError(`The walkthrough "${prev.title}" has already been posted: ${before}. Post it again only if the user asks you to, with repost: true.`);
+        }
+        const { prNumber, url } = await postWalkthroughAsDrafted(cwd, prev, this.deps.comment).catch((e: unknown) => {
+          const reason = e instanceof Error ? e.message : String(e);
+          throw new WalkthroughError(`Could not post the walkthrough "${prev.title}". ${reason} Tell the user the reason instead of posting a comment of your own.`);
+        });
+        this.markPosted(prev.id, url);
+        return `Posted the walkthrough "${prev.title}" (${stepCount(prev.steps.length)}) to PR #${prNumber} as a comment: ${url}`;
+      }
       default:
         throw new WalkthroughError(`Unknown tool: ${name}`);
     }

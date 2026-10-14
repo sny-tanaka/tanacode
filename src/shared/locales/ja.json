@@ -396,7 +396,8 @@
     "walkthrough": {
       "start_walkthrough": "始める",
       "show_code": "コードを示す",
-      "walkthrough_status": "今の場所"
+      "walkthrough_status": "今の場所",
+      "post_walkthrough": "PR に載せる"
     },
     "target": {
       "cardCount": "{count} 枚",

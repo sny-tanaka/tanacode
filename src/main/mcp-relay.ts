@@ -48,7 +48,7 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
           title: mcpToolLabel(deps.server, t),
           description: t.description,
           inputSchema: t.inputSchema,
-          annotations: { title: mcpToolLabel(deps.server, t), readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: false },
+          annotations: { title: mcpToolLabel(deps.server, t), readOnlyHint: t.kind === 'read' || t.kind === 'ask' || t.kind === 'show', openWorldHint: t.openWorld === true },
         })),
       });
     case 'tools/call': {

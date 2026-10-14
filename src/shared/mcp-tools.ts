@@ -20,9 +20,11 @@ export type McpToolGroup = 'browser' | 'sessions' | 'checklist' | 'walkthrough';
 // そのまとまりに短い名前の文言があるツールの名前。定義の name をこれにすると、文言の無いツールは型チェックで止まる
 export type McpToolName<G extends McpToolGroup> = MessageKey extends infer K ? (K extends `tools.${G}.${infer N}` ? N : never) : never;
 
+// openWorld: 手元の外（GitHub など）に書き込む。tools/list の openWorldHint にする
 export type McpTool<N extends string = string> = {
   name: N;
   kind: McpToolKind;
+  openWorld?: true;
   description: string;
   inputSchema: { type: 'object'; properties: Record<string, Schema>; required?: string[]; additionalProperties: false };
 };
