@@ -19,7 +19,7 @@ import { AppSettings } from '../src/main/app-settings';
 import { BrowserAsks } from '../src/main/browser-asks';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_GATE_REQUEST, browserGateEnv, browserMcpArgs, type BrowserMcpLaunch } from '../src/main/browser-bridge';
 import { McpBridge as BrowserBridge, callBridge as rawCallBridge, textResult, type BridgeRequest } from '../src/main/mcp-bridge';
-import { BROWSER_GATE_COMMAND, gateOutput, readAnswer, runGate } from '../src/main/browser-gate';
+import { BROWSER_GATE_COMMAND, gateOutput, navigateGateOutput, readAnswer, readGateInput, readNavigateAnswer, runGate } from '../src/main/browser-gate';
 import { respond, runRelay, type RelayDeps } from '../src/main/mcp-relay';
 import { claudeArgs } from '../src/main/claude-session';
 import { mergeSettings } from '../src/main/settings-files';
@@ -370,15 +370,15 @@ describe('起動の引数', () => {
   type Hook = { matcher: string; hooks: { type: string; command: string; timeout?: number }[] };
   const gateHooks = (settings: { hooks?: { PreToolUse?: Hook[] } }) => (settings.hooks?.PreToolUse ?? []).filter((h) => h.hooks.some((x) => x.command === BROWSER_GATE_COMMAND));
 
-  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行の確認を決める', () => {
+  it('claudeArgs: 値をいくつも取る引数は --settings より前に置き、--settings の PreToolUse のフックで JavaScript の実行と開く先の確認を決める', () => {
     const args = claudeArgs({ ...base, browser: launch, sessionId: 's1' });
     expect(args.indexOf('--mcp-config')).toBeLessThan(args.indexOf('--settings'));
     expect(args.indexOf('--allowedTools')).toBeLessThan(args.indexOf('--settings'));
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]) as { permissions?: unknown; hooks?: { PreToolUse?: Hook[] } };
-    expect(gateHooks(settings)).toEqual([{ matcher: browserToolId('evaluate'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gateHooks(settings)).toEqual([{ matcher: `${browserToolId('navigate')}|${browserToolId('evaluate')}`, hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }]);
     // permissions.ask では、ページによって変えられない。許可のルールも足さない
     expect(settings).not.toHaveProperty('permissions');
-    expect(gatedBrowserToolIds()).toEqual([browserToolId('evaluate')]);
+    expect(gatedBrowserToolIds()).toEqual([browserToolId('navigate'), browserToolId('evaluate')]);
     // オフなら足さない
     const off = claudeArgs(base);
     expect(off).not.toContain('--mcp-config');
@@ -414,10 +414,13 @@ describe('起動の引数', () => {
   });
 });
 
-describe('JavaScript の実行の確認のフック', () => {
+describe('確認のフック', () => {
   const decision = (output: string) => (JSON.parse(output) as { hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput;
+  // Claude Code がフックの標準入力に渡す JSON
+  const hookInput = (tool: string, input: Record<string, unknown> = {}) =>
+    JSON.stringify({ session_id: 'x', hook_event_name: 'PreToolUse', permission_mode: 'bypassPermissions', tool_name: browserToolId(tool), tool_input: input });
 
-  it('localhost のページなら確認なし（allow）、それ以外は確認を出させる（ask）。ページが分からないときも ask', () => {
+  it('JavaScript の実行: localhost のページなら確認なし（allow）、それ以外は確認を出させる（ask）。ページが分からないときも ask', () => {
     expect(decision(gateOutput({ local: true, url: 'http://localhost:3000/' }))).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'allow' });
     const remote = decision(gateOutput({ local: false, url: 'https://staging.example.test/' }));
     expect(remote.permissionDecision).toBe('ask');
@@ -426,41 +429,90 @@ describe('JavaScript の実行の確認のフック', () => {
     expect(decision(gateOutput(null)).permissionDecision).toBe('ask');
   });
 
+  it('開く: 許す先の外なら、オリジンを添えて確認を出させる（ask）。それ以外と、アプリの答えが分からないときは何も決めない（allow は返さない）', () => {
+    const outside = decision(navigateGateOutput({ outside: 'https://example.com' }));
+    expect(outside).toEqual({
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'ask',
+      permissionDecisionReason: 'Claude に許す先の外のページ（https://example.com）を開きます。許すと、Claude はこのタブで https://example.com のページを確認なしで読んだり操作したりします',
+    });
+    expect(navigateGateOutput({ outside: null })).toBe('{}');
+    expect(navigateGateOutput(null)).toBe('{}');
+    // 理由は、Claude Code を起動したときの言語で書く
+    setLanguage('en');
+    try {
+      expect(decision(navigateGateOutput({ outside: 'https://example.com' })).permissionDecisionReason).toBe(
+        'This opens a page outside the sites allowed for Claude (https://example.com). If you allow it, Claude reads and operates pages on https://example.com in this tab without asking again',
+      );
+    } finally {
+      setLanguage('ja');
+    }
+  });
+
+  it('標準入力からツールの名前と入力を読む。読めないものは、ツールの名前を空にする', () => {
+    expect(readGateInput(hookInput('navigate', { url: 'https://example.com/' }))).toEqual({ tool: browserToolId('navigate'), input: { url: 'https://example.com/' } });
+    expect(readGateInput(JSON.stringify({ tool_name: browserToolId('evaluate') }))).toEqual({ tool: browserToolId('evaluate'), input: {} });
+    expect(readGateInput(JSON.stringify({ tool_name: 1, tool_input: ['x'] }))).toEqual({ tool: '', input: {} });
+    expect(readGateInput('')).toEqual({ tool: '', input: {} });
+    expect(readGateInput('{')).toEqual({ tool: '', input: {} });
+  });
+
   it('アプリの答えを読む。エラーの返事・形の違う返事は null', () => {
     expect(readAnswer(textResult('{"local":true,"url":"http://localhost:3000/"}'))).toEqual({ local: true, url: 'http://localhost:3000/' });
     expect(readAnswer(textResult('{"local":true,"url":"http://localhost:3000/"}', true))).toBeNull();
     expect(readAnswer(textResult('{"local":"yes","url":1}'))).toBeNull();
-    expect(readAnswer(textResult('Unknown tool: gate:evaluate'))).toBeNull();
+    expect(readAnswer(textResult('null'))).toBeNull();
+    expect(readAnswer(textResult('Unknown tool: gate:check'))).toBeNull();
     expect(readAnswer({ content: [{ type: 'image', data: 'x', mimeType: 'image/png' }] })).toBeNull();
+    expect(readNavigateAnswer(textResult('{"outside":"https://example.com"}'))).toEqual({ outside: 'https://example.com' });
+    expect(readNavigateAnswer(textResult('{"outside":null}'))).toEqual({ outside: null });
+    expect(readNavigateAnswer(textResult('{"outside":1}'))).toBeNull();
+    expect(readNavigateAnswer(textResult('{}'))).toBeNull();
+    expect(readNavigateAnswer(textResult('{"outside":"https://example.com"}', true))).toBeNull();
   });
 
-  it('アプリ（ソケット）に今のページを聞いて答える。アプリが無い・答えが無いときは ask', async () => {
+  it('アプリ（ソケット）に、ツールの名前と入力を渡して聞いて答える。アプリが無いときは、JavaScript の実行は ask、開くのは何も決めない', async () => {
     const socketPath = join(root, 'gate.sock');
-    const asked: { session: string; tool: string }[] = [];
+    const asked: { session: string; tool: string; args: Record<string, unknown> }[] = [];
     let page = 'http://localhost:3000/';
-    const bridge = new BrowserBridge(socketPath, async (session, tool) => {
-      asked.push({ session, tool });
+    let outside: string | null = 'https://example.com';
+    const bridge = new BrowserBridge(socketPath, async (session, tool, args) => {
+      asked.push({ session, tool, args });
+      if (args.tool === browserToolId('navigate')) return textResult(JSON.stringify({ outside }));
       return textResult(JSON.stringify({ local: isLocalUrl(page), url: page }));
     });
     await bridge.start();
     try {
-      expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('allow');
-      expect(asked).toEqual([{ session: 's1', tool: BROWSER_GATE_REQUEST }]);
+      expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate', { expression: '1' }))).permissionDecision).toBe('allow');
+      expect(asked).toEqual([{ session: 's1', tool: BROWSER_GATE_REQUEST, args: { tool: browserToolId('evaluate'), input: { expression: '1' } } }]);
       page = 'https://example.com/';
-      expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
+      expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate', { expression: '1' }))).permissionDecision).toBe('ask');
+      const open = hookInput('navigate', { url: 'https://example.com/a', newTab: true });
+      expect(decision(await runGate(socketPath, 's1', 5000, open))).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('https://example.com') });
+      expect(asked.at(-1)).toEqual({ session: 's1', tool: BROWSER_GATE_REQUEST, args: { tool: browserToolId('navigate'), input: { url: 'https://example.com/a', newTab: true } } });
+      outside = null;
+      expect(await runGate(socketPath, 's1', 5000, open)).toBe('{}');
+      // フックの設定と合わないツール・読めない標準入力は、アプリに聞かずに確認を出させる（localhost のページでも allow にしない）
+      page = 'http://localhost:3000/';
+      const count = asked.length;
+      expect(decision(await runGate(socketPath, 's1', 5000, hookInput('click', { selector: '#a' }))).permissionDecision).toBe('ask');
+      expect(decision(await runGate(socketPath, 's1', 5000, '')).permissionDecision).toBe('ask');
+      expect(asked).toHaveLength(count);
     } finally {
       bridge.close();
     }
     // アプリを閉じている間
-    expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
+    expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate', { expression: '1' }))).permissionDecision).toBe('ask');
+    expect(await runGate(socketPath, 's1', 5000, hookInput('navigate', { url: 'https://example.com/' }))).toBe('{}');
   });
 
-  it('アプリが答えられなかった（エラーの返事）ときも ask', async () => {
+  it('アプリが答えられなかった（エラーの返事）ときも、JavaScript の実行は ask、開くのは何も決めない', async () => {
     const socketPath = join(root, 'gate-error.sock');
     const bridge = new BrowserBridge(socketPath, async () => textResult('This session is not in tanacode.', true));
     await bridge.start();
     try {
-      expect(decision(await runGate(socketPath, 's1', 5000)).permissionDecision).toBe('ask');
+      expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate'))).permissionDecision).toBe('ask');
+      expect(await runGate(socketPath, 's1', 5000, hookInput('navigate', { url: 'https://example.com/' }))).toBe('{}');
     } finally {
       bridge.close();
     }

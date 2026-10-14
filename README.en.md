@@ -63,7 +63,7 @@ Subagents, workflows, and background Bash commands line up above the input box w
 
 ### What Claude looked at and checked on screen
 
-Preview the page you're developing inside the app. Click an element to attach its selector, HTML, and a cropped image straight to your prompt. Console errors go to the input box with one click. After a fix, Claude opens the page in the same browser and checks it itself with screenshots, the console, and clicks. Elements get an orange outline before Claude clicks them, so you can see what it's doing (via MCP, with nothing extra to install; it can only open development hosts such as localhost). For things Claude can't do, like logging in, it asks you in the middle of its work. When you're done, press a button and Claude picks up where it left off.
+Preview the page you're developing inside the app. Click an element to attach its selector, HTML, and a cropped image straight to your prompt. Console errors go to the input box with one click. After a fix, Claude opens the page in the same browser and checks it itself with screenshots, the console, and clicks. Elements get an orange outline before Claude clicks them, so you can see what it's doing (via MCP, with nothing extra to install; it opens development hosts such as localhost without asking, and asks for your permission every time it opens any other site). For things Claude can't do, like logging in, it asks you in the middle of its work. When you're done, press a button and Claude picks up where it left off.
 
 [See it in the demo →](https://sny-tanaka.github.io/tanacode/#browser)
 

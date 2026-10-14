@@ -415,7 +415,7 @@ const modules: Record<string, Record<string, unknown>> = {
       activate: echo('browser.activate'),
       pendingAsks: echo('browser.pendingAsks'),
       answerAsk: echo('browser.answerAsk'),
-      cancelAsks: () => undefined,
+      turnOff: () => undefined,
     }),
   },
   'sessions-control': { SessionsControl: fakeClass('SessionsControl', { handle: echo('sessionsControl.handle'), dispose: () => undefined }) },

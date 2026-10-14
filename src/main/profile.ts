@@ -235,6 +235,7 @@ export class Profile {
       compacting,
       enabled: () => this.settings.sessionsControlEnabled(),
       archive: (id, options) => this.archiveSession(id, options),
+      humanOnly: (id, request) => this.browser.humanOnly(id, request),
       home: homedir(),
       scheduled: () => this.scheduled ?? null,
       report: (id, text) => this.reports.set(id, text),

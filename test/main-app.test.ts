@@ -1160,13 +1160,13 @@ describe('メニュー', () => {
     expect(savedSettings().updateCheck).toBe(true);
   });
 
-  it('「Claude にアプリ内ブラウザを操作させる」: オフにしたら、頼んでいる操作を取り下げる', async () => {
+  it('「Claude にアプリ内ブラウザを操作させる」: オフにしたら、頼んでいる操作を取り下げ、許した外の先も捨てる', async () => {
     await boot();
     toggle('Claude にアプリ内ブラウザを操作させる');
-    expect(the('BrowserControl').cancelAsks).toHaveBeenCalledTimes(1);
+    expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
     expect(savedSettings().browserControl).toBe(false);
     toggle('Claude にアプリ内ブラウザを操作させる');
-    expect(the('BrowserControl').cancelAsks).toHaveBeenCalledTimes(1);
+    expect(the('BrowserControl').turnOff).toHaveBeenCalledTimes(1);
     expect(savedSettings().browserControl).toBe(true);
   });
 
@@ -1200,7 +1200,7 @@ describe('メニュー', () => {
     expect(item.checked).toBe(true);
     expect(monitor.start).not.toHaveBeenCalled();
     expect(monitor.stop).not.toHaveBeenCalled();
-    expect(the('BrowserControl').cancelAsks).not.toHaveBeenCalled();
+    expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
   it('「アプリ内ブラウザで Claude に許す先…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {

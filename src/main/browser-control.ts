@@ -1,8 +1,9 @@
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
-import { BROWSER_MCP, browserTool, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
+import { BROWSER_MCP, browserTool, browserToolId, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
+import type { PermissionRequest } from '@shared/session-tools';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -14,6 +15,9 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
 // ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
 // その間は、Claude にブラウザを使わせない（ユーザーの操作とぶつからないように）。
+// 許す先（isClaudeAllowedUrl）の外のページも開けるが、開くたびに人の許可を求める（フックが Claude Code の許可の確認を出させる。browser-gate.ts）。
+// 人が許したら、そのタブでそのオリジンを許可し、タブを閉じるまで、その中の操作（読む・押す・同じオリジンの中の移動）には許可を求めない。
+// 別のオリジンへ移ろうとしたら止め、続けるなら、また人に許可を求める（navigate の action: "continue"）。別オリジンの iframe には、許可は効かない。
 // Claude に返す文は英語。画面の項目（メニュー・帯のボタン）の名前だけ、Claude が利用者に伝えられるよう t() で画面の言語にする
 
 // 要素を探したり読んだりするスクリプトを動かす、ページとは別の JavaScript の世界（ページのスクリプトに書き換えられない）
@@ -35,6 +39,9 @@ const CAPTURE_STALLED =
   `Could not take a screenshot: nothing came back within ${CAPTURE_TIMEOUT_MS / 1000} seconds. The tanacode window is probably not being drawn ` +
   '(for example, the window is hidden, or the screen is locked). The tools that read the page as text (get_text, get_accessibility_tree, inspect) still work. ' +
   'If you need the look of the page, tell the user and try again when they are back at the screen.';
+// 許す先の外を開くときに、人に確認した印（navigate の確認のフックに ask を返したときに控える）が使える間と、セッションごとに控える数
+const MARK_TTL_MS = 15 * 60_000;
+const MAX_MARKS = 20;
 // 撮った絵が空のとき、描かれるのを待って撮り直す時間と間隔（shoot）
 const EMPTY_SHOT_WAIT_MS = 3_000;
 const EMPTY_SHOT_POLL_MS = 100;
@@ -136,6 +143,11 @@ type Guest = {
   // 別プロセスで動く iframe（別サイトのもの）の CDP のセッション（Target.setAutoAttach でつなぐ）。
   // 見ていないタブ（透明にして描かせているもの）では、ページに送った操作がこの iframe に届かないので、iframe のセッションに直に送る
   children: Set<string>;
+  // 人が、このタブで開くことを許した、許す先の外のオリジン（タブを閉じるまで残す）
+  granted: Set<string>;
+  // Claude の操作の間に、許していない先へ移ろう（開こう）として止めた先。navigate の action: "continue" で、人に許可を求めて開く。
+  // newWindow: ページが新しいウインドウで開こうとしたもの（新しいタブで開く）
+  stopped: { url: string; newWindow: boolean } | null;
 };
 // セッションのタブ
 type Tabs = {
@@ -145,7 +157,14 @@ type Tabs = {
   // Claude の操作の間に、許していない先へ移ろう（開こう）として止めたもの・新しいタブで開いたもの（呼び出しごとに空にする）
   blocked: string | null;
   opened: string[];
+  // これからできるタブに渡す許可（navigate で新しいタブに開く・許可したページが同じオリジンを新しいウインドウで開く）。
+  // 画面がタブを作って知らせてくるまでの間だけ（until まで）
+  handoff: { origin: string; until: number }[];
 };
+
+// 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
+// url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
+type Mark = { url: string; newTab: boolean; tabId: string | null; until: number };
 
 type Deps = {
   // 画面（renderer）へ送る。チャンネルごとの中身は shared/ipc.ts の IpcEvent
@@ -190,6 +209,8 @@ export class BrowserControl {
   private readonly drawing = new Map<WebContents, number>();
   // ユーザーに頼んでいる操作
   private readonly asks: BrowserAsks;
+  // 人に確認した、許す先の外を開く印（セッションごと）
+  private readonly marks = new Map<string, Mark[]>();
 
   constructor(private readonly deps: Deps) {
     this.asks = new BrowserAsks((sessionId, ask) => {
@@ -247,7 +268,14 @@ export class BrowserControl {
     if (!contents || !host || contents.getType() !== 'webview' || contents.hostWebContents !== host) return;
     const session = this.tabsOf(sessionId);
     if (session.tabs.get(tabId)?.contents === contents) return;
-    const guest: Guest = { tabId, contents, logs: this.track(contents), cdp: false, children: new Set() };
+    // 画面が同じタブの webview を作り直したときは、そのタブの許可を引き継ぐ。作ったばかりのタブなら、渡す許可を受け取る
+    let granted = session.tabs.get(tabId)?.granted;
+    if (!granted) {
+      const now = Date.now();
+      granted = new Set(session.handoff.filter((h) => h.until > now).map((h) => h.origin));
+      session.handoff = [];
+    }
+    const guest: Guest = { tabId, contents, logs: this.track(contents), cdp: false, children: new Set(), granted, stopped: null };
     session.tabs.set(tabId, guest);
     // 並びは、画面がタブを作った順（タブの ID の番号）
     session.tabs = new Map([...session.tabs].sort(([a], [b]) => tabNumber(a) - tabNumber(b)));
@@ -279,27 +307,36 @@ export class BrowserControl {
   }
 
   // webview のトップのフレームが url へ移ろうとしている（リンク・リダイレクト・ページのスクリプト）。
-  // Claude の操作で、許していない先へ移ろうとしていれば止める（true を返す）。ユーザーの操作は止めない
+  // Claude の操作で、許していない先（許す先の外で、このタブで許可していないオリジン）へ移ろうとしていれば止める（true を返す）。
+  // 止めた先はタブに控える（続けるなら、navigate の action: "continue" で人に許可を求める）。ユーザーの操作は止めない
   blocksNavigation(contents: WebContents, url: string): boolean {
     const found = this.find(contents);
-    if (!found || !this.operating(found.sessionId) || this.allowed(url)) return false;
+    if (!found || !this.operating(found.sessionId) || this.allowedIn(found.guest, url)) return false;
     found.session.blocked = url;
+    found.guest.stopped = { url, newWindow: false };
     return true;
   }
 
   // ページが新しいウィンドウで開こうとした（target=_blank・window.open）。同じセッションの新しいタブで開かせる。
-  // Claude の操作で、許していない先を開こうとしたものは開かない。知らない webview なら false（呼び出し元が扱う）
+  // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたページのタブに控える）。
+  // そのタブで許可したオリジンなら、新しいタブにも許可を渡す（同じサイトの中の移動として扱う）。
+  // 知らない webview なら false（呼び出し元が扱う）
   openFromPage(contents: WebContents, url: string, disposition: string): boolean {
     const found = this.find(contents);
     if (!found) return false;
-    const { sessionId, session } = found;
+    const { sessionId, session, guest } = found;
     if (session.tabs.size >= MAX_TABS) return true;
     const operating = this.operating(sessionId);
-    if (operating && !this.allowed(url)) {
+    if (operating && !this.allowedIn(guest, url)) {
       session.blocked = url;
+      guest.stopped = { url, newWindow: true };
       return true;
     }
-    if (operating) session.opened.push(url);
+    if (operating) {
+      session.opened.push(url);
+      // 許す先でなければ、このタブで許したオリジン（上の allowedIn）
+      if (!this.allowed(url)) this.handOff(session, webOrigin(url)!);
+    }
     // ⌘ を押したままのクリックは、裏で開く（Claude の操作は、続けて操作できるよう前に出す）
     this.deps.send(this.deps.channels.newTab, { sessionId, url, background: !operating && disposition === 'background-tab', openerTabId: found.guest.tabId });
     return true;
@@ -319,14 +356,32 @@ export class BrowserControl {
     this.asks.answer(sessionId, askId, answer);
   }
 
-  // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）
-  cancelAsks(): void {
+  // メニューで Claude の操作をオフにした。頼んでいるものはやめる（帯が残って、押すとページを返すことのないように）。
+  // 人が許した、許す先の外のオリジンと、確認した印も捨てる（オンに戻したら、また人に許可を求める）
+  turnOff(): void {
     this.asks.cancelAll(`The request was withdrawn because the user turned off "${t('main.menu.browserControl')}" in the tanacode menu.`);
+    for (const session of this.sessions.values()) {
+      session.handoff = [];
+      for (const guest of session.tabs.values()) {
+        guest.granted.clear();
+        guest.stopped = null;
+      }
+    }
+    this.marks.clear();
+  }
+
+  // 子セッションの許可の確認のうち、人だけが答えられるもの（親の Claude に許させない。sessions-control.ts の answer_permission）。
+  // 許す先の外を開く確認（フックが ask を返して、印を控えたもの）。印のある間の navigate の確認は、どれも人に任せる
+  // （どの確認の印かを取り違えても、人に聞く側に倒す）。当たれば、親に伝える理由（英語）を返す
+  humanOnly(sessionId: string, request: PermissionRequest): string | null {
+    if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
+    return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }
 
   // セッションを消した・アーカイブしたとき
   forget(sessionId: string): void {
     this.asks.cancel(sessionId);
+    this.marks.delete(sessionId);
     this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
@@ -336,7 +391,7 @@ export class BrowserControl {
 
   // 中継から届いた呼び出し。signal: Claude Code が呼び出しを取り消した（中継がソケットを閉じた）
   async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
-    if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId);
+    if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId, args);
     const tool = browserTool(name);
     if (!tool) return textResult(`Unknown tool: ${name}`, true);
     if (!this.deps.enabled()) return textResult(`The user has turned off "${t('main.menu.browserControl')}" in the tanacode menu.`, true);
@@ -377,17 +432,60 @@ export class BrowserControl {
     const guest = session?.active ? session.tabs.get(session.active) : undefined;
     const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
     if (!guest || isBlank(url)) return ['Current tab: (no page open)'];
-    if (!this.allowed(url)) return [`The current page is not allowed for Claude (${originOf(url) ?? 'invalid URL'}). It can be neither read nor operated any further.`];
+    if (!this.allowedIn(guest, url)) return [`The current page is not allowed for Claude (${originOf(url) ?? 'invalid URL'}). It can be neither read nor operated any further.`];
     return [`Current page: ${guest.contents.getTitle() || '(untitled)'}`, `URL: ${url}`];
   }
 
-  // JavaScript の実行の確認のフック（browser-gate.ts）への答え。今のタブが localhost のページなら、確認を省いてよい。
-  // タブが無い・空のときは、確認を出させる側に倒す（待たない。フックは短い間しか待たない）
-  private gate(sessionId: string): ToolResult {
-    const session = this.sessions.get(sessionId);
-    const guest = session?.active ? session.tabs.get(session.active) : undefined;
-    const url = guest && !guest.contents.isDestroyed() ? guest.contents.getURL() : '';
+  // 確認のフック（browser-gate.ts）への答え。request.tool: ツールの名前（mcp__…）/ request.input: ツールの入力。待たない（フックは短い間しか待たない）
+  // - JavaScript の実行: 今のタブが localhost のページなら、確認を省いてよい。タブが無い・空のときは、確認を出させる側に倒す
+  // - 開く: 許す先の外で、そのタブで許可していないオリジンを開くなら、人に確認させ（outside にオリジン）、確認した印を控える
+  private gate(sessionId: string, request: Record<string, unknown>): ToolResult {
+    if (request.tool === browserToolId('navigate')) {
+      const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
+      return textResult(JSON.stringify({ outside: this.gateNavigate(sessionId, input) }));
+    }
+    const url = this.activeNow(sessionId)?.contents.getURL() ?? '';
     return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
+  }
+
+  // navigate の入力から、人に確認する先を決めて、確認した印を控える。確認しないものは null
+  // （許す先・そのタブで許可したオリジン・開けないもの。開けないものは navigate が断る）
+  private gateNavigate(sessionId: string, input: Record<string, unknown>): string | null {
+    // オフ・知らないセッションでは、navigate が断る
+    if (!this.deps.enabled() || !this.deps.hasSession(sessionId)) return null;
+    const guest = this.activeNow(sessionId);
+    const target = this.destination(guest, input);
+    if (!target) return null;
+    const origin = webOrigin(target.url);
+    if (!origin || this.openable(guest, target.url, target.newTab)) return null;
+    const marks = this.liveMarks(sessionId);
+    marks.push({ ...target, tabId: guest?.tabId ?? null, until: Date.now() + MARK_TTL_MS });
+    this.marks.set(sessionId, marks.slice(-MAX_MARKS));
+    return origin;
+  }
+
+  // navigate が開く先と、新しいタブに開くか。navigate と同じ順に読む（action を先に見る）。読み込み直す・開く先の無いものは null
+  private destination(guest: Guest | undefined, input: Record<string, unknown>): { url: string; newTab: boolean } | null {
+    const action = optionalString(input.action);
+    if (action === 'continue') return guest?.stopped ? { url: guest.stopped.url, newTab: guest.stopped.newWindow } : null;
+    if (action === 'back' || action === 'forward') {
+      if (!guest) return null;
+      const history = guest.contents.navigationHistory;
+      const index = history.getActiveIndex() + (action === 'back' ? -1 : 1);
+      return index >= 0 && index < history.length() ? { url: history.getEntryAtIndex(index).url, newTab: false } : null;
+    }
+    if (action) return null;
+    const raw = optionalString(input.url);
+    return raw ? { url: toUrl(raw), newTab: !guest || input.newTab === true } : null;
+  }
+
+  // 生きている印（使える間を過ぎたものは捨てる）
+  private liveMarks(sessionId: string): Mark[] {
+    const now = Date.now();
+    const marks = (this.marks.get(sessionId) ?? []).filter((m) => m.until > now);
+    if (marks.length > 0) this.marks.set(sessionId, marks);
+    else this.marks.delete(sessionId);
+    return marks;
   }
 
   private async run(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -397,7 +495,7 @@ export class BrowserControl {
     const result = await this.dispatch(sessionId, name, args);
     if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
-    if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${this.shownUrl(session.blocked)}).` });
+    if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${originShown(session.blocked)}).${CONTINUE_HINT}` });
     // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
     if (session.opened.length > 0) {
       const guest = await this.activeGuest(sessionId).catch(() => null);
@@ -454,6 +552,7 @@ export class BrowserControl {
     const action = optionalString(args.action);
     const rawUrl = optionalString(args.url);
     if (!action && !rawUrl) throw new ToolError('Provide url or action.');
+    if (action === 'continue') return this.continueStopped(sessionId);
     if (action) {
       const guest = await this.current(sessionId);
       const history = guest.contents.navigationHistory;
@@ -461,8 +560,7 @@ export class BrowserControl {
       else {
         const index = history.getActiveIndex() + (action === 'back' ? -1 : 1);
         if (index < 0 || index >= history.length()) throw new ToolError(action === 'back' ? 'There is no page to go back to.' : 'There is no page to go forward to.');
-        const target = history.getEntryAtIndex(index).url;
-        this.checkUrl(target, 'The destination');
+        this.permit(sessionId, guest, history.getEntryAtIndex(index).url, false, 'The destination');
         if (action === 'back') history.goBack();
         else history.goForward();
       }
@@ -470,27 +568,84 @@ export class BrowserControl {
       return this.pageResult(guest, action === 'reload' ? 'Reloaded' : action === 'back' ? 'Went back' : 'Went forward');
     }
     const url = toUrl(rawUrl!);
-    this.checkUrl(url, 'The URL to open');
+    const current = await this.activeGuest(sessionId).catch(() => null);
+    // まだブラウザを開いていないセッションも、新しいタブに開く
+    const newTab = !current || args.newTab === true;
+    this.permit(sessionId, current, url, newTab, 'The URL to open');
+    const guest = await this.open(sessionId, current, url, newTab);
+    return this.pageResult(guest, args.newTab === true ? `Opened in a new tab (tab ${this.numberOf(sessionId, guest)})` : 'Opened');
+  }
+
+  // 止めた先へ進む（action: "continue"）。今のタブで止めたものを開く（許す先の外なら、フックが人に許可を求めている）
+  private async continueStopped(sessionId: string): Promise<ToolResult> {
+    const current = await this.activeGuest(sessionId);
+    const stopped = current.stopped;
+    if (!stopped) throw new ToolError('Nothing was stopped in the current tab, so there is nothing to continue. To open a page, pass url.');
+    this.permit(sessionId, current, stopped.url, stopped.newWindow, 'The page to continue to');
+    current.stopped = null;
+    const guest = await this.open(sessionId, current, stopped.url, stopped.newWindow);
+    return this.pageResult(guest, stopped.newWindow ? `Opened in a new tab (tab ${this.numberOf(sessionId, guest)})` : 'Opened');
+  }
+
+  // url を開いて、開いたタブを返す。newTab: 新しいタブに開く（current が無ければ、ブラウザを開いて最初のタブに）
+  private async open(sessionId: string, current: Guest | null, url: string, newTab: boolean): Promise<Guest> {
     const session = this.tabsOf(sessionId);
-    let guest = await this.activeGuest(sessionId).catch(() => null);
-    if (!guest || args.newTab === true) {
-      // まだブラウザを開いていないセッションか、新しいタブ。画面に webview を作らせ、知らせを待つ
+    const stoppedError = (blocked: string) =>
+      new ToolError(`Stopped ${url} because it tried to navigate to a page not allowed for Claude (${originShown(blocked)}).${CONTINUE_HINT}`);
+    if (newTab || !current) {
+      // 画面に webview を作らせ、知らせを待つ
       const attached = this.waitAttach(sessionId);
-      if (guest) this.deps.send(this.deps.channels.newTab, { sessionId, url, background: false, openerTabId: guest.tabId });
+      if (current) this.deps.send(this.deps.channels.newTab, { sessionId, url, background: false, openerTabId: current.tabId });
       else this.deps.send(this.deps.channels.open, { sessionId, url });
-      guest = await attached;
+      const guest = await attached;
       await waitForLoad(guest.contents);
-      if (session.blocked) throw new ToolError(`Stopped ${url} because it tried to navigate to a page not allowed for Claude (${this.shownUrl(session.blocked)}).`);
-    } else {
-      const opened = guest;
-      await opened.contents.loadURL(url).catch((error: unknown) => {
-        // 許していない先へのリダイレクトを止めた
-        if (session.blocked) throw new ToolError(`Stopped ${url} because it tried to navigate to a page not allowed for Claude (${this.shownUrl(session.blocked)}).`);
-        // 移ったための中断（リダイレクトなど）は失敗にしない
-        if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
-      });
+      if (session.blocked) throw stoppedError(session.blocked);
+      return guest;
     }
-    return this.pageResult(guest, args.newTab === true ? `Opened in a new tab (tab ${[...session.tabs.keys()].indexOf(guest.tabId) + 1})` : 'Opened');
+    await current.contents.loadURL(url).catch((error: unknown) => {
+      // 許していない先へのリダイレクトを止めた
+      if (session.blocked) throw stoppedError(session.blocked);
+      // 移ったための中断（リダイレクトなど）は失敗にしない
+      if (!/ERR_ABORTED/.test(String(error))) throw new ToolError(`Could not open ${url} (${error instanceof Error ? error.message : String(error)}).`);
+    });
+    return current;
+  }
+
+  // url を開いてよいか確かめ、人に許可されたものなら、開くタブに許可を足す（新しいタブなら、できたときに渡す）。
+  // 許す先・そのタブで許可したオリジンなら、そのまま開いてよい。ほかの http(s) の先は、フックが人に確認したときの印を使い切る。
+  // 印が無ければ断る（フックが動かなかった・確認したときと今のタブが違う）
+  private permit(sessionId: string, current: Guest | null, url: string, newTab: boolean, what: string): void {
+    if (this.openable(current ?? undefined, url, newTab)) return;
+    const origin = webOrigin(url);
+    if (!origin) throw new ToolError(`${what} (${originShown(url)}) is not allowed for Claude. Only http and https pages can be opened.`);
+    const marks = this.liveMarks(sessionId);
+    const tabId = current?.tabId ?? null;
+    const index = marks.findIndex((m) => m.url === url && m.newTab === newTab && m.tabId === tabId);
+    if (index === -1) {
+      throw new ToolError(
+        `${what} (${origin}) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "${t('main.menu.browserHosts')}" in the tanacode menu), ` +
+          'so opening it needs the permission of the user every time, and tanacode has no permission from the user for this. Call navigate again to ask the user. ' +
+          'If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.',
+      );
+    }
+    marks.splice(index, 1);
+    if (newTab) this.handOff(this.tabsOf(sessionId), origin);
+    else current!.granted.add(origin);
+  }
+
+  // 許す先か、そのタブで許可したオリジンを、確認なしで開けるか。新しいタブは、許す先だけ
+  private openable(current: Guest | undefined, url: string, newTab: boolean): boolean {
+    return newTab ? this.allowed(url) : this.allowedIn(current, url);
+  }
+
+  // これからできるタブに、オリジンの許可を渡す（画面がタブを作って知らせてくるまでの間）
+  private handOff(session: Tabs, origin: string): void {
+    session.handoff.push({ origin, until: Date.now() + ATTACH_TIMEOUT_MS });
+  }
+
+  // タブの番号（1 から）
+  private numberOf(sessionId: string, guest: Guest): number {
+    return [...this.tabsOf(sessionId).tabs.keys()].indexOf(guest.tabId) + 1;
   }
 
   // ---- タブ ----
@@ -503,8 +658,8 @@ export class BrowserControl {
       const url = guest.contents.getURL();
       // 許していない先のページは、タイトルも URL の道筋も読ませない（ページが書ける・認証の途中の値が URL に入っていることがある）。
       // 空のタブ（「＋」で開いたもの）は、許していない先ではない（navigate で開ける）。タイトルは読まない
-      const title = isBlank(url) ? '(untitled)' : this.allowed(url) ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)';
-      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '(empty tab)' : this.shownUrl(url)}`;
+      const title = isBlank(url) ? '(untitled)' : this.allowedIn(guest, url) ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)';
+      return `${guest.tabId === session.active ? '*' : ' '} ${i + 1}. ${title} — ${isBlank(url) ? '(empty tab)' : this.shownUrl(url, guest)}`;
     });
     return textResult(`Tabs (* marks the current tab):\n${lines.join('\n')}`);
   }
@@ -541,8 +696,8 @@ export class BrowserControl {
     const url = guest.contents.getURL();
     // 空のタブ（「＋」で開いたもの）は、許していない先ではない。navigate で、このタブに開けることを伝える
     if (isBlank(url)) return textResult(`${done}: (empty tab)\nThe current tab is empty. Open a page in it with navigate.`);
-    const allowed = this.allowed(url);
-    const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)'}`, `URL: ${this.shownUrl(url)}`];
+    const allowed = this.allowedIn(guest, url);
+    const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)'}`, `URL: ${this.shownUrl(url, guest)}`];
     if (!allowed) lines.push('This page is not allowed for Claude, so it can be neither read nor operated any further.');
     const errors = guest.logs.console.filter((l) => l.level === 'error').length;
     if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
@@ -717,7 +872,9 @@ export class BrowserControl {
   }
 
   private async tree(guest: Guest): Promise<ToolResult> {
-    // いちばん外のページと、同じプロセスで動く iframe（同じオリジンなど）のフレームごとに読む。許していない先の iframe は読まない
+    // いちばん外のページと、同じプロセスで動く iframe（同じオリジンなど）のフレームごとに読む。許していない先の iframe は読まない。
+    // いちばん外のページと同じオリジンの iframe は、そのページと同じく、タブで許可したオリジンなら読む（get_text と同じ）
+    const top = originOf(guest.contents.getURL());
     type FrameTree = { frame: { id: string; url: string }; childFrames?: FrameTree[] };
     const { frameTree } = (await this.cdp(guest, 'Page.getFrameTree')) as { frameTree: FrameTree };
     const frames: { id: string; url: string; top: boolean }[] = [];
@@ -730,7 +887,7 @@ export class BrowserControl {
     for (const frame of frames) {
       if (lines.length >= MAX_TREE_LINES) break;
       if (!frame.top) {
-        if (!this.allowed(frame.url)) continue;
+        if (!this.allowed(frame.url) && !(originOf(frame.url) === top && this.allowedIn(guest, frame.url))) continue;
         lines.push(`--- inside iframe (${frame.url}) ---`);
       }
       const result = (await this.cdp(guest, 'Accessibility.getFullAXTree', { frameId: frame.id }).catch(() => null)) as { nodes: AXNode[] } | null;
@@ -851,7 +1008,7 @@ export class BrowserControl {
     if (target.covered) lines.push(`(another element, ${target.covered}, was covering the clicked position)`);
     const after = guest.contents.getURL();
     // 移る前に止められなかった形（ページの「戻る」ボタンの history.back など）で許していない先へ移ったときは、オリジンだけを伝える
-    if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after)}${this.allowed(after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
+    if (after !== before) lines.push(`The page navigated to ${this.shownUrl(after, guest)}${this.allowedIn(guest, after) ? '' : ' (not allowed for Claude, so it can be neither read nor operated any further)'}`);
     return textResult(lines.join('\n'));
   }
 
@@ -1024,8 +1181,20 @@ export class BrowserControl {
     const guest = await this.activeGuest(sessionId);
     const url = guest.contents.getURL();
     if (isBlank(url)) throw new ToolError('The current tab is empty. Open a page with navigate.');
-    this.checkUrl(url, 'The current page');
+    if (!this.allowedIn(guest, url)) {
+      throw new ToolError(
+        `The current page (${originShown(url)}) is not allowed for Claude: it is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "${t('main.menu.browserHosts')}" in the tanacode menu), ` +
+          'and the user has not permitted it in this tab. To use it, open it with navigate (tanacode asks the user for permission).',
+      );
+    }
     return guest;
+  }
+
+  // 今のタブ（待たない。無い・壊れていれば undefined）
+  private activeNow(sessionId: string): Guest | undefined {
+    const session = this.sessions.get(sessionId);
+    const guest = session?.active ? session.tabs.get(session.active) : undefined;
+    return guest && !guest.contents.isDestroyed() ? guest : undefined;
   }
 
   // 今のタブ。作った直後で、まだ画面から知らせが来ていなければ少し待つ
@@ -1045,7 +1214,7 @@ export class BrowserControl {
   private tabsOf(sessionId: string): Tabs {
     let session = this.sessions.get(sessionId);
     if (!session) {
-      session = { tabs: new Map(), active: null, blocked: null, opened: [] };
+      session = { tabs: new Map(), active: null, blocked: null, opened: [], handoff: [] };
       this.sessions.set(sessionId, session);
     }
     return session;
@@ -1064,20 +1233,21 @@ export class BrowserControl {
     return (this.running.get(sessionId) ?? 0) > 0 || Date.now() - (this.endedAt.get(sessionId) ?? 0) < OPERATING_GRACE_MS;
   }
 
+  // 許す先（既定と、ユーザーが足した先）のページか
   private allowed(url: string): boolean {
     return isClaudeAllowedUrl(url, this.deps.extraHosts());
   }
 
-  // Claude に見せる URL。許していない先は、オリジンだけ（ログインで外の認証のページへ移ったとき、URL に認証の途中の値が入っていることがある）
-  private shownUrl(url: string): string {
-    return this.allowed(url) ? url : (originOf(url) ?? 'invalid URL');
+  // そのタブで、Claude が読んで・操作してよいページか。許す先か、人がそのタブで開くことを許したオリジン（別オリジンの iframe には使わない）
+  private allowedIn(guest: Guest | undefined, url: string): boolean {
+    if (this.allowed(url)) return true;
+    const origin = webOrigin(url);
+    return !!guest && origin !== null && guest.granted.has(origin);
   }
 
-  private checkUrl(url: string, what: string): void {
-    if (this.allowed(url)) return;
-    throw new ToolError(
-      `${what} (${this.shownUrl(url)}) is not allowed for Claude. Claude can open only localhost, 127.0.0.1, *.local and the hosts the user added with "${t('main.menu.browserHosts')}" in the tanacode menu. If you need it, ask the user to add it.`,
-    );
+  // Claude に見せる URL。許していない先は、オリジンだけ（ログインで外の認証のページへ移ったとき、URL に認証の途中の値が入っていることがある）
+  private shownUrl(url: string, guest?: Guest): string {
+    return this.allowedIn(guest, url) ? url : originShown(url);
   }
 
   private waitAttach(sessionId: string): Promise<Guest> {
@@ -1283,6 +1453,24 @@ function originOf(url: string): string | null {
     return null;
   }
 }
+
+// 人の許可を得て開けるページ（http(s)）のオリジン。ほかのもの（file:・about: など）と読めないものは null
+function webOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+// Claude に見せる、許していない先。オリジンだけ
+function originShown(url: string): string {
+  return originOf(url) ?? 'invalid URL';
+}
+
+// 止めた先へ進む方法（止めたことを伝える文に添える）
+const CONTINUE_HINT = ' To open it, call navigate with action "continue" (tanacode asks the user for permission).';
 
 // 断る文に出す、許していない先の iframe の URL。オリジンだけ（iframe の今の URL はページからは読めず、認証・決済の途中の値が入っていることがある）。
 // URL として読めないものは、ページに書いてある src そのものなので、そのまま

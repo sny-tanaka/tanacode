@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
-import { BROWSER_ASK_TOOL } from '../src/shared/browser-tools';
+import { BROWSER_ASK_TOOL, browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel, type BrowserAskChange } from '../src/shared/ipc';
 import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
 import { setLanguage } from '../src/shared/i18n';
@@ -214,7 +214,7 @@ describe('ユーザーに操作を頼む（ask_user_to_act）', () => {
     const count = activities().length;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(activities()).toHaveLength(count);
-    control.cancelAsks();
+    control.turnOff();
     expect(await pending).toEqual(textResult('The request was withdrawn because the user turned off "Claude にアプリ内ブラウザを操作させる" in the tanacode menu.', true));
   });
 
@@ -485,11 +485,15 @@ describe('開く（navigate）', () => {
     expect(await call('navigate', { url: '  ' })).toEqual(textResult('Provide url or action.', true));
   });
 
-  it('許していない先は開かない（URL はオリジンだけ伝える）。ユーザーが足した先なら開ける', async () => {
+  it('許す先の外は、人に確認した印が無ければ開かない（フックが動かなかったとき。URL はオリジンだけ伝える）。ユーザーが足した先なら開ける', async () => {
     const { call, state, sent } = setup();
     const refused = await call('navigate', { url: 'https://example.com/path?token=secret' });
     expect(refused.isError).toBe(true);
-    expect(textOf(refused)).toMatch(/^The URL to open \(https:\/\/example\.com\) is not allowed for Claude\. Claude can open only localhost, 127\.0\.0\.1, \*\.local and the hosts the user added with "アプリ内ブラウザで Claude に許す先…" in the tanacode menu\. If you need it, ask the user to add it\.$/);
+    expect(textOf(refused)).toBe(
+      'The URL to open (https://example.com) is outside the hosts the user allowed for Claude (localhost, 127.0.0.1, *.local and the hosts added with "アプリ内ブラウザで Claude に許す先…" in the tanacode menu), ' +
+        'so opening it needs the permission of the user every time, and tanacode has no permission from the user for this. Call navigate again to ask the user. ' +
+        'If the user is not asked, this session started before tanacode added this check: ask the user to restart Claude Code in this session.',
+    );
     expect(textOf(refused)).not.toContain('secret');
     expect(sent.filter((s) => s.channel === IpcChannel.BrowserOpen)).toEqual([]);
     state.hosts = ['example.com'];
@@ -562,7 +566,7 @@ describe('開く（navigate）', () => {
       expect(control.blocksNavigation(asWebContents(page), 'https://login.example.com/auth?state=secret')).toBe(true);
     };
     const result = await call('navigate', { url: 'http://localhost:3000/' });
-    expect(result).toEqual(textResult('Stopped http://localhost:3000/ because it tried to navigate to a page not allowed for Claude (https://login.example.com).', true));
+    expect(result).toEqual(textResult('Stopped http://localhost:3000/ because it tried to navigate to a page not allowed for Claude (https://login.example.com). To open it, call navigate with action "continue" (tanacode asks the user for permission).', true));
   });
 
   it('今のタブで開く: 読み込みを待ち、ページの様子（コンソールのエラー・失敗した通信の件数）を返す', async () => {
@@ -612,7 +616,7 @@ describe('開く（navigate）', () => {
       throw new Error('ERR_ABORTED (-3)');
     };
     expect(await call('navigate', { url: 'http://localhost:3000/login' })).toEqual(
-      textResult('Stopped http://localhost:3000/login because it tried to navigate to a page not allowed for Claude (https://login.example.com).', true),
+      textResult('Stopped http://localhost:3000/login because it tried to navigate to a page not allowed for Claude (https://login.example.com). To open it, call navigate with action "continue" (tanacode asks the user for permission).', true),
     );
     // 開けたあとで、ページの中から許していない先へ移ろうとして止めたときは、結果に添える
     page.load = async (url) => {
@@ -620,7 +624,7 @@ describe('開く（navigate）', () => {
       expect(control.blocksNavigation(asWebContents(page), 'https://ads.example.com/track?id=1')).toBe(true);
     };
     expect(textOf(await call('navigate', { url: 'http://localhost:3000/home' }))).toBe(
-      'Opened: ページ\nURL: http://localhost:3000/home\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://ads.example.com).',
+      'Opened: ページ\nURL: http://localhost:3000/home\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://ads.example.com). To open it, call navigate with action "continue" (tanacode asks the user for permission).',
     );
     // 次の呼び出しには持ち越さない
     expect(textOf(await call('get_failed_requests'))).toBe('No failed requests.');
@@ -636,7 +640,7 @@ describe('開く（navigate）', () => {
     expect(textOf(await call('navigate', { action: 'back' }))).toBe('Went back: A\nURL: http://localhost:3000/a');
     const refused = await call('navigate', { action: 'back' });
     expect(refused.isError).toBe(true);
-    expect(textOf(refused)).toMatch(/^The destination \(https:\/\/login\.example\.com\) is not allowed for Claude\./);
+    expect(textOf(refused)).toMatch(/^The destination \(https:\/\/login\.example\.com\) is outside the hosts the user allowed for Claude /);
     expect(page.calls).toEqual(['reload', 'goForward', 'goBack']);
     page.history = { entries: ['http://localhost:3000/a'], index: 0 };
     expect(await call('navigate', { action: 'back' })).toEqual(textResult('There is no page to go back to.', true));
@@ -649,7 +653,7 @@ describe('開く（navigate）', () => {
     expect(await call('navigate', { action: 'reload', url: 'http://localhost:3000/' })).toEqual(textResult('The current tab is empty. Open a page with navigate.', true));
     page.url = 'https://accounts.example.com/signin?continue=secret';
     const refused = textOf(await call('navigate', { action: 'reload' }));
-    expect(refused).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude\./);
+    expect(refused).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude: /);
     expect(page.calls).toEqual([]);
   });
 
@@ -902,7 +906,7 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
       return {};
     };
     const result = textOf(await call('click', { selector: '#out' }));
-    expect(result).toBe('Clicked: a#out\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://evil.example.com).');
+    expect(result).toBe('Clicked: a#out\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://evil.example.com). To open it, call navigate with action "continue" (tanacode asks the user for permission).');
     expect(sentOn(IpcChannel.BrowserNewTab)).toEqual([]);
   });
 
@@ -922,5 +926,269 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     expect(textOf(await call('click', { selector: '#popup' }))).toBe(
       'Clicked: a#popup\nOpened in a new tab: http://localhost:3000/popup. Further actions apply to this tab (switch tabs with list_tabs and select_tab).',
     );
+  });
+});
+
+describe('許す先の外を開く（開くたびに人の許可）', () => {
+  const OUT = 'https://example.com/a?token=secret';
+  const HINT = ' To open it, call navigate with action "continue" (tanacode asks the user for permission).';
+  // 開く確認のフック（browser-gate.ts）が、navigate の入力を渡して聞く
+  const gateOpen = async (control: ReturnType<typeof setup>['control'], input: Record<string, unknown>, sessionId = 'S1') =>
+    JSON.parse(textOf(await control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input }))) as { outside: string | null };
+  const request = (input: Record<string, unknown>, tool = 'navigate') => ({ seq: 1, at: 0, tool: browserToolId(tool), input, agent: null });
+  // 終わらない wait_for で、Claude の操作の途中にする
+  const operating = async (ctx: ReturnType<typeof setup>, page: Tab) => {
+    let ready = false;
+    page.page.wait = () => ready;
+    const pending = ctx.control.handle('S1', 'wait_for', { selector: '#done' });
+    await flush();
+    return async () => {
+      ready = true;
+      return finish(pending);
+    };
+  };
+
+  it('確認のフックへの答え: 許す先の外だけ、オリジンを返して人に確認させる。許す先・開けないもの・読み込み直す・オフ・知らないセッションは何も決めない', async () => {
+    const { control, state, open } = setup();
+    // まだタブが無ければ、戻る・進む先も無い。入力の無い聞き方にも答える
+    expect(await gateOpen(control, { action: 'back' })).toEqual({ outside: null });
+    expect(JSON.parse(textOf(await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate') })))).toEqual({ outside: null });
+    const page = open('http://localhost:3000/');
+    page.history = { entries: ['http://localhost:3000/', 'https://example.org/next'], index: 0 };
+    expect(await gateOpen(control, { action: 'forward' })).toEqual({ outside: 'https://example.org' });
+    expect(await gateOpen(control, { url: OUT })).toEqual({ outside: 'https://example.com' });
+    expect(await gateOpen(control, { url: 'example.com/b' })).toEqual({ outside: 'http://example.com' });
+    expect(await gateOpen(control, { url: 'http://localhost:3000/b' })).toEqual({ outside: null });
+    expect(await gateOpen(control, { url: 'localhost:4000' })).toEqual({ outside: null });
+    // 開けないもの（navigate が断る）
+    for (const url of ['file:///etc/passwd', 'http://exa mple.com/', '  ']) expect(await gateOpen(control, { url })).toEqual({ outside: null });
+    expect(await gateOpen(control, {})).toEqual({ outside: null });
+    expect(await gateOpen(control, { action: 'reload', url: OUT })).toEqual({ outside: null });
+    // 止めたものが無ければ、続ける先も無い
+    expect(await gateOpen(control, { action: 'continue' })).toEqual({ outside: null });
+    // 戻る先が無い
+    expect(await gateOpen(control, { action: 'back' })).toEqual({ outside: null });
+    state.hosts = ['example.com'];
+    expect(await gateOpen(control, { url: OUT })).toEqual({ outside: null });
+    state.hosts = [];
+    state.enabled = false;
+    expect(await gateOpen(control, { url: OUT })).toEqual({ outside: null });
+    state.enabled = true;
+    expect(await gateOpen(control, { url: OUT }, 'NOPE')).toEqual({ outside: null });
+    // JavaScript の実行の答えは、今までどおり
+    expect(JSON.parse(textOf(await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression: '1' } })))).toEqual({
+      local: true,
+      url: 'http://localhost:3000/',
+    });
+  });
+
+  it('人に確認した印があれば、今のタブで開いて、そのタブでそのオリジンを許す。許したオリジンの中は、確認なしで読んで・操作して・移れる', async () => {
+    const { control, call, open } = setup();
+    const page = open('http://localhost:3000/', { title: 'トップ' });
+    page.load = async (url) => {
+      page.url = url;
+      page.title = '外のページ';
+    };
+    expect(await gateOpen(control, { url: OUT })).toEqual({ outside: 'https://example.com' });
+    // タイトルも URL の全体も伝える（読んでよいページになった）
+    expect(textOf(await call('navigate', { url: OUT }))).toBe(`Opened: 外のページ\nURL: ${OUT}`);
+    expect(page.calls).toEqual([`loadURL ${OUT}`]);
+    expect(textOf(await call('get_console_logs'))).toBe('No console messages.');
+    expect(textOf(await call('list_tabs'))).toBe(`Tabs (* marks the current tab):\n* 1. 外のページ — ${OUT}`);
+    // 同じオリジンの中は、確認なしで移れる（フックは何も決めない）
+    expect(await gateOpen(control, { url: 'https://example.com/b' })).toEqual({ outside: null });
+    expect(textOf(await call('navigate', { url: 'https://example.com/b' }))).toBe('Opened: 外のページ\nURL: https://example.com/b');
+    // ユーザーに頼んだ返事にも、ページを添える
+    const pending = control.handle('S1', BROWSER_ASK_TOOL, { message: '見てください' });
+    await flush();
+    control.answerAsk('S1', control.pendingAsks()[0].ask!.id, { done: true, reason: '' });
+    expect(textOf(await pending)).toBe('The user pressed "終わった".\nCurrent page: 外のページ\nURL: https://example.com/b');
+    // ほかのオリジンは、まだ許していない（example.com と www.example.com は別）
+    expect(await gateOpen(control, { url: 'https://www.example.com/' })).toEqual({ outside: 'https://www.example.com' });
+  });
+
+  it('印は 1 回だけ、確認したときと同じ開き方（同じ URL・同じ今のタブ・新しいタブか）で使え、15 分で使えなくなる', async () => {
+    const { control, call, open } = setup();
+    const first = open('http://localhost:3000/');
+    const second = open('http://localhost:3001/', { activate: false });
+    await gateOpen(control, { url: OUT });
+    const refused = (result: { isError?: boolean }) => expect(result.isError).toBe(true);
+    // 確認したあとで、今のタブが変わった
+    control.activate('S1', second.tabId);
+    refused(await call('navigate', { url: OUT }));
+    control.activate('S1', first.tabId);
+    refused(await call('navigate', { url: OUT, newTab: true }));
+    refused(await call('navigate', { url: 'https://example.com/other' }));
+    expect(second.calls).toEqual([]);
+    // 確認したのと同じ開き方なら開ける。2 回目は使えない
+    await vi.advanceTimersByTimeAsync(15 * 60_000 - 1_000);
+    expect(textOf(await call('navigate', { url: OUT }))).toMatch(/^Opened: /);
+    refused(await call('navigate', { url: OUT, newTab: true }));
+    // 15 分たったら使えない
+    await gateOpen(control, { url: 'https://other.example.com/', newTab: true });
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    refused(await call('navigate', { url: 'https://other.example.com/', newTab: true }));
+  });
+
+  it('まだブラウザを開いていないセッション・新しいタブに開くと、できたタブに許可を渡す。開いたもとのタブには渡さない', async () => {
+    const { control, call, sentOn } = setup();
+    expect(await gateOpen(control, { url: OUT })).toEqual({ outside: 'https://example.com' });
+    expect(textOf(await call('navigate', { url: OUT }))).toBe(`Opened: ${OUT} のタイトル\nURL: ${OUT}`);
+    expect(sentOn(IpcChannel.BrowserOpen)).toEqual([{ sessionId: 'S1', url: OUT }]);
+    // 新しいタブ: 今のタブで許したオリジンでも、新しいタブには人に確認する
+    expect(await gateOpen(control, { url: 'https://example.com/b', newTab: true })).toEqual({ outside: 'https://example.com' });
+    const other = 'https://other.example.org/';
+    expect(await gateOpen(control, { url: other, newTab: true })).toEqual({ outside: 'https://other.example.org' });
+    expect(textOf(await call('navigate', { url: other, newTab: true }))).toBe(`Opened in a new tab (tab 2): ${other} のタイトル\nURL: ${other}`);
+    expect(textOf(await call('list_tabs'))).toBe(`Tabs (* marks the current tab):\n  1. ${OUT} のタイトル — ${OUT}\n* 2. ${other} のタイトル — ${other}`);
+    // もとのタブでは、other.example.org を許していない
+    await call('select_tab', { index: 1 });
+    expect(await gateOpen(control, { url: other })).toEqual({ outside: 'https://other.example.org' });
+  });
+
+  it('新しいタブができなかったときの許可は、あとでユーザーが開いたタブには渡さない', async () => {
+    const { control, call, state, open } = setup();
+    state.renderer = false;
+    await gateOpen(control, { url: OUT });
+    expect((await call('navigate', { url: OUT })).isError).toBe(true);
+    open(OUT, { title: 'ユーザーが開いた' });
+    expect(textOf(await call('list_tabs'))).toBe('Tabs (* marks the current tab):\n* 1. (not allowed for Claude) — https://example.com');
+  });
+
+  it('許したタブでも、Claude の操作で別のオリジンへ移ろうとしたら止める。continue で、また人に確認してから開く', async () => {
+    const { control, call, open } = setup();
+    const page = open('http://localhost:3000/');
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    page.load = async (url) => {
+      page.url = url;
+      // 同じオリジンへのリダイレクトは止めない。別のオリジン（www 付き）は止める
+      expect(control.blocksNavigation(asWebContents(page), 'https://example.com/home')).toBe(false);
+      expect(control.blocksNavigation(asWebContents(page), 'https://www.example.com/next?state=secret')).toBe(true);
+    };
+    const stopped = textOf(await call('navigate', { url: 'https://example.com/login' }));
+    expect(stopped).toBe(`Opened: ページ\nURL: https://example.com/login\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://www.example.com).${HINT}`);
+    // 印が無ければ続けない
+    expect((await call('navigate', { action: 'continue' })).isError).toBe(true);
+    expect(await gateOpen(control, { action: 'continue' })).toEqual({ outside: 'https://www.example.com' });
+    page.load = async (url) => {
+      page.url = url;
+    };
+    expect(textOf(await call('navigate', { action: 'continue' }))).toBe('Opened: ページ\nURL: https://www.example.com/next?state=secret');
+    expect(page.calls.at(-1)).toBe('loadURL https://www.example.com/next?state=secret');
+    // 続けたら、止めた先は残さない
+    expect(await call('navigate', { action: 'continue' })).toEqual(
+      textResult('Nothing was stopped in the current tab, so there is nothing to continue. To open a page, pass url.', true),
+    );
+  });
+
+  it('止めた先は、止めたタブに控える。続けるのは今のタブで止めたもの', async () => {
+    const ctx = setup();
+    const first = ctx.open('http://localhost:3000/');
+    const second = ctx.open('http://localhost:3001/', { activate: false });
+    await operating(ctx, first);
+    expect(ctx.control.blocksNavigation(asWebContents(first), 'https://example.com/x')).toBe(true);
+    expect(ctx.control.blocksNavigation(asWebContents(second), 'https://example.org/y')).toBe(true);
+    expect(await gateOpen(ctx.control, { action: 'continue' })).toEqual({ outside: 'https://example.com' });
+    ctx.control.activate('S1', second.tabId);
+    expect(await gateOpen(ctx.control, { action: 'continue' })).toEqual({ outside: 'https://example.org' });
+  });
+
+  it('許したページが新しいウインドウで開くもの: 同じオリジンは新しいタブに許可を渡し、別のオリジンは止めて、continue で新しいタブに開く', async () => {
+    const { control, call, open, sentOn } = setup();
+    const page = open('http://localhost:3000/');
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    page.page.locate = () => ({ rect: { x: 0, y: 0, width: 10, height: 10 }, viewport: { width: 800, height: 600 }, description: 'a#popup', covered: null });
+    let popup = 'https://example.com/popup';
+    page.debugger.handler = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') expect(control.openFromPage(asWebContents(page), popup, 'foreground-tab')).toBe(true);
+      return {};
+    };
+    expect(textOf(await call('click', { selector: '#popup' }))).toBe(
+      `Clicked: a#popup\nOpened in a new tab (tab 2): ${popup}. Further actions apply to this tab (switch tabs with list_tabs and select_tab).`,
+    );
+    expect(textOf(await call('list_tabs')).split('\n')[2]).toBe(`* 2. ${popup} のタイトル — ${popup}`);
+    await call('select_tab', { index: 1 });
+    popup = 'https://other.example.org/?leak=secret';
+    expect(textOf(await call('click', { selector: '#popup' }))).toBe(`Clicked: a#popup\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://other.example.org).${HINT}`);
+    expect(sentOn(IpcChannel.BrowserNewTab)).toHaveLength(1);
+    expect(await gateOpen(control, { action: 'continue' })).toEqual({ outside: 'https://other.example.org' });
+    expect(textOf(await call('navigate', { action: 'continue' }))).toBe(`Opened in a new tab (tab 3): ${popup} のタイトル\nURL: ${popup}`);
+    expect(sentOn(IpcChannel.BrowserNewTab).at(-1)).toEqual({ sessionId: 'S1', url: popup, background: false, openerTabId: page.tabId });
+  });
+
+  it('ユーザーの操作で移ったページは止めない。許していないオリジンなら読ませない。戻る・進む先も、タブで許したかで決める', async () => {
+    const { control, call, open } = setup();
+    const page = open('http://localhost:3000/');
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(control.blocksNavigation(asWebContents(page), 'https://www.example.com/')).toBe(false);
+    page.url = 'https://www.example.com/';
+    expect(textOf(await call('get_console_logs'))).toMatch(/^The current page \(https:\/\/www\.example\.com\) is not allowed for Claude: /);
+    // 戻る先が、このタブで許したオリジンなら、確認なしで戻れる
+    page.url = 'http://localhost:3000/';
+    page.history = { entries: [OUT, 'http://localhost:3000/'], index: 1 };
+    expect(await gateOpen(control, { action: 'back' })).toEqual({ outside: null });
+    page.history = { entries: ['https://www.example.com/', 'http://localhost:3000/'], index: 1 };
+    expect(await gateOpen(control, { action: 'back' })).toEqual({ outside: 'https://www.example.com' });
+    expect(textOf(await call('navigate', { action: 'back' }))).toBe('Went back: ページ\nURL: https://www.example.com/');
+  });
+
+  it('タブを閉じる・メニューでオフにする・セッションを忘れると、許可と印を捨てる。画面が同じタブを作り直したときは引き継ぐ', async () => {
+    const { control, call, open } = setup();
+    const page = open('http://localhost:3000/');
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    // 画面が同じタブの webview を作り直したら、許可を引き継ぐ。別のタブには渡さない
+    const again = Object.assign(new FakeContents({ url: OUT }), { tabId: page.tabId });
+    control.attach('S1', page.tabId, again.id);
+    expect(textOf(await call('get_console_logs'))).toBe('No console messages.');
+    const other = new FakeContents({ url: OUT });
+    control.attach('S1', 'tab-9', other.id);
+    control.activate('S1', 'tab-9');
+    expect((await call('get_console_logs')).isError).toBe(true);
+    // 閉じたタブの許可は、タブと一緒に無くなる
+    expect(textOf(await call('close_tab', { index: 1 }))).toBe('Closed tab 1 (1 tab left)');
+    control.attach('S1', page.tabId, again.id);
+    control.activate('S1', page.tabId);
+    expect((await call('get_console_logs')).isError).toBe(true);
+    // メニューでオフにした
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    expect(textOf(await call('get_console_logs'))).toBe('No console messages.');
+    await gateOpen(control, { url: 'https://example.org/' });
+    control.turnOff();
+    expect((await call('get_console_logs')).isError).toBe(true);
+    expect(control.humanOnly('S1', request({ url: 'https://example.org/' }))).toBeNull();
+    expect((await call('navigate', { url: 'https://example.org/' })).isError).toBe(true);
+    // セッションを忘れたら、印も捨てる
+    await gateOpen(control, { url: OUT });
+    expect(control.humanOnly('S1', request({ url: OUT }))).not.toBeNull();
+    control.forget('S1');
+    expect(control.humanOnly('S1', request({ url: OUT }))).toBeNull();
+  });
+
+  it('子の許可の確認のうち、外を開く印がある間の navigate は、人だけが答えられる（親に許させない）', async () => {
+    const { control, call, open } = setup();
+    open('http://localhost:3000/');
+    expect(control.humanOnly('S1', request({ url: OUT }))).toBeNull();
+    await gateOpen(control, { url: 'http://localhost:3000/b' });
+    expect(control.humanOnly('S1', request({ url: 'http://localhost:3000/b' }))).toBeNull();
+    await gateOpen(control, { url: OUT });
+    expect(control.humanOnly('S1', request({ url: OUT }))).toBe(
+      'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.',
+    );
+    expect(control.humanOnly('S1', request({ selector: '#a' }, 'click'))).toBeNull();
+    expect(control.humanOnly('S2', request({ url: OUT }))).toBeNull();
+    // 印を使ったら、もう当たらない
+    await call('navigate', { url: OUT });
+    expect(control.humanOnly('S1', request({ url: OUT }))).toBeNull();
+    // 15 分たった印も当たらない
+    await gateOpen(control, { url: 'https://example.org/' });
+    expect(control.humanOnly('S1', request({ url: 'https://example.org/' }))).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(control.humanOnly('S1', request({ url: 'https://example.org/' }))).toBeNull();
   });
 });

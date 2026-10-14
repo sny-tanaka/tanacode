@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel } from '../src/shared/ipc';
+import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
 import { textResult } from '../src/main/mcp-bridge';
 import { keySpec } from '../src/main/browser-control';
 import { FakeImage, HOST, images } from './helpers/fake-electron';
@@ -44,7 +46,7 @@ describe('ページを読むツールの前に（今のページ）', () => {
     for (const tool of ['screenshot', 'get_text', 'get_accessibility_tree', 'get_console_logs', 'click', 'evaluate']) {
       const result = await call(tool, { selector: '#a', expression: '1' });
       expect(result.isError, tool).toBe(true);
-      expect(textOf(result), tool).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude\./);
+      expect(textOf(result), tool).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude: it is outside the hosts the user allowed for Claude .*To use it, open it with navigate \(tanacode asks the user for permission\)\.$/);
       expect(textOf(result), tool).not.toContain('secret');
     }
     expect(page.scripts).toEqual([]);
@@ -819,6 +821,50 @@ describe('許していない先の iframe の中（不具合の確かめ）', ()
     const refused = await call('type', { text: '4242' });
     expect(refused).toEqual(textResult('Cannot type because the focus is inside an iframe not allowed for Claude (https://pay.example.com).', true));
     expect(inputs(page)).toEqual([]);
+  });
+});
+
+describe('人がタブで許した、許す先の外のオリジンと iframe', () => {
+  // 開く確認のフックが聞き（人に確認した印を控える）、Claude が開く。そのタブで、そのオリジンを許したことになる
+  const permitAndOpen = async (ctx: ReturnType<typeof setup>, url: string) => {
+    await ctx.control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { url } });
+    expect(textOf(await ctx.call('navigate', { url }))).toMatch(/^Opened: /);
+  };
+
+  it('別オリジンの iframe には効かない: 許したオリジンの iframe でも、ほかのページの中なら読まない・押さない・打たない', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    await permitAndOpen(ctx, 'https://pay.example.com/');
+    await ctx.call('navigate', { url: 'http://localhost:3000/' });
+    page.page.point = () => ({ cross: true, src: 'https://pay.example.com/checkout', frame: { x: 0, y: 0 }, description: 'iframe#pay' });
+    expect((await ctx.call('click', { x: 10, y: 10 })).isError).toBe(true);
+    page.page.focus = () => 'https://pay.example.com/card';
+    expect((await ctx.call('type', { text: '4242' })).isError).toBe(true);
+    expect(inputs(page)).toEqual([]);
+    page.page.text = () => ({ title: 'トップ', url: 'http://localhost:3000/', parts: [{ frame: null, text: '本文' }] });
+    answerCdp(page, { 'Runtime.evaluate': () => ({ result: { value: '決済の中身' } }) }, { C1: 'https://pay.example.com/checkout' });
+    addChildFrame(page, 'C1');
+    expect(textOf(await ctx.call('get_text'))).not.toContain('決済の中身');
+  });
+
+  it('許したページの中の、同じオリジンの iframe はツリーも読む。別オリジンの iframe は読まない', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    await permitAndOpen(ctx, 'https://example.com/');
+    const node = (id: string, name: string) => ({ nodeId: id, ignored: false, role: { value: 'heading' }, name: { value: name } });
+    answerCdp(page, {
+      'Page.getFrameTree': () => ({
+        frameTree: {
+          frame: { id: 'F0', url: 'https://example.com/' },
+          childFrames: [{ frame: { id: 'F1', url: 'https://example.com/frame' } }, { frame: { id: 'F2', url: 'https://ads.example.org/' } }],
+        },
+      }),
+      'Accessibility.getFullAXTree': (params) => ({ nodes: [node(String(params?.frameId), `見出し ${String(params?.frameId)}`)] }),
+    });
+    expect(textOf(await ctx.call('get_accessibility_tree'))).toBe(
+      ['URL: https://example.com/', '- heading "見出し F0"', '--- inside iframe (https://example.com/frame) ---', '- heading "見出し F1"'].join('\n'),
+    );
+    expect(page.debugger.sent('Accessibility.getFullAXTree').map((c) => c.params?.frameId)).toEqual(['F0', 'F1']);
   });
 });
 
