@@ -798,7 +798,10 @@ export class SessionManager {
   async setMode(id: string, mode: PermissionMode): Promise<boolean> {
     const rt = this.runtimes.get(id);
     const ok = (await rt?.screen?.setMode(mode)) ?? false;
-    if (ok && rt) rt.knownMode = mode;
+    if (ok && rt) {
+      rt.knownMode = mode;
+      this.store.update(id, { knownMode: mode });
+    }
     return ok;
   }
 
@@ -1208,7 +1211,9 @@ export class SessionManager {
     runtime.attention = null;
     runtime.ready = false;
     runtime.startMode = mode;
-    runtime.knownMode = mode;
+    // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す
+    runtime.knownMode = adopted ? (record.knownMode ?? null) : mode;
+    if (!adopted) this.store.update(id, { knownMode: mode });
     runtime.aliveSince = adopted?.startedAt ?? null;
     runtime.turnOpen = false;
     runtime.queue = [];
