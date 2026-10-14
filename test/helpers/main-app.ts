@@ -444,7 +444,7 @@ const modules: Record<string, Record<string, unknown>> = {
   },
   github: githubModule,
   'homebrew-update': { CASK: 'sny-tanaka/tanacode/tanacode', HomebrewUpdater: { detect: (...args: unknown[]) => state.homebrewDetect(...args) } },
-  'app-update': { AppUpdateMonitor: fakeClass('AppUpdateMonitor', { get: echo('appUpdates.get'), start: () => undefined, stop: () => undefined }) },
+  'app-update': { AppUpdateMonitor: fakeClass('AppUpdateMonitor', { get: echo('appUpdates.get'), refresh: echo('appUpdates.refresh'), start: () => undefined, stop: () => undefined }) },
   'session-discovery': { discoverSessions: (...args: unknown[]) => state.fn.discoverSessions(...args) },
   'source-control': {
     SourceControl: fakeClass('SourceControl', {

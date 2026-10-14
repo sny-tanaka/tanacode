@@ -73,6 +73,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.AccountGet, [], call('readClaudeAccount', join(homedir(), '.claude.json'))],
     [IpcChannel.ClaudeVersionGet, [], call('claudeVersions.get')],
     [IpcChannel.AppUpdateGet, [], call('appUpdates.get')],
+    [IpcChannel.AppUpdateCheck, [], call('appUpdates.refresh')],
     [IpcChannel.BrowserAsksGet, [], call('browser.pendingAsks')],
     [IpcChannel.WalkthroughGet, [], call('walkthrough.list')],
     [IpcChannel.WorkspaceInfo, ['s1'], callIn(cwdOf('s1'), 'workspace.info')],

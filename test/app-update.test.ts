@@ -56,6 +56,36 @@ describe('AppUpdateMonitor', () => {
     notFound.stop();
   });
 
+  it('確かめられたかを返す（タイトルバーの印を押して確かめたときに見せる）', async () => {
+    const latest = new AppUpdateMonitor('0.1.5', () => {}, reply(200, { tag_name: 'v0.1.5' }));
+    latest.start();
+    await expect(latest.refresh()).resolves.toBe(true);
+    latest.stop();
+    const failing = new AppUpdateMonitor('0.1.4', () => {}, () => Promise.reject(new Error('offline')));
+    failing.start();
+    await expect(failing.refresh()).resolves.toBe(false);
+    failing.stop();
+  });
+
+  it('確かめている途中に頼まれたら、新しく問い合わせずに、その結果を返す', async () => {
+    let asked = 0;
+    let answer: (res: Response) => void = () => {};
+    const monitor = new AppUpdateMonitor('0.1.4', () => {}, () => (asked++, new Promise((resolve) => (answer = resolve))));
+    monitor.start();
+    const pressed = monitor.refresh();
+    answer(new Response(JSON.stringify({ tag_name: 'v0.1.5' })));
+    await expect(pressed).resolves.toBe(true);
+    expect(asked).toBe(1);
+    monitor.stop();
+  });
+
+  it('止めているとき（設定でオフ）は、問い合わせずに false を返す', async () => {
+    let asked = 0;
+    const monitor = new AppUpdateMonitor('0.1.4', () => {}, () => (asked++, Promise.reject(new Error('呼ばない'))));
+    await expect(monitor.refresh()).resolves.toBe(false);
+    expect(asked).toBe(0);
+  });
+
   it('問い合わせのあいだに止めたら、結果を捨てる', async () => {
     const changes: unknown[] = [];
     let answer: (res: Response) => void = () => {};
@@ -64,7 +94,7 @@ describe('AppUpdateMonitor', () => {
     const pending = monitor.refresh();
     monitor.stop();
     answer(new Response(JSON.stringify({ tag_name: 'v0.1.5' })));
-    await pending;
+    await expect(pending).resolves.toBe(false);
     expect(changes).toEqual([]);
     expect(monitor.get()).toBeNull();
   });

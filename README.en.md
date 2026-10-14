@@ -172,7 +172,7 @@ This builds the app and installs it to `/Applications/tanacode.app`, for whichev
 
 ### Updating
 
-When a new version is out, a blue download mark appears to the right of the version in the title bar (tanacode checks GitHub Releases every hour). You can also get notified with Watch → Custom → Releases on the repository.
+When a new version is out, a blue download mark appears to the right of the version in the title bar (tanacode checks GitHub Releases every hour; click the check mark shown when you are up to date to check right away). You can also get notified with Watch → Custom → Releases on the repository.
 
 - **If you installed with Homebrew**: updates are automatic. When tanacode finds a new version, it runs `brew update` and `brew fetch` in the background to download it, then shows "Restart to Update" in the title bar.
   - Clicking "Restart to Update" quits tanacode, replaces it with Homebrew, and starts it again. If some sessions have Claude Code running, you can choose to update and keep them running, or stop them and update. If you keep them running, new Claude tools added in the new version become available after you restart each session with "Restart" in the chat header

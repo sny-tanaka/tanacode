@@ -1097,7 +1097,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 - 図案だけの元の画像は `design/logo-mark.png`（背景を透過したもの）。ロゴは、これと「tanacode」の文字を並べた `design/logo.png`。README は、どちらのテーマでも読める背景付きの `design/logo-banner.png` を使います。タイトルバーのロゴは `src/renderer/src/assets/logo.png`、アプリのアイコンは `build/icon-source.png` から `npm run icon` で作ります。新規セッションの画面に出す小さいアイコン（`src/renderer/src/assets/icon.png`）も、同じ `npm run icon` で作ります。
 - バージョンは、ビルドのときに `package.json` の `version` を埋め込みます。
-- バージョンの右には、新しいバージョンの印（`layout/AppUpdate.tsx`）。main の `app-update.ts` が、起動時と 1 時間ごとに GitHub の `releases/latest` を問い合わせ、`app.getVersion()` と比べます。`releases/latest` は公開済みのバージョンだけを返すので、Releases の下書きを公開した時点で知らせが出ます。開くページは、返事の `html_url` を使わずにバージョンから組み立てます。問い合わせは `net.fetch`（macOS のプロキシの設定が効く）。確かめられなかったときは前の結果のまま。メニューの「新しいバージョンが出たら通知する」でオフにすると、問い合わせを止めて印も消します。新しいバージョンの印は、目の端でも気づけるよう、見つけたときに動かします（まだ見ていなければ 1 時間ごとにも）。マウスを乗せた・押したバージョンは localStorage に残し、そのバージョンではもう動かしません。
+- バージョンの右には、新しいバージョンの印（`layout/AppUpdate.tsx`）。main の `app-update.ts` が、起動時と 1 時間ごとに GitHub の `releases/latest` を問い合わせ、`app.getVersion()` と比べます。`releases/latest` は公開済みのバージョンだけを返すので、Releases の下書きを公開した時点で知らせが出ます。開くページは、返事の `html_url` を使わずにバージョンから組み立てます。問い合わせは `net.fetch`（macOS のプロキシの設定が効く）。確かめられなかったときは前の結果のまま。最新のときのチェックを押すと、`appUpdate.check` で今すぐ問い合わせます（確かめている途中なら、その結果を待つ）。確かめられたかを返し、確かめられなかったときだけ、押した画面で失敗の印にします（1 時間ごとの確認は、確かめられなくても何も出さない）。メニューの「新しいバージョンが出たら通知する」でオフにすると、問い合わせを止めて印も消します。新しいバージョンの印は、目の端でも気づけるよう、見つけたときに動かします（まだ見ていなければ 1 時間ごとにも）。マウスを乗せた・押したバージョンは localStorage に残し、そのバージョンではもう動かしません。
 - Homebrew で入れたアプリは、main の `homebrew-update.ts` が新しいバージョンを入れます。Homebrew で入れたとみなすのは、動いているのが `/Applications/tanacode.app` で、`brew info --cask --json=v2 sny-tanaka/tanacode/tanacode` の記録が、この tap の cask を動いているのと同じバージョンで入れているとき（pkg・zip・ソースのビルドで上書きしたものを除くため）。新しいバージョンが出たら、裏で `brew update` と `brew fetch --cask` だけをして（tap の cask がまだ古ければ 10 分ごと、失敗したら 1 時間ごとにやり直す）、印を「再起動して更新」にします。入れ替え（`brew upgrade --cask`）は、アプリが終わるのを待ってから、切り離したシェルで行います。動いているアプリの中身を入れ替えると、あとから起動する Electron の補助プロセスだけが新しいバージョンになり、古い本体と混ざるためです。シェルは `HOMEBREW_NO_ASK` を付け、入力をつながずに brew を動かします（確認の y/n や sudo のパスワードで止まらず、失敗にする）。ログと終了コードを `homebrew-update.log`・`homebrew-update.result` に残し、失敗していたら次の起動で知らせます。入れ替えるのは、「再起動して更新」を押したとき（入れ替えたら起動し直す）と、メニューの「終了するときに新しいバージョンを入れる（Homebrew）」と「新しいバージョンが出たら通知する」がオンで、ふつうに終了したとき。Mac の再起動・シャットダウンでは入れ替えません。pty ホストは止めずに残るので、pty ホストの形を変えたときは、これまでどおり `PROTOCOL` を上げます。
 
 ## 読むもの・書くもの
@@ -1119,7 +1119,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | Claude が読むセッションのフォルダ（`git diff`・`git ls-files`・未追跡のファイルの中身） | ほかのセッションのブランチの変更（`get_session_diff`。見える範囲のセッションだけ） |
 | `~/.claude/settings.json` | ユーザーの statusLine があるかどうか（読むだけ。プロジェクトの `.claude/settings*.json` は見ない） |
 | 登録した設定ファイル（パスは `settings.json` の `settingsFiles`。多くは `~/.claude/settings-<名前>.json`） | 選んだセッションの起動で、アプリの設定と合わせて `--settings` に渡す（API キーを含むことがある） |
-| `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと。メニューの「新しいバージョンが出たら通知する」で止められる） |
+| `https://api.github.com/repos/sny-tanaka/tanacode/releases/latest` | tanacode の新しいバージョン（起動時・1 時間ごと・タイトルバーのチェックを押したとき。メニューの「新しいバージョンが出たら通知する」で止められる） |
 | Homebrew（`brew info`・`brew update`・`brew fetch`・`brew upgrade`。tap と GitHub の Releases） | Homebrew で入れたか、新しいバージョンのダウンロードと入れ替え（Homebrew で入れたときだけ。入れ替えはアプリが終わってから） |
 
 チャットの翻訳では、ボタンを押したブロックの文字を、同梱の補助プログラム（`Contents/Resources/tanacode-translate`）に標準入力で渡し、macOS 標準の翻訳で Mac の中で訳します。外へは送りません。訳文は画面のメモリにだけ持ち、どこにも書きません。
@@ -1220,7 +1220,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）
   - `app-settings.ts`: アプリ自身の設定（通知のオン・オフ、新しいバージョンが出たら通知するか、終了するときに新しいバージョンを入れるか、登録した設定ファイル、アプリ内ブラウザを Claude に操作させるか・許す先、Claude にほかのセッションを扱わせるか、画面の言語）の保存
-  - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと）
+  - `app-update.ts`: tanacode の新しいバージョン（GitHub の Releases。起動時・1 時間ごと・タイトルバーのチェックを押したとき）
   - `homebrew-update.ts`: Homebrew で入れたかの判定と、新しいバージョンのダウンロード（`brew fetch`）・終了したあとの入れ替え（切り離したシェルで `brew upgrade`）
   - `window-state.ts`: ウインドウの位置と大きさの保存と、次の起動での置き場所（今のディスプレイに収める）
   - `shared-prefs.ts`: プロファイルをまたいで同じにする表示設定（`shared-prefs.json`）。キーは `src/shared/prefs.ts` の `SHARED_PREF_KEYS`（画面の localStorage のキーと同じ）
@@ -1264,7 +1264,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist-state.test.ts`: 「いまの状態」のリスト（Claude ができること・知らせへの出し方・圧縮の直後の決まった文）
   - `bash-task-tracker.test.ts` / `notification.test.ts` / `screen-tracker.test.ts`: 読み取りの部品の単体の確認（出力ファイルの読み込みと完了通知の重なり、通知の本文、完了通知の使用量、権限モードの切り替えのキー（途中で許可の確認が出たらやめる）、`/tasks` の画面の読み取りと止める操作。画面は偽の Claude Code が描く）
   - `scheduled-messages.test.ts`: 時刻を指定して送信（時刻になったら送る・止まったセッションの再開・取り消し・送れなかったとき・断るもの・保存と読み直し・時刻を過ぎていたもの・時刻の表示と選択肢・通知の本文）
-  - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき）
+  - `app-update.test.ts`: 新しいバージョンの確認（Releases の返事の読み取り・バージョンの比べ方・確かめられなかったときと止めたとき・押して確かめたときの返事）
   - `homebrew-update.test.ts`: Homebrew での更新（brew の返事の読み取り・Homebrew で入れたかの判定・ダウンロードとやり直し・入れ替えのシェル。シェルは本物の sh で、作り物の brew を動かす）
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）

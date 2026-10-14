@@ -21,11 +21,11 @@ export function appUpdateOf(current: string, latest: string): AppUpdate {
   return { latest, available: compareVersions(latest, current) > 0, url: `${REPO_URL}/releases/tag/v${latest}` };
 }
 
-// 起動時と 1 時間ごとに確かめ、結果が変わったら知らせる。確かめられなかったとき（オフラインなど）は、前の結果のままにする。
+// 起動時と 1 時間ごと（と、タイトルバーの印を押したとき）に確かめ、結果が変わったら知らせる。確かめられなかったとき（オフラインなど）は、前の結果のままにする。
 // 止めたとき（設定でオフにしたとき）は、結果を消して null を知らせる
 export class AppUpdateMonitor {
   private timer: NodeJS.Timeout | null = null;
-  private current: Promise<void> | null = null;
+  private current: Promise<boolean> | null = null;
   private last: AppUpdate | null = null;
 
   constructor(
@@ -50,15 +50,17 @@ export class AppUpdateMonitor {
     return this.last;
   }
 
-  // 確かめている途中なら、それを待つ（同時に何度も問い合わせない）
-  refresh(): Promise<void> {
+  // 確かめる。確かめている途中なら、それを待つ（同時に何度も問い合わせない）。
+  // 確かめられたら true（タイトルバーの印を押して確かめたときに、確かめられなかったことを見せる）。止めているときは問い合わせない
+  refresh(): Promise<boolean> {
+    if (!this.timer) return Promise.resolve(false);
     this.current ??= this.check().finally(() => {
       this.current = null;
     });
     return this.current;
   }
 
-  private async check(): Promise<void> {
+  private async check(): Promise<boolean> {
     let latest: string | null = null;
     try {
       const res = await this.fetcher(LATEST_URL, {
@@ -70,7 +72,9 @@ export class AppUpdateMonitor {
       // オフライン・タイムアウト・JSON でない返事は、次の機会に確かめ直す
     }
     // 問い合わせのあいだに止めたら、結果を捨てる
-    if (latest && this.timer) this.set(appUpdateOf(this.version, latest));
+    if (!latest || !this.timer) return false;
+    this.set(appUpdateOf(this.version, latest));
+    return true;
   }
 
   private set(update: AppUpdate | null): void {

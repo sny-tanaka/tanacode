@@ -186,9 +186,12 @@ input[type='checkbox'] {
   background: none;
   -webkit-app-region: no-drag;
 }
-/* 最新なら、バージョンの文字と同じ色で控えめに */
+/* 最新なら、バージョンの文字と同じ色で控えめに。押すと、今すぐ確かめ直す */
 .app-update.latest {
   color: var(--text-tertiary);
+  cursor: pointer;
+}
+.app-update.latest:disabled {
   cursor: default;
 }
 .app-update.available {
@@ -196,8 +199,27 @@ input[type='checkbox'] {
   color: var(--blue);
   cursor: pointer;
 }
+.app-update.latest:hover:not(:disabled),
 .app-update.available:hover {
   background: var(--bg-hover);
+}
+/* 押して確かめて、最新のままだった。終わった印（.check-mark.animate）と同じく、丸 → チェックの順に線を描き直す（長さは丸が 2π×9、チェックが約 11.5） */
+.app-update.confirmed .icon {
+  animation: check-pop 0.5s ease-out;
+}
+.app-update.confirmed .icon circle {
+  stroke-dasharray: 57;
+  stroke-dashoffset: 57;
+  animation: check-draw 0.35s ease-out forwards;
+}
+.app-update.confirmed .icon path {
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+  animation: check-draw 0.25s ease-out 0.3s forwards;
+}
+/* 押して確かめられなかった（オフラインなど） */
+.app-update.failed {
+  color: var(--warn);
 }
 /* ダウンロード済みの新しいバージョン（Homebrew）。押せば済むことが分かるよう、文字も出す */
 .app-update.ready {
@@ -252,8 +274,12 @@ input[type='checkbox'] {
 }
 @media (prefers-reduced-motion: reduce) {
   .app-update.calling .icon > path:first-child,
-  .app-update.calling::after {
+  .app-update.calling::after,
+  .app-update.confirmed .icon,
+  .app-update.confirmed .icon circle,
+  .app-update.confirmed .icon path {
     animation: none;
+    stroke-dashoffset: 0;
   }
 }
 /* 右端のボタン（通知のベル）。帯はドラッグでウインドウを動かせるので、押せるようにドラッグを外す */
