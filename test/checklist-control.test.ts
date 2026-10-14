@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { liveCards } from '../src/shared/checklist';
 import { parseChecklistEvent } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
 import type { ScreenInfo } from '../src/shared/screen';
@@ -95,7 +96,7 @@ describe('MCP のツール（断るとき・結果の文）', () => {
     // 文字でない値は、変えないものとして扱う
     await call('list_update', { list: '完了前チェック', name: 1, description: null });
     expect(store.findList(ME, '完了前チェック')).toMatchObject({ description: '終える前に確かめる' });
-    expect(first(await call('list_delete', { list: '完了前チェック' }))).toBe('Moved the list "完了前チェック" to the trash (the user can restore it in the app).');
+    expect(first(await call('list_delete', { list: '完了前チェック' }))).toBe('Moved the list "完了前チェック" to the trash (restore it with list_restore).');
     expect(store.findList(ME, '完了前チェック')).toBeUndefined();
     expect(store.lists(ME)[0].deletedAt).toBeDefined();
   });
@@ -134,11 +135,12 @@ describe('MCP のツール（断るとき・結果の文）', () => {
     expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: 'やり直す' }))).toBe('#1 was already unchecked.');
   });
 
-  it('card_move: 同じリスト（書き方が違うだけの名前も）へは移さない', async () => {
-    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
+  it('card_move: 先に同じリスト（書き方が違うだけの名前も）を渡すと、to_list を省いたときと同じく、リストの中で並べ替える', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }] });
     const result = await call('card_move', { list: 'やること', numbers: '1', to_list: ' やること ' });
-    expect(result.isError).toBe(true);
-    expect(first(result)).toBe('The destination is the same list.');
+    expect(result.isError).toBeUndefined();
+    expect(first(result)).toBe('Put #1 in "やること" at the end (the numbers stay). Order of "やること" now: #2, #1.');
+    expect(store.lists(ME)).toHaveLength(1);
   });
 
   it('card_restore: ゴミ箱に無い番号は、ゴミ箱に無いと返す', async () => {
@@ -213,6 +215,290 @@ describe('MCP のツール（断るとき・結果の文）', () => {
       throw new Error('読めない');
     });
     await expect(call('checklist_overview')).rejects.toThrow('読めない');
+  });
+});
+
+describe('並べ替えとゴミ箱（card_move・checklist_trash・list_restore）', () => {
+  const titles = (name: string, session = ME) => liveCards(store.findList(session, name)!).map((c) => `#${c.number} ${c.title}`);
+
+  it('card_move: to_list を省くと、numbers に書いた順に並べ替える（番号はそのまま）。before を省くと最後に入れる', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }, { title: 'D' }] });
+    expect(first(await call('card_move', { list: 'やること', numbers: '3,1', before: 2 }))).toBe(
+      'Put #3, #1 in "やること" before #2 (the numbers stay). Order of "やること" now: #3, #1, #2, #4.',
+    );
+    expect(first(await call('card_move', { list: 'やること', numbers: '2' }))).toBe('Put #2 in "やること" at the end (the numbers stay). Order of "やること" now: #3, #1, #4, #2.');
+    expect(titles('やること')).toEqual(['#3 C', '#1 A', '#4 D', '#2 B']);
+    // 一覧も、並べ替えた順に出す
+    expect(first(await call('checklist_overview'))).toContain('- [ ] #3 C\n- [ ] #1 A\n- [ ] #4 D\n- [ ] #2 B');
+    // 同じリストの中の並べ替えは、スレッドに記録を残さない
+    expect(store.findList(ME, 'やること')!.cards.every((c) => c.thread.length === 1)).toBe(true);
+  });
+
+  it('card_move: before が移すカードそのものなら、そこから後ろの、移さない最初のカードの前に入れる（無ければ最後）', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }, { title: 'D' }] });
+    expect(first(await call('card_move', { list: 'やること', numbers: '4,1', before: 1 }))).toBe(
+      'Put #4, #1 in "やること" before #2 (the numbers stay). Order of "やること" now: #4, #1-3.',
+    );
+    expect(first(await call('card_move', { list: 'やること', numbers: '2-3', before: '#3' }))).toBe(
+      'Put #2, #3 in "やること" at the end (the numbers stay). Order of "やること" now: #4, #1-3.',
+    );
+  });
+
+  it('card_move: ほかのリストへは、before の前に入れられる（番号は先で振り直す）。無い番号・まだ無いリスト・読めない before は断り、何も変えない', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+    await call('card_add', { list: '移した先', list_description: '', cards: [{ title: 'X' }, { title: 'Y' }] });
+    expect(first(await call('card_move', { list: 'やること', numbers: '3,1', to_list: '移した先', before: 2 }))).toBe(
+      'Moved #3, #1 from "やること" to "移した先" before #2 (new numbers: #3, #4). Order of "移した先" now: #1, #3, #4, #2.',
+    );
+    expect(titles('移した先')).toEqual(['#1 X', '#3 C', '#4 A', '#2 Y']);
+    expect(first(await call('card_move', { list: 'やること', numbers: '2', to_list: '移した先', before: 9 }))).toBe(
+      '#9 is not in "移した先". Check the numbers with checklist_overview.',
+    );
+    expect(first(await call('card_move', { list: 'やること', numbers: '2', to_list: '新しいリスト', before: 1 }))).toBe(
+      'There is no list "新しいリスト" yet, so there is no #1 to put the cards before. Omit before to create the list.',
+    );
+    expect(first(await call('card_move', { list: 'やること', numbers: '2', before: '1-2' }))).toBe('before must be one card number, like 3.');
+    expect(first(await call('card_move', { list: 'やること', numbers: '2', before: 0 }))).toBe('before must be one card number, like 3.');
+    expect(store.findList(ME, '新しいリスト')).toBeUndefined();
+    expect(titles('やること')).toEqual(['#2 B']);
+    expect(titles('移した先')).toEqual(['#1 X', '#3 C', '#4 A', '#2 Y']);
+  });
+
+  it('card_move: 決定事項のリストの中では並べ替えられる。外へは、これまでどおり移せない', async () => {
+    await call('card_add', { list: '決定事項', list_description: '', list_kind: 'decisions', cards: [{ title: 'A' }, { title: 'B' }] });
+    expect(first(await call('card_move', { list: '決定事項', numbers: '2', before: 1 }))).toBe(
+      'Put #2 in "決定事項" before #1 (the numbers stay). Order of "決定事項" now: #2, #1.',
+    );
+    const out = await call('card_move', { list: '決定事項', numbers: '1', to_list: 'やること' });
+    expect(out.isError).toBe(true);
+    expect(first(out)).toContain('but you cannot move its cards out; only the user can.');
+    expect(titles('決定事項')).toEqual(['#2 B', '#1 A']);
+  });
+
+  it('checklist_trash: ゴミ箱のリスト（id・種類・消した人と時刻・中のカード）と、ほかのリストから消したカードを返す。決定事項のものには、戻せるのは人だけと添える', async () => {
+    const at = new Date(2026, 9, 7, 9, 5).getTime();
+    const timed = new ChecklistStore(join(dir, 'timed'), () => {}, () => at);
+    const c = new ChecklistControl({ store: timed, host, enabled: () => true, notifyDelayMs: 10 });
+    const run = async (name: string, args: Record<string, unknown> = {}) => first(await c.handle(ME, name, args));
+    try {
+      expect(await run('checklist_trash')).toBe('The trash is empty.');
+      await run('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+      await run('card_delete', { list: 'やること', numbers: '2' });
+      await run('list_delete', { list: 'やること' });
+      await run('card_add', { list: '完了前チェック', list_description: '', cards: [{ title: 'D' }] });
+      const done = timed.findList(ME, '完了前チェック')!;
+      timed.deleteCards(ME, 'human', done.id, [done.cards[0].id]);
+      await run('card_add', { list: '決定事項', list_description: '', list_kind: 'decisions', cards: [{ title: 'E' }] });
+      await run('card_revoke', { list: '決定事項', numbers: '1', reason: '取り下げ' });
+      const old = timed.createList(ME, 'human', '古い決定', '', 'decisions');
+      timed.deleteList(ME, 'human', old.id);
+      const todo = timed.lists(ME).find((l) => l.name === 'やること')!;
+      expect(await run('checklist_trash')).toBe(
+        [
+          '## Lists in the trash',
+          `- "やること" (id ${todo.id.slice(0, 8)}; ordinary list; deleted by Claude, 2026-10-07 09:05; restore it with list_restore): 2 cards`,
+          '  - #1 A',
+          '  - #3 C',
+          '  - (1 card deleted before the list stays in the trash after list_restore)',
+          `- "古い決定" (id ${old.id.slice(0, 8)}; decisions list; deleted by the user, 2026-10-07 09:05; only the user can restore it): 0 cards`,
+          '',
+          '## Cards in the trash (restore them with card_restore)',
+          '- "完了前チェック" #1 D (deleted by the user, 2026-10-07 09:05)',
+          '- "決定事項" #1 E (deleted by Claude, 2026-10-07 09:05; revoked; only the user can restore it)',
+        ].join('\n'),
+      );
+      // 消した人を残す前に消したリストは、時刻だけ
+      delete todo.deletedBy;
+      expect(await run('checklist_trash')).toContain('; ordinary list; deleted 2026-10-07 09:05; restore it with list_restore): 2 cards');
+    } finally {
+      c.dispose();
+      timed.flush();
+    }
+  });
+
+  it('list_restore: ゴミ箱のリストを、消したときのカードごと戻す。同じ名前のリストがあれば名前を変え、先に消したカードはゴミ箱に残して、その数を返す', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+    await call('card_delete', { list: 'やること', numbers: '2' });
+    await call('list_delete', { list: 'やること' });
+    await call('list_create', { name: 'やること' });
+    expect(first(await call('list_restore', { list: 'やること' }))).toBe(
+      'Restored the list "やること (2)" from the trash with 2 cards (#1, #3). A list named "やること" already exists, so the restored list is named "やること (2)". 1 card deleted before the list stays in the trash (restore it with card_restore; checklist_trash shows it).',
+    );
+    const restored = store.findList(ME, 'やること (2)')!;
+    expect([restored.deletedAt, restored.deletedBy]).toEqual([undefined, undefined]);
+    expect(titles('やること (2)')).toEqual(['#1 A', '#3 C']);
+    expect(first(await call('card_restore', { list: 'やること (2)', numbers: '2' }))).toBe('Restored #2 in "やること (2)".');
+    expect(first(await call('checklist_trash'))).toBe('The trash is empty.');
+  });
+
+  it('list_restore: 同じ名前のリストがゴミ箱にいくつもあれば、checklist_trash の id で指してもらう。ゴミ箱に無い・決定事項のリストは断る', async () => {
+    const one = store.createList(ME, 'human', '確認', '');
+    store.deleteList(ME, 'human', one.id);
+    const two = store.createList(ME, 'human', '確認', '');
+    store.addCards(ME, 'human', two.id, [{ title: 'A' }]);
+    store.deleteList(ME, 'human', two.id);
+    const ids = [one, two].map((l) => l.id.slice(0, 8));
+    expect(first(await call('list_restore', { list: '確認' }))).toBe(`More than one list in the trash matches "確認" (ids: ${ids.join(', ')}). Pass the id from checklist_trash.`);
+    expect(first(await call('list_restore', { list: ` ${ids[1].toUpperCase()} ` }))).toBe('Restored the list "確認" from the trash with 1 card (#1).');
+    expect(first(await call('list_restore', { list: '確認' }))).toBe(
+      'Restored the list "確認 (2)" from the trash with 0 cards. A list named "確認" already exists, so the restored list is named "確認 (2)".',
+    );
+    expect(first(await call('list_restore', { list: '確認' }))).toBe('The list "確認" is not in the trash.');
+    expect(first(await call('list_restore', { list: 'ない' }))).toBe('There is no list "ない" in the trash. The trash has no lists.');
+    const decisions = store.createList(ME, 'human', '決定事項', '', 'decisions');
+    store.deleteList(ME, 'human', decisions.id);
+    const refused = await call('list_restore', { list: '決定事項' });
+    expect(refused.isError).toBe(true);
+    expect(first(refused)).toContain('you cannot restore the list from the trash; only the user can.');
+    expect(store.findList(ME, '決定事項')).toBeUndefined();
+    expect(first(await call('list_restore', { list: 'ない' }))).toBe(`There is no list "ない" in the trash. Lists in the trash: "決定事項" (${decisions.id.slice(0, 8)}).`);
+  });
+
+  it('ゴミ箱にあるリストを名前で指すと、先に list_restore で戻すよう返す（決定事項のリストは、戻せるのは人だけ）', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] });
+    await call('card_delete', { list: 'やること', numbers: '1' });
+    await call('list_delete', { list: 'やること' });
+    expect(first(await call('card_restore', { list: 'やること', numbers: '1' }))).toBe(
+      'There is no list "やること". The list "やること" is in the trash: restore it first with list_restore. There are no lists yet.',
+    );
+    const decisions = store.createList(ME, 'human', '決定事項', '', 'decisions');
+    store.deleteList(ME, 'human', decisions.id);
+    expect(first(await call('card_get', { list: '決定事項', numbers: '1' }))).toBe(
+      'There is no list "決定事項". The list "決定事項" is in the trash, and only the user can restore it. There are no lists yet.',
+    );
+  });
+});
+
+describe('ほかのセッションのチェックリスト（session_id）', () => {
+  const CHILD = '66666666-0000-4000-8000-000000000006';
+  // アーカイブした子
+  const GONE = '77777777-0000-4000-8000-000000000007';
+  // 別のリポジトリのセッション（見えない）
+  const FAR = '88888888-0000-4000-8000-000000000008';
+  const NOT_CHILD = (title: string, id: string) =>
+    `You can read the checklists of session "${title}" (${id.slice(0, 8)}), but you can change only those of this session and of your child sessions.`;
+  beforeEach(() => {
+    host.add(CHILD, { parentId: ME, cwd: '/work/shop/.claude/worktrees/child' });
+    host.add(GONE, { parentId: ME, archived: true });
+    host.add(FAR, { cwd: '/work/other' });
+  });
+
+  it('読む: 見えるセッション（同じフォルダ・子・親）のものを読める。未読の数と印は出さず、そのセッションの Claude が読んだことにもしない', async () => {
+    const list = store.createList(PEER, 'claude', 'やること', '');
+    const [card] = store.addCards(PEER, 'claude', list.id, [{ title: 'A' }]);
+    store.reply(PEER, 'human', list.id, card.id, '見てください');
+    const read = card.readByClaude;
+    expect(first(await call('checklist_overview', { session_id: PEER.slice(0, 8) }))).toBe(
+      ['# Session "s-22" (22222222)', '', '## やること (0/1 checked)', 'Description: (none)', '- [ ] #1 A'].join('\n'),
+    );
+    const got = first(await call('card_get', { list: 'やること', numbers: '1', session_id: PEER }));
+    expect(got).toMatch(/^# Session "s-22" \(22222222\)\n\n## "やること" #1 A\n/);
+    expect(got).toMatch(/The user replied:\n {2}見てください$/);
+    expect(card.readByClaude).toBe(read);
+    // そのセッションの Claude には、未読のまま
+    expect(first(await call('checklist_overview', {}, PEER))).toContain('- [ ] #1 A (1 unread reply)');
+    expect(first(await call('checklist_trash', { session_id: PEER }))).toBe('# Session "s-22" (22222222)\n\nThe trash is empty.');
+    expect(first(await call('checklist_overview', { session_id: CHILD }))).toBe('# Session "s-66" (66666666)\n\nNo checklists yet.');
+    // アーカイブした子も読める。子からは、親と兄弟のものも読める
+    expect(first(await call('checklist_overview', { session_id: GONE }))).toBe('# Session "s-77" (77777777)\n\nNo checklists yet.');
+    expect(first(await call('checklist_overview', { session_id: ME }, CHILD))).toBe('# Session "s-11" (11111111)\n\nNo checklists yet.');
+    expect(first(await call('checklist_overview', { session_id: GONE }, CHILD))).toBe('# Session "s-77" (77777777)\n\nNo checklists yet.');
+    // 自分の ID を渡したときは、渡さないときと同じ
+    expect(first(await call('checklist_overview', { session_id: ME }))).toBe('This session has no checklists yet. You can create one with list_create.');
+  });
+
+  it('見えないセッション（別のリポジトリ）は、読むことも書くこともできない', async () => {
+    const list = store.createList(FAR, 'human', 'やること', '');
+    for (const [name, args] of [
+      ['checklist_overview', {}],
+      ['card_add', { list: 'やること', cards: [{ title: 'A' }] }],
+    ] as const) {
+      const result = await call(name, { ...args, session_id: FAR });
+      expect(result.isError).toBe(true);
+      expect(first(result)).toBe(`No visible session has the ID ${FAR} (check with list_sessions of tanacode-sessions).`);
+    }
+    expect(list.cards).toEqual([]);
+  });
+
+  it('書き換え: 自分の子のものだけ。同じフォルダのセッション・親・アーカイブした子は断り、何も変えない', async () => {
+    const list = store.createList(PEER, 'human', 'やること', '');
+    const refused = await call('card_add', { list: 'やること', cards: [{ title: 'A' }], session_id: PEER });
+    expect(refused.isError).toBe(true);
+    expect(first(refused)).toBe(NOT_CHILD('s-22', PEER));
+    expect(first(await call('list_create', { name: '親のリスト', session_id: ME }, CHILD))).toBe(NOT_CHILD('s-11', ME));
+    expect(first(await call('list_create', { name: '兄弟のリスト', session_id: GONE }, CHILD))).toBe(NOT_CHILD('s-77', GONE));
+    expect(first(await call('list_create', { name: 'x', session_id: GONE }))).toBe('Can\'t change the checklists of "s-77" because it is an archived session.');
+    expect(list.cards).toEqual([]);
+    expect(store.lists(ME)).toEqual([]);
+    expect(store.lists(GONE)).toEqual([]);
+  });
+
+  it('書き換え: 親は子のリストを作り・足し・チェックし・返信し・並べ替え・消し・戻せる。書いた人は Claude。子の Claude が人の返信を読んだことにはしない', async () => {
+    const c = { session_id: CHILD };
+    expect(first(await call('card_add', { ...c, list: 'やること', list_description: '子の作業', cards: [{ title: 'A' }, { title: 'B' }] }))).toBe(
+      'Session "s-66" (66666666): Created the list "やること". Added #1 "A", #2 "B" to "やること".',
+    );
+    const list = store.findList(CHILD, 'やること')!;
+    store.reply(CHILD, 'human', list.id, list.cards[0].id, '人から');
+    await call('card_check', { ...c, list: 'やること', numbers: '1', comment: '親が確かめた' });
+    await call('card_reply', { ...c, list: 'やること', number: 1, text: '親から' });
+    expect(first(await call('card_move', { ...c, list: 'やること', numbers: '2', before: 1 }))).toBe(
+      'Session "s-66" (66666666): Put #2 in "やること" before #1 (the numbers stay). Order of "やること" now: #2, #1.',
+    );
+    await call('card_delete', { ...c, list: 'やること', numbers: '2' });
+    await call('card_restore', { ...c, list: 'やること', numbers: '2' });
+    await call('list_update', { ...c, list: 'やること', description: '親が直した' });
+    await call('list_delete', { ...c, list: 'やること' });
+    expect(first(await call('list_restore', { ...c, list: 'やること' }))).toBe('Session "s-66" (66666666): Restored the list "やること" from the trash with 2 cards (#1, #2).');
+    const restored = store.findList(CHILD, 'やること')!;
+    expect(restored.description).toBe('親が直した');
+    const a = restored.cards.find((card) => card.number === 1)!;
+    expect(a.thread.map((e) => `${e.author}:${e.kind === 'event' ? e.event.type : e.text}`)).toEqual([
+      'claude:created',
+      'human:人から',
+      'claude:checked',
+      'claude:親が確かめた',
+      'claude:親から',
+    ]);
+    // 子の Claude には、人の返信は未読のまま
+    expect(first(await call('checklist_overview', {}, CHILD))).toContain('- [x] #1 A (1 unread reply)');
+    // 親のセッションには、何も作らない
+    expect(store.lists(ME)).toEqual([]);
+  });
+
+  it('書き換え: 子のリストにも、決定事項の決まりはそのまま効く。断る文の頭にセッションを書く', async () => {
+    const c = { session_id: CHILD.slice(0, 8) };
+    await call('card_add', { ...c, list: '決定事項', list_description: '', list_kind: 'decisions', cards: [{ title: '決済には触らない' }] });
+    expect(first(await call('card_get', { ...c, list: 'ない', numbers: '1' }))).toBe('Session "s-66" (66666666): There is no list "ない". Existing lists: "決定事項".');
+    for (const [name, args] of [
+      ['card_update', { list: '決定事項', number: 1, title: '書き換え' }],
+      ['card_delete', { list: '決定事項', numbers: '1' }],
+      ['list_delete', { list: '決定事項' }],
+      ['card_move', { list: '決定事項', numbers: '1', to_list: 'やること' }],
+    ] as const) {
+      const result = await call(name, { ...args, ...c });
+      expect(result.isError, name).toBe(true);
+      expect(first(result), name).toMatch(/^Session "s-66" \(66666666\): "決定事項" is a decisions list/);
+    }
+    // 取り消しはできる。取り消したものはゴミ箱に入り、戻せるのは人だけ
+    expect(first(await call('card_revoke', { ...c, list: '決定事項', numbers: '1', reason: '親が取り消す' }))).toMatch(/^Session "s-66" \(66666666\): Revoked #1 in "決定事項"/);
+    expect(first(await call('card_restore', { ...c, list: '決定事項', numbers: '1' }))).toMatch(/^Session "s-66" \(66666666\): "決定事項" is a decisions list.*only the user can/);
+    expect(first(await call('checklist_trash', c))).toContain('- "決定事項" #1 決済には触らない (deleted by Claude, ');
+  });
+
+  it('前回から人が変えたものは、呼び出し元のものを添える（子のものは、子の Claude に残す）', async () => {
+    const list = store.createList(CHILD, 'human', 'やること', '');
+    store.addCards(CHILD, 'human', list.id, [{ title: '人が足した' }]);
+    expect((await call('checklist_overview', { session_id: CHILD })).content).toHaveLength(1);
+    const child = await call('checklist_overview', {}, CHILD);
+    expect((child.content[1] as { text: string }).text).toContain('- The user added #1 "人が足した" to "やること"');
+  });
+
+  it('cards_copy は session_id を見ない（コピー元と先は from_session・to_session で決める）', async () => {
+    await call('card_add', { list: '確認', list_description: '', cards: [{ title: 'A' }] });
+    expect(first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: PEER, notify: false, session_id: FAR }))).toBe(
+      'Copied #1 of "確認" in session "s-11" to "確認" in session "s-22" (22222222) as #1. (The list "確認" did not exist, so it was created.)',
+    );
   });
 });
 
@@ -321,7 +607,7 @@ describe('結果の中身', () => {
     expect(first(await call('card_get', { numbers: '1' }))).toBe('list is required.');
     expect(first(await call('card_uncheck', { list: 'やること', numbers: '1', reason: ' ' }))).toBe('reason is required.');
     expect(first(await call('card_reply', { list: 'やること', number: 1 }))).toBe('text is required.');
-    expect(first(await call('card_move', { list: 'やること', numbers: '1' }))).toBe('to_list is required.');
+    expect(first(await call('list_restore', { list: ' ' }))).toBe('list is required.');
     // 無いリストは、あるリストを並べて教える
     await call('list_create', { name: '完了' });
     expect(first(await call('card_get', { list: 'ない', numbers: '1' }))).toBe('There is no list "ない". Existing lists: "やること", "完了".');

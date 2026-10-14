@@ -245,7 +245,10 @@ describe('どのツールも、制御が振り分けて実行する（「Unknown
     const control = new ChecklistControl({ store, host: fakeHost(dir), enabled: () => true, notifyDelayMs: 10 });
     try {
       for (const tool of CHECKLIST_MCP.tools) {
-        const result = await control.handle(ME, tool.name, sampleArgs(tool.inputSchema as Schema) as Record<string, unknown>);
+        const args = sampleArgs(tool.inputSchema as Schema) as Record<string, unknown>;
+        // 呼び出し元のセッションで動かす（session_id が 'x' では、振り分けの前に断られて、振り分けを確かめられない）
+        delete args.session_id;
+        const result = await control.handle(ME, tool.name, args);
         expect(textOf(result), tool.name).not.toBe(unknown(tool.name));
       }
       expect(textOf(await control.handle(ME, 'no_such_tool', {}))).toBe(unknown('no_such_tool'));

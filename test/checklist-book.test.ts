@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkCopyRequest, checkOp, claudeNumbers, cleanName, cleanTitle, eventText, formatNumbers, humanUnread, parseNumbers, type Checklist, type ChecklistOp } from '../src/shared/checklist';
+import { checkCopyRequest, checkOp, claudeNumbers, cleanName, cleanTitle, eventText, formatNumbers, humanUnread, parseNumbers, trashOf, type Checklist, type ChecklistOp } from '../src/shared/checklist';
 import { ChecklistBook, ChecklistError } from '../src/shared/checklist-book';
 
 // チェックリストの書き換え（ChecklistBook。画面と Claude が同じものをメモリの上で書き換える）と、
@@ -235,6 +235,32 @@ describe('ChecklistBook', () => {
     expect(changes).toHaveLength(count);
   });
 
+  it('リストを消すと、消した人を残す。戻すと消す', () => {
+    const { book } = make();
+    const list = book.createList(S, 'human', '確認', '');
+    book.deleteList(S, 'claude', list.id);
+    expect(list.deletedBy).toBe('claude');
+    book.restoreList(S, 'human', list.id);
+    expect([list.deletedAt, list.deletedBy]).toEqual([undefined, undefined]);
+    book.deleteList(S, 'human', list.id);
+    expect(list.deletedBy).toBe('human');
+  });
+
+  it('ゴミ箱の中身（trashOf）: ゴミ箱のリストと、生きているリストから消したカード。ゴミ箱のリストの中で先に消したカードは、別に並べない', () => {
+    const { book } = make();
+    const kept = book.createList(S, 'human', 'やること', '');
+    const [a] = book.addCards(S, 'human', kept.id, [{ title: 'A' }, { title: 'B' }]);
+    book.deleteCards(S, 'human', kept.id, [a.id]);
+    const gone = book.createList(S, 'human', '確認', '');
+    const [c] = book.addCards(S, 'human', gone.id, [{ title: 'C' }, { title: 'D' }]);
+    book.deleteCards(S, 'claude', gone.id, [c.id]);
+    book.deleteList(S, 'claude', gone.id);
+    const trash = trashOf(book.lists(S));
+    expect(trash.lists.map((l) => l.name)).toEqual(['確認']);
+    expect(trash.cards.map(({ list, card }) => `${list.name}#${card.number}`)).toEqual(['やること#1']);
+    expect(trashOf([])).toEqual({ lists: [], cards: [] });
+  });
+
   it('断るもの: 空のタイトル・空の返信・無いリスト・無いカード・正しくないセッションの ID', () => {
     const { book } = make();
     const list = book.createList(S, 'human', 'やること', '');
@@ -430,6 +456,24 @@ describe('ChecklistBook', () => {
     expect([byClaude.readByHuman, byClaude.readByClaude > 0]).toEqual([0, true]);
     const { cards } = book.copyCards({ sessionId: S, title: 'x', listId: list.id, cardIds: [byClaude.id] }, T, 'human');
     expect([cards[0].readByHuman > 0, cards[0].readByClaude]).toEqual([true, 0]);
+  });
+
+  it('返信した人は、それまでの返信を読んだことにする。read が false（親の Claude が子のカードに書いた）なら、Claude の読んだ印は進めない', () => {
+    const { book } = make();
+    const list = book.createList(S, 'human', 'やること', '');
+    const [card] = book.addCards(S, 'human', list.id, [{ title: 'A' }]);
+    book.reply(S, 'human', list.id, card.id, '見て');
+    expect(humanUnread(card)).toBe(0);
+    const before = card.readByClaude;
+    book.reply(S, 'claude', list.id, card.id, '親から', false, false);
+    book.setChecked(S, 'claude', list.id, [card.id], true, '確かめた', false);
+    expect(card.readByClaude).toBe(before);
+    expect(card.thread.filter((e) => e.kind === 'reply').map((e) => e.author)).toEqual(['human', 'claude', 'claude']);
+    book.setChecked(S, 'claude', list.id, [card.id], false, '戻す');
+    expect(card.readByClaude).toBeGreaterThan(before);
+    // 人は、read によらず読んだことにする
+    book.reply(S, 'human', list.id, card.id, 'また', false, false);
+    expect(humanUnread(card)).toBe(0);
   });
 
   it('人が開いたときに読んだことにするのは、Claude の返信だけ（Claude のチェックなどの記録では、付け直さない）', () => {

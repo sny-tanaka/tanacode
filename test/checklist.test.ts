@@ -393,7 +393,7 @@ describe('中継・起動の引数・画面からの値', () => {
     expect((init?.result as { instructions: string }).instructions).toContain('checklist_overview');
     const list = await respond({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, deps);
     const tools = (list?.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }).tools;
-    expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort()).toEqual(['card_get', 'checklist_overview']);
+    expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name).sort()).toEqual(['card_get', 'checklist_overview', 'checklist_trash']);
   });
 
   it('起動の引数に足し、ツールはすべて許可済みにする（アプリのデータだけを変え、ゴミ箱から戻せるため）', () => {
@@ -447,5 +447,8 @@ describe('会話ログとチャットの表示', () => {
     expect(checklistTarget('Bash', { command: 'ls' })).toBeNull();
     expect(cardOfTool(checklistToolId('card_reply'), JSON.stringify({ list: '確認事項', number: 2, text: 'x' }))).toEqual({ list: '確認事項', number: 2 });
     expect(cardOfTool(checklistToolId('checklist_overview'), '{}')).toBeNull();
+    // ほかのセッションのカードは、今のセッションでは開かない
+    expect(cardOfTool(checklistToolId('card_reply'), JSON.stringify({ list: '確認事項', number: 2, text: 'x', session_id: '66666666' }))).toBeNull();
+    expect(cardOfTool(checklistToolId('card_reply'), JSON.stringify({ list: '確認事項', number: 2, text: 'x', session_id: ' ' }))).toEqual({ list: '確認事項', number: 2 });
   });
 });

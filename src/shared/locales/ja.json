@@ -391,6 +391,8 @@
       "card_move": "カードを移す",
       "card_delete": "カードを消す",
       "card_restore": "カードを戻す",
+      "checklist_trash": "ゴミ箱を見る",
+      "list_restore": "リストを戻す",
       "cards_copy": "別のセッションへコピー"
     },
     "walkthrough": {

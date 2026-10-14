@@ -97,6 +97,8 @@ export type Checklist = {
   createdBy: Author;
   createdAt: number;
   deletedAt?: number;
+  // ゴミ箱に入れた人（Claude がゴミ箱を読むとき、checklist_trash に出す）。これを足す前に消したリストには無い
+  deletedBy?: Author;
 };
 
 // セッションのチェックリスト（画面に送るもの）
@@ -149,6 +151,15 @@ export function liveLists(lists: Checklist[]): Checklist[] {
 
 export function liveCards(list: Checklist): Card[] {
   return list.cards.filter((c) => !c.deletedAt);
+}
+
+// ゴミ箱の中身（画面のゴミ箱と同じ並び）。ゴミ箱のリストと、生きているリストから消したカード。
+// ゴミ箱のリストの中で、リストより前に 1 枚ずつ消したカードは、リストを戻してもゴミ箱に残る（ここでは数えない）
+export function trashOf(lists: Checklist[]): { lists: Checklist[]; cards: { list: Checklist; card: Card }[] } {
+  return {
+    lists: lists.filter((l) => l.deletedAt),
+    cards: liveLists(lists).flatMap((list) => list.cards.filter((c) => c.deletedAt).map((card) => ({ list, card }))),
+  };
 }
 
 export function kindOf(list: Pick<Checklist, 'kind'>): ListKind {
