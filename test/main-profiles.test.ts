@@ -17,6 +17,8 @@ const managers = () => allOf('SessionManager');
 const managerOf = (index: number) => managers()[index]!.instance as Fake;
 type Listeners = { onSessionsChanged: (sessions: unknown[]) => void; onTurnCompleted: (session: { id: string; title: string | null }) => void };
 const listenersOf = (index: number) => managers()[index]!.args[4] as Listeners;
+// SessionManager に渡す、プロファイルの Claude Code の設定のフォルダ（index.ts の new SessionManager(...) の 13 番目の引数）
+const claudeDirOf = (index: number) => managers()[index]!.args[12];
 const view = () => state.views[0] as FakeView;
 const sentTo = (contents: { sent: [string, unknown][] }, channel: string) => contents.sent.filter(([c]) => c === channel).map(([, payload]) => payload);
 
@@ -26,8 +28,8 @@ describe('足したプロファイルを開く', () => {
     expect(state.ptyHostStart.mock.calls.map((c) => c[0])).toEqual([state.userData, join(state.userData, 'profiles', 'p2')]);
     expect(managers()).toHaveLength(2);
     // 既定のプロファイルは、アプリの環境変数のまま（null）
-    expect(managers()[0]!.args.at(-1)).toBeNull();
-    expect(managers()[1]!.args.at(-1)).toBe('/Users/me/.claude-me');
+    expect(claudeDirOf(0)).toBeNull();
+    expect(claudeDirOf(1)).toBe('/Users/me/.claude-me');
     expect(state.views).toHaveLength(1);
     expect(view().options).toMatchObject({ webPreferences: { partition: 'persist:tanacode-profile-p2', webviewTag: true } });
     expect(mainWindow().contentView.children).toEqual([view()]);
@@ -117,7 +119,7 @@ describe('プロファイルの追加と削除', () => {
     const added = (await invoke(IpcChannel.ProfilesAdd, { name: '検証', color: '#5fb98a', claudeDir })) as { id: string };
     expect(existsSync(claudeDir)).toBe(true);
     expect(managers()).toHaveLength(2);
-    expect(managers()[1]!.args.at(-1)).toBe(claudeDir);
+    expect(claudeDirOf(1)).toBe(claudeDir);
     expect(state.views).toHaveLength(1);
     expect(sentTo(mainWindow().webContents, IpcChannel.ProfilesChanged).at(-1)).toMatchObject({ profiles: [{ id: 'default' }, { id: added.id, name: '検証' }] });
     // 同じフォルダは足せない

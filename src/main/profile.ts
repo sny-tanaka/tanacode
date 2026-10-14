@@ -18,6 +18,7 @@ import { OptimizedCompact } from './optimized-compact';
 import { outwardHost } from './outward-state';
 import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
+import { TerminalControl } from './terminal-control';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
@@ -85,13 +86,15 @@ export class Profile {
   compact: OptimizedCompact | null = null;
   autoCompact: AutoCompact | null = null;
   walkthroughControl: WalkthroughControl | null = null;
+  terminalControl: TerminalControl | null = null;
   // Claude がターンの終わりの通知に載せる報告（tanacode-sessions の report_result）
   private readonly reports = new TurnReports();
-  // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
+  // Claude によるアプリ内ブラウザの操作・ほかのセッションの扱い・チェックリスト・ウォークスルー・人のターミナルの読み書き。中継（Claude Code が起動する MCP サーバー）からの呼び出しを、ソケットで受ける
   private browserBridge: McpBridge | null = null;
   private sessionsBridge: McpBridge | null = null;
   private checklistBridge: McpBridge | null = null;
   private walkthroughBridge: McpBridge | null = null;
+  private terminalBridge: McpBridge | null = null;
   // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
   readonly folderViews = new Map<string, string>();
   // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -107,7 +110,7 @@ export class Profile {
       {
         onData: (id, data) => send(IpcChannel.ShellData, { id, data }),
         onExit: (id, exitCode) => send(IpcChannel.ShellExit, { id, exitCode }),
-        onOpened: (owner, id, name) => send(IpcChannel.ShellOpened, { owner, id, name }),
+        onOpened: (owner, id, name, task) => send(IpcChannel.ShellOpened, { owner, id, name, task }),
       },
       claudeDir,
     );
@@ -177,6 +180,10 @@ export class Profile {
     this.walkthroughBridge = await listen('ウォークスルー', socketPathIn(dataDir, 'walkthrough', 'walkthrough'), (id, tool, args) =>
       this.walkthroughControl ? this.walkthroughControl.handle(id, tool, args) : Promise.resolve(notReady()),
     );
+    // 人のターミナルは、打つ前の確認のフック（gate）も、このソケットに聞く
+    this.terminalBridge = await listen('ターミナル', socketPathIn(dataDir, 'terminal', 'terminal'), (id, tool, args, signal) =>
+      this.terminalControl ? this.terminalControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),
+    );
     // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
     this.ptyHost = await PtyHost.start(dataDir, join(__dirname, 'pty-host.js'));
     const store = new SessionStore(join(dataDir, 'sessions.json'));
@@ -218,6 +225,7 @@ export class Profile {
       () => this.checklistLaunch(),
       () => this.walkthroughLaunch(),
       this.claudeDir,
+      () => this.terminalLaunch(),
     );
     const manager = this.manager;
     // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
@@ -261,6 +269,16 @@ export class Profile {
       enabled: () => this.settings.walkthroughControlEnabled(),
       onChange: (sessionId, walkthrough) => send(IpcChannel.WalkthroughChanged, { sessionId, walkthrough }),
       comment: { pullRequests: pullRequestsOf, comment: commentOnPullRequest },
+    });
+    this.terminalControl = new TerminalControl({
+      terminals: this.shells,
+      sessions: {
+        exists: (id) => !!manager.summary(id),
+        cwdOf: (id) => manager.cwdOf(id),
+        parentOf: (id) => manager.parentOf(id),
+        childrenOf: (id) => manager.childrenOf(id),
+      },
+      enabled: () => this.settings.terminalControlEnabled(),
     });
     const checklistControl = new ChecklistControl({ store: this.checklists, host: outward, enabled: () => this.settings.checklistControlEnabled() });
     this.checklistControl = checklistControl;
@@ -353,6 +371,12 @@ export class Profile {
     return { command: hostExecutable(), script: join(__dirname, 'walkthrough-mcp.js'), socketPath: this.walkthroughBridge.socketPath, version: app.getVersion() };
   }
 
+  // 起動する Claude Code に足す、人のターミナルの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
+  private terminalLaunch(): McpLaunch | null {
+    if (!this.terminalBridge || !this.settings.terminalControlEnabled()) return null;
+    return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion() };
+  }
+
   // 新規セッションの画面から、worktree で始める。Claude Code が worktree を作るのを待たずに id を返す（画面は、すぐそのセッションに移って待つ）。
   // 作れなかったら（セッションは、もう一覧から消えている）、理由を画面に知らせる
   async startInWorktree(cwd: string, options: NewSessionOptions): Promise<string> {
@@ -392,6 +416,7 @@ export class Profile {
     this.checklistBridge?.close();
     this.checklists.flush();
     this.walkthroughBridge?.close();
+    this.terminalBridge?.close();
     this.shells.killAll();
   }
 }

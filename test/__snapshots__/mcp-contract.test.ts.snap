@@ -1196,6 +1196,85 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
 }
 `;
 
+exports[`MCP サーバー tanacode-terminal の定義 > ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す） 1`] = `
+{
+  "allowedTools": [
+    "mcp__tanacode-terminal__list_terminals",
+    "mcp__tanacode-terminal__read_terminal",
+  ],
+  "tools": [
+    {
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "一覧",
+      "name": "list_terminals",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+          },
+          "lines": {
+            "type": "integer",
+          },
+          "session_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+        ],
+        "type": "object",
+      },
+      "kind": "read",
+      "label": "出力を読む",
+      "name": "read_terminal",
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "enter": {
+            "type": "boolean",
+          },
+          "id": {
+            "type": "string",
+          },
+          "key": {
+            "enum": [
+              "ctrl-c",
+              "ctrl-d",
+              "escape",
+              "tab",
+              "up",
+              "down",
+            ],
+            "type": "string",
+          },
+          "new_tab": {
+            "type": "boolean",
+          },
+          "text": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "kind": "act",
+      "label": "打ち込む",
+      "name": "type_in_terminal",
+    },
+  ],
+}
+`;
+
 exports[`MCP サーバー tanacode-walkthrough の定義 > ツールの名前・種類・引数の形・許可済みにするものが、控えと同じ（変えたら npx vitest -u で控えを書き直す） 1`] = `
 {
   "allowedTools": [

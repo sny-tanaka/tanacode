@@ -20,6 +20,7 @@ import { ScreenTracker } from '../../src/main/screen-tracker';
 import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
+import { TERMINAL_COMMAND_ENV, TERMINAL_SCRIPT_ENV, TERMINAL_SESSION_ENV, TERMINAL_SOCKET_ENV } from '../../src/main/terminal-bridge';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
 import { FIXTURE_ROOT, type ScreenName } from '../scenario';
 import { FakePtyHost } from './fake-pty-host';
@@ -70,6 +71,8 @@ type Options = {
   sessions?: McpLaunch;
   // チェックリストの MCP サーバー（中継）を足すときの材料（SessionManager の checklistMcp）。無ければ足さない
   checklist?: McpLaunch;
+  // 人のターミナルの MCP サーバー（中継）を足すときの材料（SessionManager の terminalMcp）。無ければ足さない
+  terminal?: McpLaunch;
   // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
   mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
@@ -186,6 +189,10 @@ export class ClaudeRun {
       CHECKLIST_SESSION_ENV,
       CHECKLIST_COMMAND_ENV,
       CHECKLIST_SCRIPT_ENV,
+      TERMINAL_SOCKET_ENV,
+      TERMINAL_SESSION_ENV,
+      TERMINAL_COMMAND_ENV,
+      TERMINAL_SCRIPT_ENV,
     ]);
   }
 
@@ -385,6 +392,10 @@ export class ClaudeRun {
       () => this.options.browser ?? null,
       () => this.options.sessions ?? null,
       () => this.options.checklist ?? null,
+      // ウォークスルーは足さない。設定のフォルダは既定のプロファイル
+      undefined,
+      null,
+      () => this.options.terminal ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);

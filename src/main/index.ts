@@ -855,6 +855,7 @@ function buildMenu(): void {
           { label: t('main.menu.sessionsControl'), type: 'checkbox', checked: !!activeProfile()?.settings.sessionsControlEnabled(), click: (item) => setSessionsControl(item) },
           { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
           { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
+          { label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
           {
             label: t('main.menu.autoCompactPercent'),
             submenu: AUTO_COMPACT_PERCENTS.map((percent) => ({
@@ -1090,6 +1091,17 @@ function setAutoCompactPercent(percent: number): void {
 function setWalkthroughControl(item: MenuItem): void {
   try {
     activeProfile()?.settings.setWalkthroughControlEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
+}
+
+// メニューの「Claude にターミナルを使わせる」。オンなら、次に起動する Claude Code から MCP サーバーを足す。
+// オフにしても、動いている Claude Code の MCP サーバーは残るので、呼ばれたら断る（terminal-control の handle。打つ前の確認のフックも断られ、確認を出させる）。
+// 保存できなかったら、チェックを元に戻す
+function setTerminalControl(item: MenuItem): void {
+  try {
+    activeProfile()?.settings.setTerminalControlEnabled(item.checked);
   } catch {
     item.checked = !item.checked;
   }

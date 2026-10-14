@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { StatusLineInfo } from '@shared/statusline';
+import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
 import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand, AUTO_COMPACT_STOP_COMMAND } from '../src/main/statusline';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
@@ -102,6 +103,14 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(matchers(ownSettings(null, true, true))).toHaveLength(4);
     expect(matchers(ownSettings(null, false, true))).toEqual(['AskUserQuestion', 'Bash', expect.any(String)]);
     expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(3);
+  });
+
+  it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {
+    const gate = (s: Record<string, unknown>) =>
+      (s as { hooks: { PreToolUse: { matcher: string; hooks: { command: string; timeout: number }[] }[] } }).hooks.PreToolUse.filter((h) => h.matcher === TERMINAL_GATED_TOOL);
+    expect(gate(ownSettings(null))).toEqual([]);
+    expect(gate(ownSettings(null, false, false, null, false, true))).toEqual([{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }]);
+    expect(gate(JSON.parse(sessionSettings(false, false, null, false, true)))).toHaveLength(1);
   });
 
   it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {

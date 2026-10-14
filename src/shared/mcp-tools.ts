@@ -1,6 +1,6 @@
 import { t, type MessageKey } from './i18n';
 
-// tanacode が起動する Claude Code に足す MCP サーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー）の、ツールの定義の形。
+// tanacode が起動する Claude Code に足す MCP サーバー（アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナル）の、ツールの定義の形。
 // 中継のスクリプト（src/main/mcp-relay.ts）が tools/list で返し、アプリが名前を確かめて実行する
 
 // read: 読むだけ（起動の引数 --allowedTools で許可済みにする）/ act: 何かを動かす（Claude Code の許可の確認を通す）/
@@ -15,7 +15,7 @@ export type McpToolKind = 'read' | 'act' | 'eval' | 'ask' | 'instruct' | 'note' 
 type Schema = Record<string, unknown>;
 
 // ツールの短い名前（チャットのツールの行などに出す）の文言のまとまり。文言は tools.<まとまり>.<ツール名>
-export type McpToolGroup = 'browser' | 'sessions' | 'checklist' | 'walkthrough';
+export type McpToolGroup = 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'terminal';
 
 // そのまとまりに短い名前の文言があるツールの名前。定義の name をこれにすると、文言の無いツールは型チェックで止まる
 export type McpToolName<G extends McpToolGroup> = MessageKey extends infer K ? (K extends `tools.${G}.${infer N}` ? N : never) : never;

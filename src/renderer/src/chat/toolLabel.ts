@@ -3,6 +3,7 @@ import { CHECKLIST_MCP, CHECKLIST_MCP_SERVER } from '@shared/checklist-tools';
 import { t } from '@shared/i18n';
 import { findTool, mcpToolLabel, type McpServerDef } from '@shared/mcp-tools';
 import { SESSIONS_MCP, SESSIONS_MCP_SERVER } from '@shared/session-tools';
+import { TERMINAL_MCP, TERMINAL_MCP_SERVER } from '@shared/terminal-tools';
 import { WALKTHROUGH_MCP, WALKTHROUGH_MCP_SERVER } from '@shared/walkthrough-tools';
 
 // MCP のツールの内部名（mcp__<サーバー>__<ツール>）を、画面に出す短い名前にする。例: 「Browser · navigate」。
@@ -12,6 +13,7 @@ const TANACODE_SERVERS = new Map<string, McpServerDef>([
   [SESSIONS_MCP_SERVER, SESSIONS_MCP],
   [CHECKLIST_MCP_SERVER, CHECKLIST_MCP],
   [WALKTHROUGH_MCP_SERVER, WALKTHROUGH_MCP],
+  [TERMINAL_MCP_SERVER, TERMINAL_MCP],
 ]);
 
 // サーバーの表示名。Claude のブラウザ・Claude in Chrome は、英語の名前のまま

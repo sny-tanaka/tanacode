@@ -6,7 +6,7 @@
 
 <h3 align="center">See inside Claude Code. Give it more to work with.</h3>
 
-<p align="center">The files Claude has read, what's in its context, and what its subagents are doing, right next to the chat.<br />Plus four MCP servers (nothing extra to install): browser checks, checklists, child sessions, and walkthroughs.<br />Under the hood, it runs the same <code>claude</code> CLI you already use.</p>
+<p align="center">The files Claude has read, what's in its context, and what its subagents are doing, right next to the chat.<br />Plus five MCP servers (nothing extra to install): browser checks, checklists, child sessions, walkthroughs, and the terminal.<br />Under the hood, it runs the same <code>claude</code> CLI you already use.</p>
 
 <p align="center">
   <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=latest&color=2ea043" alt="Latest version" /></a>
@@ -22,7 +22,7 @@
   <a href="README.md"><b>日本語</b></a>
 </p>
 
-A macOS desktop app that brings Claude Code (the `claude` CLI) and an IDE together. While Claude works, it shows right next to the chat what Claude has read and remembers, what its subagents are doing, and what it checked on screen. It also gives Claude four MCP servers: browser checks, checklists, child sessions, and walkthroughs. Leave the coding to Claude; you just review and make small fixes.
+A macOS desktop app that brings Claude Code (the `claude` CLI) and an IDE together. While Claude works, it shows right next to the chat what Claude has read and remembers, what its subagents are doing, and what it checked on screen. It also gives Claude five MCP servers: browser checks, checklists, child sessions, walkthroughs, and the terminal. Leave the coding to Claude; you just review and make small fixes.
 
 The UI is available in English and Japanese. Switch it with **tanacode → Language** in the menu bar; by default it follows your Mac's language. The other documents ([GUIDE.md](GUIDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)) and the demo are in Japanese.
 
@@ -69,12 +69,13 @@ Preview the page you're developing inside the app. Click an element to attach it
 
 ## Give Claude more to work with
 
-Four MCP servers that tanacode adds to Claude Code, with nothing extra to install.
+Five MCP servers that tanacode adds to Claude Code, with nothing extra to install.
 
 - **Browser checks**: after a fix, Claude opens the page in the in-app browser and checks it itself with screenshots, the console, and clicks. For things Claude can't do, like logging in, it asks you in the middle of its work (see "What Claude looked at and checked on screen" above; [demo](https://sny-tanaka.github.io/tanacode/#browser))
 - **Checklists shared with Claude**: named lists per session, such as to-dos, conditions to meet, things for you to do, or points to confirm. They live outside the conversation, so compaction doesn't erase them. What gets decided in the conversation (requirements, constraints, corrections, the scope of a permission) goes on a decisions list that isn't checked off, and is passed to Claude every time, even after compaction. What Claude is doing now and the next step go on a state list. For multi-step work, Claude adds items through MCP without being asked and checks off what it has verified. Replies to a card become a thread, and you can notify Claude. You can also copy cards to another session
 - **Child sessions**: Claude in a parent session starts child sessions, splits the work across them, instructs them, checks their results, and cleans up the ones that have done their job. Children line up under the parent, and marks in the session list show their state ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
 - **Walkthroughs**: like a code review over screen share, Claude opens code in the editor and explains the intent of a change while showing it. You move on with Next at your own pace and ask about any lines right there. The explanation can also be posted to a GitHub PR as a single comment with the code embedded
+- **A terminal you share with Claude**: ask "what does the dev server say?" and Claude reads the output of the terminal under the editor to answer. Ask "run it in my terminal" and it types there (showing you exactly what it will type and asking every time). You can hand a terminal you've been working in over to Claude as it is. For work Claude does on its own, it keeps using Claude Code's Bash
 
 ## Still the Claude Code you know
 

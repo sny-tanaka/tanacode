@@ -6,6 +6,7 @@ import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
 import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
+import { terminalGateEnv, terminalMcpServer, type TerminalMcpLaunch } from './terminal-bridge';
 import type { PtyHandle, PtyHostApi } from './pty-host-client';
 import type { HostedPtyInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
@@ -46,6 +47,8 @@ type Options = {
   // チェックリストの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）
   checklist?: McpLaunch | null;
   walkthrough?: McpLaunch | null;
+  // 人のターミナルの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）。child: 子セッション（読むツールだけで、打つ前の確認のフックも足さない）
+  terminal?: TerminalMcpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
   claudeDir?: string | null;
   cols: number;
@@ -85,13 +88,15 @@ export class ClaudeSession {
     } else {
       const args = claudeArgs(this.options);
       // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
-      // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も
+      // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
+      // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も
       const env = {
         ...childEnv(this.options.claudeDir ?? null),
         [STATUS_FILE_ENV]: statusFile,
         [ASK_FILE_ENV]: askFile,
         ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}),
         ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
+        ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
       };
       const { worktree, worktreeRoot, resume } = this.options;
       const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
@@ -174,7 +179,7 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir'>>,
+    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal'>>,
 ): string[] {
   const {
     claudeSessionId,
@@ -191,6 +196,7 @@ export function claudeArgs(
     walkthrough = null,
     sessionId = '',
     claudeDir = null,
+    terminal = null,
   } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
   // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
@@ -201,19 +207,21 @@ export function claudeArgs(
   args.push('--model', model ?? settings?.model ?? 'default');
   if (effort) args.push('--effort', effort);
   if (permissionMode) args.push('--permission-mode', permissionMode);
-  // アプリ内ブラウザ・セッション・チェックリスト・ウォークスルーの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
+  // アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
   const servers: McpServerEntry[] = [];
   if (browser) servers.push(browserMcpServer(browser, sessionId));
   if (sessions) servers.push(sessionsMcpServer(sessions, sessionId));
   if (checklist) servers.push(checklistMcpServer(checklist, sessionId));
   if (walkthrough) servers.push(walkthroughMcpServer(walkthrough, sessionId));
+  if (terminal) servers.push(terminalMcpServer(terminal, sessionId));
   args.push(...mcpArgs(servers));
   // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、
   // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、
-  // チェックリストを足すときは、チェックリストを使い続けさせるフック（checklist-hook.ts）も、この設定に入れる
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist));
+  // チェックリストを足すときは、チェックリストを使い続けさせるフック（checklist-hook.ts）も、
+  // ターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフック（terminal-bridge.ts）も、この設定に入れる
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child));
   return args;
 }
 
