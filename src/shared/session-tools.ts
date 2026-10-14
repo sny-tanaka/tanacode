@@ -109,9 +109,12 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
       type: 'object',
       properties: {
         prompt: { type: 'string', description: 'The first instruction. The child does not know this conversation, so include the goal, the background and when it is done' },
+        // worktree の準備（作る・.worktreeinclude の写し・node_modules）は、最初の指示より前に済む。書いておかないと、親は
+        // サブエージェントの worktree（依存が入らない）向けの手順を、子への指示に書き足してしまう（実測）
         worktree: {
           type: 'boolean',
-          description: 'If true, start in a new worktree (and branch). Set it to true when sessions edit the same repository in parallel (editing the same working tree at the same time causes conflicts)',
+          description:
+            "If true, start in a new worktree (and branch). Set it to true when sessions edit the same repository in parallel (editing the same working tree at the same time causes conflicts). The worktree is ready before the child receives the first instruction: Claude Code creates it on a new branch (by default from the remote's default branch, origin/<default>, not from the local HEAD) and copies the ignored files listed in .worktreeinclude, and tanacode copies or installs node_modules. So do not tell the child to create, enter or check the worktree, to rebase it, or to install npm packages. Mention only the setup this project needs beyond that (for example, a separate test database for each child)",
         },
         independent: {
           type: 'boolean',
