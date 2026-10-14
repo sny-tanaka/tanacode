@@ -352,6 +352,10 @@ export class SessionsControl {
       console.error('子セッションに最初の指示を送れませんでした', error);
     });
     const child = this.summary(id);
+    // worktree の準備は、最初の指示より前に済む。親が子に準備（作る・依存を入れる）を頼まないように伝える
+    const setup = options.worktree
+      ? ` The worktree is set up before the first instruction is sent (the state is starting until then), so the ${independent ? 'session' : 'child'} needs no setup for the worktree itself.`
+      : '';
     return json({
       session_id: id,
       name: name || null,
@@ -364,8 +368,8 @@ export class SessionsControl {
       remote_control: options.remoteControl,
       state: host.stateOf(id),
       note: independent
-        ? 'The first instruction will be sent as soon as the session has started. It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.'
-        : 'The first instruction will be sent as soon as the child has started. Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (end your turn and come back with a background timer, so that the user can talk to you).',
+        ? `The first instruction will be sent as soon as the session has started.${setup} It is an independent session that the user runs: you cannot instruct, wait for or stop it, and no notice arrives when it finishes. Tell the user it has started.`
+        : `The first instruction will be sent as soon as the child has started.${setup} Check on the child at regular intervals with get_session until it is done; do not wait for the notice alone, and do not wait synchronously (end your turn and come back with a background timer, so that the user can talk to you).`,
     });
   }
 

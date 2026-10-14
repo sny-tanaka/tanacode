@@ -473,6 +473,13 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
   });
 
+  it('start_session: worktree で始めたときだけ、worktree の準備は子に要らないと伝える（親が子に準備を頼まないように）', async () => {
+    const note = async (args: Record<string, unknown>) => jsonOf<{ note: string }>(await control.handle(PARENT, 'start_session', { prompt: 'x', ...args })).note;
+    expect(await note({ worktree: true })).toContain('the child needs no setup for the worktree itself.');
+    expect(await note({ worktree: true, independent: true })).toContain('the session needs no setup for the worktree itself.');
+    for (const independent of [false, true]) expect(await note({ worktree: false, independent })).not.toContain('worktree');
+  });
+
   it('start_session: independent なら、親のないセッションとして始める。Remote Control は呼び出し元に合わせ、権限モードは強くできない。指示も待つこともできない', async () => {
     // 子からは、独立したセッションも始められない
     expect(textOf(await control.handle(CHILD, 'start_session', { prompt: 'x', worktree: false, independent: true }))).toContain('cannot start');
