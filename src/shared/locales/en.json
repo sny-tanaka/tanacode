@@ -324,7 +324,7 @@
       "teleport": "Send to the cloud or resume from claude.ai",
       "terminal-setup": "Set up Shift+Enter for newlines",
       "theme": "Change the theme",
-      "tui": "Set how the terminal UI is rendered",
+      "tui": "Set how the terminal UI is rendered (tanacode sessions stay fullscreen)",
       "ultrareview": "Find and verify bugs in the cloud",
       "upgrade": "Upgrade your plan",
       "usage": "Show usage and plan status",

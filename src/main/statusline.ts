@@ -30,6 +30,11 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）
 // terminal のときだけ: 人のターミナルに打つ前に、権限モードによらず、打つものを見せて人の許可の確認を出させる（terminal-bridge.ts）
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
+// tui: 描き方を fullscreen（代替画面）に決める。決めないと、ユーザーの設定・新しいインストールかどうか・サーバー側のフラグで
+// classic（ふだんの画面にそのまま描く）にもなり、メニューや /tasks の画面の形が変わる。画面の読み取り（screen-parser.ts）と
+// 互換性の確認（test/cli）は fullscreen の形で作っている。環境変数（CLAUDE_CODE_NO_FLICKER=1）ではなく設定で渡すのは、
+// 起動に続けて失敗したときに Claude Code が classic に戻す安全策を残すため（環境変数で決めると、その判定より先に効く）。
+// --settings はユーザーの設定ファイルより優先されるが、設定の env で classic を明示した人（CLAUDE_CODE_NO_FLICKER=0 など）は classic のまま
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
 export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null, checklist = false, terminal = false): string {
   return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal));
@@ -62,6 +67,7 @@ export function ownSettings(
       ...(checklist ? { ...checklistHooks(), PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: AUTO_COMPACT_STOP_COMMAND, timeout: 5 }] }] } : {}),
     },
     ...(excludes.length > 0 ? { claudeMdExcludes: excludes } : {}),
+    tui: 'fullscreen',
   };
 }
 

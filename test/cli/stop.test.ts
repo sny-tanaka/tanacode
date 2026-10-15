@@ -127,14 +127,15 @@ describe(`Claude Code ${version} のバックグラウンドのタスクの停�
 // 動いているものが 1 つだけのとき、/tasks は一覧を飛ばして、そのものの詳細を出す。
 // Bash・サブエージェントは止めると画面が閉じ、ワークフローは画面が残る（Esc で閉じる）
 describe(`Claude Code ${version} のバックグラウンドのタスクの停止（1 つだけのとき）`, () => {
-  const only = async (tool: { id: string; name: string; input: Record<string, unknown> }, ready: (run: ClaudeRun) => boolean) => {
+  // settings: ユーザーの設定（~/.claude/settings.json）
+  const only = async (tool: { id: string; name: string; input: Record<string, unknown> }, ready: (run: ClaudeRun) => boolean, settings?: Record<string, unknown>) => {
     const api = new MockApi();
     api.conversations = [
       { match: PROMPT, steps: [[{ type: 'tool_use', ...tool }], [{ type: 'text', text: '起動しました' }]] },
       { match: AGENT_PROMPT, delayMs: LONG_DELAY_MS, steps: [[{ type: 'text', text: 'サブエージェントの結果' }]] },
       { match: WORKFLOW_AGENT_PROMPT, delayMs: LONG_DELAY_MS, steps: [[{ type: 'text', text: 'ワークフローの結果' }]] },
     ];
-    const run = new ClaudeRun(await api.start());
+    const run = new ClaudeRun(await api.start(), { settings });
     await run.open();
     await run.send(PROMPT);
     if (tool.name === 'Workflow') {
@@ -157,6 +158,24 @@ describe(`Claude Code ${version} のバックグラウンドのタスクの停�
       expect(await run.manager.stopTask(run.sessionId!, { kind: 'bash', toolUseId: 'toolu_bg' })).toBeNull();
       await run.waitFor('Bash が止まる', () => (run.bashTasks[0].state === 'killed' ? true : null));
       expect(run.attentions.length).toBe(attentions);
+      await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
+    } finally {
+      await close();
+    }
+  }, 60_000);
+
+  // 描き方（tui）が classic だと、/tasks は ▔ の線ではなく ─ の線の下に、字下げ 2 文字で出て、画面から読めない。
+  // tui を決めていない人の多くは classic なので、アプリは --settings で fullscreen に決める（statusline.ts の ownSettings）。
+  // ユーザーの設定が classic でも、それより --settings が勝って、止められる
+  it('Bash（ユーザーの設定が classic の描き方でも、アプリが fullscreen にして止める）', async () => {
+    const { run, close } = await only(
+      { id: 'toolu_bg', name: 'Bash', input: { command: 'echo only; sleep 600', description: '一つだけ', run_in_background: true } },
+      (r) => r.bashTasks.length === 1,
+      { tui: 'default' },
+    );
+    try {
+      expect(await run.manager.stopTask(run.sessionId!, { kind: 'bash', toolUseId: 'toolu_bg' })).toBeNull();
+      await run.waitFor('Bash が止まる', () => (run.bashTasks[0].state === 'killed' ? true : null));
       await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
     } finally {
       await close();
