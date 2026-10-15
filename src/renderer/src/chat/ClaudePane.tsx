@@ -18,7 +18,7 @@ import { TaskTray } from '../tasks/TaskTray';
 import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
-import { ChatInput, CommentChips, type CompletionSource } from './ChatInput';
+import { ChatInput, CommentChips, listCompletionFiles, type CompletionSource } from './ChatInput';
 import { ChatRow } from './ChatRow';
 import { useTakeClaudeDraft } from './claudeDraft';
 import { HookGroupRow } from './HookGroupRow';
@@ -382,10 +382,12 @@ export const ClaudePane = memo(function ClaudePane({
   sessionsRef.current = sessions;
   // worktree のフォルダができる前に読んだファイルの候補（空）は、できたら読み直す（鍵を変える）
   const folderPending = pendingFolder(session) !== null;
+  // ワークスペースに追加したフォルダのファイルも @ の候補に出す。足したり外したりしたら読み直す
+  const addedKey = (session.addedFolders ?? []).join('\0');
   const completion = useMemo<CompletionSource>(
     () => ({
-      key: folderPending ? `${session.id}:pending` : session.id,
-      listFiles: () => window.tanacode.workspace.listFiles(session.id),
+      key: `${folderPending ? `${session.id}:pending` : session.id}\0${addedKey}`,
+      listFiles: () => listCompletionFiles(window.tanacode.workspace.listFiles(session.id), addedKey ? addedKey.split('\0') : []),
       listCommands: () => window.tanacode.commands.list(session.id),
       // @ の候補に出すセッション。このセッションから見えるもの（Claude が read_session で読めるもの）だけ。
       // ホームのフォルダは画面からは分からないので渡さない（候補が少し広くなるだけで、読めるかは main が改めて決める）
@@ -396,7 +398,7 @@ export const ClaudePane = memo(function ClaudePane({
     }),
     // session は id が同じなら、フォルダも親も同じ
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session.id, folderPending],
+    [session.id, folderPending, addedKey],
   );
 
   // 送る本文（コードへのコメントを添える）

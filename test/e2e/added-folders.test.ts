@@ -5,11 +5,13 @@ import { E2EApp } from './app';
 
 // ワークスペースにフォルダを追加する。エクスプローラーの見出しの ＋ で選んだフォルダが、セッションのフォルダの下にツリーで並び、
 // エディタで開けて、ディスクの変更がエディタに戻るか。Claude Code にも --add-dir で渡り（手が空いているので、すぐ起動し直す）、
-// Claude が確認なしでそのフォルダを読めるか。外すと、ツリーから消え、Claude Code にも渡さなくなるか
+// Claude が確認なしでそのフォルダを読めるか。入力欄の @ の補完で選んだそのフォルダのファイルが、Claude に渡るか。
+// 外すと、ツリーから消え、Claude Code にも渡さなくなるか
 
 const PROMPT = 'フォルダを足すので待っていてください';
 const READ = 'ライブラリのファイルを読んでください';
 const SECOND = '足したフォルダが見えますか';
+const MENTION = 'このファイルを見てください';
 const LIB = 'lib';
 const UTIL = 'export const util = 1;\n';
 
@@ -39,6 +41,7 @@ describe('ワークスペースにフォルダを追加して、エクスプロ�
             [{ type: 'text', text: 'わかりました' }],
             [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: join(dirname(work), LIB, 'src', 'util.ts') } }],
             [{ type: 'text', text: '読みました' }],
+            [{ type: 'text', text: '中身を受け取りました' }],
           ],
         },
         { match: SECOND, steps: [[{ type: 'text', text: '見えています' }]] },
@@ -90,6 +93,24 @@ describe('ワークスペースにフォルダを追加して、エクスプロ�
     await app.page.locator(`.tree-row[title="${lib}/src/util.ts"] .tree-know.read`).waitFor();
   });
 
+  it('入力欄の @ の補完に追加したフォルダのファイルが出て、選ぶと絶対パスが入り、送るとファイルの中身が Claude に渡る', async () => {
+    writeFileSync(join(lib, 'src', 'util.ts'), 'export const util = 3;\n');
+    const input = app.page.locator('.chat-input textarea');
+    await input.fill('');
+    await input.pressSequentially('@util');
+    // 候補には、エクスプローラーと同じくフォルダの名前から出す
+    const item = app.page.locator('.suggest-item', { has: app.page.locator('.suggest-detail', { hasText: `${LIB}/src/util.ts` }) });
+    await item.waitFor();
+    await input.press('Enter');
+    expect(await input.inputValue()).toBe(`@${lib}/src/util.ts `);
+    await input.pressSequentially(MENTION);
+    await app.page.click('.chat-input-row [aria-label="送信"]');
+    await app.byText('.chat-list', '中身を受け取りました').waitFor();
+    // Claude Code が @ のファイルを読んで、発言に添えて渡した（ツールの結果ではなく、発言の文として届く）
+    expect(app.api.contexts.at(-1)).toContain('export const util = 3');
+    expect(await app.page.locator('.chat-list .menu-card.permission').count()).toBe(0);
+  });
+
   it('外すと、ツリーから消え、Claude Code にも渡さなくなる（フォルダそのものは残る）', async () => {
     const row = app.page.locator(`.tree-row[title="${lib}"]`);
     await row.hover();
@@ -99,12 +120,17 @@ describe('ワークスペースにフォルダを追加して、エクスプロ�
     await app.page.locator('.tree-row[title="README.md"]').waitFor();
   });
 
-  it('新規セッションの画面で追加したフォルダは、始めたセッションに渡り、はじめから --add-dir で起動する', async () => {
+  it('新規セッションの画面で追加したフォルダは、入力欄の @ の候補に出て、始めたセッションに渡り、はじめから --add-dir で起動する', async () => {
     await app.page.click('nav.sidebar .new-session-button');
     // 見ていたセッションのフォルダ（作業フォルダ）が選ばれている
     await app.page.locator(`.new-session-chips .folder-picker > button.new-session-chip[title="${app.work}"]`).waitFor();
     await app.page.click('.side-panel-title [aria-label="フォルダを追加"]');
     await app.page.locator(`.tree-row[title="${lib}"]`).waitFor();
+    // 入力欄の @ の候補にも、追加したフォルダのファイルが出る
+    const input = app.page.locator('.chat-input textarea');
+    await input.pressSequentially('@util');
+    await app.page.locator('.suggest-item .suggest-detail', { hasText: `${LIB}/src/util.ts` }).waitFor();
+    await input.fill('');
     // Remote Control は使わない（パッケージしたアプリでは既定でオン。モックの API ではつながらない）
     const remote = app.page.locator('.claude-header [role="switch"][aria-label="Remote Control"]');
     if ((await remote.count()) > 0 && (await remote.getAttribute('aria-checked')) === 'true') await remote.click();

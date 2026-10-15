@@ -71,11 +71,12 @@ export class Workspace {
     await writeFile(this.resolve(relPath), text, 'utf8');
   }
 
-  // @ファイル名の補完用。git 管理下なら追跡中と未追跡（.gitignore を除く）、そうでなければフォルダをたどる
+  // @ファイル名の補完用。git 管理下なら追跡中と未追跡（.gitignore を除く）、そうでなければフォルダをたどる。
+  // git の一覧は -z で読む（無いと、日本語などのファイル名を "\343\203\241.md" のようにエスケープして返す）
   async listFiles(): Promise<string[]> {
     const fromGit = await new Promise<string[] | null>((resolve) => {
-      execFile('git', ['ls-files', '-co', '--exclude-standard'], { cwd: this.root, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) =>
-        resolve(err ? null : stdout.split('\n').filter(Boolean)),
+      execFile('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: this.root, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) =>
+        resolve(err ? null : stdout.split('\0').filter(Boolean)),
       );
     });
     if (fromGit) return fromGit.slice(0, MAX_LISTED_FILES);

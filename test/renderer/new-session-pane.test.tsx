@@ -42,6 +42,7 @@ const props = (cwd: string, overrides: Partial<Props> = {}): Props => ({
   onForgetFolder: () => {},
   cwd,
   onCwdChange: () => {},
+  addedFolders: [],
   sessions: [],
   branch: 'feature',
   onOpenScm: () => {},
