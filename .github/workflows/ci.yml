@@ -1,13 +1,17 @@
 # PR で流す確認。互いに関わりの無いものは、ジョブを分けて並べて流す（PR がマージできるまでの待ち時間を短くするため）。
-# 同じものは 1 回だけ作り、1 回だけ流す。
+# 同じものは 1 回だけ流す。アプリの JS は 1 回だけ作り、E2E を流す台に配る。
 # - unit: 型チェックと単体テスト（カバレッジも測る）。OS に依らないので ubuntu
 # - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）。ubuntu
 # - cli: 本物の claude（動作確認済のバージョン）での確認（カバレッジも測る）。Claude Code は OS で画面の描き方が違うので macOS
-# - app: アプリ本体を、配布と同じ手順で .app まで作り（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）、
-#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（E2E。カバレッジも測る）。macOS
-# - check: ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（単体・本物の claude・E2E）を合わせて下限を確かめる。
+# - build: アプリの JS（electron-vite build。ソースマップ付き）。OS に依らないので、メモリとコアの多い ubuntu で 1 回だけ作り、out/ を app に渡す
+# - app: build の out/ から、配布と同じ手順で .app を作り（翻訳の補助プログラム・electron-builder。署名は ad-hoc）、
+#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（E2E。カバレッジも測る）。macOS。
+#        E2E はテストのファイルを、時間がそろうように 3 つに分け、3 台で並べて流す（.app は台ごとに作る）。
+#        台は build と並べて始め、out/ の要らない準備を済ませてから build を待つ
+# - check: ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（単体・本物の claude・E2E の分割ごと）を合わせて下限を確かめる。
 #          develop のルールセットの必須のチェック
-# 毎日の、最新の Claude Code での互換性の確認は claude-code-check.yml
+# 毎日の、最新の Claude Code での互換性の確認は claude-code-check.yml。
+# npm ci は、node_modules ごとキャッシュから戻して飛ばす（.github/actions/npm-ci。キャッシュは deps-cache.yml が develop で作る）
 # develop への push では流さない。develop にはルールセットで PR を通したものしか入らず、その PR で同じものを流しているため
 name: ci
 
@@ -27,14 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      # Electron の本体は使わないので落とさない
-      - run: npm ci
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      # Electron の本体は使わないので落とさない。node_modules はキャッシュから戻す（.github/actions/npm-ci）
+      - uses: ./.github/actions/npm-ci
       - run: npm run typecheck
       # 型が合わなくても、単体テストの結果も出す
       - if: ${{ !cancelled() }}
@@ -52,13 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - uses: ./.github/actions/npm-ci
       - run: npm run build-storybook
         env:
           NODE_OPTIONS: --max-old-space-size=6144
@@ -67,13 +59,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - uses: ./.github/actions/npm-ci
       # 確かめる claude は、動作確認済のバージョン（src/shared/claude-code.ts）。新しい Claude Code が出ても、関係のない PR が落ちないように。
       # API はモックなので料金はかからない
       - name: Claude Code を入れる
@@ -106,19 +92,71 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
+  # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
+  # ビルドはメモリを 6GB ほど使う（画面側が大きい）。Node の既定の上限（約 2GB）では止まるため、上限を上げる。
+  # 時間の 4 分の 1 ほどが GC なので、上限を 12GB・若い世代を 128MB と大きめにして、GC を減らす（66 秒 → 61 秒。メモリは 7GB ほど）。
+  # macOS のランナー（メモリ 7GB・3 コア）ではメモリをほぼ使い切り、かかる時間も 50 秒〜4 分半とぶれたので、ubuntu（16GB・4 コア）で作る。
+  # ビルドの設定に OS で変わるところは無く、electron と node-pty は out/ に入らず外から読むので、ここで作ったものを macOS で .app に詰められる
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/npm-ci
+      - name: アプリをビルドする
+        run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
+          NODE_OPTIONS: --max-old-space-size=12288 --max-semi-space-size=128
+      # 82MB ほど。上げ下ろしの時間を縮めるため、圧縮は軽くする
+      - uses: actions/upload-artifact@v7
+        with:
+          name: out
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+          compression-level: 1
+
+  # E2E はテストのファイルを 3 つに分けて（vitest の --shard。分け方は test/e2e/sequencer.ts）、3 台で並べて流す。
+  # 4 つに分けると、cli と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるため、3 つにする。
+  # build を needs で待たずに並べて始め、out/ の要らない準備（npm ci・翻訳の補助・Claude Code）を済ませてから、build を待つ
+  # （build の 2 分ほどの間に準備が終わるので、その分だけ早く終わる）
   app:
     runs-on: macos-latest
+    permissions:
+      contents: read
+      # build が終わったかを API で見る
+      actions: read
+    strategy:
+      # 1 つが落ちても、ほかの分割は最後まで流す（落ちたテストを 1 回で全部見られるように）
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-      # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、npm ci と並べて作る。
-      # アプリのビルドとは並べない（3 コアのランナーで取り合いになり、画面側のビルドが 1 分半ほど遅くなった）。
-      # 補助プログラムは、配布用のビルドと同じく、作れなければ失敗にする
+      # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、元のファイル（native/translate・作るスクリプト）と
+      # ランナーのイメージ（Xcode）が同じなら、前に作ったものを使う（作るのに 15〜50 秒かかり、遅い台では build の待ちに隠れきらなかった）。
+      # キーは deps-cache.yml（develop で作っておく）と同じ
+      - id: image
+        run: echo "version=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - id: helper
+        uses: actions/cache@v6
+        with:
+          path: build/native/tanacode-translate
+          key: translate-helper-${{ steps.image.outputs.version }}-${{ hashFiles('native/translate/**', 'scripts/build-translate-helper.mjs') }}
+      # 無ければ、npm ci と並べて作る。配布用のビルドと同じく、作れなければ失敗にする
       - name: 依存を入れる（あわせて翻訳の補助プログラムを作る）
+        env:
+          HELPER_CACHED: ${{ steps.helper.outputs.cache-hit }}
         run: |
+          if [ "$HELPER_CACHED" = true ]; then
+            npm ci
+            exit 0
+          fi
           log="$RUNNER_TEMP/translate-helper.log"
           node scripts/build-translate-helper.mjs --require > "$log" 2>&1 &
           helper=$!
@@ -129,13 +167,44 @@ jobs:
             exit 1
           fi
           cat "$log"
-      # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
-      # 画面側のビルドはメモリを 5GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
-      - name: アプリをビルドする
-        run: npx electron-vite build
+      # E2E で動かす claude は、動作確認済のバージョン（src/shared/claude-code.ts）。API はモックなので料金はかからない
+      - name: Claude Code を入れる
+        id: claude
+        run: |
+          VERSION=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
+          test -n "$VERSION" || { echo "::error::src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"; exit 1; }
+          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
+          echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
+      # build が終わるのを待つ。落ちたり取りやめになったりしたら、ここで失敗にする。
+      # filter=latest: やり直した回は、やり直した build を見る（落ちたジョブだけのやり直しでは、前の回の通った build を見る）。
+      # API がたまたま失敗しても待ち続け、5 回続けて読めなければ失敗にする
+      - name: build を待つ
         env:
-          TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          errors=0
+          for _ in $(seq 1 180); do
+            if ! conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest" \
+              --jq '.jobs[] | select(.name == "build") | .conclusion // "running"'); then
+              errors=$((errors + 1))
+              [ "$errors" -lt 5 ] || { echo "::error::build の状態を読めません"; exit 1; }
+              sleep 5
+              continue
+            fi
+            errors=0
+            case "$conclusion" in
+              success) exit 0 ;;
+              running | "") sleep 5 ;;
+              *) echo "::error::build が通りませんでした（$conclusion）"; exit 1 ;;
+            esac
+          done
+          echo "::error::build が 15 分たっても終わりません"
+          exit 1
+      - name: ビルドしたもの（out/）を受け取る
+        uses: actions/download-artifact@v8
+        with:
+          name: out
+          path: out/
       # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）。
       # electron-builder は PR のビルドでは署名を飛ばすので、CSC_FOR_PULL_REQUEST で署名させる
       # （このジョブは証明書も Secrets も使わないので、PR のコードに署名させても漏れるものは無い）
@@ -154,25 +223,18 @@ jobs:
           test -d "$app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"
           test -x "$app/Contents/Frameworks/tanacode Helper.app/Contents/MacOS/tanacode Helper"
           codesign --verify --deep --strict "$app"
-      # E2E で動かす claude は、動作確認済のバージョン（src/shared/claude-code.ts）。API はモックなので料金はかからない
-      - name: Claude Code を入れる
-        id: claude
-        run: |
-          VERSION=$(sed -nE "s/^export const VERIFIED_CLAUDE_CODE_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)';$/\1/p" src/shared/claude-code.ts)
-          test -n "$VERSION" || { echo "::error::src/shared/claude-code.ts に VERIFIED_CLAUDE_CODE_VERSION が見つかりません"; exit 1; }
-          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
-          echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
       # 配る形のまま動くかを確かめるため、できた .app で流す。.app のスクリプト（…/app.asar/out/…）のカバレッジは、
-      # 同じビルドの手元の out/ とソースマップで src の行に戻す（scripts/e2e-coverage.mjs）
+      # .app に詰めたのと同じ out/ とソースマップで src の行に戻す（scripts/e2e-coverage.mjs）
       - name: できた .app を、画面の操作から通しで確かめる（E2E。カバレッジも測る）
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
-          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e
+          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e -- --shard="$SHARD"
       - uses: actions/upload-artifact@v7
         with:
-          name: coverage-e2e
+          name: coverage-e2e-${{ matrix.shard }}
           path: coverage/e2e/coverage-final.json
           if-no-files-found: error
           retention-days: 1
@@ -182,7 +244,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-results
+          name: e2e-results-${{ matrix.shard }}
           path: test-results/e2e/
           if-no-files-found: ignore
           overwrite: true
@@ -192,7 +254,7 @@ jobs:
   # カバレッジのファイルは、測ったランナー（ubuntu と macOS）の絶対パスで入っているが、
   # scripts/coverage-report.mjs と scripts/unpressed.mjs が src からのパスで突き合わせるので、ここ（ubuntu）で合わせられる
   check:
-    needs: [unit, storybook, cli, app]
+    needs: [unit, storybook, cli, build, app]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -209,25 +271,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - uses: ./.github/actions/npm-ci
+      # 測ったカバレッジ（coverage-unit・coverage-cli・E2E は分割ごとに coverage-e2e-1 …）を、まとめて受け取り、
+      # coverage/unit/・coverage/cli/・coverage/e2e-1/ … に置く（coverage:report と coverage:unpressed は、coverage/ の下にあるものを全部合わせる）
       - uses: actions/download-artifact@v8
         with:
-          name: coverage-unit
-          path: coverage/unit/
-      - uses: actions/download-artifact@v8
-        with:
-          name: coverage-cli
-          path: coverage/cli/
-      - uses: actions/download-artifact@v8
-        with:
-          name: coverage-e2e
-          path: coverage/e2e/
+          pattern: coverage-*
+          path: coverage/
+      - name: カバレッジを測ったものごとのフォルダに置く
+        run: for dir in coverage/coverage-*; do mv "$dir" "coverage/${dir#coverage/coverage-}"; done
       # 層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
       # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
       - name: カバレッジをまとめる

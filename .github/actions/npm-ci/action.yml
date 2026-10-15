@@ -1,0 +1,29 @@
+# Node を用意して、依存（node_modules）を入れる。Electron の本体は落とさない（アプリを起動しないジョブ用）。
+# node_modules ごとキャッシュから戻し、当たれば npm ci を飛ばす（ubuntu で npm ci が 16〜27 秒、戻すのは数秒）。
+# 外れたら npm ci で入れ（npm が落としたものも別にキャッシュして使う）、ジョブの終わりに node_modules をキャッシュする。
+# PR で作ったキャッシュはその PR からしか読めないので、ほかの PR でも当たるよう、develop で作っておく（deps-cache.yml）
+name: npm ci（キャッシュつき）
+description: Node 24 を用意し、node_modules をキャッシュから戻す。無ければ npm ci で入れる（ELECTRON_SKIP_BINARY_DOWNLOAD）
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+    # キーは OS・CPU・Node のメジャーバージョン（node-pty などのネイティブのモジュールが合うもの）・ロックファイル
+    - id: modules
+      uses: actions/cache@v6
+      with:
+        path: node_modules
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node24-no-electron-${{ hashFiles('package-lock.json') }}
+    - if: steps.modules.outputs.cache-hit != 'true'
+      uses: actions/cache@v6
+      with:
+        path: ~/.npm
+        key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+        restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
+    - if: steps.modules.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
