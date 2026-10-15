@@ -170,14 +170,14 @@ PR で、次のものを流します。develop への push では流しません
 | `ci.yml` | `storybook` | Storybook のビルド | ubuntu |
 | `ci.yml` | `cli` | 本物の claude（動作確認済のバージョン）での確認（`npm run coverage:cli`。下の「Claude Code との互換性の確かめ方」） | macOS |
 | `ci.yml` | `build` | アプリの JS をビルドする（`electron-vite build`。E2E のカバレッジのため、ソースマップ付き）。できた `out/` を `app` に渡す | ubuntu |
-| `ci.yml` | `app`（3 台） | `build` の `out/` から、配布と同じ手順で `.app` を作る（翻訳の補助プログラム・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる。できた `.app` で E2E（`npm run coverage:e2e`。カバレッジも測る）を、テストのファイルを 3 つに分けて流す | macOS |
+| `ci.yml` | `app`（3 台） | `build` と並べて始め、`out/` の要らない準備を済ませてから `build` を待つ。`build` の `out/` から、配布と同じ手順で `.app` を作る（翻訳の補助プログラム・electron-builder。署名は ad-hoc）。同梱するもの（翻訳の補助・node-pty・Helper・ライセンスの表示）と署名も確かめる。できた `.app` で E2E（`npm run coverage:e2e`。カバレッジも測る）を、テストのファイルを 3 つに分けて流す | macOS |
 | `ci.yml` | `check` | ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（E2E は分割ごと）を合わせて下限を確かめる（下の「カバレッジ」） | ubuntu |
 | `demo-site.yml` | `tour`（PR では `build` は飛ばす） | デモのサイトをビルドし、ツアーが最後まで流れるかを PC とスマホで確かめる（下の「デモのサイト」） | ubuntu |
 
 - 型チェック（`npm run typecheck`）は `--composite false` で動かします。`*.tsbuildinfo` を使うと、JSON（文言）の変更に追いつかず、古い結果を出すことがあるためです。
 - ときどき落ちる（flaky な）テストは、再実行で済ませません。落ちる原因を突き止めて、アプリの不具合ならアプリを、テストの書き方ならテストを直します。決まった時間を待つ・押し直すなどの回り道で隠しません。直したら、手元で何回も流して、直す前より落ちなくなったことを確かめます（例: `for i in $(seq 1 30); do npx vitest run <ファイル> || echo 落ちた; done`）。
 - 本物のシェル（`/bin/sh`）を node-pty で開くテストは、シェルがプロンプトを出してから打ちます。単体テストを流す ubuntu の `/bin/sh` は dash で、起動の前に打った文字を描き直さないので、打った文字の映りのあとに、プロンプトと出力が同じ行に並びます（`$ red`）。macOS の `/bin/sh`（bash）はプロンプトのあとに描き直すので、手元では通ってしまいます。また、打った文字の映りにも同じ文字が入るので、生の出力に出たかでは待たず、次のプロンプトが出るのを待ちます（`test/shell-terminals.test.ts` の `waitForPrompt`・`typeAndWait`）。手元で dash で確かめるときは、`/bin/dash` を指す `sh` という名前のリンクを作り、テストの `process.env.SHELL` をそのリンクにします。
-- PR では流さないものに、毎日の最新の Claude Code での互換性の確認（`claude-code-check.yml`。macOS。下の「Claude Code との互換性の確かめ方」）と、週 1 回の `mutation.yml`（ubuntu。下の「ミューテーションテスト」）があります。
+- PR では流さないものに、毎日の最新の Claude Code での互換性の確認（`claude-code-check.yml`。macOS。下の「Claude Code との互換性の確かめ方」）と、週 1 回の `mutation.yml`（ubuntu。下の「ミューテーションテスト」）、依存のキャッシュを develop で作る `deps-cache.yml`（下）があります。
 - ワークフローとは別に、GitHub の設定で次の 2 つをオンにしています（どちらもワークフローのファイルは無し）。警告は Security タブに出ます。対応の手順は `/security`。
   - コードスキャン（CodeQL の default setup）: PR・develop への push・週 1 回、TypeScript とワークフローを解析（3 分ほど）。必須のチェックではありません。Swift（`native/translate/main.swift`）は、CodeQL の自動ビルドが通る形（Xcode のプロジェクト・`Package.swift`）でないので対象外。
   - シークレットスキャン: リポジトリに入ったキーやトークンを見つけて警告。プッシュ保護（キーを含むプッシュを止める）はオフ。
@@ -185,7 +185,11 @@ PR で、次のものを流します。develop への push では流しません
 - public のリポジトリなので、標準のランナー（macOS も）は無料です。気にするのは、PR がマージできるまでの待ち時間です。
   - そのため、互いに関わりの無いものは、ジョブを分けて並べて流します。ジョブの中でも、関わりの無いもの（翻訳の補助プログラムを作るのと `npm ci`、WebKit を入れるのとデモのビルド、PC とスマホのツアー）は並べて動かします。ただし、CPU を使い切るもの同士は並べません（macOS のランナーは 3 コアで、翻訳の補助プログラムとアプリのビルドを並べたら、ビルドが 1 分半ほど遅くなりました）。いちばん長いのは `build` と `app`（`.app` を作る・E2E）で、`check` がそれを待ってカバレッジを合わせます。
   - アプリの JS のビルドは、ubuntu のランナー（メモリ 16GB・4 コア）で行います。ソースマップ付きのビルドはメモリを 6GB ほど使い、macOS のランナー（7GB・3 コア）ではメモリをほぼ使い切って、かかる時間も 50 秒〜4 分半とぶれたためです。ビルドの設定に OS で変わるところは無く、`electron` と `node-pty` は `out/` に入らず外から読むので、ubuntu で作った `out/` を macOS で `.app` に詰められます（両方で作って比べ、同じになることを確かめました）。
-  - E2E は、vitest の `--shard` でテストのファイルを 3 つに分け、macOS の 3 台で並べて流します（`app` の matrix）。台ごとに `out/` を受け取って `.app` を作ります（`electron-builder` は 25 秒ほど）。4 つに分けないのは、`cli` と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるためです。
+  - E2E は、vitest の `--shard` でテストのファイルを 3 つに分け、macOS の 3 台で並べて流します（`app` の matrix）。台ごとに `out/` を受け取って `.app` を作ります（`electron-builder` は 20〜40 秒。大半は ad-hoc の署名）。4 つに分けないのは、`cli` と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるためです。
+    - 分け方は、3 台の時間がそろうように、ファイルごとの時間（`test/e2e/durations.json`。CI で測った秒数）の長いものから順に、合計のいちばん短い台に入れます（`test/e2e/sequencer.ts`）。vitest の既定の分け方（パスのハッシュの順に数で等分）では、重いファイル（`sessions.test.ts` など）が 1 つの台に寄るためです。E2E のファイルを足したら、表にも CI のログの秒数で足します（足し忘れは `test/e2e-shard.test.ts` が落とします）。
+    - `app` の台は、`build` を `needs` で待たずに並べて始めます。`npm ci`・翻訳の補助・Claude Code を入れるところまで（`out/` が要らない準備。30〜60 秒）を `build`（2 分ほど）の間に済ませ、そのあと `build` が終わるのを API で待ちます（`actions: read`）。`build` が落ちたら、待つのをやめて失敗にします。
+    - 台ごとの速さは、同じ回の中でも 2 倍ほど違うことがあります（遅い台は `npm ci`・署名・E2E がそろって遅い）。3 台のうちいちばん遅い台で、全体の時間が決まります。
+  - `npm ci` は、ubuntu のジョブと `cli` では、`node_modules` ごとキャッシュから戻して飛ばします（`.github/actions/npm-ci`。キーは OS・CPU・Node のメジャーバージョン・`package-lock.json`）。PR で作ったキャッシュはその PR からしか読めないので、develop で作っておきます（`deps-cache.yml`。依存が変わって develop に入ったときと、週 1 回）。`app` の台は Electron の本体も要り、準備は `build` の間に終わるので、キャッシュしません。
   - 同じものは 1 回だけ流します。アプリの JS は、カバレッジを測るためのソースマップ付きのビルドを 1 回だけ作り、そこから `.app` を作って E2E を流します（`.map` は `.app` に入りません）。デモのサイトも、PR では待ち時間 0 のビルド 1 回で、PC とスマホのツアーを流します。
   - `check` は develop のルールセットの必須のチェックです。前のジョブが失敗して飛ばされると、必須のチェックは通ったことになってしまうので、`check` は前のジョブの結果に関わらず動き、どれか 1 つでも通っていなければ失敗にします。
 
@@ -317,7 +321,7 @@ PR で、次のものを流します。develop への push では流しません
 `npm run test:e2e`（`test/e2e/`）は、アプリ本体を Playwright で起動し、人と同じように画面を操作して、Claude Code・MCP・ターミナルまで通しで確かめます。`claude` は本物（`TANACODE_CLAUDE_BIN`、無ければ PATH の `claude`）、API はモック（`test/cli/mock-api.ts`）なので、料金はかかりません。
 
 - 起動するのは、ビルドしたアプリ（`out/`。先に `npm run build`）か、`TANACODE_E2E_APP` に渡した実行ファイル（パッケージした `.app` の `Contents/MacOS/tanacode`）。
-- CI では、`ci.yml` の `app` のジョブで、PR のときに流します。テストのファイルを 3 つに分けて（`npm run coverage:e2e -- --shard=1/3` …）、macOS の 3 台で並べて流します（上の「テストと CI」）。`claude` は動作確認済のバージョンです。
+- CI では、`ci.yml` の `app` のジョブで、PR のときに流します。テストのファイルを、時間がそろうように 3 つに分けて（`npm run coverage:e2e -- --shard=1/3` …。`test/e2e/sequencer.ts`）、macOS の 3 台で並べて流します（上の「テストと CI」）。`claude` は動作確認済のバージョンです。
   - 配る形のまま動くかを確かめるため、作った `.app` で流します。あわせてカバレッジも測ります（`npm run coverage:e2e`）。`.app` は、`build` のジョブがソースマップ付きでビルドした `out/` から作り（`.map` は `.app` に入らない）、`.app` のスクリプト（`…/app.asar/out/…`）のカバレッジは、`.app` に詰めたのと同じ `out/` とソースマップで src の行に戻します（`scripts/e2e-coverage.mjs`）。測ったものは `check` のジョブで、分割ごとに `coverage/e2e-1/` … に置き、単体と本物の claude のテストと合わせて、下限を確かめます。
   - ソースマップには元のソースを埋め込みません（`electron.vite.config.ts` の `sourcemapExcludeSources`）。戻すときは src のファイルを読むので要らず、埋め込むと画面側のビルドの最大メモリが 0.7GB ほど増える（5.1GB → 5.8GB）ためです。
   - 毎日の定期の確認（最新の Claude Code）では流しません。E2E はビルドを含めて数分かかり、画面の待ち方しだいで落ちることもあるので、互換性の確認（読み取りが壊れていないか）とは分けています。新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れ、通らなければマージしません。

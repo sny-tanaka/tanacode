@@ -1,0 +1,31 @@
+# PR の CI（ci.yml）が使う node_modules のキャッシュ（.github/actions/npm-ci）を、develop で作っておく。
+# PR で作ったキャッシュはその PR からしか読めず、ci.yml は develop では動かないので、ここで作らないと、どの PR もはじめの CI は npm ci からになる。
+# - 依存が変わって develop に入ったとき
+# - 週に 1 回（キャッシュは 7 日使われないと消える。あれば戻すだけで終わる）
+# ubuntu（unit・storybook・build・check）と macOS（cli）の 2 つ
+name: deps-cache
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'package-lock.json'
+      - '.github/actions/npm-ci/**'
+      - '.github/workflows/deps-cache.yml'
+  schedule:
+    # 毎週水曜 5:41（日本時間）
+    - cron: '41 20 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-ci:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/npm-ci
