@@ -136,67 +136,6 @@ jobs:
           retention-days: 1
           overwrite: true
 
-  # 一時的: ubuntu で作った out/ が、macOS で作った out/ と同じかを確かめる（確かめたら外す）
-  out-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      - run: npx electron-vite build
-        env:
-          TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
-      - uses: actions/upload-artifact@v7
-        with:
-          name: out-macos
-          path: out/
-          if-no-files-found: error
-          retention-days: 1
-          overwrite: true
-
-  # 一時的: 上の続き（確かめたら外す）
-  compare-out:
-    needs: [build, out-macos]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: out
-          path: out-ubuntu/
-      - uses: actions/download-artifact@v8
-        with:
-          name: out-macos
-          path: out-macos/
-      - name: 比べる
-        run: |
-          {
-            echo "## ubuntu と macOS の out/"
-            echo "- ファイルの数: ubuntu $(find out-ubuntu -type f | wc -l)、macOS $(find out-macos -type f | wc -l)"
-            echo "- 大きさ: ubuntu $(du -sk out-ubuntu | cut -f1)KB、macOS $(du -sk out-macos | cut -f1)KB"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if diff -rq out-ubuntu out-macos > diff.txt; then
-            echo "- 中身: すべて同じ" >> "$GITHUB_STEP_SUMMARY"
-            echo "すべて同じ"
-            exit 0
-          fi
-          echo "- 中身: 違いあり（$(wc -l < diff.txt) 件）" >> "$GITHUB_STEP_SUMMARY"
-          cat diff.txt
-          # 違うファイルごとに、はじめて違うところの前後を出す
-          grep '^Files ' diff.txt | while read -r _ a _ b _; do
-            off=$(cmp "$a" "$b" | sed -nE 's/.* byte ([0-9]+).*/\1/p')
-            from=$(( off > 200 ? off - 200 : 1 ))
-            echo "== $a（$off バイト目）"
-            echo "ubuntu: $(tail -c +"$from" "$a" | head -c 400)"
-            echo "macOS : $(tail -c +"$from" "$b" | head -c 400)"
-          done
-          exit 1
-
   # E2E はテストのファイルを 3 つに分けて（vitest の --shard）、3 台で並べて流す。
   # 4 つに分けると、cli と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるため、3 つにする
   app:
