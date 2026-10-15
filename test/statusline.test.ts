@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { StatusLineInfo } from '@shared/statusline';
+import { mergeSettings } from '../src/main/settings-files';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
 import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand, AUTO_COMPACT_STOP_COMMAND } from '../src/main/statusline';
 
@@ -136,6 +137,12 @@ describe('アプリが Claude Code に渡す設定', () => {
     const dir = join(home, '.claude-work');
     expect(ownSettings(null, false, false, dir).claudeMdExcludes).toEqual(excludes);
     expect(JSON.parse(sessionSettings(false, false, dir)).claudeMdExcludes).toEqual(excludes);
+  });
+
+  it('描き方をいつも fullscreen に決める。登録した設定ファイルが classic（tui: default）でも、こちらが勝つ', () => {
+    expect(ownSettings(null).tui).toBe('fullscreen');
+    expect(JSON.parse(sessionSettings(true, true, join(home, '.claude-work'), true, true)).tui).toBe('fullscreen');
+    expect(mergeSettings({ tui: 'default' }, ownSettings(null)).tui).toBe('fullscreen');
   });
 });
 

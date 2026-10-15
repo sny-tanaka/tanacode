@@ -322,7 +322,7 @@
       "teleport": "クラウドに送る・claude.ai から再開する",
       "terminal-setup": "Shift+Enter の改行を設定",
       "theme": "テーマを変える",
-      "tui": "ターミナル UI の描画方式を設定",
+      "tui": "ターミナル UI の描画方式を設定（tanacode のセッションは fullscreen のまま）",
       "ultrareview": "クラウドでバグを探して検証する",
       "upgrade": "プランをアップグレード",
       "usage": "使用量・プランの状況",
