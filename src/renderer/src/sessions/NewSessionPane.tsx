@@ -5,7 +5,7 @@ import type { PermissionMode } from '@shared/screen';
 import { canSee } from '@shared/session-tools';
 import icon from '../assets/icon.png';
 import { errorMessage } from '../errorMessage';
-import { ChatInput, type CompletionSource } from '../chat/ChatInput';
+import { ChatInput, listCompletionFiles, type CompletionSource } from '../chat/ChatInput';
 import { isLongPaste } from '@shared/prompt-keys';
 import { useInsertInput } from '../chat/insertInput';
 import type { PendingSend } from '../chat/pendingSends';
@@ -43,6 +43,8 @@ type Props = {
   // 選んでいるフォルダ。右パネル（エクスプローラー・ソース管理など）とエディタでも、このフォルダを開く
   cwd: string | null;
   onCwdChange: (cwd: string) => void;
+  // ワークスペースに追加したフォルダ（始めるセッションに渡す）。入力欄の @ の候補に、そのファイルも出す
+  addedFolders: readonly string[];
   // 一覧のすべてのセッション。入力欄の @ の候補に、選んでいるフォルダから見えるセッションを出す
   sessions: SessionSummary[];
   // 右パネルのソース管理が読んだ今のブランチ（切り替えるとすぐ変わる）。まだ読んでいなければ undefined
@@ -71,6 +73,7 @@ export function NewSessionPane({
   onForgetFolder,
   cwd,
   onCwdChange,
+  addedFolders,
   sessions,
   branch,
   onOpenScm,
@@ -144,8 +147,8 @@ export function NewSessionPane({
   sessionsRef.current = sessions;
   const completion = useMemo<CompletionSource>(
     () => ({
-      key: `folder:${cwd ?? ''}`,
-      listFiles: () => (cwd ? window.tanacode.folders.listFiles(cwd) : Promise.resolve([])),
+      key: `folder:${cwd ?? ''}\0${addedFolders.join('\0')}`,
+      listFiles: () => (cwd ? listCompletionFiles(window.tanacode.folders.listFiles(cwd), addedFolders) : Promise.resolve([])),
       listCommands: () => (cwd ? window.tanacode.folders.commands(cwd) : Promise.resolve([])),
       // 選んだフォルダで始めるセッションから見えるもの（同じリポジトリのセッション）。まだ親子は無い。
       // ホームのフォルダは画面からは分からないので渡さない（読めるかは main が改めて決める）
@@ -155,7 +158,7 @@ export function NewSessionPane({
         return sessionsRef.current.filter((s) => canSee(draft, s));
       },
     }),
-    [cwd],
+    [cwd, addedFolders],
   );
 
   const missing = !!cwd && info === null;

@@ -843,6 +843,7 @@ export function App() {
             onForgetFolder={hideFolder}
             cwd={composing.cwd}
             onCwdChange={changeComposingCwd}
+            addedFolders={draft && draft.cwd === composing.cwd ? addedFolders : NO_FOLDERS}
             sessions={sessions ?? NO_SESSIONS}
             branch={draft && draft.cwd === composing.cwd && git.state ? (git.state.isRepo ? git.state.branch : null) : undefined}
             onOpenScm={openScm}

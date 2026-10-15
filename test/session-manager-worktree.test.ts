@@ -210,6 +210,19 @@ describe('createInWorktree', () => {
     expect(app.sessions).toEqual([]);
   });
 
+  it('アプリが手を離せない間に、信頼していないという出力と終了がまとめて届いても、信頼の確認に答えるよう案内する', async () => {
+    start();
+    const { creating, pty } = await begin();
+    // worktree ができたかを見る間隔（200ms）より長く、アプリが手を離せない（CI の遅いランナーで起きる）。
+    // その間に届いた出力は、画面（xterm）があとで文字にするので、見張りのほうが先に終わりに気づく
+    const busyUntil = Date.now() + 300;
+    while (Date.now() < busyUntil);
+    pty.output('\x1b[H\x1b[2JError: Workspace trust not yet accepted for this folder');
+    pty.exit(1);
+    await expect(creating).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
+    expect(app.manager.list()).toEqual([]);
+  });
+
   it('ほかの理由で作れずに終わったら、記録を消し、そのときの画面の最後の行を添えて失敗する', async () => {
     start();
     const { creating, pty } = await begin();

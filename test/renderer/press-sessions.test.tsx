@@ -234,6 +234,7 @@ describe('NewSessionPane（新規セッションの画面）', () => {
     onForgetFolder: vi.fn(),
     cwd: '/work/a',
     onCwdChange: vi.fn(),
+    addedFolders: [],
     sessions: [],
     branch: 'feature',
     onOpenScm: vi.fn(),

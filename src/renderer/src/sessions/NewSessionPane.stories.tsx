@@ -37,8 +37,9 @@ const SESSIONS = [
   session('a9c3b5d7-0000-4000-8000-000000000003', '古い調査', '/Users/me/work/tanacode', true),
 ];
 
-// width は、チャットの列の幅（アプリでは列の境目を動かして変える）。restore は、始められずに入力欄へ戻す指示
-function Pane({ width, restore = null }: { width: number; restore?: PendingSend | null }) {
+// width は、チャットの列の幅（アプリでは列の境目を動かして変える）。restore は、始められずに入力欄へ戻す指示。
+// addedFolders は、ワークスペースに追加したフォルダ
+function Pane({ width, restore = null, addedFolders = [] }: { width: number; restore?: PendingSend | null; addedFolders?: string[] }) {
   // 最近のフォルダ。「外す」を押すと、アプリと同じように一覧から消える
   const [folders, setFolders] = useState(FOLDERS);
   return (
@@ -48,6 +49,7 @@ function Pane({ width, restore = null }: { width: number; restore?: PendingSend 
         onForgetFolder={(dir) => setFolders((list) => list.filter((d) => d !== dir))}
         cwd="/Users/me/work/tanacode"
         onCwdChange={noop}
+        addedFolders={addedFolders}
         sessions={SESSIONS}
         branch="develop"
         onOpenScm={noop}
@@ -178,5 +180,24 @@ export const セッションを候補に出す: Story = {
   },
   play: async ({ canvasElement }) => {
     await userEvent.type(within(canvasElement).getByRole('textbox'), '@');
+  },
+};
+
+// ワークスペースに追加したフォルダ（design-system）のファイルも、@ の候補に出る。候補には、エクスプローラーと同じくフォルダの名前から出し、
+// 選ぶと絶対パス（@/Users/me/work/design-system/components/Button.tsx）が入る
+export const 追加したフォルダのファイルも候補に出す: Story = {
+  args: { addedFolders: ['/Users/me/work/design-system'] },
+  beforeEach: () => {
+    mockApi({
+      'folders.listFiles': (cwd) =>
+        Promise.resolve(
+          cwd === '/Users/me/work/design-system'
+            ? ['components/Button.tsx', 'components/IconButton.tsx', 'README.md']
+            : ['README.md', 'src/renderer/src/chat/SendButton.tsx', 'src/renderer/src/icons.tsx'],
+        ),
+    });
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.type(within(canvasElement).getByRole('textbox'), '@button');
   },
 };

@@ -3,15 +3,23 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary, SlashCommand } from '@shared/ipc';
-import { ChatInput, submitToClaude, type CompletionSource } from '../../src/renderer/src/chat/ChatInput';
+import { ChatInput, listCompletionFiles, submitToClaude, type CompletionSource } from '../../src/renderer/src/chat/ChatInput';
 import './dom';
 import { mockApi } from './mock-api';
+import { deferred } from './press-checklist-fixtures';
 
 // チャットの入力欄。送信のキー（⌘Enter。Enter は改行・変換確定では送らない）・@ と / の補完・画像の貼り付けとドロップ・添付とコメントの札
+
+// ワークスペースに追加したフォルダのファイル
+const FOLDER_FILES: Record<string, string[]> = {
+  '/Users/me/lib': ['src/util.ts', 'README.md'],
+  '/Users/me/My Projects/kit': ['notes.txt'],
+};
 
 let api: ReturnType<typeof mockApi>;
 beforeEach(() => {
   api = mockApi({
+    'folders.listFiles': (folder: never) => Promise.resolve(FOLDER_FILES[folder] ?? []),
     'attachments.save': (name: never) => Promise.resolve(`/tmp/attachments/0123abcd-${name as string}`),
     pathForFile: (file: never) => `/Users/me/${(file as File).name}`,
   });
@@ -27,13 +35,21 @@ const COMMANDS: SlashCommand[] = [
 const session = (id: string, title: string, archived = false) => ({ id, title, archived, cwd: '/work/shop', worktree: null, parentId: null }) as unknown as SessionSummary;
 
 type Props = ComponentProps<typeof ChatInput>;
-function Harness({ initial = '', onValue, onPastes, ...props }: Partial<Props> & { initial?: string; onValue?: (v: string) => void; onPastes?: (p: string[]) => void }) {
+// files: セッションのフォルダのファイル。added: ワークスペースに追加したフォルダ
+function Harness({
+  initial = '',
+  onValue,
+  onPastes,
+  files = ['src/app.ts', 'src/components/Toolbar.tsx', 'docs/top.md', 'README.md'],
+  added = [],
+  ...props
+}: Partial<Props> & { initial?: string; onValue?: (v: string) => void; onPastes?: (p: string[]) => void; files?: string[]; added?: string[] }) {
   const [value, setValue] = useState(initial);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [pastes, setPastes] = useState<string[]>([]);
   const completion: CompletionSource = {
-    key: 'k',
-    listFiles: () => Promise.resolve(['src/app.ts', 'src/components/Toolbar.tsx', 'docs/top.md', 'README.md']),
+    key: `k\0${added.join('\0')}`,
+    listFiles: () => listCompletionFiles(Promise.resolve(files), added),
     listCommands: () => Promise.resolve(COMMANDS),
     listSessions: () => [session('s2', 'ログインの改修'), session('s3', 'today の作業', true)],
   };
@@ -72,6 +88,8 @@ const type = (text: string) => {
   fireEvent.select(box(), { target: { selectionStart: text.length } });
 };
 const suggestions = () => [...document.querySelectorAll('.suggest-item .suggest-label')].map((e) => e.textContent);
+// 候補の下に出すパス
+const details = () => [...document.querySelectorAll('.suggest-item .suggest-detail')].map((e) => e.textContent);
 
 describe('送信のキー', () => {
   it('Claude Code へ送る（submitToClaude）: 本文・添付の画像・札（貼り付けた長い文）を、そのまま main に渡す', async () => {
@@ -158,6 +176,65 @@ describe('@ と / の補完', () => {
     type('a/b を直して');
     await act(() => Promise.resolve());
     expect(suggestions()).toEqual([]);
+  });
+});
+
+describe('@ の補完（ワークスペースに追加したフォルダのファイル）', () => {
+  it('追加したフォルダのファイルも候補に出し、パスはフォルダの名前から出す。選ぶと絶対パスを入れる', async () => {
+    const values: string[] = [];
+    render(<Harness added={['/Users/me/lib']} onValue={(v) => values.push(v)} />);
+    type('@readme');
+    // セッションのフォルダのファイルと混ぜて、同じ決まり（名前の前方一致・短いパスが先）で並べる
+    await waitFor(() => expect(details()).toEqual(['README.md', 'lib/README.md']));
+    // フォルダの名前でも絞れる
+    type('@lib/');
+    await waitFor(() => expect(details()).toEqual(['lib/README.md', 'lib/src/util.ts']));
+    type('見て @util');
+    await waitFor(() => expect(suggestions()).toEqual(['util.ts']));
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(values.at(-1)).toBe('見て @/Users/me/lib/src/util.ts ');
+  });
+
+  it('空白を含むパスは @"…" で囲んで入れる（Claude Code が、空白で切らずにひとつのパスとして読む）', async () => {
+    const values: string[] = [];
+    render(<Harness files={['docs/release notes.md']} added={['/Users/me/My Projects/kit']} onValue={(v) => values.push(v)} />);
+    type('@notes');
+    await waitFor(() => expect(details()).toEqual(['kit/notes.txt', 'docs/release notes.md']));
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(values.at(-1)).toBe('@"/Users/me/My Projects/kit/notes.txt" ');
+    type('@release');
+    await waitFor(() => expect(suggestions()).toEqual(['release notes.md']));
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(values.at(-1)).toBe('@"docs/release notes.md" ');
+  });
+
+  it('フォルダを足すと読み直して候補に出し、外すと出さない', async () => {
+    const view = render(<Harness />);
+    type('@util');
+    await act(() => Promise.resolve());
+    expect(suggestions()).toEqual([]);
+    expect(api.argsOf('folders.listFiles')).toEqual([]);
+    view.rerender(<Harness added={['/Users/me/lib']} />);
+    await waitFor(() => expect(details()).toEqual(['lib/src/util.ts']));
+    view.rerender(<Harness />);
+    await waitFor(() => expect(suggestions()).toEqual([]));
+  });
+
+  it('読んでいる間にフォルダが変わったら、遅れて届いた前の一覧は使わない（外したフォルダのファイルを出さない）', async () => {
+    const lists = new Map<string, ReturnType<typeof deferred<string[]>>>();
+    mockApi({
+      'folders.listFiles': (folder: never) => {
+        const list = deferred<string[]>();
+        lists.set(folder, list);
+        return list.promise;
+      },
+    }).install();
+    const view = render(<Harness added={['/Users/me/lib']} />);
+    type('@notes');
+    view.rerender(<Harness added={['/Users/me/My Projects/kit']} />);
+    await act(async () => lists.get('/Users/me/My Projects/kit')!.resolve(['notes.txt']));
+    await act(async () => lists.get('/Users/me/lib')!.resolve(['notes.md']));
+    expect(details()).toEqual(['kit/notes.txt']);
   });
 });
 
