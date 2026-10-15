@@ -1,11 +1,13 @@
 # PR で流す確認。互いに関わりの無いものは、ジョブを分けて並べて流す（PR がマージできるまでの待ち時間を短くするため）。
-# 同じものは 1 回だけ作り、1 回だけ流す。
+# 同じものは 1 回だけ流す。アプリの JS は 1 回だけ作り、E2E を流す台に配る。
 # - unit: 型チェックと単体テスト（カバレッジも測る）。OS に依らないので ubuntu
 # - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）。ubuntu
 # - cli: 本物の claude（動作確認済のバージョン）での確認（カバレッジも測る）。Claude Code は OS で画面の描き方が違うので macOS
-# - app: アプリ本体を、配布と同じ手順で .app まで作り（翻訳の補助プログラム・electron-vite build・electron-builder。署名は ad-hoc）、
-#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（E2E。カバレッジも測る）。macOS
-# - check: ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（単体・本物の claude・E2E）を合わせて下限を確かめる。
+# - build: アプリの JS（electron-vite build。ソースマップ付き）。OS に依らないので、メモリとコアの多い ubuntu で 1 回だけ作り、out/ を app に渡す
+# - app: build の out/ から、配布と同じ手順で .app を作り（翻訳の補助プログラム・electron-builder。署名は ad-hoc）、
+#        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（E2E。カバレッジも測る）。macOS。
+#        E2E はテストのファイルを 3 つに分け、3 台で並べて流す（.app は台ごとに作る）
+# - check: ほかのジョブが全部通ったかを確かめ、3 つのカバレッジ（単体・本物の claude・E2E の分割ごと）を合わせて下限を確かめる。
 #          develop のルールセットの必須のチェック
 # 毎日の、最新の Claude Code での互換性の確認は claude-code-check.yml
 # develop への push では流さない。develop にはルールセットで PR を通したものしか入らず、その PR で同じものを流しているため
@@ -106,7 +108,36 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
-  app:
+  # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
+  # ビルドはメモリを 6GB ほど使う（画面側が大きい）。Node の既定の上限（約 2GB）では止まるため、上限を上げる。
+  # macOS のランナー（メモリ 7GB・3 コア）ではメモリをほぼ使い切り、かかる時間も 50 秒〜4 分半とぶれたので、ubuntu（16GB・4 コア）で作る。
+  # ビルドの設定に OS で変わるところは無く、electron と node-pty は out/ に入らず外から読むので、ここで作ったものを macOS で .app に詰められる
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - name: アプリをビルドする
+        run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
+          NODE_OPTIONS: --max-old-space-size=6144
+      - uses: actions/upload-artifact@v7
+        with:
+          name: out
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # 一時的: ubuntu で作った out/ が、macOS で作った out/ と同じかを確かめる（確かめたら外す）
+  out-macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -114,8 +145,75 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npx electron-vite build
+        env:
+          TANACODE_SOURCEMAP: 1
+          NODE_OPTIONS: --max-old-space-size=6144
+      - uses: actions/upload-artifact@v7
+        with:
+          name: out-macos
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # 一時的: 上の続き（確かめたら外す）
+  compare-out:
+    needs: [build, out-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: out
+          path: out-ubuntu/
+      - uses: actions/download-artifact@v8
+        with:
+          name: out-macos
+          path: out-macos/
+      - name: 比べる
+        run: |
+          {
+            echo "## ubuntu と macOS の out/"
+            echo "- ファイルの数: ubuntu $(find out-ubuntu -type f | wc -l)、macOS $(find out-macos -type f | wc -l)"
+            echo "- 大きさ: ubuntu $(du -sk out-ubuntu | cut -f1)KB、macOS $(du -sk out-macos | cut -f1)KB"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if diff -rq out-ubuntu out-macos > diff.txt; then
+            echo "- 中身: すべて同じ" >> "$GITHUB_STEP_SUMMARY"
+            echo "すべて同じ"
+            exit 0
+          fi
+          echo "- 中身: 違いあり（$(wc -l < diff.txt) 件）" >> "$GITHUB_STEP_SUMMARY"
+          cat diff.txt
+          # 違うファイルごとに、はじめて違うところの前後を出す
+          grep '^Files ' diff.txt | while read -r _ a _ b _; do
+            off=$(cmp "$a" "$b" | sed -nE 's/.* byte ([0-9]+).*/\1/p')
+            from=$(( off > 200 ? off - 200 : 1 ))
+            echo "== $a（$off バイト目）"
+            echo "ubuntu: $(tail -c +"$from" "$a" | head -c 400)"
+            echo "macOS : $(tail -c +"$from" "$b" | head -c 400)"
+          done
+          exit 1
+
+  # E2E はテストのファイルを 3 つに分けて（vitest の --shard）、3 台で並べて流す。
+  # 4 つに分けると、cli と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるため、3 つにする
+  app:
+    needs: build
+    runs-on: macos-latest
+    strategy:
+      # 1 つが落ちても、ほかの分割は最後まで流す（落ちたテストを 1 回で全部見られるように）
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
       # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、npm ci と並べて作る。
-      # アプリのビルドとは並べない（3 コアのランナーで取り合いになり、画面側のビルドが 1 分半ほど遅くなった）。
       # 補助プログラムは、配布用のビルドと同じく、作れなければ失敗にする
       - name: 依存を入れる（あわせて翻訳の補助プログラムを作る）
         run: |
@@ -129,13 +227,11 @@ jobs:
             exit 1
           fi
           cat "$log"
-      # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
-      # 画面側のビルドはメモリを 5GB ほど使う。Node の既定の上限（約 2GB）では止まるため、上限を上げる
-      - name: アプリをビルドする
-        run: npx electron-vite build
-        env:
-          TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
+      - name: ビルドしたもの（out/）を受け取る
+        uses: actions/download-artifact@v8
+        with:
+          name: out
+          path: out/
       # 証明書は無いので ad-hoc で署名する（npm run dist と同じ）。
       # electron-builder は PR のビルドでは署名を飛ばすので、CSC_FOR_PULL_REQUEST で署名させる
       # （このジョブは証明書も Secrets も使わないので、PR のコードに署名させても漏れるものは無い）
@@ -163,16 +259,17 @@ jobs:
           npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@$VERSION"
           echo "bin=$RUNNER_TEMP/claude/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
       # 配る形のまま動くかを確かめるため、できた .app で流す。.app のスクリプト（…/app.asar/out/…）のカバレッジは、
-      # 同じビルドの手元の out/ とソースマップで src の行に戻す（scripts/e2e-coverage.mjs）
+      # .app に詰めたのと同じ out/ とソースマップで src の行に戻す（scripts/e2e-coverage.mjs）
       - name: できた .app を、画面の操作から通しで確かめる（E2E。カバレッジも測る）
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
-          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e
+          TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e -- --shard="$SHARD"
       - uses: actions/upload-artifact@v7
         with:
-          name: coverage-e2e
+          name: coverage-e2e-${{ matrix.shard }}
           path: coverage/e2e/coverage-final.json
           if-no-files-found: error
           retention-days: 1
@@ -182,7 +279,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-results
+          name: e2e-results-${{ matrix.shard }}
           path: test-results/e2e/
           if-no-files-found: ignore
           overwrite: true
@@ -192,7 +289,7 @@ jobs:
   # カバレッジのファイルは、測ったランナー（ubuntu と macOS）の絶対パスで入っているが、
   # scripts/coverage-report.mjs と scripts/unpressed.mjs が src からのパスで突き合わせるので、ここ（ubuntu）で合わせられる
   check:
-    needs: [unit, storybook, cli, app]
+    needs: [unit, storybook, cli, build, app]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -224,10 +321,14 @@ jobs:
         with:
           name: coverage-cli
           path: coverage/cli/
+      # E2E は分割ごとに測ったもの（coverage-e2e-1 …）を、coverage/e2e-1/ … に置く（coverage:report と coverage:unpressed は、
+      # coverage/ の下にあるものを全部合わせる）
       - uses: actions/download-artifact@v8
         with:
-          name: coverage-e2e
-          path: coverage/e2e/
+          pattern: coverage-e2e-*
+          path: coverage/
+      - name: E2E のカバレッジを分割ごとのフォルダに置く
+        run: for dir in coverage/coverage-e2e-*; do mv "$dir" "coverage/${dir#coverage/coverage-}"; done
       # 層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
       # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
       - name: カバレッジをまとめる
