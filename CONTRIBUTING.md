@@ -191,7 +191,7 @@ PR で、次のものを流します。develop への push では流しません
 - `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。pty ホストを、テストが画面の出力と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。画面は本物の Claude Code から取った控え（`.ansi`）を流し込みます（`fixtureScreen`）。キーを受けたときの claude の反応（Shift+Tab で権限モードを描き直すなど）は `ScriptedPty.onWrite` で決めます。`test/session-manager.test.ts` が使います。
   - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
   - `new ScriptedApp({ … })` で、アプリが `SessionManager` に渡す残りの引数（Remote Control を使えるか・登録した設定ファイル・`runTask`・MCP サーバーの材料）を差し替えられます。`ScriptedPty.exitOnKill` を付けると、止めたらすぐ終わる（`ClaudeSession.stop` が終わるのを待つところを通せる）。
-  - `test/session-manager-*.test.ts` が、分かれ目ごと（状態・送信・Remote Control・worktree・引き継ぎ・起動のしかた・バックグラウンドのタスク）に使います。worktree は本物の git で確かめ、Claude Code が作るところは同じ形の worktree を git で作って代わりにします。
+  - `test/session-manager-*.test.ts` が、分かれ目ごと（状態・送信・Remote Control・worktree・引き継ぎ・起動のしかた・バックグラウンドのタスク・ワークスペースに追加したフォルダ）に使います。worktree は本物の git で確かめ、Claude Code が作るところは同じ形の worktree を git で作って代わりにします。
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
 - `test/helpers/fake-electron.ts`・`test/helpers/browser-control.ts`: Electron を起動せずに、アプリ内ブラウザの操作（`src/main/browser-control.ts`）を動かす。テストのファイルの `vi.mock('electron', …)` で、webview の中身（webContents）・CDP（debugger）・撮った画像（nativeImage）を、テストが決めた答えを返して受けたもの（CDP の命令・ページで動かすスクリプト・撮った範囲）を控える作り物に差し替えます。画面（`PreviewPane`）の代わりに、タブを開く知らせに応えて webview を知らせます。待ち・時間切れは `vi.useFakeTimers` で時間を進めて確かめます（`finish`）。`test/browser-control*.test.ts` が使います。
   - ページの中で動かすスクリプト（要素を探す・文字を読む・待つ）は、`test/browser-control-scripts.test.ts` が jsdom の文書の上で本当に動かします。jsdom は描かないので、要素の位置（`getBoundingClientRect`）と、その位置にある要素（`elementFromPoint`）はテストが決めます。
@@ -339,6 +339,7 @@ PR で、次のものを流します。develop への push では流しません
 | --- | --- |
 | `chat.test.ts` | 新規セッションの画面から始め、信頼の確認・Bash と Write の許可・質問に、チャットのカードで答える（答えがモックの API まで届くか）。チャットの並び・一覧のタイトル・ターミナルモード（チャットの代わりに出す Claude Code の画面。xterm）への描画と入力（人と同じ速さで 1 文字ずつ打ち、打っている途中の文字がチャットの入力欄に移らないか。画面の外を触っても残り、チャットに戻すと移るか）・ターミナルのシェル |
 | `workspace.test.ts` | 作業フォルダのファイルを、エクスプローラー・エディタ・Markdown のプレビュー・⌘P・全文検索で扱う。プレビューの整形（コードの色付け・mermaid の図・フォルダの中の画像）と相対リンク。エディタで書き換えて ⌘S で保存するとディスクに書かれ、ディスクの変更がエディタに戻るか |
+| `added-folders.test.ts` | ワークスペースにフォルダを追加する。エクスプローラーの ＋ で選んだフォルダがツリーに並び、エディタで開けて、ディスクの変更がエディタに戻るか。Claude Code に `--add-dir` で渡り（手が空いていれば、すぐ起動し直す）、Claude が確認なしでそのフォルダを読めるか。外すと渡さなくなるか。新規セッションの画面で追加したフォルダは、はじめから渡るか |
 | `terminal.test.ts` | 人のターミナルの MCP（`tanacode-terminal`）。人がターミナルパネルの xterm で打ったコマンドの出力を、Claude（台本）が `read_terminal` で確認なしに読めるか。auto のモードでも、`type_in_terminal` の前に許可のカードが出て、tanacode のフックが出させた理由（タブの名前と打つ文字）が出るか。許すと xterm に出るか |
 | `mcp.test.ts` | Claude が MCP でチェックリスト・ウォークスルー・アプリ内ブラウザを操作すると、画面に出るか。許可や「終わった」の操作が、ツールの結果として Claude に戻るか |
 | `walkthrough-post.test.ts` | Claude に頼むと、ウォークスルーを GitHub の PR に載せる（`post_walkthrough`）。載せる前に許可のカードが出て、答えると載せ、コメントの URL が Claude に戻るか。載せた本文が、ボタンで開く下見の本文に一言を添えたものか。下見に、もう載せたことが出るか。GitHub には書かず、PATH の先頭に置いた偽の `gh`（`E2EApp.launch` の `commands`）が受け取る |
@@ -569,6 +570,13 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - それでも残れば、PR を使わずに手元でスカッシュマージ・cherry-pick したものかもしれないので、中身がデフォルトブランチ（手元と `origin/<デフォルトブランチ>`）に入っているかを比べ（`mergedInto`）、入っていれば 0 にします（`contentIn`）。コミットが作り直されてハッシュが変わるので、中身で比べます。デフォルトブランチの、ブランチと分かれたあとの時点（今の先頭と、ブランチが変えたファイルに触れたコミットを古い順に。100 まで）で `git merge-tree --write-tree <時点> <ブランチ>` し、結果のツリーがその時点のツリーと同じ（マージしても何も変わらない）ものがあれば、入っているとみなします。今の先頭だけだと、マージのあとに同じところを変えると衝突して見分けられず、ブランチ全体の差分のパッチ ID（`git cherry`）だと、マージまでにデフォルトブランチが近くの行を変えると一致しないためです。衝突を直してからマージしたものは見分けられず、入っていない側に倒れます。
   - 作り直し: 削除したセッションを開くと、`git worktree add <場所> <ブランチ>`（ブランチが無ければ `-b` で今の HEAD から）で作り直してから、worktree のフォルダで `--resume` します。Claude Code は worktree を消したあとに再開すると、元のフォルダで「worktree の結び付きを外した」と言って続けるため（実測）、作り直してから起動します。
   - アプリが自分から worktree を消すことはありません（「Claude Code も止めて終了」でも消さない）。Claude Code の終了時の確認（残す・消す）は、アプリがプロセスを止めるので出ません。Claude Code の自動の掃除も、`--worktree` のセッションは対象外です。
+- ワークスペースに追加したフォルダ（`added-folders.ts`・`SessionManager.setAddedFolders`）
+  - セッションごとに `SessionRecord.addedFolders`（リンクを解いた絶対パス）に覚えます。新規セッションの画面では、`Profile` が `folder:` の id ごとに覚えて見張り（`draftFolders`）、始めるときに画面が `NewSessionOptions.addedFolders` で渡します。main は、始める時点で確かめ直します（消したフォルダ・セッションのフォルダの中のものは外す）。
+  - 追加は、main がフォルダ選択のダイアログを出して選ばせます（`workspace.addFolder`）。画面から好きなパスを渡させないためです。Claude（MCP）からは足せません。断るのは、セッションのフォルダとその中（もうエクスプローラーに出ている）・ディスクのいちばん上（中身をすべて見張ることになる）・フォルダでないもの。
+  - Claude Code には、起動のたびに `--add-dir` で渡します（値をいくつも取るので、`--settings` より前に置く）。`permissions.additionalDirectories` を使わないのは、登録した設定ファイルと合わせるところ（`mergeSettings`）が浅い上書きで、設定ファイルの `permissions` を丸ごと消してしまうためです。
+  - 動いている claude には、手が空いたら（`stateOf` が idle）`--resume` で起動し直して渡します。作業中・確認待ち・バックグラウンドのタスクがある間は止めません。待っている印（`addedFoldersPending`）は `sessions.json` に残すので、アプリを動かしたまま終了して、次のアプリが claude を引き継いだときも、手が空いたら起動し直します。状態の知らせ（`changed`）のたびに確かめ、会話ログの行を読んでいる途中で止めないよう、`setImmediate` で今の処理を終えてから起動し直します。`/add-dir` を打たないのは、外すことができないためです。
+  - 画面は、追加したフォルダのツリーの行を絶対パスで持ちます（`listDir` に絶対パスを渡すと、絶対パスの行が返る）。エディタのタブも、フォルダの外のファイルと同じく絶対パス。ディスクの変更の知らせ（`fs:changed`）は、フォルダごとの監視から root と相対パスで届くので、絶対パスに直してツリーとタブを読み直します。Claude が読んだ・書いた印（`KnowledgeTracker`）も、追加したフォルダの中は絶対パスで持ちます。
+  - 検索・⌘P・`@` の補完・ソース管理は、まだセッションのフォルダだけを扱います。追加したフォルダのツリーには、git の色とブランチの変更の印を出しません。
 - Remote Control の切り替えは、Claude Code が動いていればその場で `/remote-control` を送ります。以前つないでいた会話を再開すると、Claude Code はフラグが無くても勝手につなぎ直すので、オフのセッションでそうなったら、すぐに `/remote-control` で切ります。
 
 ### チャット
@@ -1203,7 +1211,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 
 | ファイル | 中身 |
 | --- | --- |
-| `sessions.json` | セッション一覧（タイトル・フォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
+| `sessions.json` | セッション一覧（タイトル・フォルダ・ワークスペースに追加したフォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
 | `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。Homebrew で入れたとき、終了するときに新しいバージョンを入れるか（`updateOnQuit`。既定はオン）。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）。Claude にターミナルを使わせるか（`terminalControl`）） |
 | `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
@@ -1293,6 +1301,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（組み込みコマンド・カスタムコマンド・スキル）
   - `workspace.ts` / `workspace-watcher.ts`: ファイルツリー・読み書き・全文検索・変更の監視
+  - `added-folders.ts`: ワークスペースに追加するフォルダの確かめ（リンクを解く・セッションのフォルダの中とディスクのいちばん上を断る）
   - `git.ts` / `source-control.ts`: git CLI とソース管理の操作（ブランチの基点・デフォルトブランチの判定と、基点からの変更）。git の標準入力は、渡すものが無ければすぐ閉じます（入力を待つコマンドが、待ち続けずに失敗するように）。時間のかかる操作（フェッチ・プルなど）は、時間では止めません
   - `system-monitor.ts`: CPU・メモリの使用量
   - `shell-terminals.ts`: ターミナルパネルのシェル（node-pty）と、アプリが実行するコマンドのタブ（worktree の `npm install`・`yarn install` など）。Claude が読めるよう、出力を `@xterm/headless` に控える

@@ -516,6 +516,94 @@ describe('Explorer（エクスプローラー）', () => {
     expect(second.onOpenFile).toHaveBeenCalledWith('README.md');
     expect(first.onOpenFile).not.toHaveBeenCalled();
   });
+
+  describe('ワークスペースに追加したフォルダ', () => {
+    const LIB = '/work/lib';
+    const libDirs: Record<string, DirEntry[]> = {
+      [LIB]: [
+        { name: 'src', path: `${LIB}/src`, isDir: true },
+        { name: 'index.ts', path: `${LIB}/index.ts`, isDir: false },
+      ],
+      [`${LIB}/src`]: [{ name: 'util.ts', path: `${LIB}/src/util.ts`, isDir: false }],
+    };
+    const setupLib = () => {
+      const api = mockApi({ 'workspace.listDir': (_id: never, dir: never) => Promise.resolve(dirs[dir] ?? libDirs[dir]) });
+      api.install();
+      return api;
+    };
+    const libRow = () => screen.getByText('lib').closest<HTMLElement>('.tree-row')!;
+
+    it('セッションのフォルダの下に、フォルダの名前の行と中身を並べる。中身は絶対パスで読み、絶対パスで開く', async () => {
+      const api = setupLib();
+      const p = props({ folders: [LIB] });
+      render(<Explorer {...p} />);
+      await screen.findByText('index.ts');
+      await screen.findByText('README.md');
+      expect(api.argsOf('workspace.listDir')).toEqual([
+        ['A', ''],
+        ['A', LIB],
+      ]);
+      // フォルダの行は、セッションのフォルダの行のあと
+      const labels = [...document.querySelectorAll('.tree-row > .tree-label')].map((el) => el.textContent);
+      expect(labels.indexOf('lib')).toBeGreaterThan(labels.indexOf('README.md'));
+      expect(libRow().getAttribute('title')).toBe(LIB);
+      fireEvent.click(screen.getAllByText('src')[1]);
+      fireEvent.click(await screen.findByText('util.ts'));
+      expect(p.onOpenFile).toHaveBeenCalledWith(`${LIB}/src/util.ts`);
+      expect(api.argsOf('workspace.listDir').at(-1)).toEqual(['A', `${LIB}/src`]);
+      // フォルダの行で、そのフォルダだけを畳む
+      fireEvent.click(libRow());
+      expect(screen.queryByText('index.ts')).toBeNull();
+      expect(screen.queryByText('README.md')).not.toBeNull();
+    });
+
+    it('外すボタンは、そのフォルダを渡して呼び、行は畳まない。外せないとき（onRemoveFolder が無い）は出さない。セッションのフォルダの行には出さない', async () => {
+      setupLib();
+      const onRemoveFolder = vi.fn();
+      const view = render(<Explorer {...props({ folders: [LIB, '/work/docs'], onRemoveFolder })} />);
+      await screen.findByText('index.ts');
+      const removes = screen.getAllByRole('button', { name: 'ワークスペースから外す' });
+      expect(removes).toHaveLength(2);
+      fireEvent.click(removes[0]);
+      expect(onRemoveFolder.mock.calls).toEqual([[LIB]]);
+      expect(screen.queryByText('index.ts')).not.toBeNull();
+      fireEvent.click(removes[1]);
+      expect(onRemoveFolder.mock.calls).toEqual([[LIB], ['/work/docs']]);
+      expect(rootRow().querySelector('button')).toBeNull();
+      view.rerender(<Explorer {...props({ folders: [LIB] })} />);
+      expect(screen.queryByRole('button', { name: 'ワークスペースから外す' })).toBeNull();
+    });
+
+    it('ファイルの変更は、変わったフォルダのツリーだけで読み直す（追加したフォルダの変更は、そのフォルダからの相対パスで届く）', async () => {
+      const api = setupLib();
+      render(<Explorer {...props({ folders: [LIB] })} />);
+      await screen.findByText('index.ts');
+      fireEvent.click(screen.getAllByText('src')[1]);
+      await screen.findByText('util.ts');
+      const before = api.argsOf('workspace.listDir').length;
+      act(() => api.emit('workspace.onFilesChanged', { root: LIB, paths: ['src/new.ts'] }));
+      expect(api.argsOf('workspace.listDir').slice(before)).toEqual([['A', `${LIB}/src`]]);
+      act(() => api.emit('workspace.onFilesChanged', { root: '/work/shop', paths: ['README.md'] }));
+      expect(api.argsOf('workspace.listDir').slice(before + 1)).toEqual([['A', '']]);
+      // 知らないフォルダの変更では読み直さない
+      act(() => api.emit('workspace.onFilesChanged', { root: '/work/other', paths: ['index.ts'] }));
+      expect(api.argsOf('workspace.listDir')).toHaveLength(before + 2);
+    });
+
+    it('開いたファイルが追加したフォルダの中なら、そのツリーで親フォルダを開いて選ぶ。Claude が読んだ印は絶対パスで引く', async () => {
+      const api = setupLib();
+      render(<Explorer {...props({ folders: [LIB], activePath: `${LIB}/src/util.ts`, knowledge: { [`${LIB}/src/util.ts`]: 'read' } })} />);
+      const row = (await screen.findByText('util.ts')).closest<HTMLElement>('.tree-row')!;
+      expect(row.classList.contains('active')).toBe(true);
+      expect(row.querySelector('.tree-know.read')).not.toBeNull();
+      // セッションのフォルダのツリーでは、絶対パスのファイルを探さない
+      expect(api.argsOf('workspace.listDir')).toEqual([
+        ['A', ''],
+        ['A', LIB],
+        ['A', `${LIB}/src`],
+      ]);
+    });
+  });
 });
 
 describe('QuickOpen（ファイル名で開く）', () => {

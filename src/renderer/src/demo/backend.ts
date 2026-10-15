@@ -548,6 +548,9 @@ export class DemoBackend {
         onFilesChanged: (l) => this.ch.files.on(l),
         listFiles: () => ok(Object.keys(p.files).sort()),
         search: () => ok({ files: [], truncated: false }),
+        // デモにはフォルダ選択のダイアログが無いので、追加は取りやめと同じ
+        addFolder: () => ok(null),
+        removeFolder: () => ok([]),
       },
       git: {
         state: () => ok(this.gitState()),

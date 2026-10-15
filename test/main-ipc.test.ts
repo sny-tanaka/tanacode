@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -139,14 +139,31 @@ describe('セッションを始める', () => {
     expect(manager().create).not.toHaveBeenCalled();
     expect(manager().startInWorktree).not.toHaveBeenCalled();
 
+    // 追加したフォルダが無ければ、空の一覧にして渡す
     const options = { worktree: false, model: 'opus' };
-    await expect(invoke(IpcChannel.SessionsCreate, state.root, options)).resolves.toEqual(call('manager.create', state.root, options));
+    await expect(invoke(IpcChannel.SessionsCreate, state.root, options)).resolves.toEqual(call('manager.create', state.root, { ...options, addedFolders: [] }));
     const inWorktree = { worktree: true, model: null };
     await expect(invoke(IpcChannel.SessionsCreate, state.root, inWorktree)).resolves.toBe('in-worktree');
-    expect(manager().startInWorktree.mock.calls).toEqual([[state.root, inWorktree]]);
+    expect(manager().startInWorktree.mock.calls).toEqual([[state.root, { ...inWorktree, addedFolders: [] }]]);
     // worktree を作り終えたら、画面には何も知らせない
     await new Promise((r) => setTimeout(r, 0));
     expect(sentToRenderer(IpcChannel.SessionsCreateFailed)).toEqual([]);
+  });
+
+  it('新規セッションの画面で追加したフォルダは、始める時点で確かめ直して渡す（無くなった・セッションのフォルダの中のもの・重なりは外す）', async () => {
+    await boot();
+    const project = join(state.root, 'project');
+    const other = join(state.root, 'other');
+    const link = join(state.root, 'link');
+    mkdirSync(join(project, 'src'), { recursive: true });
+    mkdirSync(other);
+    symlinkSync(other, link);
+    const addedFolders = [other, join(project, 'src'), join(state.root, 'gone'), link];
+    await invoke(IpcChannel.SessionsCreate, project, { worktree: false, addedFolders });
+    // リンクは解いてから比べるので、other と重なる
+    expect(manager().create.mock.calls).toEqual([[project, { worktree: false, addedFolders: [other] }]]);
+    await invoke(IpcChannel.SessionsCreate, project, { worktree: true, addedFolders });
+    expect(manager().startInWorktree.mock.calls).toEqual([[project, { worktree: true, addedFolders: [other] }]]);
   });
 
   it('worktree で始めるときは、Claude Code が worktree を作るのを待たずに id を返す。作れなかったら、理由を画面に知らせる', async () => {
@@ -276,6 +293,100 @@ describe('フォルダ（新規セッションの画面）', () => {
     // 2 回閉じても、監視を 2 回やめない
     sendFromRenderer(IpcChannel.FolderClose, id);
     expect(the('WorkspaceWatchers').release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ワークスペースに追加するフォルダ', () => {
+  it('追加するフォルダは、セッションのフォルダから始まるダイアログで選ぶ。取りやめたら null で、何も変えない', async () => {
+    await boot();
+    await expect(invoke(IpcChannel.WorkspaceAddFolder, 's1')).resolves.toBeNull();
+    expect(state.dialog.showOpenDialog.mock.calls).toEqual([
+      [mainWindow(), { title: 'ワークスペースに追加するフォルダを選択', defaultPath: cwdOf('s1'), properties: ['openDirectory', 'createDirectory'] }],
+    ]);
+    expect(manager().setAddedFolders).not.toHaveBeenCalled();
+  });
+
+  it('セッションでは、選んだフォルダ（リンクは解く）を今の一覧の最後に足して manager に渡し、足したあとの一覧を返す。もう足してあれば何もしない', async () => {
+    await boot();
+    const other = join(state.root, 'other');
+    const link = join(state.root, 'link');
+    mkdirSync(other);
+    symlinkSync(other, link);
+    manager().addedFoldersOf.mockReturnValue(['/elsewhere']);
+    state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [link] });
+    await expect(invoke(IpcChannel.WorkspaceAddFolder, 's1')).resolves.toEqual(['/elsewhere', other]);
+    expect(manager().addedFoldersOf.mock.calls).toEqual([['s1']]);
+    expect(manager().setAddedFolders.mock.calls).toEqual([['s1', ['/elsewhere', other]]]);
+
+    manager().addedFoldersOf.mockReturnValue(['/elsewhere', other]);
+    state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [other] });
+    await expect(invoke(IpcChannel.WorkspaceAddFolder, 's1')).resolves.toEqual(['/elsewhere', other]);
+    expect(manager().setAddedFolders).toHaveBeenCalledTimes(1);
+  });
+
+  it('セッションのフォルダとその中・ファイル・無いフォルダ・ディスクのいちばん上は、理由を添えて断る', async () => {
+    await boot();
+    const file = join(state.root, 'file');
+    writeFileSync(file, '');
+    manager().cwdOf.mockReturnValue(state.root);
+    mkdirSync(join(state.root, 'src'));
+    const cases: [string, string][] = [
+      [state.root, `セッションのフォルダの中のフォルダは、もうエクスプローラーに出ているので追加しません: ${state.root}`],
+      [join(state.root, 'src'), 'もうエクスプローラーに出ているので追加しません'],
+      [file, `フォルダが見つかりません: ${file}`],
+      [join(state.root, 'gone'), 'フォルダが見つかりません'],
+      ['/', 'ディスクのいちばん上のフォルダは追加できません: /'],
+    ];
+    for (const [folder, message] of cases) {
+      state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [folder] });
+      await expect(invoke(IpcChannel.WorkspaceAddFolder, 's1')).rejects.toThrow(message);
+    }
+    expect(manager().setAddedFolders).not.toHaveBeenCalled();
+  });
+
+  it('セッションから外すときは、そのフォルダだけを除いた一覧を manager に渡して返す', async () => {
+    await boot();
+    manager().addedFoldersOf.mockReturnValue(['/a', '/b', '/c']);
+    await expect(invoke(IpcChannel.WorkspaceRemoveFolder, 's1', '/b')).resolves.toEqual(['/a', '/c']);
+    expect(manager().setAddedFolders.mock.calls).toEqual([['s1', ['/a', '/c']]]);
+    // 追加していないフォルダなら、何も変えない（動いている Claude Code を起動し直させない）
+    await expect(invoke(IpcChannel.WorkspaceRemoveFolder, 's1', '/x')).resolves.toEqual(['/a', '/b', '/c']);
+    expect(manager().setAddedFolders).toHaveBeenCalledTimes(1);
+  });
+
+  it('新規セッションの画面のフォルダでは、アプリが一覧を覚えて見張る。外す・画面を閉じると見張りをやめる', async () => {
+    await boot();
+    const project = join(state.root, 'project');
+    const a = join(state.root, 'a');
+    const b = join(state.root, 'b');
+    for (const dir of [project, a, b]) mkdirSync(dir);
+    manager().list.mockReturnValue([{ id: 's1', cwd: project, worktree: null }]);
+    const id = (await invoke(IpcChannel.FolderOpen, project)) as string;
+    const watchers = the('WorkspaceWatchers');
+    expect(watchers.retain.mock.calls).toEqual([[project]]);
+
+    state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [a] });
+    await expect(invoke(IpcChannel.WorkspaceAddFolder, id)).resolves.toEqual([a]);
+    // ダイアログは、新規セッションの画面で選んでいるフォルダから始める
+    expect(state.dialog.showOpenDialog.mock.calls[0][1]).toMatchObject({ defaultPath: project });
+    state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [b] });
+    await expect(invoke(IpcChannel.WorkspaceAddFolder, id)).resolves.toEqual([a, b]);
+    // もう足してあるフォルダは、2 回見張らない
+    state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [a] });
+    await expect(invoke(IpcChannel.WorkspaceAddFolder, id)).resolves.toEqual([a, b]);
+    expect(watchers.retain.mock.calls).toEqual([[project], [a], [b]]);
+    // セッションの記録には触らない
+    expect(manager().setAddedFolders).not.toHaveBeenCalled();
+
+    await expect(invoke(IpcChannel.WorkspaceRemoveFolder, id, a)).resolves.toEqual([b]);
+    expect(watchers.release.mock.calls).toEqual([[a]]);
+    sendFromRenderer(IpcChannel.FolderClose, id);
+    expect(watchers.release.mock.calls).toEqual([[a], [b], [project]]);
+    // 閉じた ID は、もう新規セッションの画面のフォルダではない（セッションとして manager に聞く）
+    expect(manager().addedFoldersOf).not.toHaveBeenCalled();
+    await invoke(IpcChannel.WorkspaceRemoveFolder, id, b);
+    expect(manager().addedFoldersOf.mock.calls).toEqual([[id]]);
+    expect(watchers.release).toHaveBeenCalledTimes(3);
   });
 });
 

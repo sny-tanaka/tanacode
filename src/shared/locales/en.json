@@ -43,7 +43,8 @@
       "languageRestart": "Restart tanacode to switch to English?",
       "languageRestartDetail": "The language changes when tanacode restarts. If you choose Later, tanacode will use English the next time it starts.",
       "restartNow": "Restart Now",
-      "restartLater": "Later"
+      "restartLater": "Later",
+      "addFolder": "Choose a Folder to Add to the Workspace"
     },
     "menu": {
       "notifyUpdates": "Notify When Updates Are Available",
@@ -239,6 +240,10 @@
       "dirtyFiles": "Some files have uncommitted changes: {files}. Commit and push them before posting.",
       "emptyBody": "The comment body is empty.",
       "tooLong": "The comment is too long ({count} characters; GitHub comments can be up to {max}). Shorten the description."
+    },
+    "addFolder": {
+      "inside": "This folder is inside the session's folder and is already in the Explorer: {path}",
+      "diskRoot": "Can't add the top folder of a disk: {path}"
     }
   },
   "commands": {
@@ -867,7 +872,11 @@
       "terminal": "Terminal",
       "tasksEmpty": "Background tasks run in the session will appear here",
       "checklistEmpty": "The session's checklist will appear here",
-      "contextEmpty": "What's in the session's context will appear here"
+      "contextEmpty": "What's in the session's context will appear here",
+      "addFolder": "Add Folder",
+      "addFolderTip": "Add folder\nShows it in the Explorer and lets Claude Code work in it too",
+      "addFolderFailed": "Couldn't add the folder: {error}",
+      "removeFolderFailed": "Couldn't remove the folder: {error}"
     },
     "session": {
       "openFailed": "Couldn't open the session: {error}",
@@ -1262,7 +1271,9 @@
     "tree": {
       "gitChangesInside": "Contains git changes",
       "addedInBranch": "Added in this branch",
-      "modifiedInBranch": "Modified in this branch"
+      "modifiedInBranch": "Modified in this branch",
+      "removeFolder": "Remove from Workspace",
+      "removeFolderTip": "Remove from workspace\nThe folder itself isn't deleted"
     },
     "knowledge": {
       "read": "Read by Claude (contents known in the current conversation)",

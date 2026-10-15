@@ -41,7 +41,7 @@ import { SessionContextPanel } from './knowledge/ContextPanel';
 import { useSessionStatusLine } from './statusline/useSessionStatusLine';
 import { Busy } from './layout/Busy';
 import { Resizer, useColumnWidths, type Column } from './layout/columns';
-import { BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
+import { AddIcon, BranchIcon, ChecklistIcon, ContextIcon, FilesIcon, GlobeIcon, IconButton, SearchIcon, TasksIcon, TerminalIcon, type IconComponent } from './icons';
 import { CardPane } from './checklist/CardPane';
 import { ChecklistPanel } from './checklist/ChecklistPanel';
 import { useOpenChecklistCard, type CardTarget } from './checklist/openCard';
@@ -73,6 +73,7 @@ const EMPTY_EDITOR: EditorState = { files: [], activePath: null, reveal: null };
 const NO_COMMENTS: ReviewComment[] = [];
 const NO_CHANGES: Record<string, FileChange> = {};
 const NO_SESSIONS: SessionSummary[] = [];
+const NO_FOLDERS: string[] = [];
 // ウォークスルーを始めてからこの間に届いたファイルの変更は、始める前の Claude の書き込みとみなす（変更の知らせは少し遅れて届く）
 const WALK_STALE_GRACE_MS = 3000;
 
@@ -133,8 +134,9 @@ export function App() {
   // 新規セッションの画面を出している。back: キャンセルで戻るセッション / cwd: 最初に選んでおくフォルダ
   // restore: 始められなかった指示（worktree を作れなかった）。新規セッションの画面の入力欄に戻す
   const [composing, setComposing] = useState<{ back: string | null; cwd: string | null; restore?: PendingSend } | null>(null);
-  // 新規セッションの画面で選んでいるフォルダを、右パネルとエディタで開いたもの（id はセッションの id と同じように使える）
-  const [draft, setDraft] = useState<{ id: string; cwd: string } | null>(null);
+  // 新規セッションの画面で選んでいるフォルダを、右パネルとエディタで開いたもの（id はセッションの id と同じように使える）。
+  // added: ワークスペースに追加したフォルダ（始めるときにセッションへ渡す）
+  const [draft, setDraft] = useState<{ id: string; cwd: string; added: string[] } | null>(null);
   const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceInfo>>({});
   // エディタのタブはフォルダ単位。同じフォルダのセッション間では共有する
   const [editors, setEditors] = useState<Record<string, EditorState>>({});
@@ -183,6 +185,11 @@ export function App() {
   const folderWaitLabel = folderWait && preparingLabel(folderWait);
   const editor = (cwd && editors[cwd]) || EMPTY_EDITOR;
   const workspace = viewId ? workspaces[viewId] : undefined;
+  // ワークスペースに追加したフォルダ。一覧が届くたびに配列が作り直されるので、中身が同じなら同じ配列を使う（エクスプローラーを描き直さない）
+  const addedKey = (selected ? (selected.addedFolders ?? NO_FOLDERS) : (draft?.added ?? NO_FOLDERS)).join('\0');
+  const addedFolders = useMemo(() => (addedKey ? addedKey.split('\0') : NO_FOLDERS), [addedKey]);
+  // フォルダを追加・外せるか（アーカイブしたセッションと、worktree の準備を待っている間は変えない）
+  const canEditFolders = !!viewId && !selected?.archived && !folderWait;
   // 選択中のセッションのタスク。ほかのセッションのタスクが動いても、ここは変わらない（stableRuns で参照が保たれる）
   const subagents = subagentsOf(selectedId);
   const workflows = workflowsOf(selectedId);
@@ -279,7 +286,7 @@ export function App() {
       (opened) => {
         if (!alive) return window.tanacode.folders.close(opened);
         id = opened;
-        setDraft({ id: opened, cwd: composingCwd });
+        setDraft({ id: opened, cwd: composingCwd, added: [] });
       },
       () => {},
     );
@@ -461,21 +468,26 @@ export function App() {
     [cwd, openFile],
   );
 
+  // root の中で変わったファイル（root からの相対パス）を、開いているタブから読み直す。タブはフォルダ単位で、
+  // フォルダの中のファイルは相対パス、外のファイル（ワークスペースに追加したフォルダのものなど）は絶対パスで持つ
   const reloadFiles = useCallback(
-    (root: string, paths: ReadonlySet<string> | null) => {
-      const state = editorsRef.current[root];
-      const sessionId = sessionsRef.current?.find((s) => s.cwd === root)?.id ?? (draftRef.current?.cwd === root ? draftRef.current.id : undefined);
-      if (!state || !sessionId) return;
-      for (const file of state.files) {
-        if (paths && !paths.has(file.path)) continue;
-        void window.tanacode.workspace
-          .readFile(sessionId, file.path)
-          .then((content) =>
-            updateEditor(root, (s) =>
-              s.files.some((f) => f.path === file.path) ? { ...s, files: withFile(s.files, file.path, content) } : s,
-            ),
-          )
-          .catch(() => {});
+    (root: string, paths: ReadonlySet<string>) => {
+      for (const [dir, state] of Object.entries(editorsRef.current)) {
+        const sessionId = sessionsRef.current?.find((s) => s.cwd === dir)?.id ?? (draftRef.current?.cwd === dir ? draftRef.current.id : undefined);
+        if (!sessionId) continue;
+        for (const file of state.files) {
+          const abs = file.path.startsWith('/');
+          const rel = !abs && dir === root ? file.path : abs && file.path.startsWith(`${root}/`) ? file.path.slice(root.length + 1) : null;
+          if (rel === null || !paths.has(rel)) continue;
+          void window.tanacode.workspace
+            .readFile(sessionId, file.path)
+            .then((content) =>
+              updateEditor(dir, (s) =>
+                s.files.some((f) => f.path === file.path) ? { ...s, files: withFile(s.files, file.path, content) } : s,
+              ),
+            )
+            .catch(() => {});
+        }
       }
     },
     [updateEditor],
@@ -501,6 +513,28 @@ export function App() {
         if (keys.length > 0) setStaleWalkFiles((prev) => new Set([...prev, ...keys]));
       }),
     [],
+  );
+
+  // ワークスペースにフォルダを追加する（main がフォルダ選択のダイアログを出す）。セッションの一覧は main から届き直すので、
+  // 新規セッションの画面のフォルダのときだけ、返ってきた一覧を覚える
+  const addFolder = useCallback(() => {
+    if (!viewId) return;
+    window.tanacode.workspace.addFolder(viewId).then(
+      (folders) => {
+        if (folders) setDraft((d) => (d && d.id === viewId ? { ...d, added: folders } : d));
+      },
+      (error: unknown) => window.alert(t('app.sidePanel.addFolderFailed', { error: errorMessage(error) })),
+    );
+  }, [viewId]);
+  const removeFolder = useCallback(
+    (folder: string) => {
+      if (!viewId) return;
+      window.tanacode.workspace.removeFolder(viewId, folder).then(
+        (folders) => setDraft((d) => (d && d.id === viewId ? { ...d, added: folders } : d)),
+        (error: unknown) => window.alert(t('app.sidePanel.removeFolderFailed', { error: errorMessage(error) })),
+      );
+    },
+    [viewId],
   );
 
   const openBranchDiff = useCallback((path: string) => {
@@ -576,7 +610,9 @@ export function App() {
   const worktreeStart = useRef<{ id: string; back: string | null } | null>(null);
   const startSession = useCallback(
     async (dir: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[] = []) => {
-      const id = await window.tanacode.sessions.create(dir, options);
+      // 新規セッションの画面でワークスペースに追加したフォルダも、一緒に渡す
+      const added = draftRef.current?.cwd === dir ? draftRef.current.added : [];
+      const id = await window.tanacode.sessions.create(dir, added.length > 0 ? { ...options, addedFolders: added } : options);
       pendingSends.send(id, text, attachments, pastes);
       if (options.worktree) worktreeStart.current = { id, back: composingRef.current?.back ?? null };
       // 始めている間に、新規セッションの画面でフォルダを変えた・画面を離れたなら、移らない（始めたセッションは一覧に出る）
@@ -898,7 +934,12 @@ export function App() {
               )}
             </div>
             <div className="side-panel">
-              <div className="side-panel-title">{panelLabel(shownPanel)}</div>
+              <div className="side-panel-title">
+                {panelLabel(shownPanel)}
+                {shownPanel === 'files' && canEditFolders && (
+                  <IconButton size="sm" icon={AddIcon} label={t('app.sidePanel.addFolder')} tip={t('app.sidePanel.addFolderTip')} onClick={addFolder} />
+                )}
+              </div>
               <div hidden={shownPanel !== 'files'} className="side-body">
                 {folderWaitNote ?? (
                   <Explorer
@@ -911,6 +952,8 @@ export function App() {
                     knowledge={knowledgeOf(selectedId).files}
                     gitMarks={marks}
                     onOpenFile={openPath}
+                    folders={addedFolders}
+                    onRemoveFolder={canEditFolders ? removeFolder : undefined}
                   />
                 )}
               </div>

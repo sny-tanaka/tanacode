@@ -51,6 +51,8 @@ type Options = {
   terminal?: TerminalMcpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
   claudeDir?: string | null;
+  // ワークスペースに追加したフォルダ（--add-dir）。Claude Code は、cwd と同じように読み書きを許す
+  addDirs?: string[];
   cols: number;
   rows: number;
 };
@@ -179,7 +181,7 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal'>>,
+    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs'>>,
 ): string[] {
   const {
     claudeSessionId,
@@ -197,6 +199,7 @@ export function claudeArgs(
     sessionId = '',
     claudeDir = null,
     terminal = null,
+    addDirs = [],
   } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
   // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
@@ -207,6 +210,8 @@ export function claudeArgs(
   args.push('--model', model ?? settings?.model ?? 'default');
   if (effort) args.push('--effort', effort);
   if (permissionMode) args.push('--permission-mode', permissionMode);
+  // --add-dir も値をいくつも取るので、--settings より前に置く（次の -- で終わる）
+  if (addDirs.length > 0) args.push('--add-dir', ...addDirs);
   // アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー。--mcp-config・--allowedTools は値をいくつも取るので、次の -- で終わるよう --settings より前に置く
   const servers: McpServerEntry[] = [];
   if (browser) servers.push(browserMcpServer(browser, sessionId));
