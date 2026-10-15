@@ -17,14 +17,34 @@ const MAX_COMMANDS = 200;
 // ワークスペースのファイル一覧を読み直す間隔
 const FILES_TTL_MS = 30_000;
 
-// @ と / の補完候補の読み込み元。key が変わったら読み直す（セッションか、新規セッションで選んだフォルダ）
+// @ の候補に出すファイル。path: Claude Code に渡すパス（セッションのフォルダの中は相対、ワークスペースに追加したフォルダの中は絶対）。
+// shown: 候補に出すパス（追加したフォルダの中は、エクスプローラーと同じくフォルダの名前から）
+export type CompletionFile = { path: string; shown: string };
+
+// @ と / の補完候補の読み込み元。key が変わったら読み直す（セッションか、新規セッションで選んだフォルダと、ワークスペースに追加したフォルダ）
 export type CompletionSource = {
   key: string;
-  listFiles(): Promise<string[]>;
+  listFiles(): Promise<CompletionFile[]>;
   listCommands(): Promise<SlashCommand[]>;
   // @ の候補に出すセッション（自分は除き、見えるものだけ）。無ければセッションは出さない
   listSessions?(): SessionSummary[];
 };
+
+// セッションのフォルダのファイル（相対パス）に、ワークスペースに追加したフォルダのファイルを足す
+export async function listCompletionFiles(own: Promise<string[]>, added: readonly string[]): Promise<CompletionFile[]> {
+  const [mine, ...lists] = await Promise.all([own, ...added.map((folder) => window.tanacode.folders.listFiles(folder))]);
+  return [
+    ...mine.map((path) => ({ path, shown: path })),
+    ...lists.flatMap((list, i) => {
+      const folder = added[i];
+      const name = folder.slice(folder.lastIndexOf('/') + 1);
+      return list.map((rel) => ({ path: `${folder}/${rel}`, shown: `${name}/${rel}` }));
+    }),
+  ];
+}
+
+// Claude Code に渡す @ファイル名。空白を含むパスは "" で囲む（Claude Code は @"…" をひとつのパスとして読む）
+const atPath = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
 
 type Props = {
   completion: CompletionSource;
@@ -136,8 +156,8 @@ export function ChatInput({
   const [selected, setSelected] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
-  const files = useRef<{ key: string; list: string[]; at: number } | null>(null);
-  const [fileList, setFileList] = useState<string[]>([]);
+  const files = useRef<{ key: string; list: CompletionFile[]; at: number } | null>(null);
+  const [fileList, setFileList] = useState<CompletionFile[]>([]);
   const [sessionList, setSessionList] = useState<SessionSummary[]>([]);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
 
@@ -163,10 +183,16 @@ export function ChatInput({
         return;
       }
       const key = completion.key;
+      // 読んでいる間に読み込み元が変わったら（フォルダを足した・外したなど）、遅れて届いた前の一覧は使わない
+      let alive = true;
       void completion.listFiles().then((list) => {
+        if (!alive) return;
         files.current = { key, list, at: Date.now() };
         setFileList(list);
       });
+      return () => {
+        alive = false;
+      };
     } else {
       void completion.listCommands().then(setCommands);
     }
@@ -196,20 +222,20 @@ export function ChatInput({
           session: true,
         }));
       const scored = fileList
-        .map((path) => {
-          const lower = path.toLowerCase();
+        .map((file) => {
+          const lower = file.shown.toLowerCase();
           const name = lower.slice(lower.lastIndexOf('/') + 1);
           const score = name.startsWith(q) ? 0 : name.includes(q) ? 1 : lower.includes(q) ? 2 : -1;
-          return { path, score };
+          return { file, score };
         })
         .filter((s) => s.score >= 0)
-        .sort((a, b) => a.score - b.score || a.path.length - b.path.length);
+        .sort((a, b) => a.score - b.score || a.file.shown.length - b.file.shown.length);
       return [
         ...sessions,
-        ...scored.slice(0, MAX_SUGGESTIONS).map(({ path }) => ({
-          value: `@${path} `,
-          label: path.slice(path.lastIndexOf('/') + 1),
-          detail: path,
+        ...scored.slice(0, MAX_SUGGESTIONS).map(({ file }) => ({
+          value: `${atPath(file.path)} `,
+          label: file.shown.slice(file.shown.lastIndexOf('/') + 1),
+          detail: file.shown,
         })),
       ];
     }

@@ -203,6 +203,13 @@ export class ScreenTracker {
     });
   }
 
+  // これまでに受け取った出力を、画面に書き終えるまで待つ（xterm は書き込みを、あとでまとめて文字にする）。
+  // 閉じたあとは待たない
+  flushed(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    return new Promise((resolve) => this.term.write('', resolve));
+  }
+
   resize(cols: number, rows: number): void {
     this.term.resize(cols, rows);
   }

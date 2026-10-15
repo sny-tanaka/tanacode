@@ -446,6 +446,7 @@ describe('NewSessionPane（始めている途中でフォルダを変えた直�
     onForgetFolder: noop,
     cwd,
     onCwdChange: noop,
+    addedFolders: [],
     sessions: [],
     branch: 'feature',
     onOpenScm: noop,

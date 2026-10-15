@@ -495,3 +495,15 @@ it('画面より高い入力欄のいちばん上の行が、番号で始まる�
   expect(tracker.current.draft.endsWith('37. 手順 37: 該当するファイルを読む')).toBe(true);
   expect(kinds).not.toContain('menu');
 });
+
+it('flushed: 受け取った出力を画面に書き終えてから戻る（直後に読んでも、最後の出力が入っている）。閉じたあとは待たずに戻る', async () => {
+  tracker = new ScreenTracker(120, 40, () => {}, () => {});
+  tracker.feed('\x1b[H\x1b[2JError: Workspace trust not yet accepted for this folder');
+  // xterm は書き込みをあとで文字にするので、受け取った直後の画面はまだ空
+  expect(tracker.text()).toBe('');
+  await tracker.flushed();
+  expect(tracker.text()).toBe('Error: Workspace trust not yet accepted for this folder');
+  tracker.dispose();
+  await expect(tracker.flushed()).resolves.toBeUndefined();
+  tracker = null;
+});

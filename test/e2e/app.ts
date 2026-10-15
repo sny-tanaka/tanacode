@@ -259,12 +259,18 @@ export class E2EApp {
       try {
         const button = page.locator('.claude-header [aria-label="ターミナルモード"]');
         if ((await button.count()) > 0) {
-          if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click({ timeout: 2000 });
-          const rows = page.locator('.claude-screen .terminal-instance .xterm-rows');
-          await rows.waitFor({ timeout: 3000 });
-          await page.waitForTimeout(500);
-          screen = await rows.innerText();
-          await page.screenshot({ path: `${base}-screen.png` });
+          const turnedOn = (await button.getAttribute('aria-pressed')) !== 'true';
+          if (turnedOn) await button.click({ timeout: 2000 });
+          try {
+            const rows = page.locator('.claude-screen .terminal-instance .xterm-rows');
+            await rows.waitFor({ timeout: 3000 });
+            await page.waitForTimeout(500);
+            screen = await rows.innerText();
+            await page.screenshot({ path: `${base}-screen.png` });
+          } finally {
+            // ターミナルモードはアプリ全体の設定。オンのままにすると、チャットの画面を見る続くテストまで落ちる（1 つの失敗が、ほかの失敗に見える）
+            if (turnedOn) await button.click({ timeout: 2000 }).catch(() => {});
+          }
         }
       } catch (error) {
         screen = `（読めませんでした: ${String(error)}）`;

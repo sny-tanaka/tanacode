@@ -4,9 +4,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
 
 // 作業フォルダのファイルを、エクスプローラー・エディタ・Markdown のプレビュー・⌘P・全文検索で扱う。
-// エディタで書いたものがディスクに保存され、ディスクの変更がエディタに戻るか
+// エディタで書いたものがディスクに保存され、ディスクの変更がエディタに戻るか。日本語の名前のファイルも、⌘P と入力欄の @ の補完で扱えるか
 
 const PROMPT = 'ファイルを見ていてください';
+const MENTION = 'を読んでください';
+// 日本語の名前のファイル（一覧を -z なしで読むと、"\347\250\216..." のようにエスケープされて返る）
+const NOTE = '税込みの価格は、1 円未満を切り捨てます。\n';
 // 1×1 の PNG
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const README = [
@@ -39,8 +42,8 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
     app = await E2EApp.launch({
       trusted: true,
       git: true,
-      files: { 'README.md': README, 'src/tax.ts': TAX },
-      conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: 'わかりました' }]] }],
+      files: { 'README.md': README, 'src/tax.ts': TAX, 'docs/税の説明.md': NOTE },
+      conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: 'わかりました' }], [{ type: 'text', text: '説明を読みました' }]] }],
     });
     // 画像はバイナリなので、files とは別に置く
     mkdirSync(join(app.work, 'docs'), { recursive: true });
@@ -106,6 +109,25 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
     await app.byText('.search-panel .search-file-name', 'tax.ts').waitFor();
     await app.byText('.search-panel .search-match', 'withTax').first().click();
     await app.byText('.editor-tab.active', 'tax.ts').waitFor();
+  });
+
+  // ⌘P の枠を開いたまま落ちると、続くテストの操作が枠に遮られるので、画面を操作するテストの最後に置く
+  it('日本語の名前のファイルも、⌘P で開け、入力欄の @ の補完で選んで送ると、中身が Claude に渡る', async () => {
+    await app.page.keyboard.press('ControlOrMeta+P');
+    await app.page.fill('.quick-open input', '税の');
+    await app.byText('.quick-open-list .quick-open-name', '税の説明.md').waitFor();
+    await app.page.keyboard.press('Enter');
+    await app.byText('.editor-tab.active', '税の説明.md').waitFor();
+    const input = app.page.locator('.chat-input textarea');
+    await input.fill('');
+    await input.pressSequentially('@税の');
+    await app.byText('.suggest-item .suggest-detail', 'docs/税の説明.md').waitFor();
+    await input.press('Enter');
+    expect(await input.inputValue()).toBe('@docs/税の説明.md ');
+    await input.pressSequentially(MENTION);
+    await app.page.click('.chat-input-row [aria-label="送信"]');
+    await app.byText('.chat-list', '説明を読みました').waitFor();
+    expect(app.api.contexts.at(-1)).toContain('1 円未満を切り捨てます');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

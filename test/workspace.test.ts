@@ -78,6 +78,16 @@ describe('Workspace', () => {
     expect((await ws.listFiles()).sort()).toEqual(['.gitignore', 'a.ts', 'node_modules/p.js', 'src/b.ts']);
   });
 
+  it('listFiles・search: git のリポジトリでも、日本語や空白を含むファイル名をそのまま返す（追跡中も未追跡も）', async () => {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    put('メモ.md', '税率を直す\n');
+    execFileSync('git', ['add', 'メモ.md'], { cwd: root });
+    put('仕様/画面 一覧.md', '税率の表\n');
+    expect((await ws.listFiles()).sort()).toEqual(['メモ.md', '仕様/画面 一覧.md']);
+    const result = await ws.search('税率', { caseSensitive: false, regex: false });
+    expect(result.files.map((f) => f.path).sort()).toEqual(['メモ.md', '仕様/画面 一覧.md']);
+  });
+
   it('search: 大文字小文字・正規表現の指定で探し、行と列と前後を詰めた抜き出しを返す。バイナリは探さない', async () => {
     put('a.ts', `const Tax = 1;\nconst tax = 2;\n${'x'.repeat(60)}TAX_RATE\n`);
     put('bin.dat', Buffer.from([0x74, 0x61, 0x78, 0x00]));
