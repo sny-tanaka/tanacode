@@ -1,8 +1,8 @@
-# PR の CI（ci.yml）が使う node_modules のキャッシュ（.github/actions/npm-ci）を、develop で作っておく。
-# PR で作ったキャッシュはその PR からしか読めず、ci.yml は develop では動かないので、ここで作らないと、どの PR もはじめの CI は npm ci からになる。
-# - 依存が変わって develop に入ったとき
-# - 週に 1 回（キャッシュは 7 日使われないと消える。あれば戻すだけで終わる）
-# ubuntu（unit・storybook・build・check）と macOS（cli）の 2 つ
+# PR の CI（ci.yml）が使うキャッシュを、develop で作っておく。
+# PR で作ったキャッシュはその PR からしか読めず、ci.yml は develop では動かないので、ここで作らないと、どの PR もはじめの CI は作るところからになる。
+# - node_modules（.github/actions/npm-ci）: ubuntu（unit・storybook・build・check）と macOS（cli）
+# - 翻訳の補助プログラム（ci.yml の app）: macOS
+# 作るのは、元が変わって develop に入ったときと、週に 1 回（キャッシュは 7 日使われないと消え、ランナーのイメージも変わる。あれば戻すだけで終わる）
 name: deps-cache
 
 on:
@@ -11,6 +11,8 @@ on:
     paths:
       - 'package-lock.json'
       - '.github/actions/npm-ci/**'
+      - 'native/translate/**'
+      - 'scripts/build-translate-helper.mjs'
       - '.github/workflows/deps-cache.yml'
   schedule:
     # 毎週水曜 5:41（日本時間）
@@ -21,7 +23,7 @@ permissions:
   contents: read
 
 jobs:
-  npm-ci:
+  caches:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -29,3 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/npm-ci
+      # ci.yml の app と同じキー
+      - if: runner.os == 'macOS'
+        id: image
+        run: echo "version=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - if: runner.os == 'macOS'
+        id: helper
+        uses: actions/cache@v6
+        with:
+          path: build/native/tanacode-translate
+          key: translate-helper-${{ steps.image.outputs.version }}-${{ hashFiles('native/translate/**', 'scripts/build-translate-helper.mjs') }}
+      - if: runner.os == 'macOS' && steps.helper.outputs.cache-hit != 'true'
+        run: node scripts/build-translate-helper.mjs --require

@@ -58,8 +58,6 @@ jobs:
   cli:
     runs-on: macos-latest
     steps:
-      # 一時的: ランナーの CPU とメモリ（台ごとの速さの違いを調べる。調べ終えたら外す）
-      - run: sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
       - uses: actions/checkout@v7
       - uses: ./.github/actions/npm-ci
       # 確かめる claude は、動作確認済のバージョン（src/shared/claude-code.ts）。新しい Claude Code が出ても、関係のない PR が落ちないように。
@@ -119,26 +117,6 @@ jobs:
           overwrite: true
           compression-level: 1
 
-  # 一時的: ビルドの GC の設定を変えて、かかる時間を比べる（調べ終えたら外す）
-  build-profile:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/npm-ci
-      - name: GC の設定ごとに 2 回ずつビルドする
-        env:
-          TANACODE_SOURCEMAP: 1
-        run: |
-          for round in 1 2; do
-            for opts in "--max-old-space-size=12288" "--max-old-space-size=12288 --max-semi-space-size=128" "--max-old-space-size=12288 --max-semi-space-size=256" "--max-old-space-size=14336 --max-semi-space-size=256"; do
-              rm -rf out
-              start=$(date +%s.%N)
-              NODE_OPTIONS="$opts" /usr/bin/time -f "%M" -o "$RUNNER_TEMP/rss" npx electron-vite build > /dev/null 2>&1
-              end=$(date +%s.%N)
-              printf '%s回目 %-60s %6.1f秒 最大メモリ %sMB\n' "$round" "$opts" "$(echo "$end - $start" | bc)" "$(( $(cat "$RUNNER_TEMP/rss") / 1024 ))" | tee -a "$GITHUB_STEP_SUMMARY"
-            done
-          done
-
   # E2E はテストのファイルを 3 つに分けて（vitest の --shard。分け方は test/e2e/sequencer.ts）、3 台で並べて流す。
   # 4 つに分けると、cli と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるため、3 つにする。
   # build を needs で待たずに並べて始め、out/ の要らない準備（npm ci・翻訳の補助・Claude Code）を済ませてから、build を待つ
@@ -155,17 +133,30 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      # 一時的: ランナーの CPU とメモリ（台ごとの速さの違いを調べる。調べ終えたら外す）
-      - run: sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-      # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、npm ci と並べて作る。
-      # 補助プログラムは、配布用のビルドと同じく、作れなければ失敗にする
+      # 翻訳の補助プログラム（Swift。依存のパッケージは使わない）は、元のファイル（native/translate・作るスクリプト）と
+      # ランナーのイメージ（Xcode）が同じなら、前に作ったものを使う（作るのに 15〜50 秒かかり、遅い台では build の待ちに隠れきらなかった）。
+      # キーは deps-cache.yml（develop で作っておく）と同じ
+      - id: image
+        run: echo "version=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - id: helper
+        uses: actions/cache@v6
+        with:
+          path: build/native/tanacode-translate
+          key: translate-helper-${{ steps.image.outputs.version }}-${{ hashFiles('native/translate/**', 'scripts/build-translate-helper.mjs') }}
+      # 無ければ、npm ci と並べて作る。配布用のビルドと同じく、作れなければ失敗にする
       - name: 依存を入れる（あわせて翻訳の補助プログラムを作る）
+        env:
+          HELPER_CACHED: ${{ steps.helper.outputs.cache-hit }}
         run: |
+          if [ "$HELPER_CACHED" = true ]; then
+            npm ci
+            exit 0
+          fi
           log="$RUNNER_TEMP/translate-helper.log"
           node scripts/build-translate-helper.mjs --require > "$log" 2>&1 &
           helper=$!
@@ -238,7 +229,6 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
-          TANACODE_E2E_WORKERS: 2
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
           TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e -- --shard="$SHARD"
@@ -282,22 +272,14 @@ jobs:
         with:
           fetch-depth: 2
       - uses: ./.github/actions/npm-ci
+      # 測ったカバレッジ（coverage-unit・coverage-cli・E2E は分割ごとに coverage-e2e-1 …）を、まとめて受け取り、
+      # coverage/unit/・coverage/cli/・coverage/e2e-1/ … に置く（coverage:report と coverage:unpressed は、coverage/ の下にあるものを全部合わせる）
       - uses: actions/download-artifact@v8
         with:
-          name: coverage-unit
-          path: coverage/unit/
-      - uses: actions/download-artifact@v8
-        with:
-          name: coverage-cli
-          path: coverage/cli/
-      # E2E は分割ごとに測ったもの（coverage-e2e-1 …）を、coverage/e2e-1/ … に置く（coverage:report と coverage:unpressed は、
-      # coverage/ の下にあるものを全部合わせる）
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: coverage-e2e-*
+          pattern: coverage-*
           path: coverage/
-      - name: E2E のカバレッジを分割ごとのフォルダに置く
-        run: for dir in coverage/coverage-e2e-*; do mv "$dir" "coverage/${dir#coverage/coverage-}"; done
+      - name: カバレッジを測ったものごとのフォルダに置く
+        run: for dir in coverage/coverage-*; do mv "$dir" "coverage/${dir#coverage/coverage-}"; done
       # 層ごとの数字をジョブの概要に出す。下限（test/coverage-thresholds.json）を下回ったら失敗にする。
       # PR の checkout はマージした結果なので、1 つ目の親（HEAD^1）がマージ先。そこからの差分の行のカバレッジも出す
       - name: カバレッジをまとめる
