@@ -178,6 +178,8 @@ export type TranscriptEntry = {
   toolUseID?: string;
   // その行を書いたときのブランチ（作業の書き出しで使う）
   gitBranch?: string;
+  // その行を書いたときの Claude Code の権限モード（user 行と permission-mode 行。default・acceptEdits・plan・auto・bypassPermissions）
+  permissionMode?: string;
   // pr-link
   prNumber?: number;
   prUrl?: string;
