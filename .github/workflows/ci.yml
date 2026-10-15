@@ -58,6 +58,8 @@ jobs:
   cli:
     runs-on: macos-latest
     steps:
+      # 一時的: ランナーの CPU とメモリ（台ごとの速さの違いを調べる。調べ終えたら外す）
+      - run: sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
       - uses: actions/checkout@v7
       - uses: ./.github/actions/npm-ci
       # 確かめる claude は、動作確認済のバージョン（src/shared/claude-code.ts）。新しい Claude Code が出ても、関係のない PR が落ちないように。
@@ -94,6 +96,7 @@ jobs:
 
   # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。
   # ビルドはメモリを 6GB ほど使う（画面側が大きい）。Node の既定の上限（約 2GB）では止まるため、上限を上げる。
+  # 時間の 4 分の 1 ほどが GC なので、上限を 12GB・若い世代を 128MB と大きめにして、GC を減らす（66 秒 → 61 秒。メモリは 7GB ほど）。
   # macOS のランナー（メモリ 7GB・3 コア）ではメモリをほぼ使い切り、かかる時間も 50 秒〜4 分半とぶれたので、ubuntu（16GB・4 コア）で作る。
   # ビルドの設定に OS で変わるところは無く、electron と node-pty は out/ に入らず外から読むので、ここで作ったものを macOS で .app に詰められる
   build:
@@ -105,7 +108,7 @@ jobs:
         run: npx electron-vite build
         env:
           TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=12288 --max-semi-space-size=128
       # 82MB ほど。上げ下ろしの時間を縮めるため、圧縮は軽くする
       - uses: actions/upload-artifact@v7
         with:
@@ -127,7 +130,7 @@ jobs:
           TANACODE_SOURCEMAP: 1
         run: |
           for round in 1 2; do
-            for opts in "--max-old-space-size=6144" "--max-old-space-size=6144 --max-semi-space-size=64" "--max-old-space-size=6144 --max-semi-space-size=128" "--max-old-space-size=12288 --max-semi-space-size=128"; do
+            for opts in "--max-old-space-size=12288" "--max-old-space-size=12288 --max-semi-space-size=128" "--max-old-space-size=12288 --max-semi-space-size=256" "--max-old-space-size=14336 --max-semi-space-size=256"; do
               rm -rf out
               start=$(date +%s.%N)
               NODE_OPTIONS="$opts" /usr/bin/time -f "%M" -o "$RUNNER_TEMP/rss" npx electron-vite build > /dev/null 2>&1
@@ -152,6 +155,8 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
+      # 一時的: ランナーの CPU とメモリ（台ごとの速さの違いを調べる。調べ終えたら外す）
+      - run: sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
@@ -233,6 +238,7 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+          TANACODE_E2E_WORKERS: 2
         run: |
           app=$(ls -d dist/mac*/tanacode.app)
           TANACODE_E2E_APP="$PWD/$app/Contents/MacOS/tanacode" npm run coverage:e2e -- --shard="$SHARD"
