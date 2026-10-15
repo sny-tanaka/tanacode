@@ -50,11 +50,14 @@ afterEach(() => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const textOf = (result: ToolResult) => result.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
-// プロンプトを決まった形（$ ）にしたシェルを開き、出るまで待つ
+// プロンプトを決まった形（$ ）にしたシェルを開き、シェルが打つものを待つところまで待つ。
+// シェルが起動する前に打つと、打った文字は pty がすぐ映し、プロンプトと出力はそのあとに続く。行の編集の無いシェル
+// （Linux の /bin/sh の dash）は、それを描き直さないので、あとで打った文字がプロンプトより前に出る（「echo $ $」）。
+// ready-2 はシェルが計算した出力にだけ出る（打った文字の映りは ready-$((1+1))）ので、映りでは待ち終わらない
 async function openShell(owner = ME): Promise<string> {
   const { id } = shells.create(owner, dir, 80, 24);
-  shells.write(id, "PS1='$ '\r");
-  await waitForText(id, '$');
+  shells.write(id, "PS1='$ '; echo ready-$((1+1))\r");
+  await waitForText(id, 'ready-2\n$');
   return id;
 }
 
@@ -104,8 +107,8 @@ describe('読む', () => {
   it('read_terminal: 最後の行を地の文で返す。行数は 1〜2000 にそろえ、既定は 100 行', async () => {
     const id = await openShell();
     shells.write(id, "i=1; while [ $i -le 150 ]; do printf '\\033[32mline %s\\033[0m\\n' $i; i=$((i+1)); done\r");
-    await waitForText(id, 'line 150');
-    await sleep(100);
+    // 最後の行の次のプロンプトまで
+    await waitForText(id, 'line 150\n$');
     const one = textOf(await control.handle(ME, 'read_terminal', { id, lines: 2 }));
     expect(one).toContain('Last 2 lines:');
     expect(one).toContain('line 150\n$');

@@ -44,6 +44,36 @@ async function waitFor(label: string, check: () => boolean, timeoutMs = 5000): P
   }
 }
 
+// 控えの画面に書き終えてから（flush）読んだ行が、check に合うまで待つ
+async function waitForLines(label: string, id: string, check: (lines: string[]) => boolean, timeoutMs = 5000): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    await shells.flush(id);
+    const lines = shells.tail(id, 1000) ?? [];
+    if (check(lines)) return;
+    if (Date.now() > until) throw new Error(`${label}: 時間切れ（${JSON.stringify(lines)}）`);
+    await sleep(25);
+  }
+}
+
+// プロンプトを決まった形（$ ）にして、シェルが打つものを待つところまで待つ。
+// シェルが起動する前に打つと、打った文字は pty がすぐ映し、プロンプトと出力はそのあとに続く。行の編集の無いシェル
+// （Linux の /bin/sh の dash）は、それを描き直さないので、プロンプトと出力が同じ行に並ぶ（「$ red」）。macOS の /bin/sh（bash）は、
+// プロンプトのあとに描き直す。どちらでも同じ画面で確かめられるよう、起動を待ってから打つ。
+// ready-2 はシェルが計算した出力にだけ出る（打った文字の映りは ready-$((1+1))）ので、映りでは待ち終わらない
+async function waitForPrompt(id: string): Promise<void> {
+  shells.write(id, "PS1='$ '; echo ready-$((1+1))\r");
+  await waitForLines('プロンプト', id, (lines) => lines.at(-2)?.endsWith('ready-2') === true && lines.at(-1) === '$');
+}
+
+// 打って、シェルが次のプロンプトを出すまで待つ（打った文字の映りや、出力の途中では待ち終わらない）
+async function typeAndWait(id: string, data: string): Promise<void> {
+  await shells.flush(id);
+  const before = (shells.tail(id, 1000) ?? []).length;
+  shells.write(id, data);
+  await waitForLines('次のプロンプト', id, (lines) => lines.length > before && lines.at(-1) === '$');
+}
+
 describe('ShellTerminals', () => {
   it('create: セッションのフォルダでログインシェルを開き、打った文字が届く。Claude Code の子セッションの印は渡さない', async () => {
     // tanacode を Claude Code の中から起動したときの印。シェルから claude を起動したとき、子セッション扱いにならないよう外す
@@ -122,10 +152,9 @@ describe('ShellTerminals', () => {
 
   it('tail・cursorLine・markCursor: 色を除いた地の文で読み、折り返した行はつなぐ。打つ前の行と、そのあとに出た行を分けて読める', async () => {
     const { id } = shells.create('session-1', dir, 20, 10);
-    shells.write(id, "PS1='$ '; printf '\\033[31mred\\033[0m\\n'\r");
-    await waitFor('色の付いた出力', () => (data.get(id) ?? '').includes('red'));
-    await sleep(200);
-    await shells.flush(id);
+    await waitForPrompt(id);
+    // 打った文字の映りにも red が入っているので、出力そのものではなく、次のプロンプトが出るのを待つ
+    await typeAndWait(id, "printf '\\033[31mred\\033[0m\\n'\r");
     expect(shells.tail(id, 5)).toContain('red');
     // 人が打ちかけた行
     shells.write(id, 'echo half');
@@ -133,10 +162,7 @@ describe('ShellTerminals', () => {
     await shells.flush(id);
     expect(shells.cursorLine(id)).toBe('$ echo half');
     const since = shells.markCursor(id)!;
-    shells.write(id, ' 0123456789012345678901234567890\r');
-    await waitFor('長い出力', () => (data.get(id) ?? '').includes('half 0123456789012345678901234567890\r\n'));
-    await sleep(200);
-    await shells.flush(id);
+    await typeAndWait(id, ' 0123456789012345678901234567890\r');
     // 20 桁で折り返した行も 1 行として読む
     expect(since()).toEqual(['$ echo half 0123456789012345678901234567890', 'half 0123456789012345678901234567890', '$']);
   });

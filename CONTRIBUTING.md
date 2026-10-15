@@ -175,6 +175,7 @@ PR で、次のものを流します。develop への push では流しません
 
 - 型チェック（`npm run typecheck`）は `--composite false` で動かします。`*.tsbuildinfo` を使うと、JSON（文言）の変更に追いつかず、古い結果を出すことがあるためです。
 - ときどき落ちる（flaky な）テストは、再実行で済ませません。落ちる原因を突き止めて、アプリの不具合ならアプリを、テストの書き方ならテストを直します。決まった時間を待つ・押し直すなどの回り道で隠しません。直したら、手元で何回も流して、直す前より落ちなくなったことを確かめます（例: `for i in $(seq 1 30); do npx vitest run <ファイル> || echo 落ちた; done`）。
+- 本物のシェル（`/bin/sh`）を node-pty で開くテストは、シェルがプロンプトを出してから打ちます。単体テストを流す ubuntu の `/bin/sh` は dash で、起動の前に打った文字を描き直さないので、打った文字の映りのあとに、プロンプトと出力が同じ行に並びます（`$ red`）。macOS の `/bin/sh`（bash）はプロンプトのあとに描き直すので、手元では通ってしまいます。また、打った文字の映りにも同じ文字が入るので、生の出力に出たかでは待たず、次のプロンプトが出るのを待ちます（`test/shell-terminals.test.ts` の `waitForPrompt`・`typeAndWait`）。手元で dash で確かめるときは、`/bin/dash` を指す `sh` という名前のリンクを作り、テストの `process.env.SHELL` をそのリンクにします。
 - PR では流さないものに、毎日の最新の Claude Code での互換性の確認（`claude-code-check.yml`。macOS。下の「Claude Code との互換性の確かめ方」）と、週 1 回の `mutation.yml`（ubuntu。下の「ミューテーションテスト」）があります。
 - ワークフローとは別に、GitHub の設定で次の 2 つをオンにしています（どちらもワークフローのファイルは無し）。警告は Security タブに出ます。対応の手順は `/security`。
   - コードスキャン（CodeQL の default setup）: PR・develop への push・週 1 回、TypeScript とワークフローを解析（3 分ほど）。必須のチェックではありません。Swift（`native/translate/main.swift`）は、CodeQL の自動ビルドが通る形（Xcode のプロジェクト・`Package.swift`）でないので対象外。
