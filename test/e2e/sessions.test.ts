@@ -239,3 +239,76 @@ describe('親が、始めたあとの子の権限モードとエフォートを�
     expect(app.consoleErrors).toEqual([]);
   });
 });
+
+// 止まっている親を一覧から開くと、子でないセッションは --permission-mode を付けずに --resume で起動する。Claude Code は前回のモードを
+// 戻すので、親のモードは変わらない。そのあとに始める子も、親のモードで始まる（アプリが決めたモードだけを見ると、親が manual 扱いになり、
+// 子が manual に絞られる。auto を指定すると断られる）
+const REOPENED_PARENT = '開き直したあとも任せます';
+const REOPENED_FIRST = '開き直す前の返事です';
+const REOPENED_ASK = '開き直したあとに、別のセッションを始めてください';
+const REOPENED_CHILD = '開き直した親からの作業として、返事だけしてください';
+const REOPENED_CHILD_NAME = '開き直した親の子';
+const REOPENED_CHILD_REPLY = '開き直した親の子の返事です';
+const REOPENED_DONE = '開き直したあとに子を始めました';
+
+describe('止まっていた親を開き直したあとに始めた子も、親の権限モードで始まる', () => {
+  let app: E2EApp;
+  const parentRow = () => app.page.locator('.session-list .session-row:not(.archived)', { hasText: REOPENED_PARENT });
+
+  beforeAll(async () => {
+    app = await E2EApp.launch({
+      trusted: true,
+      conversations: () => [
+        {
+          match: REOPENED_PARENT,
+          steps: [
+            [{ type: 'text', text: REOPENED_FIRST }],
+            [{ type: 'tool_use', id: 'toolu_reopened', name: sessionToolId('start_session'), input: { prompt: REOPENED_CHILD, worktree: false, name: REOPENED_CHILD_NAME } }],
+            [{ type: 'text', text: REOPENED_DONE }],
+          ],
+        },
+        { match: REOPENED_CHILD, steps: [[{ type: 'text', text: REOPENED_CHILD_REPLY }]] },
+      ],
+    });
+  });
+
+  afterEach(async ({ task }) => {
+    if (task.result?.state === 'fail') await app?.keepEvidence(`sessions-reopened-${task.name}`);
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('acceptEdits で始めた親をアーカイブで止め、一覧から戻して開くと、Claude Code は acceptEdits に戻る', async () => {
+    await app.startSession(REOPENED_PARENT, { mode: 'acceptEdits' });
+    await app.byText('.chat-list', REOPENED_FIRST).waitFor();
+    await parentRow().hover();
+    await parentRow().locator('[aria-label="アーカイブ"]').click();
+    await app.byText('.session-list .pane-heading', 'アーカイブ済み（1）').click();
+    const archived = app.page.locator('.session-list .session-row.archived', { hasText: REOPENED_PARENT });
+    await archived.hover();
+    await archived.locator('[aria-label="アクティブに戻す"]').click();
+    await parentRow().click();
+    await app.byText('.chat-list', REOPENED_FIRST).waitFor();
+    // 開き直した Claude Code には、モードを渡していない
+    await expect.poll(async () => (await app.claudeArgs()).join('\n')).toContain('--resume');
+    expect((await app.claudeArgs()).join('\n')).not.toContain('--permission-mode');
+    await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('acceptEdits');
+  });
+
+  it('開き直した親が、モードを省いて始めた子は、親と同じ acceptEdits で動く', async () => {
+    await app.send(REOPENED_ASK);
+    await app.choose(await app.menuCard('permission'), /^Yes/);
+    await app.byText('.chat-list', REOPENED_DONE).waitFor();
+    expect(app.api.toolResults.find((r) => r.includes(REOPENED_CHILD_NAME))).toMatch(/"permission_mode":\s*"acceptEdits"/);
+    // 子の Claude Code の画面に出ているモードも、acceptEdits
+    await app.byText('.session-list .session-row', REOPENED_CHILD_NAME).click();
+    await app.byText('.chat-list', REOPENED_CHILD_REPLY).waitFor();
+    await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('acceptEdits');
+  });
+
+  it('画面のコンソールにエラーが出ていない', () => {
+    expect(app.consoleErrors).toEqual([]);
+  });
+});

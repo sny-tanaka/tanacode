@@ -147,16 +147,23 @@ describe('adopt', () => {
       if (data === '\x1b[Z') setTimeout(() => app.showMode(switched.id, '⏵⏵ accept edits on'), 10);
     };
     expect(await app.manager.setMode(switched.id, 'acceptEdits')).toBe(true);
+    // モードを渡さずに起動し、claude が会話ログに書いた
+    const told = app.create();
+    await app.ready(told.id);
+    app.showMode(told.id, '⏵⏵ auto mode on');
+    app.append(told.id, { ...line.user('はじめ'), permissionMode: 'auto' });
+    await app.waitFor('会話ログのモード', () => app.manager.modeOf(told.id) === 'auto');
     const plain = app.create();
-    for (const { id, pty } of [launched, switched, plain]) {
+    for (const { id, pty } of [launched, switched, told, plain]) {
       pty.exit(0);
       await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     }
-    app.host.hosted = [hosted(launched.id), hosted(switched.id), hosted(plain.id)];
+    app.host.hosted = [hosted(launched.id), hosted(switched.id), hosted(told.id), hosted(plain.id)];
     await app.manager.adopt();
     // 引き継いだ claude はモードを変えずに動き続けている。戻さないと manual 扱いになり、そのあとに始める子の上限が下がる
     expect(app.manager.modeOf(launched.id)).toBe('auto');
     expect(app.manager.modeOf(switched.id)).toBe('acceptEdits');
+    expect(app.manager.modeOf(told.id)).toBe('auto');
     expect(app.manager.modeOf(plain.id)).toBe('manual');
   });
 });

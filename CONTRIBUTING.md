@@ -348,7 +348,7 @@ PR で、次のものを流します。develop への push では流しません
 | `checklist.test.ts` | 人がチェックリストを画面で使う（リストとカードを作ってチェックを付ける）。カードのスレッドに「Claude に通知する」で返信すると、手の空いた Claude に知らせが届くか。Claude が MCP でスレッドに返信すると、画面に出るか |
 | `checklist-tools.test.ts` | Claude が MCP でカードを並べ替える（`card_move` で `to_list` を省き、`before` で位置を選ぶ）と、パネルの並びが変わるか（番号はそのまま）。`list_delete` で消したリストがパネルから消えてゴミ箱に入り、`checklist_trash` で読めて、`list_restore` で戻すと、並べ替えたままパネルに戻るか |
 | `tasks.test.ts` | Claude がバックグラウンドで動かすもの（サブエージェント・バックグラウンドの Bash・ワークフロー）が、タスクの一覧に出るか。開くと中身（サブエージェントの会話・ワークフローのフェーズとエージェント）が見え、動いている Bash を画面から止められるか。ワークフローを始める前の確認には、チャットのカードで答える |
-| `sessions.test.ts` | Claude がセッションの MCP で子セッションを始める（許可のカード・一覧に並ぶ・子が動き出す）。アプリを起動し直して引き継いだ親から始めた子も、親の権限モードで始まる。親が `configure_session` で子の権限モードとエフォートを変える（確認は出ない。子は新しいエフォートと、切り替えたモードで起動し直す。起動の引数は `E2EApp.claudeArgs` で読む） |
+| `sessions.test.ts` | Claude がセッションの MCP で子セッションを始める（許可のカード・一覧に並ぶ・子が動き出す）。アプリを起動し直して引き継いだ親から始めた子も、アーカイブで止めた親を戻して開いたあと（モードを渡さずに `--resume` で起動し、Claude Code が前回のモードに戻す）に始めた子も、親の権限モードで始まる。親が `configure_session` で子の権限モードとエフォートを変える（確認は出ない。子は新しいエフォートと、切り替えたモードで起動し直す。起動の引数は `E2EApp.claudeArgs` で読む） |
 | `wakeup.test.ts` | Claude が `schedule_wakeup` で自分に予約を入れる（確認は出ない）。チャットの末尾に「Claude の予約」の印つきで、一覧に時計で出る。人が「今すぐ送る」を押すと、囲み（`<tanacode-wakeup>`）に入れて送り、チャットに「Claude の予約の時刻になりました」の知らせが出て、Claude が続きを始める。続きの終わりの `report_result` も確認なしに届く（通知そのものは E2E で切ってあるので、本文は `test/main-app.test.ts` で確かめる） |
 | `session-ops.test.ts` | 一覧とチャットの見出しからの、セッションの操作。名前の変更（見出しと記録にも出る）・作業の HTML への書き出し（本人だけが読めるファイル）・アーカイブ。一覧の「アクティブに戻す」で戻して送ると、Claude Code を再開して同じ会話を続けられるか |
 | `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
@@ -373,7 +373,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 15 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 16 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -382,6 +382,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `stop.test.ts` | バックグラウンドのタスクを、アプリから止める（`SessionManager.stopTask`）。サブエージェント・Bash 5 つ（長いコマンド・同じコマンドの 2 つ）・ワークフローを動かし続け、`/tasks` の一覧から、コマンド・説明・名前で選んで止める（ほかは動いたまま。同じコマンドが 2 つのときは決められないと断る）。画面を操作している間にメニューや「操作できない画面」の知らせが出ないこと、止めたあと入力欄に戻ること、動いていないもの・書きかけの文字があるときは打たずに断ることも。1 つだけのときは別の `claude` で、一覧を飛ばした詳細の画面（Bash・サブエージェントは止めると閉じ、ワークフローは残る）から止める |
     | `session.test.ts` | 権限モードの切り替え（Shift+Tab）→ 作業中の進み具合 → 作業中に送った発言の順番待ち（`queue` のイベント）→ 会話ログのモデル名 → `/compact` → 複数行の指示を添えた `/compact`（入力欄では貼り付けの目印になる。要約の頼みの `Additional Instructions:` に、改行もそのまま入るか）→ `/clear`（statusLine で新しい会話ログに乗り換え）→ `--resume` → `/rewind`（「何を戻すか」のメニューと、会話を戻して発言したときの `replace` のイベント） |
     | `adopt.test.ts` | `--resume` の前と後でバックグラウンドの Bash → アプリを起動し直して、動いている claude を引き継ぐ（前の claude の行は過去のもの、今の claude の行は今も動いているもの）→ アプリを止めている間の `/clear` |
+    | `permission-mode.test.ts` | 子の権限モードの上限にする親のモード（`SessionManager.modeOf`）。acceptEdits で始めたセッションを止め、一覧から開くのと同じく `--permission-mode` を付けずに `--resume` で起動すると、Claude Code が前回のモードに戻し、次の発言の行に書いたモードが上限になるか |
     | `questions.test.ts`（台本は `test/scenarios/questions.ts`） | AskUserQuestion。複数の質問のページ送り（タブ・自由記述・回答の確認画面）→ 複数選択だけの質問（チェックの付け外し・Next / Submit）→ プレビュー付きの選択肢 → 説明が長く、上が切れて見えるメニュー。どれもカードのボタンと同じ操作で答え、会話ログの答えまで確かめる |
     | `press.test.ts` | 続けて出るメニュー（AskUserQuestion → Write の許可 → Bash の許可 2 つ）を、出てすぐカードのボタンと同じ `SessionManager.choose` で押す。モックの API はすぐ応答するので、答えた直後に次の確認が出る。どれも閉じて最後まで進み、押した 1 回が次の確認に入らないか。起動直後のフォルダの信頼の確認を出てすぐ押しても、押した選択肢（Yes）が選ばれるか（5 回起動） |
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の Esc → 中断した会話の `--resume`（`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
@@ -975,8 +976,9 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - `start_session`: 権限モードは、親のモード（`modeOf`）より強ければ断ります（`modeWithin`。plan・manual ＜ acceptEdits ＜ auto ＜ bypassPermissions）。省けば親のモード（親が plan なら manual）。
     - モデルとエフォートは、省けば親の今のもの（`SessionManager.currentModel`・`currentEffort`）。独立したセッションでも同じ。今の値は statusLine の `model.id`・`effort.level`（`/model`・`/effort` で変えたあとも追える）、無ければ起動の指定（`SessionRecord.model`・`effort`。エフォートは、その前に画面の表示）。どれも無ければ `null`（Claude Code の既定）。画面のモデル名は表示名なので、`--model` には使いません。`--effort` に渡せないエフォートは渡しません（`EFFORTS`）。使ったモデルとエフォートは、結果の `model`・`effort` で返します。
   - `start_session` の `independent: true`（独立したセッション）: `parentId` を付けずに作ります。親子の記録が無いので、指示・待ち・中断・親への知らせ・起動したときのモードの上限（`launchMode`）・人への通知の抑止は、どれも付きません（起動したあとは、人が動かすふつうのセッション）。フォルダと権限モードの確かめは子と同じ。Remote Control は、子と同じく、呼び出し元の指定に合わせます。最初の指示は、子と同じ囲み（`parentMessageText`。`session` は起動したセッション）で送り、人の発言と見分けます。画面の見出しは、送り主がそのセッションの親でなければ「セッション「名前」からの指示」（`ParentHeading` の `isParent`）。
-    - `modeOf` は、アプリが決めたモード（起動の引数・`setMode` での切り替え。`knownMode`。無ければ manual）と、画面から読んだモードの弱いほう（`weakerMode`）。画面のモードの行は、会話の中の文（「bypass permissions on」など）でも読めてしまうので、強くする向きには使いません。
-      - `knownMode` は記録（`SessionRecord.knownMode`）にも残し、アプリを起動し直して動いている claude を引き継ぐ（`adopt`）ときに戻します。戻さないと、モードの変わっていない親が manual 扱いになり、そのあとに始めた子が manual になります（実際に起きた）。この記録ができる前に起動した claude は、引き継いでも manual 扱いのまま（モード欄で選び直すか、起動し直すと戻る）。
+    - `modeOf` は、分かっているモード（`knownMode`。起動の引数・`setMode` での切り替え・今の claude が会話ログに書いたモードの、いちばん新しいもの。無ければ manual）と、画面から読んだモードの弱いほう（`weakerMode`）。画面のモードの行は、会話の中の文（「bypass permissions on」など）でも読めてしまうので、強くする向きには使いません。
+      - 会話ログのモード（`noteMode`）: Claude Code は、発言の行（`user`）と `permission-mode` の行に、そのときの権限モード（`permissionMode`。manual は `default`）を書きます。アプリがモードを渡さずに起動したとき（止まっているセッションを一覧から開く・新規セッションで既定のモードを選ぶ）に Claude Code が選んだモード（`--resume` では前回のモードを戻す。実測は `test/cli/permission-mode.test.ts`）や、Remote Control・ターミナルで切り替えたモードは、これで分かります。読まないと、画面と `get_session` は auto なのに、上限は manual になります（実際に起きた）。会話の中の文では偽れないので、強くする向きにも使います。読み直した前の起動の行（`past`。今の起動では別のモードを渡していることもある）と、サブエージェントの行（`isSidechain`。エージェントの定義で、本体と別のモードで動くことがある）は使いません。知らない名前（`dontAsk` など）は manual。書かれるのは発言のときなので、ターンの途中で上げたモードは、次の発言から。
+      - `knownMode` は記録（`SessionRecord.knownMode`）にも残し、アプリを起動し直して動いている claude を引き継ぐ（`adopt`）ときに戻します。戻さないと、モードの変わっていない親が manual 扱いになり、そのあとに始めた子が manual になります（実際に起きた）。この記録ができる前に起動した claude は、引き継いだあと、次の発言の会話ログのモードで戻ります。
     - 子の起動のモードは `launchMode` に残し、止まった子を開く（`open`）・起動し直す（`restart`）ときも、それより強くしません。`SessionManager.setMode`（画面のモード欄・`configure_session`）で切り替えたら、`launchMode` も変えます（起動し直すと、切り替える前のモードに戻ってしまうため）。Claude Code が動いていない子の `setMode` は、`launchMode` だけを変えます（次の起動から効く）。
     - フォルダは `folderFor`（シンボリックリンクを解いてから、親のリポジトリの中か、そのプロファイルのセッション（`host.list()`。アーカイブしたものも）のフォルダだけ。見える範囲（`canSee`）より広いので、別のリポジトリでも始められるが、そこの会話は読めないまま。選べるフォルダは、`list_sessions` の `start_folders`（`knownFolders`。新しい順に 30 件まで。子には出さない）で Claude に渡す。worktree なら `projectRootOf` で元のフォルダに直す）。設定ファイルと Remote Control は親と同じにし（Remote Control は `SessionSummary.remoteControl`。開発版では、親も子も使わない。結果の `remote_control` で返す）、`create`・`createInWorktree` に `parentId` を渡します。最初の指示は `submitWhenReady`（worktree の準備を含めて最大 30 分）で送り、待たずに返します。
     - worktree の子（`worktree: true`）: worktree を作る・`.worktreeinclude` のファイルを写す（どちらも Claude Code）・`node_modules` を用意する（アプリ）のは、最初の指示を送る前に済みます。それを `worktree` の説明と結果の `note` で Claude に伝え、子への指示に準備の手順（作る・確かめる・rebase・npm の install）を書かせないようにします。書いておかないと、親はサブエージェントの worktree（Agent ツールの `isolation: "worktree"`。依存が入らない）向けの手順を、子への指示に書き足します（実測）。

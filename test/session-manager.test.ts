@@ -109,6 +109,47 @@ describe('権限モードと起動し直し', () => {
     expect(app.manager.modeOf(id)).toBe('manual');
   });
 
+  it('modeOf: モードを渡さずに起動したセッションは、今の claude が会話ログに書いたモードを上限にする', async () => {
+    // 止まっていたセッションを開く・既定のモードで始めると、モードを渡さずに起動する。Claude Code は --resume で前回のモードを戻す
+    const { id } = app.create();
+    await app.ready(id);
+    app.showMode(id, MODE_TEXT.auto);
+    await app.waitFor('画面のモード', () => app.screens.get(id)?.mode === 'auto');
+    expect(app.manager.modeOf(id)).toBe('manual');
+    app.append(id, { ...line.user('子を始めて'), permissionMode: 'auto' });
+    await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'auto');
+    // サブエージェントの行は、本体のモードではない（読んでいれば manual になる）
+    app.append(id, { ...line.user('サブエージェントへの依頼'), isSidechain: true, permissionMode: 'default' }, line.text('目印'));
+    await app.waitFor('目印', () => app.events(id).some((e) => e.type === 'assistant-text' && e.text === '目印'));
+    expect(app.manager.modeOf(id)).toBe('auto');
+    // ターミナルや Remote Control で切り替えた（Claude Code は manual を default と書く）
+    app.append(id, { type: 'permission-mode', permissionMode: 'acceptEdits' });
+    await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'acceptEdits');
+    // 知らない名前は、許す操作の多さが分からないので manual
+    app.append(id, { ...line.user('知らないモード'), permissionMode: 'dontAsk' });
+    await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'manual');
+  });
+
+  it('modeOf: 前の起動の claude が会話ログに書いたモードは使わない（今の起動では、別のモードを渡していることもある）', async () => {
+    const { id, pty } = app.create();
+    await app.ready(id);
+    app.showMode(id, MODE_TEXT.auto);
+    app.append(id, { ...line.user('はじめ'), permissionMode: 'auto' }, line.text('はい'), line.turnEnd());
+    await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'auto');
+    pty.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await app.manager.open(id);
+    expect(app.pty(id).arg('--resume')).toBe(pty.arg('--session-id'));
+    await app.ready(id);
+    app.showMode(id, MODE_TEXT.auto);
+    await app.waitFor('画面のモード', () => app.screens.get(id)?.mode === 'auto');
+    await app.waitFor('会話ログの読み直し', () => app.events(id).some((e) => e.type === 'turn-end'));
+    expect(app.manager.modeOf(id)).toBe('manual');
+    // 今の claude が書けば、それを使う
+    app.append(id, { ...line.user('つづき'), permissionMode: 'auto' });
+    await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'auto');
+  });
+
   it('restart: 動いている claude を止め、同じ会話を --resume で、画面に出ている権限モードのまま起動し直す', async () => {
     const { id, pty } = app.create();
     await app.ready(id);

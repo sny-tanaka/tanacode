@@ -112,8 +112,8 @@ type Runtime = {
   ready: boolean;
   // 今回の起動で --permission-mode に渡したモード（画面からモードを読めるまでの間、起動し直すときに使う）
   startMode: PermissionMode | null;
-  // アプリが決めた権限モード（起動の引数か、アプリでの切り替え）。子セッションの権限モードの上限に使う。
-  // 画面の文字は会話の中の文でも読めてしまうので、上限には画面から読んだモードだけを使わない
+  // 分かっている権限モード（起動の引数・アプリでの切り替え・今の claude が会話ログに書いたモードの、いちばん新しいもの）。
+  // 子セッションの権限モードの上限に使う。画面の文字は会話の中の文でも読めてしまうので、上限には画面から読んだモードだけを使わない
   knownMode: PermissionMode | null;
   size: { cols: number; rows: number };
   // 引き継いだ claude（前のアプリが起動したもの）が起動した時刻。これ以降の会話ログの行は、今も動いている claude が書いた
@@ -544,8 +544,8 @@ export class SessionManager {
     return 'idle';
   }
 
-  // 子セッションの権限モードの上限にする、今の権限モード。アプリが決めたモード（起動の引数・アプリでの切り替え。無ければ manual）と、
-  // 画面から読んだモードの弱いほう（画面の文字は偽れるので、強くする向きには使わない。ターミナルで下げたときは下げる）
+  // 子セッションの権限モードの上限にする、今の権限モード。分かっているモード（起動の引数・アプリでの切り替え・Claude Code が会話ログに
+  // 書いたモード。無ければ manual）と、画面から読んだモードの弱いほう（画面の文字は偽れるので、強くする向きには使わない。ターミナルで下げたときは下げる）
   modeOf(id: string): PermissionMode | null {
     const rt = this.runtimes.get(id);
     if (!rt) return null;
@@ -1480,6 +1480,16 @@ export class SessionManager {
     this.emitSessions();
   }
 
+  // 今の claude が会話ログに書いた権限モードを、分かっているモード（knownMode）にする。アプリがモードを渡さずに起動したとき
+  // （止まっていたセッションを開く・既定のモードで始める）に Claude Code が選んだモード（--resume では前回のモードを戻す）や、
+  // Remote Control・ターミナルで切り替えたモードも、子の権限モードの上限に使えるように。画面の文字と違い、会話の中の文では偽れない
+  private noteMode(id: string, rt: Runtime, entry: TranscriptEntry): void {
+    const mode = permissionModeOf(entry);
+    if (!mode || mode === rt.knownMode) return;
+    rt.knownMode = mode;
+    this.store.update(id, { knownMode: mode });
+  }
+
   // 作業中に送った発言は、Claude Code が受け取るまで会話ログに発言として書かれず、順番待ち（queue-operation）にだけ書かれる。
   // それを追って、受け取られるまでチャットに「順番待ち」として出す
   private trackQueue(id: string, rt: Runtime, entry: TranscriptEntry): void {
@@ -1589,6 +1599,7 @@ export class SessionManager {
     const past = isHistory && !(rt?.aliveSince && entryTime(entry) >= rt.aliveSince);
     rt?.tasks.track(entry, past, isHistory);
     if (rt && !past) this.trackQueue(id, rt, entry);
+    if (rt && !past) this.noteMode(id, rt, entry);
     rt?.knowledge.handle(entry);
     rt?.context.handle(entry);
 
@@ -1673,6 +1684,24 @@ function modelOf(entry: TranscriptEntry): string | null {
   if (!m) return null;
   const name = m[1][0].toUpperCase() + m[1].slice(1);
   return `${name} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
+}
+
+// 会話ログの権限モードの名前（Claude Code の名前。manual は default）
+const TRANSCRIPT_MODES = new Map<string, PermissionMode>([
+  ['default', 'manual'],
+  ['acceptEdits', 'acceptEdits'],
+  ['plan', 'plan'],
+  ['auto', 'auto'],
+  ['bypassPermissions', 'bypassPermissions'],
+]);
+
+// Claude Code が会話ログに書いた、その時点の権限モード（user 行・permission-mode 行）。書いていなければ null。
+// サブエージェントの行（sidechain）は読まない（エージェントの定義で、本体と別のモードで動くことがある）。
+// 知らない名前（dontAsk など）は、許す操作の多さが分からないので manual にする
+function permissionModeOf(entry: TranscriptEntry): PermissionMode | null {
+  if (entry.isSidechain || (entry.type !== 'user' && entry.type !== 'permission-mode')) return null;
+  if (typeof entry.permissionMode !== 'string' || !entry.permissionMode) return null;
+  return TRANSCRIPT_MODES.get(entry.permissionMode) ?? 'manual';
 }
 
 function fileSize(file: string): number {
