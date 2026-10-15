@@ -350,10 +350,14 @@ export class SessionManager {
       if (next === waiting) break;
       waiting = next;
     }
+    // 終わる直前の出力（信頼していないという理由など）は、画面があとで文字にする。アプリが忙しいと、終わりに気づくほうが
+    // 先になるので、書き終えるのを待ってから読む
+    const tracker = this.runtimes.get(id)?.screen;
+    await tracker?.flushed();
     // 人がアーカイブした・一覧から消したのは、作れなかったのではない
     const record = this.store.get(id);
     if (!record || record.archived) return false;
-    const screen = this.runtimes.get(id)?.screen?.text() ?? '';
+    const screen = tracker?.text() ?? '';
     await this.archive(id).catch(() => null);
     this.store.remove(id);
     this.emitSessions();

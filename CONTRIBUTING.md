@@ -560,6 +560,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - 結果は `startInWorktree` の返す `created` で分かります。作り終えたら `true`。作れずに Claude Code が終わったら、記録を消して、そのときの画面を添えて失敗します。作っている途中に人がアーカイブした・一覧から消したときは、作れなかったとは扱わず `false`（記録はそのまま）。止めた Claude Code からは終了の知らせが来ないので、アーカイブしたら待つのをやめます（起動ごとの `alive`）。作っている途中に再起動したら、新しい起動のほうを待ちます。
     - 作れなかったときは、`Profile.startInWorktree` が理由を `sessions:create-failed`（`sessions.onCreateFailed`）で画面に知らせます。画面（`App.tsx`）は新規セッションの画面に戻し、預かっていた最初の指示（`pendingSends.take`）を入力欄に戻して（`NewSessionPane` の `restore`）、理由をダイアログで出します。
     - `claude --worktree` は、まだ信頼していないフォルダでは、信頼の確認を出さずに「Workspace trust not yet accepted」で終わります（実測）。そのときは、日本語の理由にして返します。
+      - 理由は、終わったときの画面の文字で見分けます。画面（xterm）は受け取った出力をあとで文字にするので、書き終えるのを待ってから読みます（`ScreenTracker.flushed`）。アプリが忙しいと、worktree ができたかの見張り（200ms ごと）が終わりに先に気づき、まだ空の画面から「作れませんでした」だけを返していました（CI の遅いランナーで E2E が落ちた）。
     - 親の Claude が子セッションを始めるとき（`start_session`）は、`SessionManager.createInWorktree` で作るまで待ちます（作れなかった理由を、ツールの結果として返すため）。
   - 画面は、worktree のフォルダができる前にセッションを開きます。`preparing` が creating・restoring の間（`sessions/worktree.ts` の `pendingFolder`）は、フォルダを読むもの（エクスプローラー・ソース管理・検索・ターミナル）を出さずに、準備の段階を出して待ちます。
     - ターミナルは、無いフォルダで開くと、シェルがすぐ終了コード 1 で終わります（node-pty で実測: 13 ミリ秒）。「1 つも無ければ開く」が開き直しを繰り返すので、できるまで開きません。
