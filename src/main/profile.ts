@@ -24,6 +24,7 @@ import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
 import { ScheduledMessages } from './scheduled-messages';
 import { SessionManager } from './session-manager';
+import { resolveAddedFolder } from './added-folders';
 import { SettingsFiles } from './settings-files';
 import { SessionStore } from './session-store';
 import { socketPathIn } from './socket-path';
@@ -99,6 +100,8 @@ export class Profile {
   readonly folderViews = new Map<string, string>();
   // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
   readonly pickedFolders = new Set<string>();
+  // 新規セッションの画面で、ワークスペースに追加したフォルダ（folders.open の id → フォルダ）。始めるときに画面から渡ってくる
+  private readonly draftFolders = new Map<string, string[]>();
 
   // 作るだけ。待ち受けと pty ホストは start() で始める（途中で終われと言われても、作ったものは close() で片付けられるように）
   constructor(private readonly options: ProfileOptions) {
@@ -335,6 +338,51 @@ export class Profile {
   // workspace・git に渡された id（セッションか、folders.open で開いたフォルダ）のフォルダ
   cwdOf(id: string): string {
     return this.folderViews.get(id) ?? this.manager.cwdOf(id);
+  }
+
+  // ワークスペースに追加したフォルダ（セッションか、folders.open で開いたフォルダ）
+  addedFoldersOf(id: string): string[] {
+    return this.folderViews.has(id) ? (this.draftFolders.get(id) ?? []) : this.manager.addedFoldersOf(id);
+  }
+
+  // ワークスペースにフォルダを追加する。追加したあとの一覧を返す（もう追加してあれば、そのまま）。追加できなければ理由を添えて投げる
+  async addFolder(id: string, folder: string): Promise<string[]> {
+    const real = await resolveAddedFolder(this.cwdOf(id), folder);
+    const current = this.addedFoldersOf(id);
+    return current.includes(real) ? current : this.setAddedFolders(id, [...current, real]);
+  }
+
+  // 追加したフォルダをワークスペースから外す（フォルダそのものは消さない）。外したあとの一覧を返す
+  removeFolder(id: string, folder: string): string[] {
+    const current = this.addedFoldersOf(id);
+    // 追加していないフォルダなら、何も変えない（動いている claude を起動し直さない）
+    return current.includes(folder) ? this.setAddedFolders(id, current.filter((f) => f !== folder)) : current;
+  }
+
+  private setAddedFolders(id: string, folders: string[]): string[] {
+    if (!this.folderViews.has(id)) {
+      this.manager.setAddedFolders(id, folders);
+      return folders;
+    }
+    // 新規セッションの画面のフォルダも、セッションと同じく、エクスプローラーのために見張る
+    const before = this.draftFolders.get(id) ?? [];
+    for (const folder of folders) if (!before.includes(folder)) this.watchers.retain(folder);
+    for (const folder of before) if (!folders.includes(folder)) this.watchers.release(folder);
+    this.draftFolders.set(id, folders);
+    return folders;
+  }
+
+  // 新規セッションの画面のフォルダを閉じる（フォルダを変えた・画面を閉じた・セッションを始めた）
+  closeFolderView(id: string): void {
+    const cwd = this.folderViews.get(id);
+    if (cwd === undefined) return;
+    this.setAddedFolders(id, []);
+    this.draftFolders.delete(id);
+    this.folderViews.delete(id);
+    this.watchers.release(cwd);
+    // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じると一緒に閉じる
+    this.shells.killOwner(id);
+    this.browser.forget(id);
   }
 
   // アプリ内ブラウザで Claude に許す先を保存する。書き方をそろえ、重なりを除く。書き方が違うものがあれば、保存せずに断る

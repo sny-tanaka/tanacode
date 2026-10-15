@@ -20,6 +20,8 @@ export class KnowledgeTracker {
   constructor(
     private readonly cwd: string,
     private readonly onChange: (knowledge: SessionKnowledge) => void,
+    // ワークスペースに追加したフォルダ。その中のファイルは、絶対パスのまま覚える（エクスプローラーが、追加したフォルダの行を絶対パスで持つため）
+    private readonly addedFolders: () => readonly string[] = () => [],
   ) {}
 
   current(): SessionKnowledge {
@@ -87,6 +89,12 @@ export class KnowledgeTracker {
   private relative(path: string): string | null {
     if (!isAbsolute(path)) return null;
     const rel = relative(this.cwd, path);
-    return rel && !rel.startsWith(`..${sep}`) && rel !== '..' ? rel : null;
+    if (inside(rel)) return rel;
+    return this.addedFolders().some((folder) => inside(relative(folder, path))) ? path : null;
   }
+}
+
+// relative() の結果が、そのフォルダの中のもの（フォルダそのものは除く）
+function inside(rel: string): boolean {
+  return !!rel && !rel.startsWith(`..${sep}`) && rel !== '..';
 }

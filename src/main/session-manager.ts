@@ -143,6 +143,8 @@ type Runtime = {
   worktreeCreated: Promise<boolean> | null;
   // ファイルの変更を見張っているフォルダ（worktree は、Claude Code が作るまで見張れない）
   watched: string | null;
+  // 見張っている、ワークスペースに追加したフォルダ
+  watchedFolders: string[];
   // 送信の順番待ち。チャットの入力欄からの発言と、親セッションからの指示・知らせを、混ぜずに 1 つずつ打ち込む
   sendChain: Promise<void>;
   // 打ち込んでいる途中の文字（空白を除く）と、打ち込み始めた（打ち終えた）時刻。画面の draft から除いて画面に知らせる（チャットの入力欄に移さないため）
@@ -223,6 +225,7 @@ export class SessionManager {
 
   private changed(id: string): void {
     for (const listener of this.stateListeners) listener(id);
+    this.restartForFoldersIfIdle(id);
   }
 
   // 外から見た状態が変わった（最適化圧縮の流れが始まった・終わった）ことを、見張っている先に知らせる
@@ -283,6 +286,7 @@ export class SessionManager {
             ? { ...r.worktree, preparing: this.restoring.has(r.id) ? 'restoring' : rt?.process ? rt.preparing : null }
             : null,
           parentId: r.parentId ?? null,
+          addedFolders: r.addedFolders ?? [],
         };
       });
   }
@@ -376,6 +380,7 @@ export class SessionManager {
       remoteControl: options.remoteControl,
       worktree,
       ...(parentId ? { parentId, launchMode: options.mode } : {}),
+      ...(options.addedFolders?.length ? { addedFolders: options.addedFolders } : {}),
       createdAt: now,
       updatedAt: now,
     });
@@ -492,6 +497,7 @@ export class SessionManager {
     rt?.subagents.dispose();
     rt?.bashTasks.dispose();
     if (rt?.watched) this.watchers.release(rt.watched);
+    if (rt) this.watchFolders(rt, []);
     if (this.runtimes.get(id) === rt) this.runtimes.delete(id);
     this.store.update(id, { archived: true });
     this.emitSessions();
@@ -846,6 +852,35 @@ export class SessionManager {
     return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) === 'chosen';
   }
 
+  addedFoldersOf(id: string): string[] {
+    return this.store.get(id)?.addedFolders ?? [];
+  }
+
+  // ワークスペースに追加したフォルダを変える（確かめは呼ぶ側で済ませる）。エクスプローラーのために見張りも合わせる。
+  // 動いている claude には、手が空いたときに --resume で起動し直して渡す（作業中・確認待ち・バックグラウンドのタスクがあるうちは止めない）
+  setAddedFolders(id: string, folders: string[]): void {
+    const record = this.store.get(id);
+    if (!record) throw new Error(`unknown session: ${id}`);
+    const rt = this.runtimes.get(id);
+    this.store.update(id, { addedFolders: folders, ...(rt?.process ? { addedFoldersPending: true } : {}) });
+    if (rt && !record.archived) this.watchFolders(rt, folders);
+    this.emitSessions();
+    this.restartForFoldersIfIdle(id);
+  }
+
+  // 追加フォルダを渡すための起動し直しを待っていて、手が空いていれば起動し直す。
+  // 状態の知らせの途中（会話ログの行を読んでいるところなど）で止めないよう、今の処理が終わってから確かめ直す
+  private restartForFoldersIfIdle(id: string): void {
+    if (!this.store.get(id)?.addedFoldersPending || this.stateOf(id) !== 'idle') return;
+    setImmediate(() => {
+      if (this.closed || !this.store.get(id)?.addedFoldersPending || this.stateOf(id) !== 'idle') return;
+      // 登録した設定ファイルが読めないなどで起動し直せなければ、動いている claude はそのまま（次に手が空いたとき、また試す）
+      try {
+        this.restart(id);
+      } catch {}
+    });
+  }
+
   configure(id: string, options: SessionOptions): void {
     const record = this.store.get(id);
     const settingsFile = options.settingsFile ?? null;
@@ -1197,7 +1232,11 @@ export class SessionManager {
         subagents,
         bashTasks,
         tasks,
-        knowledge: new KnowledgeTracker(record.cwd, (value) => this.listeners.onKnowledge(id, value)),
+        knowledge: new KnowledgeTracker(
+          record.cwd,
+          (value) => this.listeners.onKnowledge(id, value),
+          () => this.store.get(id)?.addedFolders ?? [],
+        ),
         context: new ContextTracker(record.cwd),
         statusLine: null,
         chain: [],
@@ -1223,6 +1262,7 @@ export class SessionManager {
         preparing: null,
         worktreeCreated: null,
         watched: null,
+        watchedFolders: [],
         sendChain: Promise.resolve(),
         typing: null,
         pulledBack: null,
@@ -1237,6 +1277,9 @@ export class SessionManager {
     rt.checklistMcp = adopted ? null : !!checklist;
     // worktree は、Claude Code が作るまでフォルダが無い（作ったあとで見張る）
     this.watch(rt, record.cwd);
+    this.watchFolders(rt, record.addedFolders ?? []);
+    // 新しく起動する claude には、今の追加フォルダを --add-dir で渡す（引き継ぐ claude は前の引数のままなので、待ちを残す）
+    if (!adopted && record.addedFoldersPending) this.store.update(id, { addedFoldersPending: false });
     rt.events = [];
     rt.chain = [];
     // 再開すると過去の会話を読み直すので、そこから集め直す
@@ -1306,6 +1349,8 @@ export class SessionManager {
         walkthrough,
         terminal,
         claudeDir: this.claudeDir,
+        // 追加したあとで消した・動かしたフォルダは渡さない（エクスプローラーには残し、人が外せるようにする）
+        addDirs: (record.addedFolders ?? []).filter((folder) => existsSync(folder)),
         ...rt.size,
       },
       {
@@ -1389,6 +1434,13 @@ export class SessionManager {
       if (rt.screen?.current.ready) return true;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+  }
+
+  // 見張る追加フォルダを folders に合わせる（増えたものを見張り、外したものをやめる）
+  private watchFolders(rt: Runtime, folders: string[]): void {
+    for (const folder of folders) if (!rt.watchedFolders.includes(folder)) this.watchers.retain(folder);
+    for (const folder of rt.watchedFolders) if (!folders.includes(folder)) this.watchers.release(folder);
+    rt.watchedFolders = [...folders];
   }
 
   // ファイルの変更を見張る（フォルダがあれば。同じセッションでは一度だけ）

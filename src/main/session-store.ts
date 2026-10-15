@@ -32,6 +32,11 @@ export type SessionRecord = {
   // アプリが決めた権限モード（起動の引数か、アプリでの切り替え。Runtime.knownMode）。アプリを起動し直して、動いている claude を
   // 引き継ぐときに戻す（claude のモードは変わっていないのに、戻さないと manual 扱いになり、そのあとに始める子の上限が下がる）
   knownMode?: PermissionMode | null;
+  // ワークスペースに追加したフォルダ（絶対パス。リンクは解いてある）。起動時に --add-dir で渡す。無いものは追加なし
+  addedFolders?: string[];
+  // 追加したフォルダを変えたが、動いている claude にはまだ渡していない（手が空いたら --resume で起動し直す）。
+  // アプリを動かしたまま終了して、次のアプリが claude を引き継いだときも、起動し直すまで残す
+  addedFoldersPending?: boolean;
   createdAt: number;
   updatedAt: number;
 };

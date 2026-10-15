@@ -384,11 +384,17 @@ input[type='checkbox'] {
 }
 .side-panel-title {
   flex: none;
+  display: flex;
+  align-items: center;
   padding: 11px 12px 6px;
   font-size: 11px;
   font-weight: 400;
   letter-spacing: 0.06em;
   color: var(--text-secondary);
+}
+/* 見出しの右端のボタン（エクスプローラーの「フォルダを追加」）。パネルを切り替えても見出しの高さが変わらないよう、上下にはみ出させる */
+.side-panel-title .icon-button {
+  margin: -6px -4px -6px auto;
 }
 
 /* カラムの境目のつまみ（ドラッグで幅を変える） */

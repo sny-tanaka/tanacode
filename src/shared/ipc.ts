@@ -108,6 +108,8 @@ export const IpcChannel = {
   ShellExit: 'shell:exit',
   ShellOpened: 'shell:opened',
   WorkspaceInfo: 'workspace:info',
+  WorkspaceAddFolder: 'workspace:add-folder',
+  WorkspaceRemoveFolder: 'workspace:remove-folder',
   ListDir: 'fs:list-dir',
   ReadFile: 'fs:read-file',
   ReadImage: 'fs:read-image',
@@ -247,6 +249,9 @@ export type SessionSummary = {
   worktree: SessionWorktree | null;
   // 親セッションの ID（親の Claude が start_session で起動した子セッション）。無ければ親のないセッション
   parentId?: string | null;
+  // ワークスペースに追加したフォルダ（絶対パス。リンクは解いてある）。エクスプローラーで cwd の下に並べ、Claude Code にも --add-dir で渡す。
+  // 無いもの・空は追加なし
+  addedFolders?: string[];
 };
 
 // worktree のセッション。name: worktree の名前（claude --worktree に渡したもの）/ branch: Claude Code が作ったブランチ /
@@ -339,7 +344,8 @@ export type DiscoveredSession = { claudeSessionId: string; cwd: string; title: s
 export type SessionOptions = { model: string | null; effort: string | null; settingsFile: string | null };
 // 新規セッションを始めるときの指定。どれも null なら Claude Code の既定値（ユーザー設定）
 // worktree: claude --worktree で、新しい worktree に分けて始める
-export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean };
+// addedFolders: 新規セッションの画面でワークスペースに追加したフォルダ（SessionSummary.addedFolders）。無いものは追加なし
+export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[] };
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };
@@ -618,6 +624,12 @@ export type TanacodeApi = {
     // 画像を data URL で読む（画像でない・大きすぎるときは null）
     readImage(sessionId: string, relPath: string): Promise<string | null>;
     writeFile(sessionId: string, relPath: string, text: string): Promise<void>;
+    // フォルダ選択ダイアログで選んだフォルダを、ワークスペースに追加する（セッションか、新規セッションの画面のフォルダ）。
+    // 追加したあとのフォルダの一覧を返す（取りやめたら null）。追加できなければ理由を添えて失敗する。
+    // 動いているセッションでは、Claude Code の手が空いたときに --resume で起動し直して、--add-dir で渡す
+    addFolder(sessionId: string): Promise<string[] | null>;
+    // 追加したフォルダをワークスペースから外す（フォルダそのものは消さない）。外したあとのフォルダの一覧を返す
+    removeFolder(sessionId: string, folder: string): Promise<string[]>;
     onFilesChanged(listener: (payload: FilesChanged) => void): () => void;
     // ワークスペースの全ファイル（フォルダからの相対パス）
     listFiles(sessionId: string): Promise<string[]>;
@@ -788,6 +800,8 @@ export type IpcInvoke = {
   [IpcChannel.FolderCommands]: Api['folders']['commands'];
   [IpcChannel.FolderOpen]: Api['folders']['open'];
   [IpcChannel.WorkspaceInfo]: Api['workspace']['info'];
+  [IpcChannel.WorkspaceAddFolder]: Api['workspace']['addFolder'];
+  [IpcChannel.WorkspaceRemoveFolder]: Api['workspace']['removeFolder'];
   [IpcChannel.ListDir]: Api['workspace']['listDir'];
   [IpcChannel.ReadFile]: Api['workspace']['readFile'];
   [IpcChannel.ReadImage]: Api['workspace']['readImage'];

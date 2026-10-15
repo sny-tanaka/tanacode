@@ -75,6 +75,23 @@ describe('KnowledgeTracker', () => {
     expect(here.current().files).toEqual({});
   });
 
+  it('ワークスペースに追加したフォルダの中のファイルは、絶対パスのまま数える。追加したフォルダは、そのときのものを聞く', () => {
+    let added = ['/work/lib'];
+    const withFolders = new KnowledgeTracker(CWD, () => {}, () => added);
+    withFolders.handle(file('/work/lib/util.ts'));
+    withFolders.handle(reply([toolUse('Edit', { file_path: '/work/lib/src/a.ts' })]));
+    // セッションのフォルダの中は、これまでどおり相対パス。追加したフォルダそのもの・その外は数えない
+    withFolders.handle(file(`${CWD}/main.ts`));
+    withFolders.handle(nested('/work/lib'));
+    withFolders.handle(file('/work/library/b.ts'));
+    expect(withFolders.current().files).toEqual({ '/work/lib/util.ts': 'read', '/work/lib/src/a.ts': 'edited', 'main.ts': 'read' });
+    added = ['/work/other'];
+    withFolders.handle(file('/work/other/c.ts'));
+    withFolders.handle(file('/work/lib/d.ts'));
+    expect(withFolders.current().files['/work/other/c.ts']).toBe('read');
+    expect(withFolders.current().files['/work/lib/d.ts']).toBeUndefined();
+  });
+
   it('使用量は、入力・キャッシュの作成・キャッシュの読み込みの合計。0 や同じ量では変えない', () => {
     tracker.handle(reply([{ type: 'text', text: 'はい' }], { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 3, output_tokens: 20 }));
     expect(tracker.current().contextTokens).toBe(123);

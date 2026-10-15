@@ -43,7 +43,8 @@
       "languageRestart": "tanacode を再起動して、画面を日本語にしますか？",
       "languageRestartDetail": "言語は、tanacode を起動し直したときに切り替わります。「あとで」を選んだときは、次に起動したときから日本語になります。",
       "restartNow": "今すぐ再起動",
-      "restartLater": "あとで"
+      "restartLater": "あとで",
+      "addFolder": "ワークスペースに追加するフォルダを選択"
     },
     "menu": {
       "notifyUpdates": "新しいバージョンが出たら通知する",
@@ -237,6 +238,10 @@
       "dirtyFiles": "コミットしていない変更があるファイルがあります: {files}。コミットしてプッシュしてから載せてください。",
       "emptyBody": "本文が空です。",
       "tooLong": "本文が長すぎます（{count} 文字。GitHub のコメントは {max} 文字まで）。説明を短くしてください。"
+    },
+    "addFolder": {
+      "inside": "セッションのフォルダの中のフォルダは、もうエクスプローラーに出ているので追加しません: {path}",
+      "diskRoot": "ディスクのいちばん上のフォルダは追加できません: {path}"
     }
   },
   "commands": {
@@ -838,7 +843,11 @@
       "terminal": "ターミナル",
       "tasksEmpty": "セッションで実行したバックグラウンドタスクが表示されます",
       "checklistEmpty": "セッションのチェックリストが表示されます",
-      "contextEmpty": "セッションのコンテキストの中身が表示されます"
+      "contextEmpty": "セッションのコンテキストの中身が表示されます",
+      "addFolder": "フォルダを追加",
+      "addFolderTip": "フォルダを追加\nエクスプローラーに並べ、Claude Code にも作業できるフォルダとして渡します",
+      "addFolderFailed": "フォルダを追加できませんでした: {error}",
+      "removeFolderFailed": "フォルダを外せませんでした: {error}"
     },
     "session": {
       "openFailed": "セッションを開けませんでした: {error}",
@@ -1222,7 +1231,9 @@
     "tree": {
       "gitChangesInside": "中に git の変更がある",
       "addedInBranch": "このブランチで新規作成",
-      "modifiedInBranch": "このブランチで変更"
+      "modifiedInBranch": "このブランチで変更",
+      "removeFolder": "ワークスペースから外す",
+      "removeFolderTip": "ワークスペースから外す\nフォルダそのものは消しません"
     },
     "knowledge": {
       "read": "Claude が読んだファイル（今の会話で中身を知っている）",

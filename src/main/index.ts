@@ -33,6 +33,7 @@ import { LANGUAGE_SETTINGS_URL, translateAvailable, translateHelperPath, transla
 import { readClaudeAccount } from './claude-account';
 import { loadWindowState, placeWindow, saveWindowState } from './window-state';
 import { Workspace } from './workspace';
+import { resolveAddedFolders } from './added-folders';
 import { claudeConfigDir, claudeJsonPath } from './claude-config';
 import { language, LANGUAGE_SETTINGS, resolveLanguage, setLanguage, t, tFor, type LanguageSetting } from '@shared/i18n';
 
@@ -391,9 +392,11 @@ function showWindow(): BrowserWindow {
   return win;
 }
 
-async function pickFolder(p: Profile): Promise<string | null> {
+// title: ダイアログの見出し / defaultPath: はじめに開く場所（無ければ前に開いた場所）
+async function pickFolder(p: Profile, title = t('main.dialog.pickFolder'), defaultPath?: string): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
-    title: t('main.dialog.pickFolder'),
+    title,
+    ...(defaultPath ? { defaultPath } : {}),
     properties: ['openDirectory', 'createDirectory'],
   };
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
@@ -568,7 +571,9 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsCreate, async (e, cwd: string, options: NewSessionOptions) => {
     const p = P(e);
     if (!(await isDirectory(cwd))) throw new Error(t('main.error.folderNotFound', { path: cwd }));
-    return options.worktree ? p.startInWorktree(cwd, options) : p.manager.create(cwd, options);
+    // 新規セッションの画面で追加したフォルダは、始める時点で確かめ直す（消した・セッションのフォルダの中のものは外す）
+    const started = { ...options, addedFolders: await resolveAddedFolders(cwd, options.addedFolders) };
+    return options.worktree ? p.startInWorktree(cwd, started) : p.manager.create(cwd, started);
   });
   handle(IpcChannel.FolderPick, (e) => pickFolder(P(e)));
   handle(IpcChannel.FolderInfo, async (_e, cwd: string) => ((await isDirectory(cwd)) ? new Workspace(cwd).info() : null));
@@ -583,16 +588,8 @@ function registerIpc(): void {
     p.watchers.retain(cwd);
     return id;
   });
-  listen(IpcChannel.FolderClose, (e, id: string) => {
-    const p = P(e);
-    const cwd = p.folderViews.get(id);
-    if (cwd === undefined) return;
-    p.folderViews.delete(id);
-    p.watchers.release(cwd);
-    // 新規セッションの画面で開いたターミナルとブラウザは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
-    p.shells.killOwner(id);
-    p.browser.forget(id);
-  });
+  // 新規セッションの画面で開いたターミナルとブラウザ・追加したフォルダは、画面を閉じる（フォルダを変える・セッションを始める）と一緒に閉じる
+  listen(IpcChannel.FolderClose, (e, id: string) => P(e).closeFolderView(id));
   handle(IpcChannel.SessionsOpen, (e, id: string) => P(e).manager.open(id));
   handle(IpcChannel.SessionsArchive, (e, id: string, options?: ArchiveOptions) => P(e).archiveSession(id, options));
   handle(IpcChannel.SessionsWorktreeLeftovers, (e, id: string) => P(e).manager.worktreeLeftovers(id));
@@ -777,6 +774,13 @@ function registerIpc(): void {
   listen(IpcChannel.ShellResize, (e, id: string, cols: number, rows: number) => P(e).shells.resize(id, cols, rows));
   listen(IpcChannel.ShellKill, (e, id: string) => P(e).shells.kill(id));
   handle(IpcChannel.WorkspaceInfo, (e, id: string) => new Workspace(P(e).cwdOf(id)).info());
+  // 追加するフォルダは、人がダイアログで選んだものだけ（画面から好きなパスを渡させない）
+  handle(IpcChannel.WorkspaceAddFolder, async (e, id: string) => {
+    const p = P(e);
+    const folder = await pickFolder(p, t('main.dialog.addFolder'), p.cwdOf(id));
+    return folder ? p.addFolder(id, folder) : null;
+  });
+  handle(IpcChannel.WorkspaceRemoveFolder, (e, id: string, folder: string) => P(e).removeFolder(id, folder));
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
