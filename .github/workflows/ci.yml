@@ -106,6 +106,7 @@ jobs:
         env:
           TANACODE_SOURCEMAP: 1
           NODE_OPTIONS: --max-old-space-size=6144
+      # 82MB ほど。上げ下ろしの時間を縮めるため、圧縮は軽くする
       - uses: actions/upload-artifact@v7
         with:
           name: out
@@ -113,24 +114,27 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           overwrite: true
+          compression-level: 1
 
-  # 一時的: 画面側のビルドのどこに時間がかかっているかを測る（調べ終えたら外す）
+  # 一時的: ビルドの GC の設定を変えて、かかる時間を比べる（調べ終えたら外す）
   build-profile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/npm-ci
-      - run: node --cpu-prof --cpu-prof-dir="$RUNNER_TEMP/prof" --cpu-prof-interval 2000 node_modules/electron-vite/bin/electron-vite.js build
+      - name: GC の設定ごとに 2 回ずつビルドする
         env:
           TANACODE_SOURCEMAP: 1
-          NODE_OPTIONS: --max-old-space-size=6144
-      - uses: actions/upload-artifact@v7
-        with:
-          name: build-profile
-          path: ${{ runner.temp }}/prof/
-          if-no-files-found: error
-          retention-days: 1
-          overwrite: true
+        run: |
+          for round in 1 2; do
+            for opts in "--max-old-space-size=6144" "--max-old-space-size=6144 --max-semi-space-size=64" "--max-old-space-size=6144 --max-semi-space-size=128" "--max-old-space-size=12288 --max-semi-space-size=128"; do
+              rm -rf out
+              start=$(date +%s.%N)
+              NODE_OPTIONS="$opts" /usr/bin/time -f "%M" -o "$RUNNER_TEMP/rss" npx electron-vite build > /dev/null 2>&1
+              end=$(date +%s.%N)
+              printf '%s回目 %-60s %6.1f秒 最大メモリ %sMB\n' "$round" "$opts" "$(echo "$end - $start" | bc)" "$(( $(cat "$RUNNER_TEMP/rss") / 1024 ))" | tee -a "$GITHUB_STEP_SUMMARY"
+            done
+          done
 
   # E2E はテストのファイルを 3 つに分けて（vitest の --shard。分け方は test/e2e/sequencer.ts）、3 台で並べて流す。
   # 4 つに分けると、cli と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるため、3 つにする。

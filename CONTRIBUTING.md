@@ -186,7 +186,7 @@ PR で、次のものを流します。develop への push では流しません
   - そのため、互いに関わりの無いものは、ジョブを分けて並べて流します。ジョブの中でも、関わりの無いもの（翻訳の補助プログラムを作るのと `npm ci`、WebKit を入れるのとデモのビルド、PC とスマホのツアー）は並べて動かします。ただし、CPU を使い切るもの同士は並べません（macOS のランナーは 3 コアで、翻訳の補助プログラムとアプリのビルドを並べたら、ビルドが 1 分半ほど遅くなりました）。いちばん長いのは `build` と `app`（`.app` を作る・E2E）で、`check` がそれを待ってカバレッジを合わせます。
   - アプリの JS のビルドは、ubuntu のランナー（メモリ 16GB・4 コア）で行います。ソースマップ付きのビルドはメモリを 6GB ほど使い、macOS のランナー（7GB・3 コア）ではメモリをほぼ使い切って、かかる時間も 50 秒〜4 分半とぶれたためです。ビルドの設定に OS で変わるところは無く、`electron` と `node-pty` は `out/` に入らず外から読むので、ubuntu で作った `out/` を macOS で `.app` に詰められます（両方で作って比べ、同じになることを確かめました）。
   - E2E は、vitest の `--shard` でテストのファイルを 3 つに分け、macOS の 3 台で並べて流します（`app` の matrix）。台ごとに `out/` を受け取って `.app` を作ります（`electron-builder` は 20〜40 秒。大半は ad-hoc の署名）。4 つに分けないのは、`cli` と合わせて 5 台になり、無料枠の macOS の同時実行（5 台）を使い切って、ほかの PR の CI を待たせるためです。
-    - 分け方は、3 台の時間がそろうように、ファイルごとの時間（`test/e2e/durations.json`。CI で測った秒数）の長いものから順に、合計のいちばん短い台に入れます（`test/e2e/sequencer.ts`）。vitest の既定の分け方（パスのハッシュの順に数で等分）では、重いファイル（`sessions.test.ts` など）が 1 つの台に寄るためです。E2E のファイルを足したら、表にも CI のログの秒数で足します（足し忘れは `test/e2e-shard.test.ts` が落とします）。
+    - 分け方は、3 台の時間がそろうように、ファイルごとの時間（`test/e2e/durations.json`。CI で測った秒数）の長いものから順に、合計のいちばん短い台に入れます（下の「テストの部品」の `duration-sequencer.ts`）。vitest の既定の分け方（パスのハッシュの順に数で等分）では、重いファイル（`sessions.test.ts` など）が 1 つの台に寄るためです。
     - `app` の台は、`build` を `needs` で待たずに並べて始めます。`npm ci`・翻訳の補助・Claude Code を入れるところまで（`out/` が要らない準備。30〜60 秒）を `build`（2 分ほど）の間に済ませ、そのあと `build` が終わるのを API で待ちます（`actions: read`）。`build` が落ちたら、待つのをやめて失敗にします。
     - 台ごとの速さは、同じ回の中でも 2 倍ほど違うことがあります（遅い台は `npm ci`・署名・E2E がそろって遅い）。3 台のうちいちばん遅い台で、全体の時間が決まります。
   - `npm ci` は、ubuntu のジョブと `cli` では、`node_modules` ごとキャッシュから戻して飛ばします（`.github/actions/npm-ci`。キーは OS・CPU・Node のメジャーバージョン・`package-lock.json`）。PR で作ったキャッシュはその PR からしか読めないので、develop で作っておきます（`deps-cache.yml`。依存が変わって develop に入ったときと、週 1 回）。`app` の台は Electron の本体も要り、準備は `build` の間に終わるので、キャッシュしません。
@@ -202,6 +202,10 @@ PR で、次のものを流します。develop への push では流しません
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から `/bin/sh` を動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
 - `test/helpers/fake-electron.ts`・`test/helpers/browser-control.ts`: Electron を起動せずに、アプリ内ブラウザの操作（`src/main/browser-control.ts`）を動かす。テストのファイルの `vi.mock('electron', …)` で、webview の中身（webContents）・CDP（debugger）・撮った画像（nativeImage）を、テストが決めた答えを返して受けたもの（CDP の命令・ページで動かすスクリプト・撮った範囲）を控える作り物に差し替えます。画面（`PreviewPane`）の代わりに、タブを開く知らせに応えて webview を知らせます。待ち・時間切れは `vi.useFakeTimers` で時間を進めて確かめます（`finish`）。`test/browser-control*.test.ts` が使います。
   - ページの中で動かすスクリプト（要素を探す・文字を読む・待つ）は、`test/browser-control-scripts.test.ts` が jsdom の文書の上で本当に動かします。jsdom は描かないので、要素の位置（`getBoundingClientRect`）と、その位置にある要素（`elementFromPoint`）はテストが決めます。
+- `test/helpers/duration-sequencer.ts`: テストのファイルごとの時間の表（`test/e2e/durations.json`・`test/cli/durations.json`。CI のログで測った秒数）で、vitest がファイルを流す台と順を決める（`sequence.sequencer`）。表に無いファイルは、表の中央値として扱います。
+  - E2E: CI で 3 台に分ける（`--shard`）とき、長いものから順に、合計のいちばん短い台に入れます。
+  - 本物の claude のテスト（cli）: ファイルを並べて流すので、長いものから流します。長いファイル（`worktree.test.ts` など）が最後に残ると、終わりが延びるためです。
+  - テストのファイルを足したら、表にも CI のログの秒数で足します（足し忘れは `test/duration-sequencer.test.ts` が落とします）。
 - `test/helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`）を、Electron を起動せずに読み込んで動かす部品。`test/main-ipc.test.ts`・`test/main-app.test.ts` が使います。
   - `electron` を作り物（ウインドウ・ダイアログ・メニュー・通知・セッションの権限など）に差し替えます。`app.whenReady` はすぐに済むので、読み込むと起動の流れが最後まで進み、IPC の受け口・メニュー・ウインドウができます。テストは受け口を画面の代わりに呼び（`invoke`・`sendFromRenderer`）、メニューを押し、Electron のイベントを送ります。
   - Claude Code・pty ホスト・ソケット・監視など、重いものや外に出る部品は、呼ばれ方を控える作り物にします。作り物のメソッドは、既定では「呼ばれたメソッドと引数」をそのまま返すので、受け口が正しい相手に、引数を取り違えずに渡し、返事をそのまま返すかを、戻り値で確かめられます。アプリの設定・ウインドウの位置の保存・通知の文・shared は本物です。
@@ -321,7 +325,7 @@ PR で、次のものを流します。develop への push では流しません
 `npm run test:e2e`（`test/e2e/`）は、アプリ本体を Playwright で起動し、人と同じように画面を操作して、Claude Code・MCP・ターミナルまで通しで確かめます。`claude` は本物（`TANACODE_CLAUDE_BIN`、無ければ PATH の `claude`）、API はモック（`test/cli/mock-api.ts`）なので、料金はかかりません。
 
 - 起動するのは、ビルドしたアプリ（`out/`。先に `npm run build`）か、`TANACODE_E2E_APP` に渡した実行ファイル（パッケージした `.app` の `Contents/MacOS/tanacode`）。
-- CI では、`ci.yml` の `app` のジョブで、PR のときに流します。テストのファイルを、時間がそろうように 3 つに分けて（`npm run coverage:e2e -- --shard=1/3` …。`test/e2e/sequencer.ts`）、macOS の 3 台で並べて流します（上の「テストと CI」）。`claude` は動作確認済のバージョンです。
+- CI では、`ci.yml` の `app` のジョブで、PR のときに流します。テストのファイルを、時間がそろうように 3 つに分けて（`npm run coverage:e2e -- --shard=1/3` …。`test/helpers/duration-sequencer.ts`）、macOS の 3 台で並べて流します（上の「テストと CI」）。`claude` は動作確認済のバージョンです。
   - 配る形のまま動くかを確かめるため、作った `.app` で流します。あわせてカバレッジも測ります（`npm run coverage:e2e`）。`.app` は、`build` のジョブがソースマップ付きでビルドした `out/` から作り（`.map` は `.app` に入らない）、`.app` のスクリプト（`…/app.asar/out/…`）のカバレッジは、`.app` に詰めたのと同じ `out/` とソースマップで src の行に戻します（`scripts/e2e-coverage.mjs`）。測ったものは `check` のジョブで、分割ごとに `coverage/e2e-1/` … に置き、単体と本物の claude のテストと合わせて、下限を確かめます。
   - ソースマップには元のソースを埋め込みません（`electron.vite.config.ts` の `sourcemapExcludeSources`）。戻すときは src のファイルを読むので要らず、埋め込むと画面側のビルドの最大メモリが 0.7GB ほど増える（5.1GB → 5.8GB）ためです。
   - 毎日の定期の確認（最新の Claude Code）では流しません。E2E はビルドを含めて数分かかり、画面の待ち方しだいで落ちることもあるので、互換性の確認（読み取りが壊れていないか）とは分けています。新しい Claude Code での E2E は、動作確認済のバージョンを上げる PR の CI で流れ、通らなければマージしません。
