@@ -412,6 +412,8 @@ export class DemoBackend {
         activity: (id) => ok(this.sessions.get(id)?.activity ?? null),
         onActivity: (l) => this.ch.activity.on(l),
       },
+      // デモの質問は、画面のメニュー（setScreen）で出す
+      question: { get: () => ok(null), reply: () => ok(false), onChanged: () => () => {} },
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },

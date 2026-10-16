@@ -52,6 +52,7 @@ function fakes() {
   const subagents = { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn() };
   const bashTasks = { start: vi.fn(), notified: vi.fn() };
   const screen = { setQuestions: vi.fn() };
+  const questionAnswered = vi.fn();
   let shown: typeof screen | null = screen;
   const router = new TaskRouter({
     workflows: workflows as unknown as WorkflowTracker,
@@ -59,8 +60,9 @@ function fakes() {
     bashTasks: bashTasks as unknown as BashTaskTracker,
     screen: () => shown as unknown as ScreenTracker | null,
     sessionDir: () => SESSION_DIR,
+    questionAnswered,
   });
-  return { router, workflows, subagents, bashTasks, screen, hideScreen: () => (shown = null) };
+  return { router, workflows, subagents, bashTasks, screen, questionAnswered, hideScreen: () => (shown = null) };
 }
 
 describe('TaskRouter', () => {
@@ -115,8 +117,8 @@ describe('TaskRouter', () => {
     expect(subagents.resume).toHaveBeenCalledTimes(4);
   });
 
-  it('AskUserQuestion の質問を画面に渡し、答えの行で閉じる（読み直しで届いた答えは、今答えたものにしない）', () => {
-    const { router, screen, hideScreen } = fakes();
+  it('AskUserQuestion の質問を画面に渡し、答えの行で閉じる（読み直しで届いた答えは、今答えたものにしない）。答えの行は、フックが待っている質問を終わらせるのにも知らせる', () => {
+    const { router, screen, questionAnswered, hideScreen } = fakes();
     const input = { questions: [{ question: 'どちらの書き方にしますか？', header: '書き方', multiSelect: false, options: [{ label: 'です・ます', description: '丁寧な書き方' }] }] };
     router.track(assistant([toolUse('toolu_ask', 'AskUserQuestion', input)]), false, false);
     expect(screen.setQuestions).toHaveBeenLastCalledWith([
@@ -124,6 +126,7 @@ describe('TaskRouter', () => {
     ]);
     router.track(result('toolu_ask', 'Your questions have been answered: "どちらの書き方にしますか？"="です・ます".'), false, false);
     expect(screen.setQuestions).toHaveBeenLastCalledWith(null, true);
+    expect(questionAnswered).toHaveBeenCalledWith([expect.objectContaining({ question: 'どちらの書き方にしますか？' })]);
     // 同じ答えがもう一度来ても、もう待っていないので閉じ直さない
     router.track(result('toolu_ask', '…'), false, false);
     expect(screen.setQuestions).toHaveBeenCalledTimes(2);
@@ -131,6 +134,8 @@ describe('TaskRouter', () => {
     router.track(assistant([toolUse('toolu_ask2', 'AskUserQuestion', input)]), false, true);
     router.track(result('toolu_ask2', '…'), false, true);
     expect(screen.setQuestions).toHaveBeenLastCalledWith(null, false);
+    // 読み直しの答えは、今待っている質問の答えではない
+    expect(questionAnswered).toHaveBeenCalledTimes(1);
     // 過去の行の質問は画面に出さない。画面が無いときも落ちない
     router.track(assistant([toolUse('toolu_ask3', 'AskUserQuestion', input)]), true, true);
     expect(screen.setQuestions).toHaveBeenCalledTimes(4);

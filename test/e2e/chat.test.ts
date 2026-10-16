@@ -36,9 +36,11 @@ describe('チャットから Claude Code を動かす', () => {
     await app.choose(card, /^Yes/);
   });
 
-  it('AskUserQuestion の質問に、カードの選択肢で答えられる', async () => {
+  it('AskUserQuestion の質問に、カードの選択肢で答えられる（カードは、質問のフックが受け取った質問から描く。画面は読まない）', async () => {
     const card = await app.menuCard('question');
     expect(await card.locator('.menu-title').textContent()).toBe(QUESTION.question);
+    // 「この質問について話す」は、フックが受け取った質問のカード（QuestionCard）にだけ出る（画面から読んだカードは「Chat about this」）
+    await card.getByText('この質問について話す（Chat about this）').waitFor();
     await app.choose(card, 'です・ます');
   });
 

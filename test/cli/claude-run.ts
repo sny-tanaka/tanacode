@@ -21,6 +21,7 @@ import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager
 import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
 import { TERMINAL_COMMAND_ENV, TERMINAL_SCRIPT_ENV, TERMINAL_SESSION_ENV, TERMINAL_SOCKET_ENV } from '../../src/main/terminal-bridge';
+import { QUESTION_COMMAND_ENV, QUESTION_SCRIPT_ENV, QUESTION_SESSION_ENV, QUESTION_SOCKET_ENV } from '../../src/main/question-hook';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
 import { FIXTURE_ROOT, type ScreenName } from '../scenario';
 import { FakePtyHost } from './fake-pty-host';
@@ -73,6 +74,8 @@ type Options = {
   checklist?: McpLaunch;
   // 人のターミナルの MCP サーバー（中継）を足すときの材料（SessionManager の terminalMcp）。無ければ足さない
   terminal?: McpLaunch;
+  // AskUserQuestion の質問のフック（question-hook.ts）を足すときの材料（SessionManager の questionHook）。無ければ足さない（画面を読む道で答える）
+  question?: McpLaunch;
   // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
   mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
@@ -193,6 +196,10 @@ export class ClaudeRun {
       TERMINAL_SESSION_ENV,
       TERMINAL_COMMAND_ENV,
       TERMINAL_SCRIPT_ENV,
+      QUESTION_SOCKET_ENV,
+      QUESTION_SESSION_ENV,
+      QUESTION_COMMAND_ENV,
+      QUESTION_SCRIPT_ENV,
     ]);
   }
 
@@ -396,6 +403,7 @@ export class ClaudeRun {
       undefined,
       null,
       () => this.options.terminal ?? null,
+      () => this.options.question ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);

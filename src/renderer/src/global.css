@@ -3568,7 +3568,8 @@ details[open] > summary > .disclosure {
   display: flex;
   gap: 8px;
 }
-.menu-text-input input {
+.menu-text-input input,
+.menu-text-input textarea {
   flex: 1;
   min-width: 0;
   padding: 6px 10px;
@@ -3578,6 +3579,55 @@ details[open] > summary > .disclosure {
   color: var(--text-primary);
   font: inherit;
   outline: none;
+}
+/* 複数行で打てる自由記述（フックで答える質問のカード）。欄の下に、決めるボタンとやめるボタンを並べる */
+.menu-text-input.multiline {
+  flex-direction: column;
+}
+.menu-text-input textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+.menu-text-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* タブを押して、その質問のページへ戻れる（フックで答える質問のカード） */
+button.menu-tab {
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+button.menu-tab:disabled {
+  cursor: progress;
+}
+.menu-tab.current {
+  border-color: var(--border-focus);
+  color: var(--text-heading);
+}
+/* 回答の確認。質問と答えを、上から順に並べる */
+.menu-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.menu-review-item dt {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.menu-review-item dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.menu-review-item dd.unanswered {
+  color: var(--warn);
 }
 
 .terminal-instance {

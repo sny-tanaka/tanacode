@@ -8,6 +8,7 @@ import { t, type MessageKey } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
 import type { AskQuestion, ChooseResult, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
+import { answerText, type PendingQuestion } from '@shared/questions';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -73,6 +74,9 @@ export type SessionsHost = {
   interrupt(id: string): void;
   withdrawParentDraft(id: string): Promise<void>;
   askedQuestions(id: string): AskQuestion[] | null;
+  // フックが答えを待っている質問（いちばん前のもの）と、その 1 問への答え（全部そろったら返事にする）
+  pendingQuestion(id: string): PendingQuestion | null;
+  answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null;
   // expect を満たすメニューのあいだだけ選ぶ。押せたら true
   chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult>;
   watchState(listener: (id: string) => void): () => void;
@@ -493,9 +497,14 @@ export class SessionsControl {
     const child = this.resolve(caller, args.session_id, true);
     const asked = stringArg(args.question);
     const choices = Array.isArray(args.choices) ? args.choices.filter((c): c is string => typeof c === 'string' && c.trim() !== '') : [];
-    // 自由記述は子の画面に打つので、キー操作になる文字（ESC・改行など）を除き、1 行にする
-    const other = stripControlChars(stringArg(args.other)).replace(/\s*\n\s*/g, ' ').trim();
-    if (choices.length === 0 && !other) throw new ToolError('Pass choices (the options to pick) or other (a free-text answer).');
+    // 自由記述は、キー操作になる文字（ESC など）を除く
+    const typed = stripControlChars(stringArg(args.other)).trim();
+    if (choices.length === 0 && !typed) throw new ToolError('Pass choices (the options to pick) or other (a free-text answer).');
+    // フックが答えを待っている質問なら、画面を読まずに答える（改行もそのまま渡せる）
+    const pending = host.pendingQuestion(child.id);
+    if (pending) return this.answerPending(caller, child, pending, asked, choices, typed);
+    // 画面を読む道（予備）: 自由記述は子の画面に打つので、1 行にする
+    const other = typed.replace(/\s*\n\s*/g, ' ');
     const current = () => {
       const screen = host.screen(child.id);
       return screen?.state.kind === 'menu' ? screen.state.menu : null;
@@ -552,14 +561,35 @@ export class SessionsControl {
     // 答えが受け付けられて、質問が閉じた（次の質問に進んだ）のを確かめる
     for (let i = 0; i < 20 && same(current()); i++) await sleep(100);
     if (same(current())) throw new ToolError('Sent the answer, but the question did not close. Check with get_session.');
-    const next = await this.followUpQuestion(child.id, same);
+    const next = await this.followUpQuestion(child.id, same, null);
     this.observe(caller.id, child.id);
-    return json({
-      answered: true,
-      state: host.stateOf(child.id),
-      next_question: next ? questionOf(next) : undefined,
-      note: next ? 'The child is showing another question (next_question). Answer it now with answer_question, and keep going until the result has no next_question.' : undefined,
+    return answeredResult(host.stateOf(child.id), next);
+  }
+
+  // フックが答えを待っている質問に、1 問答える。質問が複数あれば、アプリが答えをためて、全部そろったらまとめてフックに返す
+  // （画面は読まず、キーも打たない）。まだ答えていない質問が残っていれば、それを next_question として返す
+  private async answerPending(caller: SessionSummary, child: SessionSummary, pending: PendingQuestion, asked: string, choices: string[], other: string): Promise<ToolResult> {
+    const { host } = this.deps;
+    const current = currentOf(pending);
+    if (!current) throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
+    if (normalizeText(current.question) !== normalizeText(asked)) {
+      throw new ToolError(`The question showing now is "${current.question}" (the user answered first, or it has moved on to the next question). To answer it, pass this question text as question.`);
+    }
+    const picked = choices.map((label) => {
+      const option = current.options.find((o) => normalizeText(o.label) === normalizeText(label));
+      if (!option) throw new ToolError(`There is no option "${label}". The options are: ${current.options.map((o) => `"${o.label}"`).join(', ')}.`);
+      return option.label;
     });
+    if (!current.multiSelect && picked.length + (other ? 1 : 0) !== 1) throw new ToolError('Only one option can be picked for this question (pass one choice, or only other).');
+    const result = host.answerPendingQuestion(child.id, pending.id, current.question, answerText(current, picked, other));
+    if (!result) throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
+    this.observe(caller.id, child.id);
+    if (result === 'waiting') {
+      const rest = host.pendingQuestion(child.id);
+      return answeredResult(host.stateOf(child.id), rest ? pendingQuestionOf(rest) : null);
+    }
+    const next = await this.followUpQuestion(child.id, () => false, pending.id);
+    return answeredResult(host.stateOf(child.id), next);
   }
 
   // 答えたあと、子が続けて出す次の質問を、少しのあいだ待つ。出たら、その質問のメニューを返す。
@@ -567,14 +597,19 @@ export class SessionsControl {
   // 数秒で次の質問を出す。待たずに返すと、親は「作業中」と見て離れ、次の質問が、親がもう一度見に来るまで待たされる
   // （2026-10-12、3 問のうち 1 問ごとに、次の質問が 1 分以上待たされた）。
   // 子の手が空いた・人の操作待ちになった・終了したら、次の質問は来ないので、待つのをやめる
-  private async followUpQuestion(id: string, same: (menu: Menu | null) => boolean): Promise<Menu | null> {
+  // answered: フックで答えた質問（その質問は次の質問ではない）。画面で答えたときは null
+  private async followUpQuestion(id: string, same: (menu: Menu | null) => boolean, answered: string | null): Promise<Record<string, unknown> | null> {
     const { host } = this.deps;
     const limit = this.deps.followUpMs ?? FOLLOW_UP_MS;
     const deadline = Date.now() + limit;
     for (;;) {
+      // 次の質問も、フックが待っていれば、画面を読まずに返す
+      const pending = host.pendingQuestion(id);
+      if (pending && pending.id !== answered) return pendingQuestionOf(pending);
+      // 画面から読むのは、画面で答えたときだけ（フックで答えた直後は、答えた質問が画面に少し残る。次の質問も、フックが先に受け取る）
       const screen = host.screen(id);
       const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
-      if (menu?.kind === 'question' && !same(menu)) return menu;
+      if (answered === null && !pending && menu?.kind === 'question' && !same(menu)) return questionOf(menu);
       const state = host.stateOf(id);
       if (state !== 'working' && state !== 'starting' && state !== 'question') return null;
       if (Date.now() >= deadline) return null;
@@ -1079,7 +1114,7 @@ export class SessionsControl {
         ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
       last_response: response ? clip(response, 4000) : null,
-      question: base.state === 'question' && menu?.kind === 'question' ? questionOf(menu) : undefined,
+      question: base.state === 'question' ? questionView(this.deps.host.pendingQuestion(s.id), menu) : undefined,
       permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), all, (r) => this.deps.humanOnly?.(s.id, r) ?? null).view : undefined,
     };
   }
@@ -1299,6 +1334,40 @@ function permissionOf(
 // 質問の選択肢そのもの（自由記述・確定・Chat about this 以外）
 function isChoice(option: MenuOption): boolean {
   return !option.textInput && option.id !== 'submit' && option.label !== 'Chat about this';
+}
+
+// フックが答えを待っている質問のうち、まだ答えていない最初の質問（親は 1 問ずつ答える）
+function currentOf(pending: PendingQuestion): AskQuestion | null {
+  return pending.questions.find((q) => !(q.question in pending.answered)) ?? null;
+}
+
+// get_session・answer_question で返す、フックが答えを待っている質問（画面の質問の questionOf と同じ形）
+function pendingQuestionOf(pending: PendingQuestion): Record<string, unknown> | null {
+  const current = currentOf(pending);
+  if (!current) return null;
+  return {
+    title: current.question,
+    multi_select: current.multiSelect,
+    tabs: pending.questions.length > 1 ? pending.questions.map((q) => ({ label: q.header, answered: q.question in pending.answered })) : undefined,
+    options: current.options.map((o) => ({ label: o.label, description: o.description || undefined })),
+    accepts_other: true,
+  };
+}
+
+// 今の質問。フックが待っていればそれを、無ければ画面から読んだ質問
+function questionView(pending: PendingQuestion | null, menu: Menu | null): Record<string, unknown> | undefined {
+  if (pending) return pendingQuestionOf(pending) ?? undefined;
+  return menu?.kind === 'question' ? questionOf(menu) : undefined;
+}
+
+// answer_question の結果。next: 続けて出た（または同じ質問の続きの）次の質問
+function answeredResult(state: SessionState | null, next: Record<string, unknown> | null): ToolResult {
+  return json({
+    answered: true,
+    state,
+    next_question: next ?? undefined,
+    note: next ? 'The child is showing another question (next_question). Answer it now with answer_question, and keep going until the result has no next_question.' : undefined,
+  });
 }
 
 function questionOf(menu: Menu): Record<string, unknown> {

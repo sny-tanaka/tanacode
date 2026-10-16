@@ -6,6 +6,7 @@ import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { checklistHooks } from './checklist-hook';
+import { questionHook } from './question-hook';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from './terminal-bridge';
 import { worktreeGuardCommand } from './worktree-guard';
@@ -29,6 +30,7 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // フックは書くだけで、何も決めない（確認は今までどおり出る）。ファイルの名前は、質問のファイルの名前から作る
 // checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）
 // terminal のときだけ: 人のターミナルに打つ前に、権限モードによらず、打つものを見せて人の許可の確認を出させる（terminal-bridge.ts）
+// question のときだけ: AskUserQuestion の質問を、画面を読まずにアプリに渡して答えを待つ（PermissionRequest。question-hook.ts）
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
 // tui: 描き方を fullscreen（代替画面）に決める。決めないと、ユーザーの設定・新しいインストールかどうか・サーバー側のフラグで
 // classic（ふだんの画面にそのまま描く）にもなり、メニューや /tasks の画面の形が変わる。画面の読み取り（screen-parser.ts）と
@@ -36,8 +38,8 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // 起動に続けて失敗したときに Claude Code が classic に戻す安全策を残すため（環境変数で決めると、その判定より先に効く）。
 // --settings はユーザーの設定ファイルより優先されるが、設定の env で classic を明示した人（CLAUDE_CODE_NO_FLICKER=0 など）は classic のまま
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
-export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null, checklist = false, terminal = false): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal));
+export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null, checklist = false, terminal = false, question = false): string {
+  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal, question));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
@@ -49,9 +51,14 @@ export function ownSettings(
   claudeDir: string | null = null,
   checklist = false,
   terminal = false,
+  question = false,
 ): Record<string, unknown> {
   const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
   const excludes = foreignClaudeMdExcludes(claudeDir);
+  const permissionRequest = [
+    ...(question ? [questionHook()] : []),
+    ...(sessions ? [{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }] : []),
+  ];
   return {
     statusLine: { type: 'command', command },
     hooks: {
@@ -62,7 +69,7 @@ export function ownSettings(
         ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] }] : []),
         ...(terminal ? [{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }] : []),
       ],
-      ...(sessions ? { PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }] } : {}),
+      ...(permissionRequest.length > 0 ? { PermissionRequest: permissionRequest } : {}),
       // 自動の最適化圧縮（チェックリストの MCP を足すときだけ。リストが無ければ引き継げない）: ツールの切れ目で止める・Claude Code の自動の圧縮を止める
       ...(checklist ? { ...checklistHooks(), PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: AUTO_COMPACT_STOP_COMMAND, timeout: 5 }] }] } : {}),
     },

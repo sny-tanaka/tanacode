@@ -50,6 +50,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.RemoteControlAvailable, [], call('manager.remoteAvailable')],
     [IpcChannel.ScreenGet, ['s1'], call('manager.screenForView', 's1')],
     [IpcChannel.ScreenActivityGet, ['s1'], call('manager.activity', 's1')],
+    [IpcChannel.QuestionGet, ['s1'], call('manager.pendingQuestion', 's1')],
+    [IpcChannel.QuestionReply, ['s1', 'q1', { kind: 'chat' }], call('manager.replyQuestion', 's1', 'q1', { kind: 'chat' })],
     [IpcChannel.WorkflowsGet, ['s1'], call('manager.workflows', 's1')],
     [IpcChannel.ScreenSetMode, ['s1', 'plan'], call('manager.setMode', 's1', 'plan')],
     [IpcChannel.ScreenRewind, ['s1', '戻す先の発言'], call('manager.rewind', 's1', '戻す先の発言')],
@@ -104,6 +106,13 @@ describe('そのまま渡す受け口', () => {
 
   it.each(cases)('%s は、受け取った引数を正しい相手に渡し、返事をそのまま返す', async (channel, args, expected) => {
     await expect(invoke(channel, ...args)).resolves.toEqual(expected);
+  });
+
+  it('質問のカードの返事は、形を確かめてから渡す（形の違う返事は渡さずに false）', async () => {
+    await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案', ほか: 1 } })).resolves.toEqual(
+      call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' } }),
+    );
+    await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'press-enter' })).resolves.toBe(false);
   });
 
   // [チャンネル, 画面から送る引数, 呼ばれる作り物, そのメソッド, 渡る引数]

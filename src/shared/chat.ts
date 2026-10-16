@@ -401,7 +401,9 @@ export const SESSIONS_GATE_HOOK_ENV = 'TANACODE_SESSIONS_GATE';
 export const CHECKLIST_HOOK_ENV = 'TANACODE_CHECKLIST_HOOK';
 // アプリが足した、人のターミナルに打つ前に、権限モードによらず人の許可の確認を出させるフック（main の terminal-bridge.ts）の目印
 export const TERMINAL_GATE_HOOK_ENV = 'TANACODE_TERMINAL_GATE';
-const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV, CHECKLIST_HOOK_ENV, TERMINAL_GATE_HOOK_ENV];
+// アプリが足した、AskUserQuestion の質問をアプリに渡して答えを待つフック（main の question-hook.ts）の目印
+export const QUESTION_HOOK_ENV = 'TANACODE_QUESTION_HOOK';
+const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV, CHECKLIST_HOOK_ENV, TERMINAL_GATE_HOOK_ENV, QUESTION_HOOK_ENV];
 
 function isAppHook(command: string): boolean {
   return APP_HOOK_MARKS.some((mark) => command.includes(mark));

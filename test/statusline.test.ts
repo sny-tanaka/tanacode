@@ -8,6 +8,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 import { mergeSettings } from '../src/main/settings-files';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
 import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand, AUTO_COMPACT_STOP_COMMAND } from '../src/main/statusline';
+import { QUESTION_HOOK_COMMAND } from '../src/main/question-hook';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
 // JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json・ask.json）を使う。
@@ -104,6 +105,18 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(matchers(ownSettings(null, true, true))).toHaveLength(4);
     expect(matchers(ownSettings(null, false, true))).toEqual(['AskUserQuestion', 'Bash', expect.any(String)]);
     expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(3);
+  });
+
+  it('質問のフック（AskUserQuestion の PermissionRequest）は、材料があるときだけ足す。セッションの許可の確認の入力を書くフックと並べる', () => {
+    type Hooks = { hooks: { PermissionRequest?: { matcher: string; hooks: { command: string; timeout: number }[] }[] } };
+    const permission = (s: Record<string, unknown>) => (s as Hooks).hooks.PermissionRequest?.map((h) => h.matcher);
+    expect(permission(ownSettings(null))).toBeUndefined();
+    expect(permission(ownSettings(null, false, false, null, false, false, true))).toEqual(['AskUserQuestion']);
+    expect(permission(ownSettings(null, false, true, null, false, false, true))).toEqual(['AskUserQuestion', '*']);
+    expect(permission(ownSettings(null, false, true))).toEqual(['*']);
+    const hook = (ownSettings(null, false, false, null, false, false, true) as Hooks).hooks.PermissionRequest![0].hooks[0];
+    expect(hook).toEqual({ type: 'command', command: QUESTION_HOOK_COMMAND, timeout: 86400 });
+    expect(JSON.parse(sessionSettings(false, false, null, false, false, true)).hooks.PermissionRequest).toHaveLength(1);
   });
 
   it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {

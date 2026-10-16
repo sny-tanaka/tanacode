@@ -1811,7 +1811,14 @@
       "send": "送信",
       "stopEditing": "やめる",
       "preview": "プレビュー: {label}",
-      "noPreview": "この選択肢にはプレビューがありません"
+      "noPreview": "この選択肢にはプレビューがありません",
+      "answerPlaceholderMultiline": "回答を入力（Enter で改行、⌘+Enter で決定）",
+      "chat": "この質問について話す（Chat about this）",
+      "review": "回答の確認",
+      "unanswered": "（未回答）",
+      "submitAnswers": "回答を送る",
+      "questionTab": "{n} 問め",
+      "questionGone": "この質問には、もう答えられません（ターミナルで答えたか、Claude Code が先へ進みました）"
     }
   }
 }

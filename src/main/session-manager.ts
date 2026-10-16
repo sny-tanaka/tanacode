@@ -30,12 +30,14 @@ import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
+import type { PendingQuestion, QuestionReply } from '@shared/questions';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, pulledBackPastes, pulledBackPrompt, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
-import type { McpLaunch } from './mcp-bridge';
+import { textResult, type McpLaunch, type ToolResult } from './mcp-bridge';
+import { PendingQuestions } from './pending-questions';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
@@ -182,6 +184,8 @@ type Listeners = {
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
   // ユーザーの操作待ちになった。menu: 選択メニューが新しく出た（質問・許可確認）、unsupported: チャットでは操作できない画面が出た（ターミナルでの操作が要る）
   onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu } | { kind: 'unsupported' }) => void;
+  // フックが答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
+  onQuestion?: (sessionId: string, question: PendingQuestion | null) => void;
 };
 
 export class SessionManager {
@@ -213,7 +217,13 @@ export class SessionManager {
     private readonly claudeDir: string | null = null,
     // 起動する Claude Code に、人のターミナルの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly terminalMcp: () => McpLaunch | null = () => null,
+    // 起動する Claude Code に、AskUserQuestion の質問をアプリに渡して答えを待つフック（question-hook.ts）を足すときの材料。
+    // 待ち受けを始められなかったら null（質問は、画面を読む道で答える）
+    private readonly questionHook: () => McpLaunch | null = () => null,
   ) {}
+
+  // フックが答えを待っている AskUserQuestion（セッションごと）
+  private readonly questions = new PendingQuestions((id) => this.questionsChanged(id));
 
   // 状態が変わったかもしれないセッション（イベント・画面の操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
   private readonly stateListeners = new Set<(id: string) => void>();
@@ -496,6 +506,7 @@ export class SessionManager {
     if (removing) await rt?.process?.stop();
     else rt?.process?.kill();
     this.settingsFiles?.release(id);
+    this.questions.releaseAll(id);
     rt?.screen?.dispose();
     rt?.workflows.dispose();
     rt?.subagents.dispose();
@@ -542,6 +553,8 @@ export class SessionManager {
     if (this.restoring.has(id)) return 'starting';
     const rt = this.runtimes.get(id);
     if (!rt?.process) return 'exited';
+    // フックが答えを待っている質問があれば、画面によらず質問中
+    if (this.questions.first(id)) return 'question';
     // 質問と読めても、AskUserQuestion を出していなければ質問ではない（コマンドの文字に ☐ があると、許可の確認が質問に見える）。
     // 親が答えられる質問と見せないよう、許可の確認として扱う
     if (rt.attention === 'question') return rt.screen?.askedQuestions ? 'question' : 'permission';
@@ -641,6 +654,30 @@ export class SessionManager {
   askQuestionsChanged(id: string, input: unknown): void {
     const questions = askQuestionsOf(input);
     if (questions) this.runtimes.get(id)?.screen?.setQuestions(questions);
+  }
+
+  // 質問のフック（question-hook.ts）が、AskUserQuestion の入力を渡した。返事（質問のカード・親の answer_question）を待って、
+  // フックに返す結果にする。待つのをやめた（人がターミナルで答えた・Claude Code が終わった）ときは kind: none（フックは何も決めない）。
+  // signal: フックとのつながりが切れた（Claude Code がフックを止めた）
+  async waitQuestion(id: string, input: unknown, signal: AbortSignal): Promise<ToolResult> {
+    const questions = askQuestionsOf(input);
+    const reply = questions && this.runtimes.get(id)?.process ? await this.questions.wait(id, questions, signal) : null;
+    return textResult(JSON.stringify(reply ?? { kind: 'none' }));
+  }
+
+  // フックが答えを待っている質問（いちばん前のもの）。無ければ null
+  pendingQuestion(id: string): PendingQuestion | null {
+    return this.questions.first(id);
+  }
+
+  // 待っている質問に返事をする（質問のカード）。その質問をもう待っていなければ false
+  replyQuestion(id: string, questionId: string, reply: QuestionReply): boolean {
+    return this.questions.reply(id, questionId, reply);
+  }
+
+  // 待っている質問のうち 1 問に答える（親の answer_question）。全部そろったら返事にする（sent）。もう待っていなければ null
+  answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null {
+    return this.questions.answerOne(id, questionId, question, answer);
   }
 
   // statusLine のファイルが書き換わった
@@ -912,6 +949,7 @@ export class SessionManager {
   // sessions: セッションの MCP サーバーを足すか（合わせる設定に、子セッションの起動の確認のフックを入れる）
   // checklist: チェックリストの MCP サーバーを足すか（合わせる設定に、チェックリストを使い続けさせるフックを入れる）
   // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（合わせる設定に、打つ前の確認のフックを入れる）
+  // question: AskUserQuestion の質問をアプリに渡すフックを足すか
   private prepareSettings(
     id: string,
     settingsFile: string | null | undefined,
@@ -919,6 +957,7 @@ export class SessionManager {
     sessions: boolean,
     checklist: boolean,
     terminal: boolean,
+    question: boolean,
   ): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
@@ -926,7 +965,7 @@ export class SessionManager {
       return null;
     }
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal);
+    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal, question);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -1196,10 +1235,11 @@ export class SessionManager {
     const checklist = adopted ? null : this.checklistMcp();
     const walkthrough = adopted ? null : this.walkthroughMcp();
     const terminalLaunch = adopted ? null : this.terminalMcp();
+    const question = adopted ? null : this.questionHook();
     // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child);
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child, !!question);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir));
@@ -1226,6 +1266,10 @@ export class SessionManager {
         bashTasks,
         screen: () => this.runtimes.get(id)?.screen ?? null,
         sessionDir: () => this.sessionDir(id),
+        // 人がターミナルや Remote Control で答えたら、その質問を待っているフックを終わらせる
+        questionAnswered: (questions) => {
+          if (questions) this.questions.answeredElsewhere(id, questions);
+        },
       });
       rt = {
         process: null,
@@ -1352,6 +1396,7 @@ export class SessionManager {
         checklist,
         walkthrough,
         terminal,
+        question,
         claudeDir: this.claudeDir,
         // 追加したあとで消した・動かしたフォルダは渡さない（エクスプローラーには残し、人が外せるようにする）
         addDirs: (record.addedFolders ?? []).filter((folder) => existsSync(folder)),
@@ -1366,6 +1411,7 @@ export class SessionManager {
         onExit: (exitCode) => {
           rt.process = null;
           this.settingsFiles?.release(id);
+          this.questions.releaseAll(id);
           rt.workflows.stopRunning();
           rt.subagents.stopRunning();
           rt.bashTasks.stopRunning();
@@ -1596,13 +1642,23 @@ export class SessionManager {
     const oneMillion = screen.oneMillionSeen;
     if (oneMillion !== null && this.store.get(id)?.oneMillion !== oneMillion) this.store.update(id, { oneMillion });
     if (info.state.kind === 'prompt') this.reconcileRemote(id);
-    const attention = info.state.kind === 'menu' ? info.state.menu.kind : info.state.kind === 'unknown' ? 'other' : null;
+    const shown = shownAttention(info);
     // 許可の確認のメニューの出はじめを覚える（pendingPermission が、フックの入力が今の確認のものかを見分ける）
-    if (attention === 'permission' && rt.permissionSince === null) rt.permissionSince = Date.now();
-    if (attention !== 'permission' && rt.permissionSince !== null) {
+    if (shown === 'permission' && rt.permissionSince === null) rt.permissionSince = Date.now();
+    if (shown !== 'permission' && rt.permissionSince !== null) {
       rt.permissionBefore = rt.permissionSince;
       rt.permissionSince = null;
     }
+    this.updateAttention(id, rt, info);
+  }
+
+  // 操作待ちの種類を、画面と、フックが答えを待っている質問から決める。待っている質問があれば、画面に許可の確認が出ているとき
+  // （質問を待っている間に出た別の確認）のほかは、画面によらず質問（画面を読めない・描き直しの途中でも）。
+  // 操作待ちでなかったところから変わったら、通知する
+  private updateAttention(id: string, rt: Runtime, info: ScreenInfo | null): void {
+    const shown = info ? shownAttention(info) : null;
+    const pending = this.questions.first(id);
+    const attention = pending && shown !== 'permission' ? 'question' : shown;
     if (attention === rt.attention) return;
     const before = rt.attention;
     rt.attention = attention;
@@ -1610,10 +1666,21 @@ export class SessionManager {
     this.changed(id);
     const summary = this.summary(id);
     // 終了したセッションは、最後の画面が残っていても通知しない（チャットの「操作できない画面」の案内も、動いているセッションだけ）
-    if (summary && rt.process && before === null) {
-      if (info.state.kind === 'menu') this.listeners.onAttention(summary, { kind: 'menu', menu: info.state.menu });
-      else if (info.state.kind === 'unknown') this.listeners.onAttention(summary, { kind: 'unsupported' });
-    }
+    if (!summary || !rt.process || before !== null) return;
+    if (pending && attention === 'question') this.listeners.onAttention(summary, { kind: 'menu', menu: pendingMenu(pending) });
+    else if (info?.state.kind === 'menu') this.listeners.onAttention(summary, { kind: 'menu', menu: info.state.menu });
+    else if (info?.state.kind === 'unknown') this.listeners.onAttention(summary, { kind: 'unsupported' });
+  }
+
+  // フックが答えを待っている質問が増えた・減った・親が 1 問答えた
+  private questionsChanged(id: string): void {
+    this.listeners.onQuestion?.(id, this.questions.first(id));
+    const rt = this.runtimes.get(id);
+    // /remote-control で切り替えている途中は、画面のメニューを見ない（切り替え終わりの画面で決め直す）
+    if (rt && !rt.remoteSwitching) this.updateAttention(id, rt, rt.screen?.current ?? null);
+    // 操作待ちの種類が変わらなくても（親が 1 問答えた・続けて次の質問が来た）、一覧と状態の見張りに知らせる
+    this.emitSessions();
+    this.changed(id);
   }
 
   // バックグラウンドタスクの数が変わったら、一覧の表示を更新する
@@ -1940,4 +2007,12 @@ function hasConversation(file: string): boolean {
   }
 }
 
+// 画面に出ている操作待ちの種類（メニューの種類・認識できない画面）。操作待ちでなければ null
+function shownAttention(info: ScreenInfo): Runtime['attention'] {
+  return info.state.kind === 'menu' ? info.state.menu.kind : info.state.kind === 'unknown' ? 'other' : null;
+}
 
+// フックが答えを待っている質問の通知に使うメニュー（通知の本文は質問文）
+function pendingMenu(pending: PendingQuestion): Menu {
+  return { kind: 'question', tabs: [], title: pending.questions[0]?.question ?? '', context: [], options: [], multiSelect: false, hint: '' };
+}

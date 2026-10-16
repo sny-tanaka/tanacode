@@ -3,6 +3,7 @@ import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
 import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
 import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
+import { questionHookEnv } from './question-hook';
 import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
@@ -49,6 +50,8 @@ type Options = {
   walkthrough?: McpLaunch | null;
   // 人のターミナルの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）。child: 子セッション（読むツールだけで、打つ前の確認のフックも足さない）
   terminal?: TerminalMcpLaunch | null;
+  // AskUserQuestion の質問をアプリに渡して答えを待つフック（question-hook.ts）の材料。null なら足さない（アプリが待ち受けを始められなかった）
+  question?: McpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
   claudeDir?: string | null;
   // ワークスペースに追加したフォルダ（--add-dir）。Claude Code は、cwd と同じように読み書きを許す
@@ -99,6 +102,7 @@ export class ClaudeSession {
         ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}),
         ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
         ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
+        ...(this.options.question ? questionHookEnv(this.options.question, sessionId) : {}),
       };
       const { worktree, worktreeRoot, resume } = this.options;
       const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
@@ -181,7 +185,7 @@ export class ClaudeSession {
 // claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs'>>,
+    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'question' | 'addDirs'>>,
 ): string[] {
   const {
     claudeSessionId,
@@ -199,6 +203,7 @@ export function claudeArgs(
     sessionId = '',
     claudeDir = null,
     terminal = null,
+    question = null,
     addDirs = [],
   } = options;
   const args = [resume ? '--resume' : '--session-id', claudeSessionId];
@@ -225,8 +230,9 @@ export function claudeArgs(
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、
   // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、
   // チェックリストを足すときは、チェックリストを使い続けさせるフック（checklist-hook.ts）も、
-  // ターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフック（terminal-bridge.ts）も、この設定に入れる
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child));
+  // ターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフック（terminal-bridge.ts）も、
+  // 質問のフックの材料があれば、AskUserQuestion の質問をアプリに渡すフック（question-hook.ts）も、この設定に入れる
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child, !!question));
   return args;
 }
 

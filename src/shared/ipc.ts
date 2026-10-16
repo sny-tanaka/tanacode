@@ -1,5 +1,6 @@
 import type { ChatEvent } from './chat';
 import type { Activity, ChooseResult, PermissionMode, ScreenInfo } from './screen';
+import type { PendingQuestion, QuestionReply } from './questions';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
@@ -77,6 +78,9 @@ export const IpcChannel = {
   ScreenChoose: 'screen:choose',
   ScreenActivityGet: 'screen:activity-get',
   ScreenActivity: 'screen:activity',
+  QuestionGet: 'question:get',
+  QuestionReply: 'question:reply',
+  QuestionChanged: 'question:changed',
   WorkflowsGet: 'workflows:get',
   WorkflowsChanged: 'workflows:changed',
   SubagentsGet: 'subagents:get',
@@ -351,6 +355,8 @@ export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; 
 export type SessionCreateFailed = { id: string; cwd: string; error: string };
 export type SessionScreen = { sessionId: string; info: ScreenInfo };
 export type SessionActivity = { sessionId: string; activity: Activity | null };
+// フックが答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
+export type SessionQuestion = { sessionId: string; question: PendingQuestion | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
 // none: 何も送らない（複数選択の自由記述は、打つだけでチェックが付く）
 export type ScreenChoice = { optionId: string; key: 'enter' | 'space' | 'none'; text?: string };
@@ -451,6 +457,13 @@ export type TanacodeApi = {
     // 作業中の進み具合（画面のタイマーの行）。作業中でなければ null
     activity(sessionId: string): Promise<Activity | null>;
     onActivity(listener: (payload: SessionActivity) => void): () => void;
+  };
+  // フックが答えを待っている AskUserQuestion（ターミナルの画面を読まずに出す質問のカード）
+  question: {
+    get(sessionId: string): Promise<PendingQuestion | null>;
+    // 返事をする。その質問をもう待っていなければ（人がターミナルで答えた・Claude Code が終わった）false
+    reply(sessionId: string, questionId: string, reply: QuestionReply): Promise<boolean>;
+    onChanged(listener: (payload: SessionQuestion) => void): () => void;
   };
   workflows: {
     get(sessionId: string): Promise<WorkflowRun[]>;
@@ -752,6 +765,8 @@ export type IpcInvoke = {
   [IpcChannel.ScreenSetMode]: Api['screen']['setMode'];
   [IpcChannel.ScreenRewind]: Api['screen']['rewind'];
   [IpcChannel.ScreenActivityGet]: Api['screen']['activity'];
+  [IpcChannel.QuestionGet]: Api['question']['get'];
+  [IpcChannel.QuestionReply]: Api['question']['reply'];
   [IpcChannel.WorkflowsGet]: Api['workflows']['get'];
   [IpcChannel.SubagentsGet]: Api['subagents']['get'];
   [IpcChannel.UsageGet]: Api['usage']['get'];
@@ -859,6 +874,7 @@ export type IpcEvent = {
   [IpcChannel.ChatEvents]: Payload<Api['sessions']['onChat']>;
   [IpcChannel.ScreenChanged]: Payload<Api['screen']['onChanged']>;
   [IpcChannel.ScreenActivity]: Payload<Api['screen']['onActivity']>;
+  [IpcChannel.QuestionChanged]: Payload<Api['question']['onChanged']>;
   [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
   [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;

@@ -61,6 +61,11 @@ const api: TanacodeApi = {
     activity: (sessionId) => invoke(IpcChannel.ScreenActivityGet, sessionId),
     onActivity: (listener) => subscribe(IpcChannel.ScreenActivity, listener),
   },
+  question: {
+    get: (sessionId) => invoke(IpcChannel.QuestionGet, sessionId),
+    reply: (sessionId, questionId, reply) => invoke(IpcChannel.QuestionReply, sessionId, questionId, reply),
+    onChanged: (listener) => subscribe(IpcChannel.QuestionChanged, listener),
+  },
   workflows: {
     get: (sessionId) => invoke(IpcChannel.WorkflowsGet, sessionId),
     onChanged: (listener) => subscribe(IpcChannel.WorkflowsChanged, listener),

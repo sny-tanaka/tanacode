@@ -1872,7 +1872,14 @@
       "send": "Send",
       "stopEditing": "Stop editing",
       "preview": "Preview: {label}",
-      "noPreview": "No preview for this option"
+      "noPreview": "No preview for this option",
+      "answerPlaceholderMultiline": "Type your answer (Enter for a new line, ⌘+Enter to confirm)",
+      "chat": "Chat about this",
+      "review": "Review your answers",
+      "unanswered": "(Not answered)",
+      "submitAnswers": "Submit answers",
+      "questionTab": "Question {n}",
+      "questionGone": "This question can no longer be answered (it was answered in the terminal, or Claude Code moved on)."
     }
   }
 }

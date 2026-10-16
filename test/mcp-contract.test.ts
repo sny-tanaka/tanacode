@@ -221,6 +221,8 @@ function fakeHost(cwd: string): SessionsHost {
     withdrawParentDraft: async () => {},
     askedQuestions: () => null,
     chooseIf: async () => 'gone',
+    pendingQuestion: () => null,
+    answerPendingQuestion: () => null,
     watchState: () => () => {},
     pendingPermission: () => null,
     subagents: () => [],
