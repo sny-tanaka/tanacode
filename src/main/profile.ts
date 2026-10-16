@@ -124,11 +124,7 @@ export class Profile {
     });
     this.statusLines = new StatusLineWatcher(
       join(dataDir, 'statusline'),
-      (id, info) => {
-        this.manager.statusLineChanged(id, info);
-        this.usage.fromStatusLine(info);
-        this.autoCompact?.check(id);
-      },
+      (id, info) => this.manager.statusLineChanged(id, info),
       (id, input) => this.manager.askQuestionsChanged(id, input),
       (id, request, at) => this.manager.permissionRequested(id, request, at),
     );
@@ -216,8 +212,7 @@ export class Profile {
         },
         onAttention: (session, attention) =>
           notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : t('main.notification.needsTerminal')),
-        onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
-        onActivity: (sessionId, activity) => send(IpcChannel.ScreenActivity, { sessionId, activity }),
+        onProgress: (sessionId, activity) => send(IpcChannel.SessionsProgress, { sessionId, activity }),
         onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
         onSubagents: (sessionId, runs) => send(IpcChannel.SubagentsChanged, { sessionId, runs }),
         onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
@@ -225,7 +220,12 @@ export class Profile {
           send(IpcChannel.KnowledgeChanged, { sessionId, knowledge });
           this.autoCompact?.check(sessionId);
         },
-        onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
+        // ターミナルモードの statusLine のファイルからも、stream-json の行から作ったものからも来る
+        onStatusLine: (sessionId, info) => {
+          send(IpcChannel.StatusLineChanged, { sessionId, info });
+          this.usage.fromStatusLine(info);
+          this.autoCompact?.check(sessionId);
+        },
         onQuestion: (sessionId, question) => send(IpcChannel.QuestionChanged, { sessionId, question }),
       },
       this.options.remoteControl,
@@ -237,7 +237,6 @@ export class Profile {
       () => this.walkthroughLaunch(),
       this.claudeDir,
       () => this.terminalLaunch(),
-      () => this.questionLaunch(),
     );
     const manager = this.manager;
     // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
@@ -432,12 +431,6 @@ export class Profile {
   private terminalLaunch(): McpLaunch | null {
     if (!this.terminalBridge || !this.settings.terminalControlEnabled()) return null;
     return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion() };
-  }
-
-  // 起動する Claude Code に足す、AskUserQuestion の質問のフック。待ち受けを始められなかったときは足さない（画面を読む道で答える）
-  private questionLaunch(): McpLaunch | null {
-    if (!this.questionBridge) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'question-hook.js'), socketPath: this.questionBridge.socketPath, version: app.getVersion() };
   }
 
   // 新規セッションの画面から、worktree で始める。Claude Code が worktree を作るのを待たずに id を返す（画面は、すぐそのセッションに移って待つ）。

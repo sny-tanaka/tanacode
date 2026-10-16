@@ -3,13 +3,11 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-li
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
-import type { ScreenInfo } from '@shared/screen';
 import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatState';
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
 import { useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
-import { LEAVE_MS } from '../../src/renderer/src/terminal/claudeScreenTyping';
 import { syncSharedPrefs } from '../../src/renderer/src/sharedPrefs';
 import { useTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
 import './dom';
@@ -76,6 +74,8 @@ const summary = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -88,7 +88,6 @@ const summary = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
 });
 const S1 = summary('s1');
 const S2 = summary('s2');
-const promptOf = (draft = ''): ScreenInfo => ({ state: { kind: 'prompt' }, model: null, effort: null, mode: 'manual', draft, ready: true });
 const chatOf = (over: Partial<ChatState> = {}): ChatState => ({ ...EMPTY_CHAT, status: 'idle', items: [{ kind: 'user', id: 'u1', text: 'ログインを直してください' }], ...over });
 const COMMENT: ReviewComment = { id: 'c1', path: 'src/tax.ts', startLine: 3, endLine: 3, quote: 'const rate = 0.1;', text: '税率は引数で受け取る' };
 
@@ -100,7 +99,6 @@ function props(over: Partial<Props> = {}): Props {
     sessions: [S1, S2],
     onSelectSession: noop,
     chat: chatOf(),
-    screen: promptOf(),
     workflows: new Map(),
     subagents: new Map(),
     bashTasks: new Map(),
@@ -124,7 +122,6 @@ function props(over: Partial<Props> = {}): Props {
     onUnarchive: noop,
     onSend: noop,
     pending: null,
-    sending: [],
     onTakePending: () => null,
     scheduled: [],
     ...over,
@@ -293,22 +290,6 @@ describe('ターミナルモード: 入力欄への差し込み（「Claude へ�
     act(() => insertIntoChat('s1', '終了中'));
     expect(textarea().value).toBe('チャットへ\n起動中\n終了中');
     expect(api.argsOf('pty.write')).toEqual([]);
-  });
-});
-
-describe('ターミナルモード: Claude Code の入力欄の書きかけ', () => {
-  it('画面を出している間は、チャットの入力欄に移さない。チャットに戻すと移し、Claude Code の入力欄は消す', () => {
-    vi.useFakeTimers();
-    const { container, rerender } = render(<ClaudePane {...props({ screen: promptOf('打ちかけ') })} />);
-    const textarea = () => container.querySelector<HTMLTextAreaElement>('.chat-input textarea')!;
-    act(() => vi.advanceTimersByTime(60_000));
-    expect(textarea().value).toBe('');
-    expect(api.argsOf('pty.write')).toEqual([]);
-
-    rerender(<ClaudePane {...props({ terminalOpen: false, screen: promptOf('打ちかけ') })} />);
-    act(() => vi.advanceTimersByTime(LEAVE_MS));
-    expect(textarea().value).toBe('打ちかけ');
-    expect(api.argsOf('pty.write')).toEqual([['s1', '\x15\x15']]);
   });
 });
 

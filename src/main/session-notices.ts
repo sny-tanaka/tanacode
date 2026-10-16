@@ -1,16 +1,14 @@
 import type { SessionSummary } from '@shared/ipc';
-import type { ScreenInfo } from '@shared/screen';
 import type { SessionState } from '@shared/session-tools';
 
-// アプリから Claude への知らせ（子の作業が終わった・チェックリストに返信があった など）を、手の空いたセッションの入力欄に打つ列。
-// 作業中なら手が空くまで待ち、入力欄に書きかけの文字があれば少し待って試し直す。続けて届いた知らせは 1 つにまとめる。
+// アプリから Claude への知らせ（子の作業が終わった・チェックリストに返信があった など）を、手の空いたセッションに送る列。
+// 作業中なら手が空くまで待つ。続けて届いた知らせは 1 つにまとめる。
 // 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる
 
 // SessionManager のうち、知らせに使うもの
 export type NoticeHost = {
   list(): SessionSummary[];
   stateOf(id: string): SessionState | null;
-  screen(id: string): ScreenInfo | null;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   watchState(listener: (id: string) => void): () => void;
 };
@@ -30,8 +28,6 @@ const RECEIVE_STATES = new Set<SessionState>(['idle', 'background']);
 // 受け付けられるようになるまで待つ上限
 const NOTIFY_TIMEOUT_MS = 10_000;
 const NOTIFY_DELAY_MS = 1500;
-// 入力欄に書きかけの文字があるときに、試し直すまでの待ち
-const RETRY_MS = 5000;
 
 export class SessionNotices<T> {
   // 送り先の ID → キー → 中身
@@ -85,17 +81,9 @@ export class SessionNotices<T> {
       this.pending.delete(target);
       return;
     }
-    // 作業中なら、手が空いたときに送る（watchState）。入力欄に書きかけの文字があれば、少し待って試し直す
+    // 作業中なら、手が空いたときに送る（watchState）
     const state = host.stateOf(target);
     if (!state || !RECEIVE_STATES.has(state)) return;
-    const screen = host.screen(target);
-    if (screen?.state.kind !== 'prompt' || screen.draft) {
-      this.timers.set(
-        target,
-        setTimeout(() => void this.deliver(target), RETRY_MS),
-      );
-      return;
-    }
     this.pending.delete(target);
     const text = this.deps.compose(target, queue);
     if (!text) return;

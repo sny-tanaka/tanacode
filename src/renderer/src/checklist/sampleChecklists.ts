@@ -139,6 +139,8 @@ const session = (sid: string, title: string, extra: Partial<SessionSummary> = {}
   createdAt: base,
   updatedAt: base,
   running: true,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,

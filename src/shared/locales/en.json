@@ -161,7 +161,8 @@
       "nameRequired": "Enter a name",
       "duplicateName": "A settings file named “{name}” already exists",
       "removed": "The settings file this session used has been removed from the list. Register it again with “Manage…” in the picker, or switch to another settings file.",
-      "unavailable": "Settings files aren't available"
+      "unavailable": "Settings files aren't available",
+      "rejected": "Claude Code was stopped because a settings file has entries it can't read. Fix them and start again.\n{details}"
     },
     "profile": {
       "cannotRemoveDefault": "The default profile can't be removed",

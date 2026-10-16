@@ -229,7 +229,7 @@ describe(`Claude Code ${version} の入力欄`, () => {
     // アプリの送信（札の目印が出るのを待って次を打ち、Enter を送る）でも、同じように届く
     before = turnEnds(run);
     const count = eventsOf(run).filter((e) => e.type === 'user').length;
-    await run.manager.submit(run.sessionId!, CHIP_TEXT, [], false, [LONG_PASTE, LONG_LINE]);
+    await run.manager.submit(run.sessionId!, CHIP_TEXT, [], [LONG_PASTE, LONG_LINE]);
     await run.waitFor('ターンの終わり', () => turnEnds(run) > before, 30_000);
     expect(eventsOf(run).filter((e) => e.type === 'user')).toHaveLength(count + 1);
     expect(lastUser()).toBe(whole);

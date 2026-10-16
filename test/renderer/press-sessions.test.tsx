@@ -37,6 +37,8 @@ const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,

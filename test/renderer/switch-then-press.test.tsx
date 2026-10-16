@@ -64,6 +64,8 @@ const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   createdAt: 0,
   updatedAt: 0,
   running: true,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -154,7 +156,6 @@ describe('ClaudePane（セッションを切り替えた直後の Remote Control
         sessions={[session('A'), session('B')]}
         onSelectSession={noop}
         chat={{ ...EMPTY_CHAT, status: 'idle' }}
-        screen={null}
         workflows={new Map()}
         subagents={new Map()}
         bashTasks={new Map()}
@@ -178,7 +179,6 @@ describe('ClaudePane（セッションを切り替えた直後の Remote Control
         onUnarchive={noop}
         onSend={noop}
         pending={null}
-        sending={[]}
         onTakePending={() => null}
         scheduled={[]}
       />

@@ -19,6 +19,8 @@ const session = (n: number, title: string, cwd: string, patch: Partial<SessionSu
   createdAt: BASE,
   updatedAt: BASE - n * 60_000,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,

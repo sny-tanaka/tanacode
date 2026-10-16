@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
+import type { UnsentPrompt } from '@shared/chat';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
@@ -21,6 +22,8 @@ const session: SessionSummary = {
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -47,7 +50,8 @@ function conversation(count: number): ChatItem[] {
 // worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示 /
 // scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）/
 // terminalMode: ターミナルモード（チャットの代わりに Claude Code の画面を出す）で始める。ヘッダーのボタンで切り替えられる /
-// comments: コードへのコメント / exited: Claude Code が終了している
+// comments: コードへのコメント / exited: Claude Code が終了している / running: 作業中 /
+// unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）
 function Pane({
   items,
   settingsFile = null,
@@ -58,6 +62,8 @@ function Pane({
   terminalMode = false,
   comments = [],
   exited = false,
+  running = false,
+  unsent = [],
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -68,6 +74,8 @@ function Pane({
   terminalMode?: boolean;
   comments?: ReviewComment[];
   exited?: boolean;
+  running?: boolean;
+  unsent?: UnsentPrompt[];
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -81,8 +89,7 @@ function Pane({
         session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing }}
         sessions={[session]}
         onSelectSession={noop}
-        chat={{ ...EMPTY_CHAT, status: exited ? 'exited' : worktree?.preparing ? 'starting' : 'idle', exitCode: exited ? 0 : null, items }}
-        screen={null}
+        chat={{ ...EMPTY_CHAT, status: exited ? 'exited' : worktree?.preparing ? 'starting' : running ? 'running' : 'idle', exitCode: exited ? 0 : null, items, unsent }}
         workflows={new Map()}
         subagents={new Map()}
         bashTasks={new Map()}
@@ -106,7 +113,6 @@ function Pane({
         onUnarchive={noop}
         onSend={noop}
         pending={pending === null ? null : { text: pending, attachments: [], pastes: [] }}
-        sending={[]}
         onTakePending={() => null}
         scheduled={scheduled}
       />
@@ -222,6 +228,22 @@ const SCHEDULED: ScheduledMessage[] = [
 
 export const 予約したメッセージ: Story = {
   args: { items: conversation(4), scheduled: SCHEDULED, input: 'あしたの朝、依存を更新してください。' },
+};
+
+// 作業中に送った発言。Claude Code に渡したばかりのものは「送信中」（見た目は発言と同じ）、Claude Code が順番待ちにしたものは
+// 「順番待ち」（点線）で、会話に出るまで末尾に出す。進み具合は main が stream-json の行から作って知らせる
+export const 送信中と順番待ち: Story = {
+  args: {
+    items: conversation(4),
+    running: true,
+    unsent: [
+      { id: 'q1', text: 'ついでに README も直してください。', pastes: [], images: 0, state: 'queued' },
+      { id: 'q2', text: 'このスクリーンショットも見てください。', pastes: [], images: 1, state: 'sending' },
+    ],
+  },
+  beforeEach: () => {
+    mockApi({ 'sessions.progress': () => Promise.resolve({ phase: 'writing', elapsed: '1m 5s', tokens: '1.2k' }) });
+  },
 };
 
 // 貼り付けた長い文（4 行以上・800 文字より長いもの）は、入力欄で札になる（Claude Code の CLI の [Pasted text #1 +30 lines] と同じ）。

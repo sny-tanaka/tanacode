@@ -6,7 +6,7 @@ import { t } from '@shared/i18n';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
-import { chatFromEvents, useSessionChats, type ChatState } from './chat/chatState';
+import { chatFromEvents, useSessionChats, withStatus, type ChatState } from './chat/chatState';
 import { usePendingSends, type PendingSend } from './chat/pendingSends';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
@@ -24,7 +24,6 @@ import { useScmView, type ScmView } from './scm/scmView';
 import { gitMarks, useGitState } from './scm/useGitState';
 import { QuickOpen } from './search/QuickOpen';
 import { SearchPanel } from './search/SearchPanel';
-import { useSessionScreens } from './screen/useSessionScreens';
 import { useSessionQuestions } from './screen/useSessionQuestions';
 import { useSessionWorkflows } from './workflow/useSessionWorkflows';
 import { ImportDialog } from './sessions/ImportDialog';
@@ -108,12 +107,19 @@ export function App() {
   const sessions = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // セッションごとの値は全セッションの分を持つが、App を描き直すのは選択中のセッションの値が変わったときだけ
-  const { chatOf, load, reset: resetChat } = useSessionChats(selectedId);
+  const { chatOf: eventChatOf, load, reset: resetChat } = useSessionChats(selectedId);
+  // 動いているセッションのチャットの状態は、main が持つ状態（一覧の state）から決める（main が 1 つだけ持つ。設計書 7 節）
+  const stateKey = (sessions ?? []).map((s) => `${s.id}:${s.state}`).join(',');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sessionStates = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, s.state])), [stateKey]);
+  const chatOf = useCallback(
+    (id: string | null) => withStatus(eventChatOf(id), id ? sessionStates.get(id) : null),
+    [eventChatOf, sessionStates],
+  );
   const pendingSends = usePendingSends(chatOf);
   // 時刻を指定して送信（予約）したメッセージ（すべてのセッションの分）
   const scheduled = useScheduledMessages();
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
-  const { screenOf, load: loadScreen } = useSessionScreens(selectedId);
   const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId);
   const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId);
   const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId);
@@ -305,7 +311,6 @@ export function App() {
   useEffect(() => {
     window.tanacode.sessions.focus(selectedId);
     if (selectedId) {
-      loadScreen(selectedId);
       loadQuestion(selectedId);
       loadWorkflows(selectedId);
       loadSubagents(selectedId);
@@ -314,7 +319,7 @@ export function App() {
       loadStatusLine(selectedId);
       loadChecklists(selectedId);
     }
-  }, [selectedId, loadScreen, loadQuestion, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
+  }, [selectedId, loadQuestion, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
 
   // Claude がアプリ内ブラウザを操作し始めたセッション（帯が消えるまで）と、見ていない間に操作したセッション
   const browsing = useRef(new Set<string>());
@@ -867,7 +872,6 @@ export function App() {
             sessions={sessions ?? NO_SESSIONS}
             onSelectSession={select}
             chat={chat}
-            screen={screenOf(selected.id)}
             question={questionOf(selected.id)}
             workflows={workflows}
             subagents={subagents}
@@ -892,7 +896,6 @@ export function App() {
             onUnarchive={openSelected}
             onSend={sendToSelected}
             pending={pendingSends.pendingOf(selected.id)}
-            sending={pendingSends.sendingOf(selected.id)}
             onTakePending={takeSelectedPending}
             scheduled={selectedScheduled}
           />
@@ -1017,7 +1020,7 @@ export function App() {
                     sessionId={selected.id}
                     visible={shownPanel === 'context'}
                     revision={chat.items.length}
-                    {...contextUsage(selected.model, screenOf(selected.id)?.model ?? null, statusLineOf(selected.id), knowledgeOf(selected.id).contextTokens)}
+                    {...contextUsage(selected.model, null, statusLineOf(selected.id), knowledgeOf(selected.id).contextTokens)}
                   />
                 ) : (
                   <div className="scm-empty">{t('app.sidePanel.contextEmpty')}</div>

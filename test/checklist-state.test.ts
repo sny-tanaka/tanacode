@@ -161,7 +161,7 @@ const ME = '11111111-0000-4000-8000-000000000001';
 
 class FakeHost implements NoticeHost {
   sessions: SessionSummary[] = [
-    { id: ME, title: 's', cwd: '/work/shop', archived: false, createdAt: 0, updatedAt: 0, running: true, unread: false, attention: null, backgroundTasks: 0, model: null, effort: null, settingsFile: null, remoteControl: false, worktree: null, parentId: null },
+    { id: ME, title: 's', cwd: '/work/shop', archived: false, createdAt: 0, updatedAt: 0, running: true, state: null, mode: null, unread: false, attention: null, backgroundTasks: 0, model: null, effort: null, settingsFile: null, remoteControl: false, worktree: null, parentId: null },
   ];
   list = () => this.sessions;
   stateOf = (): SessionState => 'idle';

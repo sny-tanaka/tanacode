@@ -4,11 +4,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
 import { prepareNodeModules, type NodeModulesResult } from '../src/main/worktree';
-import { fixtureScreen, ScriptedApp, type ScriptedOptions, type ScriptedPty } from './helpers/scripted-claude';
+import { INIT_RESPONSE, ScriptedApp, type ScriptedOptions, type ScriptedPipe } from './helpers/scripted-claude';
 
 // worktree のセッション（claude --worktree）の、SessionManager が受け持つところ。本物の git で確かめる。
 // Claude Code が worktree を作るところは、Claude Code と同じ形（.claude/worktrees/<名前>・ブランチ worktree-<名前>）を git で作って代わりにする。
-// node_modules の用意（prepareNodeModules。test/worktree.test.ts が確かめる）は、結果を決めて差し替えられるようにする。PR（gh）は調べられないことにする
+// node_modules の用意（prepareNodeModules。test/worktree.test.ts が確かめる）は、結果を決めて差し替えられるようにする。PR（gh）は調べられないことにする。
+// Claude Code は worktree を作り終えてから initialize に答えるので、テストが答える（initialized）
 
 vi.mock('../src/main/github', () => ({ pullRequestsOf: vi.fn(async () => null) }));
 vi.mock('../src/main/worktree', async (importOriginal) => {
@@ -28,6 +29,7 @@ const start = (options: ScriptedOptions = {}) => {
     },
     ...options,
   });
+  app.answers.set('initialize', null);
   git(app.cwd, 'init', '-q', '-b', 'main');
   git(app.cwd, 'config', 'user.email', 'me@example.com');
   git(app.cwd, 'config', 'user.name', 'me');
@@ -45,11 +47,16 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd,
 const NEW = { model: null, effort: null, settingsFile: null, mode: null, remoteControl: false, worktree: true };
 const EMPTY: NodeModulesResult = { cloned: [], failed: [], installs: [] };
 
-// worktree で始める。Claude Code が起動するまで待ち、その pty と、一覧に出たセッションを返す
-async function begin(): Promise<{ creating: Promise<string>; pty: ScriptedPty; session: SessionSummary }> {
+// worktree で始める。Claude Code が起動するまで待ち、そのパイプと、一覧に出たセッションを返す
+async function begin(): Promise<{ creating: Promise<string>; pipe: ScriptedPipe; session: SessionSummary }> {
   const creating = app.manager.createInWorktree(app.cwd, NEW);
-  await app.waitFor('起動', () => app.host.spawned.length > 0);
-  return { creating, pty: app.host.spawned[0], session: app.manager.list()[0] };
+  await app.waitFor('起動', () => app.host.pipes.length > 0);
+  return { creating, pipe: app.host.pipes[0], session: app.manager.list()[0] };
+}
+
+// Claude Code が起動を終えた（initialize に答えた）
+function initialized(pipe: ScriptedPipe): void {
+  pipe.respond(pipe.requests('initialize')[0].request_id, INIT_RESPONSE);
 }
 
 // Claude Code が worktree を作る（claude --worktree <名前> と同じ形）
@@ -63,14 +70,14 @@ describe('createInWorktree', () => {
   it('元のフォルダで claude --worktree <名前> を起動し、Claude Code が worktree を作るまで待ってから返す', async () => {
     start();
     prepare.mockResolvedValueOnce(EMPTY);
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     const { name, branch, root } = session.worktree!;
     expect(name).toMatch(/^tc-\d{4}-[a-z0-9]{4}$/);
     expect(branch).toBe(`worktree-${name}`);
     expect(root).toBe(app.cwd);
     expect(session.cwd).toBe(join(app.cwd, '.claude', 'worktrees', name));
-    expect(pty.request.cwd).toBe(app.cwd);
-    expect(pty.arg('--worktree')).toBe(name);
+    expect(pipe.request.cwd).toBe(app.cwd);
+    expect(pipe.arg('--worktree')).toBe(name);
     // 作るまでは準備中
     expect(session.worktree?.preparing).toBe('creating');
     expect(app.manager.stateOf(session.id)).toBe('starting');
@@ -79,7 +86,7 @@ describe('createInWorktree', () => {
     createWorktree(session);
     expect(await creating).toBe(session.id);
     expect(app.manager.cwdOf(session.id)).toBe(session.cwd);
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('受け付け', () => app.manager.stateOf(session.id) === 'idle');
   });
 
@@ -93,11 +100,11 @@ describe('createInWorktree', () => {
       hooks.onStep('installing');
       return new Promise<NodeModulesResult>((resolve) => (release = resolve));
     });
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     createWorktree(session);
     const id = await creating;
     expect(prepare).not.toHaveBeenCalled();
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('用意', () => release !== undefined);
     expect(prepare).toHaveBeenCalledWith(app.cwd, session.cwd, expect.anything());
     // install は、アプリのターミナルのタブで実行する（場所が上でなければ、名前に添える）
@@ -134,10 +141,10 @@ describe('createInWorktree', () => {
     start();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     prepare.mockRejectedValueOnce(new Error('git ls-files に失敗しました'));
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     createWorktree(session);
     const id = await creating;
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
     expect(infos(id)).toEqual([`worktree .claude/worktrees/${session.worktree!.name}（ブランチ ${session.worktree!.branch}） で始めました`]);
     expect(errors).toHaveBeenCalledWith('node_modules を用意できませんでした', expect.any(Error));
@@ -154,10 +161,10 @@ describe('createInWorktree', () => {
       codes.push(await hooks.install(join(path, 'nonexistent'), 'nonexistent', 'true'));
       return EMPTY;
     });
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     createWorktree(session);
     const id = await creating;
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
     expect(codes).toEqual([3, 0, 1]);
   });
@@ -170,10 +177,10 @@ describe('createInWorktree', () => {
       step = hooks.onStep;
       return new Promise<NodeModulesResult>((resolve) => (release = resolve));
     });
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     createWorktree(session);
     const id = await creating;
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('用意', () => release !== undefined);
     await app.manager.archive(id);
     const lists = app.sessionLists.length;
@@ -187,48 +194,44 @@ describe('createInWorktree', () => {
 
   it('worktree ができたあと、入力欄が出る前に Claude Code が終わっても、開き直したら受け付ける（準備中のままにしない）', async () => {
     start();
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     createWorktree(session);
     const id = await creating;
-    // 入力欄が出る前に終わった
-    pty.exit(1);
+    // 起動を終える前に終わった
+    pipe.exit(1);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     await app.manager.open(id);
-    app.pty(id).output(fixtureScreen('prompt'));
+    initialized(app.pipe(id));
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle', 3000);
     expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
   });
 
   it('信頼していないフォルダでは、Claude Code が worktree を作らずに終わる。記録を消し、先に信頼の確認に答えるよう案内する', async () => {
     start();
-    const { creating, pty } = await begin();
-    pty.output('\x1b[H\x1b[2JError: Workspace trust not yet accepted for this folder');
+    const { creating, pipe } = await begin();
     await new Promise((r) => setTimeout(r, 200));
-    pty.exit(1);
+    pipe.exit(1, 'Error: Workspace trust not yet accepted for this folder');
     await expect(creating).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
     expect(app.manager.list()).toEqual([]);
     expect(app.sessions).toEqual([]);
   });
 
-  it('アプリが手を離せない間に、信頼していないという出力と終了がまとめて届いても、信頼の確認に答えるよう案内する', async () => {
+  it('アプリが手を離せない間に、終わりが届いても、標準エラーから信頼の確認に答えるよう案内する', async () => {
     start();
-    const { creating, pty } = await begin();
-    // worktree ができたかを見る間隔（200ms）より長く、アプリが手を離せない（CI の遅いランナーで起きる）。
-    // その間に届いた出力は、画面（xterm）があとで文字にするので、見張りのほうが先に終わりに気づく
+    const { creating, pipe } = await begin();
+    // worktree ができたかを見る間隔（200ms）より長く、アプリが手を離せない（CI の遅いランナーで起きる）
     const busyUntil = Date.now() + 300;
     while (Date.now() < busyUntil);
-    pty.output('\x1b[H\x1b[2JError: Workspace trust not yet accepted for this folder');
-    pty.exit(1);
+    pipe.exit(1, 'Error: Workspace trust not yet accepted for this folder');
     await expect(creating).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
     expect(app.manager.list()).toEqual([]);
   });
 
-  it('ほかの理由で作れずに終わったら、記録を消し、そのときの画面の最後の行を添えて失敗する', async () => {
+  it('ほかの理由で作れずに終わったら、記録を消し、標準エラーの最後の行を添えて失敗する', async () => {
     start();
-    const { creating, pty } = await begin();
-    pty.output(`\x1b[H\x1b[2J${Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\r\n')}\r\nfatal: worktree を作れません`);
+    const { creating, pipe } = await begin();
     await new Promise((r) => setTimeout(r, 200));
-    pty.exit(1);
+    pipe.exit(1, `${Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n')}\nfatal: worktree を作れません\n`);
     const error = await creating.then(
       () => null,
       (e: Error) => e,
@@ -237,10 +240,10 @@ describe('createInWorktree', () => {
     expect(app.manager.list()).toEqual([]);
   });
 
-  it('画面に何も出さずに終わったら、画面を添えずに失敗する', async () => {
+  it('標準エラーに何も出さずに終わったら、何も添えずに失敗する', async () => {
     start();
-    const { creating, pty } = await begin();
-    pty.exit(1);
+    const { creating, pipe } = await begin();
+    pipe.exit(1);
     await expect(creating).rejects.toThrow(/^Claude Code が worktree を作れませんでした$/);
   });
 
@@ -249,16 +252,16 @@ describe('createInWorktree', () => {
     const other = join(app.root, 'plain');
     execFileSync('mkdir', [other]);
     await expect(app.manager.createInWorktree(other, NEW)).rejects.toThrow('git のリポジトリのフォルダを選んでください');
-    expect(app.host.spawned).toEqual([]);
+    expect(app.host.pipes).toEqual([]);
     expect(app.manager.list()).toEqual([]);
   });
 });
 
 describe('startInWorktree', () => {
   // worktree で始める。Claude Code が worktree を作るのを待たずに返る
-  async function begun(): Promise<{ id: string; created: Promise<boolean>; pty: ScriptedPty; session: SessionSummary }> {
+  async function begun(): Promise<{ id: string; created: Promise<boolean>; pipe: ScriptedPipe; session: SessionSummary }> {
     const { id, created } = await app.manager.startInWorktree(app.cwd, NEW);
-    return { id, created, pty: app.pty(id), session: app.manager.summary(id)! };
+    return { id, created, pipe: app.pipe(id), session: app.manager.summary(id)! };
   }
   // 決まったか（成功でも失敗でも）
   const settledOf = (promise: Promise<unknown>) => {
@@ -271,9 +274,9 @@ describe('startInWorktree', () => {
   it('Claude Code が worktree を作るのを待たずに id を返す。作り終えたら、created が true になる', async () => {
     start();
     prepare.mockResolvedValueOnce(EMPTY);
-    const { id, created, pty, session } = await begun();
+    const { id, created, pipe, session } = await begun();
     // 起動しただけで、worktree はまだ無い。一覧には「作成中」で出ている
-    expect(pty.arg('--worktree')).toBe(session.worktree!.name);
+    expect(pipe.arg('--worktree')).toBe(session.worktree!.name);
     expect(existsSync(session.cwd)).toBe(false);
     expect(session.worktree?.preparing).toBe('creating');
     expect(app.manager.stateOf(id)).toBe('starting');
@@ -283,16 +286,15 @@ describe('startInWorktree', () => {
     expect(state.settled).toBe(false);
     createWorktree(session);
     expect(await created).toBe(true);
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
   });
 
   it('作れずに Claude Code が終わったら、記録を消して、created が理由を添えて失敗する', async () => {
     start();
-    const { created, pty } = await begun();
-    pty.output('\x1b[H\x1b[2JError: Workspace trust not yet accepted for this folder');
+    const { created, pipe } = await begun();
     await new Promise((r) => setTimeout(r, 200));
-    pty.exit(1);
+    pipe.exit(1, 'Error: Workspace trust not yet accepted for this folder');
     await expect(created).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
     expect(app.manager.list()).toEqual([]);
     expect(app.sessions).toEqual([]);
@@ -329,11 +331,11 @@ describe('startInWorktree', () => {
   it('作っている途中に起動し直しても（再起動）、新しい起動が作るのを待つ。前の起動の待ちが終わっても「作成中」のまま', async () => {
     start();
     prepare.mockResolvedValueOnce(EMPTY);
-    const { id, created, pty, session } = await begun();
+    const { id, created, pipe, session } = await begun();
     const state = settledOf(created);
-    app.manager.restart(id);
-    const next = app.pty(id);
-    expect(next).not.toBe(pty);
+    await app.manager.restart(id);
+    const next = app.pipe(id);
+    expect(next).not.toBe(pipe);
     expect(next.arg('--worktree')).toBe(session.worktree!.name);
     // 前の起動の待ち（200 ミリ秒ごとに確かめている）が終わるまで待つ
     await new Promise((r) => setTimeout(r, 500));
@@ -341,7 +343,7 @@ describe('startInWorktree', () => {
     expect(app.manager.summary(id)?.worktree?.preparing).toBe('creating');
     createWorktree(session);
     expect(await created).toBe(true);
-    next.output(fixtureScreen('prompt'));
+    initialized(next);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
     expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
   });
@@ -349,14 +351,14 @@ describe('startInWorktree', () => {
 
 describe('worktree の片付けと作り直し', () => {
   // worktree で始めて、受け付けるまで進める
-  async function ready(): Promise<{ id: string; pty: ScriptedPty; session: SessionSummary }> {
+  async function ready(): Promise<{ id: string; pipe: ScriptedPipe; session: SessionSummary }> {
     prepare.mockResolvedValueOnce(EMPTY);
-    const { creating, pty, session } = await begin();
+    const { creating, pipe, session } = await begin();
     createWorktree(session);
     const id = await creating;
-    pty.output(fixtureScreen('prompt'));
+    initialized(pipe);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
-    return { id, pty, session };
+    return { id, pipe, session };
   }
 
   it('worktreeLeftovers: 消す前に、残っているもの（未コミット・未追跡・手元だけのコミット）を数える。worktree でなければ null', async () => {
@@ -381,10 +383,10 @@ describe('worktree の片付けと作り直し', () => {
 
   it('archive({ removeWorktree }): Claude Code が終わるのを待ってから worktree を消す。手元だけのコミットが無ければブランチも消す', async () => {
     start();
-    const { id, pty, session } = await ready();
-    pty.exitOnKill = true;
+    const { id, pipe, session } = await ready();
     const removal = await app.manager.archive(id, { removeWorktree: true });
-    expect(pty.killed).toBe(true);
+    expect(pipe.requests('end_session')).toHaveLength(1);
+    expect(pipe.exitedWith).toBe(0);
     expect(removal).toEqual({ backupRef: null, branch: session.worktree!.branch, branchKept: false });
     expect(existsSync(session.cwd)).toBe(false);
     expect(app.manager.stateOf(id)).toBe('archived');
@@ -392,12 +394,11 @@ describe('worktree の片付けと作り直し', () => {
 
   it('open: 消した worktree を、残したブランチから作り直してから再開し、作り直したことを知らせる', async () => {
     start();
-    const { id, pty, session } = await ready();
+    const { id, pipe, session } = await ready();
     // worktree でコミットした（ブランチは消さずに残る）
     writeFileSync(join(session.cwd, 'b.txt'), 'b\n');
     git(session.cwd, 'add', '.');
     git(session.cwd, 'commit', '-qm', 'b');
-    pty.exitOnKill = true;
     expect((await app.manager.archive(id, { removeWorktree: true }))?.branchKept).toBe(true);
     expect(existsSync(session.cwd)).toBe(false);
     prepare.mockResolvedValueOnce(EMPTY);
@@ -409,10 +410,10 @@ describe('worktree の片付けと作り直し', () => {
     await opening;
     expect(readFileSync(join(session.cwd, 'b.txt'), 'utf8')).toBe('b\n');
     expect(app.manager.summary(id)?.archived).toBe(false);
-    const next = app.pty(id);
-    expect(next).not.toBe(pty);
-    expect(app.host.spawned.filter((p) => p.request.tag === id)).toHaveLength(2);
-    next.output(fixtureScreen('prompt'));
+    const next = app.pipe(id);
+    expect(next).not.toBe(pipe);
+    expect(app.host.pipes.filter((p) => p.request.tag === id)).toHaveLength(2);
+    initialized(next);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
     expect(infos(id)).toEqual([`消していた worktree .claude/worktrees/${session.worktree!.name}（ブランチ ${session.worktree!.branch}） を作り直しました`]);
   });

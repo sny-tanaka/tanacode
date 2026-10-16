@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -31,4 +32,22 @@ export function foreignClaudeMdExcludes(dir: string | null = null): string[] {
   const standard = join(homedir(), '.claude');
   if (resolve(claudeConfigDir(dir)) === standard) return [];
   return [join(standard, 'CLAUDE.md'), join(standard, 'rules', '**')];
+}
+
+// 設定の権限モードの既定（permissions.defaultMode）。Claude Code の設定の強さの順（--settings で渡すファイル → そのフォルダの
+// .claude/settings.local.json → .claude/settings.json → 設定のフォルダの settings.json）に探し、最初に見つかったもの。無ければ null。
+// flagFile: --settings で渡すファイル（登録した設定ファイルを合わせたもの。無ければ null）
+export function settingsDefaultMode(cwd: string, flagFile: string | null, dir: string | null = null): string | null {
+  const files = [flagFile, join(cwd, '.claude', 'settings.local.json'), join(cwd, '.claude', 'settings.json'), join(claudeConfigDir(dir), 'settings.json')];
+  for (const file of files) {
+    if (!file) continue;
+    try {
+      const settings = JSON.parse(readFileSync(file, 'utf8')) as { permissions?: { defaultMode?: unknown } };
+      const mode = settings?.permissions?.defaultMode;
+      if (typeof mode === 'string' && mode) return mode;
+    } catch {
+      // 無い・読めない設定は飛ばす
+    }
+  }
+  return null;
 }

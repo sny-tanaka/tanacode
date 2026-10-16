@@ -48,8 +48,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SessionsRestart, ['s1'], call('manager.restart', 's1')],
     [IpcChannel.SessionsSetRemoteControl, ['s1', true], call('manager.setRemoteControl', 's1', true)],
     [IpcChannel.RemoteControlAvailable, [], call('manager.remoteAvailable')],
-    [IpcChannel.ScreenGet, ['s1'], call('manager.screenForView', 's1')],
-    [IpcChannel.ScreenActivityGet, ['s1'], call('manager.activity', 's1')],
+    [IpcChannel.SessionsProgressGet, ['s1'], call('manager.progress', 's1')],
     [IpcChannel.QuestionGet, ['s1'], call('manager.pendingQuestion', 's1')],
     [IpcChannel.QuestionReply, ['s1', 'q1', { kind: 'chat' }], call('manager.replyQuestion', 's1', 'q1', { kind: 'chat' })],
     [IpcChannel.WorkflowsGet, ['s1'], call('manager.workflows', 's1')],
@@ -441,15 +440,15 @@ describe('アーカイブ・一覧から消す', () => {
 });
 
 describe('送信と予約', () => {
-  it('送信: 本文が無ければ空の文字、添付と札（貼り付けた長い文）は文字のものだけを渡す。画面からの送信は、打つ前の確かめ（guarded）をしない', async () => {
+  it('送信: 本文が無ければ空の文字、添付と札（貼り付けた長い文）は文字のものだけを渡す', async () => {
     await boot();
     await invoke(IpcChannel.SessionsSubmit, 's1', 'こんにちは', ['/a.png', 3, null, '/b.png'], ['ログ\n2 行目', 7, null]);
     await invoke(IpcChannel.SessionsSubmit, 's2', null, 'not-array', 'not-array');
     await invoke(IpcChannel.SessionsSubmit, 's3', undefined, undefined);
     expect(manager().submit.mock.calls).toEqual([
-      ['s1', 'こんにちは', ['/a.png', '/b.png'], false, ['ログ\n2 行目']],
-      ['s2', '', [], false, []],
-      ['s3', '', [], false, []],
+      ['s1', 'こんにちは', ['/a.png', '/b.png'], ['ログ\n2 行目']],
+      ['s2', '', [], []],
+      ['s3', '', [], []],
     ]);
   });
 

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
-import type { ScreenInfo, ScreenState } from '@shared/screen';
+import type { PendingQuestion } from '@shared/questions';
 import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import { EMPTY_CHAT, type ChatItem, type ChatState } from '../../src/renderer/src/chat/chatState';
@@ -26,6 +26,8 @@ const summary = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -36,10 +38,10 @@ const summary = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   worktree: null,
   ...over,
 });
-const S1 = summary('s1');
+const S1 = summary('s1', { mode: 'manual' });
 const S2 = summary('s2', { model: 'opus', effort: 'high', settingsFile: 'f1', remoteControl: true });
-const screenOf = (state: ScreenState, over: Partial<ScreenInfo> = {}): ScreenInfo => ({ state, model: null, effort: null, mode: 'manual', draft: '', ready: true, ...over });
-const PROMPT = screenOf({ kind: 'prompt' });
+// フックが答えを待っている質問
+const questionOf = (id: string, question: string): PendingQuestion => ({ id, questions: [{ question, header: '確認', multiSelect: false, options: [{ label: 'はい', description: '' }] }], answered: {} });
 const USER: ChatItem = { kind: 'user', id: 'u1', text: 'ログインを直してください' };
 const chatOf = (over: Partial<ChatState> = {}): ChatState => ({ ...EMPTY_CHAT, status: 'idle', items: [USER], ...over });
 
@@ -51,7 +53,6 @@ function props(over: Partial<Props> = {}): Props {
     sessions: [S1, S2],
     onSelectSession: noop,
     chat: chatOf(),
-    screen: PROMPT,
     workflows: new Map(),
     subagents: new Map(),
     bashTasks: new Map(),
@@ -75,7 +76,6 @@ function props(over: Partial<Props> = {}): Props {
     onUnarchive: noop,
     onSend: noop,
     pending: null,
-    sending: [],
     onTakePending: () => null,
     scheduled: [],
     ...over,
@@ -263,56 +263,20 @@ describe('ヘッダー', () => {
     expect(box().value).toBe('テストも足して\n書きかけ');
   });
 
-  it('巻き戻し先を選んでいる間の「キャンセル」は、開いているセッションに Esc を送る。描き直してセッションが変わったら、そのセッションに送る', () => {
-    const rewind = screenOf({ kind: 'rewind', pointed: '' });
-    const view = render(<ClaudePane {...props({ screen: rewind })} />);
-    expect(screen.getByText('巻き戻し先を選んでいます…')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'キャンセル' }));
-    view.rerender(<ClaudePane {...props({ screen: rewind, session: S2 })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'キャンセル' }));
-    expect(api.argsOf('pty.write')).toEqual([
-      ['s1', '\x1b'],
-      ['s2', '\x1b'],
-    ]);
-  });
-
-  it('チャットで操作できない画面の「閉じる」は、開いているセッションに Esc を送る。描き直してセッションが変わったら、そのセッションに送る', () => {
-    const unknown = screenOf({ kind: 'unknown' });
-    const onOpenTerminal = vi.fn();
-    const view = render(<ClaudePane {...props({ screen: unknown, onOpenTerminal })} />);
-    fireEvent.click(screen.getByRole('button', { name: '閉じる' }));
-    view.rerender(<ClaudePane {...props({ screen: unknown, onOpenTerminal, session: S2 })} />);
-    fireEvent.click(screen.getByRole('button', { name: '閉じる' }));
-    expect(api.argsOf('pty.write')).toEqual([
-      ['s1', '\x1b'],
-      ['s2', '\x1b'],
-    ]);
-    fireEvent.click(screen.getByRole('button', { name: 'ターミナルで操作' }));
-    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
-  });
-
-  it('フックが答えを待っている質問は、画面を読まずに出す。画面から読んだ同じ質問のカードは出さず、許可の確認のカードは出す。入力欄は止める', async () => {
-    const question = { id: 'p1', questions: [{ question: 'フックの質問ですか？', header: '確認', multiSelect: false, options: [{ label: 'はい', description: '' }] }], answered: {} };
-    const asked: ScreenInfo = screenOf({ kind: 'menu', menu: { kind: 'question', tabs: [], title: '画面の質問', context: [], options: [], multiSelect: false, hint: '' } });
-    const view = render(<ClaudePane {...props({ screen: asked, question })} />);
+  it('答えを待っている質問は、カードで出し、入力欄は止める。答えると、その返事を渡す。待っていなければ出さない', async () => {
+    const question = questionOf('p1', 'フックの質問ですか？');
+    const view = render(<ClaudePane {...props({ question })} />);
     expect(screen.getByText('フックの質問ですか？')).toBeTruthy();
-    expect(screen.queryByText('画面の質問')).toBeNull();
     expect(box().placeholder).toBe('上の選択肢から選んでください');
     fireEvent.click(screen.getByText('はい'));
     await settle();
     expect(api.argsOf('question.reply')).toEqual([['s1', 'p1', { kind: 'answer', answers: { 'フックの質問ですか？': 'はい' } }]]);
-    const permission: ScreenInfo = screenOf({ kind: 'menu', menu: { kind: 'permission', tabs: [], title: 'Do you want to proceed?', context: [], options: [], multiSelect: false, hint: '' } });
-    view.rerender(<ClaudePane {...props({ screen: permission, question })} />);
-    expect(screen.getByText('フックの質問ですか？')).toBeTruthy();
-    expect(screen.getByText('Do you want to proceed?')).toBeTruthy();
-    // 待っている質問が無くなれば、画面から読んだ質問のカードに戻る（フックが使えないときの予備）
-    view.rerender(<ClaudePane {...props({ screen: asked, question: null })} />);
+    view.rerender(<ClaudePane {...props({ question: null })} />);
     expect(screen.queryByText('フックの質問ですか？')).toBeNull();
-    expect(screen.getByText('画面の質問')).toBeTruthy();
   });
 
   it('質問や確認のカードが出たとき、最下部にいれば追いかける（カードの選択肢が、見えている範囲の下に隠れない）。上を読んでいる間は動かさない', () => {
-    // カードは Claude Code の画面から来る。会話・送信中・予約は変わらない（変わると、そちらの追いかけが動く）
+    // カードは会話ログから来ない。会話・送信中・予約は変わらない（変わると、そちらの追いかけが動く）
     const base = props({ chat: chatOf({ status: 'running' }) });
     const view = render(<ClaudePane {...base} />);
     const list = document.querySelector('.chat-list') as HTMLDivElement;
@@ -320,42 +284,17 @@ describe('ヘッダー', () => {
     Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => height });
     Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
     list.scrollTop = 800;
-    const menuOf = (title: string): ScreenInfo =>
-      screenOf({ kind: 'menu', menu: { kind: 'permission', tabs: [], title, context: [], options: [{ id: '1', label: 'Yes', description: '', pointed: true, checked: null, textInput: false }], multiSelect: false, hint: '' } });
     // カードの分だけ伸びる
     height = 1400;
-    view.rerender(<ClaudePane {...base} screen={menuOf('Do you want to proceed?')} />);
+    view.rerender(<ClaudePane {...base} question={questionOf('p1', 'どちらにしますか？')} />);
     expect(list.scrollTop).toBe(1400);
     // 上を読んでいる間に次のカードが出ても、動かさない（人がホイールで上へ動かした）
     fireEvent.wheel(list, { deltaY: -100 });
     list.scrollTop = 100;
     fireEvent.scroll(list);
     height = 1600;
-    view.rerender(<ClaudePane {...base} screen={menuOf('Allow this command?')} />);
+    view.rerender(<ClaudePane {...base} question={questionOf('p2', '次はどれにしますか？')} />);
     expect(list.scrollTop).toBe(100);
-  });
-
-  it('カードが出たあとで中身が増えて伸びても（見出しと選択肢の数は同じ）、最下部にいれば追いかける', () => {
-    // 遅い Mac では、Claude Code が確認の画面を描き終える前に読み、あとから説明の行（context）が増える。
-    // 追いかけないと、選択肢が見えている範囲の下にずれ、スクロールすると「最新のメッセージへ」のボタンが選択肢に重なる
-    const base = props({ chat: chatOf({ status: 'running' }) });
-    const view = render(<ClaudePane {...base} />);
-    const list = document.querySelector('.chat-list') as HTMLDivElement;
-    let height = 1000;
-    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => height });
-    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
-    list.scrollTop = 800;
-    const menuOf = (context: string[]): ScreenInfo =>
-      screenOf({
-        kind: 'menu',
-        menu: { kind: 'permission', tabs: [], title: 'Do you want to proceed?', context, options: [{ id: '1', label: 'Yes', description: '', pointed: true, checked: null, textInput: false }], multiSelect: false, hint: '' },
-      });
-    height = 1200;
-    view.rerender(<ClaudePane {...base} screen={menuOf(['Tool use'])} />);
-    expect(list.scrollTop).toBe(1200);
-    height = 1500;
-    view.rerender(<ClaudePane {...base} screen={menuOf(['Tool use', 'prompt: …', 'worktree: false', 'name: "子の作業"'])} />);
-    expect(list.scrollTop).toBe(1500);
   });
 
   // 一覧の高さ（中身・見えている範囲）を決める。scrollTop は、ブラウザと同じく 0 から（中身 − 見えている範囲）までに収める
@@ -624,8 +563,9 @@ describe('入力欄の下の選択欄', () => {
     };
     let answer: (value: unknown) => void = noop;
     install({ 'models.refresh': () => new Promise((resolve) => (answer = resolve)) });
-    // 動いているモデル（画面に出ている名前）は Opus 5
-    render(<ClaudePane {...props({ screen: screenOf({ kind: 'prompt' }, { model: 'Opus 5' }) })} />);
+    // 動いているモデル（Claude Code が知らせた名前）は Opus 5
+    const statusLine = { model: { id: 'claude-opus-5', name: 'Opus 5' }, effort: null, version: null, context: null, rateLimits: null, costUsd: null, transcriptPath: null, updatedAt: 0 };
+    render(<ClaudePane {...props({ statusLine })} />);
     const options = (prefix: string) => [...selectByTitle(prefix).options].map((o) => [o.value, o.textContent, o.disabled]);
     // 控えの無いうちは、別名の一覧（Opus など）なので、動いているモデルを選べない
     expect(options('モデル')[0]).toEqual(['', 'Opus 5', false]);
@@ -648,17 +588,18 @@ describe('入力欄の下の選択欄', () => {
     expect(refresh.disabled).toBe(false);
   });
 
-  it('権限モードを選ぶと、開いているセッションのモードを切り替える。描き直してセッションが変わったら、そのセッションのものを切り替える。入力欄が出ていないときは選べない', () => {
+  it('権限モードを選ぶと、開いているセッションのモードを切り替える。描き直してセッションが変わったら、そのセッションのものを切り替える。質問や確認が出ている間は選べない', () => {
     const view = render(<ClaudePane {...props()} />);
     expect(selectByTitle('権限モード').value).toBe('manual');
     fireEvent.change(selectByTitle('権限モード'), { target: { value: 'plan' } });
-    view.rerender(<ClaudePane {...props({ session: S2, screen: screenOf({ kind: 'prompt' }, { mode: 'acceptEdits' }) })} />);
+    view.rerender(<ClaudePane {...props({ session: { ...S2, mode: 'acceptEdits' } })} />);
+    expect(selectByTitle('権限モード').value).toBe('acceptEdits');
     fireEvent.change(selectByTitle('権限モード'), { target: { value: 'auto' } });
     expect(api.argsOf('screen.setMode')).toEqual([
       ['s1', 'plan'],
       ['s2', 'auto'],
     ]);
-    view.rerender(<ClaudePane {...props({ session: S2, screen: screenOf({ kind: 'unknown' }) })} />);
+    view.rerender(<ClaudePane {...props({ session: S2, question: questionOf('p1', 'どちらにしますか？') })} />);
     expect(selectByTitle('権限モード').disabled).toBe(true);
   });
 });
@@ -790,24 +731,20 @@ describe('貼り付けた長い文の札', () => {
     expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
   });
 
-  it('中断で Claude Code の入力欄に戻った発言は、文は文字として、札は札として入力欄に戻す', () => {
-    const draft = 'このログを見て[Pasted text #2 +29 lines]';
-    render(<ClaudePane {...props({ screen: screenOf({ kind: 'prompt' }, { draft, draftPastes: [LOG] }) })} />);
-    expect(box().value).toBe('このログを見て');
-    expect(chips('.chat-input')).toEqual(['ログの 1 行目']);
-    expect(api.argsOf('pty.write')).toEqual([['s1', '\x15\x15']]);
-  });
-
   it('送った発言・送信中・順番待ち・起動待ち・予約の行に、札を畳んで出す。起動待ち・予約を取り消すと、札も入力欄に戻る', async () => {
     const pending = { text: '起動したら見て', attachments: [], pastes: [LOG] };
     const scheduled = [{ id: 'm1', sessionId: 's1', text: 'あとで見て', attachments: [], pastes: [LOG], at: Date.now() + 60_000, createdAt: 0, state: 'scheduled' as const, error: null }];
     install({ 'scheduled.cancel': () => Promise.resolve(scheduled[0]) });
-    const block = `<pasted_content id="c8a6">\n${LOG}\n</pasted_content id="c8a6">\n`;
     render(
       <ClaudePane
         {...props({
-          chat: chatOf({ items: [{ kind: 'user', id: 'u1', text: 'このログを見て', pastes: [LOG] }], queued: [`順番待ちの文\n\n${block}`] }),
-          sending: [{ text: '送信中の文', attachments: [], pastes: [LOG] }],
+          chat: chatOf({
+            items: [{ kind: 'user', id: 'u1', text: 'このログを見て', pastes: [LOG] }],
+            unsent: [
+              { id: 'q1', text: '順番待ちの文', pastes: [LOG], images: 0, state: 'queued' },
+              { id: 'q2', text: '送信中の文', pastes: [LOG], images: 0, state: 'sending' },
+            ],
+          }),
           pending,
           onTakePending: () => pending,
           scheduled,
@@ -816,7 +753,8 @@ describe('貼り付けた長い文の札', () => {
     );
     // 発言・順番待ち・送信中・起動待ち・予約
     expect(chips('.chat-list')).toEqual(Array(5).fill('ログの 1 行目'));
-    expect(screen.getByText('順番待ちの文', { exact: false }).textContent).not.toContain('pasted_content');
+    expect(screen.getByText('順番待ちの文', { exact: false }).closest('.chat-user')?.textContent).toContain('順番待ち');
+    expect(screen.getByText('送信中の文', { exact: false }).closest('.chat-user')?.textContent).toContain('送信中');
     // チャットの札には × が無く、押すと中身が出る
     expect(document.querySelector('.chat-list .paste-chip .icon-button')).toBeNull();
     fireEvent.click(document.querySelector('.chat-list .paste-chip-open')!);

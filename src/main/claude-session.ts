@@ -149,6 +149,7 @@ export class ClaudeSession {
       onMessage: (message, past) => this.handlers.stream?.onMessage(message, past),
       onPermission: (id, request) => this.handlers.stream?.onPermission(id, request),
       onCancel: (id) => this.handlers.stream?.onCancel(id),
+      onCaughtUp: () => this.handlers.stream?.onCaughtUp?.(),
       onExit: (exitCode, stderr) => {
         if (this.pipe !== pipe) return;
         this.pipe = null;

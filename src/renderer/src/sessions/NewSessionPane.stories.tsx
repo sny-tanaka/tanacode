@@ -20,6 +20,8 @@ const session = (id: string, title: string, cwd: string, archived = false): Sess
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,

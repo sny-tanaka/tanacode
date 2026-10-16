@@ -21,6 +21,8 @@ export type StreamEvents = {
   onCancel(requestId: string): void;
   // claude が終わった。stderr: 標準エラーの末尾
   onExit(exitCode: number, stderr: string): void;
+  // 引き継いだとき、前のアプリの頃の行を読み終えた
+  onCaughtUp?(): void;
 };
 
 // 制御の要求が失敗した（error の返事・時間切れ・終了）。reason: Claude Code の理由（時間切れなら timeout）
@@ -66,6 +68,7 @@ export class StreamClient {
   // まだ答えの無い要求を出し直す。控えの頭が欠けていても、種類ごとの最新の行（retained）は先に渡す
   adopt(info: HostedPipeInfo): void {
     this.pastUntil = info.lastSeq;
+    this.pipe.onReplayed(() => this.events.onCaughtUp?.());
     // 送り直しを頼んでから受け取り始める（頼む前に届いていた新しい行は、送り直した行のあとに渡る）
     this.pipe.replay(info.firstSeq);
     for (const item of info.retained) if (item.seq < info.firstSeq) this.receivePast(item);

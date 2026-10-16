@@ -10,6 +10,10 @@ import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePa
 // command: スラッシュコマンド（/model など。発言ではない）
 // pastes: 発言に添えた長い貼り付け（入力欄の札）の中身。text には入らない（splitPasted を参照）
 // pasted: 発言の全体が 1 つの貼り付けだった（text は、その貼り付けの中身。札だけを送った発言か、前のアプリが丸ごと貼り付けで送った複数行の発言）
+// 送ったが、まだ会話に出ていない発言。id: アプリが発言に付けた uuid（会話ログの行の uuid にもなる）/
+// state: sending（Claude Code に渡した）・queued（Claude Code の順番待ちに入った。作業中に送ったもの）/ images: 添えた画像の数
+export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued' };
+
 export type ChatEvent =
   | { type: 'user'; id: string; text: string; pastes?: string[]; pasted?: true; images?: string[]; at?: number; parent?: string; command?: true }
   | { type: 'assistant-text'; id: string; text: string; at?: number }
@@ -69,8 +73,8 @@ export type ChatEvent =
   | { type: 'api-error'; id: string; text: string; retrying: boolean }
   // interrupted: 人が中断した（Esc）
   | { type: 'turn-end'; interrupted?: true }
-  // Claude Code の作業中に送って順番を待っている発言（今の全部）。受け取られたら減る
-  | { type: 'queue'; prompts: string[] }
+  // 送ったが、まだ会話に出ていない発言（今の全部）。会話に出たら減る（送った発言の uuid で追う。設計書 7 節）
+  | { type: 'queue'; prompts: UnsentPrompt[] }
   // このセッションで作った・紐づいた PR（会話ログの pr-link 行。同じものが何度も書かれる）
   | { type: 'pr-link'; pr: PullRequestLink }
   // 会話を始め直した（/clear）。compact: 最適化圧縮の流れの中でアプリが打った /clear（チャットの画面は消さない。
@@ -245,8 +249,11 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     const prompt = midTurnPromptOf(entry.attachment);
     if (prompt !== null) {
       const blocks = entry.attachment?.prompt;
-      const images = Array.isArray(blocks) ? takeImages(entry, blocks, 'q', onImage) : [];
-      return withImages(prompt ? userTextEvents(entry, prompt) : [], entry, images);
+      // stream-json で送った発言は、送ったときの uuid（source_uuid）を発言の ID にする（送信中の表示を、同じ ID で消すため）
+      const source = entry.attachment?.source_uuid;
+      const target = typeof source === 'string' && source ? { ...entry, uuid: source } : entry;
+      const images = Array.isArray(blocks) ? takeImages(target, blocks, 'q', onImage) : [];
+      return withImages(prompt ? userTextEvents(target, prompt) : [], target, images);
     }
     if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
     const run = hookRunOf(entry.attachment);
@@ -365,12 +372,14 @@ function withImages(events: ChatEvent[], entry: TranscriptEntry, images: string[
 // Claude の作業中にユーザーが送り、そのターンに差し込まれた発言。user 行ではなく、この attachment だけが残る。
 // 同じ形のものでも、サブエージェントの報告（origin が peer）はユーザーの発言ではない。
 // CI の自動修正の知らせ（origin なし）は、user 行のときと同じくお知らせとして出す（userTextEvents が見分ける）。
+// stream-json で送った発言（-p。アプリ・親セッション）は origin が無く、送ったときの uuid（source_uuid）が付く（実測。2.1.301）。
 // 出すものでなければ null、発言だが文字が無い（画像だけ）なら ''
 function midTurnPromptOf(a: Record<string, unknown> | undefined): string | null {
   if (a?.type !== 'queued_command' || a.commandMode !== 'prompt') return null;
   const origin = (a.origin as { kind?: unknown } | undefined)?.kind;
   if (origin === undefined && typeof a.prompt === 'string' && a.prompt.trimStart().startsWith('<ci-monitor-event>')) return a.prompt;
-  if (origin !== 'human') return null;
+  const streamed = origin === undefined && typeof a.source_uuid === 'string';
+  if (origin !== 'human' && !streamed) return null;
   if (typeof a.prompt === 'string') return a.prompt;
   if (!Array.isArray(a.prompt)) return '';
   return (a.prompt as ContentBlock[])

@@ -364,7 +364,11 @@ class FakeHandle implements PtyHandle {
 
 // HostedPipe と同じく、受け手が付くまでの行を溜め、同じ通し番号の行は 2 回渡さない。送り直しは、その場で控えから渡す
 class FakePipeHandle implements PipeHandle {
-  private listeners: { line: ((line: string, seq: number) => void)[]; exit: ((exitCode: number, stderr: string) => void)[] } = { line: [], exit: [] };
+  private listeners: { line: ((line: string, seq: number) => void)[]; exit: ((exitCode: number, stderr: string) => void)[]; replayed: (() => void)[] } = {
+    line: [],
+    exit: [],
+    replayed: [],
+  };
   private ready: { line: string; seq: number }[] = [];
   private delivered = 0;
   private exited = false;
@@ -398,13 +402,18 @@ class FakePipeHandle implements PipeHandle {
   }
 
   replay(from: number): void {
-    // 送り直しの行を、まだ渡していない新しい行より先に並べる
+    // 送り直しの行を、まだ渡していない新しい行より先に並べる。その場で控えから渡すので、すぐ送り終える
     this.ready = [...this.hosted.backlog.since(from), ...this.ready];
     this.flush();
+    queueMicrotask(() => this.listeners.replayed.forEach((l) => l()));
+  }
+
+  onReplayed(listener: () => void): void {
+    this.listeners.replayed.push(listener);
   }
 
   detach(): void {
-    this.listeners = { line: [], exit: [] };
+    this.listeners = { line: [], exit: [], replayed: [] };
     this.host.releasePipe(this.hosted, this);
   }
 

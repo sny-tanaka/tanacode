@@ -314,6 +314,8 @@ class FakeHost implements SessionsHost {
       createdAt: 0,
       updatedAt: 0,
       running: true,
+      state: null,
+      mode: null,
       unread: false,
       attention: null,
       backgroundTasks: 0,

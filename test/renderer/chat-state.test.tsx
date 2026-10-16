@@ -2,7 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent, HookRun } from '@shared/chat';
-import { acceptsInput, arrivedCount, chatFromEvents, useSessionChats } from '../../src/renderer/src/chat/chatState';
+import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusOf, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
 import { mockApi } from './mock-api';
 
 // チャットの状態（会話ログから作ったイベントを、チャットの行と状態にする）。
@@ -124,13 +124,44 @@ describe('チャットの行', () => {
     expect(kept.items.length).toBeGreaterThan(0);
     expect(kept.todos).toBeNull();
     const pr = { number: 7, url: 'https://github.com/o/r/pull/7', repository: 'o/r' };
+    const later = { id: 'q1', text: 'あとで', pastes: [], images: 0, state: 'queued' as const };
     const chat = run([
-      { type: 'queue', prompts: ['あとで'] },
+      { type: 'queue', prompts: [later] },
       { type: 'remote-control', url: 'https://claude.ai/code/x' },
       { type: 'pr-link', pr },
     ]);
-    expect(chat).toMatchObject({ queued: ['あとで'], remoteControlUrl: 'https://claude.ai/code/x', pr });
-    expect(arrivedCount(chat)).toBe(1);
+    expect(chat).toMatchObject({ unsent: [later], remoteControlUrl: 'https://claude.ai/code/x', pr });
+    // 送った発言が会話に出たら、main が空の一覧を知らせる
+    expect(run([{ type: 'queue', prompts: [later] }, { type: 'queue', prompts: [] }]).unsent).toEqual([]);
+  });
+});
+
+describe('チャットの状態は、main の状態（一覧の state）から決める', () => {
+  it('動いているセッションは state から。まだ読んでいない・アーカイブ・一覧の外のセッションは、イベントから作ったまま', () => {
+    const idle = run([{ type: 'process-start' }, { type: 'ready' }]);
+    expect(idle.status).toBe('idle');
+    expect(statusOf(idle, 'starting')).toBe('starting');
+    // 作業中と、ターンの途中で人の答えを待っているもの
+    for (const state of ['working', 'question', 'permission', 'waiting', 'browser'] as const) expect(statusOf(idle, state)).toBe('running');
+    // ターンが終わって、裏のタスクだけが動いている間も、発言を受け付ける
+    expect(statusOf(idle, 'background')).toBe('idle');
+    expect(statusOf(run([{ type: 'process-start' }, { type: 'ready' }, { type: 'user', id: 'u1', text: '頼み' }]), 'idle')).toBe('idle');
+    expect(statusOf(idle, 'exited')).toBe('exited');
+    expect(statusOf(idle, 'archived')).toBe('idle');
+    expect(statusOf(idle, null)).toBe('idle');
+    expect(statusOf(idle, undefined)).toBe('idle');
+    // まだチャットを読んでいない（起動していない）セッションは、開くまで起動前のまま
+    expect(statusOf(EMPTY_CHAT, 'working')).toBe('not-started');
+  });
+
+  it('withStatus: 状態が同じならそのまま返す。違えば状態だけを替え、同じチャットと状態には同じものを返す（描き直しを増やさない）', () => {
+    const idle = run([{ type: 'process-start' }, { type: 'ready' }]);
+    expect(withStatus(idle, 'idle')).toBe(idle);
+    const running = withStatus(idle, 'working');
+    expect(running).toEqual({ ...idle, status: 'running' });
+    expect(withStatus(idle, 'working')).toBe(running);
+    expect(withStatus(idle, 'permission')).toBe(running);
+    expect(withStatus(idle, 'starting').status).toBe('starting');
   });
 });
 

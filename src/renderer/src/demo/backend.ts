@@ -171,6 +171,8 @@ export class DemoBackend {
         updatedAt: now,
         // Claude Code のプロセスが動いている（作業中かどうかではない）
         running: true,
+        state: null,
+        mode: null,
         unread: false,
         attention: null,
         backgroundTasks: 0,
@@ -398,9 +400,10 @@ export class DemoBackend {
         onSelect: (l) => this.ch.select.on(l),
         onNew: () => () => {},
         onChat: (l) => this.ch.chat.on(l),
+        progress: (id) => ok(this.sessions.get(id)?.activity ?? null),
+        onProgress: (l) => this.ch.activity.on(l),
       },
       screen: {
-        get: (id) => ok(this.sessions.get(id)?.screen ?? null),
         choose: async (id, choice) => {
           await sleep(250);
           this.onChoose(id, choice);
@@ -408,9 +411,6 @@ export class DemoBackend {
         },
         setMode: () => ok(true),
         rewind: () => ok(false),
-        onChanged: (l) => this.ch.screen.on(l),
-        activity: (id) => ok(this.sessions.get(id)?.activity ?? null),
-        onActivity: (l) => this.ch.activity.on(l),
       },
       // デモの質問は、画面のメニュー（setScreen）で出す
       question: { get: () => ok(null), reply: () => ok(false), onChanged: () => () => {} },

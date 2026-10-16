@@ -397,7 +397,7 @@ describe('会話を消さずに取りやめる', () => {
   });
 
   it('仕上げの間に人が発言した（順番待ちの発言も）', async () => {
-    script({ afterHandoff: () => host.events.push({ type: 'queue', prompts: ['ちょっと待って'] }) });
+    script({ afterHandoff: () => host.events.push({ type: 'queue', prompts: [{ id: 'q1', text: 'ちょっと待って', pastes: [], images: 0, state: 'queued' }] }) });
     compact.start(ID);
     await cancelled('prompted');
     statuses = [];

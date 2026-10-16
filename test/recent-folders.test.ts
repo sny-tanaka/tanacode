@@ -12,6 +12,8 @@ const session = (cwd: string, createdAt = 0, worktreeRoot?: string): SessionSumm
   createdAt,
   updatedAt: createdAt,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,

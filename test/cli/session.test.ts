@@ -64,8 +64,8 @@ describe(`Claude Code ${version} の会話の操作`, () => {
     await run.send(QUEUED);
     // session-manager の trackQueue が、会話ログの順番待ちの行（queue-operation）を 'queue' のイベントにする
     await run.waitFor('順番待ち', () => run.queue.includes(QUEUED));
-    const queued = run.chatEvents.findIndex((e) => e.type === 'queue' && e.prompts.includes(QUEUED));
-    expect(run.chatEvents[queued]).toEqual({ type: 'queue', prompts: [QUEUED] });
+    const queued = run.chatEvents.findIndex((e) => e.type === 'queue' && e.prompts.some((p) => p.text === QUEUED && p.state === 'queued'));
+    expect(run.chatEvents[queued]).toMatchObject({ type: 'queue', prompts: [{ text: QUEUED, state: 'queued' }] });
     // 受け取られたら、順番待ちから消えて発言になる
     await run.waitFor('順番待ちへの返事', replied('順番待ちへの返事'), 30_000);
     const after = run.chatEvents.slice(queued + 1);

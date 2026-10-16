@@ -36,6 +36,8 @@ const api: TanacodeApi = {
     onSelect: (listener) => subscribe(IpcChannel.SessionsSelect, listener),
     onNew: (listener) => subscribe(IpcChannel.SessionsNew, () => listener()),
     onChat: (listener) => subscribe(IpcChannel.ChatEvents, listener),
+    progress: (id) => invoke(IpcChannel.SessionsProgressGet, id),
+    onProgress: (listener) => subscribe(IpcChannel.SessionsProgress, listener),
     configure: (id, options) => invoke(IpcChannel.SessionsConfigure, id, options),
     restart: (id) => invoke(IpcChannel.SessionsRestart, id),
     setRemoteControl: (id, on) => invoke(IpcChannel.SessionsSetRemoteControl, id, on),
@@ -53,13 +55,9 @@ const api: TanacodeApi = {
     import: (session) => invoke(IpcChannel.SessionsImport, session),
   },
   screen: {
-    get: (sessionId) => invoke(IpcChannel.ScreenGet, sessionId),
     choose: (sessionId, choice) => invoke(IpcChannel.ScreenChoose, sessionId, choice),
     setMode: (sessionId, mode) => invoke(IpcChannel.ScreenSetMode, sessionId, mode),
     rewind: (sessionId, text) => invoke(IpcChannel.ScreenRewind, sessionId, text),
-    onChanged: (listener) => subscribe(IpcChannel.ScreenChanged, listener),
-    activity: (sessionId) => invoke(IpcChannel.ScreenActivityGet, sessionId),
-    onActivity: (listener) => subscribe(IpcChannel.ScreenActivity, listener),
   },
   question: {
     get: (sessionId) => invoke(IpcChannel.QuestionGet, sessionId),

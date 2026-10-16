@@ -52,7 +52,6 @@ const managerArg = {
   walkthroughLaunch: 11,
   claudeDir: 12,
   terminalLaunch: 13,
-  questionLaunch: 14,
 } as const;
 const managerArgs = () => argsOf('SessionManager');
 // アプリが待ち受けるソケット（userData の中の名前）
@@ -239,15 +238,15 @@ describe('起動', () => {
 });
 
 describe('Claude Code に足す MCP サーバー', () => {
-  // メニューでオン・オフを切り替えるもの。質問のフック（questionLaunch）は切り替えず、いつも足す
+  // メニューでオン・オフを切り替えるもの
   const launches = ['browserLaunch', 'sessionsLaunch', 'checklistLaunch', 'walkthroughLaunch', 'terminalLaunch'] as const;
-  const launch = (name: (typeof launches)[number] | 'questionLaunch') => (managerArgs()[managerArg[name]] as () => unknown)();
+  const launch = (name: (typeof launches)[number]) => (managerArgs()[managerArg[name]] as () => unknown)();
 
   it('どれも、同梱の Node で中継のスクリプトを動かし、userData のソケットにつなぐ', async () => {
     await boot();
-    const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js', 'question-hook.js'];
-    const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock', 'question.sock'];
-    [...launches, 'questionLaunch' as const].forEach((name, i) => {
+    const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js'];
+    const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
+    launches.forEach((name, i) => {
       expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7' });
     });
   });
@@ -255,7 +254,6 @@ describe('Claude Code に足す MCP サーバー', () => {
   it('メニューでオフにしているものは足さない（次に起動する Claude Code から）', async () => {
     await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false, terminalControl: false } });
     for (const name of launches) expect(launch(name)).toBeNull();
-    expect(launch('questionLaunch')).not.toBeNull();
     menuItem('Claude にチェックリストを扱わせる').checked = true;
     menuItem('Claude にチェックリストを扱わせる').click?.(menuItem('Claude にチェックリストを扱わせる'));
     expect(launch('checklistLaunch')).not.toBeNull();
@@ -264,7 +262,7 @@ describe('Claude Code に足す MCP サーバー', () => {
   it('待ち受けを始められなかったものは足さず、理由を出す。アプリはそのまま使える', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await boot({ before: (s) => SOCKETS.forEach((f) => s.failingSockets.add(f)) });
-    for (const name of [...launches, 'questionLaunch' as const]) expect(launch(name)).toBeNull();
+    for (const name of launches) expect(launch(name)).toBeNull();
     expect(error.mock.calls.map((c) => c[0])).toEqual([
       'アプリ内ブラウザの待ち受けを始められませんでした',
       'セッションの待ち受けを始められませんでした',
@@ -325,8 +323,7 @@ describe('部品から画面への知らせ', () => {
     ['onSessionsChanged', [[{ id: 's1' }]], IpcChannel.SessionsChanged, [{ id: 's1' }]],
     ['onChat', [{ sessionId: 's1', events: [] }], IpcChannel.ChatEvents, { sessionId: 's1', events: [] }],
     ['onPtyData', ['s1', 'ターミナルの出力'], IpcChannel.PtyData, { sessionId: 's1', data: 'ターミナルの出力' }],
-    ['onScreen', ['s1', { mode: 'plan' }], IpcChannel.ScreenChanged, { sessionId: 's1', info: { mode: 'plan' } }],
-    ['onActivity', ['s1', { kind: 'thinking' }], IpcChannel.ScreenActivity, { sessionId: 's1', activity: { kind: 'thinking' } }],
+    ['onProgress', ['s1', { phase: 'thinking' }], IpcChannel.SessionsProgress, { sessionId: 's1', activity: { phase: 'thinking' } }],
     ['onWorkflows', ['s1', [{ id: 'w' }]], IpcChannel.WorkflowsChanged, { sessionId: 's1', runs: [{ id: 'w' }] }],
     ['onSubagents', ['s1', [{ id: 'a' }]], IpcChannel.SubagentsChanged, { sessionId: 's1', runs: [{ id: 'a' }] }],
     ['onBashTasks', ['s1', [{ id: 'b' }]], IpcChannel.TasksBashChanged, { sessionId: 's1', tasks: [{ id: 'b' }] }],
@@ -382,11 +379,13 @@ describe('部品から画面への知らせ', () => {
     expect(sentToRenderer()).toEqual([]);
   });
 
-  it('statusLine は、セッションと使用量に渡す。質問の入力は、セッションに渡す', async () => {
+  it('statusLine のファイルは、セッションに渡す。セッションが知らせた statusLine（ファイルからも stream-json からも）は、使用量に渡す。質問の入力は、セッションに渡す', async () => {
     await boot();
     const info = { model: 'opus', rateLimits: {} };
     fnArg('StatusLineWatcher', 1)('s1', info);
     expect(manager().statusLineChanged.mock.calls).toEqual([['s1', info]]);
+    expect(the('UsageMonitor').fromStatusLine.mock.calls).toEqual([]);
+    callbacks().onStatusLine('s1', info);
     expect(the('UsageMonitor').fromStatusLine.mock.calls).toEqual([[info]]);
     fnArg('StatusLineWatcher', 2)('s1', { questions: [] });
     expect(manager().askQuestionsChanged.mock.calls).toEqual([['s1', { questions: [] }]]);

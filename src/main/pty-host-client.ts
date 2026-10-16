@@ -50,6 +50,8 @@ export interface PipeHandle {
   kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
   // この通し番号から、ホストが控えている行を送り直してもらう
   replay(from: number): void;
+  // 送り直しが終わった（頼んだ行をすべて渡した）
+  onReplayed(listener: () => void): void;
   detach(): void;
 }
 
@@ -125,13 +127,13 @@ export class HostedPty implements PtyHandle {
   }
 }
 
-type PipeListeners = { line: ((line: string, seq: number) => void)[]; exit: ((exitCode: number, stderr: string) => void)[] };
+type PipeListeners = { line: ((line: string, seq: number) => void)[]; exit: ((exitCode: number, stderr: string) => void)[]; replayed: (() => void)[] };
 
 type QueuedLine = { line: string; seq: number };
 
 // ホストが持っているパイプのプロセスのひとつ
 export class HostedPipe implements PipeHandle {
-  private readonly listeners: PipeListeners = { line: [], exit: [] };
+  private readonly listeners: PipeListeners = { line: [], exit: [], replayed: [] };
   // 受け手に渡す順に並べた行（受け手がいない間は溜める）と、その合計の長さ
   private ready: QueuedLine[] = [];
   private readyBytes = 0;
@@ -162,6 +164,10 @@ export class HostedPipe implements PipeHandle {
     this.listeners.exit.push(listener);
   }
 
+  onReplayed(listener: () => void): void {
+    this.listeners.replayed.push(listener);
+  }
+
   send(line: string): void {
     this.host.send({ t: 'send', id: this.id, line });
   }
@@ -189,6 +195,7 @@ export class HostedPipe implements PipeHandle {
   detach(): void {
     this.listeners.line = [];
     this.listeners.exit = [];
+    this.listeners.replayed = [];
     this.host.release(this.id);
   }
 
@@ -206,6 +213,7 @@ export class HostedPipe implements PipeHandle {
     this.held = null;
     for (const item of held) this.queue(item);
     this.flush();
+    for (const listener of this.listeners.replayed) listener();
   }
 
   emitExit(exitCode: number, stderr: string): void {

@@ -598,7 +598,7 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsSnapshot, (e, id: string) => P(e).manager.snapshot(id));
   const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
   handle(IpcChannel.SessionsSubmit, (e, id: string, text: string, attachments: string[], pastes?: string[]) =>
-    P(e).manager.submit(id, String(text ?? ''), strings(attachments), false, strings(pastes)),
+    P(e).manager.submit(id, String(text ?? ''), strings(attachments), strings(pastes)),
   );
   listen(IpcChannel.SessionsInterrupt, (e, id: string) => P(e).manager.interrupt(id));
   handle(IpcChannel.ScheduledList, (e) => P(e).scheduled.list());
@@ -677,8 +677,7 @@ function registerIpc(): void {
     p.compact?.refresh([String(id)]);
   });
   handle(IpcChannel.RemoteControlAvailable, (e) => P(e).manager.remoteAvailable());
-  handle(IpcChannel.ScreenGet, (e, id: string) => P(e).manager.screenForView(id));
-  handle(IpcChannel.ScreenActivityGet, (e, id: string) => P(e).manager.activity(id));
+  handle(IpcChannel.SessionsProgressGet, (e, id: string) => P(e).manager.progress(id));
   handle(IpcChannel.QuestionGet, (e, id: string) => P(e).manager.pendingQuestion(id));
   handle(IpcChannel.QuestionReply, (e, id: string, questionId: string, reply: unknown) => {
     const read = questionReplyOf(reply);

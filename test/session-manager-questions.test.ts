@@ -3,15 +3,15 @@ import type { AskQuestion } from '@shared/screen';
 import { QUESTION_HOOK_ENV } from '@shared/chat';
 import { QUESTION_SESSION_ENV, QUESTION_SOCKET_ENV } from '../src/main/question-hook';
 import { QUESTION } from './scenario';
-import { fixtureScreen, line, ScriptedApp } from './helpers/scripted-claude';
+import { line, ScriptedApp } from './helpers/scripted-claude';
 
 // SessionManager の、フック（question-hook.ts）が答えを待っている AskUserQuestion（本物の claude なしで動かす）。
-// 返事を待つ・状態と操作待ちの種類・通知・画面への知らせ・待つのをやめる（人がターミナルで答えた・終わった・アーカイブ・フックが止められた）
+// 返事を待つ・状態と操作待ちの種類・通知・画面への知らせ・待つのをやめる（人がターミナルで答えた・終わった・アーカイブ・フックが止められた）。
+// stream-json では、質問は can_use_tool で受け取るので、フックは Claude Code に足さない（質問の待ちは、順番 4 で「待っている要求」に広げる）
 
 let app: ScriptedApp;
-const LAUNCH = { command: '/app/Helper', script: '/app/question-hook.js', socketPath: '/data/question.sock', version: '1.0.0' };
 beforeEach(() => {
-  app = new ScriptedApp({ questionHook: () => LAUNCH });
+  app = new ScriptedApp();
 });
 afterEach(() => app.dispose());
 
@@ -22,52 +22,37 @@ const replyOf = async (result: Promise<{ content: { type: string; text?: string 
 
 // 動いているセッションで、フックが質問を渡す。返事の結果（Promise）と、つながりを切る口を返す
 async function asked(...questions: AskQuestion[]) {
-  const { id, pty } = app.create();
+  const { id, pipe } = app.create();
   await app.ready(id);
   const hook = new AbortController();
   const result = app.manager.waitQuestion(id, input(...questions), hook.signal);
   await app.waitFor('待っている質問', () => app.manager.pendingQuestion(id) !== null);
-  return { id, pty, result, hook, question: app.manager.pendingQuestion(id)! };
+  return { id, pipe, result, hook, question: app.manager.pendingQuestion(id)! };
 }
 
 describe('フックが答えを待っている質問', () => {
   it('起動する Claude Code に、質問のフックを足さない（質問は stream-json の can_use_tool で受け取る。PermissionRequest は書くだけのフック）', async () => {
-    const { pty } = app.create();
-    const settings = JSON.parse(pty.arg('--settings')!) as { hooks: { PermissionRequest?: { matcher: string; hooks: { command: string; timeout: number }[] }[] } };
+    const { pipe } = app.create();
+    const settings = JSON.parse(pipe.arg('--settings')!) as { hooks: { PermissionRequest?: { matcher: string; hooks: { command: string; timeout: number }[] }[] } };
     expect(settings.hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: expect.not.stringContaining(QUESTION_HOOK_ENV), timeout: 10 }] }]);
-    expect(pty.request.env[QUESTION_SOCKET_ENV]).toBeUndefined();
-    expect(pty.request.env[QUESTION_SESSION_ENV]).toBeUndefined();
-    expect(LAUNCH.socketPath).toBeTruthy();
+    expect(pipe.request.env[QUESTION_SOCKET_ENV]).toBeUndefined();
+    expect(pipe.request.env[QUESTION_SESSION_ENV]).toBeUndefined();
   });
 
   it('待っている間は質問中で、画面に知らせ、通知を 1 回出す。返事をすると、フックにその返事を返し、待っている質問が消える', async () => {
-    const { id, pty, result, question } = await asked(QUESTION);
+    const { id, result, question } = await asked(QUESTION);
     expect(question).toMatchObject({ questions: [QUESTION], answered: {} });
     expect(app.manager.stateOf(id)).toBe('question');
     expect(app.manager.summary(id)?.attention).toBe('question');
     expect(app.questionLog.at(-1)).toEqual({ id, question });
-    // 通知の本文は質問文（画面に質問が出るより先に、フックが質問を渡す）
+    // 通知の本文は質問文
     expect(app.attentions).toEqual([{ id, attention: { kind: 'menu', menu: expect.objectContaining({ kind: 'question', title: QUESTION.question }) } }]);
-    // 画面に同じ質問が出ても、通知を出し直さない
-    pty.output(fixtureScreen('question'));
-    await app.waitFor('画面の質問', () => app.screens.get(id)?.state.kind === 'menu');
-    expect(app.attentions).toHaveLength(1);
     expect(app.manager.replyQuestion(id, question.id, { kind: 'answer', answers: { [QUESTION.question]: 'だ・である' } })).toBe(true);
     expect(await replyOf(result)).toEqual({ kind: 'answer', answers: { [QUESTION.question]: 'だ・である' } });
     expect(app.manager.pendingQuestion(id)).toBeNull();
     expect(app.questionLog.at(-1)).toEqual({ id, question: null });
     // もう待っていない質問には返事を渡せない
     expect(app.manager.replyQuestion(id, question.id, { kind: 'chat' })).toBe(false);
-  });
-
-  it('画面を読めなくても（認識できない画面）、待っている質問があれば質問中。画面に許可の確認が出ていれば、そちらを見せる', async () => {
-    const { id, pty } = await asked(QUESTION);
-    pty.output('\x1b[H\x1b[2J何かの画面');
-    await app.waitFor('認識できない画面', () => app.screens.get(id)?.state.kind === 'unknown', 3000);
-    expect(app.manager.summary(id)?.attention).toBe('question');
-    expect(app.manager.stateOf(id)).toBe('question');
-    pty.output(fixtureScreen('bash-permission'));
-    await app.waitFor('許可の確認', () => app.manager.summary(id)?.attention === 'permission');
   });
 
   it('親は 1 問ずつ答え、全部そろったら、まとめてフックに返す', async () => {
@@ -92,7 +77,7 @@ describe('フックが答えを待っている質問', () => {
 
   it('Claude Code が終わった・アーカイブした・フックが止められた（つながりが切れた）ら、待つのをやめる', async () => {
     const exited = await asked(QUESTION);
-    exited.pty.exit(0);
+    exited.pipe.exit(0);
     expect(await replyOf(exited.result)).toEqual({ kind: 'none' });
     const archived = await asked(QUESTION);
     await app.manager.archive(archived.id);
@@ -104,10 +89,10 @@ describe('フックが答えを待っている質問', () => {
   });
 
   it('動いていないセッション・質問の形でない入力は、待たずに何も決めない', async () => {
-    const { id, pty } = app.create();
+    const { id, pipe } = app.create();
     await app.ready(id);
     expect(await replyOf(app.manager.waitQuestion(id, { questions: 'x' }, new AbortController().signal))).toEqual({ kind: 'none' });
-    pty.exit(0);
+    pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     expect(await replyOf(app.manager.waitQuestion(id, input(QUESTION), new AbortController().signal))).toEqual({ kind: 'none' });
     expect(app.manager.pendingQuestion(id)).toBeNull();

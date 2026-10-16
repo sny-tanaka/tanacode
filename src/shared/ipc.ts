@@ -1,5 +1,6 @@
 import type { ChatEvent } from './chat';
-import type { Activity, ChooseResult, PermissionMode, ScreenInfo } from './screen';
+import type { Activity, ChooseResult, PermissionMode } from './screen';
+import type { SessionState } from './session-tools';
 import type { PendingQuestion, QuestionReply } from './questions';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
@@ -73,11 +74,10 @@ export const IpcChannel = {
   ChatImage: 'chat:image',
   SessionsDiscover: 'sessions:discover',
   SessionsImport: 'sessions:import',
-  ScreenGet: 'screen:get',
-  ScreenChanged: 'screen:changed',
   ScreenChoose: 'screen:choose',
-  ScreenActivityGet: 'screen:activity-get',
-  ScreenActivity: 'screen:activity',
+  // 作業中の進み具合（考えている・書いている・経過時間）。今のもの・変わった（main → 画面）
+  SessionsProgressGet: 'sessions:progress-get',
+  SessionsProgress: 'sessions:progress',
   QuestionGet: 'question:get',
   QuestionReply: 'question:reply',
   QuestionChanged: 'question:changed',
@@ -235,6 +235,10 @@ export type SessionSummary = {
   createdAt: number;
   updatedAt: number;
   running: boolean;
+  // 今の状態（main が 1 つだけ持つ。画面は、チャットの状態をここから決める。設計書 7 節）。一覧の外のセッションは null
+  state: SessionState | null;
+  // 動いている Claude Code の今の権限モード（init・status と、アプリが変えた結果。設計書 7 節）。動いていない・分からなければ null
+  mode: PermissionMode | null;
   unread: boolean;
   // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可 /
   // other: フォルダの信頼確認や認識できない対話画面など / browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
@@ -353,8 +357,7 @@ export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; 
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };
-export type SessionScreen = { sessionId: string; info: ScreenInfo };
-export type SessionActivity = { sessionId: string; activity: Activity | null };
+export type SessionProgress = { sessionId: string; activity: Activity | null };
 // フックが答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
 export type SessionQuestion = { sessionId: string; question: PendingQuestion | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
@@ -445,18 +448,16 @@ export type TanacodeApi = {
     onSelect(listener: (id: string) => void): () => void;
     onNew(listener: () => void): () => void;
     onChat(listener: (batch: ChatBatch) => void): () => void;
+    // 作業中の進み具合（考えている・書いている・経過時間）。作業中でなければ null
+    progress(sessionId: string): Promise<Activity | null>;
+    onProgress(listener: (payload: SessionProgress) => void): () => void;
   };
   screen: {
-    get(sessionId: string): Promise<ScreenInfo | null>;
     choose(sessionId: string, choice: ScreenChoice): Promise<ChooseResult>;
     // 権限モードを Shift+Tab で切り替える（このセッションだけ）
     setMode(sessionId: string, mode: PermissionMode): Promise<boolean>;
     // text で始まる発言の直前まで巻き戻す（/rewind の一覧から選ぶ）
     rewind(sessionId: string, text: string): Promise<boolean>;
-    onChanged(listener: (payload: SessionScreen) => void): () => void;
-    // 作業中の進み具合（画面のタイマーの行）。作業中でなければ null
-    activity(sessionId: string): Promise<Activity | null>;
-    onActivity(listener: (payload: SessionActivity) => void): () => void;
   };
   // フックが答えを待っている AskUserQuestion（ターミナルの画面を読まずに出す質問のカード）
   question: {
@@ -760,11 +761,10 @@ export type IpcInvoke = {
   [IpcChannel.SessionsExportSave]: Api['sessions']['saveExport'];
   [IpcChannel.SessionsDiscover]: Api['sessions']['discover'];
   [IpcChannel.SessionsImport]: Api['sessions']['import'];
-  [IpcChannel.ScreenGet]: Api['screen']['get'];
   [IpcChannel.ScreenChoose]: Api['screen']['choose'];
   [IpcChannel.ScreenSetMode]: Api['screen']['setMode'];
   [IpcChannel.ScreenRewind]: Api['screen']['rewind'];
-  [IpcChannel.ScreenActivityGet]: Api['screen']['activity'];
+  [IpcChannel.SessionsProgressGet]: Api['sessions']['progress'];
   [IpcChannel.QuestionGet]: Api['question']['get'];
   [IpcChannel.QuestionReply]: Api['question']['reply'];
   [IpcChannel.WorkflowsGet]: Api['workflows']['get'];
@@ -872,8 +872,7 @@ export type IpcEvent = {
   [IpcChannel.SessionsSelect]: Payload<Api['sessions']['onSelect']>;
   [IpcChannel.SessionsNew]: undefined;
   [IpcChannel.ChatEvents]: Payload<Api['sessions']['onChat']>;
-  [IpcChannel.ScreenChanged]: Payload<Api['screen']['onChanged']>;
-  [IpcChannel.ScreenActivity]: Payload<Api['screen']['onActivity']>;
+  [IpcChannel.SessionsProgress]: Payload<Api['sessions']['onProgress']>;
   [IpcChannel.QuestionChanged]: Payload<Api['question']['onChanged']>;
   [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;

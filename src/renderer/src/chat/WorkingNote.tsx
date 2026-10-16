@@ -8,7 +8,7 @@ function phaseLabel(phase: Activity['phase']): string | null {
   return phase === 'working' ? null : t(`chat.working.${phase}`);
 }
 
-// 画面の表記（5s・1m 5s・1h 2m）を、今の言語の表記（日本語なら 5秒・1分5秒・1時間2分。日本語だけ間を詰める）にする
+// main の表記（5s・1m 5s・1h 2m。Claude Code の画面と同じ）を、今の言語の表記（日本語なら 5秒・1分5秒・1時間2分。日本語だけ間を詰める）にする
 function localElapsed(elapsed: string): string {
   return elapsed
     .replace(/(\d+)h/, (_, n: string) => t('chat.duration.hours', { count: n }))
@@ -24,8 +24,8 @@ function useActivity(sessionId: string | undefined): Activity | null {
     setActivity(null);
     if (!sessionId) return;
     let alive = true;
-    void window.tanacode.screen.activity(sessionId).then((a) => alive && setActivity(a));
-    const off = window.tanacode.screen.onActivity((payload) => {
+    void window.tanacode.sessions.progress(sessionId).then((a) => alive && setActivity(a));
+    const off = window.tanacode.sessions.onProgress((payload) => {
       if (payload.sessionId === sessionId) setActivity(payload.activity);
     });
     return () => {
@@ -46,7 +46,7 @@ function activityText(activity: Activity | null): string[] {
 }
 
 // チャットの末尾に出す「作業中」。セッション一覧の作業中と同じ色と回る印にして、目に留まるようにする。
-// 横に Claude Code の画面のタイマーの行から読んだ進み具合（考えている・応答を書いている・経過時間）を出す。
+// 横に進み具合（考えている・応答を書いている・経過時間。main が stream-json の行から作る）を出す。
 // sessionId が無いとき（サブエージェントの表示など）は、進み具合を出さない。
 // label: 作業中の ToDo の進行形の名前（例: 原因を調査中）。あれば「作業中」の代わりに出す
 export function WorkingNote({ sessionId, activity: given, label }: { sessionId?: string; activity?: Activity | null; label?: string }) {
