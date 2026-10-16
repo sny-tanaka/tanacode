@@ -1,12 +1,14 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
+import type { UnsentPrompt } from '@shared/chat';
 import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // 動いている Claude Code への操作（SessionManager。設計書 8 節）。画面にキーを送らず、どれも 1 つの制御の要求にする:
 // 権限モード（set_permission_mode）・裏のタスクの停止（stop_task）・巻き戻し（rewind_files・rewind_conversation）・Remote Control（remote_control）。
-// 入力欄の / の候補も、initialize の返事から作る
+// 入力欄の / の候補も、initialize の返事から作る。入力欄の「!」のコマンドは、アプリがシェルで動かしてターンを始めずに会話に足す
 
 let app: ScriptedApp;
 beforeEach(() => {
@@ -246,5 +248,107 @@ describe('initialize の返事から作るもの', () => {
     pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     expect(app.manager.commandsOf(id)).toBeNull();
+  });
+});
+
+describe('入力欄の「!」のコマンド', () => {
+  let configDir: string;
+  beforeEach(() => {
+    // 設定のフォルダ（シェルのスナップショットを探す場所）を使い捨てにする（ふだんの Claude Code のものを読まない）
+    app.dispose();
+    configDir = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-bang-config-')));
+    app = new ScriptedApp({ claudeDir: configDir });
+    mkdirSync(join(app.cwd, 'sub'), { recursive: true });
+  });
+  afterEach(() => rmSync(configDir, { recursive: true, force: true }));
+
+  const queue = (id: string): UnsentPrompt[] => {
+    const last = [...app.events(id)].reverse().find((e) => e.type === 'queue');
+    return last?.type === 'queue' ? last.prompts : [];
+  };
+  const appended = (id: string) => app.pipe(id).prompts.filter((p) => (p as { shouldQuery?: boolean }).shouldQuery === false);
+  // Claude Code が、足した行を受け付けて会話ログに書く（受け付けの知らせ・モデルを呼ばない空の result）
+  const accept = (id: string, lines: { uuid: string; message: { content: unknown } }[]) => {
+    for (const sent of lines) {
+      for (const state of ['queued', 'started', 'completed'] as const) app.pipe(id).emit(stream.lifecycle(sent.uuid, state));
+      app.append(id, { ...line.user(String(sent.message.content)), uuid: sent.uuid });
+      app.finish(id, { num_turns: 0, terminal_reason: null });
+    }
+  };
+
+  it('動かした結果を、TUI と同じ形の 2 行で、ターンを始めずに足す。ターンは開かず、行が会話に出たら送信中から外れる。cd は次の「!」に続く', async () => {
+    const shell = process.env.SHELL || '/bin/zsh';
+    // Claude Code が起動のときに作るシェルのスナップショット（別名・関数）を読む
+    mkdirSync(join(configDir, 'shell-snapshots'), { recursive: true });
+    writeFileSync(join(configDir, 'shell-snapshots', `snapshot-${basename(shell)}-${Date.now()}-abcd.sh`), "alias tanahello='echo from-snapshot'\n");
+    const { id } = app.create();
+    await app.ready(id);
+    const states: string[] = [];
+    const watching = setInterval(() => states.push(queue(id)[0]?.state ?? '-'), 5);
+    await app.manager.runShell(id, 'tanahello; echo "<&>"; echo $CLAUDECODE $GIT_EDITOR; cd sub');
+    clearInterval(watching);
+    const first = appended(id);
+    expect(first.map((p) => p.message.content)).toEqual([
+      '<bash-input>tanahello; echo "<&>"; echo $CLAUDECODE $GIT_EDITOR; cd sub</bash-input>',
+      '<bash-stdout>from-snapshot\n&lt;&amp;&gt;\n1 true</bash-stdout><bash-stderr></bash-stderr>',
+    ]);
+    expect(first.every((p) => (p as { client_composed?: boolean }).client_composed === true)).toBe(true);
+    expect(queue(id)).toMatchObject([{ id: first[0].uuid, text: 'tanahello; echo "<&>"; echo $CLAUDECODE $GIT_EDITOR; cd sub', shell: true, state: 'sending' }]);
+    expect(states).toContain('running');
+    accept(id, first);
+    await app.waitFor('会話に出る', () => queue(id).length === 0);
+    // ターンは開かない（ターンの終わり・完了の知らせを出さない）
+    await new Promise((r) => setTimeout(r, 50));
+    expect(app.events(id).filter((e) => e.type === 'turn-end')).toEqual([]);
+    expect(app.turnsCompleted).toHaveLength(0);
+    expect(app.manager.stateOf(id)).toBe('idle');
+    expect(app.events(id).find((e) => e.type === 'shell')).toMatchObject({ command: 'tanahello; echo "<&>"; echo $CLAUDECODE $GIT_EDITOR; cd sub' });
+    // cd が続く
+    await app.manager.runShell(id, 'pwd; false');
+    expect(appended(id).at(-1)?.message.content).toBe(`<bash-stdout></bash-stdout><bash-stderr>${join(app.cwd, 'sub')}\n</bash-stderr>`);
+  });
+
+  it('作業中は、ターンが終わってから動かす（待っている間は順番待ち）', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    const running = app.manager.runShell(id, 'echo later');
+    await app.waitFor('順番待ち', () => queue(id).some((p) => p.shell && p.state === 'queued'));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(appended(id)).toEqual([]);
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await running;
+    expect(appended(id).map((p) => p.message.content)).toEqual(['<bash-input>echo later</bash-input>', '<bash-stdout>later</bash-stdout><bash-stderr></bash-stderr>']);
+  });
+
+  it('止めると、会話に何も足さず、送信中から外す。claude が終わったら、動いている「!」も止める', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const running = app.manager.runShell(id, 'sleep 30');
+    await app.waitFor('実行中', () => queue(id)[0]?.state === 'running');
+    expect(app.manager.stopShell(id, queue(id)[0].id)).toBe(true);
+    await running;
+    expect(appended(id)).toEqual([]);
+    expect(queue(id)).toEqual([]);
+    expect(app.manager.stopShell(id, 'unknown')).toBe(false);
+    // claude が終わった
+    const second = app.manager.runShell(id, 'sleep 30');
+    await app.waitFor('実行中', () => queue(id)[0]?.state === 'running');
+    pipe.exit(0);
+    await second;
+    expect(appended(id)).toEqual([]);
+  });
+
+  it('止まっているセッションは、起動し直してから動かす', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    const running = app.manager.runShell(id, 'echo again');
+    await app.waitFor('起動し直す', () => app.pipe(id) !== pipe);
+    await running;
+    expect(appended(id).map((p) => p.message.content)).toEqual(['<bash-input>echo again</bash-input>', '<bash-stdout>again</bash-stdout><bash-stderr></bash-stderr>']);
   });
 });

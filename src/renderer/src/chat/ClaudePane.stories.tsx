@@ -259,6 +259,18 @@ export const 送信中と順番待ち: Story = {
   },
 };
 
+// 入力欄の「!」のコマンド。アプリがシェルで動かしている間は「実行中」、作業中に打ったものは、ターンが終わるまで順番待ち。
+// × で止めて入力欄に戻す。終わると会話のシェルの行（畳んだ出力）に替わる
+export const 入力欄のシェルのコマンド: Story = {
+  args: {
+    items: [...conversation(2), { kind: 'shell', id: 's1', command: 'git status --short', output: ' M src/tax.ts\n?? src/tax.test.ts' }],
+    unsent: [
+      { id: 'b1', text: 'npm test -- --run test/tax.test.ts', pastes: [], images: 0, state: 'running', shell: true },
+      { id: 'b2', text: 'ls -la src', pastes: [], images: 0, state: 'queued', shell: true },
+    ],
+  },
+};
+
 // 子セッションで、作業中に親セッションの Claude から届いた指示。会話に出たときと同じく、親の見出しを付けて人の発言と見分ける
 export const 親からの指示の順番待ち: Story = {
   args: {

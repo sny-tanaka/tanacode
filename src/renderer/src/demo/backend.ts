@@ -391,6 +391,8 @@ export class DemoBackend {
         configure: () => ok(undefined),
         restart: () => ok(undefined),
         setRemoteControl: () => ok(null),
+        runShell: () => ok(undefined),
+        stopShell: () => ok(false),
         // デモでは、自動の最適化圧縮は起きない（台本が進める）
         setAutoCompact: () => ok(undefined),
         remoteControlAvailable: () => ok(true),

@@ -534,7 +534,12 @@
       "modeTitle": "権限モード（このセッションだけ。Shift+Tab と同じ）",
       "mode": "モード",
       "bypassPermissions": "すべて許可",
-      "slowStartStderr": "Claude Code の標準エラーの末尾"
+      "slowStartStderr": "Claude Code の標準エラーの末尾",
+      "shellRunning": "実行中",
+      "shellStop": "止めて入力欄に戻す",
+      "shellFailed": "「!」のコマンドを動かせませんでした（{error}）",
+      "shellQueued": "順番待ち",
+      "shellQueuedTip": "今の作業が終わってから動かします"
     },
     "toolCard": {
       "running": "実行中…",

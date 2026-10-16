@@ -32,6 +32,10 @@ export type UserInput = {
   uuid: string;
   priority?: 'now' | 'next' | 'later';
   pasted_content?: string[];
+  // false: ターンを始めずに会話ログに足す（次の発言と一緒に Claude に渡る。入力欄の「!」の行）
+  shouldQuery?: boolean;
+  // アプリが組んだ文。@ のファイル指定やスラッシュコマンドとして読まない
+  client_composed?: true;
 };
 
 // Claude Code が出す user の行（ツールの結果・戻ってきた発言 SDKUserMessageReplay など）

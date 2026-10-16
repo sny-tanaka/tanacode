@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import {
@@ -46,7 +46,8 @@ import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
-import { settingsDefaultMode } from './claude-config';
+import { bangLines, findShellSnapshot, runBang } from './bang-command';
+import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
@@ -201,6 +202,15 @@ type Runtime = {
   freshConversation: boolean;
   // コンテキストの上限（最後に get_context_usage で聞いたもの。量が分からないあいだも、応答の使用量から割合を出すのに使う）
   contextSize: number | null;
+  // 今の claude を起動した（引き継いだ）時刻。入力欄の「!」で、この claude が作ったシェルのスナップショットを選ぶのに使う
+  spawnedAt: number;
+  // 入力欄の「!」のコマンド。待っている・動いているもの（<bash-input> の行の uuid → 止めるもの）と、次の「!」の作業フォルダ
+  // （cd が続く。セッションのフォルダなら null）。動かすのは 1 つずつ（shellChain）
+  shellRuns: Map<string, AbortController>;
+  shellCwd: string | null;
+  shellChain: Promise<void>;
+  // ターンを始めずに会話に足した行（user の shouldQuery: false）の uuid。受け付けの知らせ（command_lifecycle）でターンを開かない
+  appends: Set<string>;
   // 会話ログを読み終えた（読み直しの途中の、古いつながりの状態で合わせないため）
   historyLoaded: boolean;
   // 読み直した会話ログの最後の Remote Control の URL（bridge-session 行。切れていれば null、行が無ければ undefined）
@@ -1221,6 +1231,118 @@ export class SessionManager {
     return next;
   }
 
+  // 入力欄の「!」のコマンド。アプリがシェルで動かし、ターンを始めずに会話に足す（user の shouldQuery: false。TUI の「!」と同じ形の
+  // <bash-input>・<bash-stdout> の 2 行。Claude は返事をせず、次の発言のときに読む。決めたこと）。シェル・作業フォルダ・環境変数は
+  // TUI の「!」（Claude Code の Bash ツール）に合わせる（bang-command.ts）。止まっているセッションは起動し直す。起動・ターン・送信中の
+  // 発言・答えを待っている要求が済むまで待ってから動かす（TUI でも、作業中に打った「!」は順番待ち）。待っている間と動いている間は、
+  // 送信中の行（shell）に出す。止めたら（stopShell）会話には何も足さない（TUI では入力欄に戻る。画面が戻す）
+  async runShell(id: string, rawCommand: string): Promise<void> {
+    const command = stripControlChars(rawCommand).trim();
+    if (!command) return;
+    if (this.stateOf(id) === 'exited') await this.open(id);
+    const rt = this.runtimes.get(id);
+    const process = rt?.process;
+    if (!rt || !process) throw new Error(t('main.send.notRunning'));
+    const uuid = randomUUID();
+    const controller = new AbortController();
+    rt.shellRuns.set(uuid, controller);
+    const entry: Unsent = { id: uuid, text: command, pastes: [], images: 0, state: 'queued', shell: true, at: Date.now(), shown: true };
+    rt.unsent.set(uuid, entry);
+    this.emitQueue(id, rt);
+    this.changed(id);
+    const run = async () => {
+      let appended = false;
+      try {
+        for (;;) {
+          if (rt.process !== process || controller.signal.aborted) return;
+          if (this.shellCanRun(rt)) break;
+          await sleep(100);
+        }
+        entry.state = 'running';
+        this.emitQueue(id, rt);
+        const record = this.store.get(id);
+        if (!record) return;
+        const shell = globalThis.process.env.SHELL || '/bin/zsh';
+        const result = await runBang({
+          command,
+          shell,
+          cwd: rt.shellCwd ?? record.cwd,
+          env: this.shellEnv(id, rt, process),
+          snapshot: findShellSnapshot(claudeConfigDir(this.claudeDir), shell, rt.spawnedAt),
+          signal: controller.signal,
+        });
+        const client = process.client;
+        if (result.interrupted || rt.process !== process || !client) return;
+        // cd は次の「!」に続く。セッションのフォルダ・追加したフォルダの外に出たら戻す（Claude Code の Bash ツールと同じ）
+        if (result.cwd) rt.shellCwd = this.insideWorkspace(record, result.cwd) ? result.cwd : null;
+        const [input, output] = bangLines(command, result);
+        const outputId = randomUUID();
+        rt.appends.add(uuid);
+        rt.appends.add(outputId);
+        // 動いている間に、親の指示などでターンが始まっていたら、そのターンに混ぜず、終わってから足す
+        const later = rt.turnOpen || rt.turnEnding ? { priority: 'later' as const } : {};
+        const append = (text: string, lineId: string) =>
+          client.send({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: lineId, shouldQuery: false, client_composed: true, ...later });
+        append(input, uuid);
+        append(output, outputId);
+        appended = true;
+        // 会話ログに <bash-input> の行が出たら、送信中の表示から外す（出ないままなら、時間で外す）
+        entry.state = 'sending';
+        this.emitQueue(id, rt);
+        this.expireSending(id, rt, uuid);
+      } finally {
+        rt.shellRuns.delete(uuid);
+        if (!appended && rt.unsent.delete(uuid)) this.emitQueue(id, rt);
+        this.changed(id);
+      }
+    };
+    const next = rt.shellChain.then(run, run);
+    rt.shellChain = next.catch(() => {});
+    return next;
+  }
+
+  // 入力欄の「!」のコマンドを止める（待っているものは取りやめる）。止めるものが無ければ false
+  stopShell(id: string, uuid: string): boolean {
+    const controller = this.runtimes.get(id)?.shellRuns.get(uuid);
+    if (!controller) return false;
+    controller.abort();
+    return true;
+  }
+
+  private stopShells(rt: Runtime): void {
+    for (const controller of rt.shellRuns.values()) controller.abort();
+  }
+
+  // 「!」を動かしてよいか。起動が終わり、ターン・送信中の発言・答えを待っている要求が無い（待っている「!」は除く）
+  private shellCanRun(rt: Runtime): boolean {
+    if (!rt.ready || rt.preparing || rt.turnOpen || rt.turnEnding || rt.pendingSubmits > 0 || firstRequest(rt)) return false;
+    return ![...rt.unsent.values()].some((prompt) => !prompt.shell);
+  }
+
+  // 「!」の環境変数。Claude Code に渡しているもの（TUI の形）に、Claude Code が Bash ツールのコマンドに足すもののうち、動きに
+  // 関わるものを足す（実測 2.1.301。Claude Code どうしのやりとりの変数・開発用のパスは足さない）
+  private shellEnv(id: string, rt: Runtime, process: ClaudeSession): Record<string, string> {
+    const version = rt.init?.claude_code_version;
+    const record = this.store.get(id);
+    return {
+      ...process.commandEnv(),
+      CLAUDECODE: '1',
+      GIT_EDITOR: 'true',
+      COREPACK_ENABLE_AUTO_PIN: '0',
+      ...(version ? { AI_AGENT: `claude-code_${version.replaceAll('.', '-')}_agent` } : {}),
+      ...(record?.claudeSessionId ? { CLAUDE_CODE_SESSION_ID: record.claudeSessionId } : {}),
+      ...(typeof rt.init?.pid === 'number' ? { CLAUDE_PID: String(rt.init.pid) } : {}),
+    };
+  }
+
+  // セッションのフォルダか、追加したフォルダの中か（pwd -P はリンクを解いたパスなので、リンクを解いて比べる）
+  private insideWorkspace(record: SessionRecord, dir: string): boolean {
+    return [record.cwd, ...(record.addedFolders ?? [])].some((folder) => {
+      const root = realPath(folder);
+      return dir === root || dir.startsWith(`${root}/`);
+    });
+  }
+
   // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る
   private expireSending(id: string, rt: Runtime, uuid: string): void {
     setTimeout(() => {
@@ -1311,12 +1433,14 @@ export class SessionManager {
     if (this.closed) return;
     this.closed = true;
     for (const [id, rt] of this.runtimes) {
+      // 入力欄の「!」のコマンドは、アプリが動かしている（Claude Code を動かしたまま終了しても、残さない）
+      this.stopShells(rt);
       if (stop) {
         rt.process?.kill();
         this.settingsFiles?.release(id);
       } else {
         // 次のアプリが claude を引き継いだときに、送信中・順番待ちを戻せるよう残す
-        const unsent = rt.process ? [...rt.unsent.values()].map(({ at: _, ...prompt }) => prompt) : [];
+        const unsent = rt.process ? [...rt.unsent.values()].filter((prompt) => !prompt.shell).map(({ at: _, ...prompt }) => prompt) : [];
         this.store.update(id, { unsent: unsent.length > 0 ? unsent : null });
         rt.process?.detach();
       }
@@ -1446,6 +1570,11 @@ export class SessionManager {
         bridgeSessionId: null,
         freshConversation: false,
         contextSize: null,
+        spawnedAt: Date.now(),
+        shellRuns: new Map(),
+        shellCwd: null,
+        shellChain: Promise.resolve(),
+        appends: new Set(),
         taskIds: new Map(),
         historyLoaded: false,
         lastBridgeUrl: undefined,
@@ -1479,12 +1608,14 @@ export class SessionManager {
     runtime.freshConversation = false;
     runtime.requests.clear();
     // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）
-    runtime.unsent = new Map(adopted ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
+    runtime.unsent = new Map(adopted ? (record.unsent ?? []).filter((prompt) => !prompt.shell).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
     if (record.unsent) this.store.update(id, { unsent: null });
     // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す（Claude Code が知らせたら、そちらにする）
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
     if (!adopted) this.store.update(id, { knownMode: permissionMode });
     runtime.aliveSince = adopted?.startedAt ?? null;
+    runtime.spawnedAt = adopted?.startedAt ?? Date.now();
+    runtime.appends.clear();
     runtime.turnOpen = false;
     runtime.lastAssistant = null;
     if (runtime.turnEnding) clearTimeout(runtime.turnEnding.timer);
@@ -1557,6 +1688,8 @@ export class SessionManager {
           },
         },
         onExit: (exitCode, stderr) => {
+          // 入力欄の「!」のコマンドも止める（会話に足す先が無い。アーカイブのあとも残さない）
+          if (runtime.process === process) this.stopShells(runtime);
           // アーカイブ（kill）・アプリの終了のあとに届いた終わりは、片付け済み。開き直していれば、新しい起動の表示に流さない
           if (runtime.process !== process || this.runtimes.get(id) !== runtime || this.closed) return;
           runtime.process = null;
@@ -1913,6 +2046,12 @@ export class SessionManager {
 
   // 送った発言の受け付けの知らせ。queued: 順番待ちに入った / started: ターンに取り込まれた / completed・cancelled・discarded: 終わった
   private handleLifecycle(id: string, rt: Runtime, message: CommandLifecycleMessage, past: boolean): void {
+    // ターンを始めずに会話に足した行（入力欄の「!」）。モデルを呼ばない空の result が続くが、ターンは開かない（開いていないターンの
+    // result は捨てる）。送信中の表示は、会話ログに出たときに外す
+    if (rt.appends.has(message.command_uuid)) {
+      if (message.state !== 'queued' && message.state !== 'started') rt.appends.delete(message.command_uuid);
+      return;
+    }
     if (message.state === 'started') this.openTurn(id, rt, past);
     const unsent = rt.unsent.get(message.command_uuid);
     if (!unsent) return;
@@ -2284,6 +2423,15 @@ function firstRequest(rt: Runtime): CanUseToolRequest | null {
 }
 
 // 会話ログの行が、アプリが送った発言のものなら、その uuid（発言の行・作業中に送った発言の queued_command の attachment）
+// リンクを解いたパス（無いフォルダはそのまま）
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 function sentUuidOf(entry: TranscriptEntry): string | null {
   if (entry.isSidechain) return null;
   if (entry.type === 'user' && entry.uuid) return entry.uuid;

@@ -670,6 +670,8 @@ function registerIpc(): void {
     return url;
   });
   handle(IpcChannel.SessionsSetRemoteControl, (e, id: string, on: boolean) => P(e).manager.setRemoteControl(id, on));
+  handle(IpcChannel.SessionsRunShell, (e, id: string, command: string) => P(e).manager.runShell(id, String(command)));
+  handle(IpcChannel.SessionsStopShell, (e, id: string, runId: string) => P(e).manager.stopShell(id, runId));
   handle(IpcChannel.SessionsSetAutoCompact, (e, id: string, on: boolean) => {
     const p = P(e);
     p.manager.setAutoCompact(String(id), on === true);

@@ -539,7 +539,12 @@
       "modeTitle": "Permission mode (this session only; same as Shift+Tab)",
       "mode": "Mode",
       "bypassPermissions": "Bypass permissions",
-      "slowStartStderr": "The end of Claude Code's standard error"
+      "slowStartStderr": "The end of Claude Code's standard error",
+      "shellRunning": "Running",
+      "shellStop": "Stop and put it back in the input box",
+      "shellFailed": "Couldn't run the ! command ({error})",
+      "shellQueued": "Queued",
+      "shellQueuedTip": "Runs once the current work finishes"
     },
     "toolCard": {
       "running": "Running…",

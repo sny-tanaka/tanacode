@@ -61,6 +61,8 @@ export const IpcChannel = {
   SessionsConfigure: 'sessions:configure',
   SessionsRestart: 'sessions:restart',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
+  SessionsRunShell: 'sessions:run-shell',
+  SessionsStopShell: 'sessions:stop-shell',
   SessionsSetAutoCompact: 'sessions:set-auto-compact',
   RemoteControlAvailable: 'remote-control:available',
   SessionsRename: 'sessions:rename',
@@ -428,6 +430,11 @@ export type TanacodeApi = {
     submit(id: string, text: string, attachments: string[], pastes?: string[]): Promise<void>;
     // 作業を中断する（Esc を送る）
     interrupt(id: string): void;
+    // 入力欄の「!」のコマンド（先頭の ! を除いたもの）。アプリがシェルで動かし、ターンを始めずに会話に足す（Claude は次の発言のときに読む）。
+    // 止まっていれば起動し直す。作業中なら、ターンが終わってから動かす。動いている間は送信中の行（shell）に出る
+    runShell(id: string, command: string): Promise<void>;
+    // 「!」のコマンドを止める（送信中の行の ID）。会話には何も足さない。止めるものが無ければ false
+    stopShell(id: string, runId: string): Promise<boolean>;
     // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
     configure(id: string, options: SessionOptions): Promise<void>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）
@@ -771,6 +778,8 @@ export type IpcInvoke = {
   [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
   [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
+  [IpcChannel.SessionsRunShell]: Api['sessions']['runShell'];
+  [IpcChannel.SessionsStopShell]: Api['sessions']['stopShell'];
   [IpcChannel.SessionsSetAutoCompact]: Api['sessions']['setAutoCompact'];
   [IpcChannel.RemoteControlAvailable]: Api['sessions']['remoteControlAvailable'];
   [IpcChannel.SessionsRename]: Api['sessions']['rename'];
