@@ -16,7 +16,8 @@ export type StreamEvents = {
   // 出力の行（制御の要求・返事以外）。past: 引き継いだときに送り直してもらった、前のアプリの頃の行（通知などを出さない）
   onMessage(message: StreamMessage, past: boolean): void;
   // Claude Code が答えを待つ要求（can_use_tool）。答えは respond で返す
-  onPermission(requestId: string, request: CanUseToolRequest): void;
+  // replayed: 引き継いだときに、前のアプリの頃から答えを待っている要求を出し直した
+  onPermission(requestId: string, request: CanUseToolRequest, replayed: boolean): void;
   // 待っていた要求を、Claude Code が取り下げた（スマホなど、ほかで先に答えた）
   onCancel(requestId: string): void;
   // claude が終わった。stderr: 標準エラーの末尾
@@ -72,7 +73,7 @@ export class StreamClient {
     // 送り直しを頼んでから受け取り始める（頼む前に届いていた新しい行は、送り直した行のあとに渡る）
     this.pipe.replay(info.firstSeq);
     for (const item of info.retained) if (item.seq < info.firstSeq) this.receivePast(item);
-    for (const item of info.pending) this.raise(item.line);
+    for (const item of info.pending) this.raise(item.line, true);
     this.start();
   }
 
@@ -175,14 +176,14 @@ export class StreamClient {
   }
 
   // Claude Code からの制御の要求。can_use_tool は待っている要求にし、ほかは使わないので error で返す
-  private raise(line: string): void {
+  private raise(line: string, replayed = false): void {
     const value = parse(line) as { request_id?: unknown; request?: { subtype?: unknown } } | null;
     const requestId = value?.request_id;
     if (typeof requestId !== 'string' || this.permissions.has(requestId)) return;
     const request = value?.request;
     if (request?.subtype === 'can_use_tool' && isPermission(request)) {
       this.permissions.set(requestId, request);
-      this.events.onPermission(requestId, request);
+      this.events.onPermission(requestId, request, replayed);
       return;
     }
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';

@@ -580,7 +580,7 @@ export class SessionsControl {
     const reply = allow
       ? ({ kind: 'allow' } as const)
       : reason
-        ? ({ kind: 'deny', message: `The parent session denied your permission request${what}. Do not retry the same operation. Reason: ${reason}` } as const)
+        ? ({ kind: 'deny', message: `The parent session denied your permission request${what}. Do not retry the same operation. Reason: ${reason}`, byParent: true } as const)
         : ({ kind: 'stop' } as const);
     if (!host.replyPermission(child.id, id, reply)) throw changed();
     this.observe(caller.id, child.id);
@@ -1161,11 +1161,11 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
 
 // 答えを待っている許可の確認を、親に渡す形にする。
 // problem: 親に許させない理由（入力が長すぎて全文を渡せない・人だけが答えられる）。あっても、断ることはできる。
-// humanOnly: 人だけが答えられる確認なら、その理由（Deps の humanOnly）
+// 人だけが答えられるのは、プランの承認・Claude Code や人の設定が人に回したもの（PendingPermission.humanOnly）と、Deps の humanOnly
 function permissionView(permission: PendingPermission, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): { view: Record<string, unknown>; problem: string | null } {
   const full = JSON.stringify(permission.input, null, 2);
   const tooLong = full.length > MAX_PERMISSION_INPUT_CHARS;
-  const problem = tooLong ? `the tool input is too long to show in full (${full.length} characters), so you cannot read all of it.` : humanOnly(permission);
+  const problem = tooLong ? `the tool input is too long to show in full (${full.length} characters), so you cannot read all of it.` : (permission.humanOnly ?? humanOnly(permission));
   return {
     problem,
     view: {

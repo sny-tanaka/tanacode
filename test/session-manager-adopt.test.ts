@@ -163,6 +163,33 @@ describe('adopt', () => {
     expect(app.manager.summary(id)?.attention).toBe('permission');
   });
 
+  it('出し直した要求では、もう一度は通知しない。プランの承認の本文は、会話ログを読み直してから出し直す。質問は質問のまま', async () => {
+    const planFile = join(app.home, '.claude', 'plans', 'adopted.md');
+    mkdirSync(dirname(planFile), { recursive: true });
+    writeFileSync(planFile, '# 引き継いだ計画\n');
+    const id = await previous(line.user('計画して'), { ...line.turnEnd(), type: 'attachment', subtype: undefined, attachment: { type: 'plan_mode', planFilePath: planFile, planExists: true } });
+    const pending = (requestId: string, body: Record<string, unknown>, seq: number) => ({
+      seq,
+      line: JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_use_id: `toolu_${requestId}`, ...body } }),
+    });
+    const questions = [{ question: 'どちらにしますか?', header: '方式', multiSelect: false, options: [{ label: 'A', description: '' }] }];
+    app.host.hosted = [
+      hosted(id, {
+        lastSeq: 2,
+        firstSeq: 1,
+        pending: [pending('req-q', { tool_name: 'AskUserQuestion', input: { questions } }, 1), pending('req-plan', { tool_name: 'ExitPlanMode', input: {} }, 2)],
+      }),
+    ];
+    const before = app.attentions.length;
+    await app.manager.adopt();
+    attached(id)!.replayed();
+    await app.waitFor('プランの本文', () => app.manager.pendingPermission(id)?.plan === '# 引き継いだ計画\n');
+    expect(app.manager.pendingPermission(id)).toMatchObject({ id: 'req-plan', tool: 'ExitPlanMode' });
+    expect(app.permissionLog.at(-1)?.permission?.plan).toBe('# 引き継いだ計画\n');
+    expect(app.manager.pendingQuestion(id)?.questions[0].question).toBe('どちらにしますか?');
+    expect(app.attentions.length).toBe(before);
+  });
+
   it('引き継いだ claude には initialize を送らずに起動済みにし、エフォートとコンテキストの使用量を聞き直す（聞けなくても起動済み）', async () => {
     const id = await previous(line.user('はじめ'), line.text('はい'));
     app.answers.set('get_settings', new Error('timeout'));

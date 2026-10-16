@@ -794,6 +794,24 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(textOf(await answer({ permission_id: 'req-3', decision: 'allow', reason: 'x' }))).toContain('only for decision "deny"');
     });
 
+    it('プランの承認と、Claude Code や人の設定が人に回した確認は、親が acceptEdits 以上でも許せない（断ることだけできる）', async () => {
+      const plan = bashPermission('', { tool: 'ExitPlanMode', title: null, input: {}, plan: '# 計画', humanOnly: 'it is a plan approval: only the user approves a plan.' });
+      show(plan);
+      const view = await read();
+      expect(view).toMatchObject({ tool: 'ExitPlanMode', can_allow: false, can_deny: true });
+      expect(view.cannot_allow_reason).toContain('plan approval');
+      expect(textOf(await answer({ permission_id: 'req-1', decision: 'allow' }))).toContain('Cannot allow this prompt: it is a plan approval');
+      expect(host.replies).toEqual([]);
+      // 断ることはできる（理由があれば、子は計画を続ける）
+      const denied = await answer({ permission_id: 'req-1', decision: 'deny', reason: '先にテストの計画を足して' });
+      expect(denied.isError).toBeFalsy();
+      expect(host.replies[0].reply).toMatchObject({ kind: 'deny', byParent: true });
+      // 人の設定の ask の規則が出させた確認も同じ
+      show(bashPermission('npm publish', { id: 'req-2', humanOnly: "the user's settings (a permissions.ask rule) say the user must be asked." }));
+      expect((await read()).can_allow).toBe(false);
+      expect(textOf(await answer({ permission_id: 'req-2', decision: 'allow' }))).toContain('permissions.ask');
+    });
+
     it('親が読んだあとで別の確認に変わっていたら、答えない（同じコマンドの 2 回目の確認も、別の確認）', async () => {
       show(bashPermission('mkdir out'));
       const { id } = await read();

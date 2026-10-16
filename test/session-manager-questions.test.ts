@@ -3,10 +3,10 @@ import type { AskQuestion } from '@shared/screen';
 import { QUESTION_HOOK_ENV } from '@shared/chat';
 import { QUESTION_SESSION_ENV, QUESTION_SOCKET_ENV } from '../src/main/question-hook';
 import { QUESTION } from './scenario';
-import { line, ScriptedApp } from './helpers/scripted-claude';
+import { ScriptedApp } from './helpers/scripted-claude';
 
 // SessionManager の、フック（question-hook.ts）が答えを待っている AskUserQuestion（本物の claude なしで動かす）。
-// 返事を待つ・状態と操作待ちの種類・通知・画面への知らせ・待つのをやめる（人がターミナルで答えた・終わった・アーカイブ・フックが止められた）。
+// 返事を待つ・状態と操作待ちの種類・通知・画面への知らせ・待つのをやめる（終わった・アーカイブ・フックが止められた）。
 // stream-json では、質問は can_use_tool で受け取るので、フックは Claude Code に足さない（質問の待ちは、順番 4 で「待っている要求」に広げる）
 
 let app: ScriptedApp;
@@ -65,14 +65,12 @@ describe('フックが答えを待っている質問', () => {
     expect(app.manager.answerPendingQuestion(id, question.id, SECOND.question, '書く')).toBeNull();
   });
 
-  it('人がターミナルで答えた（会話ログに答えが出た）ら、待つのをやめる。違う質問の答えでは、やめない', async () => {
-    const { id, result } = await asked(QUESTION);
-    app.append(id, line.toolUse('toolu_other', 'AskUserQuestion', input(SECOND)), line.toolResult('toolu_other', 'answered'));
-    await new Promise((r) => setTimeout(r, 300));
-    expect(app.manager.pendingQuestion(id)).not.toBeNull();
-    app.append(id, line.toolUse('toolu_ask', 'AskUserQuestion', input(QUESTION)), line.toolResult('toolu_ask', 'answered'));
-    expect(await replyOf(result)).toEqual({ kind: 'none' });
-    expect(app.manager.pendingQuestion(id)).toBeNull();
+  it('親が答えたプレビュー付きの質問には、カードで答えたときと同じく、選んだ案のプレビューを添え書き（annotations）で付ける', async () => {
+    const preview: AskQuestion = { question: 'どの画面にしますか？', header: '画面', multiSelect: false, options: [{ label: '縦', description: '', preview: '┌縦┐' }, { label: '横', description: '' }] };
+    const { id, result, question } = await asked(preview, SECOND);
+    app.manager.answerPendingQuestion(id, question.id, preview.question, '縦');
+    expect(app.manager.answerPendingQuestion(id, question.id, SECOND.question, '書く')).toBe('sent');
+    expect(await replyOf(result)).toEqual({ kind: 'answer', answers: { [preview.question]: '縦', [SECOND.question]: '書く' }, annotations: { [preview.question]: { preview: '┌縦┐' } } });
   });
 
   it('Claude Code が終わった・アーカイブした・フックが止められた（つながりが切れた）ら、待つのをやめる', async () => {

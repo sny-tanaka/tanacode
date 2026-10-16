@@ -17,6 +17,9 @@ export type QuestionReply = { kind: 'answer'; answers: Record<string, string>; a
 // id: 要求の ID（request_id）/ tool: ツールの名前 / title・description: Claude Code が付けた見出しと説明 / input: ツールの入力の全文 /
 // reason: 確認する理由 / always: 「今後は聞かない」で足す許可の短い名前（例: Bash(npm test:*)。選べなければ null）/
 // plan: プランの承認（ExitPlanMode）なら、プランの本文 / agent: サブエージェントの中の呼び出しなら、その ID
+// always: 「今後は聞かない」で足す許可の説明（何を許すかと保存先。画面の言葉。Claude Code の候補が無ければ null）/
+// plan: プランの承認なら本文（読めなければ空の文字列）。プランの承認でなければ null /
+// humanOnly: 人だけが答えられる確認なら、その理由（親の Claude に向けた英語。プランの承認・Claude Code や人の設定が人に回したもの）
 export type PendingPermission = {
   id: string;
   tool: string;
@@ -27,12 +30,14 @@ export type PendingPermission = {
   always: string[] | null;
   plan: string | null;
   agent: string | null;
+  humanOnly?: string | null;
 };
 
 // 許可の確認への答え。allow: 許す（always: 今後は聞かない。Claude Code が出した候補の許可を足す）/
 // accept-edits: プランを承認して、編集を自動で進める（acceptEdits にする）/ deny: 断る（message を Claude に伝えて、作業は続く）/
 // stop: 断って、作業を止める（画面の Esc と同じ）
-export type PermissionReply = { kind: 'allow'; always?: boolean } | { kind: 'accept-edits' } | { kind: 'deny'; message: string } | { kind: 'stop' };
+// （deny の byParent: 親の Claude が断った。message をそのまま Claude に伝える。人の発言の形にしない）
+export type PermissionReply = { kind: 'allow'; always?: boolean } | { kind: 'accept-edits' } | { kind: 'deny'; message: string; byParent?: true } | { kind: 'stop' };
 
 // 1 つの質問の答えの文。画面で答えたときと同じ形にする: 複数選択は、選んだ選択肢を選択肢の順に「, 」でつなぎ、自由記述は最後に足す。
 // picked: 選んだ選択肢の名前 / other: 自由記述（前後の空白を除く。改行はそのまま）。どちらも無ければ空

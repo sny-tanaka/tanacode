@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
@@ -578,9 +578,10 @@ describe('待っている要求の知らせ', () => {
       description: 'テストを流す',
       input: { command: 'npm test', description: 'テストを流す' },
       reason: 'Bash は毎回確かめる設定です',
-      always: ['Bash(npm test:*)'],
+      always: ['「Bash(npm test:*)」・このフォルダ'],
       plan: null,
       agent: null,
+      humanOnly: null,
     });
     expect(app.permissionLog.at(-1)).toEqual({ id, permission });
     // 知らない要求・質問の返事では答えない
@@ -611,7 +612,8 @@ describe('待っている要求の知らせ', () => {
   it('プランの承認は、プランのファイル（会話ログの planFilePath）の本文をカードに渡す。読めなければ、Claude が ExitPlanMode に渡した本文', async () => {
     const { id, pipe } = app.create({ mode: 'plan' });
     await app.ready(id);
-    const planFile = join(app.root, 'plans', 'calm-plan.md');
+    // プランのフォルダ（<設定のフォルダ>/plans）の下のファイル
+    const planFile = join(app.home, '.claude', 'plans', 'calm-plan.md');
     mkdirSync(dirname(planFile), { recursive: true });
     writeFileSync(planFile, '# ファイルの計画\n');
     app.append(id, line.user('計画して'), { ...line.turnEnd(), type: 'attachment', subtype: undefined, attachment: { type: 'plan_mode', planFilePath: planFile, planExists: true } });
@@ -628,5 +630,82 @@ describe('待っている要求の知らせ', () => {
     pipe.emit({ type: 'control_request', request_id: 'req-plan2', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: {}, tool_use_id: 'toolu_plan2' } });
     await app.waitFor('次のプランの承認', () => app.manager.pendingPermission(id)?.id === 'req-plan2');
     expect(app.manager.pendingPermission(id)?.plan).toBe('# 入力の計画');
+  });
+
+  it('プランのファイルは、プランのフォルダ（設定の plansDirectory も）の下の、リンクでない通常のファイルで、大きすぎないものだけ読む', async () => {
+    app.answers.set('get_settings', { effective: { plansDirectory: 'docs/plans' }, sources: [], applied: { model: 'claude-opus-5-5', effort: null } });
+    const { id, pipe } = app.create({ mode: 'plan' });
+    await app.ready(id);
+    // 会話ログのプランの場所を読み終えてから、プランの承認を出す
+    const planFile = () => (app.manager as unknown as { runtimes: Map<string, { planFile: string | null }> }).runtimes.get(id)?.planFile;
+    const planAt = async (file: string, n: number) => {
+      app.append(id, { ...line.turnEnd(), type: 'attachment', subtype: undefined, attachment: { type: 'plan_mode', planFilePath: file, planExists: true } });
+      await app.waitFor('プランの場所', () => planFile() === file);
+      request(pipe, `req-${n}`, { tool_name: 'ExitPlanMode', input: {} });
+    };
+    const plan = (n: number) => app.waitFor(`プランの承認 ${n}`, () => app.manager.pendingPermission(id)?.id === `req-${n}`).then(() => app.manager.pendingPermission(id)?.plan);
+    const answer = (n: number) => app.manager.replyPermission(id, `req-${n}`, { kind: 'stop' });
+    // 設定の plansDirectory（プロジェクトのいちばん上からの相対）の下
+    const own = join(app.cwd, 'docs', 'plans', 'a.md');
+    mkdirSync(dirname(own), { recursive: true });
+    writeFileSync(own, '# 設定のフォルダの計画\n');
+    await planAt(own, 1);
+    expect(await plan(1)).toBe('# 設定のフォルダの計画\n');
+    answer(1);
+    // プランのフォルダの外のファイルは読まない（本文を読めなかったことにする）
+    const outside = join(app.root, 'secret.md');
+    writeFileSync(outside, '# 外のファイル\n');
+    await planAt(outside, 2);
+    expect(await plan(2)).toBe('');
+    answer(2);
+    // プランのフォルダの中でも、外を指すリンクは読まない
+    const link = join(app.home, '.claude', 'plans', 'link.md');
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(outside, link);
+    await planAt(link, 3);
+    expect(await plan(3)).toBe('');
+    answer(3);
+    // 大きすぎるファイルは読まない
+    const big = join(app.home, '.claude', 'plans', 'big.md');
+    writeFileSync(big, 'x'.repeat(1024 * 1024 + 1));
+    await planAt(big, 4);
+    expect(await plan(4)).toBe('');
+  });
+
+  it('プランの本文を読めないうちに出たプランの承認は、プランのファイル・Claude の入力が分かったら、本文を読み直して出し直す', async () => {
+    const { id, pipe } = app.create({ mode: 'plan' });
+    await app.ready(id);
+    request(pipe, 'req-plan', { tool_name: 'ExitPlanMode', input: {} });
+    await app.waitFor('プランの承認', () => app.manager.pendingPermission(id) !== null);
+    expect(app.manager.pendingPermission(id)?.plan).toBe('');
+    const planFile = join(app.home, '.claude', 'plans', 'late.md');
+    mkdirSync(dirname(planFile), { recursive: true });
+    writeFileSync(planFile, '# あとから分かった計画\n');
+    app.append(id, { ...line.turnEnd(), type: 'attachment', subtype: undefined, attachment: { type: 'plan_mode', planFilePath: planFile, planExists: true } });
+    await app.waitFor('出し直す', () => app.permissionLog.at(-1)?.permission?.plan === '# あとから分かった計画\n');
+    expect(app.manager.pendingPermission(id)?.plan).toBe('# あとから分かった計画\n');
+  });
+
+  it('読めない質問（AskUserQuestion の入力の形が違う）は、許可の確認として出さず、その場で断る', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    request(pipe, 'req-bad', { tool_name: 'AskUserQuestion', input: { questions: 'こわれた入力' } });
+    await app.waitFor('断る', () => answerTo(pipe, 'req-bad').length === 1);
+    expect(answerTo(pipe, 'req-bad')[0]).toMatchObject({ behavior: 'deny' });
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    expect(app.manager.pendingQuestion(id)).toBeNull();
+    expect(app.manager.stateOf(id)).not.toBe('permission');
+  });
+
+  it('質問は、許可の確認と同時に待っていても、許可の確認として出さない。許可の確認の答えでは答えられない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    request(pipe, 'req-q', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
+    await app.waitFor('質問', () => app.manager.pendingQuestion(id) !== null);
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    expect(app.manager.replyPermission(id, 'req-q', { kind: 'allow' })).toBe(false);
+    request(pipe, 'req-p', { tool_name: 'Bash', input: { command: 'make' } });
+    await app.waitFor('許可の確認', () => app.manager.pendingPermission(id) !== null);
+    expect(app.manager.pendingPermission(id)?.id).toBe('req-p');
   });
 });

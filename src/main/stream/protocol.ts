@@ -225,6 +225,12 @@ export type CanUseToolRequest = {
   blocked_path?: string;
   decision_reason?: string;
   decision_reason_type?: string;
+  // false: 安全の確かめのうち、人が承認しなければならないものがある
+  classifier_approvable?: boolean;
+  // 間違って 1 回押しただけで許されないようにする確認
+  default_to_no?: boolean;
+  // ユーザーの設定の ask の規則（permissions.ask）が出させた確認
+  matched_ask_rule?: { source: string; tool_name: string; rule_content?: string };
   title?: string;
   display_name?: string;
   description?: string;
@@ -279,7 +285,7 @@ export type UsageResponse = {
 };
 
 // get_settings の返事のうち使うもの。errors: 形の違う設定ファイル（-p は黙って無視する。実測）
-export type SettingsResponse = { applied?: { model?: string; effort?: string | null }; errors?: unknown[] };
+export type SettingsResponse = { effective?: { plansDirectory?: unknown }; applied?: { model?: string; effort?: string | null }; errors?: unknown[] };
 
 // stream-json の出力の行として知っている種類
 export type StreamMessage =

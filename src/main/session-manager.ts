@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   bridgeUrlOf,
   isTranscriptEntry,
@@ -157,6 +157,10 @@ type Runtime = {
   planFile: string | null;
   // Claude が ExitPlanMode に渡したプランの本文（tool_use の ID → 本文。プランのファイルが読めないときに使う）
   planInputs: Map<string, string>;
+  // 設定のプランのフォルダ（get_settings の effective.plansDirectory。プロジェクトのいちばん上からの相対）。プランのファイルを読んでよい場所
+  plansDirectory: string | null;
+  // 引き継いだときに出し直した要求を受け取っている途中（質問の待ちの登録から届く知らせでも、通知しない）
+  quietAttention: boolean;
   // initialize の返事が来た（コマンド・モデルの一覧など）。来るまでは起動中
   init: InitializeResponse | null;
   // 入力を受け付けられるようになった（ready を配信した）。worktree の準備が終わるまでは配信しない
@@ -729,11 +733,15 @@ export class SessionManager {
     this.changed(id);
   }
 
-  // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null
+  // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null。
+  // プランの本文を読めていなければ、読み直す（引き継いだときは、会話ログを読む前に要求が出る）。読めなければ空
   pendingPermission(id: string): PendingPermission | null {
     const rt = this.runtimes.get(id);
-    for (const [requestId, request] of rt?.requests ?? []) {
-      if (!rt?.questionWaits.has(requestId)) return permissionOf(requestId, request, rt?.plans.get(requestId) ?? null);
+    if (!rt) return null;
+    for (const [requestId, request] of rt.requests) {
+      if (request.tool_name === 'AskUserQuestion') continue;
+      const plan = request.tool_name === PLAN_TOOL ? (rt.plans.get(requestId) ?? this.planOf(id, rt, request) ?? '') : null;
+      return permissionOf(requestId, request, plan);
     }
     return null;
   }
@@ -742,7 +750,7 @@ export class SessionManager {
   replyPermission(id: string, requestId: string, reply: PermissionReply): boolean {
     const rt = this.runtimes.get(id);
     const request = rt?.requests.get(requestId);
-    if (!rt || !request || rt.questionWaits.has(requestId)) return false;
+    if (!rt || !request || request.tool_name === 'AskUserQuestion') return false;
     if (!rt.process?.client?.respond(requestId, permissionResult(request, reply))) return false;
     this.requestRemoved(id, rt, requestId);
     return true;
@@ -1519,10 +1527,8 @@ export class SessionManager {
         bashTasks,
         screen: () => null,
         sessionDir: () => this.sessionDir(id),
-        // 人がターミナルや Remote Control で答えたら、その質問を待っているフックを終わらせる
-        questionAnswered: (questions) => {
-          if (questions) this.questions.answeredElsewhere(id, questions);
-        },
+        // 質問の答えは会話ログからは決めない（questionAnswered を渡さない）。ほかで答えられた・取り下げられた質問は、Claude Code が
+        // control_cancel_request で知らせる（同じ質問文の別の要求を終わらせないため）
       });
       rt = {
         process: null,
@@ -1549,6 +1555,8 @@ export class SessionManager {
         plans: new Map(),
         planFile: null,
         planInputs: new Map(),
+        plansDirectory: null,
+        quietAttention: false,
         init: null,
         ready: false,
         knownMode: null,
@@ -1675,8 +1683,8 @@ export class SessionManager {
           onMessage: (message, past) => {
             if (runtime.process === process) this.handleStream(id, runtime, message, past);
           },
-          onPermission: (requestId, request) => {
-            if (runtime.process === process) this.requestAdded(id, runtime, requestId, request);
+          onPermission: (requestId, request, replayed) => {
+            if (runtime.process === process) this.requestAdded(id, runtime, requestId, request, replayed);
           },
           onCancel: (requestId) => {
             if (runtime.process === process) this.requestRemoved(id, runtime, requestId);
@@ -1772,6 +1780,7 @@ export class SessionManager {
       const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
       if (rt.process !== process) return;
       if (settings) this.updateStatus(id, rt, { effort: settings.applied?.effort ?? null });
+      this.notePlansDirectory(id, rt, settings);
       this.markReady(id, rt);
       void this.refreshContext(id, rt);
       return;
@@ -1792,6 +1801,7 @@ export class SessionManager {
     if (init.current_permission_mode) this.noteMode(id, rt, appMode(init.current_permission_mode));
     const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
     if (rt.process !== process) return;
+    this.notePlansDirectory(id, rt, settings);
     if (settings?.errors?.length) {
       // 形の違う設定ファイルは、Claude Code が黙って丸ごと無視する。登録した設定を黙って標準に切り替えないよう、止めて理由を出す
       const details = settings.errors.map((e) => describeSettingsError(e)).join('\n');
@@ -2031,7 +2041,10 @@ export class SessionManager {
     for (const block of message.message.content ?? []) {
       if (block.type === 'tool_use' && block.name === PLAN_TOOL && typeof block.id === 'string') {
         const plan = (block.input as { plan?: unknown } | undefined)?.plan;
-        if (typeof plan === 'string') rt.planInputs.set(block.id, plan);
+        if (typeof plan === 'string') {
+          rt.planInputs.set(block.id, plan);
+          this.refreshPlans(id, rt);
+        }
       }
     }
     const usage = message.message.usage;
@@ -2223,11 +2236,29 @@ export class SessionManager {
 
   // Claude Code が答えを待つ要求が来た（許可の確認・質問・プランの承認・ワークフローの確認）。
   // 質問（AskUserQuestion）は、質問のカード・親の answer_question の返事を PendingQuestions で待ち、Claude Code に返す
-  private requestAdded(id: string, rt: Runtime, requestId: string, request: CanUseToolRequest): void {
-    rt.requests.set(requestId, request);
-    // プランの本文は、プランのファイルから読む（TUI と同じ）。無ければ、Claude が ExitPlanMode に渡した本文
-    if (request.tool_name === PLAN_TOOL) rt.plans.set(requestId, readText(rt.planFile) ?? rt.planInputs.get(request.tool_use_id) ?? null);
+  // replayed: 引き継いだときに出し直した要求（前のアプリが通知したので、もう一度は通知しない）
+  private requestAdded(id: string, rt: Runtime, requestId: string, request: CanUseToolRequest, replayed = false): void {
+    rt.quietAttention = replayed;
+    try {
+      this.addRequest(id, rt, requestId, request, replayed);
+    } finally {
+      rt.quietAttention = false;
+    }
+  }
+
+  private addRequest(id: string, rt: Runtime, requestId: string, request: CanUseToolRequest, replayed: boolean): void {
     const questions = request.tool_name === 'AskUserQuestion' ? askQuestionsOf(request.input) : null;
+    if (request.tool_name === 'AskUserQuestion' && !questions) {
+      // 読めない質問は、カードにも親にも出せない（許可の確認として出さない）。断って、Claude に知らせる
+      rt.process?.client?.respond(requestId, { behavior: 'deny', message: 'tanacode could not read the questions in this AskUserQuestion call, so it was not shown to the user. Ask again with valid questions.' });
+      return;
+    }
+    rt.requests.set(requestId, request);
+    // プランの本文は、プランのファイルから読む（TUI と同じ）。無ければ、Claude が ExitPlanMode に渡した本文。読めなければ、あとで読み直す
+    if (request.tool_name === PLAN_TOOL) {
+      const plan = this.planOf(id, rt, request);
+      if (plan !== null) rt.plans.set(requestId, plan);
+    }
     if (questions) {
       const process = rt.process;
       const wait = new AbortController();
@@ -2239,7 +2270,34 @@ export class SessionManager {
         if (process?.client?.respond(requestId, questionResult(request.input, questions, reply))) this.requestRemoved(id, rt, requestId);
       });
     }
-    this.updateAttention(id, rt);
+    this.updateAttention(id, rt, replayed);
+  }
+
+  // プランの承認の本文。プランのファイル（読んでよい場所の、通常のファイルだけ）か、Claude が ExitPlanMode に渡した本文。無ければ null
+  private planOf(id: string, rt: Runtime, request: CanUseToolRequest): string | null {
+    const record = this.store.get(id);
+    const roots = [join(claudeConfigDir(this.claudeDir), 'plans'), ...(record && rt.plansDirectory ? [resolve(record.cwd, rt.plansDirectory)] : [])];
+    return readPlanFile(rt.planFile, roots) ?? rt.planInputs.get(request.tool_use_id) ?? null;
+  }
+
+  // プランのファイル・Claude の入力が分かった。本文を読めていなかったプランの承認があれば、読み直して画面に出し直す
+  private refreshPlans(id: string, rt: Runtime): void {
+    let found = false;
+    for (const [requestId, request] of rt.requests) {
+      if (request.tool_name !== PLAN_TOOL || rt.plans.has(requestId)) continue;
+      const plan = this.planOf(id, rt, request);
+      if (plan === null) continue;
+      rt.plans.set(requestId, plan);
+      found = true;
+    }
+    if (found) this.listeners.onPermission?.(id, this.pendingPermission(id));
+  }
+
+  // 設定のプランのフォルダ（get_settings の effective.plansDirectory）
+  private notePlansDirectory(id: string, rt: Runtime, settings: SettingsResponse | null): void {
+    const dir = settings?.effective?.plansDirectory;
+    rt.plansDirectory = typeof dir === 'string' && dir.trim() ? dir : null;
+    this.refreshPlans(id, rt);
   }
 
   // 待っていた要求が無くなった（答えた・Claude Code が取り下げた）
@@ -2262,7 +2320,8 @@ export class SessionManager {
   }
 
   // 操作待ちの種類を、待っている要求と、フックが答えを待っている質問から決める。操作待ちでなかったところから変わったら、通知する
-  private updateAttention(id: string, rt: Runtime): void {
+  // quiet: 通知しない（引き継いだときに出し直した要求）
+  private updateAttention(id: string, rt: Runtime, quiet = false): void {
     this.listeners.onPermission?.(id, this.pendingPermission(id));
     const request = firstRequest(rt);
     const pending = this.questions.first(id);
@@ -2277,7 +2336,7 @@ export class SessionManager {
     this.emitSessions();
     this.changed(id);
     const summary = this.summary(id);
-    if (!summary || !rt.process || before !== null || attention === null) return;
+    if (!summary || !rt.process || before !== null || attention === null || quiet || rt.quietAttention) return;
     if (request) this.listeners.onAttention(summary, { kind: 'menu', menu: requestMenu(request) });
     else if (pending) this.listeners.onAttention(summary, { kind: 'menu', menu: pendingMenu(pending) });
   }
@@ -2351,7 +2410,10 @@ export class SessionManager {
     const past = isHistory && !(rt?.aliveSince && entryTime(entry) >= rt.aliveSince);
     rt?.tasks.track(entry, past, isHistory);
     const planFile = entry.attachment?.planFilePath;
-    if (rt && typeof planFile === 'string' && planFile) rt.planFile = planFile;
+    if (rt && typeof planFile === 'string' && planFile && planFile !== rt.planFile) {
+      rt.planFile = planFile;
+      this.refreshPlans(id, rt);
+    }
     if (rt && !past) this.noteMode(id, rt, permissionModeOf(entry));
     rt?.knowledge.handle(entry);
     rt?.context.handle(entry);
@@ -2516,10 +2578,17 @@ function permissionModeOf(entry: TranscriptEntry): PermissionMode | null {
 }
 
 // 小さな文字のファイルを読む（プランのファイル）。無い・読めなければ null
-function readText(file: string | null): string | null {
-  if (!file) return null;
+// プランのファイルを読む。読んでよい場所（roots。プランのフォルダ）の下の、リンクでない通常のファイルで、大きすぎないものだけ。
+// 場所は会話ログに書かれたもので、Claude Code 以外が書き換えうるので確かめる。読めない・空なら null
+const MAX_PLAN_BYTES = 1024 * 1024;
+function readPlanFile(file: string | null, roots: string[]): string | null {
+  if (!file || !isAbsolute(file)) return null;
   try {
-    const text = readFileSync(file, 'utf8');
+    const info = lstatSync(file);
+    if (!info.isFile() || info.size > MAX_PLAN_BYTES) return null;
+    const real = realpathSync(file);
+    if (!roots.some((root) => real.startsWith(`${realPath(root)}/`))) return null;
+    const text = readFileSync(real, 'utf8');
     return text.trim() ? text : null;
   } catch {
     return null;

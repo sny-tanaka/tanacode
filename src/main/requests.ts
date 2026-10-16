@@ -1,3 +1,5 @@
+import { t } from '@shared/i18n';
+import { stripControlChars } from '@shared/prompt-keys';
 import type { PendingPermission, PermissionReply, QuestionReply } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 import type { CanUseToolRequest, PermissionResult, PermissionUpdate } from './stream/protocol';
@@ -42,21 +44,45 @@ export function questionResult(input: Record<string, unknown>, questions: AskQue
 
 // 質問でない要求を、カードと親の道具で扱う形にする。plan: プランの承認なら、プランの本文（Claude Code は要求の入力に本文を入れず、
 // プランのファイルから読む。session-manager がファイルか Claude の呼び出しの入力から取る。取れなければ空）
+// ANSI の制御の並び（色などの CSI・題名などの OSC・2 文字の並び）
+const ANSI_SEQUENCES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
+
+// 画面に出す文。ANSI の並びを消してから、残った制御文字を消す
+function displayText(text: string): string {
+  return stripControlChars(text.replace(ANSI_SEQUENCES, ''));
+}
+
+// 説明・理由は Claude Code と Claude が書いたもので、ANSI の制御文字が入ることがある（SDK の型の説明）ので、消して出す
 export function permissionOf(requestId: string, request: CanUseToolRequest, plan: string | null = null): PendingPermission {
   const planText = request.tool_name === PLAN_TOOL ? (plan ?? (typeof request.input.plan === 'string' ? request.input.plan : '')) : null;
   const suggestions = request.suppress_always_allow_rule ? [] : (request.permission_suggestions ?? []);
-  const always = suggestions.flatMap(ruleNames);
+  const always = suggestions.flatMap(alwaysOf);
+  const clean = (text: string | undefined) => (text ? displayText(text) : null);
   return {
     id: requestId,
     tool: request.tool_name,
-    title: request.title ?? request.display_name ?? null,
-    description: request.description ?? null,
+    title: clean(request.title ?? request.display_name),
+    description: clean(request.description),
     input: request.input,
-    reason: request.decision_reason ?? null,
+    reason: clean(request.decision_reason),
     always: always.length > 0 ? always : null,
     plan: planText,
     agent: request.agent_id ?? null,
+    humanOnly: humanOnlyReason(request),
   };
+}
+
+// 人だけが答えられる確認なら、その理由（親の Claude に向けた英語）。親の answer_permission では断ることだけできる。
+// プランの承認（承認すると子がプランモードから抜ける。入力は空で、親は本文も読めない）と、Claude Code が人に回したもの
+// （requires_user_interaction・人の承認が要る安全の確かめ・間違って許されないようにする確認）と、人の設定の ask の規則が出させたもの
+// （SDK の型の説明: 自動の承認で答えず、人に出す）。ふつうの確認には、どの印も付かない（実測）
+export function humanOnlyReason(request: CanUseToolRequest): string | null {
+  if (request.tool_name === PLAN_TOOL) return 'it is a plan approval: only the user approves a plan (approving it also takes the child out of plan mode).';
+  if (request.requires_user_interaction) return 'Claude Code requires the user to answer this prompt themselves.';
+  if (request.classifier_approvable === false || request.decision_reason_type === 'safetyCheck') return "Claude Code flagged it as a safety check that needs the user's own approval.";
+  if (request.matched_ask_rule || request.decision_reason_type === 'rule') return "the user's settings (a permissions.ask rule) say the user must be asked.";
+  if (request.default_to_no) return 'Claude Code marked it as a prompt the user must look at before it is allowed.';
+  return null;
 }
 
 // 許可の確認への答えを、Claude Code への返事にする。accept-edits はプランの承認だけ（ほかの要求では、許すだけ）
@@ -71,16 +97,39 @@ export function permissionResult(request: CanUseToolRequest, reply: PermissionRe
         ? { behavior: 'allow', updatedInput: request.input, updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
         : { behavior: 'allow', updatedInput: request.input };
     case 'deny':
-      return { behavior: 'deny', message: rejectedWith(reply.message) };
+      return { behavior: 'deny', message: reply.byParent ? `${REJECTED} ${reply.message}` : rejectedWith(reply.message) };
     case 'stop':
       return { behavior: 'deny', message: REJECTED, interrupt: true };
   }
 }
 
-// 「今後は聞かない」で足す許可の短い名前（カードに出す）
-function ruleNames(update: PermissionUpdate): string[] {
-  if (update.type === 'addRules' || update.type === 'replaceRules') return update.rules.map((r) => (r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName));
-  if (update.type === 'addDirectories') return update.directories;
-  if (update.type === 'setMode') return [update.mode];
+// 「今後は聞かない」で足す許可の説明（カードに出す）。何を許すか（規則・フォルダ・権限モード）と、どこに残るか（保存先）。
+// TUI の「Yes, and don't ask again for … in <フォルダ>」「… in any project (user settings)」「Yes, allow all edits during this session」に寄せる
+function alwaysOf(update: PermissionUpdate): string[] {
+  const where = destinationText(update.destination);
+  const item = (what: string) => t('main.permission.alwaysItem', { what, where });
+  if (update.type === 'addRules' || update.type === 'replaceRules') {
+    if (update.behavior !== 'allow') return [];
+    return update.rules.map((r) => item(t('main.permission.alwaysRule', { rule: r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName })));
+  }
+  if (update.type === 'addDirectories') return update.directories.map((dir) => item(t('main.permission.alwaysDirectory', { dir })));
+  if (update.type === 'setMode') return [item(update.mode === 'acceptEdits' ? t('main.permission.alwaysAcceptEdits') : t('main.permission.alwaysMode', { mode: update.mode }))];
   return [];
+}
+
+// 保存先（Claude Code の名前）を、どこに残るかの言葉に
+function destinationText(destination: string): string {
+  switch (destination) {
+    case 'localSettings':
+      return t('main.permission.whereLocal');
+    case 'projectSettings':
+      return t('main.permission.whereProject');
+    case 'userSettings':
+      return t('main.permission.whereUser');
+    case 'session':
+    case 'cliArg':
+      return t('main.permission.whereSession');
+    default:
+      return destination;
+  }
 }

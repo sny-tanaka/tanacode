@@ -250,6 +250,17 @@
     "addFolder": {
       "inside": "This folder is inside the session's folder and is already in the Explorer: {path}",
       "diskRoot": "Can't add the top folder of a disk: {path}"
+    },
+    "permission": {
+      "alwaysItem": "{what}, {where}",
+      "alwaysRule": "\"{rule}\"",
+      "alwaysDirectory": "access to {dir}",
+      "alwaysAcceptEdits": "all edits",
+      "alwaysMode": "switch to {mode} mode",
+      "whereLocal": "this folder",
+      "whereProject": "this folder's shared settings",
+      "whereUser": "all folders",
+      "whereSession": "this session only"
     }
   },
   "commands": {

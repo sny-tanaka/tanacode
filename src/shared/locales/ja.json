@@ -248,6 +248,17 @@
     "addFolder": {
       "inside": "セッションのフォルダの中のフォルダは、もうエクスプローラーに出ているので追加しません: {path}",
       "diskRoot": "ディスクのいちばん上のフォルダは追加できません: {path}"
+    },
+    "permission": {
+      "alwaysItem": "{what}・{where}",
+      "alwaysRule": "「{rule}」",
+      "alwaysDirectory": "{dir} へのアクセス",
+      "alwaysAcceptEdits": "編集をすべて許可",
+      "alwaysMode": "権限モードを {mode} にする",
+      "whereLocal": "このフォルダ",
+      "whereProject": "このフォルダの共有の設定",
+      "whereUser": "すべてのフォルダ",
+      "whereSession": "このセッションだけ"
     }
   },
   "commands": {

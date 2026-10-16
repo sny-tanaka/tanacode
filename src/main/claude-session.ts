@@ -150,7 +150,7 @@ export class ClaudeSession {
   private startStream(): void {
     const events: StreamEvents = {
       onMessage: (message, past) => !this.killed && this.handlers.stream?.onMessage(message, past),
-      onPermission: (id, request) => !this.killed && this.handlers.stream?.onPermission(id, request),
+      onPermission: (id, request, replayed) => !this.killed && this.handlers.stream?.onPermission(id, request, replayed),
       onCancel: (id) => !this.killed && this.handlers.stream?.onCancel(id),
       onCaughtUp: () => !this.killed && this.handlers.stream?.onCaughtUp?.(),
       onExit: (exitCode, stderr) => {
