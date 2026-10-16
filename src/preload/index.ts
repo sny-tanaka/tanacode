@@ -55,7 +55,6 @@ const api: TanacodeApi = {
     import: (session) => invoke(IpcChannel.SessionsImport, session),
   },
   screen: {
-    choose: (sessionId, choice) => invoke(IpcChannel.ScreenChoose, sessionId, choice),
     setMode: (sessionId, mode) => invoke(IpcChannel.ScreenSetMode, sessionId, mode),
     rewind: (sessionId, text) => invoke(IpcChannel.ScreenRewind, sessionId, text),
   },
@@ -63,6 +62,11 @@ const api: TanacodeApi = {
     get: (sessionId) => invoke(IpcChannel.QuestionGet, sessionId),
     reply: (sessionId, questionId, reply) => invoke(IpcChannel.QuestionReply, sessionId, questionId, reply),
     onChanged: (listener) => subscribe(IpcChannel.QuestionChanged, listener),
+  },
+  permission: {
+    get: (sessionId) => invoke(IpcChannel.PermissionGet, sessionId),
+    reply: (sessionId, requestId, reply) => invoke(IpcChannel.PermissionReply, sessionId, requestId, reply),
+    onChanged: (listener) => subscribe(IpcChannel.PermissionChanged, listener),
   },
   workflows: {
     get: (sessionId) => invoke(IpcChannel.WorkflowsGet, sessionId),

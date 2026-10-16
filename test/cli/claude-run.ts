@@ -4,8 +4,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
-import type { ChatBatch, ScreenChoice, SessionSummary } from '@shared/ipc';
+import type { ChatBatch, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
+import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import type { Activity, ChooseResult, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
 import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
@@ -56,6 +57,9 @@ export type Seen = { entry: TranscriptEntry; isHistory: boolean };
 
 // 選択メニューが出た・操作できない画面が出たときの、session-manager の知らせ（アプリはこれで通知を出す）
 export type Attention = { kind: 'menu'; menu: Menu } | { kind: 'unsupported' };
+
+// ターミナルモードの TUI の画面のメニューで選ぶもの（ScreenTracker の choose の引数）
+type Choice = { optionId: string; key: 'enter' | 'space' | 'none'; text?: string };
 
 type Options = {
   // ユーザーの設定（~/.claude/settings.json）。hooks を足すのに使う
@@ -470,17 +474,48 @@ export class ClaudeRun {
     return (this.runtime()?.stderr ?? '').split('\n').slice(-20).join('\n');
   }
 
-  // メニューで選ぶ（press）。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
+  // Claude Code が答えを待っている許可の確認・プランの承認（stream-json の can_use_tool。カードに出るもの）が来るまで待つ
+  permission(label: string, timeoutMs = 20_000): Promise<PendingPermission> {
+    return this.waitUntil(label, () => this.manager.pendingPermission(this.sessionId!), timeoutMs);
+  }
+
+  // カードのボタンと同じく、許可の確認に答える（session-manager の replyPermission）。もう待っていなければ失敗させる
+  replyPermission(permission: PendingPermission, reply: PermissionReply): void {
+    if (!this.manager.replyPermission(this.sessionId!, permission.id, reply)) throw new Error(`許可の確認（${permission.tool}）に答えられません。もう待っていません`);
+  }
+
+  // Claude Code が答えを待っている質問（AskUserQuestion。カードに出るもの）が来るまで待つ
+  question(label: string, timeoutMs = 20_000): Promise<PendingQuestion> {
+    return this.waitUntil(label, () => this.manager.pendingQuestion(this.sessionId!), timeoutMs);
+  }
+
+  // カードのボタンと同じく、質問に答える（session-manager の replyQuestion）。もう待っていなければ失敗させる
+  replyQuestion(question: PendingQuestion, reply: QuestionReply): void {
+    if (!this.manager.replyQuestion(this.sessionId!, question.id, reply)) throw new Error(`質問（${question.questions[0]?.question}）に答えられません。もう待っていません`);
+  }
+
+  // get が値を返すまで待つ。時間切れ・claude の終了は失敗にする
+  async waitUntil<T>(label: string, get: () => T | null | undefined | false, timeoutMs = 20_000): Promise<T> {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const value = get();
+      if (value) return value;
+      if (this.exited !== null) throw new Error(`${label}: claude が終了しました（${this.exited}）\n${this.stderr()}`);
+      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.stderr()}`);
+      await sleep(POLL_MS);
+    }
+  }
+
+  // ターミナルモードの TUI の画面のメニューで選ぶ（press）。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
   async answer(title: string, optionId: string): Promise<void> {
     const closed = this.menusClosed;
     await this.press(title, { optionId, key: 'enter' });
     await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
   }
 
-  // アプリのカードのボタンを押すのと同じく、session-manager の choose で選ぶ（Claude Code が入力を捨てる間を待つのは、アプリの側）。
-  // カードに「受け付けませんでした」と出たとき（ignored）だけ、人と同じく押し直す。黙って何度も押し直すことはしない。
-  // それ以外の理由で選べなかったら、理由と画面を付けて失敗させる。押した結果を順に返す
-  async press(label: string, choice: ScreenChoice, choose: (choice: ScreenChoice) => Promise<ChooseResult> = (c) => this.manager.choose(this.sessionId!, c)): Promise<ChooseResult[]> {
+  // ターミナルモードの TUI の画面のメニューで選ぶ（ScreenTracker の choose）。「受け付けませんでした」（ignored）のときだけ、
+  // 人と同じく押し直す。黙って何度も押し直すことはしない。それ以外の理由で選べなかったら、理由と画面を付けて失敗させる。押した結果を順に返す
+  async press(label: string, choice: Choice, choose: (choice: Choice) => Promise<ChooseResult> = (c) => this.screen.choose(c.optionId, c.key, c.text)): Promise<ChooseResult[]> {
     const results: ChooseResult[] = [];
     for (let attempt = 1; ; attempt++) {
       const result = await choose(choice);

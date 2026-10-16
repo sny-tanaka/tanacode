@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { t } from '@shared/i18n';
-import { answerText, type PendingQuestion, type QuestionReply } from '@shared/questions';
+import { answerText, type PendingQuestion, type QuestionAnnotations, type QuestionReply } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
 
@@ -23,13 +23,16 @@ type Props = {
   question: PendingQuestion;
 };
 
-// フックが答えを待っている AskUserQuestion（PendingQuestion）の質問のカード。ターミナルの画面は読まずに、質問の入力だけで描く。
+// Claude Code が答えを待っている AskUserQuestion（PendingQuestion）の質問のカード。質問の入力だけで描く。
 // ページの送り方は Claude Code の画面と同じ: 質問を 1 問ずつ出し（タブで、答えた質問が分かる）、単一選択は選ぶと次の質問へ、
 // 複数選択はチェックしてから次の質問へ。質問が複数あるときと複数選択のときは、最後に回答の確認を出してから送る。
-// 質問が 1 つで単一選択なら、選んだらすぐ送る。答えは全部そろってから、まとめてフックに返す
+// 質問が 1 つで単一選択なら、選んだらすぐ送る。答えは全部そろってから、まとめて返す。
+// プレビュー付きの質問には自由記述が無いので、代わりにメモ欄を出し、選んだ案のプレビューと一緒に添え書き（annotations）で渡す（決めたこと）
 export function QuestionCard({ sessionId, question }: Props) {
   const { questions } = question;
   const [drafts, setDrafts] = useState<Draft[]>(() => questions.map(() => EMPTY));
+  // プレビュー付きの質問のメモ（質問ごと）
+  const [notes, setNotes] = useState<string[]>(() => questions.map(() => ''));
   // 今のページ（questions.length は回答の確認）
   const [page, setPage] = useState(0);
   const [editing, setEditing] = useState(false);
@@ -62,6 +65,23 @@ export function QuestionCard({ sessionId, question }: Props) {
 
   const answers = (list: Draft[]) => Object.fromEntries(questions.map((q, i) => [q.question, answerText(q, list[i].picked, list[i].other)]));
 
+  // プレビュー付きの質問の添え書き（メモと、選んだ案がひとつならそのプレビュー）。無ければ undefined
+  const annotations = (list: Draft[]): QuestionAnnotations | undefined => {
+    const result: QuestionAnnotations = {};
+    questions.forEach((q, i) => {
+      if (!hasPreview(q)) return;
+      const note = notes[i].trim();
+      const picked = q.options.filter((o) => list[i].picked.includes(o.label));
+      const preview = picked.length === 1 ? picked[0].preview : undefined;
+      if (note || preview) result[q.question] = { ...(note ? { notes: note } : {}), ...(preview ? { preview } : {}) };
+    });
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+  const answer = (list: Draft[]): QuestionReply => {
+    const added = annotations(list);
+    return { kind: 'answer', answers: answers(list), ...(added ? { annotations: added } : {}) };
+  };
+
   const go = (next: number) => {
     setPage(next);
     setEditing(false);
@@ -73,7 +93,7 @@ export function QuestionCard({ sessionId, question }: Props) {
   const decide = (next: Draft) => {
     const list = drafts.map((d, i) => (i === page ? next : d));
     setDrafts(list);
-    if (direct) send({ kind: 'answer', answers: answers(list) });
+    if (direct) send(answer(list));
     else go(page + 1);
   };
 
@@ -119,6 +139,18 @@ export function QuestionCard({ sessionId, question }: Props) {
       {current ? (
         <>
           <div className="menu-title">{current.question}</div>
+          {hasPreview(current) && (
+            <label className="menu-notes-input">
+              <span>{t('screen.card.notes')}</span>
+              <textarea
+                rows={2}
+                value={notes[page]}
+                placeholder={t('screen.card.notesPlaceholder')}
+                disabled={sending}
+                onChange={(e) => setNotes(notes.map((n, i) => (i === page ? e.target.value : n)))}
+              />
+            </label>
+          )}
           <div className="menu-options">
             {current.options.map((option) => {
               const picked = draft.picked.includes(option.label);
@@ -211,7 +243,7 @@ export function QuestionCard({ sessionId, question }: Props) {
             ))}
           </dl>
           <div className="menu-options">
-            <button type="button" className="menu-option submit" disabled={sending || !complete} onClick={() => send({ kind: 'answer', answers: answers(drafts) })}>
+            <button type="button" className="menu-option submit" disabled={sending || !complete} onClick={() => send(answer(drafts))}>
               {t('screen.card.submitAnswers')}
             </button>
             <button type="button" className="menu-option" disabled={sending} onClick={() => send({ kind: 'cancel' })}>

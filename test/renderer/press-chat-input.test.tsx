@@ -2,12 +2,10 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Menu, MenuOption } from '@shared/screen';
 import { ChatInput } from '../../src/renderer/src/chat/ChatInput';
 import { SchedulePicker } from '../../src/renderer/src/chat/SchedulePicker';
 import { CommentList } from '../../src/renderer/src/review/CommentList';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
-import { MenuCard } from '../../src/renderer/src/screen/MenuCard';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -153,22 +151,5 @@ describe('コードへのコメントの一覧（CommentList）', () => {
     fireEvent.click(within(rows[1]).getByRole('button', { name: '削除' }));
     expect(onRemove).toHaveBeenCalledWith('c2');
     expect(onShow).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('選択メニューの自由記述（MenuCard）', () => {
-  const option = (id: string, label: string, over: Partial<MenuOption> = {}): MenuOption => ({ id, label, description: '', pointed: false, checked: null, textInput: false, ...over });
-  const menu: Menu = { kind: 'question', tabs: [], title: 'どれにしますか？', context: [], options: [option('1', 'はい'), option('2', 'Type something.', { textInput: true })], multiSelect: false, hint: '' };
-
-  it('「やめる」を押すと、打ちかけた答えを送らずに入力欄を閉じる。開き直した欄は空', () => {
-    render(<MenuCard sessionId="s1" menu={menu} />);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    fireEvent.change(screen.getByPlaceholderText('回答を入力'), { target: { value: '別の案' } });
-    fireEvent.click(screen.getByRole('button', { name: 'やめる' }));
-    expect(screen.queryByPlaceholderText('回答を入力')).toBeNull();
-    expect(api.argsOf('screen.choose')).toEqual([]);
-    expect(api.argsOf('pty.write')).toEqual([]);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    expect((screen.getByPlaceholderText('回答を入力') as HTMLInputElement).value).toBe('');
   });
 });

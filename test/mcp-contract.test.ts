@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NewSessionOptions, SessionSummary } from '@shared/ipc';
-import type { ScreenInfo } from '@shared/screen';
 import { BROWSER_MCP } from '@shared/browser-tools';
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
 import { allowedToolIds, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
@@ -195,7 +194,6 @@ const summary = (id: string, cwd: string): SessionSummary => ({
   worktree: null,
   parentId: null,
 });
-const promptScreen: ScreenInfo = { state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true };
 
 // SessionManager の代わり。呼び出し元のセッションが 1 つだけある
 function fakeHost(cwd: string): SessionsHost {
@@ -208,7 +206,6 @@ function fakeHost(cwd: string): SessionsHost {
     currentModel: () => null,
     currentEffort: () => null,
     conversation: async () => [],
-    screen: () => promptScreen,
     create: (dir: string, _options: NewSessionOptions, parentId: string | null) => {
       sessions.push({ ...summary('22222222-0000-4000-8000-000000000002', dir), parentId });
       return '22222222-0000-4000-8000-000000000002';
@@ -221,12 +218,11 @@ function fakeHost(cwd: string): SessionsHost {
     submitWhenReady: async () => {},
     interrupt: () => {},
     withdrawParentDraft: async () => {},
-    askedQuestions: () => null,
-    chooseIf: async () => 'gone',
     pendingQuestion: () => null,
     answerPendingQuestion: () => null,
     watchState: () => () => {},
     pendingPermission: () => null,
+    replyPermission: () => false,
     subagents: () => [],
     bashTasks: () => [],
     workflows: () => [],

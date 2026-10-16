@@ -1854,7 +1854,8 @@
     "kind": {
       "question": "Question from Claude Code",
       "permission": "Permission Request",
-      "other": "Confirmation"
+      "other": "Confirmation",
+      "plan": "Plan Approval"
     },
     "notChosen": {
       "busy": "Couldn't send because another action was in progress. Click again.",
@@ -1883,7 +1884,24 @@
       "unanswered": "(Not answered)",
       "submitAnswers": "Submit answers",
       "questionTab": "Question {n}",
-      "questionGone": "This question can no longer be answered (it was answered in the terminal, or Claude Code moved on)."
+      "questionGone": "This question can no longer be answered (it was answered in the terminal, or Claude Code moved on).",
+      "notes": "Notes (optional)",
+      "notesPlaceholder": "Anything to tell Claude about your choice"
+    },
+    "permission": {
+      "allow": "Allow",
+      "always": "Allow, and don't ask again ({rules})",
+      "deny": "Deny and tell Claude why",
+      "denyPlaceholder": "Why you deny it, or what Claude should do instead (Enter for a new line, ⌘+Enter to send)",
+      "stopTip": "Deny and stop (Esc)",
+      "reason": "Why this asks: {reason}",
+      "fromSubagent": "This call is inside a subagent",
+      "gone": "This prompt can no longer be answered (it was answered elsewhere, or Claude Code withdrew it).",
+      "planTitle": "Go ahead with this plan?",
+      "planApprove": "Approve (review each edit)",
+      "planAcceptEdits": "Approve and auto-accept edits",
+      "planKeep": "Keep planning (tell Claude what to change)",
+      "planPlaceholder": "What to change in the plan (Enter for a new line, ⌘+Enter to send)"
     }
   }
 }

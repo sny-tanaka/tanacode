@@ -1,3 +1,4 @@
+import { chatMessage, REJECTED } from './requests';
 import { QUESTION_HOOK_ENV } from '@shared/chat';
 import { questionReplyOf, type QuestionReply } from '@shared/questions';
 import { askQuestionsOf } from './screen-parser';
@@ -47,20 +48,8 @@ export function questionHookEnv(launch: McpLaunch, sessionId: string): Record<st
   };
 }
 
-// 画面で「Chat about this」を選んだときに、Claude Code が Claude に返す文（2.1.296 の会話ログの tool_result と同じ）
-const REJECTED = 'The user doesn\'t want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).';
-export function chatMessage(questions: string[]): string {
-  return [
-    `${REJECTED} To tell you how to proceed, the user said:`,
-    'The user wants to clarify these questions.',
-    '    This means they may have additional information, context or questions for you.',
-    '    Take their response into account and then reformulate the questions if appropriate.',
-    '    Start by asking them what they would like to clarify.',
-    '',
-    '    Questions asked:',
-    ...questions.map((q) => `- "${q}"\n  (No answer provided)`),
-  ].join('\n');
-}
+// 画面で「Chat about this」を選んだときに、Claude Code が Claude に返す文（stream-json の答えと同じもの。requests.ts）
+export { chatMessage } from './requests';
 
 // フックの標準入力（Claude Code の PermissionRequest の入力）のうち、使うもの。読めなければ null
 export function readHookInput(text: string): { tool: string; input: Record<string, unknown> } | null {

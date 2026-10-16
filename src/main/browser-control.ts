@@ -3,7 +3,6 @@ import { BROWSER_MCP, browserTool, browserToolId, isClaudeAllowedUrl, isLocalUrl
 import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
-import type { PermissionRequest } from '@shared/session-tools';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -373,7 +372,7 @@ export class BrowserControl {
   // 子セッションの許可の確認のうち、人だけが答えられるもの（親の Claude に許させない。sessions-control.ts の answer_permission）。
   // 許す先の外を開く確認（フックが ask を返して、印を控えたもの）。印のある間の navigate の確認は、どれも人に任せる
   // （どの確認の印かを取り違えても、人に聞く側に倒す）。当たれば、親に伝える理由（英語）を返す
-  humanOnly(sessionId: string, request: PermissionRequest): string | null {
+  humanOnly(sessionId: string, request: { tool: string }): string | null {
     if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
     return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }

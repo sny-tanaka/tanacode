@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
-import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type ScreenChoice, type SearchOptions, type SessionOptions } from '@shared/ipc';
+import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
 import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
@@ -22,7 +22,7 @@ import { CASK, HomebrewUpdater } from './homebrew-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
-import { questionReplyOf } from '@shared/questions';
+import { permissionReplyOf, questionReplyOf } from '@shared/questions';
 import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
@@ -679,6 +679,11 @@ function registerIpc(): void {
   handle(IpcChannel.RemoteControlAvailable, (e) => P(e).manager.remoteAvailable());
   handle(IpcChannel.SessionsProgressGet, (e, id: string) => P(e).manager.progress(id));
   handle(IpcChannel.QuestionGet, (e, id: string) => P(e).manager.pendingQuestion(id));
+  handle(IpcChannel.PermissionGet, (e, id: string) => P(e).manager.pendingPermission(id));
+  handle(IpcChannel.PermissionReply, (e, id: string, requestId: string, reply: unknown) => {
+    const read = permissionReplyOf(reply);
+    return !!read && P(e).manager.replyPermission(String(id), String(requestId), read);
+  });
   handle(IpcChannel.QuestionReply, (e, id: string, questionId: string, reply: unknown) => {
     const read = questionReplyOf(reply);
     return !!read && P(e).manager.replyQuestion(id, questionId, read);
@@ -767,7 +772,6 @@ function registerIpc(): void {
   handle(IpcChannel.TranslateOpenSettings, () => shell.openExternal(LANGUAGE_SETTINGS_URL));
   handle(IpcChannel.TasksAgentLog, (e, id: string, ref: AgentLogRef) => P(e).manager.agentLog(id, ref));
   handle(IpcChannel.TasksStop, (e, id: string, ref: TaskRef) => P(e).manager.stopTask(id, ref));
-  handle(IpcChannel.ScreenChoose, (e, id: string, choice: ScreenChoice) => P(e).manager.choose(id, choice));
   listen(IpcChannel.SessionsFocus, (e, id: string | null) => P(e).manager.focus(id));
   listen(IpcChannel.PtyWrite, (e, id: string, data: string) => P(e).manager.write(id, data));
   listen(IpcChannel.PtyResize, (e, id: string, cols: number, rows: number) => P(e).manager.resize(id, cols, rows));

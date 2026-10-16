@@ -160,4 +160,30 @@ describe('QuestionCard', () => {
     fireEvent.focus(screen.getByText('無し').closest('button')!);
     expect(screen.getByText('この選択肢にはプレビューがありません')).toBeTruthy();
   });
+
+  it('プレビュー付きの質問には、自由記述の代わりにメモ欄を出し、メモと選んだ案のプレビューを添え書き（annotations）で渡す', async () => {
+    const layout: AskQuestion = {
+      question: '並べ方は？',
+      header: '並べ方',
+      multiSelect: false,
+      options: [
+        { label: '縦', description: '', preview: '縦の図' },
+        { label: '無し', description: '' },
+      ],
+    };
+    const { unmount } = render(<QuestionCard sessionId="s1" question={pending(layout)} />);
+    fireEvent.change(screen.getByPlaceholderText('選んだ案について Claude に伝えること'), { target: { value: '  余白を広めに  ' } });
+    fireEvent.click(screen.getByText('縦'));
+    await sent();
+    expect(replies()).toEqual([['s1', 'q1', { kind: 'answer', answers: { '並べ方は？': '縦' }, annotations: { '並べ方は？': { notes: '余白を広めに', preview: '縦の図' } } }]]);
+    unmount();
+    // メモが無く、選んだ案にプレビューも無ければ、添え書きは付けない。プレビューの無い質問にはメモ欄を出さない
+    render(<QuestionCard sessionId="s1" question={{ ...pending(layout), id: 'q2' }} />);
+    fireEvent.click(screen.getByText('無し'));
+    await sent();
+    expect(replies()[1]).toEqual(['s1', 'q2', { kind: 'answer', answers: { '並べ方は？': '無し' } }]);
+    cleanup();
+    render(<QuestionCard sessionId="s1" question={pending(style)} />);
+    expect(screen.queryByPlaceholderText('選んだ案について Claude に伝えること')).toBeNull();
+  });
 });

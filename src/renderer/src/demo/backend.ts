@@ -16,7 +16,6 @@ import type {
   DiscoveredSession,
   FileChange,
   GitState,
-  ScreenChoice,
   SessionSummary,
   NewSessionOptions,
   ShellData,
@@ -27,7 +26,8 @@ import type {
 } from '@shared/ipc';
 import type { FileKnowledge } from '@shared/knowledge';
 import type { ModelCatalog } from '@shared/models';
-import type { Activity, ScreenInfo } from '@shared/screen';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
+import type { Activity } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { SystemStats } from '@shared/system';
@@ -57,7 +57,9 @@ class Channel<T> {
 export type DemoSession = {
   summary: SessionSummary;
   events: ChatEvent[];
-  screen: ScreenInfo;
+  // 答えを待っている質問と、許可の確認（カードに出す）
+  question: PendingQuestion | null;
+  permission: PendingPermission | null;
   activity: Activity | null;
   knowledge: Record<string, FileKnowledge>;
   contextTokens: number | null;
@@ -86,10 +88,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class DemoBackend {
   readonly sessions = new Map<string, DemoSession>();
-  // 台本が待つ、アプリからの入力（送った発言・選んだ選択肢）
+  // 台本が待つ、アプリからの入力（送った発言・質問や許可の確認への答え）
   // images: 添付した画像の鍵（sessions.image で読める）。本文の中の画像のパスは [Image #n] に置き換えてある
   onUserMessage: (sessionId: string, text: string, images: string[]) => void = () => {};
-  onChoose: (sessionId: string, choice: ScreenChoice) => void = () => {};
+  onAnswer: (sessionId: string) => void = () => {};
   // アプリ内ブラウザの「あなたの番です」への返事・タスクの「止める」・ターミナルへの入力・作業の書き出し
   onBrowserAnswer: (sessionId: string, askId: string, answer: BrowserAnswer) => void = () => {};
   onStopTask: (sessionId: string, ref: TaskRef) => void = () => {};
@@ -113,7 +115,8 @@ export class DemoBackend {
     sessions: new Channel<SessionSummary[]>(),
     select: new Channel<string>(),
     chat: new Channel<{ sessionId: string; fromSeq: number; events: ChatEvent[]; live: boolean }>(),
-    screen: new Channel<{ sessionId: string; info: ScreenInfo }>(),
+    question: new Channel<{ sessionId: string; question: PendingQuestion | null }>(),
+    permission: new Channel<{ sessionId: string; permission: PendingPermission | null }>(),
     activity: new Channel<{ sessionId: string; activity: Activity | null }>(),
     workflows: new Channel<{ sessionId: string; runs: WorkflowRun[] }>(),
     subagents: new Channel<{ sessionId: string; runs: SubagentRun[] }>(),
@@ -184,7 +187,8 @@ export class DemoBackend {
         ...summary,
       },
       events: ready ? [{ type: 'process-start' }, { type: 'ready' }, ...events] : [{ type: 'process-start' }, ...events],
-      screen: { state: { kind: 'prompt' }, model: 'Opus 5.5', effort: 'high', mode: 'manual', draft: '', ready: true },
+      question: null,
+      permission: null,
       activity: null,
       knowledge: {},
       contextTokens: 18_000,
@@ -234,10 +238,20 @@ export class DemoBackend {
     this.emitSessions();
   }
 
-  setScreen(id: string, patch: Partial<ScreenInfo>): void {
+  // 質問のカードを出す（null で消す）。一覧の印も合わせる
+  ask(id: string, question: PendingQuestion | null): void {
     const s = this.session(id);
-    s.screen = { ...s.screen, ...patch };
-    this.ch.screen.emit({ sessionId: id, info: s.screen });
+    s.question = question;
+    this.ch.question.emit({ sessionId: id, question });
+    this.update(id, { attention: question ? 'question' : s.permission ? 'permission' : null });
+  }
+
+  // 許可の確認のカードを出す（null で消す）。一覧の印も合わせる
+  askPermission(id: string, permission: PendingPermission | null): void {
+    const s = this.session(id);
+    s.permission = permission;
+    this.ch.permission.emit({ sessionId: id, permission });
+    this.update(id, { attention: permission ? 'permission' : s.question ? 'question' : null });
   }
 
   setActivity(id: string, activity: Activity | null): void {
@@ -404,16 +418,32 @@ export class DemoBackend {
         onProgress: (l) => this.ch.activity.on(l),
       },
       screen: {
-        choose: async (id, choice) => {
-          await sleep(250);
-          this.onChoose(id, choice);
-          return 'chosen';
-        },
         setMode: () => ok(true),
         rewind: () => ok(false),
       },
-      // デモの質問は、画面のメニュー（setScreen）で出す
-      question: { get: () => ok(null), reply: () => ok(false), onChanged: () => () => {} },
+      // 答えたら、カードを消してから台本に知らせる（本物は、Claude Code に返した要求が無くなってカードが消える）
+      question: {
+        get: (id) => ok(this.sessions.get(id)?.question ?? null),
+        reply: async (id, questionId) => {
+          if (this.sessions.get(id)?.question?.id !== questionId) return false;
+          await sleep(250);
+          this.ask(id, null);
+          this.onAnswer(id);
+          return true;
+        },
+        onChanged: (l) => this.ch.question.on(l),
+      },
+      permission: {
+        get: (id) => ok(this.sessions.get(id)?.permission ?? null),
+        reply: async (id, requestId) => {
+          if (this.sessions.get(id)?.permission?.id !== requestId) return false;
+          await sleep(250);
+          this.askPermission(id, null);
+          this.onAnswer(id);
+          return true;
+        },
+        onChanged: (l) => this.ch.permission.on(l),
+      },
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },

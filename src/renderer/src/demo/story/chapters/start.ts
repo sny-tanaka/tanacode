@@ -44,7 +44,7 @@ export async function runStart(story: Story): Promise<void> {
       { ready: false },
     );
     // 選んだ権限モードは、始めたセッションの入力欄の下にも出る
-    backend.setScreen(MAIN, { mode: options.mode ?? 'manual' });
+    backend.update(MAIN, { mode: options.mode ?? 'manual' });
     return MAIN;
   };
   d.caption('最初の指示を送ります', '.chat-input');

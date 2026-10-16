@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import {
@@ -23,7 +23,6 @@ import type {
   ChatBatch,
   ExportSource,
   NewSessionOptions,
-  ScreenChoice,
   SessionOptions,
   SessionSnapshot,
   SessionAttention,
@@ -32,14 +31,14 @@ import type {
   WorktreePreparing,
   WorktreeRemoval,
 } from '@shared/ipc';
-import type { Activity, AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
-import type { PendingQuestion, QuestionReply } from '@shared/questions';
+import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
@@ -51,6 +50,7 @@ import { PendingQuestions } from './pending-questions';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
+import { PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
 import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
@@ -63,7 +63,6 @@ import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
 import type { SessionRecord, SessionStore } from './session-store';
 import type { WorkspaceWatchers } from './workspace-watcher';
-import type { StreamClient } from './stream/client';
 import { generateTitle } from './stream/internal';
 import { LineLog } from './stream/log';
 import type {
@@ -140,6 +139,14 @@ type Runtime = {
   permission: PermissionRequest | null;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
+  // 質問（AskUserQuestion）の要求のうち、PendingQuestions で返事を待っているもの（request_id → 待つのをやめる口）
+  questionWaits: Map<string, AbortController>;
+  // プランの承認（ExitPlanMode）の要求の、プランの本文（request_id → 本文。Claude Code は要求の入力に本文を入れない）
+  plans: Map<string, string | null>;
+  // 今の会話のプランのファイル（会話ログの plan_mode の添付の planFilePath。プランモードで Claude が書く）
+  planFile: string | null;
+  // Claude が ExitPlanMode に渡したプランの本文（tool_use の ID → 本文。プランのファイルが読めないときに使う）
+  planInputs: Map<string, string>;
   // initialize の返事が来た（コマンド・モデルの一覧など）。来るまでは起動中
   init: InitializeResponse | null;
   // 入力を受け付けられるようになった（ready を配信した）。worktree の準備が終わるまでは配信しない
@@ -212,8 +219,10 @@ type Listeners = {
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
   // ユーザーの操作待ちになった（質問・許可の確認）
   onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu } | { kind: 'unsupported' }) => void;
-  // フックが答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
+  // 答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
   onQuestion?: (sessionId: string, question: PendingQuestion | null) => void;
+  // 答えを待っている、質問でない要求（許可の確認・プランの承認）。いちばん前のもの（無ければ null）
+  onPermission?: (sessionId: string, permission: PendingPermission | null) => void;
 };
 
 export class SessionManager {
@@ -247,7 +256,7 @@ export class SessionManager {
     private readonly terminalMcp: () => McpLaunch | null = () => null,
   ) {}
 
-  // フックが答えを待っている AskUserQuestion（セッションごと）
+  // 答えを待っている AskUserQuestion（セッションごと。stream-json の要求と、ターミナルモードの質問のフックのもの）
   private readonly questions = new PendingQuestions((id) => this.questionsChanged(id));
 
   // 状態が変わったかもしれないセッション（イベント・操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
@@ -689,9 +698,23 @@ export class SessionManager {
     this.changed(id);
   }
 
-  // 今出ている許可の確認の、ツールの名前と入力の全文（フックの入力から。stream-json では、待っている要求に全文がある）
-  pendingPermission(_id: string): PermissionRequest | null {
+  // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null
+  pendingPermission(id: string): PendingPermission | null {
+    const rt = this.runtimes.get(id);
+    for (const [requestId, request] of rt?.requests ?? []) {
+      if (!rt?.questionWaits.has(requestId)) return permissionOf(requestId, request, rt?.plans.get(requestId) ?? null);
+    }
     return null;
+  }
+
+  // 許可の確認に答える（カード・親の answer_permission）。その要求をもう待っていなければ false
+  replyPermission(id: string, requestId: string, reply: PermissionReply): boolean {
+    const rt = this.runtimes.get(id);
+    const request = rt?.requests.get(requestId);
+    if (!rt || !request || rt.questionWaits.has(requestId)) return false;
+    if (!rt.process?.client?.respond(requestId, permissionResult(request, reply))) return false;
+    this.requestRemoved(id, rt, requestId);
+    return true;
   }
 
   // AskUserQuestion を出す直前に、フックがその入力をファイルに書いた（stream-json では使わない）
@@ -853,15 +876,6 @@ export class SessionManager {
 
   async rewind(_id: string, _text: string): Promise<boolean> {
     return false;
-  }
-
-  // カードの選択肢を選ぶ（画面のメニュー）。stream-json では画面が無いので選べない
-  async choose(_id: string, _choice: ScreenChoice): Promise<ChooseResult> {
-    return 'gone';
-  }
-
-  async chooseIf(_id: string, _choice: ScreenChoice, _expect: (menu: Menu) => boolean): Promise<ChooseResult> {
-    return 'gone';
   }
 
   addedFoldersOf(id: string): string[] {
@@ -1218,6 +1232,10 @@ export class SessionManager {
         background: 0,
         permission: null,
         requests: new Map(),
+        questionWaits: new Map(),
+        plans: new Map(),
+        planFile: null,
+        planInputs: new Map(),
         init: null,
         ready: false,
         knownMode: null,
@@ -1658,6 +1676,12 @@ export class SessionManager {
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
     rt.lastAssistant = message.uuid;
+    for (const block of message.message.content ?? []) {
+      if (block.type === 'tool_use' && block.name === PLAN_TOOL && typeof block.id === 'string') {
+        const plan = (block.input as { plan?: unknown } | undefined)?.plan;
+        if (typeof plan === 'string') rt.planInputs.set(block.id, plan);
+      }
+    }
     const usage = message.message.usage;
     const tokens = usage ? (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) : 0;
     const size = rt.statusLine?.context?.size ?? null;
@@ -1825,15 +1849,33 @@ export class SessionManager {
     this.pushEvents(id, [{ type: 'queue', prompts }]);
   }
 
-  // Claude Code が答えを待つ要求が来た（許可の確認・質問・プランの承認・ワークフローの確認）
+  // Claude Code が答えを待つ要求が来た（許可の確認・質問・プランの承認・ワークフローの確認）。
+  // 質問（AskUserQuestion）は、質問のカード・親の answer_question の返事を PendingQuestions で待ち、Claude Code に返す
   private requestAdded(id: string, rt: Runtime, requestId: string, request: CanUseToolRequest): void {
     rt.requests.set(requestId, request);
+    // プランの本文は、プランのファイルから読む（TUI と同じ）。無ければ、Claude が ExitPlanMode に渡した本文
+    if (request.tool_name === PLAN_TOOL) rt.plans.set(requestId, readText(rt.planFile) ?? rt.planInputs.get(request.tool_use_id) ?? null);
+    const questions = request.tool_name === 'AskUserQuestion' ? askQuestionsOf(request.input) : null;
+    if (questions) {
+      const process = rt.process;
+      const wait = new AbortController();
+      rt.questionWaits.set(requestId, wait);
+      void this.questions.wait(id, questions, wait.signal).then((reply) => {
+        rt.questionWaits.delete(requestId);
+        // 待つのをやめた（取り下げられた・終わった・人がほかで答えた）ときは、何も返さない
+        if (!reply || rt.process !== process) return;
+        if (process?.client?.respond(requestId, questionResult(request.input, questions, reply))) this.requestRemoved(id, rt, requestId);
+      });
+    }
     this.updateAttention(id, rt);
   }
 
   // 待っていた要求が無くなった（答えた・Claude Code が取り下げた）
   private requestRemoved(id: string, rt: Runtime, requestId: string): void {
     if (!rt.requests.delete(requestId)) return;
+    rt.plans.delete(requestId);
+    rt.questionWaits.get(requestId)?.abort();
+    rt.questionWaits.delete(requestId);
     this.updateAttention(id, rt);
   }
 
@@ -1841,11 +1883,15 @@ export class SessionManager {
   private releaseRequests(id: string, rt: Runtime): void {
     if (rt.requests.size === 0) return;
     rt.requests.clear();
+    rt.plans.clear();
+    for (const wait of rt.questionWaits.values()) wait.abort();
+    rt.questionWaits.clear();
     this.updateAttention(id, rt);
   }
 
   // 操作待ちの種類を、待っている要求と、フックが答えを待っている質問から決める。操作待ちでなかったところから変わったら、通知する
   private updateAttention(id: string, rt: Runtime): void {
+    this.listeners.onPermission?.(id, this.pendingPermission(id));
     const request = firstRequest(rt);
     const pending = this.questions.first(id);
     const attention: SessionAttention = request ? (request.tool_name === 'AskUserQuestion' ? 'question' : 'permission') : pending ? 'question' : null;
@@ -1932,6 +1978,8 @@ export class SessionManager {
     // 引き継いだ claude が起動してから書いた行は、読み直した履歴でも今動いているもの（バックグラウンドのタスクや質問を追う）
     const past = isHistory && !(rt?.aliveSince && entryTime(entry) >= rt.aliveSince);
     rt?.tasks.track(entry, past, isHistory);
+    const planFile = entry.attachment?.planFilePath;
+    if (rt && typeof planFile === 'string' && planFile) rt.planFile = planFile;
     if (rt && !past) this.noteMode(id, rt, permissionModeOf(entry));
     rt?.knowledge.handle(entry);
     rt?.context.handle(entry);
@@ -2072,6 +2120,17 @@ function permissionModeOf(entry: TranscriptEntry): PermissionMode | null {
   if (entry.isSidechain || (entry.type !== 'user' && entry.type !== 'permission-mode')) return null;
   if (typeof entry.permissionMode !== 'string' || !entry.permissionMode) return null;
   return TRANSCRIPT_MODES.get(entry.permissionMode) ?? 'manual';
+}
+
+// 小さな文字のファイルを読む（プランのファイル）。無い・読めなければ null
+function readText(file: string | null): string | null {
+  if (!file) return null;
+  try {
+    const text = readFileSync(file, 'utf8');
+    return text.trim() ? text : null;
+  } catch {
+    return null;
+  }
 }
 
 function fileSize(file: string): number {

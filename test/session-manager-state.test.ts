@@ -171,8 +171,8 @@ describe('一覧と記録の読み取り', () => {
     expect(await app.manager.context('nope')).toEqual({ items: [] });
     expect(await app.manager.setMode('nope', 'auto')).toBe(false);
     expect(await app.manager.rewind('nope', 'はじめ')).toBe(false);
-    expect(await app.manager.chooseIf('nope', { optionId: '1', key: 'enter' }, () => true)).toBe('gone');
-    await expect(app.manager.choose('nope', { optionId: '1', key: 'enter' })).resolves.toBe('gone');
+    expect(app.manager.pendingPermission('nope')).toBeNull();
+    expect(app.manager.replyPermission('nope', 'r1', { kind: 'allow' })).toBe(false);
     // 知らないセッションへの操作は何もしない（失敗もしない）
     app.manager.write('nope', 'x');
     app.manager.interrupt('nope');

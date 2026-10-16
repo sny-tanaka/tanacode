@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
-import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
-import type { AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo } from '../src/shared/screen';
+import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
+import type { PendingPermission, PermissionReply } from '../src/shared/questions';
+import type { AskQuestion, PermissionMode } from '../src/shared/screen';
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
 import type { WorkflowRun } from '../src/shared/workflow';
@@ -31,7 +32,6 @@ import {
   sessionRef,
   sessionToolId,
   SESSION_STATE_LABEL,
-  type PermissionRequest,
   type SessionState,
 } from '../src/shared/session-tools';
 import { allowedBrowserToolIds } from '../src/shared/browser-tools';
@@ -273,21 +273,20 @@ class FakeHost implements SessionsHost {
   models = new Map<string, string>();
   efforts = new Map<string, string>();
   events = new Map<string, ChatEvent[]>();
-  screens = new Map<string, ScreenInfo>();
   created: { cwd: string; options: NewSessionOptions; parentId: string | null; worktree: boolean }[] = [];
   submitted: { id: string; text: string }[] = [];
-  chosen: { id: string; choice: ScreenChoice }[] = [];
   interrupted: string[] = [];
   opened: string[] = [];
   renamed: { id: string; title: string }[] = [];
-  asked = new Map<string, AskQuestion[]>();
   withdrawn: string[] = [];
   // end_session: アーカイブの呼び出しと、その結果（worktree を消した結果か、消せなかった理由）
   archives: { id: string; options: ArchiveOptions }[] = [];
   removal: WorktreeRemoval | Error | null = null;
   leftovers: WorktreeLeftovers | Error | null = null;
-  // フックが書いた、今出ている許可の確認の入力
-  permissions = new Map<string, PermissionRequest>();
+  // Claude Code が答えを待っている許可の確認（いちばん前のもの）と、それへの答え。onReply: 答えたあとに起きること
+  permissions = new Map<string, PendingPermission>();
+  replies: { id: string; requestId: string; reply: PermissionReply }[] = [];
+  onReply: ((id: string) => void) | null = null;
   bash: BashTask[] = [];
   agents: SubagentRun[] = [];
   flows: WorkflowRun[] = [];
@@ -342,7 +341,6 @@ class FakeHost implements SessionsHost {
   currentModel = (id: string) => this.models.get(id) ?? null;
   currentEffort = (id: string) => this.efforts.get(id) ?? null;
   conversation = async (id: string) => this.events.get(id) ?? [];
-  screen = (id: string) => this.screens.get(id) ?? null;
   create = (cwd: string, options: NewSessionOptions, parentId: string | null) => {
     this.created.push({ cwd, options, parentId, worktree: false });
     this.add('99999999-0000-4000-8000-000000000009', cwd, { parentId }, 'starting');
@@ -358,8 +356,7 @@ class FakeHost implements SessionsHost {
   setMode = async (id: string, mode: PermissionMode) => {
     if (this.modeSwitchFails) return false;
     this.modeSwitches.push({ id, mode });
-    const screen = this.screens.get(id);
-    if (screen) this.screens.set(id, { ...screen, mode });
+    this.modes.set(id, mode);
     return true;
   };
   configure = (id: string, options: SessionOptions) => {
@@ -370,24 +367,23 @@ class FakeHost implements SessionsHost {
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
   interrupt = (id: string) => void this.interrupted.push(id);
   withdrawParentDraft = async (id: string) => void this.withdrawn.push(id);
-  askedQuestions = (id: string) => this.asked.get(id) ?? null;
-  // フックが答えを待っている質問（本物と同じ PendingQuestions。試験では questions.wait で入れる）
+  // 答えを待っている質問（本物と同じ PendingQuestions。試験では questions.wait で入れる）
   questions = new PendingQuestions((id) => this.listeners.forEach((l) => l(id)));
   pendingQuestion = (id: string) => this.questions.first(id);
   answerPendingQuestion = (id: string, questionId: string, question: string, answer: string) => this.questions.answerOne(id, questionId, question, answer);
-  // 本物と同じく、メニューが expect を満たさなければ押さない。Enter で答えると質問が閉じる
-  chooseIf = async (id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult> => {
-    const screen = this.screens.get(id);
-    if (screen?.state.kind !== 'menu' || !expect(screen.state.menu)) return 'gone';
-    this.chosen.push({ id, choice });
-    if (choice.key === 'enter') this.screens.set(id, prompt(''));
-    return 'chosen';
-  };
   watchState = (listener: (id: string) => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
   pendingPermission = (id: string) => this.permissions.get(id) ?? null;
+  // 本物と同じく、その要求をもう待っていなければ答えない。答えたら、要求は無くなる
+  replyPermission = (id: string, requestId: string, reply: PermissionReply) => {
+    if (this.permissions.get(id)?.id !== requestId) return false;
+    this.replies.push({ id, requestId, reply });
+    this.permissions.delete(id);
+    this.onReply?.(id);
+    return true;
+  };
   subagents = () => this.agents;
   bashTasks = () => this.bash;
   workflows = () => this.flows;
@@ -430,19 +426,26 @@ class FakeHost implements SessionsHost {
 
 const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
 const jsonOf = <T = Record<string, unknown>>(result: { content: { type: string; text?: string }[] }) => JSON.parse(textOf(result)) as T;
-function prompt(text: string, ready = true): ScreenInfo {
-  return { state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: text, ready };
-}
-const asked = (question: string): AskQuestion => ({ question, header: '', multiSelect: false, options: [] });
-const menuScreen = (menu: Partial<Menu>): ScreenInfo => ({
-  state: { kind: 'menu', menu: { kind: 'question', tabs: [], title: '', context: [], options: [], multiSelect: false, hint: '', ...menu } },
-  model: null,
-  effort: null,
-  mode: null,
-  draft: '',
-  ready: true,
+// 子が出す許可の確認（Claude Code が答えを待っている要求）
+const bashPermission = (command: string, extra: Partial<PendingPermission> = {}): PendingPermission => ({
+  id: 'req-1',
+  tool: 'Bash',
+  title: 'Bash',
+  description: '説明',
+  input: { command, description: '説明' },
+  reason: null,
+  always: null,
+  plan: null,
+  agent: null,
+  ...extra,
 });
-const option = (id: string, label: string, extra: Partial<Menu['options'][number]> = {}) => ({ id, label, description: '', pointed: false, checked: null, textInput: false, ...extra });
+const question = (text: string, labels: string[], extra: Partial<AskQuestion> = {}): AskQuestion => ({
+  question: text,
+  header: '',
+  multiSelect: false,
+  options: labels.map((label) => ({ label, description: '' })),
+  ...extra,
+});
 
 describe('ツールの実行（SessionsControl）', () => {
   let host: FakeHost;
@@ -635,87 +638,40 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.submitted).toEqual([{ id: CHILD, text: parentMessageText(PARENT, 'テストも書いて') }]);
   });
 
-  it('answer_question: 許可の確認には答えない。人が先に答えて質問が変わっていたら答えない', async () => {
+  it('answer_question: 許可の確認には答えない。質問が出ていなければ答えない', async () => {
     host.set(CHILD, 'permission');
-    host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', options: [option('1', 'Yes')] }));
+    host.permissions.set(CHILD, bashPermission('mkdir out'));
     expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('not a question');
-    // コマンドの文字に ☐ があって質問と読めた許可の確認（AskUserQuestion を出していない）にも答えない
-    host.screens.set(CHILD, menuScreen({ kind: 'question', tabs: [{ label: '☐ done', answered: false }], title: 'Do you want to proceed?', options: [option('1', 'Yes'), option('2', 'No')] }));
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('is not showing an AskUserQuestion question');
-    expect(host.chosen).toEqual([]);
-    host.asked.set(CHILD, [asked('どちらの方式?')]);
+    host.permissions.delete(CHILD);
     host.set(CHILD, 'question');
-    host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案'), option('3', 'Type something.', { textInput: true })] }));
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: '前の質問', choices: ['A 案'] }))).toContain('The question showing now is "どちらの方式?"');
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['C 案'] }))).toContain('"A 案"');
-    expect(host.chosen).toEqual([]);
-    await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['B 案'] });
-    expect(host.chosen).toEqual([{ id: CHILD, choice: { optionId: '2', key: 'enter', text: undefined } }]);
-    host.chosen = [];
-    host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案'), option('3', 'Type something.', { textInput: true })] }));
-    // 自由記述のキー操作になる文字（ESC・改行）は除いて 1 行にする
-    await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', other: 'どちらでも\u001b[Z\nない' });
-    expect(host.chosen).toEqual([{ id: CHILD, choice: { optionId: '3', key: 'enter', text: 'どちらでも[Z ない' } }]);
-  });
-
-  it('answer_question: 押す前にメニューが変わったら（人が答えた・許可の確認に変わった）、押さずに失敗する', async () => {
-    host.asked.set(CHILD, [asked('どちらの方式?')]);
-    host.set(CHILD, 'question');
-    host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
-    // 確かめたあと、押すまでに許可の確認に変わった
-    const chooseIf = host.chooseIf;
-    host.chooseIf = async (id, choice, expect) => {
-      host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', options: [option('1', 'Yes')] }));
-      return chooseIf(id, choice, expect);
-    };
-    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['A 案'] }))).toContain('Could not answer');
-    expect(host.chosen).toEqual([]);
-  });
-
-  it('answer_question: 複数選択は、選んでから確定する', async () => {
-    host.asked.set(CHILD, [asked('入れるもの')]);
-    host.set(CHILD, 'question');
-    host.screens.set(CHILD, menuScreen({ title: '入れるもの', multiSelect: true, options: [option('1', 'テスト', { checked: false }), option('2', '文書', { checked: true }), option('submit', 'Submit')] }));
-    await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: '入れるもの', choices: ['テスト', '文書'] });
-    // 付いているものは押さない
-    expect(host.chosen.map((c) => c.choice)).toEqual([
-      { optionId: '1', key: 'space' },
-      { optionId: 'submit', key: 'enter' },
-    ]);
+    expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', choices: ['A 案'] }))).toBe(
+      'No question is showing (the user answered it first, or it was withdrawn). Check with get_session.',
+    );
+    expect(host.replies).toEqual([]);
   });
 
   describe('answer_question: 答えたあと、子が続けて出す次の質問', () => {
-    const first = () => menuScreen({ title: '1/2 どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案')] });
-    const second = () => menuScreen({ title: '2/2 テストも書く?', options: [option('1', 'はい'), option('2', 'いいえ')] });
-    // 答えると、子は作業に戻る（本物と同じく、質問が閉じて作業中になる）。after: そのあとに起きること
-    const answering = (after: () => void) => {
-      const chooseIf = host.chooseIf;
-      host.chooseIf = async (id, choice, expect) => {
-        const pressed = await chooseIf(id, choice, expect);
-        if (pressed === 'chosen' && choice.key === 'enter') {
-          host.set(id, 'working');
-          after();
-        }
-        return pressed;
-      };
-    };
-    const ask = () => {
-      host.asked.set(CHILD, [asked('1/2 どちらの方式?')]);
+    const FIRST = question('1/2 どちらの方式?', ['A 案', 'B 案']);
+    const SECOND = question('2/2 テストも書く?', ['はい', 'いいえ']);
+    // 子が質問を出す（本物と同じ PendingQuestions で待つ）。答えを受け取ると、子は作業に戻り（作業中）、after が起きる
+    const ask = (after: () => void = () => {}) => {
       host.set(CHILD, 'question');
-      host.screens.set(CHILD, first());
+      void host.questions.wait(CHILD, [FIRST], new AbortController().signal).then((reply) => {
+        if (!reply) return;
+        host.set(CHILD, 'working');
+        after();
+      });
     };
-    const answer = (target: SessionsControl = control) => target.handle(PARENT, 'answer_question', { session_id: CHILD, question: '1/2 どちらの方式?', choices: ['A 案'] });
+    const answer = (target: SessionsControl = control) => target.handle(PARENT, 'answer_question', { session_id: CHILD, question: FIRST.question, choices: ['A 案'] });
 
     it('少しあとに出た次の質問を、結果に入れて返す（親が 1 問答えて離れないように）', async () => {
-      ask();
       // 子は、答えを受け取ってから少しして、次の質問を別の AskUserQuestion で出す。
       // このテストのホストにだけ効かせ、テストが終わったら取り消す（落ちたときに、あとのテストのホストを書き換えない）
       const mine = host;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      answering(() => {
+      ask(() => {
         timer = setTimeout(() => {
-          mine.asked.set(CHILD, [asked('2/2 テストも書く?')]);
-          mine.screens.set(CHILD, second());
+          void mine.questions.wait(CHILD, [SECOND], new AbortController().signal);
           mine.set(CHILD, 'question');
         }, 15);
       });
@@ -723,7 +679,7 @@ describe('ツールの実行（SessionsControl）', () => {
         const result = jsonOf(await answer());
         expect(result.answered).toBe(true);
         expect(result.state).toBe('question');
-        expect(result.next_question).toMatchObject({ title: '2/2 テストも書く?', options: [{ label: 'はい' }, { label: 'いいえ' }] });
+        expect(result.next_question).toMatchObject({ title: SECOND.question, options: [{ label: 'はい' }, { label: 'いいえ' }] });
         expect(result.note).toContain('Answer it now');
       } finally {
         clearTimeout(timer);
@@ -732,7 +688,6 @@ describe('ツールの実行（SessionsControl）', () => {
 
     it('子が作業を続けて、上限まで次の質問が出なければ、次の質問なしで返す', async () => {
       ask();
-      answering(() => {});
       const result = jsonOf(await answer());
       expect(result).toEqual({ answered: true, state: 'working' });
     });
@@ -740,12 +695,9 @@ describe('ツールの実行（SessionsControl）', () => {
     it('子の手が空いた・人の操作待ちになったら、上限まで待たずに返す', async () => {
       // 上限を長くして、待たずに返ることを見る
       const patient = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 60_000 });
-      const chooseIf = host.chooseIf;
       try {
         for (const state of ['idle', 'background', 'permission', 'waiting', 'exited'] as const) {
-          ask();
-          host.chooseIf = chooseIf;
-          answering(() => host.set(CHILD, state));
+          ask(() => host.set(CHILD, state));
           const started = Date.now();
           const result = jsonOf(await answer(patient));
           expect(result).toEqual({ answered: true, state });
@@ -770,170 +722,115 @@ describe('ツールの実行（SessionsControl）', () => {
   });
 
   describe('answer_permission', () => {
-    const YES = option('1', 'Yes', { pointed: true });
-    const REMEMBER = option('2', 'Yes, and don’t ask again for: mkdir *');
-    const AUTO = option('3', 'Yes, and switch to auto mode · auto mode handles these prompts for you');
-    const NO = option('4', 'No');
-    const bash = (command: string, extra: Partial<PermissionRequest> = {}): PermissionRequest => ({ seq: 1, at: 100, tool: 'Bash', input: { command, description: '説明' }, agent: null, ...extra });
-    // 子が許可の確認を出している状態にする（画面のメニュー・フックの入力・会話の、結果待ちのツールの呼び出し）
-    const show = (request: PermissionRequest | null, menu: Partial<Menu> = {}, pending = true) => {
-      const command = typeof request?.input.command === 'string' ? request.input.command : 'mkdir out';
+    // 子が許可の確認を出している状態にする（Claude Code が答えを待っている要求）
+    const show = (permission: PendingPermission) => {
       host.set(CHILD, 'permission');
-      host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', context: ['Bash command', command], options: [YES, REMEMBER, AUTO, NO], ...menu }));
-      if (request) host.permissions.set(CHILD, request);
-      else host.permissions.delete(CHILD);
-      host.events.set(CHILD, pending && request ? [{ type: 'tool-use', id: `toolu_${request.seq}`, name: request.tool, target: '', input: `# 説明\n${command}`, filePath: typeof request.input.file_path === 'string' ? request.input.file_path : undefined }] : []);
+      host.permissions.set(CHILD, permission);
     };
-    type View = { id: string; tool?: string; input?: unknown; can_allow: boolean; cannot_allow_reason?: string; can_deny: boolean; from_subagent?: string };
+    type View = {
+      id: string;
+      title?: string;
+      description?: string;
+      reason?: string;
+      tool?: string;
+      input?: unknown;
+      can_allow: boolean;
+      cannot_allow_reason?: string;
+      can_deny: boolean;
+      from_subagent?: string;
+    };
     const read = async () => jsonOf<{ permission: View }>(await control.handle(PARENT, 'get_session', { session_id: CHILD })).permission;
     const answer = (args: Record<string, unknown>, caller = PARENT) => control.handle(caller, 'answer_permission', { session_id: CHILD, ...args });
 
     beforeEach(() => host.modes.set(PARENT, 'auto'));
 
-    it('get_session は、確認の ID と、ツールの入力の全文を返す', async () => {
+    it('get_session は、確認の ID・見出し・説明・確認する理由と、ツールの入力の全文を返す', async () => {
       const long = `echo ${'x'.repeat(5000)} && mkdir out`;
-      show(bash(long));
+      show(bashPermission(long, { reason: 'Bash は毎回確かめる設定です' }));
       const permission = await read();
-      expect(permission).toMatchObject({ tool: 'Bash', input: { command: long, description: '説明' }, can_allow: true, can_deny: true });
-      expect(permission.id).toMatch(/^[0-9a-f]{12}$/);
-      expect(permission.cannot_allow_reason).toBeUndefined();
+      expect(permission).toEqual({
+        id: 'req-1',
+        title: 'Bash',
+        description: '説明',
+        reason: 'Bash は毎回確かめる設定です',
+        tool: 'Bash',
+        input: { command: long, description: '説明' },
+        can_allow: true,
+        can_deny: true,
+      });
     });
 
-    it('allow: 「Yes」だけを選ぶ。許可を覚えさせる選択肢・権限モードを変える選択肢は選ばない', async () => {
-      show(bash('mkdir out'));
-      const { id } = await read();
-      const result = await answer({ permission_id: id, decision: 'allow' });
+    it('allow: 今回だけ許す（許可を覚えさせない・権限モードを変えない）', async () => {
+      show(bashPermission('mkdir out'));
+      const result = await answer({ permission_id: 'req-1', decision: 'allow' });
       expect(result.isError).toBeFalsy();
-      expect(host.chosen).toEqual([{ id: CHILD, choice: { optionId: '1', key: 'enter' } }]);
+      expect(host.replies).toEqual([{ id: CHILD, requestId: 'req-1', reply: { kind: 'allow' } }]);
       expect(jsonOf(result)).toMatchObject({ answered: true, decision: 'allow' });
       expect(jsonOf<{ note: string }>(result).note).toContain('Nothing was remembered');
       expect(host.submitted).toEqual([]);
     });
 
-    it('選択肢の並びや数が違っても、名前がちょうど Yes・No のものだけを選ぶ', async () => {
-      // 許可を覚えさせる選択肢が先頭に来ても、選ばない
-      show(bash('mkdir out'), { options: [option('1', 'Yes, and don’t ask again for: mkdir *', { pointed: true }), option('2', 'No'), option('3', 'Yes')] });
-      await answer({ permission_id: (await read()).id, decision: 'allow' });
-      expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['3']);
-      // 歯止めの確認は Yes と No だけ
-      host.chosen = [];
-      show(bash('git branch -D old', { seq: 2 }), { options: [option('1', 'Yes', { pointed: true }), option('2', 'No')] });
-      await answer({ permission_id: (await read()).id, decision: 'deny' });
-      expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['2']);
-    });
-
-    it('「今回だけ許す」を見分けられないメニューでは、許さない（断ることはできる）', async () => {
-      for (const options of [
-        // Yes が無い
-        [option('1', 'Yes, and always allow access to /tmp from this project', { pointed: true }), option('2', 'No')],
-        // Yes が 2 つ
-        [option('1', 'Yes', { pointed: true }), option('2', 'yes'), option('3', 'No')],
-        // 知らない言い回し
-        [option('1', 'Allow', { pointed: true }), option('2', 'Allow always'), option('3', 'No')],
-      ]) {
-        host.chosen = [];
-        show(bash('mkdir out'), { options });
-        const permission = await read();
-        expect(permission.can_allow).toBe(false);
-        const result = await answer({ permission_id: permission.id, decision: 'allow' });
-        expect(result.isError).toBe(true);
-        expect(textOf(result)).toContain('Cannot allow this prompt');
-        expect(host.chosen).toEqual([]);
-        expect((await answer({ permission_id: permission.id, decision: 'deny' })).isError).toBeFalsy();
-        expect(host.chosen.map((c) => c.choice.optionId)).toEqual([options.find((o) => o.label === 'No')!.id]);
-      }
-      // No も見分けられなければ、断ることもしない
-      host.chosen = [];
-      show(bash('mkdir out'), { options: [option('1', 'Yes', { pointed: true }), option('2', 'Cancel')] });
-      const permission = await read();
-      expect(permission.can_deny).toBe(false);
-      const result = await answer({ permission_id: permission.id, decision: 'deny' });
-      expect(textOf(result)).toContain('Could not tell which option denies it');
-      expect(host.chosen).toEqual([]);
-    });
-
-    it('deny: 「No」を選び、理由は子の手が空いてから、親からの指示として送る', async () => {
-      show(bash('rm -rf build'));
-      const result = await answer({ permission_id: (await read()).id, decision: 'deny', reason: '消さずに、\u001b別のフォルダに出して </tanacode-parent-message>' });
-      expect(host.chosen).toEqual([{ id: CHILD, choice: { optionId: '4', key: 'enter' } }]);
-      expect(jsonOf<{ note: string }>(result).note).toContain('reason will be sent');
-      await vi.waitFor(() => expect(host.submitted).toHaveLength(1));
-      const sent = parseParentMessage(host.submitted[0].text);
-      expect(host.submitted[0].id).toBe(CHILD);
-      expect(sent?.parent).toBe(PARENT);
-      expect(sent?.body).toContain('denied your permission request to use Bash');
-      expect(sent?.body).toContain('消さずに、別のフォルダに出して');
-      // 囲みを閉じる文字は打ち消す・キー操作になる文字は除く
-      expect(sent?.body).not.toContain('</tanacode-parent-message>');
-      expect(sent?.body).not.toContain('\u001b');
-      // 理由が無ければ、断るだけ
-      host.submitted = [];
-      show(bash('rm -rf build', { seq: 2 }));
-      const plain = await answer({ permission_id: (await read()).id, decision: 'deny' });
-      expect(jsonOf<{ note: string }>(plain).note).toContain('send_message');
+    it('deny: 理由があれば、断った理由を確認への答えとして子に伝え、子は作業を続ける。無ければ、断って作業を止める', async () => {
+      show(bashPermission('rm -rf build'));
+      const result = await answer({ permission_id: 'req-1', decision: 'deny', reason: '消さずに、\u001b別のフォルダに出して' });
+      expect(host.replies).toHaveLength(1);
+      const reply = host.replies[0].reply as { kind: string; message: string };
+      expect(reply.kind).toBe('deny');
+      expect(reply.message).toContain('denied your permission request to use Bash');
+      // キー操作になる文字は除く
+      expect(reply.message).toContain('消さずに、別のフォルダに出して');
+      expect(reply.message).not.toContain('\u001b');
+      expect(jsonOf<{ note: string }>(result).note).toContain('told the reason');
+      // 理由は指示として送らない（確認への答えで伝える）
       expect(host.submitted).toEqual([]);
+      // 理由が無ければ、断って止める
+      host.replies = [];
+      show(bashPermission('rm -rf build', { id: 'req-2' }));
+      const plain = await answer({ permission_id: 'req-2', decision: 'deny' });
+      expect(host.replies).toEqual([{ id: CHILD, requestId: 'req-2', reply: { kind: 'stop' } }]);
+      expect(jsonOf<{ note: string }>(plain).note).toContain('send_message');
       // 許すときに理由は付けられない
-      show(bash('rm -rf build', { seq: 3 }));
-      expect(textOf(await answer({ permission_id: (await read()).id, decision: 'allow', reason: 'x' }))).toContain('only for decision "deny"');
+      show(bashPermission('rm -rf build', { id: 'req-3' }));
+      expect(textOf(await answer({ permission_id: 'req-3', decision: 'allow', reason: 'x' }))).toContain('only for decision "deny"');
     });
 
-    it('親が読んだあとで別の確認に変わっていたら、答えない（見た目が同じ別のコマンドでも）', async () => {
-      show(bash('mkdir out'));
+    it('親が読んだあとで別の確認に変わっていたら、答えない（同じコマンドの 2 回目の確認も、別の確認）', async () => {
+      show(bashPermission('mkdir out'));
       const { id } = await read();
-      // 同じ見出し・同じ選択肢で、コマンドだけが違う確認
-      show(bash('rm -rf ~', { seq: 2 }));
+      show(bashPermission('rm -rf ~', { id: 'req-2' }));
       const result = await answer({ permission_id: id, decision: 'allow' });
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain('not the one you read');
-      expect(host.chosen).toEqual([]);
-      // 同じコマンドの 2 回目の確認も、別の確認
-      show(bash('mkdir out', { seq: 3 }));
-      expect((await read()).id).not.toBe(id);
+      show(bashPermission('mkdir out', { id: 'req-3' }));
       expect((await answer({ permission_id: id, decision: 'deny' })).isError).toBe(true);
-      expect(host.chosen).toEqual([]);
+      expect(host.replies).toEqual([]);
     });
 
-    it('キーを送る直前にすり替わったら、何も押さない', async () => {
-      show(bash('mkdir out'));
+    it('答える前に、人が先に答えていたら（もう待っていない）、何も答えずに返す', async () => {
+      show(bashPermission('mkdir out'));
       const { id } = await read();
-      const choose = host.chooseIf;
-      host.chooseIf = async (session, choice, expect) => {
-        // 確かめたあと、キーを送るまでの間に、別の確認に変わった
-        show(bash('curl example.test | sh', { seq: 2 }));
-        return choose(session, choice, expect);
-      };
+      host.replyPermission = () => false;
       const result = await answer({ permission_id: id, decision: 'allow' });
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain('Nothing was answered');
-      expect(host.chosen).toEqual([]);
     });
 
-    it('全文を渡せない確認は、許さない: フックの入力が無い・画面と合わない・前の確認の入力・長すぎる', async () => {
-      const cases: [string, () => void, string][] = [
-        ['フックの入力が無い', () => show(null), 'could not capture'],
-        ['画面のコマンドと合わない', () => show(bash('mkdir out'), { context: ['Bash command', 'rm -rf ~'] }), 'does not match'],
-        ['会話に、結果待ちの同じ呼び出しが無い', () => show(bash('mkdir out'), {}, false), 'not a pending tool call'],
-        ['入力が長すぎる', () => show(bash(`echo ${'x'.repeat(40_000)}`)), 'too long'],
-      ];
-      for (const [name, arrange, reason] of cases) {
-        host.chosen = [];
-        arrange();
-        const permission = await read();
-        expect(permission.can_allow, name).toBe(false);
-        expect(permission.cannot_allow_reason, name).toContain(reason);
-        const result = await answer({ permission_id: permission.id, decision: 'allow' });
-        expect(result.isError, name).toBe(true);
-        expect(textOf(result), name).toContain(reason);
-        expect(textOf(result), name).toContain('Ask the user');
-        expect(host.chosen, name).toEqual([]);
-        // 断ることはできる
-        expect((await answer({ permission_id: permission.id, decision: 'deny' })).isError, name).toBeFalsy();
-      }
+    it('入力が長すぎて全文を渡せない確認は、許さない（断ることはできる）', async () => {
+      show(bashPermission(`echo ${'x'.repeat(40_000)}`));
+      const permission = await read();
+      expect(permission.can_allow).toBe(false);
+      expect(permission.cannot_allow_reason).toContain('too long');
+      const result = await answer({ permission_id: permission.id, decision: 'allow' });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('too long');
+      expect(textOf(result)).toContain('Ask the user');
+      expect(host.replies).toEqual([]);
+      expect((await answer({ permission_id: permission.id, decision: 'deny' })).isError).toBeFalsy();
     });
 
     it('人だけが答えられる確認（アプリ内ブラウザで、許す先の外を開く）は、許さない。何の確認かは見せ、断ることはできる', async () => {
       const NAVIGATE = 'mcp__tanacode-browser__navigate';
-      const asked: [string, PermissionRequest][] = [];
+      const asked: [string, unknown][] = [];
       control.dispose();
       control = new SessionsControl({
         host,
@@ -947,11 +844,8 @@ describe('ツールの実行（SessionsControl）', () => {
         notifyDelayMs: 10,
         followUpMs: 40,
       });
-      const request: PermissionRequest = { seq: 1, at: 100, tool: NAVIGATE, input: { url: 'https://example.com/' }, agent: null };
-      host.set(CHILD, 'permission');
-      host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Do you want to proceed?', context: ['tanacode-browser - navigate(url: "https://example.com/") (MCP)'], options: [YES, NO] }));
-      host.permissions.set(CHILD, request);
-      host.events.set(CHILD, [{ type: 'tool-use', id: 'toolu_1', name: NAVIGATE, target: '', input: JSON.stringify(request.input, null, 2) }]);
+      const request = bashPermission('', { tool: NAVIGATE, title: 'tanacode-browser - navigate (MCP)', input: { url: 'https://example.com/' } });
+      show(request);
       const permission = await read();
       expect(permission).toMatchObject({ tool: NAVIGATE, input: { url: 'https://example.com/' }, can_allow: false, can_deny: true });
       expect(permission.cannot_allow_reason).toContain('only the user can answer');
@@ -961,69 +855,47 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(textOf(result)).toBe(
         'Cannot allow this prompt: it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt. Ask the user to answer it in the child session (you can still deny it).',
       );
-      expect(host.chosen).toEqual([]);
+      expect(host.replies).toEqual([]);
       expect((await answer({ permission_id: permission.id, decision: 'deny' })).isError).toBeFalsy();
-      expect(host.chosen.map((c) => c.choice.optionId)).toEqual([NO.id]);
+      expect(host.replies.map((r) => r.reply.kind)).toEqual(['stop']);
       // ほかの確認は、今までどおり許せる
-      host.chosen = [];
-      show(bash('mkdir out', { seq: 2 }));
-      expect((await answer({ permission_id: (await read()).id, decision: 'allow' })).isError).toBeFalsy();
+      show(bashPermission('mkdir out', { id: 'req-2' }));
+      expect((await answer({ permission_id: 'req-2', decision: 'allow' })).isError).toBeFalsy();
     });
 
-    it('画面と合わない入力は、親に見せない（別の操作を読んで判断させない）', async () => {
-      show(bash('mkdir out'), { context: ['Bash command', 'rm -rf ~'] });
+    it('サブエージェントの中の確認は、どのサブエージェントかを添えて返す', async () => {
+      show(bashPermission('mkdir out', { agent: 'agent-1' }));
       const permission = await read();
-      expect(permission.tool).toBeUndefined();
-      expect(permission.input).toBeUndefined();
-    });
-
-    it('すでに結果の出た呼び出しは、結果待ちに数えない。ファイルを書き換えるツールは、ファイルの名前で確かめる', async () => {
-      show(bash('mkdir out'));
-      host.events.set(CHILD, [...host.events.get(CHILD)!, { type: 'tool-result', id: 'toolu_1', isError: false } as ChatEvent]);
-      expect((await read()).can_allow).toBe(false);
-      const write: PermissionRequest = { seq: 5, at: 100, tool: 'Write', input: { file_path: '/repo/src/hello.txt', content: 'こんにちは\n' }, agent: null };
-      show(write, { title: 'Do you want to create hello.txt?', context: ['Create file', 'hello.txt'], options: [YES, option('2', 'Yes, and switch to accept edits (shift+tab)'), option('3', 'No')] });
-      host.events.set(CHILD, [{ type: 'tool-use', id: 'toolu_w', name: 'Write', target: 'src/hello.txt', input: '', filePath: '/repo/src/hello.txt' }]);
-      expect(await read()).toMatchObject({ tool: 'Write', input: { content: 'こんにちは\n' }, can_allow: true });
-      // 画面のファイルの名前が違えば、許さない
-      show(write, { title: 'Do you want to create other.txt?', context: ['Create file', 'other.txt'] });
-      host.events.set(CHILD, [{ type: 'tool-use', id: 'toolu_w', name: 'Write', target: 'src/hello.txt', input: '', filePath: '/repo/src/hello.txt' }]);
-      expect((await read()).can_allow).toBe(false);
-    });
-
-    it('サブエージェントの中の確認は、会話には出ないので、画面とフックの入力で確かめる', async () => {
-      show(bash('mkdir out', { agent: 'general-purpose' }), {}, false);
-      const permission = await read();
-      expect(permission).toMatchObject({ can_allow: true, from_subagent: 'general-purpose' });
+      expect(permission).toMatchObject({ can_allow: true, from_subagent: 'agent-1' });
       expect((await answer({ permission_id: permission.id, decision: 'allow' })).isError).toBeFalsy();
     });
 
     it.each(['manual', 'plan'] as PermissionMode[])('親が %s のモードなら、許せない（断ることはできる）', async (mode) => {
       host.modes.set(PARENT, mode);
-      show(bash('mkdir out'));
+      show(bashPermission('mkdir out'));
       const { id } = await read();
       const result = await answer({ permission_id: id, decision: 'allow' });
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain(`is in ${mode} mode`);
-      expect(host.chosen).toEqual([]);
+      expect(host.replies).toEqual([]);
       expect((await answer({ permission_id: id, decision: 'deny' })).isError).toBeFalsy();
-      expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['4']);
+      expect(host.replies.map((r) => r.reply.kind)).toEqual(['stop']);
     });
 
     it('親のモードが分からなければ、manual とみなして許さない', async () => {
       host.modes.delete(PARENT);
-      show(bash('mkdir out'));
+      show(bashPermission('mkdir out'));
       expect(textOf(await answer({ permission_id: (await read()).id, decision: 'allow' }))).toContain('is in manual mode');
     });
 
     it.each(['acceptEdits', 'bypassPermissions'] as PermissionMode[])('親が %s のモードなら、許せる', async (mode) => {
       host.modes.set(PARENT, mode);
-      show(bash('mkdir out'));
+      show(bashPermission('mkdir out'));
       expect((await answer({ permission_id: (await read()).id, decision: 'allow' })).isError).toBeFalsy();
     });
 
     it('自分の子だけ。子からも、ほかのセッションからも答えられない。引数のまちがいは断る', async () => {
-      show(bash('mkdir out'));
+      show(bashPermission('mkdir out'));
       const { id } = await read();
       expect(textOf(await answer({ permission_id: id, decision: 'allow' }, PEER))).toContain('is not a child session');
       expect(textOf(await control.handle(CHILD, 'answer_permission', { session_id: PARENT, permission_id: id, decision: 'allow' }))).toContain('is not a child session');
@@ -1031,38 +903,23 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(textOf(await answer({ decision: 'allow' }))).toContain('Pass permission_id');
       expect(textOf(await answer({ permission_id: id, decision: 'always' }))).toContain('"allow" or "deny"');
       expect(textOf(await answer({ permission_id: id }))).toContain('"allow" or "deny"');
-      expect(host.chosen).toEqual([]);
+      expect(host.replies).toEqual([]);
     });
 
-    it('許可の確認が出ていなければ、答えない: 入力欄・AskUserQuestion の質問・質問に見える確認', async () => {
+    it('許可の確認が出ていなければ、答えない（手が空いている・質問を待っている）', async () => {
       host.set(CHILD, 'idle');
-      host.screens.set(CHILD, prompt(''));
-      expect(textOf(await answer({ permission_id: 'abcdef012345', decision: 'allow' }))).toContain('is not showing a permission prompt');
+      expect(textOf(await answer({ permission_id: 'req-1', decision: 'allow' }))).toContain('is not showing a permission prompt');
       host.set(CHILD, 'question');
-      host.screens.set(CHILD, menuScreen({ kind: 'question', title: 'どちら?', options: [option('1', 'Yes', { pointed: true }), option('2', 'No')] }));
-      expect(textOf(await answer({ permission_id: 'abcdef012345', decision: 'deny' }))).toContain('is not showing a permission prompt');
-      expect(host.chosen).toEqual([]);
+      void host.questions.wait(CHILD, [question('どちら?', ['Yes', 'No'])], new AbortController().signal);
+      expect(textOf(await answer({ permission_id: 'req-1', decision: 'deny' }))).toContain('is not showing a permission prompt');
+      expect(host.replies).toEqual([]);
     });
 
     it('答えたあとに次の確認が出ていれば、それも返す', async () => {
-      show(bash('mkdir out'));
-      const { id } = await read();
-      const choose = host.chooseIf;
-      host.chooseIf = async (session, choice, expect) => {
-        const pressed = await choose(session, choice, expect);
-        if (pressed === 'chosen') show(bash('mkdir next', { seq: 2 }));
-        return pressed;
-      };
-      const result = jsonOf<{ next_permission: View }>(await answer({ permission_id: id, decision: 'allow' }));
-      expect(result.next_permission).toMatchObject({ tool: 'Bash', input: { command: 'mkdir next' } });
-      expect(result.next_permission.id).not.toBe(id);
-    });
-
-    it('答えを送っても確認が閉じなければ、失敗として返す', async () => {
-      show(bash('mkdir out'));
-      const { id } = await read();
-      host.chooseIf = async () => 'chosen';
-      expect(textOf(await answer({ permission_id: id, decision: 'allow' }))).toContain('did not close');
+      show(bashPermission('mkdir out'));
+      host.onReply = () => host.permissions.set(CHILD, bashPermission('mkdir next', { id: 'req-2' }));
+      const result = jsonOf<{ next_permission: View }>(await answer({ permission_id: 'req-1', decision: 'allow' }));
+      expect(result.next_permission).toMatchObject({ id: 'req-2', tool: 'Bash', input: { command: 'mkdir next' } });
     });
   });
 
@@ -1127,7 +984,7 @@ describe('ツールの実行（SessionsControl）', () => {
 
     it('切り替えられなかったら、今のモードを添えて失敗として返し、モデルは変えない', async () => {
       host.modes.set(PARENT, 'auto');
-      host.screens.set(SIBLING, { ...prompt(''), mode: 'acceptEdits' });
+      host.modes.set(SIBLING, 'acceptEdits');
       host.modeSwitchFails = true;
       const result = await configure({ permission_mode: 'auto', model: 'sonnet' });
       expect(result.isError).toBe(true);
@@ -1183,7 +1040,7 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('get_session は、子の今の権限モード・モデル・エフォートを返す。動いていなければ、次に起動するときの指定（モードは null）', async () => {
-      host.screens.set(SIBLING, { ...prompt(''), mode: 'acceptEdits' });
+      host.modes.set(SIBLING, 'acceptEdits');
       host.models.set(SIBLING, 'claude-opus-5-5');
       host.efforts.set(SIBLING, 'xhigh');
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: SIBLING }))).toMatchObject({
@@ -1305,7 +1162,6 @@ describe('ツールの実行（SessionsControl）', () => {
     const settle = () => new Promise((r) => setTimeout(r, 60));
     const get = async (id = CHILD) => jsonOf<{ state: string; state_label: string }>(await control.handle(PARENT, 'get_session', { session_id: id }));
     beforeEach(() => {
-      host.screens.set(PARENT, prompt(''));
       host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
     });
 
@@ -1603,7 +1459,6 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('終えた子の、まだ送っていない知らせは送らない', async () => {
-      host.screens.set(PARENT, prompt(''));
       host.set(PARENT, 'working');
       host.events.set(CHILD, [{ type: 'user', id: '1', text: '直して', parent: PARENT }]);
       host.set(CHILD, 'working');
@@ -1668,7 +1523,7 @@ describe('ツールの実行（SessionsControl）', () => {
 
   it('get_session: 質問への回答待ちなら、質問と選択肢を返す', async () => {
     host.set(CHILD, 'question');
-    host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案', { description: '速い' }), option('2', 'Type something.', { textInput: true })] }));
+    void host.questions.wait(CHILD, [{ question: 'どちらの方式?', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '速い' }] }], new AbortController().signal);
     const got = jsonOf<{ question: { title: string; options: { label: string }[]; accepts_other: boolean } }>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
     expect(got.question).toMatchObject({ title: 'どちらの方式?', options: [{ label: 'A 案', description: '速い' }], accepts_other: true });
   });
@@ -1676,7 +1531,6 @@ describe('ツールの実行（SessionsControl）', () => {
   describe('親への知らせ', () => {
     const settle = () => new Promise((r) => setTimeout(r, 60));
     beforeEach(() => {
-      host.screens.set(PARENT, prompt(''));
       host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
     });
 
@@ -1793,7 +1647,6 @@ describe('ツールの実行（SessionsControl）', () => {
       flowing = new Set();
       const compacting = (id: string) => flowing.has(id);
       flow = new SessionsControl({ host: outwardHost(host, compacting), compacting, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 40 });
-      host.screens.set(PARENT, prompt(''));
       host.events.set(CHILD, [{ type: 'user', id: '1', text: '税率を可変にして', parent: PARENT }, said('作業の報告です')]);
     });
     afterEach(() => flow.dispose());
@@ -2211,22 +2064,27 @@ describe('ツールの実行（SessionsControl）', () => {
       host.events.set(CHILD, [stopped[0], ...stopped.slice(2)]);
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_response: 'チェックリストに 2 件足しました。' });
       host.set(CHILD, 'permission');
-      const context = Array.from({ length: 15 }, (_, i) => `行 ${i}`);
-      host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Bash を実行しますか?', context, options: [option('1', 'Yes')] }));
-      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).permission).toMatchObject({ title: 'Bash を実行しますか?', context: context.slice(0, 12), can_allow: false });
+      host.permissions.set(CHILD, bashPermission('mkdir out'));
+      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).permission).toMatchObject({ id: 'req-1', title: 'Bash', tool: 'Bash', input: { command: 'mkdir out' } });
+      host.permissions.delete(CHILD);
       host.set(CHILD, 'question');
       const tabs = [
-        { label: '入れるもの', answered: false },
-        { label: '期限', answered: true },
+        { label: '中身', answered: false },
+        { label: '期限', answered: false },
       ];
-      host.screens.set(CHILD, menuScreen({ title: '入れるもの', multiSelect: true, tabs, options: [option('1', 'テスト', { checked: true }), option('submit', 'Submit'), option('3', 'Chat about this')] }));
+      void host.questions.wait(
+        CHILD,
+        [question('入れるもの', ['テスト', '文書'], { header: '中身', multiSelect: true }), question('いつまでに?', ['今日'], { header: '期限' })],
+        new AbortController().signal,
+      );
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).question).toEqual({
         title: '入れるもの',
         multi_select: true,
         tabs,
-        options: [{ label: 'テスト', checked: true }],
-        accepts_other: false,
+        options: [{ label: 'テスト' }, { label: '文書' }],
+        accepts_other: true,
       });
+      host.questions.releaseAll(CHILD);
       // 状態の分からないセッションは、動いていないものとして返す
       host.states.delete(SIBLING);
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: SIBLING }))).toMatchObject({ state: 'exited', last_prompt: null });
@@ -2352,7 +2210,6 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('親への知らせ: 子が質問・ターミナルの操作を待ったとき・終了したときの文。名前の無い子は「新しいセッション」', async () => {
-      host.screens.set(PARENT, prompt(''));
       host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
       host.sessions.find((s) => s.id === CHILD)!.title = null;
       const who = '子セッション「新しいセッション」（22222222）';
@@ -2371,17 +2228,13 @@ describe('ツールの実行（SessionsControl）', () => {
       }
     });
 
-    describe('answer_question・get_session: フックが答えを待っている質問（画面を読まない）', () => {
+    describe('answer_question・get_session: Claude Code が答えを待っている質問', () => {
       const METHOD: AskQuestion = { question: 'どちらの方式?', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '速い' }, { label: 'B 案', description: '' }] };
       const PARTS: AskQuestion = { question: 'どれを入れますか?', header: '中身', multiSelect: true, options: [{ label: 'テスト', description: '' }, { label: '文書', description: '' }] };
       // フックが質問を渡す（本物と同じ PendingQuestions で待つ）。返事を返す Promise
       const wait = (...questions: AskQuestion[]) => host.questions.wait(CHILD, questions, new AbortController().signal);
       const answer = (args: Record<string, unknown>) => control.handle(PARENT, 'answer_question', { session_id: CHILD, ...args });
-      beforeEach(() => {
-        host.set(CHILD, 'question');
-        // 画面には何も出ていない（読めない）ことにする。画面を読まずに答える
-        host.screens.delete(CHILD);
-      });
+      beforeEach(() => host.set(CHILD, 'question'));
 
       it('get_session は、まだ答えていない最初の質問を、タブと一緒に返す', async () => {
         void wait(METHOD, PARTS);
@@ -2408,7 +2261,6 @@ describe('ツールの実行（SessionsControl）', () => {
         expect(second).toMatchObject({ answered: true });
         expect(second.next_question).toBeUndefined();
         expect(await reply).toEqual({ kind: 'answer', answers: { [METHOD.question]: 'B 案', [PARTS.question]: 'テスト, 文書, 手順:\n1. 読む' } });
-        expect(host.chosen).toEqual([]);
       });
 
       it('答えたあと、子が続けて出した次の質問（フックが受け取ったもの）を返す', async () => {
@@ -2431,98 +2283,12 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     describe('answer_question', () => {
-      beforeEach(() => {
-        host.asked.set(CHILD, [asked('どちらの方式?')]);
-        host.set(CHILD, 'question');
-      });
+      beforeEach(() => host.set(CHILD, 'question'));
       const answer = (args: Record<string, unknown>) => control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', ...args });
 
       it('choices も other も無い・質問が出ていないときは断る', async () => {
         expect(textOf(await answer({ choices: [1, ' '] }))).toBe('Pass choices (the options to pick) or other (a free-text answer).');
-        host.screens.set(CHILD, prompt(''));
         expect(textOf(await answer({ choices: ['A 案'] }))).toBe('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
-        expect(host.chosen).toEqual([]);
-      });
-
-      it('自由記述の欄が無い質問に other は渡せない。1 つだけ選ぶ質問で 2 つは選べない', async () => {
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案')] }));
-        expect(textOf(await answer({ other: 'C 案' }))).toBe('This question has no field for an answer that is not among the options (free text).');
-        expect(textOf(await answer({ choices: ['A 案', 'B 案'] }))).toBe('Only one option can be picked for this question (pass one choice, or only other).');
-        expect(textOf(await answer({ choices: ['A 案'], other: 'C 案' }))).toBe('This question has no field for an answer that is not among the options (free text).');
-        expect(host.chosen).toEqual([]);
-      });
-
-      it('複数選択: 自由記述は打つだけで付ける（Enter で外れないように）。確定の選択肢が無ければ断る', async () => {
-        host.screens.set(
-          CHILD,
-          menuScreen({ title: 'どちらの方式?', multiSelect: true, options: [option('1', 'テスト', { checked: false }), option('2', 'Type something.', { textInput: true }), option('submit', 'Submit')] }),
-        );
-        expect(jsonOf(await answer({ choices: ['テスト'], other: '文書も' }))).toMatchObject({ answered: true });
-        expect(host.chosen.map((c) => c.choice)).toEqual([
-          { optionId: '1', key: 'space' },
-          { optionId: '2', key: 'none', text: '文書も' },
-          { optionId: 'submit', key: 'enter' },
-        ]);
-        host.chosen = [];
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', multiSelect: true, options: [option('1', 'テスト', { checked: false })] }));
-        expect(textOf(await answer({ choices: ['テスト'] }))).toBe('Could not find the option that submits the answers. Check the terminal.');
-        expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['1']);
-      });
-
-      it('答えても質問が閉じなければ、そう返す', async () => {
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
-        host.chooseIf = async (id, choice) => {
-          host.chosen.push({ id, choice });
-          return 'chosen';
-        };
-        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('Sent the answer, but the question did not close. Check with get_session.');
-      });
-
-      it('次の質問に進んだら、次の質問を返す', async () => {
-        host.asked.set(CHILD, [asked('どちらの方式?'), asked('いつまでに?')]);
-        const tabs = (answered: boolean) => [
-          { label: '方式', answered },
-          { label: '期限', answered: false },
-        ];
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', tabs: tabs(false), options: [option('1', 'A 案')] }));
-        host.chooseIf = async (id, choice) => {
-          host.chosen.push({ id, choice });
-          host.screens.set(CHILD, menuScreen({ title: 'いつまでに?', tabs: tabs(true), options: [option('1', '今日', { description: '急ぎ' }), option('2', '明日')] }));
-          return 'chosen';
-        };
-        expect(jsonOf(await answer({ choices: ['A 案'] }))).toEqual({
-          answered: true,
-          state: 'question',
-          next_question: { title: 'いつまでに?', multi_select: false, tabs: tabs(true), options: [{ label: '今日', description: '急ぎ' }, { label: '明日' }], accepts_other: false },
-          note: 'The child is showing another question (next_question). Answer it now with answer_question, and keep going until the result has no next_question.',
-        });
-      });
-
-      it('AskUserQuestion の質問かの見分け: 画面の質問文が途中で切れていても合う。複数の質問の最後の確認にも答える。質問文が空なら答えない', async () => {
-        const long = 'どちらの方式で在庫を持ちますか？（数で持つか、履歴で持つか、両方を持つか）';
-        host.asked.set(CHILD, [asked(long)]);
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式で在庫を持ちますか？', options: [option('1', 'A 案')] }));
-        await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式で在庫を持ちますか？', choices: ['A 案'] });
-        expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['1']);
-        host.chosen = [];
-        const review = 'Review your answers\n\nReady to submit your answers?';
-        host.screens.set(
-          CHILD,
-          menuScreen({
-            title: review,
-            tabs: [
-              { label: '方式', answered: true },
-              { label: '✔ Submit', answered: false },
-            ],
-            options: [option('1', 'Submit answers'), option('2', 'Cancel')],
-          }),
-        );
-        await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: review, choices: ['Submit answers'] });
-        expect(host.chosen.map((c) => c.choice)).toEqual([{ optionId: '1', key: 'enter', text: undefined }]);
-        host.chosen = [];
-        host.screens.set(CHILD, menuScreen({ title: ' ', options: [option('1', 'A 案')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: ' ', choices: ['A 案'] }))).toContain('is not showing an AskUserQuestion question');
-        expect(host.chosen).toEqual([]);
       });
     });
   });
@@ -2624,19 +2390,18 @@ describe('ツールの実行（SessionsControl）', () => {
         { type: 'user', id: '3', text: '二つ目', parent: PARENT },
       ]);
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).toMatchObject({ last_prompt: { from: 'parent', text: '二つ目' }, last_response: null });
-      // 作業中なのに画面にメニューが残っていても、質問・許可の確認としては返さない
-      host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
-      expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).question).toBeUndefined();
-      host.screens.set(CHILD, menuScreen({ kind: 'permission', title: 'Bash を実行しますか?', options: [option('1', 'Yes')] }));
+      // 作業中なら、待っている要求があっても、質問・許可の確認としては返さない
+      host.permissions.set(CHILD, bashPermission('mkdir out'));
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).permission).toBeUndefined();
+      host.permissions.delete(CHILD);
       host.set(CHILD, 'question');
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).question).toBeUndefined();
-      host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', tabs: [{ label: '方式', answered: false }], options: [option('1', 'A 案')] }));
+      void host.questions.wait(CHILD, [question('どちらの方式?', ['A 案'], { header: '方式' })], new AbortController().signal);
       expect(jsonOf(await control.handle(PARENT, 'get_session', { session_id: CHILD })).question).toEqual({
         title: 'どちらの方式?',
         multi_select: false,
         options: [{ label: 'A 案' }],
-        accepts_other: false,
+        accepts_other: true,
       });
     });
 
@@ -2727,7 +2492,6 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('親への知らせ: 名前と ID を書き、続けて手が空いた子は 1 つにまとめる。作業に戻った子の知らせは送らない', async () => {
-      host.screens.set(PARENT, prompt(''));
       host.set(PARENT, 'working');
       host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
       host.events.set(SIBLING, [{ type: 'user', id: '1', text: 'y', parent: PARENT }]);
@@ -2755,7 +2519,6 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     it('dispose のあとは、子の状態が変わっても知らせない', async () => {
-      host.screens.set(PARENT, prompt(''));
       host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
       control.dispose();
       host.set(CHILD, 'idle');
@@ -2764,100 +2527,32 @@ describe('ツールの実行（SessionsControl）', () => {
     });
 
     describe('answer_question', () => {
-      beforeEach(() => {
-        host.asked.set(CHILD, [asked('どちらの方式?')]);
-        host.set(CHILD, 'question');
-      });
+      // 子が質問を出す（本物と同じ PendingQuestions で待つ）。返事を返す Promise
+      const ask = (...questions: AskQuestion[]) => host.questions.wait(CHILD, questions, new AbortController().signal);
+      beforeEach(() => host.set(CHILD, 'question'));
       const answer = (args: Record<string, unknown>) => control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式?', ...args });
 
-      it('選べるのは選択肢そのものだけ（Chat about this・自由記述の欄は選べない）。無い選択肢は、選べるものを並べて返す', async () => {
-        host.screens.set(
-          CHILD,
-          menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', 'B 案'), option('3', 'Type something.', { textInput: true }), option('4', 'Chat about this')] }),
-        );
+      it('選べるのは選択肢そのものだけ（Chat about this は選べない）。無い選択肢は、選べるものを並べて返す', async () => {
+        void ask(question('どちらの方式?', ['A 案', 'B 案']));
         expect(textOf(await answer({ choices: ['Chat about this'] }))).toBe('There is no option "Chat about this". The options are: "A 案", "B 案".');
-        expect(textOf(await answer({ choices: ['Type something.'] }))).toBe('There is no option "Type something.". The options are: "A 案", "B 案".');
-        expect(host.chosen).toEqual([]);
       });
 
-      it('画面が読めないときは、質問が出ていないとして断る。自由記述は前後の空白を除く', async () => {
-        host.screens.delete(CHILD);
-        expect(textOf(await answer({ choices: ['A 案'] }))).toBe('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('3', 'Type something.', { textInput: true })] }));
+      it('自由記述は前後の空白を除く', async () => {
+        const reply = ask(question('どちらの方式?', ['A 案']));
         await answer({ other: '  どちらでも  ' });
-        expect(host.chosen.map((c) => c.choice)).toEqual([{ optionId: '3', key: 'enter', text: 'どちらでも' }]);
+        expect(await reply).toEqual({ kind: 'answer', answers: { 'どちらの方式?': 'どちらでも' } });
       });
 
       it('質問文は、空白・改行の違いと前後の空白を無視して比べる', async () => {
-        host.asked.set(CHILD, [asked('どちらの\n方式?')]);
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの  方式?', options: [option('1', 'A 案')] }));
+        const reply = ask(question('どちらの\n方式?', ['A 案']));
         await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: '  どちらの 方式?  ', choices: ['A 案'] });
-        expect(host.chosen).toHaveLength(1);
+        expect(await reply).toEqual({ kind: 'answer', answers: { 'どちらの\n方式?': 'A 案' } });
       });
 
-      it('複数選択で自由記述の欄があっても、other を渡さなければ打たない', async () => {
-        host.screens.set(
-          CHILD,
-          menuScreen({ title: 'どちらの方式?', multiSelect: true, options: [option('1', 'テスト', { checked: false }), option('2', 'Type something.', { textInput: true }), option('submit', 'Submit')] }),
-        );
+      it('複数選択で other を渡さなければ、選んだものだけを答える', async () => {
+        const reply = ask(question('どちらの方式?', ['テスト', '文書'], { multiSelect: true }));
         await answer({ choices: ['テスト'] });
-        expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['1', 'submit']);
-      });
-
-      it('自由記述の欄に前に打った文が残っていて消せなければ、何も打たず、欄を消してもらうよう返す', async () => {
-        // 残った文に継ぎ足した答えを送らない（欄の Ctrl+U は、折り返した最後の 1 行しか消さない）
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', '前に打ちかけた長い指示', { textInput: true })] }));
-        host.chooseIf = async () => 'filled';
-        expect(textOf(await answer({ other: 'B 案で進めてください' }))).toBe(
-          'The free-text field of the question already has text typed earlier that could not be cleared, so nothing was typed. Ask the user to clear the field in "s-22" (or to answer there), then answer again.',
-        );
-      });
-
-      it('答えたあと、質問が閉じるまで少し待つ', async () => {
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
-        host.chooseIf = async (id, choice) => {
-          host.chosen.push({ id, choice });
-          setTimeout(() => host.screens.set(CHILD, prompt('')), 250);
-          return 'chosen';
-        };
-        expect(jsonOf(await answer({ choices: ['A 案'] }))).toMatchObject({ answered: true });
-      });
-
-      it('押す前に次の質問に変わっていたら、押さない', async () => {
-        host.asked.set(CHILD, [asked('どちらの方式?'), asked('いつまでに?')]);
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
-        const chooseIf = host.chooseIf;
-        host.chooseIf = async (id, choice, expect) => {
-          host.screens.set(CHILD, menuScreen({ title: 'いつまでに?', options: [option('1', 'A 案')] }));
-          return chooseIf(id, choice, expect);
-        };
-        expect(textOf(await answer({ choices: ['A 案'] }))).toContain('Could not answer');
-        expect(host.chosen).toEqual([]);
-      });
-
-      it('回答の確認の画面と見なすのはタブが 2 つ以上のときだけ。質問文の前のほうが合えば答え、空の質問文はどれにも合わない', async () => {
-        host.asked.set(CHILD, [asked('別の質問')]);
-        const review = 'Ready to submit your answers?';
-        host.screens.set(CHILD, menuScreen({ title: review, tabs: [{ label: '✔ Submit', answered: false }], options: [option('1', 'Submit answers')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: review, choices: ['Submit answers'] }))).toContain('is not showing an AskUserQuestion question');
-        // タブが 2 つ以上でも、回答の確認でなく、質問文にも合わなければ答えない
-        const twoTabs = [
-          { label: 'a', answered: false },
-          { label: 'b', answered: false },
-        ];
-        host.screens.set(CHILD, menuScreen({ title: 'Do you want to proceed?', tabs: twoTabs, options: [option('1', 'Yes')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'Do you want to proceed?', choices: ['Yes'] }))).toContain('is not showing an AskUserQuestion question');
-        expect(host.chosen).toEqual([]);
-        // 画面の質問文が、質問文に続きを足したもの
-        host.asked.set(CHILD, [asked('どちらの方式?')]);
-        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式? 在庫の持ち方', options: [option('1', 'A 案')] }));
-        await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どちらの方式? 在庫の持ち方', choices: ['A 案'] });
-        expect(host.chosen).toHaveLength(1);
-        host.chosen = [];
-        host.asked.set(CHILD, [asked('')]);
-        host.screens.set(CHILD, menuScreen({ title: 'なにか', options: [option('1', 'A 案')] }));
-        expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'なにか', choices: ['A 案'] }))).toContain('is not showing an AskUserQuestion question');
-        expect(host.chosen).toEqual([]);
+        expect(await reply).toEqual({ kind: 'answer', answers: { 'どちらの方式?': 'テスト' } });
       });
     });
 

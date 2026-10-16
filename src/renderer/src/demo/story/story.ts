@@ -64,10 +64,10 @@ export class Story {
     return sent;
   }
 
-  // 次に選ばれる選択肢（質問・許可の確認）を待つ
+  // 次の答え（質問・許可の確認のカードで選んだもの）を待つ
   nextChoice(): Promise<void> {
     return new Promise((resolve) => {
-      this.backend.onChoose = () => resolve();
+      this.backend.onAnswer = () => resolve();
     });
   }
 

@@ -1793,7 +1793,8 @@
     "kind": {
       "question": "Claude Code からの質問",
       "permission": "実行の許可",
-      "other": "確認"
+      "other": "確認",
+      "plan": "プランの承認"
     },
     "notChosen": {
       "busy": "ほかの操作の途中だったため、送れませんでした。もう一度押してください",
@@ -1822,7 +1823,24 @@
       "unanswered": "（未回答）",
       "submitAnswers": "回答を送る",
       "questionTab": "{n} 問め",
-      "questionGone": "この質問には、もう答えられません（ターミナルで答えたか、Claude Code が先へ進みました）"
+      "questionGone": "この質問には、もう答えられません（ターミナルで答えたか、Claude Code が先へ進みました）",
+      "notes": "メモ（任意）",
+      "notesPlaceholder": "選んだ案について Claude に伝えること"
+    },
+    "permission": {
+      "allow": "許可する",
+      "always": "許可して、今後は聞かない（{rules}）",
+      "deny": "断って、理由を伝える",
+      "denyPlaceholder": "断る理由・代わりにしてほしいこと（Enter で改行、⌘+Enter で送る）",
+      "stopTip": "断って、作業を止める（Esc）",
+      "reason": "確認する理由: {reason}",
+      "fromSubagent": "サブエージェントの中の呼び出しです",
+      "gone": "この確認には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）",
+      "planTitle": "このプランで進めますか？",
+      "planApprove": "承認する（編集は毎回確かめる）",
+      "planAcceptEdits": "承認して、編集を自動で進める",
+      "planKeep": "計画を続ける（直してほしいことを伝える）",
+      "planPlaceholder": "プランで直してほしいこと（Enter で改行、⌘+Enter で送る）"
     }
   }
 }

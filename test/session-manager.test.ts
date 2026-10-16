@@ -1,8 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
-import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
+import { INIT_RESPONSE, line, ScriptedApp, stream, type ScriptedPipe } from './helpers/scripted-claude';
 
 // SessionManager を、本物の claude なしで動かして確かめる（claude の代わりに、テストが stream-json の行と会話ログを書く）。
 // 本物の Claude Code での振る舞いは npm run test:cli が確かめる。ここでは、その上の SessionManager の分岐を確かめる
@@ -455,5 +455,153 @@ describe('待っている要求の知らせ', () => {
     await app.waitFor('取り下げ', () => app.manager.stateOf(id) === 'working');
     expect(app.manager.summary(id)?.attention).toBeNull();
     expect(app.attentions).toHaveLength(1);
+  });
+
+  // Claude Code の要求（can_use_tool）を出す。返事はアプリが書いた control_response で見る
+  const request = (pipe: ScriptedPipe, requestId: string, body: Record<string, unknown>) =>
+    pipe.emit({ type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_use_id: `toolu_${requestId}`, ...body } });
+  const answerTo = (pipe: ScriptedPipe, requestId: string) =>
+    pipe.messages.flatMap((m) => {
+      const response = (m as { type?: string; response?: { request_id?: string; response?: unknown } }).response;
+      return m.type === 'control_response' && response?.request_id === requestId ? [response.response] : [];
+    });
+  const QUESTIONS = [{ question: 'どちらの方式?', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '速い' }, { label: 'B 案', description: '確実', preview: 'B の図' }] }];
+
+  it('質問（AskUserQuestion）は、答えを待っている質問としてカードと親の道具に渡し、答えを入力の answers・annotations に入れて許す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, '方式を決めて');
+    request(pipe, 'req-q', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
+    await app.waitFor('質問', () => app.manager.pendingQuestion(id) !== null);
+    const question = app.manager.pendingQuestion(id)!;
+    expect(question.questions).toEqual(QUESTIONS);
+    expect(app.questionLog.at(-1)).toEqual({ id, question });
+    expect(app.manager.stateOf(id)).toBe('question');
+    // 質問は許可の確認ではない
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    expect(app.manager.replyPermission(id, 'req-q', { kind: 'allow' })).toBe(false);
+    const annotations = { 'どちらの方式?': { notes: '余白を広く', preview: 'B の図' } };
+    expect(app.manager.replyQuestion(id, question.id, { kind: 'answer', answers: { 'どちらの方式?': 'B 案' }, annotations })).toBe(true);
+    await app.waitFor('返事', () => answerTo(pipe, 'req-q').length === 1);
+    expect(answerTo(pipe, 'req-q')).toEqual([{ behavior: 'allow', updatedInput: { questions: QUESTIONS, answers: { 'どちらの方式?': 'B 案' }, annotations } }]);
+    await app.waitFor('質問が閉じる', () => app.manager.pendingQuestion(id) === null);
+    expect(app.manager.stateOf(id)).toBe('working');
+  });
+
+  it('質問の「Chat about this」は、答えずに質問について話す文を返す（TUI で選んだときと同じ文）。キャンセルは断って作業を止める', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    request(pipe, 'req-chat', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
+    await app.waitFor('質問', () => app.manager.pendingQuestion(id) !== null);
+    app.manager.replyQuestion(id, app.manager.pendingQuestion(id)!.id, { kind: 'chat' });
+    await app.waitFor('返事', () => answerTo(pipe, 'req-chat').length === 1);
+    expect(answerTo(pipe, 'req-chat')).toEqual([
+      {
+        behavior: 'deny',
+        message: [
+          "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:",
+          'The user wants to clarify these questions.',
+          '    This means they may have additional information, context or questions for you.',
+          '    Take their response into account and then reformulate the questions if appropriate.',
+          '    Start by asking them what they would like to clarify.',
+          '',
+          '    Questions asked:',
+          '- "どちらの方式?"\n  (No answer provided)',
+        ].join('\n'),
+      },
+    ]);
+    request(pipe, 'req-cancel', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
+    await app.waitFor('次の質問', () => app.manager.pendingQuestion(id) !== null);
+    app.manager.replyQuestion(id, app.manager.pendingQuestion(id)!.id, { kind: 'cancel' });
+    await app.waitFor('返事', () => answerTo(pipe, 'req-cancel').length === 1);
+    expect(answerTo(pipe, 'req-cancel')).toEqual([
+      { behavior: 'deny', message: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).", interrupt: true },
+    ]);
+  });
+
+  it('取り下げられた質問（ほかで答えた・中断）は、カードから消し、あとから答えても返さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    request(pipe, 'req-q', { tool_name: 'AskUserQuestion', input: { questions: QUESTIONS } });
+    await app.waitFor('質問', () => app.manager.pendingQuestion(id) !== null);
+    const question = app.manager.pendingQuestion(id)!;
+    pipe.emit({ type: 'control_cancel_request', request_id: 'req-q' });
+    await app.waitFor('取り下げ', () => app.manager.pendingQuestion(id) === null);
+    expect(app.questionLog.at(-1)).toEqual({ id, question: null });
+    expect(app.manager.replyQuestion(id, question.id, { kind: 'answer', answers: { 'どちらの方式?': 'A 案' } })).toBe(false);
+    expect(answerTo(pipe, 'req-q')).toEqual([]);
+  });
+
+  it('許可の確認は、ツールの入力・説明・理由・「今後は聞かない」の候補をカードに渡し、答えを Claude Code の返事にする', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const suggestions = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow', destination: 'localSettings' }];
+    request(pipe, 'req-1', {
+      tool_name: 'Bash',
+      input: { command: 'npm test', description: 'テストを流す' },
+      title: 'Bash を実行しますか?',
+      description: 'テストを流す',
+      decision_reason: 'Bash は毎回確かめる設定です',
+      permission_suggestions: suggestions,
+    });
+    await app.waitFor('許可の確認', () => app.manager.pendingPermission(id) !== null);
+    const permission = app.manager.pendingPermission(id)!;
+    expect(permission).toEqual({
+      id: 'req-1',
+      tool: 'Bash',
+      title: 'Bash を実行しますか?',
+      description: 'テストを流す',
+      input: { command: 'npm test', description: 'テストを流す' },
+      reason: 'Bash は毎回確かめる設定です',
+      always: ['Bash(npm test:*)'],
+      plan: null,
+      agent: null,
+    });
+    expect(app.permissionLog.at(-1)).toEqual({ id, permission });
+    // 知らない要求・質問の返事では答えない
+    expect(app.manager.replyPermission(id, 'req-x', { kind: 'allow' })).toBe(false);
+    expect(app.manager.replyPermission(id, 'req-1', { kind: 'allow', always: true })).toBe(true);
+    expect(answerTo(pipe, 'req-1')).toEqual([{ behavior: 'allow', updatedInput: { command: 'npm test', description: 'テストを流す' }, updatedPermissions: suggestions }]);
+    expect(app.manager.pendingPermission(id)).toBeNull();
+    expect(app.permissionLog.at(-1)).toEqual({ id, permission: null });
+    // 2 回は答えない
+    expect(app.manager.replyPermission(id, 'req-1', { kind: 'allow' })).toBe(false);
+    // 理由を添えて断る・止める
+    request(pipe, 'req-2', { tool_name: 'Bash', input: { command: 'rm -rf build' } });
+    await app.waitFor('次の確認', () => app.manager.pendingPermission(id)?.id === 'req-2');
+    app.manager.replyPermission(id, 'req-2', { kind: 'deny', message: '別のフォルダに出して' });
+    expect(answerTo(pipe, 'req-2')).toEqual([
+      {
+        behavior: 'deny',
+        message:
+          "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n別のフォルダに出して",
+      },
+    ]);
+    request(pipe, 'req-3', { tool_name: 'Bash', input: { command: 'rm -rf ~' } });
+    await app.waitFor('次の確認', () => app.manager.pendingPermission(id)?.id === 'req-3');
+    app.manager.replyPermission(id, 'req-3', { kind: 'stop' });
+    expect(answerTo(pipe, 'req-3')).toEqual([expect.objectContaining({ behavior: 'deny', interrupt: true })]);
+  });
+
+  it('プランの承認は、プランのファイル（会話ログの planFilePath）の本文をカードに渡す。読めなければ、Claude が ExitPlanMode に渡した本文', async () => {
+    const { id, pipe } = app.create({ mode: 'plan' });
+    await app.ready(id);
+    const planFile = join(app.root, 'plans', 'calm-plan.md');
+    mkdirSync(dirname(planFile), { recursive: true });
+    writeFileSync(planFile, '# ファイルの計画\n');
+    app.append(id, line.user('計画して'), { ...line.turnEnd(), type: 'attachment', subtype: undefined, attachment: { type: 'plan_mode', planFilePath: planFile, planExists: true } });
+    await app.waitFor('会話ログ', () => app.events(id).some((e) => e.type === 'user'));
+    request(pipe, 'req-plan', { tool_name: 'ExitPlanMode', input: {} });
+    await app.waitFor('プランの承認', () => app.manager.pendingPermission(id) !== null);
+    expect(app.manager.pendingPermission(id)).toMatchObject({ tool: 'ExitPlanMode', input: {}, plan: '# ファイルの計画\n' });
+    // 承認して編集を自動で進める（acceptEdits にする）
+    app.manager.replyPermission(id, 'req-plan', { kind: 'accept-edits' });
+    expect(answerTo(pipe, 'req-plan')).toEqual([{ behavior: 'allow', updatedInput: {}, updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }]);
+    // ファイルが無ければ、Claude が ExitPlanMode に渡した本文（stream-json の assistant の行）
+    rmSync(planFile);
+    pipe.emit(stream.assistant({ ...line.toolUse('toolu_plan2', 'ExitPlanMode', { plan: '# 入力の計画' }) }, app.claudeId(id)));
+    pipe.emit({ type: 'control_request', request_id: 'req-plan2', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: {}, tool_use_id: 'toolu_plan2' } });
+    await app.waitFor('次のプランの承認', () => app.manager.pendingPermission(id)?.id === 'req-plan2');
+    expect(app.manager.pendingPermission(id)?.plan).toBe('# 入力の計画');
   });
 });

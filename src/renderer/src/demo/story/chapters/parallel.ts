@@ -1,8 +1,8 @@
-import type { Menu } from '@shared/screen';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { BashTask } from '@shared/task';
 import { ROOT } from '../../data';
 import { sleep } from '../../director';
-import { option, statusLine } from '../../scenarios/claude';
+import { statusLine } from '../../scenarios/claude';
 import { readerLog, WORKFLOW_TOOL, WorkflowPlayer } from '../../scenarios/workflow';
 import { MAIN, type Story } from '../story';
 
@@ -24,28 +24,32 @@ const CHILDREN: Record<string, { name: string; prompt: string }> = {
 const QUESTION = '価格の表記のルールは、README のどこに書きますか？';
 const ANSWER = '「表示のルール」の節を新しく作る';
 
-const START_PERMISSION = (name: string, prompt: string): Menu => ({
-  kind: 'permission',
-  tabs: [],
-  title: 'Do you want to proceed?',
-  context: [
-    'Tool use',
-    `tanacode-sessions - start_session(prompt: "${prompt}", worktree: true, name: "${name}") (MCP)`,
-    '子セッションを起動します。子は tanacode のセッションとして動き、Claude の利用枠を子の数だけ使います',
-  ],
-  options: [option('1', 'Yes', ''), option('2', 'No, and tell Claude what to do differently (esc)', '')],
-  multiSelect: false,
-  hint: 'Esc to cancel',
+const START_PERMISSION = (child: string, name: string, prompt: string): PendingPermission => ({
+  id: `start-${child}`,
+  tool: 'mcp__tanacode-sessions__start_session',
+  title: 'tanacode-sessions - start_session (MCP)',
+  description: '子セッションを起動します。子は tanacode のセッションとして動き、Claude の利用枠を子の数だけ使います',
+  input: { prompt, worktree: true, name },
+  reason: null,
+  always: null,
+  plan: null,
+  agent: null,
 });
 
-const QUESTION_MENU: Menu = {
-  kind: 'question',
-  tabs: [],
-  title: QUESTION,
-  context: [],
-  options: [option('1', ANSWER, '「セットアップ」の下に置く'), option('2', '「セットアップ」の節に書き足す', '節は増やさない')],
-  multiSelect: false,
-  hint: 'Enter to select · ↑/↓ to navigate · Esc to cancel',
+const README_QUESTION: PendingQuestion = {
+  id: 'readme-question',
+  questions: [
+    {
+      question: QUESTION,
+      header: '書く場所',
+      multiSelect: false,
+      options: [
+        { label: ANSWER, description: '「セットアップ」の下に置く' },
+        { label: '「セットアップ」の節に書き足す', description: '節は増やさない' },
+      ],
+    },
+  ],
+  answered: {},
 };
 
 const DEV_SERVER = 'bg-dev';
@@ -87,13 +91,10 @@ export async function runParallel(story: Story): Promise<void> {
     });
     parent.stopWorking();
     const chosen = story.nextChoice();
-    backend.setScreen(MAIN, { state: { kind: 'menu', menu: START_PERMISSION(name, prompt) } });
-    backend.update(MAIN, { attention: 'permission' });
+    backend.askPermission(MAIN, START_PERMISSION(child, name, prompt));
     await sleep(first ? 1600 : 700);
-    await d.click(d.byText('.menu-option', 'Yes'), { ms: first ? 800 : 500 });
+    await d.click(d.byText('.menu-option', '許可する'), { ms: first ? 800 : 500 });
     await chosen;
-    backend.setScreen(MAIN, { state: { kind: 'prompt' } });
-    backend.update(MAIN, { attention: null });
     parent.startWorking();
     const worktree = `tc-1004-${child.slice(6, 8)}a${first ? '1' : '2'}`;
     backend.addSession(
@@ -124,8 +125,7 @@ export async function runParallel(story: Story): Promise<void> {
   await readme.tool('Read', 'README.md', 700, { filePath: `${ROOT}/README.md` });
   readme.stopWorking();
   const answered = story.nextChoice();
-  backend.setScreen(README_CHILD, { state: { kind: 'menu', menu: QUESTION_MENU } });
-  backend.update(README_CHILD, { attention: 'question' });
+  backend.ask(README_CHILD, README_QUESTION);
   // アクセシビリティの子は、ワークフローを動かす
   const flow = new WorkflowPlayer(backend, A11Y_CHILD);
   a11y.say('観点ごとに並列で点検し、見つかった問題を直すワークフローを動かします。');
@@ -150,8 +150,6 @@ export async function runParallel(story: Story): Promise<void> {
   flow.tool('reader', 'Read');
   await d.click(d.byText('.menu-option', ANSWER), { ms: 800 });
   await answered;
-  backend.setScreen(README_CHILD, { state: { kind: 'prompt' } });
-  backend.update(README_CHILD, { attention: null });
   readme.startWorking();
   const editReadme = readme.use('Edit', 'README.md', { filePath: `${ROOT}/README.md` });
   flow.finish('keyboard');

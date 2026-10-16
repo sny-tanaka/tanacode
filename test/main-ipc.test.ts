@@ -51,10 +51,11 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SessionsProgressGet, ['s1'], call('manager.progress', 's1')],
     [IpcChannel.QuestionGet, ['s1'], call('manager.pendingQuestion', 's1')],
     [IpcChannel.QuestionReply, ['s1', 'q1', { kind: 'chat' }], call('manager.replyQuestion', 's1', 'q1', { kind: 'chat' })],
+    [IpcChannel.PermissionGet, ['s1'], call('manager.pendingPermission', 's1')],
+    [IpcChannel.PermissionReply, ['s1', 'r1', { kind: 'allow', always: true }], call('manager.replyPermission', 's1', 'r1', { kind: 'allow', always: true })],
     [IpcChannel.WorkflowsGet, ['s1'], call('manager.workflows', 's1')],
     [IpcChannel.ScreenSetMode, ['s1', 'plan'], call('manager.setMode', 's1', 'plan')],
     [IpcChannel.ScreenRewind, ['s1', '戻す先の発言'], call('manager.rewind', 's1', '戻す先の発言')],
-    [IpcChannel.ScreenChoose, ['s1', { kind: 'option', index: 2 }], call('manager.choose', 's1', { kind: 'option', index: 2 })],
     [IpcChannel.SubagentsGet, ['s1'], call('manager.subagents', 's1')],
     [IpcChannel.TasksBash, ['s1'], call('manager.bashTasks', 's1')],
     [IpcChannel.TasksAgentLog, ['s1', { agentId: 'a1' }], call('manager.agentLog', 's1', { agentId: 'a1' })],
@@ -112,6 +113,19 @@ describe('そのまま渡す受け口', () => {
       call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' } }),
     );
     await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'press-enter' })).resolves.toBe(false);
+    // プレビュー付きの質問のメモ（annotations）は、文字の値だけを渡す
+    await expect(
+      invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く', preview: 1 }, 空: { notes: ' ' } } }),
+    ).resolves.toEqual(call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く' } } }));
+  });
+
+  it('許可の確認のカードの返事も、形を確かめてから渡す（形の違う返事・理由の無い断りは渡さずに false）', async () => {
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'deny', message: '別の方法で' })).resolves.toEqual(
+      call('manager.replyPermission', 's1', 'r1', { kind: 'deny', message: '別の方法で' }),
+    );
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'allow', always: 'yes' })).resolves.toEqual(call('manager.replyPermission', 's1', 'r1', { kind: 'allow' }));
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'deny', message: '  ' })).resolves.toBe(false);
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'press-enter' })).resolves.toBe(false);
   });
 
   // [チャンネル, 画面から送る引数, 呼ばれる作り物, そのメソッド, 渡る引数]

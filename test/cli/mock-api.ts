@@ -63,8 +63,9 @@ export class MockApi {
   // 大きくすると、コンテキストが埋まってきたときの動き（自動の最適化圧縮）を確かめられる
   inputTokens = 100;
   // 台本より先に、最後の user の発言から応答を決める（何番目の応答かが決まらない場面で使う）。
-  // prompt: 最後の user の発言の文章（ツールの結果だけなら空）/ results: その発言に入っているツールの結果の文章。null を返すと台本に任せる
-  intercept: ((prompt: string, results: string[]) => Block[] | null) | null = null;
+  // prompt: 最後の user の発言の文章（ツールの結果だけなら空）/ results: その発言に入っているツールの結果の文章 /
+  // context: リクエストの user と system の発言の文章すべて（Claude Code が足した案内を読むとき）。null を返すと台本に任せる
+  intercept: ((prompt: string, results: string[], context: string) => Block[] | null) | null = null;
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
@@ -119,7 +120,8 @@ export class MockApi {
     }
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
     const lastResults = Array.isArray(lastUser?.content) ? lastUser.content.filter((b) => b.type === 'tool_result').map((b) => resultText(b.content)) : [];
-    const intercepted = tools.length > 0 && !stopped ? (this.intercept?.(textOf(lastUser), lastResults) ?? null) : null;
+    const context = messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n');
+    const intercepted = tools.length > 0 && !stopped ? (this.intercept?.(textOf(lastUser), lastResults, context) ?? null) : null;
     const blocks: Block[] = intercepted
       ? intercepted
       : stopped

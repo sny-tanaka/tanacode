@@ -227,6 +227,7 @@ export class Profile {
           this.autoCompact?.check(sessionId);
         },
         onQuestion: (sessionId, question) => send(IpcChannel.QuestionChanged, { sessionId, question }),
+        onPermission: (sessionId, permission) => send(IpcChannel.PermissionChanged, { sessionId, permission }),
       },
       this.options.remoteControl,
       this.settingsFiles,

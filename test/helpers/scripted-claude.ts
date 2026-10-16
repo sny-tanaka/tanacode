@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import type { ChatBatch, NewSessionOptions, SessionSummary } from '@shared/ipc';
 import type { Activity, Menu } from '@shared/screen';
-import type { PendingQuestion } from '@shared/questions';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
@@ -359,8 +359,10 @@ export class ScriptedApp {
   readonly workflows = new Map<string, WorkflowRun[]>();
   readonly subagents = new Map<string, SubagentRun[]>();
   readonly statusLineInfos = new Map<string, StatusLineInfo>();
-  // フックが答えを待っている質問の知らせ（onQuestion）を、届いた順に
+  // 答えを待っている質問の知らせ（onQuestion）を、届いた順に
   readonly questionLog: { id: string; question: PendingQuestion | null }[] = [];
+  // 答えを待っている許可の確認の知らせ（onPermission）を、届いた順に
+  readonly permissionLog: { id: string; permission: PendingPermission | null }[] = [];
   sessions: SessionSummary[] = [];
   // 一覧を知らせるたびの中身（途中の「準備中」なども見られるように）
   readonly sessionLists: SessionSummary[][] = [];
@@ -409,6 +411,7 @@ export class ScriptedApp {
         onStatusLine: (id, info) => this.statusLineInfos.set(id, info),
         onAttention: (session, attention) => this.attentions.push({ id: session.id, attention }),
         onQuestion: (id, question) => this.questionLog.push({ id, question }),
+        onPermission: (id, permission) => this.permissionLog.push({ id, permission }),
       },
       options.remoteControlAvailable,
       options.settingsFiles,

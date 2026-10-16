@@ -1,7 +1,7 @@
 import type { ChatEvent } from './chat';
-import type { Activity, ChooseResult, PermissionMode } from './screen';
+import type { Activity, PermissionMode } from './screen';
 import type { SessionState } from './session-tools';
-import type { PendingQuestion, QuestionReply } from './questions';
+import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from './questions';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
@@ -74,13 +74,16 @@ export const IpcChannel = {
   ChatImage: 'chat:image',
   SessionsDiscover: 'sessions:discover',
   SessionsImport: 'sessions:import',
-  ScreenChoose: 'screen:choose',
   // 作業中の進み具合（考えている・書いている・経過時間）。今のもの・変わった（main → 画面）
   SessionsProgressGet: 'sessions:progress-get',
   SessionsProgress: 'sessions:progress',
   QuestionGet: 'question:get',
   QuestionReply: 'question:reply',
   QuestionChanged: 'question:changed',
+  // 答えを待っている、質問でない要求（許可の確認・プランの承認）。今のもの・答える・変わった（main → 画面）
+  PermissionGet: 'permission:get',
+  PermissionReply: 'permission:reply',
+  PermissionChanged: 'permission:changed',
   WorkflowsGet: 'workflows:get',
   WorkflowsChanged: 'workflows:changed',
   SubagentsGet: 'subagents:get',
@@ -358,11 +361,12 @@ export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; 
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };
 export type SessionProgress = { sessionId: string; activity: Activity | null };
-// フックが答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
+// 答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
 export type SessionQuestion = { sessionId: string; question: PendingQuestion | null };
+// 答えを待っている、質問でない要求（いちばん前のもの。無ければ null）
+export type SessionPermission = { sessionId: string; permission: PendingPermission | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
 // none: 何も送らない（複数選択の自由記述は、打つだけでチェックが付く）
-export type ScreenChoice = { optionId: string; key: 'enter' | 'space' | 'none'; text?: string };
 
 // seq はセッションごとのイベント通し番号。スナップショットとライブ配信の重複を除くのに使う
 // live: 今まさに起きたこと。false は再開時に読み込んだ過去の会話
@@ -453,18 +457,24 @@ export type TanacodeApi = {
     onProgress(listener: (payload: SessionProgress) => void): () => void;
   };
   screen: {
-    choose(sessionId: string, choice: ScreenChoice): Promise<ChooseResult>;
     // 権限モードを Shift+Tab で切り替える（このセッションだけ）
     setMode(sessionId: string, mode: PermissionMode): Promise<boolean>;
     // text で始まる発言の直前まで巻き戻す（/rewind の一覧から選ぶ）
     rewind(sessionId: string, text: string): Promise<boolean>;
   };
-  // フックが答えを待っている AskUserQuestion（ターミナルの画面を読まずに出す質問のカード）
+  // Claude Code が答えを待っている AskUserQuestion（質問のカード）
   question: {
     get(sessionId: string): Promise<PendingQuestion | null>;
-    // 返事をする。その質問をもう待っていなければ（人がターミナルで答えた・Claude Code が終わった）false
+    // 返事をする。その質問をもう待っていなければ（人がほかで答えた・Claude Code が終わった）false
     reply(sessionId: string, questionId: string, reply: QuestionReply): Promise<boolean>;
     onChanged(listener: (payload: SessionQuestion) => void): () => void;
+  };
+  // Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認のカード）
+  permission: {
+    get(sessionId: string): Promise<PendingPermission | null>;
+    // 答える。その要求をもう待っていなければ（人がほかで答えた・Claude Code が取り下げた・終わった）false
+    reply(sessionId: string, requestId: string, reply: PermissionReply): Promise<boolean>;
+    onChanged(listener: (payload: SessionPermission) => void): () => void;
   };
   workflows: {
     get(sessionId: string): Promise<WorkflowRun[]>;
@@ -761,12 +771,13 @@ export type IpcInvoke = {
   [IpcChannel.SessionsExportSave]: Api['sessions']['saveExport'];
   [IpcChannel.SessionsDiscover]: Api['sessions']['discover'];
   [IpcChannel.SessionsImport]: Api['sessions']['import'];
-  [IpcChannel.ScreenChoose]: Api['screen']['choose'];
   [IpcChannel.ScreenSetMode]: Api['screen']['setMode'];
   [IpcChannel.ScreenRewind]: Api['screen']['rewind'];
   [IpcChannel.SessionsProgressGet]: Api['sessions']['progress'];
   [IpcChannel.QuestionGet]: Api['question']['get'];
   [IpcChannel.QuestionReply]: Api['question']['reply'];
+  [IpcChannel.PermissionGet]: Api['permission']['get'];
+  [IpcChannel.PermissionReply]: Api['permission']['reply'];
   [IpcChannel.WorkflowsGet]: Api['workflows']['get'];
   [IpcChannel.SubagentsGet]: Api['subagents']['get'];
   [IpcChannel.UsageGet]: Api['usage']['get'];
@@ -874,6 +885,7 @@ export type IpcEvent = {
   [IpcChannel.ChatEvents]: Payload<Api['sessions']['onChat']>;
   [IpcChannel.SessionsProgress]: Payload<Api['sessions']['onProgress']>;
   [IpcChannel.QuestionChanged]: Payload<Api['question']['onChanged']>;
+  [IpcChannel.PermissionChanged]: Payload<Api['permission']['onChanged']>;
   [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
   [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;

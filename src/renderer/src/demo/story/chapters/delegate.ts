@@ -1,7 +1,7 @@
-import type { Menu } from '@shared/screen';
+import type { PendingQuestion } from '@shared/questions';
 import { ROOT } from '../../data';
 import { sleep } from '../../director';
-import { option, statusLine } from '../../scenarios/claude';
+import { statusLine } from '../../scenarios/claude';
 import { CSS_WITH_TAX, MENU_CARD_WITH_TAX, PRICE_TEST_WITH_TAX, PRICE_WITH_TAX } from '../files';
 import { addCards, checkCards, DONE_LIST, replyCard, showPanel } from '../checklist';
 import { MAIN, type Story } from '../story';
@@ -13,19 +13,21 @@ import { MAIN, type Story } from '../story';
 const QUESTION = '税込価格の見せ方はどうしますか？';
 const ANSWER = '税込を大きく、税抜を小さく添える';
 
-const QUESTION_MENU: Menu = {
-  kind: 'question',
-  tabs: [],
-  title: QUESTION,
-  context: [],
-  options: [
-    option('1', ANSWER, '「¥572（税抜 ¥520）」のように出す', 'カフェラテ\n¥572  （税抜 ¥520）\n\nあんバタートースト\n¥748  （税抜 ¥680）'),
-    option('2', '税込だけを出す', '税抜の価格は出さない', 'カフェラテ\n¥572\n\nあんバタートースト\n¥748'),
-    option('3', '税込・税抜を切り替えるボタンを付ける', 'ページの上に切り替えのボタンを置く', '[ 税込 | 税抜 ]\n\nカフェラテ\n¥572'),
+const PRICE_QUESTION: PendingQuestion = {
+  id: 'price-question',
+  questions: [
+    {
+      question: QUESTION,
+      header: '見せ方',
+      multiSelect: false,
+      options: [
+        { label: ANSWER, description: '「¥572（税抜 ¥520）」のように出す', preview: 'カフェラテ\n¥572  （税抜 ¥520）\n\nあんバタートースト\n¥748  （税抜 ¥680）' },
+        { label: '税込だけを出す', description: '税抜の価格は出さない', preview: 'カフェラテ\n¥572\n\nあんバタートースト\n¥748' },
+        { label: '税込・税抜を切り替えるボタンを付ける', description: 'ページの上に切り替えのボタンを置く', preview: '[ 税込 | 税抜 ]\n\nカフェラテ\n¥572' },
+      ],
+    },
   ],
-  multiSelect: false,
-  hint: 'Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel',
-  previewLayout: true,
+  answered: {},
 };
 
 export async function runDelegate(story: Story): Promise<void> {
@@ -59,8 +61,7 @@ export async function runDelegate(story: Story): Promise<void> {
   d.caption('Claude からの質問には、ボタンで答えられます。選択肢にマウスを乗せると、プレビューが切り替わります', '.menu-card');
   claude.stopWorking();
   const answered = story.nextChoice();
-  backend.setScreen(id, { state: { kind: 'menu', menu: QUESTION_MENU } });
-  backend.update(id, { attention: 'question' });
+  backend.ask(id, PRICE_QUESTION);
   await sleep(1200);
   await d.moveTo(d.byText('.menu-option', '税込だけ'), { ms: 800 });
   await sleep(1300);
@@ -68,8 +69,6 @@ export async function runDelegate(story: Story): Promise<void> {
   await sleep(1300);
   await d.click(d.byText('.menu-option', ANSWER), { ms: 600 });
   await answered;
-  backend.setScreen(id, { state: { kind: 'prompt' } });
-  backend.update(id, { attention: null });
   const ask = claude.next('ask');
   backend.push(id, { type: 'tool-use', id: ask, name: 'AskUserQuestion', target: QUESTION, input: QUESTION, at: Date.now() });
   backend.push(id, { type: 'tool-result', id: ask, isError: false, answers: [{ header: '見せ方', question: QUESTION, answer: ANSWER }], at: Date.now() });

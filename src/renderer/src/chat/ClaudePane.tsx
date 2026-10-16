@@ -5,7 +5,7 @@ import type { ScheduledMessage } from '@shared/scheduled';
 import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode } from '@shared/screen';
-import type { PendingQuestion } from '@shared/questions';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { BashTask, TaskRef } from '@shared/task';
 import { errorMessage } from '../errorMessage';
 import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
@@ -13,6 +13,7 @@ import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ExportDialog } from '../export/ExportDialog';
 import { ContextMeter } from '../knowledge/ContextMeter';
 import { contextUsage } from '../knowledge/useSessionKnowledge';
+import { MenuCard } from '../screen/MenuCard';
 import { QuestionCard } from '../screen/QuestionCard';
 import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
@@ -56,8 +57,10 @@ type Props = {
   // ほかのセッションへ移る（チャットの親からの指示・子からの知らせ・@ の参照・セッションのツールのカードから）
   onSelectSession: (id: string) => void;
   chat: ChatState;
-  // フックが答えを待っている AskUserQuestion（無ければ null）
+  // Claude Code が答えを待っている AskUserQuestion（無ければ null）
   question?: PendingQuestion | null;
+  // Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認。無ければ null）
+  permission?: PendingPermission | null;
   workflows: WorkflowRuns;
   subagents: SubagentRuns;
   bashTasks: ReadonlyMap<string, BashTask>;
@@ -104,6 +107,7 @@ export const ClaudePane = memo(function ClaudePane({
   onSelectSession,
   chat,
   question = null,
+  permission = null,
   workflows,
   subagents,
   bashTasks,
@@ -274,10 +278,11 @@ export const ClaudePane = memo(function ClaudePane({
     const list = listRef.current;
     if (list) toBottom(list);
   }, [screenMode]);
-  // フックが答えを待っている質問
+  // 答えを待っている質問と、許可の確認・プランの承認
   const asked = live ? question : null;
+  const prompt = live ? permission : null;
   // 質問や確認のカードが出ている
-  const waiting = !!asked;
+  const waiting = !!asked || !!prompt;
   // 質問や確認のカードが出ている間は、答えをカードで選ぶ
   const blocked = waiting || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
   const hasContent = input.trim().length > 0 || attachments.length > 0 || pastes.length > 0 || comments.length > 0;
@@ -285,7 +290,7 @@ export const ClaudePane = memo(function ClaudePane({
   // 質問や確認のカードが出たときも、最下部にいれば追いかける。カードは会話ログから来ないので、上の追いかけ
   // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
   // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）
-  const cardKey = asked ? `question:${asked.id}` : '';
+  const cardKey = asked ? `question:${asked.id}` : prompt ? `permission:${prompt.id}` : '';
   useLayoutEffect(() => {
     const list = listRef.current;
     if (cardKey && list && stickToBottom.current) toBottom(list);
@@ -658,6 +663,8 @@ export const ClaudePane = memo(function ClaudePane({
           {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
           {/* 待っている質問が変われば作り直す（打ちかけの答えを、次の質問やほかのセッションに持ち越さない） */}
           {asked && <QuestionCard key={`${session.id}|${asked.id}`} sessionId={session.id} question={asked} />}
+          {/* 待っている要求が変われば作り直す（書きかけの理由を、次の確認やほかのセッションに持ち越さない） */}
+          {prompt && <MenuCard key={`${session.id}|${prompt.id}`} sessionId={session.id} permission={prompt} />}
           {session.archived && (
             <div className="chat-callout">
               <span>{t('chat.pane.archived')}</span>

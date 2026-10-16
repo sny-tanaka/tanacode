@@ -3469,6 +3469,45 @@ details[open] > summary > .disclosure {
   white-space: pre-wrap;
   word-break: break-all;
 }
+/* プランの承認のプランの本文（長いので、カードの中でスクロールする。等幅にしない） */
+.menu-plan {
+  max-height: 320px;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 13px;
+  word-break: normal;
+}
+/* 許可の確認のツールの入力（長いコマンドなど）も、カードの中でスクロールする */
+.menu-card.permission .menu-context {
+  max-height: 240px;
+  overflow: auto;
+}
+/* 許可の確認の説明・理由の行 */
+.menu-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+/* プレビュー付きの質問のメモ欄 */
+.menu-notes-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.menu-notes-input textarea {
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
 .menu-title {
   font-weight: 400;
   line-height: 1.6;

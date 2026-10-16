@@ -1,137 +1,142 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Menu, MenuOption } from '@shared/screen';
+import type { PendingPermission } from '@shared/questions';
 import { MenuCard } from '../../src/renderer/src/screen/MenuCard';
 import { mockApi } from './mock-api';
 
-// Claude Code の選択メニュー（質問・許可の確認）をボタンで操作するカード。押したボタンで、どのキーを送るか
-// （単一選択は Enter・複数選択のチェックは Space・自由記述は打った文字と、単一なら Enter・複数なら何も押さない・キャンセルは Esc）
+// Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認）のカード。押したボタンで、どの答えを返すか
+// （許す・今後は聞かない・理由を伝えて断る・× で断って止める。プランは承認・承認して編集を自動で・直してほしいことを伝えて計画を続ける）
 
 let api: ReturnType<typeof mockApi>;
 beforeEach(() => {
-  api = mockApi();
+  api = mockApi({ 'permission.reply': () => Promise.resolve(true) });
   api.install();
 });
 afterEach(cleanup);
 
-const option = (id: string, label: string, over: Partial<MenuOption> = {}): MenuOption => ({ id, label, description: '', pointed: false, checked: null, textInput: false, ...over });
-const menu = (over: Partial<Menu>): Menu => ({ kind: 'question', tabs: [], title: 'どれにしますか？', context: [], options: [], multiSelect: false, hint: '', ...over });
+const permission = (over: Partial<PendingPermission> = {}): PendingPermission => ({
+  id: 'req-1',
+  tool: 'Bash',
+  title: 'Bash',
+  description: 'ビルドの成果物を消す',
+  input: { command: 'rm -rf build', description: 'ビルドの成果物を消す' },
+  reason: null,
+  always: null,
+  plan: null,
+  agent: null,
+  ...over,
+});
+const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
-describe('MenuCard', () => {
-  it('単一選択の選択肢を押すと、その選択肢を Enter で選ぶ', () => {
-    render(<MenuCard sessionId="s1" menu={menu({ options: [option('1', 'はい'), option('2', 'いいえ', { description: '何もしない' })] })} />);
-    fireEvent.click(screen.getByText('いいえ'));
-    expect(api.argsOf('screen.choose')).toEqual([['s1', { optionId: '2', key: 'enter', text: undefined }]]);
-    expect(screen.getByText('何もしない')).toBeTruthy();
-  });
-
-  it('複数選択のチェックは Space で付け外しし、確定の行は Enter で次へ進む', async () => {
-    render(
-      <MenuCard
-        sessionId="s1"
-        menu={menu({ multiSelect: true, options: [option('1', '赤', { checked: true }), option('2', '青', { checked: false }), option('submit', 'Next')] })}
-      />,
-    );
-    fireEvent.click(screen.getByText('青'));
-    // 送り終えてから次を押す（送っている間は押せない）
-    await act(async () => {});
-    fireEvent.click(screen.getByText('次の質問へ →'));
-    expect(api.argsOf('screen.choose')).toEqual([
-      ['s1', { optionId: '2', key: 'space', text: undefined }],
-      ['s1', { optionId: 'submit', key: 'enter', text: undefined }],
-    ]);
-  });
-
-  it('最後の質問の確定の行は「回答の確認へ」と出す', () => {
-    render(<MenuCard sessionId="s1" menu={menu({ multiSelect: true, options: [option('1', '赤', { checked: true }), option('submit', 'Submit')] })} />);
-    expect(screen.getByText('回答の確認へ →')).toBeTruthy();
-  });
-
-  it('自由記述: 押すと入力欄を出し、単一選択では打った文字と Enter で答える。空では送らない', () => {
-    render(<MenuCard sessionId="s1" menu={menu({ options: [option('1', 'はい'), option('2', 'Type something.', { textInput: true })] })} />);
-    fireEvent.click(screen.getByText('その他（自由に入力）'));
-    const input = screen.getByPlaceholderText('回答を入力');
-    fireEvent.submit(input.closest('form')!);
-    expect(api.argsOf('screen.choose')).toEqual([]);
-    fireEvent.change(input, { target: { value: '別の案' } });
-    fireEvent.click(screen.getByText('送信'));
-    expect(api.argsOf('screen.choose')).toEqual([['s1', { optionId: '2', key: 'enter', text: '別の案' }]]);
-  });
-
-  it('自由記述: 複数選択では打つだけ（Enter はチェックを外してしまう）。打ってあった文字は入力欄に戻す', () => {
-    render(<MenuCard sessionId="s1" menu={menu({ multiSelect: true, options: [option('1', '赤', { checked: false }), option('3', '黄色', { textInput: true, checked: true })] })} />);
-    fireEvent.click(screen.getByText('その他: 黄色'));
-    const input = screen.getByPlaceholderText('回答を入力') as HTMLInputElement;
-    expect(input.value).toBe('黄色');
-    fireEvent.change(input, { target: { value: '金色' } });
-    fireEvent.click(screen.getByText('決定'));
-    expect(api.argsOf('screen.choose')).toEqual([['s1', { optionId: '3', key: 'none', text: '金色' }]]);
-  });
-
-  it('押した選択が届かなかったときは、カードにそう出して押し直せる。送っている間は、ほかの選択肢を押せない', async () => {
-    let finish!: (result: string) => void;
-    api = mockApi({ 'screen.choose': () => new Promise((resolve) => (finish = resolve)) });
-    api.install();
-    render(<MenuCard sessionId="s1" menu={menu({ kind: 'permission', options: [option('1', 'Yes'), option('2', 'No')] })} />);
-    fireEvent.click(screen.getByText('Yes'));
-    // 1 つ目を送っている間に押した 2 つ目は、送らない（押せない）
-    fireEvent.click(screen.getByText('No'));
-    expect(api.argsOf('screen.choose')).toEqual([['s1', { optionId: '1', key: 'enter', text: undefined }]]);
-    expect(screen.queryByRole('alert')).toBeNull();
-    await act(async () => finish('ignored'));
-    expect(screen.getByRole('alert').textContent).toContain('Claude Code が受け付けませんでした');
-    fireEvent.click(screen.getByText('Yes'));
-    expect(api.argsOf('screen.choose')).toHaveLength(2);
-    // 押し直したら、前の知らせは消す
-    expect(screen.queryByRole('alert')).toBeNull();
-    await act(async () => finish('chosen'));
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('キャンセルは Esc を送る', () => {
-    render(<MenuCard sessionId="s1" menu={menu({ kind: 'permission', options: [option('1', 'Yes')] })} />);
-    fireEvent.click(screen.getByLabelText('キャンセル'));
-    expect(api.argsOf('pty.write')).toEqual([['s1', '\x1b']]);
-  });
-
-  it('見出し・質問のタブ（答えたものに印）・補足・質問文を出す', () => {
-    const { container } = render(
-      <MenuCard
-        sessionId="s1"
-        menu={menu({
-          kind: 'permission',
-          title: 'Do you want to proceed?',
-          context: ['Bash command', 'rm -rf build'],
-          tabs: [
-            { label: '色', answered: true },
-            { label: '形', answered: false },
-          ],
-          options: [option('1', 'Yes')],
-        })}
-      />,
-    );
+describe('MenuCard（許可の確認）', () => {
+  it('見出し・ツールの入力（Bash はコマンド）・説明・確認する理由・サブエージェントの印を出す', () => {
+    const { container } = render(<MenuCard sessionId="s1" permission={permission({ reason: 'Bash は毎回確かめる設定です', agent: 'agent-1' })} />);
     expect(screen.getByText('実行の許可')).toBeTruthy();
-    expect(screen.getByText('Do you want to proceed?')).toBeTruthy();
-    expect(container.querySelector('.menu-context')?.textContent).toBe('Bash command\nrm -rf build');
-    expect([...container.querySelectorAll('.menu-tab')].map((t) => [t.textContent, t.classList.contains('answered')])).toEqual([
-      ['色', true],
-      ['形', false],
+    expect(container.querySelector('.menu-context')?.textContent).toBe('rm -rf build');
+    expect(container.querySelector('.menu-title')?.textContent).toBe('Bash');
+    expect(container.querySelector('.menu-notes')?.textContent).toContain('ビルドの成果物を消す');
+    expect(container.querySelector('.menu-notes')?.textContent).toContain('確認する理由: Bash は毎回確かめる設定です');
+    expect(container.querySelector('.menu-notes')?.textContent).toContain('サブエージェントの中の呼び出しです');
+  });
+
+  it('ファイルを書き換えるツールはファイルのパスを、ほかのツールは入力の JSON を出す', () => {
+    const { container, rerender } = render(<MenuCard sessionId="s1" permission={permission({ tool: 'Write', input: { file_path: '/repo/hello.txt', content: 'こんにちは' } })} />);
+    expect(container.querySelector('.menu-context')?.textContent).toBe('/repo/hello.txt');
+    rerender(<MenuCard sessionId="s1" permission={permission({ id: 'req-2', tool: 'mcp__x__y', input: { url: 'https://example.com/' } })} />);
+    expect(container.querySelector('.menu-context')?.textContent).toBe(JSON.stringify({ url: 'https://example.com/' }, null, 2));
+  });
+
+  it('「許可する」は許す。「今後は聞かない」は、Claude Code が候補を出したときだけ、足す許可の名前と一緒に出す', async () => {
+    const { rerender } = render(<MenuCard sessionId="s1" permission={permission()} />);
+    expect(screen.queryByText(/今後は聞かない/)).toBeNull();
+    fireEvent.click(screen.getByText('許可する'));
+    await settle();
+    rerender(<MenuCard sessionId="s1" permission={permission({ id: 'req-2', always: ['Bash(rm -rf build)'] })} />);
+    fireEvent.click(screen.getByText('許可して、今後は聞かない（Bash(rm -rf build)）'));
+    await settle();
+    expect(api.argsOf('permission.reply')).toEqual([
+      ['s1', 'req-1', { kind: 'allow' }],
+      ['s1', 'req-2', { kind: 'allow', always: true }],
     ]);
   });
 
-  it('プレビュー: はじめはプレビューのある最初の選択肢、ホバーした選択肢のものに変える', () => {
-    const { container } = render(
-      <MenuCard
-        sessionId="s1"
-        menu={menu({ previewLayout: true, options: [option('1', '案 A', { preview: 'A の図' }), option('2', '案 B'), option('3', '案 C', { preview: 'C の図' })] })}
-      />,
-    );
-    const body = () => container.querySelector('.menu-preview')?.textContent;
-    expect(body()).toContain('A の図');
-    fireEvent.mouseEnter(screen.getByText('案 C'));
-    expect(body()).toContain('C の図');
-    fireEvent.mouseEnter(screen.getByText('案 B'));
-    expect(body()).toContain('この選択肢にはプレビューがありません');
+  it('「断って、理由を伝える」は入力欄を出し、⌘+Enter か送信で理由を添えて断る。空では送らない。やめると閉じて、開き直した欄は空', async () => {
+    render(<MenuCard sessionId="s1" permission={permission()} />);
+    fireEvent.click(screen.getByText('断って、理由を伝える'));
+    const box = () => screen.getByPlaceholderText(/断る理由/) as HTMLTextAreaElement;
+    fireEvent.submit(box().closest('form')!);
+    expect(api.argsOf('permission.reply')).toEqual([]);
+    fireEvent.change(box(), { target: { value: '別の方法で' } });
+    fireEvent.click(screen.getByRole('button', { name: 'やめる' }));
+    expect(screen.queryByPlaceholderText(/断る理由/)).toBeNull();
+    fireEvent.click(screen.getByText('断って、理由を伝える'));
+    expect(box().value).toBe('');
+    fireEvent.change(box(), { target: { value: '  消さずに、\n別のフォルダに出して  ' } });
+    // Enter だけでは改行（送らない）
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(api.argsOf('permission.reply')).toEqual([]);
+    fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(api.argsOf('permission.reply')).toEqual([['s1', 'req-1', { kind: 'deny', message: '消さずに、\n別のフォルダに出して' }]]);
+  });
+
+  it('右上の × は、断って作業を止める', async () => {
+    render(<MenuCard sessionId="s1" permission={permission()} />);
+    fireEvent.click(screen.getByLabelText('キャンセル'));
+    await settle();
+    expect(api.argsOf('permission.reply')).toEqual([['s1', 'req-1', { kind: 'stop' }]]);
+  });
+
+  it('もう答えられない（ほかで答えた・取り下げられた）・送れないときは、カードにそう出す。送っている間は押せない', async () => {
+    let finish!: (ok: boolean) => void;
+    api = mockApi({ 'permission.reply': () => new Promise((resolve) => (finish = resolve)) });
+    api.install();
+    render(<MenuCard sessionId="s1" permission={permission()} />);
+    fireEvent.click(screen.getByText('許可する'));
+    fireEvent.click(screen.getByLabelText('キャンセル'));
+    expect(api.argsOf('permission.reply')).toEqual([['s1', 'req-1', { kind: 'allow' }]]);
+    await act(async () => finish(false));
+    expect(screen.getByRole('alert').textContent).toContain('この確認には、もう答えられません');
+    api = mockApi({ 'permission.reply': () => Promise.reject(new Error('IPC')) });
+    api.install();
+    fireEvent.click(screen.getByText('許可する'));
+    await settle();
+    expect(screen.getByRole('alert').textContent).toContain('送れませんでした');
+  });
+});
+
+describe('MenuCard（プランの承認）', () => {
+  const plan = (text: string | null = '# 計画\n\n1. 価格を直す') => permission({ tool: 'ExitPlanMode', title: 'ExitPlanMode', description: null, input: {}, plan: text });
+
+  it('プランの本文と、承認する・承認して編集を自動で進める・計画を続けるを出す（コンテキストを消して承認は出さない）', async () => {
+    const { container } = render(<MenuCard sessionId="s1" permission={plan()} />);
+    expect(screen.getByText('プランの承認')).toBeTruthy();
+    expect(container.querySelector('.menu-plan')?.textContent).toBe('# 計画\n\n1. 価格を直す');
+    expect(container.querySelector('.menu-title')?.textContent).toBe('このプランで進めますか？');
+    expect([...container.querySelectorAll('.menu-option-label')].map((e) => e.textContent)).toEqual([
+      '承認する（編集は毎回確かめる）',
+      '承認して、編集を自動で進める',
+      '計画を続ける（直してほしいことを伝える）',
+    ]);
+    fireEvent.click(screen.getByText('承認して、編集を自動で進める'));
+    await settle();
+    expect(api.argsOf('permission.reply')).toEqual([['s1', 'req-1', { kind: 'accept-edits' }]]);
+  });
+
+  it('計画を続けるときは、直してほしいことを添えて断る（Claude はプランを直す）', async () => {
+    render(<MenuCard sessionId="s1" permission={plan()} />);
+    fireEvent.click(screen.getByText('計画を続ける（直してほしいことを伝える）'));
+    fireEvent.change(screen.getByPlaceholderText(/プランで直してほしいこと/), { target: { value: 'テストも足して' } });
+    fireEvent.click(screen.getByText('送信'));
+    await settle();
+    expect(api.argsOf('permission.reply')).toEqual([['s1', 'req-1', { kind: 'deny', message: 'テストも足して' }]]);
+  });
+
+  it('プランの本文が取れなかったときは、本文の枠を出さない', () => {
+    const { container } = render(<MenuCard sessionId="s1" permission={plan('')} />);
+    expect(container.querySelector('.menu-plan')).toBeNull();
+    expect(container.querySelector('.menu-context')).toBeNull();
+    expect(screen.getByText('承認する（編集は毎回確かめる）')).toBeTruthy();
   });
 });
