@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
 import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
-import type { AskQuestion, Menu, PermissionMode, ScreenInfo } from '../src/shared/screen';
+import type { AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo } from '../src/shared/screen';
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
 import type { WorkflowRun } from '../src/shared/workflow';
@@ -369,12 +369,12 @@ class FakeHost implements SessionsHost {
   withdrawParentDraft = async (id: string) => void this.withdrawn.push(id);
   askedQuestions = (id: string) => this.asked.get(id) ?? null;
   // 本物と同じく、メニューが expect を満たさなければ押さない。Enter で答えると質問が閉じる
-  chooseIf = async (id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean) => {
+  chooseIf = async (id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult> => {
     const screen = this.screens.get(id);
-    if (screen?.state.kind !== 'menu' || !expect(screen.state.menu)) return false;
+    if (screen?.state.kind !== 'menu' || !expect(screen.state.menu)) return 'gone';
     this.chosen.push({ id, choice });
     if (choice.key === 'enter') this.screens.set(id, prompt(''));
-    return true;
+    return 'chosen';
   };
   watchState = (listener: (id: string) => void) => {
     this.listeners.add(listener);
@@ -685,7 +685,7 @@ describe('ツールの実行（SessionsControl）', () => {
       const chooseIf = host.chooseIf;
       host.chooseIf = async (id, choice, expect) => {
         const pressed = await chooseIf(id, choice, expect);
-        if (pressed && choice.key === 'enter') {
+        if (pressed === 'chosen' && choice.key === 'enter') {
           host.set(id, 'working');
           after();
         }
@@ -1043,7 +1043,7 @@ describe('ツールの実行（SessionsControl）', () => {
       const choose = host.chooseIf;
       host.chooseIf = async (session, choice, expect) => {
         const pressed = await choose(session, choice, expect);
-        if (pressed) show(bash('mkdir next', { seq: 2 }));
+        if (pressed === 'chosen') show(bash('mkdir next', { seq: 2 }));
         return pressed;
       };
       const result = jsonOf<{ next_permission: View }>(await answer({ permission_id: id, decision: 'allow' }));
@@ -1054,7 +1054,7 @@ describe('ツールの実行（SessionsControl）', () => {
     it('答えを送っても確認が閉じなければ、失敗として返す', async () => {
       show(bash('mkdir out'));
       const { id } = await read();
-      host.chooseIf = async () => true;
+      host.chooseIf = async () => 'chosen';
       expect(textOf(await answer({ permission_id: id, decision: 'allow' }))).toContain('did not close');
     });
   });
@@ -2407,7 +2407,7 @@ describe('ツールの実行（SessionsControl）', () => {
         host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
         host.chooseIf = async (id, choice) => {
           host.chosen.push({ id, choice });
-          return true;
+          return 'chosen';
         };
         expect(textOf(await answer({ choices: ['A 案'] }))).toBe('Sent the answer, but the question did not close. Check with get_session.');
       });
@@ -2422,7 +2422,7 @@ describe('ツールの実行（SessionsControl）', () => {
         host.chooseIf = async (id, choice) => {
           host.chosen.push({ id, choice });
           host.screens.set(CHILD, menuScreen({ title: 'いつまでに?', tabs: tabs(true), options: [option('1', '今日', { description: '急ぎ' }), option('2', '明日')] }));
-          return true;
+          return 'chosen';
         };
         expect(jsonOf(await answer({ choices: ['A 案'] }))).toEqual({
           answered: true,
@@ -2738,12 +2738,21 @@ describe('ツールの実行（SessionsControl）', () => {
         expect(host.chosen.map((c) => c.choice.optionId)).toEqual(['1', 'submit']);
       });
 
+      it('自由記述の欄に前に打った文が残っていて消せなければ、何も打たず、欄を消してもらうよう返す', async () => {
+        // 残った文に継ぎ足した答えを送らない（欄の Ctrl+U は、折り返した最後の 1 行しか消さない）
+        host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案'), option('2', '前に打ちかけた長い指示', { textInput: true })] }));
+        host.chooseIf = async () => 'filled';
+        expect(textOf(await answer({ other: 'B 案で進めてください' }))).toBe(
+          'The free-text field of the question already has text typed earlier that could not be cleared, so nothing was typed. Ask the user to clear the field in "s-22" (or to answer there), then answer again.',
+        );
+      });
+
       it('答えたあと、質問が閉じるまで少し待つ', async () => {
         host.screens.set(CHILD, menuScreen({ title: 'どちらの方式?', options: [option('1', 'A 案')] }));
         host.chooseIf = async (id, choice) => {
           host.chosen.push({ id, choice });
           setTimeout(() => host.screens.set(CHILD, prompt('')), 250);
-          return true;
+          return 'chosen';
         };
         expect(jsonOf(await answer({ choices: ['A 案'] }))).toMatchObject({ answered: true });
       });

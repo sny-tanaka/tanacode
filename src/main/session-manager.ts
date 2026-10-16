@@ -851,9 +851,9 @@ export class SessionManager {
     return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text)) ?? 'gone';
   }
 
-  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。選べたら true
-  async chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean> {
-    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) === 'chosen';
+  // expect を満たすメニューのあいだだけ選ぶ（親が子の質問に答えるとき。途中で許可の確認などに変わったら、何も押さない）。選べたら chosen
+  async chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult> {
+    return (await this.runtimes.get(id)?.screen?.choose(choice.optionId, choice.key, choice.text, expect)) ?? 'gone';
   }
 
   addedFoldersOf(id: string): string[] {

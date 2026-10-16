@@ -43,8 +43,12 @@ export type Menu = {
 // chosen: 送ったキーで画面が変わった（自由記述を打つだけのときは、打ち終えた） / busy: ほかの画面の操作の途中で、何も送っていない /
 // gone: メニューが出ていない・別のメニューに変わったので、何も送っていない / missing: その選択肢が画面に無いので、何も送っていない /
 // stuck: 選択肢にカーソルを合わせられなかったので、選ぶキーは送っていない /
-// ignored: 選ぶキーを 1 回送ったが、メニューの画面が変わらなかった（Claude Code が受け付けなかった。送り直してはいない）
-export type ChooseResult = 'chosen' | 'busy' | 'gone' | 'missing' | 'stuck' | 'ignored';
+// ignored: 選ぶキーを 1 回送ったが、メニューの画面が変わらなかった（Claude Code が受け付けなかった。送り直してはいない） /
+// filled: 自由記述の欄に前に打った文が残っていて消せなかったので、何も打っていない（残った文に継ぎ足した答えを送らないため）
+export type ChooseResult = 'chosen' | 'busy' | 'gone' | 'missing' | 'stuck' | 'ignored' | 'filled';
+
+// 自由記述の欄が空のときに出る文字（複数選択では、チェックの印のあとに出る）
+export const TYPE_SOMETHING = /^Type something\.?$/;
 
 // prompt: 通常の入力欄が出ている / menu: 選択メニュー / rewind: 巻き戻し先の一覧（/rewind）/
 // unknown: 認識できない対話画面（/config など）

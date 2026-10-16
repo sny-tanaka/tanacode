@@ -48,6 +48,16 @@ const SECOND_QUESTION: AskQuestion = {
     { label: '書かない', description: 'あとで足す' },
   ],
 };
+// 子の質問に、親が長い指示（自由記述）で答える
+const ASK_LONG = '長い答えの確認をしてください';
+// 端末が低いと（ここでは 100×30）、自由記述の欄が何行にも折り返して、質問文と選択肢が画面の上に押し出される長さ。
+// 番号付きの項目が、折り返した行の頭に来ることがある。answer_question は改行を空白にして 1 行で打つ
+const LONG_OTHER = [
+  '【保留】方針はまだ確定しない。がっつり進める前に、使い捨てのモックで見た目を確かめる。',
+  ...Array.from({ length: 30 }, (_, i) => `${i + 1}. 手順 ${i + 1}: 本実装のファイルは編集せず、新しい一時ファイルに、既存の部品を組み合わせた見た目を直書きで置く。`),
+].join('\n');
+// 子の欄に残っていた文（人が打ちかけて、Enter を押さないまま置いたもの）
+const LEFTOVER = '前に打ちかけて、Enter を押さないまま欄に残った長い指示です。'.repeat(30);
 const BYPASS = 'バイパスのモードで扱ってください';
 const PERMIT = '許可の確認の確かめをしてください';
 // 画面に収まらない長さのコマンド（全文を読めるかを見る）
@@ -137,6 +147,15 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
           [{ type: 'tool_use', id: 'toolu_child_ask_1', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }],
           [{ type: 'tool_use', id: 'toolu_child_ask_2', name: 'AskUserQuestion', input: { questions: [SECOND_QUESTION] } }],
           say('A 案で、テストも書きます'),
+        ],
+      },
+      {
+        match: ASK_LONG,
+        delayMs: 500,
+        steps: [
+          [{ type: 'tool_use', id: 'toolu_child_ask_long', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }],
+          say('長い答えを受け取りました'),
+          [{ type: 'tool_use', id: 'toolu_child_ask_left', name: 'AskUserQuestion', input: { questions: [CHILD_QUESTION] } }],
         ],
       },
       {
@@ -343,6 +362,65 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       expect((JSON.parse(textOf(second)) as { next_question?: unknown }).next_question).toBeUndefined();
       await child.waitFor('子の返事', replied(child, 'A 案で、テストも書きます'));
       expect(child.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_child_ask_2')).toMatchObject({ answers: [{ question: SECOND_QUESTION.question, answer: '書く' }] });
+    });
+  });
+
+  describe('子の質問に親が長い指示で答える', () => {
+    let child: ClaudeRun;
+    let control: SessionsControl;
+    const parentId = randomUUID();
+    const textOf = (result: { content: { type: string; text?: string }[] }) => (result.content[0] as { text: string }).text;
+    const answerOf = (toolUseId: string) => () => {
+      const result = child.chatEvents.find((e) => e.type === 'tool-result' && e.id === toolUseId);
+      return result?.type === 'tool-result' ? result.answers?.[0]?.answer : undefined;
+    };
+    // 質問が出て、フックが書いた質問を受け取るまで待つ（AskUserQuestion で出した質問だけに答えられる）
+    const asked = async () => {
+      await child.waitFor('子の質問', menuOf('question'));
+      await child.waitFor('フックが書いた質問', () => child.manager.askedQuestions(child.sessionId!));
+    };
+
+    beforeAll(async () => {
+      child = await open();
+      const now = Date.now();
+      child.manager['store'].add({ id: parentId, claudeSessionId: randomUUID(), cwd: child.cwd, title: '取りまとめ', titlePriority: 4, archived: false, createdAt: now, updatedAt: now });
+      child.manager['store'].update(child.sessionId!, { parentId });
+      control = new SessionsControl({ host: child.manager, enabled: () => true, archive: (id, options) => child.manager.archive(id, options), home: child.home, notifyDelayMs: 10 });
+      // 人の画面が低いときの大きさ（子の端末は、人が見ている画面の大きさになる）
+      child.manager.resize(child.sessionId!, 100, 30);
+    });
+
+    afterAll(() => control?.dispose());
+
+    it('自由記述の欄が折り返して、質問文と選択肢が画面の上に押し出されても、打ち終えて答えられる', async () => {
+      // 2026-10-16: 打ったあと、質問と読めなくなって Enter を押す前に止まり（「質問が変わった」）、打った文が子の欄に残った
+      await child.send(ASK_LONG);
+      await asked();
+      const answered = await control.handle(parentId, 'answer_question', { session_id: child.sessionId, question: CHILD_QUESTION.question, other: LONG_OTHER });
+      expect(answered.isError, textOf(answered)).toBeUndefined();
+      expect(await child.waitFor('子が受け取った答え', answerOf('toolu_child_ask_long'))).toBe(LONG_OTHER.replace(/\n/g, ' '));
+      await child.waitFor('子の返事', replied(child, '長い答えを受け取りました'));
+    });
+
+    it('欄に長い文が残って上が押し出された質問も、get_session で質問文と選択肢が読める。消せない文に継ぎ足して答えない', async () => {
+      await child.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
+      await child.send('続けてください');
+      await asked();
+      // アプリのカードから、自由記述の欄に打つだけ打つ（Enter は押さない）。欄が折り返して、上が押し出される
+      await child.press('欄に打つ', { optionId: '3', key: 'none', text: LEFTOVER });
+      await child.waitFor('欄に打った文', (info) => (info.state.kind === 'menu' && info.state.menu.options.find((o) => o.textInput)?.label.endsWith('残った長い指示です。') ? true : null));
+      // 2026-10-16: 質問文が空（""）と出て、親はどの質問か確かめられなかった
+      const got = JSON.parse(textOf(await control.handle(parentId, 'get_session', { session_id: child.sessionId }))) as {
+        state: string;
+        question: { title: string; options: { label: string }[]; accepts_other: boolean };
+      };
+      expect(got.state).toBe('question');
+      expect(got.question).toMatchObject({ title: CHILD_QUESTION.question, options: [{ label: 'A 案' }, { label: 'B 案' }], accepts_other: true });
+      // Claude Code の Ctrl+U は、欄が折り返した最後の 1 行しか消さない。残った文に継ぎ足した答えは送らず、人に消してもらうよう返す
+      const answered = await control.handle(parentId, 'answer_question', { session_id: child.sessionId, question: got.question.title, other: '残っていた文は捨てて、B 案で進めてください' });
+      expect(textOf(answered)).toContain('could not be cleared, so nothing was typed');
+      expect(child.screen.text()).not.toContain('B 案で進めてください');
+      expect(answerOf('toolu_child_ask_left')()).toBeUndefined();
     });
   });
 

@@ -220,7 +220,7 @@ function fakeHost(cwd: string): SessionsHost {
     interrupt: () => {},
     withdrawParentDraft: async () => {},
     askedQuestions: () => null,
-    chooseIf: async () => false,
+    chooseIf: async () => 'gone',
     watchState: () => () => {},
     pendingPermission: () => null,
     subagents: () => [],

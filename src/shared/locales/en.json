@@ -1857,7 +1857,8 @@
       "gone": "Not sent because the screen changed",
       "missing": "Not sent because this option is no longer on the Claude Code screen",
       "stuck": "Couldn't move the cursor to this option. Click again, or choose it in the Claude Code terminal.",
-      "ignored": "Claude Code didn't accept the choice. Click again, or choose it in the Claude Code terminal."
+      "ignored": "Claude Code didn't accept the choice. Click again, or choose it in the Claude Code terminal.",
+      "filled": "The free-text field still has earlier text that couldn't be cleared. Clear it in the Claude Code terminal, then send again."
     },
     "card": {
       "sendFailed": "Couldn't send. Click again.",

@@ -1,5 +1,5 @@
 import { Terminal } from '@xterm/headless';
-import type { Activity, AskQuestion, ChooseResult, Menu, PermissionMode, ScreenInfo, ScreenLine, ScreenState } from '@shared/screen';
+import { TYPE_SOMETHING, type Activity, type AskQuestion, type ChooseResult, type Menu, type MenuOption, type PermissionMode, type ScreenInfo, type ScreenLine, type ScreenState } from '@shared/screen';
 import {
   applyQuestions,
   findEffort,
@@ -40,8 +40,10 @@ const PRESS_CONFIRM_MS = 3000;
 const KEY_UP = '\x1b[A';
 const KEY_DOWN = '\x1b[B';
 const KEY_SHIFT_TAB = '\x1b[Z';
-// 自由記述の欄の文字を消す
+// 自由記述の欄の文字を消す（Ctrl+U）
 const KEY_CLEAR_LINE = '\x15';
+// 自由記述の欄に打った文が、欄に出るのを待つ時間（長い文は、Claude Code が読み終えるのに時間がかかる）
+const TYPED_MS = 3000;
 // Shift+Tab で一巡する権限モードの数（bypassPermissions を含むと 5）
 const MODE_CYCLE = 5;
 // /rewind の一覧をさかのぼる上限
@@ -224,7 +226,7 @@ export class ScreenTracker {
   }
 
   // メニューの選択肢を選ぶ。↑/↓ を 1 回ずつ送り、画面上のカーソルが目的の選択肢に来たら key を送る。
-  // text があれば（自由記述）カーソルを合わせたあと、前に打った文字を消して入力してから key を送る。
+  // text があれば（自由記述）カーソルを合わせたあと、前に打った文字を消して入力し（clearField）、打った文が欄に出てから key を送る。
   // expect: キーを送る前に毎回、今のメニューがこれを満たすか確かめる（途中で別のメニューに変わったら、何も送らずにやめる）。
   // 出たばかりのメニュー（MENU_SETTLE_MS）と、Claude Code が入力を捨てる間（INPUT_GRACE_MS）には送らずに待ち、
   // 選ぶキー（key）は 1 回だけ送って、効いたかを画面で確かめる（press）。選べたら chosen。
@@ -250,8 +252,12 @@ export class ScreenTracker {
         if (moved) return moved;
         if (text) {
           if (!shown()) return 'gone';
-          this.write(KEY_CLEAR_LINE + text);
-          await this.nextRead(500);
+          const cleared = await this.clearField(optionId, shown);
+          if (cleared) return cleared;
+          this.write(text);
+          // 打った文の終わりが欄に出る（Claude Code が読み終える）まで待つ。読み終える前に次のキーを送ると、長い文は貼り付けとみなされ、
+          // Enter は改行として欄に入る（送られない）。別の画面に変わったら待たない（下で何も送らずにやめる）
+          await this.readUntil(() => !shown() || typedShown(this.field(optionId), text), TYPED_MS);
         }
         if (key === 'none') return 'chosen';
         const result = await this.press(key === 'space' ? ' ' : '\r', optionId, shown);
@@ -261,6 +267,31 @@ export class ScreenTracker {
     } finally {
       this.busy = false;
     }
+  }
+
+  // 今の画面の、自由記述の欄（読み取りを待たずに、その場で読む）。無ければ null
+  private field(optionId: string): MenuOption | null {
+    return parseMenu(this.lines())?.options.find((o) => o.id === optionId && o.textInput) ?? null;
+  }
+
+  // 自由記述の欄に前に打った文が残っていれば、Ctrl+U で消す。空になったら（初めから空なら）null。
+  // Ctrl+U は、打つ文とは分けて送り、欄が変わったのを見てから次へ進む。まとめて送ると、長い文は貼り付けとみなされ、
+  // Ctrl+U が文字として欄に入る（答えの頭に \x15 が付く）。空の欄には送らない（画面が変わらず、読み終えたのを確かめられない）。
+  // Ctrl+U が消すのは、欄が折り返した最後の 1 行だけ（Claude Code 2.1.296 で確かめた。重ねて送っても、Backspace を挟んでも、その先は消えない）。
+  // 消しきれなければ、残った文に継ぎ足した答えを送らないよう、何も打たずにやめる（filled）
+  private async clearField(optionId: string, shown: () => Menu | null): Promise<ChooseResult | null> {
+    const before = this.field(optionId);
+    if (!before) return 'missing';
+    const typed = (o: MenuOption) => `${o.label} ${o.description}`.trim();
+    if (TYPE_SOMETHING.test(typed(before))) return null;
+    this.write(KEY_CLEAR_LINE);
+    await this.readUntil(() => {
+      const now = this.field(optionId);
+      return !now || typed(now) !== typed(before);
+    }, 1000);
+    if (!shown()) return 'gone';
+    const after = this.field(optionId);
+    return after && TYPE_SOMETHING.test(typed(after)) ? null : 'filled';
   }
 
   // カーソルを目的の選択肢に合わせる。合ったら null
@@ -752,6 +783,12 @@ export class ScreenTracker {
 // メニューを見分けるもの（カーソルの位置とチェックを除く）
 function menuIdentity(menu: Menu): string {
   return JSON.stringify([menu.kind, menu.title, menu.context, menu.options.map((o) => o.label)]);
+}
+
+// 自由記述の欄（field）に、打った文（text）の終わりが出たか。欄は端末の幅で折り返し、続きの行は説明として読まれる
+function typedShown(field: MenuOption | null, text: string): boolean {
+  const squash = (s: string) => s.replace(/\s+/g, '');
+  return !!field && squash(field.label + field.description).endsWith(squash(text).slice(-20));
 }
 
 function sleep(ms: number): Promise<void> {

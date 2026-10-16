@@ -183,28 +183,64 @@ describe('choose（選択肢を選ぶ）', () => {
     expect(f.writes).toEqual([KEY_DOWN]);
   });
 
-  it('質問の自由記述は、カーソルを合わせて前の文字を消してから打ち、Enter を送る。打ったあとにメニューが変わったら Enter は送らない', async () => {
+  it('質問の自由記述は、カーソルを合わせて打ち、打った文が欄に出てから Enter を送る。打ったあとにメニューが変わったら Enter は送らない', async () => {
     const question = fixture('question');
     const questions = askQuestionsOf(askInput())!;
-    const keys = (data: string, view: string[]) => {
-      if (data.startsWith('\x15')) return view;
-      return data === KEY_DOWN ? pointAt(view, 3) : data === '\r' ? promptScreen() : undefined;
+    // 自由記述の欄（3.）の文字を描き直す
+    const field = (view: string[], text: string) => view.map((l) => l.replace(/^(\s*(?:❯\s)?\s*)3\. .*$/, `$13. ${text || 'Type something.'}`));
+    // 偽の Claude Code の欄。Ctrl+U は欄を空にする
+    const typing = (initial = '') => {
+      let typed = initial;
+      return (data: string, view: string[]) => {
+        if (data === KEY_DOWN) return pointAt(view, 3);
+        if (data === '\r') return promptScreen();
+        typed = data === '\x15' ? '' : typed + data;
+        return field(view, typed);
+      };
     };
-    const f = fake(question, keys);
+    const f = fake(question, typing());
     await menuShown();
     tracker!.setQuestions(questions);
     expect(tracker!.askedQuestions).toEqual(questions);
     const typeSomething = (tracker!.current.state as { menu: Menu }).menu.options.find((o) => o.textInput)!;
+    // 欄が空なら Ctrl+U は送らない（長い文と一緒に送ると、貼り付けとみなされて Ctrl+U が文字として欄に入る）
     expect(await tracker!.choose(typeSomething.id, 'enter', '自由な答え')).toBe('chosen');
-    expect(f.writes).toEqual([KEY_DOWN, '\x15自由な答え', '\r']);
+    expect(f.writes).toEqual([KEY_DOWN, '自由な答え', '\r']);
 
     // 打ったあとに、許可の確認に変わった
-    const g = fake(question, (data, view) => (data === KEY_DOWN ? pointAt(view, 3) : data.startsWith('\x15') ? permission : undefined));
+    const g = fake(question, (data, view) => (data === KEY_DOWN ? pointAt(view, 3) : data === '\r' ? promptScreen() : permission));
     await menuShown();
     tracker!.setQuestions(questions);
     const isQuestion = (menu: Menu) => menu.kind === 'question';
     expect(await tracker!.choose(typeSomething.id, 'enter', '答え', isQuestion)).toBe('gone');
-    expect(g.writes).toEqual([KEY_DOWN, '\x15答え']);
+    expect(g.writes).toEqual([KEY_DOWN, '答え']);
+  });
+
+  it('自由記述の欄に前に打った文が残っていれば、Ctrl+U だけを先に送って消してから打つ。消しきれなければ何も打たない（filled）', async () => {
+    const question = pointAt(fixture('question'), 3);
+    const questions = askQuestionsOf(askInput())!;
+    const field = (view: string[], text: string) => view.map((l) => l.replace(/^(\s*(?:❯\s)?\s*)3\. .*$/, `$13. ${text || 'Type something.'}`));
+    // clear: Ctrl+U を受けたあとの欄（Claude Code の Ctrl+U は、欄が折り返した最後の 1 行しか消さない）
+    const typing = (initial: string, clear: (typed: string) => string) => {
+      let typed = initial;
+      return (data: string, view: string[]) => {
+        if (data === '\r') return promptScreen();
+        typed = data === '\x15' ? clear(typed) : typed + data;
+        return field(view, typed);
+      };
+    };
+    const f = fake(field(question, '前の答え'), typing('前の答え', () => ''));
+    await menuShown();
+    tracker!.setQuestions(questions);
+    expect(await tracker!.choose('3', 'enter', '新しい答え')).toBe('chosen');
+    expect(f.writes).toEqual(['\x15', '新しい答え', '\r']);
+
+    // 欄が何行にも折り返していて、Ctrl+U で最後の 1 行しか消えない。残った文に継ぎ足さない
+    const g = fake(field(question, '長い 1 行目 長い 2 行目'), typing('長い 1 行目 長い 2 行目', (typed) => typed.replace(/ 長い 2 行目$/, '')));
+    await menuShown();
+    tracker!.setQuestions(questions);
+    expect(await tracker!.choose('3', 'enter', '新しい答え')).toBe('filled');
+    expect(g.writes).toEqual(['\x15']);
   });
 });
 
