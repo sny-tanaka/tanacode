@@ -1,19 +1,16 @@
 import { useState } from 'react';
 import { t } from '@shared/i18n';
-import type { ChooseResult, Menu, MenuOption } from '@shared/screen';
+import { TYPE_SOMETHING, type ChooseResult, type Menu, type MenuOption } from '@shared/screen';
 import { CheckIcon, CloseIcon, IconButton } from '../icons';
 
 // メニューの種類の名前（見出しに出す）
 const kindLabel = (kind: Menu['kind']) => t(`screen.kind.${kind}`);
-// 自由記述の欄がまだ空のときの表示（「Type something.」。複数選択では末尾の . が無い）
-const TEXT_PLACEHOLDER = /^Type something\.?$/;
-
 // 選べなかったとき、カードに出す知らせ（押したことを黙って捨てない）
 const notChosen = (result: Exclude<ChooseResult, 'chosen'>) => t(`screen.notChosen.${result}`);
 
 // 自由記述に入力済みの文字（空なら ''）
 function typedText(option: MenuOption): string {
-  return TEXT_PLACEHOLDER.test(option.label) ? '' : option.label;
+  return TYPE_SOMETHING.test(option.label) ? '' : option.label;
 }
 
 function optionLabel(option: MenuOption): string {

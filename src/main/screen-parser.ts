@@ -42,11 +42,14 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   // 線として飛ばされずに最後の選択肢（Cancel）の説明に混ざる
   const end = footer > pointer ? footer : promptRuleBelow(lines, pointer);
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
+  const optionOf = optionMatcher(lines, pointer, end);
 
-  const first = optionsStart(lines, top, clipped ? end - 1 : pointer, end);
+  const first = optionsStart(lines, top, clipped ? end - 1 : pointer, end, optionOf);
   if (first === -1) return null;
   // 「1.」が見えているのにカーソルが無いのは、上が切れたメニューではない
-  if (clipped && lines[first].text.match(OPTION)?.[2] === '1') return null;
+  if (clipped && optionOf(lines[first].text)?.[2] === '1') return null;
+  const typed = typedField(lines, top, first, end === footer ? lines[footer].text : '', optionOf);
+  if (typed) return typed;
 
   // 選択肢のどれかにプレビューがあると、選択肢の右にプレビューの枠（┌─┐）と「Notes: press n to add notes」が並ぶ。
   // 枠が始まる位置（文字の位置）より右は読み飛ばし、左の列だけを選択肢として読む
@@ -63,13 +66,13 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
         continue;
       }
       // 左の列の幅で折り返された選択肢の名前の続き（説明はこの形では出ない）
-      if (!OPTION.test(text) && options.length > 0) {
+      if (!optionOf(text) && options.length > 0) {
         const last = options[options.length - 1];
         last.label = joinWrapped(last.label, text.trim());
         continue;
       }
     }
-    const option = text.match(OPTION);
+    const option = optionOf(text);
     if (option) {
       const checkbox = option[3].match(CHECKBOX);
       options.push({
@@ -156,11 +159,64 @@ function promptRuleBelow(lines: ScreenLine[], from: number): number {
 // 選択肢の最初の行。カーソル（❯）の行から上へたどって、最初に見つかる「1.」の行。
 // 説明の中にも番号付きの一覧があることがある（ワークフローを始める前の確認のフェーズの一覧）ので、範囲の先頭からは探さない。
 // 画面が低くて「1.」が見えていないときは、範囲の中で最初の選択肢の行
-function optionsStart(lines: ScreenLine[], top: number, pointer: number, end: number): number {
+function optionsStart(lines: ScreenLine[], top: number, pointer: number, end: number, optionOf: OptionMatcher): number {
   for (let i = Math.min(pointer, end - 1); i >= top; i--) {
-    if (lines[i].text.match(OPTION)?.[2] === '1') return i;
+    if (optionOf(lines[i].text)?.[2] === '1') return i;
   }
-  return lines.findIndex((l, i) => i >= top && i < end && OPTION.test(l.text));
+  return lines.findIndex((l, i) => i >= top && i < end && optionOf(l.text) !== null);
+}
+
+// 行が選択肢の番号の行なら、その OPTION の一致を返す
+type OptionMatcher = (text: string) => RegExpMatchArray | null;
+
+// 選択肢の番号の行を見分ける。選択肢の説明や、折り返した名前・自由記述の欄の続きの行は、選択肢の名前が始まる位置まで字下げして出る。
+// その位置より深く字下げした番号の行は、選択肢ではなく続きの行（欄に打った文の「2. 作り方」が、折り返した行の頭に来たものなど）。
+// 字下げはメニューごとに違う（質問は 2 文字、許可の確認は 3 文字、/rewind は 5 文字）ので、カーソルの行（無ければ
+// 「Chat about this」の行）の名前の位置と比べる。どちらも無ければ、番号の行はすべて選択肢とする
+function optionMatcher(lines: ScreenLine[], pointer: number, end: number): OptionMatcher {
+  const isChat = (text: string) => text.match(OPTION)?.[3].trim() === CHAT_ABOUT_THIS;
+  const chat = findLastIndex(lines.slice(0, end), (l) => isChat(l.text));
+  const reference = pointer !== -1 && OPTION.test(lines[pointer].text) ? lines[pointer].text : chat !== -1 ? lines[chat].text : null;
+  const labelAt = reference === null ? Infinity : reference.length - reference.match(OPTION)![3].length;
+  return (text) => {
+    const option = text.match(OPTION);
+    return option && text.search(/\d/) < labelAt ? option : null;
+  };
+}
+
+// 自由記述の欄に長い文があると、欄が何行にも折り返して、質問文と選択肢（欄の番号の行も）が画面の上に押し出される。
+// 見えるのは、欄の続きの行と、複数選択なら Next / Submit の行、区切りの横線、「Chat about this」、操作説明だけになる
+// （端末が低いと、千文字ほどの答えでも起きる。2026-10-16、親が子の質問に長い指示で答えようとして、質問と読めずに止まった）。
+// そのとき（見えている最初の選択肢が「Chat about this」のとき）は、横線より上をすべて自由記述の欄（「Chat about this」の 1 つ前の番号）の
+// 続きとして読む。欄の番号の行（❯）は見えないので、欄にカーソルがあるかは、欄にあるときだけ操作説明に出る「ctrl+g to edit in …」で見分ける。
+// 質問文は見えないので空にする（質問は applyQuestions が、見えている選択肢から決める）
+function typedField(lines: ScreenLine[], top: number, first: number, hint: string, optionOf: OptionMatcher): Menu | null {
+  const chat = optionOf(lines[first].text);
+  if (!chat || chat[3].trim() !== CHAT_ABOUT_THIS) return null;
+  const rule = findLastIndex(lines.slice(0, first), (l) => RULE.test(l.text));
+  if (rule <= top) return null;
+  const rows = lines
+    .slice(top, rule)
+    .map((l) => l.text.trim())
+    .filter(Boolean);
+  const submit = rows.length > 0 && SUBMIT.test(rows[rows.length - 1]) ? rows.pop()!.match(SUBMIT) : null;
+  if (rows.length === 0) return null;
+  const chatPointed = chat[1]?.startsWith('❯') ?? false;
+  const submitPointed = !!submit?.[1];
+  const options: MenuOption[] = [
+    {
+      id: String(Number(chat[2]) - 1),
+      label: rows.reduce(joinWrapped),
+      description: '',
+      pointed: !chatPointed && !submitPointed && /ctrl\+g to edit/i.test(hint),
+      // 複数選択のチェックは欄の番号の行にあり、見えない
+      checked: null,
+      textInput: true,
+    },
+  ];
+  if (submit) options.push({ id: 'submit', label: submit[2], description: '', pointed: submitPointed, checked: null, textInput: false });
+  options.push({ id: chat[2], label: CHAT_ABOUT_THIS, description: '', pointed: chatPointed, checked: null, textInput: false });
+  return { kind: 'question', tabs: [], title: '', context: [], options, multiSelect: !!submit, hint: hint.trim(), previewLayout: false };
 }
 
 // 番号の無い選択肢のメニュー（フォルダの信頼の確認など）。例:
@@ -529,20 +585,22 @@ export function applyQuestions(menu: Menu, questions: AskQuestion[], seen: SeenO
   const header = squash([...menu.context, menu.title].join(''));
   const matches = title ? questions.flatMap((q, i) => (squash(q.question).includes(title) ? [i] : [])) : [];
   const byTitle = matches.length > 1 ? (matches.find((i) => header.endsWith(squash(questions[i].question))) ?? -1) : (matches[0] ?? -1);
-  // メニューが画面より高くて上が切れると、質問文が見えない（menu.title は上の選択肢の説明の切れ端になる）。
-  // そのときは、見えている選択肢の名前がそろう質問にする
+  // メニューが画面より高くて上が切れると、質問文が見えない（menu.title は上の選択肢の説明の切れ端になる。
+  // 1 つめの選択肢が画面のいちばん上の行にあれば、空になる）。そのときは、見えている選択肢の名前がそろう質問にする
   const firstShown = menu.options.find((o) => /^\d+$/.test(o.id));
-  const cut = !!firstShown && firstShown.id !== '1';
+  const cut = !!firstShown && (firstShown.id !== '1' || !title);
   const index = byTitle === -1 && cut ? questionByOptions(menu, questions) : byTitle;
   if (index === -1) return menu;
   const q = questions[index];
   const onScreen = new Map(menu.options.map((o) => [o.id, o]));
-  // 上が切れてカーソルが見えないとき、カーソルは見えている選択肢より上にある。見えていないのが 1 つめだけなら、そこにある
-  const hiddenPointer = cut && !menu.options.some((o) => o.pointed) && firstShown.id === '2' ? '1' : null;
+  // 上が切れてカーソルが見えないとき、カーソルは見えている選択肢より上にある。見えていないのが 1 つめだけなら、そこにある。
+  // 見えている最初のものが自由記述の欄（番号の行が見えない）なら、カーソルは欄にあるかもしれないので決めない
+  const hiddenPointer = cut && !menu.options.some((o) => o.pointed) && firstShown.id === '2' && !firstShown.textInput ? '1' : null;
   const option = (id: string, base: Omit<MenuOption, 'id' | 'pointed' | 'checked'>, checkable: boolean): MenuOption => {
     const shown = onScreen.get(id);
     const key = `${index}:${id}`;
-    if (shown) seen.set(key, { label: shown.label, checked: shown.checked });
+    // チェックが見えない（自由記述の欄の、番号の行が画面の外）ときは、前に見えたチェックのまま
+    if (shown) seen.set(key, { label: shown.label, checked: shown.checked ?? seen.get(key)?.checked ?? null });
     const last = seen.get(key);
     return {
       id,

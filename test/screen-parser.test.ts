@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
-import type { ScreenLine } from '@shared/screen';
-import { findMode, findModel, isStreaming, parseMenu, parseRewind, parseSpinner, promptRange, tallPromptRange } from '../src/main/screen-parser';
+import type { AskQuestion, ScreenLine } from '@shared/screen';
+import { applyQuestions, findMode, findModel, isStreaming, parseMenu, parseRewind, parseSpinner, promptRange, tallPromptRange, type SeenOptions } from '../src/main/screen-parser';
+import { QUESTION } from './scenario';
+import { ASK_MULTI } from './scenarios/questions';
 
 // 画面の読み取り（screen-parser.ts）のうち、控えの画面のままでは出てこない場面。
 // 動作確認済のバージョンの控え（test/fixtures/claude-code/<バージョン>/screens）を元に、その場面で変わる行だけを差し替えて読む
@@ -303,4 +305,110 @@ it('画面より高い入力欄の中の ❯ と番号（上の罫線だけが�
     expect(tallPromptRange(screen(name))).toBeNull();
     expect(parseMenu(screen(name))?.kind).toBe('question');
   }
+});
+
+// 自由記述の欄に打った長い文の、折り返した続きの行（選択肢の名前の位置まで字下げして出る）。
+// 打った文の番号付きの項目（「2. 作り方」）が、折り返した行の頭に来ている
+const typedRows = (indent: string): ScreenLine[] =>
+  [
+    'ボタンが圧迫されないか、ロケールの長い文言（my・ne・vi など）で折り返さないか。',
+    '2. 作り方: 本実装のファイル（`SubHeaderBand`・各ページ）は編集しない。',
+    ...Array.from({ length: 30 }, (_, i) => `${i + 3} 行目: 子セッションへの指示の続きです。`),
+    '6. 負荷: 広範囲のテストは回さない。',
+  ].map((text) => line(`${indent}${text}`));
+// 自由記述の欄にカーソルがあるときだけ、操作説明に出る
+const FOCUSED_FOOTER = 'Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel';
+const ASKED: AskQuestion[] = [QUESTION];
+
+it('自由記述の欄に長い文を打ち、質問文と選択肢が画面の上に押し出されても、欄にカーソルのある質問として読める', () => {
+  // 端末が低いと、欄が何行にも折り返して、見えるのは欄の続きの行・区切りの横線・「Chat about this」・操作説明だけになる。
+  // 質問と読めないと、親が長い指示で答えるとき、打ったあと Enter を押す前に「質問が変わった」として止まり、打った文が欄に残る（2026-10-16）
+  const asked = screen('question');
+  const rule = asked.findIndex((l) => /^ {2}4\. Chat about this/.test(l.text)) - 1;
+  const bottom = (chat: string, footer: string) => [asked[rule], line(chat), line(''), line(footer)];
+  const pushed = [...typedRows('     '), ...bottom('  4. Chat about this', FOCUSED_FOOTER)];
+  const menu = parseMenu(pushed)!;
+  expect(menu).toMatchObject({ kind: 'question', title: '', multiSelect: false });
+  expect(menu.options.map((o) => ({ id: o.id, textInput: o.textInput, pointed: o.pointed }))).toEqual([
+    { id: '3', textInput: true, pointed: true },
+    { id: '4', textInput: false, pointed: false },
+  ]);
+  expect(menu.options[0].label).toMatch(/^ボタンが圧迫されないか.*2\. 作り方: .*6\. 負荷: 広範囲のテストは回さない。$/);
+  // 質問は、見えている選択肢（自由記述の欄の番号）から決める。欄にカーソルがある
+  const applied = applyQuestions(menu, ASKED, new Map());
+  expect(applied.title).toBe(QUESTION.question);
+  expect(applied.options.map((o) => [o.id, o.textInput ? '' : o.label, o.pointed])).toEqual([
+    ['1', 'です・ます', false],
+    ['2', 'だ・である', false],
+    ['3', '', true],
+    ['4', 'Chat about this', false],
+  ]);
+  // 操作説明に「ctrl+g to edit」が無ければ、カーソルは上の切れた選択肢にある（どれかは分からない）
+  const away = applyQuestions(parseMenu([...typedRows('     '), ...bottom('  4. Chat about this', asked[rule + 3].text)])!, ASKED, new Map());
+  expect(away.title).toBe(QUESTION.question);
+  expect(away.options.some((o) => o.pointed)).toBe(false);
+  // 「Chat about this」にカーソルがある
+  const chat = parseMenu([...typedRows('     '), ...bottom('❯ 4. Chat about this', asked[rule + 3].text)])!;
+  expect(chat.options.map((o) => [o.id, o.pointed])).toEqual([
+    ['3', false],
+    ['4', true],
+  ]);
+  // 選択肢の数が合わない質問には当てはめない（自由記述の欄は、選択肢の数 + 1 番め）
+  const three: AskQuestion = { ...QUESTION, options: [...QUESTION.options, { label: 'どちらでもない', description: '' }] };
+  expect(applyQuestions(menu, [three], new Map()).title).toBe('');
+});
+
+it('複数選択の自由記述の欄に長い文を打ち、上が押し出されても、Submit の行と欄を読み、前に見えたチェックを保つ', () => {
+  const multi = screen('question-multi');
+  const submit = multi.findIndex((l) => /^ {5}Submit$/.test(l.text));
+  const seen: SeenOptions = new Map();
+  // 打ち始め（欄の番号の行とチェックが見えている）
+  const typing = replaced(replaced(multi, /^❯ 3\. \[✔\] リンター/, '  3. [✔] リンター'), /^ {2}4\. \[ \] Type something/, '❯ 4. [✔] ボタンが圧迫されないか');
+  expect(applyQuestions(parseMenu(typing)!, ASK_MULTI, seen).options.find((o) => o.id === '4')).toMatchObject({ pointed: true, checked: true });
+  // 打ち終えて、上が押し出された
+  const pushed = [...typedRows('         '), ...multi.slice(submit, submit + 4), line(FOCUSED_FOOTER)];
+  const menu = parseMenu(pushed)!;
+  expect(menu).toMatchObject({ kind: 'question', title: '', multiSelect: true });
+  expect(menu.options.map((o) => [o.id, o.textInput, o.pointed])).toEqual([
+    ['4', true, true],
+    ['submit', false, false],
+    ['5', false, false],
+  ]);
+  const applied = applyQuestions(menu, ASK_MULTI, seen);
+  expect(applied.title).toBe(ASK_MULTI[0].question);
+  expect(applied.options.map((o) => [o.id, o.checked, o.pointed])).toEqual([
+    ['1', true, false],
+    ['2', false, false],
+    ['3', true, false],
+    ['4', true, true],
+    ['submit', null, false],
+    ['5', null, false],
+  ]);
+});
+
+it('質問文だけが画面の上に押し出され、1 つめの選択肢が画面のいちばん上の行にあるときも、質問として読む。欄の続きの行の頭の番号は、選択肢と読まない', () => {
+  // 子の質問の質問文が空（""）と出て、親が答えられなかった画面（選択肢 2 つと自由記述の欄だけが見えていた）
+  const asked = screen('question');
+  const first = asked.findIndex((l) => /^❯ 1\. です・ます/.test(l.text));
+  const rule = asked.findIndex((l) => /^ {2}4\. Chat about this/.test(l.text)) - 1;
+  const top = [line('  1. です・ます'), ...asked.slice(first + 1, first + 4), line('❯ 3. 【保留】方針はまだ確定しない。')];
+  // メニューとして読むのは、操作説明から上に 40 行まで（それより高い画面では、1 つめの選択肢もその外になる）
+  const pushed = [...top, ...typedRows('     ').slice(0, 20), asked[rule], line('  4. Chat about this'), line(''), line(FOCUSED_FOOTER)];
+  const menu = parseMenu(pushed)!;
+  expect(menu.title).toBe('');
+  expect(menu.options.map((o) => [o.id, o.label.slice(0, 12), o.pointed, o.textInput])).toEqual([
+    ['1', 'です・ます', false, false],
+    ['2', 'だ・である', false, false],
+    ['3', '【保留】方針はまだ確定し', true, true],
+    ['4', 'Chat about t', false, false],
+  ]);
+  const applied = applyQuestions(menu, ASKED, new Map());
+  expect(applied.title).toBe(QUESTION.question);
+  expect(applied.options.find((o) => o.pointed)?.id).toBe('3');
+  // 上が切れていない質問でも、欄の続きの行の頭の番号は、選択肢と読まない
+  const whole = [...asked.slice(0, first), ...top, ...typedRows('     ').slice(0, 3), ...asked.slice(rule)];
+  const read = parseMenu(whole)!;
+  expect(read.title).toBe(QUESTION.question);
+  expect(read.options.map((o) => o.id)).toEqual(['1', '2', '3', '4']);
+  expect(read.options[2].description).toContain('2. 作り方');
 });

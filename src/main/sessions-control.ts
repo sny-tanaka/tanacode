@@ -7,7 +7,7 @@ import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@sh
 import { t, type MessageKey } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
 import { stripControlChars } from '@shared/prompt-keys';
-import type { AskQuestion, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { AskQuestion, ChooseResult, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -74,7 +74,7 @@ export type SessionsHost = {
   withdrawParentDraft(id: string): Promise<void>;
   askedQuestions(id: string): AskQuestion[] | null;
   // expect を満たすメニューのあいだだけ選ぶ。押せたら true
-  chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<boolean>;
+  chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult>;
   watchState(listener: (id: string) => void): () => void;
   // 今出ている許可の確認の、ツールの名前と入力の全文（フックが書いたもの。今の確認のものと言えなければ null）
   pendingPermission(id: string): PermissionRequest | null;
@@ -523,7 +523,13 @@ export class SessionsControl {
     const changed = () => new ToolError('Could not answer because the question changed or the user acted on it while answering. Check with get_session.');
     // キーを送る前に毎回、同じ質問が出ているかを確かめる（途中で許可の確認などに変わったら、何も押さない）
     const choose = async (choice: ScreenChoice) => {
-      if (!(await host.chooseIf(child.id, choice, (m) => same(m) && isAskedQuestion(m, host.askedQuestions(child.id))))) throw changed();
+      const result = await host.chooseIf(child.id, choice, (m) => same(m) && isAskedQuestion(m, host.askedQuestions(child.id)));
+      if (result === 'filled') {
+        throw new ToolError(
+          `The free-text field of the question already has text typed earlier that could not be cleared, so nothing was typed. Ask the user to clear the field in "${nameOf(child)}" (or to answer there), then answer again.`,
+        );
+      }
+      if (result !== 'chosen') throw changed();
     };
     if (!menu.multiSelect) {
       if (picked.length + (other ? 1 : 0) !== 1) throw new ToolError('Only one option can be picked for this question (pass one choice, or only other).');
@@ -613,7 +619,7 @@ export class SessionsControl {
     // 会話は先に読んでおく（expect は同期で確かめるため）
     const events = await host.conversation(child.id);
     const same = (menu: Menu) => menu.kind === 'permission' && permissionOf(menu, host.pendingPermission(child.id), events, (r) => this.deps.humanOnly?.(child.id, r) ?? null).id === id;
-    if (!(await host.chooseIf(child.id, { optionId, key: 'enter' }, same))) throw changed();
+    if ((await host.chooseIf(child.id, { optionId, key: 'enter' }, same)) !== 'chosen') throw changed();
     // 答えが受け付けられて、確認が閉じた（次の確認に進んだ）のを確かめる
     let next = await current();
     for (let i = 0; i < 20 && next?.id === id; i++) {
