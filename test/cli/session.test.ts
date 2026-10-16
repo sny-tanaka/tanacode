@@ -8,7 +8,7 @@ import { MockApi, type Block } from './mock-api';
 
 // 本物の claude をモックの API で動かし、会話の操作を、画面にキーを送らずに制御の要求と発言で行えるかを確かめる（stream-json。設計書 8 節）。
 // 権限モード（set_permission_mode）・作業中の進み具合・作業中に送った発言の順番待ち・応答のモデル・モデルとエフォート（set_model・
-// apply_flag_settings）・裏の Bash の停止（stop_task）・入力欄の「!」・/compact（指示を添えたものも）・/clear・--resume・巻き戻し（rewind_files・rewind_conversation）
+// apply_flag_settings）・裏の Bash の停止（stop_task）・/compact（指示を添えたものも）・/clear・--resume・巻き戻し（rewind_files・rewind_conversation）
 
 const SLOW = 'ゆっくり返事してください';
 const QUEUED = '順番待ちの発言です';
@@ -113,21 +113,6 @@ describe(`Claude Code ${version} の会話の操作`, () => {
     const task = run.bashTasks.find((t) => t.state === 'running')!;
     expect(await run.manager.stopTask(run.sessionId!, { kind: 'bash', toolUseId: task.toolUseId })).toBeNull();
     await run.waitUntil('止まる', () => run.bashTasks.find((t) => t.toolUseId === task.toolUseId)?.state !== 'running', 30_000);
-    await idle('待機中');
-  });
-
-  it('入力欄の「!」のコマンドは、アプリが動かしてターンを始めずに会話に足す。Claude は次の発言のときに読む', async () => {
-    const calls = api.calls.length;
-    await run.manager.runShell(run.sessionId!, 'echo BANG-MARK');
-    await run.waitUntil('会話に出る', () => run.chatEvents.some((e) => e.type === 'shell-output' && e.output === 'BANG-MARK'));
-    // 送信中の行が外れて待機中に戻る。モデルは呼ばない（返事をしない）
-    await run.waitUntil('待機中', () => run.manager.stateOf(run.sessionId!) === 'idle');
-    expect(api.calls.length).toBe(calls);
-    await run.send('さっきの出力を覚えていますか');
-    await run.waitUntil('次の発言', () => api.lastPrompts.some((p) => p.includes('さっきの出力を覚えていますか')));
-    const prompt = api.lastPrompts.find((p) => p.includes('さっきの出力を覚えていますか'))!;
-    expect(prompt).toContain('<bash-input>echo BANG-MARK</bash-input>');
-    expect(prompt).toContain('<bash-stdout>BANG-MARK</bash-stdout>');
     await idle('待機中');
   });
 

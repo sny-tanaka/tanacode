@@ -13,8 +13,7 @@ import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePa
 // 送ったが、まだ会話に出ていない発言。id: アプリが発言に付けた uuid（会話ログの行の uuid にもなる）/
 // state: sending（Claude Code に渡した）・queued（Claude Code の順番待ちに入った。作業中に送ったもの）/ images: 添えた画像の数 /
 // text・pastes・parent: 会話に出たときと同じ形（親セッションからの指示は、囲みを外した本文と親の ID。unsentView）
-// shell: 入力欄の「!」のコマンド（text はコマンド）。running はアプリがシェルで動かしている途中
-export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued' | 'running'; parent?: string; shell?: true };
+export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued'; parent?: string };
 
 export type ChatEvent =
   | { type: 'user'; id: string; text: string; pastes?: string[]; pasted?: true; images?: string[]; at?: number; parent?: string; command?: true }
@@ -568,7 +567,7 @@ function specialUserText(id: string, text: string): ChatEvent | null {
   // ! を付けて実行したコマンド。出力は <bash-stdout> / <bash-stderr> に入る。
   // 前の Claude Code は同じ行に、今の Claude Code はコマンド（<bash-input>）と出力を別の行に書く
   const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1] ?? '';
-  // 出力は < > & をエスケープして書かれる（TUI もアプリも）ので、戻して出す
+  // 出力は < > & をエスケープして書かれる（Claude Code の TUI の「!」）ので、戻して出す
   const unescape = (s: string) => s.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
   const shellOutput = () => truncate([tag('bash-stdout'), tag('bash-stderr')].map((s) => unescape(s.trim())).filter(Boolean).join('\n'), OUTPUT_CHARS);
   if (text.startsWith('<bash-input>')) return { type: 'shell', id, command: tag('bash-input').trim(), output: shellOutput() };

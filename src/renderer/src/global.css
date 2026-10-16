@@ -3231,22 +3231,6 @@ details[open] > summary > .disclosure {
 .chat-shell > .tool-pre {
   margin: 0 12px 10px;
 }
-/* 入力欄の「!」のコマンドの、待っている・動いている間の行（会話のシェルの行と同じ見た目で、右に状態と止めるボタン） */
-.chat-shell.unsent {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px 6px 12px;
-}
-.chat-shell.unsent.pending {
-  opacity: 0.7;
-}
-.chat-shell.unsent .chat-user-meta,
-.chat-shell.unsent .busy {
-  flex: none;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
 
 /* 会話の圧縮の区切り */
 .chat-divider {

@@ -678,41 +678,6 @@ describe('入力欄の下の選択欄', () => {
 });
 
 describe('入力欄', () => {
-  it('「!」で始まる文は、Claude に送らず、アプリがシェルで動かす（先頭の ! を除いて）。画像を添えたときは、ふつうの発言', async () => {
-    const onSend = vi.fn();
-    render(<ClaudePane {...props({ onSend })} />);
-    fireEvent.change(box(), { target: { value: '  !ls -la  ' } });
-    fireEvent.click(screen.getByRole('button', { name: '送信' }));
-    expect(api.argsOf('sessions.runShell')).toEqual([['s1', 'ls -la']]);
-    expect(onSend).not.toHaveBeenCalled();
-    expect(box().value).toBe('');
-    // ! だけはふつうの発言
-    fireEvent.change(box(), { target: { value: '!' } });
-    fireEvent.click(screen.getByRole('button', { name: '送信' }));
-    expect(onSend).toHaveBeenCalledWith('!', [], []);
-  });
-
-  it('動いている「!」の行の × で止めて、入力欄に戻す。止められなかったら戻さない', async () => {
-    let stopped = true;
-    install({ 'sessions.stopShell': () => Promise.resolve(stopped) });
-    const shell = { id: 'run-1', text: 'npm test', pastes: [], images: 0, state: 'running' as const, shell: true as const };
-    render(<ClaudePane {...props({ chat: chatOf({ status: 'running', unsent: [shell] }) })} />);
-    const row = document.querySelector('.chat-shell.unsent') as HTMLElement;
-    expect(row.textContent).toContain('npm test');
-    expect(row.textContent).toContain('実行中');
-    // 「!」だけが動いている間は、「作業中」を出さない
-    expect(document.querySelector('.chat-note.working')).toBeNull();
-    fireEvent.click(within(row).getByRole('button', { name: '止めて入力欄に戻す' }));
-    expect(api.argsOf('sessions.stopShell')).toEqual([['s1', 'run-1']]);
-    await settle();
-    expect(box().value).toBe('!npm test');
-    stopped = false;
-    fireEvent.change(box(), { target: { value: '' } });
-    fireEvent.click(within(row).getByRole('button', { name: '止めて入力欄に戻す' }));
-    await settle();
-    expect(box().value).toBe('');
-  });
-
   it('コードへのコメントの札を押すとそのコメントを見せ、「外す」で、そのコメントを除いた一覧に替える', () => {
     const comments: ReviewComment[] = [
       { id: 'c1', path: 'src/tax.ts', startLine: 3, endLine: 3, quote: '', text: '設定から読む' },

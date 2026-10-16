@@ -246,10 +246,7 @@ export const ClaudePane = memo(function ClaudePane({
   };
 
   const running = chat.status === 'running';
-  // 入力欄の「!」のコマンドだけが動いている（会話に出るのを待っている）。ターンではないので、「作業中」「完了」を出さない
-  // （「!」の行に「実行中」と出る）
-  const shellOnly = chat.unsent.length > 0 && chat.unsent.every((prompt) => prompt.shell && prompt.state !== 'queued');
-  const justFinished = useJustFinished(running && !shellOnly, chat.status === 'idle', session.id);
+  const justFinished = useJustFinished(running, chat.status === 'idle', session.id);
   // TaskCreate の ToDo は終わっても一覧に残るので、すべて終わったらターンの外では欄を出さない
   const showTodos = !!chat.todos && chat.todos.length > 0 && (running || chat.todos.some((t) => t.status !== 'completed'));
   // 作業中の ToDo（ターミナルのスピナーの行と同じく、進行形の名前を「作業中…」の代わりに出す）
@@ -403,31 +400,10 @@ export const ClaudePane = memo(function ClaudePane({
     setAwayFromBottom(false);
   };
 
-  // 入力欄の「!」のコマンド（画像・札・コメントを添えていないとき）。先頭の ! を除いたもの。無ければ null（ふつうの発言）
-  const shellCommand = () => {
-    const text = input.trimStart();
-    if (!text.startsWith('!') || attachments.length > 0 || pastes.length > 0 || comments.length > 0) return null;
-    return text.slice(1).trim() || null;
-  };
-
   const send = () => {
     if (!canSend) return;
-    // 「!」のコマンドは、アプリがシェルで動かして会話に足す（Claude は返事をせず、次の発言のときに読む）
-    const command = shellCommand();
-    if (command) {
-      void window.tanacode.sessions.runShell(session.id, command).catch((error: unknown) => window.alert(t('chat.pane.shellFailed', { error: errorMessage(error) })));
-    } else {
-      onSend(composed(), attachments, pastes);
-    }
+    onSend(composed(), attachments, pastes);
     clearInput();
-  };
-
-  // 「!」のコマンドを止めて、入力欄に戻す（TUI の「!」を Esc で止めたときと同じ。会話には何も足さない）
-  const stopShell = (prompt: UnsentPrompt) => {
-    const owner = session.id;
-    void window.tanacode.sessions.stopShell(owner, prompt.id).then((stopped) => {
-      if (stopped && sessionIdRef.current === owner) setInput((prev) => [`!${prompt.text}`, prev].filter(Boolean).join('\n'));
-    });
   };
 
   // 時刻を指定して送信（予約）。選択メニューが出ている間や、止まっているセッションにも予約できる（時刻になったら main が起動し直して送る）
@@ -662,15 +638,11 @@ export const ClaudePane = memo(function ClaudePane({
               />
             ),
           )}
-          {running && !waiting && !shellOnly && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
+          {running && !waiting && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !waiting && <DoneNote />}
-          {chat.unsent.map((prompt) =>
-            prompt.shell ? (
-              <UnsentShell key={prompt.id} prompt={prompt} onStop={() => stopShell(prompt)} />
-            ) : (
-              <UnsentUser key={prompt.id} prompt={prompt} parentId={session.parentId} sessions={sessionLinks} onSelectSession={onSelectSession} />
-            ),
-          )}
+          {chat.unsent.map((prompt) => (
+            <UnsentUser key={prompt.id} prompt={prompt} parentId={session.parentId} sessions={sessionLinks} onSelectSession={onSelectSession} />
+          ))}
           {pending && (
             <div className="chat-user pending">
               <span className="chat-prompt">›</span>
@@ -841,24 +813,6 @@ export const ClaudePane = memo(function ClaudePane({
 // 会話ログにまだ発言として出ていない、送った発言（送信中・順番待ち）
 // 送信中のものは、すぐに本物の発言に置き換わるので、見た目は発言と同じにする（点線にすると置き換わるときにちらつく）。
 // 親セッションからの指示は、会話に出たとき（ChatRow）と同じく、見出しを付けて人の発言と見分ける
-// 入力欄の「!」のコマンドの、待っている・動いている間の行。会話に出たら、会話のシェルの行に替わる。× で止めて入力欄に戻す
-function UnsentShell({ prompt, onStop }: { prompt: UnsentPrompt; onStop: () => void }) {
-  return (
-    <div className={`chat-shell unsent${prompt.state === 'queued' ? ' pending' : ''}`}>
-      <span className="chat-shell-prompt">!</span>
-      <span className="chat-shell-command">{prompt.text}</span>
-      {prompt.state === 'queued' ? (
-        <span className="chat-user-meta" data-tip={t('chat.pane.shellQueuedTip')}>
-          {t('chat.pane.shellQueued')}
-        </span>
-      ) : (
-        <Busy>{t('chat.pane.shellRunning')}</Busy>
-      )}
-      {prompt.state !== 'sending' && <IconButton icon={CloseIcon} size="sm" label={t('chat.pane.shellStop')} onClick={onStop} />}
-    </div>
-  );
-}
-
 function UnsentUser({
   prompt,
   parentId,

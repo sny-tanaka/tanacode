@@ -192,8 +192,8 @@ export class ClaudeSession {
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
   // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
   // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も
-  private env(kind: LaunchKind = this.options.kind): Record<string, string> {
-    const { sessionId, statusFile, askFile } = this.options;
+  private env(): Record<string, string> {
+    const { sessionId, statusFile, askFile, kind } = this.options;
     return {
       ...claudeEnv(kind, this.options.claudeDir ?? null),
       [STATUS_FILE_ENV]: statusFile,
@@ -202,11 +202,6 @@ export class ClaudeSession {
       ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
       ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
     };
-  }
-
-  // 入力欄の「!」のコマンドに渡す環境変数。TUI の「!」は Claude Code の環境で動くので、TUI で起動したときと同じもの（端末の種類も）
-  commandEnv(): Record<string, string> {
-    return this.env('tui');
   }
 
   private finish(exitCode: number, stderr?: string): void {
