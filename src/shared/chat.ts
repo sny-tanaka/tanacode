@@ -11,8 +11,9 @@ import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePa
 // pastes: 発言に添えた長い貼り付け（入力欄の札）の中身。text には入らない（splitPasted を参照）
 // pasted: 発言の全体が 1 つの貼り付けだった（text は、その貼り付けの中身。札だけを送った発言か、前のアプリが丸ごと貼り付けで送った複数行の発言）
 // 送ったが、まだ会話に出ていない発言。id: アプリが発言に付けた uuid（会話ログの行の uuid にもなる）/
-// state: sending（Claude Code に渡した）・queued（Claude Code の順番待ちに入った。作業中に送ったもの）/ images: 添えた画像の数
-export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued' };
+// state: sending（Claude Code に渡した）・queued（Claude Code の順番待ちに入った。作業中に送ったもの）/ images: 添えた画像の数 /
+// text・pastes・parent: 会話に出たときと同じ形（親セッションからの指示は、囲みを外した本文と親の ID。unsentView）
+export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued'; parent?: string };
 
 export type ChatEvent =
   | { type: 'user'; id: string; text: string; pastes?: string[]; pasted?: true; images?: string[]; at?: number; parent?: string; command?: true }
@@ -606,6 +607,16 @@ export function isHumanPrompt(text: string): boolean {
     !head.startsWith(`<${CHECKLIST_EVENT_TAG}`) &&
     !isCompactMessage(text)
   );
+}
+
+// 送った発言を、送信中・順番待ちに出す形。会話ログの発言の行と同じ読み方（userTextEvents）で、会話に出たときと同じ形にする
+// （親セッションからの指示は、囲みを外した本文と親の ID）。発言でないもの（子セッション・予約・チェックリストの知らせ、
+// 最適化圧縮の文など）は null（出さない。会話に出たときに、お知らせとして出る）
+export function unsentView(text: string): { text: string; pastes: string[]; parent?: string } | null {
+  const events = userTextEvents({}, text);
+  const event = events.length === 1 ? events[0] : null;
+  if (event?.type !== 'user' || event.command) return null;
+  return { text: event.text, pastes: event.pastes ?? [], ...(event.parent ? { parent: event.parent } : {}) };
 }
 
 // 順番待ちとして出す文字。親セッションからの指示は、囲みを外す

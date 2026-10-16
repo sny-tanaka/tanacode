@@ -155,7 +155,6 @@ export function App() {
   const toggleShell = useCallback(() => setTerminalOpen((open) => !open), []);
   // ターミナルモード（Claude Code ペインに、チャットの代わりに Claude Code の生の画面を出す）
   const [terminalMode, setTerminalMode] = useTerminalMode();
-  const showClaudeScreen = useCallback(() => setTerminalMode(true), [setTerminalMode]);
   const toggleClaudeScreen = useCallback(() => setTerminalMode(!terminalMode), [terminalMode, setTerminalMode]);
   // チャットを見ている間も、Claude Code の画面の出力を受け取っておく（ターミナルモードにしたとき、さかのぼって読める）
   useClaudeScreenOutput();
@@ -887,7 +886,6 @@ export function App() {
             comments={sessionComments}
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}
-            onOpenTerminal={showClaudeScreen}
             onShowContext={showContext}
             onShowShell={showShell}
             onToggleTerminal={toggleClaudeScreen}

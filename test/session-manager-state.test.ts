@@ -516,7 +516,8 @@ describe('作業中の進み具合', () => {
     pipe.emit(stream.blockStart('thinking'));
     await app.waitFor('考えている', () => app.progress.get(id)?.phase === 'thinking');
     expect(app.manager.stateOf(id)).toBe('working');
-    expect(app.progress.get(id)).toEqual({ phase: 'thinking', elapsed: '0s', tokens: null });
+    // 経過は 1 秒ごとに増える（重いときは 1 秒の区切りをまたぐ）
+    expect(app.progress.get(id)).toEqual({ phase: 'thinking', elapsed: expect.stringMatching(/^\d+s$/), tokens: null });
     pipe.emit(stream.blockStart('text'));
     pipe.emit(stream.tokens(1234));
     await app.waitFor('書いている', () => app.progress.get(id)?.tokens === '1.2k');

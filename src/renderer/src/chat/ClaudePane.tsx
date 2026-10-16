@@ -28,11 +28,12 @@ import { TodoPanel } from './TodoPanel';
 import type { UnsentPrompt } from '@shared/chat';
 import { isLongPaste } from '@shared/prompt-keys';
 import { useInsertInput } from './insertInput';
-import { DoneNote, useJustFinished, WorkingNote } from './WorkingNote';
+import { DoneNote, StartingNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
 import { acceptsInput, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { PastedChips } from './PastedChips';
+import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
 import { stripControlChars } from './sanitize';
@@ -41,11 +42,8 @@ import { CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
-import { useSessionLinks } from '../sessions/sessionLinks';
+import { useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
-
-// 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
-const SLOW_START_MS = 10_000;
 
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
 const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
@@ -80,8 +78,6 @@ type Props = {
   comments: ReviewComment[];
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
-  // ターミナルモードにする（チャットで操作できない画面が出たときなど）
-  onOpenTerminal: () => void;
   // サイドパネルにコンテキストの中身を出す（ヘッダーのメーターを押したとき）
   onShowContext: () => void;
   // ターミナルパネルのシェルのタブを出す（worktree の npm install などの進み具合を見る）
@@ -122,7 +118,6 @@ export const ClaudePane = memo(function ClaudePane({
   comments,
   onCommentsChange,
   onShowComment,
-  onOpenTerminal,
   onShowContext,
   onShowShell,
   onToggleTerminal,
@@ -254,14 +249,6 @@ export const ClaudePane = memo(function ClaudePane({
   const starting = chat.status === 'starting';
   // worktree の準備の途中（終わるまで最初の指示を送らない）
   const preparing = session.archived ? null : (session.worktree?.preparing ?? null);
-  const [slowStart, setSlowStart] = useState(false);
-  useEffect(() => {
-    setSlowStart(false);
-    // npm install などは時間がかかるので、準備が終わってから測る
-    if (!starting || preparing) return;
-    const timer = setTimeout(() => setSlowStart(true), SLOW_START_MS);
-    return () => clearTimeout(timer);
-  }, [starting, preparing, session.id]);
   const live = !session.archived && chat.status !== 'exited' && chat.status !== 'not-started';
   // ターミナルモード。チャット・入力欄の代わりに、Claude Code の画面を出す。アーカイブ済みのセッションには画面が無いので、チャットのまま
   const screenMode = terminalOpen && !session.archived;
@@ -585,11 +572,6 @@ export const ClaudePane = memo(function ClaudePane({
             }
           }}
         >
-          {starting && !preparing && !pending && chat.items.length === 0 && !slowStart && (
-            <div className="chat-note">
-              <Busy>{t('chat.pane.starting')}</Busy>
-            </div>
-          )}
           {preparingNote}
           {rows.map((row) =>
             row.kind === 'tool-group' ? (
@@ -628,7 +610,7 @@ export const ClaudePane = memo(function ClaudePane({
           {running && !waiting && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !waiting && <DoneNote />}
           {chat.unsent.map((prompt) => (
-            <UnsentUser key={prompt.id} prompt={prompt} />
+            <UnsentUser key={prompt.id} prompt={prompt} parentId={session.parentId} sessions={sessionLinks} onSelectSession={onSelectSession} />
           ))}
           {pending && (
             <div className="chat-user pending">
@@ -671,12 +653,8 @@ export const ClaudePane = memo(function ClaudePane({
               onTake={() => takeScheduled(message.id)}
             />
           ))}
-          {starting && slowStart && !preparing && !waiting && (
-            <div className="chat-callout">
-              <span>{t('chat.pane.slowStart')}</span>
-              <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onOpenTerminal} />
-            </div>
-          )}
+          {/* 起動中（npm install などの準備の間は、準備の知らせを出す）。時間がかかっていれば、経過と標準エラーの末尾 */}
+          {starting && !preparing && !waiting && <StartingNote sessionId={session.id} busy={!pending && chat.items.length === 0} />}
           {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
           {/* 待っている質問が変われば作り直す（打ちかけの答えを、次の質問やほかのセッションに持ち越さない） */}
           {asked && <QuestionCard key={`${session.id}|${asked.id}`} sessionId={session.id} question={asked} />}
@@ -791,18 +769,39 @@ export const ClaudePane = memo(function ClaudePane({
 });
 
 // 会話ログにまだ発言として出ていない、送った発言（送信中・順番待ち）
-// 送信中のものは、すぐに本物の発言に置き換わるので、見た目は発言と同じにする（点線にすると置き換わるときにちらつく）
-function UnsentUser({ prompt }: { prompt: UnsentPrompt }) {
+// 送信中のものは、すぐに本物の発言に置き換わるので、見た目は発言と同じにする（点線にすると置き換わるときにちらつく）。
+// 親セッションからの指示は、会話に出たとき（ChatRow）と同じく、見出しを付けて人の発言と見分ける
+function UnsentUser({
+  prompt,
+  parentId,
+  sessions,
+  onSelectSession,
+}: {
+  prompt: UnsentPrompt;
+  parentId: string | null | undefined;
+  sessions: readonly SessionLink[];
+  onSelectSession: (id: string) => void;
+}) {
   const queued = prompt.state === 'queued';
+  const text = (
+    <span className="chat-user-text">
+      {prompt.text}
+      <PastedChips pastes={prompt.pastes} />
+      {prompt.images > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: prompt.images })}</span>}
+      <span className="chat-user-meta">{t(queued ? 'chat.pane.queued' : 'chat.pane.sending')}</span>
+    </span>
+  );
   return (
-    <div className={`chat-user${queued ? ' pending' : ''}`}>
-      <span className="chat-prompt">›</span>
-      <span className="chat-user-text">
-        {prompt.text}
-        <PastedChips pastes={prompt.pastes} />
-        {prompt.images > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: prompt.images })}</span>}
-        <span className="chat-user-meta">{t(queued ? 'chat.pane.queued' : 'chat.pane.sending')}</span>
-      </span>
+    <div className={`chat-user${queued ? ' pending' : ''}${prompt.parent ? ' from-parent' : ''}`}>
+      <span className="chat-prompt">{prompt.parent ? '»' : '›'}</span>
+      {prompt.parent ? (
+        <div className="chat-user-body">
+          <ParentHeading parentId={prompt.parent} isParent={prompt.parent === parentId} sessions={sessions} onSelectSession={onSelectSession} />
+          {text}
+        </div>
+      ) : (
+        text
+      )}
     </div>
   );
 }

@@ -166,6 +166,19 @@ describe('StreamClient', () => {
     expect(got.exits).toHaveLength(1);
   });
 
+  it('時間を区切らない要求（initialize）は、返事か claude の終了まで待つ', async () => {
+    vi.useFakeTimers();
+    const { pipe, client } = setup();
+    client.start();
+    const init = client.request('initialize', {}, null);
+    const late = client.request('initialize', {}, null);
+    vi.advanceTimersByTime(10 * 60_000);
+    pipe.respond(String(pipe.requests('initialize')[0].request_id), { pid: 1 });
+    await expect(init).resolves.toEqual({ pid: 1 });
+    pipe.exit(1);
+    await expect(late).rejects.toMatchObject({ reason: 'exited' });
+  });
+
   it('can_use_tool を待っている要求にし、答えを control_response で返す。取り下げられたら知らせ、もう答えない', () => {
     const { pipe, client, got } = setup();
     client.start();

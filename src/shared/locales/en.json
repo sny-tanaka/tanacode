@@ -89,7 +89,8 @@
     },
     "session": {
       "untitled": "New Session",
-      "notFound": "Session not found"
+      "notFound": "Session not found",
+      "notStopped": "Couldn't restart because Claude Code couldn't be stopped. The current Claude Code keeps running (the changed settings are used the next time it starts)"
     },
     "state": {
       "question": "Needs answer",
@@ -128,7 +129,8 @@
       "cancelled": "Sending was canceled",
       "waitingAnswer": "Couldn't send because Claude Code is waiting for an answer to a question or confirmation",
       "draft": "Couldn't send because the input in the terminal has unsent text",
-      "busy": "Couldn't send because Claude Code is busy"
+      "busy": "Couldn't send because Claude Code is busy",
+      "imagesSkipped": "Sent without some images that can't be sent: {names} (only readable PNG, JPEG, GIF, and WebP files can be sent)"
     },
     "worktree": {
       "untrustedFolder": "Claude Code doesn't trust this folder yet. Start a session without a worktree once and accept the folder trust prompt, then start with a worktree.",
@@ -512,7 +514,7 @@
       "takeBackTip": "Cancel sending and move the message back to the input box",
       "sendNowFailed": "Couldn't send: {error}",
       "rescheduleFailed": "Couldn't change the time: {error}",
-      "slowStart": "Claude Code is taking a long time to start. Check the terminal to see whether it's stuck on a confirmation screen.",
+      "slowStart": "Claude Code is taking a long time to start ({elapsed}). It may be waiting for MCP servers or SessionStart hooks",
       "rewinding": "Choosing where to rewind to…",
       "cancelEsc": "Cancel (Esc)",
       "unknownScreen": "Claude Code is showing a screen that can't be used from the chat",
@@ -533,7 +535,8 @@
       "effort": "Effort",
       "modeTitle": "Permission mode (this session only; same as Shift+Tab)",
       "mode": "Mode",
-      "bypassPermissions": "Bypass permissions"
+      "bypassPermissions": "Bypass permissions",
+      "slowStartStderr": "The end of Claude Code's standard error"
     },
     "toolCard": {
       "running": "Running…",

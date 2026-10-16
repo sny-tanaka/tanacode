@@ -3,12 +3,13 @@ import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   bridgeUrlOf,
   isTranscriptEntry,
   toChatEvents,
   transcriptTitle,
+  unsentView,
   type ChatEvent,
   type TranscriptEntry,
   type UnsentPrompt,
@@ -77,7 +78,7 @@ import type {
   StreamMessage,
   UserMessage,
 } from './stream/protocol';
-import { appMode, modelName, Progress, rateLimitsOf, streamMode } from './stream/state';
+import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode } from './stream/state';
 import {
   hideWorktrees,
   planWorktree,
@@ -99,11 +100,17 @@ const FIRST_PROMPT_TITLE_PRIORITY = 1;
 const TURN_END_WAIT_MS = 3000;
 // 送った発言が Claude Code に受け付けられた知らせ（command_lifecycle）も会話ログの行も来ないまま、送信中として扱う上限
 const SENDING_TIMEOUT_MS = 30_000;
+// initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
+const SLOW_START_MS = 10_000;
 // 作業中の経過時間を知らせ直す間隔
 const PROGRESS_TICK_MS = 1000;
 
 // ターミナルモードで Claude Code の画面を見ていないときの pty サイズ（ターミナルモードで見ているあいだだけ、ペインの大きさに合わせる）
 export const DEFAULT_PTY_SIZE = { cols: 120, rows: 40 };
+
+// 送ったが、まだ会話に出ていない発言。at: 送った時刻 / shown: チャットに出す（発言。親セッション・子セッションの知らせや
+// 最適化圧縮の文は出さないが、会話に出るまでは作業中に数える）
+type Unsent = UnsentPrompt & { at: number; shown: boolean };
 
 type Runtime = {
   process: ClaudeSession | null;
@@ -156,8 +163,10 @@ type Runtime = {
   // 作業中の進み具合（ターンの間だけ）
   progress: Progress | null;
   progressTimer: NodeJS.Timeout | null;
+  // 起動の見張り（initialize の返事を待つ間）。after（ミリ秒）を過ぎたら、経過と標準エラーの末尾を進み具合（starting）で知らせる
+  startWatch: { since: number; after: number; timer: NodeJS.Timeout; stderr: string } | null;
   // 送ったが、まだ会話に出ていない発言（uuid → 発言）
-  unsent: Map<string, UnsentPrompt & { at: number }>;
+  unsent: Map<string, Unsent>;
   // 送信の順番（画像を読む間に、あとから送ったものが追い越さないように）
   sendChain: Promise<void>;
   // 引き継いだ claude で、ホストに頼んだ送り直しが済んだ（前のアプリの頃の行を読み終えた）
@@ -269,6 +278,13 @@ export class SessionManager {
 
   // 残った claude を止める（leftover-claude.ts。テストで差し替える）
   stopLeftover: (claude: ClaudeProcess) => Promise<boolean> = stopLeftoverClaude;
+
+  // ターンの終わり（result）のあと、そのターンの最後の応答が会話ログに出るのを待つ上限（テストで変える）
+  turnEndWaitMs = TURN_END_WAIT_MS;
+  // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（テストで変える）
+  slowStartMs = SLOW_START_MS;
+  // 起動し直すときに止める、各段の待ち時間（end_session → SIGTERM → SIGKILL。テストで縮める。無ければ ClaudeSession の既定）
+  stopStepMs: number | undefined = undefined;
 
   // ターンが終わったときに、人に出す通知の種類（null なら出さない。profile.ts がつなぐ）。最適化圧縮の流れの途中のターンでは出さず、
   // 流れの最後のターンでは「コンテキストの最適化が完了しました」にする（compact-notice.ts）。ターンの終わりごとに、1 回だけ呼ぶ。
@@ -523,7 +539,7 @@ export class SessionManager {
       void this.prepareWorktree(id, 'restored');
       return;
     }
-    // 子セッションは起動のモードで。ほかのセッションは、前回分かっていたモードで（無ければ設定の既定。startMode）
+    // 子セッションは起動のモードで。ほかのセッションは、新しいセッションと同じ決まり（設定の既定か auto。startMode）
     this.start(id, record?.launchMode ?? null);
   }
 
@@ -547,6 +563,7 @@ export class SessionManager {
     rt?.subagents.dispose();
     rt?.bashTasks.dispose();
     if (rt) this.stopProgress(id, rt);
+    if (rt) this.stopStartWatch(id, rt);
     if (rt?.turnEnding) clearTimeout(rt.turnEnding.timer);
     if (rt?.watched) this.watchers.release(rt.watched);
     if (rt) this.watchFolders(rt, []);
@@ -596,8 +613,9 @@ export class SessionManager {
     // フックが答えを待っている質問
     if (this.questions.first(id)) return 'question';
     if (!rt.ready || rt.preparing) return 'starting';
-    // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える
-    if (rt.pendingSubmits > 0 || rt.turnOpen || rt.turnEnding || sending(rt)) return 'working';
+    // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える。
+    // 送信中・順番待ちの発言が残っていれば、ターンとターンの間も作業中（作業中の始まりは、送った発言の queued・started。設計書 7 節）
+    if (rt.pendingSubmits > 0 || rt.turnOpen || rt.turnEnding || rt.unsent.size > 0) return 'working';
     if (rt.background > 0) return 'background';
     return 'idle';
   }
@@ -816,7 +834,9 @@ export class SessionManager {
 
   // 作業中の進み具合（作業中でなければ null）
   progress(id: string): Activity | null {
-    return this.runtimes.get(id)?.progress?.current(Date.now()) ?? null;
+    const rt = this.runtimes.get(id);
+    if (!rt) return null;
+    return rt.progress?.current(Date.now()) ?? slowStartActivity(rt, Date.now());
   }
 
   // 権限モードを切り替える（画面のモード欄・親の configure_session）。子セッションは、起動し直しても切り替えたモードで起動するよう、
@@ -930,9 +950,20 @@ export class SessionManager {
     // 子セッションは、起動したときのモードより強くしない
     const launchMode = this.store.get(id)?.launchMode;
     if (launchMode && mode && !modeWithin(mode, launchMode)) mode = launchMode;
-    await process.stop();
+    // 止めている間は起動中にする（送った発言が、閉じかけの claude に入って消えないよう、画面は起動が終わるまで預かる）
+    const wasReady = rt.ready;
+    rt.ready = false;
+    this.emitSessions();
+    this.changed(id);
+    const stopped = await process.stop(this.stopStepMs);
     // 止めている間に、ほかで起動し直した・アーカイブした
-    if (this.runtimes.get(id) !== rt || rt.process) return;
+    if (this.runtimes.get(id) !== rt) return;
+    if (rt.process === process && !stopped) {
+      // 止められなかった（終わりの知らせが来ない）。動いている claude をそのまま使えるように戻し、黙らずに理由を返す
+      if (wasReady) this.markReady(id, rt);
+      throw new Error(t('main.session.notStopped'));
+    }
+    if (rt.process) return;
     this.start(id, mode && mode !== 'bypassPermissions' ? mode : null);
   }
 
@@ -953,29 +984,48 @@ export class SessionManager {
       if (!process || !client) throw new Error(t('main.send.notRunning'));
       const text = stripControlChars(rawText);
       const kept = pastes.map(stripControlChars).filter((p) => p.trim());
-      const images = await Promise.all(attachments.map(imageBlock));
+      const read = await Promise.all(attachments.map(imageBlock));
       if (rt.process !== process) throw new Error(t('main.send.exited'));
-      const content: string | ContentBlock[] =
-        images.length === 0 ? text : [...images.filter((b): b is ContentBlock => !!b), ...(text ? [{ type: 'text' as const, text }] : [])];
+      const images = read.flatMap((r) => ('block' in r ? [r.block] : []));
+      // 送れない画像（形式が違う・読めない）は、黙って落とさず、チャットに知らせる
+      const skipped = read.flatMap((r) => ('skipped' in r ? [r.skipped] : []));
+      if (skipped.length > 0) this.pushEvents(id, [{ type: 'info', id: `images-skipped:${randomUUID()}`, text: t('main.send.imagesSkipped', { names: skipped.join(', ') }) }]);
+      if (!text && images.length === 0 && kept.length === 0) return;
+      const content: string | ContentBlock[] = images.length === 0 ? text : [...images, ...(text ? [{ type: 'text' as const, text }] : [])];
       const uuid = randomUUID();
-      // スラッシュコマンドは発言として残らないものが多いので、送信中に出さない
+      // スラッシュコマンドは発言として残らないものが多いので、送信中に入れない。親の指示などは、会話に出たときと同じ形で出す
+      // （子セッション・予約・チェックリストの知らせや最適化圧縮の文は出さないが、会話に出るまでは作業中に数える）
       if (!text.trimStart().startsWith('/')) {
-        rt.unsent.set(uuid, { id: uuid, text, pastes: kept, images: images.filter(Boolean).length, state: 'sending', at: Date.now() });
+        const view = unsentView(text);
+        rt.unsent.set(uuid, {
+          id: uuid,
+          text: view?.text ?? text,
+          pastes: [...(view?.pastes ?? []), ...kept],
+          images: images.length,
+          state: 'sending',
+          ...(view?.parent ? { parent: view.parent } : {}),
+          at: Date.now(),
+          shown: view !== null,
+        });
         this.emitQueue(id, rt);
       }
       client.send({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, uuid, ...(kept.length > 0 ? { pasted_content: kept } : {}), ...(priority ? { priority } : {}) });
       this.changed(id);
-      // 受け付けの知らせも会話ログの行も来ないまま残らないよう、時間を区切る
-      setTimeout(() => {
-        if (rt.unsent.get(uuid)?.state !== 'sending') return;
-        rt.unsent.delete(uuid);
-        this.emitQueue(id, rt);
-        this.changed(id);
-      }, SENDING_TIMEOUT_MS).unref?.();
+      this.expireSending(id, rt, uuid);
     };
     const next = rt.sendChain.then(run, run);
     rt.sendChain = next.catch(() => {});
     return next;
+  }
+
+  // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る
+  private expireSending(id: string, rt: Runtime, uuid: string): void {
+    setTimeout(() => {
+      if (rt.unsent.get(uuid)?.state !== 'sending') return;
+      rt.unsent.delete(uuid);
+      this.emitQueue(id, rt);
+      this.changed(id);
+    }, SENDING_TIMEOUT_MS).unref?.();
   }
 
   // 起動が終わる（入力を受け付けられる）のを待ってから、ターンが終わってから届く発言（priority: later）として送る
@@ -1061,11 +1111,17 @@ export class SessionManager {
       if (stop) {
         rt.process?.kill();
         this.settingsFiles?.release(id);
-      } else rt.process?.detach();
+      } else {
+        // 次のアプリが claude を引き継いだときに、送信中・順番待ちを戻せるよう残す
+        const unsent = rt.process ? [...rt.unsent.values()].map(({ at: _, ...prompt }) => prompt) : [];
+        this.store.update(id, { unsent: unsent.length > 0 ? unsent : null });
+        rt.process?.detach();
+      }
       rt.workflows.dispose();
       rt.subagents.dispose();
       rt.bashTasks.dispose();
       if (rt.progressTimer) clearInterval(rt.progressTimer);
+      if (rt.startWatch) clearInterval(rt.startWatch.timer);
       if (rt.turnEnding) clearTimeout(rt.turnEnding.timer);
     }
     this.watchers.closeAll();
@@ -1082,11 +1138,10 @@ export class SessionManager {
   }
 
   // 起動するときの権限モード。指定（新規セッションの画面・子の起動のモード・起動し直すときの今のモード）があればそれ。
-  // 無ければ、前回分かっていたモード、それも無ければ設定の defaultMode、それも無ければ auto（決めたこと。設計書 15 節）。
-  // bypassPermissions は引き継がない（起動し直しと同じ）
+  // 無ければ設定の defaultMode、それも無ければ auto（決めたこと。設計書 15 節）。止まっていたセッションを開き直すときも同じで、
+  // 前回のモードは使わない（今のアプリの動きのまま）。bypassPermissions は引き継がない（起動し直しと同じ）
   private startMode(record: SessionRecord, requested: PermissionMode | null, settings: PreparedSettings | null): PermissionMode {
     if (requested) return requested;
-    if (record.knownMode && record.knownMode !== 'bypassPermissions') return record.knownMode;
     const configured = appMode(settingsDefaultMode(record.cwd, settings?.settingsFile ?? null, this.claudeDir));
     if (configured && configured !== 'bypassPermissions') return configured;
     return 'auto';
@@ -1175,6 +1230,7 @@ export class SessionManager {
         starterSeen: false,
         progress: null,
         progressTimer: null,
+        startWatch: null,
         unsent: new Map(),
         sendChain: Promise.resolve(),
         caughtUp: true,
@@ -1209,7 +1265,9 @@ export class SessionManager {
     runtime.ready = false;
     runtime.init = null;
     runtime.requests.clear();
-    runtime.unsent.clear();
+    // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）
+    runtime.unsent = new Map(adopted ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
+    if (record.unsent) this.store.update(id, { unsent: null });
     // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す（Claude Code が知らせたら、そちらにする）
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
     if (!adopted) this.store.update(id, { knownMode: permissionMode });
@@ -1222,6 +1280,7 @@ export class SessionManager {
     runtime.titleRequested = false;
     runtime.caughtUp = !adopted;
     this.stopProgress(id, runtime);
+    this.stopStartWatch(id, runtime);
     // Remote Control のつながりは、会話ログ（bridge-session）と bridge_state で分かる
     runtime.remoteConnected = false;
     // 読み直す会話ログが無ければ（新しい会話）、読み終わりの知らせは来ないので、はじめから読み終えたことにする
@@ -1297,6 +1356,7 @@ export class SessionManager {
           if (runtime.turnEnding) this.flushTurnEnd(id, runtime);
           runtime.turnOpen = false;
           this.stopProgress(id, runtime);
+          this.stopStartWatch(id, runtime);
           if (runtime.unsent.size > 0) {
             runtime.unsent.clear();
             this.emitQueue(id, runtime);
@@ -1324,6 +1384,11 @@ export class SessionManager {
     );
     rt.process = process;
     process.start();
+    if (runtime.unsent.size > 0) {
+      this.emitQueue(id, runtime);
+      for (const prompt of runtime.unsent.values()) if (prompt.state === 'sending') this.expireSending(id, runtime, prompt.id);
+    }
+    if (!adopted) this.watchStart(id, runtime, process);
     void this.initialize(id, runtime, process, adopted, claudeSessionId);
     if (creating) {
       // この起動が続いているか。終わった・起動し直した・アーカイブした（止めたときは、終了の知らせが来ない）ら、待つのをやめる
@@ -1360,18 +1425,21 @@ export class SessionManager {
       if (rt.process !== process) return;
       if (settings) this.updateStatus(id, rt, { effort: settings.applied?.effort ?? null });
       this.markReady(id, rt);
+      void this.refreshContext(id, rt);
       return;
     }
     let init: InitializeResponse;
     try {
-      init = await client.request<InitializeResponse>('initialize', { perTaskStopAffordance: true });
+      // MCP サーバー・SessionStart のフック・worktree の作成を待ってから答えるので、時間を区切らない（起動が遅いことは watchStart で知らせる）
+      init = await client.request<InitializeResponse>('initialize', { perTaskStopAffordance: true }, null);
     } catch (error) {
-      // 答えなければ、終わりの知らせ（理由は標準エラー）を待つ
+      // 答えずに終わった。終わりの知らせ（理由は標準エラー）で片付ける
       console.error('initialize に答えがありませんでした', error);
       return;
     }
     if (rt.process !== process) return;
     rt.init = init;
+    this.stopStartWatch(id, rt);
     if (typeof init.pid === 'number') this.store.update(id, { claudeProcess: { pid: init.pid, conversation } });
     if (init.current_permission_mode) this.noteMode(id, rt, appMode(init.current_permission_mode));
     const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
@@ -1384,12 +1452,51 @@ export class SessionManager {
       return;
     }
     this.updateStatus(id, rt, { effort: settings?.applied?.effort ?? null });
-    // auto を使えないモデルなら、manual に戻す（決めたこと。設計書 15 節）
-    if (rt.knownMode === 'auto' && !autoAvailable(init, rt.statusLine?.model?.id ?? null)) {
+    // 選んだモデルで auto を使えなければ、manual に戻す（決めたこと。設計書 15 節）
+    if (rt.knownMode === 'auto' && !autoAvailable(init, this.store.get(id)?.model ?? null)) {
       await client.request('set_permission_mode', { mode: streamMode('manual') }).catch(() => {});
       this.noteMode(id, rt, 'manual');
     }
     this.markReady(id, rt);
+    // コンテキストの使用量は、次のターンの終わりを待たずに聞く（再開した会話は、はじめから使っている）
+    void this.refreshContext(id, rt);
+  }
+
+  // 起動を見張る。initialize の返事が無いまま slowStartMs を過ぎたら、経過と標準エラーの末尾を進み具合（starting）で知らせ続ける
+  private watchStart(id: string, rt: Runtime, process: ClaudeSession): void {
+    this.stopStartWatch(id, rt);
+    const since = Date.now();
+    const after = this.slowStartMs;
+    const timer = setInterval(() => {
+      const watch = rt.startWatch;
+      if (watch?.timer !== timer) return;
+      if (rt.process !== process || rt.init) {
+        this.stopStartWatch(id, rt);
+        return;
+      }
+      if (Date.now() - since < after) return;
+      // 標準エラーは、ホストが控えている末尾（起動の途中では、ほかに読む道が無い）
+      void this.host.list().then(
+        (hosted) => {
+          if (rt.startWatch !== watch) return;
+          const info = hosted.filter((h) => h.kind === 'pipe' && h.tag === id && h.exitCode === null).at(-1);
+          if (info?.kind === 'pipe') watch.stderr = info.stderr;
+          this.listeners.onProgress(id, slowStartActivity(rt, Date.now()));
+        },
+        () => {},
+      );
+    }, Math.min(PROGRESS_TICK_MS, after));
+    timer.unref?.();
+    rt.startWatch = { since, after, timer, stderr: '' };
+  }
+
+  private stopStartWatch(id: string, rt: Runtime): void {
+    const watch = rt.startWatch;
+    if (!watch) return;
+    clearInterval(watch.timer);
+    rt.startWatch = null;
+    // 知らせていたら消す
+    if (!rt.progress && Date.now() - watch.since >= watch.after) this.listeners.onProgress(id, null);
   }
 
   // 受け付けられるようになった（worktree の準備の途中なら、準備が終わってから）
@@ -1461,6 +1568,8 @@ export class SessionManager {
   private historySettled(id: string, rt: Runtime, adopted: boolean): void {
     if (!rt.historyLoaded || !rt.caughtUp) return;
     if (!rt.turnOpen) this.pushEvents(id, [{ type: 'turn-end' }]);
+    // 前のアプリの頃に始まったターンの途中なら、進み具合を始める（経過はここから数える）
+    else if (!rt.progress && rt.process) this.startProgress(id, rt);
     // 引き継いだ claude は、最後の bridge-session 行のつながりのまま動いている
     // （以前つないでいた会話を再開すると、フラグが無くてもつなぎ直すため）
     if (adopted && rt.lastBridgeUrl !== undefined) {
@@ -1472,6 +1581,8 @@ export class SessionManager {
   // stream-json の出力の 1 行（制御の要求と返事は StreamClient が受け持つ）。past: 引き継いだときの、前のアプリの頃の行
   // （状態だけを組み立て直し、通知やチャットの知らせは出さない）。状態は行の種類だけで決め、順番を仮定しない（設計書 6・7 節）
   private handleStream(id: string, rt: Runtime, message: StreamMessage, past: boolean): void {
+    // 前のアプリの頃に始まったターンの途中に、今の行が来た（読み終わりより前に来ることもある）
+    if (!past && rt.turnOpen && !rt.progress && message.type !== 'result') this.startProgress(id, rt);
     switch (message.type) {
       case 'system':
         this.handleSystem(id, rt, message, past);
@@ -1531,6 +1642,9 @@ export class SessionManager {
       }
       case 'api_retry': {
         if (past) return;
+        // 入力なしで始まったターン（裏のタスクの完了の知らせなど）は、再試行の行だけが続くことがあるので、ターンの始まりに数える。
+        // 裏のタスクが動いている間は数えない（裏のクエリが利用枠を待つ間も、同じ形の行が出る。Claude Code 2.1.301 の本体）
+        if (rt.background === 0) this.openTurn(id, rt, past);
         const retry = message as Extract<StreamMessage, { subtype: 'api_retry' }>;
         const text = t('chat.transcript.apiErrorRetrying', { message: retry.error_status ? `${retry.error} (${retry.error_status})` : retry.error, attempt: retry.attempt, max: retry.max_retries });
         this.pushEvents(id, [{ type: 'api-error', id: retry.uuid, text, retrying: true }]);
@@ -1568,11 +1682,12 @@ export class SessionManager {
     this.changed(id);
   }
 
-  // ターンが始まった。前のターンの終わりをまだ出していなければ、先に出す
+  // ターンが始まった。前のターンの終わりをまだ出していなければ、先に出す（ターンを開いてから出す。終わりの知らせの間に、
+  // 手が空いたように見せない）
   private openTurn(id: string, rt: Runtime, past: boolean): void {
     if (rt.turnOpen) return;
-    if (rt.turnEnding) this.flushTurnEnd(id, rt);
     rt.turnOpen = true;
+    if (rt.turnEnding) this.flushTurnEnd(id, rt);
     rt.lastAssistant = null;
     rt.starterSeen = false;
     if (!past) this.startProgress(id, rt);
@@ -1589,8 +1704,12 @@ export class SessionManager {
     if (past || !open) return;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     const interrupted = typeof result.terminal_reason === 'string' && result.terminal_reason.startsWith('aborted');
+    // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）
+    if (result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length) {
+      this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
+    }
     const waitFor = rt.lastAssistant && !rt.chain.some((c) => c.uuid === rt.lastAssistant) ? rt.lastAssistant : null;
-    rt.turnEnding = { interrupted, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), TURN_END_WAIT_MS) };
+    rt.turnEnding = { interrupted, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
     this.emitSessions();
@@ -1625,13 +1744,18 @@ export class SessionManager {
   }
 
   // 会話のタイトルを作らせる（-p は自動では作らないため。実測）。会話ログにまだタイトル（ai-title・custom-title）が無く、人が名前を
-  // 付けていないセッションで、この起動の最初のターンが終わったあとに 1 回だけ。失敗は黙って捨てる（一覧は最初の発言のまま）
+  // 付けていないセッションで、この起動の最初のターンが終わったあとに 1 回だけ。失敗は黙って捨てる（一覧は最初の発言のまま）。
+  // 会話ログを読み終える前（あとの行にタイトルがあるかもしれない）と、まだ最初の発言が無いときは、次のターンの終わりに見直す
   private requestTitle(id: string, rt: Runtime): void {
     const record = this.store.get(id);
     const client = rt.process?.client;
-    if (rt.titleRequested || !record || !client) return;
+    if (rt.titleRequested || !record || !client || !rt.historyLoaded) return;
+    if (record.titlePriority > FIRST_PROMPT_TITLE_PRIORITY) {
+      rt.titleRequested = true;
+      return;
+    }
+    if (!record.title) return;
     rt.titleRequested = true;
-    if (record.titlePriority > FIRST_PROMPT_TITLE_PRIORITY || !record.title) return;
     void generateTitle(client, record.title).catch(() => null);
   }
 
@@ -1653,7 +1777,7 @@ export class SessionManager {
     const record = this.store.get(id);
     const modelId = patch.model ?? before?.model?.id ?? null;
     const next: StatusLineInfo = {
-      model: modelId ? { id: modelId, name: modelName(modelId) ?? modelId } : null,
+      model: modelId ? { id: modelId, name: modelName(modelId) ?? initModelName(rt.init, modelId) ?? modelId } : null,
       effort: record?.effort ?? (patch.effort !== undefined ? patch.effort : (before?.effort ?? null)),
       version: patch.version ?? before?.version ?? null,
       context: patch.context ?? before?.context ?? null,
@@ -1697,7 +1821,8 @@ export class SessionManager {
 
   // 送ったが、まだ会話に出ていない発言を、チャットに知らせる
   private emitQueue(id: string, rt: Runtime): void {
-    this.pushEvents(id, [{ type: 'queue', prompts: [...rt.unsent.values()].map(({ at: _, ...prompt }) => prompt) }]);
+    const prompts = [...rt.unsent.values()].filter((prompt) => prompt.shown).map(({ at: _, shown: __, ...prompt }) => prompt);
+    this.pushEvents(id, [{ type: 'queue', prompts }]);
   }
 
   // Claude Code が答えを待つ要求が来た（許可の確認・質問・プランの承認・ワークフローの確認）
@@ -1831,12 +1956,6 @@ export class SessionManager {
         if (!rt.starterSeen || starter.type === 'user' || compact) rt.turnStarter = turnStarterOf(starter);
         rt.starterSeen = true;
       }
-      // 送った発言が会話に出たら、送信中の表示から外す（発言の行、作業中に送ったものは queued_command の attachment）
-      const arrived = sentUuidOf(entry);
-      if (arrived && rt.unsent.delete(arrived)) {
-        this.emitQueue(id, rt);
-        this.changed(id);
-      }
     }
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
@@ -1847,6 +1966,13 @@ export class SessionManager {
         this.store.update(id, { updatedAt: Date.now() });
         if (!wasFirst) changed = true;
       }
+    }
+    // 送った発言が会話に出たら、送信中の表示から外す（発言の行、作業中に送ったものは queued_command の attachment）。
+    // 発言を出してから外す（先に外すと、一瞬どちらにも出ない）
+    const arrived = rt && !past ? sentUuidOf(entry) : null;
+    if (rt && arrived && rt.unsent.delete(arrived)) {
+      this.emitQueue(id, rt);
+      this.changed(id);
     }
     // ターンの最後の応答が会話ログに出たら、待っていたターンの終わりを出す
     if (rt?.turnEnding && entry.uuid && rt.turnEnding.waitFor === entry.uuid) this.flushTurnEnd(id, rt);
@@ -1876,12 +2002,6 @@ function firstRequest(rt: Runtime): CanUseToolRequest | null {
   return rt.requests.values().next().value ?? null;
 }
 
-// 送った発言のうち、まだ Claude Code に受け付けられていないものがあるか
-function sending(rt: Runtime): boolean {
-  for (const prompt of rt.unsent.values()) if (prompt.state === 'sending') return true;
-  return false;
-}
-
 // 会話ログの行が、アプリが送った発言のものなら、その uuid（発言の行・作業中に送った発言の queued_command の attachment）
 function sentUuidOf(entry: TranscriptEntry): string | null {
   if (entry.isSidechain) return null;
@@ -1890,13 +2010,24 @@ function sentUuidOf(entry: TranscriptEntry): string | null {
   return typeof source === 'string' ? source : null;
 }
 
-// 添えた画像のファイルを、発言の image のブロックにする。読めなければ null（送らない）
-const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-async function imageBlock(path: string): Promise<ContentBlock | null> {
-  const mediaType = IMAGE_TYPES[extname(path).toLowerCase()];
-  if (!mediaType) return null;
+// 添えた画像のファイルを、発言の image のブロックにする。送れない（Claude に送れる形式でない・読めない）なら、そのファイルの名前。
+// 形式は名前でなく中身の頭で決める（貼り付けた画像の名前は、拡張子が無いこともある）。大きな画像は Claude Code が縮めて送る
+// （6.7MB の PNG は 474KB の JPEG に、3024x1964 は 2000x1299 に。実測 2.1.301）ので、アプリでは縮めない
+async function imageBlock(path: string): Promise<{ block: ContentBlock } | { skipped: string }> {
   const data = await readFile(path).catch(() => null);
-  return data ? { type: 'image', source: { type: 'base64', media_type: mediaType, data: data.toString('base64') } } : null;
+  const mediaType = data ? imageMediaType(data) : null;
+  if (!data || !mediaType) return { skipped: basename(path) };
+  return { block: { type: 'image', source: { type: 'base64', media_type: mediaType, data: data.toString('base64') } } };
+}
+
+// 画像の中身の頭から、Claude に送れる形式（PNG・JPEG・GIF・WebP）の media_type を決める。ほかの形式なら null
+function imageMediaType(data: Buffer): string | null {
+  const head = data.subarray(0, 12).toString('latin1');
+  if (head.startsWith('\x89PNG\r\n\x1a\n')) return 'image/png';
+  if (head.startsWith('\xff\xd8\xff')) return 'image/jpeg';
+  if (head.startsWith('GIF87a') || head.startsWith('GIF89a')) return 'image/gif';
+  if (head.startsWith('RIFF') && head.slice(8, 12) === 'WEBP') return 'image/webp';
+  return null;
 }
 
 // 形の違う設定ファイルの理由（get_settings の errors の 1 つ）
@@ -1905,10 +2036,24 @@ function describeSettingsError(error: unknown): string {
   return [e?.file, e?.path, e?.message].filter((v): v is string => typeof v === 'string' && v !== '').join(': ');
 }
 
-// 今のモデルで auto を使えるか（initialize の models の supportsAutoMode。分からなければ使えるものとする）
-function autoAvailable(init: InitializeResponse, modelId: string | null): boolean {
-  const model = init.models.find((m) => m.value === 'default') ?? init.models.find((m) => m.resolvedModel === modelId);
-  return model?.supportsAutoMode !== false;
+// 選んだモデル（--model に渡したもの。null は既定のモデル）で auto を使えるか（initialize の models の supportsAutoMode。
+// 分からなければ使えるものとする）
+function autoAvailable(init: InitializeResponse, model: string | null): boolean {
+  const found = model ? init.models.find((m) => m.value === model || m.resolvedModel === model) : init.models.find((m) => m.value === 'default');
+  return found?.supportsAutoMode !== false;
+}
+
+// 名前を知らないモデルの ID（Bedrock の us.anthropic.… など）の、Claude Code が付けた名前（initialize の models の displayName）
+function initModelName(init: InitializeResponse | null, modelId: string): string | null {
+  const found = init?.models.find((m) => m.value !== 'default' && (m.resolvedModel === modelId || m.value === modelId));
+  return found?.displayName || null;
+}
+
+// 起動に時間がかかっているときの進み具合（知らせるまでの時間を過ぎるまでは null）
+function slowStartActivity(rt: Runtime, now: number): Activity | null {
+  const watch = rt.startWatch;
+  if (!watch || now - watch.since < watch.after) return null;
+  return { phase: 'starting', elapsed: elapsedText(now - watch.since), tokens: null, ...(watch.stderr.trim() ? { stderr: watch.stderr.trimEnd() } : {}) };
 }
 
 // 会話ログの権限モードの名前（Claude Code の名前。manual は default）

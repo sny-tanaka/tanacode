@@ -79,13 +79,15 @@ export type ScreenInfo = {
 
 // 作業中の画面のタイマーの行（例:「✳ Shimmying… (5s · ↓ 225 tokens · thought for 2s)」）から読んだ進み具合。
 // waiting: 応答がまだ何も来ていない / thinking: 考えている / writing: 応答を受け取っている（トークン数が増えている）/
-// working: それ以外（ツールの実行中など）
+// working: それ以外（ツールの実行中など）/ starting: 起動に時間がかかっている（initialize の返事を待っている。設計書 9 節）
 export type Activity = {
-  phase: 'waiting' | 'thinking' | 'writing' | 'working';
+  phase: 'starting' | 'waiting' | 'thinking' | 'writing' | 'working';
   // 経過時間（画面の表記のまま。例: 5s・1m 5s）
   elapsed: string | null;
   // 受け取ったトークン数（画面の表記のまま。例: 225・1.2k）
   tokens: string | null;
+  // starting のときの、Claude Code の標準エラーの末尾（MCP サーバー・フックの出力や、止まっている理由が出ることがある）
+  stderr?: string;
 };
 
 // 画面の 1 行。full は右端まで文字がある（折り返しで次の行に続いている）

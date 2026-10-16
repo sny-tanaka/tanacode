@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -186,7 +186,7 @@ describe('アプリが足す MCP サーバー', () => {
 });
 
 describe('起動の権限モードと再開', () => {
-  it('子セッションは起動したときのモードで開き直す。ほかのセッションは、前回分かっていたモードで開き直す', async () => {
+  it('子セッションは起動したときのモードで開き直す。ほかのセッションは、前回のモードでなく、新しいセッションと同じ決まり（設定の既定か auto）で開き直す', async () => {
     start();
     const parent = app.create({ mode: 'manual' });
     const child = app.create({ mode: 'plan' }, parent.id);
@@ -203,11 +203,32 @@ describe('起動の権限モードと再開', () => {
       await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
       await app.manager.open(id);
     }
-    expect(app.pipe(parent.id).arg('--permission-mode')).toBe('acceptEdits');
+    expect(app.pipe(parent.id).arg('--permission-mode')).toBe('auto');
     expect(app.pipe(child.id).arg('--permission-mode')).toBe('plan');
     // 動いているセッションを開いても、何もしない
     await app.manager.open(parent.id);
     expect(app.host.pipes).toHaveLength(4);
+  });
+
+  it('開き直すときも、設定の defaultMode があればそのモード（bypassPermissions は使わない）', async () => {
+    start();
+    const { id, pipe } = app.create({ mode: 'manual' });
+    await app.ready(id);
+    app.say(id, line.user('はじめ'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    const settings = join(app.cwd, '.claude', 'settings.json');
+    mkdirSync(join(app.cwd, '.claude'), { recursive: true });
+    writeFileSync(settings, JSON.stringify({ permissions: { defaultMode: 'plan' } }));
+    await app.manager.open(id);
+    expect(app.pipe(id).arg('--permission-mode')).toBe('plan');
+    app.pipe(id).exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    writeFileSync(settings, JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
+    await app.manager.open(id);
+    expect(app.pipe(id).arg('--permission-mode')).toBe('auto');
   });
 
   it('知らないセッションは開けない', async () => {

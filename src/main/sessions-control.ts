@@ -68,7 +68,7 @@ export type SessionsHost = {
   // 権限モードを切り替える（Shift+Tab。動いていない子は、次に起動するときのモード）。切り替えられたら true
   setMode(id: string, mode: PermissionMode): Promise<boolean>;
   // モデル・エフォート・設定ファイルを変える。動いていれば、Claude Code を起動し直して同じ会話を続ける
-  configure(id: string, options: SessionOptions): void;
+  configure(id: string, options: SessionOptions): Promise<void> | void;
   open(id: string): Promise<void>;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   interrupt(id: string): void;
@@ -740,7 +740,8 @@ export class SessionsControl {
       // 変えないものは、今の指定のまま（画面のモデル欄・エフォート欄で変えたときと同じ）。設定ファイルは変えない
       const options: SessionOptions = { model: model || (child.model ?? null), effort: effort || (child.effort ?? null), settingsFile: child.settingsFile ?? null };
       try {
-        host.configure(child.id, options);
+        // 起動し直すのを待たずに返す。止められずに起動し直せなかったとき（あとで失敗する）は、控えに残す
+        void Promise.resolve(host.configure(child.id, options)).catch((error: unknown) => console.error('子セッションを起動し直せませんでした', error));
       } catch (error) {
         throw failed('change its model or effort', error instanceof Error ? error.message : String(error));
       }

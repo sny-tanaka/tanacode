@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { language, t } from '@shared/i18n';
 import type { Activity } from '@shared/screen';
+import { Busy } from '../layout/Busy';
 import { CheckMark } from '../layout/CheckMark';
 
-// 進み具合の名前（working は出さない）
+// 進み具合の名前（working・starting は出さない。starting は StartingNote が出す）
 function phaseLabel(phase: Activity['phase']): string | null {
-  return phase === 'working' ? null : t(`chat.working.${phase}`);
+  return phase === 'working' || phase === 'starting' ? null : t(`chat.working.${phase}`);
 }
 
 // main の表記（5s・1m 5s・1h 2m。Claude Code の画面と同じ）を、今の言語の表記（日本語なら 5秒・1分5秒・1時間2分。日本語だけ間を詰める）にする
@@ -57,6 +58,30 @@ export function WorkingNote({ sessionId, activity: given, label }: { sessionId?:
       <span className="session-indicator running" />
       <span className="working-label">{label ? `${label.replace(/[…。.]+$/, '')}…` : t('chat.working.inProgress')}</span>
       {details.length > 0 && <span className="working-detail">{details.join(' · ')}</span>}
+    </div>
+  );
+}
+
+// 起動中の知らせ。起動に時間がかかっていれば（initialize の返事が無いまま 10 秒を過ぎたと main が知らせたら）、経過と
+// Claude Code の標準エラーの末尾を出す（MCP サーバー・フックを待っている、止まっている理由が出ることがある。設計書 9 節）。
+// busy: 時間がかかっていなくても「起動しています」を出す（チャットがまだ空のとき）
+export function StartingNote({ sessionId, busy }: { sessionId: string; busy: boolean }) {
+  const activity = useActivity(sessionId);
+  if (activity?.phase !== 'starting') {
+    return busy ? (
+      <div className="chat-note">
+        <Busy>{t('chat.pane.starting')}</Busy>
+      </div>
+    ) : null;
+  }
+  return (
+    <div className="chat-callout slow-start">
+      <span>{t('chat.pane.slowStart', { elapsed: activity.elapsed ? localElapsed(activity.elapsed) : '' })}</span>
+      {activity.stderr && (
+        <pre className="slow-start-stderr" aria-label={t('chat.pane.slowStartStderr')}>
+          {activity.stderr}
+        </pre>
+      )}
     </div>
   );
 }

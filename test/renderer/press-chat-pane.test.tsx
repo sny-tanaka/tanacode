@@ -67,7 +67,6 @@ function props(over: Partial<Props> = {}): Props {
     comments: [],
     onCommentsChange: noop,
     onShowComment: noop,
-    onOpenTerminal: noop,
     onShowContext: noop,
     onShowShell: noop,
     onToggleTerminal: noop,
@@ -261,6 +260,39 @@ describe('ヘッダー', () => {
     fireEvent.click(screen.getByRole('button', { name: '取り消す' }));
     expect(onTakePending).toHaveBeenCalledTimes(2);
     expect(box().value).toBe('テストも足して\n書きかけ');
+  });
+
+  it('起動中は「起動しています」を出し、main が起動に時間がかかっていると知らせたら、経過と Claude Code の標準エラーの末尾を出す', async () => {
+    render(<ClaudePane {...props({ chat: chatOf({ status: 'starting', items: [] }) })} />);
+    await settle();
+    expect(document.querySelector('.chat-list')?.textContent).toContain('起動しています');
+    act(() => api.emit('sessions.onProgress', { sessionId: 's1', activity: { phase: 'starting', elapsed: '12s', tokens: null, stderr: 'MCP server "slow": connecting' } }));
+    const callout = document.querySelector('.chat-callout.slow-start');
+    expect(callout?.textContent).toContain('Claude Code の起動に時間がかかっています（12秒）');
+    expect(callout?.querySelector('pre')?.textContent).toBe('MCP server "slow": connecting');
+    expect(document.querySelector('.chat-list')?.textContent).not.toContain('起動しています');
+    // ほかのセッションの知らせでは変わらない。起動が終われば消す
+    act(() => api.emit('sessions.onProgress', { sessionId: 's2', activity: null }));
+    expect(document.querySelector('.chat-callout.slow-start')).not.toBeNull();
+    act(() => api.emit('sessions.onProgress', { sessionId: 's1', activity: null }));
+    expect(document.querySelector('.chat-callout.slow-start')).toBeNull();
+  });
+
+  it('送信中・順番待ちの親からの指示は、会話に出たときと同じく、親の見出しを付けて出す', () => {
+    const parent = summary('parent-0001', { title: '親の作業' });
+    render(
+      <ClaudePane
+        {...props({
+          session: summary('s1', { parentId: parent.id }),
+          sessions: [parent, S1],
+          chat: chatOf({ unsent: [{ id: 'q1', text: 'テストも直して', pastes: [], images: 0, state: 'queued', parent: parent.id }] }),
+        })}
+      />,
+    );
+    const row = screen.getByText('テストも直して', { exact: false }).closest('.chat-user');
+    expect(row?.classList.contains('from-parent')).toBe(true);
+    expect(row?.textContent).toContain('親セッション「親の作業」からの指示');
+    expect(row?.textContent).toContain('順番待ち');
   });
 
   it('答えを待っている質問は、カードで出し、入力欄は止める。答えると、その返事を渡す。待っていなければ出さない', async () => {

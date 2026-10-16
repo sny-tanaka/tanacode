@@ -46,6 +46,8 @@ describe('二重にしない', () => {
 
 describe('ターンの終わりの順番', () => {
   it('result は会話ログより先に届く。チャットのターンの終わりは、最後の応答が会話ログに出てから出す（実行中のツールを、いったんエラーにしない）', async () => {
+    // 会話ログを読むのが遅くても、時間切れのターンの終わりが先に出ないよう、待つ時間を長くする
+    app.manager.turnEndWaitMs = 60_000;
     const { id, pipe } = app.create();
     await app.ready(id);
     const use = line.toolUse('toolu_1', 'Bash', { command: 'make' });
@@ -67,13 +69,14 @@ describe('ターンの終わりの順番', () => {
   });
 
   it('最後の応答が会話ログに出ないまま（書けなかった・読めなかった）でも、時間切れでターンを終える', async () => {
+    app.manager.turnEndWaitMs = 600;
     const { id, pipe } = app.create();
     await app.ready(id);
     app.append(id, line.user('はじめ'));
     pipe.emit(stream.assistant(line.text('会話ログに出ない応答')));
     app.finish(id);
-    await sleep(500);
     expect(turnEnds(id)).toBe(0);
+    expect(app.manager.stateOf(id)).toBe('working');
     await app.waitFor('時間切れ', () => turnEnds(id) === 1, 5000);
     expect(app.manager.stateOf(id)).toBe('idle');
     expect(app.turnsCompleted).toHaveLength(1);
@@ -112,6 +115,112 @@ describe('ターンの終わりの順番', () => {
     await app.waitFor('終了', () => types(id).includes('process-exit'));
     expect(types(id).indexOf('turn-end')).toBeLessThan(types(id).indexOf('process-exit'));
   });
+});
+
+describe('ターンとターンの間・入力なしのターン', () => {
+  it('ターンとターンの間に、手が空いたように見せない（次のターンを開いてから、前のターンの終わりを出す）', async () => {
+    app.manager.turnEndWaitMs = 60_000;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // 状態が変わりうるたびの状態と、それまでにチャットに出たターンの終わりの数
+    const states: [string | null, number][] = [];
+    app.manager.watchState((changed) => {
+      if (changed === id) states.push([app.manager.stateOf(id), turnEnds(id)]);
+    });
+    await app.prompt(id, 'ひとつめ');
+    await app.waitFor('ひとつめが会話に出た', () => app.events(id).some((e) => e.type === 'user'));
+    const next = await app.send(id, 'ふたつめ');
+    pipe.emit(stream.lifecycle(next, 'queued'));
+    // 最後の応答がまだ会話ログに出ないうちに result が届き、そのまま順番待ちの発言でつぎのターンが始まる
+    const answer = line.text('ひとつめの答え');
+    pipe.emit(stream.assistant(answer));
+    app.finish(id);
+    pipe.emit(stream.lifecycle(next, 'started'));
+    await app.waitFor('ひとつめのターンの終わり', () => turnEnds(id) === 1);
+    app.append(id, answer, { ...line.user('ふたつめ'), uuid: next });
+    app.say(id, line.text('ふたつめの答え'));
+    app.finish(id);
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
+    // 手が空いたのは、ふたつめのターンが終わってから
+    expect(new Set(states.filter(([state]) => state === 'idle').map(([, ended]) => ended))).toEqual(new Set([2]));
+    expect(app.turnsCompleted).toHaveLength(2);
+  });
+
+  it('前のターンの終わりを待っている間に、入力なしでつぎのターンが始まっても、手が空いたように見せない', async () => {
+    app.manager.turnEndWaitMs = 60_000;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'ひとつめ');
+    await app.waitFor('ひとつめが会話に出た', () => app.events(id).some((e) => e.type === 'user'));
+    const states: (string | null)[] = [];
+    app.manager.watchState((changed) => {
+      if (changed === id) states.push(app.manager.stateOf(id));
+    });
+    pipe.emit(stream.assistant(line.text('ひとつめの答え')));
+    app.finish(id);
+    // 裏のタスクの完了の知らせなどで、入力なしにつぎのターンが始まる（前のターンの終わりは、ここで先に出す）
+    pipe.emit(stream.blockStart('thinking'));
+    expect(turnEnds(id)).toBe(1);
+    expect(states).not.toContain('idle');
+    expect(app.manager.stateOf(id)).toBe('working');
+  });
+
+  it('result のあとも、順番待ちの発言が残っていれば作業中（作業中の始まりは、送った発言の queued と started）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'ひとつめ');
+    const next = await app.send(id, 'ふたつめ');
+    pipe.emit(stream.lifecycle(next, 'queued'));
+    app.say(id, line.text('ひとつめの答え'));
+    app.finish(id);
+    await app.waitFor('ひとつめのターンの終わり', () => turnEnds(id) === 1);
+    expect(app.manager.stateOf(id)).toBe('working');
+    // Claude Code が取り下げたら（cancelled・discarded）、手が空く
+    pipe.emit(stream.lifecycle(next, 'cancelled'));
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
+  });
+
+  it('入力なしで始まったターンで再試行の行だけが続いても作業中にし、result で終える。会話ログに残らない失敗の理由（errors）はチャットに出す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const retry = { type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 529, error: 'overloaded', uuid: 'r1', session_id: 's' };
+    pipe.emit(retry);
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    expect(app.progress.get(id)).not.toBeNull();
+    pipe.emit(stream.result(app.claudeId(id), { subtype: 'error_max_turns', is_error: true, terminal_reason: 'max_turns', errors: ['Reached maximum number of turns (3)'] }));
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(app.manager.stateOf(id)).toBe('idle');
+    expect(app.events(id).flatMap((e) => (e.type === 'api-error' ? [[e.text, e.retrying]] : []))).toEqual([
+      [expect.stringContaining('overloaded'), true],
+      ['Reached maximum number of turns (3)', false],
+    ]);
+    // 中断で終わったターンの errors は出さない（人が止めた）
+    pipe.emit({ ...retry, uuid: 'r2' });
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    pipe.emit(stream.result(app.claudeId(id), { subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming', errors: ['aborted'] }));
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 2);
+    expect(app.events(id).filter((e) => e.type === 'api-error' && !e.retrying)).toHaveLength(1);
+  });
+
+  it('裏のタスクが動いている間の再試行の行は、ターンの始まりに数えない（裏のクエリが利用枠を待つ間も、同じ形の行が出る）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.say(
+      id,
+      line.user('サーバーを起動して'),
+      line.toolUse('toolu_bg', 'Bash', { command: 'npm run dev', run_in_background: true }),
+      line.toolResult('toolu_bg', 'Command running in background with ID: b1. Output is being written to: /nonexistent/b1.output', {
+        toolUseResult: { backgroundTaskId: 'b1' },
+      }),
+      line.text('起動しました'),
+    );
+    app.finish(id);
+    await app.waitFor('裏のタスク', () => app.manager.stateOf(id) === 'background');
+    pipe.emit({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 60_000, error_status: 429, error: 'rate_limit', uuid: 'r1', session_id: 's' });
+    await sleep(100);
+    expect(app.manager.stateOf(id)).toBe('background');
+  });
+
 });
 
 describe('ターンの始まり', () => {
@@ -260,6 +369,21 @@ describe('会話のタイトル（generate_session_title）', () => {
     expect(app.manager.stateOf(id)).toBe('idle');
     await app.manager.submitWhenReady(id, 'つぎ', 500);
     expect(pipe.prompts.map((p) => p.message.content)).toEqual(['つぎ']);
+  });
+
+  it('最初の発言が無いまま最初のターンが終わったら（入力なしで始まったターン）、頼まずに、次のターンの終わりに見直す', async () => {
+    app.answers.set('generate_session_title', { title: 'ログインの修正' });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.say(id, line.text('裏のタスクが終わりました'));
+    app.finish(id);
+    await app.waitFor('ひとつめのターン', () => turnEnds(id) === 1);
+    await sleep(100);
+    expect(pipe.requests('generate_session_title')).toEqual([]);
+    app.say(id, line.user('ログインを直して'), line.text('直します'));
+    app.finish(id);
+    await app.waitFor('タイトルの頼み', () => pipe.requests('generate_session_title').length === 1);
+    expect(pipe.requests('generate_session_title')[0].request).toMatchObject({ description: 'ログインを直して' });
   });
 
   it('人が名前を付けた・会話ログにもうタイトル（ai-title・custom-title）があるときは、頼まない', async () => {

@@ -1,7 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { INIT_RESPONSE, line, ScriptedApp } from './helpers/scripted-claude';
+import { parentMessageText, sessionEventText } from '@shared/session-tools';
+import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // 発言を送る（submit）・起動が終わるのを待ってから送る（submitWhenReady）（SessionManager）。
 // stream-json では、発言は user の行 1 つ（打ち込み・入力欄の読み取りは無い）
@@ -17,20 +18,52 @@ afterEach(() => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// 添える画像（中身は何でもよい。base64 にして送る）
-function image(name: string): string {
+// 添える画像。形式は中身の頭で決まるので、拡張子に合う頭を付ける（残りは何でもよい。base64 にして送る）
+const HEADS: Record<string, Buffer> = {
+  png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  jpg: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  gif: Buffer.from('GIF89a'),
+  webp: Buffer.from('RIFF\0\0\0\0WEBPVP8 '),
+};
+const imageData = (name: string, kind = name.split('.').pop()!.toLowerCase()) => Buffer.concat([HEADS[kind] ?? Buffer.alloc(0), Buffer.from(name)]);
+function image(name: string, kind?: string): string {
   const file = join(app.root, name);
-  writeFileSync(file, Buffer.from(name));
+  writeFileSync(file, imageData(name, kind));
   return file;
 }
-const imageBlock = (name: string, mediaType = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data: Buffer.from(name).toString('base64') } });
+const imageBlock = (name: string, mediaType = 'image/png', kind?: string) => ({
+  type: 'image',
+  source: { type: 'base64', media_type: mediaType, data: imageData(name, kind).toString('base64') },
+});
+const infos = (id: string) => app.events(id).flatMap((e) => (e.type === 'info' ? [e.text] : []));
+// 送ったが、まだ会話に出ていない発言（最後の queue のイベント）
+const queue = (id: string) => {
+  const last = [...app.events(id)].reverse().find((e) => e.type === 'queue');
+  return last?.type === 'queue' ? last.prompts : [];
+};
 
 describe('submit', () => {
-  it('本文が無く画像だけなら、画像のブロックだけを送る。拡張子で種類を決める', async () => {
+  it('本文が無く画像だけなら、画像のブロックだけを送る。種類は拡張子でなく中身の頭で決める', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
-    await app.manager.submit(id, '', [image('a.png'), image('b.JPG'), image('c.webp')]);
-    expect(pipe.prompts.map((p) => p.message.content)).toEqual([[imageBlock('a.png'), imageBlock('b.JPG', 'image/jpeg'), imageBlock('c.webp', 'image/webp')]]);
+    await app.manager.submit(id, '', [image('a.png'), image('b.JPG'), image('c.webp'), image('d.gif'), image('pasted', 'png')]);
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual([
+      [imageBlock('a.png'), imageBlock('b.JPG', 'image/jpeg'), imageBlock('c.webp', 'image/webp'), imageBlock('d.gif', 'image/gif'), imageBlock('pasted', 'image/png', 'png')],
+    ]);
+    expect(infos(id)).toEqual([]);
+  });
+
+  it('送れない画像（Claude に送れない形式・読めないファイル）は添えずに送り、黙らずにチャットで知らせる。画像しか無ければ何も送らない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // HEIC は拡張子が画像でも送れない。名前だけ .png の、中身が違うファイルも送れない
+    await app.manager.submit(id, 'これを見て', [image('a.png'), image('photo.heic'), image('fake.png', 'txt'), join(app.root, 'missing.png')]);
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual([[imageBlock('a.png'), { type: 'text', text: 'これを見て' }]]);
+    expect(infos(id)).toEqual(['送れない画像があったため、添えずに送りました: photo.heic, fake.png, missing.png（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）']);
+    await app.manager.submit(id, '', [image('b.bmp', 'bmp')]);
+    expect(pipe.prompts).toHaveLength(1);
+    expect(infos(id)).toHaveLength(2);
+    expect(queue(id)).toHaveLength(1);
   });
 
   it('同じセッションへの送信は、送った順に届ける（画像を読む間に、あとの発言が追い越さない）', async () => {
@@ -73,19 +106,49 @@ describe('submit', () => {
   it('送ってから会話に出るまでは送信中としてチャットに知らせ、作業中にする。会話ログに同じ uuid の発言が出たら外す', async () => {
     const { id } = app.create();
     await app.ready(id);
-    const queue = () => {
-      const last = [...app.events(id)].reverse().find((e) => e.type === 'queue');
-      return last?.type === 'queue' ? last.prompts : [];
-    };
     const uuid = await app.send(id, 'お願いします', [image('a.png')], ['長い文']);
-    expect(queue()).toEqual([{ id: uuid, text: 'お願いします', pastes: ['長い文'], images: 1, state: 'sending' }]);
+    expect(queue(id)).toEqual([{ id: uuid, text: 'お願いします', pastes: ['長い文'], images: 1, state: 'sending' }]);
     expect(app.manager.stateOf(id)).toBe('working');
     app.append(id, { ...line.user('お願いします'), uuid });
-    await app.waitFor('会話に出た', () => queue().length === 0);
+    await app.waitFor('会話に出た', () => queue(id).length === 0);
     // スラッシュコマンドは発言として残らないものが多いので、送信中に出さない
     const before = app.events(id).filter((e) => e.type === 'queue').length;
     await app.manager.submit(id, '/compact');
     expect(app.events(id).filter((e) => e.type === 'queue')).toHaveLength(before);
+  });
+
+  it('会話に出た発言は、発言を出してから送信中から外す（先に外すと、一瞬どちらにも出ない）', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, 'お願いします');
+    app.append(id, { ...line.user('お願いします'), uuid });
+    await app.waitFor('会話に出た', () => queue(id).length === 0);
+    const kinds = app.events(id).flatMap((e) => (e.type === 'user' ? ['user'] : e.type === 'queue' ? [`queue:${e.prompts.length}`] : []));
+    expect(kinds.slice(-2)).toEqual(['user', 'queue:0']);
+  });
+
+  it('親からの指示は、会話に出たときと同じく、囲みを外した本文と親の ID で送信中・順番待ちに出す', async () => {
+    const parent = app.create();
+    const { id, pipe } = app.create({ mode: 'manual' }, parent.id);
+    await app.ready(id);
+    app.say(id, line.user('はじめ'), line.text('考えています'));
+    await app.manager.submitWhenReady(id, parentMessageText(parent.id, 'テストも直して'), 1000);
+    const uuid = pipe.prompts[0].uuid;
+    pipe.emit(stream.lifecycle(uuid, 'queued'));
+    await app.waitFor('順番待ち', () => queue(id)[0]?.state === 'queued');
+    expect(queue(id)).toEqual([{ id: uuid, text: 'テストも直して', pastes: [], images: 0, state: 'queued', parent: parent.id }]);
+  });
+
+  it('子セッションの知らせなど、発言でないものは送信中・順番待ちに出さない。会話に出るまでは作業中に数える', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.manager.submitWhenReady(id, sessionEventText(['abcdef12'], '子セッションの作業が終わりました'), 1000);
+    expect(queue(id)).toEqual([]);
+    expect(app.manager.stateOf(id)).toBe('working');
+    const uuid = pipe.prompts[0].uuid;
+    app.append(id, { ...line.user(sessionEventText(['abcdef12'], '子セッションの作業が終わりました')), uuid, origin: undefined });
+    await app.waitFor('会話に出た', () => app.manager.stateOf(id) === 'idle');
+    expect(app.events(id).some((e) => e.type === 'notice')).toBe(true);
   });
 });
 

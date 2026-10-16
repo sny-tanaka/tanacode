@@ -32,12 +32,38 @@ describe('起動と送信', () => {
     expect(app.events(id).filter((e) => e.type === 'ready')).toHaveLength(1);
   });
 
+  it('initialize の返事が遅くても見放さずに待つ。決まった時間を過ぎたら、経過と標準エラーの末尾を進み具合（starting）で知らせる', async () => {
+    app.answers.set('initialize', null);
+    app.manager.slowStartMs = 100;
+    const { id, pipe } = app.create();
+    // 標準エラーは、常駐のホストが控えている末尾から読む
+    app.host.hosted = [
+      { kind: 'pipe', id: pipe.id, tag: id, pid: 1, startedAt: Date.now(), exitCode: null, lastSeq: 0, firstSeq: 1, retained: [], pending: [], ended: false, stderr: 'MCP server "slow": connecting\n' },
+    ];
+    await app.waitFor('起動が遅い', () => app.progress.get(id)?.stderr === 'MCP server "slow": connecting');
+    expect(app.progress.get(id)).toMatchObject({ phase: 'starting', elapsed: expect.stringMatching(/^\d+s$/), tokens: null });
+    expect(app.manager.progress(id)).toMatchObject({ phase: 'starting', stderr: 'MCP server "slow": connecting' });
+    expect(app.manager.stateOf(id)).toBe('starting');
+    // 遅れて答えが来たら、起動済みにして、知らせを消す
+    pipe.respond(pipe.requests('initialize')[0].request_id, INIT_RESPONSE);
+    await app.ready(id);
+    expect(app.progress.get(id)).toBeNull();
+    expect(app.manager.progress(id)).toBeNull();
+    // 答えずに終わったら、知らせを消して終了を出す
+    const other = app.create();
+    await app.waitFor('起動が遅い', () => app.progress.get(other.id)?.phase === 'starting');
+    other.pipe.exit(1, 'Error: MCP server failed');
+    await app.waitFor('終了', () => app.manager.stateOf(other.id) === 'exited');
+    expect(app.progress.get(other.id)).toBeNull();
+  });
+
   it('発言は user の行 1 つで送る。本文の制御文字を除き、画像は image のブロック、札は pasted_content に入れる', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
     const png = join(app.root, 'shot.png');
-    writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    // 画像でないファイルと、読めないファイルは送らない
+    writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    // 画像でないファイルと、読めないファイルは送らない（チャットで知らせる）
+    writeFileSync(join(app.root, 'memo.txt'), 'メモ');
     const uuid = await app.send(id, 'こんにちは\x1b[Z‮です', [png, join(app.root, 'memo.txt'), join(app.root, 'missing.png')], ['長い\nログ']);
     expect(pipe.prompts).toEqual([
       {
@@ -47,12 +73,15 @@ describe('起動と送信', () => {
         message: {
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64') } },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64') } },
             { type: 'text', text: 'こんにちは[Zです' },
           ],
         },
         pasted_content: ['長い\nログ'],
       },
+    ]);
+    expect(app.events(id).filter((e) => e.type === 'info').map((e) => (e.type === 'info' ? e.text : ''))).toEqual([
+      expect.stringContaining('memo.txt, missing.png'),
     ]);
     // 画像が無ければ、本文はそのままの文字
     await app.send(id, 'ふつうの発言');
@@ -161,23 +190,51 @@ describe('権限モードと起動し直し', () => {
     expect(app.manager.modeOf(restricted.id)).toBe('manual');
   });
 
-  it('modeOf: 前の起動の claude が会話ログに書いたモードは使わない（今の起動では、別のモードを渡していることもある）', async () => {
+  it('auto を使えるかは、既定のモデルでなく、選んだモデル（--model）で見る', async () => {
+    const models = [
+      { ...INIT_RESPONSE.models[0], supportsAutoMode: true },
+      { value: 'haiku', resolvedModel: 'claude-haiku-5-5', displayName: 'Haiku 5.5', supportedEffortLevels: [], supportsAutoMode: false },
+    ];
+    app.answers.set('initialize', { ...INIT_RESPONSE, current_permission_mode: 'auto', models });
+    const haiku = app.create({ model: 'haiku' });
+    await app.ready(haiku.id);
+    expect(haiku.pipe.requests('set_permission_mode').map((r) => r.request)).toEqual([{ subtype: 'set_permission_mode', mode: 'default' }]);
+    expect(app.manager.modeOf(haiku.id)).toBe('manual');
+    // 既定のモデルが使えなくても、選んだモデルが使えるなら auto のまま
+    app.answers.set('initialize', { ...INIT_RESPONSE, current_permission_mode: 'auto', models: [{ ...models[0], supportsAutoMode: false }, { ...models[1], supportsAutoMode: true }] });
+    const chosen = app.create({ model: 'claude-haiku-5-5' });
+    await app.ready(chosen.id);
+    expect(chosen.pipe.requests('set_permission_mode')).toEqual([]);
+    expect(app.manager.modeOf(chosen.id)).toBe('auto');
+  });
+
+  it('名前を知らないモデルの ID（Bedrock など）は、initialize の models の displayName で出す', async () => {
+    const models = [INIT_RESPONSE.models[0], { value: 'arn:aws:bedrock:custom/abc', resolvedModel: 'arn:aws:bedrock:custom/abc', displayName: '社内の Opus', supportedEffortLevels: [] }];
+    app.answers.set('initialize', { ...INIT_RESPONSE, models });
+    const { id, pipe } = app.create({ model: 'arn:aws:bedrock:custom/abc' });
+    await app.ready(id);
+    pipe.emit(stream.init(app.claudeId(id), { model: 'arn:aws:bedrock:custom/abc' }));
+    await app.waitFor('モデル', () => app.manager.statusLine(id)?.model?.id === 'arn:aws:bedrock:custom/abc');
+    expect(app.manager.statusLine(id)?.model?.name).toBe('社内の Opus');
+  });
+
+  it('modeOf: 前の起動の claude が会話ログに書いたモードは使わない（開き直すときは、新しいセッションと同じ決まりのモードを渡す）', async () => {
     const { id, pipe } = app.create({ mode: 'manual' });
     await app.ready(id);
     app.say(id, { ...line.user('はじめ'), permissionMode: 'plan' }, line.text('はい'));
     await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'plan');
     app.finish(id);
-    // そのあと人が切り替えた。次の起動は、前回分かっていたこのモードで始める
+    // そのあと人が切り替えた。止まったあとに開き直すときは、前回のモードでなく、新しいセッションと同じ決まり（設定の既定か auto）
     pipe.emit(stream.status('acceptEdits'));
     await app.waitFor('今のモード', () => app.manager.modeOf(id) === 'acceptEdits');
     pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     await app.manager.open(id);
     expect(app.pipe(id).arg('--resume')).toBe(pipe.arg('--session-id'));
-    expect(app.pipe(id).arg('--permission-mode')).toBe('acceptEdits');
+    expect(app.pipe(id).arg('--permission-mode')).toBe('auto');
     await app.ready(id);
     await app.waitFor('会話ログの読み直し', () => app.events(id).some((e) => e.type === 'turn-end'));
-    expect(app.manager.modeOf(id)).toBe('acceptEdits');
+    expect(app.manager.modeOf(id)).toBe('auto');
     // 今の claude が書けば、それを使う
     app.append(id, { ...line.user('つづき'), permissionMode: 'auto' });
     await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'auto');
@@ -202,6 +259,35 @@ describe('権限モードと起動し直し', () => {
     expect(next.arg('--permission-mode')).toBe('acceptEdits');
   });
 
+  it('restart: 止めている間は起動中にする（送った発言が、閉じかけの claude に入って消えないよう、画面が預かる）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // end_session を受けても、すぐには終わらない
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    expect(app.manager.stateOf(id)).toBe('starting');
+    expect(app.sessions.find((s) => s.id === id)?.state).toBe('starting');
+    pipe.exit(0);
+    await restarting;
+    expect(app.pipe(id)).not.toBe(pipe);
+    await app.ready(id);
+    expect(app.manager.stateOf(id)).toBe('idle');
+  });
+
+  it('restart: 止められなかったら（終わりの知らせが来ない）、動いている claude をそのまま使えるように戻し、黙らずに理由を返す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    app.manager.stopStepMs = 20;
+    await expect(app.manager.restart(id)).rejects.toThrow('Claude Code を止められなかったため、起動し直せませんでした');
+    expect(pipe.kills).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(app.host.pipes).toHaveLength(1);
+    expect(app.manager.stateOf(id)).toBe('idle');
+    await app.manager.submit(id, 'つづき');
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual(['つづき']);
+  });
+
   it('restart: bypassPermissions は引き継がない（起動し直したあとは、設定の既定か auto）', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
@@ -220,7 +306,7 @@ describe('権限モードと起動し直し', () => {
     expect(await app.manager.setMode(child.id, 'plan')).toBe(true);
     await app.manager.open(child.id);
     expect(app.pipe(child.id).arg('--permission-mode')).toBe('plan');
-    // 子でないセッションは、動いていなければ切り替えない（次の起動は、前回分かっていたモード）
+    // 子でないセッションは、動いていなければ切り替えない（次の起動は、新しいセッションと同じ決まりのモード）
     await app.ready(parent.id);
     parent.pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(parent.id) === 'exited');

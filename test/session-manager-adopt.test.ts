@@ -1,8 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { sessionEventText } from '@shared/session-tools';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
+import { SessionStore } from '../src/main/session-store';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // アプリを起動し直したとき、前のアプリが起動して動き続けている claude を引き継ぐ（adopt）。アプリの終了（closeAll）
@@ -64,6 +66,11 @@ async function previous(...entries: Record<string, unknown>[]): Promise<string> 
 const bridgeSession = (bridgeSessionId: string) => ({ ...line.turnEnd(), type: 'bridge-session', subtype: undefined, timestamp: undefined, bridgeSessionId });
 
 const attached = (id: string) => app.host.attachedPipes.find((p) => p.request.tag === id);
+// 送ったが、まだ会話に出ていない発言（チャットに知らせた最後のもの）
+const queue = (id: string) => {
+  const last = [...app.manager.snapshot(id).events].reverse().find((e) => e.type === 'queue');
+  return last?.type === 'queue' ? last.prompts : [];
+};
 
 describe('adopt', () => {
   it('終わったものは記録を捨て、知らない・アーカイブした・もう動いているセッションと、TUI の claude は止め、ほかは起動し直さずに引き継ぐ', async () => {
@@ -123,7 +130,12 @@ describe('adopt', () => {
     await sleep(200);
     expect(app.manager.stateOf(id)).toBe('working');
     expect(app.manager.snapshot(id).events.some((e) => e.type === 'turn-end')).toBe(false);
-    pipe.emit(stream.result(), 3);
+    // 前のアプリの頃の行では進み具合を作らないが、読み終えたらターンの途中として進み具合を始める
+    expect(app.progress.get(id)).toMatchObject({ phase: 'waiting' });
+    expect(app.manager.progress(id)).toMatchObject({ phase: 'waiting' });
+    pipe.emit(stream.blockStart('text'));
+    await app.waitFor('書いている', () => app.progress.get(id)?.phase === 'writing');
+    pipe.emit(stream.result(), 4);
     await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle');
     expect(app.turnsCompleted.map((s) => s.id)).toEqual([id]);
   });
@@ -151,7 +163,7 @@ describe('adopt', () => {
     expect(app.manager.summary(id)?.attention).toBe('permission');
   });
 
-  it('引き継いだ claude には initialize を送らずに起動済みにし、エフォートだけ聞き直す（聞けなくても起動済み）', async () => {
+  it('引き継いだ claude には initialize を送らずに起動済みにし、エフォートとコンテキストの使用量を聞き直す（聞けなくても起動済み）', async () => {
     const id = await previous(line.user('はじめ'), line.text('はい'));
     app.answers.set('get_settings', new Error('timeout'));
     app.host.hosted = [hosted(id)];
@@ -159,7 +171,45 @@ describe('adopt', () => {
     attached(id)!.replayed();
     await app.waitFor('起動済み', () => app.manager.stateOf(id) === 'idle');
     expect(app.manager.snapshot(id).events.some((e) => e.type === 'ready')).toBe(true);
-    expect(attached(id)!.requests().map((r) => r.request.subtype)).toEqual(['get_settings']);
+    expect(attached(id)!.requests().map((r) => r.request.subtype)).toEqual(['get_settings', 'get_context_usage']);
+    // コンテキストは、次のターンの終わりを待たずに出す
+    await app.waitFor('コンテキスト', () => app.manager.statusLine(id)?.context?.tokens === 12_000);
+  });
+
+  it('claude を動かしたままアプリを終えるときは、送信中・順番待ちの発言を記録に残す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, '待っている発言');
+    pipe.emit(stream.lifecycle(uuid, 'queued'));
+    await app.waitFor('順番待ち', () => queue(id)[0]?.state === 'queued');
+    app.manager.closeAll(false);
+    const record = new SessionStore(join(app.userData, 'sessions.json')).get(id);
+    expect(record?.unsent).toEqual([{ id: uuid, text: '待っている発言', pastes: [], images: 0, state: 'queued', shown: true }]);
+  });
+
+  it('引き継いだら、前のアプリが残した送信中・順番待ちの発言を戻す。前のアプリの頃に済んだもの・会話に出たものは外す', async () => {
+    const id = await previous(line.user('はじめ'));
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    const prompt = (uuid: string, text: string, shown = true) => ({ id: uuid, text, pastes: [], images: 0, state: 'queued' as const, shown });
+    store.update(id, {
+      unsent: [prompt('u-done', '済んだ発言'), prompt('u-wait', '待っている発言'), prompt('u-event', sessionEventText(['abcdef12'], '子の作業が終わりました'), false)],
+    });
+    app.host.hosted = [hosted(id, { lastSeq: 3, firstSeq: 1 })];
+    await app.manager.adopt();
+    const pipe = attached(id)!;
+    pipe.emit(stream.lifecycle('u-done', 'started'), 1);
+    pipe.emit(stream.result(), 2);
+    pipe.emit(stream.lifecycle('u-done', 'completed'), 3);
+    pipe.replayed();
+    await app.waitFor('戻した', () => queue(id).map((p) => p.id).join() === 'u-wait');
+    expect(store.get(id)?.unsent).toBeNull();
+    // 順番待ちが残っているので、作業中
+    await app.waitFor('起動済み', () => app.manager.snapshot(id).events.some((e) => e.type === 'ready'));
+    expect(app.manager.stateOf(id)).toBe('working');
+    pipe.emit(stream.lifecycle('u-event', 'completed'));
+    app.append(id, { ...line.user('待っている発言'), uuid: 'u-wait' });
+    await app.waitFor('会話に出た', () => queue(id).length === 0);
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
   });
 
   it('引き継いだ claude が起動してから書いた行は、読み直した履歴でも今のもの（バックグラウンドのタスクを追う）として扱う', async () => {

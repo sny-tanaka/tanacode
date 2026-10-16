@@ -113,7 +113,6 @@ function props(over: Partial<Props> = {}): Props {
     comments: [],
     onCommentsChange: noop,
     onShowComment: noop,
-    onOpenTerminal: noop,
     onShowContext: noop,
     onShowShell: noop,
     onToggleTerminal: noop,

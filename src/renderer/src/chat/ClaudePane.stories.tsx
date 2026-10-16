@@ -34,6 +34,9 @@ const session: SessionSummary = {
   worktree: null,
 };
 
+// 子セッションのとき（child）の親セッション
+const PARENT: SessionSummary = { ...session, id: 'parent-0001', title: 'ログイン画面の作り直し' };
+
 // 発言と返答を交互に並べた、スクロールできる長さの会話
 function conversation(count: number): ChatItem[] {
   return Array.from({ length: count }, (_, i): ChatItem =>
@@ -51,7 +54,8 @@ function conversation(count: number): ChatItem[] {
 // scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）/
 // terminalMode: ターミナルモード（チャットの代わりに Claude Code の画面を出す）で始める。ヘッダーのボタンで切り替えられる /
 // comments: コードへのコメント / exited: Claude Code が終了している / running: 作業中 /
-// unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）
+// unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
+// starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション
 function Pane({
   items,
   settingsFile = null,
@@ -64,6 +68,8 @@ function Pane({
   exited = false,
   running = false,
   unsent = [],
+  starting = false,
+  child = false,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -76,6 +82,8 @@ function Pane({
   exited?: boolean;
   running?: boolean;
   unsent?: UnsentPrompt[];
+  starting?: boolean;
+  child?: boolean;
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -86,10 +94,16 @@ function Pane({
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
-        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing }}
-        sessions={[session]}
+        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null }}
+        sessions={child ? [PARENT, session] : [session]}
         onSelectSession={noop}
-        chat={{ ...EMPTY_CHAT, status: exited ? 'exited' : worktree?.preparing ? 'starting' : running ? 'running' : 'idle', exitCode: exited ? 0 : null, items, unsent }}
+        chat={{
+          ...EMPTY_CHAT,
+          status: exited ? 'exited' : worktree?.preparing || starting ? 'starting' : running ? 'running' : 'idle',
+          exitCode: exited ? 0 : null,
+          items,
+          unsent,
+        }}
         workflows={new Map()}
         subagents={new Map()}
         bashTasks={new Map()}
@@ -104,7 +118,6 @@ function Pane({
         comments={shownComments}
         onCommentsChange={setShownComments}
         onShowComment={noop}
-        onOpenTerminal={() => setTerminalOpen(true)}
         onShowContext={noop}
         onShowShell={noop}
         onToggleTerminal={() => setTerminalOpen((open) => !open)}
@@ -243,6 +256,36 @@ export const 送信中と順番待ち: Story = {
   },
   beforeEach: () => {
     mockApi({ 'sessions.progress': () => Promise.resolve({ phase: 'writing', elapsed: '1m 5s', tokens: '1.2k' }) });
+  },
+};
+
+// 子セッションで、作業中に親セッションの Claude から届いた指示。会話に出たときと同じく、親の見出しを付けて人の発言と見分ける
+export const 親からの指示の順番待ち: Story = {
+  args: {
+    items: conversation(2),
+    running: true,
+    child: true,
+    unsent: [{ id: 'q1', text: 'ログインのテストも直してください。終わったら report_result で知らせてください。', pastes: [], images: 0, state: 'queued', parent: PARENT.id }],
+  },
+  beforeEach: () => {
+    mockApi({ 'sessions.progress': () => Promise.resolve({ phase: 'thinking', elapsed: '12s', tokens: null }) });
+  },
+};
+
+// Claude Code の起動に時間がかかっている（initialize の返事が無いまま 10 秒を過ぎた）。経過と、Claude Code の標準エラーの末尾を出す
+// （MCP サーバーやフックを待っている・止まっている理由が出ることがある）
+export const 起動に時間がかかっている: Story = {
+  args: { items: [], starting: true },
+  beforeEach: () => {
+    mockApi({
+      'sessions.progress': () =>
+        Promise.resolve({
+          phase: 'starting',
+          elapsed: '25s',
+          tokens: null,
+          stderr: '[MCP] Connecting to "postgres" (stdio)…\n[MCP] "postgres": still waiting for the server to start (20s)\n[SessionStart hook] npm run setup: installing dependencies…',
+        }),
+    });
   },
 };
 

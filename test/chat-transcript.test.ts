@@ -11,6 +11,7 @@ import {
   toChatEvents,
   toolTarget,
   transcriptTitle,
+  unsentView,
   type ChatEvent,
   type TranscriptEntry,
   splitPasted,
@@ -594,6 +595,16 @@ describe('toChatEvents: 発言の行', () => {
     expect(isHumanPrompt(wrap(wakeupText('予約')))).toBe(false);
     expect(isHumanPrompt(wrap(parentMessageText(parent, '親からの指示')))).toBe(true);
     expect(transcriptTitle(user(wrap(parentMessageText(parent, '子への長い指示\n二行目'))))).toEqual({ title: '子への長い指示', priority: 1 });
+  });
+
+  it('unsentView: 送信中・順番待ちには、会話に出たときと同じ形で出す。親の指示は囲みを外して親の ID を付け、知らせは出さない', () => {
+    const parent = 'abcd1234-0000-0000-0000-000000000000';
+    expect(unsentView('ログインを直して')).toEqual({ text: 'ログインを直して', pastes: [] });
+    expect(unsentView(parentMessageText(parent, 'テストも直して'))).toEqual({ text: 'テストも直して', pastes: [], parent });
+    expect(unsentView('見て\n\n<pasted_content id="1">\nログ\n</pasted_content id="1">\n')).toEqual({ text: '見て', pastes: ['ログ'] });
+    expect(unsentView(sessionEventText(['abcdef12'], '子の作業が終わりました'))).toBeNull();
+    expect(unsentView(wakeupText('予約の本文'))).toBeNull();
+    expect(unsentView(checklistEventText([{ listId: 'ab12', cardId: 'cd34' }], '返信がありました'))).toBeNull();
   });
 
   it('Claude が自分に入れた予約の知らせは「Claude の予約の時刻になりました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {

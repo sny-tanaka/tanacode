@@ -88,7 +88,8 @@
     },
     "session": {
       "untitled": "新しいセッション",
-      "notFound": "セッションが見つかりません"
+      "notFound": "セッションが見つかりません",
+      "notStopped": "Claude Code を止められなかったため、起動し直せませんでした。今の Claude Code はそのまま動いています（変えた設定は、次に起動したときに使われます）"
     },
     "state": {
       "question": "質問への回答待ち",
@@ -126,7 +127,8 @@
       "cancelled": "送るのを取りやめました",
       "waitingAnswer": "質問や確認の答えを待っているため、送れませんでした",
       "draft": "ターミナルの入力欄に書きかけの文字があるため、送れませんでした",
-      "busy": "Claude Code の手が空かないため、送れませんでした"
+      "busy": "Claude Code の手が空かないため、送れませんでした",
+      "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）"
     },
     "worktree": {
       "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
@@ -507,7 +509,7 @@
       "takeBackTip": "送るのをやめて入力欄に戻す",
       "sendNowFailed": "送れませんでした: {error}",
       "rescheduleFailed": "時刻を変えられませんでした: {error}",
-      "slowStart": "Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください",
+      "slowStart": "Claude Code の起動に時間がかかっています（{elapsed}）。MCP サーバーや SessionStart のフックを待っていることがあります",
       "rewinding": "巻き戻し先を選んでいます…",
       "cancelEsc": "キャンセル（Esc）",
       "unknownScreen": "Claude Code がチャットでは操作できない画面を表示しています",
@@ -528,7 +530,8 @@
       "effort": "エフォート",
       "modeTitle": "権限モード（このセッションだけ。Shift+Tab と同じ）",
       "mode": "モード",
-      "bypassPermissions": "すべて許可"
+      "bypassPermissions": "すべて許可",
+      "slowStartStderr": "Claude Code の標準エラーの末尾"
     },
     "toolCard": {
       "running": "実行中…",

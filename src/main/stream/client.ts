@@ -35,7 +35,7 @@ export class ControlError extends Error {
   }
 }
 
-type Waiting = { subtype: string; resolve: (response: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+type Waiting = { subtype: string; resolve: (response: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout | null };
 
 export class StreamClient {
   // アプリが送った要求の返事待ち（request_id → 待っているもの）。request_id は tc-<この接続の印>-<連番>。
@@ -86,15 +86,19 @@ export class StreamClient {
     this.write(JSON.stringify(input));
   }
 
-  // 制御の要求を送り、返事を待つ。error の返事・時間切れ・claude の終了は ControlError で失敗する
-  request<T extends object = Record<string, unknown>>(subtype: string, payload: Record<string, unknown> = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  // 制御の要求を送り、返事を待つ。error の返事・時間切れ・claude の終了は ControlError で失敗する。
+  // timeoutMs: null なら時間を区切らない（返事か claude の終了まで待つ。initialize は MCP サーバーやフックを待つので、いつまでかかるか分からない）
+  request<T extends object = Record<string, unknown>>(subtype: string, payload: Record<string, unknown> = {}, timeoutMs: number | null = REQUEST_TIMEOUT_MS): Promise<T> {
     if (this.exited) return Promise.reject(new ControlError(subtype, 'exited'));
     const requestId = `${this.prefix}-${++this.next}`;
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.waiting.delete(requestId);
-        reject(new ControlError(subtype, 'timeout'));
-      }, timeoutMs);
+      const timer =
+        timeoutMs === null
+          ? null
+          : setTimeout(() => {
+              this.waiting.delete(requestId);
+              reject(new ControlError(subtype, 'timeout'));
+            }, timeoutMs);
       this.waiting.set(requestId, { subtype, resolve: resolve as (response: Record<string, unknown>) => void, reject, timer });
       this.write(JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype, ...payload } }));
     });
@@ -191,7 +195,7 @@ export class StreamClient {
     const waiting = this.waiting.get(response.request_id);
     if (!waiting) return;
     this.waiting.delete(response.request_id);
-    clearTimeout(waiting.timer);
+    if (waiting.timer) clearTimeout(waiting.timer);
     if (response.subtype === 'success') waiting.resolve(isRecord(response.response) ? response.response : {});
     else waiting.reject(new ControlError(waiting.subtype, typeof response.error === 'string' ? response.error : 'error'));
   }
@@ -211,7 +215,7 @@ export class StreamClient {
 
   private clearWaiting(reason: string): void {
     for (const waiting of this.waiting.values()) {
-      clearTimeout(waiting.timer);
+      if (waiting.timer) clearTimeout(waiting.timer);
       waiting.reject(new ControlError(waiting.subtype, reason));
     }
     this.waiting.clear();

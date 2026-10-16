@@ -2858,6 +2858,25 @@ button.session-ref:hover {
   display: flex;
   gap: 8px;
 }
+/* 起動に時間がかかっているときの案内。Claude Code の標準エラーの末尾を下に出す */
+.chat-callout.slow-start {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.slow-start-stderr {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* ターン終了時の変更の要約 */
 

@@ -1,5 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { UnsentPrompt } from '@shared/chat';
 import type { PermissionMode } from '@shared/screen';
 import type { ClaudeProcess } from './leftover-claude';
 
@@ -41,6 +42,9 @@ export type SessionRecord = {
   // 最後に起動したチャットの claude（initialize の返事の pid と、起動したときの会話の ID）。常駐のホストが止める間もなく落ちると
   // claude だけが残るので、開き直す前に残っていないかを確かめて止める（leftover-claude.ts）
   claudeProcess?: ClaudeProcess | null;
+  // claude を動かしたままアプリを終了したときに、送ったがまだ会話に出ていなかった発言（送信中・順番待ち）。次のアプリが claude を
+  // 引き継いだら戻す（順番待ちの発言の文は stream-json の行に無く、そのターンが始まるまで戻ってこない。実測）。shown: チャットに出すもの
+  unsent?: (UnsentPrompt & { shown: boolean })[] | null;
   createdAt: number;
   updatedAt: number;
 };

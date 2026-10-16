@@ -170,7 +170,6 @@ describe('ClaudePane（セッションを切り替えた直後の Remote Control
         comments={[]}
         onCommentsChange={noop}
         onShowComment={noop}
-        onOpenTerminal={noop}
         onShowContext={noop}
         onShowShell={noop}
         onToggleTerminal={noop}
