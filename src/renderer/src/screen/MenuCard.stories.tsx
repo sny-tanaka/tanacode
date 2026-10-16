@@ -43,14 +43,94 @@ export const 今後は聞かないが無い: Story = {
   args: { permission: permission({ always: null, reason: 'このコマンドはフォルダの外に書き込みます' }) },
 };
 
+// コマンドのほかの入力（裏で動かす・時間切れ・サンドボックスの外で動かす）も出す。説明はカードの説明と同じなので二度は出さない
+export const コマンドのほかの入力: Story = {
+  args: {
+    permission: permission({
+      input: {
+        command: 'npm run build && npm run e2e',
+        description: 'テストを流す',
+        run_in_background: true,
+        timeout: 600000,
+        dangerouslyDisableSandbox: true,
+      },
+      always: null,
+    }),
+  },
+};
+
+// 置き換える前と後を、差分の行で出す（変わらない行は色を付けない）
 export const ファイルの編集: Story = {
   args: {
     permission: permission({
       tool: 'Edit',
       title: 'Claude wants to edit a file',
       description: null,
-      input: { file_path: '/Users/me/work/app/src/Login.tsx', old_string: 'useEffect(() => {}, [])', new_string: 'useEffect(() => {}, [onSubmit])' },
+      input: {
+        file_path: '/Users/me/work/app/src/Login.tsx',
+        old_string: ['  useEffect(() => {', '    onSubmit(form);', '  }, []);'].join('\n'),
+        new_string: ['  useEffect(() => {', '    if (!submitted) onSubmit(form);', '  }, [onSubmit, submitted]);'].join('\n'),
+        replace_all: false,
+      },
       always: ['acceptEdits'],
+    }),
+  },
+};
+
+// 編集ごとに、何個めかの区切りを入れる
+export const 複数の編集: Story = {
+  args: {
+    permission: permission({
+      tool: 'MultiEdit',
+      title: 'Claude wants to edit a file',
+      description: null,
+      input: {
+        file_path: '/Users/me/work/app/src/price.ts',
+        edits: [
+          { old_string: 'const TAX = 0.08;', new_string: 'const TAX = 0.1;' },
+          { old_string: 'price * (1 + TAX)', new_string: 'Math.round(price * (1 + TAX))', replace_all: true },
+        ],
+      },
+      always: ['acceptEdits'],
+    }),
+  },
+};
+
+// 書く中身を、足す行として出す
+export const ファイルを書く: Story = {
+  args: {
+    permission: permission({
+      tool: 'Write',
+      title: 'Claude wants to create a file',
+      description: null,
+      input: {
+        file_path: '/Users/me/work/app/test/login.test.tsx',
+        content: [
+          "import { render } from '@testing-library/react';",
+          "import { Login } from '../src/Login';",
+          '',
+          "it('送信は 1 回だけ', () => {",
+          '  const onSubmit = vi.fn();',
+          '  render(<Login onSubmit={onSubmit} />);',
+          '  expect(onSubmit).toHaveBeenCalledTimes(1);',
+          '});',
+          '',
+        ].join('\n'),
+      },
+      always: ['acceptEdits'],
+    }),
+  },
+};
+
+// とても長い中身は、頭だけにして省いた文字の数を出す
+export const 長い中身: Story = {
+  args: {
+    permission: permission({
+      tool: 'Write',
+      title: 'Claude wants to create a file',
+      description: null,
+      input: { file_path: '/Users/me/work/app/data/prices.csv', content: Array.from({ length: 400 }, (_, i) => `item-${i},${(i * 37) % 1000}`).join('\n') },
+      always: null,
     }),
   },
 };
@@ -61,6 +141,11 @@ export const サブエージェントの中の呼び出し: Story = {
 
 export const プランの承認: Story = {
   args: { permission: permission({ tool: 'ExitPlanMode', title: null, description: null, input: { plan: PLAN }, always: null, plan: PLAN }) },
+};
+
+// プランの本文を読めなかった（plan が空の文字列）。承認の 2 つは押せない。計画を続ける・× は使える
+export const プランを読めない: Story = {
+  args: { permission: permission({ tool: 'ExitPlanMode', title: null, description: null, input: {}, always: null, plan: '' }) },
 };
 
 // 答えたが、もう待っていなかった（スマホで先に答えた）

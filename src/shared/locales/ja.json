@@ -1854,7 +1854,10 @@
       "always": "許可して、今後は聞かない（{rules}）",
       "deny": "断って、理由を伝える",
       "denyPlaceholder": "断る理由・代わりにしてほしいこと（Enter で改行、⌘+Enter で送る）",
-      "stopTip": "断って、作業を止める（Esc）",
+      "stopTip": "断って、作業を止める",
+      "inputField": "{key}: {value}",
+      "editNumber": "{n}/{total} 個めの編集",
+      "omitted": "…（残りの {count} 文字は省きました）",
       "reason": "確認する理由: {reason}",
       "fromSubagent": "サブエージェントの中の呼び出しです",
       "gone": "この確認には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）",
@@ -1862,7 +1865,8 @@
       "planApprove": "承認する（編集は毎回確かめる）",
       "planAcceptEdits": "承認して、編集を自動で進める",
       "planKeep": "計画を続ける（直してほしいことを伝える）",
-      "planPlaceholder": "プランで直してほしいこと（Enter で改行、⌘+Enter で送る）"
+      "planPlaceholder": "プランで直してほしいこと（Enter で改行、⌘+Enter で送る）",
+      "planMissing": "プランを読めませんでした。中身を確かめられないため、承認はできません。「計画を続ける」で出し直してもらうか、× で止めてください"
     }
   }
 }

@@ -1916,7 +1916,11 @@
       "always": "Allow, and don't ask again ({rules})",
       "deny": "Deny and tell Claude why",
       "denyPlaceholder": "Why you deny it, or what Claude should do instead (Enter for a new line, ⌘+Enter to send)",
-      "stopTip": "Deny and stop (Esc)",
+      "stopTip": "Deny and stop",
+      "inputField": "{key}: {value}",
+      "editNumber": "Edit {n} of {total}",
+      "omitted": "… ({count} more characters omitted)",
+      "omitted_one": "… ({count} more character omitted)",
       "reason": "Why this asks: {reason}",
       "fromSubagent": "This call is inside a subagent",
       "gone": "This prompt can no longer be answered (it was answered elsewhere, or Claude Code withdrew it).",
@@ -1924,7 +1928,8 @@
       "planApprove": "Approve (review each edit)",
       "planAcceptEdits": "Approve and auto-accept edits",
       "planKeep": "Keep planning (tell Claude what to change)",
-      "planPlaceholder": "What to change in the plan (Enter for a new line, ⌘+Enter to send)"
+      "planPlaceholder": "What to change in the plan (Enter for a new line, ⌘+Enter to send)",
+      "planMissing": "Couldn't read the plan, so it can't be approved. Choose “Keep planning” to have Claude present it again, or × to stop."
     }
   }
 }
