@@ -129,6 +129,17 @@ it('選択肢の名前が端末の幅で折り返されたら、次の行をつ�
   ]);
 });
 
+it('回答の確認画面の下に、名前を付けたセッションの入力欄の線（「──── 名前 ─」）が出ても、最後の選択肢（Cancel）の説明にしない', () => {
+  // 名前を付けたセッション（/rename・claude -n）では、操作説明の無い確認画面の下に、名前入りの入力欄の線が出る（2.1.296 で実測）
+  const named = { text: `${'─'.repeat(111)} 作業名 ─`, full: true };
+  const menu = parseMenu(replaced(screen('question-tabs-review'), /^ {2}2\. Cancel$/, '  2. Cancel', named));
+  expect(menu?.title).toBe('Ready to submit your answers?');
+  expect(menu!.options.map((o) => ({ label: o.label, description: o.description }))).toEqual([
+    { label: 'Submit answers', description: '' },
+    { label: 'Cancel', description: '' },
+  ]);
+});
+
 // /rewind の巻き戻し先の一覧。何を戻すかのメニュー（控えの rewind-restore）と同じく、画面の下に重ねて出る。
 // 過去の発言が番号なしで並び、❯ の付いた行が選択中。最後は「(current)」
 const rewindList = (pointed: string) => {

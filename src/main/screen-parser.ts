@@ -38,7 +38,9 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
   // 画面より高い入力欄（tallPromptRange）の中の ❯ と番号は、入力の文字。番号付きの行で始まる発言は、上の罫線だけが画面の外に出たとき、
   // いちばん上の行が「❯ 1. …」になる
   if (pointer !== -1 && tallPromptRange(lines)) return null;
-  const end = footer > pointer ? footer : lines.length;
+  // 操作説明の無いメニュー（回答の確認画面）は、下の入力欄の枠の線の手前まで。名前を付けたセッションでは線に名前が入り、
+  // 線として飛ばされずに最後の選択肢（Cancel）の説明に混ざる
+  const end = footer > pointer ? footer : promptRuleBelow(lines, pointer);
   const top = menuTop(lines, end === footer ? footer : pointer + 1);
 
   const first = optionsStart(lines, top, clipped ? end - 1 : pointer, end);
@@ -143,6 +145,12 @@ export function parseMenu(lines: ScreenLine[]): Menu | null {
     hint: end === footer ? lines[footer].text.trim() : '',
     previewLayout: previewAt !== null,
   };
+}
+
+// from より下で最初の、入力欄の枠の線の行。無ければ画面の行数
+function promptRuleBelow(lines: ScreenLine[], from: number): number {
+  const at = lines.findIndex((l, i) => i > from && PROMPT_RULE.test(l.text));
+  return at === -1 ? lines.length : at;
 }
 
 // 選択肢の最初の行。カーソル（❯）の行から上へたどって、最初に見つかる「1.」の行。
