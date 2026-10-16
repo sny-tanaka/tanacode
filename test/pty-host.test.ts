@@ -72,6 +72,16 @@ function hostPid(socketPath: string): Promise<number> {
   });
 }
 
+// プロセスが動いているか
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // 出力をためながら受ける
 function collect(pty: PtyHandle): { text: () => string; exit: () => number | null } {
   let text = '';
@@ -224,6 +234,22 @@ describe('pty ホスト', () => {
     expect(shutdownAsked).toBe(true);
     const out = collect(host.spawn(sh('s1', 'echo new-host')));
     await waitFor('新しいホストの出力', () => out.text().includes('new-host'));
+  });
+
+  it('ホストが SIGTERM で止められたら、パイプの claude を、裏で動くプロセスごと止めてから終わる', async () => {
+    const host = await start();
+    const pipe = host.spawnPipe({ ...echo('session-t'), args: ['-c', 'sleep 300 & printf \'{"bg":%s}\\n\' "$!"; exec cat'] });
+    const lines: string[] = [];
+    pipe.onLine((line) => lines.push(line));
+    await waitFor('裏のプロセス', () => lines.length === 1);
+    const bg = (JSON.parse(lines[0]) as { bg: number }).bg;
+    expect(alive(bg)).toBe(true);
+    const pid = await hostPid(socketPathIn(dir, 'pty-host', 'pty'));
+    process.kill(pid, 'SIGTERM');
+    // パイプの claude は自分のプロセスグループで動いているので、ホストが止めないと残る
+    await waitFor('裏のプロセスが止まる', () => !alive(bg), 5000);
+    await waitFor('ホストが終わる', () => !alive(pid), 5000);
+    hosts.length = 0;
   });
 
   it('ホストが落ちたら、動いていた pty は終わったことにする（-1）', async () => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hostExecutable, PtyHost } from '../src/main/pty-host-client';
 import { PROTOCOL, type ClientMessage, type HostedInfo, type HostedPipeInfo, type HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { socketPathIn } from '../src/main/socket-path';
+import { StreamClient } from '../src/main/stream/client';
 
 // アプリ側の、pty ホストとの接続（PtyHost・HostedPty）。本物のホストとのやりとりは test/pty-host.test.ts。
 // ここでは、テストが決めたとおりに答える偽物のホストで、やりとりの細かいところ（溜めておく出力・切れたとき・答えないホスト）を確かめる
@@ -354,6 +355,93 @@ describe('HostedPipe', () => {
     await waitFor('終了', () => exits.length === 1);
     expect(exits).toEqual([-1]);
     expect(got).toEqual([]);
+  });
+});
+
+describe('一覧の直後に終わったプロセス', () => {
+  it('一覧の返事と同じ受信の中で終わったプロセスも、引き継いだときに終わったと分かる（受け皿を引き継ぐまで残す）', async () => {
+    const { host } = await connect();
+    fake!.answerList = false;
+    const listing = host.list();
+    await waitFor('一覧の頼み', () => fake!.sent('list').length === 1);
+    const { req } = fake!.sent('list')[0];
+    fake!.send(
+      [
+        JSON.stringify({ t: 'list', req, hosted: [pipeInfo('q9'), info('p9')] }),
+        JSON.stringify({ t: 'exit', id: 'q9', exitCode: 3, stderr: '終わり' }),
+        JSON.stringify({ t: 'exit', id: 'p9', exitCode: 4 }),
+        '',
+      ].join('\n'),
+    );
+    const [listedPipe, listedPty] = await listing;
+    await sleep(50);
+    const pipe = host.attachPipe(listedPipe as HostedPipeInfo);
+    const pipeExits: [number, string][] = [];
+    pipe.onExit((code, stderr) => pipeExits.push([code, stderr]));
+    const pty = host.attach(listedPty as HostedPtyInfo);
+    const ptyExits: number[] = [];
+    pty.onExit((code) => ptyExits.push(code));
+    await waitFor('終わり', () => pipeExits.length === 1 && ptyExits.length === 1);
+    expect(pipeExits).toEqual([[3, '終わり']]);
+    expect(ptyExits).toEqual([4]);
+    // 終わりは 1 度だけ
+    fake!.send({ t: 'exit', id: 'q9', exitCode: 3, stderr: '終わり' });
+    await sleep(50);
+    expect(pipeExits).toHaveLength(1);
+  });
+
+  it('引き継いだあとに、ホストがもう記録を捨てたと分かっても（知らない id の replay への exit）、終わったことにする', async () => {
+    const { host } = await connect();
+    fake!.hosted = [pipeInfo('q8', { lastSeq: 2 })];
+    const [listed] = (await host.list()) as HostedPipeInfo[];
+    const pipe = host.attachPipe(listed);
+    const exits: number[] = [];
+    pipe.onExit((code) => exits.push(code));
+    pipe.replay(1);
+    await waitFor('頼み', () => fake!.sent('replay').length === 1);
+    fake!.send({ t: 'exit', id: 'q8', exitCode: -1 });
+    await waitFor('終わり', () => exits.length === 1);
+    expect(exits).toEqual([-1]);
+  });
+});
+
+describe('引き継ぎ（本物の HostedPipe と StreamClient）', () => {
+  it('答えを待っている要求を出し直し、送り直しの間に届いた取り下げは、送り直した行のあとに渡す。取り下げた要求には答えない', async () => {
+    const { host } = await connect();
+    const request = (id: string) => JSON.stringify({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'make' }, tool_use_id: `toolu_${id}` } });
+    fake!.hosted = [
+      pipeInfo('q7', {
+        lastSeq: 3,
+        firstSeq: 2,
+        retained: [{ seq: 1, line: JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', permissionMode: 'plan' }) }],
+        pending: [{ seq: 3, line: request('r1') }],
+      }),
+    ];
+    const [listed] = (await host.list()) as HostedPipeInfo[];
+    const pipe = host.attachPipe(listed);
+    const order: string[] = [];
+    const client = new StreamClient(pipe, {
+      onMessage: (message, past) => order.push(`${message.type}${'subtype' in message ? `/${String(message.subtype)}` : ''}:${past ? 'past' : 'live'}`),
+      onPermission: (id) => order.push(`permission:${id}`),
+      onCancel: (id) => order.push(`cancel:${id}`),
+      onExit: () => order.push('exit'),
+      onCaughtUp: () => order.push('caught-up'),
+    });
+    client.adopt(listed);
+    await waitFor('送り直しの頼み', () => fake!.sent('replay').length === 1);
+    expect(fake!.sent('replay')[0]).toEqual({ t: 'replay', id: 'q7', from: 2 });
+    // 送り直しの途中に、claude が要求を取り下げた（スマホで答えた）
+    fake!.send({ t: 'line', id: 'q7', seq: 2, line: JSON.stringify({ type: 'assistant', uuid: 'a1', message: { content: [] } }), replay: true });
+    fake!.send({ t: 'line', id: 'q7', seq: 4, line: JSON.stringify({ type: 'control_cancel_request', request_id: 'r1' }) });
+    fake!.send({ t: 'line', id: 'q7', seq: 3, line: request('r1'), replay: true });
+    await sleep(50);
+    // 取り下げは、送り直しが終わるまで待たせる
+    expect(order).not.toContain('cancel:r1');
+    fake!.send({ t: 'replayed', id: 'q7' });
+    await waitFor('取り下げ', () => order.includes('cancel:r1'));
+    expect(order).toEqual(['system/init:past', 'permission:r1', 'assistant:past', 'caught-up', 'cancel:r1']);
+    expect(client.pendingPermissions()).toEqual([]);
+    expect(client.respond('r1', { behavior: 'allow' })).toBe(false);
   });
 });
 

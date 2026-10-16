@@ -289,6 +289,23 @@ describe('一覧の操作', () => {
     expect(app.pipe(id).arg('--resume')).toBe(pipe.arg('--session-id'));
   });
 
+  it('アーカイブで止めた claude の終わりが、開き直したあとに届いても、新しい起動の表示に流さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // 止める頼み（SIGTERM）では、すぐには終わらない
+    pipe.exitOnEnd = false;
+    await app.manager.archive(id);
+    expect(pipe.kills).toEqual(['SIGTERM']);
+    app.manager.unarchive(id);
+    await app.manager.open(id);
+    await app.ready(id);
+    const before = app.manager.snapshot(id).events.length;
+    pipe.exit(143);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(app.manager.snapshot(id).events.slice(before).map((e) => e.type)).not.toContain('process-exit');
+    expect(app.manager.stateOf(id)).toBe('idle');
+  });
+
   it('configure: モデルを変えたら、動いている claude をそのモデルで起動し直す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
@@ -310,6 +327,26 @@ describe('一覧の操作', () => {
     writeFileSync(file, JSON.stringify({ ...line.user('前の会話'), sessionId: claudeId, cwd: app.cwd }) + '\n');
     const id = app.manager.importSession(claudeId, app.cwd, '前の会話');
     expect(app.pipe(id).arg('--resume')).toBe(claudeId);
+  });
+});
+
+describe('残った claude', () => {
+  it('起動したら initialize の pid と起動したときの会話の ID を記録し、開き直す前に、残っていれば止める（ホストが止める間もなく落ちたとき）', async () => {
+    const asked: unknown[] = [];
+    app.manager.stopLeftover = async (claude) => {
+      asked.push(claude);
+      return true;
+    };
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const conversation = pipe.arg('--session-id');
+    // ホストが落ちた（パイプの claude は残っているかもしれない）
+    pipe.exit(-1);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await app.manager.open(id);
+    expect(asked).toEqual([{ pid: INIT_RESPONSE.pid, conversation }]);
+    // 止めてから起動する
+    expect(app.host.pipes).toHaveLength(2);
   });
 });
 

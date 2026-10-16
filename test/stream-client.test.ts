@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -348,6 +348,20 @@ describe('LineLog（送受信の控え）', () => {
     log.remove();
     expect(existsSync(path)).toBe(false);
     expect(existsSync(`${path}.1`)).toBe(false);
+  });
+
+  it('前からあったファイルも本人だけが読めるようにする。長い行は頭だけを書く。閉じたあとに届いた行は書かない（開き直さない）', () => {
+    const path = join(dir, 's2.log');
+    writeFileSync(path, '', { mode: 0o644 });
+    const log = new LineLog(path);
+    log.write('<', 'x'.repeat(100 * 1024));
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const text = readFileSync(path, 'utf8');
+    expect(text.length).toBeLessThan(70 * 1024);
+    expect(text).toContain('（102400 文字。以下は略）');
+    log.close();
+    log.write('>', '閉じたあと');
+    expect(readFileSync(path, 'utf8')).not.toContain('閉じたあと');
   });
 
   it('書けなくても、やりとりは続ける。detach で閉じる', () => {

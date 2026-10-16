@@ -134,7 +134,7 @@ function spawnPipe(req: PipeSpawnRequest): void {
   };
   hosted.set(req.id, entry);
   log(`起動しました（pipe）: ${req.tag} pid=${entry.pid}`);
-  if (proc.stdout) readLines(proc.stdout, (line) => receiveLine(entry, line), (bytes) => log(`長すぎる行を捨てました: ${req.tag} ${bytes} 文字`));
+  if (proc.stdout) readLines(proc.stdout, (line) => receiveLine(entry, line), (bytes, head) => dropLine(entry, bytes, head));
   proc.stderr?.setEncoding('utf8');
   proc.stderr?.on('data', (chunk: string) => {
     entry.stderr = (entry.stderr + chunk).slice(-STDERR_TAIL);
@@ -171,6 +171,16 @@ function spawnPipe(req: PipeSpawnRequest): void {
 function receiveLine(entry: HostedPipe, line: string): void {
   const seq = entry.backlog.receive(line);
   broadcast({ t: 'line', id: entry.req.id, seq, line });
+}
+
+// 長すぎて捨てた行。claude が答えを待つ要求だったら、答えないと claude が待ち続けるので、ホストが error で答える
+// （アプリには行が届かないので、アプリは答えられない）。行の頭から要求の ID を読む
+function dropLine(entry: HostedPipe, bytes: number, head: string): void {
+  log(`長すぎる行を捨てました: ${entry.req.tag} ${bytes} バイト`);
+  if (!/^\s*\{\s*"type"\s*:\s*"control_request"/.test(head)) return;
+  const requestId = head.match(/"request_id"\s*:\s*"([^"\\]{1,200})"/)?.[1];
+  if (!requestId) return;
+  sendLine(entry, JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: 'tanacode could not read this request because it is too long.' } }));
 }
 
 // アプリが入力に書いた行
@@ -234,6 +244,8 @@ function kill(entry: Hosted, signal?: 'SIGTERM' | 'SIGKILL'): void {
     return;
   }
   try {
+    // pid が分からない（-1）ときに process.kill(1) にならないよう、グループで止めるのは pid が正のときだけ
+    if (entry.pid <= 0) throw new Error('pid がありません');
     process.kill(-entry.pid, signal ?? 'SIGTERM');
   } catch {
     // もう終わっている（グループが無い）
@@ -282,6 +294,8 @@ function handle(socket: Socket, message: ClientMessage): void {
     case 'replay': {
       const entry = hosted.get(message.id);
       if (entry?.kind === 'pipe') replay(entry, socket, message.from);
+      // もう記録を捨てたプロセス（一覧のあとに終わった）。送り直す行は無いので、終わったことを返す（アプリが待ち続けないように）
+      else if (!entry) reply({ t: 'exit', id: message.id, exitCode: -1 });
       return;
     }
     case 'kill': {
@@ -320,6 +334,9 @@ function checkIdle(): void {
 function shutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
+  // 止める途中で何かが失敗しても、ホストは必ず終わる
+  const giveUp = setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS + 3000);
+  giveUp.unref();
   for (const entry of alive()) kill(entry);
   server.close();
   removeSocket();
@@ -332,7 +349,10 @@ function shutdown(): void {
     }
     for (const entry of pipes) kill(entry, 'SIGKILL');
     // 子プロセスへ合図が届くのを少し待つ
-    setTimeout(() => process.exit(0), 200);
+    setTimeout(() => {
+      clearTimeout(giveUp);
+      process.exit(0);
+    }, 200);
   };
   wait();
 }
@@ -382,3 +402,19 @@ server.on('error', (error) => {
 });
 // アプリと一緒に止まらないよう、端末の切断の合図は無視する
 process.on('SIGHUP', () => {});
+// 止められた（アクティビティモニタの終了・kill）・失敗で終わるときも、claude を止めてから終わる。pty は端末が閉じて一緒に止まるが、
+// パイプの claude は自分のプロセスグループで動いているので、止めないと残る
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    log(`${signal} を受けました。claude を止めて終わります`);
+    shutdown();
+  });
+}
+process.on('uncaughtException', (error) => {
+  log(`予期しない失敗です。claude を止めて終わります: ${error.stack ?? String(error)}`);
+  shutdown();
+});
+process.on('unhandledRejection', (reason) => {
+  log(`予期しない失敗です。claude を止めて終わります: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`);
+  shutdown();
+});

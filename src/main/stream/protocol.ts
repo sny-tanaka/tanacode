@@ -3,6 +3,8 @@
 // SDK のパッケージは使わない（プロセスを常駐のホストが持ち、再起動したアプリが途中からつなぎ直すため。設計書 6 節）。
 // 文書に無い内部の要求（remote_control・rewind_conversation など）は internal.ts に置く
 
+import type { LineKind, RetainRule } from '../pty-host-protocol';
+
 export type PermissionModeName = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -308,12 +310,22 @@ export const STREAM_ARGS = [
 ] as const;
 
 // 常駐のホストに控えてもらう、種類ごとの最新の行（アプリを再起動したとき、控えの頭が欠けても状態を組み立て直せるように）と、
-// 控えない行（書いている途中。アプリがいない間は要らない）
-export const RETAIN_RULES = [
+// 控えない行（書いている途中。アプリがいない間は要らない）。
+// status は、権限モードの付いた行だけ（圧縮中などのモードの無い status で、モードが分からなくならないように）。
+// 裏のタスクは、終わりの知らせ（task_notification）か、終わった状態への変化（task_updated）で捨てる
+export const RETAIN_RULES: RetainRule[] = [
   { type: 'system', subtype: 'init' },
-  { type: 'system', subtype: 'status' },
+  { type: 'system', subtype: 'status', where: { permissionMode: [] } },
   { type: 'system', subtype: 'bridge_state' },
   { type: 'rate_limit_event' },
-  { type: 'system', subtype: 'task_started', key: 'task_id', until: { type: 'system', subtype: 'task_notification' } },
+  {
+    type: 'system',
+    subtype: 'task_started',
+    key: 'task_id',
+    until: [
+      { type: 'system', subtype: 'task_notification', key: 'task_id' },
+      { type: 'system', subtype: 'task_updated', key: 'task_id', where: { 'patch.status': ['completed', 'failed', 'killed'] } },
+    ],
+  },
 ];
-export const TRANSIENT_KINDS = [{ type: 'stream_event' }];
+export const TRANSIENT_KINDS: LineKind[] = [{ type: 'stream_event' }];

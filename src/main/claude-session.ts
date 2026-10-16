@@ -22,10 +22,13 @@ import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from './stream/protocol';
 // stream: チャット。claude -p の stream-json をパイプでつなぐ（StreamClient）/ tui: ターミナルモード。素の TUI を pty で動かし、人が画面で操作する
 export type LaunchKind = 'stream' | 'tui';
 
-type Options = {
+// stream（チャット）は、権限モードをいつも渡す（渡さないと、Claude Code はユーザーの設定の既定で始まり、アプリが決めたモードにならない。
+// 決めたこと。設計書 15 節）。TUI は null なら既定のまま
+type Options = BaseOptions & ({ kind: 'stream'; permissionMode: PermissionMode } | { kind: 'tui'; permissionMode: PermissionMode | null });
+
+type BaseOptions = {
   // アプリのセッション ID（常駐のホストで、どのセッションの claude かの目印にする）
   sessionId: string;
-  kind: LaunchKind;
   // セッションのフォルダ（会話ログはここに書かれる。worktree のセッションでは worktree のフォルダ）
   cwd: string;
   claudeSessionId: string;
@@ -40,8 +43,6 @@ type Options = {
   // セッション限定の指定。/model や /effort と違い、ユーザーの既定値（~/.claude/settings.json）を書き換えない
   model: string | null;
   effort: string | null;
-  // --permission-mode。このセッションだけ。null なら既定のまま
-  permissionMode: PermissionMode | null;
   // 設定ファイルを選んでいるとき、アプリの設定と登録した設定を合わせたファイルと、その model。null なら標準の設定のまま
   settings: PreparedSettings | null;
   // statusLine の JSON を書かせるファイル（--settings で足す statusLine が環境変数から読む。TUI の間だけ動く）
@@ -93,6 +94,8 @@ export class ClaudeSession {
   private transcript: TranscriptFollower | null = null;
   private exitWaiters: (() => void)[] = [];
   private exited = false;
+  // kill した。終わったかは終わりの知らせまで持つ（stop が待てるように）が、出力・行はもう表示に流さない
+  private killed = false;
 
   constructor(
     private readonly host: PtyHostApi,
@@ -134,7 +137,7 @@ export class ClaudeSession {
       proc = this.host.spawn({ tag: sessionId, file: 'claude', args: claudeArgs(this.options), cwd: this.spawnCwd(), env: this.env(), cols, rows });
     }
     proc.onData((data) => {
-      if (this.pty === proc) this.handlers.onData(data);
+      if (this.pty === proc && !this.killed) this.handlers.onData(data);
     });
     proc.onExit((exitCode) => {
       if (this.pty !== proc) return;
@@ -146,10 +149,10 @@ export class ClaudeSession {
 
   private startStream(): void {
     const events: StreamEvents = {
-      onMessage: (message, past) => this.handlers.stream?.onMessage(message, past),
-      onPermission: (id, request) => this.handlers.stream?.onPermission(id, request),
-      onCancel: (id) => this.handlers.stream?.onCancel(id),
-      onCaughtUp: () => this.handlers.stream?.onCaughtUp?.(),
+      onMessage: (message, past) => !this.killed && this.handlers.stream?.onMessage(message, past),
+      onPermission: (id, request) => !this.killed && this.handlers.stream?.onPermission(id, request),
+      onCancel: (id) => !this.killed && this.handlers.stream?.onCancel(id),
+      onCaughtUp: () => !this.killed && this.handlers.stream?.onCaughtUp?.(),
       onExit: (exitCode, stderr) => {
         if (this.pipe !== pipe) return;
         this.pipe = null;
@@ -233,11 +236,16 @@ export class ClaudeSession {
     const exited = new Promise<void>((resolve) => this.exitWaiters.push(resolve));
     const within = (ms: number) => Promise.race([exited.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
     if (this.client && this.pipe) {
-      await endSession(this.client).catch(() => {});
+      // end_session を受け付けなかった（受け口が無いなど）ときは、待たずに SIGTERM へ
+      const asked = await endSession(this.client).then(
+        () => true,
+        () => false,
+      );
+      if (asked && (await within(stepMs))) return true;
     } else {
       this.pty?.kill();
+      if (await within(stepMs)) return true;
     }
-    if (await within(stepMs)) return true;
     this.pipe?.kill('SIGTERM');
     if (this.pty) this.pty.kill('SIGTERM');
     if (await within(stepMs)) return true;
@@ -246,16 +254,14 @@ export class ClaudeSession {
     return within(stepMs);
   }
 
-  // すぐ止める（終わるのは待たない。終わったら onExit が来る）
+  // すぐ止める（終わるのは待たない）。出力・行はもう表示に流さないが、終わったかは終わりの知らせまで持ち、終わったら onExit が来る
+  // （待っている要求の後始末を通す。stop で終わるのを待つこともできる）
   kill(): void {
+    this.killed = true;
     this.transcript?.stop();
     this.transcript = null;
-    const pty = this.pty;
-    const pipe = this.pipe;
-    this.pty = null;
-    this.pipe = null;
-    pty?.kill();
-    pipe?.kill('SIGTERM');
+    this.pty?.kill();
+    this.pipe?.kill('SIGTERM');
   }
 
   // アプリの終了時。claude は動かしたまま、見るのをやめる（次に起動したアプリが引き継ぐ）
@@ -327,6 +333,25 @@ export function transcriptPath(cwd: string, claudeSessionId: string, claudeDir: 
   return join(projectLogDir(cwd, claudeDir), `${claudeSessionId}.jsonl`);
 }
 
+// tanacode を Claude Code の中から起動したとき（開発用のビルドなど）に受け継ぐ、親の Claude Code がそのセッションのために付ける変数。
+// 子の claude とそのツールに渡さない（子セッション扱いになって起動を断られる・会話ログを保存しない、親の会話の ID・メッセージの
+// トークンが子のツールから読める）。CLAUDE_CODE_USE_BEDROCK のようなユーザーの設定は残すので、名前を並べて消す
+const PARENT_SESSION_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_BRIDGE_SESSION_ID',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_SESSION_ATTENDED',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_PID',
+  'CLAUDE_EFFORT',
+  // Claude Code がツールに付ける、エージェントの中で動いている印
+  'AI_AGENT',
+];
+
 // アプリが起動する Claude Code・シェルの環境変数。claudeDir: プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR にする。
 // null は既定のプロファイルで、アプリの環境変数のまま）
 export function childEnv(claudeDir: string | null = null): Record<string, string> {
@@ -334,10 +359,10 @@ export function childEnv(claudeDir: string | null = null): Record<string, string
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
-  // Claude Code 上から起動したとき、子セッション扱い（起動拒否・会話ログ保存オフ）になるのを防ぐ
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
-  delete env.CLAUDE_CODE_CHILD_SESSION;
+  for (const key of PARENT_SESSION_ENV) delete env[key];
+  // 親の tanacode がそのセッションの Claude Code に付けたつなぎ先（ソケット・セッション ID など）も受け継がない。
+  // この tanacode は、子ごとに自分のものを付け直す（無いまま親のものが残ると、子のフックが親の tanacode につながる）
+  for (const key of Object.keys(env)) if (key.startsWith('TANACODE_')) delete env[key];
   delete env.ELECTRON_RUN_AS_NODE;
   if (claudeDir) env.CLAUDE_CONFIG_DIR = claudeDir;
   env.TERM = 'xterm-256color';

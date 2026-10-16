@@ -59,7 +59,7 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
       cols: 120,
       rows: 40,
       ...patch,
-    },
+    } as ConstructorParameters<typeof ClaudeSession>[1],
     {
       onData: (data) => got.data.push(data),
       onExit: (code) => got.exits.push(code),
@@ -71,6 +71,42 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
   );
   return { claude, got };
 }
+
+describe('子に渡す環境変数', () => {
+  it('親の Claude Code がセッションのために付けた変数と、親の tanacode のつなぎ先（TANACODE_*）は渡さない。ユーザーの設定は残す', () => {
+    const names = [
+      'CLAUDECODE',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_CHILD_SESSION',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_CODE_BRIDGE_SESSION_ID',
+      'CLAUDE_CODE_MESSAGING_SOCKET',
+      'CLAUDE_CODE_MESSAGING_TOKEN',
+      'CLAUDE_CODE_SESSION_ATTENDED',
+      'CLAUDE_CODE_EXECPATH',
+      'CLAUDE_PID',
+      'CLAUDE_EFFORT',
+      'AI_AGENT',
+      'TANACODE_BROWSER_SOCKET',
+      'TANACODE_STATUS_FILE',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'ANTHROPIC_MODEL',
+    ];
+    const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    for (const name of names) process.env[name] = 'from-parent';
+    try {
+      const env = childEnv();
+      expect(names.filter((name) => env[name] !== undefined)).toEqual(['CLAUDE_CODE_USE_BEDROCK', 'ANTHROPIC_MODEL']);
+      // stream-json の claude にも
+      expect(claudeEnv('stream').CLAUDE_CODE_MESSAGING_TOKEN).toBeUndefined();
+    } finally {
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
 
 describe('起動', () => {
   it('セッションのフォルダで、アプリの statusLine と質問のファイルを環境変数で渡して起動する。Claude Code 上から起動したときの印は消す', () => {
@@ -183,16 +219,22 @@ describe('操作と終わり方', () => {
     expect(pty.resizes).toEqual([[80, 24]]);
   });
 
-  it('kill: claude を止め、そのあとの出力と終了は受け取らない', () => {
+  it('kill: claude を止める。そのあとの出力は表示に流さないが、終わりは知らせる（待っている要求の後始末のため）。stop は終わるまで待つ', async () => {
     const { claude, got } = session();
     claude.start();
     const pty = host.spawned[0];
     claude.kill();
     expect(pty.killed).toBe(true);
     pty.output('遅れた出力');
+    let stopped: boolean | null = null;
+    const stopping = claude.stop(5000).then((ok) => (stopped = ok));
+    await sleep(50);
+    // まだ終わっていないので、stop は待っている（kill で終わったことにしない）
+    expect(stopped).toBeNull();
     pty.exit(0);
+    expect(await stopping).toBe(true);
     expect(got.data).toEqual([]);
-    expect(got.exits).toEqual([]);
+    expect(got.exits).toEqual([0]);
   });
 
   it('stop: 止めて、終わるのを待つ（終わったら true）。終わらなければ、SIGTERM・SIGKILL と強めていき、それでも終わらなければ false。動いていなければすぐ返す', async () => {
@@ -268,7 +310,7 @@ describe('stream-json（チャット）', () => {
         cols: 120,
         rows: 40,
         ...patch,
-      },
+      } as ConstructorParameters<typeof ClaudeSession>[1],
       {
         onData: () => {},
         stream: {
@@ -349,13 +391,27 @@ describe('stream-json（チャット）', () => {
     expect(pipe.kills).toEqual([]);
     expect(got.exits).toEqual([[0, '']]);
 
+    // end_session を受け付けなかった（受け口が無い古いバージョン）ら、待たずに SIGTERM
+    const unsupported = stream();
+    unsupported.claude.start();
+    const unsupportedPipe = host.pipes[1];
+    unsupportedPipe.onSend = (line) => {
+      const message = JSON.parse(line) as { request_id: string };
+      unsupportedPipe.emit({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Unsupported control request subtype: end_session' } });
+    };
+    const quick = unsupported.claude.stop(5000);
+    await waitFor('SIGTERM', () => unsupportedPipe.kills.length === 1, 1000);
+    expect(unsupportedPipe.kills).toEqual(['SIGTERM']);
+    unsupportedPipe.exit(143);
+    expect(await quick).toBe(true);
+
+    // end_session を受け付けても終わらなければ、SIGTERM・SIGKILL と強めていく
     const stuck = stream();
     stuck.claude.start();
-    const stuckPipe = host.pipes[1];
+    const stuckPipe = host.pipes[2];
     stuckPipe.onSend = (line) => {
       const message = JSON.parse(line) as { request_id: string };
-      // 受け口が無い（古いバージョン）
-      stuckPipe.emit({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Unsupported control request subtype: end_session' } });
+      stuckPipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id } });
     };
     const stopping = stuck.claude.stop(30);
     await waitFor('SIGKILL', () => stuckPipe.kills.length === 2);

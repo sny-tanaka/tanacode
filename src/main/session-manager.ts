@@ -50,6 +50,7 @@ import { PendingQuestions } from './pending-questions';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
+import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
 import type { HostedPipeInfo } from './pty-host-protocol';
@@ -265,6 +266,9 @@ export class SessionManager {
   // 最適化圧縮の流れが、そのセッションに /clear を打って、新しい会話になるのを待っているか（profile.ts がつなぐ）。
   // その /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）
   compactClearing: (id: string) => boolean = () => false;
+
+  // 残った claude を止める（leftover-claude.ts。テストで差し替える）
+  stopLeftover: (claude: ClaudeProcess) => Promise<boolean> = stopLeftoverClaude;
 
   // ターンが終わったときに、人に出す通知の種類（null なら出さない。profile.ts がつなぐ）。最適化圧縮の流れの途中のターンでは出さず、
   // 流れの最後のターンでは「コンテキストの最適化が完了しました」にする（compact-notice.ts）。ターンの終わりごとに、1 回だけ呼ぶ。
@@ -495,6 +499,16 @@ export class SessionManager {
     if (this.runtimes.get(id)?.process || this.restoring.has(id)) return;
     const record = this.store.get(id);
     if (record?.archived) this.store.update(id, { archived: false });
+    // 前に起動した claude が残っていれば（ホストが止める間もなく落ちた）、止めてから起動する（同じ会話を 2 つのプロセスが書かないように）
+    if (record?.claudeProcess) {
+      this.restoring.add(id);
+      try {
+        if (await this.stopLeftover(record.claudeProcess)) console.warn(`残っていた claude を止めました: ${id} pid=${record.claudeProcess.pid}`);
+      } finally {
+        this.restoring.delete(id);
+      }
+      if (this.runtimes.get(id)?.process) return;
+    }
     if (record?.worktree && !existsSync(record.cwd)) {
       // 作り直してから起動するまで、一覧では「準備中」にする
       this.restoring.add(id);
@@ -521,7 +535,11 @@ export class SessionManager {
     const removing = !!options?.removeWorktree && !!record?.worktree;
     // 消すときは、消している途中に Claude Code が書き込まないよう、終わるのを待つ
     if (removing) await rt?.process?.stop();
-    else rt?.process?.kill();
+    else {
+      // 終わりの知らせはあとで届くが、片付けはここでするので、届いても使わない（先にランタイムを外しておく）
+      if (rt && this.runtimes.get(id) === rt) this.runtimes.delete(id);
+      rt?.process?.kill();
+    }
     this.settingsFiles?.release(id);
     this.questions.releaseAll(id);
     if (rt) this.releaseRequests(id, rt);
@@ -1091,7 +1109,8 @@ export class SessionManager {
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
     const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child);
-    const permissionMode = adopted ? null : this.startMode(record, mode, settings);
+    // 引き継ぐ claude は起動しないので、渡すモードは使わない（前のアプリが渡したモードのまま動いている）
+    const permissionMode = adopted ? (record.knownMode ?? 'manual') : this.startMode(record, mode, settings);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir));
@@ -1264,7 +1283,8 @@ export class SessionManager {
           },
         },
         onExit: (exitCode, stderr) => {
-          if (runtime.process !== process) return;
+          // アーカイブ（kill）・アプリの終了のあとに届いた終わりは、片付け済み。開き直していれば、新しい起動の表示に流さない
+          if (runtime.process !== process || this.runtimes.get(id) !== runtime || this.closed) return;
           runtime.process = null;
           runtime.stderr = stderr ?? '';
           runtime.ready = false;
@@ -1304,7 +1324,7 @@ export class SessionManager {
     );
     rt.process = process;
     process.start();
-    void this.initialize(id, runtime, process, adopted);
+    void this.initialize(id, runtime, process, adopted, claudeSessionId);
     if (creating) {
       // この起動が続いているか。終わった・起動し直した・アーカイブした（止めたときは、終了の知らせが来ない）ら、待つのをやめる
       const alive = () => runtime.process === process && this.runtimes.get(id) === runtime;
@@ -1329,23 +1349,31 @@ export class SessionManager {
 
   // 起動の直後に 1 回だけ initialize を送る。perTaskStopAffordance: 中断で裏のタスクまで止めない（TUI の Esc と同じ。実測）。
   // フックと MCP は initialize では渡さず、--settings・--mcp-config で渡す（ターミナルモードで開き直しても同じ設定にするため）。
-  // 引き継いだ claude にも送り直す（コマンド・モデルの一覧を受け取るため）。返事のあと、形の違う設定ファイル（-p は黙って無視する）を確かめる
-  private async initialize(id: string, rt: Runtime, process: ClaudeSession, adopted: HostedPipeInfo | null): Promise<void> {
+  // 引き継いだ claude には送らない（前のアプリが済ませている）。返事のあと、形の違う設定ファイル（-p は黙って無視する）を確かめる。
+  // conversation: 起動したときの会話の ID（残った claude を見分けるため、pid と一緒に記録する）
+  private async initialize(id: string, rt: Runtime, process: ClaudeSession, adopted: HostedPipeInfo | null, conversation: string): Promise<void> {
     const client = process.client;
     if (!client) return;
-    let init: InitializeResponse | null = null;
+    if (adopted) {
+      // モード・モデルは、控えの種類ごとの最新の行（init・status）から組み立て直す。エフォートだけ聞き直す
+      const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
+      if (rt.process !== process) return;
+      if (settings) this.updateStatus(id, rt, { effort: settings.applied?.effort ?? null });
+      this.markReady(id, rt);
+      return;
+    }
+    let init: InitializeResponse;
     try {
       init = await client.request<InitializeResponse>('initialize', { perTaskStopAffordance: true });
     } catch (error) {
-      // 引き継いだ claude は、前のアプリが済ませている。新しい claude が答えなければ、終わりの知らせ（理由は標準エラー）を待つ
-      if (!adopted) {
-        console.error('initialize に答えがありませんでした', error);
-        return;
-      }
+      // 答えなければ、終わりの知らせ（理由は標準エラー）を待つ
+      console.error('initialize に答えがありませんでした', error);
+      return;
     }
     if (rt.process !== process) return;
     rt.init = init;
-    if (init?.current_permission_mode) this.noteMode(id, rt, appMode(init.current_permission_mode));
+    if (typeof init.pid === 'number') this.store.update(id, { claudeProcess: { pid: init.pid, conversation } });
+    if (init.current_permission_mode) this.noteMode(id, rt, appMode(init.current_permission_mode));
     const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
     if (rt.process !== process) return;
     if (settings?.errors?.length) {
@@ -1357,10 +1385,15 @@ export class SessionManager {
     }
     this.updateStatus(id, rt, { effort: settings?.applied?.effort ?? null });
     // auto を使えないモデルなら、manual に戻す（決めたこと。設計書 15 節）
-    if (rt.knownMode === 'auto' && init && !autoAvailable(init, rt.statusLine?.model?.id ?? null)) {
+    if (rt.knownMode === 'auto' && !autoAvailable(init, rt.statusLine?.model?.id ?? null)) {
       await client.request('set_permission_mode', { mode: streamMode('manual') }).catch(() => {});
       this.noteMode(id, rt, 'manual');
     }
+    this.markReady(id, rt);
+  }
+
+  // 受け付けられるようになった（worktree の準備の途中なら、準備が終わってから）
+  private markReady(id: string, rt: Runtime): void {
     if (!rt.preparing && !rt.ready) {
       rt.ready = true;
       this.pushEvents(id, [{ type: 'ready' }]);

@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
-import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
+import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // アプリを起動し直したとき、前のアプリが起動して動き続けている claude を引き継ぐ（adopt）。アプリの終了（closeAll）
 
@@ -83,8 +83,8 @@ describe('adopt', () => {
     expect(attached(adopted)?.kills).toEqual([]);
     expect(app.host.pipes).toHaveLength(spawned);
     expect(app.manager.summary(adopted)?.running).toBe(true);
-    // 引き継いだ claude にも initialize を送り直す（コマンド・モデルの一覧を受け取るため）
-    expect(attached(adopted)?.requests('initialize')).toHaveLength(1);
+    // 引き継いだ claude には initialize を送り直さない（前のアプリが済ませている）
+    expect(attached(adopted)?.requests('initialize')).toEqual([]);
     // 送った発言は、引き継いだ claude に届く
     await app.ready(adopted);
     await app.manager.submit(adopted, 'つづき');
@@ -151,14 +151,15 @@ describe('adopt', () => {
     expect(app.manager.summary(id)?.attention).toBe('permission');
   });
 
-  it('引き継いだ claude が initialize に答えなくても（前のアプリが済ませている）、起動済みにする', async () => {
+  it('引き継いだ claude には initialize を送らずに起動済みにし、エフォートだけ聞き直す（聞けなくても起動済み）', async () => {
     const id = await previous(line.user('はじめ'), line.text('はい'));
-    app.answers.set('initialize', new Error('Already initialized'));
+    app.answers.set('get_settings', new Error('timeout'));
     app.host.hosted = [hosted(id)];
     await app.manager.adopt();
     attached(id)!.replayed();
     await app.waitFor('起動済み', () => app.manager.stateOf(id) === 'idle');
     expect(app.manager.snapshot(id).events.some((e) => e.type === 'ready')).toBe(true);
+    expect(attached(id)!.requests().map((r) => r.request.subtype)).toEqual(['get_settings']);
   });
 
   it('引き継いだ claude が起動してから書いた行は、読み直した履歴でも今のもの（バックグラウンドのタスクを追う）として扱う', async () => {
@@ -218,15 +219,15 @@ describe('adopt', () => {
     // 引き継いだ claude はモードを変えずに動き続けている。戻さないと manual 扱いになり、そのあとに始める子の上限が下がる
     expect(app.manager.modeOf(launched.id)).toBe('acceptEdits');
     expect(app.manager.modeOf(told.id)).toBe('plan');
-    await app.ready(launched.id);
-    // initialize の答えに今のモードがあれば、それを使う
+    // 控えに残っている今のモード（status）があれば、それを使う
     app.dispose();
     app = new ScriptedApp();
     const again = app.create({ mode: 'acceptEdits' });
+    await app.ready(again.id);
     again.pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(again.id) === 'exited');
-    app.answers.set('initialize', { ...INIT_RESPONSE, current_permission_mode: 'bypassPermissions' });
-    app.host.hosted = [hosted(again.id)];
+    const status = { seq: 3, line: JSON.stringify(stream.status('bypassPermissions')) };
+    app.host.hosted = [hosted(again.id, { lastSeq: 9, firstSeq: 8, retained: [status] })];
     await app.manager.adopt();
     await app.waitFor('今のモード', () => app.manager.modeOf(again.id) === 'bypassPermissions');
   });

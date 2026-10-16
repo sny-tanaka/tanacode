@@ -21,6 +21,9 @@ vi.mock('node-pty', async (importOriginal) => {
   };
 });
 
+// 長すぎる行を捨てるところを、小さな行で確かめられるようにする（本物は 32MB）
+vi.mock('../src/main/pty-host-protocol', async (importOriginal) => ({ ...(await importOriginal<typeof import('../src/main/pty-host-protocol')>()), MAX_LINE_BYTES: 4096 }));
+
 let dir: string;
 const exits: number[] = [];
 const logs: string[] = [];
@@ -28,8 +31,12 @@ const sockets: Socket[] = [];
 const originalArgv = [...process.argv];
 const originalTitle = process.title;
 const chdirs: string[] = [];
+// ホストが読み込まれるたびに足す、プロセスの合図・失敗の受け手（テストごとに外す）
+const PROCESS_EVENTS = ['SIGHUP', 'SIGTERM', 'SIGINT', 'uncaughtException', 'unhandledRejection'] as const;
+const baseListeners = new Map<string, ((...args: unknown[]) => void)[]>();
 
 beforeAll(() => {
+  for (const event of PROCESS_EVENTS) baseListeners.set(event, process.listeners(event as NodeJS.Signals) as ((...args: unknown[]) => void)[]);
   // ホストが終わろうとしても、テストのプロセスは終わらせない（終わったことだけ控える）
   vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     exits.push(code ?? 0);
@@ -52,6 +59,10 @@ beforeEach(() => {
 });
 afterEach(async () => {
   vi.useRealTimers();
+  for (const event of PROCESS_EVENTS) {
+    const base = baseListeners.get(event) ?? [];
+    for (const listener of process.listeners(event as NodeJS.Signals)) if (!base.includes(listener as (...args: unknown[]) => void)) process.off(event, listener);
+  }
   for (const s of sockets.splice(0)) s.destroy();
   await sleep(50);
   rmSync(dir, { recursive: true, force: true });
@@ -134,6 +145,18 @@ async function list(c: Client, req: number): Promise<HostedInfo[]> {
   return reply.hosted;
 }
 
+// アプリとして数えない接続（hello の形を違えたもの）で一覧を見て、条件を満たすまで待つ。
+// アプリが見ていない間の振る舞い（終わったプロセスの記録を残す）を変えずに、決まった時間でなく、終わったのを見て進む
+async function untilListed(path: string, check: (hosted: HostedInfo[]) => boolean): Promise<void> {
+  const peek = await client(path, 0);
+  for (let req = 1000; ; req++) {
+    if (check(await list(peek, req))) break;
+    if (req > 1250) throw new Error('一覧: 時間切れ');
+    await sleep(20);
+  }
+  peek.socket.destroy();
+}
+
 // パイプでつながるプロセス。入力の行をそのまま出力に返す（cat）。first: はじめに出す行
 const pipe = (id: string, first: string[] = [], command = 'exec cat') =>
   ({
@@ -147,7 +170,7 @@ const pipe = (id: string, first: string[] = [], command = 'exec cat') =>
     env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir },
     retain: [
       { type: 'system', subtype: 'init' },
-      { type: 'system', subtype: 'task_started', key: 'task_id', until: { type: 'system', subtype: 'task_notification' } },
+      { type: 'system', subtype: 'task_started', key: 'task_id', until: [{ type: 'system', subtype: 'task_notification', key: 'task_id' }] },
     ],
     transient: [{ type: 'stream_event' }],
   }) satisfies ClientMessage;
@@ -200,7 +223,7 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     await waitFor('出力', () => output(first, 'done').includes('bye') && output(first, 'alive').includes('$ '));
     // アプリを閉じた（接続が切れた）
     first.socket.destroy();
-    await sleep(800);
+    await untilListed(path, (hosted) => typeof hosted.find((p) => p.id === 'done')?.exitCode === 'number');
     const second = await client(path);
     const listed = await list(second, 1);
     expect(listed.map((p) => [p.id, p.tag, p.exitCode, p.kind])).toEqual([
@@ -285,13 +308,38 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     await shutdown(path);
   });
 
+  it('もう記録を捨てたプロセスへの replay には、終わったことを返す（引き継いだアプリが待ち続けないように）', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    c.send({ t: 'replay', id: 'gone', from: 1 });
+    expect(await waitFor('終わり', () => exitOf(c, 'gone') !== undefined && String(exitOf(c, 'gone')))).toBe('-1');
+    await shutdown(path);
+  });
+
+  it('長すぎて捨てた行が、答えを待つ要求だったら、ホストが error で答える（アプリには届かないので、claude が待ち続けないように）', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    const long = JSON.stringify({ type: 'control_request', request_id: 'big1', request: { subtype: 'can_use_tool', input: { content: 'x'.repeat(5000) } } });
+    const other = JSON.stringify({ type: 'assistant', text: 'y'.repeat(5000) });
+    // cat は、ホストが入力に書いた答えを、そのまま出力に返す
+    c.send(pipe('q5', [long, other]));
+    await waitFor('答え', () => linesOf(c, 'q5').length === 1);
+    const [answer] = linesOf(c, 'q5');
+    expect(JSON.parse(answer.slice(answer.indexOf(':') + 1))).toEqual({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: 'big1', error: 'tanacode could not read this request because it is too long.' },
+    });
+    expect(logs.filter((l) => l.includes('長すぎる行を捨てました: tag-q5'))).toHaveLength(2);
+    await shutdown(path);
+  });
+
   it('アプリが見ていない間に終わったパイプのプロセスは、終了コードを持ったまま一覧に残る。終わったプロセスの要求は控えから外す', async () => {
     const path = await startHost();
     const first = await client(path);
     first.send(pipe('q3', ['{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool"}}'], 'sleep 0.3; exit 4'));
     await waitFor('出力', () => linesOf(first, 'q3').length === 1);
     first.socket.destroy();
-    await sleep(800);
+    await untilListed(path, (hosted) => typeof hosted.find((p) => p.id === 'q3')?.exitCode === 'number');
     const second = await client(path);
     const listed = (await list(second, 1)) as HostedPipeInfo[];
     expect(listed).toMatchObject([{ id: 'q3', exitCode: 4, pending: [] }]);

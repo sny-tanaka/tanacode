@@ -1,6 +1,6 @@
 import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { BACKLOG_BYTES, MAX_LINE_BYTES, matchesKind, type HostedLine, type LineKind, type RetainRule } from './pty-host-protocol';
+import { BACKLOG_BYTES, MAX_LINE_BYTES, matchesKind, valueAt, type HostedLine, type LineKind, type RetainRule } from './pty-host-protocol';
 
 // パイプでつながるプロセス（stream-json の claude）の出力の行の控え。常駐のホスト（pty-host.ts）と、互換性の確認の偽物のホスト
 // （test/cli）が使う。ホストの解釈はここに書いたことに限る（設計書 5 節）:
@@ -69,17 +69,23 @@ export class PipeBacklog {
 
   private retain(value: Record<string, unknown>, item: HostedLine): void {
     this.retainRules.forEach((rule, index) => {
-      if (rule.until && rule.key && matchesKind(value, rule.until)) {
-        const key = value[rule.key];
-        if (typeof key === 'string') this.retainedLines.delete(`${index}:${key}`);
+      for (const until of rule.until ?? []) {
+        if (!matchesKind(value, until)) continue;
+        if (until.key === undefined) {
+          // その決まりの行をすべて捨てる
+          for (const name of [...this.retainedLines.keys()]) if (name.startsWith(`${index}:`)) this.retainedLines.delete(name);
+          continue;
+        }
+        const key = keyOf(valueAt(value, until.key));
+        if (key !== null) this.retainedLines.delete(`${index}:${key}`);
       }
       if (!matchesKind(value, rule)) return;
       if (!rule.key) {
         this.retainedLines.set(`${index}:`, item);
         return;
       }
-      const key = value[rule.key];
-      if (typeof key === 'string') this.retainedLines.set(`${index}:${key}`, item);
+      const key = keyOf(valueAt(value, rule.key));
+      if (key !== null) this.retainedLines.set(`${index}:${key}`, item);
     });
   }
 
@@ -93,6 +99,11 @@ export class PipeBacklog {
   }
 }
 
+// 残す行の key の値（文字か数だけ）。使えなければ null
+function keyOf(value: unknown): string | null {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
+}
+
 function parseObject(line: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(line);
@@ -102,37 +113,65 @@ function parseObject(line: string): Record<string, unknown> | null {
   }
 }
 
-// 出力を改行で区切って 1 行ずつ渡す（空の行は飛ばす）。長すぎる行（maxLength 文字を超える）は捨てて onDropped で知らせ、次の改行から読み直す
-export function readLines(stream: Readable, onLine: (line: string) => void, onDropped: (length: number) => void, maxLength = MAX_LINE_BYTES): void {
+// 捨てた長すぎる行のうち、知らせに添える頭の長さ（答えを待っている要求かを見分けるのに使う）
+export const DROPPED_HEAD_CHARS = 4096;
+
+// 出力を改行で区切って 1 行ずつ渡す（空の行は飛ばす）。出力の終わりに改行の無い最後の行も渡す。
+// 長すぎる行（maxBytes バイトを超える）は捨てて、長さ（バイト）と行の頭を onDropped で知らせ、次の改行から読み直す
+export function readLines(
+  stream: Readable,
+  onLine: (line: string) => void,
+  onDropped: (bytes: number, head: string) => void,
+  maxBytes = MAX_LINE_BYTES,
+): void {
   const decoder = new StringDecoder('utf8');
   let buffered = '';
-  // 捨てている途中の行の長さ（捨てていなければ 0）
+  let bufferedBytes = 0;
+  // 捨てている途中の行の長さ（バイト。捨てていなければ 0）と、その行の頭
   let dropping = 0;
-  stream.on('data', (chunk: Buffer | string) => {
-    let text = typeof chunk === 'string' ? chunk : decoder.write(chunk);
-    for (;;) {
-      const newline = text.indexOf('\n');
-      if (newline === -1) break;
-      const rest = text.slice(0, newline);
-      text = text.slice(newline + 1);
-      if (dropping > 0) {
-        onDropped(dropping + rest.length);
-        dropping = 0;
-        continue;
-      }
-      const line = buffered + rest;
-      buffered = '';
-      if (line.length > maxLength) onDropped(line.length);
-      else if (line.trim()) onLine(line);
-    }
+  let droppedHead = '';
+  // 改行で終わった（または出力が終わった）1 行
+  const finish = (rest: string) => {
     if (dropping > 0) {
-      dropping += text.length;
+      onDropped(dropping + Buffer.byteLength(rest), droppedHead);
+      dropping = 0;
+      droppedHead = '';
+      return;
+    }
+    const line = buffered + rest;
+    const bytes = bufferedBytes + Buffer.byteLength(rest);
+    buffered = '';
+    bufferedBytes = 0;
+    if (bytes > maxBytes) onDropped(bytes, line.slice(0, DROPPED_HEAD_CHARS));
+    else if (line.trim()) onLine(line);
+  };
+  // 改行の無い続き
+  const hold = (text: string) => {
+    if (dropping > 0) {
+      dropping += Buffer.byteLength(text);
       return;
     }
     buffered += text;
-    if (buffered.length > maxLength) {
-      dropping = buffered.length;
+    bufferedBytes += Buffer.byteLength(text);
+    if (bufferedBytes > maxBytes) {
+      dropping = bufferedBytes;
+      droppedHead = buffered.slice(0, DROPPED_HEAD_CHARS);
       buffered = '';
+      bufferedBytes = 0;
     }
+  };
+  const read = (text: string) => {
+    for (;;) {
+      const newline = text.indexOf('\n');
+      if (newline === -1) break;
+      finish(text.slice(0, newline));
+      text = text.slice(newline + 1);
+    }
+    hold(text);
+  };
+  stream.on('data', (chunk: Buffer | string) => read(typeof chunk === 'string' ? chunk : decoder.write(chunk)));
+  stream.on('end', () => {
+    read(decoder.end());
+    if (dropping > 0 || buffered) finish('');
   });
 }

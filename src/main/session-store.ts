@@ -1,6 +1,7 @@
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { PermissionMode } from '@shared/screen';
+import type { ClaudeProcess } from './leftover-claude';
 
 export type SessionRecord = {
   id: string;
@@ -37,6 +38,9 @@ export type SessionRecord = {
   // 追加したフォルダを変えたが、動いている claude にはまだ渡していない（手が空いたら --resume で起動し直す）。
   // アプリを動かしたまま終了して、次のアプリが claude を引き継いだときも、起動し直すまで残す
   addedFoldersPending?: boolean;
+  // 最後に起動したチャットの claude（initialize の返事の pid と、起動したときの会話の ID）。常駐のホストが止める間もなく落ちると
+  // claude だけが残るので、開き直す前に残っていないかを確かめて止める（leftover-claude.ts）
+  claudeProcess?: ClaudeProcess | null;
   createdAt: number;
   updatedAt: number;
 };

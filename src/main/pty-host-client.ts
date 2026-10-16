@@ -74,6 +74,10 @@ export class HostedPty implements PtyHandle {
   // まだ誰も受け取っていない間に届いた出力（引き継ぎの一覧を受け取ってから、アプリが見始めるまでの分）
   private early: string[] | null = [];
   exited = false;
+  // 終わったときの終了コード（あとから付いた受け手にも渡す）
+  private exitCode: number | null = null;
+  // アプリが受け取った（起動した・引き継いだ）。一覧で作っただけの受け皿は、引き継ぐまで終わっても消さない
+  claimed = true;
 
   constructor(
     private readonly host: PtyHost,
@@ -88,8 +92,11 @@ export class HostedPty implements PtyHandle {
     early?.forEach(listener);
   }
 
+  // もう終わっていれば、すぐ（次の小さな区切りで）知らせる
   onExit(listener: (exitCode: number) => void): void {
     this.listeners.exit.push(listener);
+    const code = this.exitCode;
+    if (code !== null) queueMicrotask(() => listener(code));
   }
 
   write(data: string): void {
@@ -123,6 +130,7 @@ export class HostedPty implements PtyHandle {
   emitExit(exitCode: number): void {
     if (this.exited) return;
     this.exited = true;
+    this.exitCode = exitCode;
     for (const listener of this.listeners.exit) listener(exitCode);
   }
 }
@@ -144,6 +152,11 @@ export class HostedPipe implements PipeHandle {
   // 受け手に渡した最後の通し番号（送り直しで重なった行を、もう一度渡さない）
   private delivered = 0;
   exited = false;
+  // 終わったときの終了コードと標準エラーの末尾（あとから付いた受け手にも渡す）
+  private exitInfo: { exitCode: number; stderr: string } | null = null;
+  // アプリが受け取った（起動した・引き継いだ）。一覧で作っただけの受け皿は、引き継ぐまで終わっても消さない
+  // （一覧の返事と同じ受信の中で終わりが届いても、引き継いだあとに終わったと分かるように）
+  claimed = true;
 
   constructor(
     private readonly host: PtyHost,
@@ -160,8 +173,11 @@ export class HostedPipe implements PipeHandle {
     this.flush();
   }
 
+  // もう終わっていれば、すぐ（次の小さな区切りで）知らせる
   onExit(listener: (exitCode: number, stderr: string) => void): void {
     this.listeners.exit.push(listener);
+    const info = this.exitInfo;
+    if (info) queueMicrotask(() => listener(info.exitCode, info.stderr));
   }
 
   onReplayed(listener: () => void): void {
@@ -207,18 +223,20 @@ export class HostedPipe implements PipeHandle {
     this.flush();
   }
 
-  // 送り直しが終わった。待たせていた新しい行を渡す
+  // 送り直しが終わった。終わったことを知らせてから、待たせていた新しい行を渡す（受け手は、前のアプリの頃の行を読み終えてから続きを受け取る）
   emitReplayed(): void {
     const held = this.held ?? [];
     this.held = null;
-    for (const item of held) this.queue(item);
     this.flush();
     for (const listener of this.listeners.replayed) listener();
+    for (const item of held) this.queue(item);
+    this.flush();
   }
 
   emitExit(exitCode: number, stderr: string): void {
     if (this.exited) return;
     this.exited = true;
+    this.exitInfo = { exitCode, stderr };
     // 送り直しの途中で終わったときも、待たせていた行は渡してから終わりを知らせる
     if (this.held) this.emitReplayed();
     for (const listener of this.listeners.exit) listener(exitCode, stderr);
@@ -293,13 +311,15 @@ export class PtyHost implements PtyHostApi {
     return pipe;
   }
 
-  // 前のアプリが起動した pty を引き継ぐ（一覧を受け取ったときに作ってあるものを使う）
+  // 前のアプリが起動した pty を引き継ぐ（一覧を受け取ったときに作ってあるものを使う。その間に終わっていれば、終わりも持っている）
   attach(info: HostedPtyInfo): HostedPty {
     let pty = this.ptys.get(info.id);
     if (!pty) {
       pty = new HostedPty(this, info.id);
       this.ptys.set(info.id, pty);
     }
+    pty.claimed = true;
+    if (pty.exited) this.ptys.delete(info.id);
     return pty;
   }
 
@@ -309,6 +329,8 @@ export class PtyHost implements PtyHostApi {
       pipe = new HostedPipe(this, info.id);
       this.pipes.set(info.id, pipe);
     }
+    pipe.claimed = true;
+    if (pipe.exited) this.pipes.delete(info.id);
     return pipe;
   }
 
@@ -411,7 +433,9 @@ export class PtyHost implements PtyHostApi {
     });
     socket.on('close', () => {
       if (this.socket !== socket) return;
-      // ホストが落ちた。claude も一緒に止まっている
+      // ホストが終わった。pty の claude は端末が閉じて一緒に止まる。パイプの claude は、ホストが終わる前にグループごと止める
+      // （SIGTERM・SIGINT・失敗でも）。止める間もなく落ちた（SIGKILL など）ときは残るので、起動し直す前に、記録した pid を確かめて止める
+      // （session-manager の stopLeftover）
       this.socket = null;
       for (const pty of [...this.ptys.values()]) pty.emitExit(-1);
       for (const pipe of [...this.pipes.values()]) pipe.emitExit(-1, '');
@@ -437,8 +461,9 @@ export class PtyHost implements PtyHostApi {
       case 'exit': {
         const pty = this.ptys.get(message.id);
         const pipe = this.pipes.get(message.id);
-        this.ptys.delete(message.id);
-        this.pipes.delete(message.id);
+        // 一覧で作っただけの受け皿は、引き継ぐまで残す（引き継いだときに、終わったと分かるように）
+        if (pty?.claimed !== false) this.ptys.delete(message.id);
+        if (pipe?.claimed !== false) this.pipes.delete(message.id);
         pty?.emitExit(message.exitCode);
         pipe?.emitExit(message.exitCode, message.stderr ?? '');
         return;
@@ -447,8 +472,16 @@ export class PtyHost implements PtyHostApi {
         // 一覧より後の出力は、このあと同じ受信の中で続けて届く。引き継ぐ側が attach する前に捨てないよう、ここで受け皿を作っておく
         for (const info of message.hosted) {
           if (info.exitCode !== null) continue;
-          if (info.kind === 'pty' && !this.ptys.has(info.id)) this.ptys.set(info.id, new HostedPty(this, info.id));
-          if (info.kind === 'pipe' && !this.pipes.has(info.id)) this.pipes.set(info.id, new HostedPipe(this, info.id));
+          if (info.kind === 'pty' && !this.ptys.has(info.id)) {
+            const pty = new HostedPty(this, info.id);
+            pty.claimed = false;
+            this.ptys.set(info.id, pty);
+          }
+          if (info.kind === 'pipe' && !this.pipes.has(info.id)) {
+            const pipe = new HostedPipe(this, info.id);
+            pipe.claimed = false;
+            this.pipes.set(info.id, pipe);
+          }
         }
         this.pending.get(message.req)?.(message.hosted);
         this.pending.delete(message.req);

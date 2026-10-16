@@ -9,13 +9,18 @@ export const PROTOCOL = 3;
 // pipe: チャットの claude（stream-json）。標準入出力をパイプでつなぎ、出力の行を控える
 export type HostedKind = 'pty' | 'pipe';
 
-// 行の種類（type と subtype の組。subtype を省くと、その type のすべて）
-export type LineKind = { type: string; subtype?: string };
+// 行の種類（type と subtype の組。subtype を省くと、その type のすべて）。
+// where: 項目の値の条件（項目の名前 → 当たる値の一覧。値の一覧が空なら、その項目がある（null でない）こと）。
+// 項目の名前は、"patch.status" のように . でつないで入れ子の項目も指せる
+export type LineKind = { type: string; subtype?: string; where?: Record<string, unknown[]> };
+
+// 残している行を捨てる行。key があれば、その項目の値が残している行の key の値と同じものだけを捨てる。無ければ、その決まりの行をすべて捨てる
+export type UntilRule = LineKind & { key?: string };
 
 // 控えの上限と別に持ち、捨てない行の決まり（pipe）。何を残すかはアプリがデータとして渡す（ホストのコードを直すたびに PROTOCOL を
-// 上げると、動いている claude が止まるため）。key が無ければ、その種類の最新の 1 行。key があれば、その項目の値ごとに最新の 1 行で、
-// until の種類の行が同じ値で来たら捨てる（終わった task_*）
-export type RetainRule = LineKind & { key?: string; until?: LineKind };
+// 上げると、動いている claude が止まるため。あとで決まりを足せるよう、条件・入れ子の項目・捨てる行の一覧を書ける形にしてある）。
+// key が無ければ、その種類の最新の 1 行。key があれば、その項目の値ごとに最新の 1 行。until のどれかに当たる行が来たら捨てる（終わった task_*）
+export type RetainRule = LineKind & { key?: string; until?: UntilRule[] };
 
 type SpawnBase = {
   id: string;
@@ -108,7 +113,7 @@ export type HostMessage =
   | { t: 'line'; id: string; seq: number; line: string; replay?: true }
   // replay の頼みで送り直す行を、送り終えた
   | { t: 'replayed'; id: string }
-  // stderr: パイプのときの標準エラーの末尾（起動できなかった理由など）
+  // stderr: パイプのときの標準エラーの末尾（起動できなかった理由など）。もう記録を捨てたプロセスへの replay にも返す（exitCode は -1）
   | { t: 'exit'; id: string; exitCode: number; stderr?: string }
   | { t: 'list'; req: number; hosted: HostedInfo[] };
 
@@ -120,6 +125,20 @@ export const BACKLOG_BYTES = 8 * 1024 * 1024;
 export const STDERR_TAIL = 8 * 1024;
 
 // 行の種類が kind に当たるか（行は読めた JSON）
-export function matchesKind(value: { type?: unknown; subtype?: unknown }, kind: LineKind): boolean {
-  return value.type === kind.type && (kind.subtype === undefined || value.subtype === kind.subtype);
+export function matchesKind(value: Record<string, unknown>, kind: LineKind): boolean {
+  if (value.type !== kind.type || (kind.subtype !== undefined && value.subtype !== kind.subtype)) return false;
+  return Object.entries(kind.where ?? {}).every(([path, values]) => {
+    const found = valueAt(value, path);
+    return values.length === 0 ? found !== undefined && found !== null : values.includes(found);
+  });
+}
+
+// 項目の値。path は . でつないだ入れ子の名前（"patch.status"）。無ければ undefined
+export function valueAt(value: Record<string, unknown>, path: string): unknown {
+  let current: unknown = value;
+  for (const name of path.split('.')) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[name];
+  }
+  return current;
 }
