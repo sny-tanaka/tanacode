@@ -111,6 +111,7 @@
     },
     "task": {
       "notRunning": "セッションが動いていないため、止められません",
+      "terminalMode": "ターミナルモードの間は、ここからは止められません。Claude Code の画面の /tasks で止めてください",
       "nothingToStop": "止められるもの（動いているバックグラウンドのタスク）が見つかりません",
       "busy": "別の操作の途中です。少し待ってからもう一度押してください",
       "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
@@ -128,7 +129,8 @@
       "waitingAnswer": "質問や確認の答えを待っているため、送れませんでした",
       "draft": "ターミナルの入力欄に書きかけの文字があるため、送れませんでした",
       "busy": "Claude Code の手が空かないため、送れませんでした",
-      "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）"
+      "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）",
+      "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください"
     },
     "worktree": {
       "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
@@ -259,6 +261,13 @@
       "whereProject": "このフォルダの共有の設定",
       "whereUser": "すべてのフォルダ",
       "whereSession": "このセッションだけ"
+    },
+    "terminal": {
+      "notRunning": "Claude Code が動いていません",
+      "switching": "チャットとターミナルモードを切り替えている途中です",
+      "busy": "作業中・確認や質問への答え待ち・送る予定の発言があるときは、ターミナルモードに切り替えられません",
+      "tuiBusy": "Claude Code が作業中です。ターンが終わってからチャットに戻してください",
+      "tasksRunning": "バックグラウンドのタスクが動いています。切り替えると止まります"
     }
   },
   "commands": {
@@ -447,7 +456,6 @@
       "untitledSession": "新しいセッション",
       "childQuestion": "子セッション「{name}」（{id}）が質問への回答を待っています（answer_question で答えられます）。",
       "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。get_session で中身を読み、answer_permission で答えるか、判断できなければ人に聞いてください。",
-      "childWaiting": "子セッション「{name}」（{id}）がターミナルでの操作を待っています。人に伝えてください。",
       "childBrowser": "子セッション「{name}」（{id}）がアプリ内ブラウザで人の操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
       "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
@@ -456,7 +464,8 @@
       "checkCards": "card_get で確かめて対応し、返事は card_reply で書いてください。",
       "clipped": "{text}…（続きは card_get で）",
       "cardsCopied": "セッション「{session}」から「{list}」に {numbers}（{titles}）が届きました。",
-      "cardTitle": "「{title}」"
+      "cardTitle": "「{title}」",
+      "childTerminal": "子セッション「{name}」（{id}）がターミナルモードになり、人が Claude Code の画面で操作しています。"
     },
     "checklistCopy": {
       "sessionNotFound": "セッションが見つかりません",
@@ -508,7 +517,7 @@
       "export": "作業を書き出す…",
       "exportTip": "このセッションの流れを、1 枚の HTML ファイルに書き出す",
       "terminal": "ターミナルモード",
-      "terminalTip": "チャットの代わりに、Claude Code をターミナルの画面のまま表示して操作する",
+      "terminalTip": "チャットの代わりに、Claude Code をターミナルの画面のまま表示して操作する。切り替えると、Claude Code を起動し直して同じ会話を続けます（手が空いているときだけ）",
       "pasteComments": "入力欄に貼る",
       "pasteCommentsTip": "コードへのコメントを、Claude Code の入力欄に貼る（Enter で送る）",
       "starting": "Claude Code を起動しています…",
@@ -545,7 +554,10 @@
       "modeTitle": "権限モード（このセッションだけ。Shift+Tab と同じ）",
       "mode": "モード",
       "bypassPermissions": "すべて許可",
-      "slowStartStderr": "Claude Code の標準エラーの末尾"
+      "slowStartStderr": "Claude Code の標準エラーの末尾",
+      "terminalStopsTasks": "バックグラウンドのタスクが動いています。切り替えると、Claude Code を起動し直すので止まります。切り替えますか？",
+      "leaveTerminal": "チャットに戻ります。Claude Code の画面の入力欄に書きかけがあれば、消えます。戻りますか？",
+      "terminalFailed": "切り替えられませんでした（{error}）"
     },
     "toolCard": {
       "running": "実行中…",
@@ -667,7 +679,8 @@
       "wontConnect": "始めてもつなぎません",
       "connected": "つながっています",
       "enabled": "リモートコントロールは有効です（起動やつながりが済むと、つながります）",
-      "disconnected": "つないでいません"
+      "disconnected": "つないでいません",
+      "lockedInTerminal": "ターミナルモードの間は切り替えられません（Claude Code の画面の /remote-control で切り替えます）"
     },
     "todo": {
       "title": "Todo"
@@ -1007,7 +1020,8 @@
       "running": "作業中",
       "background": "バックグラウンド {count}件の完了待ち",
       "unread": "新しい応答",
-      "exited": "終了"
+      "exited": "終了",
+      "terminal": "ターミナルモード"
     },
     "worktreeDialog": {
       "archiveFailed": "アーカイブできませんでした: {error}",

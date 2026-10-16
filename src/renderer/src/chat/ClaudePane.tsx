@@ -492,6 +492,7 @@ export const ClaudePane = memo(function ClaudePane({
             on={session.remoteControl}
             connected={live ? !!chat.remoteControlUrl : null}
             busy={switchingRemote.has(session.id)}
+            locked={terminalOpen}
             onChange={(on) => void setRemoteControl(on)}
           />
         )}
@@ -533,6 +534,8 @@ export const ClaudePane = memo(function ClaudePane({
             label={t('chat.pane.terminal')}
             tip={t('chat.pane.terminalTip')}
             pressed={terminalOpen}
+            // 切り替えは、動いている Claude Code を止めて開き直す。動いていない・切り替えの途中は押せない
+            disabled={!live || chat.status === 'starting'}
             onClick={onToggleTerminal}
           />
         )}
@@ -541,7 +544,7 @@ export const ClaudePane = memo(function ClaudePane({
       {screenMode && (
         <>
           <ClaudeScreen sessionId={session.id} />
-          {(preparingNote || exitedCallout || comments.length > 0) && (
+          {(preparingNote || comments.length > 0) && (
             <div className="claude-screen-notes">
               {preparingNote}
               {comments.length > 0 && (
@@ -552,7 +555,6 @@ export const ClaudePane = memo(function ClaudePane({
                   </button>
                 </div>
               )}
-              {exitedCallout}
             </div>
           )}
         </>

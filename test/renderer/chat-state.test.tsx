@@ -141,8 +141,8 @@ describe('チャットの状態は、main の状態（一覧の state）から�
     const idle = run([{ type: 'process-start' }, { type: 'ready' }]);
     expect(idle.status).toBe('idle');
     expect(statusOf(idle, 'starting')).toBe('starting');
-    // 作業中と、ターンの途中で人の答えを待っているもの
-    for (const state of ['working', 'question', 'permission', 'waiting', 'browser'] as const) expect(statusOf(idle, state)).toBe('running');
+    // 作業中と、ターンの途中で人の答えを待っているもの。ターミナルモード（人が TUI で操作している）も、チャットからは操作しない
+    for (const state of ['working', 'question', 'permission', 'terminal', 'browser'] as const) expect(statusOf(idle, state)).toBe('running');
     // ターンが終わって、裏のタスクだけが動いている間も、発言を受け付ける
     expect(statusOf(idle, 'background')).toBe('idle');
     expect(statusOf(run([{ type: 'process-start' }, { type: 'ready' }, { type: 'user', id: 'u1', text: '頼み' }]), 'idle')).toBe('idle');

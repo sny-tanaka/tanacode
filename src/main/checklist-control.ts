@@ -67,6 +67,8 @@ export class ChecklistControl {
     this.notices = new SessionNotices({
       host: deps.host,
       enabled: deps.enabled,
+      // 人がボタンで頼んだ知らせなので、ターミナルモードなら TUI の入力欄に貼る（Enter は人が押す）
+      onTerminal: 'paste',
       compose: (_target, items) => {
         const all = [...items.values()];
         const message = noticeMessage(all.map((n) => n.text));

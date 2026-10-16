@@ -47,6 +47,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SessionsConfigure, ['s1', { model: 'opus', effort: null, settingsFile: null }], call('manager.configure', 's1', { model: 'opus', effort: null, settingsFile: null })],
     [IpcChannel.SessionsRestart, ['s1'], call('manager.restart', 's1')],
     [IpcChannel.SessionsSetRemoteControl, ['s1', true], call('manager.setRemoteControl', 's1', true)],
+    [IpcChannel.SessionsSetTerminalMode, ['s1', true, { stopTasks: true }], call('manager.setTerminalMode', 's1', true, { stopTasks: true })],
+    [IpcChannel.SessionsSetTerminalMode, ['s1', false], call('manager.setTerminalMode', 's1', false, { stopTasks: false })],
     [IpcChannel.RemoteControlAvailable, [], call('manager.remoteAvailable')],
     [IpcChannel.SessionsProgressGet, ['s1'], call('manager.progress', 's1')],
     [IpcChannel.QuestionGet, ['s1'], call('manager.pendingQuestion', 's1')],

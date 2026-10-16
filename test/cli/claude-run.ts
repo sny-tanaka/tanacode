@@ -110,6 +110,8 @@ export class ClaudeRun {
   bashTasks: BashTask[] = [];
   // session-manager が配信したチャットのイベント（届いた順。ChatBatch をつなげたもの）と、配信そのもの
   readonly chatEvents: ChatEvent[] = [];
+  // ターミナルモードの TUI が画面に描いたもの（端末への出力をつなげたもの）
+  ptyOutput = '';
   readonly chatBatches: ChatBatch[] = [];
   // 選択メニューなど、ユーザーの操作待ちになったときの知らせ（onAttention）
   readonly attentions: Attention[] = [];
@@ -384,7 +386,9 @@ export class ClaudeRun {
             if (event.type === 'reset') this.switches.push(this.transcript());
           }
         },
-        onPtyData: () => {},
+        onPtyData: (id, data) => {
+          if (ours(id)) this.ptyOutput += data;
+        },
         onTurnCompleted: (session) => live() && this.turnsCompleted.push(session),
         onProgress: (id, activity) => ours(id) && this.activities.push(activity),
         onWorkflows: (id, runs) => ours(id) && (this.workflowRuns = runs),

@@ -19,9 +19,9 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // ツールで返すセッションの状態。starting: 起動中（worktree の準備も）/ working: 作業中（送った指示を受け取るまでも）/
 // background: ターンは終わり、バックグラウンドのタスクの完了を待っている / question: 質問への回答待ち / permission: 実行の許可待ち /
-// waiting: ターミナルでの操作待ち（フォルダの信頼の確認など）/ browser: アプリ内ブラウザでの人の操作待ち（ask_user_to_act。ツールで返す状態だけで、
+// terminal: ターミナルモード（人が Claude Code の TUI で操作している。チャット・親からは送れない）/ browser: アプリ内ブラウザでの人の操作待ち（ask_user_to_act。ツールで返す状態だけで、
 // SessionManager.stateOf は返さない。sessions-control.ts）/ idle: 手が空いている / exited: Claude Code が動いていない / archived: アーカイブ済み
-export type SessionState = 'starting' | 'working' | 'background' | 'question' | 'permission' | 'waiting' | 'browser' | 'idle' | 'exited' | 'archived';
+export type SessionState = 'starting' | 'working' | 'background' | 'question' | 'permission' | 'terminal' | 'browser' | 'idle' | 'exited' | 'archived';
 
 export const SESSION_STATE_LABEL: Record<SessionState, string> = {
   starting: 'starting up',
@@ -29,7 +29,7 @@ export const SESSION_STATE_LABEL: Record<SessionState, string> = {
   background: 'waiting for background tasks to finish',
   question: 'waiting for an answer to a question',
   permission: 'waiting for an answer to a permission prompt',
-  waiting: 'waiting for the user to act in its terminal',
+  terminal: 'in terminal mode (the user is working in its Claude Code screen)',
   browser: 'waiting for the user to act in the in-app browser',
   idle: 'idle',
   exited: 'Claude Code is not running',

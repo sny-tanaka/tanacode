@@ -696,7 +696,7 @@ describe('ツールの実行（SessionsControl）', () => {
       // 上限を長くして、待たずに返ることを見る
       const patient = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 60_000 });
       try {
-        for (const state of ['idle', 'background', 'permission', 'waiting', 'exited'] as const) {
+        for (const state of ['idle', 'background', 'permission', 'terminal', 'exited'] as const) {
           ask(() => host.set(CHILD, state));
           const started = Date.now();
           const result = jsonOf(await answer(patient));
@@ -1016,7 +1016,7 @@ describe('ツールの実行（SessionsControl）', () => {
         ['starting', 'starting up'],
         ['question', 'answer_question'],
         ['permission', 'answer_permission'],
-        ['waiting', 'Only the user'],
+        ['terminal', 'switch it back to the chat'],
         ['archived', t('sessions.sidebar.unarchive')],
       ];
       for (const [state, hint] of cases) {
@@ -1129,7 +1129,7 @@ describe('ツールの実行（SessionsControl）', () => {
           ['starting', 'starting up'],
           ['question', 'answer_question'],
           ['permission', 'answer_permission'],
-          ['waiting', 'Only the user'],
+          ['terminal', 'switch it back to the chat'],
           ['archived', t('sessions.sidebar.unarchive')],
         ];
         for (const [state, hint] of cases) {
@@ -1199,7 +1199,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(list.sessions.find((s) => s.id === CHILD)?.state).toBe('browser');
       host.set(CHILD, 'background');
       expect((await get()).state).toBe('browser');
-      for (const state of ['question', 'permission', 'waiting', 'idle', 'exited'] as SessionState[]) {
+      for (const state of ['question', 'permission', 'terminal', 'idle', 'exited'] as SessionState[]) {
         host.set(CHILD, state);
         expect((await get()).state, state).toBe(state);
       }
@@ -1419,7 +1419,7 @@ describe('ツールの実行（SessionsControl）', () => {
       ['working', 'stop_session'],
       ['question', 'answer_question'],
       ['permission', 'answer_permission'],
-      ['waiting', 'act in its terminal'],
+      ['terminal', 'in terminal mode'],
     ] as [SessionState, string][])('%s の子は断り、理由と次にできることを返す', async (state, hint) => {
       host.set(CHILD, state);
       const result = await end();
@@ -1864,7 +1864,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(outwardState('idle', true)).toBe('working');
       expect(outwardState('background', true)).toBe('working');
       expect(outwardState('idle', false)).toBe('idle');
-      for (const state of ['working', 'permission', 'question', 'waiting', 'exited', 'archived', 'starting', null] as const) expect(outwardState(state, true)).toBe(state);
+      for (const state of ['working', 'permission', 'question', 'terminal', 'exited', 'archived', 'starting', null] as const) expect(outwardState(state, true)).toBe(state);
       // stateOf のほかは、元のものをそのまま呼ぶ
       flowing.add(CHILD);
       const outward = outwardHost(host, (id) => flowing.has(id));
@@ -2207,11 +2207,16 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.submitted).toEqual([{ id: ID, text: parentMessageText(PARENT, 'x') }]);
     });
 
-    it('send_message: 空の指示・アーカイブ済み・ターミナルの操作待ちの子には送らない', async () => {
+    it('send_message: 空の指示・アーカイブ済み・ターミナルモードの子には送らない（ターミナルモードの子には預からない）', async () => {
       expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: ' ' }))).toBe('message (the instruction to send) is empty.');
       expect(textOf(await control.handle(PARENT, 'send_message', { session_id: FAR_CHILD, message: 'x' }))).toBe(`"s-77" is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
-      host.set(CHILD, 'waiting');
-      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toBe('"s-22" is waiting for an operation in its terminal (the user needs to handle it).');
+      host.set(CHILD, 'terminal');
+      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }))).toBe(
+        '"s-22" is in terminal mode: the user is working in its Claude Code screen, so the message was not sent (and not kept for later). Tell the user, or send it again once get_session shows that the child is back in the chat.',
+      );
+      // 質問・許可の確認にも答えない（人が TUI で答える）
+      expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'q', choices: ['a'] }))).toContain('is in terminal mode');
+      expect(textOf(await control.handle(PARENT, 'answer_permission', { session_id: CHILD, permission_id: 'req-1', decision: 'deny' }))).toContain('is in terminal mode');
       expect(host.submitted).toEqual([]);
     });
 
@@ -2242,7 +2247,7 @@ describe('ツールの実行（SessionsControl）', () => {
       const who = '子セッション「新しいセッション」（22222222）';
       const cases: [SessionState, string][] = [
         ['question', `${who}が質問への回答を待っています（answer_question で答えられます）。`],
-        ['waiting', `${who}がターミナルでの操作を待っています。人に伝えてください。`],
+        ['terminal', `${who}がターミナルモードになり、人が Claude Code の画面で操作しています。`],
         ['exited', `${who}が終了しました。`],
       ];
       for (const [state, text] of cases) {
@@ -2509,7 +2514,7 @@ describe('ツールの実行（SessionsControl）', () => {
     it('answer_question・stop_session も自分の子にだけ。人の対応待ちの子は止めない。止めたら結果を返す', async () => {
       expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: PEER, question: 'q', choices: ['a'] }))).toContain('is not a child session of this session');
       expect(textOf(await control.handle(PARENT, 'stop_session', { session_id: PEER }))).toContain('is not a child session of this session');
-      for (const state of ['permission', 'waiting'] as const) {
+      for (const state of ['permission', 'terminal'] as const) {
         host.set(CHILD, state);
         expect(await control.handle(PARENT, 'stop_session', { session_id: CHILD })).toEqual(textResult(`"s-22" cannot be interrupted while it is ${SESSION_STATE_LABEL[state]}.`, true));
       }

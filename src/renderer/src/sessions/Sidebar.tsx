@@ -341,7 +341,7 @@ function ChildrenToggle({
   );
 }
 
-type Activity = { kind: 'waiting' | 'running' | 'background' | 'starting' | 'unread' | 'exited'; label: string };
+type Activity = { kind: 'waiting' | 'running' | 'background' | 'starting' | 'terminal' | 'unread' | 'exited'; label: string };
 
 // 一覧に出すセッションの状態。上ほど優先する（何もしていなければ null で、印も文言も出さない）
 // 予約したメッセージがあれば、いちばん早い時刻（送れなかったものがあれば、そのこと）を出す
@@ -386,6 +386,8 @@ function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.worktree?.preparing) return { kind: 'starting', label: preparingLabel(s.worktree.preparing) };
   const background = s.backgroundTasks;
   if (status === 'starting') return { kind: 'starting', label: t('sessions.activity.starting') };
+  // ターミナルモード（人が Claude Code の画面で操作している）
+  if (s.terminal) return { kind: 'terminal', label: t('sessions.activity.terminal') };
   if (status === 'running') {
     const label = background > 0 ? t('sessions.activity.runningWithBackground', { count: background }) : t('sessions.activity.running');
     return { kind: 'running', label };

@@ -173,6 +173,8 @@ export class StatusLineWatcher {
     private readonly onAsk: (sessionId: string, input: unknown) => void = () => {},
     // request: PermissionRequest のフックの入力（tool_name・tool_input・agent_type）/ at: ファイルが書かれた時刻
     private readonly onPermission: (sessionId: string, request: unknown, at: number) => void = () => {},
+    // 書くだけの Stop のフックが書いた（ターミナルモードの TUI のターンが終わった）
+    private readonly onIdle: (sessionId: string) => void = () => {},
   ) {}
 
   fileFor(sessionId: string): string {
@@ -213,6 +215,14 @@ export class StatusLineWatcher {
         this.timers.set(name, setTimeout(() => void this.readPermission(sessionId), 50));
         return;
       }
+      if (name?.endsWith(IDLE_SUFFIX)) {
+        const sessionId = basename(name, IDLE_SUFFIX);
+        clearTimeout(this.timers.get(name));
+        this.timers.set(name, setTimeout(() => this.onIdle(sessionId), 50));
+        return;
+      }
+      // 通知のフックのファイルは読まない（確認・質問は PermissionRequest のフックで分かる）
+      if (name?.endsWith(NOTIFICATION_SUFFIX)) return;
       if (!name?.endsWith('.json')) return;
       const sessionId = basename(name, '.json');
       // 書き込みの途中で読まないよう少し待つ

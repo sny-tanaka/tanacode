@@ -34,7 +34,7 @@ const hosted = (tag: string, patch: Partial<HostedPipeInfo> = {}): HostedPipeInf
   ...patch,
 });
 
-// 前のバージョンのアプリが TUI で起動した claude
+// 前のアプリがターミナルモード（TUI）で起動した claude
 const hostedPty = (tag: string): HostedPtyInfo => ({
   kind: 'pty',
   id: `pty-${tag}`,
@@ -73,20 +73,21 @@ const queue = (id: string) => {
 };
 
 describe('adopt', () => {
-  it('終わったものは記録を捨て、知らない・アーカイブした・もう動いているセッションと、TUI の claude は止め、ほかは起動し直さずに引き継ぐ', async () => {
+  it('終わったものは記録を捨て、知らない・アーカイブした・もう動いているセッションは止め、ほかは起動し直さずに引き継ぐ（TUI の claude はターミナルモードとして）', async () => {
     const adopted = await previous(line.user('はじめ'), line.text('はい'));
     const archived = await previous();
     await app.manager.archive(archived);
     const running = app.create().id;
-    const old = await previous(line.user('前のバージョン'));
-    app.host.hosted = [hosted('exited', { exitCode: 0 }), hosted('unknown'), hosted(archived), hosted(running), hostedPty(old), hosted(adopted)];
+    const terminal = await previous(line.user('ターミナルモード'));
+    app.host.hosted = [hosted('exited', { exitCode: 0 }), hosted('unknown'), hosted(archived), hosted(running), hostedPty(terminal), hosted(adopted)];
     const spawned = app.host.pipes.length;
     await app.manager.adopt();
     expect(app.host.forgotten).toEqual(['pipe-exited']);
     expect(attached('unknown')?.kills).toEqual(['SIGTERM']);
     expect(attached(archived)?.kills).toEqual(['SIGTERM']);
     expect(attached(running)?.kills).toEqual(['SIGTERM']);
-    expect(app.host.attached.find((p) => p.request.tag === old)?.killed).toBe(true);
+    expect(app.host.attached.find((p) => p.request.tag === terminal)?.killed).toBe(false);
+    expect(app.manager.stateOf(terminal)).toBe('terminal');
     expect(attached(adopted)?.kills).toEqual([]);
     expect(app.host.pipes).toHaveLength(spawned);
     expect(app.manager.summary(adopted)?.running).toBe(true);

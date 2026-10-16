@@ -154,8 +154,8 @@ const MAX_START_FOLDERS = 30;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
 // 親に知らせる、子の手が空いた状態。バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる。
-// 子セッションは人に通知しないので、人が答える許可の確認・ターミナルとアプリ内ブラウザでの操作の待ちも、親に知らせて人に伝えさせる
-const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'browser', 'exited']);
+// 子セッションは人に通知しないので、人が答える許可の確認・アプリ内ブラウザでの操作の待ちも、親に知らせて人に伝えさせる
+const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'terminal', 'browser', 'exited']);
 
 // end_session で終えられる状態。手が空いている・Claude Code が動いていない・裏のタスクの完了待ち（ターンは終わっている）・アーカイブ済み（残った worktree を消す）
 const ENDABLE_STATES = new Set<SessionState>(['idle', 'exited', 'background', 'archived']);
@@ -168,8 +168,7 @@ const END_REFUSAL: Partial<Record<SessionState, string>> = {
     'is waiting for an answer to a question, so its work is not finished and it was not ended. Answer the question with answer_question (get_session shows it) and let it finish, or ask the user whether to end it.',
   permission:
     'is waiting for an answer to a permission prompt, so its work is not finished and it was not ended. Answer the prompt with answer_permission (get_session shows it) or ask the user, and call end_session again once the child is idle.',
-  waiting:
-    'is waiting for the user to act in its terminal, so it was not ended. Only the user can do that: tell the user, and call end_session again once the child is idle.',
+  terminal: 'is in terminal mode: the user is working in its Claude Code screen, so it was not ended. Tell the user, and call end_session again once the user has switched it back to the chat.',
   browser:
     'is waiting for the user to act in the in-app browser, so its work is not finished and it was not ended. Tell the user, and call end_session again once the child is idle. If its work is no longer needed, interrupt it with stop_session first.',
 };
@@ -190,7 +189,7 @@ const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
   question: 'is waiting for an answer to a question, so nothing was changed. Answer it with answer_question (get_session shows it) or let the user answer it, then call configure_session again.',
   permission:
     'is waiting for an answer to a permission prompt, so nothing was changed. Answer it with answer_permission (get_session shows it) or ask the user, then call configure_session again.',
-  waiting: 'is waiting for the user to act in its terminal, so nothing was changed. Only the user can do that: tell the user, and call configure_session again once the child is idle.',
+  terminal: 'is in terminal mode: the user is working in its Claude Code screen, so nothing was changed. Ask the user to switch it back to the chat, then call configure_session again.',
   browser:
     'is waiting for the user to act in the in-app browser, so nothing was changed. Tell the user, and call configure_session again once the child is idle (or interrupt it with stop_session first).',
 };
@@ -469,7 +468,8 @@ export class SessionsControl {
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
     if (state === 'question') throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
     if (state === 'permission') throw new ToolError(`${who} is waiting for an answer to a permission prompt. Read it with get_session and answer it with answer_permission, or ask the user.`);
-    if (state === 'waiting') throw new ToolError(`${who} is waiting for an operation in its terminal (the user needs to handle it).`);
+    // ターミナルモードの間は、預からずに断る（決めたこと）
+    if (state === 'terminal') throw new ToolError(`${who} is in terminal mode: the user is working in its Claude Code screen, so the message was not sent (and not kept for later). Tell the user, or send it again once get_session shows that the child is back in the chat.`);
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ
     if (state === 'idle' || state === 'background') {
@@ -498,6 +498,7 @@ export class SessionsControl {
     // 自由記述は、キー操作になる文字（ESC など）を除く（改行はそのまま渡す）
     const typed = stripControlChars(stringArg(args.other)).trim();
     if (choices.length === 0 && !typed) throw new ToolError('Pass choices (the options to pick) or other (a free-text answer).');
+    if (host.stateOf(child.id) === 'terminal') throw new ToolError(`"${nameOf(child)}" is in terminal mode: the user answers its prompts in its Claude Code screen, so nothing was answered. Tell the user.`);
     const pending = host.pendingQuestion(child.id);
     if (pending) return this.answerPending(caller, child, pending, asked, choices, typed);
     // 許可の確認には答えさせない（answer_permission で答える）
@@ -562,6 +563,7 @@ export class SessionsControl {
     const allow = args.decision === 'allow';
     const reason = stripControlChars(stringArg(args.reason)).trim();
     if (allow && reason) throw new ToolError('reason is only for decision "deny". To allow with a condition, allow it and then instruct the child with send_message.');
+    if (host.stateOf(child.id) === 'terminal') throw new ToolError(`${who} is in terminal mode: the user answers its prompts in its Claude Code screen, so nothing was answered. Tell the user.`);
     const shown = host.pendingPermission(child.id);
     if (!shown) throw new ToolError(`${who} is not showing a permission prompt that can be answered here (the user answered it first). Check with get_session.`);
     const changed = () => new ToolError('The permission prompt showing now is not the one you read (the user answered it, or the child moved on to another prompt). Nothing was answered. Read it again with get_session.');
@@ -677,7 +679,7 @@ export class SessionsControl {
     const { host } = this.deps;
     const child = this.resolve(caller, args.session_id, true);
     const state = host.stateOf(child.id);
-    if (state === 'question' || state === 'permission' || state === 'waiting') {
+    if (state === 'question' || state === 'permission' || state === 'terminal') {
       throw new ToolError(`"${nameOf(child)}" cannot be interrupted while it is ${SESSION_STATE_LABEL[state]}.`);
     }
     // アプリ内ブラウザでの人の操作待ちは、ターンの途中（ask_user_to_act の呼び出しの途中）なら、作業中と同じに止める。
@@ -1153,7 +1155,7 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   if (state === 'question') return t('tools.notice.childQuestion', params);
   // 子セッションは人に通知しないので、親から人に伝える
   if (state === 'permission') return t('tools.notice.childPermission', params);
-  if (state === 'waiting') return t('tools.notice.childWaiting', params);
+  if (state === 'terminal') return t('tools.notice.childTerminal', params);
   if (state === 'browser') return t('tools.notice.childBrowser', params);
   if (state === 'exited') return t('tools.notice.childExited', params);
   return t('tools.notice.childDone', params);

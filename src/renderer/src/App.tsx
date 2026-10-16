@@ -51,9 +51,9 @@ import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
-import { useClaudeScreenOutput } from './terminal/ClaudeScreen';
+import { pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
 import { TerminalPanel } from './terminal/TerminalPanel';
-import { useTerminalMode } from './terminal/terminalMode';
+import { switchTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
 import { PreviewPane } from './preview/PreviewPane';
 import { TitleBar } from './layout/TitleBar';
@@ -155,9 +155,6 @@ export function App() {
   const showShell = useCallback(() => setTerminalOpen(true), []);
   const closeShell = useCallback(() => setTerminalOpen(false), []);
   const toggleShell = useCallback(() => setTerminalOpen((open) => !open), []);
-  // ターミナルモード（Claude Code ペインに、チャットの代わりに Claude Code の生の画面を出す）
-  const [terminalMode, setTerminalMode] = useTerminalMode();
-  const toggleClaudeScreen = useCallback(() => setTerminalMode(!terminalMode), [terminalMode, setTerminalMode]);
   // チャットを見ている間も、Claude Code の画面の出力を受け取っておく（ターミナルモードにしたとき、さかのぼって読める）
   useClaudeScreenOutput();
   // 左から 3 番目のペイン
@@ -727,6 +724,15 @@ export function App() {
     },
     [pendingSends.send],
   );
+  // ボタンで Claude に送るもの（ウォークスルーの質問・やり直し・頼み・範囲への質問）。ターミナルモードのセッションには送らず、
+  // Claude Code の画面の入力欄に貼るだけにする（Enter は人が押す。設計書 9 節）
+  const sendOrPaste = useCallback(
+    (id: string, text: string) => {
+      if (sessionsRef.current?.find((s) => s.id === id)?.terminal) void pasteIntoClaudeScreen(id, text);
+      else pendingSends.send(id, text, []);
+    },
+    [pendingSends.send],
+  );
   const takeSelectedPending = useCallback(
     () => (selectedIdRef.current ? pendingSends.take(selectedIdRef.current) : null),
     [pendingSends.take],
@@ -780,22 +786,22 @@ export function App() {
       stale: walkStale,
       onGo: goWalk,
       onClose: closeWalk,
-      onAsk: (question) => pendingSends.send(sessionId, stepQuestionText(walk, question), []),
-      onRestart: () => pendingSends.send(sessionId, restartRequestText(walk), []),
+      onAsk: (question) => sendOrPaste(sessionId, stepQuestionText(walk, question)),
+      onRestart: () => sendOrPaste(sessionId, restartRequestText(walk)),
       onPublish: publishWalk,
       onShowList: () => setSidePanel('scm'),
     };
-  }, [walk, walkStale, selectedId, goWalk, closeWalk, publishWalk, pendingSends.send]);
+  }, [walk, walkStale, selectedId, goWalk, closeWalk, publishWalk, sendOrPaste]);
   // ソース管理パネルの一覧（寄り道だけで、ステップが無いものは出さない）
   const walkList = useMemo(
     () => (walkAll && walkAll.steps.length > 0 ? { walkthrough: walkAll, onGo: goWalk, onPublish: publishWalk } : null),
     [walkAll, goWalk, publishWalk],
   );
   // ソース管理の「ブランチの変更」の「Claude にウォークスルーしてもらう」
-  const requestWalkthrough = useCallback(() => sendToSelected(t('app.walkthroughRequest'), []), [sendToSelected]);
+  const requestWalkthrough = useCallback(() => selectedIdRef.current && sendOrPaste(selectedIdRef.current, t('app.walkthroughRequest')), [sendOrPaste]);
   const askRange = useCallback(
-    (q: RangeQuestion) => sendToSelected(rangeQuestionText(q.path, q.startLine, q.endLine, q.quote, q.text), []),
-    [sendToSelected],
+    (q: RangeQuestion) => selectedIdRef.current && sendOrPaste(selectedIdRef.current, rangeQuestionText(q.path, q.startLine, q.endLine, q.quote, q.text)),
+    [sendOrPaste],
   );
   const showWalk = useCallback(() => walkShown && showStep(walkShown), [walkShown, showStep]);
   // チャットのウォークスルーのツールの行から。start_walkthrough は今の場所（閉じていれば、最後に見たステップから開き直す）、show_code はその場所を開く
@@ -886,13 +892,13 @@ export function App() {
             onOpenTask={openTask}
             onStopTask={stopTask}
             stoppingTasks={stoppingTasks}
-            terminalOpen={terminalMode}
+            terminalOpen={!!selected.terminal}
             comments={sessionComments}
             onCommentsChange={replaceComments}
             onShowComment={showCommentOf}
             onShowContext={showContext}
             onShowShell={showShell}
-            onToggleTerminal={toggleClaudeScreen}
+            onToggleTerminal={() => void switchTerminalMode(selected, tasks.some((task) => task.state === 'running'))}
             onOpenFile={openAbsolute}
             onResume={openSelected}
             onUnarchive={openSelected}

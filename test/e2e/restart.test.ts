@@ -42,10 +42,6 @@ describe('アプリを起動し直しても、Claude Code の会話を続けら�
     await row.waitFor();
     await row.click();
     await app.byText('.chat-list', FIRST).waitFor();
-    // 引き継いだ Claude Code の画面も、そのまま描ける
-    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
-    await app.page.locator('.claude-screen .terminal-instance .xterm-rows').getByText(FIRST).waitFor();
-    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
   });
 
   it('引き継いだ Claude Code に続きを送れる', async () => {
@@ -61,6 +57,21 @@ describe('アプリを起動し直しても、Claude Code の会話を続けら�
     await app.send('再起動のあとも');
     await app.byText('.chat-list', THIRD).waitFor();
     expect(app.api.lastPrompts).toContain('再起動のあとも');
+  });
+
+  it('ターミナルモードのまま「動かしたまま終了」で起動し直すと、ターミナルモードのまま引き継ぐ。チャットに戻せる', async () => {
+    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
+    const rows = () => app.page.locator('.claude-screen .terminal-instance .xterm-rows');
+    await rows().getByText(FIRST, { exact: false }).first().waitFor();
+    await app.restart();
+    await app.byText('.session-list .session-row', PROMPT).click();
+    // 引き継いだ TUI の画面を、そのまま描ける（チャットに戻さない）
+    await rows().getByText(FIRST, { exact: false }).first().waitFor();
+    expect(await app.page.locator('.chat-list-wrap').isVisible()).toBe(false);
+    app.page.once('dialog', (dialog) => void dialog.accept());
+    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
+    await app.page.locator('.chat-list-wrap').waitFor();
+    await app.byText('.chat-list', THIRD).waitFor();
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

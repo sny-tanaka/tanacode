@@ -94,12 +94,12 @@ function Pane({
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
-        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null }}
+        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null, terminal: terminalOpen }}
         sessions={child ? [PARENT, session] : [session]}
         onSelectSession={noop}
         chat={{
           ...EMPTY_CHAT,
-          status: exited ? 'exited' : worktree?.preparing || starting ? 'starting' : running ? 'running' : 'idle',
+          status: exited ? 'exited' : worktree?.preparing || starting ? 'starting' : running || terminalOpen ? 'running' : 'idle',
           exitCode: exited ? 0 : null,
           items,
           unsent,
@@ -342,8 +342,3 @@ export const ターミナルモードでコメントがある: Story = {
   args: { items: conversation(4), terminalMode: true, comments: COMMENTS },
 };
 
-// Claude Code が終了したら、画面の下に「再開」を出す
-export const ターミナルモードで終了した: Story = {
-  beforeEach: showClaudeScreen,
-  args: { items: conversation(4), terminalMode: true, exited: true },
-};

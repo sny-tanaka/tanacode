@@ -12,6 +12,7 @@
   "test/cli/session.test.ts": 22,
   "test/cli/sessions.test.ts": 59,
   "test/cli/stop.test.ts": 31,
+  "test/cli/terminal-mode.test.ts": 2,
   "test/cli/terminal.test.ts": 27,
   "test/cli/worktree.test.ts": 92
 }

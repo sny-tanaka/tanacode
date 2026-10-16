@@ -2608,6 +2608,11 @@ button.session-ref:hover {
   transform: scale(0.8);
   background: var(--text-tertiary);
 }
+/* ターミナルモード（人が Claude Code の画面で操作している） */
+.session-indicator.terminal {
+  transform: scale(0.8);
+  background: var(--ide);
+}
 /* 進行中・処理中の印。グラデーションの尾を引いて回る輪（ぐるぐる）。
    実行中の丸・セッションの状態の印・ステータスバーの印も、同じ見た目にそろえる */
 .spinner,

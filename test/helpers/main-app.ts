@@ -371,6 +371,7 @@ const SessionManager = fakeClass('SessionManager', {
   configure: echo('manager.configure'),
   restart: echo('manager.restart'),
   setRemoteControl: echo('manager.setRemoteControl'),
+  setTerminalMode: echo('manager.setTerminalMode'),
   remoteAvailable: echo('manager.remoteAvailable'),
   progress: echo('manager.progress'),
   pendingQuestion: echo('manager.pendingQuestion'),

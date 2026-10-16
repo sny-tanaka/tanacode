@@ -317,7 +317,8 @@ export function statusOf(chat: ChatState, state: SessionState | null | undefined
     case 'idle':
     case 'background':
       return 'idle';
-    // 作業中と、ターンの途中で人の答えを待っているもの（質問・許可・ブラウザでの操作）
+    // 作業中と、ターンの途中で人の答えを待っているもの（質問・許可・ブラウザでの操作）。ターミナルモード（人が TUI で操作している）も、
+    // チャットからは操作しない（ヘッダーのモード・モデル・巻き戻し・最適化圧縮を押せなくする）
     default:
       return 'running';
   }

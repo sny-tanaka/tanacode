@@ -14,7 +14,7 @@ import {
   type TranscriptEntry,
   type UnsentPrompt,
 } from '@shared/chat';
-import { stripControlChars } from '@shared/prompt-keys';
+import { bracketedPaste, stripControlChars } from '@shared/prompt-keys';
 import { t } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import { modeWithin, type PermissionRequest, type SessionState } from '@shared/session-tools';
@@ -45,7 +45,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
-import { ClaudeSession, transcriptPath } from './claude-session';
+import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
@@ -59,7 +59,7 @@ import { PLAN_TOOL, permissionOf, permissionResult, questionResult } from './req
 import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
-import type { HostedPipeInfo } from './pty-host-protocol';
+import type { HostedPipeInfo, HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
 import { askQuestionsOf } from './screen-parser';
 import { TaskRouter } from './task-router';
@@ -114,6 +114,8 @@ const SLOW_START_MS = 10_000;
 const PROGRESS_TICK_MS = 1000;
 
 // ターミナルモードで Claude Code の画面を見ていないときの pty サイズ（ターミナルモードで見ているあいだだけ、ペインの大きさに合わせる）
+// 引き継いだ TUI に描き直させるとき、大きさをずらしてから戻すまで（続けて変えると、1 回の変化にまとまって描き直さないことがある）
+const REDRAW_NUDGE_MS = 100;
 export const DEFAULT_PTY_SIZE = { cols: 120, rows: 40 };
 
 // 送ったが、まだ会話に出ていない発言。at: 送った時刻 / shown: チャットに出す（発言。親セッション・子セッションの知らせや
@@ -160,6 +162,16 @@ type Runtime = {
   plansDirectory: string | null;
   // 引き継いだときに出し直した要求を受け取っている途中（質問の待ちの登録から届く知らせでも、通知しない）
   quietAttention: boolean;
+  // ターミナルモード（今の claude は TUI で、人が画面で操作する。設計書 9 節）。チャットの送信・カード・親の指示は受け付けない
+  terminal: boolean;
+  // チャットとターミナルモードを切り替えている途中（今の claude を止めて、もう片方で起動し直すまで）
+  switching: boolean;
+  // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
+  tuiTurn: boolean;
+  // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
+  tuiAsk: { kind: 'permission' | 'question'; menu: Menu } | null;
+  // 引き継いだ TUI の画面を、次に画面を出したとき（resize）に描き直させる
+  redrawOnResize: boolean;
   // initialize の返事が来た（コマンド・モデルの一覧など）。来るまでは起動中
   init: InitializeResponse | null;
   // 入力を受け付けられるようになった（ready を配信した）。worktree の準備が終わるまでは配信しない
@@ -359,6 +371,7 @@ export class SessionManager {
           running: !!rt?.process,
           state: this.stateOf(r.id),
           mode: rt?.process ? (rt.knownMode ?? null) : null,
+          terminal: !!rt?.process && rt.terminal,
           unread: !!rt?.unread,
           attention: rt?.process ? (rt.attention ?? (this.browserAsks.has(r.id) ? 'browser' : null)) : null,
           backgroundTasks: rt?.process ? rt.background : 0,
@@ -641,6 +654,9 @@ export class SessionManager {
     if (this.restoring.has(id)) return 'starting';
     const rt = this.runtimes.get(id);
     if (!rt?.process) return 'exited';
+    // チャットとターミナルモードを切り替えている途中は起動中。ターミナルモードの間は、人が TUI で操作している
+    if (rt.switching) return 'starting';
+    if (rt.terminal) return 'terminal';
     // Claude Code が答えを待っている要求（AskUserQuestion は質問、ほかは許可の確認）
     const request = firstRequest(rt);
     if (request) return request.tool_name === 'AskUserQuestion' ? 'question' : 'permission';
@@ -720,7 +736,90 @@ export class SessionManager {
     // ファイルの変化は、1 回の書き込みで何度か知らされることがある。同じ書き込み（同じ時刻）は数え直さない
     if (rt.permission?.at === at) return;
     rt.permission = { seq: (rt.permission?.seq ?? 0) + 1, at, tool: request.tool_name, input: request.tool_input as Record<string, unknown>, agent };
+    // ターミナルモードの間は、TUI が出した確認・質問を、通知と一覧の印にする（答えたことは、会話ログの行で分かる）
+    if (rt.terminal && rt.process) {
+      const input = request.tool_input as Record<string, unknown>;
+      const ask = { tool_name: request.tool_name, input } as CanUseToolRequest;
+      rt.tuiAsk = { kind: request.tool_name === 'AskUserQuestion' ? 'question' : 'permission', menu: requestMenu(ask) };
+      this.updateAttention(id, rt);
+    }
     this.changed(id);
+  }
+
+  // ターミナルモードの TUI の入力欄に貼る（ブラケットペースト。Enter は送らない。人が押す）。ターミナルモードでなければ false
+  pasteIntoTerminal(id: string, text: string): boolean {
+    const rt = this.runtimes.get(id);
+    if (!rt?.terminal || rt.switching || !rt.process) return false;
+    rt.process.write(bracketedPaste(stripControlChars(text)));
+    return true;
+  }
+
+  // 書くだけの Stop のフックが、TUI のターンの終わりを知らせた（ターミナルモード）
+  tuiIdle(id: string): void {
+    const rt = this.runtimes.get(id);
+    if (!rt?.terminal || (!rt.tuiTurn && !rt.tuiAsk)) return;
+    rt.tuiTurn = false;
+    rt.tuiAsk = null;
+    this.updateAttention(id, rt);
+  }
+
+  // チャットとターミナルモードを切り替える（設計書 9 節）。今の claude を止めて終わりを確かめ、もう片方で --resume する
+  // （同じ会話を 2 つのプロセスで同時に開かない）。手が空いているときだけ（チャットはターン・答え待ちの要求・送る予定の発言が無い、
+  // TUI はターンの外）。裏のタスクが動いていれば、止まることを人が確かめた（stopTasks）ときだけ。切り替えられなければ理由を投げる。
+  // 権限モードは今のもの（TUI で変えたものは会話ログから分かる）を渡す。bypassPermissions は、起動し直しと同じく引き継がない
+  async setTerminalMode(id: string, on: boolean, { stopTasks = false }: { stopTasks?: boolean } = {}): Promise<void> {
+    const rt = this.runtimes.get(id);
+    const process = rt?.process;
+    const record = this.store.get(id);
+    if (!rt || !process || !record) throw new Error(t('main.terminal.notRunning'));
+    if (rt.terminal === on) return;
+    if (rt.switching) throw new Error(t('main.terminal.switching'));
+    if (on ? !this.chatIdle(id, rt) : rt.tuiTurn) throw new Error(t(on ? 'main.terminal.busy' : 'main.terminal.tuiBusy'));
+    if (rt.background > 0 && !stopTasks) throw new Error(t('main.terminal.tasksRunning'));
+    rt.switching = true;
+    this.emitSessions();
+    this.changed(id);
+    try {
+      // Remote Control を使わないセッションでつながっていれば、切ってから止める（TUI の --resume は前のつながりにつなぎ直し、
+      // キーを送らない TUI では切れないため）
+      if (on && !this.wantsRemote(record) && rt.remoteConnected && process.client) await disableRemoteControl(process.client).catch(() => undefined);
+      const mode = rt.knownMode;
+      const stopped = await process.stop(this.stopStepMs);
+      // 止めている間に、ほかで起動し直した・アーカイブした
+      if (this.runtimes.get(id) !== rt) return;
+      if (rt.process === process && !stopped) throw new Error(t('main.session.notStopped'));
+      if (rt.process) return;
+      this.start(id, mode && mode !== 'bypassPermissions' ? mode : null, null, on ? 'tui' : 'stream');
+    } finally {
+      rt.switching = false;
+      this.emitSessions();
+      this.changed(id);
+    }
+  }
+
+  // ターミナルモードで、会話ログに行が増えた。人の発言でターンが始まり、ターンの終わりの行で終わる（終わりは完了の知らせを出す）。
+  // TUI が出した確認・質問は、答え（ツールの結果などの user の行）が書かれたら済んだことにする
+  private tuiEntry(id: string, rt: Runtime, entry: TranscriptEntry, events: ChatEvent[]): void {
+    let changed = false;
+    if (entry.type === 'user' && rt.tuiAsk) {
+      rt.tuiAsk = null;
+      changed = true;
+    }
+    if (events.some((e) => e.type === 'user' && !e.command)) {
+      rt.tuiTurn = true;
+      changed = true;
+    }
+    if (events.some((e) => e.type === 'turn-end')) {
+      rt.tuiTurn = false;
+      changed = true;
+      this.turnCompleted(id, rt);
+    }
+    if (changed) this.updateAttention(id, rt);
+  }
+
+  // チャットの手が空いている（ターン・答え待ちの要求・送る予定の発言が無い）
+  private chatIdle(id: string, rt: Runtime): boolean {
+    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.unsent.size === 0 && rt.pendingSubmits === 0 && !this.questions.first(id);
   }
 
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null。
@@ -916,6 +1015,8 @@ export class SessionManager {
   async stopTask(id: string, ref: TaskRef): Promise<string | null> {
     const rt = this.runtimes.get(id);
     const client = rt?.process?.client;
+    // ターミナルモードの TUI には要求を送れない（人が画面の /tasks で止める）
+    if (rt?.process && rt.terminal) return t('main.task.terminalMode');
     if (!rt || !client) return t('main.task.notRunning');
     if (!taskRunning(rt, ref)) return t('main.task.nothingToStop');
     const taskId = rt.taskIds.get(ref.toolUseId) ?? (ref.kind === 'bash' ? (rt.bashTasks.all().find((task) => task.toolUseId === ref.toolUseId)?.taskId ?? null) : null);
@@ -1175,7 +1276,8 @@ export class SessionManager {
       throw new Error(t('main.session.notStopped'));
     }
     if (rt.process) return;
-    this.start(id, mode && mode !== 'bypassPermissions' ? mode : null);
+    // ターミナルモードなら、TUI で起動し直す
+    this.start(id, mode && mode !== 'bypassPermissions' ? mode : null, null, rt.terminal ? 'tui' : 'stream');
   }
 
   // ターミナルモードの TUI に打つ（人が画面で打った文字）
@@ -1189,6 +1291,8 @@ export class SessionManager {
   submit(id: string, rawText: string, attachments: string[] = [], pastes: string[] = [], priority?: 'later'): Promise<void> {
     const rt = this.runtimes.get(id);
     if (!rt?.process) return Promise.resolve();
+    // ターミナルモードの間は、人が TUI で打つ（チャットからは送らない）
+    if (rt.terminal || rt.switching) return Promise.reject(new Error(t('main.send.terminalMode')));
     const run = async () => {
       const process = rt.process;
       const client = process?.client;
@@ -1252,6 +1356,8 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     const process = rt?.process;
     if (!rt || !process) throw new Error(t('main.send.notRunning'));
+    // ターミナルモードの間に来た親の指示・予約・知らせは、預からずに断る（決めたこと）
+    if (rt.terminal || rt.switching) throw new Error(t('main.send.terminalMode'));
     rt.pendingSubmits += 1;
     this.changed(id);
     try {
@@ -1294,7 +1400,17 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     if (!rt) return;
     rt.size = { cols, rows };
-    rt.process?.resize(cols, rows);
+    const process = rt.process;
+    if (!process) return;
+    // 引き継いだ TUI の画面は、前のアプリが描いたもので、今の画面には届いていない（画面の用意より前に送った）。大きさが前と同じだと
+    // TUI は描き直さないので、最初の 1 回は大きさを一度ずらしてから戻し、画面全体を描き直させる
+    if (rt.redrawOnResize && rt.terminal) {
+      rt.redrawOnResize = false;
+      process.resize(cols, Math.max(1, rows - 1));
+      setTimeout(() => rt.process === process && process.resize(rt.size.cols, rt.size.rows), REDRAW_NUDGE_MS).unref?.();
+      return;
+    }
+    process.resize(cols, rows);
   }
 
   // 前のアプリが起動して、アプリの再起動をまたいで動いている claude を引き継ぐ
@@ -1305,11 +1421,12 @@ export class SessionManager {
         this.host.forget(info.id);
         continue;
       }
-      if (info.kind !== 'pipe' || !record || record.archived || this.runtimes.get(record.id)?.process) {
+      if (!record || record.archived || this.runtimes.get(record.id)?.process) {
         if (info.kind === 'pty') this.host.attach(info).kill();
         else this.host.attachPipe(info).kill('SIGTERM');
         continue;
       }
+      // pty の claude は、前のアプリがターミナルモードで起動したもの（PROTOCOL 3 のホストには、ほかに pty の claude はいない）
       this.start(record.id, null, info);
     }
   }
@@ -1360,9 +1477,11 @@ export class SessionManager {
 
   // mode: --permission-mode で渡す権限モード（このセッションだけ）。null なら startMode で決める。
   // adopted: 起動せずに引き継ぐ、動いている claude
-  private start(id: string, mode: PermissionMode | null = null, adopted: HostedPipeInfo | null = null): void {
+  // kind: 起動の種類（チャットは stream、ターミナルモードは tui）。引き継ぐ claude は、ホストのプロセスの種類（pipe・pty）で決まる
+  private start(id: string, mode: PermissionMode | null = null, adopted: HostedPipeInfo | HostedPtyInfo | null = null, kind: LaunchKind = 'stream'): void {
     const record = this.store.get(id);
     if (!record) throw new Error(`unknown session: ${id}`);
+    const tui = adopted ? adopted.kind === 'pty' : kind === 'tui';
 
     // 設定ファイルを使えなければ、何も変えずにここで断る（標準の設定に黙って切り替わらないように）。
     // 引き継ぐ claude は、前のアプリが起動したままなので、書き直さない
@@ -1433,6 +1552,11 @@ export class SessionManager {
         planInputs: new Map(),
         plansDirectory: null,
         quietAttention: false,
+        terminal: false,
+        switching: false,
+        tuiTurn: false,
+        tuiAsk: null,
+        redrawOnResize: false,
         init: null,
         ready: false,
         knownMode: null,
@@ -1484,10 +1608,14 @@ export class SessionManager {
     runtime.attention = null;
     runtime.ready = false;
     runtime.init = null;
+    runtime.terminal = tui;
+    runtime.tuiTurn = false;
+    runtime.tuiAsk = null;
+    runtime.redrawOnResize = adopted?.kind === 'pty';
     runtime.freshConversation = false;
     runtime.requests.clear();
     // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）
-    runtime.unsent = new Map(adopted ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
+    runtime.unsent = new Map(adopted && !tui ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
     if (record.unsent) this.store.update(id, { unsent: null });
     // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す（Claude Code が知らせたら、そちらにする）
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
@@ -1521,14 +1649,14 @@ export class SessionManager {
       this.host,
       {
         sessionId: id,
-        kind: 'stream',
+        kind: tui ? 'tui' : 'stream',
         cwd: record.cwd,
         worktree: record.worktree?.name ?? null,
         worktreeRoot: record.worktree?.root ?? null,
         claudeSessionId,
         resume,
-        // stream-json は、起動したあとに remote_control の要求でつなぐ
-        remoteControlName: null,
+        // stream-json は、起動したあとに remote_control の要求でつなぐ。TUI は起動の引数で（前のつながりに自動でつなぎ直す。実測）
+        remoteControlName: tui && this.wantsRemote(record) ? remoteName(record.cwd) : null,
         model: record.model ?? null,
         effort: record.effort ?? null,
         permissionMode,
@@ -1543,12 +1671,12 @@ export class SessionManager {
         claudeDir: this.claudeDir,
         // 追加したあとで消した・動かしたフォルダは渡さない（エクスプローラーには残し、人が外せるようにする）
         addDirs: (record.addedFolders ?? []).filter((folder) => existsSync(folder)),
-        streamLog: this.streamLogFor(id),
+        streamLog: tui ? null : this.streamLogFor(id),
         ...rt.size,
       },
       {
         onData: (data) => this.listeners.onPtyData(id, data),
-        stream: {
+        stream: tui ? undefined : {
           onMessage: (message, past) => {
             if (runtime.process === process) this.handleStream(id, runtime, message, past);
           },
@@ -1584,7 +1712,10 @@ export class SessionManager {
             runtime.unsent.clear();
             this.emitQueue(id, runtime);
           }
-          this.pushEvents(id, [{ type: 'process-exit', exitCode }]);
+          runtime.tuiTurn = false;
+          runtime.tuiAsk = null;
+          // チャットとターミナルモードの切り替えで止めたときは、終了を出さない（すぐもう片方で起動し直す）
+          if (!runtime.switching) this.pushEvents(id, [{ type: 'process-exit', exitCode }]);
           this.emitSessions();
         },
         onEntry: (entry, isHistory) => this.handleEntry(id, entry, isHistory),
@@ -1611,8 +1742,13 @@ export class SessionManager {
       this.emitQueue(id, runtime);
       for (const prompt of runtime.unsent.values()) if (prompt.state === 'sending') this.expireSending(id, runtime, prompt.id);
     }
-    if (!adopted) this.watchStart(id, runtime, process);
-    void this.initialize(id, runtime, process, adopted, claudeSessionId);
+    if (tui) {
+      // TUI には initialize を送らない（人が画面で操作する）。起動したら受け付けたことにする
+      this.markReady(id, runtime);
+    } else {
+      if (!adopted) this.watchStart(id, runtime, process);
+      void this.initialize(id, runtime, process, adopted as HostedPipeInfo | null, claudeSessionId);
+    }
     if (creating) {
       // この起動が続いているか。終わった・起動し直した・アーカイブした（止めたときは、終了の知らせが来ない）ら、待つのをやめる
       const alive = () => runtime.process === process && this.runtimes.get(id) === runtime;
@@ -2184,9 +2320,17 @@ export class SessionManager {
   // quiet: 通知しない（引き継いだときに出し直した要求）
   private updateAttention(id: string, rt: Runtime, quiet = false): void {
     this.listeners.onPermission?.(id, this.pendingPermission(id));
-    const request = firstRequest(rt);
-    const pending = this.questions.first(id);
-    const attention: SessionAttention = request ? (request.tool_name === 'AskUserQuestion' ? 'question' : 'permission') : pending ? 'question' : null;
+    const request = rt.terminal ? undefined : firstRequest(rt);
+    const pending = rt.terminal ? null : this.questions.first(id);
+    const attention: SessionAttention = rt.terminal
+      ? (rt.tuiAsk?.kind ?? null)
+      : request
+        ? request.tool_name === 'AskUserQuestion'
+          ? 'question'
+          : 'permission'
+        : pending
+          ? 'question'
+          : null;
     if (attention === rt.attention) {
       this.emitSessions();
       this.changed(id);
@@ -2198,7 +2342,8 @@ export class SessionManager {
     this.changed(id);
     const summary = this.summary(id);
     if (!summary || !rt.process || before !== null || attention === null || quiet || rt.quietAttention) return;
-    if (request) this.listeners.onAttention(summary, { kind: 'menu', menu: requestMenu(request) });
+    if (rt.terminal && rt.tuiAsk) this.listeners.onAttention(summary, { kind: 'menu', menu: rt.tuiAsk.menu });
+    else if (request) this.listeners.onAttention(summary, { kind: 'menu', menu: requestMenu(request) });
     else if (pending) this.listeners.onAttention(summary, { kind: 'menu', menu: pendingMenu(pending) });
   }
 
@@ -2282,8 +2427,10 @@ export class SessionManager {
     if (rt) this.followBranch(id, rt, entry, isHistory);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない
     let events = toChatEvents(entry, record.cwd, false, rememberImage).filter((e) => !(past && e.type === 'remote-control'));
-    // 今の claude のターンの終わりは、stream-json の result で決める（-p は turn_duration を書かない。ほかの行の終わりと二重にしない）
-    if (rt && !isHistory) events = events.filter((e) => e.type !== 'turn-end');
+    // 今の claude のターンの終わりは、stream-json の result で決める（-p は turn_duration を書かない。ほかの行の終わりと二重にしない）。
+    // ターミナルモード（TUI）では result が来ないので、会話ログのターンの終わりを使う
+    if (rt && !isHistory && !rt.terminal) events = events.filter((e) => e.type !== 'turn-end');
+    if (rt?.terminal && !past) this.tuiEntry(id, rt, entry, events);
     if (rt && isHistory) {
       const bridge = bridgeUrlOf(entry);
       if (bridge !== undefined) rt.lastBridgeUrl = bridge;

@@ -3,7 +3,8 @@ import type { SessionState } from '@shared/session-tools';
 
 // アプリから Claude への知らせ（子の作業が終わった・チェックリストに返信があった など）を、手の空いたセッションに送る列。
 // 作業中なら手が空くまで待つ。続けて届いた知らせは 1 つにまとめる。
-// 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる
+// 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる。送り先がターミナルモードなら、捨てるか（親への知らせ。
+// 預からない。決めたこと）、TUI の入力欄に貼るだけにする（人がボタンで頼んだもの。Enter は人が押す。設計書 9 節）
 
 // SessionManager のうち、知らせに使うもの
 export type NoticeHost = {
@@ -11,6 +12,8 @@ export type NoticeHost = {
   stateOf(id: string): SessionState | null;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   watchState(listener: (id: string) => void): () => void;
+  // ターミナルモードの TUI の入力欄に貼る（Enter は送らない）。貼れなければ false
+  pasteIntoTerminal?(id: string, text: string): boolean;
 };
 
 type Deps<T> = {
@@ -21,6 +24,8 @@ type Deps<T> = {
   compose: (target: string, items: Map<string, T>) => string | null;
   // まとめるまでの待ち（テストでは短くする）
   delayMs?: number;
+  // 送り先がターミナルモードのとき。paste: TUI の入力欄に貼る / 省くと捨てる
+  onTerminal?: 'paste';
 };
 
 // 知らせを受け取れる状態（ターンの外）
@@ -39,7 +44,7 @@ export class SessionNotices<T> {
     // 送り先の手が空いたら、たまっている知らせを送る
     this.unwatch = deps.host.watchState((id) => {
       const state = deps.host.stateOf(id);
-      if (state && RECEIVE_STATES.has(state) && this.pending.has(id)) this.schedule(id);
+      if (state && (RECEIVE_STATES.has(state) || state === 'terminal') && this.pending.has(id)) this.schedule(id);
     });
   }
 
@@ -79,6 +84,12 @@ export class SessionNotices<T> {
     const session = host.list().find((s) => s.id === target);
     if (!this.deps.enabled() || !session || session.archived || host.stateOf(target) === 'exited') {
       this.pending.delete(target);
+      return;
+    }
+    if (host.stateOf(target) === 'terminal') {
+      this.pending.delete(target);
+      const text = this.deps.onTerminal === 'paste' ? this.deps.compose(target, queue) : null;
+      if (text) host.pasteIntoTerminal?.(target, text);
       return;
     }
     // 作業中なら、手が空いたときに送る（watchState）

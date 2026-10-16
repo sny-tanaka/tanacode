@@ -61,6 +61,7 @@ export const IpcChannel = {
   SessionsConfigure: 'sessions:configure',
   SessionsRestart: 'sessions:restart',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
+  SessionsSetTerminalMode: 'sessions:set-terminal-mode',
   SessionsSetAutoCompact: 'sessions:set-auto-compact',
   RemoteControlAvailable: 'remote-control:available',
   SessionsRename: 'sessions:rename',
@@ -243,6 +244,8 @@ export type SessionSummary = {
   state: SessionState | null;
   // 動いている Claude Code の今の権限モード（init・status と、アプリが変えた結果。設計書 7 節）。動いていない・分からなければ null
   mode: PermissionMode | null;
+  // ターミナルモード（動いている Claude Code が TUI で、人が画面で操作している。設計書 9 節）
+  terminal?: boolean;
   unread: boolean;
   // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可 /
   // other: フォルダの信頼確認や認識できない対話画面など / browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
@@ -428,6 +431,9 @@ export type TanacodeApi = {
     submit(id: string, text: string, attachments: string[], pastes?: string[]): Promise<void>;
     // 作業を中断する（Esc を送る）
     interrupt(id: string): void;
+    // チャットとターミナルモードを切り替える（今の Claude Code を止めて、もう片方で --resume する）。手が空いているときだけ。
+    // stopTasks: 裏のタスクが止まることを人が確かめた。切り替えられなければ理由を添えて失敗する
+    setTerminalMode(id: string, on: boolean, options?: { stopTasks?: boolean }): Promise<void>;
     // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
     configure(id: string, options: SessionOptions): Promise<void>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）
@@ -771,6 +777,7 @@ export type IpcInvoke = {
   [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
   [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
+  [IpcChannel.SessionsSetTerminalMode]: Api['sessions']['setTerminalMode'];
   [IpcChannel.SessionsSetAutoCompact]: Api['sessions']['setAutoCompact'];
   [IpcChannel.RemoteControlAvailable]: Api['sessions']['remoteControlAvailable'];
   [IpcChannel.SessionsRename]: Api['sessions']['rename'];

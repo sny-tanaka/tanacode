@@ -113,6 +113,7 @@
     },
     "task": {
       "notRunning": "Can't stop it because the session isn't running",
+      "terminalMode": "Can't stop it from here in terminal mode. Use /tasks in the Claude Code screen.",
       "nothingToStop": "Nothing to stop (no running background tasks found)",
       "busy": "Another operation is in progress. Wait a moment and try again.",
       "waitingAnswer": "Can't stop it right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then stop it.",
@@ -130,7 +131,8 @@
       "waitingAnswer": "Couldn't send because Claude Code is waiting for an answer to a question or confirmation",
       "draft": "Couldn't send because the input in the terminal has unsent text",
       "busy": "Couldn't send because Claude Code is busy",
-      "imagesSkipped": "Sent without some images that can't be sent: {names} (only readable PNG, JPEG, GIF, and WebP files can be sent)"
+      "imagesSkipped": "Sent without some images that can't be sent: {names} (only readable PNG, JPEG, GIF, and WebP files can be sent)",
+      "terminalMode": "Can't send while in terminal mode. Switch back to the chat first"
     },
     "worktree": {
       "untrustedFolder": "Claude Code doesn't trust this folder yet. Start a session without a worktree once and accept the folder trust prompt, then start with a worktree.",
@@ -261,6 +263,13 @@
       "whereProject": "this folder's shared settings",
       "whereUser": "all folders",
       "whereSession": "this session only"
+    },
+    "terminal": {
+      "notRunning": "Claude Code isn't running",
+      "switching": "Switching between the chat and terminal mode",
+      "busy": "Can't switch to terminal mode while Claude is working, a prompt is waiting for an answer, or a message is waiting to be sent",
+      "tuiBusy": "Claude Code is working. Switch back to the chat after the turn ends",
+      "tasksRunning": "Background tasks are running. Switching stops them"
     }
   },
   "commands": {
@@ -451,7 +460,6 @@
       "untitledSession": "New Session",
       "childQuestion": "Child session “{name}” ({id}) is waiting for an answer to its question (you can answer it with answer_question).",
       "childPermission": "Child session “{name}” ({id}) is waiting for permission. Read the prompt with get_session and answer it with answer_permission, or ask the user if you can't decide.",
-      "childWaiting": "Child session “{name}” ({id}) is waiting for input in the terminal. Let the user know.",
       "childBrowser": "Child session “{name}” ({id}) is waiting for the user to act in the in-app browser. Let the user know.",
       "childExited": "Child session “{name}” ({id}) has exited.",
       "childDone": "Child session “{name}” ({id}) has finished its work.",
@@ -460,7 +468,8 @@
       "checkCards": "Read it with card_get, act on it, and write your reply with card_reply.",
       "clipped": "{text}… (read the rest with card_get)",
       "cardsCopied": "Session “{session}” sent {numbers} ({titles}) to “{list}”.",
-      "cardTitle": "“{title}”"
+      "cardTitle": "“{title}”",
+      "childTerminal": "Child session “{name}” ({id}) is in terminal mode: the user is working in its Claude Code screen."
     },
     "checklistCopy": {
       "sessionNotFound": "Session not found",
@@ -512,7 +521,7 @@
       "export": "Export session…",
       "exportTip": "Export this session's history to a single HTML file",
       "terminal": "Terminal mode",
-      "terminalTip": "Show and use Claude Code in its terminal view instead of the chat",
+      "terminalTip": "Show and operate Claude Code in its own terminal screen instead of the chat. Switching restarts Claude Code and continues the same conversation (only while it's idle)",
       "pasteComments": "Paste into prompt",
       "pasteCommentsTip": "Paste the code comments into Claude Code's prompt (press Enter to send)",
       "starting": "Starting Claude Code…",
@@ -550,7 +559,10 @@
       "modeTitle": "Permission mode (this session only; same as Shift+Tab)",
       "mode": "Mode",
       "bypassPermissions": "Bypass permissions",
-      "slowStartStderr": "The end of Claude Code's standard error"
+      "slowStartStderr": "The end of Claude Code's standard error",
+      "terminalStopsTasks": "Background tasks are running. Switching restarts Claude Code, which stops them. Switch anyway?",
+      "leaveTerminal": "Going back to the chat. Anything typed but not sent in Claude Code's screen will be lost. Go back?",
+      "terminalFailed": "Couldn't switch ({error})"
     },
     "toolCard": {
       "running": "Running…",
@@ -690,7 +702,8 @@
       "wontConnect": "Won't connect when the session starts",
       "connected": "Connected",
       "enabled": "Remote Control is on (it connects once Claude Code has started and the connection is ready)",
-      "disconnected": "Not connected"
+      "disconnected": "Not connected",
+      "lockedInTerminal": "Can't be switched in terminal mode (use /remote-control in Claude Code's screen)"
     },
     "todo": {
       "title": "Todos"
@@ -1046,7 +1059,8 @@
       "background": "Waiting on {count} background tasks",
       "background_one": "Waiting on {count} background task",
       "unread": "New response",
-      "exited": "Exited"
+      "exited": "Exited",
+      "terminal": "Terminal mode"
     },
     "worktreeDialog": {
       "archiveFailed": "Couldn't archive the session: {error}",

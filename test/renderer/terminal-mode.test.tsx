@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
@@ -8,8 +8,7 @@ import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatStat
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
 import { useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
-import { syncSharedPrefs } from '../../src/renderer/src/sharedPrefs';
-import { useTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
+import { switchTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
 import './dom';
 import { mockApi } from './mock-api';
 
@@ -218,18 +217,8 @@ describe('ターミナルモード: Claude Code の画面を出す', () => {
   });
 });
 
+// Claude Code が終了すると、ターミナルモードは終わってチャットに戻る（「再開」はチャットに出る）
 describe('ターミナルモード: 画面の下の知らせ', () => {
-  it('Claude Code が終了したら、画面の下に「再開」を出す', () => {
-    const onResume = vi.fn();
-    const { container, rerender } = render(<ClaudePane {...props({ onResume })} />);
-    expect(container.querySelector('.claude-screen-notes')).toBeNull();
-    rerender(<ClaudePane {...props({ onResume, chat: chatOf({ status: 'exited', exitCode: 1 }) })} />);
-    const notes = container.querySelector<HTMLElement>('.claude-screen-notes')!;
-    expect(notes.textContent).toContain('Claude Code が終了しました（code 1）');
-    fireEvent.click(notes.querySelector('button')!);
-    expect(onResume).toHaveBeenCalledTimes(1);
-  });
-
   it('コードへのコメントは画面の下に出し、「入力欄に貼る」で Claude Code の入力欄に貼って外す（送るのは、人が画面で Enter を押したとき）', () => {
     const onCommentsChange = vi.fn();
     const onShowComment = vi.fn();
@@ -292,31 +281,40 @@ describe('ターミナルモード: 入力欄への差し込み（「Claude へ�
   });
 });
 
-describe('ターミナルモードを覚える（useTerminalMode）', () => {
-  it('はじめはチャット。切り替えたら、次に起動したときもそのまま。ほかのプロファイルの画面にも配る', () => {
-    const first = renderHook(() => useTerminalMode());
-    expect(first.result.current[0]).toBe(false);
-    act(() => first.result.current[1](true));
-    expect(first.result.current[0]).toBe(true);
-    expect(api.argsOf('prefs.set')).toEqual([['tanacode.terminalMode', 'on']]);
-    first.unmount();
-
-    const second = renderHook(() => useTerminalMode());
-    expect(second.result.current[0]).toBe(true);
-    act(() => second.result.current[1](false));
-    expect(second.result.current[0]).toBe(false);
-    expect(api.argsOf('prefs.set').at(-1)).toEqual(['tanacode.terminalMode', 'off']);
-    second.unmount();
-    expect(renderHook(() => useTerminalMode()).result.current[0]).toBe(false);
+describe('チャットとターミナルモードの切り替え（switchTerminalMode。セッションごと）', () => {
+  const session = (over: Partial<SessionSummary> = {}) => ({ id: 's1', terminal: false, ...over }) as SessionSummary;
+  let confirms: string[];
+  let alerts: string[];
+  let answer: boolean;
+  beforeEach(() => {
+    confirms = [];
+    alerts = [];
+    answer = true;
+    vi.spyOn(window, 'confirm').mockImplementation((message) => (confirms.push(String(message)), answer));
+    vi.spyOn(window, 'alert').mockImplementation((message) => void alerts.push(String(message)));
   });
 
-  it('ほかのプロファイルの画面で切り替えたら、この画面も切り替わる', async () => {
-    const hook = renderHook(() => useTerminalMode());
-    api = mockApi({ 'prefs.sync': () => Promise.resolve({ 'tanacode.terminalMode': 'on' }) });
+  it('ターミナルモードにするよう main に頼む。裏のタスクが動いていれば、止まることを確かめてから', async () => {
+    await switchTerminalMode(session(), false);
+    expect(confirms).toEqual([]);
+    expect(api.argsOf('sessions.setTerminalMode')).toEqual([['s1', true, { stopTasks: false }]]);
+    await switchTerminalMode(session(), true);
+    expect(confirms).toHaveLength(1);
+    expect(confirms[0]).toContain('止まります');
+    expect(api.argsOf('sessions.setTerminalMode').at(-1)).toEqual(['s1', true, { stopTasks: true }]);
+    // やめたら頼まない
+    answer = false;
+    await switchTerminalMode(session(), true);
+    expect(api.argsOf('sessions.setTerminalMode')).toHaveLength(2);
+  });
+
+  it('チャットに戻すときは、画面の入力欄の書きかけが消えることを確かめる。切り替えられなければ、わけを出す', async () => {
+    await switchTerminalMode(session({ terminal: true }), false);
+    expect(confirms[0]).toContain('書きかけ');
+    expect(api.argsOf('sessions.setTerminalMode')).toEqual([['s1', false, { stopTasks: false }]]);
+    api = mockApi({ 'sessions.setTerminalMode': () => Promise.reject(new Error('作業中です')) });
     api.install();
-    await act(() => syncSharedPrefs());
-    expect(hook.result.current[0]).toBe(true);
-    act(() => api.emit('prefs.onChanged', { key: 'tanacode.terminalMode', value: 'off' }));
-    expect(hook.result.current[0]).toBe(false);
+    await switchTerminalMode(session(), false);
+    expect(alerts).toEqual(['切り替えられませんでした（作業中です）']);
   });
 });

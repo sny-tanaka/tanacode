@@ -157,7 +157,7 @@ export class ScheduledMessages {
     try {
       // 止まっているセッションは、起動し直してから送る（起動が終わるまでは、submitWhenReady が待つ）
       if (this.host.stateOf(sessionId) === 'exited') await this.host.open(sessionId);
-      // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間・ターミナルの入力欄に書きかけがある間も、送らずに待つ
+      // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間も、送らずに待つ（ターミナルモードの間は断られ、送れなかったものとして残る）
       // Claude の予約は、人の発言と見分けられるよう、囲みに入れて送る
       const text = message.by === 'claude' ? wakeupText(message.text) : message.text;
       await this.host.submitWhenReady(sessionId, text, Number.POSITIVE_INFINITY, {
