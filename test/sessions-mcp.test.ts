@@ -106,8 +106,8 @@ describe('中継と起動の引数', () => {
     ]);
     const off = ownSettings(null, true, false) as { hooks: { PreToolUse: Hook[]; PermissionRequest?: Hook[] } };
     expect(off.hooks.PreToolUse.some((h) => h.matcher === SESSIONS_GATED_TOOL)).toBe(false);
-    // 許可の確認を出す直前に、ツールの入力の全文を書かせるフック（何も決めない）。セッションの MCP を足すときだけ
-    expect(off.hooks.PermissionRequest).toBeUndefined();
+    // 許可の確認を出す直前に、ツールの入力の全文を書かせるフック（何も決めない）。セッションの MCP を足さなくても、いつも足す
+    expect(off.hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }]);
     const on = settings as unknown as { hooks: { PermissionRequest: Hook[] } };
     expect(on.hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }]);
   });

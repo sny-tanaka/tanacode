@@ -7,8 +7,18 @@ import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { StatusLineInfo } from '@shared/statusline';
 import { mergeSettings } from '../src/main/settings-files';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
-import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand, AUTO_COMPACT_STOP_COMMAND } from '../src/main/statusline';
-import { QUESTION_HOOK_COMMAND } from '../src/main/question-hook';
+import {
+  STATUS_FILE_ENV,
+  StatusLineWatcher,
+  ownSettings,
+  parseStatusLine,
+  sessionSettings,
+  userStatusLineCommand,
+  AUTO_COMPACT_STOP_COMMAND,
+  IDLE_FILE_COMMAND,
+  NOTIFICATION_FILE_COMMAND,
+  PERMISSION_FILE_COMMAND,
+} from '../src/main/statusline';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
 // JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json・ask.json）を使う。
@@ -97,26 +107,27 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(userStatusLineCommand()).toBeNull();
   });
 
-  it('AskUserQuestion と Bash の前のフックはいつも、ブラウザ・セッションのフックは使うときだけ足す', () => {
+  it('Bash の前のフックはいつも、ブラウザ・セッションのフックは使うときだけ足す。質問の入力を書くフックは足さない', () => {
     const matchers = (s: Record<string, unknown>) => (s as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.map((h) => h.matcher);
-    const base = ownSettings(null) as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } };
-    expect(base.hooks.PreToolUse[0]).toEqual({ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] });
-    expect(matchers(base)).toEqual(['AskUserQuestion', 'Bash']);
-    expect(matchers(ownSettings(null, true, true))).toHaveLength(4);
-    expect(matchers(ownSettings(null, false, true))).toEqual(['AskUserQuestion', 'Bash', expect.any(String)]);
-    expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(3);
+    expect(matchers(ownSettings(null))).toEqual(['Bash']);
+    expect(matchers(ownSettings(null, true, true))).toHaveLength(3);
+    expect(matchers(ownSettings(null, false, true))).toEqual(['Bash', expect.any(String)]);
+    expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(2);
   });
 
-  it('質問のフック（AskUserQuestion の PermissionRequest）は、材料があるときだけ足す。セッションの許可の確認の入力を書くフックと並べる', () => {
-    type Hooks = { hooks: { PermissionRequest?: { matcher: string; hooks: { command: string; timeout: number }[] }[] } };
-    const permission = (s: Record<string, unknown>) => (s as Hooks).hooks.PermissionRequest?.map((h) => h.matcher);
-    expect(permission(ownSettings(null))).toBeUndefined();
-    expect(permission(ownSettings(null, false, false, null, false, false, true))).toEqual(['AskUserQuestion']);
-    expect(permission(ownSettings(null, false, true, null, false, false, true))).toEqual(['AskUserQuestion', '*']);
-    expect(permission(ownSettings(null, false, true))).toEqual(['*']);
-    const hook = (ownSettings(null, false, false, null, false, false, true) as Hooks).hooks.PermissionRequest![0].hooks[0];
-    expect(hook).toEqual({ type: 'command', command: QUESTION_HOOK_COMMAND, timeout: 86400 });
-    expect(JSON.parse(sessionSettings(false, false, null, false, false, true)).hooks.PermissionRequest).toHaveLength(1);
+  it('書くだけのフック（許可の確認の入力・Claude Code の知らせ・ターンの終わり）は、いつも足す。どれも、セッションごとのファイルに書くだけ', () => {
+    type Entry = { matcher?: string; hooks: { type: string; command: string; timeout: number }[] };
+    const hooks = ownSettings(null).hooks as Record<string, Entry[]>;
+    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'Stop']);
+    expect(hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }]);
+    expect(hooks.Notification).toEqual([{ hooks: [{ type: 'command', command: NOTIFICATION_FILE_COMMAND, timeout: 10 }] }]);
+    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] }]);
+    // 質問のファイル（<id>.ask.json）の名前から、種類ごとのファイルの名前を作る（ASK_FILE_ENV を含むので、チャットのフックの一覧に出ない）
+    expect(PERMISSION_FILE_COMMAND).toBe(`cat > "\${${ASK_FILE_ENV}%.ask.json}.permission.json"`);
+    expect(NOTIFICATION_FILE_COMMAND).toBe(`cat > "\${${ASK_FILE_ENV}%.ask.json}.notification.json"`);
+    expect(IDLE_FILE_COMMAND).toBe(`cat > "\${${ASK_FILE_ENV}%.ask.json}.idle.json"`);
+    // セッションの MCP を足しても、許可の確認の入力を書くフックは 1 つだけ
+    expect(JSON.parse(sessionSettings(false, true)).hooks.PermissionRequest).toHaveLength(1);
   });
 
   it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {
@@ -128,9 +139,9 @@ describe('アプリが Claude Code に渡す設定', () => {
   });
 
   it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {
-    expect(Object.keys(ownSettings(null).hooks as object)).toEqual(['PreToolUse']);
+    expect(Object.keys(ownSettings(null).hooks as object)).not.toContain('UserPromptSubmit');
     const hooks = ownSettings(null, false, false, null, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
-    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
+    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
     expect(hooks.SessionStart[0].matcher).toBe('compact');
     // 自動の最適化圧縮: Claude Code の自動の圧縮の前に、アプリに聞く。ツールのあとは、止めるファイルを見るだけ（アプリには聞かない）
     expect(hooks.PreCompact[0].matcher).toBe('auto');
@@ -139,8 +150,9 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(hooks.PostToolUse[0].hooks[0].command).toBe(AUTO_COMPACT_STOP_COMMAND);
     expect(AUTO_COMPACT_STOP_COMMAND).not.toContain('--hook');
     expect(AUTO_COMPACT_STOP_COMMAND).toContain('TANACODE_ASK_FILE');
-    expect(hooks.Stop[0].hooks[0].command).toContain('--hook');
-    expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(1);
+    // ターンの終わりは、書くだけのフックのあとに、チェックリストのフック
+    expect(hooks.Stop.map((h) => h.hooks[0].command)).toEqual([IDLE_FILE_COMMAND, expect.stringContaining('--hook')]);
+    expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(2);
   });
 
   it('プロファイルの設定のフォルダで起動するときだけ、~/.claude の指示ファイルを読ませない設定を足す', () => {
@@ -152,10 +164,10 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(JSON.parse(sessionSettings(false, false, dir)).claudeMdExcludes).toEqual(excludes);
   });
 
-  it('描き方をいつも fullscreen に決める。登録した設定ファイルが classic（tui: default）でも、こちらが勝つ', () => {
-    expect(ownSettings(null).tui).toBe('fullscreen');
-    expect(JSON.parse(sessionSettings(true, true, join(home, '.claude-work'), true, true)).tui).toBe('fullscreen');
-    expect(mergeSettings({ tui: 'default' }, ownSettings(null)).tui).toBe('fullscreen');
+  it('描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）。登録した設定ファイルの tui はそのまま', () => {
+    expect(ownSettings(null)).not.toHaveProperty('tui');
+    expect(JSON.parse(sessionSettings(true, true, join(home, '.claude-work'), true, true))).not.toHaveProperty('tui');
+    expect(mergeSettings({ tui: 'default' }, ownSettings(null)).tui).toBe('default');
   });
 });
 

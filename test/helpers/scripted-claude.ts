@@ -14,8 +14,8 @@ import type { BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
 import type { TurnNotice } from '../../src/main/compact-notice';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
-import type { PtyHandle, PtyHostApi } from '../../src/main/pty-host-client';
-import type { HostedPtyInfo, SpawnRequest } from '../../src/main/pty-host-protocol';
+import type { PipeHandle, PtyHandle, PtyHostApi } from '../../src/main/pty-host-client';
+import type { HostedInfo, HostedPipeInfo, HostedPtyInfo, PipeSpawnRequest, PtySpawnRequest } from '../../src/main/pty-host-protocol';
 import { DEFAULT_PTY_SIZE, SessionManager, type RunTask } from '../../src/main/session-manager';
 import type { SettingsFiles } from '../../src/main/settings-files';
 import { SessionStore } from '../../src/main/session-store';
@@ -48,7 +48,7 @@ export class ScriptedPty implements PtyHandle {
 
   constructor(
     readonly id: string,
-    readonly request: Omit<SpawnRequest, 'id'>,
+    readonly request: Omit<PtySpawnRequest, 'id' | 'kind'>,
   ) {}
 
   onData(listener: (data: string) => void): void {
@@ -71,8 +71,12 @@ export class ScriptedPty implements PtyHandle {
     this.resizes.push([cols, rows]);
   }
 
-  kill(): void {
+  // 止める頼みの合図（既定の止め方は undefined）
+  readonly kills: ('SIGTERM' | 'SIGKILL' | undefined)[] = [];
+
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void {
     this.killed = true;
+    this.kills.push(signal);
     if (this.exitOnKill) this.exit(0);
   }
 
@@ -103,27 +107,119 @@ export class ScriptedPty implements PtyHandle {
   }
 }
 
-// pty ホストの代わり。spawn した pty を控え、list で返すもの（引き継ぎ）はテストが決める
+// stream-json の claude の代わりのパイプ。アプリが書いた行・入力を閉じた・止める頼みを控え、テストが出力の行と終了を送る
+export class ScriptedPipe implements PipeHandle {
+  readonly sent: string[] = [];
+  ended = false;
+  readonly kills: ('SIGTERM' | 'SIGKILL' | undefined)[] = [];
+  readonly replays: number[] = [];
+  detached = false;
+  // 入力の行を受けたときの claude の反応（テストが決める。制御の要求に答えるなど）
+  onSend: ((line: string) => void) | null = null;
+  private seq = 0;
+  private readonly lineListeners: ((line: string, seq: number) => void)[] = [];
+  private readonly exitListeners: ((code: number, stderr: string) => void)[] = [];
+  // まだ受け手がいない間に送った行
+  private early: { line: string; seq: number }[] = [];
+
+  constructor(
+    readonly id: string,
+    readonly request: Omit<PipeSpawnRequest, 'id' | 'kind'>,
+  ) {}
+
+  onLine(listener: (line: string, seq: number) => void): void {
+    this.lineListeners.push(listener);
+    const early = this.early;
+    this.early = [];
+    for (const item of early) listener(item.line, item.seq);
+  }
+
+  onExit(listener: (code: number, stderr: string) => void): void {
+    this.exitListeners.push(listener);
+  }
+
+  send(line: string): void {
+    this.sent.push(line);
+    this.onSend?.(line);
+  }
+
+  end(): void {
+    this.ended = true;
+  }
+
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void {
+    this.kills.push(signal);
+  }
+
+  replay(from: number): void {
+    this.replays.push(from);
+  }
+
+  detach(): void {
+    this.detached = true;
+  }
+
+  // claude が 1 行出した（JSON の値はそのまま行にする）。seq: 通し番号（省くと前の行の次。引き継ぎの送り直しを作るとき）
+  emit(value: unknown, seq?: number): void {
+    const line = typeof value === 'string' ? value : JSON.stringify(value);
+    if (seq !== undefined) this.seq = seq - 1;
+    seq = ++this.seq;
+    if (this.lineListeners.length === 0) this.early.push({ line, seq });
+    else this.lineListeners.forEach((l) => l(line, seq));
+  }
+
+  // claude が終わった
+  exit(code: number, stderr = ''): void {
+    this.exitListeners.forEach((l) => l(code, stderr));
+  }
+
+  // アプリが書いた行を読んだもの
+  get messages(): Record<string, unknown>[] {
+    return this.sent.map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  // 起動の引数（--session-id・--resume の値など）
+  arg(name: string): string | null {
+    const i = this.request.args.indexOf(name);
+    return i >= 0 ? (this.request.args[i + 1] ?? null) : null;
+  }
+}
+
+// 常駐のホストの代わり。起動した pty・パイプを控え、list で返すもの（引き継ぎ）はテストが決める
 export class ScriptedHost implements PtyHostApi {
   readonly spawned: ScriptedPty[] = [];
   readonly attached: ScriptedPty[] = [];
+  readonly pipes: ScriptedPipe[] = [];
+  readonly attachedPipes: ScriptedPipe[] = [];
   readonly forgotten: string[] = [];
-  hosted: HostedPtyInfo[] = [];
+  hosted: HostedInfo[] = [];
 
-  list(): Promise<HostedPtyInfo[]> {
+  list(): Promise<HostedInfo[]> {
     return Promise.resolve(this.hosted);
   }
 
-  spawn(request: Omit<SpawnRequest, 'id'>): PtyHandle {
+  spawn(request: Omit<PtySpawnRequest, 'id' | 'kind'>): PtyHandle {
     const pty = new ScriptedPty(randomUUID(), request);
     this.spawned.push(pty);
     return pty;
+  }
+
+  spawnPipe(request: Omit<PipeSpawnRequest, 'id' | 'kind'>): PipeHandle {
+    const pipe = new ScriptedPipe(randomUUID(), request);
+    this.pipes.push(pipe);
+    return pipe;
   }
 
   attach(info: HostedPtyInfo): PtyHandle {
     const pty = new ScriptedPty(info.id, { tag: info.tag, file: 'claude', args: [], cwd: '', env: {}, cols: info.cols, rows: info.rows });
     this.attached.push(pty);
     return pty;
+  }
+
+  attachPipe(info: HostedPipeInfo): PipeHandle {
+    const pipe = new ScriptedPipe(info.id, { tag: info.tag, file: 'claude', args: [], cwd: '', env: {}, retain: [], transient: [] });
+    this.attachedPipes.push(pipe);
+    return pipe;
   }
 
   forget(id: string): void {

@@ -949,7 +949,6 @@ export class SessionManager {
   // sessions: セッションの MCP サーバーを足すか（合わせる設定に、子セッションの起動の確認のフックを入れる）
   // checklist: チェックリストの MCP サーバーを足すか（合わせる設定に、チェックリストを使い続けさせるフックを入れる）
   // terminal: 人のターミナルの MCP サーバーを、打つツールごと足すか（合わせる設定に、打つ前の確認のフックを入れる）
-  // question: AskUserQuestion の質問をアプリに渡すフックを足すか
   private prepareSettings(
     id: string,
     settingsFile: string | null | undefined,
@@ -957,7 +956,6 @@ export class SessionManager {
     sessions: boolean,
     checklist: boolean,
     terminal: boolean,
-    question: boolean,
   ): PreparedSettings | null {
     if (!settingsFile) {
       // 標準の設定に戻した（または初めから標準）。前の設定ファイルで合わせたファイルが残っていれば消す
@@ -965,7 +963,7 @@ export class SessionManager {
       return null;
     }
     if (!this.settingsFiles) throw new Error(t('main.settingsFile.unavailable'));
-    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal, question);
+    return this.settingsFiles.prepare(id, settingsFile, browser, sessions, checklist, terminal);
   }
 
   // Claude Code を起動し直して同じ会話を続ける（--resume）。スキル・CLAUDE.md・設定・MCP などを読み込み直すため。
@@ -1192,8 +1190,9 @@ export class SessionManager {
         this.host.forget(info.id);
         continue;
       }
-      if (!record || record.archived || this.runtimes.get(record.id)?.process) {
-        this.host.attach(info).kill();
+      if (info.kind !== 'pty' || !record || record.archived || this.runtimes.get(record.id)?.process) {
+        if (info.kind === 'pty') this.host.attach(info).kill();
+        else this.host.attachPipe(info).kill('SIGTERM');
         continue;
       }
       this.start(record.id, null, info);
@@ -1235,11 +1234,10 @@ export class SessionManager {
     const checklist = adopted ? null : this.checklistMcp();
     const walkthrough = adopted ? null : this.walkthroughMcp();
     const terminalLaunch = adopted ? null : this.terminalMcp();
-    const question = adopted ? null : this.questionHook();
     // 子セッションには、子を動かすツールを見せない（孫は作れない）。人のターミナルも、読むツールだけ（打てるのは、人が見ている親だけ）
     const sessions = launch && record.parentId ? { ...launch, child: true } : launch;
     const terminal: TerminalMcpLaunch | null = terminalLaunch && record.parentId ? { ...terminalLaunch, child: true } : terminalLaunch;
-    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child, !!question);
+    const settings = adopted ? null : this.prepareSettings(id, record.settingsFile, !!browser, !!sessions, !!checklist, !!terminal && !terminal.child);
 
     // 会話が一度も無いセッションは --resume できないため、新しいセッション ID で始め直す
     const resume = !!adopted || hasConversation(transcriptPath(record.cwd, record.claudeSessionId, this.claudeDir));
@@ -1379,6 +1377,8 @@ export class SessionManager {
       this.host,
       {
         sessionId: id,
+        // チャットを stream-json に移すまでは、今までどおり TUI を画面で読む（設計書 11 節の順番 3 で移す）
+        kind: 'tui',
         cwd: record.cwd,
         worktree: record.worktree?.name ?? null,
         worktreeRoot: record.worktree?.root ?? null,
@@ -1396,7 +1396,6 @@ export class SessionManager {
         checklist,
         walkthrough,
         terminal,
-        question,
         claudeDir: this.claudeDir,
         // 追加したあとで消した・動かしたフォルダは渡さない（エクスプローラーには残し、人が外せるようにする）
         addDirs: (record.addedFolders ?? []).filter((folder) => existsSync(folder)),

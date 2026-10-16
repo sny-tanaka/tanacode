@@ -4,17 +4,26 @@ import { closeSync, existsSync, openSync, unlinkSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join } from 'node:path';
 import { t } from '@shared/i18n';
-import { PROTOCOL, type ClientMessage, type HostMessage, type HostedPtyInfo, type SpawnRequest } from './pty-host-protocol';
+import {
+  PROTOCOL,
+  type ClientMessage,
+  type HostMessage,
+  type HostedInfo,
+  type HostedPipeInfo,
+  type HostedPtyInfo,
+  type PipeSpawnRequest,
+  type PtySpawnRequest,
+} from './pty-host-protocol';
 import { socketPathIn } from './socket-path';
 
 // ホストを起動してから、待ち受けを始めるまで待つ時間
 const START_TIMEOUT_MS = 5000;
 const RETRY_MS = 100;
 
-// 受け手がいない間に溜めておく出力の数
+// 受け手がいない間に溜めておく pty の出力の数
 const EARLY_CHUNKS = 2000;
-
-type PtyListeners = { data: ((data: string) => void)[]; exit: ((exitCode: number) => void)[] };
+// 受け手がいない間に溜めておくパイプの行の合計の長さ。超えたら捨て、受け手が付いたときにホストに送り直しを頼む
+const EARLY_LINE_BYTES = 16 * 1024 * 1024;
 
 // ClaudeSession が使う、pty の操作（HostedPty の形）
 export interface PtyHandle {
@@ -22,18 +31,40 @@ export interface PtyHandle {
   onExit(listener: (exitCode: number) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  kill(): void;
+  // 止める。既定は SIGHUP（端末を閉じたのと同じ）
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
   detach(): void;
 }
 
-// SessionManager・ClaudeSession が使う、pty ホストの操作（PtyHost の形）。
-// Claude Code との互換性の確認（test/cli）は、node-pty を直に使う偽物に差し替えて、本物の SessionManager を動かす
+// ClaudeSession が使う、パイプでつながるプロセスの操作（HostedPipe の形）
+export interface PipeHandle {
+  // 出力の 1 行と通し番号。最初の受け手には、それまでに届いていた行を先に渡す。同じ通し番号の行は 2 回渡さない
+  onLine(listener: (line: string, seq: number) => void): void;
+  // 終了コードと、標準エラーの末尾
+  onExit(listener: (exitCode: number, stderr: string) => void): void;
+  // 入力に 1 行書く
+  send(line: string): void;
+  // 入力を閉じる
+  end(): void;
+  // 止める（プロセスグループごと）。既定は SIGTERM
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
+  // この通し番号から、ホストが控えている行を送り直してもらう
+  replay(from: number): void;
+  detach(): void;
+}
+
+// SessionManager・ClaudeSession が使う、ホストの操作（PtyHost の形）。
+// Claude Code との互換性の確認（test/cli）は、プロセスを直に起動する偽物に差し替えて、本物の SessionManager を動かす
 export interface PtyHostApi {
-  list(): Promise<HostedPtyInfo[]>;
-  spawn(request: Omit<SpawnRequest, 'id'>): PtyHandle;
+  list(): Promise<HostedInfo[]>;
+  spawn(request: Omit<PtySpawnRequest, 'id' | 'kind'>): PtyHandle;
+  spawnPipe(request: Omit<PipeSpawnRequest, 'id' | 'kind'>): PipeHandle;
   attach(info: HostedPtyInfo): PtyHandle;
+  attachPipe(info: HostedPipeInfo): PipeHandle;
   forget(id: string): void;
 }
+
+type PtyListeners = { data: ((data: string) => void)[]; exit: ((exitCode: number) => void)[] };
 
 // ホストが持っている pty のひとつ。node-pty の IPty と同じように使う
 export class HostedPty implements PtyHandle {
@@ -67,8 +98,8 @@ export class HostedPty implements PtyHandle {
     this.host.send({ t: 'resize', id: this.id, cols, rows });
   }
 
-  kill(): void {
-    this.host.send({ t: 'kill', id: this.id });
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void {
+    this.host.send({ t: 'kill', id: this.id, ...(signal ? { signal } : {}) });
   }
 
   // アプリはこの pty を見るのをやめる（claude は動かしたまま）
@@ -94,11 +125,126 @@ export class HostedPty implements PtyHandle {
   }
 }
 
-// pty ホストとの接続。ホストが無ければ起動し、形（PROTOCOL）が違う古いホストなら止めて起動し直す
+type PipeListeners = { line: ((line: string, seq: number) => void)[]; exit: ((exitCode: number, stderr: string) => void)[] };
+
+type QueuedLine = { line: string; seq: number };
+
+// ホストが持っているパイプのプロセスのひとつ
+export class HostedPipe implements PipeHandle {
+  private readonly listeners: PipeListeners = { line: [], exit: [] };
+  // 受け手に渡す順に並べた行（受け手がいない間は溜める）と、その合計の長さ
+  private ready: QueuedLine[] = [];
+  private readyBytes = 0;
+  // 送り直しを頼んでから、送り終えるまでの間に届いた新しい行（送り直した行のあとに渡す）
+  private held: QueuedLine[] | null = null;
+  // 溜めきれずに捨てた行のいちばん古い通し番号（受け手が付いたら、ここから送り直してもらう）
+  private missedFrom: number | null = null;
+  // 受け手に渡した最後の通し番号（送り直しで重なった行を、もう一度渡さない）
+  private delivered = 0;
+  exited = false;
+
+  constructor(
+    private readonly host: PtyHost,
+    readonly id: string,
+  ) {}
+
+  onLine(listener: (line: string, seq: number) => void): void {
+    this.listeners.line.push(listener);
+    if (this.missedFrom !== null) {
+      const from = this.missedFrom;
+      this.missedFrom = null;
+      this.replay(from);
+    }
+    this.flush();
+  }
+
+  onExit(listener: (exitCode: number, stderr: string) => void): void {
+    this.listeners.exit.push(listener);
+  }
+
+  send(line: string): void {
+    this.host.send({ t: 'send', id: this.id, line });
+  }
+
+  end(): void {
+    this.host.send({ t: 'end', id: this.id });
+  }
+
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void {
+    this.host.send({ t: 'kill', id: this.id, ...(signal ? { signal } : {}) });
+  }
+
+  // 送り直しを頼む。送り終えるまでに届く新しい行は、送り直した行のあとに渡す（それまでに溜まっていて、まだ渡していない行のうち、
+  // 頼んだ番号からのものも。頼んだ番号より前の行は、送り直す行より先なので、先に渡す）
+  replay(from: number): void {
+    if (this.held === null) {
+      this.held = this.ready.filter((item) => item.seq >= from);
+      this.ready = this.ready.filter((item) => item.seq < from);
+      this.readyBytes = this.ready.reduce((sum, item) => sum + item.line.length, 0);
+    }
+    this.host.send({ t: 'replay', id: this.id, from });
+    this.flush();
+  }
+
+  detach(): void {
+    this.listeners.line = [];
+    this.listeners.exit = [];
+    this.host.release(this.id);
+  }
+
+  // ホストから届いた行。replay: 送り直しの行
+  emitLine(line: string, seq: number, replay = false): void {
+    const item = { line, seq };
+    if (this.held && !replay) this.held.push(item);
+    else this.queue(item);
+    this.flush();
+  }
+
+  // 送り直しが終わった。待たせていた新しい行を渡す
+  emitReplayed(): void {
+    const held = this.held ?? [];
+    this.held = null;
+    for (const item of held) this.queue(item);
+    this.flush();
+  }
+
+  emitExit(exitCode: number, stderr: string): void {
+    if (this.exited) return;
+    this.exited = true;
+    // 送り直しの途中で終わったときも、待たせていた行は渡してから終わりを知らせる
+    if (this.held) this.emitReplayed();
+    for (const listener of this.listeners.exit) listener(exitCode, stderr);
+  }
+
+  private queue(item: QueuedLine): void {
+    if (this.listeners.line.length === 0 && this.readyBytes + item.line.length > EARLY_LINE_BYTES) {
+      // 受け手がいないまま溜めすぎない。捨てた分は、受け手が付いたときにホストの控えから送り直してもらう
+      this.missedFrom ??= item.seq;
+      return;
+    }
+    this.ready.push(item);
+    this.readyBytes += item.line.length;
+  }
+
+  private flush(): void {
+    if (this.listeners.line.length === 0) return;
+    const ready = this.ready;
+    this.ready = [];
+    this.readyBytes = 0;
+    for (const { line, seq } of ready) {
+      if (seq <= this.delivered) continue;
+      this.delivered = seq;
+      for (const listener of this.listeners.line) listener(line, seq);
+    }
+  }
+}
+
+// 常駐のホストとの接続。ホストが無ければ起動し、形（PROTOCOL）が違う古いホストなら止めて起動し直す
 export class PtyHost implements PtyHostApi {
   private socket: Socket | null = null;
   private readonly ptys = new Map<string, HostedPty>();
-  private readonly pending = new Map<number, (ptys: HostedPtyInfo[]) => void>();
+  private readonly pipes = new Map<string, HostedPipe>();
+  private readonly pending = new Map<number, (hosted: HostedInfo[]) => void>();
   private req = 0;
 
   private constructor(
@@ -114,8 +260,8 @@ export class PtyHost implements PtyHostApi {
     return host;
   }
 
-  // 動いている（または、アプリが見ていない間に終わった）pty
-  list(): Promise<HostedPtyInfo[]> {
+  // 動いている（または、アプリが見ていない間に終わった）プロセス
+  list(): Promise<HostedInfo[]> {
     const req = ++this.req;
     return new Promise((resolve) => {
       this.pending.set(req, resolve);
@@ -123,13 +269,20 @@ export class PtyHost implements PtyHostApi {
     });
   }
 
-  spawn(request: Omit<SpawnRequest, 'id'>): HostedPty {
+  spawn(request: Omit<PtySpawnRequest, 'id' | 'kind'>): HostedPty {
     const id = randomUUID();
     const pty = new HostedPty(this, id);
     this.ptys.set(id, pty);
-    if (!this.socket) void this.connect().then(() => this.send({ t: 'spawn', id, ...request }), () => pty.emitExit(-1));
-    else this.send({ t: 'spawn', id, ...request });
+    this.request({ t: 'spawn', id, kind: 'pty', ...request }, () => pty.emitExit(-1));
     return pty;
+  }
+
+  spawnPipe(request: Omit<PipeSpawnRequest, 'id' | 'kind'>): HostedPipe {
+    const id = randomUUID();
+    const pipe = new HostedPipe(this, id);
+    this.pipes.set(id, pipe);
+    this.request({ t: 'spawn', id, kind: 'pipe', ...request }, () => pipe.emitExit(-1, ''));
+    return pipe;
   }
 
   // 前のアプリが起動した pty を引き継ぐ（一覧を受け取ったときに作ってあるものを使う）
@@ -142,14 +295,25 @@ export class PtyHost implements PtyHostApi {
     return pty;
   }
 
-  // アプリが見ていない間に終わった pty の記録を捨てる
+  attachPipe(info: HostedPipeInfo): HostedPipe {
+    let pipe = this.pipes.get(info.id);
+    if (!pipe) {
+      pipe = new HostedPipe(this, info.id);
+      this.pipes.set(info.id, pipe);
+    }
+    return pipe;
+  }
+
+  // アプリが見ていない間に終わったプロセスの記録を捨てる
   forget(id: string): void {
     this.ptys.delete(id);
+    this.pipes.delete(id);
     this.send({ t: 'forget', id });
   }
 
   release(id: string): void {
     this.ptys.delete(id);
+    this.pipes.delete(id);
   }
 
   // claude をすべて止めて、ホストも終わらせる。ホストが終わるまで待つ
@@ -172,6 +336,12 @@ export class PtyHost implements PtyHostApi {
 
   send(message: ClientMessage): void {
     this.socket?.write(`${JSON.stringify(message)}\n`);
+  }
+
+  // つながっていなければ、つないでから送る。つなげなければ failed
+  private request(message: ClientMessage, failed: () => void): void {
+    if (!this.socket) void this.connect().then(() => this.send(message), failed);
+    else this.send(message);
   }
 
   private async connect(): Promise<void> {
@@ -236,7 +406,9 @@ export class PtyHost implements PtyHostApi {
       // ホストが落ちた。claude も一緒に止まっている
       this.socket = null;
       for (const pty of [...this.ptys.values()]) pty.emitExit(-1);
+      for (const pipe of [...this.pipes.values()]) pipe.emitExit(-1, '');
       this.ptys.clear();
+      this.pipes.clear();
       for (const resolve of this.pending.values()) resolve([]);
       this.pending.clear();
     });
@@ -248,20 +420,29 @@ export class PtyHost implements PtyHostApi {
       case 'data':
         this.ptys.get(message.id)?.emitData(message.data);
         return;
+      case 'line':
+        this.pipes.get(message.id)?.emitLine(message.line, message.seq, message.replay === true);
+        return;
+      case 'replayed':
+        this.pipes.get(message.id)?.emitReplayed();
+        return;
       case 'exit': {
         const pty = this.ptys.get(message.id);
-        if (!pty) return;
+        const pipe = this.pipes.get(message.id);
         this.ptys.delete(message.id);
-        pty.emitExit(message.exitCode);
+        this.pipes.delete(message.id);
+        pty?.emitExit(message.exitCode);
+        pipe?.emitExit(message.exitCode, message.stderr ?? '');
         return;
       }
       case 'list':
-        // 一覧の画面（screen）より後の出力は、このあと同じ受信の中で続けて届く。
-        // 引き継ぐ側が attach する前に捨てないよう、ここで受け皿を作っておく
-        for (const info of message.ptys) {
-          if (info.exitCode === null && !this.ptys.has(info.id)) this.ptys.set(info.id, new HostedPty(this, info.id));
+        // 一覧より後の出力は、このあと同じ受信の中で続けて届く。引き継ぐ側が attach する前に捨てないよう、ここで受け皿を作っておく
+        for (const info of message.hosted) {
+          if (info.exitCode !== null) continue;
+          if (info.kind === 'pty' && !this.ptys.has(info.id)) this.ptys.set(info.id, new HostedPty(this, info.id));
+          if (info.kind === 'pipe' && !this.pipes.has(info.id)) this.pipes.set(info.id, new HostedPipe(this, info.id));
         }
-        this.pending.get(message.req)?.(message.ptys);
+        this.pending.get(message.req)?.(message.hosted);
         this.pending.delete(message.req);
         return;
       case 'hello':

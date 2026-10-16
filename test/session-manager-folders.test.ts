@@ -151,7 +151,7 @@ describe('動いているセッションで変えたとき', () => {
     // 前のアプリでは渡せないまま、claude は動き続けている（ここでは、引き継ぐ前に今の pty を終えて、引き継ぐ pty に替える）
     pty.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
-    app.host.hosted = [{ id: 'pty-1', tag: id, pid: 100, startedAt: Date.now() - 60_000, cols: 120, rows: 40, exitCode: null, screen: '' }];
+    app.host.hosted = [{ kind: 'pty', id: 'pty-1', tag: id, pid: 100, startedAt: Date.now() - 60_000, cols: 120, rows: 40, exitCode: null, screen: '' }];
     await app.manager.adopt();
     const adopted = app.host.attached.find((p) => p.request.tag === id)!;
     expect(spawnedFor(id)).toBe(1);

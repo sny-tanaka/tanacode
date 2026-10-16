@@ -433,7 +433,7 @@ function ptyPids(socketPath: string): Promise<number[]> {
       buffered += chunk;
       for (const line of buffered.split('\n').slice(0, -1)) {
         const message = JSON.parse(line) as HostMessage;
-        if (message.t === 'list') finish(message.ptys.filter((p) => p.exitCode === null).map((p) => p.pid));
+        if (message.t === 'list') finish(message.hosted.filter((p) => p.exitCode === null).map((p) => p.pid));
       }
       buffered = buffered.slice(buffered.lastIndexOf('\n') + 1);
     });

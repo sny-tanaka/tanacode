@@ -31,11 +31,13 @@ async function asked(...questions: AskQuestion[]) {
 }
 
 describe('フックが答えを待っている質問', () => {
-  it('起動する Claude Code に、質問のフック（PermissionRequest）と、フックが使う環境変数を足す', async () => {
+  it('起動する Claude Code に、質問のフックを足さない（質問は stream-json の can_use_tool で受け取る。PermissionRequest は書くだけのフック）', async () => {
     const { pty } = app.create();
     const settings = JSON.parse(pty.arg('--settings')!) as { hooks: { PermissionRequest?: { matcher: string; hooks: { command: string; timeout: number }[] }[] } };
-    expect(settings.hooks.PermissionRequest).toEqual([{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: expect.stringContaining(QUESTION_HOOK_ENV), timeout: 86400 }] }]);
-    expect(pty.request.env).toMatchObject({ [QUESTION_SOCKET_ENV]: LAUNCH.socketPath, [QUESTION_SESSION_ENV]: expect.any(String) });
+    expect(settings.hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: expect.not.stringContaining(QUESTION_HOOK_ENV), timeout: 10 }] }]);
+    expect(pty.request.env[QUESTION_SOCKET_ENV]).toBeUndefined();
+    expect(pty.request.env[QUESTION_SESSION_ENV]).toBeUndefined();
+    expect(LAUNCH.socketPath).toBeTruthy();
   });
 
   it('待っている間は質問中で、画面に知らせ、通知を 1 回出す。返事をすると、フックにその返事を返し、待っている質問が消える', async () => {

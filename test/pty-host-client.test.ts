@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hostExecutable, PtyHost } from '../src/main/pty-host-client';
-import { PROTOCOL, type ClientMessage, type HostedPtyInfo } from '../src/main/pty-host-protocol';
+import { PROTOCOL, type ClientMessage, type HostedInfo, type HostedPipeInfo, type HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { socketPathIn } from '../src/main/socket-path';
 
 // アプリ側の、pty ホストとの接続（PtyHost・HostedPty）。本物のホストとのやりとりは test/pty-host.test.ts。
@@ -32,11 +32,11 @@ async function waitFor(label: string, check: () => boolean, timeoutMs = 3000): P
   }
 }
 
-// 偽物のホスト。受け取った要求を控え、hello には protocol で答える（null なら答えない）。list には ptys を返す
+// 偽物のホスト。受け取った要求を控え、hello には protocol で答える（null なら答えない）。list には hosted を返す
 class FakeHost {
   readonly received: ClientMessage[] = [];
   readonly sockets: Socket[] = [];
-  ptys: HostedPtyInfo[] = [];
+  hosted: HostedInfo[] = [];
   answerList = true;
   // hello の返事の前に、読めない行を送る
   noiseBeforeHello = false;
@@ -60,7 +60,7 @@ class FakeHost {
           this.received.push(message);
           if (message.t === 'hello' && this.noiseBeforeHello) this.send('読めない行\n', socket);
           if (message.t === 'hello' && this.protocol !== null) this.send({ t: 'hello', protocol: this.protocol, pid: 1 }, socket);
-          if (message.t === 'list' && this.answerList) this.send({ t: 'list', req: message.req, ptys: this.ptys }, socket);
+          if (message.t === 'list' && this.answerList) this.send({ t: 'list', req: message.req, hosted: this.hosted }, socket);
           if (message.t === 'shutdown') socket.end();
         }
       });
@@ -99,7 +99,23 @@ async function connect(): Promise<{ host: PtyHost; fake: FakeHost }> {
   return { host, fake };
 }
 const request = { tag: 's1', file: 'claude', args: ['--x'], cwd: '/work', env: { A: '1' }, cols: 80, rows: 24 };
-const info = (id: string, patch: Partial<HostedPtyInfo> = {}): HostedPtyInfo => ({ id, tag: `tag-${id}`, pid: 1, startedAt: 0, cols: 80, rows: 24, exitCode: null, screen: '', ...patch });
+const pipeRequest = { tag: 's2', file: 'claude', args: ['-p'], cwd: '/work', env: { A: '1' }, retain: [{ type: 'system', subtype: 'init' }], transient: [{ type: 'stream_event' }] };
+const info = (id: string, patch: Partial<HostedPtyInfo> = {}): HostedPtyInfo => ({ kind: 'pty', id, tag: `tag-${id}`, pid: 1, startedAt: 0, cols: 80, rows: 24, exitCode: null, screen: '', ...patch });
+const pipeInfo = (id: string, patch: Partial<HostedPipeInfo> = {}): HostedPipeInfo => ({
+  kind: 'pipe',
+  id,
+  tag: `tag-${id}`,
+  pid: 1,
+  startedAt: 0,
+  exitCode: null,
+  lastSeq: 0,
+  firstSeq: 1,
+  retained: [],
+  pending: [],
+  ended: false,
+  stderr: '',
+  ...patch,
+});
 
 // ホストのスクリプト（アプリは Electron を Node として起動する。テストでは Node）。good: 偽物のホストとして待ち受ける / dead: すぐ終わる
 function hostScript(kind: 'good' | 'dead'): string {
@@ -149,7 +165,7 @@ describe('HostedPty', () => {
     pty.resize(100, 30);
     pty.kill();
     await waitFor('要求', () => fake!.sent('kill').length === 1);
-    expect(fake!.sent('spawn')).toEqual([{ t: 'spawn', id: pty.id, ...request }]);
+    expect(fake!.sent('spawn')).toEqual([{ t: 'spawn', id: pty.id, kind: 'pty', ...request }]);
     expect(fake!.sent('write')).toEqual([{ t: 'write', id: pty.id, data: 'abc' }]);
     expect(fake!.sent('resize')).toEqual([{ t: 'resize', id: pty.id, cols: 100, rows: 30 }]);
     expect(fake!.sent('kill')).toEqual([{ t: 'kill', id: pty.id }]);
@@ -171,12 +187,12 @@ describe('HostedPty', () => {
 
   it('引き継ぐ pty の出力は、受け手がつくまで溜めておき、最初の受け手に渡す（溜めすぎない）', async () => {
     const { host } = await connect();
-    fake!.ptys = [info('p1'), info('done', { exitCode: 0 })];
+    fake!.hosted = [info('p1'), info('done', { exitCode: 0 })];
     const listed = await host.list();
     expect(listed.map((p) => p.id)).toEqual(['p1', 'done']);
     for (let i = 0; i < 2005; i++) fake!.send({ t: 'data', id: 'p1', data: `${i},` });
     await sleep(200);
-    const pty = host.attach(listed[0]);
+    const pty = host.attach(listed[0] as HostedPtyInfo);
     const first: string[] = [];
     pty.onData((d) => first.push(d));
     expect(first).toHaveLength(2000);
@@ -216,6 +232,127 @@ describe('HostedPty', () => {
     // 手元に残った pty から直に渡されても、受け手には届けない
     pty.emitData('y');
     pty.emitExit(1);
+    expect(got).toEqual([]);
+  });
+});
+
+describe('HostedPipe', () => {
+  const linesOf = (pipe: ReturnType<PtyHost['spawnPipe']>) => {
+    const got: string[] = [];
+    pipe.onLine((line, seq) => got.push(`${seq}:${line}`));
+    return got;
+  };
+
+  it('入力の行・閉じる・止める（既定は SIGTERM）・送り直しの頼みをホストに送り、出力の行と終了（標準エラーの末尾つき）を受け取る', async () => {
+    const { host } = await connect();
+    const pipe = host.spawnPipe(pipeRequest);
+    const got = linesOf(pipe);
+    const exits: [number, string][] = [];
+    pipe.onExit((c, e) => exits.push([c, e]));
+    pipe.send('{"type":"user"}');
+    pipe.end();
+    pipe.kill();
+    pipe.kill('SIGKILL');
+    await waitFor('要求', () => fake!.sent('kill').length === 2);
+    expect(fake!.sent('spawn')).toEqual([{ t: 'spawn', id: pipe.id, kind: 'pipe', ...pipeRequest }]);
+    expect(fake!.sent('send')).toEqual([{ t: 'send', id: pipe.id, line: '{"type":"user"}' }]);
+    expect(fake!.sent('end')).toEqual([{ t: 'end', id: pipe.id }]);
+    expect(fake!.sent('kill')).toEqual([{ t: 'kill', id: pipe.id }, { t: 'kill', id: pipe.id, signal: 'SIGKILL' }]);
+    fake!.send({ t: 'line', id: pipe.id, seq: 1, line: 'a' });
+    fake!.send({ t: 'line', id: 'unknown', seq: 1, line: 'x' });
+    fake!.send({ t: 'replayed', id: 'unknown' });
+    fake!.send({ t: 'exit', id: pipe.id, exitCode: 2, stderr: 'エラー' });
+    await waitFor('終了', () => exits.length > 0);
+    expect(got).toEqual(['1:a']);
+    expect(exits).toEqual([[2, 'エラー']]);
+    pipe.emitExit(5, '');
+    expect(exits).toHaveLength(1);
+  });
+
+  it('引き継ぐときは、送り直しを頼んでから受け取る。送り直しの間に届いた新しい行は、送り直した行のあとに渡し、重なった行は 1 度だけ渡す', async () => {
+    const { host } = await connect();
+    fake!.hosted = [pipeInfo('q1', { lastSeq: 3 })];
+    const [listed] = (await host.list()) as HostedPipeInfo[];
+    // 一覧のあと、受け手が付く前に新しい行が届いた
+    fake!.send({ t: 'line', id: 'q1', seq: 4, line: 'd' });
+    await sleep(50);
+    const pipe = host.attachPipe(listed);
+    expect(host.attachPipe(listed)).toBe(pipe);
+    pipe.replay(1);
+    const got = linesOf(pipe);
+    await waitFor('頼み', () => fake!.sent('replay').length === 1);
+    expect(fake!.sent('replay')).toEqual([{ t: 'replay', id: 'q1', from: 1 }]);
+    // 送り直しの途中にも新しい行が届く
+    fake!.send({ t: 'line', id: 'q1', seq: 1, line: 'a', replay: true });
+    fake!.send({ t: 'line', id: 'q1', seq: 5, line: 'e' });
+    fake!.send({ t: 'line', id: 'q1', seq: 2, line: 'b', replay: true });
+    fake!.send({ t: 'line', id: 'q1', seq: 3, line: 'c', replay: true });
+    fake!.send({ t: 'line', id: 'q1', seq: 4, line: 'd', replay: true });
+    await waitFor('送り直し', () => got.length === 4);
+    expect(got).toEqual(['1:a', '2:b', '3:c', '4:d']);
+    fake!.send({ t: 'replayed', id: 'q1' });
+    await waitFor('続き', () => got.length === 5);
+    expect(got).toEqual(['1:a', '2:b', '3:c', '4:d', '5:e']);
+    // 同じ番号の行がもう一度届いても渡さない
+    fake!.send({ t: 'line', id: 'q1', seq: 5, line: 'e' });
+    fake!.send({ t: 'line', id: 'q1', seq: 6, line: 'f' });
+    await waitFor('次', () => got.length === 6);
+    expect(got.at(-1)).toBe('6:f');
+  });
+
+  it('送り直しの途中で終わったら、待たせていた行を渡してから終わりを知らせる', async () => {
+    const { host } = await connect();
+    const pipe = host.attachPipe(pipeInfo('q2'));
+    pipe.replay(1);
+    const got = linesOf(pipe);
+    const exits: number[] = [];
+    pipe.onExit((c) => exits.push(c));
+    fake!.send({ t: 'line', id: 'q2', seq: 9, line: 'live' });
+    fake!.send({ t: 'exit', id: 'q2', exitCode: 0 });
+    await waitFor('終了', () => exits.length === 1);
+    expect(got).toEqual(['9:live']);
+  });
+
+  it('受け手がいないまま溜めすぎたら捨て、受け手が付いたときに、捨てたところから送り直してもらう', async () => {
+    const { host } = await connect();
+    const pipe = host.attachPipe(pipeInfo('q3'));
+    // 届き切ったかは、受け手のいる別のプロセスの行で見る（同じ接続の行は、送った順に読まれる）
+    const probe = host.attachPipe(pipeInfo('probe'));
+    const probed: string[] = [];
+    probe.onLine((line) => probed.push(line));
+    const big = 'x'.repeat(9 * 1024 * 1024);
+    fake!.send({ t: 'line', id: 'q3', seq: 1, line: big });
+    fake!.send({ t: 'line', id: 'q3', seq: 2, line: big });
+    fake!.send({ t: 'line', id: 'q3', seq: 3, line: 'small' });
+    fake!.send({ t: 'line', id: 'probe', seq: 1, line: 'done' });
+    await waitFor('届き切る', () => probed.length === 1, 10_000);
+    const got: number[] = [];
+    pipe.onLine((_line, seq) => got.push(seq));
+    await waitFor('頼み', () => fake!.sent('replay').length === 1);
+    expect(fake!.sent('replay')).toEqual([{ t: 'replay', id: 'q3', from: 2 }]);
+    // 頼んだ番号より前の、溜めておけた行だけ先に渡す。頼んだ番号からの行は、送り直しのあとに渡す
+    expect(got).toEqual([1]);
+    fake!.send({ t: 'line', id: 'q3', seq: 2, line: 'again', replay: true });
+    fake!.send({ t: 'replayed', id: 'q3' });
+    await waitFor('送り直し', () => got.length === 3);
+    expect(got).toEqual([1, 2, 3]);
+  });
+
+  it('detach: claude を止めずに見るのをやめる。ホストが落ちたら、動いていたプロセスを -1 で終わらせる', async () => {
+    const { host } = await connect();
+    const kept = host.spawnPipe(pipeRequest);
+    const dropped = host.spawnPipe(pipeRequest);
+    const got: unknown[] = [];
+    dropped.onLine((l) => got.push(l));
+    dropped.onExit((c) => got.push(c));
+    dropped.detach();
+    const exits: number[] = [];
+    kept.onExit((c) => exits.push(c));
+    fake!.send({ t: 'line', id: dropped.id, seq: 1, line: 'x' });
+    await sleep(50);
+    fake!.close();
+    await waitFor('終了', () => exits.length === 1);
+    expect(exits).toEqual([-1]);
     expect(got).toEqual([]);
   });
 });

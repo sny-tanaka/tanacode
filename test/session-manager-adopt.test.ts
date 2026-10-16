@@ -17,6 +17,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // pty ホストが持っている pty
 const hosted = (tag: string, patch: Partial<HostedPtyInfo> = {}): HostedPtyInfo => ({
+  kind: 'pty',
   id: `pty-${tag}`,
   tag,
   pid: 100,

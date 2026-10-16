@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { parentMessageText } from '@shared/session-tools';
-import type { PtyHandle, PtyHostApi } from '../src/main/pty-host-client';
-import type { HostedPtyInfo } from '../src/main/pty-host-protocol';
+import type { PipeHandle, PtyHandle, PtyHostApi } from '../src/main/pty-host-client';
+import type { HostedInfo } from '../src/main/pty-host-protocol';
 import { SessionManager, typedShown } from '../src/main/session-manager';
 import { SessionStore } from '../src/main/session-store';
 import { StatusLineWatcher } from '../src/main/statusline';
@@ -97,7 +97,7 @@ class FakeClaude implements PtyHandle {
 
 class FakeHost implements PtyHostApi {
   readonly spawned: FakeClaude[] = [];
-  list(): Promise<HostedPtyInfo[]> {
+  list(): Promise<HostedInfo[]> {
     return Promise.resolve([]);
   }
   spawn(): PtyHandle {
@@ -105,7 +105,13 @@ class FakeHost implements PtyHostApi {
     this.spawned.push(claude);
     return claude;
   }
+  spawnPipe(): PipeHandle {
+    throw new Error('stream-json の claude は起動しません');
+  }
   attach(): PtyHandle {
+    throw new Error('引き継ぐ claude はありません');
+  }
+  attachPipe(): PipeHandle {
     throw new Error('引き継ぐ claude はありません');
   }
   forget(): void {}
