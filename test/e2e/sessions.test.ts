@@ -59,7 +59,7 @@ describe('Claude がセッションの MCP で子セッションを始める', (
     await app.startSession(PARENT, { mode: 'manual' });
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain(CHILD);
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
   });
 
   it('子は一覧に並び、親は子の一覧を読める', async () => {

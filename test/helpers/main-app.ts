@@ -383,6 +383,8 @@ const SessionManager = fakeClass('SessionManager', {
   rewind: echo('manager.rewind'),
   rewindPreview: echo('manager.rewindPreview'),
   transcriptOf: (_self, id: string) => `/transcripts/${id}.jsonl`,
+  // 動いているセッション（live）だけ、Claude Code の initialize の候補がある
+  commandsOf: (_self, id: string) => (id === 'live' ? [{ name: 'compact', description: '圧縮', source: 'builtin' }] : null),
   subagents: echo('manager.subagents'),
   bashTasks: echo('manager.bashTasks'),
   knowledge: echo('manager.knowledge'),

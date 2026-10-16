@@ -74,7 +74,7 @@ describe('Claude が人のターミナルを読み、頼まれて打つ', () => 
     expect(text).toContain('権限モードによらず毎回確認を求めます。「zsh 1」に打つもの: echo claude-$((30+3)) ⏎');
     // まだ打っていない
     expect(await shell().locator('.xterm-rows').textContent()).not.toContain('claude-');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', TYPE_DONE).waitFor();
     await shell().locator('.xterm-rows').getByText('claude-33', { exact: false }).waitFor();
     expect(app.api.toolResults.find((r) => r.startsWith('Typed '))).toContain('claude-33');

@@ -30,6 +30,7 @@ import type {
   SessionSnapshot,
   SessionAttention,
   SessionSummary,
+  SlashCommand,
   WorktreeLeftovers,
   WorktreePreparing,
   WorktreeRemoval,
@@ -46,6 +47,7 @@ import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath } from './claude-session';
 import { settingsDefaultMode } from './claude-config';
+import { commandsFromInitialize } from './commands';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import { textResult, type McpLaunch, type ToolResult } from './mcp-bridge';
@@ -168,8 +170,8 @@ type Runtime = {
   turnOpen: boolean;
   // 今のターンの、本体の最後の応答の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）
   lastAssistant: string | null;
-  // result が届き、チャットにターンの終わりを出すのを待っているもの
-  turnEnding: { interrupted: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
+  // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
+  turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
@@ -194,6 +196,11 @@ type Runtime = {
   bridgeSessionId: string | null;
   // 裏のタスクの ID（tool_use の ID → task_started の task_id。stop_task で止めるときに使う）
   taskIds: Map<string, string>;
+  // /clear のあと、新しい会話の最初の応答がまだ無い。そのあいだコンテキストの量は分からないとして、get_context_usage も聞かない
+  // （空の会話の見積もりを返す。それで「量が下がった」とすると、自動の最適化圧縮が、切り替えた直後にまだ超えていても繰り返す）
+  freshConversation: boolean;
+  // コンテキストの上限（最後に get_context_usage で聞いたもの。量が分からないあいだも、応答の使用量から割合を出すのに使う）
+  contextSize: number | null;
   // 会話ログを読み終えた（読み直しの途中の、古いつながりの状態で合わせないため）
   historyLoaded: boolean;
   // 読み直した会話ログの最後の Remote Control の URL（bridge-session 行。切れていれば null、行が無ければ undefined）
@@ -885,6 +892,13 @@ export class SessionManager {
     ];
   }
 
+  // 入力欄の / の候補。動いている Claude Code の initialize の commands。起動の前（返事が来るまで）・止まっているときは null
+  // （呼び出し側が、フォルダと会話ログから集める）
+  commandsOf(id: string): SlashCommand[] | null {
+    const rt = this.runtimes.get(id);
+    return rt?.process && rt.init ? commandsFromInitialize(rt.init.commands) : null;
+  }
+
   bashTasks(id: string): BashTask[] {
     return this.runtimes.get(id)?.bashTasks.all() ?? [];
   }
@@ -1430,6 +1444,8 @@ export class SessionManager {
         remoteConnected: false,
         remoteSwitching: false,
         bridgeSessionId: null,
+        freshConversation: false,
+        contextSize: null,
         taskIds: new Map(),
         historyLoaded: false,
         lastBridgeUrl: undefined,
@@ -1460,6 +1476,7 @@ export class SessionManager {
     runtime.attention = null;
     runtime.ready = false;
     runtime.init = null;
+    runtime.freshConversation = false;
     runtime.requests.clear();
     // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）
     runtime.unsent = new Map(adopted ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
@@ -1817,7 +1834,11 @@ export class SessionManager {
         return;
       }
       case 'conversation_reset':
-        // 新しい会話の ID は、このあとの system/init の session_id（new_conversation_id とは別。実測）
+        // 新しい会話の ID は、このあとの system/init の session_id（new_conversation_id とは別。実測）。
+        // 新しい会話の最初の応答までは、コンテキストの量を分からないとする（ヘッダーのメーターは会話ログの量。無ければ空）
+        if (past) return;
+        rt.freshConversation = true;
+        this.updateStatus(id, rt, { context: null });
         return;
     }
   }
@@ -1882,7 +1903,8 @@ export class SessionManager {
     }
     const usage = message.message.usage;
     const tokens = usage ? (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) : 0;
-    const size = rt.statusLine?.context?.size ?? null;
+    const size = rt.statusLine?.context?.size ?? rt.contextSize;
+    if (tokens > 0) rt.freshConversation = false;
     this.updateStatus(id, rt, {
       ...(message.message.model && message.message.model !== '<synthetic>' ? { model: message.message.model } : {}),
       ...(tokens > 0 && size ? { context: { size, tokens, usedPercent: Math.round((tokens / size) * 100) } } : {}),
@@ -1931,7 +1953,10 @@ export class SessionManager {
       this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
     }
     const waitFor = rt.lastAssistant && !rt.chain.some((c) => c.uuid === rt.lastAssistant) ? rt.lastAssistant : null;
-    rt.turnEnding = { interrupted, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), this.turnEndWaitMs) };
+    // /clear・/compact のような Claude Code の中で済むコマンドは、モデルを呼ばずに result を返す（num_turns が 0。実測）。
+    // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
+    const local = result.num_turns === 0 && result.subtype === 'success';
+    rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
     this.emitSessions();
@@ -1946,6 +1971,13 @@ export class SessionManager {
     clearTimeout(ending.timer);
     rt.turnEnding = null;
     this.pushEvents(id, [ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+    // モデルを呼ばなかったターンは、未読・通知・タイトルの頼みを出さない。最適化圧縮の通知の数え方（turnNotice。流れの途中で
+    // 出さなかった通知を覚えている）にも入れない
+    if (ending.local) {
+      rt.turnStarter = 'other';
+      this.emitSessions();
+      return;
+    }
     this.turnCompleted(id, rt);
     this.requestTitle(id, rt);
   }
@@ -1981,11 +2013,13 @@ export class SessionManager {
     void generateTitle(client, record.title).catch(() => null);
   }
 
-  // ターンの終わりに、コンテキストの使用量を聞き直す
+  // ターンの終わりに、コンテキストの使用量を聞き直す。/clear のあと、新しい会話の最初の応答までは聞かない（freshConversation）
   private async refreshContext(id: string, rt: Runtime): Promise<void> {
+    if (rt.freshConversation) return;
     const process = rt.process;
     const usage = await process?.client?.request<ContextUsageResponse>('get_context_usage').catch(() => null);
-    if (!usage || rt.process !== process || typeof usage.maxTokens !== 'number') return;
+    if (!usage || rt.process !== process || typeof usage.maxTokens !== 'number' || rt.freshConversation) return;
+    rt.contextSize = usage.maxTokens;
     this.updateStatus(id, rt, { context: { size: usage.maxTokens, tokens: usage.totalTokens, usedPercent: usage.percentage } });
   }
 
@@ -2002,7 +2036,8 @@ export class SessionManager {
       model: modelId ? { id: modelId, name: modelName(modelId) ?? initModelName(rt.init, modelId) ?? modelId } : null,
       effort: record?.effort ?? (patch.effort !== undefined ? patch.effort : (before?.effort ?? null)),
       version: patch.version ?? before?.version ?? null,
-      context: patch.context ?? before?.context ?? null,
+      // null は、分からなくなった（/clear のあと）
+      context: patch.context !== undefined ? patch.context : (before?.context ?? null),
       // 値が無いときに空で上書きしない
       rateLimits: patch.rateLimits ?? before?.rateLimits ?? null,
       costUsd: patch.costUsd ?? before?.costUsd ?? null,

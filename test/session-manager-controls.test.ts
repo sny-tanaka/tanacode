@@ -2,10 +2,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
-import { line, ScriptedApp, stream } from './helpers/scripted-claude';
+import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // 動いている Claude Code への操作（SessionManager。設計書 8 節）。画面にキーを送らず、どれも 1 つの制御の要求にする:
-// 権限モード（set_permission_mode）・裏のタスクの停止（stop_task）・巻き戻し（rewind_files・rewind_conversation）・Remote Control（remote_control）
+// 権限モード（set_permission_mode）・裏のタスクの停止（stop_task）・巻き戻し（rewind_files・rewind_conversation）・Remote Control（remote_control）。
+// 入力欄の / の候補も、initialize の返事から作る
 
 let app: ScriptedApp;
 beforeEach(() => {
@@ -192,9 +193,58 @@ describe('/compact と /clear', () => {
     const file = transcriptPath(app.cwd, next);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, `${JSON.stringify({ ...line.user('新しい会話'), sessionId: next, cwd: app.cwd })}\n`);
-    pipe.emit({ type: 'conversation_reset', uuid: 'r1' });
+    pipe.emit({ type: 'conversation_reset', session_id: app.claudeId(id), uuid: 'r1' });
     pipe.emit(stream.init(next));
     await app.waitFor('乗り換え', () => app.manager.claudeSessionOf(id) === next);
     expect(app.events(id).some((e) => e.type === 'reset')).toBe(true);
+  });
+
+  it('/clear のあと、新しい会話の最初の応答までは、コンテキストの量を分からないとする（空の会話の見積もりを聞かない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // 起動のあとに聞いた量（台本は 12000 / 200000）
+    await app.waitFor('コンテキスト', () => app.statusLineInfos.get(id)?.context?.tokens === 12_000);
+    const asked = () => pipe.requests('get_context_usage').length;
+    const before = asked();
+    // /clear（Claude Code の中で済むコマンド。モデルを呼ばない result）
+    const clear = await app.send(id, '/clear');
+    pipe.emit(stream.lifecycle(clear, 'started'));
+    pipe.emit({ type: 'conversation_reset', session_id: app.claudeId(id), uuid: 'r1' });
+    app.finish(id, { num_turns: 0, terminal_reason: null });
+    await app.waitFor('量を空にする', () => app.statusLineInfos.get(id)?.context === null);
+    await app.waitFor('/clear のターンの終わり', () => app.manager.stateOf(id) === 'idle');
+    await sleep(50);
+    expect(asked()).toBe(before);
+    // 新しい会話の最初の応答の使用量から、上限（前に聞いたもの）で割合を出す。そのあとは、ターンの終わりにまた聞く
+    await app.prompt(id, '再開の文');
+    const reply = line.text('引き継ぎました');
+    app.say(id, { ...reply, message: { ...reply.message, usage: { input_tokens: 170_000 } } });
+    await app.waitFor('応答の使用量', () => app.statusLineInfos.get(id)?.context?.tokens === 170_000);
+    expect(app.statusLineInfos.get(id)?.context?.size).toBe(200_000);
+    app.finish(id);
+    await app.waitFor('聞き直す', () => asked() === before + 1);
+  });
+});
+
+describe('initialize の返事から作るもの', () => {
+  it('入力欄の / の候補は、動いている Claude Code の commands。起動の前・止まったあとは null（フォルダから集める）', async () => {
+    app.answers.set('initialize', {
+      ...INIT_RESPONSE,
+      commands: [
+        { name: 'compact', description: 'Free up context', argumentHint: '', builtin: true },
+        { name: '__remote-workflow', description: 'internal', argumentHint: '', builtin: true },
+        { name: 'deploy', description: 'デプロイする', argumentHint: '<env>' },
+      ],
+    });
+    const { id, pipe } = app.create();
+    expect(app.manager.commandsOf(id)).toBeNull();
+    await app.ready(id);
+    expect(app.manager.commandsOf(id)?.map((c) => [c.name, c.source])).toEqual([
+      ['compact', 'builtin'],
+      ['deploy', 'skill'],
+    ]);
+    pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    expect(app.manager.commandsOf(id)).toBeNull();
   });
 });

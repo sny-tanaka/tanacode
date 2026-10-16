@@ -104,6 +104,34 @@ describe('ターンの終わりの順番', () => {
     expect(app.events(id).find((e) => e.type === 'turn-end')).toEqual({ type: 'turn-end', interrupted: true });
   });
 
+  it('Claude Code の中で済むコマンド（/clear・/compact。モデルを呼ばず num_turns が 0）のターンは、終えるが、完了を知らせない', async () => {
+    const notices: string[] = [];
+    app.manager.turnNotice = (_id, starter) => (notices.push(starter), 'work');
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // ふつうのターン
+    await app.prompt(id, 'はじめ');
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ふつうのターンの終わり', () => turnEnds(id) === 1);
+    expect(app.turnsCompleted).toHaveLength(1);
+    // /clear（会話ログに発言の行は出ない）。result は num_turns 0・terminal_reason なし（実測）
+    const clear = await app.send(id, '/clear');
+    pipe.emit(stream.lifecycle(clear, 'started'));
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    app.finish(id, { num_turns: 0, terminal_reason: null });
+    await app.waitFor('/clear のターンの終わり', () => turnEnds(id) === 2);
+    expect(app.manager.stateOf(id)).toBe('idle');
+    expect(app.turnsCompleted).toHaveLength(1);
+    // 最適化圧縮の通知の数え方（流れの途中で出さなかった通知を覚える）にも入れない
+    expect(notices).toEqual(['other']);
+    // 失敗で終わったものは、num_turns が 0 でもふつうのターンとして終える
+    await app.prompt(id, 'つぎ');
+    app.finish(id, { num_turns: 0, subtype: 'error_during_execution', is_error: true, terminal_reason: 'model_error', errors: ['API Error'] });
+    await app.waitFor('失敗のターンの終わり', () => turnEnds(id) === 3);
+    expect(app.turnsCompleted).toHaveLength(2);
+  });
+
   it('claude が終わったら、待っていたターンの終わりを出す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

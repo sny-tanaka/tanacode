@@ -162,7 +162,7 @@ describe('worktree を作れなかったら、新規セッションの画面に�
     await app.page.click('section.claude:has(.new-session-body) .chat-input-row [aria-label="送信"]');
     // 信頼の確認に答える
     const card = await app.menuCard('other');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', REPLY).waitFor();
     expect(await alerts()).toHaveLength(1);
   });

@@ -180,7 +180,7 @@ describe('Claude が MCP でアプリを操作する', () => {
     // ツールは表示名（title）で出る。開く先の URL も出る
     expect(await card.textContent()).toContain('tanacode-browser — 開く');
     expect(await card.textContent()).toContain(url);
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.page.locator('.preview-pane .preview-address input').waitFor();
     await app.page.waitForFunction((expected) => document.querySelector<HTMLInputElement>('.preview-pane .preview-address input')?.value === expected, url);
   });

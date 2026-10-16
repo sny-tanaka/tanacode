@@ -101,7 +101,7 @@ describe('セッションを始めている途中で、新規セッションの�
     // 変えた先のフォルダは、まだ信頼していないので確認が出る（出るのは、変えた先のセッションに移っているから）
     const card = await app.menuCard('other');
     expect(await card.textContent()).toContain(other);
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.claude-header .claude-title', OTHER).waitFor();
     await app.byText('.chat-list', '変えた先のフォルダの返事です').waitFor();
   });

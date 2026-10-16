@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SlashCommand } from '@shared/ipc';
-import { listCommands } from '../src/main/commands';
+import { commandsFromInitialize, listCommands } from '../src/main/commands';
 
 // / で始まる入力の補完候補（src/main/commands.ts）。作業フォルダとホームフォルダ（HOME）を使い捨てのフォルダにして、
 // カスタムコマンド（.claude/commands）・スキル（.claude/skills）・会話ログのスキルの一覧（skill_listing）・組み込みコマンドを並べる。
@@ -259,5 +259,34 @@ describe('会話ログのスキルの一覧（skill_listing）', () => {
       { name: 'review', description: 'このリポジトリのレビュー', source: 'project' },
       { name: 'other', description: 'ほか', source: 'skill' },
     ]);
+  });
+});
+
+describe('動いている Claude Code の候補（initialize の commands）', () => {
+  it('組み込みは文言の説明にし、組み込みでないものは Claude Code の説明のまま。内部用（__）は出さない', () => {
+    expect(
+      commandsFromInitialize([
+        { name: 'compact', description: 'Free up context by summarizing the conversation so far', argumentHint: '', builtin: true },
+        { name: 'clear', description: 'Start a new session with empty context', argumentHint: '', aliases: ['reset', 'new'], builtin: true },
+        { name: 'heapdump', description: 'Dump the JS heap to the Desktop', argumentHint: '', builtin: true },
+        { name: '__remote-workflow', description: 'Run the workflow script', argumentHint: '', builtin: true },
+        { name: 'deploy', description: 'このリポジトリのデプロイ', argumentHint: '<env>' },
+      ]),
+    ).toEqual([
+      { name: 'compact', description: '会話を要約してコンテキストを空ける', source: 'builtin' },
+      { name: 'clear', description: '会話をリセットして新しく始める', source: 'builtin', aliases: ['reset', 'new'] },
+      // 組み込みでも、文言の無いもの（Claude Code で増えたもの）は英語の説明
+      { name: 'heapdump', description: 'Dump the JS heap to the Desktop', source: 'builtin' },
+      { name: 'deploy', description: 'このリポジトリのデプロイ', source: 'skill' },
+    ]);
+  });
+
+  it('同じ名前の行があれば、組み込みの印の付いた行を使う', () => {
+    const rows = [
+      { name: 'review', description: 'ユーザーのスキル', argumentHint: '' },
+      { name: 'review', description: 'Review a pull request', argumentHint: '', builtin: true },
+      { name: 'review', description: '別のスキル', argumentHint: '' },
+    ];
+    expect(commandsFromInitialize(rows)).toEqual([{ name: 'review', description: 'Review a pull request', source: 'builtin' }]);
   });
 });

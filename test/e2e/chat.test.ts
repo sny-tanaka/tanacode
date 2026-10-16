@@ -27,13 +27,13 @@ describe('チャットから Claude Code を動かす', () => {
     await app.startSession(PROMPT, { mode: 'manual' });
     const card = await app.menuCard('other');
     expect(await card.locator('.menu-title').textContent()).toContain('trust');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
   });
 
   it('最初の指示が届き、Bash の許可の確認に答えられる', async () => {
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain('mkdir checked');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
   });
 
   it('AskUserQuestion の質問に、カードの選択肢で答えられる（カードは、質問のフックが受け取った質問から描く。画面は読まない）', async () => {
@@ -47,7 +47,7 @@ describe('チャットから Claude Code を動かす', () => {
   it('Write の許可の確認に答えると、ファイルが書かれる', async () => {
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain('hello.txt');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', 'チェック完了').waitFor();
     expect(readFileSync(join(app.work, 'hello.txt'), 'utf8')).toBe('こんにちは\n');
   });

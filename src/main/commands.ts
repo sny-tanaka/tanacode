@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import { t, type MessageKey } from '@shared/i18n';
 import type { SlashCommand } from '@shared/ipc';
 import { claudeConfigDir, projectLogDir } from './claude-config';
+import type { SlashCommandInfo } from './stream/protocol';
 
 // 説明の文言がある組み込みコマンドの名前（文言は commands.builtin.<名前>）
 type BuiltinName = MessageKey extends infer K ? (K extends `commands.builtin.${infer N}` ? N : never) : never;
@@ -110,10 +111,33 @@ const BUILTIN: [BuiltinName, string[]?][] = [
   ['verify'],
 ];
 
+const BUILTIN_NAMES = new Set<string>(BUILTIN.map(([name]) => name));
+
+// 動いている Claude Code の initialize の commands（組み込みかどうか付き）を、入力欄の / の候補にする。
+// 組み込みのものは、文言があればそれを説明にする（無ければ Claude Code の英語の説明）。名前が __ で始まるもの（内部用）は出さない。
+// 同じ名前の行があれば、組み込みの印の付いた行を使う（/名前 で動くのはその行）
+export function commandsFromInitialize(commands: SlashCommandInfo[]): SlashCommand[] {
+  const byName = new Map<string, SlashCommand>();
+  for (const command of commands) {
+    if (command.name.startsWith('__')) continue;
+    const before = byName.get(command.name);
+    if (before && (before.source === 'builtin' || !command.builtin)) continue;
+    const builtin = command.builtin === true;
+    byName.set(command.name, {
+      name: command.name,
+      description: builtin && BUILTIN_NAMES.has(command.name) ? t(`commands.builtin.${command.name as BuiltinName}`) : command.description,
+      source: builtin ? 'builtin' : 'skill',
+      ...(command.aliases && command.aliases.length > 0 ? { aliases: command.aliases } : {}),
+    });
+  }
+  return [...byName.values()];
+}
+
 // 会話ログの skill_listing は最初の発言のあとに書かれる。新しいセッションでは同じフォルダの新しい会話ログから借りる
 const BORROW_FROM_LOGS = 3;
 
-// / で始まる入力の補完候補: カスタムコマンド（.claude/commands）・スキル・組み込みコマンド。
+// / で始まる入力の補完候補: カスタムコマンド（.claude/commands）・スキル・組み込みコマンド。Claude Code が動き始める前（initialize の
+// 返事が来るまで）に使う。動いている間は commandsFromInitialize。
 // スキルは Claude Code が会話ログに書く一覧（skill_listing）に、組み込み・プラグインのものも含めて載っている。
 // まだ会話が無ければ、同じフォルダの前の会話とフォルダ（.claude/skills）から探す
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（null は既定のプロファイル）

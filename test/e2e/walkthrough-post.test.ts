@@ -68,7 +68,7 @@ describe('Claude がウォークスルーを PR に載せる', () => {
     await app.startSession(ASK, { mode: 'manual' });
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain('tanacode-walkthrough — PR に載せる');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
   });
 
   it('答えると載せ、コメントの URL が Claude に戻る', async () => {

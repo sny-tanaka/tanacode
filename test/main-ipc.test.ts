@@ -94,6 +94,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.GitLastMessage, ['s1'], callIn(cwdOf('s1'), 'scm.lastCommitMessage')],
     // 最後の引数は、プロファイルの Claude Code の設定のフォルダ（既定のプロファイルは null）
     [IpcChannel.CommandsList, ['s1'], call('listCommands', cwdOf('s1'), '/transcripts/s1.jsonl', null)],
+    [IpcChannel.CommandsList, ['live'], [{ name: 'compact', description: '圧縮', source: 'builtin' }]],
     [IpcChannel.FolderCommands, ['/work/cafe'], call('listCommands', '/work/cafe', null, null)],
     [IpcChannel.SessionsDiscover, [], call('discoverSessions', new Set(['known-1']), null)],
     [

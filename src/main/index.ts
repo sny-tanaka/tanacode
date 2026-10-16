@@ -712,7 +712,7 @@ function registerIpc(): void {
     new Workspace(P(e).cwdOf(id)).search(query, options),
   );
   handle(IpcChannel.ListFiles, (e, id: string) => new Workspace(P(e).cwdOf(id)).listFiles());
-  handle(IpcChannel.CommandsList, (e, id: string) => listCommands(P(e).manager.cwdOf(id), P(e).manager.transcriptOf(id), P(e).claudeDir));
+  handle(IpcChannel.CommandsList, (e, id: string) => P(e).manager.commandsOf(id) ?? listCommands(P(e).manager.cwdOf(id), P(e).manager.transcriptOf(id), P(e).claudeDir));
   handle(IpcChannel.AttachmentSave, (_e, name: string, data: Uint8Array) => saveAttachment(name, data));
   handle(IpcChannel.SubagentsGet, (e, id: string) => P(e).manager.subagents(id));
   handle(IpcChannel.TasksBash, (e, id: string) => P(e).manager.bashTasks(id));
