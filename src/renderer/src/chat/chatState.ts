@@ -120,6 +120,10 @@ const sameRun = (a: HookRun, b: HookRun) => a.event === b.event && a.command ===
 function withHook(items: ChatItem[], id: string, run: HookRun): ChatItem[] {
   const merge = (runs: HookRun[]) => (runs.some((r) => sameRun(r, run)) ? runs : [...runs, run]);
   const tool = run.toolUseId ? items.findIndex((i) => i.kind === 'tool' && i.id === run.toolUseId) : -1;
+  // AskUserQuestion の PermissionRequest の決定の記録（コマンドが無い）は、アプリが足した質問のフック（main の question-hook.ts）が答えた印。
+  // ユーザーのフックではないので出さない（Claude Code は、この記録にコマンドを残さないので、目印の環境変数では見分けられない）
+  const target = items[tool];
+  if (target?.kind === 'tool' && target.name === 'AskUserQuestion' && run.event === 'PermissionRequest' && !run.command) return items;
   if (tool !== -1) {
     return items.map((item, i) => (i === tool && item.kind === 'tool' ? { ...item, hooks: merge(item.hooks ?? []) } : item));
   }

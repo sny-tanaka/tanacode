@@ -42,6 +42,7 @@ import { respond } from '../src/main/mcp-relay';
 import { textResult } from '../src/main/mcp-bridge';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
+import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 
@@ -368,6 +369,10 @@ class FakeHost implements SessionsHost {
   interrupt = (id: string) => void this.interrupted.push(id);
   withdrawParentDraft = async (id: string) => void this.withdrawn.push(id);
   askedQuestions = (id: string) => this.asked.get(id) ?? null;
+  // フックが答えを待っている質問（本物と同じ PendingQuestions。試験では questions.wait で入れる）
+  questions = new PendingQuestions((id) => this.listeners.forEach((l) => l(id)));
+  pendingQuestion = (id: string) => this.questions.first(id);
+  answerPendingQuestion = (id: string, questionId: string, question: string, answer: string) => this.questions.answerOne(id, questionId, question, answer);
   // 本物と同じく、メニューが expect を満たさなければ押さない。Enter で答えると質問が閉じる
   chooseIf = async (id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult> => {
     const screen = this.screens.get(id);
@@ -2362,6 +2367,65 @@ describe('ツールの実行（SessionsControl）', () => {
         expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
         expect(parseSessionEvent(host.submitted[0].text)).toEqual({ sessions: [CHILD], message: `${text} get_session で確かめてください。` });
       }
+    });
+
+    describe('answer_question・get_session: フックが答えを待っている質問（画面を読まない）', () => {
+      const METHOD: AskQuestion = { question: 'どちらの方式?', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '速い' }, { label: 'B 案', description: '' }] };
+      const PARTS: AskQuestion = { question: 'どれを入れますか?', header: '中身', multiSelect: true, options: [{ label: 'テスト', description: '' }, { label: '文書', description: '' }] };
+      // フックが質問を渡す（本物と同じ PendingQuestions で待つ）。返事を返す Promise
+      const wait = (...questions: AskQuestion[]) => host.questions.wait(CHILD, questions, new AbortController().signal);
+      const answer = (args: Record<string, unknown>) => control.handle(PARENT, 'answer_question', { session_id: CHILD, ...args });
+      beforeEach(() => {
+        host.set(CHILD, 'question');
+        // 画面には何も出ていない（読めない）ことにする。画面を読まずに答える
+        host.screens.delete(CHILD);
+      });
+
+      it('get_session は、まだ答えていない最初の質問を、タブと一緒に返す', async () => {
+        void wait(METHOD, PARTS);
+        const got = jsonOf<{ question: Record<string, unknown> }>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+        expect(got.question).toEqual({
+          title: METHOD.question,
+          multi_select: false,
+          tabs: [
+            { label: '方式', answered: false },
+            { label: '中身', answered: false },
+          ],
+          options: [{ label: 'A 案', description: '速い' }, { label: 'B 案' }],
+          accepts_other: true,
+        });
+      });
+
+      it('1 問ずつ答え、残りがあれば次の質問を返す。全部そろったら、まとめてフックに返す（キーは打たない）', async () => {
+        const reply = wait(METHOD, PARTS);
+        // 選択肢の名前は、空白の違いを無視して比べる
+        const first = jsonOf<{ answered: boolean; next_question: { title: string; tabs: unknown } }>(await answer({ question: METHOD.question, choices: [' B  案 '] }));
+        expect(first).toMatchObject({ answered: true, next_question: { title: PARTS.question, tabs: [{ label: '方式', answered: true }, { label: '中身', answered: false }] } });
+        // 複数選択は選択肢の順に「, 」でつなぎ、自由記述（改行もそのまま）は最後に足す
+        const second = jsonOf<{ answered: boolean; next_question?: unknown }>(await answer({ question: PARTS.question, choices: ['文書', 'テスト'], other: '  手順:\n1. 読む  ' }));
+        expect(second).toMatchObject({ answered: true });
+        expect(second.next_question).toBeUndefined();
+        expect(await reply).toEqual({ kind: 'answer', answers: { [METHOD.question]: 'B 案', [PARTS.question]: 'テスト, 文書, 手順:\n1. 読む' } });
+        expect(host.chosen).toEqual([]);
+      });
+
+      it('答えたあと、子が続けて出した次の質問（フックが受け取ったもの）を返す', async () => {
+        const reply = wait(METHOD);
+        void reply.then(() => void wait(PARTS));
+        const result = jsonOf<{ next_question?: { title: string } }>(await answer({ question: METHOD.question, choices: ['A 案'] }));
+        expect(result.next_question?.title).toBe(PARTS.question);
+      });
+
+      it('質問文が違う・無い選択肢・単一選択に 2 つ・もう待っていないときは断る', async () => {
+        void wait(METHOD);
+        expect(textOf(await answer({ question: 'ほかの質問', choices: ['A 案'] }))).toBe(
+          `The question showing now is "${METHOD.question}" (the user answered first, or it has moved on to the next question). To answer it, pass this question text as question.`,
+        );
+        expect(textOf(await answer({ question: METHOD.question, choices: ['C 案'] }))).toBe('There is no option "C 案". The options are: "A 案", "B 案".');
+        expect(textOf(await answer({ question: METHOD.question, choices: ['A 案'], other: 'どちらも' }))).toBe('Only one option can be picked for this question (pass one choice, or only other).');
+        host.questions.releaseAll(CHILD);
+        expect(textOf(await answer({ question: METHOD.question, choices: ['A 案'] }))).toBe('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
+      });
     });
 
     describe('answer_question', () => {

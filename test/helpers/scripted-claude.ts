@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import type { ChatBatch, NewSessionOptions, SessionSummary } from '@shared/ipc';
 import type { Activity, Menu, ScreenInfo } from '@shared/screen';
+import type { PendingQuestion } from '@shared/questions';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
@@ -154,6 +155,7 @@ export type ScriptedOptions = {
   walkthroughMcp?: () => McpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（無ければ既定のプロファイル）
   claudeDir?: string | null;
+  questionHook?: () => McpLaunch | null;
 };
 
 // SessionManager と、それが配信したもの
@@ -178,6 +180,8 @@ export class ScriptedApp {
   readonly workflows = new Map<string, WorkflowRun[]>();
   readonly subagents = new Map<string, SubagentRun[]>();
   readonly statusLineInfos = new Map<string, StatusLineInfo>();
+  // フックが答えを待っている質問の知らせ（onQuestion）を、届いた順に
+  readonly questionLog: { id: string; question: PendingQuestion | null }[] = [];
   sessions: SessionSummary[] = [];
   // 一覧を知らせるたびの中身（途中の「準備中」なども見られるように）
   readonly sessionLists: SessionSummary[][] = [];
@@ -229,6 +233,7 @@ export class ScriptedApp {
         onKnowledge: () => {},
         onStatusLine: (id, info) => this.statusLineInfos.set(id, info),
         onAttention: (session, attention) => this.attentions.push({ id: session.id, attention }),
+        onQuestion: (id, question) => this.questionLog.push({ id, question }),
       },
       options.remoteControlAvailable,
       options.settingsFiles,
@@ -238,6 +243,8 @@ export class ScriptedApp {
       options.checklistMcp,
       options.walkthroughMcp,
       options.claudeDir ?? null,
+      undefined,
+      options.questionHook,
     );
     this.claudeDir = options.claudeDir ?? null;
   }

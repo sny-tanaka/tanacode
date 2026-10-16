@@ -350,7 +350,7 @@ PR で、次のものを流します。develop への push では流しません
 
 | ファイル | 確かめること |
 | --- | --- |
-| `chat.test.ts` | 新規セッションの画面から始め、信頼の確認・Bash と Write の許可・質問に、チャットのカードで答える（答えがモックの API まで届くか）。チャットの並び・一覧のタイトル・ターミナルモード（チャットの代わりに出す Claude Code の画面。xterm）への描画と入力（人と同じ速さで 1 文字ずつ打ち、打っている途中の文字がチャットの入力欄に移らないか。画面の外を触っても残り、チャットに戻すと移るか）・ターミナルのシェル |
+| `chat.test.ts` | 新規セッションの画面から始め、信頼の確認・Bash と Write の許可・質問に、チャットのカードで答える（答えがモックの API まで届くか。質問は、質問のフックが受け取った質問のカードで答える）。チャットの並び・一覧のタイトル・ターミナルモード（チャットの代わりに出す Claude Code の画面。xterm）への描画と入力（人と同じ速さで 1 文字ずつ打ち、打っている途中の文字がチャットの入力欄に移らないか。画面の外を触っても残り、チャットに戻すと移るか）・ターミナルのシェル |
 | `workspace.test.ts` | 作業フォルダのファイルを、エクスプローラー・エディタ・Markdown のプレビュー・⌘P・全文検索で扱う。プレビューの整形（コードの色付け・mermaid の図・フォルダの中の画像）と相対リンク。エディタで書き換えて ⌘S で保存するとディスクに書かれ、ディスクの変更がエディタに戻るか。日本語の名前のファイルも ⌘P で開け、入力欄の `@` の補完で選んで送ると中身が Claude に渡るか（git の一覧を `-z` なしで読むと、名前がエスケープされて出ない） |
 | `added-folders.test.ts` | ワークスペースにフォルダを追加する。エクスプローラーの ＋ で選んだフォルダがツリーに並び、エディタで開けて、ディスクの変更がエディタに戻るか。Claude Code に `--add-dir` で渡り（手が空いていれば、すぐ起動し直す）、Claude が確認なしでそのフォルダを読めるか。入力欄の `@` の候補にそのフォルダのファイルが出て、選ぶと絶対パスが入り、送ると中身が Claude に渡るか。外すと渡さなくなるか。新規セッションの画面で追加したフォルダは、`@` の候補に出て、はじめから渡るか |
 | `terminal.test.ts` | 人のターミナルの MCP（`tanacode-terminal`）。人がターミナルパネルの xterm で打ったコマンドの出力を、Claude（台本）が `read_terminal` で確認なしに読めるか。auto のモードでも、`type_in_terminal` の前に許可のカードが出て、tanacode のフックが出させた理由（タブの名前と打つ文字）が出るか。許すと xterm に出るか |
@@ -402,6 +402,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     | `errors.test.ts`（台本は `test/scenarios/errors.ts`） | 失敗と中断。応答の前・応答を待つ間・ツールの実行中の Esc → 中断した会話の `--resume`（`<synthetic>` の応答を出さない）→ API エラー（529 の再試行・529 のあきらめ・400）→ 新しい会話でツールの失敗（`exit 3`）・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks |
     | `browser.test.ts` | アプリ内ブラウザの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`test/cli/browser-relay-build.ts` で `src/main/browser-mcp.ts` をまとめたもの）が、アプリの代わりのソケット（`McpBridge`）まで呼び出しを運ぶか。読むだけのツールは確認なし・クリックは確認あり・JavaScript の実行は localhost のページなら確認なし、それ以外のページなら「次から聞かない」を選んでも次も確認、アプリに聞けない間も確認・許す先の外を開くときは `bypassPermissions` でも「次から聞かない」のあとでも毎回確認、許す先は今までどおり・`--resume` のあとも使える・ソケットが無い間は「起動していません」と返し、戻ればそのまま使える・`ask_user_to_act` は許可の確認なしに届き、Esc で取り消し（`notifications/cancelled`）が届く・バックグラウンドに移ったあとも、結果が知らせで届いて Claude が続きを始める |
     | `sessions.test.ts` | ほかのセッションを扱う MCP。アプリと同じ起動の引数（`--mcp-config` の `timeout` も・`--allowedTools`・`--settings` の `PreToolUse` のフック）で起動し、ビルドした中継（`src/main/sessions-mcp.ts`）がアプリの代わりのソケットまで呼び出しを運ぶか。読むだけのツールと子への指示・質問への回答・許可の確認への回答・子の片付けは確認なし・子の中断と起動は確認あり。bypassPermissions でも、子の起動だけはフックで確認が出て、確認に「利用枠」が出る。親からの指示（囲みと、複数行の本文の貼り付け）は会話ログから「親セッションからの指示」として読め、順番待ちにも本文だけが出る。子の知らせと予約の知らせ（`<tanacode-wakeup>`）は「Claude への知らせ」として読め、Claude が続きを始める。自分への予約（`schedule_wakeup`・`list_wakeups`・`cancel_wakeup`）と報告（`report_result`）は確認なしに届く。作業中に頼んだ親の指示は、ターンが終わってから打つ。子が出した AskUserQuestion に、親（`SessionsControl` の `answer_question`。本物の `SessionManager` で）が答えると、子が続きを始める。低い端末（100×30）でも、質問文と選択肢が画面の上に押し出される長さ（約 2000 文字）の自由記述で答えられ、欄に消せない長い文が残っていれば、`get_session` で質問が読め、継ぎ足さずに断る。子が出した許可の確認に、親（`answer_permission`）が答える（アプリが足した `PermissionRequest` のフックで、画面に収まらない 600 文字のコマンドの全文を読める。許すと動き、許可は覚えないので次の確認が出る。断ると動かず、理由が親からの指示として届く。歯止めの確認にも答えられる。人が先に答えて別の確認に変わっていたら、前の ID では答えられない）。worktree の子で裏の Bash を動かし、親が `end_session` で終える（作業中は断る。裏のタスクの完了待ちなら、裏の Bash も止まり、アーカイブして worktree とブランチを消し、未追跡のファイルは控えに残る。もう一度呼ぶと、片付いていることを返す） |
+    | `question-hook.test.ts` | AskUserQuestion の質問のフック（ビルドした入口を node で動かす）。待っている間も画面に質問が出て、待っている質問として読め、返事で答えると画面で答えたのと同じ答えが会話ログに書かれる（3 つの質問）。人が画面で先に答えると、待っている質問が消え、フックは待つのをやめる。画面で選んだ Chat about this の結果と、フックの文が一字一句同じ（質問 2 つ）。キャンセルは作業を止める。親の `answer_question` は、低い端末でも画面を読まずに 1 問ずつ答え、改行のある長い自由記述もそのまま渡せる。フックが決めた記録は、ツールの呼び出しと結果の間に、コマンドの無い PermissionRequest の記録として書かれる |
     | `checklist.test.ts` | チェックリストの MCP。アプリと同じ起動の引数で起動し、ビルドした中継（`src/main/checklist-mcp.ts`）が、アプリの代わりのソケットの先の `ChecklistControl` まで呼び出しを運ぶか。書き換えるツールも確認なしに通る。サーバーの説明が Claude に渡り、`/compact` で圧縮したあとも渡り続ける。人がスレッドに「Claude に通知する」で返信すると、手の空いた Claude Code（本物の `SessionManager` で）の入力欄に知らせが打たれ、会話ログからカードの場所を持つ「Claude への知らせ」として読める |
     | `checklist-hooks.test.ts` | チェックリストを使い続けさせる hooks。アプリと同じ起動の引数（`--settings` の hooks）と環境変数で起動し、ビルドした中継を `--hook` で動かしたフックが、アプリの代わりのソケットの先の `ChecklistControl` に聞いて Claude Code に返すか。人の発言で今のチェックリストが Claude に渡る。ツールを使ってチェックリストに触れずに終えようとすると、1 回だけ止まって理由が Claude に渡り、続きが始まる（止めたあとの続きは止まらない）。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない。チェックリストに触れたターン・ツールを使っていないターンは止まらない。`/compact` のあとにも渡る（有効な決定事項も。取り消したものは渡らない）。どれもチャットのフックの一覧に出ない。モックの API はすぐに応答を返すので、フックが動いた時点では会話ログに最後の応答がまだ無く、フックがそろうのを待ってから数えることも確かめる（`settled`。Claude Code がフックに渡す `last_assistant_message` と、会話ログの最後の応答が同じ文であること）。止めた記録がチャットの目印（`checklist-stop`）になる |
     | `terminal.test.ts` | 人のターミナルの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）と環境変数で起動し、ビルドした中継（`src/main/terminal-mcp.ts`）が、アプリの代わりのソケットの先の本物の `TerminalControl`（`/bin/sh` を開く `ShellTerminals`）まで呼び出しを運ぶか。読むツールは確認なしに届き、人が打った出力を読める。打つツールは確認が出て（理由と入力に打つ文字）、許すと、フックが控えさせた印で打てる（Claude Code がフックに渡す `tool_input` と、ツールの呼び出しの引数から、同じ印の鍵ができる）。「次から聞かない」を選んでも、次も確認が出る。bypassPermissions でも確認が出る。フックがアプリに聞けない（答えが返らない）ときも確認が出て、許しても、印が無いので何も打たずに断る |
@@ -487,6 +488,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - 許可の確認の選択肢には、説明がありません。選択肢の下の行は、Claude Code が名前を端末の幅より手前で折り返した続きなので、名前につなぎます（2.1.292 の「Yes, and always allow access to <フォルダ>」の次の行の「from this project」）。
   - 巻き戻し先の一覧（`/rewind`）は、案内（Enter to continue · Esc to cancel）を下から探して見つけます。一覧は画面の下に重ねて出るので、上に残る会話の本文に同じ文字があっても取り違えません。
 - 起動時のバナーのモデル名は、ロゴの右の「Claude Code vX.Y.Z」の次の行から読みます（前の Claude Code の、枠の中の形にも対応）。見るのは、この見出しに続く行だけ。質問文の枠など、ほかの縦線（│）の行にも、モデル名のような文字が出ることがあるためです。
+  - AskUserQuestion は、質問のフックで受け取れるときは、画面を読みません（下の「質問（AskUserQuestion）」）。ここから下の AskUserQuestion の読み方は、フックが使えないときの予備の道です。
   - AskUserQuestion の質問文・選択肢・説明・プレビューは、その入力から取ります。画面からは、カーソルの位置・チェック・「その他」に打った文字・どの質問のページかだけを読みます。画面が低いと Claude Code は選択肢の一部しか出さないためです。
   - 選択肢の説明が長く、メニューが画面より高いと、上（タブ・質問文・はじめの選択肢）が切れて見えません。そのときは、見えている選択肢の名前がそろう質問として組み立てます。1 つめの選択肢が画面のいちばん上の行にあり、質問文が空になったときも、上が切れたとみなします。カーソルのある選択肢が切れて `❯` が見えないときは、カーソルは見えている選択肢より上にあります（見えていないのが 1 つめだけなら、1 つめ）。カードで選んだとき、カーソルが目的の選択肢まで来なければ、違う選択肢で答えないよう Enter などを送りません。
   - 「その他」の欄に長い文があると、欄が端末の幅で何行にも折り返して、質問文と選択肢（欄の番号の行も）が画面の上に押し出されます。見えるのが欄の続きの行（複数選択なら Next / Submit の行も）・区切りの線・「Chat about this」・操作説明だけのときは、線より上をすべて欄の続きとして読み、欄の番号（「Chat about this」の 1 つ前）がそろう質問にします（`typedField`）。欄の `❯` は見えないので、欄にカーソルがあるかは、そのときだけ操作説明に出る「ctrl+g to edit in …」で見分けます。端末が低いと、千文字ほどの答えでも起こります（2026-10-16、親が子の質問に長い指示で答えようとして、質問と読めずに止まり、打った文が子の欄に残った）。
@@ -499,6 +501,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
   - ユーザー自身が `~/.claude/settings.json` で statusLine を設定していれば、同じ JSON をそちらにも渡します。プロジェクトの設定（`.claude/settings*.json`）の statusLine は写しません。clone したリポジトリのコマンドを、フォルダの信頼の確認の前にフラグの設定として動かさないためです。このセッションでは `--settings` の statusLine が優先されるので、プロジェクトの statusLine は動きません。
 - チェックリストを Claude に扱わせるときは、`--settings` に、今のチェックリストを Claude に渡すフック（`UserPromptSubmit`・`Stop`・`SessionStart`）も足します（下の「チェックリスト」）。
 - 同じく `--settings` で、AskUserQuestion の PreToolUse のフックを足します。質問の入力をセッションごとのファイルに書かせるだけで、何も止めません。ユーザー自身のフックは、これまでどおり一緒に動きます。このフックはチャットのフックの一覧に出しません。
+- AskUserQuestion の PermissionRequest には、質問をアプリに渡して答えを待つフック（質問のフック）を足します（下の「質問（AskUserQuestion）」）。
 - Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
   - `ask` は、権限モードが auto や bypassPermissions でも確認を出します（実測）。止めはしません。
   - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
@@ -666,6 +669,48 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 - モデルの一覧は、Claude Code が持っている一覧の控え（`~/.claude/cache/model-catalog/`）から作ります。モデルやエフォートを変えると、`--model` / `--effort` を付けて起動し直し、会話を再開します。
 - コンテキストの上限は、statusLine の値（1M かどうかも含めて正確な値）を使います。圧縮の直後は statusLine の使用量が次の応答まで 0 になるので、会話ログの圧縮後の量（`compactMetadata.postTokens`）を使います。
 - 引数が複数行・長い（800 文字を超える）`/compact` は、名前だけを打鍵し、引数をブラケットペーストで送ります（`promptKeys`）。丸ごと貼り付けると、Claude Code は入力を `[Pasted text #1 …]` の目印に置き換え、`/` で始まらない入力として、コマンドにせずにふつうの発言で送るためです（実測）。ほかの「/単語」で始まる複数行の発言（「/api のエンドポイントを…」など）は、今までどおり丸ごと貼り付けます。名前を打鍵すると、Claude Code がコマンドとして実行したり（`/clear` など）、知らないコマンドとして断ったりするためです。
+
+### 質問（AskUserQuestion）
+
+- AskUserQuestion の質問は、ターミナルの画面を読まずに受け取り、キーを打たずに答えます。アプリが起動する Claude Code に、`--settings` で PermissionRequest のフックを足します（`question-hook.ts` の `questionHook`。`matcher: 'AskUserQuestion'`・`timeout: 86400`）。
+  - フックは、質問の入力をアプリのソケット（userData の `question.sock`）に渡し、返事を待ちます（`question:wait`）。
+  - 入口は `question-hook-main.ts`（`out/main/question-hook.js`）。tanacode 本体を Node として動かします。
+  - 環境変数は `TANACODE_QUESTION_SOCKET`・`TANACODE_QUESTION_SESSION`・`TANACODE_QUESTION_COMMAND`・`TANACODE_QUESTION_SCRIPT`。目印の `TANACODE_QUESTION_HOOK` で、チャットのフックの一覧から外します。
+- 返事（`@shared/questions` の `QuestionReply`）は 3 つ。
+  - 答え: `decision.behavior: 'allow'` と、入力に `answers`（質問文 → 答え）を足した `updatedInput`。会話ログには、画面で答えたときと同じ結果が書かれます（「The user answered: …」・`toolUseResult` の `questions` と `answers`）。
+    - 答えの文も、画面で答えたときと同じ形です（`answerText`）。複数選択は、選んだ選択肢を選択肢の順に「, 」でつなぎ、自由記述は最後に足します。
+    - 改行も、そのまま渡せます。
+  - Chat about this: `deny` と、画面で選んだときに Claude Code が返す文（`chatMessage`）。本物と一字一句同じかは、`test/cli/question-hook.test.ts` が確かめます。
+  - キャンセル: `deny` と `interrupt: true`。画面の Esc と同じく、作業を止めます。
+- PreToolUse ではなく PermissionRequest のフックにした理由は、待っている間も Claude Code が画面に質問を出すからです（2.1.296 で確かめた。manual・acceptEdits・auto・bypassPermissions のどれでも動く）。
+  - 人はターミナルモードや Remote Control でも答えられ、先に答えたほうが使われます。Claude Code はフックを待たずに先へ進み、あとから来たフックの返事は使いません。
+  - PreToolUse のフックで待つと、待っている間は画面に質問が出ません。人は答えられなくなります。
+  - Remote Control（スマホ）でフックから答えたときに質問が閉じるかは、ログインした本物でしか確かめられません（モックの API ではつながらない）。
+- アプリの側は、`SessionManager` が持つ `PendingQuestions`（`pending-questions.ts`）です。
+  - フックが渡した質問を、セッションごとに来た順に持ちます。`pendingQuestion` は、いちばん前のもの。
+  - 待っている間は、画面によらず質問中です（`stateOf` は `question`。一覧の操作待ちも質問）。画面に許可の確認が出ているときだけは、そちらを見せます。
+  - 来たら、通知を 1 回出します（本文は質問文）。画面に同じ質問が出ても、出し直しません。
+  - 待つのをやめるのは、次のときです。やめると、フックは何も返さずに終わります（返事は `{kind: 'none'}`）。
+    - 返事を渡した
+    - 会話ログに答えが出た（人がターミナルや Remote Control で答えた・キャンセルした。`TaskRouter` の `questionAnswered`）
+    - Claude Code が終わった・アーカイブした
+    - フックとのつながりが切れた（Claude Code がフックを止めた）
+  - フックは、アプリにつながらない・つながりが切れたら、すぐ終わります。つなぎ直さないのは、待ち続けるプロセスを残さないためです。そのあとは、画面を読む道で答えます。
+- 画面への渡し方
+  - `question:changed`（`question.onChanged`）で、セッションのいちばん前の待っている質問を送ります。画面は `useSessionQuestions` で受け、`ClaudePane` が `QuestionCard` で出します。
+  - 待っている質問があるときは、画面から読んだ質問のメニュー（`MenuCard`）を出しません。許可の確認は、今までどおり出します。
+  - カードは、質問の入力だけで描きます。ページの送り方は Claude Code の画面と同じです（1 問ずつ・タブ・単一選択は選ぶと次へ・複数選択はチェックしてから次へ・最後に回答の確認）。質問が 1 つで単一選択なら、選んだらすぐ送ります。
+  - 選んだもの・チェック・自由記述は、カードが持ちます。自由記述は複数行で、チャットの入力欄と同じく Enter で改行、⌘+Enter で決定します。
+  - 送ると、`question:reply` で返事を渡します。main は返事の形を確かめてから渡します（`questionReplyOf`）。もう待っていなければ（人が先に答えた）、カードに知らせます。
+- 親の `answer_question`・`get_session` も、待っている質問があれば画面を読まずに答えます（`sessions-control.ts` の `answerPending`）。
+  - 1 問ずつ答える今の形（`question`・`choices`・`other`・`next_question`）は変えません。
+  - 質問が複数あれば、アプリが答えをためて（`PendingQuestion.answered`）、全部そろったらまとめてフックに返します。
+- チャット: Claude Code は、フックが決めた記録（`hook_permission_decision`）にコマンドを残しません。目印の環境変数では見分けられないので、AskUserQuestion のカードに付く、コマンドの無い PermissionRequest の記録を出しません（`chatState.ts` の `withHook`。会話ログでは、ツールの呼び出しと結果の間に書かれる）。
+- 次のときは、画面を読む道（予備）で答えます。今までどおり、画面から質問を読み（`ScreenTracker`・`applyQuestions`）、キーを送ります。PreToolUse のフック（`<id>.ask.json`）は、この道のために残しています。
+  - 待ち受けを始められなかった
+  - このしくみより前のアプリが起動して、引き継いだ Claude Code（フックが無い）
+  - アプリを起動し直した（フックが終わった）
+  - 24 時間たって、Claude Code がフックを止めた
 
 ### 時刻を指定して送信（予約）
 
@@ -1031,7 +1076,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
     - 作業中の子への `send_message` は、手が空くまでアプリが預かり（最大 3 時間）、待たずに返します。本文が複数行なら、行ごとの短い貼り付けに分けて送るので、会話ログには目印のタグ（`<tanacode-parent-message>`）で始まる形で残ります。前のバージョンのアプリは丸ごと 1 つの貼り付けで送っていて、目印のタグごと `<pasted_content>` の囲みに入っていました（本文だけが囲みに入る形もあります）。どの形でも読めるよう、`session-tools.ts` の `unwrapWholePaste` が、目印を見分ける前に全体の囲みを外し、`chat.ts` が `user` のイベントに `parent`（親の ID）を付けます。外さないと、親からの指示が人の発言に見えて、下の「親への知らせ」が届きません（2026-10-12 まで、複数行の指示ではいつも届いていませんでした）。止まっている子には、起動してから送ります。
   - `read_session`: 会話（`SessionManager.conversation`。動かしたことがあれば直近の起動からのイベント、無ければ会話ログから）の `/clear` よりあとを、新しいほうから `turns` 回分の指示と応答にまとめます（`conversationLines`）。指示は 3000 文字、最後の応答は 4000 文字、途中の応答は 600 文字で途中を省き、全体は 6 万文字まで。チェックリストの知らせにターンの終わりを止められたあとの応答（チェックリストを直した報告）は、最後の応答に数えず、分けて 600 文字まで出します（`get_session`・`wait_sessions` の `last_response` にもしません。下の「チェックリストを使い続けさせる hooks」）。編集したファイルは、`Edit`・`MultiEdit`・`Write`・`NotebookEdit` の対象です。
   - `get_session_diff`: ソース管理と同じ `branchBase`・`branchFiles`（`git.ts`）で、分岐点から作業ツリーまで。未追跡のファイルは、新しいファイルの差分の形にします（256 KB を超えるもの・バイナリは中身を出さない）。読むのはふつうのファイルだけで（`lstat`。シンボリックリンクの先・デバイス・名前付きパイプは読まない）、数は 100 件、合計は結果の上限まで。`branchFiles` の行数の数え方も、同じくふつうのファイルだけ（`/dev/zero` へのリンクは読み終わらないため）。`path` はフォルダの外を指させません（`safeRelative`）。
-  - `answer_question`: 画面から読んだ今の質問（`ScreenTracker` のメニュー）の文が、渡された `question` と同じで、AskUserQuestion で出した質問（フックが書いた質問。`isAskedQuestion`）に合うときだけ答えます。キーは `SessionManager.chooseIf`（`ScreenTracker.choose` の `expect`）で、キーを送る前に毎回、同じ質問が出ているか確かめ、変わっていたら何も押さずに失敗します（人が先に答えた・許可の確認に変わったときに、違うメニューへ答えないように）。複数選択は選択肢ごとに Space を送ってから確定します。自由記述は制御文字を除き、1 行にします。欄に前の文が残っていれば、Ctrl+U だけを先に送って消し、打った文が欄に出てから Enter を送ります（Ctrl+U と長い文を一緒に送ると、貼り付けとみなされて Ctrl+U が文字として欄に入り、答えの頭に付く）。Ctrl+U は欄が折り返した最後の 1 行しか消さないので（2.1.296。重ねて送っても、Backspace を挟んでも、その先は消えない）、消しきれなければ、残った文に継ぎ足した答えを送らないよう何も打たず、人に欄を消してもらうよう返します（`filled`）。最後に、質問が閉じたのを確かめます。許可の確認のメニューには答えません（`answer_permission` で答える）。
+  - `answer_question`: 待っている質問（質問のフック。上の「質問（AskUserQuestion）」）があれば、それに答えます。画面は読まず、キーも打ちません。まだ答えていない最初の質問の文が、渡された `question` と同じときだけ答えます。以下は、フックが使えないときの道です。画面から読んだ今の質問（`ScreenTracker` のメニュー）の文が、渡された `question` と同じで、AskUserQuestion で出した質問（フックが書いた質問。`isAskedQuestion`）に合うときだけ答えます。キーは `SessionManager.chooseIf`（`ScreenTracker.choose` の `expect`）で、キーを送る前に毎回、同じ質問が出ているか確かめ、変わっていたら何も押さずに失敗します（人が先に答えた・許可の確認に変わったときに、違うメニューへ答えないように）。複数選択は選択肢ごとに Space を送ってから確定します。自由記述は制御文字を除き、1 行にします。欄に前の文が残っていれば、Ctrl+U だけを先に送って消し、打った文が欄に出てから Enter を送ります（Ctrl+U と長い文を一緒に送ると、貼り付けとみなされて Ctrl+U が文字として欄に入り、答えの頭に付く）。Ctrl+U は欄が折り返した最後の 1 行しか消さないので（2.1.296。重ねて送っても、Backspace を挟んでも、その先は消えない）、消しきれなければ、残った文に継ぎ足した答えを送らないよう何も打たず、人に欄を消してもらうよう返します（`filled`）。最後に、質問が閉じたのを確かめます。許可の確認のメニューには答えません（`answer_permission` で答える）。
     - 答えたあと、子の次の質問を少しだけ待ちます（`followUpQuestion`。長くても 20 秒）。子は、決めることがいくつもあるとき、1 問ずつ別々の AskUserQuestion で聞くことが多く（「1/3」「2/3」…）、答えた直後は作業中でも、数秒で次の質問を出します。待たずに返すと、親は「作業中」と見て離れ、次の質問が、親がもう一度見に来るまで待たされます（2026-10-12、3 問のうち 1 問ごとに 1 分以上待たされた）。次の質問が出たら、結果の `next_question` と `note` で、続けて答えるよう伝えます。子の手が空いた・人の操作待ちになった・終了したら、待つのをやめます。
   - `answer_permission`: 子が出している許可の確認（Claude Code のふつうの確認と、歯止め `worktree-guard.ts` が出させた確認）に、親が答えます。2026-10-03 に「許可の確認には、親は答えない」と決めましたが、席を離れて Remote Control から親だけを操作している間に子が止まったままになるので、2026-10-12 に、次の守りを付けて答えられるようにしました。
     - 選ぶのは 2 つだけ: 名前がちょうど `Yes` の選択肢（今回だけ許す）と、`No`（`No, …` の形も）の選択肢（断る）。`permissionOptions` が見分け、どちらもちょうど 1 つのときだけ決めます。「Yes, and don't ask again …」「Yes, and always allow …」「Yes, and switch to auto mode …」のような、許可を覚えさせる・権限モードを変える選択肢は、名前が `Yes` で終わらないので選ばれません。番号の決め打ちはしません（並びは、確認の種類と Claude Code のバージョンで変わる。歯止めの確認は `Yes`・`No` だけ）。見分けられないメニューには答えず、理由を返します。
@@ -1253,6 +1298,7 @@ tanacode は Claude Code の画面・会話ログ・statusLine・hooks の形に
 | `checklist.sock` | チェックリストの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `walkthrough.sock` | ウォークスルーの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `terminal.sock` | 人のターミナルの MCP の中継と、打つ前の確認のフックがつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
+| `question.sock` | AskUserQuestion の質問のフックがつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `statusline/<id>.json` | 各セッションの statusLine の最新の値 |
 | `statusline/<id>.ask.json` | 各セッションで最後に出た AskUserQuestion の入力（フックが書く） |
 | `statusline/<id>.auto-compact.json`・`<id>.auto-compact.hit.json` | 自動の最適化圧縮で、ターンの途中で止めるためのファイル（アプリが書く）と、フックが止めた印（フックが名前を変える）。ターンが終わったら消す |
@@ -1315,7 +1361,9 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `terminal-control.ts`: Claude から届いた人のターミナルのツールを実行する（呼び出し元と子の解決・打つ前の確認済みの印・打ったあとの出力を待つ）
   - `terminal-mcp.ts` / `terminal-bridge.ts`: 人のターミナルの中継の入り口（`--gate` では、打つ前の確認のフック）と、中継とフックに渡す環境変数・`--mcp-config` のエントリ・フックの出力
   - `walkthrough-github.ts`: ウォークスルーを GitHub の PR にコメントとして載せる（PR・HEAD・ファイルの確かめと、下見・投稿。画面からと Claude から）
-  - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナル）の置き場所
+  - `socket-path.ts`: アプリのソケット（pty ホスト・アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナル・質問）の置き場所
+  - `question-hook.ts` / `question-hook-main.ts`: AskUserQuestion の質問のフック（PermissionRequest。質問をアプリに渡して答えを待つ）と、その入り口・環境変数・フックの出力
+  - `pending-questions.ts`: フックが答えを待っている質問（セッションごと。返事・1 問ずつの答え・待つのをやめる）
   - `settings-files.ts`: 登録した設定ファイルの管理（登録・名前の変更・削除）と、アプリの設定との合成
   - `pty-host.ts` / `pty-host-client.ts` / `pty-host-protocol.ts`: Claude Code を持っておく常駐プロセスと、アプリからの接続（`SessionManager` と `ClaudeSession` が使う形は `PtyHostApi`・`PtyHandle`。互換性の確認では偽物に差し替える）
   - `transcript-follower.ts` / `transcript-tail.ts`: 会話ログ（JSONL）を追いかけて読む
@@ -1354,6 +1402,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - `.storybook`: 画面の部品のカタログ（Storybook）。`window.tanacode` は何もしないモックに差し替えます（`mockApi.ts`）。ストーリーで返事を決めたいときは、ストーリーの `beforeEach` で `mockApi({ 'settingsFiles.list': () => … })` のように呼びます（返事は、ストーリーごとに捨てます）。ストーリーは部品の隣の `*.stories.tsx`
 - `src/renderer/src`: React の UI
   - `chat/`: Claude Code ペイン（チャット・入力欄・ツールカード・hooks・時刻を指定して送信の時刻のメニューと予約の行・最適化圧縮のボタン）
+  - `screen/`: 質問と許可の確認のカード。質問のフックが受け取った質問のカード（`QuestionCard`）と、Claude Code の画面から読んだメニューのカード（`MenuCard`）。セッションごとの画面の状態（`useSessionScreens`）と、待っている質問（`useSessionQuestions`）
   - `review/`, `scm/`: 行コメント・差分・ソース管理（ブランチの変更。変更の見せ方の一覧 / ツリーは `scmView.ts` で保つ。どのプロファイルの画面でも同じ）
   - `tasks/`, `workflow/`: バックグラウンドの作業のトレイ・一覧と中身の表示
   - `checklist/`: チェックリスト（サイドパネルの一覧・カードの詳細とスレッド・リストのフォーム・別のセッションへのコピー・チャットからカードを開く受け渡し）
@@ -1368,7 +1417,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、描く前に言語（preload の `language()`）を決める
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）
+- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、Claude Code の入力欄に打ち込む文字（`prompt-keys.ts`。複数行はブラケットペースト。制御文字の除去も）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）、質問のフックが答えを待っている質問と返事の型・答えの文の組み立て・返事の形の確かめ（`questions.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）

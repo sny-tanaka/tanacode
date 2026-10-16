@@ -1,5 +1,6 @@
 import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../src/shared/checklist-tools';
 import { CHECKLIST_HOOK_COMMAND } from '../src/main/checklist-hook';
+import { QUESTION_HOOK_COMMAND } from '../src/main/question-hook';
 import { describe, expect, it } from 'vitest';
 import {
   ASK_FILE_ENV,
@@ -246,8 +247,9 @@ describe('toChatEvents: attachment の行', () => {
     expect(events({ type: 'attachment', attachment: { type: 'hook_something' } })).toEqual([
       { type: 'hook', id: '', run: expect.objectContaining({ event: 'hook', name: '', outcome: 'success' }) },
     ]);
-    // アプリが足したフック（AskUserQuestion の入力をファイルに書くもの）は出さない
+    // アプリが足したフック（AskUserQuestion の入力をファイルに書くもの・質問をアプリに渡して答えを待つもの）は出さない
     expect(events(attachment({ type: 'hook_success', hookEvent: 'PreToolUse', command: `cat > "$${ASK_FILE_ENV}"` }))).toEqual([]);
+    expect(events(attachment({ type: 'hook_success', hookEvent: 'PermissionRequest', command: QUESTION_HOOK_COMMAND }))).toEqual([]);
     // チェックリストを使い続けさせるフック。Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）・ターンの終わりを止めた記録（コマンドは blockingError に入る）。2.1.296
     const reminder = `<${CHECKLIST_REMINDER_TAG}>\n今のチェックリスト\n</${CHECKLIST_REMINDER_TAG}>`;
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'UserPromptSubmit', hookEvent: 'UserPromptSubmit', content: [reminder] }))).toEqual([]);

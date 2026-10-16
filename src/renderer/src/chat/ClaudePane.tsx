@@ -5,6 +5,7 @@ import type { ScheduledMessage } from '@shared/scheduled';
 import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode, ScreenInfo } from '@shared/screen';
+import type { PendingQuestion } from '@shared/questions';
 import type { BashTask, TaskRef } from '@shared/task';
 import { errorMessage } from '../errorMessage';
 import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
@@ -13,6 +14,7 @@ import { ExportDialog } from '../export/ExportDialog';
 import { ContextMeter } from '../knowledge/ContextMeter';
 import { contextUsage } from '../knowledge/useSessionKnowledge';
 import { MenuCard } from '../screen/MenuCard';
+import { QuestionCard } from '../screen/QuestionCard';
 import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
 import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
@@ -59,6 +61,8 @@ type Props = {
   onSelectSession: (id: string) => void;
   chat: ChatState;
   screen: ScreenInfo | null;
+  // フックが答えを待っている AskUserQuestion（無ければ null）
+  question?: PendingQuestion | null;
   workflows: WorkflowRuns;
   subagents: SubagentRuns;
   bashTasks: ReadonlyMap<string, BashTask>;
@@ -109,6 +113,7 @@ export const ClaudePane = memo(function ClaudePane({
   onSelectSession,
   chat,
   screen,
+  question = null,
   workflows,
   subagents,
   bashTasks,
@@ -289,11 +294,17 @@ export const ClaudePane = memo(function ClaudePane({
     const list = listRef.current;
     if (list) toBottom(list);
   }, [screenMode]);
-  const menu = live && screen?.state.kind === 'menu' ? screen.state.menu : null;
+  // フックが答えを待っている質問（ターミナルの画面を読まずに出す）。出ている間は、画面から読んだ質問のメニューは出さない
+  // （同じ質問が画面にも出ている。質問を待っている間に出た許可の確認などは、今までどおり画面から出す）
+  const asked = live ? question : null;
+  const screenMenu = live && screen?.state.kind === 'menu' ? screen.state.menu : null;
+  const menu = screenMenu && !(asked && screenMenu.kind === 'question') ? screenMenu : null;
+  // 質問や確認のカードが出ている
+  const waiting = !!menu || !!asked;
   const unknownScreen = live && screen?.state.kind === 'unknown';
   const rewinding = live && screen?.state.kind === 'rewind';
   // 選択メニューが出ている間に文字を送ると、メニューへのキー入力になってしまう
-  const blocked = !!menu || rewinding || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
+  const blocked = waiting || rewinding || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
   const hasContent = input.trim().length > 0 || attachments.length > 0 || pastes.length > 0 || comments.length > 0;
   const canSend = !blocked && hasContent;
   // 質問や確認のカードなどが出たときも、最下部にいれば追いかける。カードは会話ログでなく Claude Code の画面から来るので、上の追いかけ
@@ -301,12 +312,12 @@ export const ClaudePane = memo(function ClaudePane({
   // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）。
   // 出たあとで中身が変わったときも追いかける。遅い Mac では、Claude Code が確認の画面を描き終える前に読み、あとから説明の行が増えて
   // カードが伸びる（見出しと選択肢の数は同じまま）
-  const cardKey = menu ? JSON.stringify(menu) : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
+  const cardKey = asked ? `question:${asked.id}:${menu ? JSON.stringify(menu) : ''}` : menu ? JSON.stringify(menu) : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
   useLayoutEffect(() => {
     const list = listRef.current;
     if (cardKey && list && stickToBottom.current) toBottom(list);
   }, [cardKey]);
-  const canConfigure = !running && !menu && !rewinding;
+  const canConfigure = !running && !waiting && !rewinding;
   const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
   const canCompact = useCanCompact(session, chat, screen);
   const compactStatus = useCompactStatus(live ? session.id : null);
@@ -635,8 +646,8 @@ export const ClaudePane = memo(function ClaudePane({
               />
             ),
           )}
-          {running && !menu && !unknownScreen && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
-          {justFinished && !running && !menu && <DoneNote />}
+          {running && !waiting && !unknownScreen && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
+          {justFinished && !running && !waiting && <DoneNote />}
           {chat.queued.map((raw, i) => {
             const { text, pastes } = splitPasted(raw);
             return <UnsentUser key={`queued:${i}`} text={text} pastes={pastes} attachments={0} note={t('chat.pane.queued')} queued />;
@@ -685,13 +696,15 @@ export const ClaudePane = memo(function ClaudePane({
               onTake={() => takeScheduled(message.id)}
             />
           ))}
-          {starting && slowStart && !preparing && !menu && (
+          {starting && slowStart && !preparing && !waiting && (
             <div className="chat-callout">
               <span>{t('chat.pane.slowStart')}</span>
               <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onOpenTerminal} />
             </div>
           )}
           {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
+          {/* 待っている質問が変われば作り直す（打ちかけの答えを、次の質問やほかのセッションに持ち越さない） */}
+          {asked && <QuestionCard key={`${session.id}|${asked.id}`} sessionId={session.id} question={asked} />}
           {menu && <MenuCard key={`${session.id}|${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
           {rewinding && (
             <div className="chat-callout">
@@ -749,12 +762,12 @@ export const ClaudePane = memo(function ClaudePane({
             onAttachmentsChange={setAttachments}
             pastes={pastes}
             onPastesChange={setPastes}
-            placeholder={menu ? t('chat.pane.chooseAbove') : t('chat.pane.placeholder')}
+            placeholder={waiting ? t('chat.pane.chooseAbove') : t('chat.pane.placeholder')}
             blocked={blocked}
             onSend={send}
             onSchedule={schedule}
             canSchedule={hasContent}
-            showInterrupt={running && !canSend && !menu}
+            showInterrupt={running && !canSend && !waiting}
             onInterrupt={() => window.tanacode.sessions.interrupt(session.id)}
           />
           <div className="chat-options">

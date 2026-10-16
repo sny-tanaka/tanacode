@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'vite';
 
-// MCP サーバーの中継（src/main/browser-mcp.ts・sessions-mcp.ts・checklist-mcp.ts・terminal-mcp.ts）を、アプリのビルドと同じく 1 つの JS にまとめる。
-// 互換性の確認では、これを node で動かす（アプリでは tanacode 本体を Node として動かす）
-export async function buildRelay(entry: 'browser-mcp' | 'sessions-mcp' | 'checklist-mcp' | 'terminal-mcp' = 'browser-mcp'): Promise<string> {
+// MCP サーバーの中継（src/main/browser-mcp.ts・sessions-mcp.ts・checklist-mcp.ts・terminal-mcp.ts）と、質問のフックの入口（question-hook-main.ts）を、
+// アプリのビルドと同じく 1 つの JS にまとめる。互換性の確認では、これを node で動かす（アプリでは tanacode 本体を Node として動かす）
+export async function buildRelay(entry: 'browser-mcp' | 'sessions-mcp' | 'checklist-mcp' | 'terminal-mcp' | 'question-hook-main' = 'browser-mcp'): Promise<string> {
   const outDir = mkdtempSync(join(tmpdir(), 'tanacode-relay-'));
   await build({
     configFile: false,

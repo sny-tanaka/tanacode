@@ -101,6 +101,19 @@ describe('チャットの行', () => {
     ]);
   });
 
+  it('hooks: 質問のフック（アプリが足したもの）が AskUserQuestion に答えた記録（コマンドの無い PermissionRequest）は出さない', () => {
+    const decided = (toolUseId: string, command: string | null = null) => ({ type: 'hook' as const, id: `h-${toolUseId}`, run: hook({ event: 'PermissionRequest', name: 'PermissionRequest', command, toolUseId } as Partial<HookRun>) });
+    const chat = run([
+      { type: 'tool-use', id: 'ask', name: 'AskUserQuestion', target: 'どちら?', input: 'どちら?' },
+      decided('ask'),
+      // ユーザーのフック（コマンドが残る）・ほかのツールの決定は出す
+      decided('ask', 'my-hook'),
+      { type: 'tool-use', id: 'bash', name: 'Bash', target: 'ls', input: 'ls' },
+      decided('bash'),
+    ]);
+    expect(chat.items.map((i) => (i.kind === 'tool' ? `${i.name}:${i.hooks?.map((h) => h.command ?? '-').join(',') ?? ''}` : i.kind))).toEqual(['AskUserQuestion:my-hook', 'Bash:-']);
+  });
+
   it('巻き戻し（replace）で表示を置き換え、reset で行と ToDo を空にする。順番待ち・Remote Control・PR を覚える', () => {
     const before: ChatEvent[] = [{ type: 'user', id: 'u1', text: '一' }, { type: 'user', id: 'u2', text: '二' }];
     expect(run([...before, { type: 'replace', events: [{ type: 'user', id: 'u1', text: '一' }] }]).items.map((i) => i.id)).toEqual(['u1']);

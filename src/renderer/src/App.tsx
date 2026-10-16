@@ -25,6 +25,7 @@ import { gitMarks, useGitState } from './scm/useGitState';
 import { QuickOpen } from './search/QuickOpen';
 import { SearchPanel } from './search/SearchPanel';
 import { useSessionScreens } from './screen/useSessionScreens';
+import { useSessionQuestions } from './screen/useSessionQuestions';
 import { useSessionWorkflows } from './workflow/useSessionWorkflows';
 import { ImportDialog } from './sessions/ImportDialog';
 import { NewSessionPane } from './sessions/NewSessionPane';
@@ -113,6 +114,7 @@ export function App() {
   const scheduled = useScheduledMessages();
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
   const { screenOf, load: loadScreen } = useSessionScreens(selectedId);
+  const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId);
   const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId);
   const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId);
   const { bashOf, load: loadBash } = useSessionBash(selectedId);
@@ -304,6 +306,7 @@ export function App() {
     window.tanacode.sessions.focus(selectedId);
     if (selectedId) {
       loadScreen(selectedId);
+      loadQuestion(selectedId);
       loadWorkflows(selectedId);
       loadSubagents(selectedId);
       loadBash(selectedId);
@@ -311,7 +314,7 @@ export function App() {
       loadStatusLine(selectedId);
       loadChecklists(selectedId);
     }
-  }, [selectedId, loadScreen, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
+  }, [selectedId, loadScreen, loadQuestion, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
 
   // Claude がアプリ内ブラウザを操作し始めたセッション（帯が消えるまで）と、見ていない間に操作したセッション
   const browsing = useRef(new Set<string>());
@@ -865,6 +868,7 @@ export function App() {
             onSelectSession={select}
             chat={chat}
             screen={screenOf(selected.id)}
+            question={questionOf(selected.id)}
             workflows={workflows}
             subagents={subagents}
             bashTasks={bashTasks}

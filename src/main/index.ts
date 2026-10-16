@@ -22,6 +22,7 @@ import { CASK, HomebrewUpdater } from './homebrew-update';
 import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
+import { questionReplyOf } from '@shared/questions';
 import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
@@ -678,6 +679,11 @@ function registerIpc(): void {
   handle(IpcChannel.RemoteControlAvailable, (e) => P(e).manager.remoteAvailable());
   handle(IpcChannel.ScreenGet, (e, id: string) => P(e).manager.screenForView(id));
   handle(IpcChannel.ScreenActivityGet, (e, id: string) => P(e).manager.activity(id));
+  handle(IpcChannel.QuestionGet, (e, id: string) => P(e).manager.pendingQuestion(id));
+  handle(IpcChannel.QuestionReply, (e, id: string, questionId: string, reply: unknown) => {
+    const read = questionReplyOf(reply);
+    return !!read && P(e).manager.replyQuestion(id, questionId, read);
+  });
   handle(IpcChannel.WorkflowsGet, (e, id: string) => P(e).manager.workflows(id));
   handle(IpcChannel.ScreenSetMode, (e, id: string, mode: PermissionMode) => P(e).manager.setMode(id, mode));
   handle(IpcChannel.ScreenRewind, (e, id: string, text: string) => P(e).manager.rewind(id, text));

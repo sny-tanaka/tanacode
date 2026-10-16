@@ -291,6 +291,26 @@ describe('ヘッダー', () => {
     expect(onOpenTerminal).toHaveBeenCalledTimes(1);
   });
 
+  it('フックが答えを待っている質問は、画面を読まずに出す。画面から読んだ同じ質問のカードは出さず、許可の確認のカードは出す。入力欄は止める', async () => {
+    const question = { id: 'p1', questions: [{ question: 'フックの質問ですか？', header: '確認', multiSelect: false, options: [{ label: 'はい', description: '' }] }], answered: {} };
+    const asked: ScreenInfo = screenOf({ kind: 'menu', menu: { kind: 'question', tabs: [], title: '画面の質問', context: [], options: [], multiSelect: false, hint: '' } });
+    const view = render(<ClaudePane {...props({ screen: asked, question })} />);
+    expect(screen.getByText('フックの質問ですか？')).toBeTruthy();
+    expect(screen.queryByText('画面の質問')).toBeNull();
+    expect(box().placeholder).toBe('上の選択肢から選んでください');
+    fireEvent.click(screen.getByText('はい'));
+    await settle();
+    expect(api.argsOf('question.reply')).toEqual([['s1', 'p1', { kind: 'answer', answers: { 'フックの質問ですか？': 'はい' } }]]);
+    const permission: ScreenInfo = screenOf({ kind: 'menu', menu: { kind: 'permission', tabs: [], title: 'Do you want to proceed?', context: [], options: [], multiSelect: false, hint: '' } });
+    view.rerender(<ClaudePane {...props({ screen: permission, question })} />);
+    expect(screen.getByText('フックの質問ですか？')).toBeTruthy();
+    expect(screen.getByText('Do you want to proceed?')).toBeTruthy();
+    // 待っている質問が無くなれば、画面から読んだ質問のカードに戻る（フックが使えないときの予備）
+    view.rerender(<ClaudePane {...props({ screen: asked, question: null })} />);
+    expect(screen.queryByText('フックの質問ですか？')).toBeNull();
+    expect(screen.getByText('画面の質問')).toBeTruthy();
+  });
+
   it('質問や確認のカードが出たとき、最下部にいれば追いかける（カードの選択肢が、見えている範囲の下に隠れない）。上を読んでいる間は動かさない', () => {
     // カードは Claude Code の画面から来る。会話・送信中・予約は変わらない（変わると、そちらの追いかけが動く）
     const base = props({ chat: chatOf({ status: 'running' }) });

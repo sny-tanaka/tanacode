@@ -22,6 +22,7 @@ import { TerminalControl } from './terminal-control';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
+import { QUESTION_WAIT_REQUEST } from './question-hook';
 import { ScheduledMessages } from './scheduled-messages';
 import { SessionManager } from './session-manager';
 import { resolveAddedFolder } from './added-folders';
@@ -96,6 +97,7 @@ export class Profile {
   private checklistBridge: McpBridge | null = null;
   private walkthroughBridge: McpBridge | null = null;
   private terminalBridge: McpBridge | null = null;
+  private questionBridge: McpBridge | null = null;
   // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
   readonly folderViews = new Map<string, string>();
   // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -187,6 +189,11 @@ export class Profile {
     this.terminalBridge = await listen('ターミナル', socketPathIn(dataDir, 'terminal', 'terminal'), (id, tool, args, signal) =>
       this.terminalControl ? this.terminalControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),
     );
+    // AskUserQuestion の質問のフック（question-hook.ts）が、質問を渡して答えを待つ。始められなければ、質問は画面を読む道で答える
+    this.questionBridge = await listen('質問', socketPathIn(dataDir, 'question', 'question'), (id, tool, args, signal) => {
+      if (!this.manager) return Promise.resolve(notReady());
+      return tool === QUESTION_WAIT_REQUEST ? this.manager.waitQuestion(id, args.input, signal) : Promise.resolve(textResult(`Unknown request: ${tool}`, true));
+    });
     // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
     this.ptyHost = await PtyHost.start(dataDir, join(__dirname, 'pty-host.js'));
     const store = new SessionStore(join(dataDir, 'sessions.json'));
@@ -219,6 +226,7 @@ export class Profile {
           this.autoCompact?.check(sessionId);
         },
         onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
+        onQuestion: (sessionId, question) => send(IpcChannel.QuestionChanged, { sessionId, question }),
       },
       this.options.remoteControl,
       this.settingsFiles,
@@ -229,6 +237,7 @@ export class Profile {
       () => this.walkthroughLaunch(),
       this.claudeDir,
       () => this.terminalLaunch(),
+      () => this.questionLaunch(),
     );
     const manager = this.manager;
     // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
@@ -425,6 +434,12 @@ export class Profile {
     return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion() };
   }
 
+  // 起動する Claude Code に足す、AskUserQuestion の質問のフック。待ち受けを始められなかったときは足さない（画面を読む道で答える）
+  private questionLaunch(): McpLaunch | null {
+    if (!this.questionBridge) return null;
+    return { command: hostExecutable(), script: join(__dirname, 'question-hook.js'), socketPath: this.questionBridge.socketPath, version: app.getVersion() };
+  }
+
   // 新規セッションの画面から、worktree で始める。Claude Code が worktree を作るのを待たずに id を返す（画面は、すぐそのセッションに移って待つ）。
   // 作れなかったら（セッションは、もう一覧から消えている）、理由を画面に知らせる
   async startInWorktree(cwd: string, options: NewSessionOptions): Promise<string> {
@@ -465,6 +480,7 @@ export class Profile {
     this.checklists.flush();
     this.walkthroughBridge?.close();
     this.terminalBridge?.close();
+    this.questionBridge?.close();
     this.shells.killAll();
   }
 }

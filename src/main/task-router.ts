@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from '@shared/chat';
+import type { AskQuestion } from '@shared/screen';
 import type { BashTaskTracker } from './bash-task-tracker';
 import { askQuestionsOf } from './screen-parser';
 import type { ScreenTracker } from './screen-tracker';
@@ -13,6 +14,8 @@ type Targets = {
   screen: () => ScreenTracker | null;
   // 今の会話ログのセッションのフォルダ（subagents/・workflows/ がある。/clear で変わる）
   sessionDir: () => string;
+  // AskUserQuestion の答え（キャンセルを含む）が会話ログに書かれた。questions: その質問（読めなければ null）。読み直しの行では呼ばない
+  questionAnswered?: (questions: AskQuestion[] | null) => void;
 };
 
 // 会話ログの行を読み、バックグラウンドで動くもの（ワークフロー・サブエージェント・Bash）の起動・結果・完了通知と、
@@ -25,8 +28,9 @@ export class TaskRouter {
   private readonly agentToolIds = new Set<string>();
   // SendMessage の tool_use ID（結果が、前に起動したエージェントの再開かを見る）
   private readonly sendMessageIds = new Set<string>();
-  // 回答を待っている AskUserQuestion の tool_use ID
+  // 回答を待っている AskUserQuestion の tool_use ID と、その質問
   private askToolId: string | null = null;
+  private askQuestions: AskQuestion[] | null = null;
   // バックグラウンドで起動した Bash の入力（tool_use ID ごと）。結果の行で起動を知る
   private readonly bashInputs = new Map<string, Record<string, unknown>>();
 
@@ -56,12 +60,16 @@ export class TaskRouter {
       // 質問の選択メニューは、画面ではなく AskUserQuestion の input から組み立てる（画面が低いと選択肢の一部しか出ない）
       if (block.type === 'tool_use' && block.name === 'AskUserQuestion' && block.id && !isHistory) {
         this.askToolId = block.id;
-        this.targets.screen()?.setQuestions(askQuestionsOf(block.input));
+        this.askQuestions = askQuestionsOf(block.input);
+        this.targets.screen()?.setQuestions(this.askQuestions);
       }
       if (block.type === 'tool_result' && block.tool_use_id && block.tool_use_id === this.askToolId) {
+        const questions = this.askQuestions;
         this.askToolId = null;
+        this.askQuestions = null;
         // 読み直しで届いた答えは、今の画面の質問への答えではない
         this.targets.screen()?.setQuestions(null, !replaying);
+        if (!replaying) this.targets.questionAnswered?.(questions);
       }
       if (block.type === 'tool_use' && block.name === 'Bash' && block.id && block.input && isTrue(block.input.run_in_background)) {
         this.bashInputs.set(block.id, block.input);
