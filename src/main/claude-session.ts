@@ -370,13 +370,15 @@ export function childEnv(claudeDir: string | null = null): Record<string, string
   return env;
 }
 
-// Claude Code に渡す環境変数。端末の種類（TERM・COLORTERM）は TUI だけ。stream-json では、巻き戻し（rewind_files）に要る
-// ファイルの控えを有効にする（CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING）
+// stream-json の Claude Code で、巻き戻し（rewind_files）に要るファイルの控えを有効にする環境変数
+export const FILE_CHECKPOINTING_ENV = 'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING';
+
+// Claude Code に渡す環境変数。端末の種類（TERM・COLORTERM）は TUI だけ。stream-json では、ファイルの控えを有効にする
 export function claudeEnv(kind: LaunchKind, claudeDir: string | null = null): Record<string, string> {
   const env = childEnv(claudeDir);
   if (kind === 'tui') return env;
   delete env.TERM;
   delete env.COLORTERM;
-  env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = '1';
+  env[FILE_CHECKPOINTING_ENV] = '1';
   return env;
 }

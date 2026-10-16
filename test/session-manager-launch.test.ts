@@ -79,7 +79,7 @@ describe('登録した設定ファイル', () => {
     const { files } = fakeSettingsFiles();
     start({ settingsFiles: files });
     const { id, pipe } = app.create({ model: 'sonnet' });
-    expect(() => app.manager.configure(id, { model: null, effort: null, settingsFile: 'broken' })).toThrow('設定ファイルを読めません');
+    await expect(app.manager.configure(id, { model: null, effort: null, settingsFile: 'broken' })).rejects.toThrow('設定ファイルを読めません');
     expect(pipe.requests('end_session')).toEqual([]);
     expect(pipe.exitedWith).toBeNull();
     expect(app.manager.summary(id)).toMatchObject({ model: 'sonnet', settingsFile: null });

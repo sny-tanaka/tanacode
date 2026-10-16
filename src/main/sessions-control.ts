@@ -174,18 +174,19 @@ const END_REFUSAL: Partial<Record<SessionState, string>> = {
     'is waiting for the user to act in the in-app browser, so its work is not finished and it was not ended. Tell the user, and call end_session again once the child is idle. If its work is no longer needed, interrupt it with stop_session first.',
 };
 
-// configure_session で、権限モードを切り替えられる状態。手が空いている・裏のタスクの完了待ち（ターンは終わっている）・動いていない（次の起動のモード）。
-// 作業中は切り替えない（Shift+Tab を送るあいだに許可の確認が出ると、「許して accept edits に切り替える」を選んでしまう）
-const MODE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
-// モデル・エフォートを変えられる状態。Claude Code を起動し直すので、裏のタスクの完了待ちは除く（タスクが止まる）
-const RESTARTABLE_STATES = new Set<SessionState>(['idle', 'exited']);
+// configure_session で、権限モードを切り替えられる状態。手が空いている・裏のタスクの完了待ち・作業中（set_permission_mode は作業中でも効く。
+// 実測）・動いていない（次の起動のモード）
+const MODE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'working', 'exited']);
+// モデル・エフォートを変えられる状態。動いている Claude Code をその場で切り替える（set_model・apply_flag_settings）ので、裏のタスクは止まらない。
+// 作業中は、応答の途中で変えないよう除く
+const MODEL_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
+// Remote Control を切り替えられる状態（作業中は、つなぎ直しで応答を止めないよう除く）
+const REMOTE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
 // 変えられない状態ごとの、断る理由と次にできること（子の名前に続ける）
 const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
   starting: 'is still starting up. Wait until it is idle (check with get_session), then call configure_session again.',
   working:
-    'is working, so nothing was changed. Wait for it to finish (check with get_session), or interrupt it with stop_session, then call configure_session again and tell it to continue with send_message.',
-  background:
-    "is waiting for background tasks to finish, and a new model or effort restarts its Claude Code, which would stop them. Nothing was changed. Wait until it is idle, or change only the permission mode or Remote Control.",
+    'is working, so nothing was changed (only its permission mode can be switched while it works, when changed alone). Wait for it to finish (check with get_session), or interrupt it with stop_session, then call configure_session again and tell it to continue with send_message.',
   question: 'is waiting for an answer to a question, so nothing was changed. Answer it with answer_question (get_session shows it) or let the user answer it, then call configure_session again.',
   permission:
     'is waiting for an answer to a permission prompt, so nothing was changed. Answer it with answer_permission (get_session shows it) or ask the user, then call configure_session again.',
@@ -199,7 +200,6 @@ const REMOTE_REFUSAL: [MessageKey, string][] = [
   ['main.remote.switching', 'it is in the middle of switching Remote Control. Try again in a moment.'],
   ['main.remote.waitingAnswer', 'its Claude Code is waiting for an answer to a prompt. Check it with get_session, and try again once the child is idle.'],
   ['main.remote.draft', 'there is unsent text in the input field of its Claude Code (the user may be typing in it). Try again later, or ask the user.'],
-  ['main.remote.failed', 'tanacode could not switch it on the screen of its Claude Code. Ask the user to switch it with /remote-control in its terminal.'],
 ];
 
 class ToolError extends Error {}
@@ -625,17 +625,18 @@ export class SessionsControl {
     if (remote && !caller.remoteControl) {
       throw new ToolError("Remote Control can be turned on for a child only while this session's Remote Control is on, so nothing was changed. The user can turn it on in the header of the child's chat in tanacode.");
     }
-    const restart = !!model || !!effort;
+    const switching = !!model || !!effort;
     const state = host.stateOf(child.id) ?? 'exited';
     if (state === 'archived') throw new ToolError(`${who} is archived. To change it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
-    if (!(restart ? RESTARTABLE_STATES : MODE_SWITCHABLE_STATES).has(state)) {
+    const allowed = switching ? MODEL_SWITCHABLE_STATES : remote !== null ? REMOTE_SWITCHABLE_STATES : MODE_SWITCHABLE_STATES;
+    if (!allowed.has(state)) {
       throw new ToolError(`${who} ${CONFIGURE_REFUSAL[state] ?? `cannot be changed while it is ${SESSION_STATE_LABEL[state]}.`}`);
     }
     const running = state !== 'exited';
     if (mode && !(await host.setMode(child.id, mode))) {
       const now = host.modeOf(child.id);
       throw new ToolError(
-        `Could not switch ${who} to ${mode}${now ? ` (its permission mode is now ${now})` : ''}. Its screen may have changed (for example, a prompt appeared). Check it with get_session, and call configure_session again once it is idle.`,
+        `Could not switch ${who} to ${mode}${now ? ` (its permission mode is now ${now})` : ''}: its Claude Code refused it (bypassPermissions works only when it was started in that mode). Check it with get_session.`,
       );
     }
     // 途中で失敗したときに伝える、それまでに変えたもの
@@ -649,15 +650,14 @@ export class SessionsControl {
       // ヘッダーのトグルと同じ。つながるのは待たない（get_session の remote_control.connected で確かめさせる）
       const reason = await host.setRemoteControl(child.id, remote);
       const what = `turn the Remote Control of ${who} ${remote ? 'on' : 'off'}`;
-      if (reason !== null) throw failed(`${what}${restart ? ' (its model and effort were not changed)' : ''}`, remoteRefusal(reason));
+      if (reason !== null) throw failed(`${what}${switching ? ' (its model and effort were not changed)' : ''}`, remoteRefusal(reason));
       done.push(`turned the Remote Control of ${who} ${remote ? 'on' : 'off'}`);
     }
-    if (restart) {
+    if (switching) {
       // 変えないものは、今の指定のまま（画面のモデル欄・エフォート欄で変えたときと同じ）。設定ファイルは変えない
       const options: SessionOptions = { model: model || (child.model ?? null), effort: effort || (child.effort ?? null), settingsFile: child.settingsFile ?? null };
       try {
-        // 起動し直すのを待たずに返す。止められずに起動し直せなかったとき（あとで失敗する）は、控えに残す
-        void Promise.resolve(host.configure(child.id, options)).catch((error: unknown) => console.error('子セッションを起動し直せませんでした', error));
+        await host.configure(child.id, options);
       } catch (error) {
         throw failed('change its model or effort', error instanceof Error ? error.message : String(error));
       }
@@ -666,12 +666,9 @@ export class SessionsControl {
     const notes = !running
       ? ['Its Claude Code is not running, so the new settings are used when it starts next (send_message starts it).']
       : [
-          restart
-            ? 'Restarted its Claude Code with the new settings; it continues the same conversation. An instruction you send with send_message now is held until it has restarted.'
-            : mode
-              ? 'Switched. It keeps this permission mode when it is restarted.'
-              : null,
-          remote === true ? 'Turned Remote Control on. Connecting takes a moment: check remote_control.connected with get_session.' : remote === false ? 'Turned Remote Control off.' : null,
+          switching ? 'Switched its model and effort; its next response uses them (its background tasks keep running).' : null,
+          mode ? 'Switched the permission mode; it keeps this mode when it is restarted.' : null,
+          remote === true ? 'Turned Remote Control on: check remote_control.connected with get_session.' : remote === false ? 'Turned Remote Control off.' : null,
         ];
     return json({ session_id: child.id, changed, state: host.stateOf(child.id), note: notes.filter(Boolean).join(' ') });
   }
@@ -1091,7 +1088,12 @@ function withBrowserState(host: SessionsHost): SessionsHost {
 
 // Remote Control を切り替えられなかった理由（setRemoteControl が返す、画面の言語の文）を、英語の文にする
 function remoteRefusal(reason: string): string {
-  return REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1] ?? 'tanacode could not switch it. Check it with get_session.';
+  const known = REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1];
+  if (known) return known;
+  // Claude Code が断った理由（英語）は、そのまま渡す
+  const [head, tail] = t('main.remote.failed', { reason: '\u0000' }).split('\u0000');
+  if (reason.startsWith(head) && reason.endsWith(tail)) return `its Claude Code refused it: ${reason.slice(head.length, reason.length - tail.length)}`;
+  return 'tanacode could not switch it. Check it with get_session.';
 }
 
 // 動いている裏のタスク（一覧の数え方と同じ: SessionManager の countBackground）

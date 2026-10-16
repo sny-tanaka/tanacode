@@ -29,6 +29,7 @@ export type ApiFailure = { status: number; errorType: string; message: string; t
 type Message = { role?: string; content?: string | { type?: string; text?: string; content?: string | { type?: string; text?: string }[] }[] };
 type Body = {
   model?: string;
+  output_config?: { effort?: unknown };
   stream?: boolean;
   tools?: { name?: string }[];
   messages?: Message[];
@@ -53,6 +54,8 @@ export class MockApi {
   readonly contexts: string[] = [];
   // 受け取ったツールの結果（tool_result）の文章。質問への答えや許可の結果が、Claude まで届いたかを確かめる
   readonly toolResults: string[] = [];
+  // ツールの一覧が付いた呼び出し（本体の会話）ごとの、頼まれたモデルとエフォート（モデル・エフォートの切り替えが届いたかを確かめる）
+  readonly calls: { model: string | undefined; effort: unknown }[] = [];
 
   // チェックリストを使い続けさせるフックがターンの終わりを止めたとき（Stop hook feedback）の応答も、台本から返すか。
   // ふだんは、本物のモデルが直すものの無いときにするのと同じく、決まった目印だけを返して、台本を進めない
@@ -101,6 +104,7 @@ export class MockApi {
     const messages = body.messages ?? [];
     const lastUser = [...messages].reverse().find((m) => m.role === 'user');
     this.lastPrompts.push(textOf(lastUser));
+    if (tools.length > 0) this.calls.push({ model: body.model, effort: body.output_config?.effort });
     if (Array.isArray(lastUser?.content)) for (const b of lastUser.content) if (b.type === 'tool_result') this.toolResults.push(resultText(b.content));
     const reply = messages.findIndex((m) => m.role === 'assistant');
     const opening = (reply === -1 ? messages : messages.slice(0, reply)).filter((m) => m.role === 'user');

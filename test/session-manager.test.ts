@@ -392,17 +392,42 @@ describe('一覧の操作', () => {
     expect(app.manager.stateOf(id)).toBe('idle');
   });
 
-  it('configure: モデルを変えたら、動いている claude をそのモデルで起動し直す', async () => {
+  const SONNET = { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5', supportedEffortLevels: ['low', 'medium', 'high'], supportsAutoMode: true };
+  const HAIKU = { value: 'haiku', resolvedModel: 'claude-haiku-5-5', displayName: 'Haiku 5.5', supportedEffortLevels: [], supportsAutoMode: false };
+
+  it('configure: モデル・エフォートを変えたら、動いている claude を起動し直さずに、その場で切り替える（set_model・apply_flag_settings）', async () => {
+    app.answers.set('initialize', { ...INIT_RESPONSE, models: [...INIT_RESPONSE.models, SONNET] });
     const { id, pipe } = app.create();
     await app.ready(id);
-    app.say(id, line.user('はじめ'), line.text('はい'));
-    app.finish(id);
-    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
     await app.manager.configure(id, { model: 'sonnet', effort: 'high', settingsFile: null });
-    expect(pipe.exitedWith).toBe(0);
-    expect(app.pipe(id).arg('--model')).toBe('sonnet');
-    expect(app.pipe(id).arg('--effort')).toBe('high');
+    expect(pipe.requests('set_model').map((r) => r.request)).toEqual([{ subtype: 'set_model', model: 'sonnet' }]);
+    expect(pipe.requests('apply_flag_settings').map((r) => r.request)).toEqual([{ subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } }]);
+    expect(pipe.requests('end_session')).toEqual([]);
+    expect(app.host.pipes).toHaveLength(1);
     expect(app.manager.summary(id)).toMatchObject({ model: 'sonnet', effort: 'high' });
+    expect(app.manager.statusLine(id)?.model).toEqual({ id: 'claude-sonnet-5-5', name: 'Sonnet 5.5' });
+    // エフォートだけ変えたら、モデルは切り替えない
+    await app.manager.configure(id, { model: 'sonnet', effort: 'low', settingsFile: null });
+    expect(pipe.requests('set_model')).toHaveLength(1);
+    expect(pipe.requests('apply_flag_settings').at(-1)?.request).toEqual({ subtype: 'apply_flag_settings', settings: { effortLevel: 'low' } });
+    // 一覧に無いモデル・そのモデルで選べないエフォートは断る（Claude Code は知らない値も受け付けてしまう。実測）
+    await expect(app.manager.configure(id, { model: 'gpt-9', effort: null, settingsFile: null })).rejects.toThrow('gpt-9');
+    await expect(app.manager.configure(id, { model: 'sonnet', effort: 'max', settingsFile: null })).rejects.toThrow('max');
+    expect(app.manager.summary(id)).toMatchObject({ model: 'sonnet', effort: 'low' });
+    // Claude Code が断ったら、理由を添えて失敗し、指定は変えない
+    pipe.answers.set('set_model', new Error('Invalid model'));
+    await expect(app.manager.configure(id, { model: null, effort: null, settingsFile: null })).rejects.toThrow('Invalid model');
+    expect(app.manager.summary(id)?.model).toBe('sonnet');
+  });
+
+  it('configure: 切り替えたモデルで auto を使えなければ、manual に戻す（起動するときと同じ）', async () => {
+    app.answers.set('initialize', { ...INIT_RESPONSE, current_permission_mode: 'auto', models: [...INIT_RESPONSE.models, HAIKU] });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    expect(app.manager.modeOf(id)).toBe('auto');
+    await app.manager.configure(id, { model: 'haiku', effort: null, settingsFile: null });
+    expect(pipe.requests('set_permission_mode').map((r) => r.request)).toEqual([{ subtype: 'set_permission_mode', mode: 'default' }]);
+    expect(app.manager.modeOf(id)).toBe('manual');
   });
 
   it('importSession: 既存の会話を取り込み、その会話を --resume で再開する', async () => {

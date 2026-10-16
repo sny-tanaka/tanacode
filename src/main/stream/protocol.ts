@@ -57,6 +57,9 @@ export type AssistantMessage = {
   error?: string;
 };
 
+// rewind_files の返事（SDK の RewindFilesResult）。dry_run では、戻すと変わるファイルと行の数だけを返す
+export type RewindFilesResult = { canRewind: boolean; error?: string; filesChanged?: string[]; insertions?: number; deletions?: number };
+
 // SDKResultSuccess・SDKResultError（ターンの終わり）
 export type ResultMessage = {
   type: 'result';

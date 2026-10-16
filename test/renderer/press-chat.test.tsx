@@ -222,15 +222,15 @@ describe('ほかのセッションへのリンク（SessionRefs）', () => {
 });
 
 describe('巻き戻しとチェックリストのカード（ChatRow）', () => {
-  it('発言の「ここまで戻す」は、その発言の文字で巻き戻しを頼む。描き直して発言が変わったら、新しい発言の文字で頼む', () => {
+  it('発言の「ここまで戻す」は、その発言の ID で巻き戻しを頼む。描き直して発言が変わったら、新しい発言の ID で頼む', () => {
     const onRewind = vi.fn();
     const user = (id: string, text: string): ChatItem => ({ kind: 'user', id, text });
     const { rerender } = render(<ChatRow {...rowProps(user('u1', 'ログインを直して'), { onRewind })} />);
     fireEvent.click(screen.getByLabelText('ここまで戻す'));
-    expect(onRewind).toHaveBeenLastCalledWith('ログインを直して');
+    expect(onRewind).toHaveBeenLastCalledWith('u1');
     rerender(<ChatRow {...rowProps(user('u2', 'テストも足して'), { onRewind })} />);
     fireEvent.click(screen.getByLabelText('ここまで戻す'));
-    expect(onRewind).toHaveBeenLastCalledWith('テストも足して');
+    expect(onRewind).toHaveBeenLastCalledWith('u2');
     // コマンド（/ で始まる発言）には出さない
     rerender(<ChatRow {...rowProps(user('u3', '/compact'), { onRewind })} />);
     expect(screen.queryByLabelText('ここまで戻す')).toBeNull();

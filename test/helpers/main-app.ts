@@ -381,6 +381,7 @@ const SessionManager = fakeClass('SessionManager', {
   workflows: echo('manager.workflows'),
   setMode: echo('manager.setMode'),
   rewind: echo('manager.rewind'),
+  rewindPreview: echo('manager.rewindPreview'),
   transcriptOf: (_self, id: string) => `/transcripts/${id}.jsonl`,
   subagents: echo('manager.subagents'),
   bashTasks: echo('manager.bashTasks'),

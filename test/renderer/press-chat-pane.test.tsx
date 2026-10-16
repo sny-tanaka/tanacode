@@ -231,20 +231,61 @@ describe('ヘッダー', () => {
     expect(toggle.getAttribute('data-tip')).toBe('メニューの「Claude にチェックリストを扱わせる」をオンにすると使えます');
   });
 
-  it('発言の「ここまで戻す」は、開いているセッションでその発言まで巻き戻す。描き直してセッションが変わったら、そのセッションで巻き戻す。見つからなければ、わけを出す', async () => {
-    install({ 'screen.rewind': (id: never) => Promise.resolve(id === 's1') });
+  it('発言の「ここまで戻す」は、開いているセッションで、コードを戻すと変わるファイルを調べてから、戻すものを選ばせる。見つからなければ、わけを出す', async () => {
+    const preview = { files: ['/Users/me/work/app/src/login.ts', '/Users/me/work/app/test/login.test.ts'], insertions: 12, deletions: 3, codeError: null };
+    install({
+      'screen.rewindPreview': (id: never) => Promise.resolve(id === 's1' ? preview : null),
+      'screen.rewind': () => Promise.resolve({ ok: true, prefillText: 'ログインを直してください', error: null }),
+    });
     const view = render(<ClaudePane {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    expect(api.argsOf('screen.rewindPreview')).toEqual([['s1', 'u1']]);
+    const card = () => document.querySelector('.menu-card.rewind');
+    expect(card()?.textContent).toContain('コードを戻すと、2 個のファイルが変わります（+12 −3）');
+    // ファイルは作業フォルダからの相対パスで出す
+    expect(card()?.querySelector('.menu-context')?.textContent).toBe('src/login.ts\ntest/login.test.ts');
+    fireEvent.change(box(), { target: { value: '書きかけ' } });
+    fireEvent.click(screen.getByText('会話とコードを戻す'));
+    await settle();
+    expect(api.argsOf('screen.rewind')).toEqual([['s1', 'u1', { conversation: true, code: true }]]);
+    // 戻した発言の文は、入力欄に戻す（打ちかけの文字の前に）。カードは閉じる
+    expect(box().value).toBe('ログインを直してください\n書きかけ');
+    expect(card()).toBeNull();
+    // 描き直してセッションが変わったら、そのセッションで調べる。戻す先が無ければ、わけを出す
     view.rerender(<ClaudePane {...props({ session: S2, chat: chatOf({ items: [{ kind: 'user', id: 'u9', text: 'テストを足して' }] }) })} />);
     fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
-    expect(api.argsOf('screen.rewind')).toEqual([
-      ['s1', 'ログインを直してください'],
-      ['s2', 'テストを足して'],
-    ]);
-    await waitFor(() => expect(alerts).toEqual(['巻き戻し先の発言が見つかりませんでした。ターミナルで /rewind を操作してください。']));
+    await waitFor(() => expect(alerts).toEqual(['巻き戻し先の発言が見つかりませんでした']));
+    expect(api.argsOf('screen.rewindPreview').at(-1)).toEqual(['s2', 'u9']);
     // 作業中は巻き戻せない
     view.rerender(<ClaudePane {...props({ session: S2, chat: chatOf({ status: 'running' }) })} />);
     expect(screen.queryByRole('button', { name: 'ここまで戻す' })).toBeNull();
+  });
+
+  it('巻き戻し: 変わるファイルが無ければ、会話を戻すだけを出す。コードを戻せないときは理由を出す。戻せなかったら、わけを出してカードは残す', async () => {
+    let preview: unknown = { files: [], insertions: 0, deletions: 0, codeError: null };
+    install({
+      'screen.rewindPreview': () => Promise.resolve(preview),
+      'screen.rewind': () => Promise.resolve({ ok: false, prefillText: null, error: 'stale_target' }),
+    });
+    render(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    const labels = () => [...document.querySelectorAll('.menu-card.rewind .menu-option-label')].map((e) => e.textContent);
+    expect(labels()).toEqual(['会話を戻す']);
+    expect(document.querySelector('.menu-card.rewind')?.textContent).toContain('Claude が変えたファイルはありません');
+    fireEvent.click(screen.getByText('会話を戻す'));
+    await settle();
+    expect(api.argsOf('screen.rewind')).toEqual([['s1', 'u1', { conversation: true, code: false }]]);
+    expect(alerts).toEqual(['巻き戻せませんでした（stale_target）']);
+    expect(document.querySelector('.menu-card.rewind')).not.toBeNull();
+    fireEvent.click(within(document.querySelector('.menu-card.rewind') as HTMLElement).getByLabelText('キャンセル'));
+    expect(document.querySelector('.menu-card.rewind')).toBeNull();
+    preview = { files: null, insertions: 0, deletions: 0, codeError: 'File rewinding is not enabled.' };
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    expect(document.querySelector('.menu-card.rewind')?.textContent).toContain('コードは戻せません（File rewinding is not enabled.）');
+    expect(labels()).toEqual(['会話を戻す']);
   });
 
   it('起動を待っている発言の「取り消す」は、その発言と画像を入力欄に戻す（打ちかけの文字の前に）。取り下げられなかったら何もしない', async () => {

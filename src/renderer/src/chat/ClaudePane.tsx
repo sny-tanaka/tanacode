@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t, type MessageKey } from '@shared/i18n';
-import type { SessionSummary } from '@shared/ipc';
+import type { RewindChoice, RewindPreview, SessionSummary } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
@@ -34,6 +34,7 @@ import type { SubagentRuns } from './useSessionSubagents';
 import { acceptsInput, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { PastedChips } from './PastedChips';
+import { RewindCard } from './RewindCard';
 import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
@@ -300,10 +301,15 @@ export const ClaudePane = memo(function ClaudePane({
   const canCompact = useCanCompact(session, chat);
   const compactStatus = useCompactStatus(live ? session.id : null);
 
+  // 巻き戻しの確かめ（選んだ発言と、コードを戻すと変わるファイル）。ほかのセッションへ移ったら閉じる
+  const [rewinding, setRewinding] = useState<{ messageId: string; preview: RewindPreview } | null>(null);
+  const [rewindBusy, setRewindBusy] = useState(false);
+  useEffect(() => setRewinding(null), [session.id]);
   const rewindTo = useCallback(
-    (text: string) => {
-      void window.tanacode.screen.rewind(session.id, text).then((ok) => {
-        if (!ok) window.alert(t('chat.pane.rewindNotFound'));
+    (messageId: string) => {
+      void window.tanacode.screen.rewindPreview(session.id, messageId).then((preview) => {
+        if (!preview) window.alert(t('chat.pane.rewindNotFound'));
+        else setRewinding({ messageId, preview });
       });
     },
     [session.id],
@@ -431,6 +437,26 @@ export const ClaudePane = memo(function ClaudePane({
     });
   };
   const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
+  // 巻き戻す。会話を戻したら、戻した発言の文を入力欄に戻す（打ちかけの文字の前に）
+  const applyRewind = (messageId: string, choice: RewindChoice) => {
+    setRewindBusy(true);
+    void window.tanacode.screen.rewind(session.id, messageId, choice).then(
+      (outcome) => {
+        setRewindBusy(false);
+        if (!outcome.ok) {
+          window.alert(t('chat.rewind.failed', { error: outcome.error ?? '' }));
+          return;
+        }
+        setRewinding(null);
+        const prefill = outcome.prefillText;
+        if (prefill) setInput((prev) => [prefill, prev].filter((text) => text.trim()).join('\n'));
+      },
+      (error: unknown) => {
+        setRewindBusy(false);
+        window.alert(t('chat.rewind.failed', { error: errorMessage(error) }));
+      },
+    );
+  };
   const removeComment = (id: string) => onCommentsChange(comments.filter((c) => c.id !== id));
   // コードへのコメントを、Claude Code の入力欄に貼る（ターミナルモード。送るのは、人が画面で Enter を押したとき）
   const pasteComments = () => {
@@ -665,6 +691,15 @@ export const ClaudePane = memo(function ClaudePane({
           {asked && <QuestionCard key={`${session.id}|${asked.id}`} sessionId={session.id} question={asked} />}
           {/* 待っている要求が変われば作り直す（書きかけの理由を、次の確認やほかのセッションに持ち越さない） */}
           {prompt && <MenuCard key={`${session.id}|${prompt.id}`} sessionId={session.id} permission={prompt} />}
+          {rewinding && (
+            <RewindCard
+              preview={rewinding.preview}
+              cwd={session.cwd}
+              busy={rewindBusy}
+              onCancel={() => setRewinding(null)}
+              onChoose={(choice) => applyRewind(rewinding.messageId, choice)}
+            />
+          )}
           {session.archived && (
             <div className="chat-callout">
               <span>{t('chat.pane.archived')}</span>

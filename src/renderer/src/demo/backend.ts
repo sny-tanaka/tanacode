@@ -419,7 +419,9 @@ export class DemoBackend {
       },
       screen: {
         setMode: () => ok(true),
-        rewind: () => ok(false),
+        // デモでは巻き戻さない（戻す先が見つからないことにする）
+        rewindPreview: () => ok(null),
+        rewind: () => ok({ ok: false, prefillText: null, error: null }),
       },
       // 答えたら、カードを消してから台本に知らせる（本物は、Claude Code に返した要求が無くなってカードが消える）
       question: {

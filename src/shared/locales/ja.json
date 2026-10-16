@@ -107,7 +107,7 @@
       "switching": "Remote Control を切り替えている途中です。少し待ってからもう一度押してください",
       "waitingAnswer": "Claude Code が質問や確認の答えを待っているため、今は切り替えられません。答えてから切り替えてください",
       "draft": "ターミナルの Claude Code の入力欄に書きかけの文字があるため、切り替えられません",
-      "failed": "Claude Code の画面で Remote Control を切り替えられませんでした。ターミナルで /remote-control を操作してください"
+      "failed": "Remote Control を切り替えられませんでした（{reason}）"
     },
     "task": {
       "notRunning": "セッションが動いていないため、止められません",
@@ -115,9 +115,9 @@
       "busy": "別の操作の途中です。少し待ってからもう一度押してください",
       "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
       "draft": "ターミナルの入力欄に書きかけの文字があるため、止められません",
-      "notFound": "画面に見つかりませんでした。すでに終わったか、止まっています",
+      "notFound": "止める相手が見つかりませんでした。すでに終わったか、止まっています",
       "ambiguous": "同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください",
-      "failed": "止められませんでした。ターミナルで /tasks を開いて止めてください"
+      "failed": "止められませんでした（{reason}）"
     },
     "send": {
       "notAccepting": "入力を受け付けられる状態ではなくなったため、送れませんでした",
@@ -225,7 +225,10 @@
     },
     "model": {
       "noCatalog": "Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません",
-      "needsVersion": "Claude Code {version} 以上が必要（今は {installed}）"
+      "needsVersion": "Claude Code {version} 以上が必要（今は {installed}）",
+      "unknown": "このモデルは、今の Claude Code では選べません: {model}",
+      "effortUnsupported": "このモデルでは、エフォート {effort} を選べません",
+      "failed": "モデルやエフォートを切り替えられませんでした（{reason}）"
     },
     "walkthrough": {
       "missing": "ウォークスルーがありません。",
@@ -452,7 +455,7 @@
   },
   "chat": {
     "pane": {
-      "rewindNotFound": "巻き戻し先の発言が見つかりませんでした。ターミナルで /rewind を操作してください。",
+      "rewindNotFound": "巻き戻し先の発言が見つかりませんでした",
       "model": "モデル",
       "configureFailed": "変更できませんでした: {error}",
       "settingsFileDefault": "標準",
@@ -685,6 +688,20 @@
       "noAnswer": "（回答なし）",
       "image": "[画像]",
       "linesOmitted": "…（{count} 行省略）"
+    },
+    "rewind": {
+      "kind": "巻き戻し",
+      "title": "この発言の前まで戻しますか？",
+      "files": "コードを戻すと、{count} 個のファイルが変わります（+{insertions} −{deletions}）",
+      "noFiles": "この発言のあと、Claude が変えたファイルはありません。会話だけを戻します",
+      "codeUnavailable": "コードは戻せません（{reason}）。会話だけを戻せます",
+      "codeUnavailablePlain": "コードは戻せません。会話だけを戻せます",
+      "more": "ほか {count} 個",
+      "both": "会話とコードを戻す",
+      "conversation": "会話だけ戻す",
+      "conversationOnly": "会話を戻す",
+      "code": "コードだけ戻す",
+      "failed": "巻き戻せませんでした（{error}）"
     }
   },
   "composer": {

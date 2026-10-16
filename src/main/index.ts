@@ -690,7 +690,11 @@ function registerIpc(): void {
   });
   handle(IpcChannel.WorkflowsGet, (e, id: string) => P(e).manager.workflows(id));
   handle(IpcChannel.ScreenSetMode, (e, id: string, mode: PermissionMode) => P(e).manager.setMode(id, mode));
-  handle(IpcChannel.ScreenRewind, (e, id: string, text: string) => P(e).manager.rewind(id, text));
+  handle(IpcChannel.ScreenRewindPreview, (e, id: string, messageId: string) => P(e).manager.rewindPreview(id, String(messageId)));
+  handle(IpcChannel.ScreenRewind, (e, id: string, messageId: string, choice: unknown) => {
+    const c = choice as { conversation?: unknown; code?: unknown } | null;
+    return P(e).manager.rewind(id, String(messageId), { conversation: c?.conversation === true, code: c?.code === true });
+  });
   handle(IpcChannel.WriteFile, (e, id: string, relPath: string, text: string) =>
     new Workspace(P(e).cwdOf(id)).writeFile(relPath, text),
   );

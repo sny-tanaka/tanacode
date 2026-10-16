@@ -109,7 +109,7 @@
       "switching": "Remote Control is already switching. Wait a moment and try again.",
       "waitingAnswer": "Can't switch right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then switch.",
       "draft": "Can't switch because Claude Code's input in the terminal has unsent text",
-      "failed": "Couldn't switch Remote Control in Claude Code. Use /remote-control in the terminal."
+      "failed": "Couldn't switch Remote Control ({reason})"
     },
     "task": {
       "notRunning": "Can't stop it because the session isn't running",
@@ -117,9 +117,9 @@
       "busy": "Another operation is in progress. Wait a moment and try again.",
       "waitingAnswer": "Can't stop it right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then stop it.",
       "draft": "Can't stop it because the input in the terminal has unsent text",
-      "notFound": "Couldn't find it on screen. It has already finished or been stopped.",
+      "notFound": "Couldn't find the task to stop. It has already finished or stopped",
       "ambiguous": "More than one task has the same name, so tanacode can't tell which one to stop. Open /tasks in the terminal and stop it there.",
-      "failed": "Couldn't stop it. Open /tasks in the terminal and stop it there."
+      "failed": "Couldn't stop it ({reason})"
     },
     "send": {
       "notAccepting": "Couldn't send because Claude Code is no longer accepting input",
@@ -227,7 +227,10 @@
     },
     "model": {
       "noCatalog": "Claude Code's cached model list (~/.claude/cache/model-catalog) is missing",
-      "needsVersion": "Requires Claude Code {version} or later (installed: {installed})"
+      "needsVersion": "Requires Claude Code {version} or later (installed: {installed})",
+      "unknown": "This model can't be chosen in the current Claude Code: {model}",
+      "effortUnsupported": "Effort {effort} can't be chosen for this model",
+      "failed": "Couldn't switch the model or effort ({reason})"
     },
     "walkthrough": {
       "missing": "There's no walkthrough.",
@@ -456,7 +459,7 @@
   },
   "chat": {
     "pane": {
-      "rewindNotFound": "Couldn't find the message to rewind to. Use /rewind in the terminal instead.",
+      "rewindNotFound": "Couldn't find the message to rewind to",
       "model": "Model",
       "configureFailed": "Couldn't apply the change: {error}",
       "settingsFileDefault": "Default",
@@ -711,6 +714,21 @@
       "image": "[Image]",
       "linesOmitted": "… ({count} lines omitted)",
       "linesOmitted_one": "… ({count} line omitted)"
+    },
+    "rewind": {
+      "kind": "Rewind",
+      "title": "Rewind to before this message?",
+      "files": "Rewinding the code changes {count} files (+{insertions} −{deletions})",
+      "files_one": "Rewinding the code changes {count} file (+{insertions} −{deletions})",
+      "noFiles": "Claude hasn't changed any files since this message. Only the conversation is rewound",
+      "codeUnavailable": "The code can't be rewound ({reason}). Only the conversation can be",
+      "codeUnavailablePlain": "The code can't be rewound. Only the conversation can be",
+      "more": "and {count} more",
+      "both": "Rewind the conversation and code",
+      "conversation": "Rewind the conversation only",
+      "conversationOnly": "Rewind the conversation",
+      "code": "Rewind the code only",
+      "failed": "Couldn't rewind ({error})"
     }
   },
   "composer": {

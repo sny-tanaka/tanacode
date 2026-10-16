@@ -56,7 +56,8 @@ const api: TanacodeApi = {
   },
   screen: {
     setMode: (sessionId, mode) => invoke(IpcChannel.ScreenSetMode, sessionId, mode),
-    rewind: (sessionId, text) => invoke(IpcChannel.ScreenRewind, sessionId, text),
+    rewindPreview: (sessionId, messageId) => invoke(IpcChannel.ScreenRewindPreview, sessionId, messageId),
+    rewind: (sessionId, messageId, choice) => invoke(IpcChannel.ScreenRewind, sessionId, messageId, choice),
   },
   question: {
     get: (sessionId) => invoke(IpcChannel.QuestionGet, sessionId),

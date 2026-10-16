@@ -89,6 +89,7 @@ export const IpcChannel = {
   SubagentsGet: 'subagents:get',
   ScreenSetMode: 'screen:set-mode',
   ScreenRewind: 'screen:rewind',
+  ScreenRewindPreview: 'screen:rewind-preview',
   ListFiles: 'fs:list-files',
   WriteFile: 'fs:write-file',
   Search: 'fs:search',
@@ -360,6 +361,14 @@ export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; 
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };
+// 巻き戻しの前の確かめ（rewind_files の dry_run）。files: コードを戻すと変わるファイル（コードを戻せないときは null。理由は codeError）/
+// insertions・deletions: 戻すと変わる行の数
+export type RewindPreview = { files: string[] | null; insertions: number; deletions: number; codeError: string | null };
+// 巻き戻すもの。conversation: 会話（その発言の前まで）/ code: ファイル（その発言を送った時点に）
+export type RewindChoice = { conversation: boolean; code: boolean };
+// 巻き戻しの結果。prefillText: 戻した発言の文（入力欄に戻す）/ error: できなかった理由
+export type RewindOutcome = { ok: boolean; prefillText: string | null; error: string | null };
+
 export type SessionProgress = { sessionId: string; activity: Activity | null };
 // 答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
 export type SessionQuestion = { sessionId: string; question: PendingQuestion | null };
@@ -457,10 +466,12 @@ export type TanacodeApi = {
     onProgress(listener: (payload: SessionProgress) => void): () => void;
   };
   screen: {
-    // 権限モードを Shift+Tab で切り替える（このセッションだけ）
+    // 権限モードを切り替える（このセッションだけ。set_permission_mode）
     setMode(sessionId: string, mode: PermissionMode): Promise<boolean>;
-    // text で始まる発言の直前まで巻き戻す（/rewind の一覧から選ぶ）
-    rewind(sessionId: string, text: string): Promise<boolean>;
+    // messageId の発言の前まで巻き戻す前に、コードを戻すと変わるファイルを調べる。その発言に戻れなければ null
+    rewindPreview(sessionId: string, messageId: string): Promise<RewindPreview | null>;
+    // messageId の発言の前まで巻き戻す（会話・コード・両方）
+    rewind(sessionId: string, messageId: string, choice: RewindChoice): Promise<RewindOutcome>;
   };
   // Claude Code が答えを待っている AskUserQuestion（質問のカード）
   question: {
@@ -773,6 +784,7 @@ export type IpcInvoke = {
   [IpcChannel.SessionsImport]: Api['sessions']['import'];
   [IpcChannel.ScreenSetMode]: Api['screen']['setMode'];
   [IpcChannel.ScreenRewind]: Api['screen']['rewind'];
+  [IpcChannel.ScreenRewindPreview]: Api['screen']['rewindPreview'];
   [IpcChannel.SessionsProgressGet]: Api['sessions']['progress'];
   [IpcChannel.QuestionGet]: Api['question']['get'];
   [IpcChannel.QuestionReply]: Api['question']['reply'];

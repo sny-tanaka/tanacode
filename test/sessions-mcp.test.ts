@@ -953,12 +953,12 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.configured).toEqual([]);
     });
 
-    it('モデル・エフォートは、変えないほうを今の指定のまま、設定ファイルも変えずに変える（Claude Code を起動し直す）', async () => {
+    it('モデル・エフォートは、変えないほうを今の指定のまま、設定ファイルも変えずに、その場で切り替える', async () => {
       host.sessions.find((s) => s.id === SIBLING)!.model = 'opus';
       host.sessions.find((s) => s.id === SIBLING)!.effort = 'high';
       host.sessions.find((s) => s.id === SIBLING)!.settingsFile = 'work';
       const result = await configure({ effort: 'max' });
-      expect(jsonOf(result)).toMatchObject({ changed: { effort: 'max' }, note: expect.stringContaining('Restarted') });
+      expect(jsonOf(result)).toMatchObject({ changed: { effort: 'max' }, note: expect.stringContaining('Switched its model and effort') });
       await configure({ model: 'haiku' });
       expect(host.configured).toEqual([
         { id: SIBLING, options: { model: 'opus', effort: 'max', settingsFile: 'work' } },
@@ -967,7 +967,7 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.modeSwitches).toEqual([]);
     });
 
-    it('権限モードとモデルを一緒に変えるときは、先にモードを切り替えてから起動し直す。起動し直せなければ、モードは変わったと伝える', async () => {
+    it('権限モードとモデルを一緒に変えるときは、先にモードを切り替えてからモデルを切り替える。切り替えられなければ、モードは変わったと伝える', async () => {
       host.modes.set(PARENT, 'auto');
       const order: string[] = [];
       const { setMode, configure: reconfigure } = host;
@@ -995,7 +995,6 @@ describe('ツールの実行（SessionsControl）', () => {
     it('作業中・起動中・質問や許可の確認・ターミナルでの操作の待ち・アーカイブ済みの子は、理由と次にできることを添えて断る', async () => {
       host.modes.set(PARENT, 'auto');
       const cases: [SessionState, string][] = [
-        ['working', 'stop_session'],
         ['starting', 'starting up'],
         ['question', 'answer_question'],
         ['permission', 'answer_permission'],
@@ -1009,15 +1008,25 @@ describe('ツールの実行（SessionsControl）', () => {
         expect(textOf(result), state).toContain(hint);
       }
       expect(host.modeSwitches).toEqual([]);
+      // 作業中は、権限モードだけなら切り替える（set_permission_mode は作業中でも効く）。モデル・エフォートは断る
+      host.set(SIBLING, 'working');
+      const working = await configure({ model: 'sonnet' });
+      expect(working.isError).toBe(true);
+      expect(textOf(working)).toContain('stop_session');
+      expect((await configure({ permission_mode: 'auto', model: 'sonnet' })).isError).toBe(true);
+      expect(host.modeSwitches).toEqual([]);
+      expect((await configure({ permission_mode: 'auto' })).isError).toBeFalsy();
+      expect(host.modeSwitches).toEqual([{ id: SIBLING, mode: 'auto' }]);
+      expect(host.configured).toEqual([]);
     });
 
-    it('裏のタスクの完了待ちの子は、権限モードだけ切り替えられる（起動し直すとタスクが止まるので、モデル・エフォートは断る）', async () => {
+    it('裏のタスクの完了待ちの子も、権限モード・モデル・エフォートを切り替えられる（その場で切り替えるので、タスクは止まらない）', async () => {
       host.modes.set(PARENT, 'auto');
       host.set(SIBLING, 'background');
       expect((await configure({ permission_mode: 'auto' })).isError).toBeFalsy();
-      expect(textOf(await configure({ model: 'sonnet' }))).toContain('background tasks');
+      expect((await configure({ model: 'sonnet' })).isError).toBeFalsy();
       expect(host.modeSwitches).toEqual([{ id: SIBLING, mode: 'auto' }]);
-      expect(host.configured).toEqual([]);
+      expect(host.configured).toEqual([{ id: SIBLING, options: { model: 'sonnet', effort: null, settingsFile: null } }]);
     });
 
     it('Claude Code が動いていない子は、次に起動するときの指定として変える', async () => {
