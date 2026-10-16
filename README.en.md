@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/sny-tanaka/tanacode/releases/latest"><img src="https://img.shields.io/github/v/release/sny-tanaka/tanacode?label=latest&color=2ea043" alt="Latest version" /></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-555555?logo=apple" alt="Supported macOS: 13 or later" />
-  <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/verified%20Claude%20Code-2.1.301-d4835c" alt="Verified Claude Code: 2.1.301" /></a>
+  <a href="https://github.com/sny-tanaka/tanacode/actions/workflows/claude-code-check.yml"><img src="https://img.shields.io/badge/verified%20Claude%20Code-2.1.302-d4835c" alt="Verified Claude Code: 2.1.302" /></a>
   <img src="https://img.shields.io/badge/license-MIT-2f6fd6" alt="License: MIT" />
 </p>
 
@@ -104,7 +104,7 @@ There's more, such as restarting just Claude Code while keeping the conversation
 - macOS 13 or later (Apple Silicon or Intel)
 - [Claude Code](https://code.claude.com/docs) (the `claude` CLI)
   - Run `claude` in a terminal once and finish the first-time setup (choosing a theme and logging in)
-  - The version verified with tanacode is 2.1.301. If yours is different, the version in the status bar gets a warning mark (hover over it to see why)
+  - The version verified with tanacode is 2.1.302. If yours is different, the version in the status bar gets a warning mark (hover over it to see why)
   - Compatibility with the latest Claude Code is checked automatically every day. Even so, a Claude Code update may break some of the display or controls
 
 ## Installation
