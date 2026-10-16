@@ -79,16 +79,16 @@ Five MCP servers that tanacode adds to Claude Code, with nothing extra to instal
 
 ## Still the Claude Code you know
 
-- It runs the `claude` CLI you've already installed. Your skills, CLAUDE.md, hooks, and MCP settings **all keep working**
+- It runs the `claude` CLI you've already installed (the chat runs it as `claude -p` in stream-json mode, and terminal mode shows its usual screen). Your skills, CLAUDE.md, hooks, and MCP settings **all keep working**
 - **Claude Code keeps running** after you close the app. You can continue from your phone with Remote Control
 - It **never writes** to your Claude Code settings (such as `~/.claude/settings.json`). tanacode itself has no way of sending your data anywhere
 - It's **checked automatically every day** against the latest Claude Code. If your Claude Code differs from the verified version, a mark in the status bar tells you
 - Conversations you started in the terminal **can be imported**
-- Instead of the chat, you can also **use Claude Code's own terminal screen**. The MCP servers tanacode adds, the side panel, and the editor all keep working
+- While Claude Code is idle, you can **switch any session to Claude Code's own terminal screen (terminal mode)**. The conversation and Remote Control carry on, and the MCP servers tanacode adds, the side panel, and the editor all keep working
 
 ## And more
 
-- **While Claude works**: tool calls collapse into a single line. Answer questions and permission prompts with buttons in the chat ([demo](https://sny-tanaka.github.io/tanacode/#delegate))
+- **While Claude works**: tool calls collapse into a single line. Answer questions, permission prompts, and plan approvals with cards in the chat. Permission prompts show exactly what you're allowing, such as the command or the diff of an edit ([demo](https://sny-tanaka.github.io/tanacode/#delegate))
 - **Review before you push**: see the changes since the branch point (including committed ones) in a pull-request-like list. Comments you leave on diff lines go to Claude with your next prompt ([demo](https://sny-tanaka.github.io/tanacode/#review))
 - **Work in parallel**: marks in the session list tell sessions apart by state (working, waiting for background tasks, waiting for an answer, new response), and macOS notifications tell you when a session you're not looking at finishes (with a short report from Claude on what got done or what it needs from you) or needs you. Each session can get its own folder and branch with `claude --worktree`, and tanacode takes care of setting up `node_modules` ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
 - **More than one folder**: add folders other than the session's folder (another repository, for example) to the workspace, and browse and edit them in the Explorer and the editor. Claude Code gets them as folders it can work in, too
@@ -105,7 +105,7 @@ There's more, such as restarting just Claude Code while keeping the conversation
 - [Claude Code](https://code.claude.com/docs) (the `claude` CLI)
   - Run `claude` in a terminal once and finish the first-time setup (choosing a theme and logging in)
   - The version verified with tanacode is 2.1.301. If yours is different, the version in the status bar gets a warning mark (hover over it to see why)
-  - Compatibility with the latest Claude Code is checked automatically every day. Even so, a Claude Code update may break some of the display or controls
+  - Compatibility with the latest Claude Code is checked automatically every day. Even so, a Claude Code update may break some of the display or controls. Anything that stops working in the chat is still available in terminal mode (Claude Code's own screen)
 
 ## Installation
 
