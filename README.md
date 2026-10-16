@@ -78,16 +78,16 @@ tanacode が Claude Code に足す、5 つの MCP。別に入れるものは無�
 
 ## いつもの Claude Code のまま
 
-- 中で動くのは、インストール済みの `claude` CLI そのもの。スキル・CLAUDE.md・hooks・MCP の設定が**そのまま有効**
+- 中で動くのは、インストール済みの `claude` CLI そのもの（チャットは `claude -p` の stream-json で、ターミナルモードはいつもの画面で）。スキル・CLAUDE.md・hooks・MCP の設定が**そのまま有効**
 - アプリを閉じても **Claude Code は動いたまま**。Remote Control でスマホからも続行可能
 - Claude Code の設定（`~/.claude/settings.json` など）への**書き込みは無し**。tanacode 自身が情報を外へ送る仕組みも無し
 - 最新の Claude Code で動くかを**毎日自動で確認**。入っている Claude Code が動作確認済のバージョンと違えば、ステータスバーの印でお知らせ
 - ターミナルで始めた会話も**取り込み可能**
-- チャットの代わりに、**Claude Code そのものの画面（ターミナル）でも操作可能**。tanacode が足す MCP・サイドパネル・エディタは、そのまま使えます（[使い方](GUIDE.md#ターミナルモード)）
+- Claude Code の手が空いている間に、セッションごとに **Claude Code そのものの画面（ターミナルモード）へ切り替え可能**。会話と Remote Control はそのまま続き、tanacode が足す MCP・サイドパネル・エディタも使えます（[使い方](GUIDE.md#ターミナルモード)）
 
 ## ほかにも
 
-- **任せている間の表示**: ツールの操作は 1 行に畳んで表示。質問や許可の確認には、チャットのボタンで回答（[デモ](https://sny-tanaka.github.io/tanacode/#delegate)）
+- **任せている間の表示**: ツールの操作は 1 行に畳んで表示。質問・許可の確認・プランの承認には、チャットのカードで回答。許可の確認のカードには、コマンドや編集の差分など、許す中身をそのまま表示（[デモ](https://sny-tanaka.github.io/tanacode/#delegate)）
 - **プッシュ前のレビュー**: ブランチが分岐したところからの変更（コミット済みも含む）を、プルリクエストのような一覧で確認。差分の行に付けたコメントは、次の指示に添えて Claude へ（[デモ](https://sny-tanaka.github.io/tanacode/#review)）
 - **並行して進める**: セッションの状態（作業中・完了待ち・質問への回答待ち・新しい応答）を一覧の印で区別し、見ていないセッションの完了は Claude の短い報告（何が済んだか・何が要るか）つきの、確認はその中身つきの macOS の通知で。セッションごとに `claude --worktree` で作業フォルダとブランチを分け、`node_modules` の準備まで tanacode が受け持ちます（[デモ](https://sny-tanaka.github.io/tanacode/#parallel)）
 - **別のフォルダも一緒に**: セッションのフォルダとは別のフォルダ（別のリポジトリなど）をワークスペースに追加して、エクスプローラーとエディタで扱えます。Claude Code にも、作業できるフォルダとして渡します（[使い方](GUIDE.md#フォルダを追加する)）
@@ -105,7 +105,7 @@ tanacode が Claude Code に足す、5 つの MCP。別に入れるものは無�
 - [Claude Code](https://code.claude.com/docs)（`claude` CLI）
   - ターミナルで一度 `claude` を起動し、初回のセットアップ（テーマの選択とログイン）を済ませておきます
   - tanacode で動作確認済のバージョンは 2.1.301。違うバージョンのときは、ステータスバーのバージョンに警告の印が付きます（マウスを乗せると理由を表示）
-  - 最新の Claude Code で動くかも、毎日自動で確認。それでも Claude Code の更新で、一部の表示や操作が動かなくなる場合あり
+  - 最新の Claude Code で動くかも、毎日自動で確認。それでも Claude Code の更新で、一部の表示や操作が動かなくなる場合あり。チャットで使えなくなった操作も、ターミナルモード（Claude Code そのものの画面）では使えます
 
 ## インストール
 

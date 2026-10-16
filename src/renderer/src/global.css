@@ -3487,6 +3487,58 @@ details[open] > summary > .disclosure {
   max-height: 240px;
   overflow: auto;
 }
+/* 許可の確認のツールの入力（コマンドかファイルのパス、ファイルの変更、ほかの入力）。まとまりの間は詰める */
+.menu-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.menu-input-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+/* ファイルの変更。色はチャットのツールカードの差分と同じ */
+.menu-diff .add {
+  color: var(--ok);
+}
+.menu-diff .del {
+  color: var(--danger);
+}
+.menu-diff .note,
+.menu-diff .edit {
+  color: var(--text-secondary);
+}
+/* MultiEdit の 2 個めからの編集は、前の編集と間を空ける */
+.menu-diff .edit:not(:first-child) {
+  display: block;
+  margin-top: 8px;
+}
+/* コマンドやファイルの変更のほかの入力（名前: 値） */
+.menu-input-rest {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* サンドボックスを外すなどの入力 */
+.menu-input-rest .danger {
+  color: var(--danger);
+}
+/* プランの本文を読めなかったときの知らせ（承認はできない） */
+.menu-plan-missing {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
+}
 /* 許可の確認の説明・理由の行 */
 .menu-notes {
   display: flex;
@@ -3552,6 +3604,11 @@ details[open] > summary > .disclosure {
 .menu-option:disabled:not(.chosen):hover {
   border-color: var(--border-strong);
   background: transparent;
+}
+/* 選べない選択肢（本文を読めなかったプランの承認） */
+.menu-option.unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 /* 押した選択が Claude Code に届かなかったときの知らせ */
 .menu-card-error {
