@@ -305,8 +305,12 @@ export function ChatInput({
     // 保存している間にほかのセッションへ移ったら、移った先の入力欄には入れない
     const now = latest.current;
     if (now.owner !== startedFor) return;
-    if (paths.length > 0) now.onAttachmentsChange([...now.attachments, ...paths]);
-    if (texts.length > 0) now.onChange(`${now.value}${now.value && !now.value.endsWith(' ') ? ' ' : ''}${texts.join(' ')} `);
+    const attachmentsNext = paths.length > 0 ? [...now.attachments, ...paths] : now.attachments;
+    const valueNext = texts.length > 0 ? `${now.value}${now.value && !now.value.endsWith(' ') ? ' ' : ''}${texts.join(' ')} ` : now.value;
+    // 描き直す前に、ほかの保存の返事が続けて届いても、いま入れたものを上書きしないよう、すぐに控えも書き換える
+    latest.current = { ...now, attachments: attachmentsNext, value: valueNext };
+    if (paths.length > 0) now.onAttachmentsChange(attachmentsNext);
+    if (texts.length > 0) now.onChange(valueNext);
   };
 
   return (

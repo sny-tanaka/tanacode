@@ -342,6 +342,23 @@ describe('読んでいる・保存している間に変わったら、古い結�
     expect(chips()).toEqual(['画像 b.png', '画像 a.png']);
     expect(box().value).toBe('見てください /Users/me/notes.txt ');
   });
+
+  it('添付: 2 つの保存の返事が、描き直す前に続けて届いても、あとのものが先のものを上書きしない', async () => {
+    const saves = [deferred<string>(), deferred<string>()];
+    let n = 0;
+    api = mockApi({ 'attachments.save': () => saves[n++].promise, pathForFile: (file: never) => `/Users/me/${(file as File).name}` });
+    api.install();
+    render(<Harness owner="s1" />);
+    const drop = (...files: File[]) => fireEvent.drop(document.querySelector('.chat-input')!, { dataTransfer: { files, types: ['Files'] } });
+    drop(image('a.png'), new File(['x'], 'one.txt'));
+    drop(image('b.png'), new File(['y'], 'two.txt'));
+    await act(async () => {
+      saves[0].resolve('/tmp/attachments/0123abcd-a.png');
+      saves[1].resolve('/tmp/attachments/0123abcd-b.png');
+    });
+    expect(chips()).toEqual(['画像 a.png', '画像 b.png']);
+    expect(box().value).toBe('/Users/me/one.txt /Users/me/two.txt ');
+  });
 });
 
 describe('画像とファイル', () => {
