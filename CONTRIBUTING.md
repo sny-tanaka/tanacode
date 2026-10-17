@@ -1399,7 +1399,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `claude-config.ts`: Claude Code の設定のフォルダと `.claude.json`・会話ログの場所。プロファイルごとのフォルダ（`Profile.claudeDir`）があればそこ、既定のプロファイルは `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`。プロファイルのフォルダは、起動する Claude Code とシェルに `CLAUDE_CONFIG_DIR` として渡す（`childEnv`）
     - 設定のフォルダが `~/.claude` でない Claude Code には、`--settings` の `claudeMdExcludes` で `~/.claude/CLAUDE.md` と `~/.claude/rules/**` を読ませません（`foreignClaudeMdExcludes`。`statusline.ts` の `ownSettings` が足す）。
       - Claude Code は、作業フォルダから親をたどって `<親>/.claude/CLAUDE.md` をプロジェクトの指示として読みます。設定のフォルダが `~/.claude` でなくなると、ホームの下のフォルダでは `~/.claude/CLAUDE.md` がプロジェクトの指示として拾われます。
-      - 拾われると、プロジェクトの `CLAUDE.md` が見つかった扱いになり、リポジトリの `AGENTS.md` が読まれなくなります（2.1.296 で実測。`claudeMdExcludes` で外すと `AGENTS.md` が戻る）。`rules` の除外は確かめていません。
+      - 拾われると、プロジェクトの `CLAUDE.md` が見つかった扱いになり、リポジトリの `AGENTS.md` が読まれなくなります（2.1.296 で実測。`claudeMdExcludes` で外すと `AGENTS.md` が戻る）。`~/.claude/rules/*.md` も「プロジェクトの決まり」として読まれ、`CLAUDE.md` だけを外しても残ります（2.1.302 で実測。`rules/**` も外すと読まれない）。
       - アプリのターミナルのシェルで起動した `claude` には付きません（`--settings` を渡せないため）。
   - `claude-version.ts`: 入っている Claude Code のバージョン（`claude --version`。起動時・10 分ごと・ウィンドウを前に出したとき）
   - `commands.ts`: `/` の候補（動いている Claude Code の initialize の一覧と、起動の前に集める組み込みコマンド・カスタムコマンド・スキル）

@@ -153,7 +153,8 @@ type Runtime = {
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   background: number;
-  // 許可の確認を出す直前に、フックが書いた入力（親の Claude が子の許可の確認に答えるときに読む。pendingPermission）
+  // ターミナルモードの間に、書くだけの PermissionRequest のフックが書いた、許可の確認の直前のツールの名前と入力（同じ書き込みの知らせを
+  // 数え直さないため。チャットの許可の確認は、requests の can_use_tool の要求で分かる）
   permission: PermissionRequest | null;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
@@ -693,7 +694,7 @@ export class SessionManager {
     // Claude Code が答えを待っている要求（AskUserQuestion は質問、ほかは許可の確認）
     const request = firstRequest(rt);
     if (request) return request.tool_name === 'AskUserQuestion' ? 'question' : 'permission';
-    // フックが答えを待っている質問
+    // 答えを待っている質問（AskUserQuestion の要求を、PendingQuestions で預かっているもの）
     if (this.questions.first(id)) return 'question';
     if (!rt.ready || rt.preparing) return 'starting';
     // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える。
