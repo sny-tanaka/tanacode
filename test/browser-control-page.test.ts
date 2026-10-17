@@ -1329,6 +1329,13 @@ describe('JavaScript の実行（evaluate）', () => {
     // 'use strict' で始まる式は、strict のまま動く（宣言していない名前への代入はエラー）
     expect(await run("'use strict';\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
     expect(await run('"use strict"; document.title')).toBe('"題"');
+    // 先頭の注釈と、前に並ぶ directive を読み飛ばして見分ける。文字列のあとに式が続くもの（.length・改行して + 1）は directive ではない
+    expect(await run("/* 注釈 */ 'use strict';\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("// 注釈\n'a'; 'use strict'; undeclared = 1; '動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'use strict'\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'use strict'.length; undeclared = 1; '動いた'")).toBe('"動いた"');
+    expect(await run("'use strict'\n+ 1; undeclared = 1; '動いた'")).toBe('"動いた"');
+    expect(await run("'not strict'; 'use strict' + ''; undeclared = 1; '動いた'")).toBe('"動いた"');
     // #! の行（hashbang）で始まる式も動く。比べる文は、その行のあとに置く（行の終わりは \n・\r・\u2028・\u2029 のどれでも）
     expect(await run('#!/usr/bin/env node\ndocument.title')).toBe('"題"');
     expect(await run('#!x\rdocument.title')).toBe('"題"');

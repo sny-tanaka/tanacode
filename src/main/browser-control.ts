@@ -1630,13 +1630,65 @@ function originShown(url: string): string {
 // 式の行番号は、エラーのスタックで 1 つずれる。
 // - #! の行（hashbang）はスクリプトの頭にしか書けないので、その行だけ比べる文より前に置き、必ず改行を足す
 //   （行の終わりは \n・\r・\u2028・\u2029。足さないと、比べる文が #! の行の続きになって、効かなくなる）
-// - 'use strict' で始まる式は、比べる文の前に置くと directive が効かなくなるので、頭にも 'use strict'; を足す（全体が strict。式だけで動かすのと同じ）
+// - 頭の directive に 'use strict' がある式は、比べる文の前に置くと directive が効かなくなるので、頭にも 'use strict'; を足す
+//   （全体が strict。式だけで動かすのと同じ。見分け方は hasUseStrict）
 function guardedScript(origin: string, mark: string, expression: string): string {
   const hashbang = /^#![^\n\r\u2028\u2029]*/.exec(expression)?.[0] ?? '';
   const body = expression.slice(hashbang.length);
-  const strict = /^\s*(['"])use strict\1/.test(body) ? "'use strict';" : '';
+  const strict = hasUseStrict(body) ? "'use strict';" : '';
   const check = `{ if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(mark)}; }`;
   return `${hashbang ? `${hashbang}\n` : ''}${strict}${check}\n${body}`;
+}
+
+// スクリプトの頭の directive（文字列だけの文の並び）に 'use strict' があるか。空白と注釈は読み飛ばす。
+// 文字列のあとに式が続くもの（'use strict'.length・改行して + 1 など）は directive ではない。改行のあとは、次の字が式の続きでなければ
+// 文の終わり（自動のセミコロン）とみなす。見分けを誤っても、比べる文が先に動くことは変わらない（strict かどうかだけが変わる）
+const LINE_END = /[\n\r\u2028\u2029]/;
+function hasUseStrict(code: string): boolean {
+  let i = 0;
+  // 空白と注釈を読み飛ばし、行の終わりをまたいだかを返す
+  const skip = (): boolean => {
+    let newline = false;
+    while (i < code.length) {
+      const c = code[i]!;
+      if (LINE_END.test(c)) {
+        newline = true;
+        i++;
+      } else if (/\s/.test(c)) i++;
+      else if (code.startsWith('//', i)) {
+        while (i < code.length && !LINE_END.test(code[i]!)) i++;
+      } else if (code.startsWith('/*', i)) {
+        const end = code.indexOf('*/', i + 2);
+        if (end === -1) return newline;
+        if (LINE_END.test(code.slice(i + 2, end))) newline = true;
+        i = end + 2;
+      } else break;
+    }
+    return newline;
+  };
+  while (true) {
+    skip();
+    const quote = code[i];
+    if (quote !== "'" && quote !== '"') return false;
+    // 文字列の終わり（エスケープしたものは飛ばす。途中の改行は書き方の誤りなので、そこでやめる）
+    let end = i + 1;
+    while (end < code.length && code[end] !== quote) {
+      if (LINE_END.test(code[end]!)) return false;
+      end += code[end] === '\\' ? 2 : 1;
+    }
+    if (end >= code.length) return false;
+    const strict = code.slice(i + 1, end) === 'use strict';
+    i = end + 1;
+    const newline = skip();
+    const rest = code.slice(i);
+    if (rest.startsWith(';')) i++;
+    else if (rest !== '') {
+      // 改行をまたがずにほかのものが続くか、改行のあとが式の続き（. ( [ ` 演算子・in・instanceof など）なら、directive ではない
+      const continues = /^[.([`+\-*/%&|^?,=<>]/.test(rest) || rest.startsWith('!=') || /^(in|instanceof)(?![\w$])/.test(rest);
+      if (!newline || continues) return false;
+    }
+    if (strict) return true;
+  }
 }
 
 // evaluate の先頭の比べる文が、確かめたページから別のオリジンへ移っていたときに投げる目印（呼び出しごとの乱数を足して使う）
