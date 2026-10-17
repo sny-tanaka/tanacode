@@ -335,8 +335,9 @@ PR で、次のものを流します。develop への push では流しません
   - CI（環境変数 `CI` があるとき）では、配る形のまま前に出します。Linux でも前に出します（`xvfb-run` の画面に出るだけのため）。
   - Playwright は画面を CDP で操作し、フォーカスもページの中で作る（`Emulation.setFocusEmulationEnabled`）ので、ウインドウが前にある必要はありません。
 - 終わるときは、終了の確認で「Claude Code も止めて終了」を選んだことにして、pty ホストと `claude` が終わるのを待ってから、一時フォルダを消します。
-- 失敗したテストは、画面の写し・メインプロセスの出力・モックの API の呼び出し・セッションの一覧・（ターミナルモードのセッションなら）Claude Code の画面を `test-results/e2e/` に残します。CI では、ジョブの成果物（分割ごとに `e2e-results-1` …）に入れます。
+- 失敗したテストは、画面の写し・メインプロセスの出力・モックの API の呼び出し・セッションの一覧・（ターミナルモードのセッションなら）Claude Code の画面・カードを押したときに画面に届いたイベントを `test-results/e2e/` に残します。stream-json の送受信の控え（userData の `stream-logs/`）と、Claude Code の会話ログ（HOME の `.claude/projects/`）も写します（終わるときに使い捨てのフォルダごと消すため）。CI では、ジョブの成果物（分割ごとに `e2e-results-1` …）に入れます。
   - Claude Code の画面は、出ている xterm の文字から読みます（`keepEvidence`）。チャットのセッションを、読むためにターミナルモードへ切り替えることはしません（切り替えると、Claude Code を起動し直すため）。
+- カードの選択肢は `choose` で押します。Playwright の click は、画面にイベントが 1 つも届かなくても、押し始め（pointerdown）だけが選択肢に当たって離した所が外れても、成功で返ります。そこで、押す間だけ pointerdown・pointerup・mousedown・mouseup・click を capture で記録し（種類・届いた要素・位置・選択肢の位置・チャットの一覧のスクロール。`recordPress`）、click が選択肢に届かなければ、カードが閉じるのを待たずに、記録を付けて失敗にします（押し直しはしない）。記録で、押した所から選択肢が動いたのか、画面にイベントが届かなかったのかを見分けます。
 - 画面の目印には、クラス名と `aria-label` を使います。画面を変えて目印が変わったら、`test/e2e/app.ts` の操作の部品か、テストの目印を直します。
 - Linux でも `xvfb-run -a npm run test:e2e` で流せます（手元で確かめる用。CI では流しません）。
 - カバレッジも測るときは、`TANACODE_SOURCEMAP=1 npm run build` でソースマップ付きでビルドしてから `npm run coverage:e2e`（Linux では `xvfb-run -a npm run coverage:e2e`）。`npm run coverage:report` は、ほかのカバレッジと合わせて数えます（上の「カバレッジ」）。
