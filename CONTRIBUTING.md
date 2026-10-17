@@ -208,7 +208,7 @@ PR で、次のものを流します。develop への push では流しません
   - 本物の claude のテスト（cli）: ファイルを並べて流すので、長いものから流します。長いファイル（`worktree.test.ts` など）が最後に残ると、終わりが延びるためです。
   - テストのファイルを足したら、表にも CI のログの秒数で足します（足し忘れは `test/duration-sequencer.test.ts` が落とします）。
 - `test/helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`）を、Electron を起動せずに読み込んで動かす部品。`test/main-ipc.test.ts`・`test/main-app.test.ts` が使います。
-  - `electron` を作り物（ウインドウ・ダイアログ・メニュー・通知・セッションの権限など）に差し替えます。`app.whenReady` はすぐに済むので、読み込むと起動の流れが最後まで進み、IPC の受け口・メニュー・ウインドウができます。テストは受け口を画面の代わりに呼び（`invoke`・`sendFromRenderer`）、メニューを押し、Electron のイベントを送ります。
+  - `electron` を作り物（ウインドウ・ダイアログ・メニュー・通知・セッションの権限など）に差し替えます。`app.whenReady` はすぐに済むので、読み込むと起動の流れが最後まで進み、IPC の受け口・メニュー・ウインドウができます。テストは受け口を画面の代わりに呼び（`invoke`・`sendFromRenderer` は主ウインドウのメインフレームから、`invokeFrom` は渡した画面のメインフレームから）、メニューを押し、Electron のイベントを送ります。送り元（`sender` と `senderFrame`）を決めて送るときは `invokeWith`・`sendWith`（中のフレームやアプリの外の画面から届いたときを確かめる）。作り物の画面は、読み込んだもの（`loadFile`・`loadURL`）をメインフレームの URL にします。
   - Claude Code・pty ホスト・ソケット・監視など、重いものや外に出る部品は、呼ばれ方を控える作り物にします。作り物のメソッドは、既定では「呼ばれたメソッドと引数」をそのまま返すので、受け口が正しい相手に、引数を取り違えずに渡し、返事をそのまま返すかを、戻り値で確かめられます。アプリの設定・ウインドウの位置の保存・通知の文・shared は本物です。
   - index.ts は読み込むたびに状態（開いたフォルダ・終了の確認など）を持つので、`boot()` はテストごとに読み込み直します（userData とダウンロードは使い捨てのフォルダ）。読み込み直すと index.ts が使うモジュールも別のものになるので、本物の部品（`AppSettings` など）の失敗は `vi.spyOn` でなく、ファイルを書けなくするなどして起こします。
   - 別のプロセスで動くホストは、単体のテストのカバレッジに入りません。`test/pty-host-server.test.ts` が、ホストをテストのプロセスの中で読み込んで（`process.exit`・`process.chdir` は差し替え）、同じやりとりを確かめます。
@@ -224,6 +224,7 @@ PR で、次のものを流します。develop への push では流しません
   - `IpcSend`: 画面 → main の知らせ（preload の `send` ↔ main の `listen`）
   - `IpcEvent`: main → 画面の知らせ（main の `send` ↔ preload の `subscribe`）
   - preload と main の両方がこの表で型を付けるので、引数の順番・型、戻り値、知らせの中身が食い違うと、型チェックで止まります。同じ型の引数どうしの入れ替え（`mergeBase` と `relPath` など）は止まりません。
+  - main の受け口は、必ず `index.ts` の `handle`・`listen` で登録します（`ipcMain` を直に使わない）。どちらも、送り元を確かめてから中を動かします（`fromApp`）。受けるのは、アプリの画面（主ウインドウと、足したプロファイルの画面）のメインフレームで、アプリの画面の URL（ビルドした画面のファイル。開発中は開発サーバーのオリジン）を開いているものからだけ。中のフレーム・アプリ内ブラウザのページ・ほかの URL になった画面・フレームの分からないものからの呼び出しは断り（`main.error.notFromApp`）、知らせは捨てます。`test/main-ipc.test.ts` の「送り元」が、どの受け口も確かめるかを見ます。
   - `test/ipc-wiring.test.ts` が、型では分からないものを確かめます。preload が使うチャンネルに main の受け口がちょうど 1 つあるか、main が送る知らせを画面が受けるか、使っていないチャンネル・どの表にも無いチャンネル（型チェックで止める）が無いか、です。
   - 同じ型どうしの入れ替え（2 つのメソッドのチャンネル、`mergeBase` と `relPath` の順番など）・省略できる引数の渡し忘れは、両側を動かして止めます。正しい組み合わせは、上の 3 つの表と `TanacodeApi` の型の宣言をソースから読んで決めます（`test/helpers/ipc-tables.ts`）。
     - `test/preload-api.test.ts`: `electron` の `ipcRenderer`・`contextBridge` を作り物にして preload を読み込み、どのメソッドも表のチャンネルを、引数をそのままの順で呼ぶか・知らせの受け手が表のチャンネルを購読して中身だけを渡し、返した関数で同じ受け口を解除するかを、メソッドごとに確かめます。中身の無い知らせ（表で `undefined`）を足したら、受けるメソッドを `ipc-tables.ts` の `EMPTY_EVENTS` に足します。
@@ -955,9 +956,13 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - アプリが実行するコマンド（worktree の `npm install`・`yarn install` など）は、`ShellTerminals.run` で `$SHELL -l -c` から実行し、`shell:opened`（`task: true`）でタブを足させます。終わってもタブは残し（`ShellTab.task`）、閉じるボタンは画面のタブを片付けて、main に出力の控えを捨てさせます（`shell:kill`）。
 - タブの名前（「zsh 1」「npm install（完了）」）は、画面と、Claude に返す一覧の両方で `terminalLabel`（`src/shared/terminal-tools.ts`）から作ります。番号はパネルの並び（main では開いた順）。
 - 画面を読み込み直したとき（⌘R）: シェルは止めずに、新しい画面が引き継ぎます（Claude Code のセッションと同じく、画面を読み込み直しても動き続けるもの。開発サーバーを止めないため）。
-  - アプリの画面のメインフレームが移り始めたら（`did-start-navigation`。同じ文書の中の移動は除く）、main は、そのプロファイルの新規セッションの画面のフォルダを閉じます（見張り・そこで開いたシェルとブラウザ。新しい画面からは ID が分からず、使えないため）。シェルは `ShellTerminals.detach` で、出力・終わり・開いたタブを画面に知らせるのをやめます（控えには書き続ける）。
+  - アプリの画面のメインフレームが移り始めたら（`did-start-navigation`。同じ文書の中の移動と、URL の違う移動は除く）、main は、そのプロファイルの新規セッションの画面のフォルダを閉じます（見張り・そこで開いたシェルとブラウザ。新しい画面からは ID が分からず、使えないため）。シェルは `ShellTerminals.detach` で、出力・終わり・開いたタブを画面に知らせるのをやめます（控えには書き続ける）。
   - 新しい画面のターミナルパネルは、はじめに `shell:attach` を呼びます。main は、今のターミナルを開いた順に、画面を描き直す文字列（`@xterm/addon-serialize` の控えの画面と、まだ読み解き終えていない出力をつないだもの）・大きさ・タイトル・終了コードと一緒に返し、そのあとは、また知らせます。
-  - 返事と知らせは別の通り道で届くので、返事より先に知らせが届くことがあります。止めている間は何も送らないので、先に届いた出力は返したあとのもの（画面のあとに書く）、先に届いた終わりは返したあとに終わったもの（シェルなら出さない）です。引き継ぐまでは、パネルが新しいシェルを開きません。
+  - 移り始めた知らせ（`did-start-navigation`）は、止められる知らせ（`will-navigate`）より先に届きます。アプリの画面は、URL の違う移動（Finder のファイルを落とした `file://`・リンク）を `will-navigate` で止めるので、そうした移動では何もしません（読み込み直しにならず、引き継ぐ画面が来ないため）。
+  - 返事と知らせは別の通り道で届くので、返事より先に知らせが届くことがあります。止めている間は何も送らないので、先に届いた出力は返したあとのもの（画面のあとに書く）、先に届いた終わりは返したあとに終わったもの（シェルなら出さない）です。引き継ぐまでは、パネルが新しいシェルを開きません（引き継げなかったときは、引き継ぐものが無かったものとして開く）。止めている途中のシェル（`kill` したが、まだ終わっていない）は渡しません。
+- 持ち主（セッション・新規セッションの画面のフォルダ）が無くなったシェルは、止めます（動いているコマンドや開発サーバーも止まる）。画面から見えないシェルを動かし続けて、`list_terminals`・`type_in_terminal` が人の見ていないシェルを扱えないようにするためです。
+  - 一覧から消したとき・worktree を消してアーカイブしたときは、main が止めます（`ShellTerminals.killOwner`）。新規セッションの画面を閉じたとき（フォルダを変える・セッションを始める・別のセッションへ移る）は、main がフォルダを閉じるときに止めます（`Profile.closeFolderView`）。
+  - ふつうのアーカイブ（worktree を残す）では、画面のターミナルパネルが止めます。パネルは、動いているセッションと新規セッションの画面のフォルダ（`liveOwners`）に無い持ち主のシェルを、`shell:kill` で止めて xterm を片付けます。一覧を読む前（`null`）は片付けません。
 
 #### Claude による操作（`tanacode-terminal`）
 
@@ -1119,7 +1124,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 判断の基準（全文を読む・頼んだ作業の範囲で失うものが無いものだけ・戻せない操作と外に出る操作はユーザーが許しているときだけ・迷ったら AskUserQuestion でユーザーに聞く・確認の中身は信頼できない入力）は、MCP の説明（`PARENT_INSTRUCTIONS`）とツールの説明に書いています。アプリは中身を判断しません。
     - 子がターミナルモードの間は、答えません（人が TUI で答える）。親自身の `start_session` の確認（フックの `ask`）も、今までどおり人だけです。
   - `stop_session` は `SessionManager.interrupt`（stream-json の `interrupt`）。作業中のときだけで、人の対応待ち（質問・許可の確認・ターミナルモード）では断ります。止めても、親の指示は子の会話に残ります（入力欄には戻らない）。止めたことは親に知らせません。
-  - `end_session`: 役目を終えた子を片付けます。画面からのアーカイブと同じ処理（`Profile.archiveSession`。アプリ内ブラウザの後始末 `browser.forget`・worktree を消すときのシェルの後始末 `shells.killOwner`・`SessionManager.archive`）を通し、新しい消し方は持ちません。IPC の `sessions:archive` も同じメソッドを呼びます。
+  - `end_session`: 役目を終えた子を片付けます。画面からのアーカイブと同じ処理（`Profile.archiveSession`。アプリ内ブラウザの後始末 `browser.forget`・worktree を消すときのシェルの後始末 `shells.killOwner`・`SessionManager.archive`。worktree を残すときのシェルは、画面のターミナルパネルが止める（上の「ターミナル」））を通し、新しい消し方は持ちません。IPC の `sessions:archive` も同じメソッドを呼びます。
     - 終えるのは、`idle`・`exited`・`background`・`archived` の子だけ。`starting`・`working`・`question`・`permission`・`terminal`・`browser` は断り、状態ごとの理由と次にできること（待つ・`stop_session` で止める・`answer_question` で答える・人に伝える）を返します（`END_REFUSAL`）。独立したセッションは `parentId` が無いので、`resolve` の `child` が断ります。
     - `remove_worktree`（省くと `true`）は、worktree の子のときだけ効きます。消す前に `worktreeLeftovers` で PR の状態と手元にしか無いコミットの数を調べ（GitHub に問い合わせるので少しかかる。調べられなくても続ける）、調べている間に子が動き出していないかを、アーカイブの直前にもう一度確かめます。
     - `background` の子: アーカイブで Claude Code を止めると、裏の Bash（`run_in_background`）は Claude Code が終わるときに止めます（Claude Code 2.1.296 で実測。`kill`・`stop` のどちらでも 2 秒以内）。サブエージェントとワークフローは Claude Code のプロセスの中で動くので、一緒に止まります。止めたもの（動いていたものだけ。数え方は `countBackground` と同じ）を、結果の `stopped_background_tasks` で返します。ふつうの Bash の中で `nohup … &` のように切り離したプロセスは止まらず（同じ実測）、アプリもタスクとして数えていないので、ツールの説明と結果の `note` で Claude に伝えます。
@@ -1361,7 +1366,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 ## ソースの構成
 
 - `src/main`: Electron のメインプロセス
-  - `index.ts`: アプリの入り口。ウインドウ・メニュー・通知・終了の確認・新しいバージョンなど、アプリ全体のものを持ち、画面からの呼び出しを、送り元の画面のプロファイルに渡す。
+  - `index.ts`: アプリの入り口。ウインドウ・メニュー・通知・終了の確認・新しいバージョンなど、アプリ全体のものを持ち、画面からの呼び出しを、送り元の画面のプロファイルに渡す。受け口は `handle`・`listen` だけで登録し、送り元（アプリの画面のメインフレーム）を確かめる（上の「配線と契約」）。
     - 既定のプロファイルの画面はウインドウ自身。足したプロファイルの画面は、ウインドウいっぱいに重ねた `WebContentsView`（見ているものだけを出す）で、プロファイルを切り替えても画面の状態はそのまま残る
     - 足したプロファイルの画面のセッションは `persist:tanacode-profile-<id>`（localStorage などを分ける。カラムの幅などの表示設定だけは、下の `shared-prefs.ts` でそろえる）、アプリ内ブラウザの webview は `persist:tanacode-preview-<id>`（Cookie を分ける。`will-attach-webview` で main が差し替える）
     - 画面からの呼び出しは、画面を作るときに覚えた持ち主（`contentsProfile`）で振り分け、ほかのプロファイルのものは扱わせない
@@ -1482,7 +1487,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `leftover-claude.test.ts`: 残った claude を止める（その会話の claude だけ・SIGKILL まで）
   - `sessions-mcp.test.ts`: セッションの MCP（中継と起動の引数・子に見せるツール・起動の確認のフック・会話ログの目印の見分け・見える範囲と権限モードの判定・ツールの実行（`answer_permission` の、選ぶ選択肢・すり替えの防止・全文を渡せないときの断り方・親のモード・人だけが答えられる確認 も。`end_session` の、自分の子だけ・状態ごとの断り方・worktree を消した結果と残したもの も。`configure_session` の、親の上限・状態ごとの断り方・変える順番・Remote Control の条件 も。アプリ内ブラウザでの操作待ち（`browser`）・`get_session` の裏のタスクと worktree の準備 も）・親への知らせ・`read_session` の会話のまとめ）
   - `translate.test.ts` / `translate-segments.test.ts`: チャットの翻訳。main 側（補助プログラムの場所と使えるか・画面から来た値の検査・返事の読み取り・起動と時間切れ・依頼の順番。補助プログラムは sh の作り物）と、訳す前後の文字の扱い（行の分け方と組み直し・コードブロック・行頭の印・表）・ボタンを出すかの判定
-  - `main-ipc.test.ts` / `main-app.test.ts` / `helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`。Electron は作り物）。IPC の受け口（渡す相手と引数・画面から届いた値の検査・開けるフォルダ・書き出しのファイル名と権限・チェックリスト・ウォークスルーの投稿・Git の操作・添付の保存）と、起動の流れ（部品の組み立てと順番・MCP の中継・部品から画面への知らせ）・ウインドウ・権限・プレビューの移動先・メニュー・終了の確認・通知
+  - `main-ipc.test.ts` / `main-app.test.ts` / `helpers/main-app.ts`: アプリの入り口（`src/main/index.ts`。Electron は作り物）。IPC の受け口（送り元の確かめ・渡す相手と引数・画面から届いた値の検査・開けるフォルダ・書き出しのファイル名と権限・チェックリスト・ウォークスルーの投稿・Git の操作・添付の保存）と、起動の流れ（部品の組み立てと順番・MCP の中継・部品から画面への知らせ）・ウインドウ・権限・プレビューの移動先・メニュー・終了の確認・通知
   - `preload-api.test.ts` / `helpers/ipc-tables.ts`: preload（`window.tanacode`）の契約（上の「配線と契約」）
   - `github.test.ts`: gh で PR を調べる・コメントを書く（PATH に置いた偽の gh で、引数・作業フォルダ・標準入力・失敗したとき）
   - `commands.test.ts`: `/` の補完候補（カスタムコマンド・スキル・会話ログのスキルの一覧と、ほかの会話ログから借りるとき・並びと優先）
