@@ -96,7 +96,9 @@ export function rateLimitsOf(event: RateLimitEvent): StatusLineInfo['rateLimits'
 }
 
 // get_usage の返事から読んだ利用枠。modelsKnown: モデル別の週の枠の一覧（model_scoped）が返事にあったか。
-// Claude Code は、一覧を作れたときだけ model_scoped を付ける（無いのは「分からない」、空の配列は「この人には無い」。2.1.302）
+// Claude Code（2.1.302）は、/usage に出すモデルの許可リストを通した行があればその一覧を、サーバーの返事にモデル別の行が 1 つも
+// 無ければ空の配列を付け、それ以外（許可リストを通る行が無い・サーバーに聞けなかった）は付けない。無いときは、前の値を期限つきで残す
+// （UsageMonitor）
 export type UsageReport = { limits: UsageLimit[]; modelsKnown: boolean };
 
 // get_usage の利用枠（utilization は 0〜100、resets_at は ISO の時刻。実測）。5 時間枠・週の枠と、モデル別の週の枠。

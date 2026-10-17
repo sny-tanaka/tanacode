@@ -172,7 +172,7 @@ describe('利用枠（UsageMonitor）', () => {
         limits: [
           { label: '5時間', percent: 30, resetsAt: 100 },
           { label: '週', percent: 5, resetsAt: 200 },
-          { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+          { label: '週', model: 'Fable', percent: 60, resetsAt: 9000 },
         ],
         modelsKnown: true,
       },
@@ -184,7 +184,7 @@ describe('利用枠（UsageMonitor）', () => {
       limits: [
         { label: '5時間', percent: 40, resetsAt: 100 },
         { label: '週', percent: 10, resetsAt: 200 },
-        { label: '週', model: 'Fable', percent: 60, resetsAt: 300, updatedAt: 1000 },
+        { label: '週', model: 'Fable', percent: 60, resetsAt: 9000, updatedAt: 1000 },
       ],
       updatedAt: 2000,
       source: 'statusline',
@@ -203,19 +203,19 @@ describe('利用枠（UsageMonitor）', () => {
       {
         limits: [
           { label: '週', percent: 5, resetsAt: 200 },
-          { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
-          { label: '週', model: 'Sonnet', percent: 7, resetsAt: 300 },
+          { label: '週', model: 'Fable', percent: 60, resetsAt: 9000 },
+          { label: '週', model: 'Sonnet', percent: 7, resetsAt: 9000 },
         ],
         modelsKnown: true,
       },
       1000,
     );
     // 一覧の無い返事（分からない）。届いた Sonnet は置き換え、届かなかった Fable は残す
-    monitor.fromUsage({ limits: [{ label: '週', percent: 6, resetsAt: 200 }, { label: '週', model: 'sonnet', percent: 9, resetsAt: 300 }], modelsKnown: false }, 2000);
+    monitor.fromUsage({ limits: [{ label: '週', percent: 6, resetsAt: 200 }, { label: '週', model: 'sonnet', percent: 9, resetsAt: 9000 }], modelsKnown: false }, 2000);
     expect(monitor.get()?.limits).toEqual([
       { label: '週', percent: 6, resetsAt: 200 },
-      { label: '週', model: 'sonnet', percent: 9, resetsAt: 300 },
-      { label: '週', model: 'Fable', percent: 60, resetsAt: 300, updatedAt: 1000 },
+      { label: '週', model: 'sonnet', percent: 9, resetsAt: 9000 },
+      { label: '週', model: 'Fable', percent: 60, resetsAt: 9000, updatedAt: 1000 },
     ]);
     // 空の一覧（この人には無い）なら、モデル別の枠を残さない
     monitor.fromUsage({ limits: [{ label: '週', percent: 7, resetsAt: 200 }], modelsKnown: true }, 3000);
@@ -231,6 +231,51 @@ describe('利用枠（UsageMonitor）', () => {
     // 新しく受け取った利用枠なら使う
     monitor.fromStatusLine({ ...info(4000, 50), rateLimitsAt: 4000 });
     expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(50);
+  });
+
+  it('残すモデル別の枠は、リセットの時刻を過ぎたもの・得てから 7 日を超えたものを落とす（/usage で消えた枠を残し続けない）', async () => {
+    const DAY = 24 * 60 * 60_000;
+    const T = 1_800_000_000_000;
+    const monitor = new usage.UsageMonitor(join(home, 'usage6.json'), () => {});
+    monitor.fromUsage(
+      {
+        limits: [
+          { label: '週', percent: 5, resetsAt: T + 3 * DAY },
+          { label: '週', model: 'Fable', percent: 60, resetsAt: T + 3 * DAY },
+          { label: '週', model: 'Haiku', percent: 9, resetsAt: T + 10 * DAY },
+        ],
+        modelsKnown: true,
+      },
+      T,
+    );
+    // モデルの一覧の無い返事が続く。リセットの時刻を過ぎた Fable は落とす
+    monitor.fromUsage({ limits: [{ label: '週', percent: 6, resetsAt: T + 10 * DAY }], modelsKnown: false }, T + 4 * DAY);
+    expect(monitor.get()?.limits.map((l) => l.model ?? '全体')).toEqual(['全体', 'Haiku']);
+    // 得てから 7 日を超えた Haiku も落とす（statusLine の知らせでも）
+    monitor.fromStatusLine(info(T + 7 * DAY + 1, 40));
+    expect(monitor.get()?.limits.filter((l) => l.model)).toEqual([]);
+  });
+
+  it('Claude Code の控えのモデル別の枠は、直前の get_usage のモデルの一覧に出た名前だけを使う（控えは、Claude Code が /usage に出すモデルの許可リストを通さない）', async () => {
+    const monitor = new usage.UsageMonitor(join(home, 'usage7.json'), () => {});
+    monitor.fromUsage({ limits: [{ label: '週', percent: 5, resetsAt: null }, { label: '週', model: 'Fable', percent: 60, resetsAt: null }], modelsKnown: true }, 1000);
+    writeFileSync(
+      join(home, '.claude.json'),
+      JSON.stringify({
+        cachedUsageUtilization: {
+          fetchedAtMs: 3000,
+          utilization: {
+            limits: [
+              { kind: 'weekly_all', percent: 20, resets_at: null },
+              { kind: 'weekly_scoped', percent: 70, resets_at: null, scope: { model: { display_name: 'fable' } } },
+              { kind: 'weekly_scoped', percent: 9, resets_at: null, scope: { model: { display_name: 'Hidden' } } },
+            ],
+          },
+        },
+      }),
+    );
+    await monitor.refresh();
+    expect(monitor.get()?.limits.filter((l) => l.model).map((l) => [l.model, l.percent])).toEqual([['fable', 70]]);
   });
 
   it('Claude Code の控え（/usage を開いたときのもの）の方が新しければ、それを使う', async () => {
