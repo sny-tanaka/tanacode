@@ -294,6 +294,56 @@ describe('貼り付けた長い文の札', () => {
   });
 });
 
+describe('読んでいる・保存している間に変わったら、古い結果を使わない', () => {
+  const source = (key: string, list: Promise<SlashCommand[]>): CompletionSource => ({
+    key,
+    listFiles: () => Promise.resolve([]),
+    listCommands: () => list,
+  });
+  const image = (name: string) => new File([new Uint8Array([1])], name, { type: 'image/png' });
+  const chips = () => [...document.querySelectorAll('.chat-input .attachment:not(.comment-chip)')].map((e) => e.textContent);
+
+  it('/ の候補: 読んでいる間に読み込み元（セッション）が変わったら、遅れて届いた前の一覧は出さない', async () => {
+    const first = deferred<SlashCommand[]>();
+    const second = deferred<SlashCommand[]>();
+    const { rerender } = render(<Harness completion={source('s1', first.promise)} />);
+    type('/');
+    rerender(<Harness completion={source('s2', second.promise)} />);
+    await act(async () => second.resolve([{ name: 'deploy', description: 's2 のコマンド', source: 'skill' }]));
+    await act(async () => first.resolve(COMMANDS));
+    expect(suggestions()).toEqual(['/deploy']);
+  });
+
+  it('添付: 画像を保存している間に入力欄の持ち主（セッション）が変わったら、保存した画像もファイルのパスも、移った先の入力欄に入れない', async () => {
+    const saving = deferred<string>();
+    api = mockApi({ 'attachments.save': () => saving.promise, pathForFile: (file: never) => `/Users/me/${(file as File).name}` });
+    api.install();
+    const onAttachmentsChange = vi.fn();
+    const onChange = vi.fn();
+    const { rerender } = render(<Harness owner="s1" onAttachmentsChange={onAttachmentsChange} onChange={onChange} />);
+    fireEvent.drop(document.querySelector('.chat-input')!, { dataTransfer: { files: [image('shot.png'), new File(['x'], 'notes.txt')], types: ['Files'] } });
+    rerender(<Harness owner="s2" onAttachmentsChange={onAttachmentsChange} onChange={onChange} />);
+    await act(async () => saving.resolve('/tmp/attachments/0123abcd-shot.png'));
+    expect(onAttachmentsChange).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('添付: 保存している間に打った文字や、続けて足した画像を消さない', async () => {
+    const saves = [deferred<string>(), deferred<string>()];
+    let n = 0;
+    api = mockApi({ 'attachments.save': () => saves[n++].promise, pathForFile: (file: never) => `/Users/me/${(file as File).name}` });
+    api.install();
+    render(<Harness owner="s1" initial="見て" />);
+    fireEvent.paste(box(), { clipboardData: { files: [image('a.png')] } });
+    fireEvent.drop(document.querySelector('.chat-input')!, { dataTransfer: { files: [image('b.png'), new File(['x'], 'notes.txt')], types: ['Files'] } });
+    type('見てください');
+    await act(async () => saves[1].resolve('/tmp/attachments/0123abcd-b.png'));
+    await act(async () => saves[0].resolve('/tmp/attachments/0123abcd-a.png'));
+    expect(chips()).toEqual(['画像 b.png', '画像 a.png']);
+    expect(box().value).toBe('見てください /Users/me/notes.txt ');
+  });
+});
+
 describe('画像とファイル', () => {
   it('貼り付けた画像は一時ファイルに保存して添付し、札の × で外す', async () => {
     render(<Harness />);

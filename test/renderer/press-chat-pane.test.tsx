@@ -361,6 +361,18 @@ describe('ヘッダー', () => {
     expect(document.querySelector('.menu-card.rewind')).not.toBeNull();
   });
 
+  it('画像を保存している間にほかのセッションへ移ったら、保存した画像を移った先の入力欄に添付しない', async () => {
+    let saved!: (path: string) => void;
+    install({ 'attachments.save': () => new Promise<string>((resolve) => (saved = resolve)) });
+    const view = render(<ClaudePane {...props()} />);
+    const image = new File([new Uint8Array([1])], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(box(), { clipboardData: { files: [image] } });
+    await waitFor(() => expect(api.argsOf('attachments.save')).toHaveLength(1));
+    view.rerender(<ClaudePane {...props({ session: S2 })} />);
+    await act(async () => saved('/tmp/attachments/0123abcd-shot.png'));
+    expect(screen.queryByText('画像 shot.png')).toBeNull();
+  });
+
   it('起動を待っている発言の「取り消す」は、その発言と画像を入力欄に戻す（打ちかけの文字の前に）。取り下げられなかったら何もしない', async () => {
     let taken: { text: string; attachments: string[]; pastes: string[] } | null = { text: 'テストも足して', attachments: ['/tmp/attachments/0123abcd-shot.png'], pastes: [] };
     const onTakePending = vi.fn(() => taken);

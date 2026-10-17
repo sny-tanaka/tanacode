@@ -765,6 +765,7 @@ export const ClaudePane = memo(function ClaudePane({
       {!session.archived && (
         <div className="chat-input-wrap" hidden={screenMode}>
           <ChatInput
+            owner={session.id}
             working={running}
             comments={comments}
             onRemoveComment={removeComment}
