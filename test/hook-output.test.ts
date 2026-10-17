@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,6 +63,21 @@ describe('シェルで動くアプリのフック', () => {
     writeFileSync(join(dir, 's1.auto-compact.json'), '{"continue":false,"stopReason":"止めます","suppressOutput":true}');
     expect(sh(AUTO_COMPACT_STOP_COMMAND, { hook_event_name: 'PostToolUse', agent_id: 'a1', tool_name: 'Bash' }).trim()).toBe(SUPPRESS_OUTPUT);
     expect(JSON.parse(sh(AUTO_COMPACT_STOP_COMMAND, { hook_event_name: 'PostToolUse', tool_name: 'Bash' }))).toEqual({ continue: false, stopReason: '止めます', suppressOutput: true });
+  });
+
+  // Claude Code（2.1.302）は、フックの入力を書き終える前にフックが標準入力を閉じると（EPIPE）、そのフックを失敗として扱い、
+  // 標準出力も捨てる。ツールの結果は大きいことがある（PostToolUse の入力に入る）ので、パイプに入りきらない大きさの入力で確かめる
+  // （読まずに終わるフックは、必ず EPIPE になる）
+  it('どのフックも、何もしないときも入力を最後まで読む（読まずに閉じると、Claude Code がフックの失敗として扱う）', () => {
+    const input = JSON.stringify({ session_id: 'x', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(1 << 20) });
+    for (const command of [AUTO_COMPACT_STOP_COMMAND, sessionsGateCommand(), worktreeGuardCommand(), PERMISSION_FILE_COMMAND, NOTIFICATION_FILE_COMMAND, IDLE_FILE_COMMAND]) {
+      const result = spawnSync('sh', ['-c', command], {
+        input,
+        encoding: 'utf8',
+        env: { ...process.env, [ASK_FILE_ENV]: join(dir, 's1.ask.json'), PATH: [process.env.TANACODE_AWK, process.env.PATH].filter(Boolean).join(':') },
+      });
+      expect({ command, error: result.error?.message, status: result.status }).toEqual({ command, error: undefined, status: 0 });
+    }
   });
 
   it('Bash の前の確認・子セッションの起動の前の確認は、確認を出させるときも、何もしないときも、suppressOutput を付ける', () => {

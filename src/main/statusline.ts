@@ -159,10 +159,12 @@ export const IDLE_FILE_COMMAND = fileCommand(IDLE_SUFFIX);
 // 中身（{"continue": false, "stopReason": …}）を出す。Claude Code は、そこでターンを止める。ファイルが無ければ何もしない。
 // ツールの呼び出しのたびに動くので、アプリには聞かず、ファイルを見るだけにする（Node のプロセスを起こさない）。
 // サブエージェント（Agent ツール）の中のツールの呼び出しでも動く（実物の Claude Code 2.1.296 で確かめた。フックの入力に agent_id が付く）。
-// そこで掴むと、サブエージェントが止まるだけで本体のターンは止まらず、印のファイルだけが残る。止めるファイルがあるときだけ入力を読み、
+// そこで掴むと、サブエージェントが止まるだけで本体のターンは止まらず、印のファイルだけが残る。止めるファイルがあるときは入力を見て、
 // agent_id があれば何もしない（本体の次のツールの切れ目まで待つ。入力の中の文字列は " が \" になるので、キーとしての agent_id だけに当たる）。
+// 止めるファイルが無いときも、入力は最後まで読んで捨てる。Claude Code（2.1.302）は、入力を書き終える前にフックが標準入力を閉じると（EPIPE）、
+// フックの失敗として扱い、標準出力も捨てる（入力にはツールの結果が入るので、パイプに入りきらないことがある）。
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; n='${SUPPRESS_OUTPUT}'; [ -f "$f" ] || { echo "$n"; exit 0; }; case "$(cat)" in *'"agent_id":"'*) echo "$n"; exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h" || echo "$n"; exit 0`;
+export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; n='${SUPPRESS_OUTPUT}'; [ -f "$f" ] || { cat >/dev/null; echo "$n"; exit 0; }; case "$(cat)" in *'"agent_id":"'*) echo "$n"; exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h" || echo "$n"; exit 0`;
 
 // セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、書くだけのフックが書くファイル（.permission.json など）を見張る
 export class StatusLineWatcher {

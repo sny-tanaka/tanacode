@@ -26,14 +26,15 @@ const CLAUDE_TIMEOUT_MS = SESSIONS_CALL_TIMEOUT_MS + 60_000;
 // 子セッションの起動（start_session）の前に、権限モードによらず人の許可の確認を出させるフック（--settings の PreToolUse）。
 // 許可の確認は auto・bypassPermissions では出ないので、フックで ask を返す（勝手にセッションを開かせない）。
 // 子も利用枠を使うことを、確認の理由に書く（Claude Code を起動するときの言語で。シェルの単一引用符に埋め込むので、理由に ' を含めない）。
-// 目印の環境変数は、チャットのフックの一覧に出さないためのもの
+// 目印の環境変数は、チャットのフックの一覧に出さないためのもの。
+// 入力は使わないが、最後まで読んで捨てる（Claude Code は、入力を書き終える前にフックが標準入力を閉じると、フックの失敗として扱う）
 export function sessionsGateCommand(): string {
   const output = JSON.stringify({
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: t('main.hooks.sessionsGate') },
     // アプリのフックの印（hook-output.ts）
     suppressOutput: true,
   });
-  return `${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${output}'`;
+  return `cat >/dev/null; ${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${output}'`;
 }
 export const SESSIONS_GATED_TOOL = sessionToolId('start_session');
 
