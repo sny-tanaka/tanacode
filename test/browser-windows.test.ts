@@ -497,6 +497,34 @@ describe('新しいウインドウ', () => {
     expect(win.title).toBe('https://login.example.test');
   });
 
+  it('題のホスト名が長いときは、左側を省略して右端（登録したドメイン）を残す（幅の狭い別ウインドウの題の帯でも、どのサイトか分かるように）', () => {
+    const { tab, popup } = setup();
+    const guest = tab();
+    const win = popup(guest);
+    const open = (url: string) => {
+      win.webContents.url = url;
+      win.webContents.title = 'Sign in';
+      win.webContents.emit('did-navigate');
+      return win.title;
+    };
+    // ラベルの境で省略する
+    expect(open('https://accounts.google.com.signin-session-verify-0123456789abcdef.attacker.example/authorize')).toBe('https://…attacker.example — Sign in');
+    // ポートは残す
+    expect(open('https://accounts.google.com.signin-session-verify-0123456789abcdef.attacker.example:8443/')).toBe('https://…attacker.example:8443 — Sign in');
+    // 30 文字までは、そのまま
+    expect(open('https://login.microsoftonline.com/')).toBe('https://login.microsoftonline.com — Sign in');
+    // ラベルの境で切るとトップレベルドメインしか残らない（ドメインそのものが長い）ときは、文字で切る
+    const long = 'www.averyveryveryveryveryverylongdomainname.com';
+    expect(open(`https://${long}/`)).toBe(`https://…${long.slice(-30)} — Sign in`);
+    // 空のページの、中身を書けるオリジンも同じ
+    const contents = new FakeContents('window', guest.session);
+    contents.url = '';
+    contents.mainFrame.origin = 'https://accounts.google.com.signin-session-verify-0123456789abcdef.attacker.example';
+    const result = guest.open('', 'new-window', 'width=320,height=400') as { createWindow: (options: Record<string, unknown>) => unknown };
+    result.createWindow({ webContents: contents });
+    expect(popup.made.at(-1)!.title).toBe('about:blank (https://…attacker.example)');
+  });
+
   it('別ウインドウの題は、オリジンを先に置く。ページの題は、制御文字・双方向の制御文字・幅の無い文字を除き、空白を詰め、長さを切る（題の帯の切り詰めで、オリジンを押し出させない）', () => {
     const { tab, popup } = setup();
     const win = popup(tab());

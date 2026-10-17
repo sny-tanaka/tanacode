@@ -38,6 +38,8 @@ type Deps = {
 
 // 別ウインドウの題に出す、ページが書いた題の長さ（文字の数）
 const MAX_PAGE_TITLE = 80;
+// 別ウインドウの題に出す、ホスト名の長さ（文字の数）。いちばん狭い別ウインドウ（320px）の題の帯にも、「https://…」を付けて収まるくらい
+const MAX_TITLE_HOST = 30;
 
 // 1 つのタブから開いておけるポップアップの数（ページが window.open を繰り返しても、ウインドウで埋まらないように）
 export const MAX_POPUPS = 5;
@@ -274,11 +276,11 @@ function clamp(value: number, min: number, max: number): number {
 // 中身は開いたページが書ける最初の空の文書のままなので（Electron 44.7 で確かめた）
 function showOrigin(win: BrowserWindow): void {
   const where = () => {
-    const origin = originOf(win.webContents.getURL());
+    const origin = titleOrigin(win.webContents.getURL());
     if (origin) return origin;
     let writer: string | null = null;
     try {
-      writer = originOf(win.webContents.mainFrame.origin);
+      writer = titleOrigin(win.webContents.mainFrame.origin);
     } catch {
       writer = null;
     }
@@ -311,6 +313,26 @@ function pageTitle(title: string): string {
   // サロゲートペアの途中で切らないよう、文字ごとに数える
   const chars = Array.from(cleaned);
   return chars.length > MAX_PAGE_TITLE ? `${chars.slice(0, MAX_PAGE_TITLE).join('')}…` : cleaned;
+}
+
+// 題に出すオリジン。ホスト名が長いときは、左側を省略して右端（登録したドメイン）を残す（相手のサイトはホスト名を自由に長くできるので、
+// 幅の狭い別ウインドウでは、題の帯の省略で、どのサイトかが見えなくなる。Chrome がアドレス欄で登録ドメインを残すのと同じ考え方）
+function titleOrigin(url: string): string | null {
+  const origin = originOf(url);
+  if (!origin) return null;
+  const { protocol, hostname, port } = new URL(origin);
+  return `${protocol}//${shortHost(hostname)}${port ? `:${port}` : ''}`;
+}
+
+// ホスト名を MAX_TITLE_HOST 文字に収める。ラベル（. の区切り）の境で省略する。境で切るとトップレベルドメインしか残らない
+// （ドメインそのものが長い）ときは、文字の位置で切る
+function shortHost(hostname: string): string {
+  if (hostname.length <= MAX_TITLE_HOST) return hostname;
+  const tail = hostname.slice(-MAX_TITLE_HOST);
+  if (hostname[hostname.length - MAX_TITLE_HOST - 1] === '.') return `…${tail}`;
+  const dot = tail.indexOf('.');
+  const labels = dot === -1 ? '' : tail.slice(dot + 1);
+  return `…${labels.includes('.') ? labels : tail}`;
 }
 
 function originOf(url: string): string | null {
