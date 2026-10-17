@@ -643,6 +643,9 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     pipe.emit(response('h3', 'UserPromptSubmit', { stderr: '注意\n' }));
     pipe.emit(response('h4', 'Stop'));
     pipe.emit(response('h5', 'UserPromptSubmit', { outcome: 'error', exit_code: 1 }));
+    // 出力の欄が無い・文字列でない（Claude Code が欄を変えたなど。何も出力しなかったかを決められないので、出さない側に倒す）
+    pipe.emit(response('h7', 'UserPromptSubmit', { stdout: undefined }));
+    pipe.emit(response('h8', 'UserPromptSubmit', { stderr: null }));
     // 最後に出すもので、ここまでを読み終えたことを確かめる
     pipe.emit(response('h6', 'SessionStart:startup'));
     await app.waitFor('フック', () => hooks(id).length > 0);

@@ -2473,7 +2473,8 @@ export class SessionManager {
   private quietHook(id: string, rt: Runtime, message: HookResponseMessage): void {
     const started = rt.hookStarts.get(message.hook_id);
     rt.hookStarts.delete(message.hook_id);
-    const output = `${message.stdout ?? ''}${message.stderr ?? ''}`.trim();
+    // stdout・stderr がどちらも文字列であることは、StreamClient が確かめている（違えば、この行は届かない）
+    const output = `${message.stdout}${message.stderr}`.trim();
     if (message.hook_event === 'Stop' || message.outcome !== 'success' || output) return;
     const prefix = `${message.hook_event}:`;
     const toolName = TOOL_HOOK_EVENTS.has(message.hook_event) && message.hook_name.startsWith(prefix) ? message.hook_name.slice(prefix.length) : null;
