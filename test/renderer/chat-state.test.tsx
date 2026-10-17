@@ -31,6 +31,12 @@ describe('状態の移り変わり', () => {
     expect(run([{ type: 'process-start' }, { type: 'user', id: 'u', text: 'a' }, { type: 'ready' }]).status).toBe('running');
   });
 
+  it('終了のわけ（ターミナルモードで起動を終える前に終わった など）を持つ。わけの無い終了では持たない', () => {
+    const early: ChatEvent = { type: 'process-exit', exitCode: 1, reason: '起動を終える前に終わりました' };
+    expect(run([{ type: 'process-start' }, early])).toMatchObject({ status: 'exited', exitCode: 1, exitReason: '起動を終える前に終わりました' });
+    expect(run([{ type: 'process-start' }, early, { type: 'process-start' }, { type: 'ready' }, { type: 'process-exit', exitCode: 0 }]).exitReason).toBeNull();
+  });
+
   it('終了したあとの発言・ターンの終わりで、状態を戻さない', () => {
     expect(run([{ type: 'process-start' }, { type: 'ready' }, { type: 'process-exit', exitCode: 0 }, { type: 'user', id: 'u', text: 'a' }, { type: 'turn-end' }]).status).toBe('exited');
   });

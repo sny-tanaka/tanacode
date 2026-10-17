@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
@@ -217,8 +217,39 @@ describe('ターミナルモード: Claude Code の画面を出す', () => {
   });
 });
 
-// Claude Code が終了すると、ターミナルモードは終わってチャットに戻る（「再開」はチャットに出る）
+// Claude Code が終了しても、チャットには戻さず、ターミナルモードのまま止める（終了と「再開」は画面の下に出る）
 describe('ターミナルモード: 画面の下の知らせ', () => {
+  it('Claude Code が終了したら、画面の下に終了と「再開」を出す（わけがあれば、終了コードの代わりにわけ）。チャットは隠したまま', () => {
+    const onResume = vi.fn();
+    const { container, rerender } = render(<ClaudePane {...props({ onResume, chat: chatOf({ status: 'exited', exitCode: 0 }) })} />);
+    expect(chatList(container).hidden).toBe(true);
+    const notes = () => container.querySelector<HTMLElement>('.claude-screen-notes')!;
+    expect(notes().textContent).toContain('Claude Code が終了しました（code 0）');
+    fireEvent.click(within(notes()).getByRole('button', { name: '再開' }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+    const reason = 'ターミナルモードの Claude Code が、起動を終える前に終わりました（code 1）。';
+    rerender(<ClaudePane {...props({ onResume, chat: chatOf({ status: 'exited', exitCode: 1, exitReason: reason }) })} />);
+    expect(notes().textContent).toContain(reason);
+    expect(notes().textContent).not.toContain('Claude Code が終了しました');
+    // 動いている間は出さない
+    rerender(<ClaudePane {...props({ onResume, chat: chatOf({ status: 'running' }) })} />);
+    expect(container.querySelector('.claude-screen-notes')).toBeNull();
+  });
+
+  it('終了している間も、ヘッダーのボタンでチャットに戻せる。起動の途中は押せない', () => {
+    const onToggleTerminal = vi.fn();
+    const button = () => screen.getByLabelText('ターミナルモード') as HTMLButtonElement;
+    const { rerender } = render(<ClaudePane {...props({ onToggleTerminal, chat: chatOf({ status: 'exited', exitCode: 0 }) })} />);
+    expect(button().getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(button());
+    expect(onToggleTerminal).toHaveBeenCalledTimes(1);
+    rerender(<ClaudePane {...props({ onToggleTerminal, chat: chatOf({ status: 'starting' }) })} />);
+    expect(button().disabled).toBe(true);
+    // チャットで止まっているセッションも、ボタンでターミナルモードで起動できる
+    rerender(<ClaudePane {...props({ onToggleTerminal, terminalOpen: false, chat: chatOf({ status: 'exited', exitCode: 0 }) })} />);
+    expect(button().disabled).toBe(false);
+  });
+
   it('コードへのコメントは画面の下に出し、「入力欄に貼る」で Claude Code の入力欄に貼って外す（送るのは、人が画面で Enter を押したとき）', () => {
     const onCommentsChange = vi.fn();
     const onShowComment = vi.fn();
@@ -280,20 +311,29 @@ describe('ターミナルモード: 入力欄への差し込み（「Claude へ�
 
   it('TUI が許可の確認・質問のメニューを出している間は貼らずに預かり、閉じたら順に貼る。ターミナルモードでなくなったら捨てる', async () => {
     // メニューが出ている間に貼ると、メニューへの入力に混ざる（main が貼る知らせも、同じく待つ）
-    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: 'permission' }]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'terminal', attention: 'permission' }]);
     await pasteIntoClaudeScreen('s1', 'ひとつめ');
     await pasteIntoClaudeScreen('s1', 'ふたつめ');
     expect(api.argsOf('pty.write')).toEqual([]);
-    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: null }]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'terminal', attention: null }]);
     await vi.waitFor(() => expect(api.argsOf('pty.write')).toEqual([['s1', paste('ひとつめ')], ['s1', paste('ふたつめ')]]));
     // 預かっている間にチャットに戻したら、貼る先が無いので捨てる
-    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: 'question' }]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'terminal', attention: 'question' }]);
     await pasteIntoClaudeScreen('s1', 'みっつめ');
-    noteClaudeScreenSessions([{ id: 's1', terminal: false, attention: null }]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: false, state: 'idle', attention: null }]);
     // 捨てるときは、その場で決める（あとから貼る処理を残さない）
     expect(api.argsOf('pty.write')).toHaveLength(2);
-    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: null }]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'terminal', attention: null }]);
     expect(api.argsOf('pty.write')).toHaveLength(2);
+  });
+
+  it('ターミナルモードで止まっている間（起動の途中も）は貼らずに預かり、「再開」で TUI が動いたら貼る', async () => {
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'exited', attention: null }]);
+    await pasteIntoClaudeScreen('s1', '止まっている間に頼んだこと');
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'starting', attention: null }]);
+    expect(api.argsOf('pty.write')).toEqual([]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, state: 'terminal', attention: null }]);
+    await vi.waitFor(() => expect(api.argsOf('pty.write')).toEqual([['s1', paste('止まっている間に頼んだこと')]]));
   });
 
   it('チャットを出しているとき・Claude Code に貼れないとき（起動の途中・終了している）は、チャットの入力欄に入れる', () => {
@@ -311,7 +351,7 @@ describe('ターミナルモード: 入力欄への差し込み（「Claude へ�
 });
 
 describe('チャットとターミナルモードの切り替え（switchTerminalMode。セッションごと）', () => {
-  const session = (over: Partial<SessionSummary> = {}) => ({ id: 's1', terminal: false, ...over }) as SessionSummary;
+  const session = (over: Partial<SessionSummary> = {}) => ({ id: 's1', terminal: false, running: true, ...over }) as SessionSummary;
   let confirms: string[];
   let alerts: string[];
   let answer: boolean;
@@ -345,5 +385,11 @@ describe('チャットとターミナルモードの切り替え（switchTermina
     api.install();
     await switchTerminalMode(session(), false);
     expect(alerts).toEqual(['切り替えられませんでした（作業中です）']);
+  });
+
+  it('止まっているセッションは、確かめずに頼む（main がもう片方で起動する。止まった TUI に書きかけは無い）', async () => {
+    await switchTerminalMode(session({ terminal: true, running: false }), false);
+    expect(confirms).toEqual([]);
+    expect(api.argsOf('sessions.setTerminalMode')).toEqual([['s1', false, { stopTasks: false }]]);
   });
 });

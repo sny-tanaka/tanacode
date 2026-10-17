@@ -2232,6 +2232,16 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.submitted).toEqual([]);
     });
 
+    it('send_message: ターミナルモードで止まった子は、起動せずに断る（起動し直すと TUI になり、送れないため）', async () => {
+      host.set(CHILD, 'exited');
+      host.sessions.find((s) => s.id === CHILD)!.terminal = true;
+      const result = await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('is stopped in terminal mode');
+      expect(host.opened).toEqual([]);
+      expect(host.submitted).toEqual([]);
+    });
+
     it('send_message: 手の空いている子（バックグラウンドのタスクの完了待ちも）には、すぐ打って結果を返す', async () => {
       host.set(CHILD, 'idle');
       expect(jsonOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }))).toEqual({ session_id: CHILD, state: 'idle', note: 'Sent.' });
@@ -2656,6 +2666,7 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
   const scheduleHost = (finish = false): ScheduleHost => ({
     stateOf: (id) => host.stateOf(id),
     open: async () => undefined,
+    summary: (id) => host.list().find((s) => s.id === id),
     submitWhenReady: (id, text) => {
       delivered.push({ id, text });
       return finish ? Promise.resolve() : new Promise<void>(() => undefined);

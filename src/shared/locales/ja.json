@@ -269,7 +269,7 @@
       "tasksRunning": "バックグラウンドのタスクが動いています。切り替えると止まります",
       "remoteOffFailed": "Remote Control を切れなかったため、ターミナルモードにしませんでした（{reason}）",
       "startFailed": "もう片方で起動できなかったため、元に戻しました（{reason}）",
-      "tuiExited": "ターミナルモードの Claude Code が起動の途中で終了したため（code {code}）、チャットに戻しました",
+      "tuiExited": "ターミナルモードの Claude Code が、起動を終える前に終わりました（code {code}）。「再開」で起動し直すか、ターミナルモードのボタンでチャットに戻せます",
       "chatExited": "チャットの Claude Code が起動の途中で終了したため（code {code}）、ターミナルモードに戻しました",
       "startFailedStopped": "もう片方でも、元の形でも起動できませんでした（{reason}）。設定を直してから「再開」で開き直してください"
     }

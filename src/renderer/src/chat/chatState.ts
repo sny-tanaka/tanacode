@@ -65,6 +65,8 @@ export type ChatState = {
   // このセッションの PR（最後に紐づいたもの）
   pr: PullRequestLink | null;
   exitCode: number | null;
+  // 終わったわけ（process-exit の reason）。無ければ終了コードを出す
+  exitReason: string | null;
   // ToDo の一覧（最後の TodoWrite か、TaskCreate・TaskUpdate を順に当てたもの）
   todos: TodoItem[] | null;
   // 結果（番号）を待っている TaskCreate（ツールの呼び出しの id ごと）
@@ -81,6 +83,7 @@ export const EMPTY_CHAT: ChatState = {
   remoteControlUrl: null,
   pr: null,
   exitCode: null,
+  exitReason: null,
   todos: null,
   pendingTasks: {},
   inTurn: false,
@@ -182,7 +185,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       // 引き継いだ claude がターンの途中なら、入力を受け付けられても作業中のまま
       return { ...state, status: state.status === 'starting' ? (state.inTurn ? 'running' : 'idle') : state.status };
     case 'process-exit':
-      return { ...state, status: 'exited', exitCode: event.exitCode };
+      return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null };
     case 'user':
       return {
         ...state,

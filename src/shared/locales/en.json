@@ -271,7 +271,7 @@
       "tasksRunning": "Background tasks are running. Switching stops them",
       "remoteOffFailed": "Didn't switch to terminal mode because Remote Control couldn't be turned off ({reason})",
       "startFailed": "Couldn't start it the other way, so it was switched back ({reason})",
-      "tuiExited": "Claude Code in terminal mode exited while starting (code {code}), so the session is back in the chat",
+      "tuiExited": "Claude Code in terminal mode exited before it finished starting (code {code}). Resume to start it again, or switch back to the chat with the terminal mode button",
       "chatExited": "Claude Code for the chat exited while starting (code {code}), so the session is back in terminal mode",
       "startFailedStopped": "Couldn't start it either way ({reason}). Fix the settings, then reopen it with Resume"
     }

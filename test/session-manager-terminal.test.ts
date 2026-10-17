@@ -1,7 +1,11 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { StatusLineInfo } from '@shared/statusline';
+import { transcriptPath } from '../src/main/claude-session';
 import type { HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
+import { SessionStore } from '../src/main/session-store';
 import type { SettingsFiles } from '../src/main/settings-files';
 import { INIT_RESPONSE, line, ScriptedApp, type ScriptedPty } from './helpers/scripted-claude';
 
@@ -224,20 +228,21 @@ describe('切り替えられないとき・切り替えた先が起動できな�
     expect(app.manager.summary(id)?.terminal).toBe(false);
   });
 
-  it('ターミナルモードの Claude Code が起動を終える前に終わったら（フォルダの信頼の確認で「No, exit」など）、チャットで開き直す', async () => {
+  it('ターミナルモードの Claude Code が起動を終える前に終わったら（フォルダの信頼の確認で「No, exit」など）、チャットで開き直さず、ターミナルモードのまま止めてわけを出す', async () => {
     const { id } = await chatting();
     await app.manager.setTerminalMode(id, true);
     const pipes = app.host.allPipes.length;
     tui().exit(1);
-    await app.waitFor('チャットで開き直す', () => app.host.allPipes.length === pipes + 1);
-    expect(app.pipe(id).arg('--resume')).toBe(app.claudeId(id));
-    expect(app.events(id).some((e) => e.type === 'info' && e.text.includes('チャットに戻しました'))).toBe(true);
-    expect(app.events(id).some((e) => e.type === 'process-exit')).toBe(false);
-    await app.ready(id);
-    expect(app.manager.stateOf(id)).toBe('idle');
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    expect(app.host.allPipes.length).toBe(pipes);
+    // わけは終了の表示に出す（チャットは隠れているので、会話には足さない）
+    const exit = app.events(id).find((e) => e.type === 'process-exit');
+    expect(exit).toMatchObject({ exitCode: 1, reason: expect.stringContaining('起動を終える前に終わりました') });
+    expect(app.events(id).some((e) => e.type === 'info')).toBe(false);
+    expect(app.manager.summary(id)?.terminal).toBe(true);
   });
 
-  it('起動を終えた（statusLine が届いた）あとに終わったら、戻さずに終了を出す', async () => {
+  it('起動を終えた（statusLine が届いた）あとに終わったら（/exit など）、チャットに戻さず、ターミナルモードのまま止める。記録にも残す', async () => {
     const { id } = await chatting();
     await app.manager.setTerminalMode(id, true);
     const pipes = app.host.allPipes.length;
@@ -246,6 +251,64 @@ describe('切り替えられないとき・切り替えた先が起動できな�
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     expect(app.events(id).some((e) => e.type === 'process-exit')).toBe(true);
     expect(app.host.allPipes.length).toBe(pipes);
+    expect(app.manager.summary(id)?.terminal).toBe(true);
+    // アプリを起動し直しても、ターミナルモードとして開く（記録に残る。記録は少しまとめてから書く）
+    await app.waitFor('記録', () => new SessionStore(join(app.userData, 'sessions.json')).get(id)?.terminal === true);
+  });
+
+  it('ターミナルモードで止まったセッションは、アプリを起動し直しても、ターミナルモードのまま止まった状態で開き、「再開」もターミナルモードで起動する', async () => {
+    const { id } = await chatting();
+    const claudeId = app.claudeId(id);
+    await app.manager.setTerminalMode(id, true);
+    app.manager.statusLineChanged(id, statusOf('claude-opus-5-5', null));
+    tui().exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await app.waitFor('記録', () => new SessionStore(join(app.userData, 'sessions.json')).get(id)?.terminal === true);
+    const records = new SessionStore(join(app.userData, 'sessions.json')).all();
+    const log = readFileSync(app.transcript(id), 'utf8');
+    app.dispose();
+    app = new ScriptedApp({ records });
+    // 会話ログも、起動し直したアプリの作業フォルダの会話として置く（会話の無いセッションは --resume しないため）
+    const file = transcriptPath(app.cwd, claudeId, null);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, log);
+    expect(app.manager.summary(id)).toMatchObject({ terminal: true, running: false });
+    expect(app.manager.stateOf(id)).toBe('exited');
+    await app.manager.open(id);
+    expect(app.host.allPipes).toHaveLength(0);
+    expect(app.host.spawned.at(-1)!.arg('--resume')).toBe(claudeId);
+    expect(app.manager.stateOf(id)).toBe('terminal');
+  });
+
+  it('止まったターミナルモードの「再開」は、ターミナルモード（TUI）で --resume する', async () => {
+    const { id } = await chatting();
+    await app.manager.setTerminalMode(id, true);
+    app.manager.statusLineChanged(id, statusOf('claude-opus-5-5', null));
+    tui().exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    const pipes = app.host.allPipes.length;
+    const spawned = app.host.spawned.length;
+    await app.manager.open(id);
+    expect(app.host.spawned.length).toBe(spawned + 1);
+    expect(app.host.allPipes.length).toBe(pipes);
+    expect(app.host.spawned.at(-1)!.arg('--resume')).toBe(app.claudeId(id));
+    expect(app.manager.stateOf(id)).toBe('terminal');
+  });
+
+  it('止まったターミナルモードから、切り替えボタンでチャットに戻すと、チャット（stream-json）で --resume する', async () => {
+    const { id } = await chatting();
+    await app.manager.setTerminalMode(id, true);
+    app.manager.statusLineChanged(id, statusOf('claude-opus-5-5', null));
+    tui().exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    const pipes = app.host.allPipes.length;
+    await app.manager.setTerminalMode(id, false);
+    expect(app.host.allPipes.length).toBe(pipes + 1);
+    expect(app.pipe(id).arg('--resume')).toBe(app.claudeId(id));
+    expect(app.manager.summary(id)?.terminal).toBe(false);
+    await app.waitFor('記録', () => new SessionStore(join(app.userData, 'sessions.json')).get(id)?.terminal === false);
+    await app.ready(id);
+    expect(app.manager.stateOf(id)).toBe('idle');
   });
 });
 

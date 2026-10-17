@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
 import type { UnsentPrompt } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
@@ -53,7 +54,7 @@ function conversation(count: number): ChatItem[] {
 // worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示 /
 // scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）/
 // terminalMode: ターミナルモード（チャットの代わりに Claude Code の画面を出す）で始める。ヘッダーのボタンで切り替えられる /
-// comments: コードへのコメント / exited: Claude Code が終了している / running: 作業中 /
+// comments: コードへのコメント / exited: Claude Code が終了している（exitReason: 終わったわけ）/ running: 作業中 /
 // unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
 // starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション
 function Pane({
@@ -66,6 +67,7 @@ function Pane({
   terminalMode = false,
   comments = [],
   exited = false,
+  exitReason = null,
   running = false,
   unsent = [],
   starting = false,
@@ -80,6 +82,7 @@ function Pane({
   terminalMode?: boolean;
   comments?: ReviewComment[];
   exited?: boolean;
+  exitReason?: string | null;
   running?: boolean;
   unsent?: UnsentPrompt[];
   starting?: boolean;
@@ -100,7 +103,8 @@ function Pane({
         chat={{
           ...EMPTY_CHAT,
           status: exited ? 'exited' : worktree?.preparing || starting ? 'starting' : running || terminalOpen ? 'running' : 'idle',
-          exitCode: exited ? 0 : null,
+          exitCode: exited ? (exitReason ? 1 : 0) : null,
+          exitReason,
           items,
           unsent,
         }}
@@ -340,5 +344,20 @@ const COMMENTS: ReviewComment[] = [
 export const ターミナルモードでコメントがある: Story = {
   beforeEach: showClaudeScreen,
   args: { items: conversation(4), terminalMode: true, comments: COMMENTS },
+};
+
+// ターミナルモードで Claude Code が終わった（/exit など）。チャットには戻さず、画面の下に終了と「再開」を出す。
+// 再開もターミナルモードで起動する。チャットには、ヘッダーのターミナルモードのボタンで戻す
+export const ターミナルモードで止まった: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true, exited: true },
+};
+
+// 切り替えた先の TUI が、起動を終える前に終わった（フォルダの信頼の確認で「No, exit」など）。終了コードの代わりに、わけを出す
+// （わけは main が画面の言語で作る。ツールバーの言語に合わせるため、描くときに作る）
+export const ターミナルモードで起動の前に終わった: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true, exited: true },
+  render: (args) => <Pane {...args} exitReason={t('main.terminal.tuiExited', { code: 1 })} />,
 };
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
@@ -18,7 +18,7 @@ import type { PipeHandle, PtyHandle, PtyHostApi } from '../../src/main/pty-host-
 import type { HostedInfo, HostedPipeInfo, HostedPtyInfo, PipeSpawnRequest, PtySpawnRequest } from '../../src/main/pty-host-protocol';
 import { SessionManager, type RunTask } from '../../src/main/session-manager';
 import type { SettingsFiles } from '../../src/main/settings-files';
-import { SessionStore } from '../../src/main/session-store';
+import { SessionStore, type SessionRecord } from '../../src/main/session-store';
 import { StatusLineWatcher } from '../../src/main/statusline';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
 
@@ -321,6 +321,8 @@ export type ScriptedOptions = {
   walkthroughMcp?: () => McpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（無ければ既定のプロファイル）
   claudeDir?: string | null;
+  // 前のアプリが残したセッションの記録（アプリを起動し直したときの sessions.json。cwd は、このアプリの作業フォルダに置き換える）
+  records?: SessionRecord[];
 };
 
 // SessionManager と、それが配信したもの
@@ -365,6 +367,10 @@ export class ScriptedApp {
     process.env.HOME = this.home;
     const statusDir = join(this.userData, 'statusline');
     mkdirSync(statusDir, { recursive: true });
+    if (options.records) {
+      const sessions = options.records.map((r) => ({ ...r, cwd: this.cwd }));
+      writeFileSync(join(this.userData, 'sessions.json'), JSON.stringify({ version: 1, sessions }));
+    }
     this.statusLines = new StatusLineWatcher(
       statusDir,
       (id, info) => this.manager.statusLineChanged(id, info),

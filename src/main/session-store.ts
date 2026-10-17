@@ -32,6 +32,9 @@ export type SessionRecord = {
   // 子セッションの起動の権限モード（起動したときのモードか、そのあとアプリで切り替えたモード。画面のモード欄・親の configure_session）。
   // 止まった子を起動し直すときも、このモードで起動する（ユーザーの既定のモードが親より強くても、上げないため）
   launchMode?: PermissionMode | null;
+  // ターミナルモード（Claude Code の画面のまま）で起動したか。Claude Code が終わっても、アプリを起動し直しても、ターミナルモードの
+  // まま止まった状態で開き、「再開」もターミナルモードで起動する（チャットには、人が切り替えボタンで戻す）
+  terminal?: boolean;
   // アプリが決めた権限モード（起動の引数か、アプリでの切り替え。Runtime.knownMode）。アプリを起動し直して、動いている claude を
   // 引き継ぐときに戻す（claude のモードは変わっていないのに、戻さないと manual 扱いになり、そのあとに始める子の上限が下がる）
   knownMode?: PermissionMode | null;

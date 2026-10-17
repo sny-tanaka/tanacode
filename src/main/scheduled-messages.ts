@@ -11,6 +11,8 @@ export type ScheduleHost = {
   stateOf(id: string): SessionState | null;
   // 止まっているセッションを起動（再開）する
   open(id: string): Promise<void>;
+  // セッションの一覧の項目（ターミナルモードで止まっているか。止まっていても terminal が付く）
+  summary(id: string): { terminal?: boolean } | undefined;
   // 手が空くのを待ってから送る。signal で、待っている間に取りやめる
   submitWhenReady(id: string, text: string, timeoutMs: number, options: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal }): Promise<void>;
 };
@@ -155,8 +157,12 @@ export class ScheduledMessages {
     this.sending.set(id, controller);
     this.update(id, { state: 'sending', error: null });
     try {
-      // 止まっているセッションは、起動し直してから送る（起動が終わるまでは、submitWhenReady が待つ）
-      if (this.host.stateOf(sessionId) === 'exited') await this.host.open(sessionId);
+      // 止まっているセッションは、起動し直してから送る（起動が終わるまでは、submitWhenReady が待つ）。ターミナルモードで止まったものは、
+      // 起動すると TUI になって送れないので、起動せずに断る（送れなかったものとして残る）
+      if (this.host.stateOf(sessionId) === 'exited') {
+        if (this.host.summary(sessionId)?.terminal) throw new Error(t('main.send.terminalMode'));
+        await this.host.open(sessionId);
+      }
       // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間も、送らずに待つ（ターミナルモードの間は断られ、送れなかったものとして残る）
       // Claude の予約は、人の発言と見分けられるよう、囲みに入れて送る
       const text = message.by === 'claude' ? wakeupText(message.text) : message.text;

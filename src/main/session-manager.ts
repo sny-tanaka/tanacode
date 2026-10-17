@@ -389,7 +389,8 @@ export class SessionManager {
           running: !!rt?.process,
           state: this.stateOf(r.id),
           mode: rt?.process ? (rt.knownMode ?? null) : null,
-          terminal: !!rt?.process && rt.terminal,
+          // 止まっていても、ターミナルモードで起動したセッションはターミナルモードのまま（記録の terminal。チャットには人が戻す）
+          terminal: rt?.process ? rt.terminal : !!r.terminal && !r.archived,
           terminalWorking: !!rt?.process && rt.terminal && rt.tuiTurn,
           unread: !!rt?.unread,
           attention: rt?.process ? (rt.attention ?? (this.browserAsks.has(r.id) ? 'browser' : null)) : null,
@@ -600,12 +601,13 @@ export class SessionManager {
         this.restoring.delete(id);
         this.emitSessions();
       }
-      this.start(id, record.launchMode ?? null);
+      this.start(id, record.launchMode ?? null, null, record.terminal ? 'tui' : 'stream');
       void this.prepareWorktree(id, 'restored');
       return;
     }
-    // 子セッションは起動のモードで。ほかのセッションは、新しいセッションと同じ決まり（設定の既定か auto。startMode）
-    this.start(id, record?.launchMode ?? null);
+    // 子セッションは起動のモードで。ほかのセッションは、新しいセッションと同じ決まり（設定の既定か auto。startMode）。
+    // ターミナルモードで止まったセッションは、ターミナルモードで起動する（記録の terminal）
+    this.start(id, record?.launchMode ?? null, null, record?.terminal ? 'tui' : 'stream');
   }
 
   // アーカイブする。removeWorktree: worktree のセッションなら、Claude Code が終わるのを待ってから worktree も消す。
@@ -805,6 +807,13 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     const process = rt?.process;
     const record = this.store.get(id);
+    // 止まっている（ターミナルモードで終わったなど）なら、種類を変えて「再開」と同じく起動する（止めるものが無いので、確かめは要らない）
+    if (record && !record.archived && !process && !rt?.switching) {
+      this.store.update(id, { terminal: on });
+      this.emitSessions();
+      await this.open(id);
+      return;
+    }
     if (!rt || !process || !record) throw new Error(t('main.terminal.notRunning'));
     if (rt.terminal === on) return;
     if (rt.switching) throw new Error(t('main.terminal.switching'));
@@ -1714,6 +1723,8 @@ export class SessionManager {
     runtime.ready = false;
     runtime.init = null;
     runtime.terminal = tui;
+    // 止まっても、アプリを起動し直しても、この種類のまま開く（記録の terminal）
+    if (!!record.terminal !== tui) this.store.update(id, { terminal: tui });
     runtime.switchedFrom = null;
     runtime.tuiBaseline = tui ? { model: runtime.statusLine?.model?.id ?? null, effort: runtime.statusLine?.effort ?? null } : null;
     runtime.tuiRemoteSeen = false;
@@ -1827,9 +1838,14 @@ export class SessionManager {
           if (!runtime.switching) {
             const back = runtime.switchedFrom;
             runtime.switchedFrom = null;
-            if (back) {
-              // 切り替えた先が、起動を終える前に終わった。元の種類で開き直し、わけをチャットに出す
-              this.pushEvents(id, [{ type: 'info', id: `switch-back:${Date.now()}`, text: t(back === 'stream' ? 'main.terminal.tuiExited' : 'main.terminal.chatExited', { code: exitCode }) }]);
+            if (back === 'stream') {
+              // ターミナルモードに切り替えた先の TUI が、起動を終える前に終わった（フォルダの信頼の確認で「No, exit」など）。
+              // チャットで開き直さず、ターミナルモードのまま止めて、終了の表示にわけだけ出す（チャットは隠れているので、会話には足さない。
+              // 「再開」か、切り替えボタンでチャットに戻す。決めたこと）
+              this.pushEvents(id, [{ type: 'process-exit', exitCode, reason: t('main.terminal.tuiExited', { code: exitCode }) }]);
+            } else if (back) {
+              // チャットに戻した先が、起動を終える前に終わった。元の種類（ターミナルモード）で開き直し、わけを出す
+              this.pushEvents(id, [{ type: 'info', id: `switch-back:${Date.now()}`, text: t('main.terminal.chatExited', { code: exitCode }) }]);
               try {
                 this.start(id, this.relaunchMode(id, runtime), null, back);
               } catch (error) {

@@ -489,7 +489,7 @@ export const ClaudePane = memo(function ClaudePane({
   );
   const exitedCallout = !session.archived && chat.status === 'exited' && (
     <div className="chat-callout">
-      <span>{t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
+      <span>{chat.exitReason ?? t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
       <button className="send-button" onClick={onResume}>
         {t('chat.pane.resume')}
       </button>
@@ -550,8 +550,9 @@ export const ClaudePane = memo(function ClaudePane({
             label={t('chat.pane.terminal')}
             tip={t('chat.pane.terminalTip')}
             pressed={terminalOpen}
-            // 切り替えは、動いている Claude Code を止めて開き直す。動いていない・切り替えの途中は押せない
-            disabled={!live || chat.status === 'starting'}
+            // 切り替えは、動いている Claude Code を止めて開き直す。止まっていれば、もう片方で起動する（ターミナルモードで止まったセッションを
+            // チャットに戻す）。起動・切り替えの途中は押せない
+            disabled={chat.status === 'not-started' || chat.status === 'starting'}
             onClick={onToggleTerminal}
           />
         )}
@@ -560,9 +561,11 @@ export const ClaudePane = memo(function ClaudePane({
       {screenMode && (
         <>
           <ClaudeScreen sessionId={session.id} />
-          {(preparingNote || comments.length > 0) && (
+          {(preparingNote || exitedCallout || comments.length > 0) && (
             <div className="claude-screen-notes">
               {preparingNote}
+              {/* ターミナルモードで Claude Code が終わっても、チャットには戻さず、ここに終了と「再開」を出す（再開もターミナルモードで起動する） */}
+              {exitedCallout}
               {comments.length > 0 && (
                 <div className="claude-screen-comments">
                   <CommentChips comments={comments} onRemove={removeComment} onShow={onShowComment} />

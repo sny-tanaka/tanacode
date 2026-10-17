@@ -478,6 +478,10 @@ export class SessionsControl {
     if (host.switchingTerminal(child.id)) {
       throw new ToolError(`${who} is being switched between the chat and terminal mode by the user, so the message was not sent (and not kept for later). Check it with get_session, and send it again once it is back in the chat.`);
     }
+    // ターミナルモードで止まった子は、起動し直すと TUI になって送れないので、起動せずに断る
+    if (state === 'exited' && child.terminal) {
+      throw new ToolError(`${who} is stopped in terminal mode: it starts again in its Claude Code screen, where only the user can type, so it was not started and the message was not sent (and not kept for later). Tell the user, or send it again once the user has switched it back to the chat.`);
+    }
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ
     if (state === 'idle' || state === 'background') {

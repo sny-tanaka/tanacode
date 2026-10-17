@@ -14,11 +14,13 @@ const MINUTE = 60_000;
 type Sent = { id: string; text: string; attachments: string[]; pastes: string[]; signal?: AbortSignal; resolve: () => void; reject: (error: Error) => void };
 
 // セッションの作り物。送った（打ち込もうとした）ものは、resolve・reject を呼ぶまで「手が空くのを待っている」
-function fakeHost(states: Record<string, SessionState>) {
+// terminal: ターミナルモードで止まっているセッション
+function fakeHost(states: Record<string, SessionState>, terminal: string[] = []) {
   const sent: Sent[] = [];
   const opened: string[] = [];
   const host: ScheduleHost = {
     stateOf: (id) => states[id] ?? null,
+    summary: (id) => (id in states ? { terminal: terminal.includes(id) } : undefined),
     open: (id) => {
       opened.push(id);
       states[id] = 'starting';
@@ -51,8 +53,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function create(states: Record<string, SessionState>) {
-  const fake = fakeHost(states);
+function create(states: Record<string, SessionState>, terminal: string[] = []) {
+  const fake = fakeHost(states, terminal);
   const changes: ScheduledMessage[][] = [];
   const troubles: ScheduledMessage[] = [];
   const scheduled = new ScheduledMessages(file, fake.host, (m) => changes.push(m), (m) => troubles.push(m));
@@ -83,6 +85,17 @@ describe('ScheduledMessages', () => {
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(opened).toEqual(['s1']);
     expect(sent).toHaveLength(1);
+  });
+
+  it('ターミナルモードで止まっているセッションは、起動せずに送れなかったことにする（起動し直すと TUI になり、送れないため）', async () => {
+    const { scheduled, sent, opened, troubles } = create({ s1: 'exited' }, ['s1']);
+    scheduled.add('s1', '続きをお願いします', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await flush();
+    expect(opened).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(scheduled.list().map((m) => [m.state, m.error])).toEqual([['failed', 'ターミナルモードの間は送れません。チャットに戻してから送ってください']]);
+    expect(troubles).toHaveLength(1);
   });
 
   it('手が空くのを待っている間に取り消すと、送らずに外す', async () => {
@@ -334,6 +347,7 @@ describe('ScheduledMessages の断る・片付ける', () => {
     const done: (() => void)[] = [];
     const host: ScheduleHost = {
       stateOf: (id) => states[id] ?? null,
+      summary: () => undefined,
       open: async () => {},
       // 取り消し（signal）を見ない。打ち込み始めたあとは止められない
       submitWhenReady: () => new Promise<void>((resolve) => done.push(resolve)),
@@ -354,6 +368,7 @@ describe('ScheduledMessages の断る・片付ける', () => {
     const states: Record<string, SessionState> = { s1: 'idle', s2: 'exited' };
     const host: ScheduleHost = {
       stateOf: (id) => states[id] ?? null,
+      summary: () => undefined,
       open: async () => {
         throw new Error('起動できませんでした');
       },

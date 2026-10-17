@@ -93,7 +93,8 @@ export type ChatEvent =
   | { type: 'process-start' }
   // 起動が終わって入力を受け付けられるようになった（入力欄が出た）
   | { type: 'ready' }
-  | { type: 'process-exit'; exitCode: number };
+  // reason: 終わったわけ（ターミナルモードで、起動を終える前に終わった など）。終了の表示に、終了コードの代わりに出す
+  | { type: 'process-exit'; exitCode: number; reason?: string };
 
 // id: TaskCreate で作ったもの（Task #1 の 1）。TodoWrite の項目には無い
 export type TodoItem = { content: string; status: string; activeForm?: string; id?: string };

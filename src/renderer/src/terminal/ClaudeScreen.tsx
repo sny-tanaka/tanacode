@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { bracketedPaste, stripControlChars } from '@shared/paste';
+import type { SessionState } from '@shared/session-tools';
 import { xtermOptions } from './xterm';
 
 type Term = { term: Terminal; fit: FitAddon; element: HTMLDivElement; opened: boolean };
@@ -52,16 +53,20 @@ export function useClaudeScreenOutput(): void {
 
 const IMAGE_PASTE_MS = 300;
 
-// TUI が許可の確認・質問のメニューを出しているセッション（一覧の attention。main の tuiAsk）。その間に貼ると、メニューへの入力に
-// 混ざるので、貼るものは預かり、メニューが閉じたら順に貼る（main が貼る知らせと同じ。SessionManager.pasteIntoTerminal）。
+// 今は貼れないターミナルモードのセッション。TUI が許可の確認・質問のメニューを出している間（一覧の attention。main の tuiAsk）は、
+// 貼るとメニューへの入力に混ざる。ターミナルモードで止まっている・起動や切り替えの途中は、貼る先の TUI が無い。
+// その間に貼るものは預かり、TUI が動いてメニューが閉じたら順に貼る（main が貼る知らせと同じ。SessionManager.pasteIntoTerminal）。
+// 止まっている間に預かったものは、「再開」で TUI が動いたら貼る（チャットの、再開したら送る発言と同じ）。
 // 預かっている間にターミナルモードでなくなったら、貼る先の TUI が無いので捨てる
 const asking = new Set<string>();
 const held = new Map<string, { text: string; attachments: string[] }[]>();
 
 // セッションの一覧が変わった（App が呼ぶ）
-export function noteClaudeScreenSessions(sessions: readonly { id: string; terminal?: boolean; attention: string | null }[]): void {
+export function noteClaudeScreenSessions(
+  sessions: readonly { id: string; terminal?: boolean; state?: SessionState | null; attention: string | null }[],
+): void {
   for (const session of sessions) {
-    if (session.terminal && (session.attention === 'permission' || session.attention === 'question')) {
+    if (session.terminal && (session.state !== 'terminal' || session.attention === 'permission' || session.attention === 'question')) {
       asking.add(session.id);
       continue;
     }
@@ -76,7 +81,8 @@ export function noteClaudeScreenSessions(sessions: readonly { id: string; termin
   }
 }
 
-// Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。メニューが出ている間は、閉じてから貼る（上の asking）。
+// Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。メニューが出ている間・止まっている間は、貼れるように
+// なってから貼る（上の asking）。
 // 画像は、パスを貼り付けとして送ると [Image #n] として添付される（TUI の決まり）。
 // 貼る文は、ファイルの中身・Claude が書いた文・ターミナルの出力などから来るので、ここで必ず制御文字を取り除く
 // （ESC が残ると、ESC[201~ で貼り付けを抜け、あとの文字が Enter・Shift+Tab などのキーとして TUI に届く）
