@@ -90,6 +90,40 @@ describe('ページを読むツールの前に（今のページ）', () => {
     };
     expect((await call('screenshot')).isError).toBeFalsy();
   });
+
+  it('読んでいる間に、許していない先を経て許す先へ戻っても（A → B → A\'）、スクリーンショットとツリーは返さない。inspect も読んだ文書で確かめる', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    const MOVED = textResult('The page moved to a page not allowed for Claude (https://idp.example.com) while it was being read, so the result was not returned.', true);
+    // 読んでいる間に、トップのフレームで 2 回確定した（自動で送るフォームのページを経て戻る SSO など）
+    const bounce = () => {
+      page.emit('did-navigate', {}, 'https://idp.example.com/sso?SAMLRequest=secret');
+      page.emit('did-navigate', {}, 'http://localhost:3000/callback');
+    };
+    page.capture = async () => {
+      bounce();
+      return page.shot;
+    };
+    expect(await call('screenshot')).toEqual(MOVED);
+    const tree = (during: () => void) => (method: string) => {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F', url: 'http://localhost:3000/' } } };
+      if (method === 'Accessibility.getFullAXTree') {
+        during();
+        return { nodes: [{ nodeId: '1', ignored: false, role: { value: 'RootWebArea' }, name: { value: '中身' } }] };
+      }
+      return {};
+    };
+    page.debugger.handler = tree(bounce);
+    expect(await call('get_accessibility_tree')).toEqual(MOVED);
+    // 読む前に確定したもの・許す先の中の移動だけなら返す
+    page.debugger.handler = tree(() => page.emit('did-navigate', {}, 'http://localhost:3000/next'));
+    expect((await call('get_accessibility_tree')).isError).toBeFalsy();
+    page.capture = async () => page.shot;
+    expect((await call('screenshot')).isError).toBeFalsy();
+    // inspect: 読んだ文書が、許していない先のもの
+    page.page.inspect = () => ({ url: 'https://idp.example.com/sso?SAMLRequest=secret', total: 1, items: [{ html: '<input name="SAMLResponse" value="secret">', rect: { x: 0, y: 0, width: 1, height: 1 }, visible: true, frame: null, styles: {} }] });
+    expect(await call('inspect', { selector: 'input' })).toEqual(MOVED);
+  });
 });
 
 describe('スクリーンショット', () => {

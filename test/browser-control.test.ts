@@ -638,7 +638,7 @@ describe('コンソールと失敗した通信の記録', () => {
     expect(logs.failed).toHaveLength(1);
     const again = control.track(asWebContents(page));
     expect(again).not.toBe(logs);
-    expect(again).toEqual({ console: [], failed: [], seq: 0 });
+    expect(again).toEqual({ console: [], failed: [], seq: 0, navigated: { count: 0, urls: [] } });
   });
 });
 

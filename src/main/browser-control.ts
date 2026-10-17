@@ -27,6 +27,8 @@ const WORLD = 1100;
 const MAX_TEXT = 20_000;
 const MAX_CONSOLE = 200;
 const MAX_FAILED = 100;
+// 控えておく、トップのフレームで確定した移動の数（1 回の読み取りの間に、これより多く移ることは無い）
+const MAX_NAVIGATED = 20;
 const MAX_TREE_LINES = 1500;
 // スクリーンショットの長い辺の上限（Claude が画像を読むときに縮める大きさ）
 const MAX_IMAGE_SIDE = 1568;
@@ -138,8 +140,11 @@ type AXNode = {
 type LogEntry = { level: string; text: string; seq: number; origin: string | null; top: boolean };
 // 失敗した通信の記録。text: Claude に返す行 / origin・top: 通信を出したもの（requestSource。LogEntry と同じく visibleLog で、Claude に返すかを決める）
 type RequestEntry = { text: string; origin: string | null; top: boolean };
-// webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
-type Logs = { console: LogEntry[]; failed: RequestEntry[]; seq: number };
+// トップのフレームで確定した移動（did-navigate）。count: これまでの数（減らない）/ urls: 新しいもの MAX_NAVIGATED 件の URL。
+// 読んでいる間に確定したページを、読み終えたときに確かめる（readFrom）
+type Navigated = { count: number; urls: string[] };
+// webview ごとのコンソールと失敗した通信（今のページを開いてから）と、確定した移動。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
+type Logs = { console: LogEntry[]; failed: RequestEntry[]; seq: number; navigated: Navigated };
 // タブ 1 つ（webview 1 つ）
 type Guest = {
   tabId: string;
@@ -261,7 +266,7 @@ export class BrowserControl {
   track(contents: WebContents): Logs {
     const existing = this.logs.get(contents.id);
     if (existing) return existing;
-    const logs: Logs = { console: [], failed: [], seq: 0 };
+    const logs: Logs = { console: [], failed: [], seq: 0, navigated: { count: 0, urls: [] } };
     const id = contents.id;
     this.logs.set(id, logs);
     contents.on('console-message', (event) => {
@@ -277,6 +282,12 @@ export class BrowserControl {
         logs.console.length = 0;
         logs.failed.length = 0;
       }
+    });
+    // トップのフレームで確定した移動を控える（読んでいる間に、許していない先を経て戻ったかを見るため）
+    contents.on('did-navigate', (_event, url: string) => {
+      logs.navigated.count++;
+      logs.navigated.urls.push(url);
+      if (logs.navigated.urls.length > MAX_NAVIGATED) logs.navigated.urls.splice(0, logs.navigated.urls.length - MAX_NAVIGATED);
     });
     contents.once('destroyed', () => this.logs.delete(id));
     return logs;
@@ -876,6 +887,7 @@ export class BrowserControl {
 
   private async screenshot(guest: Guest, selector: string | undefined, fullPage: boolean): Promise<ToolResult> {
     const { contents } = guest;
+    const since = guest.logs.navigated.count;
     let image: NativeImage;
     // CDP で撮るものは、はじめからページの大きさ（CSS の px）
     let note: string;
@@ -910,7 +922,7 @@ export class BrowserControl {
       note = 'Visible area';
     }
     const url = contents.getURL();
-    this.readFrom(guest, url);
+    this.readFrom(guest, url, since);
     if (image.isEmpty()) throw new ToolError('Could not take a screenshot (the page may not have been rendered yet).');
     image = shrink(image, fullPage ? 1 : (await this.viewport(guest)).dpr);
     const size = image.getSize();
@@ -958,6 +970,7 @@ export class BrowserControl {
   private async tree(guest: Guest): Promise<ToolResult> {
     // いちばん外のページと、同じプロセスで動く iframe（同じオリジンなど）のフレームごとに読む。許していない先の iframe は読まない。
     // いちばん外のページと同じオリジンの iframe は、そのページと同じく、タブで許可したオリジンなら読む（get_text と同じ）
+    const since = guest.logs.navigated.count;
     const top = originOf(guest.contents.getURL());
     type FrameTree = { frame: { id: string; url: string }; childFrames?: FrameTree[] };
     const { frameTree } = (await this.cdp(guest, 'Page.getFrameTree')) as { frameTree: FrameTree };
@@ -986,15 +999,22 @@ export class BrowserControl {
     }
     if (lines.length >= MAX_TREE_LINES) lines.push(`…(truncated at ${MAX_TREE_LINES} lines)`);
     const url = guest.contents.getURL();
-    this.readFrom(guest, url);
+    this.readFrom(guest, url, since);
     return textResult([`URL: ${this.shownUrl(url, guest)}`, ...lines].join('\n'));
   }
 
   // 読み終えたときに、読んだページ（url）が許していない先なら断る。読む前に今のページを確かめても（current）、前から読み込み中だった
-  // 移動が読んでいる間に確定すると、読んだものは移った先のものかもしれない。空のタブになっただけなら、そのまま返す（前のページか、空のもの）
-  private readFrom(guest: Guest, url: string): void {
-    if (!isBlank(url) && !this.allowedIn(guest, url)) {
-      throw new ToolError(`The page moved to a page not allowed for Claude (${originShown(url)}) while it was being read, so the result was not returned.`);
+  // 移動が読んでいる間に確定すると、読んだものは移った先のものかもしれない。空のタブになっただけなら、そのまま返す（前のページか、空のもの）。
+  // since: 読み始めたときの、トップのフレームで確定した移動の数（何度かに分けて読むもの。スクリーンショット・ツリー）。読んでいる間に確定した
+  // ページも確かめる（許していない先を経て、許す先へ戻ったときも、その間に読んだものは、許していない先のものかもしれない）
+  private readFrom(guest: Guest, url: string, since?: number): void {
+    const { count, urls } = guest.logs.navigated;
+    const moved = since === undefined ? 0 : count - since;
+    if (moved > urls.length) throw new ToolError('The page moved several times while it was being read, so the result was not returned.');
+    for (const page of [...urls.slice(urls.length - moved), url]) {
+      if (!isBlank(page) && !this.allowedIn(guest, page)) {
+        throw new ToolError(`The page moved to a page not allowed for Claude (${originShown(page)}) while it was being read, so the result was not returned.`);
+      }
     }
   }
 
@@ -1030,8 +1050,8 @@ export class BrowserControl {
       `(() => {${FRAMES}
         const props = ${JSON.stringify(props)};
         let all;
-        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'Invalid selector: ' + e.message }; }
-        return { total: all.length, items: all.slice(0, 10).map((hit) => {
+        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { url: location.href, error: 'Invalid selector: ' + e.message }; }
+        return { url: location.href, total: all.length, items: all.slice(0, 10).map((hit) => {
           const el = hit.el;
           const r = __rect(el);
           const cs = __style(el);
@@ -1045,7 +1065,9 @@ export class BrowserControl {
           };
         }) };
       })()`,
-    )) as { error?: string; total: number; items: { html: string; rect: BrowserRect; visible: boolean; frame: string | null; styles: Record<string, string> }[] };
+    )) as { url?: string; error?: string; total: number; items: { html: string; rect: BrowserRect; visible: boolean; frame: string | null; styles: Record<string, string> }[] };
+    // 読んだ文書が、許していない先のもの（読む前に確かめたあとで、移動が確定した）なら返さない
+    this.readFrom(guest, found.url ?? guest.contents.getURL());
     if (found.error) throw new ToolError(found.error);
     if (found.total === 0) throw new ToolError(`No element matches "${selector}".`);
     const parts = found.items.map((item, i) =>
