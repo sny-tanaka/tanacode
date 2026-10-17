@@ -167,11 +167,71 @@ export const ClaudePane = memo(function ClaudePane({
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
-  // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）
+  // 一覧の中を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
+  // 位置を保つために一覧の上に足した余白（pad）、離したときに外す聞き手（stop）
+  const pressed = useRef<{ element: Element; top: number; base: number; pad: number; stop: () => void } | null>(null);
+  // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）。
+  // 押している間は送らずに、押した要素の位置を保つ（離したあとで送る）
   const toBottom = (list: HTMLElement) => {
+    if (pressed.current) {
+      keepPressed(list);
+      return;
+    }
     list.scrollTop = list.scrollHeight;
     lastScrollTop.current = list.scrollTop;
   };
+  // 押している間は、押した要素を画面の上で動かさない。押して離す間に、上の行が縮む・伸びる・増える・消える（終わったツールの行が
+  // 消える動き・会話ログからあとで届く行）か、最下部を追いかけて、押した要素が動くと、離した所が要素から外れ、click が要素に届かない
+  // （カードの選択肢を押しても効かない。E2E では Playwright の click が成功で返ったまま、カードが閉じるのを待って止まる）。
+  // ずれた分はスクロールで戻し、戻しきれない分（一覧がスクロールしない・端に着いた）は、一覧の上の余白で戻す
+  const keepPressed = (list: HTMLElement) => {
+    const hold = pressed.current;
+    if (!hold || !hold.element.isConnected) return;
+    const delta = hold.element.getBoundingClientRect().top - hold.top;
+    if (Math.abs(delta) < 0.5) return;
+    const before = list.scrollTop;
+    list.scrollTop = before + delta;
+    lastScrollTop.current = list.scrollTop;
+    const rest = delta - (list.scrollTop - before);
+    if (Math.abs(rest) < 0.5) return;
+    // 上へずれた分は余白を足し、下へずれた分は足した余白から引く
+    hold.pad = Math.max(0, hold.pad - rest);
+    list.style.paddingTop = hold.pad > 0 ? `${hold.base + hold.pad}px` : '';
+  };
+  // 離した。余白を外し、押している間に止めていた最下部の追いかけをする
+  const releasePressed = (list: HTMLElement) => {
+    const hold = pressed.current;
+    if (!hold) return;
+    pressed.current = null;
+    hold.stop();
+    if (hold.pad > 0) list.style.paddingTop = '';
+    if (stickToBottom.current) toBottom(list);
+    else lastScrollTop.current = list.scrollTop;
+  };
+  // 一覧の行の中を押し始めた。離した（pointerup・pointercancel）あと、そのときの click が届いてから離したことにする
+  // （pointerup・mouseup・click は、同じ入力の中で続けて届く。その途中で余白を外すと、mouseup の位置がずれる）
+  const holdPressed = (list: HTMLElement, element: Element) => {
+    releasePressed(list);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const up = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => releasePressed(list));
+    };
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    pressed.current = {
+      element,
+      top: element.getBoundingClientRect().top,
+      base: Number.parseFloat(getComputedStyle(list).paddingTop) || 0,
+      pad: 0,
+      stop: () => {
+        clearTimeout(timer);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+      },
+    };
+  };
+  useEffect(() => () => pressed.current?.stop(), []);
 
   // キーでのスクロール。一覧の中を押したあとは、入力欄の外で押したキーが一覧を動かす（キーの知らせは一覧に届かないので、ウインドウで聞く）
   useEffect(() => {
@@ -219,6 +279,8 @@ export const ClaudePane = memo(function ClaudePane({
         for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node);
         for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node);
       }
+      // 行が消えても、大きさの変化の知らせは来ない。押している間は、ここでも押した要素の位置を保つ
+      keepPressed(list);
     });
     rows.observe(list, { childList: true });
     return () => {
@@ -614,6 +676,11 @@ export const ClaudePane = memo(function ClaudePane({
           ref={listRef}
           onScroll={(e) => {
             const el = e.currentTarget;
+            // 押している間は、押した要素の位置を保つだけにする（追いかける・やめるは、離したあとで決める）
+            if (pressed.current) {
+              keepPressed(el);
+              return;
+            }
             const movedUp = el.scrollTop < lastScrollTop.current - 1;
             lastScrollTop.current = el.scrollTop;
             // ボタンで送っている途中は、着くまで（か、送り終わるまで）追いかける状態のままにする
@@ -635,6 +702,8 @@ export const ClaudePane = memo(function ClaudePane({
             // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない
             // （選択肢を押して離す間に、ほかのわけで上へ動いたのを、人のスクロールと取り違えない）
             if (e.target === e.currentTarget) userScrollingUp.current = true;
+            // 行の中を押したら、離すまで、押した要素を動かさない
+            else if (e.button === 0 && e.target instanceof Element) holdPressed(e.currentTarget, e.target);
           }}
           onScrollEnd={(e) => {
             userScrollingUp.current = false;

@@ -61,7 +61,7 @@ export class E2EApp {
   private readonly output: string[] = [];
   // アプリに渡す環境変数（prepare で決める）
   private env: Record<string, string> = {};
-  // choose で押したときに画面に届いたイベントの記録（押した回ごと。keepEvidence に残す）
+  // choose・pressHolding で押したときに画面に届いたイベントの記録（押した回ごと。keepEvidence に残す）
   private readonly presses: string[][] = [];
   private electronApp: ElectronApplication | null = null;
   private window: Page | null = null;
@@ -309,7 +309,7 @@ export class E2EApp {
         JSON.stringify(sessions, null, 2),
         '# 選んでいるセッションの Claude Code の画面',
         screen,
-        '# 押したときに画面に届いたイベント（choose。押した回ごと）',
+        '# 押したときに画面に届いたイベント（choose・pressHolding。押した回ごと）',
         ...this.presses.flatMap((lines, i) => [`## ${i + 1} 回目`, ...lines]),
       ].join('\n'),
     );
@@ -410,6 +410,19 @@ export class E2EApp {
       if (result === 'closed') return;
       if (!String(result).includes(NOT_ACCEPTED) || attempt >= PRESSES) throw new Error(`カードで選べません（${attempt} 回目）: ${String(result)}`);
     }
+  }
+
+  // target の真ん中を押し、離す前に during を動かしてから離す（押して離す間に画面が変わったときの確かめ）。
+  // 離したクリックが target に届いたかと、押す間に画面に届いたイベントの記録を返す
+  async pressHolding(target: Locator, during: () => Promise<void>): Promise<{ reached: boolean; lines: string[] }> {
+    return this.recordPress(target, async () => {
+      const box = await target.boundingBox();
+      if (!box) throw new Error('押す要素が見えていません');
+      await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await this.page.mouse.down();
+      await during();
+      await this.page.mouse.up();
+    });
   }
 
   // target を押す（press）間に、画面に届いたマウスのイベント（pointerdown・pointerup・mousedown・mouseup・click）を capture で記録する。

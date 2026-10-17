@@ -12,6 +12,7 @@
   "test/e2e/compact.test.ts": 21,
   "test/e2e/default-branch.test.ts": 16,
   "test/e2e/mcp.test.ts": 13,
+  "test/e2e/press-card.test.ts": 7,
   "test/e2e/press-chat.test.ts": 8,
   "test/e2e/press-preview.test.ts": 7,
   "test/e2e/reload.test.ts": 8,

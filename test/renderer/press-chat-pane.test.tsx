@@ -597,13 +597,23 @@ describe('ヘッダー', () => {
       () => {},
       () => fireEvent.wheel(list, { deltaY: 100 }),
       () => fireEvent.keyDown(document.querySelector('.chat-input textarea, textarea')!, { key: 'PageUp' }),
-      // 行の中（カードの選択肢など）を押したとき
-      () => fireEvent.pointerDown(list.firstElementChild!),
     ]) {
       before();
       pushedUp();
       expect(list.scrollTop).toBe(800);
       expect(jump()).toBeNull();
+    }
+    // 行の中（カードの選択肢など）を押したとき。押している間は押した要素の位置を保ち、離したら最下部へ送り直す
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerDown(list.firstElementChild!);
+      pushedUp();
+      fireEvent.pointerUp(list.firstElementChild!);
+      vi.runOnlyPendingTimers();
+      expect(list.scrollTop).toBe(800);
+      expect(jump()).toBeNull();
+    } finally {
+      vi.useRealTimers();
     }
 
     // ホイールで上へ・上へ送るキー（入力欄の外）・スクロールバーを押したときは、やめる
@@ -670,6 +680,91 @@ describe('ヘッダー', () => {
     } finally {
       window.ResizeObserver = original;
     }
+  });
+
+  // 一覧の中のカードの選択肢を押して離す場面。大きさの変化の知らせ（ResizeObserver）はテストから送り、離したあとの片付けはタイマーを進めて流す。
+  // 選択肢の画面の上の位置は、ブラウザと同じく、中身の頭からの位置（offset。上の行の高さの変化 above を足す）＋ 一覧の上の余白 − スクロールで決まる
+  function pressScene({ content, view, offset }: { content: number; view: number; offset: number }) {
+    const callbacks: (() => void)[] = [];
+    window.ResizeObserver = class {
+      constructor(callback: () => void) {
+        callbacks.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    render(<ClaudePane {...props({ question: questionOf('p1', 'どちらにしますか？') })} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    const option = screen.getByRole('button', { name: /はい/ });
+    const scene = { above: 0, below: 0 };
+    const pad = () => Number.parseFloat(list.style.paddingTop || '0');
+    sizeList(list, () => content + scene.above + scene.below + pad(), view);
+    option.getBoundingClientRect = () => ({ top: offset + scene.above + pad() - list.scrollTop }) as DOMRect;
+    return {
+      list,
+      option,
+      scene,
+      top: () => option.getBoundingClientRect().top,
+      // 行の大きさが変わった知らせ
+      resized: () => callbacks.forEach((callback) => callback()),
+    };
+  }
+
+  describe('一覧の行の中を押している間は、押した要素を画面の上で動かさない', () => {
+    // 直す前: 押して離す間に、上の行が縮んだり、最下部を追いかけたりして、押した選択肢が動き、離した所が選択肢から外れて、
+    // click が選択肢に届かなかった（人が押しても効かない。E2E では Playwright の click が成功で返ったまま、カードが閉じるのを待って止まる）
+    const original = window.ResizeObserver;
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => {
+      vi.useRealTimers();
+      window.ResizeObserver = original;
+    });
+
+    it('一覧がスクロールしないとき（中身が見えている範囲より短い）は、上の行が縮んだ分を一覧の上の余白で戻す。離したら余白を外す', () => {
+      const { list, option, scene, top, resized } = pressScene({ content: 150, view: 400, offset: 120 });
+      fireEvent.pointerDown(option);
+      scene.above = -30;
+      resized();
+      expect(top()).toBe(120);
+      expect(list.style.paddingTop).toBe('30px');
+      fireEvent.pointerUp(option);
+      vi.runOnlyPendingTimers();
+      expect(list.style.paddingTop).toBe('');
+      expect(top()).toBe(90);
+    });
+
+    it('最下部に張り付いているときは、下に行が増えても追いかけず、上の行が縮んだ分はスクロールで戻す。離したら最下部へ送る', () => {
+      const { list, option, scene, top, resized } = pressScene({ content: 1000, view: 200, offset: 950 });
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      expect(top()).toBe(150);
+      fireEvent.pointerDown(option);
+      // 下に行が増える（最下部を追いかけると、選択肢が上へ動く）
+      scene.below = 100;
+      resized();
+      fireEvent.scroll(list);
+      expect(top()).toBe(150);
+      expect(list.scrollTop).toBe(800);
+      // 上の行が縮む
+      scene.above = -60;
+      resized();
+      expect(top()).toBe(150);
+      expect(list.style.paddingTop).toBe('');
+      fireEvent.pointerUp(option);
+      vi.runOnlyPendingTimers();
+      expect(list.scrollTop).toBe(1000 - 60 + 100 - 200);
+    });
+
+    it('押したのが一覧そのもの（スクロールバー）なら、何もしない（今までどおり、人のスクロールとして扱う）', () => {
+      const { list, scene, resized } = pressScene({ content: 1000, view: 200, offset: 950 });
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      fireEvent.pointerDown(list);
+      scene.below = 100;
+      resized();
+      expect(list.scrollTop).toBe(900);
+    });
   });
 
   it('上へスクロールすると「最新のメッセージへ」を出し、押すと最下部へ送ってボタンを消す（動きを減らす設定なら、なめらかにしない）', () => {
