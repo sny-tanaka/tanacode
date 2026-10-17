@@ -106,7 +106,7 @@ const SCREEN: PopupScreen = { workArea: { x: 0, y: 25, width: 1440, height: 875 
 const asContents = (c: FakeContents) => c as unknown as WebContents;
 const asSession = (s: FakeSession) => s as unknown as Session;
 
-function setup(options: { background?: boolean; screen?: PopupScreen | null } = {}) {
+function setup(options: { background?: boolean; screen?: PopupScreen | null; focused?: boolean } = {}) {
   const preview = new FakeSession();
   restrictPreviewSession(asSession(preview));
   const browser = {
@@ -121,11 +121,15 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
   const appSession = new FakeSession();
   // アプリが作った別ウインドウ
   const made: FakeWindow[] = [];
+  // tanacode のウインドウにフォーカスがあるか（既定はある）と、フォーカスが来たら呼ぶもの
+  const focus = { now: options.focused ?? true, waiting: [] as (() => void)[] };
   const windows = new PreviewWindows({
     browsers: () => [browser as unknown as PreviewBrowser],
     background: options.background ?? false,
     openExternal: (url) => opened.push(url),
     screen: () => (options.screen === undefined ? SCREEN : options.screen),
+    focused: () => focus.now,
+    whenFocused: (callback) => focus.waiting.push(callback),
     makeWindow: (windowOptions) => {
       // 中身を渡さなければ、本物と同じく、webPreferences の session（無ければアプリの既定のセッション）で中身を作る
       const given = (windowOptions as { webContents?: FakeContents }).webContents;
@@ -151,7 +155,7 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
     expect(result.createWindow({ ...FROM_PAGE, webContents: contents })).toBe(contents);
     return made.at(-1)!;
   };
-  return { preview, browser, opened, windows, tab, popup: Object.assign(popup, { made }), made };
+  return { preview, browser, opened, windows, tab, popup: Object.assign(popup, { made }), made, focus };
 }
 
 describe('プレビューのセッション', () => {
@@ -322,6 +326,19 @@ describe('新しいウインドウ', () => {
     const win = popup(tab());
     expect(win.options.show).toBe(false);
     expect(win.shown).toEqual(['showInactive']);
+  });
+
+  it('tanacode のウインドウにフォーカスが無い（ほかのアプリを使っている）ときは、tanacode に戻るまで出さない', () => {
+    const { tab, popup, focus } = setup({ focused: false });
+    const guest = tab();
+    const win = popup(guest);
+    const closed = popup(guest);
+    expect([win.shown, closed.shown]).toEqual([[], []]);
+    // 戻る前に閉じたものは、出さない
+    closed.destroy();
+    focus.now = true;
+    for (const callback of focus.waiting) callback();
+    expect([win.shown, closed.shown]).toEqual([['showInactive'], []]);
   });
 
   it('裏で起動しているときは、別ウインドウを画面に出さない', () => {

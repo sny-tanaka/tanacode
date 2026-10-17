@@ -119,6 +119,8 @@ export class FakeWindow extends Emitter {
     super();
     state.windows.push(this);
   }
+  // フォーカスのあるウインドウ（無ければ null）
+  static getFocusedWindow = () => state.windows.find((w) => w.focused && !w.destroyed) ?? null;
   getContentBounds = () => ({ x: 0, y: 0, width: this.bounds.width, height: this.bounds.height - 28 });
   isDestroyed = () => this.destroyed;
   isMaximized = () => this.maximized;
@@ -284,6 +286,7 @@ function fakeClass(name: string, methods: Record<string, Impl>, init?: (self: Fa
 export const electronModule = {
   app: {
     on: (event: string, listener: Listener) => state.app.on(event, listener),
+    once: (event: string, listener: Listener) => state.app.once(event, listener),
     whenReady: () => state.whenReady(),
     getPath: (name: string) => (name === 'userData' ? state.userData : name === 'downloads' ? state.downloads : join(state.root, name)),
     get isPackaged() {

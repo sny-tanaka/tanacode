@@ -953,6 +953,11 @@ describe('ウインドウ', () => {
     // tanacode のウインドウ（x=40 y=30 1400×900）がある画面（1920×1080）の中に詰める。上下の位置の指定が無ければ、ウインドウの真ん中
     const contents = new FakeWebContents();
     popup.createWindow({ webContents: contents, closable: false, x: -500, width: 480, height: 640 });
+    // tanacode のウインドウにフォーカスが無い間は出さず、フォーカスが来たら、フォーカスを移さずに出す
+    const popupWindow = state.windows.at(-1)!;
+    expect(popupWindow.showInactive).not.toHaveBeenCalled();
+    state.app.emit('browser-window-focus');
+    expect(popupWindow.showInactive).toHaveBeenCalledTimes(1);
     expect(state.windows.at(-1)!.options).toEqual({ webContents: contents, show: false, x: 0, y: 160, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: secure });
     expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
     // Claude の操作で許していない先なら開かない

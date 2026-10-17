@@ -1204,6 +1204,8 @@ const previewWindows = new PreviewWindows({
   // ポップアップは、tanacode のウインドウ（タブはいつもこの中）がある画面の中に置く
   screen: () => (mainWindow && !mainWindow.isDestroyed() ? { workArea: screen.getDisplayMatching(mainWindow.getBounds()).workArea, around: mainWindow.getBounds() } : null),
   makeWindow: (options) => new BrowserWindow(options),
+  focused: () => BrowserWindow.getFocusedWindow() !== null,
+  whenFocused: (callback) => app.once('browser-window-focus', callback),
 });
 app.on('web-contents-created', (_e, contents) => previewWindows.watch(contents));
 

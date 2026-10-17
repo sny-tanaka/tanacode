@@ -31,6 +31,9 @@ type Deps = {
   screen: () => PopupScreen | null;
   // 別ウインドウを作る（new BrowserWindow）
   makeWindow: (options: BrowserWindowConstructorOptions) => BrowserWindow;
+  // tanacode のウインドウにフォーカスがあるか（tanacode を使っているか）と、フォーカスが来たら一度だけ呼ぶ
+  focused: () => boolean;
+  whenFocused: (callback: () => void) => void;
 };
 
 // 1 つのタブから開いておけるポップアップの数（ページが window.open を繰り返しても、ウインドウで埋まらないように）
@@ -163,8 +166,15 @@ export class PreviewWindows {
     );
     this.adopt(source, win, url);
     if (!contents && !win.isDestroyed()) void win.loadURL(url);
-    // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）
-    if (!this.deps.background && !win.isDestroyed()) win.showInactive();
+    // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）。
+    // tanacode を使っていない（ほかのアプリにフォーカスがある）ときは、tanacode に戻るまで出さない（ほかのアプリの前に出さない）
+    if (!this.deps.background && !win.isDestroyed()) {
+      const show = () => {
+        if (!win.isDestroyed()) win.showInactive();
+      };
+      if (this.deps.focused()) show();
+      else this.deps.whenFocused(show);
+    }
     return win.webContents;
   }
 
