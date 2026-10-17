@@ -137,4 +137,20 @@ describe('載せられるかの確かめと投稿', () => {
     await expect(postWalkthroughComment(app, WALK, '本文', false, deps([pr({ headRefOid: 'ffff' })]))).rejects.toThrow('プッシュ');
     expect(posted).toHaveLength(1);
   });
+
+  it('ステップが無い・リポジトリでない・ブランチにいない・PR の URL が読めないときは、理由を返す', async () => {
+    const noSteps = await draftWalkthroughComment(app, { ...WALK, steps: [] }, null, deps([pr()]));
+    expect(noSteps.ok ? 'ok' : noSteps.reason).toBe('ウォークスルーのステップがありません。');
+    const outside = await draftWalkthroughComment(dir, WALK, null, deps([pr()]));
+    expect(outside.ok ? 'ok' : outside.reason).toBe('git のリポジトリではありません。');
+    expect(await reason([pr({ url: 'https://example.test/not-a-pr' })])).toBe('PR の URL を読めませんでした（https://example.test/not-a-pr）。');
+    git(repo, 'switch', '-q', '--detach');
+    expect(await reason([pr()])).toBe('ブランチにいません（detached HEAD）。');
+  });
+
+  it('投稿: 本文が空なら断る。gh がコメントの URL を返さなければ、PR の URL を返す', async () => {
+    await expect(postWalkthroughComment(app, WALK, ' \n', false, deps([pr()]))).rejects.toThrow('本文が空です。');
+    const quiet: CommentDeps = { ...deps([pr()]), comment: async () => '\n' };
+    expect(await postWalkthroughComment(app, WALK, '本文', false, quiet)).toBe(`${REPO}/pull/12`);
+  });
 });

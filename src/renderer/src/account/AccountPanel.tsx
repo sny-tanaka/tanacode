@@ -162,8 +162,12 @@ export function AccountPanel() {
           )}
         </div>
         {LIMITS.map(({ label, name }) => (
-          <Gauge key={label} label={t(`account.usage.${name}`)} limit={usage?.limits.find((l) => l.label === label) ?? null} now={now} />
+          <Gauge key={label} label={t(`account.usage.${name}`)} limit={usage?.limits.find((l) => l.label === label && !l.model) ?? null} now={now} />
         ))}
+        {/* モデル別の週の枠（プランにあれば。一度届いたら、記録に残るので消えない） */}
+        {usage?.limits
+          .filter((l) => l.model)
+          .map((l) => <Gauge key={`model:${l.model}`} label={t('account.usage.weekModel', { model: l.model! })} limit={l} now={now} />)}
       </button>
       {open && (
         <div className="account-menu" style={position} role="menu" aria-label={t('account.panel.menu')}>

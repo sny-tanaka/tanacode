@@ -110,7 +110,7 @@ describe('--hook を付けると、チェックリストを使い続けさせる
 
   it('標準入力を読み終えてからアプリに聞き、答えを標準出力に書き終えたら終わる。中継は動かさない', async () => {
     process.argv = [...process.argv, '--hook'];
-    const output = JSON.stringify({ decision: 'block', reason: '直して' });
+    const output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '直して' } });
     mocks.runHook.mockResolvedValue(output);
     const input = stdin();
     const out = stdout();

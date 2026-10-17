@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { branchBase, branches, branchFiles, defaultBranch, git, GitError, isIgnored, repoInfo, showAt, status } from '../src/main/git';
+import { branchBase, branches, branchFiles, defaultBranch, git, GitError, guardOf, isIgnored, repoInfo, showAt, showHead, showIndex, status } from '../src/main/git';
 
 // git の読み取り（ソース管理パネル・セッションの差分・worktree が使う）。使い捨てのリポジトリに、本物の git で確かめる
 
@@ -322,6 +322,13 @@ describe('branchFiles', () => {
     ]);
   });
 
+  it('未追跡のファイルの行を数えるのは、1000 個まで（それより多いものは、読まずに 0 とする）', async () => {
+    for (let i = 0; i < 1001; i++) write(repo, `many/f${String(i).padStart(4, '0')}.txt`, 'a\n');
+    const files = await branchFiles(repo, base);
+    expect(files).toHaveLength(1001);
+    expect(files.filter((f) => f.added === 1)).toHaveLength(1000);
+  });
+
   it('空の未追跡のファイルは、足した行を 0 と数える（ステージしたときに git が数えるのと同じ）', async () => {
     write(repo, 'empty.txt', '');
     const untracked = await branchFiles(repo, base);
@@ -335,5 +342,194 @@ describe('branchFiles', () => {
     commit(repo, 'keep.txt', 'new\n');
     expect(await showAt(repo, base, 'keep.txt')).toBe('1\n2\n3\n');
     expect(await showAt(repo, base, 'none.txt')).toBeNull();
+  });
+});
+
+// tanacode が自分で動かす git は、開いたフォルダの設定（.git/config・.git/hooks・属性）で、人の知らないコマンドを動かさない。
+// 画面から来た値は、git のオプションとして読まれないよう確かめてから渡す
+describe('tanacode が動かす git の守り', () => {
+  let marks: string;
+  let base: string;
+  // 動いたら印のファイルを残すコマンド
+  const mark = (name: string) => `touch "${join(root, 'marks', name)}"`;
+  beforeEach(() => {
+    marks = join(root, 'marks');
+    mkdirSync(marks);
+    commit(repo, 'a.txt', 'a\n');
+    base = sha(repo);
+    run(repo, 'switch', '-q', '-c', 'feature');
+    commit(repo, 'a.txt', 'feature\n');
+    run(repo, 'config', 'core.fsmonitor', `${mark('fsmonitor')}; false`);
+    for (const key of ['clean', 'smudge', 'process']) run(repo, 'config', `filter.local.${key}`, `${mark(`filter-${key}`)}; cat`);
+    run(repo, 'config', 'diff.local.command', `${mark('diff-command')}; true`);
+    run(repo, 'config', 'diff.local.textconv', `${mark('textconv')}; cat`);
+    run(repo, 'config', 'diff.external', `${mark('diff-external')}; true`);
+    run(repo, 'config', 'merge.local.driver', `${mark('merge-driver')}; false`);
+    write(repo, '.git/info/attributes', '* filter=local diff=local merge=local\n');
+    for (const hook of ['post-index-change', 'reference-transaction', 'post-checkout']) {
+      write(repo, `.git/hooks/${hook}`, `#!/bin/sh\n${mark(`hook-${hook}`)}\n`);
+      chmodSync(join(repo, '.git/hooks', hook), 0o755);
+    }
+    write(repo, 'a.txt', 'changed\n');
+  });
+
+  it('読むだけの操作（状態・ブランチ・差分・基点での内容）で、フォルダの設定のコマンド（fsmonitor・フィルター・diff・フック）を動かさない', async () => {
+    expect(await status(repo)).toEqual([{ path: 'a.txt', index: ' ', worktree: 'M' }]);
+    const info = await repoInfo(repo);
+    await branchBase(repo, info);
+    await branchFiles(repo, base);
+    expect(await showAt(repo, base, 'a.txt')).toBe('a\n');
+    await showHead(repo, 'a.txt');
+    await showIndex(repo, 'a.txt');
+    await isIgnored(repo, 'a.txt');
+    await branches(repo);
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', base]);
+    await git(repo, ['merge-tree', '--write-tree', 'main', 'feature']).catch(() => '');
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('打ち消すのは、フォルダの設定のうちコマンドを動かすものだけ。git-lfs の決まった形のフィルターは残す', async () => {
+    run(repo, 'config', 'filter.lfs.clean', 'git-lfs clean -- %f');
+    run(repo, 'config', 'filter.lfs.process', 'git-lfs filter-process');
+    run(repo, 'config', 'filter.fake.process', 'git-lfs filter-process; echo');
+    run(repo, 'config', 'filter.a=b.clean', 'cat');
+    const { args, env } = await guardOf(repo);
+    expect(args).toEqual(
+      expect.arrayContaining(['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'filter.local.clean=', '-c', 'merge.local.driver=', '-c', 'filter.fake.process=']),
+    );
+    expect(args.some((a) => a.startsWith('filter.lfs.'))).toBe(false);
+    // 名前に「=」を含むものは -c では渡せない（最初の「=」で分けられる）ので、環境変数だけで渡す
+    expect(args.some((a) => a.startsWith('filter.a='))).toBe(false);
+    const keys = Object.keys(env).filter((k) => k.startsWith('GIT_CONFIG_KEY_'));
+    expect(env.GIT_CONFIG_COUNT).toBe(String(keys.length));
+    const passed = Object.fromEntries(keys.map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]));
+    expect(passed).toMatchObject({ 'core.fsmonitor': 'false', 'core.hooksPath': '/dev/null', 'filter.local.clean': '', 'filter.fake.process': '', 'filter.a=b.clean': '' });
+    expect(Object.keys(passed).some((k) => k.startsWith('filter.lfs.'))).toBe(false);
+  });
+
+  it('ログを読むときも、フォルダの設定の署名の確かめのコマンド（log.showSignature と gpg.program）を動かさない', async () => {
+    // 署名を作るときは何でも署名にし、確かめるとき（--verify）だけ印を残すコマンド
+    const gpg = join(root, 'fake-gpg');
+    writeFileSync(
+      gpg,
+      `#!/bin/sh\ncase "$*" in *--verify*) ${mark('gpg-verify')}; exit 0;; esac\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 X\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nZmFrZQ==\\n-----END PGP SIGNATURE-----\\n'\n`,
+    );
+    chmodSync(gpg, 0o755);
+    run(repo, '-c', `gpg.program=${gpg}`, 'commit', '-q', '-S', '--allow-empty', '-m', 'signed');
+    run(repo, 'config', 'gpg.program', gpg);
+    run(repo, 'config', 'log.showSignature', 'true');
+    // コミットで動いたもの（フック・フィルターなど。人の git なので動く）の印は捨てる
+    const clear = () => readdirSync(marks).forEach((name) => rmSync(join(marks, name)));
+    clear();
+    // 人がターミナルで打つ git では動く（このテストの作りの確かめ）
+    run(repo, 'log', '-1', '--format=%H');
+    expect(readdirSync(marks)).toContain('gpg-verify');
+    clear();
+    await git(repo, ['log', '-1', '--format=%H %s']);
+    await git(repo, ['show', '-s', '--format=%H', 'HEAD']);
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない', async () => {
+    run(repo, 'config', 'filter.a=b.clean', `${mark('eq-filter-clean')}; cat`);
+    write(repo, '.git/info/attributes', '* filter=a=b\n');
+    // --version にだけ古い番号を答え、ほかは本物の git に渡す git
+    const real = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const bin = join(root, 'old-git');
+    write(root, 'old-git/git', `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version 2.30.9"; exit 0; fi\nexec "${real}" "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      await expect(git(repo, ['status', '--porcelain'])).rejects.toThrow('Update git to 2.31 or later');
+      // 読むだけの操作は、読めなかったものとして扱う
+      expect(await status(repo)).toBeNull();
+      expect(readdirSync(marks)).toEqual([]);
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
+  it('名前に「=」を含むフィルター・merge のドライバーも打ち消す', async () => {
+    for (const key of ['clean', 'smudge', 'process']) run(repo, 'config', `filter.a=b.${key}`, `${mark(`eq-filter-${key}`)}; cat`);
+    run(repo, 'config', 'merge.c=d.driver', `${mark('eq-merge-driver')}; false`);
+    write(repo, '.git/info/attributes', '* filter=a=b merge=c=d\n');
+    expect(await status(repo)).toEqual([{ path: 'a.txt', index: ' ', worktree: 'M' }]);
+    await branchFiles(repo, base);
+    await showIndex(repo, 'a.txt');
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', base]);
+    await git(repo, ['merge-tree', '--write-tree', 'main', 'feature']).catch(() => '');
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('サブモジュール自身の設定のフィルター・fsmonitor も、状態・差分を読むときに動かさない（中の変更は今までどおり出す）', async () => {
+    const lib = join(root, 'lib');
+    mkdirSync(lib);
+    init(lib);
+    commit(lib, 'l.txt', 'l\n');
+    run(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib');
+    run(repo, 'commit', '-qm', 'submodule', '--no-verify');
+    // サブモジュールの設定（.git/modules/lib/config）と属性
+    const sub = join(repo, 'lib');
+    for (const key of ['clean', 'smudge', 'process']) run(sub, 'config', `filter.sub.${key}`, `${mark(`sub-filter-${key}`)}; cat`);
+    run(sub, 'config', 'core.fsmonitor', `${mark('sub-fsmonitor')}; false`);
+    write(repo, '.git/modules/lib/info/attributes', '* filter=sub\n');
+    // 大きさを変えない（変わると、git は中身を読まずに変更ありと分かり、フィルターを通さない）
+    write(sub, 'l.txt', 'm\n');
+    readdirSync(marks).forEach((name) => rmSync(join(marks, name)));
+    expect(await status(repo)).toEqual(expect.arrayContaining([{ path: 'lib', index: ' ', worktree: 'M' }]));
+    await branchFiles(repo, base);
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', '--stat', base]);
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
+    run(repo, 'config', 'filter.req.clean', `${mark('req-clean')}; cat`);
+    run(repo, 'config', 'filter.req.smudge', `${mark('req-smudge')}; cat`);
+    run(repo, 'config', 'filter.req.required', 'true');
+    write(repo, '.git/info/attributes', '* filter=req\n');
+    write(repo, 'b.txt', 'new\n');
+    expect(await status(repo)).toEqual([
+      { path: 'a.txt', index: ' ', worktree: 'M' },
+      { path: 'b.txt', index: '?', worktree: '?' },
+    ]);
+    expect((await branchFiles(repo, base)).map((f) => f.path)).toEqual(['a.txt', 'b.txt']);
+    expect(await git(repo, ['diff', '--no-ext-diff', '--no-textconv', '--stat', base])).toContain('a.txt');
+    // 控えのように、別のインデックスに加えるとき
+    const index = join(root, 'other-index');
+    await git(repo, ['read-tree', 'HEAD'], undefined, { GIT_INDEX_FILE: index });
+    await git(repo, ['add', '-A', '--', '.'], undefined, { GIT_INDEX_FILE: index });
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('打ち消しは、もとの環境の GIT_CONFIG_COUNT の分に足して渡す（もとの分も効く）', async () => {
+    const saved = { count: process.env.GIT_CONFIG_COUNT, key: process.env.GIT_CONFIG_KEY_0, value: process.env.GIT_CONFIG_VALUE_0 };
+    process.env.GIT_CONFIG_COUNT = '1';
+    process.env.GIT_CONFIG_KEY_0 = 'tanacode.kept';
+    process.env.GIT_CONFIG_VALUE_0 = 'yes';
+    try {
+      run(repo, 'config', 'filter.a=b.clean', `${mark('eq-filter-clean')}; cat`);
+      write(repo, '.git/info/attributes', '* filter=a=b\n');
+      expect((await git(repo, ['config', '--get', 'tanacode.kept'])).trim()).toBe('yes');
+      await status(repo);
+      expect(readdirSync(marks)).toEqual([]);
+    } finally {
+      for (const [name, value] of [
+        ['GIT_CONFIG_COUNT', saved.count],
+        ['GIT_CONFIG_KEY_0', saved.key],
+        ['GIT_CONFIG_VALUE_0', saved.value],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  it('画面から来た基点・リビジョンが - で始まっていたら、git のオプションとして読ませずに断る', async () => {
+    // オプションとして読まれると、基点での内容の代わりに、ほかのもの（コミットの書式）が返ってくる
+    expect(await showAt(repo, '--format=x', 'a.txt')).toBeNull();
+    await expect(branchFiles(repo, '--cached')).rejects.toThrow(GitError);
+    // ふつうの基点（コミットの ID）はそのまま
+    expect(await showAt(repo, base, 'a.txt')).toBe('a\n');
   });
 });

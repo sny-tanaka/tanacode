@@ -125,6 +125,51 @@ describe('ターンの終わりの順番', () => {
     expect(app.events(id).find((e) => e.type === 'turn-end')).toEqual({ type: 'turn-end', interrupted: true });
   });
 
+  it('応答の前に中断・失敗で終わったターンは、そのターンを始めた発言が会話ログに出てから終える（チャットで、発言より前に終わりを並べない）', async () => {
+    app.manager.turnEndWaitMs = 60_000;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    for (const ending of [stream.interrupted(app.claudeId(id), 'aborted_streaming'), stream.result(app.claudeId(id), { subtype: 'error_during_execution', is_error: true, terminal_reason: 'model_error', errors: ['overloaded'] })]) {
+      const before = turnEnds(id);
+      const uuid = await app.send(id, '仕上げて');
+      pipe.emit(stream.lifecycle(uuid, 'started'));
+      // 応答の前に終わった。result が、会話ログの発言の行より先に届く
+      pipe.emit(ending);
+      await sleep(200);
+      expect(turnEnds(id)).toBe(before);
+      app.append(id, { ...line.user('仕上げて'), uuid });
+      await app.waitFor('ターンの終わり', () => turnEnds(id) === before + 1);
+      const kinds = app.events(id).map((e) => e.type);
+      expect(kinds.lastIndexOf('user')).toBeLessThan(kinds.lastIndexOf('turn-end'));
+    }
+    expect(app.events(id).find((e) => e.type === 'turn-end')).toEqual({ type: 'turn-end', interrupted: true });
+    // 作業中に送って、ターンの途中に取り込まれた発言（会話ログには queued_command の attachment で出る）も同じ
+    const before = turnEnds(id);
+    const queued = await app.send(id, 'これも');
+    pipe.emit(stream.lifecycle(queued, 'started'));
+    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    await sleep(200);
+    expect(turnEnds(id)).toBe(before);
+    app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt: 'これも', source_uuid: queued } });
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === before + 1);
+  });
+
+  it('応答の前に終わったターンでも、発言が先に会話ログに出ていれば、待たずに終える。会話ログに出ないままなら、時間切れで終える', async () => {
+    app.manager.turnEndWaitMs = 600;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    await app.waitFor('発言', () => app.events(id).some((e) => e.type === 'user'));
+    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1, 300);
+    const uuid = await app.send(id, 'つぎ');
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    await sleep(200);
+    expect(turnEnds(id)).toBe(1);
+    await app.waitFor('時間切れ', () => turnEnds(id) === 2, 3000);
+  });
+
   it('Claude Code の中で済むコマンド（/clear・/compact。モデルを呼ばず num_turns が 0）のターンは、終えるが、完了を知らせない', async () => {
     const notices: string[] = [];
     app.manager.turnNotice = (_id, starter) => (notices.push(starter), 'work');
@@ -373,6 +418,31 @@ describe('知らせ', () => {
     pipe.emit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, uuid: 'l2' });
     await sleep(50);
     expect(app.statusLineInfos.get(id)?.rateLimits?.fiveHour?.percent).toBe(42);
+  });
+});
+
+describe('利用枠（get_usage）', () => {
+  it('ターンが終わったら、利用枠（モデル別の週の枠を含む）を get_usage で聞く。聞くのは 5 分に 1 回まで', async () => {
+    app.answers.set('get_usage', {
+      subscription_type: 'max',
+      rate_limits_available: true,
+      rate_limits: { five_hour: { utilization: 42, resets_at: null }, seven_day: { utilization: 10, resets_at: null }, model_scoped: [{ display_name: 'Fable', utilization: 55, resets_at: null }] },
+    });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    for (const text of ['はじめ', 'つぎ']) {
+      await app.prompt(id, text);
+      app.say(id, line.text('はい'));
+      app.finish(id);
+      await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle');
+    }
+    await app.waitFor('利用枠', () => app.usages.length === 1);
+    expect(app.usages[0]).toEqual([
+      { label: '5時間', percent: 42, resetsAt: null },
+      { label: '週', percent: 10, resetsAt: null },
+      { label: '週', model: 'Fable', percent: 55, resetsAt: null },
+    ]);
+    expect(pipe.requests('get_usage')).toHaveLength(1);
   });
 });
 

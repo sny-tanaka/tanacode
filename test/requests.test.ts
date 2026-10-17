@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatMessage, humanOnlyReason, permissionOf, permissionResult, questionResult, REJECTED, rejectedWith } from '../src/main/requests';
+import { askQuestionsOf, chatMessage, humanOnlyReason, permissionOf, permissionResult, questionResult, REJECTED, rejectedWith } from '../src/main/requests';
 import type { CanUseToolRequest } from '../src/main/stream/protocol';
 
 // Claude Code が答えを待つ要求（can_use_tool）を、カードと親の道具で扱う形にし、答えを Claude Code への返事にする（requests.ts）
@@ -13,6 +13,18 @@ const bash = (over: Partial<CanUseToolRequest> = {}): CanUseToolRequest => ({
 });
 
 describe('permissionOf', () => {
+  it('「今後は聞かない」に出せない候補（許可を外すもの）は出さず、知らない保存先は名前のまま書く。選択肢が一覧でない質問は読めない', () => {
+    const request = bash({
+      permission_suggestions: [
+        { type: 'removeDirectories', directories: ['/repo/out'], destination: 'session' },
+        { type: 'addDirectories', directories: ['/repo/tmp'], destination: 'flagSettings' },
+      ],
+    });
+    expect(permissionOf('req-1', request).always).toEqual(['/repo/tmp へのアクセス・flagSettings']);
+    expect(askQuestionsOf({ questions: [{ question: 'どちら？', options: 'A か B' }] })).toBeNull();
+    expect(askQuestionsOf({ questions: 'x' })).toBeNull();
+  });
+
   it('見出しは title、無ければ display_name。「今後は聞かない」は、何を許すかと、どこに残るか（保存先）の説明', () => {
     const request = bash({
       display_name: 'Bash',

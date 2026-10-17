@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from 'node:fs';
+import { statSync, watch, type FSWatcher } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { TranscriptTail, type EntryHandler } from './transcript-tail';
@@ -22,6 +22,9 @@ export class TranscriptFollower {
   private bridgeSessionId: string | null = null;
   private dirWatcher: FSWatcher | null = null;
   private stopped = false;
+  // はじめの会話ログの既存の行（過去ログ）を読み終えたか。はじめから空なら、読むものが無いので読み終えたことにする（知らせない。
+  // SessionManager も、はじめから読み終えたことにする）
+  private historyLoaded = false;
 
   constructor(
     initialFile: string,
@@ -33,7 +36,8 @@ export class TranscriptFollower {
   }
 
   start(): void {
-    this.follow(this.current, true);
+    this.historyLoaded = sizeOf(this.current) === 0;
+    this.follow(this.current);
   }
 
   stop(): void {
@@ -44,19 +48,33 @@ export class TranscriptFollower {
     this.dirWatcher = null;
   }
 
-  private follow(file: string, initial = false): void {
+  // 読み終えた知らせは 1 度だけ。はじめの会話ログを読み終える前に乗り換えたら（引き継いだ claude が、アプリが止まっている間に /clear
+  // していた）、乗り換えた先の既存の行を読み終えたときに知らせる。知らせないと、過去の会話の終わりが決まらず、作業中のまま残る
+  private follow(file: string): void {
     this.tail?.stop();
     this.current = file;
-    const onHistoryLoaded = initial ? this.handlers.onHistoryLoaded : undefined;
-    this.tail = new TranscriptTail(file, (entry, isHistory) => {
-      const e = entry as { type?: string; bridgeSessionId?: string };
-      if (e.type === 'bridge-session' && e.bridgeSessionId) {
-        this.bridgeSessionId = e.bridgeSessionId;
-        this.watchDir();
-      }
-      this.handlers.onEntry(entry, isHistory);
-    }, onHistoryLoaded);
+    const waiting = !this.historyLoaded;
+    this.tail = new TranscriptTail(
+      file,
+      (entry, isHistory) => {
+        const e = entry as { type?: string; bridgeSessionId?: string };
+        if (e.type === 'bridge-session' && e.bridgeSessionId) {
+          this.bridgeSessionId = e.bridgeSessionId;
+          this.watchDir();
+        }
+        this.handlers.onEntry(entry, isHistory);
+      },
+      waiting ? () => this.loaded() : undefined,
+    );
     this.tail.start();
+    // 乗り換えた先にまだ行が無ければ、読むものが無いので（TranscriptTail は知らせない）、すぐ読み終えたことにする
+    if (waiting && sizeOf(file) === 0) this.loaded();
+  }
+
+  private loaded(): void {
+    if (this.historyLoaded) return;
+    this.historyLoaded = true;
+    this.handlers.onHistoryLoaded();
   }
 
   private watchDir(): void {
@@ -94,6 +112,14 @@ export class TranscriptFollower {
     if (!matches || this.stopped || file === this.current) return;
     this.handlers.onSwitch(file);
     this.follow(file);
+  }
+}
+
+function sizeOf(file: string): number {
+  try {
+    return statSync(file).size;
+  } catch {
+    return 0;
   }
 }
 

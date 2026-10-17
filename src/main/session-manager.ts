@@ -41,6 +41,7 @@ import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
+import type { UsageLimit } from '@shared/usage';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { SessionModel } from '@shared/models';
@@ -87,9 +88,10 @@ import type {
   StreamMessage,
   TaskNotificationMessage,
   TaskStartedMessage,
+  UsageResponse,
   UserMessage,
 } from './stream/protocol';
-import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode } from './stream/state';
+import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf } from './stream/state';
 import {
   hideWorktrees,
   planWorktree,
@@ -109,10 +111,14 @@ const FIRST_PROMPT_TITLE_PRIORITY = 1;
 // ターンの終わり（result）のあと、そのターンの最後の応答が会話ログに出るのを待つ上限（出たら、チャットにターンの終わりを出す。設計書 7 節）。
 // result は会話ログより先に届くので、先に出すと実行中のツールをいったんエラーにしてしまう
 const TURN_END_WAIT_MS = 3000;
+// 会話ログに出た送った発言の uuid を覚えておく数（応答の前に終わったターンの終わりを、発言が出てから出すため）
+const MAX_ARRIVED_PROMPTS = 50;
 // 送った発言が Claude Code に受け付けられた知らせ（command_lifecycle）も会話ログの行も来ないまま、送信中として扱う上限
 const SENDING_TIMEOUT_MS = 30_000;
 // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
 const SLOW_START_MS = 10_000;
+// プランの利用枠を get_usage で聞き直す間隔の下限（サーバーに聞くため。アプリ全体で）
+const USAGE_INTERVAL_MS = 5 * 60_000;
 // stop_task のあと、タスクが終わった知らせ（task_notification）を待つ上限
 const TASK_STOP_WAIT_MS = 10_000;
 // 作業中の経過時間を知らせ直す間隔
@@ -149,7 +155,8 @@ type Runtime = {
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   background: number;
-  // 許可の確認を出す直前に、フックが書いた入力（親の Claude が子の許可の確認に答えるときに読む。pendingPermission）
+  // ターミナルモードの間に、書くだけの PermissionRequest のフックが書いた、許可の確認の直前のツールの名前と入力（同じ書き込みの知らせを
+  // 数え直さないため。チャットの許可の確認は、requests の can_use_tool の要求で分かる）
   permission: PermissionRequest | null;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
@@ -169,6 +176,8 @@ type Runtime = {
   terminal: boolean;
   // チャットとターミナルモードを切り替えている途中（今の claude を止めて、もう片方で起動し直すまで）
   switching: boolean;
+  // 切り替えで、アプリが止めている claude（この claude の終わりは、すぐもう片方で起動するので出さない）
+  switchStopping: ClaudeSession | null;
   // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
   tuiTurn: boolean;
   // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
@@ -192,6 +201,10 @@ type Runtime = {
   // 今のターンの、本体の最後の行（応答か、ツールの結果）の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）。
   // ツールの切れ目でフックが止めたターンでは、最後の行はツールの結果（stream の user の行。uuid は会話ログの行と同じ。実測）
   lastTurnLine: string | null;
+  // 今のターンに取り込まれた（command_lifecycle の started）、送った発言の uuid（いちばん新しいもの）と、会話ログに出た送った発言の uuid
+  // （新しい 50 個まで）。応答の前に終わったターンの終わりを、その発言が会話ログに出てから出す
+  turnPrompt: string | null;
+  arrivedPrompts: Set<string>;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
   turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
@@ -270,6 +283,8 @@ type Listeners = {
   onBashTasks: (sessionId: string, tasks: BashTask[]) => void;
   onKnowledge: (sessionId: string, knowledge: SessionKnowledge) => void;
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
+  // チャットのターンの終わりに get_usage で聞いた、プランの利用枠（モデル別の週の枠を含む）
+  onUsage?: (limits: UsageLimit[], at: number) => void;
   // ユーザーの操作待ちになった（質問・許可の確認）
   onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu }) => void;
   // 答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
@@ -282,6 +297,8 @@ export class SessionManager {
   private readonly runtimes = new Map<string, Runtime>();
   private focusedId: string | null = null;
   private closed = false;
+  // 最後に get_usage を聞いた時刻
+  private usageAt = 0;
 
   constructor(
     private readonly host: PtyHostApi,
@@ -494,7 +511,9 @@ export class SessionManager {
       settingsFile: options.settingsFile,
       remoteControl: options.remoteControl,
       worktree,
-      ...(parentId ? { parentId, launchMode: options.mode } : {}),
+      ...(parentId ? { parentId } : {}),
+      // 子と、Claude が始めた独立したセッションは、起動のモードを、開き直すときの上限として残す
+      ...(parentId || options.capMode ? { launchMode: options.mode } : {}),
       ...(options.addedFolders?.length ? { addedFolders: options.addedFolders } : {}),
       createdAt: now,
       updatedAt: now,
@@ -681,7 +700,7 @@ export class SessionManager {
     // Claude Code が答えを待っている要求（AskUserQuestion は質問、ほかは許可の確認）
     const request = firstRequest(rt);
     if (request) return request.tool_name === 'AskUserQuestion' ? 'question' : 'permission';
-    // フックが答えを待っている質問
+    // 答えを待っている質問（AskUserQuestion の要求を、PendingQuestions で預かっているもの）
     if (this.questions.first(id)) return 'question';
     if (!rt.ready || rt.preparing) return 'starting';
     // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える。
@@ -832,11 +851,16 @@ export class SessionManager {
           () => null,
           (error: unknown) => (error instanceof ControlError ? error.reason : String(error)),
         );
+        // 待っている間に claude が自分で終わった（終了は onExit が出した）。切り替えずに、止まったままにする
+        if (rt.process !== process) throw new Error(t('main.terminal.exitedWhileSwitching'));
         if (refused !== null) throw new Error(t('main.terminal.remoteOffFailed', { reason: refused }));
       }
       if (!on) this.adoptTuiChanges(id, rt);
       const mode = this.relaunchMode(id, rt);
-      const stopped = await process.stop(this.stopStepMs);
+      rt.switchStopping = process;
+      const stopped = await process.stop(this.stopStepMs).finally(() => {
+        rt.switchStopping = null;
+      });
       // 止めている間に、ほかで起動し直した・アーカイブした
       if (this.runtimes.get(id) !== rt) return;
       if (rt.process === process && !stopped) throw new Error(t('main.session.notStopped'));
@@ -1177,7 +1201,9 @@ export class SessionManager {
   // モードだけを変える。bypassPermissions は、起動したときに許したときだけ通る（実測）
   async setMode(id: string, mode: PermissionMode): Promise<boolean> {
     const rt = this.runtimes.get(id);
-    const child = !!this.store.get(id)?.parentId;
+    // 起動のモードを上限にしているセッション（子と、Claude が始めた独立したセッション）
+    const record = this.store.get(id);
+    const child = !!record?.parentId || record?.launchMode !== undefined;
     if (!rt?.process) {
       if (child) this.store.update(id, { launchMode: mode });
       return child;
@@ -1663,6 +1689,7 @@ export class SessionManager {
         quietAttention: false,
         terminal: false,
         switching: false,
+        switchStopping: null,
         switchedFrom: null,
         tuiBaseline: null,
         tuiRemoteSeen: false,
@@ -1677,6 +1704,8 @@ export class SessionManager {
         aliveSince: null,
         turnOpen: false,
         lastTurnLine: null,
+        turnPrompt: null,
+        arrivedPrompts: new Set(),
         turnEnding: null,
         turnStarter: 'other',
         starterSeen: false,
@@ -1834,8 +1863,9 @@ export class SessionManager {
           }
           runtime.tuiTurn = false;
           runtime.tuiAsk = null;
-          // チャットとターミナルモードの切り替えで止めたときは、終了を出さない（すぐもう片方で起動し直す）
-          if (!runtime.switching) {
+          // チャットとターミナルモードの切り替えで、アプリが止めたときは、終了を出さない（すぐもう片方で起動し直す）。
+          // 切り替えの途中でも、claude が自分で終わった（落ちた）ときは出す（出さないと止まったと分からず、送った発言が黙って消える）
+          if (runtime.switchStopping !== process) {
             const back = runtime.switchedFrom;
             runtime.switchedFrom = null;
             if (back === 'stream') {
@@ -2231,7 +2261,10 @@ export class SessionManager {
 
   // 送った発言の受け付けの知らせ。queued: 順番待ちに入った / started: ターンに取り込まれた / completed・cancelled・discarded: 終わった
   private handleLifecycle(id: string, rt: Runtime, message: CommandLifecycleMessage, past: boolean): void {
-    if (message.state === 'started') this.openTurn(id, rt, past);
+    if (message.state === 'started') {
+      this.openTurn(id, rt, past);
+      rt.turnPrompt = message.command_uuid;
+    }
     const unsent = rt.unsent.get(message.command_uuid);
     if (!unsent) return;
     if (message.state === 'queued' && unsent.state === 'sending') {
@@ -2251,6 +2284,7 @@ export class SessionManager {
     rt.turnOpen = true;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     rt.lastTurnLine = null;
+    rt.turnPrompt = null;
     rt.starterSeen = false;
     if (!past) this.startProgress(id, rt);
     this.emitSessions();
@@ -2270,16 +2304,31 @@ export class SessionManager {
     if (result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length) {
       this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
     }
-    const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : null;
     // /clear・/compact のような Claude Code の中で済むコマンドは、モデルを呼ばずに result を返す（num_turns が 0。実測）。
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
+    // 応答の前に終わったターン（中断・失敗）は、result が会話ログの発言の行より先に届くことがある。先に終わりを出すと、チャットで
+    // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
+    const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
     rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
     this.emitSessions();
     this.changed(id);
     void this.refreshContext(id, rt);
+    void this.refreshUsage(rt);
+  }
+
+  // プランの利用枠を get_usage で聞く（モデル別の週の枠は、rate_limit_event・statusLine に無いため）。サーバーに聞くので、
+  // アプリ全体で USAGE_INTERVAL_MS に 1 回まで。API キーなどで使えなければ何もしない
+  private async refreshUsage(rt: Runtime): Promise<void> {
+    const now = Date.now();
+    if (now - this.usageAt < USAGE_INTERVAL_MS) return;
+    this.usageAt = now;
+    const response = await rt.process?.client?.request<UsageResponse>('get_usage').catch(() => null);
+    const limits = response ? usageLimitsOf(response) : null;
+    if (limits && limits.length > 0) this.listeners.onUsage?.(limits, Date.now());
   }
 
   // チャットにターンの終わりを出し、完了を知らせる
@@ -2642,12 +2691,17 @@ export class SessionManager {
     // 送った発言が会話に出たら、送信中の表示から外す（発言の行、作業中に送ったものは queued_command の attachment）。
     // 発言を出してから外す（先に外すと、一瞬どちらにも出ない）
     const arrived = rt && !past ? sentUuidOf(entry) : null;
+    if (rt && arrived) {
+      rt.arrivedPrompts.add(arrived);
+      if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);
+    }
     if (rt && arrived && rt.unsent.delete(arrived)) {
       this.emitQueue(id, rt);
       this.changed(id);
     }
-    // ターンの最後の応答が会話ログに出たら、待っていたターンの終わりを出す
-    if (rt?.turnEnding && entry.uuid && rt.turnEnding.waitFor === entry.uuid) this.flushTurnEnd(id, rt);
+    // ターンの最後の応答（応答の前に終わったターンは、始めた発言）が会話ログに出たら、待っていたターンの終わりを出す
+    const waitFor = rt?.turnEnding?.waitFor;
+    if (rt && waitFor && (entry.uuid === waitFor || arrived === waitFor)) this.flushTurnEnd(id, rt);
     if (changed) this.emitSessions();
   }
 

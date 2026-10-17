@@ -543,7 +543,8 @@ describe('ツールの実行（SessionsControl）', () => {
     );
     expect(started).toMatchObject({ independent: true, permission_mode: 'acceptEdits' });
     expect(started.note).toContain('independent session');
-    expect(host.created[0]).toMatchObject({ cwd: repo, parentId: null, options: { mode: 'acceptEdits', remoteControl: true } });
+    // 独立したセッションも、起動のモードを、開き直すときの上限として残す（親より強いモードで開き直さない）
+    expect(host.created[0]).toMatchObject({ cwd: repo, parentId: null, options: { mode: 'acceptEdits', remoteControl: true, capMode: true } });
     // 最初の指示は、起動したセッションからのものと分かる囲みで送る
     expect(host.submitted).toEqual([{ id: started.session_id, text: parentMessageText(PARENT, 'README を見直して') }]);
     // 一覧では、子ではなく同じリポジトリのセッション
@@ -816,6 +817,14 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(textOf(result)).toContain('Nothing was answered');
     });
 
+    it('入力の長さは、バイトで数える（Claude Code は MCP の結果をトークンで切るので、文字数が少なくても多くのトークンになる文字を通さない）', async () => {
+      // 1.2 万文字だが、3.6 万バイト
+      show(bashPermission(`echo ${'あ'.repeat(12_000)}`));
+      const permission = await read();
+      expect(permission.can_allow).toBe(false);
+      expect(permission.cannot_allow_reason).toContain('too long');
+    });
+
     it('入力が長すぎて全文を渡せない確認は、許さない（断ることはできる）', async () => {
       show(bashPermission(`echo ${'x'.repeat(40_000)}`));
       const permission = await read();
@@ -992,6 +1001,21 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain('its permission mode is now acceptEdits');
       expect(host.configured).toEqual([]);
+      // 今のモードが分からなければ、添えない
+      host.modes.delete(SIBLING);
+      expect(textOf(await configure({ permission_mode: 'auto' }))).toMatch(/^Could not switch .* to auto: its Claude Code refused it/);
+    });
+
+    it('状態の分からない子は、終了しているとみなして、次に起動するときの指定を変える', async () => {
+      host.states.delete(SIBLING);
+      expect(jsonOf(await configure({ effort: 'max' }))).toMatchObject({ changed: { effort: 'max' }, note: expect.stringContaining('is not running') });
+    });
+
+    it('モデル・エフォートの変更が Error でないもので失敗しても、理由を文字にして返す', async () => {
+      host.configureError = 'つながりません' as unknown as Error;
+      const failed = await configure({ effort: 'max' });
+      expect(failed.isError).toBe(true);
+      expect(textOf(failed)).toMatch(/^Could not change its model or effort: /);
     });
 
     it('作業中・起動中・質問や許可の確認・ターミナルでの操作の待ち・アーカイブ済みの子は、理由と次にできることを添えて断る', async () => {
@@ -1343,6 +1367,25 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.archives).toEqual([{ id: SIBLING, options: { removeWorktree: false } }]);
       expect(ended).toMatchObject({ session_id: SIBLING, archived: true, worktree: null });
       expect(ended.note).toContain('It has no worktree');
+    });
+
+    it('worktree の無い子に remove_worktree を渡さなければ、worktree のことは書かない。状態の分からない子は、終了しているとみなす', async () => {
+      host.states.delete(SIBLING);
+      const ended = jsonOf<{ note: string }>(await control.handle(PARENT, 'end_session', { session_id: SIBLING }));
+      expect(ended).toMatchObject({ session_id: SIBLING, archived: true, worktree: null });
+      expect(ended.note).not.toContain('worktree');
+    });
+
+    it('アーカイブできなかったら、理由（Error でなければ文字にしたもの）を添えて失敗として返す', async () => {
+      host.set(CHILD, 'idle');
+      host.archive = async () => {
+        throw 'ディスクがいっぱい';
+      };
+      const failed = await end({ remove_worktree: false });
+      expect(failed.isError).toBe(true);
+      expect(textOf(failed)).toBe('Could not archive "s-22": ディスクがいっぱい');
+      host.archive = async () => null;
+      expect(textOf(await end({ remove_worktree: false }))).toBe('Could not archive "s-22": unknown error');
     });
 
     it('worktree を消せなかったとき（ユーザーが付けたロックなど）: アーカイブはしたうえで、理由を返す', async () => {
@@ -2380,6 +2423,17 @@ describe('ツールの実行（SessionsControl）', () => {
       const all = jsonOf<{ sessions: Row[] }>(await control.handle(PARENT, 'list_sessions', { include_archived: true }));
       // git のリポジトリでないフォルダのブランチは null
       expect(row(all.sessions, FAR_CHILD)).toMatchObject({ relation: 'child', state: 'archived', branch: null });
+    });
+
+    it('一覧・状態の parent_id は、呼び出し元から見える親のときだけ出す（見えない親の ID は出さない）', async () => {
+      // 同じフォルダにいるが、親は別のリポジトリのセッション（呼び出し元からは見えない）
+      const STRAY = '88888888-0000-4000-8000-000000000008';
+      host.add(STRAY, repo, { parentId: OTHER_REPO });
+      const rows = jsonOf<{ sessions: { id: string; parent_id: string | null }[] }>(await control.handle(PEER, 'list_sessions', {})).sessions;
+      expect(rows.find((s) => s.id === STRAY)?.parent_id).toBeNull();
+      expect(jsonOf<{ parent_id: string | null }>(await control.handle(PEER, 'get_session', { session_id: STRAY })).parent_id).toBeNull();
+      // 見える親なら出す
+      expect(rows.find((s) => s.id === SIBLING)?.parent_id).toBe(PARENT);
     });
 
     it('read_session の見出し: 関係・worktree・親・子を、見えるものだけ書く', async () => {

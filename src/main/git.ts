@@ -4,13 +4,27 @@ import { join, posix } from 'node:path';
 import type { GitBranches } from '@shared/ipc';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
-// 未追跡のファイルの行数を数える上限（大きいものは数えない）
+// 未追跡のファイルの行数を数える上限（大きいものは数えない）と、数えるファイルの数の上限（それより多いものは、読まずに 0 とする）
 const MAX_COUNT_BYTES = 1024 * 1024;
+const MAX_COUNT_FILES = 1000;
 
 export class GitError extends Error {}
 
-// cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）
+// tanacode が自分で動かす git（状態・差分・ブランチを読む・worktree の片付けなど）は、開いたフォルダの設定で、人の知らないコマンドを
+// 動かさないよう、コマンドを動かす設定を打ち消して動かす（guardOf）。人がソース管理パネルで頼んだ操作（ステージ・コミット・プッシュ・
+// プル・ブランチの切り替えなど）と、worktree の作り直し・消す前の控えの書き込みは userGit で、ターミナルで git を打ったときと同じに動かす
+// （フック・資格情報・フィルターを使う）
 export function git(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
+  return guardOf(cwd).then((guard) => runGit(cwd, [...guard.args, ...args], input, { ...env, ...guard.env }));
+}
+
+// 人が頼んだ操作。設定はそのまま使う
+export function userGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
+  return runGit(cwd, args, input, env);
+}
+
+// cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）
+function runGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const options = { cwd, maxBuffer: MAX_BUFFER, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env } };
     const child = execFile('git', args, options, (err, stdout, stderr) => {
@@ -20,6 +34,130 @@ export function git(cwd: string, args: string[], input?: string, env?: Record<st
     // 渡すものが無ければ、標準入力はすぐ閉じる（何かが標準入力からの入力を待っても、待ち続けずに失敗させる）
     child.stdin?.end(input);
   });
+}
+
+// 打ち消す設定を読み直す間隔（ソース管理パネルは、状態を何度も読むため）
+const GUARD_TTL_MS = 2000;
+// 打ち消す設定の渡し方。args: -c（どの git でも効く）。env: 同じものを GIT_CONFIG_COUNT・GIT_CONFIG_KEY_<n>・GIT_CONFIG_VALUE_<n> で
+// （git 2.31 から。-c は最初の「=」で名前と値を分けるので、名前に「=」を含むもの（[filter "a=b"]）は env でしか打ち消せない）
+type Guard = { args: string[]; env: Record<string, string> };
+const guards = new Map<string, { at: number; guard: Promise<Guard> }>();
+// git-lfs が入れる決まった形のフィルター（git lfs install。--skip 付きも）。読むだけの git にも要る（無いと、LFS のファイルが変更に見える）
+const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process( --skip)?)$/;
+
+// 開いたフォルダの設定のうち、読むだけの git でもコマンドを動かすものを打ち消す設定。
+// - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）と、
+//   ログの署名の確かめ（log.showSignature。gpg.program を動かす）は、いつも止める
+// - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
+//   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す。
+//   空にしたフィルターは、required も false にする。そのため、読むだけの git は、フィルターを通す前の中身で比べる（ターミナルの git と差分の見え方が違うことがある）
+// - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
+// - 取り出してあるサブモジュール（入れ子も）の設定で決めたフィルター・merge のドライバーも、同じく空にする（状態・作業ツリーとの差分は、
+//   サブモジュールの中でも git を動かす。打ち消しはサブモジュールの git にも渡るので、同じ名前を空にすれば止まる）
+// 名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない（GitError）
+export function guardOf(cwd: string): Promise<Guard> {
+  const now = Date.now();
+  const cached = guards.get(cwd);
+  if (cached && now - cached.at < GUARD_TTL_MS) return cached.guard;
+  const guard = commandKeys(cwd, { left: MAX_SUBMODULES }, 0).then(async (keys) => {
+    const pairs: [string, string][] = [...ALWAYS_OFF];
+    for (const key of keys) {
+      if (pairs.some(([k]) => k === key)) continue;
+      pairs.push([key, '']);
+      // なくてはならないとされたフィルター（required。git-crypt が書く）は、空にすると git add・diff などが失敗するので、無くてよいことにする
+      const required = key.startsWith('filter.') ? `${key.slice(0, key.lastIndexOf('.'))}.required` : null;
+      if (required && !pairs.some(([k]) => k === required)) pairs.push([required, 'false']);
+    }
+    if (pairs.some(([key]) => key.includes('=')) && !(await configEnvSupported(cwd))) {
+      throw new GitError('This folder has git settings that tanacode cannot turn off with this git. Update git to 2.31 or later.');
+    }
+    return { args: pairs.filter(([key]) => !key.includes('=')).flatMap(([key, value]) => ['-c', `${key}=${value}`]), env: configEnv(pairs) };
+  });
+  guards.set(cwd, { at: now, guard });
+  return guard;
+}
+
+// いつも止めるもの
+const ALWAYS_OFF: [string, string][] = [
+  ['core.fsmonitor', 'false'],
+  ['core.hooksPath', '/dev/null'],
+  // ログ・show で署名を確かめさせない（確かめに gpg.program を動かす）
+  ['log.showSignature', 'false'],
+];
+// 設定を読むサブモジュールの数と、入れ子の深さの上限
+const MAX_SUBMODULES = 100;
+const MAX_SUBMODULE_DEPTH = 5;
+
+// フォルダ（と、取り出してあるサブモジュール）の設定のうち、空にするフィルター・merge のドライバーの名前
+async function commandKeys(cwd: string, budget: { left: number }, depth: number): Promise<string[]> {
+  const out = await runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$']).catch(() => '');
+  const keys: string[] = [];
+  const parts = out.split('\0');
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const scope = parts[i];
+    const [key, ...value] = parts[i + 1].split('\n');
+    if (scope === 'global' || scope === 'system') continue;
+    if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
+    keys.push(key);
+  }
+  if (depth >= MAX_SUBMODULE_DEPTH) return keys;
+  for (const dir of await submodulesOf(cwd)) {
+    if (budget.left <= 0) break;
+    budget.left--;
+    keys.push(...(await commandKeys(dir, budget, depth + 1)));
+  }
+  return keys;
+}
+
+// リポジトリの一番上ごとの、サブモジュール（インデックスの gitlink）の場所。インデックスが変わったときだけ読み直す
+const submoduleLists = new Map<string, { stamp: string; dirs: string[] }>();
+
+// 取り出してある（.git のある）サブモジュールのフォルダ
+async function submodulesOf(cwd: string): Promise<string[]> {
+  const [top, index] = (await runGit(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).catch(() => '')).split('\n');
+  if (!top || !index) return [];
+  const info = await lstat(posix.isAbsolute(index) ? index : join(cwd, index)).catch(() => null);
+  const stamp = info ? `${info.mtimeMs}:${info.size}` : '';
+  const cached = submoduleLists.get(top);
+  let dirs = cached && stamp && cached.stamp === stamp ? cached.dirs : null;
+  if (!dirs) {
+    const off = ALWAYS_OFF.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
+    const listed = await runGit(top, [...off, 'ls-files', '--stage', '-z']).catch(() => '');
+    // 「<モード> <オブジェクト> <ステージ>\t<パス>」。サブモジュールはモード 160000
+    dirs = listed
+      .split('\0')
+      .filter((entry) => entry.startsWith('160000 '))
+      .map((entry) => join(top, entry.slice(entry.indexOf('\t') + 1)));
+    submoduleLists.set(top, { stamp, dirs });
+  }
+  const present: string[] = [];
+  for (const dir of dirs) if (await lstat(join(dir, '.git')).then(() => true, () => false)) present.push(dir);
+  return present;
+}
+
+// GIT_CONFIG_COUNT などで渡す設定。もとの環境にあるもの（ユーザーが渡したもの）は残し、その後ろに足す
+function configEnv(pairs: [string, string][]): Record<string, string> {
+  const given = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '', 10);
+  const base = Number.isInteger(given) && given > 0 ? given : 0;
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(base + pairs.length) };
+  pairs.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${base + i}`] = key;
+    env[`GIT_CONFIG_VALUE_${base + i}`] = value;
+  });
+  return env;
+}
+
+// GIT_CONFIG_COUNT を読む git（2.31 から）か
+async function configEnvSupported(cwd: string): Promise<boolean> {
+  const out = await runGit(cwd, ['--version']).catch(() => '');
+  const [, major, minor] = /git version (\d+)\.(\d+)/.exec(out) ?? [];
+  return major !== undefined && (Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 31));
+}
+
+// 基点（画面から来ることもある）。git のオプションとして読まれないよう、HEAD と 16 進のコミットの ID だけを受け付ける
+function commitId(value: string): string {
+  if (!/^(HEAD|[0-9a-f]{4,64})$/i.test(value)) throw new GitError(`not a commit id: ${value.slice(0, 80)}`);
+  return value;
 }
 
 // cwd がリポジトリの中なら、リポジトリのルートから cwd までの相対パス（ルートなら ''）。リポジトリでなければ null
@@ -77,12 +215,12 @@ export async function isIgnored(cwd: string, relPath: string): Promise<boolean> 
 
 // HEAD の内容。HEAD に無いファイルなら null
 export async function showHead(cwd: string, relPath: string): Promise<string | null> {
-  return git(cwd, ['show', `HEAD:./${relPath}`]).catch(() => null);
+  return git(cwd, ['show', '--no-textconv', `HEAD:./${relPath}`]).catch(() => null);
 }
 
 // ステージ済み（インデックス）の内容。無ければ null
 export async function showIndex(cwd: string, relPath: string): Promise<string | null> {
-  return git(cwd, ['show', `:./${relPath}`]).catch(() => null);
+  return git(cwd, ['show', '--no-textconv', `:./${relPath}`]).catch(() => null);
 }
 
 export type RepoInfo = {
@@ -192,9 +330,10 @@ export type BranchFile = { path: string; kind: 'added' | 'modified' | 'deleted';
 
 // 基点から作業ツリーまでの変更（コミット済み・ステージ済み・未ステージ・未追跡をまとめて）。パスは cwd からの相対
 export async function branchFiles(cwd: string, mergeBase: string): Promise<BranchFile[]> {
+  const base = commitId(mergeBase);
   const [nameStatus, numstat, untracked] = await Promise.all([
-    git(cwd, ['diff', '--relative', '--no-renames', '--name-status', '-z', mergeBase]),
-    git(cwd, ['diff', '--relative', '--no-renames', '--numstat', '-z', mergeBase]),
+    git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '--no-renames', '--name-status', '-z', base]),
+    git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '--no-renames', '--numstat', '-z', base]),
     git(cwd, ['ls-files', '--others', '--exclude-standard', '-z']),
   ]);
   const counts = new Map<string, { added: number; removed: number; binary: boolean }>();
@@ -211,7 +350,12 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
     const kind = code === 'A' ? 'added' : code === 'D' ? 'deleted' : 'modified';
     files.push({ path, kind, ...(counts.get(path) ?? { added: 0, removed: 0, binary: false }) });
   }
+  let counted = 0;
   for (const path of untracked.split('\0').filter(Boolean)) {
+    if (counted++ >= MAX_COUNT_FILES) {
+      files.push({ path, kind: 'added', added: 0, removed: 0, binary: false });
+      continue;
+    }
     // ふつうのファイルだけ数える（シンボリックリンクの先・デバイス・名前付きパイプは読まない。/dev/zero へのリンクは読み終わらない）
     const info = await lstat(join(cwd, path)).catch(() => null);
     const text = info?.isFile() && info.size <= MAX_COUNT_BYTES ? await readFile(join(cwd, path)).catch(() => null) : null;
@@ -223,7 +367,9 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-// 基点での内容。基点に無いファイルなら null
+// 基点での内容。基点に無いファイル・コミットの ID でない基点なら null
 export async function showAt(cwd: string, rev: string, relPath: string): Promise<string | null> {
-  return git(cwd, ['show', `${rev}:./${relPath}`]).catch(() => null);
+  return Promise.resolve()
+    .then(() => git(cwd, ['show', '--no-textconv', `${commitId(rev)}:./${relPath}`]))
+    .catch(() => null);
 }

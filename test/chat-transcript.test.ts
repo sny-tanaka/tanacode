@@ -258,6 +258,11 @@ describe('toChatEvents: attachment の行', () => {
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'UserPromptSubmit', hookEvent: 'UserPromptSubmit', content: [reminder] }))).toEqual([]);
     // 止めた記録は、フックの一覧には出さず、目印だけを残す（このあとの応答は、チェックリストを直した報告。ほかのセッションに結果を返すときに見分ける）
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([{ type: 'checklist-stop' }]);
+    // ターンの終わりを、止めずに文を渡して続けさせた記録（2.1.302 からのアプリ。コマンドは載らないので、囲みで見分ける）も、目印だけを残す
+    const stopReminder = `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched)</${CHECKLIST_REMINDER_TAG}>`;
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'Stop', hookEvent: 'Stop', content: [stopReminder] }))).toEqual([{ type: 'checklist-stop' }]);
+    // ユーザーの Stop のフックが文を渡したときは、フックの一覧に出す
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'Stop', hookEvent: 'Stop', content: ['テストも流して'] }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'context' } });
     // ユーザーの Stop のフックが止めたとき・Stop でないときは、目印にしない
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: 'テストを流して', command: 'npm test' } }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);

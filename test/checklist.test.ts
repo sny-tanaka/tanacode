@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toChatEvents, isHumanPrompt, transcriptTitle, type TranscriptEntry } from '../src/shared/chat';
 import { checkOp, claudeUnread, formatNumbers, humanUnread, parseNumbers, unreadCount } from '../src/shared/checklist';
 import {
@@ -146,6 +146,38 @@ describe('保存と書き換え（ChecklistStore）', () => {
     store.remove(ME);
     expect(readdirSync(dir)).toEqual([]);
     expect(() => store.lists('../etc')).toThrow();
+  });
+
+  it('読めないファイル（無いほかの理由）・形の分からないファイルは、空で始めても上書きしない。壊れたファイルは横に移してから空で始める', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 新しいバージョンのアプリが書いた形
+    const future = join(dir, 'future.json');
+    const futureText = JSON.stringify({ version: 2, lists: [{ name: '新しい形' }] });
+    writeFileSync(future, futureText);
+    // 読めない（読む権限が無い）
+    const locked = join(dir, 'locked.json');
+    const lockedText = JSON.stringify({ version: 1, lists: [] });
+    writeFileSync(locked, lockedText);
+    chmodSync(locked, 0o000);
+    // 壊れた
+    const broken = join(dir, 'broken.json');
+    writeFileSync(broken, '{壊れた');
+    const reopened = new ChecklistStore(dir);
+    for (const id of ['future', 'locked', 'broken']) {
+      expect(reopened.lists(id)).toEqual([]);
+      reopened.createList(id, 'human', 'やること', '');
+    }
+    reopened.flush();
+    expect(readFileSync(future, 'utf8')).toBe(futureText);
+    chmodSync(locked, 0o600);
+    expect(readFileSync(locked, 'utf8')).toBe(lockedText);
+    // 壊れたファイルは、中身を横（<名前>.broken-<時刻>）に残し、新しく保存する
+    const moved = readdirSync(dir).filter((name) => name.startsWith('broken.json.broken-'));
+    expect(moved.map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
+    expect(JSON.parse(readFileSync(broken, 'utf8')).lists[0].name).toBe('やること');
+    // 上書きしなかったことは、ログに残す
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
   });
 
   it('Claude に伝える人の書き換えは、Claude が前に呼んだあとのものだけ', () => {

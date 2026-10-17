@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { t } from '@shared/i18n';
 import type { WorktreeLeftovers, WorktreePr, WorktreeRemoval } from '@shared/ipc';
-import { defaultBranch, git } from './git';
+import { defaultBranch, git, userGit } from './git';
 import { type PullRequest, pullRequestsOf } from './github';
 
 // claude --worktree <名前> で始めるセッション。worktree は Claude Code が作る（元のフォルダへの書き込みや git の操作を止める、
@@ -111,12 +111,13 @@ export async function waitForWorktree(path: string, alive: () => boolean, timeou
 }
 
 // 消した worktree を、残したブランチから作り直す（アーカイブから戻すとき）。ブランチも無ければ（マージ済みで消えた）、
-// 元のフォルダの今の HEAD から同じ名前のブランチで作る。Claude Code は、同じ場所に worktree があれば --resume でそこに戻る（実測）
+// 元のフォルダの今の HEAD から同じ名前のブランチで作る。Claude Code は、同じ場所に worktree があれば --resume でそこに戻る（実測）。
+// ファイルを取り出すのは、人が頼んだ操作として、ターミナルの git と同じ設定で（フォルダの設定のフィルター（git-crypt など）で元に戻した中身を出す）
 export async function restoreWorktree(ref: WorktreeRef, path: string): Promise<void> {
   // フォルダを手で消したときは、git に残った登録を先に片付ける
   await git(ref.root, ['worktree', 'prune']).catch(() => '');
-  if (await branchExists(ref.root, ref.branch)) await git(ref.root, ['worktree', 'add', path, ref.branch]);
-  else await git(ref.root, ['worktree', 'add', '-b', ref.branch, path]);
+  if (await branchExists(ref.root, ref.branch)) await userGit(ref.root, ['worktree', 'add', path, ref.branch]);
+  else await userGit(ref.root, ['worktree', 'add', '-b', ref.branch, path]);
 }
 
 // node_modules の用意の結果。場所は worktree からの相対（'' はいちばん上）
@@ -426,7 +427,7 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
   const ahead = await countCommits(root, [branch, '--not', ...targets]);
   if (ahead === 0) return true;
   if (ahead === null) return false;
-  const changed = await git(root, ['diff', '--name-only', '-z', `${targets[0]}...${branch}`]).then(
+  const changed = await git(root, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '-z', `${targets[0]}...${branch}`]).then(
     (out) => out.split('\0').filter(Boolean),
     () => null,
   );
@@ -581,7 +582,8 @@ async function backupChanges(ref: WorktreeRef, path: string): Promise<string> {
   };
   try {
     await git(path, ['read-tree', 'HEAD'], undefined, env);
-    await git(path, ['add', '-A', '--', '.'], undefined, env);
+    // 中身を書き込むのは、人が頼んだ操作として、ターミナルの git と同じ設定で（フォルダの設定のフィルター（git-crypt など）を通した中身を残す）
+    await userGit(path, ['add', '-A', '--', '.'], undefined, env);
     const tree = (await git(path, ['write-tree'], undefined, env)).trim();
     const message = `tanacode: worktree ${ref.name} を消す前の、未コミットの変更と未追跡のファイル`;
     const commit = (await git(path, ['commit-tree', tree, '-p', 'HEAD', '-m', message], undefined, env)).trim();

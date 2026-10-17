@@ -1,8 +1,8 @@
-import { execFile } from 'node:child_process';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
 import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo } from '@shared/ipc';
+import { git } from './git';
 
 // ツリーに出さず、変更の監視もしないもの
 export const IGNORED_NAMES = new Set(['.git', 'node_modules', '.DS_Store', 'out', 'dist', '.next', '.turbo']);
@@ -75,11 +75,11 @@ export class Workspace {
   // @ファイル名の補完用。git 管理下なら追跡中と未追跡（.gitignore を除く）、そうでなければフォルダをたどる。
   // git の一覧は -z で読む（無いと、日本語などのファイル名を "\343\203\241.md" のようにエスケープして返す）
   async listFiles(): Promise<string[]> {
-    const fromGit = await new Promise<string[] | null>((resolve) => {
-      execFile('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: this.root, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) =>
-        resolve(err ? null : stdout.split('\0').filter(Boolean)),
-      );
-    });
+    // tanacode が自分で動かす git なので、フォルダの設定のコマンドを打ち消して動かす（git.ts の git）
+    const fromGit = await git(this.root, ['ls-files', '-co', '--exclude-standard', '-z']).then(
+      (stdout) => stdout.split('\0').filter(Boolean),
+      () => null,
+    );
     if (fromGit) return fromGit.slice(0, MAX_LISTED_FILES);
     const out: string[] = [];
     const walk = async (dir: string) => {

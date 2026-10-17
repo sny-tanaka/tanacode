@@ -219,6 +219,7 @@
     "git": {
       "commitMessageRequired": "Enter a commit message",
       "noDefaultBranch": "Couldn't determine the default branch",
+      "badBranch": "Not a valid branch name ({branch})",
       "diverged": "Switched to {name}, but couldn't bring it up to date because your local {name} has diverged from {target}"
     },
     "search": {
@@ -267,6 +268,7 @@
     "terminal": {
       "notRunning": "Claude Code isn't running",
       "switching": "Switching between the chat and terminal mode",
+      "exitedWhileSwitching": "Claude Code exited while switching, so it wasn't switched. Reopen it with Resume",
       "busy": "Can't switch to terminal mode while Claude is working, a prompt is waiting for an answer, or a message is waiting to be sent",
       "tuiBusy": "Claude Code is working. Switch back to the chat after the turn ends",
       "tasksRunning": "Background tasks are running. Switching stops them",
@@ -1194,6 +1196,7 @@
     "usage": {
       "fiveHour": "5-hour",
       "week": "Weekly",
+      "weekModel": "Weekly ({model})",
       "unknown": "No data",
       "reset": "Limit reset",
       "remainingMinutes": "Resets in {count}m",

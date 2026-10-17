@@ -118,6 +118,31 @@ describe('利用枠（UsageMonitor）', () => {
   const info = (updatedAt: number, five: number): StatusLineInfo =>
     ({ updatedAt, rateLimits: { fiveHour: { percent: five, resetsAt: 100 }, sevenDay: { percent: 10, resetsAt: 200 } } }) as unknown as StatusLineInfo;
 
+  it('値の無い知らせ（枠が無い statusLine・空の get_usage）では変えない。保存も控えも無ければ、空のまま始める', async () => {
+    const changes: UsageLimits[] = [];
+    const monitor = new usage.UsageMonitor(join(home, 'none', 'usage.json'), (u) => changes.push(u));
+    await monitor.start();
+    expect(monitor.get()).toBeNull();
+    monitor.fromStatusLine({ updatedAt: 1, rateLimits: null } as unknown as StatusLineInfo);
+    monitor.fromStatusLine({ updatedAt: 2, rateLimits: { fiveHour: null, sevenDay: null } } as unknown as StatusLineInfo);
+    monitor.fromUsage([], 3);
+    expect(monitor.get()).toBeNull();
+    expect(changes).toEqual([]);
+    // 読めない控え（時刻が無い・一覧でない）も使わない
+    for (const cache of [{ utilization: { limits: [] } }, { fetchedAtMs: 5, utilization: { limits: 'x' } }]) {
+      writeFileSync(join(home, '.claude.json'), JSON.stringify({ cachedUsageUtilization: cache }));
+      await monitor.refresh();
+    }
+    expect(monitor.get()).toBeNull();
+    // 控えのモデル別の枠の、リセットの時刻も読む
+    writeFileSync(
+      join(home, '.claude.json'),
+      JSON.stringify({ cachedUsageUtilization: { fetchedAtMs: 9, utilization: { limits: [{ kind: 'weekly_scoped', percent: 4, resets_at: '2026-10-20T00:00:00Z', scope: { model: { display_name: 'Haiku' } } }] } } }),
+    );
+    await monitor.refresh();
+    expect(monitor.get()?.limits).toEqual([{ label: '週', model: 'Haiku', percent: 4, resetsAt: Date.parse('2026-10-20T00:00:00Z') }]);
+  });
+
   it('statusLine から 5 時間枠と週の枠を受け取って保存し、古いものでは上書きしない', async () => {
     const file = join(home, 'usage.json');
     const changes: UsageLimits[] = [];
@@ -140,6 +165,32 @@ describe('利用枠（UsageMonitor）', () => {
     expect(restarted.get()?.updatedAt).toBe(2000);
   });
 
+  it('get_usage のモデル別の週の枠も持つ。あとで statusLine（モデル別の枠が無い）から届いても、モデル別の枠は残す', async () => {
+    const monitor = new usage.UsageMonitor(join(home, 'usage3.json'), () => {});
+    monitor.fromUsage(
+      [
+        { label: '5時間', percent: 30, resetsAt: 100 },
+        { label: '週', percent: 5, resetsAt: 200 },
+        { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+      ],
+      1000,
+    );
+    monitor.fromStatusLine(info(2000, 40));
+    expect(monitor.get()).toEqual({
+      limits: [
+        { label: '5時間', percent: 40, resetsAt: 100 },
+        { label: '週', percent: 10, resetsAt: 200 },
+        { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+      ],
+      updatedAt: 2000,
+      source: 'statusline',
+    });
+    // get_usage のモデル別の枠は、そのとき届いたものに置き換える（無くなったモデルの枠は残さない）
+    monitor.fromUsage([{ label: '週', model: 'Sonnet', percent: 8, resetsAt: null }], 3000);
+    expect(monitor.get()?.limits.filter((l) => l.model)).toEqual([{ label: '週', model: 'Sonnet', percent: 8, resetsAt: null }]);
+    expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(40);
+  });
+
   it('Claude Code の控え（/usage を開いたときのもの）の方が新しければ、それを使う', async () => {
     const monitor = new usage.UsageMonitor(join(home, 'usage2.json'), () => {});
     monitor.fromStatusLine(info(2000, 40));
@@ -148,7 +199,15 @@ describe('利用枠（UsageMonitor）', () => {
       JSON.stringify({
         cachedUsageUtilization: {
           fetchedAtMs: 3000,
-          utilization: { limits: [{ kind: 'session', percent: 55, resets_at: '2026-10-07T10:00:00Z' }, { kind: 'weekly_all', percent: 20, resets_at: null }] },
+          utilization: {
+            limits: [
+              { kind: 'session', percent: 55, resets_at: '2026-10-07T10:00:00Z' },
+              { kind: 'weekly_all', percent: 20, resets_at: null },
+              // モデル別の週の枠（scope.model）。モデルでないもの（surface）は出さない
+              { kind: 'weekly_scoped', percent: 70, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+              { kind: 'weekly_scoped', percent: 9, resets_at: null, scope: { surface: { display_name: 'Claude Code' } } },
+            ],
+          },
         },
       }),
     );
@@ -157,6 +216,7 @@ describe('利用枠（UsageMonitor）', () => {
       limits: [
         { label: '5時間', percent: 55, resetsAt: Date.parse('2026-10-07T10:00:00Z') },
         { label: '週', percent: 20, resetsAt: null },
+        { label: '週', model: 'Fable', percent: 70, resetsAt: null },
       ],
       updatedAt: 3000,
       source: 'claude-cache',

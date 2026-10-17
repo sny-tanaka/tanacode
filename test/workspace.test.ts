@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -76,6 +76,15 @@ describe('Workspace', () => {
     put('.gitignore', 'ignored/\n');
     put('ignored/c.ts', 'c');
     expect((await ws.listFiles()).sort()).toEqual(['.gitignore', 'a.ts', 'node_modules/p.js', 'src/b.ts']);
+  });
+
+  it('listFiles: フォルダの設定のコマンド（fsmonitor・フック）を動かさない', async () => {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    put('a.ts', 'a');
+    const mark = join(root, '..', 'fsmonitor-ran');
+    execFileSync('git', ['config', 'core.fsmonitor', `touch "${mark}"; false`], { cwd: root });
+    expect(await ws.listFiles()).toEqual(['a.ts']);
+    expect(existsSync(mark)).toBe(false);
   });
 
   it('listFiles・search: git のリポジトリでも、日本語や空白を含むファイル名をそのまま返す（追跡中も未追跡も）', async () => {

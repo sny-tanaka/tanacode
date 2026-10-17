@@ -499,6 +499,90 @@ describe('/clear のあと', () => {
   });
 });
 
+describe('途中でセッションが終わったとき', () => {
+  it('仕上げの頼み・/clear を送れず、そのときセッションも終わっていたら、終了として取りやめる', async () => {
+    script();
+    host.refuse = (text) => {
+      if (!isHandoff(text)) return false;
+      host.state = 'exited';
+      return true;
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+    statuses = [];
+    host.state = 'idle';
+    host.refuse = (text) => {
+      if (text !== '/clear') return false;
+      host.state = 'exited';
+      return true;
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+  });
+
+  it('/clear を打てず、手が空くのを待つあいだに終わった・新しい会話になるのを待つあいだに終わったら、終了として取りやめる', async () => {
+    script();
+    host.refuse = (text) => {
+      if (text !== '/clear') return false;
+      host.state = 'working';
+      setTimeout(() => (host.state = 'exited'), 10);
+      return true;
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+    statuses = [];
+    host.state = 'idle';
+    host.refuse = () => false;
+    script({ onClear: () => (host.state = 'exited') });
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+    expect(host.submitted.some(isResume)).toBe(false);
+  });
+
+  it('仕上げをやり直したあとも /clear を打てなければ、会話を消さずに取りやめる', async () => {
+    script();
+    host.refuse = (text) => text === '/clear';
+    compact.start(ID);
+    expect((await finished()).failure).toBe('interleaved');
+    expect(host.submitted.filter(isHandoff)).toHaveLength(2);
+  });
+});
+
+describe('仕上げのターンの見分け', () => {
+  // 仕上げのターンの、仕上げの頼みのあとの出来事（最初の回だけ。2 回目からはふつうに終わる）
+  const firstTurn = (events: ChatEvent[]) => {
+    let first = true;
+    script({
+      afterHandoff: () => {
+        host.events.push(...(first ? events : [{ type: 'turn-end' } as ChatEvent]));
+        host.state = 'idle';
+        first = false;
+      },
+    });
+  };
+
+  it('ターンの途中に届いた知らせは、別のターンに数えない', async () => {
+    firstTurn([{ type: 'notice', id: 'n', text: 'タスクが終わりました' }, { type: 'assistant-text', id: 'a1', text: '書きました' }, { type: 'turn-end' }]);
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted.filter(isHandoff)).toHaveLength(1);
+  });
+
+  it('仕上げのターンが終わったあとのターンの始まりは、別のターンが挟まったとみなして、仕上げをやり直す', async () => {
+    firstTurn([{ type: 'turn-end' }, { type: 'turn-start' }, { type: 'assistant-text', id: 'a2', text: '知らせを見ました' }, { type: 'turn-end' }]);
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted.filter(isHandoff)).toHaveLength(2);
+  });
+
+  it('仕上げのターンが終わったあとのツールの行も、別のターンが挟まったとみなす', async () => {
+    firstTurn([{ type: 'turn-end' }, { type: 'tool-use', id: 't', name: 'Bash', target: 'ls', input: 'ls' }, { type: 'turn-end' }]);
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted.filter(isHandoff)).toHaveLength(2);
+  });
+});
+
 describe('使えないとき', () => {
   it('「Claude にチェックリストを扱わせる」がオフなら、始めない。理由を返す', () => {
     enabled = false;

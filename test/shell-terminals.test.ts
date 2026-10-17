@@ -298,5 +298,29 @@ describe('ShellTerminals', () => {
     expect(shells.tail('shell-999', 1)).toBeNull();
     expect(shells.cursorLine('shell-999')).toBeNull();
     expect(shells.markCursor('shell-999')).toBeNull();
+    expect(shells.info('shell-999')).toBeNull();
+    expect(shells.applicationCursor('shell-999')).toBe(false);
+    return expect(shells.flush('shell-999')).resolves.toBeUndefined();
+  });
+
+  it('前面のプログラムが付けた題名と、矢印キーのアプリのモードを読む。空の題名は、無いことにする', async () => {
+    const { id } = shells.create('session-1', dir, 80, 24);
+    await waitForPrompt(id);
+    expect(shells.applicationCursor(id)).toBe(false);
+    await typeAndWait(id, "printf '\\033]0;build\\007\\033[?1h'\r");
+    expect(shells.info(id)?.title).toBe('build');
+    expect(shells.applicationCursor(id)).toBe(true);
+    await typeAndWait(id, "printf '\\033]0;\\007\\033[?1l'\r");
+    expect(shells.info(id)?.title).toBeNull();
+    expect(shells.applicationCursor(id)).toBe(false);
+  });
+
+  it('markCursor: シェルが終わって控えを捨てたあとは、何も読めない', async () => {
+    const { id } = shells.create('session-1', dir, 80, 24);
+    await waitForPrompt(id);
+    const since = shells.markCursor(id)!;
+    shells.write(id, 'exit\r');
+    await waitFor('シェルの終わり', () => exits.has(id));
+    expect(since()).toEqual([]);
   });
 });

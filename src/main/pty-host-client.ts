@@ -265,9 +265,15 @@ export class HostedPipe implements PipeHandle {
   }
 }
 
-// 常駐のホストとの接続。ホストが無ければ起動し、形（PROTOCOL）が違う古いホストなら止めて起動し直す
+// 常駐のホストとの接続。ホストが無ければ起動し、形（PROTOCOL）が違う古いホストなら止めて起動し直す。
+// ホストが落ちたあとは、起動・一覧の頼みでつなぎ直す。つなぐ処理は 1 本だけ走らせ（connecting）、つながるまでに送るものは溜めておいて、
+// つながったら順に送る（起動の直後の initialize・止める頼みなどを黙って捨てると、起動中のまま残るため）
 export class PtyHost implements PtyHostApi {
   private socket: Socket | null = null;
+  // つないでいる途中の処理（つながったか、あきらめたら null に戻す）
+  private connecting: Promise<void> | null = null;
+  // つながるまで溜めているもの。failed: つなげなかったときに知らせる（起動・一覧の頼み）
+  private queued: { message: ClientMessage; failed?: () => void }[] = [];
   private readonly ptys = new Map<string, HostedPty>();
   private readonly pipes = new Map<string, HostedPipe>();
   private readonly pending = new Map<number, (hosted: HostedInfo[]) => void>();
@@ -282,7 +288,7 @@ export class PtyHost implements PtyHostApi {
   // dir: ソケットとログを置くフォルダ（userData）
   static async start(dir: string, hostScript: string): Promise<PtyHost> {
     const host = new PtyHost(socketPathIn(dir, 'pty-host', 'pty'), hostScript, join(dir, 'pty-host.log'));
-    await host.connect();
+    await host.ensureConnected();
     return host;
   }
 
@@ -291,7 +297,11 @@ export class PtyHost implements PtyHostApi {
     const req = ++this.req;
     return new Promise((resolve) => {
       this.pending.set(req, resolve);
-      this.send({ t: 'list', req });
+      // つなげなければ、空の一覧（ホストが落ちたときと同じ）
+      this.request({ t: 'list', req }, () => {
+        this.pending.delete(req);
+        resolve([]);
+      });
     });
   }
 
@@ -364,14 +374,40 @@ export class PtyHost implements PtyHostApi {
     socket?.end();
   }
 
+  // つないでいる途中なら、つながってから送る。つながっておらず、つないでもいなければ捨てる（落ちたホストの、終わったプロセスへの頼み）
   send(message: ClientMessage): void {
-    this.socket?.write(`${JSON.stringify(message)}\n`);
+    if (this.socket) this.socket.write(`${JSON.stringify(message)}\n`);
+    else if (this.connecting) this.queued.push({ message });
   }
 
   // つながっていなければ、つないでから送る。つなげなければ failed
   private request(message: ClientMessage, failed: () => void): void {
-    if (!this.socket) void this.connect().then(() => this.send(message), failed);
-    else this.send(message);
+    if (this.socket) {
+      this.send(message);
+      return;
+    }
+    this.queued.push({ message, failed });
+    this.ensureConnected().catch(() => {});
+  }
+
+  // つなぐ処理を 1 本にまとめる。つながったら溜めたものを順に送り、あきらめたら起動・一覧の頼みに失敗を知らせる
+  private ensureConnected(): Promise<void> {
+    if (this.socket) return Promise.resolve();
+    if (!this.connecting) {
+      this.connecting = this.connect().then(
+        () => {
+          this.connecting = null;
+        },
+        (error: unknown) => {
+          this.connecting = null;
+          const queued = this.queued;
+          this.queued = [];
+          for (const { failed } of queued) failed?.();
+          throw error;
+        },
+      );
+    }
+    return this.connecting;
   }
 
   private async connect(): Promise<void> {
@@ -402,6 +438,10 @@ export class PtyHost implements PtyHostApi {
       await hello(socket);
     }
     this.use(socket);
+    // 溜めていたものを、つながってすぐ（あとから送るものより先に）送る
+    const queued = this.queued;
+    this.queued = [];
+    for (const { message } of queued) this.send(message);
   }
 
   // ホストを、アプリと切り離して起動する（アプリが終わっても止まらない）

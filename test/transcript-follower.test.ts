@@ -87,6 +87,40 @@ describe('TranscriptFollower', () => {
     expect(historyLoaded).toBe(1);
   });
 
+  it('はじめの会話ログを読み終える前に乗り換えたら（引き継いだ claude が、アプリが止まっている間に /clear していた）、乗り換えた先を読み終えたときに知らせる', async () => {
+    const first = join(dir, 's1.jsonl');
+    writeFileSync(first, line({ uuid: 'a1', type: 'user' }));
+    const next = join(dir, 's2.jsonl');
+    writeFileSync(next, line({ uuid: 'b1', type: 'user' }));
+    // 読み始める前（最初に読むのは、変更の通知か 150 ミリ秒ごとの見回り）に乗り換える
+    await follow(first, 0).offer(next);
+    expect(switches).toEqual([next]);
+    await expect.poll(() => historyLoaded).toBe(1);
+    expect(seen).toEqual([{ uuid: 'b1', isHistory: true }]);
+    await sleep(300);
+    expect(historyLoaded).toBe(1);
+  });
+
+  it('読み終える前に乗り換えた先に、まだ行が無ければ、すぐ読み終えたことにする。はじめの会話ログが空なら知らせない（読むものが無い）', async () => {
+    const first = join(dir, 's1.jsonl');
+    writeFileSync(first, line({ uuid: 'a1', type: 'user' }));
+    const empty = join(dir, 's2.jsonl');
+    writeFileSync(empty, '');
+    await follow(first, 0).offer(empty);
+    await expect.poll(() => historyLoaded).toBe(1);
+    follower!.stop();
+    // はじめから空の会話ログ（新しい会話。SessionManager が、はじめから読み終えたことにする）は、乗り換えても知らせない
+    historyLoaded = 0;
+    const blank = join(dir, 's3.jsonl');
+    writeFileSync(blank, '');
+    const later = join(dir, 's4.jsonl');
+    writeFileSync(later, line({ uuid: 'd1', type: 'user' }));
+    await follow(blank, 0).offer(later);
+    await expect.poll(uuids).toContain('d1');
+    await sleep(300);
+    expect(historyLoaded).toBe(0);
+  });
+
   it('別のフォルダ・まだ無いファイル・起動より前からある会話ログ（--resume で開いた会話）には乗り換えない', async () => {
     const first = join(dir, 's1.jsonl');
     writeFileSync(first, line({ uuid: 'a1', type: 'user' }));

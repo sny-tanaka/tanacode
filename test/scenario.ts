@@ -4,6 +4,8 @@ import type { ChatEvent, TranscriptEntry } from '@shared/chat';
 import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import { EFFORTS } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
+import type { PipeHandle } from '../src/main/pty-host-client';
+import { StreamClient } from '../src/main/stream/client';
 import type { Step } from './cli/mock-api';
 
 // Claude Code との互換性を確かめる台本と、アプリが読み取れるべきもの。
@@ -95,4 +97,25 @@ export function checkStatusLine(info: StatusLineInfo | null, version: string, tr
   expect(EFFORTS).toContain(info!.effort);
   expect(info!.context).not.toBeNull();
   expect(info!.transcriptPath).toBe(transcriptPath);
+}
+
+// stream-json の出力の行（Claude Code が標準出力に書いたもの）を、アプリの読み取り（StreamClient）にかけて、読めなかった行を数える。
+// malformed: 知っている種類だが、使う項目の形が違う行・JSON でない行 / unknown: 知らない種類の行（種類 → 数）。
+// Claude Code の更新で形が変わると、ここに出る（互換性の確認の test/cli/basic.test.ts と、控えの test/recorded.test.ts が見る）
+export function unreadableStreamLines(lines: string[]): { malformed: number; unknown: Record<string, number> } {
+  let listener: ((line: string, seq: number) => void) | null = null;
+  const pipe = {
+    onLine: (l: (line: string, seq: number) => void) => (listener = l),
+    onExit: () => {},
+    send: () => {},
+    end: () => {},
+    kill: () => {},
+    replay: () => {},
+    onReplayed: () => {},
+    detach: () => {},
+  } as PipeHandle;
+  const client = new StreamClient(pipe, { onMessage: () => {}, onPermission: () => {}, onCancel: () => {}, onExit: () => {} });
+  client.start();
+  lines.forEach((line, i) => listener?.(line, i + 1));
+  return { malformed: client.malformed, unknown: Object.fromEntries(client.unknown) };
 }

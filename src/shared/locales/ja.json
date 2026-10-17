@@ -217,6 +217,7 @@
     "git": {
       "commitMessageRequired": "コミットメッセージを入力してください",
       "noDefaultBranch": "デフォルトブランチが分かりません",
+      "badBranch": "ブランチの名前として使えません（{branch}）",
       "diverged": "{name} には切り替えましたが、手元の {name} が {target} と分かれているため最新まで進められませんでした"
     },
     "search": {
@@ -265,6 +266,7 @@
     "terminal": {
       "notRunning": "Claude Code が動いていません",
       "switching": "チャットとターミナルモードを切り替えている途中です",
+      "exitedWhileSwitching": "切り替えの途中で Claude Code が終了しました。切り替えずに止めたので、「再開」で開き直してください",
       "busy": "作業中・確認や質問への答え待ち・送る予定の発言があるときは、ターミナルモードに切り替えられません",
       "tuiBusy": "Claude Code が作業中です。ターンが終わってからチャットに戻してください",
       "tasksRunning": "バックグラウンドのタスクが動いています。切り替えると止まります",
@@ -1154,6 +1156,7 @@
     "usage": {
       "fiveHour": "5時間",
       "week": "週",
+      "weekModel": "週（{model}）",
       "unknown": "未取得",
       "reset": "リセット済み",
       "remainingMinutes": "あと {count}分",

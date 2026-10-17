@@ -707,6 +707,30 @@ describe('作り直し', () => {
   });
 });
 
+describe('フォルダの設定のフィルター（git-crypt など）', () => {
+  // 中身を変えて書き込み、元に戻して取り出すフィルター（rot13。なくてはならないもの）
+  beforeEach(() => {
+    git(repo, 'config', 'filter.rot.clean', 'tr a-z n-za-m');
+    git(repo, 'config', 'filter.rot.smudge', 'tr a-z n-za-m');
+    git(repo, 'config', 'filter.rot.required', 'true');
+    writeFileSync(join(repo, '.git', 'info', 'attributes'), '*.secret filter=rot\n');
+  });
+
+  it('作り直し・消す前の控えは、人が頼んだ操作なので、ターミナルの git と同じくフィルターを通して取り出し・書き込む', async () => {
+    const plan = await create();
+    writeFileSync(join(plan.path, 'kept.secret'), 'hello\n');
+    git(plan.path, 'add', 'kept.secret');
+    git(plan.path, 'commit', '-qm', 'secret');
+    writeFileSync(join(plan.path, 'new.secret'), 'world\n');
+    const removal = await removeWorktree(plan, plan.path);
+    // 控えには、フィルターを通した中身が入る（git-crypt なら、暗号にしたもの）
+    expect(git(repo, 'cat-file', '-p', `${removal.backupRef}:new.secret`)).toBe('jbeyq');
+    await restoreWorktree(plan, plan.path);
+    // 作り直した worktree には、フィルターで元に戻した中身が出る
+    expect(readFileSync(join(plan.path, 'kept.secret'), 'utf8')).toBe('hello\n');
+  });
+});
+
 describe('node_modules', () => {
   // 元のフォルダに package.json を置いてコミットし、node_modules を作る（lock: package-lock.json の中身。null なら置かない）
   const pkg = (dir: string, lock: string | null = '{}') => {

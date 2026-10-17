@@ -420,9 +420,12 @@ function isAppHook(command: string): boolean {
   return APP_HOOK_MARKS.some((mark) => command.includes(mark));
 }
 
-// チェックリストを使い続けさせるフックが、ターンの終わりを止めた記録（止めたフックのコマンドは blockingError に入る）
+// チェックリストを使い続けさせるフックが、ターンの終わりを止めた記録。文を渡して続けさせた記録（hook_additional_context。コマンドは載らないので、
+// 囲みで見分ける）と、前のバージョンのアプリが止めた記録（hook_blocking_error。止めたフックのコマンドは blockingError に入る）
 function isChecklistStop(a: Record<string, unknown> | undefined): boolean {
-  if (a?.type !== 'hook_blocking_error' || a.hookEvent !== 'Stop') return false;
+  if (a?.hookEvent !== 'Stop') return false;
+  if (a.type === 'hook_additional_context') return Array.isArray(a.content) && a.content.some((c) => typeof c === 'string' && c.includes(`<${CHECKLIST_REMINDER_TAG}>`));
+  if (a.type !== 'hook_blocking_error') return false;
   const command = (a.blockingError as { command?: unknown } | null | undefined)?.command;
   return typeof command === 'string' && command.includes(CHECKLIST_HOOK_ENV);
 }

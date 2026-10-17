@@ -363,6 +363,22 @@ describe('Remote Control を使わないセッション', () => {
     expect(app.manager.stateOf(other.id)).toBe('idle');
   });
 
+  it('切り替えの途中（Remote Control を切っている間）に claude が自分で終わったら、終了を出し、切り替えずに止まったままにする', async () => {
+    const { id, pipe } = await chatting();
+    // 切る要求に答えないまま、claude が落ちる
+    pipe.answers.set('remote_control', null);
+    const switching = app.manager.setTerminalMode(id, true);
+    await app.waitFor('切る要求', () => pipe.requests('remote_control').length === 1);
+    const spawned = app.host.spawned.length;
+    pipe.exit(1);
+    await expect(switching).rejects.toThrow(/切り替えの途中で Claude Code が終了しました/);
+    // 黙って消えない（チャットに終了を出す。止まっているので、送った発言は「再開したら送る」で預かる）
+    expect(app.events(id).find((e) => e.type === 'process-exit')).toMatchObject({ exitCode: 1 });
+    expect(app.manager.stateOf(id)).toBe('exited');
+    expect(app.host.spawned.length).toBe(spawned);
+    expect(app.manager.summary(id)?.terminal).toBe(false);
+  });
+
   it('Remote Control を使えない環境（initialize の remote_control_available が false）では、切る要求を送らない', async () => {
     app.answers.set('initialize', { ...INIT_RESPONSE, remote_control_available: false });
     const { id, pipe } = await chatting();
