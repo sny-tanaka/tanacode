@@ -172,8 +172,14 @@ export const ClaudePane = memo(function ClaudePane({
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
   // 一覧の中の押せる要素を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
-  // 位置を保つために一覧の上に足した余白（pad）、離したときに外す聞き手（stop）
-  const pressed = useRef<{ element: Element; top: number; base: number; pad: number; stop: () => void } | null>(null);
+  // 位置を保つために一覧の上と下に足した余白（pad。base は CSS で決まっている余白）、離したときに外す聞き手（stop）
+  const pressed = useRef<{
+    element: Element;
+    top: number;
+    base: { top: number; bottom: number };
+    pad: { top: number; bottom: number };
+    stop: () => void;
+  } | null>(null);
   // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）。
   // 押している間は送らずに、押した要素の位置を保つ（離したあとで送る）
   const toBottom = (list: HTMLElement) => {
@@ -187,20 +193,38 @@ export const ClaudePane = memo(function ClaudePane({
   // 押している間は、押した要素を画面の上で動かさない。押して離す間に、上の行が縮む・伸びる・増える・消える（終わったツールの行が
   // 消える動き・会話ログからあとで届く行）か、最下部を追いかけて、押した要素が動くと、離した所が要素から外れ、click が要素に届かない
   // （カードの選択肢を押しても効かない。E2E では Playwright の click が成功で返ったまま、カードが閉じるのを待って止まる）。
-  // ずれた分はスクロールで戻し、戻しきれない分（一覧がスクロールしない・端に着いた）は、一覧の上の余白で戻す
+  // ずれた分はスクロールで戻す。下へずれた（上の行が伸びた・増えた）分は、上に足した余白があればそこから引き、スクロールの余地が
+  // 足りなければ（一覧がスクロールしない・下の端に着いた）一覧の下に余白を足してから戻す。上へずれた（上の行が縮んだ・消えた）分で、
+  // スクロールで戻しきれないもの（上の端に着いた）は、一覧の上の余白で戻す
   const keepPressed = (list: HTMLElement) => {
     const hold = pressed.current;
     if (!hold || !hold.element.isConnected) return;
-    const delta = hold.element.getBoundingClientRect().top - hold.top;
-    if (Math.abs(delta) < 0.5) return;
-    const before = list.scrollTop;
-    list.scrollTop = before + delta;
+    const drift = () => hold.element.getBoundingClientRect().top - hold.top;
+    const applyPad = () => {
+      list.style.paddingTop = hold.pad.top > 0 ? `${hold.base.top + hold.pad.top}px` : '';
+      list.style.paddingBottom = hold.pad.bottom > 0 ? `${hold.base.bottom + hold.pad.bottom}px` : '';
+    };
+    let d = drift();
+    if (Math.abs(d) < 0.5) return;
+    if (d > 0 && hold.pad.top > 0) {
+      hold.pad.top = Math.max(0, hold.pad.top - d);
+      applyPad();
+      d = drift();
+    }
+    if (d > 0) {
+      const room = list.scrollHeight - list.clientHeight - list.scrollTop;
+      if (room < d) {
+        hold.pad.bottom += d - room;
+        applyPad();
+      }
+    }
+    list.scrollTop += d;
     lastScrollTop.current = list.scrollTop;
-    const rest = delta - (list.scrollTop - before);
-    if (Math.abs(rest) < 0.5) return;
-    // 上へずれた分は余白を足し、下へずれた分は足した余白から引く
-    hold.pad = Math.max(0, hold.pad - rest);
-    list.style.paddingTop = hold.pad > 0 ? `${hold.base + hold.pad}px` : '';
+    d = drift();
+    if (d < -0.5) {
+      hold.pad.top -= d;
+      applyPad();
+    }
   };
   // 離した。余白を外し、押している間に止めていた最下部の追いかけをする
   const releasePressed = (list: HTMLElement) => {
@@ -208,7 +232,8 @@ export const ClaudePane = memo(function ClaudePane({
     if (!hold) return;
     pressed.current = null;
     hold.stop();
-    if (hold.pad > 0) list.style.paddingTop = '';
+    if (hold.pad.top > 0) list.style.paddingTop = '';
+    if (hold.pad.bottom > 0) list.style.paddingBottom = '';
     if (stickToBottom.current) toBottom(list);
     else lastScrollTop.current = list.scrollTop;
   };
@@ -239,8 +264,8 @@ export const ClaudePane = memo(function ClaudePane({
     pressed.current = {
       element,
       top: element.getBoundingClientRect().top,
-      base: Number.parseFloat(getComputedStyle(list).paddingTop) || 0,
-      pad: 0,
+      base: { top: Number.parseFloat(getComputedStyle(list).paddingTop) || 0, bottom: Number.parseFloat(getComputedStyle(list).paddingBottom) || 0 },
+      pad: { top: 0, bottom: 0 },
       stop: () => {
         clearTimeout(timer);
         for (const [type, listener] of listeners) window.removeEventListener(type, listener, true);
@@ -281,12 +306,14 @@ export const ClaudePane = memo(function ClaudePane({
   }, [chat.items, chat.status, chat.unsent, scheduled, session.id]);
 
   // 行の中身や一覧の高さが、上の追いかけと関係なく変わったときも、最下部にいれば追いかける
-  // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる
+  // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる。
+  // 押せる要素を押している間は、最下部にいなくても（上を読んでいても）、押した要素の位置を保つ
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
     const resize = new ResizeObserver(() => {
-      if (stickToBottom.current) toBottom(list);
+      if (pressed.current) keepPressed(list);
+      else if (stickToBottom.current) toBottom(list);
     });
     resize.observe(list);
     for (const row of list.children) resize.observe(row);

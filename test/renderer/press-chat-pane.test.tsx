@@ -684,7 +684,8 @@ describe('ヘッダー', () => {
   });
 
   // 一覧の中のカードの選択肢を押して離す場面。大きさの変化の知らせ（ResizeObserver）はテストから送り、離したあとの片付けはタイマーを進めて流す。
-  // 選択肢の画面の上の位置は、ブラウザと同じく、中身の頭からの位置（offset。上の行の高さの変化 above を足す）＋ 一覧の上の余白 − スクロールで決まる
+  // 選択肢の画面の上の位置は、ブラウザと同じく、中身の頭からの位置（offset。上の行の高さの変化 above を足す）＋ 一覧の上の余白 − スクロールで決まる。
+  // 中身の高さ（scrollHeight）には、上と下の余白も入る
   function pressScene({ content, view, offset }: { content: number; view: number; offset: number }) {
     const callbacks: (() => void)[] = [];
     window.ResizeObserver = class {
@@ -700,7 +701,8 @@ describe('ヘッダー', () => {
     const option = screen.getByRole('button', { name: /はい/ });
     const scene = { above: 0, below: 0 };
     const pad = () => Number.parseFloat(list.style.paddingTop || '0');
-    sizeList(list, () => content + scene.above + scene.below + pad(), view);
+    const padBottom = () => Number.parseFloat(list.style.paddingBottom || '0');
+    sizeList(list, () => content + scene.above + scene.below + pad() + padBottom(), view);
     option.getBoundingClientRect = () => ({ top: offset + scene.above + pad() - list.scrollTop }) as DOMRect;
     return {
       list,
@@ -755,6 +757,44 @@ describe('ヘッダー', () => {
       fireEvent.pointerUp(option);
       vi.runOnlyPendingTimers();
       expect(list.scrollTop).toBe(1000 - 60 + 100 - 200);
+    });
+
+    // 直す前: 大きさの変化の知らせでは、最下部にいるときしか位置を戻さず、上の行が伸びた（選択肢が下へずれた）分は、スクロールしない一覧では戻せなかった
+    it('最下部にいない（少し上を読んでいる）ときも、上の行が縮んだ分をスクロールで戻す', () => {
+      const { list, option, scene, top, resized } = pressScene({ content: 1000, view: 200, offset: 600 });
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      fireEvent.wheel(list, { deltaY: -100 });
+      list.scrollTop = 500;
+      fireEvent.scroll(list);
+      fireEvent(list, new Event('scrollend'));
+      expect(top()).toBe(100);
+      fireEvent.pointerDown(option);
+      scene.above = -40;
+      resized();
+      expect(top()).toBe(100);
+      expect(list.scrollTop).toBe(460);
+    });
+
+    it('一覧がスクロールしないときに上の行が伸びたら（選択肢が下へずれる）、一覧の下に余白を足してスクロールで戻す。離したら余白を外す', () => {
+      const { list, option, scene, top, resized } = pressScene({ content: 150, view: 400, offset: 120 });
+      fireEvent.pointerDown(option);
+      scene.above = 30;
+      resized();
+      expect(top()).toBe(120);
+      expect(list.style.paddingTop).toBe('');
+      // 上に縮んでから伸びる（上に足した余白から先に戻す）
+      scene.above = -20;
+      resized();
+      expect(top()).toBe(120);
+      scene.above = 10;
+      resized();
+      expect(top()).toBe(120);
+      fireEvent.pointerUp(option);
+      vi.runOnlyPendingTimers();
+      expect(list.style.paddingTop).toBe('');
+      expect(list.style.paddingBottom).toBe('');
+      expect(top()).toBe(130);
     });
 
     // 直す前: 行の中ならどこを押しても位置を保ったので、文字を押してドラッグで選ぶときの自動のスクロールや、押したままのホイールまで戻していた
