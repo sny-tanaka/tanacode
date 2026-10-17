@@ -51,15 +51,19 @@ function* tsxFiles(dir) {
   }
 }
 
-// カバレッジの関数の記録から、start の位置で始まる関数が呼ばれた回数（見つからなければ null）。
+// カバレッジの関数の記録から、ソースの関数 node が呼ばれた回数（見つからなければ null）。
 // 単体テスト（ファイルごとに変換したもの）と E2E（ソースマップで戻したもの）では、同じ関数でも位置が少しずれて別々に入るので、
-// 近くにあるもののうち、いちばん多く呼ばれたものを使う
-function callsAt(fileCoverage, start) {
+// 近くにあるもののうち、いちばん多く呼ばれたものを使う。
+// 関数の始まり（記録の decl）か、本体の始まり（記録の loc）で探す。vite 8・vitest 5（oxc）の変換のソースマップは、
+// その場の矢印関数（onClick={() => …}）の始まりに印が無く、decl が手前の属性の名前の位置に戻るため（本体の始まりは合う）
+function callsAt(fileCoverage, node) {
   const { fnMap, f } = fileCoverage.data;
+  const near = (pos, start) => pos.line === start.line && Math.abs((pos.column ?? 0) - start.column) <= 2;
   let count = null;
   for (const [id, fn] of Object.entries(fnMap)) {
-    const near = [fn.decl.start, fn.loc.start].some((pos) => pos.line === start.line && Math.abs((pos.column ?? 0) - start.column) <= 2);
-    if (near) count = Math.max(count ?? 0, f[id]);
+    if ([fn.decl.start, fn.loc.start].some((pos) => near(pos, node.loc.start)) || near(fn.loc.start, node.body.loc.start)) {
+      count = Math.max(count ?? 0, f[id]);
+    }
   }
   return count;
 }
@@ -93,7 +97,7 @@ for (const file of tsxFiles(RENDERER)) {
         if (!fn) return;
       } else return;
       counted++;
-      const count = fileCoverage ? callsAt(fileCoverage, fn.loc.start) : 0;
+      const count = fileCoverage ? callsAt(fileCoverage, fn) : 0;
       if (count === 0 || count === null) {
         const element = path.parentPath.node.name;
         const tag = element.type === 'JSXIdentifier' ? element.name : element.type === 'JSXMemberExpression' ? `${element.object.name}.${element.property.name}` : '?';
