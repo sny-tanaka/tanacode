@@ -1228,6 +1228,16 @@ function useLoginShellPath(): void {
   }
 }
 
+// 同じ userData で動くアプリは 1 つだけにする（開発版とパッケージ版を同じ userData で起動したときなど）。2 つ動くと、同じ会話を
+// 2 回 claude --resume し、チェックリストなどの保存もぶつかる。2 つめは何も作らずに終え、1 つめはウインドウを前に出す
+const primary = app.requestSingleInstanceLock();
+if (!primary) {
+  quitDecided = true;
+  app.quit();
+} else {
+  app.on('second-instance', () => showWindow());
+}
+
 // プレビューの webview（ゲスト）が、ページの中のリンク・location の書き換え・リダイレクトで、http(s) のページの外
 // （file: や mailto: などの外部プロトコル）へ移らないようにする。新しいウィンドウは did-attach-webview の setWindowOpenHandler で扱う
 app.on('web-contents-created', (_e, contents) => {
@@ -1244,6 +1254,7 @@ app.on('web-contents-created', (_e, contents) => {
 });
 
 app.whenReady().then(async () => {
+  if (!primary) return;
   useLoginShellPath();
   // 窓を作る前に、権限の扱いを決めておく
   restrictPermissions();
@@ -1332,6 +1343,7 @@ app.on('window-all-closed', () => {
 // Mac の再起動・シャットダウンでは確認を出さない（止めずに終わる）。
 // なお kill（SIGTERM）は Chromium が受け取って、ふつうの終了と同じ流れになる（確認が出る。もう一度送ると強制的に終わる）
 app.whenReady().then(() => {
+  if (!primary) return;
   powerMonitor.on('shutdown', () => {
     quitDecided = true;
     shuttingDown = true;

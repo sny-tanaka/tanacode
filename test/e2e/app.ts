@@ -1,6 +1,7 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -142,12 +143,35 @@ export class E2EApp {
     };
   }
 
+  // 起動の引数（アプリの外から渡すもの）
+  private launchArgs(): string[] {
+    // Linux の root ではサンドボックスを使えない。macOS では、Cookie の暗号化の鍵をキーチェーンに取りに行かない（CI で確認が出て止まらないように）
+    const platformArgs = process.platform === 'linux' ? ['--no-sandbox'] : process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
+    return [...platformArgs, `--user-data-dir=${this.userData}`];
+  }
+
+  // 同じ userData で、もう 1 つアプリを起動する（二重起動の確かめ）。終わったときの終了コードを返す。
+  // timeoutMs のうちに終わらなければ、止めて null を返す
+  async launchAgain(timeoutMs = TIMEOUT_MS): Promise<number | null> {
+    const packaged = process.env.TANACODE_E2E_APP;
+    const bin = packaged ?? (createRequire(join(REPO, 'package.json'))('electron') as string);
+    const child = spawn(bin, packaged ? this.launchArgs() : [...this.launchArgs(), REPO], { cwd: this.root, env: this.env, stdio: 'ignore' });
+    return await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve(null);
+      }, timeoutMs);
+      child.once('exit', (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+    });
+  }
+
   // アプリを起動して、最初のウインドウを待つ
   private async start(): Promise<void> {
     const packaged = process.env.TANACODE_E2E_APP;
-    // Linux の root ではサンドボックスを使えない。macOS では、Cookie の暗号化の鍵をキーチェーンに取りに行かない（CI で確認が出て止まらないように）
-    const platformArgs = process.platform === 'linux' ? ['--no-sandbox'] : process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
-    const args = [...platformArgs, `--user-data-dir=${this.userData}`];
+    const args = this.launchArgs();
     this.electronApp = await electron.launch({
       // ビルドしたアプリは、リポジトリのフォルダを渡して起動する（package.json の main から out/main/index.js を読む。npm run dev と同じ）。
       // out/main/index.js を直に渡すと、アプリのフォルダ（app.getAppPath()）が out/main になり、macOS では開発中のアイコン

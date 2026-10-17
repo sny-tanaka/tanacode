@@ -186,6 +186,8 @@ function freshState() {
     // Electron の準備ができる（app.whenReady。既定はすぐに済む）
     whenReady: vi.fn(async (): Promise<void> => undefined),
     quit: vi.fn((..._args: unknown[]) => undefined),
+    // 同じ userData で動いているアプリが、ほかに無い（app.requestSingleInstanceLock。false は 2 つめの起動）
+    singleInstanceLock: true,
     // 終わったあとに起動し直す（app.relaunch）
     relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
@@ -287,6 +289,7 @@ export const electronModule = {
     getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
+    requestSingleInstanceLock: () => state.singleInstanceLock,
     relaunch: () => state.relaunch(),
     get dock() {
       return state.dock;

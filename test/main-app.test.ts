@@ -117,6 +117,30 @@ describe('起動', () => {
     expect(args[managerArg.settingsFiles]).toBe(the('SettingsFiles'));
   });
 
+  it('同じ userData のアプリがもう動いていたら（2 つめの起動）、何も作らずに、確かめずに終える', async () => {
+    await boot({ before: (s) => (s.singleInstanceLock = false) });
+    expect(state.quit).toHaveBeenCalledTimes(1);
+    // 終わるときに、Claude Code を止めるかの確認を出さない
+    state.app.emit('before-quit', fakeEvent());
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(state.ptyHostStart).not.toHaveBeenCalled();
+    expect(state.handlers.size).toBe(0);
+    expect(state.windows).toHaveLength(0);
+    expect(state.app.has('second-instance')).toBe(false);
+  });
+
+  it('2 つめを起動しようとしたら、動いているアプリのウインドウを前に出す（しまっていれば戻す）', async () => {
+    await boot();
+    const win = mainWindow();
+    win.minimized = true;
+    state.app.emit('second-instance', fakeEvent(), ['/Applications/tanacode.app/Contents/MacOS/tanacode'], '/');
+    expect(win.restore).toHaveBeenCalledTimes(1);
+    expect(win.show).toHaveBeenCalled();
+    expect(win.focus).toHaveBeenCalled();
+    expect(state.quit).not.toHaveBeenCalled();
+  });
+
   it('以前のレビュー機能が使っていたフォルダ（snapshots）を消す', async () => {
     await boot({ before: (s) => mkdirSync(join(s.userData, 'snapshots', 'old'), { recursive: true }) });
     await vi.waitFor(() => expect(existsSync(join(state.userData, 'snapshots'))).toBe(false));
