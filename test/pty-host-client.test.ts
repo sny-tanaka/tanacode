@@ -549,7 +549,7 @@ describe('PtyHost', () => {
     await host.shutdown();
   }, 15_000);
 
-  it('起動したホストが待ち受けなければ、つながらないとして失敗する。つながっていない間の起動の頼みは、-1 で終わらせる', async () => {
+  it('起動したホストが待ち受けなければ、つながらないとして失敗する。つながっていない間の起動の頼みは -1 で終わらせ、一覧は空で返し、溜めた入力は捨てる', async () => {
     const { host } = await connect();
     fake!.close();
     await sleep(50);
@@ -557,8 +557,18 @@ describe('PtyHost', () => {
     const pty = host.spawn(request);
     let exit: number | null = null;
     pty.onExit((c) => (exit = c));
+    // つないでいる途中に、起動の頼み・一覧・入力の行（溜められる）を重ねる
+    const pipe = host.spawnPipe(pipeRequest);
+    let pipeExit: number | null = null;
+    pipe.onExit((c) => (pipeExit = c));
+    pipe.send('{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}');
+    const listed = host.list();
     await waitFor('あきらめ', () => exit !== null, 8000);
     expect(exit).toBe(-1);
+    expect(pipeExit).toBe(-1);
+    expect(await listed).toEqual([]);
+    // 溜めていたものは捨てた（次につながっても、あきらめた頃の入力を送らない）
+    expect((host as unknown as { queued: unknown[] }).queued).toEqual([]);
     await expect(PtyHost.start(dir, hostScript('dead'))).rejects.toThrow(`pty ホストに繋がりません: ${socketPath()}`);
   }, 20_000);
 });
