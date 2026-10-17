@@ -52,7 +52,7 @@ import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
-import { noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
+import { keepClaudeScreens, noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
@@ -445,6 +445,10 @@ export function App() {
   // アーカイブしていないセッションと、新規セッションの画面のフォルダ（ブラウザのタブを持っておくもの。消した・アーカイブしたセッション、閉じた画面のタブは閉じる）
   const liveKey = [...(sessions ?? []).filter((s) => !s.archived).map((s) => s.id), ...(draftToolId ? [draftToolId] : [])].join(',');
   const liveSessionIds = useMemo(() => (liveKey ? liveKey.split(',') : []), [liveKey]);
+  // 一覧から消した・アーカイブしたセッションの、ターミナルモードの画面（xterm）を片付ける（一覧を読む前は片付けない）
+  useEffect(() => {
+    if (sessions) keepClaudeScreens(liveSessionIds);
+  }, [sessions, liveSessionIds]);
 
   useEffect(() => {
     if (!viewId || workspaces[viewId]) return;
@@ -1214,7 +1218,14 @@ export function App() {
             liveSessionIds={liveSessionIds}
             onClose={closeCenter}
           />
-          <TerminalPanel sessionId={toolId} waiting={folderWaitLabel} open={terminalOpen} onOpen={showShell} onClose={closeShell} />
+          <TerminalPanel
+            sessionId={toolId}
+            waiting={folderWaitLabel}
+            liveOwners={sessions ? liveSessionIds : null}
+            open={terminalOpen}
+            onOpen={showShell}
+            onClose={closeShell}
+          />
         </div>
       </div>
       <StatusBar

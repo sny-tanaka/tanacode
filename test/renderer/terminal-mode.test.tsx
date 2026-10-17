@@ -7,7 +7,7 @@ import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatState';
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
-import { noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
+import { keepClaudeScreens, noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
 import { switchTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
 import './dom';
 import { mockApi } from './mock-api';
@@ -207,6 +207,28 @@ describe('ターミナルモード: Claude Code の画面を出す', () => {
     expect(termOf(0).disposed).toBe(false);
     expect(termOf(0).written).toEqual(['s1 の出力', 'つづき']);
     expect(termOf(1).written).toEqual(['s2 の出力']);
+  });
+
+  it('一覧から消した・アーカイブしたセッションの画面（xterm）は片付ける。片付けたあとに届いた出力は、新しい画面に書く', () => {
+    function Host() {
+      useClaudeScreenOutput();
+      return null;
+    }
+    render(<Host />);
+    act(() => api.emit('pty.onData', { sessionId: 's1', data: 's1 の出力' }));
+    act(() => api.emit('pty.onData', { sessionId: 's2', data: 's2 の出力' }));
+    act(() => api.emit('pty.onData', { sessionId: 's3', data: 's3 の出力' }));
+    const [s1, s2, s3] = xterm.FakeTerminal.all;
+    // s2 は消した、s3 はアーカイブした（どちらも、一覧の動いているセッションに無い）
+    keepClaudeScreens(['s1']);
+    expect([s1.disposed, s2.disposed, s3.disposed]).toEqual([false, true, true]);
+    expect(s2.element?.isConnected ?? false).toBe(false);
+    act(() => api.emit('pty.onData', { sessionId: 's1', data: 'つづき' }));
+    expect(s1.written).toEqual(['s1 の出力', 'つづき']);
+    // 戻して動かしたセッションの出力は、新しい画面に書く
+    act(() => api.emit('pty.onData', { sessionId: 's3', data: '再開した' }));
+    expect(xterm.FakeTerminal.all.at(-1)!.written).toEqual(['再開した']);
+    expect(s3.written).toEqual(['s3 の出力']);
   });
 
   it('アーカイブ済みのセッションには画面が無いので、チャットのまま', () => {

@@ -30,6 +30,9 @@ type Props = {
   sessionId: string | null;
   // フォルダがまだ無い（worktree を作っている）あいだの文言。シェルは開かずに、これを出して待つ。null なら待っていない
   waiting?: string | null;
+  // シェルを持っておく持ち主（アーカイブしていないセッションと、新規セッションの画面のフォルダ）。ほかの持ち主のシェルは、止めて片付ける。
+  // null・省略は、まだ分からない（一覧を読む前）ので片付けない
+  liveOwners?: readonly string[] | null;
   open: boolean;
   // パネルを開く（チャットのコードブロックの「実行」など、閉じている間にコマンドを実行するとき）
   onOpen: () => void;
@@ -38,7 +41,7 @@ type Props = {
 
 // エディタの下のターミナル。セッションごとに、そのフォルダでシェルを好きなだけ開ける。
 // セッションを切り替えてもシェルは動き続け、戻ると同じ画面が出る
-export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose }: Props) {
+export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, open, onOpen, onClose }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const xterms = useRef(new Map<string, Xterm>());
   // xterm を用意する前に届いた出力
@@ -232,6 +235,29 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
       if (moved) setDiscarded((n) => n + 1);
     }
   }, [makeXterm, attachXterm, followTitle]);
+
+  // 一覧から消した・アーカイブしたセッションと、閉じた新規セッションの画面のフォルダのシェルを、止めて片付ける
+  // （xterm を残さない。画面から見えないシェルを、main で動かし続けない）
+  useEffect(() => {
+    if (!liveOwners) return;
+    const live = new Set(liveOwners);
+    const gone = Object.keys(shells).filter((owner) => !live.has(owner));
+    if (gone.length === 0) return;
+    for (const owner of gone) {
+      for (const tab of shells[owner]) {
+        window.tanacode.shell.kill(tab.id);
+        const x = xterms.current.get(tab.id);
+        x?.term.dispose();
+        x?.element.remove();
+        xterms.current.delete(tab.id);
+        taskIds.current.delete(tab.id);
+        pending.current.delete(tab.id);
+      }
+    }
+    const drop = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([owner]) => live.has(owner)));
+    setShells(drop);
+    setActive(drop);
+  }, [liveOwners, shells]);
 
   // 終わったコマンドのタブを閉じる。pty はもう無いので、画面のタブを片付け、メインプロセスに出力の控え（Claude が読むもの）を捨てさせる
   const closeTask = (id: string) => {

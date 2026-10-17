@@ -478,6 +478,32 @@ describe('TerminalPanel: シェルを開いている途中にセッションを�
   });
 });
 
+describe('TerminalPanel: 一覧から消した・アーカイブしたセッションのシェル', () => {
+  it('動いているセッション（と新規セッションの画面のフォルダ）に無い持ち主のシェルは、止めて xterm を片付ける。一覧をまだ読んでいない間（null）は何もしない', async () => {
+    const panel = (sessionId: string, liveOwners: string[] | null) => (
+      <TerminalPanel sessionId={sessionId} liveOwners={liveOwners} open onOpen={() => {}} onClose={() => {}} />
+    );
+    const { rerender } = render(panel('s1', null));
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    act(() => api.emit('shell.onOpened', { owner: 's1', id: 'task1', name: 'npm install', task: true }));
+    act(() => api.emit('shell.onExit', { id: 'task1', exitCode: 0 }));
+    rerender(panel('s2', null));
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    const [s1Shell, s1Task, s2Shell] = xterm.FakeTerminal.all;
+    expect(api.argsOf('shell.kill')).toEqual([]);
+    // s1 を消した（アーカイブも同じ。動いているセッションの一覧に無い）
+    rerender(panel('s2', ['s2']));
+    expect(api.argsOf('shell.kill')).toEqual([['sh1'], ['task1']]);
+    expect([s1Shell.disposed, s1Task.disposed, s2Shell.disposed]).toEqual([true, true, false]);
+    expect(s1Shell.element!.isConnected).toBe(false);
+    expect(tabNames()).toEqual(['zsh 1']);
+    // 片付けたシェルの終わりの知らせが、あとから届いても何もしない
+    act(() => api.emit('shell.onExit', { id: 'sh1', exitCode: 129 }));
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(api.argsOf('shell.kill')).toHaveLength(2);
+  });
+});
+
 // いまのコードでは落ちる（押しても効かない）。あるべき動きを書いておく
 describe('TerminalPanel: 押しても効かない（不具合）', () => {
   it('動いているコマンドのタブの ×（「止めて閉じる」）は、止めたあとタブも閉じる', async () => {

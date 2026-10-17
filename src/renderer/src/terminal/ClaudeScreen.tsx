@@ -45,6 +45,18 @@ function hold(): () => void {
   };
 }
 
+// 一覧から消した・アーカイブしたセッションの xterm を片付ける（App が、一覧が変わるたびに、動いているセッションの id で呼ぶ）。
+// アーカイブ済みのセッションは画面を出さないので、出している xterm は片付けない
+export function keepClaudeScreens(liveIds: readonly string[]): void {
+  const live = new Set(liveIds);
+  for (const [id, t] of terms) {
+    if (live.has(id)) continue;
+    t.term.dispose();
+    t.element.remove();
+    terms.delete(id);
+  }
+}
+
 // アプリが動いている間、どのセッションの Claude Code の画面の出力も受け取っておく（App が呼ぶ）。
 // 画面を出したときに、それまでの出力をさかのぼって読める
 export function useClaudeScreenOutput(): void {
