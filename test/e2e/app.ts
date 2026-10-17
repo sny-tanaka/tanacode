@@ -426,10 +426,14 @@ export class E2EApp {
 
   // target の真ん中を押し、離す前に during を動かしてから離す（押して離す間に画面が変わったときの確かめ）。
   // 離したクリックが target に届いたかと、押す間に画面に届いたイベントの記録を返す。
-  // 押す前に hover で、見えている範囲へ送り、位置が止まって押せるのを確かめてから、真ん中にマウスを置く（click と同じ確かめ）
+  // 押す前に hover で、位置が止まって押せるのを確かめてから、真ん中にマウスを置く（click と同じ確かめ）。target は見えているものに限る。
+  // hover にはスクロールさせない（scroll: 'none'。人と同じく、見えている所を押す）。hover は位置が止まっていないと確かめ直し、そのときは
+  // 見えている要素でもスクロールで送ってから位置を測る（Playwright 1.64 は 2 回目に block: 'end'）。チャットの一覧は、人の操作でない上への
+  // スクロールを最下部へ戻すので、マウスは送った先の位置（target の下）に残り、そこを押してしまう（CI で、カードの選択肢の 200px 下を押した）。
+  // click は、押した所に target が無ければ確かめ直すが、ここでは hover と押すのを分けているので、その確かめが効かない
   async pressHolding(target: Locator, during: () => Promise<void>): Promise<{ reached: boolean; lines: string[] }> {
     return this.recordPress(target, async () => {
-      await target.hover();
+      await target.hover({ scroll: 'none' });
       await this.page.mouse.down();
       await during();
       await this.page.mouse.up();
