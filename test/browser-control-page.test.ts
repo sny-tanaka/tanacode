@@ -1190,52 +1190,125 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(page.evaluated.map((code) => code.split('\n').at(-1))).toEqual(Array(7).fill('document.title'));
   });
 
-  // ページの中で動かす（実行するコードを、偽の location と document の上で本当に動かす）。動いたときに開いているページは、
-  // move に渡したもの（確かめたあと、動くまでの間に移動が確定した）。投げたら、Chromium と同じくコンソールに出して失敗にする
-  const runIn = (page: ReturnType<ReturnType<typeof setup>['open']>, move: { url: string; protocol: string; host: string; title: string }, log = true) => {
+  // ページの中で動かす（実行するコードを、偽の location と document の上で本当に動かす）。move.url: 動いたときにタブが開いているページ
+  // （getURL。確かめたあと、動くまでの間に移動が確定した）/ move.location: ページの中の location（既定は move.url。読み込みに失敗したページは
+  // chrome-error のページ）/ move.log: 投げたものを、Chromium と同じくコンソールに出すか（ページが window.onerror で true を返すと出ない）/
+  // move.after: 投げたあとに、ページがすること（移った先のページがコンソールに出す など）
+  type Move = { url: string; location?: string; title?: string; log?: boolean; after?: () => void };
+  const runIn = (page: ReturnType<ReturnType<typeof setup>['open']>, move: Move) => {
     page.evaluate = (code) => {
       page.url = move.url;
+      const where = new URL(move.location ?? move.url);
       try {
-        return runInNewContext(code, { location: { protocol: move.protocol, host: move.host, href: move.url }, document: { title: move.title } });
+        return runInNewContext(code, { location: { protocol: where.protocol, host: where.host, href: where.href }, document: { title: move.title ?? '' } });
       } catch (error) {
-        if (log) logConsole(page, 'error', `Uncaught ${String(error)}`);
+        if (move.log !== false) logConsole(page, 'error', `Uncaught ${String(error)}`);
+        move.after?.();
         throw new Error('Script failed to execute');
       }
     };
   };
+  const NOT_RUN = (where: string) => textResult(`The page moved to another origin (${where}) before the script ran, so the script was not run.`, true);
+  const UNKNOWN = (where: string) =>
+    textResult(
+      `The page moved to a page not allowed for Claude (${where}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
+      true,
+    );
 
-  it('確かめたページから別のオリジンへ移ったあとに動くときは、移った先のページでは動かさない', async () => {
+  it('確かめたページから別のオリジンへ移ったあとに動くときは、移った先のページでは動かさない（ポート違い・http から https も別のオリジン）', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/a');
-    runIn(page, { url: 'https://evil.example/', protocol: 'https:', host: 'evil.example', title: '外のページ' });
-    const result = await call('evaluate', { expression: 'document.title' });
-    expect(result).toEqual(textResult('The page moved to another origin (https://evil.example) before the script ran, so the script was not run.', true));
-    // コンソールの記録が移動で消えていても、同じ
-    runIn(page, { url: 'https://evil.example/', protocol: 'https:', host: 'evil.example', title: '外のページ' }, false);
+    runIn(page, { url: 'https://evil.example/', title: '外のページ' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('https://evil.example'));
     page.url = 'http://localhost:3000/a';
-    expect(await call('evaluate', { expression: 'document.title' })).toEqual(
-      textResult('The page moved to another origin (https://evil.example) before the script ran, so the script was not run.', true),
-    );
-    // 式が自分でエラーを出したあとに移ったときは、そのエラーを返す（動かなかったことにしない）
+    runIn(page, { url: 'http://localhost:3001/', title: '別のポート' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('http://localhost:3001'));
+    const local = open('http://myapp.local/');
+    runIn(local, { url: 'https://myapp.local/', title: 'https のページ' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('https://myapp.local'));
+  });
+
+  it('止めたあと、今のページが許していない先なら、ページのコンソールの文は返さない（オリジンだけ）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    // 移った先のページが window.onerror で目印を隠し、自分の文をコンソールに出す
+    runIn(page, { url: 'https://evil.example/', log: false, after: () => logConsole(page, 'error', '外のページの秘密の文') });
+    let result = await call('evaluate', { expression: 'document.title' });
+    expect(result).toEqual(UNKNOWN('https://evil.example'));
+    // 式が localhost で動いて投げ、そのあとに移った先もエラーを出す
     page.url = 'http://localhost:3000/a';
     page.evaluate = () => {
-      page.url = 'https://evil.example/';
       logConsole(page, 'error', 'Uncaught Error: 式のエラー');
+      page.url = 'https://evil.example/login?token=secret';
+      logConsole(page, 'error', '外のページの秘密の文', 'https://evil.example/login?token=secret', 3);
       throw new Error('Script failed to execute');
     };
-    expect(await call('evaluate', { expression: 'boom()' })).toEqual(textResult('Execution failed: Uncaught Error: 式のエラー', true));
+    result = await call('evaluate', { expression: 'boom()' });
+    expect(result).toEqual(UNKNOWN('https://evil.example'));
+    expect(textOf(result)).not.toContain('秘密');
+    // タブが閉じられた
+    page.url = 'http://localhost:3000/a';
+    page.evaluate = () => {
+      page.destroyed = true;
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('The tab was closed while the script was running, so it is not known whether the script ran.', true));
+  });
+
+  it('目印が無く、許す先の別のオリジンへ移っていたら、動かなかったとは言わず、式のエラーに移った先を添える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => {
+      page.url = 'http://localhost:3001/done';
+      logConsole(page, 'error', 'Uncaught Error: 送ったあとのエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'submit()' })).toEqual(
+      textResult('Execution failed: Uncaught Error: 送ったあとのエラー\n(The page moved to http://localhost:3001 while the script was running or just before it.)', true),
+    );
+    page.url = 'http://localhost:3000/a';
+    page.evaluate = () => {
+      page.url = 'http://localhost:3001/done';
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'submit()' })).toEqual(
+      textResult('Execution failed: Script failed to execute\n(The page moved to http://localhost:3001 while the script was running or just before it.)', true),
+    );
+  });
+
+  it('読み込みに失敗したページ（タブの URL は確かめたページのまま、ページは chrome-error）では、移ったとは言わず、開き直すよう伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'http://localhost:3000/a', location: 'chrome-error://chromewebdata/' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(
+      textResult(
+        'The current tab is not showing the page of http://localhost:3000 (for example, an error page because the page could not be loaded), so the script was not run. Reload it or open the page again with navigate.',
+        true,
+      ),
+    );
+  });
+
+  it('コンソールの記録が上限で前から削られても、動かしている間に出たエラーだけを返す', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    for (let i = 0; i < 200; i++) logConsole(page, 'error', `前のエラー ${i}`);
+    page.evaluate = () => {
+      logConsole(page, 'error', 'Uncaught Error: 新しいエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: Uncaught Error: 新しいエラー', true));
   });
 
   it('同じオリジンの中で移ったあとは動かす。文の並びも、最後の値を返す（ページで動かすときと同じ）', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/a');
-    runIn(page, { url: 'http://localhost:3000/b', protocol: 'http:', host: 'localhost:3000', title: '次のページ' });
+    runIn(page, { url: 'http://localhost:3000/b', title: '次のページ' });
     expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"次のページ"');
     page.url = 'http://localhost:3000/a';
     expect(textOf(await call('evaluate', { expression: 'const a = 2;\nlet b = a * 3;\nb + 1' }))).toBe('7');
     // 既定のポートは、オリジンにもページの host にも付かない
     const other = open('https://myapp.local/');
-    runIn(other, { url: 'https://myapp.local/x', protocol: 'https:', host: 'myapp.local', title: 'ローカル' });
+    runIn(other, { url: 'https://myapp.local/x', title: 'ローカル' });
     expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"ローカル"');
   });
 

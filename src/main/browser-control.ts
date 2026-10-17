@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
 import { BROWSER_MCP, browserTool, browserToolId, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
@@ -131,9 +132,10 @@ type AXNode = {
   parentId?: string;
 };
 
-type LogEntry = { level: string; text: string };
+// seq: 記録の通し番号（上限で前から削っても、移動で空にしても、番号は続く。ある時点からあとの記録を切り出すのに使う）
+type LogEntry = { level: string; text: string; seq: number };
 // webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
-type Logs = { console: LogEntry[]; failed: string[] };
+type Logs = { console: LogEntry[]; failed: string[]; seq: number };
 // タブ 1 つ（webview 1 つ）
 type Guest = {
   tabId: string;
@@ -245,13 +247,13 @@ export class BrowserControl {
   track(contents: WebContents): Logs {
     const existing = this.logs.get(contents.id);
     if (existing) return existing;
-    const logs: Logs = { console: [], failed: [] };
+    const logs: Logs = { console: [], failed: [], seq: 0 };
     const id = contents.id;
     this.logs.set(id, logs);
     contents.on('console-message', (event) => {
       const { level, message, sourceId, lineNumber } = event;
       const where = sourceId ? ` (${sourceId}${lineNumber ? `:${lineNumber}` : ''})` : '';
-      logs.console.push({ level, text: `${message}${where}` });
+      logs.console.push({ level, text: `${message}${where}`, seq: logs.seq++ });
       if (logs.console.length > MAX_CONSOLE) logs.console.splice(0, logs.console.length - MAX_CONSOLE);
     });
     // 新しいページを開いたら、コンソールと失敗した通信を空にする（「今のページを開いてから」のもの）
@@ -1201,31 +1203,22 @@ export class BrowserControl {
     return textResult(`Set the viewport to ${width} (page width ${viewport.width}px, height ${viewport.height}px)`);
   }
 
-  // ページの世界で動かす。確かめたページ（current）から、動くまでの間に別のオリジンへの移動が確定していたら、動かさない
-  // （確かめたあとに、前から読み込み中だった移動が確定することがある）。同じスクリプトの先頭で、今のページのオリジンを比べる。
-  // location とその protocol・host は、ページのスクリプトから書き換えられない（[LegacyUnforgeable]。同じ名前の let も置けない）。
-  // URL の origin ではなく protocol と host で比べるのは、CSP の sandbox のページでも origin が "null" にならないように。
-  // 比べる文は改行で区切り、式は手を入れずに続ける（文の並びも、最後の値を返す。ページで動かすときと同じ）
+  // ページの世界で動かす。evaluate の始めに読み直した今のページ（許した先）から、動くまでの間に別のオリジンへの移動が確定していたら、
+  // 動かさない（確かめたあとに、前から読み込み中だった移動が確定することがある）。同じスクリプトの先頭で、今のページのオリジンを比べる（guardedScript）
   private async evaluate(guest: Guest, expression: string): Promise<ToolResult> {
     const url = guest.contents.getURL();
     const origin = webOrigin(url);
     if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
-    const code = `if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(PAGE_CHANGED)};\n${expression}`;
+    // 目印は呼び出しごとに変える（ページが同じ文をコンソールに出して、止めたことにさせないように）
+    const mark = `${PAGE_CHANGED} ${randomUUID()}`;
     let value: unknown;
-    const logged = guest.logs.console.length;
+    const since = guest.logs.seq;
     try {
-      value = await guest.contents.executeJavaScript(code);
+      value = await guest.contents.executeJavaScript(guardedScript(origin, mark, expression));
     } catch (error) {
       // 投げられたエラーの中身は、例外には入らずコンソールに出る（届くのを少し待つ）
       await sleep(100);
-      const thrown = guest.logs.console.slice(logged).filter((l) => l.level === 'error').map((l) => l.text);
-      // 移動でコンソールの記録が消えていることもあるので、エラーが残っていなければ、今のページのオリジンでも見る
-      // （式が自分でエラーを出したときは、そのエラーを返す）
-      const now = guest.contents.isDestroyed() ? null : guest.contents.getURL();
-      if (thrown.some((t) => t.includes(PAGE_CHANGED)) || (thrown.length === 0 && now !== null && webOrigin(now) !== origin)) {
-        throw new ToolError(`The page moved to another origin (${now === null ? 'closed' : originShown(now)}) before the script ran, so the script was not run.`);
-      }
-      throw new ToolError(`Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`);
+      throw this.evaluateFailed(guest, origin, mark, since, error);
     }
     let text: string;
     try {
@@ -1234,6 +1227,32 @@ export class BrowserControl {
       text = String(value);
     }
     return textResult(clip(text, MAX_TEXT));
+  }
+
+  // evaluate が失敗したときに Claude に返すもの。origin: 動かす前に確かめたオリジン / mark: 先頭で比べる文が投げる目印 / since: 動かす前の記録の通し番号。
+  // 今のページが許していない先なら、ページのコンソールの文は返さない（オリジンだけ。ページが書いた文や、URL に入った値を渡さない）
+  private evaluateFailed(guest: Guest, origin: string, mark: string, since: number, error: unknown): ToolError {
+    if (guest.contents.isDestroyed()) return new ToolError('The tab was closed while the script was running, so it is not known whether the script ran.');
+    const now = guest.contents.getURL();
+    const nowOrigin = webOrigin(now);
+    const thrown = guest.logs.console.filter((l) => l.seq >= since && l.level === 'error').map((l) => l.text);
+    if (thrown.some((t) => t.includes(mark))) {
+      // タブの URL は確かめたオリジンのままなのに、ページの中は違う（読み込みに失敗したときのエラーのページ chrome-error など）
+      if (nowOrigin === origin) {
+        return new ToolError(
+          `The current tab is not showing the page of ${origin} (for example, an error page because the page could not be loaded), so the script was not run. Reload it or open the page again with navigate.`,
+        );
+      }
+      return new ToolError(`The page moved to another origin (${originShown(now)}) before the script ran, so the script was not run.`);
+    }
+    // 目印が無い（ページが window.onerror で隠した・動いてから移った など）。動いたかどうかは分からない
+    if (!this.allowedIn(guest, now)) {
+      return new ToolError(
+        `The page moved to a page not allowed for Claude (${originShown(now)}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
+      );
+    }
+    const failed = `Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`;
+    return new ToolError(nowOrigin === origin ? failed : `${failed}\n(The page moved to ${originShown(now)} while the script was running or just before it.)`);
   }
 
   // ---- 部品 ----
@@ -1531,7 +1550,15 @@ function originShown(url: string): string {
   return originOf(url) ?? 'invalid URL';
 }
 
-// evaluate の先頭の比べる文が、確かめたページから別のオリジンへ移っていたときに投げる目印
+// evaluate で動かすスクリプト。先頭で、今のページのオリジンを確かめたものと比べ、違えば mark を投げる。
+// location とその protocol・host は、ページのスクリプトから書き換えられない（[LegacyUnforgeable]。同じ名前の let も置けない）。
+// URL の origin ではなく protocol と host で比べるのは、CSP の sandbox のページで "null" にならないように。
+// 比べる文は改行で区切り、式は手を入れずに続ける（文の並びも、最後の値を返す。ページで動かすときと同じ）
+function guardedScript(origin: string, mark: string, expression: string): string {
+  return `if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(mark)};\n${expression}`;
+}
+
+// evaluate の先頭の比べる文が、確かめたページから別のオリジンへ移っていたときに投げる目印（呼び出しごとの乱数を足して使う）
 const PAGE_CHANGED = 'tanacode: the page moved to another origin before the script ran';
 
 // 止めた先へ進む方法（止めたことを伝える文に添える）
