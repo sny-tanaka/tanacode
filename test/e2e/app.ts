@@ -276,7 +276,8 @@ export class E2EApp {
   }
 
   // 失敗したときの手がかりを test-results/e2e に残す。画面の写し・メインプロセスの出力・モックの API の呼び出し・
-  // セッションの一覧（状態・操作待ち）と、選んでいるセッションの Claude Code の画面（ターミナルモードにして読む）
+  // セッションの一覧（状態・操作待ち）と、選んでいるセッションの Claude Code の画面（ターミナルモードにして読む）・
+  // セッションごとのチャットのイベント・stream-json の控え・会話ログ
   async keepEvidence(name: string): Promise<void> {
     mkdirSync(RESULTS, { recursive: true });
     const base = join(RESULTS, name.replace(/[^\p{L}\p{N}_-]+/gu, '-'));
@@ -313,6 +314,16 @@ export class E2EApp {
         ...this.presses.flatMap((lines, i) => [`## ${i + 1} 回目`, ...lines]),
       ].join('\n'),
     );
+    // セッションごとに、main が画面に配ったチャットのイベント（sessions.snapshot。何も変えない）。stream の行と会話ログの行が
+    // どの順でチャットに並んだか（ターンの終わりと発言の前後など）を、あとで確かめるため
+    const events = await page
+      ?.evaluate(async () => {
+        const api = (window as unknown as { tanacode: { sessions: { list(): Promise<{ id: string }[]>; snapshot(id: string): Promise<unknown> } } }).tanacode.sessions;
+        const list = await api.list();
+        return Object.fromEntries(await Promise.all(list.map(async (s) => [s.id, await api.snapshot(s.id)])));
+      })
+      .catch((error: unknown) => String(error));
+    if (events !== undefined) writeFileSync(`${base}.events.json`, JSON.stringify(events, null, 2));
     // stream-json の送受信の控え（userData の stream-logs）と、Claude Code の会話ログ（HOME の .claude/projects）の写し。
     // close() は使い捨てのフォルダごと消すので、ここで写しておく
     copyMatching(this.userData, (path) => path.split(sep).includes('stream-logs') && path.endsWith('.log'), `${base}.stream`);
