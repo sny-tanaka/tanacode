@@ -315,7 +315,10 @@ export const ClaudePane = memo(function ClaudePane({
       if (pressed.current) keepPressed(list);
       else if (stickToBottom.current) toBottom(list);
     });
-    resize.observe(list);
+    // 一覧そのものは外側の大きさ（border-box）で見張る。押している間に位置を保つため、この知らせの中で一覧に余白を足す（keepPressed）。
+    // 中身の大きさ（content-box）で見張ると、足した余白で一覧の大きさが変わったことになる。一覧は行より浅いので、その知らせは
+    // 同じ回のうちに届けられず、ブラウザが「ResizeObserver loop completed with undelivered notifications.」のエラーを出す
+    resize.observe(list, { box: 'border-box' });
     for (const row of list.children) resize.observe(row);
     const rows = new MutationObserver((records) => {
       for (const record of records) {
