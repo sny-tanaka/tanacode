@@ -2510,6 +2510,8 @@ export class SessionManager {
     // サブエージェントの中のツールには、チャットにカードが無い
     if (candidates.length > 0 && candidates.every((t) => t.sub)) return;
     const tool = candidates.length === 1 ? candidates[0] : undefined;
+    // 1 つに決められないときも、カードより上に出さないよう、本体の最後の呼び出しのカードが出るまで待たせ、そのあとに出す（どのカードにも付けない）
+    const anchor = tool ?? [...candidates].reverse().find((t) => !t.sub);
     const run: HookRun = {
       event: message.hook_event,
       name: message.hook_name,
@@ -2529,7 +2531,7 @@ export class SessionManager {
     // started）。分からないもの（スマホからの発言など）はすぐ出す。発言が会話に出ないまま終わったら（フックが止めたなど）、
     // ターンの終わりの前に出す（flushTurnEnd）
     const prompt = message.hook_event === 'UserPromptSubmit' && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
-    const holdFor = tool && !rt.shownTools.has(tool.id) ? tool.id : prompt;
+    const holdFor = anchor && !rt.shownTools.has(anchor.id) ? anchor.id : prompt;
     if (holdFor) {
       rt.heldHooks.set(holdFor, [...(rt.heldHooks.get(holdFor) ?? []), event]);
       return;

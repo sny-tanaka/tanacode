@@ -649,15 +649,17 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     pipe.emit(stream.user(resultA));
     app.append(id, a, b, resultB, resultA);
     await app.waitFor('フック', () => hooks(id).length === 4);
+    // h4 はカード a のあと、決められない h1〜h3 は最後の呼び出し（b）のカードのあと
     expect(hooks(id).map((r) => [r.name, r.toolUseId, r.hookId])).toEqual([
+      ['PostToolUse:Read', 'toolu_a', 'h4'],
       ['PreToolUse:Read', null, 'h1'],
       ['PreToolUse:Read', null, 'h2'],
       ['PostToolUse:Read', null, 'h3'],
-      ['PostToolUse:Read', 'toolu_a', 'h4'],
     ]);
-    // 付けるものは、そのカードが出てから
+    // 付けるものは、そのカードが出てから。決められないものも、カードより上に出さず、最後の呼び出しのカードが出てから
     const kinds = app.events(id).map((e) => (e.type === 'hook' ? `hook:${e.run.hookId}` : e.type === 'tool-use' ? `tool:${e.id}` : e.type));
     expect(kinds.indexOf('hook:h4')).toBeGreaterThan(kinds.indexOf('tool:toolu_a'));
+    for (const hook of ['hook:h1', 'hook:h2', 'hook:h3']) expect(kinds.indexOf(hook)).toBeGreaterThan(kinds.indexOf('tool:toolu_b'));
   });
 
   it('発言のとき（UserPromptSubmit）のフックは、その発言がチャットに出てから、そのすぐあとに出す（発言の上の、前のターンの続きに見せない）', async () => {
