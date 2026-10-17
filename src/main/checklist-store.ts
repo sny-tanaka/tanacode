@@ -1,17 +1,21 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ChecklistBook, emptyChecklistDoc, type ChecklistDoc } from '@shared/checklist-book';
 import type { Checklist } from '@shared/checklist';
+import { readSavedJson, unreadable } from './saved-json';
 
 export { ChecklistError } from '@shared/checklist-book';
 
 // チェックリストの保存。書き換えは ChecklistBook（@shared/checklist-book）が受け持つ。
-// セッションごとに userData/checklists/<セッションの id>.json に置く（tmp に書いてから rename。500ms ずつまとめて書く）
+// セッションごとに userData/checklists/<セッションの id>.json に置く（tmp に書いてから rename。500ms ずつまとめて書く）。
+// 読めない・形の分からないファイルは、空から始めても上書きしない（saved-json.ts）
 
 const SAVE_DELAY_MS = 500;
 
 export class ChecklistStore extends ChecklistBook {
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  // 保存しないセッション（読めない・形の分からないファイル。上書きも削除もしない）
+  private readonly unsaved = new Set<string>();
 
   constructor(
     private readonly dir: string,
@@ -26,7 +30,7 @@ export class ChecklistStore extends ChecklistBook {
     clearTimeout(this.timers.get(sessionId));
     this.timers.delete(sessionId);
     this.docs.delete(sessionId);
-    rmSync(this.file(sessionId), { force: true });
+    if (!this.unsaved.delete(sessionId)) rmSync(this.file(sessionId), { force: true });
   }
 
   flush(): void {
@@ -38,14 +42,14 @@ export class ChecklistStore extends ChecklistBook {
   }
 
   protected override load(sessionId: string): ChecklistDoc {
-    try {
-      const raw = JSON.parse(readFileSync(this.file(sessionId), 'utf8')) as Partial<ChecklistDoc>;
-      if (raw && raw.version === 1 && Array.isArray(raw.lists)) {
-        return { version: 1, lists: raw.lists, activity: Array.isArray(raw.activity) ? raw.activity : [], claudeSeenAt: raw.claudeSeenAt ?? 0 };
-      }
-    } catch {
-      // 無い・壊れたファイルは、空から始める
+    const file = this.file(sessionId);
+    let { data, writable } = readSavedJson(file, 'チェックリスト');
+    const raw = data as Partial<ChecklistDoc> | null;
+    if (raw && raw.version === 1 && Array.isArray(raw.lists)) {
+      return { version: 1, lists: raw.lists, activity: Array.isArray(raw.activity) ? raw.activity : [], claudeSeenAt: raw.claudeSeenAt ?? 0 };
     }
+    if (data !== null) ({ writable } = unreadable(file, 'チェックリスト'));
+    if (!writable) this.unsaved.add(sessionId);
     return emptyChecklistDoc();
   }
 
@@ -66,7 +70,7 @@ export class ChecklistStore extends ChecklistBook {
 
   private write(sessionId: string): void {
     const doc = this.docs.get(sessionId);
-    if (!doc) return;
+    if (!doc || this.unsaved.has(sessionId)) return;
     try {
       mkdirSync(this.dir, { recursive: true });
       const file = this.file(sessionId);

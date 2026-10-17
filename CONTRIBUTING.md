@@ -1308,7 +1308,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | --- | --- |
 | `sessions.json` | セッション一覧（タイトル・フォルダ・ワークスペースに追加したフォルダ・モデル・Remote Control を使うか・親セッションの ID（`parentId`）・最後に起動したチャットの claude の pid と initialize の返事の一部・アプリを閉じたときに送信中だった発言など）。読めない（壊れた JSON・形の違う中身）ときは空で始めるが、次の保存で一覧を消さないよう、元の中身を `sessions.json.broken-<時刻>` に控える |
 | `settings.json` | アプリ自身の設定（macOS の通知を出すか・新しいバージョンが出たら通知するか。右上のベルと、メニューの「新しいバージョンが出たら通知する」で切り替える。Homebrew で入れたとき、終了するときに新しいバージョンを入れるか（`updateOnQuit`。既定はオン）。登録した設定ファイルの名前とパス。Claude にアプリ内ブラウザを操作させるか・Claude に許す先。Claude にほかのセッションを扱わせるか（`sessionsControl`）。Claude にチェックリストを扱わせるか（`checklistControl`）。Claude にウォークスルーさせるか（`walkthroughControl`）。Claude にターミナルを使わせるか（`terminalControl`）） |
-| `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す） |
+| `checklists/<id>.json` | 各セッションのチェックリスト（リスト・カード・スレッド・ゴミ箱・Claude に伝える書き換えの記録。`0600`。セッションを一覧から削除すると消す）。読めない（権限が無いなど）・形の分からない（新しいバージョンのアプリが書いたものなど）ときは空で始め、上書きしないよう保存しない。壊れた JSON は `<id>.json.broken-<時刻>` に移してから空で始める（`saved-json.ts`） |
 | `browser.sock` | アプリ内ブラウザの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `sessions.sock` | ほかのセッションを扱う MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
 | `checklist.sock` | チェックリストの MCP の中継がつなぐソケット（`0600`。アプリが動いている間だけ。パスが長すぎるときは一時フォルダに置く） |
@@ -1321,7 +1321,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | `stream-logs/<id>.log`・`<id>.log.1` | チャットの claude との stream-json の送受信の控え（不具合を調べるため。発言・ツールの入出力がそのまま入る。`0600`。4MB を超えたら `.1` に回す。セッションを一覧から削除すると消す） |
 | `usage.json` | 最後に分かった利用枠 |
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
-| `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く） |
+| `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く）。読めない・形の分からないとき・壊れた JSON の扱いは、チェックリストと同じ |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
 | `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
 | `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
@@ -1372,6 +1372,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `turn-reports.ts`: Claude がターンの終わりの通知に載せる報告（`report_result`）を、セッションごとに持つ。新しいターンが始まったら捨てる
   - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信）を、手の空いたセッションに送る列（送り先がターミナルモードなら、人がボタンで頼んだものだけ TUI の入力欄に貼る）
   - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
+  - `saved-json.ts`: アプリが保存している JSON（チェックリスト・予約したメッセージ）の読み方（無ければ空・読めなければ上書きしない・壊れていれば横に移す）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
   - `checklist-mcp.ts` / `checklist-bridge.ts`: チェックリストの中継の入り口と、中継に渡す環境変数・`--mcp-config` のエントリ
   - `checklist-hook.ts`: Claude にチェックリストを使い続けさせる hooks（中継の入り口を `--hook` で動かす。会話ログからツールを数えて、アプリに聞く）

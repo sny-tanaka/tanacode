@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { t } from '@shared/i18n';
 import { SCHEDULE_LATE_MS, wakeupText, type ScheduledMessage } from '@shared/scheduled';
 import type { SessionState } from '@shared/session-tools';
+import { readSavedJson, unreadable } from './saved-json';
 
 // 予約を送るのに使う、セッションの操作（SessionManager）
 export type ScheduleHost = {
@@ -26,6 +27,8 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 // Claude が自分に入れた予約（by: 'claude'。sessions-control.ts の schedule_wakeup）も同じ流れに乗せ、送るときだけ囲み（WAKEUP_TAG）に入れる
 export class ScheduledMessages {
   private messages: ScheduledMessage[];
+  // 保存してよいか（読めない・形の分からないファイルは上書きしない）
+  private readonly writable: boolean;
   private timer: NodeJS.Timeout | null = null;
   // 送っている途中のもの（手が空くのを待っている間に取り消せるように）
   private readonly sending = new Map<string, AbortController>();
@@ -41,8 +44,11 @@ export class ScheduledMessages {
     private readonly onTrouble: (message: ScheduledMessage) => void = () => {},
     private readonly now: () => number = Date.now,
   ) {
-    // 送っている途中でアプリを閉じたものは、まだ送っていない。時刻を待っていたものと同じに扱い、過ぎていれば missed にする
-    this.messages = load(file).map((m) => (m.state === 'sending' ? { ...m, state: 'scheduled' } : m));
+    // 送っている途中でアプリを閉じたものは、まだ送っていない。時刻を待っていたものと同じに扱い、過ぎていれば missed にする。
+    // 読めない・形の分からないファイルは、空から始めても上書きしない（saved-json.ts）
+    const { messages, writable } = load(file);
+    this.messages = messages.map((m) => (m.state === 'sending' ? { ...m, state: 'scheduled' } : m));
+    this.writable = writable;
   }
 
   // 起動のあとに一度呼ぶ。時刻を過ぎたものを片付け、次の時刻を待つ
@@ -206,6 +212,12 @@ export class ScheduledMessages {
 
   // 保存して画面に知らせ、次の時刻を待ち直す。予約はたまにしか変わらないので、そのたびにすぐ書く（アプリを閉じる直前の変更も残す）
   private changed(): void {
+    if (this.writable) this.save();
+    this.onChanged(this.messages);
+    this.rearm();
+  }
+
+  private save(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
@@ -214,8 +226,6 @@ export class ScheduledMessages {
     } catch (error) {
       console.error('予約したメッセージを保存できませんでした', error);
     }
-    this.onChanged(this.messages);
-    this.rearm();
   }
 
   // 待っている時刻が変わったかもしれないので、待ち直す
@@ -229,16 +239,16 @@ export class ScheduledMessages {
   }
 }
 
-function load(file: string): ScheduledMessage[] {
-  try {
-    const data = JSON.parse(readFileSync(file, 'utf8')) as { messages?: unknown };
-    // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約だけに付ける（ほかの値は読み捨てる）
-    return Array.isArray(data.messages)
-      ? data.messages.filter(isMessage).map(({ by, ...m }) => ({ ...m, pastes: stringsOf(m.pastes), error: m.error ?? null, ...(by === 'claude' ? { by } : {}) }))
-      : [];
-  } catch {
-    return [];
-  }
+function load(file: string): { messages: ScheduledMessage[]; writable: boolean } {
+  const { data, writable } = readSavedJson(file, '予約したメッセージ');
+  if (data === null) return { messages: [], writable };
+  const saved = data as { version?: unknown; messages?: unknown };
+  if (saved.version !== 1 || !Array.isArray(saved.messages)) return { messages: [], writable: unreadable(file, '予約したメッセージ').writable };
+  // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約だけに付ける（ほかの値は読み捨てる）
+  const messages = saved.messages
+    .filter(isMessage)
+    .map(({ by, ...m }) => ({ ...m, pastes: stringsOf(m.pastes), error: m.error ?? null, ...(by === 'claude' ? { by } : {}) }));
+  return { messages, writable };
 }
 
 function stringsOf(value: unknown): string[] {

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -424,10 +424,39 @@ describe('ScheduledMessages の断る・片付ける', () => {
     // 札は、文字のものだけを読む
     writeFileSync(file, JSON.stringify({ version: 1, messages: [{ ...good, pastes: ['ログ\n2 行目', 3] }, { ...good, id: 'm5', pastes: 'x' }] }));
     expect(create({ s1: 'idle' }).scheduled.list().map((m) => m.pastes)).toEqual([['ログ\n2 行目'], []]);
-    writeFileSync(file, JSON.stringify({ version: 1, messages: 'x' }));
-    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
+  });
+
+  it('読めないファイル（無いほかの理由）・形の分からないファイルは、空で始めても上書きしない。壊れたファイルは横に移してから空で始める', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 新しいバージョンのアプリが書いた形・一覧でない
+    for (const text of [JSON.stringify({ version: 2, messages: [] }), JSON.stringify({ version: 1, messages: 'x' })]) {
+      writeFileSync(file, text);
+      const { scheduled } = create({ s1: 'idle' });
+      expect(scheduled.list()).toEqual([]);
+      scheduled.add('s1', '残らない', [], START + MINUTE);
+      expect(readFileSync(file, 'utf8')).toBe(text);
+      scheduled.dispose();
+    }
+    // 読めない（読む権限が無い）
+    const locked = JSON.stringify({ version: 1, messages: [] });
+    writeFileSync(file, locked);
+    chmodSync(file, 0o000);
+    const blocked = create({ s1: 'idle' }).scheduled;
+    blocked.add('s1', '残らない', [], START + MINUTE);
+    chmodSync(file, 0o600);
+    expect(readFileSync(file, 'utf8')).toBe(locked);
+    blocked.dispose();
+    // 壊れたファイルは、中身を横（<名前>.broken-<時刻>）に残し、新しく保存する
     writeFileSync(file, '{壊れた');
-    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
+    const fresh = create({ s1: 'idle' }).scheduled;
+    expect(fresh.list()).toEqual([]);
+    fresh.add('s1', '残る', [], START + MINUTE);
+    const moved = readdirSync(dir).filter((name) => name.startsWith('scheduled-messages.json.broken-'));
+    expect(moved.map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { messages: ScheduledMessage[] }).messages.map((m) => m.text)).toEqual(['残る']);
+    fresh.dispose();
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
   });
 
   it('dispose のあとは、時刻になっても送らない', async () => {
