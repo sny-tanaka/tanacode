@@ -12,6 +12,7 @@ import {
   unsentView,
   type ChatEvent,
   type HookRun,
+  type PartialBlock,
   type TranscriptEntry,
   type UnsentPrompt,
 } from '@shared/chat';
@@ -94,6 +95,7 @@ import type {
   UsageResponse,
   UserMessage,
 } from './stream/protocol';
+import { PartialText } from './stream/partial';
 import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf, type UsageReport } from './stream/state';
 import {
   hideWorktrees,
@@ -135,6 +137,8 @@ const TOOL_HOOK_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailu
 const TASK_STOP_WAIT_MS = 10_000;
 // 作業中の経過時間を知らせ直す間隔
 const PROGRESS_TICK_MS = 1000;
+// 書いている途中の文を画面へ送る間隔の下限（書いている途中の行は数文字ごとに届くので、まとめて送る）
+const PARTIAL_INTERVAL_MS = 50;
 
 // ターミナルモードで Claude Code の画面を見ていないときの pty サイズ（ターミナルモードで見ているあいだだけ、ペインの大きさに合わせる）
 export const DEFAULT_PTY_SIZE = { cols: 120, rows: 40 };
@@ -245,6 +249,9 @@ type Runtime = {
   // 作業中の進み具合（ターンの間だけ）
   progress: Progress | null;
   progressTimer: NodeJS.Timeout | null;
+  // 書いている途中の応答の文と思考（チャットの最後に出し、会話ログに出たら外す）と、それを画面へ送るのを待っている時計
+  partial: PartialText;
+  partialTimer: NodeJS.Timeout | null;
   // 起動の見張り（initialize の返事を待つ間）。after（ミリ秒）を過ぎたら、経過と標準エラーの末尾を進み具合（starting）で知らせる
   startWatch: { since: number; after: number; timer: NodeJS.Timeout; stderr: string } | null;
   // 送ったが、まだ会話に出ていない発言（uuid → 発言）
@@ -792,7 +799,7 @@ export class SessionManager {
   snapshot(id: string): SessionSnapshot {
     const rt = this.runtimes.get(id);
     if (!rt) return { sessionId: id, fromSeq: 0, events: [] };
-    return { sessionId: id, fromSeq: rt.seq - rt.events.length, events: rt.events };
+    return { sessionId: id, fromSeq: rt.seq - rt.events.length, events: rt.events, partial: rt.partial.view() };
   }
 
   subagents(id: string): SubagentRun[] {
@@ -1828,6 +1835,8 @@ export class SessionManager {
         starterSeen: false,
         progress: null,
         progressTimer: null,
+        partial: new PartialText(),
+        partialTimer: null,
         startWatch: null,
         unsent: new Map(),
         sendChain: Promise.resolve(),
@@ -1863,6 +1872,8 @@ export class SessionManager {
     // 再開すると過去の会話を読み直すので、そこから集め直す
     rt.knowledge.reset();
     rt.context.reset();
+    // 前の claude の書きかけの文は捨てる（起動の知らせと一緒に送る）
+    rt.partial.clear();
     this.pushEvents(id, [{ type: 'process-start' }]);
     const runtime = rt;
     runtime.attention = null;
@@ -1982,6 +1993,8 @@ export class SessionManager {
           runtime.turnOpen = false;
           this.stopProgress(id, runtime);
           this.stopStartWatch(id, runtime);
+          // 書きかけのまま終わった文は、会話ログに出ないので捨てる（このあとの終了の知らせと一緒に送る）
+          runtime.partial.clear();
           if (runtime.unsent.size > 0) {
             runtime.unsent.clear();
             this.emitQueue(id, runtime);
@@ -2289,6 +2302,7 @@ export class SessionManager {
         if (message.parent_tool_use_id || past) return;
         this.openTurn(id, rt, past);
         if (rt.progress?.streamEvent(message)) this.emitProgress(id, rt);
+        if (rt.partial.event(message.event)) this.schedulePartial(id, rt);
         return;
       case 'tool_progress':
         if (message.parent_tool_use_id || past) return;
@@ -2304,6 +2318,7 @@ export class SessionManager {
         // 新しい会話の最初の応答までは、コンテキストの量を分からないとする（ヘッダーのメーターは会話ログの量。無ければ空）
         if (past) return;
         rt.freshConversation = true;
+        rt.partial.clear();
         this.updateStatus(id, rt, { context: null });
         return;
     }
@@ -2504,6 +2519,8 @@ export class SessionManager {
     // カードが会話ログに出ないまま残ったフックは、ターンの終わりの前に、そのまま出す
     const held = [...rt.heldHooks.values()].flat();
     rt.heldHooks.clear();
+    // 会話ログに出ないまま残った書きかけの文は捨てる（ターンの終わりと一緒に送る）
+    rt.partial.clear();
     this.pushEvents(id, [...held, ...(ending.error ? [ending.error] : []), ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     // モデルを呼ばなかったターンは、未読・通知・タイトルの頼みを出さない。最適化圧縮の通知の数え方（turnNotice。流れの途中で
     // 出さなかった通知を覚えている）にも入れない
@@ -2891,6 +2908,8 @@ export class SessionManager {
     rt?.context.handle(entry);
 
     if (rt) this.followBranch(id, rt, entry, isHistory);
+    // 書いている途中の文のうち、この行で会話ログに出たブロックを外す（この行のイベントと同じ配信で送り、同じ場所で入れ替える）
+    const covered = !!rt && !past && !rt.terminal && rt.partial.cover(entry);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない
     let events = toChatEvents(entry, record.cwd, false, rememberImage).filter((e) => !(past && e.type === 'remote-control'));
     // 今の claude のターンの終わりは、stream-json の result で決める（-p は turn_duration を書かない。ほかの行の終わりと二重にしない）。
@@ -2934,6 +2953,7 @@ export class SessionManager {
         rt.promptLine = null;
       }
     }
+    if (events.length === 0 && covered) this.emitPartial(id, rt!);
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
       this.pushEvents(id, events, !isHistory);
@@ -2968,14 +2988,40 @@ export class SessionManager {
     if (changed) this.emitSessions();
   }
 
+  // チャットのイベントを配信する。書いている途中の文が変わっていれば、同じ配信に載せる（会話ログに出た応答と、その書きかけを、
+  // 画面で同じときに入れ替える）
   private pushEvents(id: string, events: ChatEvent[], live = true): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
     const fromSeq = rt.seq;
     rt.seq += events.length;
     rt.events.push(...events);
-    this.listeners.onChat({ sessionId: id, fromSeq, events, live });
+    const partial = this.takePartial(rt);
+    this.listeners.onChat({ sessionId: id, fromSeq, events, live, ...(partial ? { partial } : {}) });
     this.changed(id);
+  }
+
+  // 書いている途中の文を、PARTIAL_INTERVAL_MS に 1 回までまとめて送る
+  private schedulePartial(id: string, rt: Runtime): void {
+    if (rt.partialTimer) return;
+    rt.partialTimer = setTimeout(() => {
+      rt.partialTimer = null;
+      if (this.runtimes.get(id) === rt) this.emitPartial(id, rt);
+    }, PARTIAL_INTERVAL_MS);
+    rt.partialTimer.unref?.();
+  }
+
+  // 書いている途中の文だけを送る（変わっていれば）。イベントは無いので、通し番号は進めない
+  private emitPartial(id: string, rt: Runtime): void {
+    const partial = this.takePartial(rt);
+    if (partial) this.listeners.onChat({ sessionId: id, fromSeq: rt.seq, events: [], live: true, partial });
+  }
+
+  // 前に送ったときから変わっていれば、書いている途中の文の今の全部。送るのを待っている時計は止める（ここで送るため）
+  private takePartial(rt: Runtime): PartialBlock[] | null {
+    if (rt.partialTimer) clearTimeout(rt.partialTimer);
+    rt.partialTimer = null;
+    return rt.partial.take();
   }
 
   private emitSessions(): void {

@@ -21,7 +21,7 @@ export const FIXTURE_ROOT = '/tmp/tanacode-cli';
 const DROPPED_ATTACHMENTS = ['prompt_snapshot', 'skill_listing', 'agent_listing_delta', 'remote_session_change'];
 
 // 控え（TANACODE_RECORD=1。test/cli/claude-run.ts の record）に残す行を選ぶ。会話ログは、アプリが読まない大きな添付を除く。
-// stream-json の行は、書いている途中の文（stream_event。多く、アプリは進み具合にしか使わない）を除く。
+// stream-json の行は、書いている途中の文（stream_event。数が多く、形はテストの偽物の行で確かめる）を除く。
 // JSON でない行は残す（止まると cli のテストの後片付けが動かない。残せば、控えのテストが読めない行として数える）
 export function fixtureLines(file: 'transcript.jsonl' | 'stream.jsonl', lines: string[]): string[] {
   const dropped = (value: { type?: unknown; attachment?: { type?: unknown } }) =>

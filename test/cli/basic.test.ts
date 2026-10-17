@@ -122,6 +122,25 @@ describe(`Claude Code ${version}`, () => {
       checkChat(run.entries, run.chat(), run.cwd);
     });
 
+    it('書いている途中の文を配信し、その応答が会話ログに出たら、同じ配信で外す（stream の応答の ID と、会話ログの message.id・apiBlockIndex が合う）', () => {
+      // モックの API は、文を 1 回の続きの行で送るので、途中の文は書き終わりと同じ文
+      let shown = new Map<string, string>();
+      const swapped: string[] = [];
+      for (const batch of run.chatBatches) {
+        if (!batch.partial) continue;
+        const now = new Map(batch.partial.filter((b) => b.kind === 'text').map((b) => [b.id, b.text]));
+        for (const [id, text] of shown) {
+          if (now.has(id)) continue;
+          // 外れたブロックは、同じ配信で会話ログの応答として出ている（ターンの終わりで捨てたのではない）
+          expect(batch.events.some((e) => e.type === 'assistant-text' && e.text.trim() === text), `${id}「${text}」`).toBe(true);
+          swapped.push(text);
+        }
+        shown = now;
+      }
+      expect(swapped).toContain('チェック完了');
+      expect(shown.size).toBe(0);
+    });
+
     it('作業が終わると、完了を知らせて待機中に戻る', async () => {
       await run.waitUntil('完了の知らせ', () => run.turnsCompleted.length > 0);
       expect(run.turnsCompleted[0]).toMatchObject({ id: run.sessionId, title: PROMPT, backgroundTasks: 0 });

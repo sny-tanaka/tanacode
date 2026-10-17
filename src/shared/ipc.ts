@@ -1,4 +1,4 @@
-import type { ChatEvent } from './chat';
+import type { ChatEvent, PartialBlock } from './chat';
 import type { Activity, PermissionMode } from './screen';
 import type { SessionState } from './session-tools';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from './questions';
@@ -390,8 +390,9 @@ export type SessionPermission = { sessionId: string; permission: PendingPermissi
 
 // seq はセッションごとのイベント通し番号。スナップショットとライブ配信の重複を除くのに使う
 // live: 今まさに起きたこと。false は再開時に読み込んだ過去の会話
-export type ChatBatch = { sessionId: string; fromSeq: number; events: ChatEvent[]; live: boolean };
-export type SessionSnapshot = { sessionId: string; fromSeq: number; events: ChatEvent[] };
+// partial: 書いている途中の応答の今の全部（変わったときだけ。events が空のこともある。通し番号には数えない）
+export type ChatBatch = { sessionId: string; fromSeq: number; events: ChatEvent[]; live: boolean; partial?: PartialBlock[] };
+export type SessionSnapshot = { sessionId: string; fromSeq: number; events: ChatEvent[]; partial?: PartialBlock[] };
 export type PtyData = { sessionId: string; data: string };
 // ユーザーが開いたシェル（統合ターミナル）
 export type ShellData = { id: string; data: string };

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { QuestionAnswer } from '@shared/chat';
+import type { PartialBlock, QuestionAnswer } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { BashTask, TaskRef } from '@shared/task';
 import { useBlockTranslation } from '../translate/BlockTranslation';
@@ -115,7 +115,7 @@ export const ChatRow = memo(function ChatRow({
     );
   }
   if (item.kind === 'text') {
-    return <ResponseBlock text={item.text} onRunCommand={onRunCommand} />;
+    return <ResponseBlock text={item.text} onRunCommand={onRunCommand} settled={item.settled} />;
   }
   if (item.kind === 'notice') {
     // 子セッションからの知らせには、その子へ移るリンクを、チェックリストの知らせには、そのカードを開くリンクを添える
@@ -188,7 +188,7 @@ export const ChatRow = memo(function ChatRow({
     );
   }
   if (item.kind === 'thinking') {
-    return <ThinkingBlock text={item.text} />;
+    return <ThinkingBlock text={item.text} settled={item.settled} />;
   }
   if (item.answers) return <AnswersCard answers={item.answers} />;
   if (item.sentFiles) {
@@ -222,11 +222,12 @@ export const ChatRow = memo(function ChatRow({
 
 // Claude の応答の本文。日本語でない文なら、右上に翻訳のボタンを出しておき、押すと下に訳文を出す。
 // ボタンは本文より先に置いて右へ回り込ませる（本文はボタンをよけて折り返すので、文字が隠れない）
-function ResponseBlock({ text, onRunCommand }: { text: string; onRunCommand?: (command: string) => void }) {
+// settled: 書いている途中の文から入れ替わった（出るときの動きを付けない）
+function ResponseBlock({ text, onRunCommand, settled }: { text: string; onRunCommand?: (command: string) => void; settled?: boolean }) {
   // 訳文のコードブロックには、実行ボタンを付けない（原文の方にある）
   const translation = useBlockTranslation(text, (translated) => <Markdown text={translated} />);
   return (
-    <div className="chat-response">
+    <div className={`chat-response${settled ? ' settled' : ''}`}>
       {translation.button}
       <Markdown text={text} onRunCommand={onRunCommand} />
       {translation.panel}
@@ -235,10 +236,10 @@ function ResponseBlock({ text, onRunCommand }: { text: string; onRunCommand?: (c
 }
 
 // 思考（本文が記録されているときだけ）。翻訳のボタンは見出しの横に出し、訳文は本文の下に出す
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ text, settled }: { text: string; settled?: boolean }) {
   const translation = useBlockTranslation(text, (translated) => <div className="chat-thinking-text">{translated}</div>);
   return (
-    <details className="chat-thinking" open>
+    <details className={`chat-thinking${settled ? ' settled' : ''}`} open>
       <summary>
         <DisclosureIcon open={false} />
         {t('chat.row.thinking')}
@@ -249,6 +250,27 @@ function ThinkingBlock({ text }: { text: string }) {
     </details>
   );
 }
+
+// Claude が書いている途中の応答の文・思考。書き終わって会話ログに出たら、同じ場所で本文（ResponseBlock）・思考（ThinkingBlock）に
+// 入れ替わる。途中の文は Markdown にせず、素の文で出す（決めたこと）。翻訳のボタンと実行のボタンは、書き終わってから出す
+export const PartialRow = memo(function PartialRow({ block }: { block: PartialBlock }) {
+  if (block.kind === 'thinking') {
+    return (
+      <details className="chat-thinking" open>
+        <summary>
+          <DisclosureIcon open={false} />
+          {t('chat.row.thinking')}
+        </summary>
+        <div className="chat-thinking-text">{block.text}</div>
+      </details>
+    );
+  }
+  return (
+    <div className="chat-response">
+      <div className="markdown chat-partial-text">{block.text}</div>
+    </div>
+  );
+});
 
 // AskUserQuestion の質問と、選んだ答え。作業の書き出しでも使う
 export function AnswersCard({ answers }: { answers: QuestionAnswer[] }) {

@@ -267,6 +267,86 @@ describe('main からの配信（useSessionChats）', () => {
     expect(api.argsOf('sessions.snapshot')).toEqual([]);
   });
 
+  it('書いている途中の文（partial）は、届いたら今の全部に置き換える。イベントの無い配信でも置き換え、通し番号は進めない', () => {
+    const { result } = renderHook(() => useSessionChats('s1'));
+    const partial = (text: string) => [{ id: 'm:0', kind: 'text' as const, text }];
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true }));
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [], live: true, partial: partial('パ') }));
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [], live: true, partial: partial('パンは') }));
+    expect(result.current.chatOf('s1').partial).toEqual(partial('パンは'));
+    // partial の無い配信では、途中の文を変えない
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [{ type: 'info', id: 'i', text: '知らせ' }], live: true }));
+    expect(result.current.chatOf('s1').partial).toEqual(partial('パンは'));
+    // 会話ログに出た応答と、途中の文を外したものは、同じ配信で届く
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 2, events: [{ type: 'assistant-text', id: 'a', text: 'パンは小麦から' }], live: true, partial: [] }));
+    const chat = result.current.chatOf('s1');
+    expect(chat.items.map((i) => i.id)).toEqual(['u1', 'i', 'a']);
+    expect(chat.partial).toEqual([]);
+    // 途中の文が外れたのと同じ配信で出た本文には、印を付ける（出るときの動きを付けない）。ほかの配信で出た行には付けない
+    expect(chat.items.map((i) => (i.kind === 'text' ? i.settled : undefined))).toEqual([undefined, undefined, true]);
+    // 持っているものより古い配信（もう受け取ったイベントの配信）の途中の文は使わない
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 1, events: [{ type: 'info', id: 'i', text: '知らせ' }], live: true, partial: partial('古い') }));
+    expect(result.current.chatOf('s1').partial).toEqual([]);
+    expect(api.argsOf('sessions.snapshot')).toEqual([]);
+  });
+
+  it('ターンの終わり・終了・/clear・起動で途中の文を消し、巻き戻しの組み立て直しでは残す（main が持つものなので）', () => {
+    expect(EMPTY_CHAT.partial).toEqual([]);
+    const partial = [{ id: 'm:0', kind: 'text' as const, text: '書きかけ' }];
+    const cases: [ChatEvent, boolean][] = [
+      [{ type: 'turn-end' }, false],
+      [{ type: 'process-exit', exitCode: 0 }, false],
+      [{ type: 'reset' }, false],
+      [{ type: 'process-start' }, false],
+      [{ type: 'replace', events: [{ type: 'user', id: 'u1', text: '一' }] }, true],
+      [{ type: 'info', id: 'i', text: '知らせ' }, true],
+    ];
+    cases.forEach(([event, kept], n) => {
+      const id = `s${n + 10}`;
+      const { result } = renderHook(() => useSessionChats(id));
+      act(() => api.emit('sessions.onChat', { sessionId: id, fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true, partial }));
+      act(() => api.emit('sessions.onChat', { sessionId: id, fromSeq: 1, events: [event], live: true }));
+      expect(result.current.chatOf(id).partial).toEqual(kept ? partial : []);
+    });
+  });
+
+  it('途中の文が外れた配信の行の印は、外れたブロックと同じ種類・同じ数だけ、出た順に付ける（途中の文の無かった行には付けない）', () => {
+    const { result } = renderHook(() => useSessionChats('s1'));
+    const thinking = { id: 'm:0', kind: 'thinking' as const, text: '考え' };
+    const text = { id: 'm:1', kind: 'text' as const, text: '答え' };
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], live: true, partial: [thinking, text] }));
+    act(() =>
+      api.emit('sessions.onChat', {
+        sessionId: 's1',
+        fromSeq: 1,
+        events: [
+          { type: 'thinking', id: 'th', text: '考え' },
+          { type: 'assistant-text', id: 'a1', text: '答え（途中の文が無かった前の行）' },
+        ],
+        live: true,
+        partial: [text],
+      }),
+    );
+    act(() => api.emit('sessions.onChat', { sessionId: 's1', fromSeq: 3, events: [{ type: 'assistant-text', id: 'a2', text: '答え' }], live: true, partial: [] }));
+    const settled = result.current.chatOf('s1').items.map((i) => [i.id, i.kind === 'text' || i.kind === 'thinking' ? !!i.settled : null]);
+    expect(settled).toEqual([
+      ['u1', null],
+      ['th', true],
+      ['a1', false],
+      ['a2', true],
+    ]);
+  });
+
+  it('スナップショットの途中の文も受け取る', async () => {
+    mockApi({ 'sessions.snapshot': () => Promise.resolve({ sessionId: 's1', fromSeq: 0, events: [{ type: 'user', id: 'u1', text: '一' }], partial: [{ id: 'm:0', kind: 'text', text: '書きかけ' }] }) }).install();
+    const { result } = renderHook(() => useSessionChats('s1'));
+    await act(async () => {
+      result.current.load('s1');
+      await Promise.resolve();
+    });
+    expect(result.current.chatOf('s1').partial).toEqual([{ id: 'm:0', kind: 'text', text: '書きかけ' }]);
+  });
+
   it('途中から受けたセッションは、取りこぼした分をスナップショットで埋める', async () => {
     const { result } = renderHook(() => useSessionChats('s1'));
     await act(async () => {

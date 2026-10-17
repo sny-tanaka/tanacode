@@ -2683,6 +2683,10 @@ button.session-ref:hover {
     transform: translateY(4px);
   }
 }
+/* 書いている途中の文から入れ替わった本文・思考は、同じ場所のまま入れ替わって見えるよう、ふわっと出さない */
+.chat-list > .settled {
+  transition: none;
+}
 /* 終わった印（CheckMark）。丸を描いてから、中のチェックを描く */
 /* 状態の丸の代わりに出すときは、丸と同じ大きさの場所に重ねて描く（はみ出した分は隣の余白に重なる） */
 .check-slot {
@@ -3046,6 +3050,10 @@ details[open] > summary > .disclosure {
 .chat-response > .chat-translate {
   float: right;
   margin: -2px -4px 2px 8px;
+}
+/* 書いている途中の応答。Markdown にせず、改行をそのまま見せる（書き終わると Markdown の本文に入れ替わる） */
+.chat-partial-text {
+  white-space: pre-wrap;
 }
 /* 訳文はブロックの下に、原文と分けて出す */
 .chat-translation {

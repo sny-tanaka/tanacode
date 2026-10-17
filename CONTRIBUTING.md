@@ -199,7 +199,7 @@ PR で、次のものを流します。develop への push では流しません
 - `test/helpers/scripted-claude.ts`: 本物の claude を起動せずに、本物の `SessionManager` を動かす（`npm test` で速く、決まった結果になる）。常駐のホストを、テストが stream-json の行と終了を送る偽物（`ScriptedHost`）に差し替え、会話ログの行はテストが書き込みます。チャットの claude の代わりは `ScriptedPipe`（アプリが書いた行・入力を閉じた・止める頼みを控え、テストが出力の行を送る）、ターミナルモードの claude の代わりは `ScriptedPty`（打たれた文字と大きさの変更を控える）。`test/session-manager.test.ts` が使います。
   - 本物の Claude Code での振る舞いは `npm run test:cli` が確かめます。こちらは、その上の `SessionManager` の分岐（状態の決め方・二重と順番・権限モードの上限・再起動・取り消し・順番待ち・一覧の操作など）を確かめます。
   - `ScriptedApp` のパイプは、制御の要求（initialize など）に台本の答えを自動で返し（`ScriptedApp.answers`。要求の種類ごとに、返事の中身・error・答えない、を決められる）、`end_session` か止める頼みで終わります（`ClaudeSession.stop` が終わるのを待つところを通せる）。`new ScriptedApp({ … })` で、アプリが `SessionManager` に渡す残りの引数（Remote Control を使えるか・登録した設定ファイル・`runTask`・MCP サーバーの材料）を差し替えられます。
-  - `test/session-manager-*.test.ts` が、分かれ目ごと（状態・送信・stream-json の行の扱い（二重・ターンの終わりの順番）・操作（権限モード・タスクの停止・巻き戻し）・ターミナルモード・Remote Control・worktree・引き継ぎ・起動のしかた・バックグラウンドのタスク・ワークスペースに追加したフォルダ）に使います。worktree は本物の git で確かめ、Claude Code が作るところは同じ形の worktree を git で作って代わりにします。
+  - `test/session-manager-*.test.ts` が、分かれ目ごと（状態・送信・stream-json の行の扱い（二重・ターンの終わりの順番）・書いている途中の文・操作（権限モード・タスクの停止・巻き戻し）・ターミナルモード・Remote Control・worktree・引き継ぎ・起動のしかた・バックグラウンドのタスク・ワークスペースに追加したフォルダ）に使います。worktree は本物の git で確かめ、Claude Code が作るところは同じ形の worktree を git で作って代わりにします。
 - `test/pty-host.test.ts`: 本物の pty ホストを、アプリのビルドと同じく 1 つの JS にまとめて（`node_modules/.cache` に書き出す）Node で起動し、アプリ側の接続（`PtyHost`）から、`/bin/sh` を pty とパイプのプロセスの両方で動かします。test:cli はホストを偽物に差し替えるので、ソケット・やりとりの形・引き継ぎ・ホストが落ちたときは、ここで確かめます。
 - `test/helpers/fake-electron.ts`・`test/helpers/browser-control.ts`: Electron を起動せずに、アプリ内ブラウザの操作（`src/main/browser-control.ts`）を動かす。テストのファイルの `vi.mock('electron', …)` で、webview の中身（webContents）・CDP（debugger）・撮った画像（nativeImage）を、テストが決めた答えを返して受けたもの（CDP の命令・ページで動かすスクリプト・撮った範囲）を控える作り物に差し替えます。画面（`PreviewPane`）の代わりに、タブを開く知らせに応えて webview を知らせます。待ち・時間切れは `vi.useFakeTimers` で時間を進めて確かめます（`finish`）。`test/browser-control*.test.ts` が使います。
   - ページの中で動かすスクリプト（要素を探す・文字を読む・待つ）は、`test/browser-control-scripts.test.ts` が jsdom の文書の上で本当に動かします。jsdom は描かないので、要素の位置（`getBoundingClientRect`）と、その位置にある要素（`elementFromPoint`）はテストが決めます。
@@ -431,7 +431,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - ToDo（API キーで起動すると、`TaskCreate`・`TodoWrite` のツールが出ない）
     - 利用枠（`rate_limit_event`。API キーでは出ない）
     - 貼り付けの `<pasted_content>` の囲み: 札は `user` の行の `pasted_content` で渡します。ログインして使う本物では、TUI と同じ `\n\n<pasted_content id="…">\n…\n</pasted_content id="…">\n` の形で Claude に渡り、会話ログにも残ります（id は 16 進 4 文字。2026-10-17・Claude Code 2.1.301）。モックの API では囲まずに空行でつなぐので、`test:cli` は、文と札の中身が 1 つの発言として届くことだけを確かめます（`input.test.ts`）。囲みの付いた形は、単体テスト（`sessions-mcp.test.ts`・`chat-transcript.test.ts`）で確かめます。
-    - 書いている途中の `stream_event` の細かさ（モックは 1 つのブロックを 1 回で送る。本物（haiku）では、`text_delta` が 8〜12 文字ずつ届く。2.1.301 で実測）
+    - 書いている途中の `stream_event` の細かさ（モックは 1 つのブロックを 1 回で送る。本物（haiku）では、`text_delta` が 8〜12 文字ずつ届く。2.1.301・2.1.302 で実測）。チャットに少しずつ出ることは、開発用のビルドを本物で動かして確かめます（`test:cli` は、途中の文が会話ログの応答と入れ替わることまで）
   - hooks で止めたときの行（`hook_blocking_error` の attachment）は、PostToolUse・PostToolUseFailure の hooks でだけ書かれます。PreToolUse で止めたときは書かれず、ツールの結果の文章（「PreToolUse:Bash hook error: …」）から読みます。どちらも `errors.test.ts` で確かめます。
   - 起動の引数は、アプリと同じもの（`claudeArgs`）。アプリが付ける引数が `claude --help` にあるかも見ます（`basic.test.ts`）。
   - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
@@ -468,14 +468,14 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 
 - セッションごとに、本物の `claude` を 1 つ起動します。起動の種類は 2 つ（`claude-session.ts` の `LaunchKind`）。
   - チャット（`stream`）: `claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio --replay-user-messages --include-partial-messages`（`stream/protocol.ts` の `STREAM_ARGS`）を、標準入出力のパイプでつないで動かします。1 行 1 JSON の発言・出力の行・制御の要求でやりとりし、画面は持ちません（下の「stream-json のやりとり」）。
-    - `--verbose` が無いと起動しません。`--permission-prompt-tool stdio` が無いと、聞くべき許可が自動で断られ、AskUserQuestion・ExitPlanMode も使えません。`--replay-user-messages` は、スマホ・claude.ai から届いた発言を受け取るため、`--include-partial-messages` は、進み具合（考えている・書いている）を知るためです。
+    - `--verbose` が無いと起動しません。`--permission-prompt-tool stdio` が無いと、聞くべき許可が自動で断られ、AskUserQuestion・ExitPlanMode も使えません。`--replay-user-messages` は、スマホ・claude.ai から届いた発言を受け取るため、`--include-partial-messages` は、進み具合（考えている・書いている）と、書いている途中の文をチャットに出すためです。
   - ターミナルモード（`tui`）: ふだんの TUI を node-pty で動かし、人が画面で操作します。アプリは画面を読まず、キーも打ちません（貼り付けだけ。下の「ターミナルモード」）。
   - 同じセッションを、ふだんはチャットで、ターミナルモードの間だけ TUI で動かします。どちらも同じ会話ログに書き、同じ Remote Control のセッションにつながります。行き来はどちら向きも、今の claude を止めて終わりを確かめてから、もう片方で `--resume` します（同じ会話を 2 つのプロセスで開かない）。
 - 起動するのはアプリではなく、pty ホストという常駐プロセス。アプリを再起動しても Claude Code を止めないためです。
   - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケット（`pty-host.sock`。`0600`。つながれば任意のコマンドを起動できるため、自分だけにする）でやりとりします。パスが長すぎるときは一時フォルダに置きます。
   - ホストは、claude を 2 つの形で持ちます（`pty-host-protocol.ts` の `HostedKind`）。
     - `pty`（ターミナルモード）: 画面を仮想の端末で持ちます。起動し直したアプリは、その画面（`@xterm/addon-serialize`）を受け取って描き直します。
-    - `pipe`（チャット）: `child_process.spawn` で、claude を自分のプロセスグループで起動します。出力の行に通し番号を付けて控え（`pipe-backlog.ts` の `PipeBacklog`。合計 8MB まで、古い行から捨てる。チャットの中身は会話ログから追いつけるため）、起動し直したアプリは、控えの頭から送り直してもらいます（`replay`）。書いている途中の行（`stream_event`）は控えません。1 行は 32MB まで（超えた行は捨ててログに残す）。
+    - `pipe`（チャット）: `child_process.spawn` で、claude を自分のプロセスグループで起動します。出力の行に通し番号を付けて控え（`pipe-backlog.ts` の `PipeBacklog`。合計 8MB まで、古い行から捨てる。チャットの中身は会話ログから追いつけるため）、起動し直したアプリは、控えの頭から送り直してもらいます（`replay`）。書いている途中の行（`stream_event`）は控えません（数が多いため。起動し直したアプリは、書いている途中だった応答を、書き終わって会話ログに出たときに出す。決めたこと）。1 行は 32MB まで（超えた行は捨ててログに残す）。
   - 控えの頭が欠けても、引き継いだアプリが状態を組み立て直せるよう、種類ごとの最新の行（`system/init`・権限モードの付いた `system/status`・`system/bridge_state`・`rate_limit_event`・終わっていない `system/task_started`）は、上限と別に持ちます。何を残すかは、アプリが起動の要求でデータとして渡します（`stream/protocol.ts` の `RETAIN_RULES`）。ホストのコードを直すたびに `PROTOCOL` を上げると、動いている claude が止まるためです。
   - claude が送って、まだ答えの無い制御の要求も控えます。アプリの答え（`control_response`）か、claude の取り消し（`control_cancel_request`）で消し、引き継いだアプリに出し直します（同じ要求に 2 度答えないため）。長すぎて捨てた行が要求だったら、アプリには届かないので、ホストが error で答えます。
   - パイプの claude は、入力を閉じても、ターンと裏のタスクが終わるまで動き続けます（実測）。ホストが終わるとき（止められたときも）は、プロセスグループごと止めます（SIGTERM、終わらなければ SIGKILL）。
@@ -506,6 +506,13 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 登録が外れている・ファイルが無い・読めないときは、記録を作る前・起動し直す前・動いている Claude Code を止める前に断ります。標準の設定に黙って切り替えると、意図しない契約で動いてしまうためです。登録を外すのは、使っているセッションがあっても止めません（次に起動するときに断られる）。
   - `-p` は、形の違う設定ファイル（壊れた JSON・型の違う値・形の不正な hooks）を、ファイルごと黙って無視します（標準出力にも標準エラーにも何も出ない。実測）。同じ理由で黙って切り替えないよう、起動の直後に `get_settings` を送り、`errors` があれば、理由をチャットに出して Claude Code を止めます。
 - チャットは、stream-json の応答の行ではなく、会話ログから組み立てます（同じものを 2 つの道から取らない）。会話ログは `~/.claude/projects/<フォルダ>/<id>.jsonl`。`/clear` で会話が切り替わっても追いかけます。
+  - 書いている途中の応答（`stream_event`）だけは、会話ログに書かれる前に、チャットの最後（作業中の表示の上）に出します（`stream/partial.ts` の `PartialText`）。会話ログに残らない、画面だけの表示です。
+    - main が、応答（`message_start` の `message.id`）とブロック（`index`）ごとに文と思考をため、0.05 秒に 1 回までまとめて、チャットの配信に載せます（`ChatBatch` の `partial`。そのときの全部）。通し番号には数えず、`rt.events` にも入れません。スナップショットにも入れるので、画面を読み込み直しても続きから出ます。
+    - そのブロックが会話ログに出たら（同じ `message.id` と `apiBlockIndex` の応答の行。会話ログは 1 ブロックを 1 行に書く。`apiBlockIndex` が無ければ、同じ応答の行の数で決める）外し、その行のイベントと同じ配信で送ります。画面では、同じ場所のまま書き終わった本文に入れ替わります（決めたこと）。中断しても、書いたところまでが会話ログに残るので、同じく入れ替わります（2.1.302 で実測）。
+    - 途中は Markdown にせず、素の文で出します（決めたこと）。思考は、本文が届いたときだけ、思考の枠に出します（今のモデルの多くは本文が空）。翻訳と実行のボタンは、書き終わってから出します。
+    - 出さないもの: サブエージェントの行（Claude Code 2.1.302 は、サブエージェントの書いている途中の行を、`--forward-subagent-text` を付けても出さない。実測。サブエージェントの中身の表示は、今どおり書き終わったブロックごと。決めたこと）・応答の始まりを見ていない応答（起動し直して引き継いだときに書いている途中だったもの。頭が欠けるので、書き終わって会話ログに出たときに出す。決めたこと）・空白だけのもの・チェックリストの「直すものは無い」の目印の書きかけ。
+    - 書き終わらないまま次の応答が始まったブロック（再試行で捨てられたもの）は外します。会話ログに出ないまま残ったものは、ターンの終わり・claude の終了・`/clear` で捨てます。
+    - 確かめは `test/stream-partial.test.ts`・`test/session-manager-partial.test.ts`。本物の Claude Code の応答の ID と、会話ログの `message.id`・`apiBlockIndex` が合って入れ替わることは `test/cli/basic.test.ts` で確かめます。
   - `/clear` のあとの会話は、チャットでは `conversation_reset` のあとの `system/init` の `session_id` で分かります（`new_conversation_id` とは別の値。実測）。ターミナルモードでは、statusLine の `transcript_path` で分かります。Remote Control を使っていれば、新しい会話ログにも同じ `bridge-session` の ID が書かれるので、それでも追います。
   - Remote Control のつながりは、会話ログの `bridge_status`（URL）と `bridge-session`（ID。切ると空になる）の行と、チャットでは `system/bridge_state` で分かります。
   - 会話ログは、変更の通知（`fs.watch`）ですぐ読みます。取りこぼしに備えて、0.15 秒ごとにも確かめます。
@@ -675,11 +682,11 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - `!` で始まる発言は、シェルでは動かず、そのまま Claude への発言になります（`test/cli/input.test.ts`）。
 - スマホ・claude.ai から届いた発言（Remote Control）は、`--replay-user-messages` で、`origin` が `human` の戻った発言として届きます（実測）。それでターンが始まり、チャットには会話ログから出ます。
 - 中断は `sessions:interrupt`（stream-json の `interrupt`）。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まり、裏のタスクは止めません（実測）。中断しても、送った発言は会話に残り、入力欄には戻りません（TUI の Esc とは違う。実測・`test/cli/errors.test.ts`）。中断で終わったかは、`result` の `terminal_reason` で見ます。
-- 「作業中…」の横の進み具合は、`stream_event`（考えている・書いている・受け取ったトークン数）と `tool_progress`（ツールの実行中）から作り、経過時間はアプリが数えて 1 秒ごとに知らせ直します（`stream/state.ts` の `Progress`・IPC `sessions:progress`）。表記は、Claude Code の画面のタイマーの行と同じです（`5s`・`1m 5s`・`225`・`1.2k`。画面の `WorkingNote` が今の言語の表記に直す）。書いている途中の文は出しません（決めたこと）。
+- 「作業中…」の横の進み具合は、`stream_event`（考えている・書いている・受け取ったトークン数）と `tool_progress`（ツールの実行中）から作り、経過時間はアプリが数えて 1 秒ごとに知らせ直します（`stream/state.ts` の `Progress`・IPC `sessions:progress`）。表記は、Claude Code の画面のタイマーの行と同じです（`5s`・`1m 5s`・`225`・`1.2k`。画面の `WorkingNote` が今の言語の表記に直す）。書いている途中の文は、その上に出します（上の「チャットは、…会話ログから組み立てます」）。
   - 起動に時間がかかっているときは、経過と、Claude Code の標準エラーの末尾を出します（上の「Claude Code の動かし方」の initialize。`StartingNote`）。
 - 再試行中の API エラーは、`system/api_retry` の行から「再試行中」として出します（会話ログには残らない）。入力なしで始まったターン（裏のタスクの完了の知らせなど）では、再試行の行だけが続くことがあるので、ターンの始まりに数えます。裏のタスクが動いている間は数えません（裏のクエリが利用枠を待つ間も、同じ形の行が出るため。2.1.301 の本体）。
 - Claude の思考は、会話ログに空で記録されるので出せません。設定（`showThinkingSummaries`）で要約を残させることはできますが、英語なので使っていません。
-- 応答の文章は、書き終わるまで会話ログに書かれないので、チャットには書き終わってから出ます。
+- 応答の文章は、書き終わるまで会話ログに書かれません。書いている途中は `stream_event` から素の文で出し、書き終わると会話ログの本文に入れ替わります（上の「チャットは、…会話ログから組み立てます」）。
 - Claude Code は新しい会話ログを作るとき、最初の応答の行を発言の行より先に書くことがあります。まとめて読んだ行のうち、親（`parentUuid`）が後ろにある行は、親のすぐ後ろに回して読みます（`parentFirst`）。親の行があとの読み込みで届くこともあるので、追いかけて読む行（`TranscriptTail`）は、親の行がまだ届いていなければ、親が届くまで（長くても 1 秒）待ってから出します。読み始めた時点で既にあった行（再開したセッションの過去ログ）は待ちません。
 - ToDo は、今の Claude Code の TaskCreate・TaskUpdate（と、前の TodoWrite）を会話ログから読んで組み立てます。
 - ツールの行の説明は、Bash・Agent などの `description`。

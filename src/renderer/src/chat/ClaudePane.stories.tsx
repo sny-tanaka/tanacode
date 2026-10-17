@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
-import type { UnsentPrompt } from '@shared/chat';
+import type { PartialBlock, UnsentPrompt } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
@@ -56,7 +56,8 @@ function conversation(count: number): ChatItem[] {
 // terminalMode: ターミナルモード（チャットの代わりに Claude Code の画面を出す）で始める。ヘッダーのボタンで切り替えられる /
 // comments: コードへのコメント / exited: Claude Code が終了している（exitReason: 終わったわけ）/ running: 作業中 /
 // unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
-// starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション
+// starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション /
+// partial: Claude が書いている途中の応答の文・思考（会話の最後に、素の文で出る）
 function Pane({
   items,
   settingsFile = null,
@@ -72,6 +73,7 @@ function Pane({
   unsent = [],
   starting = false,
   child = false,
+  partial = [],
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -87,6 +89,7 @@ function Pane({
   unsent?: UnsentPrompt[];
   starting?: boolean;
   child?: boolean;
+  partial?: PartialBlock[];
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -107,6 +110,7 @@ function Pane({
           exitReason,
           items,
           unsent,
+          partial,
         }}
         workflows={new Map()}
         subagents={new Map()}
@@ -161,6 +165,28 @@ function GrowingPane() {
   return <Pane items={conversation(count)} />;
 }
 
+// 書いている途中の応答。書き終わると、同じ場所で Markdown の本文に入れ替わる
+const WRITING = '## 原因\n\n`useEffect` の依存の配列に **`onSubmit`** が足りず、送信のたびに二重に呼ばれていました。\n\n| ファイル | 直したこと |\n| --- | --- |\n| src/Login.tsx | 依存の配列を直した |\n\nテストも通っています。';
+
+// 0.05 秒ごとに数文字ずつ書き足し、書き終わったら本文に入れ替える（入れ替わった本文は、ふわっと出さない）。少し置いて、次の返答を書き始める
+function WritingPane() {
+  const [round, setRound] = useState(0);
+  const [length, setLength] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setLength((n) => n + 4), 50);
+    return () => clearInterval(timer);
+  }, [round]);
+  useEffect(() => {
+    if (length < WRITING.length + 40) return;
+    setLength(0);
+    setRound((r) => r + 1);
+  }, [length]);
+  const done = Array.from({ length: round }, (_, i): ChatItem => ({ kind: 'text', id: `w${i}`, text: WRITING, settled: true }));
+  const writing = length < WRITING.length ? [{ id: `m${round}:0`, kind: 'text' as const, text: WRITING.slice(0, length) }] : [];
+  const items = [...conversation(4), ...done, ...(length >= WRITING.length ? [{ kind: 'text' as const, id: `w${round}`, text: WRITING, settled: true as const }] : [])];
+  return <Pane items={items} running partial={writing} />;
+}
+
 const meta = {
   title: 'チャット/ペイン',
   component: Pane,
@@ -176,6 +202,19 @@ export const 長い会話: Story = {};
 export const 思考を挟む会話: Story = { args: { items: withThinking } };
 
 export const 返答が増える: Story = { render: () => <GrowingPane /> };
+
+export const 書いている途中: Story = {
+  args: {
+    items: conversation(4),
+    running: true,
+    partial: [
+      { id: 'm:0', kind: 'thinking', text: '送信のたびに二重に呼ばれている。useEffect の依存の配列を見る。' },
+      { id: 'm:1', kind: 'text', text: WRITING.slice(0, 90) },
+    ],
+  },
+};
+
+export const 書いている途中の文が伸びる: Story = { render: () => <WritingPane /> };
 
 const LITELLM = { id: 'f1', name: 'litellm', path: '/Users/me/.claude/settings-litellm.json', error: null, model: 'sonnet' };
 
