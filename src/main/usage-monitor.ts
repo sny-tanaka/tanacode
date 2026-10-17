@@ -12,7 +12,9 @@ const KEEP_MODEL_MS = 7 * 24 * 60 * 60_000;
 // 裏で Claude Code を起動したりはしない。アプリを使っていない間の値は、Claude Code 自身の控えの方が新しければそちらを使う
 export class UsageMonitor {
   private current: UsageLimits | null = null;
-  // 直前のモデルの一覧のある get_usage に出たモデルの名前（小文字。まだ聞いていなければ null）。Claude Code の控えのモデル別の行を絞る
+  // 直前の get_usage のモデルの一覧に出たモデルの名前（小文字）。Claude Code の控えのモデル別の行を絞る。まだ聞いていない・直前の返事に
+  // 一覧が無かった（分からない）ときは null。一覧の無い返事は、/usage の許可リストから外れたモデルの行をサーバーが返し続けるときにも
+  // 来るので、その前の一覧は、外れたモデルを含みうる
   private knownModels: Set<string> | null = null;
 
   // claudeDir: プロファイルの Claude Code の設定のフォルダ（/usage の控えを読む .claude.json の場所。null は既定のプロファイル）
@@ -38,7 +40,7 @@ export class UsageMonitor {
   fromUsage(report: UsageReport, updatedAt: number): void {
     // 枠が 1 つも無い返事は、何も変えない
     if (report.limits.length === 0) return;
-    if (report.modelsKnown) this.knownModels = new Set(report.limits.flatMap((l) => (l.model ? [l.model.toLowerCase()] : [])));
+    this.knownModels = report.modelsKnown ? new Set(report.limits.flatMap((l) => (l.model ? [l.model.toLowerCase()] : []))) : null;
     this.set({ limits: report.limits, updatedAt, source: 'usage' }, report.modelsKnown);
   }
 
@@ -53,12 +55,16 @@ export class UsageMonitor {
   }
 
   // Claude Code の控えの方が新しければ使う（本家で /usage を開いたあとなど）。控えのモデル別の行は、Claude Code が /usage に出す
-  // モデルの許可リストを通していない生の行なので、直前の get_usage のモデルの一覧に出た名前に絞る（まだ聞いていなければ絞らない）
+  // モデルの許可リストを通していない生の行なので、直前の get_usage のモデルの一覧に出た名前に絞る。一覧が分からない間（まだ聞いていない・
+  // 一覧の無い返事のあと）は、控えのモデル別の行を使わず、前の値のモデル別の枠を残す（期限まで。set）
   async refresh(): Promise<void> {
     const cached = await readClaudeCache(this.claudeDir);
     if (!cached) return;
     const known = this.knownModels;
-    this.set(known ? { ...cached, limits: cached.limits.filter((l) => !l.model || known.has(l.model.toLowerCase())) } : cached, true);
+    const limits = cached.limits.filter((l) => !l.model || !!known?.has(l.model.toLowerCase()));
+    // 使える行が無ければ（一覧が分からず、控えがモデル別の行だけ）、何も変えない
+    if (limits.length === 0 && !known) return;
+    this.set({ ...cached, limits }, known !== null);
   }
 
   // 新しい値で置き換える。届いた値に無い枠は、前の値を残す。ただしモデル別の週の枠は、モデルの一覧を持つ知らせ（allModels。
