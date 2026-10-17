@@ -462,6 +462,27 @@ describe('tanacode が動かす git の守り', () => {
     expect(readdirSync(marks)).toEqual([]);
   });
 
+  it('サブモジュール自身の設定のフィルター・fsmonitor も、状態・差分を読むときに動かさない（中の変更は今までどおり出す）', async () => {
+    const lib = join(root, 'lib');
+    mkdirSync(lib);
+    init(lib);
+    commit(lib, 'l.txt', 'l\n');
+    run(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib');
+    run(repo, 'commit', '-qm', 'submodule', '--no-verify');
+    // サブモジュールの設定（.git/modules/lib/config）と属性
+    const sub = join(repo, 'lib');
+    for (const key of ['clean', 'smudge', 'process']) run(sub, 'config', `filter.sub.${key}`, `${mark(`sub-filter-${key}`)}; cat`);
+    run(sub, 'config', 'core.fsmonitor', `${mark('sub-fsmonitor')}; false`);
+    write(repo, '.git/modules/lib/info/attributes', '* filter=sub\n');
+    // 大きさを変えない（変わると、git は中身を読まずに変更ありと分かり、フィルターを通さない）
+    write(sub, 'l.txt', 'm\n');
+    readdirSync(marks).forEach((name) => rmSync(join(marks, name)));
+    expect(await status(repo)).toEqual(expect.arrayContaining([{ path: 'lib', index: ' ', worktree: 'M' }]));
+    await branchFiles(repo, base);
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', '--stat', base]);
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
   it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
     run(repo, 'config', 'filter.req.clean', `${mark('req-clean')}; cat`);
     run(repo, 'config', 'filter.req.smudge', `${mark('req-smudge')}; cat`);

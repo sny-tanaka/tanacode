@@ -52,38 +52,87 @@ const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process(
 //   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す。
 //   空にしたフィルターは、required も false にする。そのため、読むだけの git は、フィルターを通す前の中身で比べる（ターミナルの git と差分の見え方が違うことがある）
 // - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
+// - 取り出してあるサブモジュール（入れ子も）の設定で決めたフィルター・merge のドライバーも、同じく空にする（状態・作業ツリーとの差分は、
+//   サブモジュールの中でも git を動かす。打ち消しはサブモジュールの git にも渡るので、同じ名前を空にすれば止まる）
 // 名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない（GitError）
 export function guardOf(cwd: string): Promise<Guard> {
   const now = Date.now();
   const cached = guards.get(cwd);
   if (cached && now - cached.at < GUARD_TTL_MS) return cached.guard;
-  const guard = runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$'])
-    .catch(() => '')
-    .then(async (out) => {
-      const pairs: [string, string][] = [
-        ['core.fsmonitor', 'false'],
-        ['core.hooksPath', '/dev/null'],
-        // ログ・show で署名を確かめさせない（確かめに gpg.program を動かす）
-        ['log.showSignature', 'false'],
-      ];
-      const parts = out.split('\0');
-      for (let i = 0; i + 1 < parts.length; i += 2) {
-        const scope = parts[i];
-        const [key, ...value] = parts[i + 1].split('\n');
-        if (scope === 'global' || scope === 'system') continue;
-        if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
-        pairs.push([key, '']);
-        // なくてはならないとされたフィルター（required。git-crypt が書く）は、空にすると git add・diff などが失敗するので、無くてよいことにする
-        const required = key.startsWith('filter.') ? `${key.slice(0, key.lastIndexOf('.'))}.required` : null;
-        if (required && !pairs.some(([k]) => k === required)) pairs.push([required, 'false']);
-      }
-      if (pairs.some(([key]) => key.includes('=')) && !(await configEnvSupported(cwd))) {
-        throw new GitError('This folder has git settings that tanacode cannot turn off with this git. Update git to 2.31 or later.');
-      }
-      return { args: pairs.filter(([key]) => !key.includes('=')).flatMap(([key, value]) => ['-c', `${key}=${value}`]), env: configEnv(pairs) };
-    });
+  const guard = commandKeys(cwd, { left: MAX_SUBMODULES }, 0).then(async (keys) => {
+    const pairs: [string, string][] = [...ALWAYS_OFF];
+    for (const key of keys) {
+      if (pairs.some(([k]) => k === key)) continue;
+      pairs.push([key, '']);
+      // なくてはならないとされたフィルター（required。git-crypt が書く）は、空にすると git add・diff などが失敗するので、無くてよいことにする
+      const required = key.startsWith('filter.') ? `${key.slice(0, key.lastIndexOf('.'))}.required` : null;
+      if (required && !pairs.some(([k]) => k === required)) pairs.push([required, 'false']);
+    }
+    if (pairs.some(([key]) => key.includes('=')) && !(await configEnvSupported(cwd))) {
+      throw new GitError('This folder has git settings that tanacode cannot turn off with this git. Update git to 2.31 or later.');
+    }
+    return { args: pairs.filter(([key]) => !key.includes('=')).flatMap(([key, value]) => ['-c', `${key}=${value}`]), env: configEnv(pairs) };
+  });
   guards.set(cwd, { at: now, guard });
   return guard;
+}
+
+// いつも止めるもの
+const ALWAYS_OFF: [string, string][] = [
+  ['core.fsmonitor', 'false'],
+  ['core.hooksPath', '/dev/null'],
+  // ログ・show で署名を確かめさせない（確かめに gpg.program を動かす）
+  ['log.showSignature', 'false'],
+];
+// 設定を読むサブモジュールの数と、入れ子の深さの上限
+const MAX_SUBMODULES = 100;
+const MAX_SUBMODULE_DEPTH = 5;
+
+// フォルダ（と、取り出してあるサブモジュール）の設定のうち、空にするフィルター・merge のドライバーの名前
+async function commandKeys(cwd: string, budget: { left: number }, depth: number): Promise<string[]> {
+  const out = await runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$']).catch(() => '');
+  const keys: string[] = [];
+  const parts = out.split('\0');
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const scope = parts[i];
+    const [key, ...value] = parts[i + 1].split('\n');
+    if (scope === 'global' || scope === 'system') continue;
+    if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
+    keys.push(key);
+  }
+  if (depth >= MAX_SUBMODULE_DEPTH) return keys;
+  for (const dir of await submodulesOf(cwd)) {
+    if (budget.left <= 0) break;
+    budget.left--;
+    keys.push(...(await commandKeys(dir, budget, depth + 1)));
+  }
+  return keys;
+}
+
+// リポジトリの一番上ごとの、サブモジュール（インデックスの gitlink）の場所。インデックスが変わったときだけ読み直す
+const submoduleLists = new Map<string, { stamp: string; dirs: string[] }>();
+
+// 取り出してある（.git のある）サブモジュールのフォルダ
+async function submodulesOf(cwd: string): Promise<string[]> {
+  const [top, index] = (await runGit(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).catch(() => '')).split('\n');
+  if (!top || !index) return [];
+  const info = await lstat(posix.isAbsolute(index) ? index : join(cwd, index)).catch(() => null);
+  const stamp = info ? `${info.mtimeMs}:${info.size}` : '';
+  const cached = submoduleLists.get(top);
+  let dirs = cached && stamp && cached.stamp === stamp ? cached.dirs : null;
+  if (!dirs) {
+    const off = ALWAYS_OFF.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
+    const listed = await runGit(top, [...off, 'ls-files', '--stage', '-z']).catch(() => '');
+    // 「<モード> <オブジェクト> <ステージ>\t<パス>」。サブモジュールはモード 160000
+    dirs = listed
+      .split('\0')
+      .filter((entry) => entry.startsWith('160000 '))
+      .map((entry) => join(top, entry.slice(entry.indexOf('\t') + 1)));
+    submoduleLists.set(top, { stamp, dirs });
+  }
+  const present: string[] = [];
+  for (const dir of dirs) if (await lstat(join(dir, '.git')).then(() => true, () => false)) present.push(dir);
+  return present;
 }
 
 // GIT_CONFIG_COUNT などで渡す設定。もとの環境にあるもの（ユーザーが渡したもの）は残し、その後ろに足す
