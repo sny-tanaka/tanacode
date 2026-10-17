@@ -1215,14 +1215,16 @@ function permissionView(permission: PendingPermission, humanOnly: (request: { to
   const problem = tooLong ? `the tool input is too long to show in full (${bytes} bytes), so you cannot read all of it.` : (permission.humanOnly ?? humanOnly(permission));
   return {
     problem,
+    // 確認の ID（answer_permission に渡すもの）は、入力のあとに置く。Claude Code は大きすぎる MCP の結果を頭から切る
+    // （MAX_MCP_OUTPUT_TOKENS。人が下げることもある）ので、入力の途中で切られたら ID も残らず、全部を読まないまま答えられない
     view: {
-      id: permission.id,
       title: permission.title ?? permission.tool,
       description: permission.description ?? undefined,
       reason: permission.reason ?? undefined,
       tool: permission.tool,
       input: tooLong ? `${clipBytes(full, MAX_PERMISSION_INPUT_BYTES)}\n…(truncated)` : permission.input,
       from_subagent: permission.agent ?? undefined,
+      id: permission.id,
       can_allow: problem === null,
       cannot_allow_reason: problem ?? undefined,
       can_deny: true,

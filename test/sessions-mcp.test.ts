@@ -744,6 +744,17 @@ describe('ツールの実行（SessionsControl）', () => {
       });
     });
 
+    it('確認の ID は、ツールの入力のあとに置く（結果が途中で切られたら、入力を全部読まないまま答えられないように）', async () => {
+      const long = `echo ${'x'.repeat(5000)} && mkdir out`;
+      show(bashPermission(long));
+      const text = textOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      const inputEnd = text.indexOf('&& mkdir out') + '&& mkdir out'.length;
+      expect(inputEnd).toBeGreaterThan(text.indexOf('"input"'));
+      expect(text.indexOf('"id": "req-1"')).toBeGreaterThan(inputEnd);
+      // Claude Code が入力の途中で結果を切ったら、ID は残らない
+      expect(text.slice(0, text.indexOf('&& mkdir out'))).not.toContain('req-1');
+    });
+
     it('allow: 今回だけ許す（許可を覚えさせない・権限モードを変えない）', async () => {
       show(bashPermission('mkdir out'));
       const result = await answer({ permission_id: 'req-1', decision: 'allow' });
