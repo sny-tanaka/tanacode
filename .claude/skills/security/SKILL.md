@@ -155,6 +155,17 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - ▶ 実行ボタンは、サニタイズのあとに作成。対象はシェルの言語（`SHELL_LANG`）のコードだけ。実行するコマンドは画面の文字ではなく、marked のトークン（`renderer.code` の `token.text`）から `stripControlChars` を通して控えたもの。`pre` の数とコマンドの数が合わないときは、ボタンを付けません。
 - 外部の画像（`http(s):`・`//`）は読み込まず、リンクに置き換え（`src/renderer/src/markdown.ts` の `replaceExternalImages`。`srcset` も削除）。文書に入れる前（DocumentFragment の中）で呼んでいるか。
 
+**エディタの Markdown のプレビュー**（`src/renderer/src/editor/MarkdownPreview.tsx`）
+
+- DOMPurify は明示の許可リスト（`SANITIZE` の `ALLOWED_TAGS`・`ALLOWED_ATTR`、`ALLOW_DATA_ATTR: false`・`ALLOW_ARIA_ATTR: false`）。GitHub が描くもの（中央寄せ・折りたたみ・キーなど）のためにチャットより少し広いが、見た目を偽るもの（`style`）・フォーム・ボタン・埋め込み・外を読みにいくもの（`video`・`audio`・`source`・`picture`・`srcset`）を足していないか。消毒のあとの `keepPreviewParts` で、`class` はコードの言語の印（`language-*`）だけ、`input` はタスクリストのチェックボックス（`disabled`）だけを残しているか。
+- 文書の中の `id`・`name` は、前置き（`user-content-`。`SANITIZE_NAMED_PROPS: true`）を付けたまま残すか。見出しの `id`（`addHeadingIds`）にも同じ前置きを付けるか。前置きの無い `id` を許すと、アプリの画面の要素や mermaid が描くときの id（`mermaid-N` など）とぶつかります。`#目印` のリンクで探すのは、プレビューの中（`ref.current`）だけか。
+- 外部の画像は、チャットと同じく `replaceExternalImages` でリンクに。相対パスの画像は `src` を外し、main の `ReadImage` で data URL にして読みます（読める範囲は次の「画面から渡るパスのファイル」）。
+
+**画面から渡るパスのファイル**（`src/main/workspace.ts`・`src/main/index.ts`）
+
+- 画面から渡るパスで、人の操作を経ずに main が読むもの（今は Markdown のプレビューの画像。`ReadImage` → `Workspace.readImage`）は、作業フォルダと追加したフォルダの中に限っているか。確かめるのは、リンクを解いた場所（`resolveInside` の `realpath`）か。
+- エディタの `ReadFile`・`WriteFile` が、外のファイル（絶対パス）や外向きのリンクの先も開くのは決めたこと（開くきっかけは、人の操作か、main がセッションのフォルダの中に限ったウォークスルーの場所）。この受け口を、人の操作を経ずに読む用途に使い回していないか。読む受け口を足すときは、`readImage` と同じ形で限ります。
+
 **制御文字**（`src/shared/paste.ts` の `stripControlChars`。画面側は `src/renderer/src/chat/sanitize.ts` の再エクスポートか、`@shared/paste` から読み込む）
 
 - C0（`\n`・`\t` 以外）・DEL・C1・双方向の制御文字（U+061C・U+200E・U+200F・U+202A〜U+202E・U+2066〜U+2069）の除去と、CR（`\r\n`・`\r`）を `\n` にそろえる処理。ソースの正規表現は `\u` の書き方で（生の双方向の文字をソースに入れない）。
@@ -173,6 +184,13 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - ターミナルモード（人が Claude Code の画面で操作している）の間と、切り替えの途中は、Claude 由来の文を TUI に打たないか。チャットの送信（`submit`・`submitWhenReady`）・親の `send_message`・`answer_question`・`answer_permission`・`stop_session`・`configure_session`・`end_session` は、預からずに断ります。予約の送信は失敗として残し、親への知らせは捨てます。
 - TUI に貼るのは、人がボタンで頼んだもの（コメント・ウォークスルーの質問・選んだ要素・チェックリストの「Claude に通知する」など）だけか。TUI が許可の確認・質問のメニューを出している間（`tuiAsk`。書くだけの PermissionRequest のフックで知る）は貼らずに預かり、閉じたら順に貼ります。預かっている間にターミナルモードでなくなったら、捨てます。
 
+**ユーザーのターミナル**（`src/main/shell-terminals.ts`・`terminal-control.ts`、`src/renderer/src/terminal/TerminalPanel.tsx`）
+
+- 画面から見えないシェルを、main で動かし続けないか（`list_terminals`・`read_terminal`・`type_in_terminal` で、人の見ていないシェルを扱わせないため）。
+  - 持ち主の無くなったシェル（一覧から消した・アーカイブしたセッション、閉じた新規セッションの画面のフォルダ）は、画面が止めます（`TerminalPanel` の `liveOwners`）。
+  - 画面の読み込み直し（⌘R）では、シェルは止めずに、新しい画面が引き継ぎます（`detach` → `attach`）。引き継ぎの頼みが断られたら一度だけ頼み直すか。画面を描き直せなかったシェル（main の `attach` で `serialize` が投げた・画面の `restore` で投げた）は、渡さずに止めるか。
+- 止めたシェル（`killed`。kill したが、まだ終わっていない）は、`list`・`info`（MCP のツールはこれで探す）と `attach` に出さず、`write`・`resize` も受けないか。SIGHUP で終わらないもの（`trap '' HUP` など）は、最初に止めたときから `KILL_GRACE_MS`（3 秒）たっても終わらなければ SIGKILL を送るか（続けて止めても、待ちを作り直さない）。
+
 **権限とウィンドウ**（`src/main/index.ts`）
 
 - 権限の要求・確認は既定で拒否（`restrictPermissions`）。アプリの画面（主ウインドウと、足したプロファイルの画面。`isAppContents`）のメインフレームだけに `APP_PERMISSIONS`（`clipboard-read`・`clipboard-sanitized-write`）。
@@ -180,6 +198,8 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - webview の取り付け（`will-attach-webview`）: preload を消し、`nodeIntegration: false`・`contextIsolation: true`・`sandbox: true`。開くのは http(s) と `about:blank` だけ。
 - webview のゲストの移動（`web-contents-created` の `will-navigate`・`will-frame-navigate`・`will-redirect` → `isPreviewDestination`）: トップのフレームは http(s) と `about:blank` だけ。中のフレーム（iframe）だけ、`about:srcdoc`・`blob:`・`data:` も許可。Claude がアプリ内ブラウザを操作している間のトップのフレームは、許した先へしか移れません（`blocksNavigation`）。
 - 新しいウィンドウは作りません（`setWindowOpenHandler` はいつも deny）。アプリの画面から開こうとした http(s) は、既定のブラウザで表示。webview のゲストから開こうとした http(s) は、アプリ内ブラウザの新しいタブ（`openFromPage`）で開き、開けなかったときは、Claude が操作していなければ既定のブラウザで表示。http(s) でないものは開きません。アプリの画面自身の移動（`will-navigate`）は止めます。
+- アプリの画面の移動の知らせで、片付けや状態の切り替え（⌘R での新規セッションの画面のフォルダの片付け・シェルの `detach` など）をするときは、`will-navigate` が止める移動（URL が `contents.getURL()` と違うもの。Finder のファイルを落とした・リンク）を除いているか。`did-start-navigation` は `will-navigate` より先に届くので、除かないと、移らなかったのに片付けてしまいます。
+- 画面からの呼び出し・知らせの受け口は、`handle`・`listen` だけで登録しているか（`ipcMain` を直に使わない。`grep -rn "ipcMain\." src/main` で、包みの中の 2 か所だけ）。包み（`fromApp`）が、送り元がアプリの画面のメインフレームで、URL がアプリの画面のもの（`isAppUrl`）かを確かめます。中のフレーム・アプリ内ブラウザのページからは受けません。
 
 **CSP**（`src/renderer/index.html`）
 
