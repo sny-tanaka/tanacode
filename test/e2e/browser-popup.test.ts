@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { browserToolId } from '@shared/browser-tools';
 import type { Block } from '../cli/mock-api';
-import { E2EApp } from './app';
+import { BACKGROUND, E2EApp } from './app';
 
 // アプリ内ブラウザのページが window.open でポップアップ（features 付き。OAuth のログインの窓など）を開くと、アプリ内ブラウザの外の
 // 別ウインドウで開き、開いたページ（window.opener）とつながるか。アプリの index.ts・browser-windows.ts を通って、本物の webview と BrowserWindow まで。
@@ -20,7 +20,7 @@ import { E2EApp } from './app';
 // - 空のページの別ウインドウの題には、about:blank と、中身を書いた開いたページのオリジンが付く（ページが書いた題だけ・アプリ名にならない）。
 //   読み込みが確定しない（204 の）先を開いたものも、開く先のオリジンではなく、中身を書いた開いたページのオリジンが付く
 // - 空のページを、開いたページが移すときも守りが効く: 人の操作でも data:・blob: へは移れない。Claude の操作では、許す先の外へ移れない（止めたことを Claude に伝える）
-// - 裏で起動しているとき、ページが window.focus() を呼んでも、別ウインドウは出ず、フォーカスも移らない
+// - ページが window.focus() を呼んでも、別ウインドウにフォーカスは移らない。裏で起動しているとき（手元の Mac）は、画面にも出ない
 // - 別ウインドウの中身の設定（getLastWebPreferences）が守りの値（sandbox・contextIsolation が有効で、Node・webview・preload が無い。ダイアログを出さない）
 // - 別ウインドウのページの alert()・confirm() は出さず、すぐに返す（prompt() は Electron がもともと出さない）
 
@@ -355,15 +355,21 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await expect.poll(async () => (await popups()).slice(12).map((p) => p.closed), { timeout: 10_000 }).toEqual([true, true]);
   });
 
-  it('裏で起動しているとき、ページが window.focus() を呼んでも、別ウインドウは出ず、フォーカスも移らない', async () => {
+  it('ページが window.focus() を呼んでも、別ウインドウにフォーカスは移らない。裏で起動しているときは、画面にも出ない', async () => {
     // 空のページだけの別ウインドウ（11 番め。開いたまま）を、開いたページ（w.focus()）と、別ウインドウの中（window.focus()）から前に出そうとする
     expect(await runIn('/', 'window.plain.focus(); "focused"')).toBe('focused');
     expect(await runInPopup(11, 'window.focus(); "focused"')).toBe('focused');
     // 両方のページともう一度行き来してから見る
     expect(await runIn('/', 'document.title')).toBe('開く側');
     expect(await runInPopup(11, 'location.href')).toBe('about:blank');
-    // 開いたままのほかの別ウインドウ（入れ子・題を書いた空のページ）も
-    for (const index of [3, 10, 11]) expect(await popupState(index)).toMatchObject({ visible: false, focused: false });
+    // 開いたままのほかの別ウインドウ（入れ子・題を書いた空のページ）も。フォーカスは、どの起動の仕方でも移らない。
+    // 画面に出ないことは、アプリを裏で起動したとき（BACKGROUND。手元の Mac）だけ確かめる。前に出して流すとき（CI）は、tanacode に
+    // フォーカスがあれば、別ウインドウはフォーカスを移さずに画面に出る（決めた動き）
+    for (const index of [3, 10, 11]) {
+      const state = await popupState(index);
+      expect(state?.focused, `${index} 番めの別ウインドウ`).toBe(false);
+      if (BACKGROUND) expect(state?.visible, `${index} 番めの別ウインドウ`).toBe(false);
+    }
   });
 
   it('別ウインドウのページの alert()・confirm() は出さず、すぐに返す（出すのを待っている間・裏での起動でも、ほかのアプリの前に出さない）', async () => {

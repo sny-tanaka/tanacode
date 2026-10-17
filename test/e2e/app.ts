@@ -30,7 +30,8 @@ const COVERAGE = process.env.TANACODE_E2E_COVERAGE === '1';
 export const COVERAGE_RAW = join(REPO, 'coverage', 'e2e-raw');
 // 手元の Mac では、アプリを裏で起動する（TANACODE_BACKGROUND=1。ウインドウを画面に出さない）。前に出すと、起動のたびに
 // 作業中のアプリから前面を奪う。画面を見ながら確かめるときは TANACODE_E2E_SHOW=1。CI では、配る形のまま前に出す
-const BACKGROUND = process.platform === 'darwin' && !process.env.CI && process.env.TANACODE_E2E_SHOW !== '1';
+// （テストからも読む。前に出して流すときは、別ウインドウなども画面に出るため）
+export const BACKGROUND = process.platform === 'darwin' && !process.env.CI && process.env.TANACODE_E2E_SHOW !== '1';
 
 type Options = {
   // モックの API の台本。作業フォルダのパスを入れるため、フォルダを受け取って返す
