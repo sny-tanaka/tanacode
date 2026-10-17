@@ -31,7 +31,7 @@ import {
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
-import { SendError, type SendFailure } from './send-error';
+import { SEND_FAILURE, SendError } from './send-error';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
 
@@ -133,15 +133,6 @@ const FIRST_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const SEND_TIMEOUT_MS = 3 * 60 * 60_000;
 // 手の空いている子に打つときの待ちの上限（すぐ打てるはず）
 const SEND_IDLE_TIMEOUT_MS = 30_000;
-// 子に送れなかった理由（SessionManager の SendError）の、Claude に返す英語の文
-const SEND_FAILURE: Record<SendFailure, string> = {
-  notRunning: 'its Claude Code is not running',
-  exited: 'its Claude Code exited before the message could be sent',
-  terminalMode: 'it is in terminal mode (or being switched to it), where only the user can type',
-  notReady: 'its Claude Code did not become ready to accept messages in time',
-  busy: 'it did not become idle in time',
-  cancelled: 'sending was cancelled',
-};
 // get_session_diff で、未追跡のファイルを読む数と、1 つのファイルから読む大きさの上限
 const MAX_UNTRACKED_FILES = 100;
 const MAX_UNTRACKED_BYTES = 256 * 1024;
@@ -840,7 +831,8 @@ export class SessionsControl {
         text: clip(m.text, MAX_WAKEUP_TEXT_CHARS),
         ...(m.attachments.length > 0 ? { images: m.attachments.length } : {}),
         ...(m.pastes.length > 0 ? { pasted_texts: m.pastes.length } : {}),
-        ...(m.error ? { error: m.error } : {}),
+        // 送れなかった理由。error は画面の言語の文なので、Claude には reason から英語の文を作って返す（理由の分からないものは、文を返さない）
+        ...(m.error ? { error: m.reason ? `Not sent to this session because ${SEND_FAILURE[m.reason]}.` : 'Not sent to this session.' } : {}),
       })),
       ...(messages.length === 0 || unsaved ? { note: [messages.length === 0 ? 'No messages are scheduled in this session.' : '', unsaved].filter(Boolean).join(' ') } : {}),
     });

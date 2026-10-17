@@ -1192,7 +1192,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - `schedule_wakeup`・`list_wakeups`・`cancel_wakeup`: 自分のセッションへの予約（[時刻を指定して送信（予約）](#時刻を指定して送信予約)）。親が子を見に行く時刻を、裏の `sleep` で待つ代わりに使います（裏の Bash は一覧に「完了待ち」として残り、人からは何を待っているか見えず、Claude Code を起動し直すと消える）。子も使えます（`PARENT_ONLY` に入れない）。人の確認は出しません（`instruct`。予約は人が画面で取り消せる）。
     - `ScheduledMessages` は `SessionsControl` より後で作るので、`Deps.scheduled` は取り出す関数（`Profile` が `() => this.scheduled`）。まだ無ければ、起動の途中と返します。
     - 時刻は `in_minutes`（1〜1440 の整数）か `at`（時差の付いた ISO 8601。時差の無い時刻は断る）のどちらか 1 つ。返すのは `id`・`at`（UTC）・`local_time`（この Mac の時差の付いた ISO 8601）。断るときは今の時刻を添えます（Claude は今の時刻を正確には知らないため）。
-    - `list_wakeups` は、このセッションの予約を人のものも返します（`by`・`state`・時刻・本文は 300 文字まで）。`cancel_wakeup` は ID（先頭 8 文字以上）で、`by: 'claude'` のものだけを取り消します。人の予約は「人だけが取り消せる」と断ります。
+    - `list_wakeups` は、このセッションの予約を人のものも返します（`by`・`state`・時刻・本文は 300 文字まで）。送れなかったものの `error` は、保存した理由（`reason`）から作る英語の文です（画面と通知に出す文は画面の言語なので、そのまま返さない。理由の分からないものは、送れなかったことだけ）。`cancel_wakeup` は ID（先頭 8 文字以上）で、`by: 'claude'` のものだけを取り消します。人の予約は「人だけが取り消せる」と断ります。
   - `report_result`: ターンの終わりの通知に載せる報告（1〜2 文）を預けます。改行は 1 行にまとめ、300 文字を超えたら断ります（切ると終わりが失われるので、書き直させる）。子は人に通知しないので、子には見せず（`PARENT_ONLY`）、呼ばれても断ります。独立したセッションには見せます。
     - 預かるのは `turn-reports.ts` の `TurnReports`（セッションごとに最後の 1 つ）。`SessionsControl` は `Deps.report` を呼ぶだけで、通知を出すか・いつ捨てるかは `Profile` が決めます。
     - ターンの終わりの通知の本文（`Profile.turnMessage`）: 報告があれば、使い切って本文にする（`snippet` で切る）。無くて、Claude の予約が待っていれば（`ScheduledMessages.hasClaudeWakeup`）、「作業が完了しました」は出さない（時刻になると Claude が続きを始めるので、まだ終わっていない。「コンテキストの最適化が完了しました」は出す）。どちらでもなければ、今までの文言。通知をオフにしている・見ているセッション・子のときは、`index.ts` の `notify` が今までどおり出しません（報告は使って捨てる）。
@@ -1388,7 +1388,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 | `stream-logs/<id>.log`・`<id>.log.1` | チャットの claude との stream-json の送受信の控え（不具合を調べるため。発言・ツールの入出力がそのまま入る。`0600`。4MB を超えたら `.1` に回す。セッションを一覧から削除すると消す） |
 | `usage.json` | 最後に分かった利用枠 |
 | `homebrew-update.log`・`homebrew-update.result` | 終了したあとの Homebrew での入れ替えの出力と、`brew upgrade` の終了コード（結果は次の起動で読んで消す） |
-| `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態。変わるたびに書く）。読めない・形の分からないとき・壊れた JSON の扱いは、チェックリストと同じ（保存しないときは、画面に渡す予約に `unsaved` を付けて予約の枠に「保存できません」を出し、`schedule_wakeup`・`list_wakeups` の結果にも、セッションごとに最初の 1 回だけ添える） |
+| `scheduled-messages.json` | 時刻を指定して送信（予約）したメッセージ（セッションの ID・本文・画像のパス・時刻・状態・送れなかった理由。変わるたびに書く）。読めない・形の分からないとき・壊れた JSON の扱いは、チェックリストと同じ（保存しないときは、画面に渡す予約に `unsaved` を付けて予約の枠に「保存できません」を出し、`schedule_wakeup`・`list_wakeups` の結果にも、セッションごとに最初の 1 回だけ添える） |
 | `window-state.json` | ウインドウの位置と大きさ・最大化・フルスクリーン（動かし終えたときと閉じたときに書き、次の起動で戻す） |
 | `shared-prefs.json` | プロファイルをまたいで同じにする表示設定（カラムの幅・ターミナルの高さ・ソース管理の見せ方・コンテキストの並び・チェックリストの「Claude に通知する」・新しいバージョンの印を見たバージョン。変わるたびに書く） |
 | `profiles.json` | 登録したプロファイル（名前・色・Claude Code の設定のフォルダ）と、既定のプロファイルの名前と色 |
@@ -1439,7 +1439,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ・自分への予約・報告）
   - `turn-reports.ts`: Claude がターンの終わりの通知に載せる報告（`report_result`）を、セッションごとに持つ。新しいターンが始まったら捨てる
   - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信）を、手の空いたセッションに送る列（送り先がターミナルモードなら、人がボタンで頼んだものだけ TUI の入力欄に貼る）
-  - `send-error.ts`: 発言を送れなかったこと（`SendError`）。文は画面の言語で、理由（`reason`）から `send_message` が Claude に返す英語の文を作る
+  - `send-error.ts`: 発言を送れなかったこと（`SendError`）。文は画面の言語で、理由（`reason`）から `send_message`・`list_wakeups` が Claude に返す英語の文を作る（同じ表 `SEND_FAILURE`）
   - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `saved-json.ts`: アプリが保存している JSON（チェックリスト・予約したメッセージ）の読み方（無ければ空・読めなければ上書きしない・壊れていれば横に移す）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ

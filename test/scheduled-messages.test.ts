@@ -6,6 +6,7 @@ import { formatScheduleTime, parseWakeup, schedulePresets, wakeupText, type Sche
 import type { SessionState } from '@shared/session-tools';
 import { scheduledNotice } from '../src/main/notice-text';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
+import { SendError } from '../src/main/send-error';
 
 // 時刻を指定して送信（予約）。保存・時刻になったら送る・時刻を過ぎていたもの・取り消し
 const START = new Date(2026, 9, 5, 14, 0).getTime();
@@ -94,8 +95,35 @@ describe('ScheduledMessages', () => {
     await flush();
     expect(opened).toEqual([]);
     expect(sent).toEqual([]);
-    expect(scheduled.list().map((m) => [m.state, m.error])).toEqual([['failed', 'ターミナルモードの間は送れません。チャットに戻してから送ってください']]);
+    expect(scheduled.list().map((m) => [m.state, m.error, m.reason])).toEqual([['failed', 'ターミナルモードの間は送れません。チャットに戻してから送ってください', 'terminalMode']]);
     expect(troubles).toHaveLength(1);
+  });
+
+  it('送れなかった理由の分かるもの（SendError）は、Claude に返す文のために、その理由（reason）も保存する。時刻を変えると消す', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    scheduled.add('s1', 'ビルドして', [], START + MINUTE);
+    scheduled.add('s1', 'テストして', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    const exited = new SendError('exited');
+    sent[0]!.reject(exited);
+    sent[1]!.reject(new Error('起動できませんでした'));
+    await flush();
+    // 画面と通知に出す error は、今までどおり画面の言語の文
+    expect(scheduled.list().map((m) => [m.text, m.error, m.reason])).toEqual([
+      ['ビルドして', exited.message, 'exited'],
+      ['テストして', '起動できませんでした', undefined],
+    ]);
+    // アプリを起動し直しても残る
+    scheduled.dispose();
+    const again = create({ s1: 'idle' }).scheduled;
+    expect(again.list().map((m) => m.reason)).toEqual(['exited', undefined]);
+    again.reschedule(again.list()[0]!.id, START + 10 * MINUTE);
+    expect(again.list()[0]).not.toHaveProperty('reason');
+    again.dispose();
+    // 知らない理由は読み捨てる
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as { version: number; messages: Record<string, unknown>[] };
+    writeFileSync(file, JSON.stringify({ ...saved, messages: saved.messages.map((m) => ({ ...m, state: 'failed', reason: 'unknown' })) }));
+    expect(create({ s1: 'idle' }).scheduled.list().map((m) => m.reason)).toEqual([undefined, undefined]);
   });
 
   it('手が空くのを待っている間に取り消すと、送らずに外す', async () => {

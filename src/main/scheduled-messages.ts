@@ -5,6 +5,11 @@ import { t } from '@shared/i18n';
 import { SCHEDULE_LATE_MS, wakeupText, type ScheduledMessage } from '@shared/scheduled';
 import type { SessionState } from '@shared/session-tools';
 import { readSavedJson, unreadable } from './saved-json';
+import { isSendFailure, SendError, type SendFailure } from './send-error';
+
+// 保存する予約。送れなかったもののうち理由の分かるもの（SendError）には、その理由（reason）も付ける。
+// error は画面の言語の文（画面と通知に出す）なので、Claude に返す英語の文は reason から作る（sessions-control.ts の list_wakeups）
+export type StoredMessage = ScheduledMessage & { reason?: SendFailure };
 
 // 予約を送るのに使う、セッションの操作（SessionManager）
 export type ScheduleHost = {
@@ -26,7 +31,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 // アプリが閉じていた・Mac がスリープしていたなどで、時刻を SCHEDULE_LATE_MS より過ぎてから気づいたものは、送らずに missed にする。
 // Claude が自分に入れた予約（by: 'claude'。sessions-control.ts の schedule_wakeup）も同じ流れに乗せ、送るときだけ囲み（WAKEUP_TAG）に入れる
 export class ScheduledMessages {
-  private messages: ScheduledMessage[];
+  private messages: StoredMessage[];
   // 保存してよいか（読めない・形の分からないファイルは上書きしない）
   private readonly writable: boolean;
   private timer: NodeJS.Timeout | null = null;
@@ -57,7 +62,7 @@ export class ScheduledMessages {
   }
 
   // 保存しないもの（ファイルを読めなかったとき）には、そう印を付ける（画面の予約の行と、Claude の予約の道具が伝える）
-  list(): ScheduledMessage[] {
+  list(): StoredMessage[] {
     return this.writable ? this.messages : this.messages.map((m) => ({ ...m, unsaved: true }));
   }
 
@@ -172,7 +177,7 @@ export class ScheduledMessages {
       // 止まっているセッションは、起動し直してから送る（起動が終わるまでは、submitWhenReady が待つ）。ターミナルモードで止まったものは、
       // 起動すると TUI になって送れないので、起動せずに断る（送れなかったものとして残る）
       if (this.host.stateOf(sessionId) === 'exited') {
-        if (this.host.summary(sessionId)?.terminal) throw new Error(t('main.send.terminalMode'));
+        if (this.host.summary(sessionId)?.terminal) throw new SendError('terminalMode');
         await this.host.open(sessionId);
       }
       // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間も、送らずに待つ（ターミナルモードの間は断られ、送れなかったものとして残る）
@@ -187,7 +192,11 @@ export class ScheduledMessages {
     } catch (error) {
       // 取り消した・セッションを閉じた（予約はもう外してある）
       if (controller.signal.aborted || !this.messages.some((m) => m.id === id)) return;
-      this.update(id, { state: 'failed', error: error instanceof Error ? error.message : String(error) });
+      this.update(id, {
+        state: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof SendError ? { reason: error.reason } : {}),
+      });
       this.onTrouble(this.find(id));
     } finally {
       if (this.sending.get(id) === controller) this.sending.delete(id);
@@ -199,14 +208,19 @@ export class ScheduledMessages {
     return state !== null && state !== 'archived';
   }
 
-  private find(id: string): ScheduledMessage {
+  private find(id: string): StoredMessage {
     const message = this.messages.find((m) => m.id === id);
     if (!message) throw new Error(t('main.scheduled.notFound'));
     return message;
   }
 
-  private update(id: string, patch: Partial<ScheduledMessage>): void {
-    this.messages = this.messages.map((m) => (m.id === id ? { ...m, ...patch } : m));
+  private update(id: string, patch: Partial<StoredMessage>): void {
+    this.messages = this.messages.map((m) => {
+      if (m.id !== id) return m;
+      // 送れなかった理由は、error と一緒に消す（もう一度待つ・送るとき）
+      const { reason, ...next } = { ...m, ...patch };
+      return next.error !== null && reason ? { ...next, reason } : next;
+    });
     this.changed();
   }
 
@@ -245,15 +259,17 @@ export class ScheduledMessages {
   }
 }
 
-function load(file: string): { messages: ScheduledMessage[]; writable: boolean } {
+function load(file: string): { messages: StoredMessage[]; writable: boolean } {
   const { data, writable } = readSavedJson(file, '予約したメッセージ');
   if (data === null) return { messages: [], writable };
   const saved = data as { version?: unknown; messages?: unknown };
   if (saved.version !== 1 || !Array.isArray(saved.messages)) return { messages: [], writable: unreadable(file, '予約したメッセージ').writable };
-  // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約だけに付ける（ほかの値は読み捨てる）
-  const messages = saved.messages
-    .filter(isMessage)
-    .map(({ by, ...m }) => ({ ...m, pastes: stringsOf(m.pastes), error: m.error ?? null, ...(by === 'claude' ? { by } : {}) }));
+  // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約だけに付ける（ほかの値は読み捨てる）。
+  // reason は、error のあるものの、知っている理由だけを読む
+  const messages = saved.messages.filter(isMessage).map(({ by, reason, ...m }) => {
+    const error = m.error ?? null;
+    return { ...m, pastes: stringsOf(m.pastes), error, ...(by === 'claude' ? { by } : {}), ...(error !== null && isSendFailure(reason) ? { reason } : {}) };
+  });
   return { messages, writable };
 }
 
@@ -261,8 +277,8 @@ function stringsOf(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
-function isMessage(value: unknown): value is ScheduledMessage {
-  const m = value as ScheduledMessage;
+function isMessage(value: unknown): value is StoredMessage {
+  const m = value as StoredMessage;
   return (
     typeof m === 'object' &&
     m !== null &&
