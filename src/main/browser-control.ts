@@ -909,13 +909,15 @@ export class BrowserControl {
       image = await this.shoot(guest);
       note = 'Visible area';
     }
+    const url = contents.getURL();
+    this.readFrom(guest, url);
     if (image.isEmpty()) throw new ToolError('Could not take a screenshot (the page may not have been rendered yet).');
     image = shrink(image, fullPage ? 1 : (await this.viewport(guest)).dpr);
     const size = image.getSize();
     return {
       content: [
         { type: 'image', data: image.toPNG().toString('base64'), mimeType: 'image/png' },
-        { type: 'text', text: `${note}, ${contents.getURL()}, image ${size.width}×${size.height}` },
+        { type: 'text', text: `${note}, ${this.shownUrl(url, guest)}, image ${size.width}×${size.height}` },
       ],
     };
   }
@@ -937,6 +939,8 @@ export class BrowserControl {
       })()`,
     )) as { title: string; url: string; parts: { frame: string | null; text: string }[] } | null;
     if (!result) throw new ToolError(`No element matches "${selector}".`);
+    // 読んだ文書が、許していない先のもの（読む前に確かめたあとで、移動が確定した）なら返さない
+    this.readFrom(guest, result.url);
     // ページ全体のときは、別プロセスの iframe（許す先のものだけ）の文字も読む
     if (!selector) {
       for (const frame of await this.childFrames(guest)) {
@@ -948,7 +952,7 @@ export class BrowserControl {
     const body = result.parts
       .map((p) => `${p.frame ? `--- inside iframe (${p.frame}) ---\n` : ''}${p.text.replace(/\n{3,}/g, '\n\n').trim()}`)
       .join('\n\n');
-    return textResult([`Title: ${result.title || '(none)'}`, `URL: ${result.url}`, '', clip(body, MAX_TEXT)].join('\n'));
+    return textResult([`Title: ${result.title || '(none)'}`, `URL: ${this.shownUrl(result.url, guest)}`, '', clip(body, MAX_TEXT)].join('\n'));
   }
 
   private async tree(guest: Guest): Promise<ToolResult> {
@@ -981,7 +985,17 @@ export class BrowserControl {
       if (result) this.formatTree(result.nodes, lines);
     }
     if (lines.length >= MAX_TREE_LINES) lines.push(`…(truncated at ${MAX_TREE_LINES} lines)`);
-    return textResult([`URL: ${guest.contents.getURL()}`, ...lines].join('\n'));
+    const url = guest.contents.getURL();
+    this.readFrom(guest, url);
+    return textResult([`URL: ${this.shownUrl(url, guest)}`, ...lines].join('\n'));
+  }
+
+  // 読み終えたときに、読んだページ（url）が許していない先なら断る。読む前に今のページを確かめても（current）、前から読み込み中だった
+  // 移動が読んでいる間に確定すると、読んだものは移った先のものかもしれない。空のタブになっただけなら、そのまま返す（前のページか、空のもの）
+  private readFrom(guest: Guest, url: string): void {
+    if (!isBlank(url) && !this.allowedIn(guest, url)) {
+      throw new ToolError(`The page moved to a page not allowed for Claude (${originShown(url)}) while it was being read, so the result was not returned.`);
+    }
   }
 
   // CDP のアクセシビリティのツリーを、字下げした一覧にして lines に足す

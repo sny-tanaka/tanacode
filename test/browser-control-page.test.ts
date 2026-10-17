@@ -55,6 +55,41 @@ describe('ページを読むツールの前に（今のページ）', () => {
     expect(page.evaluated).toEqual([]);
     expect(page.debugger.commands).toEqual([]);
   });
+
+  it('読んでいる間に許していない先へ移ったら、読んだものを返さない（スクリーンショット・文字・ツリー。移った先はオリジンだけ）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    const moved = 'https://accounts.example.com/signin?continue=secret';
+    const MOVED = textResult('The page moved to a page not allowed for Claude (https://accounts.example.com) while it was being read, so the result was not returned.', true);
+    // スクリーンショット: 撮っている間に移った（前から読み込み中だった移動が確定した など）
+    page.capture = async () => {
+      page.url = moved;
+      return page.shot;
+    };
+    expect(await call('screenshot')).toEqual(MOVED);
+    // 文字: 読んだ文書が、移った先のもの
+    page.url = 'http://localhost:3000/';
+    page.page.text = () => ({ title: '秘密の題', url: moved, parts: [{ frame: null, text: '秘密の文字' }] });
+    expect(await call('get_text')).toEqual(MOVED);
+    // ツリー: 読んでいる間に移った
+    page.url = 'http://localhost:3000/';
+    page.debugger.handler = (method) => {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F', url: 'http://localhost:3000/' } } };
+      if (method === 'Accessibility.getFullAXTree') {
+        page.url = moved;
+        return { nodes: [{ nodeId: '1', ignored: false, role: { value: 'RootWebArea' }, name: { value: '秘密' } }] };
+      }
+      return {};
+    };
+    expect(await call('get_accessibility_tree')).toEqual(MOVED);
+    // 空のタブになっただけなら、読んだもの（前のページか、空のもの）を返す
+    page.url = 'http://localhost:3000/';
+    page.capture = async () => {
+      page.url = 'about:blank';
+      return page.shot;
+    };
+    expect((await call('screenshot')).isError).toBeFalsy();
+  });
 });
 
 describe('スクリーンショット', () => {
