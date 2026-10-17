@@ -56,8 +56,14 @@ export class ScheduledMessages {
     this.tick();
   }
 
+  // 保存しないもの（ファイルを読めなかったとき）には、そう印を付ける（画面の予約の行と、Claude の予約の道具が伝える）
   list(): ScheduledMessage[] {
-    return this.messages;
+    return this.writable ? this.messages : this.messages.map((m) => ({ ...m, unsaved: true }));
+  }
+
+  // 予約を保存するか（読めない・形の分からないファイルのときは、上書きしないよう保存しない）
+  get saving(): boolean {
+    return this.writable;
   }
 
   // by: Claude が自分に入れる予約（数と時刻の決まりは、呼ぶ側の sessions-control.ts が確かめる）
@@ -213,7 +219,7 @@ export class ScheduledMessages {
   // 保存して画面に知らせ、次の時刻を待ち直す。予約はたまにしか変わらないので、そのたびにすぐ書く（アプリを閉じる直前の変更も残す）
   private changed(): void {
     if (this.writable) this.save();
-    this.onChanged(this.messages);
+    this.onChanged(this.list());
     this.rearm();
   }
 

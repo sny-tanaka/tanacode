@@ -40,6 +40,11 @@ export function ScheduledRow({
           <ScheduleIcon size={12} />
           {noteOf(message)}
         </span>
+        {message.unsaved && (
+          <span className="chat-user-meta chat-scheduled-unsaved" data-tip={t('schedule.row.unsavedTip')}>
+            {t('schedule.row.unsaved')}
+          </span>
+        )}
       </span>
       {/* 予約の操作は、ホバーしなくても見えるようにする（reveal にしない） */}
       <div className="chat-scheduled-actions">

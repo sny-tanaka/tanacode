@@ -744,6 +744,17 @@ describe('ツールの実行（SessionsControl）', () => {
       });
     });
 
+    it('確認の ID は、ツールの入力のあとに置く（結果が途中で切られたら、入力を全部読まないまま答えられないように）', async () => {
+      const long = `echo ${'x'.repeat(5000)} && mkdir out`;
+      show(bashPermission(long));
+      const text = textOf(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      const inputEnd = text.indexOf('&& mkdir out') + '&& mkdir out'.length;
+      expect(inputEnd).toBeGreaterThan(text.indexOf('"input"'));
+      expect(text.indexOf('"id": "req-1"')).toBeGreaterThan(inputEnd);
+      // Claude Code が入力の途中で結果を切ったら、ID は残らない
+      expect(text.slice(0, text.indexOf('&& mkdir out'))).not.toContain('req-1');
+    });
+
     it('allow: 今回だけ許す（許可を覚えさせない・権限モードを変えない）', async () => {
       show(bashPermission('mkdir out'));
       const result = await answer({ permission_id: 'req-1', decision: 'allow' });
@@ -2832,6 +2843,18 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(listed.messages[1]!.text.length).toBeLessThan(360);
     expect(Date.parse(listed.messages[0]!.local_time)).toBe(Math.floor(Date.parse(listed.messages[0]!.at) / 1000) * 1000);
     expect(jsonOf<Listed>(await control.handle(PEER, 'list_wakeups', {}))).toMatchObject({ messages: [], note: 'No messages are scheduled in this session.' });
+  });
+
+  it('予約のファイルを読めず保存しないときは、schedule_wakeup・list_wakeups の結果にそう添える', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scheduled!.dispose();
+    const file = join(root, 'unreadable-scheduled.json');
+    writeFileSync(file, JSON.stringify({ version: 2, messages: [] }));
+    scheduled = new ScheduledMessages(file, scheduleHost(), () => undefined);
+    const note = 'scheduled messages are not saved';
+    expect(jsonOf<{ note: string }>(await schedule({ message: '見に行く', in_minutes: 5 })).note).toContain(note);
+    expect(jsonOf<{ note?: string }>(await control.handle(PARENT, 'list_wakeups', {})).note).toContain(note);
+    errors.mockRestore();
   });
 
   it('cancel_wakeup: 取り消せるのは、このセッションの Claude の予約だけ。人の予約は人だけが取り消せる', async () => {

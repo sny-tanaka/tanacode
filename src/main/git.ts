@@ -111,10 +111,19 @@ async function commandKeys(cwd: string, budget: { left: number }, depth: number)
 
 // リポジトリの一番上ごとの、サブモジュール（インデックスの gitlink）の場所。インデックスが変わったときだけ読み直す
 const submoduleLists = new Map<string, { stamp: string; dirs: string[] }>();
+// フォルダごとの、リポジトリの一番上とインデックスの場所（変わらないので、読めたものは覚えておく）
+const repoPaths = new Map<string, Promise<string[]>>();
 
 // 取り出してある（.git のある）サブモジュールのフォルダ
 async function submodulesOf(cwd: string): Promise<string[]> {
-  const [top, index] = (await runGit(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).catch(() => '')).split('\n');
+  let paths = repoPaths.get(cwd);
+  if (!paths) {
+    paths = runGit(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).then((out) => out.split('\n'));
+    repoPaths.set(cwd, paths);
+    // 読めなかった（まだリポジトリでないなど）ものは覚えない
+    paths.catch(() => repoPaths.delete(cwd));
+  }
+  const [top, index] = await paths.catch(() => []);
   if (!top || !index) return [];
   const info = await lstat(posix.isAbsolute(index) ? index : join(cwd, index)).catch(() => null);
   const stamp = info ? `${info.mtimeMs}:${info.size}` : '';

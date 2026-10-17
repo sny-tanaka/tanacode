@@ -903,6 +903,16 @@ describe('入力欄', () => {
     expect(box().value).toBe('人の予約\n書きかけ');
   });
 
+  it('保存できない予約（予約のファイルを読めなかった）には、アプリを終えると消えることを添える', () => {
+    const at = Date.now() + 5 * 60_000;
+    const saved = { id: 'm1', sessionId: 's1', text: '保存する予約', attachments: [], pastes: [], at, createdAt: 0, state: 'scheduled' as const, error: null };
+    render(<ClaudePane {...props({ scheduled: [{ ...saved, unsaved: true }, { ...saved, id: 'm2', text: 'ふつうの予約' }] })} />);
+    const rows = [...document.querySelectorAll<HTMLElement>('.chat-user.scheduled')];
+    const mark = within(rows[0]!).getByText('保存できません');
+    expect(mark.getAttribute('data-tip')).toContain('アプリを終えると消えます');
+    expect(within(rows[1]!).queryByText('保存できません')).toBeNull();
+  });
+
   it('予約できなかったら、わけを出して入力欄の文字は残す', async () => {
     install({ 'scheduled.add': () => Promise.reject(new Error("Error invoking remote method 'scheduled:add': Error: 過去の時刻には予約できません")) });
     render(<ClaudePane {...props()} />);

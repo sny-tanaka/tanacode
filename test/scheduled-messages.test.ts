@@ -435,6 +435,9 @@ describe('ScheduledMessages の断る・片付ける', () => {
       expect(scheduled.list()).toEqual([]);
       scheduled.add('s1', '残らない', [], START + MINUTE);
       expect(readFileSync(file, 'utf8')).toBe(text);
+      // 保存しないことを、画面（予約の印）と Claude（予約の道具の結果）に伝える
+      expect(scheduled.saving).toBe(false);
+      expect(scheduled.list().map((m) => m.unsaved)).toEqual([true]);
       scheduled.dispose();
     }
     // 読めない（読む権限が無い）
@@ -451,6 +454,8 @@ describe('ScheduledMessages の断る・片付ける', () => {
     const fresh = create({ s1: 'idle' }).scheduled;
     expect(fresh.list()).toEqual([]);
     fresh.add('s1', '残る', [], START + MINUTE);
+    expect(fresh.saving).toBe(true);
+    expect(fresh.list().map((m) => m.unsaved)).toEqual([undefined]);
     const moved = readdirSync(dir).filter((name) => name.startsWith('scheduled-messages.json.broken-'));
     expect(moved.map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
     expect((JSON.parse(readFileSync(file, 'utf8')) as { messages: ScheduledMessage[] }).messages.map((m) => m.text)).toEqual(['残る']);

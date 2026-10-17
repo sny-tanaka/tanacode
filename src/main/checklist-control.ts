@@ -53,6 +53,9 @@ type Notice = { text: string; refs: CardRef[]; byHuman: boolean };
 
 // 1 回の結果の文字数の上限
 const MAX_RESULT_CHARS = 60_000;
+// チェックリストのファイルを読めず、変更を保存しないセッションの結果に添える一言
+const UNSAVED_NOTE =
+  "Note: tanacode could not read this session's saved checklist file (no permission, or written by a newer version of tanacode), so these checklists are not saved: changes are lost when tanacode quits. The original file is kept as it is. Tell the user.";
 
 // 発言の行の時刻（Claude Code が会話ログに書く）と、人の発言のフックがアプリに届いた時刻の、ずれの見込み
 const PROMPT_SLACK_MS = 5000;
@@ -183,10 +186,12 @@ export class ChecklistControl {
   // 対象のセッション（session_id）を決めてから実行する。ほかのセッションのものは、結果と断る文の頭にセッションを書く
   private runFor(caller: SessionSummary, name: string, args: Record<string, unknown>): string {
     const target = this.targetArg(caller, name, args.session_id);
-    if (target.id === caller.id) return this.run(caller, target, name, args);
+    // チェックリストのファイルを読めず、変更を保存しないセッションなら、そう添える（人に伝えてもらう）
+    const unsaved = (text: string) => (this.deps.store.unsavable(target.id) ? `${text}\n\n${UNSAVED_NOTE}` : text);
+    if (target.id === caller.id) return unsaved(this.run(caller, target, name, args));
     const where = `Session "${nameOf(target)}" (${target.id.slice(0, 8)})`;
     try {
-      const text = this.run(caller, target, name, args);
+      const text = unsaved(this.run(caller, target, name, args));
       return checklistTool(name)?.kind === 'read' ? `# ${where}\n\n${text}` : `${where}: ${text}`;
     } catch (error) {
       if (error instanceof ChecklistError) throw new ChecklistError(`${where}: ${error.message}`);

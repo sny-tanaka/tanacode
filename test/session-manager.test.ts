@@ -293,6 +293,50 @@ describe('権限モードと起動し直し', () => {
     expect(app.manager.stateOf(id)).toBe('idle');
   });
 
+  it('restart: 起動し直すまで、一覧に一度も「終了」を出さず、チャットに終了も出さない（画面が送信を一瞬止めない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const before = app.sessionLists.length;
+    await app.manager.restart(id);
+    expect(pipe.exitedWith).toBe(0);
+    const states = app.sessionLists.slice(before).map((list) => list.find((s) => s.id === id)?.state);
+    expect(states).not.toContain('exited');
+    expect(app.events(id).some((e) => e.type === 'process-exit')).toBe(false);
+    await app.ready(id);
+    expect(app.manager.stateOf(id)).toBe('idle');
+  });
+
+  it('restart: 止めている途中に送った発言は、閉じかけの claude に書かず、起動し直した claude に届ける', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    pipe.exit(0);
+    await restarting;
+    const next = app.pipe(id);
+    await app.ready(id);
+    await sent;
+    expect(pipe.prompts).toEqual([]);
+    expect(next.prompts.map((p) => p.message.content)).toEqual(['再起動のあとも']);
+  });
+
+  it('restart: 止めている途中に来た、起動を待って送るもの（親の指示・予約）も、起動し直した claude に届ける', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    pipe.exit(0);
+    await app.waitFor('止まった', () => pipe.exitedWith !== null);
+    const sent = app.manager.submitWhenReady(id, '親からの指示', 5000);
+    await restarting;
+    await app.ready(id);
+    await sent;
+    expect(app.pipe(id).prompts.map((p) => p.message.content)).toEqual(['親からの指示']);
+  });
+
   it('restart: 止められなかったら（終わりの知らせが来ない）、動いている claude をそのまま使えるように戻し、黙らずに理由を返す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

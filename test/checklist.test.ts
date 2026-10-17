@@ -148,7 +148,7 @@ describe('保存と書き換え（ChecklistStore）', () => {
     expect(() => store.lists('../etc')).toThrow();
   });
 
-  it('読めないファイル（無いほかの理由）・形の分からないファイルは、空で始めても上書きしない。壊れたファイルは横に移してから空で始める', () => {
+  it('読めないファイル（無いほかの理由）・形の分からないファイルは、空で始めても上書きしない。壊れたファイルは横に移してから空で始める', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     // 新しいバージョンのアプリが書いた形
     const future = join(dir, 'future.json');
@@ -163,6 +163,9 @@ describe('保存と書き換え（ChecklistStore）', () => {
     const broken = join(dir, 'broken.json');
     writeFileSync(broken, '{壊れた');
     const reopened = new ChecklistStore(dir);
+    // 保存しないと分かったセッション（画面の知らせ・Claude への一言に使う）
+    const unsaved: string[] = [];
+    reopened.onUnsaved = (id) => unsaved.push(id);
     for (const id of ['future', 'locked', 'broken']) {
       expect(reopened.lists(id)).toEqual([]);
       reopened.createList(id, 'human', 'やること', '');
@@ -178,6 +181,12 @@ describe('保存と書き換え（ChecklistStore）', () => {
     // 上書きしなかったことは、ログに残す
     expect(errors).toHaveBeenCalled();
     errors.mockRestore();
+    await Promise.resolve();
+    expect(unsaved).toEqual(['future', 'locked']);
+    expect(['future', 'locked', 'broken', 'none'].map((id) => reopened.unsavable(id))).toEqual([true, true, false, false]);
+    // 一覧から削除しても、読めなかったファイルは消さない（本物の中身を失わないため）
+    reopened.remove('future');
+    expect(readFileSync(future, 'utf8')).toBe(futureText);
   });
 
   it('Claude に伝える人の書き換えは、Claude が前に呼んだあとのものだけ', () => {

@@ -178,6 +178,9 @@ type Runtime = {
   switching: boolean;
   // 切り替えで、アプリが止めている claude（この claude の終わりは、すぐもう片方で起動するので出さない）
   switchStopping: ClaudeSession | null;
+  // 再起動で、アプリが止めている claude と、起動し直し終えた（か、やめた）ことの知らせ。この claude の終わりは出さず、
+  // その間は起動中にする（一瞬でも終了と見せると、画面が送信を止める）。その間に送るものは、起動し直した claude に送る
+  restarting: { process: ClaudeSession; done: Promise<void> } | null;
   // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
   tuiTurn: boolean;
   // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
@@ -376,6 +379,14 @@ export class SessionManager {
   // 動いていても、ターンの終わりに通知する（報告は、どう終わったかを伝えるもの）
   turnReported: (id: string) => boolean = () => false;
 
+  // チェックリストのファイルを読めず、変更を保存しないセッションか（profile.ts がつなぐ。一覧の印で、チェックリストのパネルが知らせる）
+  checklistUnsaved: (id: string) => boolean = () => false;
+
+  // チェックリストを保存しないと分かった（一覧の印を送り直す）
+  checklistUnsavedChanged(id: string): void {
+    if (this.store.get(id)) this.emitSessions();
+  }
+
   // 最後に終わったターンが、人の中断で終わったか
   lastTurnInterrupted(id: string): boolean {
     const events = this.runtimes.get(id)?.events ?? [];
@@ -422,6 +433,7 @@ export class SessionManager {
             : null,
           parentId: r.parentId ?? null,
           addedFolders: r.addedFolders ?? [],
+          ...(this.checklistUnsaved(r.id) ? { checklistUnsaved: true } : {}),
         };
       });
   }
@@ -693,9 +705,11 @@ export class SessionManager {
     if (record.archived) return 'archived';
     if (this.restoring.has(id)) return 'starting';
     const rt = this.runtimes.get(id);
+    // チャットとターミナルモードの切り替え・再起動で、アプリが止めて起動し直している途中は起動中
+    // （止めた claude が終わってから、次を起動するまでの間も。一瞬でも終了と見せると、画面が送信を止める）
+    if (rt?.switching || rt?.restarting) return 'starting';
     if (!rt?.process) return 'exited';
-    // チャットとターミナルモードを切り替えている途中は起動中。ターミナルモードの間は、人が TUI で操作している
-    if (rt.switching) return 'starting';
+    // ターミナルモードの間は、人が TUI で操作している
     if (rt.terminal) return 'terminal';
     // Claude Code が答えを待っている要求（AskUserQuestion は質問、ほかは許可の確認）
     const request = firstRequest(rt);
@@ -1405,22 +1419,38 @@ export class SessionManager {
     const mode = this.relaunchMode(id, rt);
     // 自分で止めるので、切り替えた先の起動の途中の終わりとはみなさない（元の種類に戻さない）
     rt.switchedFrom = null;
-    // 止めている間は起動中にする（送った発言が、閉じかけの claude に入って消えないよう、画面は起動が終わるまで預かる）
+    // 止めている間は起動中にする（送った発言が、閉じかけの claude に入って消えないよう、画面は起動が終わるまで預かる。
+    // 止めた claude が終わってから次を起動するまでの間も起動中にし、終了は出さない。その間に送ったものは、起動し直した claude に送る）
     const wasReady = rt.ready;
     rt.ready = false;
+    let finish = () => {};
+    rt.restarting = { process, done: new Promise<void>((resolve) => (finish = resolve)) };
     this.emitSessions();
     this.changed(id);
-    const stopped = await process.stop(this.stopStepMs);
-    // 止めている間に、ほかで起動し直した・アーカイブした
-    if (this.runtimes.get(id) !== rt) return;
-    if (rt.process === process && !stopped) {
-      // 止められなかった（終わりの知らせが来ない）。動いている claude をそのまま使えるように戻し、黙らずに理由を返す
-      if (wasReady) this.markReady(id, rt);
-      throw new Error(t('main.session.notStopped'));
+    try {
+      const stopped = await process.stop(this.stopStepMs);
+      // 止めている間に、ほかで起動し直した・アーカイブした
+      if (this.runtimes.get(id) !== rt) return;
+      if (rt.process === process && !stopped) {
+        // 止められなかった（終わりの知らせが来ない）。動いている claude をそのまま使えるように戻し、黙らずに理由を返す
+        if (wasReady) this.markReady(id, rt);
+        throw new Error(t('main.session.notStopped'));
+      }
+      if (rt.process) return;
+      try {
+        // ターミナルモードなら、TUI で起動し直す
+        this.start(id, mode, null, rt.terminal ? 'tui' : 'stream');
+      } catch (error) {
+        // 起動し直せなかった。止めた claude の終わりは出していないので、ここで出す（チャットの「再開」で開き直せる）
+        this.pushEvents(id, [{ type: 'process-exit', exitCode: 0 }]);
+        throw error;
+      }
+    } finally {
+      rt.restarting = null;
+      finish();
+      this.emitSessions();
+      this.changed(id);
     }
-    if (rt.process) return;
-    // ターミナルモードなら、TUI で起動し直す
-    this.start(id, mode, null, rt.terminal ? 'tui' : 'stream');
   }
 
   // ターミナルモードの TUI に打つ（人が画面で打った文字）
@@ -1433,10 +1463,15 @@ export class SessionManager {
   // priority: later はターンが終わってから別のターンにする（親からの指示・知らせ・予約）。省くと、作業中なら今のターンに取り込まれる
   submit(id: string, rawText: string, attachments: string[] = [], pastes: string[] = [], priority?: 'later'): Promise<void> {
     const rt = this.runtimes.get(id);
-    if (!rt?.process) return Promise.resolve();
+    if (!rt || (!rt.process && !rt.restarting)) return Promise.resolve();
     // ターミナルモードの間は、人が TUI で打つ（チャットからは送らない）
     if (rt.terminal || rt.switching) return Promise.reject(new Error(t('main.send.terminalMode')));
     const run = async () => {
+      // 再起動で止めている claude には書かない（閉じかけで消える）。起動し直した claude が受け付けるようになってから送る
+      if (rt.restarting) {
+        await rt.restarting.done;
+        for (const next = rt.process; next && rt.process === next && !rt.ready; ) await sleep(100);
+      }
       const process = rt.process;
       const client = process?.client;
       if (!process || !client) throw new Error(t('main.send.notRunning'));
@@ -1497,8 +1532,8 @@ export class SessionManager {
     { attachments = [], pastes = [], signal }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal } = {},
   ): Promise<void> {
     const rt = this.runtimes.get(id);
-    const process = rt?.process;
-    if (!rt || !process) throw new Error(t('main.send.notRunning'));
+    let process = rt?.process ?? null;
+    if (!rt || (!process && !rt.restarting)) throw new Error(t('main.send.notRunning'));
     // ターミナルモードの間に来た親の指示・予約・知らせは、預からずに断る（決めたこと）
     if (rt.terminal || rt.switching) throw new Error(t('main.send.terminalMode'));
     rt.pendingSubmits += 1;
@@ -1506,6 +1541,13 @@ export class SessionManager {
     try {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
+        // 再起動の途中なら、起動し直した claude を待つ
+        if (rt.restarting) {
+          await rt.restarting.done;
+          process = rt.process;
+          if (!process) throw new Error(t('main.send.exited'));
+          continue;
+        }
         if (rt.process !== process) throw new Error(t('main.send.exited'));
         if (signal?.aborted) throw new Error(t('main.send.cancelled'));
         if (rt.ready && !rt.preparing) break;
@@ -1690,6 +1732,7 @@ export class SessionManager {
         terminal: false,
         switching: false,
         switchStopping: null,
+        restarting: null,
         switchedFrom: null,
         tuiBaseline: null,
         tuiRemoteSeen: false,
@@ -1863,9 +1906,9 @@ export class SessionManager {
           }
           runtime.tuiTurn = false;
           runtime.tuiAsk = null;
-          // チャットとターミナルモードの切り替えで、アプリが止めたときは、終了を出さない（すぐもう片方で起動し直す）。
-          // 切り替えの途中でも、claude が自分で終わった（落ちた）ときは出す（出さないと止まったと分からず、送った発言が黙って消える）
-          if (runtime.switchStopping !== process) {
+          // チャットとターミナルモードの切り替え・再起動で、アプリが止めたときは、終了を出さない（すぐ起動し直す。起動できなければ、
+          // そこで出す）。切り替えの途中でも、claude が自分で終わった（落ちた）ときは出す（出さないと止まったと分からず、送った発言が黙って消える）
+          if (runtime.switchStopping !== process && runtime.restarting?.process !== process) {
             const back = runtime.switchedFrom;
             runtime.switchedFrom = null;
             if (back === 'stream') {

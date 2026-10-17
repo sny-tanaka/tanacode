@@ -383,3 +383,17 @@ describe('initialize の返事から作るもの', () => {
     expect(app.manager.commandsOf(id)).toBeNull();
   });
 });
+
+describe('チェックリストを保存できないセッション', () => {
+  it('一覧の印に出す。保存できないと分かったら、一覧を送り直す', () => {
+    const unsaved = new Set<string>();
+    app.manager.checklistUnsaved = (id) => unsaved.has(id);
+    const { id } = app.create();
+    expect(app.manager.summary(id)?.checklistUnsaved).toBeUndefined();
+    unsaved.add(id);
+    const before = app.sessionLists.length;
+    app.manager.checklistUnsavedChanged(id);
+    expect(app.sessionLists.length).toBe(before + 1);
+    expect(app.sessionLists.at(-1)?.find((s) => s.id === id)?.checklistUnsaved).toBe(true);
+  });
+});

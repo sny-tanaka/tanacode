@@ -243,6 +243,9 @@ export class Profile {
     manager.turnNotice = (id, starter) => compactNotice.turnEnded(id, starter);
     // Claude の報告があれば、バックグラウンドのタスクが動いていても、ターンの終わりに通知する（報告は、どう終わったかを伝えるもの）
     manager.turnReported = (id) => this.reports.has(id);
+    // チェックリストのファイルを読めず、変更を保存しないセッションは、一覧の印でチェックリストのパネルに知らせる
+    manager.checklistUnsaved = (id) => this.checklists.unsavable(id);
+    this.checklists.onUnsaved = (id) => manager.checklistUnsavedChanged(id);
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,

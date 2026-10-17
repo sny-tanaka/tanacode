@@ -271,6 +271,8 @@ export type SessionSummary = {
   // ワークスペースに追加したフォルダ（絶対パス。リンクは解いてある）。エクスプローラーで cwd の下に並べ、Claude Code にも --add-dir で渡す。
   // 無いもの・空は追加なし
   addedFolders?: string[];
+  // チェックリストのファイルを読めず（権限が無い・新しいバージョンのアプリが書いた形など）、変更を保存しない。無いものは保存する
+  checklistUnsaved?: boolean;
 };
 
 // worktree のセッション。name: worktree の名前（claude --worktree に渡したもの）/ branch: Claude Code が作ったブランチ /

@@ -56,11 +56,18 @@ describe('アプリを起動し直しても、Claude Code の会話を続けら�
   });
 
   it('「再起動」で Claude Code を起動し直しても、同じ会話を続けられる', async () => {
+    // ターンが閉じる前に押すと、作業中の再起動の確かめが出て取りやめになる（起動し直さないまま通ってしまう）
+    await app.byText('.statusbar', 'Claude Code 待機中').waitFor();
+    const before = await app.claudePids();
     await app.page.click('.claude-header [aria-label="再起動"]');
     // 起動し直すと、入力を受け付けるまで送信を預かる
     await app.send('再起動のあとも');
     await app.byText('.chat-list', THIRD).waitFor();
     expect(app.api.lastPrompts).toContain('再起動のあとも');
+    // 本当に起動し直した（前の claude は残っていない）
+    const after = await app.claudePids();
+    expect(after).toHaveLength(1);
+    expect(before).not.toContain(after[0]);
   });
 
   // ターミナルモードの中身（TUI）は Claude Code そのものなので、画面は読まない・キーは押さない（決めたこと）。確かめるのはアプリの側だけ

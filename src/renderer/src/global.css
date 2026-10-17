@@ -5782,6 +5782,12 @@ body.resizing-rows webview {
 .chat-user.scheduled.trouble .chat-scheduled-note {
   color: var(--warn);
 }
+/* 予約のファイルを読めず、保存しない予約 */
+.chat-scheduled-unsaved {
+  display: block;
+  width: fit-content;
+  color: var(--warn);
+}
 /* Claude が自分に入れた予約。親セッションからの指示と同じく Claude の色にして、人の予約と見分ける */
 .chat-user.scheduled.by-claude {
   background: var(--claude-tint);
@@ -6870,6 +6876,17 @@ body.resizing-rows webview {
   display: flex;
   gap: 6px;
   padding: 0 12px 6px;
+}
+/* チェックリストのファイルを読めず、変更を保存しないセッション */
+.checklist-unsaved {
+  flex: none;
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .checklist-scroll {
   flex: 1;
