@@ -1201,6 +1201,8 @@ const previewWindows = new PreviewWindows({
   browsers: () => profiles().map((p) => p.browser),
   background,
   openExternal: (url) => void shell.openExternal(url),
+  // ポップアップは、tanacode のウインドウ（タブはいつもこの中）がある画面の中に置く
+  screen: () => (mainWindow && !mainWindow.isDestroyed() ? { workArea: screen.getDisplayMatching(mainWindow.getBounds()).workArea, around: mainWindow.getBounds() } : null),
 });
 app.on('web-contents-created', (_e, contents) => previewWindows.watch(contents));
 

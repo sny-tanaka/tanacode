@@ -355,7 +355,7 @@ PR で、次のものを流します。develop への push では流しません
 | `mcp.test.ts` | Claude が MCP でチェックリスト・ウォークスルー・アプリ内ブラウザを操作すると、画面に出るか。許可や「終わった」の操作が、ツールの結果として Claude に戻るか |
 | `walkthrough-post.test.ts` | Claude に頼むと、ウォークスルーを GitHub の PR に載せる（`post_walkthrough`）。載せる前に許可のカードが出て、答えると載せ、コメントの URL が Claude に戻るか。載せた本文が、ボタンで開く下見の本文に一言を添えたものか。下見に、もう載せたことが出るか。GitHub には書かず、PATH の先頭に置いた偽の `gh`（`E2EApp.launch` の `commands`）が受け取る |
 | `browser-shot.test.ts` | Claude がアプリ内ブラウザのスクリーンショット（表示中の範囲・ページ全体・要素）を撮れるか。ブラウザが見えているときと、閉じて見ていないとき（透明にして描かせたままのタブ）の両方 |
-| `browser-popup.test.ts` | アプリ内ブラウザのページが `window.open`（features 付き）で開くポップアップが、アプリ内ブラウザの外の別ウインドウで開き、`window.opener` から `postMessage` が届くか（Claude が押したときと、人が押したときの両方）。別ウインドウに Node も preload（`window.tanacode`）も無く（features で `nodeIntegration=yes` などを渡しても）、`file:`・`blob:` へ移れず、プレビューのセッションか。`window.close()` で閉じるか。タブの一覧に出ないか |
+| `browser-popup.test.ts` | アプリ内ブラウザのページが `window.open`（features 付き）で開くポップアップが、アプリ内ブラウザの外の別ウインドウで開き、`window.opener` から `postMessage` が届くか（Claude が押したときと、人が押したときの両方）。別ウインドウに Node も preload（`window.tanacode`）も無く（features で `nodeIntegration=yes` などを渡しても）、`file:`・`blob:` へ移れず、プレビューのセッションか。ページが画面の外の位置を指定しても、開いている間ずっと tanacode のウインドウがある画面の中にあるか（作った直後は位置が決まっていないので、読み込み終えてから閉じるまで 0.1 秒ごとに見る）。`window.close()` で閉じるか。タブの一覧に出ないか |
 | `browser-outside.test.ts` | Claude が許す先の外のページ（`[::1]` のサーバー）を開くと、「次から聞かない」で許したあとでも許可の確認のカードが出て、許すと開くか。許したタブの中の同じオリジンの操作（リンクを押す・読む）には確認が出ず、別のオリジン（別のポート）へ移ろうとしたら止まって、`continue` でまた確認が出るか |
 | `checklist-decisions.test.ts` | 決定事項（チェックで消えないリスト）を、画面と Claude の両方から使う。Claude が MCP で決定事項と確認事項のリストを作ると、ピンと有効な数で出る。確認事項のカードを人がチェックすると、決定事項に移る。次の発言で、有効な決定（承認したものも）が Claude に渡る。Claude が取り消したものはゴミ箱に入り、有効なものは消せない。人はゴミ箱から戻して取り消しを戻せて、自分でも取り消せる（画面に残る）。取り消したものは、次の発言から渡らない。人が取り消して残っているものは、Claude が消せる |
 | `checklist.test.ts` | 人がチェックリストを画面で使う（リストとカードを作ってチェックを付ける）。カードのスレッドに「Claude に通知する」で返信すると、手の空いた Claude に知らせが届くか。Claude が MCP でスレッドに返信すると、画面に出るか |
@@ -1028,7 +1028,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 別ウインドウの中身は、Electron が開いたページと同じセッション（プレビューのもの。権限とダウンロードを断る）で作ります。違えば閉じます（`adopt`）。`webPreferences` の守りの値（`nodeIntegration`・`contextIsolation`・`sandbox`・`webviewTag` など）と、見た目を偽れる指定（枠・最前面・全画面など）は `overrideBrowserWindowOptions` で決め、ページが features に書いた値は効きません（`popupOptions`）。preload は付けません（webview から引き継ぐものも無い。E2E で `window.tanacode` が無いことを確かめる）。
     - 移る先の見張りと、新しいウインドウの扱いは、中身ができたとき（`web-contents-created`）に付けます。ポップアップの中身は、プレビューのセッション（`restrictPreviewSession` で控えたもの）の `window` で見分けます。`did-create-window` より前に付くので、最初の読み込みとページのスクリプトにも効きます。付けないと、ポップアップがさらに開くウインドウを、Electron がそのまま作ってしまいます。
     - ポップアップから開くもの（タブ・ポップアップ）と、ポップアップの移動の確かめ（Claude の操作の間は、開いたタブで許した先へしか移らない。`blocksNavigation` の `popup`）は、もとのタブのものとして扱います。Claude の操作で許していない先のポップアップは開きません（`allowsPopup`。止めたことと、開いたことを Claude に伝える）。別ウインドウは Claude の操作の対象にしません（タブに入れない）。
-    - 開いたタブが無くなったら、そのタブから開いた別ウインドウを閉じます（`outlivesOpener: true` にして自分で閉じる。Electron の既定では、開いたページが別のサイトへ移っただけで閉じてしまうため）。1 つのタブから 5 個まで（`MAX_POPUPS`）。アドレス欄が無いので、題に今のページのオリジンを添えます。裏で起動しているとき（`TANACODE_BACKGROUND=1`）は、画面に出しません。
+    - 開いたタブが無くなったら、そのタブから開いた別ウインドウを閉じます（`outlivesOpener: true` にして自分で閉じる。Electron の既定では、開いたページが別のサイトへ移っただけで閉じてしまうため）。1 つのタブから 5 個まで（`MAX_POPUPS`）。位置と大きさは、ページが features に書いた指定（`width`・`height`・`left`・`top` と `innerWidth` などの別名）を、tanacode のウインドウがある画面の `workArea` の中に詰めます（`popupBounds`。大きすぎる指定は画面の大きさ、小さすぎる指定は 320×240、指定が無ければ 800×600 で tanacode のウインドウの真ん中）。開いたあとにページが動かす・大きさを変える（`window.moveTo`・`resizeTo`。`content-bounds-updated`）ときも詰めます。アドレス欄が無いので、題に今のページのオリジンを添えます。裏で起動しているとき（`TANACODE_BACKGROUND=1`）は、画面に出しません。
     - Electron 44.7 で確かめたこと: webview のページのポップアップは `window.opener` がつながり、`postMessage` が届く・`window.close()` で閉じる・`noopener` ではつながらない・別ウインドウの中身は開いたページと同じセッション・`web-contents-created` が `did-create-window` より先・最初の読み込みでも `will-frame-navigate` が出る。
   - コンソールの出力と失敗した通信は、webview ができたとき（`did-attach-webview` から `track`）から集めます。タブの知らせ（`dom-ready`）を待つと、ページの最初のスクリプトが出したものを取りこぼすためです。
   - スクリーンショットは `capturePage`（Retina でもページの大きさに縮める）。ページ全体とアクセシビリティのツリーは CDP（`webContents.debugger`）。開発者ツールを開いていても使えます。
@@ -1462,7 +1462,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
-  - `browser-windows.test.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先・ポップアップの別ウインドウの作り方と数・ポップアップから開くもの・閉じ方・題のオリジン）
+  - `browser-windows.test.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先・ポップアップの別ウインドウの作り方と数・位置と大きさ・ポップアップから開くもの・閉じ方・題のオリジン）
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
   - `checklist-decisions.test.ts`: 決定事項（リストの種類と性質・Claude ができること（足す・理由つきで取り消してゴミ箱に入れる・取り消したカードを消す）と断ること・人ができること・承認したカードを決定事項に移す・知らせにいつも出すことと長さの上限・MCP のツール・種類の無いデータの読み方）

@@ -10,6 +10,7 @@ import { E2EApp } from './app';
 // - ポップアップから opener に postMessage が届く。ポップアップの window.close() で、別ウインドウが閉じる
 // - 別ウインドウにも、タブと同じ守りが効く: Node もアプリの API（preload の window.tanacode）も無い（features で nodeIntegration=yes などを
 //   渡しても）・トップのフレームは http(s) と about:blank だけ（file: にも blob: にも移れない）・プレビューのセッション
+// - 別ウインドウは、ページが画面の外の位置を指定しても、tanacode のウインドウがある画面の中に開く
 // - 別ウインドウは Claude の操作の対象にしない（タブの一覧に出ない）。Claude の操作で開いたら、そのことを Claude に伝える
 // - 人の操作（Claude の操作の外）で開いたものも、同じように開く
 
@@ -17,10 +18,12 @@ const OPEN = 'ログインのポップアップを確かめてください';
 const DONE = 'ポップアップを確かめました';
 // ポップアップが opener に送る報告（Node・アプリの API が無く、file: にも blob: にも移らなかった）
 const REPORT = 'popup node:undefined/undefined,app:undefined,stayed';
+// 作られた別ウインドウ。preview: プレビューのセッション / inside: tanacode のウインドウがある画面の中 / closed: 閉じた
+type Popup = { preview: boolean; inside: boolean; closed: boolean };
 const tool = (id: string, name: string, input: Record<string, unknown>): Block[] => [{ type: 'tool_use', id, name: browserToolId(name), input }];
 
 const OPENER = `<!doctype html><title>開く側</title><h1>ログインの前</h1>
-<button id="login" onclick="window.open('/popup', 'login', 'width=480,height=640,nodeIntegration=yes,sandbox=no,contextIsolation=no,webviewTag=yes')">ログイン</button>
+<button id="login" onclick="window.open('/popup', 'login', 'width=480,height=640,left=-10000,top=-10000,nodeIntegration=yes,sandbox=no,contextIsolation=no,webviewTag=yes')">ログイン</button>
 <p id="result">まだ</p>
 <script>
   let count = 0;
@@ -71,13 +74,32 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
         },
       ],
     });
-    // 作られたウインドウ（アプリのウインドウのあとのもの）と、そのセッションがプレビューのものかを控える
-    await app.app.evaluate(({ app: electronApp, session }) => {
-      const created: { preview: boolean; closed: boolean }[] = [];
+    // 作られたウインドウ（アプリのウインドウのあとのもの）と、そのセッションがプレビューのものか・tanacode のウインドウがある画面の中かを控える
+    await app.app.evaluate(({ app: electronApp, BrowserWindow, screen, session }) => {
+      const created: Popup[] = [];
       (globalThis as { __popups?: typeof created }).__popups = created;
       electronApp.on('browser-window-created', (_event, win) => {
-        const entry = { preview: win.webContents.session === session.fromPartition('persist:tanacode-preview'), closed: false };
+        const entry = { preview: win.webContents.session === session.fromPartition('persist:tanacode-preview'), inside: false, closed: false };
         created.push(entry);
+        // 位置は、作られた時点ではまだ決まっていない（詰めないと、Electron があとでページの指定の位置へ動かす。実測）。
+        // ページを読み込み終えてから閉じるまで、0.1 秒ごとに見て、ずっと画面の中にあったかを控える
+        // （ページの window.close() では close の知らせが出ずに閉じるので、閉じるときには見られない）
+        const seen: boolean[] = [];
+        const look = () => {
+          if (win.isDestroyed()) return false;
+          const main = BrowserWindow.getAllWindows().find((w) => w !== win);
+          const area = main ? screen.getDisplayMatching(main.getBounds()).workArea : null;
+          const b = win.getBounds();
+          seen.push(!!area && b.x >= area.x && b.y >= area.y && b.x + b.width <= area.x + area.width && b.y + b.height <= area.y + area.height);
+          entry.inside = seen.every(Boolean);
+          return true;
+        };
+        win.webContents.once('did-finish-load', () => {
+          look();
+          const timer = setInterval(() => {
+            if (!look()) clearInterval(timer);
+          }, 100);
+        });
         win.on('closed', () => (entry.closed = true));
       });
     });
@@ -92,7 +114,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await new Promise((resolve) => server?.close(resolve));
   });
 
-  const popups = () => app.app.evaluate(() => (globalThis as { __popups?: { preview: boolean; closed: boolean }[] }).__popups ?? []);
+  const popups = () => app.app.evaluate(() => (globalThis as { __popups?: Popup[] }).__popups ?? []);
   const windows = () => app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
 
   it('Claude が押して開いたポップアップは別ウインドウで開き、opener に届く。Node もアプリの API も無く、file: にも blob: にも移れない', async () => {
@@ -105,8 +127,8 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     expect((await popups())[0]?.preview).toBe(true);
   });
 
-  it('ポップアップの window.close() で、別ウインドウが閉じる', async () => {
-    await expect.poll(popups, { timeout: 10_000 }).toEqual([{ preview: true, closed: true }]);
+  it('ポップアップの window.close() で、別ウインドウが閉じる。ページが画面の外の位置を指定しても、閉じるまで画面の中にある', async () => {
+    await expect.poll(popups, { timeout: 10_000 }).toEqual([{ preview: true, inside: true, closed: true }]);
     expect(await windows()).toBe(1);
   });
 
@@ -121,8 +143,8 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
       .poll(() => app.app.evaluate(({ webContents }) => webContents.getAllWebContents().find((c) => c.getType() === 'webview')?.executeJavaScript('document.getElementById("result").textContent')), { timeout: 15_000 })
       .toBe(`${REPORT} #2`);
     await expect.poll(popups, { timeout: 10_000 }).toEqual([
-      { preview: true, closed: true },
-      { preview: true, closed: true },
+      { preview: true, inside: true, closed: true },
+      { preview: true, inside: true, closed: true },
     ]);
   });
 

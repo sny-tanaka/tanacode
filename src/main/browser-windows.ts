@@ -1,4 +1,4 @@
-import type { BrowserWindow, BrowserWindowConstructorOptions, HandlerDetails, Session, WebContents, WindowOpenHandlerResponse } from 'electron';
+import type { BrowserWindow, BrowserWindowConstructorOptions, HandlerDetails, Rectangle, Session, WebContents, WindowOpenHandlerResponse } from 'electron';
 import type { BrowserControl } from './browser-control';
 
 // アプリ内ブラウザ（プレビューのパーティションの webview のタブ）のページが、移る・新しいウインドウを開くときの守り。
@@ -14,6 +14,10 @@ import type { BrowserControl } from './browser-control';
 // アプリ内ブラウザの操作のうち、ここで使うもの
 export type PreviewBrowser = Pick<BrowserControl, 'track' | 'openFromPage' | 'isOperating' | 'blocksNavigation' | 'allowsPopup'>;
 
+// ポップアップを置く画面。workArea: tanacode のウインドウ（タブはいつもこのウインドウの中）がある画面の、メニューバーと Dock を除いた範囲 /
+// around: tanacode のウインドウ（位置の指定が無いポップアップは、この真ん中に出す）
+export type PopupScreen = { workArea: Rectangle; around: Rectangle };
+
 type Deps = {
   // 開いているプロファイルのアプリ内ブラウザ（どのタブのものかは、それぞれが見分ける）
   browsers: () => PreviewBrowser[];
@@ -21,10 +25,15 @@ type Deps = {
   background: boolean;
   // ふだんのブラウザで開く
   openExternal: (url: string) => void;
+  // ポップアップを置く画面（ウインドウが無いなど、分からなければ null。位置と大きさは Electron の既定のまま）
+  screen: () => PopupScreen | null;
 };
 
 // 1 つのタブから開いておけるポップアップの数（ページが window.open を繰り返しても、ウインドウで埋まらないように）
 export const MAX_POPUPS = 5;
+// ポップアップの大きさ。指定が無いときは Electron の既定と同じ 800×600。小さすぎる指定は、読めて押せる大きさまで広げる（画面がそれより小さければ画面の大きさ）
+const DEFAULT_POPUP = { width: 800, height: 600 };
+const MIN_POPUP = { width: 320, height: 240 };
 
 const DENY: WindowOpenHandlerResponse = { action: 'deny' };
 
@@ -98,7 +107,7 @@ export class PreviewWindows {
   }
 
   // ページが新しいウインドウで開こうとした。source: 開こうとしたタブかポップアップ
-  private open(source: WebContents, { url, disposition }: HandlerDetails): WindowOpenHandlerResponse {
+  private open(source: WebContents, { url, disposition, features }: HandlerDetails): WindowOpenHandlerResponse {
     // http(s) でないもの（file:・mailto: など）は開かない
     if (!/^https?:\/\//.test(url)) return DENY;
     const root = this.roots.get(source) ?? source;
@@ -108,7 +117,8 @@ export class PreviewWindows {
       // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える）
       if (browser && !browser.allowsPopup(root, url)) return DENY;
       // 開いたタブを閉じるときは、attach の destroyed で閉じる（Electron の決まりでは、開いたページが別のサイトへ移っただけで閉じてしまう）
-      return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupOptions(this.deps.background) };
+      const screen = this.deps.screen();
+      return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupOptions(this.deps.background, screen && popupBounds(features ?? '', screen)) };
     }
     // アプリ内ブラウザの新しいタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く
     if (!browser?.openFromPage(root, url, disposition) && !browser?.isOperating(root)) this.deps.openExternal(url);
@@ -128,14 +138,21 @@ export class PreviewWindows {
     this.popups.set(root, list);
     win.on('closed', () => list.delete(win));
     showOrigin(win);
+    // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める
+    win.webContents.on('content-bounds-updated', (event, bounds) => {
+      event.preventDefault();
+      const screen = this.deps.screen();
+      if (screen && !win.isDestroyed()) win.setBounds(fitIn(bounds, screen.workArea));
+    });
   }
 }
 
 // 別ウインドウの作り方。守りの値は、ページが features に書いた値より強い（Electron は、この値をページの値の上に重ねる）。
-// 枠・最前面・全画面など、見た目を偽れる指定も、ページには決めさせない。大きさと位置は、ページの指定のまま
-function popupOptions(background: boolean): BrowserWindowConstructorOptions {
+// 枠・最前面・全画面など、見た目を偽れる指定も、ページには決めさせない。位置と大きさは、ページの指定を画面の中に詰めたもの（popupBounds）
+function popupOptions(background: boolean, bounds: Rectangle | null): BrowserWindowConstructorOptions {
   return {
     show: !background,
+    ...bounds,
     frame: true,
     titleBarStyle: 'default',
     transparent: false,
@@ -153,6 +170,40 @@ function popupOptions(background: boolean): BrowserWindowConstructorOptions {
       webviewTag: false,
     },
   };
+}
+
+// ポップアップの位置と大きさ。ページが window.open の features に書いた指定（width・height・left・top と、innerWidth・innerHeight・
+// screenX・screenY）を、tanacode のウインドウがある画面の中に詰める（画面の外・大きすぎる・小さすぎる指定も、収まる範囲に丸める）。
+// 位置の指定が無ければ、tanacode のウインドウの真ん中。読めない値は、指定が無いものとして扱う
+export function popupBounds(features: string, { workArea, around }: PopupScreen): Rectangle {
+  const asked: Record<string, number> = {};
+  for (const item of features.split(',')) {
+    const [key, value] = item.split('=').map((part) => part.trim().toLowerCase());
+    // 先頭の数字だけを読む（ブラウザと同じく「480px」は 480）
+    const number = value === undefined ? NaN : Number.parseInt(value, 10);
+    if (key && Number.isFinite(number)) asked[key] = number;
+  }
+  // 大きさを先に丸めてから、真ん中に置く位置を決める
+  const { width, height } = fitIn(
+    { x: workArea.x, y: workArea.y, width: asked.width ?? asked.innerwidth ?? DEFAULT_POPUP.width, height: asked.height ?? asked.innerheight ?? DEFAULT_POPUP.height },
+    workArea,
+  );
+  const x = asked.left ?? asked.screenx ?? around.x + (around.width - width) / 2;
+  const y = asked.top ?? asked.screeny ?? around.y + (around.height - height) / 2;
+  return fitIn({ x, y, width, height }, workArea);
+}
+
+// bounds を area の中に詰める（大きさを先に丸めてから、はみ出さない位置へずらす）
+function fitIn(bounds: Rectangle, area: Rectangle): Rectangle {
+  const width = Math.round(clamp(bounds.width, Math.min(MIN_POPUP.width, area.width), area.width));
+  const height = Math.round(clamp(bounds.height, Math.min(MIN_POPUP.height, area.height), area.height));
+  const x = Math.round(clamp(bounds.x, area.x, area.x + area.width - width));
+  const y = Math.round(clamp(bounds.y, area.y, area.y + area.height - height));
+  return { x, y, width, height };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 // 別ウインドウにはアドレス欄が無いので、題に今のページのオリジンを添える（ログインの窓が、どのサイトのものか分かるように）

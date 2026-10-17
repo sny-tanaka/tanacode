@@ -325,7 +325,15 @@ export const electronModule = {
   net: { fetch: (...args: unknown[]) => state.netFetch(...args) },
   Notification: FakeNotification,
   powerMonitor: { on: (event: string, listener: Listener) => state.powerMonitor.on(event, listener) },
-  screen: { getAllDisplays: () => state.displays },
+  screen: {
+    getAllDisplays: () => state.displays,
+    // rect の真ん中がある画面（無ければ 1 つめ）
+    getDisplayMatching: (rect: { x: number; y: number; width: number; height: number }) => {
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      return state.displays.find(({ workArea: a }) => cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height) ?? state.displays[0];
+    },
+  },
   session: {
     get defaultSession() {
       return state.defaultSession;
