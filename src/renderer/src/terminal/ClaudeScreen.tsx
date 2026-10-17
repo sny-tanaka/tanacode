@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { bracketedPaste, stripControlChars } from '@shared/prompt-keys';
+import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { enterClaudeScreen, leaveClaudeScreen } from './claudeScreenTyping';
 import { xtermOptions } from './xterm';
 

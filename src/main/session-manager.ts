@@ -14,7 +14,7 @@ import {
   type TranscriptEntry,
   type UnsentPrompt,
 } from '@shared/chat';
-import { bracketedPaste, stripControlChars } from '@shared/prompt-keys';
+import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import { modeWithin, type PermissionRequest, type SessionState } from '@shared/session-tools';
@@ -35,7 +35,7 @@ import type {
   WorktreePreparing,
   WorktreeRemoval,
 } from '@shared/ipc';
-import type { Activity, AskQuestion, Menu, PermissionMode, ScreenInfo } from '@shared/screen';
+import type { Activity, Menu, PermissionMode } from '@shared/screen';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
@@ -51,18 +51,17 @@ import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
-import { textResult, type McpLaunch, type ToolResult } from './mcp-bridge';
+import type { McpLaunch } from './mcp-bridge';
 import { PendingQuestions } from './pending-questions';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
-import { PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
+import { askQuestionsOf, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
 import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
 import type { HostedInfo, HostedPipeInfo, HostedPtyInfo } from './pty-host-protocol';
 import { rememberImage } from './image-cache';
-import { askQuestionsOf } from './screen-parser';
 import { TaskRouter } from './task-router';
 import type { StatusLineWatcher } from './statusline';
 import { SubagentTracker } from './subagent-tracker';
@@ -266,7 +265,7 @@ type Listeners = {
   onKnowledge: (sessionId: string, knowledge: SessionKnowledge) => void;
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
   // ユーザーの操作待ちになった（質問・許可の確認）
-  onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu } | { kind: 'unsupported' }) => void;
+  onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu }) => void;
   // 答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
   onQuestion?: (sessionId: string, question: PendingQuestion | null) => void;
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）。いちばん前のもの（無ければ null）
@@ -702,11 +701,6 @@ export class SessionManager {
     return this.runtimes.get(id)?.statusLine?.effort ?? this.store.get(id)?.effort ?? null;
   }
 
-  // 今出している AskUserQuestion の質問。stream-json では画面が無いので null（質問は待っている要求として受け取る）
-  askedQuestions(_id: string): AskQuestion[] | null {
-    return null;
-  }
-
   // 会話（動かしたことがあれば直近の起動からのイベント、なければ会話ログから作ったもの）
   async conversation(id: string): Promise<ChatEvent[]> {
     const rt = this.runtimes.get(id);
@@ -937,18 +931,6 @@ export class SessionManager {
     return true;
   }
 
-  // AskUserQuestion を出す直前に、フックがその入力をファイルに書いた（stream-json では使わない）
-  askQuestionsChanged(_id: string, _input: unknown): void {}
-
-  // 質問のフック（question-hook.ts）が、AskUserQuestion の入力を渡した。返事（質問のカード・親の answer_question）を待って、
-  // フックに返す結果にする。待つのをやめた（人がターミナルで答えた・Claude Code が終わった）ときは kind: none（フックは何も決めない）。
-  // signal: フックとのつながりが切れた（Claude Code がフックを止めた）
-  async waitQuestion(id: string, input: unknown, signal: AbortSignal): Promise<ToolResult> {
-    const questions = askQuestionsOf(input);
-    const reply = questions && this.runtimes.get(id)?.process ? await this.questions.wait(id, questions, signal) : null;
-    return textResult(JSON.stringify(reply ?? { kind: 'none' }));
-  }
-
   // フックが答えを待っている質問（いちばん前のもの）。無ければ null
   pendingQuestion(id: string): PendingQuestion | null {
     return this.questions.first(id);
@@ -1167,11 +1149,6 @@ export class SessionManager {
 
   workflows(id: string): WorkflowRun[] {
     return this.runtimes.get(id)?.workflows.all() ?? [];
-  }
-
-  // Claude Code の画面から読んだもの。stream-json では画面を読まないので、いつも null
-  screen(_id: string): ScreenInfo | null {
-    return null;
   }
 
   // 作業中の進み具合（作業中でなければ null）
@@ -1502,20 +1479,6 @@ export class SessionManager {
     }
   }
 
-  // 中断で入力欄に戻った親からの指示を消す。stream-json の中断では、発言は会話に残り、入力欄に戻らない（実測）ので、何もしない
-  withdrawParentDraft(_id: string): Promise<void> {
-    return Promise.resolve();
-  }
-
-  // 中断で入力欄に戻った、最適化圧縮の文が出ているか。stream-json では入力欄に戻らない
-  compactDraftShown(_id: string): boolean {
-    return false;
-  }
-
-  withdrawCompactDraft(_id: string): Promise<void> {
-    return Promise.resolve();
-  }
-
   // 作業を中断する（interrupt。応答待ち・ツールの実行中・許可の確認待ちのどれでも止まる。裏のタスクは止めない。実測）
   interrupt(id: string): void {
     const client = this.runtimes.get(id)?.process?.client;
@@ -1654,10 +1617,7 @@ export class SessionManager {
         workflows,
         subagents,
         bashTasks,
-        screen: () => null,
         sessionDir: () => this.sessionDir(id),
-        // 質問の答えは会話ログからは決めない（questionAnswered を渡さない）。ほかで答えられた・取り下げられた質問は、Claude Code が
-        // control_cancel_request で知らせる（同じ質問文の別の要求を終わらせないため）
       });
       rt = {
         process: null,
@@ -1972,7 +1932,13 @@ export class SessionManager {
       void process.stop();
       return;
     }
-    this.updateStatus(id, rt, { effort: settings?.applied?.effort ?? null });
+    // system/init は最初の発言まで届かないので、モデル（解決済みの ID）と Claude Code のバージョンは、ここで分かるものを先に出す（ヘッダーが最初から埋まる）
+    const applied = settings?.applied;
+    this.updateStatus(id, rt, {
+      effort: applied?.effort ?? null,
+      ...(applied?.model ? { model: applied.model } : {}),
+      ...(init.claude_code_version ? { version: init.claude_code_version } : {}),
+    });
     // 選んだモデルで auto を使えなければ、manual に戻す（決めたこと。設計書 15 節）
     if (rt.knownMode === 'auto' && !autoAvailable(init, this.store.get(id)?.model ?? null)) {
       await client.request('set_permission_mode', { mode: streamMode('manual') }).catch(() => {});
@@ -2583,7 +2549,7 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     // 引き継いだ claude が起動してから書いた行は、読み直した履歴でも今動いているもの（バックグラウンドのタスクや質問を追う）
     const past = isHistory && !(rt?.aliveSince && entryTime(entry) >= rt.aliveSince);
-    rt?.tasks.track(entry, past, isHistory);
+    rt?.tasks.track(entry, past);
     const planFile = entry.attachment?.planFilePath;
     if (rt && typeof planFile === 'string' && planFile && planFile !== rt.planFile) {
       rt.planFile = planFile;

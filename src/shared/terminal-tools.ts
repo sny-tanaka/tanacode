@@ -1,6 +1,6 @@
 import { t } from './i18n';
 import { allowedToolIds, findTool, mcpToolId, type McpServerDef, type McpTool, type McpToolName } from './mcp-tools';
-import { stripControlChars } from './prompt-keys';
+import { stripControlChars } from './paste';
 
 // Claude Code に MCP のツールとして渡す、人のターミナル（エディタの下のターミナルパネルのシェルと、アプリがコマンドを動かしたタブ）を読む・打つもの。
 // 中継のスクリプト（src/main/terminal-mcp.ts）が tools/list で返し、アプリ（src/main/terminal-control.ts）が実行する。

@@ -1,11 +1,12 @@
-// pty の画面から読み取った、ユーザーの操作が必要な状態
+// Claude Code が人の操作を待っているもの（質問・許可の確認）の形と、権限モード・作業の進み具合。
+// 名前は、前に Claude Code の画面から読み取っていたころのまま（今は stream-json の要求と出力から作る）
 
 export type MenuOption = {
   // 選択肢の番号。複数選択の「Submit」行は番号を持たないので 'submit'
   id: string;
   label: string;
   description: string;
-  // 画面上で ❯ が付いている（カーソルがある）
+  // 選んでいる（前は画面で ❯ が付いていたもの。今は使わず false）
   pointed: boolean;
   // 複数選択のチェック状態。単一選択では null
   checked: boolean | null;
@@ -24,8 +25,8 @@ export type AskQuestion = {
 };
 
 export type Menu = {
-  // question: AskUserQuestion / permission: ツール実行の許可 / other: フォルダの信頼確認など
-  kind: 'question' | 'permission' | 'other';
+  // question: AskUserQuestion / permission: ツール実行の許可（プランの承認を含む）
+  kind: 'question' | 'permission';
   // AskUserQuestion で複数の質問があるときのタブ
   tabs: { label: string; answered: boolean }[];
   title: string;
@@ -39,56 +40,18 @@ export type Menu = {
   previewLayout?: boolean;
 };
 
-// メニューの選択肢を選んだ結果。chosen 以外は、選べていない（押したことを黙って捨てず、理由として返す）
-// chosen: 送ったキーで画面が変わった（自由記述を打つだけのときは、打ち終えた） / busy: ほかの画面の操作の途中で、何も送っていない /
-// gone: メニューが出ていない・別のメニューに変わったので、何も送っていない / missing: その選択肢が画面に無いので、何も送っていない /
-// stuck: 選択肢にカーソルを合わせられなかったので、選ぶキーは送っていない /
-// ignored: 選ぶキーを 1 回送ったが、メニューの画面が変わらなかった（Claude Code が受け付けなかった。送り直してはいない） /
-// filled: 自由記述の欄に前に打った文が残っていて消せなかったので、何も打っていない（残った文に継ぎ足した答えを送らないため）
-export type ChooseResult = 'chosen' | 'busy' | 'gone' | 'missing' | 'stuck' | 'ignored' | 'filled';
-
-// 自由記述の欄が空のときに出る文字（複数選択では、チェックの印のあとに出る）
-export const TYPE_SOMETHING = /^Type something\.?$/;
-
-// prompt: 通常の入力欄が出ている / menu: 選択メニュー / rewind: 巻き戻し先の一覧（/rewind）/
-// unknown: 認識できない対話画面（/config など）
-export type ScreenState =
-  | { kind: 'starting' }
-  | { kind: 'prompt' }
-  | { kind: 'menu'; menu: Menu }
-  | { kind: 'rewind'; pointed: string }
-  | { kind: 'unknown' };
-
 // 権限モード（Shift+Tab で manual → acceptEdits → plan → auto の順に切り替わる）
 export type PermissionMode = 'manual' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
 
-// model / effort / mode: 画面に出ている現在の値（起動時のバナーや入力欄の周りの表示から読む）
-export type ScreenInfo = {
-  state: ScreenState;
-  model: string | null;
-  effort: string | null;
-  mode: PermissionMode | null;
-  // Claude Code の入力欄に入っている文字（巻き戻し直後は戻した発言が入る）。灰色の入力例は含まない
-  draft: string;
-  // draft の中の貼り付けの目印（[Pasted text #1 +30 lines]）の中身。中断で入力欄に戻った発言に、札が添えてあったときだけ付く（目印の順）
-  draftPastes?: string[];
-  // 起動が終わって、打ち込んだ文字を受け付けられる（入力欄が出て少し経った）。起動し直すまで戻らない。
-  // 入力欄が出る前に送った文字は Claude Code が取りこぼす（スラッシュコマンドは入力欄に打たれたまま送信されない）
-  ready: boolean;
-};
-
-// 作業中の画面のタイマーの行（例:「✳ Shimmying… (5s · ↓ 225 tokens · thought for 2s)」）から読んだ進み具合。
+// 作業の進み具合（stream-json の出力から作る。表記は Claude Code の画面のタイマーの行（例:「✳ Shimmying… (5s · ↓ 225 tokens)」）と同じ）。
 // waiting: 応答がまだ何も来ていない / thinking: 考えている / writing: 応答を受け取っている（トークン数が増えている）/
 // working: それ以外（ツールの実行中など）/ starting: 起動に時間がかかっている（initialize の返事を待っている。設計書 9 節）
 export type Activity = {
   phase: 'starting' | 'waiting' | 'thinking' | 'writing' | 'working';
-  // 経過時間（画面の表記のまま。例: 5s・1m 5s）
+  // 経過時間（例: 5s・1m 5s）
   elapsed: string | null;
-  // 受け取ったトークン数（画面の表記のまま。例: 225・1.2k）
+  // 受け取ったトークン数（例: 225・1.2k）
   tokens: string | null;
   // starting のときの、Claude Code の標準エラーの末尾（MCP サーバー・フックの出力や、止まっている理由が出ることがある）
   stderr?: string;
 };
-
-// 画面の 1 行。full は右端まで文字がある（折り返しで次の行に続いている）
-export type ScreenLine = { text: string; full: boolean };

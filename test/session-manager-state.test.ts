@@ -163,9 +163,7 @@ describe('一覧と記録の読み取り', () => {
     expect(app.manager.bashTasks('nope')).toEqual([]);
     expect(app.manager.statusLine('nope')).toBeNull();
     expect(app.manager.knowledge('nope')).toEqual({ files: {}, contextTokens: null });
-    expect(app.manager.screen('nope')).toBeNull();
     expect(app.manager.progress('nope')).toBeNull();
-    expect(app.manager.askedQuestions('nope')).toBeNull();
     expect(app.manager.modeOf('nope')).toBeNull();
     expect(app.manager.stateOf('nope')).toBeNull();
     expect(await app.manager.context('nope')).toEqual({ items: [] });
@@ -178,7 +176,6 @@ describe('一覧と記録の読み取り', () => {
     app.manager.write('nope', 'x');
     app.manager.interrupt('nope');
     app.manager.resize('nope', 80, 24);
-    await app.manager.withdrawParentDraft('nope');
     await expect(app.manager.submit('nope', 'x')).resolves.toBeUndefined();
   });
 

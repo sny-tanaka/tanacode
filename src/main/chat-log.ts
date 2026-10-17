@@ -1,7 +1,5 @@
 import { readFile } from 'node:fs/promises';
 import { isTranscriptEntry, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
-import { isCompactMessage } from '@shared/optimized-compact';
-import { parentMessageText } from '@shared/session-tools';
 import { rememberImage } from './image-cache';
 import { parentFirst } from './transcript-tail';
 
@@ -26,57 +24,6 @@ export function branchCut(chain: ChainEntry[], entry: TranscriptEntry): { eventC
   if (!skipped.some((c) => c.type === 'user' || c.type === 'assistant')) return null;
   return { eventCut: skipped[0].eventStart, chainCut: parent + 1 };
 }
-
-// 応答が何も来ないうちに Esc で中断すると、Claude Code は発言を会話から外して入力欄に戻す。
-// 会話ログには発言の行が残るだけで、中断の行もターンの終わりの行も書かれない（次の発言で、会話から外れたことが分かる）。
-// 入力欄に戻った文字（draft）が、まだ応答の無い最後の発言と同じなら、その発言のイベントの位置を返す。
-// 空白は画面の折り返しで変わるので、除いて比べる
-export function pulledBackPrompt(events: ChatEvent[], draft: string): number | null {
-  const typed = draft.replace(/\s/g, '');
-  if (!typed) return null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    // 親セッションからの指示は、囲みごと入力欄に戻る。複数行の本文は、貼り付けの目印（[Pasted text #1 +6 lines]）になる
-    if (event.type === 'user' && event.parent) {
-      const whole = parentMessageText(event.parent, event.text).replace(/\s/g, '');
-      const [opening, closing] = parentMessageText(event.parent, '\u0001')
-        .split('\u0001')
-        .map((part) => part.replace(/\s/g, ''));
-      const pasted = typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '');
-      return typed === whole || (pasted !== typed && pasted === `${opening}${closing}`) ? i : null;
-    }
-    if (event.type === 'user') return event.text.replace(/\s/g, '') === typed || pulledBackPastes(event, draft).length > 0 ? i : null;
-    // 最適化圧縮の仕上げの頼み・再開の文。長い文は入力欄に収まらず、画面から読めるのは途中の一部だけなので、本文の一部かどうかで見る
-    // （丸ごと貼り付けで送っていた前のアプリから引き継いだ claude では、貼り付けの目印だけが戻る）
-    if (event.type === 'notice' && event.compact) {
-      const part = typed.replace(/\[Pastedtext#\d+[^\]]*\]/g, '').replace(/<\/?tanacode-(?:handoff|resume)>/g, '');
-      const body = (event.detail ?? '').replace(/\s/g, '');
-      return part === '' || isCompactMessage(draft) || (part.length >= 40 && body.includes(part)) ? i : null;
-    }
-    if (!BEFORE_RESPONSE.has(event.type)) return null;
-  }
-  return null;
-}
-
-// 入力欄の、貼り付けの目印（空白を除いたあとの形。[Pasted text #1 +30 lines]）
-const PASTE_MARK = /\[Pastedtext#\d+[^\]]*\]/g;
-
-// 入力欄に戻った文字（draft）が、札を添えた発言（event）なら、その札の中身（目印の順）。そうでなければ空。
-// 札は、入力欄では目印になって戻る。目印を除いた文が発言の文と同じで、目印の数が札の数と同じなら、その発言。
-// 札 1 つだけの発言は、会話ログからは文として読んでいる（splitPasted）ので、目印 1 つだけが戻ったら、発言の文が札の中身
-export function pulledBackPastes(event: ChatEvent, draft: string): string[] {
-  if (event.type !== 'user' || event.parent) return [];
-  const typed = draft.replace(/\s/g, '');
-  const marks = typed.match(PASTE_MARK)?.length ?? 0;
-  if (marks === 0) return [];
-  const rest = typed.replace(PASTE_MARK, '');
-  const pastes = event.pastes ?? [];
-  if (pastes.length === marks && event.text.replace(/\s/g, '') === rest) return pastes;
-  return pastes.length === 0 && marks === 1 && rest === '' && event.text ? [event.text] : [];
-}
-
-// 発言のあと、応答が来る前にも出るイベント（UserPromptSubmit の hooks など）
-const BEFORE_RESPONSE = new Set<ChatEvent['type']>(['hook', 'info', 'queue', 'remote-control', 'pr-link', 'ready']);
 
 // 会話ログの行を、親（parentUuid）が先になる順に読む（TranscriptTail と同じ。parentFirst を参照）
 export async function readEntries(file: string): Promise<TranscriptEntry[]> {

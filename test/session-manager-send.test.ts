@@ -227,15 +227,3 @@ describe('submitWhenReady', () => {
     expect(pipe.prompts).toMatchObject([{ message: { content: [imageBlock('a.png'), { type: 'text', text: 'これを見て' }] }, pasted_content: ['1\n2\n3\n4'], priority: 'later' }]);
   });
 });
-
-describe('中断で入力欄に戻った文', () => {
-  it('stream-json の中断では、発言は会話に残り、入力欄に戻らない（実測）。親からの指示・最適化圧縮の頼みを消すものは、何も送らない', async () => {
-    const { id, pipe } = app.create({ mode: 'manual' }, null);
-    await app.ready(id);
-    const sent = pipe.sent.length;
-    await app.manager.withdrawParentDraft(id);
-    await app.manager.withdrawCompactDraft(id);
-    expect(app.manager.compactDraftShown(id)).toBe(false);
-    expect(pipe.sent).toHaveLength(sent);
-  });
-});

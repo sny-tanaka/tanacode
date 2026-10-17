@@ -477,7 +477,7 @@ const COMPACT_MESSAGE = new RegExp(`^<(${HANDOFF_TAG}|${RESUME_TAG})>([\\s\\S]*)
 
 // 会話ログの発言が、仕上げの頼みか再開の文なら、どちらかと中身。
 // 前のアプリは長い文を丸ごと貼り付けで送っていたので、前の会話ログでは、目印のタグごと貼り付けの囲み（<pasted_content>）に
-// 入っている。先に外す（今は行ごとの短い貼り付けで送るので、囲みは付かない。promptKeys）
+// 入っている。先に外す（今は stream-json の発言として送るので、囲みは付かない）
 export function parseCompactMessage(text: string): { kind: 'handoff' | 'resume'; body: string } | null {
   const m = unwrapWholePaste(text).trim().match(COMPACT_MESSAGE);
   return m ? { kind: m[1] === HANDOFF_TAG ? 'handoff' : 'resume', body: m[2].trim() } : null;

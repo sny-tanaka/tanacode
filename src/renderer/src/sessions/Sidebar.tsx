@@ -381,7 +381,6 @@ function SettingsFileName({ id, files }: { id: string; files: SettingsFile[] }) 
 function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.attention === 'question') return { kind: 'waiting', label: t('sessions.activity.question') };
   if (s.attention === 'permission') return { kind: 'waiting', label: t('sessions.activity.permission') };
-  if (s.attention === 'other') return { kind: 'waiting', label: t('sessions.activity.other') };
   if (s.attention === 'browser') return { kind: 'waiting', label: t('sessions.activity.browser') };
   if (s.worktree?.preparing) return { kind: 'starting', label: preparingLabel(s.worktree.preparing) };
   const background = s.backgroundTasks;

@@ -67,12 +67,9 @@
       "turnCompleted": "Finished working",
       "compactCompleted": "Finished optimizing the context",
       "compactFailed": "Context optimization was canceled",
-      "needsTerminal": "Action needed in the terminal",
       "question": "Claude has a question",
       "permission": "Permission needed: {detail}",
       "permissionNoDetail": "Claude is asking for permission",
-      "confirm": "Confirmation needed: {title}",
-      "confirmNoTitle": "Claude is asking for confirmation",
       "images": "{count} images",
       "images_one": "{count} image",
       "scheduledMissed": "Not sent at the scheduled time ({time}): {text}",
@@ -95,7 +92,6 @@
     "state": {
       "question": "Needs answer",
       "permission": "Needs permission",
-      "other": "Needs input",
       "browser": "Needs browser action",
       "starting": "Starting",
       "workingWithBackground": "Working ({count} in background)",
@@ -115,12 +111,8 @@
       "notRunning": "Can't stop it because the session isn't running",
       "terminalMode": "Can't stop it from here in terminal mode. Use /tasks in the Claude Code screen.",
       "nothingToStop": "Nothing to stop (no running background tasks found)",
-      "busy": "Another operation is in progress. Wait a moment and try again.",
-      "waitingAnswer": "Can't stop it right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then stop it.",
-      "draft": "Can't stop it because the input in the terminal has unsent text",
       "notFound": "Claude Code hasn't sent the ID needed to stop this task. Ask Claude to stop it",
       "notStopped": "Asked Claude Code to stop it, but couldn't confirm it stopped. If it's still running, try stopping it again",
-      "ambiguous": "More than one task has the same name, so tanacode can't tell which one to stop. Open /tasks in the terminal and stop it there.",
       "failed": "Couldn't stop it ({reason})"
     },
     "rewind": {
@@ -136,13 +128,9 @@
       "persist_failed": "Couldn't write the rewind to the conversation log"
     },
     "send": {
-      "notAccepting": "Couldn't send because Claude Code is no longer accepting input",
-      "menuAppeared": "Couldn't send because a question or confirmation appeared",
       "notRunning": "Claude Code isn't running",
       "exited": "Claude Code exited",
       "cancelled": "Sending was canceled",
-      "waitingAnswer": "Couldn't send because Claude Code is waiting for an answer to a question or confirmation",
-      "draft": "Couldn't send because the input in the terminal has unsent text",
       "busy": "Couldn't send because Claude Code is busy",
       "imagesSkipped": "Sent without some images that can't be sent: {names} (only readable PNG, JPEG, GIF, and WebP files can be sent)",
       "terminalMode": "Can't send while in terminal mode. Switch back to the chat first"
@@ -558,11 +546,6 @@
       "sendNowFailed": "Couldn't send: {error}",
       "rescheduleFailed": "Couldn't change the time: {error}",
       "slowStart": "Claude Code is taking a long time to start ({elapsed}). It may be waiting for MCP servers or SessionStart hooks",
-      "rewinding": "Choosing where to rewind to…",
-      "cancelEsc": "Cancel (Esc)",
-      "unknownScreen": "Claude Code is showing a screen that can't be used from the chat",
-      "closeEsc": "Close (Esc)",
-      "operateInTerminal": "Open Terminal",
       "archived": "This session is archived",
       "unarchive": "Unarchive",
       "exited": "Claude Code exited (code {code})",
@@ -1072,7 +1055,6 @@
     "activity": {
       "question": "Needs answer",
       "permission": "Needs permission",
-      "other": "Needs input",
       "browser": "Needs browser action",
       "starting": "Starting",
       "runningWithBackground": "Working ({count} in background)",
@@ -1920,16 +1902,7 @@
     "kind": {
       "question": "Question from Claude Code",
       "permission": "Permission Request",
-      "other": "Confirmation",
       "plan": "Plan Approval"
-    },
-    "notChosen": {
-      "busy": "Couldn't send because another action was in progress. Click again.",
-      "gone": "Not sent because the screen changed",
-      "missing": "Not sent because this option is no longer on the Claude Code screen",
-      "stuck": "Couldn't move the cursor to this option. Click again, or choose it in the Claude Code terminal.",
-      "ignored": "Claude Code didn't accept the choice. Click again, or choose it in the Claude Code terminal.",
-      "filled": "The free-text field still has earlier text that couldn't be cleared. Clear it in the Claude Code terminal, then send again."
     },
     "card": {
       "sendFailed": "Couldn't send. Click again.",

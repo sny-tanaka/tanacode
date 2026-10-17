@@ -6,7 +6,7 @@ import { canSee } from '@shared/session-tools';
 import icon from '../assets/icon.png';
 import { errorMessage } from '../errorMessage';
 import { ChatInput, listCompletionFiles, type CompletionSource } from '../chat/ChatInput';
-import { isLongPaste } from '@shared/prompt-keys';
+import { isLongPaste } from '@shared/paste';
 import { useInsertInput } from '../chat/insertInput';
 import type { PendingSend } from '../chat/pendingSends';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';

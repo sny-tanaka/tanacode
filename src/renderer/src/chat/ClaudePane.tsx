@@ -27,7 +27,7 @@ import { ToolGroupRow } from './ToolGroupRow';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
 import { TodoPanel } from './TodoPanel';
 import type { UnsentPrompt } from '@shared/chat';
-import { isLongPaste } from '@shared/prompt-keys';
+import { isLongPaste } from '@shared/paste';
 import { useInsertInput } from './insertInput';
 import { DoneNote, StartingNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
@@ -502,7 +502,7 @@ export const ClaudePane = memo(function ClaudePane({
         <span className={`claude-mark${running ? ' working' : ''}`} />
         <span className="claude-title">{session.title ?? 'Claude Code'}</span>
         <div className="spacer" />
-        <ContextMeter {...contextUsage(session.model, null, statusLine, contextTokens)} onClick={onShowContext} />
+        <ContextMeter {...contextUsage(session.model, statusLine, contextTokens)} onClick={onShowContext} />
         {!session.archived && (
           <RemoteControlToggle
             on={session.remoteControl}

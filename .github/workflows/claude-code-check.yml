@@ -1,11 +1,11 @@
 # Claude Code との互換性の毎日の確認。その日の最新の Claude Code を、モックの API で動かし（API キーは使わず、料金もかからない）、
-# 画面・会話ログ・statusLine・フックをアプリと同じ読み取りにかける（npm run test:cli）。手動の実行では、確かめるバージョンを指定できる。
+# チャット（stream-json）・ターミナルモードとの切り替え・会話ログ・statusLine・フックを、アプリと同じ部品で確かめる（npm run test:cli）。手動の実行では、確かめるバージョンを指定できる。
 # PR では、動作確認済のバージョン（src/shared/claude-code.ts）での同じ確認を、ci.yml の cli のジョブで流す
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しい版への追従は、毎日の確認と、それが作る PR で行う）
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる。マージしたらブランチは消す
-# 途中の画面などの控えは artifact にも残す
-# アプリは macOS 専用なので、macOS のランナーで確かめる（Claude Code は OS で画面の描き方が違う。応答の印は macOS では ⏺、Linux では ●）
+# 会話ログと statusLine の控えは artifact にも残す
+# アプリは macOS 専用なので、macOS のランナーで確かめる
 name: claude-code-check
 
 on:
@@ -78,7 +78,7 @@ jobs:
           gh issue create --title "$title" --body "毎日の互換性の確認（claude-code-check）が失敗しました。
 
           - 失敗した実行: $RUN_URL
-          - 失敗したテストのログに、そのときの Claude Code の画面が出ています
+          - 失敗したテストのログに、そのときの Claude Code の標準エラーの末尾が出ています
           - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
 
   # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、PR の CI が通ったらマージする。

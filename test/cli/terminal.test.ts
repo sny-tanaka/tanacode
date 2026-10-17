@@ -9,8 +9,9 @@ import { ShellTerminals } from '../../src/main/shell-terminals';
 import { TERMINAL_GATE_REQUEST } from '../../src/main/terminal-bridge';
 import { TerminalControl } from '../../src/main/terminal-control';
 import { buildRelay } from './browser-relay-build';
-import { ClaudeRun, claudeVersion, menuOf } from './claude-run';
+import { ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi, type Block } from './mock-api';
+import type { PendingPermission } from '@shared/questions';
 
 // 本物の claude をモックの API で動かし、人のターミナルの MCP サーバー（中継）と、打つ前の確認のフックを確かめる。
 // アプリと同じ起動の引数（--mcp-config・--allowedTools・--settings の PreToolUse のフック）で起動し、
@@ -111,6 +112,9 @@ async function launch(conversation: { match: string; steps: Block[][] }, mode: P
   return { api, run, app };
 }
 
+// 許可の確認の見出し・説明・理由・入力（打つ文字が、どれかにそのまま出る）
+const textOf = (permission: PendingPermission) => [permission.title, permission.description, permission.reason, JSON.stringify(permission.input)].join('\n');
+
 describe(`Claude Code ${version} と人のターミナルの MCP`, () => {
   const READ = 'ターミナルを読んでください';
   const TYPE = 'ターミナルで打ってください';
@@ -150,7 +154,7 @@ describe(`Claude Code ${version} と人のターミナルの MCP`, () => {
   it('ツールの一覧が Claude に渡る', async () => {
     await app.openShell(run.cwd, 'echo typed-by-human');
     await run.send(READ);
-    await run.waitFor('返事', replied('読みました'));
+    await run.waitUntil('返事', replied('読みました'));
     for (const tool of TERMINAL_TOOLS) expect([...api.tools], tool.name).toContain(terminalToolId(tool.name));
   });
 
@@ -163,39 +167,39 @@ describe(`Claude Code ${version} と人のターミナルの MCP`, () => {
   });
 
   it('打つツールは確認が出る。理由と入力に、打つ文字がそのまま出る。許すと、フックが控えさせた印で打てる', async () => {
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
+    await run.waitUntil('入力欄', () => run.idle);
     await run.send(TYPE);
-    const menu = await run.waitFor('打つ前の確認', menuOf('permission'));
-    expect(menu.context.join('\n')).toContain('echo typed-by-claude');
+    const permission = await run.permission('打つ前の確認');
+    expect(textOf(permission)).toContain('echo typed-by-claude');
     expect(app.gates).toEqual([{ id: SHELL, text: 'echo typed-by-claude' }]);
     // 確かめただけで、まだ打っていない
     expect(app.calls.map((c) => c.tool)).toEqual(['list_terminals', 'read_terminal']);
-    const always = menu.options.find((o) => /don.t ask again/i.test(o.label));
-    expect(always, '「次から聞かない」の選択肢').toBeDefined();
-    await run.answer(menu.title, always!.id);
-    await run.waitFor('返事', replied('打ちました'));
+    // フックが確認させたツールには、Claude Code は「今後は聞かない」の候補を出さない（毎回確かめる）
+    expect(permission.always ?? []).toEqual([]);
+    run.replyPermission(permission, { kind: 'allow' });
+    await run.waitUntil('返事', replied('打ちました'));
     expect(resultText(run, 'toolu_type')).toContain('typed-by-claude');
     await app.waitForText(SHELL, 'typed-by-claude\n$');
   });
 
-  it('「次から聞かない」を選んでも、次の呼び出しでまた確認が出る', async () => {
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
+  it('許したあとの次の呼び出しでも、また確認が出る', async () => {
+    await run.waitUntil('入力欄', () => run.idle);
     await run.send(AGAIN);
-    const menu = await run.waitFor('2 回目の打つ前の確認', menuOf('permission'));
-    expect(menu.context.join('\n')).toContain('echo typed-again');
-    await run.answer(menu.title, menu.options[0].id);
-    await run.waitFor('返事', replied('もう一度打ちました'));
+    const permission = await run.permission('2 回目の打つ前の確認');
+    expect(textOf(permission)).toContain('echo typed-again');
+    run.replyPermission(permission, { kind: 'allow' });
+    await run.waitUntil('返事', replied('もう一度打ちました'));
     expect(await app.screenText()).toContain('typed-again');
   });
 
   it('フックがアプリに聞けないときも確認が出る。許しても、確認済みの印が無いので、何も打たずに断る', async () => {
     app.stallGate = true;
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
+    await run.waitUntil('入力欄', () => run.idle);
     await run.send(STALL);
-    const menu = await run.waitFor('アプリが答えないときの確認', menuOf('permission'), 30_000);
-    expect(menu.context.join('\n')).toContain('echo never-typed');
-    await run.answer(menu.title, menu.options[0].id);
-    await run.waitFor('返事', replied('打てませんでした'));
+    const permission = await run.permission('アプリが答えないときの確認', 30_000);
+    expect(textOf(permission)).toContain('echo never-typed');
+    run.replyPermission(permission, { kind: 'allow' });
+    await run.waitUntil('返事', replied('打てませんでした'));
     expect(resultText(run, 'toolu_stall')).toContain('confirmation for this input was not found');
     expect(await app.screenText()).not.toContain('never-typed\n');
   });
@@ -223,10 +227,10 @@ describe(`Claude Code ${version} と人のターミナルの MCP（bypassPermiss
   it('権限モードが bypassPermissions でも、打つ前に確認が出る', async () => {
     await app.openShell(run.cwd, 'echo ready');
     await run.send(TYPE);
-    const menu = await run.waitFor('打つ前の確認', menuOf('permission'));
-    expect(menu.context.join('\n')).toContain('echo typed-in-bypass');
-    await run.answer(menu.title, menu.options[0].id);
-    await run.waitFor('返事', () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === '打ちました'));
+    const permission = await run.permission('打つ前の確認');
+    expect(textOf(permission)).toContain('echo typed-in-bypass');
+    run.replyPermission(permission, { kind: 'allow' });
+    await run.waitUntil('返事', () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === '打ちました'));
     await app.waitForText(SHELL, 'typed-in-bypass\n$');
   });
 });

@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { liveCards } from '../src/shared/checklist';
 import { parseChecklistEvent } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { SessionState } from '../src/shared/session-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
 import { ChecklistStore } from '../src/main/checklist-store';
@@ -59,7 +58,6 @@ class FakeHost implements NoticeHost {
 
   list = () => this.sessions;
   stateOf = (id: string): SessionState => this.states.get(id) ?? 'idle';
-  screen = (): ScreenInfo => ({ state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
   pasteIntoTerminal = (id: string, text: string) => {
     if (!this.pasteOk) return false;

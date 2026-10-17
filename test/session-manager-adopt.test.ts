@@ -151,6 +151,22 @@ describe('adopt', () => {
     expect(attached(id)?.replays).toEqual([30]);
   });
 
+  it('アプリを止めている間に /clear で会話が変わっていたら、送り直しの行（新しい会話の init）で、新しい会話ログに乗り換える', async () => {
+    const id = await previous(line.user('はじめ'));
+    const before = app.claudeId(id);
+    // 止めている間に、claude が新しい会話を始めて書いた会話ログ
+    const next = '99999999-0000-4000-8000-000000000009';
+    const file = join(dirname(app.transcript(id)), `${next}.jsonl`);
+    writeFileSync(file, JSON.stringify({ ...line.user('止めている間の発言'), sessionId: next, cwd: app.cwd }) + '\n');
+    const init = { seq: 2, line: JSON.stringify(stream.init(next)) };
+    app.host.hosted = [hosted(id, { lastSeq: 40, firstSeq: 30, retained: [init], startedAt: Date.now() - 60_000 })];
+    await app.manager.adopt();
+    attached(id)!.replayed();
+    await app.waitFor('乗り換え', () => app.claudeId(id) === next);
+    expect(app.claudeId(id)).not.toBe(before);
+    await app.waitFor('新しい会話', () => app.events(id).some((e) => e.type === 'user' && e.text === '止めている間の発言'));
+  });
+
   it('まだ答えていない要求（pending）は、出し直す', async () => {
     const id = await previous(line.user('はじめ'));
     const request = {

@@ -21,12 +21,13 @@ import {
 } from '../src/main/statusline';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
-// JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json・ask.json）を使う。
+// JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json。test/cli/terminal-mode.test.ts が TUI で取る）を使う。
 // 利用枠（rate_limits）は、控えを取るときの API キーでのログインでは出ないので、src の読み取り（five_hour・seven_day）に合わせて組み立てた
 
 const FIXTURE = join('test', 'fixtures', 'claude-code', VERIFIED_CLAUDE_CODE_VERSION);
 const statusJson = readFileSync(join(FIXTURE, 'statusline.json'), 'utf8');
-const askJson = readFileSync(join(FIXTURE, 'ask.json'), 'utf8');
+// 許可の確認の直前のフック（PermissionRequest）が書く入力
+const permissionJson = JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } });
 
 describe('parseStatusLine', () => {
   it('控えの statusLine から、モデル・エフォート・バージョン・コンテキスト・料金・会話ログを読む', () => {
@@ -175,17 +176,14 @@ describe('StatusLineWatcher', () => {
   let dir: string;
   let watcher: StatusLineWatcher | null = null;
   let infos: { sessionId: string; info: StatusLineInfo }[];
-  let asks: { sessionId: string; input: unknown }[];
   let permissions: { sessionId: string; request: unknown; at: number }[];
 
   beforeEach(() => {
     dir = join(mkdtempSync(join(tmpdir(), 'tanacode-statusline-')), 'statusline');
     infos = [];
-    asks = [];
     watcher = new StatusLineWatcher(
       dir,
       (sessionId, info) => infos.push({ sessionId, info }),
-      (sessionId, input) => asks.push({ sessionId, input }),
       (sessionId, request, at) => permissions.push({ sessionId, request, at }),
     );
     permissions = [];
@@ -230,16 +228,12 @@ describe('StatusLineWatcher', () => {
     expect(infos).toHaveLength(1);
   });
 
-  it('AskUserQuestion のフックが書いた入力を読み、tool_input を渡す。書きかけ（壊れた JSON）は渡さない', async () => {
+  it('前のバージョンのフックが書いた AskUserQuestion の入力のファイル（<id>.ask.json）は、statusLine として読まない', async () => {
     await live(watcher!);
-    writeFileSync(watcher!.askFileFor('s1'), '{"tool_input":');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(asks).toEqual([]);
-    writeFileSync(watcher!.askFileFor('s1'), askJson);
-    await expect.poll(() => asks.length).toBe(1);
-    expect(asks).toEqual([{ sessionId: 's1', input: JSON.parse(askJson).tool_input }]);
-    // statusLine のファイルとしては読まない
-    expect(infos).toEqual([]);
+    writeFileSync(watcher!.askFileFor('s1'), JSON.stringify({ tool_input: { questions: [] } }));
+    writeFileSync(watcher!.fileFor('s1'), statusJson);
+    await expect.poll(() => infos.length).toBe(1);
+    expect(infos.map((i) => i.sessionId)).toEqual(['s1']);
   });
 
   it('許可の確認のフックが書いた入力を読み、書かれた時刻と一緒に渡す。書きかけ（壊れた JSON）は渡さない', async () => {
@@ -256,9 +250,8 @@ describe('StatusLineWatcher', () => {
     // 時刻は、読んだ時刻ではなく、ファイルが書かれた時刻
     expect(permissions[0].at).toBeGreaterThan(before - 2000);
     expect(permissions[0].at).toBeLessThanOrEqual(Date.now());
-    // statusLine・質問のファイルとしては読まない
+    // statusLine のファイルとしては読まない
     expect(infos).toEqual([]);
-    expect(asks).toEqual([]);
   });
 
   it('ターンの終わりのフック（Stop）が書いた入力を読み、ターンの終わりと一緒に渡す', async () => {
@@ -266,7 +259,6 @@ describe('StatusLineWatcher', () => {
     watcher!.close();
     watcher = new StatusLineWatcher(
       dir,
-      () => {},
       () => {},
       () => {},
       (sessionId, input) => idles.push({ sessionId, input }),
@@ -277,7 +269,7 @@ describe('StatusLineWatcher', () => {
     expect(idles[0]).toEqual({ sessionId: 's1', input: { hook_event_name: 'Stop', permission_mode: 'acceptEdits' } });
   });
 
-  it('質問のファイルが続けて書かれたら、読むのは最後の 1 回だけ', async () => {
+  it('書くだけのフックのファイルが続けて書かれたら、読むのは最後の 1 回だけ', async () => {
     // 見張りの知らせは本物のまま、待ち時間（setTimeout）だけを進める
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -286,17 +278,17 @@ describe('StatusLineWatcher', () => {
       const until = async (done: () => boolean) => {
         for (const end = Date.now() + 3000; !done() && Date.now() < end; ) await new Promise((resolve) => setImmediate(resolve));
       };
-      writeFileSync(watcher!.askFileFor('s1'), askJson);
-      await until(() => timers.has('s1.ask.json'));
-      const first = timers.get('s1.ask.json');
-      writeFileSync(watcher!.askFileFor('s1'), askJson);
-      await until(() => timers.get('s1.ask.json') !== first);
-      expect(timers.get('s1.ask.json')).not.toBe(first);
+      writeFileSync(watcher!.permissionFileFor('s1'), permissionJson);
+      await until(() => timers.has('s1.permission.json'));
+      const first = timers.get('s1.permission.json');
+      writeFileSync(watcher!.permissionFileFor('s1'), permissionJson);
+      await until(() => timers.get('s1.permission.json') !== first);
+      expect(timers.get('s1.permission.json')).not.toBe(first);
       vi.advanceTimersByTime(50);
-      await until(() => asks.length > 0);
+      await until(() => permissions.length > 0);
       await new Promise((resolve) => setImmediate(resolve));
-      await until(() => asks.length > 1);
-      expect(asks).toHaveLength(1);
+      await until(() => permissions.length > 1);
+      expect(permissions).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -304,12 +296,12 @@ describe('StatusLineWatcher', () => {
 
   it('見張りの知らせのあとにファイルが消えていたら、何も渡さない', async () => {
     await live(watcher!);
-    writeFileSync(watcher!.askFileFor('gone'), askJson);
+    writeFileSync(watcher!.permissionFileFor('gone'), permissionJson);
     writeFileSync(watcher!.fileFor('gone'), statusJson);
-    rmSync(watcher!.askFileFor('gone'));
+    rmSync(watcher!.permissionFileFor('gone'));
     rmSync(watcher!.fileFor('gone'));
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(asks).toEqual([]);
+    expect(permissions).toEqual([]);
     expect(infos).toEqual([]);
   });
 
@@ -345,10 +337,11 @@ describe('StatusLineWatcher', () => {
     new StatusLineWatcher(dir, () => {}).close();
   });
 
-  it('質問の受け手を渡さなくても、質問のファイルを読んで落ちない', async () => {
+  it('書くだけのフックの受け手を渡さなくても、そのファイルを読んで落ちない', async () => {
     const plain = new StatusLineWatcher(dir, (sessionId, info) => infos.push({ sessionId, info }));
     await live(plain);
-    writeFileSync(plain.askFileFor('s1'), askJson);
+    writeFileSync(plain.permissionFileFor('s1'), permissionJson);
+    writeFileSync(join(dir, 's1.idle.json'), '{}');
     writeFileSync(plain.fileFor('s1'), statusJson);
     await expect.poll(() => infos.length).toBe(1);
     plain.close();

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
@@ -21,10 +21,7 @@ import type { SettingsFiles } from '../../src/main/settings-files';
 import { SessionStore } from '../../src/main/session-store';
 import { StatusLineWatcher } from '../../src/main/statusline';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
-import type { ScreenName } from '../scenario';
 
-// 本物の Claude Code から取った控え（test/recorded.test.ts と同じ）
-const FIXTURES = join(__dirname, '..', 'fixtures', 'claude-code');
 
 // 本物の claude を起動せずに、本物の SessionManager を動かす部品（npm test 用。速く、決まった結果になる）。
 // 常駐のホストを、テストが stream-json の行と終了を送る偽物（ScriptedHost）に差し替え、会話ログの行はテストが書き込む。
@@ -311,18 +308,7 @@ export class ScriptedHost implements PtyHostApi {
   }
 }
 
-// 動作確認済みのバージョンの控えのうち、いちばん新しいものの画面（.ansi。ScreenTracker に流し込める形）
-export function fixtureScreen(name: ScreenName): string {
-  const versions = readdirSync(FIXTURES)
-    .filter((v) => existsSync(join(FIXTURES, v, 'screens', `${name}.ansi`)))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const version = versions.at(-1);
-  if (!version) throw new Error(`控えに ${name} の画面がありません`);
-  // 画面を消してから描く（前の画面の上に重ねない）
-  return `\x1b[H\x1b[2J${readFileSync(join(FIXTURES, version, 'screens', `${name}.ansi`), 'utf8')}`;
-}
-
-export type Attention = { kind: 'menu'; menu: Menu } | { kind: 'unsupported' };
+export type Attention = { kind: 'menu'; menu: Menu };
 
 // SessionManager の、アプリが組み立てるときに渡す残りの引数（省けば SessionManager の既定）
 export type ScriptedOptions = {
@@ -382,7 +368,6 @@ export class ScriptedApp {
     this.statusLines = new StatusLineWatcher(
       statusDir,
       (id, info) => this.manager.statusLineChanged(id, info),
-      (id, input) => this.manager.askQuestionsChanged(id, input),
     );
     this.manager = new SessionManager(
       this.host,

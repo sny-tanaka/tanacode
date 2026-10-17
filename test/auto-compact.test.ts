@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../src/shared/ipc';
 import { IDLE_COMPACT_STATUS, midTurnPercent, type AutoCompactTrigger, type CompactStatus } from '../src/shared/optimized-compact';
 import type { SessionState } from '../src/shared/session-tools';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { StatusLineInfo } from '../src/shared/statusline';
 import { AppSettings } from '../src/main/app-settings';
 import { AutoCompact, type AutoCompactHost } from '../src/main/auto-compact';
@@ -28,7 +27,6 @@ let changes: string[];
 let threshold: number;
 let auto: AutoCompact;
 let clock: number;
-let draft: string | null;
 let interrupted: boolean;
 
 const statusLine = (): StatusLineInfo | null =>
@@ -46,14 +44,12 @@ beforeEach(() => {
   changes = [];
   threshold = 80;
   clock = 1_000_000;
-  draft = null;
   interrupted = false;
   const host: AutoCompactHost = {
     summary: () => (summary ? ({ id: ID, archived: false, model: null, ...summary } as SessionSummary) : undefined),
     stateOf: () => state,
     statusLine,
     knowledge: () => ({ files: {}, contextTokens: null }),
-    screen: () => (draft === null ? null : ({ draft } as ScreenInfo)),
     lastTurnInterrupted: () => interrupted,
   };
   auto = new AutoCompact({
@@ -169,17 +165,6 @@ describe('ターンの終わり', () => {
     expect(started).toEqual([{ percent: 85, midTurn: false }]);
   });
 
-  it('入力欄に書きかけの文字があるあいだは、始めない（仕上げの頼みを打てずに、失敗に数えられる）。使用量を待つ間に消えたら、始める', () => {
-    draft = '次の頼みを書いている途中';
-    turn(85);
-    expect(started).toEqual([]);
-    expect(changes).toEqual([]);
-    clock += 3000;
-    draft = '';
-    auto.check(ID);
-    expect(started).toEqual([{ percent: 85, midTurn: false }]);
-  });
-
   it('使用量が分からないあいだ（statusLine も会話ログの量も無い）は、始めない', () => {
     turn(null as unknown as number);
     expect(started).toEqual([]);
@@ -251,13 +236,12 @@ describe('ターンの途中', () => {
     expect(auto.stopping(ID)).toBe(false);
   });
 
-  it('アプリが途中で止めたターンは、中断の印・入力欄の書きかけがあっても、流れを始める（止めたままにしない）', () => {
+  it('アプリが途中で止めたターンは、中断の印があっても、流れを始める（止めたままにしない）', () => {
     state = 'working';
     percent = 91;
     auto.check(ID);
     runHook();
     interrupted = true;
-    draft = '書きかけ';
     state = 'idle';
     auto.check(ID);
     expect(started).toEqual([{ percent: 91, midTurn: true }]);

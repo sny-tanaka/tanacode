@@ -40,8 +40,8 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   const hooks = (tool: string) => calls.filter((c) => c.tool === tool).map((c) => c.args);
   const said = (text: string) => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
-  // 入力欄に戻った（ターンが終わった）。止めたあとの続きが残っていないことも待つ
-  const idle = (text: string) => run.waitFor(`「${text}」のあと入力欄に戻る`, (info) => info.state.kind === 'prompt' && said(text), 30_000);
+  // 手が空いた（ターンが終わった）。止めたあとの続きが残っていないことも待つ
+  const idle = (text: string) => run.waitUntil(`「${text}」のあと手が空く`, () => run.idle && said(text), 30_000);
 
   beforeAll(async () => {
     const script = await buildRelay('checklist-mcp');
@@ -110,18 +110,18 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     expect(calls.map((c) => c.tool)).toEqual(['hook:prompt', 'hook:stop', 'card_add']);
     expect(store.findList(run.sessionId!, '人のやること')!.cards.map((c) => c.title)).toEqual(['設定画面で画像を選ぶ']);
     // 止めた記録は、チャットの目印になる。このあとの応答（チェックリストを直した報告）を、作業の結果と見分けるため
-    await run.waitFor('止めた目印', () => run.chatEvents.some((e) => e.type === 'checklist-stop'));
+    await run.waitUntil('止めた目印', () => run.chatEvents.some((e) => e.type === 'checklist-stop'));
     const types = run.chatEvents.filter((e) => e.type === 'assistant-text' || e.type === 'checklist-stop').map((e) => (e.type === 'assistant-text' ? e.text : e.type));
     expect(types).toEqual(['作業を終えました', 'checklist-stop', 'チェックリストに 1 件足しました']);
   });
 
   it('次の発言では今のチェックリストが渡る。読んだだけのターンも止まり、直すものが無いと答えた目印はチャットに出ない', async () => {
     await run.send(QUESTION);
-    await run.waitFor('止めたあとの続きが終わる', (info) => info.state.kind === 'prompt' && api.contexts.some((c) => c.includes('Before you end this turn (1 tool call, checklists not touched; unchecked: 人のやること 1)')), 30_000);
+    await run.waitUntil('止めたあとの続きが終わる', () => run.idle && api.contexts.some((c) => c.includes('Before you end this turn (1 tool call, checklists not touched; unchecked: 人のやること 1)')), 30_000);
     expect(api.contexts.some((c) => c.includes('## 人のやること (0/1 checked)\nDescription: 人にやってもらうこと\n- [ ] #1 設定画面で画像を選ぶ'))).toBe(true);
     expect(hooks('hook:stop')[1]).toEqual({ turn: 1, checklist: 0, since: expect.any(Number), settled: true });
     // 目印の応答は会話ログにはあるが、チャットには出ない
-    await run.waitFor('目印の応答', () => run.entries.some((e) => JSON.stringify(e.message?.content ?? '').includes(CHECKLIST_UNCHANGED_MARK) && e.type === 'assistant'));
+    await run.waitUntil('目印の応答', () => run.entries.some((e) => JSON.stringify(e.message?.content ?? '').includes(CHECKLIST_UNCHANGED_MARK) && e.type === 'assistant'));
     expect(said('質問に答えました')).toBe(true);
     expect(run.chatEvents.some((e) => e.type === 'assistant-text' && e.text.includes(CHECKLIST_UNCHANGED_MARK))).toBe(false);
   });
@@ -153,9 +153,9 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     const [kept, dropped] = store.addCards(run.sessionId!, 'human', decisions.id, [{ title: '決済には触らない' }, { title: '端数は切り捨て' }]);
     store.revokeCards(run.sessionId!, 'human', decisions.id, [dropped.id], '四捨五入に変わった');
     await run.send('/compact');
-    await run.waitFor('圧縮の区切り', () => run.chatEvents.some((e) => e.type === 'divider'), 30_000);
-    await run.waitFor('圧縮のあとのフック', () => hooks('hook:compact').length > 0, 30_000);
-    await run.waitFor('Claude に渡した記録', () =>
+    await run.waitUntil('圧縮の区切り', () => run.chatEvents.some((e) => e.type === 'divider'), 30_000);
+    await run.waitUntil('圧縮のあとのフック', () => hooks('hook:compact').length > 0, 30_000);
+    await run.waitUntil('Claude に渡した記録', () =>
       run.entries.some((e) => {
         const a = e.attachment;
         const content = JSON.stringify(a?.content ?? '');

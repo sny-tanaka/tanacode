@@ -67,12 +67,9 @@
       "turnCompleted": "作業が完了しました",
       "compactCompleted": "コンテキストの最適化が完了しました",
       "compactFailed": "コンテキストの最適化を取りやめました",
-      "needsTerminal": "ターミナルでの操作が必要です",
       "question": "質問しています",
       "permission": "実行の許可: {detail}",
       "permissionNoDetail": "実行の許可を求めています",
-      "confirm": "確認: {title}",
-      "confirmNoTitle": "確認を求めています",
       "images": "画像 {count} 枚",
       "scheduledMissed": "{time} に送る予約を、時刻に送れませんでした: {text}",
       "scheduledFailed": "予約したメッセージを送れませんでした（{reason}）: {text}",
@@ -94,7 +91,6 @@
     "state": {
       "question": "質問への回答待ち",
       "permission": "実行の許可待ち",
-      "other": "操作待ち",
       "browser": "ブラウザでの操作待ち",
       "starting": "起動中",
       "workingWithBackground": "作業中（バックグラウンド {count}件）",
@@ -113,12 +109,8 @@
       "notRunning": "セッションが動いていないため、止められません",
       "terminalMode": "ターミナルモードの間は、ここからは止められません。Claude Code の画面の /tasks で止めてください",
       "nothingToStop": "止められるもの（動いているバックグラウンドのタスク）が見つかりません",
-      "busy": "別の操作の途中です。少し待ってからもう一度押してください",
-      "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
-      "draft": "ターミナルの入力欄に書きかけの文字があるため、止められません",
       "notFound": "このタスクを止めるための ID が、Claude Code から届いていません。Claude に止めるよう頼んでください",
       "notStopped": "止める頼みは送りましたが、止まったことを確かめられませんでした。まだ動いていれば、もう一度止めてください",
-      "ambiguous": "同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください",
       "failed": "止められませんでした（{reason}）"
     },
     "rewind": {
@@ -134,13 +126,9 @@
       "persist_failed": "巻き戻しを会話ログに書けませんでした"
     },
     "send": {
-      "notAccepting": "入力を受け付けられる状態ではなくなったため、送れませんでした",
-      "menuAppeared": "質問や確認が出たため、送れませんでした",
       "notRunning": "Claude Code が動いていません",
       "exited": "Claude Code が終了しました",
       "cancelled": "送るのを取りやめました",
-      "waitingAnswer": "質問や確認の答えを待っているため、送れませんでした",
-      "draft": "ターミナルの入力欄に書きかけの文字があるため、送れませんでした",
       "busy": "Claude Code の手が空かないため、送れませんでした",
       "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）",
       "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください"
@@ -553,11 +541,6 @@
       "sendNowFailed": "送れませんでした: {error}",
       "rescheduleFailed": "時刻を変えられませんでした: {error}",
       "slowStart": "Claude Code の起動に時間がかかっています（{elapsed}）。MCP サーバーや SessionStart のフックを待っていることがあります",
-      "rewinding": "巻き戻し先を選んでいます…",
-      "cancelEsc": "キャンセル（Esc）",
-      "unknownScreen": "Claude Code がチャットでは操作できない画面を表示しています",
-      "closeEsc": "閉じる（Esc）",
-      "operateInTerminal": "ターミナルで操作",
       "archived": "このセッションはアーカイブされています",
       "unarchive": "アクティブに戻す",
       "exited": "Claude Code が終了しました（code {code}）",
@@ -1034,7 +1017,6 @@
     "activity": {
       "question": "質問への回答待ち",
       "permission": "実行の許可待ち",
-      "other": "操作待ち",
       "browser": "ブラウザでの操作待ち",
       "starting": "起動中",
       "runningWithBackground": "作業中（バックグラウンド {count}件）",
@@ -1858,16 +1840,7 @@
     "kind": {
       "question": "Claude Code からの質問",
       "permission": "実行の許可",
-      "other": "確認",
       "plan": "プランの承認"
-    },
-    "notChosen": {
-      "busy": "ほかの操作の途中だったため、送れませんでした。もう一度押してください",
-      "gone": "画面が変わったため、送りませんでした",
-      "missing": "この選択肢が Claude Code の画面に見つからないため、送りませんでした",
-      "stuck": "選択肢にカーソルを合わせられませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください",
-      "ignored": "Claude Code が受け付けませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください",
-      "filled": "自由記述の欄に前に打った文が残っていて、消せませんでした。Claude Code の画面（ターミナル）で消してから、もう一度送ってください"
     },
     "card": {
       "sendFailed": "送れませんでした。もう一度押してください",

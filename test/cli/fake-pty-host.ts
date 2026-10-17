@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { Terminal } from '@xterm/headless';
 import * as pty from 'node-pty';
-import type { ScreenLine } from '@shared/screen';
 import { PipeBacklog, readLines } from '../../src/main/pipe-backlog';
 import type { PipeHandle, PtyHandle, PtyHostApi } from '../../src/main/pty-host-client';
 import { STDERR_TAIL, type HostedInfo, type HostedPipeInfo, type HostedPtyInfo, type PipeSpawnRequest, type PtySpawnRequest } from '../../src/main/pty-host-protocol';
@@ -34,8 +33,13 @@ type HostedPipeEntry = {
   ended: boolean;
   handle: FakePipeHandle | null;
   disposed: boolean;
+  // プロセスが本当に終わったとき（gone）と、終わったか
   gone: Promise<void>;
+  closed: boolean;
 };
+
+// 止めるとき、パイプの claude が SIGTERM で終わるのを待つ上限（過ぎたら SIGKILL。pty-host.ts の SHUTDOWN_GRACE_MS と同じ）
+const PIPE_GRACE_MS = 2000;
 
 // 常駐のホスト（src/main/pty-host.ts と pty-host-client.ts の PtyHost）の代わり。常駐プロセスを起動せず、node-pty と child_process を直に使う。
 // やりとりの形（spawn・spawnPipe・attach・attachPipe・list・forget、受け手がいない間の出力を溜める、引き継ぎの画面・行の控えと起動時刻）は
@@ -142,6 +146,7 @@ export class FakePtyHost implements PtyHostApi {
       handle: null,
       disposed: false,
       gone,
+      closed: false,
     };
     const handle = new FakePipeHandle(hosted, this);
     hosted.handle = handle;
@@ -167,6 +172,7 @@ export class FakePtyHost implements PtyHostApi {
       hosted.stderr += String(error);
     });
     proc.on('close', (code, signal) => {
+      hosted.closed = true;
       ended();
       if (!hosted.disposed) this.pipeExited(hosted, code ?? (signal ? 128 : -1));
     });
@@ -207,33 +213,15 @@ export class FakePtyHost implements PtyHostApi {
     }
   }
 
-  // 今動いている tag の claude の画面（ScreenTracker と同じ形の行）。無ければ null
-  lines(tag: string): ScreenLine[] | null {
-    const hosted = [...this.all].reverse().find((h) => h.info.tag === tag);
-    if (!hosted || hosted.disposed) return null;
-    const { term } = hosted;
-    const buf = term.buffer.active;
-    const lines: ScreenLine[] = [];
-    for (let y = 0; y < term.rows; y++) {
-      const line = buf.getLine(buf.viewportY + y);
-      lines.push({ text: line?.translateToString(true) ?? '', full: !!line && (line.getCell(term.cols - 1)?.getChars() ?? '') !== '' });
-    }
-    return lines;
-  }
-
-  // 今動いている tag の claude の画面を、文字の属性（薄い字など）ごと書き出したもの。控えから ScreenTracker で読み直すのに使う
-  serialized(tag: string): string | null {
-    const hosted = [...this.all].reverse().find((h) => h.info.tag === tag);
-    return hosted && !hosted.disposed ? hosted.serializer.serialize() : null;
-  }
-
   // 今動いている tag の claude に、アプリを通さずに打つ（アプリが止まっている間の操作）。stream-json の claude には 1 行書く
   write(tag: string, data: string): void {
     for (const hosted of this.ptys.values()) if (hosted.info.tag === tag && hosted.exitCode === null) hosted.proc.write(data);
     for (const hosted of this.pipes.values()) if (hosted.info.tag === tag && hosted.exitCode === null) this.sendLine(hosted, data);
   }
 
-  // すべての claude を止める。返すのは、どれも本当に終わったとき（timeoutMs で待つのをやめる）
+  // すべての claude を止める。返すのは、どれも本当に終わったとき（timeoutMs で待つのをやめる）。
+  // パイプの claude は、本物のホスト（pty-host.ts の shutdown）と同じく、SIGTERM で終わるのを少し待ち、残れば SIGKILL（プロセスグループごと）。
+  // Claude Code は SIGTERM で裏の Bash を片付ける。裏の Bash は claude と別のプロセスグループで動くので、すぐ SIGKILL すると残る
   dispose(timeoutMs = 3000): Promise<void> {
     for (const hosted of this.all) {
       if (hosted.exitCode === null) hosted.proc.kill();
@@ -242,14 +230,20 @@ export class FakePtyHost implements PtyHostApi {
       hosted.term.dispose();
     }
     this.ptys.clear();
+    const running = this.allPipes.filter((hosted) => !hosted.closed);
     for (const hosted of this.allPipes) {
-      if (hosted.exitCode === null) killGroup(hosted, 'SIGKILL');
       hosted.handle = null;
       hosted.disposed = true;
     }
+    for (const hosted of running) killGroup(hosted, 'SIGTERM');
     this.pipes.clear();
-    const gone = Promise.all([...this.all.map((hosted) => hosted.gone), ...this.allPipes.map((hosted) => hosted.gone)]).then(() => undefined);
-    return Promise.race([gone, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs).unref())]);
+    const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
+    const pipesGone = Promise.all(running.map((hosted) => hosted.gone));
+    const killed = Promise.race([pipesGone, after(PIPE_GRACE_MS)]).then(() => {
+      for (const hosted of running) if (!hosted.closed) killGroup(hosted, 'SIGKILL');
+    });
+    const gone = Promise.all([...this.all.map((hosted) => hosted.gone), pipesGone, killed]).then(() => undefined);
+    return Promise.race([gone, after(PIPE_GRACE_MS + timeoutMs)]);
   }
 
   release(hosted: Hosted, handle: FakeHandle): void {

@@ -1,18 +1,23 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、チャット（stream-json）とターミナルモード（TUI）を行き来できるかを確かめる（設計書 9 節）。
 // 行き来はどちら向きも、今の claude を止めて、もう片方で --resume する。会話は続く。
-// ターミナルモードの中身（TUI）は Claude Code そのものなので、画面は読まない・キーは押さない（決めたこと）。確かめるのは切り替えだけ
+// ターミナルモードの中身（TUI）は Claude Code そのものなので、画面は読まない・キーは押さない（決めたこと）。確かめるのは切り替えだけ。
+// TANACODE_RECORD=1 を付けると、TUI の statusLine の JSON を test/fixtures/claude-code/<バージョン>/ に控えとして残す
+// （チャットの -p では statusLine が動かないので、ここで取る）
 
 const PROMPT = 'ターミナルモードを試します';
 const REPLY = 'ターミナルモードの前の返事';
 const AFTER = 'チャットに戻ってからの発言です';
 const AFTER_REPLY = 'チャットに戻ってからの返事';
 
-describe(`Claude Code ${claudeVersion()} のターミナルモード`, () => {
+const version = claudeVersion();
+
+describe(`Claude Code ${version} のターミナルモード`, () => {
   let api: MockApi;
   let run: ClaudeRun;
   let transcript: string;
@@ -31,6 +36,7 @@ describe(`Claude Code ${claudeVersion()} のターミナルモード`, () => {
   });
 
   afterAll(async () => {
+    if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['statusline.json']);
     await run?.stop();
     await api?.stop();
   });

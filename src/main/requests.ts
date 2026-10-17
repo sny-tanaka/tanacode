@@ -1,5 +1,5 @@
 import { t } from '@shared/i18n';
-import { stripControlChars } from '@shared/prompt-keys';
+import { stripControlChars } from '@shared/paste';
 import type { PendingPermission, PermissionReply, QuestionReply } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 import type { CanUseToolRequest, PermissionResult, PermissionUpdate } from './stream/protocol';
@@ -132,4 +132,23 @@ function destinationText(destination: string): string {
     default:
       return destination;
   }
+}
+
+// AskUserQuestion の input から質問を取り出す。形が違えば null
+export function askQuestionsOf(input: unknown): AskQuestion[] | null {
+  const list = (input as { questions?: unknown } | null)?.questions;
+  if (!Array.isArray(list)) return null;
+  const text = (v: unknown) => (typeof v === 'string' ? v : '');
+  const questions = list.map((q) => ({
+    question: text(q?.question),
+    header: text(q?.header),
+    multiSelect: q?.multiSelect === true || q?.multiSelect === 'true',
+    options: Array.isArray(q?.options)
+      ? q.options.map((o: unknown) => {
+          const opt = o as { label?: unknown; description?: unknown; preview?: unknown };
+          return { label: text(opt?.label), description: text(opt?.description), preview: text(opt?.preview) || undefined };
+        })
+      : [],
+  }));
+  return questions.every((q) => q.question && q.options.length > 0) ? questions : null;
 }

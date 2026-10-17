@@ -1029,7 +1029,7 @@ export function App() {
                     sessionId={selected.id}
                     visible={shownPanel === 'context'}
                     revision={chat.items.length}
-                    {...contextUsage(selected.model, null, statusLineOf(selected.id), knowledgeOf(selected.id).contextTokens)}
+                    {...contextUsage(selected.model, statusLineOf(selected.id), knowledgeOf(selected.id).contextTokens)}
                   />
                 ) : (
                   <div className="scm-empty">{t('app.sidePanel.contextEmpty')}</div>

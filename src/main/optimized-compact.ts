@@ -34,10 +34,7 @@ export type CompactHost = {
   claudeSessionOf(id: string): string | null;
   hasChecklistMcp(id: string): boolean | null;
   runningTasks(id: string): CarriedTask[];
-  // 中断で戻った仕上げの頼みが、Claude Code の入力欄に出ているか
-  compactDraftShown(id: string): boolean;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
-  withdrawCompactDraft(id: string): Promise<void>;
 };
 
 type Timings = {
@@ -51,15 +48,13 @@ type Timings = {
   clearMs: number;
   // 再開の文を送れなかったときに、試し直すまでの待ち
   retryMs: number;
-  // 送った仕上げの頼みが、入力欄に出たままのとき、中断で戻されたとみなすまでの時間
-  pulledBackMs: number;
   // 再開の文を送ってから、そのターンが始まるのを待つ上限
   startMs: number;
 };
 
 // clearMs: /clear は SessionEnd・SessionStart の hooks を走らせるので、使う人の hooks が遅い・マシンが重いと時間がかかる。
 // 時間切れにすると、会話は消えたのに再開の文を送らないことになる（いちばん避けたい）。待っている間に失うものは無いので、長く待つ
-const TIMINGS: Timings = { pollMs: 300, submitMs: 10_000, appearMs: 30_000, clearMs: 120_000, retryMs: 2000, pulledBackMs: 2000, startMs: 15_000 };
+const TIMINGS: Timings = { pollMs: 300, submitMs: 10_000, appearMs: 30_000, clearMs: 120_000, retryMs: 2000, startMs: 15_000 };
 
 type Deps = {
   host: CompactHost;
@@ -179,11 +174,7 @@ export class OptimizedCompact {
       // 仕上げもできなかった（上限に当たったあとなど、仕上げのターンが API エラーで終わった）。自動のときは、仕上げを飛ばして、
       // 今あるリストと発言の原文だけで再開する（再開の文に、そう書く）。手動のときは、飛ばさない（下の not-used で取りやめる）
       const handoffSkipped = finalized === 'api-error' && !!auto;
-      if (finalized !== 'done' && finalized !== 'api-error') {
-        // 応答の前に中断すると、Claude Code は仕上げの頼みを入力欄に戻す。Claude Code の入力欄に残さない（次の発言に混ざる）
-        if (finalized === 'interrupted' || finalized === 'busy') await host.withdrawCompactDraft(id);
-        return finalized;
-      }
+      if (finalized !== 'done' && finalized !== 'api-error') return finalized;
       // Claude がチェックリストのツールを 1 回も呼ばなかったのに会話を消すと、何も引き継げない（チェックリストの MCP が足されていない
       // セッション・頼みを無視したとき）。読むだけでもよい: リストがもう最新なら、Claude は読んで「最新です」と答えるだけのことがある
       // （ふだんから書いているセッション・取りやめた直後の押し直し・仕上げのやり直し）。書き換えを求めると、押しても圧縮できなくなる
@@ -243,21 +234,13 @@ export class OptimizedCompact {
     const sentAt = Date.now();
     let seen = false;
     // 仕上げの頼みが、入力欄に出たままになった時刻
-    let shownSince: number | null = null;
     for (;;) {
       if (!this.alive(id)) return 'exited';
       const events = await host.conversation(id);
       const at = handoffIndex(events, base);
       if (at === -1) {
-        // 会話に出たあとで消えたのは、応答の前に中断して、入力欄に戻されたとき
+        // 会話に出たあとで消えたのは、巻き戻した・/clear したとき
         if (seen) return 'interrupted';
-        // 会話ログに書かれる前に中断されると、会話には出ないまま、入力欄に戻る。送った直後に一瞬出ているのとは、続く長さで見分ける
-        if (host.compactDraftShown(id)) {
-          shownSince ??= Date.now();
-          if (Date.now() - shownSince > this.timings.pulledBackMs) return 'interrupted';
-        } else {
-          shownSince = null;
-        }
         if (Date.now() - sentAt > this.timings.appearMs) return 'busy';
       } else {
         seen = true;

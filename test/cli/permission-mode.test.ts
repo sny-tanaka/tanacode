@@ -3,9 +3,9 @@ import { ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、子セッションの権限モードの上限にする親のモード（SessionManager.modeOf）が、
-// アプリがモードを渡さずに起動したときにも、claude の今のモードに合うかを確かめる。
-// 止まっているセッションを一覧から開く（open）と、子でないセッションは --permission-mode を付けずに --resume で起動する。
-// Claude Code は前回のモードを戻すので、アプリが決めたモードだけを見ていると、画面は acceptEdits なのに上限は manual になる（実際に起きた）
+// 止まっていたセッションを開き直したときにも、claude の今のモードに合うかを確かめる。
+// 開き直すときの権限モードは、新しいセッションと同じ決まり（設定の defaultMode、無ければ auto、使えなければ default）で決め、
+// 前回のモードは引き継がない（決めたこと）
 
 const PROMPT = '権限モードの確認を始めます';
 const AFTER_REOPEN = '開き直したあとの発言です';
@@ -29,20 +29,21 @@ describe(`Claude Code ${version} の権限モード`, () => {
     await api?.stop();
   });
 
-  it('モードを渡さずに開き直すと、Claude Code は前回のモードを戻し、上限も次の発言からそのモードになる', async () => {
+  it('開き直すと、権限モードは新しいセッションと同じ決まりで決め（前回のモードは引き継がない）、上限は Claude Code の今のモードになる', async () => {
     await run.send(PROMPT);
-    await run.waitFor('はじめの返事', replied('はじめの返事'));
+    await run.waitUntil('はじめの返事', replied('はじめの返事'));
     expect(run.manager.modeOf(run.sessionId!)).toBe('acceptEdits');
     run.stopClaude();
     await run.reopen();
     expect(run.manager.parentOf(run.sessionId!)).toBeNull();
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
-    // --permission-mode を付けずに起動しても、前回のモードに戻っている
-    await run.waitFor('戻ったモード', (info) => info.mode === 'acceptEdits');
+    await run.untilState('待機中', (state) => state === 'idle');
+    const mode = run.manager.modeOf(run.sessionId!);
+    expect(mode).not.toBeNull();
+    expect(mode).not.toBe('acceptEdits');
     await run.send(AFTER_REOPEN);
-    await run.waitFor('開き直したあとの返事', replied('開き直したあとの返事'));
-    // 今の claude は、発言の行に今のモードを書く
-    expect(run.entries.some((e) => e.type === 'user' && e.permissionMode === 'acceptEdits')).toBe(true);
-    expect(run.manager.modeOf(run.sessionId!)).toBe('acceptEdits');
+    await run.waitUntil('開き直したあとの返事', replied('開き直したあとの返事'));
+    // 今の claude は、発言の行に今のモードを書く。上限はそのモードのまま
+    expect(run.entries.some((e) => e.type === 'user' && e.permissionMode && e.permissionMode !== 'acceptEdits')).toBe(true);
+    expect(run.manager.modeOf(run.sessionId!)).toBe(mode);
   });
 });

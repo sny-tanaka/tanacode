@@ -22,7 +22,6 @@ import { TerminalControl } from './terminal-control';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
-import { QUESTION_WAIT_REQUEST } from './question-hook';
 import { ScheduledMessages } from './scheduled-messages';
 import { SessionManager } from './session-manager';
 import { resolveAddedFolder } from './added-folders';
@@ -97,7 +96,6 @@ export class Profile {
   private checklistBridge: McpBridge | null = null;
   private walkthroughBridge: McpBridge | null = null;
   private terminalBridge: McpBridge | null = null;
-  private questionBridge: McpBridge | null = null;
   // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
   readonly folderViews = new Map<string, string>();
   // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -125,7 +123,6 @@ export class Profile {
     this.statusLines = new StatusLineWatcher(
       join(dataDir, 'statusline'),
       (id, info) => this.manager.statusLineChanged(id, info),
-      (id, input) => this.manager.askQuestionsChanged(id, input),
       (id, request, at) => this.manager.permissionRequested(id, request, at),
       (id, input) => this.manager.tuiIdle(id, input),
     );
@@ -186,11 +183,6 @@ export class Profile {
     this.terminalBridge = await listen('ターミナル', socketPathIn(dataDir, 'terminal', 'terminal'), (id, tool, args, signal) =>
       this.terminalControl ? this.terminalControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),
     );
-    // AskUserQuestion の質問のフック（question-hook.ts）が、質問を渡して答えを待つ。始められなければ、質問は画面を読む道で答える
-    this.questionBridge = await listen('質問', socketPathIn(dataDir, 'question', 'question'), (id, tool, args, signal) => {
-      if (!this.manager) return Promise.resolve(notReady());
-      return tool === QUESTION_WAIT_REQUEST ? this.manager.waitQuestion(id, args.input, signal) : Promise.resolve(textResult(`Unknown request: ${tool}`, true));
-    });
     // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
     this.ptyHost = await PtyHost.start(dataDir, join(__dirname, 'pty-host.js'));
     const store = new SessionStore(join(dataDir, 'sessions.json'));
@@ -211,8 +203,7 @@ export class Profile {
           const message = this.turnMessage(session.id, notice);
           if (message) notify(session.id, session.title, message);
         },
-        onAttention: (session, attention) =>
-          notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : t('main.notification.needsTerminal')),
+        onAttention: (session, attention) => notify(session.id, session.title, menuNotice(attention.menu)),
         onProgress: (sessionId, activity) => send(IpcChannel.SessionsProgress, { sessionId, activity }),
         onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
         onSubagents: (sessionId, runs) => send(IpcChannel.SubagentsChanged, { sessionId, runs }),
@@ -475,7 +466,6 @@ export class Profile {
     this.checklists.flush();
     this.walkthroughBridge?.close();
     this.terminalBridge?.close();
-    this.questionBridge?.close();
     this.shells.killAll();
   }
 }

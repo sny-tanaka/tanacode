@@ -4,7 +4,6 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
-import { QUESTION_WAIT_REQUEST } from '../src/main/question-hook';
 import { menuNotice, scheduledNotice } from '../src/main/notice-text';
 import {
   allOf,
@@ -55,7 +54,7 @@ const managerArg = {
 } as const;
 const managerArgs = () => argsOf('SessionManager');
 // アプリが待ち受けるソケット（userData の中の名前）
-const SOCKETS = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock', 'question.sock'];
+const SOCKETS = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
 type Callbacks = Record<string, (...args: unknown[]) => unknown>;
 const callbacks = () => managerArgs()[managerArg.callbacks] as Callbacks;
 // 作り物を作ったときに渡した関数
@@ -107,7 +106,6 @@ describe('起動', () => {
       u('checklist.sock'),
       u('walkthrough.sock'),
       u('terminal.sock'),
-      u('question.sock'),
     ]);
     expect(state.ptyHostStart.mock.calls).toEqual([[state.userData, join(MAIN_DIR, 'pty-host.js')]]);
     // SessionManager には、pty ホスト・会話の一覧・監視を渡す
@@ -145,14 +143,13 @@ describe('起動', () => {
       },
     });
     const sockets = allOf('McpBridge').map((c) => String(c.args[0]));
-    expect(sockets.map((path) => path.startsWith(`${tmpdir()}/`))).toEqual([true, true, true, true, true, true]);
+    expect(sockets.map((path) => path.startsWith(`${tmpdir()}/`))).toEqual([true, true, true, true, true]);
     expect(sockets.map((path) => path.slice(tmpdir().length + 1).replace(/-[0-9a-f]{12}\.sock$/, ''))).toEqual([
       'tanacode-browser',
       'tanacode-sessions',
       'tanacode-checklist',
       'tanacode-walkthrough',
       'tanacode-terminal',
-      'tanacode-question',
     ]);
   });
 
@@ -269,24 +266,19 @@ describe('Claude Code に足す MCP サーバー', () => {
       'チェックリストの待ち受けを始められませんでした',
       'ウォークスルーの待ち受けを始められませんでした',
       'ターミナルの待ち受けを始められませんでした',
-      '質問の待ち受けを始められませんでした',
     ]);
     expect(state.windows).toHaveLength(1);
   });
 
   it('中継からの呼び出しは、それぞれの制御に渡す（中断の合図も）', async () => {
     await boot();
-    const [browser, sessions, checklist, walkthrough, terminal, question] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
+    const [browser, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
     const signal = new AbortController().signal;
     expect(browser('s1', 'navigate', { url: 'http://localhost' }, signal)).toEqual({ call: 'browser.handle', args: ['s1', 'navigate', { url: 'http://localhost' }, signal] });
     expect(sessions('s1', 'start_session', { prompt: 'x' }, signal)).toEqual({ call: 'sessionsControl.handle', args: ['s1', 'start_session', { prompt: 'x' }, signal] });
     expect(checklist('s1', 'card_add', { title: 'x' })).toEqual({ call: 'checklistControl.handle', args: ['s1', 'card_add', { title: 'x' }] });
     expect(walkthrough('s1', 'walkthrough_start', { steps: [] })).toEqual({ call: 'walkthrough.handle', args: ['s1', 'walkthrough_start', { steps: [] }] });
     expect(terminal('s1', 'read_terminal', { id: 'shell-1' }, signal)).toEqual({ call: 'terminalControl.handle', args: ['s1', 'read_terminal', { id: 'shell-1' }, signal] });
-    // 質問のフックは、質問の入力を渡して答えを待つ（それ以外の呼び出しは知らない）
-    const input = { questions: [] };
-    expect(question('s1', QUESTION_WAIT_REQUEST, { input }, signal)).toEqual({ call: 'manager.waitQuestion', args: ['s1', input, signal] });
-    await expect(question('s1', 'other', {}, signal)).resolves.toEqual(textResult('Unknown request: other', true));
   });
 
   it('起動が終わる前（セッションの一覧を読む前）に、アプリ内ブラウザから届いた問い合わせ・依頼も扱える', async () => {
@@ -306,9 +298,8 @@ describe('Claude Code に足す MCP サーバー', () => {
     const host = pending<Record<string, unknown>>();
     await boot({ noWait: true, before: (s) => s.ptyHostStart.mockReturnValue(host.promise as never) });
     await vi.waitFor(() => expect(state.ptyHostStart).toHaveBeenCalled());
-    const [, sessions, checklist, walkthrough, terminal, question] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
+    const [, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
     const notYet = textResult('tanacode has not finished starting up. Wait a moment and try again.', true);
-    await expect(question('s1', QUESTION_WAIT_REQUEST, { input: {} }, new AbortController().signal)).resolves.toEqual(notYet);
     await expect(sessions('s1', 'list_sessions', {}, new AbortController().signal)).resolves.toEqual(notYet);
     await expect(checklist('s1', 'list_get', {})).resolves.toEqual(notYet);
     await expect(walkthrough('s1', 'walkthrough_start', {})).resolves.toEqual(notYet);
@@ -379,7 +370,7 @@ describe('部品から画面への知らせ', () => {
     expect(sentToRenderer()).toEqual([]);
   });
 
-  it('statusLine のファイルは、セッションに渡す。セッションが知らせた statusLine（ファイルからも stream-json からも）は、使用量に渡す。質問の入力は、セッションに渡す', async () => {
+  it('statusLine のファイルは、セッションに渡す。セッションが知らせた statusLine（ファイルからも stream-json からも）は、使用量に渡す。書くだけのフックのファイルも、セッションに渡す', async () => {
     await boot();
     const info = { model: 'opus', rateLimits: {} };
     fnArg('StatusLineWatcher', 1)('s1', info);
@@ -387,8 +378,10 @@ describe('部品から画面への知らせ', () => {
     expect(the('UsageMonitor').fromStatusLine.mock.calls).toEqual([]);
     callbacks().onStatusLine('s1', info);
     expect(the('UsageMonitor').fromStatusLine.mock.calls).toEqual([[info]]);
-    fnArg('StatusLineWatcher', 2)('s1', { questions: [] });
-    expect(manager().askQuestionsChanged.mock.calls).toEqual([['s1', { questions: [] }]]);
+    fnArg('StatusLineWatcher', 2)('s1', { tool_name: 'Bash' }, 5);
+    expect(manager().permissionRequested.mock.calls).toEqual([['s1', { tool_name: 'Bash' }, 5]]);
+    fnArg('StatusLineWatcher', 3)('s1', { permission_mode: 'plan' });
+    expect(manager().tuiIdle.mock.calls).toEqual([['s1', { permission_mode: 'plan' }]]);
   });
 
   it('セッションのフォルダで、Claude が頼んだコマンドをターミナルで動かす', async () => {
@@ -519,8 +512,7 @@ describe('通知', () => {
     await boot();
     const menu = { kind: 'question', title: 'どちらにしますか？', options: [] };
     callbacks().onAttention(session, { kind: 'menu', menu });
-    callbacks().onAttention(session, { kind: 'other' });
-    expect(state.notifications.map((n) => n.options.body)).toEqual([menuNotice(menu as never), 'ターミナルでの操作が必要です']);
+    expect(state.notifications.map((n) => n.options.body)).toEqual([menuNotice(menu as never)]);
   });
 
   it('クリックすると、ウインドウを前に出して、そのセッションを選ばせる（ウインドウを閉じていれば作る）', async () => {

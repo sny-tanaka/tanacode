@@ -8,8 +8,9 @@ import { BrowserAsks } from '../../src/main/browser-asks';
 import { BROWSER_GATE_REQUEST } from '../../src/main/browser-bridge';
 import { McpBridge as BrowserBridge, textResult, type ToolResult } from '../../src/main/mcp-bridge';
 import { buildRelay } from './browser-relay-build';
-import { ClaudeRun, claudeVersion, menuOf } from './claude-run';
+import { ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi, type Block } from './mock-api';
+import type { PendingPermission } from '@shared/questions';
 
 // 本物の claude をモックの API で動かし、アプリ内ブラウザの MCP サーバー（中継）を確かめる。
 // アプリと同じ起動の引数（--mcp-config・--allowedTools・--settings の PreToolUse のフック）で起動し、
@@ -41,6 +42,9 @@ function toolResult(run: ClaudeRun, toolUseId: string): unknown {
   }
   return undefined;
 }
+
+// 許可の確認の見出し・説明・理由・入力（開く先や実行する式が、どれかにそのまま出る）
+const textOf = (permission: PendingPermission) => [permission.title, permission.description, permission.reason, JSON.stringify(permission.input)].join('\n');
 
 describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
   let api: MockApi;
@@ -106,7 +110,7 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
 
   it('ツールの一覧が Claude に渡る', async () => {
     await run.send(BROWSE);
-    await run.waitFor('はじめのツールの結果', () => resultOf('toolu_shot'));
+    await run.waitUntil('はじめのツールの結果', () => resultOf('toolu_shot'));
     for (const tool of BROWSER_TOOLS) expect([...api.tools], tool.name).toContain(browserToolId(tool.name));
   });
 
@@ -114,52 +118,49 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     expect(calls[0]).toEqual({ session: run.sessionId, tool: 'screenshot', args: {} });
     expect(JSON.stringify(resultOf('toolu_shot'))).toContain(PNG);
     // チャットには、ツールの結果の画像として出る
-    const shown = await run.waitFor('チャットのツールの結果', () =>
+    const shown = await run.waitUntil('チャットのツールの結果', () =>
       run.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_shot' && (e.images?.length ?? 0) > 0),
     );
     expect(shown).toMatchObject({ type: 'tool-result', isError: false });
   });
 
   it('ページを動かすツールは、許可の確認を通る', async () => {
-    const menu = await run.waitFor('クリックの許可の確認', menuOf('permission'));
+    const menu = await run.permission('クリックの許可の確認');
     expect(calls).toHaveLength(1);
-    await run.answer(menu.title, menu.options[0].id);
-    await run.waitFor('クリックの結果', () => resultOf('toolu_click'));
+    run.replyPermission(menu, { kind: 'allow' });
+    await run.waitUntil('クリックの結果', () => resultOf('toolu_click'));
     expect(calls[1]).toEqual({ session: run.sessionId, tool: 'click', args: { selector: '#save' } });
   });
 
   it('localhost のページの JavaScript の実行は、許可の確認なしに通る', async () => {
     // 確認が出ていれば、答えないかぎりここで止まる
-    await run.waitFor('localhost のページでの JavaScript の実行の結果', () => resultOf('toolu_eval_local'));
+    await run.waitUntil('localhost のページでの JavaScript の実行の結果', () => resultOf('toolu_eval_local'));
     expect(calls[2]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.title' } });
     expect(gates[0]).toEqual({ session: run.sessionId, url: LOCAL });
     expect(JSON.stringify(resultOf('toolu_eval_local'))).toContain('evaluate をしました');
   });
 
-  it('localhost 以外のページの JavaScript の実行は、「次から聞かない」を選んでも毎回確かめる', async () => {
-    const menu = await run.waitFor('JavaScript の実行の許可の確認', menuOf('permission'));
+  it('localhost 以外のページの JavaScript の実行は、毎回確かめる（フックが確認させるので、「今後は聞かない」の候補は出ない）', async () => {
+    const menu = await run.permission('JavaScript の実行の許可の確認');
     expect(calls).toHaveLength(3);
-    expect(menu.context.join('\n')).toContain('document.cookie');
-    const always = menu.options.find((o) => /don.t ask again/i.test(o.label));
-    expect(always, '「次から聞かない」の選択肢').toBeDefined();
-    await run.answer(menu.title, always!.id);
-    await run.waitFor('返事', replied('確かめました'));
+    expect(textOf(menu)).toContain('document.cookie');
+    expect(menu.always ?? []).toEqual([]);
+    run.replyPermission(menu, { kind: 'allow' });
+    await run.waitUntil('返事', replied('確かめました'));
     expect(calls[3]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.cookie' } });
     expect(gates[1]).toEqual({ session: run.sessionId, url: REMOTE });
-    // 許可はプロジェクトの設定に残る（次の確認が出るのは、フックが確認を出させるため）
-    expect(readFileSync(join(run.cwd, '.claude', 'settings.local.json'), 'utf8')).toContain(browserToolId('evaluate'));
   });
 
   it('--resume で再開しても使え、localhost 以外のページの JavaScript の実行はまた確かめる', async () => {
     run.stopClaude();
     run.start({ resume: true });
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
+    await run.waitUntil('入力欄', () => run.idle);
     await run.send(AGAIN);
-    const menu = await run.waitFor('JavaScript の実行の許可の確認（2 回目）', menuOf('permission'));
-    expect(menu.context.join('\n')).toContain('1 + 1');
+    const menu = await run.permission('JavaScript の実行の許可の確認（2 回目）');
+    expect(textOf(menu)).toContain('1 + 1');
     expect(calls).toHaveLength(4);
-    await run.answer(menu.title, menu.options[0].id);
-    await run.waitFor('再開後の返事', replied('再開後も確かめました'));
+    run.replyPermission(menu, { kind: 'allow' });
+    await run.waitUntil('再開後の返事', replied('再開後も確かめました'));
     expect(calls[4]).toMatchObject({ tool: 'evaluate', args: { expression: '1 + 1' } });
     expect(gates).toHaveLength(3);
   });
@@ -167,15 +168,15 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
   it('アプリが無い間は「起動していません」と返し、戻ればそのまま使える。JavaScript の実行は、ページを確かめられないので確認が出る', async () => {
     bridge.close();
     await run.send(CLOSED);
-    const menu = await run.waitFor('JavaScript の実行の許可の確認（アプリが無い間）', menuOf('permission'));
-    expect(menu.context.join('\n')).toContain('2 + 2');
-    await run.answer(menu.title, menu.options[0].id);
-    await run.waitFor('閉じている間の JavaScript の実行の結果', () => resultOf('toolu_eval_closed'));
+    const menu = await run.permission('JavaScript の実行の許可の確認（アプリが無い間）');
+    expect(textOf(menu)).toContain('2 + 2');
+    run.replyPermission(menu, { kind: 'allow' });
+    await run.waitUntil('閉じている間の JavaScript の実行の結果', () => resultOf('toolu_eval_closed'));
     expect(JSON.stringify(resultOf('toolu_eval_closed'))).toContain('tanacode is not running.');
-    await run.waitFor('閉じている間の結果', () => resultOf('toolu_closed'));
+    await run.waitUntil('閉じている間の結果', () => resultOf('toolu_closed'));
     expect(JSON.stringify(resultOf('toolu_closed'))).toContain('tanacode is not running.');
     await bridge.start();
-    await run.waitFor('返事', replied('閉じている間の確認をしました'));
+    await run.waitUntil('返事', replied('閉じている間の確認をしました'));
     expect(JSON.stringify(resultOf('toolu_back'))).toContain('get_text をしました');
     expect(calls.map((c) => c.tool)).toEqual(['screenshot', 'click', 'evaluate', 'evaluate', 'evaluate', 'get_text']);
   });
@@ -184,9 +185,6 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
 describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依頼`, () => {
   const LOGIN = 'ログインを頼んでください';
   const AGAIN = 'もう一度頼んでください';
-  const LATER = 'しばらくしてから返事をします';
-  // 呼び出しをバックグラウンドに移すまでの時間（既定は 120 秒。試験では縮める）
-  const BACKGROUND_MS = 6000;
   const MESSAGE = 'テスト用のアカウントでログインしてください';
   let api: MockApi;
   let run: ClaudeRun;
@@ -218,14 +216,12 @@ describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依�
           ask('toolu_ask_done'),
           [{ type: 'text', text: '続きを確かめました' }],
           ask('toolu_ask_esc'),
-          ask('toolu_ask_later'),
-          [{ type: 'text', text: '返事を待ちます' }],
-          [{ type: 'text', text: '返事が届きました' }],
         ],
       },
     ];
+    // 長く待つ呼び出しを Claude Code がバックグラウンドに移す働き（CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS）は、TUI だけのもの。
+    // チャット（stream-json）では、人が答えるまでターンの中で待つ（実測）
     run = new ClaudeRun(await api.start(), {
-      env: { CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: String(BACKGROUND_MS) },
       browser: { command: process.execPath, script, socketPath, version: 'test' },
     });
     await run.open();
@@ -240,42 +236,25 @@ describe(`Claude Code ${version} とアプリ内ブラウザでの操作の依�
 
   it('許可の確認なしにアプリまで届き、ユーザーが「終わった」を押すまで返らない。押したら、そのことと今のページが Claude に届く', async () => {
     await run.send(LOGIN);
-    const first = await run.waitFor('頼み', () => asking());
+    const first = await run.waitUntil('頼み', () => asking());
     expect(first.message).toBe(MESSAGE);
-    expect(run.screen.current.state.kind).not.toBe('menu');
+    expect(run.manager.pendingPermission(run.sessionId!)).toBeNull();
     expect(resultOf('toolu_ask_done')).toBeUndefined();
     asks.answer(run.sessionId!, first.id, { done: true, reason: '' });
-    await run.waitFor('返事', replied('続きを確かめました'));
+    await run.waitUntil('返事', replied('続きを確かめました'));
     // 結果の文の " は、JSON にするとエスケープされる（\ の数は問わない）
     expect(JSON.stringify(resultOf('toolu_ask_done'))).toMatch(/The user pressed \\*"終わった\\*"\.\\nCurrent page: ダッシュボード\\nURL: http:\/\/localhost:3000\//);
     expect(asking()).toBeNull();
   });
 
-  it('待っている間に Esc で中断すると、取り消しがアプリまで届き、帯を消す', async () => {
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
+  it('待っている間に中断すると、取り消しがアプリまで届き、帯を消す', async () => {
+    await run.waitUntil('入力欄', () => run.idle);
     await run.send(AGAIN);
-    await run.waitFor('2 つ目の頼み', () => asking());
-    run.type('\x1b');
-    await run.waitFor('取り消し', () => asks.list().length === 0 && asking() === null);
-    await run.waitFor('中断の結果', () => resultOf('toolu_ask_esc'));
+    await run.waitUntil('2 つ目の頼み', () => asking());
+    run.manager.interrupt(run.sessionId!);
+    await run.waitUntil('取り消し', () => asks.list().length === 0 && asking() === null);
+    await run.waitUntil('中断の結果', () => resultOf('toolu_ask_esc'));
     expect(resultOf('toolu_ask_esc')).toMatchObject({ is_error: true });
-  });
-
-  it('待ちが長いと Claude Code がバックグラウンドに移す。そのあとで返事をしても、知らせで Claude に届き、続きを始める', async () => {
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt');
-    await run.send(LATER);
-    const third = await run.waitFor('3 つ目の頼み', () => asking());
-    await run.waitFor('バックグラウンドに移したという結果', () => resultOf('toolu_ask_later'), BACKGROUND_MS + 20_000);
-    expect(JSON.stringify(resultOf('toolu_ask_later'))).toContain('moved to the background');
-    await run.waitFor('ターンの終わり', replied('返事を待ちます'));
-    // 移したあとも、アプリは待ち続けている
-    expect(asks.list()).toEqual([{ sessionId: run.sessionId, ask: third }]);
-    asks.answer(run.sessionId!, third.id, { done: false, reason: 'テスト用のアカウントがありません' });
-    await run.waitFor('知らせのあとの返事', replied('返事が届きました'));
-    const notified = run.entries.find(
-      (e) => e.type === 'user' && /The user pressed \\*"できない\\*"\. Reason: テスト用のアカウントがありません/.test(JSON.stringify((e as { message?: unknown }).message)),
-    );
-    expect(notified, 'task-notification の発言').toBeDefined();
   });
 });
 
@@ -343,33 +322,32 @@ describe.each([
   it('許す先は、今までどおり開く（manual では、ふつうの許可の確認が出る。「次から聞かない」で許す）', async () => {
     await run.send(OPEN);
     if (mode === 'manual') {
-      const menu = await run.waitFor('localhost を開く許可の確認', menuOf('permission'));
-      const always = menu.options.find((o) => /don.t ask again/i.test(o.label));
-      expect(always, '「次から聞かない」の選択肢').toBeDefined();
-      await run.answer(menu.title, always!.id);
+      const menu = await run.permission('localhost を開く許可の確認');
+      expect(menu.always?.length ?? 0, '「今後は聞かない」の候補').toBeGreaterThan(0);
+      run.replyPermission(menu, { kind: 'allow', always: true });
     }
-    await run.waitFor('localhost を開いた結果', () => resultOf('toolu_local'));
+    await run.waitUntil('localhost を開いた結果', () => resultOf('toolu_local'));
     expect(calls).toEqual([{ tool: 'navigate', args: { url: LOCAL } }]);
     // フックは、ツールの名前と入力をアプリに渡す
     expect(gates[0]).toEqual({ tool: browserToolId('navigate'), input: { url: LOCAL } });
   });
 
   it('許す先の外は、開くたびに確認が出る。確認には開く先のオリジンが出る', async () => {
-    const first = await run.waitFor('許す先の外を開く確認', menuOf('permission'));
-    expect(first.context.join('\n')).toContain('https://example.com');
+    const first = await run.permission('許す先の外を開く確認');
+    expect(textOf(first)).toContain('https://example.com');
     expect(calls).toHaveLength(1);
-    await run.answer(first.title, first.options[0].id);
-    await run.waitFor('許す先の外を開いた結果', () => resultOf('toolu_outside'));
+    run.replyPermission(first, { kind: 'allow' });
+    await run.waitUntil('許す先の外を開いた結果', () => resultOf('toolu_outside'));
     // 2 つ目の外の先も、また確認が出る
-    const second = await run.waitFor('2 つ目の許す先の外を開く確認', menuOf('permission'));
-    expect(second.context.join('\n')).toContain('https://example.org');
+    const second = await run.permission('2 つ目の許す先の外を開く確認');
+    expect(textOf(second)).toContain('https://example.org');
     expect(calls).toHaveLength(2);
-    await run.answer(second.title, second.options[0].id);
-    await run.waitFor('2 つ目の許す先の外を開いた結果', () => resultOf('toolu_other'));
+    run.replyPermission(second, { kind: 'allow' });
+    await run.waitUntil('2 つ目の許す先の外を開いた結果', () => resultOf('toolu_other'));
   });
 
   it('外を開いたあとも、許す先は確認なしで開く', async () => {
-    await run.waitFor('返事', replied('開き終えました'));
+    await run.waitUntil('返事', replied('開き終えました'));
     expect(opened()).toEqual([LOCAL, OUTSIDE, OTHER, LOCAL_AGAIN]);
     expect(gates.map((g) => (g.input as { url: string }).url)).toEqual([LOCAL, OUTSIDE, OTHER, LOCAL_AGAIN]);
     if (mode === 'manual') expect(readFileSync(join(run.cwd, '.claude', 'settings.local.json'), 'utf8')).toContain(browserToolId('navigate'));

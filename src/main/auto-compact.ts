@@ -4,7 +4,6 @@ import { contextPercent, contextUsage } from '@shared/context';
 import type { SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
 import { midTurnPercent, type AutoCompactTrigger, type CompactFailure, type CompactStatus } from '@shared/optimized-compact';
-import type { ScreenInfo } from '@shared/screen';
 import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 
@@ -35,7 +34,6 @@ export type AutoCompactHost = {
   stateOf(id: string): SessionState | null;
   statusLine(id: string): StatusLineInfo | null;
   knowledge(id: string): SessionKnowledge;
-  screen(id: string): ScreenInfo | null;
   // 最後に終わったターンが、人の中断（Esc）で終わったか
   lastTurnInterrupted(id: string): boolean;
 };
@@ -126,8 +124,6 @@ export class AutoCompact {
         s.endedAt = null;
         return;
       }
-      // 書きかけが消えたら（使用量を待つ間なら）始める
-      if (host.screen(id)?.draft) return;
     }
     const over = s.armed && percent !== null && percent >= threshold;
     if (!stopped && !over && !s.preCompact) return;
@@ -203,7 +199,7 @@ export class AutoCompact {
   // コンテキストの割合（ヘッダーのメーターと同じ出し方）。分からなければ null
   private percentOf(id: string): number | null {
     const { host } = this.deps;
-    return contextPercent(contextUsage(host.summary(id)?.model ?? null, host.screen(id)?.model ?? null, host.statusLine(id), host.knowledge(id).contextTokens));
+    return contextPercent(contextUsage(host.summary(id)?.model ?? null, host.statusLine(id), host.knowledge(id).contextTokens));
   }
 
   private state(id: string): State {

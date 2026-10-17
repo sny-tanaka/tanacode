@@ -231,7 +231,7 @@ export type BrowserAskChange = { sessionId: string; ask: BrowserAsk | null };
 // ユーザーの返事。done: 「終わった」/ そうでなければ「できない」で、reason はその理由（書かなければ空）
 export type BrowserAnswer = { done: boolean; reason: string };
 
-export type SessionAttention = 'question' | 'permission' | 'other' | 'browser' | null;
+export type SessionAttention = 'question' | 'permission' | 'browser' | null;
 
 export type SessionSummary = {
   id: string;

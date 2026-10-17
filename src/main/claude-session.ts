@@ -92,6 +92,8 @@ export class ClaudeSession {
   // stream のとき、stream-json の行の読み書き
   client: StreamClient | null = null;
   private transcript: TranscriptFollower | null = null;
+  // 会話ログの追いかけを作る前に届いた、乗り換え先の会話ログ（引き継いだ claude の送り直しの行で、アプリが見ていない間の /clear を知ったとき）
+  private pendingFollow: string | null = null;
   private exitWaiters: (() => void)[] = [];
   private exited = false;
   // kill した。終わったかは終わりの知らせまで持つ（stop が待てるように）が、出力・行はもう表示に流さない
@@ -124,6 +126,8 @@ export class ClaudeSession {
       this.adopted?.startedAt,
     );
     this.transcript.start();
+    if (this.pendingFollow) void this.transcript.offer(this.pendingFollow);
+    this.pendingFollow = null;
   }
 
   private startTui(): void {
@@ -220,7 +224,9 @@ export class ClaudeSession {
 
   // statusLine が教えてくれた今の会話ログ（/clear で変わる）
   followTranscript(file: string): void {
-    void this.transcript?.offer(file);
+    // stream はつないだ直後に送り直しの行が届くことがあり、そのときはまだ追いかけを作っていない。作ったあとに渡す
+    if (!this.transcript) this.pendingFollow = file;
+    else void this.transcript.offer(file);
   }
 
   resize(cols: number, rows: number): void {

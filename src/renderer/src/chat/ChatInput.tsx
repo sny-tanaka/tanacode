@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SlashCommand } from '@shared/ipc';
-import { isLongPaste, stripControlChars } from '@shared/prompt-keys';
+import { isLongPaste, stripControlChars } from '@shared/paste';
 import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';

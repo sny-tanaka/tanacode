@@ -1,42 +1,15 @@
 import { expect, it } from 'vitest';
-import type { ScreenLine } from '@shared/screen';
+import type { Menu } from '@shared/screen';
 import { menuNotice } from '../src/main/notice-text';
-import { parseMenu } from '../src/main/screen-parser';
 import { taskNotificationOf } from '../src/main/task-router';
 
-// 通知まわりの読み取り（Claude Code 2.1.283・2.1.286 で見た形）
+// 通知の本文と、完了通知の読み取り
 
-const line = (text: string): ScreenLine => ({ text, full: text.length >= 120 });
-
-it('許可の確認の補足から、コマンドを囲む点線を除き、通知の本文に実行するコマンドを出す', () => {
-  const lines = [
-    '● 確認のフォルダを作る',
-    '  ⎿  $ mkdir checked && echo tanacode-check',
-    '',
-    '─'.repeat(120),
-    ' Bash command',
-    ' Tip: auto mode handles these prompts for you — choose "switch to auto mode" below',
-    ' 確認のフォルダを作る',
-    '╌'.repeat(120),
-    ' mkdir checked && echo tanacode-check',
-    '╌'.repeat(120),
-    ' Do you want to proceed?',
-    ' ❯ 1. Yes',
-    '   2. Yes, and always allow access to /tmp/work from this project',
-    '   3. Yes, and switch to auto mode · auto mode handles these prompts for you',
-    '   4. No',
-    '',
-    ' Esc to cancel · Tab to amend',
-  ].map(line);
-  const menu = parseMenu(lines);
-  expect(menu?.kind).toBe('permission');
-  expect(menu!.context).toEqual([
-    'Bash command',
-    'Tip: auto mode handles these prompts for you — choose "switch to auto mode" below',
-    '確認のフォルダを作る',
-    'mkdir checked && echo tanacode-check',
-  ]);
-  expect(menuNotice(menu!)).toBe('実行の許可: Bash command 確認のフォルダを作る mkdir checked && echo tanacode-check');
+it('確認待ちの通知の本文: 許可は実行しようとしている内容、質問は質問文。読み取れなければ種類だけ', () => {
+  const permission: Menu = { kind: 'permission', tabs: [], title: 'Bash command', context: ['確認のフォルダを作る', 'mkdir checked && echo tanacode-check'], options: [], multiSelect: false, hint: '' };
+  expect(menuNotice(permission)).toBe('実行の許可: 確認のフォルダを作る mkdir checked && echo tanacode-check');
+  expect(menuNotice({ ...permission, context: [] })).toBe('実行の許可を求めています');
+  expect(menuNotice({ ...permission, kind: 'question', title: 'どちらにしますか？' })).toBe('どちらにしますか？');
 });
 
 it('待機中に届いた完了通知（発言の行）でも、本文の <usage> からサブエージェントの使用量を読む', () => {

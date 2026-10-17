@@ -267,9 +267,8 @@ it('完了通知の要約に書かれた終了コード（exit code N）を読�
     workflows: { add: vi.fn(), notified: vi.fn() } as unknown as WorkflowTracker,
     subagents: { start: vi.fn(), resume: vi.fn(), finish: vi.fn(), notified: vi.fn() } as unknown as SubagentTracker,
     bashTasks: bashTasks as unknown as BashTaskTracker,
-    screen: () => null,
     sessionDir: () => '/home/me/.claude/projects/-work-app/s1',
   });
-  router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: BASH_NOTICE } }, false, false);
+  router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: BASH_NOTICE } }, false);
   expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_bg', 'completed', 0);
 });

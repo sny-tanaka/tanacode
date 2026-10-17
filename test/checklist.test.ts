@@ -15,7 +15,6 @@ import {
 } from '../src/shared/checklist-tools';
 import { allowedToolIds } from '../src/shared/mcp-tools';
 import type { SessionSummary } from '../src/shared/ipc';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { SessionState } from '../src/shared/session-tools';
 import { AppSettings } from '../src/main/app-settings';
 import { ChecklistControl } from '../src/main/checklist-control';
@@ -162,7 +161,6 @@ describe('保存と書き換え（ChecklistStore）', () => {
 class FakeHost implements NoticeHost {
   sessions: SessionSummary[] = [];
   states = new Map<string, SessionState>();
-  screens = new Map<string, ScreenInfo>();
   submitted: { id: string; text: string }[] = [];
   private listeners = new Set<(id: string) => void>();
 
@@ -189,7 +187,6 @@ class FakeHost implements NoticeHost {
       ...patch,
     });
     this.states.set(id, 'idle');
-    this.screens.set(id, { state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
   }
 
   set(id: string, state: SessionState): void {
@@ -199,7 +196,6 @@ class FakeHost implements NoticeHost {
 
   list = () => this.sessions;
   stateOf = (id: string) => this.states.get(id) ?? null;
-  screen = (id: string) => this.screens.get(id) ?? null;
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
   watchState = (listener: (id: string) => void) => {
     this.listeners.add(listener);

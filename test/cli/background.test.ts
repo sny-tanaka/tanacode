@@ -7,7 +7,7 @@ import { SubagentTracker } from '../../src/main/subagent-tracker';
 import { TaskRouter, taskNotificationOf } from '../../src/main/task-router';
 import { WorkflowTracker } from '../../src/main/workflow-tracker';
 import { checkWorkflowApproval } from '../scenario';
-import { ClaudeRun, claudeVersion, menuOf, sleep } from './claude-run';
+import { ClaudeRun, claudeVersion, sleep } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、バックグラウンドで動くものを、アプリと同じトラッカーで追えるかを確かめる。
@@ -67,21 +67,19 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
   });
 
   afterAll(async () => {
-    if (process.env.TANACODE_RECORD) run?.recordScreens(join('test', 'fixtures', 'claude-code', version));
     await run?.stop();
     await api?.stop();
   });
 
-  it('ワークフローを始める前の確認がメニューとして読める', async () => {
+  it('ワークフローを始める前の確認が、許可の確認（Workflow）として届き、許すと始まる', async () => {
     await run.send(PROMPT);
-    const menu = await run.waitFor('ワークフローの確認', menuOf('other', /workflow/i));
-    run.capture('workflow-approval');
-    checkWorkflowApproval(menu);
-    await run.answer(menu.title, menu.options.find((o) => /^Yes/.test(o.label))!.id);
+    const permission = await run.permission('ワークフローの確認');
+    checkWorkflowApproval(permission);
+    run.replyPermission(permission, { kind: 'allow' });
   });
 
   it('ワークフローの実行中に、journal からエージェントの状態が読める', async () => {
-    const workflow = await run.waitFor('ワークフローのエージェントの開始', () =>
+    const workflow = await run.waitUntil('ワークフローのエージェントの開始', () =>
       run.workflowRuns.find((w) => w.toolUseId === 'toolu_wf' && w.status === 'running' && w.agents.length > 0),
     );
     expect(workflow.agents).toHaveLength(1);
@@ -91,7 +89,7 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
   });
 
   it('サブエージェントの進み具合と結果を読める', async () => {
-    const agent = await run.waitFor('サブエージェントの完了', () => run.subagentRuns.find((r) => r.toolUseId === 'toolu_agent' && r.state !== 'running'));
+    const agent = await run.waitUntil('サブエージェントの完了', () => run.subagentRuns.find((r) => r.toolUseId === 'toolu_agent' && r.state !== 'running'));
     expect(agent).toMatchObject({ state: 'done', result: 'サブエージェントの結果' });
     expect(agent.agentId).toBeTruthy();
     expect(agent.toolCalls).toBe(1);
@@ -101,13 +99,13 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
   });
 
   it('バックグラウンドの Bash の出力と終わりを読める', async () => {
-    const task = await run.waitFor('Bash の完了', () => run.bashTasks.find((t) => t.toolUseId === 'toolu_bg' && t.state !== 'running'));
+    const task = await run.waitUntil('Bash の完了', () => run.bashTasks.find((t) => t.toolUseId === 'toolu_bg' && t.state !== 'running'));
     expect(task).toMatchObject({ state: 'completed', exitCode: 0, description: '裏で待つ' });
     expect(task.output).toContain('bg-done');
   });
 
   it('ワークフローのフェーズ・エージェント・結果を読める', async () => {
-    const workflow = await run.waitFor('ワークフローの完了', () => run.workflowRuns.find((w) => w.toolUseId === 'toolu_wf' && w.status !== 'running'), 30_000);
+    const workflow = await run.waitUntil('ワークフローの完了', () => run.workflowRuns.find((w) => w.toolUseId === 'toolu_wf' && w.status !== 'running'), 30_000);
     expect(workflow).toMatchObject({ status: 'completed', name: 'tanacode-check', summary: '確認のワークフロー' });
     expect(workflow.phases.map((p) => p.title)).toEqual(['調べる']);
     expect(workflow.agents).toHaveLength(1);
@@ -117,7 +115,7 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
   it('会話ログの完了通知から、どのタスクがどうなったかと結果・使用量が読める', async () => {
     // 待機中に届いた通知は、Claude Code が発言として書き、それを受けて動く。ワークフローの通知のターンが終わるまで待つ
     const delivered = () => notifications().some(({ entry, notice }) => entry.type === 'user' && notice.toolUseId === 'toolu_wf');
-    await run.waitFor('ワークフローの完了通知', delivered, 30_000);
+    await run.waitUntil('ワークフローの完了通知', delivered, 30_000);
     const of = (toolUseId: string) => notifications().filter(({ notice }) => notice.toolUseId === toolUseId).map(({ notice }) => notice);
     // 同じ通知が、順番待ち（queue-operation）・作業中の差し込み（attachment）・発言（user）の形で書かれる。どの形でも同じに読める
     const agent = of('toolu_agent');
@@ -149,7 +147,7 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
       expect(run.chatEvents).toContainEqual({ type: 'notice', id: entry.uuid, text: summary });
     }
     // 完了通知は順番待ちの発言として出さない
-    expect(run.chatEvents.filter((e) => e.type === 'queue')).toEqual([]);
+    expect(run.chatEvents.flatMap((e) => (e.type === 'queue' ? e.prompts : [])).filter((p) => p.text.includes('<task-notification>'))).toEqual([]);
   });
 
   it('完了通知だけで、それぞれの完了が分かる（出力ファイル・完了時の記録を使わずに）', async () => {
@@ -161,10 +159,10 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
       const workflows = new WorkflowTracker(() => {});
       const subagents = new SubagentTracker(run.cwd, () => {});
       const bashTasks = new BashTaskTracker(() => {});
-      const router = new TaskRouter({ workflows, subagents, bashTasks, screen: () => null, sessionDir: () => empty });
+      const router = new TaskRouter({ workflows, subagents, bashTasks, sessionDir: () => empty });
       for (const { entry } of run.seen) {
         if (skipNotifications && taskNotificationOf(entry)) continue;
-        router.track(withoutFiles(entry, empty), false, false);
+        router.track(withoutFiles(entry, empty), false);
       }
       // ワークフローの完了は、ファイルを読み直してから決まる（無いので通知の状態になる）
       for (let i = 0; i < 40 && workflows.all().some((w) => w.status === 'running') && !skipNotifications; i++) await sleep(50);

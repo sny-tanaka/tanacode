@@ -1,18 +1,16 @@
 import { expect } from 'vitest';
 import type { ChatEvent, TranscriptEntry } from '@shared/chat';
-import type { ScreenInfo } from '@shared/screen';
-import { pulledBackPrompt } from '../../src/main/chat-log';
 import type { Conversation } from '../cli/mock-api';
 
 // 失敗や中断の台本（test/cli/errors.test.ts）と、アプリが読み取れるべきもの。
-// 中断（Esc）・中断のあとの再開・API エラー・ツールの失敗・hooks で止める・Stop の hooks・Edit の差分。
-// 期待値を確かめる関数は、本物の claude を動かす確認と、控えを読む確認の両方から呼べるよう、読み取った結果だけを受け取る
+// 中断（stream-json の interrupt）・中断のあとの再開・API エラー・ツールの失敗・hooks で止める・Stop の hooks・Edit の差分。
+// 期待値を確かめる関数は、読み取った結果（チャットのイベント・会話ログの行）だけを受け取る
 
-// 応答が何も来ないうちに Esc で中断する発言
+// 応答が何も来ないうちに中断する発言
 export const EARLY_PROMPT = '応答の前に中断します';
-// 1 つ目の応答（ツール）のあと、2 つ目の応答を待つ間に Esc で中断する発言
+// 1 つ目の応答（ツール）のあと、2 つ目の応答を待つ間に中断する発言
 export const WAIT_PROMPT = '応答を待つ間に中断します';
-// ツールの実行中に Esc で中断する発言
+// ツールの実行中に中断する発言
 export const TOOL_PROMPT = 'ツールの実行中に中断します';
 // 中断した会話を --resume で再開してから送る発言と、その返事
 export const RESUME_PROMPT = '中断のあとで再開しました';
@@ -52,7 +50,7 @@ export const NOTES_AFTER = 'one\ntwo\nTHREE\nthree-and-half\nfour\n';
 
 // モックの API の台本。WORK は作業フォルダに置き換える
 const CONVERSATIONS: Conversation[] = [
-  // 応答を返すまで長く待つ（その間に Esc で中断する）
+  // 応答を返すまで長く待つ（その間に中断する）
   { match: EARLY_PROMPT, delayMs: 15_000, steps: [[{ type: 'text', text: '届かない返事' }]] },
   // どの応答も遅らせる。1 つ目のツール（echo は確認なしで動く）の結果を見てから、2 つ目を待つ間に中断する
   {
@@ -108,63 +106,49 @@ export function conversationsFor(cwd: string): Conversation[] {
 // API エラーの再試行を短くする（既定では 10 回まで、待ち時間を延ばしながら再試行する）
 export const ENV = { CLAUDE_CODE_MAX_RETRIES: '2' };
 
-// 中断の行（[Request interrupted by user…]）か、ターンの終わりの行があるか
-const ended = (events: ChatEvent[]) => events.some((e) => e.type === 'turn-end');
+// 会話の流れ（発言・応答・ツール・ターンの終わり）だけにする。送信中・順番待ちの表示や、状態の知らせを除く
+const TALK = new Set<ChatEvent['type']>(['user', 'assistant-text', 'tool-use', 'tool-result', 'turn-end']);
+const talk = (events: ChatEvent[]) => events.filter((e) => TALK.has(e.type));
 
-// 応答の前に Esc で中断したあとの入力欄。Claude Code は、中断した発言を入力欄に戻す
-export function checkEarlyDraft(info: Pick<ScreenInfo, 'state' | 'draft'>): void {
-  expect(info.state.kind).toBe('prompt');
-  expect(info.draft).toBe(EARLY_PROMPT);
+// 応答の前に中断したあとのチャット。stream-json では、発言は会話に残り（入力欄には戻らない）、中断でターンが終わる
+export function checkEarlyInterrupt(entries: TranscriptEntry[], events: ChatEvent[]): void {
+  expect(talk(events)).toEqual([expect.objectContaining({ type: 'user', text: EARLY_PROMPT }), { type: 'turn-end', interrupted: true }]);
+  expect(entries.some(isInterruption)).toBe(true);
 }
 
-// 応答の前に Esc で中断したあとのチャット。発言は出たが、ターンは終わる。
-// Claude Code は発言を入力欄に戻すだけで、会話ログには何も書かない。アプリ（session-manager）は、入力欄に戻った文字が
-// 応答の無い最後の発言と同じなのを見て（pulledBackPrompt）、発言の表示を取り消してターンを終える
-export function checkEarlyInterrupt(events: ChatEvent[], draft: string): void {
-  const start = events.findIndex((e) => e.type === 'user' && e.text === EARLY_PROMPT);
-  expect(start).not.toBe(-1);
-  if (ended(events.slice(start))) return;
-  expect(pulledBackPrompt(events, draft)).toBe(start);
-}
-
-// 2 つ目の応答を待つ間に Esc で中断したあとのチャット。1 つ目のツールは終わり、中断の行でターンが終わる
+// 2 つ目の応答を待つ間に中断したあとのチャット。1 つ目のツールは終わり、中断でターンが終わる
 export function checkWaitInterrupt(entries: TranscriptEntry[], events: ChatEvent[]): void {
   const expected = [
     { type: 'user', text: WAIT_PROMPT },
     { type: 'tool-use', id: 'toolu_wait', name: 'Bash', description: '待つ前のコマンド' },
     { type: 'tool-result', id: 'toolu_wait', isError: false, output: 'tanacode-wait' },
-    { type: 'turn-end' },
+    { type: 'turn-end', interrupted: true },
   ];
-  expect(events).toEqual(expected.map((e) => expect.objectContaining(e)));
+  expect(talk(events)).toEqual(expected.map((e) => expect.objectContaining(e)));
   expect(entries.some(isInterruption)).toBe(true);
 }
 
-// ツールの実行中に Esc で中断したあとのチャット。ツールは失敗（中断）になり、中断の行でターンが終わる
+// ツールの実行中に中断したあとのチャット。ツールは失敗（中断）になり、中断でターンが終わる
 export function checkToolInterrupt(entries: TranscriptEntry[], events: ChatEvent[]): void {
   const expected = [
     { type: 'user', text: TOOL_PROMPT },
     { type: 'tool-use', id: 'toolu_long', name: 'Bash', description: '長く動くコマンド' },
     { type: 'tool-result', id: 'toolu_long', isError: true },
-    { type: 'turn-end' },
+    { type: 'turn-end', interrupted: true },
   ];
-  expect(events).toEqual(expected.map((e) => expect.objectContaining(e)));
+  expect(talk(events)).toEqual(expected.map((e) => expect.objectContaining(e)));
   expect(entries.some(isInterruption)).toBe(true);
 }
 
-// 中断のあと、入力欄に戻った（中断した発言は戻らない）
-export function checkPromptBack(info: Pick<ScreenInfo, 'state' | 'draft'>): void {
-  expect(info.state.kind).toBe('prompt');
-  expect(info.draft).toBe('');
-}
-
+// 中断の行（-p では TUI と違い interruptedMessageId が付かない。実測 2.1.296）
 function isInterruption(entry: TranscriptEntry): boolean {
   const content = entry.message?.content;
   const text = typeof content === 'string' ? content : (content ?? []).map((b) => b.text ?? '').join('');
-  return entry.type === 'user' && !!entry.interruptedMessageId && text.startsWith('[Request interrupted by user');
+  return entry.type === 'user' && text.startsWith('[Request interrupted by user');
 }
 
 // 中断した会話を --resume で再開したあと。
-// history: 読み直した過去の行から作ったイベント。中断したターンは終わったものとして読む（作業中にしない）。
+// history: 読み直した過去の行から作ったチャット。中断したターンは終わったものとして読む（作業中にしない）。
 // entries / events: 再開してからの行とイベント。Claude Code は、中断したターンの埋め合わせに <synthetic> の応答を差し込むが、
 // チャットには出さない
 export function checkResumed(history: ChatEvent[], entries: TranscriptEntry[], events: ChatEvent[]): void {
@@ -182,7 +166,7 @@ export function checkResumed(history: ChatEvent[], entries: TranscriptEntry[], e
 export function checkRetried(events: ChatEvent[]): void {
   expect(events).toContainEqual(expect.objectContaining({ type: 'assistant-text', text: RETRY_REPLY }));
   for (const e of events.filter((e) => e.type === 'api-error')) expect(e).toMatchObject({ retrying: true, text: expect.stringMatching(/529|overloaded/i) });
-  expect(events.at(-1)).toEqual({ type: 'turn-end' });
+  expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
 }
 
 // 529 を返し続けて、再試行をあきらめたあと（isApiErrorMessage の行）
@@ -191,7 +175,7 @@ export function checkOverloaded(events: ChatEvent[]): void {
   expect(errors).toHaveLength(1);
   expect(errors[0]).toMatchObject({ text: expect.stringMatching(/529|overloaded/i) });
   expect(events.some((e) => e.type === 'assistant-text')).toBe(false);
-  expect(events.at(-1)).toEqual({ type: 'turn-end' });
+  expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
 }
 
 // 400 を返したあと（再試行しないエラー。isApiErrorMessage の行）
@@ -201,7 +185,7 @@ export function checkBadRequest(events: ChatEvent[]): void {
   expect(errors[0]).toMatchObject({ retrying: false, text: expect.stringContaining('400') });
   expect(errors[0]).toMatchObject({ text: expect.stringContaining(BAD_REQUEST_MESSAGE) });
   expect(events.some((e) => e.type === 'assistant-text')).toBe(false);
-  expect(events.at(-1)).toEqual({ type: 'turn-end' });
+  expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
 }
 
 // ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks
@@ -266,7 +250,6 @@ export function checkToolErrors(events: ChatEvent[], cwd: string): void {
     { type: 'assistant-text', text: TOOLS_REPLY },
     // 出力の無かった Stop の hooks も、stop_hook_summary から出る
     { type: 'hook', run: expect.objectContaining({ event: 'Stop', name: 'Stop', command: STOP_HOOK, outcome: 'success' }) },
-    { type: 'turn-end' },
   ];
   // この順に出る（あいだにほかのイベントがあってもよい）
   let at = 0;
@@ -275,4 +258,8 @@ export function checkToolErrors(events: ChatEvent[], cwd: string): void {
     expect(found, JSON.stringify(event)).not.toBe(-1);
     at = found + 1;
   }
+  // ターンの終わり（result から）は、返事のあとに出る。Stop の hooks の行（会話ログから）とは、どちらが先に届くかが決まらない
+  // （ターンの終わりはチャットに項目を足さないので、画面の並びは変わらない）
+  const reply = events.findIndex((e) => e.type === 'assistant-text' && e.text === TOOLS_REPLY);
+  expect(events.slice(reply)).toContainEqual({ type: 'turn-end' });
 }

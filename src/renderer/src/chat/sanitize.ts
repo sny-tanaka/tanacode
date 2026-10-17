@@ -1,7 +1,7 @@
 // Claude Code の入力欄（pty）に送る文章・チャットの入力欄に差し込む文章を整える
 
 // 制御文字の除去は、main が Claude Code の入力欄に打ち込むときにも使うので shared に置く
-export { stripControlChars } from '@shared/prompt-keys';
+export { stripControlChars } from '@shared/paste';
 
 // 中身に含まれる最も長いバッククォートの連続の長さ
 function longestBackticks(content: string): number {

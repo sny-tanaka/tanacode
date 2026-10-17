@@ -5,7 +5,7 @@ import type { ChatEvent } from '@shared/chat';
 import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@shared/optimized-compact';
 import { t, type MessageKey } from '@shared/i18n';
 import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
-import { stripControlChars } from '@shared/prompt-keys';
+import { stripControlChars } from '@shared/paste';
 import type { AskQuestion, PermissionMode } from '@shared/screen';
 import { answerText, type PendingPermission, type PendingQuestion, type PermissionReply } from '@shared/questions';
 import type { SubagentRun } from '@shared/subagent';
@@ -74,7 +74,6 @@ export type SessionsHost = {
   // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
   switchingTerminal(id: string): boolean;
   interrupt(id: string): void;
-  withdrawParentDraft(id: string): Promise<void>;
   // 答えを待っている質問（いちばん前のもの）と、その 1 問への答え（全部そろったら返事にする）
   pendingQuestion(id: string): PendingQuestion | null;
   answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null;
@@ -696,8 +695,6 @@ export class SessionsControl {
     // 止めて手が空いたことは、親に知らせない（親が止めたので）
     this.stopped.add(child.id);
     host.interrupt(child.id);
-    // 応答の前に止めると、親の指示が子の入力欄に戻る。残すと次の指示を打てず、人の入力欄にも囲みのまま移るので消す
-    await host.withdrawParentDraft(child.id);
     return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Interrupted.' });
   }
 

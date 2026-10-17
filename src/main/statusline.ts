@@ -169,8 +169,6 @@ export class StatusLineWatcher {
   constructor(
     readonly dir: string,
     private readonly onChange: (sessionId: string, info: StatusLineInfo) => void,
-    // input: AskUserQuestion の tool_input（質問の一覧）
-    private readonly onAsk: (sessionId: string, input: unknown) => void = () => {},
     // request: PermissionRequest のフックの入力（tool_name・tool_input・agent_type）/ at: ファイルが書かれた時刻
     private readonly onPermission: (sessionId: string, request: unknown, at: number) => void = () => {},
     // 書くだけの Stop のフックが書いた（ターミナルモードの TUI のターンが終わった）
@@ -182,6 +180,8 @@ export class StatusLineWatcher {
     return join(this.dir, `${sessionId}.json`);
   }
 
+  // 書くだけのフックが書くファイルの名前の元（<id>.ask.json。フックは、この名前の .ask.json を種類ごとの名前に替えて書く。
+  // 前は AskUserQuestion の入力をこのファイルに書いていた）。起動する Claude Code に ASK_FILE_ENV で渡す
   askFileFor(sessionId: string): string {
     return join(this.dir, `${sessionId}${ASK_SUFFIX}`);
   }
@@ -202,13 +202,8 @@ export class StatusLineWatcher {
   async start(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     this.watcher = watch(this.dir, (_event, name) => {
-      if (name?.endsWith(ASK_SUFFIX)) {
-        const sessionId = basename(name, ASK_SUFFIX);
-        clearTimeout(this.timers.get(name));
-        // 質問はすぐ画面に出るので、待つのは書き終わるまでの短い間だけ
-        this.timers.set(name, setTimeout(() => void this.readAsk(sessionId), 50));
-        return;
-      }
+      // 前のバージョンのフックが書いた AskUserQuestion の入力のファイルは、statusLine としては読まない
+      if (name?.endsWith(ASK_SUFFIX)) return;
       if (name?.endsWith(PERMISSION_SUFFIX)) {
         const sessionId = basename(name, PERMISSION_SUFFIX);
         clearTimeout(this.timers.get(name));
@@ -244,16 +239,6 @@ export class StatusLineWatcher {
     const info = text ? parseStatusLine(text, Date.now()) : null;
     if (info) this.onChange(sessionId, info);
     return info;
-  }
-
-  private async readAsk(sessionId: string): Promise<void> {
-    const text = await readFile(this.askFileFor(sessionId), 'utf8').catch(() => null);
-    if (!text) return;
-    try {
-      this.onAsk(sessionId, (JSON.parse(text) as { tool_input?: unknown }).tool_input);
-    } catch {
-      // 書き込みの途中。次の変更で読み直す
-    }
   }
 
   private async readIdle(sessionId: string): Promise<void> {
