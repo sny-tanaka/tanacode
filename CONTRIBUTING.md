@@ -432,7 +432,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
   - 失敗したときは、そのときの状態と、Claude Code の標準エラーの末尾がログに出ます。
 - 控え（`test/fixtures/claude-code/<バージョン>/`）は、会話ログ（`transcript.jsonl`。`basic.test.ts` のもの）と、statusLine の JSON（`statusline.json`。`-p` では statusLine が動かないので、`terminal-mode.test.ts` がターミナルモードの TUI で取る）と、stream-json の出力の行（`stream.jsonl`。`basic.test.ts` のチャットの claude が標準出力に書いたもの。書いている途中の文の `stream_event` は除く。2.1.302 から）の 3 つ。
-  - stream-json の行は、毎日の確認でも、どれもアプリの読み取り（`StreamClient`）で読めるかを確かめます（`basic.test.ts` の最後。`unreadableStreamLines`）。知らない種類の行・使う項目の形が違う行があれば落ちて Issue が立つので、Claude Code の更新で stream-json の形が変わったことに気づけます（アプリは、そうした行を捨てて動き続ける）。
+  - stream-json の行は、毎日の確認でも、どれもアプリの読み取り（`StreamClient`）で読めるかを確かめます（`basic.test.ts` の最後。`unreadableStreamLines`）。知らない種類の行・使う項目の形が違う行があれば落ちて Issue が立つので、Claude Code の更新で stream-json の形が変わったことに気づけます（アプリは、そうした行を捨てて動き続ける）。Claude Code からの制御の要求（`control_request`）も、`can_use_tool` 以外の種類は知らない種類として、形の違う `can_use_tool` は形の違う行として数えます。制御の返事（`control_response`）と取り下げ（`control_cancel_request`）は、包み（`request_id`・`subtype`・`error`）の形だけを見ます。
+    - 限界: アプリが送った要求への返事の中身（`initialize`・`get_usage`・`get_context_usage` などの `response`）の形は、どの要求への返事かが控えからは分からないので、ここでは確かめません（`basic.test.ts` の、アプリを通した確かめで見ます）。アプリが書いた行（標準入力）も控えに入らないので、確かめません。
   - `TANACODE_RECORD=1 npm run test:cli` で取ります。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。使い捨てのフォルダのパスは、決まったパス（`/tmp/tanacode-cli`）に置き換えます。
   - 単体テスト（`npm test`）は、どのバージョンの控えも読みます（`recorded.test.ts`。会話ログからチャットを組み立てられるか・statusLine の JSON を読めるか・stream-json の行を読めるか。TUI で取った古い控えには `turn_duration` の行があり、ターンの終わりも会話ログから出る）。動作確認済のバージョンの控えは、`statusline.test.ts`・`context.test.ts` も読みます。`claude` が無くても流せます。古いバージョンの控えも残し、読めるままかを確かめ続けます。
   - 控えは、GitHub Actions（macOS のランナー）が残した artifact か、手元の Mac で取ったものを使います。クラウドの開発環境のように、Claude Code の設定やトークンが置かれた環境では取りません。

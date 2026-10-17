@@ -141,10 +141,11 @@ describe('StreamClient', () => {
     const empty = client.request('interrupt');
     pipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: lastRequest(pipe).request_id } });
     expect(await empty).toEqual({});
-    // 理由の無い error
+    // 理由の無い error（形の違う返事として数えるが、待っている要求には渡す）
     const vague = client.request('x');
     pipe.emit({ type: 'control_response', response: { subtype: 'error', request_id: lastRequest(pipe).request_id } });
     await expect(vague).rejects.toMatchObject({ reason: 'error' });
+    expect(client.malformed).toBe(1);
     // request_id の無い返事は捨てる
     pipe.emit({ type: 'control_response', response: {} });
   });
@@ -216,6 +217,28 @@ describe('StreamClient', () => {
       { subtype: 'error', request_id: 'b1', error: 'tanacode does not handle can_use_tool requests.' },
       { subtype: 'error', request_id: 'n1', error: 'tanacode does not handle unknown requests.' },
     ]);
+    // 控えのテスト（unreadableStreamLines）で、Claude Code の要求の種類・形の変化に気づけるよう数える
+    expect([...client.unknown]).toEqual([
+      ['control_request/hook_callback', 1],
+      ['control_request/elicitation', 1],
+    ]);
+    expect(client.malformed).toBe(3);
+  });
+
+  it('形の違う返事・取り下げ（control_response・control_cancel_request）は、読めない行として数える。待っていない要求への返事は数えない', () => {
+    const { pipe, client } = setup();
+    client.start();
+    pipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: 'old', response: {} } });
+    pipe.emit({ type: 'control_response', response: { subtype: 'error', request_id: 'old', error: 'x' } });
+    pipe.emit({ type: 'control_cancel_request', request_id: 'old' });
+    expect(client.malformed).toBe(0);
+    pipe.emit({ type: 'control_response' });
+    pipe.emit({ type: 'control_response', response: { subtype: 'partial', request_id: 'old' } });
+    pipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: 1, response: {} } });
+    pipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: 'old', response: 'x' } });
+    pipe.emit({ type: 'control_response', response: { subtype: 'error', request_id: 'old', error: 1 } });
+    pipe.emit({ type: 'control_cancel_request' });
+    expect(client.malformed).toBe(6);
   });
 
   it('claude が終わったら、待っている要求を取り下げとして知らせてから、終わりを知らせる', () => {

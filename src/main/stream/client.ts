@@ -142,8 +142,12 @@ export class StreamClient {
       this.malformed += 1;
       return;
     }
+    // 制御の要求・返事・取り下げも、形が違えば読めない行として数え、使わない種類の要求は知らない種類として数える
+    // （控えのテストの unreadableStreamLines で、Claude Code の更新による変化に気づけるように）
     switch (value.type) {
       case 'control_response':
+        // 形が違っても、待っている要求には渡す（受け取らないと、要求が時間切れまで待ち続ける）
+        if (!isControlResponse(value)) this.malformed += 1;
         // 前のアプリが送った要求への返事は、受け取らない
         if (!past) this.answered(value);
         return;
@@ -152,7 +156,8 @@ export class StreamClient {
         if (!past) this.raise(line);
         return;
       case 'control_cancel_request':
-        if (typeof value.request_id === 'string' && this.permissions.delete(value.request_id)) this.events.onCancel(value.request_id);
+        if (typeof value.request_id !== 'string') this.malformed += 1;
+        else if (this.permissions.delete(value.request_id)) this.events.onCancel(value.request_id);
         return;
     }
     const message = messageOf(value);
@@ -179,7 +184,11 @@ export class StreamClient {
   private raise(line: string, replayed = false): void {
     const value = parse(line) as { request_id?: unknown; request?: { subtype?: unknown } } | null;
     const requestId = value?.request_id;
-    if (typeof requestId !== 'string' || this.permissions.has(requestId)) return;
+    if (typeof requestId !== 'string') {
+      this.malformed += 1;
+      return;
+    }
+    if (this.permissions.has(requestId)) return;
     const request = value?.request;
     if (request?.subtype === 'can_use_tool' && isPermission(request)) {
       this.permissions.set(requestId, request);
@@ -187,6 +196,8 @@ export class StreamClient {
       return;
     }
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';
+    if (subtype === 'can_use_tool' || subtype === 'unknown') this.malformed += 1;
+    else this.countUnknown(`control_request/${subtype}`);
     this.write(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `tanacode does not handle ${subtype} requests.` } } satisfies ControlResponseMessage));
   }
 
@@ -247,6 +258,14 @@ function kindOf(value: Record<string, unknown>): string {
 }
 
 const str = (v: unknown): v is string => typeof v === 'string';
+
+// Claude Code の制御の返事（アプリが送った要求への）。success の response は無いか、オブジェクト。error には文
+function isControlResponse(value: Record<string, unknown>): boolean {
+  const r = value.response;
+  if (!isRecord(r) || !str(r.request_id)) return false;
+  if (r.subtype === 'success') return r.response === undefined || isRecord(r.response);
+  return r.subtype === 'error' && str(r.error);
+}
 
 function isPermission(request: unknown): request is CanUseToolRequest {
   const r = request as Partial<CanUseToolRequest>;

@@ -17,6 +17,13 @@ const versions = existsSync(DIR) ? readdirSync(DIR) : [];
 // 控えを確かめる部品が、読めない行を数えられるか（Claude Code の更新で形が変わったときに、気づけるように）
 it('stream-json の読めない行（知らない種類・形の違う行・JSON でない行）を数える', () => {
   expect(unreadableStreamLines(['{"type":"brand_new"}', '{"type":"system","subtype":"init"}', 'JSON でない'])).toEqual({ malformed: 2, unknown: { brand_new: 1 } });
+  // Claude Code からの制御の要求・返事も（使わない種類の要求・形の違う can_use_tool・形の違う返事）
+  const control = [
+    { type: 'control_request', request_id: 'h1', request: { subtype: 'brand_new_request' } },
+    { type: 'control_request', request_id: 'p1', request: { subtype: 'can_use_tool', tool_name: 'Bash' } },
+    { type: 'control_response', response: { subtype: 'success', request_id: 1 } },
+  ];
+  expect(unreadableStreamLines(control.map((l) => JSON.stringify(l)))).toEqual({ malformed: 2, unknown: { 'control_request/brand_new_request': 1 } });
 });
 
 if (versions.length === 0) it.skip('控えがまだありません（TANACODE_RECORD=1 npm run test:cli で取る）', () => {});
