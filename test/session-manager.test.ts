@@ -666,6 +666,24 @@ describe('残った claude', () => {
     // 止めてから起動する
     expect(app.host.pipes).toHaveLength(2);
   });
+
+  it('残った claude を止めている間にアーカイブ・一覧から削除したら、止めたあとに起動しない', async () => {
+    for (const close of ['archive', 'remove'] as const) {
+      let stopped = () => {};
+      app.manager.stopLeftover = () => new Promise<boolean>((resolve) => (stopped = () => resolve(true)));
+      const { id, pipe } = app.create();
+      await app.ready(id);
+      pipe.exit(-1);
+      await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+      const before = app.host.pipes.length;
+      const opening = app.manager.open(id);
+      await app.manager[close](id);
+      stopped();
+      await opening;
+      expect(app.host.pipes).toHaveLength(before);
+      expect(app.manager.stateOf(id)).toBe(close === 'archive' ? 'archived' : null);
+    }
+  });
 });
 
 describe('待っている要求の知らせ', () => {

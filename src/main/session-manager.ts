@@ -650,7 +650,8 @@ export class SessionManager {
       } finally {
         this.restoring.delete(id);
       }
-      if (this.runtimes.get(id)?.process) return;
+      // 待つ間に起動した・アーカイブや一覧からの削除で片付けたなら、起動しない
+      if (this.runtimes.get(id)?.process || !this.stillOpen(id)) return;
     }
     if (record?.worktree && !existsSync(record.cwd)) {
       // 作り直してから起動するまで、一覧では「準備中」にする
@@ -662,6 +663,7 @@ export class SessionManager {
         this.restoring.delete(id);
         this.emitSessions();
       }
+      if (!this.stillOpen(id)) return;
       this.start(id, record.launchMode ?? null, null, record.terminal ? 'tui' : 'stream');
       void this.prepareWorktree(id, 'restored');
       return;
@@ -669,6 +671,12 @@ export class SessionManager {
     // 子セッションは起動のモードで。ほかのセッションは、新しいセッションと同じ決まり（設定の既定か auto。startMode）。
     // ターミナルモードで止まったセッションは、ターミナルモードで起動する（記録の terminal）
     this.start(id, record?.launchMode ?? null, null, record?.terminal ? 'tui' : 'stream');
+  }
+
+  // まだ一覧にあり、アーカイブされていないか（open が待つ間に、人が片付けたら起動しない）
+  private stillOpen(id: string): boolean {
+    const record = this.store.get(id);
+    return !!record && !record.archived;
   }
 
   // アーカイブする。removeWorktree: worktree のセッションなら、Claude Code が終わるのを待ってから worktree も消す。
