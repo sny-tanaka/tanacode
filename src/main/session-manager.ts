@@ -496,7 +496,9 @@ export class SessionManager {
       settingsFile: options.settingsFile,
       remoteControl: options.remoteControl,
       worktree,
-      ...(parentId ? { parentId, launchMode: options.mode } : {}),
+      ...(parentId ? { parentId } : {}),
+      // 子と、Claude が始めた独立したセッションは、起動のモードを、開き直すときの上限として残す
+      ...(parentId || options.capMode ? { launchMode: options.mode } : {}),
       ...(options.addedFolders?.length ? { addedFolders: options.addedFolders } : {}),
       createdAt: now,
       updatedAt: now,
@@ -1184,7 +1186,9 @@ export class SessionManager {
   // モードだけを変える。bypassPermissions は、起動したときに許したときだけ通る（実測）
   async setMode(id: string, mode: PermissionMode): Promise<boolean> {
     const rt = this.runtimes.get(id);
-    const child = !!this.store.get(id)?.parentId;
+    // 起動のモードを上限にしているセッション（子と、Claude が始めた独立したセッション）
+    const record = this.store.get(id);
+    const child = !!record?.parentId || record?.launchMode !== undefined;
     if (!rt?.process) {
       if (child) this.store.update(id, { launchMode: mode });
       return child;

@@ -322,6 +322,13 @@ describe('branchFiles', () => {
     ]);
   });
 
+  it('未追跡のファイルの行を数えるのは、1000 個まで（それより多いものは、読まずに 0 とする）', async () => {
+    for (let i = 0; i < 1001; i++) write(repo, `many/f${String(i).padStart(4, '0')}.txt`, 'a\n');
+    const files = await branchFiles(repo, base);
+    expect(files).toHaveLength(1001);
+    expect(files.filter((f) => f.added === 1)).toHaveLength(1000);
+  });
+
   it('空の未追跡のファイルは、足した行を 0 と数える（ステージしたときに git が数えるのと同じ）', async () => {
     write(repo, 'empty.txt', '');
     const untracked = await branchFiles(repo, base);

@@ -137,8 +137,10 @@ const MAX_UNTRACKED_FILES = 100;
 const MAX_UNTRACKED_BYTES = 256 * 1024;
 // 1 回の結果の文字数の上限（親のコンテキストを食いつぶさないため）
 const MAX_RESULT_CHARS = 60_000;
-// 許可の確認で、親に渡すツールの入力（JSON）の文字数の上限。超えるものは全文を渡せないので、親には許させない
-const MAX_PERMISSION_INPUT_CHARS = 30_000;
+// 許可の確認で、親に渡すツールの入力（JSON）の大きさの上限（UTF-8 のバイト）。超えるものは全文を渡せないので、親には許させない。
+// Claude Code は MCP のツールの結果をトークン（既定は 2.5 万。人の設定で減らせる）で数えて切るので、文字数ではなく、1 文字が多くの
+// トークンになる文字（日本語など）でも上限に収まるよう、バイトで数える（1 トークンは 1 バイト以上）
+const MAX_PERMISSION_INPUT_BYTES = 20_000;
 // 親が子の許可の確認を許せる、親の権限モード（manual・plan の親は、自分の操作も人が毎回許すので、子の操作も許せない）
 const MODES_ALLOWING_PERMISSION = new Set<PermissionMode>(['acceptEdits', 'auto', 'bypassPermissions']);
 const WAIT_DEFAULT_SECONDS = 300;
@@ -431,6 +433,8 @@ export class SessionsControl {
       // Remote Control も、このセッションの指定に合わせる（子も。Remote Control から頼まれて始めたセッションを、そのまま外から操作できるように）
       remoteControl: caller.remoteControl,
       worktree: args.worktree,
+      // 起動のモードを、開き直すときの上限として残す（独立したセッションも。開き直したときに、呼び出し元より強いモードにならないように）
+      capMode: true,
     };
     const parentId = independent ? null : caller.id;
     const id = options.worktree ? await host.createInWorktree(folder, options, parentId) : host.create(folder, options, parentId);
@@ -984,8 +988,14 @@ export class SessionsControl {
       folder: s.cwd,
       // preparing: worktree の準備の段階（準備中のときだけ。そのあいだ状態は starting）
       worktree: s.worktree ? { name: s.worktree.name, branch: s.worktree.branch, ...(s.worktree.preparing ? { preparing: s.worktree.preparing } : {}) } : null,
-      parent_id: s.parentId ?? null,
+      // 親の ID は、呼び出し元から見える親のときだけ（見えない親の ID は出さない）
+      parent_id: s.parentId && this.visibleParent(s.parentId, caller) ? s.parentId : null,
     };
+  }
+
+  private visibleParent(parentId: string, caller: SessionSummary): boolean {
+    const parent = this.summary(parentId);
+    return !!parent && canSee(caller, parent);
   }
 
   private headerLines(target: SessionSummary, caller: SessionSummary, all: SessionSummary[]): string[] {
@@ -1195,8 +1205,9 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
 // 人だけが答えられるのは、プランの承認・Claude Code や人の設定が人に回したもの（PendingPermission.humanOnly）と、Deps の humanOnly
 function permissionView(permission: PendingPermission, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): { view: Record<string, unknown>; problem: string | null } {
   const full = JSON.stringify(permission.input, null, 2);
-  const tooLong = full.length > MAX_PERMISSION_INPUT_CHARS;
-  const problem = tooLong ? `the tool input is too long to show in full (${full.length} characters), so you cannot read all of it.` : (permission.humanOnly ?? humanOnly(permission));
+  const bytes = Buffer.byteLength(full, 'utf8');
+  const tooLong = bytes > MAX_PERMISSION_INPUT_BYTES;
+  const problem = tooLong ? `the tool input is too long to show in full (${bytes} bytes), so you cannot read all of it.` : (permission.humanOnly ?? humanOnly(permission));
   return {
     problem,
     view: {
@@ -1205,13 +1216,25 @@ function permissionView(permission: PendingPermission, humanOnly: (request: { to
       description: permission.description ?? undefined,
       reason: permission.reason ?? undefined,
       tool: permission.tool,
-      input: tooLong ? `${full.slice(0, MAX_PERMISSION_INPUT_CHARS)}\n…(truncated)` : permission.input,
+      input: tooLong ? `${clipBytes(full, MAX_PERMISSION_INPUT_BYTES)}\n…(truncated)` : permission.input,
       from_subagent: permission.agent ?? undefined,
       can_allow: problem === null,
       cannot_allow_reason: problem ?? undefined,
       can_deny: true,
     },
   };
+}
+
+// UTF-8 で max バイトまでの頭（文字の途中では切らない）
+function clipBytes(text: string, max: number): string {
+  let bytes = 0;
+  let end = 0;
+  for (const char of text) {
+    bytes += Buffer.byteLength(char, 'utf8');
+    if (bytes > max) break;
+    end += char.length;
+  }
+  return text.slice(0, end);
 }
 
 function permissionViewOf(permission: PendingPermission | null, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): Record<string, unknown> | undefined {

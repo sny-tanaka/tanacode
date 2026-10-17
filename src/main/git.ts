@@ -4,8 +4,9 @@ import { join, posix } from 'node:path';
 import type { GitBranches } from '@shared/ipc';
 
 const MAX_BUFFER = 64 * 1024 * 1024;
-// 未追跡のファイルの行数を数える上限（大きいものは数えない）
+// 未追跡のファイルの行数を数える上限（大きいものは数えない）と、数えるファイルの数の上限（それより多いものは、読まずに 0 とする）
 const MAX_COUNT_BYTES = 1024 * 1024;
+const MAX_COUNT_FILES = 1000;
 
 export class GitError extends Error {}
 
@@ -263,7 +264,12 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
     const kind = code === 'A' ? 'added' : code === 'D' ? 'deleted' : 'modified';
     files.push({ path, kind, ...(counts.get(path) ?? { added: 0, removed: 0, binary: false }) });
   }
+  let counted = 0;
   for (const path of untracked.split('\0').filter(Boolean)) {
+    if (counted++ >= MAX_COUNT_FILES) {
+      files.push({ path, kind: 'added', added: 0, removed: 0, binary: false });
+      continue;
+    }
     // ふつうのファイルだけ数える（シンボリックリンクの先・デバイス・名前付きパイプは読まない。/dev/zero へのリンクは読み終わらない）
     const info = await lstat(join(cwd, path)).catch(() => null);
     const text = info?.isFile() && info.size <= MAX_COUNT_BYTES ? await readFile(join(cwd, path)).catch(() => null) : null;

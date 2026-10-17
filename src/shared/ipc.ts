@@ -363,7 +363,8 @@ export type SessionOptions = { model: string | null; effort: string | null; sett
 // 新規セッションを始めるときの指定。どれも null なら Claude Code の既定値（ユーザー設定）
 // worktree: claude --worktree で、新しい worktree に分けて始める
 // addedFolders: 新規セッションの画面でワークスペースに追加したフォルダ（SessionSummary.addedFolders）。無いものは追加なし
-export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[] };
+// capMode: 起動のモードを、開き直すときの上限として残す（Claude が start_session で始めたセッション。子は親があれば残す）
+export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[]; capMode?: boolean };
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };

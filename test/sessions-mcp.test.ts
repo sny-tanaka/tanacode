@@ -543,7 +543,8 @@ describe('ツールの実行（SessionsControl）', () => {
     );
     expect(started).toMatchObject({ independent: true, permission_mode: 'acceptEdits' });
     expect(started.note).toContain('independent session');
-    expect(host.created[0]).toMatchObject({ cwd: repo, parentId: null, options: { mode: 'acceptEdits', remoteControl: true } });
+    // 独立したセッションも、起動のモードを、開き直すときの上限として残す（親より強いモードで開き直さない）
+    expect(host.created[0]).toMatchObject({ cwd: repo, parentId: null, options: { mode: 'acceptEdits', remoteControl: true, capMode: true } });
     // 最初の指示は、起動したセッションからのものと分かる囲みで送る
     expect(host.submitted).toEqual([{ id: started.session_id, text: parentMessageText(PARENT, 'README を見直して') }]);
     // 一覧では、子ではなく同じリポジトリのセッション
@@ -814,6 +815,14 @@ describe('ツールの実行（SessionsControl）', () => {
       const result = await answer({ permission_id: id, decision: 'allow' });
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain('Nothing was answered');
+    });
+
+    it('入力の長さは、バイトで数える（Claude Code は MCP の結果をトークンで切るので、文字数が少なくても多くのトークンになる文字を通さない）', async () => {
+      // 1.2 万文字だが、3.6 万バイト
+      show(bashPermission(`echo ${'あ'.repeat(12_000)}`));
+      const permission = await read();
+      expect(permission.can_allow).toBe(false);
+      expect(permission.cannot_allow_reason).toContain('too long');
     });
 
     it('入力が長すぎて全文を渡せない確認は、許さない（断ることはできる）', async () => {
@@ -2380,6 +2389,17 @@ describe('ツールの実行（SessionsControl）', () => {
       const all = jsonOf<{ sessions: Row[] }>(await control.handle(PARENT, 'list_sessions', { include_archived: true }));
       // git のリポジトリでないフォルダのブランチは null
       expect(row(all.sessions, FAR_CHILD)).toMatchObject({ relation: 'child', state: 'archived', branch: null });
+    });
+
+    it('一覧・状態の parent_id は、呼び出し元から見える親のときだけ出す（見えない親の ID は出さない）', async () => {
+      // 同じフォルダにいるが、親は別のリポジトリのセッション（呼び出し元からは見えない）
+      const STRAY = '88888888-0000-4000-8000-000000000008';
+      host.add(STRAY, repo, { parentId: OTHER_REPO });
+      const rows = jsonOf<{ sessions: { id: string; parent_id: string | null }[] }>(await control.handle(PEER, 'list_sessions', {})).sessions;
+      expect(rows.find((s) => s.id === STRAY)?.parent_id).toBeNull();
+      expect(jsonOf<{ parent_id: string | null }>(await control.handle(PEER, 'get_session', { session_id: STRAY })).parent_id).toBeNull();
+      // 見える親なら出す
+      expect(rows.find((s) => s.id === SIBLING)?.parent_id).toBe(PARENT);
     });
 
     it('read_session の見出し: 関係・worktree・親・子を、見えるものだけ書く', async () => {

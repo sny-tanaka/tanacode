@@ -228,9 +228,16 @@ describe('起動の権限モードと再開', () => {
     }
     expect(app.pipe(parent.id).arg('--permission-mode')).toBe('auto');
     expect(app.pipe(child.id).arg('--permission-mode')).toBe('plan');
+    // Claude が始めた独立したセッション（親が無い。capMode）も、起動したときのモードより強くしない
+    const independent = app.create({ mode: 'plan', capMode: true });
+    await app.ready(independent.id);
+    independent.pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(independent.id) === 'exited');
+    await app.manager.open(independent.id);
+    expect(app.pipe(independent.id).arg('--permission-mode')).toBe('plan');
     // 動いているセッションを開いても、何もしない
     await app.manager.open(parent.id);
-    expect(app.host.pipes).toHaveLength(4);
+    expect(app.host.pipes).toHaveLength(6);
   });
 
   it('開き直すときも、設定の defaultMode があればそのモード（bypassPermissions は使わない）', async () => {
