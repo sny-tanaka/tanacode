@@ -426,6 +426,23 @@ describe('画面の読み込み直し（⌘R）', () => {
     // 新しい画面が、動いているシェルを引き継ぐ
     await expect(invoke(IpcChannel.ShellAttach)).resolves.toEqual(call('shells.attach'));
   });
+
+  it('URL の違う移動（Finder のファイルを落とした・リンク）は、止めるので読み込み直しにならない。フォルダは閉じず、シェルの知らせも止めない', async () => {
+    await boot();
+    manager().list.mockReturnValue([{ id: 's1', cwd: state.root, worktree: null }]);
+    await invoke(IpcChannel.FolderOpen, state.root);
+    const contents = mainWindow().webContents;
+    // Electron は、移り始めた知らせ（did-start-navigation）を、止められる知らせ（will-navigate）より先に出す
+    for (const url of ['file:///Users/me/Desktop/shot.png', 'https://example.com/']) {
+      contents.emit('did-start-navigation', fakeEvent({ isMainFrame: true, isSameDocument: false, url }));
+      const navigate = fakeEvent();
+      contents.emit('will-navigate', navigate, url);
+      expect(navigate.preventDefault).toHaveBeenCalledTimes(1);
+    }
+    expect(the('ShellTerminals').detach).not.toHaveBeenCalled();
+    expect(the('WorkspaceWatchers').release).not.toHaveBeenCalled();
+    expect(the('ShellTerminals').killOwner).not.toHaveBeenCalled();
+  });
 });
 
 describe('ワークスペースに追加するフォルダ', () => {

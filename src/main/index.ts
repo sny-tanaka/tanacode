@@ -324,9 +324,11 @@ function setupAppContents(contents: WebContents, id: string): void {
     if (url !== contents.getURL()) event.preventDefault();
   });
   // 画面を読み込み直す（⌘R）。前の画面が開いた新規セッションの画面のフォルダ（見張り・そこで開いたシェルとブラウザ）は、
-  // 新しい画面からは見えず使えないので閉じる。セッションのシェルは止めずに、新しい画面が引き継ぐ（shell.attach）まで、知らせを止める
+  // 新しい画面からは見えず使えないので閉じる。セッションのシェルは止めずに、新しい画面が引き継ぐ（shell.attach）まで、知らせを止める。
+  // 移り始めた知らせは、止められる知らせ（上の will-navigate）より先に届くので、will-navigate が止める移動（URL の違うもの。
+  // Finder のファイルを落とした・リンク）では何もしない（読み込み直しにならず、引き継ぐ画面が来ないため）
   contents.on('did-start-navigation', (details) => {
-    if (!details.isMainFrame || details.isSameDocument) return;
+    if (!details.isMainFrame || details.isSameDocument || details.url !== contents.getURL()) return;
     const p = opened.get(id);
     if (!p) return;
     for (const folder of [...p.folderViews.keys()]) p.closeFolderView(folder);
