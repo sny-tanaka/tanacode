@@ -463,15 +463,34 @@ describe('新しいウインドウ', () => {
     win.webContents.url = 'https://login.example.test/authorize?state=secret';
     win.webContents.title = 'ログイン';
     win.webContents.emit('did-navigate');
-    expect(win.title).toBe('ログイン — https://login.example.test');
+    expect(win.title).toBe('https://login.example.test — ログイン');
     const event = { preventDefault: vi.fn() };
     win.emit('page-title-updated', event, '認証');
     expect(event.preventDefault).toHaveBeenCalled();
-    expect(win.title).toBe('認証 — https://login.example.test');
+    expect(win.title).toBe('https://login.example.test — 認証');
     // 題の無いページは、オリジンだけ
     win.webContents.title = '';
     win.webContents.emit('did-navigate');
     expect(win.title).toBe('https://login.example.test');
+  });
+
+  it('別ウインドウの題は、オリジンを先に置く。ページの題は、制御文字・双方向の制御文字・幅の無い文字を除き、空白を詰め、長さを切る（題の帯の切り詰めで、オリジンを押し出させない）', () => {
+    const { tab, popup } = setup();
+    const win = popup(tab());
+    win.webContents.url = 'https://login.example.test/authorize';
+    const updated = (title: string) => {
+      win.emit('page-title-updated', { preventDefault: vi.fn() }, title);
+      return win.title;
+    };
+    // 空白（U+3000 など）を長く続けても、オリジンは先にある。空白は 1 つに詰め、前後は除く
+    expect(updated(`tanacode の再ログイン${'\u3000'.repeat(300)}\u00a0 `)).toBe('https://login.example.test — tanacode の再ログイン');
+    // 双方向の制御文字（右から左に並べ替える U+202E・U+2067 など）・制御文字・幅の無い文字は除く
+    expect(updated('\u202eログイン\u2067の\u2069確認\u200b\u0007\u0085\ufeff')).toBe('https://login.example.test — ログインの確認');
+    // 長い題は 80 文字で切る（サロゲートペアの途中で切らない）
+    expect(updated('あ'.repeat(100))).toBe(`https://login.example.test — ${'あ'.repeat(80)}…`);
+    expect(updated('😀'.repeat(100))).toBe(`https://login.example.test — ${'😀'.repeat(80)}…`);
+    // 除いたら何も残らない題は、オリジンだけ
+    expect(updated('\u202e\u3000\u200b')).toBe('https://login.example.test');
   });
 
   it('空のページ（about:blank）の別ウインドウの題には、about:blank と、中身を書ける開いたページのオリジンを添える（ページが書いた題だけを、サイトの題のように出さない）', () => {
@@ -488,9 +507,9 @@ describe('新しいウインドウ', () => {
     contents.url = 'about:blank';
     contents.title = 'Google のログイン';
     contents.emit('did-navigate');
-    expect(win.title).toBe('Google のログイン — about:blank (https://opener.example.test)');
+    expect(win.title).toBe('about:blank (https://opener.example.test) — Google のログイン');
     win.emit('page-title-updated', { preventDefault: vi.fn() }, '別の題');
-    expect(win.title).toBe('別の題 — about:blank (https://opener.example.test)');
+    expect(win.title).toBe('about:blank (https://opener.example.test) — 別の題');
     contents.title = '';
     contents.emit('did-navigate');
     expect(win.title).toBe('about:blank (https://opener.example.test)');
@@ -513,12 +532,12 @@ describe('新しいウインドウ', () => {
     expect(win.title).toBe('about:blank (https://opener.example.test)');
     // 開いたページが空の文書に題を書いても、開く先のオリジンは出さない
     win.emit('page-title-updated', { preventDefault: vi.fn() }, 'ログイン');
-    expect(win.title).toBe('ログイン — about:blank (https://opener.example.test)');
+    expect(win.title).toBe('about:blank (https://opener.example.test) — ログイン');
     // 確定したら、そのページのオリジン
     contents.url = 'https://login.example.test/authorize?state=secret';
     contents.mainFrame.origin = 'https://login.example.test';
     contents.title = 'Sign in';
     contents.emit('did-navigate');
-    expect(win.title).toBe('Sign in — https://login.example.test');
+    expect(win.title).toBe('https://login.example.test — Sign in');
   });
 });

@@ -36,6 +36,9 @@ type Deps = {
   whenFocused: (callback: () => void) => void;
 };
 
+// 別ウインドウの題に出す、ページが書いた題の長さ（文字の数）
+const MAX_PAGE_TITLE = 80;
+
 // 1 つのタブから開いておけるポップアップの数（ページが window.open を繰り返しても、ウインドウで埋まらないように）
 export const MAX_POPUPS = 5;
 // ポップアップの大きさ。指定が無いときは Electron の既定と同じ 800×600。小さすぎる指定は、読めて押せる大きさまで広げる（画面がそれより小さければ画面の大きさ）
@@ -263,11 +266,13 @@ function showOrigin(win: BrowserWindow): void {
     }
     return writer ? `about:blank (${writer})` : 'about:blank';
   };
+  // オリジンを先に置く（ページの題を長くしても、題の帯の切り詰めでオリジンを押し出せないように）
   const update = (title: string) => {
     if (win.isDestroyed()) return;
     const now = win.webContents.getURL();
     const shown = where();
-    win.setTitle(title && title !== now && title !== 'about:blank' ? `${title} — ${shown}` : shown);
+    const page = title === now || title === 'about:blank' ? '' : pageTitle(title);
+    win.setTitle(page ? `${shown} — ${page}` : shown);
   };
   update('');
   win.on('page-title-updated', (event, title) => {
@@ -275,6 +280,19 @@ function showOrigin(win: BrowserWindow): void {
     update(title);
   });
   win.webContents.on('did-navigate', () => update(win.webContents.getTitle()));
+}
+
+// ページが書いた題の、別ウインドウの題に出す形。空白（U+3000 なども）は 1 つに詰め、制御文字と、双方向の制御文字・幅の無い文字
+// （書式の文字 Cf。U+202E・U+2067・U+200B など。並びを入れ替えたり、見えない文字で埋めたりさせない）を除き、長さを切る
+function pageTitle(title: string): string {
+  const cleaned = title
+    .replace(/\s+/gu, ' ')
+    .replace(/[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+  // サロゲートペアの途中で切らないよう、文字ごとに数える
+  const chars = Array.from(cleaned);
+  return chars.length > MAX_PAGE_TITLE ? `${chars.slice(0, MAX_PAGE_TITLE).join('')}…` : cleaned;
 }
 
 function originOf(url: string): string | null {

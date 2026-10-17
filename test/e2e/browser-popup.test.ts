@@ -317,7 +317,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await runIn('/', 'document.getElementById("blank-title").click()');
     await runIn('/', 'document.getElementById("blank-plain").click()');
     const titles = () => app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.getTitle()));
-    await expect.poll(titles, { timeout: 10_000 }).toEqual(expect.arrayContaining([`tanacode の再ログイン — about:blank (${origin})`, `about:blank (${origin})`]));
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(expect.arrayContaining([`about:blank (${origin}) — tanacode の再ログイン`, `about:blank (${origin})`]));
   });
 
   it('人の操作でも、開いたページは空のページの別ウインドウを data: や blob: のページへ移せない（空のページのまま）', async () => {
@@ -383,7 +383,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     // 中身は、開いたページが書いたもののまま
     expect(await runIn('/', 'window.noContent.document.body.textContent')).toBe('書いた画面');
     const title = (await popupState(14))?.title;
-    expect(title).toBe(`ログイン — about:blank (${origin})`);
+    expect(title).toBe(`about:blank (${origin}) — ログイン`);
     expect(title).not.toContain(outside);
     // 開いておける数（1 つのタブから 5 個まで）に当たらないよう閉じる
     await runIn('/', 'window.noContent.close(); "closed"');
