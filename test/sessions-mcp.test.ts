@@ -2789,7 +2789,7 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
 
   const schedule = (args: Record<string, unknown>, caller = PARENT) => control.handle(caller, 'schedule_wakeup', args);
   const NOT_READY = 'tanacode has not finished starting up. Wait a moment and try again.';
-  type Listed = { now: string; messages: { id: string; by: string; state: string; at: string; local_time: string; text: string; images?: number }[]; note?: string };
+  type Listed = { now: string; messages: { id: string; by: string; state: string; at: string; local_time: string; text: string; images?: number; error?: string }[]; note?: string };
 
   it('schedule_wakeup: 自分のセッションに Claude の予約を入れ、ID と時刻（UTC とこの Mac の時刻）を返す。子も入れられる', async () => {
     const before = Date.now();
@@ -2870,6 +2870,30 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(listed.messages[1]!.text.length).toBeLessThan(360);
     expect(Date.parse(listed.messages[0]!.local_time)).toBe(Math.floor(Date.parse(listed.messages[0]!.at) / 1000) * 1000);
     expect(jsonOf<Listed>(await control.handle(PEER, 'list_wakeups', {}))).toMatchObject({ messages: [], note: 'No messages are scheduled in this session.' });
+  });
+
+  it('list_wakeups: 送れなかった予約の理由は、画面の言語の文ではなく、send_message と同じ英語の文で返す', async () => {
+    // 送ろうとすると断られるセッション。terminal: ターミナルモードで止まっている
+    const refusing = (error: Error, terminal = false): ScheduleHost => ({
+      stateOf: () => (terminal ? 'exited' : 'idle'),
+      open: async () => undefined,
+      summary: () => ({ terminal }),
+      submitWhenReady: () => Promise.reject(error),
+    });
+    const cases: [ScheduleHost, string][] = [
+      [refusing(new SendError('busy')), 'Not sent to this session because it did not become idle in time.'],
+      [refusing(new Error('x'), true), 'Not sent to this session because it is in terminal mode (or being switched to it), where only the user can type.'],
+      // 理由の分からないもの（起動に失敗したなど）は、文を返さない（画面の言語のことがある）
+      [refusing(new Error('起動できませんでした')), 'Not sent to this session.'],
+    ];
+    for (const [i, [fake, error]] of cases.entries()) {
+      scheduled!.dispose();
+      scheduled = new ScheduledMessages(join(root, `refused-${i}.json`), fake, () => undefined);
+      const added = scheduled.add(PARENT, '子を見に行く', [], Date.now() + 60 * 60_000, [], 'claude');
+      scheduled.sendNow(added.id);
+      await vi.waitFor(() => expect(scheduled!.list()[0]?.state).toBe('failed'));
+      expect(jsonOf<Listed>(await control.handle(PARENT, 'list_wakeups', {})).messages).toMatchObject([{ id: added.id, state: 'failed', error }]);
+    }
   });
 
   it('予約のファイルを読めず保存しないときは、schedule_wakeup・list_wakeups の結果にそう添える（セッションごとに最初の 1 回だけ）', async () => {
