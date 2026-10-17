@@ -419,6 +419,23 @@ describe('知らせ', () => {
     await sleep(50);
     expect(app.statusLineInfos.get(id)?.rateLimits?.fiveHour?.percent).toBe(42);
   });
+
+  it('statusLine を送り直すとき（費用・コンテキストの量が変わったなど）、利用枠には受け取った時刻を添えたままにする', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.emit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.42 } } }, uuid: 'l1' });
+    await app.waitFor('利用枠', () => !!app.statusLineInfos.get(id)?.rateLimits);
+    const received = app.statusLineInfos.get(id)!;
+    expect(received.rateLimitsAt).toBe(received.updatedAt);
+    await sleep(20);
+    await app.prompt(id, 'はじめ');
+    app.say(id, line.text('はい'));
+    pipe.emit(stream.result(app.claudeId(id), { total_cost_usd: 0.5 }));
+    await app.waitFor('費用', () => app.statusLineInfos.get(id)?.costUsd === 0.5);
+    const resent = app.statusLineInfos.get(id)!;
+    expect(resent.updatedAt).toBeGreaterThan(received.updatedAt);
+    expect(resent.rateLimitsAt).toBe(received.rateLimitsAt);
+  });
 });
 
 describe('利用枠（get_usage）', () => {

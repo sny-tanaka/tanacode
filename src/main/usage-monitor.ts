@@ -41,7 +41,7 @@ export class UsageMonitor {
       rl.fiveHour && { label: '5時間', percent: rl.fiveHour.percent, resetsAt: rl.fiveHour.resetsAt },
       rl.sevenDay && { label: '週', percent: rl.sevenDay.percent, resetsAt: rl.sevenDay.resetsAt },
     ].filter((l): l is UsageLimit => !!l);
-    if (limits.length > 0) this.set({ limits, updatedAt: info.updatedAt, source: 'statusline' }, false);
+    if (limits.length > 0) this.set({ limits, updatedAt: info.rateLimitsAt ?? info.updatedAt, source: 'statusline' }, false);
   }
 
   // Claude Code の控えの方が新しければ使う（本家で /usage を開いたあとなど）
@@ -57,7 +57,11 @@ export class UsageMonitor {
     if (this.current && this.current.updatedAt >= usage.updatedAt) return;
     const arrived = (old: UsageLimit) =>
       usage.limits.some((l) => (old.model ? l.model?.toLowerCase() === old.model.toLowerCase() : !l.model && l.label === old.label));
-    const kept = (this.current?.limits ?? []).filter((old) => !(old.model && allModels) && !arrived(old));
+    const before = this.current;
+    // 残す枠は、その値を得た時刻を持たせる（新しい知らせの時刻を付けて、新しく見せない）
+    const kept = (before?.limits ?? [])
+      .filter((old) => !(old.model && allModels) && !arrived(old))
+      .map((old) => ({ ...old, updatedAt: old.updatedAt ?? before!.updatedAt }));
     usage = { ...usage, limits: [...usage.limits.filter((l) => !l.model), ...kept.filter((l) => !l.model), ...usage.limits.filter((l) => l.model), ...kept.filter((l) => l.model)] };
     this.current = usage;
     void writeFile(this.file, JSON.stringify(usage, null, 2)).catch(() => {});

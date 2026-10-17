@@ -122,7 +122,7 @@ export function AccountPanel() {
   const current = list.find((p) => p.id === profiles?.current) ?? null;
   const attention = multiple && !!profiles?.othersAttention;
 
-  const at = usage ? new Date(usage.updatedAt).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const at = usage ? timeOf(usage.updatedAt) : '';
   const stale = usage !== null && now - usage.updatedAt > STALE_MS;
   const organization = account ? visibleOrganization(account) : null;
   const tip = [
@@ -253,18 +253,26 @@ function Gauge({ label, limit, now }: { label: string; limit: UsageLimit | null;
   const reset = limit.resetsAt !== null && limit.resetsAt <= now;
   const percent = reset ? 0 : limit.percent;
   const level = percent >= 90 ? 'high' : percent >= 70 ? 'mid' : 'low';
+  // 前の値から残した枠（新しい知らせに無かったもの）が古ければ、残り時間の代わりに何時点の値かを出す（欄の幅に両方は入らない）
+  const stale = limit.updatedAt !== undefined && now - limit.updatedAt > STALE_MS;
+  const detail = reset ? t('account.usage.reset') : stale ? t('account.panel.staleAt', { time: timeOf(limit.updatedAt!) }) : remaining(limit.resetsAt, now);
   return (
     <div className={`usage-gauge ${level}`}>
       <div className="usage-row">
         <span className="usage-label">{label}</span>
         <span className="usage-percent">{percent}%</span>
-        <span className="usage-reset">{reset ? t('account.usage.reset') : remaining(limit.resetsAt, now)}</span>
+        <span className="usage-reset">{detail}</span>
       </div>
       <div className="usage-bar">
         <span style={{ width: `${reset ? 0 : Math.min(100, Math.max(percent, 1))}%` }} />
       </div>
     </div>
   );
+}
+
+// 値を得た時刻（「10/7 9:20」）
+function timeOf(ms: number): string {
+  return new Date(ms).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 // 「あと 2時間13分」「あと 4日18時間」

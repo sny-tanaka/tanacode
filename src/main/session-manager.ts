@@ -2444,6 +2444,7 @@ export class SessionManager {
     const before = rt.statusLine;
     const record = this.store.get(id);
     const modelId = patch.model ?? before?.model?.id ?? null;
+    const now = Date.now();
     const next: StatusLineInfo = {
       model: modelId ? { id: modelId, name: modelName(modelId) ?? initModelName(rt.init, modelId) ?? modelId } : null,
       // 実際に使っているエフォート（get_settings の applied・init）。まだ知らせが無ければ、アプリで選んだもの
@@ -2451,11 +2452,13 @@ export class SessionManager {
       version: patch.version ?? before?.version ?? null,
       // null は、分からなくなった（/clear のあと）
       context: patch.context !== undefined ? patch.context : (before?.context ?? null),
-      // 値が無いときに空で上書きしない
+      // 値が無いときに空で上書きしない。送り直す前の値には、受け取った時刻を添えたままにする（あとで get_usage で聞いた新しい値を、
+      // 古い値で戻さない）
       rateLimits: patch.rateLimits ?? before?.rateLimits ?? null,
+      rateLimitsAt: patch.rateLimits ? now : before?.rateLimitsAt,
       costUsd: patch.costUsd ?? before?.costUsd ?? null,
       transcriptPath: null,
-      updatedAt: Date.now(),
+      updatedAt: now,
     };
     rt.statusLine = next;
     this.listeners.onStatusLine(id, next);

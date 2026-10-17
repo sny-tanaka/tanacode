@@ -101,6 +101,16 @@ export const モデル別の週の枠: Story = story(PERSONAL, {
   source: 'usage',
 });
 
+// モデル別の週の枠が、前の値から残したもので古い（そのあと statusLine の値だけが届いた）。そのゲージは、残り時間の代わりにいつの値かを出す
+export const 古いモデル別の枠: Story = story(PERSONAL, {
+  ...usage(18, 37),
+  limits: [
+    ...usage(18, 37).limits,
+    { label: '週', model: 'Fable', percent: 72, resetsAt: Date.now() + (2 * 24 + 5) * 60 * MINUTE, updatedAt: Date.now() - 50 * MINUTE },
+    { label: '週', model: 'Sonnet', percent: 9, resetsAt: Date.now() + (4 * 24 + 18) * 60 * MINUTE, updatedAt: Date.now() - 50 * MINUTE },
+  ],
+});
+
 // Claude Code にログインしていない（API キーだけで使っているときも、ここに入る）
 export const ログインしていない: Story = story(null, null);
 

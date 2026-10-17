@@ -179,19 +179,22 @@ describe('利用枠（UsageMonitor）', () => {
       1000,
     );
     monitor.fromStatusLine(info(2000, 40));
+    // 残した枠は、その値を得た時刻のまま（新しい知らせの時刻を付けない）
     expect(monitor.get()).toEqual({
       limits: [
         { label: '5時間', percent: 40, resetsAt: 100 },
         { label: '週', percent: 10, resetsAt: 200 },
-        { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+        { label: '週', model: 'Fable', percent: 60, resetsAt: 300, updatedAt: 1000 },
       ],
       updatedAt: 2000,
       source: 'statusline',
     });
+    monitor.fromStatusLine(info(2500, 41));
+    expect(monitor.get()?.limits.find((l) => l.model === 'Fable')?.updatedAt).toBe(1000);
     // get_usage のモデル別の枠は、そのとき届いたものに置き換える（無くなったモデルの枠は残さない）
     monitor.fromUsage({ limits: [{ label: '週', model: 'Sonnet', percent: 8, resetsAt: null }], modelsKnown: true }, 3000);
     expect(monitor.get()?.limits.filter((l) => l.model)).toEqual([{ label: '週', model: 'Sonnet', percent: 8, resetsAt: null }]);
-    expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(40);
+    expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(41);
   });
 
   it('モデルの一覧（model_scoped）の無い get_usage では、届かなかったモデルの枠を前の値から残す（一度の返事で「週（Fable）」を消さない）', async () => {
@@ -212,11 +215,22 @@ describe('利用枠（UsageMonitor）', () => {
     expect(monitor.get()?.limits).toEqual([
       { label: '週', percent: 6, resetsAt: 200 },
       { label: '週', model: 'sonnet', percent: 9, resetsAt: 300 },
-      { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+      { label: '週', model: 'Fable', percent: 60, resetsAt: 300, updatedAt: 1000 },
     ]);
     // 空の一覧（この人には無い）なら、モデル別の枠を残さない
     monitor.fromUsage({ limits: [{ label: '週', percent: 7, resetsAt: 200 }], modelsKnown: true }, 3000);
     expect(monitor.get()?.limits).toEqual([{ label: '週', percent: 7, resetsAt: 200 }]);
+  });
+
+  it('statusLine が前に受け取った利用枠を送り直しても（コンテキストの量だけが変わったときなど）、あとで聞いた新しい値を戻さない', async () => {
+    const monitor = new usage.UsageMonitor(join(home, 'usage5.json'), () => {});
+    monitor.fromUsage({ limits: [{ label: '5時間', percent: 45, resetsAt: 100 }], modelsKnown: true }, 2000);
+    // 利用枠は 1000 に受け取ったもの。知らせ自体は 3000
+    monitor.fromStatusLine({ ...info(3000, 42), rateLimitsAt: 1000 });
+    expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(45);
+    // 新しく受け取った利用枠なら使う
+    monitor.fromStatusLine({ ...info(4000, 50), rateLimitsAt: 4000 });
+    expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(50);
   });
 
   it('Claude Code の控え（/usage を開いたときのもの）の方が新しければ、それを使う', async () => {

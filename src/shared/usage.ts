@@ -8,6 +8,8 @@ export type UsageLimit = {
   percent: number;
   // リセットの時刻（分からなければ null）
   resetsAt: number | null;
+  // 前の値から残した枠の、その値を得た時刻（無ければ UsageLimits.updatedAt の値）。新しい知らせに無かった枠を、新しく見せない
+  updatedAt?: number;
 };
 
 export type UsageLimits = {

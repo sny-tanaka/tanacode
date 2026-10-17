@@ -180,6 +180,30 @@ describe('アカウントと利用枠（AccountPanel）', () => {
     expect(gauges()).toEqual(['usage-gauge low: 5時間42%あと 1時間30分', 'usage-gauge high: 週95%あと 3日0時間', 'usage-gauge mid: 週（Fable）72%あと 2日0時間']);
   });
 
+  it('前の値から残した枠（モデル別の週の枠など）が 30 分より古ければ、そのゲージに、残り時間の代わりに何時点の値かを出す', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T);
+    const old = T - 40 * 60_000;
+    const limits = [
+      ...usage().limits,
+      { label: '週', model: 'Fable', percent: 72, resetsAt: T + 2 * 24 * 60 * 60_000, updatedAt: old },
+      { label: '週', model: 'Sonnet', percent: 5, resetsAt: T + 2 * 24 * 60 * 60_000, updatedAt: T - 10 * 60_000 },
+    ];
+    api = mockApi({ 'usage.get': () => Promise.resolve(usage({ limits })), 'account.get': () => Promise.resolve(TEAM) });
+    api.install();
+    render(<AccountPanel />);
+    await screen.findByText('Claude Team');
+    const time = new Date(old).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    expect(gauges()).toEqual([
+      'usage-gauge low: 5時間42%あと 1時間30分',
+      'usage-gauge high: 週95%あと 3日0時間',
+      `usage-gauge mid: 週（Fable）72%${time} 時点`,
+      'usage-gauge low: 週（Sonnet）5%あと 2日0時間',
+    ]);
+    // 欄全体の値は新しいので、1 行目の印は出さない
+    expect(document.querySelector('.account-stale')).toBeNull();
+  });
+
   it('値もログインも無くても、2 つのゲージを灰色の 0% で出しておき、押すとメニューに理由を出す', async () => {
     render(<AccountPanel />);
     await screen.findByText('ログインしていません');
