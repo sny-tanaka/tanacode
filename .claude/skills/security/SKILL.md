@@ -143,59 +143,77 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 
 ## C. コードの点検（セキュリティの観点）
 
-2026-09-30 に直したときに決めた、守るべき決まり。点検のたびに、次のチェックリストを実際のソースと照らし合わせます。ファイルや名前が変わっていたら、今の場所を探して確かめます。
+2026-09-30 に直したときに決めた、守るべき決まり（2026-10-17 に、チャットを stream-json でやりとりする作りに合わせて書き直し）。点検のたびに、次のチェックリストを実際のソースと照らし合わせます。ファイルや名前が変わっていたら、今の場所を探して確かめます。
 
 ### チェックリスト
 
 **チャットの Markdown**（`src/renderer/src/chat/Markdown.tsx`）
 
 - 生の HTML（ブロック・インライン）は描かず、エスケープして文字で表示（`renderer.html` と `escapeHtml`）。
-- DOMPurify は明示の許可リスト（`SANITIZE` の `ALLOWED_TAGS`・`ALLOWED_ATTR`、`ALLOW_DATA_ATTR: false`・`ALLOW_ARIA_ATTR: false`）。style・class・button・input などを足していないか。
+- DOMPurify は明示の許可リスト（`SANITIZE` の `ALLOWED_TAGS`・`ALLOWED_ATTR`、`ALLOW_DATA_ATTR: false`・`ALLOW_ARIA_ATTR: false`）。style・class・button・input などを足していないか。書き出し（`markdownHtml`）も同じ `SANITIZE` を通るか。
 - タスクリストのチェックボックスは文字（☑・☐）。入力部品は作りません。
-- ▶ 実行ボタンは、サニタイズのあとに作成。実行するコマンドは画面の文字ではなく、marked のトークン（`renderer.code` の `token.text`）から `stripControlChars` を通して控えたもの。`pre` の数とコマンドの数が合わないときは、ボタンを付けません。
+- ▶ 実行ボタンは、サニタイズのあとに作成。対象はシェルの言語（`SHELL_LANG`）のコードだけ。実行するコマンドは画面の文字ではなく、marked のトークン（`renderer.code` の `token.text`）から `stripControlChars` を通して控えたもの。`pre` の数とコマンドの数が合わないときは、ボタンを付けません。
 - 外部の画像（`http(s):`・`//`）は読み込まず、リンクに置き換え（`src/renderer/src/markdown.ts` の `replaceExternalImages`。`srcset` も削除）。文書に入れる前（DocumentFragment の中）で呼んでいるか。
 
-**制御文字**（`src/shared/prompt-keys.ts` の `stripControlChars`。画面側は `src/renderer/src/chat/sanitize.ts` から読み込む）
+**制御文字**（`src/shared/paste.ts` の `stripControlChars`。画面側は `src/renderer/src/chat/sanitize.ts` の再エクスポートか、`@shared/paste` から読み込む）
 
-- C0（`\n`・`\t` 以外）・DEL・C1・双方向の制御文字（U+061C・U+200E・U+200F・U+202A〜U+202E・U+2066〜U+2069）の除去と、CR（`\r\n`・`\r`）を `\n` にそろえる処理。
-- Claude（pty）へ送る文字列・シェルに書くコマンドは、必ずここを通します。今の呼び出し元: main の `SessionManager.submit`（チャットの入力欄からの本文と添付のパス・親セッションからの指示・親への知らせ。画面の `submitToClaude` は IPC `sessions:submit` で頼むだけ）、`sessions-control.ts` の `answer_question` の自由記述、画面の `chat/insertInput.ts`、`chat/Markdown.tsx`（▶ 実行のコマンド）、`terminal/TerminalPanel.tsx`、`preview/picker.ts`。新しく pty・シェルに書く所が増えていないか（`grep -rn "pty.write\|shell.write" src/renderer`、`grep -rn "process.write\|\.write(id" src/main`）。
-- ブラケットペースト（`\x1b[200~ … \x1b[201~`）は、本文が改行を含むときだけ（`promptKeys`）。
+- C0（`\n`・`\t` 以外）・DEL・C1・双方向の制御文字（U+061C・U+200E・U+200F・U+202A〜U+202E・U+2066〜U+2069）の除去と、CR（`\r\n`・`\r`）を `\n` にそろえる処理。ソースの正規表現は `\u` の書き方で（生の双方向の文字をソースに入れない）。
+- Claude Code・pty・シェルに渡す文字列は、必ずここを通します。今の通り道は次のとおり。
+  - チャットの発言（main の `SessionManager.submit`）: 本文と札（`pasted_content`）を通してから、stream-json の user の行にして送ります。呼び出し元は、画面の `submitToClaude`（IPC `sessions:submit`）と `submitWhenReady`（親セッションからの指示・親への知らせ・予約・最適化圧縮）。添付は文字で送らず、中身の頭で PNG・JPEG・GIF・WebP と分かったものだけを画像のブロックにします（`imageBlock`・`imageMediaType`）。
+  - 待っている要求への返事: `answer_question` の自由記述と、`answer_permission` の断る理由。
+  - ターミナルモードの TUI に貼るもの: 画面の `writePaste`（`pasteIntoClaudeScreen`）と main の `pasteIntoTerminal`。どちらも `bracketedPaste(stripControlChars(…))` にしてから書き、Enter は送りません（人が押します）。
+  - 入力欄に差し込むもの（`chat/insertInput.ts`・`ChatInput` の貼り付け・`preview/picker.ts`）、▶ 実行のコマンド（`chat/Markdown.tsx`・`terminal/TerminalPanel.tsx`。新しいシェルのタブにだけ書く）、人のターミナルに打つツール（`readTypeInput`。改行は断る）。
+  - 新しく書く所が増えていないか（`grep -rn "pty.write\|shell.write" src/renderer`、`grep -rn "\.write(\|client\.send\|client\.respond\|sendLine\|pasteIntoTerminal\|pasteIntoClaudeScreen" src/main src/renderer`）。
+- stream-json の行は、`JSON.stringify` した 1 行だけを送ります（`src/main/stream/client.ts`）。値の中の改行や ESC で、行が割れたりキーとして読まれたりしません。画面からの生のキー入力（IPC `PtyWrite`）は pty にだけ届き、チャットの標準入力（パイプ）には書けません（pty ホストの `write` は pty だけ、`send` はパイプだけ）。
+- ブラケットペースト（`\x1b[200~ … \x1b[201~`）は、ターミナルモードの TUI に貼るときだけ、いつも使います（`bracketedPaste`）。中の文は先に `stripControlChars` を通し、`\x1b[201~` で囲みから抜けられないようにします。チャットでは使いません（長い貼り付けは `pasted_content` で渡す）。
 - `codeBlock`・`inlineCode` のフェンスは、中身の最も長いバッククォートの連続より長く。
+
+**ターミナルモード**（`src/main/session-manager.ts`・`session-notices.ts`・`sessions-control.ts`、`src/renderer/src/terminal/ClaudeScreen.tsx`）
+
+- ターミナルモード（人が Claude Code の画面で操作している）の間と、切り替えの途中は、Claude 由来の文を TUI に打たないか。チャットの送信（`submit`・`submitWhenReady`）・親の `send_message`・`answer_question`・`answer_permission`・`stop_session`・`configure_session`・`end_session` は、預からずに断ります。予約の送信は失敗として残し、親への知らせは捨てます。
+- TUI に貼るのは、人がボタンで頼んだもの（コメント・ウォークスルーの質問・選んだ要素・チェックリストの「Claude に通知する」など）だけか。TUI が許可の確認・質問のメニューを出している間（`tuiAsk`。書くだけの PermissionRequest のフックで知る）は貼らずに預かり、閉じたら順に貼ります。預かっている間にターミナルモードでなくなったら、捨てます。
 
 **権限とウィンドウ**（`src/main/index.ts`）
 
-- 権限の要求・確認は既定で拒否（`restrictPermissions`）。メインのウィンドウのメインフレームだけに `APP_PERMISSIONS`（`clipboard-read`・`clipboard-sanitized-write`）。
-- プレビューのパーティション（`PREVIEW_PARTITION` = `persist:tanacode-preview`）には、どの権限も与えません。
+- 権限の要求・確認は既定で拒否（`restrictPermissions`）。アプリの画面（主ウインドウと、足したプロファイルの画面。`isAppContents`）のメインフレームだけに `APP_PERMISSIONS`（`clipboard-read`・`clipboard-sanitized-write`）。
+- プレビューのパーティション（`PREVIEW_PARTITION` = `persist:tanacode-preview`。足したプロファイルは `previewPartition(id)`）には、どの権限も与えず、ダウンロードも止めます。
 - webview の取り付け（`will-attach-webview`）: preload を消し、`nodeIntegration: false`・`contextIsolation: true`・`sandbox: true`。開くのは http(s) と `about:blank` だけ。
-- webview のゲストの移動（`web-contents-created` の `will-navigate`・`will-frame-navigate`・`will-redirect` → `isPreviewDestination`）: トップのフレームは http(s) と `about:blank` だけ。中のフレーム（iframe）だけ、`about:srcdoc`・`blob:`・`data:` も許可。
-- 新しいウィンドウ（メインのウィンドウ・webview のゲストとも `setWindowOpenHandler`）は開かず、http(s) だけ既定のブラウザで表示。メインのウィンドウ自身の移動（`will-navigate`）は止めます。
+- webview のゲストの移動（`web-contents-created` の `will-navigate`・`will-frame-navigate`・`will-redirect` → `isPreviewDestination`）: トップのフレームは http(s) と `about:blank` だけ。中のフレーム（iframe）だけ、`about:srcdoc`・`blob:`・`data:` も許可。Claude がアプリ内ブラウザを操作している間のトップのフレームは、許した先へしか移れません（`blocksNavigation`）。
+- 新しいウィンドウは作りません（`setWindowOpenHandler` はいつも deny）。アプリの画面から開こうとした http(s) は、既定のブラウザで表示。webview のゲストから開こうとした http(s) は、アプリ内ブラウザの新しいタブ（`openFromPage`）で開き、開けなかったときは、Claude が操作していなければ既定のブラウザで表示。http(s) でないものは開きません。アプリの画面自身の移動（`will-navigate`）は止めます。
 
 **CSP**（`src/renderer/index.html`）
 
 - `img-src 'self' data: blob:`（外部の画像を読まない）、`frame-src 'none'`、`script-src 'self'`。ゆるめる変更が無いか。
 
-**statusLine**（`src/main/statusline.ts`）
+**設定ファイル**（`src/main/statusline.ts`・`settings-files.ts`・`claude-config.ts`）
 
-- `--settings` に写す statusLine は、ユーザーの `~/.claude/settings.json` のものだけ（`userStatusLineCommand`）。プロジェクトの `.claude/settings*.json` を読んでいないか。
+- `--settings` に写す statusLine は、ユーザーの設定（`claudeConfigDir` の `settings.json`）か、登録した設定ファイルのものだけ（`userStatusLineCommand`）。プロジェクトの `.claude/settings*.json` から読んでいないか。チャット（`-p`）では statusLine は動かず、ターミナルモードの TUI だけで動きます。
+- プロジェクトの設定から読むのは、最初の権限モード（`permissions.defaultMode`。`settingsDefaultMode`）だけ。そこに bypassPermissions があっても使わないか（`startMode`）。
 
-**ほかのセッションを扱う MCP**（`src/main/sessions-control.ts`・`sessions-bridge.ts`・`session-manager.ts`、`src/shared/session-tools.ts`。2026-10-03 に決めたこと。許可の確認への回答と子の片付けは 2026-10-12）
+**ほかのセッションを扱う MCP**（`src/main/sessions-control.ts`・`sessions-bridge.ts`・`session-manager.ts`・`requests.ts`・`pending-questions.ts`、`src/shared/session-tools.ts`。2026-10-03 に決めたこと。許可の確認への回答と子の片付けは 2026-10-12。答え方は 2026-10-17 に stream-json の要求に合わせて書き直し）
 
-- 質問への回答（`answer_question`）は、画面のメニューが AskUserQuestion で出した質問（`ScreenTracker.askedQuestions`。フックが書いた質問）に合うときだけ（`isAskedQuestion`）。メニューを質問と見分けるのは ☐・☒ の行なので、コマンドの文字に ☐ があると許可の確認が質問に見えるためです。キーは `chooseIf`（`ScreenTracker.choose` の `expect`）で、送る前に毎回同じ質問か確かめているか。`stateOf` も、AskUserQuestion が無い質問のメニューは `permission` にしているか。
+- 質問と許可の確認は、Claude Code が stream-json の制御の要求 `can_use_tool` で送ったものだけを、待っている要求として持ちます（AskUserQuestion は `PendingQuestions`、ほかは `pendingPermission`）。答えは `control_response` で、待っている `request_id` に 1 回だけ（`StreamClient.respond`）。人が先に答えた・取り下げられた（`control_cancel_request`）要求には答えません。形の読めない AskUserQuestion は deny し、許可の確認としても出しません。
+- 質問への回答（`answer_question`）
+  - 親が渡した質問の文が、今の質問（まだ答えていない最初の 1 問。`normalizeText` で比べる）と同じときだけ答えるか。
+  - 選べるのは、その質問の選択肢の名前（単一選択は 1 つ）と、`stripControlChars` を通した自由記述だけか。複数の質問は 1 問ずつためて、そろったら 1 つの返事にします（`answerPendingQuestion`）。
+  - 許可の確認が出ているときは、`answer_permission` を使うよう断るか。
 - 許可の確認には、親も答えられる（`answer_permission`。2026-10-12 に決めたこと。それまでは「親は答えない」）。次の守りが外れていないか。
-  - 選ぶのは、名前がちょうど `Yes` の選択肢（今回だけ許す）と `No` の選択肢（断る）だけか（`permissionOptions`。どちらも、ちょうど 1 つのときだけ決める）。「次から聞かない」「常に許す」のように許可を覚えさせる選択肢・権限モードを変える選択肢を選ぶ道（番号の決め打ち・前方一致・引数での指定）を足していないか。見分けられないメニューには、答えずに断るか。
-  - 親が読んだ確認にだけ答えるか。`permission_id`（見出し・`context`・フックの入力の全文・受け取った順番 `seq` のハッシュ）が今の確認のものと違えば何も押さず、キーを送る直前にも確かめ直しているか（`chooseIf` の `expect`）。見出しと選択肢が同じ別のコマンドの確認・同じコマンドの 2 回目の確認が、別の ID になるか。
-  - 親が全文を読めないものを、許させていないか。ツールの入力は、`PermissionRequest` のフックが書いたもの（`SessionManager.pendingPermission`。入力が書かれたのが、1 つ前の確認のメニューの出はじめよりあとのときだけ）を使い、画面と合う（`shownOnScreen`）・子の会話に結果待ちの同じ呼び出しがある（`pendingInConversation`）・3 万文字以内、のどれかが欠けたら `can_allow: false` にしているか。画面と合わない入力を、親に見せていないか。フックは書くだけで、`decision` を返していないか（確認を出さずに通す道にしない）。
-  - 許せるのは、親の権限モード（`modeOf`）が acceptEdits・auto・bypassPermissions のときだけか（manual・plan・モードが分からない親は、断ることだけ）。親のモードを、画面の文字だけで上げていないか（上の `modeOf` の項目）。
-  - 自分の子だけか（`resolve` の `child`）。子の中継に出していないか（`PARENT_ONLY`）。答えるのは `kind` が `permission` のメニューだけで、ターミナルでの操作（フォルダの信頼の確認・ログインなど）・質問に見えるメニュー・親自身の `start_session` の確認には答えないか。
-  - 断る理由は、確認の画面に打たず、子の手が空いてから親からの指示として送っているか（`submitWhenReady`。制御文字を除き、`neutralizeTags` を通る）。
+  - 親が返せるのは、今回だけ許す（`updatedPermissions` なし）・理由を添えて断る（deny）・断って止める（interrupt）の 3 つだけか。「今後は聞かない」（`permission_suggestions` を足す `always`）や、権限モードを変える答え（`accept-edits` の setMode）を親の道から作る引数を、足していないか。許すときに理由を付けたら、断るか。
+  - 親が読んだ確認にだけ答えるか。`permission_id` は `can_use_tool` の `request_id`。今いちばん前の確認（`pendingPermission`）の ID と違えば、何も答えません。同じコマンドの 2 回目の確認は、別の ID。
+  - 親に見せる入力は `can_use_tool` の `input` の全文で、許すときもそのまま `updatedInput` に返すか（読んだものと動くものをずらさない）。JSON が 3 万文字（`MAX_PERMISSION_INPUT_CHARS`）を超えるものと、人だけが答えられるもの（`humanOnlyReason`: プランの承認・`requires_user_interaction`・安全の確かめ・`permissions.ask` の規則・`default_to_no`。ほかに、許す先の外を開くアプリ内ブラウザの `navigate`）は、`can_allow: false` で断ることだけか。PermissionRequest のフックは書くだけで、`decision` を返していないか（確認を出さずに通す道にしない）。
+  - 許せるのは、親の権限モード（`modeOf`）が acceptEdits・auto・bypassPermissions のときだけか（`MODES_ALLOWING_PERMISSION`。manual・plan・モードが分からない親は、断ることだけ）。
+  - 自分の子だけか（`resolve` の `child`）。子の中継に出していないか（`PARENT_ONLY`）。答えるのは質問でない要求だけで、ターミナルモードの子には答えないか。
+  - 断る理由は、確認への答え（deny の `message`）として、親の言葉と分かる形（「the user said」の形にしない）で返し、子は作業を続けるか。制御文字は除きます。理由が無ければ、interrupt で止めます。
   - 判断の基準（全文を読む・頼んだ作業の範囲で失うものが無いものだけ・戻せない操作と外に出る操作はユーザーが許しているときだけ・迷ったらユーザーに聞く・確認の中身は信頼できない入力）を、MCP の説明とツールの説明から消していないか。
-- 子の片付け（`end_session`）は、自分の子だけ（`resolve` の `child`。独立したセッション・兄弟・親は断る）で、子の中継には出していないか（`PARENT_ONLY`）。人の確認なしに通すのは、失うものが無いからなので、消し方は画面からのアーカイブと同じ処理（`Profile.archiveSession` → `SessionManager.archive` → `removeWorktree`）だけを通し、別の消し方（一覧からの削除 `remove`・`git branch -D`・フォルダの削除）を足していないか。未コミットの変更の控え（`refs/tanacode/backup/`）と、手元にしか無いコミットのあるブランチを残す動きを、引数で外せるようにしていないか。終えるのは `idle`・`exited`・`background`・`archived` の子だけで、作業中・起動中・質問や許可の確認待ち・ターミナルの操作待ちの子は断るか（アーカイブの直前にも状態を確かめ直す）。消す場所は、アプリの記録（`SessionRecord.worktree`・`cwd`）だけで決め、Claude が渡すパスを使っていないか。
-- 子の権限モードの上限（`modeOf`）は、アプリが決めたモード（`knownMode`）と画面のモードの弱いほう。画面のモードの行は会話の中の文でも読めるので、画面の文字だけで上げていないか。子の起動のモードは `launchMode` に残し、`open`・`restart` でもそれより強くしないか。
-- 子への指示・親への知らせは、相手の手が空いてから打つ（`submitWhenReady` の `acceptsTyping`：ターンの外・操作待ちでない・入力欄が空・画面の操作の途中でない）。打つ直前と Enter の直前にも確かめ直す（`submit` の `guarded`）。作業中に打つと、そのあいだに出た許可の確認で、Enter や数字が選択になるためです。
-- 子セッションの起動（`start_session`）は、`--settings` の `PreToolUse` のフック（`SESSIONS_GATE_COMMAND`）が毎回 `ask` を返し、auto・bypassPermissions でも人の確認が出るか。子の中継には、子を動かすツールを出していないか（`SESSIONS_MCP_FOR_CHILD`）。アプリも子からの `start_session` を断るか。独立したセッション（`independent: true`）も、同じ確認・同じフォルダと権限モードの確かめを通るか。起動したあとに、呼び出し元から指示・回答・中断ができないか（`parentId` を付けない）。
+- 許可・質問・プランのカードは、中身を文字として出します。見出し・説明・理由から ANSI の並びと制御文字を消し（`requests.ts`）、画面でも、ツールの入力・差分・プラン・「今後は聞かない」の規則を `stripControlChars` で消してから出します（`MenuCard.tsx`）。プランは Markdown にせず、文字で出します。プランのファイルは、プランのフォルダの下の、リンクでないふつうのファイル（1MB まで）だけを読みます（`readPlanFile`）。
+- 子の片付け（`end_session`）は、自分の子だけ（`resolve` の `child`。独立したセッション・兄弟・親は断る）で、子の中継には出していないか（`PARENT_ONLY`）。人の確認なしに通すのは、失うものが無いからなので、消し方は画面からのアーカイブと同じ処理（`Profile.archiveSession` → `SessionManager.archive` → `removeWorktree`）だけを通し、別の消し方（一覧からの削除 `remove`・`git branch -D`・フォルダの削除）を足していないか。未コミットの変更の控え（`refs/tanacode/backup/`）と、手元にしか無いコミットのあるブランチを残す動きを、引数で外せるようにしていないか。終えるのは `idle`・`exited`・`background`・`archived` の子だけ（`ENDABLE_STATES`）で、作業中・起動中・質問や許可の確認待ち・ターミナルモードの子は断るか（アーカイブの直前にも状態を確かめ直す）。消す場所は、アプリの記録（`SessionRecord.worktree`・`cwd`）だけで決め、Claude が渡すパスを使っていないか。
+- 子の権限モードの上限（`modeOf`）は、アプリが知っている今のモード（`knownMode`: 起動の引数・`set_permission_mode` の返事・stream-json の init と status・会話ログの本体の発言の行の `permissionMode`。サブエージェントの行は読まない。ターミナルモードの間は、書くだけのフックの `permission_mode` も）。分からないとき・知らない名前は manual。画面の文字からは読みません。子の起動のモードは `launchMode` に残し、`open`・`restart`・ターミナルモードの切り替え（`relaunchMode`）でもそれより強くせず、bypassPermissions も引き継がないか。
+- 子への指示・親への知らせ・予約は、stream-json の発言（`priority: 'later'`）として送ります（`submit`・`submitWhenReady`）。作業中なら、Claude Code が今のターンのあとに回します。確認への答えは `control_response` だけなので、送った文が確認の選択になる道はありません。質問・確認を待っている子への `send_message` は断り、`answer_question`・`answer_permission` を案内するか。
+- 子セッションの起動（`start_session`）は、`--settings` の `PreToolUse` のフック（`sessionsGateCommand`。目印は `SESSIONS_GATE_HOOK_ENV`、対象のツールは `SESSIONS_GATED_TOOL`）が毎回 `ask` を返し、auto・bypassPermissions でも人の確認が出るか（チャットにもターミナルモードにも付く）。子の中継には、子を動かすツールを出していないか（`SESSIONS_MCP_FOR_CHILD`）。アプリも子からの `start_session` を断るか。独立したセッション（`independent: true`）も、同じ確認・同じフォルダと権限モードの確かめを通るか。起動したあとに、呼び出し元から指示・回答・中断ができないか（`parentId` を付けない）。
+- 子の claude には、親の Claude Code がそのセッションのために付ける環境変数（`CLAUDECODE`・`CLAUDE_CODE_SESSION_ID` など。`claude-session.ts` の `PARENT_SESSION_ENV`）を渡さないか。
 - 見える範囲（`canSee`）は、同じフォルダ（worktree は元のフォルダ）と親子・兄弟だけ。中のフォルダを含めていないか（`~/work` で開いたセッションに、その下の別々のリポジトリを見せない）。一覧や見出しに、見えない子の ID・名前を出していないか。指示・中断・回答（質問・許可の確認）・片付けは自分の子だけ（`resolve` の `child`）。
-- `start_session` のフォルダは `realpath` してから、親のリポジトリの中か、そのプロファイルのセッションのフォルダ（`host.list()`。別のプロファイルのものは含めない）だけ。別のリポジトリのフォルダを選べても、見える範囲（`canSee`）は広げていないか。`list_sessions` の `start_folders` は、フォルダのパスだけか（見えないセッションの ID・名前を出していないか）。`get_session_diff` の `path` は `safeRelative`、未追跡のファイルは `lstat` でふつうのファイルだけ・読む大きさと数に上限（`git.ts` の `branchFiles` の行数の数え方も同じ）。
-- 会話ログの目印（`<tanacode-parent-message>`・`<tanacode-session-event>`）は、本文や名前の `<tanacode-`・`</tanacode-` を `neutralizeTags` で打ち消しているか（閉じタグで囲みの外に出た文が、子の Claude に人の発言として読まれないように）。
+- `start_session` のフォルダは `realpath` してから、親のリポジトリの中か、そのプロファイルのセッションのフォルダ（`host.list()`。別のプロファイルのものは含めない）だけ（`folderFor`）。別のリポジトリのフォルダを選べても、見える範囲（`canSee`）は広げていないか。`list_sessions` の `start_folders` は、フォルダのパスだけか（見えないセッションの ID・名前を出していないか）。`get_session_diff` の `path` は `safeRelative`、未追跡のファイルは `lstat` でふつうのファイルだけ・読む大きさと数に上限（`git.ts` の `branchFiles` の行数の数え方も同じ）。
+- 会話ログの目印（`<tanacode-parent-message>`・`<tanacode-session-event>`、予約・チェックリストの知らせ）は、本文や名前の `<tanacode-`・`</tanacode-` を `neutralizeTags` で打ち消しているか（閉じタグで囲みの外に出た文が、子の Claude に人の発言として読まれないように）。
 
 ### まだ直していない項目
 
@@ -248,6 +266,10 @@ gh api repos/sny-tanaka/tanacode/secret-scanning/alerts --jq '.[] | select(.stat
 - `js/bad-code-sanitization`（`src/main/browser-control.ts`。2026-10-10 に 8 件を却下）: セレクタなどを `JSON.stringify` して、アプリ内ブラウザで動かすコードに埋めているところ。コードは `world()`（`executeJavaScriptInIsolatedWorld`）で V8 に直接渡し、HTML には埋めません。`JSON.stringify` の結果は正しい JavaScript の文字列なので、値が文字列の外に出ません。同じ書き方を足すと、その PR でまた出ます。次の 2 つを確かめてから却下します。
   - 埋める文字列・配列は `JSON.stringify` を通しているか。数をそのまま埋めるところは、有限の数だと確かめたもの（`numberOr`）だけか。
   - 組み立てたコードを、HTML（`<script>`）に埋めたり、`world()` のほかで評価したりしていないか。
+- `js/command-line-injection`（`src/main/pty-host.ts` の `spawnPipe` の `child_process.spawn`。2026-10-17 に却下）: pty ホストが、ソケットで受け取った起動の頼み（`req.file`・`req.args`）で Claude Code を起動するところ。CodeQL は、ソケットから来た値を利用者が与えた値として扱います。ソケットは自分だけがつなげるもの（待ち受けたらすぐ `chmod 0600`。置き場所は userData か、パスが長いときは `$TMPDIR` で、どちらも 0700 のフォルダの下）。つなげるのは同じユーザーのプロセスだけで、それはもともと何でも実行できます。TUI を起動する `pty.spawn(req.file, req.args)` も、develop から同じ形（CodeQL は node-pty を起動の口として扱わないので、警告が出ない）。同じ形を足すと、その PR でまた出ます。次のことを確かめてから却下します。
+  - 起動の値の出どころが、0600 のソケット（`server.listen` の直後の `chmodSync(socketPath, 0o600)`）か、main の中だけか。ソケットの置き場所が `socketPathIn`（userData か `$TMPDIR`）のままか。
+  - 起動の引数は、アプリが組み立てたもの（`claude-session.ts` など）か。会話ログ・ツールの出力・ページの中身など外から来た値を、`file` や引数にそのまま入れていないか。
+  - シェルを通していないか（`shell: true` や、`sh -c` に渡す文字列を組み立てていないか）。引数は配列のまま渡しているか。
 
 ### 3. シークレットスキャンの警告
 
