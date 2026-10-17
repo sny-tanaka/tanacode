@@ -38,6 +38,9 @@ export class Emitter {
     this.events.set(event, [...(this.events.get(event) ?? []), listener]);
     return this;
   }
+  once(event: string, listener: Listener): this {
+    return this.on(event, listener);
+  }
   // 受け手を呼ぶ（引数は Electron と同じ形で、テストが渡す）
   emit(event: string, ...args: unknown[]): unknown[] {
     return (this.events.get(event) ?? []).map((listener) => (listener as (...a: unknown[]) => unknown)(...args));
@@ -55,6 +58,8 @@ export class FakeWebContents extends Emitter {
   destroyed = false;
   url = 'file:///app/out/renderer/index.html';
   type = 'window';
+  // 使うセッション（プレビューのページが開いたポップアップの見分けに使う。決めていなければ無し）
+  session: unknown = undefined;
   windowOpenHandler: ((details: { url: string; disposition?: string }) => { action: string }) | null = null;
   send = vi.fn((channel: string, payload: unknown) => {
     this.sent.push([channel, payload]);
@@ -127,6 +132,8 @@ export class FakeWindow extends Emitter {
     super();
     state.windows.push(this);
   }
+  // フォーカスのあるウインドウ（無ければ null）
+  static getFocusedWindow = () => state.windows.find((w) => w.focused && !w.destroyed) ?? null;
   getContentBounds = () => ({ x: 0, y: 0, width: this.bounds.width, height: this.bounds.height - 28 });
   isDestroyed = () => this.destroyed;
   isMaximized = () => this.maximized;
@@ -144,6 +151,8 @@ export class FakeWindow extends Emitter {
     this.minimized = false;
   });
   show = vi.fn(() => undefined);
+  showInactive = vi.fn(() => undefined);
+  setTitle = vi.fn((_title: string) => undefined);
   focus = vi.fn(() => undefined);
   loadURL = vi.fn((url: string) => this.webContents.loadURL(url));
   loadFile = vi.fn((path: string) => this.webContents.loadFile(path));
@@ -292,6 +301,7 @@ function fakeClass(name: string, methods: Record<string, Impl>, init?: (self: Fa
 export const electronModule = {
   app: {
     on: (event: string, listener: Listener) => state.app.on(event, listener),
+    once: (event: string, listener: Listener) => state.app.once(event, listener),
     whenReady: () => state.whenReady(),
     getPath: (name: string) => (name === 'userData' ? state.userData : name === 'downloads' ? state.downloads : join(state.root, name)),
     get isPackaged() {
@@ -336,7 +346,15 @@ export const electronModule = {
   net: { fetch: (...args: unknown[]) => state.netFetch(...args) },
   Notification: FakeNotification,
   powerMonitor: { on: (event: string, listener: Listener) => state.powerMonitor.on(event, listener) },
-  screen: { getAllDisplays: () => state.displays },
+  screen: {
+    getAllDisplays: () => state.displays,
+    // rect の真ん中がある画面（無ければ 1 つめ）
+    getDisplayMatching: (rect: { x: number; y: number; width: number; height: number }) => {
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      return state.displays.find(({ workArea: a }) => cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height) ?? state.displays[0];
+    },
+  },
   session: {
     get defaultSession() {
       return state.defaultSession;
@@ -434,6 +452,7 @@ const modules: Record<string, Record<string, unknown>> = {
       handle: echo('browser.handle'),
       track: () => undefined,
       openFromPage: () => false,
+      allowsPopup: () => true,
       isOperating: () => false,
       blocksNavigation: () => false,
       forget: () => undefined,

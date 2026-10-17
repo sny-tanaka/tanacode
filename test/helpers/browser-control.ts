@@ -1,9 +1,11 @@
 import { vi } from 'vitest';
 import type { Session, WebContents } from 'electron';
+import { browserToolId } from '../../src/shared/browser-tools';
 import { IpcChannel, type BrowserActivity, type BrowserAsk } from '../../src/shared/ipc';
+import { BROWSER_GATE_REQUEST } from '../../src/main/browser-bridge';
 import { BrowserControl } from '../../src/main/browser-control';
 import type { ToolResult } from '../../src/main/mcp-bridge';
-import { FakeContents, FakeSession, HOST } from './fake-electron';
+import { FakeContents, FakeSession, HOST, type RequestSender } from './fake-electron';
 
 // アプリ内ブラウザの操作（BrowserControl）を、Electron の作り物（fake-electron.ts）の上で組み立てる。
 // 使うテストのファイルでは、先に vi.mock('electron', ...) で Electron を差し替えておく。
@@ -102,7 +104,21 @@ export function setup() {
   };
 
   // 中継から呼び出しが届いた。終わるまで時間を進める
-  const call = (name: string, args: Record<string, unknown> = {}, sessionId = 'S1'): Promise<ToolResult> => finish(control.handle(sessionId, name, args));
+  // evaluate は、本物と同じく、先に確認のフック（browser-gate.ts）が、呼び出しの ID と一緒にアプリに聞く（gate: false で聞かない）。
+  // toolUseId: 呼び出しの ID（既定は呼び出しごとに作る。null なら付けない）
+  let calls = 0;
+  const call = async (
+    name: string,
+    args: Record<string, unknown> = {},
+    sessionId = 'S1',
+    options: { gate?: boolean; toolUseId?: string | null } = {},
+  ): Promise<ToolResult> => {
+    const toolUseId = options.toolUseId === undefined ? `toolu_test_${++calls}` : (options.toolUseId ?? undefined);
+    if (name === 'evaluate' && options.gate !== false) {
+      await control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: args, ...(toolUseId ? { toolUseId } : {}) });
+    }
+    return finish(control.handle(sessionId, name, args, undefined, toolUseId));
+  };
 
   // 画面へ送ったもの（チャンネルごと）
   const sentOn = <T = unknown>(channel: string): T[] => sent.filter((s) => s.channel === channel).map((s) => s.payload as T);
@@ -115,9 +131,25 @@ export function setup() {
   return { control, state, sent, asked, created, open, call, sentOn, activities, network };
 }
 
-// ページのコンソールに出す（Electron の console-message）
-export function logConsole(page: FakeContents, level: string, message: string, sourceId = '', lineNumber = 0): void {
-  page.emit('console-message', { level, message, sourceId, lineNumber });
+// 文を出したフレーム（Electron の WebFrameMain のうち、使うもの）。parent が null ならトップのフレーム
+export type ConsoleFrame = { origin: string; url: string; parent: unknown } | null;
+
+// ページのコンソールに出す（Electron の console-message）。frame: 出したフレーム（既定は、今のページのトップのフレーム）
+export function logConsole(page: FakeContents, level: string, message: string, sourceId = '', lineNumber = 0, frame?: ConsoleFrame): void {
+  const top = (() => {
+    try {
+      return { origin: new URL(page.url).origin, url: page.url, parent: null };
+    } catch {
+      return { origin: 'null', url: page.url, parent: null };
+    }
+  })();
+  page.emit('console-message', { level, message, sourceId, lineNumber, frame: frame === undefined ? top : frame });
+}
+
+// page のフレームが出した通信（webRequest の通信の結果に足す）。origin: 出したフレームのオリジン（既定は、今のページのオリジン）/
+// top: 出したのがトップのフレームか
+export function sentBy(page: FakeContents, origin = new URL(page.url).origin, top = true): RequestSender {
+  return { webContentsId: page.id, initiatorOrigin: origin, frame: { origin, url: '', parent: top ? null : {} } };
 }
 
 // 別プロセスの iframe につながった（URL は Runtime.evaluate の location.href で答える）

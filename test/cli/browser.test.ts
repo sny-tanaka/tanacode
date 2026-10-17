@@ -145,6 +145,9 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     expect(calls).toHaveLength(3);
     expect(textOf(menu)).toContain('document.cookie');
     expect(menu.always ?? []).toEqual([]);
+    // フックが書いた理由（アプリが答えたページ）は、確認の理由（decision_reason）にそのまま入り、親のセッションにも届く。
+    // なのでアプリは、許していない先のページはオリジンだけを答える（browser-control.test.ts）
+    expect(menu.reason).toContain(REMOTE);
     run.replyPermission(menu, { kind: 'allow' });
     await run.waitUntil('返事', replied('確かめました'));
     expect(calls[3]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.cookie' } });
@@ -273,8 +276,9 @@ describe.each([
   let run: ClaudeRun;
   let bridge: BrowserBridge;
   let socketDir: string;
-  // アプリに届いた呼び出しと、フックが聞いてきたもの
+  // アプリに届いた呼び出し（と、その呼び出しの ID）と、フックが聞いてきたもの
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
+  const callIds: (string | undefined)[] = [];
   const gates: Record<string, unknown>[] = [];
   const replied = (text: string) => () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
   const resultOf = (toolUseId: string) => toolResult(run, toolUseId);
@@ -284,13 +288,14 @@ describe.each([
     const script = await buildRelay();
     socketDir = mkdtempSync(join(tmpdir(), 'tanacode-browser-outside-'));
     const socketPath = join(socketDir, 'browser.sock');
-    bridge = new BrowserBridge(socketPath, async (_session, tool, args): Promise<ToolResult> => {
+    bridge = new BrowserBridge(socketPath, async (_session, tool, args, _signal, toolUseId): Promise<ToolResult> => {
       if (tool === BROWSER_GATE_REQUEST) {
         gates.push(args);
         const url = String((args.input as { url?: unknown } | undefined)?.url ?? '');
         return textResult(JSON.stringify({ outside: isClaudeAllowedUrl(url, []) ? null : new URL(url).origin }));
       }
       calls.push({ tool, args });
+      callIds.push(toolUseId);
       return textResult(`${tool} をしました`);
     });
     await bridge.start();
@@ -328,8 +333,9 @@ describe.each([
     }
     await run.waitUntil('localhost を開いた結果', () => resultOf('toolu_local'));
     expect(calls).toEqual([{ tool: 'navigate', args: { url: LOCAL } }]);
-    // フックは、ツールの名前と入力をアプリに渡す
-    expect(gates[0]).toEqual({ tool: browserToolId('navigate'), input: { url: LOCAL } });
+    // フックは、ツールの名前と入力と、呼び出しの ID（tool_use_id）をアプリに渡す。中継も、同じ ID（tools/call の _meta）を渡す
+    expect(gates[0]).toEqual({ tool: browserToolId('navigate'), input: { url: LOCAL }, toolUseId: 'toolu_local' });
+    expect(callIds).toEqual(['toolu_local']);
   });
 
   it('許す先の外は、開くたびに確認が出る。確認には開く先のオリジンが出る', async () => {

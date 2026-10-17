@@ -320,7 +320,8 @@ describe('Claude Code に足す MCP サーバー', () => {
     await boot();
     const [browser, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
     const signal = new AbortController().signal;
-    expect(browser('s1', 'navigate', { url: 'http://localhost' }, signal)).toEqual({ call: 'browser.handle', args: ['s1', 'navigate', { url: 'http://localhost' }, signal] });
+    // アプリ内ブラウザには、Claude Code が付けた呼び出しの ID も渡す（JavaScript の実行の確認と結びつける）
+    expect(browser('s1', 'evaluate', { expression: '1' }, signal, 'toolu_1')).toEqual({ call: 'browser.handle', args: ['s1', 'evaluate', { expression: '1' }, signal, 'toolu_1'] });
     expect(sessions('s1', 'start_session', { prompt: 'x' }, signal)).toEqual({ call: 'sessionsControl.handle', args: ['s1', 'start_session', { prompt: 'x' }, signal] });
     expect(checklist('s1', 'card_add', { title: 'x' })).toEqual({ call: 'checklistControl.handle', args: ['s1', 'card_add', { title: 'x' }] });
     expect(walkthrough('s1', 'walkthrough_start', { steps: [] })).toEqual({ call: 'walkthrough.handle', args: ['s1', 'walkthrough_start', { steps: [] }] });
@@ -956,7 +957,7 @@ describe('ウインドウ', () => {
     expect(attach('data:text/html,x').prevented).toBe(true);
   });
 
-  it('webview のページが新しいウインドウで開こうとしたら、アプリ内ブラウザのタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く', async () => {
+  it('webview のページが新しいタブで開こうとしたら、アプリ内ブラウザのタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く', async () => {
     await boot();
     const guest = new FakeWebContents();
     mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
@@ -968,14 +969,48 @@ describe('ウインドウ', () => {
     expect(open({ url: 'https://example.test/tab', disposition: 'foreground-tab' })).toEqual({ action: 'deny' });
     expect(browser.openFromPage.mock.calls).toEqual([[guest, 'https://example.test/tab', 'foreground-tab']]);
     browser.isOperating.mockReturnValueOnce(true);
-    open({ url: 'https://example.test/operating', disposition: 'new-window' });
-    open({ url: 'mailto:me@example.test', disposition: 'new-window' });
+    open({ url: 'https://example.test/operating', disposition: 'background-tab' });
+    open({ url: 'mailto:me@example.test', disposition: 'foreground-tab' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
-    open({ url: 'file:///tmp/a.html#https://example.test/', disposition: 'new-window' });
+    open({ url: 'file:///tmp/a.html#https://example.test/', disposition: 'foreground-tab' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
-    open({ url: 'https://example.test/outside', disposition: 'new-window' });
-    open({ url: 'http://localhost:8080/', disposition: 'new-window' });
+    open({ url: 'https://example.test/outside', disposition: 'foreground-tab' });
+    open({ url: 'http://localhost:8080/', disposition: 'background-tab' });
     expect(state.shell.openExternal.mock.calls).toEqual([['https://example.test/outside'], ['http://localhost:8080/']]);
+  });
+
+  it('webview のページが開くポップアップ（new-window）は、アプリ内ブラウザの外の別ウインドウで開く（window.opener をつなぐ）。http(s) でないものは開かない', async () => {
+    await boot();
+    const guest = new FakeWebContents();
+    mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
+    const browser = the('BrowserControl');
+    const open = guest.windowOpenHandler!;
+    const popup = open({ url: 'https://login.example.test/authorize', disposition: 'new-window', features: 'width=480,height=640,left=-500,closable=no' } as never) as {
+      action: string;
+      outlivesOpener: boolean;
+      overrideBrowserWindowOptions: Record<string, unknown>;
+      createWindow: (options: Record<string, unknown>) => unknown;
+    };
+    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, disableDialogs: true };
+    expect(popup.action).toBe('allow');
+    expect(popup.outlivesOpener).toBe(true);
+    expect(popup.overrideBrowserWindowOptions).toEqual({ webPreferences: secure });
+    // 別ウインドウは、アプリが BrowserWindow で作る。ページの features（closable=no など）は渡さない。
+    // tanacode のウインドウ（x=40 y=30 1400×900）がある画面（1920×1080）の中に詰める。上下の位置の指定が無ければ、ウインドウの真ん中
+    const contents = new FakeWebContents();
+    popup.createWindow({ webContents: contents, closable: false, x: -500, width: 480, height: 640 });
+    // tanacode のウインドウにフォーカスが無い間は出さず、フォーカスが来たら、フォーカスを移さずに出す
+    const popupWindow = state.windows.at(-1)!;
+    expect(popupWindow.showInactive).not.toHaveBeenCalled();
+    state.app.emit('browser-window-focus');
+    expect(popupWindow.showInactive).toHaveBeenCalledTimes(1);
+    expect(state.windows.at(-1)!.options).toEqual({ webContents: contents, show: false, x: 0, y: 160, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: secure });
+    expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
+    // Claude の操作で許していない先なら開かない
+    browser.allowsPopup.mockReturnValueOnce(false);
+    expect(open({ url: 'https://outside.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toEqual({ action: 'deny' });
+    expect(open({ url: 'file:///etc/hosts', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(state.shell.openExternal).not.toHaveBeenCalled();
   });
 });
 
@@ -1071,6 +1106,19 @@ describe('プレビューの webview の移動先', () => {
   it('webview でないもの（アプリのウインドウなど）には付けない', async () => {
     const contents = await guard('window');
     expect(contents.events.size).toBe(0);
+    expect(contents.windowOpenHandler).toBeNull();
+  });
+
+  it('プレビューのセッションのウインドウ（ページが開いたポップアップの別ウインドウ）にも、同じ見張りと新しいウインドウの扱いを付ける', async () => {
+    await boot();
+    const contents = new FakeWebContents();
+    contents.session = state.partitions.get('persist:tanacode-preview');
+    state.app.emit('web-contents-created', fakeEvent(), contents);
+    expect(go(contents, 'will-navigate', 'file:///etc/hosts')).toBe('止める');
+    expect(go(contents, 'will-redirect', 'blob:http://localhost/1')).toBe('止める');
+    expect(go(contents, 'will-frame-navigate', 'https://example.test/')).toBe('通す');
+    expect(contents.windowOpenHandler!({ url: 'mailto:me@example.test', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(contents.windowOpenHandler!({ url: 'https://login.example.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toMatchObject({ action: 'allow' });
   });
 });
 
