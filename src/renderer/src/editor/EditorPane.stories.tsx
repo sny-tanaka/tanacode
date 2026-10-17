@@ -98,3 +98,47 @@ pie title 変更したファイル
 export const Markdown: Story = {
   render: () => <Pane files={[{ path: 'docs/設計メモ.md', content: { kind: 'text', text: markdown } }]} />,
 };
+
+// HTML の混ざった README（GitHub が描くものは残し、見た目を偽る style・フォーム・ボタンは描かない）
+const readme = `<div align="center">
+  <h1>cafe-menu</h1>
+  <p>季節のドリンクのメニューを作るアプリ <sup>β</sup></p>
+</div>
+
+<p style="position:fixed;inset:0;background:red">この段落の style は消える</p>
+
+<form><input type="text" placeholder="消える入力欄"><button>消えるボタン</button></form>
+
+保存は <kbd>⌘</kbd> + <kbd>S</kbd>。
+
+<details open>
+<summary>開発の始め方</summary>
+
+\`\`\`ts
+const menu = loadMenu('autumn');
+\`\`\`
+
+</details>
+
+- [x] メニューの一覧
+- [ ] 季節ごとの切り替え
+`;
+
+// 見出しの id が、mermaid の図を描くときの id（mermaid-1 など）とぶつからないか（ぶつかると、mermaid が見出しを消す）
+const mermaidHeading = `# mermaid 1
+
+図の前の段落。
+
+\`\`\`mermaid
+flowchart LR
+  A[見出し] --> B[図]
+\`\`\`
+`;
+
+export const 見出しと図のid: Story = {
+  render: () => <Pane files={[{ path: 'docs/図.md', content: { kind: 'text', text: mermaidHeading } }]} />,
+};
+
+export const HTMLの混ざったMarkdown: Story = {
+  render: () => <Pane files={[{ path: 'README.md', content: { kind: 'text', text: readme } }]} />,
+};

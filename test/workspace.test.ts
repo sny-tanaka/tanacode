@@ -159,6 +159,36 @@ describe('Workspace', () => {
     await expect(ws.readImage('../secret.png')).rejects.toThrow('outside workspace');
   });
 
+  it('readImage: ワークスペースの中（リンクを解いた場所も）の画像だけを読む。絶対パスは、ワークスペースか追加したフォルダの中のものだけ', async () => {
+    const dataUrl = (bytes: number[]) => `data:image/png;base64,${Buffer.from(bytes).toString('base64')}`;
+    const outside = join(root, '..', 'outside');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'secret.png'), Buffer.from([5]));
+    const added = join(root, '..', 'lib');
+    mkdirSync(added);
+    writeFileSync(join(added, 'logo.png'), Buffer.from([6]));
+    put('img/a.png', Buffer.from([1]));
+    // 絶対パス: ワークスペースの中と、追加したフォルダの中は読む。外は読まない
+    expect(await ws.readImage(join(root, 'img/a.png'), [added])).toBe(dataUrl([1]));
+    expect(await ws.readImage(join(added, 'logo.png'), [added])).toBe(dataUrl([6]));
+    await expect(ws.readImage(join(outside, 'secret.png'), [added])).rejects.toThrow('outside workspace');
+    await expect(ws.readImage(join(added, 'logo.png'))).rejects.toThrow('outside workspace');
+    // 中のリンク: 外を指すもの（ファイル・フォルダ）は読まず、中を指すものは読む
+    symlinkSync(join(outside, 'secret.png'), join(root, 'leak.png'));
+    symlinkSync(outside, join(root, 'docs'));
+    symlinkSync(join(root, 'img/a.png'), join(root, 'same.png'));
+    await expect(ws.readImage('leak.png')).rejects.toThrow('outside workspace');
+    await expect(ws.readImage('docs/secret.png')).rejects.toThrow('outside workspace');
+    expect(await ws.readImage('same.png')).toBe(dataUrl([1]));
+    // 追加したフォルダの中のリンクも、外を指すものは読まない
+    symlinkSync(join(outside, 'secret.png'), join(added, 'leak.png'));
+    await expect(ws.readImage(join(added, 'leak.png'), [added])).rejects.toThrow('outside workspace');
+    // ワークスペースのフォルダがリンクの先にあっても（/tmp と /private/tmp など）、中のものは読む
+    const linked = join(root, '..', 'linked-repo');
+    symlinkSync(root, linked);
+    expect(await new Workspace(linked).readImage('img/a.png')).toBe(dataUrl([1]));
+  });
+
   it('画像は 10MB ちょうどまで、絵として返す。拡張子ごとの種類', async () => {
     put('limit.png', Buffer.alloc(10 * 1024 * 1024, 1));
     expect((await ws.readFile('limit.png')).kind).toBe('image');

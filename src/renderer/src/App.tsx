@@ -14,7 +14,8 @@ import { closeSettingsFilesDialog, useSettingsFilesDialogOpen } from './chat/set
 import { ProfilesDialog } from './account/ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
-import { EditorPane, type OpenFile, type RevealRequest } from './editor/EditorPane';
+import { EditorPane, type EditorHandle, type OpenFile, type RevealRequest } from './editor/EditorPane';
+import { saveForLeaving, UnsavedDialog } from './editor/UnsavedDialog';
 import { languageFor, languageLabel } from './editor/monaco';
 import { Explorer } from './explorer/Explorer';
 import type { ReviewComment } from './review/LineComments';
@@ -51,7 +52,7 @@ import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
-import { noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
+import { keepClaudeScreens, noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
@@ -189,7 +190,20 @@ export function App() {
   // worktree で始めたセッションには、worktree のフォルダができる前に移る。できるまで、フォルダを読むもの（エクスプローラー・ソース管理・検索・ターミナル）は待つ
   const folderWait = pendingFolder(selected);
   const folderWaitLabel = folderWait && preparingLabel(folderWait);
-  const editor = (cwd && editors[cwd]) || EMPTY_EDITOR;
+  // エディタを出すフォルダ（と、ファイルを読み書きするセッション）。新規セッションの画面に移った直後は、フォルダを開き終えるまで
+  // 見ているフォルダが無くなるが、同じフォルダなら前のものを出し続ける（エディタを作り直すと、保存していない変更が消えるため）
+  const lastEditorHost = useRef<{ id: string; cwd: string } | null>(null);
+  const prevHost = lastEditorHost.current;
+  const editorHost =
+    viewId && cwd
+      ? prevHost?.id === viewId && prevHost.cwd === cwd
+        ? prevHost
+        : { id: viewId, cwd }
+      : composing && composing.cwd === prevHost?.cwd
+        ? prevHost
+        : null;
+  lastEditorHost.current = editorHost;
+  const editor = (editorHost && editors[editorHost.cwd]) || EMPTY_EDITOR;
   const workspace = viewId ? workspaces[viewId] : undefined;
   // ワークスペースに追加したフォルダ。一覧が届くたびに配列が作り直されるので、中身が同じなら同じ配列を使う（エクスプローラーを描き直さない）
   const addedKey = (selected ? (selected.addedFolders ?? NO_FOLDERS) : (draft?.added ?? NO_FOLDERS)).join('\0');
@@ -264,10 +278,55 @@ export function App() {
     if (!first) setComposing({ back: null, cwd: sessions[0]?.worktree?.root ?? sessions[0]?.cwd ?? null });
   }, [sessions, load]);
 
-  const select = useCallback((id: string | null) => {
+  // エディタのフォルダが変わる（エディタを作り直し、保存していない変更が消える）操作は、その前に確かめる。
+  // 保存していない変更があれば「保存して移る・保存せずに移る・やめる」を聞き、やめたら移らない。無いか、同じフォルダのままならすぐ移る。
+  // next: 移った先のエディタのフォルダ（分からないときは null。変わるものとして扱う）
+  const editorRef = useRef<EditorHandle>(null);
+  const editorCwdRef = useRef<string | null>(null);
+  editorCwdRef.current = editorHost?.cwd ?? null;
+  // files: 保存していないファイル（衝突中のものを除く）/ conflicts: ディスク側でも変わったもの
+  const [leaving, setLeaving] = useState<{ files: string[]; conflicts: string[]; proceed: () => void } | null>(null);
+  const leavingRef = useRef(leaving);
+  leavingRef.current = leaving;
+  const leaveEditorThen = useCallback((next: string | null, proceed: () => void) => {
+    const current = editorCwdRef.current;
+    const editor = current !== null && current !== next ? editorRef.current : null;
+    const unsaved = editor?.unsaved() ?? [];
+    // 確かめている間に別の移り先を頼まれたら、新しいほうを確かめる
+    if (unsaved.length > 0) {
+      const conflicts = editor!.conflicts();
+      return setLeaving({ files: unsaved.filter((path) => !conflicts.includes(path)), conflicts, proceed });
+    }
+    setLeaving(null);
+    proceed();
+  }, []);
+  const finishLeaving = useCallback(() => {
+    const pending = leavingRef.current;
+    setLeaving(null);
+    pending?.proceed();
+  }, []);
+  const saveAndLeave = useCallback(async () => {
+    await saveForLeaving(editorRef.current);
+    finishLeaving();
+  }, [finishLeaving]);
+  // 移らない。衝突中のファイルがあれば、そのファイルをエディタで開く（どちらを残すかを選ぶ知らせを見せる）
+  const stayInFolder = useCallback(() => {
+    const conflict = leavingRef.current?.conflicts[0];
+    const dir = editorCwdRef.current;
+    setLeaving(null);
+    if (!conflict || !dir) return;
+    setDiffView(null);
+    setEditors((prev) => ({ ...prev, [dir]: { ...(prev[dir] ?? EMPTY_EDITOR), activePath: conflict } }));
+  }, []);
+
+  const showSession = useCallback((id: string | null) => {
     setComposing(null);
     setSelectedId(id);
   }, []);
+  const select = useCallback(
+    (id: string | null) => leaveEditorThen(folderOfSession(sessionsRef.current, id), () => showSession(id)),
+    [leaveEditorThen, showSession],
+  );
 
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
@@ -278,11 +337,18 @@ export function App() {
     // worktree のセッションなら、元のフォルダ（worktree の中で、また worktree を作らないように）
     const folderOf = (s: SessionSummary | undefined) => s?.worktree?.root ?? s?.cwd;
     const cwd = folderOf(list.find((s) => s.id === back)) ?? folderOf(list[0]) ?? null;
-    setComposing((prev) => prev ?? { back, cwd });
-    setSelectedId(null);
-  }, []);
+    // 新規セッションの画面を出していれば、そのまま（フォルダも変えない）
+    const next = composingRef.current ? composingRef.current.cwd : cwd;
+    leaveEditorThen(next, () => {
+      setComposing((prev) => prev ?? { back, cwd });
+      setSelectedId(null);
+    });
+  }, [leaveEditorThen]);
 
-  const changeComposingCwd = useCallback((dir: string) => setComposing((prev) => (prev ? { ...prev, cwd: dir } : prev)), []);
+  const changeComposingCwd = useCallback(
+    (dir: string) => leaveEditorThen(dir, () => setComposing((prev) => (prev ? { ...prev, cwd: dir } : prev))),
+    [leaveEditorThen],
+  );
 
   // 新規セッションの画面で選んでいるフォルダを開く。フォルダを変えたり画面を閉じたりしたら閉じる
   const composingCwd = composing?.cwd ?? null;
@@ -392,6 +458,10 @@ export function App() {
   // アーカイブしていないセッションと、新規セッションの画面のフォルダ（ブラウザのタブを持っておくもの。消した・アーカイブしたセッション、閉じた画面のタブは閉じる）
   const liveKey = [...(sessions ?? []).filter((s) => !s.archived).map((s) => s.id), ...(draftToolId ? [draftToolId] : [])].join(',');
   const liveSessionIds = useMemo(() => (liveKey ? liveKey.split(',') : []), [liveKey]);
+  // 一覧から消した・アーカイブしたセッションの、ターミナルモードの画面（xterm）を片付ける（一覧を読む前は片付けない）
+  useEffect(() => {
+    if (sessions) keepClaudeScreens(liveSessionIds);
+  }, [sessions, liveSessionIds]);
 
   useEffect(() => {
     if (!viewId || workspaces[viewId]) return;
@@ -598,17 +668,19 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [viewId]);
 
+  const editorCwd = editorHost?.cwd ?? null;
+  const editorId = editorHost?.id ?? null;
   const closeFile = useCallback(
     (path: string) => {
-      if (!cwd) return;
-      updateEditor(cwd, (s) => {
+      if (!editorCwd) return;
+      updateEditor(editorCwd, (s) => {
         const index = s.files.findIndex((f) => f.path === path);
         const files = s.files.filter((f) => f.path !== path);
         const activePath = path === s.activePath ? (files[Math.min(index, files.length - 1)]?.path ?? null) : s.activePath;
         return { ...s, files, activePath };
       });
     },
-    [cwd, updateEditor],
+    [editorCwd, updateEditor],
   );
 
   // 選んだフォルダで Claude Code を起動し、最初の発言は起動が終わるのを待って送る。
@@ -624,10 +696,11 @@ export function App() {
       const id = await window.tanacode.sessions.create(dir, added.length > 0 ? { ...options, addedFolders: added } : options);
       pendingSends.send(id, text, attachments, pastes);
       if (options.worktree) worktreeStart.current = { id, back: composingRef.current?.back ?? null };
-      // 始めている間に、新規セッションの画面でフォルダを変えた・画面を離れたなら、移らない（始めたセッションは一覧に出る）
-      if (composingRef.current?.cwd === dir) select(id);
+      // 始めている間に、新規セッションの画面でフォルダを変えた・画面を離れたなら、移らない（始めたセッションは一覧に出る）。
+      // worktree で始めたセッションのフォルダは、worktree のフォルダ（エディタのフォルダが変わる）
+      if (composingRef.current?.cwd === dir) leaveEditorThen(options.worktree ? null : dir, () => showSession(id));
     },
-    [pendingSends.send, select],
+    [pendingSends.send, leaveEditorThen, showSession],
   );
   // worktree で始めたが、Claude Code が worktree を作れなかった（まだ信頼していないフォルダなど）。セッションは、もう一覧から消えている。
   // 新規セッションの画面に戻し、送るはずだった指示を入力欄に戻して、理由を出す（worktree なしで始め直すなど、その場でやり直せるように）
@@ -640,11 +713,13 @@ export function App() {
         const started = worktreeStart.current?.id === id ? worktreeStart.current : null;
         // 戻り先は、ほかのセッションを見ていればそのセッション、始めたセッションを見ていれば、始める前の戻り先
         const back = viewing && viewing !== id ? viewing : (started?.back ?? null);
-        setComposing((prev) => ({ back: prev ? prev.back : back, cwd: dir, restore }));
-        setSelectedId(null);
+        leaveEditorThen(dir, () => {
+          setComposing((prev) => ({ back: prev ? prev.back : back, cwd: dir, restore }));
+          setSelectedId(null);
+        });
         setStartFailure(error);
       }),
-    [pendingSends.take],
+    [pendingSends.take, leaveEditorThen],
   );
   // 理由のダイアログは、画面を戻してから出す（ダイアログが出ている間は、画面が描き直されない）
   useEffect(() => {
@@ -664,24 +739,30 @@ export function App() {
   const openImport = useCallback(() => setImporting(true), []);
   const closeCenter = useCallback(() => setDiffView(null), []);
   // 一覧から消したセッションを見ていたら、ほかのセッションに移る
+  const nextAfterRemoval = (id: string) => sessionsRef.current?.find((s) => s.id !== id && !s.archived)?.id ?? null;
   const forgetSession = useCallback(
     (id: string) => {
       pendingSends.drop(id);
-      if (id === selectedIdRef.current) setSelectedId(sessionsRef.current?.find((s) => s.id !== id && !s.archived)?.id ?? null);
+      if (id === selectedIdRef.current) setSelectedId(nextAfterRemoval(id));
     },
     [pendingSends.drop],
   );
   const removeSession = useCallback(
     (id: string) => {
-      // worktree のセッションは、worktree をどうするかを聞いてから
-      if (sessionsRef.current?.find((s) => s.id === id)?.worktree) {
-        setWorktreeDialog({ id, action: 'remove' });
-        return;
-      }
-      void window.tanacode.sessions.remove(id);
-      forgetSession(id);
+      const remove = () => {
+        // worktree のセッションは、worktree をどうするかを聞いてから
+        if (sessionsRef.current?.find((s) => s.id === id)?.worktree) {
+          setWorktreeDialog({ id, action: 'remove' });
+          return;
+        }
+        void window.tanacode.sessions.remove(id);
+        forgetSession(id);
+      };
+      // 見ているセッションを消すと、ほかのセッションに移る。エディタのフォルダが変わるなら、消す前に確かめる
+      if (id === selectedIdRef.current) leaveEditorThen(folderOfSession(sessionsRef.current, nextAfterRemoval(id)), remove);
+      else remove();
     },
-    [forgetSession],
+    [forgetSession, leaveEditorThen],
   );
   const archiveSession = useCallback(
     (id: string) => {
@@ -742,14 +823,17 @@ export function App() {
   const openPath = useCallback((path: string, line?: number) => void openFile(path, line), [openFile]);
   const openScmDiff = useCallback((path: string, staged: boolean) => setDiffView({ source: 'scm', path, staged }), []);
   const openTaskEntry = useCallback((t: TaskEntry) => openTask(t.ref), [openTask]);
-  const activatePath = useCallback((path: string) => cwd && updateEditor(cwd, (s) => ({ ...s, activePath: path })), [cwd, updateEditor]);
+  const activatePath = useCallback(
+    (path: string) => editorCwd && updateEditor(editorCwd, (s) => ({ ...s, activePath: path })),
+    [editorCwd, updateEditor],
+  );
   const saveFile = useCallback(
     async (path: string, text: string) => {
-      if (!viewId || !cwd) return;
-      await window.tanacode.workspace.writeFile(viewId, path, text);
-      updateEditor(cwd, (s) => ({ ...s, files: withFile(s.files, path, { kind: 'text', text }) }));
+      if (!editorId || !editorCwd) return;
+      await window.tanacode.workspace.writeFile(editorId, path, text);
+      updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, { kind: 'text', text }) }));
     },
-    [viewId, cwd, updateEditor],
+    [editorId, editorCwd, updateEditor],
   );
 
   // タスクは会話のあるセッションだけ。新規セッションの画面ではエクスプローラー・検索・ソース管理だけを出す
@@ -1046,7 +1130,7 @@ export function App() {
         {viewId && cwd && workspace && resizer('side')}
         {importing && (
           <ImportDialog
-            onImport={(s) => void window.tanacode.sessions.import(s).then((id) => setSelectedId(id))}
+            onImport={(s) => void window.tanacode.sessions.import(s).then((id) => leaveEditorThen(s.cwd, () => setSelectedId(id)))}
             onClose={() => setImporting(false)}
           />
         )}
@@ -1061,6 +1145,9 @@ export function App() {
             onConfirm={(removeWorktree) => finishWorktreeDialog(worktreeDialog.id, worktreeDialog.action, removeWorktree)}
             onClose={() => setWorktreeDialog(null)}
           />
+        )}
+        {leaving && (
+          <UnsavedDialog files={leaving.files} conflicts={leaving.conflicts} onSave={saveAndLeave} onDiscard={finishLeaving} onCancel={stayInFolder} />
         )}
         {quickOpen && viewId && (
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
@@ -1102,12 +1189,13 @@ export function App() {
               onAsk={walk ? askRange : undefined}
             />
           )}
-          {viewId && cwd ? (
+          {editorHost ? (
             // 差分を見ている間もエディタは残しておく（未保存の変更やスクロール位置を保つ）
             <div className="editor-host" hidden={!!diffView}>
             <EditorPane
-              key={cwd}
-              sessionId={viewId}
+              key={editorHost.cwd}
+              handle={editorRef}
+              sessionId={editorHost.id}
               files={editor.files}
               activePath={editor.activePath}
               changes={changes}
@@ -1145,7 +1233,14 @@ export function App() {
             liveSessionIds={liveSessionIds}
             onClose={closeCenter}
           />
-          <TerminalPanel sessionId={toolId} waiting={folderWaitLabel} open={terminalOpen} onOpen={showShell} onClose={closeShell} />
+          <TerminalPanel
+            sessionId={toolId}
+            waiting={folderWaitLabel}
+            liveOwners={sessions ? liveSessionIds : null}
+            open={terminalOpen}
+            onOpen={showShell}
+            onClose={closeShell}
+          />
         </div>
       </div>
       <StatusBar
@@ -1287,6 +1382,9 @@ function CardView({
   if (!list || !card) return null;
   return <CardPane session={session} sessions={sessions} list={list} card={card} onClose={onClose} />;
 }
+
+// セッションのフォルダ（エディタのフォルダ）。分からなければ null
+const folderOfSession = (sessions: SessionSummary[] | null | undefined, id: string | null) => (id && sessions?.find((s) => s.id === id)?.cwd) || null;
 
 const renameSession = (id: string, title: string) => void window.tanacode.sessions.rename(id, title);
 const unarchiveSession = (id: string) => void window.tanacode.sessions.unarchive(id);

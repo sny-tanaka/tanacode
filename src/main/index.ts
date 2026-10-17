@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
@@ -73,6 +74,8 @@ let relaunchAfterUpdate = false;
 let relaunchForLanguage = false;
 // Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
 let shuttingDown = false;
+// 起動の途中に 2 つめが起動した（ウインドウを作ったら前に出す）
+let showWhenCreated = false;
 // 終了のしかたが決まった（確認を済ませた・確認の要らない終了）。まだなら before-quit で止めて確認する
 let quitDecided = false;
 let confirmingQuit = false;
@@ -191,15 +194,41 @@ function broadcastProfiles(force = false): void {
   }
 }
 
+// 画面からの呼び出しと知らせは、どれもここで受け口を登録する。アプリの画面のメインフレームから来たものだけを受ける
 function handle<C extends keyof IpcInvoke>(
   channel: C,
   listener: (event: IpcMainInvokeEvent, ...args: Parameters<IpcInvoke[C]>) => ReturnType<IpcInvoke[C]> | Awaited<ReturnType<IpcInvoke[C]>>,
 ): void {
-  ipcMain.handle(channel, listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+  const run = listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!fromApp(event)) throw new Error(t('main.error.notFromApp'));
+    return run(event, ...args);
+  });
 }
 
 function listen<C extends keyof IpcSend>(channel: C, listener: (event: IpcMainEvent, ...args: Parameters<IpcSend[C]>) => void): void {
-  ipcMain.on(channel, listener as (event: IpcMainEvent, ...args: unknown[]) => void);
+  const run = listener as (event: IpcMainEvent, ...args: unknown[]) => void;
+  ipcMain.on(channel, (event, ...args) => {
+    if (fromApp(event)) run(event, ...args);
+  });
+}
+
+// アプリの画面（主ウインドウと、足したプロファイルの画面）のメインフレームで、アプリの画面を開いているものから来たか。
+// 中のフレーム・アプリ内ブラウザのページ・アプリの画面でなくなったもの（フレームが分からないものも）からは受けない
+function fromApp(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame;
+  return !!frame && !frame.parent && isAppContents(event.sender) && isAppUrl(frame.url);
+}
+
+// アプリの画面の URL か。ビルドした画面のファイルか、開発中は開発サーバー（同じオリジン）
+function isAppUrl(url: string): boolean {
+  try {
+    const dev = process.env.ELECTRON_RENDERER_URL;
+    if (dev) return new URL(url).origin === new URL(dev).origin;
+    return url.startsWith('file:') && fileURLToPath(url) === APP_HTML;
+  } catch {
+    return false;
+  }
 }
 
 // 前に閉じたときのウインドウの位置と大きさ。次の起動で同じところに開く
@@ -273,12 +302,15 @@ function createWindow(): void {
   for (const id of opened.keys()) if (id !== DEFAULT_PROFILE_ID) attachView(id);
 }
 
+// ビルドした画面のファイル
+const APP_HTML = join(__dirname, '../renderer/index.html');
+
 // アプリの画面を読み込む（主ウインドウか、足したプロファイルの画面）
 function loadApp(target: Pick<WebContents, 'loadURL' | 'loadFile'>): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void target.loadFile(join(__dirname, '../renderer/index.html'));
+    void target.loadFile(APP_HTML);
   }
 }
 
@@ -292,6 +324,17 @@ function setupAppContents(contents: WebContents, id: string): void {
   });
   contents.on('will-navigate', (event, url) => {
     if (url !== contents.getURL()) event.preventDefault();
+  });
+  // 画面を読み込み直す（⌘R）。前の画面が開いた新規セッションの画面のフォルダ（見張り・そこで開いたシェルとブラウザ）は、
+  // 新しい画面からは見えず使えないので閉じる。セッションのシェルは止めずに、新しい画面が引き継ぐ（shell.attach）まで、知らせを止める。
+  // 移り始めた知らせは、止められる知らせ（上の will-navigate）より先に届くので、will-navigate が止める移動（URL の違うもの。
+  // Finder のファイルを落とした・リンク）では何もしない（読み込み直しにならず、引き継ぐ画面が来ないため）
+  contents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument || details.url !== contents.getURL()) return;
+    const p = opened.get(id);
+    if (!p) return;
+    for (const folder of [...p.folderViews.keys()]) p.closeFolderView(folder);
+    p.shells.detach();
   });
   // プレビューの webview には、アプリの API（preload）や Node を渡さない。開けるのは http(s) のページだけ
   contents.on('will-attach-webview', (event, webPreferences, params) => {
@@ -613,8 +656,17 @@ function registerIpc(): void {
     const p = P(e);
     p.shells.killOwner(id);
     const targets = [id, ...p.manager.childrenOf(id)];
-    for (const target of targets) p.browser.forget(target);
-    const removal = await p.manager.remove(id, options);
+    p.browser.forget(id);
+    let removal: Awaited<ReturnType<typeof p.manager.remove>>;
+    try {
+      removal = await p.manager.remove(id, options);
+    } finally {
+      // 子のブラウザは、消えた子とアーカイブ済みの子のものだけを閉じる（親を消しても、戻しておいた子は動き続ける）
+      for (const child of targets.slice(1)) {
+        const s = p.manager.summary(child);
+        if (!s || s.archived) p.browser.forget(child);
+      }
+    }
     // 一覧から消したセッションのチェックリストも消す（アーカイブでは残す）
     for (const target of targets) if (!p.manager.summary(target)) p.checklists.remove(target);
     for (const target of targets) if (!p.manager.summary(target)) p.walkthroughControl?.forget(target);
@@ -787,6 +839,7 @@ function registerIpc(): void {
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
     P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
   );
+  handle(IpcChannel.ShellAttach, (e) => P(e).shells.attach());
   listen(IpcChannel.ShellWrite, (e, id: string, data: string) => P(e).shells.write(id, data));
   listen(IpcChannel.ShellResize, (e, id: string, cols: number, rows: number) => P(e).shells.resize(id, cols, rows));
   listen(IpcChannel.ShellKill, (e, id: string) => P(e).shells.kill(id));
@@ -801,7 +854,7 @@ function registerIpc(): void {
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
-    new Workspace(P(e).cwdOf(id)).readImage(relPath).catch(() => null),
+    new Workspace(P(e).cwdOf(id)).readImage(relPath, P(e).addedFoldersOf(id)).catch(() => null),
   );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
@@ -1218,6 +1271,21 @@ function useLoginShellPath(): void {
   }
 }
 
+// 同じ userData で動くアプリは 1 つだけにする（開発版とパッケージ版を同じ userData で起動したときなど）。2 つ動くと、同じ会話を
+// 2 回 claude --resume し、チェックリストなどの保存もぶつかる。2 つめは何も作らずに終え、1 つめはウインドウを前に出す
+const primary = app.requestSingleInstanceLock();
+if (!primary) {
+  quitDecided = true;
+  app.quit();
+} else {
+  // 起動の途中（ウインドウを作る前）は、ここでウインドウを作らず（起動の終わりにもう 1 枚作ってしまう）、印だけ付けておき、
+  // ウインドウを作ったあとで前に出す（起動を待つあいだにほかのアプリへ移った人の頼みを、捨てない）
+  app.on('second-instance', () => {
+    if (mainWindow) showWindow();
+    else showWhenCreated = true;
+  });
+}
+
 // プレビューの webview（ゲスト）が、ページの中のリンク・location の書き換え・リダイレクトで、http(s) のページの外
 // （file: や mailto: などの外部プロトコル）へ移らないようにする。新しいウィンドウは did-attach-webview の setWindowOpenHandler で扱う
 app.on('web-contents-created', (_e, contents) => {
@@ -1234,6 +1302,7 @@ app.on('web-contents-created', (_e, contents) => {
 });
 
 app.whenReady().then(async () => {
+  if (!primary) return;
   useLoginShellPath();
   // 窓を作る前に、権限の扱いを決めておく
   restrictPermissions();
@@ -1279,6 +1348,10 @@ app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   createWindow();
+  if (showWhenCreated) {
+    showWhenCreated = false;
+    showWindow();
+  }
   for (const p of profiles()) void p.usage.start();
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
@@ -1322,6 +1395,7 @@ app.on('window-all-closed', () => {
 // Mac の再起動・シャットダウンでは確認を出さない（止めずに終わる）。
 // なお kill（SIGTERM）は Chromium が受け取って、ふつうの終了と同じ流れになる（確認が出る。もう一度送ると強制的に終わる）
 app.whenReady().then(() => {
+  if (!primary) return;
   powerMonitor.on('shutdown', () => {
     quitDecided = true;
     shuttingDown = true;

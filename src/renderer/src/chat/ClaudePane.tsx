@@ -43,7 +43,7 @@ import { CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog, useSessionModels, withSessionModels } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
-import { useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
+import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
 
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
@@ -302,11 +302,19 @@ export const ClaudePane = memo(function ClaudePane({
 
   // 巻き戻しの確かめ（選んだ発言と、コードを戻すと変わるファイル）。ほかのセッションへ移ったら閉じる
   const [rewinding, setRewinding] = useState<{ messageId: string; preview: RewindPreview } | null>(null);
-  const [rewindBusy, setRewindBusy] = useState(false);
+  // 巻き戻している途中のセッション（移った先のカードを、戻している途中にしない）
+  const [rewindingIn, setRewindingIn] = useState<ReadonlySet<string>>(new Set());
+  const rewindBusy = rewindingIn.has(session.id);
   useEffect(() => setRewinding(null), [session.id]);
+  // 見ているセッション（返事が来るまでにほかのセッションへ移ったかを、呼んだときのセッションと比べる）
+  const sessionIdRef = useRef(session.id);
+  sessionIdRef.current = session.id;
   const rewindTo = useCallback(
     (messageId: string) => {
-      void window.tanacode.screen.rewindPreview(session.id, messageId).then((preview) => {
+      const owner = session.id;
+      void window.tanacode.screen.rewindPreview(owner, messageId).then((preview) => {
+        // 調べている間に移ったら、移った先には出さない（そのセッションの発言ではない）
+        if (sessionIdRef.current !== owner) return;
         if (!preview) window.alert(t('chat.pane.rewindNotFound'));
         else setRewinding({ messageId, preview });
       });
@@ -429,8 +437,6 @@ export const ClaudePane = memo(function ClaudePane({
     );
   };
   // 予約をやめて、入力欄に戻す。戻るまでにほかのセッションへ移っていたら、そのセッションの書きかけに戻す
-  const sessionIdRef = useRef(session.id);
-  sessionIdRef.current = session.id;
   const takeScheduled = (id: string) => {
     const owner = session.id;
     void window.tanacode.scheduled.cancel(id).then((taken) => {
@@ -451,25 +457,46 @@ export const ClaudePane = memo(function ClaudePane({
     });
   };
   const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
-  // 巻き戻す。会話を戻したら、戻した発言の文を入力欄に戻す（打ちかけの文字の前に）
+  // 巻き戻す。会話を戻したら、戻した発言の文を入力欄に戻す（打ちかけの文字の前に）。
+  // 返事が来るまでにほかのセッションへ移っていたら、移った先のカードと入力欄には触らず、戻した文は元のセッションの書きかけに戻す
   const applyRewind = (messageId: string, choice: RewindChoice) => {
-    setRewindBusy(true);
-    void window.tanacode.screen.rewind(session.id, messageId, choice).then(
+    const owner = session.id;
+    const title = sessionName(session);
+    const here = () => sessionIdRef.current === owner;
+    const done = () =>
+      setRewindingIn((busy) => {
+        const next = new Set(busy);
+        next.delete(owner);
+        return next;
+      });
+    // 断られたわけ。ほかのセッションへ移っていたら、どのセッションの話かを添える
+    const failed = (codeRewound: boolean, error: string) => {
+      if (here()) window.alert(t(codeRewound ? 'chat.rewind.codeOnly' : 'chat.rewind.failed', { error }));
+      else window.alert(t(codeRewound ? 'chat.rewind.codeOnlyIn' : 'chat.rewind.failedIn', { title, error }));
+    };
+    setRewindingIn((busy) => new Set(busy).add(owner));
+    void window.tanacode.screen.rewind(owner, messageId, choice).then(
       (outcome) => {
-        setRewindBusy(false);
+        done();
         if (!outcome.ok) {
           // コードだけ戻せたときは、確かめのカードを閉じる（もう一度押すと、同じ時点へコードを戻し直すことになる）
-          if (outcome.codeRewound) setRewinding(null);
-          window.alert(t(outcome.codeRewound ? 'chat.rewind.codeOnly' : 'chat.rewind.failed', { error: outcome.error ?? '' }));
+          if (outcome.codeRewound && here()) setRewinding(null);
+          failed(!!outcome.codeRewound, outcome.error ?? '');
+          return;
+        }
+        const prefill = outcome.prefillText;
+        if (!here()) {
+          if (!prefill) return;
+          const draft = drafts.current.get(owner) ?? { text: '', attachments: [], pastes: [] };
+          drafts.current.set(owner, { ...draft, text: [prefill, draft.text].filter((text) => text.trim()).join('\n') });
           return;
         }
         setRewinding(null);
-        const prefill = outcome.prefillText;
         if (prefill) setInput((prev) => [prefill, prev].filter((text) => text.trim()).join('\n'));
       },
       (error: unknown) => {
-        setRewindBusy(false);
-        window.alert(t('chat.rewind.failed', { error: errorMessage(error) }));
+        done();
+        failed(false, errorMessage(error));
       },
     );
   };
@@ -749,6 +776,7 @@ export const ClaudePane = memo(function ClaudePane({
       {!session.archived && (
         <div className="chat-input-wrap" hidden={screenMode}>
           <ChatInput
+            owner={session.id}
             working={running}
             comments={comments}
             onRemoveComment={removeComment}

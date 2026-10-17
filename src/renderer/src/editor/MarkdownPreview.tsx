@@ -8,6 +8,39 @@ import { editorTheme, monaco } from './monaco';
 // 入力のたびに描き直さないよう、少し待ってからまとめて描く
 const RENDER_DELAY_MS = 150;
 
+// プレビューで描いてよいタグと属性（チャットの SANITIZE と同じ考え方で、明示の許可リストにする）。リポジトリの文書には HTML が
+// 混ざるので、チャットより少し広く、GitHub が描くもの（中央寄せ・折りたたみ・キー・上付きなど）は残す。
+// 見た目を偽るもの（style・class）、フォーム・ボタン・埋め込み・音や動画（外を読みにいく）は描かない。
+// class はコードの言語の印（language-*）だけ、入力欄はタスクリストのチェックボックスだけを、消毒のあとで残す。
+// 文書の中の目印（<a id>・<a name>）は、GitHub と同じく前置き（user-content-）を付けて残す（アプリの画面の id とぶつけない）
+const SANITIZE = {
+  ALLOWED_TAGS: [
+    ...['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'blockquote', 'pre', 'code'],
+    ...['strong', 'b', 'em', 'i', 'del', 's', 'ins', 'mark', 'sub', 'sup', 'small', 'kbd', 'abbr', 'q', 'cite', 'var', 'samp', 'wbr'],
+    ...['ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'],
+    ...['a', 'img', 'figure', 'figcaption', 'details', 'summary', 'input'],
+  ],
+  ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'width', 'height', 'start', 'align', 'colspan', 'rowspan', 'open', 'lang', 'dir', 'class', 'type', 'checked', 'disabled', 'id', 'name'],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  SANITIZE_NAMED_PROPS: true,
+};
+// 消毒が id・name に付ける前置き（DOMPurify の SANITIZE_NAMED_PROPS）
+const USER_CONTENT = 'user-content-';
+
+// 消毒のあとで、class はコードの言語の印だけ、入力欄はタスクリストのチェックボックス（押しても変わらない）だけにする
+function keepPreviewParts(root: DocumentFragment): void {
+  for (const el of root.querySelectorAll('[class]')) {
+    const language = el.tagName === 'CODE' ? [...el.classList].find((c) => /^language-[\w+#-]+$/.test(c)) : undefined;
+    if (language) el.className = language;
+    else el.removeAttribute('class');
+  }
+  for (const input of root.querySelectorAll('input')) {
+    if (input.getAttribute('type') !== 'checkbox') input.remove();
+    else input.setAttribute('disabled', '');
+  }
+}
+
 type Props = {
   sessionId: string;
   path: string;
@@ -43,7 +76,8 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
     // 文書として読むので、チャットと違い単独の改行は段落内の空白として扱う（GitHub と同じ）
     const html = marked.parse(text, { async: false, gfm: true, breaks: false });
     // 部品に分けてから差し込む。innerHTML に入れると、書き換える前の相対パスの画像を読みにいってしまう
-    const fragment = DOMPurify.sanitize(html, { RETURN_DOM_FRAGMENT: true });
+    const fragment = DOMPurify.sanitize(html, { ...SANITIZE, RETURN_DOM_FRAGMENT: true });
+    keepPreviewParts(fragment);
     // 外の画像（http(s)）は読み込まず、ブラウザで開くリンクにする
     replaceExternalImages(fragment);
     for (const img of fragment.querySelectorAll('img')) {
@@ -77,7 +111,16 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
     if (!href) return;
     e.preventDefault();
     if (href.startsWith('#')) {
-      ref.current?.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ block: 'start' });
+      // 見出し・文書の中の目印（どちらも前置きを付けた id・name）へ移る。URL として読めないもの（#100% など）は、書いたままの名前で探す
+      let target = href.slice(1);
+      try {
+        target = decodeURIComponent(target);
+      } catch {
+        // 書いたまま
+      }
+      // 前置きまで書いたもの（#user-content-install。GitHub では効く）は、書いたままの名前でも探す（探すのはプレビューの中だけ）
+      const names = [`${USER_CONTENT}${target}`, ...(target.startsWith(USER_CONTENT) ? [target] : [])].map((name) => CSS.escape(name));
+      ref.current?.querySelector(names.map((name) => `[id="${name}"], [name="${name}"]`).join(', '))?.scrollIntoView({ block: 'start' });
       return;
     }
     // 外部のページはブラウザで開く（メインプロセスが window.open を受けて開く）
@@ -122,7 +165,8 @@ function resolvePath(from: string, href: string): string | null {
   return parts.length ? parts.join('/') : null;
 }
 
-// 見出しへのリンク（#使い方 など）が効くよう、GitHub と同じ形の id を付ける
+// 見出しへのリンク（#使い方 など）が効くよう、GitHub と同じ形の id を付ける。前置き（user-content-）も GitHub と同じく付ける
+// （アプリの画面の id や、mermaid が図を描くときの id（mermaid-1 など。同じ id の要素を消してから描く）とぶつけない）
 function addHeadingIds(root: DocumentFragment): void {
   const used = new Map<string, number>();
   for (const h of root.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
@@ -133,7 +177,7 @@ function addHeadingIds(root: DocumentFragment): void {
       .replace(/\s/g, '-');
     const n = used.get(base) ?? 0;
     used.set(base, n + 1);
-    h.id = n ? `${base}-${n}` : base;
+    h.id = `${USER_CONTENT}${n ? `${base}-${n}` : base}`;
   }
 }
 

@@ -14,7 +14,8 @@
       "nothingToExport": "Nothing to export",
       "folderNotFound": "Folder not found: {path}",
       "folderCannotOpen": "Can't open folder: {path}",
-      "ptyHostUnreachable": "Can't connect to the pty host: {path}"
+      "ptyHostUnreachable": "Can't connect to the pty host: {path}",
+      "notFromApp": "This call didn't come from the app window"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",
@@ -756,7 +757,9 @@
       "conversationOnly": "Rewind the conversation",
       "code": "Rewind the code only",
       "failed": "Couldn't rewind ({error})",
-      "codeOnly": "The code was rewound, but the conversation couldn't be ({error})"
+      "codeOnly": "The code was rewound, but the conversation couldn't be ({error})",
+      "failedIn": "Couldn't rewind “{title}” ({error})",
+      "codeOnlyIn": "The code in “{title}” was rewound, but the conversation couldn't be ({error})"
     }
   },
   "composer": {
@@ -1320,6 +1323,19 @@
     },
     "markdownPreview": {
       "diagramFailed": "Couldn't render the diagram: {error}"
+    },
+    "unsaved": {
+      "label": "Unsaved changes",
+      "title": "You have unsaved changes in {count} files",
+      "title_one": "You have unsaved changes in {count} file",
+      "about": "Moving to another folder reopens the editor, so your unsaved changes will be lost.",
+      "save": "Save and Move",
+      "saving": "Saving…",
+      "discard": "Move Without Saving",
+      "cancel": "Stay",
+      "saveFailed": "Couldn't save: {error}",
+      "conflictNote": "These files also changed on disk (by Claude or another tool). Save and Move won't write them. Choose Stay, then pick which version to keep in the editor.",
+      "editorClosed": "The editor is closed"
     }
   },
   "explorer": {

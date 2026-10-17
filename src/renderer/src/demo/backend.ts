@@ -539,6 +539,7 @@ export class DemoBackend {
       shell: {
         // 開くたびに別のシェル（タブ）にする。出力は台本が shellOutput で流す
         create: () => ok({ id: `demo-shell-${++this.shells}`, name: 'zsh' }),
+        attach: () => ok([]),
         write: (id, data) => this.onShellWrite(id, data),
         resize: () => {},
         kill: () => {},

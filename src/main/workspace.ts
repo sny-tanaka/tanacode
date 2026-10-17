@@ -1,4 +1,4 @@
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
 import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo } from '@shared/ipc';
@@ -53,11 +53,12 @@ export class Workspace {
     return { kind: 'text', text: buf.toString('utf8') };
   }
 
-  // Markdown プレビューに出す画像。レンダラーはファイルを直接読めないので data URL で渡す
-  async readImage(relPath: string): Promise<string | null> {
+  // Markdown プレビューに出す画像。レンダラーはファイルを直接読めないので data URL で渡す。
+  // 読むのは、ワークスペースの中の画像だけ（追加したフォルダ addedFolders の中も）。リンクは解いた場所で確かめる
+  async readImage(relPath: string, addedFolders: readonly string[] = []): Promise<string | null> {
     const mime = IMAGE_TYPES[extname(relPath).toLowerCase()];
     if (!mime) return null;
-    const abs = this.resolve(relPath);
+    const abs = await this.resolveInside(relPath, addedFolders);
     const { size } = await stat(abs);
     if (size > MAX_IMAGE_BYTES) return null;
     return this.imageUrl(abs, mime);
@@ -140,6 +141,18 @@ export class Workspace {
     // .. そのものか ../ で始まるものが外（..notes.md のような名前のファイルは中）
     if (rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) throw new Error(`outside workspace: ${relPath}`);
     return abs;
+  }
+
+  // ワークスペースの中（追加したフォルダの中も）のファイルの、リンクを解いた場所。外を指していれば投げる
+  private async resolveInside(relPath: string, addedFolders: readonly string[]): Promise<string> {
+    const real = await realpath(isAbsolute(relPath) ? relPath : this.resolve(relPath));
+    for (const folder of [this.root, ...addedFolders]) {
+      const root = await realpath(folder).catch(() => null);
+      if (!root) continue;
+      const rel = relative(root, real);
+      if (rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return real;
+    }
+    throw new Error(`outside workspace: ${relPath}`);
   }
 
   private async branch(): Promise<string | null> {

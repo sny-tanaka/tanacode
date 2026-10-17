@@ -117,6 +117,52 @@ describe('起動', () => {
     expect(args[managerArg.settingsFiles]).toBe(the('SettingsFiles'));
   });
 
+  it('同じ userData のアプリがもう動いていたら（2 つめの起動）、何も作らずに、確かめずに終える', async () => {
+    await boot({ before: (s) => (s.singleInstanceLock = false) });
+    expect(state.quit).toHaveBeenCalledTimes(1);
+    // 終わるときに、Claude Code を止めるかの確認を出さない
+    state.app.emit('before-quit', fakeEvent());
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(state.ptyHostStart).not.toHaveBeenCalled();
+    expect(state.handlers.size).toBe(0);
+    expect(state.windows).toHaveLength(0);
+    expect(state.app.has('second-instance')).toBe(false);
+  });
+
+  it('2 つめを起動しようとしたら、動いているアプリのウインドウを前に出す（しまっていれば戻す）', async () => {
+    await boot();
+    const win = mainWindow();
+    win.minimized = true;
+    state.app.emit('second-instance', fakeEvent(), ['/Applications/tanacode.app/Contents/MacOS/tanacode'], '/');
+    expect(win.restore).toHaveBeenCalledTimes(1);
+    expect(win.show).toHaveBeenCalled();
+    expect(win.focus).toHaveBeenCalled();
+    expect(state.quit).not.toHaveBeenCalled();
+  });
+
+  it('起動の途中に 2 つめが起動しても、ウインドウを先に作らない（作るのは起動の終わりの 1 枚だけ）。前に出す頼みは、ウインドウを作ったあとで行う', async () => {
+    const adopting = pending<undefined>();
+    await boot({ noWait: true, before: (s) => s.adopt.mockReturnValue(adopting.promise) });
+    await vi.waitFor(() => expect(state.adopt).toHaveBeenCalled());
+    state.app.emit('second-instance', fakeEvent(), [], '/');
+    expect(state.windows).toHaveLength(0);
+    adopting.resolve(undefined);
+    await started();
+    expect(state.windows).toHaveLength(1);
+    // 起動を待つあいだにほかのアプリへ移っていても、ウインドウができたら前に出す
+    expect(mainWindow().show).toHaveBeenCalledTimes(1);
+    expect(mainWindow().focus).toHaveBeenCalledTimes(1);
+    state.app.emit('second-instance', fakeEvent(), [], '/');
+    expect(mainWindow().show).toHaveBeenCalledTimes(2);
+    expect(state.windows).toHaveLength(1);
+  });
+
+  it('起動の途中に 2 つめが起動しなければ、ウインドウを作っても前に出す頼みはしない', async () => {
+    await boot();
+    expect(mainWindow().show).not.toHaveBeenCalled();
+  });
+
   it('以前のレビュー機能が使っていたフォルダ（snapshots）を消す', async () => {
     await boot({ before: (s) => mkdirSync(join(s.userData, 'snapshots', 'old'), { recursive: true }) });
     await vi.waitFor(() => expect(existsSync(join(state.userData, 'snapshots'))).toBe(false));

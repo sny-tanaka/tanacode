@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { vi, type Mock } from 'vitest';
 
 // アプリの入り口（src/main/index.ts）を、Electron を起動せずに読み込んで動かす部品（test/main-*.test.ts 用）。
@@ -68,9 +69,21 @@ export class FakeWebContents extends Emitter {
   close = vi.fn(() => {
     this.destroyed = true;
   });
-  loadURL = vi.fn((_url: string) => undefined);
-  loadFile = vi.fn((_path: string) => undefined);
+  // 読み込んだものが、画面の URL になる
+  loadURL = vi.fn((url: string) => {
+    this.url = url;
+  });
+  loadFile = vi.fn((path: string) => {
+    this.url = pathToFileURL(path).href;
+  });
+  // メインフレーム（画面からの呼び出し・知らせの送り元。親のフレームは無い）
+  get mainFrame(): FakeFrame {
+    return { url: this.url, parent: null };
+  }
 }
+
+// 画面のフレーム（WebFrameMain）。parent が無いものがメインフレーム
+export type FakeFrame = { url: string; parent: FakeFrame | null };
 
 // 足したプロファイルの画面（WebContentsView）。ウインドウに重ねて、見ているものだけを出す
 export class FakeView {
@@ -132,8 +145,8 @@ export class FakeWindow extends Emitter {
   });
   show = vi.fn(() => undefined);
   focus = vi.fn(() => undefined);
-  loadURL = vi.fn((_url: string) => undefined);
-  loadFile = vi.fn((_path: string) => undefined);
+  loadURL = vi.fn((url: string) => this.webContents.loadURL(url));
+  loadFile = vi.fn((path: string) => this.webContents.loadFile(path));
 }
 
 export class FakeSession extends Emitter {
@@ -186,6 +199,8 @@ function freshState() {
     // Electron の準備ができる（app.whenReady。既定はすぐに済む）
     whenReady: vi.fn(async (): Promise<void> => undefined),
     quit: vi.fn((..._args: unknown[]) => undefined),
+    // 同じ userData で動いているアプリが、ほかに無い（app.requestSingleInstanceLock。false は 2 つめの起動）
+    singleInstanceLock: true,
     // 終わったあとに起動し直す（app.relaunch）
     relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
@@ -287,6 +302,7 @@ export const electronModule = {
     getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
+    requestSingleInstanceLock: () => state.singleInstanceLock,
     relaunch: () => state.relaunch(),
     get dock() {
       return state.dock;
@@ -509,6 +525,8 @@ const modules: Record<string, Record<string, unknown>> = {
       killOwner: () => undefined,
       killAll: () => undefined,
       run: echo('shells.run'),
+      attach: echo('shells.attach'),
+      detach: () => undefined,
     }),
   },
   'system-monitor': { SystemMonitor: fakeClass('SystemMonitor', { start: () => undefined, stop: () => undefined }) },
@@ -662,19 +680,32 @@ export async function invoke(channel: string, ...args: unknown[]): Promise<unkno
   return await invokeFrom(appContents(), channel, ...args);
 }
 
-// 画面 sender からの呼び出し（足したプロファイルの画面から呼ぶとき）
+// 画面 sender からの呼び出し（足したプロファイルの画面から呼ぶとき）。送り元のフレームは、その画面のメインフレーム
 export async function invokeFrom(sender: unknown, channel: string, ...args: unknown[]): Promise<unknown> {
+  return await invokeWith({ sender, senderFrame: mainFrameOf(sender) }, channel, ...args);
+}
+
+// 送り元（sender と senderFrame）を決めて呼ぶ（中のフレームやアプリの外の画面から届いたときを確かめる）
+export async function invokeWith(event: { sender: unknown; senderFrame: FakeFrame | null }, channel: string, ...args: unknown[]): Promise<unknown> {
   const handler = state.handlers.get(channel);
   if (!handler) throw new Error(`${channel} の受け口がありません`);
-  return await handler({ sender }, ...args);
+  return await handler(event, ...args);
 }
 
 // 画面からの知らせ（ipcRenderer.send の代わり）
 export function sendFromRenderer(channel: string, ...args: unknown[]): unknown {
+  const sender = appContents();
+  return sendWith({ sender, senderFrame: mainFrameOf(sender) }, channel, ...args);
+}
+
+// 送り元を決めて知らせる
+export function sendWith(event: { sender: unknown; senderFrame: FakeFrame | null }, channel: string, ...args: unknown[]): unknown {
   const listener = state.listeners.get(channel);
   if (!listener) throw new Error(`${channel} の受け口がありません`);
-  return listener({ sender: appContents() }, ...args);
+  return listener(event, ...args);
 }
+
+const mainFrameOf = (sender: unknown) => (sender instanceof FakeWebContents ? sender.mainFrame : null);
 
 // 既定のプロファイルの画面（主ウインドウの画面）。ウインドウを作る前は、名前だけの送り元
 const appContents = () => state.windows.at(-1)?.webContents ?? 'renderer';

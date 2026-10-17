@@ -168,6 +168,7 @@ const api: TanacodeApi = {
   },
   shell: {
     create: (sessionId, cols, rows) => invoke(IpcChannel.ShellCreate, sessionId, cols, rows),
+    attach: () => invoke(IpcChannel.ShellAttach),
     write: (id, data) => send(IpcChannel.ShellWrite, id, data),
     resize: (id, cols, rows) => send(IpcChannel.ShellResize, id, cols, rows),
     kill: (id) => send(IpcChannel.ShellKill, id),

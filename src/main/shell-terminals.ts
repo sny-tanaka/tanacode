@@ -1,6 +1,8 @@
 import { basename } from 'node:path';
 import * as pty from 'node-pty';
 import { Terminal } from '@xterm/headless';
+import { SerializeAddon } from '@xterm/addon-serialize';
+import type { ShellSnapshot } from '@shared/ipc';
 import { childEnv } from './claude-session';
 
 // 控える行数（Claude が read_terminal で読める範囲）。出力は、pty-host.ts と同じく @xterm/headless の画面に書き込んで控える
@@ -8,6 +10,8 @@ import { childEnv } from './claude-session';
 const SCROLLBACK = 3000;
 // 終わったコマンドのタブの出力を、持ち主ごとに残す数の上限。画面がタブを閉じる（kill）まで残し、超えたら古いものから捨てる
 const MAX_EXITED = 20;
+// 止めたシェル（SIGHUP）がこの時間のうちに終わらなければ、強く止める（SIGKILL）。trap '' HUP などで SIGHUP を無視するもの
+const KILL_GRACE_MS = 3000;
 // Claude が打つために開くシェルの大きさ（画面のタブが大きさを合わせるまで）
 const OPEN_COLS = 100;
 const OPEN_ROWS = 30;
@@ -30,8 +34,13 @@ type Shell = {
   // シェルが付けたタイトル（OSC。画面のタブにも出る）
   title: string | null;
   term: Terminal;
+  serializer: SerializeAddon;
+  // 控えの画面に、まだ書き終えていない出力（@xterm/headless は少しずつ読み解く）。画面を引き継ぐとき、控えの画面のあとに渡す
+  unparsed: string[];
   // 人が止めた・タブを閉じた（終わったら、出力の控えも捨てる）
   killed: boolean;
+  // 止めたあと、終わらなければ強く止める待ちを片付ける（終わったら呼ぶ）
+  cancelForceKill: (() => void) | null;
 };
 
 // 一覧に返す 1 つのターミナル。tab: 持ち主のパネルの並びの何番目か（1 から）/ foreground: 前面で動いているプログラム（node-pty の pty.process）
@@ -63,12 +72,20 @@ type Listeners = {
 export class ShellTerminals {
   private shells = new Map<string, Shell>();
   private seq = 0;
+  // 画面を読み込み直している（⌘R）。新しい画面が attach で引き継ぐまで、出力・終わり・開いたタブを画面に知らせない（控えには書く）
+  private detached = false;
 
-  // claudeDir: プロファイルの Claude Code の設定のフォルダ（シェルで起動する claude も、そのプロファイルのアカウントを使う）。null は既定のプロファイル
+  // claudeDir: プロファイルの Claude Code の設定のフォルダ（シェルで起動する claude も、そのプロファイルのアカウントを使う）。null は既定のプロファイル。
+  // later: 時間をおいて動かし、片付ける関数を返す（テストが差し替える）
   constructor(
     private readonly listeners: Listeners,
     private readonly claudeDir: string | null = null,
     private readonly clock: () => number = Date.now,
+    private readonly later: (fn: () => void, ms: number) => () => void = (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      timer.unref();
+      return () => clearTimeout(timer);
+    },
   ) {}
 
   create(owner: string, cwd: string, cols: number, rows: number): { id: string; name: string } {
@@ -81,7 +98,7 @@ export class ShellTerminals {
   // Claude が打つために、新しいシェルのタブを開く（type_in_terminal の new_tab）。画面には、人が開いたシェルと同じタブとして出す
   openShell(owner: string, cwd: string): { id: string; name: string } {
     const opened = this.create(owner, cwd, OPEN_COLS, OPEN_ROWS);
-    this.listeners.onOpened?.(owner, opened.id, opened.name, false);
+    if (!this.detached) this.listeners.onOpened?.(owner, opened.id, opened.name, false);
     return opened;
   }
 
@@ -90,29 +107,45 @@ export class ShellTerminals {
   run(owner: string, cwd: string, command: string, name: string): Promise<number> {
     const id = `task-${++this.seq}`;
     const shell = this.spawn(id, owner, cwd, 'command', name, command, ['-l', '-c', command], 100, 24);
-    this.listeners.onOpened?.(owner, id, name, true);
+    if (!this.detached) this.listeners.onOpened?.(owner, id, name, true);
     return new Promise((resolve) => shell.proc.onExit(({ exitCode }) => resolve(exitCode)));
   }
 
+  // 止めたもの（kill したが、まだ終わっていない）には打たない
   write(id: string, data: string): void {
     const shell = this.shells.get(id);
-    if (shell && shell.exitCode === null) shell.proc.write(data);
+    if (shell && shell.exitCode === null && !shell.killed) shell.proc.write(data);
   }
 
   resize(id: string, cols: number, rows: number): void {
     const shell = this.shells.get(id);
-    if (!shell || shell.exitCode !== null || cols <= 0 || rows <= 0) return;
+    if (!shell || shell.exitCode !== null || shell.killed || cols <= 0 || rows <= 0) return;
     shell.proc.resize(cols, rows);
     shell.term.resize(cols, rows);
   }
 
-  // 止める。もう終わっていれば（終わったコマンドのタブを閉じた）、出力の控えを捨てる
+  // 止める。もう終わっていれば（終わったコマンドのタブを閉じた）、出力の控えを捨てる。
+  // SIGHUP を無視するもの（trap '' HUP など）は終わらないので、しばらくして終わっていなければ強く止める。
+  // 待ちがもうあれば作り直さない（終わる前に × を続けて押しても、最初に止めたときから数えて強く止める）
   kill(id: string): void {
     const shell = this.shells.get(id);
     if (!shell) return;
     shell.killed = true;
-    if (shell.exitCode === null) shell.proc.kill();
-    else this.drop(id);
+    if (shell.exitCode !== null) {
+      this.drop(id);
+      return;
+    }
+    shell.proc.kill();
+    if (shell.cancelForceKill) return;
+    shell.cancelForceKill = this.later(() => {
+      shell.cancelForceKill = null;
+      if (shell.exitCode !== null) return;
+      try {
+        shell.proc.kill('SIGKILL');
+      } catch {
+        // 終わりかけで、もういない
+      }
+    }, KILL_GRACE_MS);
   }
 
   // セッションを一覧から消したときは、そのフォルダで開いたシェルも閉じる
@@ -124,9 +157,41 @@ export class ShellTerminals {
     for (const id of [...this.shells.keys()]) this.kill(id);
   }
 
-  // 持ち主のターミナル（パネルのタブの並び。開いた順）
+  // 画面を読み込み直し始めた。シェルは止めずに、新しい画面が引き継ぐまで知らせるのをやめる
+  // （前の画面に送ったものも、引き継ぐまでに送ったものも、新しい画面には届かないか、引き継ぐ画面と重なるため）
+  detach(): void {
+    this.detached = true;
+  }
+
+  // 新しい画面が引き継ぐ。今のターミナルを開いた順に、画面を描き直すための文字列と一緒に返し、このあとは、また知らせる。
+  // 文字列は、控えの画面と、まだ書き終えていない出力をつないだもの（返したあとに出たものだけを、知らせで送る）
+  attach(): ShellSnapshot[] {
+    this.detached = false;
+    const snapshots: ShellSnapshot[] = [];
+    for (const [id, s] of [...this.shells]) {
+      // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）
+      if (s.killed) continue;
+      let screen: string;
+      try {
+        screen = s.serializer.serialize() + s.unparsed.join('');
+      } catch {
+        // 描き直す文字列を作れなかったものは、画面に出せないので、見えないまま動かし続けないよう止める（画面の側で書き直せなかったときと同じ）
+        this.kill(id);
+        continue;
+      }
+      snapshots.push({ owner: s.owner, id, name: s.name, title: s.title, task: s.kind === 'command', exitCode: s.exitCode, cols: s.term.cols, rows: s.term.rows, screen });
+    }
+    return snapshots;
+  }
+
+  // 持ち主のターミナル（パネルのタブの並び。開いた順）。止めたもの（kill したが、まだ終わっていない）は出さない（Claude から読ませず、打たせない）。
+  // 番号は、止めたものも数えて振る（パネルは、終わるまで止めたもののタブも残すので、その並びと合わせる）
   list(owner: string): TerminalInfo[] {
-    return [...this.shells].filter(([, s]) => s.owner === owner).map(([id, s], i) => this.infoOf(id, s, i + 1));
+    return [...this.shells]
+      .filter(([, s]) => s.owner === owner)
+      .map(([id, s], i) => ({ s, info: this.infoOf(id, s, i + 1) }))
+      .filter(({ s }) => !s.killed)
+      .map(({ info }) => info);
   }
 
   info(id: string): TerminalInfo | null {
@@ -180,17 +245,39 @@ export class ShellTerminals {
     env.TERM_PROGRAM = 'tanacode';
     const proc = pty.spawn(process.env.SHELL || '/bin/zsh', args, { name: 'xterm-256color', cols, rows, cwd, env });
     const term = new Terminal({ cols, rows, scrollback: SCROLLBACK, allowProposedApi: true });
-    const shell: Shell = { proc, owner, kind, name, command, cwd, openedAt: this.clock(), lastOutputAt: null, exitCode: null, title: null, term, killed: false };
+    const serializer = new SerializeAddon();
+    term.loadAddon(serializer);
+    const shell: Shell = {
+      proc,
+      owner,
+      kind,
+      name,
+      command,
+      cwd,
+      openedAt: this.clock(),
+      lastOutputAt: null,
+      exitCode: null,
+      title: null,
+      term,
+      serializer,
+      unparsed: [],
+      killed: false,
+      cancelForceKill: null,
+    };
     this.shells.set(id, shell);
     term.onTitleChange((title) => (shell.title = title || null));
     proc.onData((data) => {
       shell.lastOutputAt = this.clock();
-      term.write(data);
-      this.listeners.onData(id, data);
+      // 書き終えたものから順に外す（@xterm/headless は、届いた順に読み解き、終わったら順に呼ぶ）
+      shell.unparsed.push(data);
+      term.write(data, () => shell.unparsed.shift());
+      if (!this.detached) this.listeners.onData(id, data);
     });
     proc.onExit(({ exitCode }) => {
       shell.exitCode = exitCode;
-      this.listeners.onExit(id, exitCode);
+      shell.cancelForceKill?.();
+      shell.cancelForceKill = null;
+      if (!this.detached) this.listeners.onExit(id, exitCode);
       // 画面はシェルのタブを閉じる。コマンドのタブは、出力を見られるよう残す（人が止めたものは閉じる）
       if (kind === 'shell' || shell.killed) this.drop(id);
       else this.pruneExited(owner);
