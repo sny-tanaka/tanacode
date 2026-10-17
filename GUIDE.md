@@ -1072,7 +1072,7 @@ Claude は、そのセッションのアプリ内ブラウザを MCP のツー�
 
 ## 制限
 
-- tanacode で動作確認済の Claude Code のバージョンは 2.1.301（ステータスバーのバージョンの印で、入っているものと同じかが分かります）。tanacode は Claude Code の会話ログと、Claude Code とのやりとりの形（stream-json）に頼って動くため、Claude Code の更新で、一部の表示や操作が動かなくなる場合あり。
+- tanacode で動作確認済の Claude Code のバージョンは 2.1.302（ステータスバーのバージョンの印で、入っているものと同じかが分かります）。tanacode は Claude Code の会話ログと、Claude Code とのやりとりの形（stream-json）に頼って動くため、Claude Code の更新で、一部の表示や操作が動かなくなる場合あり。
 - tanacode のチャットで始めた会話は、ターミナルの `claude --resume` の会話の一覧に出ません。Claude Code が、SDK（`claude -p` の stream-json）で始めた会話を一覧から外すため（2.1.301 で実測）。ターミナルで続けたいときは、[ターミナルモード](#ターミナルモード)にするか、`claude --resume <会話の ID>` で ID を指定します。
 - 何も出力しなかった PreToolUse / PostToolUse の hooks は、Claude Code が記録しないため表示できません（Stop の hooks は、出力がなくても表示します）。
 - 週の枠のうちモデル別の枠は、Claude Code から受け取れないため出していません。
