@@ -732,6 +732,44 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     expect(types(id).slice(-2)).toEqual(['hook', 'turn-end']);
   });
 
+  it('ターンが終わったら、結果の来なかった本体の呼び出しをフックの付け先の候補から外す（次のターンの同じ名前の呼び出しのフックを、決められなくしない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    // stream に結果の来なかった呼び出し
+    pipe.emit(stream.assistant(line.toolUse('toolu_x', 'Read', { file_path: '/x' }), app.claudeId(id)));
+    app.say(id, line.text('おわり'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    await app.prompt(id, 'つぎ');
+    const tool = line.toolUse('toolu_y', 'Read', { file_path: '/y' });
+    pipe.emit(stream.assistant(tool, app.claudeId(id)));
+    pipe.emit(response('h1', 'PreToolUse:Read'));
+    app.append(id, tool);
+    await app.waitFor('フック', () => hooks(id).length === 1);
+    expect(hooks(id).map((r) => [r.hookId, r.toolUseId])).toEqual([['h1', 'toolu_y']]);
+  });
+
+  it('ツールの途中で起動し直したら、前の claude の呼び出しと待たせていたフックを持ち越さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    pipe.emit(stream.assistant(line.toolUse('toolu_old', 'Read', { file_path: '/a' }), app.claudeId(id)));
+    // カードがまだ出ていないので待たせたフック
+    pipe.emit(response('h1', 'PreToolUse:Read'));
+    await app.manager.restart(id);
+    const next = app.pipe(id);
+    await app.ready(id);
+    await app.prompt(id, 'つぎ');
+    const tool = line.toolUse('toolu_new', 'Read', { file_path: '/b' });
+    next.emit(stream.assistant(tool, app.claudeId(id)));
+    next.emit(response('h2', 'PreToolUse:Read'));
+    app.say(id, tool, line.text('おわり'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle' && hooks(id).length > 0);
+    expect(hooks(id).map((r) => [r.hookId, r.toolUseId])).toEqual([['h2', 'toolu_new']]);
+  });
+
   it('ツールに付かないフック（発言のとき・起動のとき）は、そのまま出す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

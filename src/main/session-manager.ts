@@ -1883,6 +1883,13 @@ export class SessionManager {
     if (runtime.turnEnding) clearTimeout(runtime.turnEnding.timer);
     runtime.turnEnding = null;
     runtime.lateTurnEnd = null;
+    // 前の claude のツールの呼び出し・待たせていたフック・発言の鍵は持ち越さない（結果が来ないまま止まった呼び出しが、次の同じ名前の
+    // 呼び出しのフックを決められなくし、待たせたフックが、関係のない発言のあとに出るため）
+    runtime.streamTools = [];
+    runtime.heldHooks.clear();
+    runtime.hookStarts.clear();
+    runtime.turnPrompt = null;
+    runtime.promptLine = null;
     runtime.starterSeen = false;
     runtime.titleRequested = false;
     runtime.settingsPath = settings?.settingsFile ?? null;
@@ -2432,6 +2439,9 @@ export class SessionManager {
     if (past || !open) return;
     // 発言の行を待たせていたフックは、ターンの終わりの前に出す（flushTurnEnd）。次のターンまで鍵を残さない
     rt.promptLine = null;
+    // result の時点で、本体のツールの呼び出しはどれも結果が出ている。stream に結果が来なかったもの（中断など）も、フックの付け先の候補から外す
+    // （サブエージェントの中のものは、裏で続くことがあるので残す）
+    rt.streamTools = rt.streamTools.filter((t) => t.sub);
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     const interrupted = typeof result.terminal_reason === 'string' && result.terminal_reason.startsWith('aborted');
     // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）。
