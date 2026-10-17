@@ -74,6 +74,28 @@ describe('submit', () => {
     expect(pipe.prompts.map((p) => p.message.content)).toEqual([[imageBlock('a.png'), { type: 'text', text: 'ひとつめ' }], 'ふたつめ']);
   });
 
+  it('画像を読んでいる間に再起動が始まったら、止めている最中の claude に書かず、起動し直した claude が受け付けてから送る', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const sent = app.manager.submit(id, '画像つき', [image('a.png')]);
+    // 送り始めた（画像を読んでいる）ところで、再起動を始める
+    await Promise.resolve();
+    await Promise.resolve();
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    // 画像を読み終えても、止めている最中の claude には書かない（直す前は、ここで書いていた）
+    await app.waitFor('止めている claude への送信', () => pipe.prompts.length > 0, 300).catch(() => {});
+    expect(pipe.prompts).toEqual([]);
+    pipe.exit(0);
+    await restarting;
+    const next = app.pipe(id);
+    await app.ready(id);
+    await sent;
+    expect(next.prompts).toHaveLength(1);
+    expect(JSON.stringify(next.prompts[0].message.content)).toContain('画像つき');
+  });
+
   it('送る前に claude が終わったら、送らずに失敗する', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

@@ -1501,15 +1501,15 @@ export class SessionManager {
     // ターミナルモードの間は、人が TUI で打つ（チャットからは送らない）
     if (rt.terminal || rt.switching) return Promise.reject(new SendError('terminalMode'));
     const run = async () => {
-      // 再起動で止めている claude には書かない（閉じかけで消える）。起動し直した claude が受け付けるようになってから送る
-      if (rt.restarting) await this.untilRestarted(id, rt);
-      const process = rt.process;
-      const client = process?.client;
-      if (!process || !client) throw new SendError('notRunning');
       const text = stripControlChars(rawText);
       const kept = pastes.map(stripControlChars).filter((p) => p.trim());
       const read = await Promise.all(attachments.map(imageBlock));
-      if (rt.process !== process) throw new SendError('exited');
+      // 再起動で止めている claude には書かない（閉じかけで消える。止め終わるまで rt.process に残る）。画像を読んでいる間に再起動が
+      // 始まったときも、起動し直した claude が受け付けるようになるまで待ち、書く先を取り直す
+      if (rt.restarting || !rt.ready) await this.untilRestarted(id, rt);
+      const process = rt.process;
+      const client = process?.client;
+      if (!process || !client) throw new SendError('notRunning');
       const images = read.flatMap((r) => ('block' in r ? [r.block] : []));
       // 送れない画像（形式が違う・読めない）は、黙って落とさず、チャットに知らせる
       const skipped = read.flatMap((r) => ('skipped' in r ? [r.skipped] : []));
