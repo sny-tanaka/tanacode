@@ -483,14 +483,18 @@ export class BrowserControl {
   }
 
   // 確認のフック（browser-gate.ts）への答え。request.tool: ツールの名前（mcp__…）/ request.input: ツールの入力。待たない（フックは短い間しか待たない）
-  // - JavaScript の実行: 今のタブが localhost のページなら、確認を省いてよい。タブが無い・空のときは、確認を出させる側に倒す
+  // - JavaScript の実行: 今のタブが localhost のページなら、確認を省いてよい。タブが無い・空のときは、確認を出させる側に倒す。
+  //   答える URL は、許していない先ならオリジンだけ（フックが確認の理由に書く）
   // - 開く: 許す先の外で、そのタブで許可していないオリジンを開くなら、人に確認させ（outside にオリジン）、確認した印を控える
   private gate(sessionId: string, request: Record<string, unknown>): ToolResult {
     if (request.tool === browserToolId('navigate')) {
       const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
       return textResult(JSON.stringify({ outside: this.gateNavigate(sessionId, input) }));
     }
-    const url = this.activeNow(sessionId)?.contents.getURL() ?? '';
+    // メニューでオフのとき・知らないセッションには答えない（フックは、確認を出させる側に倒す）
+    if (!this.deps.enabled() || !this.deps.hasSession(sessionId)) return textResult('The in-app browser is not available for this session.', true);
+    const guest = this.activeNow(sessionId);
+    const url = guest?.contents.getURL() ?? '';
     // 答えたときのページを、同じ式の呼び出しのために控える
     const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
     if (typeof input.expression === 'string') {
@@ -498,7 +502,8 @@ export class BrowserControl {
       marks.push({ expression: input.expression, origin: webOrigin(url) });
       this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
     }
-    return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
+    // フックは、この URL を確認の理由に書く（Claude Code の確認の理由として、親のセッションにも届く）。許していない先は、オリジンだけ
+    return textResult(JSON.stringify({ local: isLocalUrl(url), url: guest && !isBlank(url) ? this.shownUrl(url, guest) : url }));
   }
 
   // navigate の入力から、人に確認する先を決めて、確認した印を控える。確認しないものは null

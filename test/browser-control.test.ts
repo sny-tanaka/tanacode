@@ -3,6 +3,7 @@ import type { WebContents } from 'electron';
 import { BROWSER_ASK_TOOL, browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel, type BrowserAskChange } from '../src/shared/ipc';
 import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
+import { gateOutput, readAnswer } from '../src/main/browser-gate';
 import { setLanguage } from '../src/shared/i18n';
 import { textResult } from '../src/main/mcp-bridge';
 import { FakeContents, HOST } from './helpers/fake-electron';
@@ -139,9 +140,45 @@ describe('JavaScript の実行の確認のフックへの答え', () => {
     open('http://localhost:3000/');
     const remote = open('https://staging.example.test/', { activate: false });
     control.activate('S1', remote.tabId);
-    expect(await gate(control)).toEqual({ local: false, url: 'https://staging.example.test/' });
+    expect(await gate(control)).toEqual({ local: false, url: 'https://staging.example.test' });
     control.activate('S1', null);
     expect(await gate(control)).toEqual({ local: false, url: '' });
+  });
+});
+
+describe('JavaScript の実行の確認のフックへの答えに出すページ', () => {
+  const answer = (control: ReturnType<typeof setup>['control'], sessionId = 'S1') =>
+    control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression: 'document.title' } });
+
+  it('許していない先のページは、オリジンだけを答える（確認の理由に出て、親のセッションにも届くので、パス・クエリを入れない）', async () => {
+    const { control, open, state } = setup();
+    const page = open('https://accounts.example.com/oauth/callback?code=secret&state=x');
+    const result = await answer(control);
+    expect(JSON.parse(textOf(result))).toEqual({ local: false, url: 'https://accounts.example.com' });
+    const reason = gateOutput(readAnswer(result));
+    expect(reason).toContain('https://accounts.example.com');
+    expect(reason).not.toContain('oauth');
+    expect(reason).not.toContain('secret');
+    // 許す先（足した先も）のページは、URL のまま
+    state.hosts = ['accounts.example.com'];
+    expect(JSON.parse(textOf(await answer(control)))).toEqual({ local: false, url: 'https://accounts.example.com/oauth/callback?code=secret&state=x' });
+    // 空のタブ
+    state.hosts = [];
+    page.url = 'about:blank';
+    expect(JSON.parse(textOf(await answer(control)))).toEqual({ local: false, url: 'about:blank' });
+  });
+
+  it('メニューでオフのとき・知らないセッションには答えない（フックは確認を出させる側に倒す）', async () => {
+    const { control, open, state } = setup();
+    open('http://localhost:3000/');
+    state.enabled = false;
+    let result = await answer(control);
+    expect(result.isError).toBe(true);
+    expect(readAnswer(result)).toBeNull();
+    state.enabled = true;
+    result = await answer(control, 'NOPE');
+    expect(result.isError).toBe(true);
+    expect(readAnswer(result)).toBeNull();
   });
 });
 

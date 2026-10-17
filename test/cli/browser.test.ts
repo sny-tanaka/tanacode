@@ -145,6 +145,9 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
     expect(calls).toHaveLength(3);
     expect(textOf(menu)).toContain('document.cookie');
     expect(menu.always ?? []).toEqual([]);
+    // フックが書いた理由（アプリが答えたページ）は、確認の理由（decision_reason）にそのまま入り、親のセッションにも届く。
+    // なのでアプリは、許していない先のページはオリジンだけを答える（browser-control.test.ts）
+    expect(menu.reason).toContain(REMOTE);
     run.replyPermission(menu, { kind: 'allow' });
     await run.waitUntil('返事', replied('確かめました'));
     expect(calls[3]).toMatchObject({ tool: 'evaluate', args: { expression: 'document.cookie' } });
