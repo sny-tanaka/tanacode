@@ -1348,7 +1348,10 @@ app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   createWindow();
-  if (showWhenCreated) showWindow();
+  if (showWhenCreated) {
+    showWhenCreated = false;
+    showWindow();
+  }
   for (const p of profiles()) void p.usage.start();
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();
