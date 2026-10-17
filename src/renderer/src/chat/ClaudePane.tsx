@@ -43,7 +43,7 @@ import { CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog, useSessionModels, withSessionModels } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
-import { useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
+import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
 
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
@@ -303,8 +303,8 @@ export const ClaudePane = memo(function ClaudePane({
   // 巻き戻しの確かめ（選んだ発言と、コードを戻すと変わるファイル）。ほかのセッションへ移ったら閉じる
   const [rewinding, setRewinding] = useState<{ messageId: string; preview: RewindPreview } | null>(null);
   // 巻き戻している途中のセッション（移った先のカードを、戻している途中にしない）
-  const [rewindingIn, setRewindingIn] = useState<string | null>(null);
-  const rewindBusy = rewindingIn === session.id;
+  const [rewindingIn, setRewindingIn] = useState<ReadonlySet<string>>(new Set());
+  const rewindBusy = rewindingIn.has(session.id);
   useEffect(() => setRewinding(null), [session.id]);
   // 見ているセッション（返事が来るまでにほかのセッションへ移ったかを、呼んだときのセッションと比べる）
   const sessionIdRef = useRef(session.id);
@@ -461,16 +461,27 @@ export const ClaudePane = memo(function ClaudePane({
   // 返事が来るまでにほかのセッションへ移っていたら、移った先のカードと入力欄には触らず、戻した文は元のセッションの書きかけに戻す
   const applyRewind = (messageId: string, choice: RewindChoice) => {
     const owner = session.id;
+    const title = sessionName(session);
     const here = () => sessionIdRef.current === owner;
-    const done = () => setRewindingIn((busy) => (busy === owner ? null : busy));
-    setRewindingIn(owner);
+    const done = () =>
+      setRewindingIn((busy) => {
+        const next = new Set(busy);
+        next.delete(owner);
+        return next;
+      });
+    // 断られたわけ。ほかのセッションへ移っていたら、どのセッションの話かを添える
+    const failed = (codeRewound: boolean, error: string) => {
+      if (here()) window.alert(t(codeRewound ? 'chat.rewind.codeOnly' : 'chat.rewind.failed', { error }));
+      else window.alert(t(codeRewound ? 'chat.rewind.codeOnlyIn' : 'chat.rewind.failedIn', { title, error }));
+    };
+    setRewindingIn((busy) => new Set(busy).add(owner));
     void window.tanacode.screen.rewind(owner, messageId, choice).then(
       (outcome) => {
         done();
         if (!outcome.ok) {
           // コードだけ戻せたときは、確かめのカードを閉じる（もう一度押すと、同じ時点へコードを戻し直すことになる）
           if (outcome.codeRewound && here()) setRewinding(null);
-          window.alert(t(outcome.codeRewound ? 'chat.rewind.codeOnly' : 'chat.rewind.failed', { error: outcome.error ?? '' }));
+          failed(!!outcome.codeRewound, outcome.error ?? '');
           return;
         }
         const prefill = outcome.prefillText;
@@ -485,7 +496,7 @@ export const ClaudePane = memo(function ClaudePane({
       },
       (error: unknown) => {
         done();
-        window.alert(t('chat.rewind.failed', { error: errorMessage(error) }));
+        failed(false, errorMessage(error));
       },
     );
   };

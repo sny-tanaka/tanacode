@@ -728,7 +728,9 @@
       "conversationOnly": "会話を戻す",
       "code": "コードだけ戻す",
       "failed": "巻き戻せませんでした（{error}）",
-      "codeOnly": "コードは戻しました。会話は戻せませんでした（{error}）"
+      "codeOnly": "コードは戻しました。会話は戻せませんでした（{error}）",
+      "failedIn": "「{title}」を巻き戻せませんでした（{error}）",
+      "codeOnlyIn": "「{title}」のコードは戻しました。会話は戻せませんでした（{error}）"
     }
   },
   "composer": {

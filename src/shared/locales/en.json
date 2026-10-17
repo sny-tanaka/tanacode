@@ -755,7 +755,9 @@
       "conversationOnly": "Rewind the conversation",
       "code": "Rewind the code only",
       "failed": "Couldn't rewind ({error})",
-      "codeOnly": "The code was rewound, but the conversation couldn't be ({error})"
+      "codeOnly": "The code was rewound, but the conversation couldn't be ({error})",
+      "failedIn": "Couldn't rewind “{title}” ({error})",
+      "codeOnlyIn": "The code in “{title}” was rewound, but the conversation couldn't be ({error})"
     }
   },
   "composer": {

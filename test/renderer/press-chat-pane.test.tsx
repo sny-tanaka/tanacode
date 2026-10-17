@@ -343,7 +343,34 @@ describe('ヘッダー', () => {
     expect(box().value).toBe('ログインを直してください\ns1 の書きかけ');
   });
 
-  it('巻き戻し: 戻している途中でほかのセッションへ移ってから断られたら、わけは出すが、移った先のカードは閉じない', async () => {
+  it('巻き戻し: 戻している途中の印は、セッションごとに持つ（ほかのセッションでも戻し始めてから戻っても、もう一度は押せない）', async () => {
+    const finishes: ((outcome: unknown) => void)[] = [];
+    install({
+      'screen.rewindPreview': () => Promise.resolve({ files: [], insertions: 0, deletions: 0, codeError: null }),
+      'screen.rewind': () => new Promise((resolve) => finishes.push(resolve)),
+    });
+    const s2 = () => props({ session: S2, chat: chatOf({ items: [{ kind: 'user', id: 'u9', text: 'テストを足して' }] }) });
+    const option = () => screen.getByText('会話を戻す').closest('button') as HTMLButtonElement;
+    const view = render(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    fireEvent.click(option());
+    view.rerender(<ClaudePane {...s2()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    fireEvent.click(option());
+    view.rerender(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    expect(option().disabled).toBe(true);
+    // s2 が終わっても、s1 はまだ戻している途中
+    await act(async () => finishes[1]({ ok: true, prefillText: null, error: null }));
+    expect(option().disabled).toBe(true);
+    await act(async () => finishes[0]({ ok: true, prefillText: null, error: null }));
+    expect(api.argsOf('screen.rewind').map(([id]) => id)).toEqual(['s1', 's2']);
+  });
+
+  it('巻き戻し: 戻している途中でほかのセッションへ移ってから断られたら、どのセッションの話かを添えてわけを出す。移った先のカードは閉じない', async () => {
     let finish!: (outcome: unknown) => void;
     install({
       'screen.rewindPreview': () => Promise.resolve({ files: [], insertions: 0, deletions: 0, codeError: null }),
@@ -357,7 +384,7 @@ describe('ヘッダー', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
     await settle();
     await act(async () => finish({ ok: false, prefillText: null, error: '送る予定の発言があります', codeRewound: true }));
-    expect(alerts).toEqual(['コードは戻しました。会話は戻せませんでした（送る予定の発言があります）']);
+    expect(alerts).toEqual(['「セッション s1」のコードは戻しました。会話は戻せませんでした（送る予定の発言があります）']);
     expect(document.querySelector('.menu-card.rewind')).not.toBeNull();
   });
 
