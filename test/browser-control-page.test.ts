@@ -1317,10 +1317,7 @@ describe('JavaScript の実行（evaluate）', () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/a');
     runIn(page, { url: 'http://localhost:3000/a', title: '題' });
-    const run = async (expression: string) => {
-      const result = await call('evaluate', { expression });
-      return result.isError ? textOf(result) : textOf(result);
-    };
+    const run = async (expression: string) => textOf(await call('evaluate', { expression }));
     expect(await run('{a:1}')).toBe('1');
     expect(await run('1 // 行末の注釈')).toBe('1');
     expect(await run('var x = 1;')).toBe('undefined');
@@ -1341,6 +1338,32 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(await run('#!x\rdocument.title')).toBe('"題"');
     expect(await run('#!x\u2028document.title')).toBe('"題"');
     expect(await run('#!だけ')).toBe('undefined');
+  });
+
+  it('HTML の注釈（--> と <!--）やテンプレート文字列で始まる式も、比べる文を飛ばせない（移った先では動かさない）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    const expressions = ['--> 注釈\ndocument.title', '<!-- 注釈\ndocument.title', '`${document.title}`'];
+    for (const expression of expressions) {
+      page.url = 'http://localhost:3000/a';
+      runIn(page, { url: 'http://localhost:3000/b', title: '題' });
+      expect(textOf(await call('evaluate', { expression }))).toBe('"題"');
+      page.url = 'http://localhost:3000/a';
+      runIn(page, { url: 'https://evil.example/', title: '外のページ' });
+      expect(await call('evaluate', { expression })).toEqual(NOT_RUN('https://evil.example'));
+    }
+  });
+
+  it('ページが、乱数の無い目印の文をコンソールに出しても、止めたことにしない（式のエラーとして返す）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => {
+      logConsole(page, 'error', 'Uncaught tanacode: the page moved to another origin before the script ran');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(
+      textResult('Execution failed: Uncaught tanacode: the page moved to another origin before the script ran', true),
+    );
   });
 
   it('#! の行の中に、比べる文が入ってしまわない（移った先では、#! の次の行の式も動かさない）', async () => {
@@ -1442,6 +1465,22 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(textOf(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null }))).toBe('"動いた"');
     await gateOnly(control, 'v()');
     expect(textOf(await call('evaluate', { expression: 'v()' }, 'S1', { gate: false, toolUseId: 'toolu_g' }))).toBe('"動いた"');
+  });
+
+  it('子の確認に親が答えるまでに、フックが見たページから移っていたら、親が許しても動かさない（確認から実行まで通して）', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://myapp.local/a');
+    page.evaluate = () => '動いた';
+    // 子の Claude Code が evaluate を呼ぼうとし、フックが *.local のページを見て確認を出させた（呼び出しの ID 付き）
+    await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression: 'send()' }, toolUseId: 'toolu_child' });
+    // 親が確認を読む。許す先のページなので、親も許せる
+    expect(control.humanOnly('S1', { tool: browserToolId('evaluate') })).toBeNull();
+    // 親が答える前に、タブが許す先の別のオリジンへ移った（親が答えるときも、許す先なので許せる）
+    page.url = 'http://localhost:3001/';
+    expect(control.humanOnly('S1', { tool: browserToolId('evaluate') })).toBeNull();
+    // 親が許し、Claude Code がツールを呼ぶ。フックが見たページ（*.local）と違うので、動かさない
+    expect(await call('evaluate', { expression: 'send()' }, 'S1', { gate: false, toolUseId: 'toolu_child' })).toEqual(CHANGED('http://myapp.local', 'http://localhost:3001'));
+    expect(page.evaluated).toEqual([]);
   });
 
   it('同じ式の控えが 2 つあれば、新しい方を使う。控えは 1 つのセッションで 20 個まで（押し出された呼び出しは、控えが無いので断る）', async () => {
