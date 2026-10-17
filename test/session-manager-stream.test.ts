@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // stream-json の行と会話ログの、二重・順番・ターンの終わり（SessionManager。設計書 7 節の「順番と二重の扱い」）。
-// チャットの中身は会話ログから作り、動いている間の状態は stream-json の行から作る。同じものを 2 つの道から取らない
+// チャットの中身は会話ログから作り、動いている間の状態は stream-json の行から作る。同じものを 2 つの道から取らない。
+// stream-json の行は、pipe.emit の中で読み終わる（会話ログの行は、ファイルを見張って読むので、あとで届く）。「まだ終えていない」などは、
+// 時間を置かずに emit の直後に確かめる。ターンの終わりを待つ時間（turnEndWaitMs）は、時間切れを確かめるテストのほかは長くして、時間切れで通らないようにする
 
 let app: ScriptedApp;
 beforeEach(() => {
@@ -10,7 +12,6 @@ beforeEach(() => {
 });
 afterEach(() => app.dispose());
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const turnEnds = (id: string) => app.events(id).filter((e) => e.type === 'turn-end').length;
 const types = (id: string) => app.events(id).map((e) => e.type);
 // 送ったが、まだ会話に出ていない発言（最後の queue のイベント）
@@ -38,7 +39,6 @@ describe('二重にしない', () => {
     app.finish(id);
     pipe.emit(stream.result());
     await app.waitFor('完了の知らせ', () => app.turnsCompleted.length === 1);
-    await sleep(200);
     expect(app.turnsCompleted).toHaveLength(1);
     expect(turnEnds(id)).toBe(1);
   });
@@ -58,7 +58,6 @@ describe('ターンの終わりの順番', () => {
     pipe.emit(stream.assistant(answer));
     app.finish(id);
     await app.waitFor('ツールの呼び出し', () => types(id).includes('tool-use'));
-    await sleep(200);
     expect(turnEnds(id)).toBe(0);
     expect(app.manager.stateOf(id)).toBe('working');
     app.append(id, result, answer);
@@ -81,7 +80,6 @@ describe('ターンの終わりの順番', () => {
     pipe.emit(stream.user(result));
     pipe.emit(stream.result('session', { terminal_reason: 'hook_stopped' }));
     await app.waitFor('ツールの呼び出し', () => types(id).includes('tool-use'));
-    await sleep(200);
     expect(turnEnds(id)).toBe(0);
     expect(app.manager.stateOf(id)).toBe('working');
     app.append(id, result);
@@ -98,21 +96,22 @@ describe('ターンの終わりの順番', () => {
     app.finish(id);
     expect(turnEnds(id)).toBe(0);
     expect(app.manager.stateOf(id)).toBe('working');
-    await app.waitFor('時間切れ', () => turnEnds(id) === 1, 5000);
+    await app.waitFor('時間切れ', () => turnEnds(id) === 1);
     expect(app.manager.stateOf(id)).toBe('idle');
     expect(app.turnsCompleted).toHaveLength(1);
   });
 
   it('次のターンが始まったら、待っていた前のターンの終わりを先に出す', async () => {
+    app.manager.turnEndWaitMs = 60_000;
     const { id, pipe } = app.create();
     await app.ready(id);
     app.append(id, line.user('はじめ'));
     pipe.emit(stream.assistant(line.text('出ない応答')));
     app.finish(id);
-    await sleep(100);
+    expect(turnEnds(id)).toBe(0);
     // スマホから次の発言が届いた
     pipe.emit(stream.remoteUser('つぎ'));
-    await app.waitFor('前のターンの終わり', () => turnEnds(id) === 1);
+    expect(turnEnds(id)).toBe(1);
     expect(app.manager.stateOf(id)).toBe('working');
   });
 
@@ -135,7 +134,6 @@ describe('ターンの終わりの順番', () => {
       pipe.emit(stream.lifecycle(uuid, 'started'));
       // 応答の前に終わった。result が、会話ログの発言の行より先に届く
       pipe.emit(ending);
-      await sleep(200);
       expect(turnEnds(id)).toBe(before);
       app.append(id, { ...line.user('仕上げて'), uuid });
       await app.waitFor('ターンの終わり', () => turnEnds(id) === before + 1);
@@ -148,26 +146,31 @@ describe('ターンの終わりの順番', () => {
     const queued = await app.send(id, 'これも');
     pipe.emit(stream.lifecycle(queued, 'started'));
     pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
-    await sleep(200);
     expect(turnEnds(id)).toBe(before);
     app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt: 'これも', source_uuid: queued } });
     await app.waitFor('ターンの終わり', () => turnEnds(id) === before + 1);
   });
 
-  it('応答の前に終わったターンでも、発言が先に会話ログに出ていれば、待たずに終える。会話ログに出ないままなら、時間切れで終える', async () => {
-    app.manager.turnEndWaitMs = 600;
+  it('応答の前に終わったターンでも、発言が先に会話ログに出ていれば、待たずに終える', async () => {
+    app.manager.turnEndWaitMs = 60_000;
     const { id, pipe } = app.create();
     await app.ready(id);
     await app.prompt(id, 'はじめ');
     await app.waitFor('発言', () => app.events(id).some((e) => e.type === 'user'));
     pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
-    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1, 300);
+    expect(turnEnds(id)).toBe(1);
+  });
+
+  it('応答の前に終わったターンの発言が、会話ログに出ないままなら、時間切れで終える', async () => {
+    app.manager.turnEndWaitMs = 600;
+    const { id, pipe } = app.create();
+    await app.ready(id);
     const uuid = await app.send(id, 'つぎ');
     pipe.emit(stream.lifecycle(uuid, 'started'));
     pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
-    await sleep(200);
-    expect(turnEnds(id)).toBe(1);
-    await app.waitFor('時間切れ', () => turnEnds(id) === 2, 3000);
+    expect(turnEnds(id)).toBe(0);
+    await app.waitFor('時間切れ', () => turnEnds(id) === 1);
+    expect(app.events(id).some((e) => e.type === 'user')).toBe(false);
   });
 
   it('Claude Code の中で済むコマンド（/clear・/compact。モデルを呼ばず num_turns が 0）のターンは、終えるが、完了を知らせない', async () => {
@@ -199,12 +202,13 @@ describe('ターンの終わりの順番', () => {
   });
 
   it('claude が終わったら、待っていたターンの終わりを出す', async () => {
+    app.manager.turnEndWaitMs = 60_000;
     const { id, pipe } = app.create();
     await app.ready(id);
     app.append(id, line.user('はじめ'));
     pipe.emit(stream.assistant(line.text('出ない応答')));
     app.finish(id);
-    await sleep(100);
+    expect(turnEnds(id)).toBe(0);
     pipe.exit(1);
     await app.waitFor('終了', () => types(id).includes('process-exit'));
     expect(types(id).indexOf('turn-end')).toBeLessThan(types(id).indexOf('process-exit'));
@@ -311,7 +315,6 @@ describe('ターンとターンの間・入力なしのターン', () => {
     app.finish(id);
     await app.waitFor('裏のタスク', () => app.manager.stateOf(id) === 'background');
     pipe.emit({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 60_000, error_status: 429, error: 'rate_limit', uuid: 'r1', session_id: 's' });
-    await sleep(100);
     expect(app.manager.stateOf(id)).toBe('background');
   });
 
@@ -335,14 +338,13 @@ describe('ターンの始まり', () => {
     await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
     app.finish(id);
     await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
-    pipe.emit(stream.assistant(line.text('タスクが終わりました')));
-    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    app.say(id, line.text('タスクが終わりました'));
+    expect(app.manager.stateOf(id)).toBe('working');
     // サブエージェントの行では始まらない
     app.finish(id);
-    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle', 5000);
+    await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
     pipe.emit({ ...stream.assistant(line.text('サブエージェント')), parent_tool_use_id: 'toolu_agent' });
     pipe.emit(stream.blockStart('text', 'toolu_agent'));
-    await sleep(100);
     expect(app.manager.stateOf(id)).toBe('idle');
   });
 });
@@ -380,7 +382,6 @@ describe('順番待ち（command_lifecycle）', () => {
     await app.waitFor('空', () => unsent(id).length === 0);
     // 知らない uuid の知らせは、何もしない
     pipe.emit(stream.lifecycle('unknown', 'completed'));
-    await sleep(50);
     expect(unsent(id)).toEqual([]);
   });
 
@@ -416,7 +417,6 @@ describe('知らせ', () => {
     await app.waitFor('利用枠', () => app.statusLineInfos.get(id)?.rateLimits !== null && app.statusLineInfos.get(id)?.rateLimits !== undefined);
     expect(app.statusLineInfos.get(id)?.rateLimits).toEqual({ fiveHour: { percent: 42, resetsAt: 1_800_000_000_000 }, sevenDay: { percent: 10, resetsAt: null } });
     pipe.emit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, uuid: 'l2' });
-    await sleep(50);
     expect(app.statusLineInfos.get(id)?.rateLimits?.fiveHour?.percent).toBe(42);
   });
 
@@ -560,7 +560,6 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     pipe.emit(stream.assistant(tool, app.claudeId(id)));
     pipe.emit(started('h1', 'PreToolUse:Bash'));
     pipe.emit(response('h1', 'PreToolUse:Bash'));
-    await sleep(50);
     expect(hooks(id)).toEqual([]);
     // 会話ログにカードが出たら、そのあとに付ける
     app.append(id, tool);
@@ -635,7 +634,6 @@ describe('会話のタイトル（generate_session_title）', () => {
     app.say(id, line.user('つぎ'), line.text('はい'));
     app.finish(id);
     await app.waitFor('2 つめのターン', () => turnEnds(id) === 2);
-    await sleep(100);
     expect(pipe.requests('generate_session_title')).toHaveLength(1);
   });
 
@@ -670,7 +668,6 @@ describe('会話のタイトル（generate_session_title）', () => {
     app.say(id, line.text('裏のタスクが終わりました'));
     app.finish(id);
     await app.waitFor('ひとつめのターン', () => turnEnds(id) === 1);
-    await sleep(100);
     expect(pipe.requests('generate_session_title')).toEqual([]);
     app.say(id, line.user('ログインを直して'), line.text('直します'));
     app.finish(id);
@@ -689,7 +686,6 @@ describe('会話のタイトル（generate_session_title）', () => {
     app.say(titled.id, line.user('はじめ'), { type: 'ai-title', aiTitle: '前に作ったタイトル' }, line.text('はい'));
     app.finish(titled.id);
     await app.waitFor('完了', () => app.turnsCompleted.length === 2);
-    await sleep(100);
     expect(named.pipe.requests('generate_session_title')).toEqual([]);
     expect(titled.pipe.requests('generate_session_title')).toEqual([]);
   });
