@@ -13,7 +13,7 @@ import { findSession, sessionName, type SessionLink } from '../sessions/sessionL
 import { bashStateLabel } from '../tasks/taskList';
 import { ChatImages } from './ChatImages';
 import { HookRuns } from './HookRuns';
-import { toolLabel } from './toolLabel';
+import { toolLabel } from '@shared/tool-label';
 import type { ChatItem, ToolStatus } from './chatState';
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;

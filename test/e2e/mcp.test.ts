@@ -177,8 +177,8 @@ describe('Claude が MCP でアプリを操作する', () => {
 
   it('ページを開く前に許可の確認が出て、答えるとアプリ内ブラウザに開く', async () => {
     const card = await app.menuCard('permission');
-    // ツールは表示名（title）で出る。開く先の URL も出る
-    expect(await card.textContent()).toContain('tanacode-browser — 開く');
+    // ツールは、チャットのツールの行と同じ名前で出る。開く先の URL も出る
+    expect(await card.textContent()).toContain('アプリ内ブラウザ · 開く');
     expect(await card.textContent()).toContain(url);
     await app.choose(card, /^許可する/);
     await app.page.locator('.preview-pane .preview-address input').waitFor();

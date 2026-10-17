@@ -2,6 +2,7 @@ import { t } from '@shared/i18n';
 import { stripControlChars } from '@shared/paste';
 import type { PendingPermission, PermissionReply, QuestionReply } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
+import { tanacodeToolLabel } from '@shared/tool-label';
 import type { CanUseToolRequest, PermissionResult, PermissionUpdate } from './stream/protocol';
 
 // Claude Code が答えを待つ要求（stream-json の can_use_tool）を、カードと親の道具で扱う形にし、答えを Claude Code への返事
@@ -61,7 +62,8 @@ export function permissionOf(requestId: string, request: CanUseToolRequest, plan
   return {
     id: requestId,
     tool: request.tool_name,
-    title: clean(request.title ?? request.display_name),
+    // tanacode 自身の MCP のツールは、チャットのツールの行と同じ名前にする（Claude Code の見出しは、ツールの名前を英語にしただけ）
+    title: tanacodeToolLabel(request.tool_name) ?? clean(request.title ?? request.display_name),
     description: clean(request.description),
     input: request.input,
     reason: clean(request.decision_reason),

@@ -134,7 +134,6 @@
       "terminalMode": "Can't send while in terminal mode. Switch back to the chat first"
     },
     "worktree": {
-      "untrustedFolder": "Claude Code doesn't trust this folder yet. Start a session without a worktree once and accept the folder trust prompt, then start with a worktree.",
       "createFailed": "Claude Code couldn't create the worktree",
       "closedWhileCreating": "The session was archived or removed from the list while its worktree was being created",
       "commandAt": "{command} ({dir})",
@@ -1908,8 +1907,6 @@
       "reviewAnswers": "Review Answers →",
       "otherTyped": "Other: {text}",
       "other": "Other (type your own answer)",
-      "cancelTip": "Cancel",
-      "answerPlaceholder": "Type your answer",
       "confirm": "OK",
       "send": "Send",
       "stopEditing": "Stop editing",

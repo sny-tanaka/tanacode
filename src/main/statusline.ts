@@ -142,8 +142,8 @@ const IDLE_SUFFIX = '.idle.json';
 const STOP_SUFFIX = '.auto-compact.json';
 const STOP_HIT_SUFFIX = '.auto-compact.hit.json';
 
-// セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、AskUserQuestion の入力のファイル（<dir>/<セッション ID>.ask.json）を見張る
-// 書くだけのフックのコマンド。質問のファイル（<id>.ask.json）と同じフォルダの、<id> に種類の名前を付けたファイルに、フックの入力を書く
+// 書くだけのフックのコマンド。<dir>/<id>.ask.json（ASK_FILE_ENV。名前の元にするだけで、このファイルはもう書かない・読まない）と同じフォルダの、
+// <id> に種類の名前を付けたファイルに、フックの入力を書く
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
 const fileCommand = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${suffix}"`;
 // 許可の確認の直前（PermissionRequest）: <id>.permission.json
@@ -162,6 +162,7 @@ export const IDLE_FILE_COMMAND = fileCommand(IDLE_SUFFIX);
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
 export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; [ -f "$f" ] || exit 0; case "$(cat)" in *'"agent_id":"'*) exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h"; exit 0`;
 
+// セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、書くだけのフックが書くファイル（.permission.json など）を見張る
 export class StatusLineWatcher {
   private watcher: FSWatcher | null = null;
   private readonly timers = new Map<string, NodeJS.Timeout>();

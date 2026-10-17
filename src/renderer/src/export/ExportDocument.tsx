@@ -7,7 +7,7 @@ import { SentFilesCard } from '../chat/SentFilesCard';
 import { TodoList } from '../chat/TodoPanel';
 import { DIFF_TOOLS, statusLabel, ToolDetail } from '../chat/ToolCard';
 import type { ChatItem } from '../chat/chatState';
-import { toolLabel } from '../chat/toolLabel';
+import { toolLabel } from '@shared/tool-label';
 import { groupSummary, groupTools, hookSummary, type HookGroup, type ToolGroup, type ToolItem } from '../chat/toolGroups';
 import { DisclosureIcon } from '../icons';
 import { StatusDot } from '../layout/StatusDot';

@@ -40,6 +40,13 @@ export function toolLabel(name: string): string {
   return mcp.server ? `${mcp.server} · ${mcp.tool}` : mcp.tool;
 }
 
+// tanacode 自身の MCP のツールなら、画面に出す名前（例: 「アプリ内ブラウザ · 開く」）。ほかのツールは null。
+// 許可の確認のカードの見出しに使う（Claude Code が stream-json で渡す見出しは、ツールの名前を英語にしただけのもの。例: Navigate）
+export function tanacodeToolLabel(name: string): string | null {
+  const server = name.match(/^mcp__(.+?)__/)?.[1];
+  return server && TANACODE_SERVERS.has(server) ? toolLabel(name) : null;
+}
+
 // tanacode のほかのセッションを扱うツール（子セッションの起動・指示、ほかのセッションを覗く）か
 export function isSessionTool(name: string): boolean {
   return name.startsWith(`mcp__${SESSIONS_MCP_SERVER}__`);

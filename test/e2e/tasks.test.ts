@@ -52,9 +52,10 @@ describe('バックグラウンドの作業を、タスクの画面で見て止�
 
   it('ワークフローを始める前の確認に、カードで答えられる', async () => {
     await app.startSession(PROMPT, { mode: 'manual' });
-    const menu = await app.menuCard('other');
+    // ワークフローを始める前の確認は、Workflow のツールの許可の確認（can_use_tool）として届く
+    const menu = await app.menuCard('permission');
     expect(await menu.textContent()).toMatch(/workflow/i);
-    await app.choose(menu, /^Yes/);
+    await app.choose(menu, /^許可する/);
     await app.byText('.chat-list', '起動しました').waitFor();
   });
 

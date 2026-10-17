@@ -1,6 +1,5 @@
 import type { ChatEvent } from '@shared/chat';
 import { checklistTarget, checklistToolId } from '@shared/checklist-tools';
-import type { MenuOption } from '@shared/screen';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { DemoBackend } from '../backend';
 import { ROOT } from '../data';
@@ -106,16 +105,6 @@ export class Claude {
     return `${this.prefix}${prefix}-${this.seq}`;
   }
 }
-
-export const option = (id: string, label: string, description: string, preview?: string): MenuOption => ({
-  id,
-  label,
-  description,
-  pointed: id === '1',
-  checked: null,
-  textInput: false,
-  preview,
-});
 
 export function statusLine(percent: number, tokens: number): StatusLineInfo {
   return {

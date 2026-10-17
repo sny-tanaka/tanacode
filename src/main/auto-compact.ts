@@ -20,8 +20,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 // - 取りやめた・失敗したときは、次のターンの終わりにもう 1 回だけ試す。続けて 2 回だめなら、そのセッションでは休む
 //   （休んでいる間は、Claude Code の自動の圧縮を止めない。上限で詰まらないように）。手動で成功するか、トグルを入れ直すと戻る
 // 人のじゃまをしないための決まり（ターンの終わりの切り替えだけ。アプリが途中で止めたターンは、止めたままにしないよう、必ず始める）:
-// - 人が中断（Esc）して終わったターンでは、始めない（中断した人は、すぐ次の発言を打つ。仕上げが取りやめになるだけ）
-// - 入力欄に書きかけの文字があるあいだは、始めない（仕上げの頼みを打てずに、失敗に数えられる）
+// - 人が中断して終わったターンでは、始めない（中断した人は、すぐ次の発言を打つ。仕上げが取りやめになるだけ）
 const REARM_MARGIN = 10;
 const MAX_FAILURES = 2;
 // ターンが終わってから、最後の応答の使用量が届くまで待つ時間。statusLine は、ターンの終わりより少し遅れて書かれる
@@ -119,11 +118,9 @@ export class AutoCompact {
     s.working = false;
     this.clearStop(id);
     if (!ended) return;
-    if (!stopped) {
-      if (host.lastTurnInterrupted(id)) {
-        s.endedAt = null;
-        return;
-      }
+    if (!stopped && host.lastTurnInterrupted(id)) {
+      s.endedAt = null;
+      return;
     }
     const over = s.armed && percent !== null && percent >= threshold;
     if (!stopped && !over && !s.preCompact) return;

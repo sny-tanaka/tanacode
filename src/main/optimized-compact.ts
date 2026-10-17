@@ -208,7 +208,7 @@ export class OptimizedCompact {
     }
   }
 
-  // 再開の文を送る。送れないとき（入力欄に書きかけがある・人が先に発言した）は、捨てずに、入力欄が空くまで待って送る。
+  // 再開の文を送る。送れないとき（手が空かないまま時間が過ぎた・ターミナルモードの間など）は、捨てずに、少し待って送り直す。
   // 捨てると、会話が空のまま残り、Claude は引き継ぎを受け取れない
   private async resume(id: string, text: string): Promise<CompactFailure | null> {
     this.setPhase(id, 'resuming');
@@ -233,7 +233,6 @@ export class OptimizedCompact {
     const { host } = this.deps;
     const sentAt = Date.now();
     let seen = false;
-    // 仕上げの頼みが、入力欄に出たままになった時刻
     for (;;) {
       if (!this.alive(id)) return 'exited';
       const events = await host.conversation(id);
@@ -281,7 +280,7 @@ export class OptimizedCompact {
   }
 }
 
-// 送った仕上げの頼み（base よりあとの、いちばん新しいもの）の場所。まだ会話に出ていない・入力欄に戻されたら -1
+// 送った仕上げの頼み（base よりあとの、いちばん新しいもの）の場所。まだ会話に出ていない（巻き戻した・/clear したあとも）なら -1
 function handoffIndex(events: ChatEvent[], base: number): number {
   for (let i = events.length - 1; i >= base; i--) {
     const event = events[i];

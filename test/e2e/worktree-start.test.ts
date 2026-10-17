@@ -10,6 +10,8 @@ import { E2EApp } from './app';
 // 作れなかったら、新規セッションの画面に戻して、送るはずだった指示を入力欄に戻し、理由を出す
 
 const PROMPT = 'worktree に分けて始めてください';
+// worktree を作れないようにした git が出す理由
+const GIT_FAILURE = 'fatal: the test git does not add worktrees';
 const REPLY = 'worktree で始めた返事です';
 
 const newSession = (app: E2EApp) => app.page.locator('section.claude:has(.new-session-body)');
@@ -123,9 +125,12 @@ describe('worktree を作れなかったら、新規セッションの画面に�
   const alerts = () => app.page.evaluate(() => (window as unknown as { alerts: string[] }).alerts);
 
   beforeAll(async () => {
-    // フォルダを信頼していない。claude --worktree は、信頼の確認を出さずに終わる
+    // Claude Code が worktree を作れないようにする。PATH の先頭に git の代わりを置き、worktree add だけを失敗させる
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const git = `#!/bin/sh\ncase " $* " in *" worktree add "*) echo "${GIT_FAILURE}" >&2; exit 128 ;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`;
     app = await E2EApp.launch({
       git: true,
+      commands: { git },
       conversations: () => [{ match: PROMPT, steps: [[{ type: 'text', text: REPLY }]] }],
     });
     await app.page.evaluate(() => {
@@ -147,9 +152,9 @@ describe('worktree を作れなかったら、新規セッションの画面に�
     await compose(app);
     await app.page.click('section.claude:has(.new-session-body) .chat-input-row [aria-label="送信"]');
     await expect.poll(async () => (await alerts()).length, { timeout: 30_000 }).toBe(1);
-    expect(await alerts()).toEqual([
-      'セッションを始められませんでした: このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください',
-    ]);
+    // 理由には、Claude Code の標準エラーの最後の行を添える
+    expect((await alerts())[0]).toMatch(/^セッションを始められませんでした: Claude Code が worktree を作れませんでした/);
+    expect((await alerts())[0]).toContain(GIT_FAILURE);
     await newSession(app).waitFor();
     expect(await app.page.inputValue('section.claude:has(.new-session-body) .chat-input textarea')).toBe(PROMPT);
     await app.page.locator(`.new-session-chips .folder-picker > button.new-session-chip[title="${app.work}"]`).waitFor();
@@ -160,9 +165,6 @@ describe('worktree を作れなかったら、新規セッションの画面に�
   it('worktree なしで送り直すと、同じ指示で始まる', async () => {
     await app.page.uncheck('.new-session-chips .new-session-check input[type="checkbox"]');
     await app.page.click('section.claude:has(.new-session-body) .chat-input-row [aria-label="送信"]');
-    // 信頼の確認に答える
-    const card = await app.menuCard('other');
-    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', REPLY).waitFor();
     expect(await alerts()).toHaveLength(1);
   });

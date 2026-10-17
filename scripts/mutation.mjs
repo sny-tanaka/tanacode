@@ -25,8 +25,8 @@ import { parse } from '@babel/parser';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKER = join(root, 'scripts/mutation-worker.mjs');
-// 既定の対象: 読み取りの中核で、単体テストのよく通っているもの
-const DEFAULT_TARGETS = ['src/main/screen-parser.ts', 'src/shared/chat.ts'];
+// 既定の対象: Claude Code とのやりとり（stream-json の行と制御の要求）・状態の組み立て・会話ログの読み取りの中核で、単体テストのよく通っているもの
+const DEFAULT_TARGETS = ['src/main/stream/client.ts', 'src/main/stream/state.ts', 'src/shared/chat.ts'];
 // 画面の操作の書き換え（--ui）の既定の対象: ボタンの多い画面の部品
 const UI_TARGETS = [
   'src/renderer/src/sessions/NewSessionPane.tsx',

@@ -6,7 +6,7 @@ import { E2EApp } from './app';
 
 // Claude がセッションの MCP で子セッションを始める。始める前に許可の確認がカードで出て、答えると、
 // 子はアプリのふつうのセッションとして一覧に並び（親の下）、最初の指示で動き出す。親は子の一覧を読める。
-// 番号付きの手順が続く長い指示（NUMBERED_PROMPT）でも、子の入力欄に打った指示が、打ちかけのまま止まらずに送られる
+// 番号付きの手順が続く長い指示（NUMBERED_PROMPT）でも、子に全文が届き、子は動き出す
 
 const PARENT = '子セッションに任せてください';
 const CHILD = '子の作業として、返事だけしてください';
@@ -75,11 +75,9 @@ describe('Claude がセッションの MCP で子セッションを始める', (
     await app.byText('.chat-list', CHILD_REPLY).waitFor();
   });
 
-  it('番号付きの手順が続く長い指示でも、子は最初の指示で動き出す（入力欄の番号付きの行を、選択メニューと読み違えない）', async () => {
-    // 子の入力欄は、長い指示を打っている途中でスクロールして、見えているいちばん上の行が「❯ 6. 手順 6…」の形になる。
-    // 選択メニューと読むと、打つのも Enter もやめて、子は指示を受け取らないまま、番号付きの行を選択肢にしたカードを出す
+  it('番号付きの手順が続く長い指示でも、子は最初の指示で動き出す。カードは出ない', async () => {
     await app.startSession(NUMBERED_PARENT, { mode: 'manual' });
-    await app.choose(await app.menuCard('permission'), /^Yes/);
+    await app.choose(await app.menuCard('permission'), /^許可する/);
     await app.byText('.chat-list', NUMBERED_DONE).waitFor();
     await app.byText('.session-list .session-row', NUMBERED_NAME).click();
     await app.byText('.claude-header .claude-title', NUMBERED_NAME).waitFor();
@@ -140,10 +138,10 @@ describe('アプリを起動し直したあとに始めた子も、親の権限�
 
   it('引き継いだ親が、モードを省いて始めた子は、親と同じ acceptEdits で動く', async () => {
     await app.send(ADOPTED_ASK);
-    await app.choose(await app.menuCard('permission'), /^Yes/);
+    await app.choose(await app.menuCard('permission'), /^許可する/);
     await app.byText('.chat-list', ADOPTED_DONE).waitFor();
     expect(app.api.toolResults.find((r) => r.includes(ADOPTED_CHILD_NAME))).toMatch(/"permission_mode":\s*"acceptEdits"/);
-    // 子の Claude Code の画面に出ているモードも、acceptEdits
+    // 子のヘッダーのモードも、acceptEdits
     await app.byText('.session-list .session-row', ADOPTED_CHILD_NAME).click();
     await app.byText('.chat-list', ADOPTED_CHILD_REPLY).waitFor();
     await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('acceptEdits');
@@ -154,8 +152,8 @@ describe('アプリを起動し直したあとに始めた子も、親の権限�
   });
 });
 
-// 親が、始めたあとの子の権限モードとエフォートを変える（configure_session）。権限モードは、Claude Code を起動し直さずに切り替え、
-// エフォートは、子の Claude Code を起動し直して同じ会話を続ける。切り替えたモードは、起動し直しても保つ
+// 親が、始めたあとの子の権限モードとエフォートを変える（configure_session）。どちらも、動いている子の Claude Code を
+// その場で切り替える（set_permission_mode・apply_flag_settings。起動し直さない）
 const CONFIG_PARENT = '子の設定をあとから変えます';
 const CONFIG_CHILD = 'あとで設定を変える子の作業として、返事だけしてください';
 const CONFIG_CHILD_NAME = '設定を変える子';
@@ -201,14 +199,14 @@ describe('親が、始めたあとの子の権限モードとエフォートを�
 
   it('acceptEdits の親が、manual の子を始める', async () => {
     await app.startSession(CONFIG_PARENT, { mode: 'acceptEdits' });
-    await app.choose(await app.menuCard('permission'), /^Yes/);
+    await app.choose(await app.menuCard('permission'), /^許可する/);
     await app.byText('.chat-list', CONFIG_STARTED).waitFor();
     await app.byText('.session-list .session-row', CONFIG_CHILD_NAME).click();
     await app.byText('.chat-list', CONFIG_CHILD_REPLY).waitFor();
     await expect.poll(() => modeSelect().inputValue()).toBe('manual');
   });
 
-  it('親が configure_session で子を acceptEdits・エフォート low にすると、確認なしに変わり、起動し直した子もそのモードで動く', async () => {
+  it('親が configure_session で子を acceptEdits・エフォート low にすると、確認なしに、子の Claude Code を起動し直さずに変わる', async () => {
     const started = app.api.toolResults.find((r) => r.includes(CONFIG_CHILD_NAME));
     const childId = (JSON.parse(started ?? '{}') as { session_id?: string }).session_id;
     expect(childId).toBeTruthy();
@@ -217,6 +215,7 @@ describe('親が、始めたあとの子の権限モードとエフォートを�
       [{ type: 'text', text: CONFIG_DONE }],
     );
     await app.byText('.session-list .session-row', CONFIG_PARENT).click();
+    const running = await app.claudeArgs();
     await app.send(CONFIG_ASK);
     await app.byText('.chat-list', CONFIG_DONE).waitFor();
     const result = app.api.toolResults.find((r) => r.includes('"changed"'));
@@ -224,15 +223,13 @@ describe('親が、始めたあとの子の権限モードとエフォートを�
     expect(result).toMatch(/"effort":\s*"low"/);
     // 許可の確認は出ない（親に許している範囲の中の変更）
     expect(await app.page.locator('.chat-list .menu-card').count()).toBe(0);
-    // 子は、エフォートを変えるために起動し直したあとも、切り替えた acceptEdits のまま
+    // 子のヘッダーも、変えたエフォートとモードになる
     await app.byText('.session-list .session-row', CONFIG_CHILD_NAME).click();
     await app.byText('.chat-list', CONFIG_CHILD_REPLY).waitFor();
     await expect.poll(() => effortSelect().inputValue()).toBe('low');
     await expect.poll(() => modeSelect().inputValue(), { timeout: 30_000 }).toBe('acceptEdits');
-    // 子の Claude Code は、新しいエフォートと、切り替えたモードで起動し直している（同じ会話を続ける）
-    const child = (await app.claudeArgs()).find((args) => args.includes('--effort low'));
-    expect(child).toMatch(/--permission-mode acceptEdits\b/);
-    expect(child).toContain('--resume');
+    // 子の Claude Code は起動し直していない（動いている claude は、変える前と同じ引数のまま）
+    expect((await app.claudeArgs()).sort()).toEqual([...running].sort());
   });
 
   it('画面のコンソールにエラーが出ていない', () => {
@@ -240,9 +237,8 @@ describe('親が、始めたあとの子の権限モードとエフォートを�
   });
 });
 
-// 止まっている親を一覧から開くと、子でないセッションは --permission-mode を付けずに --resume で起動する。Claude Code は前回のモードを
-// 戻すので、親のモードは変わらない。そのあとに始める子も、親のモードで始まる（アプリが決めたモードだけを見ると、親が manual 扱いになり、
-// 子が manual に絞られる。auto を指定すると断られる）
+// 止まっている親を一覧から開くと、新しいセッションと同じ決まりのモード（設定の defaultMode、無ければ auto。前回のモードは引き継がない）を
+// --permission-mode に付けて --resume で起動する。そのあとに始める子も、開き直した親のモードで始まる
 const REOPENED_PARENT = '開き直したあとも任せます';
 const REOPENED_FIRST = '開き直す前の返事です';
 const REOPENED_ASK = '開き直したあとに、別のセッションを始めてください';
@@ -280,7 +276,7 @@ describe('止まっていた親を開き直したあとに始めた子も、親�
     await app?.close();
   });
 
-  it('acceptEdits で始めた親をアーカイブで止め、一覧から戻して開くと、Claude Code は acceptEdits に戻る', async () => {
+  it('acceptEdits で始めた親をアーカイブで止め、一覧から戻して開くと、新しいセッションと同じく auto で始まる', async () => {
     await app.startSession(REOPENED_PARENT, { mode: 'acceptEdits' });
     await app.byText('.chat-list', REOPENED_FIRST).waitFor();
     await parentRow().hover();
@@ -291,21 +287,21 @@ describe('止まっていた親を開き直したあとに始めた子も、親�
     await archived.locator('[aria-label="アクティブに戻す"]').click();
     await parentRow().click();
     await app.byText('.chat-list', REOPENED_FIRST).waitFor();
-    // 開き直した Claude Code には、モードを渡していない
+    // 開き直した Claude Code には、前回のモード（acceptEdits）ではなく、新しいセッションと同じモードを渡す
     await expect.poll(async () => (await app.claudeArgs()).join('\n')).toContain('--resume');
-    expect((await app.claudeArgs()).join('\n')).not.toContain('--permission-mode');
-    await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('acceptEdits');
+    expect((await app.claudeArgs()).join(' ')).toContain('--permission-mode auto');
+    await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('auto');
   });
 
-  it('開き直した親が、モードを省いて始めた子は、親と同じ acceptEdits で動く', async () => {
+  it('開き直した親が、モードを省いて始めた子は、親と同じ auto で動く', async () => {
     await app.send(REOPENED_ASK);
-    await app.choose(await app.menuCard('permission'), /^Yes/);
+    await app.choose(await app.menuCard('permission'), /^許可する/);
     await app.byText('.chat-list', REOPENED_DONE).waitFor();
-    expect(app.api.toolResults.find((r) => r.includes(REOPENED_CHILD_NAME))).toMatch(/"permission_mode":\s*"acceptEdits"/);
-    // 子の Claude Code の画面に出ているモードも、acceptEdits
+    expect(app.api.toolResults.find((r) => r.includes(REOPENED_CHILD_NAME))).toMatch(/"permission_mode":\s*"auto"/);
+    // 子のヘッダーのモードも、auto
     await app.byText('.session-list .session-row', REOPENED_CHILD_NAME).click();
     await app.byText('.chat-list', REOPENED_CHILD_REPLY).waitFor();
-    await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('acceptEdits');
+    await expect.poll(() => app.page.locator('.chat-options select[title^="権限モード"]').inputValue()).toBe('auto');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

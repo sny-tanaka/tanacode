@@ -250,8 +250,8 @@ export type SessionSummary = {
   // ターミナルモードで、TUI のターンの途中（会話ログと書くだけの Stop のフックで分かる）
   terminalWorking?: boolean;
   unread: boolean;
-  // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可 /
-  // other: フォルダの信頼確認や認識できない対話画面など / browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
+  // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可・プランの承認 /
+  // browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   backgroundTasks: number;
@@ -429,11 +429,11 @@ export type TanacodeApi = {
     // 表示中のセッション。通知の要否と未読の解除に使う
     focus(id: string | null): void;
     snapshot(id: string): Promise<SessionSnapshot>;
-    // Claude Code の入力欄に打ち込んで送る。画像はパスを貼り付けとして送ると [Image #n] として添付される。
-    // 同じセッションへの送信（親セッションからの指示を含む）は、混ざらないよう 1 つずつ順に送る
-    // pastes: 入力欄に貼り付けた長い文（札）。打った文のあとに、1 つずつ貼り付けとして送る（Claude Code が <pasted_content> の囲みに入れる）
+    // 発言を送る（stream-json の user の行）。画像（attachments はパス）は image のブロックに入れる。
+    // 同じセッションへの送信（親セッションからの指示を含む）は、送った順に届ける
+    // pastes: 入力欄に貼り付けた長い文（札）。pasted_content で渡す（Claude Code が、打った文のあとに <pasted_content> の囲みに入れて足す）
     submit(id: string, text: string, attachments: string[], pastes?: string[]): Promise<void>;
-    // 作業を中断する（Esc を送る）
+    // 作業を中断する（interrupt の要求）
     interrupt(id: string): void;
     // チャットとターミナルモードを切り替える（今の Claude Code を止めて、もう片方で --resume する）。手が空いているときだけ。
     // stopTasks: 裏のタスクが止まることを人が確かめた。切り替えられなければ理由を添えて失敗する
@@ -532,7 +532,7 @@ export type TanacodeApi = {
     pickDir(): Promise<string | null>;
     onChanged(listener: (state: ProfilesState) => void): () => void;
   };
-  // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って入力欄に打ち込む。
+  // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って送る。
   // アプリが閉じていた・Mac がスリープしていたなどで時刻を過ぎていたものは送らず、missed として残す
   scheduled: {
     list(): Promise<ScheduledMessage[]>;

@@ -36,6 +36,7 @@ import type {
   WorktreeRemoval,
 } from '@shared/ipc';
 import type { Activity, Menu, PermissionMode } from '@shared/screen';
+import { tanacodeToolLabel } from '@shared/tool-label';
 import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
@@ -469,7 +470,6 @@ export class SessionManager {
     await this.archive(id).catch(() => null);
     this.store.remove(id);
     this.emitSessions();
-    if (/trust not yet accepted/i.test(stderr)) throw new Error(t('main.worktree.untrustedFolder'));
     throw new Error(`${t('main.worktree.createFailed')}${stderr ? `\n\n${stderr.split('\n').slice(-8).join('\n')}` : ''}`);
   }
 
@@ -2274,7 +2274,8 @@ export class SessionManager {
     rt.turnStarter = 'other';
     // バックグラウンドのタスクが動いているあいだは、まだ完了ではない（一覧も「完了待ち」）。
     // タスクが終わると Claude Code が続きを始めるので、通知はそのターンの終わりに出す。
-    // ブラウザでの操作を頼んでいるあいだも同じ（2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、Claude はターンを終えて返事を待つ）。
+    // ブラウザでの操作を頼んでいるあいだも同じ（ターミナルモードの TUI では、2 分を過ぎると Claude Code が呼び出しをバックグラウンドに移し、
+    // Claude はターンを終えて返事を待つ。チャット（-p）では移さず、人が答えるまでターンの中で待つ。実測）。
     // ただし Claude が報告を預けていれば、タスクが動いていても出す（タスクを残したまま、作業を終えたと報告している）
     if (notice && summary && summary.attention !== 'browser' && (summary.backgroundTasks === 0 || this.turnReported(id))) this.listeners.onTurnCompleted(summary, notice);
     this.emitSessions();
@@ -2853,10 +2854,10 @@ function requestMenu(request: CanUseToolRequest): Menu {
   }
   const command = typeof request.input.command === 'string' ? request.input.command : null;
   const detail = [request.description ?? request.title ?? request.display_name ?? request.tool_name, command].filter((v): v is string => !!v);
-  return { kind: 'permission', tabs: [], title: request.title ?? request.tool_name, context: detail, options: [], multiSelect: false, hint: '' };
+  return { kind: 'permission', tabs: [], title: tanacodeToolLabel(request.tool_name) ?? request.title ?? request.tool_name, context: detail, options: [], multiSelect: false, hint: '' };
 }
 
-// フックが答えを待っている質問の通知に使うメニュー（通知の本文は質問文）
+// 答えを待っている質問の通知に使うメニュー（通知の本文は質問文）
 function pendingMenu(pending: PendingQuestion): Menu {
   return { kind: 'question', tabs: [], title: pending.questions[0]?.question ?? '', context: [], options: [], multiSelect: false, hint: '' };
 }

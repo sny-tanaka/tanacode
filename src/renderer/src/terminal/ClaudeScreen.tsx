@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { bracketedPaste, stripControlChars } from '@shared/paste';
-import { enterClaudeScreen, leaveClaudeScreen } from './claudeScreenTyping';
 import { xtermOptions } from './xterm';
 
 type Term = { term: Terminal; fit: FitAddon; element: HTMLDivElement; opened: boolean };
@@ -37,10 +36,9 @@ function hold(): () => void {
     if (--holders > 0) return;
     offData?.();
     offData = null;
-    for (const [id, t] of terms) {
+    for (const t of terms.values()) {
       t.term.dispose();
       t.element.remove();
-      leaveClaudeScreen(id);
     }
     terms.clear();
   };
@@ -55,7 +53,7 @@ export function useClaudeScreenOutput(): void {
 const IMAGE_PASTE_MS = 300;
 
 // Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。
-// 画像は、パスを貼り付けとして送ると [Image #n] として添付される（main の submit と同じ）。
+// 画像は、パスを貼り付けとして送ると [Image #n] として添付される（TUI の決まり）。
 // 貼る文は、ファイルの中身・Claude が書いた文・ターミナルの出力などから来るので、ここで必ず制御文字を取り除く
 // （ESC が残ると、ESC[201~ で貼り付けを抜け、あとの文字が Enter・Shift+Tab などのキーとして TUI に届く）
 export async function pasteIntoClaudeScreen(sessionId: string, text: string, attachments: string[] = []): Promise<void> {
@@ -88,15 +86,12 @@ export function ClaudeScreen({ sessionId }: { sessionId: string }) {
     // 大きさが前に出したときと同じだと onResize が来ないので、ここでも pty に伝える
     window.tanacode.pty.resize(sessionId, t.term.cols, t.term.rows);
     t.term.focus();
-    // 出している間は、人が Claude Code の入力欄に打っているものとして、書きかけをチャットの入力欄に移さない（隠したら移す）
-    enterClaudeScreen(sessionId);
     const observer = new ResizeObserver(() => t.fit.fit());
     observer.observe(host);
     return () => {
       observer.disconnect();
       t.element.remove();
       window.tanacode.pty.resetSize(sessionId);
-      leaveClaudeScreen(sessionId);
     };
   }, [sessionId]);
 

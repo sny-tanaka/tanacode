@@ -15,7 +15,7 @@ import { SentFilesCard } from './SentFilesCard';
 import { ParentHeading, SessionLinkList, SessionRefText } from './SessionRefs';
 import { ToolCard } from './ToolCard';
 import type { ChatItem } from './chatState';
-import { isSessionTool } from './toolLabel';
+import { isSessionTool } from '@shared/tool-label';
 import { openChecklistCard } from '../checklist/openCard';
 import type { SubagentRuns } from './useSessionSubagents';
 

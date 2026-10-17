@@ -3,8 +3,8 @@ import type { AskQuestion } from '@shared/screen';
 
 type Entry = { pending: PendingQuestion; finish: (reply: QuestionReply | null) => void };
 
-// フック（question-hook.ts）が返事を待っている AskUserQuestion。セッションごとに、来た順に持つ。
-// 返事（質問のカード・親の answer_question）を渡すか、待つのをやめる（人がターミナルで答えた・Claude Code が終わった・フックが止められた）と、
+// Claude Code が返事を待っている AskUserQuestion（stream-json の can_use_tool）。セッションごとに、来た順に持つ。
+// 返事（質問のカード・親の answer_question）を渡すか、待つのをやめる（Claude Code が取り下げた・終わった・ほかで答えた）と、
 // その質問は消える。changed: セッションの待っている質問が変わった（増えた・減った・親が 1 問答えた）
 export class PendingQuestions {
   private readonly bySession = new Map<string, Entry[]>();
@@ -12,7 +12,7 @@ export class PendingQuestions {
 
   constructor(private readonly changed: (session: string) => void) {}
 
-  // フックが質問を渡した。返事か、待つのをやめる（null）まで待つ。signal: フックとのつながりが切れた
+  // Claude Code が質問を出した。返事か、待つのをやめる（null）まで待つ。signal: 待つのをやめる（要求が取り下げられた・終わった）
   wait(session: string, questions: AskQuestion[], signal: AbortSignal): Promise<QuestionReply | null> {
     return new Promise((resolve) => {
       if (signal.aborted) {

@@ -4,7 +4,7 @@ import type { SubagentRun } from '@shared/subagent';
 import type { BashTask, BashTaskState, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { ChatItem } from '../chat/chatState';
-import { toolLabel } from '../chat/toolLabel';
+import { toolLabel } from '@shared/tool-label';
 import { useSessionValues } from '../sessionValues';
 import { stableRuns } from './stableRuns';
 

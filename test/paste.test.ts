@@ -11,7 +11,7 @@ describe('stripControlChars', () => {
   });
 
   it('双方向の制御文字・方向の印（見た目と中身をずらせるもの）を除く', () => {
-    expect(stripControlChars('rm ‮txt.exe‬ ⁦x⁩ ‎‏؜')).toBe('rm txt.exe x ');
+    expect(stripControlChars('rm \u202Etxt.exe\u202C \u2066x\u2069 \u200E\u200F\u061C')).toBe('rm txt.exe x ');
   });
 
   it('改行とタブは残し、CR（\\r\\n・\\r）は改行にそろえる', () => {

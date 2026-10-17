@@ -6,8 +6,6 @@ export type MenuOption = {
   id: string;
   label: string;
   description: string;
-  // 選んでいる（前は画面で ❯ が付いていたもの。今は使わず false）
-  pointed: boolean;
   // 複数選択のチェック状態。単一選択では null
   checked: boolean | null;
   // AskUserQuestion の「Type something.」（選ぶと自由記述を入力できる）

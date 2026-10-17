@@ -255,7 +255,7 @@ export class E2EApp {
       ?.evaluate(() => (window as unknown as { tanacode: { sessions: { list(): Promise<unknown> } } }).tanacode.sessions.list())
       .catch((error: unknown) => String(error));
     // ターミナルモードのセッションなら、Claude Code の画面も残す（チャットのセッションを切り替えると Claude Code を開き直すので、
-    // 切り替えはしない）
+    // 切り替えはしない）。落ちたときの手がかりに残すだけで、確かめには使わない（TUI の画面はテストで読まない。決めたこと）
     let screen = '';
     if (page) {
       try {
@@ -348,8 +348,8 @@ export class E2EApp {
     throw new Error(`「${text}」の行にコメントを書き始められません`);
   }
 
-  // チャットに出たメニューのカード（kind: other は信頼の確認など、permission は許可の確認、question は質問）
-  async menuCard(kind: 'permission' | 'question' | 'other'): Promise<Locator> {
+  // チャットに出たカード（permission は許可の確認・プランの承認、question は質問）
+  async menuCard(kind: 'permission' | 'question'): Promise<Locator> {
     const card = this.page.locator(`.chat-list .menu-card.${kind}`);
     await card.waitFor();
     return card;

@@ -64,7 +64,7 @@ describe('起動と送信', () => {
     writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     // 画像でないファイルと、読めないファイルは送らない（チャットで知らせる）
     writeFileSync(join(app.root, 'memo.txt'), 'メモ');
-    const uuid = await app.send(id, 'こんにちは\x1b[Z‮です', [png, join(app.root, 'memo.txt'), join(app.root, 'missing.png')], ['長い\nログ']);
+    const uuid = await app.send(id, 'こんにちは\x1b[Z\u202Eです', [png, join(app.root, 'memo.txt'), join(app.root, 'missing.png')], ['長い\nログ']);
     expect(pipe.prompts).toEqual([
       {
         type: 'user',

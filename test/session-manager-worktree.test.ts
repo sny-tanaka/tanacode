@@ -206,24 +206,14 @@ describe('createInWorktree', () => {
     expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
   });
 
-  it('信頼していないフォルダでは、Claude Code が worktree を作らずに終わる。記録を消し、先に信頼の確認に答えるよう案内する', async () => {
-    start();
-    const { creating, pipe } = await begin();
-    await new Promise((r) => setTimeout(r, 200));
-    pipe.exit(1, 'Error: Workspace trust not yet accepted for this folder');
-    await expect(creating).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
-    expect(app.manager.list()).toEqual([]);
-    expect(app.sessions).toEqual([]);
-  });
-
-  it('アプリが手を離せない間に、終わりが届いても、標準エラーから信頼の確認に答えるよう案内する', async () => {
+  it('アプリが手を離せない間に、終わりが届いても、標準エラーを添えて失敗する', async () => {
     start();
     const { creating, pipe } = await begin();
     // worktree ができたかを見る間隔（200ms）より長く、アプリが手を離せない（CI の遅いランナーで起きる）
     const busyUntil = Date.now() + 300;
     while (Date.now() < busyUntil);
-    pipe.exit(1, 'Error: Workspace trust not yet accepted for this folder');
-    await expect(creating).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
+    pipe.exit(1, 'fatal: worktree を作れません');
+    await expect(creating).rejects.toThrow('Claude Code が worktree を作れませんでした\n\nfatal: worktree を作れません');
     expect(app.manager.list()).toEqual([]);
   });
 
@@ -294,8 +284,8 @@ describe('startInWorktree', () => {
     start();
     const { created, pipe } = await begun();
     await new Promise((r) => setTimeout(r, 200));
-    pipe.exit(1, 'Error: Workspace trust not yet accepted for this folder');
-    await expect(created).rejects.toThrow('このフォルダは、まだ Claude Code で信頼していません');
+    pipe.exit(1, 'fatal: worktree を作れません');
+    await expect(created).rejects.toThrow('Claude Code が worktree を作れませんでした');
     expect(app.manager.list()).toEqual([]);
     expect(app.sessions).toEqual([]);
   });

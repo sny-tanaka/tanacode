@@ -118,7 +118,7 @@ export function QuestionCard({ sessionId, question }: Props) {
       {/* 見出しの行。キャンセルは右上に置く（Claude Code の画面の Esc と同じく、作業を止める） */}
       <div className="menu-card-head">
         <div className="menu-card-kind">{t('screen.kind.question')}</div>
-        <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} tip={t('screen.card.cancelTip')} disabled={sending} onClick={() => send({ kind: 'cancel' })} />
+        <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} disabled={sending} onClick={() => send({ kind: 'cancel' })} />
       </div>
       {questions.length > 1 && (
         <div className="menu-tabs">

@@ -2,7 +2,7 @@ import { BROWSER_MCP_SERVER } from '@shared/browser-tools';
 import type { HookRun } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { ChatItem } from './chatState';
-import { isChecklistTool, isSessionTool, isWalkthroughTool, mcpParts, toolLabel } from './toolLabel';
+import { isChecklistTool, isSessionTool, isWalkthroughTool, mcpParts, toolLabel } from '@shared/tool-label';
 
 export type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 

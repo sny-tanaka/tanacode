@@ -48,6 +48,13 @@ describe('permissionOf', () => {
     });
   });
 
+  it('tanacode 自身の MCP のツールは、Claude Code の英語の見出しの代わりに、チャットのツールの行と同じ名前を見出しにする', () => {
+    const navigate = bash({ tool_name: 'mcp__tanacode-browser__navigate', display_name: 'Navigate', input: { url: 'http://localhost:3000/' } });
+    expect(permissionOf('req-1', navigate).title).toBe('アプリ内ブラウザ · 開く');
+    // ほかの MCP のツールは、Claude Code の見出しのまま
+    expect(permissionOf('req-1', bash({ tool_name: 'mcp__github__create_issue', display_name: 'Create issue' })).title).toBe('Create issue');
+  });
+
   it('見出し・説明・理由の制御文字（ANSI の色など）を消す', () => {
     const permission = permissionOf('req-1', bash({ title: '\u001b[1mRun\u001b[0m', description: 'テスト\u0007', decision_reason: '\u001b[31m危険\u001b[0m' }));
     expect(permission).toMatchObject({ title: 'Run', description: 'テスト', reason: '危険' });

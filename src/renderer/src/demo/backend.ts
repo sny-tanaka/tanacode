@@ -89,7 +89,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class DemoBackend {
   readonly sessions = new Map<string, DemoSession>();
   // 台本が待つ、アプリからの入力（送った発言・質問や許可の確認への答え）
-  // images: 添付した画像の鍵（sessions.image で読める）。本文の中の画像のパスは [Image #n] に置き換えてある
+  // images: 添付した画像の鍵（sessions.image で読める）
   onUserMessage: (sessionId: string, text: string, images: string[]) => void = () => {};
   onAnswer: (sessionId: string) => void = () => {};
   // アプリ内ブラウザの「あなたの番です」への返事・タスクの「止める」・ターミナルへの入力・作業の書き出し
@@ -379,11 +379,11 @@ export class DemoBackend {
           if (id && this.sessions.get(id)?.summary.unread) this.update(id, { unread: false });
         },
         snapshot: (id) => ok({ sessionId: id, fromSeq: 0, events: [...s(id).events] }),
-        // 画像はパスを貼り付けて添付する（Claude Code は [Image #n] と出す）
-        // 本物と同じく、発言は送った後で（別の順番で）会話に届く。同じ順番で届くと、アプリが「送信中」の仮の発言を消せない
+        // 本物と同じく、発言は送った後で（別の順番で）会話に届く。同じ順番で届くと、アプリが「送信中」の仮の発言を消せない。
+        // 画像は、本物（stream-json の image のブロック）と同じく、本文には印を足さずに添える
         submit: (id, text, attachments) => {
-          const message = `${attachments.map((_, i) => `[Image #${i + 1}] `).join('')}${text}`.trim();
-          if (message) setTimeout(() => this.onUserMessage(id, message, attachments), 0);
+          const message = text.trim();
+          if (message || attachments.length > 0) setTimeout(() => this.onUserMessage(id, message, attachments), 0);
           return ok(undefined);
         },
         interrupt: () => {},

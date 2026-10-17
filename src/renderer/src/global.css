@@ -2859,10 +2859,6 @@ button.session-ref:hover {
 .chat-callout span {
   flex: 1;
 }
-.chat-callout-actions {
-  display: flex;
-  gap: 8px;
-}
 /* 起動に時間がかかっているときの案内。Claude Code の標準エラーの末尾を下に出す */
 .chat-callout.slow-start {
   flex-direction: column;

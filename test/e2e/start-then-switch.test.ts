@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { SessionSummary } from '@shared/ipc';
 import { E2EApp } from './app';
 
 // 新規セッションの画面で、セッションを始めている途中（worktree で始める前の、git の確かめの間など）にフォルダを変える。
@@ -98,12 +99,11 @@ describe('セッションを始めている途中で、新規セッションの�
 
   it('変えた先で送ると、そのフォルダでセッションが始まり、そのセッションに移る', async () => {
     await send().click();
-    // 変えた先のフォルダは、まだ信頼していないので確認が出る（出るのは、変えた先のセッションに移っているから）
-    const card = await app.menuCard('other');
-    expect(await card.textContent()).toContain(other);
-    await app.choose(card, /^許可する/);
+    // 変えた先のフォルダは、まだ信頼していないが、確かめずに始まる（stream-json。決めたこと）
     await app.byText('.claude-header .claude-title', OTHER).waitFor();
     await app.byText('.chat-list', '変えた先のフォルダの返事です').waitFor();
+    const list = await app.page.evaluate(() => (window as unknown as { tanacode: { sessions: { list(): Promise<SessionSummary[]> } } }).tanacode.sessions.list());
+    expect(list.find((s) => s.title === OTHER)?.cwd).toBe(other);
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

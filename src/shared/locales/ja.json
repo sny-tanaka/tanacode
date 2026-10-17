@@ -132,7 +132,6 @@
       "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください"
     },
     "worktree": {
-      "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
       "createFailed": "Claude Code が worktree を作れませんでした",
       "closedWhileCreating": "worktree を作っている途中で、セッションがアーカイブされたか、一覧から消されました",
       "commandAt": "{command}（{dir}）",
@@ -1846,8 +1845,6 @@
       "reviewAnswers": "回答の確認へ →",
       "otherTyped": "その他: {text}",
       "other": "その他（自由に入力）",
-      "cancelTip": "キャンセル",
-      "answerPlaceholder": "回答を入力",
       "confirm": "決定",
       "send": "送信",
       "stopEditing": "やめる",
