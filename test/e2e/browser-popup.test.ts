@@ -17,6 +17,7 @@ import { E2EApp } from './app';
 // - Claude の操作で、許す先の外（[::1]）のポップアップは開かない
 // - ポップアップがさらに開くポップアップも、同じ守りの別ウインドウで開く
 // - 1 つのタブから開いておけるのは 5 個まで（続けて開いても）。タブを閉じると、そのタブから開いた別ウインドウだけが閉じる
+// - 空のページの別ウインドウの題には、about:blank と、中身を書いた開いたページのオリジンが付く（ページが書いた題だけ・アプリ名にならない）
 
 const OPEN = 'ログインのポップアップを確かめてください';
 const DONE = 'ポップアップを確かめました';
@@ -35,6 +36,8 @@ const opener = (outside: string) => `<!doctype html><title>開く側</title><h1>
 <button id="blank-login" onclick="const w = window.open('', 'msal', 'width=480,height=640'); w.location.assign('/popup')">空のページから</button>
 <button id="outside-login" onclick="window.open('${outside}/', 'outside', 'width=480,height=640')">外のログイン</button>
 <button id="nested" onclick="window.open('/nest', 'nest', 'width=400,height=400')">入れ子</button>
+<button id="blank-title" onclick="const w = window.open('', 'blank-title', 'width=480,height=400'); w.document.write('<title>tanacode の再ログイン</title><p>空のページに書いた画面</p>'); w.document.close();">空のページに題を書く</button>
+<button id="blank-plain" onclick="window.open('', 'blank-plain', 'width=480,height=400')">空のページだけ</button>
 <p id="result">まだ</p>
 <script>
   let count = 0;
@@ -238,6 +241,13 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     await expect.poll(async () => (await popups()).slice(5).map((p) => p.closed), { timeout: 10_000 }).toEqual([true, true, true, true, true]);
     // 開く側のタブから開いた入れ子の別ウインドウは、開いたまま
     expect((await popups())[3]?.closed).toBe(false);
+  });
+
+  it('空のページの別ウインドウの題には、about:blank と開いたページのオリジンが付く（ページが題を書いたとき・書かないとき）', async () => {
+    await runIn('/', 'document.getElementById("blank-title").click()');
+    await runIn('/', 'document.getElementById("blank-plain").click()');
+    const titles = () => app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => w.getTitle()));
+    await expect.poll(titles, { timeout: 10_000 }).toEqual(expect.arrayContaining([`tanacode の再ログイン — about:blank (${origin})`, `about:blank (${origin})`]));
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

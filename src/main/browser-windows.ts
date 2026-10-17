@@ -155,14 +155,14 @@ export class PreviewWindows {
   private create(source: WebContents, url: string, contents: WebContents | undefined, bounds: Rectangle | null): WebContents {
     const win = this.deps.makeWindow({ ...(contents ? { webContents: contents } : {}), ...windowOptions(bounds) } as BrowserWindowConstructorOptions);
     if (!contents) void win.loadURL(url);
-    this.adopt(source, win);
+    this.adopt(source, win, url);
     // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）
     if (!this.deps.background && !win.isDestroyed()) win.showInactive();
     return win.webContents;
   }
 
-  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる
-  private adopt(source: WebContents, win: BrowserWindow): void {
+  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる。url: 開く先
+  private adopt(source: WebContents, win: BrowserWindow, url: string): void {
     if (win.webContents.session !== source.session) {
       win.destroy();
       return;
@@ -175,7 +175,7 @@ export class PreviewWindows {
     list.add(win);
     this.popups.set(root, list);
     win.on('closed', () => list.delete(win));
-    showOrigin(win);
+    showOrigin(win, url);
     // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める
     win.webContents.on('content-bounds-updated', (event, bounds) => {
       event.preventDefault();
@@ -227,14 +227,29 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 // 別ウインドウにはアドレス欄が無いので、題に今のページのオリジンを添える（ログインの窓が、どのサイトのものか分かるように）。
-// オリジンの無いページ（空のページ about:blank。中身は開いたページが書ける）は、その URL を添える（ページが書いた題だけを、サイトの題のように出さない）
-function showOrigin(win: BrowserWindow): void {
+// オリジンの無いページ（空のページ about:blank。中身は開いたページが書ける）は、about:blank と、中身を書けるオリジン（メインフレームのオリジン。
+// 空のページでは開いたページのもの）を添える。ページが書いた題だけを、サイトの題のように出さない。
+// 作った直後（URL も題もまだ空。Electron の既定の題はアプリ名）から付ける。url: 開く先（URL がまだ空の間に使う）
+function showOrigin(win: BrowserWindow, url: string): void {
+  const where = () => {
+    const now = win.webContents.getURL() || url;
+    const origin = originOf(now);
+    if (origin) return origin;
+    let writer: string | null = null;
+    try {
+      writer = originOf(win.webContents.mainFrame.origin);
+    } catch {
+      writer = null;
+    }
+    return writer ? `about:blank (${writer})` : 'about:blank';
+  };
   const update = (title: string) => {
     if (win.isDestroyed()) return;
-    const url = win.webContents.getURL();
-    const where = originOf(url) ?? url;
-    win.setTitle(title && title !== url ? `${title} — ${where}` : where);
+    const now = win.webContents.getURL();
+    const shown = where();
+    win.setTitle(title && title !== now && title !== 'about:blank' ? `${title} — ${shown}` : shown);
   };
+  update('');
   win.on('page-title-updated', (event, title) => {
     event.preventDefault();
     update(title);

@@ -24,6 +24,8 @@ class FakeContents extends EventEmitter {
   handler: Handler | null = null;
   url = 'about:blank';
   title = '';
+  // メインフレーム（空のページでは、開いたページのオリジン）
+  readonly mainFrame = { origin: 'null' };
   constructor(
     readonly type: string,
     readonly session: FakeSession,
@@ -145,7 +147,7 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
     expect(result.createWindow({ ...FROM_PAGE, webContents: contents })).toBe(contents);
     return made.at(-1)!;
   };
-  return { preview, browser, opened, windows, tab, popup, made };
+  return { preview, browser, opened, windows, tab, popup: Object.assign(popup, { made }), made };
 }
 
 describe('プレビューのセッション', () => {
@@ -448,17 +450,39 @@ describe('新しいウインドウ', () => {
     expect(win.title).toBe('https://login.example.test');
   });
 
-  it('空のページ（about:blank）の別ウインドウの題には、about:blank を添える（開いたページが書いた題だけを、サイトの題のように出さない）', () => {
+  it('空のページ（about:blank）の別ウインドウの題には、about:blank と、中身を書ける開いたページのオリジンを添える（ページが書いた題だけを、サイトの題のように出さない）', () => {
     const { tab, popup } = setup();
-    const win = popup(tab(), undefined, 'about:blank');
-    win.webContents.url = 'about:blank';
-    win.webContents.title = 'Google のログイン';
-    win.webContents.emit('did-navigate');
-    expect(win.title).toBe('Google のログイン — about:blank');
+    const guest = tab();
+    // 作った直後（Electron の本物では、URL も題も空）から、アプリ名の題を出さない
+    const contents = new FakeContents('window', guest.session);
+    contents.url = '';
+    contents.mainFrame.origin = 'https://opener.example.test';
+    const result = guest.open('', 'new-window', 'width=480,height=400') as { createWindow: (options: Record<string, unknown>) => unknown };
+    result.createWindow({ webContents: contents });
+    const win = popup.made.at(-1)!;
+    expect(win.title).toBe('about:blank (https://opener.example.test)');
+    contents.url = 'about:blank';
+    contents.title = 'Google のログイン';
+    contents.emit('did-navigate');
+    expect(win.title).toBe('Google のログイン — about:blank (https://opener.example.test)');
     win.emit('page-title-updated', { preventDefault: vi.fn() }, '別の題');
-    expect(win.title).toBe('別の題 — about:blank');
-    win.webContents.title = '';
-    win.webContents.emit('did-navigate');
+    expect(win.title).toBe('別の題 — about:blank (https://opener.example.test)');
+    contents.title = '';
+    contents.emit('did-navigate');
+    expect(win.title).toBe('about:blank (https://opener.example.test)');
+    // オリジンが分からなければ、about:blank だけ
+    contents.mainFrame.origin = 'null';
+    contents.emit('did-navigate');
     expect(win.title).toBe('about:blank');
+  });
+
+  it('http(s) のページを開く別ウインドウも、作った直後から、開く先のオリジンを題にする', () => {
+    const { tab, popup } = setup();
+    const guest = tab();
+    const contents = new FakeContents('window', guest.session);
+    contents.url = '';
+    const result = guest.open('https://login.example.test/authorize?state=secret', 'new-window', 'width=480,height=400') as { createWindow: (options: Record<string, unknown>) => unknown };
+    result.createWindow({ webContents: contents });
+    expect(popup.made.at(-1)!.title).toBe('https://login.example.test');
   });
 });
