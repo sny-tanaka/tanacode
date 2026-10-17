@@ -956,7 +956,7 @@ describe('ウインドウ', () => {
     expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
     // Claude の操作で許していない先なら開かない
     browser.allowsPopup.mockReturnValueOnce(false);
-    expect(open({ url: 'https://outside.test/', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(open({ url: 'https://outside.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toEqual({ action: 'deny' });
     expect(open({ url: 'file:///etc/hosts', disposition: 'new-window' })).toEqual({ action: 'deny' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
   });
@@ -1066,7 +1066,7 @@ describe('プレビューの webview の移動先', () => {
     expect(go(contents, 'will-redirect', 'blob:http://localhost/1')).toBe('止める');
     expect(go(contents, 'will-frame-navigate', 'https://example.test/')).toBe('通す');
     expect(contents.windowOpenHandler!({ url: 'mailto:me@example.test', disposition: 'new-window' })).toEqual({ action: 'deny' });
-    expect(contents.windowOpenHandler!({ url: 'https://login.example.test/', disposition: 'new-window' })).toMatchObject({ action: 'allow' });
+    expect(contents.windowOpenHandler!({ url: 'https://login.example.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toMatchObject({ action: 'allow' });
   });
 });
 

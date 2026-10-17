@@ -124,7 +124,8 @@ export class PreviewWindows {
     if (!/^https?:\/\//.test(url)) return DENY;
     const root = this.roots.get(source) ?? source;
     const browser = this.owners.get(root);
-    if (disposition === 'new-window') {
+    // ポップアップは、大きさなどを指定した window.open（features があるもの）だけ。features の無い new-window（Shift+クリックなど）は、タブで開く
+    if (disposition === 'new-window' && (features ?? '').trim() !== '') {
       if ((this.popups.get(root)?.size ?? 0) >= MAX_POPUPS) return DENY;
       // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える）
       if (browser && !browser.allowsPopup(root, url)) return DENY;

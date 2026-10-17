@@ -42,7 +42,8 @@ class FakeContents extends EventEmitter {
   setWindowOpenHandler(handler: Handler): void {
     this.handler = handler;
   }
-  open(url: string, disposition = 'new-window', features = ''): unknown {
+  // features の既定は、大きさを指定したポップアップ（window.open の 3 つめの引数）
+  open(url: string, disposition = 'new-window', features = 'width=480,height=640'): unknown {
     return this.handler!({ url, disposition, features, frameName: '' });
   }
   // ページのトップのフレーム（か中のフレーム）が移ろうとした。止めたら true
@@ -352,6 +353,18 @@ describe('新しいウインドウ', () => {
     guest.open('https://example.test/operating', 'background-tab');
     guest.open('https://example.test/outside', 'foreground-tab');
     expect(opened).toEqual(['https://example.test/outside']);
+  });
+
+  it('features の無い new-window（Shift+クリックなど）は、別ウインドウではなく、アプリ内ブラウザのタブで開く', () => {
+    const { tab, browser } = setup();
+    const guest = tab();
+    expect(guest.open('https://example.test/shift', 'new-window', '')).toEqual({ action: 'deny' });
+    expect(guest.open('https://example.test/space', 'new-window', '  ')).toEqual({ action: 'deny' });
+    expect(browser.openFromPage.mock.calls).toEqual([
+      [guest, 'https://example.test/shift', 'new-window'],
+      [guest, 'https://example.test/space', 'new-window'],
+    ]);
+    expect(browser.allowsPopup).not.toHaveBeenCalled();
   });
 
   it(`1 つのタブから開いておけるポップアップは ${MAX_POPUPS} 個まで。閉じたら、また開ける`, () => {
