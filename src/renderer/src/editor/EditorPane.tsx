@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import type { FileBaseline, FileChange, FileContent } from '@shared/ipc';
 import { shownStep } from '@shared/walkthrough';
 import { t } from '@shared/i18n';
@@ -20,6 +20,14 @@ const MARKDOWN_MODES: { mode: MarkdownMode; icon: IconComponent }[] = [
   { mode: 'source', icon: CodeIcon },
 ];
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
+
+// App から使う操作。別のフォルダへ移る（App がエディタを作り直し、保存していない変更が消える）前に、確かめて保存するため
+export type EditorHandle = {
+  // 保存していない変更のあるファイル（タブの順）
+  unsaved(): string[];
+  // 保存していない変更を、タブの順にすべて保存する。書けなかったら、そこで止めて投げる
+  saveAll(): Promise<void>;
+};
 
 type Props = {
   sessionId: string;
@@ -46,6 +54,7 @@ type Props = {
   walkthrough?: WalkthroughControls | null;
   // 行を選んで「ここを聞く」（ウォークスルーの間だけ渡す）
   onAsk?: (question: RangeQuestion) => void;
+  handle?: Ref<EditorHandle>;
 };
 
 // App はチャットのイベントなどで頻繁に描き直されるので、props が変わったときだけ描き直す
@@ -67,6 +76,7 @@ export const EditorPane = memo(function EditorPane({
   onRemoveComment,
   walkthrough = null,
   onAsk,
+  handle,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -85,6 +95,8 @@ export const EditorPane = memo(function EditorPane({
   onSaveRef.current = onSave;
   const onCursorRef = useRef(onCursor);
   onCursorRef.current = onCursor;
+  const filesRef = useRef(files);
+  filesRef.current = files;
   const [baseline, setBaseline] = useState<{ path: string; value: FileBaseline } | null>(null);
   // 表示中のモデル（Markdown プレビューが内容を読む）。モデルは描画のあとで作るので state で持つ
   const [activeModel, setActiveModel] = useState<monaco.editor.ITextModel | null>(null);
@@ -211,6 +223,21 @@ export const EditorPane = memo(function EditorPane({
       return next;
     });
   }
+
+  // モデルの内容が、最後に読み込んだ・保存したディスクの内容と違うファイル（開いたことのないタブには、モデルが無い）
+  const unsaved = () =>
+    filesRef.current
+      .map((f) => f.path)
+      .filter((path) => {
+        const model = modelsRef.current.get(path);
+        return !!model && model.getValue() !== savedRef.current.get(path);
+      });
+  useImperativeHandle(handle, () => ({
+    unsaved,
+    saveAll: async () => {
+      for (const path of unsaved()) await save(path);
+    },
+  }));
 
   // ディスクの内容で置き換える（未保存の変更は捨てる）
   function reloadFromDisk(path: string) {

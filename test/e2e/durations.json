@@ -21,6 +21,7 @@
   "test/e2e/start-then-switch.test.ts": 13,
   "test/e2e/tasks.test.ts": 13,
   "test/e2e/terminal.test.ts": 12,
+  "test/e2e/unsaved-editor.test.ts": 10,
   "test/e2e/wakeup.test.ts": 8,
   "test/e2e/walkthrough-post.test.ts": 12,
   "test/e2e/workspace.test.ts": 12,

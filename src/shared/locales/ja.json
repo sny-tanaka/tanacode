@@ -1274,6 +1274,16 @@
     },
     "markdownPreview": {
       "diagramFailed": "図を描けませんでした: {error}"
+    },
+    "unsaved": {
+      "label": "保存していない変更",
+      "title": "保存していない変更があります（{count} 件）",
+      "about": "別のフォルダに移るとエディタを開き直すので、保存していない変更は消えます。",
+      "save": "保存して移る",
+      "saving": "保存しています…",
+      "discard": "保存せずに移る",
+      "cancel": "やめる",
+      "saveFailed": "保存できませんでした: {error}"
     }
   },
   "explorer": {

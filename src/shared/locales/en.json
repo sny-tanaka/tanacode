@@ -1315,6 +1315,17 @@
     },
     "markdownPreview": {
       "diagramFailed": "Couldn't render the diagram: {error}"
+    },
+    "unsaved": {
+      "label": "Unsaved changes",
+      "title": "You have unsaved changes in {count} files",
+      "title_one": "You have unsaved changes in {count} file",
+      "about": "Moving to another folder reopens the editor, so your unsaved changes will be lost.",
+      "save": "Save and Move",
+      "saving": "Saving…",
+      "discard": "Move Without Saving",
+      "cancel": "Stay",
+      "saveFailed": "Couldn't save: {error}"
     }
   },
   "explorer": {

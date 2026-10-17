@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ComponentProps } from 'react';
+import { createRef, type ComponentProps } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { EditorPane, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
+import { EditorPane, type EditorHandle, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
+import { UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
 import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
 import './dom';
@@ -321,6 +322,103 @@ describe('EditorPane（エディタ）', () => {
       ['A', 'abc1234', 'src/app.ts'],
       ['B', 'abc1234', 'README.md'],
     ]);
+  });
+
+  // 別のフォルダへ移る（App がエディタを作り直す）前に、App が保存していないファイルを聞き、まとめて保存する
+  describe('保存していない変更を、App から聞いて保存する', () => {
+    async function twoEdited() {
+      mockApi().install();
+      const handle = createRef<EditorHandle>();
+      const p = props();
+      const view = render(<EditorPane {...p} handle={handle} />);
+      expect(handle.current!.unsaved()).toEqual([]);
+      await edit(APP, 'const total = 2;\n');
+      view.rerender(<EditorPane {...p} handle={handle} activePath="README.md" />);
+      await edit(README, '# 直した使い方\n');
+      return { handle, p };
+    }
+
+    it('保存していないファイルをタブの順に返し、まとめて保存すると、すべて書いて未保存の印も消える', async () => {
+      const { handle, p } = await twoEdited();
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
+      await act(() => handle.current!.saveAll());
+      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', 'const total = 2;\n');
+      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n');
+      expect(handle.current!.unsaved()).toEqual([]);
+      expect(document.querySelector('.editor-tab-dot.dirty')).toBeNull();
+    });
+
+    it('書けなかったら、そこで止めて投げる（書けなかったファイルは、保存していないまま）', async () => {
+      const { handle, p } = await twoEdited();
+      vi.mocked(p.onSave).mockImplementationOnce(() => Promise.reject(new Error('書き込めません')));
+      await expect(act(() => handle.current!.saveAll())).rejects.toThrow('書き込めません');
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
+      expect(p.onSave).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('UnsavedDialog（別のフォルダへ移る前の、保存していない変更の確認）', () => {
+  type Props = ComponentProps<typeof UnsavedDialog>;
+  const props = (over: Partial<Props> = {}): Props => ({
+    files: ['src/app.ts', 'README.md'],
+    onSave: vi.fn(() => Promise.resolve()),
+    onDiscard: vi.fn(),
+    onCancel: vi.fn(),
+    ...over,
+  });
+  const dialog = () => screen.getByRole('dialog', { name: '保存していない変更' });
+
+  it('保存していないファイルを並べ、「保存して移る」で保存を頼む。保存している間は、ほかのボタンを押せない', async () => {
+    let finish!: () => void;
+    const p = props({ onSave: vi.fn(() => new Promise<void>((resolve) => (finish = resolve))) });
+    render(<UnsavedDialog {...p} />);
+    expect(dialog().textContent).toContain('src/app.ts');
+    expect(dialog().textContent).toContain('README.md');
+    fireEvent.click(button('保存して移る'));
+    expect(p.onSave).toHaveBeenCalledTimes(1);
+    expect(button('保存しています…').disabled).toBe(true);
+    expect(button('保存せずに移る').disabled).toBe(true);
+    expect(button('やめる').disabled).toBe(true);
+    fireEvent.keyDown(dialog(), { key: 'Escape' });
+    expect(p.onCancel).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(p.onDiscard).not.toHaveBeenCalled();
+  });
+
+  it('保存できなかったら理由を出し、もう一度選べる', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const p = props({ onSave: vi.fn(() => Promise.reject(new Error('書き込めません'))) });
+    render(<UnsavedDialog {...p} />);
+    fireEvent.click(button('保存して移る'));
+    await settle();
+    expect(alert).toHaveBeenCalledWith('保存できませんでした: 書き込めません');
+    expect(button('保存して移る').disabled).toBe(false);
+    fireEvent.click(button('やめる'));
+    expect(p.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('「保存せずに移る」は保存を頼まずに移る', () => {
+    const p = props();
+    render(<UnsavedDialog {...p} />);
+    fireEvent.click(button('保存せずに移る'));
+    expect(p.onDiscard).toHaveBeenCalledTimes(1);
+    expect(p.onSave).not.toHaveBeenCalled();
+    expect(p.onCancel).not.toHaveBeenCalled();
+  });
+
+  it('「やめる」・Esc・外側を押すと、移らない（変換中の Esc では閉じない）', () => {
+    const p = props();
+    render(<UnsavedDialog {...p} />);
+    fireEvent.click(button('やめる'));
+    fireEvent.keyDown(dialog(), { key: 'Escape', isComposing: true });
+    expect(p.onCancel).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(dialog(), { key: 'Escape' });
+    fireEvent.mouseDown(document.querySelector('.overlay')!);
+    fireEvent.mouseDown(dialog());
+    expect(p.onCancel).toHaveBeenCalledTimes(3);
+    expect(p.onSave).not.toHaveBeenCalled();
+    expect(p.onDiscard).not.toHaveBeenCalled();
   });
 });
 
