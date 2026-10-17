@@ -827,7 +827,9 @@
       "claude": "Claude's wake-up",
       "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",
       "cancelSendingTip": "Stop sending and move the message back to the chat input",
-      "cancelTip": "Unschedule and move the message back to the chat input"
+      "cancelTip": "Unschedule and move the message back to the chat input",
+      "unsaved": "Not saved",
+      "unsavedTip": "The scheduled messages file could not be read, so scheduled messages are not saved. They are lost if you quit the app before they are sent (the original file is kept as it is)"
     },
     "note": {
       "scheduled": "Scheduled: {time}",
@@ -1494,7 +1496,8 @@
       "kindReviewTip": "A review list. Cards you check (approve) move to the decisions list.",
       "revoked": "Revoked",
       "revokedTip": "Revoked decision (no longer in force): {reason}",
-      "noReason": "no reason given"
+      "noReason": "no reason given",
+      "unsaved": "This session's checklist file could not be read, so changes are not saved. They are lost when you quit the app (the original file is kept as it is)."
     },
     "action": {
       "copyToSession": "Copy to Another Session",

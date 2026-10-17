@@ -16,6 +16,8 @@ export class ChecklistStore extends ChecklistBook {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   // 保存しないセッション（読めない・形の分からないファイル。上書きも削除もしない）
   private readonly unsaved = new Set<string>();
+  // 保存しないセッションと分かったとき（ファイルを読んだとき。profile.ts がつなぎ、画面の一覧の印を送り直す）
+  onUnsaved: (sessionId: string) => void = () => {};
 
   constructor(
     private readonly dir: string,
@@ -31,6 +33,11 @@ export class ChecklistStore extends ChecklistBook {
     this.timers.delete(sessionId);
     this.docs.delete(sessionId);
     if (!this.unsaved.delete(sessionId)) rmSync(this.file(sessionId), { force: true });
+  }
+
+  // 変更を保存しないセッションか（画面の知らせと、Claude への一言に使う）。まだ読んでいないセッションは false
+  unsavable(sessionId: string): boolean {
+    return this.unsaved.has(sessionId);
   }
 
   flush(): void {
@@ -49,7 +56,11 @@ export class ChecklistStore extends ChecklistBook {
       return { version: 1, lists: raw.lists, activity: Array.isArray(raw.activity) ? raw.activity : [], claudeSeenAt: raw.claudeSeenAt ?? 0 };
     }
     if (data !== null) ({ writable } = unreadable(file, 'チェックリスト'));
-    if (!writable) this.unsaved.add(sessionId);
+    if (!writable) {
+      this.unsaved.add(sessionId);
+      // 読んでいる途中（書き換えや一覧の読み出しの中）で知らせないよう、読み終えてから
+      queueMicrotask(() => this.onUnsaved(sessionId));
+    }
     return emptyChecklistDoc();
   }
 

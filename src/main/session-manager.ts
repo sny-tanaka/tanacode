@@ -376,6 +376,14 @@ export class SessionManager {
   // 動いていても、ターンの終わりに通知する（報告は、どう終わったかを伝えるもの）
   turnReported: (id: string) => boolean = () => false;
 
+  // チェックリストのファイルを読めず、変更を保存しないセッションか（profile.ts がつなぐ。一覧の印で、チェックリストのパネルが知らせる）
+  checklistUnsaved: (id: string) => boolean = () => false;
+
+  // チェックリストを保存しないと分かった（一覧の印を送り直す）
+  checklistUnsavedChanged(id: string): void {
+    if (this.store.get(id)) this.emitSessions();
+  }
+
   // 最後に終わったターンが、人の中断で終わったか
   lastTurnInterrupted(id: string): boolean {
     const events = this.runtimes.get(id)?.events ?? [];
@@ -422,6 +430,7 @@ export class SessionManager {
             : null,
           parentId: r.parentId ?? null,
           addedFolders: r.addedFolders ?? [],
+          ...(this.checklistUnsaved(r.id) ? { checklistUnsaved: true } : {}),
         };
       });
   }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -812,6 +812,23 @@ describe('画面からのコピー（知らせの中身）', () => {
     // 開く場所は、知らせごとに 20 枚まで（2 枚と、21 枚のうちの 20 枚）
     expect(event.cards).toHaveLength(22);
     expect(event.cards.slice(2)).toEqual(copied.slice(2, 22).map((c) => ({ listId: store.findList(PEER, '確認')!.id, cardId: c.id })));
+  });
+});
+
+describe('チェックリストのファイルを読めず、保存しないセッション', () => {
+  it('結果に、保存しないことを一言添える（ほかのセッションのものを扱うときも）。ふつうのセッションには添えない', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 新しいバージョンのアプリが書いた形（読めても、上書きしない）
+    writeFileSync(join(dir, `${PEER}.json`), JSON.stringify({ version: 2, lists: [] }));
+    const note = 'these checklists are not saved';
+    const CHILD = '66666666-0000-4000-8000-000000000006';
+    host.add(CHILD, { parentId: ME });
+    writeFileSync(join(dir, `${CHILD}.json`), JSON.stringify({ version: 2, lists: [] }));
+    expect(first(await call('checklist_overview', {}, PEER))).toContain(note);
+    expect(first(await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] }, PEER))).toContain(note);
+    expect(first(await call('card_add', { session_id: CHILD, list: 'やること', list_description: '', cards: [{ title: 'A' }] }))).toContain(note);
+    expect(first(await call('checklist_overview'))).not.toContain(note);
+    errors.mockRestore();
   });
 });
 

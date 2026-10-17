@@ -98,7 +98,7 @@ export type SessionsHost = {
 };
 
 // 予約したメッセージ（ScheduledMessages）のうち、自分への予約のツールが使うもの
-export type WakeupHost = Pick<ScheduledMessages, 'list' | 'add' | 'cancel' | 'claudeWakeups'>;
+export type WakeupHost = Pick<ScheduledMessages, 'list' | 'add' | 'cancel' | 'claudeWakeups' | 'saving'>;
 
 type Deps = {
   host: SessionsHost;
@@ -146,6 +146,9 @@ const MODES_ALLOWING_PERMISSION = new Set<PermissionMode>(['acceptEdits', 'auto'
 const WAIT_DEFAULT_SECONDS = 300;
 // list_wakeups で返す、予約の本文の文字数の上限
 const MAX_WAKEUP_TEXT_CHARS = 300;
+// 予約のファイルを読めず、保存しないときに添える一言
+const WAKEUPS_UNSAVED =
+  'Note: tanacode could not read its saved file of scheduled messages (no permission, or written by a newer version of tanacode), so scheduled messages are not saved: the ones not sent yet are lost when tanacode quits. Tell the user.';
 // schedule_wakeup の at の形（ISO 8601。時差の無い時刻は、どこの時刻か分からないので受けない）
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 // 起動が終わる前（予約・報告の受け手を作る前）に届いた呼び出しに返すもの
@@ -801,7 +804,7 @@ export class SessionsControl {
       id: added.id,
       at: new Date(added.at).toISOString(),
       local_time: localIso(added.at),
-      note: 'Scheduled. End your turn now: at that time, it is sent back to you as soon as this session is idle.',
+      note: ['Scheduled. End your turn now: at that time, it is sent back to you as soon as this session is idle.', scheduled.saving ? '' : WAKEUPS_UNSAVED].filter(Boolean).join(' '),
     });
   }
 
@@ -824,7 +827,9 @@ export class SessionsControl {
         ...(m.pastes.length > 0 ? { pasted_texts: m.pastes.length } : {}),
         ...(m.error ? { error: m.error } : {}),
       })),
-      ...(messages.length === 0 ? { note: 'No messages are scheduled in this session.' } : {}),
+      ...(messages.length === 0 || !this.wakeups().saving
+        ? { note: [messages.length === 0 ? 'No messages are scheduled in this session.' : '', this.wakeups().saving ? '' : WAKEUPS_UNSAVED].filter(Boolean).join(' ') }
+        : {}),
     });
   }
 

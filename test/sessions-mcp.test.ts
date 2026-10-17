@@ -2834,6 +2834,18 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(jsonOf<Listed>(await control.handle(PEER, 'list_wakeups', {}))).toMatchObject({ messages: [], note: 'No messages are scheduled in this session.' });
   });
 
+  it('予約のファイルを読めず保存しないときは、schedule_wakeup・list_wakeups の結果にそう添える', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scheduled!.dispose();
+    const file = join(root, 'unreadable-scheduled.json');
+    writeFileSync(file, JSON.stringify({ version: 2, messages: [] }));
+    scheduled = new ScheduledMessages(file, scheduleHost(), () => undefined);
+    const note = 'scheduled messages are not saved';
+    expect(jsonOf<{ note: string }>(await schedule({ message: '見に行く', in_minutes: 5 })).note).toContain(note);
+    expect(jsonOf<{ note?: string }>(await control.handle(PARENT, 'list_wakeups', {})).note).toContain(note);
+    errors.mockRestore();
+  });
+
   it('cancel_wakeup: 取り消せるのは、このセッションの Claude の予約だけ。人の予約は人だけが取り消せる', async () => {
     const human = scheduled!.add(PARENT, '人の予約', [], Date.now() + 60 * 60_000);
     const mine = jsonOf<{ id: string }>(await schedule({ message: '取り消す予約', in_minutes: 5 }));

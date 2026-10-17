@@ -28,6 +28,12 @@ export const まだ無い: StoryObj = {
   render: () => frame(<ChecklistPanel session={sampleSession} lists={[]} sessions={sampleSessions} activeCardId={null} onOpen={() => {}} />),
 };
 
+// チェックリストのファイルを読めなかった（権限が無い・新しいバージョンのアプリが書いた形など）。空から始め、変更は保存しない
+export const 保存できない: StoryObj = {
+  render: () =>
+    frame(<ChecklistPanel session={{ ...sampleSession, checklistUnsaved: true }} lists={sampleLists.slice(0, 1)} sessions={sampleSessions} activeCardId={null} onOpen={() => {}} />),
+};
+
 // ゴミ箱に入れたカードとリストは、下の「ゴミ箱」から戻せる
 export const ゴミ箱: StoryObj = {
   render: () => frame(<ChecklistPanel session={sampleSession} lists={trashedLists} sessions={sampleSessions} activeCardId={null} onOpen={() => {}} />),
