@@ -200,6 +200,8 @@ type Runtime = {
   // 再起動で、アプリが止めている claude と、起動し直し終えた（か、やめた）ことの知らせ。この claude の終わりは出さず、
   // その間は起動中にする（一瞬でも終了と見せると、画面が送信を止める）。その間に送るものは、起動し直した claude に送る
   restarting: { process: ClaudeSession; done: Promise<void> } | null;
+  // アーカイブ・一覧からの削除で片付けている途中（worktree も消すときは、止め終わるまで一覧から外さない）。止めたあとに起動し直さない
+  closing: boolean;
   // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
   tuiTurn: boolean;
   // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
@@ -670,8 +672,12 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     const record = this.store.get(id);
     const removing = !!options?.removeWorktree && !!record?.worktree;
-    // 消すときは、消している途中に Claude Code が書き込まないよう、終わるのを待つ
-    if (rt) rt.switchedFrom = null;
+    // 消すときは、消している途中に Claude Code が書き込まないよう、終わるのを待つ。その間に、再起動・切り替えが止めたあとに
+    // 起動し直さないよう、片付けの印を付ける（起動し直すと、消した worktree で、誰も持たない claude が動き続ける）
+    if (rt) {
+      rt.switchedFrom = null;
+      rt.closing = true;
+    }
     if (removing) await rt?.process?.stop();
     else {
       // 終わりの知らせはあとで届くが、片付けはここでするので、届いても使わない（先にランタイムを外しておく）
@@ -898,7 +904,7 @@ export class SessionManager {
         rt.switchStopping = null;
       });
       // 止めている間に、ほかで起動し直した・アーカイブした
-      if (this.runtimes.get(id) !== rt) return;
+      if (this.gone(id, rt)) return;
       if (rt.process === process && !stopped) throw new Error(t('main.session.notStopped'));
       if (rt.process) return;
       const from: LaunchKind = on ? 'stream' : 'tui';
@@ -1452,7 +1458,7 @@ export class SessionManager {
     try {
       const stopped = await process.stop(this.stopStepMs);
       // 止めている間に、ほかで起動し直した・アーカイブした
-      if (this.runtimes.get(id) !== rt) return;
+      if (this.gone(id, rt)) return;
       if (rt.process === process && !stopped) {
         // 止められなかった（終わりの知らせが来ない）。動いている claude をそのまま使えるように戻し、黙らずに理由を返す
         if (wasReady) this.markReady(id, rt);
@@ -1543,12 +1549,17 @@ export class SessionManager {
         await rt.restarting.done;
         deadline = null;
       }
-      if (this.runtimes.get(id) !== rt || !rt.process) throw new Error(t('main.send.exited'));
+      if (this.gone(id, rt) || !rt.process) throw new Error(t('main.send.exited'));
       if (rt.ready) return;
       deadline ??= Date.now() + this.restartSendWaitMs;
       if (Date.now() > deadline) throw new Error(t('main.send.notReady'));
       await sleep(100);
     }
+  }
+
+  // この runtime がもう使われない（一覧から外した・アーカイブや削除で片付けている途中）
+  private gone(id: string, rt: Runtime): boolean {
+    return this.runtimes.get(id) !== rt || rt.closing;
   }
 
   // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る
@@ -1582,7 +1593,7 @@ export class SessionManager {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         // 待つ間にアーカイブ・一覧から削除した（止めた claude からは終わりの知らせが来ず、受け付けるようにもならない）
-        if (this.runtimes.get(id) !== rt) throw new Error(t('main.send.exited'));
+        if (this.gone(id, rt)) throw new Error(t('main.send.exited'));
         // 再起動の途中なら、起動し直した claude を待つ
         if (rt.restarting) {
           await rt.restarting.done;
@@ -1779,6 +1790,7 @@ export class SessionManager {
         switching: false,
         switchStopping: null,
         restarting: null,
+        closing: false,
         switchedFrom: null,
         tuiBaseline: null,
         tuiRemoteSeen: false,
