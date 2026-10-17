@@ -20,18 +20,25 @@ const outDir = join(root, 'coverage', 'e2e');
 const counted = (path) =>
   /^src\/.+\.tsx?$/.test(path) && !path.endsWith('.stories.tsx') && !path.endsWith('.d.ts') && !path.startsWith('src/renderer/src/demo/');
 
-// 束ねる道具（vite 8 の rolldown）が足す実行時の部品。アプリの src を含まず、ソースマップも書かれない（TANACODE_SOURCEMAP=1 でも）
-const bundlerRuntime = (file) => /(^|[\\/])rolldown-runtime-[^\\/]*\.js$/.test(file);
-
-// 自分のコードを持たず、ほかのスクリプトを読んで渡すだけのもの（mermaid の図ごとの入り口など）。
-// 写すコードが無いので、rolldown はソースマップを書かない（TANACODE_SOURCEMAP=1 でも）
-async function onlyReexports(file) {
-  const { body } = await parseAstAsync(readFileSync(file, 'utf8'));
+// どのファイルのコードも含まないスクリプトか。vite 8 の rolldown は、写す元のファイルが無いチャンクには、
+// TANACODE_SOURCEMAP=1 でもソースマップを書かない（書かせる設定も無い）。数えるものが無いので、ソースマップが無くても飛ばしてよい。
+// - ほかのスクリプトを読んで渡すだけのもの（mermaid の図ごとの入り口など。import と export だけ）
+// - 束ねる道具の実行時の部品（rolldown の中のモジュール \0rolldown/runtime.js のコードだけ）
+// rolldown がモジュールごとに付ける「//#region <モジュールの ID>」の印で、どのモジュールのコードかを見る。
+// 印の外にコードがあれば（印が付かなくなったときも）含むとみなし、ソースマップが無ければ失敗にする
+async function withoutFileCode(file) {
+  const code = readFileSync(file, 'utf8');
+  const virtual = [];
+  for (const match of code.matchAll(/^\/\/#region (.*)$[\s\S]*?^\/\/#endregion$/gm)) {
+    if (match[1].startsWith('\\0')) virtual.push([match.index, match.index + match[0].length]);
+  }
+  const { body } = await parseAstAsync(code);
   return body.every(
     (node) =>
       node.type === 'ImportDeclaration' ||
       node.type === 'ExportAllDeclaration' ||
-      (node.type === 'ExportNamedDeclaration' && !node.declaration),
+      (node.type === 'ExportNamedDeclaration' && !node.declaration) ||
+      virtual.some(([start, end]) => start <= node.start && node.end <= end),
   );
 }
 
@@ -79,8 +86,8 @@ const missing = [];
 for (const file of [...byFile.keys()].sort()) {
   const mapFile = `${file}.map`;
   if (!existsSync(file) || !existsSync(mapFile)) {
-    // 束ねる道具の部品と、読んで渡すだけのものは、数えるものが無いので飛ばす。ほかは、ビルドの設定の誤りなので失敗にする
-    if (!(existsSync(file) && (bundlerRuntime(file) || (await onlyReexports(file))))) missing.push(relative(root, file));
+    // どのファイルのコードも含まないものは、数えるものが無いので飛ばす。ほかは、ビルドの設定の誤りなので失敗にする
+    if (!(existsSync(file) && (await withoutFileCode(file)))) missing.push(relative(root, file));
     continue;
   }
   const merged = mergeScriptCovs(byFile.get(file));
