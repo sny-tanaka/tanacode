@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/headless';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ShellTerminals } from '../src/main/shell-terminals';
 
 // ユーザーが使うターミナル（右下のパネル）と、アプリがコマンドを動かすターミナルのタブ（worktree の npm install など）。
@@ -239,28 +239,46 @@ describe('ShellTerminals', () => {
       },
       null,
       Date.now,
-      (fn) => later.push(fn),
+      (fn) => {
+        later.push(fn);
+        return () => {};
+      },
     );
     const { id } = shells.create('session-1', dir, 80, 24);
     await waitForPrompt(id);
-    await typeAndWait(id, "trap '' HUP\r");
+    // SIGHUP を受けても終わらず、受けたことを出力で知らせるシェルにする。入力を待っている間の dash（CI の /bin/sh）は、
+    // trap を次の入力まで後回しにする（止めたシェルには打てない）ので、ループを回させ、コマンドの切れ目で trap を動かす
+    shells.write(id, "trap 'echo hup-$((1+1))' HUP; echo loop-$((2+1)); while :; do sleep 0.1; done\r");
+    await waitFor('ループに入った印', () => (data.get(id) ?? '').includes('loop-3'));
     shells.kill(id);
     expect(shells.list('session-1')).toEqual([]);
     expect(shells.info(id)).toBeNull();
-    // SIGHUP では終わらない。待ちが過ぎたら、強く止める
+    // SIGHUP を受けたあとも動いている（受けたことを出力し、終わっていない）。時間でなく、シェルの出力で確かめる
+    await waitFor('SIGHUP を受けた知らせ', () => (data.get(id) ?? '').includes('hup-2'));
     expect(exits.has(id)).toBe(false);
+    // 待ちが過ぎたら、強く止める
     expect(later).toHaveLength(1);
     later[0]();
     await waitFor('強く止めたシェルの終わり', () => exits.has(id));
   });
 
-  it('kill: SIGHUP で終わったシェルには、あとで強く止める知らせを送らない', async () => {
+  it('kill: SIGHUP で終わったシェルには、あとで強く止める知らせ（SIGKILL）を送らない', async () => {
     const later: (() => void)[] = [];
-    shells = new ShellTerminals({ onData: () => {}, onExit: (id, code) => exits.set(id, code) }, null, Date.now, (fn) => later.push(fn));
+    shells = new ShellTerminals({ onData: () => {}, onExit: (id, code) => exits.set(id, code) }, null, Date.now, (fn) => {
+      later.push(fn);
+      return () => {};
+    });
     const { id } = shells.create('session-1', dir, 80, 24);
     shells.kill(id);
     await waitFor('止めたシェルの終わり', () => exits.has(id));
-    expect(() => later.forEach((fn) => fn())).not.toThrow();
+    // node-pty は、止める知らせを process.kill で送る
+    const kill = vi.spyOn(process, 'kill');
+    try {
+      later.forEach((fn) => fn());
+      expect(kill.mock.calls.filter(([, signal]) => signal === 'SIGKILL')).toEqual([]);
+    } finally {
+      kill.mockRestore();
+    }
   });
 
   it('知らない id への操作は何もしない（閉じたあとに届いた入力など）', () => {

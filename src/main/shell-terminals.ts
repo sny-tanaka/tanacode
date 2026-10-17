@@ -39,6 +39,8 @@ type Shell = {
   unparsed: string[];
   // 人が止めた・タブを閉じた（終わったら、出力の控えも捨てる）
   killed: boolean;
+  // 止めたあと、終わらなければ強く止める待ちを片付ける（終わったら呼ぶ）
+  cancelForceKill: (() => void) | null;
 };
 
 // 一覧に返す 1 つのターミナル。tab: 持ち主のパネルの並びの何番目か（1 から）/ foreground: 前面で動いているプログラム（node-pty の pty.process）
@@ -74,12 +76,16 @@ export class ShellTerminals {
   private detached = false;
 
   // claudeDir: プロファイルの Claude Code の設定のフォルダ（シェルで起動する claude も、そのプロファイルのアカウントを使う）。null は既定のプロファイル。
-  // later: 時間をおいて動かす（テストが差し替える）
+  // later: 時間をおいて動かし、片付ける関数を返す（テストが差し替える）
   constructor(
     private readonly listeners: Listeners,
     private readonly claudeDir: string | null = null,
     private readonly clock: () => number = Date.now,
-    private readonly later: (fn: () => void, ms: number) => void = (fn, ms) => void setTimeout(fn, ms).unref(),
+    private readonly later: (fn: () => void, ms: number) => () => void = (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      timer.unref();
+      return () => clearTimeout(timer);
+    },
   ) {}
 
   create(owner: string, cwd: string, cols: number, rows: number): { id: string; name: string } {
@@ -129,7 +135,9 @@ export class ShellTerminals {
       return;
     }
     shell.proc.kill();
-    this.later(() => {
+    shell.cancelForceKill?.();
+    shell.cancelForceKill = this.later(() => {
+      shell.cancelForceKill = null;
       if (shell.exitCode !== null) return;
       try {
         shell.proc.kill('SIGKILL');
@@ -158,23 +166,31 @@ export class ShellTerminals {
   // 文字列は、控えの画面と、まだ書き終えていない出力をつないだもの（返したあとに出たものだけを、知らせで送る）
   attach(): ShellSnapshot[] {
     this.detached = false;
-    // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）
-    return [...this.shells].filter(([, s]) => !s.killed).map(([id, s]) => ({
-      owner: s.owner,
-      id,
-      name: s.name,
-      title: s.title,
-      task: s.kind === 'command',
-      exitCode: s.exitCode,
-      cols: s.term.cols,
-      rows: s.term.rows,
-      screen: s.serializer.serialize() + s.unparsed.join(''),
-    }));
+    const snapshots: ShellSnapshot[] = [];
+    for (const [id, s] of [...this.shells]) {
+      // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）
+      if (s.killed) continue;
+      let screen: string;
+      try {
+        screen = s.serializer.serialize() + s.unparsed.join('');
+      } catch {
+        // 描き直す文字列を作れなかったものは、画面に出せないので、見えないまま動かし続けないよう止める（画面の側で書き直せなかったときと同じ）
+        this.kill(id);
+        continue;
+      }
+      snapshots.push({ owner: s.owner, id, name: s.name, title: s.title, task: s.kind === 'command', exitCode: s.exitCode, cols: s.term.cols, rows: s.term.rows, screen });
+    }
+    return snapshots;
   }
 
-  // 持ち主のターミナル（パネルのタブの並び。開いた順）。止めたもの（kill したが、まだ終わっていない）は出さない（Claude から読ませず、打たせない）
+  // 持ち主のターミナル（パネルのタブの並び。開いた順）。止めたもの（kill したが、まだ終わっていない）は出さない（Claude から読ませず、打たせない）。
+  // 番号は、止めたものも数えて振る（パネルは、終わるまで止めたもののタブも残すので、その並びと合わせる）
   list(owner: string): TerminalInfo[] {
-    return [...this.shells].filter(([, s]) => s.owner === owner && !s.killed).map(([id, s], i) => this.infoOf(id, s, i + 1));
+    return [...this.shells]
+      .filter(([, s]) => s.owner === owner)
+      .map(([id, s], i) => ({ s, info: this.infoOf(id, s, i + 1) }))
+      .filter(({ s }) => !s.killed)
+      .map(({ info }) => info);
   }
 
   info(id: string): TerminalInfo | null {
@@ -245,6 +261,7 @@ export class ShellTerminals {
       serializer,
       unparsed: [],
       killed: false,
+      cancelForceKill: null,
     };
     this.shells.set(id, shell);
     term.onTitleChange((title) => (shell.title = title || null));
@@ -257,6 +274,8 @@ export class ShellTerminals {
     });
     proc.onExit(({ exitCode }) => {
       shell.exitCode = exitCode;
+      shell.cancelForceKill?.();
+      shell.cancelForceKill = null;
       if (!this.detached) this.listeners.onExit(id, exitCode);
       // 画面はシェルのタブを閉じる。コマンドのタブは、出力を見られるよう残す（人が止めたものは閉じる）
       if (kind === 'shell' || shell.killed) this.drop(id);
