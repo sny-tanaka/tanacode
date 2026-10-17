@@ -141,6 +141,25 @@ describe('adopt', () => {
     expect(app.turnsCompleted.map((s) => s.id)).toEqual([id]);
   });
 
+  it('前のアプリの頃に書き始めた応答は、途中の文を出さず、書き終わって会話ログに出たときに出す。次の応答からは少しずつ出す', async () => {
+    const id = await previous(line.user('はじめ'));
+    app.host.hosted = [hosted(id, { lastSeq: 2, firstSeq: 1 })];
+    await app.manager.adopt();
+    const pipe = attached(id)!;
+    pipe.emit(stream.lifecycle('u1', 'started'), 1);
+    pipe.emit(stream.delta(0, '前のアプリの頃の文'), 2);
+    pipe.replayed();
+    await app.waitFor('起動済み', () => app.manager.snapshot(id).events.some((e) => e.type === 'ready'));
+    // 常駐のホストは書いている途中の行を控えないので、引き継いだあとは、応答の始まりを見ないまま続きの行が届く
+    pipe.emit(stream.delta(0, 'その続き'));
+    await sleep(150);
+    expect(app.batches.some((b) => b.sessionId === id && b.partial?.length)).toBe(false);
+    pipe.emit(stream.messageStart('msg_next'));
+    pipe.emit(stream.blockStart('text', null, 0));
+    pipe.emit(stream.delta(0, '次の応答'));
+    await app.waitFor('次の応答の途中の文', () => app.batches.some((b) => b.sessionId === id && b.partial?.[0]?.text === '次の応答'));
+  });
+
   it('控えの頭より前の、種類ごとの最新の行（retained）も、前のアプリの頃の行として読む', async () => {
     const id = await previous(line.user('はじめ'));
     const init = { seq: 2, line: JSON.stringify(stream.init('x', { model: 'claude-sonnet-5', permissionMode: 'plan' })) };

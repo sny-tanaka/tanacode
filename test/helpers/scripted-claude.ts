@@ -612,9 +612,29 @@ export const stream = {
     uuid: randomUUID(),
   }),
   // 書いている途中の行（content_block_start の種類: thinking・text・tool_use）
-  blockStart: (kind: string, parent: string | null = null) => ({
+  blockStart: (kind: string, parent: string | null = null, index = 0) => ({
     type: 'stream_event',
-    event: { type: 'content_block_start', index: 0, content_block: { type: kind } },
+    event: { type: 'content_block_start', index, content_block: { type: kind } },
+    parent_tool_use_id: parent,
+    uuid: randomUUID(),
+  }),
+  // 応答の始まり（id は、会話ログの応答の行の message.id と同じ）
+  messageStart: (id: string, parent: string | null = null) => ({
+    type: 'stream_event',
+    event: { type: 'message_start', message: { id, type: 'message', role: 'assistant', content: [] } },
+    parent_tool_use_id: parent,
+    uuid: randomUUID(),
+  }),
+  // 書いている途中の文（text_delta）・思考（thinking_delta）の続き
+  delta: (index: number, text: string, kind: 'text' | 'thinking' = 'text', parent: string | null = null) => ({
+    type: 'stream_event',
+    event: { type: 'content_block_delta', index, delta: kind === 'text' ? { type: 'text_delta', text } : { type: 'thinking_delta', thinking: text } },
+    parent_tool_use_id: parent,
+    uuid: randomUUID(),
+  }),
+  blockStop: (index: number, parent: string | null = null) => ({
+    type: 'stream_event',
+    event: { type: 'content_block_stop', index },
     parent_tool_use_id: parent,
     uuid: randomUUID(),
   }),

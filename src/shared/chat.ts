@@ -15,6 +15,10 @@ import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePa
 // text・pastes・parent: 会話に出たときと同じ形（親セッションからの指示は、囲みを外した本文と親の ID。unsentView）
 export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued'; parent?: string };
 
+// Claude が書いている途中の応答の文・思考の 1 ブロック（stream-json の stream_event から main が組み立てる。会話ログには無い）。
+// そのブロックが会話ログに出たら、会話ログの応答と同じ配信で外す。id: 応答の ID とブロックの位置
+export type PartialBlock = { id: string; kind: 'text' | 'thinking'; text: string };
+
 export type ChatEvent =
   | { type: 'user'; id: string; text: string; pastes?: string[]; pasted?: true; images?: string[]; at?: number; parent?: string; command?: true }
   | { type: 'assistant-text'; id: string; text: string; at?: number }
@@ -176,7 +180,10 @@ export type TranscriptEntry = {
   error?: unknown;
   retryAttempt?: number;
   maxRetries?: number;
-  message?: { content?: string | ContentBlock[]; model?: string };
+  // id: 応答の ID（1 つの応答は、ブロックごとに同じ id の行に分かれる）
+  message?: { id?: string; content?: string | ContentBlock[]; model?: string };
+  // 応答の行の、その応答の中のブロックの位置
+  apiBlockIndex?: number;
   toolUseResult?: unknown;
   attachment?: Record<string, unknown>;
   // stop_hook_summary

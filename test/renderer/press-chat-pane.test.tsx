@@ -504,6 +504,49 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(100);
   });
 
+  it('書いている途中の文は、会話の最後（作業中の表示の上）に素の文で出し、伸びたら最下部を追いかける。会話ログに出たら、同じ場所で本文に入れ替わる', () => {
+    const writing = (text: string) => props({ chat: chatOf({ status: 'running', partial: [{ id: 'm:1', kind: 'thinking', text: '考え' }, { id: 'm:2', kind: 'text', text }] }) });
+    const view = render(<ClaudePane {...writing('**パン**は')} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 200 });
+    // Markdown にせず、記号のまま出す。翻訳のボタンは書き終わってから
+    const partial = list.querySelector('.chat-partial-text')!;
+    expect(partial.textContent).toBe('**パン**は');
+    expect(partial.querySelector('strong')).toBeNull();
+    expect(list.querySelector('.chat-thinking .chat-thinking-text')?.textContent).toBe('考え');
+    expect(list.querySelector('.chat-translate')).toBeNull();
+    // 書き途中と分かるよう、本文・思考とも書き途中の印（少し暗い色。CSS の .partial）を付ける
+    expect([...list.querySelectorAll('.chat-response, .chat-thinking')].map((e) => e.classList.contains('partial'))).toEqual([true, true]);
+    // 発言のあと、作業中の表示の前
+    expect(list.querySelector('.chat-user')!.compareDocumentPosition(partial) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(partial.compareDocumentPosition(list.querySelector('.chat-note.working')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    list.scrollTop = 800;
+    height = 1200;
+    view.rerender(<ClaudePane {...writing('**パン**は小麦から')} />);
+    expect(list.querySelector('.chat-partial-text')?.textContent).toBe('**パン**は小麦から');
+    expect(list.scrollTop).toBe(1200);
+    view.rerender(
+      <ClaudePane
+        {...props({
+          chat: chatOf({
+            status: 'running',
+            items: [USER, { kind: 'thinking', id: 'a:0', text: '考え', settled: true }, { kind: 'text', id: 'b:0', text: '**パン**は小麦から', settled: true }],
+            partial: [],
+          }),
+        })}
+      />,
+    );
+    expect(list.querySelector('.chat-partial-text')).toBeNull();
+    expect(list.querySelector('.chat-response strong')?.textContent).toBe('パン');
+    // 入れ替わった本文・思考は、ふわっと出さない（CSS の .settled）。書き途中の印（少し暗い色。CSS の .partial）は外れる
+    expect([...list.querySelectorAll('.chat-response, .chat-thinking')].map((e) => e.classList.contains('settled'))).toEqual([true, true]);
+    expect(list.querySelector('.partial')).toBeNull();
+    view.rerender(<ClaudePane {...props({ chat: chatOf({ status: 'running', items: [USER, { kind: 'text', id: 'c:0', text: '途中の文の無かった本文' }] }) })} />);
+    expect(list.querySelector('.chat-response')!.classList.contains('settled')).toBe(false);
+  });
+
   // 一覧の高さ（中身・見えている範囲）を決める。scrollTop は、ブラウザと同じく 0 から（中身 − 見えている範囲）までに収める
   const sizeList = (list: HTMLElement, content: () => number, view = 200) => {
     let top = 0;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import type { ChatEvent, HookRun, PullRequestLink, QuestionAnswer, SentFiles, TaskChange, TodoItem, UnsentPrompt } from '@shared/chat';
+import type { ChatEvent, HookRun, PartialBlock, PullRequestLink, QuestionAnswer, SentFiles, TaskChange, TodoItem, UnsentPrompt } from '@shared/chat';
 import type { CardRef } from '@shared/checklist-tools';
 import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
 import type { SessionState } from '@shared/session-tools';
@@ -8,15 +8,16 @@ import { useSessionValues } from '../sessionValues';
 export type ToolStatus = 'running' | 'done' | 'error';
 
 // at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
+// settled: 書いている途中の文（partial）が外れたのと同じ配信で出た本文・思考。同じ場所のまま入れ替わって見えるよう、出るときの動きを付けない
 export type ChatItem =
   // parent: 親セッションの Claude からの指示なら、親セッションの ID
   | { kind: 'user'; id: string; text: string; pastes?: string[]; images?: string[]; at?: number; parent?: string }
-  | { kind: 'text'; id: string; text: string; at?: number }
+  | { kind: 'text'; id: string; text: string; at?: number; settled?: true }
   // sessions: 子セッションからの知らせなら、その子の ID / cards: チェックリストの知らせなら、そのカード
   | { kind: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[] }
   | { kind: 'info'; id: string; text: string }
   | { kind: 'shell'; id: string; command: string; output: string }
-  | { kind: 'thinking'; id: string; text: string }
+  | { kind: 'thinking'; id: string; text: string; settled?: true }
   | { kind: 'divider'; id: string; text: string }
   | { kind: 'error'; id: string; text: string; retrying: boolean }
   // ツールに付かない hooks（Stop・SessionStart・UserPromptSubmit など）。同じきっかけのものはまとめる
@@ -75,6 +76,8 @@ export type ChatState = {
   inTurn: boolean;
   // 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追う）
   unsent: UnsentPrompt[];
+  // Claude が書いている途中の応答の文と思考（main が配信に載せる今の全部。会話ログに出たら、その応答と同じ配信で外れる）
+  partial: PartialBlock[];
 };
 
 export const EMPTY_CHAT: ChatState = {
@@ -88,6 +91,7 @@ export const EMPTY_CHAT: ChatState = {
   pendingTasks: {},
   inTurn: false,
   unsent: [],
+  partial: [],
 };
 
 // TaskUpdate を一覧に当てる（deleted は消す）
@@ -190,7 +194,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       // 引き継いだ claude がターンの途中なら、入力を受け付けられても作業中のまま
       return { ...state, status: state.status === 'starting' ? (state.inTurn ? 'running' : 'idle') : state.status };
     case 'process-exit':
-      return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null };
+      return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null, partial: [] };
     case 'user':
       return {
         ...state,
@@ -269,6 +273,8 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
         ...state,
         status: turn(state, 'idle'),
         inTurn: false,
+        // 書きかけのまま会話ログに出なかった文は残さない（main も同じ配信で消す）
+        partial: [],
         // 中断されたツールは結果が来ないまま終わるので、実行中表示を残さない
         items: withoutRetrying(state.items).map((item) =>
           item.kind === 'tool' && item.status === 'running' ? { ...item, status: 'error' } : item,
@@ -277,9 +283,10 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'reset':
       // 最適化圧縮の切り替え（アプリが打った /clear）では、チャットを消さない。人が読んでいる途中の答えが、画面から消えないように
       // （前の会話はそのまま残り、再開の知らせの行が区切りになる。ふつうの圧縮と同じ見え方）。人が打った /clear は消す
-      return { ...state, items: event.compact ? state.items : [], todos: null, pendingTasks: {} };
+      return { ...state, items: event.compact ? state.items : [], todos: null, pendingTasks: {}, partial: [] };
     case 'replace':
-      return event.events.reduce(apply, EMPTY_CHAT);
+      // 巻き戻しで組み立て直しても、書いている途中の文は main が持つものなので残す
+      return { ...event.events.reduce(apply, EMPTY_CHAT), partial: state.partial };
     case 'hook':
       return { ...state, items: withHook(state.items, event.id, event.run) };
     case 'remote-control':
@@ -293,18 +300,39 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
 
 type Entry = { chat: ChatState; nextSeq: number };
 
-function withSnapshot(current: Entry | undefined, { fromSeq, events }: SessionSnapshot): Entry | undefined {
+function withSnapshot(current: Entry | undefined, { fromSeq, events, partial }: SessionSnapshot): Entry | undefined {
   // スナップショット取得中に届いたライブ配信の方が新しければそちらを残す
   if (current && current.nextSeq >= fromSeq + events.length) return current;
-  return { chat: events.reduce(apply, EMPTY_CHAT), nextSeq: fromSeq + events.length };
+  return { chat: { ...events.reduce(apply, EMPTY_CHAT), partial: partial ?? [] }, nextSeq: fromSeq + events.length };
 }
 
-function withBatch(current: Entry | undefined, { fromSeq, events }: ChatBatch): Entry | undefined {
+// 書いている途中の文（partial）は、届いたら今の全部に置き換える。イベントの無い配信（途中の文だけ）は、通し番号を進めない。
+// 持っているものより古い配信（スナップショットに入っていたもの）の途中の文は使わない
+function withBatch(current: Entry | undefined, { fromSeq, events, partial }: ChatBatch): Entry | undefined {
   const base = current ?? { chat: EMPTY_CHAT, nextSeq: 0 };
   const skip = base.nextSeq - fromSeq;
-  if (skip >= events.length) return current;
-  const fresh = events.slice(Math.max(0, skip));
-  return { chat: fresh.reduce(apply, base.chat), nextSeq: fromSeq + events.length };
+  const fresh = skip < events.length ? events.slice(Math.max(0, skip)) : null;
+  const latest = partial && fromSeq + events.length >= base.nextSeq ? partial : null;
+  if (!fresh && !latest) return current;
+  const chat = fresh ? fresh.reduce(apply, base.chat) : base.chat;
+  if (!latest) return { chat, nextSeq: fresh ? fromSeq + events.length : base.nextSeq };
+  const removed = base.chat.partial.filter((p) => !latest.some((q) => q.id === p.id));
+  return { chat: { ...chat, items: settled(chat.items, base.chat.items, removed), partial: latest }, nextSeq: fresh ? fromSeq + events.length : base.nextSeq };
+}
+
+// 外れた途中の文の代わりに、同じ配信で出た本文・思考に印を付ける（main は、会話ログに出たブロックを、その行のイベントと同じ配信で外す。
+// 1 つの配信の中では、外れたブロックと出た行は同じ順に並ぶ）
+function settled(items: ChatItem[], before: ChatItem[], removed: PartialBlock[]): ChatItem[] {
+  if (removed.length === 0) return items;
+  const old = new Set(before);
+  const left = removed.map((p) => (p.kind === 'text' ? 'text' : 'thinking'));
+  return items.map((item) => {
+    if (old.has(item) || (item.kind !== 'text' && item.kind !== 'thinking')) return item;
+    const at = left.indexOf(item.kind);
+    if (at === -1) return item;
+    left.splice(at, 1);
+    return { ...item, settled: true };
+  });
 }
 
 // 選択していないセッションでも描き直す変化。起動待ちの発言の送り出しに関わる

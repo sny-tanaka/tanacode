@@ -21,7 +21,7 @@ import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
 import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { ChatInput, CommentChips, listCompletionFiles, type CompletionSource } from './ChatInput';
-import { ChatRow } from './ChatRow';
+import { ChatRow, PartialRow } from './ChatRow';
 import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
@@ -320,7 +320,7 @@ export const ClaudePane = memo(function ClaudePane({
   useLayoutEffect(() => {
     const list = listRef.current;
     if (list && stickToBottom.current) toBottom(list);
-  }, [chat.items, chat.status, chat.unsent, scheduled, session.id]);
+  }, [chat.items, chat.partial, chat.status, chat.unsent, scheduled, session.id]);
 
   // 行の中身や一覧の高さが、上の追いかけと関係なく変わったときも、最下部にいれば追いかける
   // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる。
@@ -826,6 +826,9 @@ export const ClaudePane = memo(function ClaudePane({
               />
             ),
           )}
+          {chat.partial.map((block) => (
+            <PartialRow key={`partial:${block.id}`} block={block} />
+          ))}
           {running && !waiting && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !waiting && <DoneNote />}
           {chat.unsent.map((prompt) => (

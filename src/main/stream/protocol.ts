@@ -179,10 +179,20 @@ export type ConversationResetMessage = {
   session_id: string;
 };
 
-// SDKPartialAssistantMessage（--include-partial-messages。書いている途中。進み具合だけに使い、途中の文は出さない）
+// SDKPartialAssistantMessage（--include-partial-messages。書いている途中。event は Messages API のストリーミングの出来事）。
+// 進み具合と、チャットに出す書いている途中の文（stream/partial.ts）に使う。読むときに確かめるのは type だけなので、ほかの項目は使う側で確かめる
 export type StreamEventMessage = {
   type: 'stream_event';
-  event: { type: string; content_block?: { type?: string }; delta?: { type?: string; stop_reason?: string | null }; usage?: Usage };
+  event: {
+    type: string;
+    // content_block_* のブロックの位置
+    index?: number;
+    // message_start の応答（id は会話ログの応答の行の message.id と同じ）
+    message?: { id?: string };
+    content_block?: { type?: string; text?: string; thinking?: string };
+    delta?: { type?: string; text?: string; thinking?: string; stop_reason?: string | null };
+    usage?: Usage;
+  };
   parent_tool_use_id: string | null;
   uuid: string;
   session_id: string;

@@ -48,7 +48,7 @@ export function tokensText(n: number): string {
 }
 
 // 作業中の進み具合（書いている途中の行・ツールの経過から）。経過時間は、ターンの始まりからアプリが数える。
-// 書いている途中の文そのものは出さない（決めたこと。設計書 15 節）。サブエージェントの行は数えない
+// 書いている途中の文そのものは、チャットの最後に出す（stream/partial.ts）。サブエージェントの行は数えない
 export class Progress {
   private phase: Activity['phase'] = 'waiting';
   // 今の応答の、受け取ったトークン数（message_delta の output_tokens は、その応答の累積）
