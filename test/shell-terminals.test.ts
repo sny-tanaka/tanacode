@@ -229,6 +229,40 @@ describe('ShellTerminals', () => {
     await waitFor('止めたシェルの終わり', () => exits.has(stopping.id));
   });
 
+  it('kill: 止めたシェルは、終わる前でも一覧・情報に出さない（Claude から読めず、打てない）。SIGHUP で終わらないもの（trap）は、しばらくして強く止める', async () => {
+    // 強く止めるまでの待ちは、テストが進める
+    const later: (() => void)[] = [];
+    shells = new ShellTerminals(
+      {
+        onData: (id, chunk) => data.set(id, (data.get(id) ?? '') + chunk),
+        onExit: (id, code) => exits.set(id, code),
+      },
+      null,
+      Date.now,
+      (fn) => later.push(fn),
+    );
+    const { id } = shells.create('session-1', dir, 80, 24);
+    await waitForPrompt(id);
+    await typeAndWait(id, "trap '' HUP\r");
+    shells.kill(id);
+    expect(shells.list('session-1')).toEqual([]);
+    expect(shells.info(id)).toBeNull();
+    // SIGHUP では終わらない。待ちが過ぎたら、強く止める
+    expect(exits.has(id)).toBe(false);
+    expect(later).toHaveLength(1);
+    later[0]();
+    await waitFor('強く止めたシェルの終わり', () => exits.has(id));
+  });
+
+  it('kill: SIGHUP で終わったシェルには、あとで強く止める知らせを送らない', async () => {
+    const later: (() => void)[] = [];
+    shells = new ShellTerminals({ onData: () => {}, onExit: (id, code) => exits.set(id, code) }, null, Date.now, (fn) => later.push(fn));
+    const { id } = shells.create('session-1', dir, 80, 24);
+    shells.kill(id);
+    await waitFor('止めたシェルの終わり', () => exits.has(id));
+    expect(() => later.forEach((fn) => fn())).not.toThrow();
+  });
+
   it('知らない id への操作は何もしない（閉じたあとに届いた入力など）', () => {
     expect(() => {
       shells.write('shell-999', 'x');

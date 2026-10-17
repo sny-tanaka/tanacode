@@ -10,6 +10,8 @@ import { childEnv } from './claude-session';
 const SCROLLBACK = 3000;
 // 終わったコマンドのタブの出力を、持ち主ごとに残す数の上限。画面がタブを閉じる（kill）まで残し、超えたら古いものから捨てる
 const MAX_EXITED = 20;
+// 止めたシェル（SIGHUP）がこの時間のうちに終わらなければ、強く止める（SIGKILL）。trap '' HUP などで SIGHUP を無視するもの
+const KILL_GRACE_MS = 3000;
 // Claude が打つために開くシェルの大きさ（画面のタブが大きさを合わせるまで）
 const OPEN_COLS = 100;
 const OPEN_ROWS = 30;
@@ -71,11 +73,13 @@ export class ShellTerminals {
   // 画面を読み込み直している（⌘R）。新しい画面が attach で引き継ぐまで、出力・終わり・開いたタブを画面に知らせない（控えには書く）
   private detached = false;
 
-  // claudeDir: プロファイルの Claude Code の設定のフォルダ（シェルで起動する claude も、そのプロファイルのアカウントを使う）。null は既定のプロファイル
+  // claudeDir: プロファイルの Claude Code の設定のフォルダ（シェルで起動する claude も、そのプロファイルのアカウントを使う）。null は既定のプロファイル。
+  // later: 時間をおいて動かす（テストが差し替える）
   constructor(
     private readonly listeners: Listeners,
     private readonly claudeDir: string | null = null,
     private readonly clock: () => number = Date.now,
+    private readonly later: (fn: () => void, ms: number) => void = (fn, ms) => void setTimeout(fn, ms).unref(),
   ) {}
 
   create(owner: string, cwd: string, cols: number, rows: number): { id: string; name: string } {
@@ -101,25 +105,38 @@ export class ShellTerminals {
     return new Promise((resolve) => shell.proc.onExit(({ exitCode }) => resolve(exitCode)));
   }
 
+  // 止めたもの（kill したが、まだ終わっていない）には打たない
   write(id: string, data: string): void {
     const shell = this.shells.get(id);
-    if (shell && shell.exitCode === null) shell.proc.write(data);
+    if (shell && shell.exitCode === null && !shell.killed) shell.proc.write(data);
   }
 
   resize(id: string, cols: number, rows: number): void {
     const shell = this.shells.get(id);
-    if (!shell || shell.exitCode !== null || cols <= 0 || rows <= 0) return;
+    if (!shell || shell.exitCode !== null || shell.killed || cols <= 0 || rows <= 0) return;
     shell.proc.resize(cols, rows);
     shell.term.resize(cols, rows);
   }
 
-  // 止める。もう終わっていれば（終わったコマンドのタブを閉じた）、出力の控えを捨てる
+  // 止める。もう終わっていれば（終わったコマンドのタブを閉じた）、出力の控えを捨てる。
+  // SIGHUP を無視するもの（trap '' HUP など）は終わらないので、しばらくして終わっていなければ強く止める
   kill(id: string): void {
     const shell = this.shells.get(id);
     if (!shell) return;
     shell.killed = true;
-    if (shell.exitCode === null) shell.proc.kill();
-    else this.drop(id);
+    if (shell.exitCode !== null) {
+      this.drop(id);
+      return;
+    }
+    shell.proc.kill();
+    this.later(() => {
+      if (shell.exitCode !== null) return;
+      try {
+        shell.proc.kill('SIGKILL');
+      } catch {
+        // 終わりかけで、もういない
+      }
+    }, KILL_GRACE_MS);
   }
 
   // セッションを一覧から消したときは、そのフォルダで開いたシェルも閉じる
@@ -155,9 +172,9 @@ export class ShellTerminals {
     }));
   }
 
-  // 持ち主のターミナル（パネルのタブの並び。開いた順）
+  // 持ち主のターミナル（パネルのタブの並び。開いた順）。止めたもの（kill したが、まだ終わっていない）は出さない（Claude から読ませず、打たせない）
   list(owner: string): TerminalInfo[] {
-    return [...this.shells].filter(([, s]) => s.owner === owner).map(([id, s], i) => this.infoOf(id, s, i + 1));
+    return [...this.shells].filter(([, s]) => s.owner === owner && !s.killed).map(([id, s], i) => this.infoOf(id, s, i + 1));
   }
 
   info(id: string): TerminalInfo | null {
