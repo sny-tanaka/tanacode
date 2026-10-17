@@ -245,21 +245,29 @@ describe('ShellTerminals', () => {
       },
     );
     const { id } = shells.create('session-1', dir, 80, 24);
-    await waitForPrompt(id);
-    // SIGHUP を受けても終わらず、受けたことを出力で知らせるシェルにする。入力を待っている間の dash（CI の /bin/sh）は、
-    // trap を次の入力まで後回しにする（止めたシェルには打てない）ので、ループを回させ、コマンドの切れ目で trap を動かす
-    shells.write(id, "trap 'echo hup-$((1+1))' HUP; echo loop-$((2+1)); while :; do sleep 0.1; done\r");
-    await waitFor('ループに入った印', () => (data.get(id) ?? '').includes('loop-3'));
-    shells.kill(id);
-    expect(shells.list('session-1')).toEqual([]);
-    expect(shells.info(id)).toBeNull();
-    // SIGHUP を受けたあとも動いている（受けたことを出力し、終わっていない）。時間でなく、シェルの出力で確かめる
-    await waitFor('SIGHUP を受けた知らせ', () => (data.get(id) ?? '').includes('hup-2'));
-    expect(exits.has(id)).toBe(false);
-    // 待ちが過ぎたら、強く止める
-    expect(later).toHaveLength(1);
-    later[0]();
-    await waitFor('強く止めたシェルの終わり', () => exits.has(id));
+    try {
+      await waitForPrompt(id);
+      // SIGHUP を受けても終わらず、受けたことを出力で知らせるシェルにする。入力を待っている間の dash（CI の /bin/sh）は、
+      // trap を次の入力まで後回しにする（止めたシェルには打てない）ので、ループを回させ、コマンドの切れ目で trap を動かす。
+      // ループは 200 回（約 20 秒）で終える（テストを流している所が落ちても、SIGHUP を受けないシェルを残さないため）
+      shells.write(id, "trap 'echo hup-$((1+1))' HUP; echo loop-$((2+1)); i=0; while [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done; exit\r");
+      await waitFor('ループに入った印', () => (data.get(id) ?? '').includes('loop-3'));
+      shells.kill(id);
+      expect(shells.list('session-1')).toEqual([]);
+      expect(shells.info(id)).toBeNull();
+      // SIGHUP を受けたあとも動いている（受けたことを出力し、終わっていない）。時間でなく、シェルの出力で確かめる
+      await waitFor('SIGHUP を受けた知らせ', () => (data.get(id) ?? '').includes('hup-2'));
+      expect(exits.has(id)).toBe(false);
+      // 待ちが過ぎたら、強く止める
+      expect(later).toHaveLength(1);
+      later[0]();
+      await waitFor('強く止めたシェルの終わり', () => exits.has(id));
+    } finally {
+      // 途中で落ちても、ループを回すシェルを残さない（afterEach の killAll は SIGHUP しか送らず、trap が受ける。
+      // 強く止める待ちはこのテストが持っているので、ここで流す。待ちは、終わっていなければ SIGKILL を送る）
+      shells.kill(id);
+      later.forEach((fn) => fn());
+    }
   });
 
   it('kill: SIGHUP で終わったシェルには、あとで強く止める知らせ（SIGKILL）を送らない', async () => {
