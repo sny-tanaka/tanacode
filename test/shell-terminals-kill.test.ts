@@ -91,6 +91,18 @@ describe('止めたシェル', () => {
     expect(exits.get(quiet.id)).toBe(129);
   });
 
+  it('続けて止めても（終わる前に × を何度も押す）、強く止める待ちは作り直さず、最初に止めたときの待ちで SIGKILL を送る', () => {
+    const { id } = shells.create('session-1', '/work', 80, 24);
+    const pty = fake.FakePty.all[0];
+    shells.kill(id);
+    shells.kill(id);
+    shells.kill(id);
+    expect(later).toHaveLength(1);
+    expect(cancelled).toBe(0);
+    later[0]();
+    expect(pty.signals).toEqual([undefined, undefined, undefined, 'SIGKILL']);
+  });
+
   it('一覧のタブの番号は、止めている途中のシェルも数えたパネルの並びのまま（止めたものは出さない）', () => {
     const first = shells.create('session-1', '/work', 80, 24);
     const second = shells.create('session-1', '/work', 80, 24);

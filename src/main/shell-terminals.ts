@@ -125,7 +125,8 @@ export class ShellTerminals {
   }
 
   // 止める。もう終わっていれば（終わったコマンドのタブを閉じた）、出力の控えを捨てる。
-  // SIGHUP を無視するもの（trap '' HUP など）は終わらないので、しばらくして終わっていなければ強く止める
+  // SIGHUP を無視するもの（trap '' HUP など）は終わらないので、しばらくして終わっていなければ強く止める。
+  // 待ちがもうあれば作り直さない（終わる前に × を続けて押しても、最初に止めたときから数えて強く止める）
   kill(id: string): void {
     const shell = this.shells.get(id);
     if (!shell) return;
@@ -135,7 +136,7 @@ export class ShellTerminals {
       return;
     }
     shell.proc.kill();
-    shell.cancelForceKill?.();
+    if (shell.cancelForceKill) return;
     shell.cancelForceKill = this.later(() => {
       shell.cancelForceKill = null;
       if (shell.exitCode !== null) return;
