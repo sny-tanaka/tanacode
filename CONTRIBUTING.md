@@ -345,7 +345,7 @@ PR で、次のものを流します。develop への push では流しません
   - 集め方: メインプロセス・pty ホスト・MCP の中継（どれも Node）は `NODE_V8_COVERAGE` で、画面と preload は Playwright の `page.coverage` で、`coverage/e2e-raw/` に集めます。
   - 画面のカバレッジは、測り始めてから読み込んだスクリプトの分しか取れないので、起動したら画面を読み込み直します。
   - MCP の中継は、Claude Code が終わるときにシグナル（SIGINT）で止められ、そのままでは `NODE_V8_COVERAGE` を書きません。測るときだけ、シグナルを受けたら `process.exit` で終える `test/e2e/coverage-exit.cjs` を、`NODE_OPTIONS` の `--require` で読み込ませます。Playwright は起動するアプリに `NODE_OPTIONS` を渡さないので、起動したあとメインプロセスの環境変数に足します（Claude Code がそれを引き継いで、中継に渡します）。
-  - 戻し方: 終わったら `scripts/e2e-coverage.mjs`（`test/e2e/global-setup.ts` から）が、同じスクリプトの記録（起動のたび・プロセスごと）を V8 の形のまま合わせてから、ソースマップで src の行に戻し（`ast-v8-to-istanbul`）、`coverage/e2e/coverage-final.json` に書きます。記録ごとに戻すと、大きなスクリプト（画面は 10MB ほど）を何十回も戻すことになり、遅いためです。
+  - 戻し方: 終わったら `scripts/e2e-coverage.mjs`（`test/e2e/global-setup.ts` から）が、同じスクリプトの記録（起動のたび・プロセスごと）を V8 の形のまま合わせてから、ソースマップで src の行に戻し（`ast-v8-to-istanbul`）、`coverage/e2e/coverage-final.json` に書きます。記録ごとに戻すと、大きなスクリプト（画面は 10MB ほど）を何十回も戻すことになり、遅いためです。ソースマップの無いスクリプトがあれば失敗にします（ビルドの設定の誤り）。ただし、束ねる道具（vite 8 の rolldown）が足す実行時の部品（`rolldown-runtime-*.js`）は、src を含まずソースマップも書かれないので飛ばします。
   - ビルドは、ソースマップを書き出す分だけメモリを多く使います（手元の計測で、ソースマップなしの 4.5GB ほどに対して 5.5〜6GB ほど）。
   - ソースマップ（`.map`）は、パッケージしたアプリには入れません（`package.json` の `build.files`）。
 
