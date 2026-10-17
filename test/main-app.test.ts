@@ -938,17 +938,21 @@ describe('ウインドウ', () => {
     mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
     const browser = the('BrowserControl');
     const open = guest.windowOpenHandler!;
-    const popup = open({ url: 'https://login.example.test/authorize', disposition: 'new-window', features: 'width=480,height=640,left=-500' } as never) as {
+    const popup = open({ url: 'https://login.example.test/authorize', disposition: 'new-window', features: 'width=480,height=640,left=-500,closable=no' } as never) as {
       action: string;
       outlivesOpener: boolean;
-      overrideBrowserWindowOptions: { show: boolean; webPreferences: Record<string, unknown> };
+      overrideBrowserWindowOptions: Record<string, unknown>;
+      createWindow: (options: Record<string, unknown>) => unknown;
     };
+    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false };
     expect(popup.action).toBe('allow');
     expect(popup.outlivesOpener).toBe(true);
-    expect(popup.overrideBrowserWindowOptions.show).toBe(true);
+    expect(popup.overrideBrowserWindowOptions).toEqual({ webPreferences: secure });
+    // 別ウインドウは、アプリが BrowserWindow で作る。ページの features（closable=no など）は渡さない。
     // tanacode のウインドウ（x=40 y=30 1400×900）がある画面（1920×1080）の中に詰める。上下の位置の指定が無ければ、ウインドウの真ん中
-    expect(popup.overrideBrowserWindowOptions).toMatchObject({ x: 0, y: 160, width: 480, height: 640 });
-    expect(popup.overrideBrowserWindowOptions.webPreferences).toEqual({ nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false });
+    const contents = new FakeWebContents();
+    popup.createWindow({ webContents: contents, closable: false, x: -500, width: 480, height: 640 });
+    expect(state.windows.at(-1)!.options).toEqual({ webContents: contents, show: true, x: 0, y: 160, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: secure });
     expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
     // Claude の操作で許していない先なら開かない
     browser.allowsPopup.mockReturnValueOnce(false);

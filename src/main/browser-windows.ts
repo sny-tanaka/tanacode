@@ -9,6 +9,8 @@ import type { BrowserControl } from './browser-control';
 //   開いたページ（window.opener）とつなぐ（OAuth のログインの窓のため）。別ウインドウは Claude の操作の対象にしない（ログインは人がする）
 // 別ウインドウにも、タブと同じ守りを付ける。Electron は、ポップアップの中身を、開いたページと同じセッション（プレビューのもの。どの権限も断り、
 // ダウンロードを止める）で作る。webPreferences の守りの値はここで決め、ページが window.open の features に書いた値（nodeIntegration=yes など）は効かない。
+// ウインドウは、Electron に作らせず、ここで作る（createWindow）。ページの features（closable=no・opacity=0・type=panel など）は使わず、
+// 許すもの（画面の中に詰めた位置と大きさ）だけを渡す。ページの beforeunload で、閉じるのを止めさせない。
 // 見張り（移る先・新しいウインドウの扱い）は、中身ができたとき（web-contents-created）に付ける。ポップアップの最初の読み込みとページのスクリプトより前
 
 // アプリ内ブラウザの操作のうち、ここで使うもの
@@ -27,6 +29,8 @@ type Deps = {
   openExternal: (url: string) => void;
   // ポップアップを置く画面（ウインドウが無いなど、分からなければ null。位置と大きさは Electron の既定のまま）
   screen: () => PopupScreen | null;
+  // 別ウインドウを作る（new BrowserWindow）
+  makeWindow: (options: BrowserWindowConstructorOptions) => BrowserWindow;
 };
 
 // 1 つのタブから開いておけるポップアップの数（ページが window.open を繰り返しても、ウインドウで埋まらないように）
@@ -36,6 +40,16 @@ const DEFAULT_POPUP = { width: 800, height: 600 };
 const MIN_POPUP = { width: 320, height: 240 };
 
 const DENY: WindowOpenHandlerResponse = { action: 'deny' };
+
+// 別ウインドウの中身の守りの値（Electron が中身を作るときに使う。ページが features に書いた値より強い）
+const POPUP_PREFERENCES = {
+  nodeIntegration: false,
+  nodeIntegrationInWorker: false,
+  nodeIntegrationInSubFrames: false,
+  contextIsolation: true,
+  sandbox: true,
+  webviewTag: false,
+} as const;
 
 // プレビューのセッション（restrictPreviewSession を通したもの）。ポップアップの中身は、これで見分ける
 // （アプリの画面は、既定のセッションか、足したプロファイルのセッションを使う）
@@ -81,7 +95,6 @@ export class PreviewWindows {
     contents.on('will-redirect', guard);
     if (!popup) return;
     contents.setWindowOpenHandler((details) => this.open(contents, details));
-    contents.on('did-create-window', (win) => this.adopt(contents, win));
   }
 
   // webview のタブが付いた（did-attach-webview）。browser: そのタブのプロファイルのアプリ内ブラウザ
@@ -90,7 +103,6 @@ export class PreviewWindows {
     // コンソールと失敗した通信は、ページの最初のスクリプトから集める（Claude が読む）
     browser?.track(guest);
     guest.setWindowOpenHandler((details) => this.open(guest, details));
-    guest.on('did-create-window', (win) => this.adopt(guest, win));
     // タブを閉じたら、そのタブから開いたポップアップも閉じる（ページが閉じるのを止めていても）
     guest.once('destroyed', () => {
       for (const win of this.popups.get(guest) ?? []) if (!win.isDestroyed()) win.destroy();
@@ -116,21 +128,39 @@ export class PreviewWindows {
       if ((this.popups.get(root)?.size ?? 0) >= MAX_POPUPS) return DENY;
       // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える）
       if (browser && !browser.allowsPopup(root, url)) return DENY;
-      // 開いたタブを閉じるときは、attach の destroyed で閉じる（Electron の決まりでは、開いたページが別のサイトへ移っただけで閉じてしまう）
       const screen = this.deps.screen();
-      return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupOptions(this.deps.background, screen && popupBounds(features ?? '', screen)) };
+      const bounds = screen && popupBounds(features ?? '', screen);
+      return {
+        action: 'allow',
+        // 開いたタブを閉じるときは、attach の destroyed で閉じる（Electron の決まりでは、開いたページが別のサイトへ移っただけで閉じてしまう）
+        outlivesOpener: true,
+        // 中身の守りの値。ほかのもの（ページの features を混ぜた options）は、createWindow で使わない
+        overrideBrowserWindowOptions: { webPreferences: POPUP_PREFERENCES },
+        createWindow: (options) => this.create(source, url, (options as { webContents?: WebContents }).webContents, bounds),
+      };
     }
     // アプリ内ブラウザの新しいタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く
     if (!browser?.openFromPage(root, url, disposition) && !browser?.isOperating(root)) this.deps.openExternal(url);
     return DENY;
   }
 
-  // ポップアップの別ウインドウができた（did-create-window）。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる
+  // ポップアップの別ウインドウを作る（createWindow）。contents: Electron が作った中身（開いたページとつながっている）。
+  // Electron が作らなかったときは、作ったウインドウで url を読み込む。返すのは、ウインドウの中身（Electron は contents と同じものを求める）
+  private create(source: WebContents, url: string, contents: WebContents | undefined, bounds: Rectangle | null): WebContents {
+    const win = this.deps.makeWindow({ ...(contents ? { webContents: contents } : {}), ...windowOptions(this.deps.background, bounds) } as BrowserWindowConstructorOptions);
+    if (!contents) void win.loadURL(url);
+    this.adopt(source, win);
+    return win.webContents;
+  }
+
+  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる
   private adopt(source: WebContents, win: BrowserWindow): void {
     if (win.webContents.session !== source.session) {
       win.destroy();
       return;
     }
+    // ページの beforeunload で、閉じるのを止めさせない（閉じるボタンが効かなくなる。Electron は確認も出さない）
+    win.webContents.on('will-prevent-unload', (event) => event.preventDefault());
     const root = this.roots.get(source) ?? source;
     this.roots.set(win.webContents, root);
     const list = this.popups.get(root) ?? new Set<BrowserWindow>();
@@ -147,29 +177,10 @@ export class PreviewWindows {
   }
 }
 
-// 別ウインドウの作り方。守りの値は、ページが features に書いた値より強い（Electron は、この値をページの値の上に重ねる）。
-// 枠・最前面・全画面など、見た目を偽れる指定も、ページには決めさせない。位置と大きさは、ページの指定を画面の中に詰めたもの（popupBounds）
-function popupOptions(background: boolean, bounds: Rectangle | null): BrowserWindowConstructorOptions {
-  return {
-    show: !background,
-    ...bounds,
-    frame: true,
-    titleBarStyle: 'default',
-    transparent: false,
-    alwaysOnTop: false,
-    fullscreen: false,
-    kiosk: false,
-    skipTaskbar: false,
-    backgroundColor: '#ffffff',
-    webPreferences: {
-      nodeIntegration: false,
-      nodeIntegrationInWorker: false,
-      nodeIntegrationInSubFrames: false,
-      contextIsolation: true,
-      sandbox: true,
-      webviewTag: false,
-    },
-  };
+// 別ウインドウの作り方。許すものだけを並べる（ページの features から来たものは、どれも使わない）。
+// 位置と大きさは、ページの指定を画面の中に詰めたもの（popupBounds）。ほかは既定のまま（枠あり・閉じられる・最前面にしない など）
+function windowOptions(background: boolean, bounds: Rectangle | null): BrowserWindowConstructorOptions {
+  return { show: !background, ...bounds, backgroundColor: '#ffffff', webPreferences: POPUP_PREFERENCES };
 }
 
 // ポップアップの位置と大きさ。ページが window.open の features に書いた指定（width・height・left・top と、innerWidth・innerHeight・

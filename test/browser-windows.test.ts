@@ -53,13 +53,20 @@ class FakeContents extends EventEmitter {
   }
 }
 
+// アプリが作った別ウインドウ（options: 作るときに渡したもの / webContents: Electron が作った中身）
 class FakeWindow extends EventEmitter {
   destroyed = false;
   title = '';
-  readonly webContents: FakeContents;
-  constructor(session: FakeSession) {
+  readonly loaded: string[] = [];
+  constructor(
+    readonly options: Record<string, unknown>,
+    readonly webContents: FakeContents,
+  ) {
     super();
-    this.webContents = new FakeContents('window', session);
+  }
+  loadURL(url: string): Promise<void> {
+    this.loaded.push(url);
+    return Promise.resolve();
   }
   isDestroyed(): boolean {
     return this.destroyed;
@@ -76,6 +83,11 @@ class FakeWindow extends EventEmitter {
     this.bounds = bounds;
   }
 }
+
+// 中身の守りの値（Electron が中身を作るときに使う）
+const SECURE = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false };
+// ページが features に書いた、見た目を偽れる指定（Electron が createWindow に渡してくる。使ってはいけない）
+const FROM_PAGE = { closable: false, focusable: false, opacity: 0, alwaysOnTop: true, frame: false, visibleOnAllWorkspaces: true, type: 'panel', movable: false, minimizable: false, hasShadow: false, show: true, x: -10000, y: -10000, width: 99999, height: 1 };
 
 // tanacode のウインドウがある画面（メニューバーと Dock を除いた範囲）と、tanacode のウインドウ
 const SCREEN: PopupScreen = { workArea: { x: 0, y: 25, width: 1440, height: 875 }, around: { x: 100, y: 50, width: 1200, height: 800 } };
@@ -94,11 +106,19 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
     allowsPopup: vi.fn(() => true),
   };
   const opened: string[] = [];
+  // アプリが作った別ウインドウ
+  const made: FakeWindow[] = [];
   const windows = new PreviewWindows({
     browsers: () => [browser as unknown as PreviewBrowser],
     background: options.background ?? false,
     openExternal: (url) => opened.push(url),
     screen: () => (options.screen === undefined ? SCREEN : options.screen),
+    makeWindow: (windowOptions) => {
+      const given = (windowOptions as { webContents?: FakeContents }).webContents;
+      const win = new FakeWindow(windowOptions as Record<string, unknown>, given ?? new FakeContents('window', preview));
+      made.push(win);
+      return win as unknown as BrowserWindow;
+    },
   });
   // 画面が webview のタブを作った（web-contents-created と did-attach-webview）
   const tab = () => {
@@ -107,14 +127,16 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
     windows.attach(asContents(guest), browser as unknown as PreviewBrowser);
     return guest;
   };
-  // source がポップアップを開いた（Electron が中身を作り、web-contents-created のあとに did-create-window）
-  const popup = (source: FakeContents, session = preview) => {
-    const win = new FakeWindow(session);
-    windows.watch(asContents(win.webContents));
-    source.emit('did-create-window', win as unknown as BrowserWindow, { url: '' });
-    return win;
+  // source がポップアップを開いた（Electron が中身を作って web-contents-created を出し、ページの features を混ぜた options で createWindow を呼ぶ）
+  const popup = (source: FakeContents, session = preview, url = 'https://login.example.test/', features = 'width=480,height=640') => {
+    const contents = new FakeContents('window', session);
+    windows.watch(asContents(contents));
+    const result = source.open(url, 'new-window', features) as { action: string; createWindow?: (options: Record<string, unknown>) => unknown };
+    if (result.action !== 'allow' || !result.createWindow) throw new Error(`ポップアップを開けませんでした: ${JSON.stringify(result)}`);
+    expect(result.createWindow({ ...FROM_PAGE, webContents: contents })).toBe(contents);
+    return made.at(-1)!;
   };
-  return { preview, browser, opened, windows, tab, popup };
+  return { preview, browser, opened, windows, tab, popup, made };
 }
 
 describe('プレビューのセッション', () => {
@@ -215,10 +237,11 @@ describe('ポップアップの位置と大きさ', () => {
     expect(at('width=480,height=640', second)).toEqual({ x: 2060, y: 230, width: 480, height: 640 });
   });
 
-  it('開くときに、別ウインドウの位置と大きさを決める。画面が分からなければ、決めない（Electron の既定）', () => {
-    const options = (screen?: PopupScreen | null) =>
-      (setup({ screen }).tab().open('https://login.example.test/', 'new-window', 'width=480,height=640,left=-10000,top=0') as { overrideBrowserWindowOptions: Record<string, unknown> })
-        .overrideBrowserWindowOptions;
+  it('開くときに、別ウインドウの位置と大きさを決める。画面が分からなければ、決めない（Electron の既定。ページの指定も使わない）', () => {
+    const options = (screen?: PopupScreen | null) => {
+      const ctx = setup({ screen });
+      return ctx.popup(ctx.tab(), undefined, undefined, 'width=480,height=640,left=-10000,top=0').options;
+    };
     expect(options()).toMatchObject({ x: 0, y: 25, width: 480, height: 640 });
     expect(options(null)).not.toHaveProperty('x');
     expect(options(null)).not.toHaveProperty('width');
@@ -246,34 +269,39 @@ describe('新しいウインドウ', () => {
     expect(browser.track).toHaveBeenCalledWith(guest);
   });
 
-  it('ポップアップ（new-window）は、守りの値を決めた別ウインドウで開く。ページの features では変えられない', () => {
-    const { tab } = setup();
+  it('ポップアップ（new-window）は、アプリが作る別ウインドウで開く。中身の守りの値を決め、ページの features（閉じられない・透明・最前面など）は使わない', () => {
+    const { tab, made } = setup();
     const guest = tab();
-    expect(guest.open('https://login.example.test/authorize?state=x', 'new-window', 'width=480,height=640,nodeIntegration=yes,frame=no,alwaysOnTop=yes')).toEqual({
-      action: 'allow',
-      outlivesOpener: true,
-      overrideBrowserWindowOptions: {
-        show: true,
-        x: 460,
-        y: 130,
-        width: 480,
-        height: 640,
-        frame: true,
-        titleBarStyle: 'default',
-        transparent: false,
-        alwaysOnTop: false,
-        fullscreen: false,
-        kiosk: false,
-        skipTaskbar: false,
-        backgroundColor: '#ffffff',
-        webPreferences: { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false },
-      },
-    });
+    const result = guest.open('https://login.example.test/authorize?state=x', 'new-window', 'width=480,height=640,nodeIntegration=yes,frame=no,alwaysOnTop=yes,closable=no,opacity=0') as {
+      createWindow: (options: Record<string, unknown>) => unknown;
+    };
+    expect(result).toEqual({ action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: { webPreferences: SECURE }, createWindow: expect.any(Function) });
+    const contents = new FakeContents('window', guest.session);
+    expect(result.createWindow({ ...FROM_PAGE, webContents: contents })).toBe(contents);
+    // 渡すのは、許すもの（画面に詰めた位置と大きさ・地の色・守りの値）と、Electron が作った中身だけ
+    expect(made.map((w) => w.options)).toEqual([{ webContents: contents, show: true, x: 460, y: 130, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: SECURE }]);
+    expect(made[0]!.loaded).toEqual([]);
+  });
+
+  it('Electron が中身を作らなかったときは、作ったウインドウで開く先を読み込む', () => {
+    const { tab, made } = setup();
+    const result = tab().open('https://login.example.test/', 'new-window', 'width=480,height=640') as { createWindow: (options: Record<string, unknown>) => unknown };
+    result.createWindow({ ...FROM_PAGE });
+    expect(made[0]!.options).not.toHaveProperty('webContents');
+    expect(made[0]!.loaded).toEqual(['https://login.example.test/']);
+  });
+
+  it('ページの beforeunload で、別ウインドウを閉じるのを止めさせない', () => {
+    const { tab, popup } = setup();
+    const win = popup(tab());
+    const event = { preventDefault: vi.fn() };
+    win.webContents.emit('will-prevent-unload', event);
+    expect(event.preventDefault).toHaveBeenCalled();
   });
 
   it('裏で起動しているときは、別ウインドウを画面に出さない', () => {
-    const { tab } = setup({ background: true });
-    expect((tab().open('https://login.example.test/') as { overrideBrowserWindowOptions: { show: boolean } }).overrideBrowserWindowOptions.show).toBe(false);
+    const { tab, popup } = setup({ background: true });
+    expect(popup(tab()).options.show).toBe(false);
   });
 
   it('http(s) でないものは、ポップアップでもタブでも開かない', () => {

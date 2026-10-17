@@ -9,7 +9,7 @@ import { E2EApp } from './app';
 // 別ウインドウで開き、開いたページ（window.opener）とつながるか。アプリの index.ts・browser-windows.ts を通って、本物の webview と BrowserWindow まで。
 // - ポップアップから opener に postMessage が届く。ポップアップの window.close() で、別ウインドウが閉じる
 // - 別ウインドウにも、タブと同じ守りが効く: Node もアプリの API（preload の window.tanacode）も無い（features で nodeIntegration=yes などを
-//   渡しても）・トップのフレームは http(s) と about:blank だけ（file: にも blob: にも移れない）・プレビューのセッション
+//   渡しても）・features で閉じられない・フォーカスできない・透明・動かせない・最前面などを指定しても、ふつうのウインドウ・トップのフレームは http(s) と about:blank だけ（file: にも blob: にも移れない）・プレビューのセッション
 // - 別ウインドウは、ページが画面の外の位置を指定しても、tanacode のウインドウがある画面の中に開く
 // - 別ウインドウは Claude の操作の対象にしない（タブの一覧に出ない）。Claude の操作で開いたら、そのことを Claude に伝える
 // - 人の操作（Claude の操作の外）で開いたものも、同じように開く
@@ -18,12 +18,13 @@ const OPEN = 'ログインのポップアップを確かめてください';
 const DONE = 'ポップアップを確かめました';
 // ポップアップが opener に送る報告（Node・アプリの API が無く、file: にも blob: にも移らなかった）
 const REPORT = 'popup node:undefined/undefined,app:undefined,stayed';
-// 作られた別ウインドウ。preview: プレビューのセッション / inside: tanacode のウインドウがある画面の中 / closed: 閉じた
-type Popup = { preview: boolean; inside: boolean; closed: boolean };
+// 作られた別ウインドウ。preview: プレビューのセッション / normal: ふつうのウインドウ（閉じられる・フォーカスできる・不透明・動かせる・
+// 最小化できる・最前面でない・影がある・ほかのデスクトップに出ない）/ inside: tanacode のウインドウがある画面の中 / closed: 閉じた
+type Popup = { preview: boolean; normal: boolean; inside: boolean; closed: boolean };
 const tool = (id: string, name: string, input: Record<string, unknown>): Block[] => [{ type: 'tool_use', id, name: browserToolId(name), input }];
 
 const OPENER = `<!doctype html><title>開く側</title><h1>ログインの前</h1>
-<button id="login" onclick="window.open('/popup', 'login', 'width=480,height=640,left=-10000,top=-10000,nodeIntegration=yes,sandbox=no,contextIsolation=no,webviewTag=yes')">ログイン</button>
+<button id="login" onclick="window.open('/popup', 'login', 'width=480,height=640,left=-10000,top=-10000,nodeIntegration=yes,sandbox=no,contextIsolation=no,webviewTag=yes,closable=no,focusable=no,opacity=0,movable=no,minimizable=no,alwaysOnTop=yes,hasShadow=no,visibleOnAllWorkspaces=yes,type=panel')">ログイン</button>
 <p id="result">まだ</p>
 <script>
   let count = 0;
@@ -79,7 +80,9 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
       const created: Popup[] = [];
       (globalThis as { __popups?: typeof created }).__popups = created;
       electronApp.on('browser-window-created', (_event, win) => {
-        const entry = { preview: win.webContents.session === session.fromPartition('persist:tanacode-preview'), inside: false, closed: false };
+        const normal =
+          win.isClosable() && win.isFocusable() && win.getOpacity() === 1 && win.isMovable() && win.isMinimizable() && !win.isAlwaysOnTop() && win.hasShadow() && !win.isVisibleOnAllWorkspaces();
+        const entry = { preview: win.webContents.session === session.fromPartition('persist:tanacode-preview'), normal, inside: false, closed: false };
         created.push(entry);
         // 位置は、作られた時点ではまだ決まっていない（詰めないと、Electron があとでページの指定の位置へ動かす。実測）。
         // ページを読み込み終えてから閉じるまで、0.1 秒ごとに見て、ずっと画面の中にあったかを控える
@@ -128,7 +131,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
   });
 
   it('ポップアップの window.close() で、別ウインドウが閉じる。ページが画面の外の位置を指定しても、閉じるまで画面の中にある', async () => {
-    await expect.poll(popups, { timeout: 10_000 }).toEqual([{ preview: true, inside: true, closed: true }]);
+    await expect.poll(popups, { timeout: 10_000 }).toEqual([{ preview: true, normal: true, inside: true, closed: true }]);
     expect(await windows()).toBe(1);
   });
 
@@ -143,8 +146,8 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
       .poll(() => app.app.evaluate(({ webContents }) => webContents.getAllWebContents().find((c) => c.getType() === 'webview')?.executeJavaScript('document.getElementById("result").textContent')), { timeout: 15_000 })
       .toBe(`${REPORT} #2`);
     await expect.poll(popups, { timeout: 10_000 }).toEqual([
-      { preview: true, inside: true, closed: true },
-      { preview: true, inside: true, closed: true },
+      { preview: true, normal: true, inside: true, closed: true },
+      { preview: true, normal: true, inside: true, closed: true },
     ]);
   });
 
