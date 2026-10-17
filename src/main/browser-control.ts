@@ -1296,7 +1296,9 @@ export class BrowserControl {
   }
 
   // この呼び出しの控えを取り出す（1 回で使い切る）。呼び出しの ID があれば、同じ ID の控え（式も同じものだけ）。
-  // 無ければ（ID を渡さない中継）・ID の無い控え（ID を渡さないフック）は、同じ式のいちばん新しいもの。
+  // 同じ ID の控えが無ければ、ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの。
+  // 呼び出しに ID が無い（ID を渡さない中継）ときも、ID の無い控えだけから引く（ID のある控えは、同じ式の別の呼び出しのものや、前に断られて
+  // 残ったものかもしれない）。フックと中継は同じ Claude Code から呼ばれるので、ふつうは両方に ID があるか、両方に無い。フックにだけ ID があるときは、断る側に倒れる。
   // 同じ式を並べて呼んでも（本体とサブエージェントなど）、ID があれば取り違えない
   private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | null {
     const marks = this.evaluateMarks.get(sessionId) ?? [];
@@ -1308,9 +1310,9 @@ export class BrowserControl {
       const mark = take(byId)!;
       found = mark.expression === expression ? mark : null;
     } else {
-      // ID で引けない。呼び出しに ID が無ければ同じ式の控えから、ID があれば ID の無い控え（ID を渡さないフック）から、いちばん新しいもの
+      // ID で引けない。ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの
       let index = marks.length - 1;
-      while (index >= 0 && !(marks[index]!.expression === expression && (toolUseId === undefined || marks[index]!.toolUseId === undefined))) index--;
+      while (index >= 0 && !(marks[index]!.expression === expression && marks[index]!.toolUseId === undefined)) index--;
       found = take(index);
     }
     if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);

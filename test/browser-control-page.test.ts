@@ -1460,9 +1460,13 @@ describe('JavaScript の実行（evaluate）', () => {
     // ID の控えの式と、呼び出しの式が違えば断る
     await gateWithId('z()', 'toolu_e');
     expect(await call('evaluate', { expression: 'other()' }, 'S1', { gate: false, toolUseId: 'toolu_e' })).toEqual(NO_RECORD);
-    // ID の無い呼び出し（ID を渡さない中継）は、式で引く。ID の無い控え（ID を渡さないフック）は、ID のある呼び出しでも式で引く
+    // ID の無い呼び出し（ID を渡さない中継）は、ID の無い控え（ID を渡さないフック）だけから、式で引く。
+    // ID のある控えは、同じ式の別の呼び出しのもの（前に断られて残ったものも）かもしれないので使わない
     await gateWithId('w()', 'toolu_f');
-    expect(textOf(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null }))).toBe('"動いた"');
+    expect(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null })).toEqual(NO_RECORD);
+    await gateOnly(control, 'u()');
+    expect(textOf(await call('evaluate', { expression: 'u()' }, 'S1', { gate: false, toolUseId: null }))).toBe('"動いた"');
+    // ID の無い控えは、ID のある呼び出しでも式で引く
     await gateOnly(control, 'v()');
     expect(textOf(await call('evaluate', { expression: 'v()' }, 'S1', { gate: false, toolUseId: 'toolu_g' }))).toBe('"動いた"');
   });
