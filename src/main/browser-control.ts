@@ -168,6 +168,10 @@ type Tabs = {
   handoff: { origin: string; until: number }[];
 };
 
+// JavaScript の実行の確認のフックが答えたときのページ。フックに渡った式と、そのときの今のタブのオリジン（無ければ null）。
+// evaluate が同じ式で呼ばれたら 1 回だけ使い、そのオリジンのページでだけ動かす（フックが確認を省いた・人が確認したページと、動かすページをずらさない）
+type EvaluateMark = { expression: string; origin: string | null; until: number };
+
 // 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
 // url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
 type Mark = { url: string; newTab: boolean; tabId: string | null; until: number };
@@ -217,6 +221,8 @@ export class BrowserControl {
   private readonly asks: BrowserAsks;
   // 人に確認した、許す先の外を開く印（セッションごと）
   private readonly marks = new Map<string, Mark[]>();
+  // JavaScript の実行の確認のフックが答えたときのページ（セッションごと）
+  private readonly evaluateMarks = new Map<string, EvaluateMark[]>();
 
   constructor(private readonly deps: Deps) {
     this.asks = new BrowserAsks((sessionId, ask) => {
@@ -396,6 +402,7 @@ export class BrowserControl {
       }
     }
     this.marks.clear();
+    this.evaluateMarks.clear();
   }
 
   // 子セッションの許可の確認のうち、人だけが答えられるもの（親の Claude に許させない。sessions-control.ts の answer_permission）。
@@ -419,6 +426,7 @@ export class BrowserControl {
   forget(sessionId: string): void {
     this.asks.cancel(sessionId);
     this.marks.delete(sessionId);
+    this.evaluateMarks.delete(sessionId);
     this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
@@ -482,6 +490,14 @@ export class BrowserControl {
       return textResult(JSON.stringify({ outside: this.gateNavigate(sessionId, input) }));
     }
     const url = this.activeNow(sessionId)?.contents.getURL() ?? '';
+    // 答えたときのページを、同じ式の呼び出しのために控える
+    const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
+    if (typeof input.expression === 'string') {
+      const now = Date.now();
+      const marks = (this.evaluateMarks.get(sessionId) ?? []).filter((m) => m.until > now);
+      marks.push({ expression: input.expression, origin: webOrigin(url), until: now + MARK_TTL_MS });
+      this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
+    }
     return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
   }
 
@@ -590,7 +606,7 @@ export class BrowserControl {
       case 'set_viewport':
         return this.setViewport(sessionId, guest, requiredString(args.width, 'width'));
       case 'evaluate':
-        return this.evaluate(guest, requiredString(args.expression, 'expression'));
+        return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'));
     }
     return textResult(`Unknown tool: ${name}`, true);
   }
@@ -1205,10 +1221,18 @@ export class BrowserControl {
 
   // ページの世界で動かす。evaluate の始めに読み直した今のページ（許した先）から、動くまでの間に別のオリジンへの移動が確定していたら、
   // 動かさない（確かめたあとに、前から読み込み中だった移動が確定することがある）。同じスクリプトの先頭で、今のページのオリジンを比べる（guardedScript）
-  private async evaluate(guest: Guest, expression: string): Promise<ToolResult> {
+  private async evaluate(sessionId: string, guest: Guest, expression: string): Promise<ToolResult> {
     const url = guest.contents.getURL();
     const origin = webOrigin(url);
     if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
+    // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
+    // 控えが無い（フックの無い Claude Code・フックがアプリに聞けなかった）ときは、今までどおり
+    const checked = this.takeEvaluateMark(sessionId, expression);
+    if (checked && checked.origin !== null && checked.origin !== origin) {
+      throw new ToolError(
+        `The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so the script was not run. Call evaluate again to run it on the current page.`,
+      );
+    }
     // 目印は呼び出しごとに変える（ページが同じ文をコンソールに出して、止めたことにさせないように）
     const mark = `${PAGE_CHANGED} ${randomUUID()}`;
     let value: unknown;
@@ -1227,6 +1251,18 @@ export class BrowserControl {
       text = String(value);
     }
     return textResult(clip(text, MAX_TEXT));
+  }
+
+  // 同じ式の、いちばん新しい生きている控えを取り出す（1 回で使い切る）
+  private takeEvaluateMark(sessionId: string, expression: string): EvaluateMark | null {
+    const now = Date.now();
+    const marks = (this.evaluateMarks.get(sessionId) ?? []).filter((m) => m.until > now);
+    let index = marks.length - 1;
+    while (index >= 0 && marks[index]!.expression !== expression) index--;
+    const found = index === -1 ? null : marks.splice(index, 1)[0]!;
+    if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);
+    else this.evaluateMarks.delete(sessionId);
+    return found;
   }
 
   // evaluate が失敗したときに Claude に返すもの。origin: 動かす前に確かめたオリジン / mark: 先頭で比べる文が投げる目印 / since: 動かす前の記録の通し番号。

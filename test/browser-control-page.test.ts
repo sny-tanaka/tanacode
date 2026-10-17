@@ -1332,6 +1332,43 @@ describe('JavaScript の実行（evaluate）', () => {
     }
   });
 
+  it('確認のフックが答えたときのページから、動かす前に別のオリジンへ移っていたら、動かさない（同じ式の呼び出しに結びつける）', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    // フックが見たのは localhost のページ（確認なし）。動かす前に、許す先の別のオリジン（*.local）へ移った
+    const gate = (expression: string) => control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression } });
+    expect(JSON.parse(textOf(await gate('document.title')))).toEqual({ local: true, url: 'http://localhost:3000/a' });
+    page.url = 'http://myapp.local/';
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(
+      textResult(
+        'The page changed after tanacode checked it for this call (from http://localhost:3000 to http://myapp.local), so the script was not run. Call evaluate again to run it on the current page.',
+        true,
+      ),
+    );
+    expect(page.evaluated).toEqual([]);
+    // 控えは 1 回で使い切る（次の呼び出しは、フックがまた見る）。フックが見ていない呼び出しは、今までどおり動かす
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"動いた"');
+    // 人が確認で許したページ（フックが見た *.local）のままなら、動かす。同じオリジンの中の移動もよい
+    await gate('document.title');
+    page.url = 'http://myapp.local/next';
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"動いた"');
+    // 別の式の控えは使わない
+    await gate('other()');
+    page.url = 'http://localhost:3000/a';
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"動いた"');
+    // メニューでオフにしたら、控えも捨てる
+    await gate('off()');
+    control.turnOff();
+    expect(textOf(await call('evaluate', { expression: 'off()' }))).toBe('"動いた"');
+    // 15 分たった控えは使わない
+    page.url = 'http://localhost:3000/a';
+    await gate('late()');
+    page.url = 'http://myapp.local/';
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(textOf(await call('evaluate', { expression: 'late()' }))).toBe('"動いた"');
+  });
+
   it('同じオリジンの中で移ったあとは動かす。文の並びも、最後の値を返す（ページで動かすときと同じ）', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/a');
