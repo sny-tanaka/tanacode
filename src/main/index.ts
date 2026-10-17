@@ -1276,7 +1276,10 @@ if (!primary) {
   quitDecided = true;
   app.quit();
 } else {
-  app.on('second-instance', () => showWindow());
+  // 起動の途中（ウインドウを作る前）は何もしない。ここでウインドウを作ると、起動の終わりにもう 1 枚作ってしまう
+  app.on('second-instance', () => {
+    if (mainWindow) showWindow();
+  });
 }
 
 // プレビューの webview（ゲスト）が、ページの中のリンク・location の書き換え・リダイレクトで、http(s) のページの外

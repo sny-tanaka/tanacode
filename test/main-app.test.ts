@@ -141,6 +141,20 @@ describe('起動', () => {
     expect(state.quit).not.toHaveBeenCalled();
   });
 
+  it('起動の途中に 2 つめが起動しても、ウインドウを先に作らない（作るのは起動の終わりの 1 枚だけ）。起動が済んだあとは前に出す', async () => {
+    const adopting = pending<undefined>();
+    await boot({ noWait: true, before: (s) => s.adopt.mockReturnValue(adopting.promise) });
+    await vi.waitFor(() => expect(state.adopt).toHaveBeenCalled());
+    state.app.emit('second-instance', fakeEvent(), [], '/');
+    expect(state.windows).toHaveLength(0);
+    adopting.resolve(undefined);
+    await started();
+    expect(state.windows).toHaveLength(1);
+    state.app.emit('second-instance', fakeEvent(), [], '/');
+    expect(mainWindow().show).toHaveBeenCalled();
+    expect(state.windows).toHaveLength(1);
+  });
+
   it('以前のレビュー機能が使っていたフォルダ（snapshots）を消す', async () => {
     await boot({ before: (s) => mkdirSync(join(s.userData, 'snapshots', 'old'), { recursive: true }) });
     await vi.waitFor(() => expect(existsSync(join(state.userData, 'snapshots'))).toBe(false));
