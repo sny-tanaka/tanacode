@@ -292,7 +292,9 @@ const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   thinking_tokens: () => true,
   hook_started: (v) => str(v.hook_id),
   hook_progress: () => true,
-  hook_response: (v) => str(v.hook_id) && str(v.hook_name) && str(v.hook_event) && str(v.outcome),
+  // stdout・stderr は、何も出力しなかったフックをチャットに出すかを決めるので、どちらも文字列のときだけ使う（欄が無い・形が違えば、
+  // 出さない側に倒す。読めない行として数えるので、毎日の確認で気づける）
+  hook_response: (v) => str(v.hook_id) && str(v.hook_name) && str(v.hook_event) && str(v.outcome) && typeof v.stdout === 'string' && typeof v.stderr === 'string',
   local_command: () => true,
   informational: () => true,
 };

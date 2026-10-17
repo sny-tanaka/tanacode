@@ -43,7 +43,7 @@ npm ls <パッケージ> --omit=dev  # dependencies の側から入っている�
 
 Dependabot の scope は、package.json の dependencies / devDependencies のどちらから入っているかだけで決まります。**scope が `development` でも、アプリに入ることがあります。** 判断の前に `electron.vite.config.ts` と `package.json`（dependencies・devDependencies・`build.files`）を読み、次の前提が変わっていないかを確かめます。
 
-- main・preload: electron-vite 5 の `build.externalizeDeps`（既定で有効）が、`dependencies` に書いたものだけを外に出します（まとめずに、実行時に node_modules から読み込み）。devDependencies は、import されていれば out/ にまとめられます。
+- main・preload: electron-vite 6 の `build.externalizeDeps`（既定で有効）が、`dependencies` に書いたものだけを外に出します（まとめずに、実行時に node_modules から読み込み）。devDependencies は、import されていれば out/ にまとめられます。
 - renderer: 外に出すものは無し。import したものは dependencies・devDependencies の区別なく out/renderer にまとめられます。mermaid・marked・dompurify・monaco-editor・react などは devDependencies ですが、画面に入ります。
 - electron-builder: `build.files` は `out/**` と package.json。これとは別に、`dependencies` とその依存を node_modules ごとアプリに入れます。
 - electron: devDependencies ですが、アプリの実行環境そのもの。electron の警告は、アプリに入るものとして扱います。

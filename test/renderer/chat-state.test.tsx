@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent, HookRun } from '@shared/chat';
 import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusBarStatus, statusOf, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
+import { groupTools } from '../../src/renderer/src/chat/toolGroups';
 import { mockApi } from './mock-api';
 
 // チャットの状態（会話ログから作ったイベントを、チャットの行と状態にする）。
@@ -65,6 +66,12 @@ describe('チャットの行', () => {
     expect(run([retrying, { type: 'api-error', id: 'e2', text: '400', retrying: false }, { type: 'turn-end' }]).items).toMatchObject([{ id: 'e2', retrying: false }]);
   });
 
+  it('同じ id の失敗の知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき）、前の行を外して今の位置に出す', () => {
+    const error: ChatEvent = { type: 'api-error', id: 'r1', text: 'overloaded', retrying: false };
+    const chat = run([error, { type: 'turn-end' }, { type: 'user', id: 'u', text: '仕上げて' }, error, { type: 'turn-end' }]);
+    expect(chat.items.map((i) => `${i.kind}:${i.id}`)).toEqual(['user:u', 'error:r1']);
+  });
+
   it('ツールは結果で完了・失敗になり、結果が来ないままターンが終わったら（中断）失敗にする', () => {
     const chat = run([
       { type: 'tool-use', id: 'a', name: 'Edit', target: 'a.ts', input: '', filePath: '/w/a.ts', at: 1 },
@@ -105,6 +112,42 @@ describe('チャットの行', () => {
       'hook:a,b',
       'hook:a',
     ]);
+  });
+
+  it('hooks: 何も出力しなかったフック（hook_id のあるもの）は、1 回ずつ別の実行なので重ねない（カードに付けるものも、ツールに付かない行も）', () => {
+    const quiet = (hookId: string, toolUseId: string | null) => hook({ event: 'PreToolUse', name: 'PreToolUse:Read', command: null, toolUseId, hookId } as Partial<HookRun>);
+    const chat = run([
+      { type: 'tool-use', id: 't', name: 'Read', target: 'a', input: 'a' },
+      { type: 'hook', id: 'hook:q1', run: quiet('q1', 't') },
+      { type: 'hook', id: 'hook:q2', run: quiet('q2', 't') },
+      // 並べて呼んだ同じ名前のツールのもの（どの呼び出しのものか決められない）
+      { type: 'hook', id: 'hook:q3', run: quiet('q3', null) },
+      { type: 'hook', id: 'hook:q4', run: quiet('q4', null) },
+      // 同じ実行が重ねて届いたもの（同じ hook_id）は重ねない
+      { type: 'hook', id: 'hook:q4', run: quiet('q4', null) },
+    ]);
+    expect(chat.items.map((i) => (i.kind === 'tool' ? `tool:${i.hooks?.map((h) => h.hookId).join(',')}` : i.kind === 'hook' ? `hook:${i.runs.map((r) => r.hookId).join(',')}` : i.kind))).toEqual([
+      'tool:q1,q2',
+      'hook:q3,q4',
+    ]);
+  });
+
+  it('ツールのまとまり: どの呼び出しのものか決められなかったツールの hooks（ツールに付かない行）は、まとまりの中に入れて切らない。ほかの hooks では切る', () => {
+    const quiet = (hookId: string, event: string) => hook({ event, name: `${event}:Read`, command: null, toolUseId: null, hookId } as Partial<HookRun>);
+    const chat = run([
+      { type: 'tool-use', id: 'glob', name: 'Glob', target: '*.ts', input: '*.ts' },
+      { type: 'tool-use', id: 'a', name: 'Read', target: 'a', input: 'a' },
+      { type: 'tool-use', id: 'b', name: 'Read', target: 'b', input: 'b' },
+      { type: 'hook', id: 'hook:q1', run: quiet('q1', 'PreToolUse') },
+      { type: 'hook', id: 'hook:q2', run: quiet('q2', 'PostToolUse') },
+      { type: 'tool-use', id: 'bash', name: 'Bash', target: 'ls', input: 'ls' },
+      { type: 'hook', id: 'hook:s1', run: quiet('s1', 'Stop') },
+      { type: 'tool-use', id: 'edit', name: 'Edit', target: 'a.ts', input: '' },
+    ]);
+    const rows = groupTools(chat.items).map((row) =>
+      row.kind === 'tool-group' ? `group:${row.tools.map((t) => t.id).join(',')}/${row.items.length}` : row.kind === 'hook-group' ? `hooks:${row.runs.map((r) => r.hookId).join(',')}` : row.kind,
+    );
+    expect(rows).toEqual(['group:glob,a,b,bash/6', 'hooks:s1', 'group:edit/1']);
   });
 
   it('hooks: 質問のフック（アプリが足したもの）が AskUserQuestion に答えた記録（コマンドの無い PermissionRequest）は出さない', () => {

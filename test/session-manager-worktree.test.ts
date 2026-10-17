@@ -382,6 +382,23 @@ describe('worktree の片付けと作り直し', () => {
     expect(app.manager.stateOf(id)).toBe('archived');
   });
 
+  it('archive({ removeWorktree }): 再起動の途中にしても、止めたあとに Claude Code を起動し直さない（消した worktree で、誰も持たない claude が動き続けない）', async () => {
+    start();
+    const { id, pipe, session } = await ready();
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    const archiving = app.manager.archive(id, { removeWorktree: true });
+    pipe.exit(0);
+    await restarting;
+    expect((await archiving)?.branch).toBe(session.worktree!.branch);
+    await expect(sent).rejects.toThrow('Claude Code が終了しました');
+    expect(app.host.pipes).toHaveLength(1);
+    expect(existsSync(session.cwd)).toBe(false);
+    expect(app.manager.stateOf(id)).toBe('archived');
+  });
+
   it('open: 消した worktree を、残したブランチから作り直してから再開し、作り直したことを知らせる', async () => {
     start();
     const { id, pipe, session } = await ready();

@@ -117,7 +117,10 @@ function withoutRetrying(items: ChatItem[]): ChatItem[] {
   return items.some((i) => i.kind === 'error' && i.retrying) ? items.filter((i) => !(i.kind === 'error' && i.retrying)) : items;
 }
 
-const sameRun = (a: HookRun, b: HookRun) => a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
+// 同じ実行の記録か（Stop の要約と出力のあった記録など、同じ実行が 2 つの形で届く）。何も出力しなかったフックは hook_id で見分ける
+// （1 回ずつ別の実行。コマンドが無いので、きっかけとツールが同じでも重ねない）
+const sameRun = (a: HookRun, b: HookRun) =>
+  a.hookId !== undefined || b.hookId !== undefined ? a.hookId === b.hookId : a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
 
 // hooks はツールのカードに付ける。ツールに付かないものは、直前の同じきっかけの hooks とまとめる。
 // Stop の要約と出力のあった記録は同じ実行なので、重ねない（出力のある方を残す）
@@ -176,7 +179,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'divider':
       return { ...state, items: [...state.items, { kind: 'divider', id: event.id, text: event.text }] };
     case 'api-error': {
-      const items = withoutRetrying(state.items);
+      // 同じ知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき、main がターンの終わりと一緒に出し直す）、
+      // 前の行を外して今の位置に出す
+      const items = withoutRetrying(state.items).filter((i) => !(i.kind === 'error' && i.id === event.id));
       return { ...state, items: [...items, { kind: 'error', id: event.id, text: event.text, retrying: event.retrying }] };
     }
     case 'process-start':

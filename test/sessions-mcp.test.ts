@@ -37,6 +37,7 @@ import { allowedBrowserToolIds } from '../src/shared/browser-tools';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
+import { SendError, type SendFailure } from '../src/main/send-error';
 import { textResult } from '../src/main/mcp-bridge';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
@@ -2125,6 +2126,31 @@ describe('ツールの実行（SessionsControl）', () => {
       } finally {
         logged.mockRestore();
       }
+    });
+
+    it('send_message: 手の空いた子に送れなかったとき（送る前に終わった・手が空かないなど）は、理由を英語で返す（画面の言語の文を Claude に返さない）', async () => {
+      host.set(CHILD, 'idle');
+      const reasons: [SendFailure, string][] = [
+        ['notRunning', 'is not running'],
+        ['exited', 'exited before'],
+        ['terminalMode', 'terminal mode'],
+        ['notReady', 'did not become ready'],
+        ['busy', 'did not become idle'],
+        ['cancelled', 'cancelled'],
+      ];
+      for (const [reason, english] of reasons) {
+        host.submitWhenReady = async () => {
+          throw new SendError(reason);
+        };
+        const text = textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }));
+        expect(text).toContain(english);
+        expect(text).not.toContain(t(`main.send.${reason}`));
+      }
+      // ほかの失敗は、そのまま返す
+      host.submitWhenReady = async () => {
+        throw new Error('ほかの失敗');
+      };
+      expect(textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: '続けて' }))).toBe('ほかの失敗');
     });
 
     it('get_session: 最後の指示が人の発言か知らせかを返す。許可の確認を待っていれば中身を、質問ならタブとチェックの状態も返す', async () => {

@@ -31,7 +31,8 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 //   自動の最適化圧縮のため、ツールの切れ目で止めるフックと、Claude Code の自動の圧縮を止めるフックも
 // - 書くだけのフック（何も決めない。いつも足す）: 許可の確認を出す直前（PermissionRequest）のツールの名前と入力、Claude Code の知らせ
 //   （Notification）、ターンの終わり（Stop）を、セッションごとのファイルに書かせる。ターミナルモード（TUI）の間に、確認待ちと、手が空いたことを
-//   知るため（設計書 9 節）。stream-json では使わない（can_use_tool と result で分かる）。何も返さないので、can_use_tool と競わない（実測）
+//   知るため（設計書 9 節）。stream-json では使わない（can_use_tool と result で分かる）。答えは {"suppressOutput":true} だけで、許可も断りも
+//   決めないので、can_use_tool と競わない（実測。suppressOutput は、チャットに出す何も出力しなかったフックと見分けるため。hook-output.ts）
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
 // 描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）

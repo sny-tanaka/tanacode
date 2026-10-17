@@ -345,7 +345,7 @@ PR で、次のものを流します。develop への push では流しません
   - 集め方: メインプロセス・pty ホスト・MCP の中継（どれも Node）は `NODE_V8_COVERAGE` で、画面と preload は Playwright の `page.coverage` で、`coverage/e2e-raw/` に集めます。
   - 画面のカバレッジは、測り始めてから読み込んだスクリプトの分しか取れないので、起動したら画面を読み込み直します。
   - MCP の中継は、Claude Code が終わるときにシグナル（SIGINT）で止められ、そのままでは `NODE_V8_COVERAGE` を書きません。測るときだけ、シグナルを受けたら `process.exit` で終える `test/e2e/coverage-exit.cjs` を、`NODE_OPTIONS` の `--require` で読み込ませます。Playwright は起動するアプリに `NODE_OPTIONS` を渡さないので、起動したあとメインプロセスの環境変数に足します（Claude Code がそれを引き継いで、中継に渡します）。
-  - 戻し方: 終わったら `scripts/e2e-coverage.mjs`（`test/e2e/global-setup.ts` から）が、同じスクリプトの記録（起動のたび・プロセスごと）を V8 の形のまま合わせてから、ソースマップで src の行に戻し（`ast-v8-to-istanbul`）、`coverage/e2e/coverage-final.json` に書きます。記録ごとに戻すと、大きなスクリプト（画面は 10MB ほど）を何十回も戻すことになり、遅いためです。
+  - 戻し方: 終わったら `scripts/e2e-coverage.mjs`（`test/e2e/global-setup.ts` から）が、同じスクリプトの記録（起動のたび・プロセスごと）を V8 の形のまま合わせてから、ソースマップで src の行に戻し（`ast-v8-to-istanbul`）、`coverage/e2e/coverage-final.json` に書きます。記録ごとに戻すと、大きなスクリプト（画面は 10MB ほど）を何十回も戻すことになり、遅いためです。ソースマップの無いスクリプトがあれば失敗にします（ビルドの設定の誤り）。ただし、束ねる道具（vite 8 の rolldown）が足す実行時の部品（`rolldown-runtime-*.js`）は、src を含まずソースマップも書かれないので飛ばします。
   - ビルドは、ソースマップを書き出す分だけメモリを多く使います（手元の計測で、ソースマップなしの 4.5GB ほどに対して 5.5〜6GB ほど）。
   - ソースマップ（`.map`）は、パッケージしたアプリには入れません（`package.json` の `build.files`）。
 
@@ -484,7 +484,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - アプリも Claude Code も無くなって 10 秒たつと、ホストは自分で終わります。
   - ホストが落ちたあとは、claude の起動と一覧の頼みで、つなぎ直します（無ければホストを起動する）。つなぐ処理は 1 本だけ走らせ、つながるまでに送るもの（起動の直後の initialize・止める頼みなど）は溜めておいて、つながったら順に送ります（`PtyHost.ensureConnected`）。黙って捨てると、initialize の返事を待ったまま起動中に残るためです。つなげなければ、起動は -1 で終わらせ、一覧は空を返します。
   - やりとりの形を変えたら、`pty-host-protocol.ts` の `PROTOCOL`（今は 3）を上げます。起動したアプリは、形の違う古いホストを Claude Code ごと止めて、起動し直します。止まったセッションは `--resume` で再開します。ホストのログは userData の `pty-host.log`。
-- 止め方（`ClaudeSession.stop`）: チャットは `end_session` の要求（裏のタスクを待たずに 0.1〜0.2 秒で終わる。作業中でも終わり、裏の Bash も止まる。実測）、TUI は SIGHUP。3 秒で終わらなければ SIGTERM、さらに SIGKILL（どれもプロセスグループごと）。起動し直す（`restart`）・チャットとターミナルモードを切り替える・worktree を消すときは、終わったのを確かめてから次へ進みます（同じ会話を 2 つのプロセスが書かないように）。止められなかったときは、動いている claude をそのまま使えるように戻して、理由を返します。
+- 止め方（`ClaudeSession.stop`）: チャットは `end_session` の要求（裏のタスクを待たずに 0.1〜0.2 秒で終わる。作業中でも終わり、裏の Bash も止まる。実測）、TUI は SIGHUP。3 秒で終わらなければ SIGTERM、さらに SIGKILL（どれもプロセスグループごと）。起動し直す（`restart`）・チャットとターミナルモードを切り替える・worktree を消すときは、終わったのを確かめてから次へ進みます（同じ会話を 2 つのプロセスが書かないように）。止められなかったときは、動いている claude をそのまま使えるように戻して、理由を返します。アーカイブ・一覧からの削除では、片付けの印（`Runtime.closing`）を付けます。worktree も消すときは止め終わるまで一覧から外さないので、その間に止め終えた再起動・切り替えが、起動し直さないようにするためです（起動し直すと、消した worktree で、誰も持たない claude が動き続ける）。
   - アーカイブ・Claude Code ごとの終了（`kill`）は、終わるのを待ちません。それでも、終わりの知らせで、答えを待っていた要求を必ず片付けます。
 - 新しい会話には `--session-id <uuid>` を、再開には `--resume <id>` を付けます。
 - Remote Control をオンにしたセッションは、チャットでは起動を終えたあとに `remote_control` の要求（名前は `tanacode-<フォルダ名>`）でつなぎ、ターミナルモードでは `--remote-control tanacode-<フォルダ名>` を付けます（開発版を除く。`--remote-control` は stream-json には効かない）。worktree のセッションのフォルダ名は、元のフォルダの名前。
@@ -525,7 +525,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - `question`・`permission`: 答えを待っている `can_use_tool`（AskUserQuestion は question、ほかは permission）
   - `terminal`: ターミナルモード（人が TUI で操作している）
   - `background`・`idle`・`exited`・`archived`
-  - ターンの終わりは `result` で決めます。チャットに turn-end を出すのは、そのターンの最後の応答の uuid が会話ログに出てからです（3 秒まで待つ。`TURN_END_WAIT_MS`）。`result` は会話ログより先に届くので、先に出すと、実行中のツールをいったんエラーにしてしまうためです（`chatState.ts`）。応答の前に終わったターン（中断・失敗）は、そのターンを始めた発言（`command_lifecycle` の started の uuid）が会話ログに出るのを待ちます（先に出すと、チャットで終わりが発言より前に並び、最適化圧縮が仕上げの頼みのあとの終わりを待ち続けるため）。待つ時間が切れて先に出したあとで、待っていた行が出たら、次のターンが始まっていなければ、その行のあとにもう一度 turn-end を出します（`lateTurnEnd`。完了の知らせ・タイトルの頼みは繰り返さない）。会話ログのターンの終わりの行は、チャットの今のターンでは使いません。読み直した履歴と、ターミナルモード（`result` が来ない）では、会話ログから turn-end を出します。
+  - ターンの終わりは `result` で決めます。チャットに turn-end を出すのは、そのターンの最後の応答の uuid が会話ログに出てからです（3 秒まで待つ。`TURN_END_WAIT_MS`）。`result` は会話ログより先に届くので、先に出すと、実行中のツールをいったんエラーにしてしまうためです（`chatState.ts`）。応答の前に終わったターン（中断・失敗）は、そのターンを始めた発言（`command_lifecycle` の started の uuid）が会話ログに出るのを待ちます（先に出すと、チャットで終わりが発言より前に並び、最適化圧縮が仕上げの頼みのあとの終わりを待ち続けるため）。待つ時間が切れて先に出したあとで、待っていた行が出たら、次のターンが始まっていなければ、その行のあとにもう一度 turn-end を出します（`lateTurnEnd`。完了の知らせ・タイトルの頼みは繰り返さない）。会話ログに残らない失敗の理由（`result.errors` の `api-error`）も、turn-end の直前に出します（出し直すときも同じ id で一緒に出し、画面は前の行を外して今の位置に出す）。発言より前に並ぶと、最適化圧縮が仕上げの頼みのあとの失敗を見落とすためです。会話ログのターンの終わりの行は、チャットの今のターンでは使いません。読み直した履歴と、ターミナルモード（`result` が来ない）では、会話ログから turn-end を出します。
     - 中断で終わったかは、`result` の `terminal_reason`（`aborted_…`）で見ます。
     - Claude Code の中で済むコマンド（`/clear`・`/compact` など。モデルを呼ばず `num_turns` が 0。実測）の `result` では、ターンを終えますが、完了を知らせません（最適化圧縮の `/clear` で「作業が完了しました」が鳴らないように）。
     - 会話ログに残らない失敗（ターン数・予算の上限など）は、`result` の `errors` をチャットに出します。
@@ -535,7 +535,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - エフォート: `get_settings` の `applied.effort`（起動の直後と、切り替えたあと）
     - コンテキスト: ターンの終わりに `get_context_usage` で聞きます（上限も正確）。途中は、本体の最後の応答の `usage`。`/clear`（`conversation_reset`）のあと、新しい会話の最初の応答までは、分からないとして空にし、聞きもしません（空の会話の見積もりで「量が下がった」とすると、自動の最適化圧縮が、切り替えた直後にまだ超えていても繰り返すため）。
     - 利用枠: `rate_limit_event`（値が無いときに空で上書きしない）。料金は `result` の `total_cost_usd`
-    - モデル別の週の枠: `rate_limit_event` に無いので、ターンの終わり（`result`）に `get_usage` で聞きます（`refreshUsage`。サーバーに聞くので、プロファイル（`SessionManager`）ごとに 5 分に 1 回まで。使わない `behaviors` のために手元の会話ログを集計させないよう、`skip_behaviors: true` を付けます）。出す枠は Claude Code の `/usage` に合わせます（`usageLimitsOf`。2.1.302）: 返事の `model_scoped`（サーバーの一覧）と、プランが max・team か分からない（`subscription_type` が null）ときだけ `seven_day_sonnet`（一覧に同じ名前があれば一覧の方）。`seven_day_opus` は読みません。Claude Code は一覧を作れたときだけ `model_scoped` を付けるので、無いのは「分からない」、空の配列は「この人には無い」です（`UsageReport.modelsKnown`）。`UsageMonitor` は、モデルの一覧を持つ知らせ（`model_scoped` のある `get_usage`・Claude Code の控えの `weekly_scoped`）ではモデル別の枠を置き換え、持たない知らせ（statusLine・`rate_limit_event`・`model_scoped` の無い `get_usage`）では届かなかったモデルの枠を前の値から残します（リセットの時刻を過ぎたものと、得てから 7 日を超えたものは残さない。`KEEP_MODEL_MS`。Claude Code が `/usage` に出すモデルの許可リストから外した行を、一覧の無い返事が続く間、残し続けないため）。Claude Code の控えのモデル別の行は許可リストを通していないので、直前の `get_usage` のモデルの一覧に出た名前に絞ります（まだ聞いていなければ絞らない）。残した枠には、その値を得た時刻（`UsageLimit.updatedAt`）を持たせ、新しく見せません。チャットの statusLine は、費用やコンテキストの量が変わったときにも前の利用枠を送り直すので、利用枠を受け取った時刻（`StatusLineInfo.rateLimitsAt`）を添え、`UsageMonitor` はその時刻で新旧を比べます
+    - モデル別の週の枠: `rate_limit_event` に無いので、ターンの終わり（`result`）に `get_usage` で聞きます（`refreshUsage`。サーバーに聞くので、プロファイル（`SessionManager`）ごとに 5 分に 1 回まで。使わない `behaviors` のために手元の会話ログを集計させないよう、`skip_behaviors: true` を付けます）。出す枠は Claude Code の `/usage` に合わせます（`usageLimitsOf`。2.1.302）: 返事の `model_scoped`（サーバーの一覧）と、プランが max・team か分からない（`subscription_type` が null）ときだけ `seven_day_sonnet`（一覧に同じ名前があれば一覧の方）。`seven_day_opus` は読みません。Claude Code は一覧を作れたときだけ `model_scoped` を付けるので、無いのは「分からない」、空の配列は「この人には無い」です（`UsageReport.modelsKnown`）。`UsageMonitor` は、モデルの一覧を持つ知らせ（`model_scoped` のある `get_usage`・Claude Code の控えの `weekly_scoped`）ではモデル別の枠を置き換え、持たない知らせ（statusLine・`rate_limit_event`・`model_scoped` の無い `get_usage`）では届かなかったモデルの枠を前の値から残します（リセットの時刻を過ぎたものと、得てから 7 日を超えたものは残さない。`KEEP_MODEL_MS`。Claude Code が `/usage` に出すモデルの許可リストから外した行を、一覧の無い返事が続く間、残し続けないため）。Claude Code の控えのモデル別の行は許可リストを通していないので、直前の `get_usage` のモデルの一覧に出た名前に絞ります。一覧が分からない間（まだ聞いていない・直前の返事に一覧が無かった）は、控えのモデル別の行を使わず、前の値のモデル別の枠を期限まで残します（一覧の無い返事は、許可リストから外れたモデルの行をサーバーが返し続けるときにも来るので、その前の一覧で絞ると、外れたモデルの枠が控えから戻ってしまう）。残した枠には、その値を得た時刻（`UsageLimit.updatedAt`）を持たせ、新しく見せません。チャットの statusLine は、費用やコンテキストの量が変わったときにも前の利用枠を送り直すので、利用枠を受け取った時刻（`StatusLineInfo.rateLimitsAt`）を添え、`UsageMonitor` はその時刻で新旧を比べます
     - 権限モード: initialize の返事の `current_permission_mode`・`system/init` と `system/status` の `permissionMode`・`set_permission_mode` の返事・会話ログの発言の行の `permissionMode`。知らない名前（`dontAsk` など）は manual。
 - アプリ内ブラウザを Claude に操作させる設定・ほかのセッションを扱わせる設定・チェックリストとウォークスルーとターミナルの設定がオンなら、`--mcp-config` でそれぞれの MCP サーバー（中継）を、`--allowedTools` で許可済みにするツール（読むだけのもの・アプリ内ブラウザの `ask_user_to_act`・チェックリストのすべて・ウォークスルーの PR への投稿のほかのすべて）の許可を足します（下の「アプリ内ブラウザ（Claude による操作）」「セッション間の連携（Claude による操作）」「チェックリスト」「ウォークスルー」「ターミナル」）。どちらも値をいくつも取る引数なので、次の `--` で終わるよう `--settings` より前に置きます。
   - 2 つのサーバーを足すときも、`--mcp-config` と `--allowedTools` は 1 回ずつにまとめて渡します（`mcpArgs`）。2 回渡したときの扱いが決まっていないためです。
@@ -552,8 +552,9 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
   - チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_WORKTREE_GUARD`）。
 - アプリが足すフックは、どれも標準出力に `{"suppressOutput":true}` を書きます（答えの JSON には `suppressOutput: true` を足す。`hook-output.ts`）。下の「何も出力しなかったフック」で、ユーザーのフックと見分けるためです。`suppressOutput` は、Claude に渡す中身にも、フックの答え（判断・`additionalContext`・`continue: false`）の効き目にも関わりません（2.1.302 で実測。`test/cli` のチェックリスト・ゲート・歯止め・許可の確認で確かめている）。ただし、何かを書いたフックは、会話ログに `hook_success` の記録が残ります（コマンドの目印で、チャットには出さない）。
+- ユーザーのフックが、標準出力に `suppressOutput: true` の JSON（出力の全体が JSON のもの）を書いた成功の記録（会話ログの `hook_success`）は、Claude Code の画面と同じく、チャットに出しません（`shared/chat.ts` の `hookRunOf`）。読めない JSON・ほかの出力は出します。Stop は、要約（`stop_hook_summary`）に出力の無いフックとしてコマンドだけが残ります。
 - 何も出力しなかったフック: チャットの起動には `--include-hook-events` を付け、フックの始まりと終わり（`system/hook_started`・`hook_response`）を受け取ります。何も出力しなかったフックは会話ログに残らない（Stop は要約の `stop_hook_summary` に残る。2.1.302 で実測）ので、`hook_response` からチャットに出します（`SessionManager.quietHook`）。何かを出力したフック（アプリのフックも）・失敗したフックは会話ログに残るので、ここでは出しません。
-  - `hook_response` には、コマンドもツールの呼び出しの ID も無い（`hook_name` が「出来事:ツールの名前」）ので、ツールの前後のフックは、stream で見た同じ名前のいちばん新しい呼び出しに付けます（並んで動く同じ名前のツールでは、取り違えることがある）。そのカードが会話ログからチャットに出るまで待たせ（stream の方が先に届く）、ターンの終わりまでに出なければ、カードに付けずに出します。サブエージェントの中のツールのフックは出しません（チャットにカードが無い）。所要時間は `hook_started` から測ります。
+  - `hook_response` には、コマンドもツールの呼び出しの ID も無い（`hook_name` が「出来事:ツールの名前」）ので、ツールの前後のフックは、stream で見た同じ名前の、結果（stream の `user` 行の `tool_result`）がまだ来ていない呼び出しに付けます（PostToolUse の `hook_response` も、そのツールの結果より先に届く。2.1.302 で実測）。並んで呼んだ同じ名前のツールで 1 つに決められないときは、取り違えないよう、どのカードにも付けずにツールに付かない行として出します（カードより上に出さないよう、本体の最後の呼び出しのカードが出るまで待たせ、そのあとに出す。画面の `groupTools` は、ツールの出来事だけの hooks ではツールのまとまりを切らない）。何も出力しなかったフックには `hook_id` を持たせ（`HookRun.hookId`）、画面は 1 回ずつ別の実行として扱います（`chatState.ts` の `sameRun` で重ねない）。そのカードが会話ログからチャットに出るまで待たせ（stream の方が先に届く）、ターンの終わりまでに出なければ、カードに付けずに出します。発言のとき（UserPromptSubmit）のフックは、発言を会話ログに書く前に動く（2.1.302 で実測）ので、今のターンに取り込まれた送った発言（`command_lifecycle` の started の uuid）の行がチャットに出るまで待たせ、そのすぐあとに出します（すぐ出すと、発言の上の、前のターンの続きに見える）。フックが発言を止めたとき（発言が会話に出ず、モデルを呼ばずに終わる）は、ターンの終わりの前に出します。どの発言のものか分からないもの（スマホからの発言など）は、すぐ出します。サブエージェントの中のツールのフックは出しません（チャットにカードが無い）。同じ名前の呼び出しが本体とサブエージェントの両方にあって決められないときは、ツールに付かない行として出します（サブエージェントのものかもしれない）。所要時間は `hook_started` から測ります。
   - 会話ログに残らないので、アプリを起動し直したり、会話ログから組み立て直したりすると消えます。ターミナルモードの間（TUI）は、stream が無いので出ません。
 - 描き方（`tui`）は決めません。画面を読まないので、ユーザーの設定のままにします。
 - 裏で Claude Code を別に起動することはありません（子セッションも、許可の確認のあとに、一覧に並ぶふつうのセッションとして起動します）。利用枠の取得に `/usage` を実行することもありません。
@@ -658,7 +659,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 同じセッションへの送信は、セッションごとの順番（`sendChain`）で 1 つずつ書きます（画像を読む間に、あとから送ったものが追い越さないように）。
   - スラッシュコマンドは、送信中に出しません（発言として会話に残らないものが多いため）。発言でないもの（子セッション・予約・チェックリストの知らせや、最適化圧縮の文）も出しませんが、会話に出るまでは作業中に数えます（`unsentView`）。
   - ターミナルモードの間と、切り替えの途中は、チャットから送りません（理由を返して断る）。
-  - 再起動（`restart`）の途中に送ったものは、止めている claude に書かず（閉じかけで消えるため）、起動し直した claude が受け付けるようになってから送ります（`untilRestarted`。起動を待って送るもの `submitWhenReady` も同じ）。止められなかったときは、受け付けている（受け付けるようになった）今の claude に送ります。止めている間にアーカイブ・一覧から削除した・起動し直せなかったとき、受け付けるまで 60 秒（`RESTART_SEND_WAIT_MS`）待ちきれないときは、送らずに失敗します（画面は預かりに戻す）。
+  - 再起動（`restart`）の途中に送ったものは、止めている claude に書かず（閉じかけで消えるため）、起動し直した claude が受け付けるようになってから送ります（`untilRestarted`。起動を待って送るもの `submitWhenReady` も同じ）。止められなかったときは、受け付けている（受け付けるようになった）今の claude に送ります。待つ間にまた再起動したとき（起動の途中にモデルを変えたなど）も、それを待ち、起動し直した claude が受け付けるまで書きません（initialize の返事のあとの処理より先に、ターンを始めさせない）。止めている間にアーカイブ・一覧から削除した・起動し直せなかったとき、受け付けるまで 60 秒（`RESTART_SEND_WAIT_MS`）待ちきれないときは、送らずに失敗します（画面は預かりに戻す）。
 - 画像は、`image` のブロックで送ります。形式は名前でなく中身の頭で決め（PNG・JPEG・GIF・WebP）、送れないもの（ほかの形式・読めない）は、黙って落とさずにチャットに知らせます。大きな画像は Claude Code が縮めて送るので、アプリでは縮めません（6.7MB の PNG は 474KB の JPEG に、3024×1964 は 2000×1299 に。2.1.301 で実測）。
 - 送り方は、Claude Code の CLI と同じ規則にしています。自分で打った文はふつうの入力として送り、入力欄に外から貼り付けた長い文は、入力欄で札にして、貼り付けとして送ります。
   - 札にする境目は `isLongPaste`（`shared/paste.ts`）。4 行以上、または 800 文字より長い貼り付けで、Claude Code が入力欄で `[Pasted text #1 +30 lines]` の目印に置き換える境目と同じです（2026-10-12・2.1.296 で確かめた: 3 行・767 文字の貼り付けは文字のまま、4 行・1,569 文字は目印になる）。入力欄への貼り付け（`ChatInput` の `onPaste`）と、ほかのパネルからの差し込み（`insertIntoChat`。ターミナルの「Claude へ送る」・アプリ内ブラウザで選んだ要素）の両方で見ます。短いものは、文字のまま入力欄に入ります。
@@ -1438,6 +1439,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ・自分への予約・報告）
   - `turn-reports.ts`: Claude がターンの終わりの通知に載せる報告（`report_result`）を、セッションごとに持つ。新しいターンが始まったら捨てる
   - `session-notices.ts`: アプリから Claude への知らせ（子の作業の終わり・チェックリストの返信）を、手の空いたセッションに送る列（送り先がターミナルモードなら、人がボタンで頼んだものだけ TUI の入力欄に貼る）
+  - `send-error.ts`: 発言を送れなかったこと（`SendError`）。文は画面の言語で、理由（`reason`）から `send_message` が Claude に返す英語の文を作る
   - `checklist-store.ts`: チェックリストの保存（書き換えは `src/shared/checklist-book.ts` の `ChecklistBook`）
   - `saved-json.ts`: アプリが保存している JSON（チェックリスト・予約したメッセージ）の読み方（無ければ空・読めなければ上書きしない・壊れていれば横に移す）
   - `checklist-control.ts`: Claude から届いたチェックリストのツールを実行する・画面からの書き換えとコピー・Claude への知らせ
@@ -1617,7 +1619,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - 依存の更新の PR は、Dependabot が週 1 回（月曜の朝）作ります。設定は `.github/dependabot.yml`。
   - 出てから 7 日たったバージョンだけにします（公開の直後に乗っ取られたパッケージを掴まないため）。
   - 開発の道具のマイナー・パッチは、1 本の PR にまとめます。アプリに入るもの（electron・画面にまとめる依存・`dependencies`）は、1 つずつの PR にします。中身を見てからマージしてください。
-  - ほかの依存の対応の範囲に縛られるものは、`ignore` で止めています（`@types/node` は Node に合わせて 24 系まで。vite と `@vitejs/plugin-react` のメジャーは、electron-vite が対応するまで）。縛りが外れたら、`ignore` から外します。
+  - ほかの依存の対応の範囲に縛られるものは、`ignore` で止めています（`@types/node` は Node に合わせて 24 系まで）。縛りが外れたら、`ignore` から外します。
 - 脆弱性の警告と、その修正の PR は、これとは別に Dependabot から届きます。対応の手順は `/security`。Chromium の脆弱性は Dependabot では警告されないので、Electron のリリース（https://releases.electronjs.org/）で、修正の取り込み（Backported fixes）を確かめます。
 - npm 11 は、インストールのときに動くスクリプトを、`package.json` の `allowScripts` に書いたものだけに絞ろうとしています（今は警告だけ）。node-pty（ネイティブのモジュール）と esbuild は許し、Windows の配布にだけ使う electron-winstaller は止めています。スクリプトを持つ依存が増えて警告が出たら、中身を確かめてから `npm approve-scripts <パッケージ> --no-allow-scripts-pin` で足します（バージョンを固定しないのは、Dependabot の更新のたびに書き直さずに済むようにするため）。
 

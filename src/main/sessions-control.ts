@@ -31,6 +31,7 @@ import {
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
+import { SendError, type SendFailure } from './send-error';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
 
@@ -132,6 +133,15 @@ const FIRST_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const SEND_TIMEOUT_MS = 3 * 60 * 60_000;
 // 手の空いている子に打つときの待ちの上限（すぐ打てるはず）
 const SEND_IDLE_TIMEOUT_MS = 30_000;
+// 子に送れなかった理由（SessionManager の SendError）の、Claude に返す英語の文
+const SEND_FAILURE: Record<SendFailure, string> = {
+  notRunning: 'its Claude Code is not running',
+  exited: 'its Claude Code exited before the message could be sent',
+  terminalMode: 'it is in terminal mode (or being switched to it), where only the user can type',
+  notReady: 'its Claude Code did not become ready to accept messages in time',
+  busy: 'it did not become idle in time',
+  cancelled: 'sending was cancelled',
+};
 // get_session_diff で、未追跡のファイルを読む数と、1 つのファイルから読む大きさの上限
 const MAX_UNTRACKED_FILES = 100;
 const MAX_UNTRACKED_BYTES = 256 * 1024;
@@ -492,9 +502,11 @@ export class SessionsControl {
       throw new ToolError(`${who} is stopped in terminal mode: it starts again in its Claude Code screen, where only the user can type, so it was not started and the message was not sent (and not kept for later). Tell the user, or send it again once the user has switched it back to the chat.`);
     }
     const text = parentMessageText(caller.id, message);
-    // 手の空いている子には、すぐ打つ
+    // 手の空いている子には、すぐ打つ。送れなかった理由は、画面の言語の文でなく英語で返す
     if (state === 'idle' || state === 'background') {
-      await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS);
+      await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS).catch((error: unknown) => {
+        throw error instanceof SendError ? new ToolError(`${who}: the message was not sent because ${SEND_FAILURE[error.reason]}. Check it with get_session, and send it again if needed.`) : error;
+      });
       return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Sent.' });
     }
     // 作業中・起動中・止まっている子は、手が空くまでアプリが預かってから打つ（作業中に打つと、そのあいだに出た許可の確認で、

@@ -248,6 +248,14 @@ describe('toChatEvents: attachment の行', () => {
     expect(events({ type: 'attachment', attachment: { type: 'hook_something' } })).toEqual([
       { type: 'hook', id: '', run: expect.objectContaining({ event: 'hook', name: '', outcome: 'success' }) },
     ]);
+    // ユーザーのフックが標準出力の JSON で suppressOutput を指定したものは出さない（Claude Code の画面でも出ない）。読めない JSON・ほかの出力は出す
+    const quieted = (stdout: string) => events(attachment({ type: 'hook_success', hookName: 'PostToolUse:Bash', hookEvent: 'PostToolUse', toolUseID: 'toolu_bash', command: 'my-hook', stdout, stderr: '', exitCode: 0 }));
+    expect(quieted('{"suppressOutput":true}\n')).toEqual([]);
+    expect(quieted('{"suppressOutput": true, "hookSpecificOutput": {"hookEventName": "PostToolUse"}}')).toEqual([]);
+    expect(quieted('{"suppressOutput":false}')).toHaveLength(1);
+    expect(quieted('{"suppressOutput":true')).toHaveLength(1);
+    expect(quieted('記録しました {"suppressOutput":true}')).toHaveLength(1);
+    expect(quieted('[{"suppressOutput":true}]')).toHaveLength(1);
     // 前のバージョンのアプリが足したフック（AskUserQuestion の入力をファイルに書くもの・質問をアプリに渡して答えを待つもの）は出さない
     expect(events(attachment({ type: 'hook_success', hookEvent: 'PreToolUse', command: `cat > "$${ASK_FILE_ENV}"` }))).toEqual([]);
     expect(

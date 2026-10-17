@@ -69,6 +69,7 @@ import type { StatusLineWatcher } from './statusline';
 import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
 import type { SessionRecord, SessionStore } from './session-store';
+import { SendError } from './send-error';
 import type { WorkspaceWatchers } from './workspace-watcher';
 import { disableRemoteControl, enableRemoteControl, generateTitle, rewindConversation, type RewindResult } from './stream/internal';
 import { ControlError } from './stream/client';
@@ -170,8 +171,9 @@ type Runtime = {
   // 書き込みで何度か知らされるので、同じ書き込みを数え直さないため）
   permissionAt: number | null;
   // 何も出力しなかったフック（hook_response）をチャットに出すための控え（quietHook）。hookStarts: 始まった時刻（hook_id → 時刻）/
-  // streamTools: stream で見たツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
-  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフック（ツールの呼び出しの ID → イベント）
+  // streamTools: stream で見た、結果がまだ来ていないツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
+  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフックと、まだ会話に出ていない発言のときのフック
+  // （ツールの呼び出しの ID・送った発言の uuid → イベント）
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
   shownTools: Set<string>;
@@ -199,6 +201,8 @@ type Runtime = {
   // 再起動で、アプリが止めている claude と、起動し直し終えた（か、やめた）ことの知らせ。この claude の終わりは出さず、
   // その間は起動中にする（一瞬でも終了と見せると、画面が送信を止める）。その間に送るものは、起動し直した claude に送る
   restarting: { process: ClaudeSession; done: Promise<void> } | null;
+  // アーカイブ・一覧からの削除で片付けている途中（worktree も消すときは、止め終わるまで一覧から外さない）。止めたあとに起動し直さない
+  closing: boolean;
   // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
   tuiTurn: boolean;
   // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
@@ -227,9 +231,10 @@ type Runtime = {
   turnPrompt: string | null;
   arrivedPrompts: Set<string>;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
-  turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
+  // error: 会話ログに残らない失敗の理由（ターンの終わりの直前に出す）
+  turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; error: ChatEvent | null; timer: NodeJS.Timeout } | null;
   // 待つ時間が切れて、待っていた行より先にチャットへ出したターンの終わり（その行があとで出たら、そのあとにもう一度出す。次のターンが始まったら捨てる）
-  lateTurnEnd: { waitFor: string; interrupted: boolean } | null;
+  lateTurnEnd: { waitFor: string; interrupted: boolean; error: ChatEvent | null } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
@@ -669,8 +674,12 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     const record = this.store.get(id);
     const removing = !!options?.removeWorktree && !!record?.worktree;
-    // 消すときは、消している途中に Claude Code が書き込まないよう、終わるのを待つ
-    if (rt) rt.switchedFrom = null;
+    // 消すときは、消している途中に Claude Code が書き込まないよう、終わるのを待つ。その間に、再起動・切り替えが止めたあとに
+    // 起動し直さないよう、片付けの印を付ける（起動し直すと、消した worktree で、誰も持たない claude が動き続ける）
+    if (rt) {
+      rt.switchedFrom = null;
+      rt.closing = true;
+    }
     if (removing) await rt?.process?.stop();
     else {
       // 終わりの知らせはあとで届くが、片付けはここでするので、届いても使わない（先にランタイムを外しておく）
@@ -897,7 +906,7 @@ export class SessionManager {
         rt.switchStopping = null;
       });
       // 止めている間に、ほかで起動し直した・アーカイブした
-      if (this.runtimes.get(id) !== rt) return;
+      if (this.gone(id, rt)) return;
       if (rt.process === process && !stopped) throw new Error(t('main.session.notStopped'));
       if (rt.process) return;
       const from: LaunchKind = on ? 'stream' : 'tui';
@@ -1451,7 +1460,7 @@ export class SessionManager {
     try {
       const stopped = await process.stop(this.stopStepMs);
       // 止めている間に、ほかで起動し直した・アーカイブした
-      if (this.runtimes.get(id) !== rt) return;
+      if (this.gone(id, rt)) return;
       if (rt.process === process && !stopped) {
         // 止められなかった（終わりの知らせが来ない）。動いている claude をそのまま使えるように戻し、黙らずに理由を返す
         if (wasReady) this.markReady(id, rt);
@@ -1484,19 +1493,20 @@ export class SessionManager {
   // priority: later はターンが終わってから別のターンにする（親からの指示・知らせ・予約）。省くと、作業中なら今のターンに取り込まれる
   submit(id: string, rawText: string, attachments: string[] = [], pastes: string[] = [], priority?: 'later'): Promise<void> {
     const rt = this.runtimes.get(id);
-    if (!rt || (!rt.process && !rt.restarting)) return Promise.resolve();
+    // claude がいない（終わった直後など。画面の状態が遅れて届く）。黙って成功にせず、失敗を返す（画面は、送れなかった発言を預かりに戻す）
+    if (!rt || (!rt.process && !rt.restarting)) return Promise.reject(new SendError('notRunning'));
     // ターミナルモードの間は、人が TUI で打つ（チャットからは送らない）
-    if (rt.terminal || rt.switching) return Promise.reject(new Error(t('main.send.terminalMode')));
+    if (rt.terminal || rt.switching) return Promise.reject(new SendError('terminalMode'));
     const run = async () => {
       // 再起動で止めている claude には書かない（閉じかけで消える）。起動し直した claude が受け付けるようになってから送る
       if (rt.restarting) await this.untilRestarted(id, rt);
       const process = rt.process;
       const client = process?.client;
-      if (!process || !client) throw new Error(t('main.send.notRunning'));
+      if (!process || !client) throw new SendError('notRunning');
       const text = stripControlChars(rawText);
       const kept = pastes.map(stripControlChars).filter((p) => p.trim());
       const read = await Promise.all(attachments.map(imageBlock));
-      if (rt.process !== process) throw new Error(t('main.send.exited'));
+      if (rt.process !== process) throw new SendError('exited');
       const images = read.flatMap((r) => ('block' in r ? [r.block] : []));
       // 送れない画像（形式が違う・読めない）は、黙って落とさず、チャットに知らせる
       const skipped = read.flatMap((r) => ('skipped' in r ? [r.skipped] : []));
@@ -1530,18 +1540,29 @@ export class SessionManager {
   }
 
   // 再起動の途中に送った発言を、起動し直した claude（止められなかったときは、止めようとした claude）が受け付けるようになるまで待たせる。
-  // 止めている間にアーカイブ・一覧から削除した・起動し直せなかった（claude がいない）ときと、待ちきれないときは、送らずに失敗する
-  // （止めた claude のまま待ち続けて、送信が返らなくならないように）。受け付ける前に終わった・別の claude に変わったら、待つのをやめる（送る側が確かめる）
+  // 止めている間にアーカイブ・一覧から削除した・起動し直せなかった・受け付ける前に終わった（claude がいない）ときと、待ちきれないときは、
+  // 送らずに失敗する（止めた claude のまま待ち続けて、送信が返らなくならないように）。また再起動して claude が変わっても、受け付けるまで待つ
   private async untilRestarted(id: string, rt: Runtime): Promise<void> {
-    await rt.restarting?.done;
-    const next = rt.process;
-    if (this.runtimes.get(id) !== rt || !next) throw new Error(t('main.send.exited'));
-    const deadline = Date.now() + this.restartSendWaitMs;
-    while (rt.process === next && !rt.ready) {
-      if (this.runtimes.get(id) !== rt) throw new Error(t('main.send.exited'));
-      if (Date.now() > deadline) throw new Error(t('main.send.notReady'));
+    // 受け付けるまでの期限（再起動が終わるたびに数え直す）
+    let deadline: number | null = null;
+    for (;;) {
+      // 待つ間に、また再起動が始まったら（起動の途中にモデルを変えたなど）、それも待つ。claude が変わっても、受け付けるまで書かない
+      // （initialize の返事のあとの処理より先に、ターンを始めさせない）
+      if (rt.restarting) {
+        await rt.restarting.done;
+        deadline = null;
+      }
+      if (this.gone(id, rt) || !rt.process) throw new SendError('exited');
+      if (rt.ready) return;
+      deadline ??= Date.now() + this.restartSendWaitMs;
+      if (Date.now() > deadline) throw new SendError('notReady');
       await sleep(100);
     }
+  }
+
+  // この runtime がもう使われない（一覧から外した・アーカイブや削除で片付けている途中）
+  private gone(id: string, rt: Runtime): boolean {
+    return this.runtimes.get(id) !== rt || rt.closing;
   }
 
   // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る
@@ -1566,27 +1587,27 @@ export class SessionManager {
   ): Promise<void> {
     const rt = this.runtimes.get(id);
     let process = rt?.process ?? null;
-    if (!rt || (!process && !rt.restarting)) throw new Error(t('main.send.notRunning'));
+    if (!rt || (!process && !rt.restarting)) throw new SendError('notRunning');
     // ターミナルモードの間に来た親の指示・予約・知らせは、預からずに断る（決めたこと）
-    if (rt.terminal || rt.switching) throw new Error(t('main.send.terminalMode'));
+    if (rt.terminal || rt.switching) throw new SendError('terminalMode');
     rt.pendingSubmits += 1;
     this.changed(id);
     try {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         // 待つ間にアーカイブ・一覧から削除した（止めた claude からは終わりの知らせが来ず、受け付けるようにもならない）
-        if (this.runtimes.get(id) !== rt) throw new Error(t('main.send.exited'));
+        if (this.gone(id, rt)) throw new SendError('exited');
         // 再起動の途中なら、起動し直した claude を待つ
         if (rt.restarting) {
           await rt.restarting.done;
           process = rt.process;
-          if (!process) throw new Error(t('main.send.exited'));
+          if (!process) throw new SendError('exited');
           continue;
         }
-        if (rt.process !== process) throw new Error(t('main.send.exited'));
-        if (signal?.aborted) throw new Error(t('main.send.cancelled'));
+        if (rt.process !== process) throw new SendError('exited');
+        if (signal?.aborted) throw new SendError('cancelled');
         if (rt.ready && !rt.preparing) break;
-        if (Date.now() > deadline) throw new Error(t('main.send.busy'));
+        if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
       await this.submit(id, text, attachments, pastes, 'later');
@@ -1772,6 +1793,7 @@ export class SessionManager {
         switching: false,
         switchStopping: null,
         restarting: null,
+        closing: false,
         switchedFrom: null,
         tuiBaseline: null,
         tuiRemoteSeen: false,
@@ -2234,6 +2256,8 @@ export class SessionManager {
         if (user.isReplay && user.origin?.kind === 'human' && !user.parent_tool_use_id) this.openTurn(id, rt, past);
         // 本体のツールの結果は、ターンの最後の行になりうる（ツールの切れ目でフックが止めたとき）
         if (!user.isReplay && !user.parent_tool_use_id && rt.turnOpen && user.uuid && isToolResult(user)) rt.lastTurnLine = user.uuid;
+        // 結果が来たツールの呼び出しは、フックを付ける先の候補から外す（quietHook）
+        if (!past) this.toolsFinished(rt, user);
         return;
       }
       case 'result':
@@ -2403,10 +2427,12 @@ export class SessionManager {
     if (past || !open) return;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     const interrupted = typeof result.terminal_reason === 'string' && result.terminal_reason.startsWith('aborted');
-    // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）
-    if (result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length) {
-      this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
-    }
+    // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）。
+    // ターンの終わりの直前に出す（応答の前に終わったターンでは、始めた発言より前に並べない。最適化圧縮は、仕上げの頼みのあとの失敗を見る）
+    const error: ChatEvent | null =
+      result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length
+        ? { type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }
+        : null;
     // /clear・/compact のような Claude Code の中で済むコマンドは、モデルを呼ばずに result を返す（num_turns が 0。実測）。
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
@@ -2414,7 +2440,7 @@ export class SessionManager {
     // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
     const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
     const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
-    rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
+    rt.turnEnding = { interrupted, local, waitFor, error, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
     this.emitSessions();
@@ -2440,7 +2466,7 @@ export class SessionManager {
   // 時間が切れるのは、待つ行があるときだけ（無ければ closeTurn がすぐ出して、時計を止める。出したら turnEnding を外して時計を止める）
   private turnEndTimedOut(id: string, rt: Runtime): void {
     const ending = rt.turnEnding!;
-    rt.lateTurnEnd = { waitFor: ending.waitFor!, interrupted: ending.interrupted };
+    rt.lateTurnEnd = { waitFor: ending.waitFor!, interrupted: ending.interrupted, error: ending.error };
     this.flushTurnEnd(id, rt);
   }
 
@@ -2453,7 +2479,7 @@ export class SessionManager {
     // カードが会話ログに出ないまま残ったフックは、ターンの終わりの前に、そのまま出す
     const held = [...rt.heldHooks.values()].flat();
     rt.heldHooks.clear();
-    this.pushEvents(id, [...held, ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+    this.pushEvents(id, [...held, ...(ending.error ? [ending.error] : []), ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     // モデルを呼ばなかったターンは、未読・通知・タイトルの頼みを出さない。最適化圧縮の通知の数え方（turnNotice。流れの途中で
     // 出さなかった通知を覚えている）にも入れない
     if (ending.local) {
@@ -2468,18 +2494,24 @@ export class SessionManager {
   // 何も出力しなかったフックを、チャットに出す（会話ログに残らないため。--include-hook-events の hook_response で分かる）。
   // 何かを出力したフック（アプリのフックは、いつも suppressOutput を書く。hook-output.ts）と失敗したフックは会話ログに残り、Stop は
   // 出力が無くても会話ログの要約（stop_hook_summary）に載るので、ここでは出さない（2.1.302 で実測）。
-  // hook_response にはコマンドもツールの呼び出しの ID も無いので、ツールの前後のフックは、stream で見た同じ名前のいちばん新しい
-  // 呼び出しに付け、そのカードが会話ログからチャットに出るまで待たせる（stream の方が先に届く）
+  // hook_response にはコマンドもツールの呼び出しの ID も無いので、ツールの前後のフックは、stream で見た同じ名前の、結果がまだ来て
+  // いない呼び出しに付け、そのカードが会話ログからチャットに出るまで待たせる（stream の方が先に届く。PostToolUse の返事も、
+  // そのツールの結果より先に届く。2.1.302 で実測）。同じ名前の呼び出しが並んでいて 1 つに決められないときは、どのカードにも付けず、
+  // ツールに付かない行として出す（取り違えて別のカードに付けない）
   private quietHook(id: string, rt: Runtime, message: HookResponseMessage): void {
     const started = rt.hookStarts.get(message.hook_id);
     rt.hookStarts.delete(message.hook_id);
-    const output = `${message.stdout ?? ''}${message.stderr ?? ''}`.trim();
+    // stdout・stderr がどちらも文字列であることは、StreamClient が確かめている（違えば、この行は届かない）
+    const output = `${message.stdout}${message.stderr}`.trim();
     if (message.hook_event === 'Stop' || message.outcome !== 'success' || output) return;
     const prefix = `${message.hook_event}:`;
     const toolName = TOOL_HOOK_EVENTS.has(message.hook_event) && message.hook_name.startsWith(prefix) ? message.hook_name.slice(prefix.length) : null;
-    const tool = toolName ? [...rt.streamTools].reverse().find((t) => t.name === toolName) : undefined;
+    const candidates = toolName ? rt.streamTools.filter((t) => t.name === toolName) : [];
     // サブエージェントの中のツールには、チャットにカードが無い
-    if (tool?.sub) return;
+    if (candidates.length > 0 && candidates.every((t) => t.sub)) return;
+    const tool = candidates.length === 1 ? candidates[0] : undefined;
+    // 1 つに決められないときも、カードより上に出さないよう、本体の最後の呼び出しのカードが出るまで待たせ、そのあとに出す（どのカードにも付けない）
+    const anchor = tool ?? [...candidates].reverse().find((t) => !t.sub);
     const run: HookRun = {
       event: message.hook_event,
       name: message.hook_name,
@@ -2491,21 +2523,41 @@ export class SessionManager {
       stderr: '',
       message: '',
       toolUseId: tool?.id ?? null,
+      hookId: message.hook_id,
     };
     const event: ChatEvent = { type: 'hook', id: `hook:${message.hook_id}`, run };
-    if (tool && !rt.shownTools.has(tool.id)) {
-      rt.heldHooks.set(tool.id, [...(rt.heldHooks.get(tool.id) ?? []), event]);
+    // 発言のときのフックは、その発言の行が会話ログからチャットに出るまで待たせる（発言を会話ログに書く前に動くので、すぐ出すと、
+    // 発言の上の、前のターンの続きに見える。2.1.302 で実測）。待つのは、今のターンに取り込まれた送った発言（command_lifecycle の
+    // started）。分からないもの（スマホからの発言など）はすぐ出す。発言が会話に出ないまま終わったら（フックが止めたなど）、
+    // ターンの終わりの前に出す（flushTurnEnd）
+    const prompt = message.hook_event === 'UserPromptSubmit' && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    const holdFor = anchor && !rt.shownTools.has(anchor.id) ? anchor.id : prompt;
+    if (holdFor) {
+      rt.heldHooks.set(holdFor, [...(rt.heldHooks.get(holdFor) ?? []), event]);
       return;
     }
     this.pushEvents(id, [event]);
+  }
+
+  // stream でツールの結果が来た。その呼び出しを、フックを付ける先の候補（streamTools）から外す
+  private toolsFinished(rt: Runtime, user: UserMessage): void {
+    const content = user.message.content;
+    if (!Array.isArray(content)) return;
+    const done = new Set(content.flatMap((block) => (block.type === 'tool_result' && typeof block.tool_use_id === 'string' ? [block.tool_use_id] : [])));
+    if (done.size > 0) rt.streamTools = rt.streamTools.filter((t) => !done.has(t.id));
   }
 
   // 会話ログからツールのカードをチャットに出した。そのツールに付けるために待たせていたフックを返す
   private shownTool(rt: Runtime, toolUseId: string): ChatEvent[] {
     rt.shownTools.add(toolUseId);
     if (rt.shownTools.size > MAX_SHOWN_TOOLS) rt.shownTools.delete(rt.shownTools.values().next().value!);
-    const held = rt.heldHooks.get(toolUseId) ?? [];
-    rt.heldHooks.delete(toolUseId);
+    return this.takeHeld(rt, toolUseId);
+  }
+
+  // 待たせていたフック（ツールの呼び出しの ID・送った発言の uuid のもの）を取り出す
+  private takeHeld(rt: Runtime, key: string): ChatEvent[] {
+    const held = rt.heldHooks.get(key) ?? [];
+    rt.heldHooks.delete(key);
     return held;
   }
 
@@ -2841,8 +2893,11 @@ export class SessionManager {
         rt.starterSeen = true;
       }
     }
-    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける
+    // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
+    const arrived = rt && !past ? sentUuidOf(entry) : null;
+    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける。送った発言の行には、発言のときのフックを付ける
     if (rt) events = events.flatMap((e) => (e.type === 'tool-use' ? [e, ...this.shownTool(rt, e.id)] : [e]));
+    if (rt && arrived) events = [...events, ...this.takeHeld(rt, arrived)];
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
       this.pushEvents(id, events, !isHistory);
@@ -2853,9 +2908,7 @@ export class SessionManager {
         if (!wasFirst) changed = true;
       }
     }
-    // 送った発言が会話に出たら、送信中の表示から外す（発言の行、作業中に送ったものは queued_command の attachment）。
-    // 発言を出してから外す（先に外すと、一瞬どちらにも出ない）
-    const arrived = rt && !past ? sentUuidOf(entry) : null;
+    // 送った発言が会話に出たら、送信中の表示から外す（発言を出してから外す。先に外すと、一瞬どちらにも出ない）
     if (rt && arrived) {
       rt.arrivedPrompts.add(arrived);
       if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);
@@ -2873,7 +2926,8 @@ export class SessionManager {
     const late = rt?.lateTurnEnd;
     if (rt && late && (entry.uuid === late.waitFor || arrived === late.waitFor)) {
       rt.lateTurnEnd = null;
-      this.pushEvents(id, [late.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+      // 失敗の理由も出し直す（同じ id。画面は、前の行を外して今の位置に出す）
+      this.pushEvents(id, [...(late.error ? [late.error] : []), late.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     }
     if (changed) this.emitSessions();
   }

@@ -57,6 +57,16 @@ describe('起動と送信', () => {
     expect(app.progress.get(other.id)).toBeNull();
   });
 
+  it('claude が動いていないとき（終わった直後など）に送ると、黙って成功にせず、動いていないことで失敗する（画面は預かりに戻す）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exit(1);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await expect(app.manager.submit(id, 'おそい')).rejects.toThrow('Claude Code が動いていません');
+    await expect(app.manager.submit('nope', 'x')).rejects.toThrow('Claude Code が動いていません');
+    expect(pipe.prompts).toEqual([]);
+  });
+
   it('発言は user の行 1 つで送る。本文の制御文字を除き、画像は image のブロック、札は pasted_content に入れる', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
@@ -364,6 +374,34 @@ describe('権限モードと起動し直し', () => {
     await expect(restarting).rejects.toThrow('Claude Code を止められなかったため、起動し直せませんでした');
     await expect(sent).rejects.toThrow('Claude Code が受け付けられるようにならなかったため、送れませんでした');
     expect(pipe.prompts).toEqual([]);
+  });
+
+  it('restart: 受け付けるのを待つ間に、また再起動が始まったら（起動の途中にモデルを変えたなど）、起動の途中の claude に書かず、受け付けるまで待つ', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const first = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    // 起動し直した claude（B）も、その次（C）も、initialize にすぐには答えない
+    app.answers.set('initialize', null);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    pipe.exit(0);
+    await first;
+    const b = app.pipe(id);
+    b.exitOnEnd = false;
+    const second = app.manager.restart(id);
+    await app.waitFor('B の end_session', () => b.requests('end_session').length === 1);
+    b.exit(0);
+    await second;
+    const c = app.pipe(id);
+    expect(c).not.toBe(b);
+    // C が受け付けるようになる前には書かない（直す前は、claude が変わったところで待つのをやめて書いていた）
+    await app.waitFor('C への早すぎる送信', () => c.prompts.length > 0, 500).catch(() => {});
+    expect(c.prompts).toEqual([]);
+    c.respond(c.requests('initialize')[0].request_id, INIT_RESPONSE);
+    await sent;
+    expect([pipe.prompts, b.prompts]).toEqual([[], []]);
+    expect(c.prompts.map((p) => p.message.content)).toEqual(['再起動のあとも']);
   });
 
   it('restart: 止めている途中にアーカイブしたら、起動を待って送るもの（親の指示・予約）も、待ち続けずに失敗する', async () => {

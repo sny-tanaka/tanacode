@@ -22,7 +22,7 @@ export default defineConfig({
     // browser-mcp・sessions-mcp・checklist-mcp・walkthrough-mcp・terminal-mcp: アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー（Claude Code が起動し、アプリへ中継する）
     build: {
       sourcemap,
-      rollupOptions: {
+      rolldownOptions: {
         output,
         input: {
           index: resolve('src/main/index.ts'),
@@ -38,12 +38,12 @@ export default defineConfig({
   },
   preload: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
-    build: { sourcemap, rollupOptions: { output } },
+    build: { sourcemap, rolldownOptions: { output } },
   },
   renderer: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     define: { __APP_VERSION__: JSON.stringify(version) },
-    build: { sourcemap, rollupOptions: { output } },
+    build: { sourcemap, rolldownOptions: { output } },
     plugins: [
       react(),
       // アプリに入れて配る依存のライセンス表示を、アプリの中（out/renderer/THIRD_PARTY_NOTICES.txt）に書き出す。

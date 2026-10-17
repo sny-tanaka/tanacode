@@ -102,6 +102,9 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'status', permissionMode: 1 },
       { type: 'system', subtype: 'compact_boundary' },
       { type: 'system', subtype: 'api_retry' },
+      // 出力の欄が無い・文字列でない（何も出力しなかったかを決められない）
+      { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success' },
+      { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: null },
     ];
     for (const line of bad) pipe.emit(line);
     expect(got.messages).toEqual([]);
@@ -125,7 +128,7 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'compact_boundary', compact_metadata: {} },
       { type: 'system', subtype: 'api_retry', attempt: 1 },
       { type: 'system', subtype: 'task_progress' },
-      { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success' },
+      { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: '' },
     ];
     for (const line of good) expect(testing.messageOf(line)).not.toBeNull();
     for (const line of good) expect(testing.messageOf(line)).not.toBe('unknown');

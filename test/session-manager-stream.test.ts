@@ -140,6 +140,8 @@ describe('ターンの終わりの順番', () => {
       await app.waitFor('ターンの終わり', () => turnEnds(id) === before + 1);
       const kinds = app.events(id).map((e) => e.type);
       expect(kinds.lastIndexOf('user')).toBeLessThan(kinds.lastIndexOf('turn-end'));
+      // 会話ログに残らない失敗の理由も、発言より前に並べず、ターンの終わりの直前に出す（最適化圧縮は、仕上げの頼みのあとの失敗を見る）
+      if ('errors' in ending) expect(kinds.slice(kinds.lastIndexOf('user') + 1).filter((k) => k !== 'queue')).toEqual(['api-error', 'turn-end']);
     }
     expect(app.events(id).find((e) => e.type === 'turn-end')).toEqual({ type: 'turn-end', interrupted: true });
     // 作業中に送って、ターンの途中に取り込まれた発言（会話ログには queued_command の attachment で出る）も同じ
@@ -202,7 +204,8 @@ describe('ターンの終わりの順番', () => {
     const again = app.turnsCompleted.length;
     app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt: 'これも', source_uuid: queued } });
     await app.waitFor('もう一度のターンの終わり', () => turnEnds(id) === 4);
-    expect(app.events(id).at(-1)).toEqual({ type: 'turn-end' });
+    // 失敗の理由も、その行のあとに出し直す（画面は、同じ id の知らせを今の位置に移す）
+    expect(app.events(id).slice(-2)).toEqual([{ type: 'api-error', id: expect.any(String), text: 'overloaded', retrying: false }, { type: 'turn-end' }]);
     expect(app.turnsCompleted).toHaveLength(again);
   });
 
@@ -623,6 +626,72 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     expect(hooks(id)[1]).toMatchObject({ event: 'PostToolUse', toolUseId: 'toolu_1', durationMs: null });
   });
 
+  it('同じ名前のツールを並べて呼んだときは、どの呼び出しのものか決められないフックをカードに付けず、ツールに付かない行として出す。結果が来て 1 つに決まれば、そのカードに付ける', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    const a = line.toolUse('toolu_a', 'Read', { file_path: '/a' });
+    const b = line.toolUse('toolu_b', 'Read', { file_path: '/b' });
+    const resultA = line.toolResult('toolu_a', 'a');
+    const resultB = line.toolResult('toolu_b', 'b');
+    // Claude Code 2.1.302 で Read を 2 つ並べて呼んだときの順番（実測）。PostToolUse の返事は、そのツールの結果より先に届く
+    pipe.emit(stream.assistant(a, app.claudeId(id)));
+    pipe.emit(started('h1', 'PreToolUse:Read'));
+    pipe.emit(stream.assistant(b, app.claudeId(id)));
+    pipe.emit(started('h2', 'PreToolUse:Read'));
+    pipe.emit(response('h1', 'PreToolUse:Read'));
+    pipe.emit(response('h2', 'PreToolUse:Read'));
+    pipe.emit(started('h3', 'PostToolUse:Read'));
+    pipe.emit(started('h4', 'PostToolUse:Read'));
+    pipe.emit(response('h3', 'PostToolUse:Read'));
+    pipe.emit(stream.user(resultB));
+    pipe.emit(response('h4', 'PostToolUse:Read'));
+    pipe.emit(stream.user(resultA));
+    app.append(id, a, b, resultB, resultA);
+    await app.waitFor('フック', () => hooks(id).length === 4);
+    // h4 はカード a のあと、決められない h1〜h3 は最後の呼び出し（b）のカードのあと
+    expect(hooks(id).map((r) => [r.name, r.toolUseId, r.hookId])).toEqual([
+      ['PostToolUse:Read', 'toolu_a', 'h4'],
+      ['PreToolUse:Read', null, 'h1'],
+      ['PreToolUse:Read', null, 'h2'],
+      ['PostToolUse:Read', null, 'h3'],
+    ]);
+    // 付けるものは、そのカードが出てから。決められないものも、カードより上に出さず、最後の呼び出しのカードが出てから
+    const kinds = app.events(id).map((e) => (e.type === 'hook' ? `hook:${e.run.hookId}` : e.type === 'tool-use' ? `tool:${e.id}` : e.type));
+    expect(kinds.indexOf('hook:h4')).toBeGreaterThan(kinds.indexOf('tool:toolu_a'));
+    for (const hook of ['hook:h1', 'hook:h2', 'hook:h3']) expect(kinds.indexOf(hook)).toBeGreaterThan(kinds.indexOf('tool:toolu_b'));
+  });
+
+  it('発言のとき（UserPromptSubmit）のフックは、その発言がチャットに出てから、そのすぐあとに出す（発言の上の、前のターンの続きに見せない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, 'はじめ');
+    // Claude Code 2.1.302 の順番（実測）: 取り込まれた知らせ（started）→ フック → 会話ログの発言の行
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(started('h1', 'UserPromptSubmit'));
+    pipe.emit(response('h1', 'UserPromptSubmit'));
+    pipe.emit(started('h2', 'UserPromptSubmit'));
+    pipe.emit(response('h2', 'UserPromptSubmit'));
+    expect(hooks(id)).toEqual([]);
+    app.append(id, { ...line.user('はじめ'), uuid });
+    await app.waitFor('フック', () => hooks(id).length === 2);
+    const kinds = types(id);
+    const user = kinds.indexOf('user');
+    expect(kinds.slice(user, user + 3)).toEqual(['user', 'hook', 'hook']);
+  });
+
+  it('発言のときのフックが発言を止めた（発言が会話に出ないまま、モデルを呼ばずに終わった）ときは、待たせていたフックをターンの終わりの前に出す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, 'ブロックして');
+    // 2.1.302 の順番（実測）: started → フック（止めたものは失敗）→ result（num_turns 0・success）
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(response('h1', 'UserPromptSubmit'));
+    pipe.emit(response('h2', 'UserPromptSubmit', { outcome: 'error', exit_code: 2, stderr: '止めました' }));
+    app.finish(id, { num_turns: 0, terminal_reason: null });
+    expect(types(id).slice(-2)).toEqual(['hook', 'turn-end']);
+  });
+
   it('ツールに付かないフック（発言のとき・起動のとき）は、そのまま出す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
@@ -643,6 +712,9 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     pipe.emit(response('h3', 'UserPromptSubmit', { stderr: '注意\n' }));
     pipe.emit(response('h4', 'Stop'));
     pipe.emit(response('h5', 'UserPromptSubmit', { outcome: 'error', exit_code: 1 }));
+    // 出力の欄が無い・文字列でない（Claude Code が欄を変えたなど。何も出力しなかったかを決められないので、出さない側に倒す）
+    pipe.emit(response('h7', 'UserPromptSubmit', { stdout: undefined }));
+    pipe.emit(response('h8', 'UserPromptSubmit', { stderr: null }));
     // 最後に出すもので、ここまでを読み終えたことを確かめる
     pipe.emit(response('h6', 'SessionStart:startup'));
     await app.waitFor('フック', () => hooks(id).length > 0);
