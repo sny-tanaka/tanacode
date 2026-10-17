@@ -443,6 +443,9 @@ function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
   // アプリが足したフックは、ユーザーのフックではないので出さない（止めたフックのコマンドは blockingError に入る。
   // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせは囲みで見分ける）
   if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || content.includes(`<${CHECKLIST_REMINDER_TAG}>`)) return null;
+  // ユーザーのフックが、標準出力の JSON で suppressOutput を指定した成功の記録（Claude Code の画面でも出ない）。読めない JSON・ほかの出力は出す。
+  // Stop は、要約（stop_hook_summary）の行に、出力の無いフックとしてコマンドだけが残る
+  if (type === 'hook_success' && suppressesOutput(str(a.stdout))) return null;
   return {
     event: str(a.hookEvent) || str(a.hookName).split(':')[0] || 'hook',
     name: str(a.hookName) || str(a.hookEvent),
@@ -455,6 +458,18 @@ function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
     message: truncate(blocking?.blockingError ?? (type === 'hook_success' ? '' : content || str(a.message)), OUTPUT_CHARS),
     toolUseId: str(a.toolUseID) || null,
   };
+}
+
+// フックの標準出力が、suppressOutput: true を指定した JSON のオブジェクトか（Claude Code と同じく、出力の全体が JSON のときだけ読む）
+function suppressesOutput(stdout: string): boolean {
+  const text = stdout.trim();
+  if (!text.startsWith('{')) return false;
+  try {
+    // { で始まって読めたものは、いつもオブジェクト
+    return (JSON.parse(text) as { suppressOutput?: unknown }).suppressOutput === true;
+  } catch {
+    return false;
+  }
 }
 
 function truncate(text: string, max: number): string {
