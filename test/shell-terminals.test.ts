@@ -220,6 +220,15 @@ describe('ShellTerminals', () => {
     await waitFor('引き継いだあとの終わり', () => exits.has(shell.id));
   });
 
+  it('attach: 止めている途中（kill したが、まだ終わっていない）のシェルは渡さない', async () => {
+    const stopping = shells.create('session-1', dir, 80, 24);
+    const kept = shells.create('session-1', dir, 80, 24);
+    shells.detach();
+    shells.kill(stopping.id);
+    expect(shells.attach().map((s) => s.id)).toEqual([kept.id]);
+    await waitFor('止めたシェルの終わり', () => exits.has(stopping.id));
+  });
+
   it('知らない id への操作は何もしない（閉じたあとに届いた入力など）', () => {
     expect(() => {
       shells.write('shell-999', 'x');

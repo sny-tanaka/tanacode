@@ -283,6 +283,14 @@ describe('TerminalPanel: 画面を読み込み直したあと（⌘R）', () => 
     expect(api.argsOf('shell.create')).toEqual([]);
   });
 
+  it('引き継げなかったとき（main が答えられなかった）も、ふだんどおり新しいシェルを開く', async () => {
+    api = mockApi({ 'shell.attach': () => Promise.reject(new Error('答えられません')), 'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }) });
+    api.install();
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    expect(api.argsOf('shell.create')).toHaveLength(1);
+  });
+
   it('引き継ぐものが無ければ、ふだんどおり新しいシェルを開く', async () => {
     api = mockApi({ 'shell.attach': () => Promise.resolve([]), 'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }) });
     api.install();

@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { t } from '@shared/i18n';
 import { terminalLabel } from '@shared/terminal-tools';
+import type { ShellSnapshot } from '@shared/ipc';
 import { insertIntoChat } from '../chat/insertInput';
 import { AddIcon, CloseIcon, IconButton, SendIcon } from '../icons';
 import { Busy } from '../layout/Busy';
@@ -60,8 +61,8 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
   sessionIdRef.current = sessionId;
   // main が持っているターミナルを引き継いだ（画面を読み込み直したとき。引き継ぐまでは、新しいシェルを開かない）
   const [attached, setAttached] = useState(false);
-  // 引き継ぐ前に終わったと知らせが来たもの（引き継ぐ返事より先に届くことがある）。id → 終了コード
-  const exitedEarly = useRef(new Map<string, number>());
+  // 引き継ぐ前に終わったと知らせが来たもの（引き継ぐ返事より先に届くことがある）。id → 終了コード。引き継いだあとは控えない（null）
+  const exitedEarly = useRef<Map<string, number> | null>(new Map());
   // 次に開くシェルで実行するコマンド（チャットのコードブロックの「実行」）
   const queued = useRef<{ owner: string; command: string } | null>(null);
 
@@ -133,7 +134,7 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
         return;
       }
       const x = xterms.current.get(id);
-      if (!x) exitedEarly.current.set(id, exitCode);
+      if (!x) exitedEarly.current?.set(id, exitCode);
       x?.term.dispose();
       x?.element.remove();
       xterms.current.delete(id);
@@ -156,14 +157,16 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
     // 画面を読み込み直したとき（⌘R）、main で動き続けているターミナルを引き継ぐ。xterm を前と同じ大きさにして、今の画面を書き、
     // 返事より先に届いた出力（main が画面を控えたあとのもの）をそのあとに書く。返事より先に終わったシェルは出さない
     let alive = true;
-    void window.tanacode.shell.attach().then((list) => {
+    const restore = (list: ShellSnapshot[]) => {
       if (!alive) return;
+      const early = exitedEarly.current ?? new Map<string, number>();
+      exitedEarly.current = null;
       const restored: Record<string, ShellTab[]> = {};
-      for (const s of list ?? []) {
+      for (const s of list) {
         if (xterms.current.has(s.id)) continue;
-        const early = exitedEarly.current.get(s.id);
-        if (early !== undefined && !s.task) continue;
-        const exitCode = early ?? s.exitCode;
+        const earlyExit = early.get(s.id);
+        if (earlyExit !== undefined && !s.task) continue;
+        const exitCode = earlyExit ?? s.exitCode;
         const x = makeXterm();
         x.term.resize(s.cols, s.rows);
         x.term.write(s.screen);
@@ -175,7 +178,6 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
         }
         (restored[s.owner] ??= []).push({ id: s.id, name: s.name, title: s.title, ...(s.task ? { task: true } : {}), ...(exitCode !== null ? { exitCode } : {}) });
       }
-      exitedEarly.current.clear();
       // 引き継いだタブを先に、返事より先に開いたタブをそのあとに並べる
       setShells((prev) => {
         const next = { ...prev };
@@ -183,7 +185,12 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
         return next;
       });
       setAttached(true);
-    });
+    };
+    // 引き継げなかったとき（main が答えられなかった）も、引き継ぐものが無かったとして、ふだんどおりシェルを開けるようにする
+    window.tanacode.shell.attach().then(
+      (list) => restore(list ?? []),
+      () => restore([]),
+    );
     return () => {
       alive = false;
       offData();

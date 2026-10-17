@@ -141,7 +141,8 @@ export class ShellTerminals {
   // 文字列は、控えの画面と、まだ書き終えていない出力をつないだもの（返したあとに出たものだけを、知らせで送る）
   attach(): ShellSnapshot[] {
     this.detached = false;
-    return [...this.shells].map(([id, s]) => ({
+    // 止めている途中のもの（kill したが、まだ終わっていない）は渡さない（終わったら控えも捨てるので、タブに出さない）
+    return [...this.shells].filter(([, s]) => !s.killed).map(([id, s]) => ({
       owner: s.owner,
       id,
       name: s.name,
