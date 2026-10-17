@@ -129,6 +129,7 @@
       "exited": "Claude Code が終了しました",
       "cancelled": "送るのを取りやめました",
       "busy": "Claude Code の手が空かないため、送れませんでした",
+      "notReady": "Claude Code が受け付けられるようにならなかったため、送れませんでした",
       "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）",
       "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください"
     },

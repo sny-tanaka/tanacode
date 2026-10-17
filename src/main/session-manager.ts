@@ -117,6 +117,9 @@ const TURN_END_WAIT_MS = 3000;
 const MAX_ARRIVED_PROMPTS = 50;
 // 送った発言が Claude Code に受け付けられた知らせ（command_lifecycle）も会話ログの行も来ないまま、送信中として扱う上限
 const SENDING_TIMEOUT_MS = 30_000;
+// 再起動の途中に送った発言が、起動し直した claude（止められなかったときは、止めようとした claude）が受け付けるようになるのを待つ上限
+// （待ちきれなければ、送らずに失敗する。画面は、送れなかった発言を預かりに戻す）
+const RESTART_SEND_WAIT_MS = 60_000;
 // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
 const SLOW_START_MS = 10_000;
 // プランの利用枠を get_usage で聞き直す間隔の下限（サーバーに聞くため。プロファイル＝SessionManager ごとに）
@@ -382,6 +385,8 @@ export class SessionManager {
   slowStartMs = SLOW_START_MS;
   // 起動し直すときに止める、各段の待ち時間（end_session → SIGTERM → SIGKILL。テストで縮める。無ければ ClaudeSession の既定）
   stopStepMs: number | undefined = undefined;
+  // 再起動の途中に送った発言が、claude が受け付けるようになるのを待つ上限（テストで縮める）
+  restartSendWaitMs = RESTART_SEND_WAIT_MS;
   // stop_task のあと、タスクが終わった知らせを待つ上限（テストで縮める）
   taskStopWaitMs = TASK_STOP_WAIT_MS;
 
@@ -1482,10 +1487,7 @@ export class SessionManager {
     if (rt.terminal || rt.switching) return Promise.reject(new Error(t('main.send.terminalMode')));
     const run = async () => {
       // 再起動で止めている claude には書かない（閉じかけで消える）。起動し直した claude が受け付けるようになってから送る
-      if (rt.restarting) {
-        await rt.restarting.done;
-        for (const next = rt.process; next && rt.process === next && !rt.ready; ) await sleep(100);
-      }
+      if (rt.restarting) await this.untilRestarted(id, rt);
       const process = rt.process;
       const client = process?.client;
       if (!process || !client) throw new Error(t('main.send.notRunning'));
@@ -1523,6 +1525,21 @@ export class SessionManager {
     const next = rt.sendChain.then(run, run);
     rt.sendChain = next.catch(() => {});
     return next;
+  }
+
+  // 再起動の途中に送った発言を、起動し直した claude（止められなかったときは、止めようとした claude）が受け付けるようになるまで待たせる。
+  // 止めている間にアーカイブ・一覧から削除した・起動し直せなかった（claude がいない）ときと、待ちきれないときは、送らずに失敗する
+  // （止めた claude のまま待ち続けて、送信が返らなくならないように）。受け付ける前に終わった・別の claude に変わったら、待つのをやめる（送る側が確かめる）
+  private async untilRestarted(id: string, rt: Runtime): Promise<void> {
+    await rt.restarting?.done;
+    const next = rt.process;
+    if (this.runtimes.get(id) !== rt || !next) throw new Error(t('main.send.exited'));
+    const deadline = Date.now() + this.restartSendWaitMs;
+    while (rt.process === next && !rt.ready) {
+      if (this.runtimes.get(id) !== rt) throw new Error(t('main.send.exited'));
+      if (Date.now() > deadline) throw new Error(t('main.send.notReady'));
+      await sleep(100);
+    }
   }
 
   // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る

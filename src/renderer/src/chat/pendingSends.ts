@@ -6,8 +6,20 @@ import { acceptsInput, type ChatState } from './chatState';
 // pastes: 入力欄に貼り付けた長い文（札）
 export type PendingSend = { text: string; attachments: string[]; pastes: string[] };
 
+// セッションごとの預かり。failed: 送ったが送れなかったもの（送った順）/ typed: 起動を待つ間に送ったもの。
+// 送るときは failed を先にまとめる（送れなかったものは、いつも、預かっている間に送ったものより前に送ったもの）
+type Held = { failed: PendingSend | null; typed: PendingSend | null };
+
+// 続けて預かったものを、ひとつの発言にまとめる
+function join(before: PendingSend | null, next: PendingSend | null): PendingSend | null {
+  if (!before || !next) return before ?? next;
+  return { text: [before.text, next.text].filter((t) => t.trim()).join('\n\n'), attachments: [...before.attachments, ...next.attachments], pastes: [...before.pastes, ...next.pastes] };
+}
+
 // 起動中に送るものは、Claude Code が受け付けられるようになるまで預かってから送る（預かっている間は取り下げられる）。選んでいないセッションのものも送る。
-// 送ったあとの「送信中」「順番待ち」は、main が送った uuid で追って知らせる（chat.unsent）
+// 送ったあとの「送信中」「順番待ち」は、main が送った uuid で追って知らせる（chat.unsent）。
+// 送れなかったもの（再起動の途中に送ったが起動し直せなかった・受け付ける前に終わったなど）は、黙って消さずに預かりに戻す（止まっていれば、
+// 「再開」で起動したら送る）。受け付ける状態のまま戻ったものは、すぐ送り直して失敗を繰り返さないよう、いったん受け付けない状態になるまで送らない
 export function usePendingSends(chatOf: (sessionId: string | null) => ChatState): {
   pendingOf: (sessionId: string) => PendingSend | null;
   send: (sessionId: string, text: string, attachments: string[], pastes?: string[]) => void;
@@ -15,17 +27,26 @@ export function usePendingSends(chatOf: (sessionId: string | null) => ChatState)
   take: (sessionId: string) => PendingSend | null;
   drop: (sessionId: string) => void;
 } {
-  const [pending, setPending] = useState<Record<string, PendingSend>>({});
+  const [pending, setPending] = useState<Record<string, Held>>({});
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const chatOfRef = useRef(chatOf);
   chatOfRef.current = chatOf;
+  // 送れなかったものを戻したあと、まだ受け付けない状態になっていないセッション（送り直さない）
+  const held = useRef(new Set<string>());
 
   const submit = useCallback((sessionId: string, text: string, attachments: string[], pastes: string[]) => {
-    void submitToClaude(sessionId, text, attachments, pastes);
+    submitToClaude(sessionId, text, attachments, pastes).catch(() => {
+      held.current.add(sessionId);
+      setPending((prev) => {
+        const before = prev[sessionId] ?? { failed: null, typed: null };
+        return { ...prev, [sessionId]: { ...before, failed: join(before.failed, { text, attachments, pastes }) } };
+      });
+    });
   }, []);
 
   const drop = useCallback((sessionId: string) => {
+    held.current.delete(sessionId);
     setPending((prev) => {
       if (!(sessionId in prev)) return prev;
       const { [sessionId]: _, ...rest } = prev;
@@ -40,31 +61,36 @@ export function usePendingSends(chatOf: (sessionId: string | null) => ChatState)
     }
     // 起動を待つ間に続けて送ったものは、ひとつの発言にまとめる
     setPending((prev) => {
-      const before = prev[sessionId];
-      const next = before
-        ? { text: [before.text, text].filter((t) => t.trim()).join('\n\n'), attachments: [...before.attachments, ...attachments], pastes: [...before.pastes, ...pastes] }
-        : { text, attachments, pastes };
-      return { ...prev, [sessionId]: next };
+      const before = prev[sessionId] ?? { failed: null, typed: null };
+      return { ...prev, [sessionId]: { ...before, typed: join(before.typed, { text, attachments, pastes }) } };
     });
   }, [submit]);
 
   const take = useCallback(
     (sessionId: string) => {
-      const item = pendingRef.current[sessionId] ?? null;
+      const item = pendingRef.current[sessionId];
       drop(sessionId);
-      return item;
+      return item ? join(item.failed, item.typed) : null;
     },
     [drop],
   );
 
   useEffect(() => {
     for (const [sessionId, item] of Object.entries(pending)) {
-      if (!acceptsInput(chatOf(sessionId).status)) continue;
+      if (!acceptsInput(chatOf(sessionId).status)) {
+        held.current.delete(sessionId);
+        continue;
+      }
+      if (held.current.has(sessionId)) continue;
+      const merged = join(item.failed, item.typed);
       drop(sessionId);
-      submit(sessionId, item.text, item.attachments, item.pastes);
+      if (merged) submit(sessionId, merged.text, merged.attachments, merged.pastes);
     }
   }, [pending, chatOf, drop, submit]);
 
-  const pendingOf = useCallback((sessionId: string) => pending[sessionId] ?? null, [pending]);
+  const pendingOf = useCallback((sessionId: string) => {
+    const item = pending[sessionId];
+    return item ? join(item.failed, item.typed) : null;
+  }, [pending]);
   return { pendingOf, send, take, drop };
 }

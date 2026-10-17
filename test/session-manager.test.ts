@@ -337,6 +337,61 @@ describe('権限モードと起動し直し', () => {
     expect(app.pipe(id).prompts.map((p) => p.message.content)).toEqual(['親からの指示']);
   });
 
+  it('restart: 止めている途中にアーカイブしたら、途中に送った発言は、止めた claude を待ち続けずに失敗する', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    await app.manager.archive(id);
+    pipe.exit(0);
+    await restarting;
+    await expect(sent).rejects.toThrow('Claude Code が終了しました');
+    expect(pipe.prompts).toEqual([]);
+    expect(app.host.pipes).toHaveLength(1);
+  });
+
+  it('restart: 受け付ける前の claude を止められなかったら、途中に送った発言は、受け付けるのを待ちきれずに失敗する（待ち続けない）', async () => {
+    // initialize に答えない（起動の途中に再起動を押した）
+    app.answers.set('initialize', null);
+    const { id, pipe } = app.create();
+    pipe.exitOnEnd = false;
+    app.manager.stopStepMs = 20;
+    app.manager.restartSendWaitMs = 50;
+    const restarting = app.manager.restart(id);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    await expect(restarting).rejects.toThrow('Claude Code を止められなかったため、起動し直せませんでした');
+    await expect(sent).rejects.toThrow('Claude Code が受け付けられるようにならなかったため、送れませんでした');
+    expect(pipe.prompts).toEqual([]);
+  });
+
+  it('restart: 受け付けるのを待つ間にアーカイブしたら、待ちきるのを待たずに失敗する', async () => {
+    app.answers.set('initialize', null);
+    const { id, pipe } = app.create();
+    pipe.exitOnEnd = false;
+    app.manager.stopStepMs = 20;
+    const restarting = app.manager.restart(id);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    await expect(restarting).rejects.toThrow('Claude Code を止められなかったため、起動し直せませんでした');
+    await app.manager.archive(id);
+    await expect(sent).rejects.toThrow('Claude Code が終了しました');
+    expect(pipe.prompts).toEqual([]);
+  });
+
+  it('restart: 受け付ける前の claude を止められなかったが、待つ間に受け付けるようになったら、その claude に届ける', async () => {
+    app.answers.set('initialize', null);
+    const { id, pipe } = app.create();
+    pipe.exitOnEnd = false;
+    app.manager.stopStepMs = 20;
+    const restarting = app.manager.restart(id);
+    const sent = app.manager.submit(id, '再起動のあとも');
+    await expect(restarting).rejects.toThrow('Claude Code を止められなかったため、起動し直せませんでした');
+    pipe.respond(pipe.requests('initialize')[0].request_id, INIT_RESPONSE);
+    await sent;
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual(['再起動のあとも']);
+  });
+
   it('restart: 止められなかったら（終わりの知らせが来ない）、動いている claude をそのまま使えるように戻し、黙らずに理由を返す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
