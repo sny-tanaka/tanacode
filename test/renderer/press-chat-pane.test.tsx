@@ -603,7 +603,8 @@ describe('ヘッダー', () => {
       expect(list.scrollTop).toBe(800);
       expect(jump()).toBeNull();
     }
-    // 行の中（カードの選択肢など）を押したとき。押している間は押した要素の位置を保ち、離したら最下部へ送り直す
+    // 行の中（文字・カードの選択肢など）を押したとき。離したら最下部へ送り直す
+    // （押せる要素なら、押している間は位置を保つ。下の「一覧の行の中の押せる要素を押している間は…」）
     vi.useFakeTimers();
     try {
       fireEvent.pointerDown(list.firstElementChild!);
@@ -711,7 +712,7 @@ describe('ヘッダー', () => {
     };
   }
 
-  describe('一覧の行の中を押している間は、押した要素を画面の上で動かさない', () => {
+  describe('一覧の行の中の押せる要素を押している間は、押した要素を画面の上で動かさない', () => {
     // 直す前: 押して離す間に、上の行が縮んだり、最下部を追いかけたりして、押した選択肢が動き、離した所が選択肢から外れて、
     // click が選択肢に届かなかった（人が押しても効かない。E2E では Playwright の click が成功で返ったまま、カードが閉じるのを待って止まる）
     const original = window.ResizeObserver;
@@ -754,6 +755,42 @@ describe('ヘッダー', () => {
       fireEvent.pointerUp(option);
       vi.runOnlyPendingTimers();
       expect(list.scrollTop).toBe(1000 - 60 + 100 - 200);
+    });
+
+    // 直す前: 行の中ならどこを押しても位置を保ったので、文字を押してドラッグで選ぶときの自動のスクロールや、押したままのホイールまで戻していた
+    it('文字（押せる要素でないもの）を押したあとのホイール（配置の変化でないスクロール）は、戻さない', () => {
+      const { list } = pressScene({ content: 1000, view: 200, offset: 950 });
+      const text = screen.getByText('ログインを直してください');
+      text.getBoundingClientRect = () => ({ top: 50 - list.scrollTop }) as DOMRect;
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      fireEvent.pointerDown(text);
+      fireEvent.wheel(list, { deltaY: -100 });
+      list.scrollTop = 700;
+      fireEvent.scroll(list);
+      expect(list.scrollTop).toBe(700);
+    });
+
+    it('選択肢を押したままでも、ホイールを回す・押した点から動かす（ドラッグ）・ウインドウから離れると、位置を保つのをやめる。少し動いただけなら保つ', () => {
+      for (const leave of [
+        () => fireEvent.wheel(screen.getByRole('button', { name: /はい/ }), { deltaY: -100 }),
+        () => fireEvent.pointerMove(window, { clientX: 100, clientY: 112 }),
+        () => fireEvent.blur(window),
+      ]) {
+        const { list, option, scene, top, resized } = pressScene({ content: 150, view: 400, offset: 120 });
+        fireEvent.pointerDown(option, { clientX: 100, clientY: 100 });
+        // 少し動いただけ（手のぶれ）では、まだ保つ
+        fireEvent.pointerMove(window, { clientX: 101, clientY: 102 });
+        scene.above = -10;
+        resized();
+        expect(top()).toBe(120);
+        leave();
+        expect(list.style.paddingTop).toBe('');
+        scene.above = -40;
+        resized();
+        expect(top()).toBe(80);
+        cleanup();
+      }
     });
 
     it('押したのが一覧そのもの（スクロールバー）なら、何もしない（今までどおり、人のスクロールとして扱う）', () => {

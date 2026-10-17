@@ -49,6 +49,10 @@ import { pendingFolder, preparingLabel } from '../sessions/worktree';
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
 const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
 const SCROLL_DOWN_KEYS = new Set(['ArrowDown', 'PageDown', 'End']);
+// 押して離す間、画面の上の位置を保つ要素（押すと click で動くもの。カードの選択肢はどれも button）
+const PRESSABLE = 'button, a[href], [role="button"], summary, label';
+// 押した点からこれより動いたら、押したのではなく動かした（ドラッグ）とみなす（手のぶれは数えない）
+const PRESS_SLOP_PX = 4;
 
 type Props = {
   session: SessionSummary;
@@ -167,7 +171,7 @@ export const ClaudePane = memo(function ClaudePane({
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
-  // 一覧の中を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
+  // 一覧の中の押せる要素を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
   // 位置を保つために一覧の上に足した余白（pad）、離したときに外す聞き手（stop）
   const pressed = useRef<{ element: Element; top: number; base: number; pad: number; stop: () => void } | null>(null);
   // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）。
@@ -208,17 +212,30 @@ export const ClaudePane = memo(function ClaudePane({
     if (stickToBottom.current) toBottom(list);
     else lastScrollTop.current = list.scrollTop;
   };
-  // 一覧の行の中を押し始めた。離した（pointerup・pointercancel）あと、そのときの click が届いてから離したことにする
-  // （pointerup・mouseup・click は、同じ入力の中で続けて届く。その途中で余白を外すと、mouseup の位置がずれる）
-  const holdPressed = (list: HTMLElement, element: Element) => {
+  // 一覧の行の中の、押せる要素（カードの選択肢など）を押し始めた。離した（pointerup・pointercancel）あと、そのときの click が
+  // 届いてから離したことにする（pointerup・mouseup・click は、同じ入力の中で続けて届く。その途中で余白を外すと、mouseup の位置がずれる）。
+  // 人が自分で一覧を動かしたら、やめる: 押した点から動かした（ドラッグで文字を選ぶ。端を越えると選ぶためのスクロールが動く）・
+  // ホイールを回した・キーを押した・ウインドウから離れた（離した知らせが来ないことがある）
+  const holdPressed = (list: HTMLElement, element: Element, x: number, y: number) => {
     releasePressed(list);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const up = () => {
       clearTimeout(timer);
       timer = setTimeout(() => releasePressed(list));
     };
-    window.addEventListener('pointerup', up, true);
-    window.addEventListener('pointercancel', up, true);
+    const leave = () => releasePressed(list);
+    const move = (e: PointerEvent) => {
+      if (Math.hypot(e.clientX - x, e.clientY - y) > PRESS_SLOP_PX) leave();
+    };
+    const listeners: [string, EventListener][] = [
+      ['pointerup', up],
+      ['pointercancel', up],
+      ['pointermove', move as EventListener],
+      ['wheel', leave],
+      ['keydown', leave],
+      ['blur', leave],
+    ];
+    for (const [type, listener] of listeners) window.addEventListener(type, listener, true);
     pressed.current = {
       element,
       top: element.getBoundingClientRect().top,
@@ -226,8 +243,7 @@ export const ClaudePane = memo(function ClaudePane({
       pad: 0,
       stop: () => {
         clearTimeout(timer);
-        window.removeEventListener('pointerup', up, true);
-        window.removeEventListener('pointercancel', up, true);
+        for (const [type, listener] of listeners) window.removeEventListener(type, listener, true);
       },
     };
   };
@@ -702,8 +718,11 @@ export const ClaudePane = memo(function ClaudePane({
             // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない
             // （選択肢を押して離す間に、ほかのわけで上へ動いたのを、人のスクロールと取り違えない）
             if (e.target === e.currentTarget) userScrollingUp.current = true;
-            // 行の中を押したら、離すまで、押した要素を動かさない
-            else if (e.button === 0 && e.target instanceof Element) holdPressed(e.currentTarget, e.target);
+            // 行の中の押せる要素を押したら、離すまで、その要素を動かさない（文字などは、ドラッグで選ぶので保たない）
+            else if (e.button === 0 && e.target instanceof Element) {
+              const pressable = e.target.closest(PRESSABLE);
+              if (pressable && e.currentTarget.contains(pressable)) holdPressed(e.currentTarget, pressable, e.clientX, e.clientY);
+            }
           }}
           onScrollEnd={(e) => {
             userScrollingUp.current = false;
