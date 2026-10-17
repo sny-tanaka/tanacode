@@ -135,9 +135,9 @@ describe('MenuCard（許可の確認）', () => {
         sessionId="s1"
         permission={permission({
           title: '\x1b[1mBash\x1b[0m',
-          description: '消す‮',
-          input: { command: 'rm -rf build ‮# txt.gnp' },
-          reason: '\x1b[31mフックが確かめるよう求めました\x1b[0m‮',
+          description: '消す\u202E',
+          input: { command: 'rm -rf build \u202E# txt.gnp' },
+          reason: '\x1b[31mフックが確かめるよう求めました\x1b[0m\u202E',
         })}
       />,
     );

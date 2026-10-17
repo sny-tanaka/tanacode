@@ -45,7 +45,7 @@ describe('Markdown', () => {
 
   it('シェルのコードブロックにだけ実行ボタンを付け、見えない制御文字を除いたコマンドを渡す', () => {
     const onRun = vi.fn();
-    const md = show('```bash\nnpm test‮ -- --watch\n```\n\n```ts\nconst a = 1;\n```\n\n```sh title="x"\nls\n```', onRun);
+    const md = show('```bash\nnpm test\u202E -- --watch\n```\n\n```ts\nconst a = 1;\n```\n\n```sh title="x"\nls\n```', onRun);
     const buttons = md.querySelectorAll('pre button.code-run');
     expect(buttons).toHaveLength(2);
     // 表示からも除く（見えている文字と実行する文字をそろえる）
