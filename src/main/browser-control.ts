@@ -1295,27 +1295,37 @@ export class BrowserControl {
   // evaluate が失敗したときに Claude に返すもの。origin: 動かす前に確かめたオリジン / mark: 先頭で比べる文が投げる目印 / since: 動かす前の記録の通し番号。
   // 今のページが許していない先なら、ページのコンソールの文は返さない（オリジンだけ。ページが書いた文や、URL に入った値を渡さない）
   private evaluateFailed(guest: Guest, origin: string, mark: string, since: number, error: unknown): ToolError {
-    if (guest.contents.isDestroyed()) return new ToolError('The tab was closed while the script was running, so it is not known whether the script ran.');
+    // 記録は、タブが閉じられても残っている。目印を先に見る（出ていれば、動いていない）
+    const thrown = guest.logs.console.filter((l) => l.seq >= since && l.level === 'error').map((l) => l.text);
+    const marked = thrown.some((t) => t.includes(mark));
+    if (guest.contents.isDestroyed()) {
+      return new ToolError(
+        marked
+          ? 'The page moved to another origin and the tab was closed before the script ran, so the script was not run.'
+          : 'The tab was closed while the script was running, so it is not known whether the script ran.',
+      );
+    }
     const now = guest.contents.getURL();
     const nowOrigin = webOrigin(now);
-    const thrown = guest.logs.console.filter((l) => l.seq >= since && l.level === 'error').map((l) => l.text);
-    if (thrown.some((t) => t.includes(mark))) {
-      // タブの URL は確かめたオリジンのままなのに、ページの中は違う（読み込みに失敗したときのエラーのページ chrome-error など）
+    // 書くのはオリジンだけ。オリジンの無いページ（空のページ）は、about:blank と書く
+    const shown = nowOrigin ?? (isBlank(now) ? 'about:blank' : originShown(now));
+    if (marked) {
+      // タブの URL は確かめたオリジンのままなのに、ページの中が違った（読み込みに失敗したときのエラーのページ chrome-error・移って戻った など）
       if (nowOrigin === origin) {
         return new ToolError(
-          `The current tab is not showing the page of ${origin} (for example, an error page because the page could not be loaded), so the script was not run. Reload it or open the page again with navigate.`,
+          `The page in the current tab changed before the script ran (for example, it shows an error page because ${origin} could not be loaded, or it moved to another origin and back), so the script was not run. Reload it or open the page again with navigate if needed.`,
         );
       }
-      return new ToolError(`The page moved to another origin (${originShown(now)}) before the script ran, so the script was not run.`);
+      return new ToolError(`The page moved to another origin (${shown}) before the script ran, so the script was not run.`);
     }
     // 目印が無い（ページが window.onerror で隠した・動いてから移った など）。動いたかどうかは分からない
     if (!this.allowedIn(guest, now)) {
       return new ToolError(
-        `The page moved to a page not allowed for Claude (${originShown(now)}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
+        `The page moved to a page not allowed for Claude (${shown}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
       );
     }
     const failed = `Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`;
-    return new ToolError(nowOrigin === origin ? failed : `${failed}\n(The page moved to ${originShown(now)} while the script was running or just before it.)`);
+    return new ToolError(nowOrigin === origin ? failed : `${failed}\n(The page moved to ${shown} while the script was running or just before it.)`);
   }
 
   // ---- 部品 ----

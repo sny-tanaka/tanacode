@@ -1276,15 +1276,29 @@ describe('JavaScript の実行（evaluate）', () => {
     );
   });
 
-  it('読み込みに失敗したページ（タブの URL は確かめたページのまま、ページは chrome-error）では、移ったとは言わず、開き直すよう伝える', async () => {
+  it('タブの URL は確かめたオリジンのままでも、ページの中が違った（読み込みに失敗したページ・移って戻った）ときは、そのことを伝える', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/a');
+    const SAME = textResult(
+      'The page in the current tab changed before the script ran (for example, it shows an error page because http://localhost:3000 could not be loaded, or it moved to another origin and back), so the script was not run. Reload it or open the page again with navigate if needed.',
+      true,
+    );
     runIn(page, { url: 'http://localhost:3000/a', location: 'chrome-error://chromewebdata/' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(SAME);
+    runIn(page, { url: 'http://localhost:3000/a', location: 'https://evil.example/' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(SAME);
+  });
+
+  it('空のページ（about:blank）へ移っていたら、そう書く（オリジンの無いページを "null" と書かない）。タブが閉じる前に止めていれば、動かなかったと伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'about:blank' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('about:blank'));
+    // 止めた目印がコンソールに出たあとに、タブが閉じられた
+    page.url = 'http://localhost:3000/a';
+    runIn(page, { url: 'https://evil.example/', after: () => (page.destroyed = true) });
     expect(await call('evaluate', { expression: 'document.title' })).toEqual(
-      textResult(
-        'The current tab is not showing the page of http://localhost:3000 (for example, an error page because the page could not be loaded), so the script was not run. Reload it or open the page again with navigate.',
-        true,
-      ),
+      textResult('The page moved to another origin and the tab was closed before the script ran, so the script was not run.', true),
     );
   });
 
