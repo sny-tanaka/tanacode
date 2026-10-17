@@ -169,6 +169,8 @@ type Runtime = {
   terminal: boolean;
   // チャットとターミナルモードを切り替えている途中（今の claude を止めて、もう片方で起動し直すまで）
   switching: boolean;
+  // 切り替えで、アプリが止めている claude（この claude の終わりは、すぐもう片方で起動するので出さない）
+  switchStopping: ClaudeSession | null;
   // ターミナルモードで、TUI のターンの途中（会話ログの人の発言で始まり、ターンの終わりの行か、書くだけの Stop のフックで終わる）
   tuiTurn: boolean;
   // ターミナルモードで、TUI が出した確認・質問（書くだけの PermissionRequest のフックで分かる。答えたことは会話ログで分かる）
@@ -832,11 +834,16 @@ export class SessionManager {
           () => null,
           (error: unknown) => (error instanceof ControlError ? error.reason : String(error)),
         );
+        // 待っている間に claude が自分で終わった（終了は onExit が出した）。切り替えずに、止まったままにする
+        if (rt.process !== process) throw new Error(t('main.terminal.exitedWhileSwitching'));
         if (refused !== null) throw new Error(t('main.terminal.remoteOffFailed', { reason: refused }));
       }
       if (!on) this.adoptTuiChanges(id, rt);
       const mode = this.relaunchMode(id, rt);
-      const stopped = await process.stop(this.stopStepMs);
+      rt.switchStopping = process;
+      const stopped = await process.stop(this.stopStepMs).finally(() => {
+        rt.switchStopping = null;
+      });
       // 止めている間に、ほかで起動し直した・アーカイブした
       if (this.runtimes.get(id) !== rt) return;
       if (rt.process === process && !stopped) throw new Error(t('main.session.notStopped'));
@@ -1663,6 +1670,7 @@ export class SessionManager {
         quietAttention: false,
         terminal: false,
         switching: false,
+        switchStopping: null,
         switchedFrom: null,
         tuiBaseline: null,
         tuiRemoteSeen: false,
@@ -1834,8 +1842,9 @@ export class SessionManager {
           }
           runtime.tuiTurn = false;
           runtime.tuiAsk = null;
-          // チャットとターミナルモードの切り替えで止めたときは、終了を出さない（すぐもう片方で起動し直す）
-          if (!runtime.switching) {
+          // チャットとターミナルモードの切り替えで、アプリが止めたときは、終了を出さない（すぐもう片方で起動し直す）。
+          // 切り替えの途中でも、claude が自分で終わった（落ちた）ときは出す（出さないと止まったと分からず、送った発言が黙って消える）
+          if (runtime.switchStopping !== process) {
             const back = runtime.switchedFrom;
             runtime.switchedFrom = null;
             if (back === 'stream') {

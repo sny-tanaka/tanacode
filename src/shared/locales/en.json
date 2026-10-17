@@ -266,6 +266,7 @@
     "terminal": {
       "notRunning": "Claude Code isn't running",
       "switching": "Switching between the chat and terminal mode",
+      "exitedWhileSwitching": "Claude Code exited while switching, so it wasn't switched. Reopen it with Resume",
       "busy": "Can't switch to terminal mode while Claude is working, a prompt is waiting for an answer, or a message is waiting to be sent",
       "tuiBusy": "Claude Code is working. Switch back to the chat after the turn ends",
       "tasksRunning": "Background tasks are running. Switching stops them",
