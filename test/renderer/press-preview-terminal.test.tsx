@@ -15,6 +15,8 @@ const xterm = vi.hoisted(() => {
   type Listener<T> = (value: T) => void;
   class FakeTerminal {
     static all: FakeTerminal[] = [];
+    // これを書こうとすると投げる（画面を書き直せないときを確かめる）
+    static failOn: string | null = null;
     cols = 80;
     rows = 24;
     element: HTMLElement | null = null;
@@ -72,6 +74,7 @@ const xterm = vi.hoisted(() => {
       this.selectionListeners.forEach((listener) => listener());
     }
     write(data: string) {
+      if (FakeTerminal.failOn !== null && data === FakeTerminal.failOn) throw new Error('書けません');
       this.written.push(data);
     }
     focus() {
@@ -106,6 +109,7 @@ let inserted: { sessionId: string; text: string }[];
 let seq: number;
 beforeEach(() => {
   xterm.FakeTerminal.all = [];
+  xterm.FakeTerminal.failOn = null;
   inserted = [];
   seq = 0;
   api = mockApi({
@@ -281,6 +285,39 @@ describe('TerminalPanel: 画面を読み込み直したあと（⌘R）', () => 
     expect(tabNames()).toEqual(['zsh 1']);
     expect(xterm.FakeTerminal.all.find((t) => t.written.includes('s2 の画面'))).toBeTruthy();
     expect(api.argsOf('shell.create')).toEqual([]);
+  });
+
+  it('引き継ぐ頼みが一度断られたら、一度だけ頼み直す（動いているシェルを、見えないまま残さない）', async () => {
+    let asked = 0;
+    api = mockApi({
+      'shell.attach': () => (++asked === 1 ? Promise.reject(new Error('まだ答えられません')) : Promise.resolve([snapshot({ owner: 's1', id: 'shell-1', screen: '前の画面' })])),
+      'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }),
+    });
+    api.install();
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    expect(api.argsOf('shell.attach')).toHaveLength(2);
+    expect(api.argsOf('shell.create')).toEqual([]);
+    expect(termOf(0).written).toEqual(['前の画面']);
+  });
+
+  it('画面を書き直せなかったシェルは、止めて片付け、ほかのシェルは引き継ぐ。パネルは、ふだんどおりシェルを開ける', async () => {
+    xterm.FakeTerminal.failOn = 'こわれた画面';
+    api = mockApi({
+      'shell.attach': () =>
+        Promise.resolve([snapshot({ owner: 's1', id: 'shell-1', screen: 'こわれた画面' }), snapshot({ owner: 's2', id: 'shell-2', screen: 's2 の画面' })]),
+      'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }),
+    });
+    api.install();
+    const view = render(<Panel sessionId="s1" />);
+    // s1 には引き継げたシェルが無いので、新しく開く
+    await waitFor(() => expect(api.argsOf('shell.create').map(([owner]) => owner)).toEqual(['s1']));
+    expect(api.argsOf('shell.kill')).toEqual([['shell-1']]);
+    expect(termOf(0).disposed).toBe(true);
+    expect(termOf(0).element!.isConnected).toBe(false);
+    view.rerender(<Panel sessionId="s2" />);
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(xterm.FakeTerminal.all.some((t) => t.written.includes('s2 の画面'))).toBe(true);
   });
 
   it('引き継げなかったとき（main が答えられなかった）も、ふだんどおり新しいシェルを開く', async () => {

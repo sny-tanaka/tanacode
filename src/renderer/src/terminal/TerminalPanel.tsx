@@ -162,35 +162,49 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
       const early = exitedEarly.current ?? new Map<string, number>();
       exitedEarly.current = null;
       const restored: Record<string, ShellTab[]> = {};
-      for (const s of list) {
-        if (xterms.current.has(s.id)) continue;
-        const earlyExit = early.get(s.id);
-        if (earlyExit !== undefined && !s.task) continue;
-        const exitCode = earlyExit ?? s.exitCode;
-        const x = makeXterm();
-        x.term.resize(s.cols, s.rows);
-        x.term.write(s.screen);
-        attachXterm(s.id, x);
-        if (s.task) {
-          taskIds.current.add(s.id);
-        } else {
-          followTitle(s.owner, s.id, x.term);
+      try {
+        for (const s of list) {
+          if (xterms.current.has(s.id)) continue;
+          const earlyExit = early.get(s.id);
+          if (earlyExit !== undefined && !s.task) continue;
+          const exitCode = earlyExit ?? s.exitCode;
+          const x = makeXterm();
+          try {
+            x.term.resize(s.cols, s.rows);
+            x.term.write(s.screen);
+          } catch {
+            // 画面を書き直せなかったシェルは、見えないまま動かし続けないよう、止めて片付ける
+            x.term.dispose();
+            x.element.remove();
+            pending.current.delete(s.id);
+            window.tanacode.shell.kill(s.id);
+            continue;
+          }
+          attachXterm(s.id, x);
+          if (s.task) {
+            taskIds.current.add(s.id);
+          } else {
+            followTitle(s.owner, s.id, x.term);
+          }
+          (restored[s.owner] ??= []).push({ id: s.id, name: s.name, title: s.title, ...(s.task ? { task: true } : {}), ...(exitCode !== null ? { exitCode } : {}) });
         }
-        (restored[s.owner] ??= []).push({ id: s.id, name: s.name, title: s.title, ...(s.task ? { task: true } : {}), ...(exitCode !== null ? { exitCode } : {}) });
+      } finally {
+        // 引き継いだタブを先に、返事より先に開いたタブをそのあとに並べる
+        setShells((prev) => {
+          const next = { ...prev };
+          for (const [owner, tabs] of Object.entries(restored)) next[owner] = [...tabs, ...(prev[owner] ?? []).filter((t) => !tabs.some((r) => r.id === t.id))];
+          return next;
+        });
+        // 途中で投げても、パネルがシェルを開けるようにする
+        setAttached(true);
       }
-      // 引き継いだタブを先に、返事より先に開いたタブをそのあとに並べる
-      setShells((prev) => {
-        const next = { ...prev };
-        for (const [owner, tabs] of Object.entries(restored)) next[owner] = [...tabs, ...(prev[owner] ?? []).filter((t) => !tabs.some((r) => r.id === t.id))];
-        return next;
-      });
-      setAttached(true);
     };
-    // 引き継げなかったとき（main が答えられなかった）も、引き継ぐものが無かったとして、ふだんどおりシェルを開けるようにする
-    window.tanacode.shell.attach().then(
-      (list) => restore(list ?? []),
-      () => restore([]),
-    );
+    // 断られたら一度だけ頼み直す（main が引き継ぎの頼みを受ける前に断られると、動いているシェルが見えないまま残り、
+    // 知らせも止まったままになるため）。それでも引き継げなければ、引き継ぐものが無かったとして、ふだんどおりシェルを開けるようにする
+    const attach = () => window.tanacode.shell.attach().then((list) => list ?? []);
+    attach()
+      .catch(attach)
+      .then(restore, () => restore([]));
     return () => {
       alive = false;
       offData();
