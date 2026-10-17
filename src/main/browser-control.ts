@@ -168,9 +168,11 @@ type Tabs = {
   handoff: { origin: string; until: number }[];
 };
 
-// JavaScript の実行の確認のフックが答えたときのページ。フックに渡った式と、そのときの今のタブのオリジン（無ければ null）。
-// evaluate が同じ式で呼ばれたら 1 回だけ使い、そのオリジンのページでだけ動かす（フックが確認を省いた・人が確認したページと、動かすページをずらさない）
-type EvaluateMark = { expression: string; origin: string | null; until: number };
+// JavaScript の実行の確認のフックが答えたときのページ。フックに渡った式と、そのときの今のタブのオリジン（無い・空のタブなら null）。
+// evaluate が同じ式で呼ばれたら 1 回だけ使い、そのオリジンのページでだけ動かす（フックが確認を省いた・人が確認したページと、動かすページをずらさない）。
+// 控えは「断る」にしか使わないので、期限やメニューのオフでは消さない（消すと、確認したページを確かめずに動かす側に倒れる）。
+// 控えが無い（フックが動かなかった・アプリに聞けなかった・上限で押し出された）呼び出しも、動かさない。捨てるのは、上限と forget だけ
+type EvaluateMark = { expression: string; origin: string | null };
 
 // 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
 // url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
@@ -402,7 +404,6 @@ export class BrowserControl {
       }
     }
     this.marks.clear();
-    this.evaluateMarks.clear();
   }
 
   // 子セッションの許可の確認のうち、人だけが答えられるもの（親の Claude に許させない。sessions-control.ts の answer_permission）。
@@ -493,9 +494,8 @@ export class BrowserControl {
     // 答えたときのページを、同じ式の呼び出しのために控える
     const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
     if (typeof input.expression === 'string') {
-      const now = Date.now();
-      const marks = (this.evaluateMarks.get(sessionId) ?? []).filter((m) => m.until > now);
-      marks.push({ expression: input.expression, origin: webOrigin(url), until: now + MARK_TTL_MS });
+      const marks = this.evaluateMarks.get(sessionId) ?? [];
+      marks.push({ expression: input.expression, origin: webOrigin(url) });
       this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
     }
     return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
@@ -1226,9 +1226,17 @@ export class BrowserControl {
     const origin = webOrigin(url);
     if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
     // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
-    // 控えが無い（フックの無い Claude Code・フックがアプリに聞けなかった）ときは、今までどおり
+    // 控えが無い・フックのときにページが無かったときも、動かさない（確かめたページが分からない）
     const checked = this.takeEvaluateMark(sessionId, expression);
-    if (checked && checked.origin !== null && checked.origin !== origin) {
+    if (!checked) {
+      throw new ToolError(
+        'tanacode has no record of checking this call (its permission hook did not run, or could not reach tanacode), so the script was not run. Call evaluate again. If this keeps happening, ask the user to restart Claude Code in this session (the hook is added when it starts).',
+      );
+    }
+    if (checked.origin === null) {
+      throw new ToolError('No page was open in the current tab when tanacode checked this call, so the script was not run. Call evaluate again to run it on the current page.');
+    }
+    if (checked.origin !== origin) {
       throw new ToolError(
         `The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so the script was not run. Call evaluate again to run it on the current page.`,
       );
@@ -1253,10 +1261,9 @@ export class BrowserControl {
     return textResult(clip(text, MAX_TEXT));
   }
 
-  // 同じ式の、いちばん新しい生きている控えを取り出す（1 回で使い切る）
+  // 同じ式の、いちばん新しい控えを取り出す（1 回で使い切る）
   private takeEvaluateMark(sessionId: string, expression: string): EvaluateMark | null {
-    const now = Date.now();
-    const marks = (this.evaluateMarks.get(sessionId) ?? []).filter((m) => m.until > now);
+    const marks = this.evaluateMarks.get(sessionId) ?? [];
     let index = marks.length - 1;
     while (index >= 0 && marks[index]!.expression !== expression) index--;
     const found = index === -1 ? null : marks.splice(index, 1)[0]!;

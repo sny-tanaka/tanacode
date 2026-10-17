@@ -1,6 +1,8 @@
 import { vi } from 'vitest';
 import type { Session, WebContents } from 'electron';
+import { browserToolId } from '../../src/shared/browser-tools';
 import { IpcChannel, type BrowserActivity, type BrowserAsk } from '../../src/shared/ipc';
+import { BROWSER_GATE_REQUEST } from '../../src/main/browser-bridge';
 import { BrowserControl } from '../../src/main/browser-control';
 import type { ToolResult } from '../../src/main/mcp-bridge';
 import { FakeContents, FakeSession, HOST } from './fake-electron';
@@ -102,7 +104,11 @@ export function setup() {
   };
 
   // 中継から呼び出しが届いた。終わるまで時間を進める
-  const call = (name: string, args: Record<string, unknown> = {}, sessionId = 'S1'): Promise<ToolResult> => finish(control.handle(sessionId, name, args));
+  // evaluate は、本物と同じく、先に確認のフック（browser-gate.ts）がアプリに聞く（gate: false で聞かない）
+  const call = async (name: string, args: Record<string, unknown> = {}, sessionId = 'S1', options: { gate?: boolean } = {}): Promise<ToolResult> => {
+    if (name === 'evaluate' && options.gate !== false) await control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: args });
+    return finish(control.handle(sessionId, name, args));
+  };
 
   // 画面へ送ったもの（チャンネルごと）
   const sentOn = <T = unknown>(channel: string): T[] => sent.filter((s) => s.channel === channel).map((s) => s.payload as T);
