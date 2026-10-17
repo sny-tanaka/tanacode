@@ -274,7 +274,8 @@ describe('Claude Code に足す MCP サーバー', () => {
     await boot();
     const [browser, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
     const signal = new AbortController().signal;
-    expect(browser('s1', 'navigate', { url: 'http://localhost' }, signal)).toEqual({ call: 'browser.handle', args: ['s1', 'navigate', { url: 'http://localhost' }, signal] });
+    // アプリ内ブラウザには、Claude Code が付けた呼び出しの ID も渡す（JavaScript の実行の確認と結びつける）
+    expect(browser('s1', 'evaluate', { expression: '1' }, signal, 'toolu_1')).toEqual({ call: 'browser.handle', args: ['s1', 'evaluate', { expression: '1' }, signal, 'toolu_1'] });
     expect(sessions('s1', 'start_session', { prompt: 'x' }, signal)).toEqual({ call: 'sessionsControl.handle', args: ['s1', 'start_session', { prompt: 'x' }, signal] });
     expect(checklist('s1', 'card_add', { title: 'x' })).toEqual({ call: 'checklistControl.handle', args: ['s1', 'card_add', { title: 'x' }] });
     expect(walkthrough('s1', 'walkthrough_start', { steps: [] })).toEqual({ call: 'walkthrough.handle', args: ['s1', 'walkthrough_start', { steps: [] }] });

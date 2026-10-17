@@ -172,7 +172,8 @@ type Tabs = {
 // evaluate が同じ式で呼ばれたら 1 回だけ使い、そのオリジンのページでだけ動かす（フックが確認を省いた・人が確認したページと、動かすページをずらさない）。
 // 控えは「断る」にしか使わないので、期限やメニューのオフでは消さない（消すと、確認したページを確かめずに動かす側に倒れる）。
 // 控えが無い（フックが動かなかった・アプリに聞けなかった・上限で押し出された）呼び出しも、動かさない。捨てるのは、上限と forget だけ
-type EvaluateMark = { expression: string; origin: string | null };
+// toolUseId: その呼び出しの ID（フックの入力に tool_use_id があったときだけ）。呼び出しにも ID があれば、ID で結びつける
+type EvaluateMark = { expression: string; origin: string | null; toolUseId?: string };
 
 // 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
 // url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
@@ -435,8 +436,9 @@ export class BrowserControl {
     this.idleTimers.delete(sessionId);
   }
 
-  // 中継から届いた呼び出し。signal: Claude Code が呼び出しを取り消した（中継がソケットを閉じた）
-  async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  // 中継から届いた呼び出し。signal: Claude Code が呼び出しを取り消した（中継がソケットを閉じた）。
+  // toolUseId: Claude Code がその呼び出しに付けた ID（中継が受け取ったときだけ。evaluate の控えと結びつける）
+  async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal, toolUseId?: string): Promise<ToolResult> {
     if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId, args);
     const tool = browserTool(name);
     if (!tool) return textResult(`Unknown tool: ${name}`, true);
@@ -461,7 +463,7 @@ export class BrowserControl {
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new ToolError(`Did not finish within ${TOOL_TIMEOUT_MS / 1000} seconds.`)), TOOL_TIMEOUT_MS);
       });
-      return await Promise.race([this.run(sessionId, name, args), timeout]);
+      return await Promise.race([this.run(sessionId, name, args, toolUseId), timeout]);
     } catch (error) {
       return textResult(error instanceof Error ? error.message : String(error), true);
     } finally {
@@ -499,7 +501,8 @@ export class BrowserControl {
     const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
     if (typeof input.expression === 'string') {
       const marks = this.evaluateMarks.get(sessionId) ?? [];
-      marks.push({ expression: input.expression, origin: webOrigin(url) });
+      const toolUseId = typeof request.toolUseId === 'string' ? request.toolUseId : undefined;
+      marks.push({ expression: input.expression, origin: webOrigin(url), ...(toolUseId ? { toolUseId } : {}) });
       this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
     }
     // フックは、この URL を確認の理由に書く（Claude Code の確認の理由として、親のセッションにも届く）。許していない先は、オリジンだけ
@@ -546,13 +549,13 @@ export class BrowserControl {
     return marks;
   }
 
-  private async run(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async run(sessionId: string, name: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
     const session = this.tabsOf(sessionId);
     session.blocked = null;
     session.opened = [];
     session.popups = [];
     session.popupBlocked = null;
-    const result = await this.dispatch(sessionId, name, args);
+    const result = await this.dispatch(sessionId, name, args, toolUseId);
     if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
     if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${originShown(session.blocked)}).${CONTINUE_HINT}` });
@@ -579,7 +582,7 @@ export class BrowserControl {
     return result;
   }
 
-  private async dispatch(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async dispatch(sessionId: string, name: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
     if (name === 'navigate') return this.navigate(sessionId, args);
     if (name === 'list_tabs') return this.listTabs(sessionId);
     if (name === 'select_tab') return this.selectTab(sessionId, args.index);
@@ -611,7 +614,7 @@ export class BrowserControl {
       case 'set_viewport':
         return this.setViewport(sessionId, guest, requiredString(args.width, 'width'));
       case 'evaluate':
-        return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'));
+        return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'), toolUseId);
     }
     return textResult(`Unknown tool: ${name}`, true);
   }
@@ -1226,13 +1229,13 @@ export class BrowserControl {
 
   // ページの世界で動かす。evaluate の始めに読み直した今のページ（許した先）から、動くまでの間に別のオリジンへの移動が確定していたら、
   // 動かさない（確かめたあとに、前から読み込み中だった移動が確定することがある）。同じスクリプトの先頭で、今のページのオリジンを比べる（guardedScript）
-  private async evaluate(sessionId: string, guest: Guest, expression: string): Promise<ToolResult> {
+  private async evaluate(sessionId: string, guest: Guest, expression: string, toolUseId?: string): Promise<ToolResult> {
     const url = guest.contents.getURL();
     const origin = webOrigin(url);
     if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
     // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
     // 控えが無い・フックのときにページが無かったときも、動かさない（確かめたページが分からない）
-    const checked = this.takeEvaluateMark(sessionId, expression);
+    const checked = this.takeEvaluateMark(sessionId, expression, toolUseId);
     if (!checked) {
       throw new ToolError(
         'tanacode has no record of checking this call (its permission hook did not run, or could not reach tanacode), so the script was not run. Call evaluate again. If this keeps happening, ask the user to restart Claude Code in this session (the hook is added when it starts).',
@@ -1266,12 +1269,24 @@ export class BrowserControl {
     return textResult(clip(text, MAX_TEXT));
   }
 
-  // 同じ式の、いちばん新しい控えを取り出す（1 回で使い切る）
-  private takeEvaluateMark(sessionId: string, expression: string): EvaluateMark | null {
+  // この呼び出しの控えを取り出す（1 回で使い切る）。呼び出しの ID があれば、同じ ID の控え（式も同じものだけ）。
+  // 無ければ（ID を渡さない中継）・ID の無い控え（ID を渡さないフック）は、同じ式のいちばん新しいもの。
+  // 同じ式を並べて呼んでも（本体とサブエージェントなど）、ID があれば取り違えない
+  private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | null {
     const marks = this.evaluateMarks.get(sessionId) ?? [];
-    let index = marks.length - 1;
-    while (index >= 0 && marks[index]!.expression !== expression) index--;
-    const found = index === -1 ? null : marks.splice(index, 1)[0]!;
+    const take = (index: number) => (index === -1 ? null : marks.splice(index, 1)[0]!);
+    let found: EvaluateMark | null;
+    const byId = toolUseId === undefined ? -1 : marks.findIndex((m) => m.toolUseId === toolUseId);
+    if (byId !== -1) {
+      // 同じ ID の控え。式が違えば、その控えは捨てて断る
+      const mark = take(byId)!;
+      found = mark.expression === expression ? mark : null;
+    } else {
+      // ID で引けない。呼び出しに ID が無ければ同じ式の控えから、ID があれば ID の無い控え（ID を渡さないフック）から、いちばん新しいもの
+      let index = marks.length - 1;
+      while (index >= 0 && !(marks[index]!.expression === expression && (toolUseId === undefined || marks[index]!.toolUseId === undefined))) index--;
+      found = take(index);
+    }
     if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);
     else this.evaluateMarks.delete(sessionId);
     return found;

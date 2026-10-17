@@ -14,11 +14,12 @@ import { allowedToolIds, type McpServerDef } from '@shared/mcp-tools';
 export type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 export type ToolResult = { content: ToolContent[]; isError?: boolean };
 
-export type BridgeRequest = { id: number; session: string; tool: string; args: Record<string, unknown> };
+// toolUseId: Claude Code がその呼び出しに付けた ID（中継が受け取ったときだけ）
+export type BridgeRequest = { id: number; session: string; tool: string; args: Record<string, unknown>; toolUseId?: string };
 export type BridgeResponse = { id: number; result: ToolResult };
 
 // signal: 中継がソケットを閉じた（Claude Code が呼び出しを取り消した・中継が終わった）ら abort する
-export type BridgeHandler = (session: string, tool: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<ToolResult>;
+export type BridgeHandler = (session: string, tool: string, args: Record<string, unknown>, signal: AbortSignal, toolUseId?: string) => Promise<ToolResult>;
 
 // 1 行の上限。スクリーンショットの画像が入るので大きめ
 const MAX_LINE = 32 * 1024 * 1024;
@@ -100,7 +101,7 @@ export class McpBridge {
     const args = request.args && typeof request.args === 'object' && !Array.isArray(request.args) ? request.args : {};
     let result: ToolResult;
     try {
-      result = await this.handler(request.session, request.tool, args, signal);
+      result = await this.handler(request.session, request.tool, args, signal, typeof request.toolUseId === 'string' ? request.toolUseId : undefined);
     } catch (error) {
       result = textResult(error instanceof Error ? error.message : String(error), true);
     }

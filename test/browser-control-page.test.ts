@@ -1398,6 +1398,31 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(await ctx.call('evaluate', { expression: 'blank()' }, 'S1', { gate: false })).toEqual(NO_PAGE);
   });
 
+  it('控えは、呼び出しの ID（Claude Code がフックと MCP の両方に渡す）で結びつける。同じ式でも、別の呼び出しの控えは使わない', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    const gateWithId = (expression: string, toolUseId: string) => control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression }, toolUseId });
+    // 同じ式を 2 つ並べて呼んだ（本体とサブエージェントなど）。1 つめのフックは localhost、2 つめは *.local のページを見た
+    await gateWithId('x()', 'toolu_a');
+    page.url = 'http://myapp.local/';
+    await gateWithId('x()', 'toolu_b');
+    // 1 つめの呼び出しは、自分の控え（localhost）と比べて断る。式で引くと、新しい 2 つめの控えを使ってしまう
+    expect(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false, toolUseId: 'toolu_a' })).toEqual(CHANGED('http://localhost:3000', 'http://myapp.local'));
+    expect(textOf(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false, toolUseId: 'toolu_b' }))).toBe('"動いた"');
+    // ID のある呼び出しは、ほかの ID の控えを使わない（式が同じでも）
+    await gateWithId('y()', 'toolu_c');
+    expect(await call('evaluate', { expression: 'y()' }, 'S1', { gate: false, toolUseId: 'toolu_d' })).toEqual(NO_RECORD);
+    // ID の控えの式と、呼び出しの式が違えば断る
+    await gateWithId('z()', 'toolu_e');
+    expect(await call('evaluate', { expression: 'other()' }, 'S1', { gate: false, toolUseId: 'toolu_e' })).toEqual(NO_RECORD);
+    // ID の無い呼び出し（ID を渡さない中継）は、式で引く。ID の無い控え（ID を渡さないフック）は、ID のある呼び出しでも式で引く
+    await gateWithId('w()', 'toolu_f');
+    expect(textOf(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null }))).toBe('"動いた"');
+    await gateOnly(control, 'v()');
+    expect(textOf(await call('evaluate', { expression: 'v()' }, 'S1', { gate: false, toolUseId: 'toolu_g' }))).toBe('"動いた"');
+  });
+
   it('同じ式の控えが 2 つあれば、新しい方を使う。控えは 1 つのセッションで 20 個まで（押し出された呼び出しは、控えが無いので断る）', async () => {
     const { call, control, open } = setup();
     const page = open('http://localhost:3000/a');

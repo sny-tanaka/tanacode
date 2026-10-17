@@ -163,8 +163,8 @@ export class Profile {
     void rm(join(dataDir, 'snapshots'), { recursive: true, force: true });
     await this.statusLines.start();
     // 待ち受けを始められなくても、アプリはそのまま使う（Claude Code に MCP サーバーを足さない）
-    this.browserBridge = await listen('アプリ内ブラウザ', socketPathIn(dataDir, 'browser', 'browser'), (id, tool, args, signal) =>
-      this.browser.handle(id, tool, args, signal),
+    this.browserBridge = await listen('アプリ内ブラウザ', socketPathIn(dataDir, 'browser', 'browser'), (id, tool, args, signal, toolUseId) =>
+      this.browser.handle(id, tool, args, signal, toolUseId),
     );
     this.sessionsBridge = await listen('セッション', socketPathIn(dataDir, 'sessions', 'sessions'), (id, tool, args, signal) =>
       this.sessionsControl ? this.sessionsControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),

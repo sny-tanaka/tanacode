@@ -104,10 +104,20 @@ export function setup() {
   };
 
   // 中継から呼び出しが届いた。終わるまで時間を進める
-  // evaluate は、本物と同じく、先に確認のフック（browser-gate.ts）がアプリに聞く（gate: false で聞かない）
-  const call = async (name: string, args: Record<string, unknown> = {}, sessionId = 'S1', options: { gate?: boolean } = {}): Promise<ToolResult> => {
-    if (name === 'evaluate' && options.gate !== false) await control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: args });
-    return finish(control.handle(sessionId, name, args));
+  // evaluate は、本物と同じく、先に確認のフック（browser-gate.ts）が、呼び出しの ID と一緒にアプリに聞く（gate: false で聞かない）。
+  // toolUseId: 呼び出しの ID（既定は呼び出しごとに作る。null なら付けない）
+  let calls = 0;
+  const call = async (
+    name: string,
+    args: Record<string, unknown> = {},
+    sessionId = 'S1',
+    options: { gate?: boolean; toolUseId?: string | null } = {},
+  ): Promise<ToolResult> => {
+    const toolUseId = options.toolUseId === undefined ? `toolu_test_${++calls}` : (options.toolUseId ?? undefined);
+    if (name === 'evaluate' && options.gate !== false) {
+      await control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: args, ...(toolUseId ? { toolUseId } : {}) });
+    }
+    return finish(control.handle(sessionId, name, args, undefined, toolUseId));
   };
 
   // 画面へ送ったもの（チャンネルごと）
