@@ -18,6 +18,9 @@
   --text-primary: #c7c6c3; /* 本文・コードの本文・ツール名 */
   --text-secondary: #898781; /* パス・補足・「N件の操作」・カードの説明文・タイムスタンプ */
   --text-tertiary: #6e6c66; /* 行番号・プレースホルダー・動いていないアイコンだけ（ほかに、押せない部品の文字） */
+  /* Claude が書いている途中の応答と思考。それぞれの書き終わった色より少しだけ暗くする（書き終わると、本文・思考の色に戻る） */
+  --text-partial: color-mix(in srgb, var(--text-primary) 65%, var(--text-secondary));
+  --text-partial-secondary: color-mix(in srgb, var(--text-secondary) 65%, var(--text-tertiary));
   /* アクセント（アイコンの 3 色の彩度を落としたもの） */
   --claude: #d4835c; /* Claude が動いていることを示す場所（実行中の点・セッションの輪・ワークフローの点）と、Claude が書き換えたファイルの印 */
   --ide: #9083cf; /* IDE 側の操作（エクスプローラーの選択・アクティビティバーのアクティブなアイコン） */
@@ -3051,9 +3054,15 @@ details[open] > summary > .disclosure {
   float: right;
   margin: -2px -4px 2px 8px;
 }
-/* 書いている途中の応答。Markdown にせず、改行をそのまま見せる（書き終わると Markdown の本文に入れ替わる） */
-.chat-partial-text {
+/* 書いている途中の応答。Markdown にせず、改行をそのまま見せる。書き途中と分かるよう、本文より少しだけ暗くする
+   （書き終わると、本文の色の Markdown に入れ替わる） */
+.markdown.chat-partial-text {
   white-space: pre-wrap;
+  color: var(--text-partial);
+}
+/* 書いている途中の思考も、思考の色より少しだけ暗くする */
+.chat-thinking.partial .chat-thinking-text {
+  color: var(--text-partial-secondary);
 }
 /* 訳文はブロックの下に、原文と分けて出す */
 .chat-translation {

@@ -252,11 +252,12 @@ function ThinkingBlock({ text, settled }: { text: string; settled?: boolean }) {
 }
 
 // Claude が書いている途中の応答の文・思考。書き終わって会話ログに出たら、同じ場所で本文（ResponseBlock）・思考（ThinkingBlock）に
-// 入れ替わる。途中の文は Markdown にせず、素の文で出す（決めたこと）。翻訳のボタンと実行のボタンは、書き終わってから出す
+// 入れ替わる。途中の文は Markdown にせず、素の文で出し、書き途中と分かるよう少しだけ暗い色にする（決めたこと。CSS の .partial）。
+// 翻訳のボタンと実行のボタンは、書き終わってから出す
 export const PartialRow = memo(function PartialRow({ block }: { block: PartialBlock }) {
   if (block.kind === 'thinking') {
     return (
-      <details className="chat-thinking" open>
+      <details className="chat-thinking partial" open>
         <summary>
           <DisclosureIcon open={false} />
           {t('chat.row.thinking')}
@@ -266,7 +267,7 @@ export const PartialRow = memo(function PartialRow({ block }: { block: PartialBl
     );
   }
   return (
-    <div className="chat-response">
+    <div className="chat-response partial">
       <div className="markdown chat-partial-text">{block.text}</div>
     </div>
   );
