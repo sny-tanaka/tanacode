@@ -57,10 +57,14 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
-      # basic.test.ts が確かめるのは、その時点までに届いた stream-json の行。控えには終わりまでの行が入るので、それも読めるかを
-      # ここで確かめる（update のジョブの npm test で初めて落ちると、Issue が立たない）
-      - name: 取った控えを読めるか確かめる
-        run: npx vitest run test/recorded.test.ts
+      # update のジョブと同じ単体テストを、取った控えで流す（動作確認済のバージョンを上げたつもりで、作業ツリーだけを書き換える。
+      # このジョブの権限は読むだけのまま）。basic.test.ts が確かめるのはその時点までに届いた stream-json の行で、控えには終わりまでの
+      # 行が入る（recorded.test.ts が読む）。statusline.test.ts・context.test.ts は、動作確認済のバージョンの控え（モデル・エフォート・
+      # コンテキストの上限）を読む。ここで落ちれば Issue が立つ（update のジョブの npm test で初めて落ちると、Issue が立たない）
+      - name: 取った控えで単体テストを流す
+        env:
+          VERSION: ${{ steps.claude.outputs.version }}
+        run: node scripts/update-verified-version.mjs "$VERSION" > /dev/null && npm test
       # 次の update のジョブが控えを使う
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
