@@ -1191,4 +1191,55 @@ describe('許す先の外を開く（開くたびに人の許可）', () => {
     await vi.advanceTimersByTimeAsync(15 * 60_000);
     expect(control.humanOnly('S1', request({ url: 'https://example.org/' }))).toBeNull();
   });
+
+  it('子の JavaScript の実行の確認は、今のタブが許す先か、そのタブで人が許したオリジンのときだけ、親も答えられる。ほかは人だけ', async () => {
+    const { control, state, call, open } = setup();
+    const evaluate = (sessionId = 'S1') => control.humanOnly(sessionId, request({ expression: 'document.title' }, 'evaluate'));
+    const HUMAN_ONLY =
+      'it asks to run JavaScript on a page that the user has not allowed for Claude in the in-app browser (neither a host the user allowed in tanacode nor a site the user permitted in that tab), and only the user can answer such a prompt.';
+    // タブが無い（今のページを確かめられない）
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    // 許す先（既定の localhost・*.local と、ユーザーが足した先）
+    const page = open('http://localhost:3000/');
+    expect(evaluate()).toBeNull();
+    page.url = 'http://myapp.local/';
+    expect(evaluate()).toBeNull();
+    page.url = 'https://staging.example.test/';
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    state.hosts = ['staging.example.test'];
+    expect(evaluate()).toBeNull();
+    // まだ人が許していないサイト
+    page.url = OUT;
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    // 人がこのタブで開くのを許したら、親も答えられる
+    page.url = 'http://localhost:3000/';
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    expect(evaluate()).toBeNull();
+    // 許したあとに別のサイトへ移った
+    page.url = 'https://other.example/';
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    page.url = OUT;
+    expect(evaluate()).toBeNull();
+    // 許したのは、そのタブだけ（同じオリジンでも、別のタブは人だけ）
+    const other = open(OUT, { activate: true });
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    control.activate('S1', page.tabId);
+    expect(evaluate()).toBeNull();
+    // ほかのセッションのタブの許可は使わない
+    open(OUT, { sessionId: 'S2' });
+    expect(evaluate('S2')).toBe(HUMAN_ONLY);
+    // 空のタブ・壊れたタブ
+    control.activate('S1', other.tabId);
+    other.url = 'about:blank';
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    control.activate('S1', page.tabId);
+    // メニューでオフにすると、人が許したオリジンも捨てる
+    control.turnOff();
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    page.url = 'http://localhost:3000/';
+    expect(evaluate()).toBeNull();
+    page.destroyed = true;
+    expect(evaluate()).toBe(HUMAN_ONLY);
+  });
 });

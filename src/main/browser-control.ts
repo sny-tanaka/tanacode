@@ -370,9 +370,18 @@ export class BrowserControl {
   }
 
   // 子セッションの許可の確認のうち、人だけが答えられるもの（親の Claude に許させない。sessions-control.ts の answer_permission）。
-  // 許す先の外を開く確認（フックが ask を返して、印を控えたもの）。印のある間の navigate の確認は、どれも人に任せる
-  // （どの確認の印かを取り違えても、人に聞く側に倒す）。当たれば、親に伝える理由（英語）を返す
+  // 親が読むときと答えるときに、そのときの様子で決める。当たれば、親に伝える理由（英語）を返す
+  // - 開く: 許す先の外を開く確認（フックが ask を返して、印を控えたもの）。印のある間の navigate の確認は、どれも人に任せる
+  //   （どの確認の印かを取り違えても、人に聞く側に倒す）
+  // - JavaScript の実行: 今のタブのページが、人が許したサイト（許す先か、そのタブで人が開くのを許したオリジン）のときだけ、親も答えられる。
+  //   まだ許していないサイト・許したあとに別のサイトへ移った・タブが無い（確かめられない）ときは、人に任せる
   humanOnly(sessionId: string, request: { tool: string }): string | null {
+    if (request.tool === browserToolId('evaluate')) {
+      const guest = this.activeNow(sessionId);
+      const url = guest?.contents.getURL() ?? '';
+      if (guest && !isBlank(url) && this.allowedIn(guest, url)) return null;
+      return 'it asks to run JavaScript on a page that the user has not allowed for Claude in the in-app browser (neither a host the user allowed in tanacode nor a site the user permitted in that tab), and only the user can answer such a prompt.';
+    }
     if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
     return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }
