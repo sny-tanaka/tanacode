@@ -15,7 +15,7 @@ import { ProfilesDialog } from './account/ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './account/profiles';
 import { useSessionSubagents } from './chat/useSessionSubagents';
 import { EditorPane, type EditorHandle, type OpenFile, type RevealRequest } from './editor/EditorPane';
-import { UnsavedDialog } from './editor/UnsavedDialog';
+import { saveForLeaving, UnsavedDialog } from './editor/UnsavedDialog';
 import { languageFor, languageLabel } from './editor/monaco';
 import { Explorer } from './explorer/Explorer';
 import type { ReviewComment } from './review/LineComments';
@@ -284,14 +284,19 @@ export function App() {
   const editorRef = useRef<EditorHandle>(null);
   const editorCwdRef = useRef<string | null>(null);
   editorCwdRef.current = editorHost?.cwd ?? null;
-  const [leaving, setLeaving] = useState<{ files: string[]; proceed: () => void } | null>(null);
+  // files: 保存していないファイル（衝突中のものを除く）/ conflicts: ディスク側でも変わったもの
+  const [leaving, setLeaving] = useState<{ files: string[]; conflicts: string[]; proceed: () => void } | null>(null);
   const leavingRef = useRef(leaving);
   leavingRef.current = leaving;
   const leaveEditorThen = useCallback((next: string | null, proceed: () => void) => {
     const current = editorCwdRef.current;
-    const files = current !== null && current !== next ? (editorRef.current?.unsaved() ?? []) : [];
+    const editor = current !== null && current !== next ? editorRef.current : null;
+    const unsaved = editor?.unsaved() ?? [];
     // 確かめている間に別の移り先を頼まれたら、新しいほうを確かめる
-    if (files.length > 0) return setLeaving({ files, proceed });
+    if (unsaved.length > 0) {
+      const conflicts = editor!.conflicts();
+      return setLeaving({ files: unsaved.filter((path) => !conflicts.includes(path)), conflicts, proceed });
+    }
     setLeaving(null);
     proceed();
   }, []);
@@ -301,10 +306,18 @@ export function App() {
     pending?.proceed();
   }, []);
   const saveAndLeave = useCallback(async () => {
-    await editorRef.current?.saveAll();
+    await saveForLeaving(editorRef.current);
     finishLeaving();
   }, [finishLeaving]);
-  const stayInFolder = useCallback(() => setLeaving(null), []);
+  // 移らない。衝突中のファイルがあれば、そのファイルをエディタで開く（どちらを残すかを選ぶ知らせを見せる）
+  const stayInFolder = useCallback(() => {
+    const conflict = leavingRef.current?.conflicts[0];
+    const dir = editorCwdRef.current;
+    setLeaving(null);
+    if (!conflict || !dir) return;
+    setDiffView(null);
+    setEditors((prev) => ({ ...prev, [dir]: { ...(prev[dir] ?? EMPTY_EDITOR), activePath: conflict } }));
+  }, []);
 
   const showSession = useCallback((id: string | null) => {
     setComposing(null);
@@ -1133,7 +1146,9 @@ export function App() {
             onClose={() => setWorktreeDialog(null)}
           />
         )}
-        {leaving && <UnsavedDialog files={leaving.files} onSave={saveAndLeave} onDiscard={finishLeaving} onCancel={stayInFolder} />}
+        {leaving && (
+          <UnsavedDialog files={leaving.files} conflicts={leaving.conflicts} onSave={saveAndLeave} onDiscard={finishLeaving} onCancel={stayInFolder} />
+        )}
         {quickOpen && viewId && (
           <QuickOpen sessionId={viewId} onOpen={(path) => void openFile(path)} onClose={() => setQuickOpen(false)} />
         )}

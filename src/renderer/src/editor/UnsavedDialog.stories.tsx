@@ -25,6 +25,11 @@ export const ファイルがいくつも: Story = {
   args: { files: ['src/menu/prices.ts', 'README.md', 'docs/guides/how-to-add-a-new-seasonal-drink-to-the-menu.md'] },
 };
 
+// ディスク側（Claude など）でも変わったファイルがある（分けて示し、「保存して移る」は押せない）
+export const 衝突中のファイルがある: Story = {
+  args: { files: ['README.md'], conflicts: ['src/menu/prices.ts'] },
+};
+
 // 保存に失敗する（理由を出し、ダイアログは開いたまま）
 export const 保存に失敗する: Story = {
   args: { onSave: () => Promise.reject(new Error('EACCES: permission denied')) },

@@ -33,7 +33,7 @@ describe('保存していない変更があるうちに、別のフォルダの�
     app = await E2EApp.launch({
       trusted: true,
       git: true,
-      files: { 'note.txt': NOTE },
+      files: { 'note.txt': NOTE, 'memo.txt': 'メモ\n' },
       conversations: () => [
         { match: FIRST, steps: [[{ type: 'text', text: '作業フォルダの返事です' }]] },
         { match: SECOND, steps: [[{ type: 'text', text: '別のフォルダの返事です' }]] },
@@ -130,6 +130,28 @@ describe('保存していない変更があるうちに、別のフォルダの�
     await dialog().getByRole('button', { name: 'やめる' }).click();
     await app.page.locator(`.new-session-chips .folder-picker > button.new-session-chip[title="${app.work}"]`).waitFor();
     await dirtyTab().waitFor();
+  });
+
+  it('ディスク側でも変わったファイルは分けて示し、「保存して移る」は押せない。「やめる」でそのファイルを開き、衝突の知らせを見せる', async () => {
+    // note.txt は書きかけのまま（前のテスト）。ディスク側で note.txt が変わり、エディタに届いて衝突になる
+    const conflictBanner = () => app.byText('.pending-banner', '未保存の変更があるうちに、ディスク上のファイルが変更されました');
+    writeFileSync(join(app.work, 'note.txt'), 'Claude が書いた\n');
+    await conflictBanner().waitFor();
+    // 別のタブ（memo.txt）を見ている間は、衝突の知らせは見えない
+    await app.page.click('.tree-row[title="memo.txt"]');
+    await app.byText('.editor-tab.active', 'memo.txt').waitFor();
+    await conflictBanner().waitFor({ state: 'detached' });
+    await app.page.click('.new-session-chips .folder-picker > button.new-session-chip');
+    await app.page.click(`.folder-menu-item[title="${other}"]`);
+    await dialog().waitFor();
+    expect(await dialog().innerText()).toContain('ディスク側（Claude など）でも変わっています');
+    expect(await dialog().getByRole('button', { name: '保存して移る' }).isDisabled()).toBe(true);
+    await dialog().getByRole('button', { name: 'やめる' }).click();
+    await dialog().waitFor({ state: 'detached' });
+    // 衝突しているファイルを開き、どちらを残すかを選ぶ知らせを出す。ディスクは Claude が書いたまま
+    await app.byText('.editor-tab.active', 'note.txt').waitFor();
+    await conflictBanner().waitFor();
+    expect(readFileSync(join(app.work, 'note.txt'), 'utf8')).toBe('Claude が書いた\n');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

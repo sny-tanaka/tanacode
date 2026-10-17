@@ -4,7 +4,7 @@ import { createRef, type ComponentProps } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EditorPane, type EditorHandle, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
 import { MarkdownPreview } from '../../src/renderer/src/editor/MarkdownPreview';
-import { UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
+import { saveForLeaving, UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
 import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
 import './dom';
@@ -336,8 +336,22 @@ describe('EditorPane（エディタ）', () => {
       await edit(APP, 'const total = 2;\n');
       view.rerender(<EditorPane {...p} handle={handle} activePath="README.md" />);
       await edit(README, '# 直した使い方\n');
-      return { handle, p };
+      return { handle, p, view };
     }
+
+    it('ディスク側でも変わったファイル（衝突中）は分けて返し、まとめて保存しても書かない（今のタブでなく、衝突の帯が見えていなくても）', async () => {
+      const { handle, p, view } = await twoEdited();
+      // README を見ている間に、Claude が src/app.ts を書き換えた
+      view.rerender(<EditorPane {...p} handle={handle} activePath="README.md" files={[text('src/app.ts', 'const total = 3; // Claude が直した\n'), text('README.md', README)]} />);
+      expect(banner()).toBeNull();
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
+      expect(handle.current!.conflicts()).toEqual(['src/app.ts']);
+      await act(() => handle.current!.saveAll());
+      expect(p.onSave).toHaveBeenCalledTimes(1);
+      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n');
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts']);
+      expect(handle.current!.conflicts()).toEqual(['src/app.ts']);
+    });
 
     it('保存していないファイルをタブの順に返し、まとめて保存すると、すべて書いて未保存の印も消える', async () => {
       const { handle, p } = await twoEdited();
@@ -440,6 +454,26 @@ describe('UnsavedDialog（別のフォルダへ移る前の、保存していな
     expect(p.onCancel).not.toHaveBeenCalled();
     await act(async () => finish());
     expect(p.onDiscard).not.toHaveBeenCalled();
+  });
+
+  it('ディスク側でも変わったファイル（衝突中）は分けて示し、「保存して移る」は押せない。「やめる」で戻ってエディタで選ばせる', () => {
+    const p = props({ files: ['README.md'], conflicts: ['src/app.ts'] });
+    render(<UnsavedDialog {...p} />);
+    expect(dialog().querySelector('h2')?.textContent).toBe('保存していない変更があります（2 件）');
+    const note = screen.getByText(/ディスク側（Claude など）でも変わっています/);
+    expect(note.nextElementSibling?.textContent).toBe('src/app.ts');
+    expect(button('保存して移る').disabled).toBe(true);
+    expect(button('保存せずに移る').disabled).toBe(false);
+    fireEvent.click(button('やめる'));
+    expect(p.onCancel).toHaveBeenCalledTimes(1);
+    expect(p.onSave).not.toHaveBeenCalled();
+  });
+
+  it('「保存して移る」の保存: エディタが閉じていたら（ダイアログを出している間に外れた）、保存せずに失敗にして移らない', async () => {
+    await expect(saveForLeaving(null)).rejects.toThrow('エディタが閉じています');
+    const saveAll = vi.fn(() => Promise.resolve());
+    await saveForLeaving({ unsaved: () => [], conflicts: () => [], saveAll });
+    expect(saveAll).toHaveBeenCalledTimes(1);
   });
 
   it('保存できなかったら理由を出し、もう一度選べる', async () => {

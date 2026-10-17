@@ -23,9 +23,12 @@ const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
 
 // App から使う操作。別のフォルダへ移る（App がエディタを作り直し、保存していない変更が消える）前に、確かめて保存するため
 export type EditorHandle = {
-  // 保存していない変更のあるファイル（タブの順）
+  // 保存していない変更のあるファイル（タブの順）。ディスク側でも変わったもの（衝突中）も入る
   unsaved(): string[];
-  // 保存していない変更を、タブの順にすべて保存する。書けなかったら、そこで止めて投げる
+  // そのうち、ディスク側（Claude Code など）でも変わったもの（衝突中）
+  conflicts(): string[];
+  // 保存していない変更を、タブの順に保存する。衝突中のものは書かない（エディタで、どちらを残すか選ばせる。
+  // 今のタブでなければ衝突の知らせが見えないので、Claude が書き換えた中身を黙って上書きしないため）。書けなかったら、そこで止めて投げる
   saveAll(): Promise<void>;
 };
 
@@ -89,6 +92,8 @@ export const EditorPane = memo(function EditorPane({
   const [dirty, setDirty] = useState<ReadonlySet<string>>(new Set());
   // 未保存の変更があるのにディスク側（Claude Code など）でも変わったファイル
   const [conflicts, setConflicts] = useState<ReadonlySet<string>>(new Set());
+  const conflictsRef = useRef(conflicts);
+  conflictsRef.current = conflicts;
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
   const onSaveRef = useRef(onSave);
@@ -234,8 +239,9 @@ export const EditorPane = memo(function EditorPane({
       });
   useImperativeHandle(handle, () => ({
     unsaved,
+    conflicts: () => unsaved().filter((path) => conflictsRef.current.has(path)),
     saveAll: async () => {
-      for (const path of unsaved()) await save(path);
+      for (const path of unsaved()) if (!conflictsRef.current.has(path)) await save(path);
     },
   }));
 

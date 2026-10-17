@@ -1284,7 +1284,9 @@
       "saving": "保存しています…",
       "discard": "保存せずに移る",
       "cancel": "やめる",
-      "saveFailed": "保存できませんでした: {error}"
+      "saveFailed": "保存できませんでした: {error}",
+      "conflictNote": "次のファイルは、ディスク側（Claude など）でも変わっています。「保存して移る」では書きません。「やめる」で戻り、エディタでどちらを残すか選んでください。",
+      "editorClosed": "エディタが閉じています"
     }
   },
   "explorer": {

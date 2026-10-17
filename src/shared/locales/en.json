@@ -1326,7 +1326,9 @@
       "saving": "Saving…",
       "discard": "Move Without Saving",
       "cancel": "Stay",
-      "saveFailed": "Couldn't save: {error}"
+      "saveFailed": "Couldn't save: {error}",
+      "conflictNote": "These files also changed on disk (by Claude or another tool). Save and Move won't write them. Choose Stay, then pick which version to keep in the editor.",
+      "editorClosed": "The editor is closed"
     }
   },
   "explorer": {
