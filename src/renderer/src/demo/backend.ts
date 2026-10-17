@@ -149,7 +149,6 @@ export class DemoBackend {
   // 頼んでいる「あなたの番です」（セッション → 依頼）
   private readonly asks = new Map<string, BrowserAskChange>();
   private shells = 0;
-  private readonly typed = new Map<string, string>();
   // 添付した画像（保存したパス → data URL）
   private readonly images = new Map<string, string>();
 
@@ -531,25 +530,8 @@ export class DemoBackend {
         },
       },
       pty: {
-        // 送った発言は、文字のあとに Enter（\r）で届く
-        write: (id, data) => {
-          if (data === '\r') {
-            // 画像はパスを貼り付けて添付する（Claude Code は [Image #n] と出す）
-            const images: string[] = [];
-            const text = (this.typed.get(id) ?? '')
-              .replace(/\x1b\[200~(\/tmp\/[^\x1b]+)\x1b\[201~ ?/g, (_m, path: string) => {
-                images.push(path);
-                return `[Image #${images.length}] `;
-              })
-              .replace(/\x1b\[200~|\x1b\[201~/g, '')
-              .trim();
-            this.typed.delete(id);
-            if (text) this.onUserMessage(id, text, images);
-            return;
-          }
-          if (data === '\x1b' || /^\x15+$/.test(data)) return;
-          this.typed.set(id, (this.typed.get(id) ?? '') + data);
-        },
+        // デモにはターミナルモードが無いので、Claude Code の画面に打つことは無い（発言は sessions.submit で届く）
+        write: () => {},
         resize: () => {},
         resetSize: () => {},
         onData: () => () => {},
