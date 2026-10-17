@@ -1,10 +1,10 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from 'playwright';
 import type { PermissionMode } from '@shared/screen';
 import { type HostMessage, PROTOCOL } from '../../src/main/pty-host-protocol';
@@ -61,6 +61,8 @@ export class E2EApp {
   private readonly output: string[] = [];
   // アプリに渡す環境変数（prepare で決める）
   private env: Record<string, string> = {};
+  // choose・pressHolding で押したときに画面に届いたイベントの記録（押した回ごと。keepEvidence に残す）
+  private readonly presses: string[][] = [];
   private electronApp: ElectronApplication | null = null;
   private window: Page | null = null;
 
@@ -307,8 +309,14 @@ export class E2EApp {
         JSON.stringify(sessions, null, 2),
         '# 選んでいるセッションの Claude Code の画面',
         screen,
+        '# 押したときに画面に届いたイベント（choose・pressHolding。押した回ごと）',
+        ...this.presses.flatMap((lines, i) => [`## ${i + 1} 回目`, ...lines]),
       ].join('\n'),
     );
+    // stream-json の送受信の控え（userData の stream-logs）と、Claude Code の会話ログ（HOME の .claude/projects）の写し。
+    // close() は使い捨てのフォルダごと消すので、ここで写しておく
+    copyMatching(this.userData, (path) => path.split(sep).includes('stream-logs') && path.endsWith('.log'), `${base}.stream`);
+    copyMatching(join(this.home, '.claude', 'projects'), (path) => path.endsWith('.jsonl'), `${base}.transcript`);
   }
 
   // --- 画面の操作 ---
@@ -385,11 +393,15 @@ export class E2EApp {
   }
 
   // カードの選択肢を選んで、カードが閉じるのを待つ。カードに「受け付けませんでした」と出たときだけ、人と同じく押し直す
-  // （黙って何度も押し直すことはしない）。それ以外の知らせが出たら、失敗にする
+  // （黙って何度も押し直すことはしない）。それ以外の知らせが出たら、失敗にする。
+  // 押したクリックが選択肢に届いたかは、押す間に画面に届いたイベントで確かめる。Playwright の click は、画面にイベントが 1 つも
+  // 届かなくても、押し始め（pointerdown）だけが選択肢に当たって離した所が外れても、成功で返す。届かなかったら、閉じるのを待たずに失敗にする
   async choose(card: Locator, option: string | RegExp): Promise<void> {
     const handle = await card.elementHandle();
     for (let attempt = 1; ; attempt++) {
-      await card.locator('.menu-option', { hasText: option }).first().click();
+      const button = card.locator('.menu-option', { hasText: option }).first();
+      const press = await this.recordPress(button, () => button.click());
+      if (!press.reached) throw new Error(`カードの選択肢にクリックが届きませんでした（${attempt} 回目）\n${press.lines.join('\n')}`);
       const outcome = await this.page.waitForFunction(
         (element) => (!element?.isConnected ? 'closed' : (element.querySelector('.menu-card-error')?.textContent ?? false)),
         handle,
@@ -399,6 +411,73 @@ export class E2EApp {
       if (!String(result).includes(NOT_ACCEPTED) || attempt >= PRESSES) throw new Error(`カードで選べません（${attempt} 回目）: ${String(result)}`);
     }
   }
+
+  // target の真ん中を押し、離す前に during を動かしてから離す（押して離す間に画面が変わったときの確かめ）。
+  // 離したクリックが target に届いたかと、押す間に画面に届いたイベントの記録を返す。
+  // 押す前に hover で、見えている範囲へ送り、位置が止まって押せるのを確かめてから、真ん中にマウスを置く（click と同じ確かめ）
+  async pressHolding(target: Locator, during: () => Promise<void>): Promise<{ reached: boolean; lines: string[] }> {
+    return this.recordPress(target, async () => {
+      await target.hover();
+      await this.page.mouse.down();
+      await during();
+      await this.page.mouse.up();
+    });
+  }
+
+  // target を押す（press）間に、画面に届いたマウスのイベント（pointerdown・pointerup・mousedown・mouseup・click）を capture で記録する。
+  // 種類・届いた要素・位置と、そのときの target の位置・チャットの一覧のスクロール。reached: click が target（の中）に届いた。
+  // 記録は keepEvidence にも残す（落ちたときに、押した所からカードが動いたのか、画面にイベントが届かなかったのかを見分けるため）
+  private async recordPress(target: Locator, press: () => Promise<void>): Promise<{ reached: boolean; lines: string[] }> {
+    const element = await target.elementHandle();
+    await this.page.evaluate((el) => {
+      type Entry = Record<string, string | number | boolean>;
+      const w = window as unknown as { __e2ePress?: { entries: Entry[]; stop: () => void } };
+      w.__e2ePress?.stop();
+      const entries: Entry[] = [];
+      const rect = () => {
+        const r = el?.getBoundingClientRect();
+        return r ? `${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}` : '-';
+      };
+      const list = () => {
+        const l = document.querySelector('.chat-list');
+        return l ? `${Math.round(l.scrollTop)}/${l.scrollHeight}/${l.clientHeight}` : '-';
+      };
+      const describe = (node: EventTarget | null) => {
+        if (!(node instanceof Element)) return String(node);
+        const classes = [...node.classList].slice(0, 2).join('.');
+        return `${node.tagName.toLowerCase()}${classes ? `.${classes}` : ''}`;
+      };
+      const snapshot = (type: string, e?: MouseEvent): Entry => ({
+        t: Math.round(performance.now()),
+        type,
+        ...(e ? { target: describe(e.target), inTarget: !!el && e.target instanceof Node && el.contains(e.target), at: `${e.clientX},${e.clientY}`, trusted: e.isTrusted } : {}),
+        rect: rect(),
+        connected: !!el?.isConnected,
+        list: list(),
+      });
+      const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click'];
+      const listener = (e: Event) => entries.push(snapshot(e.type, e as MouseEvent));
+      for (const type of types) window.addEventListener(type, listener, true);
+      entries.push(snapshot('start'));
+      w.__e2ePress = { entries, stop: () => types.forEach((type) => window.removeEventListener(type, listener, true)) };
+    }, element);
+    let entries: Record<string, string | number | boolean>[] = [];
+    try {
+      await press();
+    } finally {
+      entries = await this.page
+        .evaluate(() => {
+          const w = window as unknown as { __e2ePress?: { entries: Record<string, string | number | boolean>[]; stop: () => void } };
+          w.__e2ePress?.stop();
+          const found = w.__e2ePress?.entries ?? [];
+          w.__e2ePress = undefined;
+          return found;
+        })
+        .catch(() => []);
+      this.presses.push(entries.map((entry) => Object.entries(entry).map(([key, value]) => `${key}=${value}`).join(' ')));
+    }
+    return { reached: entries.some((entry) => entry.type === 'click' && entry.inTarget === true), lines: this.presses.at(-1) ?? [] };
+  }
 }
 
 // 画面（と、画面の側で動く preload）のカバレッジを coverage/e2e-raw/renderer-*.json に書く（アプリのスクリプトの分だけ。中身は手元の out/ から読むので残さない）
@@ -407,6 +486,23 @@ async function saveRendererCoverage(page: Page): Promise<void> {
   const scripts = entries.filter((e) => /\/out\/(renderer|preload)\//.test(e.url)).map(({ url, functions }) => ({ url, functions }));
   mkdirSync(COVERAGE_RAW, { recursive: true });
   writeFileSync(join(COVERAGE_RAW, `renderer-${randomUUID()}.json`), JSON.stringify(scripts));
+}
+
+// root の下（入れ子も）の、match に合うファイルを、prefix-<root からのパス（/ は _ に）> に写す。root が無ければ何もしない
+function copyMatching(root: string, match: (path: string) => boolean, prefix: string): void {
+  let paths: string[];
+  try {
+    paths = readdirSync(root, { recursive: true, encoding: 'utf8' });
+  } catch {
+    return;
+  }
+  for (const path of paths.filter(match)) {
+    try {
+      copyFileSync(join(root, path), `${prefix}-${path.replaceAll(sep, '_')}`);
+    } catch {
+      // 写している間に消えた
+    }
+  }
 }
 
 // ファイルがあれば中身。無ければ空
