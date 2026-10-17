@@ -94,11 +94,39 @@ describe('利用枠', () => {
     expect(limits({ status: 'allowed' })).toBeNull();
   });
 
-  it('get_usage: utilization（0〜100）と resets_at（ISO）。使えなければ null', () => {
+  it('get_usage: utilization（0〜100）と resets_at（ISO）。モデル別の週の枠も読む。使えなければ null', () => {
+    const at = '2026-10-17T10:00:00.000Z';
     expect(
-      usageLimitsOf({ subscription_type: 'max', rate_limits_available: true, rate_limits: { five_hour: { utilization: 42, resets_at: '2026-10-17T10:00:00.000Z' }, seven_day: { utilization: 3, resets_at: 'x' } } }),
-    ).toEqual({ fiveHour: { percent: 42, resetsAt: Date.parse('2026-10-17T10:00:00.000Z') }, sevenDay: { percent: 3, resetsAt: null } });
+      usageLimitsOf({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 42, resets_at: at },
+          seven_day: { utilization: 3, resets_at: 'x' },
+          seven_day_opus: null,
+          seven_day_sonnet: { utilization: 7, resets_at: null },
+          // サーバーの一覧から来るモデル別の枠。同じモデルの古い欄（seven_day_sonnet）より、こちらを使う
+          model_scoped: [
+            { display_name: 'Fable', utilization: 55, resets_at: at },
+            { display_name: 'Sonnet', utilization: 12, resets_at: null },
+            { display_name: 'Haiku', utilization: null, resets_at: null },
+          ],
+        },
+      }),
+    ).toEqual([
+      { label: '5時間', percent: 42, resetsAt: Date.parse(at) },
+      { label: '週', percent: 3, resetsAt: null },
+      { label: '週', model: 'Fable', percent: 55, resetsAt: Date.parse(at) },
+      { label: '週', model: 'Sonnet', percent: 12, resetsAt: null },
+    ]);
+    // model_scoped の無い古い形は、Opus・Sonnet の欄から
+    expect(
+      usageLimitsOf({ subscription_type: 'max', rate_limits_available: true, rate_limits: { seven_day_opus: { utilization: 20, resets_at: null }, seven_day_sonnet: { utilization: 7, resets_at: null } } }),
+    ).toEqual([
+      { label: '週', model: 'Opus', percent: 20, resetsAt: null },
+      { label: '週', model: 'Sonnet', percent: 7, resetsAt: null },
+    ]);
     expect(usageLimitsOf({ subscription_type: null, rate_limits_available: false, rate_limits: null })).toBeNull();
-    expect(usageLimitsOf({ subscription_type: null, rate_limits_available: true, rate_limits: { five_hour: null } })).toEqual({ fiveHour: null, sevenDay: null });
+    expect(usageLimitsOf({ subscription_type: null, rate_limits_available: true, rate_limits: { five_hour: null } })).toEqual([]);
   });
 });

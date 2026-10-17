@@ -41,6 +41,7 @@ import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
+import type { UsageLimit } from '@shared/usage';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { SessionModel } from '@shared/models';
@@ -87,9 +88,10 @@ import type {
   StreamMessage,
   TaskNotificationMessage,
   TaskStartedMessage,
+  UsageResponse,
   UserMessage,
 } from './stream/protocol';
-import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode } from './stream/state';
+import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf } from './stream/state';
 import {
   hideWorktrees,
   planWorktree,
@@ -113,6 +115,8 @@ const TURN_END_WAIT_MS = 3000;
 const SENDING_TIMEOUT_MS = 30_000;
 // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
 const SLOW_START_MS = 10_000;
+// プランの利用枠を get_usage で聞き直す間隔の下限（サーバーに聞くため。アプリ全体で）
+const USAGE_INTERVAL_MS = 5 * 60_000;
 // stop_task のあと、タスクが終わった知らせ（task_notification）を待つ上限
 const TASK_STOP_WAIT_MS = 10_000;
 // 作業中の経過時間を知らせ直す間隔
@@ -272,6 +276,8 @@ type Listeners = {
   onBashTasks: (sessionId: string, tasks: BashTask[]) => void;
   onKnowledge: (sessionId: string, knowledge: SessionKnowledge) => void;
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
+  // チャットのターンの終わりに get_usage で聞いた、プランの利用枠（モデル別の週の枠を含む）
+  onUsage?: (limits: UsageLimit[], at: number) => void;
   // ユーザーの操作待ちになった（質問・許可の確認）
   onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu }) => void;
   // 答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
@@ -284,6 +290,8 @@ export class SessionManager {
   private readonly runtimes = new Map<string, Runtime>();
   private focusedId: string | null = null;
   private closed = false;
+  // 最後に get_usage を聞いた時刻
+  private usageAt = 0;
 
   constructor(
     private readonly host: PtyHostApi,
@@ -2293,6 +2301,18 @@ export class SessionManager {
     this.emitSessions();
     this.changed(id);
     void this.refreshContext(id, rt);
+    void this.refreshUsage(rt);
+  }
+
+  // プランの利用枠を get_usage で聞く（モデル別の週の枠は、rate_limit_event・statusLine に無いため）。サーバーに聞くので、
+  // アプリ全体で USAGE_INTERVAL_MS に 1 回まで。API キーなどで使えなければ何もしない
+  private async refreshUsage(rt: Runtime): Promise<void> {
+    const now = Date.now();
+    if (now - this.usageAt < USAGE_INTERVAL_MS) return;
+    this.usageAt = now;
+    const response = await rt.process?.client?.request<UsageResponse>('get_usage').catch(() => null);
+    const limits = response ? usageLimitsOf(response) : null;
+    if (limits && limits.length > 0) this.listeners.onUsage?.(limits, Date.now());
   }
 
   // チャットにターンの終わりを出し、完了を知らせる

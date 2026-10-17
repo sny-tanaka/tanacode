@@ -140,6 +140,32 @@ describe('利用枠（UsageMonitor）', () => {
     expect(restarted.get()?.updatedAt).toBe(2000);
   });
 
+  it('get_usage のモデル別の週の枠も持つ。あとで statusLine（モデル別の枠が無い）から届いても、モデル別の枠は残す', async () => {
+    const monitor = new usage.UsageMonitor(join(home, 'usage3.json'), () => {});
+    monitor.fromUsage(
+      [
+        { label: '5時間', percent: 30, resetsAt: 100 },
+        { label: '週', percent: 5, resetsAt: 200 },
+        { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+      ],
+      1000,
+    );
+    monitor.fromStatusLine(info(2000, 40));
+    expect(monitor.get()).toEqual({
+      limits: [
+        { label: '5時間', percent: 40, resetsAt: 100 },
+        { label: '週', percent: 10, resetsAt: 200 },
+        { label: '週', model: 'Fable', percent: 60, resetsAt: 300 },
+      ],
+      updatedAt: 2000,
+      source: 'statusline',
+    });
+    // get_usage のモデル別の枠は、そのとき届いたものに置き換える（無くなったモデルの枠は残さない）
+    monitor.fromUsage([{ label: '週', model: 'Sonnet', percent: 8, resetsAt: null }], 3000);
+    expect(monitor.get()?.limits.filter((l) => l.model)).toEqual([{ label: '週', model: 'Sonnet', percent: 8, resetsAt: null }]);
+    expect(monitor.get()?.limits.find((l) => l.label === '5時間')?.percent).toBe(40);
+  });
+
   it('Claude Code の控え（/usage を開いたときのもの）の方が新しければ、それを使う', async () => {
     const monitor = new usage.UsageMonitor(join(home, 'usage2.json'), () => {});
     monitor.fromStatusLine(info(2000, 40));
@@ -148,7 +174,15 @@ describe('利用枠（UsageMonitor）', () => {
       JSON.stringify({
         cachedUsageUtilization: {
           fetchedAtMs: 3000,
-          utilization: { limits: [{ kind: 'session', percent: 55, resets_at: '2026-10-07T10:00:00Z' }, { kind: 'weekly_all', percent: 20, resets_at: null }] },
+          utilization: {
+            limits: [
+              { kind: 'session', percent: 55, resets_at: '2026-10-07T10:00:00Z' },
+              { kind: 'weekly_all', percent: 20, resets_at: null },
+              // モデル別の週の枠（scope.model）。モデルでないもの（surface）は出さない
+              { kind: 'weekly_scoped', percent: 70, resets_at: null, scope: { model: { display_name: 'Fable' } } },
+              { kind: 'weekly_scoped', percent: 9, resets_at: null, scope: { surface: { display_name: 'Claude Code' } } },
+            ],
+          },
         },
       }),
     );
@@ -157,6 +191,7 @@ describe('利用枠（UsageMonitor）', () => {
       limits: [
         { label: '5時間', percent: 55, resetsAt: Date.parse('2026-10-07T10:00:00Z') },
         { label: '週', percent: 20, resetsAt: null },
+        { label: '週', model: 'Fable', percent: 70, resetsAt: null },
       ],
       updatedAt: 3000,
       source: 'claude-cache',

@@ -525,6 +525,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - エフォート: `get_settings` の `applied.effort`（起動の直後と、切り替えたあと）
     - コンテキスト: ターンの終わりに `get_context_usage` で聞きます（上限も正確）。途中は、本体の最後の応答の `usage`。`/clear`（`conversation_reset`）のあと、新しい会話の最初の応答までは、分からないとして空にし、聞きもしません（空の会話の見積もりで「量が下がった」とすると、自動の最適化圧縮が、切り替えた直後にまだ超えていても繰り返すため）。
     - 利用枠: `rate_limit_event`（値が無いときに空で上書きしない）。料金は `result` の `total_cost_usd`
+    - モデル別の週の枠: `rate_limit_event` に無いので、ターンの終わり（`result`）に `get_usage` で聞きます（`refreshUsage`。サーバーに聞くので、アプリ全体で 5 分に 1 回まで）。返事の `model_scoped`（サーバーの一覧。2.1.302）を先に、無いモデルだけ `seven_day_opus`・`seven_day_sonnet` から足します（`usageLimitsOf`）。`UsageMonitor` は、モデル別の枠を持たない知らせ（statusLine・`rate_limit_event`）では前の値を残し、持つ知らせ（`get_usage`・Claude Code の控えの `weekly_scoped`）では置き換えます
     - 権限モード: initialize の返事の `current_permission_mode`・`system/init` と `system/status` の `permissionMode`・`set_permission_mode` の返事・会話ログの発言の行の `permissionMode`。知らない名前（`dontAsk` など）は manual。
 - アプリ内ブラウザを Claude に操作させる設定・ほかのセッションを扱わせる設定・チェックリストとウォークスルーとターミナルの設定がオンなら、`--mcp-config` でそれぞれの MCP サーバー（中継）を、`--allowedTools` で許可済みにするツール（読むだけのもの・アプリ内ブラウザの `ask_user_to_act`・チェックリストのすべて・ウォークスルーの PR への投稿のほかのすべて）の許可を足します（下の「アプリ内ブラウザ（Claude による操作）」「セッション間の連携（Claude による操作）」「チェックリスト」「ウォークスルー」「ターミナル」）。どちらも値をいくつも取る引数なので、次の `--` で終わるよう `--settings` より前に置きます。
   - 2 つのサーバーを足すときも、`--mcp-config` と `--allowedTools` は 1 回ずつにまとめて渡します（`mcpArgs`）。2 回渡したときの扱いが決まっていないためです。
@@ -568,7 +569,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - Claude Code の画面や出力と突き合わせる文字列、ログ。
   - pty ホスト（別のプロセスで動き、言語を知らない）。
   - MCP の中継が `tools/list` で返すツールの短い名前（`title`）は、アプリが `--mcp-config` の `env` で渡す `TANACODE_LANGUAGE`（Claude Code を起動したときの言語）で読みます。チャットのツールの行の名前は、アプリが `tools.json` の名前空間から読みます（`mcpToolLabel`）。
-  - 利用枠の「5時間」「週」（`usage-monitor.ts` の `label`）: 画面が枠を見分ける値で、`usage.json` にも保存されるため。画面に出す名前は `account.usage.*`。
+  - 利用枠の「5時間」「週」（`usage-monitor.ts` の `label`）: 画面が枠を見分ける値で、`usage.json` にも保存されるため。画面に出す名前は `account.usage.*`。モデル別の週の枠は、`label` が「週」で、`model` にサーバーが付けたモデルの名前（訳さない）。
 - hooks の確認の理由（Claude Code の許可の確認に出る）は、Claude Code を起動するときの言語で作ります（`worktreeGuardCommand()`・`sessionsGateCommand()`）。アプリ内ブラウザの JavaScript の確認のフックは別のプロセスなので、言語を環境変数 `TANACODE_LANGUAGE` で渡します。シェルと JSON に埋め込むので、理由の文言には `'` `"` `\` を使いません（`test/i18n.test.ts` で確かめる）。
 - 言語の決め方: アプリの設定（`settings.json` の `language`）の `system`・`ja`・`en`。`system`（既定）なら、`app.getPreferredSystemLanguages()` に日本語があれば日本語、無ければ英語（`resolveLanguage`）。
   - main は起動するときに決めます（`applyLanguage`。プロファイルの既定の名前やダイアログが使うので、ほかのものを作る前）。

@@ -277,10 +277,18 @@ export type ContextUsageResponse = { totalTokens: number; maxTokens: number; per
 
 // get_usage の返事（SDKControlGetUsageResponse のうち使うもの）。utilization は 0〜100、resets_at は ISO の時刻（実測）
 export type UsageWindow = { utilization: number | null; resets_at: string | null } | null;
+// model_scoped: サーバーの一覧から来る、モデル別の週の枠（display_name はサーバーが付けた名前。2.1.302）。
+// seven_day_opus・seven_day_sonnet は、それより前からある Opus・Sonnet の週の枠
 export type UsageResponse = {
   subscription_type: string | null;
   rate_limits_available: boolean;
-  rate_limits: { five_hour?: UsageWindow; seven_day?: UsageWindow } | null;
+  rate_limits: {
+    five_hour?: UsageWindow;
+    seven_day?: UsageWindow;
+    seven_day_opus?: UsageWindow;
+    seven_day_sonnet?: UsageWindow;
+    model_scoped?: { display_name: string; utilization: number | null; resets_at: string | null }[];
+  } | null;
 };
 
 // get_settings の返事のうち使うもの。errors: 形の違う設定ファイル（-p は黙って無視する。実測）

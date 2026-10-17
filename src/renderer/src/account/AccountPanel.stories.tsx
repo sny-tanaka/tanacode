@@ -9,7 +9,7 @@ import { AccountPanel } from './AccountPanel';
 import { ProfilesDialog } from './ProfilesDialog';
 import { closeProfilesDialog, useProfilesDialog } from './profiles';
 
-// セッション一覧の最下部の、アカウントと利用枠。どの状態でも 3 行（名前・5 時間・週）で、高さは変わらない。
+// セッション一覧の最下部の、アカウントと利用枠。どの状態でも 3 行（名前・5 時間・週）で、高さは変わらない（モデル別の週の枠があるプランは、その分の行が増える）。
 // メールアドレスは、マウスを乗せたときと、押して開くメニューの中にだけ出る。メニューの「設定ファイルの管理…」で管理ダイアログが開く
 
 const TEAM: ClaudeAccount = { email: 'taro@corp.example', organization: 'Acme 株式会社', plan: 'Claude Team' };
@@ -89,6 +89,17 @@ export const 古い値: Story = story(TEAM, usage(55, 20, { ago: 95 * MINUTE }))
 
 // 5 時間枠のリセット時刻を過ぎた。新しい値が届くまで 0%
 export const リセット済み: Story = story(TEAM, usage(88, 20, { ago: 20 * MINUTE, fiveResetIn: -5 * MINUTE }));
+
+// モデル別の週の枠があるプラン（Max など）。週の枠の下に、モデルごとのゲージを足す（チャットのターンの終わりに get_usage で届く）
+export const モデル別の週の枠: Story = story(PERSONAL, {
+  ...usage(18, 37),
+  limits: [
+    ...usage(18, 37).limits,
+    { label: '週', model: 'Fable', percent: 72, resetsAt: Date.now() + (2 * 24 + 5) * 60 * MINUTE },
+    { label: '週', model: 'Sonnet', percent: 9, resetsAt: Date.now() + (4 * 24 + 18) * 60 * MINUTE },
+  ],
+  source: 'usage',
+});
 
 // Claude Code にログインしていない（API キーだけで使っているときも、ここに入る）
 export const ログインしていない: Story = story(null, null);

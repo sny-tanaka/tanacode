@@ -3,7 +3,8 @@ import type { StatusLineInfo } from '@shared/statusline';
 import type { UsageLimit, UsageLimits } from '@shared/usage';
 import { claudeJsonPath } from './claude-config';
 
-// プランの利用枠（5 時間枠・週の枠）。アプリのセッションが応答するたびに statusLine から受け取る。
+// プランの利用枠（5 時間枠・週の枠・モデル別の週の枠）。アプリのセッションが応答するたびに statusLine から、チャットのターンの終わりに
+// get_usage から（モデル別の枠はこちらだけ）受け取る。
 // 裏で Claude Code を起動したりはしない。アプリを使っていない間の値は、Claude Code 自身の控えの方が新しければそちらを使う
 export class UsageMonitor {
   private current: UsageLimits | null = null;
@@ -27,6 +28,11 @@ export class UsageMonitor {
     return this.current;
   }
 
+  // チャットのターンの終わりに聞いた get_usage の利用枠（モデル別の週の枠を含む）
+  fromUsage(limits: UsageLimit[], updatedAt: number): void {
+    if (limits.length > 0) this.set({ limits, updatedAt, source: 'usage' });
+  }
+
   fromStatusLine(info: StatusLineInfo): void {
     const rl = info.rateLimits;
     if (!rl) return;
@@ -43,15 +49,23 @@ export class UsageMonitor {
     if (cached) this.set(cached);
   }
 
+  // 新しい値で置き換える。届いた値に無い枠は、前の値を残す。ただしモデル別の週の枠は、それを持たない知らせ（statusLine）でだけ残し、
+  // 持っている知らせ（get_usage・控え）では、そのとき届いたものに置き換える（無くなったモデルの枠は残さない）
   private set(usage: UsageLimits): void {
     if (this.current && this.current.updatedAt >= usage.updatedAt) return;
+    const keepModels = usage.source === 'statusline';
+    const kept = (this.current?.limits ?? []).filter((old) =>
+      old.model ? keepModels : !usage.limits.some((l) => !l.model && l.label === old.label),
+    );
+    usage = { ...usage, limits: [...usage.limits.filter((l) => !l.model), ...kept.filter((l) => !l.model), ...usage.limits.filter((l) => l.model), ...kept.filter((l) => l.model)] };
     this.current = usage;
     void writeFile(this.file, JSON.stringify(usage, null, 2)).catch(() => {});
     this.onChange(usage);
   }
 }
 
-type CachedLimit = { kind?: string; percent?: number; resets_at?: string | null };
+// scope.model: モデル別の週の枠（kind は weekly_scoped）。surface（使う場所ごとの枠）は出さない
+type CachedLimit = { kind?: string; percent?: number; resets_at?: string | null; scope?: { model?: { display_name?: unknown } | null } | null };
 
 // Claude Code が /usage を開いたときに書く控え（.claude.json の cachedUsageUtilization）
 async function readClaudeCache(claudeDir: string | null): Promise<UsageLimits | null> {
@@ -68,7 +82,10 @@ async function readClaudeCache(claudeDir: string | null): Promise<UsageLimits | 
         ? { label, percent: l.percent, resetsAt: l.resets_at ? Date.parse(l.resets_at) : null }
         : null;
     };
-    const limits = [pick('session', '5時間'), pick('weekly_all', '週')].filter((l): l is UsageLimit => !!l);
+    const models = list
+      .filter((x) => x.kind === 'weekly_scoped' && typeof x.scope?.model?.display_name === 'string' && x.scope.model.display_name && typeof x.percent === 'number')
+      .map((x): UsageLimit => ({ label: '週', model: String(x.scope!.model!.display_name), percent: x.percent!, resetsAt: x.resets_at ? Date.parse(x.resets_at) : null }));
+    const limits = [pick('session', '5時間'), pick('weekly_all', '週'), ...models].filter((l): l is UsageLimit => !!l);
     return limits.length > 0 ? { limits, updatedAt: cache.fetchedAtMs, source: 'claude-cache' } : null;
   } catch {
     return null;

@@ -169,6 +169,17 @@ describe('アカウントと利用枠（AccountPanel）', () => {
     await screen.findByText('Claude Team');
   });
 
+  it('モデル別の週の枠があれば、週の枠の下に、モデルごとのゲージを足す', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T);
+    const limits = [...usage().limits, { label: '週', model: 'Fable', percent: 72, resetsAt: T + 2 * 24 * 60 * 60_000 }];
+    api = mockApi({ 'usage.get': () => Promise.resolve(usage({ limits })), 'account.get': () => Promise.resolve(TEAM) });
+    api.install();
+    render(<AccountPanel />);
+    await screen.findByText('Claude Team');
+    expect(gauges()).toEqual(['usage-gauge low: 5時間42%あと 1時間30分', 'usage-gauge high: 週95%あと 3日0時間', 'usage-gauge mid: 週（Fable）72%あと 2日0時間']);
+  });
+
   it('値もログインも無くても、2 つのゲージを灰色の 0% で出しておき、押すとメニューに理由を出す', async () => {
     render(<AccountPanel />);
     await screen.findByText('ログインしていません');

@@ -1,5 +1,6 @@
 import type { Activity, PermissionMode } from '@shared/screen';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
+import type { UsageLimit } from '@shared/usage';
 import type { PermissionModeName, RateLimitEvent, StreamEventMessage, UsageResponse, UsageWindow } from './protocol';
 
 // stream-json の行から、アプリの表示に使う値を作る小さな関数（SessionManager が使う）
@@ -94,15 +95,22 @@ export function rateLimitsOf(event: RateLimitEvent): StatusLineInfo['rateLimits'
   return { fiveHour: of(windows.five_hour), sevenDay: of(windows.seven_day) };
 }
 
-// get_usage の利用枠（utilization は 0〜100、resets_at は ISO の時刻。実測）。使えなければ null
-export function usageLimitsOf(response: UsageResponse): StatusLineInfo['rateLimits'] {
-  if (!response.rate_limits_available || !response.rate_limits) return null;
-  const of = (w: UsageWindow | undefined): RateLimit | null => {
+// get_usage の利用枠（utilization は 0〜100、resets_at は ISO の時刻。実測）。5 時間枠・週の枠と、モデル別の週の枠。
+// モデル別の枠は、サーバーの一覧（model_scoped）を先に使い、そこに無いモデルだけ、前からある Opus・Sonnet の欄から足す。使えなければ null
+export function usageLimitsOf(response: UsageResponse): UsageLimit[] | null {
+  const limits = response.rate_limits;
+  if (!response.rate_limits_available || !limits) return null;
+  const of = (label: string, w: UsageWindow | undefined, model?: string): UsageLimit | null => {
     if (!w || typeof w.utilization !== 'number') return null;
     const at = w.resets_at ? Date.parse(w.resets_at) : NaN;
-    return { percent: w.utilization, resetsAt: Number.isNaN(at) ? null : at };
+    return { label, ...(model ? { model } : {}), percent: w.utilization, resetsAt: Number.isNaN(at) ? null : at };
   };
-  return { fiveHour: of(response.rate_limits.five_hour), sevenDay: of(response.rate_limits.seven_day) };
+  const models = (Array.isArray(limits.model_scoped) ? limits.model_scoped : [])
+    .filter((m) => typeof m?.display_name === 'string' && m.display_name)
+    .map((m) => of('週', m, m.display_name));
+  const named = new Set(models.filter((m) => m).map((m) => m!.model!.toLowerCase()));
+  const legacy = [of('週', limits.seven_day_opus, 'Opus'), of('週', limits.seven_day_sonnet, 'Sonnet')].filter((m) => m && !named.has(m.model!.toLowerCase()));
+  return [of('5時間', limits.five_hour), of('週', limits.seven_day), ...models, ...legacy].filter((l): l is UsageLimit => !!l);
 }
 
 // 応答のモデルの ID を表示名にする（例: claude-sonnet-5 → Sonnet 5、claude-fable-5-1 → Fable 5.1）。読めなければ null

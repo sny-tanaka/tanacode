@@ -376,6 +376,31 @@ describe('知らせ', () => {
   });
 });
 
+describe('利用枠（get_usage）', () => {
+  it('ターンが終わったら、利用枠（モデル別の週の枠を含む）を get_usage で聞く。聞くのは 5 分に 1 回まで', async () => {
+    app.answers.set('get_usage', {
+      subscription_type: 'max',
+      rate_limits_available: true,
+      rate_limits: { five_hour: { utilization: 42, resets_at: null }, seven_day: { utilization: 10, resets_at: null }, model_scoped: [{ display_name: 'Fable', utilization: 55, resets_at: null }] },
+    });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    for (const text of ['はじめ', 'つぎ']) {
+      await app.prompt(id, text);
+      app.say(id, line.text('はい'));
+      app.finish(id);
+      await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle');
+    }
+    await app.waitFor('利用枠', () => app.usages.length === 1);
+    expect(app.usages[0]).toEqual([
+      { label: '5時間', percent: 42, resetsAt: null },
+      { label: '週', percent: 10, resetsAt: null },
+      { label: '週', model: 'Fable', percent: 55, resetsAt: null },
+    ]);
+    expect(pipe.requests('get_usage')).toHaveLength(1);
+  });
+});
+
 describe('会話のタイトル（generate_session_title）', () => {
   it('最初のターンが終わったあとに 1 回だけ、最初の発言を元に頼む（persist: true）。会話ログに ai-title が書かれたら、一覧に出す', async () => {
     app.answers.set('generate_session_title', { title: 'ログインの修正' });

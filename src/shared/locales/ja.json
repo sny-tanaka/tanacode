@@ -1153,6 +1153,7 @@
     "usage": {
       "fiveHour": "5時間",
       "week": "週",
+      "weekModel": "週（{model}）",
       "unknown": "未取得",
       "reset": "リセット済み",
       "remainingMinutes": "あと {count}分",

@@ -1193,6 +1193,7 @@
     "usage": {
       "fiveHour": "5-hour",
       "week": "Weekly",
+      "weekModel": "Weekly ({model})",
       "unknown": "No data",
       "reset": "Limit reset",
       "remainingMinutes": "Resets in {count}m",
