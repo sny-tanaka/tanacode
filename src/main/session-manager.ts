@@ -228,6 +228,8 @@ type Runtime = {
   arrivedPrompts: Set<string>;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
   turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
+  // 待つ時間が切れて、待っていた行より先にチャットへ出したターンの終わり（その行があとで出たら、そのあとにもう一度出す。次のターンが始まったら捨てる）
+  lateTurnEnd: { waitFor: string; interrupted: boolean } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
@@ -1785,6 +1787,7 @@ export class SessionManager {
         turnPrompt: null,
         arrivedPrompts: new Set(),
         turnEnding: null,
+        lateTurnEnd: null,
         turnStarter: 'other',
         starterSeen: false,
         progress: null,
@@ -1851,6 +1854,7 @@ export class SessionManager {
     runtime.lastTurnLine = null;
     if (runtime.turnEnding) clearTimeout(runtime.turnEnding.timer);
     runtime.turnEnding = null;
+    runtime.lateTurnEnd = null;
     runtime.starterSeen = false;
     runtime.titleRequested = false;
     runtime.settingsPath = settings?.settingsFile ?? null;
@@ -2379,6 +2383,7 @@ export class SessionManager {
     if (rt.turnOpen) return;
     rt.turnOpen = true;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
+    rt.lateTurnEnd = null;
     rt.lastTurnLine = null;
     rt.turnPrompt = null;
     rt.starterSeen = false;
@@ -2407,7 +2412,7 @@ export class SessionManager {
     // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
     const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
     const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
-    rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), this.turnEndWaitMs) };
+    rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
     this.emitSessions();
@@ -2427,6 +2432,14 @@ export class SessionManager {
     const response = await rt.process?.client?.request<UsageResponse>('get_usage', { skip_behaviors: true }).catch(() => null);
     const report = response ? usageLimitsOf(response) : null;
     if (report && report.limits.length > 0) this.listeners.onUsage?.(report, Date.now());
+  }
+
+  // ターンの終わりを待つ時間が切れた。待っていた行を待たずに出し、その行があとで会話ログに出たら、そのあとにもう一度出す（lateTurnEnd）。
+  // 時間が切れるのは、待つ行があるときだけ（無ければ closeTurn がすぐ出して、時計を止める。出したら turnEnding を外して時計を止める）
+  private turnEndTimedOut(id: string, rt: Runtime): void {
+    const ending = rt.turnEnding!;
+    rt.lateTurnEnd = { waitFor: ending.waitFor!, interrupted: ending.interrupted };
+    this.flushTurnEnd(id, rt);
   }
 
   // チャットにターンの終わりを出し、完了を知らせる
@@ -2852,6 +2865,14 @@ export class SessionManager {
     // ターンの最後の応答（応答の前に終わったターンは、始めた発言）が会話ログに出たら、待っていたターンの終わりを出す
     const waitFor = rt?.turnEnding?.waitFor;
     if (rt && waitFor && (entry.uuid === waitFor || arrived === waitFor)) this.flushTurnEnd(id, rt);
+    // 待つ時間が切れて、ターンの終わりのあとに出た行（応答の前に終わったターンの発言など）。そのあとにもう一度ターンの終わりを出す
+    // （チャットで、終わりを行より前に残さない。最適化圧縮は、仕上げの頼みのあとの終わりを待つ）。次のターンが始まったら印を捨てるので、
+    // 出すのはターンの外だけ。完了の知らせ・タイトルの頼みは、もう済んでいるので繰り返さない
+    const late = rt?.lateTurnEnd;
+    if (rt && late && (entry.uuid === late.waitFor || arrived === late.waitFor)) {
+      rt.lateTurnEnd = null;
+      this.pushEvents(id, [late.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+    }
     if (changed) this.emitSessions();
   }
 

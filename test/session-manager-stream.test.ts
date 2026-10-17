@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { handoffText } from '../src/shared/optimized-compact';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // stream-json の行と会話ログの、二重・順番・ターンの終わり（SessionManager。設計書 7 節の「順番と二重の扱い」）。
@@ -171,6 +172,54 @@ describe('ターンの終わりの順番', () => {
     expect(turnEnds(id)).toBe(0);
     await app.waitFor('時間切れ', () => turnEnds(id) === 1);
     expect(app.events(id).some((e) => e.type === 'user')).toBe(false);
+  });
+
+  it('時間切れで終えたあとに、待っていた発言の行が届いたら、その発言のあとにもう一度ターンの終わりを出す（最適化圧縮が、仕上げの頼みのあとの終わりを待ち続けない）', async () => {
+    app.manager.turnEndWaitMs = 50;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, handoffText());
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    await app.waitFor('時間切れ', () => turnEnds(id) === 1);
+    const completed = app.turnsCompleted.length;
+    // 仕上げの頼みの行が、遅れて会話ログに出た
+    app.append(id, { ...line.user(handoffText()), uuid });
+    await app.waitFor('もう一度のターンの終わり', () => turnEnds(id) === 2);
+    const events = app.events(id);
+    const handoff = events.findIndex((e) => e.type === 'notice' && e.compact === 'handoff');
+    expect(handoff).toBeGreaterThan(-1);
+    expect(events.slice(handoff + 1).filter((e) => e.type === 'turn-end')).toEqual([{ type: 'turn-end', interrupted: true }]);
+    expect(events.at(-1)).toEqual({ type: 'turn-end', interrupted: true });
+    expect(app.manager.stateOf(id)).toBe('idle');
+    // 完了の知らせは繰り返さない
+    expect(app.turnsCompleted).toHaveLength(completed);
+    // 作業中に送って、ターンの途中に取り込まれた発言（会話ログには queued_command の attachment で出る）も同じ
+    const queued = await app.send(id, 'これも');
+    pipe.emit(stream.lifecycle(queued, 'started'));
+    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    await app.waitFor('時間切れ', () => turnEnds(id) === 3);
+    const again = app.turnsCompleted.length;
+    app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt: 'これも', source_uuid: queued } });
+    await app.waitFor('もう一度のターンの終わり', () => turnEnds(id) === 4);
+    expect(app.events(id).at(-1)).toEqual({ type: 'turn-end', interrupted: true });
+    expect(app.turnsCompleted).toHaveLength(again);
+  });
+
+  it('時間切れで終えたあと、待っていた発言の行より先に次のターンが始まったら、もう一度は出さない', async () => {
+    app.manager.turnEndWaitMs = 50;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, '仕上げて');
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    await app.waitFor('時間切れ', () => turnEnds(id) === 1);
+    const next = await app.send(id, 'つぎ');
+    pipe.emit(stream.lifecycle(next, 'started'));
+    app.append(id, { ...line.user('仕上げて'), uuid }, { ...line.user('つぎ'), uuid: next });
+    await app.waitFor('2 つの発言', () => app.events(id).filter((e) => e.type === 'user').length === 2);
+    expect(turnEnds(id)).toBe(1);
+    expect(app.manager.stateOf(id)).toBe('working');
   });
 
   it('Claude Code の中で済むコマンド（/clear・/compact。モデルを呼ばず num_turns が 0）のターンは、終えるが、完了を知らせない', async () => {

@@ -524,7 +524,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - `question`・`permission`: 答えを待っている `can_use_tool`（AskUserQuestion は question、ほかは permission）
   - `terminal`: ターミナルモード（人が TUI で操作している）
   - `background`・`idle`・`exited`・`archived`
-  - ターンの終わりは `result` で決めます。チャットに turn-end を出すのは、そのターンの最後の応答の uuid が会話ログに出てからです（3 秒まで待つ。`TURN_END_WAIT_MS`）。`result` は会話ログより先に届くので、先に出すと、実行中のツールをいったんエラーにしてしまうためです（`chatState.ts`）。会話ログのターンの終わりの行は、チャットの今のターンでは使いません。読み直した履歴と、ターミナルモード（`result` が来ない）では、会話ログから turn-end を出します。
+  - ターンの終わりは `result` で決めます。チャットに turn-end を出すのは、そのターンの最後の応答の uuid が会話ログに出てからです（3 秒まで待つ。`TURN_END_WAIT_MS`）。`result` は会話ログより先に届くので、先に出すと、実行中のツールをいったんエラーにしてしまうためです（`chatState.ts`）。応答の前に終わったターン（中断・失敗）は、そのターンを始めた発言（`command_lifecycle` の started の uuid）が会話ログに出るのを待ちます（先に出すと、チャットで終わりが発言より前に並び、最適化圧縮が仕上げの頼みのあとの終わりを待ち続けるため）。待つ時間が切れて先に出したあとで、待っていた行が出たら、次のターンが始まっていなければ、その行のあとにもう一度 turn-end を出します（`lateTurnEnd`。完了の知らせ・タイトルの頼みは繰り返さない）。会話ログのターンの終わりの行は、チャットの今のターンでは使いません。読み直した履歴と、ターミナルモード（`result` が来ない）では、会話ログから turn-end を出します。
     - 中断で終わったかは、`result` の `terminal_reason`（`aborted_…`）で見ます。
     - Claude Code の中で済むコマンド（`/clear`・`/compact` など。モデルを呼ばず `num_turns` が 0。実測）の `result` では、ターンを終えますが、完了を知らせません（最適化圧縮の `/clear` で「作業が完了しました」が鳴らないように）。
     - 会話ログに残らない失敗（ターン数・予算の上限など）は、`result` の `errors` をチャットに出します。
