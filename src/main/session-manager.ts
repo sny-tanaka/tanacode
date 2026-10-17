@@ -171,7 +171,8 @@ type Runtime = {
   permissionAt: number | null;
   // 何も出力しなかったフック（hook_response）をチャットに出すための控え（quietHook）。hookStarts: 始まった時刻（hook_id → 時刻）/
   // streamTools: stream で見た、結果がまだ来ていないツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
-  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフック（ツールの呼び出しの ID → イベント）
+  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフックと、まだ会話に出ていない発言のときのフック
+  // （ツールの呼び出しの ID・送った発言の uuid → イベント）
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
   shownTools: Set<string>;
@@ -2500,8 +2501,14 @@ export class SessionManager {
       hookId: message.hook_id,
     };
     const event: ChatEvent = { type: 'hook', id: `hook:${message.hook_id}`, run };
-    if (tool && !rt.shownTools.has(tool.id)) {
-      rt.heldHooks.set(tool.id, [...(rt.heldHooks.get(tool.id) ?? []), event]);
+    // 発言のときのフックは、その発言の行が会話ログからチャットに出るまで待たせる（発言を会話ログに書く前に動くので、すぐ出すと、
+    // 発言の上の、前のターンの続きに見える。2.1.302 で実測）。待つのは、今のターンに取り込まれた送った発言（command_lifecycle の
+    // started）。分からないもの（スマホからの発言など）はすぐ出す。発言が会話に出ないまま終わったら（フックが止めたなど）、
+    // ターンの終わりの前に出す（flushTurnEnd）
+    const prompt = message.hook_event === 'UserPromptSubmit' && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    const holdFor = tool && !rt.shownTools.has(tool.id) ? tool.id : prompt;
+    if (holdFor) {
+      rt.heldHooks.set(holdFor, [...(rt.heldHooks.get(holdFor) ?? []), event]);
       return;
     }
     this.pushEvents(id, [event]);
@@ -2519,8 +2526,13 @@ export class SessionManager {
   private shownTool(rt: Runtime, toolUseId: string): ChatEvent[] {
     rt.shownTools.add(toolUseId);
     if (rt.shownTools.size > MAX_SHOWN_TOOLS) rt.shownTools.delete(rt.shownTools.values().next().value!);
-    const held = rt.heldHooks.get(toolUseId) ?? [];
-    rt.heldHooks.delete(toolUseId);
+    return this.takeHeld(rt, toolUseId);
+  }
+
+  // 待たせていたフック（ツールの呼び出しの ID・送った発言の uuid のもの）を取り出す
+  private takeHeld(rt: Runtime, key: string): ChatEvent[] {
+    const held = rt.heldHooks.get(key) ?? [];
+    rt.heldHooks.delete(key);
     return held;
   }
 
@@ -2856,8 +2868,11 @@ export class SessionManager {
         rt.starterSeen = true;
       }
     }
-    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける
+    // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
+    const arrived = rt && !past ? sentUuidOf(entry) : null;
+    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける。送った発言の行には、発言のときのフックを付ける
     if (rt) events = events.flatMap((e) => (e.type === 'tool-use' ? [e, ...this.shownTool(rt, e.id)] : [e]));
+    if (rt && arrived) events = [...events, ...this.takeHeld(rt, arrived)];
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
       this.pushEvents(id, events, !isHistory);
@@ -2868,9 +2883,7 @@ export class SessionManager {
         if (!wasFirst) changed = true;
       }
     }
-    // 送った発言が会話に出たら、送信中の表示から外す（発言の行、作業中に送ったものは queued_command の attachment）。
-    // 発言を出してから外す（先に外すと、一瞬どちらにも出ない）
-    const arrived = rt && !past ? sentUuidOf(entry) : null;
+    // 送った発言が会話に出たら、送信中の表示から外す（発言を出してから外す。先に外すと、一瞬どちらにも出ない）
     if (rt && arrived) {
       rt.arrivedPrompts.add(arrived);
       if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);

@@ -657,6 +657,36 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     expect(kinds.indexOf('hook:h4')).toBeGreaterThan(kinds.indexOf('tool:toolu_a'));
   });
 
+  it('発言のとき（UserPromptSubmit）のフックは、その発言がチャットに出てから、そのすぐあとに出す（発言の上の、前のターンの続きに見せない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, 'はじめ');
+    // Claude Code 2.1.302 の順番（実測）: 取り込まれた知らせ（started）→ フック → 会話ログの発言の行
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(started('h1', 'UserPromptSubmit'));
+    pipe.emit(response('h1', 'UserPromptSubmit'));
+    pipe.emit(started('h2', 'UserPromptSubmit'));
+    pipe.emit(response('h2', 'UserPromptSubmit'));
+    expect(hooks(id)).toEqual([]);
+    app.append(id, { ...line.user('はじめ'), uuid });
+    await app.waitFor('フック', () => hooks(id).length === 2);
+    const kinds = types(id);
+    const user = kinds.indexOf('user');
+    expect(kinds.slice(user, user + 3)).toEqual(['user', 'hook', 'hook']);
+  });
+
+  it('発言のときのフックが発言を止めた（発言が会話に出ないまま、モデルを呼ばずに終わった）ときは、待たせていたフックをターンの終わりの前に出す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, 'ブロックして');
+    // 2.1.302 の順番（実測）: started → フック（止めたものは失敗）→ result（num_turns 0・success）
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit(response('h1', 'UserPromptSubmit'));
+    pipe.emit(response('h2', 'UserPromptSubmit', { outcome: 'error', exit_code: 2, stderr: '止めました' }));
+    app.finish(id, { num_turns: 0, terminal_reason: null });
+    expect(types(id).slice(-2)).toEqual(['hook', 'turn-end']);
+  });
+
   it('ツールに付かないフック（発言のとき・起動のとき）は、そのまま出す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
