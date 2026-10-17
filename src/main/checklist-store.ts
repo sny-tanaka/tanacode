@@ -27,12 +27,15 @@ export class ChecklistStore extends ChecklistBook {
     super(onChange, clock);
   }
 
-  // セッションを一覧から消した。チェックリストも消す
+  // セッションを一覧から消した。チェックリストも消す。ただし、保存しないファイル（読めない・形の分からないもの）は消さない
+  // （本物の中身を失わないため）。この起動でまだ読んでいなければ、消す前に読んで確かめる（読んだかどうかで、消すかが変わらないように。
+  // 壊れたものは、読むときと同じく横に移る）
   remove(sessionId: string): void {
     clearTimeout(this.timers.get(sessionId));
     this.timers.delete(sessionId);
-    this.docs.delete(sessionId);
-    if (!this.unsaved.delete(sessionId)) rmSync(this.file(sessionId), { force: true });
+    const loaded = this.docs.delete(sessionId);
+    if (this.unsaved.delete(sessionId) || (!loaded && !this.read(sessionId).writable)) return;
+    rmSync(this.file(sessionId), { force: true });
   }
 
   // 変更を保存しないセッションか（画面の知らせと、Claude への一言に使う）。まだ読んでいないセッションは false
@@ -49,19 +52,25 @@ export class ChecklistStore extends ChecklistBook {
   }
 
   protected override load(sessionId: string): ChecklistDoc {
-    const file = this.file(sessionId);
-    let { data, writable } = readSavedJson(file, 'チェックリスト');
-    const raw = data as Partial<ChecklistDoc> | null;
-    if (raw && raw.version === 1 && Array.isArray(raw.lists)) {
-      return { version: 1, lists: raw.lists, activity: Array.isArray(raw.activity) ? raw.activity : [], claudeSeenAt: raw.claudeSeenAt ?? 0 };
-    }
-    if (data !== null) ({ writable } = unreadable(file, 'チェックリスト'));
+    const { doc, writable } = this.read(sessionId);
     if (!writable) {
       this.unsaved.add(sessionId);
       // 読んでいる途中（書き換えや一覧の読み出しの中）で知らせないよう、読み終えてから
       queueMicrotask(() => this.onUnsaved(sessionId));
     }
-    return emptyChecklistDoc();
+    return doc;
+  }
+
+  // ファイルを読む。writable: 保存してよいか（読めない・形の分からないものは false。そのときの doc は空）
+  private read(sessionId: string): { doc: ChecklistDoc; writable: boolean } {
+    const file = this.file(sessionId);
+    let { data, writable } = readSavedJson(file, 'チェックリスト');
+    const raw = data as Partial<ChecklistDoc> | null;
+    if (raw && raw.version === 1 && Array.isArray(raw.lists)) {
+      return { doc: { version: 1, lists: raw.lists, activity: Array.isArray(raw.activity) ? raw.activity : [], claudeSeenAt: raw.claudeSeenAt ?? 0 }, writable };
+    }
+    if (data !== null) ({ writable } = unreadable(file, 'チェックリスト'));
+    return { doc: emptyChecklistDoc(), writable };
   }
 
   protected override save(sessionId: string): void {

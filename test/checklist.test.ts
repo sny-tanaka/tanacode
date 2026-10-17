@@ -189,6 +189,33 @@ describe('保存と書き換え（ChecklistStore）', () => {
     expect(readFileSync(future, 'utf8')).toBe(futureText);
   });
 
+  it('一覧から削除するとき、この起動でまだ読んでいないセッションでも、読めない・形の分からないファイルは消さない。読めるものは消し、壊れたものは横に移す', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const future = join(dir, 'future.json');
+    const futureText = JSON.stringify({ version: 2, lists: [{ name: '新しい形' }] });
+    writeFileSync(future, futureText);
+    const locked = join(dir, 'locked.json');
+    const lockedText = JSON.stringify({ version: 1, lists: [] });
+    writeFileSync(locked, lockedText);
+    chmodSync(locked, 0o000);
+    writeFileSync(join(dir, 'plain.json'), JSON.stringify({ version: 1, lists: [] }));
+    writeFileSync(join(dir, 'broken.json'), '{壊れた');
+    const fresh = new ChecklistStore(dir);
+    const unsaved: string[] = [];
+    fresh.onUnsaved = (id) => unsaved.push(id);
+    for (const id of ['future', 'locked', 'plain', 'broken', 'none']) fresh.remove(id);
+    chmodSync(locked, 0o600);
+    expect(readFileSync(future, 'utf8')).toBe(futureText);
+    expect(readFileSync(locked, 'utf8')).toBe(lockedText);
+    const left = readdirSync(dir).sort();
+    expect(left.filter((name) => !name.startsWith('broken.json.broken-'))).toEqual(['future.json', 'locked.json']);
+    expect(left.filter((name) => name.startsWith('broken.json.broken-')).map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
+    // 削除するセッションのことは、画面に知らせない
+    await Promise.resolve();
+    expect(unsaved).toEqual([]);
+    errors.mockRestore();
+  });
+
   it('Claude に伝える人の書き換えは、Claude が前に呼んだあとのものだけ', () => {
     const list = store.createList(ME, 'human', 'やること', '');
     expect(store.takeHumanActivity(ME)).toEqual(['The user created the list "やること"']);
