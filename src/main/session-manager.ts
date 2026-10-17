@@ -1574,6 +1574,8 @@ export class SessionManager {
     try {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
+        // 待つ間にアーカイブ・一覧から削除した（止めた claude からは終わりの知らせが来ず、受け付けるようにもならない）
+        if (this.runtimes.get(id) !== rt) throw new Error(t('main.send.exited'));
         // 再起動の途中なら、起動し直した claude を待つ
         if (rt.restarting) {
           await rt.restarting.done;

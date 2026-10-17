@@ -366,6 +366,29 @@ describe('権限モードと起動し直し', () => {
     expect(pipe.prompts).toEqual([]);
   });
 
+  it('restart: 止めている途中にアーカイブしたら、起動を待って送るもの（親の指示・予約）も、待ち続けずに失敗する', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    const sent = app.manager.submitWhenReady(id, '親からの指示', 60_000);
+    await app.manager.archive(id);
+    pipe.exit(0);
+    await restarting;
+    await expect(sent).rejects.toThrow('Claude Code が終了しました');
+    expect(pipe.prompts).toEqual([]);
+  });
+
+  it('起動を待って送るもの（親の指示・予約）は、起動を待つ間にアーカイブしたら、待ち続けずに失敗する', async () => {
+    app.answers.set('initialize', null);
+    const { id, pipe } = app.create();
+    const sent = app.manager.submitWhenReady(id, '親からの指示', 60_000);
+    await app.manager.archive(id);
+    await expect(sent).rejects.toThrow('Claude Code が終了しました');
+    expect(pipe.prompts).toEqual([]);
+  });
+
   it('restart: 受け付けるのを待つ間にアーカイブしたら、待ちきるのを待たずに失敗する', async () => {
     app.answers.set('initialize', null);
     const { id, pipe } = app.create();

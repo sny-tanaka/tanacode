@@ -653,7 +653,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 送った発言は、すぐチャットに出し（送信中・順番待ち）、会話ログに書かれたら本物に置き換えます。
   - 送るのは main の `SessionManager.submit`（IPC `sessions:submit`）。stream-json の `user` の行を 1 つ書きます。アプリが `uuid` を付け、受け付けの知らせ（`command_lifecycle`。queued・started・completed・cancelled・discarded）と会話ログの行を、同じ `uuid` で追います（`Runtime.unsent`。画面には `queue` のイベントで、送信中と順番待ちを知らせる）。どちらも来ないまま 30 秒たったら、送信中から外します（`SENDING_TIMEOUT_MS`）。
   - 作業中に送った発言は、`priority` を付けずに送ります。Claude Code は、走っているターンに取り込みます（「The user sent a new message while you were working」。TUI に打ったときと同じ。実測）。取り込まれるまでは順番待ち（queued）です。
-  - 親からの指示・アプリの知らせ・予約・最適化圧縮の文は、`SessionManager.submitWhenReady` が `priority: "later"` で送ります。今のターンには入らず、ターンが終わってから別のターンになります（実測）。起動の途中なら、受け付けられるようになるまで待ってから送ります。
+  - 親からの指示・アプリの知らせ・予約・最適化圧縮の文は、`SessionManager.submitWhenReady` が `priority: "later"` で送ります。今のターンには入らず、ターンが終わってから別のターンになります（実測）。起動の途中なら、受け付けられるようになるまで待ってから送ります。待つ間にアーカイブ・一覧から削除したら、待つのをやめて失敗します（止めた claude からは終わりの知らせが来ないため。呼び出し側の上限は、予約では無く、親の指示では最大 3 時間）。
   - 同じセッションへの送信は、セッションごとの順番（`sendChain`）で 1 つずつ書きます（画像を読む間に、あとから送ったものが追い越さないように）。
   - スラッシュコマンドは、送信中に出しません（発言として会話に残らないものが多いため）。発言でないもの（子セッション・予約・チェックリストの知らせや、最適化圧縮の文）も出しませんが、会話に出るまでは作業中に数えます（`unsentView`）。
   - ターミナルモードの間と、切り替えの途中は、チャットから送りません（理由を返して断る）。
