@@ -6,7 +6,24 @@ import { IpcChannel } from '@shared/ipc';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
-import { argsOf, boot, cleanup, fakeEvent, githubModule, invoke, mainWindow, manager, sendFromRenderer, sentToRenderer, setSystemVersion, state, the } from './helpers/main-app';
+import {
+  argsOf,
+  boot,
+  cleanup,
+  fakeEvent,
+  FakeWebContents,
+  githubModule,
+  invoke,
+  invokeWith,
+  mainWindow,
+  manager,
+  sendFromRenderer,
+  sendWith,
+  sentToRenderer,
+  setSystemVersion,
+  state,
+  the,
+} from './helpers/main-app';
 
 // アプリの入り口（src/main/index.ts）の、画面からの呼び出し・知らせの受け口（registerIpc）。
 // Electron と重い部品を作り物にして index.ts を読み込み（test/helpers/main-app.ts）、受け口を画面の代わりに呼んで、
@@ -26,6 +43,56 @@ describe('受け口の登録', () => {
     await boot();
     expect([...state.handlers.keys()].sort()).toEqual(invokes.map((e) => e.channel).sort());
     expect([...state.listeners.keys()].sort()).toEqual(sends.map((e) => e.channel).sort());
+  });
+});
+
+describe('送り元', () => {
+  const NOT_FROM_APP = 'アプリの画面からの呼び出しではありません';
+
+  it('アプリの画面のメインフレームからの呼び出しと知らせだけを受ける。中のフレーム・アプリの画面でないもの・アプリの外の URL・フレームの分からないものは受けない', async () => {
+    await boot();
+    const contents = mainWindow().webContents;
+    const open = (sender: unknown, senderFrame: { url: string; parent: unknown } | null) =>
+      invokeWith({ sender, senderFrame: senderFrame as never }, IpcChannel.SessionsOpen, 's1');
+    await expect(open(contents, contents.mainFrame)).resolves.toEqual(call('manager.open', 's1'));
+    // 画面の中のフレーム（iframe）
+    await expect(open(contents, { url: contents.url, parent: contents.mainFrame })).rejects.toThrow(NOT_FROM_APP);
+    // フレームが分からない（呼び出しの途中で、フレームが消えた・移った）
+    await expect(open(contents, null)).rejects.toThrow(NOT_FROM_APP);
+    // アプリの画面のメインフレームが、アプリの外のページになっている
+    await expect(open(contents, { url: 'https://example.com/', parent: null })).rejects.toThrow(NOT_FROM_APP);
+    await expect(open(contents, { url: 'file:///tmp/index.html', parent: null })).rejects.toThrow(NOT_FROM_APP);
+    // アプリの画面でないもの（アプリ内ブラウザのページなど）
+    const guest = new FakeWebContents();
+    guest.type = 'webview';
+    guest.url = contents.url;
+    await expect(open(guest, guest.mainFrame)).rejects.toThrow(NOT_FROM_APP);
+    expect(manager().open.mock.calls).toEqual([['s1']]);
+    // プロファイルを見ない受け口も同じ
+    await expect(invokeWith({ sender: contents, senderFrame: { url: contents.url, parent: contents.mainFrame } }, IpcChannel.ProfilesAdd, { name: 'x', claudeDir: '/tmp/x' })).rejects.toThrow(NOT_FROM_APP);
+    // 知らせ: 中のフレームからのものは何もしない
+    sendWith({ sender: contents, senderFrame: { url: contents.url, parent: contents.mainFrame } }, IpcChannel.SessionsInterrupt, 's1');
+    sendWith({ sender: guest, senderFrame: guest.mainFrame }, IpcChannel.SessionsInterrupt, 's1');
+    expect(manager().interrupt).not.toHaveBeenCalled();
+    sendWith({ sender: contents, senderFrame: contents.mainFrame }, IpcChannel.SessionsInterrupt, 's1');
+    expect(manager().interrupt.mock.calls).toEqual([['s1']]);
+  });
+
+  it('どの受け口も、送り元を確かめてから中を動かす', async () => {
+    await boot();
+    const contents = mainWindow().webContents;
+    const sub = { url: contents.url, parent: contents.mainFrame };
+    for (const channel of state.handlers.keys()) await expect(invokeWith({ sender: contents, senderFrame: sub }, channel), channel).rejects.toThrow(NOT_FROM_APP);
+    for (const channel of state.listeners.keys()) expect(sendWith({ sender: contents, senderFrame: sub }, channel), channel).toBeUndefined();
+    expect(manager().interrupt).not.toHaveBeenCalled();
+    expect(the('ShellTerminals').write).not.toHaveBeenCalled();
+  });
+
+  it('開発中は、開発サーバーの画面（同じオリジン）から受ける', async () => {
+    await boot({ before: () => (process.env.ELECTRON_RENDERER_URL = 'http://localhost:5173') });
+    const contents = mainWindow().webContents;
+    await expect(invokeWith({ sender: contents, senderFrame: { url: 'http://localhost:5173/#x', parent: null } }, IpcChannel.SessionsOpen, 's1')).resolves.toEqual(call('manager.open', 's1'));
+    await expect(invokeWith({ sender: contents, senderFrame: { url: 'http://localhost:5174/', parent: null } }, IpcChannel.SessionsOpen, 's1')).rejects.toThrow(NOT_FROM_APP);
   });
 });
 
@@ -244,11 +311,11 @@ describe('フォルダ（新規セッションの画面）', () => {
     await expect(invoke(IpcChannel.FolderOpen, other)).rejects.toThrow('フォルダを開けません');
   });
 
-  it('主ウインドウが無いときは、ダイアログを単独で出す', async () => {
+  it('主ウインドウを閉じたあとに、閉じた画面から届いた呼び出しは受けない（ダイアログを出さない）', async () => {
     await boot();
     mainWindow().emit('closed');
-    await invoke(IpcChannel.FolderPick);
-    expect(state.dialog.showOpenDialog.mock.calls[0]).toEqual([{ title: '作業するフォルダを選択', properties: ['openDirectory', 'createDirectory'] }]);
+    await expect(invoke(IpcChannel.FolderPick)).rejects.toThrow('アプリの画面からの呼び出しではありません');
+    expect(state.dialog.showOpenDialog).not.toHaveBeenCalled();
   });
 
   it('フォルダの情報は、フォルダがあるときだけ読む', async () => {
@@ -563,13 +630,14 @@ describe('作業の書き出し', () => {
     expect(state.shell.showItemInFolder.mock.calls).toEqual([[target]]);
   });
 
-  it('主ウインドウが無いときは、ダイアログを単独で出す。保存先が無ければ保存しない', async () => {
+  it('保存先が無ければ保存しない。主ウインドウを閉じたあとに、閉じた画面から届いた呼び出しは受けない', async () => {
     await boot();
-    mainWindow().emit('closed');
     state.dialog.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: undefined });
     await expect(invoke(IpcChannel.SessionsExportSave, '<html></html>', '作業')).resolves.toBeNull();
-    expect(state.dialog.showSaveDialog.mock.calls[0]).toHaveLength(1);
-    expect(state.dialog.showSaveDialog.mock.calls[0][0]).toMatchObject({ defaultPath: join(state.downloads, '作業.html') });
+    expect(state.dialog.showSaveDialog.mock.calls[0][1]).toMatchObject({ defaultPath: join(state.downloads, '作業.html') });
+    mainWindow().emit('closed');
+    await expect(invoke(IpcChannel.SessionsExportSave, '<html></html>', '作業')).rejects.toThrow('アプリの画面からの呼び出しではありません');
+    expect(state.dialog.showSaveDialog).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -779,9 +847,6 @@ describe('通知・モデル・翻訳', () => {
     // キャンセルしたら、パスが返ってきても使わない
     state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: ['/Users/me/.claude/work.json'] });
     await expect(invoke(IpcChannel.SettingsFilesPick)).resolves.toBeNull();
-    mainWindow().emit('closed');
-    await invoke(IpcChannel.SettingsFilesPick);
-    expect(state.dialog.showOpenDialog.mock.calls.at(-1)).toEqual([options]);
   });
 });
 

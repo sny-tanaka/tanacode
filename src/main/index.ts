@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
@@ -191,15 +192,41 @@ function broadcastProfiles(force = false): void {
   }
 }
 
+// 画面からの呼び出しと知らせは、どれもここで受け口を登録する。アプリの画面のメインフレームから来たものだけを受ける
 function handle<C extends keyof IpcInvoke>(
   channel: C,
   listener: (event: IpcMainInvokeEvent, ...args: Parameters<IpcInvoke[C]>) => ReturnType<IpcInvoke[C]> | Awaited<ReturnType<IpcInvoke[C]>>,
 ): void {
-  ipcMain.handle(channel, listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+  const run = listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!fromApp(event)) throw new Error(t('main.error.notFromApp'));
+    return run(event, ...args);
+  });
 }
 
 function listen<C extends keyof IpcSend>(channel: C, listener: (event: IpcMainEvent, ...args: Parameters<IpcSend[C]>) => void): void {
-  ipcMain.on(channel, listener as (event: IpcMainEvent, ...args: unknown[]) => void);
+  const run = listener as (event: IpcMainEvent, ...args: unknown[]) => void;
+  ipcMain.on(channel, (event, ...args) => {
+    if (fromApp(event)) run(event, ...args);
+  });
+}
+
+// アプリの画面（主ウインドウと、足したプロファイルの画面）のメインフレームで、アプリの画面を開いているものから来たか。
+// 中のフレーム・アプリ内ブラウザのページ・アプリの画面でなくなったもの（フレームが分からないものも）からは受けない
+function fromApp(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame;
+  return !!frame && !frame.parent && isAppContents(event.sender) && isAppUrl(frame.url);
+}
+
+// アプリの画面の URL か。ビルドした画面のファイルか、開発中は開発サーバー（同じオリジン）
+function isAppUrl(url: string): boolean {
+  try {
+    const dev = process.env.ELECTRON_RENDERER_URL;
+    if (dev) return new URL(url).origin === new URL(dev).origin;
+    return url.startsWith('file:') && fileURLToPath(url) === APP_HTML;
+  } catch {
+    return false;
+  }
 }
 
 // 前に閉じたときのウインドウの位置と大きさ。次の起動で同じところに開く
@@ -273,12 +300,15 @@ function createWindow(): void {
   for (const id of opened.keys()) if (id !== DEFAULT_PROFILE_ID) attachView(id);
 }
 
+// ビルドした画面のファイル
+const APP_HTML = join(__dirname, '../renderer/index.html');
+
 // アプリの画面を読み込む（主ウインドウか、足したプロファイルの画面）
 function loadApp(target: Pick<WebContents, 'loadURL' | 'loadFile'>): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void target.loadFile(join(__dirname, '../renderer/index.html'));
+    void target.loadFile(APP_HTML);
   }
 }
 

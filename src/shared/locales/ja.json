@@ -14,7 +14,8 @@
       "nothingToExport": "書き出す中身がありません",
       "folderNotFound": "フォルダが見つかりません: {path}",
       "folderCannotOpen": "フォルダを開けません: {path}",
-      "ptyHostUnreachable": "pty ホストに繋がりません: {path}"
+      "ptyHostUnreachable": "pty ホストに繋がりません: {path}",
+      "notFromApp": "アプリの画面からの呼び出しではありません"
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",

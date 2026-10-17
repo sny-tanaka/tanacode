@@ -14,7 +14,8 @@
       "nothingToExport": "Nothing to export",
       "folderNotFound": "Folder not found: {path}",
       "folderCannotOpen": "Can't open folder: {path}",
-      "ptyHostUnreachable": "Can't connect to the pty host: {path}"
+      "ptyHostUnreachable": "Can't connect to the pty host: {path}",
+      "notFromApp": "This call didn't come from the app window"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",
