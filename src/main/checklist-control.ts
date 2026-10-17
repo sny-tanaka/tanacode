@@ -55,7 +55,7 @@ type Notice = { text: string; refs: CardRef[]; byHuman: boolean };
 const MAX_RESULT_CHARS = 60_000;
 // チェックリストのファイルを読めず、変更を保存しないセッションの結果に添える一言
 const UNSAVED_NOTE =
-  "Note: tanacode could not read this session's saved checklist file (no permission, or written by a newer version of tanacode), so these checklists are not saved: changes are lost when tanacode quits. The original file is kept as it is. Tell the user.";
+  "Note: tanacode could not read this session's saved checklist file (no permission, or written by a newer version of tanacode), so these checklists are not saved: changes are lost when tanacode quits. The original file is kept as it is. Tell the user (this note is given only once, not in every result).";
 
 // 発言の行の時刻（Claude Code が会話ログに書く）と、人の発言のフックがアプリに届いた時刻の、ずれの見込み
 const PROMPT_SLACK_MS = 5000;
@@ -66,6 +66,9 @@ export class ChecklistControl {
   // ターンの終わりのフックが読んだ会話ログが、最後の応答までそろっていなかったときに使う（reminder）
   private readonly usedAt = new Map<string, number>();
   private readonly promptedAt = new Map<string, number>();
+  // 保存しないことを結果に添えた、呼んだセッションと対象のセッションの組（\0 でつなぐ）。Claude が呼ぶたびに人へ伝え直さないよう、
+  // 組ごとに最初の 1 回だけ添える（画面のチェックリストにも「保存できません」が出ている）
+  private readonly unsavedNoted = new Set<string>();
 
   constructor(private readonly deps: Deps) {
     this.notices = new SessionNotices({
@@ -186,8 +189,13 @@ export class ChecklistControl {
   // 対象のセッション（session_id）を決めてから実行する。ほかのセッションのものは、結果と断る文の頭にセッションを書く
   private runFor(caller: SessionSummary, name: string, args: Record<string, unknown>): string {
     const target = this.targetArg(caller, name, args.session_id);
-    // チェックリストのファイルを読めず、変更を保存しないセッションなら、そう添える（人に伝えてもらう）
-    const unsaved = (text: string) => (this.deps.store.unsavable(target.id) ? `${text}\n\n${UNSAVED_NOTE}` : text);
+    // チェックリストのファイルを読めず、変更を保存しないセッションなら、そう添える（人に伝えてもらう。最初の 1 回だけ）
+    const unsaved = (text: string) => {
+      const key = `${caller.id}\0${target.id}`;
+      if (!this.deps.store.unsavable(target.id) || this.unsavedNoted.has(key)) return text;
+      this.unsavedNoted.add(key);
+      return `${text}\n\n${UNSAVED_NOTE}`;
+    };
     if (target.id === caller.id) return unsaved(this.run(caller, target, name, args));
     const where = `Session "${nameOf(target)}" (${target.id.slice(0, 8)})`;
     try {

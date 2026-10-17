@@ -2846,7 +2846,7 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(jsonOf<Listed>(await control.handle(PEER, 'list_wakeups', {}))).toMatchObject({ messages: [], note: 'No messages are scheduled in this session.' });
   });
 
-  it('予約のファイルを読めず保存しないときは、schedule_wakeup・list_wakeups の結果にそう添える', async () => {
+  it('予約のファイルを読めず保存しないときは、schedule_wakeup・list_wakeups の結果にそう添える（セッションごとに最初の 1 回だけ）', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     scheduled!.dispose();
     const file = join(root, 'unreadable-scheduled.json');
@@ -2854,7 +2854,12 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     scheduled = new ScheduledMessages(file, scheduleHost(), () => undefined);
     const note = 'scheduled messages are not saved';
     expect(jsonOf<{ note: string }>(await schedule({ message: '見に行く', in_minutes: 5 })).note).toContain(note);
-    expect(jsonOf<{ note?: string }>(await control.handle(PARENT, 'list_wakeups', {})).note).toContain(note);
+    // 同じセッションには繰り返さない（Claude が呼ぶたびに人へ伝え直さないように。画面にも出ている）
+    expect(jsonOf<{ note?: string }>(await control.handle(PARENT, 'list_wakeups', {}))).not.toHaveProperty('note');
+    expect(jsonOf<{ note: string }>(await schedule({ message: 'もう一度', in_minutes: 5 })).note).not.toContain(note);
+    // ほかのセッションには 1 回
+    expect(jsonOf<{ note: string }>(await control.handle(PEER, 'list_wakeups', {})).note).toContain(note);
+    expect(jsonOf<{ note: string }>(await control.handle(PEER, 'list_wakeups', {})).note).toBe('No messages are scheduled in this session.');
     errors.mockRestore();
   });
 

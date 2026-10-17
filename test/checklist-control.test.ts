@@ -816,7 +816,7 @@ describe('画面からのコピー（知らせの中身）', () => {
 });
 
 describe('チェックリストのファイルを読めず、保存しないセッション', () => {
-  it('結果に、保存しないことを一言添える（ほかのセッションのものを扱うときも）。ふつうのセッションには添えない', async () => {
+  it('結果に、保存しないことを一言添える（ほかのセッションのものを扱うときも）。呼んだセッションと対象ごとに最初の 1 回だけ。ふつうのセッションには添えない', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     // 新しいバージョンのアプリが書いた形（読めても、上書きしない）
     writeFileSync(join(dir, `${PEER}.json`), JSON.stringify({ version: 2, lists: [] }));
@@ -825,8 +825,12 @@ describe('チェックリストのファイルを読めず、保存しないセ�
     host.add(CHILD, { parentId: ME });
     writeFileSync(join(dir, `${CHILD}.json`), JSON.stringify({ version: 2, lists: [] }));
     expect(first(await call('checklist_overview', {}, PEER))).toContain(note);
-    expect(first(await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] }, PEER))).toContain(note);
+    // 同じセッションには繰り返さない（Claude が呼ぶたびに人へ伝え直さないように。画面にも出ている）
+    expect(first(await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] }, PEER))).not.toContain(note);
     expect(first(await call('card_add', { session_id: CHILD, list: 'やること', list_description: '', cards: [{ title: 'A' }] }))).toContain(note);
+    expect(first(await call('card_add', { session_id: CHILD, list: 'やること', cards: [{ title: 'B' }] }))).not.toContain(note);
+    // 子が自分で呼んだときは、子に 1 回
+    expect(first(await call('checklist_overview', {}, CHILD))).toContain(note);
     expect(first(await call('checklist_overview'))).not.toContain(note);
     errors.mockRestore();
   });
