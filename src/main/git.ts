@@ -25,15 +25,39 @@ export function userGit(cwd: string, args: string[], input?: string, env?: Recor
 
 // cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）
 function runGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
+  return runGitBytes(cwd, args, input, env).then((out) => out.toString('utf8'));
+}
+
+// runGit と同じ。標準出力は、文字に直さずにバイトのまま返す
+function runGitBytes(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const options = { cwd, maxBuffer: MAX_BUFFER, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env } };
+    const options = { cwd, maxBuffer: MAX_BUFFER, encoding: 'buffer' as const, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env } };
     const child = execFile('git', args, options, (err, stdout, stderr) => {
-      if (err) reject(new GitError((stderr || err.message).trim()));
+      if (err) reject(new GitError((stderr.toString('utf8') || err.message).trim()));
       else resolve(stdout);
     });
     // 渡すものが無ければ、標準入力はすぐ閉じる（何かが標準入力からの入力を待っても、待ち続けずに失敗させる）
     child.stdin?.end(input);
   });
+}
+
+// バイト列を separator で分ける（文字列の split と同じく、最後の区切りの後ろの空のものも返す）
+function splitBytes(bytes: Buffer, separator: number): Buffer[] {
+  const parts: Buffer[] = [];
+  let start = 0;
+  for (let at = bytes.indexOf(separator); at >= 0; at = bytes.indexOf(separator, start)) {
+    parts.push(bytes.subarray(start, at));
+    start = at + 1;
+  }
+  parts.push(bytes.subarray(start));
+  return parts;
+}
+
+// バイト列を、同じバイト列に戻せる文字列にする。UTF-8 として読めないものは null（Node は引数・環境変数・パスを UTF-8 で渡すので、
+// 文字列にすると別の名前・場所になる）
+function exactText(bytes: Buffer): string | null {
+  const text = bytes.toString('utf8');
+  return Buffer.from(text, 'utf8').equals(bytes) ? text : null;
 }
 
 // 打ち消す設定を読み直す間隔（ソース管理パネルは、状態を何度も読むため）
@@ -54,7 +78,8 @@ const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process(
 // - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
 // - 取り出してあるサブモジュール（入れ子も）の設定で決めたフィルター・merge のドライバーも、同じく空にする（状態・作業ツリーとの差分は、
 //   サブモジュールの中でも git を動かす。打ち消しはサブモジュールの git にも渡るので、同じ名前を空にすれば止まる）
-// 名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない（GitError）
+// 名前に「=」を含むものを打ち消せない古い git（2.31 より前）と、名前が UTF-8 として読めないもの（-c でも環境変数でも渡せない）・
+// 場所が UTF-8 として読めない取り出してあるサブモジュール（設定を読めない）があるときは、git を動かさない（GitError）
 export function guardOf(cwd: string): Promise<Guard> {
   const now = Date.now();
   const cached = guards.get(cwd);
@@ -88,16 +113,29 @@ const ALWAYS_OFF: [string, string][] = [
 const MAX_SUBMODULES = 100;
 const MAX_SUBMODULE_DEPTH = 5;
 
+// 空にする設定の名前（filter.<名前>.clean・smudge・process と merge.<名前>.driver）。<名前> には何でも入る（. も、UTF-8 でないバイトも）
+const COMMAND_KEY = /^(filter|merge)\..+\.(clean|smudge|process|driver)$/s;
+const UNREADABLE_NAME = 'This folder has git settings that tanacode cannot turn off, because their names are not valid UTF-8.';
+const UNREADABLE_PATH = 'tanacode cannot read the git settings of this folder, because the path of its repository or of a submodule is not valid UTF-8.';
+
 // フォルダ（と、取り出してあるサブモジュール）の設定のうち、空にするフィルター・merge のドライバーの名前
 async function commandKeys(cwd: string, budget: { left: number }, depth: number): Promise<string[]> {
-  const out = await runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$']).catch(() => '');
+  // 設定は全部をバイトのまま読み、選ぶのはこちらでする（名前は UTF-8 とは限らない）。「<スコープ>\0<名前>\n<値>\0」（値の無いものは「\n<値>」が無い）
+  const out = await runGitBytes(cwd, ['config', '--list', '--null', '--show-scope'], undefined, { LC_ALL: 'C' }).catch(() => Buffer.alloc(0));
   const keys: string[] = [];
-  const parts = out.split('\0');
+  const parts = splitBytes(out, 0);
   for (let i = 0; i + 1 < parts.length; i += 2) {
-    const scope = parts[i];
-    const [key, ...value] = parts[i + 1].split('\n');
+    const scope = parts[i].toString('latin1');
     if (scope === 'global' || scope === 'system') continue;
-    if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
+    const entry = parts[i + 1];
+    const end = entry.indexOf(10);
+    const name = end < 0 ? entry : entry.subarray(0, end);
+    // 節と変数の名前は ASCII なので、1 バイトを 1 文字にして比べる
+    if (!COMMAND_KEY.test(name.toString('latin1'))) continue;
+    const key = exactText(name);
+    if (key === null) throw new GitError(UNREADABLE_NAME);
+    const value = end < 0 ? '' : entry.subarray(end + 1).toString('utf8');
+    if (key.startsWith('filter.') && LFS_FILTER.test(value)) continue;
     keys.push(key);
   }
   if (depth >= MAX_SUBMODULE_DEPTH) return keys;
@@ -109,38 +147,50 @@ async function commandKeys(cwd: string, budget: { left: number }, depth: number)
   return keys;
 }
 
-// リポジトリの一番上ごとの、サブモジュール（インデックスの gitlink）の場所。インデックスが変わったときだけ読み直す
-const submoduleLists = new Map<string, { stamp: string; dirs: string[] }>();
+// リポジトリの一番上ごとの、サブモジュール（インデックスの gitlink）の場所。インデックスが変わったときだけ読み直す。
+// 場所が UTF-8 として読めないものは、バイトのまま（文字列にすると別の場所になる）
+const submoduleLists = new Map<string, { stamp: string; dirs: (string | Buffer)[] }>();
 // フォルダごとの、リポジトリの一番上とインデックスの場所（変わらないので、読めたものは覚えておく）
-const repoPaths = new Map<string, Promise<string[]>>();
+const repoPaths = new Map<string, Promise<Buffer[]>>();
 
 // 取り出してある（.git のある）サブモジュールのフォルダ
 async function submodulesOf(cwd: string): Promise<string[]> {
   let paths = repoPaths.get(cwd);
   if (!paths) {
-    paths = runGit(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).then((out) => out.split('\n'));
+    paths = runGitBytes(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).then((out) => splitBytes(out, 10));
     repoPaths.set(cwd, paths);
     // 読めなかった（まだリポジトリでないなど）ものは覚えない
     paths.catch(() => repoPaths.delete(cwd));
   }
-  const [top, index] = await paths.catch(() => []);
-  if (!top || !index) return [];
+  const located = await paths.catch((): Buffer[] => []);
+  if (!located[0]?.length || !located[1]?.length) return [];
+  const [top, index] = [exactText(located[0]), exactText(located[1])];
+  if (top === null || index === null) throw new GitError(UNREADABLE_PATH);
   const info = await lstat(posix.isAbsolute(index) ? index : join(cwd, index)).catch(() => null);
   const stamp = info ? `${info.mtimeMs}:${info.size}` : '';
   const cached = submoduleLists.get(top);
   let dirs = cached && stamp && cached.stamp === stamp ? cached.dirs : null;
   if (!dirs) {
     const off = ALWAYS_OFF.flatMap(([key, value]) => ['-c', `${key}=${value}`]);
-    const listed = await runGit(top, [...off, 'ls-files', '--stage', '-z']).catch(() => '');
+    const listed = await runGitBytes(top, [...off, 'ls-files', '--stage', '-z']).catch(() => Buffer.alloc(0));
     // 「<モード> <オブジェクト> <ステージ>\t<パス>」。サブモジュールはモード 160000
-    dirs = listed
-      .split('\0')
-      .filter((entry) => entry.startsWith('160000 '))
-      .map((entry) => join(top, entry.slice(entry.indexOf('\t') + 1)));
+    dirs = splitBytes(listed, 0)
+      .filter((entry) => entry.subarray(0, 7).toString('latin1') === '160000 ')
+      .map((entry) => {
+        const path = entry.subarray(entry.indexOf(9) + 1);
+        const text = exactText(path);
+        return text === null ? Buffer.concat([Buffer.from(`${top}/`), path]) : join(top, text);
+      });
     submoduleLists.set(top, { stamp, dirs });
   }
   const present: string[] = [];
-  for (const dir of dirs) if (await lstat(join(dir, '.git')).then(() => true, () => false)) present.push(dir);
+  for (const dir of dirs) {
+    const dotGit = typeof dir === 'string' ? join(dir, '.git') : Buffer.concat([dir, Buffer.from('/.git')]);
+    if (!(await lstat(dotGit).then(() => true, () => false))) continue;
+    // 取り出してあれば、状態・差分はその中でも git を動かすが、場所を文字列で渡せないので設定を読めない
+    if (typeof dir !== 'string') throw new GitError(UNREADABLE_PATH);
+    present.push(dir);
+  }
   return present;
 }
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -481,6 +481,52 @@ describe('tanacode が動かす git の守り', () => {
     await branchFiles(repo, base);
     await git(repo, ['diff', '--no-ext-diff', '--no-textconv', '--stat', base]);
     expect(readdirSync(marks)).toEqual([]);
+  });
+
+  // UTF-8 として読めない 1 バイト（0xFF）を挟んだ名前
+  const badName = (before: string, after: string) => Buffer.concat([Buffer.from(before), Buffer.from([0xff]), Buffer.from(after)]);
+
+  it('名前が UTF-8 として読めないフィルターがあれば、打ち消しを渡せないので、git を動かさない', async () => {
+    appendFileSync(join(repo, '.git/config'), badName('[filter "', `"]\n\tclean = ${mark('bad-filter-clean')}; cat\n\tsmudge = ${mark('bad-filter-smudge')}; cat\n`));
+    write(repo, '.git/info/attributes', badName('* filter=', '\n'));
+    await expect(git(repo, ['diff', '--no-ext-diff', '--no-textconv', base])).rejects.toThrow(GitError);
+    // 読むだけの操作は、読めなかったものとして扱う
+    expect(await status(repo)).toBeNull();
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('名前が UTF-8 として読めない merge のドライバーでも、git を動かさない。コマンドを動かさない設定の名前なら動かす', async () => {
+    const other = join(root, 'other');
+    init(other);
+    appendFileSync(join(other, '.git/config'), badName('[branch "', '"]\n\tdescription = x\n'));
+    await expect(guardOf(other)).resolves.toBeDefined();
+    appendFileSync(join(repo, '.git/config'), badName('[merge "', `"]\n\tdriver = ${mark('bad-merge-driver')}; false\n`));
+    await expect(guardOf(repo)).rejects.toThrow(GitError);
+  });
+
+  it('名前に UTF-8 の日本語を含むフィルターは、打ち消して動かす', async () => {
+    for (const key of ['clean', 'smudge', 'process']) run(repo, 'config', `filter.日本語.${key}`, `${mark(`ja-filter-${key}`)}; cat`);
+    write(repo, '.git/info/attributes', '* filter=日本語\n');
+    expect(await status(repo)).toEqual([{ path: 'a.txt', index: ' ', worktree: 'M' }]);
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', base]);
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('取り出してあるサブモジュールの場所が UTF-8 として読めなければ、その設定を読めないので、git を動かさない', async (ctx) => {
+    // macOS（APFS）は、UTF-8 として読めない名前のファイルを作れない（CI の Linux で確かめる）
+    const dir = Buffer.concat([Buffer.from(`${repo}/`), badName('lib', '')]);
+    try {
+      mkdirSync(dir);
+    } catch {
+      ctx.skip();
+    }
+    const lib = join(root, 'lib');
+    init(lib);
+    commit(lib, 'l.txt', 'l\n');
+    run(lib, 'config', 'filter.sub.clean', `${mark('sub-filter-clean')}; cat`);
+    writeFileSync(Buffer.concat([dir, Buffer.from('/.git')]), `gitdir: ${join(lib, '.git')}\n`);
+    execFileSync('git', ['update-index', '-z', '--index-info'], { cwd: repo, input: Buffer.concat([Buffer.from(`160000 ${sha(lib)}\t`), badName('lib', ''), Buffer.from([0])]) });
+    await expect(guardOf(repo)).rejects.toThrow(GitError);
   });
 
   it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
