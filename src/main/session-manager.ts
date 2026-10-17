@@ -17,7 +17,7 @@ import {
 import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
-import { modeWithin, type PermissionRequest, type SessionState } from '@shared/session-tools';
+import { modeWithin, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
   ChatBatch,
@@ -154,9 +154,9 @@ type Runtime = {
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   background: number;
-  // ターミナルモードの間に、書くだけの PermissionRequest のフックが書いた、許可の確認の直前のツールの名前と入力（同じ書き込みの知らせを
-  // 数え直さないため。チャットの許可の確認は、requests の can_use_tool の要求で分かる）
-  permission: PermissionRequest | null;
+  // 書くだけの PermissionRequest のフックが最後にファイルに書いた時刻（フックはチャットでも足される。ファイルの変化は 1 回の
+  // 書き込みで何度か知らされるので、同じ書き込みを数え直さないため）
+  permissionAt: number | null;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
   // 質問（AskUserQuestion）の要求のうち、PendingQuestions で返事を待っているもの（request_id → 待つのをやめる口）
@@ -778,12 +778,11 @@ export class SessionManager {
   // 許可の確認を出す直前に、フックがそのツールの名前と入力をファイルに書いた
   permissionRequested(id: string, raw: unknown, at: number): void {
     const rt = this.runtimes.get(id);
-    const request = raw as { tool_name?: unknown; tool_input?: unknown; agent_type?: unknown; agent_id?: unknown } | null;
+    const request = raw as { tool_name?: unknown; tool_input?: unknown } | null;
     if (!rt || !request || typeof request.tool_name !== 'string' || !request.tool_input || typeof request.tool_input !== 'object') return;
-    const agent = typeof request.agent_type === 'string' ? request.agent_type : typeof request.agent_id === 'string' ? request.agent_id : null;
     // ファイルの変化は、1 回の書き込みで何度か知らされることがある。同じ書き込み（同じ時刻）は数え直さない
-    if (rt.permission?.at === at) return;
-    rt.permission = { seq: (rt.permission?.seq ?? 0) + 1, at, tool: request.tool_name, input: request.tool_input as Record<string, unknown>, agent };
+    if (rt.permissionAt === at) return;
+    rt.permissionAt = at;
     // ターミナルモードの間は、TUI が出した確認・質問を、通知と一覧の印にする（答えたことは、会話ログの行で分かる）
     if (rt.terminal && rt.process) {
       this.noteHookMode(id, rt, raw);
@@ -1719,7 +1718,7 @@ export class SessionManager {
         chain: [],
         attention: null,
         background: 0,
-        permission: null,
+        permissionAt: null,
         requests: new Map(),
         questionWaits: new Map(),
         plans: new Map(),

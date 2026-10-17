@@ -36,10 +36,6 @@ export const SESSION_STATE_LABEL: Record<SessionState, string> = {
   archived: 'archived',
 };
 
-// 許可の確認を出す直前に、Claude Code がフック（PermissionRequest）に渡した、ツールの名前と入力の全文。
-// seq: 受け取った順番（同じ中身の確認が続いても見分ける）/ at: フックがファイルに書いた時刻 / agent: サブエージェントの中の確認なら、その種類
-export type PermissionRequest = { seq: number; at: number; tool: string; input: Record<string, unknown>; agent: string | null };
-
 // 手が空くのを待つ（wait_sessions）ときに、まだ動いているとみなす状態。
 // バックグラウンドのタスクの完了待ちは、ターンが終わっているので手が空いたとみなす（開発サーバーのように終わらないものもあるため）
 export function isBusy(state: SessionState): boolean {
@@ -104,7 +100,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'wait_sessions',
     kind: 'read',
     description:
-      'Waits until one of the child sessions is free (it finishes its work, waits on a question or permission prompt, or exits), then returns the states of the target children. A child that has finished its turn and is waiting for background tasks also counts as free. Without session_ids, all working children are targets. Returns immediately if a target child is already free. While it waits, the messages of the user do not reach you, so pass a short timeout_seconds (a few seconds to look at the states, at most about a minute); do not use it to sit and wait for children that will take long.',
+      'Waits until one of the child sessions is free (it finishes its work, waits on a question or permission prompt, is switched to terminal mode by the user, waits for the user to act in the in-app browser, or exits), then returns the states of the target children. A child that has finished its turn and is waiting for background tasks also counts as free. Without session_ids, all working children are targets. Returns immediately if a target child is already free. While it waits, the messages of the user do not reach you, so pass a short timeout_seconds (a few seconds to look at the states, at most about a minute); do not use it to sit and wait for children that will take long.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -234,7 +230,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     // 片付けは人の確認なしに（アーカイブは一覧から戻せ、worktree を消しても未コミットの変更の控えと、手元にしか無いコミットのあるブランチが残るので、失うものが無い）
     kind: 'instruct',
     description:
-      "Ends a child session that has done its job: archives it (Claude Code stops, and it leaves the session list) and, by default, removes its worktree. Use it when the child's work is no longer needed (its pull request was merged, or the user said so) and you have checked its result; never end a child whose result you have not checked. Nothing is lost: the user can restore an archived session from the session list, uncommitted changes in the worktree are saved as a commit under refs/tanacode/backup/, and a branch with commits that exist only locally is kept. Only works on a child that is idle, exited, or waiting for background tasks (those tasks are stopped with Claude Code; processes the child detached from Claude Code, such as with nohup or open, keep running, so have the child stop them first). A child that is starting, working, waiting on a question or a permission prompt, or in terminal mode is refused. Calling it again on an archived child removes a worktree that is still left. Returns what was done and what was kept.",
+      "Ends a child session that has done its job: archives it (Claude Code stops, and it leaves the session list) and, by default, removes its worktree. Use it when the child's work is no longer needed (its pull request was merged, or the user said so) and you have checked its result; never end a child whose result you have not checked. Nothing is lost: the user can restore an archived session from the session list, uncommitted changes in the worktree are saved as a commit under refs/tanacode/backup/, and a branch with commits that exist only locally is kept. Only works on a child that is idle, exited, or waiting for background tasks (those tasks are stopped with Claude Code; processes the child detached from Claude Code, such as with nohup or open, keep running, so have the child stop them first). A child that is starting, working, waiting on a question or a permission prompt, in terminal mode, or waiting for the user to act in the in-app browser is refused. Calling it again on an archived child removes a worktree that is still left. Returns what was done and what was kept.",
     inputSchema: {
       type: 'object',
       properties: {

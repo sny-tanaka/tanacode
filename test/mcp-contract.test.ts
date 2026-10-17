@@ -6,7 +6,7 @@ import type { NewSessionOptions, SessionSummary } from '@shared/ipc';
 import { BROWSER_MCP } from '@shared/browser-tools';
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
 import { allowedToolIds, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
-import { SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD } from '@shared/session-tools';
+import { SESSION_STATE_LABEL, SESSION_TOOLS, SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD, isBusy, type SessionState } from '@shared/session-tools';
 import { TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD } from '@shared/terminal-tools';
 import { WALKTHROUGH_MCP } from '@shared/walkthrough-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
@@ -312,5 +312,37 @@ describe('どのツールも、制御が振り分けて実行する（「Unknown
       expect(textOf(result), tool.name).not.toBe(unknown(tool.name));
     }
     expect(textOf(await control.handle(ME, 'no_such_tool', {}))).toBe(unknown('no_such_tool'));
+  });
+});
+
+// 子の状態の説明が、Claude に渡す道具の説明から漏れないように（状態を足したら、説明も直す）
+describe('wait_sessions・end_session の説明', () => {
+  // 説明の中で、その状態を表す言い方
+  const PHRASES: Record<SessionState, string> = {
+    starting: 'starting',
+    working: 'working',
+    background: 'background tasks',
+    question: 'question',
+    permission: 'permission prompt',
+    terminal: 'terminal mode',
+    browser: 'in-app browser',
+    idle: 'idle',
+    exited: 'exit',
+    archived: 'archived',
+  };
+  const description = (name: string) => SESSION_TOOLS.find((tool) => tool.name === name)!.description;
+  const states = Object.keys(SESSION_STATE_LABEL) as SessionState[];
+
+  it('wait_sessions は、手が空いたとみなす状態をすべて挙げる', () => {
+    for (const state of states.filter((s) => !isBusy(s) && s !== 'idle' && s !== 'archived')) {
+      expect(description('wait_sessions'), state).toContain(PHRASES[state]);
+    }
+  });
+
+  it('end_session は、断る状態をすべて挙げる', () => {
+    // 終えられるのは idle・exited・background・archived（sessions-control.ts の ENDABLE_STATES）
+    for (const state of states.filter((s) => !['idle', 'exited', 'background', 'archived'].includes(s))) {
+      expect(description('end_session'), state).toContain(PHRASES[state]);
+    }
   });
 });
