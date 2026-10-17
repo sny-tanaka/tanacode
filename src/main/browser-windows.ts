@@ -193,7 +193,9 @@ export class PreviewWindows {
     this.popups.set(root, list);
     win.on('closed', () => list.delete(win));
     showOrigin(win, url);
-    // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める
+    // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める。
+    // bounds は、Electron の説明（content bounds）と違い、枠を含むウインドウの位置と大きさ（ページの outerWidth・screenX と同じ。
+    // Electron の既定の動きも setBounds に渡す。44.7 で確かめた）。setContentBounds に渡すと、resizeBy(0, 0) のたびに題の帯の分だけ大きくなる
     win.webContents.on('content-bounds-updated', (event, bounds) => {
       event.preventDefault();
       const screen = this.deps.screen();
