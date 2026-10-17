@@ -166,11 +166,14 @@ export const ClaudePane = memo(function ClaudePane({
   const jumping = useRef(false);
   // 前に読んだ（か、送った）スクロールの位置。上へ動いたか（上を読み始めたか）を見分ける
   const lastScrollTop = useRef(0);
-  // 人が上へスクロールしようとしている（ホイール・トラックパッドで上へ・上へ送るキー・スクロールバーを押した）。スクロールが止まるまで立てておく。
+  // 人が上へスクロールしようとしている（ホイール・トラックパッドで上へ・上へ送るキー・スクロールバーを押した・Tab で上の要素へフォーカスを
+  // 移して一覧が上へ動いた）。スクロールが止まるまで立てておく。
   // 最下部を追いかけるのをやめるのは、人が上へ動かしたときだけ。一覧が縮んで位置が押し戻された（位置を保つ調整も）知らせが、
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
+  // Tab（Shift+Tab）を押している間（押してから離すまで）。フォーカスを移した先を見せるために、ブラウザが一覧を動かすことがある
+  const tabbing = useRef(false);
   // 一覧の中の押せる要素を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
   // 位置を保つために一覧の上と下に足した余白（pad。base は CSS で決まっている余白）、離したときに外す聞き手（stop）
   const pressed = useRef<{
@@ -275,14 +278,28 @@ export const ClaudePane = memo(function ClaudePane({
   useEffect(() => () => pressed.current?.stop(), []);
 
   // キーでのスクロール。一覧の中を押したあとは、入力欄の外で押したキーが一覧を動かす（キーの知らせは一覧に届かないので、ウインドウで聞く）
+  // Tab は、入力欄の中で押しても、一覧の中へフォーカスを移す（離したら、または離した知らせが来ないままウインドウから離れたら、下ろす）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') tabbing.current = true;
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (SCROLL_UP_KEYS.has(e.key) || (e.key === ' ' && e.shiftKey)) userScrollingUp.current = true;
       else if (SCROLL_DOWN_KEYS.has(e.key) || e.key === ' ') userScrollingUp.current = false;
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') tabbing.current = false;
+    };
+    const onBlur = () => {
+      tabbing.current = false;
+    };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
 
   const [draftSessionId, setDraftSessionId] = useState(session.id);
@@ -740,6 +757,11 @@ export const ClaudePane = memo(function ClaudePane({
           }}
           onWheel={(e) => {
             if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
+          }}
+          onFocus={(e) => {
+            // Tab で一覧の中の要素へフォーカスを移すと、ブラウザは focusin より先に、その要素が見えるよう一覧を動かす。上へ動いていれば、
+            // 人が上へスクロールしたものとして扱う（最下部へ送り直すと、フォーカスした要素が見えなくなる）。アプリが動かしたフォーカスは数えない
+            if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - 1) userScrollingUp.current = true;
           }}
           onPointerDown={(e) => {
             // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない

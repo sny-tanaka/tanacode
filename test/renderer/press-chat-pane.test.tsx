@@ -637,6 +637,44 @@ describe('ヘッダー', () => {
     expect(list.scrollTop).toBe(800);
   });
 
+  // 直す前: Tab で上の見えていない要素へフォーカスを移すと、ブラウザが一覧を上へ送って見せたのに、人の操作でない上へのスクロールとして
+  // 最下部へ戻し、フォーカスした要素が見えなくなっていた（本物の画面で確かめた。ブラウザは、focusin より先に一覧を動かす）
+  it('Tab（Shift+Tab）で一覧の中の上の要素へフォーカスを移し、一覧が上へ動いたら、人のスクロールとして追いかけをやめる', () => {
+    render(<ClaudePane {...props({ chat: chatOf({ items: [{ kind: 'user', id: 'u1', text: '質問' }] }) })} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    sizeList(list, () => 1000);
+    const jump = () => screen.queryByRole('button', { name: '最新のメッセージへ' });
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    const row = list.firstElementChild!;
+    const input = document.querySelector('.chat-input textarea, textarea')!;
+    // フォーカスを移すと、ブラウザが一覧を上へ送り、それから focusin・keyup が届き、スクロールの知らせは次に描くときに届く
+    const focusUp = (focus: () => void) => {
+      focus();
+      list.scrollTop = 100;
+      fireEvent.focusIn(row);
+      fireEvent.keyUp(input, { key: 'Tab' });
+      fireEvent.scroll(list);
+      fireEvent(list, new Event('scrollend'));
+    };
+
+    // アプリが動かしたフォーカス（Tab を押していない）では、今までどおり最下部へ送り直す
+    focusUp(() => {});
+    expect(list.scrollTop).toBe(800);
+    expect(jump()).toBeNull();
+    // Tab で移したフォーカスでも、一覧が上へ動かなければ（見えている要素へ移った）、追いかけたまま
+    fireEvent.keyDown(input, { key: 'Tab' });
+    fireEvent.focusIn(row);
+    fireEvent.keyUp(input, { key: 'Tab' });
+    list.scrollTop = 500;
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(800);
+    // 入力欄からの Shift+Tab で上へ動いたら、動いた所に残し、「最新のメッセージへ」を出す
+    focusUp(() => fireEvent.keyDown(input, { key: 'Tab', shiftKey: true }));
+    expect(list.scrollTop).toBe(100);
+    expect(jump()).toBeTruthy();
+  });
+
   it('行の中身や一覧の高さが変わったら（会話や画面は変わらない）、最下部にいれば追いかける。上を読んでいる間は動かさない', () => {
     // 大きさの変化の知らせを、テストから送る
     const callbacks: (() => void)[] = [];
