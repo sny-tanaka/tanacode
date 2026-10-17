@@ -227,5 +227,9 @@ describe(`Claude Code ${version} の、プランの承認のカード`, () => {
     await run.waitUntil('acceptEdits', () => run.manager.modeOf(run.sessionId!) === 'acceptEdits');
     await run.untilState('待機中', (state) => state === 'idle');
     expect(api.toolResults.some((r) => /approved/i.test(r))).toBe(true);
+    // 会話ログを承認の結果の行まで読み終えても、acceptEdits のまま（会話ログは stream より遅れて読むことがあり、
+    // 承認より前に書かれた発言の行の plan で戻していた）
+    await run.waitUntil('承認の結果の行', () => run.entries.some((e) => JSON.stringify(e).includes('"tool_use_id":"toolu_plan"')));
+    expect(run.manager.modeOf(run.sessionId!)).toBe('acceptEdits');
   });
 });

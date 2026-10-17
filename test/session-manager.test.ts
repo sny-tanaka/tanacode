@@ -176,6 +176,24 @@ describe('権限モードと起動し直し', () => {
     await app.waitFor('会話ログのモード', () => app.manager.modeOf(id) === 'manual');
   });
 
+  it('modeOf: 会話ログを stream より遅れて読んでも、stream で知ったモードを、それより前に書かれた行のモードで戻さない', async () => {
+    const { id, pipe } = app.create({ mode: 'plan' });
+    await app.ready(id);
+    // プランモードで送った発言の行。会話ログに書かれたのは、プランの承認より前
+    const prompt = { ...line.user('プランを作って'), timestamp: new Date(Date.now() - 1000).toISOString(), permissionMode: 'plan' };
+    // プランの承認（「承認して、編集を自動で進める」）で、Claude Code が acceptEdits にした（stream の status）。会話ログはまだ読んでいない
+    // （新しい会話の会話ログは、最初の発言でできるので、追い始めるのが遅れることがある）
+    pipe.emit(stream.status('acceptEdits'));
+    await app.waitFor('status のモード', () => app.manager.modeOf(id) === 'acceptEdits');
+    // あとから会話ログの行が届いても、承認より前に書かれた行のモードでは戻さない
+    app.append(id, prompt, line.text('目印'));
+    await app.waitFor('目印', () => app.events(id).some((e) => e.type === 'assistant-text' && e.text === '目印'));
+    expect(app.manager.modeOf(id)).toBe('acceptEdits');
+    // 承認よりあとに書かれた行のモードは使う
+    app.append(id, { ...line.user('つづき'), permissionMode: 'default' });
+    await app.waitFor('新しい行のモード', () => app.manager.modeOf(id) === 'manual');
+  });
+
   it('最初のモード: 指定が無ければ auto。auto を使えないモデルなら、set_permission_mode で default（manual）にする', async () => {
     const first = app.create();
     expect(first.pipe.arg('--permission-mode')).toBe('auto');

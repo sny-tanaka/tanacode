@@ -182,6 +182,8 @@ type Runtime = {
   // 分かっている権限モード（起動の引数・アプリでの切り替え・Claude Code が知らせたモード（init・status・発言の行）の、いちばん新しいもの）。
   // 子セッションの権限モードの上限にも使う
   knownMode: PermissionMode | null;
+  // knownMode を知った時刻（会話ログの行で知ったときは、その行の時刻）。これより前に書かれた会話ログの行のモードでは戻さない
+  modeAt: number;
   size: { cols: number; rows: number };
   // 引き継いだ claude（前のアプリが起動したもの）が起動した時刻。これ以降の会話ログの行は、今も動いている claude が書いた
   aliveSince: number | null;
@@ -1661,6 +1663,7 @@ export class SessionManager {
         init: null,
         ready: false,
         knownMode: null,
+        modeAt: 0,
         size: DEFAULT_PTY_SIZE,
         aliveSince: null,
         turnOpen: false,
@@ -2349,9 +2352,14 @@ export class SessionManager {
     this.listeners.onStatusLine(id, next);
   }
 
-  // 分かっている権限モードを変える（Claude Code が知らせたモード）
-  private noteMode(id: string, rt: Runtime, mode: PermissionMode | null): void {
-    if (!mode || mode === rt.knownMode) return;
+  // 分かっている権限モードを変える（Claude Code が知らせたモード）。writtenAt: 会話ログの行のモードなら、その行が書かれた時刻。
+  // 会話ログは stream より遅れて読むことがある（新しい会話の会話ログは最初の発言でできるので、追い始めるのが遅れる）ため、
+  // stream などで知ったモードを、それより前に書かれた行のモードでは戻さない（プランの承認で acceptEdits になったのを、
+  // 承認より前の発言の行の plan で戻していた）。stream・フック・set_permission_mode の返事は、受け取った今のモード
+  private noteMode(id: string, rt: Runtime, mode: PermissionMode | null, writtenAt?: number): void {
+    if (!mode || (writtenAt !== undefined && writtenAt < rt.modeAt)) return;
+    rt.modeAt = Math.max(rt.modeAt, writtenAt ?? Date.now());
+    if (mode === rt.knownMode) return;
     rt.knownMode = mode;
     this.store.update(id, { knownMode: mode });
     this.emitSessions();
@@ -2572,7 +2580,8 @@ export class SessionManager {
       rt.planFile = planFile;
       this.refreshPlans(id, rt);
     }
-    if (rt && !past) this.noteMode(id, rt, permissionModeOf(entry));
+    // 時刻の無い行（TUI の permission-mode の行）は、読んだ今のモードとして扱う
+    if (rt && !past) this.noteMode(id, rt, permissionModeOf(entry), entryTime(entry) || undefined);
     rt?.knowledge.handle(entry);
     rt?.context.handle(entry);
 
