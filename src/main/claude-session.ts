@@ -379,12 +379,20 @@ export function childEnv(claudeDir: string | null = null): Record<string, string
 // stream-json の Claude Code で、巻き戻し（rewind_files）に要るファイルの控えを有効にする環境変数
 export const FILE_CHECKPOINTING_ENV = 'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING';
 
-// Claude Code に渡す環境変数。端末の種類（TERM・COLORTERM）は TUI だけ。stream-json では、ファイルの控えを有効にする
+// Claude Code が Remote Control のために作る、ターンの途中とターンの終わりの要約（スマホ・claude.ai のセッションの一覧に出る一言）の
+// 作り方。0 にすると、モデルを呼ばずに応答の文などから作る。-p では、モデルで作るとき、作り終えるまで Stop フックと result を出さない
+// （チャットの作業中が、1 回 1.5〜5.5 秒延びた。チェックリストのフックがターンの終わりを止めると、止めるたびに作り直す。2.1.302 で実測）。
+// TUI では裏で作るので待たない
+export const CLASSIFIER_SUMMARY_ENV = 'CLAUDE_CODE_CLASSIFIER_SUMMARY';
+
+// Claude Code に渡す環境変数。端末の種類（TERM・COLORTERM）は TUI だけ。stream-json では、ファイルの控えを有効にし、
+// Remote Control の要約をモデルで作らせない（作り終えるまで、チャットの完了を待たせないため）
 export function claudeEnv(kind: LaunchKind, claudeDir: string | null = null): Record<string, string> {
   const env = childEnv(claudeDir);
   if (kind === 'tui') return env;
   delete env.TERM;
   delete env.COLORTERM;
   env[FILE_CHECKPOINTING_ENV] = '1';
+  env[CLASSIFIER_SUMMARY_ENV] = '0';
   return env;
 }
