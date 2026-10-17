@@ -1661,16 +1661,24 @@ function originOf(url: string): string | null {
 }
 
 // コンソールの文を出したフレーム（Electron の WebFrameMain）の、オリジンとトップのフレームか。
-// 分からない（フレームが無い・もう無くなった・オリジンが無い "null"）ときは、オリジンを null にする（Claude に返さない）
+// 分からない（フレームが無い・もう無くなった・オリジンが無い "null"）ときは、オリジンを null にする（Claude に返さない）。
+// ただしトップのフレームのオリジンが "null"（Content-Security-Policy: sandbox のページ）なら、そのフレームの URL のオリジン（topOrigin）
 function frameOf(event: { frame?: unknown }): { origin: string | null; top: boolean } {
   try {
-    const f = event.frame as { origin?: unknown; parent?: unknown } | null | undefined;
+    const f = event.frame as { origin?: unknown; parent?: unknown; url?: unknown } | null | undefined;
     if (!f) return { origin: null, top: true };
+    const top = f.parent === null;
     const origin = typeof f.origin === 'string' && f.origin !== 'null' ? f.origin : null;
-    return { origin, top: f.parent === null };
+    return { origin: origin ?? (top ? topOrigin(f) : null), top };
   } catch {
     return { origin: null, top: true };
   }
+}
+
+// オリジンが "null" のトップのフレーム（Content-Security-Policy: sandbox のページ）のオリジンを、URL から決める。中身は、その URL のサーバーが
+// 返したもの（Electron 44.7 で、フレームの url はページの URL だった）。iframe は、オリジンが "null" なら決めない（data: など、どこのものか分からない）
+function topOrigin(frame: { url?: unknown }): string | null {
+  return typeof frame.url === 'string' ? webOrigin(frame.url) : null;
 }
 
 // 失敗した通信を出したもの（Claude に返すかを、コンソールの記録と同じ決まり visibleLog で決める）。Electron 44.7 で確かめた。
@@ -1686,8 +1694,10 @@ function requestSource(details: RequestDetails): { origin: string | null; top: b
   }
   const origin = webOrigin(details.initiatorOrigin ?? '');
   try {
-    const frame = details.frame as { parent?: unknown } | null | undefined;
-    return { origin, top: !!frame && frame.parent === null };
+    const frame = details.frame as { parent?: unknown; url?: unknown } | null | undefined;
+    const top = !!frame && frame.parent === null;
+    // 出したオリジンが "null" で、出したのがトップのフレームなら、コンソールの記録と同じく、そのフレームの URL のオリジン
+    return { origin: origin ?? (top && details.initiatorOrigin === 'null' ? topOrigin(frame) : null), top };
   } catch {
     return { origin, top: false };
   }

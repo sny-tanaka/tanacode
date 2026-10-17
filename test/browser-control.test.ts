@@ -444,6 +444,21 @@ describe('コンソールの記録のうち、許していない先の文', () =
     );
   });
 
+  it('トップのフレームのオリジンが "null"（Content-Security-Policy: sandbox のページ）なら、フレームの URL のオリジンで決める。iframe は "null" なら返さない', async () => {
+    const { call, open, network } = setup();
+    const page = open('http://localhost:3000/');
+    const sandboxedTop = { origin: 'null', url: 'http://localhost:3000/', parent: null };
+    logConsole(page, 'error', 'sandbox のページの文', '', 0, sandboxedTop);
+    logConsole(page, 'error', 'sandbox の iframe の文', '', 0, { origin: 'null', url: 'http://localhost:3000/frame', parent: {} });
+    logConsole(page, 'error', '外の sandbox のページの文', '', 0, { origin: 'null', url: 'https://evil.example/', parent: null });
+    expect(textOf(await call('get_console_logs'))).toBe('[error] sandbox のページの文\n(2 more messages from pages or frames not allowed for Claude are not shown.)');
+    // 失敗した通信も同じ（出したオリジンが "null" で、出したのがトップのフレーム）
+    const fail = (url: string, frame: object) => network.completed!({ statusCode: 404, method: 'GET', url, resourceType: 'xhr', webContentsId: page.id, initiatorOrigin: 'null', frame } as never);
+    fail('http://localhost:3000/api', sandboxedTop);
+    fail('http://localhost:3000/frame-api?token=secret', { origin: 'null', url: 'http://localhost:3000/frame', parent: {} });
+    expect(textOf(await call('get_failed_requests'))).toBe('404 GET http://localhost:3000/api (xhr)\n(1 more failed request from pages or frames not allowed for Claude is not shown.)');
+  });
+
   it('evaluate が失敗したときも、許していない先のフレームの文は返さない', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/');
