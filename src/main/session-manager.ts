@@ -1531,15 +1531,21 @@ export class SessionManager {
   }
 
   // 再起動の途中に送った発言を、起動し直した claude（止められなかったときは、止めようとした claude）が受け付けるようになるまで待たせる。
-  // 止めている間にアーカイブ・一覧から削除した・起動し直せなかった（claude がいない）ときと、待ちきれないときは、送らずに失敗する
-  // （止めた claude のまま待ち続けて、送信が返らなくならないように）。受け付ける前に終わった・別の claude に変わったら、待つのをやめる（送る側が確かめる）
+  // 止めている間にアーカイブ・一覧から削除した・起動し直せなかった・受け付ける前に終わった（claude がいない）ときと、待ちきれないときは、
+  // 送らずに失敗する（止めた claude のまま待ち続けて、送信が返らなくならないように）。また再起動して claude が変わっても、受け付けるまで待つ
   private async untilRestarted(id: string, rt: Runtime): Promise<void> {
-    await rt.restarting?.done;
-    const next = rt.process;
-    if (this.runtimes.get(id) !== rt || !next) throw new Error(t('main.send.exited'));
-    const deadline = Date.now() + this.restartSendWaitMs;
-    while (rt.process === next && !rt.ready) {
-      if (this.runtimes.get(id) !== rt) throw new Error(t('main.send.exited'));
+    // 受け付けるまでの期限（再起動が終わるたびに数え直す）
+    let deadline: number | null = null;
+    for (;;) {
+      // 待つ間に、また再起動が始まったら（起動の途中にモデルを変えたなど）、それも待つ。claude が変わっても、受け付けるまで書かない
+      // （initialize の返事のあとの処理より先に、ターンを始めさせない）
+      if (rt.restarting) {
+        await rt.restarting.done;
+        deadline = null;
+      }
+      if (this.runtimes.get(id) !== rt || !rt.process) throw new Error(t('main.send.exited'));
+      if (rt.ready) return;
+      deadline ??= Date.now() + this.restartSendWaitMs;
       if (Date.now() > deadline) throw new Error(t('main.send.notReady'));
       await sleep(100);
     }
