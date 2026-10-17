@@ -15,7 +15,7 @@ import {
   type UnsentPrompt,
 } from '@shared/chat';
 import { bracketedPaste, stripControlChars } from '@shared/prompt-keys';
-import { t } from '@shared/i18n';
+import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
 import { modeWithin, type PermissionRequest, type SessionState } from '@shared/session-tools';
 import type {
@@ -42,6 +42,7 @@ import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
+import type { SessionModel } from '@shared/models';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
@@ -68,7 +69,7 @@ import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
 import type { SessionRecord, SessionStore } from './session-store';
 import type { WorkspaceWatchers } from './workspace-watcher';
-import { disableRemoteControl, enableRemoteControl, generateTitle, rewindConversation } from './stream/internal';
+import { disableRemoteControl, enableRemoteControl, generateTitle, rewindConversation, type RewindResult } from './stream/internal';
 import { ControlError } from './stream/client';
 import { LineLog } from './stream/log';
 import type {
@@ -79,10 +80,12 @@ import type {
   ContentBlock,
   ContextUsageResponse,
   InitializeResponse,
+  ModelInfo,
   ResultMessage,
   RewindFilesResult,
   SettingsResponse,
   StreamMessage,
+  TaskNotificationMessage,
   TaskStartedMessage,
   UserMessage,
 } from './stream/protocol';
@@ -110,6 +113,8 @@ const TURN_END_WAIT_MS = 3000;
 const SENDING_TIMEOUT_MS = 30_000;
 // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
 const SLOW_START_MS = 10_000;
+// stop_task のあと、タスクが終わった知らせ（task_notification）を待つ上限
+const TASK_STOP_WAIT_MS = 10_000;
 // 作業中の経過時間を知らせ直す間隔
 const PROGRESS_TICK_MS = 1000;
 
@@ -203,15 +208,16 @@ type Runtime = {
   sendChain: Promise<void>;
   // 引き継いだ claude で、ホストに頼んだ送り直しが済んだ（前のアプリの頃の行を読み終えた）
   caughtUp: boolean;
-  // Remote Control が実際につながっているか（system/bridge_state・remote_control の返事・会話ログの bridge-session で分かる）。
-  // null: つなぐ・切るのを待っている
-  remoteConnected: boolean | null;
+  // Remote Control が実際につながっているか（system/bridge_state・remote_control の返事・会話ログの bridge-session で分かる）
+  remoteConnected: boolean;
   // Remote Control を切り替えている途中（remote_control の返事を待っている）
   remoteSwitching: boolean;
   // つないだ Remote Control のセッションの ID（ターミナルモードから戻ったとき、同じセッションに付け直す）
   bridgeSessionId: string | null;
   // 裏のタスクの ID（tool_use の ID → task_started の task_id。stop_task で止めるときに使う）
   taskIds: Map<string, string>;
+  // 止める頼みを送ったタスクの ID → 終わった知らせ（task_notification）を待っている受け手
+  taskEnds: Map<string, () => void>;
   // /clear のあと、新しい会話の最初の応答がまだ無い。そのあいだコンテキストの量は分からないとして、get_context_usage も聞かない
   // （空の会話の見積もりを返す。それで「量が下がった」とすると、自動の最適化圧縮が、切り替えた直後にまだ超えていても繰り返す）
   freshConversation: boolean;
@@ -331,6 +337,8 @@ export class SessionManager {
   slowStartMs = SLOW_START_MS;
   // 起動し直すときに止める、各段の待ち時間（end_session → SIGTERM → SIGKILL。テストで縮める。無ければ ClaudeSession の既定）
   stopStepMs: number | undefined = undefined;
+  // stop_task のあと、タスクが終わった知らせを待つ上限（テストで縮める）
+  taskStopWaitMs = TASK_STOP_WAIT_MS;
 
   // ターンが終わったときに、人に出す通知の種類（null なら出さない。profile.ts がつなぐ）。最適化圧縮の流れの途中のターンでは出さず、
   // 流れの最後のターンでは「コンテキストの最適化が完了しました」にする（compact-notice.ts）。ターンの終わりごとに、1 回だけ呼ぶ。
@@ -907,9 +915,11 @@ export class SessionManager {
   // 指定と、実際につながっているかがずれていたら合わせる（起動が終わったとき）。失敗は知らせない（一覧の印で分かる）
   private reconcileRemote(id: string, rt: Runtime): void {
     const record = this.store.get(id);
-    if (!record || !rt.process?.client || !rt.ready || rt.remoteSwitching || rt.remoteConnected === null) return;
+    if (!record || !rt.process?.client || !rt.ready || rt.remoteSwitching) return;
     const want = this.wantsRemote(record);
     if (want === rt.remoteConnected) return;
+    // Remote Control を使えない環境（API キー・Bedrock など。initialize の remote_control_available）では、つなぎに行かない
+    if (want && rt.init?.remote_control_available === false) return;
     void this.switchRemote(id, rt, record.cwd, want);
   }
 
@@ -923,7 +933,7 @@ export class SessionManager {
       if (on) {
         const session = await enableRemoteControl(client, remoteName(cwd), rt.bridgeSessionId);
         if (rt.process !== process) return null;
-        rt.bridgeSessionId = session.bridgeSessionId ?? rt.bridgeSessionId;
+        this.noteBridgeSession(id, rt, session.bridgeSessionId);
         rt.remoteConnected = true;
         if (session.sessionUrl) this.pushEvents(id, [{ type: 'remote-control', url: session.sessionUrl }]);
       } else {
@@ -941,6 +951,13 @@ export class SessionManager {
     }
   }
 
+  // つないだ Remote Control のセッションの ID を覚える（開き直したときに付け直すため、記録にも残す）
+  private noteBridgeSession(id: string, rt: Runtime, bridgeSessionId: string | null | undefined): void {
+    if (!bridgeSessionId || bridgeSessionId === rt.bridgeSessionId) return;
+    rt.bridgeSessionId = bridgeSessionId;
+    this.store.update(id, { bridgeSessionId });
+  }
+
   // このセッションで、最適化圧縮を自動で始めるか（チャットのヘッダーの「自動」のトグル）
   setAutoCompact(id: string, on: boolean): void {
     if (!this.store.get(id)) return;
@@ -953,10 +970,12 @@ export class SessionManager {
     return this.remoteControlAvailable;
   }
 
-  // Remote Control が今つながっているか。null: つながるのを待っている。Claude Code が動いていなければ false
+  // Remote Control が今つながっているか。null: つなぐ・切るのを待っている（remote_control の返事を待っている）。
+  // Claude Code が動いていなければ false
   remoteConnectedOf(id: string): boolean | null {
     const rt = this.runtimes.get(id);
-    return rt?.process ? rt.remoteConnected : false;
+    if (!rt?.process) return false;
+    return rt.remoteSwitching ? null : rt.remoteConnected;
   }
 
   // このセッションで Remote Control を使うか（開発版では使わない）
@@ -1006,12 +1025,20 @@ export class SessionManager {
     return rt?.process && rt.init ? commandsFromInitialize(rt.init.commands) : null;
   }
 
+  // モデルの選択肢のうち、動いている Claude Code がその場で切り替えられるもの（initialize の models）。起動の前・止まっているときは null
+  // （画面は、モデルの一覧の控えだけで選ばせる）
+  modelsOf(id: string): SessionModel[] | null {
+    const rt = this.runtimes.get(id);
+    if (!rt?.process || !rt.init || rt.terminal) return null;
+    return rt.init.models.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel ?? null, name: m.displayName, efforts: effortsOf(m) }));
+  }
+
   bashTasks(id: string): BashTask[] {
     return this.runtimes.get(id)?.bashTasks.all() ?? [];
   }
 
   // 動いているバックグラウンドのもの（サブエージェント・ワークフロー・Bash）を止める（stop_task）。止められなかったら理由を返す。
-  // 止まったかは、Claude Code が知らせる task_notification（stopped）と会話ログの完了通知で分かる（stop_task は知らない ID にも success を返す）
+  // stop_task は知らない ID にも success を返すので（実測）、Claude Code がそのタスクの終わり（task_notification）を知らせるまで待って確かめる
   async stopTask(id: string, ref: TaskRef): Promise<string | null> {
     const rt = this.runtimes.get(id);
     const client = rt?.process?.client;
@@ -1021,11 +1048,22 @@ export class SessionManager {
     if (!taskRunning(rt, ref)) return t('main.task.nothingToStop');
     const taskId = rt.taskIds.get(ref.toolUseId) ?? (ref.kind === 'bash' ? (rt.bashTasks.all().find((task) => task.toolUseId === ref.toolUseId)?.taskId ?? null) : null);
     if (!taskId) return t('main.task.notFound');
+    let ended = () => {};
+    const end = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), this.taskStopWaitMs);
+      ended = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+    });
+    rt.taskEnds.set(taskId, ended);
     try {
       await client.request('stop_task', { task_id: taskId });
-      return null;
+      return (await end) ? null : t('main.task.notStopped');
     } catch (error) {
       return t('main.task.failed', { reason: error instanceof ControlError ? error.reason : String(error) });
+    } finally {
+      if (rt.taskEnds.get(taskId) === ended) rt.taskEnds.delete(taskId);
     }
   }
 
@@ -1070,14 +1108,13 @@ export class SessionManager {
     const process = rt.process;
     const client = process.client;
     if (!client || !rt.ready) return false;
-    const ok = await client.request('set_permission_mode', { mode: streamMode(mode) }).then(
-      () => true,
-      () => false,
-    );
-    if (!ok || rt.process !== process) return false;
-    this.noteMode(id, rt, mode);
-    if (child) this.store.update(id, { launchMode: mode });
-    return true;
+    const response = await client.request<{ mode?: unknown }>('set_permission_mode', { mode: streamMode(mode) }).catch(() => null);
+    if (!response || rt.process !== process) return false;
+    // 返事の mode が、実際に切り替わったモード（実測。無ければ頼んだモード）
+    const applied = (typeof response.mode === 'string' ? appMode(response.mode) : null) ?? mode;
+    this.noteMode(id, rt, applied);
+    if (child) this.store.update(id, { launchMode: applied });
+    return applied === mode;
   }
 
   // messageId の発言の前まで巻き戻す前に、コードを戻すと変わるファイルを調べる（rewind_files の dry_run）。
@@ -1101,8 +1138,11 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     const process = rt?.process;
     const client = process?.client;
-    const failed = (error: string | null): RewindOutcome => ({ ok: false, prefillText: null, error: error ?? t('chat.pane.rewindNotFound') });
+    const failed = (error: string | null, codeRewound = false): RewindOutcome => ({ ok: false, prefillText: null, error: error ?? t('chat.pane.rewindNotFound'), codeRewound });
     if (!rt || !client || !rt.ready) return failed(t('main.send.notRunning'));
+    // 会話を戻せない（作業中・答え待ち・送る予定の発言がある）と分かっていれば、コードも戻さずに断る（Claude Code も turn_running・
+    // commands_queued で断る）。コードを先に戻すのは、会話を戻したあとでは、その発言のファイルの控えを探せるか確かめていないため
+    if (choice.conversation && !this.chatIdle(id, rt)) return failed(rewindReasonText('turn_running', null));
     if (choice.code) {
       const result = await client.request<RewindFilesResult>('rewind_files', { user_message_id: messageId }).catch(
         (error: unknown): RewindFilesResult => ({ canRewind: false, error: error instanceof ControlError ? error.reason : String(error) }),
@@ -1110,15 +1150,13 @@ export class SessionManager {
       if (!result.canRewind) return failed(result.error ?? null);
     }
     if (!choice.conversation) return { ok: true, prefillText: null, error: null };
-    // アプリが知っている最後の発言（無いと stale_target で断られる。実測）
-    const last = [...rt.events].reverse().find((e) => e.type === 'user' && !e.command);
-    const lastSeen = last?.type === 'user' ? last.id : messageId;
-    const result = await rewindConversation(client, messageId, lastSeen).catch((error: unknown) => ({
-      rewound: false,
-      prefillText: null,
-      reason: error instanceof ControlError ? error.reason : String(error),
-    }));
-    if (!result.rewound) return failed(result.reason);
+    // アプリが読んだ会話ログの、いちばん新しい user の行（無いと stale_target、それより後の発言があると unseen_later_turn で断られる。
+    // 知らせ・スラッシュコマンドの行も含めるため、チャットの発言ではなく会話ログの行から選ぶ）
+    const lastSeen = [...rt.chain].reverse().find((c) => c.type === 'user')?.uuid ?? messageId;
+    const result = await rewindConversation(client, messageId, lastSeen).catch(
+      (error: unknown): RewindResult => ({ rewound: false, prefillText: null, reason: null, error: error instanceof ControlError ? error.reason : String(error) }),
+    );
+    if (!result.rewound) return failed(rewindReasonText(result.reason, result.error), choice.code);
     if (rt.process === process) this.cutBefore(id, rt, messageId);
     return { ok: true, prefillText: result.prefillText, error: null };
   }
@@ -1164,7 +1202,8 @@ export class SessionManager {
   }
 
   // モデル・エフォート・設定ファイルを変える。動いている Claude Code は、モデルとエフォートだけならその場で切り替え（set_model・
-  // apply_flag_settings。次の応答から）、設定ファイルを変えたとき・起動の途中は起動し直す（--resume）。止まっていれば、次に起動するときの指定
+  // apply_flag_settings。次の応答から）、設定ファイルを変えたとき・起動の途中・initialize の models に無いモデル（控えにある旧モデルなど。
+  // set_model は知らない名前も黙って受け付けるため）は起動し直す（--resume と --model）。止まっていれば、次に起動するときの指定
   async configure(id: string, options: SessionOptions): Promise<void> {
     const record = this.store.get(id);
     const settingsFile = options.settingsFile ?? null;
@@ -1174,7 +1213,7 @@ export class SessionManager {
     const model = settingsChanged ? null : options.model;
     const effort = settingsChanged ? null : options.effort;
     const rt = this.runtimes.get(id);
-    if (rt?.process?.client && rt.ready && !settingsChanged) {
+    if (rt?.process?.client && rt.ready && !settingsChanged && (!rt.init || !model || modelEntry(rt.init, model))) {
       await this.switchModel(id, rt, model, effort);
       return;
     }
@@ -1189,10 +1228,12 @@ export class SessionManager {
     const record = this.store.get(id)!;
     const process = rt.process!;
     const client = process.client!;
-    const entry = model ? rt.init?.models.find((m) => m.value === model || m.resolvedModel === model) : rt.init?.models.find((m) => m.value === 'default');
+    const entry = rt.init ? (model ? modelEntry(rt.init, model) : modelEntry(rt.init, 'default')) : undefined;
     if (model && rt.init && !entry) throw new Error(t('main.model.unknown', { model }));
-    if (effort && entry?.supportedEffortLevels && !(entry.supportedEffortLevels as string[]).includes(effort)) throw new Error(t('main.model.effortUnsupported', { effort }));
     const modelChanged = (record.model ?? null) !== model;
+    // モデルだけを変えたとき、今のエフォートを新しいモデルで選べなければ、エフォートの指定を外す（そのモデルの既定にする）
+    if (modelChanged && effort && effort === (record.effort ?? null) && entry && !effortsOf(entry).includes(effort)) effort = null;
+    if (effort && entry && !effortsOf(entry).includes(effort)) throw new Error(t('main.model.effortUnsupported', { effort }));
     const fail = (error: unknown) => new Error(t('main.model.failed', { reason: error instanceof ControlError ? error.reason : String(error) }));
     if (modelChanged) {
       await client.request('set_model', { model }).catch((error: unknown) => Promise.reject(fail(error)));
@@ -1575,10 +1616,11 @@ export class SessionManager {
         caughtUp: true,
         remoteConnected: false,
         remoteSwitching: false,
-        bridgeSessionId: null,
+        bridgeSessionId: record.bridgeSessionId ?? null,
         freshConversation: false,
         contextSize: null,
         taskIds: new Map(),
+        taskEnds: new Map(),
         historyLoaded: false,
         lastBridgeUrl: undefined,
         titleRequested: false,
@@ -1779,6 +1821,9 @@ export class SessionManager {
     const client = process.client;
     if (!client) return;
     if (adopted) {
+      // initialize の返事は、前のアプリが受け取ったものを記録から戻す（同じ claude には送り直さない）
+      const saved = this.store.get(id)?.claudeInit;
+      if (saved) rt.init = { ...saved, account: {} };
       // モード・モデルは、控えの種類ごとの最新の行（init・status）から組み立て直す。エフォートだけ聞き直す
       const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
       if (rt.process !== process) return;
@@ -1801,6 +1846,7 @@ export class SessionManager {
     rt.init = init;
     this.stopStartWatch(id, rt);
     if (typeof init.pid === 'number') this.store.update(id, { claudeProcess: { pid: init.pid, conversation } });
+    this.store.update(id, { claudeInit: { commands: init.commands, models: init.models, remote_control_available: init.remote_control_available } });
     if (init.current_permission_mode) this.noteMode(id, rt, appMode(init.current_permission_mode));
     const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
     if (rt.process !== process) return;
@@ -2023,6 +2069,13 @@ export class SessionManager {
         if (task.tool_use_id) rt.taskIds.set(task.tool_use_id, task.task_id);
         return;
       }
+      case 'task_notification': {
+        // 裏のタスクが終わった（止めた・済んだ・失敗した）。止める頼みを送っていれば、止まったことにする
+        const taskId = (message as TaskNotificationMessage).task_id;
+        rt.taskEnds.get(taskId)?.();
+        rt.taskEnds.delete(taskId);
+        return;
+      }
       case 'api_retry': {
         if (past) return;
         // 入力なしで始まったターン（裏のタスクの完了の知らせなど）は、再試行の行だけが続くことがあるので、ターンの始まりに数える。
@@ -2183,7 +2236,8 @@ export class SessionManager {
     const modelId = patch.model ?? before?.model?.id ?? null;
     const next: StatusLineInfo = {
       model: modelId ? { id: modelId, name: modelName(modelId) ?? initModelName(rt.init, modelId) ?? modelId } : null,
-      effort: record?.effort ?? (patch.effort !== undefined ? patch.effort : (before?.effort ?? null)),
+      // 実際に使っているエフォート（get_settings の applied・init）。まだ知らせが無ければ、アプリで選んだもの
+      effort: patch.effort !== undefined ? patch.effort : before ? before.effort : (record?.effort ?? null),
       version: patch.version ?? before?.version ?? null,
       // null は、分からなくなった（/clear のあと）
       context: patch.context !== undefined ? patch.context : (before?.context ?? null),
@@ -2435,6 +2489,10 @@ export class SessionManager {
       const bridge = bridgeUrlOf(entry);
       if (bridge !== undefined) rt.lastBridgeUrl = bridge;
     }
+    // ターミナルモードの TUI（--remote-control）がつないだ Remote Control のセッションも、付け直せるように覚える
+    if (rt && entry.type === 'bridge-session' && typeof (entry as { bridgeSessionId?: unknown }).bridgeSessionId === 'string') {
+      this.noteBridgeSession(id, rt, (entry as { bridgeSessionId: string }).bridgeSessionId);
+    }
     if (rt && !past) {
       const remote = [...events].reverse().find((e) => e.type === 'remote-control');
       if (remote) rt.remoteConnected = remote.url !== null;
@@ -2541,8 +2599,24 @@ function remoteName(cwd: string): string {
 // 選んだモデル（--model に渡したもの。null は既定のモデル）で auto を使えるか（initialize の models の supportsAutoMode。
 // 分からなければ使えるものとする）
 function autoAvailable(init: InitializeResponse, model: string | null): boolean {
-  const found = model ? init.models.find((m) => m.value === model || m.resolvedModel === model) : init.models.find((m) => m.value === 'default');
-  return found?.supportsAutoMode !== false;
+  return modelEntry(init, model ?? 'default')?.supportsAutoMode !== false;
+}
+
+// 会話の巻き戻しを断られた理由。主なものは画面の言語の文に、ほかは Claude Code の説明（英語）か識別子のまま
+const REWIND_REASONS = new Set(['turn_running', 'commands_queued', 'prompt_pending', 'unseen_later_turn', 'stale_target', 'target_not_found', 'expired', 'usage_limited', 'state_changed', 'persist_failed']);
+function rewindReasonText(reason: string | null, error: string | null): string | null {
+  if (reason && REWIND_REASONS.has(reason)) return t(`main.rewind.${reason}` as MessageKey);
+  return error ?? reason;
+}
+
+// initialize の models のうち、その値（別名）か、その別名が指すモデル ID が合うもの
+function modelEntry(init: InitializeResponse, model: string): ModelInfo | undefined {
+  return init.models.find((m) => m.value === model || m.resolvedModel === model);
+}
+
+// そのモデルで選べるエフォート。選べないモデルは空
+function effortsOf(model: ModelInfo): string[] {
+  return model.supportsEffort === false ? [] : (model.supportedEffortLevels ?? []);
 }
 
 // 名前を知らないモデルの ID（Bedrock の us.anthropic.… など）の、Claude Code が付けた名前（initialize の models の displayName）

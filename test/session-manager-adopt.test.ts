@@ -202,6 +202,10 @@ describe('adopt', () => {
     expect(attached(id)!.requests().map((r) => r.request.subtype)).toEqual(['get_settings', 'get_context_usage']);
     // コンテキストは、次のターンの終わりを待たずに出す
     await app.waitFor('コンテキスト', () => app.manager.statusLine(id)?.context?.tokens === 12_000);
+    // initialize の返事（/ の候補・モデル）は、前のアプリが受け取ったものを記録から戻す
+    expect(app.manager.modelsOf(id)?.map((m) => m.value)).toEqual(['default']);
+    expect(app.manager.commandsOf(id)).not.toBeNull();
+    await expect(app.manager.configure(id, { model: null, effort: 'max', settingsFile: null })).rejects.toThrow('max');
   });
 
   it('claude を動かしたままアプリを終えるときは、送信中・順番待ちの発言を記録に残す', async () => {

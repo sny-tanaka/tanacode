@@ -116,9 +116,22 @@
       "busy": "別の操作の途中です。少し待ってからもう一度押してください",
       "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
       "draft": "ターミナルの入力欄に書きかけの文字があるため、止められません",
-      "notFound": "止める相手が見つかりませんでした。すでに終わったか、止まっています",
+      "notFound": "このタスクを止めるための ID が、Claude Code から届いていません。Claude に止めるよう頼んでください",
+      "notStopped": "止める頼みは送りましたが、止まったことを確かめられませんでした。まだ動いていれば、もう一度止めてください",
       "ambiguous": "同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください",
       "failed": "止められませんでした（{reason}）"
+    },
+    "rewind": {
+      "turn_running": "Claude Code が作業中です",
+      "commands_queued": "送る予定の発言があります",
+      "prompt_pending": "送った発言がまだ会話に入っていません",
+      "unseen_later_turn": "まだ画面に出ていない、あとの発言があります。少し待ってから、もう一度試してください",
+      "stale_target": "画面の会話が古くなっています。少し待ってから、もう一度試してください",
+      "target_not_found": "巻き戻し先の発言が見つかりませんでした",
+      "expired": "時間がたっているため、この発言までは戻せません",
+      "usage_limited": "利用枠の上限に達しているため、戻せません",
+      "state_changed": "途中で会話が変わりました。もう一度試してください",
+      "persist_failed": "巻き戻しを会話ログに書けませんでした"
     },
     "send": {
       "notAccepting": "入力を受け付けられる状態ではなくなったため、送れませんでした",
@@ -478,6 +491,8 @@
       "rewindNotFound": "巻き戻し先の発言が見つかりませんでした",
       "model": "モデル",
       "configureFailed": "変更できませんでした: {error}",
+      "modeFailed": "権限モードを「{mode}」に切り替えられませんでした",
+      "modeFailedError": "権限モードを切り替えられませんでした（{error}）",
       "settingsFileDefault": "標準",
       "settingsFileMissing": "登録なし",
       "confirmSettingsFile": "設定ファイルを「{name}」に変えます。Claude Code を起動し直して会話を続けます。設定の内容（接続先の URL・API キーなど）によっては、これまでの会話の内容が新しい接続先に送られます。\n\n変えますか？",
@@ -725,7 +740,8 @@
       "conversation": "会話だけ戻す",
       "conversationOnly": "会話を戻す",
       "code": "コードだけ戻す",
-      "failed": "巻き戻せませんでした（{error}）"
+      "failed": "巻き戻せませんでした（{error}）",
+      "codeOnly": "コードは戻しました。会話は戻せませんでした（{error}）"
     }
   },
   "composer": {

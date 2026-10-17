@@ -206,7 +206,7 @@ export const SESSION_TOOLS: McpTool<McpToolName<'sessions'>>[] = [
     name: 'configure_session',
     // 子の設定の変更も人の確認なしに。権限モードは親より強くできないので、親に許している範囲を超えない。
     // Remote Control は、親がオンのときだけオンにできる（人が外から使っていない親に、外から操作できる子を作らせない）。
-    // 切り替えは手の空いた子だけ（作業中に Shift+Tab を送ると、その間に出た許可の確認で「許して accept edits に切り替える」を選んでしまう）
+    // モデル・エフォートの切り替えは手の空いた子だけ（応答の途中で変えない）。権限モードは作業中でも切り替える（set_permission_mode）
     kind: 'instruct',
     description:
       "Changes the permission mode, model, effort or Remote Control of a child session after it has started. Pass only what to change. The permission mode cannot be more permissive than this session's (lowering it is always allowed). Remote Control: turning it on lets the user operate the child from the Claude app or claude.ai; it can be turned on only while this session's Remote Control is on (turning it off is always allowed). Changes are made only while the child is idle or waiting for background tasks (a new permission mode also while it is working): interrupt a working child with stop_session first to change its model or effort, and answer a question or permission prompt it is showing first (answer_question, answer_permission, or the user), then call this and tell the child to continue with send_message. A new model or effort is switched in place, without restarting its Claude Code: its next response uses them and its background tasks keep running. If the child's Claude Code is not running (exited), the new settings are used when it starts next (send_message starts it). The child keeps the new settings when it is restarted. get_session shows its current permission mode, model, effort and Remote Control.",

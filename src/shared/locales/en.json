@@ -118,9 +118,22 @@
       "busy": "Another operation is in progress. Wait a moment and try again.",
       "waitingAnswer": "Can't stop it right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then stop it.",
       "draft": "Can't stop it because the input in the terminal has unsent text",
-      "notFound": "Couldn't find the task to stop. It has already finished or stopped",
+      "notFound": "Claude Code hasn't sent the ID needed to stop this task. Ask Claude to stop it",
+      "notStopped": "Asked Claude Code to stop it, but couldn't confirm it stopped. If it's still running, try stopping it again",
       "ambiguous": "More than one task has the same name, so tanacode can't tell which one to stop. Open /tasks in the terminal and stop it there.",
       "failed": "Couldn't stop it ({reason})"
+    },
+    "rewind": {
+      "turn_running": "Claude Code is working",
+      "commands_queued": "A message is waiting to be sent",
+      "prompt_pending": "A message you sent isn't in the conversation yet",
+      "unseen_later_turn": "There are later messages that aren't shown yet. Wait a moment and try again",
+      "stale_target": "The conversation on screen is out of date. Wait a moment and try again",
+      "target_not_found": "Couldn't find the message to rewind to",
+      "expired": "It's been too long to rewind to this message",
+      "usage_limited": "Can't rewind because the usage limit has been reached",
+      "state_changed": "The conversation changed in the meantime. Try again",
+      "persist_failed": "Couldn't write the rewind to the conversation log"
     },
     "send": {
       "notAccepting": "Couldn't send because Claude Code is no longer accepting input",
@@ -482,6 +495,8 @@
       "rewindNotFound": "Couldn't find the message to rewind to",
       "model": "Model",
       "configureFailed": "Couldn't apply the change: {error}",
+      "modeFailed": "Couldn't switch the permission mode to “{mode}”",
+      "modeFailedError": "Couldn't switch the permission mode ({error})",
       "settingsFileDefault": "Default",
       "settingsFileMissing": "Not registered",
       "confirmSettingsFile": "This switches the settings file to “{name}” and restarts Claude Code to continue the conversation. Depending on its settings (such as the endpoint URL or API key), the conversation so far will be sent to the new endpoint.\n\nSwitch settings files?",
@@ -752,7 +767,8 @@
       "conversation": "Rewind the conversation only",
       "conversationOnly": "Rewind the conversation",
       "code": "Rewind the code only",
-      "failed": "Couldn't rewind ({error})"
+      "failed": "Couldn't rewind ({error})",
+      "codeOnly": "The code was rewound, but the conversation couldn't be ({error})"
     }
   },
   "composer": {

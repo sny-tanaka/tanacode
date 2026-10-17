@@ -5,7 +5,7 @@ import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
-import type { ModelCatalog } from './models';
+import type { ModelCatalog, SessionModel } from './models';
 import type { SettingsFile } from './settings-file';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
@@ -59,6 +59,7 @@ export const IpcChannel = {
   SettingsFilesRemove: 'settings-files:remove',
   SettingsFilesChanged: 'settings-files:changed',
   SessionsConfigure: 'sessions:configure',
+  SessionsModels: 'sessions:models',
   SessionsRestart: 'sessions:restart',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
   SessionsSetTerminalMode: 'sessions:set-terminal-mode',
@@ -369,8 +370,9 @@ export type SessionCreateFailed = { id: string; cwd: string; error: string };
 export type RewindPreview = { files: string[] | null; insertions: number; deletions: number; codeError: string | null };
 // 巻き戻すもの。conversation: 会話（その発言の前まで）/ code: ファイル（その発言を送った時点に）
 export type RewindChoice = { conversation: boolean; code: boolean };
-// 巻き戻しの結果。prefillText: 戻した発言の文（入力欄に戻す）/ error: できなかった理由
-export type RewindOutcome = { ok: boolean; prefillText: string | null; error: string | null };
+// 巻き戻しの結果。prefillText: 戻した発言の文（入力欄に戻す）/ error: できなかった理由 /
+// codeRewound: 失敗したときに、コードだけは戻した（会話とコードを戻すとき、コードを戻したあとで会話を断られた）
+export type RewindOutcome = { ok: boolean; prefillText: string | null; error: string | null; codeRewound?: boolean };
 
 export type SessionProgress = { sessionId: string; activity: Activity | null };
 // 答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
@@ -436,6 +438,8 @@ export type TanacodeApi = {
     setTerminalMode(id: string, on: boolean, options?: { stopTasks?: boolean }): Promise<void>;
     // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
     configure(id: string, options: SessionOptions): Promise<void>;
+    // 動いている Claude Code がその場で切り替えられるモデル（initialize の models）。起動の前・止まっているときは null
+    models(id: string): Promise<SessionModel[] | null>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）
     restart(id: string): Promise<void>;
     // このセッションの Remote Control を切り替える。動いていればその場でつなぐ・切る。切り替えられなかったら理由を返す
@@ -775,6 +779,7 @@ export type IpcInvoke = {
   [IpcChannel.SessionsSnapshot]: Api['sessions']['snapshot'];
   [IpcChannel.SessionsSubmit]: Api['sessions']['submit'];
   [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
+  [IpcChannel.SessionsModels]: Api['sessions']['models'];
   [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
   [IpcChannel.SessionsSetTerminalMode]: Api['sessions']['setTerminalMode'];

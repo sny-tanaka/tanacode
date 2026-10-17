@@ -661,7 +661,7 @@ export class SessionsControl {
       try {
         await host.configure(child.id, options);
       } catch (error) {
-        throw failed('change its model or effort', error instanceof Error ? error.message : String(error));
+        throw failed('change its model or effort', modelRefusal(error instanceof Error ? error.message : String(error)));
       }
     }
     const changed = { ...(mode ? { permission_mode: mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(remote !== null ? { remote_control: remote } : {}) };
@@ -1093,9 +1093,28 @@ function remoteRefusal(reason: string): string {
   const known = REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1];
   if (known) return known;
   // Claude Code が断った理由（英語）は、そのまま渡す
-  const [head, tail] = t('main.remote.failed', { reason: '\u0000' }).split('\u0000');
-  if (reason.startsWith(head) && reason.endsWith(tail)) return `its Claude Code refused it: ${reason.slice(head.length, reason.length - tail.length)}`;
+  const refused = placeholderIn('main.remote.failed', 'reason', reason);
+  if (refused !== null) return `its Claude Code refused it: ${refused}`;
   return 'tanacode could not switch it. Check it with get_session.';
+}
+
+// モデル・エフォートを切り替えられなかった理由（configure が投げる、画面の言語の文）を、英語の文にする
+function modelRefusal(reason: string): string {
+  const effort = placeholderIn('main.model.effortUnsupported', 'effort', reason);
+  if (effort !== null) return `its model does not support the effort ${effort}`;
+  const model = placeholderIn('main.model.unknown', 'model', reason);
+  if (model !== null) return `its Claude Code does not offer the model ${model}`;
+  // Claude Code が断った理由（英語）は、そのまま渡す
+  const refused = placeholderIn('main.model.failed', 'reason', reason);
+  if (refused !== null) return `its Claude Code refused it: ${refused}`;
+  return 'tanacode could not switch it. Check it with get_session.';
+}
+
+// 画面の言語の文 text が、key の文言の name の差し込みを埋めたものなら、差し込まれた値。違えば null
+function placeholderIn(key: MessageKey, name: string, text: string): string | null {
+  const [head, tail] = t(key, { [name]: '\u0000' }).split('\u0000');
+  if (tail === undefined || text.length < head.length + tail.length || !text.startsWith(head) || !text.endsWith(tail)) return null;
+  return text.slice(head.length, text.length - tail.length);
 }
 
 // 動いている裏のタスク（一覧の数え方と同じ: SessionManager の countBackground）

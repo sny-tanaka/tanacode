@@ -3,10 +3,10 @@ import { t } from '@shared/i18n';
 import { errorMessage } from '../errorMessage';
 import type { TaskEntry } from './taskList';
 
-// 止める操作が済んでから、タスクの状態が変わる知らせ（会話ログ）を待つ時間。これだけ待っても変わらなければ、押せる状態に戻す
+// 止まったことを確かめてから、タスクの状態が変わる知らせ（会話ログ）を待つ時間。これだけ待っても変わらなければ、押せる状態に戻す
 const SETTLE_MS = 8000;
 
-// 動いているバックグラウンドのタスクを止める（本家の /tasks の画面を操作するので、数秒かかる）。
+// 動いているバックグラウンドのタスクを止める（main が stop_task を送り、Claude Code がそのタスクの終わりを知らせるまで待つ）。
 // stopping: 止めている途中のタスク（key）。終わって状態が変わるまで、押せなくする。
 // 止められなかったときは、理由を出す
 export function useStopTask(sessionId: string | null) {

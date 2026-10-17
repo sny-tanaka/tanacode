@@ -369,6 +369,7 @@ const SessionManager = fakeClass('SessionManager', {
   claudeSessionIds: () => new Set(['known-1']),
   importSession: echo('manager.importSession'),
   configure: echo('manager.configure'),
+  modelsOf: echo('manager.modelsOf'),
   restart: echo('manager.restart'),
   setRemoteControl: echo('manager.setRemoteControl'),
   setTerminalMode: echo('manager.setTerminalMode'),

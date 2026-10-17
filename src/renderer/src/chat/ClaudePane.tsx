@@ -41,7 +41,7 @@ import { RemoteControlToggle } from './RemoteControlToggle';
 import { stripControlChars } from './sanitize';
 import { useCanCompact } from './compactState';
 import { CompactButton, useCompactStatus } from './CompactButton';
-import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
+import { EFFORTS, modeChoices, refreshTitle, useModelCatalog, useSessionModels, withSessionModels } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
 import { useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
@@ -317,7 +317,10 @@ export const ClaudePane = memo(function ClaudePane({
 
   // Claude Code が持っているモデル一覧の控え。更新のボタンで読み直す
   const models = useModelCatalog();
-  const { choices, labelOf } = models;
+  const { labelOf } = models;
+  // 動いている間は、Claude Code がその場で切り替えられるモデルと、そのモデルで選べるエフォートにする
+  const liveModels = useSessionModels(live && chat.status !== 'starting' ? session.id : null);
+  const choices = useMemo(() => withSessionModels(models.choices, liveModels), [models.choices, liveModels]);
   // 既定のまま（--model・--effort を渡していない）ときは、実際に動いているものを選択中として出す
   const runningModel = statusLine?.model?.name ?? null;
   const modelValue = session.model ?? choices.find((c) => !c.disabled && c.name === runningModel)?.value ?? '';
@@ -332,8 +335,20 @@ export const ClaudePane = memo(function ClaudePane({
   const currentChoice = choices.find((c) => c.value === modelValue) ?? choices.find((c) => c.name === runningModel);
   const efforts = currentChoice?.efforts ?? EFFORTS;
   const effortValue = session.effort ?? (efforts.find((e) => e === statusLine?.effort) ?? '');
+  // 権限モードを変える。Claude Code に断られたら知らせる（モード欄は、Claude Code が知らせた今のモードのまま）
+  const changeMode = (mode: PermissionMode) =>
+    void window.tanacode.screen.setMode(session.id, mode).then(
+      (ok) => ok || window.alert(t('chat.pane.modeFailed', { mode: modeChoices().find(([value]) => value === mode)?.[1] ?? mode })),
+      reportError('chat.pane.modeFailedError'),
+    );
+  // モデルを変える。今のエフォートを新しいモデルで選べなければ、エフォートの指定を外す（そのモデルの既定にする）
+  const changeModel = (value: string) => {
+    const next = choices.find((c) => c.value === value);
+    const keepEffort = !session.effort || !next || next.efforts.includes(session.effort);
+    configure({ model: value || null, ...(keepEffort ? {} : { effort: null }) });
+  };
 
-  // Remote Control の切り替え。動いていれば /remote-control でその場でつなぐ・切るので、終わるまでぐるぐるを出す
+  // Remote Control の切り替え。動いていれば remote_control の要求でその場でつなぐ・切るので、終わるまでぐるぐるを出す
   const [switchingRemote, setSwitchingRemote] = useState<ReadonlySet<string>>(() => new Set());
   const setRemoteControl = async (on: boolean) => {
     const id = session.id;
@@ -444,7 +459,9 @@ export const ClaudePane = memo(function ClaudePane({
       (outcome) => {
         setRewindBusy(false);
         if (!outcome.ok) {
-          window.alert(t('chat.rewind.failed', { error: outcome.error ?? '' }));
+          // コードだけ戻せたときは、確かめのカードを閉じる（もう一度押すと、同じ時点へコードを戻し直すことになる）
+          if (outcome.codeRewound) setRewinding(null);
+          window.alert(t(outcome.codeRewound ? 'chat.rewind.codeOnly' : 'chat.rewind.failed', { error: outcome.error ?? '' }));
           return;
         }
         setRewinding(null);
@@ -760,7 +777,7 @@ export const ClaudePane = memo(function ClaudePane({
             <select
               value={modelValue}
               disabled={!canConfigure}
-              onChange={(e) => configure({ model: e.target.value || null })}
+              onChange={(e) => changeModel(e.target.value)}
               title={t('chat.pane.modelTitle')}
             >
               {modelOptions.map((o) => (
@@ -794,7 +811,7 @@ export const ClaudePane = memo(function ClaudePane({
             <select
               value={session.mode ?? ''}
               disabled={!live || waiting}
-              onChange={(e) => void window.tanacode.screen.setMode(session.id, e.target.value as PermissionMode)}
+              onChange={(e) => changeMode(e.target.value as PermissionMode)}
               title={t('chat.pane.modeTitle')}
             >
               {!session.mode && <option value="">{t('chat.pane.mode')}</option>}

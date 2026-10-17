@@ -288,6 +288,20 @@ describe('ヘッダー', () => {
     expect(labels()).toEqual(['会話を戻す']);
   });
 
+  it('巻き戻し: コードを戻したあとで会話を断られたら、コードは戻したことを出して、カードを閉じる', async () => {
+    install({
+      'screen.rewindPreview': () => Promise.resolve({ files: ['/repo/src/login.ts'], insertions: 1, deletions: 1, codeError: null }),
+      'screen.rewind': () => Promise.resolve({ ok: false, prefillText: null, error: '送る予定の発言があります', codeRewound: true }),
+    });
+    render(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    fireEvent.click(screen.getByText('会話とコードを戻す'));
+    await settle();
+    expect(alerts).toEqual(['コードは戻しました。会話は戻せませんでした（送る予定の発言があります）']);
+    expect(document.querySelector('.menu-card.rewind')).toBeNull();
+  });
+
   it('起動を待っている発言の「取り消す」は、その発言と画像を入力欄に戻す（打ちかけの文字の前に）。取り下げられなかったら何もしない', async () => {
     let taken: { text: string; attachments: string[]; pastes: string[] } | null = { text: 'テストも足して', attachments: ['/tmp/attachments/0123abcd-shot.png'], pastes: [] };
     const onTakePending = vi.fn(() => taken);
@@ -598,11 +612,32 @@ describe('入力欄の下の選択欄', () => {
     expect(api.argsOf('sessions.configure')).toEqual([['s1', { model: 'sonnet', effort: null, settingsFile: null }]]);
     view.rerender(<ClaudePane {...props({ session: S2 })} />);
     expect(selectByTitle('モデル').value).toBe('opus');
+    fireEvent.change(selectByTitle('モデル'), { target: { value: 'sonnet' } });
+    expect(api.argsOf('sessions.configure').at(-1)).toEqual(['s2', { model: 'sonnet', effort: 'high', settingsFile: 'f1' }]);
+    // 今のエフォートを選べないモデル（エフォートの無いモデル）に変えるときは、エフォートの指定を外す
     fireEvent.change(selectByTitle('モデル'), { target: { value: 'haiku' } });
-    expect(api.argsOf('sessions.configure').at(-1)).toEqual(['s2', { model: 'haiku', effort: 'high', settingsFile: 'f1' }]);
+    expect(api.argsOf('sessions.configure').at(-1)).toEqual(['s2', { model: 'haiku', effort: null, settingsFile: 'f1' }]);
     // 作業中は変えられない
     view.rerender(<ClaudePane {...props({ session: S2, chat: chatOf({ status: 'running' }) })} />);
     expect(selectByTitle('モデル').disabled).toBe(true);
+  });
+
+  it('動いている間は、Claude Code がその場で切り替えられるモデル（initialize の models）のエフォートを選択肢にし、控えに無いモデルを足す', async () => {
+    install({
+      'sessions.models': () =>
+        Promise.resolve([
+          { value: 'opus', resolvedModel: 'claude-opus-5', name: 'Opus', efforts: ['low', 'medium'] },
+          { value: 'us.anthropic.claude-x', resolvedModel: null, name: 'Bedrock X', efforts: [] },
+        ]),
+    });
+    render(<ClaudePane {...props({ session: S2 })} />);
+    await settle();
+    expect(api.argsOf('sessions.models')).toEqual([['s2']]);
+    expect([...selectByTitle('エフォート').options].map((o) => o.value)).toEqual(['low', 'medium']);
+    expect([...selectByTitle('モデル').options].map((o) => o.textContent)).toContain('Bedrock X');
+    // 動いているモデルで選べないエフォート（high）のまま、別のモデルに変えるときは、エフォートの指定を外す
+    fireEvent.change(selectByTitle('モデル'), { target: { value: 'us.anthropic.claude-x' } });
+    expect(api.argsOf('sessions.configure').at(-1)).toEqual(['s2', { model: 'us.anthropic.claude-x', effort: null, settingsFile: 'f1' }]);
   });
 
   it('モデルを変えられなかったら、わけを出す', async () => {
@@ -674,6 +709,14 @@ describe('入力欄の下の選択欄', () => {
     ]);
     view.rerender(<ClaudePane {...props({ session: S2, question: questionOf('p1', 'どちらにしますか？') })} />);
     expect(selectByTitle('権限モード').disabled).toBe(true);
+  });
+
+  it('権限モードを切り替えられなかったら、知らせる', async () => {
+    install({ 'screen.setMode': () => Promise.resolve(false) });
+    render(<ClaudePane {...props()} />);
+    fireEvent.change(selectByTitle('権限モード'), { target: { value: 'auto' } });
+    await waitFor(() => expect(alerts).toHaveLength(1));
+    expect(alerts[0]).toContain('権限モードを「');
   });
 });
 

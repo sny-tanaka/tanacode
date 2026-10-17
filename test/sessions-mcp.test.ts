@@ -997,7 +997,8 @@ describe('ツールの実行（SessionsControl）', () => {
       const failed = await configure({ permission_mode: 'manual', model: 'haiku' });
       expect(failed.isError).toBe(true);
       expect(textOf(failed)).toContain('Switched the permission mode');
-      expect(textOf(failed)).toContain('設定ファイルが読めません');
+      // 画面の言語の理由は、そのまま返さない
+      expect(textOf(failed)).not.toContain('設定ファイルが読めません');
     });
 
     it('切り替えられなかったら、今のモードを添えて失敗として返し、モデルは変えない', async () => {
@@ -1164,7 +1165,12 @@ describe('ツールの実行（SessionsControl）', () => {
       it('Remote Control と一緒にモデルを変えて、起動し直せなければ、Remote Control は変わったと伝える。remote_control は true か false だけ', async () => {
         host.configureError = new Error('設定ファイルが読めません');
         const failed = await configure({ remote_control: true, effort: 'low' });
-        expect(textOf(failed)).toContain('Turned the Remote Control of "s-33" on, but could not change its model or effort: 設定ファイルが読めません');
+        expect(textOf(failed)).toContain('Turned the Remote Control of "s-33" on, but could not change its model or effort: tanacode could not switch it.');
+        // 画面の言語の理由は、英語にして返す（Claude Code が断った理由は、そのまま）
+        host.configureError = new Error(t('main.model.effortUnsupported', { effort: 'max' }));
+        expect(textOf(await configure({ effort: 'max' }))).toContain('not change its model or effort: its model does not support the effort max');
+        host.configureError = new Error(t('main.model.failed', { reason: 'Invalid model' }));
+        expect(textOf(await configure({ model: 'x' }))).toContain('not change its model or effort: its Claude Code refused it: Invalid model');
         expect(textOf(await configure({ remote_control: 'yes' }))).toContain('Pass remote_control as true or false');
         expect(host.remoteSwitches).toEqual([{ id: SIBLING, on: true }]);
       });

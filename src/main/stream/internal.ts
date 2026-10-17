@@ -34,8 +34,9 @@ export async function disableRemoteControl(client: StreamClient): Promise<void> 
 }
 
 // 会話を巻き戻す。target: 戻す先の発言の uuid / lastSeen: アプリが知っている最後の発言の uuid（無いと stale_target で断られる。実測）。
-// prefillText: 戻した発言の文（チャットの入力欄に入れる）。会話ログは消されず、次の発言から枝分かれする
-export type RewindResult = { rewound: boolean; prefillText: string | null; reason: string | null };
+// prefillText: 戻した発言の文（チャットの入力欄に入れる）。会話ログは消されず、次の発言から枝分かれする。
+// reason: 断られた理由の識別子（turn_running など）/ error: Claude Code が付けた英語の説明（turn running など）
+export type RewindResult = { rewound: boolean; prefillText: string | null; reason: string | null; error: string | null };
 
 export async function rewindConversation(client: StreamClient, target: string, lastSeen: string): Promise<RewindResult> {
   const response = await client.request<{ rewound?: unknown; prefillText?: unknown; reason?: unknown; error?: unknown }>('rewind_conversation', {
@@ -45,7 +46,8 @@ export async function rewindConversation(client: StreamClient, target: string, l
   return {
     rewound: response.rewound === true,
     prefillText: typeof response.prefillText === 'string' ? response.prefillText : null,
-    reason: typeof response.reason === 'string' ? response.reason : typeof response.error === 'string' ? response.error : null,
+    reason: typeof response.reason === 'string' ? response.reason : null,
+    error: typeof response.error === 'string' ? response.error : null,
   };
 }
 

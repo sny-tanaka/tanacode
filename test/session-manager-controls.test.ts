@@ -14,8 +14,6 @@ beforeEach(() => {
 });
 afterEach(() => app.dispose());
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 describe('権限モード', () => {
   it('動いている claude は set_permission_mode で切り替え（作業中でも）、子は起動のモードも変える。断られたら false', async () => {
     const parent = app.create();
@@ -31,6 +29,11 @@ describe('権限モード', () => {
     // manual は Claude Code の名前（default）で送る
     expect(await app.manager.setMode(id, 'manual')).toBe(true);
     expect(pipe.requests('set_permission_mode').at(-1)?.request).toEqual({ subtype: 'set_permission_mode', mode: 'default' });
+    // 返事の mode が、実際に切り替わったモード。頼んだものと違えば false
+    pipe.answers.set('set_permission_mode', { mode: 'default' });
+    expect(await app.manager.setMode(id, 'auto')).toBe(false);
+    expect(app.manager.modeOf(id)).toBe('manual');
+    pipe.answers.delete('set_permission_mode');
     // 子は、起動し直しても切り替えたモードで起動する
     pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
@@ -45,7 +48,14 @@ describe('権限モード', () => {
 });
 
 describe('裏のタスクの停止', () => {
-  it('task_started の task_id で stop_task を送る。Bash は会話ログのタスクの ID でも止める。動いていないものは止めない', async () => {
+  // count 個めの stop_task が届いたら、そのタスクの終わりの知らせ（task_notification）を返す
+  const stopsWith = async (pipe: ReturnType<typeof app.create>['pipe'], count: number) => {
+    await app.waitFor('stop_task', () => pipe.requests('stop_task').length === count);
+    const r = pipe.requests('stop_task')[count - 1];
+    pipe.emit({ type: 'system', subtype: 'task_notification', task_id: r.request.task_id, status: 'stopped', output_file: '', summary: '', uuid: r.request_id });
+  };
+
+  it('task_started の task_id で stop_task を送り、そのタスクの終わりの知らせで止まったと確かめる。Bash は会話ログのタスクの ID でも止める。動いていないものは止めない', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
     app.say(
@@ -63,10 +73,16 @@ describe('裏のタスクの停止', () => {
     await app.waitFor('裏のタスク', () => app.manager.summary(id)?.backgroundTasks === 2);
     // サブエージェントは、task_started の task_id で止める
     pipe.emit({ type: 'system', subtype: 'task_started', task_id: 'task-agent-1', tool_use_id: 'toolu_agent', description: '調べる', task_type: 'local_agent', uuid: 's1' });
-    await sleep(20);
-    expect(await app.manager.stopTask(id, { kind: 'subagent', toolUseId: 'toolu_agent' })).toBeNull();
+    // 行は届いた順に読むので、あとに送った行が読まれたら、task_started も読み終えている
+    pipe.emit(stream.status('plan'));
+    await app.waitFor('task_started を読む', () => app.manager.modeOf(id) === 'plan');
+    const agent = app.manager.stopTask(id, { kind: 'subagent', toolUseId: 'toolu_agent' });
+    await stopsWith(pipe, 1);
+    expect(await agent).toBeNull();
     // Bash は、task_started が無くても、会話ログのタスクの ID で止める
-    expect(await app.manager.stopTask(id, { kind: 'bash', toolUseId: 'toolu_bg' })).toBeNull();
+    const bash = app.manager.stopTask(id, { kind: 'bash', toolUseId: 'toolu_bg' });
+    await stopsWith(pipe, 2);
+    expect(await bash).toBeNull();
     expect(pipe.requests('stop_task').map((r) => r.request)).toEqual([
       { subtype: 'stop_task', task_id: 'task-agent-1' },
       { subtype: 'stop_task', task_id: 'b1' },
@@ -77,6 +93,24 @@ describe('裏のタスクの停止', () => {
     pipe.answers.set('stop_task', new Error('Task not found'));
     expect(await app.manager.stopTask(id, { kind: 'bash', toolUseId: 'toolu_bg' })).toBe('止められませんでした（Task not found）');
     expect(await app.manager.stopTask('nope', { kind: 'bash', toolUseId: 'toolu_bg' })).toBe('セッションが動いていないため、止められません');
+  });
+
+  it('stop_task が success でも、終わりの知らせが来なければ、止まったと確かめられなかったことを返す（知らない ID にも success を返すため）', async () => {
+    app.manager.taskStopWaitMs = 50;
+    const { id } = app.create();
+    await app.ready(id);
+    app.say(
+      id,
+      line.user('サーバーを起動して'),
+      line.toolUse('toolu_bg', 'Bash', { command: 'npm run dev', run_in_background: true }),
+      line.toolResult('toolu_bg', 'Command running in background with ID: b1. Output is being written to: /nonexistent/b1.output', {
+        toolUseResult: { backgroundTaskId: 'b1' },
+      }),
+      line.text('動かしました'),
+    );
+    app.finish(id);
+    await app.waitFor('裏のタスク', () => app.manager.summary(id)?.backgroundTasks === 1);
+    expect(await app.manager.stopTask(id, { kind: 'bash', toolUseId: 'toolu_bg' })).toContain('確かめられませんでした');
   });
 });
 
@@ -129,13 +163,65 @@ describe('巻き戻し', () => {
     pipe.answers.set('rewind_files', { canRewind: true });
     expect(await app.manager.rewind(id, first.uuid, { conversation: false, code: true })).toEqual({ ok: true, prefillText: null, error: null });
     expect(pipe.requests('rewind_conversation')).toEqual([]);
-    pipe.answers.set('rewind_conversation', { rewound: false, reason: 'target_not_found' });
-    expect(await app.manager.rewind(id, first.uuid, { conversation: true, code: false })).toEqual({ ok: false, prefillText: null, error: 'target_not_found' });
+    // 断られた理由の識別子は、そのまま出さずに画面の言語の文にする
+    pipe.answers.set('rewind_conversation', { rewound: false, reason: 'target_not_found', error: 'target not found' });
+    expect(await app.manager.rewind(id, first.uuid, { conversation: true, code: false })).toEqual({
+      ok: false,
+      prefillText: null,
+      error: '巻き戻し先の発言が見つかりませんでした',
+      codeRewound: false,
+    });
     expect(pipe.requests('rewind_files')).toHaveLength(1);
     expect(app.events(id).some((e) => e.type === 'replace')).toBe(false);
+    // 文を用意していない理由は、Claude Code の説明のまま
+    pipe.answers.set('rewind_conversation', { rewound: false, reason: 'target_splits_tool_call', error: 'target splits a tool call' });
+    expect((await app.manager.rewind(id, first.uuid, { conversation: true, code: false })).error).toBe('target splits a tool call');
     pipe.answers.set('rewind_files', { canRewind: false, error: 'No checkpoint' });
-    expect(await app.manager.rewind(id, first.uuid, { conversation: true, code: true })).toEqual({ ok: false, prefillText: null, error: 'No checkpoint' });
-    expect(pipe.requests('rewind_conversation')).toHaveLength(1);
+    expect(await app.manager.rewind(id, first.uuid, { conversation: true, code: true })).toEqual({ ok: false, prefillText: null, error: 'No checkpoint', codeRewound: false });
+    expect(pipe.requests('rewind_conversation')).toHaveLength(2);
+  });
+
+  it('rewind: 会話とコードのうち、コードを戻したあとで会話を断られたら、コードは戻したことを返す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const first = line.user('ログインを直して');
+    app.say(id, first, line.text('直しました'));
+    app.finish(id);
+    await app.waitFor('会話', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    pipe.answers.set('rewind_files', { canRewind: true });
+    pipe.answers.set('rewind_conversation', { rewound: false, reason: 'unseen_later_turn', error: 'unseen later turn' });
+    const outcome = await app.manager.rewind(id, first.uuid, { conversation: true, code: true });
+    expect(outcome).toMatchObject({ ok: false, codeRewound: true });
+    expect(outcome.error).toContain('あとの発言');
+    expect(app.events(id).some((e) => e.type === 'replace')).toBe(false);
+  });
+
+  it('rewind: 作業中は、コードも戻さずに断る（会話を戻せないと分かっているため）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const first = line.user('ログインを直して');
+    app.say(id, first, line.text('直しました'));
+    app.finish(id);
+    await app.waitFor('会話', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    await app.prompt(id, 'つぎ');
+    const outcome = await app.manager.rewind(id, first.uuid, { conversation: true, code: true });
+    expect(outcome).toMatchObject({ ok: false, codeRewound: false, error: 'Claude Code が作業中です' });
+    expect(pipe.requests('rewind_files')).toEqual([]);
+  });
+
+  it('rewind: 最後に見た発言は、会話ログのいちばん新しい user の行（チャットの発言にならない、ツールの結果などの行も含む）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const first = line.user('ログインを直して');
+    app.say(id, first, line.text('直しました'));
+    app.finish(id);
+    await app.waitFor('会話', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    const result = line.toolResult('toolu_late', 'done');
+    app.append(id, line.toolUse('toolu_late', 'Bash', { command: 'true' }), result);
+    await app.waitFor('ツールの結果を読む', () => app.events(id).some((e) => e.type === 'tool-result'));
+    pipe.answers.set('rewind_conversation', { rewound: true, prefillText: 'ログインを直して' });
+    await app.manager.rewind(id, first.uuid, { conversation: true, code: false });
+    expect(pipe.requests('rewind_conversation').at(-1)?.request).toMatchObject({ last_seen_user_message_uuid: result.uuid });
   });
 });
 
@@ -159,10 +245,32 @@ describe('Remote Control', () => {
     await app.waitFor('切れた', () => app.manager.remoteConnectedOf(id) === false);
   });
 
+  it('止まっていたセッションを開き直してつなぐときも、前の Remote Control のセッションに付け直す（記録に残す）', async () => {
+    app.answers.set('remote_control', { session_url: 'https://claude.ai/code/session_x', bridge_session_id: 'bridge-1' });
+    const { id } = app.create({ remoteControl: true });
+    await app.ready(id);
+    await app.waitFor('つなぐ', () => app.manager.remoteConnectedOf(id) === true);
+    // アーカイブして戻すと、動いている間の覚え（Runtime）は消え、記録から開き直す（アプリを起動し直したときと同じ）
+    await app.manager.archive(id);
+    app.manager.unarchive(id);
+    await app.manager.open(id);
+    await app.ready(id);
+    await app.waitFor('つなぎ直す', () => app.pipe(id).requests('remote_control').length === 1);
+    expect(app.pipe(id).requests('remote_control')[0].request).toEqual({ subtype: 'remote_control', enabled: true, name: 'tanacode-work', reattach_session_id: 'bridge-1' });
+  });
+
+  it('Remote Control を使えない環境（initialize の remote_control_available が false）では、起動が終わってもつなぎに行かない', async () => {
+    app.answers.set('initialize', { ...INIT_RESPONSE, remote_control_available: false });
+    const { id, pipe } = app.create({ remoteControl: true });
+    await app.ready(id);
+    // つなぐ要求は、起動が終わったとき（ready）にその場で送る
+    expect(pipe.requests('remote_control')).toEqual([]);
+  });
+
   it('つなげなかったら、指定を戻して理由を返す。使わない指定のセッションには送らない', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
-    await sleep(50);
+    // つなぐ要求は、起動が終わったとき（ready）にその場で送る
     expect(pipe.requests('remote_control')).toEqual([]);
     pipe.answers.set('remote_control', new Error('Remote Control is only available when using Claude via api.anthropic.com.'));
     expect(await app.manager.setRemoteControl(id, true)).toBe('Remote Control を切り替えられませんでした（Remote Control is only available when using Claude via api.anthropic.com.）');
@@ -213,7 +321,7 @@ describe('/compact と /clear', () => {
     app.finish(id, { num_turns: 0, terminal_reason: null });
     await app.waitFor('量を空にする', () => app.statusLineInfos.get(id)?.context === null);
     await app.waitFor('/clear のターンの終わり', () => app.manager.stateOf(id) === 'idle');
-    await sleep(50);
+    // 使用量は、ターンの終わりにその場で聞く
     expect(asked()).toBe(before);
     // 新しい会話の最初の応答の使用量から、上限（前に聞いたもの）で割合を出す。そのあとは、ターンの終わりにまた聞く
     await app.prompt(id, '再開の文');

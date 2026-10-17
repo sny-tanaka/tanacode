@@ -410,14 +410,44 @@ describe('一覧の操作', () => {
     await app.manager.configure(id, { model: 'sonnet', effort: 'low', settingsFile: null });
     expect(pipe.requests('set_model')).toHaveLength(1);
     expect(pipe.requests('apply_flag_settings').at(-1)?.request).toEqual({ subtype: 'apply_flag_settings', settings: { effortLevel: 'low' } });
-    // 一覧に無いモデル・そのモデルで選べないエフォートは断る（Claude Code は知らない値も受け付けてしまう。実測）
-    await expect(app.manager.configure(id, { model: 'gpt-9', effort: null, settingsFile: null })).rejects.toThrow('gpt-9');
+    // ヘッダーのエフォートは、頼んだ値ではなく、Claude Code が実際に使うと答えた値（get_settings の applied）
+    pipe.answers.set('get_settings', { applied: { effort: 'medium' } });
+    await app.manager.configure(id, { model: 'sonnet', effort: 'high', settingsFile: null });
+    expect(app.manager.statusLine(id)?.effort).toBe('medium');
+    pipe.answers.set('get_settings', { applied: { effort: 'low' } });
+    await app.manager.configure(id, { model: 'sonnet', effort: 'low', settingsFile: null });
+    // そのモデルで選べないエフォートは断る（Claude Code は知らない値も受け付けてしまう。実測）
     await expect(app.manager.configure(id, { model: 'sonnet', effort: 'max', settingsFile: null })).rejects.toThrow('max');
     expect(app.manager.summary(id)).toMatchObject({ model: 'sonnet', effort: 'low' });
+    // 画面の選択肢（その場で切り替えられるモデル）は initialize の models から
+    expect(app.manager.modelsOf(id)?.map((m) => [m.value, m.efforts])).toEqual([
+      ['default', ['low', 'medium', 'high']],
+      ['sonnet', ['low', 'medium', 'high']],
+    ]);
     // Claude Code が断ったら、理由を添えて失敗し、指定は変えない
     pipe.answers.set('set_model', new Error('Invalid model'));
     await expect(app.manager.configure(id, { model: null, effort: null, settingsFile: null })).rejects.toThrow('Invalid model');
     expect(app.manager.summary(id)?.model).toBe('sonnet');
+    // 一覧に無いモデル（控えにある旧モデルなど）は、set_model せずに --model で起動し直す（set_model は知らない名前も受け付けてしまう。実測）
+    pipe.answers.delete('set_model');
+    await app.manager.configure(id, { model: 'claude-old-4', effort: 'low', settingsFile: null });
+    expect(pipe.requests('set_model')).toHaveLength(2);
+    expect(pipe.requests('end_session')).toHaveLength(1);
+    expect(app.pipe(id).arg('--model')).toBe('claude-old-4');
+    expect(app.manager.summary(id)).toMatchObject({ model: 'claude-old-4', effort: 'low' });
+  });
+
+  it('configure: モデルだけを変えて、今のエフォートを新しいモデルで選べなければ、エフォートの指定を外す', async () => {
+    app.answers.set('initialize', { ...INIT_RESPONSE, models: [...INIT_RESPONSE.models, HAIKU] });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.manager.configure(id, { model: null, effort: 'high', settingsFile: null });
+    await app.manager.configure(id, { model: 'haiku', effort: 'high', settingsFile: null });
+    expect(pipe.requests('set_model').map((r) => r.request)).toEqual([{ subtype: 'set_model', model: 'haiku' }]);
+    expect(pipe.requests('apply_flag_settings').at(-1)?.request).toEqual({ subtype: 'apply_flag_settings', settings: { effortLevel: null } });
+    expect(app.manager.summary(id)).toMatchObject({ model: 'haiku', effort: null });
+    // エフォートも一緒に頼んだ（今のものと違う）なら、選べなければ断る
+    await expect(app.manager.configure(id, { model: null, effort: 'max', settingsFile: null })).rejects.toThrow('max');
   });
 
   it('configure: 切り替えたモデルで auto を使えなければ、manual に戻す（起動するときと同じ）', async () => {

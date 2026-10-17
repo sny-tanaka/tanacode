@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '@shared/chat';
@@ -101,8 +101,21 @@ describe(`Claude Code ${version} の会話の操作`, () => {
     // 起動し直していない
     expect(run.manager['runtimes'].get(run.sessionId!)!.init!.pid).toBe(pid);
     await idle('待機中');
-    // 元に戻す（既定のモデル・エフォート）
+    // 元に戻す（既定のモデル・エフォート）と、次の応答から既定のモデルになる
     await run.manager.configure(run.sessionId!, { model: null, effort: null, settingsFile: null });
+    expect(run.summary()).toMatchObject({ model: null, effort: null });
+    // apply_flag_settings は --settings と同じ層を変えるので、アプリが --settings で入れたフック（書くだけの Stop のフック）が
+    // そのあとも動くかを見る
+    const idleFile = run.statusFile.replace(/\.json$/, '.idle.json');
+    rmSync(idleFile, { force: true });
+    const before = api.calls.length;
+    await run.send(AFTER_CLEAR.replace('始めます', '戻します'));
+    await run.waitUntil('既定での応答', () => api.calls.length > before);
+    const defaultModel = init.models.find((m) => m.value === 'default')?.resolvedModel;
+    expect(api.calls[before].model).toBe(defaultModel);
+    expect(api.calls[before].effort).not.toBe('low');
+    await idle('待機中');
+    await run.waitUntil('Stop のフック', () => existsSync(idleFile));
   });
 
   it('裏の Bash を stop_task で止める。止まったことは Claude Code の知らせで分かる', async () => {

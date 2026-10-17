@@ -630,6 +630,7 @@ function registerIpc(): void {
   handle(IpcChannel.SessionsDiscover, (e) => discoverSessions(P(e).manager.claudeSessionIds(), P(e).claudeDir));
   handle(IpcChannel.SessionsImport, (e, s: DiscoveredSession) => P(e).manager.importSession(s.claudeSessionId, s.cwd, s.title));
   handle(IpcChannel.SessionsConfigure, (e, id: string, options: SessionOptions) => P(e).manager.configure(id, options));
+  handle(IpcChannel.SessionsModels, (e, id: string) => P(e).manager.modelsOf(id));
   handle(IpcChannel.SessionsRestart, (e, id: string) => P(e).manager.restart(id));
   // チェックリスト。読む・書き換える（画面から届いた形を確かめる）・別のセッションへコピーする・セッションごとの未読の数
   handle(IpcChannel.ChecklistGet, (e, id: string) => (P(e).manager.summary(id) ? P(e).checklists.lists(id) : []));

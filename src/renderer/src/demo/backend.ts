@@ -389,6 +389,7 @@ export class DemoBackend {
         },
         interrupt: () => {},
         configure: () => ok(undefined),
+        models: () => ok(null),
         restart: () => ok(undefined),
         setRemoteControl: () => ok(null),
         setTerminalMode: () => ok(undefined),

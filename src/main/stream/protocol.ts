@@ -269,6 +269,9 @@ export type InitializeResponse = {
   remote_control_available?: boolean;
 };
 
+// initialize の返事のうち、記録に残して引き継ぎで戻すもの（SessionRecord.claudeInit）
+export type SavedInit = Pick<InitializeResponse, 'commands' | 'models' | 'remote_control_available'>;
+
 // get_context_usage の返事（SDKControlGetContextUsageResponse のうち使うもの）
 export type ContextUsageResponse = { totalTokens: number; maxTokens: number; percentage: number; model?: string };
 

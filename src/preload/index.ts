@@ -39,6 +39,7 @@ const api: TanacodeApi = {
     progress: (id) => invoke(IpcChannel.SessionsProgressGet, id),
     onProgress: (listener) => subscribe(IpcChannel.SessionsProgress, listener),
     configure: (id, options) => invoke(IpcChannel.SessionsConfigure, id, options),
+    models: (id) => invoke(IpcChannel.SessionsModels, id),
     restart: (id) => invoke(IpcChannel.SessionsRestart, id),
     setRemoteControl: (id, on) => invoke(IpcChannel.SessionsSetRemoteControl, id, on),
     setTerminalMode: (id, on, options) => invoke(IpcChannel.SessionsSetTerminalMode, id, on, options),

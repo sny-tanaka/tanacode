@@ -14,3 +14,8 @@ export type ModelChoice = {
 };
 
 export type ModelCatalog = { choices: ModelChoice[]; updatedAt: number };
+
+// 動いている Claude Code がその場で切り替えられるモデル（initialize の models）。
+// value: set_model に渡す値（別名など）/ resolvedModel: その別名が指すモデル ID / name: Claude Code が付けた名前 /
+// efforts: 選べるエフォート。空ならエフォートを選べないモデル
+export type SessionModel = { value: string; resolvedModel: string | null; name: string; efforts: string[] };

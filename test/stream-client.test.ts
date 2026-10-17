@@ -301,13 +301,13 @@ describe('内部の要求（internal.ts）', () => {
     const rewound = rewindConversation(client, 'u2', 'u5');
     expect(lastRequest(pipe).request).toEqual({ subtype: 'rewind_conversation', target_message_uuid: 'u2', last_seen_user_message_uuid: 'u5' });
     answer({ rewound: true, prefillText: '戻した発言' });
-    expect(await rewound).toEqual({ rewound: true, prefillText: '戻した発言', reason: null });
+    expect(await rewound).toEqual({ rewound: true, prefillText: '戻した発言', reason: null, error: null });
     const stale = rewindConversation(client, 'u2', 'u1');
-    answer({ rewound: false, prefillText: null, reason: 'stale_target' });
-    expect(await stale).toEqual({ rewound: false, prefillText: null, reason: 'stale_target' });
+    answer({ rewound: false, prefillText: null, reason: 'stale_target', error: 'stale target' });
+    expect(await stale).toEqual({ rewound: false, prefillText: null, reason: 'stale_target', error: 'stale target' });
     const missing = rewindConversation(client, 'x', 'y');
     answer({ error: 'target not found' });
-    expect(await missing).toEqual({ rewound: false, prefillText: null, reason: 'target not found' });
+    expect(await missing).toEqual({ rewound: false, prefillText: null, reason: null, error: 'target not found' });
     const ended = endSession(client);
     expect(lastRequest(pipe).request).toEqual({ subtype: 'end_session', reason: 'tanacode' });
     answer({});
