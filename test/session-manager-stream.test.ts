@@ -680,6 +680,46 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     expect(kinds.slice(user, user + 3)).toEqual(['user', 'hook', 'hook']);
   });
 
+  it('発言のときのフックは、送った uuid と違う発言の行（コマンドの行など）でもそのあとに、発言の行より先に応答が出たらその前に出す（応答の全部のあとまで待たせない）', async () => {
+    app.manager.turnEndWaitMs = 60_000;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // 発言の行が、送った uuid と違う uuid で出た
+    const first = await app.send(id, '/greet');
+    pipe.emit(stream.lifecycle(first, 'started'));
+    pipe.emit(response('h1', 'UserPromptSubmit'));
+    app.append(id, line.user('/greet'));
+    await app.waitFor('フック', () => hooks(id).length === 1);
+    expect(types(id).slice(types(id).indexOf('user'), types(id).indexOf('user') + 2)).toEqual(['user', 'hook']);
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    // 発言の行より先に応答が出た
+    const second = await app.send(id, 'つぎ');
+    pipe.emit(stream.lifecycle(second, 'started'));
+    pipe.emit(response('h2', 'UserPromptSubmit'));
+    app.say(id, line.text('こたえ'));
+    await app.waitFor('フック', () => hooks(id).length === 2);
+    const kinds = app.events(id).map((e) => (e.type === 'hook' ? `hook:${e.run.hookId}` : e.type === 'assistant-text' ? `text:${e.text}` : e.type));
+    expect(kinds.indexOf('hook:h2')).toBe(kinds.indexOf('text:こたえ') - 1);
+  });
+
+  it('発言のときのフックは、このターンに取り込まれた発言が無ければ待たせない（前のターンの発言の鍵で待たせない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    // ツールの結果の行がたくさん続いた（送った発言の控えから、前の発言が押し出される）
+    app.append(id, ...Array.from({ length: 60 }, (_, i) => line.toolResult(`toolu_${i}`, 'x')));
+    app.say(id, line.text('おわり'));
+    await app.waitFor('行を読み終えた', () => app.events(id).some((e) => e.type === 'assistant-text' && e.text === 'おわり'));
+    // started を通らずに届いた発言のときのフック（スマホからの発言など）は、すぐ出す
+    pipe.emit(response('h3', 'UserPromptSubmit'));
+    expect(hooks(id).map((r) => r.hookId)).toContain('h3');
+  });
+
   it('発言のときのフックが発言を止めた（発言が会話に出ないまま、モデルを呼ばずに終わった）ときは、待たせていたフックをターンの終わりの前に出す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

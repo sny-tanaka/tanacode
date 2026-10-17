@@ -229,6 +229,9 @@ type Runtime = {
   // 今のターンに取り込まれた（command_lifecycle の started）、送った発言の uuid（いちばん新しいもの）と、会話ログに出た送った発言の uuid
   // （新しい 50 個まで）。応答の前に終わったターンの終わりを、その発言が会話ログに出てから出す
   turnPrompt: string | null;
+  // 今のターンに取り込まれた（started）送った発言のうち、まだ会話ログに出ていないもの。発言のときのフックを、その発言の行のあとまで
+  // 待たせる鍵（出たとき・ターンの終わりに消す）
+  promptLine: string | null;
   arrivedPrompts: Set<string>;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
   // error: 会話ログに残らない失敗の理由（ターンの終わりの直前に出す）
@@ -1809,6 +1812,7 @@ export class SessionManager {
         turnOpen: false,
         lastTurnLine: null,
         turnPrompt: null,
+        promptLine: null,
         arrivedPrompts: new Set(),
         turnEnding: null,
         lateTurnEnd: null,
@@ -2390,6 +2394,7 @@ export class SessionManager {
     if (message.state === 'started') {
       this.openTurn(id, rt, past);
       rt.turnPrompt = message.command_uuid;
+      if (!past) rt.promptLine = message.command_uuid;
     }
     const unsent = rt.unsent.get(message.command_uuid);
     if (!unsent) return;
@@ -2425,6 +2430,8 @@ export class SessionManager {
     this.stopProgress(id, rt);
     // 開いていないターンの result（重ねて届いた知らせなど）では、ターンの終わりも完了の知らせも出さない
     if (past || !open) return;
+    // 発言の行を待たせていたフックは、ターンの終わりの前に出す（flushTurnEnd）。次のターンまで鍵を残さない
+    rt.promptLine = null;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     const interrupted = typeof result.terminal_reason === 'string' && result.terminal_reason.startsWith('aborted');
     // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）。
@@ -2527,10 +2534,10 @@ export class SessionManager {
     };
     const event: ChatEvent = { type: 'hook', id: `hook:${message.hook_id}`, run };
     // 発言のときのフックは、その発言の行が会話ログからチャットに出るまで待たせる（発言を会話ログに書く前に動くので、すぐ出すと、
-    // 発言の上の、前のターンの続きに見える。2.1.302 で実測）。待つのは、今のターンに取り込まれた送った発言（command_lifecycle の
-    // started）。分からないもの（スマホからの発言など）はすぐ出す。発言が会話に出ないまま終わったら（フックが止めたなど）、
+    // 発言の上の、前のターンの続きに見える。2.1.302 で実測）。待つのは、開いているターンに取り込まれ、まだ会話に出ていない送った発言
+    // （promptLine）。分からないもの（スマホからの発言など）はすぐ出す。発言が会話に出ないまま終わったら（フックが止めたなど）、
     // ターンの終わりの前に出す（flushTurnEnd）
-    const prompt = message.hook_event === 'UserPromptSubmit' && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    const prompt = message.hook_event === 'UserPromptSubmit' && rt.turnOpen ? rt.promptLine : null;
     const holdFor = anchor && !rt.shownTools.has(anchor.id) ? anchor.id : prompt;
     if (holdFor) {
       rt.heldHooks.set(holdFor, [...(rt.heldHooks.get(holdFor) ?? []), event]);
@@ -2895,9 +2902,20 @@ export class SessionManager {
     }
     // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
     const arrived = rt && !past ? sentUuidOf(entry) : null;
-    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける。送った発言の行には、発言のときのフックを付ける
+    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける
     if (rt) events = events.flatMap((e) => (e.type === 'tool-use' ? [e, ...this.shownTool(rt, e.id)] : [e]));
-    if (rt && arrived) events = [...events, ...this.takeHeld(rt, arrived)];
+    // 発言のときのフックは、その発言の行（送った uuid。作業中に送ったものは attachment）のあとに付ける。違う形で出たとき（uuid の違う
+    // 本体の発言の行）もそのあとに、発言の行より先に応答・ツールの行が出たらその前に付ける（応答の全部のあとまで待たせない）
+    const promptLine = rt && !past ? rt.promptLine : null;
+    if (rt && promptLine) {
+      if (arrived === promptLine || events.some((e) => e.type === 'user')) {
+        events = [...events, ...this.takeHeld(rt, promptLine)];
+        rt.promptLine = null;
+      } else if (events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use' || e.type === 'thinking')) {
+        events = [...this.takeHeld(rt, promptLine), ...events];
+        rt.promptLine = null;
+      }
+    }
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
       this.pushEvents(id, events, !isHistory);
