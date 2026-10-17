@@ -412,6 +412,50 @@ describe('webview の受け付け（attach）', () => {
   });
 });
 
+describe('コンソールの記録のうち、許していない先の文', () => {
+  const iframe = (origin: string) => ({ origin, url: `${origin}/frame?token=secret`, parent: {} });
+
+  it('get_console_logs は、許していない先のフレーム（別オリジンの iframe・移る途中の前のページ）の文を返さず、除いた数だけを伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    logConsole(page, 'error', 'トップの文');
+    logConsole(page, 'error', '許す先の iframe の文', '', 0, iframe('http://localhost:4000'));
+    logConsole(page, 'error', '外の iframe の秘密の文', '', 0, iframe('https://ads.example.com'));
+    // 移り始めたあとに、前のページ（許していない先）が出した文
+    logConsole(page, 'warning', '前のページの秘密の文', '', 0, { origin: 'https://evil.example', url: 'https://evil.example/', parent: null });
+    // 出したフレームが分からない
+    logConsole(page, 'error', 'フレームの分からない文', '', 0, null);
+    const text = textOf(await call('get_console_logs'));
+    expect(text).toBe('[error] トップの文\n[error] 許す先の iframe の文\n(3 more messages from pages or frames not allowed for Claude are not shown.)');
+    // ページの様子に添える「エラー N 件」も、見せるものだけを数える（隠したエラーは 2 件）
+    expect(textOf(await call('navigate', { action: 'reload' }))).toContain('The console has 2 errors (read them with get_console_logs).');
+  });
+
+  it('トップと同じオリジンの iframe は、トップが人の許したオリジンなら返す。別オリジンの iframe には、タブの許可は効かない', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/');
+    await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { url: 'https://app.example.com/' } });
+    await call('navigate', { url: 'https://app.example.com/' });
+    logConsole(page, 'error', '許したページの文');
+    logConsole(page, 'error', '同じオリジンの iframe の文', '', 0, iframe('https://app.example.com'));
+    logConsole(page, 'error', '別オリジンの iframe の文', '', 0, iframe('https://pay.example.com'));
+    expect(textOf(await call('get_console_logs'))).toBe(
+      '[error] 許したページの文\n[error] 同じオリジンの iframe の文\n(1 more message from pages or frames not allowed for Claude is not shown.)',
+    );
+  });
+
+  it('evaluate が失敗したときも、許していない先のフレームの文は返さない', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.evaluate = () => {
+      logConsole(page, 'error', '外の iframe の秘密の文', '', 0, iframe('https://ads.example.com'));
+      logConsole(page, 'error', 'Uncaught Error: 式のエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: Uncaught Error: 式のエラー', true));
+  });
+});
+
 describe('コンソールと失敗した通信の記録', () => {
   it('コンソール: 出た場所を添えて集め、レベルで選んで読む。clear で消す', async () => {
     const { call, open } = setup();

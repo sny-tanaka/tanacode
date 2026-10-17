@@ -131,9 +131,19 @@ export function setup() {
   return { control, state, sent, asked, created, open, call, sentOn, activities, network };
 }
 
-// ページのコンソールに出す（Electron の console-message）
-export function logConsole(page: FakeContents, level: string, message: string, sourceId = '', lineNumber = 0): void {
-  page.emit('console-message', { level, message, sourceId, lineNumber });
+// 文を出したフレーム（Electron の WebFrameMain のうち、使うもの）。parent が null ならトップのフレーム
+export type ConsoleFrame = { origin: string; url: string; parent: unknown } | null;
+
+// ページのコンソールに出す（Electron の console-message）。frame: 出したフレーム（既定は、今のページのトップのフレーム）
+export function logConsole(page: FakeContents, level: string, message: string, sourceId = '', lineNumber = 0, frame?: ConsoleFrame): void {
+  const top = (() => {
+    try {
+      return { origin: new URL(page.url).origin, url: page.url, parent: null };
+    } catch {
+      return { origin: 'null', url: page.url, parent: null };
+    }
+  })();
+  page.emit('console-message', { level, message, sourceId, lineNumber, frame: frame === undefined ? top : frame });
 }
 
 // 別プロセスの iframe につながった（URL は Runtime.evaluate の location.href で答える）

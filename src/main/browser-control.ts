@@ -132,8 +132,10 @@ type AXNode = {
   parentId?: string;
 };
 
-// seq: 記録の通し番号（上限で前から削っても、移動で空にしても、番号は続く。ある時点からあとの記録を切り出すのに使う）
-type LogEntry = { level: string; text: string; seq: number };
+// seq: 記録の通し番号（上限で前から削っても、移動で空にしても、番号は続く。ある時点からあとの記録を切り出すのに使う）。
+// origin: 文を出したフレームのオリジン（分からなければ null）/ top: トップのフレームか。Claude に返すのは、許した先のフレームの文だけ（visibleLog）。
+// 別オリジンの iframe の文や、移り始めたあとに前のページが出した文（pagehide など）も、同じ記録に入るため
+type LogEntry = { level: string; text: string; seq: number; origin: string | null; top: boolean };
 // webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
 type Logs = { console: LogEntry[]; failed: string[]; seq: number };
 // タブ 1 つ（webview 1 つ）
@@ -262,7 +264,8 @@ export class BrowserControl {
     contents.on('console-message', (event) => {
       const { level, message, sourceId, lineNumber } = event;
       const where = sourceId ? ` (${sourceId}${lineNumber ? `:${lineNumber}` : ''})` : '';
-      logs.console.push({ level, text: `${message}${where}`, seq: logs.seq++ });
+      const { origin, top } = frameOf(event);
+      logs.console.push({ level, text: `${message}${where}`, seq: logs.seq++, origin, top });
       if (logs.console.length > MAX_CONSOLE) logs.console.splice(0, logs.console.length - MAX_CONSOLE);
     });
     // 新しいページを開いたら、コンソールと失敗した通信を空にする（「今のページを開いてから」のもの）
@@ -772,7 +775,7 @@ export class BrowserControl {
     const allowed = this.allowedIn(guest, url);
     const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)'}`, `URL: ${this.shownUrl(url, guest)}`];
     if (!allowed) lines.push('This page is not allowed for Claude, so it can be neither read nor operated any further.');
-    const errors = guest.logs.console.filter((l) => l.level === 'error').length;
+    const errors = guest.logs.console.filter((l) => l.level === 'error' && this.visibleLog(guest, l)).length;
     if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
     if (guest.logs.failed.length > 0) lines.push(`${count(guest.logs.failed.length, 'request')} failed (read them with get_failed_requests).`);
     return textResult(lines.join('\n'));
@@ -1040,12 +1043,26 @@ export class BrowserControl {
     return textResult(`Elements matching "${selector}": ${found.total}\n\n${parts.join('\n\n')}${more}`);
   }
 
+  // 許していない先のフレームの文は返さず、除いた数だけを伝える
   private consoleLogs(guest: Guest, level: string, clear: boolean): ToolResult {
     const levels = level === 'error' ? ['error'] : level === 'warning' ? ['error', 'warning'] : null;
-    const logs = guest.logs.console.filter((l) => !levels || levels.includes(l.level));
+    const picked = guest.logs.console.filter((l) => !levels || levels.includes(l.level));
+    const logs = picked.filter((l) => this.visibleLog(guest, l));
+    const hidden = picked.length - logs.length;
     if (clear) guest.logs.console.length = 0;
-    if (logs.length === 0) return textResult('No console messages.');
-    return textResult(clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT));
+    const note = hidden > 0 ? `(${count(hidden, 'more message')} from pages or frames not allowed for Claude ${hidden === 1 ? 'is' : 'are'} not shown.)` : '';
+    if (logs.length === 0) return textResult(note || 'No console messages.');
+    return textResult([clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT), ...(note ? [note] : [])].join('\n'));
+  }
+
+  // Claude に返してよい記録か。トップのフレームの文は、そのオリジンが許した先（許す先か、このタブで人が許したオリジン）のとき。
+  // iframe の文は、許す先のときか、今のトップと同じオリジンでトップが許した先のとき（別オリジンの iframe には、タブの許可は効かない）
+  private visibleLog(guest: Guest, entry: LogEntry): boolean {
+    if (!entry.origin) return false;
+    if (entry.top) return this.allowedIn(guest, entry.origin);
+    if (this.allowed(entry.origin)) return true;
+    const topUrl = guest.contents.isDestroyed() ? '' : guest.contents.getURL();
+    return webOrigin(topUrl) === entry.origin && this.allowedIn(guest, topUrl);
   }
 
   private failedRequests(guest: Guest, clear: boolean): ToolResult {
@@ -1295,9 +1312,9 @@ export class BrowserControl {
   // evaluate が失敗したときに Claude に返すもの。origin: 動かす前に確かめたオリジン / mark: 先頭で比べる文が投げる目印 / since: 動かす前の記録の通し番号。
   // 今のページが許していない先なら、ページのコンソールの文は返さない（オリジンだけ。ページが書いた文や、URL に入った値を渡さない）
   private evaluateFailed(guest: Guest, origin: string, mark: string, since: number, error: unknown): ToolError {
-    // 記録は、タブが閉じられても残っている。目印を先に見る（出ていれば、動いていない）
-    const thrown = guest.logs.console.filter((l) => l.seq >= since && l.level === 'error').map((l) => l.text);
-    const marked = thrown.some((t) => t.includes(mark));
+    // 記録は、タブが閉じられても残っている。目印を先に見る（出ていれば、動いていない。目印は文を返さないので、どのフレームの記録でも見る）
+    const errors = guest.logs.console.filter((l) => l.seq >= since && l.level === 'error');
+    const marked = errors.some((l) => l.text.includes(mark));
     if (guest.contents.isDestroyed()) {
       return new ToolError(
         marked
@@ -1324,6 +1341,8 @@ export class BrowserControl {
         `The page moved to a page not allowed for Claude (${shown}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
       );
     }
+    // 返すのは、許した先のフレームの文だけ
+    const thrown = errors.filter((l) => this.visibleLog(guest, l)).map((l) => l.text);
     const failed = `Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`;
     return new ToolError(nowOrigin === origin ? failed : `${failed}\n(The page moved to ${shown} while the script was running or just before it.)`);
   }
@@ -1605,6 +1624,19 @@ function originOf(url: string): string | null {
     return new URL(url).origin;
   } catch {
     return null;
+  }
+}
+
+// コンソールの文を出したフレーム（Electron の WebFrameMain）の、オリジンとトップのフレームか。
+// 分からない（フレームが無い・もう無くなった・オリジンが無い "null"）ときは、オリジンを null にする（Claude に返さない）
+function frameOf(event: { frame?: unknown }): { origin: string | null; top: boolean } {
+  try {
+    const f = event.frame as { origin?: unknown; parent?: unknown } | null | undefined;
+    if (!f) return { origin: null, top: true };
+    const origin = typeof f.origin === 'string' && f.origin !== 'null' ? f.origin : null;
+    return { origin, top: f.parent === null };
+  } catch {
+    return { origin: null, top: true };
   }
 }
 
