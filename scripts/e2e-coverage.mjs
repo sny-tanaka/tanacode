@@ -23,6 +23,18 @@ const counted = (path) =>
 // 束ねる道具（vite 8 の rolldown）が足す実行時の部品。アプリの src を含まず、ソースマップも書かれない（TANACODE_SOURCEMAP=1 でも）
 const bundlerRuntime = (file) => /(^|[\\/])rolldown-runtime-[^\\/]*\.js$/.test(file);
 
+// 自分のコードを持たず、ほかのスクリプトを読んで渡すだけのもの（mermaid の図ごとの入り口など）。
+// 写すコードが無いので、rolldown はソースマップを書かない（TANACODE_SOURCEMAP=1 でも）
+async function onlyReexports(file) {
+  const { body } = await parseAstAsync(readFileSync(file, 'utf8'));
+  return body.every(
+    (node) =>
+      node.type === 'ImportDeclaration' ||
+      node.type === 'ExportAllDeclaration' ||
+      (node.type === 'ExportNamedDeclaration' && !node.declaration),
+  );
+}
+
 // アプリの中のスクリプトの URL を、手元の out/ のファイルにする。アプリのスクリプトでなければ null
 function localScript(url) {
   const match = /\/out\/((?:main|preload|renderer)\/[^?#]+)/.exec(url);
@@ -67,8 +79,8 @@ const missing = [];
 for (const file of [...byFile.keys()].sort()) {
   const mapFile = `${file}.map`;
   if (!existsSync(file) || !existsSync(mapFile)) {
-    // 束ねる道具の部品は、数えるものが無いので飛ばす。ほかは、ビルドの設定の誤りなので失敗にする
-    if (!(existsSync(file) && bundlerRuntime(file))) missing.push(relative(root, file));
+    // 束ねる道具の部品と、読んで渡すだけのものは、数えるものが無いので飛ばす。ほかは、ビルドの設定の誤りなので失敗にする
+    if (!(existsSync(file) && (bundlerRuntime(file) || (await onlyReexports(file))))) missing.push(relative(root, file));
     continue;
   }
   const merged = mergeScriptCovs(byFile.get(file));
