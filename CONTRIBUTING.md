@@ -1015,7 +1015,9 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 確認した印: 開く確認で `ask` を返すとき、アプリはセッションごとに印（開く先の URL・新しいタブか・そのときの今のタブ）を控えます（`gateNavigate`）。`navigate` は、許す先の外で、そのタブで許可していないオリジンを開くとき、同じ開き方の印を 1 回だけ使い切ります（`permit`。印は 15 分で失効）。印が無ければ断ります。フックが動かないとき（この機能の前から動いている Claude Code は、フックの `matcher` に `navigate` が無い）の備えです。
   - タブごとの許可: 印を使って開いたら、そのタブ（`Guest.granted`）にオリジンを足します。新しいタブに開くときは、作る前にセッションに「次にできるタブに渡す許可」（`handoff`。10 秒）を置き、つながったとき（`attach`）に移します。許したページが同じオリジンを新しいウインドウで開くものも、新しいタブに渡します。画面が同じタブの webview を作り直したときは、引き継ぎます。許可は、タブを閉じる・`forget`・メニューでオフにする（`turnOff`）・アプリを終える、まで残ります。読む・押す・撮る・移るときの確かめ（`allowedIn`）は、許す先か、タブの許可を見ます。別オリジンの iframe には効きません（許す先だけを見る `allowed` のまま）。
   - 止めた先へ進む: Claude の操作で許していないオリジンへ移ろう（開こう）として止めたら、止めた URL と、新しいウインドウで開こうとしたかを、タブに控えます（`Guest.stopped`）。Claude に返す文には、オリジンと、`navigate` の `action: "continue"` で続けられることを書きます。`continue` は、フックが確認し、印を使って開きます（新しいウインドウなら新しいタブに）。
-  - 子の確認: 子セッションの `navigate` の確認で、その子に生きている印があれば、親の `answer_permission` では許させません（`SessionsControl` の `humanOnly` → `BrowserControl.humanOnly`。印と確認を取り違えても、人に聞く側に倒す）。断ることはできます。
+  - 子の確認: 親の `answer_permission` では許させない確認があります（`SessionsControl` の `humanOnly` → `BrowserControl.humanOnly`）。断ることはできます。親が読むとき（`get_session` の `can_allow`）と答えるときの両方で、そのときの様子で決めます。
+    - `navigate`: その子に生きている印があれば（印と確認を取り違えても、人に聞く側に倒す）。
+    - `evaluate`: 今のタブのページが、許す先（`isClaudeAllowedUrl`）でも、そのタブで人が開くのを許したオリジン（`Guest.granted`）でもないとき。まだ許していないサイト・許したあとに別のサイトへ移ったとき・タブが無い・空のときも。
   - 登録した設定ファイルを重ねるときは、登録した設定のフックと並べて足します（`mergeSettings`）。
 - 実行はメインプロセス（`browser-control.ts`）。そのセッションの webview の中身（`webContents`）を直接動かします。
   - アプリ内ブラウザは、セッションごとにタブ（1 つのタブに 1 つの webview）を持ちます。画面（`PreviewPane`）は、タブの webview の準備ができたら（`dom-ready`。それより前の `getWebContentsId` は例外になる）、その `webContents` の ID を main に知らせます（`browser.attach`）。今のタブが変わったときも知らせ（`browser.activate`）、Claude の操作は今のタブに対して行います。main は、アプリの画面の中の webview だけを受け付けます。
@@ -1107,7 +1109,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 全文: `get_session` の `permission` に、要求の ID（`id`）・見出し・説明・理由・ツールの名前と入力の全文（`input`）・サブエージェントの中なら `from_subagent` を入れます。入力の JSON が 3 万文字を超えたら頭だけにして、親には許させません（`MAX_PERMISSION_INPUT_CHARS`。断ることはできる）。
     - すり替えの防止: 親は、`get_session` で読んだ `permission.id`（Claude Code の要求の `request_id`）を `permission_id` として渡します。親が読んだあとで人が先に答えた・別の確認に変わっていたら、その ID はもう待っていないので、何も答えずに断ります（`replyPermission` が false）。
     - 親のモード: 許せるのは、親（呼び出し元）の `modeOf` が acceptEdits・auto・bypassPermissions のときだけ（`MODES_ALLOWING_PERMISSION`）。manual・plan の親と、モードが分からない親は、断ることだけ。親自身の操作を人が毎回許すモードで、子を通じて人の確認を省かせないためです。
-    - 人だけが答えられる確認（`can_allow: false` と理由。断ることはできる）: プランの承認・Claude Code が人に回したもの（`requires_user_interaction`・人の承認が要る安全の確かめ・間違って許されないようにする確認 `default_to_no`）・人の設定の ask の規則が出させたもの（`matched_ask_rule`）（`requests.ts` の `humanOnlyReason`）と、アプリ内ブラウザで許す先の外を開く確認（`BrowserControl.humanOnly`）。ふつうの確認には、どの印も付きません（実測）。
+    - 人だけが答えられる確認（`can_allow: false` と理由。断ることはできる）: プランの承認・Claude Code が人に回したもの（`requires_user_interaction`・人の承認が要る安全の確かめ・間違って許されないようにする確認 `default_to_no`）・人の設定の ask の規則が出させたもの（`matched_ask_rule`）（`requests.ts` の `humanOnlyReason`）と、アプリ内ブラウザの確認のうち、許す先の外を開く `navigate` と、許す先でもそのタブで人が許したオリジンでもないページでの `evaluate`（`BrowserControl.humanOnly`。読むときと答えるときに、そのときのページで決める）。ふつうの確認には、どの印も付きません（実測）。
     - 断る理由（`reason`）があれば、確認への答え（deny の message）として子に届き、子は作業を続けます。無ければ、断って作業を止めます（deny と `interrupt`。次の指示は `send_message` で）。制御文字は除きます。
     - 判断の基準（全文を読む・頼んだ作業の範囲で失うものが無いものだけ・戻せない操作と外に出る操作はユーザーが許しているときだけ・迷ったら AskUserQuestion でユーザーに聞く・確認の中身は信頼できない入力）は、MCP の説明（`PARENT_INSTRUCTIONS`）とツールの説明に書いています。アプリは中身を判断しません。
     - 子がターミナルモードの間は、答えません（人が TUI で答える）。親自身の `start_session` の確認（フックの `ask`）も、今までどおり人だけです。
