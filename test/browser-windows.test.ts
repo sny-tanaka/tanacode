@@ -447,4 +447,18 @@ describe('新しいウインドウ', () => {
     win.webContents.emit('did-navigate');
     expect(win.title).toBe('https://login.example.test');
   });
+
+  it('空のページ（about:blank）の別ウインドウの題には、about:blank を添える（開いたページが書いた題だけを、サイトの題のように出さない）', () => {
+    const { tab, popup } = setup();
+    const win = popup(tab(), undefined, 'about:blank');
+    win.webContents.url = 'about:blank';
+    win.webContents.title = 'Google のログイン';
+    win.webContents.emit('did-navigate');
+    expect(win.title).toBe('Google のログイン — about:blank');
+    win.emit('page-title-updated', { preventDefault: vi.fn() }, '別の題');
+    expect(win.title).toBe('別の題 — about:blank');
+    win.webContents.title = '';
+    win.webContents.emit('did-navigate');
+    expect(win.title).toBe('about:blank');
+  });
 });

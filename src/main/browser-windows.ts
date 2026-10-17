@@ -225,12 +225,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-// 別ウインドウにはアドレス欄が無いので、題に今のページのオリジンを添える（ログインの窓が、どのサイトのものか分かるように）
+// 別ウインドウにはアドレス欄が無いので、題に今のページのオリジンを添える（ログインの窓が、どのサイトのものか分かるように）。
+// オリジンの無いページ（空のページ about:blank。中身は開いたページが書ける）は、その URL を添える（ページが書いた題だけを、サイトの題のように出さない）
 function showOrigin(win: BrowserWindow): void {
   const update = (title: string) => {
     if (win.isDestroyed()) return;
-    const origin = originOf(win.webContents.getURL());
-    win.setTitle(origin && title && title !== win.webContents.getURL() ? `${title} — ${origin}` : (origin ?? title));
+    const url = win.webContents.getURL();
+    const where = originOf(url) ?? url;
+    win.setTitle(title && title !== url ? `${title} — ${where}` : where);
   };
   win.on('page-title-updated', (event, title) => {
     event.preventDefault();
