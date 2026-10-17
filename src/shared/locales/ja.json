@@ -216,6 +216,7 @@
     "git": {
       "commitMessageRequired": "コミットメッセージを入力してください",
       "noDefaultBranch": "デフォルトブランチが分かりません",
+      "badBranch": "ブランチの名前として使えません（{branch}）",
       "diverged": "{name} には切り替えましたが、手元の {name} が {target} と分かれているため最新まで進められませんでした"
     },
     "search": {

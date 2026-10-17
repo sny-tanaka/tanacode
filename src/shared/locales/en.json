@@ -218,6 +218,7 @@
     "git": {
       "commitMessageRequired": "Enter a commit message",
       "noDefaultBranch": "Couldn't determine the default branch",
+      "badBranch": "Not a valid branch name ({branch})",
       "diverged": "Switched to {name}, but couldn't bring it up to date because your local {name} has diverged from {target}"
     },
     "search": {

@@ -426,7 +426,7 @@ async function mergedInto(root: string, branch: string, targets: string[]): Prom
   const ahead = await countCommits(root, [branch, '--not', ...targets]);
   if (ahead === 0) return true;
   if (ahead === null) return false;
-  const changed = await git(root, ['diff', '--name-only', '-z', `${targets[0]}...${branch}`]).then(
+  const changed = await git(root, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '-z', `${targets[0]}...${branch}`]).then(
     (out) => out.split('\0').filter(Boolean),
     () => null,
   );

@@ -213,6 +213,11 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - 子の claude には、親の Claude Code がそのセッションのために付ける環境変数（`CLAUDECODE`・`CLAUDE_CODE_SESSION_ID` など。`claude-session.ts` の `PARENT_SESSION_ENV`）を渡さないか。
 - 見える範囲（`canSee`）は、同じフォルダ（worktree は元のフォルダ）と親子・兄弟だけ。中のフォルダを含めていないか（`~/work` で開いたセッションに、その下の別々のリポジトリを見せない）。一覧や見出しに、見えない子の ID・名前を出していないか。指示・中断・回答（質問・許可の確認）・片付けは自分の子だけ（`resolve` の `child`）。
 - `start_session` のフォルダは `realpath` してから、親のリポジトリの中か、そのプロファイルのセッションのフォルダ（`host.list()`。別のプロファイルのものは含めない）だけ（`folderFor`）。別のリポジトリのフォルダを選べても、見える範囲（`canSee`）は広げていないか。`list_sessions` の `start_folders` は、フォルダのパスだけか（見えないセッションの ID・名前を出していないか）。`get_session_diff` の `path` は `safeRelative`（`:` で始まるもの、つまり git の pathspec の書き方は断る）、path を渡す git には `GIT_LITERAL_PATHSPECS=1` を付けるか。未追跡のファイルは、`../` で始まるもの・リンクを解いた場所がセッションのフォルダの外になるものは読まず、`lstat` でふつうのファイルだけ・読む大きさと数に上限（`git.ts` の `branchFiles` の行数の数え方も同じ）。
+
+**git**（`src/main/git.ts`・`source-control.ts`）
+
+- tanacode が自分で動かす git（`git`）は、`guardArgs` の `-c` を付けて動かしているか（`core.fsmonitor=false`・`core.hooksPath=/dev/null`、リポジトリの設定（local・worktree）で決めたフィルター・merge のドライバーを空に。git-lfs の決まった形とユーザー自身の設定だけ残す）。diff を動かす所に `--no-ext-diff`・`--no-textconv`、`show` に `--no-textconv` を付けているか。フォルダの設定のまま動かす `userGit` は、人がソース管理パネルで押した操作（ステージ・コミット・プッシュ・プル・ブランチの切り替えなど）だけか。`git` を通さずに git を動かす所（`execFile('git', …)`）を増やしていないか（`grep -rn "execFile('git'" src/main`）。
+- 画面・Claude から来た値を、git の引数にそのまま渡していないか。基点・リビジョンは `HEAD` か 16 進のコミットの ID だけ（`commitId`）、ブランチの名前は `-` で始まるものを断る（`SourceControl.checkout`）、パスは `--` のあとに置くか `:./` を前に付ける。
 - 会話ログの目印（`<tanacode-parent-message>`・`<tanacode-session-event>`、予約・チェックリストの知らせ）は、本文や名前の `<tanacode-`・`</tanacode-` を `neutralizeTags` で打ち消しているか（閉じタグで囲みの外に出た文が、子の Claude に人の発言として読まれないように）。
 
 ### まだ直していない項目

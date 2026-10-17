@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { branchBase, branches, branchFiles, defaultBranch, git, GitError, isIgnored, repoInfo, showAt, status } from '../src/main/git';
+import { branchBase, branches, branchFiles, defaultBranch, git, GitError, guardArgs, isIgnored, repoInfo, showAt, showHead, showIndex, status } from '../src/main/git';
 
 // git の読み取り（ソース管理パネル・セッションの差分・worktree が使う）。使い捨てのリポジトリに、本物の git で確かめる
 
@@ -335,5 +335,68 @@ describe('branchFiles', () => {
     commit(repo, 'keep.txt', 'new\n');
     expect(await showAt(repo, base, 'keep.txt')).toBe('1\n2\n3\n');
     expect(await showAt(repo, base, 'none.txt')).toBeNull();
+  });
+});
+
+// tanacode が自分で動かす git は、開いたフォルダの設定（.git/config・.git/hooks・属性）で、人の知らないコマンドを動かさない。
+// 画面から来た値は、git のオプションとして読まれないよう確かめてから渡す
+describe('tanacode が動かす git の守り', () => {
+  let marks: string;
+  let base: string;
+  // 動いたら印のファイルを残すコマンド
+  const mark = (name: string) => `touch "${join(root, 'marks', name)}"`;
+  beforeEach(() => {
+    marks = join(root, 'marks');
+    mkdirSync(marks);
+    commit(repo, 'a.txt', 'a\n');
+    base = sha(repo);
+    run(repo, 'switch', '-q', '-c', 'feature');
+    commit(repo, 'a.txt', 'feature\n');
+    run(repo, 'config', 'core.fsmonitor', `${mark('fsmonitor')}; false`);
+    for (const key of ['clean', 'smudge', 'process']) run(repo, 'config', `filter.local.${key}`, `${mark(`filter-${key}`)}; cat`);
+    run(repo, 'config', 'diff.local.command', `${mark('diff-command')}; true`);
+    run(repo, 'config', 'diff.local.textconv', `${mark('textconv')}; cat`);
+    run(repo, 'config', 'diff.external', `${mark('diff-external')}; true`);
+    run(repo, 'config', 'merge.local.driver', `${mark('merge-driver')}; false`);
+    write(repo, '.git/info/attributes', '* filter=local diff=local merge=local\n');
+    for (const hook of ['post-index-change', 'reference-transaction', 'post-checkout']) {
+      write(repo, `.git/hooks/${hook}`, `#!/bin/sh\n${mark(`hook-${hook}`)}\n`);
+      chmodSync(join(repo, '.git/hooks', hook), 0o755);
+    }
+    write(repo, 'a.txt', 'changed\n');
+  });
+
+  it('読むだけの操作（状態・ブランチ・差分・基点での内容）で、フォルダの設定のコマンド（fsmonitor・フィルター・diff・フック）を動かさない', async () => {
+    expect(await status(repo)).toEqual([{ path: 'a.txt', index: ' ', worktree: 'M' }]);
+    const info = await repoInfo(repo);
+    await branchBase(repo, info);
+    await branchFiles(repo, base);
+    expect(await showAt(repo, base, 'a.txt')).toBe('a\n');
+    await showHead(repo, 'a.txt');
+    await showIndex(repo, 'a.txt');
+    await isIgnored(repo, 'a.txt');
+    await branches(repo);
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', base]);
+    await git(repo, ['merge-tree', '--write-tree', 'main', 'feature']).catch(() => '');
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('打ち消すのは、フォルダの設定のうちコマンドを動かすものだけ。git-lfs の決まった形のフィルターは残す', async () => {
+    run(repo, 'config', 'filter.lfs.clean', 'git-lfs clean -- %f');
+    run(repo, 'config', 'filter.lfs.process', 'git-lfs filter-process');
+    run(repo, 'config', 'filter.fake.process', 'git-lfs filter-process; echo');
+    const args = await guardArgs(repo);
+    expect(args).toEqual(
+      expect.arrayContaining(['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'filter.local.clean=', '-c', 'merge.local.driver=', '-c', 'filter.fake.process=']),
+    );
+    expect(args.some((a) => a.startsWith('filter.lfs.'))).toBe(false);
+  });
+
+  it('画面から来た基点・リビジョンが - で始まっていたら、git のオプションとして読ませずに断る', async () => {
+    // オプションとして読まれると、基点での内容の代わりに、ほかのもの（コミットの書式）が返ってくる
+    expect(await showAt(repo, '--format=x', 'a.txt')).toBeNull();
+    await expect(branchFiles(repo, '--cached')).rejects.toThrow(GitError);
+    // ふつうの基点（コミットの ID）はそのまま
+    expect(await showAt(repo, base, 'a.txt')).toBe('a\n');
   });
 });

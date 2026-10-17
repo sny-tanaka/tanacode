@@ -2,9 +2,11 @@ import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { t } from '@shared/i18n';
 import type { BranchChanges, FileBaseline, GitBranches, GitDiffSides, GitState } from '@shared/ipc';
-import { branchBase, branchFiles, branches, defaultBranch, git, GitError, repoInfo, showAt, showHead, showIndex, status } from './git';
+import { branchBase, branchFiles, branches, defaultBranch, git, GitError, repoInfo, showAt, showHead, showIndex, status, userGit } from './git';
 
-// ソース管理パネルの操作。パスはすべて cwd（セッションのフォルダ）からの相対
+// ソース管理パネルの操作。パスはすべて cwd（セッションのフォルダ）からの相対。
+// 状態・差分を読むのは tanacode が自分で動かす git（git。フォルダの設定でコマンドを動かさない）、人が押した操作（ステージ・コミット・
+// プッシュ・ブランチの切り替えなど）は userGit（ターミナルで打ったときと同じに、フック・資格情報・フィルターを使う）
 export class SourceControl {
   constructor(private readonly cwd: string) {}
 
@@ -41,14 +43,14 @@ export class SourceControl {
   }
 
   async stage(paths: string[]): Promise<void> {
-    await git(this.cwd, ['add', '-A', '--', ...paths]);
+    await userGit(this.cwd, ['add', '-A', '--', ...paths]);
   }
 
   async unstage(paths: string[]): Promise<void> {
     const { empty } = await repoInfo(this.cwd);
     // 最初のコミット前は HEAD が無いので restore --staged が使えない
-    if (empty) await git(this.cwd, ['rm', '--cached', '-r', '-q', '--', ...paths]);
-    else await git(this.cwd, ['restore', '--staged', '--', ...paths]);
+    if (empty) await userGit(this.cwd, ['rm', '--cached', '-r', '-q', '--', ...paths]);
+    else await userGit(this.cwd, ['restore', '--staged', '--', ...paths]);
   }
 
   // 作業ツリーの変更を捨てる。未追跡のファイルは消す
@@ -56,7 +58,7 @@ export class SourceControl {
     const entries = (await status(this.cwd)) ?? [];
     const untracked = new Set(entries.filter((e) => e.index === '?').map((e) => e.path));
     const tracked = paths.filter((p) => !untracked.has(p));
-    if (tracked.length > 0) await git(this.cwd, ['restore', '--', ...tracked]);
+    if (tracked.length > 0) await userGit(this.cwd, ['restore', '--', ...tracked]);
     for (const p of paths.filter((p) => untracked.has(p))) await rm(join(this.cwd, p), { force: true, recursive: true });
   }
 
@@ -64,7 +66,7 @@ export class SourceControl {
     if (!message.trim() && !amend) throw new GitError(t('main.git.commitMessageRequired'));
     const args = ['commit', '-F', '-'];
     if (amend) args.push('--amend');
-    await git(this.cwd, args, message);
+    await userGit(this.cwd, args, message);
   }
 
   async lastCommitMessage(): Promise<string> {
@@ -77,22 +79,24 @@ export class SourceControl {
   async push(): Promise<void> {
     const { upstream } = await repoInfo(this.cwd);
     // 上流が無ければ origin に同じ名前で作る
-    await git(this.cwd, upstream ? ['push'] : ['push', '-u', 'origin', 'HEAD']);
+    await userGit(this.cwd, upstream ? ['push'] : ['push', '-u', 'origin', 'HEAD']);
   }
 
   async pull(): Promise<void> {
-    await git(this.cwd, ['pull']);
+    await userGit(this.cwd, ['pull']);
   }
 
   async fetch(): Promise<void> {
-    await git(this.cwd, ['fetch', '--prune']);
+    await userGit(this.cwd, ['fetch', '--prune']);
   }
 
   // local: 既存のブランチへ / remote: origin/foo なら同じ名前のローカルブランチを作って追跡 / create: 新しいブランチ
+  // 画面から来たブランチの名前が - で始まっていたら、git のオプションとして読ませずに断る（ブランチの名前は - で始められない）
   async checkout(branch: string, mode: 'local' | 'remote' | 'create'): Promise<void> {
-    if (mode === 'create') await git(this.cwd, ['switch', '-c', branch]);
-    else if (mode === 'remote') await git(this.cwd, ['switch', '--track', branch]);
-    else await git(this.cwd, ['switch', branch]);
+    if (!branch || branch.startsWith('-')) throw new GitError(t('main.git.badBranch', { branch: branch.slice(0, 80) }));
+    if (mode === 'create') await userGit(this.cwd, ['switch', '-c', branch]);
+    else if (mode === 'remote') await userGit(this.cwd, ['switch', '--track', branch]);
+    else await userGit(this.cwd, ['switch', branch]);
   }
 
   // リモートの最新を取り込み、デフォルトブランチに切り替えて最新にする。
@@ -103,9 +107,9 @@ export class SourceControl {
       () => false,
     );
     if (hasOrigin) {
-      await git(this.cwd, ['fetch', '--prune', 'origin']);
+      await userGit(this.cwd, ['fetch', '--prune', 'origin']);
       // リモートでデフォルトブランチが変わっていることがあるので、origin/HEAD を取り直す（取れなければ手元の控えを使う）
-      await git(this.cwd, ['remote', 'set-head', 'origin', '--auto']).catch(() => {});
+      await userGit(this.cwd, ['remote', 'set-head', 'origin', '--auto']).catch(() => {});
     }
     const name = await defaultBranch(this.cwd);
     if (!name) throw new GitError(t('main.git.noDefaultBranch'));
@@ -115,7 +119,7 @@ export class SourceControl {
         () => false,
       );
     if ((await repoInfo(this.cwd)).branch !== name) {
-      await git(this.cwd, (await hasRef(`refs/heads/${name}`)) ? ['switch', name] : ['switch', '--track', `origin/${name}`]);
+      await userGit(this.cwd, (await hasRef(`refs/heads/${name}`)) ? ['switch', name] : ['switch', '--track', `origin/${name}`]);
     }
     // 取り込んだ origin のものに合わせる。手元のブランチの上流は、無いことも origin 以外のこともあるので頼らない
     const { upstream } = await repoInfo(this.cwd);
@@ -123,8 +127,8 @@ export class SourceControl {
     const target = remoteRef ?? upstream;
     if (!target) return;
     // 上流が無いとプル・プッシュの数も出ないので、origin のものを上流にする
-    if (!upstream && remoteRef) await git(this.cwd, ['branch', `--set-upstream-to=${remoteRef}`]);
-    await git(this.cwd, ['merge', '--ff-only', target]).catch((err: unknown) => {
+    if (!upstream && remoteRef) await userGit(this.cwd, ['branch', `--set-upstream-to=${remoteRef}`]);
+    await userGit(this.cwd, ['merge', '--ff-only', target]).catch((err: unknown) => {
       const detail = err instanceof Error ? err.message : String(err);
       throw new GitError(`${t('main.git.diverged', { name, target })}\n${detail}`);
     });

@@ -9,8 +9,20 @@ const MAX_COUNT_BYTES = 1024 * 1024;
 
 export class GitError extends Error {}
 
-// cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）
+// tanacode が自分で動かす git（状態・差分・ブランチを読む・worktree の片付けなど）は、開いたフォルダの設定で、人の知らないコマンドを
+// 動かさないよう、コマンドを動かす設定を打ち消して動かす（guardArgs）。人がソース管理パネルで頼んだ操作（ステージ・コミット・プッシュ・
+// プル・ブランチの切り替えなど）は userGit で、ターミナルで git を打ったときと同じに動かす（フック・資格情報・フィルターを使う）
 export function git(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
+  return guardArgs(cwd).then((guard) => runGit(cwd, [...guard, ...args], input, env));
+}
+
+// 人が頼んだ操作。設定はそのまま使う
+export function userGit(cwd: string, args: string[], input?: string): Promise<string> {
+  return runGit(cwd, args, input);
+}
+
+// cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）
+function runGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const options = { cwd, maxBuffer: MAX_BUFFER, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env } };
     const child = execFile('git', args, options, (err, stdout, stderr) => {
@@ -20,6 +32,45 @@ export function git(cwd: string, args: string[], input?: string, env?: Record<st
     // 渡すものが無ければ、標準入力はすぐ閉じる（何かが標準入力からの入力を待っても、待ち続けずに失敗させる）
     child.stdin?.end(input);
   });
+}
+
+// 打ち消す設定を読み直す間隔（ソース管理パネルは、状態を何度も読むため）
+const GUARD_TTL_MS = 2000;
+const guards = new Map<string, { at: number; args: Promise<string[]> }>();
+// git-lfs が入れる決まった形のフィルター（git lfs install。--skip 付きも）。読むだけの git にも要る（無いと、LFS のファイルが変更に見える）
+const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process( --skip)?)$/;
+
+// 開いたフォルダの設定のうち、読むだけの git でもコマンドを動かすものを打ち消す引数（-c）。
+// - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）は、いつも止める
+// - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
+//   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す
+// - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
+export function guardArgs(cwd: string): Promise<string[]> {
+  const now = Date.now();
+  const cached = guards.get(cwd);
+  if (cached && now - cached.at < GUARD_TTL_MS) return cached.args;
+  const args = runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$'])
+    .catch(() => '')
+    .then((out) => {
+      const fixed = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+      const parts = out.split('\0');
+      for (let i = 0; i + 1 < parts.length; i += 2) {
+        const scope = parts[i];
+        const [key, ...value] = parts[i + 1].split('\n');
+        if (scope === 'global' || scope === 'system') continue;
+        if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
+        fixed.push('-c', `${key}=`);
+      }
+      return fixed;
+    });
+  guards.set(cwd, { at: now, args });
+  return args;
+}
+
+// 基点（画面から来ることもある）。git のオプションとして読まれないよう、HEAD と 16 進のコミットの ID だけを受け付ける
+function commitId(value: string): string {
+  if (!/^(HEAD|[0-9a-f]{4,64})$/i.test(value)) throw new GitError(`not a commit id: ${value.slice(0, 80)}`);
+  return value;
 }
 
 // cwd がリポジトリの中なら、リポジトリのルートから cwd までの相対パス（ルートなら ''）。リポジトリでなければ null
@@ -77,12 +128,12 @@ export async function isIgnored(cwd: string, relPath: string): Promise<boolean> 
 
 // HEAD の内容。HEAD に無いファイルなら null
 export async function showHead(cwd: string, relPath: string): Promise<string | null> {
-  return git(cwd, ['show', `HEAD:./${relPath}`]).catch(() => null);
+  return git(cwd, ['show', '--no-textconv', `HEAD:./${relPath}`]).catch(() => null);
 }
 
 // ステージ済み（インデックス）の内容。無ければ null
 export async function showIndex(cwd: string, relPath: string): Promise<string | null> {
-  return git(cwd, ['show', `:./${relPath}`]).catch(() => null);
+  return git(cwd, ['show', '--no-textconv', `:./${relPath}`]).catch(() => null);
 }
 
 export type RepoInfo = {
@@ -192,9 +243,10 @@ export type BranchFile = { path: string; kind: 'added' | 'modified' | 'deleted';
 
 // 基点から作業ツリーまでの変更（コミット済み・ステージ済み・未ステージ・未追跡をまとめて）。パスは cwd からの相対
 export async function branchFiles(cwd: string, mergeBase: string): Promise<BranchFile[]> {
+  const base = commitId(mergeBase);
   const [nameStatus, numstat, untracked] = await Promise.all([
-    git(cwd, ['diff', '--relative', '--no-renames', '--name-status', '-z', mergeBase]),
-    git(cwd, ['diff', '--relative', '--no-renames', '--numstat', '-z', mergeBase]),
+    git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '--no-renames', '--name-status', '-z', base]),
+    git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '--no-renames', '--numstat', '-z', base]),
     git(cwd, ['ls-files', '--others', '--exclude-standard', '-z']),
   ]);
   const counts = new Map<string, { added: number; removed: number; binary: boolean }>();
@@ -223,7 +275,9 @@ export async function branchFiles(cwd: string, mergeBase: string): Promise<Branc
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-// 基点での内容。基点に無いファイルなら null
+// 基点での内容。基点に無いファイル・コミットの ID でない基点なら null
 export async function showAt(cwd: string, rev: string, relPath: string): Promise<string | null> {
-  return git(cwd, ['show', `${rev}:./${relPath}`]).catch(() => null);
+  return Promise.resolve()
+    .then(() => git(cwd, ['show', '--no-textconv', `${commitId(rev)}:./${relPath}`]))
+    .catch(() => null);
 }
