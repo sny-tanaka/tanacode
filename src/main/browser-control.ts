@@ -1200,15 +1200,30 @@ export class BrowserControl {
     return textResult(`Set the viewport to ${width} (page width ${viewport.width}px, height ${viewport.height}px)`);
   }
 
+  // ページの世界で動かす。確かめたページ（current）から、動くまでの間に別のオリジンへの移動が確定していたら、動かさない
+  // （確かめたあとに、前から読み込み中だった移動が確定することがある）。同じスクリプトの先頭で、今のページのオリジンを比べる。
+  // location とその protocol・host は、ページのスクリプトから書き換えられない（[LegacyUnforgeable]。同じ名前の let も置けない）。
+  // URL の origin ではなく protocol と host で比べるのは、CSP の sandbox のページでも origin が "null" にならないように。
+  // 比べる文は改行で区切り、式は手を入れずに続ける（文の並びも、最後の値を返す。ページで動かすときと同じ）
   private async evaluate(guest: Guest, expression: string): Promise<ToolResult> {
+    const url = guest.contents.getURL();
+    const origin = webOrigin(url);
+    if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
+    const code = `if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(PAGE_CHANGED)};\n${expression}`;
     let value: unknown;
     const logged = guest.logs.console.length;
     try {
-      value = await guest.contents.executeJavaScript(expression);
+      value = await guest.contents.executeJavaScript(code);
     } catch (error) {
       // 投げられたエラーの中身は、例外には入らずコンソールに出る（届くのを少し待つ）
       await sleep(100);
       const thrown = guest.logs.console.slice(logged).filter((l) => l.level === 'error').map((l) => l.text);
+      // 移動でコンソールの記録が消えていることもあるので、エラーが残っていなければ、今のページのオリジンでも見る
+      // （式が自分でエラーを出したときは、そのエラーを返す）
+      const now = guest.contents.isDestroyed() ? null : guest.contents.getURL();
+      if (thrown.some((t) => t.includes(PAGE_CHANGED)) || (thrown.length === 0 && now !== null && webOrigin(now) !== origin)) {
+        throw new ToolError(`The page moved to another origin (${now === null ? 'closed' : originShown(now)}) before the script ran, so the script was not run.`);
+      }
       throw new ToolError(`Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`);
     }
     let text: string;
@@ -1514,6 +1529,9 @@ function webOrigin(url: string): string | null {
 function originShown(url: string): string {
   return originOf(url) ?? 'invalid URL';
 }
+
+// evaluate の先頭の比べる文が、確かめたページから別のオリジンへ移っていたときに投げる目印
+const PAGE_CHANGED = 'tanacode: the page moved to another origin before the script ran';
 
 // 止めた先へ進む方法（止めたことを伝える文に添える）
 const CONTINUE_HINT = ' To open it, call navigate with action "continue" (tanacode asks the user for permission).';

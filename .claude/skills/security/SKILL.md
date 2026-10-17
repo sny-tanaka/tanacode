@@ -204,7 +204,7 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - 許可の確認には、親も答えられる（`answer_permission`。2026-10-12 に決めたこと。それまでは「親は答えない」）。次の守りが外れていないか。
   - 親が返せるのは、今回だけ許す（`updatedPermissions` なし）・理由を添えて断る（deny）・断って止める（interrupt）の 3 つだけか。「今後は聞かない」（`permission_suggestions` を足す `always`）や、権限モードを変える答え（`accept-edits` の setMode）を親の道から作る引数を、足していないか。許すときに理由を付けたら、断るか。
   - 親が読んだ確認にだけ答えるか。`permission_id` は `can_use_tool` の `request_id`。今いちばん前の確認（`pendingPermission`）の ID と違えば、何も答えません。同じコマンドの 2 回目の確認は、別の ID。
-  - 親に見せる入力は `can_use_tool` の `input` の全文で、許すときもそのまま `updatedInput` に返すか（読んだものと動くものをずらさない）。JSON が 3 万文字（`MAX_PERMISSION_INPUT_CHARS`）を超えるものと、人だけが答えられるもの（`humanOnlyReason`: プランの承認・`requires_user_interaction`・安全の確かめ・`permissions.ask` の規則・`default_to_no`。ほかに、アプリ内ブラウザの `BrowserControl.humanOnly`: 許す先の外を開く `navigate` と、今のタブのページが許す先でもそのタブで人が許したオリジンでもない（タブが無い・空のときも）`evaluate`。親が読むときと答えるときの、そのときのページで決める）は、`can_allow: false` で断ることだけか。PermissionRequest のフックは書くだけで、`decision` を返していないか（確認を出さずに通す道にしない）。
+  - 親に見せる入力は `can_use_tool` の `input` の全文で、許すときもそのまま `updatedInput` に返すか（読んだものと動くものをずらさない）。JSON が 3 万文字（`MAX_PERMISSION_INPUT_CHARS`）を超えるものと、人だけが答えられるもの（`humanOnlyReason`: プランの承認・`requires_user_interaction`・安全の確かめ・`permissions.ask` の規則・`default_to_no`。ほかに、アプリ内ブラウザの `BrowserControl.humanOnly`: 許す先の外を開く `navigate` と、今のタブのページが許す先でもそのタブで人が許したオリジンでもない（タブが無い・空のときも）`evaluate`。親が読むときと答えるときの、そのときのページで決める。`evaluate` は、動くときにも、確かめたページのオリジンのままかを、実行するコードの先頭で比べる）は、`can_allow: false` で断ることだけか。PermissionRequest のフックは書くだけで、`decision` を返していないか（確認を出さずに通す道にしない）。
   - 許せるのは、親の権限モード（`modeOf`）が acceptEdits・auto・bypassPermissions のときだけか（`MODES_ALLOWING_PERMISSION`。manual・plan・モードが分からない親は、断ることだけ）。
   - 自分の子だけか（`resolve` の `child`）。子の中継に出していないか（`PARENT_ONLY`）。答えるのは質問でない要求だけで、ターミナルモードの子には答えないか。
   - 断る理由は、確認への答え（deny の `message`）として、親の言葉と分かる形（「the user said」の形にしない）で返し、子は作業を続けるか。制御文字は除きます。理由が無ければ、interrupt で止めます。
@@ -269,7 +269,7 @@ gh api repos/sny-tanaka/tanacode/secret-scanning/alerts --jq '.[] | select(.stat
 
 - `js/bad-code-sanitization`（`src/main/browser-control.ts`。2026-10-10 に 8 件を却下）: セレクタなどを `JSON.stringify` して、アプリ内ブラウザで動かすコードに埋めているところ。コードは `world()`（`executeJavaScriptInIsolatedWorld`）で V8 に直接渡し、HTML には埋めません。`JSON.stringify` の結果は正しい JavaScript の文字列なので、値が文字列の外に出ません。同じ書き方を足すと、その PR でまた出ます。次の 2 つを確かめてから却下します。
   - 埋める文字列・配列は `JSON.stringify` を通しているか。数をそのまま埋めるところは、有限の数だと確かめたもの（`numberOr`）だけか。
-  - 組み立てたコードを、HTML（`<script>`）に埋めたり、`world()` のほかで評価したりしていないか。
+  - 組み立てたコードを、HTML（`<script>`）に埋めたり、`world()` のほかで評価したりしていないか。例外は `evaluate` の先頭の比べる文だけ（ページの世界の `executeJavaScript`。埋めるのは、確かめたページのオリジン（`webOrigin`）と目印の文字列を `JSON.stringify` したもので、Claude の式はそのあとに手を入れずに続ける）。
 - `js/command-line-injection`（`src/main/pty-host.ts` の `spawnPipe` の `child_process.spawn`。2026-10-17 に却下）: pty ホストが、ソケットで受け取った起動の頼み（`req.file`・`req.args`）で Claude Code を起動するところ。CodeQL は、ソケットから来た値を利用者が与えた値として扱います。ソケットは自分だけがつなげるもの（待ち受けたらすぐ `chmod 0600`。置き場所は userData か、パスが長いときは `$TMPDIR` で、どちらも 0700 のフォルダの下）。つなげるのは同じユーザーのプロセスだけで、それはもともと何でも実行できます。TUI を起動する `pty.spawn(req.file, req.args)` も、develop から同じ形（CodeQL は node-pty を起動の口として扱わないので、警告が出ない）。同じ形を足すと、その PR でまた出ます。次のことを確かめてから却下します。
   - 起動の値の出どころが、0600 のソケット（`server.listen` の直後の `chmodSync(socketPath, 0o600)`）か、main の中だけか。ソケットの置き場所が `socketPathIn`（userData か `$TMPDIR`）のままか。
   - 起動の引数は、アプリが組み立てたもの（`claude-session.ts` など）か。会話ログ・ツールの出力・ページの中身など外から来た値を、`file` や引数にそのまま入れていないか。

@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel } from '../src/shared/ipc';
@@ -1186,7 +1187,56 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(await run(loop)).toBe('[object Object]');
     expect(await run(10n)).toBe('10');
     expect(await run('x'.repeat(25_000))).toBe(`"${'x'.repeat(19_999)}\n…(5002 more characters omitted)`);
-    expect(page.evaluated).toEqual(Array(7).fill('document.title'));
+    expect(page.evaluated.map((code) => code.split('\n').at(-1))).toEqual(Array(7).fill('document.title'));
+  });
+
+  // ページの中で動かす（実行するコードを、偽の location と document の上で本当に動かす）。動いたときに開いているページは、
+  // move に渡したもの（確かめたあと、動くまでの間に移動が確定した）。投げたら、Chromium と同じくコンソールに出して失敗にする
+  const runIn = (page: ReturnType<ReturnType<typeof setup>['open']>, move: { url: string; protocol: string; host: string; title: string }, log = true) => {
+    page.evaluate = (code) => {
+      page.url = move.url;
+      try {
+        return runInNewContext(code, { location: { protocol: move.protocol, host: move.host, href: move.url }, document: { title: move.title } });
+      } catch (error) {
+        if (log) logConsole(page, 'error', `Uncaught ${String(error)}`);
+        throw new Error('Script failed to execute');
+      }
+    };
+  };
+
+  it('確かめたページから別のオリジンへ移ったあとに動くときは、移った先のページでは動かさない', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'https://evil.example/', protocol: 'https:', host: 'evil.example', title: '外のページ' });
+    const result = await call('evaluate', { expression: 'document.title' });
+    expect(result).toEqual(textResult('The page moved to another origin (https://evil.example) before the script ran, so the script was not run.', true));
+    // コンソールの記録が移動で消えていても、同じ
+    runIn(page, { url: 'https://evil.example/', protocol: 'https:', host: 'evil.example', title: '外のページ' }, false);
+    page.url = 'http://localhost:3000/a';
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(
+      textResult('The page moved to another origin (https://evil.example) before the script ran, so the script was not run.', true),
+    );
+    // 式が自分でエラーを出したあとに移ったときは、そのエラーを返す（動かなかったことにしない）
+    page.url = 'http://localhost:3000/a';
+    page.evaluate = () => {
+      page.url = 'https://evil.example/';
+      logConsole(page, 'error', 'Uncaught Error: 式のエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'boom()' })).toEqual(textResult('Execution failed: Uncaught Error: 式のエラー', true));
+  });
+
+  it('同じオリジンの中で移ったあとは動かす。文の並びも、最後の値を返す（ページで動かすときと同じ）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'http://localhost:3000/b', protocol: 'http:', host: 'localhost:3000', title: '次のページ' });
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"次のページ"');
+    page.url = 'http://localhost:3000/a';
+    expect(textOf(await call('evaluate', { expression: 'const a = 2;\nlet b = a * 3;\nb + 1' }))).toBe('7');
+    // 既定のポートは、オリジンにもページの host にも付かない
+    const other = open('https://myapp.local/');
+    runIn(other, { url: 'https://myapp.local/x', protocol: 'https:', host: 'myapp.local', title: 'ローカル' });
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"ローカル"');
   });
 
   it('失敗したら、そのときコンソールに出たエラーを返す（前から出ていたもの・エラーでないものは含めない）', async () => {
