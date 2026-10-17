@@ -1382,8 +1382,25 @@ describe('JavaScript の実行（evaluate）', () => {
   const CHANGED = (from: string, to: string) =>
     textResult(`The page changed after tanacode checked it for this call (from ${from} to ${to}), so the script was not run. Call evaluate again to run it on the current page.`, true);
   const NO_PAGE = textResult('No page was open in the current tab when tanacode checked this call, so the script was not run. Call evaluate again to run it on the current page.', true);
+  // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフだった・押し出された・フックが切られている など）
   const NO_RECORD = textResult(
-    'tanacode has no record of checking this call (its permission hook did not run, or could not reach tanacode), so the script was not run. Call evaluate again. If this keeps happening, ask the user to restart Claude Code in this session (the hook is added when it starts).',
+    'tanacode has no record of checking this call, so the script was not run. Call evaluate again. ' +
+      '(tanacode checks each evaluate call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ' +
+      'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
+      'If this keeps happening, tell the user that tanacode cannot check evaluate calls in this session.',
+    true,
+  );
+  // フックは ID 付きで控えたのに、呼び出しに ID が無い（アプリを更新する前から動いている Claude Code の、古い中継）。起動し直せば直る
+  const OLD_RELAY = textResult(
+    'tanacode checked this call, but the call reached tanacode without its ID, so the script was not run. ' +
+      'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
+      'Ask the user to restart Claude Code in this session (the restart button in the chat header), then call evaluate again.',
+    true,
+  );
+  // 同じ呼び出しの控えはあるが、式が違う（ほかのフックが入力を書き換えた など）
+  const CHANGED_INPUT = textResult(
+    'The expression of this call differs from the one tanacode checked for it (another hook may have changed the input), so the script was not run. Call evaluate again. ' +
+      'If this keeps happening, tell the user that another hook seems to change the input of evaluate.',
     true,
   );
 
@@ -1457,13 +1474,15 @@ describe('JavaScript の実行（evaluate）', () => {
     // ID のある呼び出しは、ほかの ID の控えを使わない（式が同じでも）
     await gateWithId('y()', 'toolu_c');
     expect(await call('evaluate', { expression: 'y()' }, 'S1', { gate: false, toolUseId: 'toolu_d' })).toEqual(NO_RECORD);
-    // ID の控えの式と、呼び出しの式が違えば断る
+    // ID の控えの式と、呼び出しの式が違えば断る（控えが無いときとは別の文で）
     await gateWithId('z()', 'toolu_e');
-    expect(await call('evaluate', { expression: 'other()' }, 'S1', { gate: false, toolUseId: 'toolu_e' })).toEqual(NO_RECORD);
+    expect(await call('evaluate', { expression: 'other()' }, 'S1', { gate: false, toolUseId: 'toolu_e' })).toEqual(CHANGED_INPUT);
     // ID の無い呼び出し（ID を渡さない中継）は、ID の無い控え（ID を渡さないフック）だけから、式で引く。
     // ID のある控えは、同じ式の別の呼び出しのもの（前に断られて残ったものも）かもしれないので使わない
+    // （フックが ID 付きで控えたのに呼び出しに ID が無いのは、古い中継のため。起動し直すよう伝える）
     await gateWithId('w()', 'toolu_f');
-    expect(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null })).toEqual(NO_RECORD);
+    expect(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null })).toEqual(OLD_RELAY);
+    expect(await call('evaluate', { expression: 'unknown()' }, 'S1', { gate: false, toolUseId: null })).toEqual(NO_RECORD);
     await gateOnly(control, 'u()');
     expect(textOf(await call('evaluate', { expression: 'u()' }, 'S1', { gate: false, toolUseId: null }))).toBe('"動いた"');
     // ID の無い控えは、ID のある呼び出しでも式で引く

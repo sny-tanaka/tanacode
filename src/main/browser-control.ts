@@ -1262,9 +1262,29 @@ export class BrowserControl {
     // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
     // 控えが無い・フックのときにページが無かったときも、動かさない（確かめたページが分からない）
     const checked = this.takeEvaluateMark(sessionId, expression, toolUseId);
+    // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフの間に聞いた・押し出された・フックが切られている など）
     if (!checked) {
       throw new ToolError(
-        'tanacode has no record of checking this call (its permission hook did not run, or could not reach tanacode), so the script was not run. Call evaluate again. If this keeps happening, ask the user to restart Claude Code in this session (the hook is added when it starts).',
+        'tanacode has no record of checking this call, so the script was not run. Call evaluate again. ' +
+          '(tanacode checks each evaluate call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ' +
+          'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
+          'If this keeps happening, tell the user that tanacode cannot check evaluate calls in this session.',
+      );
+    }
+    // フックは ID 付きで控えたのに、呼び出しに ID が無い。アプリを更新する前から動いている Claude Code の中継（ID を渡さない古いもの）。
+    // フックは呼ばれるたびに今のアプリから動くので、中継だけが古い。Claude Code を起動し直せば直る
+    if (checked === 'no-id') {
+      throw new ToolError(
+        'tanacode checked this call, but the call reached tanacode without its ID, so the script was not run. ' +
+          'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
+          'Ask the user to restart Claude Code in this session (the restart button in the chat header), then call evaluate again.',
+      );
+    }
+    // 同じ呼び出しの控えはあるが、式が違う（ほかのフックが入力を書き換えた など）
+    if (checked === 'changed') {
+      throw new ToolError(
+        'The expression of this call differs from the one tanacode checked for it (another hook may have changed the input), so the script was not run. Call evaluate again. ' +
+          'If this keeps happening, tell the user that another hook seems to change the input of evaluate.',
       );
     }
     if (checked.origin === null) {
@@ -1300,20 +1320,22 @@ export class BrowserControl {
   // 呼び出しに ID が無い（ID を渡さない中継）ときも、ID の無い控えだけから引く（ID のある控えは、同じ式の別の呼び出しのものや、前に断られて
   // 残ったものかもしれない）。フックと中継は同じ Claude Code から呼ばれるので、ふつうは両方に ID があるか、両方に無い。フックにだけ ID があるときは、断る側に倒れる。
   // 同じ式を並べて呼んでも（本体とサブエージェントなど）、ID があれば取り違えない
-  private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | null {
+  // 同じ ID の控えの式が違えば、その控えは捨てて 'changed' を返す。ID の無い呼び出しに、同じ式の ID のある控えしか無ければ 'no-id'
+  // （古い中継）。どちらも、控えが無いときと分けて伝える
+  private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | 'changed' | 'no-id' | null {
     const marks = this.evaluateMarks.get(sessionId) ?? [];
     const take = (index: number) => (index === -1 ? null : marks.splice(index, 1)[0]!);
-    let found: EvaluateMark | null;
+    let found: EvaluateMark | 'changed' | 'no-id' | null;
     const byId = toolUseId === undefined ? -1 : marks.findIndex((m) => m.toolUseId === toolUseId);
     if (byId !== -1) {
-      // 同じ ID の控え。式が違えば、その控えは捨てて断る
       const mark = take(byId)!;
-      found = mark.expression === expression ? mark : null;
+      found = mark.expression === expression ? mark : 'changed';
     } else {
       // ID で引けない。ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの
       let index = marks.length - 1;
       while (index >= 0 && !(marks[index]!.expression === expression && marks[index]!.toolUseId === undefined)) index--;
       found = take(index);
+      if (!found && toolUseId === undefined && marks.some((m) => m.expression === expression)) found = 'no-id';
     }
     if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);
     else this.evaluateMarks.delete(sessionId);
