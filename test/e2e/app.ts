@@ -413,12 +413,11 @@ export class E2EApp {
   }
 
   // target の真ん中を押し、離す前に during を動かしてから離す（押して離す間に画面が変わったときの確かめ）。
-  // 離したクリックが target に届いたかと、押す間に画面に届いたイベントの記録を返す
+  // 離したクリックが target に届いたかと、押す間に画面に届いたイベントの記録を返す。
+  // 押す前に hover で、見えている範囲へ送り、位置が止まって押せるのを確かめてから、真ん中にマウスを置く（click と同じ確かめ）
   async pressHolding(target: Locator, during: () => Promise<void>): Promise<{ reached: boolean; lines: string[] }> {
     return this.recordPress(target, async () => {
-      const box = await target.boundingBox();
-      if (!box) throw new Error('押す要素が見えていません');
-      await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await target.hover();
       await this.page.mouse.down();
       await during();
       await this.page.mouse.up();
