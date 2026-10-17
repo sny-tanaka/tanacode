@@ -69,6 +69,7 @@ import type { StatusLineWatcher } from './statusline';
 import { SubagentTracker } from './subagent-tracker';
 import { WorkflowTracker } from './workflow-tracker';
 import type { SessionRecord, SessionStore } from './session-store';
+import { SendError } from './send-error';
 import type { WorkspaceWatchers } from './workspace-watcher';
 import { disableRemoteControl, enableRemoteControl, generateTitle, rewindConversation, type RewindResult } from './stream/internal';
 import { ControlError } from './stream/client';
@@ -1493,19 +1494,19 @@ export class SessionManager {
   submit(id: string, rawText: string, attachments: string[] = [], pastes: string[] = [], priority?: 'later'): Promise<void> {
     const rt = this.runtimes.get(id);
     // claude がいない（終わった直後など。画面の状態が遅れて届く）。黙って成功にせず、失敗を返す（画面は、送れなかった発言を預かりに戻す）
-    if (!rt || (!rt.process && !rt.restarting)) return Promise.reject(new Error(t('main.send.notRunning')));
+    if (!rt || (!rt.process && !rt.restarting)) return Promise.reject(new SendError('notRunning'));
     // ターミナルモードの間は、人が TUI で打つ（チャットからは送らない）
-    if (rt.terminal || rt.switching) return Promise.reject(new Error(t('main.send.terminalMode')));
+    if (rt.terminal || rt.switching) return Promise.reject(new SendError('terminalMode'));
     const run = async () => {
       // 再起動で止めている claude には書かない（閉じかけで消える）。起動し直した claude が受け付けるようになってから送る
       if (rt.restarting) await this.untilRestarted(id, rt);
       const process = rt.process;
       const client = process?.client;
-      if (!process || !client) throw new Error(t('main.send.notRunning'));
+      if (!process || !client) throw new SendError('notRunning');
       const text = stripControlChars(rawText);
       const kept = pastes.map(stripControlChars).filter((p) => p.trim());
       const read = await Promise.all(attachments.map(imageBlock));
-      if (rt.process !== process) throw new Error(t('main.send.exited'));
+      if (rt.process !== process) throw new SendError('exited');
       const images = read.flatMap((r) => ('block' in r ? [r.block] : []));
       // 送れない画像（形式が違う・読めない）は、黙って落とさず、チャットに知らせる
       const skipped = read.flatMap((r) => ('skipped' in r ? [r.skipped] : []));
@@ -1551,10 +1552,10 @@ export class SessionManager {
         await rt.restarting.done;
         deadline = null;
       }
-      if (this.gone(id, rt) || !rt.process) throw new Error(t('main.send.exited'));
+      if (this.gone(id, rt) || !rt.process) throw new SendError('exited');
       if (rt.ready) return;
       deadline ??= Date.now() + this.restartSendWaitMs;
-      if (Date.now() > deadline) throw new Error(t('main.send.notReady'));
+      if (Date.now() > deadline) throw new SendError('notReady');
       await sleep(100);
     }
   }
@@ -1586,27 +1587,27 @@ export class SessionManager {
   ): Promise<void> {
     const rt = this.runtimes.get(id);
     let process = rt?.process ?? null;
-    if (!rt || (!process && !rt.restarting)) throw new Error(t('main.send.notRunning'));
+    if (!rt || (!process && !rt.restarting)) throw new SendError('notRunning');
     // ターミナルモードの間に来た親の指示・予約・知らせは、預からずに断る（決めたこと）
-    if (rt.terminal || rt.switching) throw new Error(t('main.send.terminalMode'));
+    if (rt.terminal || rt.switching) throw new SendError('terminalMode');
     rt.pendingSubmits += 1;
     this.changed(id);
     try {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         // 待つ間にアーカイブ・一覧から削除した（止めた claude からは終わりの知らせが来ず、受け付けるようにもならない）
-        if (this.gone(id, rt)) throw new Error(t('main.send.exited'));
+        if (this.gone(id, rt)) throw new SendError('exited');
         // 再起動の途中なら、起動し直した claude を待つ
         if (rt.restarting) {
           await rt.restarting.done;
           process = rt.process;
-          if (!process) throw new Error(t('main.send.exited'));
+          if (!process) throw new SendError('exited');
           continue;
         }
-        if (rt.process !== process) throw new Error(t('main.send.exited'));
-        if (signal?.aborted) throw new Error(t('main.send.cancelled'));
+        if (rt.process !== process) throw new SendError('exited');
+        if (signal?.aborted) throw new SendError('cancelled');
         if (rt.ready && !rt.preparing) break;
-        if (Date.now() > deadline) throw new Error(t('main.send.busy'));
+        if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
       await this.submit(id, text, attachments, pastes, 'later');
