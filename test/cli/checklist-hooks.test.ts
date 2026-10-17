@@ -106,7 +106,11 @@ describe(`Claude Code ${version} とチェックリストを使い続けさせ�
     // settled: フックが、会話ログが最後の応答まで書かれているのを確かめた（Claude Code がフックに渡す last_assistant_message と、会話ログの最後の応答が同じ）
     expect(hooks('hook:stop')).toEqual([{ turn: 2, checklist: 0, since: expect.any(Number), settled: true }]);
     const afterStop = api.contexts[api.contexts.length - 1];
-    expect(afterStop).toContain(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched; there are no lists yet)`);
+    expect(afterStop).toContain(`Stop hook additional context: <${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched; there are no lists yet)`);
+    // 止めた理由は、エラー（hookErrors。ターミナルモードの画面では、赤い「Stop hook error」と通知になる）ではなく、
+    // Claude に渡す文（hookAdditionalContext。「Stop hook feedback」）として残る
+    const summary = run.entries.find((e) => e.type === 'system' && e.subtype === 'stop_hook_summary' && JSON.stringify(e).includes(CHECKLIST_REMINDER_TAG));
+    expect(summary).toMatchObject({ hookErrors: [], hookAdditionalContext: [expect.stringContaining(`<${CHECKLIST_REMINDER_TAG}>Before you end this turn`)] });
     expect(calls.map((c) => c.tool)).toEqual(['hook:prompt', 'hook:stop', 'card_add']);
     expect(store.findList(run.sessionId!, '人のやること')!.cards.map((c) => c.title)).toEqual(['設定画面で画像を選ぶ']);
     // 止めた記録は、チャットの目印になる。このあとの応答（チェックリストを直した報告）を、作業の結果と見分けるため

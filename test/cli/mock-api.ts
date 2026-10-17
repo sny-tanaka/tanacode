@@ -115,7 +115,8 @@ export class MockApi {
     // 目印だけの応答は、台本の応答に数えない
     const scripted = (m: Message) => m.role === 'assistant' && (this.scriptChecklistStops || textOf(m).trim() !== CHECKLIST_UNCHANGED_MARK);
     const index = messages.filter(scripted).length;
-    const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>`);
+    // 止めたあとの続き（Claude Code が、フックの文を最後の user の発言に入れて続ける。2.1.302 は「Stop hook additional context: 」を頭に付ける）
+    const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`<${CHECKLIST_REMINDER_TAG}>Before you end this turn`);
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
     if (conversation) {
       const system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text ?? '').join('\n');
