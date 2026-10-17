@@ -128,9 +128,12 @@ function localPath(abs) {
 // （例: 三項演算子の中の t(…) の始まりが、片方は「? 」の前、もう片方は t の位置になる）。
 // istanbul は位置で合わせるので、そのままでは同じ分岐が 2 つに分かれ、片方を通っていないものとして数えてしまう。
 // 先に合わせたもの（target）に同じ位置のものが無い分岐・関数は、種類と行が同じで位置の合わないものが両方に同じ数だけあれば、
-// 行の中の順に対応させて、先に合わせたものの位置にそろえる
+// 行の中の順に対応させて、先に合わせたものの位置にそろえる。
+// 分岐は、種類・枝の数・最初の枝の始まりの行で組にする。vite 8（rolldown）でビルドしたスクリプトのソースマップは終わりの位置が粗く、
+// E2E では、終わりの列が無い・終わりの行が 1 つ前（閉じ括弧の行でなくその前）・else の枝の始まりの行が違う、となることがあるため
+// （終わりの行やほかの枝の行まで見ると、同じ分岐を 2 つに数え、main の分岐が 1 点ほど下がる）
 function align(target, incoming) {
-  realign(target.branchMap, incoming.branchMap, (m) => m.locations[0], (m) => [m.type, ...m.locations.map((l) => `${l.start.line}-${l.end.line}`)].join());
+  realign(target.branchMap, incoming.branchMap, (m) => m.locations[0], (m) => [m.type, m.locations.length, m.locations[0].start.line].join());
   realign(target.fnMap, incoming.fnMap, (m) => m.loc, (m) => `${m.loc.start.line}-${m.loc.end.line}`);
 }
 
