@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { branchBase, branches, branchFiles, defaultBranch, git, GitError, guardOf, isIgnored, repoInfo, showAt, showHead, showIndex, status } from '../src/main/git';
 
 // git の読み取り（ソース管理パネル・セッションの差分・worktree が使う）。使い捨てのリポジトリに、本物の git で確かめる
@@ -632,6 +632,22 @@ describe('tanacode が動かす git の守り', () => {
     } finally {
       if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
       else process.env.GIT_CONFIG_GLOBAL = saved;
+    }
+  });
+
+  it('サブフォルダがあとからリポジトリになったら、そのリポジトリのサブモジュールの設定を読む', async () => {
+    const pkg = join(repo, 'pkg');
+    mkdirSync(pkg);
+    await guardOf(pkg);
+    init(pkg);
+    run(nest(pkg, 'lib'), 'config', 'filter.inner.clean', `${mark('inner-filter-clean')}; cat`);
+    // 打ち消す設定を読み直す間隔（2 秒）が過ぎたことにする
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+    try {
+      expect((await guardOf(pkg)).args).toContain('filter.inner.clean=');
+    } finally {
+      vi.restoreAllMocks();
     }
   });
 

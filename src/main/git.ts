@@ -163,19 +163,14 @@ async function commandKeys(cwd: string, budget: { left: number }, depth: number)
 // リポジトリの一番上ごとの、サブモジュール（インデックスの gitlink）の場所。インデックスが変わったときだけ読み直す。
 // 場所が UTF-8 として読めないものは、バイトのまま（文字列にすると別の場所になる）
 const submoduleLists = new Map<string, { stamp: string; dirs: (string | Buffer)[] }>();
-// フォルダごとの、リポジトリの一番上とインデックスの場所（変わらないので、読めたものは覚えておく）
-const repoPaths = new Map<string, Promise<Buffer[]>>();
 
 // 取り出してある（.git のある）サブモジュールのフォルダ
 async function submodulesOf(cwd: string): Promise<string[]> {
-  let paths = repoPaths.get(cwd);
-  if (!paths) {
-    paths = runGitBytes(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).then((out) => splitBytes(out, 10));
-    repoPaths.set(cwd, paths);
-    // 読めなかった（まだリポジトリでないなど）ものは覚えない
-    paths.catch(() => repoPaths.delete(cwd));
-  }
-  const located = await paths.catch((): Buffer[] => []);
+  // リポジトリの一番上とインデックスの場所は、毎回読む（サブフォルダで git init するなど、リポジトリの境目は変わる。rev-parse は軽い）
+  const located = await runGitBytes(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index']).then(
+    (out) => splitBytes(out, 10),
+    (): Buffer[] => [],
+  );
   if (!located[0]?.length || !located[1]?.length) return [];
   const [top, index] = [exactText(located[0]), exactText(located[1])];
   if (top === null || index === null) throw new GitError(UNREADABLE_PATH);
