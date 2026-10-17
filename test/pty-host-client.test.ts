@@ -491,6 +491,49 @@ describe('PtyHost', () => {
     await host.shutdown();
   }, 15_000);
 
+  // ホストが落ちたあと、同じ場所で待ち受けている（起動し直した）ホスト
+  async function restarted(): Promise<FakeHost> {
+    fake!.close();
+    await sleep(50);
+    fake = await FakeHost.start(socketPath());
+    return fake;
+  }
+
+  it('つなぎ直している間に送ったもの（起動の直後の入力の行・止める頼み）は、捨てずに、つながってから順に送る', async () => {
+    const { host } = await connect();
+    const again = await restarted();
+    const pipe = host.spawnPipe(pipeRequest);
+    // 起動の直後に送る initialize と、止める頼み（end_session のあとの kill）。つながる前に送っている
+    pipe.send('{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}');
+    pipe.end();
+    pipe.kill();
+    await waitFor('止める頼み', () => again.sent('kill').length === 1);
+    expect(again.received.filter((m) => m.t !== 'hello').map((m) => m.t)).toEqual(['spawn', 'send', 'end', 'kill']);
+    expect(again.sent('send')).toEqual([{ t: 'send', id: pipe.id, line: '{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}' }]);
+  });
+
+  it('ホストが落ちたあとの一覧は、つなぎ直してから聞く（答えないまま待たせない）', async () => {
+    const { host } = await connect();
+    const again = await restarted();
+    again.hosted = [info('p1')];
+    const listed = await Promise.race([host.list(), sleep(3000).then(() => 'つながらないまま' as const)]);
+    expect(listed).not.toBe('つながらないまま');
+    expect((listed as HostedInfo[]).map((p) => p.id)).toEqual(['p1']);
+  });
+
+  it('つながっていない間に続けて頼んでも、つなぐのは 1 回（接続を 2 本張らない・ホストを 2 つ起動しない）', async () => {
+    const { host } = await connect();
+    const again = await restarted();
+    const first = host.spawn(request);
+    const second = host.spawnPipe(pipeRequest);
+    const listing = host.list();
+    await waitFor('2 つの起動', () => again.sent('spawn').length === 2);
+    await listing;
+    expect(again.sent('spawn').map((m) => m.id)).toEqual([first.id, second.id]);
+    expect(again.sockets).toHaveLength(1);
+    expect(again.sent('hello')).toHaveLength(1);
+  });
+
   it('つながっていない間に起動を頼んだら、ホストを起動し直してから頼む', async () => {
     const { host } = await connect();
     // ホストが落ちた
