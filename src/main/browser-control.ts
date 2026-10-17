@@ -1778,8 +1778,10 @@ function hasUseStrict(code: string): boolean {
     const rest = code.slice(i);
     if (rest.startsWith(';')) i++;
     else if (rest !== '') {
-      // 改行をまたがずにほかのものが続くか、改行のあとが式の続き（. ( [ ` 演算子・in・instanceof など）なら、directive ではない
-      const continues = /^[.([`+\-*/%&|^?,=<>]/.test(rest) || rest.startsWith('!=') || /^(in|instanceof)(?![\w$])/.test(rest);
+      // 改行をまたがずにほかのものが続くか、改行のあとが式の続き（. ( [ ` 演算子・in・instanceof など）なら、directive ではない。
+      // 改行のあとの ++・-- は続きではない（後置の ++・-- は改行をまたげないので、自動のセミコロンが入り、次の文の前置の ++・-- になる）
+      const continues =
+        !/^(\+\+|--)/.test(rest) && (/^[.([`+\-*/%&|^?,=<>]/.test(rest) || rest.startsWith('!=') || /^(in|instanceof)(?![\w$])/.test(rest));
       if (!newline || continues) return false;
     }
     if (strict) return true;

@@ -1332,6 +1332,9 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(await run("'use strict'\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
     expect(await run("'use strict'.length; undeclared = 1; '動いた'")).toBe('"動いた"');
     expect(await run("'use strict'\n+ 1; undeclared = 1; '動いた'")).toBe('"動いた"');
+    // 改行のあとの ++・-- は、前の文字列に付かない（後置の ++・-- は改行をまたげないので、自動のセミコロンが入り、directive になる）
+    expect(await run("'use strict'\n++globalThis.n; undeclared = 1; '動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'use strict'\n--globalThis.n; undeclared = 1; '動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
     expect(await run("'not strict'; 'use strict' + ''; undeclared = 1; '動いた'")).toBe('"動いた"');
     // #! の行（hashbang）で始まる式も動く。比べる文は、その行のあとに置く（行の終わりは \n・\r・\u2028・\u2029 のどれでも）
     expect(await run('#!/usr/bin/env node\ndocument.title')).toBe('"題"');
