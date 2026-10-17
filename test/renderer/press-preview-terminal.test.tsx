@@ -410,6 +410,74 @@ describe('TerminalPanel: セッションを切り替えた直後のボタン', (
   });
 });
 
+describe('TerminalPanel: シェルを開いている途中にセッションを切り替えたとき', () => {
+  // シェルを開く返事を、テストが好きなときに返す
+  function slowCreate() {
+    const creates: ((shell: { id: string; name: string }) => void)[] = [];
+    api = mockApi({ 'shell.attach': () => Promise.resolve([]), 'shell.create': () => new Promise((resolve) => creates.push(resolve)) });
+    api.install();
+    return creates;
+  }
+
+  it('前のセッションのために開いたシェルは、出さずに止めて片付け、切り替えた先のシェルを開く。打った文字は、切り替えた先のシェルに届く', async () => {
+    const creates = slowCreate();
+    const { rerender } = render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(api.argsOf('shell.create')).toEqual([['s1', 80, 24]]));
+    const first = termOf(0);
+    rerender(<Panel sessionId="s2" />);
+    await act(async () => creates[0]({ id: 'sh1', name: 'zsh' }));
+    // s1 のシェルは、見えたまま残さず、止めて片付ける
+    expect(api.argsOf('shell.kill')).toEqual([['sh1']]);
+    expect(first.disposed).toBe(true);
+    expect(first.element!.isConnected).toBe(false);
+    expect(tabs()).toEqual([]);
+    // 切り替えた先（s2）のシェルを開き、打った文字は s2 のシェルに届く
+    await waitFor(() => expect(api.argsOf('shell.create').map(([owner]) => owner)).toEqual(['s1', 's2']));
+    await act(async () => creates[1]({ id: 'sh2', name: 'zsh' }));
+    expect(tabNames()).toEqual(['zsh 1']);
+    const second = termOf(1);
+    expect(shown(second)).toBe(true);
+    act(() => second.input('ls'));
+    expect(api.argsOf('shell.write')).toEqual([['sh2', 'ls']]);
+    // s1 に戻ると、片付けたシェルのタブは無く、新しく開く
+    rerender(<Panel sessionId="s1" />);
+    await waitFor(() => expect(api.argsOf('shell.create').map(([owner]) => owner)).toEqual(['s1', 's2', 's1']));
+  });
+
+  it('シェルを開けなかったら、作った xterm を残さず、開き直しも繰り返さない', async () => {
+    api = mockApi({ 'shell.attach': () => Promise.resolve([]), 'shell.create': () => Promise.reject(new Error('フォルダがありません')) });
+    api.install();
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(api.argsOf('shell.create')).toHaveLength(1));
+    await act(async () => {});
+    expect(termOf(0).disposed).toBe(true);
+    expect(termOf(0).element!.isConnected).toBe(false);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(api.argsOf('shell.create')).toHaveLength(1);
+  });
+
+  it('チャットのコードブロックの「実行」で開いていたシェルなら、コマンドは打たず、戻ったときにも打たない', async () => {
+    const creates = slowCreate();
+    const { rerender } = render(
+      <>
+        <TerminalPanel sessionId="s1" open={false} onOpen={() => {}} onClose={() => {}} />
+      </>,
+    );
+    await act(async () => {});
+    act(() => void runInTerminal('s1', 'npm test'));
+    await waitFor(() => expect(api.argsOf('shell.create')).toHaveLength(1));
+    rerender(<TerminalPanel sessionId="s2" open={false} onOpen={() => {}} onClose={() => {}} />);
+    await act(async () => creates[0]({ id: 'sh1', name: 'zsh' }));
+    expect(api.argsOf('shell.kill')).toEqual([['sh1']]);
+    // s1 に戻ってパネルを開き、新しいシェルができても、コマンドは打たない
+    rerender(<TerminalPanel sessionId="s1" open onOpen={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(api.argsOf('shell.create')).toHaveLength(2));
+    await act(async () => creates[1]({ id: 'sh2', name: 'zsh' }));
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(api.argsOf('shell.write')).toEqual([]);
+  });
+});
+
 // いまのコードでは落ちる（押しても効かない）。あるべき動きを書いておく
 describe('TerminalPanel: 押しても効かない（不具合）', () => {
   it('動いているコマンドのタブの ×（「止めて閉じる」）は、止めたあとタブも閉じる', async () => {

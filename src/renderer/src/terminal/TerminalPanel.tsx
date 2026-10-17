@@ -50,6 +50,11 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
   const [height, setHeight] = useState(loadHeight);
   useSharedPrefChange(HEIGHT_KEY, () => setHeight(loadHeight()));
   const creating = useRef(false);
+  // 開いている間にほかのセッションへ移って、開いたシェルを片付けた回数（切り替えた先に 1 つも無ければ、開き直すため）
+  const [discarded, setDiscarded] = useState(0);
+  // 見ているセッション（シェルを開き終えたときに、開き始めたときと比べる）
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
   // main が持っているターミナルを引き継いだ（画面を読み込み直したとき。引き継ぐまでは、新しいシェルを開かない）
   const [attached, setAttached] = useState(false);
   // 引き継ぐ前に終わったと知らせが来たもの（引き継ぐ返事より先に届くことがある）。id → 終了コード
@@ -188,13 +193,28 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
   const newShell = useCallback(async (owner: string) => {
     if (creating.current) return;
     creating.current = true;
+    let moved = false;
+    for (const x of xterms.current.values()) x.element.hidden = true;
+    const x = makeXterm();
+    x.element.hidden = false;
+    x.fit.fit();
+    const { term } = x;
+    const discard = () => {
+      term.dispose();
+      x.element.remove();
+    };
     try {
-      for (const x of xterms.current.values()) x.element.hidden = true;
-      const x = makeXterm();
-      x.element.hidden = false;
-      x.fit.fit();
-      const { term } = x;
       const { id, name } = await window.tanacode.shell.create(owner, term.cols, term.rows);
+      // 開いている間にほかのセッションへ移ったら、出さずに止めて片付ける（見えたまま残ると、打った文字が前のフォルダのシェルに届く）。
+      // 待っていたコマンド（チャットの「実行」）も、見ていない間には打たない
+      if (sessionIdRef.current !== owner) {
+        moved = true;
+        window.tanacode.shell.kill(id);
+        discard();
+        pending.current.delete(id);
+        if (queued.current?.owner === owner) queued.current = null;
+        return;
+      }
       attachXterm(id, x);
       followTitle(owner, id, term);
       if (queued.current?.owner === owner) {
@@ -204,8 +224,12 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
       }
       setShells((prev) => ({ ...prev, [owner]: [...(prev[owner] ?? []), { id, name, title: null }] }));
       setActive((prev) => ({ ...prev, [owner]: id }));
+    } catch {
+      // 開けなかった（フォルダが無いなど）。作った xterm を残さない
+      discard();
     } finally {
       creating.current = false;
+      if (moved) setDiscarded((n) => n + 1);
     }
   }, [makeXterm, attachXterm, followTitle]);
 
@@ -236,9 +260,10 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
 
   // シェルを出すのに 1 つも無ければ開く。フォルダがまだ無ければ、できるまで待つ（無いフォルダではシェルがすぐ終わり、開き直しを繰り返してしまう）。
   // main が持っているターミナルを引き継ぐまでも待つ（引き継ぐものがあるかもしれない）
+  // 開いている間に移って片付けたあと（discarded）も、切り替えた先に 1 つも無ければ開く
   useEffect(() => {
     if (attached && open && sessionId && !waiting && tabs.length === 0) void newShell(sessionId);
-  }, [attached, open, sessionId, waiting, tabs.length, newShell]);
+  }, [attached, open, sessionId, waiting, tabs.length, newShell, discarded]);
 
   // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
   // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）
