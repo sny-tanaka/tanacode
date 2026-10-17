@@ -168,25 +168,27 @@ export function TerminalPanel({ sessionId, waiting = null, liveOwners = null, op
           const earlyExit = early.get(s.id);
           if (earlyExit !== undefined && !s.task) continue;
           const exitCode = earlyExit ?? s.exitCode;
-          const x = makeXterm();
+          let x: Xterm | null = null;
           try {
+            x = makeXterm();
             x.term.resize(s.cols, s.rows);
             x.term.write(s.screen);
+            attachXterm(s.id, x);
+            if (s.task) {
+              taskIds.current.add(s.id);
+            } else {
+              followTitle(s.owner, s.id, x.term);
+            }
+            (restored[s.owner] ??= []).push({ id: s.id, name: s.name, title: s.title, ...(s.task ? { task: true } : {}), ...(exitCode !== null ? { exitCode } : {}) });
           } catch {
-            // 画面を書き直せなかったシェルは、見えないまま動かし続けないよう、止めて片付ける
-            x.term.dispose();
-            x.element.remove();
+            // 引き継げなかったシェル（画面を書き直せない・受け手を付けられない）は、見えないまま動かし続けないよう、止めて片付ける
+            x?.term.dispose();
+            x?.element.remove();
+            xterms.current.delete(s.id);
+            taskIds.current.delete(s.id);
             pending.current.delete(s.id);
             window.tanacode.shell.kill(s.id);
-            continue;
           }
-          attachXterm(s.id, x);
-          if (s.task) {
-            taskIds.current.add(s.id);
-          } else {
-            followTitle(s.owner, s.id, x.term);
-          }
-          (restored[s.owner] ??= []).push({ id: s.id, name: s.name, title: s.title, ...(s.task ? { task: true } : {}), ...(exitCode !== null ? { exitCode } : {}) });
         }
       } finally {
         // 引き継いだタブを先に、返事より先に開いたタブをそのあとに並べる

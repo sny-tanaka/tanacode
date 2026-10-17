@@ -17,6 +17,8 @@ const xterm = vi.hoisted(() => {
     static all: FakeTerminal[] = [];
     // これを書こうとすると投げる（画面を書き直せないときを確かめる）
     static failOn: string | null = null;
+    // 次のタイトルの受け手を付けるときに、一度だけ投げる（引き継ぎの途中の、書き直しのあとで投げるときを確かめる）
+    static failTitleOnce = false;
     cols = 80;
     rows = 24;
     element: HTMLElement | null = null;
@@ -51,6 +53,10 @@ const xterm = vi.hoisted(() => {
     }
     private titleListeners: Listener<string>[] = [];
     onTitleChange(listener: Listener<string>) {
+      if (FakeTerminal.failTitleOnce) {
+        FakeTerminal.failTitleOnce = false;
+        throw new Error('受け手を付けられません');
+      }
       this.titleListeners.push(listener);
       return { dispose() {} };
     }
@@ -110,6 +116,7 @@ let seq: number;
 beforeEach(() => {
   xterm.FakeTerminal.all = [];
   xterm.FakeTerminal.failOn = null;
+  xterm.FakeTerminal.failTitleOnce = false;
   inserted = [];
   seq = 0;
   api = mockApi({
@@ -318,6 +325,28 @@ describe('TerminalPanel: 画面を読み込み直したあと（⌘R）', () => 
     view.rerender(<Panel sessionId="s2" />);
     expect(tabNames()).toEqual(['zsh 1']);
     expect(xterm.FakeTerminal.all.some((t) => t.written.includes('s2 の画面'))).toBe(true);
+  });
+
+  it('書き直したあと（タイトルの受け手を付けるところ）で投げたシェルも、止めて xterm を片付ける。ほかのシェルは引き継ぐ', async () => {
+    xterm.FakeTerminal.failTitleOnce = true;
+    api = mockApi({
+      'shell.attach': () =>
+        Promise.resolve([
+          snapshot({ owner: 's1', id: 'shell-1', screen: '前の画面' }),
+          snapshot({ owner: 's1', id: 'task-2', name: 'npm install', task: true, exitCode: 0, screen: 'added 1 package' }),
+        ]),
+      'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }),
+    });
+    api.install();
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['npm install（完了）']));
+    expect(api.argsOf('shell.kill')).toEqual([['shell-1']]);
+    const broken = termOf(0);
+    expect(broken.disposed).toBe(true);
+    expect(broken.element!.isConnected).toBe(false);
+    // 片付けた xterm には、もう書かない
+    act(() => api.emit('shell.onData', { id: 'shell-1', data: 'まだ出力' }));
+    expect(broken.written).toEqual(['前の画面']);
   });
 
   it('引き継げなかったとき（main が答えられなかった）も、ふだんどおり新しいシェルを開く', async () => {
