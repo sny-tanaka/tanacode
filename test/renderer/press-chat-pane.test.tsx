@@ -302,6 +302,65 @@ describe('ヘッダー', () => {
     expect(document.querySelector('.menu-card.rewind')).toBeNull();
   });
 
+  it('巻き戻し: 下見の返事が来る前にほかのセッションへ移ったら、移った先にカードも、見つからなかったわけも出さない', async () => {
+    const answers: ((preview: unknown) => void)[] = [];
+    install({ 'screen.rewindPreview': () => new Promise((resolve) => answers.push(resolve)) });
+    const view = render(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    view.rerender(<ClaudePane {...props({ session: S2 })} />);
+    await act(async () => answers[0]({ files: [], insertions: 0, deletions: 0, codeError: null }));
+    await act(async () => answers[1](null));
+    expect(document.querySelector('.menu-card.rewind')).toBeNull();
+    expect(alerts).toEqual([]);
+  });
+
+  it('巻き戻し: 戻している途中でほかのセッションへ移ったら、戻した文は元のセッションの書きかけに入れ、移った先の入力欄とカードには触らない', async () => {
+    let finish!: (outcome: unknown) => void;
+    install({
+      'screen.rewindPreview': () => Promise.resolve({ files: [], insertions: 0, deletions: 0, codeError: null }),
+      'screen.rewind': () => new Promise((resolve) => (finish = resolve)),
+    });
+    const view = render(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    fireEvent.change(box(), { target: { value: 's1 の書きかけ' } });
+    fireEvent.click(screen.getByText('会話を戻す'));
+    expect(api.argsOf('screen.rewind')).toEqual([['s1', 'u1', { conversation: true, code: false }]]);
+    // 戻している途中に移り、移った先でも巻き戻しのカードを開く（戻している途中の印は持ち越さない）
+    view.rerender(<ClaudePane {...props({ session: S2, chat: chatOf({ items: [{ kind: 'user', id: 'u9', text: 'テストを足して' }] }) })} />);
+    fireEvent.change(box(), { target: { value: 's2 の書きかけ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    const option = () => screen.getByText('会話を戻す').closest('button') as HTMLButtonElement;
+    expect(option().disabled).toBe(false);
+    await act(async () => finish({ ok: true, prefillText: 'ログインを直してください', error: null }));
+    expect(box().value).toBe('s2 の書きかけ');
+    expect(document.querySelector('.menu-card.rewind')).not.toBeNull();
+    expect(option().disabled).toBe(false);
+    // 元のセッションに戻ると、戻した文が書きかけの前に入っている
+    view.rerender(<ClaudePane {...props()} />);
+    expect(box().value).toBe('ログインを直してください\ns1 の書きかけ');
+  });
+
+  it('巻き戻し: 戻している途中でほかのセッションへ移ってから断られたら、わけは出すが、移った先のカードは閉じない', async () => {
+    let finish!: (outcome: unknown) => void;
+    install({
+      'screen.rewindPreview': () => Promise.resolve({ files: [], insertions: 0, deletions: 0, codeError: null }),
+      'screen.rewind': () => new Promise((resolve) => (finish = resolve)),
+    });
+    const view = render(<ClaudePane {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    fireEvent.click(screen.getByText('会話を戻す'));
+    view.rerender(<ClaudePane {...props({ session: S2, chat: chatOf({ items: [{ kind: 'user', id: 'u9', text: 'テストを足して' }] }) })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+    await settle();
+    await act(async () => finish({ ok: false, prefillText: null, error: '送る予定の発言があります', codeRewound: true }));
+    expect(alerts).toEqual(['コードは戻しました。会話は戻せませんでした（送る予定の発言があります）']);
+    expect(document.querySelector('.menu-card.rewind')).not.toBeNull();
+  });
+
   it('起動を待っている発言の「取り消す」は、その発言と画像を入力欄に戻す（打ちかけの文字の前に）。取り下げられなかったら何もしない', async () => {
     let taken: { text: string; attachments: string[]; pastes: string[] } | null = { text: 'テストも足して', attachments: ['/tmp/attachments/0123abcd-shot.png'], pastes: [] };
     const onTakePending = vi.fn(() => taken);
