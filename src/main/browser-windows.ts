@@ -119,13 +119,17 @@ export class PreviewWindows {
   }
 
   // ページが新しいウインドウで開こうとした。source: 開こうとしたタブかポップアップ
-  private open(source: WebContents, { url, disposition, features }: HandlerDetails): WindowOpenHandlerResponse {
-    // http(s) でないもの（file:・mailto: など）は開かない
-    if (!/^https?:\/\//.test(url)) return DENY;
+  private open(source: WebContents, { url: asked, disposition, features }: HandlerDetails): WindowOpenHandlerResponse {
+    // ポップアップは、大きさなどを指定した window.open（features があるもの）だけ。features の無い new-window（Shift+クリックなど）は、タブで開く
+    const popup = disposition === 'new-window' && (features ?? '').trim() !== '';
+    // 空のページ（window.open('')・about:blank）は、ポップアップでだけ開く（開いてから location を移す OAuth のため。中身は開いたページが書き、
+    // 移るときは見張りが確かめる）
+    const url = popup && (asked === '' || asked === 'about:blank') ? 'about:blank' : asked;
+    // ほかの http(s) でないもの（file:・mailto: など）は開かない
+    if (!/^https?:\/\//.test(url) && !(popup && url === 'about:blank')) return DENY;
     const root = this.roots.get(source) ?? source;
     const browser = this.owners.get(root);
-    // ポップアップは、大きさなどを指定した window.open（features があるもの）だけ。features の無い new-window（Shift+クリックなど）は、タブで開く
-    if (disposition === 'new-window' && (features ?? '').trim() !== '') {
+    if (popup) {
       if ((this.popups.get(root)?.size ?? 0) >= MAX_POPUPS) return DENY;
       // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える）
       if (browser && !browser.allowsPopup(root, url)) return DENY;

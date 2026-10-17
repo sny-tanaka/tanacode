@@ -13,6 +13,7 @@ import { E2EApp } from './app';
 // - 別ウインドウは、ページが画面の外の位置を指定しても、tanacode のウインドウがある画面の中に開く
 // - 別ウインドウは Claude の操作の対象にしない（タブの一覧に出ない）。Claude の操作で開いたら、そのことを Claude に伝える
 // - 人の操作（Claude の操作の外）で開いたものも、同じように開く
+// - 空のページ（window.open('')）を開いてから location を移すもの（MSAL などの OAuth）も、別ウインドウで開いて opener に届く
 
 const OPEN = 'ログインのポップアップを確かめてください';
 const DONE = 'ポップアップを確かめました';
@@ -25,6 +26,7 @@ const tool = (id: string, name: string, input: Record<string, unknown>): Block[]
 
 const OPENER = `<!doctype html><title>開く側</title><h1>ログインの前</h1>
 <button id="login" onclick="window.open('/popup', 'login', 'width=480,height=640,left=-10000,top=-10000,nodeIntegration=yes,sandbox=no,contextIsolation=no,webviewTag=yes,closable=no,focusable=no,opacity=0,movable=no,minimizable=no,alwaysOnTop=yes,hasShadow=no,visibleOnAllWorkspaces=yes,type=panel')">ログイン</button>
+<button id="blank-login" onclick="const w = window.open('', 'msal', 'width=480,height=640'); w.location.assign('/popup')">空のページから</button>
 <p id="result">まだ</p>
 <script>
   let count = 0;
@@ -149,6 +151,18 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
       { preview: true, normal: true, inside: true, closed: true },
       { preview: true, normal: true, inside: true, closed: true },
     ]);
+  });
+
+  it('空のページ（window.open(\'\')）を開いてから location を移すものも、別ウインドウで開いて opener に届く', async () => {
+    await app.app.evaluate(async ({ webContents }) => {
+      const guest = webContents.getAllWebContents().find((c) => c.getType() === 'webview' && c.getURL().endsWith('/'));
+      await guest?.executeJavaScript('document.getElementById("blank-login").click()', true);
+    });
+    await expect.poll(popups, { timeout: 10_000 }).toHaveLength(3);
+    await expect
+      .poll(() => app.app.evaluate(({ webContents }) => webContents.getAllWebContents().find((c) => c.getType() === 'webview')?.executeJavaScript('document.getElementById("result").textContent')), { timeout: 15_000 })
+      .toBe(`${REPORT} #3`);
+    await expect.poll(async () => (await popups())[2], { timeout: 10_000 }).toEqual({ preview: true, normal: true, inside: true, closed: true });
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

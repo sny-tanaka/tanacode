@@ -329,11 +329,12 @@ export class BrowserControl {
 
   // ページがポップアップ（別ウインドウ）を開こうとした。開いてよいか（browser-windows.ts）。
   // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える。continue では、新しいタブに開く）。
-  // Claude の操作の間に開くものは、Claude に伝える。知らないタブ（画面からまだ知らせが来ていない）は、Claude が操作していないので開いてよい
+  // Claude の操作の間に開くものは、Claude に伝える。知らないタブ（画面からまだ知らせが来ていない）は、Claude が操作していないので開いてよい。
+  // 空のページ（about:blank）は開いてよい（中身は開いたページが書く。そこから移るときは、blocksNavigation の popup で確かめる）
   allowsPopup(contents: WebContents, url: string): boolean {
     const found = this.find(contents);
     if (!found || !this.operating(found.sessionId)) return true;
-    if (!this.allowedIn(found.guest, url)) {
+    if (!isBlank(url) && !this.allowedIn(found.guest, url)) {
       found.session.blocked = url;
       found.guest.stopped = { url, newWindow: true };
       return false;
@@ -537,7 +538,7 @@ export class BrowserControl {
       result.content.push({
         type: 'text',
         text:
-          `Opened a popup window outside the in-app browser (${[...new Set(session.popups.map(originShown))].join(', ')}). ` +
+          `Opened a popup window outside the in-app browser (${[...new Set(session.popups.map((url) => (isBlank(url) ? 'about:blank' : originShown(url))))].join(', ')}). ` +
           'You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
       });
     }

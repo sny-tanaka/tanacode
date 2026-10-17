@@ -355,6 +355,26 @@ describe('新しいウインドウ', () => {
     expect(opened).toEqual(['https://example.test/outside']);
   });
 
+  it('空のページ（window.open の URL が空・about:blank）のポップアップも開く（開いてから location を移す OAuth のため）。タブには開かない', () => {
+    const { tab, browser, opened, made } = setup();
+    const guest = tab();
+    for (const url of ['', 'about:blank']) {
+      const result = guest.open(url, 'new-window', 'width=480,height=640') as { action: string; createWindow: (options: Record<string, unknown>) => unknown };
+      expect(result.action).toBe('allow');
+      // Electron が中身を作らなかったときは、空のページを読み込む
+      result.createWindow({ ...FROM_PAGE });
+    }
+    expect(browser.allowsPopup.mock.calls).toEqual([
+      [guest, 'about:blank'],
+      [guest, 'about:blank'],
+    ]);
+    expect(made.map((w) => w.loaded)).toEqual([['about:blank'], ['about:blank']]);
+    expect(guest.open('about:blank', 'foreground-tab')).toEqual({ action: 'deny' });
+    expect(guest.open('about:blank', 'new-window', '')).toEqual({ action: 'deny' });
+    expect(browser.openFromPage).not.toHaveBeenCalled();
+    expect(opened).toEqual([]);
+  });
+
   it('features の無い new-window（Shift+クリックなど）は、別ウインドウではなく、アプリ内ブラウザのタブで開く', () => {
     const { tab, browser } = setup();
     const guest = tab();

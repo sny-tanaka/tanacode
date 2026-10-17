@@ -908,6 +908,16 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     expect(textOf(await ctx.call('get_console_logs'))).toBe('No console messages.');
   });
 
+  it('allowsPopup: 空のページ（about:blank）のポップアップは、Claude の操作の間も開く（中身は開いたページが書き、移るときに確かめる）', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    const result = textOf(await clickOpening(ctx, page, () => expect(ctx.control.allowsPopup(asWebContents(page), 'about:blank')).toBe(true)));
+    expect(result).toBe(
+      'Clicked: button#login\n' +
+        'Opened a popup window outside the in-app browser (about:blank). You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+    );
+  });
+
   it('allowsPopup: Claude の操作で、許していない先のポップアップは開かず、止めたことを伝える（continue では新しいタブに開く）', async () => {
     const ctx = setup();
     const page = ctx.open('http://localhost:3000/');
