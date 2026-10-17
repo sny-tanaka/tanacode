@@ -13,7 +13,7 @@ import { MockApi } from './mock-api';
 // 本物の claude（TANACODE_CLAUDE_BIN、無ければ PATH の claude）を、モックの API で動かす（料金はかからない）。
 // 基本の台本（test/scenario.ts）: 起動・許可の確認・質問・hooks・チャット・ヘッダーの statusLine・/ の候補（stream-json）。
 // Claude Code の形が変わって、アプリの読み取りが通らなくなったら失敗する。
-// TANACODE_RECORD=1 を付けると、会話ログを test/fixtures/claude-code/<バージョン>/ に控えとして残す（statusLine は terminal-mode.test.ts が残す）
+// TANACODE_RECORD=1 を付けると、会話ログと stream-json の行を test/fixtures/claude-code/<バージョン>/ に控えとして残す（statusLine は terminal-mode.test.ts が残す）
 
 // アプリが付ける引数（claudeArgs）が、今の claude にまだあるか
 const FLAGS = ['--session-id', '--resume', '--remote-control', '--model', '--effort', '--permission-mode', '--mcp-config', '--allowedTools', '--settings'];

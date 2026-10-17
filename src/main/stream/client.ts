@@ -160,6 +160,7 @@ export class StreamClient {
         else if (this.permissions.delete(value.request_id)) this.events.onCancel(value.request_id);
         return;
     }
+    if (IGNORED_KINDS.has(kindOf(value))) return;
     const message = messageOf(value);
     if (message === 'unknown') {
       this.countUnknown(kindOf(value));
@@ -271,6 +272,10 @@ function isPermission(request: unknown): request is CanUseToolRequest {
   const r = request as Partial<CanUseToolRequest>;
   return str(r.tool_name) && isRecord(r.input) && str(r.tool_use_id);
 }
+
+// 使わないと分かっていて、黙って捨てる種類。時間で出る行（keep_alive。2.1.302 は 30 秒ごとに出すことがある）は、
+// 知らない種類として数えると、控えのテスト（unreadableStreamLines）がテストの長さしだいで落ちたり通ったりする
+const IGNORED_KINDS = new Set(['keep_alive']);
 
 // system の知らせのうち、使うもの（使う項目の形を確かめる）と、種類だけを見るもの
 const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {

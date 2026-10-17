@@ -54,8 +54,8 @@ describe('StreamClient', () => {
     client.start();
     pipe.emit({ type: 'system', subtype: 'init', session_id: 's', model: 'm', permissionMode: 'default' });
     pipe.emit({ type: 'assistant', message: { content: [] }, parent_tool_use_id: null, uuid: 'a1' });
-    pipe.emit({ type: 'keep_alive' });
-    pipe.emit({ type: 'keep_alive' });
+    pipe.emit({ type: 'brand_new' });
+    pipe.emit({ type: 'brand_new' });
     pipe.emit({ type: 'system', subtype: 'post_turn_summary' });
     pipe.emit('{壊れた');
     pipe.emit('[1,2]');
@@ -65,11 +65,22 @@ describe('StreamClient', () => {
       ['assistant', false],
     ]);
     expect([...client.unknown]).toEqual([
-      ['keep_alive', 2],
+      ['brand_new', 2],
       ['system/post_turn_summary', 1],
     ]);
     expect(client.malformed).toBe(3);
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('時間で出る行（keep_alive。30 秒ごと）は、使わないと分かっているので、知らない種類として数えずに捨てる（控えのテストが、テストの長さしだいで落ちないように）', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'keep_alive' });
+    pipe.emit({ type: 'keep_alive' });
+    expect(got.messages).toEqual([]);
+    expect([...client.unknown]).toEqual([]);
+    expect(client.malformed).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('知っている種類でも、使う項目の形が違う行は捨てて、読めない行として数える', () => {
