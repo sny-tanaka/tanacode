@@ -65,6 +65,12 @@ describe('チャットの行', () => {
     expect(run([retrying, { type: 'api-error', id: 'e2', text: '400', retrying: false }, { type: 'turn-end' }]).items).toMatchObject([{ id: 'e2', retrying: false }]);
   });
 
+  it('同じ id の失敗の知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき）、前の行を外して今の位置に出す', () => {
+    const error: ChatEvent = { type: 'api-error', id: 'r1', text: 'overloaded', retrying: false };
+    const chat = run([error, { type: 'turn-end' }, { type: 'user', id: 'u', text: '仕上げて' }, error, { type: 'turn-end' }]);
+    expect(chat.items.map((i) => `${i.kind}:${i.id}`)).toEqual(['user:u', 'error:r1']);
+  });
+
   it('ツールは結果で完了・失敗になり、結果が来ないままターンが終わったら（中断）失敗にする', () => {
     const chat = run([
       { type: 'tool-use', id: 'a', name: 'Edit', target: 'a.ts', input: '', filePath: '/w/a.ts', at: 1 },

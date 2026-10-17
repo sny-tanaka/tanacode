@@ -179,7 +179,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'divider':
       return { ...state, items: [...state.items, { kind: 'divider', id: event.id, text: event.text }] };
     case 'api-error': {
-      const items = withoutRetrying(state.items);
+      // 同じ知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき、main がターンの終わりと一緒に出し直す）、
+      // 前の行を外して今の位置に出す
+      const items = withoutRetrying(state.items).filter((i) => !(i.kind === 'error' && i.id === event.id));
       return { ...state, items: [...items, { kind: 'error', id: event.id, text: event.text, retrying: event.retrying }] };
     }
     case 'process-start':

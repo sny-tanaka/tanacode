@@ -230,9 +230,10 @@ type Runtime = {
   turnPrompt: string | null;
   arrivedPrompts: Set<string>;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
-  turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
+  // error: 会話ログに残らない失敗の理由（ターンの終わりの直前に出す）
+  turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; error: ChatEvent | null; timer: NodeJS.Timeout } | null;
   // 待つ時間が切れて、待っていた行より先にチャットへ出したターンの終わり（その行があとで出たら、そのあとにもう一度出す。次のターンが始まったら捨てる）
-  lateTurnEnd: { waitFor: string; interrupted: boolean } | null;
+  lateTurnEnd: { waitFor: string; interrupted: boolean; error: ChatEvent | null } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
@@ -2425,10 +2426,12 @@ export class SessionManager {
     if (past || !open) return;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     const interrupted = typeof result.terminal_reason === 'string' && result.terminal_reason.startsWith('aborted');
-    // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）
-    if (result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length) {
-      this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
-    }
+    // 会話ログに残らない失敗（ターン数・予算の上限、Claude Code の中の失敗など）は、理由をチャットに出す（中断は除く）。
+    // ターンの終わりの直前に出す（応答の前に終わったターンでは、始めた発言より前に並べない。最適化圧縮は、仕上げの頼みのあとの失敗を見る）
+    const error: ChatEvent | null =
+      result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length
+        ? { type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }
+        : null;
     // /clear・/compact のような Claude Code の中で済むコマンドは、モデルを呼ばずに result を返す（num_turns が 0。実測）。
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
@@ -2436,7 +2439,7 @@ export class SessionManager {
     // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
     const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
     const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
-    rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
+    rt.turnEnding = { interrupted, local, waitFor, error, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
     this.emitSessions();
@@ -2462,7 +2465,7 @@ export class SessionManager {
   // 時間が切れるのは、待つ行があるときだけ（無ければ closeTurn がすぐ出して、時計を止める。出したら turnEnding を外して時計を止める）
   private turnEndTimedOut(id: string, rt: Runtime): void {
     const ending = rt.turnEnding!;
-    rt.lateTurnEnd = { waitFor: ending.waitFor!, interrupted: ending.interrupted };
+    rt.lateTurnEnd = { waitFor: ending.waitFor!, interrupted: ending.interrupted, error: ending.error };
     this.flushTurnEnd(id, rt);
   }
 
@@ -2475,7 +2478,7 @@ export class SessionManager {
     // カードが会話ログに出ないまま残ったフックは、ターンの終わりの前に、そのまま出す
     const held = [...rt.heldHooks.values()].flat();
     rt.heldHooks.clear();
-    this.pushEvents(id, [...held, ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+    this.pushEvents(id, [...held, ...(ending.error ? [ending.error] : []), ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     // モデルを呼ばなかったターンは、未読・通知・タイトルの頼みを出さない。最適化圧縮の通知の数え方（turnNotice。流れの途中で
     // 出さなかった通知を覚えている）にも入れない
     if (ending.local) {
@@ -2920,7 +2923,8 @@ export class SessionManager {
     const late = rt?.lateTurnEnd;
     if (rt && late && (entry.uuid === late.waitFor || arrived === late.waitFor)) {
       rt.lateTurnEnd = null;
-      this.pushEvents(id, [late.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+      // 失敗の理由も出し直す（同じ id。画面は、前の行を外して今の位置に出す）
+      this.pushEvents(id, [...(late.error ? [late.error] : []), late.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     }
     if (changed) this.emitSessions();
   }

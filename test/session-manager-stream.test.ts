@@ -140,6 +140,8 @@ describe('ターンの終わりの順番', () => {
       await app.waitFor('ターンの終わり', () => turnEnds(id) === before + 1);
       const kinds = app.events(id).map((e) => e.type);
       expect(kinds.lastIndexOf('user')).toBeLessThan(kinds.lastIndexOf('turn-end'));
+      // 会話ログに残らない失敗の理由も、発言より前に並べず、ターンの終わりの直前に出す（最適化圧縮は、仕上げの頼みのあとの失敗を見る）
+      if ('errors' in ending) expect(kinds.slice(kinds.lastIndexOf('user') + 1).filter((k) => k !== 'queue')).toEqual(['api-error', 'turn-end']);
     }
     expect(app.events(id).find((e) => e.type === 'turn-end')).toEqual({ type: 'turn-end', interrupted: true });
     // 作業中に送って、ターンの途中に取り込まれた発言（会話ログには queued_command の attachment で出る）も同じ
@@ -202,7 +204,8 @@ describe('ターンの終わりの順番', () => {
     const again = app.turnsCompleted.length;
     app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt: 'これも', source_uuid: queued } });
     await app.waitFor('もう一度のターンの終わり', () => turnEnds(id) === 4);
-    expect(app.events(id).at(-1)).toEqual({ type: 'turn-end' });
+    // 失敗の理由も、その行のあとに出し直す（画面は、同じ id の知らせを今の位置に移す）
+    expect(app.events(id).slice(-2)).toEqual([{ type: 'api-error', id: expect.any(String), text: 'overloaded', retrying: false }, { type: 'turn-end' }]);
     expect(app.turnsCompleted).toHaveLength(again);
   });
 
