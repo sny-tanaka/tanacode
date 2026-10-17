@@ -386,8 +386,12 @@ function activityOf(s: SessionSummary, status: SessionStatus): Activity | null {
   if (s.worktree?.preparing) return { kind: 'starting', label: preparingLabel(s.worktree.preparing) };
   const background = s.backgroundTasks;
   if (status === 'starting') return { kind: 'starting', label: t('sessions.activity.starting') };
-  // ターミナルモード（人が Claude Code の画面で操作している）
-  if (s.terminal) return { kind: 'terminal', label: t('sessions.activity.terminal') };
+  // ターミナルモード（人が Claude Code の画面で操作している）。TUI の作業中・新しい応答は、チャットのときと同じ印で出す
+  if (s.terminal) {
+    if (s.terminalWorking) return { kind: 'running', label: t('sessions.activity.terminalWorking') };
+    if (s.unread) return { kind: 'unread', label: t('sessions.activity.terminalUnread') };
+    return { kind: 'terminal', label: t('sessions.activity.terminal') };
+  }
   if (status === 'running') {
     const label = background > 0 ? t('sessions.activity.runningWithBackground', { count: background }) : t('sessions.activity.running');
     return { kind: 'running', label };

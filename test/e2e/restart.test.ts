@@ -9,6 +9,7 @@ const PROMPT = '起動し直しても続けてください';
 const FIRST = 'はじめの返事です';
 const SECOND = 'つづきの返事です';
 const THIRD = '再起動のあとの返事です';
+const FOURTH = 'チャットに戻ってからの返事です';
 
 describe('アプリを起動し直しても、Claude Code の会話を続けられる', () => {
   let app: E2EApp;
@@ -17,7 +18,10 @@ describe('アプリを起動し直しても、Claude Code の会話を続けら�
     app = await E2EApp.launch({
       trusted: true,
       conversations: () => [
-        { match: PROMPT, steps: [[{ type: 'text', text: FIRST }], [{ type: 'text', text: SECOND }], [{ type: 'text', text: THIRD }]] },
+        {
+          match: PROMPT,
+          steps: [[{ type: 'text', text: FIRST }], [{ type: 'text', text: SECOND }], [{ type: 'text', text: THIRD }], [{ type: 'text', text: FOURTH }]],
+        },
       ],
     });
   });
@@ -59,19 +63,38 @@ describe('アプリを起動し直しても、Claude Code の会話を続けら�
     expect(app.api.lastPrompts).toContain('再起動のあとも');
   });
 
-  it('ターミナルモードのまま「動かしたまま終了」で起動し直すと、ターミナルモードのまま引き継ぐ。チャットに戻せる', async () => {
+  // ターミナルモードの中身（TUI）は Claude Code そのものなので、画面は読まない・キーは押さない（決めたこと）。確かめるのはアプリの側だけ
+  it('ターミナルモードのまま「動かしたまま終了」で起動し直すと、ターミナルモードのまま引き継ぐ。チャットに戻すと会話が続く', async () => {
+    // 切り替えは手が空いているときだけ（返事が出たあとも、ターンが閉じるまでは作業中）
+    await app.byText('.statusbar', 'Claude Code 待機中').waitFor();
     await app.page.click('.claude-header [aria-label="ターミナルモード"]');
-    const rows = () => app.page.locator('.claude-screen .terminal-instance .xterm-rows');
-    await rows().getByText(FIRST, { exact: false }).first().waitFor();
+    await app.byText('.session-list .session-row', 'ターミナルモード').waitFor();
+    await app.page.locator('.claude .claude-screen').waitFor();
+    // チャットと入力欄は隠す
+    expect(await app.page.locator('.chat-list-wrap').isVisible()).toBe(false);
+    expect(await app.page.locator('.chat-input-wrap').isVisible()).toBe(false);
     await app.restart();
     await app.byText('.session-list .session-row', PROMPT).click();
-    // 引き継いだ TUI の画面を、そのまま描ける（チャットに戻さない）
-    await rows().getByText(FIRST, { exact: false }).first().waitFor();
+    // 引き継いだ TUI は、チャットに戻さずにターミナルモードのまま出す
+    await app.byText('.session-list .session-row', 'ターミナルモード').waitFor();
+    await app.page.locator('.claude .claude-screen').waitFor();
     expect(await app.page.locator('.chat-list-wrap').isVisible()).toBe(false);
-    app.page.once('dialog', (dialog) => void dialog.accept());
+    // チャットに戻すときは、Claude Code の画面の書きかけが消えることを確かめる
+    const dialogs: string[] = [];
+    app.page.once('dialog', (dialog) => {
+      dialogs.push(dialog.message());
+      void dialog.accept();
+    });
     await app.page.click('.claude-header [aria-label="ターミナルモード"]');
     await app.page.locator('.chat-list-wrap').waitFor();
+    await app.page.locator('.claude .claude-screen').waitFor({ state: 'detached' });
+    expect(dialogs[0]).toContain('書きかけ');
     await app.byText('.chat-list', THIRD).waitFor();
+    // 戻したあとも、同じ会話が続く（発言がモックの API に届き、返事がチャットに出る）
+    await app.byText('.statusbar', 'Claude Code 待機中').waitFor();
+    await app.send('チャットに戻りました');
+    await app.byText('.chat-list', FOURTH).waitFor();
+    expect(app.api.lastPrompts).toContain('チャットに戻りました');
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

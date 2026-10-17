@@ -359,6 +359,8 @@ export class ScriptedApp {
   readonly workflows = new Map<string, WorkflowRun[]>();
   readonly subagents = new Map<string, SubagentRun[]>();
   readonly statusLineInfos = new Map<string, StatusLineInfo>();
+  // 画面に流した Claude Code の画面の出力（ターミナルモード）
+  readonly ptyData: { id: string; data: string }[] = [];
   // 答えを待っている質問の知らせ（onQuestion）を、届いた順に
   readonly questionLog: { id: string; question: PendingQuestion | null }[] = [];
   // 答えを待っている許可の確認の知らせ（onPermission）を、届いた順に
@@ -398,7 +400,7 @@ export class ScriptedApp {
           this.batches.push(batch);
           this.chat.set(batch.sessionId, [...(this.chat.get(batch.sessionId) ?? []), ...batch.events]);
         },
-        onPtyData: () => {},
+        onPtyData: (id, data) => this.ptyData.push({ id, data }),
         onTurnCompleted: (session, notice) => {
           this.turnsCompleted.push(session);
           this.turnNotices.push(notice);

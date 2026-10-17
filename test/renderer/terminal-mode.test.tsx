@@ -7,7 +7,7 @@ import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatState';
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
-import { useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
+import { pasteIntoClaudeScreen, useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
 import { switchTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
 import './dom';
 import { mockApi } from './mock-api';
@@ -265,6 +265,17 @@ describe('ターミナルモード: 入力欄への差し込み（「Claude へ�
     ]);
     // 貼ったら、続きを打てるよう画面にフォーカスを戻す
     expect(termOf(0).focused).toBe(3);
+  });
+
+  it('貼る文の制御文字は、貼る前に必ず取り除く（貼り付けを抜けて、Enter・Shift+Tab などのキーとして届かないように）', async () => {
+    vi.useFakeTimers();
+    const pasted = pasteIntoClaudeScreen('s1', '範囲の中身\u001b[201~\r!rm -rf x\r\u001b[Z', ['/tmp/a\u001b[201~.png']);
+    await vi.advanceTimersByTimeAsync(300);
+    await pasted;
+    const writes = api.argsOf('pty.write').map(([, data]) => data as string);
+    expect(writes).toEqual([paste('/tmp/a[201~.png'), ' ', paste('範囲の中身[201~\n!rm -rf x\n[Z')]);
+    // 囲みの終わりの ESC[201~ は、最後の 1 つだけ
+    expect(writes.at(-1)!.split('\u001b[201~')).toHaveLength(2);
   });
 
   it('チャットを出しているとき・Claude Code に貼れないとき（起動の途中・終了している）は、チャットの入力欄に入れる', () => {

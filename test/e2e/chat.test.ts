@@ -73,63 +73,6 @@ describe('チャットから Claude Code を動かす', () => {
     expect(await app.page.locator('.claude-header .claude-title').textContent()).toBe(PROMPT);
   });
 
-  it('ターミナルモードにすると、Claude Code を TUI で開き直し、チャットの代わりにその画面を出す。打った文字が届く', async () => {
-    // 切り替えは手が空いているときだけ（作業中は断る）。返事が出たあとも、Stop のフックなどが済んでターンが閉じるまでは作業中
-    await app.byText('.statusbar', 'Claude Code 待機中').waitFor();
-    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
-    const rows = app.page.locator('.claude .claude-screen .terminal-instance .xterm-rows');
-    // TUI は --resume で前の会話を描き直す。信頼していないフォルダでは、その前に TUI がフォルダの信頼を確かめるので（チャットの
-    // stream-json は確かめない。決めたこと）、人と同じく画面で答える。TUI は確かめの画面を出した直後に押したキーを読み落とすことがある
-    // （実測: 出てすぐの ↓ は効かず、次の ↓ で動いた）。決まった時間おいて Enter を押すと「No, exit」のまま終わってしまうので、
-    // 選択が「Yes」に動いたのを画面で見てから Enter を押す（動いていなければ、人と同じく ↓ を押し直す）
-    await rows.waitFor();
-    const seen: string[] = [];
-    const started = Date.now();
-    let last = '';
-    for (const until = Date.now() + 30_000; ; ) {
-      const text = (await rows.textContent({ timeout: 2000 }).catch(() => '（画面が消えた）')) ?? '';
-      if (last !== text) seen.push(`${Date.now() - started}ms: ${text}`);
-      last = text;
-      if (text.includes('チェック完了')) break;
-      if (Date.now() > until || text === '（画面が消えた）') throw new Error(`TUI に前の会話が出ません:\n${seen.join('\n----\n')}`);
-      if (/❯ No, exit/.test(text)) {
-        // 既定は「No, exit」なので、↓ で「Yes」にする（人と同じく、選択が動いたのを見てから Enter を押す）
-        await app.page.locator('.claude-screen .terminal-instance .xterm-helper-textarea').focus();
-        await app.page.keyboard.press('ArrowDown');
-        seen.push(`${Date.now() - started}ms: ↓`);
-      } else if (/❯ Yes, I trust this folder/.test(text)) {
-        await app.page.keyboard.press('Enter');
-        seen.push(`${Date.now() - started}ms: Enter`);
-      }
-      await app.page.waitForTimeout(200);
-    }
-    // チャットと入力欄は隠す
-    expect(await app.page.locator('.chat-list-wrap').isVisible()).toBe(false);
-    expect(await app.page.locator('.chat-input-wrap').isVisible()).toBe(false);
-    // 一覧の印もターミナルモード
-    await app.byText('.session-list .session-row', 'ターミナルモード').waitFor();
-    // 打った文字は pty から claude に届き、claude の入力欄に出る
-    await app.page.locator('.claude-screen .terminal-instance .xterm-helper-textarea').focus();
-    await app.page.keyboard.type('typed-from-xterm', { delay: 80 });
-    await rows.getByText('typed-from-xterm', { exact: false }).waitFor();
-  });
-
-  it('チャットに戻すと、書きかけが消えることを確かめてから、Claude Code を stream-json で開き直す。書きかけはチャットに移さない', async () => {
-    const dialogs: string[] = [];
-    app.page.once('dialog', (dialog) => {
-      dialogs.push(dialog.message());
-      void dialog.accept();
-    });
-    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
-    await app.page.locator('.chat-list-wrap').waitFor();
-    await app.page.locator('.claude-screen').waitFor({ state: 'detached' });
-    expect(dialogs[0]).toContain('書きかけ');
-    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
-    // チャットの会話も、戻したあとの Claude Code も続いている
-    await app.byText('.chat-list', 'チェック完了').waitFor();
-    await app.byText('.statusbar', 'Claude Code 待機中').waitFor();
-  });
-
   it('ターミナルで、シェルのコマンドを動かせる', async () => {
     await app.page.click('.activity-bar [aria-label="ターミナル"]');
     const shell = app.page.locator('.terminal-panel .terminal-host:not([hidden]) .terminal-instance:not([hidden])');

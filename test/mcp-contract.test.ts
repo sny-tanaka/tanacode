@@ -216,6 +216,7 @@ function fakeHost(cwd: string): SessionsHost {
     configure: () => {},
     open: async () => {},
     submitWhenReady: async () => {},
+    switchingTerminal: () => false,
     interrupt: () => {},
     withdrawParentDraft: async () => {},
     pendingQuestion: () => null,

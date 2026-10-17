@@ -365,6 +365,9 @@ class FakeHost implements SessionsHost {
   };
   open = async (id: string) => void this.opened.push(id);
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
+  // チャットとターミナルモードを切り替えている途中のセッション
+  switching = new Set<string>();
+  switchingTerminal = (id: string) => this.switching.has(id);
   interrupt = (id: string) => void this.interrupted.push(id);
   withdrawParentDraft = async (id: string) => void this.withdrawn.push(id);
   // 答えを待っている質問（本物と同じ PendingQuestions。試験では questions.wait で入れる）
@@ -2223,6 +2226,12 @@ describe('ツールの実行（SessionsControl）', () => {
       // 質問・許可の確認にも答えない（人が TUI で答える）
       expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'q', choices: ['a'] }))).toContain('is in terminal mode');
       expect(textOf(await control.handle(PARENT, 'answer_permission', { session_id: CHILD, permission_id: 'req-1', decision: 'deny' }))).toContain('is in terminal mode');
+      // 切り替えの途中（状態は starting）も、預からずにその場で断る
+      host.set(CHILD, 'starting');
+      host.switching.add(CHILD);
+      const switching = await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' });
+      expect(switching.isError).toBe(true);
+      expect(textOf(switching)).toContain('is being switched between the chat and terminal mode');
       expect(host.submitted).toEqual([]);
     });
 

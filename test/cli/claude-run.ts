@@ -110,8 +110,6 @@ export class ClaudeRun {
   bashTasks: BashTask[] = [];
   // session-manager が配信したチャットのイベント（届いた順。ChatBatch をつなげたもの）と、配信そのもの
   readonly chatEvents: ChatEvent[] = [];
-  // ターミナルモードの TUI が画面に描いたもの（端末への出力をつなげたもの）
-  ptyOutput = '';
   readonly chatBatches: ChatBatch[] = [];
   // 選択メニューなど、ユーザーの操作待ちになったときの知らせ（onAttention）
   readonly attentions: Attention[] = [];
@@ -255,6 +253,11 @@ export class ClaudeRun {
     return join(dirname(this.transcript()), this.claudeSessionId);
   }
 
+  // 起動した TUI（ターミナルモード）の引数。起動した順
+  get tuiArgs(): string[][] {
+    return this.host.ptyArgs;
+  }
+
   // 今の会話ログ（worktree のセッションでは、worktree のフォルダの側に書かれる）
   transcript(): string {
     return (this.sessionId && this.app?.manager.transcriptOf(this.sessionId)) || transcriptPath(this.cwd, this.claudeSessionId);
@@ -386,9 +389,8 @@ export class ClaudeRun {
             if (event.type === 'reset') this.switches.push(this.transcript());
           }
         },
-        onPtyData: (id, data) => {
-          if (ours(id)) this.ptyOutput += data;
-        },
+        // ターミナルモードの TUI の画面は読まない（決めたこと）
+        onPtyData: () => {},
         onTurnCompleted: (session) => live() && this.turnsCompleted.push(session),
         onProgress: (id, activity) => ours(id) && this.activities.push(activity),
         onWorkflows: (id, runs) => ours(id) && (this.workflowRuns = runs),

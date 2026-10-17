@@ -48,7 +48,8 @@ type Deps = {
 };
 
 // 知らせの中身。ref: 開くカード
-type Notice = { text: string; refs: CardRef[] };
+// byHuman: 人が画面で頼んだ知らせ（「Claude に通知する」で返信した・画面からコピーした）。ターミナルモードなら TUI の入力欄に貼る
+type Notice = { text: string; refs: CardRef[]; byHuman: boolean };
 
 // 1 回の結果の文字数の上限
 const MAX_RESULT_CHARS = 60_000;
@@ -67,8 +68,8 @@ export class ChecklistControl {
     this.notices = new SessionNotices({
       host: deps.host,
       enabled: deps.enabled,
-      // 人がボタンで頼んだ知らせなので、ターミナルモードなら TUI の入力欄に貼る（Enter は人が押す）
-      onTerminal: 'paste',
+      // 人がボタンで頼んだ知らせは、ターミナルモードなら TUI の入力欄に貼る（Enter は人が押す）。Claude からの知らせは捨てる
+      pasteInTerminal: (notice) => notice.byHuman,
       compose: (_target, items) => {
         const all = [...items.values()];
         const message = noticeMessage(all.map((n) => n.text));
@@ -95,7 +96,7 @@ export class ChecklistControl {
       const text = replyNoticeText(list.name, card.number, card.title, op.text);
       // 返信ごとに 1 つ。続けて返信したものは、1 つの知らせにまとめて送る
       const reply = card.thread[card.thread.length - 1];
-      this.notices.add(sessionId, `reply:${reply.id}`, { text, refs: [{ listId: list.id, cardId: card.id }] });
+      this.notices.add(sessionId, `reply:${reply.id}`, { text, refs: [{ listId: list.id, cardId: card.id }], byHuman: true });
     }
   }
 
@@ -114,7 +115,7 @@ export class ChecklistControl {
       'human',
       request.toList,
     );
-    if (request.notify && to.id !== from.id) this.notifyCopy(from, to.id, result.list, result.cards);
+    if (request.notify && to.id !== from.id) this.notifyCopy(from, to.id, result.list, result.cards, true);
   }
 
   // --- MCP のツール ---
@@ -354,27 +355,31 @@ export class ChecklistControl {
       'claude',
       optionalString(args.to_list),
     );
-    const notify = args.notify !== false && to.id !== caller.id;
-    if (notify) this.notifyCopy(from, to.id, result.list, result.cards);
+    const wanted = args.notify !== false && to.id !== caller.id;
+    // ターミナルモード（人が Claude Code の画面で操作している）の先には、Claude からの知らせを貼らない（人の入力に割り込むため）
+    const terminal = wanted && this.deps.host.stateOf(to.id) === 'terminal';
+    const notify = wanted && !terminal;
+    if (notify) this.notifyCopy(from, to.id, result.list, result.cards, false);
     const where = to.id === caller.id ? 'this session' : `session "${nameOf(to)}" (${to.id.slice(0, 8)})`;
     return [
       `Copied ${claudeNumbers(cards.map((c) => c.number))} of "${list.name}" in session "${nameOf(from)}" to "${result.list.name}" in ${where} as ${claudeNumbers(result.cards.map((c) => c.number))}.`,
       result.createdList ? `(The list "${result.list.name}" did not exist, so it was created.)` : '',
       notify ? 'Claude in the destination session will be notified when it is idle.' : '',
+      terminal ? 'Claude in the destination session was not notified: it is in terminal mode (the user is working in its Claude Code screen). Tell the user if it matters.' : '',
     ]
       .filter(Boolean)
       .join(' ');
   }
 
   // 知らせはチャットにも出るので、画面の言語で書く
-  private notifyCopy(from: SessionSummary, to: string, list: Checklist, cards: Card[]): void {
+  private notifyCopy(from: SessionSummary, to: string, list: Checklist, cards: Card[], byHuman: boolean): void {
     const text = t('tools.notice.cardsCopied', {
       session: from.title ?? t('tools.notice.untitledSession'),
       list: list.name,
       numbers: formatNumbers(cards.map((c) => c.number)),
       titles: cards.map((c) => t('tools.notice.cardTitle', { title: c.title })).join(t('main.format.listSeparator')),
     });
-    this.notices.add(to, `copy:${cards[0]?.id ?? ''}`, { text: clipNotice(text, 600), refs: cards.slice(0, 20).map((c) => ({ listId: list.id, cardId: c.id })) });
+    this.notices.add(to, `copy:${cards[0]?.id ?? ''}`, { text: clipNotice(text, 600), refs: cards.slice(0, 20).map((c) => ({ listId: list.id, cardId: c.id })), byHuman });
   }
 
   // --- 引数 ---

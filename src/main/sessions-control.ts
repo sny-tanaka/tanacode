@@ -71,6 +71,8 @@ export type SessionsHost = {
   configure(id: string, options: SessionOptions): Promise<void> | void;
   open(id: string): Promise<void>;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
+  // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
+  switchingTerminal(id: string): boolean;
   interrupt(id: string): void;
   withdrawParentDraft(id: string): Promise<void>;
   // 答えを待っている質問（いちばん前のもの）と、その 1 問への答え（全部そろったら返事にする）
@@ -468,8 +470,11 @@ export class SessionsControl {
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
     if (state === 'question') throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
     if (state === 'permission') throw new ToolError(`${who} is waiting for an answer to a permission prompt. Read it with get_session and answer it with answer_permission, or ask the user.`);
-    // ターミナルモードの間は、預からずに断る（決めたこと）
+    // ターミナルモードの間と、切り替えの途中は、預からずにその場で断る（決めたこと）
     if (state === 'terminal') throw new ToolError(`${who} is in terminal mode: the user is working in its Claude Code screen, so the message was not sent (and not kept for later). Tell the user, or send it again once get_session shows that the child is back in the chat.`);
+    if (host.switchingTerminal(child.id)) {
+      throw new ToolError(`${who} is being switched between the chat and terminal mode by the user, so the message was not sent (and not kept for later). Check it with get_session, and send it again once it is back in the chat.`);
+    }
     const text = parentMessageText(caller.id, message);
     // 手の空いている子には、すぐ打つ
     if (state === 'idle' || state === 'background') {

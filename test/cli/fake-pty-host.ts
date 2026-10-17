@@ -49,6 +49,8 @@ export class FakePtyHost implements PtyHostApi {
   // ホストが持っているパイプの claude（list に出るもの）と、これまでに起動したすべて
   private readonly pipes = new Map<string, HostedPipeEntry>();
   private readonly allPipes: HostedPipeEntry[] = [];
+  // 起動した pty（TUI）の引数。起動した順
+  readonly ptyArgs: string[][] = [];
 
   constructor(
     private readonly file: string,
@@ -89,6 +91,7 @@ export class FakePtyHost implements PtyHostApi {
 
   spawn(request: Omit<PtySpawnRequest, 'id' | 'kind'>): PtyHandle {
     const id = randomUUID();
+    this.ptyArgs.push([...request.args]);
     const env = this.envFor(request.env);
     const term = new Terminal({ cols: request.cols, rows: request.rows, scrollback: SCROLLBACK, allowProposedApi: true });
     const serializer = new SerializeAddon();

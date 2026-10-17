@@ -3,8 +3,9 @@ import type { SessionState } from '@shared/session-tools';
 
 // アプリから Claude への知らせ（子の作業が終わった・チェックリストに返信があった など）を、手の空いたセッションに送る列。
 // 作業中なら手が空くまで待つ。続けて届いた知らせは 1 つにまとめる。
-// 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる。送り先がターミナルモードなら、捨てるか（親への知らせ。
-// 預からない。決めたこと）、TUI の入力欄に貼るだけにする（人がボタンで頼んだもの。Enter は人が押す。設計書 9 節）
+// 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる。送り先がターミナルモードなら、捨てるか（親への知らせ・
+// Claude からの知らせ。預からない。決めたこと）、TUI の入力欄に貼るだけにする（人がボタンで頼んだもの。Enter は人が押す。設計書 9 節）。
+// TUI が確認・質問のメニューを出している間は貼らずに待つ（貼った文字がメニューの選択になるため）
 
 // SessionManager のうち、知らせに使うもの
 export type NoticeHost = {
@@ -12,7 +13,7 @@ export type NoticeHost = {
   stateOf(id: string): SessionState | null;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   watchState(listener: (id: string) => void): () => void;
-  // ターミナルモードの TUI の入力欄に貼る（Enter は送らない）。貼れなければ false
+  // ターミナルモードの TUI の入力欄に貼る（Enter は送らない）。貼れなければ（メニューを出している間など）false
   pasteIntoTerminal?(id: string, text: string): boolean;
 };
 
@@ -24,8 +25,8 @@ type Deps<T> = {
   compose: (target: string, items: Map<string, T>) => string | null;
   // まとめるまでの待ち（テストでは短くする）
   delayMs?: number;
-  // 送り先がターミナルモードのとき。paste: TUI の入力欄に貼る / 省くと捨てる
-  onTerminal?: 'paste';
+  // 送り先がターミナルモードのとき、TUI の入力欄に貼る知らせか（人がボタンで頼んだもの）。省くと、どれも捨てる
+  pasteInTerminal?: (item: T) => boolean;
 };
 
 // 知らせを受け取れる状態（ターンの外）
@@ -87,9 +88,14 @@ export class SessionNotices<T> {
       return;
     }
     if (host.stateOf(target) === 'terminal') {
+      const pasteable = new Map([...queue].filter(([, item]) => this.deps.pasteInTerminal?.(item) ?? false));
+      const text = pasteable.size > 0 ? this.deps.compose(target, pasteable) : null;
+      // 貼れなかったら（メニューを出している間）、貼るものだけ残して、次に状態が変わったとき（watchState）に貼り直す
+      if (text && host.pasteIntoTerminal?.(target, text) === false) {
+        this.pending.set(target, pasteable);
+        return;
+      }
       this.pending.delete(target);
-      const text = this.deps.onTerminal === 'paste' ? this.deps.compose(target, queue) : null;
-      if (text) host.pasteIntoTerminal?.(target, text);
       return;
     }
     // 作業中なら、手が空いたときに送る（watchState）

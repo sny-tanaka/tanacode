@@ -38,7 +38,6 @@ import { RewindCard } from './RewindCard';
 import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
-import { stripControlChars } from './sanitize';
 import { useCanCompact } from './compactState';
 import { CompactButton, useCompactStatus } from './CompactButton';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog, useSessionModels, withSessionModels } from './sessionOptions';
@@ -477,7 +476,7 @@ export const ClaudePane = memo(function ClaudePane({
   const removeComment = (id: string) => onCommentsChange(comments.filter((c) => c.id !== id));
   // コードへのコメントを、Claude Code の入力欄に貼る（ターミナルモード。送るのは、人が画面で Enter を押したとき）
   const pasteComments = () => {
-    void pasteIntoClaudeScreen(session.id, stripControlChars(formatComments(comments)));
+    void pasteIntoClaudeScreen(session.id, formatComments(comments));
     onCommentsChange([]);
   };
 

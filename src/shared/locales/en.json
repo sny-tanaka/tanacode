@@ -282,7 +282,12 @@
       "switching": "Switching between the chat and terminal mode",
       "busy": "Can't switch to terminal mode while Claude is working, a prompt is waiting for an answer, or a message is waiting to be sent",
       "tuiBusy": "Claude Code is working. Switch back to the chat after the turn ends",
-      "tasksRunning": "Background tasks are running. Switching stops them"
+      "tasksRunning": "Background tasks are running. Switching stops them",
+      "remoteOffFailed": "Didn't switch to terminal mode because Remote Control couldn't be turned off ({reason})",
+      "startFailed": "Couldn't start it the other way, so it was switched back ({reason})",
+      "tuiExited": "Claude Code in terminal mode exited while starting (code {code}), so the session is back in the chat",
+      "chatExited": "Claude Code for the chat exited while starting (code {code}), so the session is back in terminal mode",
+      "startFailedStopped": "Couldn't start it either way ({reason}). Fix the settings, then reopen it with Resume"
     }
   },
   "commands": {
@@ -1076,7 +1081,9 @@
       "background_one": "Waiting on {count} background task",
       "unread": "New response",
       "exited": "Exited",
-      "terminal": "Terminal mode"
+      "terminal": "Terminal mode",
+      "terminalWorking": "Terminal mode · Working",
+      "terminalUnread": "Terminal mode · New response"
     },
     "worktreeDialog": {
       "archiveFailed": "Couldn't archive the session: {error}",

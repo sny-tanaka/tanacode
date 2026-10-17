@@ -261,6 +261,22 @@ describe('StatusLineWatcher', () => {
     expect(asks).toEqual([]);
   });
 
+  it('ターンの終わりのフック（Stop）が書いた入力を読み、ターンの終わりと一緒に渡す', async () => {
+    const idles: { sessionId: string; input: unknown }[] = [];
+    watcher!.close();
+    watcher = new StatusLineWatcher(
+      dir,
+      () => {},
+      () => {},
+      () => {},
+      (sessionId, input) => idles.push({ sessionId, input }),
+    );
+    await live(watcher);
+    writeFileSync(join(dir, 's1.idle.json'), JSON.stringify({ hook_event_name: 'Stop', permission_mode: 'acceptEdits' }));
+    await expect.poll(() => idles.length).toBe(1);
+    expect(idles[0]).toEqual({ sessionId: 's1', input: { hook_event_name: 'Stop', permission_mode: 'acceptEdits' } });
+  });
+
   it('質問のファイルが続けて書かれたら、読むのは最後の 1 回だけ', async () => {
     // 見張りの知らせは本物のまま、待ち時間（setTimeout）だけを進める
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

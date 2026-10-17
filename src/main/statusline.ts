@@ -174,7 +174,8 @@ export class StatusLineWatcher {
     // request: PermissionRequest のフックの入力（tool_name・tool_input・agent_type）/ at: ファイルが書かれた時刻
     private readonly onPermission: (sessionId: string, request: unknown, at: number) => void = () => {},
     // 書くだけの Stop のフックが書いた（ターミナルモードの TUI のターンが終わった）
-    private readonly onIdle: (sessionId: string) => void = () => {},
+    // input: Stop のフックの入力（permission_mode など）。読めなければ null
+    private readonly onIdle: (sessionId: string, input: unknown) => void = () => {},
   ) {}
 
   fileFor(sessionId: string): string {
@@ -218,7 +219,7 @@ export class StatusLineWatcher {
       if (name?.endsWith(IDLE_SUFFIX)) {
         const sessionId = basename(name, IDLE_SUFFIX);
         clearTimeout(this.timers.get(name));
-        this.timers.set(name, setTimeout(() => this.onIdle(sessionId), 50));
+        this.timers.set(name, setTimeout(() => void this.readIdle(sessionId), 50));
         return;
       }
       // 通知のフックのファイルは読まない（確認・質問は PermissionRequest のフックで分かる）
@@ -253,6 +254,17 @@ export class StatusLineWatcher {
     } catch {
       // 書き込みの途中。次の変更で読み直す
     }
+  }
+
+  private async readIdle(sessionId: string): Promise<void> {
+    const text = await readFile(join(this.dir, `${sessionId}${IDLE_SUFFIX}`), 'utf8').catch(() => null);
+    let input: unknown = null;
+    try {
+      input = text ? JSON.parse(text) : null;
+    } catch {
+      // 書き込みの途中でも、ターンの終わりは知らせる（入力は使わない）
+    }
+    this.onIdle(sessionId, input);
   }
 
   private async readPermission(sessionId: string): Promise<void> {

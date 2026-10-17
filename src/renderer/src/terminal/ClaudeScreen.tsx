@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { bracketedPaste } from '@shared/prompt-keys';
+import { bracketedPaste, stripControlChars } from '@shared/prompt-keys';
 import { enterClaudeScreen, leaveClaudeScreen } from './claudeScreenTyping';
 import { xtermOptions } from './xterm';
 
@@ -55,20 +55,23 @@ export function useClaudeScreenOutput(): void {
 const IMAGE_PASTE_MS = 300;
 
 // Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。
-// 画像は、パスを貼り付けとして送ると [Image #n] として添付される（main の submit と同じ）。制御文字は、呼ぶ側で取り除いておく
+// 画像は、パスを貼り付けとして送ると [Image #n] として添付される（main の submit と同じ）。
+// 貼る文は、ファイルの中身・Claude が書いた文・ターミナルの出力などから来るので、ここで必ず制御文字を取り除く
+// （ESC が残ると、ESC[201~ で貼り付けを抜け、あとの文字が Enter・Shift+Tab などのキーとして TUI に届く）
 export async function pasteIntoClaudeScreen(sessionId: string, text: string, attachments: string[] = []): Promise<void> {
   for (const path of attachments) {
-    window.tanacode.pty.write(sessionId, bracketedPaste(path));
+    window.tanacode.pty.write(sessionId, bracketedPaste(stripControlChars(path)));
     await new Promise((resolve) => setTimeout(resolve, IMAGE_PASTE_MS));
     window.tanacode.pty.write(sessionId, ' ');
   }
-  if (text) window.tanacode.pty.write(sessionId, bracketedPaste(text));
+  const safe = stripControlChars(text);
+  if (safe) window.tanacode.pty.write(sessionId, bracketedPaste(safe));
   terms.get(sessionId)?.term.focus();
 }
 
 // Claude Code の生の画面。ターミナルモードで、チャットの代わりに Claude Code ペインに出す。
 // 出した時点の大きさに pty をリサイズするので、Claude が画面全体を描き直す。
-// 隠したら pty を既定の大きさに戻す（チャットに出す質問や確認は、main が画面から読む。読むのに向いた大きさにしておく）
+// 隠したら pty を既定の大きさに戻す（次に出したときに大きさが変わり、TUI が画面全体を描き直す）
 export function ClaudeScreen({ sessionId }: { sessionId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   useClaudeScreenOutput();

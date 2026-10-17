@@ -51,11 +51,29 @@ class FakeHost implements NoticeHost {
     });
   }
 
+  // セッションの状態（無ければ idle）。ターミナルモードの TUI に貼ったもの（pasteOk が false なら、メニューを出していて貼れない）
+  states = new Map<string, SessionState>();
+  pasted: { id: string; text: string }[] = [];
+  pasteOk = true;
+  private readonly watchers = new Set<(id: string) => void>();
+
   list = () => this.sessions;
-  stateOf = (): SessionState => 'idle';
+  stateOf = (id: string): SessionState => this.states.get(id) ?? 'idle';
   screen = (): ScreenInfo => ({ state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
-  watchState = () => () => {};
+  pasteIntoTerminal = (id: string, text: string) => {
+    if (!this.pasteOk) return false;
+    this.pasted.push({ id, text });
+    return true;
+  };
+  watchState = (listener: (id: string) => void) => {
+    this.watchers.add(listener);
+    return () => this.watchers.delete(listener);
+  };
+  // 状態が変わった（SessionManager の changed）
+  changed(id: string): void {
+    this.watchers.forEach((l) => l(id));
+  }
 }
 
 let dir: string;
@@ -593,6 +611,37 @@ describe('画面からのコピー', () => {
     expect(event?.cards).toEqual([{ listId: copied.id, cardId: copied.cards[0].id }]);
     expect(event?.message).toContain('セッション「s-11」から「確認」に #1（「A」）が届きました。');
     expect(store.findList(ME, '控え')!.cards.map((c) => c.title)).toEqual(['A']);
+  });
+});
+
+describe('ターミナルモード（人が Claude Code の画面で操作している）の先への知らせ', () => {
+  let request: Parameters<ChecklistControl['copy']>[0];
+  beforeEach(() => {
+    const list = store.createList(ME, 'human', '確認', '');
+    const [card] = store.addCards(ME, 'human', list.id, [{ title: 'A' }]);
+    request = { fromSession: ME, listId: list.id, cardIds: [card.id], toSession: PEER, notify: true };
+    host.states.set(PEER, 'terminal');
+  });
+
+  it('人が画面で頼んだ知らせは、送らずに TUI の入力欄に貼る。メニューを出している間は待って、閉じたら貼る', async () => {
+    host.pasteOk = false;
+    control.copy(request);
+    await settle();
+    expect(host.pasted).toEqual([]);
+    host.pasteOk = true;
+    host.changed(PEER);
+    await settle();
+    expect(host.pasted.map((p) => p.id)).toEqual([PEER]);
+    expect(parseChecklistEvent(host.pasted[0].text)?.message).toContain('セッション「s-11」から「確認」に #1（「A」）が届きました。');
+    expect(host.submitted).toEqual([]);
+  });
+
+  it('Claude がしたコピーの知らせは貼らない（人の入力に割り込むため）。知らせなかったことを Claude に返す', async () => {
+    const result = first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: PEER }));
+    expect(result).toContain('was not notified: it is in terminal mode');
+    await settle();
+    expect(host.pasted).toEqual([]);
+    expect(host.submitted).toEqual([]);
   });
 });
 

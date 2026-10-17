@@ -247,6 +247,8 @@ export type SessionSummary = {
   mode: PermissionMode | null;
   // ターミナルモード（動いている Claude Code が TUI で、人が画面で操作している。設計書 9 節）
   terminal?: boolean;
+  // ターミナルモードで、TUI のターンの途中（会話ログと書くだけの Stop のフックで分かる）
+  terminalWorking?: boolean;
   unread: boolean;
   // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可 /
   // other: フォルダの信頼確認や認識できない対話画面など / browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない

@@ -898,7 +898,8 @@ export function App() {
             onShowComment={showCommentOf}
             onShowContext={showContext}
             onShowShell={showShell}
-            onToggleTerminal={() => void switchTerminalMode(selected, tasks.some((task) => task.state === 'running'))}
+            // 裏のタスクが動いているかは、main が切り替えで見るものと同じ数（一覧の backgroundTasks）で決める
+            onToggleTerminal={() => void switchTerminalMode(selected, (selected.backgroundTasks ?? 0) > 0)}
             onOpenFile={openAbsolute}
             onResume={openSelected}
             onUnarchive={openSelected}

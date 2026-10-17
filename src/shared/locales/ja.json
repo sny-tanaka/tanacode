@@ -280,7 +280,12 @@
       "switching": "チャットとターミナルモードを切り替えている途中です",
       "busy": "作業中・確認や質問への答え待ち・送る予定の発言があるときは、ターミナルモードに切り替えられません",
       "tuiBusy": "Claude Code が作業中です。ターンが終わってからチャットに戻してください",
-      "tasksRunning": "バックグラウンドのタスクが動いています。切り替えると止まります"
+      "tasksRunning": "バックグラウンドのタスクが動いています。切り替えると止まります",
+      "remoteOffFailed": "Remote Control を切れなかったため、ターミナルモードにしませんでした（{reason}）",
+      "startFailed": "もう片方で起動できなかったため、元に戻しました（{reason}）",
+      "tuiExited": "ターミナルモードの Claude Code が起動の途中で終了したため（code {code}）、チャットに戻しました",
+      "chatExited": "チャットの Claude Code が起動の途中で終了したため（code {code}）、ターミナルモードに戻しました",
+      "startFailedStopped": "もう片方でも、元の形でも起動できませんでした（{reason}）。設定を直してから「再開」で開き直してください"
     }
   },
   "commands": {
@@ -1037,7 +1042,9 @@
       "background": "バックグラウンド {count}件の完了待ち",
       "unread": "新しい応答",
       "exited": "終了",
-      "terminal": "ターミナルモード"
+      "terminal": "ターミナルモード",
+      "terminalWorking": "ターミナルモード・作業中",
+      "terminalUnread": "ターミナルモード・新しい応答"
     },
     "worktreeDialog": {
       "archiveFailed": "アーカイブできませんでした: {error}",

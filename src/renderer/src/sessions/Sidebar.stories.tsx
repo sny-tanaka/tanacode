@@ -40,6 +40,9 @@ const INITIAL: SessionSummary[] = [
   session(9, '決済画面の確認', '/Users/me/work/cafe-menu', { running: true, attention: 'browser' }),
   // ターミナルモード（人が Claude Code の画面で操作している）
   session(10, '設定の見直し', '/Users/me/work/tanacode', { running: true, state: 'terminal', terminal: true }),
+  // ターミナルモードで、TUI のターンの途中・新しい応答があるもの（チャットのときと同じ印）
+  session(11, 'ログの調べもの', '/Users/me/work/tanacode', { running: true, state: 'terminal', terminal: true, terminalWorking: true }),
+  session(12, 'ビルドの直し', '/Users/me/work/cafe-menu', { running: true, state: 'terminal', terminal: true, unread: true }),
   // 標準以外の設定ファイルを重ねて動いているセッションは、行の末尾に設定ファイルの名前が出る（登録に無ければ「（登録なし）」）
   session(4, '依存の更新', '/Users/me/work/cafe-menu', { settingsFile: 'f1' }),
   session(6, '社内 API の確認', '/Users/me/work/notes', { settingsFile: 'f0' }),
