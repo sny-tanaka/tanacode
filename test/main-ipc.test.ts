@@ -458,29 +458,34 @@ describe('アーカイブ・一覧から消す', () => {
 
   it('一覧から消すと、シェルとブラウザを閉じ、消えたセッション（子も）のチェックリストとウォークスルーを捨てる。残ったものは残す', async () => {
     await boot();
-    const alive = new Set(['s1', 'c1', 'c2']);
-    manager().childrenOf.mockReturnValue(['c1', 'c2']);
-    manager().summary.mockImplementation((id: string) => (alive.has(id) ? { id } : undefined));
-    // c2 は消えずに残る（manager が残したもの）
+    const sessions = new Map<string, { id: string; archived: boolean }>(['s1', 'c1', 'c2', 'c3'].map((id) => [id, { id, archived: false }]));
+    manager().childrenOf.mockReturnValue(['c1', 'c2', 'c3']);
+    manager().summary.mockImplementation((id: string) => sessions.get(id));
+    // c1 は消え、c3 はアーカイブに残り、c2 は戻しておいた子として動き続ける（どれも manager が決めたもの）
     manager().remove.mockImplementation(async (id: string, options: unknown) => {
-      alive.delete('s1');
-      alive.delete('c1');
+      sessions.delete('s1');
+      sessions.delete('c1');
+      sessions.set('c3', { id: 'c3', archived: true });
       return { removed: id, options };
     });
     await expect(invoke(IpcChannel.SessionsRemove, 's1', { removeWorktree: true })).resolves.toEqual({ removed: 's1', options: { removeWorktree: true } });
     expect(the('ShellTerminals').killOwner.mock.calls).toEqual([['s1']]);
-    expect(the('BrowserControl').forget.mock.calls).toEqual([['s1'], ['c1'], ['c2']]);
+    // ブラウザを閉じるのは、消したセッションと、消えた・アーカイブ済みの子だけ（動き続ける子のブラウザは残す）
+    expect(the('BrowserControl').forget.mock.calls).toEqual([['s1'], ['c1'], ['c3']]);
     // 消したあとに、消えたかを確かめる
     expect(the('ChecklistStore').remove.mock.calls).toEqual([['s1'], ['c1']]);
     expect(the('WalkthroughControl').forget.mock.calls).toEqual([['s1'], ['c1']]);
   });
 
-  it('消せなかったら、チェックリストとウォークスルーは残す', async () => {
+  it('消せなかったら、チェックリストとウォークスルーは残す。ブラウザは、消そうとしたセッションと、アーカイブ済みの子のものだけを閉じる', async () => {
     await boot();
+    manager().childrenOf.mockReturnValue(['c1', 'c2']);
+    manager().summary.mockImplementation((id: string) => ({ id, archived: id !== 'c2' }));
     manager().remove.mockRejectedValue(new Error('worktree を消せません'));
     await expect(invoke(IpcChannel.SessionsRemove, 's1')).rejects.toThrow('worktree を消せません');
     expect(the('ChecklistStore').remove).not.toHaveBeenCalled();
     expect(the('WalkthroughControl').forget).not.toHaveBeenCalled();
+    expect(the('BrowserControl').forget.mock.calls).toEqual([['s1'], ['c1']]);
   });
 });
 

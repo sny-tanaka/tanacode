@@ -622,8 +622,17 @@ function registerIpc(): void {
     const p = P(e);
     p.shells.killOwner(id);
     const targets = [id, ...p.manager.childrenOf(id)];
-    for (const target of targets) p.browser.forget(target);
-    const removal = await p.manager.remove(id, options);
+    p.browser.forget(id);
+    let removal: Awaited<ReturnType<typeof p.manager.remove>>;
+    try {
+      removal = await p.manager.remove(id, options);
+    } finally {
+      // 子のブラウザは、消えた子とアーカイブ済みの子のものだけを閉じる（親を消しても、戻しておいた子は動き続ける）
+      for (const child of targets.slice(1)) {
+        const s = p.manager.summary(child);
+        if (!s || s.archived) p.browser.forget(child);
+      }
+    }
     // 一覧から消したセッションのチェックリストも消す（アーカイブでは残す）
     for (const target of targets) if (!p.manager.summary(target)) p.checklists.remove(target);
     for (const target of targets) if (!p.manager.summary(target)) p.walkthroughControl?.forget(target);
