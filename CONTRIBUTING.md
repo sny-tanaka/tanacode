@@ -397,10 +397,10 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 画面は読まず、キーも押しません（ターミナルモードの TUI も、起動の引数と状態だけを見る。`tuiArgs`）。決まった時間だけ待たず、状態を待ちます（`untilState`・`waitUntil`・`idle`）。許可の確認と質問には、カードのボタンと同じ `SessionManager.replyPermission`・`replyQuestion` で答えます（`ClaudeRun.permission`・`replyPermission`・`question`・`replyQuestion`）。答えようとしたときに、もう待っていなければ、テストを失敗にします。
   - アプリを止めている間の操作は、claude の標準入力に発言の行を直に書きます（`sendWithoutApp`）。
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
-    - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。
+    - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。
     - 本体の会話の呼び出しごとに、頼まれたモデルとエフォートを控えます（切り替えが届いたかを確かめる。`calls`）。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 17 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 18 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -420,6 +420,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `terminal.test.ts` | 人のターミナルの MCP。アプリと同じ起動の引数（`--mcp-config`・`--allowedTools`・`--settings` の `PreToolUse` のフック）と環境変数で起動し、ビルドした中継（`src/main/terminal-mcp.ts`）が、アプリの代わりのソケットの先の本物の `TerminalControl`（`/bin/sh` を開く `ShellTerminals`）まで呼び出しを運ぶか。読むツールは確認なしに届き、人が打った出力を読める。打つツールは確認が出て（理由と入力に打つ文字）、許すと、フックが控えさせた印で打てる（Claude Code がフックに渡す `tool_input` と、ツールの呼び出しの引数から、同じ印の鍵ができる）。「次から聞かない」を選んでも、次も確認が出る。bypassPermissions でも確認が出る。フックがアプリに聞けない（答えが返らない）ときも確認が出て、許しても、印が無いので何も打たずに断る |
     | `worktree.test.ts` | git のリポジトリで `claude --worktree`（`SessionManager.createInWorktree`）→ worktree の場所・ブランチ・Claude Code のロック・`.worktreeinclude` の写し・元のフォルダの未追跡に出ないこと → 準備が終わってから入力を受け付け、会話ログが worktree の側に書かれる → `git branch -D` で、アプリが足した hooks の許可の確認が出る → 止めて `--resume`（worktree のフォルダで再開）→ worktree を削除してアーカイブ（未追跡のファイルの控えの ref）→ 戻すと作り直して再開。信頼していないフォルダでも、確かめずに始まる（`-p` はフォルダの信頼を確かめない）。大きなモノレポ（4 万ファイル）で、workspaces の各パッケージの `node_modules` も見つける |
     | `input.test.ts`（台本は `test/scenarios/input.ts`） | 台本ごとに別の `claude` を起動。発言は、チャットと同じく `SessionManager.submit` で送る。`--effort` で起動したときのエフォートとモデル → 会話の最初の `/context` → 複数行の発言（そのまま 1 つの発言になり、起動したエフォートで API を呼ぶ）→ `/`・`@`・`!`・`#` で始まる行を含む長い複数行・改行なしで 2,000 文字ほどの 1 行・1,500 文字ほどの行を含む複数行・30 行の発言（どれも欠けずに 1 つの発言になり、コマンドとして動かない）→ 札（長い貼り付け）を添えた発言（文と札の中身が 1 つの発言として届く）→ `!` で始まる発言（シェルで動かず、そのまま Claude への発言になる）→ 番号付きの手順が続く長い親セッションからの指示（手が空くのを待つ送り方で、親からの発言として全文届く）→ `/rename` と AI のタイトル → セッションの一覧。上限いっぱい（4 万文字）の再開の文が、手が空くのを待つ送り方で、1 文字も欠けず・囲みなしで届く。読み取り: `@` の添付・Read・サブフォルダの CLAUDE.md・コンテキストの使用量（`KnowledgeTracker`）・コンテキストの中身（`ContextTracker`）・思考・画像。サブエージェントの実行中の直近のツールと会話ログ（`readAgentLog`）。バックグラウンドの Bash を `TaskStop` で止める |
+    | `turn-summary.test.ts` | Remote Control のターンの終わりの要約が、チャットの完了を待たせないか。Remote Control のつながりとモデルの要約を環境変数で同じ状態にして（`CLAUDE_CODE_ENVIRONMENT_KIND=bridge`・`CLAUDE_CODE_CLASSIFIER_SUMMARY=1`。アプリが渡す `0` が優先される）、要約の呼び出し（ツールの無い呼び出し）の返事を止めたままでも、作業中から待機中に戻って完了を知らせるか。要約そのもの（`system/post_turn_summary`）は、応答の文から作られて出るか |
     | `internal-requests.test.ts` | アプリが使う Claude Code の内部の制御の要求（`stream/internal.ts`。公開の Agent SDK の型に無いもの）に受け口があるか。`remote_control`（つなぐ・切る。モックの API では理由つきで断られる）・`generate_session_title`（タイトルが返る）・`rewind_conversation`（知らない発言を指すと、巻き戻さずに理由を返す）・`end_session`（Claude Code が終わる）が、「Unsupported control request subtype」で断られない。毎日の確認で、新しい Claude Code でも使えるかを見る |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
@@ -495,7 +496,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 決め方（`SessionManager.startMode`）: 指定（新規セッションの画面・子の起動のモード・起動し直すときの今のモード）があればそれ。無ければ設定の `defaultMode`（bypassPermissions を除く）、それも無ければ auto（決めたこと）。止まっていたセッションを開き直すときも同じで、前回のモードは使いません。
   - 起動したあと、選んだモデルで auto を使えなければ（initialize の返事の `models` の `supportsAutoMode`）、manual に戻します。
   - bypassPermissions は、起動し直すとき（切り替えも）に引き継ぎません（`relaunchMode`）。子は、起動したときのモード（`launchMode`）より強くしません。
-- 環境変数は `childEnv`（親の Claude Code がそのセッションのために付ける変数と `TANACODE_*` を消し、プロファイルの `CLAUDE_CONFIG_DIR` を足す）。TUI だけ `TERM`・`COLORTERM` を付け、チャットだけ `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`（`rewind_files` に要る）を足します（`claudeEnv`）。
+- 環境変数は `childEnv`（親の Claude Code がそのセッションのために付ける変数と `TANACODE_*` を消し、プロファイルの `CLAUDE_CONFIG_DIR` を足す）。TUI だけ `TERM`・`COLORTERM` を付け、チャットだけ `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`（`rewind_files` に要る）と `CLAUDE_CODE_CLASSIFIER_SUMMARY=0` を足します（`claudeEnv`）。
+  - `CLAUDE_CODE_CLASSIFIER_SUMMARY=0`: Remote Control でつないでいると、Claude Code はターンの途中と終わりに、スマホ・claude.ai のセッションの一覧に出す要約（`system/task_summary`・`system/post_turn_summary`）を作ります。モデルで作るとき、`-p` ではターンの終わりの要約を作り終えるまで Stop フックと `result` を出さず、チャットの作業中が 1 回 1.5〜5.5 秒延びました（チェックリストのフックがターンの終わりを止めると、止めるたびに作り直す。2.1.302 で実測。TUI では裏で作るので待たない）。`0` にすると、モデルを呼ばずに応答の文などから作ります（決めたこと。一覧の一言は簡素になる）。確かめは `test/cli/turn-summary.test.ts`。
 - 設定ファイル（登録した Claude Code の設定ファイル。セッションごとに選ぶ。`SessionRecord.settingsFile` に登録の ID を持つ）を選んだセッションは、`--settings` にアプリの設定と登録した設定を合わせたファイルを渡します（`settings-files.ts`）。
   - Claude Code は `--settings` を 2 回渡しても合わせず、最後の 1 つしか使いません（実測）。そのため、登録した設定ファイルを 2 つ目として足さず、アプリが合わせます。`hooks` と `claudeMdExcludes` は両方を残し、`statusLine` はアプリのもの（登録した設定の statusLine は、そのコマンドを `tee` の先で動かして包む）、`env`・`model` などは登録した設定のままにします。
   - 登録するのは名前とパス（`userData/settings.json` の `settingsFiles`。`AppSettings`）だけで、ファイルの中身は預かりません。名前を変えても、セッションが指す先（ID）は変わりません。読めないファイル（無い・JSON でない）は登録できません。

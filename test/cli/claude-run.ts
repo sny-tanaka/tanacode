@@ -15,7 +15,7 @@ import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import { CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV } from '../../src/main/checklist-bridge';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
-import { FILE_CHECKPOINTING_ENV, transcriptPath } from '../../src/main/claude-session';
+import { CLASSIFIER_SUMMARY_ENV, FILE_CHECKPOINTING_ENV, transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
 import { SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
@@ -145,7 +145,8 @@ export class ClaudeRun {
       git('commit', '-qm', 'init', '--allow-empty');
     }
     // 環境変数は最小限にする（Claude Code の中から動かしたときの子セッションの印などを持ち込まない）。
-    // アプリが付ける statusLine・書くだけのフックのファイルの変数と、ファイルの控え（巻き戻しに要る）の変数だけは、session-manager が渡すものを使う
+    // アプリが付ける statusLine・書くだけのフックのファイルの変数と、ファイルの控え（巻き戻しに要る）・ターンの終わりの要約の作り方の変数だけは、
+    // session-manager が渡すものを使う（台本ごとの env より優先する）
     const env: Record<string, string> = {
       PATH: process.env.PATH ?? '',
       HOME: this.home,
@@ -163,6 +164,7 @@ export class ClaudeRun {
     this.host = new FakePtyHost(CLAUDE_BIN, env, [
       STATUS_FILE_ENV,
       FILE_CHECKPOINTING_ENV,
+      CLASSIFIER_SUMMARY_ENV,
       ASK_FILE_ENV,
       BROWSER_SOCKET_ENV,
       BROWSER_SESSION_ENV,

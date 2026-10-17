@@ -328,7 +328,7 @@ describe('stream-json（チャット）', () => {
     return { claude, got };
   };
 
-  it('パイプで claude -p を stream-json で起動する。--remote-control は付けず、モード・モデル・エフォートは渡す。端末の変数は渡さず、ファイルの控えを有効にする', () => {
+  it('パイプで claude -p を stream-json で起動する。--remote-control は付けず、モード・モデル・エフォートは渡す。端末の変数は渡さず、ファイルの控えを有効にし、Remote Control の要約をモデルで作らせない', () => {
     const { claude } = stream();
     claude.start();
     expect(host.spawned).toEqual([]);
@@ -343,10 +343,12 @@ describe('stream-json（チャット）', () => {
     expect(pipe.arg('--effort')).toBe('high');
     expect(pipe.request.env.TERM).toBeUndefined();
     expect(pipe.request.env.COLORTERM).toBeUndefined();
-    expect(pipe.request.env).toMatchObject({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1', [ASK_FILE_ENV]: '/status/s1.ask.json' });
+    expect(pipe.request.env).toMatchObject({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1', CLAUDE_CODE_CLASSIFIER_SUMMARY: '0', [ASK_FILE_ENV]: '/status/s1.ask.json' });
     // TUI は --remote-control を付ける（前のセッションに自動でつながり直す）
     expect(claudeArgs({ claudeSessionId: CLAUDE_ID, resume: true, remoteControlName: 'tanacode-work', model: null, effort: null, permissionMode: 'manual' })).toContain('--remote-control');
     expect(claudeEnv('tui').TERM).toBe('xterm-256color');
+    // TUI は要約を裏で作る（ターンの終わりを待たせない）ので、Claude Code のとおりモデルで作らせる
+    expect(claudeEnv('tui').CLAUDE_CODE_CLASSIFIER_SUMMARY).toBeUndefined();
   });
 
   it('出力の行・答えを待つ要求・取り下げ・終わり（標準エラーの末尾つき）を渡す', () => {

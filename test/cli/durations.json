@@ -15,5 +15,6 @@
   "test/cli/stop.test.ts": 31,
   "test/cli/terminal-mode.test.ts": 2,
   "test/cli/terminal.test.ts": 27,
+  "test/cli/turn-summary.test.ts": 2,
   "test/cli/worktree.test.ts": 92
 }

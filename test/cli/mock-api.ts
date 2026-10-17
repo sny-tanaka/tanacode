@@ -75,6 +75,8 @@ export class MockApi {
   // ツールの一覧が付いていない呼び出し（タイトル作りなど）への返事。match: その呼び出しの発言に含まれる文字。
   // どれにも当たらなければ、これまでどおり短い文を返す
   plainReplies: { match: string; text: string }[] = [];
+  // ツールの一覧が付いていない呼び出しを、これが済むまで返さない（Claude Code がその返事を待たずに先へ進むことを確かめる）
+  holdPlain: Promise<void> | null = null;
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -137,6 +139,7 @@ export class MockApi {
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
     this.requests.push(`  ${conversation ? `「${conversation.match}」の会話・${index} 番目の応答` : `台本の無い呼び出し（${first.slice(0, 60)}）`}`);
     if (conversation?.delayMs) await new Promise((resolve) => setTimeout(resolve, conversation.delayMs));
+    if (tools.length === 0 && this.holdPlain) await this.holdPlain;
     const failure = conversation?.failures?.[index];
     const key = `${conversation?.match}:${index}`;
     if (failure && (failure.times === undefined || (this.failed.get(key) ?? 0) < failure.times)) {
