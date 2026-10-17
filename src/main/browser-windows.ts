@@ -120,7 +120,8 @@ export class PreviewWindows {
 
   // ページが新しいウインドウで開こうとした。source: 開こうとしたタブかポップアップ
   private open(source: WebContents, { url: asked, disposition, features }: HandlerDetails): WindowOpenHandlerResponse {
-    // ポップアップは、大きさなどを指定した window.open（features があるもの）だけ。features の無い new-window（Shift+クリックなど）は、タブで開く
+    // ポップアップは、features を付けた window.open だけ（Chromium は、features が空・noopener・noreferrer・popup=0 だけのもの以外を new-window にする）。
+    // features の無い new-window（Shift+クリックなど）は、タブで開く
     const popup = disposition === 'new-window' && (features ?? '').trim() !== '';
     // 空のページ（window.open('')・about:blank）は、ポップアップでだけ開く（開いてから location を移す OAuth のため。中身は開いたページが書き、
     // 移るときは見張りが確かめる）

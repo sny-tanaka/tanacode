@@ -132,7 +132,7 @@ export const BROWSER_TOOLS: BrowserTool[] = [
       'Scrolls the element matching a selector (the first visible one; same-origin iframes are searched too) into view and clicks it. ' +
       'For what a selector cannot reach (inside a cross-origin iframe, a canvas and so on), click at x and y (the position from the top left of the visible area, the same as in a screenshot). ' +
       'A link that opens a new window (target=_blank) opens in a new tab, which becomes the current tab. ' +
-      'A popup the page opens (window.open with a size, such as a login window) opens in a separate window outside the in-app browser, which you can neither read nor operate.',
+      'A popup the page opens (window.open with window features, such as a login window) opens in a separate window outside the in-app browser, which you can neither read nor operate.',
     inputSchema: {
       type: 'object',
       properties: {
