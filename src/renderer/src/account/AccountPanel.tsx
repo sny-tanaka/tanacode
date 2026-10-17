@@ -9,12 +9,19 @@ import { openProfilesDialog, useProfiles } from './profiles';
 
 // これより古い値は、いつの値かを添えて出す
 const STALE_MS = 30 * 60_000;
-// いつも出す利用枠。値が無くても灰色の 0% で場所を取っておき、欄の高さを変えない（行が増減して、ゲージが上下しないように）。
+// いつも出す利用枠。値が無くても灰色の 0% で場所を取っておき、この 2 つの行は増減させない（ゲージが上下しないように）。
+// モデル別の週の枠の行は、その下に、プランにあるモデルの分だけ出す（増え・消える）。
 // label は main が付ける利用枠の名前（UsageLimit.label）で、どの枠かを見分ける値として比べる。画面に出す名前は name のキーで読む
 const LIMITS = [
   { label: '5時間', name: 'fiveHour' },
   { label: '週', name: 'week' },
 ] as const;
+// マウスを乗せたときの説明の、利用枠の出どころ
+const USAGE_SOURCES = {
+  statusline: 'account.panel.usageFromStatusline',
+  usage: 'account.panel.usageFromUsage',
+  'claude-cache': 'account.panel.usageFromCache',
+} as const satisfies Record<UsageLimits['source'], string>;
 // 応答のたびに届く利用枠をきっかけにアカウントを読み直すのは、この間隔に 1 回まで（~/.claude.json は大きくなることがあるため）
 const ACCOUNT_REREAD_MS = 60_000;
 
@@ -128,9 +135,7 @@ export function AccountPanel() {
   const tip = [
     multiple && current ? t('account.panel.profile', { name: current.name }) : null,
     account ? account.email : account === null ? t('account.panel.notLoggedIn') : null,
-    usage
-      ? t(usage.source === 'statusline' ? 'account.panel.usageFromStatusline' : 'account.panel.usageFromCache', { time: at })
-      : t('account.panel.usagePending'),
+    usage ? t(USAGE_SOURCES[usage.source], { time: at }) : t('account.panel.usagePending'),
   ]
     .filter(Boolean)
     .join('\n');
@@ -164,7 +169,7 @@ export function AccountPanel() {
         {LIMITS.map(({ label, name }) => (
           <Gauge key={label} label={t(`account.usage.${name}`)} limit={usage?.limits.find((l) => l.label === label && !l.model) ?? null} now={now} />
         ))}
-        {/* モデル別の週の枠（プランにあれば。一度届いたら、記録に残るので消えない） */}
+        {/* モデル別の週の枠（プランにあれば）。モデルの一覧が届いたら、そこに無いモデルの行は消える。一覧の無い知らせでは前の値を残す */}
         {usage?.limits
           .filter((l) => l.model)
           .map((l) => <Gauge key={`model:${l.model}`} label={t('account.usage.weekModel', { model: l.model! })} limit={l} now={now} />)}

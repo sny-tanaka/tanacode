@@ -1143,6 +1143,7 @@
       "notLoggedIn": "ログインしていません",
       "usageFromStatusline": "プランの利用枠。{time} 時点（セッションの応答から）",
       "usageFromCache": "プランの利用枠。{time} 時点（Claude Code の /usage の控えから）",
+      "usageFromUsage": "プランの利用枠。{time} 時点（チャットのターンの終わりに Claude Code に聞いたもの）",
       "usagePending": "プランの利用枠は、セッションが応答すると出ます",
       "staleAt": "{time} 時点",
       "othersAttention": "別のアカウントに通知あり",

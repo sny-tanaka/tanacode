@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextItem } from '@shared/context';
 import type { ClaudeAccount } from '@shared/account';
@@ -202,6 +202,19 @@ describe('アカウントと利用枠（AccountPanel）', () => {
     ]);
     // 欄全体の値は新しいので、1 行目の印は出さない
     expect(document.querySelector('.account-stale')).toBeNull();
+  });
+
+  it('マウスを乗せたときの説明に、利用枠の出どころを出す（statusLine・get_usage・/usage の控え）', async () => {
+    const sources = { statusline: '（セッションの応答から）', usage: '（チャットのターンの終わりに Claude Code に聞いたもの）', 'claude-cache': '（Claude Code の /usage の控えから）' };
+    for (const [source, text] of Object.entries(sources)) {
+      api = mockApi({ 'usage.get': () => Promise.resolve(usage({ source: source as UsageLimits['source'] })), 'account.get': () => Promise.resolve(TEAM) });
+      api.install();
+      render(<AccountPanel />);
+      await screen.findByText('Claude Team');
+      await waitFor(() => expect(summary().title).toMatch(/プランの利用枠。/));
+      expect(summary().title.endsWith(text)).toBe(true);
+      cleanup();
+    }
   });
 
   it('値もログインも無くても、2 つのゲージを灰色の 0% で出しておき、押すとメニューに理由を出す', async () => {

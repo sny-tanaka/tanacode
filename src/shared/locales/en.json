@@ -1183,6 +1183,7 @@
       "notLoggedIn": "Not logged in",
       "usageFromStatusline": "Plan usage as of {time} (from session responses)",
       "usageFromCache": "Plan usage as of {time} (from Claude Code's cached /usage)",
+      "usageFromUsage": "Plan usage as of {time} (asked Claude Code at the end of a chat turn)",
       "usagePending": "Plan usage appears once a session responds",
       "staleAt": "As of {time}",
       "othersAttention": "Another account needs attention",
