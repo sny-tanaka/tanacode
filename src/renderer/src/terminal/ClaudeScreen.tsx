@@ -52,11 +52,43 @@ export function useClaudeScreenOutput(): void {
 
 const IMAGE_PASTE_MS = 300;
 
-// Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。
+// TUI が許可の確認・質問のメニューを出しているセッション（一覧の attention。main の tuiAsk）。その間に貼ると、メニューへの入力に
+// 混ざるので、貼るものは預かり、メニューが閉じたら順に貼る（main が貼る知らせと同じ。SessionManager.pasteIntoTerminal）。
+// 預かっている間にターミナルモードでなくなったら、貼る先の TUI が無いので捨てる
+const asking = new Set<string>();
+const held = new Map<string, { text: string; attachments: string[] }[]>();
+
+// セッションの一覧が変わった（App が呼ぶ）
+export function noteClaudeScreenSessions(sessions: readonly { id: string; terminal?: boolean; attention: string | null }[]): void {
+  for (const session of sessions) {
+    if (session.terminal && (session.attention === 'permission' || session.attention === 'question')) {
+      asking.add(session.id);
+      continue;
+    }
+    asking.delete(session.id);
+    const waiting = held.get(session.id);
+    if (!waiting) continue;
+    held.delete(session.id);
+    if (!session.terminal) continue;
+    void (async () => {
+      for (const paste of waiting) await writePaste(session.id, paste.text, paste.attachments);
+    })();
+  }
+}
+
+// Claude Code の入力欄に貼る（送らない。人が画面で続きを打ち、Enter で送る）。メニューが出ている間は、閉じてから貼る（上の asking）。
 // 画像は、パスを貼り付けとして送ると [Image #n] として添付される（TUI の決まり）。
 // 貼る文は、ファイルの中身・Claude が書いた文・ターミナルの出力などから来るので、ここで必ず制御文字を取り除く
 // （ESC が残ると、ESC[201~ で貼り付けを抜け、あとの文字が Enter・Shift+Tab などのキーとして TUI に届く）
 export async function pasteIntoClaudeScreen(sessionId: string, text: string, attachments: string[] = []): Promise<void> {
+  if (asking.has(sessionId)) {
+    held.set(sessionId, [...(held.get(sessionId) ?? []), { text, attachments }]);
+    return;
+  }
+  await writePaste(sessionId, text, attachments);
+}
+
+async function writePaste(sessionId: string, text: string, attachments: string[]): Promise<void> {
   for (const path of attachments) {
     window.tanacode.pty.write(sessionId, bracketedPaste(stripControlChars(path)));
     await new Promise((resolve) => setTimeout(resolve, IMAGE_PASTE_MS));

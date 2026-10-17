@@ -366,10 +366,14 @@ PR で、次のものを流します。develop への push では流しません
 | `scm.test.ts` | Claude が直したファイルを、ソース管理の画面で開いて差分の行にコメントし、チャットから返す。画面からステージしてコミットする |
 | `default-branch.test.ts` | 新規セッションの画面の「最新のデフォルトブランチへ切り替える」。フォルダを切り替えた直後に押しても効くか。フェッチに時間がかかっている間（合図があるまで答えないリモート。git の `ext::`）にフォルダを変えると、変えた先のボタンと送信がすぐ使えるか。時間のかかっているフォルダは止めずに、リモートが答えたら切り替わるか |
 | `restart.test.ts` | 「動かしたまま終了」で閉じて起動し直すと、Claude Code が引き継がれて続けられる。「再起動」のあとも同じ会話を続けられる。ターミナルモードのまま「動かしたまま終了」で起動し直すと、ターミナルモードのまま引き継ぎ、チャットに戻すと（書きかけが消える確かめのあと）同じ会話が続く |
+| `start-then-switch.test.ts` | 新規セッションの画面で、セッションを始めている途中（worktree で始める前の git の確かめの間）にフォルダを変えると、変えた先の送信はすぐ使え、前のフォルダのセッションができても、変えた先の画面から移らないか。変えた先で送ると、そのフォルダでセッションが始まるか |
 | `worktree-start.test.ts` | worktree で始めると、Claude Code が worktree を作っている間（合図があるまで `git worktree add` を待たせる）でも、送ってすぐセッションの画面に移るか。できるまで、チャット・エクスプローラー・ソース管理・ターミナルが準備の段階を出して待ち（ターミナルはシェルを開かない）、できたら預かっていた指示を送って worktree を開くか。作れなかったときは、新規セッションの画面に戻って、指示が入力欄に戻り、理由が出るか。worktree なしで送り直せるか |
 | `compact.test.ts` | ヘッダーの「最適化圧縮」を押すと、仕上げの頼み → Claude が MCP で「いまの状態」を書く → `/clear` → 再開の文（今の状態と、前の会話の発言の原文）→ Claude がリストを読んで報告、と進むか。要約を頼まないか |
 | `compact-interrupt.test.ts` | 最適化圧縮の仕上げの頼みを、応答の前に中断すると、チャットの入力欄に何も入らず、会話を消さずに取りやめて理由を出すか。次の発言はそれだけで送り、中断した仕上げの頼みは、中断の印のあとの別の発言として Claude に届くか |
+| `compact-child.test.ts` | 子セッションで、最適化圧縮が自動で動くか（親が指示した子でも）。子の長いターンをツールの切れ目で止めて切り替え、続きを進めさせる。親には、止めた瞬間には作業が終わった知らせが届かず、続きを終えたときに 1 回届くか。`get_session` で読めるのは、親が出した指示と、続きを終えたあとの応答か |
 | `compact-auto.test.ts` | 最適化圧縮を自動で始める。モックの API が返す入力のトークン数を大きくして、ターンの終わりに 80% を超えたら切り替えるか・切り替えた直後に繰り返さないか・長いターンの途中（90% 超）でツールの切れ目で止めて、止めた場所を再開の文に入れるか・Claude Code の自動の圧縮が始まる大きさでも要約を作らせないか・「自動」をオフにしたセッションでは Claude Code の圧縮が動くか |
+| `press-chat.test.ts` | エディタの行に付ける Claude へのコメント（Monaco の中に差し込んだ欄なので、画面の部品のテストでは描けない）。書きかけの欄のキー（Esc でやめる・⌘Enter で付ける）と、付けたコメントの「削除」が、チャットの入力欄の札まで効くか |
+| `press-preview.test.ts` | アクティビティバーのブラウザとターミナルのボタン。新規セッションの画面で押すと、アプリ内ブラウザ（本物の webview）とシェル（本物の pty）が開き、もう一度押すと閉じるか。アドレス欄・戻る・進む・読み込み直し、閉じて開き直しても同じシェルが残るか |
 
 どのファイルも、最後に画面のコンソールにエラーが出ていないかを確かめます。
 
@@ -453,7 +457,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - セッションごとに、本物の `claude` を 1 つ起動します。起動の種類は 2 つ（`claude-session.ts` の `LaunchKind`）。
   - チャット（`stream`）: `claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio --replay-user-messages --include-partial-messages`（`stream/protocol.ts` の `STREAM_ARGS`）を、標準入出力のパイプでつないで動かします。1 行 1 JSON の発言・出力の行・制御の要求でやりとりし、画面は持ちません（下の「stream-json のやりとり」）。
     - `--verbose` が無いと起動しません。`--permission-prompt-tool stdio` が無いと、聞くべき許可が自動で断られ、AskUserQuestion・ExitPlanMode も使えません。`--replay-user-messages` は、スマホ・claude.ai から届いた発言を受け取るため、`--include-partial-messages` は、進み具合（考えている・書いている）を知るためです。
-  - ターミナルモード（`tui`）: ふだんの TUI を node-pty で動かし、人が画面で操作します。アプリは画面を読まず、キーも押しません（下の「ターミナルモード」）。
+  - ターミナルモード（`tui`）: ふだんの TUI を node-pty で動かし、人が画面で操作します。アプリは画面を読まず、キーも打ちません（貼り付けだけ。下の「ターミナルモード」）。
   - 同じセッションを、ふだんはチャットで、ターミナルモードの間だけ TUI で動かします。どちらも同じ会話ログに書き、同じ Remote Control のセッションにつながります。行き来はどちら向きも、今の claude を止めて終わりを確かめてから、もう片方で `--resume` します（同じ会話を 2 つのプロセスで開かない）。
 - 起動するのはアプリではなく、pty ホストという常駐プロセス。アプリを再起動しても Claude Code を止めないためです。
   - アプリが Electron を Node として（`ELECTRON_RUN_AS_NODE`）、アプリと切り離して起動します。macOS では Dock にアイコンが出ないよう、同梱の `tanacode Helper.app` の実行ファイルを使います。アプリとは userData の Unix ソケット（`pty-host.sock`。`0600`。つながれば任意のコマンドを起動できるため、自分だけにする）でやりとりします。パスが長すぎるときは一時フォルダに置きます。
@@ -670,7 +674,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - コード: `rewind_files`（`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` が要る）。会話を戻せないと分かっていれば（作業中・答え待ち・送る予定の発言がある）、コードも戻さずに断ります。コードを先に戻すのは、会話を戻したあとでは、その発言のファイルの控えを探せるか確かめていないためです。
   - 会話: `rewind_conversation`（内部の要求）に、戻す先の発言の uuid と、アプリが読んだ会話ログのいちばん新しい user の行の uuid（`last_seen_user_message_uuid`。無いと `stale_target` で断られる。実測）を渡します。返事の `prefillText`（戻した発言の文）を、チャットの入力欄に戻します。会話ログは消されず、次の発言から枝分かれするので、チャットの表示は、その発言の前の時点に先に戻します（`cutBefore`。そのあとの枝分かれは `branchCut`）。
   - 断られた理由（`turn_running`・`stale_target` など）は、主なものを画面の言語にして出します。コードだけ戻せて会話を断られたときは、そう知らせます。
-  - 「ここから要約」は作りません（決めたこと。ターミナルモードの `/rewind` では使える）。
+  - 要約して戻す 2 つ（「Summarize from here」「Summarize up to here」）は作りません（決めたこと。ターミナルモードの `/rewind` では使える）。
 
 ### 質問（AskUserQuestion）
 
@@ -1126,7 +1130,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 新しいターンが始まったら（状態が作業中になったら）、前のターンの報告は捨てます（`TurnReports.stateChanged`。`Profile` の `manager.watchState` から）。質問・許可の確認・ターミナルモード・ブラウザでの操作の待ちから作業中に戻ったのは同じターンなので、捨てません。Claude Code が終わった・アーカイブしたときも捨てます。
 - 親への知らせ（`SessionsControl.stateChanged`）: 子の状態（ツールで見せる状態。`browser` も）が `working` から `idle`・`background`・`question`・`permission`・`terminal`・`browser`・`exited` に変わり、子の最後の発言（`/clear` よりあと）が親からの指示なら、親ごとに溜めます。親が止めた子（`stop_session`）は除きます。`starting` から手が空いたもの（アプリを起動し直して引き継いだときなど）は、作業を終えたのではないので数えません。子セッションは人に通知しないので（`index.ts` の `notify` が `parentOf` で除く）、親が答えられない許可の確認・ターミナルとアプリ内ブラウザでの操作の待ちも親に知らせ、人に伝えさせます。
   - 親が `idle` か `background`（ターンの外）なら、`<tanacode-session-event sessions="子の ID">文</tanacode-session-event>`（1 行。`sessionEventText`）を `submitWhenReady` で送ります。親が作業中なら、ターンの外になったときに送ります。親がターミナルモードなら、知らせは捨てます（預からない。決めたこと）。1.5 秒の間に続けて手が空いた子は、1 つにまとめます。待ちの列・まとめ・試し直しは `session-notices.ts` の `SessionNotices`（チェックリストの知らせと共通）。
-  - 知らせは、届かないことがあります（親が手の空かないまま・アプリの不具合）。MCP サーバーの説明と `start_session` の説明・結果で、親の Claude に「知らせだけを待たず、子の状況を定期的に確かめる（`get_session`）」「同期で待たない」と伝えています。`wait_sessions` などの長いツールの呼び出しの間は、ユーザーの発言が親に届かないためです（2026-10-12、親が `wait_sessions` を 600 秒で呼んで待ち、ユーザーが話しかけられなかった）。ほかにやることが無いときは、ターンを終えて、バックグラウンドのコマンドのタイマー（`sleep 300` など）で起きてから見るよう伝えています。
+  - 知らせは、届かないことがあります（親が手の空かないまま・アプリの不具合）。MCP サーバーの説明と `start_session` の説明・結果で、親の Claude に「知らせだけを待たず、子の状況を定期的に確かめる（`get_session`）」「同期で待たない」と伝えています。`wait_sessions` などの長いツールの呼び出しの間は、ユーザーの発言が親に届かないためです（2026-10-12、親が `wait_sessions` を 600 秒で呼んで待ち、ユーザーが話しかけられなかった）。ほかにやることが無いときは、ターンを終えて、`schedule_wakeup` で自分に予約を入れ、起きてから見るよう伝えています（下の「親への知らせ」の説明）。
   - 親がその子を読んだ（`read_session`・`get_session`・`get_session_diff`・`wait_sessions`・`answer_question`）時刻より前の出来事は、送りません（`observedAt`）。
   - 会話ログでは、`chat.ts` が `notice` のイベント（`sessions` に子の ID）にします。順番待ちの行では、人の発言として数えません（`isHumanPrompt`）。
 - MCP の説明（`initialize` の `instructions`。Claude Code は会話の先頭の `system` の発言に入れる）で、Claude に次のことを伝えます。
@@ -1232,7 +1236,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 人が閉じても捨てず（`open` を false にするだけ）、Claude が作り直す（`start_walkthrough`）まで、ソース管理の一覧からもう一度開けます（`go`）。寄り道だけで、ステップが無いものは、閉じたら捨てます。
   - アーカイブ・一覧から削除したセッションのものは捨てます（`discard`）。
 - Claude がまとめて手順を渡し、人が自分で進めます（`start_walkthrough`）。1 ステップごとに Claude のターンを回すと、毎回の待ちと料金がかかるためです。
-  - ツールは人の操作を待たずに、すぐ返します。Claude Code は 120 秒たっても終わらない MCP のツールをバックグラウンドに移すので（アプリ内ブラウザの `ask_user_to_act` と同じ問題）、人のペースで進む説明を 1 回の呼び出しで待つことはしません。
+  - ツールは人の操作を待たずに、すぐ返します。人のペースで進む説明を 1 回の呼び出しで待つと、その間はユーザーの発言が Claude に届かず、ターミナルモードの TUI では、120 秒たっても終わらない MCP のツールが Claude Code にバックグラウンドへ移されるためです（アプリ内ブラウザの `ask_user_to_act` と同じ問題）。
   - 人の質問は、MCP ではなく、ふつうの発言としてチャットに送ります（`stepQuestionText`・`rangeQuestionText`。画面の `usePendingSends`）。作業中に送れば Claude Code の順番待ちに入るので、知らせの仕組み（`SessionNotices`）は使いません。ターミナルモードのセッションには送らず、Claude Code の画面の入力欄に貼るだけにします（`App.tsx` の `sendOrPaste`。Enter は人が押す）。
 - MCP サーバー（`tanacode-walkthrough`）は、ほかと同じ形の stdio の中継（`src/main/walkthrough-mcp.ts` → `out/main/walkthrough-mcp.js`）。定義は `src/shared/walkthrough-tools.ts` の `WALKTHROUGH_MCP`、起動の材料は `index.ts` の `walkthroughLaunch` と `walkthrough-bridge.ts`（ソケットは userData の `walkthrough.sock`。env は `TANACODE_WALKTHROUGH_SOCKET`・`TANACODE_WALKTHROUGH_SESSION`）。
   - ツールの種類は、示す `start_walkthrough`・`show_code` が `show`、`walkthrough_status` が `read`（`mcp-tools.ts`）。どちらも `--allowedTools` で許可済みにし、`readOnlyHint` も付けます。人のエディタに示すだけで、ファイルは書き換えないためです。
@@ -1253,7 +1257,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - view zone の中のクリックとキー入力は、エディタに渡しません。ホイールは、ポインタの下にその向きへスクロールできるもの（あふれた質問の欄・横に長いコード）があるときだけ止め、ほかはエディタに渡します（`editor/zoneEvents.ts`。行コメントと同じ）。吹き出しの上でも、エディタをスクロールできます。
   - ストーリーは `walkthrough/Walkthrough.stories.tsx`。
 - GitHub の PR に載せる（`walkthrough-github.ts`。本文は `src/shared/walkthrough-comment.ts`）: 吹き出しのボタンで下見のダイアログ（`walkthrough/CommentDialog.tsx`）を開き、`walkthrough:draft-comment` で本文と投稿先を、`walkthrough:post-comment` で投稿します。人に頼まれた Claude は、MCP のツール `post_walkthrough`（`WalkthroughControl` から `postWalkthroughAsDrafted`）で載せます。下見の本文を直さずに、一言を添えて投稿するのと同じです。本文はどちらもステップから組み立て、Claude には書かせません。Claude が `gh` で自分の文を載せると、ボタンで載せるものと形がそろわないためです。
-  - Claude から: 載せられない理由と `gh` のエラーは、画面の言語によらず英語で返します（`tFor('en')`）。投稿は `gh` を待つので、中継が待つ上限（`WALKTHROUGH_CALL_TIMEOUT_MS`）は 90 秒にしています（`github.ts` の `gh` を待つ上限の合計より長く、Claude Code が MCP のツールをバックグラウンドに移す 120 秒より短く）。
+  - Claude から: 載せられない理由と `gh` のエラーは、画面の言語によらず英語で返します（`tFor('en')`）。投稿は `gh` を待つので、中継が待つ上限（`WALKTHROUGH_CALL_TIMEOUT_MS`）は 90 秒にしています（`github.ts` の `gh` を待つ上限の合計より長く、ターミナルモードの TUI が MCP のツールをバックグラウンドに移す 120 秒より短く）。
   - インラインのレビューコメントにはしません。差分の行にしか付けられず、「Files changed」のファイル順に並び替わるので、ウォークスルーの良さ（説明の順番・差分の外のコード）が消えるためです。
   - 本文: ステップの順に、見出し・パーマリンク（`<リポジトリ>/blob/<SHA>/<パス>#L1-L3`。前後を空行にして 1 行だけで置くと、GitHub がコードを埋め込む）・説明。リポジトリの URL は PR の URL から取ります。パスは、リポジトリのルートからセッションのフォルダまで（`repoPrefix`）を足したもの。質問と答え・寄り道は載せません。
   - 確かめること（下見と、投稿の直前の 2 回）: ブランチの開いている PR（`gh pr list`。`pullRequestsOf`）があること・手元の HEAD が PR の `headRefOid` と同じこと・ステップのファイルが HEAD のコミットにあり、変更が無いこと。パーマリンクが手元の HEAD を指すためです。アプリが代わりにプッシュや PR の作成はしません。

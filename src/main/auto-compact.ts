@@ -160,7 +160,7 @@ export class AutoCompact {
   }
 
   // 圧縮の前のフック（PreCompact・auto）に答える。自動がオンで使えるセッションなら、止める理由を返す（Claude Code は要約を作らない）。
-  // 止めたら、次のツールの切れ目（かターンの終わり）で、同じ流れに入る。オフ・使えない・休んでいるセッションと、
+  // 止めたら、次のツールの切れ目（かターンの終わり）で、同じ流れに入る。オフ・使えない・休んでいる・ターミナルモードのセッションと、
   // 切り替えたばかりのセッションでは止めない（空を返す）
   preCompact(id: string): string {
     if (!this.active(id)) return '';
@@ -187,9 +187,10 @@ export class AutoCompact {
   }
 
   // 自動で始めるセッションか。トグルがオン・チェックリストが使える・休んでいない
+  // 使えるか。ターミナルモードの間（TUI）は使わない。流れ（仕上げ・/clear・再開の文）を進められないので、Claude Code の自動の圧縮も止めない
   private active(id: string): boolean {
     const summary = this.deps.host.summary(id);
-    if (!summary || summary.archived || summary.autoCompact === false) return false;
+    if (!summary || summary.archived || summary.autoCompact === false || summary.terminal) return false;
     return !this.state(id).paused && this.deps.compact.status(id).unavailable === null;
   }
 

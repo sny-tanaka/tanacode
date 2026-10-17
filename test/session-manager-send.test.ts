@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { wakeupText } from '@shared/scheduled';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
 import { INIT_RESPONSE, line, ScriptedApp, stream } from './helpers/scripted-claude';
 
@@ -137,6 +138,20 @@ describe('submit', () => {
     pipe.emit(stream.lifecycle(uuid, 'queued'));
     await app.waitFor('順番待ち', () => queue(id)[0]?.state === 'queued');
     expect(queue(id)).toEqual([{ id: uuid, text: 'テストも直して', pastes: [], images: 0, state: 'queued', parent: parent.id }]);
+  });
+
+  it('人が書いた予約の送信（時刻になると、手が空くのを待たずに priority: later で渡す）は、作業中なら順番待ちに出す。Claude の予約は出さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.say(id, line.user('はじめ'), line.text('考えています'));
+    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
+    // 予約（ScheduledMessages）は、人が書いたものはそのまま、Claude のものは囲みに入れて、submitWhenReady で渡す
+    await app.manager.submitWhenReady(id, '予約していた発言', 1000);
+    await app.manager.submitWhenReady(id, wakeupText('Claude の予約'), 1000);
+    const [human] = pipe.prompts;
+    pipe.emit(stream.lifecycle(human.uuid, 'queued'));
+    await app.waitFor('順番待ち', () => queue(id)[0]?.state === 'queued');
+    expect(queue(id)).toEqual([{ id: human.uuid, text: '予約していた発言', pastes: [], images: 0, state: 'queued' }]);
   });
 
   it('子セッションの知らせなど、発言でないものは送信中・順番待ちに出さない。会話に出るまでは作業中に数える', async () => {

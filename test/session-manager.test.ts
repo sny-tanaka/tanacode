@@ -325,15 +325,14 @@ describe('権限モードと起動し直し', () => {
     expect(app.pipe(child.id).arg('--permission-mode')).toBe('manual');
   });
 
-  it('形の違う設定ファイルがあれば（get_settings の errors）、理由をチャットに出して止める', async () => {
+  it('ユーザー・プロジェクトの設定ファイルに読めない項目があれば（get_settings の errors）、チャットに知らせて続ける（止めるのは、登録した設定ファイルのときだけ）', async () => {
     app.answers.set('get_settings', { applied: {}, errors: [{ file: '/x/settings.json', path: 'permissions.allow', message: 'Expected array' }] });
     const { id, pipe } = app.create();
-    await app.waitFor('止める', () => pipe.requests('end_session').length === 1);
+    await app.waitFor('受け付け', () => app.events(id).some((e) => e.type === 'ready'));
     expect(app.events(id).filter((e) => e.type === 'info').map((e) => (e.type === 'info' ? e.text : ''))).toEqual([
-      expect.stringContaining('permissions.allow'),
+      expect.stringMatching(/^設定ファイルに読めない項目があります。[\s\S]*\/x\/settings\.json: permissions\.allow: Expected array/),
     ]);
-    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
-    expect(app.events(id).some((e) => e.type === 'ready')).toBe(false);
+    expect(pipe.requests('end_session')).toEqual([]);
   });
 });
 

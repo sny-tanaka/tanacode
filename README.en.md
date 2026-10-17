@@ -92,7 +92,7 @@ Five MCP servers that tanacode adds to Claude Code, with nothing extra to instal
 - **Review before you push**: see the changes since the branch point (including committed ones) in a pull-request-like list. Comments you leave on diff lines go to Claude with your next prompt ([demo](https://sny-tanaka.github.io/tanacode/#review))
 - **Work in parallel**: marks in the session list tell sessions apart by state (working, waiting for background tasks, waiting for an answer, new response), and macOS notifications tell you when a session you're not looking at finishes (with a short report from Claude on what got done or what it needs from you) or needs you. Each session can get its own folder and branch with `claude --worktree`, and tanacode takes care of setting up `node_modules` ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
 - **More than one folder**: add folders other than the session's folder (another repository, for example) to the workspace, and browse and edit them in the Explorer and the editor. Claude Code gets them as folders it can work in, too
-- **Scheduled messages**: send a prompt you've written at a set time (like Slack's scheduled messages). When the time comes, tanacode waits until Claude Code is free and then sends it
+- **Scheduled messages**: send a prompt you've written at a set time (like Slack's scheduled messages). When the time comes, tanacode hands it to Claude Code; if Claude is working, it arrives after the current work
 - **Wrap up and look back**: export the session as a single HTML file that looks just like the chat ([demo](https://sny-tanaka.github.io/tanacode/#wrapup)). With the Japanese UI, you can also translate Claude's thinking and responses into Japanese with one button (on your Mac with macOS's built-in translation; nothing is sent out; macOS 15 or later)
 - **English and Japanese**: the UI is available in English and Japanese. Switch it with **tanacode → Language** in the menu bar. By default it follows your Mac: Japanese if Japanese is among your preferred languages, otherwise English. The new language takes effect when tanacode restarts
 - **Account, usage limits, and the app itself**: always shows your plan, how much of the 5-hour and weekly limits you've used and when they reset, and this Mac's CPU and memory usage. You can keep separate Claude Code accounts (profiles), such as work and personal, and switch between them in one window. A mark in the title bar tells you when a new version of tanacode is out ([demo](https://sny-tanaka.github.io/tanacode/#app))
@@ -102,6 +102,7 @@ There's more, such as restarting just Claude Code while keeping the conversation
 ## Requirements
 
 - macOS 13 or later (Apple Silicon or Intel)
+  - Chat translation alone needs macOS 15 or later (it uses macOS's built-in translation)
 - [Claude Code](https://code.claude.com/docs) (the `claude` CLI)
   - Run `claude` in a terminal once and finish the first-time setup (choosing a theme and logging in)
   - The version verified with tanacode is 2.1.301. If yours is different, the version in the status bar gets a warning mark (hover over it to see why)

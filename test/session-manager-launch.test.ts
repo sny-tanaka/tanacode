@@ -44,6 +44,29 @@ describe('登録した設定ファイル', () => {
     expect(app.manager.summary(id)?.settingsFile).toBe('work');
   });
 
+  it('登録した設定ファイルに読めない項目があれば（合わせたファイルの get_settings の errors）、理由をチャットに出して止める。ほかのファイルの誤りは知らせるだけ', async () => {
+    // Claude Code は読めない項目を使わない。登録した設定（Team プランと従量課金の切り替えなど）を黙って標準に切り替えないよう、止める
+    const { files } = fakeSettingsFiles();
+    start({ settingsFiles: files });
+    // 合わせたファイルの名前はセッションの ID で決まる。get_settings は起動の答えのあとに届くので、そのときに読む
+    let merged = '';
+    app.answers.set('get_settings', () => ({
+      applied: {},
+      errors: [
+        { file: '/x/settings.json', path: 'model', message: 'Expected string' },
+        { file: merged, path: 'permissions.allow', message: 'Expected array' },
+      ],
+    }));
+    const { id, pipe } = app.create({ settingsFile: 'work' });
+    merged = `/run/${id}.json`;
+    await app.waitFor('止める', () => pipe.requests('end_session').length === 1);
+    expect(app.events(id).flatMap((e) => (e.type === 'info' ? [e.text] : []))).toEqual([
+      expect.stringMatching(/^設定ファイルに読めない項目があります。[\s\S]*\/x\/settings\.json: model/),
+      expect.stringMatching(new RegExp(`^設定ファイルに読めない項目があるため、Claude Code を止めました。[\\s\\S]*/run/${id}\\.json: permissions\\.allow`)),
+    ]);
+    expect(app.events(id).some((e) => e.type === 'ready')).toBe(false);
+  });
+
   it('使えない設定ファイル・設定ファイルを使えない状態なら、記録を作らずに断る', () => {
     const { files } = fakeSettingsFiles();
     start({ settingsFiles: files });

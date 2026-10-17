@@ -235,6 +235,8 @@ type Runtime = {
   lastBridgeUrl: string | null | undefined;
   // この起動で、会話のタイトルを作らせた（generate_session_title。最初のターンのあとに 1 回だけ）
   titleRequested: boolean;
+  // この起動で --settings に渡した、登録した設定ファイルを合わせたファイル（登録した設定ファイルを使っていなければ null）
+  settingsPath: string | null;
   // worktree の準備の途中（Claude Code が worktree を作るのを待っている・node_modules の用意）。終わるまで ready を配信しない
   preparing: WorktreePreparing | null;
   // Claude Code が worktree を作り終えたか（新しい worktree で起動したときだけ。作れずに終わったら false）
@@ -305,7 +307,7 @@ export class SessionManager {
     private readonly terminalMcp: () => McpLaunch | null = () => null,
   ) {}
 
-  // 答えを待っている AskUserQuestion（セッションごと。stream-json の要求と、ターミナルモードの質問のフックのもの）
+  // 答えを待っている AskUserQuestion（セッションごと。stream-json の can_use_tool の要求）
   private readonly questions = new PendingQuestions((id) => this.questionsChanged(id));
 
   // 状態が変わったかもしれないセッション（イベント・操作待ち・バックグラウンドの数・アーカイブ）を知らせる先
@@ -1645,6 +1647,7 @@ export class SessionManager {
         plans: new Map(),
         planFile: null,
         planInputs: new Map(),
+        settingsPath: null,
         plansDirectory: null,
         quietAttention: false,
         terminal: false,
@@ -1729,6 +1732,7 @@ export class SessionManager {
     runtime.turnEnding = null;
     runtime.starterSeen = false;
     runtime.titleRequested = false;
+    runtime.settingsPath = settings?.settingsFile ?? null;
     runtime.caughtUp = !adopted;
     this.stopProgress(id, runtime);
     this.stopStartWatch(id, runtime);
@@ -1926,9 +1930,18 @@ export class SessionManager {
     const settings = await client.request<SettingsResponse>('get_settings').catch(() => null);
     if (rt.process !== process) return;
     this.notePlansDirectory(id, rt, settings);
-    if (settings?.errors?.length) {
-      // 形の違う設定ファイルは、Claude Code が黙って丸ごと無視する。登録した設定を黙って標準に切り替えないよう、止めて理由を出す
-      const details = settings.errors.map((e) => describeSettingsError(e)).join('\n');
+    // 読めない項目のある設定ファイルは、Claude Code がその項目を黙って使わない（get_settings の errors。どのファイルかは file）。
+    // 登録した設定ファイル（合わせて --settings に渡したもの）なら、登録した設定を黙って標準に切り替えないよう、止めて理由を出す。
+    // ほかの設定ファイル（ユーザー・プロジェクトの設定）なら、Claude Code の TUI と同じく、知らせて続ける
+    const errors = settings?.errors ?? [];
+    const registered = errors.filter((e) => rt.settingsPath !== null && settingsErrorFile(e) === rt.settingsPath);
+    const others = errors.filter((e) => !registered.includes(e));
+    if (others.length > 0) {
+      const details = others.map((e) => describeSettingsError(e)).join('\n');
+      this.pushEvents(id, [{ type: 'info', id: `settings-warning:${Date.now()}`, text: t('main.settingsFile.ignored', { details }) }]);
+    }
+    if (registered.length > 0) {
+      const details = registered.map((e) => describeSettingsError(e)).join('\n');
       this.pushEvents(id, [{ type: 'info', id: `settings-error:${Date.now()}`, text: t('main.settingsFile.rejected', { details }) }]);
       void process.stop();
       return;
@@ -2665,6 +2678,12 @@ function imageMediaType(data: Buffer): string | null {
 }
 
 // 形の違う設定ファイルの理由（get_settings の errors の 1 つ）
+// 設定ファイルの誤りが、どのファイルのものか
+function settingsErrorFile(error: unknown): string | null {
+  const file = (error as { file?: unknown } | null)?.file;
+  return typeof file === 'string' ? file : null;
+}
+
 function describeSettingsError(error: unknown): string {
   const e = error as { file?: unknown; path?: unknown; message?: unknown } | null;
   return [e?.file, e?.path, e?.message].filter((v): v is string => typeof v === 'string' && v !== '').join(': ');

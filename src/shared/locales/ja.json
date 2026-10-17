@@ -162,7 +162,8 @@
       "duplicateName": "「{name}」という名前の設定ファイルは、すでにあります",
       "removed": "このセッションが使っていた設定ファイルは、登録から外されています。選択欄の「管理…」で登録し直すか、別の設定ファイルに切り替えてください",
       "unavailable": "設定ファイルを使えない状態です",
-      "rejected": "設定ファイルに読めない項目があるため、Claude Code を止めました。直してから、もう一度始めてください。\n{details}"
+      "rejected": "設定ファイルに読めない項目があるため、Claude Code を止めました。直してから、もう一度始めてください。\n{details}",
+      "ignored": "設定ファイルに読めない項目があります。Claude Code は、その項目を使わずに動いています。\n{details}"
     },
     "profile": {
       "cannotRemoveDefault": "標準のプロファイルは外せません",
@@ -351,7 +352,7 @@
       "teleport": "クラウドに送る・claude.ai から再開する",
       "terminal-setup": "Shift+Enter の改行を設定",
       "theme": "テーマを変える",
-      "tui": "ターミナル UI の描画方式を設定（tanacode のセッションは fullscreen のまま）",
+      "tui": "ターミナル UI の描画方式を設定（ターミナルモードで使う。チャットには描画が無い）",
       "ultrareview": "クラウドでバグを探して検証する",
       "upgrade": "プランをアップグレード",
       "usage": "使用量・プランの状況",

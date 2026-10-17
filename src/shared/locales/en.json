@@ -164,7 +164,8 @@
       "duplicateName": "A settings file named “{name}” already exists",
       "removed": "The settings file this session used has been removed from the list. Register it again with “Manage…” in the picker, or switch to another settings file.",
       "unavailable": "Settings files aren't available",
-      "rejected": "Claude Code was stopped because a settings file has entries it can't read. Fix them and start again.\n{details}"
+      "rejected": "Claude Code was stopped because a settings file has entries it can't read. Fix them and start again.\n{details}",
+      "ignored": "Some settings files have entries Claude Code can't read. Claude Code is running without them.\n{details}"
     },
     "profile": {
       "cannotRemoveDefault": "The default profile can't be removed",
@@ -353,7 +354,7 @@
       "teleport": "Send to the cloud or resume from claude.ai",
       "terminal-setup": "Set up Shift+Enter for newlines",
       "theme": "Change the theme",
-      "tui": "Set how the terminal UI is rendered (tanacode sessions stay fullscreen)",
+      "tui": "Set how the terminal UI is rendered (used in terminal mode; the chat has no terminal UI)",
       "ultrareview": "Find and verify bugs in the cloud",
       "upgrade": "Upgrade your plan",
       "usage": "Show usage and plan status",

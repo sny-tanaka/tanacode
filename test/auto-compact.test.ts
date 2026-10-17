@@ -369,6 +369,20 @@ describe('使えないとき', () => {
     expect(started).toEqual([]);
   });
 
+  it('ターミナルモードの間は、始めない・止めない（Claude Code の自動の圧縮を止めない）。書いてあった止めるファイルは片付ける', () => {
+    // TUI では状態が terminal で、流れ（仕上げ・/clear・再開の文）を進められない。Claude Code の圧縮まで止めると、どちらの圧縮も起きない
+    state = 'working';
+    percent = 95;
+    auto.check(ID);
+    expect(existsSync(stopFile())).toBe(true);
+    summary = { terminal: true };
+    state = 'terminal';
+    auto.check(ID);
+    expect(existsSync(stopFile())).toBe(false);
+    expect(auto.preCompact(ID)).toBe('');
+    expect(started).toEqual([]);
+  });
+
   it('アーカイブした・終了した・一覧から消したセッションは、何もしない（止めるファイルも片付ける）', () => {
     state = 'working';
     percent = 95;

@@ -7,7 +7,7 @@ import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatState';
 import { insertIntoChat } from '../../src/renderer/src/chat/insertInput';
 import type { ReviewComment } from '../../src/renderer/src/review/comments';
-import { pasteIntoClaudeScreen, useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
+import { noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from '../../src/renderer/src/terminal/ClaudeScreen';
 import { switchTerminalMode } from '../../src/renderer/src/terminal/terminalMode';
 import './dom';
 import { mockApi } from './mock-api';
@@ -276,6 +276,24 @@ describe('ターミナルモード: 入力欄への差し込み（「Claude へ�
     expect(writes).toEqual([paste('/tmp/a[201~.png'), ' ', paste('範囲の中身[201~\n!rm -rf x\n[Z')]);
     // 囲みの終わりの ESC[201~ は、最後の 1 つだけ
     expect(writes.at(-1)!.split('\u001b[201~')).toHaveLength(2);
+  });
+
+  it('TUI が許可の確認・質問のメニューを出している間は貼らずに預かり、閉じたら順に貼る。ターミナルモードでなくなったら捨てる', async () => {
+    // メニューが出ている間に貼ると、メニューへの入力に混ざる（main が貼る知らせも、同じく待つ）
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: 'permission' }]);
+    await pasteIntoClaudeScreen('s1', 'ひとつめ');
+    await pasteIntoClaudeScreen('s1', 'ふたつめ');
+    expect(api.argsOf('pty.write')).toEqual([]);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: null }]);
+    await vi.waitFor(() => expect(api.argsOf('pty.write')).toEqual([['s1', paste('ひとつめ')], ['s1', paste('ふたつめ')]]));
+    // 預かっている間にチャットに戻したら、貼る先が無いので捨てる
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: 'question' }]);
+    await pasteIntoClaudeScreen('s1', 'みっつめ');
+    noteClaudeScreenSessions([{ id: 's1', terminal: false, attention: null }]);
+    // 捨てるときは、その場で決める（あとから貼る処理を残さない）
+    expect(api.argsOf('pty.write')).toHaveLength(2);
+    noteClaudeScreenSessions([{ id: 's1', terminal: true, attention: null }]);
+    expect(api.argsOf('pty.write')).toHaveLength(2);
   });
 
   it('チャットを出しているとき・Claude Code に貼れないとき（起動の途中・終了している）は、チャットの入力欄に入れる', () => {

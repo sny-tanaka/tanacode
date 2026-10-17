@@ -51,7 +51,7 @@ import { TaskPane } from './tasks/TaskPane';
 import { TaskListPanel } from './tasks/TaskListPanel';
 import { useStopTask } from './tasks/useStopTask';
 import { buildTasks, taskKey, useSessionBash, type TaskEntry } from './tasks/taskList';
-import { pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
+import { noteClaudeScreenSessions, pasteIntoClaudeScreen, useClaudeScreenOutput } from './terminal/ClaudeScreen';
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { switchTerminalMode } from './terminal/terminalMode';
 import { BrowserHostsDialog } from './preview/BrowserHostsDialog';
@@ -248,6 +248,8 @@ export function App() {
   editorsRef.current = editors;
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  // ターミナルモードの TUI がメニューを出している間は、ボタンから貼るものを預かる（ClaudeScreen）
+  useEffect(() => noteClaudeScreenSessions(sessions ?? []), [sessions]);
   const draftRef = useRef(draft);
   draftRef.current = draft;
 
