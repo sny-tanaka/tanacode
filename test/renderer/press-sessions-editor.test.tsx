@@ -454,6 +454,39 @@ describe('MarkdownPreview の目印へのリンク', () => {
   });
 });
 
+describe('MarkdownPreview の見出しの id', () => {
+  function previewOf(text: string) {
+    mockApi().install();
+    const model = fake.monaco.editor.createModel(text, 'markdown');
+    render(<MarkdownPreview sessionId="A" path="README.md" model={model as never} onOpenFile={vi.fn()} />);
+    return document.querySelector<HTMLElement>('.markdown-doc')!;
+  }
+
+  it('見出しの id にも前置きを付ける（mermaid の図を描くときの id「mermaid-1」などとぶつけない。ぶつかると mermaid が見出しを消す）。#見出し のリンクで移れる', async () => {
+    const doc = previewOf(['[図の見出しへ](#mermaid-1)', '', '# mermaid 1', '', '## mermaid 1'].join('\n'));
+    await settle();
+    expect([...doc.querySelectorAll('h1, h2')].map((h) => h.id)).toEqual(['user-content-mermaid-1', 'user-content-mermaid-1-1']);
+    expect(doc.querySelector('[id="mermaid-1"]')).toBeNull();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    fireEvent.click(screen.getByText('図の見出しへ'));
+    expect(scrolled).toEqual([doc.querySelector('h1')]);
+  });
+
+  it('% を含む目印（#100%）のように、URL として読めないリンクでも止まらず、書いたままの名前で探す', async () => {
+    const doc = previewOf(['[全部へ](#100%)', '', '<a id="100%"></a>', '', '本文'].join('\n'));
+    await settle();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    expect(() => fireEvent.click(screen.getByText('全部へ'))).not.toThrow();
+    expect(scrolled).toEqual([doc.querySelector('[id="user-content-100%"]')]);
+  });
+});
+
 describe('UnsavedDialog（別のフォルダへ移る前の、保存していない変更の確認）', () => {
   type Props = ComponentProps<typeof UnsavedDialog>;
   const props = (over: Partial<Props> = {}): Props => ({

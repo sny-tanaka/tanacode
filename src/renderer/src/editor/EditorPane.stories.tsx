@@ -124,6 +124,21 @@ const menu = loadMenu('autumn');
 - [ ] 季節ごとの切り替え
 `;
 
+// 見出しの id が、mermaid の図を描くときの id（mermaid-1 など）とぶつからないか（ぶつかると、mermaid が見出しを消す）
+const mermaidHeading = `# mermaid 1
+
+図の前の段落。
+
+\`\`\`mermaid
+flowchart LR
+  A[見出し] --> B[図]
+\`\`\`
+`;
+
+export const 見出しと図のid: Story = {
+  render: () => <Pane files={[{ path: 'docs/図.md', content: { kind: 'text', text: mermaidHeading } }]} />,
+};
+
 export const HTMLの混ざったMarkdown: Story = {
   render: () => <Pane files={[{ path: 'README.md', content: { kind: 'text', text: readme } }]} />,
 };

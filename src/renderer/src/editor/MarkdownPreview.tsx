@@ -111,10 +111,15 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
     if (!href) return;
     e.preventDefault();
     if (href.startsWith('#')) {
-      // 見出し（addHeadingIds の id）か、文書の中の目印（前置きを付けた id・name）へ移る
-      const name = CSS.escape(decodeURIComponent(href.slice(1)));
-      const prefixed = `${USER_CONTENT}${name}`;
-      ref.current?.querySelector(`[id="${name}"], [id="${prefixed}"], [name="${prefixed}"]`)?.scrollIntoView({ block: 'start' });
+      // 見出し・文書の中の目印（どちらも前置きを付けた id・name）へ移る。URL として読めないもの（#100% など）は、書いたままの名前で探す
+      let target = href.slice(1);
+      try {
+        target = decodeURIComponent(target);
+      } catch {
+        // 書いたまま
+      }
+      const prefixed = CSS.escape(`${USER_CONTENT}${target}`);
+      ref.current?.querySelector(`[id="${prefixed}"], [name="${prefixed}"]`)?.scrollIntoView({ block: 'start' });
       return;
     }
     // 外部のページはブラウザで開く（メインプロセスが window.open を受けて開く）
@@ -159,7 +164,8 @@ function resolvePath(from: string, href: string): string | null {
   return parts.length ? parts.join('/') : null;
 }
 
-// 見出しへのリンク（#使い方 など）が効くよう、GitHub と同じ形の id を付ける
+// 見出しへのリンク（#使い方 など）が効くよう、GitHub と同じ形の id を付ける。前置き（user-content-）も GitHub と同じく付ける
+// （アプリの画面の id や、mermaid が図を描くときの id（mermaid-1 など。同じ id の要素を消してから描く）とぶつけない）
 function addHeadingIds(root: DocumentFragment): void {
   const used = new Map<string, number>();
   for (const h of root.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
@@ -170,7 +176,7 @@ function addHeadingIds(root: DocumentFragment): void {
       .replace(/\s/g, '-');
     const n = used.get(base) ?? 0;
     used.set(base, n + 1);
-    h.id = n ? `${base}-${n}` : base;
+    h.id = `${USER_CONTENT}${n ? `${base}-${n}` : base}`;
   }
 }
 
