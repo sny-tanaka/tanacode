@@ -198,6 +198,11 @@ export class E2EApp {
     await this.start();
   }
 
+  // pty ホストで動いている Claude Code の pid（起動し直したことを確かめるため）
+  claudePids(): Promise<number[]> {
+    return ptyPids(socketPathIn(this.userData, 'pty-host', 'pty'));
+  }
+
   // pty ホストで動いている Claude Code の、起動の引数（1 つの文字列）。起動し直したときに渡した引数を確かめるため
   async claudeArgs(): Promise<string[]> {
     const pids = await ptyPids(socketPathIn(this.userData, 'pty-host', 'pty'));

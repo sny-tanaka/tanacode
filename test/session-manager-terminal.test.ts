@@ -52,6 +52,15 @@ describe('チャットからターミナルモードへ', () => {
     expect(app.events(id).some((e) => e.type === 'process-exit')).toBe(false);
   });
 
+  it('切り替えの間、一覧に一度も「終了」を出さない（止めた claude が終わってから、もう片方を起動するまでの間も起動中）', async () => {
+    const { id } = await chatting();
+    const before = app.sessionLists.length;
+    await app.manager.setTerminalMode(id, true);
+    const states = app.sessionLists.slice(before).map((list) => list.find((s) => s.id === id)?.state);
+    expect(states).not.toContain('exited');
+    expect(states.at(-1)).toBe('terminal');
+  });
+
   it('作業中・答え待ちの要求・送る予定の発言があるときは切り替えない。裏のタスクが動いていれば、止まることを確かめたときだけ', async () => {
     const { id, pipe } = await chatting();
     await app.prompt(id, 'つぎ');

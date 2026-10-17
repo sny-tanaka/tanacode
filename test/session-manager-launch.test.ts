@@ -137,6 +137,23 @@ describe('登録した設定ファイル', () => {
     expect(app.host.pipes).toHaveLength(1);
   });
 
+  it('restart: 止めている間に設定ファイルが使えなくなって起動し直せなければ、そこで終了を出す', async () => {
+    const { files } = fakeSettingsFiles();
+    start({ settingsFiles: files });
+    const { id, pipe } = app.create({ settingsFile: 'work' });
+    await app.ready(id);
+    pipe.exitOnEnd = false;
+    const restarting = app.manager.restart(id);
+    await app.waitFor('end_session', () => pipe.requests('end_session').length === 1);
+    files.prepare = () => {
+      throw new Error('設定ファイルを読めません: work');
+    };
+    pipe.exit(0);
+    await expect(restarting).rejects.toThrow('設定ファイルを読めません: work');
+    expect(app.manager.stateOf(id)).toBe('exited');
+    expect(app.events(id).some((e) => e.type === 'process-exit')).toBe(true);
+  });
+
   it('claude が終わった・アーカイブした・アプリを終えて claude も止めたときは、合わせた設定のファイルを片付ける', async () => {
     const { files, calls } = fakeSettingsFiles();
     start({ settingsFiles: files });
