@@ -462,6 +462,25 @@ describe('tanacode が動かす git の守り', () => {
     expect(readdirSync(marks)).toEqual([]);
   });
 
+  it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
+    run(repo, 'config', 'filter.req.clean', `${mark('req-clean')}; cat`);
+    run(repo, 'config', 'filter.req.smudge', `${mark('req-smudge')}; cat`);
+    run(repo, 'config', 'filter.req.required', 'true');
+    write(repo, '.git/info/attributes', '* filter=req\n');
+    write(repo, 'b.txt', 'new\n');
+    expect(await status(repo)).toEqual([
+      { path: 'a.txt', index: ' ', worktree: 'M' },
+      { path: 'b.txt', index: '?', worktree: '?' },
+    ]);
+    expect((await branchFiles(repo, base)).map((f) => f.path)).toEqual(['a.txt', 'b.txt']);
+    expect(await git(repo, ['diff', '--no-ext-diff', '--no-textconv', '--stat', base])).toContain('a.txt');
+    // 控えのように、別のインデックスに加えるとき
+    const index = join(root, 'other-index');
+    await git(repo, ['read-tree', 'HEAD'], undefined, { GIT_INDEX_FILE: index });
+    await git(repo, ['add', '-A', '--', '.'], undefined, { GIT_INDEX_FILE: index });
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
   it('打ち消しは、もとの環境の GIT_CONFIG_COUNT の分に足して渡す（もとの分も効く）', async () => {
     const saved = { count: process.env.GIT_CONFIG_COUNT, key: process.env.GIT_CONFIG_KEY_0, value: process.env.GIT_CONFIG_VALUE_0 };
     process.env.GIT_CONFIG_COUNT = '1';

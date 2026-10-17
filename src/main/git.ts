@@ -11,15 +11,16 @@ const MAX_COUNT_FILES = 1000;
 export class GitError extends Error {}
 
 // tanacode が自分で動かす git（状態・差分・ブランチを読む・worktree の片付けなど）は、開いたフォルダの設定で、人の知らないコマンドを
-// 動かさないよう、コマンドを動かす設定を打ち消して動かす（guardArgs）。人がソース管理パネルで頼んだ操作（ステージ・コミット・プッシュ・
-// プル・ブランチの切り替えなど）は userGit で、ターミナルで git を打ったときと同じに動かす（フック・資格情報・フィルターを使う）
+// 動かさないよう、コマンドを動かす設定を打ち消して動かす（guardOf）。人がソース管理パネルで頼んだ操作（ステージ・コミット・プッシュ・
+// プル・ブランチの切り替えなど）と、worktree の作り直し・消す前の控えの書き込みは userGit で、ターミナルで git を打ったときと同じに動かす
+// （フック・資格情報・フィルターを使う）
 export function git(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
   return guardOf(cwd).then((guard) => runGit(cwd, [...guard.args, ...args], input, { ...env, ...guard.env }));
 }
 
 // 人が頼んだ操作。設定はそのまま使う
-export function userGit(cwd: string, args: string[], input?: string): Promise<string> {
-  return runGit(cwd, args, input);
+export function userGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
+  return runGit(cwd, args, input, env);
 }
 
 // cwd で git を実行して標準出力を返す。失敗したら GitError（メッセージは標準エラー）
@@ -48,7 +49,8 @@ const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process(
 // - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）と、
 //   ログの署名の確かめ（log.showSignature。gpg.program を動かす）は、いつも止める
 // - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
-//   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す
+//   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す。
+//   空にしたフィルターは、required も false にする。そのため、読むだけの git は、フィルターを通す前の中身で比べる（ターミナルの git と差分の見え方が違うことがある）
 // - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
 // 名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない（GitError）
 export function guardOf(cwd: string): Promise<Guard> {
@@ -71,6 +73,9 @@ export function guardOf(cwd: string): Promise<Guard> {
         if (scope === 'global' || scope === 'system') continue;
         if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
         pairs.push([key, '']);
+        // なくてはならないとされたフィルター（required。git-crypt が書く）は、空にすると git add・diff などが失敗するので、無くてよいことにする
+        const required = key.startsWith('filter.') ? `${key.slice(0, key.lastIndexOf('.'))}.required` : null;
+        if (required && !pairs.some(([k]) => k === required)) pairs.push([required, 'false']);
       }
       if (pairs.some(([key]) => key.includes('=')) && !(await configEnvSupported(cwd))) {
         throw new GitError('This folder has git settings that tanacode cannot turn off with this git. Update git to 2.31 or later.');

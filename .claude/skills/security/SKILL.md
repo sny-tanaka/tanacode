@@ -217,7 +217,7 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 
 **git**（`src/main/git.ts`・`source-control.ts`）
 
-- tanacode が自分で動かす git（`git`）は、`guardArgs` の `-c` を付けて動かしているか（`core.fsmonitor=false`・`core.hooksPath=/dev/null`、リポジトリの設定（local・worktree）で決めたフィルター・merge のドライバーを空に。git-lfs の決まった形とユーザー自身の設定だけ残す）。diff を動かす所に `--no-ext-diff`・`--no-textconv`、`show` に `--no-textconv` を付けているか。フォルダの設定のまま動かす `userGit` は、人がソース管理パネルで押した操作（ステージ・コミット・プッシュ・プル・ブランチの切り替えなど）だけか。`git` を通さずに git を動かす所（`execFile('git', …)`）を増やしていないか（`grep -rn "execFile('git'" src/main`）。
+- tanacode が自分で動かす git（`git`）は、`guardOf` の打ち消しを付けて動かしているか（`core.fsmonitor=false`・`core.hooksPath=/dev/null`・`log.showSignature=false`、リポジトリの設定（local・worktree）で決めたフィルター・merge のドライバーを空に、空にしたフィルターの `required` を `false` に。git-lfs の決まった形とユーザー自身の設定だけ残す）。打ち消しを `-c` と `GIT_CONFIG_COUNT`・`GIT_CONFIG_KEY_<n>`・`GIT_CONFIG_VALUE_<n>` の両方で渡しているか（名前に `=` を含むものは環境変数だけ。2.31 より前の git では動かさない）。diff を動かす所に `--no-ext-diff`・`--no-textconv`、`show` に `--no-textconv` を付けているか。フォルダの設定のまま動かす `userGit` は、人がソース管理パネルで押した操作（ステージ・コミット・プッシュ・プル・ブランチの切り替えなど）と、worktree の作り直し・消す前の控えの書き込みだけか。`git` を通さずに git を動かす所（`execFile('git', …)`）を増やしていないか（`grep -rn "execFile('git'" src/main`）。
 - 画面・Claude から来た値を、git の引数にそのまま渡していないか。基点・リビジョンは `HEAD` か 16 進のコミットの ID だけ（`commitId`）、ブランチの名前は `-` で始まるものを断る（`SourceControl.checkout`）、パスは `--` のあとに置くか `:./` を前に付ける。
 - 会話ログの目印（`<tanacode-parent-message>`・`<tanacode-session-event>`、予約・チェックリストの知らせ）は、本文や名前の `<tanacode-`・`</tanacode-` を `neutralizeTags` で打ち消しているか（閉じタグで囲みの外に出た文が、子の Claude に人の発言として読まれないように）。
 
