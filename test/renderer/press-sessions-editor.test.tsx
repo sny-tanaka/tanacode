@@ -475,6 +475,17 @@ describe('MarkdownPreview の見出しの id', () => {
     expect(scrolled).toEqual([doc.querySelector('h1')]);
   });
 
+  it('前置きまで書いた目印へのリンク（#user-content-install。GitHub では効く）でも移れる', async () => {
+    const doc = previewOf(['[入れ方へ](#user-content-install)', '', '<a id="install"></a>', '', '本文'].join('\n'));
+    await settle();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    fireEvent.click(screen.getByText('入れ方へ'));
+    expect(scrolled).toEqual([doc.querySelector('[id="user-content-install"]')]);
+  });
+
   it('% を含む目印（#100%）のように、URL として読めないリンクでも止まらず、書いたままの名前で探す', async () => {
     const doc = previewOf(['[全部へ](#100%)', '', '<a id="100%"></a>', '', '本文'].join('\n'));
     await settle();

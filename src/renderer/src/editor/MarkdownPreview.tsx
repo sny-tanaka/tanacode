@@ -118,8 +118,9 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
       } catch {
         // 書いたまま
       }
-      const prefixed = CSS.escape(`${USER_CONTENT}${target}`);
-      ref.current?.querySelector(`[id="${prefixed}"], [name="${prefixed}"]`)?.scrollIntoView({ block: 'start' });
+      // 前置きまで書いたもの（#user-content-install。GitHub では効く）は、書いたままの名前でも探す（探すのはプレビューの中だけ）
+      const names = [`${USER_CONTENT}${target}`, ...(target.startsWith(USER_CONTENT) ? [target] : [])].map((name) => CSS.escape(name));
+      ref.current?.querySelector(names.map((name) => `[id="${name}"], [name="${name}"]`).join(', '))?.scrollIntoView({ block: 'start' });
       return;
     }
     // 外部のページはブラウザで開く（メインプロセスが window.open を受けて開く）
