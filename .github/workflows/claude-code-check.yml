@@ -57,6 +57,10 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
+      # basic.test.ts が確かめるのは、その時点までに届いた stream-json の行。控えには終わりまでの行が入るので、それも読めるかを
+      # ここで確かめる（update のジョブの npm test で初めて落ちると、Issue が立たない）
+      - name: 取った控えを読めるか確かめる
+        run: npx vitest run test/recorded.test.ts
       # 次の update のジョブが控えを使う
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
