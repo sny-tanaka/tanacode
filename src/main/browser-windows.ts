@@ -153,9 +153,16 @@ export class PreviewWindows {
   // ポップアップの別ウインドウを作る（createWindow）。contents: Electron が作った中身（開いたページとつながっている）。
   // Electron が作らなかったときは、作ったウインドウで url を読み込む。返すのは、ウインドウの中身（Electron は contents と同じものを求める）
   private create(source: WebContents, url: string, contents: WebContents | undefined, bounds: Rectangle | null): WebContents {
-    const win = this.deps.makeWindow({ ...(contents ? { webContents: contents } : {}), ...windowOptions(bounds) } as BrowserWindowConstructorOptions);
-    if (!contents) void win.loadURL(url);
+    const options = windowOptions(bounds);
+    // Electron が中身を作らなかったときは、開いたページと同じセッション（プレビューのもの）で作り、確かめて（adopt）から読み込む
+    // （セッションを渡さないと、アプリの既定のセッションで作られ、確かめる前に通信を始めてしまう）
+    const win = this.deps.makeWindow(
+      contents
+        ? ({ webContents: contents, ...options } as BrowserWindowConstructorOptions)
+        : { ...options, webPreferences: { ...POPUP_PREFERENCES, session: source.session } },
+    );
     this.adopt(source, win, url);
+    if (!contents && !win.isDestroyed()) void win.loadURL(url);
     // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）
     if (!this.deps.background && !win.isDestroyed()) win.showInactive();
     return win.webContents;

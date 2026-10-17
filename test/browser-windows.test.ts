@@ -117,6 +117,8 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
     allowsPopup: vi.fn(() => true),
   };
   const opened: string[] = [];
+  // アプリの既定のセッション（プレビューのものではない）
+  const appSession = new FakeSession();
   // アプリが作った別ウインドウ
   const made: FakeWindow[] = [];
   const windows = new PreviewWindows({
@@ -125,8 +127,10 @@ function setup(options: { background?: boolean; screen?: PopupScreen | null } = 
     openExternal: (url) => opened.push(url),
     screen: () => (options.screen === undefined ? SCREEN : options.screen),
     makeWindow: (windowOptions) => {
+      // 中身を渡さなければ、本物と同じく、webPreferences の session（無ければアプリの既定のセッション）で中身を作る
       const given = (windowOptions as { webContents?: FakeContents }).webContents;
-      const win = new FakeWindow(windowOptions as Record<string, unknown>, given ?? new FakeContents('window', preview));
+      const session = (windowOptions.webPreferences as { session?: FakeSession } | undefined)?.session ?? appSession;
+      const win = new FakeWindow(windowOptions as Record<string, unknown>, given ?? new FakeContents('window', session));
       made.push(win);
       return win as unknown as BrowserWindow;
     },
@@ -294,11 +298,14 @@ describe('新しいウインドウ', () => {
     expect(made[0]!.loaded).toEqual([]);
   });
 
-  it('Electron が中身を作らなかったときは、作ったウインドウで開く先を読み込む', () => {
+  it('Electron が中身を作らなかったときは、開いたページと同じセッションで作り、確かめてから開く先を読み込む', () => {
     const { tab, made } = setup();
-    const result = tab().open('https://login.example.test/', 'new-window', 'width=480,height=640') as { createWindow: (options: Record<string, unknown>) => unknown };
+    const guest = tab();
+    const result = guest.open('https://login.example.test/', 'new-window', 'width=480,height=640') as { createWindow: (options: Record<string, unknown>) => unknown };
     result.createWindow({ ...FROM_PAGE });
     expect(made[0]!.options).not.toHaveProperty('webContents');
+    expect((made[0]!.options.webPreferences as { session?: unknown }).session).toBe(guest.session);
+    expect(made[0]!.destroyed).toBe(false);
     expect(made[0]!.loaded).toEqual(['https://login.example.test/']);
   });
 
@@ -363,14 +370,14 @@ describe('新しいウインドウ', () => {
     for (const url of ['', 'about:blank']) {
       const result = guest.open(url, 'new-window', 'width=480,height=640') as { action: string; createWindow: (options: Record<string, unknown>) => unknown };
       expect(result.action).toBe('allow');
-      // Electron が中身を作らなかったときは、空のページを読み込む
-      result.createWindow({ ...FROM_PAGE });
+      const contents = new FakeContents('window', guest.session);
+      expect(result.createWindow({ ...FROM_PAGE, webContents: contents })).toBe(contents);
     }
     expect(browser.allowsPopup.mock.calls).toEqual([
       [guest, 'about:blank'],
       [guest, 'about:blank'],
     ]);
-    expect(made.map((w) => w.loaded)).toEqual([['about:blank'], ['about:blank']]);
+    expect(made.map((w) => w.destroyed)).toEqual([false, false]);
     expect(guest.open('about:blank', 'foreground-tab')).toEqual({ action: 'deny' });
     expect(guest.open('about:blank', 'new-window', '')).toEqual({ action: 'deny' });
     expect(browser.openFromPage).not.toHaveBeenCalled();
