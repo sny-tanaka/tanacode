@@ -407,6 +407,29 @@ describe('tanacode が動かす git の守り', () => {
     expect(Object.keys(passed).some((k) => k.startsWith('filter.lfs.'))).toBe(false);
   });
 
+  it('ログを読むときも、フォルダの設定の署名の確かめのコマンド（log.showSignature と gpg.program）を動かさない', async () => {
+    // 署名を作るときは何でも署名にし、確かめるとき（--verify）だけ印を残すコマンド
+    const gpg = join(root, 'fake-gpg');
+    writeFileSync(
+      gpg,
+      `#!/bin/sh\ncase "$*" in *--verify*) ${mark('gpg-verify')}; exit 0;; esac\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 X\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nZmFrZQ==\\n-----END PGP SIGNATURE-----\\n'\n`,
+    );
+    chmodSync(gpg, 0o755);
+    run(repo, '-c', `gpg.program=${gpg}`, 'commit', '-q', '-S', '--allow-empty', '-m', 'signed');
+    run(repo, 'config', 'gpg.program', gpg);
+    run(repo, 'config', 'log.showSignature', 'true');
+    // コミットで動いたもの（フック・フィルターなど。人の git なので動く）の印は捨てる
+    const clear = () => readdirSync(marks).forEach((name) => rmSync(join(marks, name)));
+    clear();
+    // 人がターミナルで打つ git では動く（このテストの作りの確かめ）
+    run(repo, 'log', '-1', '--format=%H');
+    expect(readdirSync(marks)).toContain('gpg-verify');
+    clear();
+    await git(repo, ['log', '-1', '--format=%H %s']);
+    await git(repo, ['show', '-s', '--format=%H', 'HEAD']);
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
   it('名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない', async () => {
     run(repo, 'config', 'filter.a=b.clean', `${mark('eq-filter-clean')}; cat`);
     write(repo, '.git/info/attributes', '* filter=a=b\n');

@@ -45,7 +45,8 @@ const guards = new Map<string, { at: number; guard: Promise<Guard> }>();
 const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process( --skip)?)$/;
 
 // 開いたフォルダの設定のうち、読むだけの git でもコマンドを動かすものを打ち消す設定。
-// - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）は、いつも止める
+// - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）と、
+//   ログの署名の確かめ（log.showSignature。gpg.program を動かす）は、いつも止める
 // - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
 //   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す
 // - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
@@ -60,6 +61,8 @@ export function guardOf(cwd: string): Promise<Guard> {
       const pairs: [string, string][] = [
         ['core.fsmonitor', 'false'],
         ['core.hooksPath', '/dev/null'],
+        // ログ・show で署名を確かめさせない（確かめに gpg.program を動かす）
+        ['log.showSignature', 'false'],
       ];
       const parts = out.split('\0');
       for (let i = 0; i + 1 < parts.length; i += 2) {
