@@ -1130,12 +1130,12 @@ describe('ツールの実行（SessionsControl）', () => {
 
       it('切り替えられなかった理由（画面の言語）は、英語の文にして返す。先に変えた権限モードは伝え、モデルは変えない', async () => {
         host.modes.set(PARENT, 'auto');
-        host.remoteRefusal = t('main.remote.draft');
+        host.remoteRefusal = t('main.remote.switching');
         const result = await configure({ permission_mode: 'auto', remote_control: true, model: 'sonnet' });
         expect(result.isError).toBe(true);
         expect(textOf(result)).toContain('Switched the permission mode of "s-33" to auto, but could not turn the Remote Control of "s-33" on (its model and effort were not changed)');
-        expect(textOf(result)).toContain('unsent text');
-        expect(textOf(result)).not.toContain(t('main.remote.draft'));
+        expect(textOf(result)).toContain('in the middle of switching Remote Control');
+        expect(textOf(result)).not.toContain(t('main.remote.switching'));
         expect(host.modeSwitches).toEqual([{ id: SIBLING, mode: 'auto' }]);
         expect(host.configured).toEqual([]);
         // 知らない理由も、画面の言語のまま返さない

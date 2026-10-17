@@ -103,8 +103,6 @@
     "remote": {
       "unavailable": "Remote Control isn't available in development builds (launch with TANACODE_REMOTE_CONTROL=1 to enable it)",
       "switching": "Remote Control is already switching. Wait a moment and try again.",
-      "waitingAnswer": "Can't switch right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then switch.",
-      "draft": "Can't switch because Claude Code's input in the terminal has unsent text",
       "failed": "Couldn't switch Remote Control ({reason})"
     },
     "task": {
@@ -1910,7 +1908,7 @@
       "reviewAnswers": "Review Answers →",
       "otherTyped": "Other: {text}",
       "other": "Other (type your own answer)",
-      "cancelTip": "Cancel (Esc)",
+      "cancelTip": "Cancel",
       "answerPlaceholder": "Type your answer",
       "confirm": "OK",
       "send": "Send",
@@ -1923,7 +1921,7 @@
       "unanswered": "(Not answered)",
       "submitAnswers": "Submit answers",
       "questionTab": "Question {n}",
-      "questionGone": "This question can no longer be answered (it was answered in the terminal, or Claude Code moved on).",
+      "questionGone": "This question can no longer be answered (it was answered elsewhere, or Claude Code withdrew it).",
       "notes": "Notes (optional)",
       "notesPlaceholder": "Anything to tell Claude about your choice"
     },

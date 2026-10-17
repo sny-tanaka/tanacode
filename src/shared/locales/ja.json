@@ -101,8 +101,6 @@
     "remote": {
       "unavailable": "Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）",
       "switching": "Remote Control を切り替えている途中です。少し待ってからもう一度押してください",
-      "waitingAnswer": "Claude Code が質問や確認の答えを待っているため、今は切り替えられません。答えてから切り替えてください",
-      "draft": "ターミナルの Claude Code の入力欄に書きかけの文字があるため、切り替えられません",
       "failed": "Remote Control を切り替えられませんでした（{reason}）"
     },
     "task": {
@@ -1848,7 +1846,7 @@
       "reviewAnswers": "回答の確認へ →",
       "otherTyped": "その他: {text}",
       "other": "その他（自由に入力）",
-      "cancelTip": "キャンセル（Esc）",
+      "cancelTip": "キャンセル",
       "answerPlaceholder": "回答を入力",
       "confirm": "決定",
       "send": "送信",
@@ -1861,7 +1859,7 @@
       "unanswered": "（未回答）",
       "submitAnswers": "回答を送る",
       "questionTab": "{n} 問め",
-      "questionGone": "この質問には、もう答えられません（ターミナルで答えたか、Claude Code が先へ進みました）",
+      "questionGone": "この質問には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）",
       "notes": "メモ（任意）",
       "notesPlaceholder": "選んだ案について Claude に伝えること"
     },

@@ -121,6 +121,8 @@ describe('QuestionCard', () => {
     render(<QuestionCard sessionId="s1" question={pending(languages)} />);
     fireEvent.click(screen.getByText('この質問について話す（Chat about this）'));
     await sent();
+    // Esc の受け口は無い（画面全体で Esc を受けると、エディタやダイアログを閉じるつもりの Esc で答えてしまう）ので、ツールチップにも出さない
+    expect(screen.getByLabelText('キャンセル').getAttribute('data-tip')).toBe('キャンセル');
     fireEvent.click(screen.getByLabelText('キャンセル'));
     await sent();
     fireEvent.click(screen.getByText('回答の確認へ →'));
@@ -129,12 +131,12 @@ describe('QuestionCard', () => {
     expect(replies().map((args) => args[2])).toEqual([{ kind: 'chat' }, { kind: 'cancel' }, { kind: 'cancel' }]);
   });
 
-  it('もう答えられない（人がターミナルで答えた）・送れなかったときは、カードに知らせる', async () => {
+  it('もう答えられない（ほかで答えた・取り下げられた）・送れなかったときは、カードに知らせる', async () => {
     replied = false;
     render(<QuestionCard sessionId="s1" question={pending(style)} />);
     fireEvent.click(screen.getByText('です・ます'));
     await sent();
-    expect(screen.getByRole('alert').textContent).toBe('この質問には、もう答えられません（ターミナルで答えたか、Claude Code が先へ進みました）');
+    expect(screen.getByRole('alert').textContent).toBe('この質問には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）');
     replied = new Error('ipc');
     fireEvent.click(screen.getByText('だ・である'));
     await sent();

@@ -198,8 +198,6 @@ const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
 // setRemoteControl が返す理由（画面の言語）を置き換える、Claude に返す英語の文
 const REMOTE_REFUSAL: [MessageKey, string][] = [
   ['main.remote.switching', 'it is in the middle of switching Remote Control. Try again in a moment.'],
-  ['main.remote.waitingAnswer', 'its Claude Code is waiting for an answer to a prompt. Check it with get_session, and try again once the child is idle.'],
-  ['main.remote.draft', 'there is unsent text in the input field of its Claude Code (the user may be typing in it). Try again later, or ask the user.'],
 ];
 
 class ToolError extends Error {}
