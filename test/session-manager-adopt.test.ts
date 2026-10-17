@@ -170,6 +170,23 @@ describe('adopt', () => {
     await app.waitFor('過去の会話の終わり', () => types().lastIndexOf('turn-end') > types().lastIndexOf('reset'));
   });
 
+  it('はじめの会話ログを読み終えたあとに乗り換えても、乗り換えた先に前からあった行を読み終えたら、過去の会話の終わりを決める', async () => {
+    const id = await previous(line.user('はじめ'));
+    app.host.hosted = [hosted(id, { lastSeq: 40, firstSeq: 30, startedAt: Date.now() - 60_000 })];
+    await app.manager.adopt();
+    attached(id)!.replayed();
+    const types = () => app.events(id).map((e) => e.type);
+    await app.waitFor('はじめの会話ログの終わり', () => types().includes('user') && types().includes('turn-end'));
+    // 止めている間に、claude が新しい会話を始めて書いた会話ログ。それを、読み終えたあとの送り直しの行（init）で知る
+    const next = '99999999-0000-4000-8000-000000000010';
+    const file = join(dirname(app.transcript(id)), `${next}.jsonl`);
+    writeFileSync(file, JSON.stringify({ ...line.user('止めている間の発言'), sessionId: next, cwd: app.cwd }) + '\n');
+    attached(id)!.emit(stream.init(next));
+    await app.waitFor('乗り換え', () => app.claudeId(id) === next);
+    await app.waitFor('新しい会話', () => app.events(id).some((e) => e.type === 'user' && e.text === '止めている間の発言'));
+    await app.waitFor('過去の会話の終わり', () => types().lastIndexOf('turn-end') > types().lastIndexOf('reset'));
+  });
+
   it('まだ答えていない要求（pending）は、出し直す', async () => {
     const id = await previous(line.user('はじめ'));
     const request = {

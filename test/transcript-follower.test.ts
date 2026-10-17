@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranscriptFollower } from '../src/main/transcript-follower';
 
 // /clear などで Claude Code が新しい会話ログに書き始めたときに、乗り換えて読み続ける（TranscriptFollower）。
@@ -43,8 +43,18 @@ beforeEach(() => {
 afterEach(() => {
   follower?.stop();
   follower = null;
+  vi.useRealTimers();
   rmSync(dir, { recursive: true, force: true });
 });
+
+// 会話ログを読むのは、変更の通知（fs.watch）と、150 ミリ秒ごとの見回り（setInterval）。見回りを止めておけば、前からある
+// ファイルを読み始めるのは、テストが時計を進めたときだけになる（時間に頼らずに、読み始める前に乗り換えられる）
+function holdPolling(): void {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+}
+function poll(): void {
+  vi.advanceTimersByTime(150);
+}
 
 describe('TranscriptFollower', () => {
   it('はじめの会話ログを読み、前からあった行は過去のものとして渡して、読み終えたら知らせる', async () => {
@@ -69,9 +79,10 @@ describe('TranscriptFollower', () => {
     writeFileSync(next, line({ uuid: 'b1', type: 'user' }));
     await f.offer(next);
     expect(switches).toEqual([next]);
-    // 乗り換えた先の行は今のもの。読み終えた知らせは、はじめの会話ログでだけ
+    // 乗り換えた先に前からあった行も過去のもの。読み終えたら、もう一度知らせる（過去の会話の終わりを決め直す）
     await expect.poll(uuids).toEqual(['a1', 'b1']);
     expect(seen[1]).toEqual({ uuid: 'b1', isHistory: true });
+    await expect.poll(() => historyLoaded).toBe(2);
     // 別のフォルダにできた会話ログには乗り換えない
     mkdirSync(join(dir, 'other'));
     writeFileSync(join(dir, 'other', 's3.jsonl'), line({ uuid: 'c1', type: 'user' }));
@@ -84,6 +95,19 @@ describe('TranscriptFollower', () => {
     // 今のものをもう一度教えられても、乗り換え直さない
     await f.offer(next);
     expect(switches).toEqual([next]);
+    expect(historyLoaded).toBe(2);
+  });
+
+  it('読み終えたあとに乗り換えた先に、まだ行が無ければ、知らせない（決め直す過去の会話が無い）', async () => {
+    const first = join(dir, 's1.jsonl');
+    writeFileSync(first, line({ uuid: 'a1', type: 'user' }));
+    const f = follow(first, 0);
+    await expect.poll(() => historyLoaded).toBe(1);
+    const empty = join(dir, 's2.jsonl');
+    writeFileSync(empty, '');
+    await f.offer(empty);
+    appendFileSync(empty, line({ uuid: 'b1', type: 'user' }));
+    await expect.poll(() => seen.at(-1)).toEqual({ uuid: 'b1', isHistory: false });
     expect(historyLoaded).toBe(1);
   });
 
@@ -92,12 +116,17 @@ describe('TranscriptFollower', () => {
     writeFileSync(first, line({ uuid: 'a1', type: 'user' }));
     const next = join(dir, 's2.jsonl');
     writeFileSync(next, line({ uuid: 'b1', type: 'user' }));
-    // 読み始める前（最初に読むのは、変更の通知か 150 ミリ秒ごとの見回り）に乗り換える
+    // 読み始める前に乗り換える
+    holdPolling();
     await follow(first, 0).offer(next);
     expect(switches).toEqual([next]);
+    poll();
     await expect.poll(() => historyLoaded).toBe(1);
     expect(seen).toEqual([{ uuid: 'b1', isHistory: true }]);
-    await sleep(300);
+    // そのあとの行を読んでも、もう知らせない
+    appendFileSync(next, line({ uuid: 'b2', type: 'user' }));
+    poll();
+    await expect.poll(uuids).toEqual(['b1', 'b2']);
     expect(historyLoaded).toBe(1);
   });
 
@@ -106,19 +135,25 @@ describe('TranscriptFollower', () => {
     writeFileSync(first, line({ uuid: 'a1', type: 'user' }));
     const empty = join(dir, 's2.jsonl');
     writeFileSync(empty, '');
+    holdPolling();
     await follow(first, 0).offer(empty);
-    await expect.poll(() => historyLoaded).toBe(1);
+    expect(historyLoaded).toBe(1);
+    expect(seen).toEqual([]);
     follower!.stop();
-    // はじめから空の会話ログ（新しい会話。SessionManager が、はじめから読み終えたことにする）は、乗り換えても知らせない
+    // はじめから空の会話ログ（新しい会話。SessionManager が、はじめから読み終えたことにする）は知らせない。
+    // 乗り換えた先に前からあった行は、読み終えたら知らせる（その過去の会話の終わりを決める）
     historyLoaded = 0;
     const blank = join(dir, 's3.jsonl');
     writeFileSync(blank, '');
     const later = join(dir, 's4.jsonl');
     writeFileSync(later, line({ uuid: 'd1', type: 'user' }));
-    await follow(blank, 0).offer(later);
-    await expect.poll(uuids).toContain('d1');
-    await sleep(300);
+    const g = follow(blank, 0);
+    poll();
     expect(historyLoaded).toBe(0);
+    await g.offer(later);
+    poll();
+    await expect.poll(uuids).toContain('d1');
+    await expect.poll(() => historyLoaded).toBe(1);
   });
 
   it('別のフォルダ・まだ無いファイル・起動より前からある会話ログ（--resume で開いた会話）には乗り換えない', async () => {

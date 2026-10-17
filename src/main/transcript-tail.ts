@@ -22,7 +22,8 @@ export class TranscriptTail {
   // 読んでいる間に届いた変更の通知。読み終えたらもう一度読む
   private again = false;
   private watcher: FSWatcher | null = null;
-  private historyBytes = 0;
+  // start で取った大きさ。ここまでの行が、前からあった行（過去ログ）
+  private startBytes = 0;
   private historySignaled = false;
   // 出した行の uuid と、親を待っている行（届いた順）
   private readonly seen = new Set<string>();
@@ -37,9 +38,9 @@ export class TranscriptTail {
 
   start(): void {
     try {
-      this.historyBytes = statSync(this.file).size;
+      this.startBytes = statSync(this.file).size;
     } catch {
-      this.historyBytes = 0;
+      this.startBytes = 0;
     }
     this.timer = setInterval(() => {
       this.watchFile();
@@ -47,6 +48,11 @@ export class TranscriptTail {
       void this.poll();
     }, POLL_MS);
     this.watchFile();
+  }
+
+  // 前からあった行の大きさ（start で取ったもの）。0 なら、読み終えた知らせ（onHistoryLoaded）は来ない
+  get historyBytes(): number {
+    return this.startBytes;
   }
 
   stop(): void {
@@ -115,11 +121,11 @@ export class TranscriptTail {
       } catch {
         continue;
       }
-      read.push({ entry, isHistory: lineEnd <= this.historyBytes });
+      read.push({ entry, isHistory: lineEnd <= this.startBytes });
     }
     for (const { entry, isHistory } of parentFirst(read, (r) => r.entry)) this.accept(entry, isHistory);
     this.pending = buffer;
-    if (!this.historySignaled && this.historyBytes > 0 && this.offset >= this.historyBytes) {
+    if (!this.historySignaled && this.startBytes > 0 && this.offset >= this.startBytes) {
       this.historySignaled = true;
       this.onHistoryLoaded?.();
     }

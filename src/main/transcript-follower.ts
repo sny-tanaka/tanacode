@@ -1,4 +1,4 @@
-import { statSync, watch, type FSWatcher } from 'node:fs';
+import { watch, type FSWatcher } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { TranscriptTail, type EntryHandler } from './transcript-tail';
@@ -22,8 +22,8 @@ export class TranscriptFollower {
   private bridgeSessionId: string | null = null;
   private dirWatcher: FSWatcher | null = null;
   private stopped = false;
-  // はじめの会話ログの既存の行（過去ログ）を読み終えたか。はじめから空なら、読むものが無いので読み終えたことにする（知らせない。
-  // SessionManager も、はじめから読み終えたことにする）
+  // 前からあった行（過去ログ）を読み終えたと、一度でも決めたか。はじめの会話ログがはじめから空なら、読むものが無いので読み終えた
+  // ことにする（知らせない。SessionManager も、はじめから読み終えたことにする）
   private historyLoaded = false;
 
   constructor(
@@ -36,8 +36,7 @@ export class TranscriptFollower {
   }
 
   start(): void {
-    this.historyLoaded = sizeOf(this.current) === 0;
-    this.follow(this.current);
+    this.follow(this.current, true);
   }
 
   stop(): void {
@@ -48,13 +47,16 @@ export class TranscriptFollower {
     this.dirWatcher = null;
   }
 
-  // 読み終えた知らせは 1 度だけ。はじめの会話ログを読み終える前に乗り換えたら（引き継いだ claude が、アプリが止まっている間に /clear
-  // していた）、乗り換えた先の既存の行を読み終えたときに知らせる。知らせないと、過去の会話の終わりが決まらず、作業中のまま残る
-  private follow(file: string): void {
+  // 読む会話ログの、前からあった行を読み終えたら知らせる（SessionManager が過去の会話の終わりを決める）。
+  // - はじめの会話ログ: 行があれば、読み終えたときに知らせる。はじめから空なら知らせない
+  // - 乗り換えた先（/clear のあと。引き継いだ claude が、アプリが止まっている間に /clear していたときも）: 前からあった行があれば、
+  //   読み終えたときにもう一度知らせる（知らせないと、その過去の会話の終わりが決まらず、作業中のまま残る）。行が無ければ、
+  //   まだ一度も知らせていないときだけ、すぐ知らせる（はじめの会話ログを読み終える前に乗り換えた）
+  // 前からあった行の大きさは、TranscriptTail が読み始めに取ったものを使う（別に取ると、その間に書かれた行で食い違う）
+  private follow(file: string, initial = false): void {
     this.tail?.stop();
     this.current = file;
-    const waiting = !this.historyLoaded;
-    this.tail = new TranscriptTail(
+    const tail: TranscriptTail = new TranscriptTail(
       file,
       (entry, isHistory) => {
         const e = entry as { type?: string; bridgeSessionId?: string };
@@ -64,15 +66,19 @@ export class TranscriptFollower {
         }
         this.handlers.onEntry(entry, isHistory);
       },
-      waiting ? () => this.loaded() : undefined,
+      // 乗り換えたあとに、前の会話ログの読みかけが終わっても知らせない
+      () => {
+        if (this.tail === tail) this.loaded();
+      },
     );
-    this.tail.start();
-    // 乗り換えた先にまだ行が無ければ、読むものが無いので（TranscriptTail は知らせない）、すぐ読み終えたことにする
-    if (waiting && sizeOf(file) === 0) this.loaded();
+    this.tail = tail;
+    tail.start();
+    if (tail.historyBytes > 0 || this.historyLoaded) return;
+    if (initial) this.historyLoaded = true;
+    else this.loaded();
   }
 
   private loaded(): void {
-    if (this.historyLoaded) return;
     this.historyLoaded = true;
     this.handlers.onHistoryLoaded();
   }
@@ -112,14 +118,6 @@ export class TranscriptFollower {
     if (!matches || this.stopped || file === this.current) return;
     this.handlers.onSwitch(file);
     this.follow(file);
-  }
-}
-
-function sizeOf(file: string): number {
-  try {
-    return statSync(file).size;
-  } catch {
-    return 0;
   }
 }
 
