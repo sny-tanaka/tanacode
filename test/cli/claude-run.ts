@@ -470,11 +470,16 @@ export class ClaudeRun {
     }
   }
 
-  // 会話ログ・statusLine を dir に書き出す（互換性の確認の控え。TANACODE_RECORD=1 のとき）。
+  // claude（チャット）が標準出力に書いた stream-json の行。届いた順
+  streamLines(): string[] {
+    return this.host.stdoutLines;
+  }
+
+  // 会話ログ・statusLine・stream-json の行を dir に書き出す（互換性の確認の控え。TANACODE_RECORD=1 のとき）。
   // 会話ログは test/cli/basic.test.ts（チャット）が、statusLine は test/cli/terminal-mode.test.ts（-p では statusLine が動かないので、
   // ターミナルモードの TUI）が書く。files: 書くもの。
   // 使い捨てのフォルダのパスは、決まったパス（FIXTURE_ROOT）に置き換える。途中で失敗したときは、そこまでにできたものだけを書く
-  record(dir: string, files: ('transcript.jsonl' | 'statusline.json')[]): void {
+  record(dir: string, files: ('transcript.jsonl' | 'statusline.json' | 'stream.jsonl')[]): void {
     mkdirSync(dir, { recursive: true });
     const transcript = () => {
       const lines = readOrNull(this.transcript())
@@ -482,7 +487,12 @@ export class ClaudeRun {
         .filter((line) => line && !DROPPED_ATTACHMENTS.includes((JSON.parse(line) as TranscriptEntry).attachment?.type as string));
       return lines?.length ? `${lines.join('\n')}\n` : null;
     };
-    const texts = { 'transcript.jsonl': transcript, 'statusline.json': () => this.statusLineText() };
+    // stream-json の行は、書いている途中の文（stream_event）を除く（多く、アプリは進み具合にしか使わない）
+    const stream = () => {
+      const lines = this.streamLines().filter((line) => (JSON.parse(line) as { type?: string }).type !== 'stream_event');
+      return lines.length ? `${lines.join('\n')}\n` : null;
+    };
+    const texts = { 'transcript.jsonl': transcript, 'statusline.json': () => this.statusLineText(), 'stream.jsonl': stream };
     for (const name of files) {
       const text = texts[name]();
       if (text) writeFileSync(join(dir, name), this.fixed(text));

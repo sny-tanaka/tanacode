@@ -55,6 +55,8 @@ export class FakePtyHost implements PtyHostApi {
   private readonly allPipes: HostedPipeEntry[] = [];
   // 起動した pty（TUI）の引数。起動した順
   readonly ptyArgs: string[][] = [];
+  // パイプの claude が標準出力に書いた行（stream-json）。届いた順に、どのプロセスのものもまとめて
+  readonly stdoutLines: string[] = [];
 
   constructor(
     private readonly file: string,
@@ -157,6 +159,7 @@ export class FakePtyHost implements PtyHostApi {
         proc.stdout,
         (line) => {
           if (hosted.disposed) return;
+          this.stdoutLines.push(line);
           const seq = hosted.backlog.receive(line);
           hosted.handle?.emitLine(line, seq);
         },

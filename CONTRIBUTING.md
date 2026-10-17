@@ -427,9 +427,10 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - HOME は使い捨てのフォルダに差し替えるので、ふだんの `~/.claude` には触りません。
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
   - 失敗したときは、そのときの状態と、Claude Code の標準エラーの末尾がログに出ます。
-- 控え（`test/fixtures/claude-code/<バージョン>/`）は、会話ログ（`transcript.jsonl`。`basic.test.ts` のもの）と、statusLine の JSON（`statusline.json`。`-p` では statusLine が動かないので、`terminal-mode.test.ts` がターミナルモードの TUI で取る）の 2 つ。
+- 控え（`test/fixtures/claude-code/<バージョン>/`）は、会話ログ（`transcript.jsonl`。`basic.test.ts` のもの）と、statusLine の JSON（`statusline.json`。`-p` では statusLine が動かないので、`terminal-mode.test.ts` がターミナルモードの TUI で取る）と、stream-json の出力の行（`stream.jsonl`。`basic.test.ts` のチャットの claude が標準出力に書いたもの。書いている途中の文の `stream_event` は除く。2.1.302 から）の 3 つ。
+  - stream-json の行は、毎日の確認でも、どれもアプリの読み取り（`StreamClient`）で読めるかを確かめます（`basic.test.ts` の最後。`unreadableStreamLines`）。知らない種類の行・使う項目の形が違う行があれば落ちて Issue が立つので、Claude Code の更新で stream-json の形が変わったことに気づけます（アプリは、そうした行を捨てて動き続ける）。
   - `TANACODE_RECORD=1 npm run test:cli` で取ります。システムプロンプトの全文やツールの一覧など、アプリが読まない大きな行は残しません。使い捨てのフォルダのパスは、決まったパス（`/tmp/tanacode-cli`）に置き換えます。
-  - 単体テスト（`npm test`）は、どのバージョンの控えも読みます（`recorded.test.ts`。会話ログからチャットを組み立てられるか・statusLine の JSON を読めるか。TUI で取った古い控えには `turn_duration` の行があり、ターンの終わりも会話ログから出る）。動作確認済のバージョンの控えは、`statusline.test.ts`・`context.test.ts` も読みます。`claude` が無くても流せます。古いバージョンの控えも残し、読めるままかを確かめ続けます。
+  - 単体テスト（`npm test`）は、どのバージョンの控えも読みます（`recorded.test.ts`。会話ログからチャットを組み立てられるか・statusLine の JSON を読めるか・stream-json の行を読めるか。TUI で取った古い控えには `turn_duration` の行があり、ターンの終わりも会話ログから出る）。動作確認済のバージョンの控えは、`statusline.test.ts`・`context.test.ts` も読みます。`claude` が無くても流せます。古いバージョンの控えも残し、読めるままかを確かめ続けます。
   - 控えは、GitHub Actions（macOS のランナー）が残した artifact か、手元の Mac で取ったものを使います。クラウドの開発環境のように、Claude Code の設定やトークンが置かれた環境では取りません。
 - tanacode で動作確認済のバージョンは `src/shared/claude-code.ts` の `VERIFIED_CLAUDE_CODE_VERSION`。ステータスバーは、入っているバージョンがこれと同じならチェックマーク、違えば警告の印を付けます（新しいバージョンと古いバージョンで分ける）。
   - 上げるのは、GitHub Actions の毎日の確認です（下）。新しいバージョンで通ったら、`scripts/update-verified-version.mjs` で次のものを書き換えた PR を作って、そのままマージします。

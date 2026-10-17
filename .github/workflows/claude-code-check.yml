@@ -4,7 +4,7 @@
 # （新しい Claude Code が出ても、関係のない PR が落ちないように。新しいバージョンへの追従は、毎日の確認と、それが作る PR で行う）
 # - 読み取れなくなっていたら、Issue を立てる
 # - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をそのバージョンに上げる PR を作って、そのままマージする。そのバージョンの控えも一緒に入れる。マージしたらブランチは消す
-# 会話ログと statusLine の控えは artifact にも残す
+# 会話ログ・statusLine・stream-json の行の控えは artifact にも残す（stream-json の行は、どれも読めるかも確かめる。形が変わったら落ちて Issue が立つ）
 # アプリは macOS 専用なので、macOS のランナーで確かめる
 name: claude-code-check
 

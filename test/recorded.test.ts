@@ -5,7 +5,7 @@ import { isTranscriptEntry, toChatEvents } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import { transcriptPath } from '../src/main/claude-session';
 import { parseStatusLine } from '../src/main/statusline';
-import { FIXTURE_ROOT, checkChat, checkStatusLine } from './scenario';
+import { FIXTURE_ROOT, checkChat, checkStatusLine, unreadableStreamLines } from './scenario';
 
 // 本物の Claude Code から取った控え（test/fixtures/claude-code/<バージョン>/）を、アプリの読み取りにかける。
 // 控えは、互換性の確認（npm run test:cli）に TANACODE_RECORD=1 を付けて取る（会話ログは basic.test.ts、statusLine は
@@ -13,6 +13,11 @@ import { FIXTURE_ROOT, checkChat, checkStatusLine } from './scenario';
 
 const DIR = join(__dirname, 'fixtures', 'claude-code');
 const versions = existsSync(DIR) ? readdirSync(DIR) : [];
+
+// 控えを確かめる部品が、読めない行を数えられるか（Claude Code の更新で形が変わったときに、気づけるように）
+it('stream-json の読めない行（知らない種類・形の違う行・JSON でない行）を数える', () => {
+  expect(unreadableStreamLines(['{"type":"brand_new"}', '{"type":"system","subtype":"init"}', 'JSON でない'])).toEqual({ malformed: 2, unknown: { brand_new: 1 } });
+});
 
 if (versions.length === 0) it.skip('控えがまだありません（TANACODE_RECORD=1 npm run test:cli で取る）', () => {});
 // ステータスバーで「動作確認済のバージョン」とするもの（VERIFIED_CLAUDE_CODE_VERSION）は、控えで確かめられるバージョンにする
@@ -40,6 +45,13 @@ describe.each(versions)('Claude Code %s の控え', (version) => {
     // チャット（-p）で取る控えには無い（ターンの終わりは stream の result から出す）
     const turnEnd = entries.some((e) => e.type === 'system' && e.subtype === 'turn_duration');
     checkChat(entries, entries.flatMap((e) => toChatEvents(e, cwd)), cwd, { turnEnd });
+  });
+
+  // stream-json の行の控えは 2.1.302 から（それより前は TUI で取っていた）
+  it.runIf(existsSync(join(dir, 'stream.jsonl')))('stream-json の行が、どれも読める（知らない種類・形の違う行が無い）', () => {
+    const lines = readFileSync(join(dir, 'stream.jsonl'), 'utf8').split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(unreadableStreamLines(lines)).toEqual({ malformed: 0, unknown: {} });
   });
 
   it('statusLine の JSON が読める', () => {

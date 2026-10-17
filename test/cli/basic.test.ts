@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents } from '@shared/chat';
 import { listCommands } from '../../src/main/commands';
 import { menuNotice } from '../../src/main/notice-text';
-import { PROMPT, QUESTION, SETTINGS, checkChat, checkPermission, checkQuestion, stepsFor } from '../scenario';
+import { PROMPT, QUESTION, SETTINGS, checkChat, checkPermission, checkQuestion, stepsFor, unreadableStreamLines } from '../scenario';
 import { CLAUDE_BIN, ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi } from './mock-api';
 
@@ -65,7 +65,7 @@ describe(`Claude Code ${version}`, () => {
     });
 
     afterAll(async () => {
-      if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['transcript.jsonl']);
+      if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['transcript.jsonl', 'stream.jsonl']);
       await run?.stop();
       await api?.stop();
     });
@@ -146,6 +146,12 @@ describe(`Claude Code ${version}`, () => {
       expect(run.manager.statusLine(run.sessionId!)).toEqual(run.statusLine);
       // statusLine のコマンドは動かない（ファイルは書かれない）
       expect(run.statusLineText()).toBeNull();
+    });
+
+    // 毎日の確認（claude-code-check.yml）で、Claude Code の更新による stream-json の形の変化に気づくため
+    it('stream-json の行が、どれも読める（知らない種類・形の違う行が無い）', () => {
+      expect(run.streamLines().length).toBeGreaterThan(0);
+      expect(unreadableStreamLines(run.streamLines())).toEqual({ malformed: 0, unknown: {} });
     });
   });
 });
