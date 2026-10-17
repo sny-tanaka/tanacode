@@ -339,14 +339,20 @@ export class SessionsControl {
     const ref = base?.mergeBase ?? 'HEAD';
     const inPath = (file: string) => !path || file === path || file.startsWith(`${path}/`);
     const files = (await branchFiles(cwd, ref)).filter((f) => inPath(f.path));
-    const tracked = await git(cwd, ['diff', '--relative', '--no-renames', '--no-color', ref, '--', ...(path ? [path] : [])]);
-    const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...(path ? [path] : [])])).split('\0').filter(Boolean);
+    // path は git の pathspec の書き方（:(top) など）として読ませず、書いたままのパスとして渡す
+    const literal = { GIT_LITERAL_PATHSPECS: '1' };
+    const tracked = await git(cwd, ['diff', '--relative', '--no-renames', '--no-color', ref, '--', ...(path ? [path] : [])], undefined, literal);
+    const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...(path ? [path] : [])], undefined, literal))
+      .split('\0')
+      // セッションのフォルダの外を指すもの（../ で始まるもの）は読まない
+      .filter((file) => file && !isAbsolute(file) && file !== '..' && !file.startsWith('../'));
     // 未追跡のファイルは 1 つずつ、結果の上限に達したら読むのをやめる
+    const folder = await realpath(cwd).catch(() => cwd);
     const added: string[] = [];
     let size = tracked.length;
     for (const file of untracked.slice(0, MAX_UNTRACKED_FILES)) {
       if (size > MAX_RESULT_CHARS) break;
-      const part = await untrackedDiff(cwd, file);
+      const part = await untrackedDiff(cwd, folder, file);
       added.push(part);
       size += part.length;
     }
@@ -1351,13 +1357,16 @@ async function branchOf(s: SessionSummary): Promise<string | null> {
 }
 
 // 未追跡のファイルを、新しいファイルの差分の形にする（大きいもの・バイナリは中身を出さない）。
-// ふつうのファイルだけを読む（シンボリックリンクの先・デバイス・名前付きパイプは読まない）。読む大きさにも上限を付ける
-async function untrackedDiff(cwd: string, file: string): Promise<string> {
+// ふつうのファイルだけを読む（シンボリックリンクの先・デバイス・名前付きパイプは読まない）。読む大きさにも上限を付ける。
+// folder: セッションのフォルダ（リンクを解いたもの）。リンクを解いた場所がその外になるファイルは読まない
+async function untrackedDiff(cwd: string, folder: string, file: string): Promise<string> {
   const head = `diff --git a/${file} b/${file}\nnew file (untracked)\n--- /dev/null\n+++ b/${file}`;
   const info = await lstat(join(cwd, file)).catch(() => null);
   if (!info) return head;
   if (info.isSymbolicLink()) return `${head}\n(symbolic link; contents not read)`;
   if (!info.isFile()) return `${head}\n(not a regular file; contents not read)`;
+  const real = await realpath(join(cwd, file)).catch(() => null);
+  if (!real || !insideFolder(folder, real)) return `${head}\n(outside the session folder; contents not read)`;
   if (info.size > MAX_UNTRACKED_BYTES) return `${head}\n(large file of ${Math.round(info.size / 1024)} KB; contents omitted)`;
   const data = await readHead(join(cwd, file), MAX_UNTRACKED_BYTES);
   // 空のファイルは、行の無い新しいファイル（git diff と同じく @@ の行を書かない）
@@ -1382,11 +1391,18 @@ async function readHead(path: string, limit: number): Promise<Buffer | null> {
   }
 }
 
-// フォルダの外を指さない相対パスにする
+// フォルダの外を指さない相対パスにする。git の pathspec の書き方（:(top)・:/ など。: で始まるもの）は受け付けない
 function safeRelative(path: string): string {
   const rel = normalize(path).replace(/\/+$/, '');
+  if (path.startsWith(':') || rel.startsWith(':')) throw new ToolError('Pass path as a plain path relative to the session folder (git pathspec magic such as ":(top)" is not accepted).');
   if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new ToolError('Pass path as a path relative to the session folder.');
   return rel === '.' ? '' : rel;
+}
+
+// path（リンクを解いたもの）が folder の中か
+function insideFolder(folder: string, path: string): boolean {
+  const rel = relative(folder, path);
+  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
 }
 
 // 中身の最も長いバッククォートの連続より長いフェンスで囲む（中身の ``` でブロックから抜けないように）

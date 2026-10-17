@@ -1537,6 +1537,23 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(text).not.toContain('ひみつ');
   });
 
+  it('get_session_diff: path に git の pathspec の書き方（:(top)・:/ など）を渡しても、セッションのフォルダの外は出さない', async () => {
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@localhost', ...args], { cwd: repo });
+    git('init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'a.txt'), 'a\n');
+    git('add', 'a.txt');
+    git('commit', '-qm', 'init');
+    // サブフォルダ（sub）で開いたセッションから見て、フォルダの外（リポジトリの一番上）の未追跡のファイル
+    writeFileSync(join(repo, 'outside.txt'), 'そとのファイル\n');
+    writeFileSync(join(repo, 'sub', 'inner.txt'), 'なかのファイル\n');
+    const diffOf = async (path?: string) =>
+      textOf(await control.handle(NESTED, 'get_session_diff', { session_id: NESTED, ...(path === undefined ? {} : { path }) }));
+    expect(await diffOf()).toContain('+なかのファイル');
+    for (const path of [':(top)', ':/', ':(top)outside.txt', ':/outside.txt', ':(glob)../*', './:(top)', 'sub/../:/']) {
+      expect(await diffOf(path)).not.toContain('そとのファイル');
+    }
+  });
+
   it('get_session: 質問への回答待ちなら、質問と選択肢を返す', async () => {
     host.set(CHILD, 'question');
     void host.questions.wait(CHILD, [{ question: 'どちらの方式?', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '速い' }] }], new AbortController().signal);
@@ -2945,5 +2962,9 @@ describe('会話のまとめ（read_session の中身）', () => {
     expect(() => testing.safeRelative('..')).toThrow();
     expect(() => testing.safeRelative('../x')).toThrow();
     expect(() => testing.safeRelative('/etc/passwd')).toThrow();
+    // git の pathspec の書き方（:(top)・:/ など）は受け付けない
+    expect(() => testing.safeRelative(':(top)')).toThrow();
+    expect(() => testing.safeRelative(':/')).toThrow();
+    expect(() => testing.safeRelative('./:(top)')).toThrow();
   });
 });
