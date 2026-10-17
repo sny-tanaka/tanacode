@@ -21,7 +21,8 @@ import { E2EApp } from './app';
 //   読み込みが確定しない（204 の）先を開いたものも、開く先のオリジンではなく、中身を書いた開いたページのオリジンが付く
 // - 空のページを、開いたページが移すときも守りが効く: 人の操作でも data:・blob: へは移れない。Claude の操作では、許す先の外へ移れない（止めたことを Claude に伝える）
 // - 裏で起動しているとき、ページが window.focus() を呼んでも、別ウインドウは出ず、フォーカスも移らない
-// - 別ウインドウの中身の設定（getLastWebPreferences）が守りの値（sandbox・contextIsolation が有効で、Node・webview・preload が無い）
+// - 別ウインドウの中身の設定（getLastWebPreferences）が守りの値（sandbox・contextIsolation が有効で、Node・webview・preload が無い。ダイアログを出さない）
+// - 別ウインドウのページの alert()・confirm() は出さず、すぐに返す（prompt() は Electron がもともと出さない）
 
 const OPEN = 'ログインのポップアップを確かめてください';
 const DONE = 'ポップアップを確かめました';
@@ -167,7 +168,8 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
           !prefs.nodeIntegrationInSubFrames &&
           !prefs.nodeIntegrationInWorker &&
           !prefs.webviewTag &&
-          !prefs.preload;
+          !prefs.preload &&
+          prefs.disableDialogs === true;
         const entry = { preview: win.webContents.session === session.fromPartition('persist:tanacode-preview'), secure, normal, inside: false, closed: false };
         created.push(entry);
         // 中身のトップのフレームが移り始めた先と、コンソールの文
@@ -362,6 +364,14 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     expect(await runInPopup(11, 'location.href')).toBe('about:blank');
     // 開いたままのほかの別ウインドウ（入れ子・題を書いた空のページ）も
     for (const index of [3, 10, 11]) expect(await popupState(index)).toMatchObject({ visible: false, focused: false });
+  });
+
+  it('別ウインドウのページの alert()・confirm() は出さず、すぐに返す（出すのを待っている間・裏での起動でも、ほかのアプリの前に出さない）', async () => {
+    // 守りの値で切っていることを先に確かめる（切っていないまま呼ぶと、ダイアログが前に出て止まるため）
+    expect((await popups())[11]?.secure).toBe(true);
+    expect(await runInPopup(11, 'String(alert("a")) + "/" + String(confirm("b"))')).toBe('undefined/false');
+    // prompt() は、Electron がもともと出さない（投げる）
+    expect(await runInPopup(11, '(() => { try { return String(prompt("c")); } catch (e) { return e.message; } })()')).toBe('prompt() is not supported.');
   });
 
   it('読み込みが確定しない（204 の）許す先の外を開いた別ウインドウに、開いたページが題を書いても、その外のオリジンを題に出さない', async () => {

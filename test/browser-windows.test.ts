@@ -95,8 +95,8 @@ class FakeWindow extends EventEmitter {
   }
 }
 
-// 中身の守りの値（Electron が中身を作るときに使う）
-const SECURE = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false };
+// 中身の守りの値（Electron が中身を作るときに使う）。ページの alert・confirm も出さない
+const SECURE = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, disableDialogs: true };
 // ページが features に書いた、見た目を偽れる指定（Electron が createWindow に渡してくる。使ってはいけない）
 const FROM_PAGE = { closable: false, focusable: false, opacity: 0, alwaysOnTop: true, frame: false, visibleOnAllWorkspaces: true, type: 'panel', movable: false, minimizable: false, hasShadow: false, show: true, x: -10000, y: -10000, width: 99999, height: 1 };
 

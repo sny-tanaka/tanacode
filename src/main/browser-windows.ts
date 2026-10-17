@@ -55,6 +55,9 @@ const POPUP_PREFERENCES = {
   contextIsolation: true,
   sandbox: true,
   webviewTag: false,
+  // ページの alert・confirm は出さない（すぐに返る。confirm は false。prompt は Electron がもともと出さない）。出すのを待っている（tanacode にフォーカスが来るまで出さない）・
+  // 裏で起動している別ウインドウのダイアログは、ウインドウに付かず、ほかのアプリの前に出うるため。safeDialogs では、1 回目は出てしまう
+  disableDialogs: true,
 } as const;
 
 // プレビューのセッション（restrictPreviewSession を通したもの）。ポップアップの中身は、これで見分ける

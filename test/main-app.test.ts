@@ -945,7 +945,7 @@ describe('ウインドウ', () => {
       overrideBrowserWindowOptions: Record<string, unknown>;
       createWindow: (options: Record<string, unknown>) => unknown;
     };
-    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false };
+    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, disableDialogs: true };
     expect(popup.action).toBe('allow');
     expect(popup.outlivesOpener).toBe(true);
     expect(popup.overrideBrowserWindowOptions).toEqual({ webPreferences: secure });
