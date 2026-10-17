@@ -74,6 +74,17 @@ describe('ProfileRegistry', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).profiles).toHaveLength(4);
   });
 
+  it('変えるのは渡したものだけ（足したプロファイルも）。名前・フォルダが文字でなければ断る。profiles が一覧でなければ、足したものは無し', () => {
+    const registry = new ProfileRegistry(file);
+    const added = registry.add({ name: '会社', color: '#5fb98a', claudeDir: join(root, 'w') });
+    expect(registry.update(added.id, { color: '#D4835C' })).toMatchObject({ name: '会社', color: '#d4835c' });
+    expect(registry.update(added.id, { name: '仕事' })).toMatchObject({ name: '仕事', color: '#d4835c' });
+    expect(() => registry.update(added.id, { name: 3 as unknown as string })).toThrow('名前を入れてください');
+    expect(() => registry.add({ name: 'x', color: '#6d9ccf', claudeDir: null as unknown as string })).toThrow('絶対パスか ~/');
+    writeFileSync(file, JSON.stringify({ default: { name: '個人' }, profiles: 'x' }));
+    expect(new ProfileRegistry(file).list()).toEqual([{ id: 'default', name: '個人', color: '#6d9ccf', claudeDir: null }]);
+  });
+
   it('データのフォルダは、既定のプロファイルなら userData、足したものは userData/profiles/<id>', () => {
     expect(profileDataDir('/u', 'default')).toBe('/u');
     expect(profileDataDir('/u', 'p2')).toBe(join('/u', 'profiles', 'p2'));

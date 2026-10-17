@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ToolResult } from '../src/main/mcp-bridge';
-import { ShellTerminals } from '../src/main/shell-terminals';
+import { ShellTerminals, type TerminalInfo } from '../src/main/shell-terminals';
 import { TERMINAL_GATE_REQUEST, readGateAnswer } from '../src/main/terminal-bridge';
-import { TerminalControl, type TerminalSessions } from '../src/main/terminal-control';
+import { TerminalControl, type TerminalSessions, type TerminalsApi } from '../src/main/terminal-control';
 
 // Claude による人のターミナルの読み書き（terminal-control.ts）。本物のシェル（/bin/sh）を ShellTerminals で開き、
 // 中継から届く呼び出し（ツールと、打つ前の確認のフックの問い合わせ）を直に渡して確かめる。
@@ -244,5 +244,103 @@ describe('打つ', () => {
     const id = await openShell();
     enabled = false;
     expect(await gate({ id, text: 'ls' })).toMatchObject({ isError: true });
+  });
+});
+
+// ターミナルの作り物で、細かい分かれ目（キーの送り方・読めない指定・何も出ていない・終わったターミナル）を確かめる
+describe('細かいところ（ターミナルの作り物）', () => {
+  type Fake = TerminalInfo & { lines: string[] };
+  const info = (over: Partial<Fake>): Fake => ({
+    id: 't1',
+    owner: ME,
+    tab: 1,
+    kind: 'shell',
+    name: 'zsh',
+    title: null,
+    command: null,
+    cwd: '/work',
+    running: true,
+    exitCode: null,
+    foreground: null,
+    openedAt: 0,
+    lastOutputAt: null,
+    lines: [],
+    ...over,
+  });
+  let all: Fake[];
+  let written: { id: string; data: string }[];
+  let appCursor: boolean;
+  let printed: string[] | null;
+  let fakeControl: TerminalControl;
+  beforeEach(() => {
+    all = [info({})];
+    written = [];
+    appCursor = false;
+    printed = null;
+    const terminals = {
+      list: (owner: string) => all.filter((t) => t.owner === owner),
+      info: (id: string) => all.find((t) => t.id === id) ?? null,
+      flush: () => Promise.resolve(),
+      tail: (id: string) => all.find((t) => t.id === id)?.lines ?? null,
+      cursorLine: () => null,
+      markCursor: () => (printed === null ? null : () => printed!),
+      applicationCursor: () => appCursor,
+      write: (id: string, data: string) => void written.push({ id, data }),
+      openShell: () => ({ id: 't1' }),
+    } as unknown as TerminalsApi;
+    fakeControl = new TerminalControl({ terminals, sessions, enabled: () => true, quietMs: 1, maxWaitMs: 5 });
+  });
+  const typeKey = async (key: string) => {
+    await fakeControl.handle(ME, TERMINAL_GATE_REQUEST, { id: 't1', key });
+    return fakeControl.handle(ME, 'type_in_terminal', { id: 't1', key });
+  };
+
+  it('キー: Ctrl+D・Esc・Tab と、矢印（前面のプログラムのモードに合わせる）を、決まった文字にして送る', async () => {
+    for (const key of ['ctrl-d', 'escape', 'tab', 'up', 'down']) await typeKey(key);
+    appCursor = true;
+    for (const key of ['up', 'down']) await typeKey(key);
+    expect(written.map((w) => w.data)).toEqual(['\x04', '\x1b', '\t', '\x1b[A', '\x1b[B', '\x1bOA', '\x1bOB']);
+    const result = textOf(await typeKey('tab'));
+    expect(result).toContain('Typed the key tab into terminal t1');
+    // 出力を控えられないときも、何も出なかったことにする
+    expect(result).toContain('(nothing)');
+  });
+
+  it('打ったあとに閉じたターミナル・多すぎる出力は、そう書く', async () => {
+    printed = Array.from({ length: 60 }, (_, i) => `行 ${i}`);
+    await fakeControl.handle(ME, TERMINAL_GATE_REQUEST, { id: 't1', text: 'ls' });
+    const promise = fakeControl.handle(ME, 'type_in_terminal', { id: 't1', text: 'ls' });
+    all = [];
+    const result = textOf(await promise);
+    expect(result).toContain('the last 50 lines');
+    expect(result).toContain('The terminal has closed.');
+  });
+
+  it('読む: 何も出ていない・終わった・前面のプログラムがあるターミナル。一覧が空なら、そう書く', async () => {
+    expect(textOf(await fakeControl.handle(ME, 'read_terminal', { id: 't1' }))).toContain('The terminal shows nothing yet.');
+    all = [info({ running: false, exitCode: 3, lines: ['a'], lastOutputAt: 1000 }), info({ id: 't2', tab: 2, foreground: 'vim', lines: ['b'] })];
+    expect(textOf(await fakeControl.handle(ME, 'read_terminal', { id: 't1', lines: 'たくさん' }))).toContain('exited with code 3');
+    expect(textOf(await fakeControl.handle(ME, 'read_terminal', { id: 't2' }))).toContain('running (foreground: vim)');
+    const listed = JSON.parse(textOf(await fakeControl.handle(ME, 'list_terminals', {}))) as { terminals: { last_output_at: string | null }[] };
+    expect(listed.terminals.map((t) => t.last_output_at)).toEqual([new Date(1000).toISOString(), null]);
+    all = [];
+    expect(textOf(await fakeControl.handle(ME, 'list_terminals', {}))).toContain('No terminal is open');
+    // 終わったターミナルの終了コードが分からなければ、コードを書かない
+    all = [info({ running: false, exitCode: null })];
+    expect(textOf(await fakeControl.handle(ME, TERMINAL_GATE_REQUEST, { id: 't1', text: 'ls' }))).toContain('Terminal t1 has exited; it cannot take input.');
+  });
+
+  it('読めない指定: 数でない session_id・重なる子の ID・id の無い読み取り・知らないツール', async () => {
+    expect(textOf(await fakeControl.handle(ME, 'list_terminals', { session_id: 42 }))).toContain('at least its first 8 characters');
+    expect(textOf(await fakeControl.handle(ME, 'read_terminal', {}))).toContain('Pass the ID of a terminal');
+    expect(textOf(await fakeControl.handle(ME, 'no_such_tool', {}))).toContain('Unknown tool');
+    // 呼び出し元の ID のはじめを渡したら、自分のもの
+    expect((JSON.parse(textOf(await fakeControl.handle(ME, 'list_terminals', { session_id: ME.slice(0, 8) }))) as { session_id: string }).session_id).toBe(ME);
+    const ambiguous = new TerminalControl({
+      terminals: {} as TerminalsApi,
+      sessions: { ...sessions, exists: () => true, childrenOf: () => ['44444444-aaaa', '44444444-bbbb'] },
+      enabled: () => true,
+    });
+    expect(textOf(await ambiguous.handle(ME, 'list_terminals', { session_id: '44444444' }))).toContain('More than one child session');
   });
 });

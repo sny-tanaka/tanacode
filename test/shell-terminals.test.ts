@@ -9,22 +9,23 @@ import { ShellTerminals } from '../src/main/shell-terminals';
 
 let dir: string;
 let shells: ShellTerminals;
-const data = new Map<string, string>();
-const exits = new Map<string, number>();
-const opened: { owner: string; id: string; name: string; task: boolean }[] = [];
+// テストごとに作り直す。前のテストのシェル（afterEach で止めたもの）の出力・終わりは、そのテストの受け手に遅れて届くことがあり、
+// id（shell-1 など）は ShellTerminals ごとに 1 から振るので、同じ受け手だと、今のテストのシェルのものと見分けられない
+let data: Map<string, string>;
+let exits: Map<string, number>;
+let opened: { owner: string; id: string; name: string; task: boolean }[];
 const oldShell = process.env.SHELL;
 const oldClaudeCode = process.env.CLAUDECODE;
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-shell-')));
   process.env.SHELL = '/bin/sh';
-  data.clear();
-  exits.clear();
-  opened.length = 0;
+  const mine = { data: new Map<string, string>(), exits: new Map<string, number>(), opened: [] as typeof opened };
+  ({ data, exits, opened } = mine);
   shells = new ShellTerminals({
-    onData: (id, chunk) => data.set(id, (data.get(id) ?? '') + chunk),
-    onExit: (id, code) => exits.set(id, code),
-    onOpened: (owner, id, name, task) => opened.push({ owner, id, name, task }),
+    onData: (id, chunk) => mine.data.set(id, (mine.data.get(id) ?? '') + chunk),
+    onExit: (id, code) => mine.exits.set(id, code),
+    onOpened: (owner, id, name, task) => mine.opened.push({ owner, id, name, task }),
   });
 });
 afterEach(() => {
@@ -184,5 +185,29 @@ describe('ShellTerminals', () => {
     expect(shells.tail('shell-999', 1)).toBeNull();
     expect(shells.cursorLine('shell-999')).toBeNull();
     expect(shells.markCursor('shell-999')).toBeNull();
+    expect(shells.info('shell-999')).toBeNull();
+    expect(shells.applicationCursor('shell-999')).toBe(false);
+    return expect(shells.flush('shell-999')).resolves.toBeUndefined();
+  });
+
+  it('前面のプログラムが付けた題名と、矢印キーのアプリのモードを読む。空の題名は、無いことにする', async () => {
+    const { id } = shells.create('session-1', dir, 80, 24);
+    await waitForPrompt(id);
+    expect(shells.applicationCursor(id)).toBe(false);
+    await typeAndWait(id, "printf '\\033]0;build\\007\\033[?1h'\r");
+    expect(shells.info(id)?.title).toBe('build');
+    expect(shells.applicationCursor(id)).toBe(true);
+    await typeAndWait(id, "printf '\\033]0;\\007\\033[?1l'\r");
+    expect(shells.info(id)?.title).toBeNull();
+    expect(shells.applicationCursor(id)).toBe(false);
+  });
+
+  it('markCursor: シェルが終わって控えを捨てたあとは、何も読めない', async () => {
+    const { id } = shells.create('session-1', dir, 80, 24);
+    await waitForPrompt(id);
+    const since = shells.markCursor(id)!;
+    shells.write(id, 'exit\r');
+    await waitFor('シェルの終わり', () => exits.has(id));
+    expect(since()).toEqual([]);
   });
 });

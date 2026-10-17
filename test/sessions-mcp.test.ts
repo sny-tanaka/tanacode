@@ -1001,6 +1001,21 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(result.isError).toBe(true);
       expect(textOf(result)).toContain('its permission mode is now acceptEdits');
       expect(host.configured).toEqual([]);
+      // 今のモードが分からなければ、添えない
+      host.modes.delete(SIBLING);
+      expect(textOf(await configure({ permission_mode: 'auto' }))).toMatch(/^Could not switch .* to auto: its Claude Code refused it/);
+    });
+
+    it('状態の分からない子は、終了しているとみなして、次に起動するときの指定を変える', async () => {
+      host.states.delete(SIBLING);
+      expect(jsonOf(await configure({ effort: 'max' }))).toMatchObject({ changed: { effort: 'max' }, note: expect.stringContaining('is not running') });
+    });
+
+    it('モデル・エフォートの変更が Error でないもので失敗しても、理由を文字にして返す', async () => {
+      host.configureError = 'つながりません' as unknown as Error;
+      const failed = await configure({ effort: 'max' });
+      expect(failed.isError).toBe(true);
+      expect(textOf(failed)).toMatch(/^Could not change its model or effort: /);
     });
 
     it('作業中・起動中・質問や許可の確認・ターミナルでの操作の待ち・アーカイブ済みの子は、理由と次にできることを添えて断る', async () => {
@@ -1352,6 +1367,25 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(host.archives).toEqual([{ id: SIBLING, options: { removeWorktree: false } }]);
       expect(ended).toMatchObject({ session_id: SIBLING, archived: true, worktree: null });
       expect(ended.note).toContain('It has no worktree');
+    });
+
+    it('worktree の無い子に remove_worktree を渡さなければ、worktree のことは書かない。状態の分からない子は、終了しているとみなす', async () => {
+      host.states.delete(SIBLING);
+      const ended = jsonOf<{ note: string }>(await control.handle(PARENT, 'end_session', { session_id: SIBLING }));
+      expect(ended).toMatchObject({ session_id: SIBLING, archived: true, worktree: null });
+      expect(ended.note).not.toContain('worktree');
+    });
+
+    it('アーカイブできなかったら、理由（Error でなければ文字にしたもの）を添えて失敗として返す', async () => {
+      host.set(CHILD, 'idle');
+      host.archive = async () => {
+        throw 'ディスクがいっぱい';
+      };
+      const failed = await end({ remove_worktree: false });
+      expect(failed.isError).toBe(true);
+      expect(textOf(failed)).toBe('Could not archive "s-22": ディスクがいっぱい');
+      host.archive = async () => null;
+      expect(textOf(await end({ remove_worktree: false }))).toBe('Could not archive "s-22": unknown error');
     });
 
     it('worktree を消せなかったとき（ユーザーが付けたロックなど）: アーカイブはしたうえで、理由を返す', async () => {

@@ -223,6 +223,33 @@ describe('巻き戻し', () => {
     await app.manager.rewind(id, first.uuid, { conversation: true, code: false });
     expect(pipe.requests('rewind_conversation').at(-1)?.request).toMatchObject({ last_seen_user_message_uuid: result.uuid });
   });
+
+  it('巻き戻しの細かいところ: 要求の失敗（error の返事）・理由の無い断り・動いていない・今の会話に無い発言', async () => {
+    expect(await app.manager.rewind('nope', 'x', { conversation: true, code: true })).toMatchObject({ ok: false, error: 'Claude Code が動いていません' });
+    expect(await app.manager.rewindPreview('nope', 'x')).toBeNull();
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const first = line.user('ログインを直して');
+    app.say(id, first, line.text('直しました'));
+    app.finish(id);
+    await app.waitFor('会話', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    // 要求が error で返ったら、その理由
+    pipe.answers.set('rewind_files', new Error('checkpoints are off'));
+    expect(await app.manager.rewindPreview(id, first.uuid)).toEqual({ files: null, insertions: 0, deletions: 0, codeError: 'checkpoints are off' });
+    expect(await app.manager.rewind(id, first.uuid, { conversation: false, code: true })).toMatchObject({ ok: false, error: 'checkpoints are off' });
+    pipe.answers.set('rewind_conversation', new Error('busy'));
+    expect((await app.manager.rewind(id, first.uuid, { conversation: true, code: false })).error).toBe('busy');
+    // 戻せると答えたが、変わる数を言わない・戻せないが理由を言わない
+    pipe.answers.set('rewind_files', { canRewind: true });
+    expect(await app.manager.rewindPreview(id, first.uuid)).toEqual({ files: [], insertions: 0, deletions: 0, codeError: null });
+    pipe.answers.set('rewind_files', { canRewind: false });
+    expect(await app.manager.rewindPreview(id, first.uuid)).toMatchObject({ codeError: null });
+    expect((await app.manager.rewind(id, first.uuid, { conversation: false, code: true })).error).toBe('巻き戻し先の発言が見つかりませんでした');
+    // 今の会話の行に無い発言を戻せたと答えても、表示は変えない
+    pipe.answers.set('rewind_conversation', { rewound: true, prefillText: null });
+    expect(await app.manager.rewind(id, 'not-in-chain', { conversation: true, code: false })).toEqual({ ok: true, prefillText: null, error: null });
+    expect(app.events(id).some((e) => e.type === 'replace')).toBe(false);
+  });
 });
 
 describe('Remote Control', () => {

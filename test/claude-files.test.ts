@@ -118,6 +118,31 @@ describe('利用枠（UsageMonitor）', () => {
   const info = (updatedAt: number, five: number): StatusLineInfo =>
     ({ updatedAt, rateLimits: { fiveHour: { percent: five, resetsAt: 100 }, sevenDay: { percent: 10, resetsAt: 200 } } }) as unknown as StatusLineInfo;
 
+  it('値の無い知らせ（枠が無い statusLine・空の get_usage）では変えない。保存も控えも無ければ、空のまま始める', async () => {
+    const changes: UsageLimits[] = [];
+    const monitor = new usage.UsageMonitor(join(home, 'none', 'usage.json'), (u) => changes.push(u));
+    await monitor.start();
+    expect(monitor.get()).toBeNull();
+    monitor.fromStatusLine({ updatedAt: 1, rateLimits: null } as unknown as StatusLineInfo);
+    monitor.fromStatusLine({ updatedAt: 2, rateLimits: { fiveHour: null, sevenDay: null } } as unknown as StatusLineInfo);
+    monitor.fromUsage([], 3);
+    expect(monitor.get()).toBeNull();
+    expect(changes).toEqual([]);
+    // 読めない控え（時刻が無い・一覧でない）も使わない
+    for (const cache of [{ utilization: { limits: [] } }, { fetchedAtMs: 5, utilization: { limits: 'x' } }]) {
+      writeFileSync(join(home, '.claude.json'), JSON.stringify({ cachedUsageUtilization: cache }));
+      await monitor.refresh();
+    }
+    expect(monitor.get()).toBeNull();
+    // 控えのモデル別の枠の、リセットの時刻も読む
+    writeFileSync(
+      join(home, '.claude.json'),
+      JSON.stringify({ cachedUsageUtilization: { fetchedAtMs: 9, utilization: { limits: [{ kind: 'weekly_scoped', percent: 4, resets_at: '2026-10-20T00:00:00Z', scope: { model: { display_name: 'Haiku' } } }] } } }),
+    );
+    await monitor.refresh();
+    expect(monitor.get()?.limits).toEqual([{ label: '週', model: 'Haiku', percent: 4, resetsAt: Date.parse('2026-10-20T00:00:00Z') }]);
+  });
+
   it('statusLine から 5 時間枠と週の枠を受け取って保存し、古いものでは上書きしない', async () => {
     const file = join(home, 'usage.json');
     const changes: UsageLimits[] = [];
