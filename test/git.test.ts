@@ -565,6 +565,44 @@ describe('tanacode が動かす git の守り', () => {
     }
   });
 
+  // dir の中に name のリポジトリを作り、dir のインデックスにサブモジュール（gitlink）として載せる。
+  // 設定を読むところだけを確かめるので、コミットは作らない（gitlink の指すコミットは、サブモジュールの中に無くてよい）
+  const nest = (dir: string, name: string): string => {
+    const child = join(dir, name);
+    mkdirSync(child);
+    run(child, 'init', '-q');
+    run(dir, 'update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},${name}`);
+    return child;
+  };
+
+  it('入れ子のサブモジュールは 5 段まで読む。それより深いものがあれば、読まずに動かすことはせず、git を動かさない', async () => {
+    let dir = repo;
+    for (let depth = 1; depth <= 5; depth++) dir = nest(dir, `d${depth}`);
+    run(dir, 'config', 'filter.deep.clean', `${mark('deep-filter-clean')}; cat`);
+    expect((await guardOf(repo)).args).toContain('filter.deep.clean=');
+    const deeper = join(root, 'deeper');
+    init(deeper);
+    dir = deeper;
+    for (let depth = 1; depth <= 6; depth++) dir = nest(dir, `d${depth}`);
+    await expect(guardOf(deeper)).rejects.toThrow(GitError);
+    expect(await status(deeper)).toBeNull();
+  });
+
+  it('設定を読むサブモジュールは 100 個まで。それより多ければ、読まずに動かすことはせず、git を動かさない', async () => {
+    // 101 個の取り出してあるサブモジュール。どれも同じリポジトリを指す（.git をファイルにする）
+    const lib = join(root, 'lib');
+    init(lib);
+    commit(lib, 'l.txt', 'l\n');
+    const head = sha(lib);
+    const entries: string[] = [];
+    for (let i = 0; i < 101; i++) {
+      write(repo, `subs/s${i}/.git`, `gitdir: ${join(lib, '.git')}\n`);
+      entries.push(`160000 ${head}\tsubs/s${i}`);
+    }
+    execFileSync('git', ['update-index', '-z', '--index-info'], { cwd: repo, input: `${entries.join('\0')}\0` });
+    await expect(guardOf(repo)).rejects.toThrow(GitError);
+  }, 30_000);
+
   it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
     run(repo, 'config', 'filter.req.clean', `${mark('req-clean')}; cat`);
     run(repo, 'config', 'filter.req.smudge', `${mark('req-smudge')}; cat`);

@@ -80,7 +80,8 @@ const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process(
 // - 取り出してあるサブモジュール（入れ子も）の設定で決めたフィルター・merge のドライバーも、同じく空にする（状態・作業ツリーとの差分は、
 //   サブモジュールの中でも git を動かす。打ち消しはサブモジュールの git にも渡るので、同じ名前を空にすれば止まる）
 // 名前に「=」を含むものを打ち消せない古い git（2.31 より前）と、名前が UTF-8 として読めないもの（-c でも環境変数でも渡せない）・
-// 場所が UTF-8 として読めない取り出してあるサブモジュール（設定を読めない）があるときは、git を動かさない（GitError）
+// 場所が UTF-8 として読めない取り出してあるサブモジュール（設定を読めない）・上限より多い・深いサブモジュールがあるときは、
+// git を動かさない（GitError）
 export function guardOf(cwd: string): Promise<Guard> {
   const now = Date.now();
   const cached = guards.get(cwd);
@@ -112,9 +113,10 @@ const ALWAYS_OFF: [string, string][] = [
   // サブモジュールの差分は、コミットの ID の短い形で出す（中身の差分は、サブモジュールの中で diff を動かす）
   ['diff.submodule', 'short'],
 ];
-// 設定を読むサブモジュールの数と、入れ子の深さの上限
+// 設定を読むサブモジュールの数と、入れ子の深さの上限。超えるものがあれば、git を動かさない
 const MAX_SUBMODULES = 100;
 const MAX_SUBMODULE_DEPTH = 5;
+const TOO_MANY_SUBMODULES = `tanacode reads the git settings of up to ${MAX_SUBMODULES} checked-out submodules, nested up to ${MAX_SUBMODULE_DEPTH} levels deep. This folder has more, so tanacode does not run git here.`;
 
 // 空にする設定の名前（filter.<名前>.clean・smudge・process と merge.<名前>.driver）。<名前> には何でも入る（. も、UTF-8 でないバイトも）
 const COMMAND_KEY = /^(filter|merge)\..+\.(clean|smudge|process|driver)$/s;
@@ -141,9 +143,9 @@ async function commandKeys(cwd: string, budget: { left: number }, depth: number)
     if (key.startsWith('filter.') && LFS_FILTER.test(value)) continue;
     keys.push(key);
   }
-  if (depth >= MAX_SUBMODULE_DEPTH) return keys;
   for (const dir of await submodulesOf(cwd)) {
-    if (budget.left <= 0) break;
+    // 上限を超えて読まずに残るものがあれば、git を動かさない
+    if (depth >= MAX_SUBMODULE_DEPTH || budget.left <= 0) throw new GitError(TOO_MANY_SUBMODULES);
     budget.left--;
     keys.push(...(await commandKeys(dir, budget, depth + 1)));
   }
