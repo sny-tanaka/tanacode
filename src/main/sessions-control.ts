@@ -348,7 +348,7 @@ export class SessionsControl {
     const files = (await branchFiles(cwd, ref)).filter((f) => inPath(f.path));
     // path は git の pathspec の書き方（:(top) など）として読ませず、書いたままのパスとして渡す
     const literal = { GIT_LITERAL_PATHSPECS: '1' };
-    const tracked = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '--no-renames', '--no-color', ref, '--', ...(path ? [path] : [])], undefined, literal);
+    const tracked = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--submodule=short', '--relative', '--no-renames', '--no-color', ref, '--', ...(path ? [path] : [])], undefined, literal);
     const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...(path ? [path] : [])], undefined, literal))
       .split('\0')
       // セッションのフォルダの外を指すもの（../ で始まるもの）は読まない

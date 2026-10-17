@@ -529,6 +529,42 @@ describe('tanacode が動かす git の守り', () => {
     await expect(guardOf(repo)).rejects.toThrow(GitError);
   });
 
+  it('パッチを出す差分でも、サブモジュールの設定の diff のコマンド（外部コマンド・textconv）を動かさない', async () => {
+    const lib = join(root, 'lib');
+    init(lib);
+    commit(lib, 'l.txt', 'l\n');
+    run(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib');
+    run(repo, 'commit', '-qm', 'submodule', '--no-verify');
+    const sub = join(repo, 'lib');
+    run(repo, 'config', 'diff.submodule', 'diff');
+    write(sub, 'l.txt', 'changed\n');
+    // get_session_diff（sessions-control.ts）と同じ引数
+    const patch = (ref?: string) => ['diff', '--no-ext-diff', '--no-textconv', '--submodule=short', '--relative', '--no-renames', '--no-color', ...(ref ? [ref] : []), '--'];
+    const clear = () => readdirSync(marks).forEach((name) => rmSync(join(marks, name)));
+    for (const [setup, name] of [
+      [() => run(sub, 'config', 'diff.external', `${mark('sub-diff-external')}; true`), 'sub-diff-external'],
+      [
+        () => {
+          run(sub, 'config', '--unset', 'diff.external');
+          run(sub, 'config', 'diff.subconv.textconv', `${mark('sub-textconv')}; cat`);
+          write(repo, '.git/modules/lib/info/attributes', '* diff=subconv\n');
+        },
+        'sub-textconv',
+      ],
+    ] as const) {
+      setup();
+      // 人がターミナルで打つ git では動く（このテストの作りの確かめ）
+      clear();
+      run(repo, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD');
+      expect(readdirSync(marks)).toContain(name);
+      clear();
+      // --submodule を付けない差分でも
+      for (const args of [patch(base), patch('HEAD'), patch(), ['diff', '--no-ext-diff', '--no-textconv', base]]) await git(repo, args);
+      await branchFiles(repo, base);
+      expect(readdirSync(marks)).toEqual([]);
+    }
+  });
+
   it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
     run(repo, 'config', 'filter.req.clean', `${mark('req-clean')}; cat`);
     run(repo, 'config', 'filter.req.smudge', `${mark('req-smudge')}; cat`);

@@ -75,7 +75,8 @@ const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process(
 // - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
 //   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す。
 //   空にしたフィルターは、required も false にする。そのため、読むだけの git は、フィルターを通す前の中身で比べる（ターミナルの git と差分の見え方が違うことがある）
-// - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
+// - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける。
+//   サブモジュールの差分の形は、いつも short にする（diff.submodule。パッチを出す diff には --submodule=short も付ける）
 // - 取り出してあるサブモジュール（入れ子も）の設定で決めたフィルター・merge のドライバーも、同じく空にする（状態・作業ツリーとの差分は、
 //   サブモジュールの中でも git を動かす。打ち消しはサブモジュールの git にも渡るので、同じ名前を空にすれば止まる）
 // 名前に「=」を含むものを打ち消せない古い git（2.31 より前）と、名前が UTF-8 として読めないもの（-c でも環境変数でも渡せない）・
@@ -108,6 +109,8 @@ const ALWAYS_OFF: [string, string][] = [
   ['core.hooksPath', '/dev/null'],
   // ログ・show で署名を確かめさせない（確かめに gpg.program を動かす）
   ['log.showSignature', 'false'],
+  // サブモジュールの差分は、コミットの ID の短い形で出す（中身の差分は、サブモジュールの中で diff を動かす）
+  ['diff.submodule', 'short'],
 ];
 // 設定を読むサブモジュールの数と、入れ子の深さの上限
 const MAX_SUBMODULES = 100;
