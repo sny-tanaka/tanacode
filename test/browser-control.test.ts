@@ -7,7 +7,7 @@ import { gateOutput, readAnswer } from '../src/main/browser-gate';
 import { setLanguage } from '../src/shared/i18n';
 import { textResult } from '../src/main/mcp-bridge';
 import { FakeContents, HOST } from './helpers/fake-electron';
-import { finish, flush, logConsole, setup, textOf, type Tab } from './helpers/browser-control';
+import { finish, flush, logConsole, sentBy, setup, textOf, type Tab } from './helpers/browser-control';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
 
@@ -456,6 +456,73 @@ describe('コンソールの記録のうち、許していない先の文', () =
   });
 });
 
+describe('失敗した通信の記録のうち、許していない先のもの', () => {
+  it('get_failed_requests は、許していない先のページ・フレームの通信を返さず、除いた数だけを伝える', async () => {
+    const { call, open, network } = setup();
+    const page = open('http://localhost:3000/');
+    const fail = (url: string, resourceType: string, sender: object) => network.completed!({ statusCode: 404, method: 'GET', url, resourceType, ...sentBy(page), ...sender });
+    // トップのページが出した通信（許す先の外へのものも、ページ自身の通信なので返す）
+    fail('http://localhost:3000/api?q=1', 'xhr', {});
+    fail('https://cdn.example.com/logo.png', 'image', {});
+    // 許す先の iframe が出した通信
+    fail('http://localhost:4000/data', 'xhr', sentBy(page, 'http://localhost:4000', false));
+    // 許していない先の iframe が出した通信
+    fail('https://ads.example.com/track?token=secret', 'xhr', sentBy(page, 'https://ads.example.com', false));
+    // 許していない先の iframe の読み込み（出したのはトップでも、そこに入るのは許していない先のページ）
+    fail('https://ads.example.com/frame?token=secret', 'subFrame', sentBy(page, 'http://localhost:3000', false));
+    // 許していない先へのトップの読み込み（ページのリンクから）
+    network.errored!({ error: 'net::ERR_CONNECTION_REFUSED', method: 'GET', url: 'https://login.example.com/auth?code=secret', resourceType: 'mainFrame', ...sentBy(page) });
+    // 許す先のトップの読み込み（navigate など、ブラウザが自分で始めたもの。出したオリジンが無い）
+    fail('http://localhost:3000/missing', 'mainFrame', { initiatorOrigin: undefined });
+    // 出したオリジンが分からない（不透明なオリジン・ブラウザが自分で始めた通信）
+    fail('https://sandboxed.example.com/x?token=secret', 'xhr', { initiatorOrigin: 'null', frame: null });
+    fail('https://browser.example.com/y?token=secret', 'other', { initiatorOrigin: undefined, frame: undefined });
+    const text = textOf(await call('get_failed_requests'));
+    expect(text).toBe(
+      [
+        '404 GET http://localhost:3000/api?q=1 (xhr)',
+        '404 GET https://cdn.example.com/logo.png (image)',
+        '404 GET http://localhost:4000/data (xhr)',
+        '404 GET http://localhost:3000/missing (mainFrame)',
+        '(5 more failed requests from pages or frames not allowed for Claude are not shown.)',
+      ].join('\n'),
+    );
+    expect(text).not.toContain('secret');
+    // ページの様子に添える「失敗した通信 N 件」も、見せるものだけを数える
+    expect(textOf(await call('select_tab', { index: 1 }))).toContain('4 requests failed (read them with get_failed_requests).');
+    // 見せるものが無ければ、除いた数だけ。clear では、除いたものも消す
+    await call('get_failed_requests', { clear: true });
+    fail('https://ads.example.com/track?token=secret', 'xhr', sentBy(page, 'https://ads.example.com', false));
+    expect(textOf(await call('get_failed_requests', { clear: true }))).toBe('(1 more failed request from pages or frames not allowed for Claude is not shown.)');
+    expect(textOf(await call('select_tab', { index: 1 }))).not.toContain('failed');
+    expect(textOf(await call('get_failed_requests'))).toBe('No failed requests.');
+  });
+
+  it('トップと同じオリジンの iframe の通信は、トップが人の許したオリジンなら返す。別オリジンの iframe には、タブの許可は効かない', async () => {
+    const { call, control, open, network } = setup();
+    const page = open('http://localhost:3000/');
+    await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { url: 'https://app.example.com/' } });
+    await call('navigate', { url: 'https://app.example.com/' });
+    const fail = (url: string, resourceType: string, sender: object) => network.completed!({ statusCode: 500, method: 'GET', url, resourceType, ...sentBy(page), ...sender });
+    fail('https://app.example.com/api', 'xhr', {});
+    fail('https://app.example.com/frame-api', 'xhr', sentBy(page, 'https://app.example.com', false));
+    fail('https://app.example.com/inner', 'subFrame', {});
+    fail('https://pay.example.com/api?token=secret', 'xhr', sentBy(page, 'https://pay.example.com', false));
+    fail('https://pay.example.com/frame?token=secret', 'subFrame', {});
+    // 出したフレームが分からない（移った・無くなった）ときは、iframe と同じ決まり
+    fail('https://app.example.com/late', 'xhr', { frame: null });
+    expect(textOf(await call('get_failed_requests'))).toBe(
+      [
+        '500 GET https://app.example.com/api (xhr)',
+        '500 GET https://app.example.com/frame-api (xhr)',
+        '500 GET https://app.example.com/inner (subFrame)',
+        '500 GET https://app.example.com/late (xhr)',
+        '(2 more failed requests from pages or frames not allowed for Claude are not shown.)',
+      ].join('\n'),
+    );
+  });
+});
+
 describe('コンソールと失敗した通信の記録', () => {
   it('コンソール: 出た場所を添えて集め、レベルで選んで読む。clear で消す', async () => {
     const { call, open } = setup();
@@ -498,7 +565,7 @@ describe('コンソールと失敗した通信の記録', () => {
     const page = open('http://localhost:3000/');
     const keep = () => {
       logConsole(page, 'error', 'こわれた');
-      network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/api', resourceType: 'xhr', webContentsId: page.id });
+      network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/api', resourceType: 'xhr', ...sentBy(page) });
     };
     keep();
     page.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false });
@@ -514,7 +581,7 @@ describe('コンソールと失敗した通信の記録', () => {
     const { control, call, open, network } = setup();
     const page = open('http://localhost:3000/');
     expect(network.filters).toEqual([{ urls: ['http://*/*', 'https://*/*'] }, { urls: ['http://*/*', 'https://*/*'] }]);
-    const base = { method: 'GET', resourceType: 'script', webContentsId: page.id };
+    const base = { method: 'GET', resourceType: 'script', ...sentBy(page) };
     network.completed!({ ...base, statusCode: 200, url: 'http://localhost:3000/ok.js' });
     network.completed!({ ...base, statusCode: 399, url: 'http://localhost:3000/redirect.js' });
     network.completed!({ ...base, statusCode: 400, url: 'http://localhost:3000/bad.js' });
@@ -548,8 +615,9 @@ describe('コンソールと失敗した通信の記録', () => {
     const page = new FakeContents({ url: 'http://localhost:3000/' });
     const logs = control.track(asWebContents(page));
     expect(control.track(asWebContents(page))).toBe(logs);
-    network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/a', resourceType: 'xhr', webContentsId: page.id });
-    expect(logs.failed).toEqual(['500 GET http://localhost:3000/a (xhr)']);
+    network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/a', resourceType: 'xhr', ...sentBy(page) });
+    // 通信を出したもの（オリジンとトップのフレームか）も残す
+    expect(logs.failed).toEqual([{ text: '500 GET http://localhost:3000/a (xhr)', origin: 'http://localhost:3000', top: true }]);
     page.destroy();
     network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/b', resourceType: 'xhr', webContentsId: page.id });
     expect(logs.failed).toHaveLength(1);
@@ -659,7 +727,7 @@ describe('開く（navigate）', () => {
       logConsole(page, 'error', 'a');
       logConsole(page, 'warning', 'b');
       logConsole(page, 'error', 'c');
-      network.completed!({ statusCode: 404, method: 'GET', url: 'http://localhost:3000/x.png', resourceType: 'image', webContentsId: page.id });
+      network.completed!({ statusCode: 404, method: 'GET', url: 'http://localhost:3000/x.png', resourceType: 'image', ...sentBy(page) });
     };
     expect(textOf(await call('navigate', { url: 'http://localhost:3000/next' }))).toBe(
       [

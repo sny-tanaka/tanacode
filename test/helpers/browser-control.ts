@@ -5,7 +5,7 @@ import { IpcChannel, type BrowserActivity, type BrowserAsk } from '../../src/sha
 import { BROWSER_GATE_REQUEST } from '../../src/main/browser-bridge';
 import { BrowserControl } from '../../src/main/browser-control';
 import type { ToolResult } from '../../src/main/mcp-bridge';
-import { FakeContents, FakeSession, HOST } from './fake-electron';
+import { FakeContents, FakeSession, HOST, type RequestSender } from './fake-electron';
 
 // アプリ内ブラウザの操作（BrowserControl）を、Electron の作り物（fake-electron.ts）の上で組み立てる。
 // 使うテストのファイルでは、先に vi.mock('electron', ...) で Electron を差し替えておく。
@@ -144,6 +144,12 @@ export function logConsole(page: FakeContents, level: string, message: string, s
     }
   })();
   page.emit('console-message', { level, message, sourceId, lineNumber, frame: frame === undefined ? top : frame });
+}
+
+// page のフレームが出した通信（webRequest の通信の結果に足す）。origin: 出したフレームのオリジン（既定は、今のページのオリジン）/
+// top: 出したのがトップのフレームか
+export function sentBy(page: FakeContents, origin = new URL(page.url).origin, top = true): RequestSender {
+  return { webContentsId: page.id, initiatorOrigin: origin, frame: { origin, url: '', parent: top ? null : {} } };
 }
 
 // 別プロセスの iframe につながった（URL は Runtime.evaluate の location.href で答える）

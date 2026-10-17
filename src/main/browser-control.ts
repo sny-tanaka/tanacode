@@ -136,8 +136,10 @@ type AXNode = {
 // origin: 文を出したフレームのオリジン（分からなければ null）/ top: トップのフレームか。Claude に返すのは、許した先のフレームの文だけ（visibleLog）。
 // 別オリジンの iframe の文や、移り始めたあとに前のページが出した文（pagehide など）も、同じ記録に入るため
 type LogEntry = { level: string; text: string; seq: number; origin: string | null; top: boolean };
+// 失敗した通信の記録。text: Claude に返す行 / origin・top: 通信を出したもの（requestSource。LogEntry と同じく visibleLog で、Claude に返すかを決める）
+type RequestEntry = { text: string; origin: string | null; top: boolean };
 // webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
-type Logs = { console: LogEntry[]; failed: string[]; seq: number };
+type Logs = { console: LogEntry[]; failed: RequestEntry[]; seq: number };
 // タブ 1 つ（webview 1 つ）
 type Guest = {
   tabId: string;
@@ -239,18 +241,19 @@ export class BrowserControl {
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
   watchNetwork(session: Session): void {
     const filter = { urls: ['http://*/*', 'https://*/*'] };
-    const record = (contentsId: number | undefined, text: string) => {
-      const logs = contentsId === undefined ? undefined : this.logs.get(contentsId);
+    // 通信を出したもの（どのページ・フレームか）も残す。Claude に返すのは、許した先のものだけ（failedRequests）
+    const record = (details: RequestDetails & { webContentsId?: number }, text: string) => {
+      const logs = details.webContentsId === undefined ? undefined : this.logs.get(details.webContentsId);
       if (!logs) return;
-      logs.failed.push(text);
+      logs.failed.push({ text, ...requestSource(details) });
       if (logs.failed.length > MAX_FAILED) logs.failed.splice(0, logs.failed.length - MAX_FAILED);
     };
     session.webRequest.onCompleted(filter, (details) => {
-      if (details.statusCode >= 400) record(details.webContentsId, `${details.statusCode} ${details.method} ${details.url} (${details.resourceType})`);
+      if (details.statusCode >= 400) record(details, `${details.statusCode} ${details.method} ${details.url} (${details.resourceType})`);
     });
     session.webRequest.onErrorOccurred(filter, (details) => {
       // 移ったための中断（ERR_ABORTED）は失敗にしない
-      if (details.error !== 'net::ERR_ABORTED') record(details.webContentsId, `${details.error} ${details.method} ${details.url} (${details.resourceType})`);
+      if (details.error !== 'net::ERR_ABORTED') record(details, `${details.error} ${details.method} ${details.url} (${details.resourceType})`);
     });
   }
 
@@ -777,7 +780,8 @@ export class BrowserControl {
     if (!allowed) lines.push('This page is not allowed for Claude, so it can be neither read nor operated any further.');
     const errors = guest.logs.console.filter((l) => l.level === 'error' && this.visibleLog(guest, l)).length;
     if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
-    if (guest.logs.failed.length > 0) lines.push(`${count(guest.logs.failed.length, 'request')} failed (read them with get_failed_requests).`);
+    const failed = guest.logs.failed.filter((r) => this.visibleLog(guest, r)).length;
+    if (failed > 0) lines.push(`${count(failed, 'request')} failed (read them with get_failed_requests).`);
     return textResult(lines.join('\n'));
   }
 
@@ -1055,9 +1059,10 @@ export class BrowserControl {
     return textResult([clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT), ...(note ? [note] : [])].join('\n'));
   }
 
-  // Claude に返してよい記録か。トップのフレームの文は、そのオリジンが許した先（許す先か、このタブで人が許したオリジン）のとき。
-  // iframe の文は、許す先のときか、今のトップと同じオリジンでトップが許した先のとき（別オリジンの iframe には、タブの許可は効かない）
-  private visibleLog(guest: Guest, entry: LogEntry): boolean {
+  // Claude に返してよい記録（コンソールの文・失敗した通信）か。トップのフレームのものは、そのオリジンが許した先（許す先か、このタブで人が
+  // 許したオリジン）のとき。iframe のものは、許す先のときか、今のトップと同じオリジンでトップが許した先のとき（別オリジンの iframe には、
+  // タブの許可は効かない）。オリジンが分からないものは返さない
+  private visibleLog(guest: Guest, entry: { origin: string | null; top: boolean }): boolean {
     if (!entry.origin) return false;
     if (entry.top) return this.allowedIn(guest, entry.origin);
     if (this.allowed(entry.origin)) return true;
@@ -1065,10 +1070,14 @@ export class BrowserControl {
     return webOrigin(topUrl) === entry.origin && this.allowedIn(guest, topUrl);
   }
 
+  // 許していない先のページ・フレームの通信は返さず、除いた数だけを伝える（コンソールの記録と同じ）。clear は、除いたものも消す
   private failedRequests(guest: Guest, clear: boolean): ToolResult {
-    const failed = [...guest.logs.failed];
+    const failed = guest.logs.failed.filter((r) => this.visibleLog(guest, r));
+    const hidden = guest.logs.failed.length - failed.length;
     if (clear) guest.logs.failed.length = 0;
-    return textResult(failed.length === 0 ? 'No failed requests.' : clip(failed.join('\n'), MAX_TEXT));
+    const note = hidden > 0 ? `(${count(hidden, 'more failed request')} from pages or frames not allowed for Claude ${hidden === 1 ? 'is' : 'are'} not shown.)` : '';
+    if (failed.length === 0) return textResult(note || 'No failed requests.');
+    return textResult([clip(failed.map((r) => r.text).join('\n'), MAX_TEXT), ...(note ? [note] : [])].join('\n'));
   }
 
   // ---- 動かす ----
@@ -1637,6 +1646,26 @@ function frameOf(event: { frame?: unknown }): { origin: string | null; top: bool
     return { origin, top: f.parent === null };
   } catch {
     return { origin: null, top: true };
+  }
+}
+
+// 失敗した通信を出したもの（Claude に返すかを、コンソールの記録と同じ決まり visibleLog で決める）。Electron 44.7 で確かめた。
+// - 文書の読み込み（mainFrame・subFrame）は、読み込もうとした先のオリジン（そこに入るページ）。initiatorOrigin は読み込みを始めたページなので、
+//   許したページのリンクから許していない先へ移るときも、許したページになってしまう。トップの読み込みなら top
+// - ほかの通信（スクリプト・画像・fetch など）は、出したオリジン（initiatorOrigin。リダイレクトしても変わらない。不透明なオリジン "null"・
+//   ブラウザが自分で始めた通信は無いので、null にして返さない）と、出したフレームがトップか。フレームが分からない（移った・無くなった）
+//   ときは iframe として扱う（許す先か、今のトップと同じオリジンでトップが許した先のときだけ返す）
+type RequestDetails = { url: string; resourceType: string; initiatorOrigin?: string; frame?: unknown };
+function requestSource(details: RequestDetails): { origin: string | null; top: boolean } {
+  if (details.resourceType === 'mainFrame' || details.resourceType === 'subFrame') {
+    return { origin: webOrigin(details.url), top: details.resourceType === 'mainFrame' };
+  }
+  const origin = webOrigin(details.initiatorOrigin ?? '');
+  try {
+    const frame = details.frame as { parent?: unknown } | null | undefined;
+    return { origin, top: !!frame && frame.parent === null };
+  } catch {
+    return { origin, top: false };
   }
 }
 

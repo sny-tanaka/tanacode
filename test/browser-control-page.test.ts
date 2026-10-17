@@ -44,7 +44,7 @@ describe('ページを読むツールの前に（今のページ）', () => {
     const page = open('about:blank');
     expect(await call('screenshot')).toEqual(textResult('The current tab is empty. Open a page with navigate.', true));
     page.url = 'https://accounts.example.com/signin?continue=secret';
-    for (const tool of ['screenshot', 'get_text', 'get_accessibility_tree', 'get_console_logs', 'click', 'evaluate']) {
+    for (const tool of ['screenshot', 'get_text', 'get_accessibility_tree', 'get_console_logs', 'get_failed_requests', 'click', 'evaluate']) {
       const result = await call(tool, { selector: '#a', expression: '1' });
       expect(result.isError, tool).toBe(true);
       expect(textOf(result), tool).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude: it is outside the hosts the user allowed for Claude .*To use it, open it with navigate \(tanacode asks the user for permission\)\.$/);
