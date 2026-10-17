@@ -117,7 +117,7 @@ const MAX_ARRIVED_PROMPTS = 50;
 const SENDING_TIMEOUT_MS = 30_000;
 // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
 const SLOW_START_MS = 10_000;
-// プランの利用枠を get_usage で聞き直す間隔の下限（サーバーに聞くため。アプリ全体で）
+// プランの利用枠を get_usage で聞き直す間隔の下限（サーバーに聞くため。プロファイル＝SessionManager ごとに）
 const USAGE_INTERVAL_MS = 5 * 60_000;
 // stop_task のあと、タスクが終わった知らせ（task_notification）を待つ上限
 const TASK_STOP_WAIT_MS = 10_000;
@@ -2364,12 +2364,14 @@ export class SessionManager {
   }
 
   // プランの利用枠を get_usage で聞く（モデル別の週の枠は、rate_limit_event・statusLine に無いため）。サーバーに聞くので、
-  // アプリ全体で USAGE_INTERVAL_MS に 1 回まで。API キーなどで使えなければ何もしない
+  // プロファイル（この SessionManager）ごとに USAGE_INTERVAL_MS に 1 回まで。API キーなどで使えなければ何もしない。
+  // skip_behaviors: 返事の behaviors（使い方の傾向）は使わない。渡さないと、Claude Code が手元の会話ログ（24 時間・7 日分）を
+  // 毎回読んで集計する（2.1.302）
   private async refreshUsage(rt: Runtime): Promise<void> {
     const now = Date.now();
     if (now - this.usageAt < USAGE_INTERVAL_MS) return;
     this.usageAt = now;
-    const response = await rt.process?.client?.request<UsageResponse>('get_usage').catch(() => null);
+    const response = await rt.process?.client?.request<UsageResponse>('get_usage', { skip_behaviors: true }).catch(() => null);
     const limits = response ? usageLimitsOf(response) : null;
     if (limits && limits.length > 0) this.listeners.onUsage?.(limits, Date.now());
   }

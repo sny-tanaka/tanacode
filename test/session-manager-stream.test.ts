@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // stream-json の行と会話ログの、二重・順番・ターンの終わり（SessionManager。設計書 7 節の「順番と二重の扱い」）。
@@ -443,6 +443,66 @@ describe('利用枠（get_usage）', () => {
       { label: '週', model: 'Fable', percent: 55, resetsAt: null },
     ]);
     expect(pipe.requests('get_usage')).toHaveLength(1);
+  });
+
+  it('get_usage には skip_behaviors を付ける（使わない behaviors のために、手元の会話ログを集計させない）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await app.waitFor('get_usage', () => pipe.requests('get_usage').length === 1);
+    expect(pipe.requests('get_usage')[0].request).toEqual({ subtype: 'get_usage', skip_behaviors: true });
+  });
+
+  it('5 分たったら、次のターンの終わりに聞き直す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const turn = async (text: string, count: number) => {
+      await app.prompt(id, text);
+      app.say(id, line.text('はい'));
+      app.finish(id);
+      await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle' && turnEnds(id) === count);
+    };
+    await turn('はじめ', 1);
+    await app.waitFor('get_usage', () => pipe.requests('get_usage').length === 1);
+    // 時計を 5 分進める（進み方は本物のまま）
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now() + 5 * 60_000);
+    try {
+      await turn('つぎ', 2);
+      await app.waitFor('聞き直し', () => pipe.requests('get_usage').length === 2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('get_usage が失敗しても、答えが来なくても、利用枠を変えず、ターンも次の発言も待たせない', async () => {
+    app.answers.set('get_usage', new Error('rate limited'));
+    const first = app.create();
+    await app.ready(first.id);
+    await app.prompt(first.id, 'はじめ');
+    app.say(first.id, line.text('はい'));
+    app.finish(first.id);
+    await app.waitFor('失敗した get_usage', () => first.pipe.requests('get_usage').length === 1);
+    await app.waitFor('ターンの終わり', () => app.manager.stateOf(first.id) === 'idle');
+
+    // 答えない（時間切れまで待つ）
+    first.pipe.answers.set('get_usage', null);
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now() + 5 * 60_000);
+    try {
+      await app.prompt(first.id, 'つぎ');
+      app.say(first.id, line.text('はい'));
+      app.finish(first.id);
+      await app.waitFor('答えの無い get_usage', () => first.pipe.requests('get_usage').length === 2);
+      await app.waitFor('ターンの終わり', () => app.manager.stateOf(first.id) === 'idle' && turnEnds(first.id) === 2);
+      const uuid = await app.prompt(first.id, 'そのつぎ');
+      expect(first.pipe.prompts.some((p) => p.uuid === uuid)).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(app.usages).toEqual([]);
   });
 });
 
