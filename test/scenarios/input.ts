@@ -3,31 +3,29 @@ import { transcriptTitle, type ChatEvent, type TranscriptEntry } from '@shared/c
 import type { DiscoveredSession } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
-import type { ScreenInfo } from '@shared/screen';
+import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { Step } from '../cli/mock-api';
 
 // 入力まわりと、まだ確かめていなかった読み取りの台本（test/cli/input.test.ts）と、アプリが読み取れるべきもの。
-// - 入力欄: 書きかけ・--effort の表示・会話の最初の /context・複数行の貼り付け・! のコマンド・/rename と AI のタイトル
+// - 発言: --effort・会話の最初の /context・複数行と長い発言・札・! で始まる発言・親からの指示・/rename と AI のタイトル
 // - 読み取り: @ で添付したファイル・Read・サブフォルダの CLAUDE.md・思考・画像・セッションの一覧
 // - バックグラウンド: 実行中のサブエージェントの直近のツールと会話ログ・止めたバックグラウンドの Bash
 
-// 入力欄の台本 ------------------------------------------------------------
+// 発言の台本 --------------------------------------------------------------
 
 // 起動の引数に付けるエフォート（既定の値とは違うもの）
 export const EFFORT = 'low';
-// 打つだけで送らない文字（全角の文字も入れる）
-export const DRAFT = '書きかけの文 abc';
-// 複数行の貼り付け。短いものは入力欄にそのまま出て、長いものは [Pasted text #1 +29 lines] の目印になる
+// 複数行の発言
 export const PASTE = '貼り付けの 1 行目\n2 行目\n3 行目';
 export const LONG_PASTE = Array.from({ length: 30 }, (_, i) => `長い貼り付けの ${i + 1} 行目`).join('\n');
-// 入力欄の札（貼り付けた長い文）を添えた発言。アプリは、打った文のあとに、札を 1 つずつ丸ごと貼り付けとして打つ（SessionManager.submit の pastes）。
-// 1 行の長い貼り付け（800 文字より長い）は、行数の無い目印（[Pasted text #2]）になる
+// 入力欄の札（貼り付けた長い文）を添えた発言。アプリは、札を発言の文のあとに足して送る（SessionManager.submit の pastes。
+// ログインして使う Claude Code は <pasted_content> の囲みに入れる。モックの API で動かすここでは、囲みは付かない）
 export const CHIP_TEXT = '次のログを見て、原因を教えてください。';
 export const LONG_LINE = `1 行の長い貼り付け ${'x'.repeat(900)}`;
-// 長い複数行の発言。アプリは、行ごとの短い貼り付けに分けて送る（promptKeys）。入力欄で意味を持つ文字で始まる行（/ @ ! #）・空行・字下げ・
-// コードブロック・絵文字・長い行（300 文字の切れ目に絵文字が来る）を混ぜる。タブは、Claude Code が空白 4 つに直すので入れない
+// 長い複数行の発言。stream-json の発言の行で、そのまま送る。TUI の入力欄で意味を持つ文字で始まる行（/ @ ! #）・空行・字下げ・
+// コードブロック・絵文字・長い行を混ぜる。どれもコマンドやファイルの指定にならず、そのまま届く
 export const LONG_LINES = [
   '長い複数行の発言の 1 行目です。',
   '',
@@ -40,7 +38,7 @@ export const LONG_LINES = [
   '  - 入れ子（行末に空白 2 つ）  ',
   '```ts',
   'function f(a: number) {',
-  '    return `${a}`; // 字下げは空白 4 つ',
+  '\treturn `${a}`; // タブで字下げ',
   '}',
   '```',
   '',
@@ -49,23 +47,13 @@ export const LONG_LINES = [
   ...Array.from({ length: 30 }, (_, i) => `${i + 18} 行目: 長い複数行の発言が、そのまま届くかを確かめる文です。`),
   '最後の行（このあとに改行は無い）',
 ].join('\n');
-// 改行なしで 800 文字を超える行（1 段落の長い発言）。行の中は 300 文字までの貼り付けに分けて打つ。続けて届いた断片を Claude Code が
-// 1 つの貼り付けにまとめると、800 文字を超えて目印（[Pasted text #1]）になり、囲みに入ってしまう
 const sentences = (count: number, label: string) => Array.from({ length: count }, (_, i) => `これは${label}の ${i + 1} 文めで、途中で欠けずに届くかを確かめます。`).join('');
-// 1 行だけで 2,000 文字ほど
+// 改行なしで 2,000 文字ほどの 1 行（1 段落の長い発言）
 export const ONE_LONG_LINE = sentences(60, '改行のない長い段落');
 // 複数行の中に、1,500 文字ほどの行が 1 つ
 export const LINES_WITH_LONG_LINE = ['長い行を含む発言の 1 行目です。', sentences(48, '途中の長い行'), '', '最後の行です。'].join('\n');
-// 入力欄が背の高くなる発言。行ごとに送ると、入力欄には文字のまま入る。Claude Code は、入力欄を画面の高さの半分ほどまで伸ばして
-// 終わりのほうを出す（40 行の画面で 15 行）。背の高い画面（アプリのペインが縦に長いとき）では、入力欄が 30 行を超える
-export const TALL_LINES = Array.from({ length: 70 }, (_, i) => `${i + 1} 行目: 入力欄が高くなる発言です。`).join('\n');
-// 番号付きの行（Markdown の番号付きの箇条書き）を含む発言。入力欄の先頭の行が「❯ 1. …」の形になると、メニューのカーソルのある選択肢と
-// 同じ形になる。入力欄の高さに上限のある Claude Code（40 行の画面で 15 行）では、長い入力は入力欄の中でスクロールし、見えている
-// いちばん上の行に ❯ が付くので、発言の途中の番号付きの行でも、打っている途中にこの形になる
+// 親セッションから子への指示の形（見出し・番号付きの手順・箇条書き）
 const steps = (count: number) => Array.from({ length: count }, (_, i) => `${i + 1}. 手順 ${i + 1}: 該当するファイルを読んで、直すところを洗い出す`);
-// 番号付きの行で終わる発言（打ち終えた入力欄の、見えているいちばん上の行が番号付きになる）
-export const NUMBERED_LINES = ['次の順に進めてください。', '', '## 進め方', ...steps(24)].join('\n');
-// 親セッションから子への指示の形（見出し・番号付きの手順・箇条書き）。番号付きの行が入力欄の高さより長く続き、そのあとにも文が続く
 export const NUMBERED_PROMPT = [
   'あなたは worktree で動く子セッションです。次の作業を 1 件だけ担当します。',
   '',
@@ -78,72 +66,42 @@ export const NUMBERED_PROMPT = [
   '',
   '終わったら、変えたファイルと確かめた結果を報告してください。',
 ].join('\n');
-// 1 行めから番号で始まる発言（人がチャットの入力欄に書く、番号付きの箇条書き）。小分けに打つ長さ（1,000 バイトより長い）
-export const NUMBERED_FIRST = [...steps(30), '', '上から順にお願いします。'].join('\n');
-// 入力欄で ! を付けて実行するコマンドと、その出力
+// ! で始まる発言。チャットの入力欄では、シェルで動かさず、そのまま Claude への発言として送る
 export const SHELL_COMMAND = 'echo tanacode-shell';
-export const SHELL_OUTPUT = 'tanacode-shell';
 export const RENAMED = 'tanacode の確認';
 // タイトル作りの呼び出し（ツールの一覧が付いていない）にモックが返す JSON の title
 export const AI_TITLE = 'AI が付けたタイトル';
 export const AI_TITLE_REPLY = { match: 'Write the title', text: JSON.stringify({ title: AI_TITLE }) };
 
-// --effort を付けて起動したときの入力欄のまわり。エフォートは入力欄の上の表示から、モデル名はバナーから読む
-// （バナーは「Opus 5.5 with low effort · …」になる）
-export function checkEffort(info: Pick<ScreenInfo, 'effort' | 'model'>, effort: string): void {
-  expect(info.effort).toBe(effort);
-  expect(info.model).toMatch(/^[A-Z][a-z]+ \d+(?:\.\d+)?(?: \(1M context\))?$/);
+// --effort を付けて起動したときの、アプリが stream から組み立てた状態（statusLine の代わり）
+export function checkEffort(info: StatusLineInfo | null, effort: string): void {
+  expect(info?.effort).toBe(effort);
+  expect(info?.model).not.toBeNull();
 }
 
-// 入力欄の書きかけ（送っていない文字）。前後の空白と、先頭の「❯ 」は含めない
-export function checkDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, typed: string): void {
-  expect(info.state.kind).toBe('prompt');
-  expect(info.draft).toBe(typed);
-}
-
-// 番号付きの行で始まる入力欄（「❯ 9. 手順 9…」）。選択メニューではなく入力欄として読み、見えている分（打った文の終わり）を書きかけにする
-export function checkNumberedDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, typed: string): void {
-  expect(info.state.kind).toBe('prompt');
-  expect(info.draft).toMatch(/^\d+\. /);
-  expect(typed.replace(/\s/g, '').endsWith(info.draft.replace(/\s/g, ''))).toBe(true);
-}
-
-// 長い貼り付けは入力欄で目印になる（ClaudePane は、この目印を除いて送った文字と比べる）
-export function checkPastedDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, lines: number): void {
-  expect(info.state.kind).toBe('prompt');
-  expect(info.draft).toMatch(new RegExp(`^\\[Pasted text #\\d+ \\+${lines - 1} lines\\]$`));
-}
-
-// 札を添えた発言の入力欄。打った文のあとに、札ごとの目印が並ぶ（中断で入力欄に戻ったときも同じ形。pulledBackPastes が、目印の数で札と突き合わせる）
-export function checkChipDraft(info: Pick<ScreenInfo, 'state' | 'draft'>, text: string, lines: number): void {
-  expect(info.state.kind).toBe('prompt');
-  const draft = info.draft.replace(/\s/g, '');
-  expect(draft.startsWith(text.replace(/\s/g, ''))).toBe(true);
-  expect(draft.slice(text.replace(/\s/g, '').length)).toMatch(new RegExp(`^\\[Pastedtext#\\d+\\+${lines - 1}lines\\]\\[Pastedtext#\\d+\\]$`));
-}
-
-// 貼り付けた発言は、改行を含めてそのまま 1 つの発言になる（<pasted_content> の囲みや端末の制御文字を残さない）
+// 送った発言は、改行を含めてそのまま 1 つの発言になる（<pasted_content> の囲みや端末の制御文字を残さない）
 export function checkPasted(events: ChatEvent[], text: string): void {
   const users = events.filter((e): e is Extract<ChatEvent, { type: 'user' }> => e.type === 'user');
   expect(users.map((e) => e.text)).toContain(text);
   for (const e of users) expect(e.text).not.toMatch(/<\/?pasted_content|\x1b/);
 }
 
-// 会話の最初の /context などのローカルのコマンドは、system の local_command の行に残る。
-// コマンドは発言として出し、出力（<local-command-stdout>）や、Claude 向けに書かれた結果（isMeta の user 行）は出さない
+// 会話の最初の /context などのローカルのコマンド。-p では、コマンドは user の行（<command-name>）に、出力は system の
+// local_command の行（<local-command-stdout>）に残る（TUI では、コマンドも system の local_command の行だった）。
+// コマンドは発言として出し、出力や、Claude 向けに書かれた結果（isMeta の user 行）は出さない
 export function checkLocalCommand(entries: TranscriptEntry[], events: ChatEvent[], command: string): void {
-  expect(entries.some((e) => e.type === 'system' && e.subtype === 'local_command' && e.content?.includes(`<command-name>${command.split(' ')[0]}</command-name>`))).toBe(true);
+  const name = `<command-name>${command.split(' ')[0]}</command-name>`;
+  const textOf = (e: TranscriptEntry) => (typeof e.message?.content === 'string' ? e.message.content : (e.content ?? ''));
+  expect(entries.some((e) => (e.type === 'user' || (e.type === 'system' && e.subtype === 'local_command')) && textOf(e).includes(name))).toBe(true);
+  expect(entries.some((e) => e.type === 'system' && e.subtype === 'local_command' && textOf(e).includes('<local-command-stdout>'))).toBe(true);
   expect(events).toContainEqual(expect.objectContaining({ type: 'user', text: command }));
   for (const e of events) if (e.type === 'user') expect(e.text).not.toMatch(/<local-command-|<command-name>|^## Context Usage/);
 }
 
-// ! のコマンド。コマンドと出力は別の user 行に分かれて残る（<bash-input> と <bash-stdout>）。
-// shell のイベントになり、出力のタグを発言として出さない
-export function checkShell(events: ChatEvent[], command: string, output: string): void {
-  expect(events).toContainEqual(expect.objectContaining({ type: 'shell', command }));
-  const outputs = events.flatMap((e) => (e.type === 'shell' || e.type === 'shell-output' ? [e.output] : []));
-  expect(outputs.join('\n')).toContain(output);
-  for (const e of events) if (e.type === 'user') expect(e.text).not.toMatch(/<\/?bash-(?:input|stdout|stderr)>/);
+// ! で始まる発言は、シェルで動かず、そのまま発言になる（コマンドの行・出力の行にならない）
+export function checkBangPrompt(events: ChatEvent[], command: string): void {
+  expect(events).toContainEqual(expect.objectContaining({ type: 'user', text: `!${command}` }));
+  expect(events.filter((e) => e.type === 'shell' || e.type === 'shell-output')).toEqual([]);
 }
 
 // /rename で付けた名前（custom-title）は、ほかのタイトルより優先される

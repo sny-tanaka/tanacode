@@ -45,6 +45,6 @@ export default defineConfig({
     emptyOutDir: true,
     chunkSizeWarningLimit: 8000,
     // 親のページ（上の帯・機能一覧）と、iframe の中のアプリの画面
-    rollupOptions: { input: { index: resolve('src/renderer/src/demo/site/index.html'), app: resolve('src/renderer/src/demo/site/app.html') } },
+    rolldownOptions: { input: { index: resolve('src/renderer/src/demo/site/index.html'), app: resolve('src/renderer/src/demo/site/app.html') } },
   },
 });

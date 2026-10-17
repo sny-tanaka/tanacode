@@ -1,125 +1,154 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import type { Menu, MenuOption } from '@shared/screen';
+import type { PendingPermission } from '@shared/questions';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { MenuCard } from './MenuCard';
 
-const option = (id: string, label: string, extra: Partial<MenuOption> = {}): MenuOption => ({
-  id,
-  label,
-  description: '',
-  pointed: false,
-  checked: null,
-  textInput: false,
-  ...extra,
+// Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認）のカード
+const permission = (patch: Partial<PendingPermission> = {}): PendingPermission => ({
+  id: 'req-1',
+  tool: 'Bash',
+  title: 'Claude wants to run a command',
+  description: 'テストを流す',
+  input: { command: 'npm test -- --run test/session-manager.test.ts', description: 'テストを流す' },
+  reason: null,
+  always: ['Bash(npm test:*)'],
+  plan: null,
+  agent: null,
+  ...patch,
 });
 
-const question: Menu = {
-  kind: 'question',
-  tabs: [],
-  title:
-    '新規指摘 D1-1（staging.yml に注記を足す案）は、どう扱いますか？ 私の判断は次 PR メモ送りです。指摘の趣旨は今回の修正で満たされており、この注記は本 PR の目的の範囲外なので、PR 本文に残すだけにします。',
-  context: [],
-  options: [
-    option('1', '次 PR メモ送り（推奨）', { description: '差分は変えず、PR 本文の「次 PR メモ」欄に 1 行記録して先へ進む', pointed: true }),
-    option('2', '今修正する', { description: 'staging.yml:46 付近に注記を 1〜2 行足してコミットする' }),
-    option('3', '不要として捨てる', { description: '記録せずに先へ進む' }),
-    option('4', 'Type something.', { textInput: true }),
-    option('5', 'Chat about this'),
-  ],
-  multiSelect: false,
-  hint: 'Enter to select · ↑/↓ to navigate · Esc to cancel',
-};
+const PLAN = [
+  '## ログインの不具合を直すプラン',
+  '',
+  '1. `src/Login.tsx` の `useEffect` の依存の配列に `onSubmit` を足す（送信のたびに二重に呼ばれているため）',
+  '2. `test/login.test.tsx` に、二重に送らないことを確かめるテストを足す',
+  '3. `npm test` を流して、ほかのテストが落ちないことを確かめる',
+  '',
+  '変えるのは 2 ファイルだけです。設定やほかの画面には触れません。',
+].join('\n');
 
 const meta = {
-  title: 'チャット/質問のカード',
+  title: 'チャット/許可の確認のカード',
   component: MenuCard,
-  args: { sessionId: 'story', menu: question },
+  args: { sessionId: 'story', permission: permission() },
 } satisfies Meta<typeof MenuCard>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const 質問: Story = {};
+export const コマンドの許可: Story = {};
 
-export const 複数選択: Story = {
+// 「今後は聞かない」の候補を Claude Code が出さないとき（読むだけの Bash など、覚えさせられないもの）
+export const 今後は聞かないが無い: Story = {
+  args: { permission: permission({ always: null, reason: 'このコマンドはフォルダの外に書き込みます' }) },
+};
+
+// コマンドのほかの入力（裏で動かす・時間切れ・サンドボックスの外で動かす）も出す。説明はカードの説明と同じなので二度は出さない
+export const コマンドのほかの入力: Story = {
   args: {
-    menu: {
-      ...question,
-      title: '直したい箇所をすべて選んでください',
-      tabs: [
-        { label: '直す箇所', answered: false },
-        { label: '進め方', answered: true },
-      ],
-      multiSelect: true,
-      options: [
-        option('1', '送信ボタンの色', { checked: true, pointed: true }),
-        option('2', 'インラインコード', { checked: false }),
-        option('3', 'ターミナルの配色', { checked: true }),
-        option('4', 'Type something.', { checked: false, textInput: true }),
-        option('submit', 'Next'),
-        option('5', 'Chat about this'),
-      ],
-    },
+    permission: permission({
+      input: {
+        command: 'npm run build && npm run e2e',
+        description: 'テストを流す',
+        run_in_background: true,
+        timeout: 600000,
+        dangerouslyDisableSandbox: true,
+      },
+      always: null,
+    }),
   },
 };
 
-export const 実行の許可: Story = {
+// 置き換える前と後を、差分の行で出す（変わらない行は色を付けない）
+export const ファイルの編集: Story = {
   args: {
-    menu: {
-      kind: 'permission',
-      tabs: [],
-      title: 'Do you want to proceed?',
-      context: ['Bash command', 'python3 -c "import time; time.sleep(30); print(42)"', '30秒待機してから42を出力'],
-      options: [option('1', 'Yes', { pointed: true }), option('2', 'Yes, and don’t ask again for: python3 *'), option('3', 'No')],
-      multiSelect: false,
-      hint: 'Esc to cancel · Tab to amend',
-    },
+    permission: permission({
+      tool: 'Edit',
+      title: 'Claude wants to edit a file',
+      description: null,
+      input: {
+        file_path: '/Users/me/work/app/src/Login.tsx',
+        old_string: ['  useEffect(() => {', '    onSubmit(form);', '  }, []);'].join('\n'),
+        new_string: ['  useEffect(() => {', '    if (!submitted) onSubmit(form);', '  }, [onSubmit, submitted]);'].join('\n'),
+        replace_all: false,
+      },
+      always: ['acceptEdits'],
+    }),
   },
 };
 
-// 押した選択が Claude Code に届かなかったとき（選択肢を押すと、カードの下に知らせが出る。押し直せる）
-export const 実行の許可_届かなかったとき: Story = {
-  args: 実行の許可.args,
-  beforeEach: () => mockApi({ 'screen.choose': () => Promise.resolve('ignored') }),
-};
-
-// 初めてのフォルダで出る、フォルダの信頼の確認（Claude Code の画面では番号の無い選択肢）
-export const フォルダの信頼の確認: Story = {
+// 編集ごとに、何個めかの区切りを入れる
+export const 複数の編集: Story = {
   args: {
-    menu: {
-      kind: 'other',
-      tabs: [],
-      title:
-        "Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.",
-      context: ['Accessing workspace:', '/Users/me/src/tanacode', "Claude Code'll be able to read, edit, and execute files here.", 'Security guide'],
-      options: [option('1', 'No, exit', { pointed: true }), option('2', 'Yes, I trust this folder')],
-      multiSelect: false,
-      hint: 'Enter to confirm · Esc to cancel',
-    },
+    permission: permission({
+      tool: 'MultiEdit',
+      title: 'Claude wants to edit a file',
+      description: null,
+      input: {
+        file_path: '/Users/me/work/app/src/price.ts',
+        edits: [
+          { old_string: 'const TAX = 0.08;', new_string: 'const TAX = 0.1;' },
+          { old_string: 'price * (1 + TAX)', new_string: 'Math.round(price * (1 + TAX))', replace_all: true },
+        ],
+      },
+      always: ['acceptEdits'],
+    }),
   },
 };
 
-// 選択肢にプレビューがある質問。ホバーした選択肢のプレビューが下に出る
-export const プレビュー付き: Story = {
+// 書く中身を、足す行として出す
+export const ファイルを書く: Story = {
   args: {
-    menu: {
-      ...question,
-      title: '今回の移行はワークスペース全体の移行ですか？',
-      tabs: [
-        { label: '移行範囲', answered: false },
-        { label: 'Chatbot認可状況', answered: false },
-      ],
-      previewLayout: true,
-      options: [
-        option('1', 'ワークスペース全体を新アカウントへ移行（こちらの想定に近い）', {
-          pointed: true,
-          preview: '新ワークスペース\n├─ #dev\n├─ #dev-notify-deploy\n└─ #grp_パーソナリティ開発部\n\n旧ワークスペース: 廃止',
-        }),
-        option('2', '一部のチャンネルのみ新ワークスペースへ移行', {
-          preview: '新ワークスペース\n└─ #grp_パーソナリティ開発部\n\n旧ワークスペース\n├─ #dev\n└─ #dev-notify-deploy',
-        }),
-        option('3', 'まだ決めていない'),
-      ],
-    },
+    permission: permission({
+      tool: 'Write',
+      title: 'Claude wants to create a file',
+      description: null,
+      input: {
+        file_path: '/Users/me/work/app/test/login.test.tsx',
+        content: [
+          "import { render } from '@testing-library/react';",
+          "import { Login } from '../src/Login';",
+          '',
+          "it('送信は 1 回だけ', () => {",
+          '  const onSubmit = vi.fn();',
+          '  render(<Login onSubmit={onSubmit} />);',
+          '  expect(onSubmit).toHaveBeenCalledTimes(1);',
+          '});',
+          '',
+        ].join('\n'),
+      },
+      always: ['acceptEdits'],
+    }),
   },
+};
+
+// とても長い中身は、頭だけにして省いた文字の数を出す
+export const 長い中身: Story = {
+  args: {
+    permission: permission({
+      tool: 'Write',
+      title: 'Claude wants to create a file',
+      description: null,
+      input: { file_path: '/Users/me/work/app/data/prices.csv', content: Array.from({ length: 400 }, (_, i) => `item-${i},${(i * 37) % 1000}`).join('\n') },
+      always: null,
+    }),
+  },
+};
+
+export const サブエージェントの中の呼び出し: Story = {
+  args: { permission: permission({ agent: 'agent-7f3a', description: 'ビルドの結果を調べる' }) },
+};
+
+export const プランの承認: Story = {
+  args: { permission: permission({ tool: 'ExitPlanMode', title: null, description: null, input: { plan: PLAN }, always: null, plan: PLAN }) },
+};
+
+// プランの本文を読めなかった（plan が空の文字列）。承認の 2 つは押せない。計画を続ける・× は使える
+export const プランを読めない: Story = {
+  args: { permission: permission({ tool: 'ExitPlanMode', title: null, description: null, input: {}, always: null, plan: '' }) },
+};
+
+// 答えたが、もう待っていなかった（スマホで先に答えた）
+export const 答えられなかった: Story = {
+  beforeEach: () => mockApi({ 'permission.reply': () => Promise.resolve(false) }),
 };

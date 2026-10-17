@@ -4,16 +4,18 @@ import { Toggle } from '../layout/Toggle';
 import { useRemoteControlAvailable } from './sessionOptions';
 
 // Remote Control を使うかのトグル（チャットのヘッダーと、新規セッションの画面）。
-// connected: 実際につながっているか（null は、まだ始めていないセッション）
+// connected: 実際につながっているか（null は、まだ始めていないセッション）/ locked: 今は切り替えられない（ターミナルモード）
 export function RemoteControlToggle({
   on,
   connected,
   busy = false,
+  locked = false,
   onChange,
 }: {
   on: boolean;
   connected: boolean | null;
   busy?: boolean;
+  locked?: boolean;
   onChange: (on: boolean) => void;
 }) {
   const available = useRemoteControlAvailable();
@@ -32,9 +34,9 @@ export function RemoteControlToggle({
       label={<RemoteIcon size={16} />}
       name="Remote Control"
       on={available && on}
-      disabled={!available}
+      disabled={!available || locked}
       busy={busy}
-      title={`Remote Control\n${available ? `${t('chat.remoteControl.about')}\n${state}` : t('chat.remoteControl.unavailable')}`}
+      title={`Remote Control\n${available ? `${t('chat.remoteControl.about')}\n${state}${locked ? `\n${t('chat.remoteControl.lockedInTerminal')}` : ''}` : t('chat.remoteControl.unavailable')}`}
       onChange={onChange}
     />
   );

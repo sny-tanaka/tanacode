@@ -19,8 +19,9 @@ export type RelayDeps = {
   // どの MCP サーバーとして答えるか（ツールの一覧と説明）
   server: McpServerDef;
   version: string;
-  // アプリにツールの呼び出しを渡し、結果を受け取る。signal: Claude Code がその呼び出しを取り消した（Esc で中断した・待つ上限を過ぎた）
-  call: (tool: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<ToolResult>;
+  // アプリにツールの呼び出しを渡し、結果を受け取る。signal: Claude Code がその呼び出しを取り消した（Esc で中断した・待つ上限を過ぎた）。
+  // toolUseId: Claude Code がその呼び出しに付けた ID（tools/call の _meta の claudecode/toolUseId。フックの tool_use_id と同じ。無ければ undefined）
+  call: (tool: string, args: Record<string, unknown>, signal: AbortSignal, toolUseId?: string) => Promise<ToolResult>;
 };
 
 // 1 つのメッセージへの返事。通知（id の無いもの）には返さない（null）
@@ -56,7 +57,9 @@ export async function respond(message: Incoming, deps: RelayDeps, signal: AbortS
       const raw = params?.arguments;
       const args = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
       if (!findTool(deps.server, name)) return ok(textResult(`Unknown tool: ${name}`, true));
-      return ok(await deps.call(name, args, signal));
+      const meta = params?._meta && typeof params._meta === 'object' ? (params._meta as Record<string, unknown>) : {};
+      const toolUseId = typeof meta['claudecode/toolUseId'] === 'string' ? meta['claudecode/toolUseId'] : undefined;
+      return ok(await deps.call(name, args, signal, toolUseId));
     }
     default:
       return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };

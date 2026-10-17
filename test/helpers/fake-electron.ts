@@ -264,11 +264,15 @@ export const electronModule = {
   },
 };
 
+// 通信の結果のうち、どのページの通信かを表すもの。initiatorOrigin: 通信を出したオリジン（ブラウザが自分で始めたものは無い）/
+// frame: 通信を出したフレーム（Electron の WebFrameMain のうち、使うもの。parent が null ならトップ。移った・無くなったら無い）
+export type RequestSender = { webContentsId?: number; initiatorOrigin?: string; frame?: { origin: string; url: string; parent: unknown } | null };
+
 // プレビューの webview が使うセッション（Session の代わり）。webRequest の受け手を控え、テストから通信の結果を送る
 export class FakeSession {
   readonly filters: unknown[] = [];
-  completed: ((details: { statusCode: number; method: string; url: string; resourceType: string; webContentsId?: number }) => void) | null = null;
-  errored: ((details: { error: string; method: string; url: string; resourceType: string; webContentsId?: number }) => void) | null = null;
+  completed: ((details: { statusCode: number; method: string; url: string; resourceType: string } & RequestSender) => void) | null = null;
+  errored: ((details: { error: string; method: string; url: string; resourceType: string } & RequestSender) => void) | null = null;
   readonly webRequest = {
     onCompleted: (filter: unknown, listener: NonNullable<FakeSession['completed']>) => {
       this.filters.push(filter);

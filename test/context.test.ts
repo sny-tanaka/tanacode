@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
 import { clip, contextPercent, contextUsage, contextWindow, type ContextItem } from '@shared/context';
 import { setLanguage } from '@shared/i18n';
-import { promptKeys } from '@shared/prompt-keys';
 import { ContextTracker, estimateTokens } from '../src/main/context-tracker';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 
@@ -230,45 +229,26 @@ describe('estimateTokens', () => {
   });
 });
 
-describe('promptKeys', () => {
-  it('引数が複数行の /compact は、名前を打鍵して引数を貼り付ける', () => {
-    expect(promptKeys('/compact 残す\n捨てる')).toBe('/compact \x1b[200~残す\n捨てる\x1b[201~');
-    // 長い 1 行も、貼り付けとみなされる前に引数だけ貼り付ける
-    const long = `/compact ${'あ'.repeat(900)}`;
-    expect(promptKeys(long)).toBe(`/compact \x1b[200~${'あ'.repeat(900)}\x1b[201~`);
-    expect(promptKeys('/compact 短い指示')).toBe('/compact 短い指示');
-  });
-
-  it('/compact 以外の「/単語」で始まる複数行の発言・パスで始まる複数行の発言は、今までどおり丸ごと貼り付ける', () => {
-    // 名前を打鍵すると、Claude Code がコマンドとして実行してしまう（/clear など）。行ごとに分けても、1 行めがコマンドになる
-    expect(promptKeys('/api のエンドポイントを直して\n詳しく')).toBe('\x1b[200~/api のエンドポイントを直して\n詳しく\x1b[201~');
-    expect(promptKeys('/clear は何をしますか?\n詳しく')).toBe('\x1b[200~/clear は何をしますか?\n詳しく\x1b[201~');
-    expect(promptKeys('/Users/me/a.ts を見て\n直して')).toBe('\x1b[200~/Users/me/a.ts を見て\n直して\x1b[201~');
-    expect(promptKeys('一行')).toBe('一行');
-  });
-});
-
 describe('コンテキストの使用量と割合（ヘッダーのメーターと、自動の最適化圧縮で同じ出し方）', () => {
   const statusLine = (tokens: number, size = 1_000_000) => ({ model: null, effort: null, version: null, context: { size, usedPercent: 0, tokens }, rateLimits: null, costUsd: null, transcriptPath: null, updatedAt: 0 });
 
-  it('上限は、1M コンテキストのモデル・表示・20 万を超えた使用量なら 100 万、ほかは 20 万', () => {
-    expect(contextWindow(null, null, null)).toBe(200_000);
-    expect(contextWindow('claude-opus-5-5[1m]', null, 10)).toBe(1_000_000);
-    expect(contextWindow('opus', 'Opus 5.5 (1M context)', 10)).toBe(1_000_000);
-    expect(contextWindow('opus', 'Opus 5.5', 200_001)).toBe(1_000_000);
-    expect(contextWindow('opus', 'Opus 5.5', 200_000)).toBe(200_000);
+  it('上限は、1M コンテキストのモデル・20 万を超えた使用量なら 100 万、ほかは 20 万', () => {
+    expect(contextWindow(null, null)).toBe(200_000);
+    expect(contextWindow('claude-opus-5-5[1m]', 10)).toBe(1_000_000);
+    expect(contextWindow('opus', 200_001)).toBe(1_000_000);
+    expect(contextWindow('opus', 200_000)).toBe(200_000);
   });
 
   it('statusLine があれば、その使用量と上限。使用量が 0 のとき（/clear・圧縮の直後）は、会話ログの使用量で補う', () => {
-    expect(contextUsage(null, null, statusLine(170_000), 5)).toEqual({ tokens: 170_000, limit: 1_000_000 });
-    expect(contextUsage(null, null, statusLine(0, 200_000), 4200)).toEqual({ tokens: 4200, limit: 200_000 });
-    expect(contextUsage(null, null, statusLine(0), null)).toEqual({ tokens: 0, limit: 1_000_000 });
+    expect(contextUsage(null, statusLine(170_000), 5)).toEqual({ tokens: 170_000, limit: 1_000_000 });
+    expect(contextUsage(null, statusLine(0, 200_000), 4200)).toEqual({ tokens: 4200, limit: 200_000 });
+    expect(contextUsage(null, statusLine(0), null)).toEqual({ tokens: 0, limit: 1_000_000 });
   });
 
   it('statusLine が無ければ、会話ログの使用量と、モデルから決めた上限', () => {
-    expect(contextUsage(null, null, null, 50_000)).toEqual({ tokens: 50_000, limit: 200_000 });
-    expect(contextUsage('sonnet[1m]', null, null, null)).toEqual({ tokens: null, limit: 1_000_000 });
-    expect(contextUsage(null, null, { ...statusLine(1), context: null }, 300_000)).toEqual({ tokens: 300_000, limit: 1_000_000 });
+    expect(contextUsage(null, null, 50_000)).toEqual({ tokens: 50_000, limit: 200_000 });
+    expect(contextUsage('sonnet[1m]', null, null)).toEqual({ tokens: null, limit: 1_000_000 });
+    expect(contextUsage(null, { ...statusLine(1), context: null }, 300_000)).toEqual({ tokens: 300_000, limit: 1_000_000 });
   });
 
   it('割合は 0〜100。使用量が分からない・上限が無いときは null', () => {

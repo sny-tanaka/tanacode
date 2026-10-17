@@ -41,11 +41,8 @@ function enterFreeMode(story: Story): void {
   backend.onUserMessage = (id, text, images) => reply(id, (c) => ({ type: 'user', id: c.next('u'), text, images }));
   // チェックリストのスレッドに「Claude に通知する」で返信したときも、知らせを出して同じ返事をする
   backend.onChecklistNotify = (id, notice) => reply(id, () => notice);
-  // 質問のカードが残っていたら、答えたところで閉じる
-  backend.onChoose = (id) => {
-    backend.setScreen(id, { state: { kind: 'prompt' } });
-    backend.update(id, { attention: null });
-  };
+  // 質問のカードが残っていたら、答えたところで閉じる（カードは backend が消す）
+  backend.onAnswer = () => {};
 }
 
 // start: ツアーを始める章の番号（-1 ならツアーを流さない）

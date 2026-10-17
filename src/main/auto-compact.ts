@@ -4,7 +4,6 @@ import { contextPercent, contextUsage } from '@shared/context';
 import type { SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
 import { midTurnPercent, type AutoCompactTrigger, type CompactFailure, type CompactStatus } from '@shared/optimized-compact';
-import type { ScreenInfo } from '@shared/screen';
 import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 
@@ -21,8 +20,7 @@ import type { StatusLineInfo } from '@shared/statusline';
 // - 取りやめた・失敗したときは、次のターンの終わりにもう 1 回だけ試す。続けて 2 回だめなら、そのセッションでは休む
 //   （休んでいる間は、Claude Code の自動の圧縮を止めない。上限で詰まらないように）。手動で成功するか、トグルを入れ直すと戻る
 // 人のじゃまをしないための決まり（ターンの終わりの切り替えだけ。アプリが途中で止めたターンは、止めたままにしないよう、必ず始める）:
-// - 人が中断（Esc）して終わったターンでは、始めない（中断した人は、すぐ次の発言を打つ。仕上げが取りやめになるだけ）
-// - 入力欄に書きかけの文字があるあいだは、始めない（仕上げの頼みを打てずに、失敗に数えられる）
+// - 人が中断して終わったターンでは、始めない（中断した人は、すぐ次の発言を打つ。仕上げが取りやめになるだけ）
 const REARM_MARGIN = 10;
 const MAX_FAILURES = 2;
 // ターンが終わってから、最後の応答の使用量が届くまで待つ時間。statusLine は、ターンの終わりより少し遅れて書かれる
@@ -35,7 +33,6 @@ export type AutoCompactHost = {
   stateOf(id: string): SessionState | null;
   statusLine(id: string): StatusLineInfo | null;
   knowledge(id: string): SessionKnowledge;
-  screen(id: string): ScreenInfo | null;
   // 最後に終わったターンが、人の中断（Esc）で終わったか
   lastTurnInterrupted(id: string): boolean;
 };
@@ -121,13 +118,9 @@ export class AutoCompact {
     s.working = false;
     this.clearStop(id);
     if (!ended) return;
-    if (!stopped) {
-      if (host.lastTurnInterrupted(id)) {
-        s.endedAt = null;
-        return;
-      }
-      // 書きかけが消えたら（使用量を待つ間なら）始める
-      if (host.screen(id)?.draft) return;
+    if (!stopped && host.lastTurnInterrupted(id)) {
+      s.endedAt = null;
+      return;
     }
     const over = s.armed && percent !== null && percent >= threshold;
     if (!stopped && !over && !s.preCompact) return;
@@ -167,7 +160,7 @@ export class AutoCompact {
   }
 
   // 圧縮の前のフック（PreCompact・auto）に答える。自動がオンで使えるセッションなら、止める理由を返す（Claude Code は要約を作らない）。
-  // 止めたら、次のツールの切れ目（かターンの終わり）で、同じ流れに入る。オフ・使えない・休んでいるセッションと、
+  // 止めたら、次のツールの切れ目（かターンの終わり）で、同じ流れに入る。オフ・使えない・休んでいる・ターミナルモードのセッションと、
   // 切り替えたばかりのセッションでは止めない（空を返す）
   preCompact(id: string): string {
     if (!this.active(id)) return '';
@@ -194,16 +187,17 @@ export class AutoCompact {
   }
 
   // 自動で始めるセッションか。トグルがオン・チェックリストが使える・休んでいない
+  // 使えるか。ターミナルモードの間（TUI）は使わない。流れ（仕上げ・/clear・再開の文）を進められないので、Claude Code の自動の圧縮も止めない
   private active(id: string): boolean {
     const summary = this.deps.host.summary(id);
-    if (!summary || summary.archived || summary.autoCompact === false) return false;
+    if (!summary || summary.archived || summary.autoCompact === false || summary.terminal) return false;
     return !this.state(id).paused && this.deps.compact.status(id).unavailable === null;
   }
 
   // コンテキストの割合（ヘッダーのメーターと同じ出し方）。分からなければ null
   private percentOf(id: string): number | null {
     const { host } = this.deps;
-    return contextPercent(contextUsage(host.summary(id)?.model ?? null, host.screen(id)?.model ?? null, host.statusLine(id), host.knowledge(id).contextTokens));
+    return contextPercent(contextUsage(host.summary(id)?.model ?? null, host.statusLine(id), host.knowledge(id).contextTokens));
   }
 
   private state(id: string): State {
@@ -226,7 +220,8 @@ export class AutoCompact {
     const reason = `tanacode: the context is ${percent === null ? 'almost' : `${Math.round(percent)}%`} full, so tanacode stops here to reset the conversation and resume from the checklists (optimized compaction).`;
     try {
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify({ continue: false, stopReason: reason }), { mode: 0o600 });
+      // suppressOutput: アプリのフックの印（hook-output.ts）
+      writeFileSync(file, JSON.stringify({ continue: false, stopReason: reason, suppressOutput: true }), { mode: 0o600 });
       this.state(id).stopWritten = true;
     } catch {
       // 書けなければ、ターンの終わりを待つ

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
 import type { SessionSummary, SlashCommand } from '@shared/ipc';
-import { isLongPaste, stripControlChars } from '@shared/prompt-keys';
+import { isLongPaste, stripControlChars } from '@shared/paste';
 import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
 import type { ReviewComment } from '../review/LineComments';
@@ -73,6 +73,9 @@ type Props = {
   onSchedule?: (at: number) => void;
   // 予約できる（送る内容がある）
   canSchedule?: boolean;
+  // 入力欄の持ち主（チャットではセッションの id。描き直して持ち主が変わったら、前の持ち主のために保存していた添付は、移った先に入れない）。
+  // 省略は、持ち主が変わらない入力欄（新規セッションの画面は、フォルダを変えても同じ入力欄）
+  owner?: string;
 };
 
 // 送るときに一緒に送る、コードへのコメント。入力欄の上と、ターミナルモードの画面の下に出す。押すと、そのコメントの場所を開く
@@ -150,6 +153,7 @@ export function ChatInput({
   working = false,
   onSchedule,
   canSchedule = false,
+  owner = '',
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
@@ -194,7 +198,14 @@ export function ChatInput({
         alive = false;
       };
     } else {
-      void completion.listCommands().then(setCommands);
+      // 読んでいる間に読み込み元が変わったら（ほかのセッションへ移ったなど）、遅れて届いた前の一覧は使わない
+      let alive = true;
+      void completion.listCommands().then((list) => {
+        if (alive) setCommands(list);
+      });
+      return () => {
+        alive = false;
+      };
     }
     // completion は key が同じなら同じ読み込み元
   }, [open, token?.kind, completion.key]);
@@ -275,7 +286,11 @@ export function ChatInput({
     requestAnimationFrame(() => inputRef.current?.setSelectionRange(nextCaret, nextCaret));
   };
 
+  // 画像を保存し終えたときの、入力欄の持ち主と中身（保存している間に打った文字・足した添付を、古い中身で上書きしない）
+  const latest = useRef({ owner, value, attachments, onChange, onAttachmentsChange });
+  latest.current = { owner, value, attachments, onChange, onAttachmentsChange };
   const addFiles = async (list: FileList | File[]) => {
+    const startedFor = latest.current.owner;
     const paths: string[] = [];
     const texts: string[] = [];
     for (const file of Array.from(list)) {
@@ -287,8 +302,15 @@ export function ChatInput({
         if (path) texts.push(path);
       }
     }
-    if (paths.length > 0) onAttachmentsChange([...attachments, ...paths]);
-    if (texts.length > 0) onChange(`${value}${value && !value.endsWith(' ') ? ' ' : ''}${texts.join(' ')} `);
+    // 保存している間にほかのセッションへ移ったら、移った先の入力欄には入れない
+    const now = latest.current;
+    if (now.owner !== startedFor) return;
+    const attachmentsNext = paths.length > 0 ? [...now.attachments, ...paths] : now.attachments;
+    const valueNext = texts.length > 0 ? `${now.value}${now.value && !now.value.endsWith(' ') ? ' ' : ''}${texts.join(' ')} ` : now.value;
+    // 描き直す前に、ほかの保存の返事が続けて届いても、いま入れたものを上書きしないよう、すぐに控えも書き換える
+    latest.current = { ...now, attachments: attachmentsNext, value: valueNext };
+    if (paths.length > 0) now.onAttachmentsChange(attachmentsNext);
+    if (texts.length > 0) now.onChange(valueNext);
   };
 
   return (

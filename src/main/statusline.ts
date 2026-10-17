@@ -6,7 +6,7 @@ import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { checklistHooks } from './checklist-hook';
-import { questionHook } from './question-hook';
+import { SUPPRESS_OUTPUT } from './hook-output';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from './terminal-bridge';
 import { worktreeGuardCommand } from './worktree-guard';
@@ -18,28 +18,26 @@ import { claudeConfigDir, foreignClaudeMdExcludes } from './claude-config';
 export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 
 // アプリが起動する Claude Code にだけ渡す設定（--settings。ユーザーの設定ファイルは書き換えない。フックはユーザーのものと一緒に動く）。
-// statusLine: 上のとおり。--settings の statusLine はプロジェクトの設定のものより優先されるので、プロジェクトの statusLine はこのセッションでは動かない。
-// hooks: AskUserQuestion を出す前に、その入力（質問・選択肢の説明・プレビュー）をセッションごとのファイルに書かせる。
-// 会話ログには答えたあとにしか書かれないので、質問のカードに説明やプレビューを出すにはこれが要る。
-// Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。
-// browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる（browser-gate.ts）。
-// permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）。
-// sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）。
-// 許可の確認を出す直前（PermissionRequest）に、そのツールの名前と入力の全文をセッションごとのファイルに書かせる。
-// 親の Claude が子の許可の確認に答える（sessions-control.ts の answer_permission）とき、画面に収まらない部分まで読ませるため。
-// フックは書くだけで、何も決めない（確認は今までどおり出る）。ファイルの名前は、質問のファイルの名前から作る
-// checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）
-// terminal のときだけ: 人のターミナルに打つ前に、権限モードによらず、打つものを見せて人の許可の確認を出させる（terminal-bridge.ts）
-// question のときだけ: AskUserQuestion の質問を、画面を読まずにアプリに渡して答えを待つ（PermissionRequest。question-hook.ts）
+// チャット（stream-json）とターミナルモード（TUI）で同じ中身にする（設計書 4 節）。
+// statusLine: 上のとおり。TUI の間だけ動く（stream-json では動かない。害は無い）。--settings の statusLine はプロジェクトの設定のものより
+// 優先されるので、プロジェクトの statusLine はこのセッションでは動かない。
+// hooks（どれも、アプリが足したものはチャットのフックの一覧に出さない）:
+// - Bash の前には、worktree やブランチを消す操作で確認を出させる（worktree-guard.ts）。ask は stream-json では can_use_tool として届く
+// - browser のときだけ: アプリ内ブラウザで JavaScript を実行するツールの前に、今のページが localhost なら確認なし、それ以外なら確認を出させる
+//   （browser-gate.ts）。permissions.ask では、ページによって変えられない（localhost の開発中のページでも毎回確認が出る）
+// - sessions のときだけ: 子セッションの起動の前に、権限モードによらず人の許可の確認を出させる（sessions-bridge.ts）
+// - terminal のときだけ: 人のターミナルに打つ前に、権限モードによらず、打つものを見せて人の許可の確認を出させる（terminal-bridge.ts）
+// - checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）。
+//   自動の最適化圧縮のため、ツールの切れ目で止めるフックと、Claude Code の自動の圧縮を止めるフックも
+// - 書くだけのフック（何も決めない。いつも足す）: 許可の確認を出す直前（PermissionRequest）のツールの名前と入力、Claude Code の知らせ
+//   （Notification）、ターンの終わり（Stop）を、セッションごとのファイルに書かせる。ターミナルモード（TUI）の間に、確認待ちと、手が空いたことを
+//   知るため（設計書 9 節）。stream-json では使わない（can_use_tool と result で分かる）。答えは {"suppressOutput":true} だけで、許可も断りも
+//   決めないので、can_use_tool と競わない（実測。suppressOutput は、チャットに出す何も出力しなかったフックと見分けるため。hook-output.ts）
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
-// tui: 描き方を fullscreen（代替画面）に決める。決めないと、ユーザーの設定・新しいインストールかどうか・サーバー側のフラグで
-// classic（ふだんの画面にそのまま描く）にもなり、メニューや /tasks の画面の形が変わる。画面の読み取り（screen-parser.ts）と
-// 互換性の確認（test/cli）は fullscreen の形で作っている。環境変数（CLAUDE_CODE_NO_FLICKER=1）ではなく設定で渡すのは、
-// 起動に続けて失敗したときに Claude Code が classic に戻す安全策を残すため（環境変数で決めると、その判定より先に効く）。
-// --settings はユーザーの設定ファイルより優先されるが、設定の env で classic を明示した人（CLAUDE_CODE_NO_FLICKER=0 など）は classic のまま
+// 描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
-export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null, checklist = false, terminal = false, question = false): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal, question));
+export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null, checklist = false, terminal = false): string {
+  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
@@ -51,30 +49,28 @@ export function ownSettings(
   claudeDir: string | null = null,
   checklist = false,
   terminal = false,
-  question = false,
 ): Record<string, unknown> {
   const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
   const excludes = foreignClaudeMdExcludes(claudeDir);
-  const permissionRequest = [
-    ...(question ? [questionHook()] : []),
-    ...(sessions ? [{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }] : []),
-  ];
+  const writeOnly = (fileCommand: string) => ({ hooks: [{ type: 'command', command: fileCommand, timeout: 10 }] });
+  const checklistEvents = checklist ? checklistHooks() : {};
   return {
     statusLine: { type: 'command', command },
     hooks: {
       PreToolUse: [
-        { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] },
         { matcher: 'Bash', hooks: [{ type: 'command', command: worktreeGuardCommand() }] },
         ...(browser ? [{ matcher: gatedBrowserToolIds().join('|'), hooks: [{ type: 'command', command: BROWSER_GATE_COMMAND, timeout: 10 }] }] : []),
         ...(sessions ? [{ matcher: SESSIONS_GATED_TOOL, hooks: [{ type: 'command', command: sessionsGateCommand(), timeout: 10 }] }] : []),
         ...(terminal ? [{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }] : []),
       ],
-      ...(permissionRequest.length > 0 ? { PermissionRequest: permissionRequest } : {}),
-      // 自動の最適化圧縮（チェックリストの MCP を足すときだけ。リストが無ければ引き継げない）: ツールの切れ目で止める・Claude Code の自動の圧縮を止める
-      ...(checklist ? { ...checklistHooks(), PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: AUTO_COMPACT_STOP_COMMAND, timeout: 5 }] }] } : {}),
+      PermissionRequest: [{ matcher: '*', ...writeOnly(PERMISSION_FILE_COMMAND) }],
+      Notification: [writeOnly(NOTIFICATION_FILE_COMMAND)],
+      ...checklistEvents,
+      Stop: [writeOnly(IDLE_FILE_COMMAND), ...(checklistEvents.Stop ?? [])],
+      // 自動の最適化圧縮（チェックリストの MCP を足すときだけ。リストが無ければ引き継げない）: ツールの切れ目で止める
+      ...(checklist ? { PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: AUTO_COMPACT_STOP_COMMAND, timeout: 5 }] }] } : {}),
     },
     ...(excludes.length > 0 ? { claudeMdExcludes: excludes } : {}),
-    tui: 'fullscreen',
   };
 }
 
@@ -142,24 +138,35 @@ export function parseStatusLine(text: string, updatedAt: number): StatusLineInfo
 
 const ASK_SUFFIX = '.ask.json';
 const PERMISSION_SUFFIX = '.permission.json';
+const NOTIFICATION_SUFFIX = '.notification.json';
+const IDLE_SUFFIX = '.idle.json';
 // 自動の最適化圧縮で、ターンの途中で止めるためのファイル。アプリが書き（止めるとき）、フックが名前を変えて中身を出す（止めた印）
 const STOP_SUFFIX = '.auto-compact.json';
 const STOP_HIT_SUFFIX = '.auto-compact.hit.json';
 
-// セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、AskUserQuestion の入力のファイル（<dir>/<セッション ID>.ask.json）を見張る
-// 許可の確認の入力を書かせるフックのコマンド。質問のファイル（<id>.ask.json）と同じフォルダの <id>.permission.json に書く
+// 書くだけのフックのコマンド。<dir>/<id>.ask.json（ASK_FILE_ENV。名前の元にするだけで、このファイルはもう書かない・読まない）と同じフォルダの、
+// <id> に種類の名前を付けたファイルに、フックの入力を書く。何も決めないので、アプリのフックの印（suppressOutput）だけを書く（hook-output.ts）
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-export const PERMISSION_FILE_COMMAND = `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${PERMISSION_SUFFIX}"`;
+const fileCommand = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${suffix}"; printf '%s\\n' '${SUPPRESS_OUTPUT}'`;
+// 許可の確認の直前（PermissionRequest）: <id>.permission.json
+export const PERMISSION_FILE_COMMAND = fileCommand(PERMISSION_SUFFIX);
+// Claude Code の知らせ（Notification。確認待ち・入力待ちなど）: <id>.notification.json
+export const NOTIFICATION_FILE_COMMAND = fileCommand(NOTIFICATION_SUFFIX);
+// ターンの終わり（Stop）: <id>.idle.json
+export const IDLE_FILE_COMMAND = fileCommand(IDLE_SUFFIX);
 
 // ツールのあと（PostToolUse）のフック。アプリが止めるファイル（<id>.auto-compact.json）を書いていれば、名前を変えて（最初の 1 回だけ効く）、
 // 中身（{"continue": false, "stopReason": …}）を出す。Claude Code は、そこでターンを止める。ファイルが無ければ何もしない。
 // ツールの呼び出しのたびに動くので、アプリには聞かず、ファイルを見るだけにする（Node のプロセスを起こさない）。
 // サブエージェント（Agent ツール）の中のツールの呼び出しでも動く（実物の Claude Code 2.1.296 で確かめた。フックの入力に agent_id が付く）。
-// そこで掴むと、サブエージェントが止まるだけで本体のターンは止まらず、印のファイルだけが残る。止めるファイルがあるときだけ入力を読み、
+// そこで掴むと、サブエージェントが止まるだけで本体のターンは止まらず、印のファイルだけが残る。止めるファイルがあるときは入力を見て、
 // agent_id があれば何もしない（本体の次のツールの切れ目まで待つ。入力の中の文字列は " が \" になるので、キーとしての agent_id だけに当たる）。
+// 止めるファイルが無いときも、入力は最後まで読んで捨てる。Claude Code（2.1.302）は、入力を書き終える前にフックが標準入力を閉じると（EPIPE）、
+// フックの失敗として扱い、標準出力も捨てる（入力にはツールの結果が入るので、パイプに入りきらないことがある）。
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; [ -f "$f" ] || exit 0; case "$(cat)" in *'"agent_id":"'*) exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h"; exit 0`;
+export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; n='${SUPPRESS_OUTPUT}'; [ -f "$f" ] || { cat >/dev/null; echo "$n"; exit 0; }; case "$(cat)" in *'"agent_id":"'*) echo "$n"; exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h" || echo "$n"; exit 0`;
 
+// セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、書くだけのフックが書くファイル（.permission.json など）を見張る
 export class StatusLineWatcher {
   private watcher: FSWatcher | null = null;
   private readonly timers = new Map<string, NodeJS.Timeout>();
@@ -167,16 +174,19 @@ export class StatusLineWatcher {
   constructor(
     readonly dir: string,
     private readonly onChange: (sessionId: string, info: StatusLineInfo) => void,
-    // input: AskUserQuestion の tool_input（質問の一覧）
-    private readonly onAsk: (sessionId: string, input: unknown) => void = () => {},
     // request: PermissionRequest のフックの入力（tool_name・tool_input・agent_type）/ at: ファイルが書かれた時刻
     private readonly onPermission: (sessionId: string, request: unknown, at: number) => void = () => {},
+    // 書くだけの Stop のフックが書いた（ターミナルモードの TUI のターンが終わった）
+    // input: Stop のフックの入力（permission_mode など）。読めなければ null
+    private readonly onIdle: (sessionId: string, input: unknown) => void = () => {},
   ) {}
 
   fileFor(sessionId: string): string {
     return join(this.dir, `${sessionId}.json`);
   }
 
+  // 書くだけのフックが書くファイルの名前の元（<id>.ask.json。フックは、この名前の .ask.json を種類ごとの名前に替えて書く。
+  // 前は AskUserQuestion の入力をこのファイルに書いていた）。起動する Claude Code に ASK_FILE_ENV で渡す
   askFileFor(sessionId: string): string {
     return join(this.dir, `${sessionId}${ASK_SUFFIX}`);
   }
@@ -197,13 +207,8 @@ export class StatusLineWatcher {
   async start(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     this.watcher = watch(this.dir, (_event, name) => {
-      if (name?.endsWith(ASK_SUFFIX)) {
-        const sessionId = basename(name, ASK_SUFFIX);
-        clearTimeout(this.timers.get(name));
-        // 質問はすぐ画面に出るので、待つのは書き終わるまでの短い間だけ
-        this.timers.set(name, setTimeout(() => void this.readAsk(sessionId), 50));
-        return;
-      }
+      // 前のバージョンのフックが書いた AskUserQuestion の入力のファイルは、statusLine としては読まない
+      if (name?.endsWith(ASK_SUFFIX)) return;
       if (name?.endsWith(PERMISSION_SUFFIX)) {
         const sessionId = basename(name, PERMISSION_SUFFIX);
         clearTimeout(this.timers.get(name));
@@ -211,6 +216,14 @@ export class StatusLineWatcher {
         this.timers.set(name, setTimeout(() => void this.readPermission(sessionId), 50));
         return;
       }
+      if (name?.endsWith(IDLE_SUFFIX)) {
+        const sessionId = basename(name, IDLE_SUFFIX);
+        clearTimeout(this.timers.get(name));
+        this.timers.set(name, setTimeout(() => void this.readIdle(sessionId), 50));
+        return;
+      }
+      // 通知のフックのファイルは読まない（確認・質問は PermissionRequest のフックで分かる）
+      if (name?.endsWith(NOTIFICATION_SUFFIX)) return;
       if (!name?.endsWith('.json')) return;
       const sessionId = basename(name, '.json');
       // 書き込みの途中で読まないよう少し待つ
@@ -233,14 +246,15 @@ export class StatusLineWatcher {
     return info;
   }
 
-  private async readAsk(sessionId: string): Promise<void> {
-    const text = await readFile(this.askFileFor(sessionId), 'utf8').catch(() => null);
-    if (!text) return;
+  private async readIdle(sessionId: string): Promise<void> {
+    const text = await readFile(join(this.dir, `${sessionId}${IDLE_SUFFIX}`), 'utf8').catch(() => null);
+    let input: unknown = null;
     try {
-      this.onAsk(sessionId, (JSON.parse(text) as { tool_input?: unknown }).tool_input);
+      input = text ? JSON.parse(text) : null;
     } catch {
-      // 書き込みの途中。次の変更で読み直す
+      // 書き込みの途中でも、ターンの終わりは知らせる（入力は使わない）
     }
+    this.onIdle(sessionId, input);
   }
 
   private async readPermission(sessionId: string): Promise<void> {

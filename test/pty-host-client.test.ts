@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hostExecutable, PtyHost } from '../src/main/pty-host-client';
-import { PROTOCOL, type ClientMessage, type HostedPtyInfo } from '../src/main/pty-host-protocol';
+import { PROTOCOL, type ClientMessage, type HostedInfo, type HostedPipeInfo, type HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { socketPathIn } from '../src/main/socket-path';
+import { StreamClient } from '../src/main/stream/client';
 
 // アプリ側の、pty ホストとの接続（PtyHost・HostedPty）。本物のホストとのやりとりは test/pty-host.test.ts。
 // ここでは、テストが決めたとおりに答える偽物のホストで、やりとりの細かいところ（溜めておく出力・切れたとき・答えないホスト）を確かめる
@@ -32,11 +33,11 @@ async function waitFor(label: string, check: () => boolean, timeoutMs = 3000): P
   }
 }
 
-// 偽物のホスト。受け取った要求を控え、hello には protocol で答える（null なら答えない）。list には ptys を返す
+// 偽物のホスト。受け取った要求を控え、hello には protocol で答える（null なら答えない）。list には hosted を返す
 class FakeHost {
   readonly received: ClientMessage[] = [];
   readonly sockets: Socket[] = [];
-  ptys: HostedPtyInfo[] = [];
+  hosted: HostedInfo[] = [];
   answerList = true;
   // hello の返事の前に、読めない行を送る
   noiseBeforeHello = false;
@@ -60,7 +61,7 @@ class FakeHost {
           this.received.push(message);
           if (message.t === 'hello' && this.noiseBeforeHello) this.send('読めない行\n', socket);
           if (message.t === 'hello' && this.protocol !== null) this.send({ t: 'hello', protocol: this.protocol, pid: 1 }, socket);
-          if (message.t === 'list' && this.answerList) this.send({ t: 'list', req: message.req, ptys: this.ptys }, socket);
+          if (message.t === 'list' && this.answerList) this.send({ t: 'list', req: message.req, hosted: this.hosted }, socket);
           if (message.t === 'shutdown') socket.end();
         }
       });
@@ -99,7 +100,23 @@ async function connect(): Promise<{ host: PtyHost; fake: FakeHost }> {
   return { host, fake };
 }
 const request = { tag: 's1', file: 'claude', args: ['--x'], cwd: '/work', env: { A: '1' }, cols: 80, rows: 24 };
-const info = (id: string, patch: Partial<HostedPtyInfo> = {}): HostedPtyInfo => ({ id, tag: `tag-${id}`, pid: 1, startedAt: 0, cols: 80, rows: 24, exitCode: null, screen: '', ...patch });
+const pipeRequest = { tag: 's2', file: 'claude', args: ['-p'], cwd: '/work', env: { A: '1' }, retain: [{ type: 'system', subtype: 'init' }], transient: [{ type: 'stream_event' }] };
+const info = (id: string, patch: Partial<HostedPtyInfo> = {}): HostedPtyInfo => ({ kind: 'pty', id, tag: `tag-${id}`, pid: 1, startedAt: 0, cols: 80, rows: 24, exitCode: null, screen: '', ...patch });
+const pipeInfo = (id: string, patch: Partial<HostedPipeInfo> = {}): HostedPipeInfo => ({
+  kind: 'pipe',
+  id,
+  tag: `tag-${id}`,
+  pid: 1,
+  startedAt: 0,
+  exitCode: null,
+  lastSeq: 0,
+  firstSeq: 1,
+  retained: [],
+  pending: [],
+  ended: false,
+  stderr: '',
+  ...patch,
+});
 
 // ホストのスクリプト（アプリは Electron を Node として起動する。テストでは Node）。good: 偽物のホストとして待ち受ける / dead: すぐ終わる
 function hostScript(kind: 'good' | 'dead'): string {
@@ -149,7 +166,7 @@ describe('HostedPty', () => {
     pty.resize(100, 30);
     pty.kill();
     await waitFor('要求', () => fake!.sent('kill').length === 1);
-    expect(fake!.sent('spawn')).toEqual([{ t: 'spawn', id: pty.id, ...request }]);
+    expect(fake!.sent('spawn')).toEqual([{ t: 'spawn', id: pty.id, kind: 'pty', ...request }]);
     expect(fake!.sent('write')).toEqual([{ t: 'write', id: pty.id, data: 'abc' }]);
     expect(fake!.sent('resize')).toEqual([{ t: 'resize', id: pty.id, cols: 100, rows: 30 }]);
     expect(fake!.sent('kill')).toEqual([{ t: 'kill', id: pty.id }]);
@@ -171,12 +188,12 @@ describe('HostedPty', () => {
 
   it('引き継ぐ pty の出力は、受け手がつくまで溜めておき、最初の受け手に渡す（溜めすぎない）', async () => {
     const { host } = await connect();
-    fake!.ptys = [info('p1'), info('done', { exitCode: 0 })];
+    fake!.hosted = [info('p1'), info('done', { exitCode: 0 })];
     const listed = await host.list();
     expect(listed.map((p) => p.id)).toEqual(['p1', 'done']);
     for (let i = 0; i < 2005; i++) fake!.send({ t: 'data', id: 'p1', data: `${i},` });
     await sleep(200);
-    const pty = host.attach(listed[0]);
+    const pty = host.attach(listed[0] as HostedPtyInfo);
     const first: string[] = [];
     pty.onData((d) => first.push(d));
     expect(first).toHaveLength(2000);
@@ -217,6 +234,214 @@ describe('HostedPty', () => {
     pty.emitData('y');
     pty.emitExit(1);
     expect(got).toEqual([]);
+  });
+});
+
+describe('HostedPipe', () => {
+  const linesOf = (pipe: ReturnType<PtyHost['spawnPipe']>) => {
+    const got: string[] = [];
+    pipe.onLine((line, seq) => got.push(`${seq}:${line}`));
+    return got;
+  };
+
+  it('入力の行・閉じる・止める（既定は SIGTERM）・送り直しの頼みをホストに送り、出力の行と終了（標準エラーの末尾つき）を受け取る', async () => {
+    const { host } = await connect();
+    const pipe = host.spawnPipe(pipeRequest);
+    const got = linesOf(pipe);
+    const exits: [number, string][] = [];
+    pipe.onExit((c, e) => exits.push([c, e]));
+    pipe.send('{"type":"user"}');
+    pipe.end();
+    pipe.kill();
+    pipe.kill('SIGKILL');
+    await waitFor('要求', () => fake!.sent('kill').length === 2);
+    expect(fake!.sent('spawn')).toEqual([{ t: 'spawn', id: pipe.id, kind: 'pipe', ...pipeRequest }]);
+    expect(fake!.sent('send')).toEqual([{ t: 'send', id: pipe.id, line: '{"type":"user"}' }]);
+    expect(fake!.sent('end')).toEqual([{ t: 'end', id: pipe.id }]);
+    expect(fake!.sent('kill')).toEqual([{ t: 'kill', id: pipe.id }, { t: 'kill', id: pipe.id, signal: 'SIGKILL' }]);
+    fake!.send({ t: 'line', id: pipe.id, seq: 1, line: 'a' });
+    fake!.send({ t: 'line', id: 'unknown', seq: 1, line: 'x' });
+    fake!.send({ t: 'replayed', id: 'unknown' });
+    fake!.send({ t: 'exit', id: pipe.id, exitCode: 2, stderr: 'エラー' });
+    await waitFor('終了', () => exits.length > 0);
+    expect(got).toEqual(['1:a']);
+    expect(exits).toEqual([[2, 'エラー']]);
+    pipe.emitExit(5, '');
+    expect(exits).toHaveLength(1);
+  });
+
+  it('引き継ぐときは、送り直しを頼んでから受け取る。送り直しの間に届いた新しい行は、送り直した行のあとに渡し、重なった行は 1 度だけ渡す', async () => {
+    const { host } = await connect();
+    fake!.hosted = [pipeInfo('q1', { lastSeq: 3 })];
+    const [listed] = (await host.list()) as HostedPipeInfo[];
+    // 一覧のあと、受け手が付く前に新しい行が届いた
+    fake!.send({ t: 'line', id: 'q1', seq: 4, line: 'd' });
+    await sleep(50);
+    const pipe = host.attachPipe(listed);
+    expect(host.attachPipe(listed)).toBe(pipe);
+    pipe.replay(1);
+    const got = linesOf(pipe);
+    await waitFor('頼み', () => fake!.sent('replay').length === 1);
+    expect(fake!.sent('replay')).toEqual([{ t: 'replay', id: 'q1', from: 1 }]);
+    // 送り直しの途中にも新しい行が届く
+    fake!.send({ t: 'line', id: 'q1', seq: 1, line: 'a', replay: true });
+    fake!.send({ t: 'line', id: 'q1', seq: 5, line: 'e' });
+    fake!.send({ t: 'line', id: 'q1', seq: 2, line: 'b', replay: true });
+    fake!.send({ t: 'line', id: 'q1', seq: 3, line: 'c', replay: true });
+    fake!.send({ t: 'line', id: 'q1', seq: 4, line: 'd', replay: true });
+    await waitFor('送り直し', () => got.length === 4);
+    expect(got).toEqual(['1:a', '2:b', '3:c', '4:d']);
+    fake!.send({ t: 'replayed', id: 'q1' });
+    await waitFor('続き', () => got.length === 5);
+    expect(got).toEqual(['1:a', '2:b', '3:c', '4:d', '5:e']);
+    // 同じ番号の行がもう一度届いても渡さない
+    fake!.send({ t: 'line', id: 'q1', seq: 5, line: 'e' });
+    fake!.send({ t: 'line', id: 'q1', seq: 6, line: 'f' });
+    await waitFor('次', () => got.length === 6);
+    expect(got.at(-1)).toBe('6:f');
+  });
+
+  it('送り直しの途中で終わったら、待たせていた行を渡してから終わりを知らせる', async () => {
+    const { host } = await connect();
+    const pipe = host.attachPipe(pipeInfo('q2'));
+    pipe.replay(1);
+    const got = linesOf(pipe);
+    const exits: number[] = [];
+    pipe.onExit((c) => exits.push(c));
+    fake!.send({ t: 'line', id: 'q2', seq: 9, line: 'live' });
+    fake!.send({ t: 'exit', id: 'q2', exitCode: 0 });
+    await waitFor('終了', () => exits.length === 1);
+    expect(got).toEqual(['9:live']);
+  });
+
+  it('受け手がいないまま溜めすぎたら捨て、受け手が付いたときに、捨てたところから送り直してもらう', async () => {
+    const { host } = await connect();
+    const pipe = host.attachPipe(pipeInfo('q3'));
+    // 届き切ったかは、受け手のいる別のプロセスの行で見る（同じ接続の行は、送った順に読まれる）
+    const probe = host.attachPipe(pipeInfo('probe'));
+    const probed: string[] = [];
+    probe.onLine((line) => probed.push(line));
+    const big = 'x'.repeat(9 * 1024 * 1024);
+    fake!.send({ t: 'line', id: 'q3', seq: 1, line: big });
+    fake!.send({ t: 'line', id: 'q3', seq: 2, line: big });
+    fake!.send({ t: 'line', id: 'q3', seq: 3, line: 'small' });
+    fake!.send({ t: 'line', id: 'probe', seq: 1, line: 'done' });
+    await waitFor('届き切る', () => probed.length === 1, 10_000);
+    const got: number[] = [];
+    pipe.onLine((_line, seq) => got.push(seq));
+    await waitFor('頼み', () => fake!.sent('replay').length === 1);
+    expect(fake!.sent('replay')).toEqual([{ t: 'replay', id: 'q3', from: 2 }]);
+    // 頼んだ番号より前の、溜めておけた行だけ先に渡す。頼んだ番号からの行は、送り直しのあとに渡す
+    expect(got).toEqual([1]);
+    fake!.send({ t: 'line', id: 'q3', seq: 2, line: 'again', replay: true });
+    fake!.send({ t: 'replayed', id: 'q3' });
+    await waitFor('送り直し', () => got.length === 3);
+    expect(got).toEqual([1, 2, 3]);
+  });
+
+  it('detach: claude を止めずに見るのをやめる。ホストが落ちたら、動いていたプロセスを -1 で終わらせる', async () => {
+    const { host } = await connect();
+    const kept = host.spawnPipe(pipeRequest);
+    const dropped = host.spawnPipe(pipeRequest);
+    const got: unknown[] = [];
+    dropped.onLine((l) => got.push(l));
+    dropped.onExit((c) => got.push(c));
+    dropped.detach();
+    const exits: number[] = [];
+    kept.onExit((c) => exits.push(c));
+    fake!.send({ t: 'line', id: dropped.id, seq: 1, line: 'x' });
+    await sleep(50);
+    fake!.close();
+    await waitFor('終了', () => exits.length === 1);
+    expect(exits).toEqual([-1]);
+    expect(got).toEqual([]);
+  });
+});
+
+describe('一覧の直後に終わったプロセス', () => {
+  it('一覧の返事と同じ受信の中で終わったプロセスも、引き継いだときに終わったと分かる（受け皿を引き継ぐまで残す）', async () => {
+    const { host } = await connect();
+    fake!.answerList = false;
+    const listing = host.list();
+    await waitFor('一覧の頼み', () => fake!.sent('list').length === 1);
+    const { req } = fake!.sent('list')[0];
+    fake!.send(
+      [
+        JSON.stringify({ t: 'list', req, hosted: [pipeInfo('q9'), info('p9')] }),
+        JSON.stringify({ t: 'exit', id: 'q9', exitCode: 3, stderr: '終わり' }),
+        JSON.stringify({ t: 'exit', id: 'p9', exitCode: 4 }),
+        '',
+      ].join('\n'),
+    );
+    const [listedPipe, listedPty] = await listing;
+    await sleep(50);
+    const pipe = host.attachPipe(listedPipe as HostedPipeInfo);
+    const pipeExits: [number, string][] = [];
+    pipe.onExit((code, stderr) => pipeExits.push([code, stderr]));
+    const pty = host.attach(listedPty as HostedPtyInfo);
+    const ptyExits: number[] = [];
+    pty.onExit((code) => ptyExits.push(code));
+    await waitFor('終わり', () => pipeExits.length === 1 && ptyExits.length === 1);
+    expect(pipeExits).toEqual([[3, '終わり']]);
+    expect(ptyExits).toEqual([4]);
+    // 終わりは 1 度だけ
+    fake!.send({ t: 'exit', id: 'q9', exitCode: 3, stderr: '終わり' });
+    await sleep(50);
+    expect(pipeExits).toHaveLength(1);
+  });
+
+  it('引き継いだあとに、ホストがもう記録を捨てたと分かっても（知らない id の replay への exit）、終わったことにする', async () => {
+    const { host } = await connect();
+    fake!.hosted = [pipeInfo('q8', { lastSeq: 2 })];
+    const [listed] = (await host.list()) as HostedPipeInfo[];
+    const pipe = host.attachPipe(listed);
+    const exits: number[] = [];
+    pipe.onExit((code) => exits.push(code));
+    pipe.replay(1);
+    await waitFor('頼み', () => fake!.sent('replay').length === 1);
+    fake!.send({ t: 'exit', id: 'q8', exitCode: -1 });
+    await waitFor('終わり', () => exits.length === 1);
+    expect(exits).toEqual([-1]);
+  });
+});
+
+describe('引き継ぎ（本物の HostedPipe と StreamClient）', () => {
+  it('答えを待っている要求を出し直し、送り直しの間に届いた取り下げは、送り直した行のあとに渡す。取り下げた要求には答えない', async () => {
+    const { host } = await connect();
+    const request = (id: string) => JSON.stringify({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'make' }, tool_use_id: `toolu_${id}` } });
+    fake!.hosted = [
+      pipeInfo('q7', {
+        lastSeq: 3,
+        firstSeq: 2,
+        retained: [{ seq: 1, line: JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', permissionMode: 'plan' }) }],
+        pending: [{ seq: 3, line: request('r1') }],
+      }),
+    ];
+    const [listed] = (await host.list()) as HostedPipeInfo[];
+    const pipe = host.attachPipe(listed);
+    const order: string[] = [];
+    const client = new StreamClient(pipe, {
+      onMessage: (message, past) => order.push(`${message.type}${'subtype' in message ? `/${String(message.subtype)}` : ''}:${past ? 'past' : 'live'}`),
+      onPermission: (id) => order.push(`permission:${id}`),
+      onCancel: (id) => order.push(`cancel:${id}`),
+      onExit: () => order.push('exit'),
+      onCaughtUp: () => order.push('caught-up'),
+    });
+    client.adopt(listed);
+    await waitFor('送り直しの頼み', () => fake!.sent('replay').length === 1);
+    expect(fake!.sent('replay')[0]).toEqual({ t: 'replay', id: 'q7', from: 2 });
+    // 送り直しの途中に、claude が要求を取り下げた（スマホで答えた）
+    fake!.send({ t: 'line', id: 'q7', seq: 2, line: JSON.stringify({ type: 'assistant', uuid: 'a1', message: { content: [] } }), replay: true });
+    fake!.send({ t: 'line', id: 'q7', seq: 4, line: JSON.stringify({ type: 'control_cancel_request', request_id: 'r1' }) });
+    fake!.send({ t: 'line', id: 'q7', seq: 3, line: request('r1'), replay: true });
+    await sleep(50);
+    // 取り下げは、送り直しが終わるまで待たせる
+    expect(order).not.toContain('cancel:r1');
+    fake!.send({ t: 'replayed', id: 'q7' });
+    await waitFor('取り下げ', () => order.includes('cancel:r1'));
+    expect(order).toEqual(['system/init:past', 'permission:r1', 'assistant:past', 'caught-up', 'cancel:r1']);
+    expect(client.pendingPermissions()).toEqual([]);
+    expect(client.respond('r1', { behavior: 'allow' })).toBe(false);
   });
 });
 
@@ -266,6 +491,49 @@ describe('PtyHost', () => {
     await host.shutdown();
   }, 15_000);
 
+  // ホストが落ちたあと、同じ場所で待ち受けている（起動し直した）ホスト
+  async function restarted(): Promise<FakeHost> {
+    fake!.close();
+    await sleep(50);
+    fake = await FakeHost.start(socketPath());
+    return fake;
+  }
+
+  it('つなぎ直している間に送ったもの（起動の直後の入力の行・止める頼み）は、捨てずに、つながってから順に送る', async () => {
+    const { host } = await connect();
+    const again = await restarted();
+    const pipe = host.spawnPipe(pipeRequest);
+    // 起動の直後に送る initialize と、止める頼み（end_session のあとの kill）。つながる前に送っている
+    pipe.send('{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}');
+    pipe.end();
+    pipe.kill();
+    await waitFor('止める頼み', () => again.sent('kill').length === 1);
+    expect(again.received.filter((m) => m.t !== 'hello').map((m) => m.t)).toEqual(['spawn', 'send', 'end', 'kill']);
+    expect(again.sent('send')).toEqual([{ t: 'send', id: pipe.id, line: '{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}' }]);
+  });
+
+  it('ホストが落ちたあとの一覧は、つなぎ直してから聞く（答えないまま待たせない）', async () => {
+    const { host } = await connect();
+    const again = await restarted();
+    again.hosted = [info('p1')];
+    const listed = await Promise.race([host.list(), sleep(3000).then(() => 'つながらないまま' as const)]);
+    expect(listed).not.toBe('つながらないまま');
+    expect((listed as HostedInfo[]).map((p) => p.id)).toEqual(['p1']);
+  });
+
+  it('つながっていない間に続けて頼んでも、つなぐのは 1 回（接続を 2 本張らない・ホストを 2 つ起動しない）', async () => {
+    const { host } = await connect();
+    const again = await restarted();
+    const first = host.spawn(request);
+    const second = host.spawnPipe(pipeRequest);
+    const listing = host.list();
+    await waitFor('2 つの起動', () => again.sent('spawn').length === 2);
+    await listing;
+    expect(again.sent('spawn').map((m) => m.id)).toEqual([first.id, second.id]);
+    expect(again.sockets).toHaveLength(1);
+    expect(again.sent('hello')).toHaveLength(1);
+  });
+
   it('つながっていない間に起動を頼んだら、ホストを起動し直してから頼む', async () => {
     const { host } = await connect();
     // ホストが落ちた
@@ -281,7 +549,7 @@ describe('PtyHost', () => {
     await host.shutdown();
   }, 15_000);
 
-  it('起動したホストが待ち受けなければ、つながらないとして失敗する。つながっていない間の起動の頼みは、-1 で終わらせる', async () => {
+  it('起動したホストが待ち受けなければ、つながらないとして失敗する。つながっていない間の起動の頼みは -1 で終わらせ、一覧は空で返し、溜めた入力は捨てる', async () => {
     const { host } = await connect();
     fake!.close();
     await sleep(50);
@@ -289,8 +557,18 @@ describe('PtyHost', () => {
     const pty = host.spawn(request);
     let exit: number | null = null;
     pty.onExit((c) => (exit = c));
+    // つないでいる途中に、起動の頼み・一覧・入力の行（溜められる）を重ねる
+    const pipe = host.spawnPipe(pipeRequest);
+    let pipeExit: number | null = null;
+    pipe.onExit((c) => (pipeExit = c));
+    pipe.send('{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}');
+    const listed = host.list();
     await waitFor('あきらめ', () => exit !== null, 8000);
     expect(exit).toBe(-1);
+    expect(pipeExit).toBe(-1);
+    expect(await listed).toEqual([]);
+    // 溜めていたものは捨てた（次につながっても、あきらめた頃の入力を送らない）
+    expect((host as unknown as { queued: unknown[] }).queued).toEqual([]);
     await expect(PtyHost.start(dir, hostScript('dead'))).rejects.toThrow(`pty ホストに繋がりません: ${socketPath()}`);
   }, 20_000);
 });

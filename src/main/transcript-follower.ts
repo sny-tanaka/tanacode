@@ -22,6 +22,9 @@ export class TranscriptFollower {
   private bridgeSessionId: string | null = null;
   private dirWatcher: FSWatcher | null = null;
   private stopped = false;
+  // 前からあった行（過去ログ）を読み終えたと、一度でも決めたか。はじめの会話ログがはじめから空なら、読むものが無いので読み終えた
+  // ことにする（知らせない。SessionManager も、はじめから読み終えたことにする）
+  private historyLoaded = false;
 
   constructor(
     initialFile: string,
@@ -44,19 +47,40 @@ export class TranscriptFollower {
     this.dirWatcher = null;
   }
 
+  // 読む会話ログの、前からあった行を読み終えたら知らせる（SessionManager が過去の会話の終わりを決める）。
+  // - はじめの会話ログ: 行があれば、読み終えたときに知らせる。はじめから空なら知らせない
+  // - 乗り換えた先（/clear のあと。引き継いだ claude が、アプリが止まっている間に /clear していたときも）: 前からあった行があれば、
+  //   読み終えたときにもう一度知らせる（知らせないと、その過去の会話の終わりが決まらず、作業中のまま残る）。行が無ければ、
+  //   まだ一度も知らせていないときだけ、すぐ知らせる（はじめの会話ログを読み終える前に乗り換えた）
+  // 前からあった行の大きさは、TranscriptTail が読み始めに取ったものを使う（別に取ると、その間に書かれた行で食い違う）
   private follow(file: string, initial = false): void {
     this.tail?.stop();
     this.current = file;
-    const onHistoryLoaded = initial ? this.handlers.onHistoryLoaded : undefined;
-    this.tail = new TranscriptTail(file, (entry, isHistory) => {
-      const e = entry as { type?: string; bridgeSessionId?: string };
-      if (e.type === 'bridge-session' && e.bridgeSessionId) {
-        this.bridgeSessionId = e.bridgeSessionId;
-        this.watchDir();
-      }
-      this.handlers.onEntry(entry, isHistory);
-    }, onHistoryLoaded);
-    this.tail.start();
+    const tail: TranscriptTail = new TranscriptTail(
+      file,
+      (entry, isHistory) => {
+        const e = entry as { type?: string; bridgeSessionId?: string };
+        if (e.type === 'bridge-session' && e.bridgeSessionId) {
+          this.bridgeSessionId = e.bridgeSessionId;
+          this.watchDir();
+        }
+        this.handlers.onEntry(entry, isHistory);
+      },
+      // 乗り換えたあとに、前の会話ログの読みかけが終わっても知らせない
+      () => {
+        if (this.tail === tail) this.loaded();
+      },
+    );
+    this.tail = tail;
+    tail.start();
+    if (tail.historyBytes > 0 || this.historyLoaded) return;
+    if (initial) this.historyLoaded = true;
+    else this.loaded();
+  }
+
+  private loaded(): void {
+    this.historyLoaded = true;
+    this.handlers.onHistoryLoaded();
   }
 
   private watchDir(): void {

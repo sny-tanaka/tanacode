@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ClaudeRun, claudeVersion, menuOf, shown } from './claude-run';
+import { ClaudeRun, claudeVersion, shown } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、worktree のセッション（claude --worktree）をアプリと同じ部品で扱えるかを確かめる。
@@ -23,7 +23,7 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
   let branch = '';
   const summary = () => run.summary()!;
   const replied = (text: string) => () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === text);
-  const prompt = () => run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready, 30_000);
+  const prompt = () => run.waitUntil('手が空く', () => run.idle, 30_000);
 
   beforeAll(async () => {
     api = new MockApi();
@@ -73,24 +73,24 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
 
   it('準備が終わってから入力を受け付け、会話ログは worktree の側に書かれる', async () => {
     // 入力欄が出てから準備（node_modules）を始め、終わってから ready を配信する
-    await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 30_000);
+    await run.waitUntil('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 30_000);
     const kinds = run.chatEvents.map((e) => e.type);
     // 準備の知らせ（worktree で始めた）は、ready より先
     expect(kinds.indexOf('info')).toBeGreaterThan(-1);
     expect(kinds.indexOf('info')).toBeLessThan(kinds.indexOf('ready'));
     expect(run.chatEvents.find((e) => e.type === 'info')).toMatchObject({ text: expect.stringContaining(`worktree .claude/worktrees/${summary().worktree!.name}`) });
     await run.send(HELLO);
-    await run.waitFor('返事', replied('はい、worktree です'));
+    await run.waitUntil('返事', replied('はい、worktree です'));
     expect(run.transcript().startsWith(join(homedir(), '.claude', 'projects', path.replace(/[^a-zA-Z0-9]/g, '-')))).toBe(true);
     expect(existsSync(run.transcript())).toBe(true);
   });
 
   it('worktree やブランチを消す操作は、アプリが足した hooks で確認が出る', async () => {
     await run.send(GUARD);
-    const menu = await run.waitFor('許可の確認', menuOf('permission'));
-    expect(run.dump()).toContain('tanacode が確認を求めています');
-    // 断ると、Claude Code はツールを止めて、次の指示を待つ
-    await run.answer(menu.title, menu.options.find((o) => /^No/.test(o.label))!.id);
+    const permission = await run.permission('許可の確認');
+    expect([permission.title, permission.description, permission.reason].join('\n')).toContain('tanacode が確認を求めています');
+    // 断って止めると、Claude Code はツールを止めて、次の指示を待つ
+    run.replyPermission(permission, { kind: 'stop' });
     await prompt();
     // アプリが足したフックは、チャットのフックの一覧に出さない
     expect(run.chatEvents.some((e) => e.type === 'hook' && e.run.command?.includes('TANACODE_WORKTREE_GUARD'))).toBe(false);
@@ -99,13 +99,12 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
   it('止めてから --resume すると、worktree のフォルダで会話に戻る', async () => {
     await prompt();
     run.stopClaude();
-    await run.waitFor('終了', () => !summary().running || null).catch(() => undefined);
+    await run.waitUntil('終了', () => !summary().running || null).catch(() => undefined);
     run.start({ resume: true });
     await prompt();
-    run.type('!pwd');
-    await run.waitFor('入力欄に入る', (info) => info.draft === '!pwd');
-    run.type('\r');
-    await run.waitFor('コマンドの出力', () => run.entries.some((e) => typeof e.message?.content === 'string' && e.message.content.includes(`<bash-stdout>${path}`)));
+    // worktree のフォルダの側の会話ログを読み直して、続きにする
+    expect(run.seen.some((s) => s.isHistory && s.entry.type === 'user')).toBe(true);
+    expect(run.transcript().startsWith(join(homedir(), '.claude', 'projects', path.replace(/[^a-zA-Z0-9]/g, '-')))).toBe(true);
   });
 
   it('worktree を削除してアーカイブすると、未追跡のファイルの控えを残して消す。戻すと作り直して再開する', async () => {
@@ -118,7 +117,7 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
 
     await run.reopen();
     expect(existsSync(join(path, '.git'))).toBe(true);
-    await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'info' && e.text.includes('作り直しました')), 30_000);
+    await run.waitUntil('準備の終わり', () => run.chatEvents.some((e) => e.type === 'info' && e.text.includes('作り直しました')), 30_000);
     await prompt();
     // 作り直した worktree で、前の会話を読み直している
     expect(shown(run.chat()).some((e) => e.type === 'user' && e.text === HELLO)).toBe(true);
@@ -126,12 +125,14 @@ describe(`Claude Code ${version} の worktree のセッション`, () => {
 });
 
 describe(`Claude Code ${version} の worktree のセッション（信頼していないフォルダ）`, () => {
-  it('claude --worktree は始まらないので、理由を添えて断り、一覧に残さない', async () => {
+  it('信頼していないフォルダでも、claude --worktree は確かめずに始まる（stream-json はフォルダの信頼を確かめない。決めたこと）', async () => {
     const api = new MockApi();
     const run = new ClaudeRun(await api.start(), { git: true, files: { 'a.txt': 'a\n' } });
     try {
-      await expect(run.startInWorktree()).rejects.toThrow('信頼');
-      expect(run.manager.list()).toEqual([]);
+      await run.startInWorktree();
+      const worktree = run.summary()!.worktree!;
+      expect(worktree.name).toBeTruthy();
+      expect(existsSync(join(worktree.root, '.claude', 'worktrees', worktree.name))).toBe(true);
     } finally {
       await run.stop();
       await api.stop();
@@ -153,7 +154,7 @@ describe(`Claude Code ${version} の worktree のセッション（大きなモ�
     const run = new ClaudeRun(await api.start(), { git: true, trusted: true, files });
     try {
       await run.startInWorktree();
-      await run.waitFor('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 120_000);
+      await run.waitUntil('準備の終わり', () => run.chatEvents.some((e) => e.type === 'ready'), 120_000);
       // アプリの知らせ（node_modules を用意した場所）。worktree を作るのに時間がかかると、Claude Code も自分の知らせ
       // （「Worktree creation took 17s. …」）を出すので、それと取り違えない
       const note = run.chatEvents.find((e) => e.type === 'info' && e.text.includes('node_modules'));

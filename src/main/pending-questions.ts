@@ -1,10 +1,10 @@
-import type { PendingQuestion, QuestionReply } from '@shared/questions';
+import type { PendingQuestion, QuestionAnnotations, QuestionReply } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 
 type Entry = { pending: PendingQuestion; finish: (reply: QuestionReply | null) => void };
 
-// フック（question-hook.ts）が返事を待っている AskUserQuestion。セッションごとに、来た順に持つ。
-// 返事（質問のカード・親の answer_question）を渡すか、待つのをやめる（人がターミナルで答えた・Claude Code が終わった・フックが止められた）と、
+// Claude Code が返事を待っている AskUserQuestion（stream-json の can_use_tool）。セッションごとに、来た順に持つ。
+// 返事（質問のカード・親の answer_question）を渡すか、待つのをやめる（Claude Code が取り下げた・終わった・ほかで答えた）と、
 // その質問は消える。changed: セッションの待っている質問が変わった（増えた・減った・親が 1 問答えた）
 export class PendingQuestions {
   private readonly bySession = new Map<string, Entry[]>();
@@ -12,7 +12,7 @@ export class PendingQuestions {
 
   constructor(private readonly changed: (session: string) => void) {}
 
-  // フックが質問を渡した。返事か、待つのをやめる（null）まで待つ。signal: フックとのつながりが切れた
+  // Claude Code が質問を出した。返事か、待つのをやめる（null）まで待つ。signal: 待つのをやめる（要求が取り下げられた・終わった）
   wait(session: string, questions: AskQuestion[], signal: AbortSignal): Promise<QuestionReply | null> {
     return new Promise((resolve) => {
       if (signal.aborted) {
@@ -60,20 +60,18 @@ export class PendingQuestions {
     if (!entry) return null;
     const answered = { ...entry.pending.answered, [question]: answer };
     if (entry.pending.questions.every((q) => q.question in answered)) {
-      entry.finish({ kind: 'answer', answers: answered });
+      // プレビュー付きの質問は、カードで答えたときと同じく、選んだ案のプレビューを添え書き（annotations）で渡す
+      const annotations: QuestionAnnotations = {};
+      for (const q of entry.pending.questions) {
+        const preview = q.options.find((o) => o.label === answered[q.question])?.preview;
+        if (preview) annotations[q.question] = { preview };
+      }
+      entry.finish({ kind: 'answer', answers: answered, ...(Object.keys(annotations).length > 0 ? { annotations } : {}) });
       return 'sent';
     }
     entry.pending = { ...entry.pending, answered };
     this.changed(session);
     return 'waiting';
-  }
-
-  // 会話ログに答えが出た（人がターミナルや Remote Control で答えた・キャンセルした）。同じ質問文の待っている質問をやめる
-  answeredElsewhere(session: string, questions: AskQuestion[]): void {
-    const texts = questions.map((q) => q.question).join('\n');
-    for (const entry of [...(this.bySession.get(session) ?? [])]) {
-      if (entry.pending.questions.map((q) => q.question).join('\n') === texts) entry.finish(null);
-    }
   }
 
   // セッションの待っている質問を、すべてやめる（Claude Code が終わった・アーカイブした）

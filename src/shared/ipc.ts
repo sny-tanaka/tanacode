@@ -1,10 +1,11 @@
 import type { ChatEvent } from './chat';
-import type { Activity, ChooseResult, PermissionMode, ScreenInfo } from './screen';
-import type { PendingQuestion, QuestionReply } from './questions';
+import type { Activity, PermissionMode } from './screen';
+import type { SessionState } from './session-tools';
+import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from './questions';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
-import type { ModelCatalog } from './models';
+import type { ModelCatalog, SessionModel } from './models';
 import type { SettingsFile } from './settings-file';
 import type { StatusLineInfo } from './statusline';
 import type { SystemStats } from './system';
@@ -58,8 +59,10 @@ export const IpcChannel = {
   SettingsFilesRemove: 'settings-files:remove',
   SettingsFilesChanged: 'settings-files:changed',
   SessionsConfigure: 'sessions:configure',
+  SessionsModels: 'sessions:models',
   SessionsRestart: 'sessions:restart',
   SessionsSetRemoteControl: 'sessions:set-remote-control',
+  SessionsSetTerminalMode: 'sessions:set-terminal-mode',
   SessionsSetAutoCompact: 'sessions:set-auto-compact',
   RemoteControlAvailable: 'remote-control:available',
   SessionsRename: 'sessions:rename',
@@ -73,19 +76,22 @@ export const IpcChannel = {
   ChatImage: 'chat:image',
   SessionsDiscover: 'sessions:discover',
   SessionsImport: 'sessions:import',
-  ScreenGet: 'screen:get',
-  ScreenChanged: 'screen:changed',
-  ScreenChoose: 'screen:choose',
-  ScreenActivityGet: 'screen:activity-get',
-  ScreenActivity: 'screen:activity',
+  // 作業中の進み具合（考えている・書いている・経過時間）。今のもの・変わった（main → 画面）
+  SessionsProgressGet: 'sessions:progress-get',
+  SessionsProgress: 'sessions:progress',
   QuestionGet: 'question:get',
   QuestionReply: 'question:reply',
   QuestionChanged: 'question:changed',
+  // 答えを待っている、質問でない要求（許可の確認・プランの承認）。今のもの・答える・変わった（main → 画面）
+  PermissionGet: 'permission:get',
+  PermissionReply: 'permission:reply',
+  PermissionChanged: 'permission:changed',
   WorkflowsGet: 'workflows:get',
   WorkflowsChanged: 'workflows:changed',
   SubagentsGet: 'subagents:get',
   ScreenSetMode: 'screen:set-mode',
   ScreenRewind: 'screen:rewind',
+  ScreenRewindPreview: 'screen:rewind-preview',
   ListFiles: 'fs:list-files',
   WriteFile: 'fs:write-file',
   Search: 'fs:search',
@@ -105,6 +111,7 @@ export const IpcChannel = {
   PtyResetSize: 'pty:reset-size',
   PtyData: 'pty:data',
   ShellCreate: 'shell:create',
+  ShellAttach: 'shell:attach',
   ShellWrite: 'shell:write',
   ShellResize: 'shell:resize',
   ShellKill: 'shell:kill',
@@ -225,7 +232,7 @@ export type BrowserAskChange = { sessionId: string; ask: BrowserAsk | null };
 // ユーザーの返事。done: 「終わった」/ そうでなければ「できない」で、reason はその理由（書かなければ空）
 export type BrowserAnswer = { done: boolean; reason: string };
 
-export type SessionAttention = 'question' | 'permission' | 'other' | 'browser' | null;
+export type SessionAttention = 'question' | 'permission' | 'browser' | null;
 
 export type SessionSummary = {
   id: string;
@@ -235,9 +242,17 @@ export type SessionSummary = {
   createdAt: number;
   updatedAt: number;
   running: boolean;
+  // 今の状態（main が 1 つだけ持つ。画面は、チャットの状態をここから決める。設計書 7 節）。一覧の外のセッションは null
+  state: SessionState | null;
+  // 動いている Claude Code の今の権限モード（init・status と、アプリが変えた結果。設計書 7 節）。動いていない・分からなければ null
+  mode: PermissionMode | null;
+  // ターミナルモード（動いている Claude Code が TUI で、人が画面で操作している。設計書 9 節）
+  terminal?: boolean;
+  // ターミナルモードで、TUI のターンの途中（会話ログと書くだけの Stop のフックで分かる）
+  terminalWorking?: boolean;
   unread: boolean;
-  // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可 /
-  // other: フォルダの信頼確認や認識できない対話画面など / browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
+  // ユーザーの操作を待っているもの。question: AskUserQuestion / permission: ツール実行の許可・プランの承認 /
+  // browser: アプリ内ブラウザでの操作の依頼（ask_user_to_act）/ null: 待っていない
   attention: SessionAttention;
   // 実行中のバックグラウンドタスク（サブエージェント・ワークフロー・Bash）の数
   backgroundTasks: number;
@@ -256,6 +271,8 @@ export type SessionSummary = {
   // ワークスペースに追加したフォルダ（絶対パス。リンクは解いてある）。エクスプローラーで cwd の下に並べ、Claude Code にも --add-dir で渡す。
   // 無いもの・空は追加なし
   addedFolders?: string[];
+  // チェックリストのファイルを読めず（権限が無い・新しいバージョンのアプリが書いた形など）、変更を保存しない。無いものは保存する
+  checklistUnsaved?: boolean;
 };
 
 // worktree のセッション。name: worktree の名前（claude --worktree に渡したもの）/ branch: Claude Code が作ったブランチ /
@@ -349,17 +366,27 @@ export type SessionOptions = { model: string | null; effort: string | null; sett
 // 新規セッションを始めるときの指定。どれも null なら Claude Code の既定値（ユーザー設定）
 // worktree: claude --worktree で、新しい worktree に分けて始める
 // addedFolders: 新規セッションの画面でワークスペースに追加したフォルダ（SessionSummary.addedFolders）。無いものは追加なし
-export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[] };
+// capMode: 起動のモードを、開き直すときの上限として残す（Claude が start_session で始めたセッション。子は親があれば残す）
+export type NewSessionOptions = SessionOptions & { mode: PermissionMode | null; remoteControl: boolean; worktree: boolean; addedFolders?: string[]; capMode?: boolean };
 // worktree で始めたセッションを、作れなかった（Claude Code が worktree を作らずに終わった）。id: 始めたときに返した id（セッションは、もう一覧に無い）/
 // cwd: 始めようとしたフォルダ / error: 理由
 export type SessionCreateFailed = { id: string; cwd: string; error: string };
-export type SessionScreen = { sessionId: string; info: ScreenInfo };
-export type SessionActivity = { sessionId: string; activity: Activity | null };
-// フックが答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
+// 巻き戻しの前の確かめ（rewind_files の dry_run）。files: コードを戻すと変わるファイル（コードを戻せないときは null。理由は codeError）/
+// insertions・deletions: 戻すと変わる行の数
+export type RewindPreview = { files: string[] | null; insertions: number; deletions: number; codeError: string | null };
+// 巻き戻すもの。conversation: 会話（その発言の前まで）/ code: ファイル（その発言を送った時点に）
+export type RewindChoice = { conversation: boolean; code: boolean };
+// 巻き戻しの結果。prefillText: 戻した発言の文（入力欄に戻す）/ error: できなかった理由 /
+// codeRewound: 失敗したときに、コードだけは戻した（会話とコードを戻すとき、コードを戻したあとで会話を断られた）
+export type RewindOutcome = { ok: boolean; prefillText: string | null; error: string | null; codeRewound?: boolean };
+
+export type SessionProgress = { sessionId: string; activity: Activity | null };
+// 答えを待っている AskUserQuestion（いちばん前のもの。無ければ null）
 export type SessionQuestion = { sessionId: string; question: PendingQuestion | null };
+// 答えを待っている、質問でない要求（いちばん前のもの。無ければ null）
+export type SessionPermission = { sessionId: string; permission: PendingPermission | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
 // none: 何も送らない（複数選択の自由記述は、打つだけでチェックが付く）
-export type ScreenChoice = { optionId: string; key: 'enter' | 'space' | 'none'; text?: string };
 
 // seq はセッションごとのイベント通し番号。スナップショットとライブ配信の重複を除くのに使う
 // live: 今まさに起きたこと。false は再開時に読み込んだ過去の会話
@@ -372,6 +399,19 @@ export type ShellExit = { id: string; exitCode: number };
 // アプリが開いたターミナル。owner: セッションの id / task: コマンドのタブ（worktree の npm install など。終わってもタブを残す）。
 // false は、Claude が人のターミナルに打つために開いたシェル（type_in_terminal の new_tab。人が開いたシェルと同じに扱う）
 export type ShellOpened = { owner: string; id: string; name: string; task: boolean };
+// 画面を読み込み直したとき（⌘R）に引き継ぐ、main が持っているターミナル（パネルのタブ）。task: コマンドのタブ / exitCode: 動いている間は null /
+// screen: 今の画面を描き直すための文字列（さかのぼって読める行も含む）。cols・rows の大きさの xterm に書く
+export type ShellSnapshot = {
+  owner: string;
+  id: string;
+  name: string;
+  title: string | null;
+  task: boolean;
+  exitCode: number | null;
+  cols: number;
+  rows: number;
+  screen: string;
+};
 
 export type WorkspaceInfo = { root: string; name: string; branch: string | null };
 export type DirEntry = { name: string; path: string; isDir: boolean };
@@ -406,14 +446,19 @@ export type TanacodeApi = {
     // 表示中のセッション。通知の要否と未読の解除に使う
     focus(id: string | null): void;
     snapshot(id: string): Promise<SessionSnapshot>;
-    // Claude Code の入力欄に打ち込んで送る。画像はパスを貼り付けとして送ると [Image #n] として添付される。
-    // 同じセッションへの送信（親セッションからの指示を含む）は、混ざらないよう 1 つずつ順に送る
-    // pastes: 入力欄に貼り付けた長い文（札）。打った文のあとに、1 つずつ貼り付けとして送る（Claude Code が <pasted_content> の囲みに入れる）
+    // 発言を送る（stream-json の user の行）。画像（attachments はパス）は image のブロックに入れる。
+    // 同じセッションへの送信（親セッションからの指示を含む）は、送った順に届ける
+    // pastes: 入力欄に貼り付けた長い文（札）。pasted_content で渡す（Claude Code が、打った文のあとに <pasted_content> の囲みに入れて足す）
     submit(id: string, text: string, attachments: string[], pastes?: string[]): Promise<void>;
-    // 作業を中断する（Esc を送る）
+    // 作業を中断する（interrupt の要求）
     interrupt(id: string): void;
+    // チャットとターミナルモードを切り替える（今の Claude Code を止めて、もう片方で --resume する）。手が空いているときだけ。
+    // stopTasks: 裏のタスクが止まることを人が確かめた。切り替えられなければ理由を添えて失敗する
+    setTerminalMode(id: string, on: boolean, options?: { stopTasks?: boolean }): Promise<void>;
     // モデル・エフォート・設定ファイルを変える。起動中なら --resume で起動し直して反映する。設定ファイルを読めなければ理由を添えて失敗する
     configure(id: string, options: SessionOptions): Promise<void>;
+    // 動いている Claude Code がその場で切り替えられるモデル（initialize の models）。起動の前・止まっているときは null
+    models(id: string): Promise<SessionModel[] | null>;
     // Claude Code を起動し直して同じ会話を続ける（スキルや設定を読み込み直す）
     restart(id: string): Promise<void>;
     // このセッションの Remote Control を切り替える。動いていればその場でつなぐ・切る。切り替えられなかったら理由を返す
@@ -445,25 +490,31 @@ export type TanacodeApi = {
     onSelect(listener: (id: string) => void): () => void;
     onNew(listener: () => void): () => void;
     onChat(listener: (batch: ChatBatch) => void): () => void;
+    // 作業中の進み具合（考えている・書いている・経過時間）。作業中でなければ null
+    progress(sessionId: string): Promise<Activity | null>;
+    onProgress(listener: (payload: SessionProgress) => void): () => void;
   };
   screen: {
-    get(sessionId: string): Promise<ScreenInfo | null>;
-    choose(sessionId: string, choice: ScreenChoice): Promise<ChooseResult>;
-    // 権限モードを Shift+Tab で切り替える（このセッションだけ）
+    // 権限モードを切り替える（このセッションだけ。set_permission_mode）
     setMode(sessionId: string, mode: PermissionMode): Promise<boolean>;
-    // text で始まる発言の直前まで巻き戻す（/rewind の一覧から選ぶ）
-    rewind(sessionId: string, text: string): Promise<boolean>;
-    onChanged(listener: (payload: SessionScreen) => void): () => void;
-    // 作業中の進み具合（画面のタイマーの行）。作業中でなければ null
-    activity(sessionId: string): Promise<Activity | null>;
-    onActivity(listener: (payload: SessionActivity) => void): () => void;
+    // messageId の発言の前まで巻き戻す前に、コードを戻すと変わるファイルを調べる。その発言に戻れなければ null
+    rewindPreview(sessionId: string, messageId: string): Promise<RewindPreview | null>;
+    // messageId の発言の前まで巻き戻す（会話・コード・両方）
+    rewind(sessionId: string, messageId: string, choice: RewindChoice): Promise<RewindOutcome>;
   };
-  // フックが答えを待っている AskUserQuestion（ターミナルの画面を読まずに出す質問のカード）
+  // Claude Code が答えを待っている AskUserQuestion（質問のカード）
   question: {
     get(sessionId: string): Promise<PendingQuestion | null>;
-    // 返事をする。その質問をもう待っていなければ（人がターミナルで答えた・Claude Code が終わった）false
+    // 返事をする。その質問をもう待っていなければ（人がほかで答えた・Claude Code が終わった）false
     reply(sessionId: string, questionId: string, reply: QuestionReply): Promise<boolean>;
     onChanged(listener: (payload: SessionQuestion) => void): () => void;
+  };
+  // Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認のカード）
+  permission: {
+    get(sessionId: string): Promise<PendingPermission | null>;
+    // 答える。その要求をもう待っていなければ（人がほかで答えた・Claude Code が取り下げた・終わった）false
+    reply(sessionId: string, requestId: string, reply: PermissionReply): Promise<boolean>;
+    onChanged(listener: (payload: SessionPermission) => void): () => void;
   };
   workflows: {
     get(sessionId: string): Promise<WorkflowRun[]>;
@@ -498,7 +549,7 @@ export type TanacodeApi = {
     pickDir(): Promise<string | null>;
     onChanged(listener: (state: ProfilesState) => void): () => void;
   };
-  // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って入力欄に打ち込む。
+  // 時刻を指定して送信（予約）。main が保存し、時刻になったら Claude Code の手が空くのを待って送る。
   // アプリが閉じていた・Mac がスリープしていたなどで時刻を過ぎていたものは送らず、missed として残す
   scheduled: {
     list(): Promise<ScheduledMessage[]>;
@@ -608,6 +659,8 @@ export type TanacodeApi = {
   shell: {
     // セッションのフォルダでログインシェルを開く
     create(sessionId: string, cols: number, rows: number): Promise<{ id: string; name: string }>;
+    // 画面を読み込み直したあと、main が持っているターミナルを引き継ぐ（開いた順）。このあとの出力・終わり・開いたタブを、この画面に知らせる
+    attach(): Promise<ShellSnapshot[]>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
     kill(id: string): void;
@@ -747,8 +800,10 @@ export type IpcInvoke = {
   [IpcChannel.SessionsSnapshot]: Api['sessions']['snapshot'];
   [IpcChannel.SessionsSubmit]: Api['sessions']['submit'];
   [IpcChannel.SessionsConfigure]: Api['sessions']['configure'];
+  [IpcChannel.SessionsModels]: Api['sessions']['models'];
   [IpcChannel.SessionsRestart]: Api['sessions']['restart'];
   [IpcChannel.SessionsSetRemoteControl]: Api['sessions']['setRemoteControl'];
+  [IpcChannel.SessionsSetTerminalMode]: Api['sessions']['setTerminalMode'];
   [IpcChannel.SessionsSetAutoCompact]: Api['sessions']['setAutoCompact'];
   [IpcChannel.RemoteControlAvailable]: Api['sessions']['remoteControlAvailable'];
   [IpcChannel.SessionsRename]: Api['sessions']['rename'];
@@ -760,13 +815,14 @@ export type IpcInvoke = {
   [IpcChannel.SessionsExportSave]: Api['sessions']['saveExport'];
   [IpcChannel.SessionsDiscover]: Api['sessions']['discover'];
   [IpcChannel.SessionsImport]: Api['sessions']['import'];
-  [IpcChannel.ScreenGet]: Api['screen']['get'];
-  [IpcChannel.ScreenChoose]: Api['screen']['choose'];
   [IpcChannel.ScreenSetMode]: Api['screen']['setMode'];
   [IpcChannel.ScreenRewind]: Api['screen']['rewind'];
-  [IpcChannel.ScreenActivityGet]: Api['screen']['activity'];
+  [IpcChannel.ScreenRewindPreview]: Api['screen']['rewindPreview'];
+  [IpcChannel.SessionsProgressGet]: Api['sessions']['progress'];
   [IpcChannel.QuestionGet]: Api['question']['get'];
   [IpcChannel.QuestionReply]: Api['question']['reply'];
+  [IpcChannel.PermissionGet]: Api['permission']['get'];
+  [IpcChannel.PermissionReply]: Api['permission']['reply'];
   [IpcChannel.WorkflowsGet]: Api['workflows']['get'];
   [IpcChannel.SubagentsGet]: Api['subagents']['get'];
   [IpcChannel.UsageGet]: Api['usage']['get'];
@@ -809,6 +865,7 @@ export type IpcInvoke = {
   [IpcChannel.TasksAgentLog]: Api['tasks']['agentLog'];
   [IpcChannel.TasksStop]: Api['tasks']['stop'];
   [IpcChannel.ShellCreate]: Api['shell']['create'];
+  [IpcChannel.ShellAttach]: Api['shell']['attach'];
   [IpcChannel.FolderPick]: Api['folders']['pick'];
   [IpcChannel.FolderInfo]: Api['folders']['info'];
   [IpcChannel.FolderFiles]: Api['folders']['listFiles'];
@@ -872,9 +929,9 @@ export type IpcEvent = {
   [IpcChannel.SessionsSelect]: Payload<Api['sessions']['onSelect']>;
   [IpcChannel.SessionsNew]: undefined;
   [IpcChannel.ChatEvents]: Payload<Api['sessions']['onChat']>;
-  [IpcChannel.ScreenChanged]: Payload<Api['screen']['onChanged']>;
-  [IpcChannel.ScreenActivity]: Payload<Api['screen']['onActivity']>;
+  [IpcChannel.SessionsProgress]: Payload<Api['sessions']['onProgress']>;
   [IpcChannel.QuestionChanged]: Payload<Api['question']['onChanged']>;
+  [IpcChannel.PermissionChanged]: Payload<Api['permission']['onChanged']>;
   [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
   [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;

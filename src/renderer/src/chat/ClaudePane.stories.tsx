@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
+import type { UnsentPrompt } from '@shared/chat';
+import { t } from '@shared/i18n';
 import type { SessionSummary, SessionWorktree } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { mockApi } from '../../../../.storybook/mockApi';
@@ -21,6 +23,8 @@ const session: SessionSummary = {
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -30,6 +34,9 @@ const session: SessionSummary = {
   remoteControl: false,
   worktree: null,
 };
+
+// 子セッションのとき（child）の親セッション
+const PARENT: SessionSummary = { ...session, id: 'parent-0001', title: 'ログイン画面の作り直し' };
 
 // 発言と返答を交互に並べた、スクロールできる長さの会話
 function conversation(count: number): ChatItem[] {
@@ -47,7 +54,9 @@ function conversation(count: number): ChatItem[] {
 // worktree: worktree のセッション（preparing を入れると、準備の途中で起動を待っている）。pending: 起動を待っている最初の指示 /
 // scheduled: 予約したメッセージ / input: 入力欄に入れておく文字（予約のボタンを押せるようにする）/
 // terminalMode: ターミナルモード（チャットの代わりに Claude Code の画面を出す）で始める。ヘッダーのボタンで切り替えられる /
-// comments: コードへのコメント / exited: Claude Code が終了している
+// comments: コードへのコメント / exited: Claude Code が終了している（exitReason: 終わったわけ）/ running: 作業中 /
+// unsent: 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追って知らせる）/
+// starting: Claude Code の起動を待っている / child: 親セッション（PARENT）から起動した子セッション
 function Pane({
   items,
   settingsFile = null,
@@ -58,6 +67,11 @@ function Pane({
   terminalMode = false,
   comments = [],
   exited = false,
+  exitReason = null,
+  running = false,
+  unsent = [],
+  starting = false,
+  child = false,
 }: {
   items: ChatItem[];
   settingsFile?: string | null;
@@ -68,6 +82,11 @@ function Pane({
   terminalMode?: boolean;
   comments?: ReviewComment[];
   exited?: boolean;
+  exitReason?: string | null;
+  running?: boolean;
+  unsent?: UnsentPrompt[];
+  starting?: boolean;
+  child?: boolean;
 }) {
   const [terminalOpen, setTerminalOpen] = useState(terminalMode);
   const [shownComments, setShownComments] = useState(comments);
@@ -78,11 +97,17 @@ function Pane({
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg-panel)' }}>
       <ClaudePane
-        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing }}
-        sessions={[session]}
+        session={{ ...session, settingsFile, worktree, running: !!worktree?.preparing || starting, parentId: child ? PARENT.id : null, terminal: terminalOpen }}
+        sessions={child ? [PARENT, session] : [session]}
         onSelectSession={noop}
-        chat={{ ...EMPTY_CHAT, status: exited ? 'exited' : worktree?.preparing ? 'starting' : 'idle', exitCode: exited ? 0 : null, items }}
-        screen={null}
+        chat={{
+          ...EMPTY_CHAT,
+          status: exited ? 'exited' : worktree?.preparing || starting ? 'starting' : running || terminalOpen ? 'running' : 'idle',
+          exitCode: exited ? (exitReason ? 1 : 0) : null,
+          exitReason,
+          items,
+          unsent,
+        }}
         workflows={new Map()}
         subagents={new Map()}
         bashTasks={new Map()}
@@ -97,7 +122,6 @@ function Pane({
         comments={shownComments}
         onCommentsChange={setShownComments}
         onShowComment={noop}
-        onOpenTerminal={() => setTerminalOpen(true)}
         onShowContext={noop}
         onShowShell={noop}
         onToggleTerminal={() => setTerminalOpen((open) => !open)}
@@ -106,7 +130,6 @@ function Pane({
         onUnarchive={noop}
         onSend={noop}
         pending={pending === null ? null : { text: pending, attachments: [], pastes: [] }}
-        sending={[]}
         onTakePending={() => null}
         scheduled={scheduled}
       />
@@ -224,6 +247,52 @@ export const 予約したメッセージ: Story = {
   args: { items: conversation(4), scheduled: SCHEDULED, input: 'あしたの朝、依存を更新してください。' },
 };
 
+// 作業中に送った発言。Claude Code に渡したばかりのものは「送信中」（見た目は発言と同じ）、Claude Code が順番待ちにしたものは
+// 「順番待ち」（点線）で、会話に出るまで末尾に出す。進み具合は main が stream-json の行から作って知らせる
+export const 送信中と順番待ち: Story = {
+  args: {
+    items: conversation(4),
+    running: true,
+    unsent: [
+      { id: 'q1', text: 'ついでに README も直してください。', pastes: [], images: 0, state: 'queued' },
+      { id: 'q2', text: 'このスクリーンショットも見てください。', pastes: [], images: 1, state: 'sending' },
+    ],
+  },
+  beforeEach: () => {
+    mockApi({ 'sessions.progress': () => Promise.resolve({ phase: 'writing', elapsed: '1m 5s', tokens: '1.2k' }) });
+  },
+};
+
+// 子セッションで、作業中に親セッションの Claude から届いた指示。会話に出たときと同じく、親の見出しを付けて人の発言と見分ける
+export const 親からの指示の順番待ち: Story = {
+  args: {
+    items: conversation(2),
+    running: true,
+    child: true,
+    unsent: [{ id: 'q1', text: 'ログインのテストも直してください。終わったら report_result で知らせてください。', pastes: [], images: 0, state: 'queued', parent: PARENT.id }],
+  },
+  beforeEach: () => {
+    mockApi({ 'sessions.progress': () => Promise.resolve({ phase: 'thinking', elapsed: '12s', tokens: null }) });
+  },
+};
+
+// Claude Code の起動に時間がかかっている（initialize の返事が無いまま 10 秒を過ぎた）。経過と、Claude Code の標準エラーの末尾を出す
+// （MCP サーバーやフックを待っている・止まっている理由が出ることがある）
+export const 起動に時間がかかっている: Story = {
+  args: { items: [], starting: true },
+  beforeEach: () => {
+    mockApi({
+      'sessions.progress': () =>
+        Promise.resolve({
+          phase: 'starting',
+          elapsed: '25s',
+          tokens: null,
+          stderr: '[MCP] Connecting to "postgres" (stdio)…\n[MCP] "postgres": still waiting for the server to start (20s)\n[SessionStart hook] npm run setup: installing dependencies…',
+        }),
+    });
+  },
+};
+
 // 貼り付けた長い文（4 行以上・800 文字より長いもの）は、入力欄で札になる（Claude Code の CLI の [Pasted text #1 +30 lines] と同じ）。
 // 札には冒頭の文字と行数を出し、押すと中身を確かめられ、× で外せる。送った発言・予約したメッセージにも、同じ札で出す
 const PASTED_LOG = Array.from({ length: 30 }, (_, i) => `2026-10-12T09:${String(i).padStart(2, '0')}:00Z ERROR request ${i + 1} failed: connect ECONNREFUSED 127.0.0.1:5432`).join('\n');
@@ -277,8 +346,18 @@ export const ターミナルモードでコメントがある: Story = {
   args: { items: conversation(4), terminalMode: true, comments: COMMENTS },
 };
 
-// Claude Code が終了したら、画面の下に「再開」を出す
-export const ターミナルモードで終了した: Story = {
+// ターミナルモードで Claude Code が終わった（/exit など）。チャットには戻さず、画面の下に終了と「再開」を出す。
+// 再開もターミナルモードで起動する。チャットには、ヘッダーのターミナルモードのボタンで戻す
+export const ターミナルモードで止まった: Story = {
   beforeEach: showClaudeScreen,
   args: { items: conversation(4), terminalMode: true, exited: true },
 };
+
+// 切り替えた先の TUI が、起動を終える前に終わった（フォルダの信頼の確認で「No, exit」など）。終了コードの代わりに、わけを出す
+// （わけは main が画面の言語で作る。ツールバーの言語に合わせるため、描くときに作る）
+export const ターミナルモードで起動の前に終わった: Story = {
+  beforeEach: showClaudeScreen,
+  args: { items: conversation(4), terminalMode: true, exited: true },
+  render: (args) => <Pane {...args} exitReason={t('main.terminal.tuiExited', { code: 1 })} />,
+};
+

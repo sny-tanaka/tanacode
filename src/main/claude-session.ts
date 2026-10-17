@@ -3,21 +3,31 @@ import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
 import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
 import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
-import { questionHookEnv } from './question-hook';
 import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
 import { terminalGateEnv, terminalMcpServer, type TerminalMcpLaunch } from './terminal-bridge';
-import type { PtyHandle, PtyHostApi } from './pty-host-client';
-import type { HostedPtyInfo } from './pty-host-protocol';
+import type { PipeHandle, PtyHandle, PtyHostApi } from './pty-host-client';
+import type { HostedInfo } from './pty-host-protocol';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { STATUS_FILE_ENV, sessionSettings } from './statusline';
 import { TranscriptFollower } from './transcript-follower';
 import type { EntryHandler } from './transcript-tail';
 import { projectLogDir } from './claude-config';
+import { StreamClient, type StreamEvents } from './stream/client';
+import { endSession } from './stream/internal';
+import { LineLog } from './stream/log';
+import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from './stream/protocol';
 
-type Options = {
-  // アプリのセッション ID（pty ホストで、どのセッションの claude かの目印にする）
+// stream: チャット。claude -p の stream-json をパイプでつなぐ（StreamClient）/ tui: ターミナルモード。素の TUI を pty で動かし、人が画面で操作する
+export type LaunchKind = 'stream' | 'tui';
+
+// stream（チャット）は、権限モードをいつも渡す（渡さないと、Claude Code はユーザーの設定の既定で始まり、アプリが決めたモードにならない。
+// 決めたこと。設計書 15 節）。TUI は null なら既定のまま
+type Options = BaseOptions & ({ kind: 'stream'; permissionMode: PermissionMode } | { kind: 'tui'; permissionMode: PermissionMode | null });
+
+type BaseOptions = {
+  // アプリのセッション ID（常駐のホストで、どのセッションの claude かの目印にする）
   sessionId: string;
   // セッションのフォルダ（会話ログはここに書かれる。worktree のセッションでは worktree のフォルダ）
   cwd: string;
@@ -28,18 +38,16 @@ type Options = {
   worktreeRoot?: string | null;
   // true: 既存の会話を --resume で再開する / false: --session-id で新規に始める
   resume: boolean;
-  // Remote Control の名前。null なら --remote-control を付けない
+  // Remote Control の名前。null なら --remote-control を付けない（TUI だけ。stream-json は起動後に remote_control の要求でつなぐ）
   remoteControlName: string | null;
   // セッション限定の指定。/model や /effort と違い、ユーザーの既定値（~/.claude/settings.json）を書き換えない
   model: string | null;
   effort: string | null;
-  // --permission-mode。Shift+Tab と同じくこのセッションだけ。null なら既定のまま
-  permissionMode: PermissionMode | null;
   // 設定ファイルを選んでいるとき、アプリの設定と登録した設定を合わせたファイルと、その model。null なら標準の設定のまま
   settings: PreparedSettings | null;
-  // statusLine の JSON を書かせるファイル（--settings で足す statusLine が環境変数から読む）
+  // statusLine の JSON を書かせるファイル（--settings で足す statusLine が環境変数から読む。TUI の間だけ動く）
   statusFile: string;
-  // AskUserQuestion の入力を書かせるファイル（sessionSettings のフック）
+  // フックが書くファイルの名前の元（質問のファイル。許可の確認の入力・止めるファイルの名前は、ここから作る）
   askFile: string;
   // アプリ内ブラウザの MCP サーバー（中継）を足すときの材料。null なら足さない（メニューでオフにしている）
   browser: BrowserMcpLaunch | null;
@@ -50,75 +58,63 @@ type Options = {
   walkthrough?: McpLaunch | null;
   // 人のターミナルの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）。child: 子セッション（読むツールだけで、打つ前の確認のフックも足さない）
   terminal?: TerminalMcpLaunch | null;
-  // AskUserQuestion の質問をアプリに渡して答えを待つフック（question-hook.ts）の材料。null なら足さない（アプリが待ち受けを始められなかった）
-  question?: McpLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
   claudeDir?: string | null;
   // ワークスペースに追加したフォルダ（--add-dir）。Claude Code は、cwd と同じように読み書きを許す
   addDirs?: string[];
+  // stream-json の送受信の控え（不具合を調べるため）。null なら控えない
+  streamLog?: string | null;
   cols: number;
   rows: number;
 };
 
 type Handlers = {
+  // TUI の出力（ターミナルモードの画面）
   onData: (data: string) => void;
-  // Claude Code に入力を送った（画面の読み取りが、Claude Code が入力を捨てる間を避けるのに使う）
+  // Claude Code に入力を送った（TUI）
   onInput?: () => void;
-  onExit: (exitCode: number) => void;
+  // stream-json の出力の行・答えを待つ要求・その取り下げ（stream）
+  stream?: Omit<StreamEvents, 'onExit'>;
+  // stderr: stream のときの標準エラーの末尾（起動できなかった理由など）
+  onExit: (exitCode: number, stderr?: string) => void;
   onEntry: EntryHandler;
   onHistoryLoaded: () => void;
   onSwitch: (claudeSessionId: string) => void;
 };
 
-// claude は pty ホスト（アプリとは別の常駐プロセス）が起動して持つ。アプリを再起動しても止まらず、起動し直したアプリが引き継ぐ
+// 止めるときの待ち方（stop）。end_session で終わらなければ SIGTERM、それでも終わらなければ SIGKILL（どれもプロセスグループごと）
+const STOP_STEP_MS = 3000;
+
+// claude は常駐のホスト（アプリとは別のプロセス）が起動して持つ。アプリを再起動しても止まらず、起動し直したアプリが引き継ぐ
 export class ClaudeSession {
-  private process: PtyHandle | null = null;
+  private pty: PtyHandle | null = null;
+  private pipe: PipeHandle | null = null;
+  // stream のとき、stream-json の行の読み書き
+  client: StreamClient | null = null;
   private transcript: TranscriptFollower | null = null;
+  // 会話ログの追いかけを作る前に届いた、乗り換え先の会話ログ（引き継いだ claude の送り直しの行で、アプリが見ていない間の /clear を知ったとき）
+  private pendingFollow: string | null = null;
+  private exitWaiters: (() => void)[] = [];
+  private exited = false;
+  // kill した。終わったかは終わりの知らせまで持つ（stop が待てるように）が、出力・行はもう表示に流さない
+  private killed = false;
 
   constructor(
     private readonly host: PtyHostApi,
     private readonly options: Options,
     private readonly handlers: Handlers,
     // 前のアプリが起動して、まだ動いている claude（引き継ぐ）。null なら新しく起動する
-    private readonly adopted: HostedPtyInfo | null = null,
+    private readonly adopted: HostedInfo | null = null,
   ) {}
 
-  start(): void {
-    const { sessionId, cwd, claudeSessionId, statusFile, askFile, cols, rows } = this.options;
-    let proc: PtyHandle;
-    if (this.adopted) {
-      proc = this.host.attach(this.adopted);
-      // 引き継いだときは、今の画面を描き直してから続き（一覧を受け取ったあとに届いていた分も）を受け取る
-      if (this.adopted.screen) this.handlers.onData(this.adopted.screen);
-    } else {
-      const args = claudeArgs(this.options);
-      // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
-      // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
-      // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も
-      const env = {
-        ...childEnv(this.options.claudeDir ?? null),
-        [STATUS_FILE_ENV]: statusFile,
-        [ASK_FILE_ENV]: askFile,
-        ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}),
-        ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
-        ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
-        ...(this.options.question ? questionHookEnv(this.options.question, sessionId) : {}),
-      };
-      const { worktree, worktreeRoot, resume } = this.options;
-      const spawnCwd = worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
-      proc = this.host.spawn({ tag: sessionId, file: 'claude', args, cwd: spawnCwd, env, cols, rows });
-    }
-    proc.onData((data) => {
-      if (this.process === proc) this.handlers.onData(data);
-    });
-    proc.onExit((exitCode) => {
-      if (this.process !== proc) return;
-      this.process = null;
-      this.transcript?.stop();
-      this.handlers.onExit(exitCode);
-    });
-    this.process = proc;
+  get kind(): LaunchKind {
+    return this.options.kind;
+  }
 
+  start(): void {
+    if (this.options.kind === 'stream') this.startStream();
+    else this.startTui();
+    const { cwd, claudeSessionId } = this.options;
     this.transcript = new TranscriptFollower(
       transcriptPath(cwd, claudeSessionId, this.options.claudeDir ?? null),
       {
@@ -130,64 +126,170 @@ export class ClaudeSession {
       this.adopted?.startedAt,
     );
     this.transcript.start();
+    if (this.pendingFollow) void this.transcript.offer(this.pendingFollow);
+    this.pendingFollow = null;
   }
 
+  private startTui(): void {
+    let proc: PtyHandle;
+    if (this.adopted?.kind === 'pty') {
+      proc = this.host.attach(this.adopted);
+      // 引き継いだときは、今の画面を描き直してから続き（一覧を受け取ったあとに届いていた分も）を受け取る
+      if (this.adopted.screen) this.handlers.onData(this.adopted.screen);
+    } else {
+      const { sessionId, cols, rows } = this.options;
+      proc = this.host.spawn({ tag: sessionId, file: 'claude', args: claudeArgs(this.options), cwd: this.spawnCwd(), env: this.env(), cols, rows });
+    }
+    proc.onData((data) => {
+      if (this.pty === proc && !this.killed) this.handlers.onData(data);
+    });
+    proc.onExit((exitCode) => {
+      if (this.pty !== proc) return;
+      this.pty = null;
+      this.finish(exitCode);
+    });
+    this.pty = proc;
+  }
+
+  private startStream(): void {
+    const events: StreamEvents = {
+      onMessage: (message, past) => !this.killed && this.handlers.stream?.onMessage(message, past),
+      onPermission: (id, request, replayed) => !this.killed && this.handlers.stream?.onPermission(id, request, replayed),
+      onCancel: (id) => !this.killed && this.handlers.stream?.onCancel(id),
+      onCaughtUp: () => !this.killed && this.handlers.stream?.onCaughtUp?.(),
+      onExit: (exitCode, stderr) => {
+        if (this.pipe !== pipe) return;
+        this.pipe = null;
+        this.finish(exitCode, stderr);
+      },
+    };
+    const log = this.options.streamLog ? new LineLog(this.options.streamLog) : null;
+    let pipe: PipeHandle;
+    if (this.adopted?.kind === 'pipe') {
+      pipe = this.host.attachPipe(this.adopted);
+      this.pipe = pipe;
+      this.client = new StreamClient(pipe, events, log);
+      this.client.adopt(this.adopted);
+      return;
+    }
+    const { sessionId } = this.options;
+    pipe = this.host.spawnPipe({
+      tag: sessionId,
+      file: 'claude',
+      args: claudeArgs(this.options),
+      cwd: this.spawnCwd(),
+      env: this.env(),
+      retain: RETAIN_RULES,
+      transient: TRANSIENT_KINDS,
+    });
+    this.pipe = pipe;
+    this.client = new StreamClient(pipe, events, log);
+    this.client.start();
+  }
+
+  // 新しい worktree で始めるときは、元のフォルダ（リポジトリのいちばん上）で起動する
+  private spawnCwd(): string {
+    const { worktree, worktreeRoot, resume, cwd } = this.options;
+    return worktree && worktreeRoot && !resume ? worktreeRoot : cwd;
+  }
+
+  // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
+  // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
+  // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も
+  private env(): Record<string, string> {
+    const { sessionId, statusFile, askFile, kind } = this.options;
+    return {
+      ...claudeEnv(kind, this.options.claudeDir ?? null),
+      [STATUS_FILE_ENV]: statusFile,
+      [ASK_FILE_ENV]: askFile,
+      ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}),
+      ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
+      ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
+    };
+  }
+
+  private finish(exitCode: number, stderr?: string): void {
+    this.exited = true;
+    this.transcript?.stop();
+    for (const waiter of this.exitWaiters.splice(0)) waiter();
+    this.handlers.onExit(exitCode, stderr);
+  }
+
+  // TUI に打つ
   write(data: string): void {
-    if (!this.process) return;
-    this.process.write(data);
+    if (!this.pty) return;
+    this.pty.write(data);
     this.handlers.onInput?.();
   }
 
   // statusLine が教えてくれた今の会話ログ（/clear で変わる）
   followTranscript(file: string): void {
-    void this.transcript?.offer(file);
+    // stream はつないだ直後に送り直しの行が届くことがあり、そのときはまだ追いかけを作っていない。作ったあとに渡す
+    if (!this.transcript) this.pendingFollow = file;
+    else void this.transcript.offer(file);
   }
 
   resize(cols: number, rows: number): void {
-    this.process?.resize(cols, rows);
+    this.pty?.resize(cols, rows);
   }
 
-  // 止めて、終わるのを待つ（worktree を消す前に。消している途中に Claude Code が書き込まないように）
-  stop(timeoutMs = 10_000): Promise<void> {
-    const proc = this.process;
-    if (!proc) {
-      this.kill();
-      return Promise.resolve();
+  // 止めて、終わるのを待つ（切り替え・起動し直し・worktree を消す前。同じ会話を 2 つのプロセスが書かないように）。
+  // stream は end_session（裏のタスクを待たずに終わる。実測）、TUI は SIGHUP。終わらなければ SIGTERM、さらに SIGKILL（プロセスグループごと）。
+  // 終わったら true。SIGKILL のあとも終わったと分からなければ（ホストが落ちたなど）false
+  async stop(stepMs = STOP_STEP_MS): Promise<boolean> {
+    if (this.exited) return true;
+    if (!this.pty && !this.pipe) return true;
+    const exited = new Promise<void>((resolve) => this.exitWaiters.push(resolve));
+    const within = (ms: number) => Promise.race([exited.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+    if (this.client && this.pipe) {
+      // end_session を受け付けなかった（受け口が無いなど）ときは、待たずに SIGTERM へ
+      const asked = await endSession(this.client).then(
+        () => true,
+        () => false,
+      );
+      if (asked && (await within(stepMs))) return true;
+    } else {
+      this.pty?.kill();
+      if (await within(stepMs)) return true;
     }
-    return new Promise((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
-      proc.onExit(() => {
-        clearTimeout(timer);
-        resolve();
-      });
-      this.kill();
-    });
+    this.pipe?.kill('SIGTERM');
+    if (this.pty) this.pty.kill('SIGTERM');
+    if (await within(stepMs)) return true;
+    this.pipe?.kill('SIGKILL');
+    if (this.pty) this.pty.kill('SIGKILL');
+    return within(stepMs);
   }
 
+  // すぐ止める（終わるのは待たない）。出力・行はもう表示に流さないが、終わったかは終わりの知らせまで持ち、終わったら onExit が来る
+  // （待っている要求の後始末を通す。stop で終わるのを待つこともできる）
   kill(): void {
+    this.killed = true;
     this.transcript?.stop();
     this.transcript = null;
-    const proc = this.process;
-    this.process = null;
-    proc?.kill();
+    this.pty?.kill();
+    this.pipe?.kill('SIGTERM');
   }
 
   // アプリの終了時。claude は動かしたまま、見るのをやめる（次に起動したアプリが引き継ぐ）
   detach(): void {
     this.transcript?.stop();
     this.transcript = null;
-    const proc = this.process;
-    this.process = null;
-    proc?.detach();
+    const pty = this.pty;
+    this.pty = null;
+    this.pipe = null;
+    pty?.detach();
+    this.client?.detach();
   }
 }
 
-// claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う
+// claude に付ける引数。Claude Code との互換性の確認（test/cli）も同じものを使う。
+// kind を省くと tui（ターミナルモード）
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'question' | 'addDirs'>>,
+    Partial<Pick<Options, 'kind' | 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs'>>,
 ): string[] {
   const {
+    kind = 'tui',
     claudeSessionId,
     resume,
     remoteControlName,
@@ -203,13 +305,14 @@ export function claudeArgs(
     sessionId = '',
     claudeDir = null,
     terminal = null,
-    question = null,
     addDirs = [],
   } = options;
-  const args = [resume ? '--resume' : '--session-id', claudeSessionId];
+  const args: string[] = kind === 'stream' ? [...STREAM_ARGS] : [];
+  args.push(resume ? '--resume' : '--session-id', claudeSessionId);
   // 新しい会話だけ。再開では付けない（worktree のフォルダで起動すれば、Claude Code が会話ログから worktree に戻る）
   if (worktree && !resume) args.push('--worktree', worktree);
-  if (remoteControlName) args.push('--remote-control', remoteControlName);
+  // stream-json には効かない（起動後に remote_control の要求でつなぐ）
+  if (remoteControlName && kind === 'tui') args.push('--remote-control', remoteControlName);
   // --resume は前回のモデルを引き継ぐので、既定に戻すときも明示する。
   // --model は設定ファイルの model を上書きするので、登録した設定ファイルに model があれば、選んでいないときはそれを渡す
   args.push('--model', model ?? settings?.model ?? 'default');
@@ -225,14 +328,9 @@ export function claudeArgs(
   if (walkthrough) servers.push(walkthroughMcpServer(walkthrough, sessionId));
   if (terminal) servers.push(terminalMcpServer(terminal, sessionId));
   args.push(...mcpArgs(servers));
-  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。
+  // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。どちらの起動でも同じ中身にする（statusline.ts の ownSettings）。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
-  // アプリ内ブラウザを足すときは、JavaScript の実行の確認（localhost 以外のページだけ。browser-gate.ts のフック）も、
-  // セッションを足すときは、子セッションの起動の確認（sessions-bridge.ts のフック）も、
-  // チェックリストを足すときは、チェックリストを使い続けさせるフック（checklist-hook.ts）も、
-  // ターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフック（terminal-bridge.ts）も、
-  // 質問のフックの材料があれば、AskUserQuestion の質問をアプリに渡すフック（question-hook.ts）も、この設定に入れる
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child, !!question));
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child));
   return args;
 }
 
@@ -241,6 +339,25 @@ export function transcriptPath(cwd: string, claudeSessionId: string, claudeDir: 
   return join(projectLogDir(cwd, claudeDir), `${claudeSessionId}.jsonl`);
 }
 
+// tanacode を Claude Code の中から起動したとき（開発用のビルドなど）に受け継ぐ、親の Claude Code がそのセッションのために付ける変数。
+// 子の claude とそのツールに渡さない（子セッション扱いになって起動を断られる・会話ログを保存しない、親の会話の ID・メッセージの
+// トークンが子のツールから読める）。CLAUDE_CODE_USE_BEDROCK のようなユーザーの設定は残すので、名前を並べて消す
+const PARENT_SESSION_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_BRIDGE_SESSION_ID',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_SESSION_ATTENDED',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_PID',
+  'CLAUDE_EFFORT',
+  // Claude Code がツールに付ける、エージェントの中で動いている印
+  'AI_AGENT',
+];
+
 // アプリが起動する Claude Code・シェルの環境変数。claudeDir: プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR にする。
 // null は既定のプロファイルで、アプリの環境変数のまま）
 export function childEnv(claudeDir: string | null = null): Record<string, string> {
@@ -248,13 +365,26 @@ export function childEnv(claudeDir: string | null = null): Record<string, string
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
-  // Claude Code 上から起動したとき、子セッション扱い（起動拒否・会話ログ保存オフ）になるのを防ぐ
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
-  delete env.CLAUDE_CODE_CHILD_SESSION;
+  for (const key of PARENT_SESSION_ENV) delete env[key];
+  // 親の tanacode がそのセッションの Claude Code に付けたつなぎ先（ソケット・セッション ID など）も受け継がない。
+  // この tanacode は、子ごとに自分のものを付け直す（無いまま親のものが残ると、子のフックが親の tanacode につながる）
+  for (const key of Object.keys(env)) if (key.startsWith('TANACODE_')) delete env[key];
   delete env.ELECTRON_RUN_AS_NODE;
   if (claudeDir) env.CLAUDE_CONFIG_DIR = claudeDir;
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
+  return env;
+}
+
+// stream-json の Claude Code で、巻き戻し（rewind_files）に要るファイルの控えを有効にする環境変数
+export const FILE_CHECKPOINTING_ENV = 'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING';
+
+// Claude Code に渡す環境変数。端末の種類（TERM・COLORTERM）は TUI だけ。stream-json では、ファイルの控えを有効にする
+export function claudeEnv(kind: LaunchKind, claudeDir: string | null = null): Record<string, string> {
+  const env = childEnv(claudeDir);
+  if (kind === 'tui') return env;
+  delete env.TERM;
+  delete env.COLORTERM;
+  env[FILE_CHECKPOINTING_ENV] = '1';
   return env;
 }

@@ -69,12 +69,12 @@ describe('Claude が人のターミナルを読み、頼まれて打つ', () => 
     await app.send(TYPE);
     const card = await app.menuCard('permission');
     const text = await card.textContent();
-    expect(text).toContain('tanacode-terminal — 打ち込む');
+    expect(text).toContain('ターミナル · 打ち込む');
     // tanacode のフックが出させた確認の理由。打つ先のタブと、打つ文字がそのまま出る
     expect(text).toContain('権限モードによらず毎回確認を求めます。「zsh 1」に打つもの: echo claude-$((30+3)) ⏎');
     // まだ打っていない
     expect(await shell().locator('.xterm-rows').textContent()).not.toContain('claude-');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', TYPE_DONE).waitFor();
     await shell().locator('.xterm-rows').getByText('claude-33', { exact: false }).waitFor();
     expect(app.api.toolResults.find((r) => r.startsWith('Typed '))).toContain('claude-33');

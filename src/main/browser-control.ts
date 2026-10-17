@@ -1,9 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { nativeImage, webContents as allWebContents, type NativeImage, type Session, type WebContents } from 'electron';
 import { BROWSER_MCP, browserTool, browserToolId, isClaudeAllowedUrl, isLocalUrl } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
 import type { BrowserActivity, BrowserAsk, BrowserAskChange, BrowserRect, IpcChannel, IpcEvent } from '@shared/ipc';
 import { mcpToolLabel } from '@shared/mcp-tools';
-import type { PermissionRequest } from '@shared/session-tools';
 import { BrowserAsks } from './browser-asks';
 import { BROWSER_GATE_REQUEST } from './browser-bridge';
 import { textResult, type ToolResult } from './mcp-bridge';
@@ -11,6 +11,8 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開かせる（openFromPage）。
+// ページが開くポップアップ（features 付きの window.open など）は、アプリ内ブラウザの外の別ウインドウで開く（browser-windows.ts）。
+// 別ウインドウは Claude の操作の対象にしない。Claude の操作で開いたときは、そのことを伝える（allowsPopup）。
 // クリックや入力は CDP（Input.*）で送る。ウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
 // ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
@@ -25,6 +27,8 @@ const WORLD = 1100;
 const MAX_TEXT = 20_000;
 const MAX_CONSOLE = 200;
 const MAX_FAILED = 100;
+// 控えておく、トップのフレームで確定した移動の数（1 回の読み取りの間に、これより多く移ることは無い）
+const MAX_NAVIGATED = 20;
 const MAX_TREE_LINES = 1500;
 // スクリーンショットの長い辺の上限（Claude が画像を読むときに縮める大きさ）
 const MAX_IMAGE_SIDE = 1568;
@@ -130,9 +134,17 @@ type AXNode = {
   parentId?: string;
 };
 
-type LogEntry = { level: string; text: string };
-// webview ごとのコンソールと失敗した通信（今のページを開いてから）。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
-type Logs = { console: LogEntry[]; failed: string[] };
+// seq: 記録の通し番号（上限で前から削っても、移動で空にしても、番号は続く。ある時点からあとの記録を切り出すのに使う）。
+// origin: 文を出したフレームのオリジン（分からなければ null）/ top: トップのフレームか。Claude に返すのは、許した先のフレームの文だけ（visibleLog）。
+// 別オリジンの iframe の文や、移り始めたあとに前のページが出した文（pagehide など）も、同じ記録に入るため
+type LogEntry = { level: string; text: string; seq: number; origin: string | null; top: boolean };
+// 失敗した通信の記録。text: Claude に返す行 / origin・top: 通信を出したもの（requestSource。LogEntry と同じく visibleLog で、Claude に返すかを決める）
+type RequestEntry = { text: string; origin: string | null; top: boolean };
+// トップのフレームで確定した移動（did-navigate）。count: これまでの数（減らない）/ urls: 新しいもの MAX_NAVIGATED 件の URL。
+// 読んでいる間に確定したページを、読み終えたときに確かめる（readFrom）
+type Navigated = { count: number; urls: string[] };
+// webview ごとのコンソールと失敗した通信（今のページを開いてから）と、確定した移動。画面がタブを知らせてくる前（ページの最初のスクリプト）から集める
+type Logs = { console: LogEntry[]; failed: RequestEntry[]; seq: number; navigated: Navigated };
 // タブ 1 つ（webview 1 つ）
 type Guest = {
   tabId: string;
@@ -154,13 +166,23 @@ type Tabs = {
   tabs: Map<string, Guest>;
   // 今のタブ（画面が知らせてくる。Claude の操作はこのタブに対して行う）
   active: string | null;
-  // Claude の操作の間に、許していない先へ移ろう（開こう）として止めたもの・新しいタブで開いたもの（呼び出しごとに空にする）
+  // Claude の操作の間に、許していない先へ移ろう（開こう）として止めたもの・新しいタブで開いたもの・別ウインドウで開いたポップアップ・
+  // 許していない先へ移ろうとして止めたポップアップの移動（呼び出しごとに空にする）
   blocked: string | null;
   opened: string[];
+  popups: string[];
+  popupBlocked: string | null;
   // これからできるタブに渡す許可（navigate で新しいタブに開く・許可したページが同じオリジンを新しいウインドウで開く）。
   // 画面がタブを作って知らせてくるまでの間だけ（until まで）
   handoff: { origin: string; until: number }[];
 };
+
+// JavaScript の実行の確認のフックが答えたときのページ。フックに渡った式と、そのときの今のタブのオリジン（無い・空のタブなら null）。
+// evaluate が同じ式で呼ばれたら 1 回だけ使い、そのオリジンのページでだけ動かす（フックが確認を省いた・人が確認したページと、動かすページをずらさない）。
+// 控えは「断る」にしか使わないので、期限やメニューのオフでは消さない（消すと、確認したページを確かめずに動かす側に倒れる）。
+// 控えが無い（フックが動かなかった・アプリに聞けなかった・上限で押し出された）呼び出しも、動かさない。捨てるのは、上限と forget だけ
+// toolUseId: その呼び出しの ID（フックの入力に tool_use_id があったときだけ）。呼び出しにも ID があれば、ID で結びつける
+type EvaluateMark = { expression: string; origin: string | null; toolUseId?: string };
 
 // 許す先の外を開くことを、人に確認した印。フックが ask を返したときに控え、navigate が開くときに 1 回だけ使う。
 // url: 開く先 / newTab: 新しいタブに開くか / tabId: 確認したときの今のタブ（無ければ null）
@@ -211,6 +233,8 @@ export class BrowserControl {
   private readonly asks: BrowserAsks;
   // 人に確認した、許す先の外を開く印（セッションごと）
   private readonly marks = new Map<string, Mark[]>();
+  // JavaScript の実行の確認のフックが答えたときのページ（セッションごと）
+  private readonly evaluateMarks = new Map<string, EvaluateMark[]>();
 
   constructor(private readonly deps: Deps) {
     this.asks = new BrowserAsks((sessionId, ask) => {
@@ -222,18 +246,19 @@ export class BrowserControl {
   // 失敗した通信（4xx・5xx・つながらなかったもの）を集める。プレビューの webview が使うセッションに 1 回だけ付ける
   watchNetwork(session: Session): void {
     const filter = { urls: ['http://*/*', 'https://*/*'] };
-    const record = (contentsId: number | undefined, text: string) => {
-      const logs = contentsId === undefined ? undefined : this.logs.get(contentsId);
+    // 通信を出したもの（どのページ・フレームか）も残す。Claude に返すのは、許した先のものだけ（failedRequests）
+    const record = (details: RequestDetails & { webContentsId?: number }, text: string) => {
+      const logs = details.webContentsId === undefined ? undefined : this.logs.get(details.webContentsId);
       if (!logs) return;
-      logs.failed.push(text);
+      logs.failed.push({ text, ...requestSource(details) });
       if (logs.failed.length > MAX_FAILED) logs.failed.splice(0, logs.failed.length - MAX_FAILED);
     };
     session.webRequest.onCompleted(filter, (details) => {
-      if (details.statusCode >= 400) record(details.webContentsId, `${details.statusCode} ${details.method} ${details.url} (${details.resourceType})`);
+      if (details.statusCode >= 400) record(details, `${details.statusCode} ${details.method} ${details.url} (${details.resourceType})`);
     });
     session.webRequest.onErrorOccurred(filter, (details) => {
       // 移ったための中断（ERR_ABORTED）は失敗にしない
-      if (details.error !== 'net::ERR_ABORTED') record(details.webContentsId, `${details.error} ${details.method} ${details.url} (${details.resourceType})`);
+      if (details.error !== 'net::ERR_ABORTED') record(details, `${details.error} ${details.method} ${details.url} (${details.resourceType})`);
     });
   }
 
@@ -241,13 +266,14 @@ export class BrowserControl {
   track(contents: WebContents): Logs {
     const existing = this.logs.get(contents.id);
     if (existing) return existing;
-    const logs: Logs = { console: [], failed: [] };
+    const logs: Logs = { console: [], failed: [], seq: 0, navigated: { count: 0, urls: [] } };
     const id = contents.id;
     this.logs.set(id, logs);
     contents.on('console-message', (event) => {
       const { level, message, sourceId, lineNumber } = event;
       const where = sourceId ? ` (${sourceId}${lineNumber ? `:${lineNumber}` : ''})` : '';
-      logs.console.push({ level, text: `${message}${where}` });
+      const { origin, top } = frameOf(event);
+      logs.console.push({ level, text: `${message}${where}`, seq: logs.seq++, origin, top });
       if (logs.console.length > MAX_CONSOLE) logs.console.splice(0, logs.console.length - MAX_CONSOLE);
     });
     // 新しいページを開いたら、コンソールと失敗した通信を空にする（「今のページを開いてから」のもの）
@@ -256,6 +282,12 @@ export class BrowserControl {
         logs.console.length = 0;
         logs.failed.length = 0;
       }
+    });
+    // トップのフレームで確定した移動を控える（読んでいる間に、許していない先を経て戻ったかを見るため）
+    contents.on('did-navigate', (_event, url: string) => {
+      logs.navigated.count++;
+      logs.navigated.urls.push(url);
+      if (logs.navigated.urls.length > MAX_NAVIGATED) logs.navigated.urls.splice(0, logs.navigated.urls.length - MAX_NAVIGATED);
     });
     contents.once('destroyed', () => this.logs.delete(id));
     return logs;
@@ -308,12 +340,34 @@ export class BrowserControl {
 
   // webview のトップのフレームが url へ移ろうとしている（リンク・リダイレクト・ページのスクリプト）。
   // Claude の操作で、許していない先（許す先の外で、このタブで許可していないオリジン）へ移ろうとしていれば止める（true を返す）。
-  // 止めた先はタブに控える（続けるなら、navigate の action: "continue" で人に許可を求める）。ユーザーの操作は止めない
-  blocksNavigation(contents: WebContents, url: string): boolean {
+  // 止めた先はタブに控える（続けるなら、navigate の action: "continue" で人に許可を求める）。ユーザーの操作は止めない。
+  // popup: contents のタブが開いたポップアップ（別ウインドウ）の移動。そのタブで許した先かを見て、止めたことだけを Claude に伝える
+  // （Claude はポップアップを操作できないので、continue の先には控えない）
+  blocksNavigation(contents: WebContents, url: string, popup = false): boolean {
     const found = this.find(contents);
     if (!found || !this.operating(found.sessionId) || this.allowedIn(found.guest, url)) return false;
+    if (popup) {
+      found.session.popupBlocked = url;
+      return true;
+    }
     found.session.blocked = url;
     found.guest.stopped = { url, newWindow: false };
+    return true;
+  }
+
+  // ページがポップアップ（別ウインドウ）を開こうとした。開いてよいか（browser-windows.ts）。
+  // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える。continue では、新しいタブに開く）。
+  // Claude の操作の間に開くものは、Claude に伝える。知らないタブ（画面からまだ知らせが来ていない）は、Claude が操作していないので開いてよい。
+  // 空のページ（about:blank）は開いてよい（中身は開いたページが書く。そこから移るときは、blocksNavigation の popup で確かめる）
+  allowsPopup(contents: WebContents, url: string): boolean {
+    const found = this.find(contents);
+    if (!found || !this.operating(found.sessionId)) return true;
+    if (!isBlank(url) && !this.allowedIn(found.guest, url)) {
+      found.session.blocked = url;
+      found.guest.stopped = { url, newWindow: true };
+      return false;
+    }
+    found.session.popups.push(url);
     return true;
   }
 
@@ -371,9 +425,18 @@ export class BrowserControl {
   }
 
   // 子セッションの許可の確認のうち、人だけが答えられるもの（親の Claude に許させない。sessions-control.ts の answer_permission）。
-  // 許す先の外を開く確認（フックが ask を返して、印を控えたもの）。印のある間の navigate の確認は、どれも人に任せる
-  // （どの確認の印かを取り違えても、人に聞く側に倒す）。当たれば、親に伝える理由（英語）を返す
-  humanOnly(sessionId: string, request: PermissionRequest): string | null {
+  // 親が読むときと答えるときに、そのときの様子で決める。当たれば、親に伝える理由（英語）を返す
+  // - 開く: 許す先の外を開く確認（フックが ask を返して、印を控えたもの）。印のある間の navigate の確認は、どれも人に任せる
+  //   （どの確認の印かを取り違えても、人に聞く側に倒す）
+  // - JavaScript の実行: 今のタブのページが、人が許したサイト（許す先か、そのタブで人が開くのを許したオリジン）のときだけ、親も答えられる。
+  //   まだ許していないサイト・許したあとに別のサイトへ移った・タブが無い（確かめられない）ときは、人に任せる
+  humanOnly(sessionId: string, request: { tool: string }): string | null {
+    if (request.tool === browserToolId('evaluate')) {
+      const guest = this.activeNow(sessionId);
+      const url = guest?.contents.getURL() ?? '';
+      if (guest && !isBlank(url) && this.allowedIn(guest, url)) return null;
+      return 'it asks to run JavaScript on a page that the user has not allowed for Claude in the in-app browser (neither a host the user allowed in tanacode nor a site the user permitted in that tab), and only the user can answer such a prompt.';
+    }
     if (request.tool !== browserToolId('navigate') || this.liveMarks(sessionId).length === 0) return null;
     return 'it asks to open a page outside the hosts the user allowed for Claude in the in-app browser, and only the user can answer such a prompt.';
   }
@@ -382,6 +445,7 @@ export class BrowserControl {
   forget(sessionId: string): void {
     this.asks.cancel(sessionId);
     this.marks.delete(sessionId);
+    this.evaluateMarks.delete(sessionId);
     this.sessions.delete(sessionId);
     this.running.delete(sessionId);
     this.endedAt.delete(sessionId);
@@ -389,8 +453,9 @@ export class BrowserControl {
     this.idleTimers.delete(sessionId);
   }
 
-  // 中継から届いた呼び出し。signal: Claude Code が呼び出しを取り消した（中継がソケットを閉じた）
-  async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  // 中継から届いた呼び出し。signal: Claude Code が呼び出しを取り消した（中継がソケットを閉じた）。
+  // toolUseId: Claude Code がその呼び出しに付けた ID（中継が受け取ったときだけ。evaluate の控えと結びつける）
+  async handle(sessionId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal, toolUseId?: string): Promise<ToolResult> {
     if (name === BROWSER_GATE_REQUEST) return this.gate(sessionId, args);
     const tool = browserTool(name);
     if (!tool) return textResult(`Unknown tool: ${name}`, true);
@@ -415,7 +480,7 @@ export class BrowserControl {
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new ToolError(`Did not finish within ${TOOL_TIMEOUT_MS / 1000} seconds.`)), TOOL_TIMEOUT_MS);
       });
-      return await Promise.race([this.run(sessionId, name, args), timeout]);
+      return await Promise.race([this.run(sessionId, name, args, toolUseId), timeout]);
     } catch (error) {
       return textResult(error instanceof Error ? error.message : String(error), true);
     } finally {
@@ -437,15 +502,28 @@ export class BrowserControl {
   }
 
   // 確認のフック（browser-gate.ts）への答え。request.tool: ツールの名前（mcp__…）/ request.input: ツールの入力。待たない（フックは短い間しか待たない）
-  // - JavaScript の実行: 今のタブが localhost のページなら、確認を省いてよい。タブが無い・空のときは、確認を出させる側に倒す
+  // - JavaScript の実行: 今のタブが localhost のページなら、確認を省いてよい。タブが無い・空のときは、確認を出させる側に倒す。
+  //   答える URL は、許していない先ならオリジンだけ（フックが確認の理由に書く）
   // - 開く: 許す先の外で、そのタブで許可していないオリジンを開くなら、人に確認させ（outside にオリジン）、確認した印を控える
   private gate(sessionId: string, request: Record<string, unknown>): ToolResult {
     if (request.tool === browserToolId('navigate')) {
       const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
       return textResult(JSON.stringify({ outside: this.gateNavigate(sessionId, input) }));
     }
-    const url = this.activeNow(sessionId)?.contents.getURL() ?? '';
-    return textResult(JSON.stringify({ local: isLocalUrl(url), url }));
+    // メニューでオフのとき・知らないセッションには答えない（フックは、確認を出させる側に倒す）
+    if (!this.deps.enabled() || !this.deps.hasSession(sessionId)) return textResult('The in-app browser is not available for this session.', true);
+    const guest = this.activeNow(sessionId);
+    const url = guest?.contents.getURL() ?? '';
+    // 答えたときのページを、同じ式の呼び出しのために控える
+    const input = request.input && typeof request.input === 'object' ? (request.input as Record<string, unknown>) : {};
+    if (typeof input.expression === 'string') {
+      const marks = this.evaluateMarks.get(sessionId) ?? [];
+      const toolUseId = typeof request.toolUseId === 'string' ? request.toolUseId : undefined;
+      marks.push({ expression: input.expression, origin: webOrigin(url), ...(toolUseId ? { toolUseId } : {}) });
+      this.evaluateMarks.set(sessionId, marks.slice(-MAX_MARKS));
+    }
+    // フックは、この URL を確認の理由に書く（Claude Code の確認の理由として、親のセッションにも届く）。許していない先は、オリジンだけ
+    return textResult(JSON.stringify({ local: isLocalUrl(url), url: guest && !isBlank(url) ? this.shownUrl(url, guest) : url }));
   }
 
   // navigate の入力から、人に確認する先を決めて、確認した印を控える。確認しないものは null
@@ -488,14 +566,26 @@ export class BrowserControl {
     return marks;
   }
 
-  private async run(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async run(sessionId: string, name: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
     const session = this.tabsOf(sessionId);
     session.blocked = null;
     session.opened = [];
-    const result = await this.dispatch(sessionId, name, args);
+    session.popups = [];
+    session.popupBlocked = null;
+    const result = await this.dispatch(sessionId, name, args, toolUseId);
     if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
     if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${originShown(session.blocked)}).${CONTINUE_HINT}` });
+    // ポップアップは別ウインドウで開き、Claude は操作できない。ログインなどは人に頼むよう伝える（オリジンだけ。URL に認証の途中の値が入っていることがある）
+    if (session.popups.length > 0) {
+      result.content.push({
+        type: 'text',
+        text:
+          `Opened a popup window outside the in-app browser (${[...new Set(session.popups.map((url) => (isBlank(url) ? 'about:blank' : originShown(url))))].join(', ')}). ` +
+          'You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+      });
+    }
+    if (session.popupBlocked) result.content.push({ type: 'text', text: `Blocked an attempt to move a popup window opened by the page to a page not allowed for Claude (${originShown(session.popupBlocked)}).` });
     // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
     if (session.opened.length > 0) {
       const guest = await this.activeGuest(sessionId).catch(() => null);
@@ -509,7 +599,7 @@ export class BrowserControl {
     return result;
   }
 
-  private async dispatch(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async dispatch(sessionId: string, name: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
     if (name === 'navigate') return this.navigate(sessionId, args);
     if (name === 'list_tabs') return this.listTabs(sessionId);
     if (name === 'select_tab') return this.selectTab(sessionId, args.index);
@@ -541,7 +631,7 @@ export class BrowserControl {
       case 'set_viewport':
         return this.setViewport(sessionId, guest, requiredString(args.width, 'width'));
       case 'evaluate':
-        return this.evaluate(guest, requiredString(args.expression, 'expression'));
+        return this.evaluate(sessionId, guest, requiredString(args.expression, 'expression'), toolUseId);
     }
     return textResult(`Unknown tool: ${name}`, true);
   }
@@ -699,9 +789,10 @@ export class BrowserControl {
     const allowed = this.allowedIn(guest, url);
     const lines = [`${done}: ${allowed ? guest.contents.getTitle() || '(untitled)' : '(not allowed for Claude)'}`, `URL: ${this.shownUrl(url, guest)}`];
     if (!allowed) lines.push('This page is not allowed for Claude, so it can be neither read nor operated any further.');
-    const errors = guest.logs.console.filter((l) => l.level === 'error').length;
+    const errors = guest.logs.console.filter((l) => l.level === 'error' && this.visibleLog(guest, l)).length;
     if (errors > 0) lines.push(`The console has ${count(errors, 'error')} (read them with get_console_logs).`);
-    if (guest.logs.failed.length > 0) lines.push(`${count(guest.logs.failed.length, 'request')} failed (read them with get_failed_requests).`);
+    const failed = guest.logs.failed.filter((r) => this.visibleLog(guest, r)).length;
+    if (failed > 0) lines.push(`${count(failed, 'request')} failed (read them with get_failed_requests).`);
     return textResult(lines.join('\n'));
   }
 
@@ -796,6 +887,7 @@ export class BrowserControl {
 
   private async screenshot(guest: Guest, selector: string | undefined, fullPage: boolean): Promise<ToolResult> {
     const { contents } = guest;
+    const since = guest.logs.navigated.count;
     let image: NativeImage;
     // CDP で撮るものは、はじめからページの大きさ（CSS の px）
     let note: string;
@@ -829,13 +921,15 @@ export class BrowserControl {
       image = await this.shoot(guest);
       note = 'Visible area';
     }
+    const url = contents.getURL();
+    this.readFrom(guest, url, since);
     if (image.isEmpty()) throw new ToolError('Could not take a screenshot (the page may not have been rendered yet).');
     image = shrink(image, fullPage ? 1 : (await this.viewport(guest)).dpr);
     const size = image.getSize();
     return {
       content: [
         { type: 'image', data: image.toPNG().toString('base64'), mimeType: 'image/png' },
-        { type: 'text', text: `${note}, ${contents.getURL()}, image ${size.width}×${size.height}` },
+        { type: 'text', text: `${note}, ${this.shownUrl(url, guest)}, image ${size.width}×${size.height}` },
       ],
     };
   }
@@ -857,6 +951,8 @@ export class BrowserControl {
       })()`,
     )) as { title: string; url: string; parts: { frame: string | null; text: string }[] } | null;
     if (!result) throw new ToolError(`No element matches "${selector}".`);
+    // 読んだ文書が、許していない先のもの（読む前に確かめたあとで、移動が確定した）なら返さない
+    this.readFrom(guest, result.url);
     // ページ全体のときは、別プロセスの iframe（許す先のものだけ）の文字も読む
     if (!selector) {
       for (const frame of await this.childFrames(guest)) {
@@ -868,12 +964,13 @@ export class BrowserControl {
     const body = result.parts
       .map((p) => `${p.frame ? `--- inside iframe (${p.frame}) ---\n` : ''}${p.text.replace(/\n{3,}/g, '\n\n').trim()}`)
       .join('\n\n');
-    return textResult([`Title: ${result.title || '(none)'}`, `URL: ${result.url}`, '', clip(body, MAX_TEXT)].join('\n'));
+    return textResult([`Title: ${result.title || '(none)'}`, `URL: ${this.shownUrl(result.url, guest)}`, '', clip(body, MAX_TEXT)].join('\n'));
   }
 
   private async tree(guest: Guest): Promise<ToolResult> {
     // いちばん外のページと、同じプロセスで動く iframe（同じオリジンなど）のフレームごとに読む。許していない先の iframe は読まない。
     // いちばん外のページと同じオリジンの iframe は、そのページと同じく、タブで許可したオリジンなら読む（get_text と同じ）
+    const since = guest.logs.navigated.count;
     const top = originOf(guest.contents.getURL());
     type FrameTree = { frame: { id: string; url: string }; childFrames?: FrameTree[] };
     const { frameTree } = (await this.cdp(guest, 'Page.getFrameTree')) as { frameTree: FrameTree };
@@ -901,7 +998,24 @@ export class BrowserControl {
       if (result) this.formatTree(result.nodes, lines);
     }
     if (lines.length >= MAX_TREE_LINES) lines.push(`…(truncated at ${MAX_TREE_LINES} lines)`);
-    return textResult([`URL: ${guest.contents.getURL()}`, ...lines].join('\n'));
+    const url = guest.contents.getURL();
+    this.readFrom(guest, url, since);
+    return textResult([`URL: ${this.shownUrl(url, guest)}`, ...lines].join('\n'));
+  }
+
+  // 読み終えたときに、読んだページ（url）が許していない先なら断る。読む前に今のページを確かめても（current）、前から読み込み中だった
+  // 移動が読んでいる間に確定すると、読んだものは移った先のものかもしれない。空のタブになっただけなら、そのまま返す（前のページか、空のもの）。
+  // since: 読み始めたときの、トップのフレームで確定した移動の数（何度かに分けて読むもの。スクリーンショット・ツリー）。読んでいる間に確定した
+  // ページも確かめる（許していない先を経て、許す先へ戻ったときも、その間に読んだものは、許していない先のものかもしれない）
+  private readFrom(guest: Guest, url: string, since?: number): void {
+    const { count, urls } = guest.logs.navigated;
+    const moved = since === undefined ? 0 : count - since;
+    if (moved > urls.length) throw new ToolError('The page moved several times while it was being read, so the result was not returned.');
+    for (const page of [...urls.slice(urls.length - moved), url]) {
+      if (!isBlank(page) && !this.allowedIn(guest, page)) {
+        throw new ToolError(`The page moved to a page not allowed for Claude (${originShown(page)}) while it was being read, so the result was not returned.`);
+      }
+    }
   }
 
   // CDP のアクセシビリティのツリーを、字下げした一覧にして lines に足す
@@ -936,8 +1050,8 @@ export class BrowserControl {
       `(() => {${FRAMES}
         const props = ${JSON.stringify(props)};
         let all;
-        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { error: 'Invalid selector: ' + e.message }; }
-        return { total: all.length, items: all.slice(0, 10).map((hit) => {
+        try { all = __all(${JSON.stringify(selector)}); } catch (e) { return { url: location.href, error: 'Invalid selector: ' + e.message }; }
+        return { url: location.href, total: all.length, items: all.slice(0, 10).map((hit) => {
           const el = hit.el;
           const r = __rect(el);
           const cs = __style(el);
@@ -951,7 +1065,9 @@ export class BrowserControl {
           };
         }) };
       })()`,
-    )) as { error?: string; total: number; items: { html: string; rect: BrowserRect; visible: boolean; frame: string | null; styles: Record<string, string> }[] };
+    )) as { url?: string; error?: string; total: number; items: { html: string; rect: BrowserRect; visible: boolean; frame: string | null; styles: Record<string, string> }[] };
+    // 読んだ文書が、許していない先のもの（読む前に確かめたあとで、移動が確定した）なら返さない
+    this.readFrom(guest, found.url ?? guest.contents.getURL());
     if (found.error) throw new ToolError(found.error);
     if (found.total === 0) throw new ToolError(`No element matches "${selector}".`);
     const parts = found.items.map((item, i) =>
@@ -967,18 +1083,37 @@ export class BrowserControl {
     return textResult(`Elements matching "${selector}": ${found.total}\n\n${parts.join('\n\n')}${more}`);
   }
 
+  // 許していない先のフレームの文は返さず、除いた数だけを伝える
   private consoleLogs(guest: Guest, level: string, clear: boolean): ToolResult {
     const levels = level === 'error' ? ['error'] : level === 'warning' ? ['error', 'warning'] : null;
-    const logs = guest.logs.console.filter((l) => !levels || levels.includes(l.level));
+    const picked = guest.logs.console.filter((l) => !levels || levels.includes(l.level));
+    const logs = picked.filter((l) => this.visibleLog(guest, l));
+    const hidden = picked.length - logs.length;
     if (clear) guest.logs.console.length = 0;
-    if (logs.length === 0) return textResult('No console messages.');
-    return textResult(clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT));
+    const note = hidden > 0 ? `(${count(hidden, 'more message')} from pages or frames not allowed for Claude ${hidden === 1 ? 'is' : 'are'} not shown.)` : '';
+    if (logs.length === 0) return textResult(note || 'No console messages.');
+    return textResult([clip(logs.map((l) => `[${l.level}] ${l.text}`).join('\n'), MAX_TEXT), ...(note ? [note] : [])].join('\n'));
   }
 
+  // Claude に返してよい記録（コンソールの文・失敗した通信）か。トップのフレームのものは、そのオリジンが許した先（許す先か、このタブで人が
+  // 許したオリジン）のとき。iframe のものは、許す先のときか、今のトップと同じオリジンでトップが許した先のとき（別オリジンの iframe には、
+  // タブの許可は効かない）。オリジンが分からないものは返さない
+  private visibleLog(guest: Guest, entry: { origin: string | null; top: boolean }): boolean {
+    if (!entry.origin) return false;
+    if (entry.top) return this.allowedIn(guest, entry.origin);
+    if (this.allowed(entry.origin)) return true;
+    const topUrl = guest.contents.isDestroyed() ? '' : guest.contents.getURL();
+    return webOrigin(topUrl) === entry.origin && this.allowedIn(guest, topUrl);
+  }
+
+  // 許していない先のページ・フレームの通信は返さず、除いた数だけを伝える（コンソールの記録と同じ）。clear は、除いたものも消す
   private failedRequests(guest: Guest, clear: boolean): ToolResult {
-    const failed = [...guest.logs.failed];
+    const failed = guest.logs.failed.filter((r) => this.visibleLog(guest, r));
+    const hidden = guest.logs.failed.length - failed.length;
     if (clear) guest.logs.failed.length = 0;
-    return textResult(failed.length === 0 ? 'No failed requests.' : clip(failed.join('\n'), MAX_TEXT));
+    const note = hidden > 0 ? `(${count(hidden, 'more failed request')} from pages or frames not allowed for Claude ${hidden === 1 ? 'is' : 'are'} not shown.)` : '';
+    if (failed.length === 0) return textResult(note || 'No failed requests.');
+    return textResult([clip(failed.map((r) => r.text).join('\n'), MAX_TEXT), ...(note ? [note] : [])].join('\n'));
   }
 
   // ---- 動かす ----
@@ -1154,16 +1289,58 @@ export class BrowserControl {
     return textResult(`Set the viewport to ${width} (page width ${viewport.width}px, height ${viewport.height}px)`);
   }
 
-  private async evaluate(guest: Guest, expression: string): Promise<ToolResult> {
+  // ページの世界で動かす。evaluate の始めに読み直した今のページ（許した先）から、動くまでの間に別のオリジンへの移動が確定していたら、
+  // 動かさない（確かめたあとに、前から読み込み中だった移動が確定することがある）。同じスクリプトの先頭で、今のページのオリジンを比べる（guardedScript）
+  private async evaluate(sessionId: string, guest: Guest, expression: string, toolUseId?: string): Promise<ToolResult> {
+    const url = guest.contents.getURL();
+    const origin = webOrigin(url);
+    if (!origin || !this.allowedIn(guest, url)) throw new ToolError(`The current page (${originShown(url)}) is not allowed for Claude, so the script was not run.`);
+    // 確認のフックが、この呼び出しのために見たページ（確認を省いた localhost のページ・人に確認したページ）から、別のオリジンへ移っていたら動かさない。
+    // 控えが無い・フックのときにページが無かったときも、動かさない（確かめたページが分からない）
+    const checked = this.takeEvaluateMark(sessionId, expression, toolUseId);
+    // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフの間に聞いた・押し出された・フックが切られている など）
+    if (!checked) {
+      throw new ToolError(
+        'tanacode has no record of checking this call, so the script was not run. Call evaluate again. ' +
+          '(tanacode checks each evaluate call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ' +
+          'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
+          'If this keeps happening, tell the user that tanacode cannot check evaluate calls in this session.',
+      );
+    }
+    // フックは ID 付きで控えたのに、呼び出しに ID が無い。アプリを更新する前から動いている Claude Code の中継（ID を渡さない古いもの）。
+    // フックは呼ばれるたびに今のアプリから動くので、中継だけが古い。Claude Code を起動し直せば直る
+    if (checked === 'no-id') {
+      throw new ToolError(
+        'tanacode checked this call, but the call reached tanacode without its ID, so the script was not run. ' +
+          'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
+          'Ask the user to restart Claude Code in this session (the restart button in the chat header), then call evaluate again.',
+      );
+    }
+    // 同じ呼び出しの控えはあるが、式が違う（ほかのフックが入力を書き換えた など）
+    if (checked === 'changed') {
+      throw new ToolError(
+        'The expression of this call differs from the one tanacode checked for it (another hook may have changed the input), so the script was not run. Call evaluate again. ' +
+          'If this keeps happening, tell the user that another hook seems to change the input of evaluate.',
+      );
+    }
+    if (checked.origin === null) {
+      throw new ToolError('No page was open in the current tab when tanacode checked this call, so the script was not run. Call evaluate again to run it on the current page.');
+    }
+    if (checked.origin !== origin) {
+      throw new ToolError(
+        `The page changed after tanacode checked it for this call (from ${checked.origin} to ${originShown(url)}), so the script was not run. Call evaluate again to run it on the current page.`,
+      );
+    }
+    // 目印は呼び出しごとに変える（ページが同じ文をコンソールに出して、止めたことにさせないように）
+    const mark = `${PAGE_CHANGED} ${randomUUID()}`;
     let value: unknown;
-    const logged = guest.logs.console.length;
+    const since = guest.logs.seq;
     try {
-      value = await guest.contents.executeJavaScript(expression);
+      value = await guest.contents.executeJavaScript(guardedScript(origin, mark, expression));
     } catch (error) {
       // 投げられたエラーの中身は、例外には入らずコンソールに出る（届くのを少し待つ）
       await sleep(100);
-      const thrown = guest.logs.console.slice(logged).filter((l) => l.level === 'error').map((l) => l.text);
-      throw new ToolError(`Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`);
+      throw this.evaluateFailed(guest, origin, mark, since, error);
     }
     let text: string;
     try {
@@ -1172,6 +1349,71 @@ export class BrowserControl {
       text = String(value);
     }
     return textResult(clip(text, MAX_TEXT));
+  }
+
+  // この呼び出しの控えを取り出す（1 回で使い切る）。呼び出しの ID があれば、同じ ID の控え（式も同じものだけ）。
+  // 同じ ID の控えが無ければ、ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの。
+  // 呼び出しに ID が無い（ID を渡さない中継）ときも、ID の無い控えだけから引く（ID のある控えは、同じ式の別の呼び出しのものや、前に断られて
+  // 残ったものかもしれない）。フックと中継は同じ Claude Code から呼ばれるので、ふつうは両方に ID があるか、両方に無い。フックにだけ ID があるときは、断る側に倒れる。
+  // 同じ式を並べて呼んでも（本体とサブエージェントなど）、ID があれば取り違えない
+  // 同じ ID の控えの式が違えば、その控えは捨てて 'changed' を返す。ID の無い呼び出しに、同じ式の ID のある控えしか無ければ 'no-id'
+  // （古い中継）。どちらも、控えが無いときと分けて伝える
+  private takeEvaluateMark(sessionId: string, expression: string, toolUseId?: string): EvaluateMark | 'changed' | 'no-id' | null {
+    const marks = this.evaluateMarks.get(sessionId) ?? [];
+    const take = (index: number) => (index === -1 ? null : marks.splice(index, 1)[0]!);
+    let found: EvaluateMark | 'changed' | 'no-id' | null;
+    const byId = toolUseId === undefined ? -1 : marks.findIndex((m) => m.toolUseId === toolUseId);
+    if (byId !== -1) {
+      const mark = take(byId)!;
+      found = mark.expression === expression ? mark : 'changed';
+    } else {
+      // ID で引けない。ID の無い控え（ID を渡さないフック）のうち、同じ式のいちばん新しいもの
+      let index = marks.length - 1;
+      while (index >= 0 && !(marks[index]!.expression === expression && marks[index]!.toolUseId === undefined)) index--;
+      found = take(index);
+      if (!found && toolUseId === undefined && marks.some((m) => m.expression === expression)) found = 'no-id';
+    }
+    if (marks.length > 0) this.evaluateMarks.set(sessionId, marks);
+    else this.evaluateMarks.delete(sessionId);
+    return found;
+  }
+
+  // evaluate が失敗したときに Claude に返すもの。origin: 動かす前に確かめたオリジン / mark: 先頭で比べる文が投げる目印 / since: 動かす前の記録の通し番号。
+  // 今のページが許していない先なら、ページのコンソールの文は返さない（オリジンだけ。ページが書いた文や、URL に入った値を渡さない）
+  private evaluateFailed(guest: Guest, origin: string, mark: string, since: number, error: unknown): ToolError {
+    // 記録は、タブが閉じられても残っている。目印を先に見る（出ていれば、動いていない。目印は文を返さないので、どのフレームの記録でも見る）
+    const errors = guest.logs.console.filter((l) => l.seq >= since && l.level === 'error');
+    const marked = errors.some((l) => l.text.includes(mark));
+    if (guest.contents.isDestroyed()) {
+      return new ToolError(
+        marked
+          ? 'The page moved to another origin and the tab was closed before the script ran, so the script was not run.'
+          : 'The tab was closed while the script was running, so it is not known whether the script ran.',
+      );
+    }
+    const now = guest.contents.getURL();
+    const nowOrigin = webOrigin(now);
+    // 書くのはオリジンだけ。オリジンの無いページ（空のページ）は、about:blank と書く
+    const shown = nowOrigin ?? (isBlank(now) ? 'about:blank' : originShown(now));
+    if (marked) {
+      // タブの URL は確かめたオリジンのままなのに、ページの中が違った（読み込みに失敗したときのエラーのページ chrome-error・移って戻った など）
+      if (nowOrigin === origin) {
+        return new ToolError(
+          `The page in the current tab changed before the script ran (for example, it shows an error page because ${origin} could not be loaded, or it moved to another origin and back), so the script was not run. Reload it or open the page again with navigate if needed.`,
+        );
+      }
+      return new ToolError(`The page moved to another origin (${shown}) before the script ran, so the script was not run.`);
+    }
+    // 目印が無い（ページが window.onerror で隠した・動いてから移った など）。動いたかどうかは分からない
+    if (!this.allowedIn(guest, now)) {
+      return new ToolError(
+        `The page moved to a page not allowed for Claude (${shown}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
+      );
+    }
+    // 返すのは、許した先のフレームの文だけ
+    const thrown = errors.filter((l) => this.visibleLog(guest, l)).map((l) => l.text);
+    const failed = `Execution failed: ${thrown.length > 0 ? thrown.join('\n') : error instanceof Error ? error.message : String(error)}`;
+    return new ToolError(nowOrigin === origin ? failed : `${failed}\n(The page moved to ${shown} while the script was running or just before it.)`);
   }
 
   // ---- 部品 ----
@@ -1214,7 +1456,7 @@ export class BrowserControl {
   private tabsOf(sessionId: string): Tabs {
     let session = this.sessions.get(sessionId);
     if (!session) {
-      session = { tabs: new Map(), active: null, blocked: null, opened: [], handoff: [] };
+      session = { tabs: new Map(), active: null, blocked: null, opened: [], popups: [], popupBlocked: null, handoff: [] };
       this.sessions.set(sessionId, session);
     }
     return session;
@@ -1454,6 +1696,49 @@ function originOf(url: string): string | null {
   }
 }
 
+// コンソールの文を出したフレーム（Electron の WebFrameMain）の、オリジンとトップのフレームか。
+// 分からない（フレームが無い・もう無くなった・オリジンが無い "null"）ときは、オリジンを null にする（Claude に返さない）。
+// ただしトップのフレームのオリジンが "null"（Content-Security-Policy: sandbox のページ）なら、そのフレームの URL のオリジン（topOrigin）
+function frameOf(event: { frame?: unknown }): { origin: string | null; top: boolean } {
+  try {
+    const f = event.frame as { origin?: unknown; parent?: unknown; url?: unknown } | null | undefined;
+    if (!f) return { origin: null, top: true };
+    const top = f.parent === null;
+    const origin = typeof f.origin === 'string' && f.origin !== 'null' ? f.origin : null;
+    return { origin: origin ?? (top ? topOrigin(f) : null), top };
+  } catch {
+    return { origin: null, top: true };
+  }
+}
+
+// オリジンが "null" のトップのフレーム（Content-Security-Policy: sandbox のページ）のオリジンを、URL から決める。中身は、その URL のサーバーが
+// 返したもの（Electron 44.7 で、フレームの url はページの URL だった）。iframe は、オリジンが "null" なら決めない（data: など、どこのものか分からない）
+function topOrigin(frame: { url?: unknown }): string | null {
+  return typeof frame.url === 'string' ? webOrigin(frame.url) : null;
+}
+
+// 失敗した通信を出したもの（Claude に返すかを、コンソールの記録と同じ決まり visibleLog で決める）。Electron 44.7 で確かめた。
+// - 文書の読み込み（mainFrame・subFrame）は、読み込もうとした先のオリジン（そこに入るページ）。initiatorOrigin は読み込みを始めたページなので、
+//   許したページのリンクから許していない先へ移るときも、許したページになってしまう。トップの読み込みなら top
+// - ほかの通信（スクリプト・画像・fetch など）は、出したオリジン（initiatorOrigin。リダイレクトしても変わらない。不透明なオリジン "null"・
+//   ブラウザが自分で始めた通信は無いので、null にして返さない）と、出したフレームがトップか。フレームが分からない（移った・無くなった）
+//   ときは iframe として扱う（許す先か、今のトップと同じオリジンでトップが許した先のときだけ返す）
+type RequestDetails = { url: string; resourceType: string; initiatorOrigin?: string; frame?: unknown };
+function requestSource(details: RequestDetails): { origin: string | null; top: boolean } {
+  if (details.resourceType === 'mainFrame' || details.resourceType === 'subFrame') {
+    return { origin: webOrigin(details.url), top: details.resourceType === 'mainFrame' };
+  }
+  const origin = webOrigin(details.initiatorOrigin ?? '');
+  try {
+    const frame = details.frame as { parent?: unknown; url?: unknown } | null | undefined;
+    const top = !!frame && frame.parent === null;
+    // 出したオリジンが "null" で、出したのがトップのフレームなら、コンソールの記録と同じく、そのフレームの URL のオリジン
+    return { origin: origin ?? (top && details.initiatorOrigin === 'null' ? topOrigin(frame) : null), top };
+  } catch {
+    return { origin, top: false };
+  }
+}
+
 // 人の許可を得て開けるページ（http(s)）のオリジン。ほかのもの（file:・about: など）と読めないものは null
 function webOrigin(url: string): string | null {
   try {
@@ -1468,6 +1753,79 @@ function webOrigin(url: string): string | null {
 function originShown(url: string): string {
   return originOf(url) ?? 'invalid URL';
 }
+
+// evaluate で動かすスクリプト。先頭で、今のページのオリジンを確かめたものと比べ、違えば mark を投げる。
+// location とその protocol・host は、ページのスクリプトから書き換えられない（[LegacyUnforgeable]。同じ名前の let も置けない）。
+// location.origin で比べても同じ（CSP の sandbox のページでも URL のオリジン。"null" になるのは self.origin。Electron 44.7 で確かめた）。
+// 比べる文はブロックで包み、改行で区切って、式は手を入れずに続ける（文の並びも最後の値を返す。else で始まる式が、比べる文の if の続きにならない）。
+// 式の行番号は、エラーのスタックで 1 つずれる。
+// - #! の行（hashbang）はスクリプトの頭にしか書けないので、その行だけ比べる文より前に置き、必ず改行を足す
+//   （行の終わりは \n・\r・\u2028・\u2029。足さないと、比べる文が #! の行の続きになって、効かなくなる）
+// - 頭の directive に 'use strict' がある式は、比べる文の前に置くと directive が効かなくなるので、頭にも 'use strict'; を足す
+//   （全体が strict。式だけで動かすのと同じ。見分け方は hasUseStrict）
+function guardedScript(origin: string, mark: string, expression: string): string {
+  const hashbang = /^#![^\n\r\u2028\u2029]*/.exec(expression)?.[0] ?? '';
+  const body = expression.slice(hashbang.length);
+  const strict = hasUseStrict(body) ? "'use strict';" : '';
+  const check = `{ if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(mark)}; }`;
+  return `${hashbang ? `${hashbang}\n` : ''}${strict}${check}\n${body}`;
+}
+
+// スクリプトの頭の directive（文字列だけの文の並び）に 'use strict' があるか。空白と注釈は読み飛ばす。
+// 文字列のあとに式が続くもの（'use strict'.length・改行して + 1 など）は directive ではない。改行のあとは、次の字が式の続きでなければ
+// 文の終わり（自動のセミコロン）とみなす。見分けを誤っても、比べる文が先に動くことは変わらない（strict かどうかだけが変わる）
+const LINE_END = /[\n\r\u2028\u2029]/;
+function hasUseStrict(code: string): boolean {
+  let i = 0;
+  // 空白と注釈を読み飛ばし、行の終わりをまたいだかを返す
+  const skip = (): boolean => {
+    let newline = false;
+    while (i < code.length) {
+      const c = code[i]!;
+      if (LINE_END.test(c)) {
+        newline = true;
+        i++;
+      } else if (/\s/.test(c)) i++;
+      else if (code.startsWith('//', i)) {
+        while (i < code.length && !LINE_END.test(code[i]!)) i++;
+      } else if (code.startsWith('/*', i)) {
+        const end = code.indexOf('*/', i + 2);
+        if (end === -1) return newline;
+        if (LINE_END.test(code.slice(i + 2, end))) newline = true;
+        i = end + 2;
+      } else break;
+    }
+    return newline;
+  };
+  while (true) {
+    skip();
+    const quote = code[i];
+    if (quote !== "'" && quote !== '"') return false;
+    // 文字列の終わり（エスケープしたものは飛ばす。途中の改行は書き方の誤りなので、そこでやめる）
+    let end = i + 1;
+    while (end < code.length && code[end] !== quote) {
+      if (LINE_END.test(code[end]!)) return false;
+      end += code[end] === '\\' ? 2 : 1;
+    }
+    if (end >= code.length) return false;
+    const strict = code.slice(i + 1, end) === 'use strict';
+    i = end + 1;
+    const newline = skip();
+    const rest = code.slice(i);
+    if (rest.startsWith(';')) i++;
+    else if (rest !== '') {
+      // 改行をまたがずにほかのものが続くか、改行のあとが式の続き（. ( [ ` 演算子・in・instanceof など）なら、directive ではない。
+      // 改行のあとの ++・-- は続きではない（後置の ++・-- は改行をまたげないので、自動のセミコロンが入り、次の文の前置の ++・-- になる）
+      const continues =
+        !/^(\+\+|--)/.test(rest) && (/^[.([`+\-*/%&|^?,=<>]/.test(rest) || rest.startsWith('!=') || /^(in|instanceof)(?![\w$])/.test(rest));
+      if (!newline || continues) return false;
+    }
+    if (strict) return true;
+  }
+}
+
+// evaluate の先頭の比べる文が、確かめたページから別のオリジンへ移っていたときに投げる目印（呼び出しごとの乱数を足して使う）
+const PAGE_CHANGED = 'tanacode: the page moved to another origin before the script ran';
 
 // 止めた先へ進む方法（止めたことを伝える文に添える）
 const CONTINUE_HINT = ' To open it, call navigate with action "continue" (tanacode asks the user for permission).';

@@ -2,7 +2,7 @@
 # 同じものは 1 回だけ流す。アプリの JS は 1 回だけ作り、E2E を流す台に配る。
 # - unit: 型チェックと単体テスト（カバレッジも測る）。OS に依らないので ubuntu
 # - storybook: Storybook のビルド（画面の部品のストーリーが壊れていないか）。ubuntu
-# - cli: 本物の claude（動作確認済のバージョン）での確認（カバレッジも測る）。Claude Code は OS で画面の描き方が違うので macOS
+# - cli: 本物の claude（動作確認済のバージョン）での確認（カバレッジも測る）。アプリと同じ macOS
 # - build: アプリの JS（electron-vite build。ソースマップ付き）。OS に依らないので、メモリとコアの多い ubuntu で 1 回だけ作り、out/ を app に渡す
 # - app: build の out/ から、配布と同じ手順で .app を作り（翻訳の補助プログラム・electron-builder。署名は ad-hoc）、
 #        できた .app を起動して、画面の操作から Claude Code・MCP・ターミナルまでを通しで確かめる（E2E。カバレッジも測る）。macOS。
@@ -82,7 +82,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           overwrite: true
-      # 落ちたときの手がかりに、そのときの画面などの控えを残す
+      # 落ちたときの手がかりに、そこまでの会話ログなどの控えを残す
       - name: 控えを残す
         if: failure() && steps.claude.outputs.version
         uses: actions/upload-artifact@v7

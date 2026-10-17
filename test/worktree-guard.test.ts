@@ -2,12 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLanguage, t } from '@shared/i18n';
 import { toChatEvents, type TranscriptEntry } from '../src/shared/chat';
+import { SUPPRESS_OUTPUT } from '../src/main/hook-output';
 import { ownSettings } from '../src/main/statusline';
 import { worktreeGuardCommand } from '../src/main/worktree-guard';
 
 // Claude が worktree やブランチを消す操作の歯止め（アプリが --settings で足す、Bash の PreToolUse のフック）。
 // macOS の awk（bwk awk）でも動くかは、TANACODE_AWK に入れた awk の場所で確かめられる（PATH の前に足す）
 
+// 何も決めないとき（アプリのフックの印だけを書く。hook-output.ts）
+const NOTHING = `${SUPPRESS_OUTPUT}\n`;
 const run = (command: string, cwd = '/r/proj') =>
   execFileSync('sh', ['-c', worktreeGuardCommand()], {
     input: JSON.stringify({ session_id: 'x', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command, description: 'd' } }),
@@ -30,6 +33,7 @@ describe('確認を出させるもの', () => {
   ])('%s', (command) => {
     expect(JSON.parse(run(command))).toEqual({
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('tanacode') },
+      suppressOutput: true,
     });
   });
 
@@ -49,11 +53,11 @@ describe('何もしないもの', () => {
     'rm -rf .',
     'git push --force',
   ])('%s', (command) => {
-    expect(run(command)).toBe('');
+    expect(run(command)).toBe(NOTHING);
   });
 
   it('worktree の中でも、ほかのフォルダの rm -rf はそのまま', () => {
-    expect(run('rm -rf dist', '/r/proj/.claude/worktrees/a')).toBe('');
+    expect(run('rm -rf dist', '/r/proj/.claude/worktrees/a')).toBe(NOTHING);
   });
 });
 

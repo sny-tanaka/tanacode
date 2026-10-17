@@ -3,11 +3,11 @@ import { connect, type Socket } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PROTOCOL, type ClientMessage, type HostMessage, type HostedPtyInfo } from '../src/main/pty-host-protocol';
+import { PROTOCOL, type ClientMessage, type HostMessage, type HostedInfo, type HostedPipeInfo } from '../src/main/pty-host-protocol';
 
 // pty ホスト（src/main/pty-host.ts）のやりとりを、テストのプロセスの中で動かして確かめる（カバレッジを測れるように）。
 // ホストはファイルを読み込むと待ち受けを始める（引数はソケットのパス）。終わるとき（process.exit）と作業フォルダの移動（process.chdir）は差し替える。
-// claude の代わりに /bin/sh を起動する。別のプロセスとして起動したときの振る舞い（引き継ぎ・ホストが落ちたとき）は test/pty-host.test.ts
+// claude の代わりに /bin/sh を起動する（パイプのプロセスは、入力の行をそのまま出力に返す cat）。別のプロセスとして起動したときの振る舞い（引き継ぎ・ホストが落ちたとき）は test/pty-host.test.ts
 
 // 起動できないものを起動しようとしたとき（node-pty が例外を投げる）を作れるようにする
 vi.mock('node-pty', async (importOriginal) => {
@@ -21,6 +21,9 @@ vi.mock('node-pty', async (importOriginal) => {
   };
 });
 
+// 長すぎる行を捨てるところを、小さな行で確かめられるようにする（本物は 32MB）
+vi.mock('../src/main/pty-host-protocol', async (importOriginal) => ({ ...(await importOriginal<typeof import('../src/main/pty-host-protocol')>()), MAX_LINE_BYTES: 4096 }));
+
 let dir: string;
 const exits: number[] = [];
 const logs: string[] = [];
@@ -28,8 +31,12 @@ const sockets: Socket[] = [];
 const originalArgv = [...process.argv];
 const originalTitle = process.title;
 const chdirs: string[] = [];
+// ホストが読み込まれるたびに足す、プロセスの合図・失敗の受け手（テストごとに外す）
+const PROCESS_EVENTS = ['SIGHUP', 'SIGTERM', 'SIGINT', 'uncaughtException', 'unhandledRejection'] as const;
+const baseListeners = new Map<string, ((...args: unknown[]) => void)[]>();
 
 beforeAll(() => {
+  for (const event of PROCESS_EVENTS) baseListeners.set(event, process.listeners(event as NodeJS.Signals) as ((...args: unknown[]) => void)[]);
   // ホストが終わろうとしても、テストのプロセスは終わらせない（終わったことだけ控える）
   vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     exits.push(code ?? 0);
@@ -52,6 +59,10 @@ beforeEach(() => {
 });
 afterEach(async () => {
   vi.useRealTimers();
+  for (const event of PROCESS_EVENTS) {
+    const base = baseListeners.get(event) ?? [];
+    for (const listener of process.listeners(event as NodeJS.Signals)) if (!base.includes(listener as (...args: unknown[]) => void)) process.off(event, listener);
+  }
   for (const s of sockets.splice(0)) s.destroy();
   await sleep(50);
   rmSync(dir, { recursive: true, force: true });
@@ -111,6 +122,7 @@ async function client(path: string, protocol = PROTOCOL): Promise<Client> {
 const sh = (id: string, command?: string) =>
   ({
     t: 'spawn',
+    kind: 'pty',
     id,
     tag: `tag-${id}`,
     file: '/bin/sh',
@@ -127,11 +139,44 @@ const output = (c: Client, id: string) =>
     .flatMap((m) => (m.t === 'data' && m.id === id ? [m.data] : []))
     .join('');
 const exitOf = (c: Client, id: string) => c.received().find((m): m is Extract<HostMessage, { t: 'exit' }> => m.t === 'exit' && m.id === id)?.exitCode;
-async function list(c: Client, req: number): Promise<HostedPtyInfo[]> {
+async function list(c: Client, req: number): Promise<HostedInfo[]> {
   c.send({ t: 'list', req });
   const reply = await waitFor('一覧', () => c.received().find((m): m is Extract<HostMessage, { t: 'list' }> => m.t === 'list' && m.req === req));
-  return reply.ptys;
+  return reply.hosted;
 }
+
+// アプリとして数えない接続（hello の形を違えたもの）で一覧を見て、条件を満たすまで待つ。
+// アプリが見ていない間の振る舞い（終わったプロセスの記録を残す）を変えずに、決まった時間でなく、終わったのを見て進む
+async function untilListed(path: string, check: (hosted: HostedInfo[]) => boolean): Promise<void> {
+  const peek = await client(path, 0);
+  for (let req = 1000; ; req++) {
+    if (check(await list(peek, req))) break;
+    if (req > 1250) throw new Error('一覧: 時間切れ');
+    await sleep(20);
+  }
+  peek.socket.destroy();
+}
+
+// パイプでつながるプロセス。入力の行をそのまま出力に返す（cat）。first: はじめに出す行
+const pipe = (id: string, first: string[] = [], command = 'exec cat') =>
+  ({
+    t: 'spawn',
+    kind: 'pipe',
+    id,
+    tag: `tag-${id}`,
+    file: '/bin/sh',
+    args: ['-c', `${first.map((l) => `printf '%s\\n' '${l}'`).join('; ')}${first.length ? '; ' : ''}${command}`],
+    cwd: dir,
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir },
+    retain: [
+      { type: 'system', subtype: 'init' },
+      { type: 'system', subtype: 'task_started', key: 'task_id', until: [{ type: 'system', subtype: 'task_notification', key: 'task_id' }] },
+    ],
+    transient: [{ type: 'stream_event' }],
+  }) satisfies ClientMessage;
+const linesOf = (c: Client, id: string, replay = false) =>
+  c.received().flatMap((m) => (m.t === 'line' && m.id === id && (m.replay === true) === replay ? [`${m.seq}:${m.line}`] : []));
+const stderrOf = (c: Client, id: string) => c.received().find((m): m is Extract<HostMessage, { t: 'exit' }> => m.t === 'exit' && m.id === id)?.stderr;
 async function shutdown(path: string): Promise<void> {
   const c = await client(path);
   c.send({ t: 'shutdown' });
@@ -178,14 +223,14 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     await waitFor('出力', () => output(first, 'done').includes('bye') && output(first, 'alive').includes('$ '));
     // アプリを閉じた（接続が切れた）
     first.socket.destroy();
-    await sleep(800);
+    await untilListed(path, (hosted) => typeof hosted.find((p) => p.id === 'done')?.exitCode === 'number');
     const second = await client(path);
     const listed = await list(second, 1);
-    expect(listed.map((p) => [p.id, p.tag, p.exitCode])).toEqual([
-      ['done', 'tag-done', 5],
-      ['alive', 'tag-alive', null],
+    expect(listed.map((p) => [p.id, p.tag, p.exitCode, p.kind])).toEqual([
+      ['done', 'tag-done', 5, 'pty'],
+      ['alive', 'tag-alive', null, 'pty'],
     ]);
-    expect(listed[0].screen).toContain('bye');
+    expect(listed[0]).toMatchObject({ screen: expect.stringContaining('bye') });
     expect(listed[1]).toMatchObject({ cols: 80, rows: 24 });
     second.send({ t: 'forget', id: 'done' });
     second.send({ t: 'forget', id: 'alive' });
@@ -194,7 +239,125 @@ describe('pty ホスト（テストのプロセスの中で動かす）', () => 
     // 終わるときは、動いている pty を止める
     second.send({ t: 'shutdown' });
     await waitFor('終わり', () => exits.includes(0));
-    expect(logs.some((l) => l.includes('終了しました: tag-alive'))).toBe(true);
+    expect(logs.some((l) => l.includes('終了しました（pty）: tag-alive'))).toBe(true);
+  });
+
+  it('パイプのプロセス: 出力の行に通し番号を付けて届け、入力の行を渡し、入力を閉じると終わる。終わりには標準エラーの末尾を添える', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    c.send(pipe('q1', ['{"type":"system","subtype":"init","session_id":"s1"}'], 'echo 失敗の理由 >&2; exec cat'));
+    // 同じ ID の起動は、2 度目を無視する
+    c.send(pipe('q1', [], 'exit 9'));
+    await waitFor('最初の行', () => linesOf(c, 'q1').length === 1);
+    c.send({ t: 'send', id: 'q1', line: '{"type":"user","n":1}' });
+    c.send({ t: 'send', id: 'q1', line: '{壊れた' });
+    await waitFor('返った行', () => linesOf(c, 'q1').length === 3);
+    expect(linesOf(c, 'q1')).toEqual(['1:{"type":"system","subtype":"init","session_id":"s1"}', '2:{"type":"user","n":1}', '3:{壊れた']);
+    c.send({ t: 'end', id: 'q1' });
+    c.send({ t: 'end', id: 'q1' });
+    expect(await waitFor('終了', () => exitOf(c, 'q1') !== undefined && String(exitOf(c, 'q1')))).toBe('0');
+    expect(stderrOf(c, 'q1')).toContain('失敗の理由');
+    // 終わった・知らないプロセスへの頼みは無視する
+    c.send({ t: 'send', id: 'q1', line: 'x' });
+    c.send({ t: 'send', id: 'none', line: 'x' });
+    c.send({ t: 'end', id: 'none' });
+    c.send({ t: 'replay', id: 'none', from: 1 });
+    expect(await list(c, 1)).toEqual([]);
+    await shutdown(path);
+  });
+
+  it('パイプのプロセスの控え: 書いている途中の行は控えない・種類ごとの最新を残す・答えの無い要求を控える。送り直しは印を付けて送り、終わりを知らせる', async () => {
+    const path = await startHost();
+    const first = await client(path);
+    first.send(pipe('q2'));
+    const send = (value: unknown) => first.send({ t: 'send', id: 'q2', line: JSON.stringify(value) });
+    // claude が出す行の代わりに、入力に書いた行がそのまま返る
+    send({ type: 'system', subtype: 'init', session_id: 'a' });
+    send({ type: 'stream_event', event: { type: 'message_start' } });
+    send({ type: 'system', subtype: 'task_started', task_id: 't1' });
+    send({ type: 'system', subtype: 'task_started', task_id: 't2' });
+    send({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool' } });
+    send({ type: 'control_request', request_id: 'r2', request: { subtype: 'can_use_tool' } });
+    send({ type: 'control_request', request_id: 'r3', request: { subtype: 'can_use_tool' } });
+    send({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'completed' });
+    send({ type: 'system', subtype: 'init', session_id: 'b' });
+    // claude が要求を出してから答える（入力に書いた行が出力に返ってから）
+    await waitFor('要求', () => linesOf(first, 'q2').length === 9);
+    // r1 はアプリが答え、r2 は claude が取り下げた（どちらも控えから外す）
+    send({ type: 'control_response', response: { subtype: 'success', request_id: 'r1' } });
+    send({ type: 'control_cancel_request', request_id: 'r2' });
+    await waitFor('出力', () => linesOf(first, 'q2').length === 11);
+    // アプリを閉じて、起動し直したアプリが引き継ぐ
+    first.socket.destroy();
+    await sleep(100);
+    const second = await client(path);
+    const [info] = (await list(second, 1)) as HostedPipeInfo[];
+    expect(info).toMatchObject({ kind: 'pipe', id: 'q2', exitCode: null, lastSeq: 11, firstSeq: 1, ended: false });
+    expect(info.retained.map((l) => l.seq)).toEqual([4, 9]);
+    expect(info.pending.map((l) => JSON.parse(l.line).request_id)).toEqual(['r3']);
+    second.send({ t: 'replay', id: 'q2', from: 8 });
+    await waitFor('送り直し', () => second.received().some((m) => m.t === 'replayed' && m.id === 'q2'));
+    // 書いている途中の行（2 番）は控えていない。8 番から
+    expect(linesOf(second, 'q2', true).map((l) => l.split(':')[0])).toEqual(['8', '9', '10', '11']);
+    second.send({ t: 'replay', id: 'q2', from: 1 });
+    await waitFor('全部', () => linesOf(second, 'q2', true).length === 4 + 10);
+    expect(linesOf(second, 'q2', true).slice(4).map((l) => l.split(':')[0])).not.toContain('2');
+    // 止めると、プロセスグループごと SIGTERM で止める
+    second.send({ t: 'kill', id: 'q2' });
+    expect(await waitFor('終了', () => exitOf(second, 'q2') !== undefined && String(exitOf(second, 'q2')))).toBe('128');
+    await shutdown(path);
+  });
+
+  it('もう記録を捨てたプロセスへの replay には、終わったことを返す（引き継いだアプリが待ち続けないように）', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    c.send({ t: 'replay', id: 'gone', from: 1 });
+    expect(await waitFor('終わり', () => exitOf(c, 'gone') !== undefined && String(exitOf(c, 'gone')))).toBe('-1');
+    await shutdown(path);
+  });
+
+  it('長すぎて捨てた行が、答えを待つ要求だったら、ホストが error で答える（アプリには届かないので、claude が待ち続けないように）', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    const long = JSON.stringify({ type: 'control_request', request_id: 'big1', request: { subtype: 'can_use_tool', input: { content: 'x'.repeat(5000) } } });
+    const other = JSON.stringify({ type: 'assistant', text: 'y'.repeat(5000) });
+    // cat は、ホストが入力に書いた答えを、そのまま出力に返す
+    c.send(pipe('q5', [long, other]));
+    await waitFor('答え', () => linesOf(c, 'q5').length === 1);
+    const [answer] = linesOf(c, 'q5');
+    expect(JSON.parse(answer.slice(answer.indexOf(':') + 1))).toEqual({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: 'big1', error: 'tanacode could not read this request because it is too long.' },
+    });
+    expect(logs.filter((l) => l.includes('長すぎる行を捨てました: tag-q5'))).toHaveLength(2);
+    await shutdown(path);
+  });
+
+  it('アプリが見ていない間に終わったパイプのプロセスは、終了コードを持ったまま一覧に残る。終わったプロセスの要求は控えから外す', async () => {
+    const path = await startHost();
+    const first = await client(path);
+    first.send(pipe('q3', ['{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool"}}'], 'sleep 0.3; exit 4'));
+    await waitFor('出力', () => linesOf(first, 'q3').length === 1);
+    first.socket.destroy();
+    await untilListed(path, (hosted) => typeof hosted.find((p) => p.id === 'q3')?.exitCode === 'number');
+    const second = await client(path);
+    const listed = (await list(second, 1)) as HostedPipeInfo[];
+    expect(listed).toMatchObject([{ id: 'q3', exitCode: 4, pending: [] }]);
+    second.send({ t: 'forget', id: 'q3' });
+    expect(await list(second, 2)).toEqual([]);
+    await shutdown(path);
+  });
+
+  it('終わるときは、SIGTERM で終わらないパイプのプロセスを、少し待ってから SIGKILL で止める', async () => {
+    const path = await startHost();
+    const c = await client(path);
+    c.send(pipe('stubborn', [], "trap '' TERM; echo ready; while :; do sleep 1; done"));
+    await waitFor('出力', () => linesOf(c, 'stubborn').length === 1);
+    const started = Date.now();
+    c.send({ t: 'shutdown' });
+    await waitFor('終わり', () => exits.includes(0), 8000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1900);
+    expect(logs.some((l) => l.includes('終了しました（pipe）: tag-stubborn') && l.includes('SIGKILL'))).toBe(true);
   });
 
   it('形（PROTOCOL）の違うアプリには hello だけ答え、出力は送らない', async () => {

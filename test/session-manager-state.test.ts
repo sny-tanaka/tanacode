@@ -6,7 +6,7 @@ import { transcriptPath } from '../src/main/claude-session';
 import type { TurnStarter } from '../src/main/compact-notice';
 import { handoffText, resumeText } from '../src/shared/optimized-compact';
 import { QUESTION } from './scenario';
-import { fixtureScreen, line, ScriptedApp } from './helpers/scripted-claude';
+import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
 // SessionManager の一覧・状態・読み取り（本物の claude なしで動かす。test/session-manager.test.ts の続き）
 
@@ -17,6 +17,8 @@ beforeEach(() => {
 afterEach(() => app.dispose());
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// チャットに出たターンの終わりの数（新しい会話では、読み直す会話ログが無いので、起動では出ない）
+const turnEnds = (id: string) => app.events(id).filter((e) => e.type === 'turn-end').length;
 
 // バックグラウンドで動き続ける Bash を起動した、ターンの途中の行
 const backgroundBash = (id: string) => [
@@ -26,6 +28,13 @@ const backgroundBash = (id: string) => [
     toolUseResult: { backgroundTaskId: id },
   }),
 ];
+
+// Claude Code が答えを待つ要求（can_use_tool）
+const canUseTool = (requestId: string, toolName: string, input: Record<string, unknown>) => ({
+  type: 'control_request',
+  request_id: requestId,
+  request: { subtype: 'can_use_tool', tool_name: toolName, input, tool_use_id: `toolu_${requestId}` },
+});
 
 describe('一覧と記録の読み取り', () => {
   it('watchState: 状態が変わったかもしれないセッションを知らせ、やめたあとは知らせない', async () => {
@@ -39,6 +48,21 @@ describe('一覧と記録の読み取り', () => {
     expect(seen).toEqual([]);
   });
 
+  it('状態が変わったら、一覧を送り直す（画面は、チャットの状態を一覧の state から決める）', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const states = () => app.sessionLists.map((list) => list.find((s) => s.id === id)?.state);
+    expect(states().at(-1)).toBe('idle');
+    app.say(id, line.user('はじめ'), line.text('考えています'));
+    await app.waitFor('作業中', () => states().at(-1) === 'working');
+    app.finish(id);
+    await app.waitFor('待機中', () => states().at(-1) === 'idle');
+    // 状態が変わらない知らせでは、一覧を送り直さない
+    const lists = app.sessionLists.length;
+    app.manager.notifyState(id);
+    expect(app.sessionLists).toHaveLength(lists);
+  });
+
   it('cwdOf・parentOf・childrenOf・claudeSessionIds・transcriptOf: 記録から読む。知らないセッションは cwdOf で失敗する', () => {
     const parent = app.create();
     const child = app.create({ mode: 'manual' }, parent.id);
@@ -49,7 +73,7 @@ describe('一覧と記録の読み取り', () => {
     expect(app.manager.parentOf('nope')).toBeNull();
     expect(app.manager.childrenOf(parent.id)).toEqual([child.id]);
     expect(app.manager.childrenOf(child.id)).toEqual([]);
-    expect(app.manager.claudeSessionIds()).toEqual(new Set([parent.pty.arg('--session-id'), child.pty.arg('--session-id')]));
+    expect(app.manager.claudeSessionIds()).toEqual(new Set([parent.pipe.arg('--session-id'), child.pipe.arg('--session-id')]));
     expect(app.manager.transcriptOf(parent.id)).toBe(app.transcript(parent.id));
     expect(app.manager.transcriptOf('nope')).toBeNull();
     expect(app.manager.summary(child.id)?.parentId).toBe(parent.id);
@@ -78,8 +102,10 @@ describe('一覧と記録の読み取り', () => {
     await app.ready(b.id);
     app.manager.focus(b.id);
     expect(app.manager.isFocused(b.id)).toBe(true);
-    app.append(a.id, line.user('やって'), line.text('しました'), line.turnEnd());
-    app.append(b.id, line.user('やって'), line.text('しました'), line.turnEnd());
+    for (const id of [a.id, b.id]) {
+      app.say(id, line.user('やって'), line.text('しました'));
+      app.finish(id);
+    }
     await app.waitFor('ターンの終わり', () => app.turnsCompleted.length === 2);
     expect(app.manager.summary(a.id)?.unread).toBe(true);
     expect(app.manager.summary(b.id)?.unread).toBe(false);
@@ -99,8 +125,9 @@ describe('一覧と記録の読み取り', () => {
     expect(await app.manager.history('nope')).toEqual([]);
     const { id } = app.create();
     await app.ready(id);
-    app.append(id, line.user('はじめ'), line.text('はい'), line.turnEnd());
-    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    app.say(id, line.user('はじめ'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
     const snapshot = app.manager.snapshot(id);
     expect(snapshot.fromSeq).toBe(0);
     expect(snapshot.events).toEqual(app.events(id));
@@ -119,7 +146,7 @@ describe('一覧と記録の読み取り', () => {
     await expect(app.manager.exportSource('nope')).rejects.toThrow('セッションが見つかりません');
     const { id } = app.create();
     await app.ready(id);
-    app.append(id, { ...line.user('直して'), gitBranch: 'feature/a' }, { ...line.text('直します'), gitBranch: 'feature/b' }, { ...line.text('まだ'), gitBranch: 'feature/a' });
+    app.say(id, { ...line.user('直して'), gitBranch: 'feature/a' }, { ...line.text('直します'), gitBranch: 'feature/b' }, { ...line.text('まだ'), gitBranch: 'feature/a' });
     await app.waitFor('応答', () => app.events(id).filter((e) => e.type === 'assistant-text').length === 2);
     const live = await app.manager.exportSource(id);
     expect(live.branches).toEqual(['feature/a', 'feature/b']);
@@ -136,31 +163,29 @@ describe('一覧と記録の読み取り', () => {
     expect(app.manager.bashTasks('nope')).toEqual([]);
     expect(app.manager.statusLine('nope')).toBeNull();
     expect(app.manager.knowledge('nope')).toEqual({ files: {}, contextTokens: null });
-    expect(app.manager.screen('nope')).toBeNull();
-    expect(app.manager.screenForView('nope')).toBeNull();
-    expect(app.manager.activity('nope')).toBeNull();
-    expect(app.manager.askedQuestions('nope')).toBeNull();
+    expect(app.manager.progress('nope')).toBeNull();
     expect(app.manager.modeOf('nope')).toBeNull();
     expect(app.manager.stateOf('nope')).toBeNull();
     expect(await app.manager.context('nope')).toEqual({ items: [] });
     expect(await app.manager.setMode('nope', 'auto')).toBe(false);
-    expect(await app.manager.rewind('nope', 'はじめ')).toBe(false);
-    expect(await app.manager.chooseIf('nope', { optionId: '1', key: 'enter' }, () => true)).toBe('gone');
-    // 動いていないセッションには何も送らず、画面が無い（gone）と返す
-    await expect(app.manager.choose('nope', { optionId: '1', key: 'enter' })).resolves.toBe('gone');
+    expect(await app.manager.rewindPreview('nope', 'u1')).toBeNull();
+    expect(await app.manager.rewind('nope', 'u1', { conversation: true, code: false })).toMatchObject({ ok: false });
+    expect(app.manager.pendingPermission('nope')).toBeNull();
+    expect(app.manager.replyPermission('nope', 'r1', { kind: 'allow' })).toBe(false);
     // 知らないセッションへの操作は何もしない（失敗もしない）
     app.manager.write('nope', 'x');
     app.manager.interrupt('nope');
     app.manager.resize('nope', 80, 24);
-    await app.manager.withdrawParentDraft('nope');
-    await expect(app.manager.submit('nope', 'x')).resolves.toBeUndefined();
+    // 送信だけは、黙って成功にしない（画面は、送れなかった発言を預かりに戻す）
+    await expect(app.manager.submit('nope', 'x')).rejects.toThrow('Claude Code が動いていません');
   });
 
   it('context: 動いている間はその場の集計、止めたあとは会話ログから集め直す', async () => {
     const { id } = app.create();
     await app.ready(id);
-    app.append(id, line.user('ログインを直して'), line.text('直しました'), line.turnEnd());
-    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    app.say(id, line.user('ログインを直して'), line.text('直しました'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
     const live = await app.manager.context(id);
     expect(live.items.some((i) => i.kind === 'topic' && i.label.includes('ログインを直して'))).toBe(true);
     await app.manager.archive(id);
@@ -172,43 +197,51 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
   const live = (title = '新しいセッション') => app.manager.liveSessions().find((s) => s.title === title)?.state;
 
   it('起動中 → 待機中 → 作業中 → 待機中。終わったら exited、アーカイブしたら archived で、liveSessions から外す', async () => {
-    const { id, pty } = app.create();
+    const { id, pipe } = app.create();
     expect(app.manager.stateOf(id)).toBe('starting');
     expect(app.manager.liveSessions()).toEqual([{ title: '新しいセッション', state: '起動中' }]);
     await app.ready(id);
     expect(app.manager.stateOf(id)).toBe('idle');
     expect(live()).toBe('待機中');
-    app.append(id, line.user('作業して'));
-    await app.waitFor('作業中', () => app.manager.stateOf(id) === 'working');
-    expect(live('作業して')).toBe('作業中');
-    app.append(id, line.text('しました'), line.turnEnd());
+    await app.prompt(id, '作業して');
+    expect(app.manager.stateOf(id)).toBe('working');
+    await app.waitFor('一覧の題', () => live('作業して') === '作業中');
+    app.say(id, line.text('しました'));
+    app.finish(id);
     await app.waitFor('待機中', () => app.manager.stateOf(id) === 'idle');
-    pty.exit(0);
+    pipe.exit(0);
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     expect(app.manager.liveSessions()).toEqual([]);
     await app.manager.archive(id);
     expect(app.manager.stateOf(id)).toBe('archived');
   });
 
-  it('送ったばかりで会話ログにまだ発言が出ていない間も、作業中として扱う', async () => {
-    const { id, pty } = app.create();
+  it('送ったばかりで会話にまだ出ていない間も、作業中として扱う。result のあと、最後の応答が会話ログに出るまでも作業中', async () => {
+    const { id, pipe } = app.create();
     await app.ready(id);
-    // Claude Code の代わりに、打った文字を入力欄に出す（出たら Enter が送られる）
-    pty.onWrite = (data) => {
-      if (data.includes('/clear')) setTimeout(() => pty.output(`${fixtureScreen('prompt')}\x1b[37;3H/clear`), 10);
-    };
-    await app.manager.submit(id, '/clear');
-    expect(pty.typed.endsWith('/clear\r')).toBe(true);
+    const uuid = await app.send(id, '作業して');
     expect(app.manager.stateOf(id)).toBe('working');
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    const answer = line.text('しました');
+    // 応答は stream-json に先に出て、会話ログにはあとで書かれる
+    pipe.emit(stream.assistant(answer));
+    app.finish(id);
+    await sleep(100);
+    expect(app.manager.stateOf(id)).toBe('working');
+    expect(turnEnds(id)).toBe(0);
+    app.append(id, { ...line.user('作業して'), uuid }, answer);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(app.manager.stateOf(id)).toBe('idle');
   });
 
   it('バックグラウンドのタスクが動いている間: 作業中（バックグラウンド n 件）→ ターンが終わると完了待ち（background）', async () => {
     const { id } = app.create();
     await app.ready(id);
-    app.append(id, ...backgroundBash('b1'));
+    app.say(id, ...backgroundBash('b1'));
     await app.waitFor('バックグラウンドの数', () => app.manager.summary(id)?.backgroundTasks === 1);
     expect(live('サーバーを起動して')).toBe('作業中（バックグラウンド 1件）');
-    app.append(id, line.text('起動しました'), line.turnEnd());
+    app.say(id, line.text('起動しました'));
+    app.finish(id);
     await app.waitFor('完了待ち', () => app.manager.stateOf(id) === 'background');
     expect(live('サーバーを起動して')).toBe('バックグラウンド 1件の完了待ち');
     expect(app.manager.bashTasks(id).map((t) => [t.command, t.state])).toEqual([['npm run dev', 'running']]);
@@ -219,65 +252,23 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
     expect(app.manager.runningTasks('nope')).toEqual([]);
   });
 
-  it('pendingPermission: フックが書いた入力を、今出ている許可の確認のものと言えるときだけ返す', async () => {
-    const { id, pty } = app.create();
+  it('許可の確認・質問は、それぞれの状態と文言（AskUserQuestion の can_use_tool は質問、ほかは許可の確認）', async () => {
+    const { id, pipe } = app.create();
     await app.ready(id);
-    const request = (command: string) => ({ tool_name: 'Bash', tool_input: { command }, agent_type: undefined as string | undefined });
-    // 確認が出ていなければ返さない
-    app.manager.permissionRequested(id, request('mkdir checked && echo tanacode-check'), Date.now());
-    expect(app.manager.pendingPermission(id)).toBeNull();
-    // 入力が書かれたあとに確認が出た: 今の確認のもの
-    pty.output(fixtureScreen('bash-permission'));
+    app.say(id, line.user('頼み'), line.toolUse('toolu_x', 'Bash', { command: 'make' }));
+    pipe.emit(canUseTool('r1', 'Bash', { command: 'make' }));
     await app.waitFor('許可の確認', () => app.manager.stateOf(id) === 'permission');
-    expect(app.manager.pendingPermission(id)).toMatchObject({ seq: 1, tool: 'Bash', input: { command: 'mkdir checked && echo tanacode-check' }, agent: null });
-    // 同じ書き込み（同じ時刻）がもう一度知らされても、数え直さない
-    const first = app.manager.pendingPermission(id)!;
-    app.manager.permissionRequested(id, request('mkdir checked && echo tanacode-check'), first.at);
-    expect(app.manager.pendingPermission(id)?.seq).toBe(1);
-    // 確認が閉じたら返さない
-    pty.output(fixtureScreen('prompt'));
-    await app.waitFor('入力欄', () => app.manager.stateOf(id) !== 'permission');
-    expect(app.manager.pendingPermission(id)).toBeNull();
-    // 次の確認が、フックの入力なしに出た: 残っているのは前の確認の入力なので、返さない
-    await sleep(20);
-    pty.output(fixtureScreen('bash-permission'));
-    await app.waitFor('次の許可の確認', () => app.manager.stateOf(id) === 'permission');
-    expect(app.manager.pendingPermission(id)).toBeNull();
-    // 確認が出ている間に書かれた入力（フックが少し遅れて届いた・続けて出た次の確認）は、今の確認のもの
-    app.manager.permissionRequested(id, { ...request('rm -rf build'), agent_type: 'general-purpose' }, Date.now());
-    expect(app.manager.pendingPermission(id)).toMatchObject({ seq: 2, input: { command: 'rm -rf build' }, agent: 'general-purpose' });
-    // 形の合わない入力は使わない
-    for (const bad of [null, {}, { tool_name: 'Bash' }, { tool_name: 1, tool_input: {} }, { tool_name: 'Bash', tool_input: 'x' }]) {
-      app.manager.permissionRequested(id, bad, Date.now() + 1000);
-    }
-    expect(app.manager.pendingPermission(id)?.seq).toBe(2);
-    // 知らないセッション・Claude Code が止まったセッションでは返さない
-    expect(app.manager.pendingPermission('nope')).toBeNull();
-    app.manager.permissionRequested('nope', request('x'), Date.now());
-    await app.manager.archive(id);
-    expect(app.manager.pendingPermission(id)).toBeNull();
-  });
-
-  it('許可の確認・質問・操作できない画面は、それぞれの文言。質問は AskUserQuestion の入力が届くまで許可の確認として扱う', async () => {
-    const { id, pty } = app.create();
-    await app.ready(id);
-    pty.output(fixtureScreen('bash-permission'));
-    await app.waitFor('許可の確認', () => app.manager.stateOf(id) === 'permission');
-    expect(live()).toBe('実行の許可待ち');
-    pty.output(fixtureScreen('question'));
-    await app.waitFor('質問', () => app.manager.summary(id)?.attention === 'question');
-    expect(live()).toBe('質問への回答待ち');
-    // 画面は質問に見えても、AskUserQuestion の入力が無ければ、親が答えられる質問として見せない
-    expect(app.manager.stateOf(id)).toBe('permission');
-    expect(app.manager.askedQuestions(id)).toBeNull();
-    // 質問の形でない入力は使わない
-    app.manager.askQuestionsChanged(id, { questions: 'x' });
-    expect(app.manager.askedQuestions(id)).toBeNull();
-    app.manager.askQuestionsChanged(id, { questions: [QUESTION] });
-    expect(app.manager.askedQuestions(id)?.map((q) => q.question)).toEqual([QUESTION.question]);
-    expect(app.manager.stateOf(id)).toBe('question');
-    pty.output('\x1b[H\x1b[2J何かの画面');
-    await app.waitFor('操作待ち', () => live() === '操作待ち', 3000);
+    // 一覧の題（最初の発言）は、会話ログを読んでから
+    await app.waitFor('一覧の文言', () => live('頼み') === '実行の許可待ち');
+    pipe.emit({ type: 'control_cancel_request', request_id: 'r1' });
+    pipe.emit(canUseTool('r2', 'AskUserQuestion', { questions: [QUESTION] }));
+    await app.waitFor('質問', () => app.manager.stateOf(id) === 'question');
+    expect(app.manager.summary(id)?.attention).toBe('question');
+    expect(live('頼み')).toBe('質問への回答待ち');
+    // claude が終わったら、待っている要求は消える
+    pipe.exit(0);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    expect(app.manager.summary(id)?.attention).toBeNull();
   });
 
   it('browserAskChanged: 頼んでいる間は一覧で「ブラウザでの操作待ち」。ターンが終わっても完了を知らせない。同じ知らせは繰り返さない', async () => {
@@ -296,8 +287,9 @@ describe('状態（stateOf）と、一覧の状態の文言（liveSessions）', 
     expect(app.manager.stateOf(id)).toBe('idle');
     expect(app.manager.summary(id)?.attention).toBe('browser');
     expect(live()).toBe('ブラウザでの操作待ち');
-    app.append(id, line.user('ログインして'), line.text('ブラウザで操作してください'), line.turnEnd());
-    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end') && app.manager.stateOf(id) === 'idle');
+    app.say(id, line.user('ログインして'), line.text('ブラウザで操作してください'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1 && app.manager.stateOf(id) === 'idle');
     await sleep(100);
     expect(app.turnsCompleted).toEqual([]);
     const before = app.sessionLists.length;
@@ -324,7 +316,7 @@ describe('statusLine', () => {
     updatedAt: 1,
   });
 
-  it('動いているセッションの statusLine だけを受け取り、画面に知らせる', async () => {
+  it('動いているセッションの statusLine（ターミナルモードのファイル）だけを受け取り、画面に知らせる', async () => {
     app.manager.statusLineChanged('nope', info(null));
     expect(app.statusLineInfos.size).toBe(0);
     const { id } = app.create();
@@ -348,34 +340,70 @@ describe('statusLine', () => {
     expect([app.manager.currentModel(id), app.manager.currentEffort(id)]).toEqual(['sonnet', 'low']);
   });
 
-  it('/clear で会話ログが変わったら、新しい会話ログに乗り換える（会話の ID を記録し直し、チャットを空にする）', async () => {
+  it('stream-json の行から作る: モデルは init と本体の応答、バージョンは init、エフォートは get_settings、コストは result', async () => {
+    app.answers.set('get_settings', { applied: { model: 'claude-opus-5-5', effort: 'medium' } });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    expect(app.statusLineInfos.get(id)).toMatchObject({ effort: 'medium' });
+    pipe.emit(stream.init(app.claudeId(id), { model: 'claude-opus-5-5', claude_code_version: '2.1.301' }));
+    await app.waitFor('init', () => app.statusLineInfos.get(id)?.version === '2.1.301');
+    expect(app.statusLineInfos.get(id)?.model).toEqual({ id: 'claude-opus-5-5', name: 'Opus 5.5' });
+    const model = (name: string) => ({ ...line.text('はい'), message: { ...line.text('はい').message, model: name } });
+    app.say(id, line.user('はじめ'), model('claude-fable-5-1'));
+    await app.waitFor('応答のモデル', () => app.statusLineInfos.get(id)?.model?.name === 'Fable 5.1');
+    // サブエージェントの応答は、本体のモデルではない
+    pipe.emit({ ...stream.assistant(model('claude-haiku-5-5')), parent_tool_use_id: 'toolu_agent' });
+    // 読めない ID は、そのまま出す（別の接続先のモデルなど）
+    app.say(id, model('custom-model'));
+    await app.waitFor('読めない ID', () => app.statusLineInfos.get(id)?.model?.name === 'custom-model');
+    app.finish(id, { total_cost_usd: 0.25 });
+    await app.waitFor('コスト', () => app.statusLineInfos.get(id)?.costUsd === 0.25);
+  });
+
+  it('コンテキスト: 途中は本体の最後の応答の usage、ターンの終わりに get_context_usage で聞き直す（上限も）', async () => {
     const { id } = app.create();
     await app.ready(id);
-    app.append(id, line.user('前の会話'), line.text('はい'), line.turnEnd());
-    await app.waitFor('前の会話', () => app.events(id).some((e) => e.type === 'turn-end'));
+    app.say(id, line.user('はじめ'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('聞き直し', () => app.statusLineInfos.get(id)?.context?.size === 200_000);
+    expect(app.statusLineInfos.get(id)?.context).toEqual({ size: 200_000, tokens: 12_000, usedPercent: 6 });
+    const usage = { input_tokens: 10, cache_creation_input_tokens: 990, cache_read_input_tokens: 49_000 };
+    app.say(id, line.user('つぎ'), { ...line.text('はい'), message: { ...line.text('はい').message, usage } });
+    await app.waitFor('途中の使用量', () => app.statusLineInfos.get(id)?.context?.tokens === 50_000);
+    expect(app.statusLineInfos.get(id)?.context).toEqual({ size: 200_000, tokens: 50_000, usedPercent: 25 });
+  });
+
+  it('/clear で新しい会話になったら（init の session_id が変わる）、新しい会話ログに乗り換える（会話の ID を記録し直し、チャットを空にする）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    app.say(id, line.user('前の会話'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('前の会話', () => turnEnds(id) === 1);
     const next = '44444444-0000-4000-8000-000000000004';
     const file = transcriptPath(app.cwd, next);
     writeFileSync(file, `${JSON.stringify({ ...line.user('新しい会話'), sessionId: next, cwd: app.cwd })}\n`);
-    app.manager.statusLineChanged(id, info(file));
+    pipe.emit({ type: 'conversation_reset', session_id: app.claudeId(id), new_conversation_id: 'other' });
+    pipe.emit(stream.init(next));
     await app.waitFor('乗り換え', () => app.events(id).some((e) => e.type === 'reset'));
     expect(app.manager.transcriptOf(id)).toBe(file);
     await app.waitFor('新しい会話の発言', () => app.events(id).some((e) => e.type === 'user' && e.text === '新しい会話'));
     // 起動し直すと、新しい会話を再開する
-    app.manager.restart(id);
-    expect(app.pty(id).arg('--resume')).toBe(next);
+    await app.manager.restart(id);
+    expect(app.pipe(id).arg('--resume')).toBe(next);
   });
 
   it('最適化圧縮の流れが打った /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）。人の /clear には付けない', async () => {
-    const { id } = app.create();
+    const { id, pipe } = app.create();
     await app.ready(id);
-    app.append(id, line.user('前の会話'), line.text('はい'), line.turnEnd());
-    await app.waitFor('前の会話', () => app.events(id).some((e) => e.type === 'turn-end'));
+    app.say(id, line.user('前の会話'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('前の会話', () => turnEnds(id) === 1);
     const resets = () => app.events(id).filter((e) => e.type === 'reset');
     const switchTo = async (next: string) => {
       const file = transcriptPath(app.cwd, next);
       writeFileSync(file, `${JSON.stringify({ ...line.user('新しい会話'), sessionId: next, cwd: app.cwd })}\n`);
       const before = resets().length;
-      app.manager.statusLineChanged(id, info(file));
+      pipe.emit(stream.init(next));
       await app.waitFor('乗り換え', () => resets().length > before);
     };
     const asked: string[] = [];
@@ -401,10 +429,11 @@ describe('statusLine', () => {
       return starter === 'handoff' ? null : starter === 'resume' ? 'compact' : 'work';
     };
     let turns = 0;
-    const turn = async (...lines: Parameters<typeof app.append>[1][]) => {
+    const turn = async (...lines: Record<string, unknown>[]) => {
       turns += 1;
-      app.append(id, ...lines, line.text('はい'), line.turnEnd());
-      await app.waitFor('ターンの終わり', () => app.events(id).filter((e) => e.type === 'turn-end').length === turns);
+      app.say(id, ...lines, line.text('はい'));
+      app.finish(id);
+      await app.waitFor('ターンの終わり', () => turnEnds(id) === turns);
     };
     const RESUME = { lists: [], messages: [], tasks: [] };
     await turn(line.user('税率を可変にして'));
@@ -438,24 +467,28 @@ describe('statusLine', () => {
   it('何もつながなければ、ターンの終わりは、ふつうの完了として知らせる', async () => {
     const { id } = app.create();
     await app.ready(id);
-    app.append(id, line.user('頼み'), line.text('はい'), line.turnEnd());
+    app.say(id, line.user('頼み'), line.text('はい'));
+    app.finish(id);
     await app.waitFor('完了の知らせ', () => app.turnsCompleted.length === 1);
     expect(app.turnNotices).toEqual(['work']);
   });
 
-  it('最後に終わったターンが、人の中断で終わったかが分かる。外から見た状態が変わったことを、見張っている先に知らせられる', async () => {
+  it('最後に終わったターンが、人の中断で終わったかが分かる（result の terminal_reason が aborted_…）。外から見た状態が変わったことを、見張っている先に知らせられる', async () => {
     const { id } = app.create();
     await app.ready(id);
     expect(app.manager.lastTurnInterrupted(id)).toBe(false);
     expect(app.manager.lastTurnInterrupted('nope')).toBe(false);
-    app.append(id, line.user('頼み'), line.text('はい'), line.turnEnd());
-    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    app.say(id, line.user('頼み'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
     expect(app.manager.lastTurnInterrupted(id)).toBe(false);
-    app.append(id, line.user('次の頼み'), line.user('[Request interrupted by user]'));
+    app.say(id, line.user('次の頼み'), line.text('途中'), line.user('[Request interrupted by user]'));
+    app.pipe(id).emit(stream.interrupted(app.claudeId(id), 'aborted_tools'));
     await app.waitFor('中断', () => app.events(id).some((e) => e.type === 'turn-end' && e.interrupted));
     expect(app.manager.lastTurnInterrupted(id)).toBe(true);
-    app.append(id, line.user('その次'), line.text('はい'), line.turnEnd());
-    await app.waitFor('次のターンの終わり', () => app.events(id).filter((e) => e.type === 'turn-end').length >= 3);
+    app.say(id, line.user('その次'), line.text('はい'));
+    app.finish(id);
+    await app.waitFor('次のターンの終わり', () => turnEnds(id) === 3);
     expect(app.manager.lastTurnInterrupted(id)).toBe(false);
     const seen: string[] = [];
     const unwatch = app.manager.watchState((session) => seen.push(session));
@@ -464,27 +497,40 @@ describe('statusLine', () => {
     expect(seen).toEqual([id]);
   });
 
-  it('新しい会話に切り替わったら、送信中の扱いをやめる（/clear は発言として会話ログに出ない。次の送信を待たせない）', async () => {
-    const { id, pty } = app.create();
+  it('/clear などのスラッシュコマンドは、送信中として数えない（発言として会話ログに出ない。次の送信を待たせない）', async () => {
+    const { id, pipe } = app.create();
     await app.ready(id);
-    app.append(id, line.user('前の会話'), line.text('はい'), line.turnEnd());
-    await app.waitFor('前の会話', () => app.events(id).some((e) => e.type === 'turn-end'));
-    pty.onWrite = (data) => {
-      if (data.includes('/clear')) setTimeout(() => pty.output(`${fixtureScreen('prompt')}\x1b[37;3H/clear`), 10);
-      if (data === '\r') setTimeout(() => pty.output(fixtureScreen('prompt')), 10);
-    };
     await app.manager.submitWhenReady(id, '/clear', 2000);
-    expect(app.manager.stateOf(id)).toBe('working');
-    const next = '55555555-0000-4000-8000-000000000005';
-    const file = transcriptPath(app.cwd, next);
-    // 新しい会話ログには、/clear のコマンドの記録だけがある（読み直した行として読まれる）
-    writeFileSync(file, `${JSON.stringify({ ...line.user('<command-name>/clear</command-name>'), sessionId: next, cwd: app.cwd })}\n`);
-    app.manager.statusLineChanged(id, info(file));
-    await app.waitFor('乗り換え', () => app.events(id).some((e) => e.type === 'reset'));
-    await app.waitFor('待機', () => app.manager.stateOf(id) === 'idle', 2000);
-    // 次の送信は、待たずに打ち始める（直す前は、15 秒たつまで「送信中」で、短い待ち時間では失敗した）
+    expect(app.manager.stateOf(id)).toBe('idle');
     await app.manager.submitWhenReady(id, '次の発言', 500);
-    expect(pty.typed.endsWith('次の発言\r')).toBe(true);
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual(['/clear', '次の発言']);
+  });
+});
+
+describe('作業中の進み具合', () => {
+  it('書いている途中の行から、考えている・書いている・ツールの実行中と、受け取ったトークン数を知らせる。ターンが終わったら null', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // 手が空いている間に届いた書いている途中の行で、ターンが始まる
+    pipe.emit(stream.blockStart('thinking'));
+    await app.waitFor('考えている', () => app.progress.get(id)?.phase === 'thinking');
+    expect(app.manager.stateOf(id)).toBe('working');
+    // 経過は 1 秒ごとに増える（重いときは 1 秒の区切りをまたぐ）
+    expect(app.progress.get(id)).toEqual({ phase: 'thinking', elapsed: expect.stringMatching(/^\d+s$/), tokens: null });
+    pipe.emit(stream.blockStart('text'));
+    pipe.emit(stream.tokens(1234));
+    await app.waitFor('書いている', () => app.progress.get(id)?.tokens === '1.2k');
+    expect(app.progress.get(id)?.phase).toBe('writing');
+    expect(app.manager.progress(id)).toMatchObject({ phase: 'writing', tokens: '1.2k' });
+    pipe.emit({ type: 'tool_progress', tool_use_id: 'toolu_1', tool_name: 'Bash', elapsed_time_seconds: 3, uuid: 'p1' });
+    await app.waitFor('ツール', () => app.progress.get(id)?.phase === 'working');
+    // サブエージェントの行は数えない
+    pipe.emit(stream.blockStart('thinking', 'toolu_agent'));
+    await sleep(50);
+    expect(app.progress.get(id)?.phase).toBe('working');
+    app.finish(id);
+    await app.waitFor('終わり', () => app.progress.get(id) === null);
+    expect(app.manager.progress(id)).toBeNull();
   });
 });
 
@@ -503,32 +549,12 @@ describe('最適化圧縮を自動で始めるか（セッションごと）', (
   });
 });
 
-describe('送る・止める・大きさ', () => {
-  it('write: 打った文字をそのまま送る。resize: pty と画面の大きさを変える', async () => {
-    const { id, pty } = app.create();
-    app.manager.write(id, 'abc');
-    expect(pty.writes).toEqual(['abc']);
-    app.manager.resize(id, 100, 30);
-    expect(pty.resizes).toEqual([[100, 30]]);
-    // 起動し直しても、同じ大きさで起動する
-    app.manager.restart(id);
-    expect(app.pty(id).request).toMatchObject({ cols: 100, rows: 30 });
-  });
-
-  it('interrupt: Esc を送り、打ち込んでいる途中の文字を、入力欄に戻った文字として見せるようにする', async () => {
-    const { id, pty } = app.create();
+describe('中断', () => {
+  it('interrupt: interrupt の要求を送る', async () => {
+    const { id, pipe } = app.create();
     await app.ready(id);
-    const text = '応答の前に中断します';
-    pty.onWrite = (data) => {
-      if (data.includes(text)) setTimeout(() => pty.output(fixtureScreen('interrupt-draft')), 10);
-    };
-    await app.manager.submit(id, text);
-    // 送ったばかりの文字は、入力欄に残っていても書きかけとして見せない（チャットの入力欄に移さない）
-    await app.waitFor('入力欄', () => app.manager.screen(id)?.draft === text);
-    expect(app.manager.screenForView(id)?.draft).toBe('');
     app.manager.interrupt(id);
-    expect(pty.writes.at(-1)).toBe('\x1b');
-    expect(app.manager.screenForView(id)?.draft).toBe(text);
+    await app.waitFor('中断', () => pipe.requests('interrupt').length === 1);
   });
 });
 
@@ -553,116 +579,39 @@ describe('会話ログの読み取り', () => {
     expect(texts).toEqual(['はじめ', 'はい', 'やり直し']);
   });
 
-  it('順番待ち: 受け取られた発言（dequeue）を外す。画像つきの発言（content が配列）も文字で数える。知らせは人の発言として出さない', async () => {
-    const { id } = app.create();
+  it('claude が終わったら、送信中を空にし、動いていたバックグラウンドのタスクを止まったことにする', async () => {
+    const { id, pipe } = app.create();
     await app.ready(id);
-    const queue = () => {
-      const last = [...app.events(id)].reverse().find((e) => e.type === 'queue');
-      return last?.type === 'queue' ? last.prompts : null;
-    };
-    const op = (operation: string, content?: unknown) => ({ ...line.turnEnd(), type: 'queue-operation', subtype: undefined, operation, content });
-    app.append(
-      id,
-      op('enqueue', [
-        { type: 'image', source: {} },
-        { type: 'text', text: '画像を見て' },
-      ]),
-      op('enqueue', '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>'),
-      op('enqueue', 'あとで B'),
-    );
-    await app.waitFor('順番待ち', () => queue()?.length === 2);
-    // 画像のブロックは文字にならない（文字のブロックだけを改行でつなぐ）
-    expect(queue()?.map((t) => t.trim())).toEqual(['画像を見て', 'あとで B']);
-    app.append(id, op('dequeue'));
-    await app.waitFor('受け取り', () => queue()?.length === 1);
-    expect(queue()).toEqual(['あとで B']);
-    // 中身の読めないもの（文字でも配列でもない）は足さない。順番待ちに無いものを外しても変わらない
-    app.append(id, op('enqueue', 42), op('remove', '無いもの'), op('remove', 'あとで B'));
-    await app.waitFor('外す', () => queue()?.length === 0);
-  });
-
-  it('claude が終わったら、順番待ちを空にし、動いていたバックグラウンドのタスクを止まったことにする', async () => {
-    const { id, pty } = app.create();
-    await app.ready(id);
-    app.append(id, ...backgroundBash('b2'), { ...line.turnEnd(), type: 'queue-operation', subtype: undefined, operation: 'enqueue', content: 'あとで' });
-    await app.waitFor('順番待ち', () => app.events(id).some((e) => e.type === 'queue'));
+    app.say(id, ...backgroundBash('b2'));
     await app.waitFor('バックグラウンド', () => app.manager.summary(id)?.backgroundTasks === 1);
-    pty.exit(0);
+    await app.send(id, 'あとで');
+    pipe.exit(0);
     await app.waitFor('終了', () => app.events(id).some((e) => e.type === 'process-exit'));
     const queues = app.events(id).filter((e) => e.type === 'queue');
     expect(queues.at(-1)).toEqual({ type: 'queue', prompts: [] });
     expect(app.manager.bashTasks(id).map((t) => t.state)).toEqual(['stopped']);
   });
 
-  it('1M コンテキストは、起動時の表示で分かったら覚え、起動し直したあとも会話ログのモデル名に付ける', async () => {
-    const { id } = app.create();
-    // 起動時の枠に「(1M context)」が出ている
-    app.pty(id).output(fixtureScreen('prompt').replace('Opus 5.5 · API Usage Billing', 'Opus 5.5 (1M context) · API Usage Billing'));
-    await app.waitFor('起動', () => app.screens.get(id)?.ready === true);
-    expect(app.screens.get(id)?.model).toBe('Opus 5.5 (1M context)');
-    app.append(id, line.user('はじめ'), line.text('はい'), line.turnEnd());
-    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
-    app.manager.restart(id);
-    // 起動し直したあとは、起動時の表示が出る前でも、会話ログのモデル名に 1M を付ける
-    app.append(id, line.user('続き'), line.text('はい'));
-    await app.waitFor('モデル', () => app.manager.screen(id)?.model === 'Opus 5.5 (1M context)');
-    // エフォートだけ変えたときは、1M のまま
-    app.manager.configure(id, { model: null, effort: 'high', settingsFile: null });
-    expect(app.pty(id).arg('--effort')).toBe('high');
-    await app.waitFor('モデル', () => app.manager.screen(id)?.model === 'Opus 5.5 (1M context)');
-    // モデルを変えたら、1M かどうかは起動時の表示で分かり直す
-    app.manager.configure(id, { model: 'sonnet', effort: null, settingsFile: null });
-    app.append(id, line.text('変えました'));
-    await app.waitFor('モデル', () => app.manager.screen(id)?.model === 'Opus 5.5');
-  });
-
-  it('会話ログのモデル ID を表示名にする（日付の付いた ID・小数点のある版も）', async () => {
-    const { id } = app.create();
-    await app.ready(id);
-    const model = (name: string) => ({ ...line.text('はい'), message: { ...line.text('はい').message, model: name } });
-    app.append(id, line.user('はじめ'), model('claude-opus-4-1-20250805'));
-    await app.waitFor('モデル', () => app.manager.screen(id)?.model === 'Opus 4.1');
-    app.append(id, model('claude-sonnet-5'));
-    await app.waitFor('モデル', () => app.manager.screen(id)?.model === 'Sonnet 5');
-    app.append(id, model('claude-fable-5-1'));
-    await app.waitFor('モデル', () => app.manager.screen(id)?.model === 'Fable 5.1');
-    // 読めない ID は使わない（前のまま）
-    app.append(id, model('gpt-4'), line.user('次'));
-    await app.waitFor('発言', () => app.events(id).some((e) => e.type === 'user' && e.text === '次'));
-    expect(app.manager.screen(id)?.model).toBe('Fable 5.1');
-  });
-
-  it('日付の付いたモデル ID でも、小数点の無い版を取り違えない（claude-sonnet-5-20260101 は Sonnet 5）', async () => {
-    const { id } = app.create();
-    await app.ready(id);
-    const model = (name: string) => ({ ...line.text('はい'), message: { ...line.text('はい').message, model: name } });
-    app.append(id, line.user('はじめ'), model('claude-sonnet-5-20260101'));
-    await app.waitFor('応答', () => app.events(id).some((e) => e.type === 'assistant-text'));
-    await sleep(200);
-    // 日付の先頭の数字（2）を、版の小数点以下と読まない
-    expect(app.manager.screen(id)?.model).toBe('Sonnet 5');
-  });
-
   it('会話ログの先頭に大きな行があっても、発言の行があれば --resume で再開する', async () => {
-    const { id } = app.create();
+    const { id, pipe } = app.create();
     const file = app.transcript(id);
     mkdirSync(dirname(file), { recursive: true });
     // 読む区切り（256KB）を超える行のあとに発言がある
     writeFileSync(file, `${JSON.stringify({ type: 'summary', summary: 'x'.repeat(300 * 1024) })}\n${JSON.stringify({ ...line.user('はじめ') })}\n`);
-    const conversation = app.pty(id).arg('--session-id');
-    app.manager.restart(id);
-    expect(app.pty(id).arg('--resume')).toBe(conversation);
+    const conversation = pipe.arg('--session-id');
+    await app.manager.restart(id);
+    expect(app.pipe(id).arg('--resume')).toBe(conversation);
   });
 
   it('会話ログに発言が無ければ、--resume できないので新しい会話の ID で始め直す', async () => {
-    const { id } = app.create();
+    const { id, pipe } = app.create();
     const file = app.transcript(id);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, `${JSON.stringify({ type: 'summary', summary: 'x'.repeat(300 * 1024) })}\n`);
-    const conversation = app.pty(id).arg('--session-id');
-    app.manager.restart(id);
-    expect(app.pty(id).arg('--resume')).toBeNull();
-    expect(app.pty(id).arg('--session-id')).not.toBe(conversation);
+    const conversation = pipe.arg('--session-id');
+    await app.manager.restart(id);
+    expect(app.pipe(id).arg('--resume')).toBeNull();
+    expect(app.pipe(id).arg('--session-id')).not.toBe(conversation);
   });
 
   it('会話ログの、行として読めないもの（オブジェクトでない JSON）は読み飛ばす', async () => {
@@ -670,40 +619,18 @@ describe('会話ログの読み取り', () => {
     await app.ready(id);
     app.append(id, line.user('はじめ'));
     appendFileSync(app.transcript(id), '42\n"文字"\n');
-    app.append(id, line.text('はい'), line.turnEnd());
-    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    app.say(id, line.text('はい'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
     expect(app.events(id).filter((e) => e.type === 'user' || e.type === 'assistant-text').map((e) => ('text' in e ? e.text : ''))).toEqual(['はじめ', 'はい']);
-  });
-
-  it('AskUserQuestion: 会話ログの質問を、画面の質問として使う。答えが返ったら外す', async () => {
-    const { id } = app.create();
-    await app.ready(id);
-    app.append(id, line.user('聞いて'), line.toolUse('toolu_ask', 'AskUserQuestion', { questions: [QUESTION] }));
-    await app.waitFor('質問', () => app.manager.askedQuestions(id) !== null);
-    expect(app.manager.askedQuestions(id)?.map((q) => [q.question, q.options.map((o) => o.label)])).toEqual([[QUESTION.question, ['です・ます', 'だ・である']]]);
-    app.append(id, line.toolResult('toolu_ask', 'User has answered your questions: です・ます'));
-    await app.waitFor('答え', () => app.manager.askedQuestions(id) === null);
   });
 });
 
-describe('画面の知らせ', () => {
-  it('作業中の表示（タイマー・トークン数）を読んで知らせ、消えたら null を知らせる', async () => {
-    const { id, pty } = app.create();
-    await app.ready(id);
-    pty.output(`${fixtureScreen('prompt')}\x1b[33;1H✻ Working… (5s · ↓ 1.2k tokens)`);
-    await app.waitFor('作業中の表示', () => !!app.activities.get(id));
-    expect(app.activities.get(id)).toEqual({ phase: 'writing', elapsed: '5s', tokens: '1.2k' });
-    expect(app.manager.activity(id)).toEqual(app.activities.get(id));
-    // 終わると、タイマーの行が完了の行（✻ Worked for 5s）に変わる
-    pty.output(`${fixtureScreen('prompt')}\x1b[33;1H✻ Worked for 5s`);
-    await app.waitFor('作業の終わり', () => app.activities.get(id) === null);
-    expect(app.manager.activity(id)).toBeNull();
-  });
-
-  it('modeOf: 画面からモードを読めないうちは、アプリが決めたモード（無ければ manual）', () => {
+describe('起動のモードと子', () => {
+  it('modeOf: 起動したばかりは、起動に渡したモード（指定が無ければ auto）', () => {
     const a = app.create();
     const b = app.create({ mode: 'plan' });
-    expect(app.manager.modeOf(a.id)).toBe('manual');
+    expect(app.manager.modeOf(a.id)).toBe('auto');
     expect(app.manager.modeOf(b.id)).toBe('plan');
   });
 

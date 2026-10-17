@@ -7,7 +7,6 @@ import { ChecklistBook, ChecklistError } from '../src/shared/checklist-book';
 import { checklistReminder, MAX_REMINDER_CHARS, type TurnActivity } from '../src/shared/checklist-reminder';
 import { CHECKLIST_REMINDER_TAG } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { SessionState } from '../src/shared/session-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
 import { ChecklistStore } from '../src/main/checklist-store';
@@ -161,11 +160,10 @@ const ME = '11111111-0000-4000-8000-000000000001';
 
 class FakeHost implements NoticeHost {
   sessions: SessionSummary[] = [
-    { id: ME, title: 's', cwd: '/work/shop', archived: false, createdAt: 0, updatedAt: 0, running: true, unread: false, attention: null, backgroundTasks: 0, model: null, effort: null, settingsFile: null, remoteControl: false, worktree: null, parentId: null },
+    { id: ME, title: 's', cwd: '/work/shop', archived: false, createdAt: 0, updatedAt: 0, running: true, state: null, mode: null, unread: false, attention: null, backgroundTasks: 0, model: null, effort: null, settingsFile: null, remoteControl: false, worktree: null, parentId: null },
   ];
   list = () => this.sessions;
   stateOf = (): SessionState => 'idle';
-  screen = (): ScreenInfo => ({ state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
   submitWhenReady = async () => {};
   watchState = () => () => {};
 }

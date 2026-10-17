@@ -38,4 +38,4 @@ export class TurnReports {
 }
 
 // ターンの途中で、人の操作を待っている状態（browser は、ツールで見せる状態として渡されたとき）
-const MID_TURN = new Set<SessionState>(['question', 'permission', 'waiting', 'browser']);
+const MID_TURN = new Set<SessionState>(['question', 'permission', 'terminal', 'browser']);

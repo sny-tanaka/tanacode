@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { vi, type Mock } from 'vitest';
 
 // アプリの入り口（src/main/index.ts）を、Electron を起動せずに読み込んで動かす部品（test/main-*.test.ts 用）。
@@ -37,6 +38,9 @@ export class Emitter {
     this.events.set(event, [...(this.events.get(event) ?? []), listener]);
     return this;
   }
+  once(event: string, listener: Listener): this {
+    return this.on(event, listener);
+  }
   // 受け手を呼ぶ（引数は Electron と同じ形で、テストが渡す）
   emit(event: string, ...args: unknown[]): unknown[] {
     return (this.events.get(event) ?? []).map((listener) => (listener as (...a: unknown[]) => unknown)(...args));
@@ -54,6 +58,8 @@ export class FakeWebContents extends Emitter {
   destroyed = false;
   url = 'file:///app/out/renderer/index.html';
   type = 'window';
+  // 使うセッション（プレビューのページが開いたポップアップの見分けに使う。決めていなければ無し）
+  session: unknown = undefined;
   windowOpenHandler: ((details: { url: string; disposition?: string }) => { action: string }) | null = null;
   send = vi.fn((channel: string, payload: unknown) => {
     this.sent.push([channel, payload]);
@@ -68,9 +74,21 @@ export class FakeWebContents extends Emitter {
   close = vi.fn(() => {
     this.destroyed = true;
   });
-  loadURL = vi.fn((_url: string) => undefined);
-  loadFile = vi.fn((_path: string) => undefined);
+  // 読み込んだものが、画面の URL になる
+  loadURL = vi.fn((url: string) => {
+    this.url = url;
+  });
+  loadFile = vi.fn((path: string) => {
+    this.url = pathToFileURL(path).href;
+  });
+  // メインフレーム（画面からの呼び出し・知らせの送り元。親のフレームは無い）
+  get mainFrame(): FakeFrame {
+    return { url: this.url, parent: null };
+  }
 }
+
+// 画面のフレーム（WebFrameMain）。parent が無いものがメインフレーム
+export type FakeFrame = { url: string; parent: FakeFrame | null };
 
 // 足したプロファイルの画面（WebContentsView）。ウインドウに重ねて、見ているものだけを出す
 export class FakeView {
@@ -114,6 +132,8 @@ export class FakeWindow extends Emitter {
     super();
     state.windows.push(this);
   }
+  // フォーカスのあるウインドウ（無ければ null）
+  static getFocusedWindow = () => state.windows.find((w) => w.focused && !w.destroyed) ?? null;
   getContentBounds = () => ({ x: 0, y: 0, width: this.bounds.width, height: this.bounds.height - 28 });
   isDestroyed = () => this.destroyed;
   isMaximized = () => this.maximized;
@@ -131,9 +151,11 @@ export class FakeWindow extends Emitter {
     this.minimized = false;
   });
   show = vi.fn(() => undefined);
+  showInactive = vi.fn(() => undefined);
+  setTitle = vi.fn((_title: string) => undefined);
   focus = vi.fn(() => undefined);
-  loadURL = vi.fn((_url: string) => undefined);
-  loadFile = vi.fn((_path: string) => undefined);
+  loadURL = vi.fn((url: string) => this.webContents.loadURL(url));
+  loadFile = vi.fn((path: string) => this.webContents.loadFile(path));
 }
 
 export class FakeSession extends Emitter {
@@ -186,6 +208,8 @@ function freshState() {
     // Electron の準備ができる（app.whenReady。既定はすぐに済む）
     whenReady: vi.fn(async (): Promise<void> => undefined),
     quit: vi.fn((..._args: unknown[]) => undefined),
+    // 同じ userData で動いているアプリが、ほかに無い（app.requestSingleInstanceLock。false は 2 つめの起動）
+    singleInstanceLock: true,
     // 終わったあとに起動し直す（app.relaunch）
     relaunch: vi.fn(() => undefined),
     // macOS 以外では無い
@@ -277,6 +301,7 @@ function fakeClass(name: string, methods: Record<string, Impl>, init?: (self: Fa
 export const electronModule = {
   app: {
     on: (event: string, listener: Listener) => state.app.on(event, listener),
+    once: (event: string, listener: Listener) => state.app.once(event, listener),
     whenReady: () => state.whenReady(),
     getPath: (name: string) => (name === 'userData' ? state.userData : name === 'downloads' ? state.downloads : join(state.root, name)),
     get isPackaged() {
@@ -287,6 +312,7 @@ export const electronModule = {
     getPreferredSystemLanguages: () => state.preferredLanguages,
     name: 'tanacode',
     quit: (...args: unknown[]) => state.quit(...args),
+    requestSingleInstanceLock: () => state.singleInstanceLock,
     relaunch: () => state.relaunch(),
     get dock() {
       return state.dock;
@@ -320,7 +346,15 @@ export const electronModule = {
   net: { fetch: (...args: unknown[]) => state.netFetch(...args) },
   Notification: FakeNotification,
   powerMonitor: { on: (event: string, listener: Listener) => state.powerMonitor.on(event, listener) },
-  screen: { getAllDisplays: () => state.displays },
+  screen: {
+    getAllDisplays: () => state.displays,
+    // rect の真ん中がある画面（無ければ 1 つめ）
+    getDisplayMatching: (rect: { x: number; y: number; width: number; height: number }) => {
+      const cx = rect.x + rect.width / 2;
+      const cy = rect.y + rect.height / 2;
+      return state.displays.find(({ workArea: a }) => cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height) ?? state.displays[0];
+    },
+  },
   session: {
     get defaultSession() {
       return state.defaultSession;
@@ -369,18 +403,23 @@ const SessionManager = fakeClass('SessionManager', {
   claudeSessionIds: () => new Set(['known-1']),
   importSession: echo('manager.importSession'),
   configure: echo('manager.configure'),
+  modelsOf: echo('manager.modelsOf'),
   restart: echo('manager.restart'),
   setRemoteControl: echo('manager.setRemoteControl'),
+  setTerminalMode: echo('manager.setTerminalMode'),
   remoteAvailable: echo('manager.remoteAvailable'),
-  screenForView: echo('manager.screenForView'),
-  activity: echo('manager.activity'),
+  progress: echo('manager.progress'),
   pendingQuestion: echo('manager.pendingQuestion'),
   replyQuestion: echo('manager.replyQuestion'),
-  waitQuestion: echo('manager.waitQuestion'),
+  pendingPermission: echo('manager.pendingPermission'),
+  replyPermission: echo('manager.replyPermission'),
   workflows: echo('manager.workflows'),
   setMode: echo('manager.setMode'),
   rewind: echo('manager.rewind'),
+  rewindPreview: echo('manager.rewindPreview'),
   transcriptOf: (_self, id: string) => `/transcripts/${id}.jsonl`,
+  // 動いているセッション（live）だけ、Claude Code の initialize の候補がある
+  commandsOf: (_self, id: string) => (id === 'live' ? [{ name: 'compact', description: '圧縮', source: 'builtin' }] : null),
   subagents: echo('manager.subagents'),
   bashTasks: echo('manager.bashTasks'),
   knowledge: echo('manager.knowledge'),
@@ -388,7 +427,6 @@ const SessionManager = fakeClass('SessionManager', {
   statusLine: echo('manager.statusLine'),
   agentLog: echo('manager.agentLog'),
   stopTask: echo('manager.stopTask'),
-  choose: echo('manager.choose'),
   focus: echo('manager.focus'),
   write: echo('manager.write'),
   resize: echo('manager.resize'),
@@ -397,7 +435,8 @@ const SessionManager = fakeClass('SessionManager', {
   liveSessions: () => [],
   closeAll: () => undefined,
   statusLineChanged: () => undefined,
-  askQuestionsChanged: () => undefined,
+  permissionRequested: () => undefined,
+  tuiIdle: () => undefined,
   browserAskChanged: () => undefined,
   watchState: () => undefined,
   stateOf: () => 'idle',
@@ -413,6 +452,7 @@ const modules: Record<string, Record<string, unknown>> = {
       handle: echo('browser.handle'),
       track: () => undefined,
       openFromPage: () => false,
+      allowsPopup: () => true,
       isOperating: () => false,
       blocksNavigation: () => false,
       forget: () => undefined,
@@ -504,6 +544,8 @@ const modules: Record<string, Record<string, unknown>> = {
       killOwner: () => undefined,
       killAll: () => undefined,
       run: echo('shells.run'),
+      attach: echo('shells.attach'),
+      detach: () => undefined,
     }),
   },
   'system-monitor': { SystemMonitor: fakeClass('SystemMonitor', { start: () => undefined, stop: () => undefined }) },
@@ -657,19 +699,32 @@ export async function invoke(channel: string, ...args: unknown[]): Promise<unkno
   return await invokeFrom(appContents(), channel, ...args);
 }
 
-// 画面 sender からの呼び出し（足したプロファイルの画面から呼ぶとき）
+// 画面 sender からの呼び出し（足したプロファイルの画面から呼ぶとき）。送り元のフレームは、その画面のメインフレーム
 export async function invokeFrom(sender: unknown, channel: string, ...args: unknown[]): Promise<unknown> {
+  return await invokeWith({ sender, senderFrame: mainFrameOf(sender) }, channel, ...args);
+}
+
+// 送り元（sender と senderFrame）を決めて呼ぶ（中のフレームやアプリの外の画面から届いたときを確かめる）
+export async function invokeWith(event: { sender: unknown; senderFrame: FakeFrame | null }, channel: string, ...args: unknown[]): Promise<unknown> {
   const handler = state.handlers.get(channel);
   if (!handler) throw new Error(`${channel} の受け口がありません`);
-  return await handler({ sender }, ...args);
+  return await handler(event, ...args);
 }
 
 // 画面からの知らせ（ipcRenderer.send の代わり）
 export function sendFromRenderer(channel: string, ...args: unknown[]): unknown {
+  const sender = appContents();
+  return sendWith({ sender, senderFrame: mainFrameOf(sender) }, channel, ...args);
+}
+
+// 送り元を決めて知らせる
+export function sendWith(event: { sender: unknown; senderFrame: FakeFrame | null }, channel: string, ...args: unknown[]): unknown {
   const listener = state.listeners.get(channel);
   if (!listener) throw new Error(`${channel} の受け口がありません`);
-  return listener({ sender: appContents() }, ...args);
+  return listener(event, ...args);
 }
+
+const mainFrameOf = (sender: unknown) => (sender instanceof FakeWebContents ? sender.mainFrame : null);
 
 // 既定のプロファイルの画面（主ウインドウの画面）。ウインドウを作る前は、名前だけの送り元
 const appContents = () => state.windows.at(-1)?.webContents ?? 'renderer';

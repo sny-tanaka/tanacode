@@ -29,6 +29,7 @@ export type ApiFailure = { status: number; errorType: string; message: string; t
 type Message = { role?: string; content?: string | { type?: string; text?: string; content?: string | { type?: string; text?: string }[] }[] };
 type Body = {
   model?: string;
+  output_config?: { effort?: unknown };
   stream?: boolean;
   tools?: { name?: string }[];
   messages?: Message[];
@@ -53,6 +54,8 @@ export class MockApi {
   readonly contexts: string[] = [];
   // 受け取ったツールの結果（tool_result）の文章。質問への答えや許可の結果が、Claude まで届いたかを確かめる
   readonly toolResults: string[] = [];
+  // ツールの一覧が付いた呼び出し（本体の会話）ごとの、頼まれたモデルとエフォート（モデル・エフォートの切り替えが届いたかを確かめる）
+  readonly calls: { model: string | undefined; effort: unknown }[] = [];
 
   // チェックリストを使い続けさせるフックがターンの終わりを止めたとき（Stop hook feedback）の応答も、台本から返すか。
   // ふだんは、本物のモデルが直すものの無いときにするのと同じく、決まった目印だけを返して、台本を進めない
@@ -63,8 +66,9 @@ export class MockApi {
   // 大きくすると、コンテキストが埋まってきたときの動き（自動の最適化圧縮）を確かめられる
   inputTokens = 100;
   // 台本より先に、最後の user の発言から応答を決める（何番目の応答かが決まらない場面で使う）。
-  // prompt: 最後の user の発言の文章（ツールの結果だけなら空）/ results: その発言に入っているツールの結果の文章。null を返すと台本に任せる
-  intercept: ((prompt: string, results: string[]) => Block[] | null) | null = null;
+  // prompt: 最後の user の発言の文章（ツールの結果だけなら空）/ results: その発言に入っているツールの結果の文章 /
+  // context: リクエストの user と system の発言の文章すべて（Claude Code が足した案内を読むとき）。null を返すと台本に任せる
+  intercept: ((prompt: string, results: string[], context: string) => Block[] | null) | null = null;
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
@@ -100,6 +104,7 @@ export class MockApi {
     const messages = body.messages ?? [];
     const lastUser = [...messages].reverse().find((m) => m.role === 'user');
     this.lastPrompts.push(textOf(lastUser));
+    if (tools.length > 0) this.calls.push({ model: body.model, effort: body.output_config?.effort });
     if (Array.isArray(lastUser?.content)) for (const b of lastUser.content) if (b.type === 'tool_result') this.toolResults.push(resultText(b.content));
     const reply = messages.findIndex((m) => m.role === 'assistant');
     const opening = (reply === -1 ? messages : messages.slice(0, reply)).filter((m) => m.role === 'user');
@@ -110,7 +115,8 @@ export class MockApi {
     // 目印だけの応答は、台本の応答に数えない
     const scripted = (m: Message) => m.role === 'assistant' && (this.scriptChecklistStops || textOf(m).trim() !== CHECKLIST_UNCHANGED_MARK);
     const index = messages.filter(scripted).length;
-    const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`Stop hook feedback:\n<${CHECKLIST_REMINDER_TAG}>`);
+    // 止めたあとの続き（Claude Code が、フックの文を最後の user の発言に入れて続ける。2.1.302 は「Stop hook additional context: 」を頭に付ける）
+    const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`<${CHECKLIST_REMINDER_TAG}>Before you end this turn`);
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
     if (conversation) {
       const system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text ?? '').join('\n');
@@ -119,7 +125,8 @@ export class MockApi {
     }
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
     const lastResults = Array.isArray(lastUser?.content) ? lastUser.content.filter((b) => b.type === 'tool_result').map((b) => resultText(b.content)) : [];
-    const intercepted = tools.length > 0 && !stopped ? (this.intercept?.(textOf(lastUser), lastResults) ?? null) : null;
+    const context = messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n');
+    const intercepted = tools.length > 0 && !stopped ? (this.intercept?.(textOf(lastUser), lastResults, context) ?? null) : null;
     const blocks: Block[] = intercepted
       ? intercepted
       : stopped

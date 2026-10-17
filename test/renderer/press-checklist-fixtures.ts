@@ -35,6 +35,8 @@ export function session(id: string, over: Partial<SessionSummary> = {}): Session
     createdAt: NOW,
     updatedAt: NOW,
     running: true,
+    state: null,
+    mode: null,
     unread: false,
     attention: null,
     backgroundTasks: 0,

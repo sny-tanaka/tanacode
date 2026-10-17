@@ -570,3 +570,13 @@ describe('セッションを切り替えた直後', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });
+
+describe('保存できないチェックリスト', () => {
+  it('チェックリストのファイルを読めなかったセッションでは、変更を保存しないことを上に出す', () => {
+    const view = show({ session: session('s1', { checklistUnsaved: true }) });
+    expect(view.container.querySelector('.checklist-unsaved')?.textContent).toContain('変更を保存しません');
+    view.unmount();
+    show();
+    expect(document.querySelector('.checklist-unsaved')).toBeNull();
+  });
+});

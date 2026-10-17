@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { locale, t } from '@shared/i18n';
-import type { ModelCatalog, ModelChoice } from '@shared/models';
+import type { ModelCatalog, ModelChoice, SessionModel } from '@shared/models';
 import type { PermissionMode } from '@shared/screen';
 
 // モデル・エフォート・権限モードの選択肢（チャットの入力欄の下と、新規セッションの画面で使う）
@@ -51,6 +51,37 @@ export function useModelCatalog(): ModelCatalogState {
     return c.disabled ? t('composer.models.needsUpdate', { name }) : name;
   };
   return { catalog, choices, labelOf, refreshing, refresh };
+}
+
+// 動いている Claude Code がその場で切り替えられるモデル（initialize の models）。sessionId が null（起動の前・止まっている）なら null。
+// 起動し直すと選べるモデルが変わることがあるので、起動が終わるたびに（sessionId が null から戻るたびに）読み直す
+export function useSessionModels(sessionId: string | null): SessionModel[] | null {
+  const [models, setModels] = useState<{ sessionId: string; models: SessionModel[] | null } | null>(null);
+  useEffect(() => {
+    if (!sessionId) return;
+    let alive = true;
+    void window.tanacode.sessions.models(sessionId).then((list) => alive && setModels({ sessionId, models: list }));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+  return sessionId && models?.sessionId === sessionId ? models.models : null;
+}
+
+// モデルの選択肢。見え方はモデル一覧の控えのまま、動いている Claude Code が切り替えられるモデルは、そのモデルで選べるエフォートにする。
+// 控えに無いもの（Bedrock のモデル ID など）は、Claude Code が付けた名前で足す。切り替えられないもの（控えにある旧モデルなど）は、
+// 選ぶと main が --model で起動し直す
+export function withSessionModels(choices: ModelChoice[], live: SessionModel[] | null): ModelChoice[] {
+  if (!live) return choices;
+  const liveOf = (value: string) => live.find((m) => m.value === value || m.resolvedModel === value);
+  const merged = choices.map((c) => {
+    const m = liveOf(c.value);
+    return m ? { ...c, efforts: m.efforts } : c;
+  });
+  const extra = live
+    .filter((m) => m.value !== 'default' && !choices.some((c) => c.value === m.value || c.value === m.resolvedModel))
+    .map((m): ModelChoice => ({ value: m.value, name: m.name, detail: '', disabled: false, efforts: m.efforts }));
+  return [...merged, ...extra];
 }
 
 export function refreshTitle(catalog: ModelCatalog | null): string {

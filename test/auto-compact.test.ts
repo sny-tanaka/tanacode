@@ -1,21 +1,23 @@
 import { execFileSync } from 'node:child_process';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../src/shared/ipc';
 import { IDLE_COMPACT_STATUS, midTurnPercent, type AutoCompactTrigger, type CompactStatus } from '../src/shared/optimized-compact';
 import type { SessionState } from '../src/shared/session-tools';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { StatusLineInfo } from '../src/shared/statusline';
 import { AppSettings } from '../src/main/app-settings';
 import { AutoCompact, type AutoCompactHost } from '../src/main/auto-compact';
+import { SUPPRESS_OUTPUT } from '../src/main/hook-output';
 import { AUTO_COMPACT_STOP_COMMAND, StatusLineWatcher } from '../src/main/statusline';
 
 // 最適化圧縮を自動で始める（main の AutoCompact）。いつ始めるか・ターンの途中で止めるファイル・続けて何度も起きないこと・
 // Claude Code の自動の圧縮を止めるか
 
 const ID = 's1';
+// フックが何も決めないとき（アプリのフックの印だけを書く。hook-output.ts）
+const NOTHING = `${SUPPRESS_OUTPUT}\n`;
 let dir: string;
 let watcher: StatusLineWatcher;
 let state: SessionState | null;
@@ -28,7 +30,6 @@ let changes: string[];
 let threshold: number;
 let auto: AutoCompact;
 let clock: number;
-let draft: string | null;
 let interrupted: boolean;
 
 const statusLine = (): StatusLineInfo | null =>
@@ -46,14 +47,12 @@ beforeEach(() => {
   changes = [];
   threshold = 80;
   clock = 1_000_000;
-  draft = null;
   interrupted = false;
   const host: AutoCompactHost = {
     summary: () => (summary ? ({ id: ID, archived: false, model: null, ...summary } as SessionSummary) : undefined),
     stateOf: () => state,
     statusLine,
     knowledge: () => ({ files: {}, contextTokens: null }),
-    screen: () => (draft === null ? null : ({ draft } as ScreenInfo)),
     lastTurnInterrupted: () => interrupted,
   };
   auto = new AutoCompact({
@@ -92,19 +91,10 @@ function finish(failure: Parameters<AutoCompact['finished']>[1], trigger: AutoCo
 const stopFile = () => watcher.stopFileFor(ID);
 const hitFile = () => watcher.stopHitFileFor(ID);
 // ツールのあとのフックを、本物のコマンドで動かす
-// input: フックの標準入力（Claude Code が渡す JSON）。パイプに書かず、ファイルから読ませる。止めるファイルが無いとき、フックは入力を
-// 読まずに終わる。パイプ（execFileSync の input）だと、sh が先に終わったときに書き込みが EPIPE になり、execFileSync が投げる
-// （Linux の sh は起動が速く、CI で 100 回に 1 回ほど起きた。Claude Code は、入力を読まずに終わるフックを問題にしない）
-const runHook = (input: Record<string, unknown> = { hook_event_name: 'PostToolUse', tool_name: 'Bash' }) => {
-  const file = join(dir, 'hook-input.json');
-  writeFileSync(file, JSON.stringify(input));
-  const stdin = openSync(file, 'r');
-  try {
-    return execFileSync('sh', ['-c', AUTO_COMPACT_STOP_COMMAND], { env: { ...process.env, TANACODE_ASK_FILE: watcher.askFileFor(ID) }, encoding: 'utf8', stdio: [stdin, 'pipe', 'pipe'] });
-  } finally {
-    closeSync(stdin);
-  }
-};
+// input: フックの標準入力（Claude Code が渡す JSON）。Claude Code と同じく、パイプに書く。フックは、止めるファイルが無いときも
+// 入力を最後まで読む（読まずに終わると、書き込みが EPIPE になる。Claude Code はそのフックを失敗として扱う。test/hook-output.test.ts）
+const runHook = (input: Record<string, unknown> = { hook_event_name: 'PostToolUse', tool_name: 'Bash' }) =>
+  execFileSync('sh', ['-c', AUTO_COMPACT_STOP_COMMAND], { env: { ...process.env, TANACODE_ASK_FILE: watcher.askFileFor(ID) }, encoding: 'utf8', input: JSON.stringify(input) });
 
 describe('ターンの終わり', () => {
   it('待機に戻ったときに、設定の大きさを超えていたら始める（報告して待つ）。超えていなければ始めない', () => {
@@ -169,17 +159,6 @@ describe('ターンの終わり', () => {
     expect(started).toEqual([{ percent: 85, midTurn: false }]);
   });
 
-  it('入力欄に書きかけの文字があるあいだは、始めない（仕上げの頼みを打てずに、失敗に数えられる）。使用量を待つ間に消えたら、始める', () => {
-    draft = '次の頼みを書いている途中';
-    turn(85);
-    expect(started).toEqual([]);
-    expect(changes).toEqual([]);
-    clock += 3000;
-    draft = '';
-    auto.check(ID);
-    expect(started).toEqual([{ percent: 85, midTurn: false }]);
-  });
-
   it('使用量が分からないあいだ（statusLine も会話ログの量も無い）は、始めない', () => {
     turn(null as unknown as number);
     expect(started).toEqual([]);
@@ -193,8 +172,8 @@ describe('ターンの途中', () => {
     percent = 89;
     auto.check(ID);
     expect(existsSync(stopFile())).toBe(false);
-    // ファイルが無ければ、フックは何も出さない
-    expect(runHook()).toBe('');
+    // ファイルが無ければ、フックは何も決めない（アプリのフックの印だけを書く）
+    expect(runHook()).toBe(NOTHING);
     percent = 91;
     auto.check(ID);
     const stop = JSON.parse(readFileSync(stopFile(), 'utf8')) as { continue: boolean; stopReason: string };
@@ -202,7 +181,7 @@ describe('ターンの途中', () => {
     expect(stop.stopReason).toContain('the context is 91% full');
     expect(JSON.parse(runHook())).toEqual(stop);
     // 2 回めは出さない（止めるのは 1 回だけ）。止めた印が残る
-    expect(runHook()).toBe('');
+    expect(runHook()).toBe(NOTHING);
     expect(existsSync(stopFile())).toBe(false);
     expect(existsSync(hitFile())).toBe(true);
     // 止めたあと、割合が変わっても、書き直さない
@@ -225,7 +204,7 @@ describe('ターンの途中', () => {
     state = 'working';
     percent = 91;
     auto.check(ID);
-    expect(runHook({ hook_event_name: 'PostToolUse', agent_id: 'aeefce232d4dcd1bd', agent_type: 'general-purpose', tool_name: 'Bash' })).toBe('');
+    expect(runHook({ hook_event_name: 'PostToolUse', agent_id: 'aeefce232d4dcd1bd', agent_type: 'general-purpose', tool_name: 'Bash' })).toBe(NOTHING);
     expect(existsSync(stopFile())).toBe(true);
     expect(existsSync(hitFile())).toBe(false);
     expect(auto.stopping(ID)).toBe(false);
@@ -251,13 +230,12 @@ describe('ターンの途中', () => {
     expect(auto.stopping(ID)).toBe(false);
   });
 
-  it('アプリが途中で止めたターンは、中断の印・入力欄の書きかけがあっても、流れを始める（止めたままにしない）', () => {
+  it('アプリが途中で止めたターンは、中断の印があっても、流れを始める（止めたままにしない）', () => {
     state = 'working';
     percent = 91;
     auto.check(ID);
     runHook();
     interrupted = true;
-    draft = '書きかけ';
     state = 'idle';
     auto.check(ID);
     expect(started).toEqual([{ percent: 91, midTurn: true }]);
@@ -382,6 +360,20 @@ describe('使えないとき', () => {
     expect(auto.preCompact(ID)).toBe('');
     unavailable = 'no-checklist';
     turn(95);
+    expect(started).toEqual([]);
+  });
+
+  it('ターミナルモードの間は、始めない・止めない（Claude Code の自動の圧縮を止めない）。書いてあった止めるファイルは片付ける', () => {
+    // TUI では状態が terminal で、流れ（仕上げ・/clear・再開の文）を進められない。Claude Code の圧縮まで止めると、どちらの圧縮も起きない
+    state = 'working';
+    percent = 95;
+    auto.check(ID);
+    expect(existsSync(stopFile())).toBe(true);
+    summary = { terminal: true };
+    state = 'terminal';
+    auto.check(ID);
+    expect(existsSync(stopFile())).toBe(false);
+    expect(auto.preCompact(ID)).toBe('');
     expect(started).toEqual([]);
   });
 

@@ -4,7 +4,7 @@ import type { AskQuestion } from '@shared/screen';
 import { mockApi } from '../../../../.storybook/mockApi';
 import { QuestionCard } from './QuestionCard';
 
-// フックが答えを待っている AskUserQuestion の質問のカード（ターミナルの画面を読まずに、質問の入力だけで描く）
+// Claude Code が答えを待っている AskUserQuestion の質問のカード（質問の入力だけで描く）。プレビュー付きの質問には、メモ欄が付く
 const pending = (...questions: AskQuestion[]): PendingQuestion => ({ id: '1', questions, answered: {} });
 
 const handling: AskQuestion = {
@@ -62,7 +62,7 @@ const layout: AskQuestion = {
 };
 
 const meta = {
-  title: 'チャット/質問のカード（フック）',
+  title: 'チャット/質問のカード',
   component: QuestionCard,
   args: { sessionId: 'story', question: pending(handling) },
   // 送ると、待っている質問が無くなってカードが消える（ここでは、送れたことにして何も変えない）

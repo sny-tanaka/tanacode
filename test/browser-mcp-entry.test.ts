@@ -69,6 +69,15 @@ describe('中継（MCP サーバー）として動く', () => {
       BROWSER_CLOSED_MESSAGE,
       signal,
     );
+    // 呼び出しの ID（Claude Code が tools/call の _meta に付けたもの）があれば、それもアプリに渡す
+    await deps.call('evaluate', { expression: '1' }, signal, 'toolu_1');
+    expect(mocks.callBridge).toHaveBeenLastCalledWith(
+      '/u/Application Support/tanacode/browser.sock',
+      { session: 'S1', tool: 'evaluate', args: { expression: '1' }, toolUseId: 'toolu_1' },
+      90_000,
+      BROWSER_CLOSED_MESSAGE,
+      signal,
+    );
     // ユーザーに操作を頼むものは、アプリの時間切れ（10 分）より少し長く待つ
     await deps.call(BROWSER_ASK_TOOL, { message: 'ログインしてください' }, signal);
     expect(mocks.callBridge).toHaveBeenLastCalledWith(
@@ -126,7 +135,8 @@ describe('--gate を付けると、JavaScript の実行と開く先の確認の�
     // 閉じるまでは聞かない
     expect(mocks.runGate).not.toHaveBeenCalled();
     stdin.end(input.slice(10));
-    await vi.waitFor(() => expect(written).toEqual([`${output}\n`]));
+    // アプリのフックの印（suppressOutput）を足して書く（hook-output.ts）
+    await vi.waitFor(() => expect(written.map((w) => JSON.parse(w))).toEqual([{ ...JSON.parse(output), suppressOutput: true }]));
     expect(mocks.runGate).toHaveBeenCalledWith('/u/Application Support/tanacode/browser.sock', 'S1', 5_000, input);
     expect(mocks.runRelay).not.toHaveBeenCalled();
     // 書き終える前には終わらない（答えが途中で切れないように）

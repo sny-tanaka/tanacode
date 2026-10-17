@@ -7,7 +7,6 @@ import { ChecklistBook, ChecklistError } from '../src/shared/checklist-book';
 import { checklistReminder, MAX_REMINDER_CHARS, type TurnActivity } from '../src/shared/checklist-reminder';
 import { CHECKLIST_MCP_INSTRUCTIONS, CHECKLIST_REMINDER_TAG, CHECKLIST_TOOLS } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { SessionState } from '../src/shared/session-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
 import { ChecklistStore } from '../src/main/checklist-store';
@@ -491,6 +490,8 @@ class FakeHost implements NoticeHost {
       createdAt: 0,
       updatedAt: 0,
       running: true,
+      state: null,
+      mode: null,
       unread: false,
       attention: null,
       backgroundTasks: 0,
@@ -504,7 +505,6 @@ class FakeHost implements NoticeHost {
   ];
   list = () => this.sessions;
   stateOf = (): SessionState => 'idle';
-  screen = (): ScreenInfo => ({ state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
   submitWhenReady = async () => {};
   watchState = () => () => {};
 }

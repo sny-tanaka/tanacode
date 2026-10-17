@@ -4,44 +4,31 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
-import type { ChatBatch, ScreenChoice, SessionSummary } from '@shared/ipc';
+import type { ChatBatch, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
-import type { Activity, ChooseResult, Menu, PermissionMode, ScreenInfo, ScreenLine } from '@shared/screen';
+import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
+import type { Activity, Menu, PermissionMode } from '@shared/screen';
+import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import { CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV } from '../../src/main/checklist-bridge';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
-import { transcriptPath } from '../../src/main/claude-session';
+import { FILE_CHECKPOINTING_ENV, transcriptPath } from '../../src/main/claude-session';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
-import { showsCommandSuggestion } from '../../src/main/screen-parser';
-import { ScreenTracker } from '../../src/main/screen-tracker';
-import { DEFAULT_PTY_SIZE, SessionManager } from '../../src/main/session-manager';
+import { SessionManager } from '../../src/main/session-manager';
 import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
 import { TERMINAL_COMMAND_ENV, TERMINAL_SCRIPT_ENV, TERMINAL_SESSION_ENV, TERMINAL_SOCKET_ENV } from '../../src/main/terminal-bridge';
-import { QUESTION_COMMAND_ENV, QUESTION_SCRIPT_ENV, QUESTION_SESSION_ENV, QUESTION_SOCKET_ENV } from '../../src/main/question-hook';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
-import { FIXTURE_ROOT, type ScreenName } from '../scenario';
+import { FIXTURE_ROOT, fixtureLines } from '../scenario';
 import { FakePtyHost } from './fake-pty-host';
 
 // API キーでログインしたことにする（モックの API にしか送らない）
 const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
 // 状態を待つときに見直す間隔
 const POLL_MS = 50;
-// 選べたあと、画面の読み取りがメニューの閉じたのに追いつくのを待つ時間
-const MENU_CLOSE_MS = 1500;
-// カードに「受け付けませんでした」と出たとき（ignored）に、人と同じく押し直す回数の上限（はじめの 1 回を含む）
-const PRESSES = 3;
-// 打った文字が入力欄に出るのを待つ時間。出なくても Enter は送る（そのあとの確かめで失敗する）
-const DRAFT_MS = 3000;
-// 入力欄でないところに打ったとき、Enter を送るまで待つ時間（打った文字を画面から読めないので、決まった時間だけ待つ）
-const OTHER_INPUT_MS = 300;
-
-// 控えの会話ログに残さない行（attachment の type）。システムプロンプトの全文やツール・スキルの一覧、
-// 動かした環境ごとの情報で、アプリは読まない
-const DROPPED_ATTACHMENTS = ['prompt_snapshot', 'skill_listing', 'agent_listing_delta', 'remote_session_change'];
 
 // 確かめる claude。TANACODE_CLAUDE_BIN が無ければ PATH の claude
 export const CLAUDE_BIN = process.env.TANACODE_CLAUDE_BIN || 'claude';
@@ -53,8 +40,8 @@ export function claudeVersion(): string {
 // 会話ログの 1 行と、起動したときにもうあった行（--resume で読み直した過去の行）か
 export type Seen = { entry: TranscriptEntry; isHistory: boolean };
 
-// 選択メニューが出た・操作できない画面が出たときの、session-manager の知らせ（アプリはこれで通知を出す）
-export type Attention = { kind: 'menu'; menu: Menu } | { kind: 'unsupported' };
+// 質問・許可の確認を待っているときの、session-manager の知らせ（アプリはこれで通知を出す）
+export type Attention = { kind: 'menu'; menu: Menu };
 
 type Options = {
   // ユーザーの設定（~/.claude/settings.json）。hooks を足すのに使う
@@ -74,8 +61,6 @@ type Options = {
   checklist?: McpLaunch;
   // 人のターミナルの MCP サーバー（中継）を足すときの材料（SessionManager の terminalMcp）。無ければ足さない
   terminal?: McpLaunch;
-  // AskUserQuestion の質問のフック（question-hook.ts）を足すときの材料（SessionManager の questionHook）。無ければ足さない（画面を読む道で答える）
-  question?: McpLaunch;
   // 起動するときの権限モード。無ければ manual（許可の確認を出させる）
   mode?: PermissionMode;
   // 作業フォルダを git のリポジトリにする（files をはじめのコミットにする）。claude --worktree の確認に使う
@@ -86,11 +71,11 @@ type Options = {
 
 // 本物の claude を、アプリと同じ SessionManager で動かして読む。src/main/index.ts と同じ組み立て方で、
 // pty ホストだけを node-pty を直に使う偽物（FakePtyHost）に、userData を使い捨てのフォルダに差し替える（electron には頼らない）。
-// - 画面: ScreenTracker（session-manager が起動ごとに作るもの）
+// - stream-json: session-manager の StreamClient（送信・制御の要求・待っている要求）。ターミナルモードの TUI の画面は読まない
 // - 会話ログ: ClaudeSession の TranscriptFollower から session-manager の行の処理（handleEntry）へ。
 //   チャットのイベント（巻き戻しの replace・順番待ちの queue を含む）は、session-manager が配信したものを chatEvents に控える
 // - バックグラウンドの作業と質問: session-manager の TaskRouter と各トラッカー
-// - statusLine と AskUserQuestion のフック: StatusLineWatcher（<dir>/<id>.json・<id>.ask.json）
+// - statusLine と書くだけのフック: StatusLineWatcher（<dir>/<id>.json・<id>.permission.json など）
 // HOME は使い捨てのフォルダにするので、ふだんの ~/.claude には触らない
 export class ClaudeRun {
   readonly root = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-cli-')));
@@ -124,12 +109,6 @@ export class ClaudeRun {
   private generation = 0;
   // 起動する前の会話の ID（起動すると session-manager の記録のものを使う）
   private readonly firstClaudeSessionId = randomUUID();
-  // 起動前に返す、何も映っていない画面
-  private readonly blank = new ScreenTracker(DEFAULT_PTY_SIZE.cols, DEFAULT_PTY_SIZE.rows, () => {}, () => {});
-  private readonly screens = new Map<ScreenName, { lines: ScreenLine[]; serialized: string }>();
-  // 今出ている選択メニューの見出し。menusClosed: メニューが閉じた（別の画面になった）回数
-  private menuShown: string | null = null;
-  private menusClosed = 0;
   private exited: number | null = null;
   private readonly oldHome = process.env.HOME;
 
@@ -166,7 +145,7 @@ export class ClaudeRun {
       git('commit', '-qm', 'init', '--allow-empty');
     }
     // 環境変数は最小限にする（Claude Code の中から動かしたときの子セッションの印などを持ち込まない）。
-    // アプリが付ける statusLine・AskUserQuestion のファイルの変数だけは、session-manager が渡すものを使う
+    // アプリが付ける statusLine・書くだけのフックのファイルの変数と、ファイルの控え（巻き戻しに要る）の変数だけは、session-manager が渡すものを使う
     const env: Record<string, string> = {
       PATH: process.env.PATH ?? '',
       HOME: this.home,
@@ -183,6 +162,7 @@ export class ClaudeRun {
     };
     this.host = new FakePtyHost(CLAUDE_BIN, env, [
       STATUS_FILE_ENV,
+      FILE_CHECKPOINTING_ENV,
       ASK_FILE_ENV,
       BROWSER_SOCKET_ENV,
       BROWSER_SESSION_ENV,
@@ -196,16 +176,7 @@ export class ClaudeRun {
       TERMINAL_SESSION_ENV,
       TERMINAL_COMMAND_ENV,
       TERMINAL_SCRIPT_ENV,
-      QUESTION_SOCKET_ENV,
-      QUESTION_SESSION_ENV,
-      QUESTION_COMMAND_ENV,
-      QUESTION_SCRIPT_ENV,
     ]);
-  }
-
-  // 今の画面（起動のたびに session-manager が作り直す）
-  get screen(): ScreenTracker {
-    return this.runtime()?.screen ?? this.blank;
   }
 
   // 動かしている SessionManager（起動するまでは無い）
@@ -229,24 +200,31 @@ export class ClaudeRun {
     return this.runtime()?.historyLoaded ?? false;
   }
 
-  // 順番待ちの発言（session-manager が最後に配信した 'queue' のイベント）
+  // Claude Code の手が空いている（ターンの外。裏のタスクが動いていてもよい。前は画面の入力欄で見ていたもの）
+  get idle(): boolean {
+    const state = this.sessionId ? this.manager.stateOf(this.sessionId) : null;
+    return state === 'idle' || state === 'background';
+  }
+
+  // 順番待ちの発言（session-manager が最後に配信した 'queue' のイベントのうち、Claude Code が順番待ちにしたもの）
   get queue(): string[] {
     const last = [...this.chatEvents].reverse().find((e) => e.type === 'queue');
-    return last?.type === 'queue' ? last.prompts : [];
+    return last?.type === 'queue' ? last.prompts.filter((p) => p.state === 'queued').map((p) => p.text) : [];
   }
 
-  // statusLine と AskUserQuestion のフックが書くファイル（StatusLineWatcher の <dir>/<id>.json・<id>.ask.json）
+  // statusLine が書くファイル（StatusLineWatcher の <dir>/<id>.json）
   get statusFile(): string {
     return join(this.userData, 'statusline', `${this.sessionId ?? 'none'}.json`);
-  }
-
-  get askFile(): string {
-    return join(this.userData, 'statusline', `${this.sessionId ?? 'none'}.ask.json`);
   }
 
   // 今の会話ログのセッションのフォルダ（subagents/・workflows/ がある）
   sessionDir(): string {
     return join(dirname(this.transcript()), this.claudeSessionId);
+  }
+
+  // 起動した TUI（ターミナルモード）の引数。起動した順
+  get tuiArgs(): string[][] {
+    return this.host.ptyArgs;
   }
 
   // 今の会話ログ（worktree のセッションでは、worktree のフォルダの側に書かれる）
@@ -309,7 +287,6 @@ export class ClaudeRun {
   async reopen(): Promise<void> {
     process.env.HOME = this.home;
     this.exited = null;
-    this.menuShown = null;
     await this.manager.open(this.sessionId!);
   }
 
@@ -318,7 +295,6 @@ export class ClaudeRun {
     this.stopClaude();
     this.sessionId = null;
     this.exited = null;
-    this.menuShown = null;
     this.start();
   }
 
@@ -328,21 +304,20 @@ export class ClaudeRun {
   }
 
   // アプリを終了して起動し直す（claude は止めない）。新しい SessionManager が、動いている claude を引き継ぐ（adopt）。
-  // whileClosed: アプリを止めている間にすること（typeWithoutApp で claude に直に打つなど）
+  // whileClosed: アプリを止めている間にすること（claude だけで進む作業が終わるのを待つなど）
   async restartApp(whileClosed?: () => Promise<void>): Promise<void> {
     process.env.HOME = this.home;
     this.closeApp(false);
     await whileClosed?.();
     this.exited = null;
-    this.menuShown = null;
     this.launchApp();
     await this.app!.statusLines.start();
     await this.manager.adopt();
   }
 
-  // アプリを止めている間の操作として、claude に直に打つ
-  typeWithoutApp(text: string): void {
-    if (this.sessionId) this.host.write(this.sessionId, text);
+  // アプリを止めている間の操作として、claude に発言の行（stream-json の user の行）を直に書く
+  sendWithoutApp(text: string): void {
+    if (this.sessionId) this.host.write(this.sessionId, JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: randomUUID() }));
   }
 
   // src/main/index.ts と同じく、StatusLineWatcher と SessionManager を組み立てる
@@ -355,8 +330,8 @@ export class ClaudeRun {
     const statusLines = new StatusLineWatcher(
       statusDir,
       (id, info) => live() && manager.statusLineChanged(id, info),
-      (id, input) => live() && manager.askQuestionsChanged(id, input),
       (id, request, at) => live() && manager.permissionRequested(id, request, at),
+      (id, input) => live() && manager.tuiIdle(id, input),
     );
     const watchers = new WorkspaceWatchers(() => {});
     const store = new SessionStore(join(this.userData, 'sessions.json'));
@@ -380,10 +355,10 @@ export class ClaudeRun {
             if (event.type === 'reset') this.switches.push(this.transcript());
           }
         },
+        // ターミナルモードの TUI の画面は読まない（決めたこと）
         onPtyData: () => {},
         onTurnCompleted: (session) => live() && this.turnsCompleted.push(session),
-        onScreen: (id, info) => ours(id) && this.noteScreen(info),
-        onActivity: (id, activity) => ours(id) && this.activities.push(activity),
+        onProgress: (id, activity) => ours(id) && this.activities.push(activity),
         onWorkflows: (id, runs) => ours(id) && (this.workflowRuns = runs),
         onSubagents: (id, runs) => ours(id) && (this.subagentRuns = runs),
         onBashTasks: (id, tasks) => ours(id) && (this.bashTasks = tasks),
@@ -403,7 +378,6 @@ export class ClaudeRun {
       undefined,
       null,
       () => this.options.terminal ?? null,
-      () => this.options.question ?? null,
     );
     // 会話ログの行を、session-manager が受け取るのと同じ順に控える（行の処理 handleEntry の手前に差し込む）
     const handleEntry = manager['handleEntry'].bind(manager);
@@ -429,127 +403,92 @@ export class ClaudeRun {
     return this.seen.some((s) => s.entry.type === 'user') || (readOrNull(this.transcript())?.includes('"type":"user"') ?? false);
   }
 
-  // 選択メニューが閉じた回数を数える
-  private noteScreen(info: ScreenInfo): void {
-    const title = info.state.kind === 'menu' ? info.state.menu.title : null;
-    if (this.menuShown !== null && this.menuShown !== title) this.menusClosed++;
-    this.menuShown = title;
-  }
-
-  // フックが書いた AskUserQuestion の入力（StatusLineWatcher が読むファイル）
-  askInput(): unknown {
-    try {
-      return (JSON.parse(readFileSync(this.askFile, 'utf8')) as { tool_input?: unknown }).tool_input;
-    } catch {
-      return null;
-    }
-  }
-
   statusLineText(): string | null {
     return readOrNull(this.statusFile);
   }
 
-  type(text: string): void {
-    if (this.sessionId) this.app?.manager.write(this.sessionId, text);
-  }
-
-  // 入力欄に打って送る。決まった時間だけ待つのではなく、打った文字が入力欄に出たのを画面で確かめてから Enter を送る。
-  // スラッシュコマンドは、補完の候補にそのコマンドが出るのも待つ（候補を出している途中の Enter は、送信にならないことがある）。
-  // 入力欄でないところ（質問の「その他」の欄など）に打つときは、画面から打った文字を読めないので、少しだけ待つ
+  // アプリのチャットから送るのと同じく、session-manager の submit で送る（stream-json の user の行）
   async send(text: string): Promise<void> {
-    const prompt = this.screen.current.state.kind === 'prompt';
-    this.type(text);
-    if (!prompt) {
-      await sleep(OTHER_INPUT_MS);
-      this.type('\r');
-      return;
-    }
-    const typed = squash(text);
-    const command = text.startsWith('/') ? text.split(/\s/)[0] : null;
-    await this.until(
-      () =>
-        this.screen.current.state.kind === 'prompt' &&
-        squash(this.screen.current.draft).endsWith(typed) &&
-        (!command || showsCommandSuggestion(this.lines(), command)),
-      DRAFT_MS,
-    );
-    this.type('\r');
+    await this.manager.submit(this.sessionId!, text);
   }
 
-  // 起動して、初めてのフォルダで出る信頼の確認に「Yes」で答え、入力欄が使えるようになるまで待つ
+  // 起動して、Claude Code が受け付けられるようになるまで待つ（信頼していないフォルダでも確認は出ない。stream-json）
   async open(): Promise<void> {
     this.start();
-    const trust = await this.waitFor('フォルダの信頼の確認', menuOf('other'));
-    await this.answer(trust.title, trust.options.find((o) => /^Yes/.test(o.label))!.id);
-    await this.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
+    await this.untilState('起動', (state) => state !== 'starting');
   }
 
-  // メニューで選ぶ（press）。選べたら、画面の読み取りがメニューの閉じたのに追いつくのを待つ
-  async answer(title: string, optionId: string): Promise<void> {
-    const closed = this.menusClosed;
-    await this.press(title, { optionId, key: 'enter' });
-    await this.until(() => this.menusClosed > closed, MENU_CLOSE_MS);
-  }
-
-  // アプリのカードのボタンを押すのと同じく、session-manager の choose で選ぶ（Claude Code が入力を捨てる間を待つのは、アプリの側）。
-  // カードに「受け付けませんでした」と出たとき（ignored）だけ、人と同じく押し直す。黙って何度も押し直すことはしない。
-  // それ以外の理由で選べなかったら、理由と画面を付けて失敗させる。押した結果を順に返す
-  async press(label: string, choice: ScreenChoice, choose: (choice: ScreenChoice) => Promise<ChooseResult> = (c) => this.manager.choose(this.sessionId!, c)): Promise<ChooseResult[]> {
-    const results: ChooseResult[] = [];
-    for (let attempt = 1; ; attempt++) {
-      const result = await choose(choice);
-      results.push(result);
-      if (result === 'chosen') return results;
-      if (result !== 'ignored' || attempt >= PRESSES) throw new Error(`「${label}」で選べません（${results.join(' → ')}）\n${this.dump()}`);
-    }
-  }
-
-  // 条件が満たされるまで待つ。時間切れのときは、そのときの画面を付けて失敗させる
-  async waitFor<T>(label: string, check: (info: ScreenInfo) => T | null | undefined | false, timeoutMs = 20_000): Promise<T> {
+  // session-manager の状態が条件を満たすまで待つ。時間切れ・claude の終了は失敗にする
+  async untilState(label: string, check: (state: SessionState | null) => boolean, timeoutMs = 20_000): Promise<void> {
     const until = Date.now() + timeoutMs;
     for (;;) {
-      const value = check(this.screen.current);
-      if (value) return value;
-      if (this.exited !== null) throw new Error(`${label}: claude が終了しました（${this.exited}）\n${this.dump()}`);
-      if (Date.now() > until) throw new Error(`${label}: 時間切れ\n状態: ${JSON.stringify(this.screen.current)}\n${this.dump()}`);
+      if (this.sessionId && check(this.manager.stateOf(this.sessionId))) return;
+      if (this.exited !== null) throw new Error(`${label}: claude が終了しました（${this.exited}）\n${this.stderr()}`);
+      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.stderr()}`);
       await sleep(POLL_MS);
     }
   }
 
-  // 条件が満たされるか、時間がたつまで待つ（満たされなくても失敗にしない）
-  private async until(check: () => boolean, timeoutMs: number): Promise<boolean> {
+  // claude の標準エラーの末尾（失敗したときの手がかり）
+  stderr(): string {
+    return (this.runtime()?.stderr ?? '').split('\n').slice(-20).join('\n');
+  }
+
+  // Claude Code が答えを待っている許可の確認・プランの承認（stream-json の can_use_tool。カードに出るもの）が来るまで待つ
+  permission(label: string, timeoutMs = 20_000): Promise<PendingPermission> {
+    return this.waitUntil(label, () => this.manager.pendingPermission(this.sessionId!), timeoutMs);
+  }
+
+  // カードのボタンと同じく、許可の確認に答える（session-manager の replyPermission）。もう待っていなければ失敗させる
+  replyPermission(permission: PendingPermission, reply: PermissionReply): void {
+    if (!this.manager.replyPermission(this.sessionId!, permission.id, reply)) throw new Error(`許可の確認（${permission.tool}）に答えられません。もう待っていません`);
+  }
+
+  // Claude Code が答えを待っている質問（AskUserQuestion。カードに出るもの）が来るまで待つ
+  question(label: string, timeoutMs = 20_000): Promise<PendingQuestion> {
+    return this.waitUntil(label, () => this.manager.pendingQuestion(this.sessionId!), timeoutMs);
+  }
+
+  // カードのボタンと同じく、質問に答える（session-manager の replyQuestion）。もう待っていなければ失敗させる
+  replyQuestion(question: PendingQuestion, reply: QuestionReply): void {
+    if (!this.manager.replyQuestion(this.sessionId!, question.id, reply)) throw new Error(`質問（${question.questions[0]?.question}）に答えられません。もう待っていません`);
+  }
+
+  // get が値を返すまで待つ。時間切れ・claude の終了は失敗にする
+  async waitUntil<T>(label: string, get: () => T | null | undefined | false, timeoutMs = 20_000): Promise<T> {
     const until = Date.now() + timeoutMs;
-    while (!check()) {
-      if (Date.now() > until || this.exited !== null) return false;
+    for (;;) {
+      const value = get();
+      if (value) return value;
+      if (this.exited !== null) throw new Error(`${label}: claude が終了しました（${this.exited}）\n${this.stderr()}`);
+      if (Date.now() > until) throw new Error(`${label}: 時間切れ（状態: ${this.sessionId ? this.manager.stateOf(this.sessionId) : 'なし'}）\n${this.stderr()}`);
       await sleep(POLL_MS);
     }
-    return true;
   }
 
-  // 今の画面を控えとして取っておく。ScreenTracker と同じ形の行と、文字の属性ごとの書き出し（書きかけの読み取りは、薄い字を見分ける）
-  capture(name: ScreenName): void {
-    this.screens.set(name, { lines: this.lines(), serialized: (this.sessionId && this.host.serialized(this.sessionId)) || '' });
+  // claude（チャット）が標準出力に書いた stream-json の行。届いた順
+  streamLines(): string[] {
+    return this.host.stdoutLines;
   }
 
-  // 取っておいた画面と、会話ログ・statusLine・フックが書いた質問を dir に書き出す。
-  // 使い捨てのフォルダのパスは、決まったパス（FIXTURE_ROOT）に置き換える。
-  // 途中で失敗したときは、そこまでにできたものだけを書く（失敗の手がかりにする）
-  record(dir: string): void {
-    this.recordScreens(dir);
-    const transcript = readOrNull(this.transcript())
-      ?.split('\n')
-      .filter((line) => line && !DROPPED_ATTACHMENTS.includes((JSON.parse(line) as TranscriptEntry).attachment?.type as string))
-      .join('\n');
-    const files = { 'transcript.jsonl': transcript && `${transcript}\n`, 'statusline.json': this.statusLineText(), 'ask.json': readOrNull(this.askFile) };
-    for (const [name, text] of Object.entries(files)) if (text) writeFileSync(join(dir, name), this.fixed(text));
+  // アプリが claude（チャット）の標準入力に書いた行。書いた順
+  sentLines(): string[] {
+    return this.host.stdinLines;
   }
 
-  // 取っておいた画面だけを書き出す（基本の台本でない台本は、画面だけを控えに残す）
-  recordScreens(dir: string): void {
-    mkdirSync(join(dir, 'screens'), { recursive: true });
-    for (const [name, { lines, serialized }] of this.screens) {
-      writeFileSync(join(dir, 'screens', `${name}.json`), this.fixed(`${JSON.stringify(lines, null, 1)}\n`));
-      writeFileSync(join(dir, 'screens', `${name}.ansi`), this.fixed(serialized));
+  // 会話ログ・statusLine・stream-json の行を dir に書き出す（互換性の確認の控え。TANACODE_RECORD=1 のとき）。
+  // 会話ログは test/cli/basic.test.ts（チャット）が、statusLine は test/cli/terminal-mode.test.ts（-p では statusLine が動かないので、
+  // ターミナルモードの TUI）が書く。files: 書くもの。
+  // 使い捨てのフォルダのパスは、決まったパス（FIXTURE_ROOT）に置き換える。途中で失敗したときは、そこまでにできたものだけを書く
+  record(dir: string, files: ('transcript.jsonl' | 'statusline.json' | 'stream.jsonl')[]): void {
+    mkdirSync(dir, { recursive: true });
+    const joined = (lines: string[]) => (lines.length ? `${lines.join('\n')}\n` : null);
+    const transcript = () => joined(fixtureLines('transcript.jsonl', readOrNull(this.transcript())?.split('\n') ?? []));
+    const stream = () => joined(fixtureLines('stream.jsonl', this.streamLines()));
+    const texts = { 'transcript.jsonl': transcript, 'statusline.json': () => this.statusLineText(), 'stream.jsonl': stream };
+    for (const name of files) {
+      const text = texts[name]();
+      if (text) writeFileSync(join(dir, name), this.fixed(text));
     }
   }
 
@@ -559,24 +498,12 @@ export class ClaudeRun {
     return text.replaceAll(this.root, FIXTURE_ROOT).replaceAll(dashed(this.root), dashed(FIXTURE_ROOT));
   }
 
-  // 今の claude の画面（pty ホストの仮想の端末から）
-  lines(): ScreenLine[] {
-    return (this.sessionId && this.host.lines(this.sessionId)) || [];
-  }
-
-  // 今の画面の文字（失敗したときの手がかり）
-  dump(): string {
-    const rows = this.lines().map((l) => l.text);
-    return `---- 画面 ----\n${rows.join('\n').replace(/\n+$/, '')}\n--------------`;
-  }
-
   // claude を止めて、使い捨てのフォルダを消す。claude は終わるときにも設定の控えなどを書くので、
   // 終わるのを待ってからもう一度消す（待たずに呼んでも、すぐ一度は消す）
   async stop(): Promise<void> {
     this.closeApp(true);
     this.app = null;
     const gone = this.host.dispose();
-    this.blank.dispose();
     process.env.HOME = this.oldHome;
     const remove = () => rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     try {
@@ -599,19 +526,8 @@ export function shown(events: ChatEvent[]): ChatEvent[] {
   }, []);
 }
 
-// waitFor に渡す、選択メニューが出るのを待つ条件
-export const menuOf =
-  (kind: Menu['kind'], title?: RegExp) =>
-  (info: ScreenInfo): Menu | null =>
-    info.state.kind === 'menu' && info.state.menu.kind === kind && (!title || title.test(info.state.menu.title)) ? info.state.menu : null;
-
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
-}
-
-// 空白を除く（入力欄の折り返しや字下げと比べるため）
-function squash(text: string): string {
-  return text.replace(/\s+/g, '');
 }
 
 // 会話ログのパスから、会話の ID

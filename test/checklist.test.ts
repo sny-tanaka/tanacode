@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toChatEvents, isHumanPrompt, transcriptTitle, type TranscriptEntry } from '../src/shared/chat';
 import { checkOp, claudeUnread, formatNumbers, humanUnread, parseNumbers, unreadCount } from '../src/shared/checklist';
 import {
@@ -15,7 +15,6 @@ import {
 } from '../src/shared/checklist-tools';
 import { allowedToolIds } from '../src/shared/mcp-tools';
 import type { SessionSummary } from '../src/shared/ipc';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { SessionState } from '../src/shared/session-tools';
 import { AppSettings } from '../src/main/app-settings';
 import { ChecklistControl } from '../src/main/checklist-control';
@@ -149,6 +148,74 @@ describe('保存と書き換え（ChecklistStore）', () => {
     expect(() => store.lists('../etc')).toThrow();
   });
 
+  it('読めないファイル（無いほかの理由）・形の分からないファイルは、空で始めても上書きしない。壊れたファイルは横に移してから空で始める', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 新しいバージョンのアプリが書いた形
+    const future = join(dir, 'future.json');
+    const futureText = JSON.stringify({ version: 2, lists: [{ name: '新しい形' }] });
+    writeFileSync(future, futureText);
+    // 読めない（読む権限が無い）
+    const locked = join(dir, 'locked.json');
+    const lockedText = JSON.stringify({ version: 1, lists: [] });
+    writeFileSync(locked, lockedText);
+    chmodSync(locked, 0o000);
+    // 壊れた
+    const broken = join(dir, 'broken.json');
+    writeFileSync(broken, '{壊れた');
+    const reopened = new ChecklistStore(dir);
+    // 保存しないと分かったセッション（画面の知らせ・Claude への一言に使う）
+    const unsaved: string[] = [];
+    reopened.onUnsaved = (id) => unsaved.push(id);
+    for (const id of ['future', 'locked', 'broken']) {
+      expect(reopened.lists(id)).toEqual([]);
+      reopened.createList(id, 'human', 'やること', '');
+    }
+    reopened.flush();
+    expect(readFileSync(future, 'utf8')).toBe(futureText);
+    chmodSync(locked, 0o600);
+    expect(readFileSync(locked, 'utf8')).toBe(lockedText);
+    // 壊れたファイルは、中身を横（<名前>.broken-<時刻>）に残し、新しく保存する
+    const moved = readdirSync(dir).filter((name) => name.startsWith('broken.json.broken-'));
+    expect(moved.map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
+    expect(JSON.parse(readFileSync(broken, 'utf8')).lists[0].name).toBe('やること');
+    // 上書きしなかったことは、ログに残す
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+    await Promise.resolve();
+    expect(unsaved).toEqual(['future', 'locked']);
+    expect(['future', 'locked', 'broken', 'none'].map((id) => reopened.unsavable(id))).toEqual([true, true, false, false]);
+    // 一覧から削除しても、読めなかったファイルは消さない（本物の中身を失わないため）
+    reopened.remove('future');
+    expect(readFileSync(future, 'utf8')).toBe(futureText);
+  });
+
+  it('一覧から削除するとき、この起動でまだ読んでいないセッションでも、読めない・形の分からないファイルは消さない。読めるものは消し、壊れたものは横に移す', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const future = join(dir, 'future.json');
+    const futureText = JSON.stringify({ version: 2, lists: [{ name: '新しい形' }] });
+    writeFileSync(future, futureText);
+    const locked = join(dir, 'locked.json');
+    const lockedText = JSON.stringify({ version: 1, lists: [] });
+    writeFileSync(locked, lockedText);
+    chmodSync(locked, 0o000);
+    writeFileSync(join(dir, 'plain.json'), JSON.stringify({ version: 1, lists: [] }));
+    writeFileSync(join(dir, 'broken.json'), '{壊れた');
+    const fresh = new ChecklistStore(dir);
+    const unsaved: string[] = [];
+    fresh.onUnsaved = (id) => unsaved.push(id);
+    for (const id of ['future', 'locked', 'plain', 'broken', 'none']) fresh.remove(id);
+    chmodSync(locked, 0o600);
+    expect(readFileSync(future, 'utf8')).toBe(futureText);
+    expect(readFileSync(locked, 'utf8')).toBe(lockedText);
+    const left = readdirSync(dir).sort();
+    expect(left.filter((name) => !name.startsWith('broken.json.broken-'))).toEqual(['future.json', 'locked.json']);
+    expect(left.filter((name) => name.startsWith('broken.json.broken-')).map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
+    // 削除するセッションのことは、画面に知らせない
+    await Promise.resolve();
+    expect(unsaved).toEqual([]);
+    errors.mockRestore();
+  });
+
   it('Claude に伝える人の書き換えは、Claude が前に呼んだあとのものだけ', () => {
     const list = store.createList(ME, 'human', 'やること', '');
     expect(store.takeHumanActivity(ME)).toEqual(['The user created the list "やること"']);
@@ -162,7 +229,6 @@ describe('保存と書き換え（ChecklistStore）', () => {
 class FakeHost implements NoticeHost {
   sessions: SessionSummary[] = [];
   states = new Map<string, SessionState>();
-  screens = new Map<string, ScreenInfo>();
   submitted: { id: string; text: string }[] = [];
   private listeners = new Set<(id: string) => void>();
 
@@ -175,6 +241,8 @@ class FakeHost implements NoticeHost {
       createdAt: 0,
       updatedAt: 0,
       running: true,
+      state: null,
+      mode: null,
       unread: false,
       attention: null,
       backgroundTasks: 0,
@@ -187,7 +255,6 @@ class FakeHost implements NoticeHost {
       ...patch,
     });
     this.states.set(id, 'idle');
-    this.screens.set(id, { state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
   }
 
   set(id: string, state: SessionState): void {
@@ -197,7 +264,6 @@ class FakeHost implements NoticeHost {
 
   list = () => this.sessions;
   stateOf = (id: string) => this.states.get(id) ?? null;
-  screen = (id: string) => this.screens.get(id) ?? null;
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
   watchState = (listener: (id: string) => void) => {
     this.listeners.add(listener);

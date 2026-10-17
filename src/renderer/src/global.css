@@ -2608,6 +2608,11 @@ button.session-ref:hover {
   transform: scale(0.8);
   background: var(--text-tertiary);
 }
+/* ターミナルモード（人が Claude Code の画面で操作している） */
+.session-indicator.terminal {
+  transform: scale(0.8);
+  background: var(--ide);
+}
 /* 進行中・処理中の印。グラデーションの尾を引いて回る輪（ぐるぐる）。
    実行中の丸・セッションの状態の印・ステータスバーの印も、同じ見た目にそろえる */
 .spinner,
@@ -2854,9 +2859,24 @@ button.session-ref:hover {
 .chat-callout span {
   flex: 1;
 }
-.chat-callout-actions {
-  display: flex;
-  gap: 8px;
+/* 起動に時間がかかっているときの案内。Claude Code の標準エラーの末尾を下に出す */
+.chat-callout.slow-start {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.slow-start-stderr {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ターン終了時の変更の要約 */
@@ -3450,6 +3470,97 @@ details[open] > summary > .disclosure {
   white-space: pre-wrap;
   word-break: break-all;
 }
+/* プランの承認のプランの本文（長いので、カードの中でスクロールする。等幅にしない） */
+.menu-plan {
+  max-height: 320px;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 13px;
+  word-break: normal;
+}
+/* 許可の確認のツールの入力（長いコマンドなど）も、カードの中でスクロールする */
+.menu-card.permission .menu-context {
+  max-height: 240px;
+  overflow: auto;
+}
+/* 許可の確認のツールの入力（コマンドかファイルのパス、ファイルの変更、ほかの入力）。まとまりの間は詰める */
+.menu-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.menu-input-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+/* ファイルの変更。色はチャットのツールカードの差分と同じ */
+.menu-diff .add {
+  color: var(--ok);
+}
+.menu-diff .del {
+  color: var(--danger);
+}
+.menu-diff .note,
+.menu-diff .edit {
+  color: var(--text-secondary);
+}
+/* MultiEdit の 2 個めからの編集は、前の編集と間を空ける */
+.menu-diff .edit:not(:first-child) {
+  display: block;
+  margin-top: 8px;
+}
+/* コマンドやファイルの変更のほかの入力（名前: 値） */
+.menu-input-rest {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* サンドボックスを外すなどの入力 */
+.menu-input-rest .danger {
+  color: var(--danger);
+}
+/* プランの本文を読めなかったときの知らせ（承認はできない） */
+.menu-plan-missing {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
+}
+/* 許可の確認の説明・理由の行 */
+.menu-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+/* プレビュー付きの質問のメモ欄 */
+.menu-notes-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.menu-notes-input textarea {
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
 .menu-title {
   font-weight: 400;
   line-height: 1.6;
@@ -3489,6 +3600,11 @@ details[open] > summary > .disclosure {
 .menu-option:disabled:not(.chosen):hover {
   border-color: var(--border-strong);
   background: transparent;
+}
+/* 選べない選択肢（本文を読めなかったプランの承認） */
+.menu-option.unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 /* 押した選択が Claude Code に届かなかったときの知らせ */
 .menu-card-error {
@@ -5666,6 +5782,12 @@ body.resizing-rows webview {
 .chat-user.scheduled.trouble .chat-scheduled-note {
   color: var(--warn);
 }
+/* 予約のファイルを読めず、保存しない予約 */
+.chat-scheduled-unsaved {
+  display: block;
+  width: fit-content;
+  color: var(--warn);
+}
 /* Claude が自分に入れた予約。親セッションからの指示と同じく Claude の色にして、人の予約と見分ける */
 .chat-user.scheduled.by-claude {
   background: var(--claude-tint);
@@ -6754,6 +6876,17 @@ body.resizing-rows webview {
   display: flex;
   gap: 6px;
   padding: 0 12px 6px;
+}
+/* チェックリストのファイルを読めず、変更を保存しないセッション */
+.checklist-unsaved {
+  flex: none;
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .checklist-scroll {
   flex: 1;

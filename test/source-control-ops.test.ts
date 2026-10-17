@@ -148,6 +148,9 @@ describe('SourceControl', () => {
     await scm.checkout('origin/shared', 'remote');
     expect(await scm.state()).toMatchObject({ branch: 'shared' });
     expect((await run(repo, ['rev-parse', '--abbrev-ref', 'shared@{upstream}'])).trim()).toBe('origin/shared');
+    // 画面から来たブランチの名前が - で始まっていたら、git のオプションとして読ませずに断る（ブランチから外れない）
+    for (const mode of ['local', 'remote', 'create'] as const) await expect(scm.checkout('--detach', mode)).rejects.toThrow();
+    expect(await scm.state()).toMatchObject({ branch: 'shared' });
   });
 
   it('diffSides: ステージ済みは HEAD とステージ、そうでなければステージ（無ければ HEAD）と作業ツリー', async () => {

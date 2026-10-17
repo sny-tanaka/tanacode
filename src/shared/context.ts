@@ -33,8 +33,8 @@ export function clip(text: string, max: number): string {
 }
 
 // コンテキストの上限。1M コンテキストのモデルか、すでに 20 万を超えていれば 100 万とみなす
-export function contextWindow(model: string | null, screenModel: string | null, tokens: number | null): number {
-  const oneMillion = /\[1m\]/i.test(model ?? '') || /1M/.test(screenModel ?? '') || (tokens ?? 0) > 200_000;
+export function contextWindow(model: string | null, tokens: number | null): number {
+  const oneMillion = /\[1m\]/i.test(model ?? '') || (tokens ?? 0) > 200_000;
   return oneMillion ? 1_000_000 : 200_000;
 }
 
@@ -43,13 +43,12 @@ export function contextWindow(model: string | null, screenModel: string | null, 
 // ヘッダーのメーター（画面）と、自動の最適化圧縮の判断（main）で、同じものを使う
 export function contextUsage(
   model: string | null,
-  screenModel: string | null,
   statusLine: StatusLineInfo | null,
   contextTokens: number | null,
 ): { tokens: number | null; limit: number } {
   const context = statusLine?.context;
   if (context) return { tokens: context.tokens > 0 ? context.tokens : (contextTokens ?? 0), limit: context.size };
-  return { tokens: contextTokens, limit: contextWindow(model, screenModel, contextTokens) };
+  return { tokens: contextTokens, limit: contextWindow(model, contextTokens) };
 }
 
 // コンテキストの割合（0〜100）。使用量が分からなければ null

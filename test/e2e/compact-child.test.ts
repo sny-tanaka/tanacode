@@ -84,7 +84,7 @@ describe('子セッションで、最適化圧縮が自動で動く', () => {
     app.api.inputTokens = LOW_TOKENS;
     await app.startSession(PARENT);
     const card = await app.menuCard('permission');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', PARENT_STARTED).waitFor();
     await app.waitUntil('子の仕上げの頼み', () => prompts(`<${HANDOFF_TAG}>`).length === 1, 90_000);
     expect(prompts(`<${HANDOFF_TAG}>`)[0]).toContain('tanacode stopped your turn between tool calls');

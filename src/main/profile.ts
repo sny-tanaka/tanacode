@@ -22,7 +22,6 @@ import { TerminalControl } from './terminal-control';
 import { commentOnPullRequest, pullRequestsOf } from './github';
 import { menuNotice, scheduledNotice, snippet } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
-import { QUESTION_WAIT_REQUEST } from './question-hook';
 import { ScheduledMessages } from './scheduled-messages';
 import { SessionManager } from './session-manager';
 import { resolveAddedFolder } from './added-folders';
@@ -97,7 +96,6 @@ export class Profile {
   private checklistBridge: McpBridge | null = null;
   private walkthroughBridge: McpBridge | null = null;
   private terminalBridge: McpBridge | null = null;
-  private questionBridge: McpBridge | null = null;
   // 新規セッションの画面で開いているフォルダ（id → フォルダ）。セッションと同じように右パネルとエディタで使う
   readonly folderViews = new Map<string, string>();
   // フォルダ選択ダイアログで選ばれたフォルダ。folders.open で開けるのは、これとセッションのフォルダだけ
@@ -124,13 +122,9 @@ export class Profile {
     });
     this.statusLines = new StatusLineWatcher(
       join(dataDir, 'statusline'),
-      (id, info) => {
-        this.manager.statusLineChanged(id, info);
-        this.usage.fromStatusLine(info);
-        this.autoCompact?.check(id);
-      },
-      (id, input) => this.manager.askQuestionsChanged(id, input),
+      (id, info) => this.manager.statusLineChanged(id, info),
       (id, request, at) => this.manager.permissionRequested(id, request, at),
+      (id, input) => this.manager.tuiIdle(id, input),
     );
     // 登録した設定ファイル。設定ファイルを選んだセッションの起動で、アプリの設定と合わせたファイルは session-settings に置く
     this.settingsFiles = new SettingsFiles(this.settings, join(dataDir, 'session-settings'), (files) => send(IpcChannel.SettingsFilesChanged, files), claudeDir);
@@ -169,8 +163,8 @@ export class Profile {
     void rm(join(dataDir, 'snapshots'), { recursive: true, force: true });
     await this.statusLines.start();
     // 待ち受けを始められなくても、アプリはそのまま使う（Claude Code に MCP サーバーを足さない）
-    this.browserBridge = await listen('アプリ内ブラウザ', socketPathIn(dataDir, 'browser', 'browser'), (id, tool, args, signal) =>
-      this.browser.handle(id, tool, args, signal),
+    this.browserBridge = await listen('アプリ内ブラウザ', socketPathIn(dataDir, 'browser', 'browser'), (id, tool, args, signal, toolUseId) =>
+      this.browser.handle(id, tool, args, signal, toolUseId),
     );
     this.sessionsBridge = await listen('セッション', socketPathIn(dataDir, 'sessions', 'sessions'), (id, tool, args, signal) =>
       this.sessionsControl ? this.sessionsControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),
@@ -189,11 +183,6 @@ export class Profile {
     this.terminalBridge = await listen('ターミナル', socketPathIn(dataDir, 'terminal', 'terminal'), (id, tool, args, signal) =>
       this.terminalControl ? this.terminalControl.handle(id, tool, args, signal) : Promise.resolve(notReady()),
     );
-    // AskUserQuestion の質問のフック（question-hook.ts）が、質問を渡して答えを待つ。始められなければ、質問は画面を読む道で答える
-    this.questionBridge = await listen('質問', socketPathIn(dataDir, 'question', 'question'), (id, tool, args, signal) => {
-      if (!this.manager) return Promise.resolve(notReady());
-      return tool === QUESTION_WAIT_REQUEST ? this.manager.waitQuestion(id, args.input, signal) : Promise.resolve(textResult(`Unknown request: ${tool}`, true));
-    });
     // Claude Code は、アプリとは別の常駐プロセス（pty ホスト）が起動して持つ。アプリを再起動しても止まらない
     this.ptyHost = await PtyHost.start(dataDir, join(__dirname, 'pty-host.js'));
     const store = new SessionStore(join(dataDir, 'sessions.json'));
@@ -214,10 +203,8 @@ export class Profile {
           const message = this.turnMessage(session.id, notice);
           if (message) notify(session.id, session.title, message);
         },
-        onAttention: (session, attention) =>
-          notify(session.id, session.title, attention.kind === 'menu' ? menuNotice(attention.menu) : t('main.notification.needsTerminal')),
-        onScreen: (sessionId, info) => send(IpcChannel.ScreenChanged, { sessionId, info }),
-        onActivity: (sessionId, activity) => send(IpcChannel.ScreenActivity, { sessionId, activity }),
+        onAttention: (session, attention) => notify(session.id, session.title, menuNotice(attention.menu)),
+        onProgress: (sessionId, activity) => send(IpcChannel.SessionsProgress, { sessionId, activity }),
         onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
         onSubagents: (sessionId, runs) => send(IpcChannel.SubagentsChanged, { sessionId, runs }),
         onBashTasks: (sessionId, tasks) => send(IpcChannel.TasksBashChanged, { sessionId, tasks }),
@@ -225,8 +212,15 @@ export class Profile {
           send(IpcChannel.KnowledgeChanged, { sessionId, knowledge });
           this.autoCompact?.check(sessionId);
         },
-        onStatusLine: (sessionId, info) => send(IpcChannel.StatusLineChanged, { sessionId, info }),
+        // ターミナルモードの statusLine のファイルからも、stream-json の行から作ったものからも来る
+        onStatusLine: (sessionId, info) => {
+          send(IpcChannel.StatusLineChanged, { sessionId, info });
+          this.usage.fromStatusLine(info);
+          this.autoCompact?.check(sessionId);
+        },
+        onUsage: (report, at) => this.usage.fromUsage(report, at),
         onQuestion: (sessionId, question) => send(IpcChannel.QuestionChanged, { sessionId, question }),
+        onPermission: (sessionId, permission) => send(IpcChannel.PermissionChanged, { sessionId, permission }),
       },
       this.options.remoteControl,
       this.settingsFiles,
@@ -237,7 +231,6 @@ export class Profile {
       () => this.walkthroughLaunch(),
       this.claudeDir,
       () => this.terminalLaunch(),
-      () => this.questionLaunch(),
     );
     const manager = this.manager;
     // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
@@ -250,6 +243,9 @@ export class Profile {
     manager.turnNotice = (id, starter) => compactNotice.turnEnded(id, starter);
     // Claude の報告があれば、バックグラウンドのタスクが動いていても、ターンの終わりに通知する（報告は、どう終わったかを伝えるもの）
     manager.turnReported = (id) => this.reports.has(id);
+    // チェックリストのファイルを読めず、変更を保存しないセッションは、一覧の印でチェックリストのパネルに知らせる
+    manager.checklistUnsaved = (id) => this.checklists.unsavable(id);
+    this.checklists.onUnsaved = (id) => manager.checklistUnsavedChanged(id);
     this.sessionsControl = new SessionsControl({
       host: outward,
       compacting,
@@ -434,12 +430,6 @@ export class Profile {
     return { command: hostExecutable(), script: join(__dirname, 'terminal-mcp.js'), socketPath: this.terminalBridge.socketPath, version: app.getVersion() };
   }
 
-  // 起動する Claude Code に足す、AskUserQuestion の質問のフック。待ち受けを始められなかったときは足さない（画面を読む道で答える）
-  private questionLaunch(): McpLaunch | null {
-    if (!this.questionBridge) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'question-hook.js'), socketPath: this.questionBridge.socketPath, version: app.getVersion() };
-  }
-
   // 新規セッションの画面から、worktree で始める。Claude Code が worktree を作るのを待たずに id を返す（画面は、すぐそのセッションに移って待つ）。
   // 作れなかったら（セッションは、もう一覧から消えている）、理由を画面に知らせる
   async startInWorktree(cwd: string, options: NewSessionOptions): Promise<string> {
@@ -480,7 +470,6 @@ export class Profile {
     this.checklists.flush();
     this.walkthroughBridge?.close();
     this.terminalBridge?.close();
-    this.questionBridge?.close();
     this.shells.killAll();
   }
 }

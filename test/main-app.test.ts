@@ -4,7 +4,6 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
-import { QUESTION_WAIT_REQUEST } from '../src/main/question-hook';
 import { menuNotice, scheduledNotice } from '../src/main/notice-text';
 import {
   allOf,
@@ -52,11 +51,10 @@ const managerArg = {
   walkthroughLaunch: 11,
   claudeDir: 12,
   terminalLaunch: 13,
-  questionLaunch: 14,
 } as const;
 const managerArgs = () => argsOf('SessionManager');
 // アプリが待ち受けるソケット（userData の中の名前）
-const SOCKETS = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock', 'question.sock'];
+const SOCKETS = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
 type Callbacks = Record<string, (...args: unknown[]) => unknown>;
 const callbacks = () => managerArgs()[managerArg.callbacks] as Callbacks;
 // 作り物を作ったときに渡した関数
@@ -108,7 +106,6 @@ describe('起動', () => {
       u('checklist.sock'),
       u('walkthrough.sock'),
       u('terminal.sock'),
-      u('question.sock'),
     ]);
     expect(state.ptyHostStart.mock.calls).toEqual([[state.userData, join(MAIN_DIR, 'pty-host.js')]]);
     // SessionManager には、pty ホスト・会話の一覧・監視を渡す
@@ -118,6 +115,52 @@ describe('起動', () => {
     expect(args[managerArg.watchers]).toBe(the('WorkspaceWatchers'));
     expect(args[managerArg.statusLines]).toBe(the('StatusLineWatcher'));
     expect(args[managerArg.settingsFiles]).toBe(the('SettingsFiles'));
+  });
+
+  it('同じ userData のアプリがもう動いていたら（2 つめの起動）、何も作らずに、確かめずに終える', async () => {
+    await boot({ before: (s) => (s.singleInstanceLock = false) });
+    expect(state.quit).toHaveBeenCalledTimes(1);
+    // 終わるときに、Claude Code を止めるかの確認を出さない
+    state.app.emit('before-quit', fakeEvent());
+    expect(state.dialog.showMessageBox).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(state.ptyHostStart).not.toHaveBeenCalled();
+    expect(state.handlers.size).toBe(0);
+    expect(state.windows).toHaveLength(0);
+    expect(state.app.has('second-instance')).toBe(false);
+  });
+
+  it('2 つめを起動しようとしたら、動いているアプリのウインドウを前に出す（しまっていれば戻す）', async () => {
+    await boot();
+    const win = mainWindow();
+    win.minimized = true;
+    state.app.emit('second-instance', fakeEvent(), ['/Applications/tanacode.app/Contents/MacOS/tanacode'], '/');
+    expect(win.restore).toHaveBeenCalledTimes(1);
+    expect(win.show).toHaveBeenCalled();
+    expect(win.focus).toHaveBeenCalled();
+    expect(state.quit).not.toHaveBeenCalled();
+  });
+
+  it('起動の途中に 2 つめが起動しても、ウインドウを先に作らない（作るのは起動の終わりの 1 枚だけ）。前に出す頼みは、ウインドウを作ったあとで行う', async () => {
+    const adopting = pending<undefined>();
+    await boot({ noWait: true, before: (s) => s.adopt.mockReturnValue(adopting.promise) });
+    await vi.waitFor(() => expect(state.adopt).toHaveBeenCalled());
+    state.app.emit('second-instance', fakeEvent(), [], '/');
+    expect(state.windows).toHaveLength(0);
+    adopting.resolve(undefined);
+    await started();
+    expect(state.windows).toHaveLength(1);
+    // 起動を待つあいだにほかのアプリへ移っていても、ウインドウができたら前に出す
+    expect(mainWindow().show).toHaveBeenCalledTimes(1);
+    expect(mainWindow().focus).toHaveBeenCalledTimes(1);
+    state.app.emit('second-instance', fakeEvent(), [], '/');
+    expect(mainWindow().show).toHaveBeenCalledTimes(2);
+    expect(state.windows).toHaveLength(1);
+  });
+
+  it('起動の途中に 2 つめが起動しなければ、ウインドウを作っても前に出す頼みはしない', async () => {
+    await boot();
+    expect(mainWindow().show).not.toHaveBeenCalled();
   });
 
   it('以前のレビュー機能が使っていたフォルダ（snapshots）を消す', async () => {
@@ -146,14 +189,13 @@ describe('起動', () => {
       },
     });
     const sockets = allOf('McpBridge').map((c) => String(c.args[0]));
-    expect(sockets.map((path) => path.startsWith(`${tmpdir()}/`))).toEqual([true, true, true, true, true, true]);
+    expect(sockets.map((path) => path.startsWith(`${tmpdir()}/`))).toEqual([true, true, true, true, true]);
     expect(sockets.map((path) => path.slice(tmpdir().length + 1).replace(/-[0-9a-f]{12}\.sock$/, ''))).toEqual([
       'tanacode-browser',
       'tanacode-sessions',
       'tanacode-checklist',
       'tanacode-walkthrough',
       'tanacode-terminal',
-      'tanacode-question',
     ]);
   });
 
@@ -239,15 +281,15 @@ describe('起動', () => {
 });
 
 describe('Claude Code に足す MCP サーバー', () => {
-  // メニューでオン・オフを切り替えるもの。質問のフック（questionLaunch）は切り替えず、いつも足す
+  // メニューでオン・オフを切り替えるもの
   const launches = ['browserLaunch', 'sessionsLaunch', 'checklistLaunch', 'walkthroughLaunch', 'terminalLaunch'] as const;
-  const launch = (name: (typeof launches)[number] | 'questionLaunch') => (managerArgs()[managerArg[name]] as () => unknown)();
+  const launch = (name: (typeof launches)[number]) => (managerArgs()[managerArg[name]] as () => unknown)();
 
   it('どれも、同梱の Node で中継のスクリプトを動かし、userData のソケットにつなぐ', async () => {
     await boot();
-    const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js', 'question-hook.js'];
-    const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock', 'question.sock'];
-    [...launches, 'questionLaunch' as const].forEach((name, i) => {
+    const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js'];
+    const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
+    launches.forEach((name, i) => {
       expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7' });
     });
   });
@@ -255,7 +297,6 @@ describe('Claude Code に足す MCP サーバー', () => {
   it('メニューでオフにしているものは足さない（次に起動する Claude Code から）', async () => {
     await boot({ settings: { browserControl: false, sessionsControl: false, checklistControl: false, walkthroughControl: false, terminalControl: false } });
     for (const name of launches) expect(launch(name)).toBeNull();
-    expect(launch('questionLaunch')).not.toBeNull();
     menuItem('Claude にチェックリストを扱わせる').checked = true;
     menuItem('Claude にチェックリストを扱わせる').click?.(menuItem('Claude にチェックリストを扱わせる'));
     expect(launch('checklistLaunch')).not.toBeNull();
@@ -264,31 +305,27 @@ describe('Claude Code に足す MCP サーバー', () => {
   it('待ち受けを始められなかったものは足さず、理由を出す。アプリはそのまま使える', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await boot({ before: (s) => SOCKETS.forEach((f) => s.failingSockets.add(f)) });
-    for (const name of [...launches, 'questionLaunch' as const]) expect(launch(name)).toBeNull();
+    for (const name of launches) expect(launch(name)).toBeNull();
     expect(error.mock.calls.map((c) => c[0])).toEqual([
       'アプリ内ブラウザの待ち受けを始められませんでした',
       'セッションの待ち受けを始められませんでした',
       'チェックリストの待ち受けを始められませんでした',
       'ウォークスルーの待ち受けを始められませんでした',
       'ターミナルの待ち受けを始められませんでした',
-      '質問の待ち受けを始められませんでした',
     ]);
     expect(state.windows).toHaveLength(1);
   });
 
   it('中継からの呼び出しは、それぞれの制御に渡す（中断の合図も）', async () => {
     await boot();
-    const [browser, sessions, checklist, walkthrough, terminal, question] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
+    const [browser, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => unknown);
     const signal = new AbortController().signal;
-    expect(browser('s1', 'navigate', { url: 'http://localhost' }, signal)).toEqual({ call: 'browser.handle', args: ['s1', 'navigate', { url: 'http://localhost' }, signal] });
+    // アプリ内ブラウザには、Claude Code が付けた呼び出しの ID も渡す（JavaScript の実行の確認と結びつける）
+    expect(browser('s1', 'evaluate', { expression: '1' }, signal, 'toolu_1')).toEqual({ call: 'browser.handle', args: ['s1', 'evaluate', { expression: '1' }, signal, 'toolu_1'] });
     expect(sessions('s1', 'start_session', { prompt: 'x' }, signal)).toEqual({ call: 'sessionsControl.handle', args: ['s1', 'start_session', { prompt: 'x' }, signal] });
     expect(checklist('s1', 'card_add', { title: 'x' })).toEqual({ call: 'checklistControl.handle', args: ['s1', 'card_add', { title: 'x' }] });
     expect(walkthrough('s1', 'walkthrough_start', { steps: [] })).toEqual({ call: 'walkthrough.handle', args: ['s1', 'walkthrough_start', { steps: [] }] });
     expect(terminal('s1', 'read_terminal', { id: 'shell-1' }, signal)).toEqual({ call: 'terminalControl.handle', args: ['s1', 'read_terminal', { id: 'shell-1' }, signal] });
-    // 質問のフックは、質問の入力を渡して答えを待つ（それ以外の呼び出しは知らない）
-    const input = { questions: [] };
-    expect(question('s1', QUESTION_WAIT_REQUEST, { input }, signal)).toEqual({ call: 'manager.waitQuestion', args: ['s1', input, signal] });
-    await expect(question('s1', 'other', {}, signal)).resolves.toEqual(textResult('Unknown request: other', true));
   });
 
   it('起動が終わる前（セッションの一覧を読む前）に、アプリ内ブラウザから届いた問い合わせ・依頼も扱える', async () => {
@@ -308,9 +345,8 @@ describe('Claude Code に足す MCP サーバー', () => {
     const host = pending<Record<string, unknown>>();
     await boot({ noWait: true, before: (s) => s.ptyHostStart.mockReturnValue(host.promise as never) });
     await vi.waitFor(() => expect(state.ptyHostStart).toHaveBeenCalled());
-    const [, sessions, checklist, walkthrough, terminal, question] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
+    const [, sessions, checklist, walkthrough, terminal] = allOf('McpBridge').map((c) => c.args[1] as (...args: unknown[]) => Promise<unknown>);
     const notYet = textResult('tanacode has not finished starting up. Wait a moment and try again.', true);
-    await expect(question('s1', QUESTION_WAIT_REQUEST, { input: {} }, new AbortController().signal)).resolves.toEqual(notYet);
     await expect(sessions('s1', 'list_sessions', {}, new AbortController().signal)).resolves.toEqual(notYet);
     await expect(checklist('s1', 'list_get', {})).resolves.toEqual(notYet);
     await expect(walkthrough('s1', 'walkthrough_start', {})).resolves.toEqual(notYet);
@@ -325,8 +361,7 @@ describe('部品から画面への知らせ', () => {
     ['onSessionsChanged', [[{ id: 's1' }]], IpcChannel.SessionsChanged, [{ id: 's1' }]],
     ['onChat', [{ sessionId: 's1', events: [] }], IpcChannel.ChatEvents, { sessionId: 's1', events: [] }],
     ['onPtyData', ['s1', 'ターミナルの出力'], IpcChannel.PtyData, { sessionId: 's1', data: 'ターミナルの出力' }],
-    ['onScreen', ['s1', { mode: 'plan' }], IpcChannel.ScreenChanged, { sessionId: 's1', info: { mode: 'plan' } }],
-    ['onActivity', ['s1', { kind: 'thinking' }], IpcChannel.ScreenActivity, { sessionId: 's1', activity: { kind: 'thinking' } }],
+    ['onProgress', ['s1', { phase: 'thinking' }], IpcChannel.SessionsProgress, { sessionId: 's1', activity: { phase: 'thinking' } }],
     ['onWorkflows', ['s1', [{ id: 'w' }]], IpcChannel.WorkflowsChanged, { sessionId: 's1', runs: [{ id: 'w' }] }],
     ['onSubagents', ['s1', [{ id: 'a' }]], IpcChannel.SubagentsChanged, { sessionId: 's1', runs: [{ id: 'a' }] }],
     ['onBashTasks', ['s1', [{ id: 'b' }]], IpcChannel.TasksBashChanged, { sessionId: 's1', tasks: [{ id: 'b' }] }],
@@ -382,14 +417,18 @@ describe('部品から画面への知らせ', () => {
     expect(sentToRenderer()).toEqual([]);
   });
 
-  it('statusLine は、セッションと使用量に渡す。質問の入力は、セッションに渡す', async () => {
+  it('statusLine のファイルは、セッションに渡す。セッションが知らせた statusLine（ファイルからも stream-json からも）は、使用量に渡す。書くだけのフックのファイルも、セッションに渡す', async () => {
     await boot();
     const info = { model: 'opus', rateLimits: {} };
     fnArg('StatusLineWatcher', 1)('s1', info);
     expect(manager().statusLineChanged.mock.calls).toEqual([['s1', info]]);
+    expect(the('UsageMonitor').fromStatusLine.mock.calls).toEqual([]);
+    callbacks().onStatusLine('s1', info);
     expect(the('UsageMonitor').fromStatusLine.mock.calls).toEqual([[info]]);
-    fnArg('StatusLineWatcher', 2)('s1', { questions: [] });
-    expect(manager().askQuestionsChanged.mock.calls).toEqual([['s1', { questions: [] }]]);
+    fnArg('StatusLineWatcher', 2)('s1', { tool_name: 'Bash' }, 5);
+    expect(manager().permissionRequested.mock.calls).toEqual([['s1', { tool_name: 'Bash' }, 5]]);
+    fnArg('StatusLineWatcher', 3)('s1', { permission_mode: 'plan' });
+    expect(manager().tuiIdle.mock.calls).toEqual([['s1', { permission_mode: 'plan' }]]);
   });
 
   it('セッションのフォルダで、Claude が頼んだコマンドをターミナルで動かす', async () => {
@@ -520,8 +559,7 @@ describe('通知', () => {
     await boot();
     const menu = { kind: 'question', title: 'どちらにしますか？', options: [] };
     callbacks().onAttention(session, { kind: 'menu', menu });
-    callbacks().onAttention(session, { kind: 'other' });
-    expect(state.notifications.map((n) => n.options.body)).toEqual([menuNotice(menu as never), 'ターミナルでの操作が必要です']);
+    expect(state.notifications.map((n) => n.options.body)).toEqual([menuNotice(menu as never)]);
   });
 
   it('クリックすると、ウインドウを前に出して、そのセッションを選ばせる（ウインドウを閉じていれば作る）', async () => {
@@ -919,7 +957,7 @@ describe('ウインドウ', () => {
     expect(attach('data:text/html,x').prevented).toBe(true);
   });
 
-  it('webview のページが新しいウインドウで開こうとしたら、アプリ内ブラウザのタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く', async () => {
+  it('webview のページが新しいタブで開こうとしたら、アプリ内ブラウザのタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く', async () => {
     await boot();
     const guest = new FakeWebContents();
     mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
@@ -931,14 +969,48 @@ describe('ウインドウ', () => {
     expect(open({ url: 'https://example.test/tab', disposition: 'foreground-tab' })).toEqual({ action: 'deny' });
     expect(browser.openFromPage.mock.calls).toEqual([[guest, 'https://example.test/tab', 'foreground-tab']]);
     browser.isOperating.mockReturnValueOnce(true);
-    open({ url: 'https://example.test/operating', disposition: 'new-window' });
-    open({ url: 'mailto:me@example.test', disposition: 'new-window' });
+    open({ url: 'https://example.test/operating', disposition: 'background-tab' });
+    open({ url: 'mailto:me@example.test', disposition: 'foreground-tab' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
-    open({ url: 'file:///tmp/a.html#https://example.test/', disposition: 'new-window' });
+    open({ url: 'file:///tmp/a.html#https://example.test/', disposition: 'foreground-tab' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
-    open({ url: 'https://example.test/outside', disposition: 'new-window' });
-    open({ url: 'http://localhost:8080/', disposition: 'new-window' });
+    open({ url: 'https://example.test/outside', disposition: 'foreground-tab' });
+    open({ url: 'http://localhost:8080/', disposition: 'background-tab' });
     expect(state.shell.openExternal.mock.calls).toEqual([['https://example.test/outside'], ['http://localhost:8080/']]);
+  });
+
+  it('webview のページが開くポップアップ（new-window）は、アプリ内ブラウザの外の別ウインドウで開く（window.opener をつなぐ）。http(s) でないものは開かない', async () => {
+    await boot();
+    const guest = new FakeWebContents();
+    mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
+    const browser = the('BrowserControl');
+    const open = guest.windowOpenHandler!;
+    const popup = open({ url: 'https://login.example.test/authorize', disposition: 'new-window', features: 'width=480,height=640,left=-500,closable=no' } as never) as {
+      action: string;
+      outlivesOpener: boolean;
+      overrideBrowserWindowOptions: Record<string, unknown>;
+      createWindow: (options: Record<string, unknown>) => unknown;
+    };
+    const secure = { nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false, disableDialogs: true };
+    expect(popup.action).toBe('allow');
+    expect(popup.outlivesOpener).toBe(true);
+    expect(popup.overrideBrowserWindowOptions).toEqual({ webPreferences: secure });
+    // 別ウインドウは、アプリが BrowserWindow で作る。ページの features（closable=no など）は渡さない。
+    // tanacode のウインドウ（x=40 y=30 1400×900）がある画面（1920×1080）の中に詰める。上下の位置の指定が無ければ、ウインドウの真ん中
+    const contents = new FakeWebContents();
+    popup.createWindow({ webContents: contents, closable: false, x: -500, width: 480, height: 640 });
+    // tanacode のウインドウにフォーカスが無い間は出さず、フォーカスが来たら、フォーカスを移さずに出す
+    const popupWindow = state.windows.at(-1)!;
+    expect(popupWindow.showInactive).not.toHaveBeenCalled();
+    state.app.emit('browser-window-focus');
+    expect(popupWindow.showInactive).toHaveBeenCalledTimes(1);
+    expect(state.windows.at(-1)!.options).toEqual({ webContents: contents, show: false, x: 0, y: 160, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: secure });
+    expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
+    // Claude の操作で許していない先なら開かない
+    browser.allowsPopup.mockReturnValueOnce(false);
+    expect(open({ url: 'https://outside.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toEqual({ action: 'deny' });
+    expect(open({ url: 'file:///etc/hosts', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(state.shell.openExternal).not.toHaveBeenCalled();
   });
 });
 
@@ -1034,6 +1106,19 @@ describe('プレビューの webview の移動先', () => {
   it('webview でないもの（アプリのウインドウなど）には付けない', async () => {
     const contents = await guard('window');
     expect(contents.events.size).toBe(0);
+    expect(contents.windowOpenHandler).toBeNull();
+  });
+
+  it('プレビューのセッションのウインドウ（ページが開いたポップアップの別ウインドウ）にも、同じ見張りと新しいウインドウの扱いを付ける', async () => {
+    await boot();
+    const contents = new FakeWebContents();
+    contents.session = state.partitions.get('persist:tanacode-preview');
+    state.app.emit('web-contents-created', fakeEvent(), contents);
+    expect(go(contents, 'will-navigate', 'file:///etc/hosts')).toBe('止める');
+    expect(go(contents, 'will-redirect', 'blob:http://localhost/1')).toBe('止める');
+    expect(go(contents, 'will-frame-navigate', 'https://example.test/')).toBe('通す');
+    expect(contents.windowOpenHandler!({ url: 'mailto:me@example.test', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(contents.windowOpenHandler!({ url: 'https://login.example.test/', disposition: 'new-window', features: 'width=480,height=640' } as never)).toMatchObject({ action: 'allow' });
   });
 });
 

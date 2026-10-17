@@ -110,7 +110,7 @@ describe('--hook を付けると、チェックリストを使い続けさせる
 
   it('標準入力を読み終えてからアプリに聞き、答えを標準出力に書き終えたら終わる。中継は動かさない', async () => {
     process.argv = [...process.argv, '--hook'];
-    const output = JSON.stringify({ decision: 'block', reason: '直して' });
+    const output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '直して' } });
     mocks.runHook.mockResolvedValue(output);
     const input = stdin();
     const out = stdout();
@@ -120,7 +120,8 @@ describe('--hook を付けると、チェックリストを使い続けさせる
     input.data('{"hook_event_name":');
     input.data('"Stop"}');
     input.end();
-    await vi.waitFor(() => expect(out.written).toEqual([`${output}\n`]));
+    // アプリのフックの印（suppressOutput）を足して書く（hook-output.ts）
+    await vi.waitFor(() => expect(out.written.map((w) => JSON.parse(w))).toEqual([{ ...JSON.parse(output), suppressOutput: true }]));
     expect(mocks.runHook).toHaveBeenCalledWith('{"hook_event_name":"Stop"}', '/u/Application Support/tanacode/checklist.sock', 'S1', 5_000);
     // 書き終える前には終わらない（答えが途中で切れないように）
     expect(exit).not.toHaveBeenCalled();
@@ -128,14 +129,15 @@ describe('--hook を付けると、チェックリストを使い続けさせる
     expect(exit).toHaveBeenCalledWith(0);
   });
 
-  it('渡すものが無ければ、何も書かずに終わる', async () => {
+  it('渡すものが無ければ、アプリのフックの印（suppressOutput）だけを書いて終わる', async () => {
     process.argv = [...process.argv, '--hook'];
     mocks.runHook.mockResolvedValue('');
     const input = stdin();
     const out = stdout();
     await start();
     input.end();
-    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
-    expect(out.written).toEqual([]);
+    await vi.waitFor(() => expect(out.written).toEqual(['{"suppressOutput":true}\n']));
+    out.flushed?.();
+    expect(exit).toHaveBeenCalledWith(0);
   });
 });

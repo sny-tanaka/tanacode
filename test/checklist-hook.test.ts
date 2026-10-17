@@ -183,8 +183,10 @@ describe('会話ログの終わりを読む', () => {
 });
 
 describe('Claude Code に返すもの', () => {
-  it('Stop はターンの終わりを止めて理由を渡し、ほかは文をコンテキストに足す', () => {
-    expect(JSON.parse(hookOutput('Stop', '直して'))).toEqual({ decision: 'block', reason: '直して' });
+  it('どれも文を Claude のコンテキストに足す。Stop も、止める（decision: block）のではなく文を渡して続けさせる', () => {
+    // block は Claude Code 2.1.302 でエラー（hookErrors）になり、ターミナルモードの画面に赤い「Stop hook error」と通知が出る。
+    // Stop の additionalContext は「Stop hook feedback」として続きを始めさせ、続きのフックの入力には stop_hook_active が付く（2.1.293 からある）
+    expect(JSON.parse(hookOutput('Stop', '直して'))).toEqual({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '直して' } });
     expect(JSON.parse(hookOutput('UserPromptSubmit', '今の状態'))).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: '今の状態' } });
   });
 
@@ -250,7 +252,7 @@ describe('フックの本体', () => {
   it('ターンの終わりは、会話ログから数えたツールをアプリに渡し、返ってきた文で止める', async () => {
     const at = '2026-10-12T01:39:11.884Z';
     const transcript_path = transcript(prompt('依頼', { timestamp: at }), use('Edit', 'Bash'), result(), say('終わりました'));
-    expect(JSON.parse(await run({ hook_event_name: 'Stop', transcript_path, last_assistant_message: '終わりました' }))).toEqual({ decision: 'block', reason: '今のチェックリスト' });
+    expect(JSON.parse(await run({ hook_event_name: 'Stop', transcript_path, last_assistant_message: '終わりました' }))).toEqual({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '今のチェックリスト' } });
     // ターンのはじまりの時刻と、会話ログが最後の応答までそろっているのを確かめたことも渡す
     expect(calls).toEqual([{ session: 'S1', tool: 'hook:stop', args: { turn: 2, checklist: 0, since: Date.parse(at), settled: true } }]);
   });
@@ -258,7 +260,7 @@ describe('フックの本体', () => {
   it('最後の応答が会話ログに書かれないままなら、上限まで待ってから、そろわなかったことをアプリに伝える', async () => {
     // 最後の応答（とその前のツール）がまだ書かれていない。アプリは、自分が受けた呼び出しでも確かめる
     const transcript_path = transcript(prompt('依頼'), use('Edit'), result());
-    expect(JSON.parse(await runHook(JSON.stringify({ hook_event_name: 'Stop', transcript_path, last_assistant_message: '終わりました' }), socket, 'S1', 2000, 100))).toMatchObject({ decision: 'block' });
+    expect(JSON.parse(await runHook(JSON.stringify({ hook_event_name: 'Stop', transcript_path, last_assistant_message: '終わりました' }), socket, 'S1', 2000, 100))).toMatchObject({ hookSpecificOutput: { hookEventName: 'Stop' } });
     // 最後の応答の文が渡らない（古い Claude Code）ときも、そろったか分からないものとして伝える
     await run({ hook_event_name: 'Stop', transcript_path });
     expect(calls.map((c) => c.args)).toEqual([

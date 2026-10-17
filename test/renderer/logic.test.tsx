@@ -165,7 +165,7 @@ describe('アプリ内ブラウザ', () => {
   });
 
   it('describePicked: 選んだ要素を 1 行ずつにまとめ、制御文字を除き、html の ``` でフェンスから抜けられないようにする', () => {
-    const text = describePicked({ url: 'http://localhost:3000/\nx', selector: 'main > button', text: '  送信‮ \n する ', html: '<button>```\n送信</button>' } as never);
+    const text = describePicked({ url: 'http://localhost:3000/\nx', selector: 'main > button', text: '  送信\u202E \n する ', html: '<button>```\n送信</button>' } as never);
     const lines = text.split('\n');
     expect(lines.slice(0, 3)).toEqual(['アプリ内ブラウザ（http://localhost:3000/ x）で選んだ要素:', '- セレクタ: `main > button`', '- テキスト: 「送信 する」']);
     const fence = lines[3];

@@ -3,10 +3,11 @@ import type { WebContents } from 'electron';
 import { BROWSER_ASK_TOOL, browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel, type BrowserAskChange } from '../src/shared/ipc';
 import { BROWSER_GATE_REQUEST } from '../src/main/browser-bridge';
+import { gateOutput, readAnswer } from '../src/main/browser-gate';
 import { setLanguage } from '../src/shared/i18n';
 import { textResult } from '../src/main/mcp-bridge';
 import { FakeContents, HOST } from './helpers/fake-electron';
-import { finish, flush, logConsole, setup, textOf, type Tab } from './helpers/browser-control';
+import { finish, flush, logConsole, sentBy, setup, textOf, type Tab } from './helpers/browser-control';
 
 vi.mock('electron', () => import('./helpers/fake-electron').then((m) => m.electronModule));
 
@@ -139,9 +140,45 @@ describe('JavaScript の実行の確認のフックへの答え', () => {
     open('http://localhost:3000/');
     const remote = open('https://staging.example.test/', { activate: false });
     control.activate('S1', remote.tabId);
-    expect(await gate(control)).toEqual({ local: false, url: 'https://staging.example.test/' });
+    expect(await gate(control)).toEqual({ local: false, url: 'https://staging.example.test' });
     control.activate('S1', null);
     expect(await gate(control)).toEqual({ local: false, url: '' });
+  });
+});
+
+describe('JavaScript の実行の確認のフックへの答えに出すページ', () => {
+  const answer = (control: ReturnType<typeof setup>['control'], sessionId = 'S1') =>
+    control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression: 'document.title' } });
+
+  it('許していない先のページは、オリジンだけを答える（確認の理由に出て、親のセッションにも届くので、パス・クエリを入れない）', async () => {
+    const { control, open, state } = setup();
+    const page = open('https://accounts.example.com/oauth/callback?code=secret&state=x');
+    const result = await answer(control);
+    expect(JSON.parse(textOf(result))).toEqual({ local: false, url: 'https://accounts.example.com' });
+    const reason = gateOutput(readAnswer(result));
+    expect(reason).toContain('https://accounts.example.com');
+    expect(reason).not.toContain('oauth');
+    expect(reason).not.toContain('secret');
+    // 許す先（足した先も）のページは、URL のまま
+    state.hosts = ['accounts.example.com'];
+    expect(JSON.parse(textOf(await answer(control)))).toEqual({ local: false, url: 'https://accounts.example.com/oauth/callback?code=secret&state=x' });
+    // 空のタブ
+    state.hosts = [];
+    page.url = 'about:blank';
+    expect(JSON.parse(textOf(await answer(control)))).toEqual({ local: false, url: 'about:blank' });
+  });
+
+  it('メニューでオフのとき・知らないセッションには答えない（フックは確認を出させる側に倒す）', async () => {
+    const { control, open, state } = setup();
+    open('http://localhost:3000/');
+    state.enabled = false;
+    let result = await answer(control);
+    expect(result.isError).toBe(true);
+    expect(readAnswer(result)).toBeNull();
+    state.enabled = true;
+    result = await answer(control, 'NOPE');
+    expect(result.isError).toBe(true);
+    expect(readAnswer(result)).toBeNull();
   });
 });
 
@@ -375,6 +412,132 @@ describe('webview の受け付け（attach）', () => {
   });
 });
 
+describe('コンソールの記録のうち、許していない先の文', () => {
+  const iframe = (origin: string) => ({ origin, url: `${origin}/frame?token=secret`, parent: {} });
+
+  it('get_console_logs は、許していない先のフレーム（別オリジンの iframe・移る途中の前のページ）の文を返さず、除いた数だけを伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    logConsole(page, 'error', 'トップの文');
+    logConsole(page, 'error', '許す先の iframe の文', '', 0, iframe('http://localhost:4000'));
+    logConsole(page, 'error', '外の iframe の秘密の文', '', 0, iframe('https://ads.example.com'));
+    // 移り始めたあとに、前のページ（許していない先）が出した文
+    logConsole(page, 'warning', '前のページの秘密の文', '', 0, { origin: 'https://evil.example', url: 'https://evil.example/', parent: null });
+    // 出したフレームが分からない
+    logConsole(page, 'error', 'フレームの分からない文', '', 0, null);
+    const text = textOf(await call('get_console_logs'));
+    expect(text).toBe('[error] トップの文\n[error] 許す先の iframe の文\n(3 more messages from pages or frames not allowed for Claude are not shown.)');
+    // ページの様子に添える「エラー N 件」も、見せるものだけを数える（隠したエラーは 2 件）
+    expect(textOf(await call('navigate', { action: 'reload' }))).toContain('The console has 2 errors (read them with get_console_logs).');
+  });
+
+  it('トップと同じオリジンの iframe は、トップが人の許したオリジンなら返す。別オリジンの iframe には、タブの許可は効かない', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/');
+    await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { url: 'https://app.example.com/' } });
+    await call('navigate', { url: 'https://app.example.com/' });
+    logConsole(page, 'error', '許したページの文');
+    logConsole(page, 'error', '同じオリジンの iframe の文', '', 0, iframe('https://app.example.com'));
+    logConsole(page, 'error', '別オリジンの iframe の文', '', 0, iframe('https://pay.example.com'));
+    expect(textOf(await call('get_console_logs'))).toBe(
+      '[error] 許したページの文\n[error] 同じオリジンの iframe の文\n(1 more message from pages or frames not allowed for Claude is not shown.)',
+    );
+  });
+
+  it('トップのフレームのオリジンが "null"（Content-Security-Policy: sandbox のページ）なら、フレームの URL のオリジンで決める。iframe は "null" なら返さない', async () => {
+    const { call, open, network } = setup();
+    const page = open('http://localhost:3000/');
+    const sandboxedTop = { origin: 'null', url: 'http://localhost:3000/', parent: null };
+    logConsole(page, 'error', 'sandbox のページの文', '', 0, sandboxedTop);
+    logConsole(page, 'error', 'sandbox の iframe の文', '', 0, { origin: 'null', url: 'http://localhost:3000/frame', parent: {} });
+    logConsole(page, 'error', '外の sandbox のページの文', '', 0, { origin: 'null', url: 'https://evil.example/', parent: null });
+    expect(textOf(await call('get_console_logs'))).toBe('[error] sandbox のページの文\n(2 more messages from pages or frames not allowed for Claude are not shown.)');
+    // 失敗した通信も同じ（出したオリジンが "null" で、出したのがトップのフレーム）
+    const fail = (url: string, frame: object) => network.completed!({ statusCode: 404, method: 'GET', url, resourceType: 'xhr', webContentsId: page.id, initiatorOrigin: 'null', frame } as never);
+    fail('http://localhost:3000/api', sandboxedTop);
+    fail('http://localhost:3000/frame-api?token=secret', { origin: 'null', url: 'http://localhost:3000/frame', parent: {} });
+    expect(textOf(await call('get_failed_requests'))).toBe('404 GET http://localhost:3000/api (xhr)\n(1 more failed request from pages or frames not allowed for Claude is not shown.)');
+  });
+
+  it('evaluate が失敗したときも、許していない先のフレームの文は返さない', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    page.evaluate = () => {
+      logConsole(page, 'error', '外の iframe の秘密の文', '', 0, iframe('https://ads.example.com'));
+      logConsole(page, 'error', 'Uncaught Error: 式のエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: Uncaught Error: 式のエラー', true));
+  });
+});
+
+describe('失敗した通信の記録のうち、許していない先のもの', () => {
+  it('get_failed_requests は、許していない先のページ・フレームの通信を返さず、除いた数だけを伝える', async () => {
+    const { call, open, network } = setup();
+    const page = open('http://localhost:3000/');
+    const fail = (url: string, resourceType: string, sender: object) => network.completed!({ statusCode: 404, method: 'GET', url, resourceType, ...sentBy(page), ...sender });
+    // トップのページが出した通信（許す先の外へのものも、ページ自身の通信なので返す）
+    fail('http://localhost:3000/api?q=1', 'xhr', {});
+    fail('https://cdn.example.com/logo.png', 'image', {});
+    // 許す先の iframe が出した通信
+    fail('http://localhost:4000/data', 'xhr', sentBy(page, 'http://localhost:4000', false));
+    // 許していない先の iframe が出した通信
+    fail('https://ads.example.com/track?token=secret', 'xhr', sentBy(page, 'https://ads.example.com', false));
+    // 許していない先の iframe の読み込み（出したのはトップでも、そこに入るのは許していない先のページ）
+    fail('https://ads.example.com/frame?token=secret', 'subFrame', sentBy(page, 'http://localhost:3000', false));
+    // 許していない先へのトップの読み込み（ページのリンクから）
+    network.errored!({ error: 'net::ERR_CONNECTION_REFUSED', method: 'GET', url: 'https://login.example.com/auth?code=secret', resourceType: 'mainFrame', ...sentBy(page) });
+    // 許す先のトップの読み込み（navigate など、ブラウザが自分で始めたもの。出したオリジンが無い）
+    fail('http://localhost:3000/missing', 'mainFrame', { initiatorOrigin: undefined });
+    // 出したオリジンが分からない（不透明なオリジン・ブラウザが自分で始めた通信）
+    fail('https://sandboxed.example.com/x?token=secret', 'xhr', { initiatorOrigin: 'null', frame: null });
+    fail('https://browser.example.com/y?token=secret', 'other', { initiatorOrigin: undefined, frame: undefined });
+    const text = textOf(await call('get_failed_requests'));
+    expect(text).toBe(
+      [
+        '404 GET http://localhost:3000/api?q=1 (xhr)',
+        '404 GET https://cdn.example.com/logo.png (image)',
+        '404 GET http://localhost:4000/data (xhr)',
+        '404 GET http://localhost:3000/missing (mainFrame)',
+        '(5 more failed requests from pages or frames not allowed for Claude are not shown.)',
+      ].join('\n'),
+    );
+    expect(text).not.toContain('secret');
+    // ページの様子に添える「失敗した通信 N 件」も、見せるものだけを数える
+    expect(textOf(await call('select_tab', { index: 1 }))).toContain('4 requests failed (read them with get_failed_requests).');
+    // 見せるものが無ければ、除いた数だけ。clear では、除いたものも消す
+    await call('get_failed_requests', { clear: true });
+    fail('https://ads.example.com/track?token=secret', 'xhr', sentBy(page, 'https://ads.example.com', false));
+    expect(textOf(await call('get_failed_requests', { clear: true }))).toBe('(1 more failed request from pages or frames not allowed for Claude is not shown.)');
+    expect(textOf(await call('select_tab', { index: 1 }))).not.toContain('failed');
+    expect(textOf(await call('get_failed_requests'))).toBe('No failed requests.');
+  });
+
+  it('トップと同じオリジンの iframe の通信は、トップが人の許したオリジンなら返す。別オリジンの iframe には、タブの許可は効かない', async () => {
+    const { call, control, open, network } = setup();
+    const page = open('http://localhost:3000/');
+    await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { url: 'https://app.example.com/' } });
+    await call('navigate', { url: 'https://app.example.com/' });
+    const fail = (url: string, resourceType: string, sender: object) => network.completed!({ statusCode: 500, method: 'GET', url, resourceType, ...sentBy(page), ...sender });
+    fail('https://app.example.com/api', 'xhr', {});
+    fail('https://app.example.com/frame-api', 'xhr', sentBy(page, 'https://app.example.com', false));
+    fail('https://app.example.com/inner', 'subFrame', {});
+    fail('https://pay.example.com/api?token=secret', 'xhr', sentBy(page, 'https://pay.example.com', false));
+    fail('https://pay.example.com/frame?token=secret', 'subFrame', {});
+    // 出したフレームが分からない（移った・無くなった）ときは、iframe と同じ決まり
+    fail('https://app.example.com/late', 'xhr', { frame: null });
+    expect(textOf(await call('get_failed_requests'))).toBe(
+      [
+        '500 GET https://app.example.com/api (xhr)',
+        '500 GET https://app.example.com/frame-api (xhr)',
+        '500 GET https://app.example.com/inner (subFrame)',
+        '500 GET https://app.example.com/late (xhr)',
+        '(2 more failed requests from pages or frames not allowed for Claude are not shown.)',
+      ].join('\n'),
+    );
+  });
+});
+
 describe('コンソールと失敗した通信の記録', () => {
   it('コンソール: 出た場所を添えて集め、レベルで選んで読む。clear で消す', async () => {
     const { call, open } = setup();
@@ -417,7 +580,7 @@ describe('コンソールと失敗した通信の記録', () => {
     const page = open('http://localhost:3000/');
     const keep = () => {
       logConsole(page, 'error', 'こわれた');
-      network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/api', resourceType: 'xhr', webContentsId: page.id });
+      network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/api', resourceType: 'xhr', ...sentBy(page) });
     };
     keep();
     page.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false });
@@ -433,7 +596,7 @@ describe('コンソールと失敗した通信の記録', () => {
     const { control, call, open, network } = setup();
     const page = open('http://localhost:3000/');
     expect(network.filters).toEqual([{ urls: ['http://*/*', 'https://*/*'] }, { urls: ['http://*/*', 'https://*/*'] }]);
-    const base = { method: 'GET', resourceType: 'script', webContentsId: page.id };
+    const base = { method: 'GET', resourceType: 'script', ...sentBy(page) };
     network.completed!({ ...base, statusCode: 200, url: 'http://localhost:3000/ok.js' });
     network.completed!({ ...base, statusCode: 399, url: 'http://localhost:3000/redirect.js' });
     network.completed!({ ...base, statusCode: 400, url: 'http://localhost:3000/bad.js' });
@@ -467,14 +630,15 @@ describe('コンソールと失敗した通信の記録', () => {
     const page = new FakeContents({ url: 'http://localhost:3000/' });
     const logs = control.track(asWebContents(page));
     expect(control.track(asWebContents(page))).toBe(logs);
-    network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/a', resourceType: 'xhr', webContentsId: page.id });
-    expect(logs.failed).toEqual(['500 GET http://localhost:3000/a (xhr)']);
+    network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/a', resourceType: 'xhr', ...sentBy(page) });
+    // 通信を出したもの（オリジンとトップのフレームか）も残す
+    expect(logs.failed).toEqual([{ text: '500 GET http://localhost:3000/a (xhr)', origin: 'http://localhost:3000', top: true }]);
     page.destroy();
     network.completed!({ statusCode: 500, method: 'GET', url: 'http://localhost:3000/b', resourceType: 'xhr', webContentsId: page.id });
     expect(logs.failed).toHaveLength(1);
     const again = control.track(asWebContents(page));
     expect(again).not.toBe(logs);
-    expect(again).toEqual({ console: [], failed: [] });
+    expect(again).toEqual({ console: [], failed: [], seq: 0, navigated: { count: 0, urls: [] } });
   });
 });
 
@@ -578,7 +742,7 @@ describe('開く（navigate）', () => {
       logConsole(page, 'error', 'a');
       logConsole(page, 'warning', 'b');
       logConsole(page, 'error', 'c');
-      network.completed!({ statusCode: 404, method: 'GET', url: 'http://localhost:3000/x.png', resourceType: 'image', webContentsId: page.id });
+      network.completed!({ statusCode: 404, method: 'GET', url: 'http://localhost:3000/x.png', resourceType: 'image', ...sentBy(page) });
     };
     expect(textOf(await call('navigate', { url: 'http://localhost:3000/next' }))).toBe(
       [
@@ -877,6 +1041,72 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     expect(sentOn(IpcChannel.BrowserNewTab)).toEqual([{ sessionId: 'S1', url: 'http://localhost:3000/popup', background: false, openerTabId: page.tabId }]);
     expect(created).toHaveLength(1);
     expect(created[0].loadingPolls).toBe(0);
+  });
+
+  // Claude がページのボタンを押して、ページがポップアップを開こうとする（押したときに、別ウインドウの扱いが聞いてくる）
+  const clickOpening = (ctx: ReturnType<typeof setup>, page: Tab, onRelease: () => void) => {
+    page.page.locate = () => ({ rect: { x: 0, y: 0, width: 10, height: 10 }, viewport: { width: 800, height: 600 }, description: 'button#login', covered: null });
+    page.debugger.handler = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') onRelease();
+      return {};
+    };
+    return ctx.call('click', { selector: '#login' });
+  };
+
+  it('allowsPopup: ユーザーの操作のポップアップは開いてよい（知らない webview も）。Claude の操作の間は、許した先だけ開き、別ウインドウで開いたことをオリジンで伝える', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    expect(ctx.control.allowsPopup(asWebContents(page), 'https://example.com/login')).toBe(true);
+    expect(ctx.control.allowsPopup(asWebContents(new FakeContents()), 'https://example.com/login')).toBe(true);
+    const result = textOf(
+      await clickOpening(ctx, page, () => {
+        expect(ctx.control.allowsPopup(asWebContents(page), 'http://localhost:3000/login?state=secret')).toBe(true);
+        expect(ctx.control.allowsPopup(asWebContents(page), 'http://localhost:3000/again')).toBe(true);
+      }),
+    );
+    expect(result).toBe(
+      'Clicked: button#login\n' +
+        'Opened a popup window outside the in-app browser (http://localhost:3000). You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+    );
+    // 次の呼び出しには残らない
+    expect(textOf(await ctx.call('get_console_logs'))).toBe('No console messages.');
+  });
+
+  it('allowsPopup: 空のページ（about:blank）のポップアップは、Claude の操作の間も開く（中身は開いたページが書き、移るときに確かめる）', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    const result = textOf(await clickOpening(ctx, page, () => expect(ctx.control.allowsPopup(asWebContents(page), 'about:blank')).toBe(true)));
+    expect(result).toBe(
+      'Clicked: button#login\n' +
+        'Opened a popup window outside the in-app browser (about:blank). You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+    );
+  });
+
+  it('allowsPopup: Claude の操作で、許していない先のポップアップは開かず、止めたことを伝える（continue では新しいタブに開く）', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    const result = textOf(await clickOpening(ctx, page, () => expect(ctx.control.allowsPopup(asWebContents(page), 'https://example.com/login?state=secret')).toBe(false)));
+    expect(result).toBe(
+      'Clicked: button#login\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://example.com). To open it, call navigate with action "continue" (tanacode asks the user for permission).',
+    );
+    const gate = JSON.parse(textOf(await ctx.control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { action: 'continue' } }))) as { outside: string | null };
+    expect(gate).toEqual({ outside: 'https://example.com' });
+    await ctx.call('navigate', { action: 'continue' });
+    expect(ctx.sentOn(IpcChannel.BrowserNewTab)).toEqual([{ sessionId: 'S1', url: 'https://example.com/login?state=secret', background: false, openerTabId: page.tabId }]);
+  });
+
+  it('blocksNavigation（ポップアップ）: Claude の操作の間は、開いたタブで許していない先への移動だけ止めて伝える。continue の先には控えない', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    expect(ctx.control.blocksNavigation(asWebContents(page), 'https://example.com/', true)).toBe(false);
+    const result = textOf(
+      await clickOpening(ctx, page, () => {
+        expect(ctx.control.blocksNavigation(asWebContents(page), 'http://localhost:3000/next', true)).toBe(false);
+        expect(ctx.control.blocksNavigation(asWebContents(page), 'https://example.com/callback?code=secret', true)).toBe(true);
+      }),
+    );
+    expect(result).toBe('Clicked: button#login\nBlocked an attempt to move a popup window opened by the page to a page not allowed for Claude (https://example.com).');
+    expect(textOf(await ctx.call('navigate', { action: 'continue' }))).toBe('Nothing was stopped in the current tab, so there is nothing to continue. To open a page, pass url.');
   });
 
   it('1 回の操作で新しいタブがいくつも開いたら、開いた先をすべて伝え、最後に開いたタブの番号を返す', async () => {
@@ -1190,5 +1420,56 @@ describe('許す先の外を開く（開くたびに人の許可）', () => {
     expect(control.humanOnly('S1', request({ url: 'https://example.org/' }))).not.toBeNull();
     await vi.advanceTimersByTimeAsync(15 * 60_000);
     expect(control.humanOnly('S1', request({ url: 'https://example.org/' }))).toBeNull();
+  });
+
+  it('子の JavaScript の実行の確認は、今のタブが許す先か、そのタブで人が許したオリジンのときだけ、親も答えられる。ほかは人だけ', async () => {
+    const { control, state, call, open } = setup();
+    const evaluate = (sessionId = 'S1') => control.humanOnly(sessionId, request({ expression: 'document.title' }, 'evaluate'));
+    const HUMAN_ONLY =
+      'it asks to run JavaScript on a page that the user has not allowed for Claude in the in-app browser (neither a host the user allowed in tanacode nor a site the user permitted in that tab), and only the user can answer such a prompt.';
+    // タブが無い（今のページを確かめられない）
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    // 許す先（既定の localhost・*.local と、ユーザーが足した先）
+    const page = open('http://localhost:3000/');
+    expect(evaluate()).toBeNull();
+    page.url = 'http://myapp.local/';
+    expect(evaluate()).toBeNull();
+    page.url = 'https://staging.example.test/';
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    state.hosts = ['staging.example.test'];
+    expect(evaluate()).toBeNull();
+    // まだ人が許していないサイト
+    page.url = OUT;
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    // 人がこのタブで開くのを許したら、親も答えられる
+    page.url = 'http://localhost:3000/';
+    await gateOpen(control, { url: OUT });
+    await call('navigate', { url: OUT });
+    expect(evaluate()).toBeNull();
+    // 許したあとに別のサイトへ移った
+    page.url = 'https://other.example/';
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    page.url = OUT;
+    expect(evaluate()).toBeNull();
+    // 許したのは、そのタブだけ（同じオリジンでも、別のタブは人だけ）
+    const other = open(OUT, { activate: true });
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    control.activate('S1', page.tabId);
+    expect(evaluate()).toBeNull();
+    // ほかのセッションのタブの許可は使わない
+    open(OUT, { sessionId: 'S2' });
+    expect(evaluate('S2')).toBe(HUMAN_ONLY);
+    // 空のタブ・壊れたタブ
+    control.activate('S1', other.tabId);
+    other.url = 'about:blank';
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    control.activate('S1', page.tabId);
+    // メニューでオフにすると、人が許したオリジンも捨てる
+    control.turnOff();
+    expect(evaluate()).toBe(HUMAN_ONLY);
+    page.url = 'http://localhost:3000/';
+    expect(evaluate()).toBeNull();
+    page.destroyed = true;
+    expect(evaluate()).toBe(HUMAN_ONLY);
   });
 });

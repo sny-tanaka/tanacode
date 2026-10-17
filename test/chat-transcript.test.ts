@@ -1,9 +1,9 @@
 import { CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK } from '../src/shared/checklist-tools';
 import { CHECKLIST_HOOK_COMMAND } from '../src/main/checklist-hook';
-import { QUESTION_HOOK_COMMAND } from '../src/main/question-hook';
 import { describe, expect, it } from 'vitest';
 import {
   ASK_FILE_ENV,
+  QUESTION_HOOK_ENV,
   bridgeUrlOf,
   isHumanPrompt,
   isTranscriptEntry,
@@ -11,6 +11,7 @@ import {
   toChatEvents,
   toolTarget,
   transcriptTitle,
+  unsentView,
   type ChatEvent,
   type TranscriptEntry,
   splitPasted,
@@ -247,14 +248,29 @@ describe('toChatEvents: attachment の行', () => {
     expect(events({ type: 'attachment', attachment: { type: 'hook_something' } })).toEqual([
       { type: 'hook', id: '', run: expect.objectContaining({ event: 'hook', name: '', outcome: 'success' }) },
     ]);
-    // アプリが足したフック（AskUserQuestion の入力をファイルに書くもの・質問をアプリに渡して答えを待つもの）は出さない
+    // ユーザーのフックが標準出力の JSON で suppressOutput を指定したものは出さない（Claude Code の画面でも出ない）。読めない JSON・ほかの出力は出す
+    const quieted = (stdout: string) => events(attachment({ type: 'hook_success', hookName: 'PostToolUse:Bash', hookEvent: 'PostToolUse', toolUseID: 'toolu_bash', command: 'my-hook', stdout, stderr: '', exitCode: 0 }));
+    expect(quieted('{"suppressOutput":true}\n')).toEqual([]);
+    expect(quieted('{"suppressOutput": true, "hookSpecificOutput": {"hookEventName": "PostToolUse"}}')).toEqual([]);
+    expect(quieted('{"suppressOutput":false}')).toHaveLength(1);
+    expect(quieted('{"suppressOutput":true')).toHaveLength(1);
+    expect(quieted('記録しました {"suppressOutput":true}')).toHaveLength(1);
+    expect(quieted('[{"suppressOutput":true}]')).toHaveLength(1);
+    // 前のバージョンのアプリが足したフック（AskUserQuestion の入力をファイルに書くもの・質問をアプリに渡して答えを待つもの）は出さない
     expect(events(attachment({ type: 'hook_success', hookEvent: 'PreToolUse', command: `cat > "$${ASK_FILE_ENV}"` }))).toEqual([]);
-    expect(events(attachment({ type: 'hook_success', hookEvent: 'PermissionRequest', command: QUESTION_HOOK_COMMAND }))).toEqual([]);
+    expect(
+      events(attachment({ type: 'hook_success', hookEvent: 'PermissionRequest', command: `${QUESTION_HOOK_ENV}=1 ELECTRON_RUN_AS_NODE=1 "$TANACODE_QUESTION_COMMAND" "$TANACODE_QUESTION_SCRIPT"` })),
+    ).toEqual([]);
     // チェックリストを使い続けさせるフック。Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）・ターンの終わりを止めた記録（コマンドは blockingError に入る）。2.1.296
     const reminder = `<${CHECKLIST_REMINDER_TAG}>\n今のチェックリスト\n</${CHECKLIST_REMINDER_TAG}>`;
     expect(events(attachment({ type: 'hook_additional_context', hookName: 'UserPromptSubmit', hookEvent: 'UserPromptSubmit', content: [reminder] }))).toEqual([]);
     // 止めた記録は、フックの一覧には出さず、目印だけを残す（このあとの応答は、チェックリストを直した報告。ほかのセッションに結果を返すときに見分ける）
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([{ type: 'checklist-stop' }]);
+    // ターンの終わりを、止めずに文を渡して続けさせた記録（2.1.302 からのアプリ。コマンドは載らないので、囲みで見分ける）も、目印だけを残す
+    const stopReminder = `<${CHECKLIST_REMINDER_TAG}>Before you end this turn (2 tool calls, checklists not touched)</${CHECKLIST_REMINDER_TAG}>`;
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'Stop', hookEvent: 'Stop', content: [stopReminder] }))).toEqual([{ type: 'checklist-stop' }]);
+    // ユーザーの Stop のフックが文を渡したときは、フックの一覧に出す
+    expect(events(attachment({ type: 'hook_additional_context', hookName: 'Stop', hookEvent: 'Stop', content: ['テストも流して'] }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'context' } });
     // ユーザーの Stop のフックが止めたとき・Stop でないときは、目印にしない
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: 'テストを流して', command: 'npm test' } }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
@@ -594,6 +610,16 @@ describe('toChatEvents: 発言の行', () => {
     expect(isHumanPrompt(wrap(wakeupText('予約')))).toBe(false);
     expect(isHumanPrompt(wrap(parentMessageText(parent, '親からの指示')))).toBe(true);
     expect(transcriptTitle(user(wrap(parentMessageText(parent, '子への長い指示\n二行目'))))).toEqual({ title: '子への長い指示', priority: 1 });
+  });
+
+  it('unsentView: 送信中・順番待ちには、会話に出たときと同じ形で出す。親の指示は囲みを外して親の ID を付け、知らせは出さない', () => {
+    const parent = 'abcd1234-0000-0000-0000-000000000000';
+    expect(unsentView('ログインを直して')).toEqual({ text: 'ログインを直して', pastes: [] });
+    expect(unsentView(parentMessageText(parent, 'テストも直して'))).toEqual({ text: 'テストも直して', pastes: [], parent });
+    expect(unsentView('見て\n\n<pasted_content id="1">\nログ\n</pasted_content id="1">\n')).toEqual({ text: '見て', pastes: ['ログ'] });
+    expect(unsentView(sessionEventText(['abcdef12'], '子の作業が終わりました'))).toBeNull();
+    expect(unsentView(wakeupText('予約の本文'))).toBeNull();
+    expect(unsentView(checklistEventText([{ listId: 'ab12', cardId: 'cd34' }], '返信がありました'))).toBeNull();
   });
 
   it('Claude が自分に入れた予約の知らせは「Claude の予約の時刻になりました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {

@@ -1,14 +1,13 @@
-import { createHash } from 'node:crypto';
 import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ChatEvent } from '@shared/chat';
 import { autoPercentOf, carriedMessages, compactMidTurn, lastReplyIn } from '@shared/optimized-compact';
 import { t, type MessageKey } from '@shared/i18n';
-import type { ArchiveOptions, NewSessionOptions, ScreenChoice, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
-import { stripControlChars } from '@shared/prompt-keys';
-import type { AskQuestion, ChooseResult, Menu, MenuOption, PermissionMode, ScreenInfo } from '@shared/screen';
-import { answerText, type PendingQuestion } from '@shared/questions';
+import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '@shared/ipc';
+import { stripControlChars } from '@shared/paste';
+import type { AskQuestion, PermissionMode } from '@shared/screen';
+import { answerText, type PendingPermission, type PendingQuestion, type PermissionReply } from '@shared/questions';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -27,12 +26,12 @@ import {
   sessionEventText,
   sessionTool,
   SWITCHABLE_MODES,
-  type PermissionRequest,
   type SessionState,
 } from '@shared/session-tools';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
+import { SEND_FAILURE, SendError } from './send-error';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
 
@@ -50,6 +49,9 @@ import { WAIT_MAX_SECONDS } from './sessions-bridge';
 // schedule_wakeup・list_wakeups・cancel_wakeup は、自分のセッションへの予約（時刻を指定して送信と同じ流れ。scheduled-messages.ts）。子も使える。
 // report_result は、ターンの終わりの通知に載せる報告を預ける（子は人に通知しないので、子でないセッションだけ）
 
+// 人だけが答えられる確認かを決めるのに使う、許可の確認のツールと入力
+export type PermissionTarget = { tool: string; input: Record<string, unknown> };
+
 // SessionManager のうち、ツールが使うもの
 export type SessionsHost = {
   list(): SessionSummary[];
@@ -61,27 +63,25 @@ export type SessionsHost = {
   currentModel(id: string): string | null;
   currentEffort(id: string): string | null;
   conversation(id: string): Promise<ChatEvent[]>;
-  screen(id: string): ScreenInfo | null;
   create(cwd: string, options: NewSessionOptions, parentId: string | null): string;
   createInWorktree(cwd: string, options: NewSessionOptions, parentId: string | null): Promise<string>;
   rename(id: string, title: string): void;
   // 権限モードを切り替える（Shift+Tab。動いていない子は、次に起動するときのモード）。切り替えられたら true
   setMode(id: string, mode: PermissionMode): Promise<boolean>;
   // モデル・エフォート・設定ファイルを変える。動いていれば、Claude Code を起動し直して同じ会話を続ける
-  configure(id: string, options: SessionOptions): void;
+  configure(id: string, options: SessionOptions): Promise<void> | void;
   open(id: string): Promise<void>;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
+  // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
+  switchingTerminal(id: string): boolean;
   interrupt(id: string): void;
-  withdrawParentDraft(id: string): Promise<void>;
-  askedQuestions(id: string): AskQuestion[] | null;
-  // フックが答えを待っている質問（いちばん前のもの）と、その 1 問への答え（全部そろったら返事にする）
+  // 答えを待っている質問（いちばん前のもの）と、その 1 問への答え（全部そろったら返事にする）
   pendingQuestion(id: string): PendingQuestion | null;
   answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null;
-  // expect を満たすメニューのあいだだけ選ぶ。押せたら true
-  chooseIf(id: string, choice: ScreenChoice, expect: (menu: Menu) => boolean): Promise<ChooseResult>;
   watchState(listener: (id: string) => void): () => void;
-  // 今出ている許可の確認の、ツールの名前と入力の全文（フックが書いたもの。今の確認のものと言えなければ null）
-  pendingPermission(id: string): PermissionRequest | null;
+  // 答えを待っている許可の確認（いちばん前のもの。ツールの名前と入力の全文つき）と、それへの答え（もう待っていなければ false）
+  pendingPermission(id: string): PendingPermission | null;
+  replyPermission(id: string, requestId: string, reply: PermissionReply): boolean;
   // バックグラウンドで動かしたもの（終わったものも入っている）。end_session で、Claude Code と一緒に止まるものを伝えるために読む
   subagents(id: string): SubagentRun[];
   bashTasks(id: string): BashTask[];
@@ -99,7 +99,7 @@ export type SessionsHost = {
 };
 
 // 予約したメッセージ（ScheduledMessages）のうち、自分への予約のツールが使うもの
-export type WakeupHost = Pick<ScheduledMessages, 'list' | 'add' | 'cancel' | 'claudeWakeups'>;
+export type WakeupHost = Pick<ScheduledMessages, 'list' | 'add' | 'cancel' | 'claudeWakeups' | 'saving'>;
 
 type Deps = {
   host: SessionsHost;
@@ -109,7 +109,7 @@ type Deps = {
   // アーカイブはしたうえで、理由を添えて失敗する
   archive: (id: string, options: ArchiveOptions) => Promise<WorktreeRemoval | null>;
   // 子の許可の確認のうち、人だけが答えられるもの（アプリ内ブラウザで、許す先の外を開く）。当たれば、親に許させない理由（英語）
-  humanOnly?: (sessionId: string, request: PermissionRequest) => string | null;
+  humanOnly?: (sessionId: string, request: PermissionTarget) => string | null;
   // ホームのフォルダ（ここを開いたセッションに、ホームの下のすべてのセッションを見せないため）
   home: string;
   // 予約したメッセージ（自分への予約に使う）。予約は SessionsControl より後で作るので、取り出す関数で渡す
@@ -138,13 +138,18 @@ const MAX_UNTRACKED_FILES = 100;
 const MAX_UNTRACKED_BYTES = 256 * 1024;
 // 1 回の結果の文字数の上限（親のコンテキストを食いつぶさないため）
 const MAX_RESULT_CHARS = 60_000;
-// 許可の確認で、親に渡すツールの入力（JSON）の文字数の上限。超えるものは全文を渡せないので、親には許させない
-const MAX_PERMISSION_INPUT_CHARS = 30_000;
+// 許可の確認で、親に渡すツールの入力（JSON）の大きさの上限（UTF-8 のバイト）。超えるものは全文を渡せないので、親には許させない。
+// Claude Code は MCP のツールの結果をトークン（既定は 2.5 万。人の設定で減らせる）で数えて切るので、文字数ではなく、1 文字が多くの
+// トークンになる文字（日本語など）でも上限に収まるよう、バイトで数える（1 トークンは 1 バイト以上）
+const MAX_PERMISSION_INPUT_BYTES = 20_000;
 // 親が子の許可の確認を許せる、親の権限モード（manual・plan の親は、自分の操作も人が毎回許すので、子の操作も許せない）
 const MODES_ALLOWING_PERMISSION = new Set<PermissionMode>(['acceptEdits', 'auto', 'bypassPermissions']);
 const WAIT_DEFAULT_SECONDS = 300;
 // list_wakeups で返す、予約の本文の文字数の上限
 const MAX_WAKEUP_TEXT_CHARS = 300;
+// 予約のファイルを読めず、保存しないときに添える一言
+const WAKEUPS_UNSAVED =
+  'Note: tanacode could not read its saved file of scheduled messages (no permission, or written by a newer version of tanacode), so scheduled messages are not saved: the ones not sent yet are lost when tanacode quits. Tell the user (this note is given only once, not in every result).';
 // schedule_wakeup の at の形（ISO 8601。時差の無い時刻は、どこの時刻か分からないので受けない）
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 // 起動が終わる前（予約・報告の受け手を作る前）に届いた呼び出しに返すもの
@@ -156,8 +161,8 @@ const MAX_START_FOLDERS = 30;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
 // 親に知らせる、子の手が空いた状態。バックグラウンドのタスクの完了待ちも、ターンは終わっているので知らせる。
-// 子セッションは人に通知しないので、人が答える許可の確認・ターミナルとアプリ内ブラウザでの操作の待ちも、親に知らせて人に伝えさせる
-const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'waiting', 'browser', 'exited']);
+// 子セッションは人に通知しないので、人が答える許可の確認・アプリ内ブラウザでの操作の待ちも、親に知らせて人に伝えさせる
+const NOTIFY_STATES = new Set<SessionState>(['idle', 'background', 'question', 'permission', 'terminal', 'browser', 'exited']);
 
 // end_session で終えられる状態。手が空いている・Claude Code が動いていない・裏のタスクの完了待ち（ターンは終わっている）・アーカイブ済み（残った worktree を消す）
 const ENDABLE_STATES = new Set<SessionState>(['idle', 'exited', 'background', 'archived']);
@@ -170,28 +175,28 @@ const END_REFUSAL: Partial<Record<SessionState, string>> = {
     'is waiting for an answer to a question, so its work is not finished and it was not ended. Answer the question with answer_question (get_session shows it) and let it finish, or ask the user whether to end it.',
   permission:
     'is waiting for an answer to a permission prompt, so its work is not finished and it was not ended. Answer the prompt with answer_permission (get_session shows it) or ask the user, and call end_session again once the child is idle.',
-  waiting:
-    'is waiting for the user to act in its terminal, so it was not ended. Only the user can do that: tell the user, and call end_session again once the child is idle.',
+  terminal: 'is in terminal mode: the user is working in its Claude Code screen, so it was not ended. Tell the user, and call end_session again once the user has switched it back to the chat.',
   browser:
     'is waiting for the user to act in the in-app browser, so its work is not finished and it was not ended. Tell the user, and call end_session again once the child is idle. If its work is no longer needed, interrupt it with stop_session first.',
 };
 
-// configure_session で、権限モードを切り替えられる状態。手が空いている・裏のタスクの完了待ち（ターンは終わっている）・動いていない（次の起動のモード）。
-// 作業中は切り替えない（Shift+Tab を送るあいだに許可の確認が出ると、「許して accept edits に切り替える」を選んでしまう）
-const MODE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
-// モデル・エフォートを変えられる状態。Claude Code を起動し直すので、裏のタスクの完了待ちは除く（タスクが止まる）
-const RESTARTABLE_STATES = new Set<SessionState>(['idle', 'exited']);
+// configure_session で、権限モードを切り替えられる状態。手が空いている・裏のタスクの完了待ち・作業中（set_permission_mode は作業中でも効く。
+// 実測）・動いていない（次の起動のモード）
+const MODE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'working', 'exited']);
+// モデル・エフォートを変えられる状態。動いている Claude Code をその場で切り替える（set_model・apply_flag_settings）ので、裏のタスクは止まらない。
+// 作業中は、応答の途中で変えないよう除く
+const MODEL_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
+// Remote Control を切り替えられる状態（作業中は、つなぎ直しで応答を止めないよう除く）
+const REMOTE_SWITCHABLE_STATES = new Set<SessionState>(['idle', 'background', 'exited']);
 // 変えられない状態ごとの、断る理由と次にできること（子の名前に続ける）
 const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
   starting: 'is still starting up. Wait until it is idle (check with get_session), then call configure_session again.',
   working:
-    'is working, so nothing was changed. Wait for it to finish (check with get_session), or interrupt it with stop_session, then call configure_session again and tell it to continue with send_message.',
-  background:
-    "is waiting for background tasks to finish, and a new model or effort restarts its Claude Code, which would stop them. Nothing was changed. Wait until it is idle, or change only the permission mode or Remote Control.",
+    'is working, so nothing was changed (only its permission mode can be switched while it works, when changed alone). Wait for it to finish (check with get_session), or interrupt it with stop_session, then call configure_session again and tell it to continue with send_message.',
   question: 'is waiting for an answer to a question, so nothing was changed. Answer it with answer_question (get_session shows it) or let the user answer it, then call configure_session again.',
   permission:
     'is waiting for an answer to a permission prompt, so nothing was changed. Answer it with answer_permission (get_session shows it) or ask the user, then call configure_session again.',
-  waiting: 'is waiting for the user to act in its terminal, so nothing was changed. Only the user can do that: tell the user, and call configure_session again once the child is idle.',
+  terminal: 'is in terminal mode: the user is working in its Claude Code screen, so nothing was changed. Ask the user to switch it back to the chat, then call configure_session again.',
   browser:
     'is waiting for the user to act in the in-app browser, so nothing was changed. Tell the user, and call configure_session again once the child is idle (or interrupt it with stop_session first).',
 };
@@ -199,9 +204,6 @@ const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
 // setRemoteControl が返す理由（画面の言語）を置き換える、Claude に返す英語の文
 const REMOTE_REFUSAL: [MessageKey, string][] = [
   ['main.remote.switching', 'it is in the middle of switching Remote Control. Try again in a moment.'],
-  ['main.remote.waitingAnswer', 'its Claude Code is waiting for an answer to a prompt. Check it with get_session, and try again once the child is idle.'],
-  ['main.remote.draft', 'there is unsent text in the input field of its Claude Code (the user may be typing in it). Try again later, or ask the user.'],
-  ['main.remote.failed', 'tanacode could not switch it on the screen of its Claude Code. Ask the user to switch it with /remote-control in its terminal.'],
 ];
 
 class ToolError extends Error {}
@@ -217,6 +219,8 @@ export class SessionsControl {
   private readonly compacted = new Set<string>();
   // 親が止めた子。止めてターンが終わったことは、親に知らせない
   private readonly stopped = new Set<string>();
+  // 予約を保存しないことを結果に添えたセッション。Claude が呼ぶたびに人へ伝え直さないよう、最初の 1 回だけ添える（画面の予約にも出ている）
+  private readonly wakeupsUnsavedNoted = new Set<string>();
   private readonly unwatch: () => void;
   private readonly deps: Deps;
   // 元の host（アプリ内ブラウザでの人の操作待ちを、browser に置き換えない）
@@ -343,14 +347,20 @@ export class SessionsControl {
     const ref = base?.mergeBase ?? 'HEAD';
     const inPath = (file: string) => !path || file === path || file.startsWith(`${path}/`);
     const files = (await branchFiles(cwd, ref)).filter((f) => inPath(f.path));
-    const tracked = await git(cwd, ['diff', '--relative', '--no-renames', '--no-color', ref, '--', ...(path ? [path] : [])]);
-    const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...(path ? [path] : [])])).split('\0').filter(Boolean);
+    // path は git の pathspec の書き方（:(top) など）として読ませず、書いたままのパスとして渡す
+    const literal = { GIT_LITERAL_PATHSPECS: '1' };
+    const tracked = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--submodule=short', '--relative', '--no-renames', '--no-color', ref, '--', ...(path ? [path] : [])], undefined, literal);
+    const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...(path ? [path] : [])], undefined, literal))
+      .split('\0')
+      // セッションのフォルダの外を指すもの（../ で始まるもの）は読まない
+      .filter((file) => file && !isAbsolute(file) && file !== '..' && !file.startsWith('../'));
     // 未追跡のファイルは 1 つずつ、結果の上限に達したら読むのをやめる
+    const folder = await realpath(cwd).catch(() => cwd);
     const added: string[] = [];
     let size = tracked.length;
     for (const file of untracked.slice(0, MAX_UNTRACKED_FILES)) {
       if (size > MAX_RESULT_CHARS) break;
-      const part = await untrackedDiff(cwd, file);
+      const part = await untrackedDiff(cwd, folder, file);
       added.push(part);
       size += part.length;
     }
@@ -429,6 +439,8 @@ export class SessionsControl {
       // Remote Control も、このセッションの指定に合わせる（子も。Remote Control から頼まれて始めたセッションを、そのまま外から操作できるように）
       remoteControl: caller.remoteControl,
       worktree: args.worktree,
+      // 起動のモードを、開き直すときの上限として残す（独立したセッションも。開き直したときに、呼び出し元より強いモードにならないように）
+      capMode: true,
     };
     const parentId = independent ? null : caller.id;
     const id = options.worktree ? await host.createInWorktree(folder, options, parentId) : host.create(folder, options, parentId);
@@ -471,11 +483,21 @@ export class SessionsControl {
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
     if (state === 'question') throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
     if (state === 'permission') throw new ToolError(`${who} is waiting for an answer to a permission prompt. Read it with get_session and answer it with answer_permission, or ask the user.`);
-    if (state === 'waiting') throw new ToolError(`${who} is waiting for an operation in its terminal (the user needs to handle it).`);
+    // ターミナルモードの間と、切り替えの途中は、預からずにその場で断る（決めたこと）
+    if (state === 'terminal') throw new ToolError(`${who} is in terminal mode: the user is working in its Claude Code screen, so the message was not sent (and not kept for later). Tell the user, or send it again once get_session shows that the child is back in the chat.`);
+    if (host.switchingTerminal(child.id)) {
+      throw new ToolError(`${who} is being switched between the chat and terminal mode by the user, so the message was not sent (and not kept for later). Check it with get_session, and send it again once it is back in the chat.`);
+    }
+    // ターミナルモードで止まった子は、起動し直すと TUI になって送れないので、起動せずに断る
+    if (state === 'exited' && child.terminal) {
+      throw new ToolError(`${who} is stopped in terminal mode: it starts again in its Claude Code screen, where only the user can type, so it was not started and the message was not sent (and not kept for later). Tell the user, or send it again once the user has switched it back to the chat.`);
+    }
     const text = parentMessageText(caller.id, message);
-    // 手の空いている子には、すぐ打つ
+    // 手の空いている子には、すぐ打つ。送れなかった理由は、画面の言語の文でなく英語で返す
     if (state === 'idle' || state === 'background') {
-      await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS);
+      await host.submitWhenReady(child.id, text, SEND_IDLE_TIMEOUT_MS).catch((error: unknown) => {
+        throw error instanceof SendError ? new ToolError(`${who}: the message was not sent because ${SEND_FAILURE[error.reason]}. Check it with get_session, and send it again if needed.`) : error;
+      });
       return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Sent.' });
     }
     // 作業中・起動中・止まっている子は、手が空くまでアプリが預かってから打つ（作業中に打つと、そのあいだに出た許可の確認で、
@@ -497,77 +519,19 @@ export class SessionsControl {
     const child = this.resolve(caller, args.session_id, true);
     const asked = stringArg(args.question);
     const choices = Array.isArray(args.choices) ? args.choices.filter((c): c is string => typeof c === 'string' && c.trim() !== '') : [];
-    // 自由記述は、キー操作になる文字（ESC など）を除く
+    // 自由記述は、キー操作になる文字（ESC など）を除く（改行はそのまま渡す）
     const typed = stripControlChars(stringArg(args.other)).trim();
     if (choices.length === 0 && !typed) throw new ToolError('Pass choices (the options to pick) or other (a free-text answer).');
-    // フックが答えを待っている質問なら、画面を読まずに答える（改行もそのまま渡せる）
+    if (host.stateOf(child.id) === 'terminal') throw new ToolError(`"${nameOf(child)}" is in terminal mode: the user answers its prompts in its Claude Code screen, so nothing was answered. Tell the user.`);
     const pending = host.pendingQuestion(child.id);
     if (pending) return this.answerPending(caller, child, pending, asked, choices, typed);
-    // 画面を読む道（予備）: 自由記述は子の画面に打つので、1 行にする
-    const other = typed.replace(/\s*\n\s*/g, ' ');
-    const current = () => {
-      const screen = host.screen(child.id);
-      return screen?.state.kind === 'menu' ? screen.state.menu : null;
-    };
-    const menu = current();
-    // 許可の確認には答えさせない（人だけが答える）
-    if (menu?.kind === 'permission') throw new ToolError(`"${nameOf(child)}" is showing a permission prompt, not a question. Answer it with answer_permission (get_session shows it).`);
-    if (menu?.kind !== 'question') throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
-    // 質問と読めても、AskUserQuestion で出した質問でなければ答えない（コマンドの文字に ☐ があると、許可の確認が質問に見える）
-    if (!isAskedQuestion(menu, host.askedQuestions(child.id))) {
-      throw new ToolError(`"${nameOf(child)}" is not showing an AskUserQuestion question. The user answers it.`);
-    }
-    const same = (m: Menu | null) => m?.kind === 'question' && normalizeText(m.title) === normalizeText(menu.title);
-    if (normalizeText(menu.title) !== normalizeText(asked)) {
-      throw new ToolError(`The question showing now is "${menu.title}" (the user answered first, or it has moved on to the next question). To answer it, pass this question text as question.`);
-    }
-    const selectable = menu.options.filter(isChoice);
-    const picked = choices.map((label) => {
-      const option = selectable.find((o) => normalizeText(o.label) === normalizeText(label));
-      if (!option) throw new ToolError(`There is no option "${label}". The options are: ${selectable.map((o) => `"${o.label}"`).join(', ')}.`);
-      return option;
-    });
-    const textOption = menu.options.find((o) => o.textInput);
-    if (other && !textOption) throw new ToolError('This question has no field for an answer that is not among the options (free text).');
-    const changed = () => new ToolError('Could not answer because the question changed or the user acted on it while answering. Check with get_session.');
-    // キーを送る前に毎回、同じ質問が出ているかを確かめる（途中で許可の確認などに変わったら、何も押さない）
-    const choose = async (choice: ScreenChoice) => {
-      const result = await host.chooseIf(child.id, choice, (m) => same(m) && isAskedQuestion(m, host.askedQuestions(child.id)));
-      if (result === 'filled') {
-        throw new ToolError(
-          `The free-text field of the question already has text typed earlier that could not be cleared, so nothing was typed. Ask the user to clear the field in "${nameOf(child)}" (or to answer there), then answer again.`,
-        );
-      }
-      if (result !== 'chosen') throw changed();
-    };
-    if (!menu.multiSelect) {
-      if (picked.length + (other ? 1 : 0) !== 1) throw new ToolError('Only one option can be picked for this question (pass one choice, or only other).');
-      const option = picked[0] ?? textOption!;
-      await choose({ optionId: option.id, key: 'enter', text: other || undefined });
-    } else {
-      for (const option of picked) {
-        if (current()?.options.find((o) => o.id === option.id)?.checked) continue;
-        await choose({ optionId: option.id, key: 'space' });
-        await sleep(300);
-      }
-      if (other && textOption) {
-        // 複数選択の自由記述は、打つだけでチェックが付く（Enter だと外れる）
-        await choose({ optionId: textOption.id, key: 'none', text: other });
-        await sleep(300);
-      }
-      if (!current()?.options.some((o) => o.id === 'submit')) throw new ToolError('Could not find the option that submits the answers. Check the terminal.');
-      await choose({ optionId: 'submit', key: 'enter' });
-    }
-    // 答えが受け付けられて、質問が閉じた（次の質問に進んだ）のを確かめる
-    for (let i = 0; i < 20 && same(current()); i++) await sleep(100);
-    if (same(current())) throw new ToolError('Sent the answer, but the question did not close. Check with get_session.');
-    const next = await this.followUpQuestion(child.id, same, null);
-    this.observe(caller.id, child.id);
-    return answeredResult(host.stateOf(child.id), next);
+    // 許可の確認には答えさせない（answer_permission で答える）
+    if (host.pendingPermission(child.id)) throw new ToolError(`"${nameOf(child)}" is showing a permission prompt, not a question. Answer it with answer_permission (get_session shows it).`);
+    throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
   }
 
-  // フックが答えを待っている質問に、1 問答える。質問が複数あれば、アプリが答えをためて、全部そろったらまとめてフックに返す
-  // （画面は読まず、キーも打たない）。まだ答えていない質問が残っていれば、それを next_question として返す
+  // 答えを待っている質問に、1 問答える。質問が複数あれば、アプリが答えをためて、全部そろったらまとめて Claude Code に返す。
+  // まだ答えていない質問が残っていれば、それを next_question として返す
   private async answerPending(caller: SessionSummary, child: SessionSummary, pending: PendingQuestion, asked: string, choices: string[], other: string): Promise<ToolResult> {
     const { host } = this.deps;
     const current = currentOf(pending);
@@ -588,28 +552,22 @@ export class SessionsControl {
       const rest = host.pendingQuestion(child.id);
       return answeredResult(host.stateOf(child.id), rest ? pendingQuestionOf(rest) : null);
     }
-    const next = await this.followUpQuestion(child.id, () => false, pending.id);
+    const next = await this.followUpQuestion(child.id, pending.id);
     return answeredResult(host.stateOf(child.id), next);
   }
 
-  // 答えたあと、子が続けて出す次の質問を、少しのあいだ待つ。出たら、その質問のメニューを返す。
+  // 答えたあと、子が続けて出す次の質問を、少しのあいだ待つ。出たら、その質問を返す。
   // 子は、決めることがいくつもあるとき、1 問ずつ別々の AskUserQuestion で聞くことが多い（「1/3」「2/3」…）。答えた直後の子は作業中でも、
   // 数秒で次の質問を出す。待たずに返すと、親は「作業中」と見て離れ、次の質問が、親がもう一度見に来るまで待たされる
   // （2026-10-12、3 問のうち 1 問ごとに、次の質問が 1 分以上待たされた）。
-  // 子の手が空いた・人の操作待ちになった・終了したら、次の質問は来ないので、待つのをやめる
-  // answered: フックで答えた質問（その質問は次の質問ではない）。画面で答えたときは null
-  private async followUpQuestion(id: string, same: (menu: Menu | null) => boolean, answered: string | null): Promise<Record<string, unknown> | null> {
+  // 子の手が空いた・人の操作待ちになった・終了したら、次の質問は来ないので、待つのをやめる。answered: 答えた質問（次の質問ではない）
+  private async followUpQuestion(id: string, answered: string): Promise<Record<string, unknown> | null> {
     const { host } = this.deps;
     const limit = this.deps.followUpMs ?? FOLLOW_UP_MS;
     const deadline = Date.now() + limit;
     for (;;) {
-      // 次の質問も、フックが待っていれば、画面を読まずに返す
       const pending = host.pendingQuestion(id);
       if (pending && pending.id !== answered) return pendingQuestionOf(pending);
-      // 画面から読むのは、画面で答えたときだけ（フックで答えた直後は、答えた質問が画面に少し残る。次の質問も、フックが先に受け取る）
-      const screen = host.screen(id);
-      const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
-      if (answered === null && !pending && menu?.kind === 'question' && !same(menu)) return questionOf(menu);
       const state = host.stateOf(id);
       if (state !== 'working' && state !== 'starting' && state !== 'question') return null;
       if (Date.now() >= deadline) return null;
@@ -617,9 +575,8 @@ export class SessionsControl {
     }
   }
 
-  // 子が出している許可の確認に、親が答える。選ぶのは「今回だけ許す」（Yes）か「断る」（No）だけで、
-  // 許可を覚えさせる選択肢・権限モードを変える選択肢は選ばない（permissionOf が、その 2 つの選択肢だけを見分ける）。
-  // 答えるのは、親が get_session で読んだ確認（permission_id）が、そのまま出ているときだけ。キーを送る直前にも確かめ直す
+  // 子が出している許可の確認に、親が答える。選べるのは「今回だけ許す」か「断る」だけで、許可を覚えさせる・権限モードを変える答えはしない。
+  // 答えるのは、親が get_session で読んだ確認（permission_id。Claude Code の要求の ID）が、まだ答えを待っているときだけ
   private async answerPermission(caller: SessionSummary, args: Record<string, unknown>): Promise<ToolResult> {
     const { host } = this.deps;
     const child = this.resolve(caller, args.session_id, true);
@@ -628,47 +585,32 @@ export class SessionsControl {
     if (!id) throw new ToolError('Pass permission_id (permission.id from get_session) to say which permission prompt you are answering.');
     if (args.decision !== 'allow' && args.decision !== 'deny') throw new ToolError('Pass decision as "allow" or "deny".');
     const allow = args.decision === 'allow';
-    // 理由は子の入力欄に打つので、キー操作になる文字（ESC など）を除く
     const reason = stripControlChars(stringArg(args.reason)).trim();
     if (allow && reason) throw new ToolError('reason is only for decision "deny". To allow with a condition, allow it and then instruct the child with send_message.');
-    const current = async () => {
-      const screen = host.screen(child.id);
-      const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
-      return menu?.kind === 'permission' ? permissionOf(menu, host.pendingPermission(child.id), await host.conversation(child.id), (r) => this.deps.humanOnly?.(child.id, r) ?? null) : null;
-    };
-    const shown = await current();
-    if (!shown) throw new ToolError(`${who} is not showing a permission prompt that can be answered here (the user answered it first, or it is another kind of screen). Check with get_session.`);
+    if (host.stateOf(child.id) === 'terminal') throw new ToolError(`${who} is in terminal mode: the user answers its prompts in its Claude Code screen, so nothing was answered. Tell the user.`);
+    const shown = host.pendingPermission(child.id);
+    if (!shown) throw new ToolError(`${who} is not showing a permission prompt that can be answered here (the user answered it first). Check with get_session.`);
     const changed = () => new ToolError('The permission prompt showing now is not the one you read (the user answered it, or the child moved on to another prompt). Nothing was answered. Read it again with get_session.');
     if (shown.id !== id) throw changed();
+    const view = permissionView(shown, (r) => this.deps.humanOnly?.(child.id, r) ?? null);
     if (allow) {
       // 親が自分の操作を人に毎回許してもらうモードなら、子の操作も親には許させない（子を通じて、人の確認を省かせない）
       const mode = host.modeOf(caller.id) ?? 'manual';
       if (!MODES_ALLOWING_PERMISSION.has(mode)) {
         throw new ToolError(`This session is in ${mode} mode, so it cannot allow a child's permission prompts (it can only deny them). Ask the user to answer it: show them exactly what the child wants to run.`);
       }
-      if (shown.problem) throw new ToolError(`Cannot allow this prompt: ${shown.problem} Ask the user to answer it in the child session (you can still deny it).`);
+      if (view.problem) throw new ToolError(`Cannot allow this prompt: ${view.problem} Ask the user to answer it in the child session (you can still deny it).`);
     }
-    const optionId = allow ? shown.allowOption : shown.denyOption;
-    if (!optionId) throw new ToolError(`Could not tell which option ${allow ? 'allows this once' : 'denies it'} (the options are: ${shown.labels.map((l) => `"${l}"`).join(', ')}). Nothing was answered. Ask the user to answer it.`);
-    // キーを送る直前に、同じ確認が出ているか確かめる（別の確認にすり替わっていたら、何も押さない）。
-    // 会話は先に読んでおく（expect は同期で確かめるため）
-    const events = await host.conversation(child.id);
-    const same = (menu: Menu) => menu.kind === 'permission' && permissionOf(menu, host.pendingPermission(child.id), events, (r) => this.deps.humanOnly?.(child.id, r) ?? null).id === id;
-    if ((await host.chooseIf(child.id, { optionId, key: 'enter' }, same)) !== 'chosen') throw changed();
-    // 答えが受け付けられて、確認が閉じた（次の確認に進んだ）のを確かめる
-    let next = await current();
-    for (let i = 0; i < 20 && next?.id === id; i++) {
-      await sleep(100);
-      next = await current();
-    }
-    if (next?.id === id) throw new ToolError('Sent the answer, but the permission prompt did not close. Check with get_session.');
+    // 理由があれば、断った理由として Claude に伝え、子は作業を続ける。無ければ、断って作業を止める（次の指示は send_message で）
+    const what = shown.tool ? ` to use ${shown.tool}` : '';
+    const reply = allow
+      ? ({ kind: 'allow' } as const)
+      : reason
+        ? ({ kind: 'deny', message: `The parent session denied your permission request${what}. Do not retry the same operation. Reason: ${reason}`, byParent: true } as const)
+        : ({ kind: 'stop' } as const);
+    if (!host.replyPermission(child.id, id, reply)) throw changed();
     this.observe(caller.id, child.id);
-    // 断った理由は、子の手が空いてから、親からの指示として送る（確認の画面には文字を打たない）。待たずに返す
-    if (!allow && reason) {
-      const what = shown.view.tool ? ` to use ${String(shown.view.tool)}` : '';
-      const text = `The parent session denied your permission request${what}. Do not retry the same operation. Reason: ${reason}`;
-      void host.submitWhenReady(child.id, parentMessageText(caller.id, text), SEND_TIMEOUT_MS).catch((error: unknown) => console.error('子セッションに断った理由を送れませんでした', error));
-    }
+    const next = host.pendingPermission(child.id);
     return json({
       session_id: child.id,
       answered: true,
@@ -677,9 +619,9 @@ export class SessionsControl {
       note: allow
         ? 'Allowed this once. Nothing was remembered: the same operation will ask again.'
         : reason
-          ? 'Denied. The reason will be sent to the child as an instruction as soon as it is idle.'
+          ? 'Denied. The child was told the reason and continues its work.'
           : 'Denied. The child stops this operation and waits for an instruction: tell it what to do instead with send_message.',
-      next_permission: next ? next.view : undefined,
+      next_permission: next ? permissionView(next, (r) => this.deps.humanOnly?.(child.id, r) ?? null).view : undefined,
     });
   }
 
@@ -709,17 +651,18 @@ export class SessionsControl {
     if (remote && !caller.remoteControl) {
       throw new ToolError("Remote Control can be turned on for a child only while this session's Remote Control is on, so nothing was changed. The user can turn it on in the header of the child's chat in tanacode.");
     }
-    const restart = !!model || !!effort;
+    const switching = !!model || !!effort;
     const state = host.stateOf(child.id) ?? 'exited';
     if (state === 'archived') throw new ToolError(`${who} is archived. To change it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
-    if (!(restart ? RESTARTABLE_STATES : MODE_SWITCHABLE_STATES).has(state)) {
+    const allowed = switching ? MODEL_SWITCHABLE_STATES : remote !== null ? REMOTE_SWITCHABLE_STATES : MODE_SWITCHABLE_STATES;
+    if (!allowed.has(state)) {
       throw new ToolError(`${who} ${CONFIGURE_REFUSAL[state] ?? `cannot be changed while it is ${SESSION_STATE_LABEL[state]}.`}`);
     }
     const running = state !== 'exited';
     if (mode && !(await host.setMode(child.id, mode))) {
-      const now = host.screen(child.id)?.mode;
+      const now = host.modeOf(child.id);
       throw new ToolError(
-        `Could not switch ${who} to ${mode}${now ? ` (its permission mode is now ${now})` : ''}. Its screen may have changed (for example, a prompt appeared). Check it with get_session, and call configure_session again once it is idle.`,
+        `Could not switch ${who} to ${mode}${now ? ` (its permission mode is now ${now})` : ''}: its Claude Code refused it (bypassPermissions works only when it was started in that mode). Check it with get_session.`,
       );
     }
     // 途中で失敗したときに伝える、それまでに変えたもの
@@ -733,28 +676,25 @@ export class SessionsControl {
       // ヘッダーのトグルと同じ。つながるのは待たない（get_session の remote_control.connected で確かめさせる）
       const reason = await host.setRemoteControl(child.id, remote);
       const what = `turn the Remote Control of ${who} ${remote ? 'on' : 'off'}`;
-      if (reason !== null) throw failed(`${what}${restart ? ' (its model and effort were not changed)' : ''}`, remoteRefusal(reason));
+      if (reason !== null) throw failed(`${what}${switching ? ' (its model and effort were not changed)' : ''}`, remoteRefusal(reason));
       done.push(`turned the Remote Control of ${who} ${remote ? 'on' : 'off'}`);
     }
-    if (restart) {
+    if (switching) {
       // 変えないものは、今の指定のまま（画面のモデル欄・エフォート欄で変えたときと同じ）。設定ファイルは変えない
       const options: SessionOptions = { model: model || (child.model ?? null), effort: effort || (child.effort ?? null), settingsFile: child.settingsFile ?? null };
       try {
-        host.configure(child.id, options);
+        await host.configure(child.id, options);
       } catch (error) {
-        throw failed('change its model or effort', error instanceof Error ? error.message : String(error));
+        throw failed('change its model or effort', modelRefusal(error instanceof Error ? error.message : String(error)));
       }
     }
     const changed = { ...(mode ? { permission_mode: mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(remote !== null ? { remote_control: remote } : {}) };
     const notes = !running
       ? ['Its Claude Code is not running, so the new settings are used when it starts next (send_message starts it).']
       : [
-          restart
-            ? 'Restarted its Claude Code with the new settings; it continues the same conversation. An instruction you send with send_message now is held until it has restarted.'
-            : mode
-              ? 'Switched. It keeps this permission mode when it is restarted.'
-              : null,
-          remote === true ? 'Turned Remote Control on. Connecting takes a moment: check remote_control.connected with get_session.' : remote === false ? 'Turned Remote Control off.' : null,
+          switching ? 'Switched its model and effort; its next response uses them (its background tasks keep running).' : null,
+          mode ? 'Switched the permission mode; it keeps this mode when it is restarted.' : null,
+          remote === true ? 'Turned Remote Control on: check remote_control.connected with get_session.' : remote === false ? 'Turned Remote Control off.' : null,
         ];
     return json({ session_id: child.id, changed, state: host.stateOf(child.id), note: notes.filter(Boolean).join(' ') });
   }
@@ -763,7 +703,7 @@ export class SessionsControl {
     const { host } = this.deps;
     const child = this.resolve(caller, args.session_id, true);
     const state = host.stateOf(child.id);
-    if (state === 'question' || state === 'permission' || state === 'waiting') {
+    if (state === 'question' || state === 'permission' || state === 'terminal') {
       throw new ToolError(`"${nameOf(child)}" cannot be interrupted while it is ${SESSION_STATE_LABEL[state]}.`);
     }
     // アプリ内ブラウザでの人の操作待ちは、ターンの途中（ask_user_to_act の呼び出しの途中）なら、作業中と同じに止める。
@@ -775,8 +715,6 @@ export class SessionsControl {
     // 止めて手が空いたことは、親に知らせない（親が止めたので）
     this.stopped.add(child.id);
     host.interrupt(child.id);
-    // 応答の前に止めると、親の指示が子の入力欄に戻る。残すと次の指示を打てず、人の入力欄にも囲みのまま移るので消す
-    await host.withdrawParentDraft(child.id);
     return json({ session_id: child.id, state: host.stateOf(child.id), note: 'Interrupted.' });
   }
 
@@ -871,7 +809,7 @@ export class SessionsControl {
       id: added.id,
       at: new Date(added.at).toISOString(),
       local_time: localIso(added.at),
-      note: 'Scheduled. End your turn now: at that time, it is sent back to you as soon as this session is idle.',
+      note: ['Scheduled. End your turn now: at that time, it is sent back to you as soon as this session is idle.', this.wakeupsUnsavedNote(caller)].filter(Boolean).join(' '),
     });
   }
 
@@ -881,6 +819,7 @@ export class SessionsControl {
       .list()
       .filter((m) => m.sessionId === caller.id)
       .sort((a, b) => a.at - b.at);
+    const unsaved = this.wakeupsUnsavedNote(caller);
     return json({
       now: localIso(Date.now()),
       messages: messages.map((m) => ({
@@ -892,10 +831,18 @@ export class SessionsControl {
         text: clip(m.text, MAX_WAKEUP_TEXT_CHARS),
         ...(m.attachments.length > 0 ? { images: m.attachments.length } : {}),
         ...(m.pastes.length > 0 ? { pasted_texts: m.pastes.length } : {}),
-        ...(m.error ? { error: m.error } : {}),
+        // 送れなかった理由。error は画面の言語の文なので、Claude には reason から英語の文を作って返す（理由の分からないものは、文を返さない）
+        ...(m.error ? { error: m.reason ? `Not sent to this session because ${SEND_FAILURE[m.reason]}.` : 'Not sent to this session.' } : {}),
       })),
-      ...(messages.length === 0 ? { note: 'No messages are scheduled in this session.' } : {}),
+      ...(messages.length === 0 || unsaved ? { note: [messages.length === 0 ? 'No messages are scheduled in this session.' : '', unsaved].filter(Boolean).join(' ') } : {}),
     });
+  }
+
+  // 予約を保存しないことの一言（セッションごとに最初の 1 回だけ。保存できていれば空）
+  private wakeupsUnsavedNote(caller: SessionSummary): string {
+    if (this.wakeups().saving || this.wakeupsUnsavedNoted.has(caller.id)) return '';
+    this.wakeupsUnsavedNoted.add(caller.id);
+    return WAKEUPS_UNSAVED;
   }
 
   // Claude が入れた予約だけを取り消す。人の予約は、人が画面で扱う
@@ -1058,8 +1005,14 @@ export class SessionsControl {
       folder: s.cwd,
       // preparing: worktree の準備の段階（準備中のときだけ。そのあいだ状態は starting）
       worktree: s.worktree ? { name: s.worktree.name, branch: s.worktree.branch, ...(s.worktree.preparing ? { preparing: s.worktree.preparing } : {}) } : null,
-      parent_id: s.parentId ?? null,
+      // 親の ID は、呼び出し元から見える親のときだけ（見えない親の ID は出さない）
+      parent_id: s.parentId && this.visibleParent(s.parentId, caller) ? s.parentId : null,
     };
+  }
+
+  private visibleParent(parentId: string, caller: SessionSummary): boolean {
+    const parent = this.summary(parentId);
+    return !!parent && canSee(caller, parent);
   }
 
   private headerLines(target: SessionSummary, caller: SessionSummary, all: SessionSummary[]): string[] {
@@ -1095,16 +1048,14 @@ export class SessionsControl {
     const carried = resume ? carriedMessages([resume]).at(-1) : undefined;
     const lastPrompt: Prompt | undefined = prompt ?? (carried ? { type: 'user', id: '', text: carried.text, ...(carried.fromParent && s.parentId ? { parent: s.parentId } : {}) } : undefined);
     const response = work[work.length - 1] ?? notes[notes.length - 1] ?? (resume ? (lastReplyIn(detailOf(resume)) ?? undefined) : undefined);
-    const screen = this.deps.host.screen(s.id);
-    const menu = screen?.state.kind === 'menu' ? screen.state.menu : null;
     // 今の権限モード・モデル・エフォート（configure_session で変える前に確かめるため）。動いていなければ、次に起動するときの指定
-    // （null は Claude Code の既定。権限モードは画面から読むので、動いていなければ null）
+    // （null は Claude Code の既定。権限モードは Claude Code が知らせたものなので、動いていなければ null）
     const running = base.state !== 'exited' && base.state !== 'archived';
     // 動いている裏のタスク（無ければ出さない）
     const tasks = runningTasks(this.deps.host, s.id);
     return {
       ...base,
-      permission_mode: running ? (screen?.mode ?? null) : null,
+      permission_mode: running ? this.deps.host.modeOf(s.id) : null,
       model: running ? this.deps.host.currentModel(s.id) : (s.model ?? null),
       effort: running ? this.deps.host.currentEffort(s.id) : (s.effort ?? null),
       // Remote Control の指定と、実際につながっているか（configure_session で変えたあとに確かめるため）。使えない開発版では出さない
@@ -1114,8 +1065,8 @@ export class SessionsControl {
         ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
       last_response: response ? clip(response, 4000) : null,
-      question: base.state === 'question' ? questionView(this.deps.host.pendingQuestion(s.id), menu) : undefined,
-      permission: base.state === 'permission' && menu?.kind === 'permission' ? permissionOf(menu, this.deps.host.pendingPermission(s.id), all, (r) => this.deps.humanOnly?.(s.id, r) ?? null).view : undefined,
+      question: base.state === 'question' ? questionView(this.deps.host.pendingQuestion(s.id)) : undefined,
+      permission: base.state === 'permission' ? permissionViewOf(this.deps.host.pendingPermission(s.id), (r) => this.deps.humanOnly?.(s.id, r) ?? null) : undefined,
     };
   }
 
@@ -1176,7 +1127,31 @@ function withBrowserState(host: SessionsHost): SessionsHost {
 
 // Remote Control を切り替えられなかった理由（setRemoteControl が返す、画面の言語の文）を、英語の文にする
 function remoteRefusal(reason: string): string {
-  return REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1] ?? 'tanacode could not switch it. Check it with get_session.';
+  const known = REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1];
+  if (known) return known;
+  // Claude Code が断った理由（英語）は、そのまま渡す
+  const refused = placeholderIn('main.remote.failed', 'reason', reason);
+  if (refused !== null) return `its Claude Code refused it: ${refused}`;
+  return 'tanacode could not switch it. Check it with get_session.';
+}
+
+// モデル・エフォートを切り替えられなかった理由（configure が投げる、画面の言語の文）を、英語の文にする
+function modelRefusal(reason: string): string {
+  const effort = placeholderIn('main.model.effortUnsupported', 'effort', reason);
+  if (effort !== null) return `its model does not support the effort ${effort}`;
+  const model = placeholderIn('main.model.unknown', 'model', reason);
+  if (model !== null) return `its Claude Code does not offer the model ${model}`;
+  // Claude Code が断った理由（英語）は、そのまま渡す
+  const refused = placeholderIn('main.model.failed', 'reason', reason);
+  if (refused !== null) return `its Claude Code refused it: ${refused}`;
+  return 'tanacode could not switch it. Check it with get_session.';
+}
+
+// 画面の言語の文 text が、key の文言の name の差し込みを埋めたものなら、差し込まれた値。違えば null
+function placeholderIn(key: MessageKey, name: string, text: string): string | null {
+  const [head, tail] = t(key, { [name]: '\u0000' }).split('\u0000');
+  if (tail === undefined || text.length < head.length + tail.length || !text.startsWith(head) || !text.endsWith(tail)) return null;
+  return text.slice(head.length, text.length - tail.length);
 }
 
 // 動いている裏のタスク（一覧の数え方と同じ: SessionManager の countBackground）
@@ -1236,112 +1211,61 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   if (state === 'question') return t('tools.notice.childQuestion', params);
   // 子セッションは人に通知しないので、親から人に伝える
   if (state === 'permission') return t('tools.notice.childPermission', params);
-  if (state === 'waiting') return t('tools.notice.childWaiting', params);
+  if (state === 'terminal') return t('tools.notice.childTerminal', params);
   if (state === 'browser') return t('tools.notice.childBrowser', params);
   if (state === 'exited') return t('tools.notice.childExited', params);
   return t('tools.notice.childDone', params);
 }
 
-// 許可の確認の選択肢のうち、「今回だけ許す」と「断る」。名前がちょうど Yes・No のものだけ（「Yes, and don't ask again …」のように
-// 許可を覚えさせるもの・権限モードを変えるものは、名前が Yes で終わらないので選ばれない）。断るほうは「No, and tell Claude …」の形も。
-// どちらも、ちょうど 1 つのときだけ決める（見分けられないメニューには答えない）
-function permissionOptions(menu: Menu): { allow: string | null; deny: string | null } {
-  const one = (match: (label: string) => boolean) => {
-    const found = menu.options.filter((o) => !o.textInput && match(normalizeText(o.label)));
-    return found.length === 1 ? found[0].id : null;
-  };
-  return { allow: one((label) => /^yes$/i.test(label)), deny: one((label) => /^no$/i.test(label) || /^no, /i.test(label)) };
-}
-
-// 画面の確認が、フックの入力と同じものを指しているか（画面に出ている範囲で確かめる）。Bash はコマンドのはじめか終わりが、
-// ファイルを書き換えるツールはファイルの名前が、画面に出ている。ほかのツールは、画面からは確かめない
-function shownOnScreen(menu: Menu, request: PermissionRequest): boolean {
-  const squash = (text: string) => text.replace(/\s+/g, '');
-  const screen = squash([menu.title, ...menu.context].join(' '));
-  const { input } = request;
-  if (request.tool === 'Bash' && typeof input.command === 'string') {
-    const command = squash(input.command);
-    return command !== '' && (screen.includes(command.slice(0, 40)) || screen.includes(command.slice(-40)));
-  }
-  const file = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : null;
-  if (file) return screen.includes(squash(basename(file)));
-  return true;
-}
-
-// 会話に、まだ結果の出ていない同じツールの呼び出しがあるか（答え終えた確認の入力が残っているだけでないことを確かめる）。
-// サブエージェントの中の呼び出しは、この会話には出ないので確かめられない
-function pendingInConversation(events: ChatEvent[], request: PermissionRequest): boolean {
-  const done = new Set<string>();
-  for (const e of events) if (e.type === 'tool-result') done.add(e.id);
-  const { input } = request;
-  const file = typeof input.file_path === 'string' ? input.file_path : null;
-  const head = (request.tool === 'Bash' && typeof input.command === 'string' ? input.command : JSON.stringify(input, null, 2)).slice(0, 200);
-  return events.some((e) => e.type === 'tool-use' && !done.has(e.id) && e.name === request.tool && (file ? e.filePath === file : e.input.includes(head)));
-}
-
-// 今出ている許可の確認を、親に渡す形にする。
-// id: この確認の目印（メニューの文と、フックの入力と、受け取った順番から作る。違う確認は、見た目が同じでも違う ID になる）。
-// 選択肢の名前は入れない（カーソルを動かすと、折り返した名前の読み取りが変わることがあり、選んでいる途中で別の確認に見えてしまう）。
-// problem: 親に許させない理由（全文を渡せない・今の確認のものと確かめられない・人だけが答えられる）。あっても、断ることはできる。
-// humanOnly: 人だけが答えられる確認なら、その理由（Deps の humanOnly）
-function permissionOf(
-  menu: Menu,
-  request: PermissionRequest | null,
-  events: ChatEvent[],
-  humanOnly: (request: PermissionRequest) => string | null,
-): { id: string; view: Record<string, unknown>; problem: string | null; allowOption: string | null; denyOption: string | null; labels: string[] } {
-  const options = permissionOptions(menu);
-  const labels = menu.options.map((o) => o.label);
-  const full = request ? JSON.stringify(request.input, null, 2) : '';
-  let problem: string | null = null;
-  if (!request) problem = 'tanacode could not capture what this prompt asks to run, so you cannot read all of it.';
-  else if (!shownOnScreen(menu, request)) problem = 'the prompt on the screen does not match the tool input tanacode captured, so it may be about something else.';
-  else if (request.agent === null && !pendingInConversation(events, request)) problem = "the tool input tanacode captured is not a pending tool call in the child's conversation, so it may belong to an earlier prompt.";
-  else if (full.length > MAX_PERMISSION_INPUT_CHARS) problem = `the tool input is too long to show in full (${full.length} characters), so you cannot read all of it.`;
-  else if (!options.allow) problem = 'tanacode could not tell which option allows it only this once.';
-  // 画面と合わない・前の確認のものかもしれない入力は、親に見せない（別の操作を読んで判断させないため）
-  const trusted = request !== null && (problem === null || full.length > MAX_PERMISSION_INPUT_CHARS || !options.allow) ? request : null;
-  // 人だけが答えられる確認は、入力は見せたうえで（何の確認かを人に伝えられるように）、許させない
-  if (request && problem === null) problem = humanOnly(request);
-  const id = createHash('sha256')
-    .update(JSON.stringify([menu.title, menu.context, request ? [request.seq, request.tool, full] : null]))
-    .digest('hex')
-    .slice(0, 12);
+// 答えを待っている許可の確認を、親に渡す形にする。
+// problem: 親に許させない理由（入力が長すぎて全文を渡せない・人だけが答えられる）。あっても、断ることはできる。
+// 人だけが答えられるのは、プランの承認・Claude Code や人の設定が人に回したもの（PendingPermission.humanOnly）と、Deps の humanOnly
+function permissionView(permission: PendingPermission, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): { view: Record<string, unknown>; problem: string | null } {
+  const full = JSON.stringify(permission.input, null, 2);
+  const bytes = Buffer.byteLength(full, 'utf8');
+  const tooLong = bytes > MAX_PERMISSION_INPUT_BYTES;
+  const problem = tooLong ? `the tool input is too long to show in full (${bytes} bytes), so you cannot read all of it.` : (permission.humanOnly ?? humanOnly(permission));
   return {
-    id,
     problem,
-    allowOption: options.allow,
-    denyOption: options.deny,
-    labels,
+    // 確認の ID（answer_permission に渡すもの）は、入力のあとに置く。Claude Code は大きすぎる MCP の結果を頭から切る
+    // （MAX_MCP_OUTPUT_TOKENS。人が下げることもある）ので、入力の途中で切られたら ID も残らず、全部を読まないまま答えられない
     view: {
-      id,
-      title: menu.title,
-      context: menu.context.slice(0, 12),
-      ...(trusted
-        ? {
-            tool: trusted.tool,
-            input: full.length > MAX_PERMISSION_INPUT_CHARS ? `${full.slice(0, MAX_PERMISSION_INPUT_CHARS)}\n…(truncated)` : trusted.input,
-            from_subagent: trusted.agent ?? undefined,
-          }
-        : {}),
+      title: permission.title ?? permission.tool,
+      description: permission.description ?? undefined,
+      reason: permission.reason ?? undefined,
+      tool: permission.tool,
+      input: tooLong ? `${clipBytes(full, MAX_PERMISSION_INPUT_BYTES)}\n…(truncated)` : permission.input,
+      from_subagent: permission.agent ?? undefined,
+      id: permission.id,
       can_allow: problem === null,
       cannot_allow_reason: problem ?? undefined,
-      can_deny: options.deny !== null,
+      can_deny: true,
     },
   };
 }
 
-// 質問の選択肢そのもの（自由記述・確定・Chat about this 以外）
-function isChoice(option: MenuOption): boolean {
-  return !option.textInput && option.id !== 'submit' && option.label !== 'Chat about this';
+// UTF-8 で max バイトまでの頭（文字の途中では切らない）
+function clipBytes(text: string, max: number): string {
+  let bytes = 0;
+  let end = 0;
+  for (const char of text) {
+    bytes += Buffer.byteLength(char, 'utf8');
+    if (bytes > max) break;
+    end += char.length;
+  }
+  return text.slice(0, end);
 }
 
-// フックが答えを待っている質問のうち、まだ答えていない最初の質問（親は 1 問ずつ答える）
+function permissionViewOf(permission: PendingPermission | null, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): Record<string, unknown> | undefined {
+  return permission ? permissionView(permission, humanOnly).view : undefined;
+}
+
+// 答えを待っている質問のうち、まだ答えていない最初の質問（親は 1 問ずつ答える）
 function currentOf(pending: PendingQuestion): AskQuestion | null {
   return pending.questions.find((q) => !(q.question in pending.answered)) ?? null;
 }
 
-// get_session・answer_question で返す、フックが答えを待っている質問（画面の質問の questionOf と同じ形）
+// get_session・answer_question で返す、答えを待っている質問
 function pendingQuestionOf(pending: PendingQuestion): Record<string, unknown> | null {
   const current = currentOf(pending);
   if (!current) return null;
@@ -1354,10 +1278,9 @@ function pendingQuestionOf(pending: PendingQuestion): Record<string, unknown> | 
   };
 }
 
-// 今の質問。フックが待っていればそれを、無ければ画面から読んだ質問
-function questionView(pending: PendingQuestion | null, menu: Menu | null): Record<string, unknown> | undefined {
-  if (pending) return pendingQuestionOf(pending) ?? undefined;
-  return menu?.kind === 'question' ? questionOf(menu) : undefined;
+// 今の質問（答えを待っているもの）
+function questionView(pending: PendingQuestion | null): Record<string, unknown> | undefined {
+  return pending ? (pendingQuestionOf(pending) ?? undefined) : undefined;
 }
 
 // answer_question の結果。next: 続けて出た（または同じ質問の続きの）次の質問
@@ -1368,16 +1291,6 @@ function answeredResult(state: SessionState | null, next: Record<string, unknown
     next_question: next ?? undefined,
     note: next ? 'The child is showing another question (next_question). Answer it now with answer_question, and keep going until the result has no next_question.' : undefined,
   });
-}
-
-function questionOf(menu: Menu): Record<string, unknown> {
-  return {
-    title: menu.title,
-    multi_select: menu.multiSelect,
-    tabs: menu.tabs.length > 1 ? menu.tabs.map((t) => ({ label: t.label, answered: t.answered })) : undefined,
-    options: menu.options.filter(isChoice).map((o) => ({ label: o.label, description: o.description || undefined, checked: o.checked ?? undefined })),
-    accepts_other: menu.options.some((o) => o.textInput),
-  };
 }
 
 // 会話を、新しいほうから turns 回分の指示とその応答にまとめる（長い応答は途中を省く）。
@@ -1490,13 +1403,16 @@ async function branchOf(s: SessionSummary): Promise<string | null> {
 }
 
 // 未追跡のファイルを、新しいファイルの差分の形にする（大きいもの・バイナリは中身を出さない）。
-// ふつうのファイルだけを読む（シンボリックリンクの先・デバイス・名前付きパイプは読まない）。読む大きさにも上限を付ける
-async function untrackedDiff(cwd: string, file: string): Promise<string> {
+// ふつうのファイルだけを読む（シンボリックリンクの先・デバイス・名前付きパイプは読まない）。読む大きさにも上限を付ける。
+// folder: セッションのフォルダ（リンクを解いたもの）。リンクを解いた場所がその外になるファイルは読まない
+async function untrackedDiff(cwd: string, folder: string, file: string): Promise<string> {
   const head = `diff --git a/${file} b/${file}\nnew file (untracked)\n--- /dev/null\n+++ b/${file}`;
   const info = await lstat(join(cwd, file)).catch(() => null);
   if (!info) return head;
   if (info.isSymbolicLink()) return `${head}\n(symbolic link; contents not read)`;
   if (!info.isFile()) return `${head}\n(not a regular file; contents not read)`;
+  const real = await realpath(join(cwd, file)).catch(() => null);
+  if (!real || !insideFolder(folder, real)) return `${head}\n(outside the session folder; contents not read)`;
   if (info.size > MAX_UNTRACKED_BYTES) return `${head}\n(large file of ${Math.round(info.size / 1024)} KB; contents omitted)`;
   const data = await readHead(join(cwd, file), MAX_UNTRACKED_BYTES);
   // 空のファイルは、行の無い新しいファイル（git diff と同じく @@ の行を書かない）
@@ -1521,23 +1437,18 @@ async function readHead(path: string, limit: number): Promise<Buffer | null> {
   }
 }
 
-// AskUserQuestion で出した質問か（質問文がフックの書いた質問のどれかに合う。複数の質問の最後の、回答の確認の画面も）
-function isAskedQuestion(menu: Menu, asked: AskQuestion[] | null): boolean {
-  if (!asked || asked.length === 0) return false;
-  const title = normalizeText(menu.title);
-  if (!title) return false;
-  if (/submit your answers/i.test(title) && menu.tabs.length > 1) return true;
-  return asked.some((q) => {
-    const question = normalizeText(q.question);
-    return !!question && (title.startsWith(question.slice(0, 30)) || question.startsWith(title.slice(0, 30)));
-  });
-}
-
-// フォルダの外を指さない相対パスにする
+// フォルダの外を指さない相対パスにする。git の pathspec の書き方（:(top)・:/ など。: で始まるもの）は受け付けない
 function safeRelative(path: string): string {
   const rel = normalize(path).replace(/\/+$/, '');
+  if (path.startsWith(':') || rel.startsWith(':')) throw new ToolError('Pass path as a plain path relative to the session folder (git pathspec magic such as ":(top)" is not accepted).');
   if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new ToolError('Pass path as a path relative to the session folder.');
   return rel === '.' ? '' : rel;
+}
+
+// path（リンクを解いたもの）が folder の中か
+function insideFolder(folder: string, path: string): boolean {
+  const rel = relative(folder, path);
+  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
 }
 
 // 中身の最も長いバッククォートの連続より長いフェンスで囲む（中身の ``` でブロックから抜けないように）

@@ -120,6 +120,11 @@ export const ChecklistPanel = memo(function ChecklistPanel({ session, lists, ses
           {t('checklist.panel.createList')}
         </button>
       </div>
+      {session.checklistUnsaved && (
+        <div className="checklist-unsaved" role="status">
+          {t('checklist.panel.unsaved')}
+        </div>
+      )}
       {editing?.id === null && (
         <ListForm
           initial={editing}

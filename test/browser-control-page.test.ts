@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browserToolId } from '../src/shared/browser-tools';
 import { IpcChannel } from '../src/shared/ipc';
@@ -43,7 +44,7 @@ describe('ページを読むツールの前に（今のページ）', () => {
     const page = open('about:blank');
     expect(await call('screenshot')).toEqual(textResult('The current tab is empty. Open a page with navigate.', true));
     page.url = 'https://accounts.example.com/signin?continue=secret';
-    for (const tool of ['screenshot', 'get_text', 'get_accessibility_tree', 'get_console_logs', 'click', 'evaluate']) {
+    for (const tool of ['screenshot', 'get_text', 'get_accessibility_tree', 'get_console_logs', 'get_failed_requests', 'click', 'evaluate']) {
       const result = await call(tool, { selector: '#a', expression: '1' });
       expect(result.isError, tool).toBe(true);
       expect(textOf(result), tool).toMatch(/^The current page \(https:\/\/accounts\.example\.com\) is not allowed for Claude: it is outside the hosts the user allowed for Claude .*To use it, open it with navigate \(tanacode asks the user for permission\)\.$/);
@@ -53,6 +54,75 @@ describe('ページを読むツールの前に（今のページ）', () => {
     expect(page.captures).toEqual([]);
     expect(page.evaluated).toEqual([]);
     expect(page.debugger.commands).toEqual([]);
+  });
+
+  it('読んでいる間に許していない先へ移ったら、読んだものを返さない（スクリーンショット・文字・ツリー。移った先はオリジンだけ）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    const moved = 'https://accounts.example.com/signin?continue=secret';
+    const MOVED = textResult('The page moved to a page not allowed for Claude (https://accounts.example.com) while it was being read, so the result was not returned.', true);
+    // スクリーンショット: 撮っている間に移った（前から読み込み中だった移動が確定した など）
+    page.capture = async () => {
+      page.url = moved;
+      return page.shot;
+    };
+    expect(await call('screenshot')).toEqual(MOVED);
+    // 文字: 読んだ文書が、移った先のもの
+    page.url = 'http://localhost:3000/';
+    page.page.text = () => ({ title: '秘密の題', url: moved, parts: [{ frame: null, text: '秘密の文字' }] });
+    expect(await call('get_text')).toEqual(MOVED);
+    // ツリー: 読んでいる間に移った
+    page.url = 'http://localhost:3000/';
+    page.debugger.handler = (method) => {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F', url: 'http://localhost:3000/' } } };
+      if (method === 'Accessibility.getFullAXTree') {
+        page.url = moved;
+        return { nodes: [{ nodeId: '1', ignored: false, role: { value: 'RootWebArea' }, name: { value: '秘密' } }] };
+      }
+      return {};
+    };
+    expect(await call('get_accessibility_tree')).toEqual(MOVED);
+    // 空のタブになっただけなら、読んだもの（前のページか、空のもの）を返す
+    page.url = 'http://localhost:3000/';
+    page.capture = async () => {
+      page.url = 'about:blank';
+      return page.shot;
+    };
+    expect((await call('screenshot')).isError).toBeFalsy();
+  });
+
+  it('読んでいる間に、許していない先を経て許す先へ戻っても（A → B → A\'）、スクリーンショットとツリーは返さない。inspect も読んだ文書で確かめる', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    const MOVED = textResult('The page moved to a page not allowed for Claude (https://idp.example.com) while it was being read, so the result was not returned.', true);
+    // 読んでいる間に、トップのフレームで 2 回確定した（自動で送るフォームのページを経て戻る SSO など）
+    const bounce = () => {
+      page.emit('did-navigate', {}, 'https://idp.example.com/sso?SAMLRequest=secret');
+      page.emit('did-navigate', {}, 'http://localhost:3000/callback');
+    };
+    page.capture = async () => {
+      bounce();
+      return page.shot;
+    };
+    expect(await call('screenshot')).toEqual(MOVED);
+    const tree = (during: () => void) => (method: string) => {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'F', url: 'http://localhost:3000/' } } };
+      if (method === 'Accessibility.getFullAXTree') {
+        during();
+        return { nodes: [{ nodeId: '1', ignored: false, role: { value: 'RootWebArea' }, name: { value: '中身' } }] };
+      }
+      return {};
+    };
+    page.debugger.handler = tree(bounce);
+    expect(await call('get_accessibility_tree')).toEqual(MOVED);
+    // 読む前に確定したもの・許す先の中の移動だけなら返す
+    page.debugger.handler = tree(() => page.emit('did-navigate', {}, 'http://localhost:3000/next'));
+    expect((await call('get_accessibility_tree')).isError).toBeFalsy();
+    page.capture = async () => page.shot;
+    expect((await call('screenshot')).isError).toBeFalsy();
+    // inspect: 読んだ文書が、許していない先のもの
+    page.page.inspect = () => ({ url: 'https://idp.example.com/sso?SAMLRequest=secret', total: 1, items: [{ html: '<input name="SAMLResponse" value="secret">', rect: { x: 0, y: 0, width: 1, height: 1 }, visible: true, frame: null, styles: {} }] });
+    expect(await call('inspect', { selector: 'input' })).toEqual(MOVED);
   });
 });
 
@@ -1186,7 +1256,355 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(await run(loop)).toBe('[object Object]');
     expect(await run(10n)).toBe('10');
     expect(await run('x'.repeat(25_000))).toBe(`"${'x'.repeat(19_999)}\n…(5002 more characters omitted)`);
-    expect(page.evaluated).toEqual(Array(7).fill('document.title'));
+    expect(page.evaluated.map((code) => code.split('\n').at(-1))).toEqual(Array(7).fill('document.title'));
+  });
+
+  // ページの中で動かす（実行するコードを、偽の location と document の上で本当に動かす）。move.url: 動いたときにタブが開いているページ
+  // （getURL。確かめたあと、動くまでの間に移動が確定した）/ move.location: ページの中の location（既定は move.url。読み込みに失敗したページは
+  // chrome-error のページ）/ move.log: 投げたものを、Chromium と同じくコンソールに出すか（ページが window.onerror で true を返すと出ない）/
+  // move.after: 投げたあとに、ページがすること（移った先のページがコンソールに出す など）
+  type Move = { url: string; location?: string; title?: string; log?: boolean; after?: () => void };
+  const runIn = (page: ReturnType<ReturnType<typeof setup>['open']>, move: Move) => {
+    page.evaluate = (code) => {
+      page.url = move.url;
+      const where = new URL(move.location ?? move.url);
+      try {
+        return runInNewContext(code, { location: { protocol: where.protocol, host: where.host, href: where.href }, document: { title: move.title ?? '' } });
+      } catch (error) {
+        if (move.log !== false) logConsole(page, 'error', `Uncaught ${String(error)}`);
+        move.after?.();
+        throw new Error('Script failed to execute');
+      }
+    };
+  };
+  const NOT_RUN = (where: string) => textResult(`The page moved to another origin (${where}) before the script ran, so the script was not run.`, true);
+  const UNKNOWN = (where: string) =>
+    textResult(
+      `The page moved to a page not allowed for Claude (${where}) while the script was running or just before it, so it is not known whether the script ran. Check the page (for example, with list_tabs) before running it again.`,
+      true,
+    );
+
+  it('確かめたページから別のオリジンへ移ったあとに動くときは、移った先のページでは動かさない（ポート違い・http から https も別のオリジン）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'https://evil.example/', title: '外のページ' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('https://evil.example'));
+    page.url = 'http://localhost:3000/a';
+    runIn(page, { url: 'http://localhost:3001/', title: '別のポート' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('http://localhost:3001'));
+    const local = open('http://myapp.local/');
+    runIn(local, { url: 'https://myapp.local/', title: 'https のページ' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('https://myapp.local'));
+  });
+
+  it('止めたあと、今のページが許していない先なら、ページのコンソールの文は返さない（オリジンだけ）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    // 移った先のページが window.onerror で目印を隠し、自分の文をコンソールに出す
+    runIn(page, { url: 'https://evil.example/', log: false, after: () => logConsole(page, 'error', '外のページの秘密の文') });
+    let result = await call('evaluate', { expression: 'document.title' });
+    expect(result).toEqual(UNKNOWN('https://evil.example'));
+    // 式が localhost で動いて投げ、そのあとに移った先もエラーを出す
+    page.url = 'http://localhost:3000/a';
+    page.evaluate = () => {
+      logConsole(page, 'error', 'Uncaught Error: 式のエラー');
+      page.url = 'https://evil.example/login?token=secret';
+      logConsole(page, 'error', '外のページの秘密の文', 'https://evil.example/login?token=secret', 3);
+      throw new Error('Script failed to execute');
+    };
+    result = await call('evaluate', { expression: 'boom()' });
+    expect(result).toEqual(UNKNOWN('https://evil.example'));
+    expect(textOf(result)).not.toContain('秘密');
+    // タブが閉じられた
+    page.url = 'http://localhost:3000/a';
+    page.evaluate = () => {
+      page.destroyed = true;
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('The tab was closed while the script was running, so it is not known whether the script ran.', true));
+  });
+
+  it('目印が無く、許す先の別のオリジンへ移っていたら、動かなかったとは言わず、式のエラーに移った先を添える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => {
+      page.url = 'http://localhost:3001/done';
+      logConsole(page, 'error', 'Uncaught Error: 送ったあとのエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'submit()' })).toEqual(
+      textResult('Execution failed: Uncaught Error: 送ったあとのエラー\n(The page moved to http://localhost:3001 while the script was running or just before it.)', true),
+    );
+    page.url = 'http://localhost:3000/a';
+    page.evaluate = () => {
+      page.url = 'http://localhost:3001/done';
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'submit()' })).toEqual(
+      textResult('Execution failed: Script failed to execute\n(The page moved to http://localhost:3001 while the script was running or just before it.)', true),
+    );
+  });
+
+  it('タブの URL は確かめたオリジンのままでも、ページの中が違った（読み込みに失敗したページ・移って戻った）ときは、そのことを伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    const SAME = textResult(
+      'The page in the current tab changed before the script ran (for example, it shows an error page because http://localhost:3000 could not be loaded, or it moved to another origin and back), so the script was not run. Reload it or open the page again with navigate if needed.',
+      true,
+    );
+    runIn(page, { url: 'http://localhost:3000/a', location: 'chrome-error://chromewebdata/' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(SAME);
+    runIn(page, { url: 'http://localhost:3000/a', location: 'https://evil.example/' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(SAME);
+  });
+
+  it('空のページ（about:blank）へ移っていたら、そう書く（オリジンの無いページを "null" と書かない）。タブが閉じる前に止めていれば、動かなかったと伝える', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'about:blank' });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(NOT_RUN('about:blank'));
+    // 止めた目印がコンソールに出たあとに、タブが閉じられた
+    page.url = 'http://localhost:3000/a';
+    runIn(page, { url: 'https://evil.example/', after: () => (page.destroyed = true) });
+    expect(await call('evaluate', { expression: 'document.title' })).toEqual(
+      textResult('The page moved to another origin and the tab was closed before the script ran, so the script was not run.', true),
+    );
+  });
+
+  it('コンソールの記録が上限で前から削られても、動かしている間に出たエラーだけを返す', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/');
+    for (let i = 0; i < 200; i++) logConsole(page, 'error', `前のエラー ${i}`);
+    page.evaluate = () => {
+      logConsole(page, 'error', 'Uncaught Error: 新しいエラー');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: Uncaught Error: 新しいエラー', true));
+  });
+
+  it('先頭で比べる文は、式の意味を変えない（最後の値・ブロックとラベル・行末の注釈・宣言だけ・else・use strict・#!）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'http://localhost:3000/a', title: '題' });
+    const run = async (expression: string) => textOf(await call('evaluate', { expression }));
+    expect(await run('{a:1}')).toBe('1');
+    expect(await run('1 // 行末の注釈')).toBe('1');
+    expect(await run('var x = 1;')).toBe('undefined');
+    // else で始まる式は、比べる文の if の続きにならない（式だけで動かしたときと同じく、書き方の誤り）
+    expect(await run('else document.title')).toMatch(/^Execution failed: Uncaught SyntaxError/);
+    // 'use strict' で始まる式は、strict のまま動く（宣言していない名前への代入はエラー）
+    expect(await run("'use strict';\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run('"use strict"; document.title')).toBe('"題"');
+    // 先頭の注釈と、前に並ぶ directive を読み飛ばして見分ける。文字列のあとに式が続くもの（.length・改行して + 1）は directive ではない
+    expect(await run("/* 注釈 */ 'use strict';\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("// 注釈\n'a'; 'use strict'; undeclared = 1; '動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'use strict'\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'use strict'.length; undeclared = 1; '動いた'")).toBe('"動いた"');
+    expect(await run("'use strict'\n+ 1; undeclared = 1; '動いた'")).toBe('"動いた"');
+    // 改行のあとの ++・-- は、前の文字列に付かない（後置の ++・-- は改行をまたげないので、自動のセミコロンが入り、directive になる）
+    expect(await run("'use strict'\n++globalThis.n; undeclared = 1; '動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'use strict'\n--globalThis.n; undeclared = 1; '動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run("'not strict'; 'use strict' + ''; undeclared = 1; '動いた'")).toBe('"動いた"');
+    // #! の行（hashbang）で始まる式も動く。比べる文は、その行のあとに置く（行の終わりは \n・\r・\u2028・\u2029 のどれでも）
+    expect(await run('#!/usr/bin/env node\ndocument.title')).toBe('"題"');
+    expect(await run('#!x\rdocument.title')).toBe('"題"');
+    expect(await run('#!x\u2028document.title')).toBe('"題"');
+    expect(await run('#!だけ')).toBe('undefined');
+  });
+
+  it('HTML の注釈（--> と <!--）やテンプレート文字列で始まる式も、比べる文を飛ばせない（移った先では動かさない）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    const expressions = ['--> 注釈\ndocument.title', '<!-- 注釈\ndocument.title', '`${document.title}`'];
+    for (const expression of expressions) {
+      page.url = 'http://localhost:3000/a';
+      runIn(page, { url: 'http://localhost:3000/b', title: '題' });
+      expect(textOf(await call('evaluate', { expression }))).toBe('"題"');
+      page.url = 'http://localhost:3000/a';
+      runIn(page, { url: 'https://evil.example/', title: '外のページ' });
+      expect(await call('evaluate', { expression })).toEqual(NOT_RUN('https://evil.example'));
+    }
+  });
+
+  it('ページが、乱数の無い目印の文をコンソールに出しても、止めたことにしない（式のエラーとして返す）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => {
+      logConsole(page, 'error', 'Uncaught tanacode: the page moved to another origin before the script ran');
+      throw new Error('Script failed to execute');
+    };
+    expect(await call('evaluate', { expression: 'x' })).toEqual(
+      textResult('Execution failed: Uncaught tanacode: the page moved to another origin before the script ran', true),
+    );
+  });
+
+  it('#! の行の中に、比べる文が入ってしまわない（移った先では、#! の次の行の式も動かさない）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    for (const expression of ['#!x', '#!x\rdocument.title', '#!x\r\ndocument.title', '#!x\u2029document.title']) {
+      page.url = 'http://localhost:3000/a';
+      runIn(page, { url: 'https://evil.example/', title: '外のページ' });
+      expect(await call('evaluate', { expression })).toEqual(NOT_RUN('https://evil.example'));
+    }
+  });
+
+  // 確認のフックだけを動かす（ツールはまだ呼ばない）
+  const gateOnly = (control: ReturnType<typeof setup>['control'], expression: string, sessionId = 'S1') =>
+    control.handle(sessionId, BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression } });
+  const CHANGED = (from: string, to: string) =>
+    textResult(`The page changed after tanacode checked it for this call (from ${from} to ${to}), so the script was not run. Call evaluate again to run it on the current page.`, true);
+  const NO_PAGE = textResult('No page was open in the current tab when tanacode checked this call, so the script was not run. Call evaluate again to run it on the current page.', true);
+  // 控えが無い。原因は決めつけない（フックが動かなかった・アプリに聞けなかった・オフだった・押し出された・フックが切られている など）
+  const NO_RECORD = textResult(
+    'tanacode has no record of checking this call, so the script was not run. Call evaluate again. ' +
+      '(tanacode checks each evaluate call in its permission hook. The record can be missing for several reasons: hooks are disabled, the hook could not reach tanacode, ' +
+      'browser control was turned off at that time, or the record was pushed out by many other checks.) ' +
+      'If this keeps happening, tell the user that tanacode cannot check evaluate calls in this session.',
+    true,
+  );
+  // フックは ID 付きで控えたのに、呼び出しに ID が無い（アプリを更新する前から動いている Claude Code の、古い中継）。起動し直せば直る
+  const OLD_RELAY = textResult(
+    'tanacode checked this call, but the call reached tanacode without its ID, so the script was not run. ' +
+      'The tanacode tools in this session seem to be older than tanacode itself (for example, tanacode was updated after Claude Code started). ' +
+      'Ask the user to restart Claude Code in this session (the restart button in the chat header), then call evaluate again.',
+    true,
+  );
+  // 同じ呼び出しの控えはあるが、式が違う（ほかのフックが入力を書き換えた など）
+  const CHANGED_INPUT = textResult(
+    'The expression of this call differs from the one tanacode checked for it (another hook may have changed the input), so the script was not run. Call evaluate again. ' +
+      'If this keeps happening, tell the user that another hook seems to change the input of evaluate.',
+    true,
+  );
+
+  it('確認のフックが答えたときのページから、動かす前に別のオリジンへ移っていたら、動かさない（同じ式の呼び出しに結びつける）', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    // フックが見たのは localhost のページ（確認なし）。動かす前に、許す先の別のオリジン（*.local）へ移った
+    expect(JSON.parse(textOf(await gateOnly(control, 'document.title')))).toEqual({ local: true, url: 'http://localhost:3000/a' });
+    page.url = 'http://myapp.local/';
+    expect(await call('evaluate', { expression: 'document.title' }, 'S1', { gate: false })).toEqual(CHANGED('http://localhost:3000', 'http://myapp.local'));
+    expect(page.evaluated).toEqual([]);
+    // 人が確認で許したページ（フックが見た *.local）のままなら、動かす。同じオリジンの中の移動もよい
+    await gateOnly(control, 'document.title');
+    page.url = 'http://myapp.local/next';
+    expect(textOf(await call('evaluate', { expression: 'document.title' }, 'S1', { gate: false }))).toBe('"動いた"');
+  });
+
+  it('控えは 1 回で使い切る。控えが無い（フックが動かなかった）呼び出しは動かさない。別の式・別のセッションの控えは使わない', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    open('http://localhost:4000/', { sessionId: 'S2' }).evaluate = () => '動いた';
+    await gateOnly(control, 'x()');
+    expect(textOf(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false }))).toBe('"動いた"');
+    expect(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false })).toEqual(NO_RECORD);
+    await gateOnly(control, 'other()');
+    expect(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false })).toEqual(NO_RECORD);
+    await gateOnly(control, 'y()', 'S2');
+    expect(await call('evaluate', { expression: 'y()' }, 'S1', { gate: false })).toEqual(NO_RECORD);
+    expect(textOf(await call('evaluate', { expression: 'y()' }, 'S2', { gate: false }))).toBe('"動いた"');
+  });
+
+  it('控えは期限で消えず、メニューでオフにしても消えない（断る側に倒す）。フックのときにタブが無い・空なら断る', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    await gateOnly(control, 'late()');
+    page.url = 'http://myapp.local/';
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(await call('evaluate', { expression: 'late()' }, 'S1', { gate: false })).toEqual(CHANGED('http://localhost:3000', 'http://myapp.local'));
+    page.url = 'http://localhost:3000/a';
+    await gateOnly(control, 'off()');
+    control.turnOff();
+    page.url = 'http://myapp.local/';
+    expect(await call('evaluate', { expression: 'off()' }, 'S1', { gate: false })).toEqual(CHANGED('http://localhost:3000', 'http://myapp.local'));
+    // フックのときに、このセッションのタブが無かった・空のタブだった
+    const ctx = setup();
+    await gateOnly(ctx.control, 'none()');
+    const later = ctx.open('http://localhost:3000/');
+    later.evaluate = () => '動いた';
+    expect(await ctx.call('evaluate', { expression: 'none()' }, 'S1', { gate: false })).toEqual(NO_PAGE);
+    later.url = 'about:blank';
+    await gateOnly(ctx.control, 'blank()');
+    later.url = 'http://localhost:3000/';
+    expect(await ctx.call('evaluate', { expression: 'blank()' }, 'S1', { gate: false })).toEqual(NO_PAGE);
+  });
+
+  it('控えは、呼び出しの ID（Claude Code がフックと MCP の両方に渡す）で結びつける。同じ式でも、別の呼び出しの控えは使わない', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    const gateWithId = (expression: string, toolUseId: string) => control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression }, toolUseId });
+    // 同じ式を 2 つ並べて呼んだ（本体とサブエージェントなど）。1 つめのフックは localhost、2 つめは *.local のページを見た
+    await gateWithId('x()', 'toolu_a');
+    page.url = 'http://myapp.local/';
+    await gateWithId('x()', 'toolu_b');
+    // 1 つめの呼び出しは、自分の控え（localhost）と比べて断る。式で引くと、新しい 2 つめの控えを使ってしまう
+    expect(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false, toolUseId: 'toolu_a' })).toEqual(CHANGED('http://localhost:3000', 'http://myapp.local'));
+    expect(textOf(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false, toolUseId: 'toolu_b' }))).toBe('"動いた"');
+    // ID のある呼び出しは、ほかの ID の控えを使わない（式が同じでも）
+    await gateWithId('y()', 'toolu_c');
+    expect(await call('evaluate', { expression: 'y()' }, 'S1', { gate: false, toolUseId: 'toolu_d' })).toEqual(NO_RECORD);
+    // ID の控えの式と、呼び出しの式が違えば断る（控えが無いときとは別の文で）
+    await gateWithId('z()', 'toolu_e');
+    expect(await call('evaluate', { expression: 'other()' }, 'S1', { gate: false, toolUseId: 'toolu_e' })).toEqual(CHANGED_INPUT);
+    // ID の無い呼び出し（ID を渡さない中継）は、ID の無い控え（ID を渡さないフック）だけから、式で引く。
+    // ID のある控えは、同じ式の別の呼び出しのもの（前に断られて残ったものも）かもしれないので使わない
+    // （フックが ID 付きで控えたのに呼び出しに ID が無いのは、古い中継のため。起動し直すよう伝える）
+    await gateWithId('w()', 'toolu_f');
+    expect(await call('evaluate', { expression: 'w()' }, 'S1', { gate: false, toolUseId: null })).toEqual(OLD_RELAY);
+    expect(await call('evaluate', { expression: 'unknown()' }, 'S1', { gate: false, toolUseId: null })).toEqual(NO_RECORD);
+    await gateOnly(control, 'u()');
+    expect(textOf(await call('evaluate', { expression: 'u()' }, 'S1', { gate: false, toolUseId: null }))).toBe('"動いた"');
+    // ID の無い控えは、ID のある呼び出しでも式で引く
+    await gateOnly(control, 'v()');
+    expect(textOf(await call('evaluate', { expression: 'v()' }, 'S1', { gate: false, toolUseId: 'toolu_g' }))).toBe('"動いた"');
+  });
+
+  it('子の確認に親が答えるまでに、フックが見たページから移っていたら、親が許しても動かさない（確認から実行まで通して）', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://myapp.local/a');
+    page.evaluate = () => '動いた';
+    // 子の Claude Code が evaluate を呼ぼうとし、フックが *.local のページを見て確認を出させた（呼び出しの ID 付き）
+    await control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('evaluate'), input: { expression: 'send()' }, toolUseId: 'toolu_child' });
+    // 親が確認を読む。許す先のページなので、親も許せる
+    expect(control.humanOnly('S1', { tool: browserToolId('evaluate') })).toBeNull();
+    // 親が答える前に、タブが許す先の別のオリジンへ移った（親が答えるときも、許す先なので許せる）
+    page.url = 'http://localhost:3001/';
+    expect(control.humanOnly('S1', { tool: browserToolId('evaluate') })).toBeNull();
+    // 親が許し、Claude Code がツールを呼ぶ。フックが見たページ（*.local）と違うので、動かさない
+    expect(await call('evaluate', { expression: 'send()' }, 'S1', { gate: false, toolUseId: 'toolu_child' })).toEqual(CHANGED('http://myapp.local', 'http://localhost:3001'));
+    expect(page.evaluated).toEqual([]);
+  });
+
+  it('同じ式の控えが 2 つあれば、新しい方を使う。控えは 1 つのセッションで 20 個まで（押し出された呼び出しは、控えが無いので断る）', async () => {
+    const { call, control, open } = setup();
+    const page = open('http://localhost:3000/a');
+    page.evaluate = () => '動いた';
+    await gateOnly(control, 'x()');
+    page.url = 'http://myapp.local/';
+    await gateOnly(control, 'x()');
+    expect(textOf(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false }))).toBe('"動いた"');
+    // 古い方は残る（次の呼び出しも、フックがまた見るので、新しい控えが使われる）
+    expect(await call('evaluate', { expression: 'x()' }, 'S1', { gate: false })).toEqual(CHANGED('http://localhost:3000', 'http://myapp.local'));
+    await gateOnly(control, 'first()');
+    for (let i = 0; i < 20; i++) await gateOnly(control, `more${i}()`);
+    expect(await call('evaluate', { expression: 'first()' }, 'S1', { gate: false })).toEqual(NO_RECORD);
+    expect(textOf(await call('evaluate', { expression: 'more0()' }, 'S1', { gate: false }))).toBe('"動いた"');
+  });
+
+  it('同じオリジンの中で移ったあとは動かす。文の並びも、最後の値を返す（ページで動かすときと同じ）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'http://localhost:3000/b', title: '次のページ' });
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"次のページ"');
+    page.url = 'http://localhost:3000/a';
+    expect(textOf(await call('evaluate', { expression: 'const a = 2;\nlet b = a * 3;\nb + 1' }))).toBe('7');
+    // 既定のポートは、オリジンにもページの host にも付かない
+    const other = open('https://myapp.local/');
+    runIn(other, { url: 'https://myapp.local/x', title: 'ローカル' });
+    expect(textOf(await call('evaluate', { expression: 'document.title' }))).toBe('"ローカル"');
   });
 
   it('失敗したら、そのときコンソールに出たエラーを返す（前から出ていたもの・エラーでないものは含めない）', async () => {

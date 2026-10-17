@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
-import { childEnv, ClaudeSession, transcriptPath } from '../src/main/claude-session';
-import type { HostedPtyInfo } from '../src/main/pty-host-protocol';
+import { childEnv, claudeArgs, claudeEnv, ClaudeSession, transcriptPath } from '../src/main/claude-session';
+import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protocol';
+import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from '../src/main/stream/protocol';
 import { STATUS_FILE_ENV } from '../src/main/statusline';
 import { ScriptedHost } from './helpers/scripted-claude';
 
@@ -43,6 +44,7 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
     host,
     {
       sessionId: 's1',
+      kind: 'tui',
       cwd: join(root, 'work'),
       claudeSessionId: CLAUDE_ID,
       resume: false,
@@ -57,7 +59,7 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
       cols: 120,
       rows: 40,
       ...patch,
-    },
+    } as ConstructorParameters<typeof ClaudeSession>[1],
     {
       onData: (data) => got.data.push(data),
       onExit: (code) => got.exits.push(code),
@@ -69,6 +71,42 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
   );
   return { claude, got };
 }
+
+describe('子に渡す環境変数', () => {
+  it('親の Claude Code がセッションのために付けた変数と、親の tanacode のつなぎ先（TANACODE_*）は渡さない。ユーザーの設定は残す', () => {
+    const names = [
+      'CLAUDECODE',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_CHILD_SESSION',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_CODE_BRIDGE_SESSION_ID',
+      'CLAUDE_CODE_MESSAGING_SOCKET',
+      'CLAUDE_CODE_MESSAGING_TOKEN',
+      'CLAUDE_CODE_SESSION_ATTENDED',
+      'CLAUDE_CODE_EXECPATH',
+      'CLAUDE_PID',
+      'CLAUDE_EFFORT',
+      'AI_AGENT',
+      'TANACODE_BROWSER_SOCKET',
+      'TANACODE_STATUS_FILE',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'ANTHROPIC_MODEL',
+    ];
+    const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    for (const name of names) process.env[name] = 'from-parent';
+    try {
+      const env = childEnv();
+      expect(names.filter((name) => env[name] !== undefined)).toEqual(['CLAUDE_CODE_USE_BEDROCK', 'ANTHROPIC_MODEL']);
+      // stream-json の claude にも
+      expect(claudeEnv('stream').CLAUDE_CODE_MESSAGING_TOKEN).toBeUndefined();
+    } finally {
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
 
 describe('起動', () => {
   it('セッションのフォルダで、アプリの statusLine と質問のファイルを環境変数で渡して起動する。Claude Code 上から起動したときの印は消す', () => {
@@ -116,10 +154,19 @@ describe('起動', () => {
     session({ checklist }).claude.start();
     const { env, args } = host.spawned[0].request;
     expect(env).toMatchObject({ TANACODE_CHECKLIST_SOCKET: '/u/checklist.sock', TANACODE_CHECKLIST_SESSION: 's1', TANACODE_CHECKLIST_COMMAND: 'node', TANACODE_CHECKLIST_SCRIPT: '/x/checklist-mcp.js' });
-    expect(Object.keys(JSON.parse(args[args.indexOf('--settings') + 1]).hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
+    expect(Object.keys(JSON.parse(args[args.indexOf('--settings') + 1]).hooks)).toEqual([
+      'PreToolUse',
+      'PermissionRequest',
+      'Notification',
+      'UserPromptSubmit',
+      'Stop',
+      'SessionStart',
+      'PreCompact',
+      'PostToolUse',
+    ]);
     session().claude.start();
     expect(host.spawned[1].request.env.TANACODE_CHECKLIST_SOCKET).toBeUndefined();
-    expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse']);
+    expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'Stop']);
   });
 
   it('人のターミナルを足すときは、打つ前の確認のフックが使う環境変数を渡し、設定にフックを入れる。子セッションには、どちらも渡さない', () => {
@@ -138,7 +185,7 @@ describe('起動', () => {
   });
 
   it('引き継ぐときは起動せず、今の画面を先に描き直してから、続きの出力を渡す', () => {
-    const info: HostedPtyInfo = { id: 'p1', tag: 's1', pid: 1, startedAt: Date.now(), cols: 100, rows: 30, exitCode: null, screen: '画面' };
+    const info: HostedPtyInfo = { kind: 'pty', id: 'p1', tag: 's1', pid: 1, startedAt: Date.now(), cols: 100, rows: 30, exitCode: null, screen: '画面' };
     const { claude, got } = session({ resume: true }, info);
     claude.start();
     expect(host.spawned).toEqual([]);
@@ -172,38 +219,56 @@ describe('操作と終わり方', () => {
     expect(pty.resizes).toEqual([[80, 24]]);
   });
 
-  it('kill: claude を止め、そのあとの出力と終了は受け取らない', () => {
+  it('kill: claude を止める。そのあとの出力は表示に流さないが、終わりは知らせる（待っている要求の後始末のため）。stop は終わるまで待つ', async () => {
     const { claude, got } = session();
     claude.start();
     const pty = host.spawned[0];
     claude.kill();
     expect(pty.killed).toBe(true);
     pty.output('遅れた出力');
+    let stopped: boolean | null = null;
+    const stopping = claude.stop(5000).then((ok) => (stopped = ok));
+    await sleep(50);
+    // まだ終わっていないので、stop は待っている（kill で終わったことにしない）
+    expect(stopped).toBeNull();
     pty.exit(0);
+    expect(await stopping).toBe(true);
     expect(got.data).toEqual([]);
-    expect(got.exits).toEqual([]);
+    expect(got.exits).toEqual([0]);
   });
 
-  it('stop: 止めて、終わるのを待つ。終わらなければ、待つ上限で諦める。動いていなければすぐ返す', async () => {
-    const { claude } = session();
+  it('stop: 止めて、終わるのを待つ（終わったら true）。終わらなければ、SIGTERM・SIGKILL と強めていき、それでも終わらなければ false。動いていなければすぐ返す', async () => {
+    const { claude, got } = session();
     claude.start();
     const pty = host.spawned[0];
-    let stopped = false;
-    const stopping = claude.stop(5000).then(() => (stopped = true));
-    expect(pty.killed).toBe(true);
+    let stopped: boolean | null = null;
+    const stopping = claude.stop(5000).then((ok) => (stopped = ok));
+    expect(pty.kills).toEqual([undefined]);
     await sleep(50);
-    expect(stopped).toBe(false);
+    expect(stopped).toBeNull();
     pty.exit(0);
     await stopping;
+    expect(stopped).toBe(true);
+    // 止めて終わったときも、終わりを知らせる
+    expect(got.exits).toEqual([0]);
 
     const stuck = session();
     stuck.claude.start();
     const startedAt = Date.now();
-    await stuck.claude.stop(100);
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(90);
-    expect(host.spawned[1].killed).toBe(true);
+    expect(await stuck.claude.stop(30)).toBe(false);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(80);
+    expect(host.spawned[1].kills).toEqual([undefined, 'SIGTERM', 'SIGKILL']);
 
-    await claude.stop();
+    // SIGTERM で終わる
+    const late = session();
+    late.claude.start();
+    host.spawned[2].onWrite = null;
+    const lateStop = late.claude.stop(30);
+    await waitFor('SIGTERM', () => host.spawned[2].kills.length === 2);
+    host.spawned[2].exit(143);
+    expect(await lateStop).toBe(true);
+
+    expect(await claude.stop()).toBe(true);
   });
 
   it('detach: claude を止めずに見るのをやめる（次のアプリが引き継ぐ）', () => {
@@ -220,6 +285,151 @@ describe('操作と終わり方', () => {
     // 動いていなければ何もしない
     claude.detach();
     claude.kill();
+  });
+});
+
+describe('stream-json（チャット）', () => {
+  const stream = (patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> = {}, adopted: HostedPipeInfo | null = null) => {
+    const got = { messages: [] as [string, boolean][], permissions: [] as string[], cancels: [] as string[], exits: [] as [number, string | undefined][] };
+    const claude = new ClaudeSession(
+      host,
+      {
+        sessionId: 's1',
+        kind: 'stream',
+        cwd: join(root, 'work'),
+        claudeSessionId: CLAUDE_ID,
+        resume: false,
+        remoteControlName: 'tanacode-work',
+        model: 'opus',
+        effort: 'high',
+        permissionMode: 'auto',
+        settings: null,
+        statusFile: '/status/s1.json',
+        askFile: '/status/s1.ask.json',
+        browser: null,
+        cols: 120,
+        rows: 40,
+        ...patch,
+      } as ConstructorParameters<typeof ClaudeSession>[1],
+      {
+        onData: () => {},
+        stream: {
+          onMessage: (message, past) => got.messages.push([message.type, past]),
+          onPermission: (id) => got.permissions.push(id),
+          onCancel: (id) => got.cancels.push(id),
+        },
+        onExit: (code, stderr) => got.exits.push([code, stderr]),
+        onEntry: () => {},
+        onHistoryLoaded: () => {},
+        onSwitch: () => {},
+      },
+      adopted,
+    );
+    return { claude, got };
+  };
+
+  it('パイプで claude -p を stream-json で起動する。--remote-control は付けず、モード・モデル・エフォートは渡す。端末の変数は渡さず、ファイルの控えを有効にする', () => {
+    const { claude } = stream();
+    claude.start();
+    expect(host.spawned).toEqual([]);
+    const pipe = host.pipes[0];
+    expect(claude.kind).toBe('stream');
+    expect(pipe.request).toMatchObject({ tag: 's1', file: 'claude', cwd: join(root, 'work'), retain: RETAIN_RULES, transient: TRANSIENT_KINDS });
+    expect(pipe.request.args.slice(0, STREAM_ARGS.length)).toEqual([...STREAM_ARGS]);
+    expect(pipe.request.args).not.toContain('--remote-control');
+    expect(pipe.arg('--session-id')).toBe(CLAUDE_ID);
+    expect(pipe.arg('--permission-mode')).toBe('auto');
+    expect(pipe.arg('--model')).toBe('opus');
+    expect(pipe.arg('--effort')).toBe('high');
+    expect(pipe.request.env.TERM).toBeUndefined();
+    expect(pipe.request.env.COLORTERM).toBeUndefined();
+    expect(pipe.request.env).toMatchObject({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1', [ASK_FILE_ENV]: '/status/s1.ask.json' });
+    // TUI は --remote-control を付ける（前のセッションに自動でつながり直す）
+    expect(claudeArgs({ claudeSessionId: CLAUDE_ID, resume: true, remoteControlName: 'tanacode-work', model: null, effort: null, permissionMode: 'manual' })).toContain('--remote-control');
+    expect(claudeEnv('tui').TERM).toBe('xterm-256color');
+  });
+
+  it('出力の行・答えを待つ要求・取り下げ・終わり（標準エラーの末尾つき）を渡す', () => {
+    const { claude, got } = stream();
+    claude.start();
+    const pipe = host.pipes[0];
+    pipe.emit({ type: 'system', subtype: 'status', status: null });
+    pipe.emit({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: {}, tool_use_id: 't' } });
+    pipe.emit({ type: 'control_cancel_request', request_id: 'r1' });
+    expect(claude.client).not.toBeNull();
+    pipe.exit(1, 'Error creating worktree');
+    expect(got).toEqual({ messages: [['system', false]], permissions: ['r1'], cancels: ['r1'], exits: [[1, 'Error creating worktree']] });
+  });
+
+  it('引き継ぐときは起動せず、控えている行を送り直してもらう（前の頃の行は past）', () => {
+    const info: HostedPipeInfo = { kind: 'pipe', id: 'q1', tag: 's1', pid: 1, startedAt: Date.now(), exitCode: null, lastSeq: 2, firstSeq: 1, retained: [], pending: [], ended: false, stderr: '' };
+    const { claude, got } = stream({ resume: true }, info);
+    claude.start();
+    expect(host.pipes).toEqual([]);
+    const pipe = host.attachedPipes[0];
+    expect(pipe.id).toBe('q1');
+    expect(pipe.replays).toEqual([1]);
+    pipe.emit({ type: 'system', subtype: 'status' }, 2);
+    pipe.emit({ type: 'system', subtype: 'status' }, 3);
+    expect(got.messages).toEqual([
+      ['system', true],
+      ['system', false],
+    ]);
+  });
+
+  it('stop: end_session を送って終わるのを待つ。終わらなければ SIGTERM・SIGKILL（プロセスグループごと）', async () => {
+    const { claude, got } = stream();
+    claude.start();
+    const pipe = host.pipes[0];
+    pipe.onSend = (line) => {
+      const message = JSON.parse(line) as { type: string; request_id: string; request: { subtype: string } };
+      if (message.request?.subtype !== 'end_session') return;
+      pipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id } });
+      pipe.exit(0);
+    };
+    expect(await claude.stop(1000)).toBe(true);
+    expect(pipe.kills).toEqual([]);
+    expect(got.exits).toEqual([[0, '']]);
+
+    // end_session を受け付けなかった（受け口が無い古いバージョン）ら、待たずに SIGTERM
+    const unsupported = stream();
+    unsupported.claude.start();
+    const unsupportedPipe = host.pipes[1];
+    unsupportedPipe.onSend = (line) => {
+      const message = JSON.parse(line) as { request_id: string };
+      unsupportedPipe.emit({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Unsupported control request subtype: end_session' } });
+    };
+    const quick = unsupported.claude.stop(5000);
+    await waitFor('SIGTERM', () => unsupportedPipe.kills.length === 1, 1000);
+    expect(unsupportedPipe.kills).toEqual(['SIGTERM']);
+    unsupportedPipe.exit(143);
+    expect(await quick).toBe(true);
+
+    // end_session を受け付けても終わらなければ、SIGTERM・SIGKILL と強めていく
+    const stuck = stream();
+    stuck.claude.start();
+    const stuckPipe = host.pipes[2];
+    stuckPipe.onSend = (line) => {
+      const message = JSON.parse(line) as { request_id: string };
+      stuckPipe.emit({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id } });
+    };
+    const stopping = stuck.claude.stop(30);
+    await waitFor('SIGKILL', () => stuckPipe.kills.length === 2);
+    expect(stuckPipe.kills).toEqual(['SIGTERM', 'SIGKILL']);
+    stuckPipe.exit(137);
+    expect(await stopping).toBe(true);
+  });
+
+  it('kill: すぐ SIGTERM で止める。detach: 止めずに見るのをやめる', () => {
+    const { claude } = stream();
+    claude.start();
+    claude.kill();
+    expect(host.pipes[0].kills).toEqual(['SIGTERM']);
+    const kept = stream();
+    kept.claude.start();
+    kept.claude.detach();
+    expect(host.pipes[1].detached).toBe(true);
+    expect(host.pipes[1].kills).toEqual([]);
   });
 });
 

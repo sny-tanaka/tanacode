@@ -5,6 +5,7 @@
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
 import { CHECKLIST_CALL_TIMEOUT_MS, CHECKLIST_CLOSED_MESSAGE, CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV } from './checklist-bridge';
 import { CHECKLIST_HOOK_ARG, preCompactBlock, runHook } from './checklist-hook';
+import { appHookOutput } from './hook-output';
 import { callBridge } from './mcp-bridge';
 import { runRelay } from './mcp-relay';
 
@@ -25,7 +26,8 @@ if (process.argv.includes(CHECKLIST_HOOK_ARG)) {
       const block = await preCompactBlock(stdin, socketPath, session, HOOK_TIMEOUT_MS);
       if (block) return process.stderr.write(`${block}\n`, () => process.exit(2));
       const output = await runHook(stdin, socketPath, session, HOOK_TIMEOUT_MS);
-      return output ? process.stdout.write(`${output}\n`, () => process.exit(0)) : process.exit(0);
+      // 何も渡さないときも、アプリのフックの印（suppressOutput）を書く（hook-output.ts）
+      return process.stdout.write(`${appHookOutput(output)}\n`, () => process.exit(0));
     })();
   });
 } else {

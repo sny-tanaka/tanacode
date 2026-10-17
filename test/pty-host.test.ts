@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { build } from 'vite';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PtyHost, type PtyHandle } from '../src/main/pty-host-client';
-import { PROTOCOL } from '../src/main/pty-host-protocol';
+import { PROTOCOL, type HostedPipeInfo, type HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { socketPathIn } from '../src/main/socket-path';
 
 // 本物の pty ホスト（src/main/pty-host.ts）と、アプリ側の接続（pty-host-client.ts の PtyHost）。
@@ -27,7 +27,7 @@ beforeAll(async () => {
       emptyOutDir: false,
       minify: false,
       // アプリのビルド（electron-vite）と同じく、dependencies は 1 つにまとめず node_modules から読む
-      rollupOptions: { external: ['node-pty', '@xterm/headless', '@xterm/addon-serialize'], output: { format: 'cjs', entryFileNames: 'pty-host.js' } },
+      rolldownOptions: { external: ['node-pty', '@xterm/headless', '@xterm/addon-serialize'], output: { format: 'cjs', entryFileNames: 'pty-host.js' } },
     },
   });
   script = join(buildDir, 'pty-host.js');
@@ -72,6 +72,16 @@ function hostPid(socketPath: string): Promise<number> {
   });
 }
 
+// プロセスが動いているか
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // 出力をためながら受ける
 function collect(pty: PtyHandle): { text: () => string; exit: () => number | null } {
   let text = '';
@@ -91,9 +101,48 @@ const sh = (tag: string, command?: string) => ({
   rows: 24,
 });
 
+// パイプでつながるプロセス（stream-json の claude の代わり）。入力の行をそのまま出力に返す
+const echo = (tag: string, first: string[] = []) => ({
+  tag,
+  file: '/bin/sh',
+  args: ['-c', `${first.map((l) => `printf '%s\\n' '${l}'; `).join('')}exec cat`],
+  cwd: dir,
+  env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir },
+  retain: [{ type: 'system', subtype: 'init' }],
+  transient: [{ type: 'stream_event' }],
+});
+
 describe('pty ホスト', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'tanacode-pty-'));
+  });
+
+  it('パイプのプロセス: アプリを起動し直しても止めず、控えた行を送り直してもらって続きを受け取る。答えの無い要求も渡る', async () => {
+    const first = await start();
+    const pipe = first.spawnPipe(echo('session-p', ['{"type":"system","subtype":"init","session_id":"s1"}']));
+    const before: string[] = [];
+    pipe.onLine((line, seq) => before.push(`${seq}:${line}`));
+    pipe.send('{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool"}}');
+    pipe.send('{"type":"stream_event","event":{"type":"message_start"}}');
+    await waitFor('出力', () => before.length === 3);
+    first.close();
+    await sleep(300);
+    const second = await start();
+    const listed = (await second.list()) as HostedPipeInfo[];
+    expect(listed).toMatchObject([{ kind: 'pipe', tag: 'session-p', exitCode: null, lastSeq: 3, firstSeq: 1 }]);
+    expect(listed[0].pending.map((l) => l.seq)).toEqual([2]);
+    expect(listed[0].retained.map((l) => l.seq)).toEqual([1]);
+    const adopted = second.attachPipe(listed[0]);
+    adopted.replay(listed[0].firstSeq);
+    const after: string[] = [];
+    adopted.onLine((line, seq) => after.push(`${seq}:${line}`));
+    adopted.send('{"type":"user","n":2}');
+    // 書いている途中の行（3 番）は控えていないので、送り直しには入らない
+    await waitFor('続き', () => after.length === 3);
+    expect(after.map((l) => l.split(':')[0])).toEqual(['1', '2', '4']);
+    const exit = new Promise<number>((resolve) => adopted.onExit((code) => resolve(code)));
+    adopted.end();
+    expect(await exit).toBe(0);
   });
 
   it('起動した pty の出力が届き、打った文字が届く', async () => {
@@ -132,9 +181,9 @@ describe('pty ホスト', () => {
     // アプリを終了する（claude は止めずに接続だけ切る）
     first.close();
     const second = await start();
-    const listed = await second.list();
+    const listed = (await second.list()) as HostedPtyInfo[];
     expect(listed).toHaveLength(1);
-    expect(listed[0]).toMatchObject({ tag: 'session-1', exitCode: null, cols: 80, rows: 24 });
+    expect(listed[0]).toMatchObject({ kind: 'pty', tag: 'session-1', exitCode: null, cols: 80, rows: 24 });
     expect(listed[0].screen).toContain('before-restart');
     // 引き継いだ pty に打てて、出力も届く
     const adopted = second.attach(listed[0]);
@@ -185,6 +234,22 @@ describe('pty ホスト', () => {
     expect(shutdownAsked).toBe(true);
     const out = collect(host.spawn(sh('s1', 'echo new-host')));
     await waitFor('新しいホストの出力', () => out.text().includes('new-host'));
+  });
+
+  it('ホストが SIGTERM で止められたら、パイプの claude を、裏で動くプロセスごと止めてから終わる', async () => {
+    const host = await start();
+    const pipe = host.spawnPipe({ ...echo('session-t'), args: ['-c', 'sleep 300 & printf \'{"bg":%s}\\n\' "$!"; exec cat'] });
+    const lines: string[] = [];
+    pipe.onLine((line) => lines.push(line));
+    await waitFor('裏のプロセス', () => lines.length === 1);
+    const bg = (JSON.parse(lines[0]) as { bg: number }).bg;
+    expect(alive(bg)).toBe(true);
+    const pid = await hostPid(socketPathIn(dir, 'pty-host', 'pty'));
+    process.kill(pid, 'SIGTERM');
+    // パイプの claude は自分のプロセスグループで動いているので、ホストが止めないと残る
+    await waitFor('裏のプロセスが止まる', () => !alive(bg), 5000);
+    await waitFor('ホストが終わる', () => !alive(pid), 5000);
+    hosts.length = 0;
   });
 
   it('ホストが落ちたら、動いていた pty は終わったことにする（-1）', async () => {

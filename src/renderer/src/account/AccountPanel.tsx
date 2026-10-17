@@ -9,12 +9,19 @@ import { openProfilesDialog, useProfiles } from './profiles';
 
 // これより古い値は、いつの値かを添えて出す
 const STALE_MS = 30 * 60_000;
-// いつも出す利用枠。値が無くても灰色の 0% で場所を取っておき、欄の高さを変えない（行が増減して、ゲージが上下しないように）。
+// いつも出す利用枠。値が無くても灰色の 0% で場所を取っておき、この 2 つの行は増減させない（ゲージが上下しないように）。
+// モデル別の週の枠の行は、その下に、プランにあるモデルの分だけ出す（増え・消える）。
 // label は main が付ける利用枠の名前（UsageLimit.label）で、どの枠かを見分ける値として比べる。画面に出す名前は name のキーで読む
 const LIMITS = [
   { label: '5時間', name: 'fiveHour' },
   { label: '週', name: 'week' },
 ] as const;
+// マウスを乗せたときの説明の、利用枠の出どころ
+const USAGE_SOURCES = {
+  statusline: 'account.panel.usageFromStatusline',
+  usage: 'account.panel.usageFromUsage',
+  'claude-cache': 'account.panel.usageFromCache',
+} as const satisfies Record<UsageLimits['source'], string>;
 // 応答のたびに届く利用枠をきっかけにアカウントを読み直すのは、この間隔に 1 回まで（~/.claude.json は大きくなることがあるため）
 const ACCOUNT_REREAD_MS = 60_000;
 
@@ -122,15 +129,13 @@ export function AccountPanel() {
   const current = list.find((p) => p.id === profiles?.current) ?? null;
   const attention = multiple && !!profiles?.othersAttention;
 
-  const at = usage ? new Date(usage.updatedAt).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const at = usage ? timeOf(usage.updatedAt) : '';
   const stale = usage !== null && now - usage.updatedAt > STALE_MS;
   const organization = account ? visibleOrganization(account) : null;
   const tip = [
     multiple && current ? t('account.panel.profile', { name: current.name }) : null,
     account ? account.email : account === null ? t('account.panel.notLoggedIn') : null,
-    usage
-      ? t(usage.source === 'statusline' ? 'account.panel.usageFromStatusline' : 'account.panel.usageFromCache', { time: at })
-      : t('account.panel.usagePending'),
+    usage ? t(USAGE_SOURCES[usage.source], { time: at }) : t('account.panel.usagePending'),
   ]
     .filter(Boolean)
     .join('\n');
@@ -162,8 +167,12 @@ export function AccountPanel() {
           )}
         </div>
         {LIMITS.map(({ label, name }) => (
-          <Gauge key={label} label={t(`account.usage.${name}`)} limit={usage?.limits.find((l) => l.label === label) ?? null} now={now} />
+          <Gauge key={label} label={t(`account.usage.${name}`)} limit={usage?.limits.find((l) => l.label === label && !l.model) ?? null} now={now} />
         ))}
+        {/* モデル別の週の枠（プランにあれば）。モデルの一覧が届いたら、そこに無いモデルの行は消える。一覧の無い知らせでは前の値を残す */}
+        {usage?.limits
+          .filter((l) => l.model)
+          .map((l) => <Gauge key={`model:${l.model}`} label={t('account.usage.weekModel', { model: l.model! })} limit={l} now={now} />)}
       </button>
       {open && (
         <div className="account-menu" style={position} role="menu" aria-label={t('account.panel.menu')}>
@@ -249,18 +258,26 @@ function Gauge({ label, limit, now }: { label: string; limit: UsageLimit | null;
   const reset = limit.resetsAt !== null && limit.resetsAt <= now;
   const percent = reset ? 0 : limit.percent;
   const level = percent >= 90 ? 'high' : percent >= 70 ? 'mid' : 'low';
+  // 前の値から残した枠（新しい知らせに無かったもの）が古ければ、残り時間の代わりに何時点の値かを出す（欄の幅に両方は入らない）
+  const stale = limit.updatedAt !== undefined && now - limit.updatedAt > STALE_MS;
+  const detail = reset ? t('account.usage.reset') : stale ? t('account.panel.staleAt', { time: timeOf(limit.updatedAt!) }) : remaining(limit.resetsAt, now);
   return (
     <div className={`usage-gauge ${level}`}>
       <div className="usage-row">
         <span className="usage-label">{label}</span>
         <span className="usage-percent">{percent}%</span>
-        <span className="usage-reset">{reset ? t('account.usage.reset') : remaining(limit.resetsAt, now)}</span>
+        <span className="usage-reset">{detail}</span>
       </div>
       <div className="usage-bar">
         <span style={{ width: `${reset ? 0 : Math.min(100, Math.max(percent, 1))}%` }} />
       </div>
     </div>
   );
+}
+
+// 値を得た時刻（「10/7 9:20」）
+function timeOf(ms: number): string {
+  return new Date(ms).toLocaleString(locale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 // 「あと 2時間13分」「あと 4日18時間」

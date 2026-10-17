@@ -6,7 +6,24 @@ import { IpcChannel } from '@shared/ipc';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
-import { argsOf, boot, cleanup, githubModule, invoke, mainWindow, manager, sendFromRenderer, sentToRenderer, setSystemVersion, state, the } from './helpers/main-app';
+import {
+  argsOf,
+  boot,
+  cleanup,
+  fakeEvent,
+  FakeWebContents,
+  githubModule,
+  invoke,
+  invokeWith,
+  mainWindow,
+  manager,
+  sendFromRenderer,
+  sendWith,
+  sentToRenderer,
+  setSystemVersion,
+  state,
+  the,
+} from './helpers/main-app';
 
 // アプリの入り口（src/main/index.ts）の、画面からの呼び出し・知らせの受け口（registerIpc）。
 // Electron と重い部品を作り物にして index.ts を読み込み（test/helpers/main-app.ts）、受け口を画面の代わりに呼んで、
@@ -29,6 +46,67 @@ describe('受け口の登録', () => {
   });
 });
 
+describe('Markdown のプレビューの画像', () => {
+  it('セッションのフォルダで読み、追加したフォルダも渡す（その中の画像だけを読む）。読めなければ null', async () => {
+    await boot();
+    manager().addedFoldersOf.mockReturnValue(['/Users/me/lib']);
+    await expect(invoke(IpcChannel.ReadImage, 's1', '/Users/me/lib/logo.png')).resolves.toEqual(
+      callIn(cwdOf('s1'), 'workspace.readImage', '/Users/me/lib/logo.png', ['/Users/me/lib']),
+    );
+    expect(manager().addedFoldersOf.mock.calls).toEqual([['s1']]);
+  });
+});
+
+describe('送り元', () => {
+  const NOT_FROM_APP = 'アプリの画面からの呼び出しではありません';
+
+  it('アプリの画面のメインフレームからの呼び出しと知らせだけを受ける。中のフレーム・アプリの画面でないもの・アプリの外の URL・フレームの分からないものは受けない', async () => {
+    await boot();
+    const contents = mainWindow().webContents;
+    const open = (sender: unknown, senderFrame: { url: string; parent: unknown } | null) =>
+      invokeWith({ sender, senderFrame: senderFrame as never }, IpcChannel.SessionsOpen, 's1');
+    await expect(open(contents, contents.mainFrame)).resolves.toEqual(call('manager.open', 's1'));
+    // 画面の中のフレーム（iframe）
+    await expect(open(contents, { url: contents.url, parent: contents.mainFrame })).rejects.toThrow(NOT_FROM_APP);
+    // フレームが分からない（呼び出しの途中で、フレームが消えた・移った）
+    await expect(open(contents, null)).rejects.toThrow(NOT_FROM_APP);
+    // アプリの画面のメインフレームが、アプリの外のページになっている
+    await expect(open(contents, { url: 'https://example.com/', parent: null })).rejects.toThrow(NOT_FROM_APP);
+    await expect(open(contents, { url: 'file:///tmp/index.html', parent: null })).rejects.toThrow(NOT_FROM_APP);
+    // アプリの画面でないもの（アプリ内ブラウザのページなど）
+    const guest = new FakeWebContents();
+    guest.type = 'webview';
+    guest.url = contents.url;
+    await expect(open(guest, guest.mainFrame)).rejects.toThrow(NOT_FROM_APP);
+    expect(manager().open.mock.calls).toEqual([['s1']]);
+    // プロファイルを見ない受け口も同じ
+    await expect(invokeWith({ sender: contents, senderFrame: { url: contents.url, parent: contents.mainFrame } }, IpcChannel.ProfilesAdd, { name: 'x', claudeDir: '/tmp/x' })).rejects.toThrow(NOT_FROM_APP);
+    // 知らせ: 中のフレームからのものは何もしない
+    sendWith({ sender: contents, senderFrame: { url: contents.url, parent: contents.mainFrame } }, IpcChannel.SessionsInterrupt, 's1');
+    sendWith({ sender: guest, senderFrame: guest.mainFrame }, IpcChannel.SessionsInterrupt, 's1');
+    expect(manager().interrupt).not.toHaveBeenCalled();
+    sendWith({ sender: contents, senderFrame: contents.mainFrame }, IpcChannel.SessionsInterrupt, 's1');
+    expect(manager().interrupt.mock.calls).toEqual([['s1']]);
+  });
+
+  it('どの受け口も、送り元を確かめてから中を動かす', async () => {
+    await boot();
+    const contents = mainWindow().webContents;
+    const sub = { url: contents.url, parent: contents.mainFrame };
+    for (const channel of state.handlers.keys()) await expect(invokeWith({ sender: contents, senderFrame: sub }, channel), channel).rejects.toThrow(NOT_FROM_APP);
+    for (const channel of state.listeners.keys()) expect(sendWith({ sender: contents, senderFrame: sub }, channel), channel).toBeUndefined();
+    expect(manager().interrupt).not.toHaveBeenCalled();
+    expect(the('ShellTerminals').write).not.toHaveBeenCalled();
+  });
+
+  it('開発中は、開発サーバーの画面（同じオリジン）から受ける', async () => {
+    await boot({ before: () => (process.env.ELECTRON_RENDERER_URL = 'http://localhost:5173') });
+    const contents = mainWindow().webContents;
+    await expect(invokeWith({ sender: contents, senderFrame: { url: 'http://localhost:5173/#x', parent: null } }, IpcChannel.SessionsOpen, 's1')).resolves.toEqual(call('manager.open', 's1'));
+    await expect(invokeWith({ sender: contents, senderFrame: { url: 'http://localhost:5174/', parent: null } }, IpcChannel.SessionsOpen, 's1')).rejects.toThrow(NOT_FROM_APP);
+  });
+});
+
 describe('そのまま渡す受け口', () => {
   beforeEach(async () => {
     await boot();
@@ -45,17 +123,21 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.SessionsHistory, ['s1'], call('manager.history', 's1')],
     [IpcChannel.SessionsExportSource, ['s1'], call('manager.exportSource', 's1')],
     [IpcChannel.SessionsConfigure, ['s1', { model: 'opus', effort: null, settingsFile: null }], call('manager.configure', 's1', { model: 'opus', effort: null, settingsFile: null })],
+    [IpcChannel.SessionsModels, ['s1'], call('manager.modelsOf', 's1')],
     [IpcChannel.SessionsRestart, ['s1'], call('manager.restart', 's1')],
     [IpcChannel.SessionsSetRemoteControl, ['s1', true], call('manager.setRemoteControl', 's1', true)],
+    [IpcChannel.SessionsSetTerminalMode, ['s1', true, { stopTasks: true }], call('manager.setTerminalMode', 's1', true, { stopTasks: true })],
+    [IpcChannel.SessionsSetTerminalMode, ['s1', false], call('manager.setTerminalMode', 's1', false, { stopTasks: false })],
     [IpcChannel.RemoteControlAvailable, [], call('manager.remoteAvailable')],
-    [IpcChannel.ScreenGet, ['s1'], call('manager.screenForView', 's1')],
-    [IpcChannel.ScreenActivityGet, ['s1'], call('manager.activity', 's1')],
+    [IpcChannel.SessionsProgressGet, ['s1'], call('manager.progress', 's1')],
     [IpcChannel.QuestionGet, ['s1'], call('manager.pendingQuestion', 's1')],
     [IpcChannel.QuestionReply, ['s1', 'q1', { kind: 'chat' }], call('manager.replyQuestion', 's1', 'q1', { kind: 'chat' })],
+    [IpcChannel.PermissionGet, ['s1'], call('manager.pendingPermission', 's1')],
+    [IpcChannel.PermissionReply, ['s1', 'r1', { kind: 'allow', always: true }], call('manager.replyPermission', 's1', 'r1', { kind: 'allow', always: true })],
     [IpcChannel.WorkflowsGet, ['s1'], call('manager.workflows', 's1')],
     [IpcChannel.ScreenSetMode, ['s1', 'plan'], call('manager.setMode', 's1', 'plan')],
-    [IpcChannel.ScreenRewind, ['s1', '戻す先の発言'], call('manager.rewind', 's1', '戻す先の発言')],
-    [IpcChannel.ScreenChoose, ['s1', { kind: 'option', index: 2 }], call('manager.choose', 's1', { kind: 'option', index: 2 })],
+    [IpcChannel.ScreenRewindPreview, ['s1', 'u1'], call('manager.rewindPreview', 's1', 'u1')],
+    [IpcChannel.ScreenRewind, ['s1', 'u1', { conversation: true, code: 1 }], call('manager.rewind', 's1', 'u1', { conversation: true, code: false })],
     [IpcChannel.SubagentsGet, ['s1'], call('manager.subagents', 's1')],
     [IpcChannel.TasksBash, ['s1'], call('manager.bashTasks', 's1')],
     [IpcChannel.TasksAgentLog, ['s1', { agentId: 'a1' }], call('manager.agentLog', 's1', { agentId: 'a1' })],
@@ -81,7 +163,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.WorkspaceInfo, ['s1'], callIn(cwdOf('s1'), 'workspace.info')],
     [IpcChannel.ListDir, ['s1', 'src/lib'], callIn(cwdOf('s1'), 'workspace.listDir', 'src/lib')],
     [IpcChannel.ReadFile, ['s1', 'README.md'], callIn(cwdOf('s1'), 'workspace.readFile', 'README.md')],
-    [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png')],
+    // 追加したフォルダの中の画像も読めるよう、セッションの追加したフォルダも渡す（下の「Markdown のプレビューの画像」）
+    [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png', [])],
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身')],
     [IpcChannel.ListFiles, ['s1'], callIn(cwdOf('s1'), 'workspace.listFiles')],
     [IpcChannel.Search, ['s1', 'TODO', { regex: true }], callIn(cwdOf('s1'), 'workspace.search', 'TODO', { regex: true })],
@@ -93,6 +176,7 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.GitLastMessage, ['s1'], callIn(cwdOf('s1'), 'scm.lastCommitMessage')],
     // 最後の引数は、プロファイルの Claude Code の設定のフォルダ（既定のプロファイルは null）
     [IpcChannel.CommandsList, ['s1'], call('listCommands', cwdOf('s1'), '/transcripts/s1.jsonl', null)],
+    [IpcChannel.CommandsList, ['live'], [{ name: 'compact', description: '圧縮', source: 'builtin' }]],
     [IpcChannel.FolderCommands, ['/work/cafe'], call('listCommands', '/work/cafe', null, null)],
     [IpcChannel.SessionsDiscover, [], call('discoverSessions', new Set(['known-1']), null)],
     [
@@ -101,6 +185,7 @@ describe('そのまま渡す受け口', () => {
       call('manager.importSession', 'c1', '/work/cafe', '外の会話'),
     ],
     [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.create', 's1', cwdOf('s1'), 120, 40)],
+    [IpcChannel.ShellAttach, [], call('shells.attach')],
     [IpcChannel.TranslateRun, [['こんにちは', 'Hello']], call('translator.translate', ['こんにちは', 'Hello'])],
   ];
 
@@ -113,6 +198,19 @@ describe('そのまま渡す受け口', () => {
       call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' } }),
     );
     await expect(invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'press-enter' })).resolves.toBe(false);
+    // プレビュー付きの質問のメモ（annotations）は、文字の値だけを渡す
+    await expect(
+      invoke(IpcChannel.QuestionReply, 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く', preview: 1 }, 空: { notes: ' ' } } }),
+    ).resolves.toEqual(call('manager.replyQuestion', 's1', 'q1', { kind: 'answer', answers: { 'どちら?': 'A 案' }, annotations: { 'どちら?': { notes: '余白を広く' } } }));
+  });
+
+  it('許可の確認のカードの返事も、形を確かめてから渡す（形の違う返事・理由の無い断りは渡さずに false）', async () => {
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'deny', message: '別の方法で' })).resolves.toEqual(
+      call('manager.replyPermission', 's1', 'r1', { kind: 'deny', message: '別の方法で' }),
+    );
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'allow', always: 'yes' })).resolves.toEqual(call('manager.replyPermission', 's1', 'r1', { kind: 'allow' }));
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'deny', message: '  ' })).resolves.toBe(false);
+    await expect(invoke(IpcChannel.PermissionReply, 's1', 'r1', { kind: 'press-enter' })).resolves.toBe(false);
   });
 
   // [チャンネル, 画面から送る引数, 呼ばれる作り物, そのメソッド, 渡る引数]
@@ -225,11 +323,11 @@ describe('フォルダ（新規セッションの画面）', () => {
     await expect(invoke(IpcChannel.FolderOpen, other)).rejects.toThrow('フォルダを開けません');
   });
 
-  it('主ウインドウが無いときは、ダイアログを単独で出す', async () => {
+  it('主ウインドウを閉じたあとに、閉じた画面から届いた呼び出しは受けない（ダイアログを出さない）', async () => {
     await boot();
     mainWindow().emit('closed');
-    await invoke(IpcChannel.FolderPick);
-    expect(state.dialog.showOpenDialog.mock.calls[0]).toEqual([{ title: '作業するフォルダを選択', properties: ['openDirectory', 'createDirectory'] }]);
+    await expect(invoke(IpcChannel.FolderPick)).rejects.toThrow('アプリの画面からの呼び出しではありません');
+    expect(state.dialog.showOpenDialog).not.toHaveBeenCalled();
   });
 
   it('フォルダの情報は、フォルダがあるときだけ読む', async () => {
@@ -302,6 +400,48 @@ describe('フォルダ（新規セッションの画面）', () => {
     // 2 回閉じても、監視を 2 回やめない
     sendFromRenderer(IpcChannel.FolderClose, id);
     expect(the('WorkspaceWatchers').release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('画面の読み込み直し（⌘R）', () => {
+  it('アプリの画面を読み込み直すと、前の画面が開いた新規セッションの画面のフォルダを閉じ、シェルは止めずに、新しい画面が引き継ぐまで知らせを止める', async () => {
+    await boot();
+    manager().list.mockReturnValue([{ id: 's1', cwd: state.root, worktree: null }]);
+    const id = (await invoke(IpcChannel.FolderOpen, state.root)) as string;
+    const contents = mainWindow().webContents;
+    // 同じ文書の中の移動（# の付け替えなど）と、中のフレームの移動では、何もしない
+    contents.emit('did-start-navigation', fakeEvent({ isMainFrame: true, isSameDocument: true, url: `${contents.url}#top` }));
+    contents.emit('did-start-navigation', fakeEvent({ isMainFrame: false, isSameDocument: false, url: 'about:blank' }));
+    expect(the('ShellTerminals').detach).not.toHaveBeenCalled();
+    expect(the('WorkspaceWatchers').release).not.toHaveBeenCalled();
+
+    contents.emit('did-start-navigation', fakeEvent({ isMainFrame: true, isSameDocument: false, url: contents.url }));
+    expect(the('ShellTerminals').detach).toHaveBeenCalledTimes(1);
+    expect(the('WorkspaceWatchers').release.mock.calls).toEqual([[state.root]]);
+    expect(the('ShellTerminals').killOwner.mock.calls).toEqual([[id]]);
+    expect(the('ShellTerminals').killAll).not.toHaveBeenCalled();
+    expect(the('BrowserControl').forget.mock.calls).toEqual([[id]]);
+    // 前の画面のフォルダの ID は、もうそのフォルダを指さない
+    await expect(invoke(IpcChannel.WorkspaceInfo, id)).resolves.toEqual(callIn(cwdOf(id), 'workspace.info'));
+    // 新しい画面が、動いているシェルを引き継ぐ
+    await expect(invoke(IpcChannel.ShellAttach)).resolves.toEqual(call('shells.attach'));
+  });
+
+  it('URL の違う移動（Finder のファイルを落とした・リンク）は、止めるので読み込み直しにならない。フォルダは閉じず、シェルの知らせも止めない', async () => {
+    await boot();
+    manager().list.mockReturnValue([{ id: 's1', cwd: state.root, worktree: null }]);
+    await invoke(IpcChannel.FolderOpen, state.root);
+    const contents = mainWindow().webContents;
+    // Electron は、移り始めた知らせ（did-start-navigation）を、止められる知らせ（will-navigate）より先に出す
+    for (const url of ['file:///Users/me/Desktop/shot.png', 'https://example.com/']) {
+      contents.emit('did-start-navigation', fakeEvent({ isMainFrame: true, isSameDocument: false, url }));
+      const navigate = fakeEvent();
+      contents.emit('will-navigate', navigate, url);
+      expect(navigate.preventDefault).toHaveBeenCalledTimes(1);
+    }
+    expect(the('ShellTerminals').detach).not.toHaveBeenCalled();
+    expect(the('WorkspaceWatchers').release).not.toHaveBeenCalled();
+    expect(the('ShellTerminals').killOwner).not.toHaveBeenCalled();
   });
 });
 
@@ -414,42 +554,47 @@ describe('アーカイブ・一覧から消す', () => {
 
   it('一覧から消すと、シェルとブラウザを閉じ、消えたセッション（子も）のチェックリストとウォークスルーを捨てる。残ったものは残す', async () => {
     await boot();
-    const alive = new Set(['s1', 'c1', 'c2']);
-    manager().childrenOf.mockReturnValue(['c1', 'c2']);
-    manager().summary.mockImplementation((id: string) => (alive.has(id) ? { id } : undefined));
-    // c2 は消えずに残る（manager が残したもの）
+    const sessions = new Map<string, { id: string; archived: boolean }>(['s1', 'c1', 'c2', 'c3'].map((id) => [id, { id, archived: false }]));
+    manager().childrenOf.mockReturnValue(['c1', 'c2', 'c3']);
+    manager().summary.mockImplementation((id: string) => sessions.get(id));
+    // c1 は消え、c3 はアーカイブに残り、c2 は戻しておいた子として動き続ける（どれも manager が決めたもの）
     manager().remove.mockImplementation(async (id: string, options: unknown) => {
-      alive.delete('s1');
-      alive.delete('c1');
+      sessions.delete('s1');
+      sessions.delete('c1');
+      sessions.set('c3', { id: 'c3', archived: true });
       return { removed: id, options };
     });
     await expect(invoke(IpcChannel.SessionsRemove, 's1', { removeWorktree: true })).resolves.toEqual({ removed: 's1', options: { removeWorktree: true } });
     expect(the('ShellTerminals').killOwner.mock.calls).toEqual([['s1']]);
-    expect(the('BrowserControl').forget.mock.calls).toEqual([['s1'], ['c1'], ['c2']]);
+    // ブラウザを閉じるのは、消したセッションと、消えた・アーカイブ済みの子だけ（動き続ける子のブラウザは残す）
+    expect(the('BrowserControl').forget.mock.calls).toEqual([['s1'], ['c1'], ['c3']]);
     // 消したあとに、消えたかを確かめる
     expect(the('ChecklistStore').remove.mock.calls).toEqual([['s1'], ['c1']]);
     expect(the('WalkthroughControl').forget.mock.calls).toEqual([['s1'], ['c1']]);
   });
 
-  it('消せなかったら、チェックリストとウォークスルーは残す', async () => {
+  it('消せなかったら、チェックリストとウォークスルーは残す。ブラウザは、消そうとしたセッションと、アーカイブ済みの子のものだけを閉じる', async () => {
     await boot();
+    manager().childrenOf.mockReturnValue(['c1', 'c2']);
+    manager().summary.mockImplementation((id: string) => ({ id, archived: id !== 'c2' }));
     manager().remove.mockRejectedValue(new Error('worktree を消せません'));
     await expect(invoke(IpcChannel.SessionsRemove, 's1')).rejects.toThrow('worktree を消せません');
     expect(the('ChecklistStore').remove).not.toHaveBeenCalled();
     expect(the('WalkthroughControl').forget).not.toHaveBeenCalled();
+    expect(the('BrowserControl').forget.mock.calls).toEqual([['s1'], ['c1']]);
   });
 });
 
 describe('送信と予約', () => {
-  it('送信: 本文が無ければ空の文字、添付と札（貼り付けた長い文）は文字のものだけを渡す。画面からの送信は、打つ前の確かめ（guarded）をしない', async () => {
+  it('送信: 本文が無ければ空の文字、添付と札（貼り付けた長い文）は文字のものだけを渡す', async () => {
     await boot();
     await invoke(IpcChannel.SessionsSubmit, 's1', 'こんにちは', ['/a.png', 3, null, '/b.png'], ['ログ\n2 行目', 7, null]);
     await invoke(IpcChannel.SessionsSubmit, 's2', null, 'not-array', 'not-array');
     await invoke(IpcChannel.SessionsSubmit, 's3', undefined, undefined);
     expect(manager().submit.mock.calls).toEqual([
-      ['s1', 'こんにちは', ['/a.png', '/b.png'], false, ['ログ\n2 行目']],
-      ['s2', '', [], false, []],
-      ['s3', '', [], false, []],
+      ['s1', 'こんにちは', ['/a.png', '/b.png'], ['ログ\n2 行目']],
+      ['s2', '', [], []],
+      ['s3', '', [], []],
     ]);
   });
 
@@ -514,13 +659,14 @@ describe('作業の書き出し', () => {
     expect(state.shell.showItemInFolder.mock.calls).toEqual([[target]]);
   });
 
-  it('主ウインドウが無いときは、ダイアログを単独で出す。保存先が無ければ保存しない', async () => {
+  it('保存先が無ければ保存しない。主ウインドウを閉じたあとに、閉じた画面から届いた呼び出しは受けない', async () => {
     await boot();
-    mainWindow().emit('closed');
     state.dialog.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: undefined });
     await expect(invoke(IpcChannel.SessionsExportSave, '<html></html>', '作業')).resolves.toBeNull();
-    expect(state.dialog.showSaveDialog.mock.calls[0]).toHaveLength(1);
-    expect(state.dialog.showSaveDialog.mock.calls[0][0]).toMatchObject({ defaultPath: join(state.downloads, '作業.html') });
+    expect(state.dialog.showSaveDialog.mock.calls[0][1]).toMatchObject({ defaultPath: join(state.downloads, '作業.html') });
+    mainWindow().emit('closed');
+    await expect(invoke(IpcChannel.SessionsExportSave, '<html></html>', '作業')).rejects.toThrow('アプリの画面からの呼び出しではありません');
+    expect(state.dialog.showSaveDialog).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -730,9 +876,6 @@ describe('通知・モデル・翻訳', () => {
     // キャンセルしたら、パスが返ってきても使わない
     state.dialog.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: ['/Users/me/.claude/work.json'] });
     await expect(invoke(IpcChannel.SettingsFilesPick)).resolves.toBeNull();
-    mainWindow().emit('closed');
-    await invoke(IpcChannel.SettingsFilesPick);
-    expect(state.dialog.showOpenDialog.mock.calls.at(-1)).toEqual([options]);
   });
 });
 

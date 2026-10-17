@@ -10,6 +10,11 @@ import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePa
 // command: スラッシュコマンド（/model など。発言ではない）
 // pastes: 発言に添えた長い貼り付け（入力欄の札）の中身。text には入らない（splitPasted を参照）
 // pasted: 発言の全体が 1 つの貼り付けだった（text は、その貼り付けの中身。札だけを送った発言か、前のアプリが丸ごと貼り付けで送った複数行の発言）
+// 送ったが、まだ会話に出ていない発言。id: アプリが発言に付けた uuid（会話ログの行の uuid にもなる）/
+// state: sending（Claude Code に渡した）・queued（Claude Code の順番待ちに入った。作業中に送ったもの）/ images: 添えた画像の数 /
+// text・pastes・parent: 会話に出たときと同じ形（親セッションからの指示は、囲みを外した本文と親の ID。unsentView）
+export type UnsentPrompt = { id: string; text: string; pastes: string[]; images: number; state: 'sending' | 'queued'; parent?: string };
+
 export type ChatEvent =
   | { type: 'user'; id: string; text: string; pastes?: string[]; pasted?: true; images?: string[]; at?: number; parent?: string; command?: true }
   | { type: 'assistant-text'; id: string; text: string; at?: number }
@@ -69,8 +74,8 @@ export type ChatEvent =
   | { type: 'api-error'; id: string; text: string; retrying: boolean }
   // interrupted: 人が中断した（Esc）
   | { type: 'turn-end'; interrupted?: true }
-  // Claude Code の作業中に送って順番を待っている発言（今の全部）。受け取られたら減る
-  | { type: 'queue'; prompts: string[] }
+  // 送ったが、まだ会話に出ていない発言（今の全部）。会話に出たら減る（送った発言の uuid で追う。設計書 7 節）
+  | { type: 'queue'; prompts: UnsentPrompt[] }
   // このセッションで作った・紐づいた PR（会話ログの pr-link 行。同じものが何度も書かれる）
   | { type: 'pr-link'; pr: PullRequestLink }
   // 会話を始め直した（/clear）。compact: 最適化圧縮の流れの中でアプリが打った /clear（チャットの画面は消さない。
@@ -88,7 +93,8 @@ export type ChatEvent =
   | { type: 'process-start' }
   // 起動が終わって入力を受け付けられるようになった（入力欄が出た）
   | { type: 'ready' }
-  | { type: 'process-exit'; exitCode: number };
+  // reason: 終わったわけ（ターミナルモードで、起動を終える前に終わった など）。終了の表示に、終了コードの代わりに出す
+  | { type: 'process-exit'; exitCode: number; reason?: string };
 
 // id: TaskCreate で作ったもの（Task #1 の 1）。TodoWrite の項目には無い
 export type TodoItem = { content: string; status: string; activeForm?: string; id?: string };
@@ -122,6 +128,9 @@ export type HookRun = {
   // 止めた理由・Claude に渡した内容など
   message: string;
   toolUseId: string | null;
+  // 何も出力しなかったフック（stream の hook_response から作ったもの）の、Claude Code の hook_id。1 回の実行ごとに違うので、
+  // 画面はこれで同じ実行の重なりを見分ける（コマンドが無いので、ほかの欄では見分けられない）
+  hookId?: string;
 };
 
 // チャットに載せる出力の上限（全文はデバッグ用ターミナルか会話ログで見る）
@@ -245,8 +254,11 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     const prompt = midTurnPromptOf(entry.attachment);
     if (prompt !== null) {
       const blocks = entry.attachment?.prompt;
-      const images = Array.isArray(blocks) ? takeImages(entry, blocks, 'q', onImage) : [];
-      return withImages(prompt ? userTextEvents(entry, prompt) : [], entry, images);
+      // stream-json で送った発言は、送ったときの uuid（source_uuid）を発言の ID にする（送信中の表示を、同じ ID で消すため）
+      const source = entry.attachment?.source_uuid;
+      const target = typeof source === 'string' && source ? { ...entry, uuid: source } : entry;
+      const images = Array.isArray(blocks) ? takeImages(target, blocks, 'q', onImage) : [];
+      return withImages(prompt ? userTextEvents(target, prompt) : [], target, images);
     }
     if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
     const run = hookRunOf(entry.attachment);
@@ -365,12 +377,14 @@ function withImages(events: ChatEvent[], entry: TranscriptEntry, images: string[
 // Claude の作業中にユーザーが送り、そのターンに差し込まれた発言。user 行ではなく、この attachment だけが残る。
 // 同じ形のものでも、サブエージェントの報告（origin が peer）はユーザーの発言ではない。
 // CI の自動修正の知らせ（origin なし）は、user 行のときと同じくお知らせとして出す（userTextEvents が見分ける）。
+// stream-json で送った発言（-p。アプリ・親セッション）は origin が無く、送ったときの uuid（source_uuid）が付く（実測。2.1.301）。
 // 出すものでなければ null、発言だが文字が無い（画像だけ）なら ''
 function midTurnPromptOf(a: Record<string, unknown> | undefined): string | null {
   if (a?.type !== 'queued_command' || a.commandMode !== 'prompt') return null;
   const origin = (a.origin as { kind?: unknown } | undefined)?.kind;
   if (origin === undefined && typeof a.prompt === 'string' && a.prompt.trimStart().startsWith('<ci-monitor-event>')) return a.prompt;
-  if (origin !== 'human') return null;
+  const streamed = origin === undefined && typeof a.source_uuid === 'string';
+  if (origin !== 'human' && !streamed) return null;
   if (typeof a.prompt === 'string') return a.prompt;
   if (!Array.isArray(a.prompt)) return '';
   return (a.prompt as ContentBlock[])
@@ -401,7 +415,7 @@ export const SESSIONS_GATE_HOOK_ENV = 'TANACODE_SESSIONS_GATE';
 export const CHECKLIST_HOOK_ENV = 'TANACODE_CHECKLIST_HOOK';
 // アプリが足した、人のターミナルに打つ前に、権限モードによらず人の許可の確認を出させるフック（main の terminal-bridge.ts）の目印
 export const TERMINAL_GATE_HOOK_ENV = 'TANACODE_TERMINAL_GATE';
-// アプリが足した、AskUserQuestion の質問をアプリに渡して答えを待つフック（main の question-hook.ts）の目印
+// 前のバージョンのアプリが足した、AskUserQuestion の質問をアプリに渡して答えを待つフックの目印（前の会話ログに残る行を、チャットのフックの一覧に出さない）
 export const QUESTION_HOOK_ENV = 'TANACODE_QUESTION_HOOK';
 const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV, CHECKLIST_HOOK_ENV, TERMINAL_GATE_HOOK_ENV, QUESTION_HOOK_ENV];
 
@@ -409,9 +423,12 @@ function isAppHook(command: string): boolean {
   return APP_HOOK_MARKS.some((mark) => command.includes(mark));
 }
 
-// チェックリストを使い続けさせるフックが、ターンの終わりを止めた記録（止めたフックのコマンドは blockingError に入る）
+// チェックリストを使い続けさせるフックが、ターンの終わりを止めた記録。文を渡して続けさせた記録（hook_additional_context。コマンドは載らないので、
+// 囲みで見分ける）と、前のバージョンのアプリが止めた記録（hook_blocking_error。止めたフックのコマンドは blockingError に入る）
 function isChecklistStop(a: Record<string, unknown> | undefined): boolean {
-  if (a?.type !== 'hook_blocking_error' || a.hookEvent !== 'Stop') return false;
+  if (a?.hookEvent !== 'Stop') return false;
+  if (a.type === 'hook_additional_context') return Array.isArray(a.content) && a.content.some((c) => typeof c === 'string' && c.includes(`<${CHECKLIST_REMINDER_TAG}>`));
+  if (a.type !== 'hook_blocking_error') return false;
   const command = (a.blockingError as { command?: unknown } | null | undefined)?.command;
   return typeof command === 'string' && command.includes(CHECKLIST_HOOK_ENV);
 }
@@ -426,6 +443,9 @@ function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
   // アプリが足したフックは、ユーザーのフックではないので出さない（止めたフックのコマンドは blockingError に入る。
   // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせは囲みで見分ける）
   if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || content.includes(`<${CHECKLIST_REMINDER_TAG}>`)) return null;
+  // ユーザーのフックが、標準出力の JSON で suppressOutput を指定した成功の記録（Claude Code の画面でも出ない）。読めない JSON・ほかの出力は出す。
+  // Stop は、要約（stop_hook_summary）の行に、出力の無いフックとしてコマンドだけが残る
+  if (type === 'hook_success' && suppressesOutput(str(a.stdout))) return null;
   return {
     event: str(a.hookEvent) || str(a.hookName).split(':')[0] || 'hook',
     name: str(a.hookName) || str(a.hookEvent),
@@ -438,6 +458,18 @@ function hookRunOf(a: Record<string, unknown> | undefined): HookRun | null {
     message: truncate(blocking?.blockingError ?? (type === 'hook_success' ? '' : content || str(a.message)), OUTPUT_CHARS),
     toolUseId: str(a.toolUseID) || null,
   };
+}
+
+// フックの標準出力が、suppressOutput: true を指定した JSON のオブジェクトか（Claude Code と同じく、出力の全体が JSON のときだけ読む）
+function suppressesOutput(stdout: string): boolean {
+  const text = stdout.trim();
+  if (!text.startsWith('{')) return false;
+  try {
+    // { で始まって読めたものは、いつもオブジェクト
+    return (JSON.parse(text) as { suppressOutput?: unknown }).suppressOutput === true;
+  } catch {
+    return false;
+  }
 }
 
 function truncate(text: string, max: number): string {
@@ -557,7 +589,9 @@ function specialUserText(id: string, text: string): ChatEvent | null {
   // ! を付けて実行したコマンド。出力は <bash-stdout> / <bash-stderr> に入る。
   // 前の Claude Code は同じ行に、今の Claude Code はコマンド（<bash-input>）と出力を別の行に書く
   const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1] ?? '';
-  const shellOutput = () => truncate([tag('bash-stdout'), tag('bash-stderr')].map((s) => s.trim()).filter(Boolean).join('\n'), OUTPUT_CHARS);
+  // 出力は < > & をエスケープして書かれる（Claude Code の TUI の「!」）ので、戻して出す
+  const unescape = (s: string) => s.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+  const shellOutput = () => truncate([tag('bash-stdout'), tag('bash-stderr')].map((s) => unescape(s.trim())).filter(Boolean).join('\n'), OUTPUT_CHARS);
   if (text.startsWith('<bash-input>')) return { type: 'shell', id, command: tag('bash-input').trim(), output: shellOutput() };
   if (text.startsWith('<bash-stdout>') || text.startsWith('<bash-stderr>')) return { type: 'shell-output', id, output: shellOutput() };
   // 本家アプリの「Auto-fix pull requests」が、PR のレビューコメントや CI の失敗を Claude に知らせる
@@ -597,6 +631,16 @@ export function isHumanPrompt(text: string): boolean {
     !head.startsWith(`<${CHECKLIST_EVENT_TAG}`) &&
     !isCompactMessage(text)
   );
+}
+
+// 送った発言を、送信中・順番待ちに出す形。会話ログの発言の行と同じ読み方（userTextEvents）で、会話に出たときと同じ形にする
+// （親セッションからの指示は、囲みを外した本文と親の ID）。発言でないもの（子セッション・予約・チェックリストの知らせ、
+// 最適化圧縮の文など）は null（出さない。会話に出たときに、お知らせとして出る）
+export function unsentView(text: string): { text: string; pastes: string[]; parent?: string } | null {
+  const events = userTextEvents({}, text);
+  const event = events.length === 1 ? events[0] : null;
+  if (event?.type !== 'user' || event.command) return null;
+  return { text: event.text, pastes: event.pastes ?? [], ...(event.parent ? { parent: event.parent } : {}) };
 }
 
 // 順番待ちとして出す文字。親セッションからの指示は、囲みを外す

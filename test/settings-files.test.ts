@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSettings } from '../src/main/app-settings';
 import { claudeArgs } from '../src/main/claude-session';
 import { defaultName, mergeSettings, SettingsFiles } from '../src/main/settings-files';
+import { IDLE_FILE_COMMAND } from '../src/main/statusline';
 import type { SettingsFile } from '../src/shared/settings-file';
 
 // 登録した設定ファイル。選んだセッションだけ、アプリの設定と合わせて Claude Code を起動する
@@ -173,7 +174,7 @@ describe('起動の準備', () => {
     const written = JSON.parse(readFileSync(prepared.settingsFile, 'utf8'));
     expect(written.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-secret');
     expect(written.statusLine.command).toContain('TANACODE_STATUS_FILE');
-    expect(written.hooks.PreToolUse[0].matcher).toBe('AskUserQuestion');
+    expect(written.hooks.PreToolUse[0].matcher).toBe('Bash');
     expect(statSync(prepared.settingsFile).mode & 0o777).toBe(0o600);
     expect(statSync(runDir).mode & 0o777).toBe(0o700);
   });
@@ -183,10 +184,12 @@ describe('起動の準備', () => {
     const mine = { hooks: [{ type: 'command', command: 'npm test' }] };
     const { id } = files.add(file('a.json', { hooks: { Stop: [mine] } }));
     const without = JSON.parse(readFileSync(files.prepare('s', id, false, false).settingsFile, 'utf8'));
-    expect(without.hooks.Stop).toEqual([mine]);
+    // ターンの終わりを書くだけのフックは、いつも足す
+    const idle = { hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] };
+    expect(without.hooks.Stop).toEqual([mine, idle]);
     expect(without.hooks.UserPromptSubmit).toBeUndefined();
     const written = JSON.parse(readFileSync(files.prepare('s', id, false, false, true).settingsFile, 'utf8'));
-    expect(written.hooks.Stop).toEqual([mine, { hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_CHECKLIST_HOOK=1') })] }]);
+    expect(written.hooks.Stop).toEqual([mine, idle, { hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_CHECKLIST_HOOK=1') })] }]);
     expect(written.hooks.UserPromptSubmit).toHaveLength(1);
     expect(written.hooks.SessionStart[0].matcher).toBe('compact');
   });
@@ -229,8 +232,8 @@ describe('起動の準備', () => {
     const { id } = files.add(file('a.json', {}));
     const matchers = (sessionId: string, ...flags: boolean[]) =>
       (JSON.parse(readFileSync(files.prepare(sessionId, id, ...flags).settingsFile, 'utf8')).hooks.PreToolUse as { matcher: string }[]).map((h) => h.matcher);
-    expect(matchers('s1')).toEqual(['AskUserQuestion', 'Bash']);
-    expect(matchers('s2', true, true)).toHaveLength(4);
+    expect(matchers('s1')).toEqual(['Bash']);
+    expect(matchers('s2', true, true)).toHaveLength(3);
   });
 
   it('読めない理由の文には、ホームの外のパスをそのまま書く', () => {

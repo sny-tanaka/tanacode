@@ -1,6 +1,9 @@
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { UnsentPrompt } from '@shared/chat';
 import type { PermissionMode } from '@shared/screen';
+import type { ClaudeProcess } from './leftover-claude';
+import type { SavedInit } from './stream/protocol';
 
 export type SessionRecord = {
   id: string;
@@ -29,6 +32,9 @@ export type SessionRecord = {
   // 子セッションの起動の権限モード（起動したときのモードか、そのあとアプリで切り替えたモード。画面のモード欄・親の configure_session）。
   // 止まった子を起動し直すときも、このモードで起動する（ユーザーの既定のモードが親より強くても、上げないため）
   launchMode?: PermissionMode | null;
+  // ターミナルモード（Claude Code の画面のまま）で起動したか。Claude Code が終わっても、アプリを起動し直しても、ターミナルモードの
+  // まま止まった状態で開き、「再開」もターミナルモードで起動する（チャットには、人が切り替えボタンで戻す）
+  terminal?: boolean;
   // アプリが決めた権限モード（起動の引数か、アプリでの切り替え。Runtime.knownMode）。アプリを起動し直して、動いている claude を
   // 引き継ぐときに戻す（claude のモードは変わっていないのに、戻さないと manual 扱いになり、そのあとに始める子の上限が下がる）
   knownMode?: PermissionMode | null;
@@ -37,6 +43,18 @@ export type SessionRecord = {
   // 追加したフォルダを変えたが、動いている claude にはまだ渡していない（手が空いたら --resume で起動し直す）。
   // アプリを動かしたまま終了して、次のアプリが claude を引き継いだときも、起動し直すまで残す
   addedFoldersPending?: boolean;
+  // 最後に起動したチャットの claude（initialize の返事の pid と、起動したときの会話の ID）。常駐のホストが止める間もなく落ちると
+  // claude だけが残るので、開き直す前に残っていないかを確かめて止める（leftover-claude.ts）
+  claudeProcess?: ClaudeProcess | null;
+  // 最後に起動したチャットの claude の initialize の返事のうち、引き継いだあとも要るもの（モデル・エフォートの確かめ、auto を使えるか、
+  // / の候補、Remote Control を使えるか）。引き継いだ claude には initialize を送り直さないので、ここから戻す
+  claudeInit?: SavedInit | null;
+  // 最後につないだ Remote Control のセッションの ID（remote_control の返事・会話ログの bridge-session 行の bridgeSessionId）。
+  // 止まっていたセッションを開き直してつなぐときも、reattach_session_id で同じ Remote Control のセッションに付け直す
+  bridgeSessionId?: string | null;
+  // claude を動かしたままアプリを終了したときに、送ったがまだ会話に出ていなかった発言（送信中・順番待ち）。次のアプリが claude を
+  // 引き継いだら戻す（順番待ちの発言の文は stream-json の行に無く、そのターンが始まるまで戻ってこない。実測）。shown: チャットに出すもの
+  unsent?: (UnsentPrompt & { shown: boolean })[] | null;
   createdAt: number;
   updatedAt: number;
 };

@@ -1,7 +1,8 @@
 import { useCallback, useEffect } from 'react';
-import type { ChatEvent, HookRun, PullRequestLink, QuestionAnswer, SentFiles, TaskChange, TodoItem } from '@shared/chat';
+import type { ChatEvent, HookRun, PullRequestLink, QuestionAnswer, SentFiles, TaskChange, TodoItem, UnsentPrompt } from '@shared/chat';
 import type { CardRef } from '@shared/checklist-tools';
 import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
+import type { SessionState } from '@shared/session-tools';
 import { useSessionValues } from '../sessionValues';
 
 export type ToolStatus = 'running' | 'done' | 'error';
@@ -49,7 +50,7 @@ export type ChatItem =
       endedAt?: number;
     };
 
-// starting: 起動してから入力欄が出るまで（ready が届くまで）。この間に送った文字は Claude Code が取りこぼすので送らない
+// starting: 起動してから、Claude Code が受け付けられるようになるまで（initialize の返事が来るまで）。この間に送るものは預かる
 export type SessionStatus = 'not-started' | 'starting' | 'idle' | 'running' | 'exited';
 
 // 送った文字を Claude Code が受け付けられる状態
@@ -64,14 +65,16 @@ export type ChatState = {
   // このセッションの PR（最後に紐づいたもの）
   pr: PullRequestLink | null;
   exitCode: number | null;
+  // 終わったわけ（process-exit の reason）。無ければ終了コードを出す
+  exitReason: string | null;
   // ToDo の一覧（最後の TodoWrite か、TaskCreate・TaskUpdate を順に当てたもの）
   todos: TodoItem[] | null;
   // 結果（番号）を待っている TaskCreate（ツールの呼び出しの id ごと）
   pendingTasks: Record<string, TodoItem>;
   // ターンの途中（発言・完了通知・別の Claude からの知らせで始まり、turn-end で終わる）。起動中に読み直した会話で始まったターンも数える
   inTurn: boolean;
-  // Claude Code の作業中に送って、順番を待っている発言
-  queued: string[];
+  // 送ったが、まだ会話に出ていない発言（送信中・順番待ち。main が送った uuid で追う）
+  unsent: UnsentPrompt[];
 };
 
 export const EMPTY_CHAT: ChatState = {
@@ -80,10 +83,11 @@ export const EMPTY_CHAT: ChatState = {
   remoteControlUrl: null,
   pr: null,
   exitCode: null,
+  exitReason: null,
   todos: null,
   pendingTasks: {},
   inTurn: false,
-  queued: [],
+  unsent: [],
 };
 
 // TaskUpdate を一覧に当てる（deleted は消す）
@@ -113,14 +117,17 @@ function withoutRetrying(items: ChatItem[]): ChatItem[] {
   return items.some((i) => i.kind === 'error' && i.retrying) ? items.filter((i) => !(i.kind === 'error' && i.retrying)) : items;
 }
 
-const sameRun = (a: HookRun, b: HookRun) => a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
+// 同じ実行の記録か（Stop の要約と出力のあった記録など、同じ実行が 2 つの形で届く）。何も出力しなかったフックは hook_id で見分ける
+// （1 回ずつ別の実行。コマンドが無いので、きっかけとツールが同じでも重ねない）
+const sameRun = (a: HookRun, b: HookRun) =>
+  a.hookId !== undefined || b.hookId !== undefined ? a.hookId === b.hookId : a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
 
 // hooks はツールのカードに付ける。ツールに付かないものは、直前の同じきっかけの hooks とまとめる。
 // Stop の要約と出力のあった記録は同じ実行なので、重ねない（出力のある方を残す）
 function withHook(items: ChatItem[], id: string, run: HookRun): ChatItem[] {
   const merge = (runs: HookRun[]) => (runs.some((r) => sameRun(r, run)) ? runs : [...runs, run]);
   const tool = run.toolUseId ? items.findIndex((i) => i.kind === 'tool' && i.id === run.toolUseId) : -1;
-  // AskUserQuestion の PermissionRequest の決定の記録（コマンドが無い）は、アプリが足した質問のフック（main の question-hook.ts）が答えた印。
+  // AskUserQuestion の PermissionRequest の決定の記録（コマンドが無い）は、前のアプリが足した質問のフックが答えた印（前の会話ログに残る）。
   // ユーザーのフックではないので出さない（Claude Code は、この記録にコマンドを残さないので、目印の環境変数では見分けられない）
   const target = items[tool];
   if (target?.kind === 'tool' && target.name === 'AskUserQuestion' && run.event === 'PermissionRequest' && !run.command) return items;
@@ -172,7 +179,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'divider':
       return { ...state, items: [...state.items, { kind: 'divider', id: event.id, text: event.text }] };
     case 'api-error': {
-      const items = withoutRetrying(state.items);
+      // 同じ知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき、main がターンの終わりと一緒に出し直す）、
+      // 前の行を外して今の位置に出す
+      const items = withoutRetrying(state.items).filter((i) => !(i.kind === 'error' && i.id === event.id));
       return { ...state, items: [...items, { kind: 'error', id: event.id, text: event.text, retrying: event.retrying }] };
     }
     case 'process-start':
@@ -181,7 +190,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       // 引き継いだ claude がターンの途中なら、入力を受け付けられても作業中のまま
       return { ...state, status: state.status === 'starting' ? (state.inTurn ? 'running' : 'idle') : state.status };
     case 'process-exit':
-      return { ...state, status: 'exited', exitCode: event.exitCode };
+      return { ...state, status: 'exited', exitCode: event.exitCode, exitReason: event.reason ?? null };
     case 'user':
       return {
         ...state,
@@ -276,7 +285,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'remote-control':
       return { ...state, remoteControlUrl: event.url };
     case 'queue':
-      return { ...state, queued: event.prompts };
+      return { ...state, unsent: event.prompts };
     case 'pr-link':
       return state.pr?.url === event.pr.url ? state : { ...state, pr: event.pr };
   }
@@ -298,15 +307,49 @@ function withBatch(current: Entry | undefined, { fromSeq, events }: ChatBatch): 
   return { chat: fresh.reduce(apply, base.chat), nextSeq: fromSeq + events.length };
 }
 
-// 会話ログに出た発言（! のコマンドを含む）と、順番待ちの発言の数（送信中の発言が会話ログに出たかを見るのに使う）。
-// 順番待ちが受け取られると発言に移るので、合計は減らない
-export function arrivedCount(chat: ChatState): number {
-  return chat.items.filter((i) => i.kind === 'user' || (i.kind === 'shell' && i.command)).length + chat.queued.length;
+// 選択していないセッションでも描き直す変化。起動待ちの発言の送り出しに関わる
+function notableChange(prev: Entry | undefined, next: Entry): boolean {
+  return !prev || prev.chat.status !== next.chat.status;
 }
 
-// 選択していないセッションでも描き直す変化。一覧の状態の表示と、送信中・起動待ちの発言の送り出しに関わる
-function notableChange(prev: Entry | undefined, next: Entry): boolean {
-  return !prev || prev.chat.status !== next.chat.status || arrivedCount(prev.chat) !== arrivedCount(next.chat);
+// チャットの状態。動いているセッションは、main が持つ状態（一覧の state）から決める（状態は main が 1 つだけ持つ。設計書 7 節）。
+// まだチャットを読んでいない（not-started）・アーカイブ済み・一覧の外のセッションは、チャットのイベントから作ったまま
+export function statusOf(chat: ChatState, state: SessionState | null | undefined): SessionStatus {
+  if (chat.status === 'not-started' || !state || state === 'archived') return chat.status;
+  switch (state) {
+    case 'starting':
+      return 'starting';
+    case 'exited':
+      return 'exited';
+    // ターンが終わって、裏のタスクだけが動いている間も、発言を受け付ける
+    case 'idle':
+    case 'background':
+      return 'idle';
+    // 作業中と、ターンの途中で人の答えを待っているもの（質問・許可・ブラウザでの操作）。ターミナルモード（人が TUI で操作している）も、
+    // チャットからは操作しない（ヘッダーのモード・モデル・巻き戻し・最適化圧縮を押せなくする）
+    default:
+      return 'running';
+  }
+}
+
+// ステータスバーに出す状態。ターミナルモードの間は、チャットの操作を止めるために statusOf では作業中にしているが、
+// ステータスバーには、一覧の印と同じく、TUI がターンの途中か（terminalWorking）で待機中・作業中を出す
+export function statusBarStatus(status: SessionStatus, session: { state?: SessionState | null; terminalWorking?: boolean } | null): SessionStatus {
+  if (session?.state !== 'terminal') return status;
+  return session.terminalWorking ? 'running' : 'idle';
+}
+
+// 状態だけ違うチャット。同じチャットと状態には同じものを返す（チャットの画面を、状態が変わらないのに描き直さない）
+const withStatusCache = new WeakMap<ChatState, ChatState>();
+
+export function withStatus(chat: ChatState, state: SessionState | null | undefined): ChatState {
+  const status = statusOf(chat, state);
+  if (status === chat.status) return chat;
+  const cached = withStatusCache.get(chat);
+  if (cached?.status === status) return cached;
+  const next = { ...chat, status };
+  withStatusCache.set(chat, next);
+  return next;
 }
 
 // 全セッションのチャット。描き直すのは、選択中のセッションのチャットが変わったときと、ほかのセッションの状態が変わったときだけ

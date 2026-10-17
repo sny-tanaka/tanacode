@@ -78,6 +78,10 @@ it('! を付けて実行したシェルのコマンドと出力を、発言で�
   expect(toChatEvents(user('b4', '<bash-input>ls</bash-input><bash-stdout>a.ts\nb.ts</bash-stdout><bash-stderr>warning</bash-stderr>'), CWD)).toEqual([
     { type: 'shell', id: 'b4', command: 'ls', output: 'a.ts\nb.ts\nwarning' },
   ]);
+  // 出力の < > & は、エスケープして書かれる（TUI の「!」）ので、戻して出す
+  expect(toChatEvents(user('b5', '<bash-stdout>&lt;div&gt; &amp;amp;</bash-stdout><bash-stderr></bash-stderr>'), CWD)).toEqual([
+    { type: 'shell-output', id: 'b5', output: '<div> &amp;' },
+  ]);
 });
 
 it('CI の自動修正の知らせは、PR の番号と見つけたものを短く出し、全文は開いて読めるようにする', () => {

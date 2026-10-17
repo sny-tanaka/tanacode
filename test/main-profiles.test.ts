@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
-import { allOf, boot, cleanup, fakeEvent, invoke, invokeFrom, mainWindow, state, type Fake, type FakeView } from './helpers/main-app';
+import { allOf, boot, cleanup, fakeEvent, invoke, invokeFrom, mainWindow, sendWith, state, type Fake, type FakeView, type FakeWebContents } from './helpers/main-app';
 
 // プロファイル（Claude Code のアカウントごとの環境）を複数開いたとき（src/main/index.ts）。
 // 足したプロファイルは、それぞれの pty ホスト・データ・Claude Code の設定のフォルダを持ち、画面はウインドウに重ねて出し分ける
@@ -49,7 +49,8 @@ describe('足したプロファイルを開く', () => {
     expect(managerOf(0).list).not.toHaveBeenCalled();
     await invoke(IpcChannel.SessionsList);
     expect(managerOf(0).list).toHaveBeenCalledTimes(1);
-    await expect(invokeFrom({}, IpcChannel.SessionsList)).rejects.toThrow('この画面のプロファイルが見つかりません');
+    // アプリの画面でないもの（プロファイルの無い画面）からは受けない
+    await expect(invokeFrom({}, IpcChannel.SessionsList)).rejects.toThrow('アプリの画面からの呼び出しではありません');
     // プロファイルの様子は、その画面から見たもの
     const profiles = [{ id: 'default', name: '会社', color: '#6d9ccf', claudeDir: null }, PERSONAL];
     await expect(invokeFrom(view().webContents, IpcChannel.ProfilesGet)).resolves.toEqual({ profiles, current: 'p2', othersAttention: false });
@@ -165,7 +166,7 @@ describe('プロファイルの追加と削除', () => {
 describe('プロファイルをまたいで同じにする表示設定', () => {
   const COLUMNS = 'tanacode.columns';
   const savedPrefs = () => (JSON.parse(readFileSync(join(state.userData, 'shared-prefs.json'), 'utf8')) as { values: Record<string, string> }).values;
-  const sendFrom = (sender: unknown, channel: string, ...args: unknown[]) => state.listeners.get(channel)!({ sender }, ...args);
+  const sendFrom = (sender: FakeWebContents, channel: string, ...args: unknown[]) => sendWith({ sender, senderFrame: sender.mainFrame }, channel, ...args);
 
   it('起動したときは、先に聞いてきた画面の値を採り、あとの画面にはその値を返す（知らないキー・形の違う値は採らない）', async () => {
     await boot({ profiles: PROFILES });
@@ -177,7 +178,7 @@ describe('プロファイルをまたいで同じにする表示設定', () => {
     expect(savedPrefs()).toEqual({ [COLUMNS]: '{"sessions":300}', 'tanacode.scmView': 'tree' });
     // あとの画面から採ったものは、先の画面に配る
     expect(sentTo(mainWindow().webContents, IpcChannel.PrefsChanged)).toEqual([{ key: 'tanacode.scmView', value: 'tree' }]);
-    await expect(invokeFrom({}, IpcChannel.PrefsSync, {})).rejects.toThrow('この画面のプロファイルが見つかりません');
+    await expect(invokeFrom({}, IpcChannel.PrefsSync, {})).rejects.toThrow('アプリの画面からの呼び出しではありません');
   });
 
   it('変えると覚えて、ほかのプロファイルの画面にだけ配る。次の起動でも同じ値を返す', async () => {

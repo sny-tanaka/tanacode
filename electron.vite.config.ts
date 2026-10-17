@@ -20,10 +20,9 @@ export default defineConfig({
     resolve: { alias: { '@shared': resolve('src/shared') } },
     // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
     // browser-mcp・sessions-mcp・checklist-mcp・walkthrough-mcp・terminal-mcp: アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー（Claude Code が起動し、アプリへ中継する）
-    // question-hook: AskUserQuestion の質問をアプリに渡して答えを待つフック（Claude Code が起動する）
     build: {
       sourcemap,
-      rollupOptions: {
+      rolldownOptions: {
         output,
         input: {
           index: resolve('src/main/index.ts'),
@@ -33,19 +32,18 @@ export default defineConfig({
           'checklist-mcp': resolve('src/main/checklist-mcp.ts'),
           'walkthrough-mcp': resolve('src/main/walkthrough-mcp.ts'),
           'terminal-mcp': resolve('src/main/terminal-mcp.ts'),
-          'question-hook': resolve('src/main/question-hook-main.ts'),
         },
       },
     },
   },
   preload: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
-    build: { sourcemap, rollupOptions: { output } },
+    build: { sourcemap, rolldownOptions: { output } },
   },
   renderer: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
     define: { __APP_VERSION__: JSON.stringify(version) },
-    build: { sourcemap, rollupOptions: { output } },
+    build: { sourcemap, rolldownOptions: { output } },
     plugins: [
       react(),
       // アプリに入れて配る依存のライセンス表示を、アプリの中（out/renderer/THIRD_PARTY_NOTICES.txt）に書き出す。

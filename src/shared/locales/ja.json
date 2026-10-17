@@ -14,7 +14,8 @@
       "nothingToExport": "書き出す中身がありません",
       "folderNotFound": "フォルダが見つかりません: {path}",
       "folderCannotOpen": "フォルダを開けません: {path}",
-      "ptyHostUnreachable": "pty ホストに繋がりません: {path}"
+      "ptyHostUnreachable": "pty ホストに繋がりません: {path}",
+      "notFromApp": "アプリの画面からの呼び出しではありません"
     },
     "dialog": {
       "pickFolder": "作業するフォルダを選択",
@@ -67,12 +68,9 @@
       "turnCompleted": "作業が完了しました",
       "compactCompleted": "コンテキストの最適化が完了しました",
       "compactFailed": "コンテキストの最適化を取りやめました",
-      "needsTerminal": "ターミナルでの操作が必要です",
       "question": "質問しています",
       "permission": "実行の許可: {detail}",
       "permissionNoDetail": "実行の許可を求めています",
-      "confirm": "確認: {title}",
-      "confirmNoTitle": "確認を求めています",
       "images": "画像 {count} 枚",
       "scheduledMissed": "{time} に送る予約を、時刻に送れませんでした: {text}",
       "scheduledFailed": "予約したメッセージを送れませんでした（{reason}）: {text}",
@@ -88,12 +86,12 @@
     },
     "session": {
       "untitled": "新しいセッション",
-      "notFound": "セッションが見つかりません"
+      "notFound": "セッションが見つかりません",
+      "notStopped": "Claude Code を止められなかったため、起動し直せませんでした。今の Claude Code はそのまま動いています（変えた設定は、次に起動したときに使われます）"
     },
     "state": {
       "question": "質問への回答待ち",
       "permission": "実行の許可待ち",
-      "other": "操作待ち",
       "browser": "ブラウザでの操作待ち",
       "starting": "起動中",
       "workingWithBackground": "作業中（バックグラウンド {count}件）",
@@ -104,32 +102,38 @@
     "remote": {
       "unavailable": "Remote Control は開発版では使えません（TANACODE_REMOTE_CONTROL=1 を付けて起動すると使えます）",
       "switching": "Remote Control を切り替えている途中です。少し待ってからもう一度押してください",
-      "waitingAnswer": "Claude Code が質問や確認の答えを待っているため、今は切り替えられません。答えてから切り替えてください",
-      "draft": "ターミナルの Claude Code の入力欄に書きかけの文字があるため、切り替えられません",
-      "failed": "Claude Code の画面で Remote Control を切り替えられませんでした。ターミナルで /remote-control を操作してください"
+      "failed": "Remote Control を切り替えられませんでした（{reason}）"
     },
     "task": {
       "notRunning": "セッションが動いていないため、止められません",
+      "terminalMode": "ターミナルモードの間は、ここからは止められません。Claude Code の画面の /tasks で止めてください",
       "nothingToStop": "止められるもの（動いているバックグラウンドのタスク）が見つかりません",
-      "busy": "別の操作の途中です。少し待ってからもう一度押してください",
-      "waitingAnswer": "質問や確認の答えを待っているため、今は止められません。答えてから止めてください",
-      "draft": "ターミナルの入力欄に書きかけの文字があるため、止められません",
-      "notFound": "画面に見つかりませんでした。すでに終わったか、止まっています",
-      "ambiguous": "同じ名前のものが 2 つ以上あり、どれを止めるか決められません。ターミナルで /tasks を開いて止めてください",
-      "failed": "止められませんでした。ターミナルで /tasks を開いて止めてください"
+      "notFound": "このタスクを止めるための ID が、Claude Code から届いていません。Claude に止めるよう頼んでください",
+      "notStopped": "止める頼みは送りましたが、止まったことを確かめられませんでした。まだ動いていれば、もう一度止めてください",
+      "failed": "止められませんでした（{reason}）"
+    },
+    "rewind": {
+      "turn_running": "Claude Code が作業中です",
+      "commands_queued": "送る予定の発言があります",
+      "prompt_pending": "送った発言がまだ会話に入っていません",
+      "unseen_later_turn": "まだ画面に出ていない、あとの発言があります。少し待ってから、もう一度試してください",
+      "stale_target": "画面の会話が古くなっています。少し待ってから、もう一度試してください",
+      "target_not_found": "巻き戻し先の発言が見つかりませんでした",
+      "expired": "時間がたっているため、この発言までは戻せません",
+      "usage_limited": "利用枠の上限に達しているため、戻せません",
+      "state_changed": "途中で会話が変わりました。もう一度試してください",
+      "persist_failed": "巻き戻しを会話ログに書けませんでした"
     },
     "send": {
-      "notAccepting": "入力を受け付けられる状態ではなくなったため、送れませんでした",
-      "menuAppeared": "質問や確認が出たため、送れませんでした",
       "notRunning": "Claude Code が動いていません",
       "exited": "Claude Code が終了しました",
       "cancelled": "送るのを取りやめました",
-      "waitingAnswer": "質問や確認の答えを待っているため、送れませんでした",
-      "draft": "ターミナルの入力欄に書きかけの文字があるため、送れませんでした",
-      "busy": "Claude Code の手が空かないため、送れませんでした"
+      "busy": "Claude Code の手が空かないため、送れませんでした",
+      "notReady": "Claude Code が受け付けられるようにならなかったため、送れませんでした",
+      "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）",
+      "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください"
     },
     "worktree": {
-      "untrustedFolder": "このフォルダは、まだ Claude Code で信頼していません。一度 worktree なしで始めて、フォルダの信頼の確認に答えてから、worktree で始めてください",
       "createFailed": "Claude Code が worktree を作れませんでした",
       "closedWhileCreating": "worktree を作っている途中で、セッションがアーカイブされたか、一覧から消されました",
       "commandAt": "{command}（{dir}）",
@@ -159,7 +163,9 @@
       "nameRequired": "名前を入力してください",
       "duplicateName": "「{name}」という名前の設定ファイルは、すでにあります",
       "removed": "このセッションが使っていた設定ファイルは、登録から外されています。選択欄の「管理…」で登録し直すか、別の設定ファイルに切り替えてください",
-      "unavailable": "設定ファイルを使えない状態です"
+      "unavailable": "設定ファイルを使えない状態です",
+      "rejected": "設定ファイルに読めない項目があるため、Claude Code を止めました。直してから、もう一度始めてください。\n{details}",
+      "ignored": "設定ファイルに読めない項目があります。Claude Code は、その項目を使わずに動いています。\n{details}"
     },
     "profile": {
       "cannotRemoveDefault": "標準のプロファイルは外せません",
@@ -212,6 +218,7 @@
     "git": {
       "commitMessageRequired": "コミットメッセージを入力してください",
       "noDefaultBranch": "デフォルトブランチが分かりません",
+      "badBranch": "ブランチの名前として使えません（{branch}）",
       "diverged": "{name} には切り替えましたが、手元の {name} が {target} と分かれているため最新まで進められませんでした"
     },
     "search": {
@@ -222,7 +229,10 @@
     },
     "model": {
       "noCatalog": "Claude Code のモデル一覧の控え（~/.claude/cache/model-catalog）がありません",
-      "needsVersion": "Claude Code {version} 以上が必要（今は {installed}）"
+      "needsVersion": "Claude Code {version} 以上が必要（今は {installed}）",
+      "unknown": "このモデルは、今の Claude Code では選べません: {model}",
+      "effortUnsupported": "このモデルでは、エフォート {effort} を選べません",
+      "failed": "モデルやエフォートを切り替えられませんでした（{reason}）"
     },
     "walkthrough": {
       "missing": "ウォークスルーがありません。",
@@ -242,6 +252,30 @@
     "addFolder": {
       "inside": "セッションのフォルダの中のフォルダは、もうエクスプローラーに出ているので追加しません: {path}",
       "diskRoot": "ディスクのいちばん上のフォルダは追加できません: {path}"
+    },
+    "permission": {
+      "alwaysItem": "{what}・{where}",
+      "alwaysRule": "「{rule}」",
+      "alwaysDirectory": "{dir} へのアクセス",
+      "alwaysAcceptEdits": "編集をすべて許可",
+      "alwaysMode": "権限モードを {mode} にする",
+      "whereLocal": "このフォルダ",
+      "whereProject": "このフォルダの共有の設定",
+      "whereUser": "すべてのフォルダ",
+      "whereSession": "このセッションだけ"
+    },
+    "terminal": {
+      "notRunning": "Claude Code が動いていません",
+      "switching": "チャットとターミナルモードを切り替えている途中です",
+      "exitedWhileSwitching": "切り替えの途中で Claude Code が終了しました。切り替えずに止めたので、「再開」で開き直してください",
+      "busy": "作業中・確認や質問への答え待ち・送る予定の発言があるときは、ターミナルモードに切り替えられません",
+      "tuiBusy": "Claude Code が作業中です。ターンが終わってからチャットに戻してください",
+      "tasksRunning": "バックグラウンドのタスクが動いています。切り替えると止まります",
+      "remoteOffFailed": "Remote Control を切れなかったため、ターミナルモードにしませんでした（{reason}）",
+      "startFailed": "もう片方で起動できなかったため、元に戻しました（{reason}）",
+      "tuiExited": "ターミナルモードの Claude Code が、起動を終える前に終わりました（code {code}）。「再開」で起動し直すか、ターミナルモードのボタンでチャットに戻せます",
+      "chatExited": "チャットの Claude Code が起動の途中で終了したため（code {code}）、ターミナルモードに戻しました",
+      "startFailedStopped": "もう片方でも、元の形でも起動できませんでした（{reason}）。設定を直してから「再開」で開き直してください"
     }
   },
   "commands": {
@@ -322,7 +356,7 @@
       "teleport": "クラウドに送る・claude.ai から再開する",
       "terminal-setup": "Shift+Enter の改行を設定",
       "theme": "テーマを変える",
-      "tui": "ターミナル UI の描画方式を設定（tanacode のセッションは fullscreen のまま）",
+      "tui": "ターミナル UI の描画方式を設定（ターミナルモードで使う。チャットには描画が無い）",
       "ultrareview": "クラウドでバグを探して検証する",
       "upgrade": "プランをアップグレード",
       "usage": "使用量・プランの状況",
@@ -430,7 +464,6 @@
       "untitledSession": "新しいセッション",
       "childQuestion": "子セッション「{name}」（{id}）が質問への回答を待っています（answer_question で答えられます）。",
       "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。get_session で中身を読み、answer_permission で答えるか、判断できなければ人に聞いてください。",
-      "childWaiting": "子セッション「{name}」（{id}）がターミナルでの操作を待っています。人に伝えてください。",
       "childBrowser": "子セッション「{name}」（{id}）がアプリ内ブラウザで人の操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
       "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
@@ -439,7 +472,8 @@
       "checkCards": "card_get で確かめて対応し、返事は card_reply で書いてください。",
       "clipped": "{text}…（続きは card_get で）",
       "cardsCopied": "セッション「{session}」から「{list}」に {numbers}（{titles}）が届きました。",
-      "cardTitle": "「{title}」"
+      "cardTitle": "「{title}」",
+      "childTerminal": "子セッション「{name}」（{id}）がターミナルモードになり、人が Claude Code の画面で操作しています。"
     },
     "checklistCopy": {
       "sessionNotFound": "セッションが見つかりません",
@@ -449,9 +483,11 @@
   },
   "chat": {
     "pane": {
-      "rewindNotFound": "巻き戻し先の発言が見つかりませんでした。ターミナルで /rewind を操作してください。",
+      "rewindNotFound": "巻き戻し先の発言が見つかりませんでした",
       "model": "モデル",
       "configureFailed": "変更できませんでした: {error}",
+      "modeFailed": "権限モードを「{mode}」に切り替えられませんでした",
+      "modeFailedError": "権限モードを切り替えられませんでした（{error}）",
       "settingsFileDefault": "標準",
       "settingsFileMissing": "登録なし",
       "confirmSettingsFile": "設定ファイルを「{name}」に変えます。Claude Code を起動し直して会話を続けます。設定の内容（接続先の URL・API キーなど）によっては、これまでの会話の内容が新しい接続先に送られます。\n\n変えますか？",
@@ -491,7 +527,7 @@
       "export": "作業を書き出す…",
       "exportTip": "このセッションの流れを、1 枚の HTML ファイルに書き出す",
       "terminal": "ターミナルモード",
-      "terminalTip": "チャットの代わりに、Claude Code をターミナルの画面のまま表示して操作する",
+      "terminalTip": "チャットの代わりに、Claude Code をターミナルの画面のまま表示して操作する。切り替えると、Claude Code を起動し直して同じ会話を続けます（手が空いているときだけ）",
       "pasteComments": "入力欄に貼る",
       "pasteCommentsTip": "コードへのコメントを、Claude Code の入力欄に貼る（Enter で送る）",
       "starting": "Claude Code を起動しています…",
@@ -506,12 +542,7 @@
       "takeBackTip": "送るのをやめて入力欄に戻す",
       "sendNowFailed": "送れませんでした: {error}",
       "rescheduleFailed": "時刻を変えられませんでした: {error}",
-      "slowStart": "Claude Code の起動に時間がかかっています。確認の画面などで止まっていないか、ターミナルで見てください",
-      "rewinding": "巻き戻し先を選んでいます…",
-      "cancelEsc": "キャンセル（Esc）",
-      "unknownScreen": "Claude Code がチャットでは操作できない画面を表示しています",
-      "closeEsc": "閉じる（Esc）",
-      "operateInTerminal": "ターミナルで操作",
+      "slowStart": "Claude Code の起動に時間がかかっています（{elapsed}）。MCP サーバーや SessionStart のフックを待っていることがあります",
       "archived": "このセッションはアーカイブされています",
       "unarchive": "アクティブに戻す",
       "exited": "Claude Code が終了しました（code {code}）",
@@ -520,14 +551,18 @@
       "chooseAbove": "上の選択肢から選んでください",
       "placeholder": "Claude Codeに指示する（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）",
       "settingsFileTitle": "設定ファイル（変更すると Claude Code を起動し直して会話を再開します。モデルとエフォートは設定ファイルの既定に戻ります）",
-      "modelTitle": "モデル（変更すると Claude Code を起動し直して会話を再開します）",
+      "modelTitle": "モデル（動いている Claude Code をその場で切り替え、次の応答から使います。このセッションだけ）",
       "refreshModels": "モデル一覧を更新",
-      "effortTitle": "エフォート（変更すると Claude Code を起動し直して会話を再開します）",
+      "effortTitle": "エフォート（動いている Claude Code をその場で切り替え、次の応答から使います。このセッションだけ）",
       "noEffort": "エフォートなし",
       "effort": "エフォート",
       "modeTitle": "権限モード（このセッションだけ。Shift+Tab と同じ）",
       "mode": "モード",
-      "bypassPermissions": "すべて許可"
+      "bypassPermissions": "すべて許可",
+      "slowStartStderr": "Claude Code の標準エラーの末尾",
+      "terminalStopsTasks": "バックグラウンドのタスクが動いています。切り替えると、Claude Code を起動し直すので止まります。切り替えますか？",
+      "leaveTerminal": "チャットに戻ります。Claude Code の画面の入力欄に書きかけがあれば、消えます。戻りますか？",
+      "terminalFailed": "切り替えられませんでした（{error}）"
     },
     "toolCard": {
       "running": "実行中…",
@@ -649,7 +684,8 @@
       "wontConnect": "始めてもつなぎません",
       "connected": "つながっています",
       "enabled": "リモートコントロールは有効です（起動やつながりが済むと、つながります）",
-      "disconnected": "つないでいません"
+      "disconnected": "つないでいません",
+      "lockedInTerminal": "ターミナルモードの間は切り替えられません（Claude Code の画面の /remote-control で切り替えます）"
     },
     "todo": {
       "title": "Todo"
@@ -681,6 +717,23 @@
       "noAnswer": "（回答なし）",
       "image": "[画像]",
       "linesOmitted": "…（{count} 行省略）"
+    },
+    "rewind": {
+      "kind": "巻き戻し",
+      "title": "この発言の前まで戻しますか？",
+      "files": "コードを戻すと、{count} 個のファイルが変わります（+{insertions} −{deletions}）",
+      "noFiles": "この発言のあと、Claude が変えたファイルはありません。会話だけを戻します",
+      "codeUnavailable": "コードは戻せません（{reason}）。会話だけを戻せます",
+      "codeUnavailablePlain": "コードは戻せません。会話だけを戻せます",
+      "more": "ほか {count} 個",
+      "both": "会話とコードを戻す",
+      "conversation": "会話だけ戻す",
+      "conversationOnly": "会話を戻す",
+      "code": "コードだけ戻す",
+      "failed": "巻き戻せませんでした（{error}）",
+      "codeOnly": "コードは戻しました。会話は戻せませんでした（{error}）",
+      "failedIn": "「{title}」を巻き戻せませんでした（{error}）",
+      "codeOnlyIn": "「{title}」のコードは戻しました。会話は戻せませんでした（{error}）"
     }
   },
   "composer": {
@@ -749,7 +802,9 @@
       "claude": "Claude の予約",
       "claudeTip": "Claude が自分に入れた予約です。時刻になると、このセッションの Claude に知らせとして送ります",
       "cancelSendingTip": "送るのをやめて入力欄に戻す",
-      "cancelTip": "予約をやめて入力欄に戻す"
+      "cancelTip": "予約をやめて入力欄に戻す",
+      "unsaved": "保存できません",
+      "unsavedTip": "予約のファイルを読めないため、予約を保存しません。送る前にアプリを終えると消えます（元のファイルはそのまま残します）"
     },
     "note": {
       "scheduled": "{time} に送ります",
@@ -968,14 +1023,16 @@
     "activity": {
       "question": "質問への回答待ち",
       "permission": "実行の許可待ち",
-      "other": "操作待ち",
       "browser": "ブラウザでの操作待ち",
       "starting": "起動中",
       "runningWithBackground": "作業中（バックグラウンド {count}件）",
       "running": "作業中",
       "background": "バックグラウンド {count}件の完了待ち",
       "unread": "新しい応答",
-      "exited": "終了"
+      "exited": "終了",
+      "terminal": "ターミナルモード",
+      "terminalWorking": "ターミナルモード・作業中",
+      "terminalUnread": "ターミナルモード・新しい応答"
     },
     "worktreeDialog": {
       "archiveFailed": "アーカイブできませんでした: {error}",
@@ -1087,6 +1144,7 @@
       "notLoggedIn": "ログインしていません",
       "usageFromStatusline": "プランの利用枠。{time} 時点（セッションの応答から）",
       "usageFromCache": "プランの利用枠。{time} 時点（Claude Code の /usage の控えから）",
+      "usageFromUsage": "プランの利用枠。{time} 時点（チャットのターンの終わりに Claude Code に聞いたもの）",
       "usagePending": "プランの利用枠は、セッションが応答すると出ます",
       "staleAt": "{time} 時点",
       "othersAttention": "別のアカウントに通知あり",
@@ -1102,6 +1160,7 @@
     "usage": {
       "fiveHour": "5時間",
       "week": "週",
+      "weekModel": "週（{model}）",
       "unknown": "未取得",
       "reset": "リセット済み",
       "remainingMinutes": "あと {count}分",
@@ -1225,6 +1284,18 @@
     },
     "markdownPreview": {
       "diagramFailed": "図を描けませんでした: {error}"
+    },
+    "unsaved": {
+      "label": "保存していない変更",
+      "title": "保存していない変更があります（{count} 件）",
+      "about": "別のフォルダに移るとエディタを開き直すので、保存していない変更は消えます。",
+      "save": "保存して移る",
+      "saving": "保存しています…",
+      "discard": "保存せずに移る",
+      "cancel": "やめる",
+      "saveFailed": "保存できませんでした: {error}",
+      "conflictNote": "次のファイルは、ディスク側（Claude など）でも変わっています。「保存して移る」では書きません。「やめる」で戻り、エディタでどちらを残すか選んでください。",
+      "editorClosed": "エディタが閉じています"
     }
   },
   "explorer": {
@@ -1396,7 +1467,8 @@
       "kindReviewTip": "確認事項のリスト。チェック（承認）したカードは、決定事項に移ります",
       "revoked": "取り消し",
       "revokedTip": "取り消した決定（有効ではありません）: {reason}",
-      "noReason": "理由なし"
+      "noReason": "理由なし",
+      "unsaved": "このセッションのチェックリストのファイルを読めないため、変更を保存しません。アプリを終えると消えます（元のファイルはそのまま残します）。"
     },
     "action": {
       "copyToSession": "別のセッションへコピー",
@@ -1789,15 +1861,7 @@
     "kind": {
       "question": "Claude Code からの質問",
       "permission": "実行の許可",
-      "other": "確認"
-    },
-    "notChosen": {
-      "busy": "ほかの操作の途中だったため、送れませんでした。もう一度押してください",
-      "gone": "画面が変わったため、送りませんでした",
-      "missing": "この選択肢が Claude Code の画面に見つからないため、送りませんでした",
-      "stuck": "選択肢にカーソルを合わせられませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください",
-      "ignored": "Claude Code が受け付けませんでした。もう一度押すか、Claude Code の画面（ターミナル）で選んでください",
-      "filled": "自由記述の欄に前に打った文が残っていて、消せませんでした。Claude Code の画面（ターミナル）で消してから、もう一度送ってください"
+      "plan": "プランの承認"
     },
     "card": {
       "sendFailed": "送れませんでした。もう一度押してください",
@@ -1805,8 +1869,6 @@
       "reviewAnswers": "回答の確認へ →",
       "otherTyped": "その他: {text}",
       "other": "その他（自由に入力）",
-      "cancelTip": "キャンセル（Esc）",
-      "answerPlaceholder": "回答を入力",
       "confirm": "決定",
       "send": "送信",
       "stopEditing": "やめる",
@@ -1818,7 +1880,28 @@
       "unanswered": "（未回答）",
       "submitAnswers": "回答を送る",
       "questionTab": "{n} 問め",
-      "questionGone": "この質問には、もう答えられません（ターミナルで答えたか、Claude Code が先へ進みました）"
+      "questionGone": "この質問には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）",
+      "notes": "メモ（任意）",
+      "notesPlaceholder": "選んだ案について Claude に伝えること"
+    },
+    "permission": {
+      "allow": "許可する",
+      "always": "許可して、今後は聞かない（{rules}）",
+      "deny": "断って、理由を伝える",
+      "denyPlaceholder": "断る理由・代わりにしてほしいこと（Enter で改行、⌘+Enter で送る）",
+      "stopTip": "断って、作業を止める",
+      "inputField": "{key}: {value}",
+      "editNumber": "{n}/{total} 個めの編集",
+      "omitted": "…（残りの {count} 文字は省きました）",
+      "reason": "確認する理由: {reason}",
+      "fromSubagent": "サブエージェントの中の呼び出しです",
+      "gone": "この確認には、もう答えられません（ほかで答えたか、Claude Code が取り下げました）",
+      "planTitle": "このプランで進めますか？",
+      "planApprove": "承認する（編集は毎回確かめる）",
+      "planAcceptEdits": "承認して、編集を自動で進める",
+      "planKeep": "計画を続ける（直してほしいことを伝える）",
+      "planPlaceholder": "プランで直してほしいこと（Enter で改行、⌘+Enter で送る）",
+      "planMissing": "プランを読めませんでした。中身を確かめられないため、承認はできません。「計画を続ける」で出し直してもらうか、× で止めてください"
     }
   }
 }

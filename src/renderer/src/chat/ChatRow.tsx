@@ -15,7 +15,7 @@ import { SentFilesCard } from './SentFilesCard';
 import { ParentHeading, SessionLinkList, SessionRefText } from './SessionRefs';
 import { ToolCard } from './ToolCard';
 import type { ChatItem } from './chatState';
-import { isSessionTool } from './toolLabel';
+import { isSessionTool } from '@shared/tool-label';
 import { openChecklistCard } from '../checklist/openCard';
 import type { SubagentRuns } from './useSessionSubagents';
 
@@ -24,7 +24,8 @@ type Props = {
   workflows: WorkflowRuns;
   subagents: SubagentRuns;
   bashTasks: ReadonlyMap<string, BashTask>;
-  onRewind: ((text: string) => void) | null;
+  // 発言の前まで巻き戻す（発言の ID を渡す）
+  onRewind: ((messageId: string) => void) | null;
   onOpenFile: (absPath: string, line?: number) => void;
   // サブエージェント・ワークフロー・バックグラウンドの Bash の中身を開く。null なら開けない（タスクの中身の表示の中など）
   onOpenTask: ((ref: TaskRef) => void) | null;
@@ -107,7 +108,7 @@ export const ChatRow = memo(function ChatRow({
             label={t('chat.row.rewind')}
             tip={t('chat.row.rewindTip')}
             className="chat-rewind"
-            onClick={() => onRewind(item.text)}
+            onClick={() => onRewind(item.id)}
           />
         )}
       </div>

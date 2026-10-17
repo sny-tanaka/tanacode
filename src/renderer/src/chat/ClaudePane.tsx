@@ -1,11 +1,11 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t, type MessageKey } from '@shared/i18n';
-import type { SessionSummary } from '@shared/ipc';
+import type { RewindChoice, RewindPreview, SessionSummary } from '@shared/ipc';
 import type { ScheduledMessage } from '@shared/scheduled';
 import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
-import type { PermissionMode, ScreenInfo } from '@shared/screen';
-import type { PendingQuestion } from '@shared/questions';
+import type { PermissionMode } from '@shared/screen';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { BashTask, TaskRef } from '@shared/task';
 import { errorMessage } from '../errorMessage';
 import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
@@ -22,36 +22,37 @@ import { runInTerminal } from '../terminal/runInTerminal';
 import type { WorkflowRuns } from '../workflow/useSessionWorkflows';
 import { ChatInput, CommentChips, listCompletionFiles, type CompletionSource } from './ChatInput';
 import { ChatRow } from './ChatRow';
-import { useTakeClaudeDraft } from './claudeDraft';
 import { HookGroupRow } from './HookGroupRow';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupTools, reuseGroups, type ChatRowItem } from './toolGroups';
 import { TodoPanel } from './TodoPanel';
-import { splitPasted } from '@shared/chat';
-import { isLongPaste } from '@shared/prompt-keys';
+import type { UnsentPrompt } from '@shared/chat';
+import { isLongPaste } from '@shared/paste';
 import { useInsertInput } from './insertInput';
-import { DoneNote, useJustFinished, WorkingNote } from './WorkingNote';
+import { DoneNote, StartingNote, useJustFinished, WorkingNote } from './WorkingNote';
 import type { SubagentRuns } from './useSessionSubagents';
 import { acceptsInput, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { PastedChips } from './PastedChips';
+import { RewindCard } from './RewindCard';
+import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
 import { RemoteControlToggle } from './RemoteControlToggle';
-import { stripControlChars } from './sanitize';
 import { useCanCompact } from './compactState';
 import { CompactButton, useCompactStatus } from './CompactButton';
-import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from './sessionOptions';
+import { EFFORTS, modeChoices, refreshTitle, useModelCatalog, useSessionModels, withSessionModels } from './sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from './settingsFiles';
 import { Busy } from '../layout/Busy';
-import { useSessionLinks } from '../sessions/sessionLinks';
+import { sessionName, useSessionLinks, type SessionLink } from '../sessions/sessionLinks';
 import { pendingFolder, preparingLabel } from '../sessions/worktree';
-
-// 起動がこれより長くかかったら、Claude Code の画面を確かめるよう促す
-const SLOW_START_MS = 10_000;
 
 // チャットの一覧を上・下へ送るキー（Space は、Shift と一緒なら上へ）
 const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
 const SCROLL_DOWN_KEYS = new Set(['ArrowDown', 'PageDown', 'End']);
+// 押して離す間、画面の上の位置を保つ要素（押すと click で動くもの。カードの選択肢はどれも button）
+const PRESSABLE = 'button, a[href], [role="button"], summary, label';
+// 押した点からこれより動いたら、押したのではなく動かした（ドラッグ）とみなす（手のぶれは数えない）
+const PRESS_SLOP_PX = 4;
 
 type Props = {
   session: SessionSummary;
@@ -60,9 +61,10 @@ type Props = {
   // ほかのセッションへ移る（チャットの親からの指示・子からの知らせ・@ の参照・セッションのツールのカードから）
   onSelectSession: (id: string) => void;
   chat: ChatState;
-  screen: ScreenInfo | null;
-  // フックが答えを待っている AskUserQuestion（無ければ null）
+  // Claude Code が答えを待っている AskUserQuestion（無ければ null）
   question?: PendingQuestion | null;
+  // Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認。無ければ null）
+  permission?: PendingPermission | null;
   workflows: WorkflowRuns;
   subagents: SubagentRuns;
   bashTasks: ReadonlyMap<string, BashTask>;
@@ -83,8 +85,6 @@ type Props = {
   comments: ReviewComment[];
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
-  // ターミナルモードにする（チャットで操作できない画面が出たときなど）
-  onOpenTerminal: () => void;
   // サイドパネルにコンテキストの中身を出す（ヘッダーのメーターを押したとき）
   onShowContext: () => void;
   // ターミナルパネルのシェルのタブを出す（worktree の npm install などの進み具合を見る）
@@ -98,8 +98,6 @@ type Props = {
   onSend: (text: string, attachments: string[], pastes?: string[]) => void;
   // 起動を待っている発言
   pending: PendingSend | null;
-  // 送ったが、まだ会話ログに出ていない発言
-  sending: PendingSend[];
   // 起動を待っている発言を取り下げる（入力欄に戻す）
   onTakePending: () => PendingSend | null;
   // このセッションに予約したメッセージ（時刻の早い順）
@@ -112,8 +110,8 @@ export const ClaudePane = memo(function ClaudePane({
   sessions,
   onSelectSession,
   chat,
-  screen,
   question = null,
+  permission = null,
   workflows,
   subagents,
   bashTasks,
@@ -128,7 +126,6 @@ export const ClaudePane = memo(function ClaudePane({
   comments,
   onCommentsChange,
   onShowComment,
-  onOpenTerminal,
   onShowContext,
   onShowShell,
   onToggleTerminal,
@@ -137,7 +134,6 @@ export const ClaudePane = memo(function ClaudePane({
   onUnarchive,
   onSend,
   pending,
-  sending,
   onTakePending,
   scheduled,
 }: Props) {
@@ -170,26 +166,140 @@ export const ClaudePane = memo(function ClaudePane({
   const jumping = useRef(false);
   // 前に読んだ（か、送った）スクロールの位置。上へ動いたか（上を読み始めたか）を見分ける
   const lastScrollTop = useRef(0);
-  // 人が上へスクロールしようとしている（ホイール・トラックパッドで上へ・上へ送るキー・スクロールバーを押した）。スクロールが止まるまで立てておく。
+  // 人が上へスクロールしようとしている（ホイール・トラックパッドで上へ・上へ送るキー・スクロールバーを押した・Tab で上の要素へフォーカスを
+  // 移して一覧が上へ動いた）。スクロールが止まるまで立てておく。
   // 最下部を追いかけるのをやめるのは、人が上へ動かしたときだけ。一覧が縮んで位置が押し戻された（位置を保つ調整も）知らせが、
   // そのあと伸びてから届くと（CPU が忙しいと起きる）、上へ動いて最下部から離れたように見える。これで追いかけをやめると、
   // カードの選択肢が見えている範囲の下に隠れ、その上に「最新のメッセージへ」が出る（選択肢の代わりにボタンを押してしまう）
   const userScrollingUp = useRef(false);
-  // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）
+  // Tab（Shift+Tab）を押している間（押してから離すまで）。フォーカスを移した先を見せるために、ブラウザが一覧を動かすことがある
+  const tabbing = useRef(false);
+  // 一覧の中の押せる要素を押している間（押してから、離して click が届くまで）。押した要素と、押したときの画面の上の位置（top）、
+  // 位置を保つために一覧の上と下に足した余白（pad。base は CSS で決まっている余白）、離したときに外す聞き手（stop）
+  const pressed = useRef<{
+    element: Element;
+    top: number;
+    base: { top: number; bottom: number };
+    pad: { top: number; bottom: number };
+    stop: () => void;
+  } | null>(null);
+  // 最下部へ送る。送った位置を覚えておく（送ったスクロールの知らせを、上へ動いたと取り違えない）。
+  // 押している間は送らずに、押した要素の位置を保つ（離したあとで送る）
   const toBottom = (list: HTMLElement) => {
+    if (pressed.current) {
+      keepPressed(list);
+      return;
+    }
     list.scrollTop = list.scrollHeight;
     lastScrollTop.current = list.scrollTop;
   };
+  // 押している間は、押した要素を画面の上で動かさない。押して離す間に、上の行が縮む・伸びる・増える・消える（終わったツールの行が
+  // 消える動き・会話ログからあとで届く行）か、最下部を追いかけて、押した要素が動くと、離した所が要素から外れ、click が要素に届かない
+  // （カードの選択肢を押しても効かない。E2E では Playwright の click が成功で返ったまま、カードが閉じるのを待って止まる）。
+  // ずれた分はスクロールで戻す。下へずれた（上の行が伸びた・増えた）分は、上に足した余白があればそこから引き、スクロールの余地が
+  // 足りなければ（一覧がスクロールしない・下の端に着いた）一覧の下に余白を足してから戻す。上へずれた（上の行が縮んだ・消えた）分で、
+  // スクロールで戻しきれないもの（上の端に着いた）は、一覧の上の余白で戻す
+  const keepPressed = (list: HTMLElement) => {
+    const hold = pressed.current;
+    if (!hold || !hold.element.isConnected) return;
+    const drift = () => hold.element.getBoundingClientRect().top - hold.top;
+    const applyPad = () => {
+      list.style.paddingTop = hold.pad.top > 0 ? `${hold.base.top + hold.pad.top}px` : '';
+      list.style.paddingBottom = hold.pad.bottom > 0 ? `${hold.base.bottom + hold.pad.bottom}px` : '';
+    };
+    let d = drift();
+    if (Math.abs(d) < 0.5) return;
+    if (d > 0 && hold.pad.top > 0) {
+      hold.pad.top = Math.max(0, hold.pad.top - d);
+      applyPad();
+      d = drift();
+    }
+    if (d > 0) {
+      const room = list.scrollHeight - list.clientHeight - list.scrollTop;
+      if (room < d) {
+        hold.pad.bottom += d - room;
+        applyPad();
+      }
+    }
+    list.scrollTop += d;
+    lastScrollTop.current = list.scrollTop;
+    d = drift();
+    if (d < -0.5) {
+      hold.pad.top -= d;
+      applyPad();
+    }
+  };
+  // 離した。余白を外し、押している間に止めていた最下部の追いかけをする
+  const releasePressed = (list: HTMLElement) => {
+    const hold = pressed.current;
+    if (!hold) return;
+    pressed.current = null;
+    hold.stop();
+    if (hold.pad.top > 0) list.style.paddingTop = '';
+    if (hold.pad.bottom > 0) list.style.paddingBottom = '';
+    if (stickToBottom.current) toBottom(list);
+    else lastScrollTop.current = list.scrollTop;
+  };
+  // 一覧の行の中の、押せる要素（カードの選択肢など）を押し始めた。離した（pointerup・pointercancel）あと、そのときの click が
+  // 届いてから離したことにする（pointerup・mouseup・click は、同じ入力の中で続けて届く。その途中で余白を外すと、mouseup の位置がずれる）。
+  // 人が自分で一覧を動かしたら、やめる: 押した点から動かした（ドラッグで文字を選ぶ。端を越えると選ぶためのスクロールが動く）・
+  // ホイールを回した・キーを押した・ウインドウから離れた（離した知らせが来ないことがある）
+  const holdPressed = (list: HTMLElement, element: Element, x: number, y: number) => {
+    releasePressed(list);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const up = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => releasePressed(list));
+    };
+    const leave = () => releasePressed(list);
+    const move = (e: PointerEvent) => {
+      if (Math.hypot(e.clientX - x, e.clientY - y) > PRESS_SLOP_PX) leave();
+    };
+    const listeners: [string, EventListener][] = [
+      ['pointerup', up],
+      ['pointercancel', up],
+      ['pointermove', move as EventListener],
+      ['wheel', leave],
+      ['keydown', leave],
+      ['blur', leave],
+    ];
+    for (const [type, listener] of listeners) window.addEventListener(type, listener, true);
+    pressed.current = {
+      element,
+      top: element.getBoundingClientRect().top,
+      base: { top: Number.parseFloat(getComputedStyle(list).paddingTop) || 0, bottom: Number.parseFloat(getComputedStyle(list).paddingBottom) || 0 },
+      pad: { top: 0, bottom: 0 },
+      stop: () => {
+        clearTimeout(timer);
+        for (const [type, listener] of listeners) window.removeEventListener(type, listener, true);
+      },
+    };
+  };
+  useEffect(() => () => pressed.current?.stop(), []);
 
   // キーでのスクロール。一覧の中を押したあとは、入力欄の外で押したキーが一覧を動かす（キーの知らせは一覧に届かないので、ウインドウで聞く）
+  // Tab は、入力欄の中で押しても、一覧の中へフォーカスを移す（離したら、または離した知らせが来ないままウインドウから離れたら、下ろす）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') tabbing.current = true;
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (SCROLL_UP_KEYS.has(e.key) || (e.key === ' ' && e.shiftKey)) userScrollingUp.current = true;
       else if (SCROLL_DOWN_KEYS.has(e.key) || e.key === ' ') userScrollingUp.current = false;
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') tabbing.current = false;
+    };
+    const onBlur = () => {
+      tabbing.current = false;
+    };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
 
   const [draftSessionId, setDraftSessionId] = useState(session.id);
@@ -210,23 +320,30 @@ export const ClaudePane = memo(function ClaudePane({
   useLayoutEffect(() => {
     const list = listRef.current;
     if (list && stickToBottom.current) toBottom(list);
-  }, [chat.items, chat.status, chat.queued, sending, scheduled, session.id]);
+  }, [chat.items, chat.status, chat.unsent, scheduled, session.id]);
 
   // 行の中身や一覧の高さが、上の追いかけと関係なく変わったときも、最下部にいれば追いかける
-  // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる
+  // （カードや行があとから描き足されて伸びる・下の欄が出て一覧が縮むなど）。追いかけないと、カードの選択肢が見えている範囲の下に隠れる。
+  // 押せる要素を押している間は、最下部にいなくても（上を読んでいても）、押した要素の位置を保つ
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
     const resize = new ResizeObserver(() => {
-      if (stickToBottom.current) toBottom(list);
+      if (pressed.current) keepPressed(list);
+      else if (stickToBottom.current) toBottom(list);
     });
-    resize.observe(list);
+    // 一覧そのものは外側の大きさ（border-box）で見張る。押している間に位置を保つため、この知らせの中で一覧に余白を足す（keepPressed）。
+    // 中身の大きさ（content-box）で見張ると、足した余白で一覧の大きさが変わったことになる。一覧は行より浅いので、その知らせは
+    // 同じ回のうちに届けられず、ブラウザが「ResizeObserver loop completed with undelivered notifications.」のエラーを出す
+    resize.observe(list, { box: 'border-box' });
     for (const row of list.children) resize.observe(row);
     const rows = new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node);
         for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node);
       }
+      // 行が消えても、大きさの変化の知らせは来ない。押している間は、ここでも押した要素の位置を保つ
+      keepPressed(list);
     });
     rows.observe(list, { childList: true });
     return () => {
@@ -261,14 +378,6 @@ export const ClaudePane = memo(function ClaudePane({
   const starting = chat.status === 'starting';
   // worktree の準備の途中（終わるまで最初の指示を送らない）
   const preparing = session.archived ? null : (session.worktree?.preparing ?? null);
-  const [slowStart, setSlowStart] = useState(false);
-  useEffect(() => {
-    setSlowStart(false);
-    // npm install などは時間がかかるので、準備が終わってから測る
-    if (!starting || preparing) return;
-    const timer = setTimeout(() => setSlowStart(true), SLOW_START_MS);
-    return () => clearTimeout(timer);
-  }, [starting, preparing, session.id]);
   const live = !session.archived && chat.status !== 'exited' && chat.status !== 'not-started';
   // ターミナルモード。チャット・入力欄の代わりに、Claude Code の画面を出す。アーカイブ済みのセッションには画面が無いので、チャットのまま
   const screenMode = terminalOpen && !session.archived;
@@ -294,45 +403,45 @@ export const ClaudePane = memo(function ClaudePane({
     const list = listRef.current;
     if (list) toBottom(list);
   }, [screenMode]);
-  // フックが答えを待っている質問（ターミナルの画面を読まずに出す）。出ている間は、画面から読んだ質問のメニューは出さない
-  // （同じ質問が画面にも出ている。質問を待っている間に出た許可の確認などは、今までどおり画面から出す）
+  // 答えを待っている質問と、許可の確認・プランの承認
   const asked = live ? question : null;
-  const screenMenu = live && screen?.state.kind === 'menu' ? screen.state.menu : null;
-  const menu = screenMenu && !(asked && screenMenu.kind === 'question') ? screenMenu : null;
+  const prompt = live ? permission : null;
   // 質問や確認のカードが出ている
-  const waiting = !!menu || !!asked;
-  const unknownScreen = live && screen?.state.kind === 'unknown';
-  const rewinding = live && screen?.state.kind === 'rewind';
-  // 選択メニューが出ている間に文字を送ると、メニューへのキー入力になってしまう
-  const blocked = waiting || rewinding || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
+  const waiting = !!asked || !!prompt;
+  // 質問や確認のカードが出ている間は、答えをカードで選ぶ
+  const blocked = waiting || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
   const hasContent = input.trim().length > 0 || attachments.length > 0 || pastes.length > 0 || comments.length > 0;
   const canSend = !blocked && hasContent;
-  // 質問や確認のカードなどが出たときも、最下部にいれば追いかける。カードは会話ログでなく Claude Code の画面から来るので、上の追いかけ
+  // 質問や確認のカードが出たときも、最下部にいれば追いかける。カードは会話ログから来ないので、上の追いかけ
   // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
-  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）。
-  // 出たあとで中身が変わったときも追いかける。遅い Mac では、Claude Code が確認の画面を描き終える前に読み、あとから説明の行が増えて
-  // カードが伸びる（見出しと選択肢の数は同じまま）
-  const cardKey = asked ? `question:${asked.id}:${menu ? JSON.stringify(menu) : ''}` : menu ? JSON.stringify(menu) : rewinding ? 'rewind' : unknownScreen ? 'unknown' : '';
+  // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）
+  const cardKey = asked ? `question:${asked.id}` : prompt ? `permission:${prompt.id}` : '';
   useLayoutEffect(() => {
     const list = listRef.current;
     if (cardKey && list && stickToBottom.current) toBottom(list);
   }, [cardKey]);
-  const canConfigure = !running && !waiting && !rewinding;
-  const canRewind = live && chat.status === 'idle' && screen?.state.kind === 'prompt';
-  const canCompact = useCanCompact(session, chat, screen);
+  const canConfigure = !running && !waiting;
+  const canRewind = live && chat.status === 'idle';
+  const canCompact = useCanCompact(session, chat);
   const compactStatus = useCompactStatus(live ? session.id : null);
 
-  // Claude Code の入力欄に残った文字（巻き戻し・中断で戻った発言など）は、こちらの入力欄に移して向こうは消す
-  // 中断で戻った発言に札が添えてあったら、札は札として戻す
-  useTakeClaudeDraft(session.id, live && screen?.state.kind === 'prompt' ? screen.draft : '', screen?.draftPastes, (draft, back) => {
-    if (draft) setInput((prev) => (prev ? `${prev}\n${draft}` : draft));
-    if (back.length > 0) setPastes((prev) => [...prev, ...back]);
-  });
-
+  // 巻き戻しの確かめ（選んだ発言と、コードを戻すと変わるファイル）。ほかのセッションへ移ったら閉じる
+  const [rewinding, setRewinding] = useState<{ messageId: string; preview: RewindPreview } | null>(null);
+  // 巻き戻している途中のセッション（移った先のカードを、戻している途中にしない）
+  const [rewindingIn, setRewindingIn] = useState<ReadonlySet<string>>(new Set());
+  const rewindBusy = rewindingIn.has(session.id);
+  useEffect(() => setRewinding(null), [session.id]);
+  // 見ているセッション（返事が来るまでにほかのセッションへ移ったかを、呼んだときのセッションと比べる）
+  const sessionIdRef = useRef(session.id);
+  sessionIdRef.current = session.id;
   const rewindTo = useCallback(
-    (text: string) => {
-      void window.tanacode.screen.rewind(session.id, text).then((ok) => {
-        if (!ok) window.alert(t('chat.pane.rewindNotFound'));
+    (messageId: string) => {
+      const owner = session.id;
+      void window.tanacode.screen.rewindPreview(owner, messageId).then((preview) => {
+        // 調べている間に移ったら、移った先には出さない（そのセッションの発言ではない）
+        if (sessionIdRef.current !== owner) return;
+        if (!preview) window.alert(t('chat.pane.rewindNotFound'));
+        else setRewinding({ messageId, preview });
       });
     },
     [session.id],
@@ -340,9 +449,12 @@ export const ClaudePane = memo(function ClaudePane({
 
   // Claude Code が持っているモデル一覧の控え。更新のボタンで読み直す
   const models = useModelCatalog();
-  const { choices, labelOf } = models;
+  const { labelOf } = models;
+  // 動いている間は、Claude Code がその場で切り替えられるモデルと、そのモデルで選べるエフォートにする
+  const liveModels = useSessionModels(live && chat.status !== 'starting' ? session.id : null);
+  const choices = useMemo(() => withSessionModels(models.choices, liveModels), [models.choices, liveModels]);
   // 既定のまま（--model・--effort を渡していない）ときは、実際に動いているものを選択中として出す
-  const runningModel = statusLine?.model?.name ?? screen?.model?.replace(' (1M context)', '') ?? null;
+  const runningModel = statusLine?.model?.name ?? null;
   const modelValue = session.model ?? choices.find((c) => !c.disabled && c.name === runningModel)?.value ?? '';
   const modelOptions: { value: string; label: string; disabled: boolean; detail: string }[] = [
     ...(modelValue === '' ? [{ value: '', label: runningModel ?? t('chat.pane.model'), disabled: false, detail: '' }] : []),
@@ -354,9 +466,21 @@ export const ClaudePane = memo(function ClaudePane({
   // 選んでいる（動いている）モデルで選べるエフォート。空ならエフォートを選べないモデル
   const currentChoice = choices.find((c) => c.value === modelValue) ?? choices.find((c) => c.name === runningModel);
   const efforts = currentChoice?.efforts ?? EFFORTS;
-  const effortValue = session.effort ?? (efforts.find((e) => e === screen?.effort) ?? '');
+  const effortValue = session.effort ?? (efforts.find((e) => e === statusLine?.effort) ?? '');
+  // 権限モードを変える。Claude Code に断られたら知らせる（モード欄は、Claude Code が知らせた今のモードのまま）
+  const changeMode = (mode: PermissionMode) =>
+    void window.tanacode.screen.setMode(session.id, mode).then(
+      (ok) => ok || window.alert(t('chat.pane.modeFailed', { mode: modeChoices().find(([value]) => value === mode)?.[1] ?? mode })),
+      reportError('chat.pane.modeFailedError'),
+    );
+  // モデルを変える。今のエフォートを新しいモデルで選べなければ、エフォートの指定を外す（そのモデルの既定にする）
+  const changeModel = (value: string) => {
+    const next = choices.find((c) => c.value === value);
+    const keepEffort = !session.effort || !next || next.efforts.includes(session.effort);
+    configure({ model: value || null, ...(keepEffort ? {} : { effort: null }) });
+  };
 
-  // Remote Control の切り替え。動いていれば /remote-control でその場でつなぐ・切るので、終わるまでぐるぐるを出す
+  // Remote Control の切り替え。動いていれば remote_control の要求でその場でつなぐ・切るので、終わるまでぐるぐるを出す
   const [switchingRemote, setSwitchingRemote] = useState<ReadonlySet<string>>(() => new Set());
   const setRemoteControl = async (on: boolean) => {
     const id = session.id;
@@ -438,8 +562,6 @@ export const ClaudePane = memo(function ClaudePane({
     );
   };
   // 予約をやめて、入力欄に戻す。戻るまでにほかのセッションへ移っていたら、そのセッションの書きかけに戻す
-  const sessionIdRef = useRef(session.id);
-  sessionIdRef.current = session.id;
   const takeScheduled = (id: string) => {
     const owner = session.id;
     void window.tanacode.scheduled.cancel(id).then((taken) => {
@@ -460,10 +582,53 @@ export const ClaudePane = memo(function ClaudePane({
     });
   };
   const reportError = (key: MessageKey) => (error: unknown) => window.alert(t(key, { error: errorMessage(error) }));
+  // 巻き戻す。会話を戻したら、戻した発言の文を入力欄に戻す（打ちかけの文字の前に）。
+  // 返事が来るまでにほかのセッションへ移っていたら、移った先のカードと入力欄には触らず、戻した文は元のセッションの書きかけに戻す
+  const applyRewind = (messageId: string, choice: RewindChoice) => {
+    const owner = session.id;
+    const title = sessionName(session);
+    const here = () => sessionIdRef.current === owner;
+    const done = () =>
+      setRewindingIn((busy) => {
+        const next = new Set(busy);
+        next.delete(owner);
+        return next;
+      });
+    // 断られたわけ。ほかのセッションへ移っていたら、どのセッションの話かを添える
+    const failed = (codeRewound: boolean, error: string) => {
+      if (here()) window.alert(t(codeRewound ? 'chat.rewind.codeOnly' : 'chat.rewind.failed', { error }));
+      else window.alert(t(codeRewound ? 'chat.rewind.codeOnlyIn' : 'chat.rewind.failedIn', { title, error }));
+    };
+    setRewindingIn((busy) => new Set(busy).add(owner));
+    void window.tanacode.screen.rewind(owner, messageId, choice).then(
+      (outcome) => {
+        done();
+        if (!outcome.ok) {
+          // コードだけ戻せたときは、確かめのカードを閉じる（もう一度押すと、同じ時点へコードを戻し直すことになる）
+          if (outcome.codeRewound && here()) setRewinding(null);
+          failed(!!outcome.codeRewound, outcome.error ?? '');
+          return;
+        }
+        const prefill = outcome.prefillText;
+        if (!here()) {
+          if (!prefill) return;
+          const draft = drafts.current.get(owner) ?? { text: '', attachments: [], pastes: [] };
+          drafts.current.set(owner, { ...draft, text: [prefill, draft.text].filter((text) => text.trim()).join('\n') });
+          return;
+        }
+        setRewinding(null);
+        if (prefill) setInput((prev) => [prefill, prev].filter((text) => text.trim()).join('\n'));
+      },
+      (error: unknown) => {
+        done();
+        failed(false, errorMessage(error));
+      },
+    );
+  };
   const removeComment = (id: string) => onCommentsChange(comments.filter((c) => c.id !== id));
   // コードへのコメントを、Claude Code の入力欄に貼る（ターミナルモード。送るのは、人が画面で Enter を押したとき）
   const pasteComments = () => {
-    void pasteIntoClaudeScreen(session.id, stripControlChars(formatComments(comments)));
+    void pasteIntoClaudeScreen(session.id, formatComments(comments));
     onCommentsChange([]);
   };
 
@@ -476,7 +641,7 @@ export const ClaudePane = memo(function ClaudePane({
   );
   const exitedCallout = !session.archived && chat.status === 'exited' && (
     <div className="chat-callout">
-      <span>{t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
+      <span>{chat.exitReason ?? t('chat.pane.exited', { code: chat.exitCode ?? '' })}</span>
       <button className="send-button" onClick={onResume}>
         {t('chat.pane.resume')}
       </button>
@@ -489,12 +654,13 @@ export const ClaudePane = memo(function ClaudePane({
         <span className={`claude-mark${running ? ' working' : ''}`} />
         <span className="claude-title">{session.title ?? 'Claude Code'}</span>
         <div className="spacer" />
-        <ContextMeter {...contextUsage(session.model, screen?.model ?? null, statusLine, contextTokens)} onClick={onShowContext} />
+        <ContextMeter {...contextUsage(session.model, statusLine, contextTokens)} onClick={onShowContext} />
         {!session.archived && (
           <RemoteControlToggle
             on={session.remoteControl}
             connected={live ? !!chat.remoteControlUrl : null}
             busy={switchingRemote.has(session.id)}
+            locked={terminalOpen}
             onChange={(on) => void setRemoteControl(on)}
           />
         )}
@@ -536,6 +702,9 @@ export const ClaudePane = memo(function ClaudePane({
             label={t('chat.pane.terminal')}
             tip={t('chat.pane.terminalTip')}
             pressed={terminalOpen}
+            // 切り替えは、動いている Claude Code を止めて開き直す。止まっていれば、もう片方で起動する（ターミナルモードで止まったセッションを
+            // チャットに戻す）。起動・切り替えの途中は押せない
+            disabled={chat.status === 'not-started' || chat.status === 'starting'}
             onClick={onToggleTerminal}
           />
         )}
@@ -547,6 +716,8 @@ export const ClaudePane = memo(function ClaudePane({
           {(preparingNote || exitedCallout || comments.length > 0) && (
             <div className="claude-screen-notes">
               {preparingNote}
+              {/* ターミナルモードで Claude Code が終わっても、チャットには戻さず、ここに終了と「再開」を出す（再開もターミナルモードで起動する） */}
+              {exitedCallout}
               {comments.length > 0 && (
                 <div className="claude-screen-comments">
                   <CommentChips comments={comments} onRemove={removeComment} onShow={onShowComment} />
@@ -555,7 +726,6 @@ export const ClaudePane = memo(function ClaudePane({
                   </button>
                 </div>
               )}
-              {exitedCallout}
             </div>
           )}
         </>
@@ -569,6 +739,11 @@ export const ClaudePane = memo(function ClaudePane({
           ref={listRef}
           onScroll={(e) => {
             const el = e.currentTarget;
+            // 押している間は、押した要素の位置を保つだけにする（追いかける・やめるは、離したあとで決める）
+            if (pressed.current) {
+              keepPressed(el);
+              return;
+            }
             const movedUp = el.scrollTop < lastScrollTop.current - 1;
             lastScrollTop.current = el.scrollTop;
             // ボタンで送っている途中は、着くまで（か、送り終わるまで）追いかける状態のままにする
@@ -586,10 +761,20 @@ export const ClaudePane = memo(function ClaudePane({
           onWheel={(e) => {
             if (e.deltaY !== 0) userScrollingUp.current = e.deltaY < 0;
           }}
+          onFocus={(e) => {
+            // Tab で一覧の中の要素へフォーカスを移すと、ブラウザは focusin より先に、その要素が見えるよう一覧を動かす。上へ動いていれば、
+            // 人が上へスクロールしたものとして扱う（最下部へ送り直すと、フォーカスした要素が見えなくなる）。アプリが動かしたフォーカスは数えない
+            if (tabbing.current && e.currentTarget.scrollTop < lastScrollTop.current - 1) userScrollingUp.current = true;
+          }}
           onPointerDown={(e) => {
             // スクロールバー（一覧そのもの）を押したとき。行の中（カードの選択肢など）を押したときは数えない
             // （選択肢を押して離す間に、ほかのわけで上へ動いたのを、人のスクロールと取り違えない）
             if (e.target === e.currentTarget) userScrollingUp.current = true;
+            // 行の中の押せる要素を押したら、離すまで、その要素を動かさない（文字などは、ドラッグで選ぶので保たない）
+            else if (e.button === 0 && e.target instanceof Element) {
+              const pressable = e.target.closest(PRESSABLE);
+              if (pressable && e.currentTarget.contains(pressable)) holdPressed(e.currentTarget, pressable, e.clientX, e.clientY);
+            }
           }}
           onScrollEnd={(e) => {
             userScrollingUp.current = false;
@@ -606,11 +791,6 @@ export const ClaudePane = memo(function ClaudePane({
             }
           }}
         >
-          {starting && !preparing && !pending && chat.items.length === 0 && !slowStart && (
-            <div className="chat-note">
-              <Busy>{t('chat.pane.starting')}</Busy>
-            </div>
-          )}
           {preparingNote}
           {rows.map((row) =>
             row.kind === 'tool-group' ? (
@@ -646,14 +826,10 @@ export const ClaudePane = memo(function ClaudePane({
               />
             ),
           )}
-          {running && !waiting && !unknownScreen && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
+          {running && !waiting && <WorkingNote sessionId={session.id} label={currentTodo?.activeForm ?? currentTodo?.content} />}
           {justFinished && !running && !waiting && <DoneNote />}
-          {chat.queued.map((raw, i) => {
-            const { text, pastes } = splitPasted(raw);
-            return <UnsentUser key={`queued:${i}`} text={text} pastes={pastes} attachments={0} note={t('chat.pane.queued')} queued />;
-          })}
-          {sending.map((item, i) => (
-            <UnsentUser key={`sending:${i}`} text={item.text} pastes={item.pastes} attachments={item.attachments.length} note={t('chat.pane.sending')} />
+          {chat.unsent.map((prompt) => (
+            <UnsentUser key={prompt.id} prompt={prompt} parentId={session.parentId} sessions={sessionLinks} onSelectSession={onSelectSession} />
           ))}
           {pending && (
             <div className="chat-user pending">
@@ -696,32 +872,21 @@ export const ClaudePane = memo(function ClaudePane({
               onTake={() => takeScheduled(message.id)}
             />
           ))}
-          {starting && slowStart && !preparing && !waiting && (
-            <div className="chat-callout">
-              <span>{t('chat.pane.slowStart')}</span>
-              <IconButton icon={MonitorIcon} label={t('chat.pane.showInTerminal')} onClick={onOpenTerminal} />
-            </div>
-          )}
+          {/* 起動中（npm install などの準備の間は、準備の知らせを出す）。時間がかかっていれば、経過と標準エラーの末尾 */}
+          {starting && !preparing && !waiting && <StartingNote sessionId={session.id} busy={!pending && chat.items.length === 0} />}
           {/* 同じ質問でも、セッションが変われば作り直す（打ちかけの答えを、移った先のセッションに持ち越さない） */}
           {/* 待っている質問が変われば作り直す（打ちかけの答えを、次の質問やほかのセッションに持ち越さない） */}
           {asked && <QuestionCard key={`${session.id}|${asked.id}`} sessionId={session.id} question={asked} />}
-          {menu && <MenuCard key={`${session.id}|${menu.title}|${menu.options.map((o) => o.label).join('|')}`} sessionId={session.id} menu={menu} />}
+          {/* 待っている要求が変われば作り直す（書きかけの理由を、次の確認やほかのセッションに持ち越さない） */}
+          {prompt && <MenuCard key={`${session.id}|${prompt.id}`} sessionId={session.id} permission={prompt} />}
           {rewinding && (
-            <div className="chat-callout">
-              <span>{t('chat.pane.rewinding')}</span>
-              <IconButton icon={CloseIcon} size="md" label={t('common.cancel')} tip={t('chat.pane.cancelEsc')} onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
-            </div>
-          )}
-          {unknownScreen && (
-            <div className="chat-callout">
-              <span>{t('chat.pane.unknownScreen')}</span>
-              <div className="chat-callout-actions">
-                <IconButton icon={CloseIcon} size="md" label={t('common.close')} tip={t('chat.pane.closeEsc')} onClick={() => window.tanacode.pty.write(session.id, '\x1b')} />
-                <button className="send-button" onClick={onOpenTerminal}>
-                  {t('chat.pane.operateInTerminal')}
-                </button>
-              </div>
-            </div>
+            <RewindCard
+              preview={rewinding.preview}
+              cwd={session.cwd}
+              busy={rewindBusy}
+              onCancel={() => setRewinding(null)}
+              onChoose={(choice) => applyRewind(rewinding.messageId, choice)}
+            />
           )}
           {session.archived && (
             <div className="chat-callout">
@@ -751,6 +916,7 @@ export const ClaudePane = memo(function ClaudePane({
       {!session.archived && (
         <div className="chat-input-wrap" hidden={screenMode}>
           <ChatInput
+            owner={session.id}
             working={running}
             comments={comments}
             onRemoveComment={removeComment}
@@ -781,7 +947,7 @@ export const ClaudePane = memo(function ClaudePane({
             <select
               value={modelValue}
               disabled={!canConfigure}
-              onChange={(e) => configure({ model: e.target.value || null })}
+              onChange={(e) => changeModel(e.target.value)}
               title={t('chat.pane.modelTitle')}
             >
               {modelOptions.map((o) => (
@@ -813,18 +979,18 @@ export const ClaudePane = memo(function ClaudePane({
               ))}
             </select>
             <select
-              value={screen?.mode ?? ''}
-              disabled={!live || screen?.state.kind !== 'prompt'}
-              onChange={(e) => void window.tanacode.screen.setMode(session.id, e.target.value as PermissionMode)}
+              value={session.mode ?? ''}
+              disabled={!live || waiting}
+              onChange={(e) => changeMode(e.target.value as PermissionMode)}
               title={t('chat.pane.modeTitle')}
             >
-              {!screen?.mode && <option value="">{t('chat.pane.mode')}</option>}
+              {!session.mode && <option value="">{t('chat.pane.mode')}</option>}
               {modeChoices().map(([mode, label]) => (
                 <option key={mode} value={mode}>
                   {label}
                 </option>
               ))}
-              {screen?.mode === 'bypassPermissions' && <option value="bypassPermissions">{t('chat.pane.bypassPermissions')}</option>}
+              {session.mode === 'bypassPermissions' && <option value="bypassPermissions">{t('chat.pane.bypassPermissions')}</option>}
             </select>
           </div>
         </div>
@@ -834,17 +1000,39 @@ export const ClaudePane = memo(function ClaudePane({
 });
 
 // 会話ログにまだ発言として出ていない、送った発言（送信中・順番待ち）
-// 送信中のものは、すぐに本物の発言に置き換わるので、見た目は発言と同じにする（点線にすると置き換わるときにちらつく）
-function UnsentUser({ text, pastes, attachments, note, queued = false }: { text: string; pastes: string[]; attachments: number; note: string; queued?: boolean }) {
+// 送信中のものは、すぐに本物の発言に置き換わるので、見た目は発言と同じにする（点線にすると置き換わるときにちらつく）。
+// 親セッションからの指示は、会話に出たとき（ChatRow）と同じく、見出しを付けて人の発言と見分ける
+function UnsentUser({
+  prompt,
+  parentId,
+  sessions,
+  onSelectSession,
+}: {
+  prompt: UnsentPrompt;
+  parentId: string | null | undefined;
+  sessions: readonly SessionLink[];
+  onSelectSession: (id: string) => void;
+}) {
+  const queued = prompt.state === 'queued';
+  const text = (
+    <span className="chat-user-text">
+      {prompt.text}
+      <PastedChips pastes={prompt.pastes} />
+      {prompt.images > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: prompt.images })}</span>}
+      <span className="chat-user-meta">{t(queued ? 'chat.pane.queued' : 'chat.pane.sending')}</span>
+    </span>
+  );
   return (
-    <div className={`chat-user${queued ? ' pending' : ''}`}>
-      <span className="chat-prompt">›</span>
-      <span className="chat-user-text">
-        {text}
-        <PastedChips pastes={pastes} />
-        {attachments > 0 && <span className="chat-user-meta">{t('chat.pane.imageCount', { count: attachments })}</span>}
-        <span className="chat-user-meta">{note}</span>
-      </span>
+    <div className={`chat-user${queued ? ' pending' : ''}${prompt.parent ? ' from-parent' : ''}`}>
+      <span className="chat-prompt">{prompt.parent ? '»' : '›'}</span>
+      {prompt.parent ? (
+        <div className="chat-user-body">
+          <ParentHeading parentId={prompt.parent} isParent={prompt.parent === parentId} sessions={sessions} onSelectSession={onSelectSession} />
+          {text}
+        </div>
+      ) : (
+        text
+      )}
     </div>
   );
 }

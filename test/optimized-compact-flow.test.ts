@@ -10,7 +10,7 @@ import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compac
 const ID = 's1';
 // 自動で始める大きさは、AutoCompact から届く（ここでは 60）
 const IDLE = { ...IDLE_COMPACT_STATUS, autoPercent: 60 };
-const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, pulledBackMs: 30, startMs: 30 };
+const TIMINGS = { pollMs: 2, submitMs: 30, appearMs: 200, clearMs: 60, retryMs: 5, startMs: 30 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // SessionManager の代わり。打ち込まれた文を控え、台本（onSubmit）で会話を進める
@@ -21,9 +21,6 @@ class FakeHost implements CompactHost {
   checklistMcp: boolean | null = true;
   tasks: CarriedTask[] = [];
   submitted: string[] = [];
-  withdrawn = 0;
-  // 仕上げの頼みが、Claude Code の入力欄に出ている
-  draftShown = false;
   // 打ち込みを断る理由（あれば、その回は失敗する）
   refuse: (text: string) => boolean = () => false;
   onSubmit: (text: string) => void = () => {};
@@ -33,14 +30,10 @@ class FakeHost implements CompactHost {
   claudeSessionOf = () => this.claudeSession;
   hasChecklistMcp = () => this.checklistMcp;
   runningTasks = () => this.tasks;
-  compactDraftShown = () => this.draftShown;
   async submitWhenReady(_id: string, text: string): Promise<void> {
     if (this.refuse(text)) throw new Error('busy');
     this.submitted.push(text);
     this.onSubmit(text);
-  }
-  async withdrawCompactDraft(): Promise<void> {
-    this.withdrawn += 1;
   }
 }
 
@@ -359,10 +352,9 @@ describe('会話を消さずに取りやめる', () => {
     });
     compact.start(ID);
     await cancelled('interrupted');
-    expect(host.withdrawn).toBe(1);
   });
 
-  it('応答の前に中断して、仕上げの頼みが入力欄に戻された（会話から消えた）。入力欄から消す', async () => {
+  it('仕上げの頼みが会話から消えた（巻き戻した・/clear した）', async () => {
     script({
       afterHandoff: () => {
         host.events = host.events.filter((e) => !(e.type === 'notice' && e.compact));
@@ -371,33 +363,10 @@ describe('会話を消さずに取りやめる', () => {
     });
     compact.start(ID);
     await cancelled('interrupted');
-    expect(host.withdrawn).toBe(1);
-  });
-
-  it('会話ログに書かれる前に中断して、会話に出ないまま入力欄に戻された。入力欄から消す', async () => {
-    host.onSubmit = () => setTimeout(() => (host.draftShown = true), 5);
-    compact.start(ID);
-    await cancelled('interrupted');
-    expect(host.withdrawn).toBe(1);
-  });
-
-  it('送った直後に、入力欄に一瞬出ているだけなら、中断とみなさない', async () => {
-    script();
-    const submit = host.onSubmit;
-    host.onSubmit = (text) => {
-      if (isHandoff(text)) {
-        host.draftShown = true;
-        setTimeout(() => (host.draftShown = false), 10);
-        // 会話に出るのは、入力欄から消えたあと
-        setTimeout(() => submit(text), 15);
-      } else submit(text);
-    };
-    compact.start(ID);
-    expect((await finished()).failure).toBeNull();
   });
 
   it('仕上げの間に人が発言した（順番待ちの発言も）', async () => {
-    script({ afterHandoff: () => host.events.push({ type: 'queue', prompts: ['ちょっと待って'] }) });
+    script({ afterHandoff: () => host.events.push({ type: 'queue', prompts: [{ id: 'q1', text: 'ちょっと待って', pastes: [], images: 0, state: 'queued' }] }) });
     compact.start(ID);
     await cancelled('prompted');
     statuses = [];
@@ -418,7 +387,7 @@ describe('会話を消さずに取りやめる', () => {
     await cancelled('not-used');
   });
 
-  it('仕上げの頼みを送れなかった・送っても会話に出なかった（入力欄に残っていれば消す）', async () => {
+  it('仕上げの頼みを送れなかった・送っても会話に出なかった', async () => {
     host.refuse = isHandoff;
     compact.start(ID);
     await cancelled('busy');
@@ -427,7 +396,6 @@ describe('会話を消さずに取りやめる', () => {
     host.onSubmit = () => {};
     compact.start(ID);
     await cancelled('busy');
-    expect(host.withdrawn).toBe(1);
   });
 
   it('セッションが終了した', async () => {
@@ -528,6 +496,90 @@ describe('/clear のあと', () => {
     await sleep(120);
     host.state = 'exited';
     expect((await finished()).failure).toBe('exited');
+  });
+});
+
+describe('途中でセッションが終わったとき', () => {
+  it('仕上げの頼み・/clear を送れず、そのときセッションも終わっていたら、終了として取りやめる', async () => {
+    script();
+    host.refuse = (text) => {
+      if (!isHandoff(text)) return false;
+      host.state = 'exited';
+      return true;
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+    statuses = [];
+    host.state = 'idle';
+    host.refuse = (text) => {
+      if (text !== '/clear') return false;
+      host.state = 'exited';
+      return true;
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+  });
+
+  it('/clear を打てず、手が空くのを待つあいだに終わった・新しい会話になるのを待つあいだに終わったら、終了として取りやめる', async () => {
+    script();
+    host.refuse = (text) => {
+      if (text !== '/clear') return false;
+      host.state = 'working';
+      setTimeout(() => (host.state = 'exited'), 10);
+      return true;
+    };
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+    statuses = [];
+    host.state = 'idle';
+    host.refuse = () => false;
+    script({ onClear: () => (host.state = 'exited') });
+    compact.start(ID);
+    expect((await finished()).failure).toBe('exited');
+    expect(host.submitted.some(isResume)).toBe(false);
+  });
+
+  it('仕上げをやり直したあとも /clear を打てなければ、会話を消さずに取りやめる', async () => {
+    script();
+    host.refuse = (text) => text === '/clear';
+    compact.start(ID);
+    expect((await finished()).failure).toBe('interleaved');
+    expect(host.submitted.filter(isHandoff)).toHaveLength(2);
+  });
+});
+
+describe('仕上げのターンの見分け', () => {
+  // 仕上げのターンの、仕上げの頼みのあとの出来事（最初の回だけ。2 回目からはふつうに終わる）
+  const firstTurn = (events: ChatEvent[]) => {
+    let first = true;
+    script({
+      afterHandoff: () => {
+        host.events.push(...(first ? events : [{ type: 'turn-end' } as ChatEvent]));
+        host.state = 'idle';
+        first = false;
+      },
+    });
+  };
+
+  it('ターンの途中に届いた知らせは、別のターンに数えない', async () => {
+    firstTurn([{ type: 'notice', id: 'n', text: 'タスクが終わりました' }, { type: 'assistant-text', id: 'a1', text: '書きました' }, { type: 'turn-end' }]);
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted.filter(isHandoff)).toHaveLength(1);
+  });
+
+  it('仕上げのターンが終わったあとのターンの始まりは、別のターンが挟まったとみなして、仕上げをやり直す', async () => {
+    firstTurn([{ type: 'turn-end' }, { type: 'turn-start' }, { type: 'assistant-text', id: 'a2', text: '知らせを見ました' }, { type: 'turn-end' }]);
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted.filter(isHandoff)).toHaveLength(2);
+  });
+
+  it('仕上げのターンが終わったあとのツールの行も、別のターンが挟まったとみなす', async () => {
+    firstTurn([{ type: 'turn-end' }, { type: 'tool-use', id: 't', name: 'Bash', target: 'ls', input: 'ls' }, { type: 'turn-end' }]);
+    compact.start(ID);
+    expect((await finished()).failure).toBeNull();
+    expect(host.submitted.filter(isHandoff)).toHaveLength(2);
   });
 });
 

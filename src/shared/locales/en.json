@@ -14,7 +14,8 @@
       "nothingToExport": "Nothing to export",
       "folderNotFound": "Folder not found: {path}",
       "folderCannotOpen": "Can't open folder: {path}",
-      "ptyHostUnreachable": "Can't connect to the pty host: {path}"
+      "ptyHostUnreachable": "Can't connect to the pty host: {path}",
+      "notFromApp": "This call didn't come from the app window"
     },
     "dialog": {
       "pickFolder": "Choose a Working Folder",
@@ -67,12 +68,9 @@
       "turnCompleted": "Finished working",
       "compactCompleted": "Finished optimizing the context",
       "compactFailed": "Context optimization was canceled",
-      "needsTerminal": "Action needed in the terminal",
       "question": "Claude has a question",
       "permission": "Permission needed: {detail}",
       "permissionNoDetail": "Claude is asking for permission",
-      "confirm": "Confirmation needed: {title}",
-      "confirmNoTitle": "Claude is asking for confirmation",
       "images": "{count} images",
       "images_one": "{count} image",
       "scheduledMissed": "Not sent at the scheduled time ({time}): {text}",
@@ -89,12 +87,12 @@
     },
     "session": {
       "untitled": "New Session",
-      "notFound": "Session not found"
+      "notFound": "Session not found",
+      "notStopped": "Couldn't restart because Claude Code couldn't be stopped. The current Claude Code keeps running (the changed settings are used the next time it starts)"
     },
     "state": {
       "question": "Needs answer",
       "permission": "Needs permission",
-      "other": "Needs input",
       "browser": "Needs browser action",
       "starting": "Starting",
       "workingWithBackground": "Working ({count} in background)",
@@ -106,32 +104,38 @@
     "remote": {
       "unavailable": "Remote Control isn't available in development builds (launch with TANACODE_REMOTE_CONTROL=1 to enable it)",
       "switching": "Remote Control is already switching. Wait a moment and try again.",
-      "waitingAnswer": "Can't switch right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then switch.",
-      "draft": "Can't switch because Claude Code's input in the terminal has unsent text",
-      "failed": "Couldn't switch Remote Control in Claude Code. Use /remote-control in the terminal."
+      "failed": "Couldn't switch Remote Control ({reason})"
     },
     "task": {
       "notRunning": "Can't stop it because the session isn't running",
+      "terminalMode": "Can't stop it from here in terminal mode. Use /tasks in the Claude Code screen.",
       "nothingToStop": "Nothing to stop (no running background tasks found)",
-      "busy": "Another operation is in progress. Wait a moment and try again.",
-      "waitingAnswer": "Can't stop it right now because Claude Code is waiting for an answer to a question or confirmation. Answer it first, then stop it.",
-      "draft": "Can't stop it because the input in the terminal has unsent text",
-      "notFound": "Couldn't find it on screen. It has already finished or been stopped.",
-      "ambiguous": "More than one task has the same name, so tanacode can't tell which one to stop. Open /tasks in the terminal and stop it there.",
-      "failed": "Couldn't stop it. Open /tasks in the terminal and stop it there."
+      "notFound": "Claude Code hasn't sent the ID needed to stop this task. Ask Claude to stop it",
+      "notStopped": "Asked Claude Code to stop it, but couldn't confirm it stopped. If it's still running, try stopping it again",
+      "failed": "Couldn't stop it ({reason})"
+    },
+    "rewind": {
+      "turn_running": "Claude Code is working",
+      "commands_queued": "A message is waiting to be sent",
+      "prompt_pending": "A message you sent isn't in the conversation yet",
+      "unseen_later_turn": "There are later messages that aren't shown yet. Wait a moment and try again",
+      "stale_target": "The conversation on screen is out of date. Wait a moment and try again",
+      "target_not_found": "Couldn't find the message to rewind to",
+      "expired": "It's been too long to rewind to this message",
+      "usage_limited": "Can't rewind because the usage limit has been reached",
+      "state_changed": "The conversation changed in the meantime. Try again",
+      "persist_failed": "Couldn't write the rewind to the conversation log"
     },
     "send": {
-      "notAccepting": "Couldn't send because Claude Code is no longer accepting input",
-      "menuAppeared": "Couldn't send because a question or confirmation appeared",
       "notRunning": "Claude Code isn't running",
       "exited": "Claude Code exited",
       "cancelled": "Sending was canceled",
-      "waitingAnswer": "Couldn't send because Claude Code is waiting for an answer to a question or confirmation",
-      "draft": "Couldn't send because the input in the terminal has unsent text",
-      "busy": "Couldn't send because Claude Code is busy"
+      "busy": "Couldn't send because Claude Code is busy",
+      "notReady": "Couldn't send because Claude Code didn't become ready to accept messages",
+      "imagesSkipped": "Sent without some images that can't be sent: {names} (only readable PNG, JPEG, GIF, and WebP files can be sent)",
+      "terminalMode": "Can't send while in terminal mode. Switch back to the chat first"
     },
     "worktree": {
-      "untrustedFolder": "Claude Code doesn't trust this folder yet. Start a session without a worktree once and accept the folder trust prompt, then start with a worktree.",
       "createFailed": "Claude Code couldn't create the worktree",
       "closedWhileCreating": "The session was archived or removed from the list while its worktree was being created",
       "commandAt": "{command} ({dir})",
@@ -161,7 +165,9 @@
       "nameRequired": "Enter a name",
       "duplicateName": "A settings file named “{name}” already exists",
       "removed": "The settings file this session used has been removed from the list. Register it again with “Manage…” in the picker, or switch to another settings file.",
-      "unavailable": "Settings files aren't available"
+      "unavailable": "Settings files aren't available",
+      "rejected": "Claude Code was stopped because a settings file has entries it can't read. Fix them and start again.\n{details}",
+      "ignored": "Some settings files have entries Claude Code can't read. Claude Code is running without them.\n{details}"
     },
     "profile": {
       "cannotRemoveDefault": "The default profile can't be removed",
@@ -214,6 +220,7 @@
     "git": {
       "commitMessageRequired": "Enter a commit message",
       "noDefaultBranch": "Couldn't determine the default branch",
+      "badBranch": "Not a valid branch name ({branch})",
       "diverged": "Switched to {name}, but couldn't bring it up to date because your local {name} has diverged from {target}"
     },
     "search": {
@@ -224,7 +231,10 @@
     },
     "model": {
       "noCatalog": "Claude Code's cached model list (~/.claude/cache/model-catalog) is missing",
-      "needsVersion": "Requires Claude Code {version} or later (installed: {installed})"
+      "needsVersion": "Requires Claude Code {version} or later (installed: {installed})",
+      "unknown": "This model can't be chosen in the current Claude Code: {model}",
+      "effortUnsupported": "Effort {effort} can't be chosen for this model",
+      "failed": "Couldn't switch the model or effort ({reason})"
     },
     "walkthrough": {
       "missing": "There's no walkthrough.",
@@ -244,6 +254,30 @@
     "addFolder": {
       "inside": "This folder is inside the session's folder and is already in the Explorer: {path}",
       "diskRoot": "Can't add the top folder of a disk: {path}"
+    },
+    "permission": {
+      "alwaysItem": "{what}, {where}",
+      "alwaysRule": "\"{rule}\"",
+      "alwaysDirectory": "access to {dir}",
+      "alwaysAcceptEdits": "all edits",
+      "alwaysMode": "switch to {mode} mode",
+      "whereLocal": "this folder",
+      "whereProject": "this folder's shared settings",
+      "whereUser": "all folders",
+      "whereSession": "this session only"
+    },
+    "terminal": {
+      "notRunning": "Claude Code isn't running",
+      "switching": "Switching between the chat and terminal mode",
+      "exitedWhileSwitching": "Claude Code exited while switching, so it wasn't switched. Reopen it with Resume",
+      "busy": "Can't switch to terminal mode while Claude is working, a prompt is waiting for an answer, or a message is waiting to be sent",
+      "tuiBusy": "Claude Code is working. Switch back to the chat after the turn ends",
+      "tasksRunning": "Background tasks are running. Switching stops them",
+      "remoteOffFailed": "Didn't switch to terminal mode because Remote Control couldn't be turned off ({reason})",
+      "startFailed": "Couldn't start it the other way, so it was switched back ({reason})",
+      "tuiExited": "Claude Code in terminal mode exited before it finished starting (code {code}). Resume to start it again, or switch back to the chat with the terminal mode button",
+      "chatExited": "Claude Code for the chat exited while starting (code {code}), so the session is back in terminal mode",
+      "startFailedStopped": "Couldn't start it either way ({reason}). Fix the settings, then reopen it with Resume"
     }
   },
   "commands": {
@@ -324,7 +358,7 @@
       "teleport": "Send to the cloud or resume from claude.ai",
       "terminal-setup": "Set up Shift+Enter for newlines",
       "theme": "Change the theme",
-      "tui": "Set how the terminal UI is rendered (tanacode sessions stay fullscreen)",
+      "tui": "Set how the terminal UI is rendered (used in terminal mode; the chat has no terminal UI)",
       "ultrareview": "Find and verify bugs in the cloud",
       "upgrade": "Upgrade your plan",
       "usage": "Show usage and plan status",
@@ -434,7 +468,6 @@
       "untitledSession": "New Session",
       "childQuestion": "Child session “{name}” ({id}) is waiting for an answer to its question (you can answer it with answer_question).",
       "childPermission": "Child session “{name}” ({id}) is waiting for permission. Read the prompt with get_session and answer it with answer_permission, or ask the user if you can't decide.",
-      "childWaiting": "Child session “{name}” ({id}) is waiting for input in the terminal. Let the user know.",
       "childBrowser": "Child session “{name}” ({id}) is waiting for the user to act in the in-app browser. Let the user know.",
       "childExited": "Child session “{name}” ({id}) has exited.",
       "childDone": "Child session “{name}” ({id}) has finished its work.",
@@ -443,7 +476,8 @@
       "checkCards": "Read it with card_get, act on it, and write your reply with card_reply.",
       "clipped": "{text}… (read the rest with card_get)",
       "cardsCopied": "Session “{session}” sent {numbers} ({titles}) to “{list}”.",
-      "cardTitle": "“{title}”"
+      "cardTitle": "“{title}”",
+      "childTerminal": "Child session “{name}” ({id}) is in terminal mode: the user is working in its Claude Code screen."
     },
     "checklistCopy": {
       "sessionNotFound": "Session not found",
@@ -453,9 +487,11 @@
   },
   "chat": {
     "pane": {
-      "rewindNotFound": "Couldn't find the message to rewind to. Use /rewind in the terminal instead.",
+      "rewindNotFound": "Couldn't find the message to rewind to",
       "model": "Model",
       "configureFailed": "Couldn't apply the change: {error}",
+      "modeFailed": "Couldn't switch the permission mode to “{mode}”",
+      "modeFailedError": "Couldn't switch the permission mode ({error})",
       "settingsFileDefault": "Default",
       "settingsFileMissing": "Not registered",
       "confirmSettingsFile": "This switches the settings file to “{name}” and restarts Claude Code to continue the conversation. Depending on its settings (such as the endpoint URL or API key), the conversation so far will be sent to the new endpoint.\n\nSwitch settings files?",
@@ -495,7 +531,7 @@
       "export": "Export session…",
       "exportTip": "Export this session's history to a single HTML file",
       "terminal": "Terminal mode",
-      "terminalTip": "Show and use Claude Code in its terminal view instead of the chat",
+      "terminalTip": "Show and operate Claude Code in its own terminal screen instead of the chat. Switching restarts Claude Code and continues the same conversation (only while it's idle)",
       "pasteComments": "Paste into prompt",
       "pasteCommentsTip": "Paste the code comments into Claude Code's prompt (press Enter to send)",
       "starting": "Starting Claude Code…",
@@ -511,12 +547,7 @@
       "takeBackTip": "Cancel sending and move the message back to the input box",
       "sendNowFailed": "Couldn't send: {error}",
       "rescheduleFailed": "Couldn't change the time: {error}",
-      "slowStart": "Claude Code is taking a long time to start. Check the terminal to see whether it's stuck on a confirmation screen.",
-      "rewinding": "Choosing where to rewind to…",
-      "cancelEsc": "Cancel (Esc)",
-      "unknownScreen": "Claude Code is showing a screen that can't be used from the chat",
-      "closeEsc": "Close (Esc)",
-      "operateInTerminal": "Open Terminal",
+      "slowStart": "Claude Code is taking a long time to start ({elapsed}). It may be waiting for MCP servers or SessionStart hooks",
       "archived": "This session is archived",
       "unarchive": "Unarchive",
       "exited": "Claude Code exited (code {code})",
@@ -525,14 +556,18 @@
       "chooseAbove": "Choose an option above",
       "placeholder": "Message Claude Code (⌘Enter to send · @ for files and sessions · / for commands)",
       "settingsFileTitle": "Settings file (changing it restarts Claude Code and resumes the conversation; model and effort reset to the settings file's defaults)",
-      "modelTitle": "Model (changing it restarts Claude Code and resumes the conversation)",
+      "modelTitle": "Model (switches the running Claude Code in place, from the next response; this session only)",
       "refreshModels": "Refresh model list",
-      "effortTitle": "Effort (changing it restarts Claude Code and resumes the conversation)",
+      "effortTitle": "Effort (switches the running Claude Code in place, from the next response; this session only)",
       "noEffort": "No effort levels",
       "effort": "Effort",
       "modeTitle": "Permission mode (this session only; same as Shift+Tab)",
       "mode": "Mode",
-      "bypassPermissions": "Bypass permissions"
+      "bypassPermissions": "Bypass permissions",
+      "slowStartStderr": "The end of Claude Code's standard error",
+      "terminalStopsTasks": "Background tasks are running. Switching restarts Claude Code, which stops them. Switch anyway?",
+      "leaveTerminal": "Going back to the chat. Anything typed but not sent in Claude Code's screen will be lost. Go back?",
+      "terminalFailed": "Couldn't switch ({error})"
     },
     "toolCard": {
       "running": "Running…",
@@ -672,7 +707,8 @@
       "wontConnect": "Won't connect when the session starts",
       "connected": "Connected",
       "enabled": "Remote Control is on (it connects once Claude Code has started and the connection is ready)",
-      "disconnected": "Not connected"
+      "disconnected": "Not connected",
+      "lockedInTerminal": "Can't be switched in terminal mode (use /remote-control in Claude Code's screen)"
     },
     "todo": {
       "title": "Todos"
@@ -707,6 +743,24 @@
       "image": "[Image]",
       "linesOmitted": "… ({count} lines omitted)",
       "linesOmitted_one": "… ({count} line omitted)"
+    },
+    "rewind": {
+      "kind": "Rewind",
+      "title": "Rewind to before this message?",
+      "files": "Rewinding the code changes {count} files (+{insertions} −{deletions})",
+      "files_one": "Rewinding the code changes {count} file (+{insertions} −{deletions})",
+      "noFiles": "Claude hasn't changed any files since this message. Only the conversation is rewound",
+      "codeUnavailable": "The code can't be rewound ({reason}). Only the conversation can be",
+      "codeUnavailablePlain": "The code can't be rewound. Only the conversation can be",
+      "more": "and {count} more",
+      "both": "Rewind the conversation and code",
+      "conversation": "Rewind the conversation only",
+      "conversationOnly": "Rewind the conversation",
+      "code": "Rewind the code only",
+      "failed": "Couldn't rewind ({error})",
+      "codeOnly": "The code was rewound, but the conversation couldn't be ({error})",
+      "failedIn": "Couldn't rewind “{title}” ({error})",
+      "codeOnlyIn": "The code in “{title}” was rewound, but the conversation couldn't be ({error})"
     }
   },
   "composer": {
@@ -777,7 +831,9 @@
       "claude": "Claude's wake-up",
       "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",
       "cancelSendingTip": "Stop sending and move the message back to the chat input",
-      "cancelTip": "Unschedule and move the message back to the chat input"
+      "cancelTip": "Unschedule and move the message back to the chat input",
+      "unsaved": "Not saved",
+      "unsavedTip": "The scheduled messages file could not be read, so scheduled messages are not saved. They are lost if you quit the app before they are sent (the original file is kept as it is)"
     },
     "note": {
       "scheduled": "Scheduled: {time}",
@@ -1005,7 +1061,6 @@
     "activity": {
       "question": "Needs answer",
       "permission": "Needs permission",
-      "other": "Needs input",
       "browser": "Needs browser action",
       "starting": "Starting",
       "runningWithBackground": "Working ({count} in background)",
@@ -1013,7 +1068,10 @@
       "background": "Waiting on {count} background tasks",
       "background_one": "Waiting on {count} background task",
       "unread": "New response",
-      "exited": "Exited"
+      "exited": "Exited",
+      "terminal": "Terminal mode",
+      "terminalWorking": "Terminal mode · Working",
+      "terminalUnread": "Terminal mode · New response"
     },
     "worktreeDialog": {
       "archiveFailed": "Couldn't archive the session: {error}",
@@ -1126,6 +1184,7 @@
       "notLoggedIn": "Not logged in",
       "usageFromStatusline": "Plan usage as of {time} (from session responses)",
       "usageFromCache": "Plan usage as of {time} (from Claude Code's cached /usage)",
+      "usageFromUsage": "Plan usage as of {time} (asked Claude Code at the end of a chat turn)",
       "usagePending": "Plan usage appears once a session responds",
       "staleAt": "As of {time}",
       "othersAttention": "Another account needs attention",
@@ -1141,6 +1200,7 @@
     "usage": {
       "fiveHour": "5-hour",
       "week": "Weekly",
+      "weekModel": "Weekly ({model})",
       "unknown": "No data",
       "reset": "Limit reset",
       "remainingMinutes": "Resets in {count}m",
@@ -1265,6 +1325,19 @@
     },
     "markdownPreview": {
       "diagramFailed": "Couldn't render the diagram: {error}"
+    },
+    "unsaved": {
+      "label": "Unsaved changes",
+      "title": "You have unsaved changes in {count} files",
+      "title_one": "You have unsaved changes in {count} file",
+      "about": "Moving to another folder reopens the editor, so your unsaved changes will be lost.",
+      "save": "Save and Move",
+      "saving": "Saving…",
+      "discard": "Move Without Saving",
+      "cancel": "Stay",
+      "saveFailed": "Couldn't save: {error}",
+      "conflictNote": "These files also changed on disk (by Claude or another tool). Save and Move won't write them. Choose Stay, then pick which version to keep in the editor.",
+      "editorClosed": "The editor is closed"
     }
   },
   "explorer": {
@@ -1441,7 +1514,8 @@
       "kindReviewTip": "A review list. Cards you check (approve) move to the decisions list.",
       "revoked": "Revoked",
       "revokedTip": "Revoked decision (no longer in force): {reason}",
-      "noReason": "no reason given"
+      "noReason": "no reason given",
+      "unsaved": "This session's checklist file could not be read, so changes are not saved. They are lost when you quit the app (the original file is kept as it is)."
     },
     "action": {
       "copyToSession": "Copy to Another Session",
@@ -1850,15 +1924,7 @@
     "kind": {
       "question": "Question from Claude Code",
       "permission": "Permission Request",
-      "other": "Confirmation"
-    },
-    "notChosen": {
-      "busy": "Couldn't send because another action was in progress. Click again.",
-      "gone": "Not sent because the screen changed",
-      "missing": "Not sent because this option is no longer on the Claude Code screen",
-      "stuck": "Couldn't move the cursor to this option. Click again, or choose it in the Claude Code terminal.",
-      "ignored": "Claude Code didn't accept the choice. Click again, or choose it in the Claude Code terminal.",
-      "filled": "The free-text field still has earlier text that couldn't be cleared. Clear it in the Claude Code terminal, then send again."
+      "plan": "Plan Approval"
     },
     "card": {
       "sendFailed": "Couldn't send. Click again.",
@@ -1866,8 +1932,6 @@
       "reviewAnswers": "Review Answers →",
       "otherTyped": "Other: {text}",
       "other": "Other (type your own answer)",
-      "cancelTip": "Cancel (Esc)",
-      "answerPlaceholder": "Type your answer",
       "confirm": "OK",
       "send": "Send",
       "stopEditing": "Stop editing",
@@ -1879,7 +1943,29 @@
       "unanswered": "(Not answered)",
       "submitAnswers": "Submit answers",
       "questionTab": "Question {n}",
-      "questionGone": "This question can no longer be answered (it was answered in the terminal, or Claude Code moved on)."
+      "questionGone": "This question can no longer be answered (it was answered elsewhere, or Claude Code withdrew it).",
+      "notes": "Notes (optional)",
+      "notesPlaceholder": "Anything to tell Claude about your choice"
+    },
+    "permission": {
+      "allow": "Allow",
+      "always": "Allow, and don't ask again ({rules})",
+      "deny": "Deny and tell Claude why",
+      "denyPlaceholder": "Why you deny it, or what Claude should do instead (Enter for a new line, ⌘+Enter to send)",
+      "stopTip": "Deny and stop",
+      "inputField": "{key}: {value}",
+      "editNumber": "Edit {n} of {total}",
+      "omitted": "… ({count} more characters omitted)",
+      "omitted_one": "… ({count} more character omitted)",
+      "reason": "Why this asks: {reason}",
+      "fromSubagent": "This call is inside a subagent",
+      "gone": "This prompt can no longer be answered (it was answered elsewhere, or Claude Code withdrew it).",
+      "planTitle": "Go ahead with this plan?",
+      "planApprove": "Approve (review each edit)",
+      "planAcceptEdits": "Approve and auto-accept edits",
+      "planKeep": "Keep planning (tell Claude what to change)",
+      "planPlaceholder": "What to change in the plan (Enter for a new line, ⌘+Enter to send)",
+      "planMissing": "Couldn't read the plan, so it can't be approved. Choose “Keep planning” to have Claude present it again, or × to stop."
     }
   }
 }

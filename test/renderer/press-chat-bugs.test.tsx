@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSummary } from '@shared/ipc';
-import type { MenuOption, ScreenInfo } from '@shared/screen';
+import type { PendingQuestion } from '@shared/questions';
 import { ClaudePane } from '../../src/renderer/src/chat/ClaudePane';
 import { EMPTY_CHAT, type ChatState } from '../../src/renderer/src/chat/chatState';
 import './dom';
@@ -21,6 +21,8 @@ const summary = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
   createdAt: 0,
   updatedAt: 0,
   running: false,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -33,7 +35,6 @@ const summary = (id: string, over: Partial<SessionSummary> = {}): SessionSummary
 });
 const S1 = summary('s1');
 const S2 = summary('s2');
-const PROMPT: ScreenInfo = { state: { kind: 'prompt' }, model: null, effort: null, mode: 'manual', draft: '', ready: true };
 const chatOf = (over: Partial<ChatState> = {}): ChatState => ({ ...EMPTY_CHAT, status: 'idle', ...over });
 
 type Props = ComponentProps<typeof ClaudePane>;
@@ -44,7 +45,6 @@ function props(over: Partial<Props> = {}): Props {
     sessions: [S1, S2],
     onSelectSession: noop,
     chat: chatOf(),
-    screen: PROMPT,
     workflows: new Map(),
     subagents: new Map(),
     bashTasks: new Map(),
@@ -59,7 +59,6 @@ function props(over: Partial<Props> = {}): Props {
     comments: [],
     onCommentsChange: noop,
     onShowComment: noop,
-    onOpenTerminal: noop,
     onShowContext: noop,
     onShowShell: noop,
     onToggleTerminal: noop,
@@ -68,7 +67,6 @@ function props(over: Partial<Props> = {}): Props {
     onUnarchive: noop,
     onSend: noop,
     pending: null,
-    sending: [],
     onTakePending: () => null,
     scheduled: [],
     ...over,
@@ -142,19 +140,16 @@ describe('セッションを切り替えたときの、前のセッションの�
   it('同じ質問を出している別のセッションへ移ると、前のセッションで打ちかけた自由記述の答えは、移った先のカードに残らない', () => {
     api = mockApi();
     api.install();
-    const option = (id: string, label: string, textInput = false): MenuOption => ({ id, label, description: '', pointed: false, checked: null, textInput });
-    const asking: ScreenInfo = {
-      ...PROMPT,
-      state: {
-        kind: 'menu',
-        menu: { kind: 'question', tabs: [], title: 'どちらの案にしますか？', context: [], options: [option('1', 'A 案'), option('2', 'B 案'), option('3', 'Type something.', true)], multiSelect: false, hint: '' },
-      },
+    const asking: PendingQuestion = {
+      id: 'p1',
+      questions: [{ question: 'どちらの案にしますか？', header: '方式', multiSelect: false, options: [{ label: 'A 案', description: '' }, { label: 'B 案', description: '' }] }],
+      answered: {},
     };
-    const view = render(<ClaudePane {...props({ screen: asking })} />);
+    const view = render(<ClaudePane {...props({ question: asking })} />);
     fireEvent.click(screen.getByText('その他（自由に入力）'));
-    fireEvent.change(screen.getByPlaceholderText('回答を入力'), { target: { value: 'A 案を少し変えて' } });
-    view.rerender(<ClaudePane {...props({ session: S2, screen: asking })} />);
-    expect(screen.queryByPlaceholderText('回答を入力')).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText(/^回答を入力/), { target: { value: 'A 案を少し変えて' } });
+    view.rerender(<ClaudePane {...props({ session: S2, question: asking })} />);
+    expect(screen.queryByPlaceholderText(/^回答を入力/)).toBeNull();
     expect(screen.getByText('その他（自由に入力）')).toBeTruthy();
   });
 });

@@ -20,6 +20,9 @@ export type ScheduledMessage = {
   // Claude が自分に入れた予約（tanacode-sessions の schedule_wakeup）。人の予約には無い。
   // 時刻になると、本文を囲み（WAKEUP_TAG）に入れて送り、チャットでは「Claude への知らせ」として出す
   by?: 'claude';
+  // 予約のファイルを読めず（権限が無い・新しいバージョンのアプリが書いた形など）、保存しない。アプリを終えると消える。
+  // 保存はせず、main が画面などに渡すときだけ付ける
+  unsaved?: true;
 };
 
 // 予定の時刻をこれより過ぎてから気づいたものは、送らずに missed にする。何時間も前の指示が、急に動き出さないように

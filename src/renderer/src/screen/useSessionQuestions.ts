@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react';
 import type { PendingQuestion } from '@shared/questions';
 import { useSessionValues } from '../sessionValues';
 
-// セッションごとの、フックが答えを待っている AskUserQuestion（質問のカードを、ターミナルの画面を読まずに出す）。
+// セッションごとの、Claude Code が答えを待っている AskUserQuestion（質問のカードに出す）。
 // 描き直すのは選択中のセッションが変わったときだけ
 export function useSessionQuestions(selectedId: string | null): {
   questionOf: (sessionId: string | null) => PendingQuestion | null;

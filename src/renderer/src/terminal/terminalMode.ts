@@ -1,20 +1,19 @@
-import { useCallback, useState } from 'react';
-import { readSharedPref, useSharedPrefChange, writeSharedPref } from '../sharedPrefs';
+import { t } from '@shared/i18n';
+import type { SessionSummary } from '@shared/ipc';
+import { errorMessage } from '../errorMessage';
 
-const STORAGE_KEY = 'tanacode.terminalMode';
-
-function load(): boolean {
-  return readSharedPref(STORAGE_KEY) === 'on';
-}
-
-// ターミナルモード（Claude Code ペインに、チャットの代わりに Claude Code そのものの画面を出す）にしているか。
-// どのセッションにも効き、次回起動時も保つ。どのプロファイルの画面でも同じにする（sharedPrefs）
-export function useTerminalMode(): [boolean, (on: boolean) => void] {
-  const [on, setOn] = useState(load);
-  const change = useCallback((next: boolean) => {
-    setOn(next);
-    writeSharedPref(STORAGE_KEY, next ? 'on' : 'off');
-  }, []);
-  useSharedPrefChange(STORAGE_KEY, () => setOn(load()));
-  return [on, change];
+// ターミナルモード（Claude Code ペインに、チャットの代わりに Claude Code そのものの画面を出す）は、セッションごと（設計書 9 節）。
+// 切り替えると、main が今の Claude Code を止めて、もう片方（チャットは stream-json、ターミナルモードは TUI）で --resume する。
+// 裏のタスクは止まるので、動いていれば確かめる。チャットに戻すときは、TUI の入力欄の書きかけが消えることを確かめる
+// （画面を読まないので、書きかけがあるかは分からない）。止まっているセッションは、確かめずにもう片方で起動する
+// （止まった TUI に書きかけは無い）。切り替えられなければ、わけを出す
+export async function switchTerminalMode(session: SessionSummary, tasksRunning: boolean): Promise<void> {
+  const on = !session.terminal;
+  if (session.running && tasksRunning && !window.confirm(t('chat.pane.terminalStopsTasks'))) return;
+  if (session.running && !on && !window.confirm(t('chat.pane.leaveTerminal'))) return;
+  try {
+    await window.tanacode.sessions.setTerminalMode(session.id, on, { stopTasks: tasksRunning });
+  } catch (error) {
+    window.alert(t('chat.pane.terminalFailed', { error: errorMessage(error) }));
+  }
 }

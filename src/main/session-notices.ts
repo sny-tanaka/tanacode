@@ -1,18 +1,20 @@
 import type { SessionSummary } from '@shared/ipc';
-import type { ScreenInfo } from '@shared/screen';
 import type { SessionState } from '@shared/session-tools';
 
-// アプリから Claude への知らせ（子の作業が終わった・チェックリストに返信があった など）を、手の空いたセッションの入力欄に打つ列。
-// 作業中なら手が空くまで待ち、入力欄に書きかけの文字があれば少し待って試し直す。続けて届いた知らせは 1 つにまとめる。
-// 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる
+// アプリから Claude への知らせ（子の作業が終わった・チェックリストに返信があった など）を、手の空いたセッションに送る列。
+// 作業中なら手が空くまで待つ。続けて届いた知らせは 1 つにまとめる。
+// 送り先が止まっている・アーカイブした・使わない設定にしたときは、送らずに捨てる。送り先がターミナルモードなら、捨てるか（親への知らせ・
+// Claude からの知らせ。預からない。決めたこと）、TUI の入力欄に貼るだけにする（人がボタンで頼んだもの。Enter は人が押す。設計書 9 節）。
+// TUI が確認・質問のメニューを出している間は貼らずに待つ（貼った文字がメニューの選択になるため）
 
 // SessionManager のうち、知らせに使うもの
 export type NoticeHost = {
   list(): SessionSummary[];
   stateOf(id: string): SessionState | null;
-  screen(id: string): ScreenInfo | null;
   submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
   watchState(listener: (id: string) => void): () => void;
+  // ターミナルモードの TUI の入力欄に貼る（Enter は送らない）。貼れなければ（メニューを出している間など）false
+  pasteIntoTerminal?(id: string, text: string): boolean;
 };
 
 type Deps<T> = {
@@ -23,6 +25,8 @@ type Deps<T> = {
   compose: (target: string, items: Map<string, T>) => string | null;
   // まとめるまでの待ち（テストでは短くする）
   delayMs?: number;
+  // 送り先がターミナルモードのとき、TUI の入力欄に貼る知らせか（人がボタンで頼んだもの）。省くと、どれも捨てる
+  pasteInTerminal?: (item: T) => boolean;
 };
 
 // 知らせを受け取れる状態（ターンの外）
@@ -30,8 +34,6 @@ const RECEIVE_STATES = new Set<SessionState>(['idle', 'background']);
 // 受け付けられるようになるまで待つ上限
 const NOTIFY_TIMEOUT_MS = 10_000;
 const NOTIFY_DELAY_MS = 1500;
-// 入力欄に書きかけの文字があるときに、試し直すまでの待ち
-const RETRY_MS = 5000;
 
 export class SessionNotices<T> {
   // 送り先の ID → キー → 中身
@@ -43,7 +45,7 @@ export class SessionNotices<T> {
     // 送り先の手が空いたら、たまっている知らせを送る
     this.unwatch = deps.host.watchState((id) => {
       const state = deps.host.stateOf(id);
-      if (state && RECEIVE_STATES.has(state) && this.pending.has(id)) this.schedule(id);
+      if (state && (RECEIVE_STATES.has(state) || state === 'terminal') && this.pending.has(id)) this.schedule(id);
     });
   }
 
@@ -85,17 +87,20 @@ export class SessionNotices<T> {
       this.pending.delete(target);
       return;
     }
-    // 作業中なら、手が空いたときに送る（watchState）。入力欄に書きかけの文字があれば、少し待って試し直す
-    const state = host.stateOf(target);
-    if (!state || !RECEIVE_STATES.has(state)) return;
-    const screen = host.screen(target);
-    if (screen?.state.kind !== 'prompt' || screen.draft) {
-      this.timers.set(
-        target,
-        setTimeout(() => void this.deliver(target), RETRY_MS),
-      );
+    if (host.stateOf(target) === 'terminal') {
+      const pasteable = new Map([...queue].filter(([, item]) => this.deps.pasteInTerminal?.(item) ?? false));
+      const text = pasteable.size > 0 ? this.deps.compose(target, pasteable) : null;
+      // 貼れなかったら（メニューを出している間）、貼るものだけ残して、次に状態が変わったとき（watchState）に貼り直す
+      if (text && host.pasteIntoTerminal?.(target, text) === false) {
+        this.pending.set(target, pasteable);
+        return;
+      }
+      this.pending.delete(target);
       return;
     }
+    // 作業中なら、手が空いたときに送る（watchState）
+    const state = host.stateOf(target);
+    if (!state || !RECEIVE_STATES.has(state)) return;
     this.pending.delete(target);
     const text = this.deps.compose(target, queue);
     if (!text) return;

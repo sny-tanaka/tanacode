@@ -1,6 +1,7 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '@shared/chat';
-import { showsCommandSuggestion } from '../../src/main/screen-parser';
 import { ClaudeRun, claudeVersion, shown, sleep } from './claude-run';
 import { MockApi } from './mock-api';
 
@@ -61,25 +62,25 @@ describe(`Claude Code ${version} の引き継ぎ`, () => {
 
   it('前の claude で始めたバックグラウンドの作業は、claude を止めると止まる', async () => {
     await run.send(PROMPT);
-    await run.waitFor('前の起動の返事', replied('前の起動の返事'));
+    await run.waitUntil('前の起動の返事', replied('前の起動の返事'));
     expect(task('toolu_old')?.state).toBe('running');
     run.stopClaude();
     expect(task('toolu_old')?.state).toBe('stopped');
     run.start({ resume: true });
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
+    await run.waitUntil('入力欄', () => run.idle);
     await run.send(AFTER_RESUME);
-    await run.waitFor('今の起動の返事', replied('今の起動の返事'));
+    await run.waitUntil('今の起動の返事', replied('今の起動の返事'));
     expect(task('toolu_new')?.state).toBe('running');
-    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt');
+    await run.waitUntil('入力欄に戻る', () => run.idle);
   });
 
   it('アプリを起動し直すと、動いている claude を引き継ぎ、今も動いている作業を追い続ける', async () => {
     const sessionId = run.sessionId;
     await run.restartApp();
     expect(run.sessionId).toBe(sessionId);
-    await run.waitFor('会話ログの読み直し', () => run.historyLoaded);
+    await run.waitUntil('会話ログの読み直し', () => run.historyLoaded);
     // 起動し直さずに、claude の画面をそのまま受け取る
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.ready);
+    await run.waitUntil('入力欄', () => run.idle);
     // 引き継いだ claude が起動する前に書かれた行は過去のもの。前の claude の作業は止まったものとして読む
     expect(task('toolu_old')).toMatchObject({ state: 'stopped', startedAt: null });
     // 引き継いだ claude が起動したあとに書かれた行は、読み直しでも今動いているもの
@@ -100,65 +101,48 @@ describe(`Claude Code ${version} の引き継ぎ`, () => {
   });
 
   it('引き継いだ claude の作業の完了と、そのあとの発言を読める', async () => {
-    const done = await run.waitFor('今の claude の作業の完了', () => (task('toolu_new')?.state !== 'running' ? task('toolu_new') : null), (NEW_TASK_SECONDS + 10) * 1000);
+    const done = await run.waitUntil('今の claude の作業の完了', () => (task('toolu_new')?.state !== 'running' ? task('toolu_new') : null), (NEW_TASK_SECONDS + 10) * 1000);
     expect(done.state).toBe('completed');
     // 終了コードと出力は、出力ファイルから読む
-    const read = await run.waitFor('終了コード', () => (task('toolu_new')?.exitCode !== null ? task('toolu_new') : null), 5000);
+    const read = await run.waitUntil('終了コード', () => (task('toolu_new')?.exitCode !== null ? task('toolu_new') : null), 5000);
     expect(read).toMatchObject({ state: 'completed', exitCode: 0 });
     expect(read.output).toContain('new-done');
     // 完了通知を受けて Claude が続きを書く（今起きたこととして配信する）
-    await run.waitFor('完了通知への返事', replied('完了通知への返事'));
+    await run.waitUntil('完了通知への返事', replied('完了通知への返事'));
     expect(sinceStart().some((b) => b.live && b.events.some((e) => e.type === 'notice'))).toBe(true);
-    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt');
+    await run.waitUntil('入力欄に戻る', () => run.idle);
     await run.send(AFTER_ADOPT);
-    await run.waitFor('引き継いだあとの返事', replied('引き継いだあとの返事'));
-    await run.waitFor('待機中', () => run.manager.liveSessions()[0]?.state === '待機中');
+    await run.waitUntil('引き継いだあとの返事', replied('引き継いだあとの返事'));
+    await run.waitUntil('待機中', () => run.manager.liveSessions()[0]?.state === '待機中');
   });
 
   it('アプリを止めている間に /clear で会話が変わっても、引き継いですぐ新しい会話ログに乗り換える', async () => {
     const before = run.claudeSessionId;
-    const statusPath = () => {
-      try {
-        return (JSON.parse(run.statusLineText() ?? '') as { transcript_path?: string }).transcript_path ?? null;
-      } catch {
-        return null;
-      }
-    };
+    const projectDir = dirname(run.transcript());
+    // 止めている間に、前と別の会話ログに書かれた（アプリの外から探す）
+    const newTranscriptHas = (text: string) =>
+      readdirSync(projectDir).some((f) => f.endsWith('.jsonl') && f !== `${before}.jsonl` && readFileSync(join(projectDir, f), 'utf8').includes(text));
     await run.restartApp(async () => {
-      // アプリを通さずに打つ。画面は pty ホストの仮想の端末で見る
-      const shows = (text: string) => run.lines().some((l) => l.text.includes(text));
-      run.typeWithoutApp('/clear');
-      await until(() => showsCommandSuggestion(run.lines(), '/clear'));
-      run.typeWithoutApp('\r');
-      await until(() => !shows(AFTER_ADOPT));
-      run.typeWithoutApp(WHILE_CLOSED);
-      await until(() => shows(WHILE_CLOSED));
-      run.typeWithoutApp('\r');
-      await until(() => shows('止めている間の返事'));
-      // statusLine には、アプリが止まっている間に新しい会話ログのパスが書かれている
-      await until(() => !!statusPath() && statusPath() !== run.transcript());
+      // アプリを通さずに、claude に発言の行を直に書く
+      run.sendWithoutApp('/clear');
+      run.sendWithoutApp(WHILE_CLOSED);
+      await until(() => newTranscriptHas('止めている間の返事'));
     });
-    // 次に statusLine が書かれるのを待たずに、残っている statusLine から今の会話ログを知って乗り換える
-    await run.waitFor('新しい会話ログに乗り換える', () => run.claudeSessionId !== before, 3000);
-    expect(run.transcript()).toBe(statusPath());
-    expect(run.statusLine?.transcriptPath).toBe(statusPath());
-    await run.waitFor('止めている間の発言', () => texts(shown(run.chat())).includes(`user: ${WHILE_CLOSED}`));
-    expect(texts(shown(run.chat())).slice(0, 2)).toEqual(['user: /clear', `user: ${WHILE_CLOSED}`]);
+    // 引き継いだ claude の、前のアプリの頃の行（新しい会話の init）から、今の会話ログを知って乗り換える
+    await run.waitUntil('新しい会話ログに乗り換える', () => run.claudeSessionId !== before, 5000);
+    await run.waitUntil('止めている間の発言', () => texts(shown(run.chat())).includes(`user: ${WHILE_CLOSED}`));
     // 引き継いだあとも、新しい会話で続けられる
-    // （Claude Code は、止めている間の返事を次の書き込みまで会話ログに書かないことがあるので、返事はここで確かめる）
+    await run.waitUntil('手が空く', () => run.idle);
     await run.send(AFTER_ADOPT);
-    await run.waitFor('乗り換えたあとの返事', replied('乗り換えたあとの返事'));
-    expect(texts(shown(run.chat()))).toEqual([
-      'user: /clear',
-      `user: ${WHILE_CLOSED}`,
-      'assistant-text: 止めている間の返事',
-      `user: ${AFTER_ADOPT}`,
-      'assistant-text: 乗り換えたあとの返事',
-    ]);
+    await run.waitUntil('乗り換えたあとの返事', replied('乗り換えたあとの返事'));
+    const after = texts(shown(run.chat()));
+    expect(after).toContain(`user: ${WHILE_CLOSED}`);
+    expect(after.slice(-2)).toEqual([`user: ${AFTER_ADOPT}`, 'assistant-text: 乗り換えたあとの返事']);
+    expect(after).not.toContain(`user: ${PROMPT}`);
   });
 });
 
-// 条件が満たされるまで待つ（アプリを止めている間は画面の読み取りが無いので、仮想の端末の文字を見る）
+// 条件が満たされるまで待つ（アプリを止めている間は session-manager が無いので、ファイルを見る）
 async function until(check: () => boolean, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!check()) {

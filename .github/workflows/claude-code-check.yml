@@ -1,11 +1,11 @@
 # Claude Code との互換性の毎日の確認。その日の最新の Claude Code を、モックの API で動かし（API キーは使わず、料金もかからない）、
-# 画面・会話ログ・statusLine・フックをアプリと同じ読み取りにかける（npm run test:cli）。手動の実行では、確かめるバージョンを指定できる。
+# チャット（stream-json）・ターミナルモードとの切り替え・会話ログ・statusLine・フックを、アプリと同じ部品で確かめる（npm run test:cli）。手動の実行では、確かめるバージョンを指定できる。
 # PR では、動作確認済のバージョン（src/shared/claude-code.ts）での同じ確認を、ci.yml の cli のジョブで流す
-# （新しい Claude Code が出ても、関係のない PR が落ちないように。新しい版への追従は、毎日の確認と、それが作る PR で行う）
+# （新しい Claude Code が出ても、関係のない PR が落ちないように。新しいバージョンへの追従は、毎日の確認と、それが作る PR で行う）
 # - 読み取れなくなっていたら、Issue を立てる
-# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をその版に上げる PR を作って、そのままマージする。その版の控えも一緒に入れる。マージしたらブランチは消す
-# 途中の画面などの控えは artifact にも残す
-# アプリは macOS 専用なので、macOS のランナーで確かめる（Claude Code は OS で画面の描き方が違う。応答の印は macOS では ⏺、Linux では ●）
+# - 通ったら、動作確認済のバージョン（src/shared/claude-code.ts）をそのバージョンに上げる PR を作って、そのままマージする。そのバージョンの控えも一緒に入れる。マージしたらブランチは消す
+# 会話ログ・statusLine・stream-json の行の控えは artifact にも残す（stream-json の行は、どれも読めるかも確かめる。形が変わったら落ちて Issue が立つ）
+# アプリは macOS 専用なので、macOS のランナーで確かめる
 name: claude-code-check
 
 on:
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 確かめる Claude Code の版（空なら最新）
+        description: 確かめる Claude Code のバージョン（空なら最新）
         required: false
 
 # 既定は読むだけ。書き込みは、それが要るジョブだけに付ける
@@ -57,6 +57,14 @@ jobs:
         env:
           TANACODE_CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
           TANACODE_RECORD: 1
+      # update のジョブと同じ単体テストを、取った控えで流す（動作確認済のバージョンを上げたつもりで、作業ツリーだけを書き換える。
+      # このジョブの権限は読むだけのまま）。basic.test.ts が確かめるのはその時点までに届いた stream-json の行で、控えには終わりまでの
+      # 行が入る（recorded.test.ts が読む）。statusline.test.ts・context.test.ts は、動作確認済のバージョンの控え（モデル・エフォート・
+      # コンテキストの上限）を読む。ここで落ちれば Issue が立つ（update のジョブの npm test で初めて落ちると、Issue が立たない）
+      - name: 取った控えで単体テストを流す
+        env:
+          VERSION: ${{ steps.claude.outputs.version }}
+        run: node scripts/update-verified-version.mjs "$VERSION" > /dev/null && npm test
       # 次の update のジョブが控えを使う
       - name: 控えを残す
         if: always() && steps.claude.outputs.version
@@ -65,7 +73,7 @@ jobs:
           name: claude-code-${{ steps.claude.outputs.version }}
           path: test/fixtures/claude-code/
           if-no-files-found: ignore
-      # 同じ版の Issue がもう開いていれば、立てない
+      # 同じバージョンの Issue がもう開いていれば、立てない
       - name: 失敗したら Issue を立てる
         if: failure()
         env:
@@ -73,12 +81,12 @@ jobs:
           VERSION: ${{ steps.claude.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          title="Claude Code ${VERSION:-（版が分からない）} で読み取れないところがあります"
+          title="Claude Code ${VERSION:-（バージョンが分からない）} で読み取れないところがあります"
           if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then exit 0; fi
           gh issue create --title "$title" --body "毎日の互換性の確認（claude-code-check）が失敗しました。
 
           - 失敗した実行: $RUN_URL
-          - 失敗したテストのログに、そのときの Claude Code の画面が出ています
+          - 失敗したテストのログに、そのときの Claude Code の標準エラーの末尾が出ています
           - 手元では \`TANACODE_CLAUDE_BIN=<claude のパス> npm run test:cli\` で同じ確認ができます"
 
   # 毎日の確認（と手動の実行）が通ったら、動作確認済のバージョンを上げる PR を作って、PR の CI が通ったらマージする。
@@ -120,7 +128,7 @@ jobs:
         with:
           name: claude-code-${{ needs.compat.outputs.version }}
           path: test/fixtures/claude-code/
-      # 同じ版の PR が一度でもあれば（閉じたものも）、作り直さない
+      # 同じバージョンの PR が一度でもあれば（閉じたものも）、作り直さない
       - name: 動作確認済のバージョンを上げる PR を作る
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -142,7 +150,7 @@ jobs:
           npm test
           if [ "$action" = bump ]; then
             title="chore: 動作確認済の Claude Code を $VERSION にする"
-            summary="毎日の互換性の確認が Claude Code $VERSION で通ったので、動作確認済のバージョンを上げます。ステータスバーは、この版と同じならチェックマークを出します。"
+            summary="毎日の互換性の確認が Claude Code $VERSION で通ったので、動作確認済のバージョンを上げます。ステータスバーは、このバージョンと同じならチェックマークを出します。"
           else
             title="test: Claude Code $VERSION の控えを足す"
             summary="動作確認済のバージョン（$VERSION）の控えがまだ無いので、毎日の互換性の確認で取った控えを足します。"

@@ -4,8 +4,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOOK_COMMAND, PROMPT, QUESTION, SETTINGS, stepsFor } from '../scenario';
 import { E2EApp } from './app';
 
-// 基本の台本（test/scenario.ts）を、アプリの画面から動かす。新しいセッションを始め、チャットに出るカードで
-// フォルダの信頼・Bash の許可・質問・Write の許可に答えて、返事がチャットに出るまで。
+// 基本の台本（test/scenario.ts）を、アプリの画面から動かす。信頼していないフォルダで新しいセッションを始め、チャットに出るカードで
+// Bash の許可・質問・Write の許可に答えて、返事がチャットに出るまで。
 // 答えが Claude まで届いたかは、モックの API が受け取ったツールの結果で確かめる
 describe('チャットから Claude Code を動かす', () => {
   let app: E2EApp;
@@ -22,21 +22,16 @@ describe('チャットから Claude Code を動かす', () => {
     await app?.close();
   });
 
-  it('新しいセッションを始めると、フォルダの信頼の確認がカードで出る', async () => {
+  it('信頼していないフォルダでも、フォルダの信頼は確かめずに始まる。最初の指示が届き、Bash の許可の確認に答えられる', async () => {
     // 許可の確認を出させる（Claude Code の既定のモードでは、確認なしで動くことがある）
     await app.startSession(PROMPT, { mode: 'manual' });
-    const card = await app.menuCard('other');
-    expect(await card.locator('.menu-title').textContent()).toContain('trust');
-    await app.choose(card, /^Yes/);
-  });
-
-  it('最初の指示が届き、Bash の許可の確認に答えられる', async () => {
+    // チャット（stream-json）はフォルダの信頼を確かめない（決めたこと）。最初に出るカードは Bash の許可の確認
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain('mkdir checked');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
   });
 
-  it('AskUserQuestion の質問に、カードの選択肢で答えられる（カードは、質問のフックが受け取った質問から描く。画面は読まない）', async () => {
+  it('AskUserQuestion の質問に、カードの選択肢で答えられる（カードは、Claude Code が答えを待つ要求（can_use_tool）の質問から描く。画面は読まない）', async () => {
     const card = await app.menuCard('question');
     expect(await card.locator('.menu-title').textContent()).toBe(QUESTION.question);
     // 「この質問について話す」は、フックが受け取った質問のカード（QuestionCard）にだけ出る（画面から読んだカードは「Chat about this」）
@@ -47,7 +42,7 @@ describe('チャットから Claude Code を動かす', () => {
   it('Write の許可の確認に答えると、ファイルが書かれる', async () => {
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain('hello.txt');
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await app.byText('.chat-list', 'チェック完了').waitFor();
     expect(readFileSync(join(app.work, 'hello.txt'), 'utf8')).toBe('こんにちは\n');
   });
@@ -76,46 +71,6 @@ describe('チャットから Claude Code を動かす', () => {
     await app.byText('.session-list .session-row', PROMPT).waitFor();
     expect(await app.page.inputValue('.chat-options select[title^="権限モード"]')).toBe('manual');
     expect(await app.page.locator('.claude-header .claude-title').textContent()).toBe(PROMPT);
-  });
-
-  it('ターミナルモードにすると、チャットの代わりに claude の画面がそのまま描かれ、打った文字が届く', async () => {
-    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
-    const rows = app.page.locator('.claude .claude-screen .terminal-instance .xterm-rows');
-    await rows.getByText('チェック完了', { exact: false }).waitFor();
-    // チャットと入力欄は隠す
-    expect(await app.page.locator('.chat-list-wrap').isVisible()).toBe(false);
-    expect(await app.page.locator('.chat-input-wrap').isVisible()).toBe(false);
-    // 打った文字は pty から claude に届き、claude の入力欄に出る。人と同じ速さで 1 文字ずつ打つ
-    // （打っている途中の文字を、入力欄に残った文字としてチャットの入力欄に移さない）
-    await app.page.locator('.claude-screen .terminal-instance .xterm-helper-textarea').focus();
-    await app.page.keyboard.type('typed-from-xterm', { delay: 80 });
-    await rows.getByText('typed-from-xterm', { exact: false }).waitFor();
-    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
-    // 書きかけは消しておく（Ctrl+U）
-    await app.page.keyboard.press('Control+U');
-    await app.page.waitForFunction(
-      () => !document.querySelector('.claude-screen .terminal-instance .xterm-rows')?.textContent?.includes('typed-from-xterm'),
-    );
-    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
-  });
-
-  it('ターミナルモードで打ちかけたまま、エディタなどを触っても書きかけは画面に残る。チャットに戻すと、チャットの入力欄に移る', async () => {
-    const rows = app.page.locator('.claude .claude-screen .terminal-instance .xterm-rows');
-    await app.page.locator('.claude-screen .terminal-instance .xterm-helper-textarea').focus();
-    await app.page.keyboard.type('left-in-xterm', { delay: 80 });
-    await rows.getByText('left-in-xterm', { exact: false }).waitFor();
-    // 画面の外（ヘッダー）を押してフォーカスを外しても、書きかけは移さない（見えていないチャットの入力欄に入れない）
-    await app.page.click('.claude-header .claude-title');
-    // 移さないことを確かめるので、移すまでの待ち（隠してから 0.5 秒）より長く待つ
-    await app.page.waitForTimeout(1000);
-    expect(await rows.textContent()).toContain('left-in-xterm');
-    expect(await app.page.inputValue('.chat-input textarea')).toBe('');
-    // チャットに戻すと、書きかけはチャットの入力欄に移り、Claude Code の入力欄は空になる（チャットから送ったとき、書きかけの後ろにつながらない）
-    await app.page.click('.claude-header [aria-label="ターミナルモード"]');
-    await app.page.locator('.chat-list-wrap').waitFor();
-    await app.page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>('.chat-input textarea')?.value === 'left-in-xterm');
-    expect(await app.page.locator('.claude-screen').count()).toBe(0);
-    await app.page.fill('.chat-input textarea', '');
   });
 
   it('ターミナルで、シェルのコマンドを動かせる', async () => {

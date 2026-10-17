@@ -7,16 +7,27 @@ import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { StatusLineInfo } from '@shared/statusline';
 import { mergeSettings } from '../src/main/settings-files';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
-import { STATUS_FILE_ENV, StatusLineWatcher, ownSettings, parseStatusLine, sessionSettings, userStatusLineCommand, AUTO_COMPACT_STOP_COMMAND } from '../src/main/statusline';
-import { QUESTION_HOOK_COMMAND } from '../src/main/question-hook';
+import {
+  STATUS_FILE_ENV,
+  StatusLineWatcher,
+  ownSettings,
+  parseStatusLine,
+  sessionSettings,
+  userStatusLineCommand,
+  AUTO_COMPACT_STOP_COMMAND,
+  IDLE_FILE_COMMAND,
+  NOTIFICATION_FILE_COMMAND,
+  PERMISSION_FILE_COMMAND,
+} from '../src/main/statusline';
 
 // statusLine の JSON の読み取り・アプリが Claude Code に渡す設定・セッションごとのファイルの見張り（statusline.ts）。
-// JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json・ask.json）を使う。
+// JSON の形は、動作確認済の Claude Code の控え（test/fixtures/claude-code/<バージョン>/statusline.json。test/cli/terminal-mode.test.ts が TUI で取る）を使う。
 // 利用枠（rate_limits）は、控えを取るときの API キーでのログインでは出ないので、src の読み取り（five_hour・seven_day）に合わせて組み立てた
 
 const FIXTURE = join('test', 'fixtures', 'claude-code', VERIFIED_CLAUDE_CODE_VERSION);
 const statusJson = readFileSync(join(FIXTURE, 'statusline.json'), 'utf8');
-const askJson = readFileSync(join(FIXTURE, 'ask.json'), 'utf8');
+// 許可の確認の直前のフック（PermissionRequest）が書く入力
+const permissionJson = JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } });
 
 describe('parseStatusLine', () => {
   it('控えの statusLine から、モデル・エフォート・バージョン・コンテキスト・料金・会話ログを読む', () => {
@@ -97,26 +108,29 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(userStatusLineCommand()).toBeNull();
   });
 
-  it('AskUserQuestion と Bash の前のフックはいつも、ブラウザ・セッションのフックは使うときだけ足す', () => {
+  it('Bash の前のフックはいつも、ブラウザ・セッションのフックは使うときだけ足す。質問の入力を書くフックは足さない', () => {
     const matchers = (s: Record<string, unknown>) => (s as { hooks: { PreToolUse: { matcher: string }[] } }).hooks.PreToolUse.map((h) => h.matcher);
-    const base = ownSettings(null) as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } };
-    expect(base.hooks.PreToolUse[0]).toEqual({ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `cat > "$${ASK_FILE_ENV}"` }] });
-    expect(matchers(base)).toEqual(['AskUserQuestion', 'Bash']);
-    expect(matchers(ownSettings(null, true, true))).toHaveLength(4);
-    expect(matchers(ownSettings(null, false, true))).toEqual(['AskUserQuestion', 'Bash', expect.any(String)]);
-    expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(3);
+    expect(matchers(ownSettings(null))).toEqual(['Bash']);
+    expect(matchers(ownSettings(null, true, true))).toHaveLength(3);
+    expect(matchers(ownSettings(null, false, true))).toEqual(['Bash', expect.any(String)]);
+    expect(JSON.parse(sessionSettings(true, false)).hooks.PreToolUse).toHaveLength(2);
   });
 
-  it('質問のフック（AskUserQuestion の PermissionRequest）は、材料があるときだけ足す。セッションの許可の確認の入力を書くフックと並べる', () => {
-    type Hooks = { hooks: { PermissionRequest?: { matcher: string; hooks: { command: string; timeout: number }[] }[] } };
-    const permission = (s: Record<string, unknown>) => (s as Hooks).hooks.PermissionRequest?.map((h) => h.matcher);
-    expect(permission(ownSettings(null))).toBeUndefined();
-    expect(permission(ownSettings(null, false, false, null, false, false, true))).toEqual(['AskUserQuestion']);
-    expect(permission(ownSettings(null, false, true, null, false, false, true))).toEqual(['AskUserQuestion', '*']);
-    expect(permission(ownSettings(null, false, true))).toEqual(['*']);
-    const hook = (ownSettings(null, false, false, null, false, false, true) as Hooks).hooks.PermissionRequest![0].hooks[0];
-    expect(hook).toEqual({ type: 'command', command: QUESTION_HOOK_COMMAND, timeout: 86400 });
-    expect(JSON.parse(sessionSettings(false, false, null, false, false, true)).hooks.PermissionRequest).toHaveLength(1);
+  it('書くだけのフック（許可の確認の入力・Claude Code の知らせ・ターンの終わり）は、いつも足す。どれも、セッションごとのファイルに書くだけ', () => {
+    type Entry = { matcher?: string; hooks: { type: string; command: string; timeout: number }[] };
+    const hooks = ownSettings(null).hooks as Record<string, Entry[]>;
+    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'Stop']);
+    expect(hooks.PermissionRequest).toEqual([{ matcher: '*', hooks: [{ type: 'command', command: PERMISSION_FILE_COMMAND, timeout: 10 }] }]);
+    expect(hooks.Notification).toEqual([{ hooks: [{ type: 'command', command: NOTIFICATION_FILE_COMMAND, timeout: 10 }] }]);
+    expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] }]);
+    // 質問のファイル（<id>.ask.json）の名前から、種類ごとのファイルの名前を作る（ASK_FILE_ENV を含むので、チャットのフックの一覧に出ない）
+    // 何も決めないので、アプリのフックの印（suppressOutput）だけを書く（hook-output.ts）
+    const write = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%.ask.json}.${suffix}.json"; printf '%s\\n' '{"suppressOutput":true}'`;
+    expect(PERMISSION_FILE_COMMAND).toBe(write('permission'));
+    expect(NOTIFICATION_FILE_COMMAND).toBe(write('notification'));
+    expect(IDLE_FILE_COMMAND).toBe(write('idle'));
+    // セッションの MCP を足しても、許可の確認の入力を書くフックは 1 つだけ
+    expect(JSON.parse(sessionSettings(false, true)).hooks.PermissionRequest).toHaveLength(1);
   });
 
   it('人のターミナルに打つ前の確認のフックは、ターミナルを打つツールごと足すときだけ足す', () => {
@@ -128,9 +142,9 @@ describe('アプリが Claude Code に渡す設定', () => {
   });
 
   it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {
-    expect(Object.keys(ownSettings(null).hooks as object)).toEqual(['PreToolUse']);
+    expect(Object.keys(ownSettings(null).hooks as object)).not.toContain('UserPromptSubmit');
     const hooks = ownSettings(null, false, false, null, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
-    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
+    expect(Object.keys(hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'UserPromptSubmit', 'Stop', 'SessionStart', 'PreCompact', 'PostToolUse']);
     expect(hooks.SessionStart[0].matcher).toBe('compact');
     // 自動の最適化圧縮: Claude Code の自動の圧縮の前に、アプリに聞く。ツールのあとは、止めるファイルを見るだけ（アプリには聞かない）
     expect(hooks.PreCompact[0].matcher).toBe('auto');
@@ -139,8 +153,9 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(hooks.PostToolUse[0].hooks[0].command).toBe(AUTO_COMPACT_STOP_COMMAND);
     expect(AUTO_COMPACT_STOP_COMMAND).not.toContain('--hook');
     expect(AUTO_COMPACT_STOP_COMMAND).toContain('TANACODE_ASK_FILE');
-    expect(hooks.Stop[0].hooks[0].command).toContain('--hook');
-    expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(1);
+    // ターンの終わりは、書くだけのフックのあとに、チェックリストのフック
+    expect(hooks.Stop.map((h) => h.hooks[0].command)).toEqual([IDLE_FILE_COMMAND, expect.stringContaining('--hook')]);
+    expect(JSON.parse(sessionSettings(false, false, null, true)).hooks.Stop).toHaveLength(2);
   });
 
   it('プロファイルの設定のフォルダで起動するときだけ、~/.claude の指示ファイルを読ませない設定を足す', () => {
@@ -152,10 +167,10 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(JSON.parse(sessionSettings(false, false, dir)).claudeMdExcludes).toEqual(excludes);
   });
 
-  it('描き方をいつも fullscreen に決める。登録した設定ファイルが classic（tui: default）でも、こちらが勝つ', () => {
-    expect(ownSettings(null).tui).toBe('fullscreen');
-    expect(JSON.parse(sessionSettings(true, true, join(home, '.claude-work'), true, true)).tui).toBe('fullscreen');
-    expect(mergeSettings({ tui: 'default' }, ownSettings(null)).tui).toBe('fullscreen');
+  it('描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）。登録した設定ファイルの tui はそのまま', () => {
+    expect(ownSettings(null)).not.toHaveProperty('tui');
+    expect(JSON.parse(sessionSettings(true, true, join(home, '.claude-work'), true, true))).not.toHaveProperty('tui');
+    expect(mergeSettings({ tui: 'default' }, ownSettings(null)).tui).toBe('default');
   });
 });
 
@@ -163,17 +178,14 @@ describe('StatusLineWatcher', () => {
   let dir: string;
   let watcher: StatusLineWatcher | null = null;
   let infos: { sessionId: string; info: StatusLineInfo }[];
-  let asks: { sessionId: string; input: unknown }[];
   let permissions: { sessionId: string; request: unknown; at: number }[];
 
   beforeEach(() => {
     dir = join(mkdtempSync(join(tmpdir(), 'tanacode-statusline-')), 'statusline');
     infos = [];
-    asks = [];
     watcher = new StatusLineWatcher(
       dir,
       (sessionId, info) => infos.push({ sessionId, info }),
-      (sessionId, input) => asks.push({ sessionId, input }),
       (sessionId, request, at) => permissions.push({ sessionId, request, at }),
     );
     permissions = [];
@@ -218,16 +230,12 @@ describe('StatusLineWatcher', () => {
     expect(infos).toHaveLength(1);
   });
 
-  it('AskUserQuestion のフックが書いた入力を読み、tool_input を渡す。書きかけ（壊れた JSON）は渡さない', async () => {
+  it('前のバージョンのフックが書いた AskUserQuestion の入力のファイル（<id>.ask.json）は、statusLine として読まない', async () => {
     await live(watcher!);
-    writeFileSync(watcher!.askFileFor('s1'), '{"tool_input":');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(asks).toEqual([]);
-    writeFileSync(watcher!.askFileFor('s1'), askJson);
-    await expect.poll(() => asks.length).toBe(1);
-    expect(asks).toEqual([{ sessionId: 's1', input: JSON.parse(askJson).tool_input }]);
-    // statusLine のファイルとしては読まない
-    expect(infos).toEqual([]);
+    writeFileSync(watcher!.askFileFor('s1'), JSON.stringify({ tool_input: { questions: [] } }));
+    writeFileSync(watcher!.fileFor('s1'), statusJson);
+    await expect.poll(() => infos.length).toBe(1);
+    expect(infos.map((i) => i.sessionId)).toEqual(['s1']);
   });
 
   it('許可の確認のフックが書いた入力を読み、書かれた時刻と一緒に渡す。書きかけ（壊れた JSON）は渡さない', async () => {
@@ -244,12 +252,26 @@ describe('StatusLineWatcher', () => {
     // 時刻は、読んだ時刻ではなく、ファイルが書かれた時刻
     expect(permissions[0].at).toBeGreaterThan(before - 2000);
     expect(permissions[0].at).toBeLessThanOrEqual(Date.now());
-    // statusLine・質問のファイルとしては読まない
+    // statusLine のファイルとしては読まない
     expect(infos).toEqual([]);
-    expect(asks).toEqual([]);
   });
 
-  it('質問のファイルが続けて書かれたら、読むのは最後の 1 回だけ', async () => {
+  it('ターンの終わりのフック（Stop）が書いた入力を読み、ターンの終わりと一緒に渡す', async () => {
+    const idles: { sessionId: string; input: unknown }[] = [];
+    watcher!.close();
+    watcher = new StatusLineWatcher(
+      dir,
+      () => {},
+      () => {},
+      (sessionId, input) => idles.push({ sessionId, input }),
+    );
+    await live(watcher);
+    writeFileSync(join(dir, 's1.idle.json'), JSON.stringify({ hook_event_name: 'Stop', permission_mode: 'acceptEdits' }));
+    await expect.poll(() => idles.length).toBe(1);
+    expect(idles[0]).toEqual({ sessionId: 's1', input: { hook_event_name: 'Stop', permission_mode: 'acceptEdits' } });
+  });
+
+  it('書くだけのフックのファイルが続けて書かれたら、読むのは最後の 1 回だけ', async () => {
     // 見張りの知らせは本物のまま、待ち時間（setTimeout）だけを進める
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -258,17 +280,17 @@ describe('StatusLineWatcher', () => {
       const until = async (done: () => boolean) => {
         for (const end = Date.now() + 3000; !done() && Date.now() < end; ) await new Promise((resolve) => setImmediate(resolve));
       };
-      writeFileSync(watcher!.askFileFor('s1'), askJson);
-      await until(() => timers.has('s1.ask.json'));
-      const first = timers.get('s1.ask.json');
-      writeFileSync(watcher!.askFileFor('s1'), askJson);
-      await until(() => timers.get('s1.ask.json') !== first);
-      expect(timers.get('s1.ask.json')).not.toBe(first);
+      writeFileSync(watcher!.permissionFileFor('s1'), permissionJson);
+      await until(() => timers.has('s1.permission.json'));
+      const first = timers.get('s1.permission.json');
+      writeFileSync(watcher!.permissionFileFor('s1'), permissionJson);
+      await until(() => timers.get('s1.permission.json') !== first);
+      expect(timers.get('s1.permission.json')).not.toBe(first);
       vi.advanceTimersByTime(50);
-      await until(() => asks.length > 0);
+      await until(() => permissions.length > 0);
       await new Promise((resolve) => setImmediate(resolve));
-      await until(() => asks.length > 1);
-      expect(asks).toHaveLength(1);
+      await until(() => permissions.length > 1);
+      expect(permissions).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -276,12 +298,12 @@ describe('StatusLineWatcher', () => {
 
   it('見張りの知らせのあとにファイルが消えていたら、何も渡さない', async () => {
     await live(watcher!);
-    writeFileSync(watcher!.askFileFor('gone'), askJson);
+    writeFileSync(watcher!.permissionFileFor('gone'), permissionJson);
     writeFileSync(watcher!.fileFor('gone'), statusJson);
-    rmSync(watcher!.askFileFor('gone'));
+    rmSync(watcher!.permissionFileFor('gone'));
     rmSync(watcher!.fileFor('gone'));
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(asks).toEqual([]);
+    expect(permissions).toEqual([]);
     expect(infos).toEqual([]);
   });
 
@@ -317,10 +339,11 @@ describe('StatusLineWatcher', () => {
     new StatusLineWatcher(dir, () => {}).close();
   });
 
-  it('質問の受け手を渡さなくても、質問のファイルを読んで落ちない', async () => {
+  it('書くだけのフックの受け手を渡さなくても、そのファイルを読んで落ちない', async () => {
     const plain = new StatusLineWatcher(dir, (sessionId, info) => infos.push({ sessionId, info }));
     await live(plain);
-    writeFileSync(plain.askFileFor('s1'), askJson);
+    writeFileSync(plain.permissionFileFor('s1'), permissionJson);
+    writeFileSync(join(dir, 's1.idle.json'), '{}');
     writeFileSync(plain.fileFor('s1'), statusJson);
     await expect.poll(() => infos.length).toBe(1);
     plain.close();

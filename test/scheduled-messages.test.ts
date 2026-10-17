@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +6,7 @@ import { formatScheduleTime, parseWakeup, schedulePresets, wakeupText, type Sche
 import type { SessionState } from '@shared/session-tools';
 import { scheduledNotice } from '../src/main/notice-text';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
+import { SendError } from '../src/main/send-error';
 
 // 時刻を指定して送信（予約）。保存・時刻になったら送る・時刻を過ぎていたもの・取り消し
 const START = new Date(2026, 9, 5, 14, 0).getTime();
@@ -14,11 +15,13 @@ const MINUTE = 60_000;
 type Sent = { id: string; text: string; attachments: string[]; pastes: string[]; signal?: AbortSignal; resolve: () => void; reject: (error: Error) => void };
 
 // セッションの作り物。送った（打ち込もうとした）ものは、resolve・reject を呼ぶまで「手が空くのを待っている」
-function fakeHost(states: Record<string, SessionState>) {
+// terminal: ターミナルモードで止まっているセッション
+function fakeHost(states: Record<string, SessionState>, terminal: string[] = []) {
   const sent: Sent[] = [];
   const opened: string[] = [];
   const host: ScheduleHost = {
     stateOf: (id) => states[id] ?? null,
+    summary: (id) => (id in states ? { terminal: terminal.includes(id) } : undefined),
     open: (id) => {
       opened.push(id);
       states[id] = 'starting';
@@ -51,8 +54,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function create(states: Record<string, SessionState>) {
-  const fake = fakeHost(states);
+function create(states: Record<string, SessionState>, terminal: string[] = []) {
+  const fake = fakeHost(states, terminal);
   const changes: ScheduledMessage[][] = [];
   const troubles: ScheduledMessage[] = [];
   const scheduled = new ScheduledMessages(file, fake.host, (m) => changes.push(m), (m) => troubles.push(m));
@@ -83,6 +86,44 @@ describe('ScheduledMessages', () => {
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(opened).toEqual(['s1']);
     expect(sent).toHaveLength(1);
+  });
+
+  it('ターミナルモードで止まっているセッションは、起動せずに送れなかったことにする（起動し直すと TUI になり、送れないため）', async () => {
+    const { scheduled, sent, opened, troubles } = create({ s1: 'exited' }, ['s1']);
+    scheduled.add('s1', '続きをお願いします', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await flush();
+    expect(opened).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(scheduled.list().map((m) => [m.state, m.error, m.reason])).toEqual([['failed', 'ターミナルモードの間は送れません。チャットに戻してから送ってください', 'terminalMode']]);
+    expect(troubles).toHaveLength(1);
+  });
+
+  it('送れなかった理由の分かるもの（SendError）は、Claude に返す文のために、その理由（reason）も保存する。時刻を変えると消す', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    scheduled.add('s1', 'ビルドして', [], START + MINUTE);
+    scheduled.add('s1', 'テストして', [], START + MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    const exited = new SendError('exited');
+    sent[0]!.reject(exited);
+    sent[1]!.reject(new Error('起動できませんでした'));
+    await flush();
+    // 画面と通知に出す error は、今までどおり画面の言語の文
+    expect(scheduled.list().map((m) => [m.text, m.error, m.reason])).toEqual([
+      ['ビルドして', exited.message, 'exited'],
+      ['テストして', '起動できませんでした', undefined],
+    ]);
+    // アプリを起動し直しても残る
+    scheduled.dispose();
+    const again = create({ s1: 'idle' }).scheduled;
+    expect(again.list().map((m) => m.reason)).toEqual(['exited', undefined]);
+    again.reschedule(again.list()[0]!.id, START + 10 * MINUTE);
+    expect(again.list()[0]).not.toHaveProperty('reason');
+    again.dispose();
+    // 知らない理由は読み捨てる
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as { version: number; messages: Record<string, unknown>[] };
+    writeFileSync(file, JSON.stringify({ ...saved, messages: saved.messages.map((m) => ({ ...m, state: 'failed', reason: 'unknown' })) }));
+    expect(create({ s1: 'idle' }).scheduled.list().map((m) => m.reason)).toEqual([undefined, undefined]);
   });
 
   it('手が空くのを待っている間に取り消すと、送らずに外す', async () => {
@@ -334,6 +375,7 @@ describe('ScheduledMessages の断る・片付ける', () => {
     const done: (() => void)[] = [];
     const host: ScheduleHost = {
       stateOf: (id) => states[id] ?? null,
+      summary: () => undefined,
       open: async () => {},
       // 取り消し（signal）を見ない。打ち込み始めたあとは止められない
       submitWhenReady: () => new Promise<void>((resolve) => done.push(resolve)),
@@ -354,6 +396,7 @@ describe('ScheduledMessages の断る・片付ける', () => {
     const states: Record<string, SessionState> = { s1: 'idle', s2: 'exited' };
     const host: ScheduleHost = {
       stateOf: (id) => states[id] ?? null,
+      summary: () => undefined,
       open: async () => {
         throw new Error('起動できませんでした');
       },
@@ -409,10 +452,44 @@ describe('ScheduledMessages の断る・片付ける', () => {
     // 札は、文字のものだけを読む
     writeFileSync(file, JSON.stringify({ version: 1, messages: [{ ...good, pastes: ['ログ\n2 行目', 3] }, { ...good, id: 'm5', pastes: 'x' }] }));
     expect(create({ s1: 'idle' }).scheduled.list().map((m) => m.pastes)).toEqual([['ログ\n2 行目'], []]);
-    writeFileSync(file, JSON.stringify({ version: 1, messages: 'x' }));
-    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
+  });
+
+  it('読めないファイル（無いほかの理由）・形の分からないファイルは、空で始めても上書きしない。壊れたファイルは横に移してから空で始める', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 新しいバージョンのアプリが書いた形・一覧でない
+    for (const text of [JSON.stringify({ version: 2, messages: [] }), JSON.stringify({ version: 1, messages: 'x' })]) {
+      writeFileSync(file, text);
+      const { scheduled } = create({ s1: 'idle' });
+      expect(scheduled.list()).toEqual([]);
+      scheduled.add('s1', '残らない', [], START + MINUTE);
+      expect(readFileSync(file, 'utf8')).toBe(text);
+      // 保存しないことを、画面（予約の印）と Claude（予約の道具の結果）に伝える
+      expect(scheduled.saving).toBe(false);
+      expect(scheduled.list().map((m) => m.unsaved)).toEqual([true]);
+      scheduled.dispose();
+    }
+    // 読めない（読む権限が無い）
+    const locked = JSON.stringify({ version: 1, messages: [] });
+    writeFileSync(file, locked);
+    chmodSync(file, 0o000);
+    const blocked = create({ s1: 'idle' }).scheduled;
+    blocked.add('s1', '残らない', [], START + MINUTE);
+    chmodSync(file, 0o600);
+    expect(readFileSync(file, 'utf8')).toBe(locked);
+    blocked.dispose();
+    // 壊れたファイルは、中身を横（<名前>.broken-<時刻>）に残し、新しく保存する
     writeFileSync(file, '{壊れた');
-    expect(create({ s1: 'idle' }).scheduled.list()).toEqual([]);
+    const fresh = create({ s1: 'idle' }).scheduled;
+    expect(fresh.list()).toEqual([]);
+    fresh.add('s1', '残る', [], START + MINUTE);
+    expect(fresh.saving).toBe(true);
+    expect(fresh.list().map((m) => m.unsaved)).toEqual([undefined]);
+    const moved = readdirSync(dir).filter((name) => name.startsWith('scheduled-messages.json.broken-'));
+    expect(moved.map((name) => readFileSync(join(dir, name), 'utf8'))).toEqual(['{壊れた']);
+    expect((JSON.parse(readFileSync(file, 'utf8')) as { messages: ScheduledMessage[] }).messages.map((m) => m.text)).toEqual(['残る']);
+    fresh.dispose();
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
   });
 
   it('dispose のあとは、時刻になっても送らない', async () => {

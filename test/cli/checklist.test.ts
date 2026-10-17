@@ -97,7 +97,7 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
   it('ツールの一覧と説明が Claude に渡り、書き換えるツールも許可の確認なしにアプリまで届く', async () => {
     await run.send(USE);
     // 確認が出ていれば、答えないかぎりここで止まる
-    await run.waitFor('一覧の結果', () => resultOf('toolu_overview'));
+    await run.waitUntil('一覧の結果', () => resultOf('toolu_overview'));
     for (const tool of CHECKLIST_TOOLS) expect([...api.tools], tool.name).toContain(checklistToolId(tool.name));
     expect(api.systems.every((s) => s.includes('## tanacode-checklist') && s.includes('survive compaction'))).toBe(true);
     expect(tools).toEqual(['card_add', 'card_check', 'checklist_overview']);
@@ -107,31 +107,31 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
       ['税込表示が整数であること', true, 'claude'],
       ['税率0%でも壊れないこと', false, null],
     ]);
-    await run.waitFor('応答', () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === 'チェックリストを使いました'));
+    await run.waitUntil('応答', () => run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === 'チェックリストを使いました'));
   });
 
   it('「Claude に通知する」で返信すると、手の空いた Claude に知らせが打たれ、カードの場所を持つ知らせとして読める', async () => {
     const list = store.findList(run.sessionId!, '完了前チェック')!;
     const card = list.cards[1];
     control!.apply(run.sessionId!, { type: 'card-reply', listId: list.id, cardId: card.id, text: '0% のときは税込も同じ額にして', notify: true });
-    await run.waitFor('知らせ', () => run.chatEvents.find((e) => e.type === 'notice' && e.cards?.length), 30_000);
+    await run.waitUntil('知らせ', () => run.chatEvents.find((e) => e.type === 'notice' && e.cards?.length), 30_000);
     const notice = run.chatEvents.find((e) => e.type === 'notice' && e.cards?.length);
     expect(notice).toMatchObject({ type: 'notice', cards: [{ listId: list.id, cardId: card.id }] });
     expect(notice?.type === 'notice' && notice.text).toContain('0% のときは税込も同じ額にして');
     // 知らせを受けて Claude が読んだら、Claude の未読は消える
-    await run.waitFor('カードを読んだ結果', () => resultOf('toolu_get'));
+    await run.waitUntil('カードを読んだ結果', () => resultOf('toolu_get'));
     expect(resultOf('toolu_get')).toContain('The user replied (unread)');
     expect(store.findList(run.sessionId!, '完了前チェック')!.cards[1].readByClaude).toBeGreaterThan(0);
   });
 
   it('/compact で会話を圧縮しても、サーバーの説明は渡り続け、チェックリストも読める', async () => {
-    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt' && run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === LAST_REPLY));
+    await run.waitUntil('入力欄に戻る', () => run.idle && run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === LAST_REPLY));
     await run.send('/compact');
-    await run.waitFor('圧縮の区切り', () => run.chatEvents.some((e) => e.type === 'divider'), 30_000);
-    await run.waitFor('入力欄に戻る', (info) => info.state.kind === 'prompt');
+    await run.waitUntil('圧縮の区切り', () => run.chatEvents.some((e) => e.type === 'divider'), 30_000);
+    await run.waitUntil('入力欄に戻る', () => run.idle);
     const before = api.systems.length;
     await run.send(AFTER_COMPACT);
-    await run.waitFor('圧縮のあとの一覧', () => resultOf('toolu_after'), 30_000);
+    await run.waitUntil('圧縮のあとの一覧', () => resultOf('toolu_after'), 30_000);
     expect(api.systems.slice(before).every((s) => s.includes('## tanacode-checklist') && s.includes('checklist_overview'))).toBe(true);
     expect(resultOf('toolu_after')).toContain('## 完了前チェック (1/2 checked)');
   });

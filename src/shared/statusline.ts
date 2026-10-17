@@ -13,4 +13,6 @@ export type StatusLineInfo = {
   // 今の会話の会話ログ。/clear で新しい会話になると変わる
   transcriptPath: string | null;
   updatedAt: number;
+  // rateLimits を受け取った時刻（チャットでは、ほかの値が変わったときにも前の rateLimits を送り直すため）。無ければ updatedAt
+  rateLimitsAt?: number;
 };

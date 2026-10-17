@@ -27,15 +27,15 @@ export type GateAnswer = { local: boolean; url: string };
 // アプリが答える、開く先（navigate）。outside: 許す先の外で、人に確認するオリジン（null は、何も決めない）
 export type NavigateGateAnswer = { outside: string | null };
 
-// フックの標準入力（Claude Code の PreToolUse の入力）のうち、使うもの
-export type GateInput = { tool: string; input: Record<string, unknown> };
+// フックの標準入力（Claude Code の PreToolUse の入力）のうち、使うもの。toolUseId: その呼び出しの ID（tool_use_id。無ければ付けない）
+export type GateInput = { tool: string; input: Record<string, unknown>; toolUseId?: string };
 
 // 標準入力の JSON を読む。読めなければ、ツールの名前を空にする（確認を出させる）
 export function readGateInput(text: string): GateInput {
   try {
-    const value = JSON.parse(text) as { tool_name?: unknown; tool_input?: unknown };
+    const value = JSON.parse(text) as { tool_name?: unknown; tool_input?: unknown; tool_use_id?: unknown };
     const input = value.tool_input && typeof value.tool_input === 'object' && !Array.isArray(value.tool_input) ? (value.tool_input as Record<string, unknown>) : {};
-    return { tool: typeof value.tool_name === 'string' ? value.tool_name : '', input };
+    return { tool: typeof value.tool_name === 'string' ? value.tool_name : '', input, ...(typeof value.tool_use_id === 'string' ? { toolUseId: value.tool_use_id } : {}) };
   } catch {
     return { tool: '', input: {} };
   }
@@ -84,10 +84,10 @@ export function navigateGateOutput(answer: NavigateGateAnswer | null): string {
 
 // フックの本体。アプリにツールの名前と入力を渡して聞き、標準出力に書く内容を返す。hookInput: 標準入力に届いた JSON
 export async function runGate(socketPath: string, session: string, timeoutMs: number, hookInput: string): Promise<string> {
-  const { tool, input } = readGateInput(hookInput);
+  const { tool, input, toolUseId } = readGateInput(hookInput);
   const navigate = tool === browserToolId('navigate');
   // ほかのツールで呼ばれたら（フックの設定と合わない）、確認を出させる。localhost のページでも allow は返さない
   if (!navigate && tool !== browserToolId('evaluate')) return gateOutput(null);
-  const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: { tool, input } }, timeoutMs, BROWSER_CLOSED_MESSAGE);
+  const result = await callBridge(socketPath, { session, tool: BROWSER_GATE_REQUEST, args: { tool, input, ...(toolUseId ? { toolUseId } : {}) } }, timeoutMs, BROWSER_CLOSED_MESSAGE);
   return navigate ? navigateGateOutput(readNavigateAnswer(result)) : gateOutput(readAnswer(result));
 }

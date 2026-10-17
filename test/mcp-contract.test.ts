@@ -3,11 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NewSessionOptions, SessionSummary } from '@shared/ipc';
-import type { ScreenInfo } from '@shared/screen';
 import { BROWSER_MCP } from '@shared/browser-tools';
 import { CHECKLIST_MCP } from '@shared/checklist-tools';
 import { allowedToolIds, mcpToolLabel, type McpServerDef, type McpTool } from '@shared/mcp-tools';
-import { SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD } from '@shared/session-tools';
+import { SESSION_STATE_LABEL, SESSION_TOOLS, SESSIONS_MCP, SESSIONS_MCP_FOR_CHILD, isBusy, type SessionState } from '@shared/session-tools';
 import { TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD } from '@shared/terminal-tools';
 import { WALKTHROUGH_MCP } from '@shared/walkthrough-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
@@ -183,6 +182,8 @@ const summary = (id: string, cwd: string): SessionSummary => ({
   createdAt: 0,
   updatedAt: 0,
   running: true,
+  state: null,
+  mode: null,
   unread: false,
   attention: null,
   backgroundTasks: 0,
@@ -193,7 +194,6 @@ const summary = (id: string, cwd: string): SessionSummary => ({
   worktree: null,
   parentId: null,
 });
-const promptScreen: ScreenInfo = { state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true };
 
 // SessionManager の代わり。呼び出し元のセッションが 1 つだけある
 function fakeHost(cwd: string): SessionsHost {
@@ -206,7 +206,6 @@ function fakeHost(cwd: string): SessionsHost {
     currentModel: () => null,
     currentEffort: () => null,
     conversation: async () => [],
-    screen: () => promptScreen,
     create: (dir: string, _options: NewSessionOptions, parentId: string | null) => {
       sessions.push({ ...summary('22222222-0000-4000-8000-000000000002', dir), parentId });
       return '22222222-0000-4000-8000-000000000002';
@@ -217,14 +216,13 @@ function fakeHost(cwd: string): SessionsHost {
     configure: () => {},
     open: async () => {},
     submitWhenReady: async () => {},
+    switchingTerminal: () => false,
     interrupt: () => {},
-    withdrawParentDraft: async () => {},
-    askedQuestions: () => null,
-    chooseIf: async () => 'gone',
     pendingQuestion: () => null,
     answerPendingQuestion: () => null,
     watchState: () => () => {},
     pendingPermission: () => null,
+    replyPermission: () => false,
     subagents: () => [],
     bashTasks: () => [],
     workflows: () => [],
@@ -314,5 +312,37 @@ describe('どのツールも、制御が振り分けて実行する（「Unknown
       expect(textOf(result), tool.name).not.toBe(unknown(tool.name));
     }
     expect(textOf(await control.handle(ME, 'no_such_tool', {}))).toBe(unknown('no_such_tool'));
+  });
+});
+
+// 子の状態の説明が、Claude に渡す道具の説明から漏れないように（状態を足したら、説明も直す）
+describe('wait_sessions・end_session の説明', () => {
+  // 説明の中で、その状態を表す言い方
+  const PHRASES: Record<SessionState, string> = {
+    starting: 'starting',
+    working: 'working',
+    background: 'background tasks',
+    question: 'question',
+    permission: 'permission prompt',
+    terminal: 'terminal mode',
+    browser: 'in-app browser',
+    idle: 'idle',
+    exited: 'exit',
+    archived: 'archived',
+  };
+  const description = (name: string) => SESSION_TOOLS.find((tool) => tool.name === name)!.description;
+  const states = Object.keys(SESSION_STATE_LABEL) as SessionState[];
+
+  it('wait_sessions は、手が空いたとみなす状態をすべて挙げる', () => {
+    for (const state of states.filter((s) => !isBusy(s) && s !== 'idle' && s !== 'archived')) {
+      expect(description('wait_sessions'), state).toContain(PHRASES[state]);
+    }
+  });
+
+  it('end_session は、断る状態をすべて挙げる', () => {
+    // 終えられるのは idle・exited・background・archived（sessions-control.ts の ENDABLE_STATES）
+    for (const state of states.filter((s) => !['idle', 'exited', 'background', 'archived'].includes(s))) {
+      expect(description('end_session'), state).toContain(PHRASES[state]);
+    }
   });
 });

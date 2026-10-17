@@ -1,11 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { liveCards } from '../src/shared/checklist';
 import { parseChecklistEvent } from '../src/shared/checklist-tools';
 import type { SessionSummary } from '../src/shared/ipc';
-import type { ScreenInfo } from '../src/shared/screen';
 import type { SessionState } from '../src/shared/session-tools';
 import { ChecklistControl } from '../src/main/checklist-control';
 import { ChecklistStore } from '../src/main/checklist-store';
@@ -36,6 +35,8 @@ class FakeHost implements NoticeHost {
       createdAt: 0,
       updatedAt: 0,
       running: true,
+      state: null,
+      mode: null,
       unread: false,
       attention: null,
       backgroundTasks: 0,
@@ -49,11 +50,28 @@ class FakeHost implements NoticeHost {
     });
   }
 
+  // セッションの状態（無ければ idle）。ターミナルモードの TUI に貼ったもの（pasteOk が false なら、メニューを出していて貼れない）
+  states = new Map<string, SessionState>();
+  pasted: { id: string; text: string }[] = [];
+  pasteOk = true;
+  private readonly watchers = new Set<(id: string) => void>();
+
   list = () => this.sessions;
-  stateOf = (): SessionState => 'idle';
-  screen = (): ScreenInfo => ({ state: { kind: 'prompt' }, model: null, effort: null, mode: null, draft: '', ready: true });
+  stateOf = (id: string): SessionState => this.states.get(id) ?? 'idle';
   submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
-  watchState = () => () => {};
+  pasteIntoTerminal = (id: string, text: string) => {
+    if (!this.pasteOk) return false;
+    this.pasted.push({ id, text });
+    return true;
+  };
+  watchState = (listener: (id: string) => void) => {
+    this.watchers.add(listener);
+    return () => this.watchers.delete(listener);
+  };
+  // 状態が変わった（SessionManager の changed）
+  changed(id: string): void {
+    this.watchers.forEach((l) => l(id));
+  }
 }
 
 let dir: string;
@@ -594,6 +612,37 @@ describe('画面からのコピー', () => {
   });
 });
 
+describe('ターミナルモード（人が Claude Code の画面で操作している）の先への知らせ', () => {
+  let request: Parameters<ChecklistControl['copy']>[0];
+  beforeEach(() => {
+    const list = store.createList(ME, 'human', '確認', '');
+    const [card] = store.addCards(ME, 'human', list.id, [{ title: 'A' }]);
+    request = { fromSession: ME, listId: list.id, cardIds: [card.id], toSession: PEER, notify: true };
+    host.states.set(PEER, 'terminal');
+  });
+
+  it('人が画面で頼んだ知らせは、送らずに TUI の入力欄に貼る。メニューを出している間は待って、閉じたら貼る', async () => {
+    host.pasteOk = false;
+    control.copy(request);
+    await settle();
+    expect(host.pasted).toEqual([]);
+    host.pasteOk = true;
+    host.changed(PEER);
+    await settle();
+    expect(host.pasted.map((p) => p.id)).toEqual([PEER]);
+    expect(parseChecklistEvent(host.pasted[0].text)?.message).toContain('セッション「s-11」から「確認」に #1（「A」）が届きました。');
+    expect(host.submitted).toEqual([]);
+  });
+
+  it('Claude がしたコピーの知らせは貼らない（人の入力に割り込むため）。知らせなかったことを Claude に返す', async () => {
+    const result = first(await call('cards_copy', { from_list: '確認', numbers: '1', to_session: PEER }));
+    expect(result).toContain('was not notified: it is in terminal mode');
+    await settle();
+    expect(host.pasted).toEqual([]);
+    expect(host.submitted).toEqual([]);
+  });
+});
+
 describe('結果の中身', () => {
   it('断るときは isError を付けて、決まった文を返す', async () => {
     expect(await control.handle('nobody', 'checklist_overview', {})).toEqual(textResult('This session is not in tanacode.', true));
@@ -763,5 +812,116 @@ describe('画面からのコピー（知らせの中身）', () => {
     // 開く場所は、知らせごとに 20 枚まで（2 枚と、21 枚のうちの 20 枚）
     expect(event.cards).toHaveLength(22);
     expect(event.cards.slice(2)).toEqual(copied.slice(2, 22).map((c) => ({ listId: store.findList(PEER, '確認')!.id, cardId: c.id })));
+  });
+});
+
+describe('チェックリストのファイルを読めず、保存しないセッション', () => {
+  it('結果に、保存しないことを一言添える（ほかのセッションのものを扱うときも）。呼んだセッションと対象ごとに最初の 1 回だけ。ふつうのセッションには添えない', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 新しいバージョンのアプリが書いた形（読めても、上書きしない）
+    writeFileSync(join(dir, `${PEER}.json`), JSON.stringify({ version: 2, lists: [] }));
+    const note = 'these checklists are not saved';
+    const CHILD = '66666666-0000-4000-8000-000000000006';
+    host.add(CHILD, { parentId: ME });
+    writeFileSync(join(dir, `${CHILD}.json`), JSON.stringify({ version: 2, lists: [] }));
+    expect(first(await call('checklist_overview', {}, PEER))).toContain(note);
+    // 同じセッションには繰り返さない（Claude が呼ぶたびに人へ伝え直さないように。画面にも出ている）
+    expect(first(await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }] }, PEER))).not.toContain(note);
+    expect(first(await call('card_add', { session_id: CHILD, list: 'やること', list_description: '', cards: [{ title: 'A' }] }))).toContain(note);
+    expect(first(await call('card_add', { session_id: CHILD, list: 'やること', cards: [{ title: 'B' }] }))).not.toContain(note);
+    // 子が自分で呼んだときは、子に 1 回
+    expect(first(await call('checklist_overview', {}, CHILD))).toContain(note);
+    expect(first(await call('checklist_overview'))).not.toContain(note);
+    errors.mockRestore();
+  });
+});
+
+describe('結果の文の細かいところ（取り消し・ゴミ箱・一覧・カード）', () => {
+  it('card_revoke: もう取り消したカードは、そう返す。2 枚を取り消したら them と書く', async () => {
+    const decisions = store.createList(ME, 'human', '決定事項', '', 'decisions');
+    const cards = store.addCards(ME, 'human', decisions.id, ['A', 'B', 'C', 'D', 'E'].map((title) => ({ title })));
+    // 人が取り消したものは、ゴミ箱に入れずに画面に残る（理由は省ける）
+    store.revokeCards(ME, 'human', decisions.id, [cards[0].id, cards[1].id], '');
+    expect(first(await call('card_revoke', { list: '決定事項', numbers: '1-3', reason: '取り下げ' }))).toBe(
+      'Revoked #3 in "決定事項" and moved it to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate it). #1, #2 were already revoked. 2 cards in force in "決定事項".',
+    );
+    expect(first(await call('card_revoke', { list: '決定事項', numbers: '1', reason: '取り下げ' }))).toBe('#1 was already revoked. 2 cards in force in "決定事項".');
+    expect(first(await call('card_revoke', { list: '決定事項', numbers: '4-5', reason: '取り下げ' }))).toBe(
+      'Revoked #4, #5 in "決定事項" and moved them to the trash (no longer in force; the reason stays in the thread, and only the user can restore and reinstate them). 0 cards in force in "決定事項".',
+    );
+  });
+
+  it('checklist_overview: 理由の無い取り消しは印だけ、長い理由は 200 文字で切る。いまの状態のリストのカードが 1 枚なら単数で書く', async () => {
+    const decisions = store.createList(ME, 'human', '決定事項', '', 'decisions');
+    const cards = store.addCards(ME, 'human', decisions.id, [{ title: 'A' }, { title: 'B' }]);
+    store.revokeCards(ME, 'human', decisions.id, [cards[0].id], '');
+    store.revokeCards(ME, 'human', decisions.id, [cards[1].id], `${'あ'.repeat(199)}い う`);
+    const state = store.createList(ME, 'human', '状態', '', 'state');
+    store.addCards(ME, 'human', state.id, [{ title: 'いまやっていること' }]);
+    expect(first(await call('checklist_overview'))).toBe(
+      [
+        '## 決定事項 (decisions list: permanent, no checks; 0 in force, 2 revoked)',
+        'Description: (none)',
+        '- (revoked) #1 A',
+        `- (revoked: ${'あ'.repeat(199)}い…) #2 B`,
+        '',
+        '## 状態 (state list: no checks, keep it current by rewriting its cards; 1 card)',
+        'Description: (none)',
+        '- #1 いまやっていること',
+      ].join('\n'),
+    );
+  });
+
+  it('card_get: 人がチェックしたカードと、人が理由なしで取り消したカード・Claude が理由つきで取り消したカードの書き方', async () => {
+    const at = new Date(2026, 9, 7, 9, 5).getTime();
+    const timed = new ChecklistStore(join(dir, 'timed'), () => {}, () => at);
+    const c = new ChecklistControl({ store: timed, host, enabled: () => true, notifyDelayMs: 10 });
+    const run = async (name: string, args: Record<string, unknown> = {}) => first(await c.handle(ME, name, args));
+    try {
+      const todo = timed.createList(ME, 'human', 'やること', '');
+      const [task] = timed.addCards(ME, 'human', todo.id, [{ title: 'A' }]);
+      timed.setChecked(ME, 'human', todo.id, [task.id], true);
+      expect(await run('card_get', { list: 'やること', numbers: '1' })).toContain('\n- Status: checked (by the user, 2026-10-07 09:05)\n- Created by: the user\n');
+      const decisions = timed.createList(ME, 'human', '決定事項', '', 'decisions');
+      const cards = timed.addCards(ME, 'human', decisions.id, [{ title: 'B' }, { title: 'C' }]);
+      timed.revokeCards(ME, 'human', decisions.id, [cards[0].id], '');
+      expect(await run('card_get', { list: '決定事項', numbers: '1' })).toContain('\n- Status: revoked, no longer in force (by the user, 2026-10-07 09:05)\n');
+      await run('card_revoke', { list: '決定事項', numbers: '2', reason: '取り下げ' });
+      // 人がゴミ箱から戻しても、取り消したまま
+      timed.restoreCards(ME, 'human', decisions.id, [cards[1].id]);
+      expect(await run('card_get', { list: '決定事項', numbers: '2' })).toContain('\n- Status: revoked, no longer in force (by Claude, 2026-10-07 09:05: 取り下げ)\n');
+    } finally {
+      c.dispose();
+      timed.flush();
+    }
+  });
+
+  it('list_restore・checklist_trash: リストより前に消したカードが 2 枚なら、複数で書く', async () => {
+    await call('card_add', { list: 'やること', list_description: '', cards: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+    await call('card_delete', { list: 'やること', numbers: '1-2' });
+    await call('list_delete', { list: 'やること' });
+    expect(first(await call('checklist_trash'))).toContain('  - #3 C\n  - (2 cards deleted before the list stay in the trash after list_restore)');
+    expect(first(await call('list_restore', { list: 'やること' }))).toBe(
+      'Restored the list "やること" from the trash with 1 card (#3). 2 cards deleted before the list stay in the trash (restore them with card_restore; checklist_trash shows them).',
+    );
+  });
+
+  it('card_get: 上限を 1 文字だけ超えたら、単数で書く', async () => {
+    const list = store.createList(ME, 'human', 'やること', '');
+    store.addCards(ME, 'human', list.id, [{ title: 'A', body: 'あ'.repeat(60_000) }]);
+    // 本文のほかの部分の長さ（本文が 60,000 文字なので、その分だけ超えている）
+    const overhead = Number(/…\((\d+) characters omitted\)$/.exec(first(await call('card_get', { list: 'やること', numbers: '1' })))![1]);
+    // 名前の長さが同じリストの、同じ形のカード
+    const other = store.createList(ME, 'human', 'あとで書', '');
+    store.addCards(ME, 'human', other.id, [{ title: 'A', body: 'あ'.repeat(60_001 - overhead) }]);
+    expect(first(await call('card_get', { list: 'あとで書', numbers: '1' }))).toMatch(/\n…\(1 character omitted\)$/);
+  });
+
+  it('画面からのコピー: 名前の無いセッションからの知らせは「新しいセッション」と書く', async () => {
+    const list = store.createList(UNTITLED, 'human', '確認', '');
+    const [card] = store.addCards(UNTITLED, 'human', list.id, [{ title: 'A' }]);
+    control.copy({ fromSession: UNTITLED, listId: list.id, cardIds: [card.id], toSession: PEER, notify: true });
+    await settle();
+    expect(parseChecklistEvent(host.submitted[0].text)?.message).toContain('セッション「新しいセッション」から「確認」に #1（「A」）が届きました。');
   });
 });

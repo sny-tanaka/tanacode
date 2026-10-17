@@ -80,7 +80,7 @@ describe('Claude が許す先の外のページを開く', () => {
     await app.startSession(OPEN, { mode: 'manual' });
     const card = await app.menuCard('permission');
     expect(await card.textContent()).toContain(a.origin);
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await address(`${a.origin}/`);
   });
 
@@ -98,7 +98,7 @@ describe('Claude が許す先の外のページを開く', () => {
     expect(await card.textContent()).toContain(b.origin);
     // 止めている間は、移っていない
     await address(`${a.origin}/next`);
-    await app.choose(card, /^Yes/);
+    await app.choose(card, /^許可する/);
     await address(`${b.origin}/`);
     await app.byText('.chat-list', DONE).waitFor();
     expect(app.api.toolResults.some((r) => r.includes(OTHER_TEXT))).toBe(true);

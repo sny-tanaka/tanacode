@@ -1,0 +1,371 @@
+// Claude Code の stream-json（claude -p --input-format stream-json --output-format stream-json）の行のうち、tanacode が使うもの。
+// 形は公開の Agent SDK（@anthropic-ai/claude-agent-sdk 0.3.301 = Claude Code 2.1.301 の sdk.d.ts）の型に合わせ、使う項目だけを書く。
+// SDK のパッケージは使わない（プロセスを常駐のホストが持ち、再起動したアプリが途中からつなぎ直すため。設計書 6 節）。
+// 文書に無い内部の要求（remote_control・rewind_conversation など）は internal.ts に置く
+
+import type { LineKind, RetainRule } from '../pty-host-protocol';
+
+export type PermissionModeName = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+// Messages API の内容のブロック（使う形だけ）
+export type TextBlock = { type: 'text'; text: string };
+export type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+export type ContentBlock = TextBlock | ImageBlock | { type: string; [key: string]: unknown };
+
+export type Usage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+};
+
+// SDKMessageOrigin（スマホなど、アプリの外から届いた発言は human）
+export type MessageOrigin = { kind: string; [key: string]: unknown };
+
+// アプリが送る発言（SDKUserMessage）。uuid はアプリが付け、戻ってくる行（--replay-user-messages）と command_lifecycle で追う。
+// pasted_content: 入力欄に貼り付けた長い文（札）。CLI が打った文のあとに足し、TUI と同じ <pasted_content> の囲みに入れる
+export type UserInput = {
+  type: 'user';
+  message: { role: 'user'; content: string | ContentBlock[] };
+  parent_tool_use_id: null;
+  uuid: string;
+  priority?: 'now' | 'next' | 'later';
+  pasted_content?: string[];
+};
+
+// Claude Code が出す user の行（ツールの結果・戻ってきた発言 SDKUserMessageReplay など）
+export type UserMessage = {
+  type: 'user';
+  message: { role: 'user'; content: string | ContentBlock[] };
+  parent_tool_use_id: string | null;
+  uuid?: string;
+  isReplay?: boolean;
+  isSynthetic?: boolean;
+  origin?: MessageOrigin;
+  priority?: 'now' | 'next' | 'later';
+  session_id?: string;
+};
+
+// SDKAssistantMessage（message は BetaMessage）
+export type AssistantMessage = {
+  type: 'assistant';
+  message: { id?: string; model?: string; content?: ContentBlock[]; stop_reason?: string | null; usage?: Usage };
+  parent_tool_use_id: string | null;
+  uuid: string;
+  session_id?: string;
+  error?: string;
+};
+
+// rewind_files の返事（SDK の RewindFilesResult）。dry_run では、戻すと変わるファイルと行の数だけを返す
+export type RewindFilesResult = { canRewind: boolean; error?: string; filesChanged?: string[]; insertions?: number; deletions?: number };
+
+// SDKResultSuccess・SDKResultError（ターンの終わり）
+export type ResultMessage = {
+  type: 'result';
+  subtype: 'success' | 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries';
+  is_error: boolean;
+  duration_ms: number;
+  num_turns: number;
+  result?: string;
+  stop_reason: string | null;
+  terminal_reason?: string;
+  total_cost_usd?: number;
+  usage?: Usage;
+  // このターンが取り込んだ発言の uuid（アプリが付けたもの）
+  user_message_uuids?: string[];
+  errors?: string[];
+  uuid: string;
+  session_id: string;
+};
+
+// SDKSystemMessage（subtype init）。effort は次の要求で送るエフォート（無ければ null）
+export type InitMessage = {
+  type: 'system';
+  subtype: 'init';
+  session_id: string;
+  model: string;
+  permissionMode: PermissionModeName;
+  apiKeySource: string;
+  claude_code_version: string;
+  cwd: string;
+  tools: string[];
+  slash_commands: string[];
+  effort?: EffortLevel | null;
+  capabilities?: string[];
+  uuid: string;
+};
+
+// SDKStatusMessage。status: compacting（圧縮中）・requesting（応答を待っている）・null
+export type StatusMessage = {
+  type: 'system';
+  subtype: 'status';
+  status: 'compacting' | 'requesting' | null;
+  permissionMode?: PermissionModeName;
+  uuid: string;
+  session_id: string;
+};
+
+// SDKTaskStartedMessage・SDKTaskNotificationMessage（裏のタスク）。task_type は local_bash・local_agent・local_workflow など
+export type TaskStartedMessage = {
+  type: 'system';
+  subtype: 'task_started';
+  task_id: string;
+  tool_use_id?: string;
+  description: string;
+  task_type?: string;
+  is_backgrounded?: boolean;
+  uuid: string;
+};
+
+export type TaskNotificationMessage = {
+  type: 'system';
+  subtype: 'task_notification';
+  task_id: string;
+  tool_use_id?: string;
+  status: 'completed' | 'failed' | 'stopped';
+  output_file: string;
+  summary: string;
+  uuid: string;
+};
+
+// SDKCompactBoundaryMessage
+export type CompactBoundaryMessage = {
+  type: 'system';
+  subtype: 'compact_boundary';
+  compact_metadata: { trigger: 'manual' | 'auto'; pre_tokens: number; post_tokens?: number };
+  uuid: string;
+};
+
+// SDKAPIRetryMessage
+export type ApiRetryMessage = {
+  type: 'system';
+  subtype: 'api_retry';
+  attempt: number;
+  max_retries: number;
+  retry_delay_ms: number;
+  error_status: number | null;
+  error: string;
+  uuid: string;
+};
+
+// Remote Control のつながり（system/bridge_state。SDK の公開の型には無い）。state: ready・connected・failed など
+export type BridgeStateMessage = { type: 'system'; subtype: 'bridge_state'; state: string; detail?: string; uuid?: string };
+
+// フックの始まりと終わり（system/hook_started・hook_response。--include-hook-events）。hook_name は「出来事:ツールの名前」など
+// （例: PreToolUse:Bash）。コマンドとツールの呼び出しの ID は載らない。outcome: success・error・cancelled（2.1.302）
+export type HookStartedMessage = { type: 'system'; subtype: 'hook_started'; hook_id: string; hook_name: string; hook_event: string; uuid?: string };
+export type HookResponseMessage = {
+  type: 'system';
+  subtype: 'hook_response';
+  hook_id: string;
+  hook_name: string;
+  hook_event: string;
+  output?: string;
+  stdout: string;
+  stderr: string;
+  exit_code?: number;
+  outcome: string;
+  uuid?: string;
+};
+
+// SDKConversationResetMessage（/clear）。新しい会話の ID は、このあとの system/init の session_id（new_conversation_id とは別。実測）
+export type ConversationResetMessage = {
+  type: 'conversation_reset';
+  new_conversation_id: string;
+  trigger?: 'clear' | 'plan_mode_exit' | 'fresh_session' | 'onboarding';
+  user_message_uuid?: string;
+  uuid: string;
+  session_id: string;
+};
+
+// SDKPartialAssistantMessage（--include-partial-messages。書いている途中。進み具合だけに使い、途中の文は出さない）
+export type StreamEventMessage = {
+  type: 'stream_event';
+  event: { type: string; content_block?: { type?: string }; delta?: { type?: string; stop_reason?: string | null }; usage?: Usage };
+  parent_tool_use_id: string | null;
+  uuid: string;
+  session_id: string;
+};
+
+// SDKToolProgressMessage（ツールの実行中の経過）
+export type ToolProgressMessage = {
+  type: 'tool_progress';
+  tool_use_id: string;
+  tool_name: string;
+  parent_tool_use_id: string | null;
+  elapsed_time_seconds: number;
+  uuid: string;
+};
+
+// SDKRateLimitEvent。unifiedWindows の utilization は 0〜1、resetsAt は秒（実測）
+export type RateLimitWindow = { utilization: number; resetsAt: number };
+export type RateLimitEvent = {
+  type: 'rate_limit_event';
+  rate_limit_info: {
+    status: 'allowed' | 'allowed_warning' | 'rejected';
+    resetsAt?: number;
+    rateLimitType?: string;
+    utilization?: number;
+    unifiedWindows?: { five_hour?: RateLimitWindow; seven_day?: RateLimitWindow };
+  };
+  uuid: string;
+};
+
+// 送った発言の受け付けの知らせ。queued: 順番待ちに入った / started: ターンに取り込まれた / completed・cancelled・discarded: 終わった。
+// SDK の公開の型には無い（system/init の capabilities の msg_lifecycle_v1）。command_uuid は、アプリが発言に付けた uuid
+export type CommandLifecycleMessage = {
+  type: 'command_lifecycle';
+  command_uuid: string;
+  state: 'queued' | 'started' | 'completed' | 'cancelled' | 'discarded';
+  uuid: string;
+  session_id: string;
+};
+
+// Claude Code からアプリへの制御の要求のうち、答えるもの（SDKControlPermissionRequest）。
+// 許可の確認・AskUserQuestion・ExitPlanMode・ワークフローを始める前の確認が、どれもこれで来る
+export type PermissionUpdate =
+  | { type: 'addRules' | 'replaceRules' | 'removeRules'; rules: { toolName: string; ruleContent?: string }[]; behavior: 'allow' | 'deny' | 'ask'; destination: string }
+  | { type: 'setMode'; mode: PermissionModeName; destination: string }
+  | { type: 'addDirectories' | 'removeDirectories'; directories: string[]; destination: string };
+
+export type CanUseToolRequest = {
+  subtype: 'can_use_tool';
+  tool_name: string;
+  input: Record<string, unknown>;
+  tool_use_id: string;
+  permission_suggestions?: PermissionUpdate[];
+  blocked_path?: string;
+  decision_reason?: string;
+  decision_reason_type?: string;
+  // false: 安全の確かめのうち、人が承認しなければならないものがある
+  classifier_approvable?: boolean;
+  // 間違って 1 回押しただけで許されないようにする確認
+  default_to_no?: boolean;
+  // ユーザーの設定の ask の規則（permissions.ask）が出させた確認
+  matched_ask_rule?: { source: string; tool_name: string; rule_content?: string };
+  title?: string;
+  display_name?: string;
+  description?: string;
+  agent_id?: string;
+  suppress_always_allow_rule?: boolean;
+  requires_user_interaction?: boolean;
+};
+
+// 許可への答え（PermissionResult）
+export type PermissionResult =
+  | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: PermissionUpdate[] }
+  | { behavior: 'deny'; message: string; interrupt?: boolean };
+
+export type ControlRequestMessage = { type: 'control_request'; request_id: string; request: { subtype: string; [key: string]: unknown } };
+export type ControlCancelMessage = { type: 'control_cancel_request'; request_id: string };
+export type ControlResponseMessage = {
+  type: 'control_response';
+  response: { subtype: 'success'; request_id: string; response?: Record<string, unknown> } | { subtype: 'error'; request_id: string; error: string };
+};
+
+// initialize の返事（SDKControlInitializeResponse のうち使うもの。pid・current_permission_mode・remote_control_available は公開の型に無い）
+export type ModelInfo = {
+  value: string;
+  resolvedModel?: string;
+  displayName: string;
+  description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: EffortLevel[];
+  supportsAutoMode?: boolean;
+};
+export type SlashCommandInfo = { name: string; description: string; argumentHint: string; aliases?: string[]; builtin?: boolean };
+export type AccountInfo = { email?: string; organization?: string; subscriptionType?: string; tokenSource?: string; apiKeySource?: string; apiProvider?: string };
+export type InitializeResponse = {
+  commands: SlashCommandInfo[];
+  models: ModelInfo[];
+  account: AccountInfo;
+  claude_code_version?: string;
+  pid?: number;
+  current_permission_mode?: PermissionModeName;
+  remote_control_available?: boolean;
+};
+
+// initialize の返事のうち、記録に残して引き継ぎで戻すもの（SessionRecord.claudeInit）
+export type SavedInit = Pick<InitializeResponse, 'commands' | 'models' | 'remote_control_available'>;
+
+// get_context_usage の返事（SDKControlGetContextUsageResponse のうち使うもの）
+export type ContextUsageResponse = { totalTokens: number; maxTokens: number; percentage: number; model?: string };
+
+// get_usage の返事（SDKControlGetUsageResponse のうち使うもの）。utilization は 0〜100、resets_at は ISO の時刻（実測）
+export type UsageWindow = { utilization: number | null; resets_at: string | null } | null;
+// model_scoped: サーバーの一覧から来る、モデル別の週の枠（display_name はサーバーが付けた名前。一覧を作れなかったときは無い。2.1.302）。
+// seven_day_opus・seven_day_sonnet は、それより前からある Opus・Sonnet の週の枠（2.1.302 の /usage は seven_day_opus を出さない）
+export type UsageResponse = {
+  subscription_type: string | null;
+  rate_limits_available: boolean;
+  rate_limits: {
+    five_hour?: UsageWindow;
+    seven_day?: UsageWindow;
+    seven_day_opus?: UsageWindow;
+    seven_day_sonnet?: UsageWindow;
+    model_scoped?: { display_name: string; utilization: number | null; resets_at: string | null }[];
+  } | null;
+};
+
+// get_settings の返事のうち使うもの。errors: 形の違う設定ファイル（-p は黙って無視する。実測）
+export type SettingsResponse = { effective?: { plansDirectory?: unknown }; applied?: { model?: string; effort?: string | null }; errors?: unknown[] };
+
+// stream-json の出力の行として知っている種類
+export type StreamMessage =
+  | UserMessage
+  | AssistantMessage
+  | ResultMessage
+  | InitMessage
+  | StatusMessage
+  | TaskStartedMessage
+  | TaskNotificationMessage
+  | CompactBoundaryMessage
+  | ApiRetryMessage
+  | BridgeStateMessage
+  | ConversationResetMessage
+  | StreamEventMessage
+  | ToolProgressMessage
+  | RateLimitEvent
+  | CommandLifecycleMessage
+  // ほかの system の知らせ（task_progress・task_updated・hook_* など）。使わないものは種類だけを見る
+  | { type: 'system'; subtype: string; uuid?: string; [key: string]: unknown };
+
+// 起動の引数（ClaudeSession の claudeArgs が足す）。--verbose が無いと stream-json では起動しない。
+// --permission-prompt-tool stdio が無いと、聞くべき許可が自動で断られ、AskUserQuestion・ExitPlanMode も使えない（設計書 4 節）。
+// --include-hook-events: すべての出来事のフックの終わり（system/hook_response）を出させる。何も出力しなかったフックは会話ログに
+// 残らないので、これでチャットに出す（無いと SessionStart・Setup だけ）
+export const STREAM_ARGS = [
+  '-p',
+  '--input-format',
+  'stream-json',
+  '--output-format',
+  'stream-json',
+  '--verbose',
+  '--permission-prompt-tool',
+  'stdio',
+  '--replay-user-messages',
+  '--include-partial-messages',
+  '--include-hook-events',
+] as const;
+
+// 常駐のホストに控えてもらう、種類ごとの最新の行（アプリを再起動したとき、控えの頭が欠けても状態を組み立て直せるように）と、
+// 控えない行（書いている途中。アプリがいない間は要らない）。
+// status は、権限モードの付いた行だけ（圧縮中などのモードの無い status で、モードが分からなくならないように）。
+// 裏のタスクは、終わりの知らせ（task_notification）か、終わった状態への変化（task_updated）で捨てる
+export const RETAIN_RULES: RetainRule[] = [
+  { type: 'system', subtype: 'init' },
+  { type: 'system', subtype: 'status', where: { permissionMode: [] } },
+  { type: 'system', subtype: 'bridge_state' },
+  { type: 'rate_limit_event' },
+  {
+    type: 'system',
+    subtype: 'task_started',
+    key: 'task_id',
+    until: [
+      { type: 'system', subtype: 'task_notification', key: 'task_id' },
+      { type: 'system', subtype: 'task_updated', key: 'task_id', where: { 'patch.status': ['completed', 'failed', 'killed'] } },
+    ],
+  },
+];
+export const TRANSIENT_KINDS: LineKind[] = [{ type: 'stream_event' }];

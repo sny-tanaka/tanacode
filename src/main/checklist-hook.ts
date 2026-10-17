@@ -213,9 +213,11 @@ export async function settledScan(path: string, last: string | undefined, timeou
   return scan;
 }
 
-// フックが標準出力に書く JSON。Stop はターンの終わりを止めて、理由を Claude に渡す。ほかは、文を Claude のコンテキストに足す
+// フックが標準出力に書く JSON。どれも、文を Claude のコンテキストに足す（additionalContext）。
+// Stop も、ターンの終わりを止める（decision: block）のではなく、文を渡して続けさせる。block は Claude Code 2.1.302 でエラー（hookErrors）になり、
+// ターミナルモードの画面に赤い「Stop hook error」と通知が出るため。additionalContext は「Stop hook feedback」として続きを始めさせ、
+// 続きのフックの入力には stop_hook_active が付く（2.1.293 からある。本体で確かめた）
 export function hookOutput(hookEventName: string, text: string): string {
-  if (hookEventName === 'Stop') return JSON.stringify({ decision: 'block', reason: text });
   return JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } });
 }
 

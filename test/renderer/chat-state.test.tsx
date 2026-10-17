@@ -2,7 +2,8 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent, HookRun } from '@shared/chat';
-import { acceptsInput, arrivedCount, chatFromEvents, useSessionChats } from '../../src/renderer/src/chat/chatState';
+import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusBarStatus, statusOf, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
+import { groupTools } from '../../src/renderer/src/chat/toolGroups';
 import { mockApi } from './mock-api';
 
 // チャットの状態（会話ログから作ったイベントを、チャットの行と状態にする）。
@@ -31,6 +32,12 @@ describe('状態の移り変わり', () => {
     expect(run([{ type: 'process-start' }, { type: 'user', id: 'u', text: 'a' }, { type: 'ready' }]).status).toBe('running');
   });
 
+  it('終了のわけ（ターミナルモードで起動を終える前に終わった など）を持つ。わけの無い終了では持たない', () => {
+    const early: ChatEvent = { type: 'process-exit', exitCode: 1, reason: '起動を終える前に終わりました' };
+    expect(run([{ type: 'process-start' }, early])).toMatchObject({ status: 'exited', exitCode: 1, exitReason: '起動を終える前に終わりました' });
+    expect(run([{ type: 'process-start' }, early, { type: 'process-start' }, { type: 'ready' }, { type: 'process-exit', exitCode: 0 }]).exitReason).toBeNull();
+  });
+
   it('終了したあとの発言・ターンの終わりで、状態を戻さない', () => {
     expect(run([{ type: 'process-start' }, { type: 'ready' }, { type: 'process-exit', exitCode: 0 }, { type: 'user', id: 'u', text: 'a' }, { type: 'turn-end' }]).status).toBe('exited');
   });
@@ -57,6 +64,12 @@ describe('チャットの行', () => {
     expect(run([retrying, { type: 'tool-use', id: 'x', name: 'Bash', target: 'ls', input: 'ls' }]).items.map((i) => i.kind)).toEqual(['tool']);
     expect(run([retrying, { type: 'turn-end' }]).items).toEqual([]);
     expect(run([retrying, { type: 'api-error', id: 'e2', text: '400', retrying: false }, { type: 'turn-end' }]).items).toMatchObject([{ id: 'e2', retrying: false }]);
+  });
+
+  it('同じ id の失敗の知らせが届き直したら（応答の前に終わったターンの発言の行が遅れて届いたとき）、前の行を外して今の位置に出す', () => {
+    const error: ChatEvent = { type: 'api-error', id: 'r1', text: 'overloaded', retrying: false };
+    const chat = run([error, { type: 'turn-end' }, { type: 'user', id: 'u', text: '仕上げて' }, error, { type: 'turn-end' }]);
+    expect(chat.items.map((i) => `${i.kind}:${i.id}`)).toEqual(['user:u', 'error:r1']);
   });
 
   it('ツールは結果で完了・失敗になり、結果が来ないままターンが終わったら（中断）失敗にする', () => {
@@ -101,6 +114,42 @@ describe('チャットの行', () => {
     ]);
   });
 
+  it('hooks: 何も出力しなかったフック（hook_id のあるもの）は、1 回ずつ別の実行なので重ねない（カードに付けるものも、ツールに付かない行も）', () => {
+    const quiet = (hookId: string, toolUseId: string | null) => hook({ event: 'PreToolUse', name: 'PreToolUse:Read', command: null, toolUseId, hookId } as Partial<HookRun>);
+    const chat = run([
+      { type: 'tool-use', id: 't', name: 'Read', target: 'a', input: 'a' },
+      { type: 'hook', id: 'hook:q1', run: quiet('q1', 't') },
+      { type: 'hook', id: 'hook:q2', run: quiet('q2', 't') },
+      // 並べて呼んだ同じ名前のツールのもの（どの呼び出しのものか決められない）
+      { type: 'hook', id: 'hook:q3', run: quiet('q3', null) },
+      { type: 'hook', id: 'hook:q4', run: quiet('q4', null) },
+      // 同じ実行が重ねて届いたもの（同じ hook_id）は重ねない
+      { type: 'hook', id: 'hook:q4', run: quiet('q4', null) },
+    ]);
+    expect(chat.items.map((i) => (i.kind === 'tool' ? `tool:${i.hooks?.map((h) => h.hookId).join(',')}` : i.kind === 'hook' ? `hook:${i.runs.map((r) => r.hookId).join(',')}` : i.kind))).toEqual([
+      'tool:q1,q2',
+      'hook:q3,q4',
+    ]);
+  });
+
+  it('ツールのまとまり: どの呼び出しのものか決められなかったツールの hooks（ツールに付かない行）は、まとまりの中に入れて切らない。ほかの hooks では切る', () => {
+    const quiet = (hookId: string, event: string) => hook({ event, name: `${event}:Read`, command: null, toolUseId: null, hookId } as Partial<HookRun>);
+    const chat = run([
+      { type: 'tool-use', id: 'glob', name: 'Glob', target: '*.ts', input: '*.ts' },
+      { type: 'tool-use', id: 'a', name: 'Read', target: 'a', input: 'a' },
+      { type: 'tool-use', id: 'b', name: 'Read', target: 'b', input: 'b' },
+      { type: 'hook', id: 'hook:q1', run: quiet('q1', 'PreToolUse') },
+      { type: 'hook', id: 'hook:q2', run: quiet('q2', 'PostToolUse') },
+      { type: 'tool-use', id: 'bash', name: 'Bash', target: 'ls', input: 'ls' },
+      { type: 'hook', id: 'hook:s1', run: quiet('s1', 'Stop') },
+      { type: 'tool-use', id: 'edit', name: 'Edit', target: 'a.ts', input: '' },
+    ]);
+    const rows = groupTools(chat.items).map((row) =>
+      row.kind === 'tool-group' ? `group:${row.tools.map((t) => t.id).join(',')}/${row.items.length}` : row.kind === 'hook-group' ? `hooks:${row.runs.map((r) => r.hookId).join(',')}` : row.kind,
+    );
+    expect(rows).toEqual(['group:glob,a,b,bash/6', 'hooks:s1', 'group:edit/1']);
+  });
+
   it('hooks: 質問のフック（アプリが足したもの）が AskUserQuestion に答えた記録（コマンドの無い PermissionRequest）は出さない', () => {
     const decided = (toolUseId: string, command: string | null = null) => ({ type: 'hook' as const, id: `h-${toolUseId}`, run: hook({ event: 'PermissionRequest', name: 'PermissionRequest', command, toolUseId } as Partial<HookRun>) });
     const chat = run([
@@ -124,13 +173,56 @@ describe('チャットの行', () => {
     expect(kept.items.length).toBeGreaterThan(0);
     expect(kept.todos).toBeNull();
     const pr = { number: 7, url: 'https://github.com/o/r/pull/7', repository: 'o/r' };
+    const later = { id: 'q1', text: 'あとで', pastes: [], images: 0, state: 'queued' as const };
     const chat = run([
-      { type: 'queue', prompts: ['あとで'] },
+      { type: 'queue', prompts: [later] },
       { type: 'remote-control', url: 'https://claude.ai/code/x' },
       { type: 'pr-link', pr },
     ]);
-    expect(chat).toMatchObject({ queued: ['あとで'], remoteControlUrl: 'https://claude.ai/code/x', pr });
-    expect(arrivedCount(chat)).toBe(1);
+    expect(chat).toMatchObject({ unsent: [later], remoteControlUrl: 'https://claude.ai/code/x', pr });
+    // 送った発言が会話に出たら、main が空の一覧を知らせる
+    expect(run([{ type: 'queue', prompts: [later] }, { type: 'queue', prompts: [] }]).unsent).toEqual([]);
+  });
+});
+
+describe('チャットの状態は、main の状態（一覧の state）から決める', () => {
+  it('動いているセッションは state から。まだ読んでいない・アーカイブ・一覧の外のセッションは、イベントから作ったまま', () => {
+    const idle = run([{ type: 'process-start' }, { type: 'ready' }]);
+    expect(idle.status).toBe('idle');
+    expect(statusOf(idle, 'starting')).toBe('starting');
+    // 作業中と、ターンの途中で人の答えを待っているもの。ターミナルモード（人が TUI で操作している）も、チャットからは操作しない
+    for (const state of ['working', 'question', 'permission', 'terminal', 'browser'] as const) expect(statusOf(idle, state)).toBe('running');
+    // ターンが終わって、裏のタスクだけが動いている間も、発言を受け付ける
+    expect(statusOf(idle, 'background')).toBe('idle');
+    expect(statusOf(run([{ type: 'process-start' }, { type: 'ready' }, { type: 'user', id: 'u1', text: '頼み' }]), 'idle')).toBe('idle');
+    expect(statusOf(idle, 'exited')).toBe('exited');
+    expect(statusOf(idle, 'archived')).toBe('idle');
+    expect(statusOf(idle, null)).toBe('idle');
+    expect(statusOf(idle, undefined)).toBe('idle');
+    // まだチャットを読んでいない（起動していない）セッションは、開くまで起動前のまま
+    expect(statusOf(EMPTY_CHAT, 'working')).toBe('not-started');
+  });
+
+  it('ステータスバーは、ターミナルモードの間だけ、TUI がターンの途中か（terminalWorking）で待機中・作業中を出す（一覧の印と同じ）', () => {
+    const terminal = statusOf(run([{ type: 'process-start' }, { type: 'ready' }]), 'terminal');
+    expect(terminal).toBe('running');
+    expect(statusBarStatus(terminal, { state: 'terminal', terminalWorking: false })).toBe('idle');
+    expect(statusBarStatus(terminal, { state: 'terminal', terminalWorking: true })).toBe('running');
+    expect(statusBarStatus(terminal, { state: 'terminal' })).toBe('idle');
+    // ターミナルモードでなければ、チャットの状態のまま
+    expect(statusBarStatus('running', { state: 'working', terminalWorking: false })).toBe('running');
+    expect(statusBarStatus('starting', { state: 'starting' })).toBe('starting');
+    expect(statusBarStatus('idle', null)).toBe('idle');
+  });
+
+  it('withStatus: 状態が同じならそのまま返す。違えば状態だけを替え、同じチャットと状態には同じものを返す（描き直しを増やさない）', () => {
+    const idle = run([{ type: 'process-start' }, { type: 'ready' }]);
+    expect(withStatus(idle, 'idle')).toBe(idle);
+    const running = withStatus(idle, 'working');
+    expect(running).toEqual({ ...idle, status: 'running' });
+    expect(withStatus(idle, 'working')).toBe(running);
+    expect(withStatus(idle, 'permission')).toBe(running);
+    expect(withStatus(idle, 'starting').status).toBe('starting');
   });
 });
 

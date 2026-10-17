@@ -79,6 +79,18 @@ describe('中継（MCP の JSON-RPC）', () => {
     expect(calls).toEqual([['click', { selector: '#a' }]]);
   });
 
+  it('tools/call: Claude Code が付けた呼び出しの ID（_meta の claudecode/toolUseId）も、アプリに渡す', async () => {
+    const seen: (string | undefined)[] = [];
+    const withId: RelayDeps = { ...deps, call: async (tool, _args, _signal, toolUseId) => (seen.push(toolUseId), textResult(`${tool} をしました`)) };
+    const call = (meta?: unknown) =>
+      respond({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'evaluate', arguments: { expression: '1' }, ...(meta === undefined ? {} : { _meta: meta }) } }, withId);
+    await call({ 'claudecode/toolUseId': 'toolu_1', progressToken: 2 });
+    await call();
+    await call({ 'claudecode/toolUseId': 3 });
+    await call('toolu_2');
+    expect(seen).toEqual(['toolu_1', undefined, undefined, undefined]);
+  });
+
   it('通知には答えず、知らないメソッドはエラーにする', async () => {
     expect(await respond({ jsonrpc: '2.0', method: 'notifications/initialized' }, deps)).toBeNull();
     expect(await respond({ jsonrpc: '2.0', id: 6, method: 'ping' }, deps)).toEqual({ jsonrpc: '2.0', id: 6, result: {} });
@@ -146,6 +158,24 @@ describe('アプリとのソケット', () => {
       // アプリ側の失敗は、エラーの結果として返す
       expect(await callBridge(socketPath, { session: 's1', tool: 'boom', args: {} }, 5000)).toEqual(textResult('こわれた', true));
       expect(seen).toEqual(['s1:screenshot:{"fullPage":true}', 's1:boom:{}']);
+    } finally {
+      bridge.close();
+    }
+  });
+
+  it('呼び出しの ID があれば、アプリに渡す（文字でないものは渡さない）', async () => {
+    const socketPath = join(root, 'browser.sock');
+    const seen: (string | undefined)[] = [];
+    const bridge = new BrowserBridge(socketPath, async (_session, tool, _args, _signal, toolUseId) => {
+      seen.push(toolUseId);
+      return textResult(tool);
+    });
+    await bridge.start();
+    try {
+      await callBridge(socketPath, { session: 's1', tool: 'evaluate', args: {}, toolUseId: 'toolu_1' }, 5000);
+      await callBridge(socketPath, { session: 's1', tool: 'evaluate', args: {} }, 5000);
+      await callBridge(socketPath, { session: 's1', tool: 'evaluate', args: {}, toolUseId: 1 as unknown as string }, 5000);
+      expect(seen).toEqual(['toolu_1', undefined, undefined]);
     } finally {
       bridge.close();
     }
@@ -455,6 +485,13 @@ describe('確認のフック', () => {
     expect(readGateInput(JSON.stringify({ tool_name: 1, tool_input: ['x'] }))).toEqual({ tool: '', input: {} });
     expect(readGateInput('')).toEqual({ tool: '', input: {} });
     expect(readGateInput('{')).toEqual({ tool: '', input: {} });
+    // 呼び出しの ID（tool_use_id）があれば、それも読む
+    expect(readGateInput(JSON.stringify({ tool_name: browserToolId('evaluate'), tool_input: { expression: '1' }, tool_use_id: 'toolu_1' }))).toEqual({
+      tool: browserToolId('evaluate'),
+      input: { expression: '1' },
+      toolUseId: 'toolu_1',
+    });
+    expect(readGateInput(JSON.stringify({ tool_name: browserToolId('evaluate'), tool_use_id: 1 }))).toEqual({ tool: browserToolId('evaluate'), input: {} });
   });
 
   it('アプリの答えを読む。エラーの返事・形の違う返事は null', () => {
@@ -485,6 +522,9 @@ describe('確認のフック', () => {
     try {
       expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate', { expression: '1' }))).permissionDecision).toBe('allow');
       expect(asked).toEqual([{ session: 's1', tool: BROWSER_GATE_REQUEST, args: { tool: browserToolId('evaluate'), input: { expression: '1' } } }]);
+      // 呼び出しの ID があれば、それもアプリに渡す（アプリは、その ID の呼び出しのために見たページを控える）
+      await runGate(socketPath, 's1', 5000, JSON.stringify({ tool_name: browserToolId('evaluate'), tool_input: { expression: '1' }, tool_use_id: 'toolu_1' }));
+      expect(asked.at(-1)).toEqual({ session: 's1', tool: BROWSER_GATE_REQUEST, args: { tool: browserToolId('evaluate'), input: { expression: '1' }, toolUseId: 'toolu_1' } });
       page = 'https://example.com/';
       expect(decision(await runGate(socketPath, 's1', 5000, hookInput('evaluate', { expression: '1' }))).permissionDecision).toBe('ask');
       const open = hookInput('navigate', { url: 'https://example.com/a', newTab: true });

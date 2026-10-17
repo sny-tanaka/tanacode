@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ComponentProps } from 'react';
+import { createRef, type ComponentProps } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { EditorPane, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
+import { EditorPane, type EditorHandle, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
+import { MarkdownPreview } from '../../src/renderer/src/editor/MarkdownPreview';
+import { saveForLeaving, UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
 import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
 import './dom';
@@ -321,6 +323,262 @@ describe('EditorPane（エディタ）', () => {
       ['A', 'abc1234', 'src/app.ts'],
       ['B', 'abc1234', 'README.md'],
     ]);
+  });
+
+  // 別のフォルダへ移る（App がエディタを作り直す）前に、App が保存していないファイルを聞き、まとめて保存する
+  describe('保存していない変更を、App から聞いて保存する', () => {
+    async function twoEdited() {
+      mockApi().install();
+      const handle = createRef<EditorHandle>();
+      const p = props();
+      const view = render(<EditorPane {...p} handle={handle} />);
+      expect(handle.current!.unsaved()).toEqual([]);
+      await edit(APP, 'const total = 2;\n');
+      view.rerender(<EditorPane {...p} handle={handle} activePath="README.md" />);
+      await edit(README, '# 直した使い方\n');
+      return { handle, p, view };
+    }
+
+    it('ディスク側でも変わったファイル（衝突中）は分けて返し、まとめて保存しても書かない（今のタブでなく、衝突の帯が見えていなくても）', async () => {
+      const { handle, p, view } = await twoEdited();
+      // README を見ている間に、Claude が src/app.ts を書き換えた
+      view.rerender(<EditorPane {...p} handle={handle} activePath="README.md" files={[text('src/app.ts', 'const total = 3; // Claude が直した\n'), text('README.md', README)]} />);
+      expect(banner()).toBeNull();
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
+      expect(handle.current!.conflicts()).toEqual(['src/app.ts']);
+      await act(() => handle.current!.saveAll());
+      expect(p.onSave).toHaveBeenCalledTimes(1);
+      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n');
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts']);
+      expect(handle.current!.conflicts()).toEqual(['src/app.ts']);
+    });
+
+    it('保存していないファイルをタブの順に返し、まとめて保存すると、すべて書いて未保存の印も消える', async () => {
+      const { handle, p } = await twoEdited();
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
+      await act(() => handle.current!.saveAll());
+      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', 'const total = 2;\n');
+      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n');
+      expect(handle.current!.unsaved()).toEqual([]);
+      expect(document.querySelector('.editor-tab-dot.dirty')).toBeNull();
+    });
+
+    it('書けなかったら、そこで止めて投げる（書けなかったファイルは、保存していないまま）', async () => {
+      const { handle, p } = await twoEdited();
+      vi.mocked(p.onSave).mockImplementationOnce(() => Promise.reject(new Error('書き込めません')));
+      await expect(act(() => handle.current!.saveAll())).rejects.toThrow('書き込めません');
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
+      expect(p.onSave).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('MarkdownPreview（Markdown のプレビュー）', () => {
+  function preview(text: string) {
+    const api = mockApi({ 'workspace.readImage': () => Promise.resolve('data:image/png;base64,AA==') });
+    api.install();
+    const model = fake.monaco.editor.createModel(text, 'markdown');
+    render(<MarkdownPreview sessionId="A" path="docs/guide.md" model={model as never} onOpenFile={vi.fn()} />);
+    return { api, doc: document.querySelector<HTMLElement>('.markdown-doc')! };
+  }
+
+  it('文書に混ざった HTML は、プレビューに要るタグと属性だけを残す（見た目を偽る style・class や、フォーム・ボタン・埋め込みは消す）', async () => {
+    const { api, doc } = preview(
+      [
+        '<div align="center" style="position:fixed;inset:0" class="overlay" id="main" onclick="alert(1)">中央の段落</div>',
+        '',
+        '<form action="https://example.com"><input type="text" name="q"><button>送る</button><select><option>a</option></select></form>',
+        '',
+        '<iframe src="https://example.com"></iframe><style>body{display:none}</style><video src="a.mp4"></video>',
+        '',
+        '<details open><summary>くわしく</summary>中身</details>',
+        '',
+        '<p><kbd>⌘</kbd>+<kbd>S</kbd>で保存<sup>1</sup></p>',
+        '',
+        '<img src="../img/logo.png" width="120" height="40" alt="ロゴ" style="width:9999px" class="hero">',
+        '',
+        '- [x] 済んだこと',
+        '- [ ] まだのこと',
+        '',
+        '```ts',
+        'const a = 1;',
+        '```',
+      ].join('\n'),
+    );
+    await settle();
+    expect(doc.querySelector('[style], [onclick], [id="main"]')).toBeNull();
+    // class は、コードの言語の印（色付け・mermaid の図に使う）だけ
+    expect([...doc.querySelectorAll('[class]')].map((e) => `${e.tagName.toLowerCase()}.${e.getAttribute('class')}`)).toEqual(['code.language-ts']);
+    expect(doc.querySelector('form, button, select, iframe, style, video')).toBeNull();
+    expect(doc.querySelector('div[align="center"]')?.textContent).toBe('中央の段落');
+    expect(doc.querySelector('details[open] > summary')?.textContent).toBe('くわしく');
+    expect([...doc.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['⌘', 'S']);
+    expect(doc.querySelector('sup')?.textContent).toBe('1');
+    // 画像は、Markdown ファイルからの相対パスを、ワークスペースのパスにして読む。大きさと代わりの文字は残す
+    const img = doc.querySelector('img')!;
+    expect(img.dataset.path).toBe('img/logo.png');
+    expect([img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt')]).toEqual(['120', '40', 'ロゴ']);
+    expect(api.argsOf('workspace.readImage')).toEqual([['A', 'img/logo.png']]);
+    // 入力欄は、タスクリストのチェックボックスだけ（押しても変わらない）
+    const boxes = [...doc.querySelectorAll<HTMLInputElement>('input')];
+    expect(boxes.map((b) => [b.type, b.checked, b.disabled])).toEqual([
+      ['checkbox', true, true],
+      ['checkbox', false, true],
+    ]);
+  });
+});
+
+describe('MarkdownPreview の目印へのリンク', () => {
+  it('文書の中の目印（<a id>・<a name>）は、アプリの画面の id とぶつからないよう前置き（user-content-）を付けて残し、#目印 のリンクで移れる', async () => {
+    mockApi().install();
+    const model = fake.monaco.editor.createModel(
+      ['[入れ方へ](#install) / [よくある質問へ](#faq) / [使い方へ](#使い方)', '', '<a id="install"></a>', '', '## 使い方', '', '<a name="faq"></a>', '', '本文'].join('\n'),
+      'markdown',
+    );
+    render(<MarkdownPreview sessionId="A" path="README.md" model={model as never} onOpenFile={vi.fn()} />);
+    await settle();
+    const doc = document.querySelector<HTMLElement>('.markdown-doc')!;
+    expect(doc.querySelector('[id="install"], [name="faq"]')).toBeNull();
+    const install = doc.querySelector('[id="user-content-install"]');
+    const faq = doc.querySelector('[name="user-content-faq"]');
+    expect(install).not.toBeNull();
+    expect(faq).not.toBeNull();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    fireEvent.click(screen.getByText('入れ方へ'));
+    fireEvent.click(screen.getByText('よくある質問へ'));
+    fireEvent.click(screen.getByText('使い方へ'));
+    expect(scrolled).toEqual([install, faq, doc.querySelector('h2')]);
+  });
+});
+
+describe('MarkdownPreview の見出しの id', () => {
+  function previewOf(text: string) {
+    mockApi().install();
+    const model = fake.monaco.editor.createModel(text, 'markdown');
+    render(<MarkdownPreview sessionId="A" path="README.md" model={model as never} onOpenFile={vi.fn()} />);
+    return document.querySelector<HTMLElement>('.markdown-doc')!;
+  }
+
+  it('見出しの id にも前置きを付ける（mermaid の図を描くときの id「mermaid-1」などとぶつけない。ぶつかると mermaid が見出しを消す）。#見出し のリンクで移れる', async () => {
+    const doc = previewOf(['[図の見出しへ](#mermaid-1)', '', '# mermaid 1', '', '## mermaid 1'].join('\n'));
+    await settle();
+    expect([...doc.querySelectorAll('h1, h2')].map((h) => h.id)).toEqual(['user-content-mermaid-1', 'user-content-mermaid-1-1']);
+    expect(doc.querySelector('[id="mermaid-1"]')).toBeNull();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    fireEvent.click(screen.getByText('図の見出しへ'));
+    expect(scrolled).toEqual([doc.querySelector('h1')]);
+  });
+
+  it('前置きまで書いた目印へのリンク（#user-content-install。GitHub では効く）でも移れる', async () => {
+    const doc = previewOf(['[入れ方へ](#user-content-install)', '', '<a id="install"></a>', '', '本文'].join('\n'));
+    await settle();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    fireEvent.click(screen.getByText('入れ方へ'));
+    expect(scrolled).toEqual([doc.querySelector('[id="user-content-install"]')]);
+  });
+
+  it('% を含む目印（#100%）のように、URL として読めないリンクでも止まらず、書いたままの名前で探す', async () => {
+    const doc = previewOf(['[全部へ](#100%)', '', '<a id="100%"></a>', '', '本文'].join('\n'));
+    await settle();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    expect(() => fireEvent.click(screen.getByText('全部へ'))).not.toThrow();
+    expect(scrolled).toEqual([doc.querySelector('[id="user-content-100%"]')]);
+  });
+});
+
+describe('UnsavedDialog（別のフォルダへ移る前の、保存していない変更の確認）', () => {
+  type Props = ComponentProps<typeof UnsavedDialog>;
+  const props = (over: Partial<Props> = {}): Props => ({
+    files: ['src/app.ts', 'README.md'],
+    onSave: vi.fn(() => Promise.resolve()),
+    onDiscard: vi.fn(),
+    onCancel: vi.fn(),
+    ...over,
+  });
+  const dialog = () => screen.getByRole('dialog', { name: '保存していない変更' });
+
+  it('保存していないファイルを並べ、「保存して移る」で保存を頼む。保存している間は、ほかのボタンを押せない', async () => {
+    let finish!: () => void;
+    const p = props({ onSave: vi.fn(() => new Promise<void>((resolve) => (finish = resolve))) });
+    render(<UnsavedDialog {...p} />);
+    expect(dialog().textContent).toContain('src/app.ts');
+    expect(dialog().textContent).toContain('README.md');
+    fireEvent.click(button('保存して移る'));
+    expect(p.onSave).toHaveBeenCalledTimes(1);
+    expect(button('保存しています…').disabled).toBe(true);
+    expect(button('保存せずに移る').disabled).toBe(true);
+    expect(button('やめる').disabled).toBe(true);
+    fireEvent.keyDown(dialog(), { key: 'Escape' });
+    expect(p.onCancel).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(p.onDiscard).not.toHaveBeenCalled();
+  });
+
+  it('ディスク側でも変わったファイル（衝突中）は分けて示し、「保存して移る」は押せない。「やめる」で戻ってエディタで選ばせる', () => {
+    const p = props({ files: ['README.md'], conflicts: ['src/app.ts'] });
+    render(<UnsavedDialog {...p} />);
+    expect(dialog().querySelector('h2')?.textContent).toBe('保存していない変更があります（2 件）');
+    const note = screen.getByText(/ディスク側（Claude など）でも変わっています/);
+    expect(note.nextElementSibling?.textContent).toBe('src/app.ts');
+    expect(button('保存して移る').disabled).toBe(true);
+    expect(button('保存せずに移る').disabled).toBe(false);
+    fireEvent.click(button('やめる'));
+    expect(p.onCancel).toHaveBeenCalledTimes(1);
+    expect(p.onSave).not.toHaveBeenCalled();
+  });
+
+  it('「保存して移る」の保存: エディタが閉じていたら（ダイアログを出している間に外れた）、保存せずに失敗にして移らない', async () => {
+    await expect(saveForLeaving(null)).rejects.toThrow('エディタが閉じています');
+    const saveAll = vi.fn(() => Promise.resolve());
+    await saveForLeaving({ unsaved: () => [], conflicts: () => [], saveAll });
+    expect(saveAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('保存できなかったら理由を出し、もう一度選べる', async () => {
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const p = props({ onSave: vi.fn(() => Promise.reject(new Error('書き込めません'))) });
+    render(<UnsavedDialog {...p} />);
+    fireEvent.click(button('保存して移る'));
+    await settle();
+    expect(alert).toHaveBeenCalledWith('保存できませんでした: 書き込めません');
+    expect(button('保存して移る').disabled).toBe(false);
+    fireEvent.click(button('やめる'));
+    expect(p.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('「保存せずに移る」は保存を頼まずに移る', () => {
+    const p = props();
+    render(<UnsavedDialog {...p} />);
+    fireEvent.click(button('保存せずに移る'));
+    expect(p.onDiscard).toHaveBeenCalledTimes(1);
+    expect(p.onSave).not.toHaveBeenCalled();
+    expect(p.onCancel).not.toHaveBeenCalled();
+  });
+
+  it('「やめる」・Esc・外側を押すと、移らない（変換中の Esc では閉じない）', () => {
+    const p = props();
+    render(<UnsavedDialog {...p} />);
+    fireEvent.click(button('やめる'));
+    fireEvent.keyDown(dialog(), { key: 'Escape', isComposing: true });
+    expect(p.onCancel).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(dialog(), { key: 'Escape' });
+    fireEvent.mouseDown(document.querySelector('.overlay')!);
+    fireEvent.mouseDown(dialog());
+    expect(p.onCancel).toHaveBeenCalledTimes(3);
+    expect(p.onSave).not.toHaveBeenCalled();
+    expect(p.onDiscard).not.toHaveBeenCalled();
   });
 });
 

@@ -1,19 +1,20 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TaskRef } from '@shared/task';
 import { checkWorkflowApproval } from '../scenario';
-import { ClaudeRun, claudeVersion, menuOf, sleep } from './claude-run';
+import { ClaudeRun, claudeVersion } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、バックグラウンドで動いているものを、アプリから止められるかを確かめる。
-// アプリの停止は、本家の /tasks の画面を開き、行を選んで x を送る操作（ScreenTracker.stopTask）。
-// 台本: バックグラウンドのサブエージェント → Bash 2 つ（名前の違うもの）→ 同じコマンドの Bash 2 つ → ワークフロー。
-// どれも長く動かし続け、止めたものだけが止まる（ほかは動いたまま）ことと、画面が入力欄に戻ることを見る
+// アプリの停止は stop_task（task_started の task_id。Bash は会話ログのタスクの ID でも）。止まったことは、Claude Code がそのタスクの
+// 終わり（task_notification）を知らせるまで待って確かめる（SessionManager.stopTask）。
+// 台本: バックグラウンドのサブエージェント → Bash 2 つ（名前の違うもの）→ 一覧で省略されるほど長いコマンドの Bash →
+// 同じコマンドの Bash 2 つ → ワークフロー。どれも長く動かし続け、止めたものだけが止まる（ほかは動いたまま）ことを見る
 
 const PROMPT = 'バックグラウンドでいろいろ動かしてください';
 const AGENT_PROMPT = '長い仕事のサブエージェントです';
 const WORKFLOW_AGENT_PROMPT = 'ワークフローのエージェントです';
 const LONG_DELAY_MS = 120_000;
-// 一覧で省略されるほど長いコマンド
+// 長いコマンド（前は /tasks の一覧で省略されて見つけにくかった）
 const LONG_COMMAND = `echo long-command-start; ${'sleep 1; '.repeat(40)}sleep 700`;
 
 const SCRIPT = `export const meta = { name: 'tanacode-stop', description: '止める確認のワークフロー', phases: [{ title: '調べる' }] }
@@ -28,7 +29,7 @@ describe(`Claude Code ${version} のバックグラウンドのタスクの停�
   let run: ClaudeRun;
   const stop = (ref: TaskRef) => run.manager.stopTask(run.sessionId!, ref);
   const bash = (toolUseId: string) => run.bashTasks.find((t) => t.toolUseId === toolUseId);
-  const idle = () => run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
+  const idle = () => run.waitUntil('手が空く', () => run.idle);
 
   beforeAll(async () => {
     api = new MockApi();
@@ -52,14 +53,15 @@ describe(`Claude Code ${version} のバックグラウンドのタスクの停�
     run = new ClaudeRun(await api.start());
     await run.open();
     await run.send(PROMPT);
-    const menu = await run.waitFor('ワークフローの確認', menuOf('other', /workflow/i));
-    checkWorkflowApproval(menu);
-    await run.answer(menu.title, menu.options.find((o) => /^Yes/.test(o.label))!.id);
-    await run.waitFor('すべてが動いている', () =>
-      run.bashTasks.length === 5 && run.subagentRuns.some((r) => r.state === 'running') && run.workflowRuns.some((w) => w.status === 'running' && w.agents.length > 0) ? true : null,
-    30_000);
+    const permission = await run.permission('ワークフローの確認');
+    checkWorkflowApproval(permission);
+    run.replyPermission(permission, { kind: 'allow' });
+    await run.waitUntil(
+      'すべてが動いている',
+      () => (run.bashTasks.length === 5 && run.subagentRuns.some((r) => r.state === 'running') && run.workflowRuns.some((w) => w.status === 'running' && w.agents.length > 0) ? true : null),
+      30_000,
+    );
     await idle();
-    await sleep(1500);
   }, 90_000);
 
   afterAll(async () => {
@@ -67,43 +69,39 @@ describe(`Claude Code ${version} のバックグラウンドのタスクの停�
     await api?.stop();
   });
 
-  it('同じコマンドが 2 つあるときは、決められないと断って、何も止めない', async () => {
-    const message = await stop({ kind: 'bash', toolUseId: 'toolu_dup1' });
-    expect(message).toContain('2 つ以上');
-    // 画面は入力欄に戻り、どれも動いたまま
-    await idle();
-    expect(bash('toolu_dup1')?.state).toBe('running');
+  it('同じコマンドが 2 つあっても、止めたものだけが止まる（ID で止めるので取り違えない）', async () => {
+    expect(await stop({ kind: 'bash', toolUseId: 'toolu_dup1' })).toBeNull();
+    await run.waitUntil('Bash が止まる', () => (bash('toolu_dup1')?.state !== 'running' ? true : null));
     expect(bash('toolu_dup2')?.state).toBe('running');
+    await idle();
   });
 
-  it('一覧の途中の Bash を、コマンドで見つけて止める（ほかは動いたまま）', async () => {
+  it('Bash を止める（ほかは動いたまま）。止めても、確認や質問として知らせない', async () => {
     const attentions = run.attentions.length;
     expect(await stop({ kind: 'bash', toolUseId: 'toolu_one' })).toBeNull();
-    const task = await run.waitFor('Bash が止まる', () => (bash('toolu_one')?.state === 'killed' ? bash('toolu_one') : null));
+    const task = await run.waitUntil('Bash が止まる', () => (bash('toolu_one')?.state !== 'running' ? bash('toolu_one') : null));
     expect(task.output).toContain('one');
     expect(bash('toolu_two')?.state).toBe('running');
-    // /tasks の画面が開いている間も、メニューや操作できない画面として知らせない
     expect(run.attentions.length).toBe(attentions);
     await idle();
-    expect(run.screen.current.draft).toBe('');
   });
 
-  it('一覧で「…」と省略される長いコマンドも、頭で見つけて止める', async () => {
+  it('長いコマンドの Bash も止める', async () => {
     expect(await stop({ kind: 'bash', toolUseId: 'toolu_long' })).toBeNull();
-    await run.waitFor('Bash が止まる', () => (bash('toolu_long')?.state === 'killed' ? true : null));
+    await run.waitUntil('Bash が止まる', () => (bash('toolu_long')?.state !== 'running' ? true : null));
     expect(bash('toolu_two')?.state).toBe('running');
     await idle();
   });
 
-  it('バックグラウンドのサブエージェントを、説明で見つけて止める', async () => {
+  it('バックグラウンドのサブエージェントを止める', async () => {
     expect(await stop({ kind: 'subagent', toolUseId: 'toolu_agent' })).toBeNull();
-    await run.waitFor('サブエージェントが止まる', () => (run.subagentRuns.find((r) => r.toolUseId === 'toolu_agent')?.state === 'stopped' ? true : null));
+    await run.waitUntil('サブエージェントが止まる', () => (run.subagentRuns.find((r) => r.toolUseId === 'toolu_agent')?.state === 'stopped' ? true : null));
     await idle();
   });
 
-  it('ワークフローを、名前で見つけて止める', async () => {
+  it('ワークフローを止める', async () => {
     expect(await stop({ kind: 'workflow', toolUseId: 'toolu_wf' })).toBeNull();
-    await run.waitFor('ワークフローが止まる', () => (run.workflowRuns.find((w) => w.toolUseId === 'toolu_wf')?.status === 'killed' ? true : null));
+    await run.waitUntil('ワークフローが止まる', () => (run.workflowRuns.find((w) => w.toolUseId === 'toolu_wf')?.status === 'killed' ? true : null));
     await idle();
   });
 
@@ -113,104 +111,4 @@ describe(`Claude Code ${version} のバックグラウンドのタスクの停�
     expect(bash('toolu_two')?.state).toBe('running');
     expect(await stop({ kind: 'bash', toolUseId: 'toolu_nothing' })).toContain('見つかりません');
   });
-
-  it('入力欄に書きかけの文字があるときは、打たずに断る', async () => {
-    run.type('書きかけ');
-    await run.waitFor('書きかけが映る', (info) => (info.draft.includes('書きかけ') ? true : null));
-    expect(await stop({ kind: 'bash', toolUseId: 'toolu_dup1' })).toContain('書きかけ');
-    // 打った文字はそのまま残る（送られていない）
-    expect(run.screen.current.draft).toContain('書きかけ');
-    run.type('\x15');
-  });
-});
-
-// 動いているものが 1 つだけのとき、/tasks は一覧を飛ばして、そのものの詳細を出す。
-// Bash・サブエージェントは止めると画面が閉じ、ワークフローは画面が残る（Esc で閉じる）
-describe(`Claude Code ${version} のバックグラウンドのタスクの停止（1 つだけのとき）`, () => {
-  // settings: ユーザーの設定（~/.claude/settings.json）
-  const only = async (tool: { id: string; name: string; input: Record<string, unknown> }, ready: (run: ClaudeRun) => boolean, settings?: Record<string, unknown>) => {
-    const api = new MockApi();
-    api.conversations = [
-      { match: PROMPT, steps: [[{ type: 'tool_use', ...tool }], [{ type: 'text', text: '起動しました' }]] },
-      { match: AGENT_PROMPT, delayMs: LONG_DELAY_MS, steps: [[{ type: 'text', text: 'サブエージェントの結果' }]] },
-      { match: WORKFLOW_AGENT_PROMPT, delayMs: LONG_DELAY_MS, steps: [[{ type: 'text', text: 'ワークフローの結果' }]] },
-    ];
-    const run = new ClaudeRun(await api.start(), { settings });
-    await run.open();
-    await run.send(PROMPT);
-    if (tool.name === 'Workflow') {
-      const menu = await run.waitFor('ワークフローの確認', menuOf('other', /workflow/i));
-      await run.answer(menu.title, menu.options.find((o) => /^Yes/.test(o.label))!.id);
-    }
-    await run.waitFor('動いている', () => (ready(run) ? true : null), 30_000);
-    await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
-    await sleep(1500);
-    return { run, close: async () => (await run.stop(), await api.stop()) };
-  };
-
-  it('Bash', async () => {
-    const { run, close } = await only(
-      { id: 'toolu_bg', name: 'Bash', input: { command: 'echo only; sleep 600', description: '一つだけ', run_in_background: true } },
-      (r) => r.bashTasks.length === 1,
-    );
-    try {
-      const attentions = run.attentions.length;
-      expect(await run.manager.stopTask(run.sessionId!, { kind: 'bash', toolUseId: 'toolu_bg' })).toBeNull();
-      await run.waitFor('Bash が止まる', () => (run.bashTasks[0].state === 'killed' ? true : null));
-      expect(run.attentions.length).toBe(attentions);
-      await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
-    } finally {
-      await close();
-    }
-  }, 60_000);
-
-  // 描き方（tui）が classic だと、/tasks は ▔ の線ではなく ─ の線の下に、字下げ 2 文字で出て、画面から読めない。
-  // tui を決めていない人の多くは classic なので、アプリは --settings で fullscreen に決める（statusline.ts の ownSettings）。
-  // ユーザーの設定が classic でも、それより --settings が勝って、止められる
-  it('Bash（ユーザーの設定が classic の描き方でも、アプリが fullscreen にして止める）', async () => {
-    const { run, close } = await only(
-      { id: 'toolu_bg', name: 'Bash', input: { command: 'echo only; sleep 600', description: '一つだけ', run_in_background: true } },
-      (r) => r.bashTasks.length === 1,
-      { tui: 'default' },
-    );
-    try {
-      expect(await run.manager.stopTask(run.sessionId!, { kind: 'bash', toolUseId: 'toolu_bg' })).toBeNull();
-      await run.waitFor('Bash が止まる', () => (run.bashTasks[0].state === 'killed' ? true : null));
-      await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
-    } finally {
-      await close();
-    }
-  }, 60_000);
-
-  it('サブエージェント', async () => {
-    const { run, close } = await only(
-      { id: 'toolu_ag', name: 'Agent', input: { description: '長い調べもの', prompt: AGENT_PROMPT, subagent_type: 'general-purpose', run_in_background: true } },
-      (r) => r.subagentRuns.some((a) => a.state === 'running'),
-    );
-    try {
-      expect(await run.manager.stopTask(run.sessionId!, { kind: 'subagent', toolUseId: 'toolu_ag' })).toBeNull();
-      await run.waitFor('サブエージェントが止まる', () => (run.subagentRuns[0].state === 'stopped' ? true : null));
-      await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
-    } finally {
-      await close();
-    }
-  }, 60_000);
-
-  it('ワークフロー（止めても画面が残るので、閉じて入力欄に戻す）', async () => {
-    const { run, close } = await only(
-      { id: 'toolu_wf', name: 'Workflow', input: { script: SCRIPT } },
-      (r) => r.workflowRuns.some((w) => w.status === 'running' && w.agents.length > 0),
-    );
-    try {
-      const attentions = run.attentions.length;
-      expect(await run.manager.stopTask(run.sessionId!, { kind: 'workflow', toolUseId: 'toolu_wf' })).toBeNull();
-      await run.waitFor('ワークフローが止まる', () => (run.workflowRuns[0].status === 'killed' ? true : null));
-      expect(run.attentions.length).toBe(attentions);
-      await run.waitFor('入力欄', (info) => info.state.kind === 'prompt' && info.draft === '');
-      // 入力欄に戻っていて、書きかけの文字（x など）が残っていない
-      expect(run.screen.current.draft).toBe('');
-    } finally {
-      await close();
-    }
-  }, 60_000);
 });

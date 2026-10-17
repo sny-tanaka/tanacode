@@ -2,7 +2,7 @@ import { BROWSER_MCP_SERVER } from '@shared/browser-tools';
 import type { HookRun } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { ChatItem } from './chatState';
-import { isChecklistTool, isSessionTool, isWalkthroughTool, mcpParts, toolLabel } from './toolLabel';
+import { isChecklistTool, isSessionTool, isWalkthroughTool, mcpParts, toolLabel } from '@shared/tool-label';
 
 export type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
@@ -12,21 +12,32 @@ export type ToolGroup = { kind: 'tool-group'; id: string; items: ChatItem[]; too
 // ツールに付かない hooks の続き（Stop・SessionStart など）。これも畳んで 1 行で出す
 export type HookGroup = { kind: 'hook-group'; id: string; runs: HookRun[] };
 
+// ツールの前後・許可の確認の hooks のきっかけ
+const TOOL_HOOK_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
+
 // チャットの行を、ツールの呼び出しのまとまりごとに束ねる。
 // 本文・思考・発言・通知・エラー・区切り・ツールに付かない hooks・ユーザーに送ったファイル・質問への回答で区切る。思考はまとまりに入れず、外に出す。
 // ワークフローも束ねる（実行中のものは入力欄の上のトレイに出るので、進み具合はそこで見られる）。
-// ツールに付かない hooks は、続いているものを 1 つに束ねる
+// ツールに付かない hooks は、続いているものを 1 つに束ねる。ただし、ツールの出来事だけの hooks（並べて呼んだ同じ名前のツールで、
+// どの呼び出しのものか決められなかったもの）は、まとまりの中に入れて切らない
 export function groupTools(items: ChatItem[]): ChatRowItem[] {
   const out: ChatRowItem[] = [];
   let run: ToolItem[] = [];
+  let members: ChatItem[] = [];
   const flush = () => {
-    if (run.length > 0) out.push({ kind: 'tool-group', id: `group:${run[0].id}`, items: run, tools: run });
+    if (run.length > 0) out.push({ kind: 'tool-group', id: `group:${run[0].id}`, items: members, tools: run });
     run = [];
+    members = [];
   };
   for (const item of items) {
     // ユーザーに送ったファイルと、質問への回答は、本文と同じく畳まずに出す
     if (item.kind === 'tool' && item.name !== 'SendUserFile' && !item.answers) {
       run.push(item);
+      members.push(item);
+      continue;
+    }
+    if (item.kind === 'hook' && run.length > 0 && item.runs.every((r) => TOOL_HOOK_EVENTS.has(r.event))) {
+      members.push(item);
       continue;
     }
     flush();

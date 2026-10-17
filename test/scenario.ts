@@ -1,19 +1,41 @@
 import { join } from 'node:path';
 import { expect } from 'vitest';
 import type { ChatEvent, TranscriptEntry } from '@shared/chat';
-import type { Menu, ScreenInfo } from '@shared/screen';
+import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import { EFFORTS } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
-import { askQuestionsOf } from '../src/main/screen-parser';
+import type { PipeHandle } from '../src/main/pty-host-client';
+import { StreamClient } from '../src/main/stream/client';
 import type { Step } from './cli/mock-api';
 
 // Claude Code との互換性を確かめる台本と、アプリが読み取れるべきもの。
-// 本物の claude を動かす確認（test/cli）と、そのとき取った控えを読む確認（test/recorded.test.ts）で共有する。
+// 本物の claude を動かす確認（test/cli）と、画面からの確認（E2E）で共有する。
 // 台本: 発言 → Bash を実行（許可の確認）→ AskUserQuestion で質問 → Write でファイルを作る（許可の確認）→ 文章で返事。
 // ユーザーの設定に、Bash のあとに動く hooks（PostToolUse）を入れておく
 
 // 控えに書くときの、使い捨てのフォルダのパス（実行のたびに変わるので決まったものに置き換える）
 export const FIXTURE_ROOT = '/tmp/tanacode-cli';
+
+// 控えの会話ログに残さない行（attachment の type）。システムプロンプトの全文やツール・スキルの一覧、
+// 動かした環境ごとの情報で、アプリは読まない
+const DROPPED_ATTACHMENTS = ['prompt_snapshot', 'skill_listing', 'agent_listing_delta', 'remote_session_change'];
+
+// 控え（TANACODE_RECORD=1。test/cli/claude-run.ts の record）に残す行を選ぶ。会話ログは、アプリが読まない大きな添付を除く。
+// stream-json の行は、書いている途中の文（stream_event。多く、アプリは進み具合にしか使わない）を除く。
+// JSON でない行は残す（止まると cli のテストの後片付けが動かない。残せば、控えのテストが読めない行として数える）
+export function fixtureLines(file: 'transcript.jsonl' | 'stream.jsonl', lines: string[]): string[] {
+  const dropped = (value: { type?: unknown; attachment?: { type?: unknown } }) =>
+    file === 'stream.jsonl' ? value.type === 'stream_event' : DROPPED_ATTACHMENTS.includes(value.attachment?.type as string);
+  return lines.filter((line) => {
+    if (!line) return false;
+    try {
+      const value: unknown = JSON.parse(line);
+      return !(value && typeof value === 'object' && dropped(value));
+    } catch {
+      return true;
+    }
+  });
+}
 
 export const PROMPT = '確認を始めてください';
 
@@ -47,102 +69,28 @@ export function stepsFor(cwd: string): Step[] {
   return JSON.parse(JSON.stringify(STEPS).replaceAll('WORK', cwd)) as Step[];
 }
 
-// 控えに残す画面
-// workflow-approval（background.test.ts）と rewind-restore（session.test.ts）は、ほかの台本で取る。
-// question- で始まるもの（question を除く）は、AskUserQuestion の台本（questions.test.ts）で取る
-// interrupt-draft・tool-interrupted は失敗と中断の台本（errors.test.ts）で取る
-// effort・draft・pasted-draft・shell-draft（input.test.ts）は、--effort を付けた入力欄・書きかけ・長い貼り付けの目印・! のコマンドを書いている入力欄
-// numbered-draft（input.test.ts）は、番号付きの行を含む長い発言を打って、見えているいちばん上の行が番号付きになった入力欄
-export type ScreenName =
-  | 'trust'
-  | 'prompt'
-  | 'bash-permission'
-  | 'question'
-  | 'write-permission'
-  | 'workflow-approval'
-  | 'rewind-restore'
-  | QuestionScreenName
-  | 'interrupt-draft'
-  | 'tool-interrupted'
-  | InputScreenName;
-
-// AskUserQuestion の台本（test/scenarios/questions.ts）で取る画面
-export type QuestionScreenName =
-  | 'question-tabs-first'
-  | 'question-tabs-multi'
-  | 'question-tabs-last'
-  | 'question-tabs-review'
-  | 'question-multi'
-  | 'question-multi-review'
-  | 'question-preview'
-  | 'question-tall'
-  | 'question-tall-moved';
-
-type InputScreenName = 'effort' | 'draft' | 'pasted-draft' | 'shell-draft' | 'numbered-draft';
-
 // /rewind で戻す先の発言（session.test.ts）
 export const REWOUND = '再開して続けてください';
 
-// ワークフローを始める前の確認。説明の中のフェーズの一覧（番号付き）を、選択肢と取り違えない
-export function checkWorkflowApproval(menu: Menu | null): void {
-  expect(menu?.kind).toBe('other');
-  expect(menu!.title).toMatch(/workflow.*\?$/i);
-  expect(menu!.options.map((o) => o.label)).not.toContain('調べる');
-  expect(menu!.options.find((o) => /^Yes/.test(o.label))?.pointed).toBe(true);
+// ワークフローを始める前の確認（stream-json の can_use_tool。ツールは Workflow）
+export function checkWorkflowApproval(permission: PendingPermission | null): void {
+  expect(permission?.tool).toBe('Workflow');
+  expect(permission!.humanOnly).toBeFalsy();
 }
 
-// /rewind で戻す先を選んだあとの「何を戻すか」。戻す先の発言（縦線の枠の引用）は、見出しではなく補足に出る
-export function checkRewindRestore(menu: Menu | null): void {
-  expect(menu?.kind).toBe('other');
-  expect(menu!.title).toMatch(/restore/i);
-  expect(menu!.context.join('\n')).toContain(REWOUND);
-  expect(menu!.options.some((o) => /^Restore conversation/.test(o.label))).toBe(true);
-  expect(menu!.options.some((o) => /Never mind/i.test(o.label))).toBe(true);
-  expect(menu!.options.filter((o) => o.pointed)).toHaveLength(1);
+// target: 確認の見出し・説明か、ツールの入力（実行しようとしているコマンドなど）に出るはずの文字
+export function checkPermission(permission: PendingPermission | null, tool: string, target: string): void {
+  expect(permission?.tool).toBe(tool);
+  expect([permission!.title, permission!.description, JSON.stringify(permission!.input)].join('\n')).toContain(target);
 }
 
-// 初めてのフォルダで出る、フォルダの信頼の確認（番号の無い選択肢）。問いかけを見出しにする
-export function checkTrust(menu: Menu | null): void {
-  expect(menu?.kind).toBe('other');
-  expect(menu!.title).toContain('trust');
-  expect(menu!.options.length).toBeGreaterThanOrEqual(2);
-  expect(menu!.options.filter((o) => o.pointed)).toHaveLength(1);
-  expect(menu!.options.some((o) => /^Yes/.test(o.label))).toBe(true);
+// AskUserQuestion の質問（stream-json の can_use_tool の入力から読んだもの）
+export function checkQuestion(question: PendingQuestion | null): void {
+  expect(question?.questions).toEqual([{ ...QUESTION, options: QUESTION.options.map((o) => ({ ...o, preview: undefined })) }]);
 }
 
-// 起動したあとの入力欄（権限モードは --permission-mode manual で起動する）。モデル名は起動時のバナーから読む
-export function checkPrompt(info: Pick<ScreenInfo, 'mode' | 'effort' | 'model'>): void {
-  expect(info.mode).toBe('manual');
-  expect(info.effort).not.toBeNull();
-  expect(info.model).toMatch(/^[A-Z][a-z]+ \d/);
-}
-
-// target: 確認の見出しか補足（実行しようとしているコマンドなど）に出るはずの文字
-export function checkPermission(menu: Menu | null, target: string): void {
-  expect(menu?.kind).toBe('permission');
-  expect([menu!.title, ...menu!.context].join('\n')).toContain(target);
-  // コマンドを囲む点線などの飾りの行は、補足に入れない
-  expect(menu!.context.filter((line) => /^[╌┄┈─]{20,}$/.test(line))).toEqual([]);
-  expect(menu!.options.some((o) => o.pointed)).toBe(true);
-  expect(menu!.options[0].label).toMatch(/^Yes/);
-  // 許可の確認の選択肢には説明が無い。Claude Code が選択肢の名前を折り返しても、続きを説明として読まない
-  expect(menu!.options.filter((o) => o.description).map((o) => `${o.label} / ${o.description}`)).toEqual([]);
-}
-
-// questions を渡したあとの質問のメニュー（ScreenTracker が applyQuestions で組み立てたもの）
-export function checkQuestion(menu: Menu | null): void {
-  expect(menu?.kind).toBe('question');
-  expect(menu!.title).toBe(QUESTION.question);
-  expect(menu!.options.slice(0, 2).map((o) => ({ label: o.label, description: o.description }))).toEqual(QUESTION.options);
-  expect(menu!.options[0].pointed).toBe(true);
-}
-
-// PreToolUse のフックが書いた AskUserQuestion の入力
-export function checkAskInput(input: unknown): void {
-  expect(askQuestionsOf(input)).toEqual([{ ...QUESTION, options: QUESTION.options.map((o) => ({ ...o, preview: undefined })) }]);
-}
-
-export function checkChat(entries: TranscriptEntry[], events: ChatEvent[], cwd: string): void {
+// turnEnd: ターンの終わりも求めるか（-p の会話ログには turn_duration の行が無いので、会話ログだけから組み立てたチャットには出ない）
+export function checkChat(entries: TranscriptEntry[], events: ChatEvent[], cwd: string, { turnEnd = true } = {}): void {
   // 画面のモデル名は、会話ログの応答のモデル（session-manager の modelOf）から取る
   expect(entries.find((e) => e.type === 'assistant')?.message?.model).toMatch(/^claude-[a-z]+-\d/);
   const file = join(cwd, 'hello.txt');
@@ -157,7 +105,7 @@ export function checkChat(entries: TranscriptEntry[], events: ChatEvent[], cwd: 
     { type: 'tool-use', id: 'toolu_write', name: 'Write', filePath: file },
     { type: 'tool-result', id: 'toolu_write', isError: false, filePath: file, added: 1 },
     { type: 'assistant-text', text: 'チェック完了' },
-    { type: 'turn-end' },
+    ...(turnEnd ? [{ type: 'turn-end' }] : []),
   ];
   for (const event of expected) expect(events).toContainEqual(expect.objectContaining(event));
 }
@@ -170,4 +118,25 @@ export function checkStatusLine(info: StatusLineInfo | null, version: string, tr
   expect(EFFORTS).toContain(info!.effort);
   expect(info!.context).not.toBeNull();
   expect(info!.transcriptPath).toBe(transcriptPath);
+}
+
+// stream-json の出力の行（Claude Code が標準出力に書いたもの）を、アプリの読み取り（StreamClient）にかけて、読めなかった行を数える。
+// malformed: 知っている種類だが、使う項目の形が違う行・JSON でない行 / unknown: 知らない種類の行（種類 → 数）。
+// Claude Code の更新で形が変わると、ここに出る（互換性の確認の test/cli/basic.test.ts と、控えの test/recorded.test.ts が見る）
+export function unreadableStreamLines(lines: string[]): { malformed: number; unknown: Record<string, number> } {
+  let listener: ((line: string, seq: number) => void) | null = null;
+  const pipe = {
+    onLine: (l: (line: string, seq: number) => void) => (listener = l),
+    onExit: () => {},
+    send: () => {},
+    end: () => {},
+    kill: () => {},
+    replay: () => {},
+    onReplayed: () => {},
+    detach: () => {},
+  } as PipeHandle;
+  const client = new StreamClient(pipe, { onMessage: () => {}, onPermission: () => {}, onCancel: () => {}, onExit: () => {} });
+  client.start();
+  lines.forEach((line, i) => listener?.(line, i + 1));
+  return { malformed: client.malformed, unknown: Object.fromEntries(client.unknown) };
 }
