@@ -165,6 +165,9 @@ describe('adopt', () => {
     await app.waitFor('乗り換え', () => app.claudeId(id) === next);
     expect(app.claudeId(id)).not.toBe(before);
     await app.waitFor('新しい会話', () => app.events(id).some((e) => e.type === 'user' && e.text === '止めている間の発言'));
+    // はじめの会話ログを読み終える前に乗り換えても、乗り換えた先を読み終えたら、過去の会話の終わりを決める（作業中のまま残さない）
+    const types = () => app.events(id).map((e) => e.type);
+    await app.waitFor('過去の会話の終わり', () => types().lastIndexOf('turn-end') > types().lastIndexOf('reset'));
   });
 
   it('まだ答えていない要求（pending）は、出し直す', async () => {
