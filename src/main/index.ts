@@ -74,6 +74,8 @@ let relaunchAfterUpdate = false;
 let relaunchForLanguage = false;
 // Mac の再起動・シャットダウンで終わる（brew を動かしても途中で止められるので、入れ替えない）
 let shuttingDown = false;
+// 起動の途中に 2 つめが起動した（ウインドウを作ったら前に出す）
+let showWhenCreated = false;
 // 終了のしかたが決まった（確認を済ませた・確認の要らない終了）。まだなら before-quit で止めて確認する
 let quitDecided = false;
 let confirmingQuit = false;
@@ -1276,9 +1278,11 @@ if (!primary) {
   quitDecided = true;
   app.quit();
 } else {
-  // 起動の途中（ウインドウを作る前）は何もしない。ここでウインドウを作ると、起動の終わりにもう 1 枚作ってしまう
+  // 起動の途中（ウインドウを作る前）は、ここでウインドウを作らず（起動の終わりにもう 1 枚作ってしまう）、印だけ付けておき、
+  // ウインドウを作ったあとで前に出す（起動を待つあいだにほかのアプリへ移った人の頼みを、捨てない）
   app.on('second-instance', () => {
     if (mainWindow) showWindow();
+    else showWhenCreated = true;
   });
 }
 
@@ -1344,6 +1348,7 @@ app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   createWindow();
+  if (showWhenCreated) showWindow();
   for (const p of profiles()) void p.usage.start();
   system = new SystemMonitor((stats) => send(IpcChannel.SystemStats, stats));
   system.start();

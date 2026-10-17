@@ -141,7 +141,7 @@ describe('起動', () => {
     expect(state.quit).not.toHaveBeenCalled();
   });
 
-  it('起動の途中に 2 つめが起動しても、ウインドウを先に作らない（作るのは起動の終わりの 1 枚だけ）。起動が済んだあとは前に出す', async () => {
+  it('起動の途中に 2 つめが起動しても、ウインドウを先に作らない（作るのは起動の終わりの 1 枚だけ）。前に出す頼みは、ウインドウを作ったあとで行う', async () => {
     const adopting = pending<undefined>();
     await boot({ noWait: true, before: (s) => s.adopt.mockReturnValue(adopting.promise) });
     await vi.waitFor(() => expect(state.adopt).toHaveBeenCalled());
@@ -150,9 +150,17 @@ describe('起動', () => {
     adopting.resolve(undefined);
     await started();
     expect(state.windows).toHaveLength(1);
+    // 起動を待つあいだにほかのアプリへ移っていても、ウインドウができたら前に出す
+    expect(mainWindow().show).toHaveBeenCalledTimes(1);
+    expect(mainWindow().focus).toHaveBeenCalledTimes(1);
     state.app.emit('second-instance', fakeEvent(), [], '/');
-    expect(mainWindow().show).toHaveBeenCalled();
+    expect(mainWindow().show).toHaveBeenCalledTimes(2);
     expect(state.windows).toHaveLength(1);
+  });
+
+  it('起動の途中に 2 つめが起動しなければ、ウインドウを作っても前に出す頼みはしない', async () => {
+    await boot();
+    expect(mainWindow().show).not.toHaveBeenCalled();
   });
 
   it('以前のレビュー機能が使っていたフォルダ（snapshots）を消す', async () => {
