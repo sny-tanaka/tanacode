@@ -471,6 +471,11 @@ export class ClaudeRun {
     return this.host.stdoutLines;
   }
 
+  // アプリが claude（チャット）の標準入力に書いた行。書いた順
+  sentLines(): string[] {
+    return this.host.stdinLines;
+  }
+
   // 会話ログ・statusLine・stream-json の行を dir に書き出す（互換性の確認の控え。TANACODE_RECORD=1 のとき）。
   // 会話ログは test/cli/basic.test.ts（チャット）が、statusLine は test/cli/terminal-mode.test.ts（-p では statusLine が動かないので、
   // ターミナルモードの TUI）が書く。files: 書くもの。

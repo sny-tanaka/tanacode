@@ -57,6 +57,8 @@ export class FakePtyHost implements PtyHostApi {
   readonly ptyArgs: string[][] = [];
   // パイプの claude が標準出力に書いた行（stream-json）。届いた順に、どのプロセスのものもまとめて
   readonly stdoutLines: string[] = [];
+  // アプリがパイプの claude の標準入力に書いた行（発言・制御の要求と返事）。書いた順に、どのプロセスのものもまとめて
+  readonly stdinLines: string[] = [];
 
   constructor(
     private readonly file: string,
@@ -260,6 +262,7 @@ export class FakePtyHost implements PtyHostApi {
   sendLine(hosted: HostedPipeEntry, line: string): void {
     if (hosted.exitCode !== null || hosted.ended) return;
     hosted.backlog.sent(line);
+    this.stdinLines.push(line);
     hosted.proc.stdin?.write(`${line}\n`);
   }
 

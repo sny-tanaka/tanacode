@@ -152,6 +152,29 @@ describe(`Claude Code ${version}`, () => {
       expect(run.statusLineText()).toBeNull();
     });
 
+    // get_usage は実験的な要求（2.1.302 の説明: "Experimental — the response shape may change"）。API キーでは中身が返らない
+    // （rate_limits_available: false・rate_limits: null）ので、モデル別の枠の形までは確かめられない。返事の外側の形だけを確かめる
+    it('ターンの終わりに聞く get_usage の返事に、アプリが読む欄（subscription_type・rate_limits_available・rate_limits）がある', async () => {
+      const json = (line: string) => {
+        try {
+          return JSON.parse(line) as { type?: string; request_id?: string; request?: { subtype?: string }; response?: { subtype?: string; request_id?: string; response?: Record<string, unknown> } };
+        } catch {
+          return null;
+        }
+      };
+      const request = await run.waitUntil('get_usage の要求', () => run.sentLines().map(json).find((v) => v?.type === 'control_request' && v.request?.subtype === 'get_usage'));
+      const answer = await run.waitUntil('get_usage の返事', () =>
+        run.streamLines().map(json).find((v) => v?.type === 'control_response' && v.response?.request_id === request.request_id),
+      );
+      expect(answer.response?.subtype).toBe('success');
+      const usage = answer.response?.response ?? {};
+      expect(usage).toHaveProperty('subscription_type');
+      expect(usage.subscription_type === null || typeof usage.subscription_type === 'string').toBe(true);
+      expect(typeof usage.rate_limits_available).toBe('boolean');
+      expect(usage).toHaveProperty('rate_limits');
+      expect(usage.rate_limits === null || typeof usage.rate_limits === 'object').toBe(true);
+    });
+
     // 毎日の確認（claude-code-check.yml）で、Claude Code の更新による stream-json の形の変化に気づくため
     it('stream-json の行が、どれも読める（知らない種類・形の違う行が無い）', () => {
       expect(run.streamLines().length).toBeGreaterThan(0);

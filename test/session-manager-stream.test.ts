@@ -427,11 +427,17 @@ describe('知らせ', () => {
     await app.waitFor('利用枠', () => !!app.statusLineInfos.get(id)?.rateLimits);
     const received = app.statusLineInfos.get(id)!;
     expect(received.rateLimitsAt).toBe(received.updatedAt);
-    await sleep(20);
-    await app.prompt(id, 'はじめ');
-    app.say(id, line.text('はい'));
-    pipe.emit(stream.result(app.claudeId(id), { total_cost_usd: 0.5 }));
-    await app.waitFor('費用', () => app.statusLineInfos.get(id)?.costUsd === 0.5);
+    // 時計を進めてから送り直させる（2 つの時刻を、待たずに違える。進み方は本物のまま）
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now() + 60_000);
+    try {
+      await app.prompt(id, 'はじめ');
+      app.say(id, line.text('はい'));
+      pipe.emit(stream.result(app.claudeId(id), { total_cost_usd: 0.5 }));
+      await app.waitFor('費用', () => app.statusLineInfos.get(id)?.costUsd === 0.5);
+    } finally {
+      clock.mockRestore();
+    }
     const resent = app.statusLineInfos.get(id)!;
     expect(resent.updatedAt).toBeGreaterThan(received.updatedAt);
     expect(resent.rateLimitsAt).toBe(received.rateLimitsAt);
