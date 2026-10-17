@@ -27,7 +27,7 @@ beforeAll(async () => {
       emptyOutDir: false,
       minify: false,
       // アプリのビルド（electron-vite）と同じく、dependencies は 1 つにまとめず node_modules から読む
-      rollupOptions: { external: ['node-pty', '@xterm/headless', '@xterm/addon-serialize'], output: { format: 'cjs', entryFileNames: 'pty-host.js' } },
+      rolldownOptions: { external: ['node-pty', '@xterm/headless', '@xterm/addon-serialize'], output: { format: 'cjs', entryFileNames: 'pty-host.js' } },
     },
   });
   script = join(buildDir, 'pty-host.js');

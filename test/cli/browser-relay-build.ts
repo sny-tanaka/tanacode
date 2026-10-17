@@ -16,7 +16,7 @@ export async function buildRelay(entry: 'browser-mcp' | 'sessions-mcp' | 'checkl
       outDir,
       emptyOutDir: false,
       minify: false,
-      rollupOptions: { output: { format: 'cjs', entryFileNames: `${entry}.js` } },
+      rolldownOptions: { output: { format: 'cjs', entryFileNames: `${entry}.js` } },
     },
   });
   return join(outDir, `${entry}.js`);
