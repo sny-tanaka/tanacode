@@ -370,6 +370,28 @@ describe('ヘッダー', () => {
     expect(api.argsOf('screen.rewind').map(([id]) => id)).toEqual(['s1', 's2']);
   });
 
+  it('巻き戻し: ほかのセッションへ移ってから、会話もコードも戻せなかった・呼び出しそのものが失敗したときも、どのセッションの話かを添える', async () => {
+    const finishes: { resolve: (outcome: unknown) => void; reject: (error: unknown) => void }[] = [];
+    install({
+      'screen.rewindPreview': () => Promise.resolve({ files: [], insertions: 0, deletions: 0, codeError: null }),
+      'screen.rewind': () => new Promise((resolve, reject) => finishes.push({ resolve, reject })),
+    });
+    const view = render(<ClaudePane {...props()} />);
+    // s1 で戻し始めて s2 へ移る
+    const rewindThenLeave = async () => {
+      view.rerender(<ClaudePane {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'ここまで戻す' }));
+      await settle();
+      fireEvent.click(screen.getByText('会話を戻す'));
+      view.rerender(<ClaudePane {...props({ session: S2 })} />);
+    };
+    await rewindThenLeave();
+    await act(async () => finishes[0].resolve({ ok: false, prefillText: null, error: 'stale_target' }));
+    await rewindThenLeave();
+    await act(async () => finishes[1].reject(new Error('つながりません')));
+    expect(alerts).toEqual(['「セッション s1」を巻き戻せませんでした（stale_target）', '「セッション s1」を巻き戻せませんでした（つながりません）']);
+  });
+
   it('巻き戻し: 戻している途中でほかのセッションへ移ってから断られたら、どのセッションの話かを添えてわけを出す。移った先のカードは閉じない', async () => {
     let finish!: (outcome: unknown) => void;
     install({
