@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ShellSnapshot } from '@shared/ipc';
 import { useInsertInput } from '../../src/renderer/src/chat/insertInput';
 import { runInTerminal } from '../../src/renderer/src/terminal/runInTerminal';
 import { TerminalPanel } from '../../src/renderer/src/terminal/TerminalPanel';
@@ -30,8 +31,18 @@ const xterm = vi.hoisted(() => {
     open(element: HTMLElement) {
       this.element = element;
     }
-    onData(_listener: Listener<string>) {
+    private dataListeners: Listener<string>[] = [];
+    onData(listener: Listener<string>) {
+      this.dataListeners.push(listener);
       return { dispose() {} };
+    }
+    // 人が xterm で打ったことにする
+    input(data: string) {
+      this.dataListeners.forEach((listener) => listener(data));
+    }
+    resize(cols: number, rows: number) {
+      this.cols = cols;
+      this.rows = rows;
     }
     onResize(_listener: Listener<{ cols: number; rows: number }>) {
       return { dispose() {} };
@@ -209,6 +220,75 @@ describe('TerminalPanel: シェルのタブ', () => {
     act(() => api.emit('shell.onExit', { id: 'shell-9', exitCode: 0 }));
     expect(tabNames()).toEqual(['zsh 1']);
     expect(opened.disposed).toBe(true);
+  });
+});
+
+describe('TerminalPanel: 画面を読み込み直したあと（⌘R）', () => {
+  // main が持っているターミナル（引き継ぐもの）
+  const snapshot = (over: Partial<ShellSnapshot> & Pick<ShellSnapshot, 'owner' | 'id'>): ShellSnapshot => ({
+    name: 'zsh',
+    title: null,
+    task: false,
+    exitCode: null,
+    cols: 80,
+    rows: 24,
+    screen: '',
+    ...over,
+  });
+
+  it('動いているシェルを引き継ぎ、タブ・画面の中身・タイトル・終わったコマンドのタブを出し直す。引き継ぐ前に届いた出力は画面のあとに書き、終わったシェルは出さない', async () => {
+    let attach!: (list: ShellSnapshot[]) => void;
+    api = mockApi({
+      'shell.attach': () => new Promise<ShellSnapshot[]>((resolve) => (attach = resolve)),
+      'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }),
+    });
+    api.install();
+    const view = render(<Panel sessionId="s1" />);
+    // 引き継ぐまでは、新しいシェルを開かない（引き継ぐものがあるかもしれない）
+    await act(async () => {});
+    expect(api.argsOf('shell.attach')).toEqual([[]]);
+    expect(api.argsOf('shell.create')).toEqual([]);
+    // main が画面を控えたあとの出力と、終わったシェル（引き継ぐ返事より先に届くことがある）
+    act(() => api.emit('shell.onData', { id: 'shell-1', data: 'compiled\r\n' }));
+    act(() => api.emit('shell.onExit', { id: 'shell-4', exitCode: 0 }));
+    await act(async () =>
+      attach([
+        snapshot({ owner: 's1', id: 'shell-1', title: 'dev server', cols: 120, rows: 30, screen: 'npm run dev\r\nready\r\n' }),
+        snapshot({ owner: 's2', id: 'shell-2', screen: 's2 の画面' }),
+        snapshot({ owner: 's1', id: 'task-3', name: 'npm install', task: true, exitCode: 0, cols: 100, screen: 'added 10 packages' }),
+        snapshot({ owner: 's1', id: 'shell-4' }),
+      ]),
+    );
+    expect(tabNames()).toEqual(['dev server', 'npm install（完了）']);
+    expect(api.argsOf('shell.create')).toEqual([]);
+    const dev = termOf(0);
+    expect([dev.cols, dev.rows]).toEqual([120, 30]);
+    expect(dev.written).toEqual(['npm run dev\r\nready\r\n', 'compiled\r\n']);
+    // 引き継いだあとの出力・タイトル・終わりは、ふだんどおり
+    act(() => api.emit('shell.onData', { id: 'shell-1', data: 'reloaded\r\n' }));
+    expect(dev.written.at(-1)).toBe('reloaded\r\n');
+    act(() => dev.emitTitle('vite'));
+    expect(tabNames()).toEqual(['vite', 'npm install（完了）']);
+    // 打った文字は、引き継いだシェルに届く
+    act(() => dev.input('q'));
+    expect(api.argsOf('shell.write')).toEqual([['shell-1', 'q']]);
+    // 終わったコマンドのタブの × は、片付ける
+    fireEvent.click(closeOf(1));
+    expect(api.argsOf('shell.kill')).toEqual([['task-3']]);
+    expect(tabNames()).toEqual(['vite']);
+    // ほかのセッションのシェルも、戻ると出る
+    view.rerender(<Panel sessionId="s2" />);
+    expect(tabNames()).toEqual(['zsh 1']);
+    expect(xterm.FakeTerminal.all.find((t) => t.written.includes('s2 の画面'))).toBeTruthy();
+    expect(api.argsOf('shell.create')).toEqual([]);
+  });
+
+  it('引き継ぐものが無ければ、ふだんどおり新しいシェルを開く', async () => {
+    api = mockApi({ 'shell.attach': () => Promise.resolve([]), 'shell.create': () => Promise.resolve({ id: `sh${++seq}`, name: 'zsh' }) });
+    api.install();
+    render(<Panel sessionId="s1" />);
+    await waitFor(() => expect(tabNames()).toEqual(['zsh 1']));
+    expect(api.argsOf('shell.create')).toHaveLength(1);
   });
 });
 

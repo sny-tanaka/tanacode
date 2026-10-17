@@ -111,6 +111,7 @@ export const IpcChannel = {
   PtyResetSize: 'pty:reset-size',
   PtyData: 'pty:data',
   ShellCreate: 'shell:create',
+  ShellAttach: 'shell:attach',
   ShellWrite: 'shell:write',
   ShellResize: 'shell:resize',
   ShellKill: 'shell:kill',
@@ -395,6 +396,19 @@ export type ShellExit = { id: string; exitCode: number };
 // アプリが開いたターミナル。owner: セッションの id / task: コマンドのタブ（worktree の npm install など。終わってもタブを残す）。
 // false は、Claude が人のターミナルに打つために開いたシェル（type_in_terminal の new_tab。人が開いたシェルと同じに扱う）
 export type ShellOpened = { owner: string; id: string; name: string; task: boolean };
+// 画面を読み込み直したとき（⌘R）に引き継ぐ、main が持っているターミナル（パネルのタブ）。task: コマンドのタブ / exitCode: 動いている間は null /
+// screen: 今の画面を描き直すための文字列（さかのぼって読める行も含む）。cols・rows の大きさの xterm に書く
+export type ShellSnapshot = {
+  owner: string;
+  id: string;
+  name: string;
+  title: string | null;
+  task: boolean;
+  exitCode: number | null;
+  cols: number;
+  rows: number;
+  screen: string;
+};
 
 export type WorkspaceInfo = { root: string; name: string; branch: string | null };
 export type DirEntry = { name: string; path: string; isDir: boolean };
@@ -642,6 +656,8 @@ export type TanacodeApi = {
   shell: {
     // セッションのフォルダでログインシェルを開く
     create(sessionId: string, cols: number, rows: number): Promise<{ id: string; name: string }>;
+    // 画面を読み込み直したあと、main が持っているターミナルを引き継ぐ（開いた順）。このあとの出力・終わり・開いたタブを、この画面に知らせる
+    attach(): Promise<ShellSnapshot[]>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
     kill(id: string): void;
@@ -846,6 +862,7 @@ export type IpcInvoke = {
   [IpcChannel.TasksAgentLog]: Api['tasks']['agentLog'];
   [IpcChannel.TasksStop]: Api['tasks']['stop'];
   [IpcChannel.ShellCreate]: Api['shell']['create'];
+  [IpcChannel.ShellAttach]: Api['shell']['attach'];
   [IpcChannel.FolderPick]: Api['folders']['pick'];
   [IpcChannel.FolderInfo]: Api['folders']['info'];
   [IpcChannel.FolderFiles]: Api['folders']['listFiles'];

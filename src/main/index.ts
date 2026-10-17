@@ -293,6 +293,15 @@ function setupAppContents(contents: WebContents, id: string): void {
   contents.on('will-navigate', (event, url) => {
     if (url !== contents.getURL()) event.preventDefault();
   });
+  // 画面を読み込み直す（⌘R）。前の画面が開いた新規セッションの画面のフォルダ（見張り・そこで開いたシェルとブラウザ）は、
+  // 新しい画面からは見えず使えないので閉じる。セッションのシェルは止めずに、新しい画面が引き継ぐ（shell.attach）まで、知らせを止める
+  contents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    const p = opened.get(id);
+    if (!p) return;
+    for (const folder of [...p.folderViews.keys()]) p.closeFolderView(folder);
+    p.shells.detach();
+  });
   // プレビューの webview には、アプリの API（preload）や Node を渡さない。開けるのは http(s) のページだけ
   contents.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload;
@@ -787,6 +796,7 @@ function registerIpc(): void {
   handle(IpcChannel.ShellCreate, (e, id: string, cols: number, rows: number) =>
     P(e).shells.create(id, P(e).cwdOf(id), cols, rows),
   );
+  handle(IpcChannel.ShellAttach, (e) => P(e).shells.attach());
   listen(IpcChannel.ShellWrite, (e, id: string, data: string) => P(e).shells.write(id, data));
   listen(IpcChannel.ShellResize, (e, id: string, cols: number, rows: number) => P(e).shells.resize(id, cols, rows));
   listen(IpcChannel.ShellKill, (e, id: string) => P(e).shells.kill(id));

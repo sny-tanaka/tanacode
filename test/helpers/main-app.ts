@@ -509,6 +509,8 @@ const modules: Record<string, Record<string, unknown>> = {
       killOwner: () => undefined,
       killAll: () => undefined,
       run: echo('shells.run'),
+      attach: echo('shells.attach'),
+      detach: () => undefined,
     }),
   },
   'system-monitor': { SystemMonitor: fakeClass('SystemMonitor', { start: () => undefined, stop: () => undefined }) },

@@ -6,7 +6,7 @@ import { IpcChannel } from '@shared/ipc';
 import { LANGUAGE_SETTINGS_URL } from '../src/main/translate';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
 import { invokes, sends } from './helpers/ipc-tables';
-import { argsOf, boot, cleanup, githubModule, invoke, mainWindow, manager, sendFromRenderer, sentToRenderer, setSystemVersion, state, the } from './helpers/main-app';
+import { argsOf, boot, cleanup, fakeEvent, githubModule, invoke, mainWindow, manager, sendFromRenderer, sentToRenderer, setSystemVersion, state, the } from './helpers/main-app';
 
 // アプリの入り口（src/main/index.ts）の、画面からの呼び出し・知らせの受け口（registerIpc）。
 // Electron と重い部品を作り物にして index.ts を読み込み（test/helpers/main-app.ts）、受け口を画面の代わりに呼んで、
@@ -106,6 +106,7 @@ describe('そのまま渡す受け口', () => {
       call('manager.importSession', 'c1', '/work/cafe', '外の会話'),
     ],
     [IpcChannel.ShellCreate, ['s1', 120, 40], call('shells.create', 's1', cwdOf('s1'), 120, 40)],
+    [IpcChannel.ShellAttach, [], call('shells.attach')],
     [IpcChannel.TranslateRun, [['こんにちは', 'Hello']], call('translator.translate', ['こんにちは', 'Hello'])],
   ];
 
@@ -320,6 +321,31 @@ describe('フォルダ（新規セッションの画面）', () => {
     // 2 回閉じても、監視を 2 回やめない
     sendFromRenderer(IpcChannel.FolderClose, id);
     expect(the('WorkspaceWatchers').release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('画面の読み込み直し（⌘R）', () => {
+  it('アプリの画面を読み込み直すと、前の画面が開いた新規セッションの画面のフォルダを閉じ、シェルは止めずに、新しい画面が引き継ぐまで知らせを止める', async () => {
+    await boot();
+    manager().list.mockReturnValue([{ id: 's1', cwd: state.root, worktree: null }]);
+    const id = (await invoke(IpcChannel.FolderOpen, state.root)) as string;
+    const contents = mainWindow().webContents;
+    // 同じ文書の中の移動（# の付け替えなど）と、中のフレームの移動では、何もしない
+    contents.emit('did-start-navigation', fakeEvent({ isMainFrame: true, isSameDocument: true, url: `${contents.url}#top` }));
+    contents.emit('did-start-navigation', fakeEvent({ isMainFrame: false, isSameDocument: false, url: 'about:blank' }));
+    expect(the('ShellTerminals').detach).not.toHaveBeenCalled();
+    expect(the('WorkspaceWatchers').release).not.toHaveBeenCalled();
+
+    contents.emit('did-start-navigation', fakeEvent({ isMainFrame: true, isSameDocument: false, url: contents.url }));
+    expect(the('ShellTerminals').detach).toHaveBeenCalledTimes(1);
+    expect(the('WorkspaceWatchers').release.mock.calls).toEqual([[state.root]]);
+    expect(the('ShellTerminals').killOwner.mock.calls).toEqual([[id]]);
+    expect(the('ShellTerminals').killAll).not.toHaveBeenCalled();
+    expect(the('BrowserControl').forget.mock.calls).toEqual([[id]]);
+    // 前の画面のフォルダの ID は、もうそのフォルダを指さない
+    await expect(invoke(IpcChannel.WorkspaceInfo, id)).resolves.toEqual(callIn(cwdOf(id), 'workspace.info'));
+    // 新しい画面が、動いているシェルを引き継ぐ
+    await expect(invoke(IpcChannel.ShellAttach)).resolves.toEqual(call('shells.attach'));
   });
 });
 

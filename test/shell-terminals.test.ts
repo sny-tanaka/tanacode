@@ -1,6 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Terminal } from '@xterm/headless';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ShellTerminals } from '../src/main/shell-terminals';
 
@@ -9,22 +10,23 @@ import { ShellTerminals } from '../src/main/shell-terminals';
 
 let dir: string;
 let shells: ShellTerminals;
-const data = new Map<string, string>();
-const exits = new Map<string, number>();
-const opened: { owner: string; id: string; name: string; task: boolean }[] = [];
+let data: Map<string, string>;
+let exits: Map<string, number>;
+let opened: { owner: string; id: string; name: string; task: boolean }[];
 const oldShell = process.env.SHELL;
 const oldClaudeCode = process.env.CLAUDECODE;
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'tanacode-shell-')));
   process.env.SHELL = '/bin/sh';
-  data.clear();
-  exits.clear();
-  opened.length = 0;
+  // 知らせは、テストごとに別の控えに書く。前のテストで止めたシェルが終わった知らせは、次のテストが始まってから届くことがあり、
+  // id（shell-1 など）も同じなので、同じ控えに書くと、次のテストのシェルが終わったように見えてしまう
+  const mine = { data: new Map<string, string>(), exits: new Map<string, number>(), opened: [] as typeof opened };
+  ({ data, exits, opened } = mine);
   shells = new ShellTerminals({
-    onData: (id, chunk) => data.set(id, (data.get(id) ?? '') + chunk),
-    onExit: (id, code) => exits.set(id, code),
-    onOpened: (owner, id, name, task) => opened.push({ owner, id, name, task }),
+    onData: (id, chunk) => mine.data.set(id, (mine.data.get(id) ?? '') + chunk),
+    onExit: (id, code) => mine.exits.set(id, code),
+    onOpened: (owner, id, name, task) => mine.opened.push({ owner, id, name, task }),
   });
 });
 afterEach(() => {
@@ -173,6 +175,49 @@ describe('ShellTerminals', () => {
     expect(shells.info(id)).toMatchObject({ kind: 'shell', tab: 1, running: true });
     shells.write(id, 'stty size\r');
     await waitFor('大きさ', () => (data.get(id) ?? '').includes('30 100'));
+  });
+
+  it('detach・attach: 画面を読み込み直す間は画面に知らせず、引き継ぐ画面に、開いた順のターミナルと今の画面を渡す。引き継いだら、また知らせる', async () => {
+    const shell = shells.create('session-1', dir, 40, 12);
+    await waitForPrompt(shell.id);
+    await typeAndWait(shell.id, 'echo before-$((1+1))\r');
+    await shells.run('session-2', dir, 'echo built; exit 3', 'npm install');
+    const npm = opened[0].id;
+    shells.detach();
+    const forwarded = data.get(shell.id);
+    // 読み込み直している間の出力・開いたタブ・終わったタブは、画面に知らせない（控えには書く）
+    await typeAndWait(shell.id, 'echo during-$((2+1))\r');
+    const yarn = shells.run('session-1', dir, 'echo linked; exit 5', 'yarn');
+    await yarn;
+    expect(data.get(shell.id)).toBe(forwarded);
+    expect(opened).toHaveLength(1);
+    expect([...exits.keys()]).toEqual([npm]);
+
+    const list = shells.attach();
+    const yarnId = list.find((s) => s.name === 'yarn')?.id;
+    expect(list.map((s) => [s.owner, s.id, s.name, s.title, s.task, s.exitCode, s.cols, s.rows])).toEqual([
+      ['session-1', shell.id, 'sh', null, false, null, 40, 12],
+      ['session-2', npm, 'npm install', null, true, 3, 100, 24],
+      ['session-1', yarnId, 'yarn', null, true, 5, 100, 24],
+    ]);
+    // 渡した画面を xterm に書くと、読み込み直す前と、その間の出力が見える
+    const screenOf = async (screen: string, cols: number, rows: number) => {
+      const term = new Terminal({ cols, rows, scrollback: 1000, allowProposedApi: true });
+      await new Promise<void>((resolve) => term.write(screen, resolve));
+      const buffer = term.buffer.active;
+      const lines = Array.from({ length: buffer.length }, (_, y) => buffer.getLine(y)?.translateToString(true) ?? '');
+      term.dispose();
+      return lines.join('\n');
+    };
+    const shown = await screenOf(list[0].screen, 40, 12);
+    expect(shown).toContain('before-2');
+    expect(shown).toContain('during-3');
+    expect(await screenOf(list[2].screen, 100, 24)).toContain('linked');
+    // 引き継いだあとは、また画面に知らせる
+    shells.write(shell.id, 'echo after-$((3+1))\r');
+    await waitFor('引き継いだあとの出力', () => (data.get(shell.id) ?? '').includes('after-4'));
+    shells.kill(shell.id);
+    await waitFor('引き継いだあとの終わり', () => exits.has(shell.id));
   });
 
   it('知らない id への操作は何もしない（閉じたあとに届いた入力など）', () => {

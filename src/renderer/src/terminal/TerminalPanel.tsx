@@ -50,6 +50,10 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
   const [height, setHeight] = useState(loadHeight);
   useSharedPrefChange(HEIGHT_KEY, () => setHeight(loadHeight()));
   const creating = useRef(false);
+  // main が持っているターミナルを引き継いだ（画面を読み込み直したとき。引き継ぐまでは、新しいシェルを開かない）
+  const [attached, setAttached] = useState(false);
+  // 引き継ぐ前に終わったと知らせが来たもの（引き継ぐ返事より先に届くことがある）。id → 終了コード
+  const exitedEarly = useRef(new Map<string, number>());
   // 次に開くシェルで実行するコマンド（チャットのコードブロックの「実行」）
   const queued = useRef<{ owner: string; command: string } | null>(null);
 
@@ -121,6 +125,7 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
         return;
       }
       const x = xterms.current.get(id);
+      if (!x) exitedEarly.current.set(id, exitCode);
       x?.term.dispose();
       x?.element.remove();
       xterms.current.delete(id);
@@ -140,7 +145,39 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
       for (const x of xterms.current.values()) if (!x.element.hidden) x.fit.fit();
     });
     observer.observe(hostRef.current!);
+    // 画面を読み込み直したとき（⌘R）、main で動き続けているターミナルを引き継ぐ。xterm を前と同じ大きさにして、今の画面を書き、
+    // 返事より先に届いた出力（main が画面を控えたあとのもの）をそのあとに書く。返事より先に終わったシェルは出さない
+    let alive = true;
+    void window.tanacode.shell.attach().then((list) => {
+      if (!alive) return;
+      const restored: Record<string, ShellTab[]> = {};
+      for (const s of list ?? []) {
+        if (xterms.current.has(s.id)) continue;
+        const early = exitedEarly.current.get(s.id);
+        if (early !== undefined && !s.task) continue;
+        const exitCode = early ?? s.exitCode;
+        const x = makeXterm();
+        x.term.resize(s.cols, s.rows);
+        x.term.write(s.screen);
+        attachXterm(s.id, x);
+        if (s.task) {
+          taskIds.current.add(s.id);
+        } else {
+          followTitle(s.owner, s.id, x.term);
+        }
+        (restored[s.owner] ??= []).push({ id: s.id, name: s.name, title: s.title, ...(s.task ? { task: true } : {}), ...(exitCode !== null ? { exitCode } : {}) });
+      }
+      exitedEarly.current.clear();
+      // 引き継いだタブを先に、返事より先に開いたタブをそのあとに並べる
+      setShells((prev) => {
+        const next = { ...prev };
+        for (const [owner, tabs] of Object.entries(restored)) next[owner] = [...tabs, ...(prev[owner] ?? []).filter((t) => !tabs.some((r) => r.id === t.id))];
+        return next;
+      });
+      setAttached(true);
+    });
     return () => {
+      alive = false;
       offData();
       offExit();
       offOpened();
@@ -197,10 +234,11 @@ export function TerminalPanel({ sessionId, waiting = null, open, onOpen, onClose
     return true;
   });
 
-  // シェルを出すのに 1 つも無ければ開く。フォルダがまだ無ければ、できるまで待つ（無いフォルダではシェルがすぐ終わり、開き直しを繰り返してしまう）
+  // シェルを出すのに 1 つも無ければ開く。フォルダがまだ無ければ、できるまで待つ（無いフォルダではシェルがすぐ終わり、開き直しを繰り返してしまう）。
+  // main が持っているターミナルを引き継ぐまでも待つ（引き継ぐものがあるかもしれない）
   useEffect(() => {
-    if (open && sessionId && !waiting && tabs.length === 0) void newShell(sessionId);
-  }, [open, sessionId, waiting, tabs.length, newShell]);
+    if (attached && open && sessionId && !waiting && tabs.length === 0) void newShell(sessionId);
+  }, [attached, open, sessionId, waiting, tabs.length, newShell]);
 
   // 表示するシェルだけを出す。選んでいるかどうかも、出しているシェルで読み直す
   // （シェルがまだ無いセッションに切り替えたときに、前のセッションで選んでいた出力の分の「Claude へ送る」を残さない）
