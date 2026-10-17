@@ -6,7 +6,7 @@ import { t } from '@shared/i18n';
 import type { TaskRef } from '@shared/task';
 import { ClaudePane } from './chat/ClaudePane';
 import { errorMessage } from './errorMessage';
-import { chatFromEvents, useSessionChats, withStatus, type ChatState } from './chat/chatState';
+import { chatFromEvents, statusBarStatus, useSessionChats, withStatus, type ChatState } from './chat/chatState';
 import { usePendingSends, type PendingSend } from './chat/pendingSends';
 import { scheduledOf, useScheduledMessages } from './chat/scheduled';
 import { SettingsFilesDialog } from './chat/SettingsFilesDialog';
@@ -1149,7 +1149,7 @@ export function App() {
         </div>
       </div>
       <StatusBar
-        status={chat.status}
+        status={statusBarStatus(chat.status, selected)}
         exitCode={chat.exitCode}
         branch={(git.state?.isRepo ? git.state.branch : workspace?.branch) ?? null}
         worktree={selected?.worktree ?? null}

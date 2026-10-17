@@ -2,7 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent, HookRun } from '@shared/chat';
-import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusOf, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
+import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusBarStatus, statusOf, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
 import { mockApi } from './mock-api';
 
 // チャットの状態（会話ログから作ったイベントを、チャットの行と状態にする）。
@@ -152,6 +152,18 @@ describe('チャットの状態は、main の状態（一覧の state）から�
     expect(statusOf(idle, undefined)).toBe('idle');
     // まだチャットを読んでいない（起動していない）セッションは、開くまで起動前のまま
     expect(statusOf(EMPTY_CHAT, 'working')).toBe('not-started');
+  });
+
+  it('ステータスバーは、ターミナルモードの間だけ、TUI がターンの途中か（terminalWorking）で待機中・作業中を出す（一覧の印と同じ）', () => {
+    const terminal = statusOf(run([{ type: 'process-start' }, { type: 'ready' }]), 'terminal');
+    expect(terminal).toBe('running');
+    expect(statusBarStatus(terminal, { state: 'terminal', terminalWorking: false })).toBe('idle');
+    expect(statusBarStatus(terminal, { state: 'terminal', terminalWorking: true })).toBe('running');
+    expect(statusBarStatus(terminal, { state: 'terminal' })).toBe('idle');
+    // ターミナルモードでなければ、チャットの状態のまま
+    expect(statusBarStatus('running', { state: 'working', terminalWorking: false })).toBe('running');
+    expect(statusBarStatus('starting', { state: 'starting' })).toBe('starting');
+    expect(statusBarStatus('idle', null)).toBe('idle');
   });
 
   it('withStatus: 状態が同じならそのまま返す。違えば状態だけを替え、同じチャットと状態には同じものを返す（描き直しを増やさない）', () => {

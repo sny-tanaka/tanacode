@@ -324,6 +324,13 @@ export function statusOf(chat: ChatState, state: SessionState | null | undefined
   }
 }
 
+// ステータスバーに出す状態。ターミナルモードの間は、チャットの操作を止めるために statusOf では作業中にしているが、
+// ステータスバーには、一覧の印と同じく、TUI がターンの途中か（terminalWorking）で待機中・作業中を出す
+export function statusBarStatus(status: SessionStatus, session: { state?: SessionState | null; terminalWorking?: boolean } | null): SessionStatus {
+  if (session?.state !== 'terminal') return status;
+  return session.terminalWorking ? 'running' : 'idle';
+}
+
 // 状態だけ違うチャット。同じチャットと状態には同じものを返す（チャットの画面を、状態が変わらないのに描き直さない）
 const withStatusCache = new WeakMap<ChatState, ChatState>();
 
