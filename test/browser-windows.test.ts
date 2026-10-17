@@ -58,6 +58,14 @@ class FakeWindow extends EventEmitter {
   destroyed = false;
   title = '';
   readonly loaded: string[] = [];
+  // 出し方（show: 前に出してフォーカスも移す / showInactive: フォーカスは移さない）
+  readonly shown: string[] = [];
+  show(): void {
+    this.shown.push('show');
+  }
+  showInactive(): void {
+    this.shown.push('showInactive');
+  }
   constructor(
     readonly options: Record<string, unknown>,
     readonly webContents: FakeContents,
@@ -279,7 +287,7 @@ describe('新しいウインドウ', () => {
     const contents = new FakeContents('window', guest.session);
     expect(result.createWindow({ ...FROM_PAGE, webContents: contents })).toBe(contents);
     // 渡すのは、許すもの（画面に詰めた位置と大きさ・地の色・守りの値）と、Electron が作った中身だけ
-    expect(made.map((w) => w.options)).toEqual([{ webContents: contents, show: true, x: 460, y: 130, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: SECURE }]);
+    expect(made.map((w) => w.options)).toEqual([{ webContents: contents, show: false, x: 460, y: 130, width: 480, height: 640, backgroundColor: '#ffffff', webPreferences: SECURE }]);
     expect(made[0]!.loaded).toEqual([]);
   });
 
@@ -299,9 +307,18 @@ describe('新しいウインドウ', () => {
     expect(event.preventDefault).toHaveBeenCalled();
   });
 
+  it('別ウインドウは、フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように）', () => {
+    const { tab, popup } = setup();
+    const win = popup(tab());
+    expect(win.options.show).toBe(false);
+    expect(win.shown).toEqual(['showInactive']);
+  });
+
   it('裏で起動しているときは、別ウインドウを画面に出さない', () => {
     const { tab, popup } = setup({ background: true });
-    expect(popup(tab()).options.show).toBe(false);
+    const win = popup(tab());
+    expect(win.options.show).toBe(false);
+    expect(win.shown).toEqual([]);
   });
 
   it('http(s) でないものは、ポップアップでもタブでも開かない', () => {

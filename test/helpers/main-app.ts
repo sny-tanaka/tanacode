@@ -136,6 +136,7 @@ export class FakeWindow extends Emitter {
     this.minimized = false;
   });
   show = vi.fn(() => undefined);
+  showInactive = vi.fn(() => undefined);
   focus = vi.fn(() => undefined);
   loadURL = vi.fn((_url: string) => undefined);
   loadFile = vi.fn((_path: string) => undefined);

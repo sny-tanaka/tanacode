@@ -147,9 +147,11 @@ export class PreviewWindows {
   // ポップアップの別ウインドウを作る（createWindow）。contents: Electron が作った中身（開いたページとつながっている）。
   // Electron が作らなかったときは、作ったウインドウで url を読み込む。返すのは、ウインドウの中身（Electron は contents と同じものを求める）
   private create(source: WebContents, url: string, contents: WebContents | undefined, bounds: Rectangle | null): WebContents {
-    const win = this.deps.makeWindow({ ...(contents ? { webContents: contents } : {}), ...windowOptions(this.deps.background, bounds) } as BrowserWindowConstructorOptions);
+    const win = this.deps.makeWindow({ ...(contents ? { webContents: contents } : {}), ...windowOptions(bounds) } as BrowserWindowConstructorOptions);
     if (!contents) void win.loadURL(url);
     this.adopt(source, win);
+    // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）
+    if (!this.deps.background && !win.isDestroyed()) win.showInactive();
     return win.webContents;
   }
 
@@ -178,9 +180,10 @@ export class PreviewWindows {
 }
 
 // 別ウインドウの作り方。許すものだけを並べる（ページの features から来たものは、どれも使わない）。
-// 位置と大きさは、ページの指定を画面の中に詰めたもの（popupBounds）。ほかは既定のまま（枠あり・閉じられる・最前面にしない など）
-function windowOptions(background: boolean, bounds: Rectangle | null): BrowserWindowConstructorOptions {
-  return { show: !background, ...bounds, backgroundColor: '#ffffff', webPreferences: POPUP_PREFERENCES };
+// 位置と大きさは、ページの指定を画面の中に詰めたもの（popupBounds）。ほかは既定のまま（枠あり・閉じられる・最前面にしない など）。
+// 作るときは出さない（出すのは create の showInactive）
+function windowOptions(bounds: Rectangle | null): BrowserWindowConstructorOptions {
+  return { show: false, ...bounds, backgroundColor: '#ffffff', webPreferences: POPUP_PREFERENCES };
 }
 
 // ポップアップの位置と大きさ。ページが window.open の features に書いた指定（width・height・left・top と、innerWidth・innerHeight・
