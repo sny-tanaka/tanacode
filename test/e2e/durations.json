@@ -1,6 +1,8 @@
 {
   "test/e2e/added-folders.test.ts": 14,
+  "test/e2e/browser-failed.test.ts": 8,
   "test/e2e/browser-outside.test.ts": 13,
+  "test/e2e/browser-popup.test.ts": 37,
   "test/e2e/browser-shot.test.ts": 11,
   "test/e2e/chat.test.ts": 26,
   "test/e2e/checklist-decisions.test.ts": 10,
