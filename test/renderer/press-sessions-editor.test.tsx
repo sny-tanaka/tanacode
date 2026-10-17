@@ -428,6 +428,32 @@ describe('MarkdownPreview（Markdown のプレビュー）', () => {
   });
 });
 
+describe('MarkdownPreview の目印へのリンク', () => {
+  it('文書の中の目印（<a id>・<a name>）は、アプリの画面の id とぶつからないよう前置き（user-content-）を付けて残し、#目印 のリンクで移れる', async () => {
+    mockApi().install();
+    const model = fake.monaco.editor.createModel(
+      ['[入れ方へ](#install) / [よくある質問へ](#faq) / [使い方へ](#使い方)', '', '<a id="install"></a>', '', '## 使い方', '', '<a name="faq"></a>', '', '本文'].join('\n'),
+      'markdown',
+    );
+    render(<MarkdownPreview sessionId="A" path="README.md" model={model as never} onOpenFile={vi.fn()} />);
+    await settle();
+    const doc = document.querySelector<HTMLElement>('.markdown-doc')!;
+    expect(doc.querySelector('[id="install"], [name="faq"]')).toBeNull();
+    const install = doc.querySelector('[id="user-content-install"]');
+    const faq = doc.querySelector('[name="user-content-faq"]');
+    expect(install).not.toBeNull();
+    expect(faq).not.toBeNull();
+    const scrolled: Element[] = [];
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this);
+    });
+    fireEvent.click(screen.getByText('入れ方へ'));
+    fireEvent.click(screen.getByText('よくある質問へ'));
+    fireEvent.click(screen.getByText('使い方へ'));
+    expect(scrolled).toEqual([install, faq, doc.querySelector('h2')]);
+  });
+});
+
 describe('UnsavedDialog（別のフォルダへ移る前の、保存していない変更の確認）', () => {
   type Props = ComponentProps<typeof UnsavedDialog>;
   const props = (over: Partial<Props> = {}): Props => ({

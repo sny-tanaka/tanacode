@@ -10,8 +10,9 @@ const RENDER_DELAY_MS = 150;
 
 // プレビューで描いてよいタグと属性（チャットの SANITIZE と同じ考え方で、明示の許可リストにする）。リポジトリの文書には HTML が
 // 混ざるので、チャットより少し広く、GitHub が描くもの（中央寄せ・折りたたみ・キー・上付きなど）は残す。
-// 見た目を偽るもの（style・class・id）、フォーム・ボタン・埋め込み・音や動画（外を読みにいく）は描かない。
-// class はコードの言語の印（language-*）だけ、入力欄はタスクリストのチェックボックスだけを、消毒のあとで残す
+// 見た目を偽るもの（style・class）、フォーム・ボタン・埋め込み・音や動画（外を読みにいく）は描かない。
+// class はコードの言語の印（language-*）だけ、入力欄はタスクリストのチェックボックスだけを、消毒のあとで残す。
+// 文書の中の目印（<a id>・<a name>）は、GitHub と同じく前置き（user-content-）を付けて残す（アプリの画面の id とぶつけない）
 const SANITIZE = {
   ALLOWED_TAGS: [
     ...['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'blockquote', 'pre', 'code'],
@@ -19,10 +20,13 @@ const SANITIZE = {
     ...['ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'],
     ...['a', 'img', 'figure', 'figcaption', 'details', 'summary', 'input'],
   ],
-  ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'width', 'height', 'start', 'align', 'colspan', 'rowspan', 'open', 'lang', 'dir', 'class', 'type', 'checked', 'disabled'],
+  ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'width', 'height', 'start', 'align', 'colspan', 'rowspan', 'open', 'lang', 'dir', 'class', 'type', 'checked', 'disabled', 'id', 'name'],
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
+  SANITIZE_NAMED_PROPS: true,
 };
+// 消毒が id・name に付ける前置き（DOMPurify の SANITIZE_NAMED_PROPS）
+const USER_CONTENT = 'user-content-';
 
 // 消毒のあとで、class はコードの言語の印だけ、入力欄はタスクリストのチェックボックス（押しても変わらない）だけにする
 function keepPreviewParts(root: DocumentFragment): void {
@@ -107,7 +111,10 @@ export function MarkdownPreview({ sessionId, path, model, onOpenFile }: Props) {
     if (!href) return;
     e.preventDefault();
     if (href.startsWith('#')) {
-      ref.current?.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ block: 'start' });
+      // 見出し（addHeadingIds の id）か、文書の中の目印（前置きを付けた id・name）へ移る
+      const name = CSS.escape(decodeURIComponent(href.slice(1)));
+      const prefixed = `${USER_CONTENT}${name}`;
+      ref.current?.querySelector(`[id="${name}"], [id="${prefixed}"], [name="${prefixed}"]`)?.scrollIntoView({ block: 'start' });
       return;
     }
     // 外部のページはブラウザで開く（メインプロセスが window.open を受けて開く）
