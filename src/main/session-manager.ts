@@ -111,6 +111,8 @@ const FIRST_PROMPT_TITLE_PRIORITY = 1;
 // ターンの終わり（result）のあと、そのターンの最後の応答が会話ログに出るのを待つ上限（出たら、チャットにターンの終わりを出す。設計書 7 節）。
 // result は会話ログより先に届くので、先に出すと実行中のツールをいったんエラーにしてしまう
 const TURN_END_WAIT_MS = 3000;
+// 会話ログに出た送った発言の uuid を覚えておく数（応答の前に終わったターンの終わりを、発言が出てから出すため）
+const MAX_ARRIVED_PROMPTS = 50;
 // 送った発言が Claude Code に受け付けられた知らせ（command_lifecycle）も会話ログの行も来ないまま、送信中として扱う上限
 const SENDING_TIMEOUT_MS = 30_000;
 // initialize の返事が無いまま、起動に時間がかかっていると知らせるまで（経過と標準エラーの末尾を出す。設計書 9 節の「起動が遅いときの案内」）
@@ -199,6 +201,10 @@ type Runtime = {
   // 今のターンの、本体の最後の行（応答か、ツールの結果）の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）。
   // ツールの切れ目でフックが止めたターンでは、最後の行はツールの結果（stream の user の行。uuid は会話ログの行と同じ。実測）
   lastTurnLine: string | null;
+  // 今のターンに取り込まれた（command_lifecycle の started）、送った発言の uuid（いちばん新しいもの）と、会話ログに出た送った発言の uuid
+  // （新しい 50 個まで）。応答の前に終わったターンの終わりを、その発言が会話ログに出てから出す
+  turnPrompt: string | null;
+  arrivedPrompts: Set<string>;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
   turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
@@ -1698,6 +1704,8 @@ export class SessionManager {
         aliveSince: null,
         turnOpen: false,
         lastTurnLine: null,
+        turnPrompt: null,
+        arrivedPrompts: new Set(),
         turnEnding: null,
         turnStarter: 'other',
         starterSeen: false,
@@ -2253,7 +2261,10 @@ export class SessionManager {
 
   // 送った発言の受け付けの知らせ。queued: 順番待ちに入った / started: ターンに取り込まれた / completed・cancelled・discarded: 終わった
   private handleLifecycle(id: string, rt: Runtime, message: CommandLifecycleMessage, past: boolean): void {
-    if (message.state === 'started') this.openTurn(id, rt, past);
+    if (message.state === 'started') {
+      this.openTurn(id, rt, past);
+      rt.turnPrompt = message.command_uuid;
+    }
     const unsent = rt.unsent.get(message.command_uuid);
     if (!unsent) return;
     if (message.state === 'queued' && unsent.state === 'sending') {
@@ -2273,6 +2284,7 @@ export class SessionManager {
     rt.turnOpen = true;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
     rt.lastTurnLine = null;
+    rt.turnPrompt = null;
     rt.starterSeen = false;
     if (!past) this.startProgress(id, rt);
     this.emitSessions();
@@ -2292,10 +2304,13 @@ export class SessionManager {
     if (result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length) {
       this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
     }
-    const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : null;
     // /clear・/compact のような Claude Code の中で済むコマンドは、モデルを呼ばずに result を返す（num_turns が 0。実測）。
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
+    // 応答の前に終わったターン（中断・失敗）は、result が会話ログの発言の行より先に届くことがある。先に終わりを出すと、チャットで
+    // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
+    const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
     rt.turnEnding = { interrupted, local, waitFor, timer: setTimeout(() => this.flushTurnEnd(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
     if (!waitFor) this.flushTurnEnd(id, rt);
@@ -2676,12 +2691,17 @@ export class SessionManager {
     // 送った発言が会話に出たら、送信中の表示から外す（発言の行、作業中に送ったものは queued_command の attachment）。
     // 発言を出してから外す（先に外すと、一瞬どちらにも出ない）
     const arrived = rt && !past ? sentUuidOf(entry) : null;
+    if (rt && arrived) {
+      rt.arrivedPrompts.add(arrived);
+      if (rt.arrivedPrompts.size > MAX_ARRIVED_PROMPTS) rt.arrivedPrompts.delete(rt.arrivedPrompts.values().next().value!);
+    }
     if (rt && arrived && rt.unsent.delete(arrived)) {
       this.emitQueue(id, rt);
       this.changed(id);
     }
-    // ターンの最後の応答が会話ログに出たら、待っていたターンの終わりを出す
-    if (rt?.turnEnding && entry.uuid && rt.turnEnding.waitFor === entry.uuid) this.flushTurnEnd(id, rt);
+    // ターンの最後の応答（応答の前に終わったターンは、始めた発言）が会話ログに出たら、待っていたターンの終わりを出す
+    const waitFor = rt?.turnEnding?.waitFor;
+    if (rt && waitFor && (entry.uuid === waitFor || arrived === waitFor)) this.flushTurnEnd(id, rt);
     if (changed) this.emitSessions();
   }
 
