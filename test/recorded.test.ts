@@ -5,7 +5,7 @@ import { isTranscriptEntry, toChatEvents } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import { transcriptPath } from '../src/main/claude-session';
 import { parseStatusLine } from '../src/main/statusline';
-import { FIXTURE_ROOT, checkChat, checkStatusLine, unreadableStreamLines } from './scenario';
+import { FIXTURE_ROOT, checkChat, checkStatusLine, fixtureLines, unreadableStreamLines } from './scenario';
 
 // 本物の Claude Code から取った控え（test/fixtures/claude-code/<バージョン>/）を、アプリの読み取りにかける。
 // 控えは、互換性の確認（npm run test:cli）に TANACODE_RECORD=1 を付けて取る（会話ログは basic.test.ts、statusLine は
@@ -24,6 +24,15 @@ it('stream-json の読めない行（知らない種類・形の違う行・JSON
     { type: 'control_response', response: { subtype: 'success', request_id: 1 } },
   ];
   expect(unreadableStreamLines(control.map((l) => JSON.stringify(l)))).toEqual({ malformed: 2, unknown: { 'control_request/brand_new_request': 1 } });
+});
+
+// 控えを取るとき（TANACODE_RECORD=1）、JSON でない行があっても止まらない（止まると、cli のテストの後片付けが動かない）。
+// その行も残し、控えのテストが読めない行として数える
+it('控えに残す行を選ぶ: 書いている途中の文・アプリが読まない大きな添付は除き、JSON でない行は残す', () => {
+  const stream = ['{"type":"stream_event","event":{"type":"message_start"}}', '{"type":"assistant"}', 'JSON でない'];
+  expect(fixtureLines('stream.jsonl', stream)).toEqual(['{"type":"assistant"}', 'JSON でない']);
+  const transcript = ['{"type":"attachment","attachment":{"type":"skill_listing"}}', '{"type":"user"}', '', '{壊れた'];
+  expect(fixtureLines('transcript.jsonl', transcript)).toEqual(['{"type":"user"}', '{壊れた']);
 });
 
 if (versions.length === 0) it.skip('控えがまだありません（TANACODE_RECORD=1 npm run test:cli で取る）', () => {});

@@ -36,9 +36,13 @@ describe(`Claude Code ${version} のターミナルモード`, () => {
   });
 
   afterAll(async () => {
-    if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['statusline.json']);
-    await run?.stop();
-    await api?.stop();
+    // 控えを書けなくても、claude とモックの API は止める
+    try {
+      if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['statusline.json']);
+    } finally {
+      await run?.stop();
+      await api?.stop();
+    }
   });
 
   it('ターミナルモードにすると、同じ会話を --resume して TUI を起動する。TUI は起動を終える（アプリの statusLine を動かす）', async () => {

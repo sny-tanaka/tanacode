@@ -65,9 +65,13 @@ describe(`Claude Code ${version}`, () => {
     });
 
     afterAll(async () => {
-      if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['transcript.jsonl', 'stream.jsonl']);
-      await run?.stop();
-      await api?.stop();
+      // 控えを書けなくても、claude とモックの API は止める（残ると、ほかのテストやジョブまで動き続ける）
+      try {
+        if (process.env.TANACODE_RECORD) run?.record(join('test', 'fixtures', 'claude-code', version), ['transcript.jsonl', 'stream.jsonl']);
+      } finally {
+        await run?.stop();
+        await api?.stop();
+      }
     });
 
     it('信頼していないフォルダでも、確かめずに起動して受け付ける（stream-json。決めたこと）。権限モードは起動したもの', async () => {

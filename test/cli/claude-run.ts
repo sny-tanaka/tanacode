@@ -22,17 +22,13 @@ import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
 import { TERMINAL_COMMAND_ENV, TERMINAL_SCRIPT_ENV, TERMINAL_SESSION_ENV, TERMINAL_SOCKET_ENV } from '../../src/main/terminal-bridge';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
-import { FIXTURE_ROOT } from '../scenario';
+import { FIXTURE_ROOT, fixtureLines } from '../scenario';
 import { FakePtyHost } from './fake-pty-host';
 
 // API キーでログインしたことにする（モックの API にしか送らない）
 const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
 // 状態を待つときに見直す間隔
 const POLL_MS = 50;
-
-// 控えの会話ログに残さない行（attachment の type）。システムプロンプトの全文やツール・スキルの一覧、
-// 動かした環境ごとの情報で、アプリは読まない
-const DROPPED_ATTACHMENTS = ['prompt_snapshot', 'skill_listing', 'agent_listing_delta', 'remote_session_change'];
 
 // 確かめる claude。TANACODE_CLAUDE_BIN が無ければ PATH の claude
 export const CLAUDE_BIN = process.env.TANACODE_CLAUDE_BIN || 'claude';
@@ -481,17 +477,9 @@ export class ClaudeRun {
   // 使い捨てのフォルダのパスは、決まったパス（FIXTURE_ROOT）に置き換える。途中で失敗したときは、そこまでにできたものだけを書く
   record(dir: string, files: ('transcript.jsonl' | 'statusline.json' | 'stream.jsonl')[]): void {
     mkdirSync(dir, { recursive: true });
-    const transcript = () => {
-      const lines = readOrNull(this.transcript())
-        ?.split('\n')
-        .filter((line) => line && !DROPPED_ATTACHMENTS.includes((JSON.parse(line) as TranscriptEntry).attachment?.type as string));
-      return lines?.length ? `${lines.join('\n')}\n` : null;
-    };
-    // stream-json の行は、書いている途中の文（stream_event）を除く（多く、アプリは進み具合にしか使わない）
-    const stream = () => {
-      const lines = this.streamLines().filter((line) => (JSON.parse(line) as { type?: string }).type !== 'stream_event');
-      return lines.length ? `${lines.join('\n')}\n` : null;
-    };
+    const joined = (lines: string[]) => (lines.length ? `${lines.join('\n')}\n` : null);
+    const transcript = () => joined(fixtureLines('transcript.jsonl', readOrNull(this.transcript())?.split('\n') ?? []));
+    const stream = () => joined(fixtureLines('stream.jsonl', this.streamLines()));
     const texts = { 'transcript.jsonl': transcript, 'statusline.json': () => this.statusLineText(), 'stream.jsonl': stream };
     for (const name of files) {
       const text = texts[name]();

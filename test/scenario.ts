@@ -16,6 +16,27 @@ import type { Step } from './cli/mock-api';
 // 控えに書くときの、使い捨てのフォルダのパス（実行のたびに変わるので決まったものに置き換える）
 export const FIXTURE_ROOT = '/tmp/tanacode-cli';
 
+// 控えの会話ログに残さない行（attachment の type）。システムプロンプトの全文やツール・スキルの一覧、
+// 動かした環境ごとの情報で、アプリは読まない
+const DROPPED_ATTACHMENTS = ['prompt_snapshot', 'skill_listing', 'agent_listing_delta', 'remote_session_change'];
+
+// 控え（TANACODE_RECORD=1。test/cli/claude-run.ts の record）に残す行を選ぶ。会話ログは、アプリが読まない大きな添付を除く。
+// stream-json の行は、書いている途中の文（stream_event。多く、アプリは進み具合にしか使わない）を除く。
+// JSON でない行は残す（止まると cli のテストの後片付けが動かない。残せば、控えのテストが読めない行として数える）
+export function fixtureLines(file: 'transcript.jsonl' | 'stream.jsonl', lines: string[]): string[] {
+  const dropped = (value: { type?: unknown; attachment?: { type?: unknown } }) =>
+    file === 'stream.jsonl' ? value.type === 'stream_event' : DROPPED_ATTACHMENTS.includes(value.attachment?.type as string);
+  return lines.filter((line) => {
+    if (!line) return false;
+    try {
+      const value: unknown = JSON.parse(line);
+      return !(value && typeof value === 'object' && dropped(value));
+    } catch {
+      return true;
+    }
+  });
+}
+
 export const PROMPT = '確認を始めてください';
 
 // ユーザーの設定（~/.claude/settings.json）。何か出力する hooks だけが会話ログに残る
