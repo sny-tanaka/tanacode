@@ -274,8 +274,10 @@ function isPermission(request: unknown): request is CanUseToolRequest {
 }
 
 // 使わないと分かっていて、黙って捨てる種類。時間で出る行（keep_alive。2.1.302 は 30 秒ごとに出すことがある）は、
-// 知らない種類として数えると、控えのテスト（unreadableStreamLines）がテストの長さしだいで落ちたり通ったりする
-const IGNORED_KINDS = new Set(['keep_alive']);
+// 知らない種類として数えると、控えのテスト（unreadableStreamLines）がテストの長さしだいで落ちたり通ったりする。
+// system/task_summary（ターンの途中の「今していること」の一言）と system/post_turn_summary（ターンごとのまとめ）は、
+// 2.1.302 が Remote Control のときに出す内部用（@internal）の行で、使わない
+const IGNORED_KINDS = new Set(['keep_alive', 'system/task_summary', 'system/post_turn_summary']);
 
 // system の知らせのうち、使うもの（使う項目の形を確かめる）と、種類だけを見るもの
 const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {

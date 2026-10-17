@@ -56,7 +56,7 @@ describe('StreamClient', () => {
     pipe.emit({ type: 'assistant', message: { content: [] }, parent_tool_use_id: null, uuid: 'a1' });
     pipe.emit({ type: 'brand_new' });
     pipe.emit({ type: 'brand_new' });
-    pipe.emit({ type: 'system', subtype: 'post_turn_summary' });
+    pipe.emit({ type: 'system', subtype: 'brand_new_notice' });
     pipe.emit('{壊れた');
     pipe.emit('[1,2]');
     pipe.emit({ no: 'type' });
@@ -66,7 +66,7 @@ describe('StreamClient', () => {
     ]);
     expect([...client.unknown]).toEqual([
       ['brand_new', 2],
-      ['system/post_turn_summary', 1],
+      ['system/brand_new_notice', 1],
     ]);
     expect(client.malformed).toBe(3);
     expect(warn).toHaveBeenCalledTimes(2);
@@ -77,6 +77,17 @@ describe('StreamClient', () => {
     client.start();
     pipe.emit({ type: 'keep_alive' });
     pipe.emit({ type: 'keep_alive' });
+    expect(got.messages).toEqual([]);
+    expect([...client.unknown]).toEqual([]);
+    expect(client.malformed).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('Remote Control のときに出る内部用の system の行（task_summary・post_turn_summary）は、使わないので、知らない種類として数えずに黙って捨てる', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'system', subtype: 'task_summary', summary: 'テストを直している', session_id: 's', uuid: 'u1' });
+    pipe.emit({ type: 'system', subtype: 'post_turn_summary', status_category: 'done', status_detail: '直した', needs_action: false, session_id: 's', uuid: 'u2' });
     expect(got.messages).toEqual([]);
     expect([...client.unknown]).toEqual([]);
     expect(client.malformed).toBe(0);
