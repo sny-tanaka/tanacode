@@ -176,7 +176,8 @@ describe('一覧と記録の読み取り', () => {
     app.manager.write('nope', 'x');
     app.manager.interrupt('nope');
     app.manager.resize('nope', 80, 24);
-    await expect(app.manager.submit('nope', 'x')).resolves.toBeUndefined();
+    // 送信だけは、黙って成功にしない（画面は、送れなかった発言を預かりに戻す）
+    await expect(app.manager.submit('nope', 'x')).rejects.toThrow('Claude Code が動いていません');
   });
 
   it('context: 動いている間はその場の集計、止めたあとは会話ログから集め直す', async () => {

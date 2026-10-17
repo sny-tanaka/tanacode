@@ -1491,7 +1491,8 @@ export class SessionManager {
   // priority: later はターンが終わってから別のターンにする（親からの指示・知らせ・予約）。省くと、作業中なら今のターンに取り込まれる
   submit(id: string, rawText: string, attachments: string[] = [], pastes: string[] = [], priority?: 'later'): Promise<void> {
     const rt = this.runtimes.get(id);
-    if (!rt || (!rt.process && !rt.restarting)) return Promise.resolve();
+    // claude がいない（終わった直後など。画面の状態が遅れて届く）。黙って成功にせず、失敗を返す（画面は、送れなかった発言を預かりに戻す）
+    if (!rt || (!rt.process && !rt.restarting)) return Promise.reject(new Error(t('main.send.notRunning')));
     // ターミナルモードの間は、人が TUI で打つ（チャットからは送らない）
     if (rt.terminal || rt.switching) return Promise.reject(new Error(t('main.send.terminalMode')));
     const run = async () => {

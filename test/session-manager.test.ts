@@ -57,6 +57,16 @@ describe('起動と送信', () => {
     expect(app.progress.get(other.id)).toBeNull();
   });
 
+  it('claude が動いていないとき（終わった直後など）に送ると、黙って成功にせず、動いていないことで失敗する（画面は預かりに戻す）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.exit(1);
+    await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
+    await expect(app.manager.submit(id, 'おそい')).rejects.toThrow('Claude Code が動いていません');
+    await expect(app.manager.submit('nope', 'x')).rejects.toThrow('Claude Code が動いていません');
+    expect(pipe.prompts).toEqual([]);
+  });
+
   it('発言は user の行 1 つで送る。本文の制御文字を除き、画像は image のブロック、札は pasted_content に入れる', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

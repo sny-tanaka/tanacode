@@ -81,7 +81,8 @@ describe('submit', () => {
     pipe.exit(0);
     await expect(sending).rejects.toThrow('Claude Code');
     expect(pipe.prompts).toEqual([]);
-    await expect(app.manager.submit(id, 'ふたつめ')).resolves.toBeUndefined();
+    // 終わったあとの送信も、黙って成功にしない（画面は預かりに戻す）
+    await expect(app.manager.submit(id, 'ふたつめ')).rejects.toThrow('Claude Code が動いていません');
     expect(pipe.prompts).toEqual([]);
   });
 
