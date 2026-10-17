@@ -128,6 +128,9 @@ export type HookRun = {
   // 止めた理由・Claude に渡した内容など
   message: string;
   toolUseId: string | null;
+  // 何も出力しなかったフック（stream の hook_response から作ったもの）の、Claude Code の hook_id。1 回の実行ごとに違うので、
+  // 画面はこれで同じ実行の重なりを見分ける（コマンドが無いので、ほかの欄では見分けられない）
+  hookId?: string;
 };
 
 // チャットに載せる出力の上限（全文はデバッグ用ターミナルか会話ログで見る）

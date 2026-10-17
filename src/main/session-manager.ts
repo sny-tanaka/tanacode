@@ -170,7 +170,7 @@ type Runtime = {
   // 書き込みで何度か知らされるので、同じ書き込みを数え直さないため）
   permissionAt: number | null;
   // 何も出力しなかったフック（hook_response）をチャットに出すための控え（quietHook）。hookStarts: 始まった時刻（hook_id → 時刻）/
-  // streamTools: stream で見たツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
+  // streamTools: stream で見た、結果がまだ来ていないツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
   // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフック（ツールの呼び出しの ID → イベント）
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
@@ -2234,6 +2234,8 @@ export class SessionManager {
         if (user.isReplay && user.origin?.kind === 'human' && !user.parent_tool_use_id) this.openTurn(id, rt, past);
         // 本体のツールの結果は、ターンの最後の行になりうる（ツールの切れ目でフックが止めたとき）
         if (!user.isReplay && !user.parent_tool_use_id && rt.turnOpen && user.uuid && isToolResult(user)) rt.lastTurnLine = user.uuid;
+        // 結果が来たツールの呼び出しは、フックを付ける先の候補から外す（quietHook）
+        if (!past) this.toolsFinished(rt, user);
         return;
       }
       case 'result':
@@ -2468,8 +2470,10 @@ export class SessionManager {
   // 何も出力しなかったフックを、チャットに出す（会話ログに残らないため。--include-hook-events の hook_response で分かる）。
   // 何かを出力したフック（アプリのフックは、いつも suppressOutput を書く。hook-output.ts）と失敗したフックは会話ログに残り、Stop は
   // 出力が無くても会話ログの要約（stop_hook_summary）に載るので、ここでは出さない（2.1.302 で実測）。
-  // hook_response にはコマンドもツールの呼び出しの ID も無いので、ツールの前後のフックは、stream で見た同じ名前のいちばん新しい
-  // 呼び出しに付け、そのカードが会話ログからチャットに出るまで待たせる（stream の方が先に届く）
+  // hook_response にはコマンドもツールの呼び出しの ID も無いので、ツールの前後のフックは、stream で見た同じ名前の、結果がまだ来て
+  // いない呼び出しに付け、そのカードが会話ログからチャットに出るまで待たせる（stream の方が先に届く。PostToolUse の返事も、
+  // そのツールの結果より先に届く。2.1.302 で実測）。同じ名前の呼び出しが並んでいて 1 つに決められないときは、どのカードにも付けず、
+  // ツールに付かない行として出す（取り違えて別のカードに付けない）
   private quietHook(id: string, rt: Runtime, message: HookResponseMessage): void {
     const started = rt.hookStarts.get(message.hook_id);
     rt.hookStarts.delete(message.hook_id);
@@ -2478,9 +2482,10 @@ export class SessionManager {
     if (message.hook_event === 'Stop' || message.outcome !== 'success' || output) return;
     const prefix = `${message.hook_event}:`;
     const toolName = TOOL_HOOK_EVENTS.has(message.hook_event) && message.hook_name.startsWith(prefix) ? message.hook_name.slice(prefix.length) : null;
-    const tool = toolName ? [...rt.streamTools].reverse().find((t) => t.name === toolName) : undefined;
+    const candidates = toolName ? rt.streamTools.filter((t) => t.name === toolName) : [];
     // サブエージェントの中のツールには、チャットにカードが無い
-    if (tool?.sub) return;
+    if (candidates.length > 0 && candidates.every((t) => t.sub)) return;
+    const tool = candidates.length === 1 ? candidates[0] : undefined;
     const run: HookRun = {
       event: message.hook_event,
       name: message.hook_name,
@@ -2492,6 +2497,7 @@ export class SessionManager {
       stderr: '',
       message: '',
       toolUseId: tool?.id ?? null,
+      hookId: message.hook_id,
     };
     const event: ChatEvent = { type: 'hook', id: `hook:${message.hook_id}`, run };
     if (tool && !rt.shownTools.has(tool.id)) {
@@ -2499,6 +2505,14 @@ export class SessionManager {
       return;
     }
     this.pushEvents(id, [event]);
+  }
+
+  // stream でツールの結果が来た。その呼び出しを、フックを付ける先の候補（streamTools）から外す
+  private toolsFinished(rt: Runtime, user: UserMessage): void {
+    const content = user.message.content;
+    if (!Array.isArray(content)) return;
+    const done = new Set(content.flatMap((block) => (block.type === 'tool_result' && typeof block.tool_use_id === 'string' ? [block.tool_use_id] : [])));
+    if (done.size > 0) rt.streamTools = rt.streamTools.filter((t) => !done.has(t.id));
   }
 
   // 会話ログからツールのカードをチャットに出した。そのツールに付けるために待たせていたフックを返す

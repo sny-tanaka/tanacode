@@ -117,7 +117,10 @@ function withoutRetrying(items: ChatItem[]): ChatItem[] {
   return items.some((i) => i.kind === 'error' && i.retrying) ? items.filter((i) => !(i.kind === 'error' && i.retrying)) : items;
 }
 
-const sameRun = (a: HookRun, b: HookRun) => a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
+// 同じ実行の記録か（Stop の要約と出力のあった記録など、同じ実行が 2 つの形で届く）。何も出力しなかったフックは hook_id で見分ける
+// （1 回ずつ別の実行。コマンドが無いので、きっかけとツールが同じでも重ねない）
+const sameRun = (a: HookRun, b: HookRun) =>
+  a.hookId !== undefined || b.hookId !== undefined ? a.hookId === b.hookId : a.event === b.event && a.command === b.command && a.toolUseId === b.toolUseId;
 
 // hooks はツールのカードに付ける。ツールに付かないものは、直前の同じきっかけの hooks とまとめる。
 // Stop の要約と出力のあった記録は同じ実行なので、重ねない（出力のある方を残す）

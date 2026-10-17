@@ -623,6 +623,40 @@ describe('何も出力しなかったフック（--include-hook-events の hook_
     expect(hooks(id)[1]).toMatchObject({ event: 'PostToolUse', toolUseId: 'toolu_1', durationMs: null });
   });
 
+  it('同じ名前のツールを並べて呼んだときは、どの呼び出しのものか決められないフックをカードに付けず、ツールに付かない行として出す。結果が来て 1 つに決まれば、そのカードに付ける', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    const a = line.toolUse('toolu_a', 'Read', { file_path: '/a' });
+    const b = line.toolUse('toolu_b', 'Read', { file_path: '/b' });
+    const resultA = line.toolResult('toolu_a', 'a');
+    const resultB = line.toolResult('toolu_b', 'b');
+    // Claude Code 2.1.302 で Read を 2 つ並べて呼んだときの順番（実測）。PostToolUse の返事は、そのツールの結果より先に届く
+    pipe.emit(stream.assistant(a, app.claudeId(id)));
+    pipe.emit(started('h1', 'PreToolUse:Read'));
+    pipe.emit(stream.assistant(b, app.claudeId(id)));
+    pipe.emit(started('h2', 'PreToolUse:Read'));
+    pipe.emit(response('h1', 'PreToolUse:Read'));
+    pipe.emit(response('h2', 'PreToolUse:Read'));
+    pipe.emit(started('h3', 'PostToolUse:Read'));
+    pipe.emit(started('h4', 'PostToolUse:Read'));
+    pipe.emit(response('h3', 'PostToolUse:Read'));
+    pipe.emit(stream.user(resultB));
+    pipe.emit(response('h4', 'PostToolUse:Read'));
+    pipe.emit(stream.user(resultA));
+    app.append(id, a, b, resultB, resultA);
+    await app.waitFor('フック', () => hooks(id).length === 4);
+    expect(hooks(id).map((r) => [r.name, r.toolUseId, r.hookId])).toEqual([
+      ['PreToolUse:Read', null, 'h1'],
+      ['PreToolUse:Read', null, 'h2'],
+      ['PostToolUse:Read', null, 'h3'],
+      ['PostToolUse:Read', 'toolu_a', 'h4'],
+    ]);
+    // 付けるものは、そのカードが出てから
+    const kinds = app.events(id).map((e) => (e.type === 'hook' ? `hook:${e.run.hookId}` : e.type === 'tool-use' ? `tool:${e.id}` : e.type));
+    expect(kinds.indexOf('hook:h4')).toBeGreaterThan(kinds.indexOf('tool:toolu_a'));
+  });
+
   it('ツールに付かないフック（発言のとき・起動のとき）は、そのまま出す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

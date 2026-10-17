@@ -107,6 +107,24 @@ describe('チャットの行', () => {
     ]);
   });
 
+  it('hooks: 何も出力しなかったフック（hook_id のあるもの）は、1 回ずつ別の実行なので重ねない（カードに付けるものも、ツールに付かない行も）', () => {
+    const quiet = (hookId: string, toolUseId: string | null) => hook({ event: 'PreToolUse', name: 'PreToolUse:Read', command: null, toolUseId, hookId } as Partial<HookRun>);
+    const chat = run([
+      { type: 'tool-use', id: 't', name: 'Read', target: 'a', input: 'a' },
+      { type: 'hook', id: 'hook:q1', run: quiet('q1', 't') },
+      { type: 'hook', id: 'hook:q2', run: quiet('q2', 't') },
+      // 並べて呼んだ同じ名前のツールのもの（どの呼び出しのものか決められない）
+      { type: 'hook', id: 'hook:q3', run: quiet('q3', null) },
+      { type: 'hook', id: 'hook:q4', run: quiet('q4', null) },
+      // 同じ実行が重ねて届いたもの（同じ hook_id）は重ねない
+      { type: 'hook', id: 'hook:q4', run: quiet('q4', null) },
+    ]);
+    expect(chat.items.map((i) => (i.kind === 'tool' ? `tool:${i.hooks?.map((h) => h.hookId).join(',')}` : i.kind === 'hook' ? `hook:${i.runs.map((r) => r.hookId).join(',')}` : i.kind))).toEqual([
+      'tool:q1,q2',
+      'hook:q3,q4',
+    ]);
+  });
+
   it('hooks: 質問のフック（アプリが足したもの）が AskUserQuestion に答えた記録（コマンドの無い PermissionRequest）は出さない', () => {
     const decided = (toolUseId: string, command: string | null = null) => ({ type: 'hook' as const, id: `h-${toolUseId}`, run: hook({ event: 'PermissionRequest', name: 'PermissionRequest', command, toolUseId } as Partial<HookRun>) });
     const chat = run([

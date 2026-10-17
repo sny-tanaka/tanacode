@@ -783,7 +783,7 @@ Claude も、自分のセッションに予約を入れられます（MCP のツ
 - PreToolUse / PostToolUse の hooks は、そのツールのカードの下に出します。コマンド・出力・終了コード・所要時間が見られます。
 - Stop や SessionStart など、ツールに付かない hooks は、続いているものをまとめて、畳んだ 1 行（例: フック 3件 · Stop · 失敗 1 · 1秒）で出します。クリックで開きます。
 - ツールを止めた hooks（exit 2 など）は赤で、理由と一緒に出します。
-- 何も出力しなかった hooks も出します。Claude Code がコマンドを知らせないので、出来事の名前（「PreToolUse:Bash」など）で出します。同じツールで、何も出力しなかった hooks が 2 つ以上動いても、1 つにまとまります。
+- 何も出力しなかった hooks も出します。Claude Code がコマンドを知らせないので、出来事の名前（「PreToolUse:Bash」など）で出します。Claude が同じツールを並べて呼んだとき（Read を 2 つ同時に など）は、どの呼び出しの hooks か分からないことがあり、そのときはツールのカードに付けず、ツールに付かない行として出します。
 - tanacode は、起動する Claude Code に Bash の PreToolUse の hooks を 1 つ足します。`git worktree remove --force`・`git branch -D`（`--delete --force` も）・worktree の `rm -rf`（`.claude/worktrees` を指すもの。worktree の中では `.`・`..`・`*` も）のときだけ、許可の確認を出させます。止めはしないので、許可すればそのまま動きます。この hooks はチャットには出しません。
 
 ## エディタ
