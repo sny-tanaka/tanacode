@@ -1299,6 +1299,39 @@ describe('JavaScript の実行（evaluate）', () => {
     expect(await call('evaluate', { expression: 'x' })).toEqual(textResult('Execution failed: Uncaught Error: 新しいエラー', true));
   });
 
+  it('先頭で比べる文は、式の意味を変えない（最後の値・ブロックとラベル・行末の注釈・宣言だけ・else・use strict・#!）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    runIn(page, { url: 'http://localhost:3000/a', title: '題' });
+    const run = async (expression: string) => {
+      const result = await call('evaluate', { expression });
+      return result.isError ? textOf(result) : textOf(result);
+    };
+    expect(await run('{a:1}')).toBe('1');
+    expect(await run('1 // 行末の注釈')).toBe('1');
+    expect(await run('var x = 1;')).toBe('undefined');
+    // else で始まる式は、比べる文の if の続きにならない（式だけで動かしたときと同じく、書き方の誤り）
+    expect(await run('else document.title')).toMatch(/^Execution failed: Uncaught SyntaxError/);
+    // 'use strict' で始まる式は、strict のまま動く（宣言していない名前への代入はエラー）
+    expect(await run("'use strict';\nundeclared = 1;\n'動いた'")).toMatch(/^Execution failed: Uncaught ReferenceError/);
+    expect(await run('"use strict"; document.title')).toBe('"題"');
+    // #! の行（hashbang）で始まる式も動く。比べる文は、その行のあとに置く（行の終わりは \n・\r・\u2028・\u2029 のどれでも）
+    expect(await run('#!/usr/bin/env node\ndocument.title')).toBe('"題"');
+    expect(await run('#!x\rdocument.title')).toBe('"題"');
+    expect(await run('#!x\u2028document.title')).toBe('"題"');
+    expect(await run('#!だけ')).toBe('undefined');
+  });
+
+  it('#! の行の中に、比べる文が入ってしまわない（移った先では、#! の次の行の式も動かさない）', async () => {
+    const { call, open } = setup();
+    const page = open('http://localhost:3000/a');
+    for (const expression of ['#!x', '#!x\rdocument.title', '#!x\r\ndocument.title', '#!x\u2029document.title']) {
+      page.url = 'http://localhost:3000/a';
+      runIn(page, { url: 'https://evil.example/', title: '外のページ' });
+      expect(await call('evaluate', { expression })).toEqual(NOT_RUN('https://evil.example'));
+    }
+  });
+
   it('同じオリジンの中で移ったあとは動かす。文の並びも、最後の値を返す（ページで動かすときと同じ）', async () => {
     const { call, open } = setup();
     const page = open('http://localhost:3000/a');

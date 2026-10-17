@@ -1552,10 +1552,18 @@ function originShown(url: string): string {
 
 // evaluate で動かすスクリプト。先頭で、今のページのオリジンを確かめたものと比べ、違えば mark を投げる。
 // location とその protocol・host は、ページのスクリプトから書き換えられない（[LegacyUnforgeable]。同じ名前の let も置けない）。
-// URL の origin ではなく protocol と host で比べるのは、CSP の sandbox のページで "null" にならないように。
-// 比べる文は改行で区切り、式は手を入れずに続ける（文の並びも、最後の値を返す。ページで動かすときと同じ）
+// location.origin で比べても同じ（CSP の sandbox のページでも URL のオリジン。"null" になるのは self.origin。Electron 44.7 で確かめた）。
+// 比べる文はブロックで包み、改行で区切って、式は手を入れずに続ける（文の並びも最後の値を返す。else で始まる式が、比べる文の if の続きにならない）。
+// 式の行番号は、エラーのスタックで 1 つずれる。
+// - #! の行（hashbang）はスクリプトの頭にしか書けないので、その行だけ比べる文より前に置き、必ず改行を足す
+//   （行の終わりは \n・\r・\u2028・\u2029。足さないと、比べる文が #! の行の続きになって、効かなくなる）
+// - 'use strict' で始まる式は、比べる文の前に置くと directive が効かなくなるので、頭にも 'use strict'; を足す（全体が strict。式だけで動かすのと同じ）
 function guardedScript(origin: string, mark: string, expression: string): string {
-  return `if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(mark)};\n${expression}`;
+  const hashbang = /^#![^\n\r\u2028\u2029]*/.exec(expression)?.[0] ?? '';
+  const body = expression.slice(hashbang.length);
+  const strict = /^\s*(['"])use strict\1/.test(body) ? "'use strict';" : '';
+  const check = `{ if (location.protocol + '//' + location.host !== ${JSON.stringify(origin)}) throw ${JSON.stringify(mark)}; }`;
+  return `${hashbang ? `${hashbang}\n` : ''}${strict}${check}\n${body}`;
 }
 
 // evaluate の先頭の比べる文が、確かめたページから別のオリジンへ移っていたときに投げる目印（呼び出しごとの乱数を足して使う）
