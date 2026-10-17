@@ -6,7 +6,7 @@ import { coverage } from './vitest.coverage';
 export default defineConfig({
   resolve: { alias: { '@shared': resolve('src/shared') } },
   // アイコン（tsx）を描いて確かめるテストがある。tsconfig と同じ、import 不要の JSX にする
-  esbuild: { jsx: 'automatic' },
+  oxc: { jsx: { runtime: 'automatic' } },
   // 画面のテスト（test/renderer）は、ファイルの先頭の @vitest-environment jsdom で DOM の代わりを使う
   // clean-env.ts: tanacode や Claude Code の中のシェルで流しても、そのセッションの環境変数（CLAUDE_CONFIG_DIR・TANACODE_*）を持ち込まない
   test: { include: ['test/*.test.ts', 'test/renderer/*.test.{ts,tsx}'], setupFiles: ['test/clean-env.ts'], coverage: coverage('unit') },

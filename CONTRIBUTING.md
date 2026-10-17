@@ -1619,7 +1619,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
 - 依存の更新の PR は、Dependabot が週 1 回（月曜の朝）作ります。設定は `.github/dependabot.yml`。
   - 出てから 7 日たったバージョンだけにします（公開の直後に乗っ取られたパッケージを掴まないため）。
   - 開発の道具のマイナー・パッチは、1 本の PR にまとめます。アプリに入るもの（electron・画面にまとめる依存・`dependencies`）は、1 つずつの PR にします。中身を見てからマージしてください。
-  - ほかの依存の対応の範囲に縛られるものは、`ignore` で止めています（`@types/node` は Node に合わせて 24 系まで。vite と `@vitejs/plugin-react` のメジャーは、electron-vite が対応するまで）。縛りが外れたら、`ignore` から外します。
+  - ほかの依存の対応の範囲に縛られるものは、`ignore` で止めています（`@types/node` は Node に合わせて 24 系まで）。縛りが外れたら、`ignore` から外します。
 - 脆弱性の警告と、その修正の PR は、これとは別に Dependabot から届きます。対応の手順は `/security`。Chromium の脆弱性は Dependabot では警告されないので、Electron のリリース（https://releases.electronjs.org/）で、修正の取り込み（Backported fixes）を確かめます。
 - npm 11 は、インストールのときに動くスクリプトを、`package.json` の `allowScripts` に書いたものだけに絞ろうとしています（今は警告だけ）。node-pty（ネイティブのモジュール）と esbuild は許し、Windows の配布にだけ使う electron-winstaller は止めています。スクリプトを持つ依存が増えて警告が出たら、中身を確かめてから `npm approve-scripts <パッケージ> --no-allow-scripts-pin` で足します（バージョンを固定しないのは、Dependabot の更新のたびに書き直さずに済むようにするため）。
 
