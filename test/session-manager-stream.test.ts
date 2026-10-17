@@ -194,15 +194,15 @@ describe('ターンの終わりの順番', () => {
     expect(app.manager.stateOf(id)).toBe('idle');
     // 完了の知らせは繰り返さない
     expect(app.turnsCompleted).toHaveLength(completed);
-    // 作業中に送って、ターンの途中に取り込まれた発言（会話ログには queued_command の attachment で出る）も同じ
+    // 作業中に送って、ターンの途中に取り込まれた発言（会話ログには queued_command の attachment で出る）・失敗で終わったターンも同じ
     const queued = await app.send(id, 'これも');
     pipe.emit(stream.lifecycle(queued, 'started'));
-    pipe.emit(stream.interrupted(app.claudeId(id), 'aborted_streaming'));
+    pipe.emit(stream.result(app.claudeId(id), { subtype: 'error_during_execution', is_error: true, terminal_reason: 'model_error', errors: ['overloaded'] }));
     await app.waitFor('時間切れ', () => turnEnds(id) === 3);
     const again = app.turnsCompleted.length;
     app.append(id, { type: 'attachment', uuid: 'att-1', attachment: { type: 'queued_command', prompt: 'これも', source_uuid: queued } });
     await app.waitFor('もう一度のターンの終わり', () => turnEnds(id) === 4);
-    expect(app.events(id).at(-1)).toEqual({ type: 'turn-end', interrupted: true });
+    expect(app.events(id).at(-1)).toEqual({ type: 'turn-end' });
     expect(app.turnsCompleted).toHaveLength(again);
   });
 
