@@ -164,7 +164,7 @@ export class PreviewWindows {
         ? ({ webContents: contents, ...options } as BrowserWindowConstructorOptions)
         : { ...options, webPreferences: { ...POPUP_PREFERENCES, session: source.session } },
     );
-    this.adopt(source, win, url);
+    this.adopt(source, win);
     if (!contents && !win.isDestroyed()) void win.loadURL(url);
     // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）。
     // tanacode を使っていない（ほかのアプリにフォーカスがある）ときは、tanacode に戻るまで出さない（ほかのアプリの前に出さない）
@@ -178,8 +178,8 @@ export class PreviewWindows {
     return win.webContents;
   }
 
-  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる。url: 開く先
-  private adopt(source: WebContents, win: BrowserWindow, url: string): void {
+  // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる
+  private adopt(source: WebContents, win: BrowserWindow): void {
     if (win.webContents.session !== source.session) {
       win.destroy();
       return;
@@ -192,7 +192,7 @@ export class PreviewWindows {
     list.add(win);
     this.popups.set(root, list);
     win.on('closed', () => list.delete(win));
-    showOrigin(win, url);
+    showOrigin(win);
     // 開いたあとにページが動かす・大きさを変えるとき（window.moveTo・resizeTo など）も、画面の中に詰める。
     // bounds は、Electron の説明（content bounds）と違い、枠を含むウインドウの位置と大きさ（ページの outerWidth・screenX と同じ。
     // Electron の既定の動きも setBounds に渡す。44.7 で確かめた）。setContentBounds に渡すと、resizeBy(0, 0) のたびに題の帯の分だけ大きくなる
@@ -248,11 +248,12 @@ function clamp(value: number, min: number, max: number): number {
 // 別ウインドウにはアドレス欄が無いので、題に今のページのオリジンを添える（ログインの窓が、どのサイトのものか分かるように）。
 // オリジンの無いページ（空のページ about:blank。中身は開いたページが書ける）は、about:blank と、中身を書けるオリジン（メインフレームのオリジン。
 // 空のページでは開いたページのもの）を添える。ページが書いた題だけを、サイトの題のように出さない。
-// 作った直後（URL も題もまだ空。Electron の既定の題はアプリ名）から付ける。url: 開く先（URL がまだ空の間に使う）
-function showOrigin(win: BrowserWindow, url: string): void {
+// 作った直後（URL も題もまだ空。Electron の既定の題はアプリ名）から付ける。
+// 使うのは、読み込みが確定した URL だけ（開く先の URL は使わない）。読み込みが確定しない先（204 の応答・ダウンロード）では、URL は空のままで、
+// 中身は開いたページが書ける最初の空の文書のままなので（Electron 44.7 で確かめた）
+function showOrigin(win: BrowserWindow): void {
   const where = () => {
-    const now = win.webContents.getURL() || url;
-    const origin = originOf(now);
+    const origin = originOf(win.webContents.getURL());
     if (origin) return origin;
     let writer: string | null = null;
     try {

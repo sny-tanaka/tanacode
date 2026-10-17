@@ -17,7 +17,8 @@ import { E2EApp } from './app';
 // - Claude の操作で、許す先の外（[::1]）のポップアップは開かない
 // - ポップアップがさらに開くポップアップも、同じ守りの別ウインドウで開く
 // - 1 つのタブから開いておけるのは 5 個まで（続けて開いても）。タブを閉じると、そのタブから開いた別ウインドウだけが閉じる
-// - 空のページの別ウインドウの題には、about:blank と、中身を書いた開いたページのオリジンが付く（ページが書いた題だけ・アプリ名にならない）
+// - 空のページの別ウインドウの題には、about:blank と、中身を書いた開いたページのオリジンが付く（ページが書いた題だけ・アプリ名にならない）。
+//   読み込みが確定しない（204 の）先を開いたものも、開く先のオリジンではなく、中身を書いた開いたページのオリジンが付く
 // - 空のページを、開いたページが移すときも守りが効く: 人の操作でも data:・blob: へは移れない。Claude の操作では、許す先の外へ移れない（止めたことを Claude に伝える）
 // - 裏で起動しているとき、ページが window.focus() を呼んでも、別ウインドウは出ず、フォーカスも移らない
 // - 別ウインドウの中身の設定（getLastWebPreferences）が守りの値（sandbox・contextIsolation が有効で、Node・webview・preload が無い）
@@ -40,6 +41,7 @@ type PopupWindow = {
     isDestroyed(): boolean;
     isVisible(): boolean;
     isFocused(): boolean;
+    getTitle(): string;
     webContents: { getURL(): string; isLoading(): boolean; executeJavaScript(code: string, userGesture?: boolean): Promise<unknown> };
   };
   starts: string[];
@@ -103,7 +105,13 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
 
   beforeAll(async () => {
     // 許す先の外（[::1]。許す先の既定 localhost・127.0.0.1・*.local に当たらない）
-    outsideServer = createServer((_req, res) => {
+    outsideServer = createServer((req, res) => {
+      // 中身の無い応答（204）。読み込みが確定せず、別ウインドウの中身は、開いたページが書ける空の文書のまま
+      if (req.url === '/no-content') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
       outsideRequests += 1;
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>外のログイン</title>');
@@ -224,7 +232,7 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
       const entry = (globalThis as { __popupWindows?: PopupWindow[] }).__popupWindows?.[i];
       if (!entry || entry.win.isDestroyed()) return null;
       const { win, starts, console } = entry;
-      return { url: win.webContents.getURL(), loading: win.webContents.isLoading(), starts: [...starts], console: [...console], visible: win.isVisible(), focused: win.isFocused() };
+      return { url: win.webContents.getURL(), loading: win.webContents.isLoading(), starts: [...starts], console: [...console], visible: win.isVisible(), focused: win.isFocused(), title: win.getTitle() };
     }, index);
   // index 番めに作られた別ウインドウの中で、code を動かす
   const runInPopup = (index: number, code: string) =>
@@ -356,21 +364,47 @@ describe('アプリ内ブラウザのページが開くポップアップ', () =
     for (const index of [3, 10, 11]) expect(await popupState(index)).toMatchObject({ visible: false, focused: false });
   });
 
+  it('読み込みが確定しない（204 の）許す先の外を開いた別ウインドウに、開いたページが題を書いても、その外のオリジンを題に出さない', async () => {
+    await runIn(
+      '/',
+      `window.noContent = window.open('${outside}/no-content', 'no-content', 'width=480,height=400'); window.noContent.document.body.innerHTML = '<p>書いた画面</p>'; window.noContent.document.title = 'ログイン'; 'ok'`,
+    );
+    await expect.poll(popups, { timeout: 10_000 }).toHaveLength(15);
+    // 204 の読み込みが終わって（確定せずに）から見る
+    await expect
+      .poll(
+        async () => {
+          const state = await popupState(14);
+          return state && { tried: state.starts.includes(`${outside}/no-content`), loading: state.loading, url: state.url };
+        },
+        { timeout: 10_000 },
+      )
+      .toEqual({ tried: true, loading: false, url: '' });
+    // 中身は、開いたページが書いたもののまま
+    expect(await runIn('/', 'window.noContent.document.body.textContent')).toBe('書いた画面');
+    const title = (await popupState(14))?.title;
+    expect(title).toBe(`ログイン — about:blank (${origin})`);
+    expect(title).not.toContain(outside);
+    // 開いておける数（1 つのタブから 5 個まで）に当たらないよう閉じる
+    await runIn('/', 'window.noContent.close(); "closed"');
+    await expect.poll(async () => (await popups())[14]?.closed, { timeout: 10_000 }).toBe(true);
+  });
+
   it('空のページを開いてから許す先の外へ移すポップアップを Claude が押すと、別ウインドウは開くが、移るのを止めて Claude に伝える（空のページのまま）', async () => {
     await app.send(BLANK_OUT);
     await app.byText('.chat-list', BLANK_BLOCKED).waitFor();
     const clicked = app.api.toolResults.find((r) => r.startsWith('Clicked: button#blank-outside'));
     expect(clicked).toContain('Opened a popup window outside the in-app browser (about:blank).');
     expect(clicked).toContain(`Blocked an attempt to move a popup window opened by the page to a page not allowed for Claude (${outside}).`);
-    expect(await popups()).toHaveLength(15);
+    expect(await popups()).toHaveLength(16);
     // ページは移ろうとしたが、止めたので、空のページのまま（Electron から見ても、開いたページから見ても）。許す先の外には通信していない
-    await expect.poll(async () => (await popupState(14))?.loading, { timeout: 10_000 }).toBe(false);
-    expect((await popupState(14))?.starts).toContain(`${outside}/`);
-    expect((await popupState(14))?.url).toBe('about:blank');
+    await expect.poll(async () => (await popupState(15))?.loading, { timeout: 10_000 }).toBe(false);
+    expect((await popupState(15))?.starts).toContain(`${outside}/`);
+    expect((await popupState(15))?.url).toBe('about:blank');
     expect(await runIn('/', 'window.msal2.location.href')).toBe('about:blank');
     expect(outsideRequests).toBe(0);
     await runIn('/', 'window.msal2.close(); "closed"');
-    await expect.poll(async () => (await popups())[14], { timeout: 10_000 }).toEqual({ ...GUARDED, closed: true });
+    await expect.poll(async () => (await popups())[15], { timeout: 10_000 }).toEqual({ ...GUARDED, closed: true });
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

@@ -500,13 +500,25 @@ describe('新しいウインドウ', () => {
     expect(win.title).toBe('about:blank');
   });
 
-  it('http(s) のページを開く別ウインドウも、作った直後から、開く先のオリジンを題にする', () => {
+  it('http(s) のページを開く別ウインドウでも、読み込みが確定するまでは、開く先のオリジンを題に出さない（中身は、開いたページが書ける空の文書のまま）', () => {
     const { tab, popup } = setup();
     const guest = tab();
+    // Electron 44.7 の本物では、作った直後と、読み込みが確定しない先（204・ダウンロード）のあとは、URL が空で、メインフレームのオリジンは開いたページのもの
     const contents = new FakeContents('window', guest.session);
     contents.url = '';
+    contents.mainFrame.origin = 'https://opener.example.test';
     const result = guest.open('https://login.example.test/authorize?state=secret', 'new-window', 'width=480,height=400') as { createWindow: (options: Record<string, unknown>) => unknown };
     result.createWindow({ webContents: contents });
-    expect(popup.made.at(-1)!.title).toBe('https://login.example.test');
+    const win = popup.made.at(-1)!;
+    expect(win.title).toBe('about:blank (https://opener.example.test)');
+    // 開いたページが空の文書に題を書いても、開く先のオリジンは出さない
+    win.emit('page-title-updated', { preventDefault: vi.fn() }, 'ログイン');
+    expect(win.title).toBe('ログイン — about:blank (https://opener.example.test)');
+    // 確定したら、そのページのオリジン
+    contents.url = 'https://login.example.test/authorize?state=secret';
+    contents.mainFrame.origin = 'https://login.example.test';
+    contents.title = 'Sign in';
+    contents.emit('did-navigate');
+    expect(win.title).toBe('Sign in — https://login.example.test');
   });
 });
