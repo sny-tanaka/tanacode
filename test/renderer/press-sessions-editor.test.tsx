@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createRef, type ComponentProps } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EditorPane, type EditorHandle, type OpenFile } from '../../src/renderer/src/editor/EditorPane';
+import { MarkdownPreview } from '../../src/renderer/src/editor/MarkdownPreview';
 import { UnsavedDialog } from '../../src/renderer/src/editor/UnsavedDialog';
 import { LineComments } from '../../src/renderer/src/review/LineComments';
 import { DiffPane } from '../../src/renderer/src/scm/DiffPane';
@@ -355,6 +356,61 @@ describe('EditorPane（エディタ）', () => {
       expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
       expect(p.onSave).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('MarkdownPreview（Markdown のプレビュー）', () => {
+  function preview(text: string) {
+    const api = mockApi({ 'workspace.readImage': () => Promise.resolve('data:image/png;base64,AA==') });
+    api.install();
+    const model = fake.monaco.editor.createModel(text, 'markdown');
+    render(<MarkdownPreview sessionId="A" path="docs/guide.md" model={model as never} onOpenFile={vi.fn()} />);
+    return { api, doc: document.querySelector<HTMLElement>('.markdown-doc')! };
+  }
+
+  it('文書に混ざった HTML は、プレビューに要るタグと属性だけを残す（見た目を偽る style・class や、フォーム・ボタン・埋め込みは消す）', async () => {
+    const { api, doc } = preview(
+      [
+        '<div align="center" style="position:fixed;inset:0" class="overlay" id="main" onclick="alert(1)">中央の段落</div>',
+        '',
+        '<form action="https://example.com"><input type="text" name="q"><button>送る</button><select><option>a</option></select></form>',
+        '',
+        '<iframe src="https://example.com"></iframe><style>body{display:none}</style><video src="a.mp4"></video>',
+        '',
+        '<details open><summary>くわしく</summary>中身</details>',
+        '',
+        '<p><kbd>⌘</kbd>+<kbd>S</kbd>で保存<sup>1</sup></p>',
+        '',
+        '<img src="../img/logo.png" width="120" height="40" alt="ロゴ" style="width:9999px" class="hero">',
+        '',
+        '- [x] 済んだこと',
+        '- [ ] まだのこと',
+        '',
+        '```ts',
+        'const a = 1;',
+        '```',
+      ].join('\n'),
+    );
+    await settle();
+    expect(doc.querySelector('[style], [onclick], [id="main"]')).toBeNull();
+    // class は、コードの言語の印（色付け・mermaid の図に使う）だけ
+    expect([...doc.querySelectorAll('[class]')].map((e) => `${e.tagName.toLowerCase()}.${e.getAttribute('class')}`)).toEqual(['code.language-ts']);
+    expect(doc.querySelector('form, button, select, iframe, style, video')).toBeNull();
+    expect(doc.querySelector('div[align="center"]')?.textContent).toBe('中央の段落');
+    expect(doc.querySelector('details[open] > summary')?.textContent).toBe('くわしく');
+    expect([...doc.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['⌘', 'S']);
+    expect(doc.querySelector('sup')?.textContent).toBe('1');
+    // 画像は、Markdown ファイルからの相対パスを、ワークスペースのパスにして読む。大きさと代わりの文字は残す
+    const img = doc.querySelector('img')!;
+    expect(img.dataset.path).toBe('img/logo.png');
+    expect([img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt')]).toEqual(['120', '40', 'ロゴ']);
+    expect(api.argsOf('workspace.readImage')).toEqual([['A', 'img/logo.png']]);
+    // 入力欄は、タスクリストのチェックボックスだけ（押しても変わらない）
+    const boxes = [...doc.querySelectorAll<HTMLInputElement>('input')];
+    expect(boxes.map((b) => [b.type, b.checked, b.disabled])).toEqual([
+      ['checkbox', true, true],
+      ['checkbox', false, true],
+    ]);
   });
 });
 

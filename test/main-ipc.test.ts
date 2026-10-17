@@ -46,6 +46,17 @@ describe('受け口の登録', () => {
   });
 });
 
+describe('Markdown のプレビューの画像', () => {
+  it('セッションのフォルダで読み、追加したフォルダも渡す（その中の画像だけを読む）。読めなければ null', async () => {
+    await boot();
+    manager().addedFoldersOf.mockReturnValue(['/Users/me/lib']);
+    await expect(invoke(IpcChannel.ReadImage, 's1', '/Users/me/lib/logo.png')).resolves.toEqual(
+      callIn(cwdOf('s1'), 'workspace.readImage', '/Users/me/lib/logo.png', ['/Users/me/lib']),
+    );
+    expect(manager().addedFoldersOf.mock.calls).toEqual([['s1']]);
+  });
+});
+
 describe('送り元', () => {
   const NOT_FROM_APP = 'アプリの画面からの呼び出しではありません';
 
@@ -152,7 +163,8 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.WorkspaceInfo, ['s1'], callIn(cwdOf('s1'), 'workspace.info')],
     [IpcChannel.ListDir, ['s1', 'src/lib'], callIn(cwdOf('s1'), 'workspace.listDir', 'src/lib')],
     [IpcChannel.ReadFile, ['s1', 'README.md'], callIn(cwdOf('s1'), 'workspace.readFile', 'README.md')],
-    [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png')],
+    // 追加したフォルダの中の画像も読めるよう、セッションの追加したフォルダも渡す（下の「Markdown のプレビューの画像」）
+    [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png', [])],
     [IpcChannel.WriteFile, ['s1', 'a.txt', '中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身')],
     [IpcChannel.ListFiles, ['s1'], callIn(cwdOf('s1'), 'workspace.listFiles')],
     [IpcChannel.Search, ['s1', 'TODO', { regex: true }], callIn(cwdOf('s1'), 'workspace.search', 'TODO', { regex: true })],

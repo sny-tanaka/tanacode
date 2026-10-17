@@ -850,7 +850,7 @@ function registerIpc(): void {
   handle(IpcChannel.ListDir, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).listDir(relPath));
   handle(IpcChannel.ReadFile, (e, id: string, relPath: string) => new Workspace(P(e).cwdOf(id)).readFile(relPath));
   handle(IpcChannel.ReadImage, (e, id: string, relPath: string) =>
-    new Workspace(P(e).cwdOf(id)).readImage(relPath).catch(() => null),
+    new Workspace(P(e).cwdOf(id)).readImage(relPath, P(e).addedFoldersOf(id)).catch(() => null),
   );
   listen(IpcChannel.BrowserAttach, (e, id: string, tabId: string, webContentsId: number) => P(e).browser.attach(id, tabId, webContentsId));
   listen(IpcChannel.BrowserActivate, (e, id: string, tabId: string | null) => P(e).browser.activate(id, tabId));
