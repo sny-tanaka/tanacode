@@ -126,7 +126,8 @@ describe('--gate を付けると、JavaScript の実行と開く先の確認の�
     // 閉じるまでは聞かない
     expect(mocks.runGate).not.toHaveBeenCalled();
     stdin.end(input.slice(10));
-    await vi.waitFor(() => expect(written).toEqual([`${output}\n`]));
+    // アプリのフックの印（suppressOutput）を足して書く（hook-output.ts）
+    await vi.waitFor(() => expect(written.map((w) => JSON.parse(w))).toEqual([{ ...JSON.parse(output), suppressOutput: true }]));
     expect(mocks.runGate).toHaveBeenCalledWith('/u/Application Support/tanacode/browser.sock', 'S1', 5_000, input);
     expect(mocks.runRelay).not.toHaveBeenCalled();
     // 書き終える前には終わらない（答えが途中で切れないように）

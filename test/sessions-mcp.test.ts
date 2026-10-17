@@ -113,7 +113,8 @@ describe('中継と起動の引数', () => {
   it('許可の確認のフックは、入力を <セッション>.permission.json に書くだけで、何も出さない（確認は今までどおり出る）', () => {
     const ask = join(root, 'abc.ask.json');
     const out = execFileSync('/bin/sh', ['-c', PERMISSION_FILE_COMMAND], { encoding: 'utf8', input: '{"tool_name":"Bash"}', env: { TANACODE_ASK_FILE: ask, PATH: process.env.PATH ?? '' } });
-    expect(out).toBe('');
+    // 何も決めない（アプリのフックの印だけを書く）
+    expect(out).toBe('{"suppressOutput":true}\n');
     expect(readFileSync(join(root, 'abc.permission.json'), 'utf8')).toBe('{"tool_name":"Bash"}');
   });
 

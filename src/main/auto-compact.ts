@@ -220,7 +220,8 @@ export class AutoCompact {
     const reason = `tanacode: the context is ${percent === null ? 'almost' : `${Math.round(percent)}%`} full, so tanacode stops here to reset the conversation and resume from the checklists (optimized compaction).`;
     try {
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify({ continue: false, stopReason: reason }), { mode: 0o600 });
+      // suppressOutput: アプリのフックの印（hook-output.ts）
+      writeFileSync(file, JSON.stringify({ continue: false, stopReason: reason, suppressOutput: true }), { mode: 0o600 });
       this.state(id).stopWritten = true;
     } catch {
       // 書けなければ、ターンの終わりを待つ

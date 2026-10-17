@@ -526,6 +526,93 @@ describe('利用枠（get_usage）', () => {
   });
 });
 
+describe('何も出力しなかったフック（--include-hook-events の hook_response）', () => {
+  // Claude Code 2.1.302 の hook_response の形（コマンドとツールの ID は載らない）
+  const started = (hookId: string, hookName: string) => ({ type: 'system', subtype: 'hook_started', hook_id: hookId, hook_name: hookName, hook_event: hookName.split(':')[0], uuid: `s-${hookId}` });
+  const response = (hookId: string, hookName: string, patch: Record<string, unknown> = {}) => ({
+    type: 'system',
+    subtype: 'hook_response',
+    hook_id: hookId,
+    hook_name: hookName,
+    hook_event: hookName.split(':')[0],
+    output: '',
+    stdout: '',
+    stderr: '',
+    exit_code: 0,
+    outcome: 'success',
+    uuid: `r-${hookId}`,
+    ...patch,
+  });
+  const hooks = (id: string) => app.events(id).flatMap((e) => (e.type === 'hook' ? [e.run] : []));
+
+  it('ツールの前後のフックは、そのツールのカードに付ける。会話ログのカードより先に届いたら、カードが出るまで待つ', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    const tool = line.toolUse('toolu_1', 'Bash', { command: 'ls' });
+    // stream に先に届く（会話ログはまだ）
+    pipe.emit(stream.assistant(tool, app.claudeId(id)));
+    pipe.emit(started('h1', 'PreToolUse:Bash'));
+    pipe.emit(response('h1', 'PreToolUse:Bash'));
+    await sleep(50);
+    expect(hooks(id)).toEqual([]);
+    // 会話ログにカードが出たら、そのあとに付ける
+    app.append(id, tool);
+    await app.waitFor('フック', () => hooks(id).length === 1);
+    const types = app.events(id).map((e) => e.type);
+    expect(types.indexOf('hook')).toBeGreaterThan(types.indexOf('tool-use'));
+    expect(hooks(id)[0]).toMatchObject({ event: 'PreToolUse', name: 'PreToolUse:Bash', command: null, outcome: 'success', exitCode: 0, toolUseId: 'toolu_1', stdout: '', stderr: '' });
+    expect(typeof hooks(id)[0].durationMs).toBe('number');
+    // カードが出たあとのフックは、すぐ付ける
+    pipe.emit(response('h2', 'PostToolUse:Bash'));
+    await app.waitFor('あとのフック', () => hooks(id).length === 2);
+    expect(hooks(id)[1]).toMatchObject({ event: 'PostToolUse', toolUseId: 'toolu_1', durationMs: null });
+  });
+
+  it('ツールに付かないフック（発言のとき・起動のとき）は、そのまま出す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.emit(response('h1', 'UserPromptSubmit'));
+    pipe.emit(response('h2', 'SessionStart:startup'));
+    await app.waitFor('フック', () => hooks(id).length === 2);
+    expect(hooks(id).map((r) => [r.name, r.toolUseId])).toEqual([
+      ['UserPromptSubmit', null],
+      ['SessionStart:startup', null],
+    ]);
+  });
+
+  it('出力したフック（会話ログに残る）・アプリのフック（suppressOutput）・Stop（要約に残る）・失敗したフックは出さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.emit(response('h1', 'UserPromptSubmit', { stdout: 'ユーザーのフックの出力\n', output: 'ユーザーのフックの出力\n' }));
+    pipe.emit(response('h2', 'UserPromptSubmit', { stdout: '{"suppressOutput":true}\n' }));
+    pipe.emit(response('h3', 'UserPromptSubmit', { stderr: '注意\n' }));
+    pipe.emit(response('h4', 'Stop'));
+    pipe.emit(response('h5', 'UserPromptSubmit', { outcome: 'error', exit_code: 1 }));
+    // 最後に出すもので、ここまでを読み終えたことを確かめる
+    pipe.emit(response('h6', 'SessionStart:startup'));
+    await app.waitFor('フック', () => hooks(id).length > 0);
+    expect(hooks(id).map((r) => r.name)).toEqual(['SessionStart:startup']);
+  });
+
+  it('カードが会話ログに出ないまま（サブエージェントのツールでない、知らないツール）ターンが終わったら、ターンの終わりの前に出す。サブエージェントのツールのフックは出さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'はじめ');
+    const sub = { ...line.toolUse('toolu_sub', 'Read', { file_path: '/a' }), parent_tool_use_id: 'toolu_agent' };
+    pipe.emit({ ...stream.assistant(sub, app.claudeId(id)), parent_tool_use_id: 'toolu_agent' });
+    pipe.emit(response('h1', 'PreToolUse:Read'));
+    pipe.emit(stream.assistant(line.toolUse('toolu_lost', 'Grep', { pattern: 'x' }), app.claudeId(id)));
+    pipe.emit(response('h2', 'PreToolUse:Grep'));
+    app.say(id, line.text('おわり'));
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(hooks(id).map((r) => [r.name, r.toolUseId])).toEqual([['PreToolUse:Grep', 'toolu_lost']]);
+    const types = app.events(id).map((e) => e.type);
+    expect(types.lastIndexOf('hook')).toBeLessThan(types.lastIndexOf('turn-end'));
+  });
+});
+
 describe('会話のタイトル（generate_session_title）', () => {
   it('最初のターンが終わったあとに 1 回だけ、最初の発言を元に頼む（persist: true）。会話ログに ai-title が書かれたら、一覧に出す', async () => {
     app.answers.set('generate_session_title', { title: 'ログインの修正' });

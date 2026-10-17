@@ -6,6 +6,7 @@ import { BROWSER_ASK_TIMEOUT_MS, BROWSER_ASK_TOOL, BROWSER_MCP } from '@shared/b
 import { isLanguage, setLanguage } from '@shared/i18n';
 import { BROWSER_CLOSED_MESSAGE, BROWSER_LANGUAGE_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV } from './browser-bridge';
 import { BROWSER_GATE_ARG, runGate } from './browser-gate';
+import { appHookOutput } from './hook-output';
 import { callBridge } from './mcp-bridge';
 import { runRelay } from './mcp-relay';
 
@@ -43,7 +44,7 @@ if (process.argv.includes(BROWSER_GATE_ARG)) {
   if (isLanguage(lang)) setLanguage(lang);
   void readInput()
     .then((input) => runGate(socketPath, session, GATE_TIMEOUT_MS, input))
-    .then((output) => process.stdout.write(`${output}\n`, () => process.exit(0)));
+    .then((output) => process.stdout.write(`${appHookOutput(output)}\n`, () => process.exit(0)));
 } else {
   runRelay(
     process.stdin,

@@ -194,6 +194,9 @@ export function checkToolErrors(events: ChatEvent[], cwd: string): void {
   const expected = [
     { type: 'user', text: TOOLS_PROMPT },
     { type: 'tool-use', id: 'toolu_fail', name: 'Bash', description: '失敗するコマンド' },
+    // 止めなかった（何も出力しなかった）PreToolUse の hooks は、会話ログに残らない。stream の hook_response から、ツールのカードに付ける
+    // （コマンドは知らされないので、出来事の名前で出る）
+    { type: 'hook', run: expect.objectContaining({ event: 'PreToolUse', name: 'PreToolUse:Bash', command: null, outcome: 'success', toolUseId: 'toolu_fail' }) },
     { type: 'tool-result', id: 'toolu_fail', isError: true, output: expect.stringMatching(/Exit code 3[\s\S]*tanacode-fail/) },
     { type: 'tool-use', id: 'toolu_blocked', name: 'Bash' },
     { type: 'tool-result', id: 'toolu_blocked', isError: true, output: expect.stringContaining(BLOCK_REASON) },

@@ -47,7 +47,7 @@ function risky(p, d,   t, m, k, j, a, git, rm, r, f, del, force) {
 }
 { s = s $0 " " }
 END {
-  if (!match(s, /"command"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) exit 0
+  if (!match(s, /"command"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) { print "{\"suppressOutput\":true}"; exit 0 }
   c = unq(substr(s, RSTART, RLENGTH))
   d = ""
   if (match(s, /"cwd"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) d = unq(substr(s, RSTART, RLENGTH))
@@ -56,9 +56,10 @@ END {
   gsub(/\\"|\047|\\\\/, "", c)
   n = split(c, parts, /&&|\|\||[;|&()` + '`' + String.raw`]|\$\(/)
   for (i = 1; i <= n; i++) if (risky(parts[i], d)) {
-    print "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"${reason}\"}}"
+    print "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"${reason}\"},\"suppressOutput\":true}"
     exit 0
   }
+  print "{\"suppressOutput\":true}"
 }
 `;
 

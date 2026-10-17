@@ -91,7 +91,8 @@ it('--gate では、標準入力のフックの入力を最後まで読んでア
   await start();
   stdin.write('{"tool_input":');
   stdin.end('{"id":"shell-1","text":"ls"}}');
-  await vi.waitFor(() => expect(written).toEqual(['{"hookSpecificOutput":{}}\n']));
+  // アプリのフックの印（suppressOutput）を足して書く（hook-output.ts）
+  await vi.waitFor(() => expect(written).toEqual(['{"hookSpecificOutput":{},"suppressOutput":true}\n']));
   expect(mocks.runTerminalGate).toHaveBeenCalledWith('/u/terminal.sock', 'S1', '{"tool_input":{"id":"shell-1","text":"ls"}}', 5_000);
   expect(mocks.runRelay).not.toHaveBeenCalled();
   const { language } = await import('../src/shared/i18n');

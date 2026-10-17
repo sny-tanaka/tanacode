@@ -30,6 +30,8 @@ const CLAUDE_TIMEOUT_MS = SESSIONS_CALL_TIMEOUT_MS + 60_000;
 export function sessionsGateCommand(): string {
   const output = JSON.stringify({
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: t('main.hooks.sessionsGate') },
+    // アプリのフックの印（hook-output.ts）
+    suppressOutput: true,
   });
   return `${SESSIONS_GATE_HOOK_ENV}=1 printf '%s\\n' '${output}'`;
 }

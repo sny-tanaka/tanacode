@@ -4,6 +4,7 @@
 // --gate を付けて動かしたときは、MCP サーバーではなく、打つ前の確認のフックとして働く（terminal-bridge.ts）。標準入力に、フックの入力の JSON が届く
 import { isLanguage, setLanguage } from '@shared/i18n';
 import { TERMINAL_MCP, TERMINAL_MCP_FOR_CHILD } from '@shared/terminal-tools';
+import { appHookOutput } from './hook-output';
 import { callBridge, MCP_LANGUAGE_ENV } from './mcp-bridge';
 import { runRelay } from './mcp-relay';
 import {
@@ -44,7 +45,7 @@ if (process.argv.includes(TERMINAL_GATE_ARG)) {
   if (isLanguage(lang)) setLanguage(lang);
   void readStdin(GATE_TIMEOUT_MS)
     .then((input) => runTerminalGate(socketPath, session, input, GATE_TIMEOUT_MS))
-    .then((output) => process.stdout.write(`${output}\n`, () => process.exit(0)));
+    .then((output) => process.stdout.write(`${appHookOutput(output)}\n`, () => process.exit(0)));
 } else {
   runRelay(
     process.stdin,

@@ -290,9 +290,9 @@ const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   task_updated: () => true,
   background_tasks_changed: () => true,
   thinking_tokens: () => true,
-  hook_started: () => true,
+  hook_started: (v) => str(v.hook_id),
   hook_progress: () => true,
-  hook_response: () => true,
+  hook_response: (v) => str(v.hook_id) && str(v.hook_name) && str(v.hook_event) && str(v.outcome),
   local_command: () => true,
   informational: () => true,
 };

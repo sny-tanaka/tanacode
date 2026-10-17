@@ -125,7 +125,7 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'compact_boundary', compact_metadata: {} },
       { type: 'system', subtype: 'api_retry', attempt: 1 },
       { type: 'system', subtype: 'task_progress' },
-      { type: 'system', subtype: 'hook_response' },
+      { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success' },
     ];
     for (const line of good) expect(testing.messageOf(line)).not.toBeNull();
     for (const line of good) expect(testing.messageOf(line)).not.toBe('unknown');

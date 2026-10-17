@@ -124,9 +124,11 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(hooks.Notification).toEqual([{ hooks: [{ type: 'command', command: NOTIFICATION_FILE_COMMAND, timeout: 10 }] }]);
     expect(hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: IDLE_FILE_COMMAND, timeout: 10 }] }]);
     // 質問のファイル（<id>.ask.json）の名前から、種類ごとのファイルの名前を作る（ASK_FILE_ENV を含むので、チャットのフックの一覧に出ない）
-    expect(PERMISSION_FILE_COMMAND).toBe(`cat > "\${${ASK_FILE_ENV}%.ask.json}.permission.json"`);
-    expect(NOTIFICATION_FILE_COMMAND).toBe(`cat > "\${${ASK_FILE_ENV}%.ask.json}.notification.json"`);
-    expect(IDLE_FILE_COMMAND).toBe(`cat > "\${${ASK_FILE_ENV}%.ask.json}.idle.json"`);
+    // 何も決めないので、アプリのフックの印（suppressOutput）だけを書く（hook-output.ts）
+    const write = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%.ask.json}.${suffix}.json"; printf '%s\\n' '{"suppressOutput":true}'`;
+    expect(PERMISSION_FILE_COMMAND).toBe(write('permission'));
+    expect(NOTIFICATION_FILE_COMMAND).toBe(write('notification'));
+    expect(IDLE_FILE_COMMAND).toBe(write('idle'));
     // セッションの MCP を足しても、許可の確認の入力を書くフックは 1 つだけ
     expect(JSON.parse(sessionSettings(false, true)).hooks.PermissionRequest).toHaveLength(1);
   });

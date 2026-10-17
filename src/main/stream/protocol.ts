@@ -152,6 +152,23 @@ export type ApiRetryMessage = {
 // Remote Control のつながり（system/bridge_state。SDK の公開の型には無い）。state: ready・connected・failed など
 export type BridgeStateMessage = { type: 'system'; subtype: 'bridge_state'; state: string; detail?: string; uuid?: string };
 
+// フックの始まりと終わり（system/hook_started・hook_response。--include-hook-events）。hook_name は「出来事:ツールの名前」など
+// （例: PreToolUse:Bash）。コマンドとツールの呼び出しの ID は載らない。outcome: success・error・cancelled（2.1.302）
+export type HookStartedMessage = { type: 'system'; subtype: 'hook_started'; hook_id: string; hook_name: string; hook_event: string; uuid?: string };
+export type HookResponseMessage = {
+  type: 'system';
+  subtype: 'hook_response';
+  hook_id: string;
+  hook_name: string;
+  hook_event: string;
+  output?: string;
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+  outcome: string;
+  uuid?: string;
+};
+
 // SDKConversationResetMessage（/clear）。新しい会話の ID は、このあとの system/init の session_id（new_conversation_id とは別。実測）
 export type ConversationResetMessage = {
   type: 'conversation_reset';
@@ -315,7 +332,9 @@ export type StreamMessage =
   | { type: 'system'; subtype: string; uuid?: string; [key: string]: unknown };
 
 // 起動の引数（ClaudeSession の claudeArgs が足す）。--verbose が無いと stream-json では起動しない。
-// --permission-prompt-tool stdio が無いと、聞くべき許可が自動で断られ、AskUserQuestion・ExitPlanMode も使えない（設計書 4 節）
+// --permission-prompt-tool stdio が無いと、聞くべき許可が自動で断られ、AskUserQuestion・ExitPlanMode も使えない（設計書 4 節）。
+// --include-hook-events: すべての出来事のフックの終わり（system/hook_response）を出させる。何も出力しなかったフックは会話ログに
+// 残らないので、これでチャットに出す（無いと SessionStart・Setup だけ）
 export const STREAM_ARGS = [
   '-p',
   '--input-format',
@@ -327,6 +346,7 @@ export const STREAM_ARGS = [
   'stdio',
   '--replay-user-messages',
   '--include-partial-messages',
+  '--include-hook-events',
 ] as const;
 
 // 常駐のホストに控えてもらう、種類ごとの最新の行（アプリを再起動したとき、控えの頭が欠けても状態を組み立て直せるように）と、

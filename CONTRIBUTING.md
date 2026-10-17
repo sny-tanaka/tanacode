@@ -541,12 +541,16 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - チェックリストを Claude に扱わせるときは、`--settings` に、今のチェックリストを Claude に渡すフック（`UserPromptSubmit`・`Stop`・`SessionStart`）も足します（下の「チェックリスト」）。どれも `-p` で動きます（2.1.301 で実測）。
 - 書くだけのフック（何も決めない）: 許可の確認を出す直前（`PermissionRequest`）のツールの名前と入力、Claude Code の知らせ（`Notification`）、ターンの終わり（`Stop`）を、`statusline/<id>.permission.json`・`<id>.notification.json`・`<id>.idle.json` に書かせます（`PERMISSION_FILE_COMMAND`・`NOTIFICATION_FILE_COMMAND`・`IDLE_FILE_COMMAND`。いつも足す）。
   - ターミナルモードの間に、確認待ちと、手が空いたことを知るためです（下の「ターミナルモード」。`Notification` のファイルは、今は読んでいません）。チャットでは使いません（`can_use_tool` と `result` で分かる）。
-  - 何も返さないので、`can_use_tool` と競いません（実測: フックが何も返さなければ、Claude Code はアプリの返事を待つ）。
+  - 何も決めない（決める欄の無い `{"suppressOutput":true}` だけを書く）ので、`can_use_tool` と競いません（実測: フックが何も決めなければ、Claude Code はアプリの返事を待つ）。
   - ファイルの場所は、環境変数 `TANACODE_ASK_FILE`（`ASK_FILE_ENV`）の `<id>.ask.json` から作ります（このファイルそのものは書かない）。コマンドにこの変数が入るので、チャットのフックの一覧には出しません。
 - Bash の PreToolUse には、worktree やブランチを消す操作の歯止めのフック（`worktree-guard.ts`）を足します。`git worktree remove --force`・`git branch -D`・worktree の `rm -rf` だけ、`permissionDecision: "ask"` を返して許可の確認を出させます。
   - `ask` は、権限モードが auto や bypassPermissions でも確認を出します（実測）。止めはしません。チャットでは `can_use_tool` として届きます（「今後は聞かない」の候補は付かない。実測）。
   - Node があるとは限らないので、macOS に必ずある awk で JSON を読みます。コマンドは `;`・`&&`・`|` などで区切り、区切りごとに見ます。macOS の awk（bwk awk）でも動くかは、`TANACODE_AWK=<bwk awk のあるフォルダ> npx vitest run test/worktree-guard.test.ts` で確かめられます（Linux なら `original-awk`）。
   - チャットのフックの一覧には出しません（目印は環境変数の名前 `TANACODE_WORKTREE_GUARD`）。
+- アプリが足すフックは、どれも標準出力に `{"suppressOutput":true}` を書きます（答えの JSON には `suppressOutput: true` を足す。`hook-output.ts`）。下の「何も出力しなかったフック」で、ユーザーのフックと見分けるためです。`suppressOutput` は、Claude に渡す中身にも、フックの答え（判断・`additionalContext`・`continue: false`）の効き目にも関わりません（2.1.302 で実測。`test/cli` のチェックリスト・ゲート・歯止め・許可の確認で確かめている）。ただし、何かを書いたフックは、会話ログに `hook_success` の記録が残ります（コマンドの目印で、チャットには出さない）。
+- 何も出力しなかったフック: チャットの起動には `--include-hook-events` を付け、フックの始まりと終わり（`system/hook_started`・`hook_response`）を受け取ります。何も出力しなかったフックは会話ログに残らない（Stop は要約の `stop_hook_summary` に残る。2.1.302 で実測）ので、`hook_response` からチャットに出します（`SessionManager.quietHook`）。何かを出力したフック（アプリのフックも）・失敗したフックは会話ログに残るので、ここでは出しません。
+  - `hook_response` には、コマンドもツールの呼び出しの ID も無い（`hook_name` が「出来事:ツールの名前」）ので、ツールの前後のフックは、stream で見た同じ名前のいちばん新しい呼び出しに付けます（並んで動く同じ名前のツールでは、取り違えることがある）。そのカードが会話ログからチャットに出るまで待たせ（stream の方が先に届く）、ターンの終わりまでに出なければ、カードに付けずに出します。サブエージェントの中のツールのフックは出しません（チャットにカードが無い）。所要時間は `hook_started` から測ります。
+  - 会話ログに残らないので、アプリを起動し直したり、会話ログから組み立て直したりすると消えます。ターミナルモードの間（TUI）は、stream が無いので出ません。
 - 描き方（`tui`）は決めません。画面を読まないので、ユーザーの設定のままにします。
 - 裏で Claude Code を別に起動することはありません（子セッションも、許可の確認のあとに、一覧に並ぶふつうのセッションとして起動します）。利用枠の取得に `/usage` を実行することもありません。
 

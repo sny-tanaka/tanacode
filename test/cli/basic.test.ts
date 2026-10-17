@@ -16,7 +16,7 @@ import { MockApi } from './mock-api';
 // TANACODE_RECORD=1 を付けると、会話ログと stream-json の行を test/fixtures/claude-code/<バージョン>/ に控えとして残す（statusLine は terminal-mode.test.ts が残す）
 
 // アプリが付ける引数（claudeArgs）が、今の claude にまだあるか
-const FLAGS = ['--session-id', '--resume', '--remote-control', '--model', '--effort', '--permission-mode', '--mcp-config', '--allowedTools', '--settings'];
+const FLAGS = ['--session-id', '--resume', '--remote-control', '--model', '--effort', '--permission-mode', '--mcp-config', '--allowedTools', '--settings', '--include-hook-events'];
 
 const version = claudeVersion();
 

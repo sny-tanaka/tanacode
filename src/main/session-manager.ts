@@ -11,6 +11,7 @@ import {
   transcriptTitle,
   unsentView,
   type ChatEvent,
+  type HookRun,
   type TranscriptEntry,
   type UnsentPrompt,
 } from '@shared/chat';
@@ -79,6 +80,8 @@ import type {
   CommandLifecycleMessage,
   ContentBlock,
   ContextUsageResponse,
+  HookResponseMessage,
+  HookStartedMessage,
   InitializeResponse,
   ModelInfo,
   ResultMessage,
@@ -118,6 +121,12 @@ const SENDING_TIMEOUT_MS = 30_000;
 const SLOW_START_MS = 10_000;
 // プランの利用枠を get_usage で聞き直す間隔の下限（サーバーに聞くため。プロファイル＝SessionManager ごとに）
 const USAGE_INTERVAL_MS = 5 * 60_000;
+// 何も出力しなかったフックをチャットに出すときの控えの上限（quietHook）。始まった時刻・stream で見たツールの呼び出し・チャットに出したカード
+const MAX_HOOK_STARTS = 200;
+const MAX_STREAM_TOOLS = 200;
+const MAX_SHOWN_TOOLS = 1000;
+// ツールの呼び出しごとに動くフックの出来事（hook_name が「出来事:ツールの名前」）
+const TOOL_HOOK_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
 // stop_task のあと、タスクが終わった知らせ（task_notification）を待つ上限
 const TASK_STOP_WAIT_MS = 10_000;
 // 作業中の経過時間を知らせ直す間隔
@@ -157,6 +166,13 @@ type Runtime = {
   // 書くだけの PermissionRequest のフックが最後にファイルに書いた時刻（フックはチャットでも足される。ファイルの変化は 1 回の
   // 書き込みで何度か知らされるので、同じ書き込みを数え直さないため）
   permissionAt: number | null;
+  // 何も出力しなかったフック（hook_response）をチャットに出すための控え（quietHook）。hookStarts: 始まった時刻（hook_id → 時刻）/
+  // streamTools: stream で見たツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
+  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフック（ツールの呼び出しの ID → イベント）
+  hookStarts: Map<string, number>;
+  streamTools: { id: string; name: string; sub: boolean }[];
+  shownTools: Set<string>;
+  heldHooks: Map<string, ChatEvent[]>;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
   // 質問（AskUserQuestion）の要求のうち、PendingQuestions で返事を待っているもの（request_id → 待つのをやめる口）
@@ -1719,6 +1735,10 @@ export class SessionManager {
         attention: null,
         background: 0,
         permissionAt: null,
+        hookStarts: new Map(),
+        streamTools: [],
+        shownTools: new Set(),
+        heldHooks: new Map(),
         requests: new Map(),
         questionWaits: new Map(),
         plans: new Map(),
@@ -1940,6 +1960,7 @@ export class SessionManager {
           this.store.update(id, { claudeSessionId: nextClaudeSessionId });
           this.changed(id);
           rt.chain = [];
+          rt.heldHooks.clear();
           rt.knowledge.reset();
           rt.context.reset();
           this.pushEvents(id, [this.compactClearing(id) ? { type: 'reset', compact: true } : { type: 'reset' }]);
@@ -2263,6 +2284,14 @@ export class SessionManager {
         rt.taskEnds.delete(taskId);
         return;
       }
+      case 'hook_started':
+        if (past) return;
+        rt.hookStarts.set((message as HookStartedMessage).hook_id, Date.now());
+        if (rt.hookStarts.size > MAX_HOOK_STARTS) rt.hookStarts.delete(rt.hookStarts.keys().next().value!);
+        return;
+      case 'hook_response':
+        if (!past) this.quietHook(id, rt, message as HookResponseMessage);
+        return;
       case 'api_retry': {
         if (past) return;
         // 入力なしで始まったターン（裏のタスクの完了の知らせなど）は、再試行の行だけが続くことがあるので、ターンの始まりに数える。
@@ -2277,6 +2306,15 @@ export class SessionManager {
   }
 
   private handleAssistant(id: string, rt: Runtime, message: AssistantMessage, past: boolean): void {
+    // ツールの前後のフック（hook_response）を付けるカードを探すため、ツールの呼び出しを控える（サブエージェントの中のものも、印を付けて）
+    if (!past) {
+      for (const block of message.message.content ?? []) {
+        if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+          rt.streamTools.push({ id: block.id, name: block.name, sub: !!message.parent_tool_use_id });
+        }
+      }
+      if (rt.streamTools.length > MAX_STREAM_TOOLS) rt.streamTools.splice(0, rt.streamTools.length - MAX_STREAM_TOOLS);
+    }
     // サブエージェントの行は、モデル・コンテキスト・進み具合に使わない
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
@@ -2380,7 +2418,10 @@ export class SessionManager {
     if (!ending) return;
     clearTimeout(ending.timer);
     rt.turnEnding = null;
-    this.pushEvents(id, [ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
+    // カードが会話ログに出ないまま残ったフックは、ターンの終わりの前に、そのまま出す
+    const held = [...rt.heldHooks.values()].flat();
+    rt.heldHooks.clear();
+    this.pushEvents(id, [...held, ending.interrupted ? { type: 'turn-end', interrupted: true } : { type: 'turn-end' }]);
     // モデルを呼ばなかったターンは、未読・通知・タイトルの頼みを出さない。最適化圧縮の通知の数え方（turnNotice。流れの途中で
     // 出さなかった通知を覚えている）にも入れない
     if (ending.local) {
@@ -2390,6 +2431,50 @@ export class SessionManager {
     }
     this.turnCompleted(id, rt);
     this.requestTitle(id, rt);
+  }
+
+  // 何も出力しなかったフックを、チャットに出す（会話ログに残らないため。--include-hook-events の hook_response で分かる）。
+  // 何かを出力したフック（アプリのフックは、いつも suppressOutput を書く。hook-output.ts）と失敗したフックは会話ログに残り、Stop は
+  // 出力が無くても会話ログの要約（stop_hook_summary）に載るので、ここでは出さない（2.1.302 で実測）。
+  // hook_response にはコマンドもツールの呼び出しの ID も無いので、ツールの前後のフックは、stream で見た同じ名前のいちばん新しい
+  // 呼び出しに付け、そのカードが会話ログからチャットに出るまで待たせる（stream の方が先に届く）
+  private quietHook(id: string, rt: Runtime, message: HookResponseMessage): void {
+    const started = rt.hookStarts.get(message.hook_id);
+    rt.hookStarts.delete(message.hook_id);
+    const output = `${message.stdout ?? ''}${message.stderr ?? ''}`.trim();
+    if (message.hook_event === 'Stop' || message.outcome !== 'success' || output) return;
+    const prefix = `${message.hook_event}:`;
+    const toolName = TOOL_HOOK_EVENTS.has(message.hook_event) && message.hook_name.startsWith(prefix) ? message.hook_name.slice(prefix.length) : null;
+    const tool = toolName ? [...rt.streamTools].reverse().find((t) => t.name === toolName) : undefined;
+    // サブエージェントの中のツールには、チャットにカードが無い
+    if (tool?.sub) return;
+    const run: HookRun = {
+      event: message.hook_event,
+      name: message.hook_name,
+      command: null,
+      outcome: 'success',
+      exitCode: typeof message.exit_code === 'number' ? message.exit_code : null,
+      durationMs: started === undefined ? null : Date.now() - started,
+      stdout: '',
+      stderr: '',
+      message: '',
+      toolUseId: tool?.id ?? null,
+    };
+    const event: ChatEvent = { type: 'hook', id: `hook:${message.hook_id}`, run };
+    if (tool && !rt.shownTools.has(tool.id)) {
+      rt.heldHooks.set(tool.id, [...(rt.heldHooks.get(tool.id) ?? []), event]);
+      return;
+    }
+    this.pushEvents(id, [event]);
+  }
+
+  // 会話ログからツールのカードをチャットに出した。そのツールに付けるために待たせていたフックを返す
+  private shownTool(rt: Runtime, toolUseId: string): ChatEvent[] {
+    rt.shownTools.add(toolUseId);
+    if (rt.shownTools.size > MAX_SHOWN_TOOLS) rt.shownTools.delete(rt.shownTools.values().next().value!);
+    const held = rt.heldHooks.get(toolUseId) ?? [];
+    rt.heldHooks.delete(toolUseId);
+    return held;
   }
 
   // ターンが終わったときの未読と通知
@@ -2724,6 +2809,8 @@ export class SessionManager {
         rt.starterSeen = true;
       }
     }
+    // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける
+    if (rt) events = events.flatMap((e) => (e.type === 'tool-use' ? [e, ...this.shownTool(rt, e.id)] : [e]));
     if (events.length > 0) {
       const active = !isHistory && events.some((e) => e.type === 'user' || e.type === 'assistant-text' || e.type === 'tool-use');
       this.pushEvents(id, events, !isHistory);

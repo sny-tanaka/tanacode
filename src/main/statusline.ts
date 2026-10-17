@@ -6,6 +6,7 @@ import { ASK_FILE_ENV } from '@shared/chat';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { checklistHooks } from './checklist-hook';
+import { SUPPRESS_OUTPUT } from './hook-output';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from './terminal-bridge';
 import { worktreeGuardCommand } from './worktree-guard';
@@ -143,9 +144,9 @@ const STOP_SUFFIX = '.auto-compact.json';
 const STOP_HIT_SUFFIX = '.auto-compact.hit.json';
 
 // 書くだけのフックのコマンド。<dir>/<id>.ask.json（ASK_FILE_ENV。名前の元にするだけで、このファイルはもう書かない・読まない）と同じフォルダの、
-// <id> に種類の名前を付けたファイルに、フックの入力を書く
+// <id> に種類の名前を付けたファイルに、フックの入力を書く。何も決めないので、アプリのフックの印（suppressOutput）だけを書く（hook-output.ts）
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-const fileCommand = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${suffix}"`;
+const fileCommand = (suffix: string) => `cat > "\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${suffix}"; printf '%s\\n' '${SUPPRESS_OUTPUT}'`;
 // 許可の確認の直前（PermissionRequest）: <id>.permission.json
 export const PERMISSION_FILE_COMMAND = fileCommand(PERMISSION_SUFFIX);
 // Claude Code の知らせ（Notification。確認待ち・入力待ちなど）: <id>.notification.json
@@ -160,7 +161,7 @@ export const IDLE_FILE_COMMAND = fileCommand(IDLE_SUFFIX);
 // そこで掴むと、サブエージェントが止まるだけで本体のターンは止まらず、印のファイルだけが残る。止めるファイルがあるときだけ入力を読み、
 // agent_id があれば何もしない（本体の次のツールの切れ目まで待つ。入力の中の文字列は " が \" になるので、キーとしての agent_id だけに当たる）。
 // （ASK_FILE_ENV を含むので、チャットのフックの一覧には出ない）
-export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; [ -f "$f" ] || exit 0; case "$(cat)" in *'"agent_id":"'*) exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h"; exit 0`;
+export const AUTO_COMPACT_STOP_COMMAND = `f="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_SUFFIX}"; h="\${${ASK_FILE_ENV}%${ASK_SUFFIX}}${STOP_HIT_SUFFIX}"; n='${SUPPRESS_OUTPUT}'; [ -f "$f" ] || { echo "$n"; exit 0; }; case "$(cat)" in *'"agent_id":"'*) echo "$n"; exit 0;; esac; mv "$f" "$h" 2>/dev/null && cat "$h" || echo "$n"; exit 0`;
 
 // セッションごとの statusLine のファイル（<dir>/<セッション ID>.json）と、書くだけのフックが書くファイル（.permission.json など）を見張る
 export class StatusLineWatcher {

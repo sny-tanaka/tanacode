@@ -9,12 +9,15 @@ import type { SessionState } from '../src/shared/session-tools';
 import type { StatusLineInfo } from '../src/shared/statusline';
 import { AppSettings } from '../src/main/app-settings';
 import { AutoCompact, type AutoCompactHost } from '../src/main/auto-compact';
+import { SUPPRESS_OUTPUT } from '../src/main/hook-output';
 import { AUTO_COMPACT_STOP_COMMAND, StatusLineWatcher } from '../src/main/statusline';
 
 // 最適化圧縮を自動で始める（main の AutoCompact）。いつ始めるか・ターンの途中で止めるファイル・続けて何度も起きないこと・
 // Claude Code の自動の圧縮を止めるか
 
 const ID = 's1';
+// フックが何も決めないとき（アプリのフックの印だけを書く。hook-output.ts）
+const NOTHING = `${SUPPRESS_OUTPUT}\n`;
 let dir: string;
 let watcher: StatusLineWatcher;
 let state: SessionState | null;
@@ -178,8 +181,8 @@ describe('ターンの途中', () => {
     percent = 89;
     auto.check(ID);
     expect(existsSync(stopFile())).toBe(false);
-    // ファイルが無ければ、フックは何も出さない
-    expect(runHook()).toBe('');
+    // ファイルが無ければ、フックは何も決めない（アプリのフックの印だけを書く）
+    expect(runHook()).toBe(NOTHING);
     percent = 91;
     auto.check(ID);
     const stop = JSON.parse(readFileSync(stopFile(), 'utf8')) as { continue: boolean; stopReason: string };
@@ -187,7 +190,7 @@ describe('ターンの途中', () => {
     expect(stop.stopReason).toContain('the context is 91% full');
     expect(JSON.parse(runHook())).toEqual(stop);
     // 2 回めは出さない（止めるのは 1 回だけ）。止めた印が残る
-    expect(runHook()).toBe('');
+    expect(runHook()).toBe(NOTHING);
     expect(existsSync(stopFile())).toBe(false);
     expect(existsSync(hitFile())).toBe(true);
     // 止めたあと、割合が変わっても、書き直さない
@@ -210,7 +213,7 @@ describe('ターンの途中', () => {
     state = 'working';
     percent = 91;
     auto.check(ID);
-    expect(runHook({ hook_event_name: 'PostToolUse', agent_id: 'aeefce232d4dcd1bd', agent_type: 'general-purpose', tool_name: 'Bash' })).toBe('');
+    expect(runHook({ hook_event_name: 'PostToolUse', agent_id: 'aeefce232d4dcd1bd', agent_type: 'general-purpose', tool_name: 'Bash' })).toBe(NOTHING);
     expect(existsSync(stopFile())).toBe(true);
     expect(existsSync(hitFile())).toBe(false);
     expect(auto.stopping(ID)).toBe(false);
