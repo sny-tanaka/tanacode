@@ -73,8 +73,9 @@ const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process(
 // - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）と、
 //   ログの署名の確かめ（log.showSignature。gpg.program を動かす）は、いつも止める
 // - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
-//   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す。
-//   空にしたフィルターは、required も false にする。そのため、読むだけの git は、フィルターを通す前の中身で比べる（ターミナルの git と差分の見え方が違うことがある）
+//   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す
+//   （リポジトリの設定に git-lfs の拡張（lfs.extension）があるときは、それらも空にする）。空にしたフィルターは、required も false にする。
+//   そのため、読むだけの git は、フィルターを通す前の中身で比べる（ターミナルの git と差分の見え方が違うことがある）
 // - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける。
 //   サブモジュールの差分の形は、いつも short にする（diff.submodule。パッチを出す diff には --submodule=short も付ける）
 // - 取り出してあるサブモジュール（入れ子も）の設定で決めたフィルター・merge のドライバーも、同じく空にする（状態・作業ツリーとの差分は、
@@ -127,22 +128,29 @@ const UNREADABLE_PATH = 'tanacode cannot read the git settings of this folder, b
 async function commandKeys(cwd: string, budget: { left: number }, depth: number): Promise<string[]> {
   // 設定は全部をバイトのまま読み、選ぶのはこちらでする（名前は UTF-8 とは限らない）。「<スコープ>\0<名前>\n<値>\0」（値の無いものは「\n<値>」が無い）
   const out = await runGitBytes(cwd, ['config', '--list', '--null', '--show-scope'], undefined, { LC_ALL: 'C' }).catch(() => Buffer.alloc(0));
-  const keys: string[] = [];
+  // 空にする候補。own: ユーザー自身の設定（global・system）のもの。lfs: git-lfs の決まった形のフィルター
+  const found: { key: string | null; own: boolean; lfs: boolean }[] = [];
+  let lfsExtension = false;
   const parts = splitBytes(out, 0);
   for (let i = 0; i + 1 < parts.length; i += 2) {
     const scope = parts[i].toString('latin1');
-    if (scope === 'global' || scope === 'system') continue;
+    const own = scope === 'global' || scope === 'system';
     const entry = parts[i + 1];
     const end = entry.indexOf(10);
     const name = end < 0 ? entry : entry.subarray(0, end);
     // 節と変数の名前は ASCII なので、1 バイトを 1 文字にして比べる
-    if (!COMMAND_KEY.test(name.toString('latin1'))) continue;
-    const key = exactText(name);
-    if (key === null) throw new GitError(UNREADABLE_NAME);
+    const text = name.toString('latin1');
+    // git-lfs の拡張（lfs.extension.<名前>.clean・smudge。git-lfs が動かすコマンド）。大文字・小文字は問わない
+    if (!own && text.toLowerCase().startsWith('lfs.extension.')) lfsExtension = true;
+    if (!COMMAND_KEY.test(text)) continue;
     const value = end < 0 ? '' : entry.subarray(end + 1).toString('utf8');
-    if (key.startsWith('filter.') && LFS_FILTER.test(value)) continue;
-    keys.push(key);
+    found.push({ key: exactText(name), own, lfs: text.startsWith('filter.') && LFS_FILTER.test(value) });
   }
+  // リポジトリの設定に git-lfs の拡張があれば、ユーザー自身の設定のもの・git-lfs の決まった形のものも空にする
+  // （git-lfs を呼ぶものは、決まった形のほかにも書ける）
+  const blanked = found.filter((f) => lfsExtension || (!f.own && !f.lfs));
+  if (blanked.some((f) => f.key === null)) throw new GitError(UNREADABLE_NAME);
+  const keys = blanked.map((f) => f.key as string);
   for (const dir of await submodulesOf(cwd)) {
     // 上限を超えて読まずに残るものがあれば、git を動かさない
     if (depth >= MAX_SUBMODULE_DEPTH || budget.left <= 0) throw new GitError(TOO_MANY_SUBMODULES);

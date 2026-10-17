@@ -603,6 +603,38 @@ describe('tanacode が動かす git の守り', () => {
     await expect(guardOf(repo)).rejects.toThrow(GitError);
   }, 30_000);
 
+  it('git-lfs の拡張（lfs.extension）がリポジトリの設定にあれば、ユーザー自身の設定・git-lfs の決まった形のフィルターと merge のドライバーも打ち消す', async () => {
+    // ユーザー自身の設定（global）。git-lfs を決まった形のほかの書き方で呼ぶものも
+    const global = join(root, 'global-config');
+    writeFileSync(
+      global,
+      '[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n[filter "mine"]\n\tclean = /opt/lfs/git-lfs clean -- %f\n[merge "mine"]\n\tdriver = git lfs merge-driver %O %A %B\n',
+    );
+    const saved = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = global;
+    try {
+      const names = ['filter.lfs.clean=', 'filter.lfs.process=', 'filter.mine.clean=', 'merge.mine.driver=', 'filter.other.clean='];
+      const blanked = async (dir: string) => (await guardOf(dir)).args.filter((a) => names.includes(a));
+      // 拡張が無ければ残す
+      run(repo, 'config', 'filter.other.clean', 'git-lfs clean -- %f');
+      expect(await blanked(repo)).toEqual([]);
+      const ext = join(root, 'ext');
+      init(ext);
+      run(ext, 'config', 'filter.other.clean', 'git-lfs clean -- %f');
+      run(ext, 'config', 'lfs.extension.ext.clean', `${mark('lfs-extension')}; cat`);
+      expect(await blanked(ext)).toEqual(expect.arrayContaining(names));
+      expect((await guardOf(ext)).args).toContain('filter.lfs.required=false');
+      // サブモジュールの設定にあるときも（git-lfs はサブモジュールの中でも動き、その設定を読む）。大文字・小文字は問わない
+      const outer = join(root, 'outer');
+      init(outer);
+      run(nest(outer, 'lib'), 'config', 'lfs.Extension.ext.smudge', `${mark('lfs-extension')}; cat`);
+      expect(await blanked(outer)).toEqual(expect.arrayContaining(['filter.lfs.clean=', 'filter.lfs.process=', 'filter.mine.clean=', 'merge.mine.driver=']));
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved;
+    }
+  });
+
   it('なくてはならないとされたフィルター（required。git-crypt など）も、打ち消したうえで失敗させない', async () => {
     run(repo, 'config', 'filter.req.clean', `${mark('req-clean')}; cat`);
     run(repo, 'config', 'filter.req.smudge', `${mark('req-smudge')}; cat`);
