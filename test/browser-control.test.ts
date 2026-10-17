@@ -879,6 +879,62 @@ describe('Claude の操作の間だけ、許していない先へ移らせない
     expect(created[0].loadingPolls).toBe(0);
   });
 
+  // Claude がページのボタンを押して、ページがポップアップを開こうとする（押したときに、別ウインドウの扱いが聞いてくる）
+  const clickOpening = (ctx: ReturnType<typeof setup>, page: Tab, onRelease: () => void) => {
+    page.page.locate = () => ({ rect: { x: 0, y: 0, width: 10, height: 10 }, viewport: { width: 800, height: 600 }, description: 'button#login', covered: null });
+    page.debugger.handler = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') onRelease();
+      return {};
+    };
+    return ctx.call('click', { selector: '#login' });
+  };
+
+  it('allowsPopup: ユーザーの操作のポップアップは開いてよい（知らない webview も）。Claude の操作の間は、許した先だけ開き、別ウインドウで開いたことをオリジンで伝える', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    expect(ctx.control.allowsPopup(asWebContents(page), 'https://example.com/login')).toBe(true);
+    expect(ctx.control.allowsPopup(asWebContents(new FakeContents()), 'https://example.com/login')).toBe(true);
+    const result = textOf(
+      await clickOpening(ctx, page, () => {
+        expect(ctx.control.allowsPopup(asWebContents(page), 'http://localhost:3000/login?state=secret')).toBe(true);
+        expect(ctx.control.allowsPopup(asWebContents(page), 'http://localhost:3000/again')).toBe(true);
+      }),
+    );
+    expect(result).toBe(
+      'Clicked: button#login\n' +
+        'Opened a popup window outside the in-app browser (http://localhost:3000). You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+    );
+    // 次の呼び出しには残らない
+    expect(textOf(await ctx.call('get_console_logs'))).toBe('No console messages.');
+  });
+
+  it('allowsPopup: Claude の操作で、許していない先のポップアップは開かず、止めたことを伝える（continue では新しいタブに開く）', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    const result = textOf(await clickOpening(ctx, page, () => expect(ctx.control.allowsPopup(asWebContents(page), 'https://example.com/login?state=secret')).toBe(false)));
+    expect(result).toBe(
+      'Clicked: button#login\nBlocked an attempt to navigate to (or open) a page not allowed for Claude (https://example.com). To open it, call navigate with action "continue" (tanacode asks the user for permission).',
+    );
+    const gate = JSON.parse(textOf(await ctx.control.handle('S1', BROWSER_GATE_REQUEST, { tool: browserToolId('navigate'), input: { action: 'continue' } }))) as { outside: string | null };
+    expect(gate).toEqual({ outside: 'https://example.com' });
+    await ctx.call('navigate', { action: 'continue' });
+    expect(ctx.sentOn(IpcChannel.BrowserNewTab)).toEqual([{ sessionId: 'S1', url: 'https://example.com/login?state=secret', background: false, openerTabId: page.tabId }]);
+  });
+
+  it('blocksNavigation（ポップアップ）: Claude の操作の間は、開いたタブで許していない先への移動だけ止めて伝える。continue の先には控えない', async () => {
+    const ctx = setup();
+    const page = ctx.open('http://localhost:3000/');
+    expect(ctx.control.blocksNavigation(asWebContents(page), 'https://example.com/', true)).toBe(false);
+    const result = textOf(
+      await clickOpening(ctx, page, () => {
+        expect(ctx.control.blocksNavigation(asWebContents(page), 'http://localhost:3000/next', true)).toBe(false);
+        expect(ctx.control.blocksNavigation(asWebContents(page), 'https://example.com/callback?code=secret', true)).toBe(true);
+      }),
+    );
+    expect(result).toBe('Clicked: button#login\nBlocked an attempt to move a popup window opened by the page to a page not allowed for Claude (https://example.com).');
+    expect(textOf(await ctx.call('navigate', { action: 'continue' }))).toBe('Nothing was stopped in the current tab, so there is nothing to continue. To open a page, pass url.');
+  });
+
   it('1 回の操作で新しいタブがいくつも開いたら、開いた先をすべて伝え、最後に開いたタブの番号を返す', async () => {
     const { control, call, open } = setup();
     const page = open('http://localhost:3000/');

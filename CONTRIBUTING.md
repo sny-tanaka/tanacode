@@ -355,6 +355,7 @@ PR で、次のものを流します。develop への push では流しません
 | `mcp.test.ts` | Claude が MCP でチェックリスト・ウォークスルー・アプリ内ブラウザを操作すると、画面に出るか。許可や「終わった」の操作が、ツールの結果として Claude に戻るか |
 | `walkthrough-post.test.ts` | Claude に頼むと、ウォークスルーを GitHub の PR に載せる（`post_walkthrough`）。載せる前に許可のカードが出て、答えると載せ、コメントの URL が Claude に戻るか。載せた本文が、ボタンで開く下見の本文に一言を添えたものか。下見に、もう載せたことが出るか。GitHub には書かず、PATH の先頭に置いた偽の `gh`（`E2EApp.launch` の `commands`）が受け取る |
 | `browser-shot.test.ts` | Claude がアプリ内ブラウザのスクリーンショット（表示中の範囲・ページ全体・要素）を撮れるか。ブラウザが見えているときと、閉じて見ていないとき（透明にして描かせたままのタブ）の両方 |
+| `browser-popup.test.ts` | アプリ内ブラウザのページが `window.open`（features 付き）で開くポップアップが、アプリ内ブラウザの外の別ウインドウで開き、`window.opener` から `postMessage` が届くか（Claude が押したときと、人が押したときの両方）。別ウインドウに Node も preload（`window.tanacode`）も無く（features で `nodeIntegration=yes` などを渡しても）、`file:`・`blob:` へ移れず、プレビューのセッションか。`window.close()` で閉じるか。タブの一覧に出ないか |
 | `browser-outside.test.ts` | Claude が許す先の外のページ（`[::1]` のサーバー）を開くと、「次から聞かない」で許したあとでも許可の確認のカードが出て、許すと開くか。許したタブの中の同じオリジンの操作（リンクを押す・読む）には確認が出ず、別のオリジン（別のポート）へ移ろうとしたら止まって、`continue` でまた確認が出るか |
 | `checklist-decisions.test.ts` | 決定事項（チェックで消えないリスト）を、画面と Claude の両方から使う。Claude が MCP で決定事項と確認事項のリストを作ると、ピンと有効な数で出る。確認事項のカードを人がチェックすると、決定事項に移る。次の発言で、有効な決定（承認したものも）が Claude に渡る。Claude が取り消したものはゴミ箱に入り、有効なものは消せない。人はゴミ箱から戻して取り消しを戻せて、自分でも取り消せる（画面に残る）。取り消したものは、次の発言から渡らない。人が取り消して残っているものは、Claude が消せる |
 | `checklist.test.ts` | 人がチェックリストを画面で使う（リストとカードを作ってチェックを付ける）。カードのスレッドに「Claude に通知する」で返信すると、手の空いた Claude に知らせが届くか。Claude が MCP でスレッドに返信すると、画面に出るか |
@@ -1021,7 +1022,14 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - タブの番号は、画面がタブを作った順（タブの ID の番号）。画面の並びと Claude の `list_tabs` をそろえるため、新しいタブはいつも右端に足します。
   - 空のタブ（「＋」で開いたもの。`about:blank`）は、許していない先ではなく空のタブとして Claude に伝えます（`list_tabs`・`select_tab`。`select_tab` では、`navigate` でそのタブに開けることも添える）。中は読ませず、操作もさせません。
   - まだタブの無いセッションで Claude が URL を開くときは、main が画面にタブを作らせ（`browser:open`）、知らせを待ちます。新しいタブで開くとき（`newTab`）は `browser:new-tab`。タブの切り替え・閉じるも、main が画面に頼みます。
-  - 新しいウィンドウで開くもの（`target=_blank`・`window.open`）は、webview に `allowpopups` を付けて main の `setWindowOpenHandler` に届かせ、ウィンドウは作らずに、同じセッションの新しいタブで開かせます（`openFromPage`）。`allowpopups` が無いと、main に届かずに捨てられます。新しいタブのページは、開いたページ（`window.opener`）とつながりません。
+  - 新しいウィンドウで開くもの（`target=_blank`・`window.open`）は、webview に `allowpopups` を付けて main の `setWindowOpenHandler` に届かせます（`allowpopups` が無いと、main に届かずに捨てられます）。扱いは `browser-windows.ts` の `PreviewWindows`。
+    - リンクの「新しいタブで開く」など（`disposition` が `new-window` でないもの）は、ウィンドウは作らずに、同じセッションの新しいタブで開かせます（`openFromPage`）。新しいタブのページは、開いたページ（`window.opener`）とつながりません。
+    - ポップアップ（`disposition` が `new-window`。features 付きの `window.open` など。OAuth のログインの窓）は、`allow` を返して、アプリ内ブラウザの外の別ウインドウ（`BrowserWindow`）で開かせ、`window.opener` をつなぎます。タブを `WebContentsView` に作り直す案は、アプリの画面（ツールチップ・メニュー・ダイアログ）がページの下に隠れるため、やめました（2026-10-17）。
+    - 別ウインドウの中身は、Electron が開いたページと同じセッション（プレビューのもの。権限とダウンロードを断る）で作ります。違えば閉じます（`adopt`）。`webPreferences` の守りの値（`nodeIntegration`・`contextIsolation`・`sandbox`・`webviewTag` など）と、見た目を偽れる指定（枠・最前面・全画面など）は `overrideBrowserWindowOptions` で決め、ページが features に書いた値は効きません（`popupOptions`）。preload は付けません（webview から引き継ぐものも無い。E2E で `window.tanacode` が無いことを確かめる）。
+    - 移る先の見張りと、新しいウインドウの扱いは、中身ができたとき（`web-contents-created`）に付けます。ポップアップの中身は、プレビューのセッション（`restrictPreviewSession` で控えたもの）の `window` で見分けます。`did-create-window` より前に付くので、最初の読み込みとページのスクリプトにも効きます。付けないと、ポップアップがさらに開くウインドウを、Electron がそのまま作ってしまいます。
+    - ポップアップから開くもの（タブ・ポップアップ）と、ポップアップの移動の確かめ（Claude の操作の間は、開いたタブで許した先へしか移らない。`blocksNavigation` の `popup`）は、もとのタブのものとして扱います。Claude の操作で許していない先のポップアップは開きません（`allowsPopup`。止めたことと、開いたことを Claude に伝える）。別ウインドウは Claude の操作の対象にしません（タブに入れない）。
+    - 開いたタブが無くなったら、そのタブから開いた別ウインドウを閉じます（`outlivesOpener: true` にして自分で閉じる。Electron の既定では、開いたページが別のサイトへ移っただけで閉じてしまうため）。1 つのタブから 5 個まで（`MAX_POPUPS`）。アドレス欄が無いので、題に今のページのオリジンを添えます。裏で起動しているとき（`TANACODE_BACKGROUND=1`）は、画面に出しません。
+    - Electron 44.7 で確かめたこと: webview のページのポップアップは `window.opener` がつながり、`postMessage` が届く・`window.close()` で閉じる・`noopener` ではつながらない・別ウインドウの中身は開いたページと同じセッション・`web-contents-created` が `did-create-window` より先・最初の読み込みでも `will-frame-navigate` が出る。
   - コンソールの出力と失敗した通信は、webview ができたとき（`did-attach-webview` から `track`）から集めます。タブの知らせ（`dom-ready`）を待つと、ページの最初のスクリプトが出したものを取りこぼすためです。
   - スクリーンショットは `capturePage`（Retina でもページの大きさに縮める）。ページ全体とアクセシビリティのツリーは CDP（`webContents.debugger`）。開発者ツールを開いていても使えます。
   - クリック・入力・キーは CDP の `Input.*` で送ります。ウィンドウが前に無くても届き、ページには本物の操作（`isTrusted`）として届きます。スクロールは、真ん中（か要素）から上へたどった、動かせる入れ物の `scrollBy`（CDP のホイールは、動きが遅れて量が読めないため）。
@@ -1046,9 +1054,9 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 見ていないプロファイルのセッションと、足したプロファイルを見ていて Mac の画面をロックした状態の 2 つで、表示中の範囲・要素・ページ全体の 3 通りを撮ります。直す前のソースでは、どれも撮れません。
 - 表示: main は、呼び出しの始めと終わりに操作の様子（`browser:activity`）を送ります。画面は、そのセッションを見ていれば、操作が始まったときにエディタの場所にブラウザを開きます（帯が消えるまでは開き直さない）。見ていなければ覚えておき、切り替えたときに開きます。帯は最後の操作から 8 秒で消します。クリックと入力の前には、押す要素の位置を送り、画面がページの上に枠を重ねます（ページの中には描かない）。
 - 守り: Claude が開ける・読める・操作できるのは、`isClaudeAllowedUrl` に通るページだけ（既定の `localhost`・`127.0.0.1`・`*.local` と、`settings.json` の `browserHosts`）。開く前の URL・戻る／進む先・今のページを、呼び出しのたびに確かめます。
-  - Claude の呼び出しの間（と終わって 2 秒）は、トップのフレームが許していない先（許す先の外で、そのタブで許可していないオリジン）へ移るの（リンク・リダイレクト・ページのスクリプト）を止め（`blocksNavigation`。`web-contents-created` の見張りから呼ぶ）、許していない先を新しいタブでも開きません（`openFromPage`）。止めたことは、その呼び出しの結果で Claude に伝えます。新しいタブで開いたことも伝えます。ユーザーの操作で許していない先へ移った（開いた）ときは、次の呼び出しから断ります。許していない先の URL は、断りの文・`list_tabs`・タブの切り替えの結果・止めたことの知らせ・クリックで移った先（ページの「戻る」ボタンの `history.back` など、移る前に止められない形）のどれでも、オリジンだけを見せ（`shownUrl`）、タイトルも読ませません（ログインで外の認証のページへ移ったとき、URL に認証の途中の値が入っていることがあるため）。
+  - Claude の呼び出しの間（と終わって 2 秒）は、トップのフレームが許していない先（許す先の外で、そのタブで許可していないオリジン）へ移るの（リンク・リダイレクト・ページのスクリプト）を止め（`blocksNavigation`。`web-contents-created` の見張り（`PreviewWindows.watch`）から呼ぶ）、許していない先を新しいタブでもポップアップでも開きません（`openFromPage`・`allowsPopup`）。ページが開いたポップアップの別ウインドウの移動も、開いたタブで許した先かで止めます。止めたことは、その呼び出しの結果で Claude に伝えます。新しいタブで開いたことも伝えます。ユーザーの操作で許していない先へ移った（開いた）ときは、次の呼び出しから断ります。許していない先の URL は、断りの文・`list_tabs`・タブの切り替えの結果・止めたことの知らせ・クリックで移った先（ページの「戻る」ボタンの `history.back` など、移る前に止められない形）のどれでも、オリジンだけを見せ（`shownUrl`）、タイトルも読ませません（ログインで外の認証のページへ移ったとき、URL に認証の途中の値が入っていることがあるため）。
   - 要素の説明（クリックの結果など）に、パスワードの欄の値は使いません（`__label`）。
-  - `evaluate` は、ユーザーの操作の扱い（userGesture）を付けずに実行します。`file:` に行けないこと（`isPreviewDestination`）・権限を全部断ること（`restrictPermissions`）は、今までどおり。プレビューのセッションのダウンロードは断ります。
+  - `evaluate` は、ユーザーの操作の扱い（userGesture）を付けずに実行します。`file:` に行けないこと（`isPreviewDestination`）・権限を全部断ること（`restrictPreviewSession`）は、今までどおり（ポップアップの別ウインドウも同じ）。プレビューのセッションのダウンロードは断ります。
 - ユーザーに頼む（`ask_user_to_act`。kind は `'ask'`）: ログイン・二段階認証・決済のテスト画面など、Claude にできない（させたくない）操作や見た目の判断を、Claude が作業の途中で人に頼むツール。待つ上限は `BROWSER_ASK_TIMEOUT_MS`（10 分）。MCP の instructions で、頼む内容にパスワードなどの値を書かないこと・チャットで頼んで止まらずにこのツールで頼むことを伝えます。
   - 待ち合わせは `browser-asks.ts` の `BrowserAsks`（Electron を使わない）。セッションごとに 1 つで、2 つ目の頼みは断ります。ユーザーの返事・時間切れ・取り消し（Claude Code の中断）・セッションを閉じたときのどれかで終わります。
   - `handle` は、kind が `ask` なら `begin` せずに `BrowserAsks.wait` を呼びます。Claude の操作として扱わず、「Claude が操作中」の帯を下ろし、操作の直後の猶予（2 秒）も消すので、待っている間はユーザーがログインで許していない先（外の認証のページ）へ移って戻ってこられます（`readOnlyHint` が true なので、Claude Code は読むツールと並べて呼ぶことがあります。並べた呼び出しが動いていても、頼んでいる間は `operating` が false）。頼んでいる間は、そのセッションのほかのブラウザのツールを断ります。メニューでオフにしたときは、頼んでいるものをやめます（`turnOff`。タブの許可と印も捨てる）。
@@ -1364,6 +1372,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `mcp-bridge.ts`: 中継とアプリのソケット（待ち受けの `McpBridge`・呼び出しの `callBridge`）と、起動の引数（`--mcp-config`・`--allowedTools`）の共通部分
   - `browser-mcp.ts` / `browser-bridge.ts`: アプリ内ブラウザの中継の入り口と、中継・JavaScript の実行の確認のフックに渡す環境変数と `--mcp-config` のエントリ
   - `browser-control.ts`: Claude から届いたアプリ内ブラウザの操作を、webview の中身で実行する（スクリーンショット・CDP・許す先とタブごとの許可の確かめ）
+  - `browser-windows.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先の見張り・新しいタブ・ポップアップの別ウインドウ・プレビューのセッションの権限とダウンロード）
   - `browser-asks.ts`: Claude がユーザーに頼んだ操作（`ask_user_to_act`）の返事を待つ（返事・時間切れ・取り消し）
   - `sessions-mcp.ts` / `sessions-bridge.ts`: セッションの中継の入り口と、中継に渡す環境変数・子セッションの起動の確認のフック・`--mcp-config` のエントリ
   - `sessions-control.ts`: Claude から届いたセッションのツールを実行する（見える範囲の判定・子の起動と指示・質問への回答・子を待つ・親への知らせ・自分への予約・報告）
@@ -1453,6 +1462,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `settings-files.test.ts`: 設定ファイルの切り替え（登録・名前の変更・削除、設定の合成、合わせたファイルの権限と後始末、起動引数）
   - `worktree.test.ts`: worktree のセッションの、アプリが受け持つところ（名前と場所・`.git/info/exclude`・残っているもの・控えを残して消す・ロック・作り直す・`node_modules`。本物の git で）
   - `worktree-guard.test.ts`: worktree やブランチを消す操作の歯止めの hooks（確認を出させるもの・出させないもの）
+  - `browser-windows.test.ts`: アプリ内ブラウザのページが移る・新しいウインドウを開くときの守り（移る先・ポップアップの別ウインドウの作り方と数・ポップアップから開くもの・閉じ方・題のオリジン）
   - `browser-mcp.test.ts`: アプリ内ブラウザの MCP（中継の JSON-RPC・アプリとのソケットとその権限・Claude に許す先・起動の引数と `permissions.ask` の合成・呼び出しの取り消し（中継とソケット）・ユーザーに頼んだ操作の待ち合わせ（`BrowserAsks`））
   - `checklist.test.ts`: チェックリスト（番号の読み方・保存と書き換え（番号・ゴミ箱・未読・ファイル）・MCP のツール・Claude への知らせ・別のセッションへのコピーと見える範囲・起動の引数・画面から届いた値・会話ログの見分け）
   - `checklist-decisions.test.ts`: 決定事項（リストの種類と性質・Claude ができること（足す・理由つきで取り消してゴミ箱に入れる・取り消したカードを消す）と断ること・人ができること・承認したカードを決定事項に移す・知らせにいつも出すことと長さの上限・MCP のツール・種類の無いデータの読み方）

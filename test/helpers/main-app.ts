@@ -37,6 +37,9 @@ export class Emitter {
     this.events.set(event, [...(this.events.get(event) ?? []), listener]);
     return this;
   }
+  once(event: string, listener: Listener): this {
+    return this.on(event, listener);
+  }
   // 受け手を呼ぶ（引数は Electron と同じ形で、テストが渡す）
   emit(event: string, ...args: unknown[]): unknown[] {
     return (this.events.get(event) ?? []).map((listener) => (listener as (...a: unknown[]) => unknown)(...args));
@@ -54,6 +57,8 @@ export class FakeWebContents extends Emitter {
   destroyed = false;
   url = 'file:///app/out/renderer/index.html';
   type = 'window';
+  // 使うセッション（プレビューのページが開いたポップアップの見分けに使う。決めていなければ無し）
+  session: unknown = undefined;
   windowOpenHandler: ((details: { url: string; disposition?: string }) => { action: string }) | null = null;
   send = vi.fn((channel: string, payload: unknown) => {
     this.sent.push([channel, payload]);
@@ -418,6 +423,7 @@ const modules: Record<string, Record<string, unknown>> = {
       handle: echo('browser.handle'),
       track: () => undefined,
       openFromPage: () => false,
+      allowsPopup: () => true,
       isOperating: () => false,
       blocksNavigation: () => false,
       forget: () => undefined,

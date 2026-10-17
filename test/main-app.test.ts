@@ -910,7 +910,7 @@ describe('ウインドウ', () => {
     expect(attach('data:text/html,x').prevented).toBe(true);
   });
 
-  it('webview のページが新しいウインドウで開こうとしたら、アプリ内ブラウザのタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く', async () => {
+  it('webview のページが新しいタブで開こうとしたら、アプリ内ブラウザのタブで開く。開けず、Claude の操作中でもなければ、ふだんのブラウザで開く', async () => {
     await boot();
     const guest = new FakeWebContents();
     mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
@@ -922,14 +922,33 @@ describe('ウインドウ', () => {
     expect(open({ url: 'https://example.test/tab', disposition: 'foreground-tab' })).toEqual({ action: 'deny' });
     expect(browser.openFromPage.mock.calls).toEqual([[guest, 'https://example.test/tab', 'foreground-tab']]);
     browser.isOperating.mockReturnValueOnce(true);
-    open({ url: 'https://example.test/operating', disposition: 'new-window' });
-    open({ url: 'mailto:me@example.test', disposition: 'new-window' });
+    open({ url: 'https://example.test/operating', disposition: 'background-tab' });
+    open({ url: 'mailto:me@example.test', disposition: 'foreground-tab' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
-    open({ url: 'file:///tmp/a.html#https://example.test/', disposition: 'new-window' });
+    open({ url: 'file:///tmp/a.html#https://example.test/', disposition: 'foreground-tab' });
     expect(state.shell.openExternal).not.toHaveBeenCalled();
-    open({ url: 'https://example.test/outside', disposition: 'new-window' });
-    open({ url: 'http://localhost:8080/', disposition: 'new-window' });
+    open({ url: 'https://example.test/outside', disposition: 'foreground-tab' });
+    open({ url: 'http://localhost:8080/', disposition: 'background-tab' });
     expect(state.shell.openExternal.mock.calls).toEqual([['https://example.test/outside'], ['http://localhost:8080/']]);
+  });
+
+  it('webview のページが開くポップアップ（new-window）は、アプリ内ブラウザの外の別ウインドウで開く（window.opener をつなぐ）。http(s) でないものは開かない', async () => {
+    await boot();
+    const guest = new FakeWebContents();
+    mainWindow().webContents.emit('did-attach-webview', fakeEvent(), guest);
+    const browser = the('BrowserControl');
+    const open = guest.windowOpenHandler!;
+    const popup = open({ url: 'https://login.example.test/authorize', disposition: 'new-window' }) as { action: string; outlivesOpener: boolean; overrideBrowserWindowOptions: { show: boolean; webPreferences: Record<string, unknown> } };
+    expect(popup.action).toBe('allow');
+    expect(popup.outlivesOpener).toBe(true);
+    expect(popup.overrideBrowserWindowOptions.show).toBe(true);
+    expect(popup.overrideBrowserWindowOptions.webPreferences).toEqual({ nodeIntegration: false, nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webviewTag: false });
+    expect(browser.allowsPopup.mock.calls).toEqual([[guest, 'https://login.example.test/authorize']]);
+    // Claude の操作で許していない先なら開かない
+    browser.allowsPopup.mockReturnValueOnce(false);
+    expect(open({ url: 'https://outside.test/', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(open({ url: 'file:///etc/hosts', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(state.shell.openExternal).not.toHaveBeenCalled();
   });
 });
 
@@ -1025,6 +1044,19 @@ describe('プレビューの webview の移動先', () => {
   it('webview でないもの（アプリのウインドウなど）には付けない', async () => {
     const contents = await guard('window');
     expect(contents.events.size).toBe(0);
+    expect(contents.windowOpenHandler).toBeNull();
+  });
+
+  it('プレビューのセッションのウインドウ（ページが開いたポップアップの別ウインドウ）にも、同じ見張りと新しいウインドウの扱いを付ける', async () => {
+    await boot();
+    const contents = new FakeWebContents();
+    contents.session = state.partitions.get('persist:tanacode-preview');
+    state.app.emit('web-contents-created', fakeEvent(), contents);
+    expect(go(contents, 'will-navigate', 'file:///etc/hosts')).toBe('止める');
+    expect(go(contents, 'will-redirect', 'blob:http://localhost/1')).toBe('止める');
+    expect(go(contents, 'will-frame-navigate', 'https://example.test/')).toBe('通す');
+    expect(contents.windowOpenHandler!({ url: 'mailto:me@example.test', disposition: 'new-window' })).toEqual({ action: 'deny' });
+    expect(contents.windowOpenHandler!({ url: 'https://login.example.test/', disposition: 'new-window' })).toMatchObject({ action: 'allow' });
   });
 });
 

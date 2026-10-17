@@ -173,13 +173,17 @@ GitHub の画面の細かい操作は変わることがあります。迷った�
 - ターミナルモード（人が Claude Code の画面で操作している）の間と、切り替えの途中は、Claude 由来の文を TUI に打たないか。チャットの送信（`submit`・`submitWhenReady`）・親の `send_message`・`answer_question`・`answer_permission`・`stop_session`・`configure_session`・`end_session` は、預からずに断ります。予約の送信は失敗として残し、親への知らせは捨てます。
 - TUI に貼るのは、人がボタンで頼んだもの（コメント・ウォークスルーの質問・選んだ要素・チェックリストの「Claude に通知する」など）だけか。TUI が許可の確認・質問のメニューを出している間（`tuiAsk`。書くだけの PermissionRequest のフックで知る）は貼らずに預かり、閉じたら順に貼ります。預かっている間にターミナルモードでなくなったら、捨てます。
 
-**権限とウィンドウ**（`src/main/index.ts`）
+**権限とウィンドウ**（`src/main/index.ts`・`src/main/browser-windows.ts`）
 
 - 権限の要求・確認は既定で拒否（`restrictPermissions`）。アプリの画面（主ウインドウと、足したプロファイルの画面。`isAppContents`）のメインフレームだけに `APP_PERMISSIONS`（`clipboard-read`・`clipboard-sanitized-write`）。
-- プレビューのパーティション（`PREVIEW_PARTITION` = `persist:tanacode-preview`。足したプロファイルは `previewPartition(id)`）には、どの権限も与えず、ダウンロードも止めます。
+- プレビューのパーティション（`PREVIEW_PARTITION` = `persist:tanacode-preview`。足したプロファイルは `previewPartition(id)`）には、どの権限も与えず、ダウンロードも止めます（`browser-windows.ts` の `restrictPreviewSession`。ポップアップの見分けに使うので、プレビューのセッションはここで控えます）。
 - webview の取り付け（`will-attach-webview`）: preload を消し、`nodeIntegration: false`・`contextIsolation: true`・`sandbox: true`。開くのは http(s) と `about:blank` だけ。
-- webview のゲストの移動（`web-contents-created` の `will-navigate`・`will-frame-navigate`・`will-redirect` → `isPreviewDestination`）: トップのフレームは http(s) と `about:blank` だけ。中のフレーム（iframe）だけ、`about:srcdoc`・`blob:`・`data:` も許可。Claude がアプリ内ブラウザを操作している間のトップのフレームは、許した先へしか移れません（`blocksNavigation`）。
-- 新しいウィンドウは作りません（`setWindowOpenHandler` はいつも deny）。アプリの画面から開こうとした http(s) は、既定のブラウザで表示。webview のゲストから開こうとした http(s) は、アプリ内ブラウザの新しいタブ（`openFromPage`）で開き、開けなかったときは、Claude が操作していなければ既定のブラウザで表示。http(s) でないものは開きません。アプリの画面自身の移動（`will-navigate`）は止めます。
+- プレビューのページの移動（`web-contents-created` → `PreviewWindows.watch` の `will-navigate`・`will-frame-navigate`・`will-redirect` → `isPreviewDestination`）: webview のゲストと、プレビューのセッションの `window`（ページが開いたポップアップ）の両方に付けるか。トップのフレームは http(s) と `about:blank` だけ。中のフレーム（iframe）だけ、`about:srcdoc`・`blob:`・`data:` も許可。Claude がアプリ内ブラウザを操作している間のトップのフレームは、許した先へしか移れません（`blocksNavigation`。ポップアップは、開いたタブで許した先かを見る）。
+- 新しいウィンドウ: アプリの画面の `setWindowOpenHandler` はいつも deny（開こうとした http(s) は、既定のブラウザで表示）。アプリの画面自身の移動（`will-navigate`）は止めます。webview のゲストとポップアップの `setWindowOpenHandler`（`PreviewWindows.open`）は、http(s) でないものを開かないか。
+  - `disposition` が `new-window` でないもの（リンクの「新しいタブで開く」など）は deny して、アプリ内ブラウザの新しいタブ（`openFromPage`）で開き、開けなかったときは、Claude が操作していなければ既定のブラウザで表示。
+  - ポップアップ（`new-window`）だけ `allow` して、アプリ内ブラウザの外の別ウインドウで開きます（`window.opener` をつなぐため。OAuth のログインの窓）。`overrideBrowserWindowOptions`（`popupOptions`）で `nodeIntegration: false`・`nodeIntegrationInWorker: false`・`nodeIntegrationInSubFrames: false`・`contextIsolation: true`・`sandbox: true`・`webviewTag: false` と、枠あり・最前面にしない・全画面にしないを決めているか（ページが features に書いた値より強い）。preload を足していないか。partition を指定していないか（開いたページと同じセッションのまま。`did-create-window` で違うセッションなら閉じる `adopt`）。
+  - ポップアップの `setWindowOpenHandler` と見張りは、`web-contents-created` で付けるか（`did-create-window` で付けると、ポップアップがさらに開くウインドウを Electron がそのまま作る隙ができる）。ポップアップから開くものも、もとのタブのものとして同じ扱い（Claude の操作で許していない先は開かない `allowsPopup`・1 つのタブから 5 個まで `MAX_POPUPS`）。
+  - 別ウインドウは Claude の操作の対象にしない（タブに入れない）。アドレス欄が無いので、題に今のページのオリジンを添えるか（`showOrigin`）。開いたタブが無くなったら閉じるか。
 
 **CSP**（`src/renderer/index.html`）
 

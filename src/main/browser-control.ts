@@ -10,6 +10,8 @@ import { textResult, type ToolResult } from './mcp-bridge';
 // Claude Code から（中継とソケット経由で）届いた、アプリ内ブラウザの操作を実行する。
 // 操作するのは、そのセッションの今のタブの webview の中身（webContents）。メインプロセスが直接動かす（capturePage・CDP）。
 // ページが新しいウィンドウで開くもの（target=_blank・window.open）は、同じセッションの新しいタブで開かせる（openFromPage）。
+// ページが開くポップアップ（features 付きの window.open など）は、アプリ内ブラウザの外の別ウインドウで開く（browser-windows.ts）。
+// 別ウインドウは Claude の操作の対象にしない。Claude の操作で開いたときは、そのことを伝える（allowsPopup）。
 // クリックや入力は CDP（Input.*）で送る。ウィンドウが前に無くても届き、ページには本物の操作（isTrusted）として届く。
 // 隠れているセッションの webview も、画面（renderer）が透明にして描かせたままにするので、撮れるし操作できる。
 // ユーザーに操作を頼む（ask_user_to_act）間は、Claude の操作として扱わない（ログインで外の認証のページへ移って戻ってこられるように）。
@@ -153,9 +155,12 @@ type Tabs = {
   tabs: Map<string, Guest>;
   // 今のタブ（画面が知らせてくる。Claude の操作はこのタブに対して行う）
   active: string | null;
-  // Claude の操作の間に、許していない先へ移ろう（開こう）として止めたもの・新しいタブで開いたもの（呼び出しごとに空にする）
+  // Claude の操作の間に、許していない先へ移ろう（開こう）として止めたもの・新しいタブで開いたもの・別ウインドウで開いたポップアップ・
+  // 許していない先へ移ろうとして止めたポップアップの移動（呼び出しごとに空にする）
   blocked: string | null;
   opened: string[];
+  popups: string[];
+  popupBlocked: string | null;
   // これからできるタブに渡す許可（navigate で新しいタブに開く・許可したページが同じオリジンを新しいウインドウで開く）。
   // 画面がタブを作って知らせてくるまでの間だけ（until まで）
   handoff: { origin: string; until: number }[];
@@ -307,12 +312,33 @@ export class BrowserControl {
 
   // webview のトップのフレームが url へ移ろうとしている（リンク・リダイレクト・ページのスクリプト）。
   // Claude の操作で、許していない先（許す先の外で、このタブで許可していないオリジン）へ移ろうとしていれば止める（true を返す）。
-  // 止めた先はタブに控える（続けるなら、navigate の action: "continue" で人に許可を求める）。ユーザーの操作は止めない
-  blocksNavigation(contents: WebContents, url: string): boolean {
+  // 止めた先はタブに控える（続けるなら、navigate の action: "continue" で人に許可を求める）。ユーザーの操作は止めない。
+  // popup: contents のタブが開いたポップアップ（別ウインドウ）の移動。そのタブで許した先かを見て、止めたことだけを Claude に伝える
+  // （Claude はポップアップを操作できないので、continue の先には控えない）
+  blocksNavigation(contents: WebContents, url: string, popup = false): boolean {
     const found = this.find(contents);
     if (!found || !this.operating(found.sessionId) || this.allowedIn(found.guest, url)) return false;
+    if (popup) {
+      found.session.popupBlocked = url;
+      return true;
+    }
     found.session.blocked = url;
     found.guest.stopped = { url, newWindow: false };
+    return true;
+  }
+
+  // ページがポップアップ（別ウインドウ）を開こうとした。開いてよいか（browser-windows.ts）。
+  // Claude の操作で、許していない先を開こうとしたものは開かない（開こうとしたタブに控える。continue では、新しいタブに開く）。
+  // Claude の操作の間に開くものは、Claude に伝える。知らないタブ（画面からまだ知らせが来ていない）は、Claude が操作していないので開いてよい
+  allowsPopup(contents: WebContents, url: string): boolean {
+    const found = this.find(contents);
+    if (!found || !this.operating(found.sessionId)) return true;
+    if (!this.allowedIn(found.guest, url)) {
+      found.session.blocked = url;
+      found.guest.stopped = { url, newWindow: true };
+      return false;
+    }
+    found.session.popups.push(url);
     return true;
   }
 
@@ -500,10 +526,22 @@ export class BrowserControl {
     const session = this.tabsOf(sessionId);
     session.blocked = null;
     session.opened = [];
+    session.popups = [];
+    session.popupBlocked = null;
     const result = await this.dispatch(sessionId, name, args);
     if (result.isError) return result;
     // 操作の途中で、許していない先へ移ろうとして止めたら、そう伝える
     if (session.blocked) result.content.push({ type: 'text', text: `Blocked an attempt to navigate to (or open) a page not allowed for Claude (${originShown(session.blocked)}).${CONTINUE_HINT}` });
+    // ポップアップは別ウインドウで開き、Claude は操作できない。ログインなどは人に頼むよう伝える（オリジンだけ。URL に認証の途中の値が入っていることがある）
+    if (session.popups.length > 0) {
+      result.content.push({
+        type: 'text',
+        text:
+          `Opened a popup window outside the in-app browser (${[...new Set(session.popups.map(originShown))].join(', ')}). ` +
+          'You can neither read nor operate it (it is not a tab). If the user needs to act there (for example, to log in), ask them with ask_user_to_act.',
+      });
+    }
+    if (session.popupBlocked) result.content.push({ type: 'text', text: `Blocked an attempt to move a popup window opened by the page to a page not allowed for Claude (${originShown(session.popupBlocked)}).` });
     // 新しいタブで開いたら、そのタブができるのを待って伝える（画面がそのタブを今のタブにする）
     if (session.opened.length > 0) {
       const guest = await this.activeGuest(sessionId).catch(() => null);
@@ -1222,7 +1260,7 @@ export class BrowserControl {
   private tabsOf(sessionId: string): Tabs {
     let session = this.sessions.get(sessionId);
     if (!session) {
-      session = { tabs: new Map(), active: null, blocked: null, opened: [], handoff: [] };
+      session = { tabs: new Map(), active: null, blocked: null, opened: [], popups: [], popupBlocked: null, handoff: [] };
       this.sessions.set(sessionId, session);
     }
     return session;

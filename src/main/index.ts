@@ -7,6 +7,7 @@ import { basename, join, resolve } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, screen, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type WebContents } from 'electron';
 import { IpcChannel, LANGUAGE_ARG, type IpcEvent, type IpcInvoke, type IpcSend, type ArchiveOptions, type DiscoveredSession, type GitAction, type NewSessionOptions, type SearchOptions, type SessionOptions } from '@shared/ipc';
 import { AppSettings } from './app-settings';
+import { PreviewWindows, restrictPreviewSession } from './browser-windows';
 import { SharedPrefStore } from './shared-prefs';
 import { Profile, type Send } from './profile';
 import { profileDataDir, ProfileRegistry } from './profile-registry';
@@ -102,25 +103,10 @@ function restrictAppSession(target: Electron.Session): void {
   target.setPermissionCheckHandler((contents, permission, _origin, details) => APP_PERMISSIONS.has(permission) && isApp(contents, details.isMainFrame));
 }
 
-function restrictPreviewSession(preview: Electron.Session): void {
-  preview.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  preview.setPermissionCheckHandler(() => false);
-  // ダウンロードも断る（Claude が操作したページが、勝手にファイルを保存させないように）
-  preview.on('will-download', (event) => event.preventDefault());
-}
-
 // アプリ自身の画面か（主ウインドウか、足したプロファイルの画面）
 function isAppContents(contents: WebContents): boolean {
   if (contents.getType() !== 'window' && contents.getType() !== 'browserView') return false;
   return contents === mainWindow?.webContents || [...views.values()].some((view) => view.webContents === contents);
-}
-
-// プレビューの webview の中で移ってよい先。トップのフレームは http(s) のページと about:blank だけ（file: や
-// mailto: などの外部プロトコルへは移らない。外部プロトコルのアプリも起こさない）。
-// 中のフレーム（iframe）は、ページが自分で作る about:srcdoc・blob:・data: も通す（ページの開発で使うため。どれもページの外には出られない）
-function isPreviewDestination(url: string, isMainFrame: boolean): boolean {
-  if (/^https?:\/\//i.test(url) || url === 'about:blank') return true;
-  return !isMainFrame && (url === 'about:srcdoc' || /^(blob|data):/i.test(url));
 }
 
 // 画面への知らせ・画面からの呼び出しと知らせの受け口。チャンネルごとの中身・引数・戻り値は、shared/ipc.ts の表（IpcEvent・IpcInvoke・IpcSend）で決まる。
@@ -302,17 +288,8 @@ function setupAppContents(contents: WebContents, id: string): void {
     if (id !== DEFAULT_PROFILE_ID) webPreferences.partition = previewPartition(id);
     if (!/^https?:\/\//.test(params.src) && params.src !== 'about:blank') event.preventDefault();
   });
-  contents.on('did-attach-webview', (_e, guest) => {
-    const browser = opened.get(id)?.browser;
-    // コンソールと失敗した通信は、ページの最初のスクリプトから集める（Claude が読む）
-    browser?.track(guest);
-    // 新しいウィンドウで開くもの（target=_blank・window.open）は、アプリ内ブラウザの新しいタブで開く（ウィンドウは作らない）。
-    // Claude の操作で、許していない先を開こうとしたものは開かない（browser-control の openFromPage）
-    guest.setWindowOpenHandler(({ url, disposition }) => {
-      if (/^https?:\/\//.test(url) && !browser?.openFromPage(guest, url, disposition) && !browser?.isOperating(guest)) void shell.openExternal(url);
-      return { action: 'deny' };
-    });
-  });
+  // ページが新しいウインドウで開くもの（新しいタブ・ポップアップの別ウインドウ）の扱いは、browser-windows.ts
+  contents.on('did-attach-webview', (_e, guest) => previewWindows.attach(guest, opened.get(id)?.browser));
 }
 
 // 足したプロファイルの画面を作って、ウインドウに重ねる（見ているプロファイルのものだけを出す）
@@ -1218,20 +1195,14 @@ function useLoginShellPath(): void {
   }
 }
 
-// プレビューの webview（ゲスト）が、ページの中のリンク・location の書き換え・リダイレクトで、http(s) のページの外
-// （file: や mailto: などの外部プロトコル）へ移らないようにする。新しいウィンドウは did-attach-webview の setWindowOpenHandler で扱う
-app.on('web-contents-created', (_e, contents) => {
-  if (contents.getType() !== 'webview') return;
-  // Claude の操作でトップのフレームが移るときは、Claude に許した先だけ（リンクやリダイレクトで、外のサイトを開かせない）
-  const guard = (event: Electron.Event<{ url: string; isMainFrame: boolean }>) => {
-    if (!isPreviewDestination(event.url, event.isMainFrame)) event.preventDefault();
-    // どのプロファイルの Claude が操作しているページかは、それぞれのアプリ内ブラウザの操作が見分ける
-    else if (event.isMainFrame && profiles().some((p) => p.browser.blocksNavigation(contents, event.url))) event.preventDefault();
-  };
-  contents.on('will-navigate', guard);
-  contents.on('will-frame-navigate', guard);
-  contents.on('will-redirect', guard);
+// プレビューのページ（webview のタブと、そのページが開いたポップアップの別ウインドウ）が、ページの中のリンク・location の書き換え・
+// リダイレクトで、http(s) のページの外（file: や mailto: などの外部プロトコル）へ移らないようにする（browser-windows.ts）
+const previewWindows = new PreviewWindows({
+  browsers: () => profiles().map((p) => p.browser),
+  background,
+  openExternal: (url) => void shell.openExternal(url),
 });
+app.on('web-contents-created', (_e, contents) => previewWindows.watch(contents));
 
 app.whenReady().then(async () => {
   useLoginShellPath();
