@@ -41,7 +41,6 @@ import type { SubagentRun } from '@shared/subagent';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { SessionContext } from '@shared/context';
 import type { StatusLineInfo } from '@shared/statusline';
-import type { UsageLimit } from '@shared/usage';
 import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { SessionModel } from '@shared/models';
@@ -91,7 +90,7 @@ import type {
   UsageResponse,
   UserMessage,
 } from './stream/protocol';
-import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf } from './stream/state';
+import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf, type UsageReport } from './stream/state';
 import {
   hideWorktrees,
   planWorktree,
@@ -287,7 +286,7 @@ type Listeners = {
   onKnowledge: (sessionId: string, knowledge: SessionKnowledge) => void;
   onStatusLine: (sessionId: string, info: StatusLineInfo) => void;
   // チャットのターンの終わりに get_usage で聞いた、プランの利用枠（モデル別の週の枠を含む）
-  onUsage?: (limits: UsageLimit[], at: number) => void;
+  onUsage?: (report: UsageReport, at: number) => void;
   // ユーザーの操作待ちになった（質問・許可の確認）
   onAttention: (session: SessionSummary, attention: { kind: 'menu'; menu: Menu }) => void;
   // 答えを待っている AskUserQuestion（いちばん前のもの）が変わった（無くなったら null）
@@ -2372,8 +2371,8 @@ export class SessionManager {
     if (now - this.usageAt < USAGE_INTERVAL_MS) return;
     this.usageAt = now;
     const response = await rt.process?.client?.request<UsageResponse>('get_usage', { skip_behaviors: true }).catch(() => null);
-    const limits = response ? usageLimitsOf(response) : null;
-    if (limits && limits.length > 0) this.listeners.onUsage?.(limits, Date.now());
+    const report = response ? usageLimitsOf(response) : null;
+    if (report && report.limits.length > 0) this.listeners.onUsage?.(report, Date.now());
   }
 
   // チャットにターンの終わりを出し、完了を知らせる

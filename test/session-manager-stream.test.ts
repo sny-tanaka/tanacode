@@ -437,11 +437,14 @@ describe('利用枠（get_usage）', () => {
       await app.waitFor('ターンの終わり', () => app.manager.stateOf(id) === 'idle');
     }
     await app.waitFor('利用枠', () => app.usages.length === 1);
-    expect(app.usages[0]).toEqual([
-      { label: '5時間', percent: 42, resetsAt: null },
-      { label: '週', percent: 10, resetsAt: null },
-      { label: '週', model: 'Fable', percent: 55, resetsAt: null },
-    ]);
+    expect(app.usages[0]).toEqual({
+      limits: [
+        { label: '5時間', percent: 42, resetsAt: null },
+        { label: '週', percent: 10, resetsAt: null },
+        { label: '週', model: 'Fable', percent: 55, resetsAt: null },
+      ],
+      modelsKnown: true,
+    });
     expect(pipe.requests('get_usage')).toHaveLength(1);
   });
 

@@ -218,7 +218,7 @@ export class Profile {
           this.usage.fromStatusLine(info);
           this.autoCompact?.check(sessionId);
         },
-        onUsage: (limits, at) => this.usage.fromUsage(limits, at),
+        onUsage: (report, at) => this.usage.fromUsage(report, at),
         onQuestion: (sessionId, question) => send(IpcChannel.QuestionChanged, { sessionId, question }),
         onPermission: (sessionId, permission) => send(IpcChannel.PermissionChanged, { sessionId, permission }),
       },

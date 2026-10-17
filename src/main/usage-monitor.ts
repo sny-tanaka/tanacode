@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { UsageLimit, UsageLimits } from '@shared/usage';
 import { claudeJsonPath } from './claude-config';
+import type { UsageReport } from './stream/state';
 
 // プランの利用枠（5 時間枠・週の枠・モデル別の週の枠）。アプリのセッションが応答するたびに statusLine から、チャットのターンの終わりに
 // get_usage から（モデル別の枠はこちらだけ）受け取る。
@@ -29,8 +30,8 @@ export class UsageMonitor {
   }
 
   // チャットのターンの終わりに聞いた get_usage の利用枠（モデル別の週の枠を含む）
-  fromUsage(limits: UsageLimit[], updatedAt: number): void {
-    if (limits.length > 0) this.set({ limits, updatedAt, source: 'usage' });
+  fromUsage(report: UsageReport, updatedAt: number): void {
+    if (report.limits.length > 0) this.set({ limits: report.limits, updatedAt, source: 'usage' }, report.modelsKnown);
   }
 
   fromStatusLine(info: StatusLineInfo): void {
@@ -40,23 +41,23 @@ export class UsageMonitor {
       rl.fiveHour && { label: '5時間', percent: rl.fiveHour.percent, resetsAt: rl.fiveHour.resetsAt },
       rl.sevenDay && { label: '週', percent: rl.sevenDay.percent, resetsAt: rl.sevenDay.resetsAt },
     ].filter((l): l is UsageLimit => !!l);
-    if (limits.length > 0) this.set({ limits, updatedAt: info.updatedAt, source: 'statusline' });
+    if (limits.length > 0) this.set({ limits, updatedAt: info.updatedAt, source: 'statusline' }, false);
   }
 
   // Claude Code の控えの方が新しければ使う（本家で /usage を開いたあとなど）
   async refresh(): Promise<void> {
     const cached = await readClaudeCache(this.claudeDir);
-    if (cached) this.set(cached);
+    if (cached) this.set(cached, true);
   }
 
-  // 新しい値で置き換える。届いた値に無い枠は、前の値を残す。ただしモデル別の週の枠は、それを持たない知らせ（statusLine）でだけ残し、
-  // 持っている知らせ（get_usage・控え）では、そのとき届いたものに置き換える（無くなったモデルの枠は残さない）
-  private set(usage: UsageLimits): void {
+  // 新しい値で置き換える。届いた値に無い枠は、前の値を残す。ただしモデル別の週の枠は、モデルの一覧を持つ知らせ（allModels。
+  // model_scoped のある get_usage・控え）では、そのとき届いたものに置き換える（無くなったモデルの枠は残さない）。一覧を持たない
+  // 知らせ（statusLine・model_scoped の無い get_usage）では、届かなかったモデルの枠を残す
+  private set(usage: UsageLimits, allModels: boolean): void {
     if (this.current && this.current.updatedAt >= usage.updatedAt) return;
-    const keepModels = usage.source === 'statusline';
-    const kept = (this.current?.limits ?? []).filter((old) =>
-      old.model ? keepModels : !usage.limits.some((l) => !l.model && l.label === old.label),
-    );
+    const arrived = (old: UsageLimit) =>
+      usage.limits.some((l) => (old.model ? l.model?.toLowerCase() === old.model.toLowerCase() : !l.model && l.label === old.label));
+    const kept = (this.current?.limits ?? []).filter((old) => !(old.model && allModels) && !arrived(old));
     usage = { ...usage, limits: [...usage.limits.filter((l) => !l.model), ...kept.filter((l) => !l.model), ...usage.limits.filter((l) => l.model), ...kept.filter((l) => l.model)] };
     this.current = usage;
     void writeFile(this.file, JSON.stringify(usage, null, 2)).catch(() => {});

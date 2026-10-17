@@ -7,7 +7,6 @@ import type { ChatBatch, NewSessionOptions, SessionSummary } from '@shared/ipc';
 import type { Activity, Menu } from '@shared/screen';
 import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { StatusLineInfo } from '@shared/statusline';
-import type { UsageLimit } from '@shared/usage';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -21,6 +20,7 @@ import { SessionManager, type RunTask } from '../../src/main/session-manager';
 import type { SettingsFiles } from '../../src/main/settings-files';
 import { SessionStore, type SessionRecord } from '../../src/main/session-store';
 import { StatusLineWatcher } from '../../src/main/statusline';
+import type { UsageReport } from '../../src/main/stream/state';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
 
 
@@ -349,7 +349,7 @@ export class ScriptedApp {
   readonly subagents = new Map<string, SubagentRun[]>();
   readonly statusLineInfos = new Map<string, StatusLineInfo>();
   // get_usage で受け取った利用枠（onUsage）を、届いた順に
-  readonly usages: UsageLimit[][] = [];
+  readonly usages: UsageReport[] = [];
   // 画面に流した Claude Code の画面の出力（ターミナルモード）
   readonly ptyData: { id: string; data: string }[] = [];
   // 答えを待っている質問の知らせ（onQuestion）を、届いた順に
@@ -405,7 +405,7 @@ export class ScriptedApp {
         onBashTasks: (id, tasks) => this.bashTasks.set(id, tasks),
         onKnowledge: () => {},
         onStatusLine: (id, info) => this.statusLineInfos.set(id, info),
-        onUsage: (limits) => this.usages.push(limits),
+        onUsage: (report) => this.usages.push(report),
         onAttention: (session, attention) => this.attentions.push({ id: session.id, attention }),
         onQuestion: (id, question) => this.questionLog.push({ id, question }),
         onPermission: (id, permission) => this.permissionLog.push({ id, permission }),

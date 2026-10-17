@@ -95,9 +95,15 @@ export function rateLimitsOf(event: RateLimitEvent): StatusLineInfo['rateLimits'
   return { fiveHour: of(windows.five_hour), sevenDay: of(windows.seven_day) };
 }
 
+// get_usage の返事から読んだ利用枠。modelsKnown: モデル別の週の枠の一覧（model_scoped）が返事にあったか。
+// Claude Code は、一覧を作れたときだけ model_scoped を付ける（無いのは「分からない」、空の配列は「この人には無い」。2.1.302）
+export type UsageReport = { limits: UsageLimit[]; modelsKnown: boolean };
+
 // get_usage の利用枠（utilization は 0〜100、resets_at は ISO の時刻。実測）。5 時間枠・週の枠と、モデル別の週の枠。
-// モデル別の枠は、サーバーの一覧（model_scoped）を先に使い、そこに無いモデルだけ、前からある Opus・Sonnet の欄から足す。使えなければ null
-export function usageLimitsOf(response: UsageResponse): UsageLimit[] | null {
+// 出す枠は Claude Code の /usage と同じ（2.1.302）: seven_day_opus は読まない。seven_day_sonnet は、プランが max・team か
+// 分からない（null）ときだけ（model_scoped があっても出す。同じ名前のモデルが一覧にあれば、一覧の方を使う）。
+// utilization の無い枠は出さない。使えなければ null
+export function usageLimitsOf(response: UsageResponse): UsageReport | null {
   const limits = response.rate_limits;
   if (!response.rate_limits_available || !limits) return null;
   const of = (label: string, w: UsageWindow | undefined, model?: string): UsageLimit | null => {
@@ -105,12 +111,15 @@ export function usageLimitsOf(response: UsageResponse): UsageLimit[] | null {
     const at = w.resets_at ? Date.parse(w.resets_at) : NaN;
     return { label, ...(model ? { model } : {}), percent: w.utilization, resetsAt: Number.isNaN(at) ? null : at };
   };
-  const models = (Array.isArray(limits.model_scoped) ? limits.model_scoped : [])
+  const modelsKnown = Array.isArray(limits.model_scoped);
+  const models = (modelsKnown ? limits.model_scoped! : [])
     .filter((m) => typeof m?.display_name === 'string' && m.display_name)
     .map((m) => of('週', m, m.display_name));
   const named = new Set(models.filter((m) => m).map((m) => m!.model!.toLowerCase()));
-  const legacy = [of('週', limits.seven_day_opus, 'Opus'), of('週', limits.seven_day_sonnet, 'Sonnet')].filter((m) => m && !named.has(m.model!.toLowerCase()));
-  return [of('5時間', limits.five_hour), of('週', limits.seven_day), ...models, ...legacy].filter((l): l is UsageLimit => !!l);
+  const plan = response.subscription_type;
+  const sonnet = plan === 'max' || plan === 'team' || plan === null ? of('週', limits.seven_day_sonnet, 'Sonnet') : null;
+  const legacy = sonnet && !named.has('sonnet') ? [sonnet] : [];
+  return { limits: [of('5時間', limits.five_hour), of('週', limits.seven_day), ...models, ...legacy].filter((l): l is UsageLimit => !!l), modelsKnown };
 }
 
 // 応答のモデルの ID を表示名にする（例: claude-sonnet-5 → Sonnet 5、claude-fable-5-1 → Fable 5.1）。読めなければ null

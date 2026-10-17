@@ -113,20 +113,38 @@ describe('利用枠', () => {
           ],
         },
       }),
-    ).toEqual([
-      { label: '5時間', percent: 42, resetsAt: Date.parse(at) },
-      { label: '週', percent: 3, resetsAt: null },
-      { label: '週', model: 'Fable', percent: 55, resetsAt: Date.parse(at) },
-      { label: '週', model: 'Sonnet', percent: 12, resetsAt: null },
-    ]);
-    // model_scoped の無い古い形は、Opus・Sonnet の欄から
-    expect(
-      usageLimitsOf({ subscription_type: 'max', rate_limits_available: true, rate_limits: { seven_day_opus: { utilization: 20, resets_at: null }, seven_day_sonnet: { utilization: 7, resets_at: null } } }),
-    ).toEqual([
-      { label: '週', model: 'Opus', percent: 20, resetsAt: null },
-      { label: '週', model: 'Sonnet', percent: 7, resetsAt: null },
-    ]);
+    ).toEqual({
+      limits: [
+        { label: '5時間', percent: 42, resetsAt: Date.parse(at) },
+        { label: '週', percent: 3, resetsAt: null },
+        { label: '週', model: 'Fable', percent: 55, resetsAt: Date.parse(at) },
+        { label: '週', model: 'Sonnet', percent: 12, resetsAt: null },
+      ],
+      modelsKnown: true,
+    });
     expect(usageLimitsOf({ subscription_type: null, rate_limits_available: false, rate_limits: null })).toBeNull();
-    expect(usageLimitsOf({ subscription_type: null, rate_limits_available: true, rate_limits: { five_hour: null } })).toEqual([]);
+    expect(usageLimitsOf({ subscription_type: null, rate_limits_available: true, rate_limits: { five_hour: null } })).toEqual({ limits: [], modelsKnown: false });
+  });
+
+  it('get_usage: Claude Code の /usage と同じ枠だけ出す（seven_day_opus は読まない。seven_day_sonnet は max・team・プランの分からないときだけ）', () => {
+    const old = { seven_day_opus: { utilization: 20, resets_at: null }, seven_day_sonnet: { utilization: 7, resets_at: null } };
+    const sonnet = { label: '週', model: 'Sonnet', percent: 7, resetsAt: null };
+    for (const plan of ['max', 'team', null]) {
+      expect(usageLimitsOf({ subscription_type: plan, rate_limits_available: true, rate_limits: old })?.limits).toEqual([sonnet]);
+    }
+    for (const plan of ['pro', 'enterprise']) {
+      expect(usageLimitsOf({ subscription_type: plan, rate_limits_available: true, rate_limits: old })?.limits).toEqual([]);
+    }
+    // model_scoped があっても seven_day_sonnet は出す（同じ名前のモデルが一覧にあれば、一覧の方）
+    expect(
+      usageLimitsOf({ subscription_type: 'max', rate_limits_available: true, rate_limits: { ...old, model_scoped: [{ display_name: 'Fable', utilization: 55, resets_at: null }] } })?.limits,
+    ).toEqual([{ label: '週', model: 'Fable', percent: 55, resetsAt: null }, sonnet]);
+  });
+
+  it('get_usage: model_scoped が無い返事は、モデル別の枠が分からない（空の配列は、この人には無い）', () => {
+    const base = { subscription_type: 'pro', rate_limits_available: true } as const;
+    expect(usageLimitsOf({ ...base, rate_limits: { seven_day: { utilization: 3, resets_at: null } } })?.modelsKnown).toBe(false);
+    expect(usageLimitsOf({ ...base, rate_limits: { seven_day: { utilization: 3, resets_at: null }, model_scoped: [] } })?.modelsKnown).toBe(true);
+    expect(usageLimitsOf({ ...base, rate_limits: { model_scoped: 'x' as unknown as [] } })?.modelsKnown).toBe(false);
   });
 });
