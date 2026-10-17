@@ -341,6 +341,29 @@ describe('新しいウインドウ', () => {
     expect([win.shown, closed.shown]).toEqual([['showInactive'], []]);
   });
 
+  it('フォーカスを待つのは、待っている別ウインドウが何個あっても 1 つだけ（tanacode を使っていない間に、ページが開いて閉じるのを繰り返しても増えない）', () => {
+    const { tab, popup, focus } = setup({ focused: false });
+    const guest = tab();
+    const closed = Array.from({ length: 20 }, () => {
+      const win = popup(guest);
+      win.destroy();
+      return win;
+    });
+    const [a, b] = [popup(guest), popup(guest)];
+    expect(focus.waiting).toHaveLength(1);
+    // フォーカスが来たら、待っているものをまとめて出す。閉じたものは出さない
+    focus.now = true;
+    for (const callback of focus.waiting.splice(0)) callback();
+    expect([a.shown, b.shown]).toEqual([['showInactive'], ['showInactive']]);
+    expect(closed.filter((win) => win.shown.length > 0)).toEqual([]);
+    // また使っていない間に開いたものも、待つのは 1 つだけ
+    focus.now = false;
+    const [c, d] = [popup(guest), popup(guest)];
+    expect(focus.waiting).toHaveLength(1);
+    for (const callback of focus.waiting.splice(0)) callback();
+    expect([c.shown, d.shown, a.shown]).toEqual([['showInactive'], ['showInactive'], ['showInactive']]);
+  });
+
   it('裏で起動しているときは、別ウインドウを画面に出さない', () => {
     const { tab, popup } = setup({ background: true });
     const win = popup(tab());

@@ -87,6 +87,10 @@ export class PreviewWindows {
   private readonly popups = new Map<WebContents, Set<BrowserWindow>>();
   // タブ → そのタブのプロファイルのアプリ内ブラウザ
   private readonly owners = new WeakMap<WebContents, PreviewBrowser>();
+  // tanacode にフォーカスが来るまで出さずに待っている別ウインドウ（閉じたら外す）と、フォーカスを待っているか（待つのは、いつも 1 つだけ。
+  // tanacode を使っていない間に、ページが開いて閉じるのを繰り返しても、待ちが増えないように）
+  private readonly waiting = new Set<BrowserWindow>();
+  private waitingFocus = false;
 
   constructor(private readonly deps: Deps) {}
 
@@ -175,13 +179,24 @@ export class PreviewWindows {
     // フォーカスを移さずに出す（ページの操作だけで、アプリが前に出て入力を奪わないように。人は、押してから入力する）。
     // tanacode を使っていない（ほかのアプリにフォーカスがある）ときは、tanacode に戻るまで出さない（ほかのアプリの前に出さない）
     if (!this.deps.background && !win.isDestroyed()) {
-      const show = () => {
-        if (!win.isDestroyed()) win.showInactive();
-      };
-      if (this.deps.focused()) show();
-      else this.deps.whenFocused(show);
+      if (this.deps.focused()) win.showInactive();
+      else this.showWhenFocused(win);
     }
     return win.webContents;
+  }
+
+  // tanacode にフォーカスが来たら出す。待っているものは、フォーカスが来たときにまとめて出す
+  private showWhenFocused(win: BrowserWindow): void {
+    this.waiting.add(win);
+    win.once('closed', () => this.waiting.delete(win));
+    if (this.waitingFocus) return;
+    this.waitingFocus = true;
+    this.deps.whenFocused(() => {
+      this.waitingFocus = false;
+      const shown = [...this.waiting];
+      this.waiting.clear();
+      for (const waiting of shown) if (!waiting.isDestroyed()) waiting.showInactive();
+    });
   }
 
   // ポップアップの別ウインドウができた。開いたページと違うセッションなら（プレビューの守りが効かない）、閉じる
