@@ -14,7 +14,7 @@ export class GitError extends Error {}
 // 動かさないよう、コマンドを動かす設定を打ち消して動かす（guardArgs）。人がソース管理パネルで頼んだ操作（ステージ・コミット・プッシュ・
 // プル・ブランチの切り替えなど）は userGit で、ターミナルで git を打ったときと同じに動かす（フック・資格情報・フィルターを使う）
 export function git(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<string> {
-  return guardArgs(cwd).then((guard) => runGit(cwd, [...guard, ...args], input, env));
+  return guardOf(cwd).then((guard) => runGit(cwd, [...guard.args, ...args], input, { ...env, ...guard.env }));
 }
 
 // 人が頼んだ操作。設定はそのまま使う
@@ -37,35 +37,64 @@ function runGit(cwd: string, args: string[], input?: string, env?: Record<string
 
 // 打ち消す設定を読み直す間隔（ソース管理パネルは、状態を何度も読むため）
 const GUARD_TTL_MS = 2000;
-const guards = new Map<string, { at: number; args: Promise<string[]> }>();
+// 打ち消す設定の渡し方。args: -c（どの git でも効く）。env: 同じものを GIT_CONFIG_COUNT・GIT_CONFIG_KEY_<n>・GIT_CONFIG_VALUE_<n> で
+// （git 2.31 から。-c は最初の「=」で名前と値を分けるので、名前に「=」を含むもの（[filter "a=b"]）は env でしか打ち消せない）
+type Guard = { args: string[]; env: Record<string, string> };
+const guards = new Map<string, { at: number; guard: Promise<Guard> }>();
 // git-lfs が入れる決まった形のフィルター（git lfs install。--skip 付きも）。読むだけの git にも要る（無いと、LFS のファイルが変更に見える）
 const LFS_FILTER = /^git-lfs (clean -- %f|smudge( --skip)? -- %f|filter-process( --skip)?)$/;
 
-// 開いたフォルダの設定のうち、読むだけの git でもコマンドを動かすものを打ち消す引数（-c）。
+// 開いたフォルダの設定のうち、読むだけの git でもコマンドを動かすものを打ち消す設定。
 // - core.fsmonitor（状態・ファイルの一覧で動く）と、フック（.git/hooks・core.hooksPath。インデックスや参照を書くと動くものがある）は、いつも止める
 // - フィルター（filter.<名前>.clean・smudge・process）と merge のドライバー（merge.<名前>.driver）は、リポジトリの設定（local・worktree）で
 //   決めたものだけ空にする（空のものは動かない。git 2.39 で確かめた）。ユーザー自身の設定（global・system）と git-lfs の決まった形は残す
 // - diff の外部コマンド（diff.external・diff.<名前>.command）と textconv は、diff を動かす所で --no-ext-diff・--no-textconv を付ける
-export function guardArgs(cwd: string): Promise<string[]> {
+// 名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない（GitError）
+export function guardOf(cwd: string): Promise<Guard> {
   const now = Date.now();
   const cached = guards.get(cwd);
-  if (cached && now - cached.at < GUARD_TTL_MS) return cached.args;
-  const args = runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$'])
+  if (cached && now - cached.at < GUARD_TTL_MS) return cached.guard;
+  const guard = runGit(cwd, ['config', '--show-scope', '--null', '--get-regexp', '^(filter|merge)\\..+\\.(clean|smudge|process|driver)$'])
     .catch(() => '')
-    .then((out) => {
-      const fixed = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+    .then(async (out) => {
+      const pairs: [string, string][] = [
+        ['core.fsmonitor', 'false'],
+        ['core.hooksPath', '/dev/null'],
+      ];
       const parts = out.split('\0');
       for (let i = 0; i + 1 < parts.length; i += 2) {
         const scope = parts[i];
         const [key, ...value] = parts[i + 1].split('\n');
         if (scope === 'global' || scope === 'system') continue;
         if (key.startsWith('filter.') && LFS_FILTER.test(value.join('\n'))) continue;
-        fixed.push('-c', `${key}=`);
+        pairs.push([key, '']);
       }
-      return fixed;
+      if (pairs.some(([key]) => key.includes('=')) && !(await configEnvSupported(cwd))) {
+        throw new GitError('This folder has git settings that tanacode cannot turn off with this git. Update git to 2.31 or later.');
+      }
+      return { args: pairs.filter(([key]) => !key.includes('=')).flatMap(([key, value]) => ['-c', `${key}=${value}`]), env: configEnv(pairs) };
     });
-  guards.set(cwd, { at: now, args });
-  return args;
+  guards.set(cwd, { at: now, guard });
+  return guard;
+}
+
+// GIT_CONFIG_COUNT などで渡す設定。もとの環境にあるもの（ユーザーが渡したもの）は残し、その後ろに足す
+function configEnv(pairs: [string, string][]): Record<string, string> {
+  const given = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '', 10);
+  const base = Number.isInteger(given) && given > 0 ? given : 0;
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(base + pairs.length) };
+  pairs.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${base + i}`] = key;
+    env[`GIT_CONFIG_VALUE_${base + i}`] = value;
+  });
+  return env;
+}
+
+// GIT_CONFIG_COUNT を読む git（2.31 から）か
+async function configEnvSupported(cwd: string): Promise<boolean> {
+  const out = await runGit(cwd, ['--version']).catch(() => '');
+  const [, major, minor] = /git version (\d+)\.(\d+)/.exec(out) ?? [];
+  return major !== undefined && (Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 31));
 }
 
 // 基点（画面から来ることもある）。git のオプションとして読まれないよう、HEAD と 16 進のコミットの ID だけを受け付ける

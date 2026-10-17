@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, s
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { branchBase, branches, branchFiles, defaultBranch, git, GitError, guardArgs, isIgnored, repoInfo, showAt, showHead, showIndex, status } from '../src/main/git';
+import { branchBase, branches, branchFiles, defaultBranch, git, GitError, guardOf, isIgnored, repoInfo, showAt, showHead, showIndex, status } from '../src/main/git';
 
 // git の読み取り（ソース管理パネル・セッションの差分・worktree が使う）。使い捨てのリポジトリに、本物の git で確かめる
 
@@ -392,11 +392,74 @@ describe('tanacode が動かす git の守り', () => {
     run(repo, 'config', 'filter.lfs.clean', 'git-lfs clean -- %f');
     run(repo, 'config', 'filter.lfs.process', 'git-lfs filter-process');
     run(repo, 'config', 'filter.fake.process', 'git-lfs filter-process; echo');
-    const args = await guardArgs(repo);
+    run(repo, 'config', 'filter.a=b.clean', 'cat');
+    const { args, env } = await guardOf(repo);
     expect(args).toEqual(
       expect.arrayContaining(['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'filter.local.clean=', '-c', 'merge.local.driver=', '-c', 'filter.fake.process=']),
     );
     expect(args.some((a) => a.startsWith('filter.lfs.'))).toBe(false);
+    // 名前に「=」を含むものは -c では渡せない（最初の「=」で分けられる）ので、環境変数だけで渡す
+    expect(args.some((a) => a.startsWith('filter.a='))).toBe(false);
+    const keys = Object.keys(env).filter((k) => k.startsWith('GIT_CONFIG_KEY_'));
+    expect(env.GIT_CONFIG_COUNT).toBe(String(keys.length));
+    const passed = Object.fromEntries(keys.map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]));
+    expect(passed).toMatchObject({ 'core.fsmonitor': 'false', 'core.hooksPath': '/dev/null', 'filter.local.clean': '', 'filter.fake.process': '', 'filter.a=b.clean': '' });
+    expect(Object.keys(passed).some((k) => k.startsWith('filter.lfs.'))).toBe(false);
+  });
+
+  it('名前に「=」を含むものを打ち消せない古い git（2.31 より前）では、git を動かさない', async () => {
+    run(repo, 'config', 'filter.a=b.clean', `${mark('eq-filter-clean')}; cat`);
+    write(repo, '.git/info/attributes', '* filter=a=b\n');
+    // --version にだけ古い番号を答え、ほかは本物の git に渡す git
+    const real = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const bin = join(root, 'old-git');
+    write(root, 'old-git/git', `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version 2.30.9"; exit 0; fi\nexec "${real}" "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      await expect(git(repo, ['status', '--porcelain'])).rejects.toThrow('Update git to 2.31 or later');
+      // 読むだけの操作は、読めなかったものとして扱う
+      expect(await status(repo)).toBeNull();
+      expect(readdirSync(marks)).toEqual([]);
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
+  it('名前に「=」を含むフィルター・merge のドライバーも打ち消す', async () => {
+    for (const key of ['clean', 'smudge', 'process']) run(repo, 'config', `filter.a=b.${key}`, `${mark(`eq-filter-${key}`)}; cat`);
+    run(repo, 'config', 'merge.c=d.driver', `${mark('eq-merge-driver')}; false`);
+    write(repo, '.git/info/attributes', '* filter=a=b merge=c=d\n');
+    expect(await status(repo)).toEqual([{ path: 'a.txt', index: ' ', worktree: 'M' }]);
+    await branchFiles(repo, base);
+    await showIndex(repo, 'a.txt');
+    await git(repo, ['diff', '--no-ext-diff', '--no-textconv', base]);
+    await git(repo, ['merge-tree', '--write-tree', 'main', 'feature']).catch(() => '');
+    expect(readdirSync(marks)).toEqual([]);
+  });
+
+  it('打ち消しは、もとの環境の GIT_CONFIG_COUNT の分に足して渡す（もとの分も効く）', async () => {
+    const saved = { count: process.env.GIT_CONFIG_COUNT, key: process.env.GIT_CONFIG_KEY_0, value: process.env.GIT_CONFIG_VALUE_0 };
+    process.env.GIT_CONFIG_COUNT = '1';
+    process.env.GIT_CONFIG_KEY_0 = 'tanacode.kept';
+    process.env.GIT_CONFIG_VALUE_0 = 'yes';
+    try {
+      run(repo, 'config', 'filter.a=b.clean', `${mark('eq-filter-clean')}; cat`);
+      write(repo, '.git/info/attributes', '* filter=a=b\n');
+      expect((await git(repo, ['config', '--get', 'tanacode.kept'])).trim()).toBe('yes');
+      await status(repo);
+      expect(readdirSync(marks)).toEqual([]);
+    } finally {
+      for (const [name, value] of [
+        ['GIT_CONFIG_COUNT', saved.count],
+        ['GIT_CONFIG_KEY_0', saved.key],
+        ['GIT_CONFIG_VALUE_0', saved.value],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it('画面から来た基点・リビジョンが - で始まっていたら、git のオプションとして読ませずに断る', async () => {
