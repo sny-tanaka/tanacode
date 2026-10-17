@@ -68,6 +68,27 @@ describe('ターンの終わりの順番', () => {
     expect(app.manager.stateOf(id)).toBe('idle');
   });
 
+  it('ツールの切れ目でフックが止めたターン（最後の行がツールの結果）は、ツールの結果が会話ログに出てからターンの終わりを出す', async () => {
+    // 自動の最適化圧縮は、ターンの終わりのチャットから止めた場所（直前のツールと、その結果）を取り出す。結果を読む前に終わりを出すと、
+    // 終わったツールを「結果が無い」と書いてしまう（E2E の compact-auto で落ちた）
+    app.manager.turnEndWaitMs = 60_000;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const use = line.toolUse('toolu_1', 'Bash', { command: 'echo step-1' });
+    const result = line.toolResult('toolu_1', 'step-1');
+    app.append(id, line.user('手順を進めて'), use);
+    pipe.emit(stream.assistant(use));
+    pipe.emit(stream.user(result));
+    pipe.emit(stream.result('session', { terminal_reason: 'hook_stopped' }));
+    await app.waitFor('ツールの呼び出し', () => types(id).includes('tool-use'));
+    await sleep(200);
+    expect(turnEnds(id)).toBe(0);
+    expect(app.manager.stateOf(id)).toBe('working');
+    app.append(id, result);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(types(id).lastIndexOf('tool-result')).toBeLessThan(types(id).lastIndexOf('turn-end'));
+  });
+
   it('最後の応答が会話ログに出ないまま（書けなかった・読めなかった）でも、時間切れでターンを終える', async () => {
     app.manager.turnEndWaitMs = 600;
     const { id, pipe } = app.create();

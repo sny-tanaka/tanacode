@@ -573,6 +573,14 @@ export const stream = {
     parent_tool_use_id: null,
     message: entry.message,
   }),
+  // 会話ログの user の行（line.toolResult）を、同じ uuid の stream-json の行にする（ツールの結果。実測で uuid は会話ログと同じ）
+  user: (entry: Record<string, unknown>, sessionId = 'session') => ({
+    type: 'user',
+    uuid: entry.uuid,
+    session_id: sessionId,
+    parent_tool_use_id: null,
+    message: entry.message,
+  }),
   result: (sessionId = 'session', extra: Record<string, unknown> = {}) => ({
     type: 'result',
     subtype: 'success',

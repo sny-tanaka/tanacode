@@ -187,8 +187,9 @@ type Runtime = {
   aliveSince: number | null;
   // ターンの途中（Claude Code が作業中）。stream-json の行で決める（設計書 7 節）
   turnOpen: boolean;
-  // 今のターンの、本体の最後の応答の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）
-  lastAssistant: string | null;
+  // 今のターンの、本体の最後の行（応答か、ツールの結果）の uuid（ターンの終わりを、会話ログがここまで追いついてから出す）。
+  // ツールの切れ目でフックが止めたターンでは、最後の行はツールの結果（stream の user の行。uuid は会話ログの行と同じ。実測）
+  lastTurnLine: string | null;
   // result が届き、チャットにターンの終わりを出すのを待っているもの。local: モデルを呼ばなかったターン（/clear・/compact など）
   turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; timer: NodeJS.Timeout } | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
@@ -1660,7 +1661,7 @@ export class SessionManager {
         size: DEFAULT_PTY_SIZE,
         aliveSince: null,
         turnOpen: false,
-        lastAssistant: null,
+        lastTurnLine: null,
         turnEnding: null,
         turnStarter: 'other',
         starterSeen: false,
@@ -1723,7 +1724,7 @@ export class SessionManager {
     if (!adopted) this.store.update(id, { knownMode: permissionMode });
     runtime.aliveSince = adopted?.startedAt ?? null;
     runtime.turnOpen = false;
-    runtime.lastAssistant = null;
+    runtime.lastTurnLine = null;
     if (runtime.turnEnding) clearTimeout(runtime.turnEnding.timer);
     runtime.turnEnding = null;
     runtime.starterSeen = false;
@@ -2084,6 +2085,8 @@ export class SessionManager {
         const user = message as UserMessage;
         // スマホ・claude.ai から届いた発言（Remote Control）は、それでターンが始まる
         if (user.isReplay && user.origin?.kind === 'human' && !user.parent_tool_use_id) this.openTurn(id, rt, past);
+        // 本体のツールの結果は、ターンの最後の行になりうる（ツールの切れ目でフックが止めたとき）
+        if (!user.isReplay && !user.parent_tool_use_id && rt.turnOpen && user.uuid && isToolResult(user)) rt.lastTurnLine = user.uuid;
         return;
       }
       case 'result':
@@ -2174,7 +2177,7 @@ export class SessionManager {
     // サブエージェントの行は、モデル・コンテキスト・進み具合に使わない
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
-    rt.lastAssistant = message.uuid;
+    rt.lastTurnLine = message.uuid;
     for (const block of message.message.content ?? []) {
       if (block.type === 'tool_use' && block.name === PLAN_TOOL && typeof block.id === 'string') {
         const plan = (block.input as { plan?: unknown } | undefined)?.plan;
@@ -2215,7 +2218,7 @@ export class SessionManager {
     if (rt.turnOpen) return;
     rt.turnOpen = true;
     if (rt.turnEnding) this.flushTurnEnd(id, rt);
-    rt.lastAssistant = null;
+    rt.lastTurnLine = null;
     rt.starterSeen = false;
     if (!past) this.startProgress(id, rt);
     this.emitSessions();
@@ -2235,7 +2238,7 @@ export class SessionManager {
     if (result.is_error && result.subtype !== 'success' && !interrupted && result.errors?.length) {
       this.pushEvents(id, [{ type: 'api-error', id: result.uuid, text: result.errors.join('\n'), retrying: false }]);
     }
-    const waitFor = rt.lastAssistant && !rt.chain.some((c) => c.uuid === rt.lastAssistant) ? rt.lastAssistant : null;
+    const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : null;
     // /clear・/compact のような Claude Code の中で済むコマンドは、モデルを呼ばずに result を返す（num_turns が 0。実測）。
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
@@ -2847,6 +2850,12 @@ function hasConversation(file: string): boolean {
 }
 
 // 待っている要求の通知に使うメニュー（通知の本文は、許可ならツールの説明、質問なら質問文）
+// stream の user の行が、ツールの結果か
+function isToolResult(user: UserMessage): boolean {
+  const content = user.message?.content;
+  return Array.isArray(content) && content.some((block) => block.type === 'tool_result');
+}
+
 function requestMenu(request: CanUseToolRequest): Menu {
   if (request.tool_name === 'AskUserQuestion') {
     const questions = askQuestionsOf(request.input);
