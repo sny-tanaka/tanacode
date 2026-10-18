@@ -35,6 +35,8 @@ describe('MCP サーバーの質問（elicitation）のカード', () => {
         { match: PAGE, steps: [tool('toolu_url', 'ask_url'), [{ type: 'text', text: PAGE_DONE }]] },
       ],
     });
+    // CI の Mac と同じ大きさにする（カードがチャットの一覧に収まらず、一覧がスクロールして最下部に張り付く。手元の Mac の大きさでは収まる）
+    await app.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1180, 677));
   });
 
   afterEach(async ({ task }) => {
@@ -52,15 +54,17 @@ describe('MCP サーバーの質問（elicitation）のカード', () => {
     await card.waitFor();
     expect(await card.locator('.menu-elicitation-server').textContent()).toBe('MCP サーバー: elicit');
     expect(await card.locator('.menu-title').textContent()).toBe('どこに出しますか？');
-    // カードが出ている間は、入力欄から送れない（答えはカードで）
-    await app.page.fill('.chat-input textarea', '先に送る');
+    // カードが出ている間は、入力欄から送れない（答えはカードで）。入力欄には打たない（打つと入力欄の高さが変わって一覧が動き、
+    // 直後にカードを押したクリックが、CI で届かなかった）
     expect(await app.page.locator('.chat-input-row [aria-label="送信"]').isDisabled()).toBe(true);
-    await app.page.fill('.chat-input textarea', '');
-    await card.locator('button.menu-option.submit').click();
+    await app.press(card.locator('button.menu-option.submit'));
     await card.locator('.menu-field-error', { hasText: '選んでください' }).waitFor();
     await card.locator('select').selectOption('prod');
     await card.locator('.menu-field', { hasText: 'メモ' }).locator('input').fill('E2E のメモ');
     await card.locator('label', { hasText: 'us' }).locator('input').check();
+    // 直した項目の誤りが消えるとカードが縮み、一覧が最下部へ追いかけて「送る」が動く。消えて描き終えてから押す
+    await card.locator('.menu-field-error').first().waitFor({ state: 'detached' });
+    await app.rendered();
     await app.choose(card, '送る');
     await app.byText('.chat-list', FORM_DONE).waitFor();
     expect(app.api.toolResults.some((r) => r.includes(JSON.stringify({ action: 'accept', content: { target: 'prod', replicas: 2, note: 'E2E のメモ', notify: false, regions: ['us'] } })))).toBe(true);

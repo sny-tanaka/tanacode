@@ -424,6 +424,18 @@ export class E2EApp {
     }
   }
 
+  // target を押す。押したクリックが target に届かなければ、押す間に画面に届いたイベントを添えて失敗にする（押し直さない）。
+  // カードを閉じない押し方（フォームの入力の誤りを出すなど）に使う。閉じるものは choose
+  async press(target: Locator): Promise<void> {
+    const press = await this.recordPress(target, () => target.click());
+    if (!press.reached) throw new Error(`クリックが届きませんでした\n${press.lines.join('\n')}`);
+  }
+
+  // 画面を 2 回描かせる。直前の変化（中身の大きさが変わって、チャットの一覧が最下部へ追いかけるなど）を、押す前に描き終えさせる
+  async rendered(): Promise<void> {
+    await this.page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  }
+
   // target の真ん中を押し、離す前に during を動かしてから離す（押して離す間に画面が変わったときの確かめ）。
   // 離したクリックが target に届いたかと、押す間に画面に届いたイベントの記録を返す。
   // 押す前に hover で、位置が止まって押せるのを確かめてから、真ん中にマウスを置く（click と同じ確かめ）。target は見えているものに限る。
