@@ -1,12 +1,13 @@
+import { elicitationFieldsOf, openableUrl, type ElicitationField, type ElicitationReply, type PendingElicitation } from '@shared/elicitation';
 import { t } from '@shared/i18n';
 import { stripControlChars } from '@shared/paste';
 import type { PendingPermission, PermissionReply, QuestionReply } from '@shared/questions';
 import type { AskQuestion } from '@shared/screen';
 import { tanacodeToolLabel } from '@shared/tool-label';
-import type { CanUseToolRequest, PermissionResult, PermissionUpdate } from './stream/protocol';
+import type { CanUseToolRequest, ElicitationRequest, ElicitationResult, PermissionResult, PermissionUpdate } from './stream/protocol';
 
-// Claude Code が答えを待つ要求（stream-json の can_use_tool）を、カードと親の道具で扱う形にし、答えを Claude Code への返事
-// （PermissionResult）にする（設計書 8 節「カード」）。返事の文は、TUI で同じ答えを選んだときに Claude Code が Claude に返す文と同じ
+// Claude Code が答えを待つ要求（stream-json の can_use_tool と elicitation）を、カードと親の道具で扱う形にし、答えを Claude Code への返事
+// （PermissionResult・ElicitationResult）にする（設計書 8 節「カード」）。返事の文は、TUI で同じ答えを選んだときに Claude Code が Claude に返す文と同じ
 
 // 断ったときに Claude Code が Claude に返す文（2.1.296 の会話ログの tool_result と同じ）
 export const REJECTED =
@@ -49,7 +50,7 @@ export function questionResult(input: Record<string, unknown>, questions: AskQue
 const ANSI_SEQUENCES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
 
 // 画面に出す文。ANSI の並びを消してから、残った制御文字を消す
-function displayText(text: string): string {
+export function displayText(text: string): string {
   return stripControlChars(text.replace(ANSI_SEQUENCES, ''));
 }
 
@@ -153,4 +154,48 @@ export function askQuestionsOf(input: unknown): AskQuestion[] | null {
       : [],
   }));
   return questions.every((q) => q.question && q.options.length > 0) ? questions : null;
+}
+
+// MCP サーバーの質問（elicitation）を、カードと親の道具で扱う形にする。文・項目の名前・選択肢は MCP サーバーが書いたもので、
+// ANSI の制御文字が入りうるので消して出す。開くページは、読み直した形（ホストは punycode）で出し、そのまま開く
+export function elicitationOf(requestId: string, request: ElicitationRequest): PendingElicitation {
+  const mode = request.mode === 'url' ? 'url' : 'form';
+  const { fields, unsupported } = mode === 'form' ? elicitationFieldsOf(request.requested_schema, request.property_order) : { fields: [], unsupported: [] };
+  const clean = (text: string | undefined) => (text?.trim() ? displayText(text) : null);
+  const raw = mode === 'url' ? (request.url ?? '') : null;
+  const openable = raw !== null && openableUrl(raw);
+  return {
+    id: requestId,
+    server: displayText(request.mcp_server_name),
+    message: displayText(request.message),
+    title: clean(request.title),
+    description: clean(request.description),
+    mode,
+    url: raw === null ? null : openable ? new URL(raw).href : displayText(raw),
+    openable,
+    fields: fields.map(cleanField),
+    unsupported: unsupported.map(displayText),
+    opened: false,
+  };
+}
+
+// 項目の名前・説明・選択肢の名前の制御文字を消す（返す値の名前と、選択肢の値はそのまま）
+function cleanField(field: ElicitationField): ElicitationField {
+  const base = { ...field, title: displayText(field.title), description: field.description === null ? null : displayText(field.description) };
+  return base.type === 'select' || base.type === 'multi' ? { ...base, options: base.options.map((o) => ({ ...o, label: displayText(o.label) })) } : base;
+}
+
+// MCP サーバーの質問への答えを、Claude Code への返事にする（URL の形の「開く」は、同意として accept）。完了待ちのカードの答えは返事にしない
+export function elicitationResult(reply: ElicitationReply): ElicitationResult | null {
+  switch (reply.kind) {
+    case 'accept':
+      return { action: 'accept', content: reply.content };
+    case 'open':
+      return { action: 'accept' };
+    case 'decline':
+    case 'cancel':
+      return { action: reply.kind };
+    default:
+      return null;
+  }
 }

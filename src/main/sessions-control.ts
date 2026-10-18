@@ -8,6 +8,7 @@ import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary,
 import { stripControlChars } from '@shared/paste';
 import type { AskQuestion, PermissionMode } from '@shared/screen';
 import { answerText, type PendingPermission, type PendingQuestion, type PermissionReply } from '@shared/questions';
+import type { PendingElicitation } from '@shared/elicitation';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
@@ -82,6 +83,8 @@ export type SessionsHost = {
   // 答えを待っている許可の確認（いちばん前のもの。ツールの名前と入力の全文つき）と、それへの答え（もう待っていなければ false）
   pendingPermission(id: string): PendingPermission | null;
   replyPermission(id: string, requestId: string, reply: PermissionReply): boolean;
+  // 答えを待っている MCP サーバーの質問（いちばん前のもの。完了を待っている URL の形の質問のこともある）。親には答えさせず、人に回す
+  pendingElicitation(id: string): PendingElicitation | null;
   // バックグラウンドで動かしたもの（終わったものも入っている）。end_session で、Claude Code と一緒に止まるものを伝えるために読む
   subagents(id: string): SubagentRun[];
   bashTasks(id: string): BashTask[];
@@ -481,7 +484,11 @@ export class SessionsControl {
     const state = host.stateOf(child.id);
     const who = `"${nameOf(child)}"`;
     if (state === 'archived') throw new ToolError(`${who} is archived. To continue it, ask the user to restore it with "${t('sessions.sidebar.unarchive')}" in the session list.`);
-    if (state === 'question') throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
+    if (state === 'question') {
+      const asked = askingElicitation(host, child.id);
+      if (asked) throw new ToolError(`${who} is waiting for the user to answer a question from the MCP server "${asked.server}". Only the user can answer it, in the child session, so the message was not sent. Tell the user.`);
+      throw new ToolError(`${who} is waiting for an answer to a question. Answer it with answer_question (get_session shows the question).`);
+    }
     if (state === 'permission') throw new ToolError(`${who} is waiting for an answer to a permission prompt. Read it with get_session and answer it with answer_permission, or ask the user.`);
     // ターミナルモードの間と、切り替えの途中は、預からずにその場で断る（決めたこと）
     if (state === 'terminal') throw new ToolError(`${who} is in terminal mode: the user is working in its Claude Code screen, so the message was not sent (and not kept for later). Tell the user, or send it again once get_session shows that the child is back in the chat.`);
@@ -527,6 +534,9 @@ export class SessionsControl {
     if (pending) return this.answerPending(caller, child, pending, asked, choices, typed);
     // 許可の確認には答えさせない（answer_permission で答える）
     if (host.pendingPermission(child.id)) throw new ToolError(`"${nameOf(child)}" is showing a permission prompt, not a question. Answer it with answer_permission (get_session shows it).`);
+    // MCP サーバーから人への質問には、親は答えない（人に回す。決めたこと）
+    const elicitation = askingElicitation(host, child.id);
+    if (elicitation) throw new ToolError(`"${nameOf(child)}" is showing a question from the MCP server "${elicitation.server}" (mcp_question in get_session). Only the user can answer it, in the child session, so nothing was answered. Tell the user.`);
     throw new ToolError('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
   }
 
@@ -922,7 +932,10 @@ export class SessionsControl {
     const all = this.deps.host.list();
     const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
     if (notices.length === 0) return null;
-    const message = [...notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state)), t('tools.notice.checkSessions')].join(' ');
+    const message = [
+      ...notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state, event.state === 'question' ? askingElicitation(this.deps.host, child) : null)),
+      t('tools.notice.checkSessions'),
+    ].join(' ');
     return sessionEventText(notices.map(([child]) => child), message);
   }
 
@@ -1066,6 +1079,7 @@ export class SessionsControl {
         : null,
       last_response: response ? clip(response, 4000) : null,
       question: base.state === 'question' ? questionView(this.deps.host.pendingQuestion(s.id)) : undefined,
+      mcp_question: base.state === 'question' ? mcpQuestionView(askingElicitation(this.deps.host, s.id)) : undefined,
       permission: base.state === 'permission' ? permissionViewOf(this.deps.host.pendingPermission(s.id), (r) => this.deps.humanOnly?.(s.id, r) ?? null) : undefined,
     };
   }
@@ -1206,8 +1220,10 @@ function nameOf(s: SessionSummary | undefined): string {
 }
 
 // 親への知らせの文。チャットに知らせとして出るので、画面の言語で書く
-function noticeText(child: SessionSummary | undefined, id: string, state: SessionState): string {
+// elicitation: 子が答えを待っている MCP サーバーの質問（人だけが答えられる）
+function noticeText(child: SessionSummary | undefined, id: string, state: SessionState, elicitation: PendingElicitation | null = null): string {
   const params = { name: child?.title ?? t('tools.notice.untitledSession'), id: id.slice(0, 8) };
+  if (state === 'question' && elicitation) return t('tools.notice.childElicitation', { ...params, server: elicitation.server });
   if (state === 'question') return t('tools.notice.childQuestion', params);
   // 子セッションは人に通知しないので、親から人に伝える
   if (state === 'permission') return t('tools.notice.childPermission', params);
@@ -1258,6 +1274,28 @@ function clipBytes(text: string, max: number): string {
 
 function permissionViewOf(permission: PendingPermission | null, humanOnly: (request: { tool: string; input: Record<string, unknown> }) => string | null): Record<string, unknown> | undefined {
   return permission ? permissionView(permission, humanOnly).view : undefined;
+}
+
+// Claude Code が答えを待っている MCP サーバーの質問（完了を待っている URL の形の質問は、もう答えたので除く）
+function askingElicitation(host: Pick<SessionsHost, 'pendingElicitation'>, id: string): PendingElicitation | null {
+  const pending = host.pendingElicitation(id);
+  return pending && !pending.opened ? pending : null;
+}
+
+// get_session で返す、MCP サーバーの質問。親は答えられないので、人に伝えるための中身だけを渡す。
+// URL の形のページは、ホストだけ（URL には、ログインの合言葉などが入っていることがある）
+function mcpQuestionView(pending: PendingElicitation | null): Record<string, unknown> | undefined {
+  if (!pending) return undefined;
+  return {
+    server: pending.server,
+    message: clip(pending.message, 2000),
+    mode: pending.mode,
+    // 開けるページ（http・https）は読めるので、ホストが取れる
+    page_host: pending.mode === 'url' && pending.openable && pending.url ? new URL(pending.url).host : undefined,
+    fields: pending.mode === 'form' ? pending.fields.map((f) => ({ name: f.key, title: f.title, type: f.type, required: f.required })) : undefined,
+    can_answer: false,
+    cannot_answer_reason: "It is a question from an MCP server to the user: only the user can answer it, in the child session's card. Tell the user.",
+  };
 }
 
 // 答えを待っている質問のうち、まだ答えていない最初の質問（親は 1 問ずつ答える）

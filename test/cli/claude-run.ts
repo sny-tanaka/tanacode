@@ -7,6 +7,7 @@ import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry }
 import type { ChatBatch, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
+import type { ElicitationReply, PendingElicitation } from '@shared/elicitation';
 import type { Activity, Menu, PermissionMode } from '@shared/screen';
 import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
@@ -95,6 +96,8 @@ export class ClaudeRun {
   readonly chatBatches: ChatBatch[] = [];
   // 選択メニューなど、ユーザーの操作待ちになったときの知らせ（onAttention）
   readonly attentions: Attention[] = [];
+  // URL の形の MCP サーバーの質問で、カードの「ページを開く」がふだんのブラウザで開いたページ（onOpenExternal）
+  readonly openedUrls: string[] = [];
   // 作業が終わったときの知らせ（onTurnCompleted。アプリは「作業が完了しました」の通知を出す）
   readonly turnsCompleted: SessionSummary[] = [];
   // 最後に届いたセッションの一覧（onSessionsChanged）
@@ -367,6 +370,7 @@ export class ClaudeRun {
         onKnowledge: (id, knowledge) => ours(id) && (this.knowledge = knowledge),
         onStatusLine: (id, info) => ours(id) && (this.statusLine = info),
         onAttention: (session, attention) => ours(session.id) && this.attentions.push(attention),
+        onOpenExternal: (url) => live() && this.openedUrls.push(url),
       },
       // 開発版と同じく Remote Control は使わない（claude.ai へのログインが要る）
       false,
@@ -454,6 +458,16 @@ export class ClaudeRun {
   // カードのボタンと同じく、質問に答える（session-manager の replyQuestion）。もう待っていなければ失敗させる
   replyQuestion(question: PendingQuestion, reply: QuestionReply): void {
     if (!this.manager.replyQuestion(this.sessionId!, question.id, reply)) throw new Error(`質問（${question.questions[0]?.question}）に答えられません。もう待っていません`);
+  }
+
+  // Claude Code が答えを待っている MCP サーバーの質問（elicitation。カードに出るもの）が来るまで待つ
+  elicitation(label: string, timeoutMs = 20_000): Promise<PendingElicitation> {
+    return this.waitUntil(label, () => this.manager.pendingElicitation(this.sessionId!), timeoutMs);
+  }
+
+  // カードのボタンと同じく、MCP サーバーの質問に答える（session-manager の replyElicitation）。答えられなければ失敗させる
+  replyElicitation(elicitation: PendingElicitation, reply: ElicitationReply): void {
+    if (!this.manager.replyElicitation(this.sessionId!, elicitation.id, reply)) throw new Error(`MCP サーバーの質問（${elicitation.message}）に ${reply.kind} で答えられません`);
   }
 
   // get が値を返すまで待つ。時間切れ・claude の終了は失敗にする

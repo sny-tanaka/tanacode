@@ -69,6 +69,7 @@
       "compactCompleted": "Finished optimizing the context",
       "compactFailed": "Context optimization was canceled",
       "question": "Claude has a question",
+      "elicitation": "Question from the MCP server \"{server}\": {message}",
       "permission": "Permission needed: {detail}",
       "permissionNoDetail": "Claude is asking for permission",
       "images": "{count} images",
@@ -467,6 +468,7 @@
     "notice": {
       "untitledSession": "New Session",
       "childQuestion": "Child session “{name}” ({id}) is waiting for an answer to its question (you can answer it with answer_question).",
+      "childElicitation": "Child session “{name}” ({id}) is waiting for an answer to a question from the MCP server “{server}” (only the user can answer it, in the child session’s card).",
       "childPermission": "Child session “{name}” ({id}) is waiting for permission. Read the prompt with get_session and answer it with answer_permission, or ask the user if you can't decide.",
       "childBrowser": "Child session “{name}” ({id}) is waiting for the user to act in the in-app browser. Let the user know.",
       "childExited": "Child session “{name}” ({id}) has exited.",
@@ -1936,7 +1938,8 @@
     "kind": {
       "question": "Question from Claude Code",
       "permission": "Permission Request",
-      "plan": "Plan Approval"
+      "plan": "Plan Approval",
+      "elicitation": "Question from an MCP server"
     },
     "card": {
       "sendFailed": "Couldn't send. Click again.",
@@ -1978,6 +1981,40 @@
       "planKeep": "Keep planning (tell Claude what to change)",
       "planPlaceholder": "What to change in the plan (Enter for a new line, ⌘+Enter to send)",
       "planMissing": "Couldn't read the plan, so it can't be approved. Choose “Keep planning” to have Claude present it again, or × to stop."
+    },
+    "elicitation": {
+      "server": "MCP server: {server}",
+      "submit": "Submit",
+      "decline": "Decline",
+      "cancelTip": "Close without answering (the MCP server is told it was canceled)",
+      "required": "Required",
+      "choose": "Choose one",
+      "none": "(None)",
+      "unsupported": "This question has fields that tanacode cannot show ({fields}). Decline it.",
+      "open": "Open the page",
+      "openNote": "Opens in your default browser. Continue on that page.",
+      "notOpenable": "This page cannot be opened (it is not an http or https page). Decline it.",
+      "opened": "The page is open in your browser. This card closes when you finish there.",
+      "reopen": "Open again",
+      "dismiss": "Close",
+      "gone": "This question can no longer be answered (it was answered elsewhere or withdrawn)",
+      "problem": {
+        "required": "Enter a value",
+        "pick": "Choose an option",
+        "tooShort": "Enter at least {min} characters",
+        "tooLong": "Enter {max} characters or fewer",
+        "email": "Enter an email address",
+        "uri": "Enter a URL (such as https://…)",
+        "date": "Enter a date",
+        "dateTime": "Enter a date and time",
+        "number": "Enter a number",
+        "integer": "Enter a whole number",
+        "tooSmall": "Enter {min} or more",
+        "tooLarge": "Enter {max} or less",
+        "tooFew": "Choose at least {min}",
+        "tooMany": "Choose up to {max}",
+        "option": "Choose from the options"
+      }
     }
   }
 }

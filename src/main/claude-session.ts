@@ -17,7 +17,7 @@ import { projectLogDir } from './claude-config';
 import { StreamClient, type StreamEvents } from './stream/client';
 import { endSession } from './stream/internal';
 import { LineLog } from './stream/log';
-import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS } from './stream/protocol';
+import { RETAIN_RULES, STREAM_ARGS, TRANSIENT_KINDS, type ElicitationRequest } from './stream/protocol';
 
 // stream: チャット。claude -p の stream-json をパイプでつなぐ（StreamClient）/ tui: ターミナルモード。素の TUI を pty で動かし、人が画面で操作する
 export type LaunchKind = 'stream' | 'tui';
@@ -155,6 +155,10 @@ export class ClaudeSession {
     const events: StreamEvents = {
       onMessage: (message, past) => !this.killed && this.handlers.stream?.onMessage(message, past),
       onPermission: (id, request, replayed) => !this.killed && this.handlers.stream?.onPermission(id, request, replayed),
+      // MCP サーバーの質問は、受け取る先があるときだけ受け取る（無ければ、StreamClient が error で返す。待たせたままにしない）
+      ...(this.handlers.stream?.onElicitation
+        ? { onElicitation: (id: string, request: ElicitationRequest, replayed: boolean) => !this.killed && this.handlers.stream?.onElicitation?.(id, request, replayed) }
+        : {}),
       onCancel: (id) => !this.killed && this.handlers.stream?.onCancel(id),
       onCaughtUp: () => !this.killed && this.handlers.stream?.onCaughtUp?.(),
       onExit: (exitCode, stderr) => {

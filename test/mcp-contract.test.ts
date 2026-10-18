@@ -223,6 +223,7 @@ function fakeHost(cwd: string): SessionsHost {
     watchState: () => () => {},
     pendingPermission: () => null,
     replyPermission: () => false,
+    pendingElicitation: () => null,
     subagents: () => [],
     bashTasks: () => [],
     workflows: () => [],

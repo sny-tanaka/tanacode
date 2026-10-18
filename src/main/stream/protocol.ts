@@ -319,6 +319,31 @@ export type PermissionResult =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: PermissionUpdate[] }
   | { behavior: 'deny'; message: string; interrupt?: boolean };
 
+// MCP サーバーから人への質問（SDKControlElicitationRequest）。MCP サーバーが elicitation/create を送り、フックが答えなかったときに来る。
+// mode: form（項目を埋める。無ければ form）・url（人がページを開いて続ける。elicitation_id で、あとの完了の知らせ
+// system/elicitation_complete と結ぶ）/ property_order: requested_schema.properties の項目の、MCP サーバーが書いた順 /
+// title・display_name・description: MCP サーバーの _meta の anthropic/permissionDisplay。
+// 待っている間、Claude Code は Remote Control に「Claude needs your input」と出す（2.1.302 の本体）
+export type ElicitationRequest = {
+  subtype: 'elicitation';
+  mcp_server_name: string;
+  message: string;
+  mode?: 'form' | 'url';
+  url?: string;
+  elicitation_id?: string;
+  requested_schema?: Record<string, unknown>;
+  property_order?: string[];
+  title?: string;
+  display_name?: string;
+  description?: string;
+};
+
+// 質問への答え（MCP の ElicitResult。content は accept のときだけ）。error で返すと、Claude Code は cancel にする（2.1.302 の本体）
+export type ElicitationResult = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, string | number | boolean | string[]> };
+
+// SDKElicitationCompleteMessage（URL の形の質問を、MCP サーバーが終わったと知らせた。notifications/elicitation/complete）
+export type ElicitationCompleteMessage = { type: 'system'; subtype: 'elicitation_complete'; mcp_server_name: string; elicitation_id: string; uuid?: string; session_id?: string };
+
 export type ControlRequestMessage = { type: 'control_request'; request_id: string; request: { subtype: string; [key: string]: unknown } };
 export type ControlCancelMessage = { type: 'control_cancel_request'; request_id: string };
 export type ControlResponseMessage = {
@@ -389,6 +414,7 @@ export type StreamMessage =
   | ModelRefusalFallbackMessage
   | BridgeStateMessage
   | CommandsChangedMessage
+  | ElicitationCompleteMessage
   | ConversationResetMessage
   | StreamEventMessage
   | ToolProgressMessage

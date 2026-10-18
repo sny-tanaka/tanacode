@@ -219,6 +219,25 @@ describe('adopt', () => {
     expect(app.manager.summary(id)?.attention).toBe('permission');
   });
 
+  it('まだ答えていない MCP サーバーの質問（elicitation）も出し直し、もう一度は通知しない。答えると返す', async () => {
+    const id = await previous(line.user('出して'));
+    const request = {
+      type: 'control_request',
+      request_id: 'el-old',
+      request: { subtype: 'elicitation', mcp_server_name: 'deploy', message: 'どこに出しますか？', requested_schema: { type: 'object', properties: { target: { type: 'string', enum: ['stg'] } } } },
+    };
+    app.host.hosted = [hosted(id, { lastSeq: 1, firstSeq: 1, pending: [{ seq: 1, line: JSON.stringify(request) }] })];
+    const before = app.attentions.length;
+    await app.manager.adopt();
+    attached(id)!.replayed();
+    await app.waitFor('質問', () => app.manager.pendingElicitation(id) !== null);
+    expect(app.manager.pendingElicitation(id)).toMatchObject({ id: 'el-old', server: 'deploy', fields: [{ key: 'target' }] });
+    expect(app.manager.stateOf(id)).toBe('question');
+    expect(app.attentions.length).toBe(before);
+    expect(app.manager.replyElicitation(id, 'el-old', { kind: 'accept', content: { target: 'stg' } })).toBe(true);
+    expect(attached(id)!.messages.at(-1)).toEqual({ type: 'control_response', response: { subtype: 'success', request_id: 'el-old', response: { action: 'accept', content: { target: 'stg' } } } });
+  });
+
   it('出し直した要求では、もう一度は通知しない。プランの承認の本文は、会話ログを読み直してから出し直す。質問は質問のまま', async () => {
     const planFile = join(app.home, '.claude', 'plans', 'adopted.md');
     mkdirSync(dirname(planFile), { recursive: true });

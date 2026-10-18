@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { app, type Session, type WebContents } from 'electron';
+import { app, shell, type Session, type WebContents } from 'electron';
 import { IpcChannel, type ArchiveOptions, type IpcEvent, type NewSessionOptions, type WorktreeRemoval } from '@shared/ipc';
 import { normalizeHostPattern } from '@shared/browser-tools';
 import { t } from '@shared/i18n';
@@ -221,6 +221,11 @@ export class Profile {
         onUsage: (report, at) => this.usage.fromUsage(report, at),
         onQuestion: (sessionId, question) => send(IpcChannel.QuestionChanged, { sessionId, question }),
         onPermission: (sessionId, permission) => send(IpcChannel.PermissionChanged, { sessionId, permission }),
+        onElicitation: (sessionId, elicitation) => send(IpcChannel.ElicitationChanged, { sessionId, elicitation }),
+        // URL の形の MCP サーバーの質問のページは、チャットのリンクと同じく、ふだんのブラウザで開く（ログインなど、人のブラウザのログインが要るもの）
+        onOpenExternal: (url) => {
+          if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+        },
       },
       this.options.remoteControl,
       this.settingsFiles,

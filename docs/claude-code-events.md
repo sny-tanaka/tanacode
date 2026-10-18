@@ -64,6 +64,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ✅ 取り消された応答を、書いている途中の文から外す。お知らせは会話ログの行から（5 節） |
 | `commands_changed` | / のコマンドの一覧の途中での変化（スキルのファイルを足した・プラグインを読み直したなど） | 有 | ✅ 入力欄の / の候補と記録を差し替える。プロジェクトのスキルのファイルを足すと出る（実測。`test/cli/commands-changed.test.ts`） |
 | `permission_check_status` | auto モードの判定を 4 秒より長く待っている（checking）・待ち終えた（done） | 無 | ✅ 作業中の表示の「安全を確認しています」 |
+| `elicitation_complete` | MCP サーバーの URL での質問の完了（MCP の `notifications/elicitation/complete` を中継。`mcp_server_name`・`elicitation_id`） | 有 | ✅ ページを開いたあとの、完了を待っているカードを閉じる（実測。`test/cli/elicitation.test.ts`） |
 
 ### 受け取るだけのもの
 
@@ -103,7 +104,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | --- | --- | --- | --- |
 | `session_state_changed` | セッションの状態（idle・running・requires_action） | 有 | `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` などを付けたときだけ |
 | `control_request_progress` | アプリが送った side_question の進み具合 | 有 | side_question を送ったときだけ（tanacode は送らない） |
-| `elicitation_complete` | MCP サーバーの URL での質問の完了 | 有 | MCP サーバーが URL で質問したとき |
 | `plugin_install` | プラグインのインストールの進み具合 | 有 | `CLAUDE_CODE_SYNC_PLUGIN_INSTALL` のときだけ |
 | `mirror_error` | 会話ログの写しの失敗 | 有 | SessionStore を使う SDK だけ |
 | `worker_shutting_down` | 理由つきの、Remote Control の接続の終わり | 有 | Remote Control で、閉じる理由があるとき |
@@ -130,7 +130,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | subtype | どんなイベントか | tanacode |
 | --- | --- | --- |
 | `can_use_tool` | 許可の確認・AskUserQuestion・ExitPlanMode など | ✅ 画面で聞いて答える |
-| `elicitation` | MCP サーバーから人への質問 | ❌ 取り消しになる（ターミナルモードなら答えられる） |
+| `elicitation` | MCP サーバーから人への質問（フォームの形と URL の形） | ✅ チャットのカードで聞いて答える（`action` と `content`。error で返すと Claude Code は取り消しにする）。答える前に作業を止めると、`control_cancel_request` で取り下げられる（実測。`test/cli/elicitation.test.ts`） |
 | `hook_callback` | アプリが登録したフックの呼び出し | ❌ tanacode は登録しないので来ない |
 | `mcp_message` | アプリの中の MCP サーバーへの中継 | ❌ 同上 |
 | `request_user_dialog` | アプリが宣言した種類のダイアログ | ❌ tanacode は宣言しないので来ない |
