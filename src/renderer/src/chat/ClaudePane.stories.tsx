@@ -169,7 +169,7 @@ const withUnknown: ChatItem[] = [
   unknownRow('unknown:tp', 'system/turn_preempted'),
   tool('r1', 'Read', 'src/Login.tsx'),
   tool('r2', 'Grep', 'onSubmit'),
-  unknownRow('unknown:pc', 'system/permission_check_status', 3),
+  unknownRow('unknown:uit', 'system/ui_toast', 3),
   tool('e1', 'Edit', 'src/Login.tsx'),
   tool('b1', 'Bash', 'npm test'),
   { kind: 'text', id: 't1', text: '`useEffect` の依存の配列を直しました。テストも通っています。' },

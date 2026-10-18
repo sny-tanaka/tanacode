@@ -9,11 +9,13 @@
 //
 // 例: VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build && npm run demo:check:sp
 //     npm run demo:check:sp -- --dir demo-check --chapter review --max-memory 1500
+//     npm run demo:check:sp -- --evidence tour-evidence/sp（止まったら、そのときの画面の様子を書き出す。demo-tour-evidence.mjs）
 // WebKit が入っていなければ、先に npx playwright install --with-deps webkit で入れる（Linux だけで動く。メモリを /proc から読むため）
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { devices, webkit } from 'playwright';
+import { EVIDENCE_TIMEOUT_MS, snapshot, within } from './demo-tour-evidence.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -30,6 +32,8 @@ const STALL_MS = Number(option('stall', 120_000));
 const UNRESPONSIVE_MS = 3000;
 // ページの処理のプロセスのメモリの上限（MB）。いまの作りでは 1.4GB 前後。iframe を transform で縮めていたころは 2.8〜3.6GB（CONTRIBUTING の「デモのサイト」）
 const MAX_MEMORY_MB = Number(option('max-memory', 2048));
+// 止まったときの証拠を書き出すフォルダ（無ければ書き出さない）
+const evidenceDir = option('evidence', '');
 // 見立てる端末。iPhone 13（390×664・倍率 3）
 const DEVICE = 'iPhone 13';
 
@@ -195,8 +199,25 @@ clearInterval(meter);
 measure();
 const seconds = elapsed();
 const hungSeconds = unresponsive ? ((Date.now() - unresponsive.since) / 1000).toFixed(0) : '';
+if (evidenceDir && result !== 'done') await saveEvidence();
 await Promise.race([browser.close().catch(() => {}), sleep(15_000)]);
 server.close();
+
+// 止まったときの画面の写し（ページ全体と、差分の画面）・アプリの画面の HTML・画面の様子。ページの処理が落ちたときは、止まり方とエラーだけ
+async function saveEvidence() {
+  mkdirSync(evidenceDir, { recursive: true });
+  const app = crashed ? null : page.frames().find((f) => f.url().includes('app.html'));
+  if (!crashed) await page.screenshot({ path: join(evidenceDir, 'page.png'), timeout: EVIDENCE_TIMEOUT_MS }).catch(() => {});
+  let state = null;
+  if (app) {
+    await app.locator('.diff-pane').first().screenshot({ path: join(evidenceDir, 'diff-pane.png'), timeout: EVIDENCE_TIMEOUT_MS }).catch(() => {});
+    const html = await within(app.content().catch(() => null));
+    if (html) writeFileSync(join(evidenceDir, 'app.html'), html);
+    state = await within(app.evaluate(snapshot).catch((e) => ({ error: String(e) })), { error: '応答しませんでした' });
+  }
+  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], state }, null, 2));
+  console.log(`止まったときの様子を ${evidenceDir} に書き出しました`);
+}
 
 const memory = `ページの処理のメモリの最大: ${peak}MB（上限 ${MAX_MEMORY_MB}MB）。そのときの説明: ${peakAt}`;
 // 応答しないまま終わったときは、その間の長さとメモリを添える

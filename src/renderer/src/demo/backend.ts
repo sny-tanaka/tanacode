@@ -447,6 +447,8 @@ export class DemoBackend {
         },
         onChanged: (l) => this.ch.permission.on(l),
       },
+      // デモの台本は、MCP サーバーの質問を出さない
+      elicitation: { get: () => ok(null), reply: () => ok(false), onChanged: () => () => {} },
       workflows: { get: (id) => ok(s(id).workflows), onChanged: (l) => this.ch.workflows.on(l) },
       subagents: { get: (id) => ok(s(id).subagents), onChanged: (l) => this.ch.subagents.on(l) },
       usage: { get: () => ok(this.usage), refresh: () => ok(undefined), onChanged: (l) => this.ch.usage.on(l) },

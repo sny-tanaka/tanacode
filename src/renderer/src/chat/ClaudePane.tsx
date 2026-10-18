@@ -6,6 +6,7 @@ import { canSee } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { PermissionMode } from '@shared/screen';
 import type { PendingPermission, PendingQuestion } from '@shared/questions';
+import type { PendingElicitation } from '@shared/elicitation';
 import type { BashTask, TaskRef } from '@shared/task';
 import { errorMessage } from '../errorMessage';
 import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
@@ -15,6 +16,7 @@ import { ContextMeter } from '../knowledge/ContextMeter';
 import { contextUsage } from '../knowledge/useSessionKnowledge';
 import { MenuCard } from '../screen/MenuCard';
 import { QuestionCard } from '../screen/QuestionCard';
+import { ElicitationCard } from '../screen/ElicitationCard';
 import type { TaskEntry } from '../tasks/taskList';
 import { TaskTray } from '../tasks/TaskTray';
 import { ClaudeScreen, pasteIntoClaudeScreen } from '../terminal/ClaudeScreen';
@@ -65,6 +67,8 @@ type Props = {
   question?: PendingQuestion | null;
   // Claude Code が答えを待っている、質問でない要求（許可の確認・プランの承認。無ければ null）
   permission?: PendingPermission | null;
+  // MCP サーバーから人への質問（答えを待っているもの。無ければ、完了を待っている URL の形の質問。どちらも無ければ null）
+  elicitation?: PendingElicitation | null;
   workflows: WorkflowRuns;
   subagents: SubagentRuns;
   bashTasks: ReadonlyMap<string, BashTask>;
@@ -112,6 +116,7 @@ export const ClaudePane = memo(function ClaudePane({
   chat,
   question = null,
   permission = null,
+  elicitation = null,
   workflows,
   subagents,
   bashTasks,
@@ -406,8 +411,9 @@ export const ClaudePane = memo(function ClaudePane({
   // 答えを待っている質問と、許可の確認・プランの承認
   const asked = live ? question : null;
   const prompt = live ? permission : null;
-  // 質問や確認のカードが出ている
-  const waiting = !!asked || !!prompt;
+  const elicited = live ? elicitation : null;
+  // 質問や確認のカードが出ている（完了を待っている URL の形の質問は、Claude Code が答えを待っていないので数えない）
+  const waiting = !!asked || !!prompt || (!!elicited && !elicited.opened);
   // 質問や確認のカードが出ている間は、答えをカードで選ぶ
   const blocked = waiting || !(chat.status === 'idle' || chat.status === 'running' || chat.status === 'starting');
   const hasContent = input.trim().length > 0 || attachments.length > 0 || pastes.length > 0 || comments.length > 0;
@@ -415,7 +421,7 @@ export const ClaudePane = memo(function ClaudePane({
   // 質問や確認のカードが出たときも、最下部にいれば追いかける。カードは会話ログから来ないので、上の追いかけ
   // （chat.items など）では動かない。追いかけないと、カードの選択肢が見えている範囲の下に出て、スクロールすると
   // 「最新のメッセージへ」のボタンが選択肢の上に重なる（選択肢を押したつもりが、ボタンを押してしまう）
-  const cardKey = asked ? `question:${asked.id}` : prompt ? `permission:${prompt.id}` : '';
+  const cardKey = asked ? `question:${asked.id}` : prompt ? `permission:${prompt.id}` : elicited ? `elicitation:${elicited.id}` : '';
   useLayoutEffect(() => {
     const list = listRef.current;
     if (cardKey && list && stickToBottom.current) toBottom(list);
@@ -882,6 +888,8 @@ export const ClaudePane = memo(function ClaudePane({
           {asked && <QuestionCard key={`${session.id}|${asked.id}`} sessionId={session.id} question={asked} />}
           {/* 待っている要求が変われば作り直す（書きかけの理由を、次の確認やほかのセッションに持ち越さない） */}
           {prompt && <MenuCard key={`${session.id}|${prompt.id}`} sessionId={session.id} permission={prompt} />}
+          {/* 待っている質問が変われば作り直す（入れかけの答えを、次の質問やほかのセッションに持ち越さない） */}
+          {elicited && <ElicitationCard key={`${session.id}|${elicited.id}`} sessionId={session.id} elicitation={elicited} />}
           {rewinding && (
             <RewindCard
               preview={rewinding.preview}

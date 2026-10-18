@@ -96,14 +96,33 @@ export type InitMessage = {
   uuid: string;
 };
 
-// SDKStatusMessage。status: compacting（圧縮中）・requesting（応答を待っている）・null
+// SDKStatusMessage。status: compacting（圧縮中）・requesting（応答を待っている）・null。
+// 圧縮が終わると、null に compact_result（success・failed）と、失敗なら compact_error（理由の文）を付けて出す。
+// 圧縮中の行は、要約を待つ間 30 秒ごとに出直すことがある。compact_output_chars（@internal）は自動の圧縮の compacting にだけ付く
+// （手動の /compact には付かない。2.1.302 の型の説明と実測）。PreCompact のフックが自動の圧縮を止めると、compacting のあと、
+// compact_result の無い null か、失敗（compact_error が「Compaction blocked by PreCompact hook: <フックの理由>」）になる（2.1.302 の本体）
 export type StatusMessage = {
   type: 'system';
   subtype: 'status';
   status: 'compacting' | 'requesting' | null;
   permissionMode?: PermissionModeName;
+  compact_result?: 'success' | 'failed';
+  compact_error?: string;
+  compact_output_chars?: number;
   uuid: string;
   session_id: string;
+};
+
+// auto モードの判定（ツールを使ってよいか）の待ち（system/permission_check_status。SDK の公開の型には無い）。
+// checking: 判定を 4 秒ほど待って、まだ待っている / done: その待ちが終わった（4 秒より早く済んだ判定には、どちらも出ない）。
+// agent_id: サブエージェントの中のツールの呼び出しのとき（2.1.302 の本体）
+export type PermissionCheckStatusMessage = {
+  type: 'system';
+  subtype: 'permission_check_status';
+  tool_use_id: string;
+  agent_id?: string;
+  status: 'checking' | 'done';
+  uuid?: string;
 };
 
 // SDKTaskStartedMessage・SDKTaskNotificationMessage（裏のタスク）。task_type は local_bash・local_agent・local_workflow など
@@ -147,6 +166,32 @@ export type ApiRetryMessage = {
   error_status: number | null;
   error: string;
   uuid: string;
+};
+
+// SDKNotificationMessage。Claude Code の警告（圧縮の失敗・起動時のエフォートやコンテキストの上限・メモリの停止など）。stream-json にだけ出る。
+// key: 種類（stop-hook-error など）/ priority: low・medium・high・immediate / color: error・warning・success・suggestion など /
+// timeout_ms: TUI で消すまでの時間（一時的な知らせ）。uuid は付かないこともある（Claude Code 2.1.302 の本体）
+export type NotificationMessage = {
+  type: 'system';
+  subtype: 'notification';
+  key: string;
+  text: string;
+  priority?: string;
+  color?: string;
+  timeout_ms?: number;
+  uuid?: string;
+};
+
+// SDKModelRefusalFallbackMessage。モデルが断った応答を取り消して、別のモデルで取り直した。チャットのお知らせは会話ログの同じ行から出し、
+// ここでは取り消された応答（retracted_message_uuids。stream-json に出た assistant・user の行の uuid）を、書いている途中の文から外すのに使う。
+// 取り消された応答は会話ログに書かれない（2.1.302 で実測）
+export type ModelRefusalFallbackMessage = {
+  type: 'system';
+  subtype: 'model_refusal_fallback';
+  original_model?: string;
+  fallback_model?: string;
+  retracted_message_uuids?: string[];
+  uuid?: string;
 };
 
 // Remote Control のつながり（system/bridge_state。SDK の公開の型には無い）。state: ready・connected・failed など
@@ -274,6 +319,31 @@ export type PermissionResult =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: PermissionUpdate[] }
   | { behavior: 'deny'; message: string; interrupt?: boolean };
 
+// MCP サーバーから人への質問（SDKControlElicitationRequest）。MCP サーバーが elicitation/create を送り、フックが答えなかったときに来る。
+// mode: form（項目を埋める。無ければ form）・url（人がページを開いて続ける。elicitation_id で、あとの完了の知らせ
+// system/elicitation_complete と結ぶ）/ property_order: requested_schema.properties の項目の、MCP サーバーが書いた順 /
+// title・display_name・description: MCP サーバーの _meta の anthropic/permissionDisplay。
+// 待っている間、Claude Code は Remote Control に「Claude needs your input」と出す（2.1.302 の本体）
+export type ElicitationRequest = {
+  subtype: 'elicitation';
+  mcp_server_name: string;
+  message: string;
+  mode?: 'form' | 'url';
+  url?: string;
+  elicitation_id?: string;
+  requested_schema?: Record<string, unknown>;
+  property_order?: string[];
+  title?: string;
+  display_name?: string;
+  description?: string;
+};
+
+// 質問への答え（MCP の ElicitResult。content は accept のときだけ）。error で返すと、Claude Code は cancel にする（2.1.302 の本体）
+export type ElicitationResult = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, string | number | boolean | string[]> };
+
+// SDKElicitationCompleteMessage（URL の形の質問を、MCP サーバーが終わったと知らせた。notifications/elicitation/complete）
+export type ElicitationCompleteMessage = { type: 'system'; subtype: 'elicitation_complete'; mcp_server_name: string; elicitation_id: string; uuid?: string; session_id?: string };
+
 export type ControlRequestMessage = { type: 'control_request'; request_id: string; request: { subtype: string; [key: string]: unknown } };
 export type ControlCancelMessage = { type: 'control_cancel_request'; request_id: string };
 export type ControlResponseMessage = {
@@ -335,12 +405,16 @@ export type StreamMessage =
   | ResultMessage
   | InitMessage
   | StatusMessage
+  | PermissionCheckStatusMessage
   | TaskStartedMessage
   | TaskNotificationMessage
   | CompactBoundaryMessage
   | ApiRetryMessage
+  | NotificationMessage
+  | ModelRefusalFallbackMessage
   | BridgeStateMessage
   | CommandsChangedMessage
+  | ElicitationCompleteMessage
   | ConversationResetMessage
   | StreamEventMessage
   | ToolProgressMessage

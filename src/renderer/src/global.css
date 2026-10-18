@@ -3019,6 +3019,7 @@ button.session-ref:hover {
 }
 .chat-thinking summary,
 .chat-notice.expandable summary,
+.chat-info.expandable summary,
 .task-prompt summary {
   display: flex;
   align-items: center;
@@ -3027,6 +3028,7 @@ button.session-ref:hover {
 }
 .chat-thinking summary::-webkit-details-marker,
 .chat-notice.expandable summary::-webkit-details-marker,
+.chat-info.expandable summary::-webkit-details-marker,
 .task-prompt summary::-webkit-details-marker {
   display: none;
 }
@@ -3207,6 +3209,15 @@ details[open] > summary > .disclosure {
 .chat-info {
   color: var(--text-secondary);
   font-size: 11px;
+}
+/* Claude Code の警告・モデルの切り替え */
+.chat-info.warning {
+  color: var(--warn);
+}
+/* 全文を開けるもの（モデルの切り替えの説明・メモリのファイル名） */
+.chat-info.expandable summary {
+  width: fit-content;
+  cursor: pointer;
 }
 /* 未知のイベント（tanacode が知らない、Claude Code からの行）。ふだんは灰色の小さな 1 行で、開くと生の行 */
 .chat-unknown {
@@ -3612,14 +3623,109 @@ details[open] > summary > .disclosure {
 .menu-input-rest .danger {
   color: var(--danger);
 }
-/* プランの本文を読めなかったときの知らせ（承認はできない） */
-.menu-plan-missing {
+/* プランの本文を読めなかったときの知らせ（承認はできない）。MCP サーバーの質問に答えられないとき（出せない項目・開けないページ）も */
+.menu-plan-missing,
+.menu-elicitation-warning {
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--warn-tint);
   color: var(--warn);
   font-size: 12px;
   line-height: 1.6;
+}
+/* MCP サーバーの質問の、どのサーバーからかと、サーバーが付けた見出し */
+.menu-elicitation-server {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.menu-elicitation-heading {
+  font-size: 13px;
+  color: var(--text-heading);
+  overflow-wrap: anywhere;
+}
+/* URL の形の質問の、開くページ。ホストを目立たせる */
+.menu-elicitation-url strong {
+  font-weight: 500;
+  color: var(--text-heading);
+}
+/* 完了を待っている URL の形の質問は、Claude Code が答えを待っていないので、枠を流さない */
+.menu-card.elicitation.opened {
+  border-color: var(--border-strong);
+  background: transparent;
+  animation: none;
+}
+/* MCP サーバーの質問のフォーム。項目ごとに、名前・説明・入力欄・誤りを縦に並べる */
+.menu-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.menu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.menu-field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.menu-field-required {
+  font-size: 11px;
+  color: var(--warn);
+}
+.menu-field-desc {
+  overflow-wrap: anywhere;
+}
+.menu-field input:not([type='checkbox']),
+.menu-field select {
+  min-width: 0;
+  /* 日付・日時の欄も、文字の欄と同じ高さにそろえる */
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.menu-field input:not([type='checkbox']):focus,
+.menu-field select:focus {
+  border-color: var(--border-focus);
+}
+.menu-field.invalid input:not([type='checkbox']),
+.menu-field.invalid select {
+  border-color: var(--danger);
+}
+.menu-field-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.menu-field-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.menu-field-check input {
+  flex: none;
+  margin: 3px 0 0;
+}
+.menu-field-error {
+  color: var(--danger);
 }
 /* 許可の確認の説明・理由の行 */
 .menu-notes {

@@ -12,13 +12,13 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 - SDK は、型に無い種類も捨てずにアプリへ渡します。SDK が自分で受け取って渡さないのは、`keep_alive`・制御の要求と返事・`transcript_mirror` だけです。
 - tanacode は、どの種類も「使う」「意図して捨てる（理由つき）」「知らない」のどれか 1 つに分けます。stream-json は `src/main/stream/client.ts`（使う: `messageOf`・`SYSTEM_CHECKS`、意図して捨てる: `IGNORED_KINDS`、断る要求: `DECLINED_REQUESTS`）、会話ログは `src/shared/chat.ts`（使う: `toChatEvents` の分岐と `TYPES_USED_ELSEWHERE`、意図して捨てる: `IGNORED_*`）。どこにも書いていない種類が「知らない」種類です。
 - 知らない種類は、数えてコンソールに警告を出し、チャットに「未知のイベント」として出します（仕組みは CONTRIBUTING.md の「チャット」）。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
-- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）と、モデルが断る場面の 2 つです。
+- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）・モデルが断る場面（同じモデルでの取り直しと、別のモデルでの取り直し）・混雑による予備のモデルへの切り替え（あとの 2 つの行は `test/fixtures/claude-code-events/2.1.302/` に置いた）・圧縮（`/compact`・自動の圧縮・その失敗・PreCompact フックで止めた自動の圧縮）・auto モードの判定待ち（`permission_check_status`。`test/cli/progress.test.ts`）です。
 
 ## 凡例
 
 | 印 | 意味 |
 | --- | --- |
-| ✅ | 使う。「予定」は、ほかの PR で対応している途中（それまでは ⚠️ と同じ扱い） |
+| ✅ | 使う |
 | ⏭ | 意図して捨てる（理由つき。数えず、未知のイベントにもしない）。要求は、理由を付けた一覧で断る（error で返す） |
 | ⚠️ | 知らない（数えて警告を出し、チャットに「未知のイベント」として出す）。要求は error で返す |
 
@@ -52,19 +52,18 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | subtype | どんなイベントか | SDK | tanacode |
 | --- | --- | --- | --- |
 | `init` | 起動・/clear のあとの、セッションの情報 | 有 | ✅ 権限モード・モデル・バージョン。会話ログの乗り換え |
-| `status` | 圧縮中（`compacting`）・圧縮の成否（`compact_result`・`compact_error`）・応答待ち・権限モードの変化 | 有 | ✅ 権限モード。圧縮中と圧縮の成否は使う予定（ほかの PR） |
+| `status` | 圧縮中（`compacting`）・圧縮の成否（`compact_result`・`compact_error`）・応答待ち・権限モードの変化 | 有 | ✅ 権限モード。作業中の表示の「会話を圧縮しています」（compacting から null まで）と、圧縮の失敗（`compact_result`・`compact_error`）のチャットへの表示 |
 | `bridge_state` | Remote Control のつながり | 無 | ✅ つながっているかの表示 |
 | `task_started` | 裏のタスクの始まり | 有 | ✅ タスクを止めるときの ID |
 | `task_notification` | 裏のタスクの終わり | 有 | ✅ 止めたタスクの終わり |
 | `hook_started` | フックの始まり | 有 | ✅ フックの時間 |
 | `hook_response` | フックの終わり（`--include-hook-events`） | 有 | ✅ 何も出力しなかったフックの、チャットへの表示 |
 | `api_retry` | API の再試行 | 有 | ✅ チャットの「再試行中」 |
-| `notification` | 警告（圧縮の失敗・Stop フックの止めすぎ・モデルのコンテキストやエフォートの上限・メモリの停止など） | 有 | ✅ 使う予定（ほかの PR。チャットのお知らせ） |
+| `notification` | 警告（起動時のエフォートやコンテキストの上限・メモリの停止・plan を抜けたら auto が使えなかった・組織の方針で使えないモデルなど） | 有 | ✅ チャットのお知らせ（文はそのまま。ほかの道で出すもの・tanacode 自身が起こしたもの・一時的なものは出さない。`stream/notification.ts`） |
 | `commands_changed` | / のコマンドの一覧の途中での変化（スキルのファイルを足した・プラグインを読み直したなど） | 有 | ✅ 入力欄の / の候補と記録を差し替える。プロジェクトのスキルのファイルを足すと出る（実測。`test/cli/commands-changed.test.ts`） |
-| `model_fallback` | 混雑などによる、モデルの自動の切り替え | 無 | ✅ 使う予定（ほかの PR）。設定の `fallbackModel` か `--fallback-model` が要る（tanacode は付けない。本体のコードからの推測）。TUI では黄色で出る |
-| `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ✅ 使う予定（ほかの PR。取り消された応答を外す。5 節） |
-| `permission_check_status` | auto モードの判定中・判定済み | 無 | ✅ 使う予定（ほかの PR。作業中の表示） |
-| `elicitation_complete` | MCP サーバーの URL での質問の完了 | 有 | ✅ 使う予定（ほかの PR。MCP サーバーの質問をカードで答える。3 節の `elicitation`） |
+| `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ✅ 取り消された応答を、書いている途中の文から外す。お知らせは会話ログの行から（5 節） |
+| `permission_check_status` | auto モードの判定を 4 秒より長く待っている（checking）・待ち終えた（done） | 無 | ✅ 作業中の表示の「安全を確認しています」 |
+| `elicitation_complete` | MCP サーバーの URL での質問の完了（MCP の `notifications/elicitation/complete` を中継。`mcp_server_name`・`elicitation_id`） | 有 | ✅ ページを開いたあとの、完了を待っているカードを閉じる（実測。`test/cli/elicitation.test.ts`） |
 
 ### 意図して捨てるもの
 
@@ -85,6 +84,8 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `code_change_published` | PR の作成などの公開 | 無 | ⏭ ほかの道で足りている（会話ログの `pr-link`） |
 | `worker_shutting_down` | 理由つきの、Remote Control の接続の終わり | 有 | ⏭ ほかの道で足りている（`bridge_state`） |
 | `model_refusal_no_fallback` | 断られたが、取り直さなかった | 有 | ⏭ 中身（`content`）が空。断られた応答そのものは会話ログに出る |
+| `model_fallback` | 混雑などによる、予備のモデルへの切り替え | 無 | ⏭ ほかの道で足りている（お知らせは会話ログの同じ行から出す。5 節。同じ `uuid`。実測）。設定の `fallbackModel` か `--fallback-model` があるときだけ出る（tanacode は付けない） |
+| `memory_recall` | 思い出したメモリ | 有 | ⏭ ほかの道で足りている（お知らせは会話ログの attachment の `relevant_memories` から出す。5 節） |
 | `session_state_changed` | セッションの状態（idle・running・requires_action） | 有 | ⏭ tanacode の起動のしかたでは出ない（`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` などを付けたときだけ） |
 | `plugin_install` | プラグインのインストールの進み具合 | 有 | ⏭ tanacode の起動のしかたでは出ない（`CLAUDE_CODE_SYNC_PLUGIN_INSTALL` のときだけ） |
 | `mirror_error` | 会話ログの写しの失敗 | 有 | ⏭ tanacode の起動のしかたでは出ない（SessionStore を使う SDK だけ） |
@@ -105,7 +106,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 | subtype | どんなイベントか | SDK | 出る条件 |
 | --- | --- | --- | --- |
-| `memory_recall` | 思い出したメモリ | 有 | メモリの機能を使うとき |
 | `files_persisted` | ファイルの保存（クラウド） | 有 | 不明 |
 | `session_metadata` | セッションの付帯情報（成果物など） | 無 | 不明 |
 | `dev_intent` | 開発の種類（iOS アプリなど）の検出 | 無 | 不明 |
@@ -119,7 +119,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | subtype | どんなイベントか | tanacode |
 | --- | --- | --- |
 | `can_use_tool` | 許可の確認・AskUserQuestion・ExitPlanMode など | ✅ 画面で聞いて答える |
-| `elicitation` | MCP サーバーから人への質問 | ✅ 使う予定（ほかの PR。カードで答える）。それまでは error で返し（取り消しになる。ターミナルモードなら答えられる）、未知のイベントとして出す |
+| `elicitation` | MCP サーバーから人への質問（フォームの形と URL の形） | ✅ チャットのカードで聞いて答える（`action` と `content`。error で返すと Claude Code は取り消しにする）。答える前に作業を止めると、`control_cancel_request` で取り下げられる（実測。`test/cli/elicitation.test.ts`） |
 | `hook_callback` | アプリが登録したフックの呼び出し | ⏭ 断る。tanacode は登録しないので来ない |
 | `mcp_message` | アプリの中の MCP サーバーへの中継 | ⏭ 断る。同上 |
 | `request_user_dialog` | アプリが宣言した種類のダイアログ | ⏭ 断る。tanacode は宣言しないので来ない |
@@ -140,7 +140,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 ## 5. 会話ログ（jsonl）にだけ書く system の行
 
-stream-json には出ません。Claude Code は、会話の処理が作った system の行のうち、決まった 12 種類（`status`・`init`・`notification`・`api_retry`・`compact_boundary`・`model_fallback` など）だけを stream-json に出します。tanacode はチャットを会話ログから作る（`src/shared/chat.ts` の `toChatEvents`）ので、こちらでの対応がチャットの表示になります。意図して捨てるものは `chat.ts` の `IGNORED_SYSTEM` に並べ、どこにも無い subtype は未知のイベントとして出します。system 以外の行（付帯情報の行・attachment・応答と発言のブロック）の分け方も `chat.ts` にあります（`TYPES_USED_ELSEWHERE`・`IGNORED_TYPES`・`IGNORED_ATTACHMENTS`・`IGNORED_ASSISTANT_BLOCKS`）。attachment の `relevant_memories`（思い出したメモリ）は、使う予定です（ほかの PR）。
+stream-json には出ません。Claude Code は、会話の処理が作った system の行のうち、決まった 12 種類（`status`・`init`・`notification`・`api_retry`・`compact_boundary`・`model_fallback` など）だけを stream-json に出します。tanacode はチャットを会話ログから作る（`src/shared/chat.ts` の `toChatEvents`）ので、こちらでの対応がチャットの表示になります。意図して捨てるものは `chat.ts` の `IGNORED_SYSTEM` に並べ、どこにも無い subtype は未知のイベントとして出します。system 以外の行（付帯情報の行・attachment・応答と発言のブロック）の分け方も `chat.ts` にあります（`TYPES_USED_ELSEWHERE`・`IGNORED_TYPES`・`IGNORED_ATTACHMENTS`・`IGNORED_ASSISTANT_BLOCKS`）。
 
 | subtype | どんなイベントか | tanacode のチャット |
 | --- | --- | --- |
@@ -151,13 +151,15 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 | `local_command` | ローカルのコマンド | ✅ |
 | `informational` | お知らせの文 | ✅ |
 | `compact_boundary` | 圧縮の区切り | ✅ |
-| `model_fallback` | モデルの自動の切り替え | ✅ 使う予定（ほかの PR） |
-| `model_refusal_fallback` | 断られた応答の取り消し（`retractedMessageUuids`） | ✅ 使う予定（ほかの PR。取り消された応答をチャットから外す。Claude Code は、会話ログを読むときに外す）。本体に、断りの種類ごとの既定の取り直し先の表があり、設定しなくても起きうる（本体のコードからの推測） |
-| `memory_saved` | メモリの保存 | ✅ 使う予定（ほかの PR） |
+| `model_fallback` | 予備のモデルへの切り替え | ✅ お知らせ「X から Y に切り替えました」（開くと Claude Code の説明）。stream-json にも同じ `uuid` で出る（実測） |
+| `model_refusal_fallback` | 断られた応答の取り消し（`retractedMessageUuids`） | ✅ お知らせ「X が応答を断ったので、Y で取り直しました」。取り消された行はチャットから外す（`chat-log.ts` の `retract`。Claude Code も、会話を再開するときに外す）。2.1.302 は、取り消した応答を会話ログに書かない（ツールを実行したものも。実測）。別のモデルでの取り直しは Anthropic の API のときだけで、1 回目の拒否は同じモデルで取り直す。断りの種類ごとの既定の取り直し先の表が本体にあり、設定しなくても起きうる（本体のコードからの推測） |
+| `memory_saved` | メモリの保存（`writtenPaths`） | ✅ お知らせ「メモリを N 件保存しました」（開くとファイルの名前） |
 | `away_summary`・`permission_retry`・`scheduled_task_fire`・`rewind_stand_in`・`cloud_session_status`・`file_snapshot` | 離れていた間のまとめ・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・ファイルの控え | ⏭ クラウド・Remote Control・別の機能向け |
 | `model_refusal_no_fallback` | 断られたが、取り直さなかった | ⏭ 中身が空（断られた応答そのものは、応答の行に出る） |
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | ⏭ tanacode の起動のしかたでは出ない（モデルを選ばせない） |
 | `agents_killed` | 裏のエージェントの停止 | ⏭ 使い道がない（止めたことは、裏のタスクの終わりで分かる） |
+
+会話ログの attachment の `relevant_memories`（思い出したメモリ。`memories[].path`）も、お知らせ「メモリを N 件思い出しました」（開くとファイルの名前）にします。
 
 ## 調べ直し方
 

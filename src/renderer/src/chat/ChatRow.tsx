@@ -160,7 +160,18 @@ export const ChatRow = memo(function ChatRow({
     );
   }
   if (item.kind === 'info') {
-    return <div className="chat-info">{item.text}</div>;
+    const className = item.warning ? 'chat-info warning' : 'chat-info';
+    if (!item.detail) return <div className={className}>{item.text}</div>;
+    // 開くと全文（モデルの切り替えの Claude Code の説明・メモリのファイル名など）が読める
+    return (
+      <details className={`${className} expandable`}>
+        <summary>
+          <DisclosureIcon open={false} />
+          {item.text}
+        </summary>
+        <pre className="chat-notice-detail">{item.detail}</pre>
+      </details>
+    );
   }
   if (item.kind === 'shell') {
     return (

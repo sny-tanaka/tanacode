@@ -69,6 +69,7 @@
       "compactCompleted": "コンテキストの最適化が完了しました",
       "compactFailed": "コンテキストの最適化を取りやめました",
       "question": "質問しています",
+      "elicitation": "MCP サーバー「{server}」からの質問: {message}",
       "permission": "実行の許可: {detail}",
       "permissionNoDetail": "実行の許可を求めています",
       "images": "画像 {count} 枚",
@@ -463,6 +464,7 @@
     "notice": {
       "untitledSession": "新しいセッション",
       "childQuestion": "子セッション「{name}」（{id}）が質問への回答を待っています（answer_question で答えられます）。",
+      "childElicitation": "子セッション「{name}」（{id}）が、MCP サーバー「{server}」からの質問への回答を待っています（答えられるのは人だけです。子セッションのカードで答えます）。",
       "childPermission": "子セッション「{name}」（{id}）が実行の許可を待っています。get_session で中身を読み、answer_permission で答えるか、判断できなければ人に聞いてください。",
       "childBrowser": "子セッション「{name}」（{id}）がアプリ内ブラウザで人の操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
@@ -690,6 +692,8 @@
       "waiting": "応答を待っています",
       "thinking": "考えています",
       "writing": "応答を書いています",
+      "compacting": "会話を圧縮しています",
+      "checking": "安全を確認しています",
       "tokens": "{count} トークン",
       "inProgress": "作業中…",
       "done": "完了"
@@ -714,6 +718,8 @@
       "apiErrorNoDetail": "API エラー",
       "charsOmitted": "…（{count} 文字省略）",
       "compacted": "会話を圧縮しました",
+      "compactFailed": "会話を圧縮できませんでした: {message}",
+      "compactFailedNoDetail": "会話を圧縮できませんでした",
       "compactedAuto": "会話を自動で圧縮しました",
       "compactedFrom": "会話を圧縮しました（{count}k tokens から）",
       "compactedAutoFrom": "会話を自動で圧縮しました（{count}k tokens から）",
@@ -730,6 +736,12 @@
       "scheduledTask": "スケジュールタスクの実行",
       "scheduledTaskNamed": "スケジュールタスク「{name}」の実行",
       "wakeup": "Claude の予約の時刻になりました",
+      "modelFallback": "モデルを {from} から {to} に切り替えました",
+      "modelFallbackUnknown": "モデルを切り替えました",
+      "modelRefusalFallback": "{from} が応答を断ったので、{to} で取り直しました",
+      "modelRefusalFallbackUnknown": "断られた応答を、別のモデルで取り直しました",
+      "memoryRecalled": "メモリを {count} 件思い出しました",
+      "memorySaved": "メモリを {count} 件保存しました",
       "omitted": "…（省略）",
       "noAnswer": "（回答なし）",
       "image": "[画像]",
@@ -1878,7 +1890,8 @@
     "kind": {
       "question": "Claude Code からの質問",
       "permission": "実行の許可",
-      "plan": "プランの承認"
+      "plan": "プランの承認",
+      "elicitation": "MCP サーバーからの質問"
     },
     "card": {
       "sendFailed": "送れませんでした。もう一度押してください",
@@ -1919,6 +1932,40 @@
       "planKeep": "計画を続ける（直してほしいことを伝える）",
       "planPlaceholder": "プランで直してほしいこと（Enter で改行、⌘+Enter で送る）",
       "planMissing": "プランを読めませんでした。中身を確かめられないため、承認はできません。「計画を続ける」で出し直してもらうか、× で止めてください"
+    },
+    "elicitation": {
+      "server": "MCP サーバー: {server}",
+      "submit": "送る",
+      "decline": "断る",
+      "cancelTip": "答えずに閉じます（MCP サーバーには、取り消したと伝わります）",
+      "required": "必須",
+      "choose": "選んでください",
+      "none": "（選ばない）",
+      "unsupported": "この質問には、tanacode では入力できない形の項目があります（{fields}）。断ってください。",
+      "open": "ページを開く",
+      "openNote": "ふだんのブラウザで開きます。開いたページで続けてください。",
+      "notOpenable": "このページは開けません（http・https のページではありません）。断ってください。",
+      "opened": "ページをブラウザで開きました。ページでの操作を終えると、このカードは閉じます。",
+      "reopen": "もう一度開く",
+      "dismiss": "閉じる",
+      "gone": "この質問には、もう答えられません（ほかで答えたか、取り下げられました）",
+      "problem": {
+        "required": "入力してください",
+        "pick": "選んでください",
+        "tooShort": "{min} 文字以上で入力してください",
+        "tooLong": "{max} 文字以内で入力してください",
+        "email": "メールアドレスの形で入力してください",
+        "uri": "URL（https://… など）の形で入力してください",
+        "date": "日付を入力してください",
+        "dateTime": "日時を入力してください",
+        "number": "数を入力してください",
+        "integer": "整数を入力してください",
+        "tooSmall": "{min} 以上にしてください",
+        "tooLarge": "{max} 以下にしてください",
+        "tooFew": "{min} 個以上選んでください",
+        "tooMany": "{max} 個までにしてください",
+        "option": "選択肢から選んでください"
+      }
     }
   }
 }

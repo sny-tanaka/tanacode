@@ -71,6 +71,11 @@ const api: TanacodeApi = {
     reply: (sessionId, requestId, reply) => invoke(IpcChannel.PermissionReply, sessionId, requestId, reply),
     onChanged: (listener) => subscribe(IpcChannel.PermissionChanged, listener),
   },
+  elicitation: {
+    get: (sessionId) => invoke(IpcChannel.ElicitationGet, sessionId),
+    reply: (sessionId, elicitationId, reply) => invoke(IpcChannel.ElicitationReply, sessionId, elicitationId, reply),
+    onChanged: (listener) => subscribe(IpcChannel.ElicitationChanged, listener),
+  },
   workflows: {
     get: (sessionId) => invoke(IpcChannel.WorkflowsGet, sessionId),
     onChanged: (listener) => subscribe(IpcChannel.WorkflowsChanged, listener),

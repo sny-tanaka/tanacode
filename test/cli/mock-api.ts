@@ -85,12 +85,15 @@ export class MockApi {
   // prompt: 最後の user の発言の文章（ツールの結果だけなら空）/ results: その発言に入っているツールの結果の文章 /
   // context: リクエストの user と system の発言の文章すべて（Claude Code が足した案内を読むとき）。null を返すと台本に任せる
   intercept: ((prompt: string, results: string[], context: string) => Block[] | null) | null = null;
+  // 台本より先に、最後の user の発言から、応答の代わりに返す API エラーを決める（/compact の要約の頼みを失敗させるなど）。
+  // null を返すと、ふだんどおりに応答する
+  failIf: ((prompt: string) => ApiFailure | null) | null = null;
 
   // 台本。起動したあとで決めてよい（作業フォルダのパスを入れるため）
   conversations: Conversation[] = [];
-  // ツールの一覧が付いていない呼び出し（タイトル作りなど）への返事。match: その呼び出しの発言に含まれる文字。
-  // どれにも当たらなければ、これまでどおり短い文を返す
-  plainReplies: { match: string; text: string }[] = [];
+  // ツールの一覧が付いていない呼び出し（タイトル作り・auto モードの判定など）への返事。match: その呼び出しの発言に含まれる文字。
+  // delayMs: 返すまで待つ時間（auto モードの判定を待たせるなど）。どれにも当たらなければ、これまでどおり短い文を返す
+  plainReplies: { match: string; text: string; delayMs?: number }[] = [];
   // ツールの一覧が付いていない呼び出しを、これが済むまで返さない（Claude Code がその返事を待たずに先へ進むことを確かめる）
   holdPlain: Promise<void> | null = null;
   // 台本のある会話の文のブロックを、書き終える（content_block_stop を送る）前に、これが済むまで止める（text: そのブロックの文）。
@@ -159,7 +162,13 @@ export class MockApi {
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
     this.requests.push(`  ${conversation ? `「${conversation.match}」の会話・${index} 番目の応答` : `台本の無い呼び出し（${first.slice(0, 60)}）`}`);
     if (conversation?.delayMs) await new Promise((resolve) => setTimeout(resolve, conversation.delayMs));
+    if (plain?.delayMs) await new Promise((resolve) => setTimeout(resolve, plain.delayMs));
     if (tools.length === 0 && this.holdPlain) await this.holdPlain;
+    const forced = tools.length > 0 ? (this.failIf?.(textOf(lastUser)) ?? null) : null;
+    if (forced) {
+      this.requests.push(`  → API エラー ${forced.status}（failIf）`);
+      return fail(res, forced);
+    }
     const failure = conversation?.failures?.[index];
     const key = `${conversation?.match}:${index}`;
     if (failure && (failure.times === undefined || (this.failed.get(key) ?? 0) < failure.times)) {

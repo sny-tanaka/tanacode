@@ -2,6 +2,7 @@ import type { ChatEvent, PartialBlock } from './chat';
 import type { Activity, PermissionMode } from './screen';
 import type { SessionState } from './session-tools';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from './questions';
+import type { ElicitationReply, PendingElicitation } from './elicitation';
 import type { SubagentRun } from './subagent';
 import type { SessionKnowledge } from './knowledge';
 import type { SessionContext } from './context';
@@ -86,6 +87,10 @@ export const IpcChannel = {
   PermissionGet: 'permission:get',
   PermissionReply: 'permission:reply',
   PermissionChanged: 'permission:changed',
+  // MCP サーバーから人への質問（elicitation）。今のもの・答える・変わった（main → 画面）
+  ElicitationGet: 'elicitation:get',
+  ElicitationReply: 'elicitation:reply',
+  ElicitationChanged: 'elicitation:changed',
   WorkflowsGet: 'workflows:get',
   WorkflowsChanged: 'workflows:changed',
   SubagentsGet: 'subagents:get',
@@ -385,6 +390,8 @@ export type SessionProgress = { sessionId: string; activity: Activity | null };
 export type SessionQuestion = { sessionId: string; question: PendingQuestion | null };
 // 答えを待っている、質問でない要求（いちばん前のもの。無ければ null）
 export type SessionPermission = { sessionId: string; permission: PendingPermission | null };
+// 答えを待っている MCP サーバーの質問（いちばん前のもの。無ければ完了を待っている URL の形の質問。どちらも無ければ null）
+export type SessionElicitation = { sessionId: string; elicitation: PendingElicitation | null };
 // optionId の選択肢にカーソルを合わせて key を送る。text は自由記述の入力。
 // none: 何も送らない（複数選択の自由記述は、打つだけでチェックが付く）
 
@@ -516,6 +523,13 @@ export type TanacodeApi = {
     // 答える。その要求をもう待っていなければ（人がほかで答えた・Claude Code が取り下げた・終わった）false
     reply(sessionId: string, requestId: string, reply: PermissionReply): Promise<boolean>;
     onChanged(listener: (payload: SessionPermission) => void): () => void;
+  };
+  // MCP サーバーから人への質問（フォーム・URL のカード）
+  elicitation: {
+    get(sessionId: string): Promise<PendingElicitation | null>;
+    // 答える。その質問をもう待っていなければ（ほかで答えた・Claude Code が取り下げた・終わった）か、形に合わない答えなら false
+    reply(sessionId: string, elicitationId: string, reply: ElicitationReply): Promise<boolean>;
+    onChanged(listener: (payload: SessionElicitation) => void): () => void;
   };
   workflows: {
     get(sessionId: string): Promise<WorkflowRun[]>;
@@ -824,6 +838,8 @@ export type IpcInvoke = {
   [IpcChannel.QuestionReply]: Api['question']['reply'];
   [IpcChannel.PermissionGet]: Api['permission']['get'];
   [IpcChannel.PermissionReply]: Api['permission']['reply'];
+  [IpcChannel.ElicitationGet]: Api['elicitation']['get'];
+  [IpcChannel.ElicitationReply]: Api['elicitation']['reply'];
   [IpcChannel.WorkflowsGet]: Api['workflows']['get'];
   [IpcChannel.SubagentsGet]: Api['subagents']['get'];
   [IpcChannel.UsageGet]: Api['usage']['get'];
@@ -933,6 +949,7 @@ export type IpcEvent = {
   [IpcChannel.SessionsProgress]: Payload<Api['sessions']['onProgress']>;
   [IpcChannel.QuestionChanged]: Payload<Api['question']['onChanged']>;
   [IpcChannel.PermissionChanged]: Payload<Api['permission']['onChanged']>;
+  [IpcChannel.ElicitationChanged]: Payload<Api['elicitation']['onChanged']>;
   [IpcChannel.WorkflowsChanged]: Payload<Api['workflows']['onChanged']>;
   [IpcChannel.SubagentsChanged]: Payload<Api['subagents']['onChanged']>;
   [IpcChannel.UsageChanged]: Payload<Api['usage']['onChanged']>;

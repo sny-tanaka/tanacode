@@ -219,6 +219,20 @@ describe('ほかのセッションへのリンク（SessionRefs）', () => {
     expect(onSelectSession).toHaveBeenCalledWith(LOGIN);
     expect(outer).not.toHaveBeenCalled();
   });
+
+  it('お知らせ（info）: 全文のあるものは見出しを押すと開ける（モデルの切り替えの説明・メモリのファイル名）。警告は色の印を付ける', () => {
+    const { container, rerender } = render(<ChatRow {...rowProps({ kind: 'info', id: 'i1', text: 'AGENTS.md を読み込みました' })} />);
+    expect(container.querySelector('div.chat-info')!.textContent).toBe('AGENTS.md を読み込みました');
+    expect(container.querySelector('details')).toBeNull();
+    rerender(<ChatRow {...rowProps({ kind: 'info', id: 'i2', text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました', detail: 'Switched to Sonnet 5.5', warning: true })} />);
+    const details = container.querySelector('details.chat-info.warning.expandable')!;
+    expect(details.querySelector('summary')!.textContent).toBe('モデルを Opus 5.5 から Sonnet 5.5 に切り替えました');
+    expect(details.querySelector('pre')!.textContent).toBe('Switched to Sonnet 5.5');
+    // 見出しを押したときの開閉（details の標準の動き）を止めない
+    expect(clickPrevented(details.querySelector('summary')!)).toBe(false);
+    rerender(<ChatRow {...rowProps({ kind: 'info', id: 'i3', text: '警告だけ', warning: true })} />);
+    expect(container.querySelector('div.chat-info.warning')!.textContent).toBe('警告だけ');
+  });
 });
 
 describe('巻き戻しとチェックリストのカード（ChatRow）', () => {
@@ -454,7 +468,7 @@ describe('未知のイベント', () => {
   const item: ChatItem = {
     kind: 'unknown',
     id: 'unknown:u1',
-    name: 'system/model_fallback',
+    name: 'system/ui_toast',
     problem: 'unknown',
     count: 2,
     samples: [
@@ -470,7 +484,7 @@ describe('未知のイベント', () => {
 
   it('畳んだ 1 行に種類と回数を出し、生の行は開くまで描かない。開くと、どこから来たか・バージョン・生の行を出す', () => {
     const { container } = render(<ChatRow {...rowProps(item)} />);
-    expect(container.querySelector('summary')!.textContent).toBe('未知のイベント: system/model_fallback2 回');
+    expect(container.querySelector('summary')!.textContent).toBe('未知のイベント: system/ui_toast2 回');
     expect(container.querySelector('.chat-unknown-raw')).toBeNull();
     open(container.querySelector('details')!);
     expect([...container.querySelectorAll('.chat-unknown-meta')].map((m) => m.textContent)).toEqual(['stream-json の行Claude Code 2.1.302', '会話ログの行Claude Code のバージョンは不明']);
@@ -506,7 +520,7 @@ describe('未知のイベント', () => {
       cleanup();
       return text;
     };
-    expect(summary(one({ problem: 'malformed' }))).toBe('未知のイベント: system/model_fallback（形が違う）');
+    expect(summary(one({ problem: 'malformed' }))).toBe('未知のイベント: system/ui_toast（形が違う）');
     expect(summary(one({ problem: 'malformed', name: '' }))).toBe('未知のイベント: 形の違う行');
     expect(summary(one({ problem: 'unparsable', name: '' }))).toBe('未知のイベント: 読めない行');
     const { container } = render(<ChatRow {...rowProps(one({ count: 5, samples: [{ ...item.samples[0], truncated: 200_000 }] }))} />);

@@ -7,7 +7,7 @@ export type UnknownSource = 'stream' | 'transcript' | 'request';
 // unknown: 知らない種類 / malformed: 知っている種類だが、使う項目の形が違う（種類の欄が無いものも）/ unparsable: JSON として読めない
 export type UnknownProblem = 'unknown' | 'malformed' | 'unparsable';
 
-// name: 種類の名前（system/turn_preempted・attachment/foo・assistant/server_tool_use・control_request/elicitation など。分からなければ空）/
+// name: 種類の名前（system/turn_preempted・attachment/foo・assistant/server_tool_use・control_request/register_device_hooks など。分からなければ空）/
 // version: Claude Code のバージョン（分かれば）/ raw: 生の行（整形した JSON。読めない行は、その文字のまま）/
 // truncated: 長くて切ったときの、元のバイト数。id: 行の uuid から作る（stream と会話ログの両方に同じ行が出たら、画面で 1 つに寄せる）
 export type UnknownEvent = {

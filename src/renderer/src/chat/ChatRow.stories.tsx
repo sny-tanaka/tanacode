@@ -67,6 +67,50 @@ export const 生のHTMLを含む本文: Story = { args: { item: { kind: 'text', 
 
 export const お知らせ: Story = { args: { item: { kind: 'info', id: 'i1', text: 'agents-md: no CLAUDE.md found; AGENTS.md loaded: /Users/you/work/tanacode/AGENTS.md' } } };
 
+// Claude Code の警告（system/notification。文は Claude Code のもの）
+export const お知らせ_警告: Story = {
+  args: { item: { kind: 'info', id: 'i2', text: 'plan exit → default · auto mode is unavailable for your plan', warning: true } },
+};
+
+// 開くと全文が読めるお知らせ（見出しを押して開いた状態）
+const openDetail = async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+  await userEvent.click(canvasElement.querySelector('summary')!);
+};
+
+// 混雑などで、予備のモデルに切り替えた（model_fallback）。開くと Claude Code の説明
+export const お知らせ_モデルの切り替え: Story = {
+  args: {
+    item: {
+      kind: 'info',
+      id: 'i3',
+      text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました',
+      detail: 'Switched to Sonnet 5.5 due to high demand for Opus 5.5',
+      warning: true,
+    },
+  },
+};
+
+// モデルが断った応答を取り消して、別のモデルで取り直した（model_refusal_fallback。説明は Claude Code 2.1.302 のもの）
+export const お知らせ_断られた応答の取り直し_開いた状態: Story = {
+  args: {
+    item: {
+      kind: 'info',
+      id: 'i4',
+      text: 'Opus 5.5 が応答を断ったので、Opus 4.8 で取り直しました',
+      detail:
+        "Opus 5.5's safeguards flagged this session. You may be seeing this for the first time: Opus 5.5 is more capable and has stronger safeguards as a result, which can sometimes flag non-cybersecurity work. We're improving these safeguards to reduce the amount of incorrectly flagged messages. Opus 4.8 is answering instead, or you can edit and retry with Opus 5.5. You can learn more: https://support.claude.com/en/articles/8106465\n\nDetails: `[cyber]`",
+      warning: true,
+    },
+  },
+  play: openDetail,
+};
+
+// 発言に関係のありそうなメモリを思い出した（relevant_memories）・保存した（memory_saved）。開くとファイルの名前
+export const お知らせ_メモリ_開いた状態: Story = {
+  args: { item: { kind: 'info', id: 'i5', text: 'メモリを 3 件思い出しました', detail: 'build-with-npm-ci.md\nask-decisions-one-at-a-time.md\nno-heavy-cpu-load.md' } },
+  play: openDetail,
+};
+
 export const エラー: Story = { args: { item: { kind: 'error', id: 'e1', text: 'API Error: 529 Overloaded', retrying: false } } };
 
 export const エラー_再試行中: Story = { args: { item: { kind: 'error', id: 'e2', text: 'API Error: 529 Overloaded（再試行 2/10）', retrying: true } } };
@@ -94,10 +138,10 @@ const preemptedTranscript = json({
   timestamp: '2026-10-18T11:02:41.512Z',
   version: '2.1.302',
 });
-const elicitation = json({
+const deviceHooks = json({
   type: 'control_request',
   request_id: '9d1c3b5a-7e2f-4a6b-8c0d-1e3f5a7b9c2d',
-  request: { subtype: 'elicitation', mcp_server_name: 'deploy', message: 'Choose the environment to deploy to', requested_schema: { type: 'object', properties: { env: { type: 'string', enum: ['staging', 'production'] } } } },
+  request: { subtype: 'register_device_hooks' },
 });
 const goal = (n: number) => ({
   id: `unknown:a${n}`,
@@ -147,7 +191,7 @@ export const 未知のイベント_古いものを省いた: Story = {
 
 // Claude Code からの要求（使わない種類は、エラーで返している）
 export const 未知のイベント_要求: Story = {
-  args: { item: { kind: 'unknown', id: 'unknown:request:9d1c', name: 'control_request/elicitation', problem: 'unknown', count: 1, samples: [{ id: 'unknown:request:9d1c', source: 'request', version: '2.1.302', raw: elicitation }] } },
+  args: { item: { kind: 'unknown', id: 'unknown:request:9d1c', name: 'control_request/register_device_hooks', problem: 'unknown', count: 1, samples: [{ id: 'unknown:request:9d1c', source: 'request', version: '2.1.302', raw: deviceHooks }] } },
   play: openRow,
 };
 

@@ -94,7 +94,7 @@ describe('StreamClient', () => {
     pipe.emit({ type: 'system', subtype: 'compact_boundary' });
     const subtypes = [
       ...['informational', 'local_command', 'task_progress', 'task_updated', 'background_tasks_changed', 'thinking_tokens', 'hook_progress', 'permission_denied'],
-      ...['session_title_changed', 'code_change_published', 'worker_shutting_down', 'model_refusal_no_fallback'],
+      ...['session_title_changed', 'code_change_published', 'worker_shutting_down', 'model_refusal_no_fallback', 'model_fallback', 'memory_recall'],
       ...['session_state_changed', 'plugin_install', 'mirror_error', 'control_request_progress', 'model_consent_fallback'],
       ...['cloud_session_delta', 'vcs_state_changed', 'file_attachments_missing', 'peer_message_hold', 'feedback_draft_queued', 'instruction_size_warning'],
       ...['ui_invalidate', 'ui_panes', 'ui_scroll', 'ui_focus', 'per_turn_effort_changed'],
@@ -125,6 +125,12 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'task_notification', task_id: 't' },
       { type: 'system', subtype: 'bridge_state' },
       { type: 'system', subtype: 'status', permissionMode: 1 },
+      { type: 'system', subtype: 'status', status: 1 },
+      { type: 'system', subtype: 'status', status: null, compact_result: 'ok' },
+      { type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: {} },
+      { type: 'system', subtype: 'permission_check_status', status: 'checking' },
+      { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'waiting' },
+      { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'done', agent_id: 1 },
       { type: 'system', subtype: 'api_retry' },
       // / のコマンドの一覧が無い・名前や説明が文字列でない・別名が文字列の配列でない
       { type: 'system', subtype: 'commands_changed' },
@@ -134,6 +140,9 @@ describe('StreamClient', () => {
       // 出力の欄が無い・文字列でない（何も出力しなかったかを決められない）
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success' },
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: null },
+      // どのサーバーのどの質問かが分からない（完了待ちのカードと結べない）
+      { type: 'system', subtype: 'elicitation_complete', mcp_server_name: 'deploy' },
+      { type: 'system', subtype: 'elicitation_complete', elicitation_id: 'el-1' },
     ];
     for (const line of bad) pipe.emit(line);
     expect(got.messages).toEqual([]);
@@ -151,6 +160,12 @@ describe('StreamClient', () => {
       { type: 'rate_limit_event', rate_limit_info: {} },
       { type: 'command_lifecycle', command_uuid: 'u', state: 'queued' },
       { type: 'system', subtype: 'status' },
+      // 圧縮の始まりと終わり（2.1.302 の実測の形）
+      { type: 'system', subtype: 'status', status: 'compacting', compact_output_chars: 0 },
+      { type: 'system', subtype: 'status', status: null, compact_result: 'success' },
+      { type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Error during compaction: API Error: 400 x' },
+      { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'checking' },
+      { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'done', agent_id: 'a1' },
       { type: 'system', subtype: 'task_started', task_id: 't' },
       { type: 'system', subtype: 'task_notification', task_id: 't', status: 'stopped' },
       { type: 'system', subtype: 'bridge_state', state: 'connected' },
@@ -159,6 +174,7 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy', description: 'x', argumentHint: '', aliases: ['d'] }] },
       { type: 'system', subtype: 'hook_started', hook_id: 'h1' },
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: '' },
+      { type: 'system', subtype: 'elicitation_complete', mcp_server_name: 'deploy', elicitation_id: 'el-1', uuid: 'u', session_id: 's' },
     ];
     for (const line of good) expect(testing.messageOf(line)).not.toBeNull();
     for (const line of good) expect(testing.messageOf(line)).not.toBe('unknown');
@@ -246,11 +262,69 @@ describe('StreamClient', () => {
     expect(client.pendingPermissions()).toEqual([]);
   });
 
+  it('MCP サーバーの質問（elicitation）は、受け取る先があれば待っている要求にし、答えを control_response で返す。取り下げ・終了で知らせる', () => {
+    const pipe = new ScriptedPipe('p1', { tag: 's1', file: 'claude', args: [], cwd: '/', env: {}, retain: [], transient: [] });
+    const elicitations: [string, Record<string, unknown>, boolean][] = [];
+    const cancels: string[] = [];
+    const client = new StreamClient(pipe, {
+      onMessage: () => {},
+      onPermission: () => {},
+      onElicitation: (id, request, replayed) => elicitations.push([id, request, replayed]),
+      onCancel: (id) => cancels.push(id),
+      onExit: () => {},
+    });
+    client.start();
+    const form = { subtype: 'elicitation', mcp_server_name: 'deploy', message: 'どこに？', requested_schema: { type: 'object', properties: {} }, property_order: [] };
+    const url = { subtype: 'elicitation', mcp_server_name: 'auth', message: 'ログイン', mode: 'url', url: 'https://example.com', elicitation_id: 'el-1' };
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: form });
+    pipe.emit({ type: 'control_request', request_id: 'e2', request: url });
+    pipe.emit({ type: 'control_request', request_id: 'e3', request: form });
+    // 同じ要求が 2 度届いても、1 度だけ知らせる
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: form });
+    expect(elicitations).toEqual([
+      ['e1', form, false],
+      ['e2', url, false],
+      ['e3', form, false],
+    ]);
+    expect(client.respondElicitation('e1', { action: 'accept', content: { target: 'staging' } })).toBe(true);
+    expect(pipe.messages.at(-1)).toEqual({ type: 'control_response', response: { subtype: 'success', request_id: 'e1', response: { action: 'accept', content: { target: 'staging' } } } });
+    expect(client.respondElicitation('e1', { action: 'decline' })).toBe(false);
+    // 許可の確認の答えでは答えられない
+    expect(client.respond('e2', { behavior: 'allow' })).toBe(false);
+    pipe.emit({ type: 'control_cancel_request', request_id: 'e2' });
+    expect(cancels).toEqual(['e2']);
+    expect(client.respondElicitation('e2', { action: 'accept' })).toBe(false);
+    pipe.exit(0);
+    expect(cancels).toEqual(['e2', 'e3']);
+    expect(client.malformed).toBe(0);
+    expect([...client.unknown]).toEqual([]);
+  });
+
+  it('形の違う elicitation（サーバーの名前・文・URL の形のページが無い・知らない形）は、error で返して読めない行として数える', () => {
+    const pipe = new ScriptedPipe('p1', { tag: 's1', file: 'claude', args: [], cwd: '/', env: {}, retain: [], transient: [] });
+    const elicitations: string[] = [];
+    const client = new StreamClient(pipe, { onMessage: () => {}, onPermission: () => {}, onElicitation: (id) => elicitations.push(id), onCancel: () => {}, onExit: () => {} });
+    client.start();
+    const bad = [
+      { subtype: 'elicitation', message: 'x' },
+      { subtype: 'elicitation', mcp_server_name: 'a' },
+      { subtype: 'elicitation', mcp_server_name: 'a', message: 'x', mode: 'url' },
+      { subtype: 'elicitation', mcp_server_name: 'a', message: 'x', mode: 'popup' },
+      { subtype: 'elicitation', mcp_server_name: 'a', message: 'x', requested_schema: 'x' },
+      { subtype: 'elicitation', mcp_server_name: 'a', message: 'x', property_order: [1] },
+    ];
+    bad.forEach((request, i) => pipe.emit({ type: 'control_request', request_id: `b${i}`, request }));
+    expect(elicitations).toEqual([]);
+    expect(pipe.messages.map((m) => (m.response as { error?: string }).error)).toEqual(bad.map(() => 'tanacode does not handle elicitation requests.'));
+    expect(client.malformed).toBe(bad.length);
+  });
+
   it('使わない要求・形の違う can_use_tool には、必ず error で返す（返さないと Claude Code が待ち続ける）。request_id の無い要求は捨てる', () => {
     const { pipe, client, got } = setup();
     client.start();
     pipe.emit({ type: 'control_request', request_id: 'h1', request: { subtype: 'hook_callback' } });
-    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'elicitation' } });
+    // MCP サーバーの質問も、受け取る先が無ければ断る（待たせたままにしない）
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'elicitation', mcp_server_name: 'a', message: 'x' } });
     pipe.emit({ type: 'control_request', request_id: 'b1', request: { subtype: 'can_use_tool', tool_name: 'Bash' } });
     pipe.emit({ type: 'control_request', request_id: 'n1' });
     pipe.emit({ type: 'control_request', request: { subtype: 'can_use_tool' } });
@@ -353,7 +427,7 @@ describe('未知のイベント（onUnknown）', () => {
     pipe.emit({ type: 'system', subtype: 'init', session_id: 's', uuid: 'u3' });
     pipe.emit('{壊れた');
     pipe.emit('[1,2]');
-    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'elicitation' } });
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'register_device_hooks' } });
     pipe.emit({ type: 'control_request', request_id: 'b1', request: { subtype: 'can_use_tool', tool_name: 'Bash' } });
     pipe.emit({ type: 'control_request', request_id: 'n1' });
     pipe.emit({ type: 'control_request', request: { subtype: 'can_use_tool' } });
@@ -365,7 +439,7 @@ describe('未知のイベント（onUnknown）', () => {
       ['system/init', 'malformed', 'stream', 'unknown:u3'],
       ['', 'unparsable', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
       ['', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
-      ['control_request/elicitation', 'unknown', 'request', 'unknown:request:e1'],
+      ['control_request/register_device_hooks', 'unknown', 'request', 'unknown:request:e1'],
       ['control_request/can_use_tool', 'malformed', 'request', 'unknown:request:b1'],
       ['control_request', 'malformed', 'request', 'unknown:request:n1'],
       ['control_request', 'malformed', 'request', expect.stringMatching(/^unknown:request:n\d+$/)],
@@ -379,7 +453,7 @@ describe('未知のイベント（onUnknown）', () => {
     expect([...client.unknown]).toEqual([
       ['brand_new', 1],
       ['system/brand_new_notice', 1],
-      ['control_request/elicitation', 1],
+      ['control_request/register_device_hooks', 1],
     ]);
     expect(client.malformed).toBe(8);
   });
@@ -442,7 +516,7 @@ describe('未知のイベント（onUnknown）', () => {
     });
     pipe.emit({ type: 'brand_new', uuid: 'old' }, 3);
     pipe.emit('{壊れた');
-    pipe.emit({ type: 'control_request', request_id: 'old-request', request: { subtype: 'elicitation' } });
+    pipe.emit({ type: 'control_request', request_id: 'old-request', request: { subtype: 'register_device_hooks' } });
     pipe.emit({ type: 'control_response' });
     pipe.emit({ type: 'control_cancel_request' });
     pipe.emit({ type: 'system', subtype: 'init', session_id: 's' });

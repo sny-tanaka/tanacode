@@ -47,19 +47,25 @@ export function tokensText(n: number): string {
   return n < 1000 ? String(n) : `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
 }
 
-// 作業中の進み具合（書いている途中の行・ツールの経過から）。経過時間は、ターンの始まりからアプリが数える。
-// 書いている途中の文そのものは、チャットの最後に出す（stream/partial.ts）。サブエージェントの行は数えない
+// 作業中の進み具合（書いている途中の行・ツールの経過・圧縮と auto モードの判定の知らせから）。経過時間は、ターンの始まりからアプリが数える。
+// 書いている途中の文そのものは、チャットの最後に出す（stream/partial.ts）。サブエージェントの行は数えない。
+// 圧縮中と判定待ちは、ほかの段階の上に重ねる（終わったら、下の段階に戻る）。圧縮中がいちばん上
 export class Progress {
   private phase: Activity['phase'] = 'waiting';
   // 今の応答の、受け取ったトークン数（message_delta の output_tokens は、その応答の累積）
   private tokens: number | null = null;
+  // 会話を圧縮している（system/status の compacting から、ほかの status まで）
+  private compactingNow = false;
+  // auto モードの判定を待っているツールの呼び出しの ID（system/permission_check_status の checking から done まで）。
+  // ツールを並べて呼ぶと、呼び出しごとに知らせが来る
+  private readonly checks = new Set<string>();
 
   constructor(private readonly startedAt: number) {}
 
   // 書いている途中の行。進み具合が変わったら true
   streamEvent(message: StreamEventMessage): boolean {
     const { event } = message;
-    const before = `${this.phase}:${this.tokens}`;
+    const before = this.key();
     if (event.type === 'message_start') {
       this.phase = 'waiting';
       this.tokens = null;
@@ -71,18 +77,47 @@ export class Progress {
     } else if (event.type === 'content_block_delta' && this.phase === 'waiting') {
       this.phase = 'writing';
     }
-    return before !== `${this.phase}:${this.tokens}`;
+    return before !== this.key();
   }
 
   // ツールの実行中
   tool(): boolean {
-    if (this.phase === 'working') return false;
+    const before = this.key();
     this.phase = 'working';
-    return true;
+    return before !== this.key();
+  }
+
+  // 圧縮の始まり（on）と終わり。終わったら応答待ちにする（自動の圧縮のあとは、続きの応答を頼む。手動の /compact は、このあとターンが終わる）
+  compacting(on: boolean): boolean {
+    if (this.compactingNow === on) return false;
+    const before = this.key();
+    this.compactingNow = on;
+    if (!on) {
+      this.phase = 'waiting';
+      this.tokens = null;
+    }
+    return before !== this.key();
+  }
+
+  // auto モードの判定を待ち始めた（waiting）・待ち終えた、ツールの呼び出し
+  checking(toolUseId: string, waiting: boolean): boolean {
+    const before = this.key();
+    if (waiting) this.checks.add(toolUseId);
+    else this.checks.delete(toolUseId);
+    return before !== this.key();
   }
 
   current(now: number): Activity {
-    return { phase: this.phase, elapsed: elapsedText(now - this.startedAt), tokens: this.tokens === null ? null : tokensText(this.tokens) };
+    return { phase: this.shown(), elapsed: elapsedText(now - this.startedAt), tokens: this.tokens === null ? null : tokensText(this.tokens) };
+  }
+
+  private shown(): Activity['phase'] {
+    if (this.compactingNow) return 'compacting';
+    return this.checks.size > 0 ? 'checking' : this.phase;
+  }
+
+  private key(): string {
+    return `${this.shown()}:${this.tokens}`;
   }
 }
 
@@ -124,12 +159,5 @@ export function usageLimitsOf(response: UsageResponse): UsageReport | null {
   return { limits: [of('5時間', limits.five_hour), of('週', limits.seven_day), ...models, ...legacy].filter((l): l is UsageLimit => !!l), modelsKnown };
 }
 
-// 応答のモデルの ID を表示名にする（例: claude-sonnet-5 → Sonnet 5、claude-fable-5-1 → Fable 5.1）。読めなければ null
-export function modelName(id: string | null | undefined): string | null {
-  // 新しい系統名のモデルにも対応できるよう、名前は決め打ちしない。
-  // 小数点以下は 1 桁の数字だけ（claude-sonnet-5-20260101 の日付の先頭の 2 を、小数点以下と読まない）
-  const m = id?.match(/^claude-([a-z]+)-(\d+)(?:-(\d)(?!\d))?(?:-\d{8})?/);
-  if (!m) return null;
-  const name = m[1][0].toUpperCase() + m[1].slice(1);
-  return `${name} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
-}
+// 応答のモデルの ID の表示名（チャットのモデルの切り替えのお知らせでも使うので、shared に置く）
+export { modelName } from '@shared/model-name';

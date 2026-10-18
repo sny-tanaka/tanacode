@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   bridgeUrlOf,
   isTranscriptEntry,
+  retractedUuidsOf,
   toChatEvents,
   transcriptTitle,
   unsentView,
@@ -48,11 +49,13 @@ import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { SessionModel } from '@shared/models';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
+import { checkedContent, type ElicitationReply, type PendingElicitation } from '@shared/elicitation';
 import { BashTaskTracker } from './bash-task-tracker';
-import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
+import { branchCut, readAgentLog, readChatLog, readExportLog, retract, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
+import { blockedByPreCompact } from './auto-compact';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
@@ -60,7 +63,7 @@ import { PendingQuestions } from './pending-questions';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
-import { askQuestionsOf, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
+import { askQuestionsOf, elicitationOf, elicitationResult, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
 import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
@@ -84,19 +87,26 @@ import type {
   CommandsChangedMessage,
   ContentBlock,
   ContextUsageResponse,
+  ElicitationCompleteMessage,
+  ElicitationRequest,
   HookResponseMessage,
   HookStartedMessage,
   InitializeResponse,
   ModelInfo,
+  ModelRefusalFallbackMessage,
+  NotificationMessage,
+  PermissionCheckStatusMessage,
   ResultMessage,
   RewindFilesResult,
   SettingsResponse,
+  StatusMessage,
   StreamMessage,
   TaskNotificationMessage,
   TaskStartedMessage,
   UsageResponse,
   UserMessage,
 } from './stream/protocol';
+import { notificationEvent } from './stream/notification';
 import { PartialText } from './stream/partial';
 import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf, type UsageReport } from './stream/state';
 import {
@@ -132,6 +142,8 @@ const USAGE_INTERVAL_MS = 5 * 60_000;
 // 何も出力しなかったフックをチャットに出すときの控えの上限（quietHook）。始まった時刻・stream で見たツールの呼び出し・チャットに出したカード
 const MAX_HOOK_STARTS = 200;
 const MAX_STREAM_TOOLS = 200;
+// stream で見た本体の応答の行の控え（streamMessages）の上限
+const MAX_STREAM_MESSAGES = 50;
 const MAX_SHOWN_TOOLS = 1000;
 // ツールの呼び出しごとに動くフックの出来事（hook_name が「出来事:ツールの名前」）
 const TOOL_HOOK_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
@@ -178,14 +190,21 @@ type Runtime = {
   permissionAt: number | null;
   // 何も出力しなかったフック（hook_response）をチャットに出すための控え（quietHook）。hookStarts: 始まった時刻（hook_id → 時刻）/
   // streamTools: stream で見た、結果がまだ来ていないツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
-  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフックと、まだ会話に出ていない発言のときのフック
-  // （ツールの呼び出しの ID・送った発言の uuid → イベント）
+  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフックと、まだ会話に出ていない発言のときのフック・
+  // 圧縮の失敗の知らせ（ツールの呼び出しの ID・送った発言の uuid → イベント）
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
   shownTools: Set<string>;
+  // stream で見た本体の応答の行の uuid → 応答の ID（message.id。新しい MAX_STREAM_MESSAGES 個まで）。モデルが断って取り消された応答
+  // （system/model_refusal_fallback の retracted_message_uuids）を、書いている途中の文から外すのに使う
+  streamMessages: Map<string, string>;
   heldHooks: Map<string, ChatEvent[]>;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
+  // MCP サーバーから人への質問（elicitation）のうち、Claude Code が答えを待っているもの（request_id → カードの形と要求。来た順）と、
+  // URL の形で、人がページを開いて、MCP サーバーの完了の知らせを待っているもの（カードの ID → カードの形と要求。Claude Code にはもう答えた）
+  elicitations: Map<string, ElicitationWait>;
+  openedUrls: Map<string, ElicitationWait>;
   // 質問（AskUserQuestion）の要求のうち、PendingQuestions で返事を待っているもの（request_id → 待つのをやめる口）
   questionWaits: Map<string, AbortController>;
   // プランの承認（ExitPlanMode）の要求の、プランの本文（request_id → 本文。Claude Code は要求の入力に本文を入れない）
@@ -331,6 +350,10 @@ type Listeners = {
   onQuestion?: (sessionId: string, question: PendingQuestion | null) => void;
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）。いちばん前のもの（無ければ null）
   onPermission?: (sessionId: string, permission: PendingPermission | null) => void;
+  // 答えを待っている MCP サーバーの質問（いちばん前のもの。無ければ、完了を待っている URL の形の質問。どちらも無ければ null）
+  onElicitation?: (sessionId: string, elicitation: PendingElicitation | null) => void;
+  // URL の形の MCP サーバーの質問で、人が「ページを開く」を選んだ。ふだんのブラウザで開く
+  onOpenExternal?: (url: string) => void;
 };
 
 export class SessionManager {
@@ -394,6 +417,10 @@ export class SessionManager {
   // 最適化圧縮の流れが、そのセッションに /clear を打って、新しい会話になるのを待っているか（profile.ts がつなぐ）。
   // その /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）
   compactClearing: (id: string) => boolean = () => false;
+
+  // 今 Claude Code の自動の圧縮が始まろうとしたら、アプリの圧縮の前のフックが止めるか（自動の最適化圧縮がオンのセッション。
+  // profile.ts が AutoCompact.blocks をつなぐ）。止める圧縮は、作業中の表示で圧縮中にしない
+  compactBlocked: (id: string) => boolean = () => false;
 
   // 残った claude を止める（leftover-claude.ts。テストで差し替える）
   stopLeftover: (claude: ClaudeProcess) => Promise<boolean> = stopLeftoverClaude;
@@ -765,8 +792,8 @@ export class SessionManager {
     // Claude Code が答えを待っている要求（AskUserQuestion は質問、ほかは許可の確認）
     const request = firstRequest(rt);
     if (request) return request.tool_name === 'AskUserQuestion' ? 'question' : 'permission';
-    // 答えを待っている質問（AskUserQuestion の要求を、PendingQuestions で預かっているもの）
-    if (this.questions.first(id)) return 'question';
+    // 答えを待っている質問（AskUserQuestion の要求を、PendingQuestions で預かっているもの）と、MCP サーバーの質問
+    if (this.questions.first(id) || rt.elicitations.size > 0) return 'question';
     if (!rt.ready || rt.preparing) return 'starting';
     // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える。
     // 送信中・順番待ちの発言が残っていれば、ターンとターンの間も作業中（作業中の始まりは、送った発言の queued・started。設計書 7 節）
@@ -1007,7 +1034,7 @@ export class SessionManager {
 
   // チャットの手が空いている（ターン・答え待ちの要求・送る予定の発言が無い）
   private chatIdle(id: string, rt: Runtime): boolean {
-    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.unsent.size === 0 && rt.pendingSubmits === 0 && !this.questions.first(id);
+    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.elicitations.size === 0 && rt.unsent.size === 0 && rt.pendingSubmits === 0 && !this.questions.first(id);
   }
 
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null。
@@ -1046,6 +1073,47 @@ export class SessionManager {
   // 待っている質問のうち 1 問に答える（親の answer_question）。全部そろったら返事にする（sent）。もう待っていなければ null
   answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null {
     return this.questions.answerOne(id, questionId, question, answer);
+  }
+
+  // 答えを待っている MCP サーバーの質問（いちばん前のもの）。無ければ、ページを開いて完了を待っている URL の形の質問。どちらも無ければ null
+  pendingElicitation(id: string): PendingElicitation | null {
+    const rt = this.runtimes.get(id);
+    if (!rt) return null;
+    return (rt.elicitations.values().next().value ?? rt.openedUrls.values().next().value)?.pending ?? null;
+  }
+
+  // MCP サーバーの質問に答える（カード）。その質問をもう待っていなければ false。形に合わない答え（フォームの中身が項目に合わない・
+  // 開けないページを開く・出せない項目のあるフォームを送る）も送らずに false
+  replyElicitation(id: string, elicitationId: string, reply: ElicitationReply): boolean {
+    const rt = this.runtimes.get(id);
+    if (!rt) return false;
+    const opened = rt.openedUrls.get(elicitationId);
+    if (opened) {
+      // 完了待ちのカード: もう一度開く・閉じる（Claude Code には、開いたときにもう答えた）
+      if (reply.kind === 'reopen' && opened.pending.url) this.listeners.onOpenExternal?.(opened.pending.url);
+      else if (reply.kind === 'dismiss') rt.openedUrls.delete(elicitationId);
+      else return false;
+      this.updateAttention(id, rt);
+      return true;
+    }
+    const waiting = rt.elicitations.get(elicitationId);
+    if (!waiting) return false;
+    const { pending, request } = waiting;
+    if (reply.kind === 'accept' && (pending.mode !== 'form' || pending.unsupported.length > 0 || !checkedContent(pending.fields, reply.content))) return false;
+    if (reply.kind === 'open' && (pending.mode !== 'url' || !pending.openable)) return false;
+    const result = elicitationResult(reply);
+    if (!result || !rt.process?.client?.respondElicitation(elicitationId, result)) return false;
+    rt.elicitations.delete(elicitationId);
+    if (reply.kind === 'open' && pending.url) {
+      this.listeners.onOpenExternal?.(pending.url);
+      // 完了の知らせと結べる（elicitation_id がある）ときだけ、完了を待つカードにする
+      if (request.elicitation_id) {
+        const key = `opened:${elicitationId}`;
+        rt.openedUrls.set(key, { pending: { ...pending, id: key, opened: true }, request });
+      }
+    }
+    this.updateAttention(id, rt);
+    return true;
   }
 
   // statusLine のファイルが書き換わった（ターミナルモードの TUI の間だけ動く。stream-json では、行から作る）
@@ -1800,8 +1868,11 @@ export class SessionManager {
         hookStarts: new Map(),
         streamTools: [],
         shownTools: new Set(),
+        streamMessages: new Map(),
         heldHooks: new Map(),
         requests: new Map(),
+        elicitations: new Map(),
+        openedUrls: new Map(),
         questionWaits: new Map(),
         plans: new Map(),
         planFile: null,
@@ -1907,6 +1978,7 @@ export class SessionManager {
     // 前の claude のツールの呼び出し・待たせていたフック・発言の鍵は持ち越さない（結果が来ないまま止まった呼び出しが、次の同じ名前の
     // 呼び出しのフックを決められなくし、待たせたフックが、関係のない発言のあとに出るため）
     runtime.streamTools = [];
+    runtime.streamMessages.clear();
     runtime.heldHooks.clear();
     runtime.hookStarts.clear();
     runtime.turnPrompt = null;
@@ -1969,6 +2041,9 @@ export class SessionManager {
           },
           onPermission: (requestId, request, replayed) => {
             if (runtime.process === process) this.requestAdded(id, runtime, requestId, request, replayed);
+          },
+          onElicitation: (requestId, request, replayed) => {
+            if (runtime.process === process) this.elicitationAdded(id, runtime, requestId, request, replayed);
           },
           onCancel: (requestId) => {
             if (runtime.process === process) this.requestRemoved(id, runtime, requestId);
@@ -2345,8 +2420,18 @@ export class SessionManager {
         return;
       }
       case 'status': {
-        const mode = (message as Extract<StreamMessage, { subtype: 'status' }>).permissionMode;
-        if (mode) this.noteMode(id, rt, appMode(mode));
+        const status = message as StatusMessage;
+        if (status.permissionMode) this.noteMode(id, rt, appMode(status.permissionMode));
+        // 権限モードの変化の行は、圧縮の始まり・終わりに数えない
+        else if (!past) this.compactStatus(id, rt, status);
+        return;
+      }
+      case 'permission_check_status': {
+        // auto モードの判定を待っている間は、作業中の表示を「安全を確認しています」にする。サブエージェントの中の判定は数えない
+        // （進み具合は、本体の行だけで作る）
+        const check = message as PermissionCheckStatusMessage;
+        if (past || check.agent_id) return;
+        if (rt.progress?.checking(check.tool_use_id, check.status === 'checking')) this.emitProgress(id, rt);
         return;
       }
       case 'bridge_state': {
@@ -2390,6 +2475,21 @@ export class SessionManager {
         this.pushEvents(id, [{ type: 'api-error', id: retry.uuid, text, retrying: true }]);
         return;
       }
+      case 'notification': {
+        // Claude Code の警告。会話ログに残らないので、ここでチャットに出す（起動し直すと消える。api_retry と同じ）。ターンは始めない
+        if (past) return;
+        const event = notificationEvent(message as NotificationMessage);
+        if (event) this.pushEvents(id, [event]);
+        return;
+      }
+      case 'model_refusal_fallback':
+        // モデルが断った応答を取り消して、別のモデルで取り直す。お知らせは会話ログの同じ行から出す（handleEntry）。
+        // 取り消された応答は会話ログに出ないので、ここで書いている途中の文から外し、ターンの終わりにも待たない
+        if (!past) this.retractStreamed(id, rt, (message as ModelRefusalFallbackMessage).retracted_message_uuids ?? []);
+        return;
+      case 'elicitation_complete':
+        this.elicitationCompleted(id, rt, message as ElicitationCompleteMessage);
+        return;
       case 'commands_changed': {
         // / のコマンドの一覧が変わった（スキルのファイルを足した・プラグインを読み直したなど）。入力欄は / の候補を開くたびに
         // 読みに来る（commandsOf）ので、差し替えておけば次に開いたときから新しくなる。引き継ぎで戻せるよう記録も直す
@@ -2401,6 +2501,39 @@ export class SessionManager {
         return;
       }
     }
+  }
+
+  // 圧縮の始まり（compacting。要約を待つ間は 30 秒ごとに出直す）と終わり（null）。圧縮の間は、作業中の表示を
+  // 「会話を圧縮しています」にする。失敗（compact_result が failed）は、理由をチャットに出す（会話ログには残らない。手動の /compact の
+  // 失敗は、会話ログではローカルのコマンドの標準エラーになり、チャットには出していない）。成功は、会話ログの区切り（compact_boundary）で出る。
+  // 自動の最適化圧縮がオンのセッションでは、Claude Code の自動の圧縮をアプリの圧縮の前のフックが止める。Claude Code はフックより先に
+  // compacting を出すので、止める自動の圧縮（compact_output_chars が付く）は圧縮中にせず、止めたことの失敗も出さない
+  private compactStatus(id: string, rt: Runtime, status: StatusMessage): void {
+    if (status.status === 'compacting') {
+      if (status.compact_output_chars !== undefined && this.compactBlocked(id)) return;
+      if (rt.progress?.compacting(true)) this.emitProgress(id, rt);
+      return;
+    }
+    // requesting（応答を頼んだ）は、圧縮の終わりではない
+    if (status.status) return;
+    if (rt.progress?.compacting(false)) this.emitProgress(id, rt);
+    if (status.compact_result !== 'failed') return;
+    const reason = status.compact_error?.trim();
+    if (reason && blockedByPreCompact(reason)) return;
+    const text = reason ? t('chat.transcript.compactFailed', { message: reason }) : t('chat.transcript.compactFailedNoDetail');
+    const event: ChatEvent = { type: 'api-error', id: status.uuid, text, retrying: false };
+    // 手動の /compact の発言の行は、圧縮が終わってから会話ログに書かれる（失敗の知らせの方が先に届く。2.1.302 で実測）。
+    // 今のターンの送った発言がまだ会話に出ていなければ、発言のときのフックと同じく、その行のあとまで待たせる（closeTurn も待つ）
+    const prompt = rt.turnOpen ? rt.promptLine : null;
+    if (prompt) rt.heldHooks.set(prompt, [...(rt.heldHooks.get(prompt) ?? []), event]);
+    else this.pushEvents(id, [event]);
+  }
+
+  // stream に出た応答（uuids）が取り消された。書いている途中の文から外し、ターンの最後の行にしない（会話ログに出るのを待たない）
+  private retractStreamed(id: string, rt: Runtime, uuids: string[]): void {
+    if (rt.lastTurnLine && uuids.includes(rt.lastTurnLine)) rt.lastTurnLine = null;
+    const messageIds = uuids.flatMap((uuid) => rt.streamMessages.get(uuid) ?? []);
+    if (rt.partial.drop(messageIds)) this.emitPartial(id, rt);
   }
 
   private handleAssistant(id: string, rt: Runtime, message: AssistantMessage, past: boolean): void {
@@ -2417,6 +2550,10 @@ export class SessionManager {
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
     rt.lastTurnLine = message.uuid;
+    if (!past && message.message.id) {
+      rt.streamMessages.set(message.uuid, message.message.id);
+      if (rt.streamMessages.size > MAX_STREAM_MESSAGES) rt.streamMessages.delete(rt.streamMessages.keys().next().value!);
+    }
     for (const block of message.message.content ?? []) {
       if (block.type === 'tool_use' && block.name === PLAN_TOOL && typeof block.id === 'string') {
         const plan = (block.input as { plan?: unknown } | undefined)?.plan;
@@ -2494,8 +2631,11 @@ export class SessionManager {
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
     // 応答の前に終わったターン（中断・失敗）は、result が会話ログの発言の行より先に届くことがある。先に終わりを出すと、チャットで
-    // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
-    const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ。
+    // モデルを呼ばなかったターンは待たない（/clear の発言の行は新しい会話ログに出ないことがあり、フックが止めた発言は会話に出ない）。
+    // ただし、/compact の失敗の知らせを、その発言の行のあとに出すために待たせていれば待つ（/compact の発言の行は、圧縮のあとに必ず書かれる）
+    const compactFailed = !!rt.turnPrompt && !!rt.heldHooks.get(rt.turnPrompt)?.some((e) => e.type === 'api-error');
+    const prompt = !rt.lastTurnLine && (!local || compactFailed) && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
     const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
     rt.turnEnding = { interrupted, local, waitFor, error, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });
@@ -2730,6 +2870,22 @@ export class SessionManager {
     this.pushEvents(id, [{ type: 'queue', prompts }]);
   }
 
+  // MCP サーバーの質問（elicitation）が来た。カードで答える。replayed: 引き継いだときに出し直した要求（もう一度は通知しない）
+  private elicitationAdded(id: string, rt: Runtime, requestId: string, request: ElicitationRequest, replayed = false): void {
+    rt.elicitations.set(requestId, { pending: elicitationOf(requestId, request), request });
+    this.updateAttention(id, rt, replayed);
+  }
+
+  // URL の形の MCP サーバーの質問を、MCP サーバーが終わったと知らせた。完了を待っているカードを閉じる
+  private elicitationCompleted(id: string, rt: Runtime, message: ElicitationCompleteMessage): void {
+    for (const [key, opened] of rt.openedUrls) {
+      if (opened.request.mcp_server_name !== message.mcp_server_name || opened.request.elicitation_id !== message.elicitation_id) continue;
+      rt.openedUrls.delete(key);
+      this.updateAttention(id, rt);
+      return;
+    }
+  }
+
   // Claude Code が答えを待つ要求が来た（許可の確認・質問・プランの承認・ワークフローの確認）。
   // 質問（AskUserQuestion）は、質問のカード・親の answer_question の返事を PendingQuestions で待ち、Claude Code に返す
   // replayed: 引き継いだときに出し直した要求（前のアプリが通知したので、もう一度は通知しない）
@@ -2798,6 +2954,10 @@ export class SessionManager {
 
   // 待っていた要求が無くなった（答えた・Claude Code が取り下げた）
   private requestRemoved(id: string, rt: Runtime, requestId: string): void {
+    if (rt.elicitations.delete(requestId)) {
+      this.updateAttention(id, rt);
+      return;
+    }
     if (!rt.requests.delete(requestId)) return;
     rt.plans.delete(requestId);
     rt.questionWaits.get(requestId)?.abort();
@@ -2807,8 +2967,11 @@ export class SessionManager {
 
   // 待っている要求をすべて捨てる（Claude Code が終わった・アーカイブした）
   private releaseRequests(id: string, rt: Runtime): void {
-    if (rt.requests.size === 0) return;
+    if (rt.requests.size === 0 && rt.elicitations.size === 0 && rt.openedUrls.size === 0) return;
     rt.requests.clear();
+    // 終わった claude の質問には答えられず、完了の知らせも届かない
+    rt.elicitations.clear();
+    rt.openedUrls.clear();
     rt.plans.clear();
     for (const wait of rt.questionWaits.values()) wait.abort();
     rt.questionWaits.clear();
@@ -2819,15 +2982,18 @@ export class SessionManager {
   // quiet: 通知しない（引き継いだときに出し直した要求）
   private updateAttention(id: string, rt: Runtime, quiet = false): void {
     this.listeners.onPermission?.(id, this.pendingPermission(id));
+    this.listeners.onElicitation?.(id, this.pendingElicitation(id));
     const request = rt.terminal ? undefined : firstRequest(rt);
     const pending = rt.terminal ? null : this.questions.first(id);
+    // 完了を待っている URL の形の質問は、Claude Code が答えを待っていないので、操作待ちにしない
+    const elicitation = rt.terminal ? undefined : rt.elicitations.values().next().value?.pending;
     const attention: SessionAttention = rt.terminal
       ? (rt.tuiAsk?.kind ?? null)
       : request
         ? request.tool_name === 'AskUserQuestion'
           ? 'question'
           : 'permission'
-        : pending
+        : pending || elicitation
           ? 'question'
           : null;
     if (attention === rt.attention) {
@@ -2844,6 +3010,7 @@ export class SessionManager {
     if (rt.terminal && rt.tuiAsk) this.listeners.onAttention(summary, { kind: 'menu', menu: rt.tuiAsk.menu });
     else if (request) this.listeners.onAttention(summary, { kind: 'menu', menu: requestMenu(request) });
     else if (pending) this.listeners.onAttention(summary, { kind: 'menu', menu: pendingMenu(pending) });
+    else if (elicitation) this.listeners.onAttention(summary, { kind: 'menu', menu: elicitationMenu(elicitation) });
   }
 
   // フックが答えを待っている質問が増えた・減った・親が 1 問答えた
@@ -2871,6 +3038,24 @@ export class SessionManager {
       this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: kept }], live: !isHistory });
     }
     rt.chain.push({ uuid: entry.uuid, type: entry.type, eventStart: rt.events.length });
+  }
+
+  // モデルが断って取り消された応答（model_refusal_fallback の retractedMessageUuids）が、もうチャットに出ていたら外す。
+  // 2.1.302 は取り消した応答を会話ログに書かない（実測）が、書かれていても、会話ログから作り直したチャット（chat-log.ts）と同じにする
+  private followRetraction(id: string, rt: Runtime, entry: TranscriptEntry, isHistory: boolean): void {
+    this.retractEntries(id, rt, retractedUuidsOf(entry), isHistory);
+  }
+
+  // 会話ログの行（uuids）から作ったイベントを、チャットから外す（取り消された応答。会話ログからいったん書かれて消された行にも使える）
+  private retractEntries(id: string, rt: Runtime, uuids: string[], isHistory: boolean): void {
+    const retracted = retract(rt.chain, rt.events, uuids);
+    if (!retracted) return;
+    rt.chain = retracted.chain;
+    rt.events = retracted.events;
+    // 巻き戻しと同じく、残ったものに置き換える（replace は events に残さず、通し番号だけ進める）
+    const fromSeq = rt.seq;
+    rt.seq += 1;
+    this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: [...retracted.events] }], live: !isHistory });
   }
 
   // 今の会話ログのセッションのフォルダ（subagents/・workflows/ がある）
@@ -2925,6 +3110,7 @@ export class SessionManager {
     rt?.context.handle(entry);
 
     if (rt) this.followBranch(id, rt, entry, isHistory);
+    if (rt) this.followRetraction(id, rt, entry, isHistory);
     // 書いている途中の文のうち、この行で会話ログに出たブロックを外す（この行のイベントと同じ配信で送り、同じ場所で入れ替える）
     const covered = !!rt && !past && !rt.terminal && rt.partial.cover(entry);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない
@@ -3302,3 +3488,11 @@ function requestMenu(request: CanUseToolRequest): Menu {
 function pendingMenu(pending: PendingQuestion): Menu {
   return { kind: 'question', tabs: [], title: pending.questions[0]?.question ?? '', context: [], options: [], multiSelect: false, hint: '' };
 }
+
+// MCP サーバーの質問の通知に使うメニュー（通知の本文は、どのサーバーからかと質問の文）
+function elicitationMenu(pending: PendingElicitation): Menu {
+  return { kind: 'question', tabs: [], title: t('main.notification.elicitation', { server: pending.server, message: pending.message }), context: [], options: [], multiSelect: false, hint: '' };
+}
+
+// MCP サーバーの質問。pending: カードの形 / request: Claude Code の要求（完了の知らせと結ぶ、サーバーの名前と elicitation_id）
+type ElicitationWait = { pending: PendingElicitation; request: ElicitationRequest };

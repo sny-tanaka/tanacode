@@ -43,9 +43,10 @@ export type PermissionMode = 'manual' | 'acceptEdits' | 'plan' | 'auto' | 'bypas
 
 // 作業の進み具合（stream-json の出力から作る。表記は Claude Code の画面のタイマーの行（例:「✳ Shimmying… (5s · ↓ 225 tokens)」）と同じ）。
 // waiting: 応答がまだ何も来ていない / thinking: 考えている / writing: 応答を受け取っている（トークン数が増えている）/
-// working: それ以外（ツールの実行中など）/ starting: 起動に時間がかかっている（initialize の返事を待っている。設計書 9 節）
+// working: それ以外（ツールの実行中など）/ starting: 起動に時間がかかっている（initialize の返事を待っている。設計書 9 節）/
+// compacting: 会話を圧縮している（/compact と自動の圧縮）/ checking: auto モードの判定（ツールを使ってよいか）を 4 秒より長く待っている
 export type Activity = {
-  phase: 'starting' | 'waiting' | 'thinking' | 'writing' | 'working';
+  phase: 'starting' | 'waiting' | 'thinking' | 'writing' | 'working' | 'compacting' | 'checking';
   // 経過時間（例: 5s・1m 5s）
   elapsed: string | null;
   // 受け取ったトークン数（例: 225・1.2k）

@@ -22,7 +22,8 @@ export type ChatItem =
   | { kind: 'text'; id: string; text: string; at?: number; settled?: true }
   // sessions: 子セッションからの知らせなら、その子の ID / cards: チェックリストの知らせなら、そのカード
   | { kind: 'notice'; id: string; text: string; detail?: string; sessions?: string[]; cards?: CardRef[] }
-  | { kind: 'info'; id: string; text: string }
+  // detail: 開くと読める全文 / warning: 警告の色で出す
+  | { kind: 'info'; id: string; text: string; detail?: string; warning?: true }
   | { kind: 'shell'; id: string; command: string; output: string }
   | { kind: 'thinking'; id: string; text: string; settled?: true }
   | { kind: 'divider'; id: string; text: string }
@@ -246,7 +247,7 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
     case 'checklist-stop':
       return state;
     case 'info':
-      return { ...state, items: [...state.items, { kind: 'info', id: event.id, text: event.text }] };
+      return { ...state, items: [...state.items, { kind: 'info', id: event.id, text: event.text, detail: event.detail, warning: event.warning }] };
     case 'shell':
       return { ...state, items: [...state.items, { kind: 'shell', id: event.id, command: event.command, output: event.output }] };
     case 'shell-output':

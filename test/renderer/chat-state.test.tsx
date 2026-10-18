@@ -74,6 +74,20 @@ describe('チャットの行', () => {
     expect(chat.items.map((i) => `${i.kind}:${i.id}`)).toEqual(['user:u', 'error:r1']);
   });
 
+  it('お知らせ（info）は、開くと読める全文と警告の印を持つ。作業中・待機中は変えない', () => {
+    const chat = run([
+      { type: 'process-start' },
+      { type: 'ready' },
+      { type: 'info', id: 'f', text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました', detail: 'Switched to Sonnet 5.5', warning: true },
+      { type: 'info', id: 'm', text: 'メモリを 1 件思い出しました', detail: 'build.md' },
+    ]);
+    expect(chat.status).toBe('idle');
+    expect(chat.items).toEqual([
+      { kind: 'info', id: 'f', text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました', detail: 'Switched to Sonnet 5.5', warning: true },
+      { kind: 'info', id: 'm', text: 'メモリを 1 件思い出しました', detail: 'build.md', warning: undefined },
+    ]);
+  });
+
   it('ツールは結果で完了・失敗になり、結果が来ないままターンが終わったら（中断）失敗にする', () => {
     const chat = run([
       { type: 'tool-use', id: 'a', name: 'Edit', target: 'a.ts', input: '', filePath: '/w/a.ts', at: 1 },
@@ -191,7 +205,7 @@ describe('未知のイベント', () => {
   const unknown = (id: string, over: Partial<UnknownEvent> = {}): UnknownEvent => ({
     type: 'unknown-event',
     id,
-    name: 'system/model_fallback',
+    name: 'system/ui_toast',
     problem: 'unknown',
     source: 'stream',
     raw: `{"uuid":"${id}"}`,
@@ -216,17 +230,17 @@ describe('未知のイベント', () => {
         // 画面の行にならないもの（ターンの終わり・順番待ちなど）は、間に挟んでも切らない
         { type: 'turn-end' },
         unknown('unknown:c'),
-        unknown('unknown:d', { name: 'system/notification' }),
-        unknown('unknown:e', { name: 'system/notification', problem: 'malformed' }),
+        unknown('unknown:d', { name: 'system/files_persisted' }),
+        unknown('unknown:e', { name: 'system/files_persisted', problem: 'malformed' }),
         { type: 'info', id: 'i', text: 'お知らせ' },
         unknown('unknown:f'),
       ]),
     ).toEqual([
-      ['system/model_fallback', 3, ['unknown:a@stream', 'unknown:b@stream', 'unknown:c@stream']],
-      ['system/notification', 1, ['unknown:d@stream']],
-      ['system/notification', 1, ['unknown:e@stream']],
+      ['system/ui_toast', 3, ['unknown:a@stream', 'unknown:b@stream', 'unknown:c@stream']],
+      ['system/files_persisted', 1, ['unknown:d@stream']],
+      ['system/files_persisted', 1, ['unknown:e@stream']],
       'info',
-      ['system/model_fallback', 1, ['unknown:f@stream']],
+      ['system/ui_toast', 1, ['unknown:f@stream']],
     ]);
   });
 
@@ -239,7 +253,7 @@ describe('未知のイベント', () => {
         unknown('unknown:a', { source: 'transcript' }),
         unknown('unknown:a'),
       ]),
-    ).toEqual([['system/model_fallback', 1, ['unknown:a@stream', 'unknown:a@transcript']], 'text']);
+    ).toEqual([['system/ui_toast', 1, ['unknown:a@stream', 'unknown:a@transcript']], 'text']);
   });
 
   it('まとめた行の生の行は、新しいほうから UNKNOWN_SAMPLES 件まで残す。数は全部を数える', () => {
