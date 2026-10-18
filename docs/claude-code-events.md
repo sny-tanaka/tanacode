@@ -62,6 +62,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `api_retry` | API の再試行 | 有 | ✅ チャットの「再試行中」 |
 | `notification` | 警告（起動時のエフォートやコンテキストの上限・メモリの停止・plan を抜けたら auto が使えなかった・組織の方針で使えないモデルなど） | 有 | ✅ チャットのお知らせ（文はそのまま。ほかの道で出すもの・tanacode 自身が起こしたもの・一時的なものは出さない。`stream/notification.ts`） |
 | `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ✅ 取り消された応答を、書いている途中の文から外す。お知らせは会話ログの行から（5 節） |
+| `commands_changed` | / のコマンドの一覧の途中での変化（スキルのファイルを足した・プラグインを読み直したなど） | 有 | ✅ 入力欄の / の候補と記録を差し替える。プロジェクトのスキルのファイルを足すと出る（実測。`test/cli/commands-changed.test.ts`） |
 
 ### 受け取るだけのもの
 
@@ -95,7 +96,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | 無 | ⚠️ |
 | `permission_denied` | auto モードの判定や規則による、確認なしの拒否 | 有 | ⚠️ 理由はツールの結果には残る |
 | `permission_check_status` | auto モードの判定中・判定済み | 無 | ⚠️ 作業中の表示に使えそう |
-| `commands_changed` | / のコマンドの一覧の途中での変化（スキルが増えたなど） | 有 | ⚠️ 入力欄の候補が古いまま。クラウドの開発環境の変数を受け継いだときだけ出た |
 
 **関係の薄いもの（条件付き、または tanacode では出ない見込み）**
 

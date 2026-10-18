@@ -6,6 +6,7 @@
   "test/cli/cards.test.ts": 3,
   "test/cli/checklist-hooks.test.ts": 5,
   "test/cli/checklist.test.ts": 7,
+  "test/cli/commands-changed.test.ts": 5,
   "test/cli/errors.test.ts": 23,
   "test/cli/input.test.ts": 52,
   "test/cli/internal-requests.test.ts": 3,
