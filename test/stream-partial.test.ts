@@ -103,6 +103,13 @@ describe('PartialText', () => {
     expect(partial.view()).toEqual([{ id: 'm:1', kind: 'text', text: 'まだ' }]);
   });
 
+  it('渡す前に会話ログに出たブロックは、一度も渡さない（まとめて送る前に会話ログの応答が読めたとき。チャットには会話ログの応答だけが出る）', () => {
+    const partial = new PartialText();
+    feed(partial, start('m'), block(0, 'text'), text(0, 'すぐ書き終えた文'), stop(0));
+    expect(partial.cover(line('m', 0))).toBe(true);
+    expect(partial.take()).toBeNull();
+  });
+
   it('次の応答が始まったら、書き終わらなかったブロックは外し、書き終わったブロックは会話ログに出るまで残す', () => {
     const partial = new PartialText();
     feed(partial, start('a'), block(0, 'text'), text(0, '書き終えた'), stop(0), block(1, 'text'), text(1, '書きかけ'));
