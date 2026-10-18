@@ -73,7 +73,7 @@ function session(patch: Partial<ConstructorParameters<typeof ClaudeSession>[1]> 
 }
 
 describe('子に渡す環境変数', () => {
-  it('親の Claude Code がセッションのために付けた変数と、親の tanacode のつなぎ先（TANACODE_*）は渡さない。ユーザーの設定は残す', () => {
+  it('親の Claude Code がセッションのために付けた変数と、親の tanacode のつなぎ先（TANACODE_*）・チャットの Claude Code に付けた変数は渡さない。ユーザーの設定は残す', () => {
     const names = [
       'CLAUDECODE',
       'CLAUDE_CODE_ENTRYPOINT',
@@ -89,6 +89,8 @@ describe('子に渡す環境変数', () => {
       'AI_AGENT',
       'TANACODE_BROWSER_SOCKET',
       'TANACODE_STATUS_FILE',
+      'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING',
+      'CLAUDE_CODE_CLASSIFIER_SUMMARY',
       'CLAUDE_CODE_USE_BEDROCK',
       'ANTHROPIC_MODEL',
     ];
@@ -99,6 +101,9 @@ describe('子に渡す環境変数', () => {
       expect(names.filter((name) => env[name] !== undefined)).toEqual(['CLAUDE_CODE_USE_BEDROCK', 'ANTHROPIC_MODEL']);
       // stream-json の claude にも
       expect(claudeEnv('stream').CLAUDE_CODE_MESSAGING_TOKEN).toBeUndefined();
+      // チャットの Claude Code に付ける変数は、この tanacode が起動の種類ごとに付け直す（親の tanacode のチャットの中で起動しても、TUI には付かない）
+      expect(claudeEnv('stream')).toMatchObject({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1', CLAUDE_CODE_CLASSIFIER_SUMMARY: '0' });
+      expect(claudeEnv('tui').CLAUDE_CODE_CLASSIFIER_SUMMARY).toBeUndefined();
     } finally {
       for (const [key, value] of Object.entries(before)) {
         if (value === undefined) delete process.env[key];
