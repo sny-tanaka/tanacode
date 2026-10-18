@@ -77,6 +77,9 @@ export class MockApi {
   plainReplies: { match: string; text: string }[] = [];
   // ツールの一覧が付いていない呼び出しを、これが済むまで返さない（Claude Code がその返事を待たずに先へ進むことを確かめる）
   holdPlain: Promise<void> | null = null;
+  // 台本のある会話の文のブロックを、書き終える（content_block_stop を送る）前に、これが済むまで止める（text: そのブロックの文）。
+  // Claude Code は、ブロックを書き終えてから会話ログに書くので、書いている途中の文がアプリに届いてから、会話ログに出るようにできる
+  holdText: ((text: string) => Promise<unknown>) | null = null;
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -149,7 +152,15 @@ export class MockApi {
     }
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
     const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason, inputTokens: this.inputTokens };
-    if (body.stream) stream(res, answer);
+    // 止めた文を待ち切れなくても、応答は最後まで返す（Claude Code を止めたままにしない）。待ち切れなかったことは手がかりに残す
+    const holdText = conversation ? this.holdText : null;
+    const hold = holdText
+      ? (text: string) => holdText(text).then(
+          () => undefined,
+          (error: unknown) => void this.requests.push(`  → 文「${text}」を止めたが、待ち切れなかった（${error instanceof Error ? error.message : String(error)}）`),
+        )
+      : null;
+    if (body.stream) await stream(res, answer, hold);
     else json(res, message(answer));
   }
 }
@@ -183,15 +194,17 @@ function json(res: ServerResponse, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 
-// ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る
-function stream(res: ServerResponse, reply: Reply): void {
+// ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る。
+// hold: 文のブロックを書き終える前に待つもの（MockApi.holdText）
+async function stream(res: ServerResponse, reply: Reply, hold: ((text: string) => Promise<void>) | null): Promise<void> {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const send = (type: string, data: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
   send('message_start', { message: { ...message({ ...reply, content: [] }), stop_reason: null, usage: { input_tokens: reply.inputTokens, output_tokens: 0 } } });
-  reply.content.forEach((block, index) => {
+  for (const [index, block] of reply.content.entries()) {
     if (block.type === 'text') {
       send('content_block_start', { index, content_block: { type: 'text', text: '' } });
       send('content_block_delta', { index, delta: { type: 'text_delta', text: block.text } });
+      if (hold) await hold(block.text);
     } else if (block.type === 'thinking') {
       send('content_block_start', { index, content_block: { type: 'thinking', thinking: '', signature: '' } });
       send('content_block_delta', { index, delta: { type: 'thinking_delta', thinking: block.thinking } });
@@ -201,7 +214,7 @@ function stream(res: ServerResponse, reply: Reply): void {
       send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });
     }
     send('content_block_stop', { index });
-  });
+  }
   send('message_delta', { delta: { stop_reason: reply.stopReason, stop_sequence: null }, usage: { output_tokens: 20 } });
   send('message_stop', {});
   res.end();

@@ -61,6 +61,9 @@ describe(`Claude Code ${version}`, () => {
       api = new MockApi();
       run = new ClaudeRun(await api.start(), { settings: SETTINGS });
       api.conversations = [{ match: PROMPT, steps: stepsFor(run.cwd) }];
+      // 文は、書いている途中の文がアプリから配信されてから書き終える（会話ログに出る）。モックは文を 1 度に送るので、止めないと、
+      // 途中の文をまとめて送る（PARTIAL_INTERVAL_MS）前に会話ログの応答が読めて、途中の文を一度も配信しないことがある（それで正しい）
+      api.holdText = (text) => run.waitUntil(`途中の文「${text}」の配信`, () => run.chatBatches.some((b) => b.partial?.some((p) => p.text === text.trim())));
       run.start();
     });
 
@@ -123,7 +126,8 @@ describe(`Claude Code ${version}`, () => {
     });
 
     it('書いている途中の文を配信し、その応答が会話ログに出たら、同じ配信で外す（stream の応答の ID と、会話ログの message.id・apiBlockIndex が合う）', () => {
-      // モックの API は、文を 1 回の続きの行で送るので、途中の文は書き終わりと同じ文
+      // モックの API は、文を 1 回の続きの行で送るので、途中の文は書き終わりと同じ文。途中の文が配信されるまで書き終えない（holdText）ので、
+      // どの文も、途中の文として出てから、会話ログの応答に入れ替わる
       let shown = new Map<string, string>();
       const swapped: string[] = [];
       for (const batch of run.chatBatches) {
@@ -137,7 +141,7 @@ describe(`Claude Code ${version}`, () => {
         }
         shown = now;
       }
-      expect(swapped).toContain('チェック完了');
+      expect(swapped).toEqual(['コマンドを実行します。', 'チェック完了']);
       expect(shown.size).toBe(0);
     });
 
