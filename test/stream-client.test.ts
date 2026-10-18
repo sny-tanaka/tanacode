@@ -85,12 +85,24 @@ describe('StreamClient', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('Remote Control のときに出る内部用の system の行（task_summary・post_turn_summary）は、使わないので、知らない種類として数えずに黙って捨てる', () => {
+  it('意図して捨てる種類（Remote Control の内部用・ほかの道で足りている・tanacode の起動のしかたでは出ない・別の機能向け・使い道がない）は、知らない種類として数えずに黙って捨て、未知のイベントにもしない', () => {
     const { pipe, client, got } = setup();
     client.start();
     pipe.emit({ type: 'system', subtype: 'task_summary', summary: 'テストを直している', session_id: 's', uuid: 'u1' });
     pipe.emit({ type: 'system', subtype: 'post_turn_summary', status_category: 'done', status_detail: '直した', needs_action: false, session_id: 's', uuid: 'u2' });
+    // 形を確かめないので、使う項目が無くても数えない
+    pipe.emit({ type: 'system', subtype: 'compact_boundary' });
+    const subtypes = [
+      ...['informational', 'local_command', 'task_progress', 'task_updated', 'background_tasks_changed', 'thinking_tokens', 'hook_progress', 'permission_denied'],
+      ...['session_title_changed', 'code_change_published', 'worker_shutting_down', 'model_refusal_no_fallback'],
+      ...['session_state_changed', 'plugin_install', 'mirror_error', 'control_request_progress', 'model_consent_fallback'],
+      ...['cloud_session_delta', 'vcs_state_changed', 'file_attachments_missing', 'peer_message_hold', 'feedback_draft_queued', 'instruction_size_warning'],
+      ...['ui_invalidate', 'ui_panes', 'ui_scroll', 'ui_focus', 'per_turn_effort_changed'],
+    ];
+    for (const subtype of subtypes) pipe.emit({ type: 'system', subtype, uuid: subtype });
+    for (const type of ['prompt_suggestion', 'auth_status', 'transcript_mirror', 'active_goal', 'autocompact_state', 'tool_use_summary']) pipe.emit({ type, uuid: type });
     expect(got.messages).toEqual([]);
+    expect(got.unknowns).toEqual([]);
     expect([...client.unknown]).toEqual([]);
     expect(client.malformed).toBe(0);
     expect(warn).not.toHaveBeenCalled();
@@ -113,7 +125,6 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'task_notification', task_id: 't' },
       { type: 'system', subtype: 'bridge_state' },
       { type: 'system', subtype: 'status', permissionMode: 1 },
-      { type: 'system', subtype: 'compact_boundary' },
       { type: 'system', subtype: 'api_retry' },
       // / のコマンドの一覧が無い・名前や説明が文字列でない・別名が文字列の配列でない
       { type: 'system', subtype: 'commands_changed' },
@@ -143,11 +154,10 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'task_started', task_id: 't' },
       { type: 'system', subtype: 'task_notification', task_id: 't', status: 'stopped' },
       { type: 'system', subtype: 'bridge_state', state: 'connected' },
-      { type: 'system', subtype: 'compact_boundary', compact_metadata: {} },
       { type: 'system', subtype: 'api_retry', attempt: 1 },
       { type: 'system', subtype: 'commands_changed', commands: [] },
       { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy', description: 'x', argumentHint: '', aliases: ['d'] }] },
-      { type: 'system', subtype: 'task_progress' },
+      { type: 'system', subtype: 'hook_started', hook_id: 'h1' },
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: '' },
     ];
     for (const line of good) expect(testing.messageOf(line)).not.toBeNull();
@@ -251,12 +261,11 @@ describe('StreamClient', () => {
       { subtype: 'error', request_id: 'b1', error: 'tanacode does not handle can_use_tool requests.' },
       { subtype: 'error', request_id: 'n1', error: 'tanacode does not handle unknown requests.' },
     ]);
-    // 控えのテスト（unreadableStreamLines）で、Claude Code の要求の種類・形の変化に気づけるよう数える
-    expect([...client.unknown]).toEqual([
-      ['control_request/hook_callback', 1],
-      ['control_request/elicitation', 1],
-    ]);
+    // 控えのテスト（unreadableStreamLines）で、Claude Code の要求の種類・形の変化に気づけるよう、知らない要求は数える。
+    // 意図して断る要求（アプリが登録したときだけ来る hook_callback など）は数えず、未知のイベントにもしない
+    expect([...client.unknown]).toEqual([['control_request/elicitation', 1]]);
     expect(client.malformed).toBe(3);
+    expect(got.unknowns.map((e) => e.name)).not.toContain('control_request/hook_callback');
   });
 
   it('形の違う返事・取り下げ（control_response・control_cancel_request）は、読めない行として数える。待っていない要求への返事は数えない', () => {
@@ -425,7 +434,7 @@ describe('未知のイベント（onUnknown）', () => {
         { seq: 2, line: JSON.stringify({ type: 'brand_new' }) },
       ],
       pending: [
-        { seq: 5, line: JSON.stringify({ type: 'control_request', request_id: 'hook', request: { subtype: 'hook_callback' } }) },
+        { seq: 5, line: JSON.stringify({ type: 'control_request', request_id: 'device', request: { subtype: 'register_device_hooks' } }) },
         { seq: 5, line: JSON.stringify({ type: 'control_request', request: { subtype: 'can_use_tool' } }) },
       ],
       ended: false,

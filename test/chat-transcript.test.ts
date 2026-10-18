@@ -708,7 +708,7 @@ describe('toChatEvents: 未知のイベント', () => {
     ]);
   });
 
-  it('ふだんから会話ログに出る、知っているが使わない行は出さない', () => {
+  it('チャットの外で使う行と、意図して捨てる行（ふだんから会話ログに出る付帯情報・Claude への文脈など）は出さない', () => {
     const known: TranscriptEntry[] = [
       { type: 'mode', mode: 'normal' } as TranscriptEntry,
       { type: 'permission-mode', permissionMode: 'default' },
@@ -733,12 +733,13 @@ describe('toChatEvents: 未知のイベント', () => {
       // 作業中に届いた、発言でない差し込み・hooks の記録で出さないもの
       attachment({ type: 'queued_command', commandMode: 'prompt', prompt: '<task-notification>', origin: { kind: 'task-notification' } }),
       attachment({ type: 'hook_success', hookEvent: 'SessionStart', stdout: JSON.stringify({ suppressOutput: true }) }),
-      system('away_summary'),
-      system('file_snapshot'),
+      ...['away_summary', 'permission_retry', 'scheduled_task_fire', 'rewind_stand_in', 'cloud_session_status', 'file_snapshot', 'model_refusal_no_fallback', 'model_consent_fallback', 'agents_killed'].map((subtype) => system(subtype)),
       system('bridge_status'),
       system('informational'),
       assistant([{ type: 'redacted_thinking', data: 'x' }, { type: 'thinking', thinking: '' }, { type: 'text', text: '' }, { type: 'tool_use' }]),
       user([{ type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } }, { type: 'text', text: '' }]),
+      // 呼び出しの ID の無いツールの結果（付けるカードが無い）
+      user([{ type: 'tool_result', content: 'x' }]),
       // メタの行・圧縮の要約は、ブロックを見ない
       user([{ type: 'brand_new' }], { isMeta: true }),
       user([{ type: 'brand_new' }], { isCompactSummary: true }),

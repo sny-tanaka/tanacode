@@ -55,7 +55,7 @@ node <スキル>/scripts/kinds.mjs --cli <Claude Code の実体> --sdk <sdk.d.ts
 
 `kinds.md` に、次のものが出ます（数十秒かかる）。
 
-- **system の行**: subtype ごとに、SDK の型にあるか・会話の処理の行から stream-json に出すか・本体に書かれた数・そのうち会話ログ用らしいもの（`timestamp`・`isMeta` の付いた行）・tanacode が知っているか（`src/main/stream/client.ts` の `SYSTEM_CHECKS`・`IGNORED_KINDS`）・tanacode の会話ログの読み取り（`src/shared/chat.ts` の `toChatEvents`）が読むか・出さないと決めたか（`TRANSCRIPT_SYSTEM`）。どちらでもないものは、会話ログに出れば、チャットに未知のイベントとして出ます（stream-json の知らない種類も同じ）
+- **system の行**: subtype ごとに、SDK の型にあるか・会話の処理の行から stream-json に出すか・本体に書かれた数・そのうち会話ログ用らしいもの（`timestamp`・`isMeta` の付いた行）・tanacode が使うか・意図して捨てるか・知らないか（`src/main/stream/client.ts` の `SYSTEM_CHECKS`・`IGNORED_KINDS`）・tanacode の会話ログの読み取り（`src/shared/chat.ts` の `toChatEvents`）が読むか・意図して捨てるか（`IGNORED_SYSTEM`）。どちらでもないものは、会話ログに出れば、チャットに未知のイベントとして出ます（stream-json の知らない種類も同じ）
 - **system 以外の行**: 出力の待ち行列に入れる種類（`enqueue({type:…})` と、目印から見つけた出力の関数）と、会話の処理の行の振り分けにある種類
 - **本体からアプリへの要求**（`sendRequest({subtype:…})`）
 - **stream_event の追加の欄**

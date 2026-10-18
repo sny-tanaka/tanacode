@@ -97,11 +97,11 @@ const topKnown = new Set([
 ]);
 topKnown.delete('system');
 const transcriptHandled = new Set(all(/entry\.subtype === '([a-z_]+)'/g, block(chatSrc, 'export function toChatEvents', '\n}')));
-// 会話ログの system の行のうち、知っている（出さないと決めたものも含む）もの。ここに無いものは、チャットに未知のイベントとして出る
-const transcriptKnown = new Set(all(/'([a-z_]+)'/g, block(chatSrc, 'const TRANSCRIPT_SYSTEM', ']);')));
+// 会話ログの system の行のうち、意図して捨てるもの。読む（分岐のある）ものでも、これでもないものは、チャットに未知のイベントとして出る
+const transcriptKnown = new Set(all(/'([a-z_]+)'/g, block(chatSrc, 'const IGNORED_SYSTEM', ']);')));
 
-const tanacodeSystem = (s) => (ignored.has(`system/${s}`) ? '捨てる' : systemChecks.has(s) ? '知っている' : '知らない');
-const tanacodeTop = (t) => (ignored.has(t) ? '捨てる' : topKnown.has(t) ? '知っている' : '知らない');
+const tanacodeSystem = (s) => (ignored.has(`system/${s}`) ? '捨てる' : systemChecks.has(s) ? '使う' : '知らない');
+const tanacodeTop = (t) => (ignored.has(t) ? '捨てる' : topKnown.has(t) ? '使う' : '知らない');
 
 // ---- 書き出し ----
 const yes = (b) => (b ? '有' : '無');
@@ -112,7 +112,7 @@ lines.push(`- 本体の system: ${system.size} 種類（うち stream-json に�
 lines.push('', '## system', '', '| subtype | SDK | 会話の処理から出す | 書かれた数 | うち会話ログ用らしいもの | tanacode（stream） | tanacode（会話ログ） |', '| --- | --- | --- | --- | --- | --- | --- |');
 for (const name of uniq([...system.keys(), ...sdkSystem, ...systemChecks])) {
   const s = system.get(name) ?? { count: 0, transcriptLike: 0 };
-  lines.push(`| \`${name}\` | ${yes(sdkSystem.has(name))} | ${outputFilter.has(name) ? '出す' : ''} | ${s.count} | ${s.transcriptLike} | ${tanacodeSystem(name)} | ${transcriptHandled.has(name) ? '読む' : transcriptKnown.has(name) ? '出さない' : '未知のイベント'} |`);
+  lines.push(`| \`${name}\` | ${yes(sdkSystem.has(name))} | ${outputFilter.has(name) ? '出す' : ''} | ${s.count} | ${s.transcriptLike} | ${tanacodeSystem(name)} | ${transcriptHandled.has(name) ? '読む' : transcriptKnown.has(name) ? '捨てる' : '未知のイベント'} |`);
 }
 lines.push('', '## system 以外', '', `出力の待ち行列に入れる関数（目印から見つけたもの）: ${[...emitters].map((e) => `\`${e}\``).join('・') || '見つからない'}`, '');
 lines.push('| type | SDK | 出力の待ち行列に入れる | 会話の処理の行の振り分けにある | tanacode |', '| --- | --- | --- | --- | --- |');

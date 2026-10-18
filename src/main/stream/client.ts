@@ -8,7 +8,8 @@ import type { CanUseToolRequest, ControlResponseMessage, PermissionResult, Strea
 // stream-json の claude 1 つとの、行の読み書き・制御の要求と返事の対応・待っている要求の管理（設計書 6 節）。
 // SessionManager は行の形を知らずに、ここの関数と知らせだけを使う。
 // 全部が JSON で届くので、予期しないものは機械的に見分ける: 読めない行・知らない種類は捨てて数え、控え（LineLog）とコンソールに残す。
-// 使う項目の形が違う行も捨てて「読めない行」として数える。知らない要求が Claude Code から来たら、必ず error で返す（返さないと待ち続ける）。
+// 使う項目の形が違う行も捨てて「読めない行」として数える。意図して捨てる種類（IGNORED_KINDS）は数えない。
+// 使わない要求（意図して断るもの・知らないもの）が Claude Code から来たら、必ず error で返す（返さないと待ち続ける）。
 // 数えたものは、未知のイベント（onUnknown）としてチャットにも出す。書いている途中の行（stream_event）と、前のアプリの頃の行は出さない
 
 // 制御の要求の返事を待つ既定の上限
@@ -201,7 +202,8 @@ export class StreamClient {
     if (message && message !== 'unknown') this.events.onMessage(message, true);
   }
 
-  // Claude Code からの制御の要求。can_use_tool は待っている要求にし、ほかは使わないので error で返す
+  // Claude Code からの制御の要求。can_use_tool は待っている要求にし、ほかは使わないので error で返す。
+  // 意図して断る要求（DECLINED_REQUESTS）は数えず、知らない要求は数えて、未知のイベントにする
   private raise(line: string, replayed = false): void {
     const value = parse(line) as { request_id?: unknown; request?: { subtype?: unknown } } | null;
     const requestId = value?.request_id;
@@ -220,9 +222,9 @@ export class StreamClient {
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';
     const malformed = subtype === 'can_use_tool' || subtype === 'unknown';
     if (malformed) this.malformed += 1;
-    else this.countUnknown(`control_request/${subtype}`);
+    else if (!DECLINED_REQUESTS.has(subtype)) this.countUnknown(`control_request/${subtype}`);
     // 前のアプリの頃から答えを待っている要求（引き継いで出し直したもの）は、ほかの前の行と同じく出さない
-    if (!replayed) this.report(subtype === 'unknown' ? 'control_request' : `control_request/${subtype}`, malformed ? 'malformed' : 'unknown', value, 'request');
+    if (!replayed && !DECLINED_REQUESTS.has(subtype)) this.report(subtype === 'unknown' ? 'control_request' : `control_request/${subtype}`, malformed ? 'malformed' : 'unknown', value, 'request');
     this.write(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `tanacode does not handle ${subtype} requests.` } } satisfies ControlResponseMessage));
   }
 
@@ -311,33 +313,83 @@ function isCommand(value: unknown): boolean {
   return isRecord(value) && str(value.name) && str(value.description) && (value.aliases === undefined || (Array.isArray(value.aliases) && value.aliases.every(str)));
 }
 
-// 使わないと分かっていて、黙って捨てる種類。時間で出る行（keep_alive。2.1.302 は 30 秒ごとに出すことがある）は、
-// 知らない種類として数えると、控えのテスト（unreadableStreamLines）がテストの長さしだいで落ちたり通ったりする。
-// system/task_summary（ターンの途中の「今していること」の一言）と system/post_turn_summary（ターンごとのまとめ）は、
-// 2.1.302 が Remote Control のときに出す内部用（@internal）の行で、使わない
-const IGNORED_KINDS = new Set(['keep_alive', 'system/task_summary', 'system/post_turn_summary']);
+// 種類は、どれも次の 3 つのどれか 1 か所にだけ書く（docs/claude-code-events.md の ✅・⏭・⚠️ と同じ分け方）
+// - 使う: messageOf の case と SYSTEM_CHECKS（使う項目の形を確かめる）
+// - 意図して捨てる: IGNORED_KINDS（理由つき。数えず、未知のイベントにもしない）
+// - 知らない: どこにも書かない（数えて警告を出し、未知のイベントとしてチャットに出す）
 
-// system の知らせのうち、使うもの（使う項目の形を確かめる）と、種類だけを見るもの
+// 意図して捨てる種類（種類、system は system/subtype）。理由ごとに並べる
+const IGNORED_KINDS = new Set([
+  // 時間で出る、生きている知らせ（2.1.302 は 30 秒ごとに出すことがある。知らない種類として数えると、控えのテスト
+  // （unreadableStreamLines）がテストの長さしだいで落ちたり通ったりする）
+  'keep_alive',
+  // Remote Control のときに出る内部用（@internal）の、ターンの途中の「今していること」の一言と、ターンごとのまとめ（2.1.302）
+  'system/task_summary',
+  'system/post_turn_summary',
+  // ほかの道で足りている
+  // - 圧縮の区切り・お知らせの文・ローカルのコマンドの出力は、会話ログの行から出す（chat.ts）
+  'system/compact_boundary',
+  'system/informational',
+  'system/local_command',
+  // - 裏のタスクの経過・状態・一覧は、会話ログとタスクの出力のファイルから数える（task-router.ts と各トラッカー）
+  'system/task_progress',
+  'system/task_updated',
+  'system/background_tasks_changed',
+  // - 進み具合は stream_event から、フックは hook_started・hook_response と会話ログから作る
+  'system/thinking_tokens',
+  'system/hook_progress',
+  // - 確認なしで断ったツールの理由は、会話ログのツールの結果に出る
+  'system/permission_denied',
+  // - セッションの名前は会話ログの custom-title、PR は会話ログの pr-link、Remote Control の終わりは bridge_state で分かる
+  'system/session_title_changed',
+  'system/code_change_published',
+  'system/worker_shutting_down',
+  // - 断られて取り直さなかった知らせは中身（content）が空。断られた応答そのものは会話ログに出る
+  'system/model_refusal_no_fallback',
+  // tanacode の起動のしかたでは出ない（その機能を有効にしない・SessionStore を使わない・side_question を送らない・モデルを選ばせない）
+  'prompt_suggestion',
+  'auth_status',
+  'transcript_mirror',
+  'system/session_state_changed',
+  'system/plugin_install',
+  'system/mirror_error',
+  'system/control_request_progress',
+  'system/model_consent_fallback',
+  // クラウドの開発環境・Remote Control・別の機能（プラグインの画面・フィードバックなど）向け
+  'active_goal',
+  'autocompact_state',
+  'system/cloud_session_delta',
+  'system/vcs_state_changed',
+  'system/file_attachments_missing',
+  'system/peer_message_hold',
+  'system/feedback_draft_queued',
+  'system/instruction_size_warning',
+  'system/ui_invalidate',
+  'system/ui_panes',
+  'system/ui_scroll',
+  'system/ui_focus',
+  // 使い道がない（ターンごとのエフォートの変化・ツールの呼び出しのまとめの一言）
+  'system/per_turn_effort_changed',
+  'tool_use_summary',
+]);
+
+// Claude Code からの要求のうち、意図して断るもの（error で返し、知らない種類には数えない）。どれも、アプリがフック・MCP サーバー・
+// ダイアログの種類・認証・Remote Control の鍵を、制御の要求で登録・宣言したときだけ来る（tanacode はしないので来ない）
+const DECLINED_REQUESTS = new Set(['hook_callback', 'mcp_message', 'request_user_dialog', 'oauth_token_refresh', 'host_auth_token_refresh', 'remote_control_work_secret']);
+
+// system の知らせのうち、使うもの（使う項目の形を確かめる）
 const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   init: (v) => str(v.session_id) && str(v.model) && str(v.permissionMode),
   status: (v) => v.permissionMode === undefined || str(v.permissionMode),
   task_started: (v) => str(v.task_id),
   task_notification: (v) => str(v.task_id) && str(v.status),
   bridge_state: (v) => str(v.state),
-  compact_boundary: (v) => isRecord(v.compact_metadata),
   api_retry: (v) => typeof v.attempt === 'number',
   commands_changed: (v) => Array.isArray(v.commands) && v.commands.every(isCommand),
-  task_progress: () => true,
-  task_updated: () => true,
-  background_tasks_changed: () => true,
-  thinking_tokens: () => true,
   hook_started: (v) => str(v.hook_id),
-  hook_progress: () => true,
   // stdout・stderr は、何も出力しなかったフックをチャットに出すかを決めるので、どちらも文字列のときだけ使う（欄が無い・形が違えば、
   // 出さない側に倒す。読めない行として数えるので、毎日の確認で気づける）
   hook_response: (v) => str(v.hook_id) && str(v.hook_name) && str(v.hook_event) && str(v.outcome) && typeof v.stdout === 'string' && typeof v.stderr === 'string',
-  local_command: () => true,
-  informational: () => true,
 };
 
 // 知っている種類の行を、使う項目の形を確かめて型にする。知らない種類は 'unknown'、形が違えば null
