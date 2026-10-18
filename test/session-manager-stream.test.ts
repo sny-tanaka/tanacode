@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PRECOMPACT_REASON } from '../src/main/auto-compact';
 import { handoffText } from '../src/shared/optimized-compact';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
 
@@ -456,6 +457,66 @@ describe('知らせ', () => {
     pipe.emit({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 1000, error_status: 529, error: 'overloaded_error', uuid: 'r1' });
     await app.waitFor('再試行', () => types(id).includes('api-error'));
     expect(app.events(id).find((e) => e.type === 'api-error')).toMatchObject({ id: 'r1', retrying: true, text: expect.stringContaining('overloaded_error (529)') });
+  });
+
+  it('圧縮の失敗（status の compact_result が failed）は、理由をチャットに出す。理由が無ければ、失敗したことだけを出す', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, '/compact');
+    pipe.emit({ type: 'system', subtype: 'status', status: 'compacting', uuid: 'c1' });
+    pipe.emit({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Error during compaction: API Error: 400 x', uuid: 'c2' });
+    await app.waitFor('失敗', () => types(id).includes('api-error'));
+    expect(app.events(id).find((e) => e.type === 'api-error')).toEqual({
+      type: 'api-error',
+      id: 'c2',
+      text: '会話を圧縮できませんでした: Error during compaction: API Error: 400 x',
+      retrying: false,
+    });
+    pipe.emit({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', uuid: 'c3' });
+    await app.waitFor('理由の無い失敗', () => app.events(id).some((e) => e.type === 'api-error' && e.id === 'c3'));
+    expect(app.events(id).find((e) => e.type === 'api-error' && e.id === 'c3')).toMatchObject({ text: '会話を圧縮できませんでした' });
+  });
+
+  it('圧縮の失敗の知らせは、送った発言の行より先に届く。その行が会話ログに出るまで待たせる（自動の圧縮がターンの始めに失敗した）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, '続けて');
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit({ type: 'system', subtype: 'status', status: 'compacting', compact_output_chars: 0, uuid: 'c1' });
+    pipe.emit({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'error', uuid: 'c2' });
+    expect(types(id)).not.toContain('api-error');
+    app.append(id, { ...line.user('続けて'), uuid });
+    await app.waitFor('失敗', () => types(id).includes('api-error'));
+    expect(types(id).filter((t) => t === 'user' || t === 'api-error')).toEqual(['user', 'api-error']);
+  });
+
+  it('/compact（モデルを呼ばないターン）の失敗は、ターンの終わりも /compact の発言の行を待ってから、知らせのあとに出す（発言の行は圧縮のあとに書かれる）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const uuid = await app.send(id, '/compact');
+    pipe.emit(stream.lifecycle(uuid, 'started'));
+    pipe.emit({ type: 'system', subtype: 'status', status: 'compacting', uuid: 'c1' });
+    pipe.emit({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Error during compaction: x', uuid: 'c2' });
+    // モデルを呼ばなかったターン（num_turns が 0）
+    pipe.emit(stream.result(app.claudeId(id), { num_turns: 0 }));
+    expect(types(id)).not.toContain('api-error');
+    expect(turnEnds(id)).toBe(0);
+    // /compact の発言の行（チャットには出さない。送信中の表示から外れる）
+    app.append(id, { ...line.user('<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'), uuid });
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(types(id).filter((t) => t === 'api-error' || t === 'turn-end')).toEqual(['api-error', 'turn-end']);
+    expect(unsent(id)).toEqual([]);
+  });
+
+  it('アプリの圧縮の前のフックが止めたことの失敗は、チャットに出さない（自動の圧縮の道によっては、止めたことを失敗として知らせる）', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, '続けて');
+    pipe.emit({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: `Compaction blocked by PreCompact hook: ${PRECOMPACT_REASON}`, uuid: 'c1' });
+    // ほかのフックが止めたものは出す（人のフック。止めた理由を知らせる）
+    pipe.emit({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Compaction blocked by PreCompact hook: 人のフック', uuid: 'c2' });
+    await app.waitFor('人のフック', () => types(id).includes('api-error'));
+    expect(app.events(id).filter((e) => e.type === 'api-error').map((e) => e.id)).toEqual(['c2']);
   });
 
   it('利用枠（rate_limit_event）を statusLine に入れる。値の無い知らせで空にしない', async () => {

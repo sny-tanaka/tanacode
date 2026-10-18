@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -531,6 +532,66 @@ describe('作業中の進み具合', () => {
     app.finish(id);
     await app.waitFor('終わり', () => app.progress.get(id) === null);
     expect(app.manager.progress(id)).toBeNull();
+  });
+
+  // 圧縮の行（2.1.302 の実測の形）。自動の圧縮の compacting にだけ compact_output_chars が付く
+  const compacting = (auto = false) => ({ type: 'system', subtype: 'status', status: 'compacting', ...(auto ? { compact_output_chars: 0 } : {}), uuid: randomUUID() });
+  const compacted = (extra: Record<string, unknown> = {}) => ({ type: 'system', subtype: 'status', status: null, ...extra, uuid: randomUUID() });
+
+  it('圧縮の間（status の compacting から null まで）は、圧縮中にする。応答を頼んだ知らせ（requesting）・権限モードの変化では終えない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, '/compact');
+    await app.waitFor('応答待ち', () => app.progress.get(id)?.phase === 'waiting');
+    pipe.emit(compacting());
+    await app.waitFor('圧縮中', () => app.progress.get(id)?.phase === 'compacting');
+    pipe.emit({ type: 'system', subtype: 'status', status: 'requesting', uuid: randomUUID() });
+    pipe.emit(stream.status('acceptEdits'));
+    await sleep(50);
+    expect(app.progress.get(id)?.phase).toBe('compacting');
+    pipe.emit(compacted({ compact_result: 'success' }));
+    await app.waitFor('圧縮の終わり', () => app.progress.get(id)?.phase === 'waiting');
+    // 成功は、会話ログの区切りで出るので、ここでは何も出さない
+    expect(app.events(id).filter((e) => e.type === 'api-error')).toEqual([]);
+  });
+
+  it('アプリの圧縮の前のフックが止める自動の圧縮は、圧縮中にしない（止めたあと、compact_result の無い null が来る）。手動の /compact は圧縮中にする', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const blocked: string[] = [];
+    app.manager.compactBlocked = (sessionId) => {
+      blocked.push(sessionId);
+      return true;
+    };
+    await app.prompt(id, '続けて');
+    await app.waitFor('応答待ち', () => app.progress.get(id)?.phase === 'waiting');
+    pipe.emit(compacting(true));
+    pipe.emit(compacted());
+    pipe.emit(stream.messageStart('msg_1'));
+    pipe.emit(stream.blockStart('text'));
+    await app.waitFor('書いている', () => app.progress.get(id)?.phase === 'writing');
+    expect(blocked).toEqual([id]);
+    expect(app.events(id).filter((e) => e.type === 'api-error')).toEqual([]);
+    // 手動の /compact（compact_output_chars が無い）は、フックが止めないので圧縮中にする
+    pipe.emit(compacting());
+    await app.waitFor('圧縮中', () => app.progress.get(id)?.phase === 'compacting');
+    expect(blocked).toEqual([id]);
+  });
+
+  it('auto モードの判定を待つ間（permission_check_status の checking から done まで）は、判定待ちにする。サブエージェントの中の判定は数えない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    await app.prompt(id, 'コマンドを動かして');
+    pipe.emit(stream.blockStart('tool_use'));
+    await app.waitFor('ツール', () => app.progress.get(id)?.phase === 'working');
+    pipe.emit({ type: 'system', subtype: 'permission_check_status', tool_use_id: 'toolu_sub', agent_id: 'a1', status: 'checking', uuid: randomUUID() });
+    await sleep(50);
+    expect(app.progress.get(id)?.phase).toBe('working');
+    pipe.emit({ type: 'system', subtype: 'permission_check_status', tool_use_id: 'toolu_1', status: 'checking', uuid: randomUUID() });
+    await app.waitFor('判定待ち', () => app.progress.get(id)?.phase === 'checking');
+    expect(app.manager.progress(id)?.phase).toBe('checking');
+    pipe.emit({ type: 'system', subtype: 'permission_check_status', tool_use_id: 'toolu_1', status: 'done', uuid: randomUUID() });
+    await app.waitFor('判定の終わり', () => app.progress.get(id)?.phase === 'working');
   });
 });
 

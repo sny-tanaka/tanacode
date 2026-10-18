@@ -96,14 +96,33 @@ export type InitMessage = {
   uuid: string;
 };
 
-// SDKStatusMessage。status: compacting（圧縮中）・requesting（応答を待っている）・null
+// SDKStatusMessage。status: compacting（圧縮中）・requesting（応答を待っている）・null。
+// 圧縮が終わると、null に compact_result（success・failed）と、失敗なら compact_error（理由の文）を付けて出す。
+// 圧縮中の行は、要約を待つ間 30 秒ごとに出直すことがある。compact_output_chars（@internal）は自動の圧縮の compacting にだけ付く
+// （手動の /compact には付かない。2.1.302 の型の説明と実測）。PreCompact のフックが自動の圧縮を止めると、compacting のあと、
+// compact_result の無い null か、失敗（compact_error が「Compaction blocked by PreCompact hook: <フックの理由>」）になる（2.1.302 の本体）
 export type StatusMessage = {
   type: 'system';
   subtype: 'status';
   status: 'compacting' | 'requesting' | null;
   permissionMode?: PermissionModeName;
+  compact_result?: 'success' | 'failed';
+  compact_error?: string;
+  compact_output_chars?: number;
   uuid: string;
   session_id: string;
+};
+
+// auto モードの判定（ツールを使ってよいか）の待ち（system/permission_check_status。SDK の公開の型には無い）。
+// checking: 判定を 4 秒ほど待って、まだ待っている / done: その待ちが終わった（4 秒より早く済んだ判定には、どちらも出ない）。
+// agent_id: サブエージェントの中のツールの呼び出しのとき（2.1.302 の本体）
+export type PermissionCheckStatusMessage = {
+  type: 'system';
+  subtype: 'permission_check_status';
+  tool_use_id: string;
+  agent_id?: string;
+  status: 'checking' | 'done';
+  uuid?: string;
 };
 
 // SDKTaskStartedMessage・SDKTaskNotificationMessage（裏のタスク）。task_type は local_bash・local_agent・local_workflow など
@@ -328,6 +347,7 @@ export type StreamMessage =
   | ResultMessage
   | InitMessage
   | StatusMessage
+  | PermissionCheckStatusMessage
   | TaskStartedMessage
   | TaskNotificationMessage
   | CompactBoundaryMessage

@@ -81,6 +81,41 @@ describe('Progress（作業中の進み具合）', () => {
     expect(progress.tool()).toBe(false);
     expect(progress.current(0).phase).toBe('working');
   });
+
+  it('圧縮の間は、ほかの段階より上に圧縮中を出す。出直した compacting では変わらない。終わったら応答待ちに戻す', () => {
+    const progress = new Progress(0);
+    progress.streamEvent(event({ type: 'content_block_start', content_block: { type: 'text' } }));
+    progress.streamEvent(event({ type: 'message_delta', usage: { output_tokens: 50 } }));
+    expect(progress.compacting(true)).toBe(true);
+    expect(progress.compacting(true)).toBe(false);
+    expect(progress.current(0).phase).toBe('compacting');
+    // 圧縮の間に届いた行（裏の経過など）でも、圧縮中のまま
+    expect(progress.tool()).toBe(false);
+    expect(progress.current(0).phase).toBe('compacting');
+    expect(progress.compacting(false)).toBe(true);
+    expect(progress.current(0)).toMatchObject({ phase: 'waiting', tokens: null });
+    expect(progress.compacting(false)).toBe(false);
+  });
+
+  it('auto モードの判定を待つ間は、判定待ちを出す。並べて呼んだツールは、どれの判定も済むまで判定待ち', () => {
+    const progress = new Progress(0);
+    progress.streamEvent(event({ type: 'content_block_start', content_block: { type: 'tool_use' } }));
+    expect(progress.checking('toolu_1', true)).toBe(true);
+    expect(progress.checking('toolu_2', true)).toBe(false);
+    expect(progress.current(0).phase).toBe('checking');
+    // 先に済んだツールの実行（tool_progress）があっても、判定待ちのまま
+    expect(progress.tool()).toBe(false);
+    expect(progress.checking('toolu_1', false)).toBe(false);
+    expect(progress.current(0).phase).toBe('checking');
+    expect(progress.checking('toolu_2', false)).toBe(true);
+    expect(progress.current(0).phase).toBe('working');
+    // 待っていない呼び出しの done は、何も変えない
+    expect(progress.checking('toolu_3', false)).toBe(false);
+    // 圧縮中は、判定待ちより上
+    progress.checking('toolu_4', true);
+    progress.compacting(true);
+    expect(progress.current(0).phase).toBe('compacting');
+  });
 });
 
 describe('利用枠', () => {

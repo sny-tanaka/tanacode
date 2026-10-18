@@ -282,7 +282,13 @@ const IGNORED_KINDS = new Set(['keep_alive', 'system/task_summary', 'system/post
 // system の知らせのうち、使うもの（使う項目の形を確かめる）と、種類だけを見るもの
 const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   init: (v) => str(v.session_id) && str(v.model) && str(v.permissionMode),
-  status: (v) => v.permissionMode === undefined || str(v.permissionMode),
+  // 圧縮の終わり（compact_result・compact_error）は、作業中の表示とチャットの失敗の知らせに使う
+  status: (v) =>
+    (v.status === null || v.status === undefined || str(v.status)) &&
+    (v.permissionMode === undefined || str(v.permissionMode)) &&
+    (v.compact_result === undefined || v.compact_result === 'success' || v.compact_result === 'failed') &&
+    (v.compact_error === undefined || typeof v.compact_error === 'string'),
+  permission_check_status: (v) => str(v.tool_use_id) && (v.status === 'checking' || v.status === 'done') && (v.agent_id === undefined || str(v.agent_id)),
   task_started: (v) => str(v.task_id),
   task_notification: (v) => str(v.task_id) && str(v.status),
   bridge_state: (v) => str(v.state),
