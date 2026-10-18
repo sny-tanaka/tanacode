@@ -100,7 +100,7 @@ npm run dev
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコン（サイドパネルの切り替えと、ブラウザ・ターミナルの開閉）は「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
-- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）の 3 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
+- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）・Claude Code のイベントの調べ（`/claude-code-events`）の 4 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
 - 公開すると、`release-publish.yml` から呼ぶ `homebrew.yml` が、Homebrew の tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask の `version` と `sha256` を新しいバージョンにします。プッシュの前に、ランナーの Mac でその cask から実際に入れ、バージョンと、quarantine 属性が外れることを確かめます。tap への書き込みは GitHub App の token（tap の Contents の書き込みだけ・1 時間で失効）。同じ App を、動作確認済の Claude Code を上げる PR にも使います（下の「Claude Code との互換性の確かめ方」）。App の Client ID と秘密鍵は、develop でしか使えない Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）と `HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）に置きます。失敗したときは、develop で `homebrew.yml` を手動で起動し直します。
 
 ## 見た目の確かめ方
@@ -461,6 +461,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - develop のルールセット（need-pr）は、PR を通すことと、必須のチェック（`check`・`build`・`tour`）が通ることを求めています（承認 0 人・squash のみ）。
   - 途中の控えは artifact（`claude-code-<バージョン>`）にも残します。
   - 「Run workflow」で、バージョンを指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古いバージョンでは作らない）。
+- Claude Code が stream-json で出すイベント・会話ログにだけ書く system の行と、tanacode の対応の一覧は [docs/claude-code-events.md](docs/claude-code-events.md)。Agent SDK の型に無い種類も含めた、ある時点の写しです。調べ直すときは、スキル `/claude-code-events`（`.claude/skills/claude-code-events/`）の手順で。
+  - 毎日の確認で気づけるのは、台本で起こした場面に出た種類だけです。台本に無い場面（接続が途中で切れて取り直す、など）で出る種類は、この一覧で確かめます。
 
 ## 仕組み
 
@@ -481,6 +483,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - パイプの claude は、入力を閉じても、ターンと裏のタスクが終わるまで動き続けます（実測）。ホストが終わるとき（止められたときも）は、プロセスグループごと止めます（SIGTERM、終わらなければ SIGKILL）。
   - 起動し直したアプリは、Claude Code が起動した時刻も受け取って引き継ぎます。その時刻より後の会話ログの行は、今も動いている Claude Code が書いたものとして扱います。途中のターン・バックグラウンドのタスク・答えを待つ要求は、終わったことにせず、そのまま追いかけます。
   - 送り直してもらった行は、前のアプリの頃の行（`past`）として、状態だけを組み立て直し、通知やチャットの知らせは出しません（`StreamClient.adopt`）。initialize は送り直さず、前のアプリが受け取った返事のうち要るもの（コマンドとモデルの一覧・Remote Control を使えるか）を記録（`SessionRecord.claudeInit`）から戻し、エフォートだけ `get_settings` で聞き直します。送信中・順番待ちの発言も、記録（`SessionRecord.unsent`）から戻します（順番待ちの発言の文は stream-json の行に無く、そのターンが始まるまで戻ってこないため。実測）。
+  - 引き継ぐ前に claude が終わっていたとき（一覧の返事の直後に終わった）は、ホストがもう控えを捨てているので、送り直しを頼みません。それまでに届いていた行を渡し、読み終わりを知らせてから、終わったことを知らせます（`HostedPipe.replay`。読み終わりを知らせないと、引き継いだ会話の終わりが決まらない）。
   - アプリが止まっている間に `/clear` で会話が変わっていても、送り直しの行（新しい会話の `system/init` の `session_id`）と、起動した時刻より後にできた会話ログで、すぐ乗り換えます。乗り換えた先に前からあった行は、読み終えたときに読み終えたことを知らせ直します（`TranscriptFollower`。はじめの会話ログを読み終える前でもあとでも。知らせないと、その過去の会話の終わりが決まらず、チャットが作業中のまま残り、タイトルも作られない）。前からあった行の大きさは、読み始め（`TranscriptTail`）で 1 回だけ取ります（別に取ると、その間に書かれた行で食い違う）。
   - ホストが止める間もなく落ちたとき（SIGKILL など）は、パイプの claude だけが残ります（自分のプロセスグループで動いているため）。そこで、initialize の返事の `pid` を、起動したときの会話の ID と一緒に記録（`SessionRecord.claudeProcess`）に残し、開き直す前に、その pid がまだその会話の claude なら、プロセスグループごと止めます（`leftover-claude.ts`。pid は使い回されるので、起動の引数にその会話の ID が無いプロセスは止めない）。
   - アプリも Claude Code も無くなって 10 秒たつと、ホストは自分で終わります。
