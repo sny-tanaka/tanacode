@@ -11,7 +11,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 - SDK の型（`sdk.d.ts` の `SDKMessage`）は 39 種類（うち system は 28 種類）。Claude Code は、型に無い種類も出します。
 - SDK は、型に無い種類も捨てずにアプリへ渡します。SDK が自分で受け取って渡さないのは、`keep_alive`・制御の要求と返事・`transcript_mirror` だけです。
 - tanacode の読み取り（`src/main/stream/client.ts` の `StreamClient`）は、知らない種類を捨てて数え、コンソールに警告を出します。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
-- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）と、モデルが断る場面の 2 つです。
+- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）と、モデルが断る場面と、圧縮（`/compact`・自動の圧縮・その失敗・PreCompact フックで止めた自動の圧縮）と auto モードの判定待ち（`permission_check_status`。`test/cli/progress.test.ts`）です。
 
 ## 凡例
 
@@ -53,13 +53,14 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | subtype | どんなイベントか | SDK | tanacode |
 | --- | --- | --- | --- |
 | `init` | 起動・/clear のあとの、セッションの情報 | 有 | ✅ 権限モード・モデル・バージョン。会話ログの乗り換え |
-| `status` | 圧縮中・応答待ち・権限モードの変化 | 有 | ✅ 権限モードだけ |
+| `status` | 圧縮中・応答待ち・権限モードの変化 | 有 | ✅ 権限モード。作業中の表示の「会話を圧縮しています」（compacting から null まで）と、圧縮の失敗（`compact_result`・`compact_error`）のチャットへの表示 |
 | `bridge_state` | Remote Control のつながり | 無 | ✅ つながっているかの表示 |
 | `task_started` | 裏のタスクの始まり | 有 | ✅ タスクを止めるときの ID |
 | `task_notification` | 裏のタスクの終わり | 有 | ✅ 止めたタスクの終わり |
 | `hook_started` | フックの始まり | 有 | ✅ フックの時間 |
 | `hook_response` | フックの終わり（`--include-hook-events`） | 有 | ✅ 何も出力しなかったフックの、チャットへの表示 |
 | `api_retry` | API の再試行 | 有 | ✅ チャットの「再試行中」 |
+| `permission_check_status` | auto モードの判定を 4 秒より長く待っている（checking）・待ち終えた（done） | 無 | ✅ 作業中の表示の「安全を確認しています」 |
 
 ### 受け取るだけのもの
 
@@ -93,7 +94,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `model_refusal_no_fallback` | 断られたが、取り直さなかった | 有 | ⚠️ |
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | 無 | ⚠️ |
 | `permission_denied` | auto モードの判定や規則による、確認なしの拒否 | 有 | ⚠️ 理由はツールの結果には残る |
-| `permission_check_status` | auto モードの判定中・判定済み | 無 | ⚠️ 作業中の表示に使えそう |
 | `commands_changed` | / のコマンドの一覧の途中での変化（スキルが増えたなど） | 有 | ⚠️ 入力欄の候補が古いまま。クラウドの開発環境の変数を受け継いだときだけ出た |
 
 **関係の薄いもの（条件付き、または tanacode では出ない見込み）**
