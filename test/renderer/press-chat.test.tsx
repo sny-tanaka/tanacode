@@ -219,6 +219,20 @@ describe('ほかのセッションへのリンク（SessionRefs）', () => {
     expect(onSelectSession).toHaveBeenCalledWith(LOGIN);
     expect(outer).not.toHaveBeenCalled();
   });
+
+  it('お知らせ（info）: 全文のあるものは見出しを押すと開ける（モデルの切り替えの説明・メモリのファイル名）。警告は色の印を付ける', () => {
+    const { container, rerender } = render(<ChatRow {...rowProps({ kind: 'info', id: 'i1', text: 'AGENTS.md を読み込みました' })} />);
+    expect(container.querySelector('div.chat-info')!.textContent).toBe('AGENTS.md を読み込みました');
+    expect(container.querySelector('details')).toBeNull();
+    rerender(<ChatRow {...rowProps({ kind: 'info', id: 'i2', text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました', detail: 'Switched to Sonnet 5.5', warning: true })} />);
+    const details = container.querySelector('details.chat-info.warning.expandable')!;
+    expect(details.querySelector('summary')!.textContent).toBe('モデルを Opus 5.5 から Sonnet 5.5 に切り替えました');
+    expect(details.querySelector('pre')!.textContent).toBe('Switched to Sonnet 5.5');
+    // 見出しを押したときの開閉（details の標準の動き）を止めない
+    expect(clickPrevented(details.querySelector('summary')!)).toBe(false);
+    rerender(<ChatRow {...rowProps({ kind: 'info', id: 'i3', text: '警告だけ', warning: true })} />);
+    expect(container.querySelector('div.chat-info.warning')!.textContent).toBe('警告だけ');
+  });
 });
 
 describe('巻き戻しとチェックリストのカード（ChatRow）', () => {

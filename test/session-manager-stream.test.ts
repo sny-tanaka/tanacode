@@ -519,6 +519,42 @@ describe('知らせ', () => {
     expect(app.events(id).filter((e) => e.type === 'api-error').map((e) => e.id)).toEqual(['c2']);
   });
 
+  it('Claude Code の警告（system/notification）は、お知らせとしてチャットに出す。ターンは始めず、ほかの道で出すものは出さない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    // ほかの道で出すもの（Stop フックの失敗は stop_hook_summary から）
+    pipe.emit({ type: 'system', subtype: 'notification', key: 'stop-hook-error', text: 'Stop hook error occurred', priority: 'immediate', uuid: 'n0' });
+    // 起動時のメモリの停止（2.1.302 は stream-json のときだけ、これで知らせる）
+    pipe.emit({ type: 'system', subtype: 'notification', key: 'memory-paused', text: 'Auto memory is paused', priority: 'high', color: 'warning', uuid: 'n1' });
+    await app.waitFor('お知らせ', () => types(id).includes('info'));
+    expect(app.events(id).filter((e) => e.type === 'info')).toEqual([{ type: 'info', id: 'notification:n1', text: 'Auto memory is paused', warning: true }]);
+    expect(app.manager.stateOf(id)).toBe('idle');
+  });
+
+  it('取り消された応答が会話ログに書かれていたら、取り直しの行で、チャットから外す（残りに置き換える）', async () => {
+    app.manager.turnEndWaitMs = 60_000;
+    const { id } = app.create();
+    await app.ready(id);
+    const prompt = line.user('調べて');
+    const refused = line.text('断られる文');
+    app.say(id, prompt, refused);
+    await app.waitFor('断られる文', () => app.events(id).some((e) => e.type === 'assistant-text'));
+    const fallback = { ...line.turnEnd(), subtype: 'model_refusal_fallback', originalModel: 'claude-opus-5-5', fallbackModel: 'claude-opus-4-8', retractedMessageUuids: [refused.uuid] };
+    app.say(id, fallback, line.text('取り直した答え'));
+    // main が持つチャット（画面のスナップショットと、ほかのセッションに渡すもの）
+    const shown = () => app.manager.snapshot(id).events.map((e) => (e.type === 'user' || e.type === 'assistant-text' || e.type === 'info' ? `${e.type}:${e.text}` : e.type));
+    await app.waitFor('取り直した答え', () => shown().includes('assistant-text:取り直した答え'));
+    expect(shown().filter((e) => e !== 'ready' && e !== 'process-start')).toEqual([
+      'user:調べて',
+      'info:Opus 5.5 が応答を断ったので、Opus 4.8 で取り直しました',
+      'assistant-text:取り直した答え',
+    ]);
+    // 画面には、外したあとの全部を置き換えで送る
+    const replaced = app.batches.find((b) => b.sessionId === id && b.events.some((e) => e.type === 'replace'));
+    const replace = replaced?.events[0];
+    expect(replace?.type === 'replace' && replace.events.map((e) => e.type)).toEqual(['process-start', 'ready', 'user']);
+  });
+
   it('利用枠（rate_limit_event）を statusLine に入れる。値の無い知らせで空にしない', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

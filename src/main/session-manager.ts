@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   bridgeUrlOf,
   isTranscriptEntry,
+  retractedUuidsOf,
   toChatEvents,
   transcriptTitle,
   unsentView,
@@ -48,7 +49,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import type { SessionModel } from '@shared/models';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
 import { BashTaskTracker } from './bash-task-tracker';
-import { branchCut, readAgentLog, readChatLog, readExportLog, type ChainEntry } from './chat-log';
+import { branchCut, readAgentLog, readChatLog, readExportLog, retract, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
@@ -88,6 +89,8 @@ import type {
   HookStartedMessage,
   InitializeResponse,
   ModelInfo,
+  ModelRefusalFallbackMessage,
+  NotificationMessage,
   PermissionCheckStatusMessage,
   ResultMessage,
   RewindFilesResult,
@@ -99,6 +102,7 @@ import type {
   UsageResponse,
   UserMessage,
 } from './stream/protocol';
+import { notificationEvent } from './stream/notification';
 import { PartialText } from './stream/partial';
 import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf, type UsageReport } from './stream/state';
 import {
@@ -134,6 +138,8 @@ const USAGE_INTERVAL_MS = 5 * 60_000;
 // 何も出力しなかったフックをチャットに出すときの控えの上限（quietHook）。始まった時刻・stream で見たツールの呼び出し・チャットに出したカード
 const MAX_HOOK_STARTS = 200;
 const MAX_STREAM_TOOLS = 200;
+// stream で見た本体の応答の行の控え（streamMessages）の上限
+const MAX_STREAM_MESSAGES = 50;
 const MAX_SHOWN_TOOLS = 1000;
 // ツールの呼び出しごとに動くフックの出来事（hook_name が「出来事:ツールの名前」）
 const TOOL_HOOK_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
@@ -185,6 +191,9 @@ type Runtime = {
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
   shownTools: Set<string>;
+  // stream で見た本体の応答の行の uuid → 応答の ID（message.id。新しい MAX_STREAM_MESSAGES 個まで）。モデルが断って取り消された応答
+  // （system/model_refusal_fallback の retracted_message_uuids）を、書いている途中の文から外すのに使う
+  streamMessages: Map<string, string>;
   heldHooks: Map<string, ChatEvent[]>;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
@@ -1806,6 +1815,7 @@ export class SessionManager {
         hookStarts: new Map(),
         streamTools: [],
         shownTools: new Set(),
+        streamMessages: new Map(),
         heldHooks: new Map(),
         requests: new Map(),
         questionWaits: new Map(),
@@ -1913,6 +1923,7 @@ export class SessionManager {
     // 前の claude のツールの呼び出し・待たせていたフック・発言の鍵は持ち越さない（結果が来ないまま止まった呼び出しが、次の同じ名前の
     // 呼び出しのフックを決められなくし、待たせたフックが、関係のない発言のあとに出るため）
     runtime.streamTools = [];
+    runtime.streamMessages.clear();
     runtime.heldHooks.clear();
     runtime.hookStarts.clear();
     runtime.turnPrompt = null;
@@ -2401,6 +2412,18 @@ export class SessionManager {
         this.pushEvents(id, [{ type: 'api-error', id: retry.uuid, text, retrying: true }]);
         return;
       }
+      case 'notification': {
+        // Claude Code の警告。会話ログに残らないので、ここでチャットに出す（起動し直すと消える。api_retry と同じ）。ターンは始めない
+        if (past) return;
+        const event = notificationEvent(message as NotificationMessage);
+        if (event) this.pushEvents(id, [event]);
+        return;
+      }
+      case 'model_refusal_fallback':
+        // モデルが断った応答を取り消して、別のモデルで取り直す。お知らせは会話ログの同じ行から出す（handleEntry）。
+        // 取り消された応答は会話ログに出ないので、ここで書いている途中の文から外し、ターンの終わりにも待たない
+        if (!past) this.retractStreamed(id, rt, (message as ModelRefusalFallbackMessage).retracted_message_uuids ?? []);
+        return;
       case 'commands_changed': {
         // / のコマンドの一覧が変わった（スキルのファイルを足した・プラグインを読み直したなど）。入力欄は / の候補を開くたびに
         // 読みに来る（commandsOf）ので、差し替えておけば次に開いたときから新しくなる。引き継ぎで戻せるよう記録も直す
@@ -2440,6 +2463,13 @@ export class SessionManager {
     else this.pushEvents(id, [event]);
   }
 
+  // stream に出た応答（uuids）が取り消された。書いている途中の文から外し、ターンの最後の行にしない（会話ログに出るのを待たない）
+  private retractStreamed(id: string, rt: Runtime, uuids: string[]): void {
+    if (rt.lastTurnLine && uuids.includes(rt.lastTurnLine)) rt.lastTurnLine = null;
+    const messageIds = uuids.flatMap((uuid) => rt.streamMessages.get(uuid) ?? []);
+    if (rt.partial.drop(messageIds)) this.emitPartial(id, rt);
+  }
+
   private handleAssistant(id: string, rt: Runtime, message: AssistantMessage, past: boolean): void {
     // ツールの前後のフック（hook_response）を付けるカードを探すため、ツールの呼び出しを控える（サブエージェントの中のものも、印を付けて）
     if (!past) {
@@ -2454,6 +2484,10 @@ export class SessionManager {
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
     rt.lastTurnLine = message.uuid;
+    if (!past && message.message.id) {
+      rt.streamMessages.set(message.uuid, message.message.id);
+      if (rt.streamMessages.size > MAX_STREAM_MESSAGES) rt.streamMessages.delete(rt.streamMessages.keys().next().value!);
+    }
     for (const block of message.message.content ?? []) {
       if (block.type === 'tool_use' && block.name === PLAN_TOOL && typeof block.id === 'string') {
         const plan = (block.input as { plan?: unknown } | undefined)?.plan;
@@ -2913,6 +2947,24 @@ export class SessionManager {
     rt.chain.push({ uuid: entry.uuid, type: entry.type, eventStart: rt.events.length });
   }
 
+  // モデルが断って取り消された応答（model_refusal_fallback の retractedMessageUuids）が、もうチャットに出ていたら外す。
+  // 2.1.302 は取り消した応答を会話ログに書かない（実測）が、書かれていても、会話ログから作り直したチャット（chat-log.ts）と同じにする
+  private followRetraction(id: string, rt: Runtime, entry: TranscriptEntry, isHistory: boolean): void {
+    this.retractEntries(id, rt, retractedUuidsOf(entry), isHistory);
+  }
+
+  // 会話ログの行（uuids）から作ったイベントを、チャットから外す（取り消された応答。会話ログからいったん書かれて消された行にも使える）
+  private retractEntries(id: string, rt: Runtime, uuids: string[], isHistory: boolean): void {
+    const retracted = retract(rt.chain, rt.events, uuids);
+    if (!retracted) return;
+    rt.chain = retracted.chain;
+    rt.events = retracted.events;
+    // 巻き戻しと同じく、残ったものに置き換える（replace は events に残さず、通し番号だけ進める）
+    const fromSeq = rt.seq;
+    rt.seq += 1;
+    this.listeners.onChat({ sessionId: id, fromSeq, events: [{ type: 'replace', events: [...retracted.events] }], live: !isHistory });
+  }
+
   // 今の会話ログのセッションのフォルダ（subagents/・workflows/ がある）
   private sessionDir(id: string): string {
     const record = this.store.get(id)!;
@@ -2965,6 +3017,7 @@ export class SessionManager {
     rt?.context.handle(entry);
 
     if (rt) this.followBranch(id, rt, entry, isHistory);
+    if (rt) this.followRetraction(id, rt, entry, isHistory);
     // 書いている途中の文のうち、この行で会話ログに出たブロックを外す（この行のイベントと同じ配信で送り、同じ場所で入れ替える）
     const covered = !!rt && !past && !rt.terminal && rt.partial.cover(entry);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない

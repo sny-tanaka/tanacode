@@ -1,6 +1,7 @@
 import { CHECKLIST_EVENT_TAG, CHECKLIST_REMINDER_TAG, CHECKLIST_UNCHANGED_MARK, checklistTarget, parseChecklistEvent, type CardRef } from './checklist-tools';
 import { walkthroughTarget } from './walkthrough-tools';
 import { t } from './i18n';
+import { modelName } from './model-name';
 import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
@@ -66,8 +67,9 @@ export type ChatEvent =
   // 別の Claude（サブエージェント・ほかのセッション）からの知らせで、待機中の Claude Code が続きを始める。
   // 発言でも完了通知でもなく、チャットには何も出さない（ターンの始まりだけを伝える）
   | { type: 'turn-start' }
-  // 画面に出るだけのお知らせ（起動時の「AGENTS.md を読み込みました」など）。ターンは始まらない
-  | { type: 'info'; id: string; text: string }
+  // 画面に出るだけのお知らせ（起動時の「AGENTS.md を読み込みました」・Claude Code の警告・モデルの切り替え・メモリなど）。ターンは始まらない。
+  // detail: 開くと読める全文（モデルの切り替えの Claude Code の説明・メモリのファイル名など）/ warning: 警告の色で出す
+  | { type: 'info'; id: string; text: string; detail?: string; warning?: true }
   // 入力欄で ! を付けて実行したシェルのコマンド（Claude には渡らない）
   | { type: 'shell'; id: string; command: string; output: string }
   // ! のコマンドの出力。今の Claude Code はコマンドと出力を別の行に書くので、直前の shell に付ける
@@ -200,6 +202,13 @@ export type TranscriptEntry = {
   prNumber?: number;
   prUrl?: string;
   prRepository?: string;
+  // model_fallback・model_refusal_fallback: 元のモデルと、切り替えた先のモデル（ID）
+  originalModel?: unknown;
+  fallbackModel?: unknown;
+  // model_refusal_fallback: 断られて取り消された応答の行の uuid（チャットから外す。retractedUuidsOf）
+  retractedMessageUuids?: unknown;
+  // memory_saved: 保存したメモリのファイル（絶対パス）
+  writtenPaths?: unknown;
 };
 
 const INTERRUPTED_PREFIX = '[Request interrupted by user';
@@ -237,6 +246,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     }
     if (entry.subtype === 'compact_boundary') return [{ type: 'divider', id: entry.uuid ?? '', text: compactText(entry) }];
     if (entry.subtype === 'stop_hook_summary') return stopHookEvents(entry);
+    if (entry.subtype === 'model_fallback' || entry.subtype === 'model_refusal_fallback') return [modelSwitchEvent(entry)];
+    if (entry.subtype === 'memory_saved') return memoryEvents(entry, entry.writtenPaths, 'chat.transcript.memorySaved');
     if (entry.subtype === 'api_error') {
       const error = entry.error as { formatted?: string; message?: string } | undefined;
       const message = error?.formatted ?? error?.message ?? t('chat.transcript.unknownError');
@@ -268,6 +279,11 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
       return withImages(prompt ? userTextEvents(target, prompt) : [], target, images);
     }
     if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
+    // Claude が、発言に関係のありそうなメモリを思い出した（中身は Claude にだけ渡り、画面には数とファイル名を出す。TUI と同じ程度）
+    if (entry.attachment?.type === 'relevant_memories') {
+      const memories = Array.isArray(entry.attachment.memories) ? (entry.attachment.memories as { path?: unknown }[]) : [];
+      return memoryEvents(entry, memories.map((m) => m?.path), 'chat.transcript.memoryRecalled');
+    }
     const run = hookRunOf(entry.attachment);
     return run ? [{ type: 'hook', id: entry.uuid ?? '', run }] : [];
   }
@@ -531,6 +547,41 @@ function compactText(entry: TranscriptEntry): string {
   const auto = trigger === 'auto';
   if (!preTokens) return t(auto ? 'chat.transcript.compactedAuto' : 'chat.transcript.compacted');
   return t(auto ? 'chat.transcript.compactedAutoFrom' : 'chat.transcript.compactedFrom', { count: Math.round(preTokens / 1000) });
+}
+
+// モデルの切り替えのお知らせ。model_fallback: 混雑などで、予備のモデル（fallbackModel の設定・--fallback-model）に切り替えた。
+// model_refusal_fallback: モデルが断った応答を取り消して、別のモデルで取り直した（取り消された応答は、retractedUuidsOf でチャットから外す）。
+// 開くと、Claude Code の説明（英語。理由や、断られた種類・案内のリンク）が読める
+function modelSwitchEvent(entry: TranscriptEntry): ChatEvent {
+  const from = modelLabel(entry.originalModel);
+  const to = modelLabel(entry.fallbackModel);
+  const detail = typeof entry.content === 'string' && entry.content.trim() ? entry.content.trim() : undefined;
+  const refusal = entry.subtype === 'model_refusal_fallback';
+  const text =
+    from && to
+      ? t(refusal ? 'chat.transcript.modelRefusalFallback' : 'chat.transcript.modelFallback', { from, to })
+      : t(refusal ? 'chat.transcript.modelRefusalFallbackUnknown' : 'chat.transcript.modelFallbackUnknown');
+  return { type: 'info', id: entry.uuid ?? '', text, ...(detail ? { detail } : {}), warning: true };
+}
+
+// モデルの ID の表示名（読めなければ ID のまま）
+function modelLabel(id: unknown): string | null {
+  return typeof id === 'string' && id ? (modelName(id) ?? id) : null;
+}
+
+// 断られて取り消された応答の行の uuid（model_refusal_fallback の retractedMessageUuids）。その行から作ったイベントは、チャットから外す
+// （main の chat-log.ts の retract）。Claude Code も、会話を再開するときに、会話ログからこの行を外す（2.1.302 の本体）。
+// 2.1.302 は、取り消した応答を会話ログに書かない（実測）が、書かれていても同じに見えるようにする
+export function retractedUuidsOf(entry: TranscriptEntry): string[] {
+  if (entry.type !== 'system' || entry.subtype !== 'model_refusal_fallback' || !Array.isArray(entry.retractedMessageUuids)) return [];
+  return entry.retractedMessageUuids.filter((uuid): uuid is string => typeof uuid === 'string' && uuid !== '');
+}
+
+// メモリを思い出した（relevant_memories）・保存した（memory_saved）お知らせ。開くと、そのファイルの名前が読める。ファイルが無ければ出さない
+function memoryEvents(entry: TranscriptEntry, paths: unknown, key: 'chat.transcript.memorySaved' | 'chat.transcript.memoryRecalled'): ChatEvent[] {
+  const files = (Array.isArray(paths) ? paths : []).filter((p): p is string => typeof p === 'string' && p !== '');
+  if (files.length === 0) return [];
+  return [{ type: 'info', id: entry.uuid ?? '', text: t(key, { count: files.length }), detail: files.map((p) => p.split('/').pop()).join('\n') }];
 }
 
 function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
