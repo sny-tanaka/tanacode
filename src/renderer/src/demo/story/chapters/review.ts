@@ -175,7 +175,8 @@ export async function runReview(story: Story): Promise<void> {
 
   // 6. 行に ＋ でコメントを付ける（ソース管理の下と入力欄の上にたまる）
   d.caption('行番号の横の ＋ で、差分の行にコメントを付けます', '.diff-pane');
-  await comment(d, '<small>（税抜', COMMENT_CARD);
+  // 一時: 止まったときに証拠が残るかを確かめるため、無い行を探させて止める（次のコミットで戻す）
+  await comment(d, '<small>（存在しない行', COMMENT_CARD);
   await sleep(1000);
 
   // 7. ↓ で次のファイルへ移り、price.ts にもう 1 件
