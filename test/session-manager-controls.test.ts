@@ -382,6 +382,30 @@ describe('initialize の返事から作るもの', () => {
     await app.waitFor('終了', () => app.manager.stateOf(id) === 'exited');
     expect(app.manager.commandsOf(id)).toBeNull();
   });
+
+  it('/ のコマンドの一覧が途中で変わったら（commands_changed。スキルを足したなど）、起動し直さずに候補を差し替える', async () => {
+    app.answers.set('initialize', { ...INIT_RESPONSE, commands: [{ name: 'compact', description: 'Free up context', argumentHint: '', builtin: true }] });
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    expect(app.manager.commandsOf(id)?.map((c) => c.name)).toEqual(['compact']);
+    pipe.emit({
+      type: 'system',
+      subtype: 'commands_changed',
+      commands: [
+        { name: 'compact', description: 'Free up context', argumentHint: '', builtin: true },
+        { name: 'deploy', description: 'デプロイする', argumentHint: '<env>', aliases: ['d'] },
+      ],
+      uuid: 'c1',
+      session_id: 's',
+    });
+    expect(app.manager.commandsOf(id)).toEqual([
+      expect.objectContaining({ name: 'compact', source: 'builtin' }),
+      { name: 'deploy', description: 'デプロイする', source: 'skill', aliases: ['d'] },
+    ]);
+    // 形の違う一覧では差し替えない（読めない行として捨てる）
+    pipe.emit({ type: 'system', subtype: 'commands_changed', commands: [{ name: 1 }], uuid: 'c2', session_id: 's' });
+    expect(app.manager.commandsOf(id)?.map((c) => c.name)).toEqual(['compact', 'deploy']);
+  });
 });
 
 describe('チェックリストを保存できないセッション', () => {

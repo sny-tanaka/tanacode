@@ -60,6 +60,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `hook_started` | フックの始まり | 有 | ✅ フックの時間 |
 | `hook_response` | フックの終わり（`--include-hook-events`） | 有 | ✅ 何も出力しなかったフックの、チャットへの表示 |
 | `api_retry` | API の再試行 | 有 | ✅ チャットの「再試行中」 |
+| `commands_changed` | / のコマンドの一覧の途中での変化（スキルのファイルを足した・プラグインを読み直したなど） | 有 | ✅ 入力欄の / の候補と記録を差し替える。プロジェクトのスキルのファイルを足すと出る（実測。`test/cli/commands-changed.test.ts`） |
 
 ### 受け取るだけのもの
 
@@ -94,7 +95,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | 無 | ⚠️ |
 | `permission_denied` | auto モードの判定や規則による、確認なしの拒否 | 有 | ⚠️ 理由はツールの結果には残る |
 | `permission_check_status` | auto モードの判定中・判定済み | 無 | ⚠️ 作業中の表示に使えそう |
-| `commands_changed` | / のコマンドの一覧の途中での変化（スキルが増えたなど） | 有 | ⚠️ 入力欄の候補が古いまま。クラウドの開発環境の変数を受け継いだときだけ出た |
 
 **関係の薄いもの（条件付き、または tanacode では出ない見込み）**
 
