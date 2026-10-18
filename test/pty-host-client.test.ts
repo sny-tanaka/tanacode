@@ -314,6 +314,30 @@ describe('HostedPipe', () => {
     expect(got).toEqual(['9:live']);
   });
 
+  it('終わったあとに送り直しを頼まれたら、ホストには頼まず（もう記録が無い）、溜めていた行を渡して、送り直しの終わりを 1 度だけ知らせる', async () => {
+    const { host } = await connect();
+    const pipe = host.attachPipe(pipeInfo('q4'));
+    const exits: number[] = [];
+    pipe.onExit((c) => exits.push(c));
+    fake!.send({ t: 'line', id: 'q4', seq: 1, line: 'a' });
+    fake!.send({ t: 'exit', id: 'q4', exitCode: 0 });
+    await waitFor('終了', () => exits.length === 1);
+    const order: string[] = [];
+    pipe.onReplayed(() => order.push('replayed'));
+    // 引き継ぐときの頼みと、溜めすぎて捨てた分の頼みが重なっても、終わりは 1 度
+    pipe.replay(1);
+    pipe.replay(1);
+    pipe.onLine((line, seq) => order.push(`${seq}:${line}`));
+    pipe.onExit((c) => order.push(`exit:${c}`));
+    await waitFor('終わり', () => order.includes('exit:0'));
+    await sleep(20);
+    expect(order).toEqual(['replayed', '1:a', 'exit:0']);
+    // 頼んでいない（同じ接続で、あとから送ったものが届いた時点で、それより前のものは届いている）
+    host.forget('probe');
+    await waitFor('forget', () => fake!.sent('forget').length === 1);
+    expect(fake!.sent('replay')).toEqual([]);
+  });
+
   it('受け手がいないまま溜めすぎたら捨て、受け手が付いたときに、捨てたところから送り直してもらう', async () => {
     const { host } = await connect();
     const pipe = host.attachPipe(pipeInfo('q3'));
@@ -442,6 +466,45 @@ describe('引き継ぎ（本物の HostedPipe と StreamClient）', () => {
     expect(order).toEqual(['system/init:past', 'permission:r1', 'assistant:past', 'caught-up', 'cancel:r1']);
     expect(client.pendingPermissions()).toEqual([]);
     expect(client.respond('r1', { behavior: 'allow' })).toBe(false);
+  });
+
+  it('list の返事・行・exit が同じかたまりで届いても、引き継ぐと行が届き、onCaughtUp が来てから終了が知らされる', async () => {
+    const { host } = await connect();
+    fake!.answerList = false;
+    const listing = host.list();
+    await waitFor('一覧の頼み', () => fake!.sent('list').length === 1);
+    const { req } = fake!.sent('list')[0];
+    // 一覧のあとに claude がターンを終えて終わった。ホストは終わったときに記録を捨てるので、あとから送り直しは頼めない
+    fake!.send(
+      [
+        JSON.stringify({
+          t: 'list',
+          req,
+          hosted: [pipeInfo('q6', { lastSeq: 2, firstSeq: 2, retained: [{ seq: 1, line: JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', permissionMode: 'default' }) }] })],
+        }),
+        JSON.stringify({ t: 'line', id: 'q6', seq: 3, line: JSON.stringify({ type: 'result', subtype: 'success', is_error: false }) }),
+        JSON.stringify({ t: 'exit', id: 'q6', exitCode: 0, stderr: '' }),
+        '',
+      ].join('\n'),
+    );
+    const [listed] = (await listing) as HostedPipeInfo[];
+    await sleep(50);
+    const pipe = host.attachPipe(listed);
+    const order: string[] = [];
+    const client = new StreamClient(pipe, {
+      onMessage: (message, past) => order.push(`${message.type}${'subtype' in message ? `/${String(message.subtype)}` : ''}:${past ? 'past' : 'live'}`),
+      onPermission: (id) => order.push(`permission:${id}`),
+      onCancel: (id) => order.push(`cancel:${id}`),
+      onExit: (code) => order.push(`exit:${code}`),
+      onCaughtUp: () => order.push('caught-up'),
+    });
+    client.adopt(listed);
+    await waitFor('終わり', () => order.some((item) => item.startsWith('exit:')));
+    // ふつうの引き継ぎと同じ順（前のアプリの頃の行 → 読み終わり → 一覧のあとの行）で渡してから、終わりを知らせる
+    expect(order).toEqual(['system/init:past', 'caught-up', 'result/success:live', 'exit:0']);
+    // 読み終わりも終わりも 1 度だけ
+    await sleep(50);
+    expect(order).toHaveLength(4);
   });
 });
 
