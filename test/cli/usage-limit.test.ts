@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '@shared/chat';
-import { USAGE_RESUME_TAG, usageResumeText } from '@shared/usage-limit';
+import { parseUsageResume, USAGE_RESUME_TAG, usageResumeText } from '@shared/usage-limit';
 import { ScheduledMessages } from '../../src/main/scheduled-messages';
 import { UsageLimitResume } from '../../src/main/usage-limit-resume';
 import { ClaudeRun, claudeVersion } from './claude-run';
@@ -70,7 +70,8 @@ describe(`Claude Code ${version} とプランの利用枠`, () => {
     scheduled!.sendNow(scheduled!.list()[0]!.id);
     await run.waitUntil('再開のあとのターンが終わる', () => run.turnLimits.length === 2 && run.idle && run.chatEvents.some((e) => e.type === 'assistant-text' && e.text === DONE), 30_000);
     expect(api.lastPrompts.some((p) => p.includes(`<${USAGE_RESUME_TAG}>`))).toBe(true);
-    expect(run.chatEvents.filter((e) => e.type === 'notice' && e.detail?.includes('The usage limit')).length).toBe(1);
+    // 本文は画面の言語（囲みを外したもの）
+    expect(run.chatEvents.filter((e) => e.type === 'notice' && e.detail === parseUsageResume(usageResumeText())?.body)).toHaveLength(1);
     expect(run.turnLimits[1]).toBeNull();
     expect(scheduled!.list()).toEqual([]);
     expect(resume!.noticeOf(run.sessionId!)).toBeNull();

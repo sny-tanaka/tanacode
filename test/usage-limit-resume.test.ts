@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionState } from '@shared/session-tools';
-import { usageResumeText } from '@shared/usage-limit';
+import { setLanguage } from '@shared/i18n';
+import { parseUsageResume, USAGE_RESUME_TAG, usageResumeText } from '@shared/usage-limit';
 import { ScheduledMessages } from '../src/main/scheduled-messages';
 import { UsageLimitResume } from '../src/main/usage-limit-resume';
 
@@ -131,6 +132,22 @@ describe('UsageLimitResume', () => {
     expect(resume.noticeOf('parent')).toEqual({ resumeAt: null, resetsAt: RESET });
     resume.forget('parent');
     expect(resume.noticeOf('parent')).toBeNull();
+  });
+
+  it('再開のメッセージは、人にも見える（予約の行・送ったあとの知らせ）ので画面の言語で書き、囲みで見分ける（どの言語で書いたものも読める）', () => {
+    setLanguage('en');
+    const en = usageResumeText();
+    setLanguage('ja');
+    const ja = usageResumeText();
+    expect(ja).toContain('枠が戻りました');
+    expect(ja).toContain('答えを待っていたなら、続けないでください');
+    expect(en).toContain('it has reset now');
+    expect(en).toContain('do not continue: tell the user briefly where things stand');
+    for (const text of [ja, en]) {
+      expect(text.startsWith(`<${USAGE_RESUME_TAG}>\n`)).toBe(true);
+      expect(text.endsWith(`\n</${USAGE_RESUME_TAG}>`)).toBe(true);
+      expect(parseUsageResume(text)?.body).toBe(text.split('\n').slice(1, -1).join('\n'));
+    }
   });
 
   it('予約の置き場がまだ無ければ、何もしない', () => {

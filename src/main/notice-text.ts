@@ -22,7 +22,7 @@ export function menuNotice(menu: Menu): string {
 
 // 予約したメッセージを送れなかった・時刻に送れなかったときの通知の本文。Claude が自分に入れた予約・利用枠の再開の予約は、人の予約と見分けて伝える
 export function scheduledNotice(message: ScheduledMessage, now: Date = new Date()): string {
-  // 利用枠の再開の予約の本文は、アプリが書いた英語の文なので出さない
+  // 利用枠の再開の予約の本文は、アプリが書いた決まった文なので出さない（利用枠の再開だと伝える）
   if (message.by === 'usage-limit') {
     if (message.state === 'missed') return t('main.notification.usageResumeMissed', { time: formatScheduleTime(message.at, now) });
     return t('main.notification.usageResumeFailed', { reason: message.error ?? t('main.notification.unknownReason') });

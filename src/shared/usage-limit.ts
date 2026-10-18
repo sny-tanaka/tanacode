@@ -37,17 +37,18 @@ export function usageLimitText(stop: UsageLimitStop): string | null {
   return t('chat.transcript.usageLimit', { time });
 }
 
-// 再開のメッセージ。Claude だけが読むので英語。tanacode が送ったものだと分かるよう、囲みに入れる。
+// 再開のメッセージ。予約の行と、送ったあとのチャットの知らせで人にも見えるので、画面の言語で書く（英語に決め打ちしない）。
+// tanacode が送ったものだと分かるよう、囲みに入れる（見分けるのは囲みだけなので、どの言語で書いたものも読める）。
 // 続けるか待つかは、最適化圧縮の再開の文と同じく、チェックリスト（いまの状態）と会話から Claude に決めさせる
 export function usageResumeText(): string {
   return [
     `<${USAGE_RESUME_TAG}>`,
-    "The usage limit of the user's plan stopped your previous turn, and it has reset now. tanacode sent this message by itself (the user did not type it), so that the work can go on.",
-    '- First check where you stopped: the checklists (checklist_overview: the state list and the decisions list), if this session has them, and the end of this conversation.',
-    '- If you were waiting for an answer from the user (or from the parent session that gave you the task), do not continue: tell the user briefly where things stand and what you are waiting for, and wait.',
-    '- Otherwise, continue the work that was in progress from where it stopped. Continue only the work that was already under way; do not start anything new.',
-    '- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.',
-    '- A step may have taken effect before the stop (a commit, a push, a file write). Check the actual state before you do it again.',
+    t('schedule.usageResume.intro'),
+    t('schedule.usageResume.check'),
+    t('schedule.usageResume.waiting'),
+    t('schedule.usageResume.continue'),
+    t('schedule.usageResume.ask'),
+    t('schedule.usageResume.verify'),
     `</${USAGE_RESUME_TAG}>`,
   ].join('\n');
 }

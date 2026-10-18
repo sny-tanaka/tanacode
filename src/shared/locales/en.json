@@ -878,7 +878,6 @@
       "claudeTip": "Claude scheduled this for itself. At the scheduled time, it is sent to Claude in this session as a notice",
       "usageLimit": "Usage limit resume",
       "usageLimitTip": "Claude stopped at the usage limit, so tanacode sends a message asking it to continue after the limit resets. Cancel it to not resume automatically (menu: Resume Automatically When the Usage Limit Resets)",
-      "usageLimitText": "Asks Claude to check where it stopped (the checklists and the conversation) and continue",
       "cancelSendingTip": "Stop sending and move the message back to the chat input",
       "cancelTip": "Unschedule and move the message back to the chat input",
       "unsaved": "Not saved",
@@ -910,6 +909,14 @@
       "yesterday": "Yesterday {time}",
       "date": "{weekday}, {month}/{day} {time}",
       "dateWithYear": "{weekday}, {month}/{day}/{year} {time}"
+    },
+    "usageResume": {
+      "intro": "The usage limit of the user's plan stopped your previous turn, and it has reset now. tanacode sent this message by itself (the user did not type it), so that the work can go on.",
+      "check": "- First check where you stopped: the checklists (checklist_overview: the state list and the decisions list), if this session has them, and the end of this conversation.",
+      "waiting": "- If you were waiting for an answer from the user (or from the parent session that gave you the task), do not continue: tell the user briefly where things stand and what you are waiting for, and wait.",
+      "continue": "- Otherwise, continue the work that was in progress from where it stopped. Continue only the work that was already under way; do not start anything new.",
+      "ask": "- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.",
+      "verify": "- A step may have taken effect before the stop (a commit, a push, a file write). Check the actual state before you do it again."
     }
   },
   "settingsFiles": {

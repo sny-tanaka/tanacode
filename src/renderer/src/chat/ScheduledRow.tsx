@@ -1,5 +1,6 @@
 import { t } from '@shared/i18n';
 import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
+import { parseUsageResume } from '@shared/usage-limit';
 import { CloseIcon, IconButton, ScheduleIcon, SendIcon } from '../icons';
 import { PastedChips } from './PastedChips';
 import { needsAttention } from './scheduled';
@@ -7,8 +8,8 @@ import { SchedulePicker } from './SchedulePicker';
 
 // チャットの末尾に出す、予約したメッセージ（時刻を指定して送信）。送るまでは点線の枠で、今すぐ送る・時刻を変える・取り消す（入力欄に戻す）ができる。
 // Claude が自分に入れた予約（by: 'claude'）は、親セッションからの指示と同じく Claude の色で出して、人の予約と見分ける。取り消しても入力欄には戻さない。
-// 利用枠で止まったセッションの再開の予約（by: 'usage-limit'。アプリが入れたもの）は、お知らせと同じ灰色の印にし、本文（Claude に送る英語の文）の
-// 代わりに、何を頼むかを画面の言語で出す。これも取り消しても入力欄には戻さない
+// 利用枠で止まったセッションの再開の予約（by: 'usage-limit'。アプリが入れたもの）は、お知らせと同じ灰色の印にし、本文を囲みを外して出す
+// （本文は、入れたときの画面の言語）。これも取り消しても入力欄には戻さない
 export function ScheduledRow({
   message,
   onSendNow,
@@ -41,7 +42,7 @@ export function ScheduledRow({
             {t('schedule.row.usageLimit')}
           </span>
         )}
-        {limit ? t('schedule.row.usageLimitText') : message.text}
+        {limit ? (parseUsageResume(message.text)?.body ?? message.text) : message.text}
         <PastedChips pastes={message.pastes} />
         {message.attachments.length > 0 && <span className="chat-user-meta">{t('schedule.row.images', { count: message.attachments.length })}</span>}
         <span className="chat-user-meta chat-scheduled-note">

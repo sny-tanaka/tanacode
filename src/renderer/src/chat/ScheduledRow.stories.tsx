@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { ScheduledMessage } from '@shared/scheduled';
+import { usageResumeText } from '@shared/usage-limit';
 import { ScheduledRow } from './ScheduledRow';
 
 // チャットの末尾に出す、予約したメッセージの行。ふつうの予約・予約のファイルを読めず保存しない予約・利用枠で止まったときの再開の予約
@@ -37,8 +38,8 @@ export const Claude_の予約で保存できない: Story = {
   args: { message: { ...MESSAGE, text: '子セッションの状態を get_session で確かめる。', at: later(5), by: 'claude', unsaved: true } },
 };
 
-// 利用枠で止まったので、アプリが入れた再開の予約。本文（Claude に送る英語の文）の代わりに、何を頼むかを出す
-const USAGE_RESUME: ScheduledMessage = { ...MESSAGE, text: '<tanacode-usage-limit-reset>…</tanacode-usage-limit-reset>', at: later(61), by: 'usage-limit', limitResetsAt: later(60) };
+// 利用枠で止まったので、アプリが入れた再開の予約。本文は囲みを外して出す
+const USAGE_RESUME: ScheduledMessage = { ...MESSAGE, text: usageResumeText(), at: later(61), by: 'usage-limit', limitResetsAt: later(60) };
 
 export const 利用枠の再開: Story = {
   args: { message: USAGE_RESUME },
