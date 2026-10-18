@@ -227,7 +227,7 @@ describe('流れ', () => {
 });
 
 describe('自動で始めた流れ', () => {
-  it('ターンの終わり: 仕上げの頼みと再開の文に、自動であることが入る。再開のあとは報告して待たせる。終わったら知らせる', async () => {
+  it('ターンの終わり: 仕上げの頼みと再開の文に、自動であることが入る。再開のあとに続けるか待つかは「いまの状態」で決めさせる。終わったら知らせる', async () => {
     script();
     const auto = { percent: 83, midTurn: false };
     compact.start(ID, auto);
@@ -235,7 +235,8 @@ describe('自動で始めた流れ', () => {
     expect(host.submitted[0]).toContain('instead of compacting it (automatic; context 83% full).');
     expect(host.submitted[0]).toContain('This reset is automatic: the user did not press anything');
     expect(host.submitted[2]).toContain('(automatic; context 83% full). No summary was made.');
-    expect(host.submitted[2]).toContain('Do not continue the work until the user tells you to.');
+    expect(host.submitted[2]).toContain('- Then decide from the state list whether you are waiting for an answer from the user');
+    expect(host.submitted[2]).not.toContain('Do not continue the work until the user tells you to.');
     expect(finishes).toEqual([{ failure: null, auto }]);
   });
 
@@ -252,7 +253,7 @@ describe('自動で始めた流れ', () => {
     expect((await finished()).failure).toBeNull();
     expect(host.submitted[0]).toContain('tanacode stopped your turn between tool calls');
     const resume = host.submitted[2];
-    expect(resume).toContain('continue the work from where it stopped');
+    expect(resume).toContain('continue the work that was in progress from where it stopped (the state list, and "Where the turn was stopped" below)');
     expect(resume).toContain('Your last words before the stop:\nテストを流します\nYour last tool calls, oldest first:\n- Bash: npm test → finished');
     expect(resume).not.toContain('Do not continue the work until the user tells you to.');
   });

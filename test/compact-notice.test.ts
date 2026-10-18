@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '../src/shared/chat';
 import { autoHandoffText, handoffText, resumeText } from '../src/shared/optimized-compact';
-import { CompactNotice, turnStarterOf } from '../src/main/compact-notice';
+import { CompactNotice, continuesWork, resumeContinued, turnStarterOf } from '../src/main/compact-notice';
 
 // 最適化圧縮の流れの間の、人への完了の通知（main の CompactNotice）。流れの途中のターンの終わりでは鳴らさず、
 // 流れが最後まで終わったときに 1 回だけ知らせる
@@ -26,12 +26,29 @@ describe('turnStarterOf', () => {
     expect(turnStarterOf(compact('handoff', autoHandoffText({ percent: 92, midTurn: true })))).toBe('handoff');
   });
 
-  it('報告して待つ再開の文（手動・ターンの終わりの自動）は resume。続きを進めさせる再開の文（ターンの途中で止めた自動）は、作業の続きなので other', () => {
+  it('手動・ターンの終わりの自動の再開の文は resume（作業を続けたかは、そのあとのツールで分かる）。ターンの途中で止めた自動の再開の文は、作業の続きなので other', () => {
     expect(turnStarterOf(compact('resume', resumeText(RESUME)))).toBe('resume');
     expect(turnStarterOf(compact('resume', resumeText({ ...RESUME, auto: { percent: 83, midTurn: false } })))).toBe('resume');
     expect(turnStarterOf(compact('resume', resumeText({ ...RESUME, auto: { percent: 92, midTurn: true } })))).toBe('other');
     // 全文が無い再開の知らせは、報告して待つものとして扱う
     expect(turnStarterOf({ type: 'notice', id: 'n1', text: '最適化圧縮', compact: 'resume' })).toBe('resume');
+  });
+
+  it('再開の文のターンで、チェックリスト以外のツールを使ったら、作業を続けた。チェックリストのツールと ToolSearch だけなら、報告して待った', () => {
+    const tool = (name: string): ChatEvent => ({ type: 'tool-use', id: name, name, target: '', input: '' });
+    expect(continuesWork(tool('Bash'))).toBe(true);
+    expect(continuesWork(tool('Edit'))).toBe(true);
+    expect(continuesWork(tool('mcp__tanacode-sessions__get_session'))).toBe(true);
+    expect(continuesWork(tool('mcp__tanacode-checklist__checklist_overview'))).toBe(false);
+    expect(continuesWork(tool('mcp__tanacode-checklist__card_update'))).toBe(false);
+    expect(continuesWork(tool('ToolSearch'))).toBe(false);
+    expect(continuesWork({ type: 'assistant-text', id: 'a', text: '引き継ぎました' })).toBe(false);
+    const resume = (auto?: { percent: number; midTurn: boolean }) => compact('resume', resumeText({ ...RESUME, ...(auto ? { auto } : {}) })) as Extract<ChatEvent, { type: 'notice' }>;
+    const said: ChatEvent = { type: 'assistant-text', id: 'a', text: '引き継ぎました。答えを待っています' };
+    expect(resumeContinued(resume(), [tool('ToolSearch'), tool('mcp__tanacode-checklist__checklist_overview'), said])).toBe(false);
+    expect(resumeContinued(resume({ percent: 83, midTurn: false }), [tool('mcp__tanacode-checklist__checklist_overview'), tool('Bash')])).toBe(true);
+    // 途中で止めた切り替えは、ツールを使わなくても作業の続き
+    expect(resumeContinued(resume({ percent: 92, midTurn: true }), [said])).toBe(true);
   });
 
   it('人の発言・ほかの知らせ・ほかのセッションからの知らせは other', () => {

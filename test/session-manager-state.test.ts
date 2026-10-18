@@ -6,8 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
 import type { TurnStarter } from '../src/main/compact-notice';
 import { handoffText, resumeText } from '../src/shared/optimized-compact';
+import type { ChatEvent } from '../src/shared/chat';
+import { readChatLog } from '../src/main/chat-log';
 import { QUESTION } from './scenario';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
+import { removeLine } from './helpers/tombstone';
 
 // SessionManager の一覧・状態・読み取り（本物の claude なしで動かす。test/session-manager.test.ts の続き）
 
@@ -424,7 +427,7 @@ describe('statusLine', () => {
     const { id } = app.create();
     await app.ready(id);
     const asked: [string, TurnStarter][] = [];
-    // 最適化圧縮の流れの途中のターン（仕上げ）では出さず、流れの最後のターン（報告して待つ再開）では、最適化の完了にする
+    // 最適化圧縮の流れの途中のターン（仕上げ）では出さず、流れの最後のターン（報告して待った再開）では、最適化の完了にする
     app.manager.turnNotice = (session, starter) => {
       asked.push([session, starter]);
       return starter === 'handoff' ? null : starter === 'resume' ? 'compact' : 'work';
@@ -441,8 +444,15 @@ describe('statusLine', () => {
     // 仕上げのターン（このあと /clear）: 聞くが、完了は知らせない。途中で届いた知らせ（タスクの完了など）では、仕上げのターンのまま
     await turn(line.user(handoffText()), line.user('<task-notification><summary>ビルドが終わりました</summary></task-notification>'));
     expect(app.turnNotices).toEqual(['work']);
-    // 報告して待つ再開のターン
+    // 報告して待った再開のターン。チェックリストを読むだけ（その定義の読み込みも）なら、作業を続けたことにならない
     await turn(line.user(resumeText(RESUME)));
+    await turn(
+      line.user(resumeText(RESUME)),
+      line.toolUse('toolu_s', 'ToolSearch', { query: 'select:mcp__tanacode-checklist__checklist_overview' }),
+      line.toolUse('toolu_c', 'mcp__tanacode-checklist__checklist_overview', {}),
+    );
+    // 再開のターンで、チェックリスト以外のツールを使った: 作業を続けた（その終わりは、作業の完了）
+    await turn(line.user(resumeText(RESUME)), line.toolUse('toolu_c2', 'mcp__tanacode-checklist__checklist_overview', {}), line.toolUse('toolu_b', 'Bash', { command: 'npm test' }));
     // ターンの途中で止めた切り替えの再開は、作業の続き
     await turn(line.user(resumeText({ ...RESUME, auto: { percent: 92, midTurn: true } })));
     // 仕上げの間に人が発言したら、その発言のターン
@@ -453,16 +463,18 @@ describe('statusLine', () => {
       [id, 'other'],
       [id, 'handoff'],
       [id, 'resume'],
+      [id, 'resume'],
+      [id, 'other'],
       [id, 'other'],
       [id, 'other'],
       [id, 'other'],
     ]);
-    expect(app.turnNotices).toEqual(['work', 'compact', 'work', 'work', 'work']);
+    expect(app.turnNotices).toEqual(['work', 'compact', 'compact', 'work', 'work', 'work', 'work']);
     // 完了を知らせないとき（ブラウザでの操作待ち）も聞く（流れの途中で出さなかったことを、覚えさせる）
     app.manager.browserAskChanged(id, true);
     await turn(line.user(handoffText()));
-    expect(asked).toHaveLength(7);
-    expect(app.turnNotices).toHaveLength(5);
+    expect(asked).toHaveLength(9);
+    expect(app.turnNotices).toHaveLength(7);
   });
 
   it('何もつながなければ、ターンの終わりは、ふつうの完了として知らせる', async () => {
@@ -711,6 +723,29 @@ describe('会話ログの読み取り', () => {
     await app.waitFor('置き換え', () => app.events(id).some((e) => e.type === 'replace'));
     const texts = app.manager.snapshot(id).events.flatMap((e) => (e.type === 'user' || e.type === 'assistant-text' ? [e.text] : []));
     expect(texts).toEqual(['はじめ', 'はい', 'やり直し']);
+  });
+
+  // 形の壊れたツールの呼び出しなどを取り直すとき、Claude Code は取り消した応答の行を、会話ログに書いたあとで消す（#240。removeLine を参照）
+  it('会話ログに書いたあとで消された応答（tombstone）は、チャットから外し、会話ログから作り直したチャットと同じにする', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const talk = (events: ChatEvent[]) => events.flatMap((e) => (e.type === 'user' || e.type === 'assistant-text' ? [e.text] : []));
+    const prompt = await app.prompt(id, 'ツールの呼び出しの形が壊れます');
+    const malformed = { ...line.text('形の壊れた応答です。これは取り消されるはず'), parentUuid: prompt };
+    app.append(id, malformed);
+    await app.waitFor('取り消される応答', () => talk(app.manager.snapshot(id).events).includes('形の壊れた応答です。これは取り消されるはず'));
+    // 消したあとすぐ、取り直しの発言（isMeta）と、取り直した応答を書き足す
+    removeLine(app.transcript(id), malformed.uuid);
+    const retry = { ...line.user('The previous response failed to produce a valid tool call. Please retry the tool call now.'), parentUuid: prompt, isMeta: true };
+    app.say(id, retry, { ...line.text('形を直して届いた返事'), parentUuid: retry.uuid });
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(talk(app.manager.snapshot(id).events)).toEqual(['ツールの呼び出しの形が壊れます', '形を直して届いた返事']);
+    // 画面には、取り消された応答を外したチャットへの置き換えで届く
+    const replaced = app.events(id).filter((e) => e.type === 'replace');
+    expect(replaced).toHaveLength(1);
+    expect(talk(replaced[0].type === 'replace' ? replaced[0].events : [])).toEqual(['ツールの呼び出しの形が壊れます']);
+    expect(talk(await readChatLog(app.transcript(id), app.cwd))).toEqual(['ツールの呼び出しの形が壊れます', '形を直して届いた返事']);
   });
 
   it('claude が終わったら、送信中を空にし、動いていたバックグラウンドのタスクを止まったことにする', async () => {

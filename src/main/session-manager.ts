@@ -57,7 +57,7 @@ import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
 import { blockedByPreCompact } from './auto-compact';
-import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
+import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import { PendingQuestions } from './pending-questions';
@@ -2125,6 +2125,8 @@ export class SessionManager {
           this.emitSessions();
         },
         onEntry: (entry, isHistory) => this.handleEntry(id, entry, isHistory),
+        // Claude Code が取り消した応答（tombstone）の行を、会話ログに書いたあとで消した。会話ログから作り直したチャットには無いので、外す
+        onRemoved: (uuids) => this.retractEntries(id, runtime, uuids, false),
         // 再開時、応答のないまま終わった過去のターンを作業中として扱わない。
         // 引き継いだ claude がターンの途中なら、本当に作業中なのでそのままにする（前のアプリの頃の行を読み終えてから決める）
         onHistoryLoaded: () => {
@@ -3080,7 +3082,7 @@ export class SessionManager {
     this.retractEntries(id, rt, retractedUuidsOf(entry), isHistory);
   }
 
-  // 会話ログの行（uuids）から作ったイベントを、チャットから外す（取り消された応答。会話ログからいったん書かれて消された行にも使える）
+  // 会話ログの行（uuids）から作ったイベントを、チャットから外す（取り消された応答。断られた応答と、会話ログにいったん書かれて消された行）
   private retractEntries(id: string, rt: Runtime, uuids: string[], isHistory: boolean): void {
     const retracted = retract(rt.chain, rt.events, uuids);
     if (!retracted) return;
@@ -3180,6 +3182,8 @@ export class SessionManager {
         if (!rt.starterSeen || starter.type === 'user' || compact) rt.turnStarter = turnStarterOf(starter);
         rt.starterSeen = true;
       }
+      // 再開の文のターンで、チェックリスト以外のツールを使った。報告して待ったのではなく、作業を続けたターン（終わりは作業の完了）
+      if (rt.turnStarter === 'resume' && events.some(continuesWork)) rt.turnStarter = 'other';
     }
     // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
     const arrived = rt && !past ? sentUuidOf(entry) : null;
