@@ -2303,7 +2303,7 @@ export class SessionManager {
         if (message.parent_tool_use_id || past) return;
         this.openTurn(id, rt, past);
         if (rt.progress?.streamEvent(message)) this.emitProgress(id, rt);
-        if (rt.partial.event(message.event)) this.schedulePartial(id, rt);
+        if (rt.partial.event(message)) this.schedulePartial(id, rt);
         return;
       case 'tool_progress':
         if (message.parent_tool_use_id || past) return;

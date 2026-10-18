@@ -197,6 +197,9 @@ export type StreamEventMessage = {
     delta?: { type?: string; text?: string; thinking?: string; stop_reason?: string | null };
     usage?: Usage;
   };
+  // 取り直すために捨てた応答のブロック（message_stop に付く。この応答の from_block_index から先は、会話ログに出ない。
+  // 接続が途中で切れたときなど。Claude Code 2.1.302 で実測）
+  abandoned_blocks?: { api_message_id?: string; from_block_index?: number };
   parent_tool_use_id: string | null;
   uuid: string;
   session_id: string;
