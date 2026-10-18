@@ -519,6 +519,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 取り消されて会話ログに出ない応答のブロックは、次のときに外します。
       - 書き終わらないまま、次の応答が始まった（再試行で捨てられたもの）。
       - 取り直すために捨てたと知らされた（`message_stop` の行の外側の `abandoned_blocks`。`{ api_message_id, from_block_index }` で、その応答のそのブロックから先）。接続が途中で切れたとき、Claude Code は書きかけのブロックを `content_block_stop` で閉じてから、これを付けて取り直します（2.1.302 で実測）。
+      - モデルが断って取り消された（`system/model_refusal_fallback` の行が届いた。下の「モデルの切り替え」）。取り直した応答を書き終えるのを待たずに外します（`drop`）。
       - あとから始まった応答の行が、会話ログに出た。会話ログは応答の順に書かれるので、それより前の応答の残りは、もう出ません。`abandoned_blocks` の付かない取り消し（ツールの呼び出しの形が壊れた応答の取り直しなど。Claude Code の内部では tombstone）への備えです。Claude Code は、取り消す応答の書きかけのブロックを閉じますが、`abandoned_blocks` は付けません（本体のコードを読んで確かめたもの）。
     - それでも会話ログに出ないまま残ったものは、ターンの終わり・claude の終了・`/clear` で捨てます。
     - 確かめは `test/stream-partial.test.ts`・`test/session-manager-partial.test.ts`。本物の Claude Code の応答の ID と、会話ログの `message.id`・`apiBlockIndex` が合って入れ替わることは `test/cli/basic.test.ts`（モックの API は、途中の文が配信されるまで文を書き終えない。`holdText`）、取り消された書きかけが取り直した返事より先に外れることは `test/cli/errors.test.ts` で確かめます。
@@ -694,6 +695,18 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 「作業中…」の横の進み具合は、`stream_event`（考えている・書いている・受け取ったトークン数）と `tool_progress`（ツールの実行中）から作り、経過時間はアプリが数えて 1 秒ごとに知らせ直します（`stream/state.ts` の `Progress`・IPC `sessions:progress`）。表記は、Claude Code の画面のタイマーの行と同じです（`5s`・`1m 5s`・`225`・`1.2k`。画面の `WorkingNote` が今の言語の表記に直す）。書いている途中の文は、その上に出します（上の「チャットは、…会話ログから組み立てます」）。
   - 起動に時間がかかっているときは、経過と、Claude Code の標準エラーの末尾を出します（上の「Claude Code の動かし方」の initialize。`StartingNote`）。
 - 再試行中の API エラーは、`system/api_retry` の行から「再試行中」として出します（会話ログには残らない）。入力なしで始まったターン（裏のタスクの完了の知らせなど）では、再試行の行だけが続くことがあるので、ターンの始まりに数えます。裏のタスクが動いている間は数えません（裏のクエリが利用枠を待つ間も、同じ形の行が出るため。2.1.301 の本体）。
+- Claude Code の警告（`system/notification`）は、stream-json にだけ出て会話ログに残らないので、`api_retry` と同じく、その行からお知らせ（`info`。`color` が `warning`・`error` なら警告の色）として出します（`stream/notification.ts`）。文は Claude Code のもの（英語）のまま。ターンは始めず、起動し直すと消えます。知らない `key` も出します。出さないもの（決めたこと）:
+  - `stop-hook-error`: Stop フックの失敗。会話ログの `stop_hook_summary` から、フックの表示で出している。
+  - `stop-hook-block-cap`: Stop フックがターンの終わりを止めすぎた。同じ文が会話ログの `informational` にも書かれる（2.1.302 の本体）。
+  - `error-compacting-conversation`: 圧縮の失敗。同じときに出る `system/status` の `compact_error`（くわしい理由つき）から出す。
+  - `compaction-blocked-by-hook`: PreCompact フックが圧縮を止めた。止めるのは tanacode 自身（最適化圧縮を自動にしたとき。`auto-compact.ts`）。
+  - `remote-tool-` で始まるもの: ツールのホストの経過の、一時的な知らせ（`timeout_ms` で消える）。
+- モデルの切り替え（`system/model_fallback`。混雑などで、予備のモデルに切り替えた）と、断られた応答の取り直し（`system/model_refusal_fallback`）は、stream-json と会話ログの両方に、同じ `uuid` で出ます（2.1.302 で実測）。チャットのお知らせは会話ログの行から出し（「X から Y に切り替えました」。開くと Claude Code の説明。モデルの名前は `shared/model-name.ts` の `modelName`）、stream-json の行は形を確かめるだけにします（二重にしない）。
+  - 取り直しでは、Claude Code が断った応答を取り消します（`retracted_message_uuids`・会話ログでは `retractedMessageUuids`。stream-json に出た応答・ツールの呼び出し・ツールの結果の行の `uuid`）。2.1.302 は、取り消した応答を会話ログに書きません（ツールを実行したものも。実測）。stream-json には出るので、書いている途中の文から、取り直しの行が届いたときに外します（`PartialText` の `drop`。stream の応答の行の `uuid` から応答の ID を引く。取り直した応答を書き終えるのを待たない。決めたこと）。ターンの終わりも、取り消された応答が会話ログに出るのを待ちません。
+  - Claude Code は、会話を再開するとき、会話ログから取り消された行を外します。tanacode も、取り消された行が会話ログに書かれていたら、取り直しの行でチャットから外します（`chat-log.ts` の `retract`。動いている間は、外したあとの全部を `replace` で送る。巻き戻しと同じ。`SessionManager` の `retractEntries` は行の `uuid` を受け取るので、会話ログからいったん書かれて消された行（#240）にも使えます）。
+  - 断られた 1 回目は、同じモデルで取り直します。断った応答は会話ログに残り、Claude Code はそのあとに「… safeguards stopped the response above · continuing once with that noted」（`informational`）を書きます。別のモデルでの取り直しは、Anthropic の API のときだけ（モックの API で起こすには `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1`）。
+  - 行の形は、本物の Claude Code 2.1.302 をモックの API につないで録った控え（`test/fixtures/claude-code-events/2.1.302/`。スキル `/claude-code-events` の `record.mjs` の場面 `refusal-fallback`・`model-fallback`）で確かめます（`test/chat-notices.test.ts`・`test/session-manager-partial.test.ts`）。
+- メモリは、会話ログの `relevant_memories`（思い出したメモリ。stream-json の `system/memory_recall` は受け取るだけ）と `system/memory_saved`（保存したメモリ。会話ログだけ）から、数をお知らせにして出します。開くと、ファイルの名前（中身は Claude にだけ渡るので出さない）。TUI の「Recalled N memories」「Saved N memories」と同じ程度（決めたこと）。行の形は 2.1.302 の本体のコードから（自動のメモリを使う設定が要るので、録れていない）。
 - Claude の思考は、会話ログに空で記録されるので出せません。設定（`showThinkingSummaries`）で要約を残させることはできますが、英語なので使っていません。
 - 応答の文章は、書き終わるまで会話ログに書かれません。書いている途中は `stream_event` から素の文で出し、書き終わると会話ログの本文に入れ替わります（上の「チャットは、…会話ログから組み立てます」）。
 - Claude Code は新しい会話ログを作るとき、最初の応答の行を発言の行より先に書くことがあります。まとめて読んだ行のうち、親（`parentUuid`）が後ろにある行は、親のすぐ後ろに回して読みます（`parentFirst`）。親の行があとの読み込みで届くこともあるので、追いかけて読む行（`TranscriptTail`）は、親の行がまだ届いていなければ、親が届くまで（長くても 1 秒）待ってから出します。読み始めた時点で既にあった行（再開したセッションの過去ログ）は待ちません。
@@ -1554,6 +1567,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
   - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所・PR への投稿と載せ直し・載せられない理由）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
   - `stream-client.test.ts` / `stream-state.test.ts`: stream-json のやりとり（行の読み分け・知らない種類と形の違う行・制御の要求と返事・時間切れ・答えを待つ要求と取り下げ・使わない要求への error・引き継ぎ・内部の要求）と、行から作る値（権限モードの名前・表記・進み具合・利用枠）
+  - `chat-notices.test.ts` / `fixtures/claude-code-events/<バージョン>/`: チャットのお知らせ（Claude Code の警告と出さない `key`・モデルの切り替え・断られた応答の取り直しと取り消し・メモリ）。切り替えと取り直しの行は、本物の Claude Code をモックの API につないで録った控え（場面ごとのフォルダに、stream-json の行と、アプリが読まない大きな行を除いた会話ログ）
   - `pipe-backlog.test.ts`: パイプの claude の出力の行の控え（通し番号と送り直し・上限・種類ごとの最新・答えを待つ要求）
   - `requests.test.ts` / `pending-questions.test.ts`: 答えを待つ要求（カードに出す形・「今後は聞かない」の説明・人だけが答えられる確認・返事の文）と、待っている質問
   - `paste.test.ts`: 貼り付けた文の扱い（制御文字の除去・ブラケットペースト・札にする境目）

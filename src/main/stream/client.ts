@@ -305,6 +305,13 @@ const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   hook_response: (v) => str(v.hook_id) && str(v.hook_name) && str(v.hook_event) && str(v.outcome) && typeof v.stdout === 'string' && typeof v.stderr === 'string',
   local_command: () => true,
   informational: () => true,
+  // Claude Code の警告。key で出すかを決め、text をチャットに出す
+  notification: (v) => str(v.key) && str(v.text),
+  // モデルの切り替え（混雑など）と、思い出したメモリ。チャットのお知らせは、会話ログの同じもの（model_fallback の行・relevant_memories）から出す
+  model_fallback: () => true,
+  memory_recall: () => true,
+  // 断られた応答の取り直し。お知らせは会話ログの同じ行から出し、ここでは取り消された応答を、書いている途中の文から外す
+  model_refusal_fallback: (v) => v.retracted_message_uuids === undefined || (Array.isArray(v.retracted_message_uuids) && v.retracted_message_uuids.every(str)),
 };
 
 // 知っている種類の行を、使う項目の形を確かめて型にする。知らない種類は 'unknown'、形が違えば null
