@@ -20,8 +20,9 @@ export type CompactPhase = 'finalizing' | 'clearing' | 'resuming' | 'waiting';
 
 // 取りやめた・失敗した理由。interrupted: 仕上げを人が中断した / prompted: 仕上げの間に人が発言した /
 // not-used: Claude がチェックリストのツールを 1 回も使わなかった / interleaved: 仕上げのあとに別のターンが続いた /
-// not-cleared: /clear を送っても新しい会話にならなかった / exited: セッションが終了した / busy: 仕上げの頼みを送れなかった
-export type CompactFailure = 'interrupted' | 'prompted' | 'not-used' | 'interleaved' | 'not-cleared' | 'exited' | 'busy';
+// not-cleared: /clear を送っても新しい会話にならなかった / exited: セッションが終了した / busy: 仕上げの頼みを送れなかった /
+// usage-limit: 仕上げのターンが、プランの利用枠に当たって止まった（会話は消さない。枠が戻ったら、続きを頼む予約が入る）
+export type CompactFailure = 'interrupted' | 'prompted' | 'not-used' | 'interleaved' | 'not-cleared' | 'exited' | 'busy' | 'usage-limit';
 
 // 使えない理由。checklist-off: 「Claude にチェックリストを扱わせる」がオフ / no-checklist: このセッションの Claude Code にチェックリストの MCP が足されていない
 export type CompactUnavailable = 'checklist-off' | 'no-checklist';

@@ -21,6 +21,7 @@ import type { UnknownEvent } from '@shared/unknown-event';
 import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
+import type { UsageLimitStop } from '@shared/usage-limit';
 import { modeWithin, type SessionState } from '@shared/session-tools';
 import type {
   ArchiveOptions,
@@ -108,7 +109,7 @@ import type {
 } from './stream/protocol';
 import { notificationEvent } from './stream/notification';
 import { PartialText } from './stream/partial';
-import { appMode, elapsedText, modelName, Progress, rateLimitsOf, streamMode, usageLimitsOf, type UsageReport } from './stream/state';
+import { appMode, elapsedText, modelName, Progress, rateLimitsOf, rejectedLimitOf, streamMode, usageLimitsOf, type UsageReport } from './stream/state';
 import {
   hideWorktrees,
   planWorktree,
@@ -267,6 +268,14 @@ type Runtime = {
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
   starterSeen: boolean;
+  // 今のターンが、プランの利用枠に当たって止まった（会話ログの、apiError が usage_limit_reached の行。ターンの終わりに読んで消す）
+  turnLimit: UsageLimitStop | null;
+  // 今のターンの result が、利用枠に当たって終わったと言っている（api_error が usage_limit_reached。会話ログの行が間に合わないときの補い）
+  limitResult: boolean;
+  // 今のターンで届いた、利用枠を断られた知らせ（rate_limit_event の status が rejected）。会話ログの行が無いときの、枠が戻る時刻の補い
+  rejectedLimit: UsageLimitStop | null;
+  // 今のターンで、モデルが応答した（合成でない応答が届いた）。利用枠で止まったあとに作業が進んだかを見分ける（応答の前に中断したターンは数えない）
+  turnAnswered: boolean;
   // 作業中の進み具合（ターンの間だけ）
   progress: Progress | null;
   progressTimer: NodeJS.Timeout | null;
@@ -335,6 +344,9 @@ type Listeners = {
   onChat: (batch: ChatBatch) => void;
   onPtyData: (sessionId: string, data: string) => void;
   onTurnCompleted: (session: SessionSummary, notice: TurnNotice) => void;
+  // ターンが終わった（通知を出さないときも、onTurnCompleted より先に）。limit: プランの利用枠に当たって止まったなら、その知らせ。
+  // null は、止まらずにモデルが応答した（作業が進んだ）。どちらでもないターン（応答の前に中断した・モデルを呼ばなかった）では呼ばない
+  onTurnLimit?: (sessionId: string, limit: UsageLimitStop | null) => void;
   // 作業中の進み具合（作業中でなければ null）
   onProgress: (sessionId: string, activity: Activity | null) => void;
   onWorkflows: (sessionId: string, runs: WorkflowRun[]) => void;
@@ -1906,6 +1918,10 @@ export class SessionManager {
         lateTurnEnd: null,
         turnStarter: 'other',
         starterSeen: false,
+        turnLimit: null,
+        limitResult: false,
+        rejectedLimit: null,
+        turnAnswered: false,
         progress: null,
         progressTimer: null,
         partial: new PartialText(),
@@ -2395,6 +2411,8 @@ export class SessionManager {
       case 'rate_limit_event': {
         const rateLimits = rateLimitsOf(message);
         if (rateLimits) this.updateStatus(id, rt, { rateLimits });
+        // 枠を断られた（このあと、利用枠で止まった応答の行が会話ログに書かれる）。行が間に合わないときの、枠が戻る時刻の補いに控える
+        if (!past && message.rate_limit_info.status === 'rejected') rt.rejectedLimit = rejectedLimitOf(message);
         return;
       }
       case 'conversation_reset':
@@ -2552,6 +2570,8 @@ export class SessionManager {
     if (message.parent_tool_use_id) return;
     this.openTurn(id, rt, past);
     rt.lastTurnLine = message.uuid;
+    // 合成の応答（利用枠で止まった・API エラーなど）は、モデルの応答に数えない
+    if (!past && message.message.model !== '<synthetic>') rt.turnAnswered = true;
     if (!past && message.message.id) {
       rt.streamMessages.set(message.uuid, message.message.id);
       if (rt.streamMessages.size > MAX_STREAM_MESSAGES) rt.streamMessages.delete(rt.streamMessages.keys().next().value!);
@@ -2604,6 +2624,10 @@ export class SessionManager {
     rt.lastTurnLine = null;
     rt.turnPrompt = null;
     rt.starterSeen = false;
+    rt.turnLimit = null;
+    rt.limitResult = false;
+    rt.rejectedLimit = null;
+    rt.turnAnswered = false;
     if (!past) this.startProgress(id, rt);
     this.emitSessions();
     this.changed(id);
@@ -2616,6 +2640,8 @@ export class SessionManager {
     this.stopProgress(id, rt);
     // 開いていないターンの result（重ねて届いた知らせなど）では、ターンの終わりも完了の知らせも出さない
     if (past || !open) return;
+    // 利用枠に当たって終わった。時刻は result に無いので、会話ログの行（turnLimit）か、断られた知らせ（rejectedLimit）から取る
+    if (result.api_error === 'usage_limit_reached') rt.limitResult = true;
     // 発言の行を待たせていたフックは、ターンの終わりの前に出す（flushTurnEnd）。次のターンまで鍵を残さない
     rt.promptLine = null;
     // result の時点で、本体のツールの呼び出しはどれも結果が出ている。stream に結果が来なかったもの（中断など）も、フックの付け先の候補から外す
@@ -2765,6 +2791,14 @@ export class SessionManager {
   // ターンが終わったときの未読と通知
   private turnCompleted(id: string, rt: Runtime): void {
     if (!this.isFocused(id)) rt.unread = true;
+    // 利用枠に当たって止まったか（会話ログの行が正。間に合わなければ result と、断られた知らせで補う）。通知を出さないときも先に知らせる
+    // （止まったセッションに、枠が戻ったら再開する予約を入れる。usage-limit-resume.ts）
+    const limit = rt.turnLimit ?? (rt.limitResult ? (rt.rejectedLimit ?? { resetsAt: null, window: null }) : null);
+    if (limit || rt.turnAnswered) this.listeners.onTurnLimit?.(id, limit);
+    rt.turnLimit = null;
+    rt.limitResult = false;
+    rt.rejectedLimit = null;
+    rt.turnAnswered = false;
     const summary = this.summary(id);
     // 通知を出さないとき（下の、バックグラウンドのタスクが動いているあいだなど）も聞く。流れの途中で出さなかったことを、覚えさせる
     const notice = this.turnNotice(id, rt.turnStarter);
@@ -3122,6 +3156,11 @@ export class SessionManager {
     // 今の claude のターンの終わりは、stream-json の result で決める（-p は turn_duration を書かない。ほかの行の終わりと二重にしない）。
     // ターミナルモード（TUI）では result が来ないので、会話ログのターンの終わりを使う
     if (rt && !isHistory && !rt.terminal) events = events.filter((e) => e.type !== 'turn-end');
+    // 今のターンが、利用枠に当たって止まった（読み直した過去の行・終わったターンのあとに遅れて出た行は数えない。終わりに予約を入れるので）
+    const limited = events.find((e): e is Extract<ChatEvent, { type: 'api-error' }> => e.type === 'api-error' && !!e.limit);
+    if (rt && !past && limited?.limit && (rt.terminal || rt.turnOpen || rt.turnEnding)) rt.turnLimit = limited.limit;
+    // ターミナルモードは stream が無いので、モデルが応答したかは会話ログの行で見る
+    if (rt?.terminal && !past && events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use' || e.type === 'thinking')) rt.turnAnswered = true;
     if (rt?.terminal && !past) this.tuiEntry(id, rt, entry, events, isHistory);
     if (rt && isHistory) {
       const bridge = bridgeUrlOf(entry);

@@ -55,6 +55,7 @@
       "checklistControl": "Claude にチェックリストを扱わせる",
       "walkthroughControl": "Claude にウォークスルーさせる",
       "terminalControl": "Claude にターミナルを使わせる",
+      "usageLimitResume": "利用枠で止まったら、戻ったときに自動で再開する",
       "autoCompactPercent": "自動で最適化圧縮する大きさ",
       "language": "言語（Language）",
       "languageSystem": "システムに合わせる",
@@ -68,6 +69,9 @@
       "turnCompleted": "作業が完了しました",
       "compactCompleted": "コンテキストの最適化が完了しました",
       "compactFailed": "コンテキストの最適化を取りやめました",
+      "usageLimitResume": "利用枠で止まりました。{time} に再開します",
+      "usageLimitStopped": "利用枠で止まりました。{time} に戻ります",
+      "usageLimitStoppedNoTime": "利用枠で止まりました",
       "question": "質問しています",
       "elicitation": "MCP サーバー「{server}」からの質問: {message}",
       "permission": "実行の許可: {detail}",
@@ -77,6 +81,8 @@
       "scheduledFailed": "予約したメッセージを送れませんでした（{reason}）: {text}",
       "wakeupMissed": "{time} の Claude の予約を、時刻に送れませんでした: {text}",
       "wakeupFailed": "Claude の予約を送れませんでした（{reason}）: {text}",
+      "usageResumeMissed": "{time} の利用枠の再開を、時刻に送れませんでした",
+      "usageResumeFailed": "利用枠の再開を送れませんでした（{reason}）",
       "unknownReason": "理由は不明"
     },
     "format": {
@@ -469,6 +475,9 @@
       "childBrowser": "子セッション「{name}」（{id}）がアプリ内ブラウザで人の操作を待っています。人に伝えてください。",
       "childExited": "子セッション「{name}」（{id}）が終了しました。",
       "childDone": "子セッション「{name}」（{id}）の作業が終わりました。",
+      "childUsageLimit": "子セッション「{name}」（{id}）は、利用枠の上限に達して止まりました。{time} に、続きを頼むメッセージを送る予約があります（それまで様子を見に行く必要はありません）。",
+      "childUsageLimitNoResume": "子セッション「{name}」（{id}）は、利用枠の上限に達して止まりました（枠が戻るのは {time}）。自動で再開する予約はありません。",
+      "childUsageLimitNoTime": "子セッション「{name}」（{id}）は、利用枠の上限に達して止まりました（枠が戻る時刻は分かりません）。",
       "checkSessions": "get_session で確かめてください。",
       "cardReply": "「{list}」#{number}「{title}」に人が返信しました: 「{reply}」。",
       "checkCards": "card_get で確かめて対応し、返事は card_reply で書いてください。",
@@ -513,7 +522,8 @@
         "interleaved": "仕上げのあとに別の作業が続いたので、最適化圧縮を取りやめました。会話は消していません",
         "notCleared": "/clear を送りましたが、新しい会話に切り替わりませんでした。チェックリストは更新してあります",
         "exited": "セッションが終了したので、最適化圧縮を取りやめました",
-        "busy": "Claude Code に送れなかったので、最適化圧縮を取りやめました。会話は消していません"
+        "busy": "Claude Code に送れなかったので、最適化圧縮を取りやめました。会話は消していません",
+        "usageLimit": "利用枠の上限に達したので、最適化圧縮を取りやめました。会話は消していません"
       },
       "compactFailed": "最適化圧縮を取りやめました",
       "compactWaiting": "再開の文を送るのを待っています",
@@ -716,6 +726,9 @@
       "apiErrorRetrying": "API エラー: {message} — 再試行中（{attempt}/{max}）",
       "unknownError": "不明なエラー",
       "apiErrorNoDetail": "API エラー",
+      "usageLimit": "利用枠の上限に達したので、止まりました（{time} に戻ります）",
+      "usageLimitFiveHour": "5 時間の利用枠の上限に達したので、止まりました（{time} に戻ります）",
+      "usageLimitWeekly": "週の利用枠の上限に達したので、止まりました（{time} に戻ります）",
       "charsOmitted": "…（{count} 文字省略）",
       "compacted": "会話を圧縮しました",
       "compactFailed": "会話を圧縮できませんでした: {message}",
@@ -736,6 +749,7 @@
       "scheduledTask": "スケジュールタスクの実行",
       "scheduledTaskNamed": "スケジュールタスク「{name}」の実行",
       "wakeup": "Claude の予約の時刻になりました",
+      "usageLimitResume": "利用枠が戻ったので、続きを頼みました",
       "modelFallback": "モデルを {from} から {to} に切り替えました",
       "modelFallbackUnknown": "モデルを切り替えました",
       "modelRefusalFallback": "{from} が応答を断ったので、{to} で取り直しました",
@@ -830,6 +844,8 @@
       "cancel": "取り消す",
       "claude": "Claude の予約",
       "claudeTip": "Claude が自分に入れた予約です。時刻になると、このセッションの Claude に知らせとして送ります",
+      "usageLimit": "利用枠の再開",
+      "usageLimitTip": "利用枠で止まったので、枠が戻ったあとに、続きを頼むメッセージを tanacode が送ります。取り消すと、自動では再開しません（メニューの「利用枠で止まったら、戻ったときに自動で再開する」）",
       "cancelSendingTip": "送るのをやめて入力欄に戻す",
       "cancelTip": "予約をやめて入力欄に戻す",
       "unsaved": "保存できません",
@@ -861,6 +877,14 @@
       "yesterday": "昨日 {time}",
       "date": "{month}/{day}（{weekday}）{time}",
       "dateWithYear": "{year}/{month}/{day}（{weekday}）{time}"
+    },
+    "usageResume": {
+      "intro": "前のターンは、プランの利用枠の上限に達して止まりましたが、枠が戻りました。作業を続けられるよう、tanacode が自動で送ったメッセージです（ユーザーが打ったものではありません）。",
+      "check": "- まず、止まったところを確かめてください。チェックリスト（このセッションにあれば、checklist_overview の「いまの状態」と決定事項）と、この会話の終わりです。",
+      "waiting": "- ユーザー（または、作業を指示した親セッション）の答えを待っていたなら、続けないでください。いまの状況と、何の答えを待っているかを短く伝えて、待ってください。",
+      "continue": "- そうでなければ、進めていた作業を、止まったところから続けてください。続けるのは、もう進めていた作業だけです。新しいことは始めないでください。",
+      "ask": "- 次の一手に、決定事項に無い許可や判断が要るときは、止まってユーザーに聞いてください。",
+      "verify": "- 止まる前に済んでいたかもしれないこと（コミット・プッシュ・ファイルの書き込み）は、やり直す前に、実際の状態を確かめてください。"
     }
   },
   "settingsFiles": {

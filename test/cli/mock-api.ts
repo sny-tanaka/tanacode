@@ -35,8 +35,31 @@ export type Conversation = {
 };
 
 // 応答の代わりに返す API エラー。status: HTTP の状態コード（529 は overloaded）。errorType: エラーの種類（overloaded_error など）。
-// times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）
-export type ApiFailure = { status: number; errorType: string; message: string; times?: number };
+// times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）。headers: 添える応答のヘッダー
+export type ApiFailure = { status: number; errorType: string; message: string; times?: number; headers?: Record<string, string> };
+
+// プランの利用枠（5 時間の枠）に当たったときの API の応答（429 と、枠のヘッダー）。resetsAt: 枠が戻る時刻（ミリ秒）。
+// Claude Code は、OAuth のトークン（CLAUDE_CODE_OAUTH_TOKEN）で動いているときだけ、これを利用枠として読む（API キーでは、ただの 429。2.1.302 で実測）
+export function usageLimitFailure(resetsAt: number, times?: number): ApiFailure {
+  const reset = String(Math.floor(resetsAt / 1000));
+  return {
+    status: 429,
+    errorType: 'rate_limit_error',
+    message: 'Number of request tokens has exceeded your rate limit',
+    ...(times === undefined ? {} : { times }),
+    headers: {
+      'anthropic-ratelimit-unified-status': 'rejected',
+      'anthropic-ratelimit-unified-reset': reset,
+      'anthropic-ratelimit-unified-representative-claim': 'five_hour',
+      'anthropic-ratelimit-unified-overage-status': 'rejected',
+      'anthropic-ratelimit-unified-overage-disabled-reason': 'org_level_disabled',
+      'anthropic-ratelimit-unified-fallback': 'unavailable',
+      'anthropic-ratelimit-unified-5h-status': 'rejected',
+      'anthropic-ratelimit-unified-5h-reset': reset,
+      'anthropic-ratelimit-unified-5h-utilization': '1.0',
+    },
+  };
+}
 
 // 台本の応答の代わりに返す、取り消される応答。text: その応答の文（切るものは、切る前に送る書きかけ）。
 // times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（Claude Code の取り直しが通る）
@@ -222,8 +245,8 @@ function message({ id, model, content, stopReason, inputTokens }: Reply) {
 }
 
 // 本物の API と同じ形のエラー（{ type: 'error', error: { type, message } }）
-function fail(res: ServerResponse, { status, errorType, message }: ApiFailure): void {
-  res.writeHead(status, { 'content-type': 'application/json', 'request-id': `req_mock_${status}` });
+function fail(res: ServerResponse, { status, errorType, message, headers }: ApiFailure): void {
+  res.writeHead(status, { 'content-type': 'application/json', 'request-id': `req_mock_${status}`, ...headers });
   res.end(JSON.stringify({ type: 'error', error: { type: errorType, message } }));
 }
 

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { t } from '@shared/i18n';
-import { SCHEDULE_LATE_MS, wakeupText, type ScheduledMessage } from '@shared/scheduled';
+import { SCHEDULE_LATE_MS, wakeupText, type ScheduledBy, type ScheduledMessage } from '@shared/scheduled';
 import type { SessionState } from '@shared/session-tools';
 import { readSavedJson, unreadable } from './saved-json';
 import { isSendFailure, SendError, type SendFailure } from './send-error';
@@ -29,7 +29,8 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 // 予約したメッセージ。ファイルに保存し、アプリを起動し直しても残す。
 // 時刻になったら、Claude Code の手が空くのを待って送る（子セッションへの指示と同じ送り方。作業中に打つと、許可の確認の選択になってしまうことがある）。
 // アプリが閉じていた・Mac がスリープしていたなどで、時刻を SCHEDULE_LATE_MS より過ぎてから気づいたものは、送らずに missed にする。
-// Claude が自分に入れた予約（by: 'claude'。sessions-control.ts の schedule_wakeup）も同じ流れに乗せ、送るときだけ囲み（WAKEUP_TAG）に入れる
+// Claude が自分に入れた予約（by: 'claude'。sessions-control.ts の schedule_wakeup）も同じ流れに乗せ、送るときだけ囲み（WAKEUP_TAG）に入れる。
+// 利用枠で止まったセッションの再開の予約（by: 'usage-limit'。usage-limit-resume.ts）も同じ流れ。本文は囲みごと持っているので、そのまま送る
 export class ScheduledMessages {
   private messages: StoredMessage[];
   // 保存してよいか（読めない・形の分からないファイルは上書きしない）
@@ -71,8 +72,8 @@ export class ScheduledMessages {
     return this.writable;
   }
 
-  // by: Claude が自分に入れる予約（数と時刻の決まりは、呼ぶ側の sessions-control.ts が確かめる）
-  add(sessionId: string, text: string, attachments: string[], at: number, pastes: string[] = [], by?: 'claude'): ScheduledMessage {
+  // by: Claude が自分に入れる予約（数と時刻の決まりは、呼ぶ側の sessions-control.ts が確かめる）・利用枠の再開の予約（limitResetsAt: 枠が戻る時刻）
+  add(sessionId: string, text: string, attachments: string[], at: number, pastes: string[] = [], by?: ScheduledBy, limitResetsAt?: number): ScheduledMessage {
     if (!this.accepts(sessionId)) throw new Error(t('main.scheduled.cannotSchedule'));
     if (!text.trim() && attachments.length === 0 && pastes.length === 0) throw new Error(t('main.scheduled.empty'));
     if (!Number.isFinite(at) || at <= this.now()) throw new Error(t('main.scheduled.pastTime'));
@@ -87,18 +88,26 @@ export class ScheduledMessages {
       state: 'scheduled',
       error: null,
       ...(by ? { by } : {}),
+      ...(by === 'usage-limit' && limitResetsAt !== undefined ? { limitResetsAt } : {}),
     };
     this.messages = [...this.messages, message];
     this.changed();
     return message;
   }
 
-  // 時刻を変える（送れなかったもの・時刻を過ぎていたものも、もう一度待つ）
+  // 時刻を変える（送れなかったもの・時刻を過ぎていたものも、もう一度待つ）。人が変えた利用枠の再開の予約は、もうアプリが並べ直さない
   reschedule(id: string, at: number): void {
     const message = this.find(id);
     if (message.state === 'sending') throw new Error(t('main.scheduled.sending'));
     if (!Number.isFinite(at) || at <= this.now()) throw new Error(t('main.scheduled.pastTime'));
-    this.update(id, { at, state: 'scheduled', error: null });
+    this.update(id, { at, state: 'scheduled', error: null, limitResetsAt: undefined });
+  }
+
+  // アプリが、時刻を待っている予約の時刻を変える（利用枠の再開の予約を並べ直す。usage-limit-resume.ts）。人が変えたときと違い、印は残す
+  retime(id: string, at: number): void {
+    const message = this.messages.find((m) => m.id === id);
+    if (!message || message.state !== 'scheduled' || message.at === at || !Number.isFinite(at) || at <= this.now()) return;
+    this.update(id, { at });
   }
 
   sendNow(id: string): void {
@@ -181,7 +190,7 @@ export class ScheduledMessages {
         await this.host.open(sessionId);
       }
       // 待つ時間の上限は設けない。質問や確認に答えるのを待っている間も、送らずに待つ（ターミナルモードの間は断られ、送れなかったものとして残る）
-      // Claude の予約は、人の発言と見分けられるよう、囲みに入れて送る
+      // Claude の予約は、人の発言と見分けられるよう、囲みに入れて送る（利用枠の再開の予約は、囲みごと持っている）
       const text = message.by === 'claude' ? wakeupText(message.text) : message.text;
       await this.host.submitWhenReady(sessionId, text, Number.POSITIVE_INFINITY, {
         attachments: message.attachments,
@@ -217,9 +226,9 @@ export class ScheduledMessages {
   private update(id: string, patch: Partial<StoredMessage>): void {
     this.messages = this.messages.map((m) => {
       if (m.id !== id) return m;
-      // 送れなかった理由は、error と一緒に消す（もう一度待つ・送るとき）
-      const { reason, ...next } = { ...m, ...patch };
-      return next.error !== null && reason ? { ...next, reason } : next;
+      // 送れなかった理由は、error と一緒に消す（もう一度待つ・送るとき）。外した枠の時刻（undefined）は、項目ごと消す
+      const { reason, limitResetsAt, ...next } = { ...m, ...patch };
+      return { ...next, ...(next.error !== null && reason ? { reason } : {}), ...(limitResetsAt !== undefined ? { limitResetsAt } : {}) };
     });
     this.changed();
   }
@@ -264,11 +273,18 @@ function load(file: string): { messages: StoredMessage[]; writable: boolean } {
   if (data === null) return { messages: [], writable };
   const saved = data as { version?: unknown; messages?: unknown };
   if (saved.version !== 1 || !Array.isArray(saved.messages)) return { messages: [], writable: unreadable(file, '予約したメッセージ').writable };
-  // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約だけに付ける（ほかの値は読み捨てる）。
-  // reason は、error のあるものの、知っている理由だけを読む
-  const messages = saved.messages.filter(isMessage).map(({ by, reason, ...m }) => {
+  // pastes は、前のバージョンで保存した予約には無い。by は Claude の予約と利用枠の再開の予約だけに付ける（ほかの値は読み捨てる）。
+  // reason は、error のあるものの、知っている理由だけを読む。枠の時刻は、利用枠の再開の予約の数だけを読む
+  const messages = saved.messages.filter(isMessage).map(({ by, reason, limitResetsAt, ...m }) => {
     const error = m.error ?? null;
-    return { ...m, pastes: stringsOf(m.pastes), error, ...(by === 'claude' ? { by } : {}), ...(error !== null && isSendFailure(reason) ? { reason } : {}) };
+    return {
+      ...m,
+      pastes: stringsOf(m.pastes),
+      error,
+      ...(by === 'claude' || by === 'usage-limit' ? { by } : {}),
+      ...(by === 'usage-limit' && typeof limitResetsAt === 'number' ? { limitResetsAt } : {}),
+      ...(error !== null && isSendFailure(reason) ? { reason } : {}),
+    };
   });
   return { messages, writable };
 }

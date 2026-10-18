@@ -5,6 +5,7 @@ import { modelName } from './model-name';
 import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
+import { parseUsageResume, USAGE_RESUME_TAG, usageLimitOf, usageLimitText, type UsageLimitStop } from './usage-limit';
 import { unknownEvent, type UnknownEvent } from './unknown-event';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
@@ -77,8 +78,9 @@ export type ChatEvent =
   | { type: 'shell-output'; id: string; output: string }
   // 会話の圧縮（/compact・自動圧縮）の区切り
   | { type: 'divider'; id: string; text: string }
-  // API エラー。retrying: Claude Code が自動で再試行している（応答が来れば消す）
-  | { type: 'api-error'; id: string; text: string; retrying: boolean }
+  // API エラー。retrying: Claude Code が自動で再試行している（応答が来れば消す）/
+  // limit: プランの利用枠に当たって止まった（会話ログの apiError が usage_limit_reached。枠が戻る時刻と、当たった枠）
+  | { type: 'api-error'; id: string; text: string; retrying: boolean; limit?: UsageLimitStop }
   // interrupted: 人が中断した（Esc）
   | { type: 'turn-end'; interrupted?: true }
   // 送ったが、まだ会話に出ていない発言（今の全部）。会話に出たら減る（送った発言の uuid で追う。設計書 7 節）
@@ -181,6 +183,10 @@ export type TranscriptEntry = {
   isCompactSummary?: boolean;
   isVisibleInTranscriptOnly?: boolean;
   isApiErrorMessage?: boolean;
+  // API エラーの種類（usage_limit_reached など）と、その詳しいところ（利用枠なら rate_limit_info）。quotaLimits も利用枠の同じ中身
+  apiError?: unknown;
+  apiErrorParams?: unknown;
+  quotaLimits?: unknown;
   compactMetadata?: { trigger?: string; preTokens?: number };
   error?: unknown;
   retryAttempt?: number;
@@ -311,6 +317,9 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     }
     if (entry.isApiErrorMessage) {
       const text = blocks.map((b) => b.text ?? '').join('\n').trim();
+      // 利用枠に当たって止まった。Claude Code の英語の文（「You've hit your session limit · resets 5am」）の代わりに、枠が戻る時刻を出す
+      const limit = usageLimitOf(entry);
+      if (limit) return [{ type: 'api-error', id: entry.uuid ?? '', text: usageLimitText(limit) ?? (text || t('chat.transcript.apiErrorNoDetail')), retrying: false, limit }];
       return [{ type: 'api-error', id: entry.uuid ?? '', text: text || t('chat.transcript.apiErrorNoDetail'), retrying: false }];
     }
     const events: ChatEvent[] = [];
@@ -811,6 +820,9 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
   // Claude が自分に入れた予約の時刻になった知らせ（アプリが、手が空いてから送る）。開くと、Claude が書いた本文が読める
   const wakeup = parseWakeup(text);
   if (wakeup) return [{ type: 'notice', id: entry.uuid ?? '', text: t('chat.transcript.wakeup'), detail: unwrapPasted(wakeup.body) }];
+  // 利用枠で止まったあと、枠が戻ったのでアプリが送った再開のメッセージ。開くと全文が読める
+  const usageResume = parseUsageResume(text);
+  if (usageResume) return [{ type: 'notice', id: entry.uuid ?? '', text: t('chat.transcript.usageLimitResume'), detail: usageResume.body }];
   // チェックリストのスレッドへの返信・ほかのセッションから届いたカードの知らせ
   const checklist = parseChecklistEvent(text);
   if (checklist) return [{ type: 'notice', id: entry.uuid ?? '', text: checklist.message, cards: checklist.cards }];
@@ -898,6 +910,7 @@ export function isHumanPrompt(text: string): boolean {
     !head.startsWith('<ci-monitor-event>') &&
     !head.startsWith(`<${SESSION_EVENT_TAG}`) &&
     !head.startsWith(`<${WAKEUP_TAG}`) &&
+    !head.startsWith(`<${USAGE_RESUME_TAG}`) &&
     !head.startsWith(`<${CHECKLIST_EVENT_TAG}`) &&
     !isCompactMessage(text)
   );
@@ -1105,7 +1118,7 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     typeof entry.message?.content === 'string'
   ) {
     const text = entry.message.content;
-    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseWakeup(text)) return null;
+    if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseWakeup(text) || parseUsageResume(text)) return null;
     // 親セッションからの指示は、囲みを外した本文の 1 行目
     const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];
     return firstLine ? { title: firstLine.slice(0, 80), priority: 1 } : null;

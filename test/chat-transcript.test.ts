@@ -17,7 +17,8 @@ import {
   splitPasted,
 } from '@shared/chat';
 import { checklistEventText } from '@shared/checklist-tools';
-import { wakeupText } from '@shared/scheduled';
+import { formatScheduleTime, wakeupText } from '@shared/scheduled';
+import { usageLimitOf, usageResumeText } from '@shared/usage-limit';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
 
 // 会話ログの行をチャットの出来事に変える（toChatEvents）と、そのまわりの読み取り（shared/chat.ts）。
@@ -622,6 +623,42 @@ describe('toChatEvents: 発言の行', () => {
     expect(unsentView(sessionEventText(['abcdef12'], '子の作業が終わりました'))).toBeNull();
     expect(unsentView(wakeupText('予約の本文'))).toBeNull();
     expect(unsentView(checklistEventText([{ listId: 'ab12', cardId: 'cd34' }], '返信がありました'))).toBeNull();
+  });
+
+  it('プランの利用枠に当たって止まった行（2.1.296・2.1.302 の実物の形）は、枠が戻る時刻と当たった枠の付いた api-error にし、英語の文の代わりに戻る時刻を出す', () => {
+    const resetsAt = 1_792_163_400_000;
+    const info = { status: 'rejected', resetsAt: resetsAt / 1000, rateLimitType: 'five_hour', overageStatus: 'rejected', overageDisabledReason: 'org_level_disabled', isUsingOverage: false };
+    const limited = (extra: Record<string, unknown>) =>
+      assistant([{ type: 'text', text: "You've hit your session limit · resets 5am (Asia/Tokyo)" }], {
+        message: { model: '<synthetic>', content: [{ type: 'text', text: "You've hit your session limit · resets 5am (Asia/Tokyo)" }] },
+        isApiErrorMessage: true,
+        apiError: 'usage_limit_reached',
+        error: 'rate_limit',
+        ...extra,
+      });
+    const time = formatScheduleTime(resetsAt);
+    expect(events(limited({ apiErrorParams: { rate_limit_info: info }, quotaLimits: { ...info, unifiedRateLimitFallbackAvailable: false } }))).toEqual([
+      { type: 'api-error', id: 'a1', text: `5 時間の利用枠の上限に達したので、止まりました（${time} に戻ります）`, retrying: false, limit: { resetsAt, window: 'five_hour' } },
+    ]);
+    // 週の枠（モデル別の週の枠も）・知らない枠・rate_limit_info が無く quotaLimits だけのもの
+    expect(events(limited({ apiErrorParams: { rate_limit_info: { ...info, rateLimitType: 'seven_day_opus' } } }))[0]).toMatchObject({ text: `週の利用枠の上限に達したので、止まりました（${time} に戻ります）` });
+    expect(events(limited({ quotaLimits: { ...info, rateLimitType: 'overage' } }))[0]).toMatchObject({ text: `利用枠の上限に達したので、止まりました（${time} に戻ります）`, limit: { resetsAt, window: 'overage' } });
+    // 時刻の無いもの（2.1.289 は文だけ）は、Claude Code の文のまま。時刻が分からないことは limit に残す
+    expect(events(limited({}))).toEqual([{ type: 'api-error', id: 'a1', text: "You've hit your session limit · resets 5am (Asia/Tokyo)", retrying: false, limit: { resetsAt: null, window: null } }]);
+    // 利用枠でない API エラーには付けない
+    expect(usageLimitOf({ isApiErrorMessage: true, apiError: 'overloaded' })).toBeNull();
+    expect(usageLimitOf({ apiError: 'usage_limit_reached' })).toBeNull();
+    expect(usageLimitOf({ isApiErrorMessage: true, apiError: 'usage_limit_reached', apiErrorParams: { rate_limit_info: { resetsAt: 'soon', rateLimitType: '' } } })).toEqual({ resetsAt: null, window: null });
+  });
+
+  it('利用枠が戻ったのでアプリが送った再開のメッセージは、「利用枠が戻ったので、続きを頼みました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {
+    const body = usageResumeText().replace(/^<[^>]+>\n/, '').replace(/\n<\/[^>]+>$/, '');
+    expect(events(user(usageResumeText()))).toEqual([{ type: 'notice', id: 'u1', text: '利用枠が戻ったので、続きを頼みました', detail: body }]);
+    expect(events(user(`<pasted_content id="7">\n${usageResumeText()}\n</pasted_content id="7">`))[0]).toMatchObject({ type: 'notice', text: '利用枠が戻ったので、続きを頼みました' });
+    expect(isHumanPrompt(usageResumeText())).toBe(false);
+    expect(transcriptTitle(user(usageResumeText()))).toBeNull();
+    expect(unsentView(usageResumeText())).toBeNull();
+    expect(events(user(`${usageResumeText()} これは人の発言`))[0]).toMatchObject({ type: 'user' });
   });
 
   it('Claude が自分に入れた予約の知らせは「Claude の予約の時刻になりました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {

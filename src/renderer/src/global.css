@@ -5987,6 +5987,11 @@ body.resizing-rows webview {
 .chat-user.scheduled.by-claude .chat-prompt {
   color: var(--claude);
 }
+/* 利用枠で止まったセッションの再開の予約（アプリが入れたもの）。お知らせと同じ灰色の印で、人の予約・Claude の予約と見分ける */
+.chat-user.scheduled.by-tanacode .chat-prompt,
+.chat-user.scheduled.by-tanacode .chat-scheduled-by {
+  color: var(--text-secondary);
+}
 .chat-scheduled-by {
   display: block;
   width: fit-content;

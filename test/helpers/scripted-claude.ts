@@ -14,6 +14,7 @@ import type { WorkflowRun } from '@shared/workflow';
 import type { BrowserMcpLaunch } from '../../src/main/browser-bridge';
 import { transcriptPath } from '../../src/main/claude-session';
 import type { TurnNotice } from '../../src/main/compact-notice';
+import type { UsageLimitStop } from '../../src/shared/usage-limit';
 import type { McpLaunch } from '../../src/main/mcp-bridge';
 import type { PipeHandle, PtyHandle, PtyHostApi } from '../../src/main/pty-host-client';
 import type { HostedInfo, HostedPipeInfo, HostedPtyInfo, PipeSpawnRequest, PtySpawnRequest } from '../../src/main/pty-host-protocol';
@@ -343,6 +344,8 @@ export class ScriptedApp {
   readonly turnsCompleted: SessionSummary[] = [];
   // 完了の知らせの種類を、届いた順に（turnsCompleted と同じ並び）
   readonly turnNotices: TurnNotice[] = [];
+  // モデルを呼んだターンの終わりと、利用枠で止まったならその知らせ（onTurnLimit）を、届いた順に
+  readonly turnLimits: { id: string; limit: UsageLimitStop | null }[] = [];
   // 作業中の進み具合の知らせ（最後のもの）
   readonly progress = new Map<string, Activity | null>();
   readonly bashTasks = new Map<string, BashTask[]>();
@@ -403,6 +406,7 @@ export class ScriptedApp {
           this.turnsCompleted.push(session);
           this.turnNotices.push(notice);
         },
+        onTurnLimit: (id, limit) => this.turnLimits.push({ id, limit }),
         onProgress: (id, activity) => this.progress.set(id, activity),
         onWorkflows: (id, runs) => this.workflows.set(id, runs),
         onSubagents: (id, runs) => this.subagents.set(id, runs),
@@ -537,6 +541,21 @@ export const line = {
     ...extra,
   }),
   turnEnd: () => ({ ...base(), type: 'system', subtype: 'turn_duration', durationMs: 100 }),
+  // プランの利用枠に当たって止まった（Claude Code 2.1.302 が書く合成の応答の行。resetsAt はミリ秒で渡す。会話ログは秒）
+  limit: (resetsAt: number | null, rateLimitType = 'five_hour') => {
+    const info = { status: 'rejected', ...(resetsAt === null ? {} : { resetsAt: resetsAt / 1000 }), rateLimitType, overageStatus: 'rejected', isUsingOverage: false };
+    return {
+      ...base(),
+      type: 'assistant',
+      message: { id: randomUUID(), role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: "You've hit your session limit · resets 7:44am (Asia/Tokyo)" }] },
+      apiError: 'usage_limit_reached',
+      apiErrorParams: { rate_limit_info: info },
+      quotaLimits: info,
+      error: 'rate_limit',
+      isApiErrorMessage: true,
+      apiErrorStatus: 429,
+    };
+  },
 };
 
 // 台本の claude の、制御の要求への既定の答え
@@ -607,6 +626,15 @@ export const stream = {
     session_id: sessionId,
     uuid: randomUUID(),
     ...extra,
+  }),
+  // 利用枠に当たって終わったターン（subtype は success のまま。時刻は無い。2.1.302 で実測）
+  limited: (sessionId = 'session') =>
+    stream.result(sessionId, { is_error: true, terminal_reason: 'api_error', api_error: 'usage_limit_reached', api_error_status: 429, result: "You've hit your session limit · resets 7:44am (Asia/Tokyo)" }),
+  // 利用枠の知らせ（rate_limit_event。resetsAt はミリ秒で渡す。stream-json は秒）
+  rateLimit: (status: 'allowed' | 'rejected', resetsAt: number, rateLimitType = 'five_hour') => ({
+    type: 'rate_limit_event',
+    rate_limit_info: { status, resetsAt: resetsAt / 1000, rateLimitType, unifiedWindows: { five_hour: { utilization: status === 'rejected' ? 1 : 0.5, resetsAt: resetsAt / 1000 } } },
+    uuid: randomUUID(),
   }),
   // 中断で終わったターン（応答を待っている間なら aborted_streaming、ツールの途中・許可待ちなら aborted_tools。実測）
   interrupted: (sessionId = 'session', reason = 'aborted_streaming') =>

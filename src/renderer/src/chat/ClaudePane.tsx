@@ -571,8 +571,8 @@ export const ClaudePane = memo(function ClaudePane({
   const takeScheduled = (id: string) => {
     const owner = session.id;
     void window.tanacode.scheduled.cancel(id).then((taken) => {
-      // Claude が自分に入れた予約は、人が書いたものではないので、入力欄に戻さない（取り消すだけ）
-      if (!taken || taken.by === 'claude') return;
+      // Claude が自分に入れた予約と、利用枠の再開の予約は、人が書いたものではないので、入力欄に戻さない（取り消すだけ）
+      if (!taken || taken.by === 'claude' || taken.by === 'usage-limit') return;
       if (sessionIdRef.current !== owner) {
         const draft = drafts.current.get(owner) ?? { text: '', attachments: [], pastes: [] };
         drafts.current.set(owner, {
