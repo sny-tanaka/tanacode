@@ -204,7 +204,16 @@ export class HostedPipe implements PipeHandle {
       this.ready = this.ready.filter((item) => item.seq < from);
       this.readyBytes = this.ready.reduce((sum, item) => sum + item.line.length, 0);
     }
-    this.host.send({ t: 'replay', id: this.id, from });
+    if (this.exited) {
+      // もう終わっている（一覧の返事と同じ受信の中で終わった）。ホストは終わったときに記録を捨てているので、頼まずに、送り直しが
+      // 終わったことにする。引き継ぐ側が受け手を付け終えてから（次の小さな区切りで）、待たせていた行を渡す。
+      // 引き継ぐ側（StreamClient.adopt）は、受け手を付ける前に頼むので、終わりの知らせ（onExit の、次の小さな区切り）より先になる
+      queueMicrotask(() => {
+        if (this.held) this.emitReplayed();
+      });
+    } else {
+      this.host.send({ t: 'replay', id: this.id, from });
+    }
     this.flush();
   }
 

@@ -19,12 +19,26 @@ export type Step = Block[];
 
 // match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）。
 // model: 応答に書くモデル（無ければ頼まれたモデル。会話ログのモデルが画面のモデル名になるかを見るため）
-// failures: 応答の番号 → 応答の代わりに返す API エラー
-export type Conversation = { match: string; steps: Step[]; delayMs?: number; model?: string; failures?: Record<number, ApiFailure> };
+// failures: 応答の番号 → 応答の代わりに返す API エラー。cuts: 応答の番号 → 書いている途中で接続を切る応答（ストリーミングのときだけ）。
+// malformed: 応答の番号 → ツールを呼ばないのに stop_reason が tool_use の応答（ツールの呼び出しの形が壊れた応答）。
+// cuts と malformed は、Claude Code が取り消して取り直す応答（会話ログには残らない）
+export type Conversation = {
+  match: string;
+  steps: Step[];
+  delayMs?: number;
+  model?: string;
+  failures?: Record<number, ApiFailure>;
+  cuts?: Record<number, Retracted>;
+  malformed?: Record<number, Retracted>;
+};
 
 // 応答の代わりに返す API エラー。status: HTTP の状態コード（529 は overloaded）。errorType: エラーの種類（overloaded_error など）。
 // times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）
 export type ApiFailure = { status: number; errorType: string; message: string; times?: number };
+
+// 台本の応答の代わりに返す、取り消される応答。text: その応答の文（切るものは、切る前に送る書きかけ）。
+// times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（Claude Code の取り直しが通る）
+export type Retracted = { text: string; times?: number };
 
 type Message = { role?: string; content?: string | { type?: string; text?: string; content?: string | { type?: string; text?: string }[] }[] };
 type Body = {
@@ -80,6 +94,10 @@ export class MockApi {
   plainReplies: { match: string; text: string; delayMs?: number }[] = [];
   // ツールの一覧が付いていない呼び出しを、これが済むまで返さない（Claude Code がその返事を待たずに先へ進むことを確かめる）
   holdPlain: Promise<void> | null = null;
+  // 台本のある会話の文のブロックを、書き終える（content_block_stop を送る）前に、これが済むまで止める（text: そのブロックの文）。
+  // Claude Code は、ブロックを書き終えてから会話ログに書くので、書いている途中の文がアプリに届いてから、会話ログに出るようにできる。
+  // 書いている途中で接続を切る応答（cuts）では、書きかけを送ってから切るまでに止める（書きかけがアプリに届いてから切る）
+  holdText: ((text: string) => Promise<unknown>) | null = null;
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -158,8 +176,28 @@ export class MockApi {
     }
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
     const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason, inputTokens: this.inputTokens };
-    if (body.stream) stream(res, answer);
-    else json(res, message(answer));
+    // 止めた文を待ち切れなくても、応答は最後まで返す（Claude Code を止めたままにしない）。待ち切れなかったことは手がかりに残す
+    const holdText = conversation ? this.holdText : null;
+    const hold = holdText
+      ? (text: string) => holdText(text).then(
+          () => undefined,
+          (error: unknown) => void this.requests.push(`  → 文「${text}」を止めたが、待ち切れなかった（${error instanceof Error ? error.message : String(error)}）`),
+        )
+      : null;
+    // 取り消される応答を、使い切るまで台本の応答の代わりに返す
+    const retract = (label: string, retracted: Retracted | undefined): Retracted | undefined => {
+      const counted = `${key}:${label}`;
+      if (!retracted || (retracted.times !== undefined && (this.failed.get(counted) ?? 0) >= retracted.times)) return undefined;
+      this.failed.set(counted, (this.failed.get(counted) ?? 0) + 1);
+      this.requests.push(`  → ${label}（${this.failed.get(counted)} 回目）`);
+      return retracted;
+    };
+    const cut = body.stream ? retract('書いている途中で接続を切る', conversation?.cuts?.[index]) : undefined;
+    if (cut) return cutStream(res, answer, cut.text, hold);
+    const malformed = retract('形の壊れたツールの呼び出し', conversation?.malformed?.[index]);
+    const sent: Reply = malformed ? { ...answer, content: [{ type: 'text', text: malformed.text }], stopReason: 'tool_use' } : answer;
+    if (body.stream) await stream(res, sent, hold);
+    else json(res, message(sent));
   }
 }
 
@@ -192,15 +230,23 @@ function json(res: ServerResponse, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 
-// ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る
-function stream(res: ServerResponse, reply: Reply): void {
+// ストリーミング（SSE）の応答を、応答の始まり（message_start）まで送る。返すのは、続きの出来事を送る関数
+function openStream(res: ServerResponse, reply: Reply): (type: string, data: Record<string, unknown>) => void {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const send = (type: string, data: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
   send('message_start', { message: { ...message({ ...reply, content: [] }), stop_reason: null, usage: { input_tokens: reply.inputTokens, output_tokens: 0 } } });
-  reply.content.forEach((block, index) => {
+  return send;
+}
+
+// ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る。
+// hold: 文のブロックを書き終える前に待つもの（MockApi.holdText）
+async function stream(res: ServerResponse, reply: Reply, hold: ((text: string) => Promise<void>) | null): Promise<void> {
+  const send = openStream(res, reply);
+  for (const [index, block] of reply.content.entries()) {
     if (block.type === 'text') {
       send('content_block_start', { index, content_block: { type: 'text', text: '' } });
       send('content_block_delta', { index, delta: { type: 'text_delta', text: block.text } });
+      if (hold) await hold(block.text);
     } else if (block.type === 'thinking') {
       send('content_block_start', { index, content_block: { type: 'thinking', thinking: '', signature: '' } });
       send('content_block_delta', { index, delta: { type: 'thinking_delta', thinking: block.thinking } });
@@ -210,10 +256,19 @@ function stream(res: ServerResponse, reply: Reply): void {
       send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });
     }
     send('content_block_stop', { index });
-  });
+  }
   send('message_delta', { delta: { stop_reason: reply.stopReason, stop_sequence: null }, usage: { output_tokens: 20 } });
   send('message_stop', {});
   res.end();
+}
+
+// 書いている途中で接続が切れるストリーミングの応答。文のブロックの書きかけ（text）まで送り、hold が済んだら接続を切る
+async function cutStream(res: ServerResponse, reply: Reply, text: string, hold: ((text: string) => Promise<void>) | null): Promise<void> {
+  const send = openStream(res, reply);
+  send('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
+  send('content_block_delta', { index: 0, delta: { type: 'text_delta', text } });
+  if (hold) await hold(text);
+  res.socket?.destroy();
 }
 
 function textOf(message: Message | undefined): string {
