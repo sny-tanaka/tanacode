@@ -6,8 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { transcriptPath } from '../src/main/claude-session';
 import type { TurnStarter } from '../src/main/compact-notice';
 import { handoffText, resumeText } from '../src/shared/optimized-compact';
+import type { ChatEvent } from '../src/shared/chat';
+import { readChatLog } from '../src/main/chat-log';
 import { QUESTION } from './scenario';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
+import { removeLine } from './helpers/tombstone';
 
 // SessionManager の一覧・状態・読み取り（本物の claude なしで動かす。test/session-manager.test.ts の続き）
 
@@ -647,6 +650,29 @@ describe('会話ログの読み取り', () => {
     await app.waitFor('置き換え', () => app.events(id).some((e) => e.type === 'replace'));
     const texts = app.manager.snapshot(id).events.flatMap((e) => (e.type === 'user' || e.type === 'assistant-text' ? [e.text] : []));
     expect(texts).toEqual(['はじめ', 'はい', 'やり直し']);
+  });
+
+  // 形の壊れたツールの呼び出しなどを取り直すとき、Claude Code は取り消した応答の行を、会話ログに書いたあとで消す（#240。removeLine を参照）
+  it('会話ログに書いたあとで消された応答（tombstone）は、チャットから外し、会話ログから作り直したチャットと同じにする', async () => {
+    const { id } = app.create();
+    await app.ready(id);
+    const talk = (events: ChatEvent[]) => events.flatMap((e) => (e.type === 'user' || e.type === 'assistant-text' ? [e.text] : []));
+    const prompt = await app.prompt(id, 'ツールの呼び出しの形が壊れます');
+    const malformed = { ...line.text('形の壊れた応答です。これは取り消されるはず'), parentUuid: prompt };
+    app.append(id, malformed);
+    await app.waitFor('取り消される応答', () => talk(app.manager.snapshot(id).events).includes('形の壊れた応答です。これは取り消されるはず'));
+    // 消したあとすぐ、取り直しの発言（isMeta）と、取り直した応答を書き足す
+    removeLine(app.transcript(id), malformed.uuid);
+    const retry = { ...line.user('The previous response failed to produce a valid tool call. Please retry the tool call now.'), parentUuid: prompt, isMeta: true };
+    app.say(id, retry, { ...line.text('形を直して届いた返事'), parentUuid: retry.uuid });
+    app.finish(id);
+    await app.waitFor('ターンの終わり', () => turnEnds(id) === 1);
+    expect(talk(app.manager.snapshot(id).events)).toEqual(['ツールの呼び出しの形が壊れます', '形を直して届いた返事']);
+    // 画面には、取り消された応答を外したチャットへの置き換えで届く
+    const replaced = app.events(id).filter((e) => e.type === 'replace');
+    expect(replaced).toHaveLength(1);
+    expect(talk(replaced[0].type === 'replace' ? replaced[0].events : [])).toEqual(['ツールの呼び出しの形が壊れます']);
+    expect(talk(await readChatLog(app.transcript(id), app.cwd))).toEqual(['ツールの呼び出しの形が壊れます', '形を直して届いた返事']);
   });
 
   it('claude が終わったら、送信中を空にし、動いていたバックグラウンドのタスクを止まったことにする', async () => {

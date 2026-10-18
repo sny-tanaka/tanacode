@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChatEvent, TranscriptEntry } from '@shared/chat';
 import type { PendingPermission } from '@shared/questions';
-import { readChatLog } from '../../src/main/chat-log';
+import { readChatLog, readEntries } from '../../src/main/chat-log';
 import {
   BAD_REQUEST_PROMPT,
   CUT_DRAFT,
@@ -25,6 +25,7 @@ import {
   checkCut,
   checkEarlyInterrupt,
   checkMalformed,
+  checkMalformedTalk,
   checkOverloaded,
   checkResumed,
   checkRetried,
@@ -190,12 +191,20 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
     expect(api.requests.filter((r) => r.includes(`「${CUT_PROMPT}」の会話`))).toHaveLength(2);
   });
 
-  it('ツールの呼び出しの形が壊れた応答を取り直すと、取り消された応答の文は、書いている途中の文に残らない', async () => {
+  it('ツールの呼び出しの形が壊れた応答を取り直すと、取り消された応答は、書いている途中の文にもチャットにも残らない', async () => {
     const batches = run.chatBatches.length;
     await begin(MALFORMED_PROMPT);
     await run.waitUntil('ターンの終わり', has((e) => e.type === 'turn-end'), 30_000);
     checkMalformed(run.chatBatches.slice(batches), events());
     expect(api.requests.filter((r) => r.includes(`「${MALFORMED_PROMPT}」の会話`))).toHaveLength(2);
+    // 起動し直して会話ログから作り直したチャットも、配信したチャットと同じ
+    const log = await readChatLog(run.transcript(), run.cwd);
+    checkMalformedTalk(log.slice(log.findIndex((e) => e.type === 'user' && e.text === MALFORMED_PROMPT)));
+    // 取り消された応答の行が消えて、後ろの行が詰められても、会話ログに残った行を読み落とさない（ターンの終わりのあとに書かれた行は、読むまで待つ）
+    const onDisk = (await readEntries(run.transcript())).filter((e) => e.uuid);
+    const missed = () => onDisk.filter((e) => !run.seen.some((s) => s.entry.uuid === e.uuid)).map((e) => `${e.type}:${e.uuid}`);
+    await run.waitUntil('会話ログに残った行を読む', () => missed().length === 0, 5_000).catch(() => undefined);
+    expect(missed()).toEqual([]);
   });
 
   it('新しい会話の最初の発言から、ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks が読める', async () => {
