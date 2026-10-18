@@ -263,6 +263,25 @@ describe('adopt', () => {
     await expect(app.manager.configure(id, { model: null, effort: 'max', settingsFile: null })).rejects.toThrow('max');
   });
 
+  it('アプリがいない間に / のコマンドの一覧が変わっていたら（控えの commands_changed）、引き継いだときに候補を新しくする', async () => {
+    const id = await previous(line.user('はじめ'), line.text('はい'));
+    const changed = (seq: number, names: string[]) => ({
+      seq,
+      line: JSON.stringify({ type: 'system', subtype: 'commands_changed', commands: names.map((name) => ({ name, description: name, argumentHint: '' })), uuid: `c${seq}`, session_id: 's' }),
+    });
+    // 控えの頭より前の、種類ごとの最新の行（retained）
+    app.host.hosted = [hosted(id, { lastSeq: 3, firstSeq: 3, retained: [changed(1, ['deploy'])] })];
+    await app.manager.adopt();
+    await app.waitFor('起動済み', () => app.manager.stateOf(id) === 'idle');
+    expect(app.manager.commandsOf(id)?.map((c) => c.name)).toEqual(['deploy']);
+    // 送り直しの行（前のアプリの頃）と、新しい行
+    attached(id)!.emit(JSON.parse(changed(3, ['deploy', 'review']).line), 3);
+    attached(id)!.replayed();
+    expect(app.manager.commandsOf(id)?.map((c) => c.name)).toEqual(['deploy', 'review']);
+    attached(id)!.emit(JSON.parse(changed(4, ['review']).line));
+    expect(app.manager.commandsOf(id)?.map((c) => c.name)).toEqual(['review']);
+  });
+
   it('claude を動かしたままアプリを終えるときは、送信中・順番待ちの発言を記録に残す', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);

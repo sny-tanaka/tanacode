@@ -188,6 +188,10 @@ export type HookResponseMessage = {
   uuid?: string;
 };
 
+// SDKCommandsChangedMessage（セッションの途中での / のコマンドの一覧の変化。スキルのファイルを足した・プラグインを読み直したなど）。
+// commands は initialize の返事の commands と同じ形の、変わったあとの全部（Claude Code 2.1.302 の本体。同じ関数で作る）
+export type CommandsChangedMessage = { type: 'system'; subtype: 'commands_changed'; commands: SlashCommandInfo[]; uuid?: string; session_id?: string };
+
 // SDKConversationResetMessage（/clear）。新しい会話の ID は、このあとの system/init の session_id（new_conversation_id とは別。実測）
 export type ConversationResetMessage = {
   type: 'conversation_reset';
@@ -356,6 +360,7 @@ export type StreamMessage =
   | CompactBoundaryMessage
   | ApiRetryMessage
   | BridgeStateMessage
+  | CommandsChangedMessage
   | ConversationResetMessage
   | StreamEventMessage
   | ToolProgressMessage
@@ -385,11 +390,13 @@ export const STREAM_ARGS = [
 // 常駐のホストに控えてもらう、種類ごとの最新の行（アプリを再起動したとき、控えの頭が欠けても状態を組み立て直せるように）と、
 // 控えない行（書いている途中。アプリがいない間は要らない）。
 // status は、権限モードの付いた行だけ（圧縮中などのモードの無い status で、モードが分からなくならないように）。
-// 裏のタスクは、終わりの知らせ（task_notification）か、終わった状態への変化（task_updated）で捨てる
+// 裏のタスクは、終わりの知らせ（task_notification）か、終わった状態への変化（task_updated）で捨てる。
+// / のコマンドの一覧の変化（commands_changed）は、アプリがいない間に変わっても、入力欄の候補を新しくできるように
 export const RETAIN_RULES: RetainRule[] = [
   { type: 'system', subtype: 'init' },
   { type: 'system', subtype: 'status', where: { permissionMode: [] } },
   { type: 'system', subtype: 'bridge_state' },
+  { type: 'system', subtype: 'commands_changed' },
   { type: 'rate_limit_event' },
   {
     type: 'system',

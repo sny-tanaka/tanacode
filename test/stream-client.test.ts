@@ -119,6 +119,11 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'done', agent_id: 1 },
       { type: 'system', subtype: 'compact_boundary' },
       { type: 'system', subtype: 'api_retry' },
+      // / のコマンドの一覧が無い・名前や説明が文字列でない・別名が文字列の配列でない
+      { type: 'system', subtype: 'commands_changed' },
+      { type: 'system', subtype: 'commands_changed', commands: [{ description: 'x' }] },
+      { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy' }] },
+      { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy', description: 'x', aliases: 'd' }] },
       // 出力の欄が無い・文字列でない（何も出力しなかったかを決められない）
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success' },
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: null },
@@ -150,6 +155,8 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'bridge_state', state: 'connected' },
       { type: 'system', subtype: 'compact_boundary', compact_metadata: {} },
       { type: 'system', subtype: 'api_retry', attempt: 1 },
+      { type: 'system', subtype: 'commands_changed', commands: [] },
+      { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy', description: 'x', argumentHint: '', aliases: ['d'] }] },
       { type: 'system', subtype: 'task_progress' },
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: '' },
     ];

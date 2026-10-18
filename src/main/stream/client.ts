@@ -273,6 +273,11 @@ function isPermission(request: unknown): request is CanUseToolRequest {
   return str(r.tool_name) && isRecord(r.input) && str(r.tool_use_id);
 }
 
+// / のコマンド（initialize の返事の commands と同じ形）。候補に使う name・description・aliases を確かめる
+function isCommand(value: unknown): boolean {
+  return isRecord(value) && str(value.name) && str(value.description) && (value.aliases === undefined || (Array.isArray(value.aliases) && value.aliases.every(str)));
+}
+
 // 使わないと分かっていて、黙って捨てる種類。時間で出る行（keep_alive。2.1.302 は 30 秒ごとに出すことがある）は、
 // 知らない種類として数えると、控えのテスト（unreadableStreamLines）がテストの長さしだいで落ちたり通ったりする。
 // system/task_summary（ターンの途中の「今していること」の一言）と system/post_turn_summary（ターンごとのまとめ）は、
@@ -294,6 +299,7 @@ const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   bridge_state: (v) => str(v.state),
   compact_boundary: (v) => isRecord(v.compact_metadata),
   api_retry: (v) => typeof v.attempt === 'number',
+  commands_changed: (v) => Array.isArray(v.commands) && v.commands.every(isCommand),
   task_progress: () => true,
   task_updated: () => true,
   background_tasks_changed: () => true,
