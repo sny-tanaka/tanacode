@@ -24,6 +24,7 @@ const FAILURE_TEXT = {
   'not-cleared': 'chat.pane.compactFailure.notCleared',
   exited: 'chat.pane.compactFailure.exited',
   busy: 'chat.pane.compactFailure.busy',
+  'usage-limit': 'chat.pane.compactFailure.usageLimit',
 } as const satisfies Record<CompactFailure, string>;
 
 // セッションの最適化圧縮の状態（進んでいる段階・取りやめた理由・使えない理由）。流れは main が動かすので、画面は聞いて、変わったら受け取るだけ

@@ -42,6 +42,7 @@ import { SendError, type SendFailure } from '../src/main/send-error';
 import { textResult } from '../src/main/mcp-bridge';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
+import { usageResumeText } from '../src/shared/usage-limit';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
@@ -1866,6 +1867,34 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(text).toContain('After the reset, the session continued the work that was in progress: what follows is the rest of that work.');
     });
 
+    it('再開のターンが、作業を続ける前に利用枠で止まった: 引き継いだ報告で終わったのではないので、利用枠で止まったことを親に知らせる', async () => {
+      const AUTO = { percent: 85, midTurn: false };
+      const RESET = Math.floor(Date.now() / 1000) * 1000 + 3 * 60 * 60_000;
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: '税率を可変にして', parent: PARENT }, said('手順 1 を終えました'), { type: 'turn-end' }]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      handoffTurn(AUTO);
+      await settle();
+      // 再開のターン: チェックリストを読んだところで、利用枠に当たって止まった（応答は無い）
+      push({ type: 'reset', compact: true }, { type: 'user', id: `c${n++}`, text: '/clear', command: true }, { type: 'turn-end' }, resumeNotice(AUTO));
+      host.set(CHILD, 'working');
+      flowing.delete(CHILD);
+      host.set(CHILD, 'working');
+      const limit = { resetsAt: RESET, window: 'five_hour' as const };
+      push(tool('ToolSearch'), tool('mcp__tanacode-checklist__checklist_overview'), { type: 'api-error', id: `e${n++}`, text: '利用枠の上限に達したので、止まりました', retrying: false, limit }, { type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      await settle();
+      const name = { name: host.list().find((x) => x.id === CHILD)?.title ?? t('tools.notice.untitledSession'), id: CHILD.slice(0, 8) };
+      const last = notices().at(-1)?.text ?? '';
+      expect(notices()).toHaveLength(2);
+      expect(last).not.toContain(t('tools.notice.childDone', name));
+      const reset = last.match(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d/)?.[0];
+      expect(new Date(reset!).getTime()).toBe(RESET);
+      expect(last).toContain(t('tools.notice.childUsageLimitNoResume', { ...name, time: reset! }));
+    });
+
     it('途中で止める自動: 止めた瞬間には知らせない。続きを終えたときに、親に知らせる。読めるのは、続きを終えたあとの応答', async () => {
       const AUTO = { percent: 91, midTurn: true };
       // フックが止めるファイルを掴んだ（このあと、ターンが止まって流れに入る）
@@ -2997,6 +3026,101 @@ describe('自分への予約と、人への報告（SessionsControl）', () => {
     expect(jsonOf<{ note: string }>(await control.handle(PEER, 'list_wakeups', {})).note).toContain(note);
     expect(jsonOf<{ note: string }>(await control.handle(PEER, 'list_wakeups', {})).note).toBe('No messages are scheduled in this session.');
     errors.mockRestore();
+  });
+
+  describe('利用枠で止まった子', () => {
+    // 枠が戻る時刻は、秒で届く
+    const RESET = Math.floor(Date.now() / 1000) * 1000 + 3 * 60 * 60_000;
+    // この Mac の時刻と時差で書いた ISO 8601 か（Claude が人に時刻を伝えるときの形）。その時刻
+    const localTime = (value: unknown) => {
+      expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$/);
+      return new Date(value as string).getTime();
+    };
+    const limitTurn = (): ChatEvent[] => [
+      { type: 'user', id: 'u1', text: '税率を可変にして', parent: PARENT },
+      { type: 'assistant-text', id: 'a1', text: 'tax.ts を直しています' },
+      { type: 'api-error', id: 'e1', text: '利用枠の上限に達したので、止まりました', retrying: false, limit: { resetsAt: RESET, window: 'five_hour' } },
+      { type: 'turn-end' },
+    ];
+    type Limited = { last_response: string | null; usage_limit?: { resets_at: string | null; resume_scheduled_at: string | null; note: string } };
+
+    it('get_session: 最後のターンが利用枠で止まった子には、枠が戻る時刻・再開の予約の時刻を付け、last_response が結果ではないと伝える', async () => {
+      host.events.set(CHILD, limitTurn());
+      host.set(CHILD, 'idle');
+      const before = jsonOf<Limited>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      expect(before.last_response).toBe('tax.ts を直しています');
+      expect(localTime(before.usage_limit?.resets_at)).toBe(RESET);
+      expect(before.usage_limit?.resume_scheduled_at).toBeNull();
+      expect(before.usage_limit?.note).toContain('No message is scheduled to resume it.');
+      scheduled!.add(CHILD, usageResumeText(), [], RESET + 60_000, [], 'usage-limit', RESET);
+      const after = jsonOf<Limited>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      expect(localTime(after.usage_limit?.resume_scheduled_at)).toBe(RESET + 60_000);
+      expect(after.usage_limit?.note).toBe(
+        'The last turn stopped because the usage limit of the plan was reached: last_response (if any) is from before the stop, not a result of the work. At resume_scheduled_at, tanacode sends it a message to continue (the user can move or cancel it). There is no need to check on it before then.',
+      );
+      // 枠が戻って続きの応答が来たら、もう付けない
+      host.events.set(CHILD, [...limitTurn(), { type: 'notice', id: 'n1', text: '利用枠が戻ったので、続きを頼みました' }, { type: 'assistant-text', id: 'a2', text: '直しました' }]);
+      expect(jsonOf<Limited>(await control.handle(PARENT, 'get_session', { session_id: CHILD }))).not.toHaveProperty('usage_limit');
+    });
+
+    it('親への知らせ: 子が利用枠で止まったら、作業が終わったとは言わずに、いつ再開するか（再開しないなら、枠がいつ戻るか）を伝える', async () => {
+      const notifying = new SessionsControl({ host, enabled: () => true, archive: async () => null, home: '/nonexistent-home', scheduled: () => scheduled, notifyDelayMs: 10 });
+      try {
+        const settle = () => new Promise((r) => setTimeout(r, 60));
+        const name = { name: host.list().find((x) => x.id === CHILD)?.title ?? t('tools.notice.untitledSession'), id: CHILD.slice(0, 8) };
+        scheduled!.add(CHILD, usageResumeText(), [], RESET + 60_000, [], 'usage-limit', RESET);
+        host.events.set(CHILD, limitTurn());
+        host.set(CHILD, 'idle');
+        await settle();
+        const first = host.submitted.filter((x) => x.id === PARENT).at(-1)?.text ?? '';
+        const time = (iso: string) => t('tools.notice.childUsageLimit', { ...name, time: iso });
+        expect(first).not.toContain(t('tools.notice.childDone', name));
+        const at = first.match(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d/)?.[0];
+        expect(localTime(at)).toBe(RESET + 60_000);
+        expect(first).toContain(time(at!));
+        // 予約が無ければ、枠が戻る時刻と、予約が無いこと
+        scheduled!.cancel(scheduled!.list()[0]!.id);
+        host.set(CHILD, 'working');
+        host.set(CHILD, 'idle');
+        await settle();
+        const second = host.submitted.filter((x) => x.id === PARENT).at(-1)?.text ?? '';
+        const reset = second.match(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d/)?.[0];
+        expect(localTime(reset)).toBe(RESET);
+        expect(second).toContain(t('tools.notice.childUsageLimitNoResume', { ...name, time: reset! }));
+      } finally {
+        notifying.dispose();
+      }
+    });
+
+    it('親が利用枠で止まって再開を待っている間は、子の知らせを送らずに預かり、再開して手が空いたら送る', async () => {
+      const notifying = new SessionsControl({ host, enabled: () => true, archive: async () => null, home: '/nonexistent-home', scheduled: () => scheduled, notifyDelayMs: 10 });
+      try {
+        const settle = () => new Promise((r) => setTimeout(r, 60));
+        const parentResume = scheduled!.add(PARENT, usageResumeText(), [], RESET + 60_000, [], 'usage-limit', RESET);
+        host.events.set(CHILD, limitTurn());
+        host.set(CHILD, 'idle');
+        await settle();
+        expect(host.submitted.filter((x) => x.id === PARENT)).toEqual([]);
+        // 親の再開の予約が送られ、続きのターンが終わった
+        scheduled!.cancel(parentResume.id);
+        host.set(PARENT, 'working');
+        host.set(PARENT, 'idle');
+        await settle();
+        expect(host.submitted.filter((x) => x.id === PARENT)).toHaveLength(1);
+      } finally {
+        notifying.dispose();
+      }
+    });
+
+    it('list_wakeups・cancel_wakeup: 利用枠の再開の予約は tanacode のものとして見せ（本文の代わりに中身の説明）、Claude には取り消させない', async () => {
+      const added = scheduled!.add(PARENT, usageResumeText(), [], RESET + 60_000, [], 'usage-limit', RESET);
+      const listed = jsonOf<Listed>(await control.handle(PARENT, 'list_wakeups', {}));
+      expect(listed.messages).toMatchObject([{ id: added.id, by: 'tanacode', text: 'tanacode resumes this session after the usage limit resets (the message asks you to check where you stopped and continue).' }]);
+      expect(textOf(await control.handle(PARENT, 'cancel_wakeup', { id: added.id }))).toBe(
+        'tanacode scheduled this message to resume this session after the usage limit resets. Only the user can cancel or change it.',
+      );
+      expect(scheduled!.list()).toHaveLength(1);
+    });
   });
 
   it('cancel_wakeup: 取り消せるのは、このセッションの Claude の予約だけ。人の予約は人だけが取り消せる', async () => {

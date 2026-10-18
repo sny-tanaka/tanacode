@@ -1,6 +1,7 @@
 import type { Activity, PermissionMode } from '@shared/screen';
 import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import type { UsageLimit } from '@shared/usage';
+import type { UsageLimitStop } from '@shared/usage-limit';
 import type { PermissionModeName, RateLimitEvent, StreamEventMessage, UsageResponse, UsageWindow } from './protocol';
 
 // stream-json の行から、アプリの表示に使う値を作る小さな関数（SessionManager が使う）
@@ -128,6 +129,15 @@ export function rateLimitsOf(event: RateLimitEvent): StatusLineInfo['rateLimits'
   const of = (w: { utilization?: unknown; resetsAt?: unknown } | undefined): RateLimit | null =>
     typeof w?.utilization === 'number' ? { percent: Math.round(w.utilization * 1000) / 10, resetsAt: typeof w.resetsAt === 'number' ? w.resetsAt * 1000 : null } : null;
   return { fiveHour: of(windows.five_hour), sevenDay: of(windows.seven_day) };
+}
+
+// 利用枠を断られた知らせ（rate_limit_event の status が rejected）の、枠が戻る時刻（resetsAt は秒）と、当たった枠（rateLimitType）
+export function rejectedLimitOf(event: RateLimitEvent): UsageLimitStop {
+  const { resetsAt, rateLimitType } = event.rate_limit_info;
+  return {
+    resetsAt: typeof resetsAt === 'number' && Number.isFinite(resetsAt) && resetsAt > 0 ? resetsAt * 1000 : null,
+    window: typeof rateLimitType === 'string' && rateLimitType ? rateLimitType : null,
+  };
 }
 
 // get_usage の返事から読んだ利用枠。modelsKnown: モデル別の週の枠の一覧（model_scoped）が返事にあったか。

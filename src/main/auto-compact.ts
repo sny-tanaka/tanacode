@@ -143,6 +143,9 @@ export class AutoCompact {
     if (failure === null) {
       s.failures = 0;
       s.paused = false;
+    } else if (auto && failure === 'usage-limit') {
+      // 利用枠で止まったのは、切り替えられないからではないので、休むまでの数に入れない。枠が戻って続きのターンが終わったら、また試す
+      s.armed = true;
     } else if (auto) {
       s.failures += 1;
       if (s.failures >= MAX_FAILURES) s.paused = true;
