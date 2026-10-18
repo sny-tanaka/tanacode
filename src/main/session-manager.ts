@@ -80,6 +80,7 @@ import type {
   BridgeStateMessage,
   CanUseToolRequest,
   CommandLifecycleMessage,
+  CommandsChangedMessage,
   ContentBlock,
   ContextUsageResponse,
   HookResponseMessage,
@@ -2381,6 +2382,16 @@ export class SessionManager {
         const retry = message as Extract<StreamMessage, { subtype: 'api_retry' }>;
         const text = t('chat.transcript.apiErrorRetrying', { message: retry.error_status ? `${retry.error} (${retry.error_status})` : retry.error, attempt: retry.attempt, max: retry.max_retries });
         this.pushEvents(id, [{ type: 'api-error', id: retry.uuid, text, retrying: true }]);
+        return;
+      }
+      case 'commands_changed': {
+        // / のコマンドの一覧が変わった（スキルのファイルを足した・プラグインを読み直したなど）。入力欄は / の候補を開くたびに
+        // 読みに来る（commandsOf）ので、差し替えておけば次に開いたときから新しくなる。引き継ぎで戻せるよう記録も直す
+        // （前のアプリの頃の行も。initialize の返事は記録から戻すので、引き継いだときはこちらが先に記録を直す）
+        const commands = (message as CommandsChangedMessage).commands;
+        if (rt.init) rt.init = { ...rt.init, commands };
+        const saved = this.store.get(id)?.claudeInit;
+        if (saved) this.store.update(id, { claudeInit: { ...saved, commands } });
         return;
       }
     }
