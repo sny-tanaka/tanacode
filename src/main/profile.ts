@@ -20,7 +20,7 @@ import { ChecklistStore } from './checklist-store';
 import { WalkthroughControl } from './walkthrough-control';
 import { TerminalControl } from './terminal-control';
 import { commentOnPullRequest, pullRequestsOf } from './github';
-import { menuNotice, scheduledNotice, snippet } from './notice-text';
+import { menuNotice, scheduledNotice, snippet, usageLimitNotice } from './notice-text';
 import { hostExecutable, PtyHost } from './pty-host-client';
 import { ScheduledMessages } from './scheduled-messages';
 import { SessionManager } from './session-manager';
@@ -31,6 +31,7 @@ import { socketPathIn } from './socket-path';
 import { StatusLineWatcher } from './statusline';
 import { ShellTerminals } from './shell-terminals';
 import { TurnReports } from './turn-reports';
+import { UsageLimitResume } from './usage-limit-resume';
 import { UsageMonitor } from './usage-monitor';
 import { WorkspaceWatchers } from './workspace-watcher';
 
@@ -86,6 +87,8 @@ export class Profile {
   checklistControl: ChecklistControl | null = null;
   compact: OptimizedCompact | null = null;
   autoCompact: AutoCompact | null = null;
+  // 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れる
+  usageLimit: UsageLimitResume | null = null;
   walkthroughControl: WalkthroughControl | null = null;
   terminalControl: TerminalControl | null = null;
   // Claude がターンの終わりの通知に載せる報告（tanacode-sessions の report_result）
@@ -203,6 +206,8 @@ export class Profile {
           const message = this.turnMessage(session.id, notice);
           if (message) notify(session.id, session.title, message);
         },
+        // 利用枠で止まったら、枠が戻ったときに続きを頼む予約を入れる（止まらずに終わったら、待っている予約は要らない）
+        onTurnLimit: (sessionId, limit) => this.usageLimit?.turnEnded(sessionId, limit),
         onAttention: (session, attention) => notify(session.id, session.title, menuNotice(attention.menu)),
         onProgress: (sessionId, activity) => send(IpcChannel.SessionsProgress, { sessionId, activity }),
         onWorkflows: (sessionId, runs) => send(IpcChannel.WorkflowsChanged, { sessionId, runs }),
@@ -268,10 +273,17 @@ export class Profile {
       (messages) => send(IpcChannel.ScheduledChanged, messages),
       (message) => notify(message.sessionId, manager.summary(message.sessionId)?.title ?? null, scheduledNotice(message)),
     );
+    this.usageLimit = new UsageLimitResume({
+      scheduled: () => this.scheduled ?? null,
+      enabled: () => this.settings.usageLimitResumeEnabled(),
+      parentOf: (id) => manager.parentOf(id),
+      terminal: (id) => !!manager.summary(id)?.terminal,
+    });
     // アーカイブした・一覧から消したセッションの予約は取り消し、ウォークスルーは捨てる
     manager.watchState((id) => {
       const state = manager.stateOf(id);
       if (state === null || state === 'archived') this.scheduled.dropSession(id);
+      if (state === null || state === 'archived') this.usageLimit?.forget(id);
       if (state === null || state === 'archived') this.walkthroughControl?.discard(id);
       if (state === null || state === 'archived' || state === 'exited') compactNotice.forget(id);
       // 新しいターンが始まったら、前のターンの報告は捨てる
@@ -308,8 +320,10 @@ export class Profile {
       autoStatus: (id) => autoCompact.status(id),
       onFinish: (id, failure, auto) => {
         autoCompact.finished(id, failure, auto);
-        // 仕上げのターン・アプリが止めたターンは終わっているのに、切り替えられなかった（そのターンの終わりでは、通知を出していない）
-        if (compactNotice.finished(id, failure)) notify(id, manager.summary(id)?.title ?? null, t('main.notification.compactFailed'));
+        // 仕上げのターン・アプリが止めたターンは終わっているのに、切り替えられなかった（そのターンの終わりでは、通知を出していない）。
+        // 仕上げのターンが利用枠で止まったときは、利用枠で止まったことを知らせる
+        const limit = failure === 'usage-limit' ? this.usageLimit?.noticeOf(id) : null;
+        if (compactNotice.finished(id, failure)) notify(id, manager.summary(id)?.title ?? null, limit ? usageLimitNotice(limit) : t('main.notification.compactFailed'));
       },
     });
     this.compact = compact;
@@ -334,6 +348,12 @@ export class Profile {
   // ターンが終わったときの通知の本文（null なら出さない）。Claude の報告があれば、その文にする（使ったら捨てる）。
   // 無くて、Claude が自分に入れた予約が待っていれば、作業の完了は知らせない（時刻になると Claude が続きを始めるので、まだ終わっていない）
   private turnMessage(id: string, notice: TurnNotice): string | null {
+    // 利用枠で止まったのは、作業の完了ではない。いつ再開するか（戻るか）を知らせる
+    const limit = this.usageLimit?.noticeOf(id);
+    if (limit) {
+      this.reports.take(id);
+      return usageLimitNotice(limit);
+    }
     const report = this.reports.take(id);
     if (report) return snippet(report);
     if (notice === 'work' && this.scheduled?.hasClaudeWakeup(id)) return null;

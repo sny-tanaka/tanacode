@@ -6,7 +6,9 @@ import { needsAttention } from './scheduled';
 import { SchedulePicker } from './SchedulePicker';
 
 // チャットの末尾に出す、予約したメッセージ（時刻を指定して送信）。送るまでは点線の枠で、今すぐ送る・時刻を変える・取り消す（入力欄に戻す）ができる。
-// Claude が自分に入れた予約（by: 'claude'）は、親セッションからの指示と同じく Claude の色で出して、人の予約と見分ける。取り消しても入力欄には戻さない
+// Claude が自分に入れた予約（by: 'claude'）は、親セッションからの指示と同じく Claude の色で出して、人の予約と見分ける。取り消しても入力欄には戻さない。
+// 利用枠で止まったセッションの再開の予約（by: 'usage-limit'。アプリが入れたもの）は、お知らせと同じ灰色の印にし、本文（Claude に送る英語の文）の
+// 代わりに、何を頼むかを画面の言語で出す。これも取り消しても入力欄には戻さない
 export function ScheduledRow({
   message,
   onSendNow,
@@ -22,18 +24,24 @@ export function ScheduledRow({
   const sending = message.state === 'sending';
   const trouble = needsAttention(message);
   const claude = message.by === 'claude';
-  // Claude の予約は、取り消しても入力欄に戻らないので、ツールチップも「取り消す」だけにする
-  const cancelTip = claude ? t('schedule.row.cancel') : sending ? t('schedule.row.cancelSendingTip') : t('schedule.row.cancelTip');
+  const limit = message.by === 'usage-limit';
+  // Claude の予約・利用枠の再開の予約は、取り消しても入力欄に戻らないので、ツールチップも「取り消す」だけにする
+  const cancelTip = claude || limit ? t('schedule.row.cancel') : sending ? t('schedule.row.cancelSendingTip') : t('schedule.row.cancelTip');
   return (
-    <div className={`chat-user pending scheduled${claude ? ' by-claude' : ''}${trouble ? ' trouble' : ''}`}>
-      <span className="chat-prompt">{claude ? '»' : '›'}</span>
+    <div className={`chat-user pending scheduled${claude ? ' by-claude' : ''}${limit ? ' by-tanacode' : ''}${trouble ? ' trouble' : ''}`}>
+      <span className="chat-prompt">{claude || limit ? '»' : '›'}</span>
       <span className="chat-user-text">
         {claude && (
           <span className="chat-scheduled-by" data-tip={t('schedule.row.claudeTip')}>
             {t('schedule.row.claude')}
           </span>
         )}
-        {message.text}
+        {limit && (
+          <span className="chat-scheduled-by" data-tip={t('schedule.row.usageLimitTip')}>
+            {t('schedule.row.usageLimit')}
+          </span>
+        )}
+        {limit ? t('schedule.row.usageLimitText') : message.text}
         <PastedChips pastes={message.pastes} />
         {message.attachments.length > 0 && <span className="chat-user-meta">{t('schedule.row.images', { count: message.attachments.length })}</span>}
         <span className="chat-user-meta chat-scheduled-note">

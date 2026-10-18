@@ -401,7 +401,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）と、そのほかの API のブロック（`raw`。そのまま送る）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。文のブロックを書き終える前に止めておくこともできます（`holdText`。書いている途中の文がアプリから配信されてから、会話ログに出るようにする）。
     - 本体の会話の呼び出しごとに、頼まれたモデルとエフォートを控えます（切り替えが届いたかを確かめる。`calls`）。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 20 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 21 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -427,6 +427,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `internal-requests.test.ts` | アプリが使う Claude Code の内部の制御の要求（`stream/internal.ts`。公開の Agent SDK の型に無いもの）に受け口があるか。`remote_control`（つなぐ・切る。モックの API では理由つきで断られる）・`generate_session_title`（タイトルが返る）・`rewind_conversation`（知らない発言を指すと、巻き戻さずに理由を返す）・`end_session`（Claude Code が終わる）が、「Unsupported control request subtype」で断られない。毎日の確認で、新しい Claude Code でも使えるかを見る |
     | `commands-changed.test.ts` | セッションの途中で / のコマンドの一覧が変わったとき。起動したあとにプロジェクトのスキルのファイルを足すと、Claude Code が `system/commands_changed` を出し、入力欄の候補（`SessionManager.commandsOf`）が起動し直さずに新しくなるか。Claude Code のスキルの見張りは起動の途中で裏で始まり、始まる前に足したファイルは変化として知らされないので、デバッグの記録（`DEBUG_SDK=1` と `CLAUDE_CODE_DEBUG_LOGS_DIR`）に見張りの始まり（`Watching for changes in skill/command directories`）が出てから足す |
     | `unknown-events.test.ts` | アプリの知らない行が、捨てられずに未知のイベントとしてチャットに届くか。モックの API が応答に、アプリの読まないブロック（サーバーのツールの `server_tool_use`・`web_search_tool_result`。本物の API が返す形）を混ぜると、Claude Code はそのまま会話ログに書き（2.1.302 で実測）、チャットに種類・会話ログから来たこと・バージョン・生の行の付いた未知のイベントが届く。ターンは始めず、ふつうに終わって待機中に戻る |
+    | `usage-limit.test.ts` | プランの利用枠に当たって止まったこと。モックの API が、はじめの応答の代わりに 429 と枠のヘッダー（`usageLimitFailure`。`anthropic-ratelimit-unified-status: rejected` など）を返す。Claude Code は OAuth のトークン（`ClaudeRun` の `oauth`。偽物の `CLAUDE_CODE_OAUTH_TOKEN`）で動かす（API キーでは、枠として読まない。2.1.302 で実測）。再試行はせず、会話ログの合成の応答の行（`apiError: usage_limit_reached`・枠が戻る時刻）が時刻の付いた API エラーとしてチャットに出て、ターンの終わりに `onTurnLimit` が届く。アプリと同じ `UsageLimitResume` が、枠が戻る 1 分後に予約を入れ、今すぐ送ると囲みに入れた再開のメッセージが Claude に届いて続きが始まり、予約は消える |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。同じように、書いている途中で接続を切る応答（`cuts`。書きかけを送ってから、`holdText` が済んだら切る）と、ツールを呼ばないのに `stop_reason` が `tool_use` の応答（`malformed`）も返せます。どちらも Claude Code が取り消して、取り直します。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
@@ -822,9 +823,34 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - タイマーは、いちばん早い予約に 1 つだけ掛けます。`setTimeout` の上限（約 24.8 日）より先なら、途中で一度起きて測り直します。
 - Claude が自分に入れた予約（`schedule_wakeup`。[セッション間の連携](#セッション間の連携claude-による操作)）も、同じ `ScheduledMessages` に乗せます。人の予約と分けるのは `ScheduledMessage.by: 'claude'` だけで、一覧の時計・5 分過ぎたら送らない・人が画面で今すぐ送る・時刻を変える・取り消す、はそのまま効きます。
   - 送るときだけ、本文を `<tanacode-wakeup>本文</tanacode-wakeup>`（`scheduled.ts` の `wakeupText`。本文の `<tanacode-` は `neutralizeTags` で打ち消す）に入れます。会話ログでは `chat.ts` が `parseWakeup` で読み、`notice` のイベント（文言は「Claude の予約の時刻になりました」、`detail` は本文）にします。順番待ちの行（`isHumanPrompt`）・一覧のタイトル（`transcriptTitle`）では、人の発言として数えません。囲みの名前（`WAKEUP_TAG`）は `session-tools.ts` に置きます（MCP の説明で使い、`scheduled.ts` が `session-tools.ts` を読むので、逆に置くと読み込みが輪になる）。
-  - `by` は保存し、読むときは `'claude'` のほかは捨てます（前のバージョンの保存には無い）。
+  - `by` は保存し、読むときは `'claude'` と `'usage-limit'`（下の「利用枠で止まったときの再開」）のほかは捨てます（前のバージョンの保存には無い）。
   - 数（待っているものはセッションごとに 3 つまで）と時刻（1 分後から 24 時間後まで）の決まりは、Claude に英語で返すので、呼ぶ側の `SessionsControl` が確かめます。`ScheduledMessages.add` は人の予約と同じ確かめだけ。待っているものは `claudeWakeups`（`scheduled`・`sending`。`missed`・`failed` は数えない）。
   - 画面: 予約の行（`ScheduledRow`）は、`by: 'claude'` なら「Claude の予約」の印を付け、親からの指示と同じ Claude の色（`by-claude`）で出します。取り消しても入力欄には戻しません（`ClaudePane` の `takeScheduled`）。送れなかったときの通知（`scheduledNotice`）は「Claude の予約」と添えます。
+
+### 利用枠で止まったときの再開
+
+- プランの利用枠（5 時間枠・週の枠）に当たると、Claude Code は API を呼び直さずにターンを終えます。止まったセッションに、枠が戻る時刻の 1 分後（`USAGE_RESUME_DELAY_MS`）に続きを頼む予約を入れます（`src/main/usage-limit-resume.ts` の `UsageLimitResume`。`Profile` が持つ）。
+- 止まったことを何で知るか（2.1.296・2.1.302 の実物、2.1.302 はモックでも再現。`docs/claude-code-events.md`）
+  - 正: 会話ログの合成の応答の行（model `<synthetic>`・`isApiErrorMessage`・`apiError: 'usage_limit_reached'`・`apiErrorParams.rate_limit_info`（`resetsAt` は秒・`rateLimitType`・`status: 'rejected'`）。`quotaLimits` も同じ中身）。`chat.ts` が `usageLimitOf`（`src/shared/usage-limit.ts`）で読み、`api-error` のイベントに `limit`（`{ resetsAt, window }`）を付けます。チャットの文は、Claude Code の英語の文の代わりに、枠が戻る時刻（`usageLimitText`）。会話ログに残るので、アプリを起動し直したあとも、親が子の様子を読んだときも同じに分かります。
+  - 補い 1: stream-json の `result` の `api_error: 'usage_limit_reached'`（`subtype` は `success` のまま・`is_error: true`・`terminal_reason: 'api_error'`。時刻は無い）。ターンの終わりの時点で会話ログの行が間に合わなかったとき（`turnEndWaitMs` を過ぎた）にも、止まったと分かります。
+  - 補い 2: stream-json の `rate_limit_event` の `status: 'rejected'`（`resetsAt` は秒）。補い 1 で分かったが、会話ログの行が無いときの、枠が戻る時刻。これだけでは止まったことにしません（断られても、予備のモデルで続けることがあるため）。
+  - `SessionManager` は、今のターンの間（ターミナルモードでは、いつも）に出た会話ログの行（`turnLimit`）・`result`（`limitResult`）・断られた知らせ（`rejectedLimit`）を控え、ターンの終わり（`turnCompleted`。モデルを呼ばなかったターンは除く）に `onTurnLimit` を呼びます（通知を出さないターンでも、`onTurnCompleted` より先に）。止まったときは知らせを、止まらずにモデルが応答したとき（`turnAnswered`。合成でない応答が stream に届いた。ターミナルモードでは会話ログの応答の行）は null を渡します。どちらでもないターン（応答の前に中断した）では呼びません（作業が進んだとして、再開の予約を消さないように）。ターンが始まったら消します。終わったターンのあとに遅れて出た行は数えません。
+  - `resetsAt` は、あとから更新されない記録です。今の時刻と比べ、過ぎていたら予約しません（同じ枠で当たり続けないように）。読み直した過去の行でも予約しません。
+  - 時刻が取れないとき（2.1.289 は文だけ。`result` の補いだけで `rate_limit_event` も無いとき）は、予約しません。`UsageMonitor` の時刻では補いません。どの枠に当たったか分からないまま 5 時間枠・週の枠のどちらかを選ぶと、早すぎて当たり直すか、遅すぎるためです。文の「resets 5am (Asia/Tokyo)」は日付が無いので読みません。
+- 予約（`ScheduledMessages` の `by: 'usage-limit'`。`limitResetsAt` に枠が戻る時刻）
+  - 本文は、囲み（`<tanacode-usage-limit-reset>`。`usageResumeText`）ごと持ちます。前のバージョンのアプリは、知らない `by` を読み捨てて人の予約として送りますが、囲みごと届くので、Claude には同じに伝わります。今のアプリは、送るときに囲み直しません。
+  - 同じプロファイル（予約の置き場はプロファイルごと）で同じ時刻に戻る枠の予約は、親子の深さ（親のいないセッションが 0）の順、同じなら止まった順に、1 分ずつ（`USAGE_RESUME_STAGGER_MS`）ずらして並べ直します（`arrange`。アプリは `ScheduledMessages.retime` で変える）。子が先に止まって、あとから親の予約（`schedule_wakeup` が届いたターンなど）が止まることが多いので、入れるたびに並べ直します。取り消した・作業が進んで外したときも、前に詰めます。
+  - 人（画面）が時刻を変えたら（`reschedule`）、`limitResetsAt` を外し、もう並べ直しません。
+  - 止まり直したら、そのセッションの前の予約（送れなかったもの・送っている途中のものも）を取り消して入れ直します。1 つのセッションに 1 つだけ。
+  - 止まらずにモデルが応答してターンが終わったら（人が自分で続きを頼んだ・予備のモデルで続いたなど）、そのセッションの予約を取り消します（`onTurnLimit(id, null)`）。再開の予約が送られて始まったターンでは、予約はもう外れています。
+  - 5 分より遅れて気づいたら送らない（`missed`）は、ほかの予約と同じ。通知（`scheduledNotice`）は本文（英語の文）を出さず「利用枠の再開」と伝えます。
+  - Claude の予約（3 つまで）には数えません（`claudeWakeups` は `by: 'claude'` だけ）。`list_wakeups` では `by: 'tanacode'` と、本文の代わりに中身の説明を返し、`cancel_wakeup` では取り消させません（人の予約と同じ）。
+  - 予約しないとき: メニューの「利用枠で止まったら、戻ったときに自動で再開する」（`AppSettings.usageLimitResume`。既定はオン）がオフ・ターミナルモードのセッション（送るときに断られる）・アーカイブしたセッション。メニューでオフにしたら、待っている予約をすべて取り消します（`cancelAll`）。
+- 再開のメッセージ（Claude だけが読むので英語）は、最適化圧縮の再開の文と同じ考えです。止まったところをチェックリストと会話から確かめ、答えを待っていたなら報告して待ち、そうでなければ進めていた作業を続ける。歯止め（新しいことは始めない・決定事項に無い許可や判断が要るなら聞く・やり直す前に済んでいないか確かめる）も書きます。チャットには「利用枠が戻ったので、続きを頼みました」のお知らせ（`parseUsageResume`）で出し、人の発言・一覧のタイトル・順番待ちの人の発言にはしません。
+- 通知（`profile.ts` の `turnMessage`・`notice-text.ts` の `usageLimitNotice`）: 利用枠で止まったターンの終わりは「作業が完了しました」ではなく「利用枠で止まりました。◯時に再開します」（予約しなかったら「◯時に戻ります」、時刻が分からなければ「利用枠で止まりました」）。Claude の報告（`report_result`）より先にし、報告は使って捨てます。
+- 最適化圧縮の仕上げのターンが利用枠で止まったら、仕上げを飛ばして切り替える（`handoffSkipped`）のではなく、取りやめます（`CompactFailure` の `usage-limit`。`turnAfter` が、あきらめた API エラーに `limit` があるかを見る）。飛ばして `/clear` しても、再開の文のターンも同じ枠で止まるうえ、リストが古いまま会話を消すことになるためです。取りやめは自動の休むまでの回数に数えず、次のターンの終わり（枠が戻って続けたあと）にまた試します（`AutoCompact.finished`）。取りやめの通知も、利用枠で止まったことの文にします。
+- 親子セッション（`sessions-control.ts`）: 子の最後のターンが利用枠で止まったら（`usageLimitStopOf`。あきらめた API エラーのあとに応答もツールも無い）、親への知らせは「作業が終わりました」ではなく、止まったことと再開の予約の時刻（無ければ枠が戻る時刻）にします。`get_session`・`wait_sessions` には `usage_limit`（`resets_at`・`resume_scheduled_at`・`note`）を足し、`last_response` は止まる前の途中の応答で、結果ではないと伝えます（`last_response` は応答の文だけから作るので、エラーが入らず、前の応答が結果に見えるため）。
+  - 親自身が利用枠で止まって再開の予約を待っている間は、子の知らせを親に送らずに預かります（`SessionNotices` の `holds`）。送っても、親のターンが同じ枠で断られるだけで、そのたびに「利用枠で止まりました」の通知が増えるためです。再開して手が空いたら送ります。
 
 ### 翻訳
 
@@ -948,7 +974,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 備え（`PreCompact`・`auto`）: Claude Code の自動の圧縮（要約）が先に始まろうとしたら、圧縮の前のフックが、チェックリストの hooks と同じ入口（`checklist-mcp.js --hook`）でアプリに聞きます（`hook:precompact`。`Profile` が `AutoCompact.preCompact` に渡す）。止める理由が返ったら、入口は標準エラーに書いて終了コード 2 で終え、Claude Code は要約を作りません（`checklist-hook.ts` の `preCompactBlock`）。アプリは止めるファイルを書き、次のツールの切れ目（かターンの終わり）で、割合に関係なく同じ流れに入ります。人が打った `/compact`（`manual`）は止めません。
   - 止めないとき: 自動のスイッチがオフ・「Claude にチェックリストを扱わせる」がオフ・チェックリストの MCP なしで起動したセッション・自動を休んでいる・切り替えたばかりで、まだ割合が下がっていない。止めても切り替えられないのに止め続けると、上限で詰まるか、切り替えを繰り返すためです（E2E で、モックが大きい使用量を返し続けると、切り替え → 再開のターンでまた圧縮の前のフック → 切り替え、と繰り返した）。
   - 流れの途中（仕上げのターン）で始まろうとした圧縮は、止めるだけです（このあと会話を消す）。
-- 仕上げを飛ばす: 自動の流れで、仕上げのターンが、Claude Code があきらめた API エラー（上限に当たったなど。再試行中のもの・そのあとに応答が来たものは数えない）で終わったときは、チェックリストを使ったかの確かめ（`not-used`）を飛ばして切り替え、再開の文に「仕上げはできなかった。リストは切り替えの前のままで、古いかもしれない」と書きます（`handoffSkipped`）。手動のボタンでは飛ばしません（会話を消さずに取りやめる）。
+- 仕上げを飛ばす: 自動の流れで、仕上げのターンが、Claude Code があきらめた API エラー（上限に当たったなど。再試行中のもの・そのあとに応答が来たものは数えない）で終わったときは、チェックリストを使ったかの確かめ（`not-used`）を飛ばして切り替え、再開の文に「仕上げはできなかった。リストは切り替えの前のままで、古いかもしれない」と書きます（`handoffSkipped`）。手動のボタンでは飛ばしません（会話を消さずに取りやめる）。プランの利用枠に当たったときは、自動でも飛ばさずに取りやめます（`usage-limit`。下の「利用枠で止まったときの再開」）。
 - 送る文（`src/shared/optimized-compact.ts`）
   - 仕上げの頼みは、`handoffText()` の書き出しの「何で始まったか」（手動は「ボタンが押された」）を、自動の目印（`(automatic; context 83% full)`）に替え、文の終わり（閉じタグの前）に、自動のときだけ 1 段足します（`autoHandoffText`）。書き出しを替えないと、「ボタンが押された」と書いたまま、終わりで「誰も押していない」と言うことになり、食い違います。足す 1 段は、自動であること（人は何も押していない・質問を見ていない）と、途中で止めたときは、途中だった手順・直前のツールが終わったか・次の一手を「いまの状態」に書くこと。
   - 再開の文は、`resumeText` の `auto`・`stopped`・`handoffSkipped` で書き分けます。途中で止めたとき（`auto.midTurn`）だけ「報告して待つ」を「続きを進める」に替え、歯止めを書きます（進めていた作業だけ・決定事項に無い許可や判断が要るなら止まって聞く・何の途中かはっきりしなければ報告して待つ・結果の分からないツールはやり直す前に状態を確かめる・最初に 1 行で伝える）。「許可は、決定事項に無ければ引き継がない」は、どの場合も同じです。

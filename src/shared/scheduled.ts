@@ -17,13 +17,20 @@ export type ScheduledMessage = {
   createdAt: number;
   state: 'scheduled' | 'sending' | 'missed' | 'failed';
   error: string | null;
-  // Claude が自分に入れた予約（tanacode-sessions の schedule_wakeup）。人の予約には無い。
-  // 時刻になると、本文を囲み（WAKEUP_TAG）に入れて送り、チャットでは「Claude への知らせ」として出す
-  by?: 'claude';
+  // 人のものでない予約。人の予約には無い。
+  // claude: Claude が自分に入れた予約（tanacode-sessions の schedule_wakeup）。時刻になると、本文を囲み（WAKEUP_TAG）に入れて送り、
+  // チャットでは「Claude への知らせ」として出す /
+  // usage-limit: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約（アプリが入れる。main の usage-limit-resume.ts）。
+  // 本文は囲み（USAGE_RESUME_TAG）ごと持つ（前のバージョンのアプリは、知らない by を読み捨てて人の予約として送るが、それでも囲みごと届く）
+  by?: ScheduledBy;
+  // usage-limit の予約の、枠が戻る時刻。アプリが時刻を決めて並べている間だけ持つ（人が時刻を変えたら外し、並べ直さない）
+  limitResetsAt?: number;
   // 予約のファイルを読めず（権限が無い・新しいバージョンのアプリが書いた形など）、保存しない。アプリを終えると消える。
   // 保存はせず、main が画面などに渡すときだけ付ける
   unsaved?: true;
 };
+
+export type ScheduledBy = 'claude' | 'usage-limit';
 
 // 予定の時刻をこれより過ぎてから気づいたものは、送らずに missed にする。何時間も前の指示が、急に動き出さないように
 export const SCHEDULE_LATE_MS = 5 * 60_000;

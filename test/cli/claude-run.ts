@@ -13,6 +13,7 @@ import type { SessionState } from '@shared/session-tools';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
+import type { UsageLimitStop } from '@shared/usage-limit';
 import type { WorkflowRun } from '@shared/workflow';
 import { CHECKLIST_COMMAND_ENV, CHECKLIST_SCRIPT_ENV, CHECKLIST_SESSION_ENV, CHECKLIST_SOCKET_ENV } from '../../src/main/checklist-bridge';
 import { BROWSER_COMMAND_ENV, BROWSER_SCRIPT_ENV, BROWSER_SESSION_ENV, BROWSER_SOCKET_ENV, type BrowserMcpLaunch } from '../../src/main/browser-bridge';
@@ -28,6 +29,7 @@ import { FakePtyHost } from './fake-pty-host';
 
 // API キーでログインしたことにする（モックの API にしか送らない）
 const API_KEY = 'sk-ant-api03-tanacode-cli-check-00000000000000000000';
+const OAUTH_TOKEN = 'sk-ant-oat01-tanacode-cli-check-00000000000000000000';
 // 状態を待つときに見直す間隔
 const POLL_MS = 50;
 
@@ -51,6 +53,10 @@ type Options = {
   files?: Record<string, string>;
   // claude に足す環境変数（API エラーの再試行の回数を減らすなど）
   env?: Record<string, string>;
+  // API キーの代わりに、OAuth のトークン（CLAUDE_CODE_OAUTH_TOKEN。偽物）で動かす。プランの利用枠の知らせは、このときだけ Claude Code が読む
+  oauth?: boolean;
+  // モデルを呼んだターンの終わり（SessionManager の onTurnLimit。アプリは、利用枠で止まったら再開の予約を入れる）
+  onTurnLimit?: (sessionId: string, limit: UsageLimitStop | null) => void;
   // 起動の引数に付けるモデル・エフォート（claudeArgs の model・effort）。無ければ付けない
   model?: string;
   effort?: string;
@@ -100,6 +106,8 @@ export class ClaudeRun {
   readonly openedUrls: string[] = [];
   // 作業が終わったときの知らせ（onTurnCompleted。アプリは「作業が完了しました」の通知を出す）
   readonly turnsCompleted: SessionSummary[] = [];
+  // モデルを呼んだターンの終わりに、利用枠で止まったか（onTurnLimit。止まらなければ null）
+  readonly turnLimits: (UsageLimitStop | null)[] = [];
   // 最後に届いたセッションの一覧（onSessionsChanged）
   sessions: SessionSummary[] = [];
   statusLine: StatusLineInfo | null = null;
@@ -157,7 +165,7 @@ export class ClaudeRun {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       ANTHROPIC_BASE_URL: this.baseUrl,
-      ANTHROPIC_API_KEY: API_KEY,
+      ...(this.options.oauth ? { CLAUDE_CODE_OAUTH_TOKEN: OAUTH_TOKEN } : { ANTHROPIC_API_KEY: API_KEY }),
       NO_PROXY: '127.0.0.1,localhost',
       DISABLE_AUTOUPDATER: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -363,6 +371,11 @@ export class ClaudeRun {
         // ターミナルモードの TUI の画面は読まない（決めたこと）
         onPtyData: () => {},
         onTurnCompleted: (session) => live() && this.turnsCompleted.push(session),
+        onTurnLimit: (id, limit) => {
+          if (!ours(id)) return;
+          this.turnLimits.push(limit);
+          this.options.onTurnLimit?.(id, limit);
+        },
         onProgress: (id, activity) => ours(id) && this.activities.push(activity),
         onWorkflows: (id, runs) => ours(id) && (this.workflowRuns = runs),
         onSubagents: (id, runs) => ours(id) && (this.subagentRuns = runs),

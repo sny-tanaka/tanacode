@@ -271,6 +271,22 @@ describe('自動で始めた流れ', () => {
     expect(host.submitted[2]).toContain('The wrap-up before this reset could not run');
   });
 
+  it('仕上げのターンがプランの利用枠に当たって止まったら、飛ばさずに取りやめる（会話を消さない。手動も自動も）', async () => {
+    for (const auto of [{ percent: 97, midTurn: true }, null]) {
+      host.submitted = [];
+      script({
+        afterHandoff: () => {
+          host.events.push({ type: 'api-error', id: 'e', text: '利用枠の上限に達したので、止まりました', retrying: false, limit: { resetsAt: Date.now() + 3_600_000, window: 'five_hour' } }, { type: 'turn-end' });
+          host.state = 'idle';
+        },
+      });
+      compact.start(ID, auto);
+      expect((await finished()).failure).toBe('usage-limit');
+      expect(host.submitted).toHaveLength(1);
+    }
+    expect(finishes.map((f) => f.failure)).toEqual(['usage-limit', 'usage-limit']);
+  });
+
   it('再試行中の API エラー・立ち直った API エラーでは、飛ばさない', async () => {
     script({
       afterHandoff: () => {

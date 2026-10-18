@@ -27,6 +27,8 @@ type Deps<T> = {
   delayMs?: number;
   // 送り先がターミナルモードのとき、TUI の入力欄に貼る知らせか（人がボタンで頼んだもの）。省くと、どれも捨てる
   pasteInTerminal?: (item: T) => boolean;
+  // 手が空いていても、まだ送らずに預かるか（送り先が利用枠で止まって、再開を待っている間など）。次に状態が変わったときに見直す
+  holds?: (target: string) => boolean;
 };
 
 // 知らせを受け取れる状態（ターンの外）
@@ -98,9 +100,9 @@ export class SessionNotices<T> {
       this.pending.delete(target);
       return;
     }
-    // 作業中なら、手が空いたときに送る（watchState）
+    // 作業中なら、手が空いたときに送る（watchState）。預かるあいだも同じ
     const state = host.stateOf(target);
-    if (!state || !RECEIVE_STATES.has(state)) return;
+    if (!state || !RECEIVE_STATES.has(state) || this.deps.holds?.(target)) return;
     this.pending.delete(target);
     const text = this.deps.compose(target, queue);
     if (!text) return;

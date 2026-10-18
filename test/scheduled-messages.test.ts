@@ -7,6 +7,7 @@ import type { SessionState } from '@shared/session-tools';
 import { scheduledNotice } from '../src/main/notice-text';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { SendError } from '../src/main/send-error';
+import { USAGE_RESUME_TAG, usageResumeText } from '@shared/usage-limit';
 
 // 時刻を指定して送信（予約）。保存・時刻になったら送る・時刻を過ぎていたもの・取り消し
 const START = new Date(2026, 9, 5, 14, 0).getTime();
@@ -318,6 +319,71 @@ describe('Claude が自分に入れた予約（by: claude）', () => {
     expect(troubles.map((m) => m.text)).toEqual(['眠っていた間の予約']);
     expect(scheduledNotice(troubles[0]!, new Date(START))).toBe('14:01 の Claude の予約を、時刻に送れませんでした: 眠っていた間の予約');
     expect(scheduledNotice({ ...troubles[0]!, state: 'failed', error: 'x' }, new Date(START))).toBe('Claude の予約を送れませんでした（x）: 眠っていた間の予約');
+  });
+});
+
+describe('利用枠の再開の予約（by: usage-limit）', () => {
+  const RESET = START + 60 * MINUTE;
+
+  it('印と枠の時刻を付けて保存し、起動し直しても残す。前のバージョンが読み捨てる印でも、本文は囲みごとなので、そのまま届く', () => {
+    const { scheduled } = create({ s1: 'idle' });
+    scheduled.add('s1', usageResumeText(), [], RESET + MINUTE, [], 'usage-limit', RESET);
+    // 枠の時刻は、利用枠の再開の予約にだけ付ける
+    scheduled.add('s1', '子を見に行く', [], START + 5 * MINUTE, [], 'claude', RESET);
+    scheduled.dispose();
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as { messages: ScheduledMessage[] };
+    expect(saved.messages.map((m) => [m.by, m.limitResetsAt])).toEqual([
+      ['usage-limit', RESET],
+      ['claude', undefined],
+    ]);
+    expect(saved.messages[0]!.text.startsWith(`<${USAGE_RESUME_TAG}>`)).toBe(true);
+    // 数でない枠の時刻は読み捨てる
+    writeFileSync(file, JSON.stringify({ version: 1, messages: [...saved.messages, { ...saved.messages[0], id: 'odd', limitResetsAt: 'soon' }] }));
+    const { scheduled: again } = create({ s1: 'idle' });
+    expect(again.list().map((m) => [m.by, m.limitResetsAt])).toEqual([
+      ['usage-limit', RESET],
+      ['claude', undefined],
+      ['usage-limit', undefined],
+    ]);
+    // Claude の予約には数えない（1 セッション 3 つまでの決まりに入れない）
+    expect(again.claudeWakeups('s1')).toHaveLength(1);
+  });
+
+  it('時刻になったら、本文をそのまま送る（Claude の予約の囲みに入れ直さない）', async () => {
+    const { scheduled, sent } = create({ s1: 'idle' });
+    scheduled.add('s1', usageResumeText(), [], START + MINUTE, [], 'usage-limit', START);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(sent.map((m) => m.text)).toEqual([usageResumeText()]);
+  });
+
+  it('アプリが時刻を変える（retime）ときは枠の時刻を残し、人が変える（reschedule）と外す（もう並べ直さない）。待っていないもの・過去の時刻には変えない', async () => {
+    const { scheduled } = create({ s1: 'idle' });
+    const m = scheduled.add('s1', usageResumeText(), [], RESET + MINUTE, [], 'usage-limit', RESET);
+    scheduled.retime(m.id, RESET + 2 * MINUTE);
+    expect(scheduled.list()[0]).toMatchObject({ at: RESET + 2 * MINUTE, limitResetsAt: RESET });
+    scheduled.retime(m.id, START - MINUTE);
+    scheduled.retime('missing', RESET);
+    expect(scheduled.list()[0]?.at).toBe(RESET + 2 * MINUTE);
+    scheduled.reschedule(m.id, RESET + 30 * MINUTE);
+    expect(scheduled.list()[0]?.at).toBe(RESET + 30 * MINUTE);
+    expect('limitResetsAt' in scheduled.list()[0]!).toBe(false);
+    // 送っている途中のものは、変えない
+    const now = scheduled.add('s1', usageResumeText(), [], RESET, [], 'usage-limit', RESET);
+    scheduled.sendNow(now.id);
+    scheduled.retime(now.id, RESET + 5 * MINUTE);
+    expect(scheduled.list().find((x) => x.id === now.id)).toMatchObject({ state: 'sending', at: RESET });
+  });
+
+  it('時刻を 5 分より過ぎてから気づいたものは、送らずに missed にして知らせる。通知では、本文（英語の文）を出さずに利用枠の再開と分かる', async () => {
+    const { scheduled, sent, troubles } = create({ s1: 'idle' });
+    scheduled.add('s1', usageResumeText(), [], START + MINUTE, [], 'usage-limit', START);
+    await flush();
+    vi.setSystemTime(START + 7 * MINUTE);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(sent).toEqual([]);
+    expect(scheduled.list()[0]?.state).toBe('missed');
+    expect(scheduledNotice(troubles[0]!, new Date(START))).toBe('14:01 の利用枠の再開を、時刻に送れませんでした');
+    expect(scheduledNotice({ ...troubles[0]!, state: 'failed', error: '止まっていました' }, new Date(START))).toBe('利用枠の再開を送れませんでした（止まっていました）');
   });
 });
 

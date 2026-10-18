@@ -299,6 +299,22 @@ describe('続けて何度も起きない', () => {
     expect(existsSync(stopFile())).toBe(false);
   });
 
+  it('仕上げが利用枠で止まって取りやめたのは、休むまでの数に入れない。次のターンの終わり（枠が戻って続けたあと）に、また試す', () => {
+    turn(85);
+    finish('usage-limit');
+    turn(86);
+    expect(started).toHaveLength(2);
+    finish('usage-limit');
+    turn(87);
+    expect(started).toHaveLength(3);
+    expect(auto.status(ID).paused).toBe(false);
+    // ほかの理由の取りやめは、いつもどおり数える
+    finish('busy');
+    turn(88);
+    finish('busy');
+    expect(auto.status(ID).paused).toBe(true);
+  });
+
   it('1 回取りやめたあとに成功したら、数え直す', () => {
     turn(85);
     finish('prompted');
