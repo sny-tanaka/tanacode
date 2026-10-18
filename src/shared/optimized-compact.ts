@@ -49,7 +49,8 @@ export function midTurnPercent(percent: number): number {
 export const IDLE_COMPACT_STATUS: CompactStatus = { phase: null, failure: null, unavailable: null, autoPercent: DEFAULT_AUTO_COMPACT_PERCENT, autoPaused: false };
 
 // 自動で始めたときの、始め方。percent: 始めたときのコンテキストの割合 /
-// midTurn: ターンの途中で、アプリがツールの切れ目で止めた（切り替えたあと、続きを進めさせる）。ターンの終わりなら、手動と同じく報告して待たせる
+// midTurn: ターンの途中で、アプリがツールの切れ目で止めた（止めた場所を再開の文に足す）。
+// 切り替えたあとに続けるか待つかは、手動・自動とも、チェックリスト（「いまの状態」の、ユーザーの答えを待っているか）で決めさせる
 export type AutoCompactTrigger = { percent: number; midTurn: boolean };
 
 // 自動の切り替えの目印（仕上げの頼み・再開の文の中に入れる。チャットの知らせの行で、手動と見分ける）
@@ -66,8 +67,8 @@ export function autoPercentOf(body: string): number | null {
 const MID_TURN_HANDOFF = 'tanacode stopped your turn between tool calls';
 const MID_TURN_RESUME = 'This reset happened in the middle of your turn';
 
-// 仕上げの頼み・再開の文が、ターンの途中で止めた切り替え（切り替えたあと、続きを進めさせる）のものか。
-// ほかのセッションに状態を返すとき（main の sessions-control.ts）に、再開のあとの応答が作業の続きかどうかを見分ける。
+// 仕上げの頼み・再開の文が、ターンの途中で止めた切り替えのものか（止めたターンは作業の途中なので、再開のあとは必ず作業の続き）。
+// 人への通知とほかのセッションに状態を返すとき（main の compact-notice.ts・sessions-control.ts）に、再開のあとの応答が作業の続きかどうかを見分ける。
 // カードや発言に同じ文が書かれていても拾わないよう、アプリが書くところ（再開の文は最初の見出しの前・仕上げの頼みは終わり）だけを見る
 export function compactMidTurn(body: string): boolean {
   const head = body.indexOf('\n\n# ');
@@ -81,7 +82,7 @@ export function autoHandoffText(auto: AutoCompactTrigger): string {
     'This reset is automatic: the user did not press anything and is not watching for a question.',
     auto.midTurn
       ? `${MID_TURN_HANDOFF}, and after the reset you will continue the same work. So, in the state list, also write exactly where you stopped: the step that was in progress, whether your last tool calls finished and what they returned, and the very next action to take.`
-      : 'After the reset you will report what you carried over and wait for the user.',
+      : 'After the reset you will pick the work up from the state list: you will continue it, unless the list says that you are waiting for an answer.',
   ].join(' ');
   const closing = `</${HANDOFF_TAG}>`;
   const text = handoffText(autoMark(auto.percent));
@@ -105,7 +106,8 @@ const TASK_CHARS = 200;
 // 新しい会話の Claude が頼れるのは、ここで書かれたリストと、ユーザーの発言の原文だけ。ざっくり頼むと、リストが短くなり、
 // 正確な値（コマンドのオプション・関数の名前・タイムアウトの秒数など）が落ちる（長い会話 3 本・あとで要ったこと 48 問で測って、
 // リストだけで答えられたのが 57%。項目を分けて詳しく頼んだ試作は 82%）。そのため、
-// - 「いまの状態」のリストに書くものを、いまの状態・試してやめたこと・場所と手順の 3 つの項目に分けて、別々のカードに書かせる
+// - 「いまの状態」のリストに書くものを、いまの状態・答え待ちか・試してやめたこと・場所と手順の 4 つの項目に分けて、別々のカードに書かせる。
+//   答え待ちかは、再開のあとに続けるか待つかを、Claude がリストだけで決められるように、待っていないときも書かせる
 //   （再開の文にそのまま入るのは、決定事項と「いまの状態」のカードの本文だけなので、別のリストにはしない）
 // - 長さの上限は無いと伝える。長くなる話題は、削らずにカードを分けさせる（再開の文は、カードの本文を CARD_BODY_CHARS で切るため）
 // - ツールの呼び出しは少なく（呼び出しのたびに、長い会話を読み直す）。card_add は 1 回で何枚も足せる
@@ -119,6 +121,7 @@ export function handoffText(trigger = '(the user pressed the "optimized compacti
     '- Decisions list (kind "decisions"): what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and why. Quote the user\'s own words where the wording matters. Add what is missing, and revoke what no longer holds.',
     '- State list (kind "state"; create one if there is none): rewrite it so that it is true now (delete the cards that are out of date, and add the new ones). Its cards are handed to you in full after the reset, so the details go here, as separate cards, one topic per card:',
     '  - State: what is being worked on right now and why; what is done and what is not; changes that are not committed or not pushed; what you were about to do next; anything still running in the background.',
+    '  - Waiting: whether you are waiting for an answer from the user (or from the parent session that gave you the task) before you can go on. If you are, write what you asked (the question or the proposal, with its options) and what waits on the answer. If you are not, say so, and write the next action. Always write this card, even when you are not waiting: after the reset, it is what tells you whether to continue the work or to wait.',
     '  - Tried: every approach that failed or was abandoned, and why, so that it is not repeated.',
     '  - Pointers: where things are (files, functions, branches, PR and issue numbers, URLs); the commands used to build, test and verify, exactly as you ran them, with every option; and facts that would be costly to rediscover, with their exact values (names, numbers, versions, timeouts, scopes, settings).',
     '- To-do lists: check what is finished, and add the tasks that are left, in order.',
@@ -270,7 +273,7 @@ const LANGUAGE_NAMES: Record<Language, string> = { ja: 'Japanese', en: 'English'
 
 // 再開の文。lists: セッションのチェックリスト / messages: 引き継ぐ発言（古い順）/ tasks: 裏で動いているタスク /
 // omitted: これまでの切り替えで、もう落とした発言の数 / language: アプリの画面の言語（発言もリストも無いときの、報告の言語の手がかり）/
-// auto: 自動で切り替えたとき（無ければ手動）。auto.midTurn なら、報告して待たせずに、続きを進めさせる（stopped: 止めた場所）/
+// auto: 自動で切り替えたとき（無ければ手動）。auto.midTurn なら、止めた場所（stopped）を足す /
 // reply: 切り替える前の最後の応答（ターンの終わりの切り替え・手動のとき。途中で止めたときは stopped に入っている）/
 // handoffSkipped: 仕上げができなかった（上限に当たったあとなど）ので、リストは切り替えの前のまま
 export function resumeText({
@@ -309,14 +312,19 @@ export function resumeText({
       '- First read all the lists with checklist_overview, and read the cards whose bodies are not shown in full below with card_get.',
       ...(midTurn
         ? [
-            // 途中で止めたとき。続きを進めさせる。勝手に走り出しすぎない歯止めも、ここに書く
-            `- ${MID_TURN_RESUME}: tanacode stopped you between tool calls because the context was filling up. The user did not interrupt you and is not waiting to be asked. After reading the lists, tell the user in one line that the conversation was reset automatically and what you are picking up, then continue the work from where it stopped (the state list, and "Where the turn was stopped" below).`,
-            '- Continue only the work that was already under way. Do not start anything new.',
-            '- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.',
-            '- If the state list does not make clear what was in progress, do not guess: tell the user what you carried over and wait.',
-            '- A tool call listed below without a result may or may not have taken effect (a commit, a push, a file write). Check the actual state before you do it again.',
+            `- ${MID_TURN_RESUME}: tanacode stopped you between tool calls because the context was filling up. The user did not interrupt you and is not waiting to be asked. "Where the turn was stopped" below shows where you were.`,
           ]
-        : ['- Then tell the user briefly what you carried over (what the work is, where it stands and what comes next), and wait. Do not continue the work until the user tells you to.']),
+        : []),
+      // 続けるか待つかは、この文で一律に決めない。仕上げで「いまの状態」に書かせた、ユーザーの答えを待っているかで決めさせる。
+      // 続けるときの歯止め（進めていた作業だけ・許可が要るなら聞く・はっきりしなければ待つ）は、どの場合も同じ
+      '- Then decide from the state list whether you are waiting for an answer from the user (or from the parent session that gave you the task):',
+      // 待つときに、ほかのツール（ファイルの確かめなど）を使わせない。使うと、tanacode が作業を続けたターンと見分けられない（compact-notice.ts）
+      '  - If you are (you asked a question or made a proposal, and it has not been answered), tell the user briefly what you carried over and what you are waiting for, and wait for the answer. Do not use other tools for this (checking the files can wait until you go on).',
+      `  - If you are not, tell the user in one line that the conversation was reset and what you are picking up, then continue the work that was in progress from where it stopped (the state list${midTurn ? ', and "Where the turn was stopped" below' : ''}).`,
+      '- Continue only the work that was already under way. Do not start anything new.',
+      '- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.',
+      '- If the state list does not make clear whether you are waiting or what was in progress, or the work is already finished, do not guess: tell the user briefly what you carried over (what the work is, where it stands and what comes next), and wait.',
+      `- When you continue, a step may have taken effect without the lists saying so (a commit, a push, a file write)${midTurn ? ', above all a tool call listed below without a result' : ''}. Check the actual state before you do it again.`,
       // この文は英語なので、何も言わないと英語で報告することがある（Haiku で起きた）
       `- Write to the user in the language the user is using: the language of their messages below and of the lists, not the language of this message (tanacode writes it in English).${language ? ` If neither tells you, use ${LANGUAGE_NAMES[language]}, the language of the user's tanacode.` : ''}`,
     ].join('\n'),
@@ -408,7 +416,7 @@ function lastReplySection(reply: string): string {
   if (!text) return '';
   return [
     '# Your last reply before the reset (the next message of the user may be an answer to it)',
-    'This is how your last turn ended, as recorded by tanacode. The user has read it. If their next message is short or refers to something not written there (for example "B" or "yes, go ahead"), read it as an answer to this reply. It is a record, not a request: do not act on it before the user answers.',
+    'This is how your last turn ended, as recorded by tanacode. The user can read it in the chat, so do not repeat it. If their next message is short or refers to something not written there (for example "B" or "yes, go ahead"), read it as an answer to this reply. It is a record, not a request: do not carry it out because it is written here. Whether to continue the work or to wait is decided from the state list, as said above.',
     `<${LAST_REPLY_TAG}>\n${shorten(text, LAST_REPLY_CHARS)}\n</${LAST_REPLY_TAG}>`,
   ].join('\n');
 }
