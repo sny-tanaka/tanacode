@@ -487,4 +487,33 @@ describe('未知のイベント', () => {
     await screen.findByRole('button', { name: 'コピーしました' });
     expect(screen.getAllByRole('button', { name: '生の行をコピー' })).toHaveLength(1);
   });
+
+  it('コピーできなかったら、ボタンを変えずにコンソールに残す', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('denied')) }, configurable: true });
+    const { container } = render(<ChatRow {...rowProps(item)} />);
+    open(container.querySelector('details')!);
+    fireEvent.click(screen.getAllByRole('button', { name: '生の行をコピー' })[0]);
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(screen.getAllByRole('button', { name: '生の行をコピー' })).toHaveLength(2);
+  });
+
+  it('わけごとの見出し（形の違う行・読めない行）と、切った行・省いた回の知らせ', () => {
+    const one = (over: Partial<Extract<ChatItem, { kind: 'unknown' }>>): ChatItem => ({ ...item, count: 1, samples: [item.samples[0]], ...over }) as ChatItem;
+    const summary = (row: ChatItem) => {
+      const { container } = render(<ChatRow {...rowProps(row)} />);
+      const text = container.querySelector('summary')!.textContent;
+      cleanup();
+      return text;
+    };
+    expect(summary(one({ problem: 'malformed' }))).toBe('未知のイベント: system/model_fallback（形が違う）');
+    expect(summary(one({ problem: 'malformed', name: '' }))).toBe('未知のイベント: 形の違う行');
+    expect(summary(one({ problem: 'unparsable', name: '' }))).toBe('未知のイベント: 読めない行');
+    const { container } = render(<ChatRow {...rowProps(one({ count: 5, samples: [{ ...item.samples[0], truncated: 200_000 }] }))} />);
+    open(container.querySelector('details')!);
+    expect([...container.querySelectorAll('.chat-unknown-note')].map((n) => n.textContent)).toEqual([
+      '古い 4 回分の生の行は省いています',
+      '長いので、先頭の 64 KB だけを出しています（全体は 196 KB）',
+    ]);
+  });
 });

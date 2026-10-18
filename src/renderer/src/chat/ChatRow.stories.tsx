@@ -75,22 +75,21 @@ export const 区切り: Story = { args: { item: { kind: 'divider', id: 'd1', tex
 
 // 未知のイベント（tanacode が知らない、Claude Code からの行）。生の行の例は、形を見せるための作りもの
 const json = (value: unknown) => JSON.stringify(value, null, 2);
-const fallbackStream = json({
+const preemptedStream = json({
   type: 'system',
-  subtype: 'model_fallback',
-  from_model: 'claude-opus-5-5',
-  to_model: 'claude-sonnet-5-5',
-  reason: 'overloaded',
+  subtype: 'turn_preempted',
+  reason: 'new_user_message',
+  preempted_by: '7b2e4c6a-8d0f-4a1b-9c3d-5e7f9a1b3c5d',
   session_id: '6f1d2c3b-4a5e-4f60-8a71-92b3c4d5e6f7',
   uuid: '1c5e7a9b-0d2f-4e6a-8b1c-3d5e7f9a0b2c',
 });
-const fallbackTranscript = json({
+const preemptedTranscript = json({
   parentUuid: '0b4d6f8a-1c3e-4a5b-9c7d-2e4f6a8b0c1d',
   isSidechain: false,
   type: 'system',
-  subtype: 'model_fallback',
-  content: 'Switched to claude-sonnet-5-5 because claude-opus-5-5 is overloaded',
-  level: 'warning',
+  subtype: 'turn_preempted',
+  content: 'Stopped the response to read the new message',
+  level: 'info',
   uuid: '1c5e7a9b-0d2f-4e6a-8b1c-3d5e7f9a0b2c',
   timestamp: '2026-10-18T11:02:41.512Z',
   version: '2.1.302',
@@ -112,7 +111,7 @@ const openRow = async ({ canvasElement }: { canvasElement: HTMLElement }) => {
 };
 
 export const 未知のイベント: Story = {
-  args: { item: { kind: 'unknown', id: 'unknown:1c5e', name: 'system/model_fallback', problem: 'unknown', count: 1, samples: [{ id: 'unknown:1c5e', source: 'stream', version: '2.1.302', raw: fallbackStream }] } },
+  args: { item: { kind: 'unknown', id: 'unknown:1c5e', name: 'system/turn_preempted', problem: 'unknown', count: 1, samples: [{ id: 'unknown:1c5e', source: 'stream', version: '2.1.302', raw: preemptedStream }] } },
 };
 
 // stream-json と会話ログの両方に出た同じ行は、1 回と数えて、両方の生の行を並べる
@@ -121,12 +120,12 @@ export const 未知のイベント_開いた: Story = {
     item: {
       kind: 'unknown',
       id: 'unknown:1c5e',
-      name: 'system/model_fallback',
+      name: 'system/turn_preempted',
       problem: 'unknown',
       count: 1,
       samples: [
-        { id: 'unknown:1c5e', source: 'stream', version: '2.1.302', raw: fallbackStream },
-        { id: 'unknown:1c5e', source: 'transcript', version: '2.1.302', raw: fallbackTranscript },
+        { id: 'unknown:1c5e', source: 'stream', version: '2.1.302', raw: preemptedStream },
+        { id: 'unknown:1c5e', source: 'transcript', version: '2.1.302', raw: preemptedTranscript },
       ],
     },
   },

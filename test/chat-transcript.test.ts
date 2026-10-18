@@ -684,7 +684,7 @@ describe('toChatEvents: 未知のイベント', () => {
   it('知らない種類の行・system の行・attachment・応答と発言のブロックを、未知のイベントとして出す。ID は行の uuid（ブロックは位置も）', () => {
     const v = { version: '2.1.302' };
     expect(brief({ type: 'brand-new', uuid: 'n1', ...v })).toEqual([['brand-new', 'unknown', 'unknown:n1', '2.1.302']]);
-    expect(brief(system('model_fallback', { content: 'Switched to claude-sonnet-5-5', ...v }))).toEqual([['system/model_fallback', 'unknown', 'unknown:s1', '2.1.302']]);
+    expect(brief(system('brand_new_notice', { content: '新しい知らせ', ...v }))).toEqual([['system/brand_new_notice', 'unknown', 'unknown:s1', '2.1.302']]);
     expect(brief(attachment({ type: 'max_turns_reached', maxTurns: 3 }))).toEqual([['attachment/max_turns_reached', 'unknown', 'unknown:at1', undefined]]);
     expect(brief(assistant([{ type: 'text', text: '調べます' }, { type: 'server_tool_use', id: 'srv_1', name: 'web_search' }], v))).toEqual([
       'assistant-text',
@@ -703,6 +703,9 @@ describe('toChatEvents: 未知のイベント', () => {
     expect(brief({ type: 'system', uuid: 'x2' })).toEqual([['system', 'malformed', 'unknown:x2', undefined]]);
     expect(brief(assistant([{ text: '型が無い' }]))).toEqual([['assistant/', 'malformed', 'unknown:a1:0', undefined]]);
     expect(brief({ type: 'brand-new' })).toEqual([['brand-new', 'unknown', expect.stringMatching(/^unknown:n\d+$/), undefined]]);
+    expect(brief({ type: 'assistant', message: { content: [{ type: 'server_tool_use' }] } } as TranscriptEntry)).toEqual([
+      ['assistant/server_tool_use', 'unknown', expect.stringMatching(/^unknown:n\d+$/), undefined],
+    ]);
   });
 
   it('ふだんから会話ログに出る、知っているが使わない行は出さない', () => {

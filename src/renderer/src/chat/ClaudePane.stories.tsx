@@ -166,7 +166,7 @@ const unknownRow = (id: string, name: string, count = 1): ChatItem => ({
 });
 const withUnknown: ChatItem[] = [
   { kind: 'user', id: 'u1', text: 'ログイン画面のバグを直してください。' },
-  unknownRow('unknown:fb', 'system/model_fallback'),
+  unknownRow('unknown:tp', 'system/turn_preempted'),
   tool('r1', 'Read', 'src/Login.tsx'),
   tool('r2', 'Grep', 'onSubmit'),
   unknownRow('unknown:pc', 'system/permission_check_status', 3),

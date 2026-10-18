@@ -2,7 +2,7 @@
 
 Claude Code がチャット（`claude -p` の stream-json）で出すイベントと、会話ログ（jsonl）に書く system の行の一覧です。それぞれ、どんなイベントか、Agent SDK の型にあるか、tanacode が対応しているかを並べました。開発者向けの文書で、仕組みと確かめ方は [CONTRIBUTING.md](../CONTRIBUTING.md) の「Claude Code との互換性の確かめ方」にあります。
 
-- 対象: Claude Code 2.1.302・Agent SDK（`@anthropic-ai/claude-agent-sdk`）0.3.302・tanacode 2.0.1
+- 対象: Claude Code 2.1.302・Agent SDK（`@anthropic-ai/claude-agent-sdk`）0.3.302・tanacode 2.0.1（tanacode の列は、知らない行をチャットに「未知のイベント」として出すようにしたあとに直したもの）
 - 調べた日: 2026-10-18
 - その時点の写しです。Claude Code の更新で種類は増えます。調べ直し方は最後の節（スキル `/claude-code-events`）にあります。
 
@@ -10,7 +10,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 - SDK の型（`sdk.d.ts` の `SDKMessage`）は 39 種類（うち system は 28 種類）。Claude Code は、型に無い種類も出します。
 - SDK は、型に無い種類も捨てずにアプリへ渡します。SDK が自分で受け取って渡さないのは、`keep_alive`・制御の要求と返事・`transcript_mirror` だけです。
-- tanacode の読み取り（`src/main/stream/client.ts` の `StreamClient`）は、知らない種類を捨てて数え、コンソールに警告を出します。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
+- tanacode の読み取り（`src/main/stream/client.ts` の `StreamClient`）は、知らない種類を数え、コンソールに警告を出し、チャットに「未知のイベント」として出します（会話ログの知らない行も同じ。仕組みは CONTRIBUTING.md の「チャット」）。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
 - 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）と、モデルが断る場面の 2 つです。
 
 ## 凡例
@@ -20,8 +20,8 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | ✅ | 使っている |
 | 🔷 | 受け取るだけ（形を確かめて、何もしない） |
 | ⏭ | 意図して捨てる（`client.ts` の `IGNORED_KINDS`） |
-| ⚠️ | 知らない種類（警告を出して数え、捨てる） |
-| ❌ | エラーで返す（Claude Code からの要求） |
+| ⚠️ | 知らない種類（警告を出して数え、チャットには「未知のイベント」として出すだけ） |
+| ❌ | エラーで返す（Claude Code からの要求。チャットにも「未知のイベント」として出す） |
 
 「SDK」の列は、Agent SDK の型に定義があるか。
 
@@ -88,8 +88,8 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 | subtype | どんなイベントか | SDK | tanacode |
 | --- | --- | --- | --- |
-| `model_fallback` | 混雑などによる、モデルの自動の切り替え | 無 | ⚠️ チャットに何も出ない（TUI では黄色で出る） |
-| `notification` | 警告（圧縮の失敗・Stop フックの止めすぎ・モデルのコンテキストやエフォートの上限・メモリの停止など） | 有 | ⚠️ チャットに何も出ない |
+| `model_fallback` | 混雑などによる、モデルの自動の切り替え | 無 | ⚠️ チャットには未知のイベントとして出るだけ（TUI では黄色で出る） |
+| `notification` | 警告（圧縮の失敗・Stop フックの止めすぎ・モデルのコンテキストやエフォートの上限・メモリの停止など） | 有 | ⚠️ チャットには未知のイベントとして出るだけ |
 | `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ⚠️ 取り消された応答を外していない（5 節） |
 | `model_refusal_no_fallback` | 断られたが、取り直さなかった | 有 | ⚠️ |
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | 無 | ⚠️ |
@@ -151,7 +151,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 ## 5. 会話ログ（jsonl）にだけ書く system の行
 
-stream-json には出ません。Claude Code は、会話の処理が作った system の行のうち、決まった 12 種類（`status`・`init`・`notification`・`api_retry`・`compact_boundary`・`model_fallback` など）だけを stream-json に出します。tanacode はチャットを会話ログから作る（`src/shared/chat.ts` の `toChatEvents`）ので、こちらでの対応がチャットの表示になります。
+stream-json には出ません。Claude Code は、会話の処理が作った system の行のうち、決まった 12 種類（`status`・`init`・`notification`・`api_retry`・`compact_boundary`・`model_fallback` など）だけを stream-json に出します。tanacode はチャットを会話ログから作る（`src/shared/chat.ts` の `toChatEvents`）ので、こちらでの対応がチャットの表示になります。知らない subtype は「未知のイベント」として出し、出さないと決めたものは `chat.ts` の `TRANSCRIPT_SYSTEM` に並べます。
 
 | subtype | どんなイベントか | tanacode のチャット |
 | --- | --- | --- |
@@ -162,10 +162,10 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 | `local_command` | ローカルのコマンド | ✅ |
 | `informational` | お知らせの文 | ✅ |
 | `compact_boundary` | 圧縮の区切り | ✅ |
-| `model_fallback` | モデルの自動の切り替え | ⚠️ 出さない |
+| `model_fallback` | モデルの自動の切り替え | ⚠️ 未知のイベントとして出すだけ |
 | `model_refusal_fallback` | 断られた応答の取り消し（`retractedMessageUuids`） | ⚠️ 取り消された応答を外していない。Claude Code は、会話ログを読むときに外す（未確認。断ったときに取り直すモデルの設定でだけ起きる） |
-| `model_refusal_no_fallback`・`model_consent_fallback` | 断られた・人が選んだ切り替え | ⚠️ 出さない |
-| `away_summary`・`agents_killed`・`memory_saved`・`permission_retry`・`scheduled_task_fire`・`rewind_stand_in`・`cloud_session_status`・`file_snapshot` | 離れていた間のまとめ・裏のエージェントの停止・メモリの保存・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・ファイルの控え | 出さない |
+| `model_refusal_no_fallback`・`model_consent_fallback` | 断られた・人が選んだ切り替え | ⚠️ 未知のイベントとして出すだけ |
+| `away_summary`・`agents_killed`・`memory_saved`・`permission_retry`・`scheduled_task_fire`・`rewind_stand_in`・`cloud_session_status`・`file_snapshot` | 離れていた間のまとめ・裏のエージェントの停止・メモリの保存・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・ファイルの控え | 出さない（`TRANSCRIPT_SYSTEM`） |
 
 ## 調べ直し方
 

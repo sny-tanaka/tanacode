@@ -340,7 +340,7 @@ describe('未知のイベント（onUnknown）', () => {
     const { pipe, client, got } = setup();
     client.start();
     pipe.emit({ type: 'brand_new', uuid: 'u1' });
-    pipe.emit({ type: 'system', subtype: 'model_fallback', uuid: 'u2', from: 'a', to: 'b' });
+    pipe.emit({ type: 'system', subtype: 'brand_new_notice', uuid: 'u2', from: 'a', to: 'b' });
     pipe.emit({ type: 'system', subtype: 'init', session_id: 's', uuid: 'u3' });
     pipe.emit('{壊れた');
     pipe.emit('[1,2]');
@@ -352,7 +352,7 @@ describe('未知のイベント（onUnknown）', () => {
     pipe.emit({ type: 'control_cancel_request' });
     expect(brief(got.unknowns)).toEqual([
       ['brand_new', 'unknown', 'stream', 'unknown:u1'],
-      ['system/model_fallback', 'unknown', 'stream', 'unknown:u2'],
+      ['system/brand_new_notice', 'unknown', 'stream', 'unknown:u2'],
       ['system/init', 'malformed', 'stream', 'unknown:u3'],
       ['', 'unparsable', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
       ['', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
@@ -364,12 +364,12 @@ describe('未知のイベント（onUnknown）', () => {
       ['control_cancel_request', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
     ]);
     // 生の行は、読めた行は整形した JSON、読めない行はその文字のまま。知らない要求に error で返す動きと、数はそのまま
-    expect(got.unknowns[1].raw).toBe(JSON.stringify({ type: 'system', subtype: 'model_fallback', uuid: 'u2', from: 'a', to: 'b' }, null, 2));
+    expect(got.unknowns[1].raw).toBe(JSON.stringify({ type: 'system', subtype: 'brand_new_notice', uuid: 'u2', from: 'a', to: 'b' }, null, 2));
     expect(got.unknowns[3].raw).toBe('{壊れた');
     expect(pipe.messages.filter((m) => m.type === 'control_response').map((m) => (m.response as { request_id: string }).request_id)).toEqual(['e1', 'b1', 'n1']);
     expect([...client.unknown]).toEqual([
       ['brand_new', 1],
-      ['system/model_fallback', 1],
+      ['system/brand_new_notice', 1],
       ['control_request/elicitation', 1],
     ]);
     expect(client.malformed).toBe(8);
@@ -397,7 +397,11 @@ describe('未知のイベント（onUnknown）', () => {
     client.start();
     pipe.emit({ type: 'brand_new', text: 'あ'.repeat(30_000) });
     pipe.emit({ type: 'brand_new', text: 'a'.repeat(100) });
-    const [long, short] = got.unknowns;
+    // 文字の数では上限に近くても、UTF-8 で上限に収まれば切らない
+    pipe.emit({ type: 'brand_new', text: 'a'.repeat(30_000) });
+    const [long, short, ascii] = got.unknowns;
+    expect(ascii.truncated).toBeUndefined();
+    expect(ascii.raw).toContain('a'.repeat(30_000));
     expect(new TextEncoder().encode(long.raw).length).toBeLessThanOrEqual(UNKNOWN_RAW_BYTES);
     expect(new TextEncoder().encode(long.raw).length).toBeGreaterThan(UNKNOWN_RAW_BYTES - 4);
     expect(long.raw).not.toContain('�');
@@ -414,20 +418,29 @@ describe('未知のイベント（onUnknown）', () => {
       pid: 1,
       startedAt: 0,
       exitCode: null,
-      lastSeq: 7,
-      firstSeq: 5,
+      lastSeq: 9,
+      firstSeq: 3,
       retained: [
-        { seq: 2, line: '{壊れた' },
-        { seq: 3, line: JSON.stringify({ type: 'brand_new' }) },
+        { seq: 1, line: '{壊れた' },
+        { seq: 2, line: JSON.stringify({ type: 'brand_new' }) },
       ],
-      pending: [{ seq: 5, line: JSON.stringify({ type: 'control_request', request_id: 'hook', request: { subtype: 'hook_callback' } }) }],
+      pending: [
+        { seq: 5, line: JSON.stringify({ type: 'control_request', request_id: 'hook', request: { subtype: 'hook_callback' } }) },
+        { seq: 5, line: JSON.stringify({ type: 'control_request', request: { subtype: 'can_use_tool' } }) },
+      ],
       ended: false,
       stderr: '',
     });
-    pipe.emit({ type: 'brand_new', uuid: 'old' }, 5);
+    pipe.emit({ type: 'brand_new', uuid: 'old' }, 3);
     pipe.emit('{壊れた');
     pipe.emit({ type: 'control_request', request_id: 'old-request', request: { subtype: 'elicitation' } });
+    pipe.emit({ type: 'control_response' });
+    pipe.emit({ type: 'control_cancel_request' });
+    pipe.emit({ type: 'system', subtype: 'init', session_id: 's' });
+    pipe.emit({ type: 'keep_alive' });
     expect(got.unknowns).toEqual([]);
+    // 前の行も数える（控えのテストと同じ数え方）
+    expect(client.malformed).toBe(5);
     // 引き継いだあとの新しい行は出す
     pipe.emit({ type: 'brand_new', uuid: 'new' });
     expect(brief(got.unknowns)).toEqual([['brand_new', 'unknown', 'stream', 'unknown:new']]);
