@@ -48,6 +48,7 @@ import type { AgentLogRef, BashTask, TaskRef } from '@shared/task';
 import type { WorkflowRun } from '@shared/workflow';
 import type { SessionModel } from '@shared/models';
 import type { PendingPermission, PendingQuestion, PermissionReply, QuestionReply } from '@shared/questions';
+import { checkedContent, type ElicitationReply, type PendingElicitation } from '@shared/elicitation';
 import { BashTaskTracker } from './bash-task-tracker';
 import { branchCut, readAgentLog, readChatLog, readExportLog, retract, type ChainEntry } from './chat-log';
 import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
@@ -61,7 +62,7 @@ import { PendingQuestions } from './pending-questions';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
-import { askQuestionsOf, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
+import { askQuestionsOf, elicitationOf, elicitationResult, PLAN_TOOL, permissionOf, permissionResult, questionResult } from './requests';
 import { stopLeftoverClaude, type ClaudeProcess } from './leftover-claude';
 import { ContextTracker, readContext } from './context-tracker';
 import type { PtyHostApi } from './pty-host-client';
@@ -85,6 +86,8 @@ import type {
   CommandsChangedMessage,
   ContentBlock,
   ContextUsageResponse,
+  ElicitationCompleteMessage,
+  ElicitationRequest,
   HookResponseMessage,
   HookStartedMessage,
   InitializeResponse,
@@ -197,6 +200,10 @@ type Runtime = {
   heldHooks: Map<string, ChatEvent[]>;
   // Claude Code が答えを待っている要求（can_use_tool。request_id → 要求。来た順）
   requests: Map<string, CanUseToolRequest>;
+  // MCP サーバーから人への質問（elicitation）のうち、Claude Code が答えを待っているもの（request_id → カードの形と要求。来た順）と、
+  // URL の形で、人がページを開いて、MCP サーバーの完了の知らせを待っているもの（カードの ID → カードの形と要求。Claude Code にはもう答えた）
+  elicitations: Map<string, ElicitationWait>;
+  openedUrls: Map<string, ElicitationWait>;
   // 質問（AskUserQuestion）の要求のうち、PendingQuestions で返事を待っているもの（request_id → 待つのをやめる口）
   questionWaits: Map<string, AbortController>;
   // プランの承認（ExitPlanMode）の要求の、プランの本文（request_id → 本文。Claude Code は要求の入力に本文を入れない）
@@ -342,6 +349,10 @@ type Listeners = {
   onQuestion?: (sessionId: string, question: PendingQuestion | null) => void;
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）。いちばん前のもの（無ければ null）
   onPermission?: (sessionId: string, permission: PendingPermission | null) => void;
+  // 答えを待っている MCP サーバーの質問（いちばん前のもの。無ければ、完了を待っている URL の形の質問。どちらも無ければ null）
+  onElicitation?: (sessionId: string, elicitation: PendingElicitation | null) => void;
+  // URL の形の MCP サーバーの質問で、人が「ページを開く」を選んだ。ふだんのブラウザで開く
+  onOpenExternal?: (url: string) => void;
 };
 
 export class SessionManager {
@@ -780,8 +791,8 @@ export class SessionManager {
     // Claude Code が答えを待っている要求（AskUserQuestion は質問、ほかは許可の確認）
     const request = firstRequest(rt);
     if (request) return request.tool_name === 'AskUserQuestion' ? 'question' : 'permission';
-    // 答えを待っている質問（AskUserQuestion の要求を、PendingQuestions で預かっているもの）
-    if (this.questions.first(id)) return 'question';
+    // 答えを待っている質問（AskUserQuestion の要求を、PendingQuestions で預かっているもの）と、MCP サーバーの質問
+    if (this.questions.first(id) || rt.elicitations.size > 0) return 'question';
     if (!rt.ready || rt.preparing) return 'starting';
     // result のあと、そのターンの最後の応答が会話ログに出るまで（turnEnding）も作業中。チャットのターンの終わりと揃える。
     // 送信中・順番待ちの発言が残っていれば、ターンとターンの間も作業中（作業中の始まりは、送った発言の queued・started。設計書 7 節）
@@ -1022,7 +1033,7 @@ export class SessionManager {
 
   // チャットの手が空いている（ターン・答え待ちの要求・送る予定の発言が無い）
   private chatIdle(id: string, rt: Runtime): boolean {
-    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.unsent.size === 0 && rt.pendingSubmits === 0 && !this.questions.first(id);
+    return rt.ready && !rt.preparing && !rt.turnOpen && !rt.turnEnding && rt.requests.size === 0 && rt.elicitations.size === 0 && rt.unsent.size === 0 && rt.pendingSubmits === 0 && !this.questions.first(id);
   }
 
   // 答えを待っている、質問でない要求（許可の確認・プランの承認）のうち、いちばん前のもの。無ければ null。
@@ -1061,6 +1072,47 @@ export class SessionManager {
   // 待っている質問のうち 1 問に答える（親の answer_question）。全部そろったら返事にする（sent）。もう待っていなければ null
   answerPendingQuestion(id: string, questionId: string, question: string, answer: string): 'sent' | 'waiting' | null {
     return this.questions.answerOne(id, questionId, question, answer);
+  }
+
+  // 答えを待っている MCP サーバーの質問（いちばん前のもの）。無ければ、ページを開いて完了を待っている URL の形の質問。どちらも無ければ null
+  pendingElicitation(id: string): PendingElicitation | null {
+    const rt = this.runtimes.get(id);
+    if (!rt) return null;
+    return (rt.elicitations.values().next().value ?? rt.openedUrls.values().next().value)?.pending ?? null;
+  }
+
+  // MCP サーバーの質問に答える（カード）。その質問をもう待っていなければ false。形に合わない答え（フォームの中身が項目に合わない・
+  // 開けないページを開く・出せない項目のあるフォームを送る）も送らずに false
+  replyElicitation(id: string, elicitationId: string, reply: ElicitationReply): boolean {
+    const rt = this.runtimes.get(id);
+    if (!rt) return false;
+    const opened = rt.openedUrls.get(elicitationId);
+    if (opened) {
+      // 完了待ちのカード: もう一度開く・閉じる（Claude Code には、開いたときにもう答えた）
+      if (reply.kind === 'reopen' && opened.pending.url) this.listeners.onOpenExternal?.(opened.pending.url);
+      else if (reply.kind === 'dismiss') rt.openedUrls.delete(elicitationId);
+      else return false;
+      this.updateAttention(id, rt);
+      return true;
+    }
+    const waiting = rt.elicitations.get(elicitationId);
+    if (!waiting) return false;
+    const { pending, request } = waiting;
+    if (reply.kind === 'accept' && (pending.mode !== 'form' || pending.unsupported.length > 0 || !checkedContent(pending.fields, reply.content))) return false;
+    if (reply.kind === 'open' && (pending.mode !== 'url' || !pending.openable)) return false;
+    const result = elicitationResult(reply);
+    if (!result || !rt.process?.client?.respondElicitation(elicitationId, result)) return false;
+    rt.elicitations.delete(elicitationId);
+    if (reply.kind === 'open' && pending.url) {
+      this.listeners.onOpenExternal?.(pending.url);
+      // 完了の知らせと結べる（elicitation_id がある）ときだけ、完了を待つカードにする
+      if (request.elicitation_id) {
+        const key = `opened:${elicitationId}`;
+        rt.openedUrls.set(key, { pending: { ...pending, id: key, opened: true }, request });
+      }
+    }
+    this.updateAttention(id, rt);
+    return true;
   }
 
   // statusLine のファイルが書き換わった（ターミナルモードの TUI の間だけ動く。stream-json では、行から作る）
@@ -1818,6 +1870,8 @@ export class SessionManager {
         streamMessages: new Map(),
         heldHooks: new Map(),
         requests: new Map(),
+        elicitations: new Map(),
+        openedUrls: new Map(),
         questionWaits: new Map(),
         plans: new Map(),
         planFile: null,
@@ -1986,6 +2040,9 @@ export class SessionManager {
           },
           onPermission: (requestId, request, replayed) => {
             if (runtime.process === process) this.requestAdded(id, runtime, requestId, request, replayed);
+          },
+          onElicitation: (requestId, request, replayed) => {
+            if (runtime.process === process) this.elicitationAdded(id, runtime, requestId, request, replayed);
           },
           onCancel: (requestId) => {
             if (runtime.process === process) this.requestRemoved(id, runtime, requestId);
@@ -2424,6 +2481,9 @@ export class SessionManager {
         // 取り消された応答は会話ログに出ないので、ここで書いている途中の文から外し、ターンの終わりにも待たない
         if (!past) this.retractStreamed(id, rt, (message as ModelRefusalFallbackMessage).retracted_message_uuids ?? []);
         return;
+      case 'elicitation_complete':
+        this.elicitationCompleted(id, rt, message as ElicitationCompleteMessage);
+        return;
       case 'commands_changed': {
         // / のコマンドの一覧が変わった（スキルのファイルを足した・プラグインを読み直したなど）。入力欄は / の候補を開くたびに
         // 読みに来る（commandsOf）ので、差し替えておけば次に開いたときから新しくなる。引き継ぎで戻せるよう記録も直す
@@ -2804,6 +2864,22 @@ export class SessionManager {
     this.pushEvents(id, [{ type: 'queue', prompts }]);
   }
 
+  // MCP サーバーの質問（elicitation）が来た。カードで答える。replayed: 引き継いだときに出し直した要求（もう一度は通知しない）
+  private elicitationAdded(id: string, rt: Runtime, requestId: string, request: ElicitationRequest, replayed = false): void {
+    rt.elicitations.set(requestId, { pending: elicitationOf(requestId, request), request });
+    this.updateAttention(id, rt, replayed);
+  }
+
+  // URL の形の MCP サーバーの質問を、MCP サーバーが終わったと知らせた。完了を待っているカードを閉じる
+  private elicitationCompleted(id: string, rt: Runtime, message: ElicitationCompleteMessage): void {
+    for (const [key, opened] of rt.openedUrls) {
+      if (opened.request.mcp_server_name !== message.mcp_server_name || opened.request.elicitation_id !== message.elicitation_id) continue;
+      rt.openedUrls.delete(key);
+      this.updateAttention(id, rt);
+      return;
+    }
+  }
+
   // Claude Code が答えを待つ要求が来た（許可の確認・質問・プランの承認・ワークフローの確認）。
   // 質問（AskUserQuestion）は、質問のカード・親の answer_question の返事を PendingQuestions で待ち、Claude Code に返す
   // replayed: 引き継いだときに出し直した要求（前のアプリが通知したので、もう一度は通知しない）
@@ -2872,6 +2948,10 @@ export class SessionManager {
 
   // 待っていた要求が無くなった（答えた・Claude Code が取り下げた）
   private requestRemoved(id: string, rt: Runtime, requestId: string): void {
+    if (rt.elicitations.delete(requestId)) {
+      this.updateAttention(id, rt);
+      return;
+    }
     if (!rt.requests.delete(requestId)) return;
     rt.plans.delete(requestId);
     rt.questionWaits.get(requestId)?.abort();
@@ -2881,8 +2961,11 @@ export class SessionManager {
 
   // 待っている要求をすべて捨てる（Claude Code が終わった・アーカイブした）
   private releaseRequests(id: string, rt: Runtime): void {
-    if (rt.requests.size === 0) return;
+    if (rt.requests.size === 0 && rt.elicitations.size === 0 && rt.openedUrls.size === 0) return;
     rt.requests.clear();
+    // 終わった claude の質問には答えられず、完了の知らせも届かない
+    rt.elicitations.clear();
+    rt.openedUrls.clear();
     rt.plans.clear();
     for (const wait of rt.questionWaits.values()) wait.abort();
     rt.questionWaits.clear();
@@ -2893,15 +2976,18 @@ export class SessionManager {
   // quiet: 通知しない（引き継いだときに出し直した要求）
   private updateAttention(id: string, rt: Runtime, quiet = false): void {
     this.listeners.onPermission?.(id, this.pendingPermission(id));
+    this.listeners.onElicitation?.(id, this.pendingElicitation(id));
     const request = rt.terminal ? undefined : firstRequest(rt);
     const pending = rt.terminal ? null : this.questions.first(id);
+    // 完了を待っている URL の形の質問は、Claude Code が答えを待っていないので、操作待ちにしない
+    const elicitation = rt.terminal ? undefined : rt.elicitations.values().next().value?.pending;
     const attention: SessionAttention = rt.terminal
       ? (rt.tuiAsk?.kind ?? null)
       : request
         ? request.tool_name === 'AskUserQuestion'
           ? 'question'
           : 'permission'
-        : pending
+        : pending || elicitation
           ? 'question'
           : null;
     if (attention === rt.attention) {
@@ -2918,6 +3004,7 @@ export class SessionManager {
     if (rt.terminal && rt.tuiAsk) this.listeners.onAttention(summary, { kind: 'menu', menu: rt.tuiAsk.menu });
     else if (request) this.listeners.onAttention(summary, { kind: 'menu', menu: requestMenu(request) });
     else if (pending) this.listeners.onAttention(summary, { kind: 'menu', menu: pendingMenu(pending) });
+    else if (elicitation) this.listeners.onAttention(summary, { kind: 'menu', menu: elicitationMenu(elicitation) });
   }
 
   // フックが答えを待っている質問が増えた・減った・親が 1 問答えた
@@ -3387,3 +3474,11 @@ function requestMenu(request: CanUseToolRequest): Menu {
 function pendingMenu(pending: PendingQuestion): Menu {
   return { kind: 'question', tabs: [], title: pending.questions[0]?.question ?? '', context: [], options: [], multiSelect: false, hint: '' };
 }
+
+// MCP サーバーの質問の通知に使うメニュー（通知の本文は、どのサーバーからかと質問の文）
+function elicitationMenu(pending: PendingElicitation): Menu {
+  return { kind: 'question', tabs: [], title: t('main.notification.elicitation', { server: pending.server, message: pending.message }), context: [], options: [], multiSelect: false, hint: '' };
+}
+
+// MCP サーバーの質問。pending: カードの形 / request: Claude Code の要求（完了の知らせと結ぶ、サーバーの名前と elicitation_id）
+type ElicitationWait = { pending: PendingElicitation; request: ElicitationRequest };

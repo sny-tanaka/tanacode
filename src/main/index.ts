@@ -25,6 +25,7 @@ import { discoverSessions } from './session-discovery';
 import { SourceControl } from './source-control';
 import type { PermissionMode } from '@shared/screen';
 import { permissionReplyOf, questionReplyOf } from '@shared/questions';
+import { elicitationReplyOf } from '@shared/elicitation';
 import type { AgentLogRef, TaskRef } from '@shared/task';
 import { listCommands } from './commands';
 import { imageOf } from './image-cache';
@@ -716,6 +717,11 @@ function registerIpc(): void {
   handle(IpcChannel.PermissionReply, (e, id: string, requestId: string, reply: unknown) => {
     const read = permissionReplyOf(reply);
     return !!read && P(e).manager.replyPermission(String(id), String(requestId), read);
+  });
+  handle(IpcChannel.ElicitationGet, (e, id: string) => P(e).manager.pendingElicitation(id));
+  handle(IpcChannel.ElicitationReply, (e, id: string, elicitationId: string, reply: unknown) => {
+    const read = elicitationReplyOf(reply);
+    return !!read && P(e).manager.replyElicitation(String(id), String(elicitationId), read);
   });
   handle(IpcChannel.QuestionReply, (e, id: string, questionId: string, reply: unknown) => {
     const read = questionReplyOf(reply);

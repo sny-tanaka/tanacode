@@ -26,6 +26,7 @@ import { gitMarks, useGitState } from './scm/useGitState';
 import { QuickOpen } from './search/QuickOpen';
 import { SearchPanel } from './search/SearchPanel';
 import { useSessionPermissions } from './screen/useSessionPermissions';
+import { useSessionElicitations } from './screen/useSessionElicitations';
 import { useSessionQuestions } from './screen/useSessionQuestions';
 import { useSessionWorkflows } from './workflow/useSessionWorkflows';
 import { ImportDialog } from './sessions/ImportDialog';
@@ -124,6 +125,7 @@ export function App() {
   const selectedScheduled = useMemo(() => (selectedId ? scheduledOf(scheduled, selectedId) : []), [scheduled, selectedId]);
   const { questionOf, load: loadQuestion } = useSessionQuestions(selectedId);
   const { permissionOf, load: loadPermission } = useSessionPermissions(selectedId);
+  const { elicitationOf, load: loadElicitation } = useSessionElicitations(selectedId);
   const { workflowsOf, load: loadWorkflows } = useSessionWorkflows(selectedId);
   const { subagentsOf, load: loadSubagents } = useSessionSubagents(selectedId);
   const { bashOf, load: loadBash } = useSessionBash(selectedId);
@@ -379,6 +381,7 @@ export function App() {
     if (selectedId) {
       loadQuestion(selectedId);
       loadPermission(selectedId);
+      loadElicitation(selectedId);
       loadWorkflows(selectedId);
       loadSubagents(selectedId);
       loadBash(selectedId);
@@ -386,7 +389,7 @@ export function App() {
       loadStatusLine(selectedId);
       loadChecklists(selectedId);
     }
-  }, [selectedId, loadQuestion, loadPermission, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
+  }, [selectedId, loadQuestion, loadPermission, loadElicitation, loadWorkflows, loadSubagents, loadBash, loadKnowledge, loadStatusLine, loadChecklists]);
 
   // Claude がアプリ内ブラウザを操作し始めたセッション（帯が消えるまで）と、見ていない間に操作したセッション
   const browsing = useRef(new Set<string>());
@@ -968,6 +971,7 @@ export function App() {
             chat={chat}
             question={questionOf(selected.id)}
             permission={permissionOf(selected.id)}
+            elicitation={elicitationOf(selected.id)}
             workflows={workflows}
             subagents={subagents}
             bashTasks={bashTasks}

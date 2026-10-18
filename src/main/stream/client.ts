@@ -2,12 +2,13 @@ import { randomBytes } from 'node:crypto';
 import type { PipeHandle } from '../pty-host-client';
 import type { HostedLine, HostedPipeInfo } from '../pty-host-protocol';
 import type { LineLog } from './log';
-import type { CanUseToolRequest, ControlResponseMessage, PermissionResult, StreamMessage, UserInput } from './protocol';
+import type { CanUseToolRequest, ControlResponseMessage, ElicitationRequest, ElicitationResult, PermissionResult, StreamMessage, UserInput } from './protocol';
 
 // stream-json の claude 1 つとの、行の読み書き・制御の要求と返事の対応・待っている要求の管理（設計書 6 節）。
 // SessionManager は行の形を知らずに、ここの関数と知らせだけを使う。
 // 全部が JSON で届くので、予期しないものは機械的に見分ける: 読めない行・知らない種類は捨てて数え、控え（LineLog）とコンソールに残す。
-// 使う項目の形が違う行も捨てて「読めない行」として数える。知らない要求が Claude Code から来たら、必ず error で返す（返さないと待ち続ける）
+// 使う項目の形が違う行も捨てて「読めない行」として数える。知らない要求が Claude Code から来たら、必ず error で返す（返さないと待ち続ける）。
+// Claude Code が答えを待つ要求は 2 つ: can_use_tool（許可の確認・質問など）と elicitation（MCP サーバーから人への質問）
 
 // 制御の要求の返事を待つ既定の上限
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -18,6 +19,8 @@ export type StreamEvents = {
   // Claude Code が答えを待つ要求（can_use_tool）。答えは respond で返す
   // replayed: 引き継いだときに、前のアプリの頃から答えを待っている要求を出し直した
   onPermission(requestId: string, request: CanUseToolRequest, replayed: boolean): void;
+  // MCP サーバーから人への質問（elicitation）。答えは respondElicitation で返す。受け取る先が無ければ、使わない要求と同じく error で返す
+  onElicitation?(requestId: string, request: ElicitationRequest, replayed: boolean): void;
   // 待っていた要求を、Claude Code が取り下げた（スマホなど、ほかで先に答えた）
   onCancel(requestId: string): void;
   // claude が終わった。stderr: 標準エラーの末尾
@@ -46,6 +49,7 @@ export class StreamClient {
   private next = 0;
   // Claude Code が答えを待っている要求（request_id → 要求）
   private readonly permissions = new Map<string, CanUseToolRequest>();
+  private readonly elicitations = new Map<string, ElicitationRequest>();
   // 引き継いだとき、この通し番号までは前のアプリの頃の行
   private pastUntil = 0;
   // 知らない種類の行と、読めない行の数（不具合を調べるため）
@@ -112,6 +116,13 @@ export class StreamClient {
     return true;
   }
 
+  // 待っている MCP サーバーの質問（elicitation）に答える。もう待っていなければ（取り下げられた・答えた）false
+  respondElicitation(requestId: string, result: ElicitationResult): boolean {
+    if (!this.elicitations.delete(requestId)) return false;
+    this.write(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: result } } satisfies ControlResponseMessage));
+    return true;
+  }
+
   // 入力を閉じる
   end(): void {
     this.pipe.end();
@@ -157,7 +168,7 @@ export class StreamClient {
         return;
       case 'control_cancel_request':
         if (typeof value.request_id !== 'string') this.malformed += 1;
-        else if (this.permissions.delete(value.request_id)) this.events.onCancel(value.request_id);
+        else if (this.permissions.delete(value.request_id) || this.elicitations.delete(value.request_id)) this.events.onCancel(value.request_id);
         return;
     }
     if (IGNORED_KINDS.has(kindOf(value))) return;
@@ -181,7 +192,7 @@ export class StreamClient {
     if (message && message !== 'unknown') this.events.onMessage(message, true);
   }
 
-  // Claude Code からの制御の要求。can_use_tool は待っている要求にし、ほかは使わないので error で返す
+  // Claude Code からの制御の要求。can_use_tool と elicitation は待っている要求にし、ほかは使わないので error で返す
   private raise(line: string, replayed = false): void {
     const value = parse(line) as { request_id?: unknown; request?: { subtype?: unknown } } | null;
     const requestId = value?.request_id;
@@ -189,15 +200,21 @@ export class StreamClient {
       this.malformed += 1;
       return;
     }
-    if (this.permissions.has(requestId)) return;
+    if (this.permissions.has(requestId) || this.elicitations.has(requestId)) return;
     const request = value?.request;
     if (request?.subtype === 'can_use_tool' && isPermission(request)) {
       this.permissions.set(requestId, request);
       this.events.onPermission(requestId, request, replayed);
       return;
     }
+    const answersElicitations = !!this.events.onElicitation;
+    if (request?.subtype === 'elicitation' && answersElicitations && isElicitation(request)) {
+      this.elicitations.set(requestId, request);
+      this.events.onElicitation?.(requestId, request, replayed);
+      return;
+    }
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';
-    if (subtype === 'can_use_tool' || subtype === 'unknown') this.malformed += 1;
+    if (subtype === 'can_use_tool' || subtype === 'unknown' || (subtype === 'elicitation' && answersElicitations)) this.malformed += 1;
     else this.countUnknown(`control_request/${subtype}`);
     this.write(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `tanacode does not handle ${subtype} requests.` } } satisfies ControlResponseMessage));
   }
@@ -218,8 +235,9 @@ export class StreamClient {
     this.exited = true;
     this.clearWaiting('exited');
     // 終わったプロセスの要求には、もう答えられない
-    for (const requestId of [...this.permissions.keys()]) {
+    for (const requestId of [...this.permissions.keys(), ...this.elicitations.keys()]) {
       this.permissions.delete(requestId);
+      this.elicitations.delete(requestId);
       this.events.onCancel(requestId);
     }
     this.log?.close();
@@ -273,6 +291,20 @@ function isPermission(request: unknown): request is CanUseToolRequest {
   return str(r.tool_name) && isRecord(r.input) && str(r.tool_use_id);
 }
 
+// MCP サーバーの質問。URL の形には開くページが要る。項目の形（requested_schema の中身）は、カードが読む（読めない項目は、断るだけにする）
+function isElicitation(request: unknown): request is ElicitationRequest {
+  const r = request as Partial<ElicitationRequest>;
+  const mode = r.mode ?? 'form';
+  return (
+    str(r.mcp_server_name) &&
+    str(r.message) &&
+    (mode === 'form' || (mode === 'url' && str(r.url))) &&
+    (r.elicitation_id === undefined || str(r.elicitation_id)) &&
+    (r.requested_schema === undefined || isRecord(r.requested_schema)) &&
+    (r.property_order === undefined || (Array.isArray(r.property_order) && r.property_order.every(str)))
+  );
+}
+
 // / のコマンド（initialize の返事の commands と同じ形）。候補に使う name・description・aliases を確かめる
 function isCommand(value: unknown): boolean {
   return isRecord(value) && str(value.name) && str(value.description) && (value.aliases === undefined || (Array.isArray(value.aliases) && value.aliases.every(str)));
@@ -300,6 +332,8 @@ const SYSTEM_CHECKS: Record<string, (v: Record<string, unknown>) => boolean> = {
   compact_boundary: (v) => isRecord(v.compact_metadata),
   api_retry: (v) => typeof v.attempt === 'number',
   commands_changed: (v) => Array.isArray(v.commands) && v.commands.every(isCommand),
+  // URL の形の MCP サーバーの質問の完了。完了を待っているカードを閉じる
+  elicitation_complete: (v) => str(v.mcp_server_name) && str(v.elicitation_id),
   task_progress: () => true,
   task_updated: () => true,
   background_tasks_changed: () => true,

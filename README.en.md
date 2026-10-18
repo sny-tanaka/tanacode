@@ -88,7 +88,7 @@ Five MCP servers that tanacode adds to Claude Code, with nothing extra to instal
 
 ## And more
 
-- **While Claude works**: tool calls collapse into a single line. Answer questions, permission prompts, and plan approvals with cards in the chat. Permission prompts show exactly what you're allowing, such as the command or the diff of an edit ([demo](https://sny-tanaka.github.io/tanacode/#delegate))
+- **While Claude works**: tool calls collapse into a single line. Answer questions, permission prompts, plan approvals, and questions from MCP servers (input forms and login pages) with cards in the chat. Permission prompts show exactly what you're allowing, such as the command or the diff of an edit ([demo](https://sny-tanaka.github.io/tanacode/#delegate))
 - **Review before you push**: see the changes since the branch point (including committed ones) in a pull-request-like list. Comments you leave on diff lines go to Claude with your next prompt ([demo](https://sny-tanaka.github.io/tanacode/#review))
 - **Work in parallel**: marks in the session list tell sessions apart by state (working, waiting for background tasks, waiting for an answer, new response), and macOS notifications tell you when a session you're not looking at finishes (with a short report from Claude on what got done or what it needs from you) or needs you. Each session can get its own folder and branch with `claude --worktree`, and tanacode takes care of setting up `node_modules` ([demo](https://sny-tanaka.github.io/tanacode/#parallel))
 - **More than one folder**: add folders other than the session's folder (another repository, for example) to the workspace, and browse and edit them in the Explorer and the editor. Claude Code gets them as folders it can work in, too

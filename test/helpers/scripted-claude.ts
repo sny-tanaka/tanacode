@@ -6,6 +6,7 @@ import type { ChatEvent } from '@shared/chat';
 import type { ChatBatch, NewSessionOptions, SessionSummary } from '@shared/ipc';
 import type { Activity, Menu } from '@shared/screen';
 import type { PendingPermission, PendingQuestion } from '@shared/questions';
+import type { PendingElicitation } from '@shared/elicitation';
 import type { StatusLineInfo } from '@shared/statusline';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
@@ -356,6 +357,9 @@ export class ScriptedApp {
   readonly questionLog: { id: string; question: PendingQuestion | null }[] = [];
   // 答えを待っている許可の確認の知らせ（onPermission）を、届いた順に
   readonly permissionLog: { id: string; permission: PendingPermission | null }[] = [];
+  // 答えを待っている MCP サーバーの質問の知らせ（onElicitation）と、ふだんのブラウザで開いたページ（onOpenExternal）を、届いた順に
+  readonly elicitationLog: { id: string; elicitation: PendingElicitation | null }[] = [];
+  readonly openedUrls: string[] = [];
   sessions: SessionSummary[] = [];
   // 一覧を知らせるたびの中身（途中の「準備中」なども見られるように）
   readonly sessionLists: SessionSummary[][] = [];
@@ -409,6 +413,8 @@ export class ScriptedApp {
         onAttention: (session, attention) => this.attentions.push({ id: session.id, attention }),
         onQuestion: (id, question) => this.questionLog.push({ id, question }),
         onPermission: (id, permission) => this.permissionLog.push({ id, permission }),
+        onElicitation: (id, elicitation) => this.elicitationLog.push({ id, elicitation }),
+        onOpenExternal: (url) => this.openedUrls.push(url),
       },
       options.remoteControlAvailable,
       options.settingsFiles,

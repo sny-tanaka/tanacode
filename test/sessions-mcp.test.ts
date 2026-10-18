@@ -7,6 +7,7 @@ import { setLanguage, t } from '@shared/i18n';
 import { promptDisplayText, isHumanPrompt, toChatEvents, transcriptTitle, type ChatEvent, type TranscriptEntry } from '../src/shared/chat';
 import type { ArchiveOptions, NewSessionOptions, SessionOptions, SessionSummary, WorktreeLeftovers, WorktreeRemoval } from '../src/shared/ipc';
 import type { PendingPermission, PermissionReply } from '../src/shared/questions';
+import { elicitationFieldsOf, type PendingElicitation } from '../src/shared/elicitation';
 import type { AskQuestion, PermissionMode } from '../src/shared/screen';
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
@@ -371,6 +372,9 @@ class FakeHost implements SessionsHost {
     this.onReply?.(id);
     return true;
   };
+  // 答えを待っている MCP サーバーの質問（試験で入れる）
+  elicitations = new Map<string, PendingElicitation>();
+  pendingElicitation = (id: string) => this.elicitations.get(id) ?? null;
   subagents = () => this.agents;
   bashTasks = () => this.bash;
   workflows = () => this.flows;
@@ -636,6 +640,66 @@ describe('ツールの実行（SessionsControl）', () => {
       'No question is showing (the user answered it first, or it was withdrawn). Check with get_session.',
     );
     expect(host.replies).toEqual([]);
+  });
+
+  describe('MCP サーバーの質問（子が答えを待っている elicitation）は、人だけが答える', () => {
+    const asking = (over: Partial<PendingElicitation> = {}): PendingElicitation => ({
+      id: 'e1',
+      server: 'deploy',
+      message: 'どこに出しますか？',
+      title: null,
+      description: null,
+      mode: 'form',
+      url: null,
+      openable: false,
+      ...elicitationFieldsOf({ type: 'object', properties: { target: { type: 'string', title: '出す先', enum: ['stg', 'prod'] } }, required: ['target'] }),
+      opened: false,
+      ...over,
+    });
+    beforeEach(() => host.set(CHILD, 'question'));
+
+    it('get_session は、どのサーバーからかと質問の文・項目の名前を返し、答えられないと伝える。URL の形のページは、ホストだけ', async () => {
+      host.elicitations.set(CHILD, asking());
+      const got = jsonOf<{ question?: unknown; mcp_question: unknown }>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      expect(got.question).toBeUndefined();
+      expect(got.mcp_question).toEqual({
+        server: 'deploy',
+        message: 'どこに出しますか？',
+        mode: 'form',
+        fields: [{ name: 'target', title: '出す先', type: 'select', required: true }],
+        can_answer: false,
+        cannot_answer_reason: "It is a question from an MCP server to the user: only the user can answer it, in the child session's card. Tell the user.",
+      });
+      // URL には、ログインの合言葉などが入っていることがある
+      host.elicitations.set(CHILD, asking({ mode: 'url', url: 'https://auth.example.com/login?state=SECRET', openable: true, fields: [] }));
+      const url = jsonOf<{ mcp_question: unknown }>(await control.handle(PARENT, 'get_session', { session_id: CHILD }));
+      expect(url.mcp_question).toMatchObject({ mode: 'url', page_host: 'auth.example.com' });
+      expect(JSON.stringify(url)).not.toContain('SECRET');
+    });
+
+    it('answer_question・send_message は、答えも送りもせずに、人に伝えるよう返す。完了を待っている URL の形の質問は、もう答えている', async () => {
+      host.elicitations.set(CHILD, asking());
+      const answered = textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'どこに出しますか？', choices: ['stg'] }));
+      expect(answered).toContain('is showing a question from the MCP server "deploy" (mcp_question in get_session). Only the user can answer it, in the child session, so nothing was answered. Tell the user.');
+      const sent = textOf(await control.handle(PARENT, 'send_message', { session_id: CHILD, message: 'x' }));
+      expect(sent).toContain('is waiting for the user to answer a question from the MCP server "deploy". Only the user can answer it, in the child session, so the message was not sent. Tell the user.');
+      expect(host.submitted).toEqual([]);
+      host.elicitations.set(CHILD, asking({ id: 'opened:e1', mode: 'url', url: 'https://auth.example.com/', openable: true, fields: [], opened: true }));
+      expect(textOf(await control.handle(PARENT, 'answer_question', { session_id: CHILD, question: 'q', choices: ['a'] }))).toBe('No question is showing (the user answered it first, or it was withdrawn). Check with get_session.');
+    });
+
+    it('親への知らせは、どのサーバーからの質問かと、人だけが答えられることを伝える', async () => {
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
+      host.elicitations.set(CHILD, asking());
+      host.submitted = [];
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'question');
+      await new Promise((r) => setTimeout(r, 60));
+      const name = host.sessions.find((s) => s.id === CHILD)!.title;
+      expect(parseSessionEvent(host.submitted[0].text)?.message).toBe(
+        `子セッション「${name}」（22222222）が、MCP サーバー「deploy」からの質問への回答を待っています（答えられるのは人だけです。子セッションのカードで答えます）。 get_session で確かめてください。`,
+      );
+    });
   });
 
   describe('answer_question: 答えたあと、子が続けて出す次の質問', () => {
