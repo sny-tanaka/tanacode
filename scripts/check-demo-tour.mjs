@@ -6,10 +6,12 @@
 //
 // 例: VITE_DEMO_WAIT=0 DEMO_OUT_DIR=demo-check npm run demo:build && npm run demo:check
 //     npm run demo:check -- --dir demo-check --chapter review
+//     npm run demo:check -- --evidence tour-evidence/pc（止まったら、そのときの画面の様子を書き出す。demo-tour-evidence.mjs）
 import { app, BrowserWindow } from 'electron';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
+import { snapshot, within } from './demo-tour-evidence.mjs';
 
 // このスクリプトより後ろの引数（electron の実行ファイルのパスなどは除く）
 const args = process.argv.slice(process.argv.findIndex((a) => a.endsWith('check-demo-tour.mjs')) + 1);
@@ -21,6 +23,8 @@ const dir = resolve(option('dir', 'demo-check'));
 const chapter = option('chapter', 'start');
 // ツアーが終わらないときに止める時間
 const LIMIT_MS = Number(option('limit', 10 * 60_000));
+// 止まったときの証拠を書き出すフォルダ（無ければ書き出さない）
+const evidenceDir = option('evidence', '');
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 
@@ -39,6 +43,22 @@ function serve() {
     createReadStream(file).pipe(res);
   });
   return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
+}
+
+// 止まったときの画面の写し・アプリの画面の HTML・画面の様子
+async function saveEvidence(win, summary) {
+  mkdirSync(evidenceDir, { recursive: true });
+  const image = await within(win.webContents.capturePage().catch(() => null));
+  if (image && !image.isEmpty()) writeFileSync(join(evidenceDir, 'page.png'), image.toPNG());
+  const app = win.webContents.mainFrame.framesInSubtree.find((f) => f.url.includes('app.html'));
+  let state = null;
+  if (app) {
+    const html = await within(app.executeJavaScript('document.documentElement.outerHTML').catch(() => null));
+    if (html) writeFileSync(join(evidenceDir, 'app.html'), html);
+    state = await within(app.executeJavaScript(`(${snapshot})()`).catch((e) => ({ error: String(e) })), { error: '応答しませんでした' });
+  }
+  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ ...summary, state }, null, 2));
+  console.log(`止まったときの様子を ${evidenceDir} に書き出しました`);
 }
 
 // プロキシは通さない（開くのは自分で立てたサーバーだけ）。CI の Linux ではサンドボックスを使えないので、npm run demo:check は --no-sandbox で起動する
@@ -87,8 +107,9 @@ app.whenReady().then(async () => {
     }
     if (Date.now() - started > LIMIT_MS) break;
   }
-  server.close();
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  if (evidenceDir && result !== 'done') await saveEvidence(win, { result, seconds: Number(seconds), step, last, errors });
+  server.close();
   const ok = result === 'done' && errors.length === 0;
   if (ok) console.log(`ツアーが最後まで流れました（${seconds} 秒）`);
   else if (result === 'done') console.error(`ツアーは最後まで流れましたが、コンソールにエラーが出ました（${errors.length} 件。${seconds} 秒）`);

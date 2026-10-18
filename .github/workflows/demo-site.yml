@@ -19,6 +19,7 @@ on:
       - 'scripts/third-party-notices.ts'
       - 'scripts/check-demo-tour.mjs'
       - 'scripts/check-demo-tour-sp.mjs'
+      - 'scripts/demo-tour-evidence.mjs'
       - '.github/workflows/demo-site.yml'
   # build と tour は develop へのマージに必須のチェック。ワークフローが動かないと結果が届かずにマージできないので、PR では絞り込まずに毎回動かす
   pull_request:
@@ -92,11 +93,12 @@ jobs:
             echo "::error::WebKit を入れられませんでした"
             exit 1
           fi
+      # 止まったら、そのときの画面の様子を tour-evidence に書き出す（scripts/demo-tour-evidence.mjs）
       - name: ツアーを PC とスマホで並べて流す
         run: |
-          xvfb-run -a -s "-screen 0 2560x1440x24" npm run demo:check > "$RUNNER_TEMP/tour-pc.log" 2>&1 &
+          xvfb-run -a -s "-screen 0 2560x1440x24" npm run demo:check -- --evidence "$RUNNER_TEMP/tour-evidence/pc" > "$RUNNER_TEMP/tour-pc.log" 2>&1 &
           pc=$!
-          npm run demo:check:sp > "$RUNNER_TEMP/tour-sp.log" 2>&1 &
+          npm run demo:check:sp -- --evidence "$RUNNER_TEMP/tour-evidence/sp" > "$RUNNER_TEMP/tour-sp.log" 2>&1 &
           sp=$!
           status=0
           wait "$pc" || status=$?
@@ -107,6 +109,15 @@ jobs:
           echo "::group::スマホのツアー"; cat "$RUNNER_TEMP/tour-sp.log"; echo "::endgroup::"
           [ "$sp_status" -eq 0 ] || echo "::error::スマホのツアーが最後まで流れませんでした（メモリの上限を超えたときも）"
           [ "$status" -eq 0 ] && [ "$sp_status" -eq 0 ]
+      # ツアーがときどき止まるときは、手元で再現しにくい。止まったときの画面の写し・アプリの画面の HTML・画面の様子を残して、原因を見分けられるようにする
+      - name: ツアーが止まったときの様子を残す
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tour-evidence
+          path: ${{ runner.temp }}/tour-evidence/
+          if-no-files-found: ignore
+          overwrite: true
 
   deploy:
     if: github.event_name != 'pull_request'
