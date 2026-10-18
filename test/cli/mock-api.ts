@@ -19,12 +19,23 @@ export type Step = Block[];
 
 // match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）。
 // model: 応答に書くモデル（無ければ頼まれたモデル。会話ログのモデルが画面のモデル名になるかを見るため）
-// failures: 応答の番号 → 応答の代わりに返す API エラー
-export type Conversation = { match: string; steps: Step[]; delayMs?: number; model?: string; failures?: Record<number, ApiFailure> };
+// failures: 応答の番号 → 応答の代わりに返す API エラー。cuts: 応答の番号 → 書いている途中で接続を切る応答（ストリーミングのときだけ）
+export type Conversation = {
+  match: string;
+  steps: Step[];
+  delayMs?: number;
+  model?: string;
+  failures?: Record<number, ApiFailure>;
+  cuts?: Record<number, StreamCut>;
+};
 
 // 応答の代わりに返す API エラー。status: HTTP の状態コード（529 は overloaded）。errorType: エラーの種類（overloaded_error など）。
 // times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）
 export type ApiFailure = { status: number; errorType: string; message: string; times?: number };
+
+// 書いている途中で接続を切る応答。text: 切る前に送る、文のブロックの書きかけ。times: 続けて切る回数（無ければ毎回）。
+// 使い切ったあとは台本どおりの応答を返す（Claude Code の取り直しが通る）
+export type StreamCut = { text: string; times?: number };
 
 type Message = { role?: string; content?: string | { type?: string; text?: string; content?: string | { type?: string; text?: string }[] }[] };
 type Body = {
@@ -77,6 +88,8 @@ export class MockApi {
   plainReplies: { match: string; text: string }[] = [];
   // ツールの一覧が付いていない呼び出しを、これが済むまで返さない（Claude Code がその返事を待たずに先へ進むことを確かめる）
   holdPlain: Promise<void> | null = null;
+  // 書いている途中で接続を切る応答（cuts）で、書きかけを送ってから切るまでに待つもの（書きかけがチャットに出たのを見届けてから切る）
+  holdCut: (() => Promise<void>) | null = null;
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -149,6 +162,13 @@ export class MockApi {
     }
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
     const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason, inputTokens: this.inputTokens };
+    const cut = body.stream ? conversation?.cuts?.[index] : undefined;
+    const cutKey = `${key}:cut`;
+    if (cut && (cut.times === undefined || (this.failed.get(cutKey) ?? 0) < cut.times)) {
+      this.failed.set(cutKey, (this.failed.get(cutKey) ?? 0) + 1);
+      this.requests.push(`  → 書いている途中で接続を切る（${this.failed.get(cutKey)} 回目）`);
+      return cutStream(res, answer, cut.text, this.holdCut);
+    }
     if (body.stream) stream(res, answer);
     else json(res, message(answer));
   }
@@ -183,11 +203,17 @@ function json(res: ServerResponse, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 
-// ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る
-function stream(res: ServerResponse, reply: Reply): void {
+// ストリーミング（SSE）の応答を、応答の始まり（message_start）まで送る。返すのは、続きの出来事を送る関数
+function openStream(res: ServerResponse, reply: Reply): (type: string, data: Record<string, unknown>) => void {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const send = (type: string, data: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
   send('message_start', { message: { ...message({ ...reply, content: [] }), stop_reason: null, usage: { input_tokens: reply.inputTokens, output_tokens: 0 } } });
+  return send;
+}
+
+// ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る
+function stream(res: ServerResponse, reply: Reply): void {
+  const send = openStream(res, reply);
   reply.content.forEach((block, index) => {
     if (block.type === 'text') {
       send('content_block_start', { index, content_block: { type: 'text', text: '' } });
@@ -205,6 +231,15 @@ function stream(res: ServerResponse, reply: Reply): void {
   send('message_delta', { delta: { stop_reason: reply.stopReason, stop_sequence: null }, usage: { output_tokens: 20 } });
   send('message_stop', {});
   res.end();
+}
+
+// 書いている途中で接続が切れるストリーミングの応答。文のブロックの書きかけ（text）まで送り、hold が済んだら接続を切る
+async function cutStream(res: ServerResponse, reply: Reply, text: string, hold: (() => Promise<void>) | null): Promise<void> {
+  const send = openStream(res, reply);
+  send('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
+  send('content_block_delta', { index: 0, delta: { type: 'text_delta', text } });
+  await hold?.().catch(() => undefined);
+  res.socket?.destroy();
 }
 
 function textOf(message: Message | undefined): string {

@@ -1,5 +1,6 @@
 import { expect } from 'vitest';
 import type { ChatEvent, TranscriptEntry } from '@shared/chat';
+import type { ChatBatch } from '@shared/ipc';
 import type { Conversation } from '../cli/mock-api';
 
 // 失敗や中断の台本（test/cli/errors.test.ts）と、アプリが読み取れるべきもの。
@@ -21,6 +22,10 @@ export const RETRY_REPLY = '再試行で届いた返事';
 export const OVERLOADED_PROMPT = 'ずっと混み合います';
 export const BAD_REQUEST_PROMPT = '不正なリクエストになります';
 export const BAD_REQUEST_MESSAGE = 'テストの不正なリクエストです';
+// 書いている途中で接続が切れる発言と、切れる前の書きかけの文・取り直した返事
+export const CUT_PROMPT = '書いている途中で接続が切れます';
+export const CUT_DRAFT = '書きかけの文です。これは取り消されるはず';
+export const CUT_REPLY = '取り直した返事';
 // ツールの失敗・hooks で止める・Write と Edit
 export const TOOLS_PROMPT = 'ツールの失敗と差分を試してください';
 export const TOOLS_REPLY = 'ツールの確認が終わりました';
@@ -86,6 +91,8 @@ const CONVERSATIONS: Conversation[] = [
     failures: { 0: { status: 400, errorType: 'invalid_request_error', message: BAD_REQUEST_MESSAGE } },
     steps: [[{ type: 'text', text: '届かない返事' }]],
   },
+  // 1 回目のストリーミングを、書いている途中で切る（Claude Code は取り直す）
+  { match: CUT_PROMPT, cuts: { 0: { text: CUT_DRAFT, times: 1 } }, steps: [[{ type: 'text', text: CUT_REPLY }]] },
   {
     match: TOOLS_PROMPT,
     steps: [
@@ -186,6 +193,22 @@ export function checkBadRequest(events: ChatEvent[]): void {
   expect(errors[0]).toMatchObject({ text: expect.stringContaining(BAD_REQUEST_MESSAGE) });
   expect(events.some((e) => e.type === 'assistant-text')).toBe(false);
   expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
+}
+
+// 書いている途中で接続が切れて、取り直したあと（#233）。batches: 発言を送ってからの配信 / events: 今の台本のチャット。
+// 取り消された書きかけ（会話ログに出ない）は、取り直した返事がチャットに出るまでに、書いている途中の文から外れる（ターンの終わりまで残らない）。
+// チャットに残るのは、取り直した返事だけ
+export function checkCut(batches: ChatBatch[], events: ChatEvent[]): void {
+  const drafting = (batch: ChatBatch) => !!batch.partial?.some((b) => b.text === CUT_DRAFT);
+  const shown = batches.findIndex(drafting);
+  expect(shown, '書きかけの文が、書いている途中の文として出る').toBeGreaterThanOrEqual(0);
+  const removed = batches.findIndex((b, i) => i > shown && !!b.partial && !drafting(b));
+  const answered = batches.findIndex((b) => b.events.some((e) => e.type === 'assistant-text' && e.text === CUT_REPLY));
+  expect(answered, '取り直した返事が出る').toBeGreaterThan(shown);
+  expect(removed, '取り消された書きかけが外れる').toBeGreaterThan(shown);
+  expect(removed, '取り直した返事が出るまでに外れる（ターンの終わりまで残らない）').toBeLessThanOrEqual(answered);
+  const expected = [{ type: 'user', text: CUT_PROMPT }, { type: 'assistant-text', text: CUT_REPLY }, { type: 'turn-end' }];
+  expect(talk(events)).toEqual(expected.map((e) => expect.objectContaining(e)));
 }
 
 // ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks

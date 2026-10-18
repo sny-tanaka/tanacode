@@ -6,6 +6,8 @@ import type { PendingPermission } from '@shared/questions';
 import { readChatLog } from '../../src/main/chat-log';
 import {
   BAD_REQUEST_PROMPT,
+  CUT_DRAFT,
+  CUT_PROMPT,
   EARLY_PROMPT,
   ENV,
   NOTES,
@@ -19,6 +21,7 @@ import {
   TOOL_PROMPT,
   WAIT_PROMPT,
   checkBadRequest,
+  checkCut,
   checkEarlyInterrupt,
   checkOverloaded,
   checkResumed,
@@ -33,7 +36,7 @@ import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、失敗や中断を、アプリと同じ部品で読めるかを確かめる。
 // 台本（test/scenarios/errors.ts）: 応答の前の中断 → 応答を待つ間の中断 → ツールの実行中の中断 → --resume → API エラー
-// （529 の再試行・529 のあきらめ・400）→ ツールの失敗・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks。
+// （529 の再試行・529 のあきらめ・400）→ 書いている途中で接続が切れる → ツールの失敗・PreToolUse の hooks で止める・Write と Edit の差分・Stop の hooks。
 // 中断はチャットの停止のボタンと同じく session-manager の interrupt（stream-json の interrupt）。
 // 台本ごとに /clear で会話を分ける（モックは会話のはじめの発言で台本を選ぶため）
 
@@ -167,6 +170,22 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
     await run.waitUntil('ターンの終わり', has((e) => e.type === 'turn-end'), 30_000);
     await idle();
     checkBadRequest(events());
+  });
+
+  it('書いている途中で接続が切れて取り直すと、取り消された書きかけはチャットから外れ、取り直した返事だけが残る', async () => {
+    const batches = run.chatBatches.length;
+    // 書きかけの文が、書いている途中の文として配信されたのを見届けてから、接続を切る
+    const drafted = () => run.chatBatches.slice(batches).some((b) => b.partial?.some((p) => p.text === CUT_DRAFT));
+    api.holdCut = () => run.waitUntil('書きかけの文', drafted, 30_000).then(() => undefined);
+    try {
+      await begin(CUT_PROMPT);
+      await run.waitUntil('ターンの終わり', has((e) => e.type === 'turn-end'), 30_000);
+    } finally {
+      api.holdCut = null;
+    }
+    checkCut(run.chatBatches.slice(batches), events());
+    // 1 回目は書いている途中で切れ、取り直した 2 回目で応答した
+    expect(api.requests.filter((r) => r.includes(`「${CUT_PROMPT}」の会話`))).toHaveLength(2);
   });
 
   it('新しい会話の最初の発言から、ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks が読める', async () => {
