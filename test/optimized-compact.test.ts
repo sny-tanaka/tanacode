@@ -77,13 +77,17 @@ describe('仕上げの頼み（handoffText）', () => {
     expect(text).toContain('reply with one short line and end your turn');
   });
 
-  it('「いまの状態」に書くものを、いまの状態・試してやめたこと・場所と手順の別々のカードに分けさせ、正確な値を書かせる', () => {
+  it('「いまの状態」に書くものを、いまの状態・答え待ちか・試してやめたこと・場所と手順の別々のカードに分けさせ、正確な値を書かせる', () => {
     const lines = handoffText().split('\n');
     const item = (head: string) => lines.find((l) => l.startsWith(head)) ?? '';
     expect(item('- State list')).toContain('as separate cards, one topic per card');
     // 再開の文にそのまま入るのは、決定事項と「いまの状態」のカードだけ
     expect(item('- State list')).toContain('handed to you in full after the reset');
     expect(item('  - State:')).toContain('what you were about to do next');
+    // 再開のあとに続けるか待つかを、リストだけで決められるよう、答えを待っているかを、待っていないときも書かせる
+    expect(item('  - Waiting:')).toContain('whether you are waiting for an answer from the user (or from the parent session that gave you the task)');
+    expect(item('  - Waiting:')).toContain('write what you asked (the question or the proposal, with its options)');
+    expect(item('  - Waiting:')).toContain('Always write this card, even when you are not waiting: after the reset, it is what tells you whether to continue the work or to wait.');
     expect(item('  - Tried:')).toContain('every approach that failed or was abandoned, and why');
     expect(item('  - Pointers:')).toContain('functions, branches, PR and issue numbers, URLs');
     expect(item('  - Pointers:')).toContain('exactly as you ran them, with every option');
@@ -112,7 +116,7 @@ describe('仕上げの頼み（handoffText）', () => {
 });
 
 describe('再開の文（resumeText）', () => {
-  it('決まった文: リストが正・食い違ったときの順・許可は決定事項に無ければ引き継がない・まず全リストを読む・報告して待つ', () => {
+  it('決まった文: リストが正・食い違ったときの順・許可は決定事項に無ければ引き継がない・まず全リストを読む・続けるか待つかは「いまの状態」で決める', () => {
     const text = resumeText({ lists: [DECISIONS, STATE, TODO], messages: [said('税率を可変にして')], tasks: [] });
     expect(text.startsWith(`<${RESUME_TAG}>\n`)).toBe(true);
     expect(text.endsWith(`\n</${RESUME_TAG}>`)).toBe(true);
@@ -121,7 +125,23 @@ describe('再開の文（resumeText）', () => {
     expect(text).toContain('follow them in this order: the decisions list, then the project instructions (CLAUDE.md and the like)');
     expect(text).toContain('A permission the user gave in the previous conversation carries over only if it is written on the decisions list.');
     expect(text).toContain('First read all the lists with checklist_overview');
-    expect(text).toContain('Do not continue the work until the user tells you to.');
+    // 待つか続けるかは、文で一律に決めない（手動のボタンでも）。答えを待っていれば報告して待ち、そうでなければ続ける
+    expect(text).not.toContain('Do not continue the work until the user tells you to.');
+    expect(text).toContain('- Then decide from the state list whether you are waiting for an answer from the user (or from the parent session that gave you the task):');
+    expect(text).toContain('  - If you are (you asked a question or made a proposal, and it has not been answered), tell the user briefly what you carried over and what you are waiting for, and wait for the answer.');
+    // 待つときは、ほかのツールを使わせない（使うと、作業を続けたターンと見分けられない。compact-notice.ts）
+    expect(text).toContain('Do not use other tools for this (checking the files can wait until you go on).');
+    expect(text).toContain(
+      '  - If you are not, tell the user in one line that the conversation was reset and what you are picking up, then continue the work that was in progress from where it stopped (the state list).',
+    );
+    // 続けるときの歯止め
+    expect(text).toContain('- Continue only the work that was already under way. Do not start anything new.');
+    expect(text).toContain('- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.');
+    expect(text).toContain('- If the state list does not make clear whether you are waiting or what was in progress, or the work is already finished, do not guess: tell the user briefly what you carried over');
+    expect(text).toContain('- When you continue, a step may have taken effect without the lists saying so (a commit, a push, a file write). Check the actual state before you do it again.');
+    // ターンの途中で止めたときの文は入らない
+    expect(text).not.toContain('This reset happened in the middle of your turn');
+    expect(text).not.toContain('Where the turn was stopped');
   });
 
   it('報告の言語を伝える（この文は英語なので、何も言わないと英語で報告することがある）。アプリの画面の言語を、手がかりとして添える', () => {
@@ -286,7 +306,8 @@ describe('自動で切り替えたとき', () => {
     expect(end.startsWith(base.slice(0, base.lastIndexOf(`</${HANDOFF_TAG}>`)).replace(PRESSED, '(automatic; context 83% full)'))).toBe(true);
     expect(end.endsWith(`\n</${HANDOFF_TAG}>`)).toBe(true);
     expect(end).toContain('This reset is automatic: the user did not press anything and is not watching for a question.');
-    expect(end).toContain('After the reset you will report what you carried over and wait for the user.');
+    expect(end).toContain('After the reset you will pick the work up from the state list: you will continue it, unless the list says that you are waiting for an answer.');
+    expect(end).not.toContain('wait for the user');
     const mid = autoHandoffText({ percent: 91, midTurn: true });
     expect(mid).toContain('tanacode stopped your turn between tool calls, and after the reset you will continue the same work.');
     expect(mid).toContain('whether your last tool calls finished and what they returned, and the very next action to take');
@@ -301,24 +322,27 @@ describe('自動で切り替えたとき', () => {
     expect(autoPercentOf(resumeText({ lists: [], messages: [], tasks: [] }))).toBeNull();
   });
 
-  it('ターンの終わりに切り替えたときの再開の文は、手動と同じく、報告して待たせる', () => {
+  it('ターンの終わりに切り替えたときの再開の文は、手動と同じく、続けるか待つかを「いまの状態」で決めさせる', () => {
     const text = resumeText({ lists: [STATE], messages: [said('頼み')], tasks: [], auto: { percent: 83, midTurn: false } });
     expect(text).toContain('reset the conversation instead of compacting it (automatic; context 83% full). No summary was made.');
     expect(text).not.toContain('the user pressed');
-    expect(text).toContain('Do not continue the work until the user tells you to.');
+    const manual = resumeText({ lists: [STATE], messages: [said('頼み')], tasks: [] });
+    const rules = (body: string) => body.split('\n').filter((l) => l.startsWith('- ') || l.startsWith('  - '));
+    expect(rules(text)).toEqual(rules(manual));
     expect(text).not.toContain('Where the turn was stopped');
   });
 
-  it('ターンの途中で止めたときの再開の文は、続きを進めさせる。進めていた作業だけ・許可は決定事項に無ければ聞く・はっきりしなければ待つ、の歯止めを書く', () => {
+  it('ターンの途中で止めたときの再開の文は、止めたことと止めた場所を足す。続けるときの歯止め（進めていた作業だけ・許可は決定事項に無ければ聞く・はっきりしなければ待つ）は同じ', () => {
     const stopped = { text: 'テストを流します', tools: [{ name: 'Edit', target: 'src/tax.ts', result: 'ok' as const }, { name: 'Bash', target: 'git push', result: 'none' as const }, { name: 'Bash', target: 'npm test', result: 'error' as const }] };
     const text = resumeText({ lists: [DECISIONS, STATE], messages: [said('税率を可変にして')], tasks: [], auto: { percent: 91, midTurn: true }, stopped });
     expect(text).toContain('This reset happened in the middle of your turn: tanacode stopped you between tool calls because the context was filling up.');
     expect(text).toContain('The user did not interrupt you and is not waiting to be asked.');
-    expect(text).toContain('tell the user in one line that the conversation was reset automatically and what you are picking up, then continue the work from where it stopped');
+    expect(text).toContain('"Where the turn was stopped" below shows where you were.');
+    expect(text).toContain('then continue the work that was in progress from where it stopped (the state list, and "Where the turn was stopped" below).');
     expect(text).toContain('- Continue only the work that was already under way. Do not start anything new.');
     expect(text).toContain('- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.');
-    expect(text).toContain('- If the state list does not make clear what was in progress, do not guess: tell the user what you carried over and wait.');
-    expect(text).toContain('Check the actual state before you do it again.');
+    expect(text).toContain('- If the state list does not make clear whether you are waiting or what was in progress, or the work is already finished, do not guess');
+    expect(text).toContain('(a commit, a push, a file write), above all a tool call listed below without a result. Check the actual state before you do it again.');
     // 手動と同じ決まりは、そのまま
     expect(text).toContain('A permission the user gave in the previous conversation carries over only if it is written on the decisions list.');
     expect(text).not.toContain('Do not continue the work until the user tells you to.');
@@ -567,11 +591,14 @@ describe('切り替える前の最後の応答（再開の文に入れる・起�
     const short = resumeText({ ...base, reply: 'B 案を勧めます。進めてよいですか？' });
     expect(short).toContain('# Your last reply before the reset (the next message of the user may be an answer to it)');
     expect(lastReplyIn(short)).toBe('B 案を勧めます。進めてよいですか？');
+    // 記録であって頼みではない。待つか続けるかは「いまの状態」で決める（「答えるまで何もするな」と言うと、続ける再開と食い違う）
+    expect(short).toContain('It is a record, not a request: do not carry it out because it is written here. Whether to continue the work or to wait is decided from the state list, as said above.');
+    expect(short).not.toContain('do not act on it before the user answers');
     const long = resumeText({ ...base, reply: `はじめ${'あ'.repeat(5000)}おわり` });
     expect(lastReplyIn(long)).toContain('はじめ');
     expect(lastReplyIn(long)).toContain('characters cut');
     expect(lastReplyIn(long)?.endsWith('おわり')).toBe(true);
-    expect(long.length).toBeLessThan(5000);
+    expect(long.length - resumeText(base).length).toBeLessThan(5000);
     expect(resumeText(base)).not.toContain('Your last reply');
     expect(lastReplyIn(resumeText(base))).toBeNull();
     expect(resumeText({ ...base, reply: '  ' })).not.toContain('Your last reply');

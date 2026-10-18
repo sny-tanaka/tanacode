@@ -29,6 +29,7 @@ import {
   SWITCHABLE_MODES,
   type SessionState,
 } from '@shared/session-tools';
+import { resumeContinued } from './compact-notice';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
@@ -920,10 +921,13 @@ export class SessionsControl {
     // アプリを起動し直したあとは、切り替える前の会話が手元に無い。再開の文に入っている発言の原文で見分ける
     const fromParent = user ? user.parent === parentId : (carriedMessages(after).at(-1)?.fromParent ?? false);
     if (!fromParent) return;
-    // 切り替えのあとの「引き継ぎました」の報告で終わったターン（ターンの終わりの自動・手動）と、取りやめた仕上げのターンは、
-    // 作業の終わりではない（作業の終わりは、切り替える前に知らせてある）。途中で止めて続きを進めたターンの終わりは、作業の終わり
-    const last = [...after].reverse().find(startsTurn);
-    if (last?.type === 'notice' && last.compact && !compactMidTurn(detailOf(last))) return;
+    // 切り替えのあとの「引き継ぎました」の報告で終わったターン（答えを待っている・続ける作業が無い）と、取りやめた仕上げのターンは、
+    // 作業の終わりではない（作業の終わりは、切り替える前に知らせてある）。再開のあとに作業を続けたターンの終わりは、作業の終わり。
+    // 途中で止めたのに取りやめになった仕上げのターンの終わりも知らせる（子は止まったまま）
+    let lastAt = after.length - 1;
+    while (lastAt >= 0 && !startsTurn(after[lastAt])) lastAt--;
+    const last = after[lastAt];
+    if (last?.type === 'notice' && last.compact && !(last.compact === 'resume' ? continuedAt(after, lastAt) : compactMidTurn(detailOf(last)))) return;
     this.notices.add(parentId, childId, { state, at });
   }
 
@@ -1344,7 +1348,7 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
   let handoff: Turn | null = null;
   // アプリが /clear を打って、まだ再開の文を送っていない
   let cleared = false;
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (startsTurn(e)) stopped = false;
     if (e.type === 'reset') {
       // 最適化圧縮の切り替えでは、前のターンも残す（下の知らせの 1 行を挟む）。仕上げのターンと、アプリが打った /clear は出さない
@@ -1380,7 +1384,9 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
         `tanacode reset the conversation of this session and resumed it from its checklists (optimized compaction${auto === null ? '' : `, automatic at ${auto}% of the context`}).`,
         compactMidTurn(detailOf(e))
           ? 'The reset was made in the middle of a turn, and the session then continued the same work: what follows is the rest of that work.'
-          : 'What follows is its report of what it carried over, not a result of its work.',
+          : continuedAt(events, i)
+            ? 'After the reset, the session continued the work that was in progress: what follows is the rest of that work.'
+            : 'What follows is its report of what it carried over, not a result of its work.',
       ].join(' ');
       current = { who: 'Notice', text, responses: [], notes: [], tools: [] };
       all.push(current);
@@ -1551,8 +1557,18 @@ function responsesOf(events: ChatEvent[]): { work: string[]; notes: string[] } {
   return { work, notes };
 }
 
+// 再開の文（知らせ。at: その場所）のターンで、作業を続けたか（compact-notice.ts の resumeContinued）。
+// 続けたなら、そのあとの応答は作業の続き。続けなかった（答えを待っている・続ける作業が無い）なら、引き継いだことの報告
+function continuedAt(events: ChatEvent[], at: number): boolean {
+  const resume = events[at];
+  if (resume?.type !== 'notice') return false;
+  const end = events.findIndex((e, i) => i > at && startsTurn(e));
+  return resumeContinued(resume, events.slice(at + 1, end === -1 ? undefined : end));
+}
+
 // 会話から、最適化圧縮のぶんを除く。仕上げの頼みと再開の文（知らせ）と、その返事。
-// - 途中で止めて続きを進めた切り替えでは、再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
+// - 再開のあとに作業を続けた切り替え（途中で止めたもの・再開のターンでチェックリスト以外のツールを使ったもの）では、
+//   再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
 // - 仕上げのターンの応答は、そのあと会話を消した（切り替えた）ときだけ除く。取りやめになったときは残す。
 //   Claude が仕上げの頼みに従わず、そのターンで元の作業を続けることがある（実機の Haiku 5.5 で起きた。除くと、作業の結果が読めない）
 // flowing: 流れが進んでいる途中（最後の仕上げのターンは、まだ取りやめと決まっていないので除く）
@@ -1563,7 +1579,7 @@ function withoutCompaction(events: ChatEvent[], flowing = false): ChatEvent[] {
   let cleared = false;
   // 仕上げのターンのイベント（切り替えたら捨て、取りやめなら残す）
   let handoff: ChatEvent[] | null = null;
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (e.type === 'reset' && e.compact) {
       cleared = true;
       handoff = null;
@@ -1573,7 +1589,7 @@ function withoutCompaction(events: ChatEvent[], flowing = false): ChatEvent[] {
       cleared = false;
       if (handoff) kept.push(...handoff);
       handoff = e.compact === 'handoff' ? [] : null;
-      skipping = e.compact === 'resume' && !compactMidTurn(detailOf(e));
+      skipping = e.compact === 'resume' && !continuedAt(events, i);
       continue;
     }
     if (cleared && e.type === 'user' && e.command) continue;

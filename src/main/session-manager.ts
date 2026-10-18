@@ -56,7 +56,7 @@ import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
 import { blockedByPreCompact } from './auto-compact';
-import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
+import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import { PendingQuestions } from './pending-questions';
@@ -3141,6 +3141,8 @@ export class SessionManager {
         if (!rt.starterSeen || starter.type === 'user' || compact) rt.turnStarter = turnStarterOf(starter);
         rt.starterSeen = true;
       }
+      // 再開の文のターンで、チェックリスト以外のツールを使った。報告して待ったのではなく、作業を続けたターン（終わりは作業の完了）
+      if (rt.turnStarter === 'resume' && events.some(continuesWork)) rt.turnStarter = 'other';
     }
     // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
     const arrived = rt && !past ? sentUuidOf(entry) : null;

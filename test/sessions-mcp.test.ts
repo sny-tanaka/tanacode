@@ -1785,13 +1785,15 @@ describe('ツールの実行（SessionsControl）', () => {
       push(said('リストを更新しました'), { type: 'turn-end' });
       host.set(CHILD, 'idle');
     };
-    const resumeTurn = (auto: AutoCompactTrigger | null, reply: string) => {
+    const tool = (name: string): ChatEvent => ({ type: 'tool-use', id: `t${n++}`, name, target: '', input: '' });
+    // tools: 再開のターンで使ったツール（チェックリストのツールだけなら報告して待った、ほかのツールを使ったら作業を続けた）
+    const resumeTurn = (auto: AutoCompactTrigger | null, reply: string, tools: ChatEvent[] = []) => {
       // 新しい会話には、アプリが打った /clear が、コマンドの発言として残る
       push({ type: 'reset', compact: true }, { type: 'user', id: `c${n++}`, text: '/clear', command: true }, { type: 'turn-end' }, resumeNotice(auto));
       host.set(CHILD, 'working');
       flowing.delete(CHILD);
       host.set(CHILD, 'working');
-      push(said(reply), { type: 'turn-end' });
+      push(...tools, said(reply), { type: 'turn-end' });
       host.set(CHILD, 'idle');
     };
 
@@ -1839,9 +1841,29 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(notices()).toHaveLength(1);
       handoffTurn(AUTO);
       await settle();
-      resumeTurn(AUTO, '引き継ぎました。指示を待ちます');
+      // 答えを待っているので、リストを読んで報告しただけ
+      resumeTurn(AUTO, '引き継ぎました。指示を待ちます', [tool('ToolSearch'), tool('mcp__tanacode-checklist__checklist_overview')]);
       await settle();
       expect(notices()).toHaveLength(1);
+    });
+
+    it.each([
+      ['ターンの終わりの自動', { percent: 85, midTurn: false }],
+      ['手動', null],
+    ] as const)('%s で、再開のあとに作業を続けた（チェックリスト以外のツールを使った）: 続きを終えたときにも、親に知らせる。読めるのは、続きを終えたあとの応答', async (_, auto) => {
+      host.events.set(CHILD, [{ type: 'user', id: '1', text: '税率を可変にして', parent: PARENT }, said('手順 1 を終えました'), { type: 'turn-end' }]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      handoffTurn(auto);
+      await settle();
+      resumeTurn(auto, '手順 2 も終えました', [tool('ToolSearch'), tool('mcp__tanacode-checklist__checklist_overview'), tool('Edit')]);
+      await settle();
+      expect(notices()).toHaveLength(2);
+      expect(await status()).toMatchObject({ state: 'idle', last_prompt: { from: 'parent', text: '税率を可変にして' }, last_response: '手順 2 も終えました' });
+      const text = textOf(await flow.handle(PARENT, 'read_session', { session_id: CHILD }));
+      expect(text).toContain('After the reset, the session continued the work that was in progress: what follows is the rest of that work.');
     });
 
     it('途中で止める自動: 止めた瞬間には知らせない。続きを終えたときに、親に知らせる。読めるのは、続きを終えたあとの応答', async () => {
