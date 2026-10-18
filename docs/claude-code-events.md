@@ -4,7 +4,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 - 対象: Claude Code 2.1.302・Agent SDK（`@anthropic-ai/claude-agent-sdk`）0.3.302・tanacode 2.0.1
 - 調べた日: 2026-10-18
-- その時点の写しです。Claude Code の更新で種類は増えます。調べ直し方は最後の節にあります。
+- その時点の写しです。Claude Code の更新で種類は増えます。調べ直し方は最後の節（スキル `/claude-code-events`）にあります。
 
 ## 前提
 
@@ -169,11 +169,8 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 
 ## 調べ直し方
 
-Claude Code の新しいバージョンで調べ直すときの手順です。
+スキル `/claude-code-events`（`.claude/skills/claude-code-events/SKILL.md`）の手順で調べ直します。引数は調べる Claude Code のバージョンです。
 
-1. 同じバージョンの Claude Code と Agent SDK を、使い捨てのフォルダに入れる（`npm install --no-save --ignore-scripts @anthropic-ai/claude-code@<バージョン> @anthropic-ai/claude-agent-sdk@<SDK のバージョン>`。SDK のバージョンの末尾は、Claude Code のバージョンの末尾と同じ）
-2. SDK の種類: `sdk.d.ts` の `SDKMessage` の一覧から、型ごとの `type` と `subtype` を抜き出す
-3. Claude Code の種類: `claude` の実体（JavaScript のソースが文字のまま入った 1 つの実行ファイル）から `strings` で文字を取り出し、`type:"system",subtype:"〜"` を grep で集める
-   - 名前の前後のコードで分けます。`ki(...)` に渡すもの（stream-json の出力の待ち行列に入れる関数）は stream-json に出るもの、`timestamp` や `isMeta` の付いた行を作る関数は会話ログ用。会話の処理の行のうち stream-json に出すものは、`case"model_fallback":case"model_consent_fallback":yield e` を含む `switch` で選ばれます（この関数の名前は、バージョンごとに変わります）
-   - 決まった書き方だけを拾うので、数はおおよそです（名前を変数で組み立てている種類や、書く順の違う種類は漏れる）
-4. 実際の行: `test/cli/mock-api.ts` のようなモック API に本物の `claude -p` をつないで、出てきた行を録る。環境変数は `test/cli/claude-run.ts` と同じ最小限にします（クラウドの開発環境の変数を受け継ぐと、ふだんは出ない種類が出る）
+- `scripts/kinds.mjs`: Claude Code の本体・SDK の型・tanacode の読み取りから種類を集めて、突き合わせる
+- `scripts/record.mjs`: 本物の `claude -p` をモックの API につないで、行と会話ログを録る（ふつうに答える・書いている途中で切る・断る）
+- `scripts/feed.ts`: 録った行を tanacode の読み取り（`StreamClient`・`PartialText`）にそのまま流す

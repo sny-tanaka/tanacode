@@ -100,7 +100,7 @@ npm run dev
 - 画面の場所の呼び方は、文書と画面の文言でそろえます。左端の縦並びのアイコン（サイドパネルの切り替えと、ブラウザ・ターミナルの開閉）は「アクティビティバー」、画面の下の帯は「ステータスバー」。hooks は「hooks」と書きます（画面の畳んだ行の表示は「フック N件」）。
 - 整形ツール（prettier など）の設定は無し。まわりのコードの書き方に合わせます。
 - AI のエージェント向けの決まりは [AGENTS.md](AGENTS.md) にあります。
-- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）の 3 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
+- 決まった手順は、Claude Code のスキルとして `.claude/skills/` に。リリース（`/release`）・セキュリティ対応（`/security`）・ソースから入れたアプリの更新（`/update-app`）・Claude Code のイベントの調べ（`/claude-code-events`）の 4 つ。リリースはメンテナーだけが行います。手元のほか、Claude Code の cloud のセッションからも、Actions の手動の起動（`release.yml`・`release-publish.yml`）で行えます。
 - 公開すると、`release-publish.yml` から呼ぶ `homebrew.yml` が、Homebrew の tap（[sny-tanaka/homebrew-tanacode](https://github.com/sny-tanaka/homebrew-tanacode)）の cask の `version` と `sha256` を新しいバージョンにします。プッシュの前に、ランナーの Mac でその cask から実際に入れ、バージョンと、quarantine 属性が外れることを確かめます。tap への書き込みは GitHub App の token（tap の Contents の書き込みだけ・1 時間で失効）。同じ App を、動作確認済の Claude Code を上げる PR にも使います（下の「Claude Code との互換性の確かめ方」）。App の Client ID と秘密鍵は、develop でしか使えない Environment「homebrew」の `HOMEBREW_TAP_APP_CLIENT_ID`（変数）と `HOMEBREW_TAP_APP_PRIVATE_KEY`（シークレット）に置きます。失敗したときは、develop で `homebrew.yml` を手動で起動し直します。
 
 ## 見た目の確かめ方
@@ -461,7 +461,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - develop のルールセット（need-pr）は、PR を通すことと、必須のチェック（`check`・`build`・`tour`）が通ることを求めています（承認 0 人・squash のみ）。
   - 途中の控えは artifact（`claude-code-<バージョン>`）にも残します。
   - 「Run workflow」で、バージョンを指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古いバージョンでは作らない）。
-- Claude Code が stream-json で出すイベント・会話ログにだけ書く system の行と、tanacode の対応の一覧は [docs/claude-code-events.md](docs/claude-code-events.md)。Agent SDK の型に無い種類も含めた、ある時点の写しです。調べ直し方も載せています。
+- Claude Code が stream-json で出すイベント・会話ログにだけ書く system の行と、tanacode の対応の一覧は [docs/claude-code-events.md](docs/claude-code-events.md)。Agent SDK の型に無い種類も含めた、ある時点の写しです。調べ直すときは、スキル `/claude-code-events`（`.claude/skills/claude-code-events/`）の手順で。
   - 毎日の確認で気づけるのは、台本で起こした場面に出た種類だけです。台本に無い場面（接続が途中で切れて取り直す、など）で出る種類は、この一覧で確かめます。
 
 ## 仕組み
