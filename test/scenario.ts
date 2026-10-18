@@ -108,6 +108,8 @@ export function checkChat(entries: TranscriptEntry[], events: ChatEvent[], cwd: 
     ...(turnEnd ? [{ type: 'turn-end' }] : []),
   ];
   for (const event of expected) expect(events).toContainEqual(expect.objectContaining(event));
+  // ふだんの会話ログの行は、どれも知っている（Claude Code の更新で増えた種類に気づけるように。増えたら、chat.ts の一覧か読み取りに足す）
+  expect(events.filter((e) => e.type === 'unknown-event').map((e) => e.type === 'unknown-event' && e.name)).toEqual([]);
 }
 
 export function checkStatusLine(info: StatusLineInfo | null, version: string, transcriptPath: string): void {

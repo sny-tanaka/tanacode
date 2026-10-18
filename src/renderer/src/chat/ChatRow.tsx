@@ -14,6 +14,7 @@ import { PastedChips } from './PastedChips';
 import { SentFilesCard } from './SentFilesCard';
 import { ParentHeading, SessionLinkList, SessionRefText } from './SessionRefs';
 import { ToolCard } from './ToolCard';
+import { UnknownEventRow } from './UnknownEventRow';
 import type { ChatItem } from './chatState';
 import { isSessionTool } from '@shared/tool-label';
 import { openChecklistCard } from '../checklist/openCard';
@@ -200,6 +201,9 @@ export const ChatRow = memo(function ChatRow({
   }
   if (item.kind === 'thinking') {
     return <ThinkingBlock text={item.text} settled={item.settled} />;
+  }
+  if (item.kind === 'unknown') {
+    return <UnknownEventRow item={item} />;
   }
   if (item.answers) return <AnswersCard answers={item.answers} />;
   if (item.sentFiles) {

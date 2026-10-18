@@ -72,7 +72,8 @@ describe('toChatEvents: system の行', () => {
     expect(events(system('informational'))).toEqual([]);
     expect(events(system('bridge_status', { url: 'https://claude.ai/code/session_abc' }))).toEqual([{ type: 'remote-control', url: 'https://claude.ai/code/session_abc' }]);
     expect(events(system('bridge_status'))).toEqual([]);
-    expect(events(system('something_new'))).toEqual([]);
+    // 知らない system の行は、未知のイベントとして出す（toChatEvents: 未知のイベント）
+    expect(events(system('something_new'))).toMatchObject([{ type: 'unknown-event', name: 'system/something_new' }]);
   });
 
   it('ローカルのコマンド（会話の最初の /rename など）は発言として出し、出力の行はターンの終わりにする', () => {
@@ -276,7 +277,8 @@ describe('toChatEvents: attachment の行', () => {
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
     // hooks でない attachment
     expect(events(attachment({ type: 'file', filename: `${CWD}/notes.txt` }))).toEqual([]);
-    expect(events({ type: 'attachment' })).toEqual([]);
+    // 中身の無い attachment は、形の違う行として、未知のイベントにする
+    expect(events({ type: 'attachment' })).toMatchObject([{ type: 'unknown-event', name: 'attachment', problem: 'malformed' }]);
   });
 });
 
@@ -672,6 +674,83 @@ describe('toChatEvents: 発言の行', () => {
     expect(ci('知らせ')).toMatchObject({ text: 'CI の自動修正: 知らせが届きました', detail: '知らせ' });
     expect(events(user('<scheduled-task name="朝の確認">\n毎朝の作業です\n</scheduled-task>'))).toEqual([{ type: 'notice', id: 'u1', text: 'スケジュールタスク「朝の確認」の実行', detail: '毎朝の作業です' }]);
     expect(events(user('<scheduled-task>中身</scheduled-task>'))).toEqual([{ type: 'notice', id: 'u1', text: 'スケジュールタスクの実行', detail: '中身' }]);
+  });
+});
+
+describe('toChatEvents: 未知のイベント', () => {
+  // 名前・わけ・ID・バージョン
+  const brief = (entry: TranscriptEntry) => events(entry).map((e) => (e.type === 'unknown-event' ? [e.name, e.problem, e.id, e.version] : e.type));
+
+  it('知らない種類の行・system の行・attachment・応答と発言のブロックを、未知のイベントとして出す。ID は行の uuid（ブロックは位置も）', () => {
+    const v = { version: '2.1.302' };
+    expect(brief({ type: 'brand-new', uuid: 'n1', ...v })).toEqual([['brand-new', 'unknown', 'unknown:n1', '2.1.302']]);
+    expect(brief(system('brand_new_notice', { content: '新しい知らせ', ...v }))).toEqual([['system/brand_new_notice', 'unknown', 'unknown:s1', '2.1.302']]);
+    expect(brief(attachment({ type: 'max_turns_reached', maxTurns: 3 }))).toEqual([['attachment/max_turns_reached', 'unknown', 'unknown:at1', undefined]]);
+    expect(brief(assistant([{ type: 'text', text: '調べます' }, { type: 'server_tool_use', id: 'srv_1', name: 'web_search' }], v))).toEqual([
+      'assistant-text',
+      ['assistant/server_tool_use', 'unknown', 'unknown:a1:1', '2.1.302'],
+    ]);
+    expect(brief(user([{ type: 'text', text: '読んで' }, { type: 'document', source: { type: 'base64' } }]))).toEqual(['user', ['user/document', 'unknown', 'unknown:u1:1', undefined]]);
+    // 生の行は、整形した行の全体（ブロックは、そのブロックだけ）
+    const [line] = events({ type: 'brand-new', uuid: 'n1', value: 1 } as TranscriptEntry);
+    expect(line).toMatchObject({ source: 'transcript', raw: JSON.stringify({ type: 'brand-new', uuid: 'n1', value: 1 }, null, 2) });
+    const [, block] = events(assistant([{ type: 'text', text: 'x' }, { type: 'server_tool_use', id: 'srv_1' }]));
+    expect(block).toMatchObject({ raw: JSON.stringify({ type: 'server_tool_use', id: 'srv_1' }, null, 2) });
+  });
+
+  it('形の違う行（種類の欄が無い・system の subtype が無い・ブロックの type が無い）は、形の違う行として出す。uuid が無ければ連番の ID', () => {
+    expect(brief({ uuid: 'x1' })).toEqual([['', 'malformed', 'unknown:x1', undefined]]);
+    expect(brief({ type: 'system', uuid: 'x2' })).toEqual([['system', 'malformed', 'unknown:x2', undefined]]);
+    expect(brief(assistant([{ text: '型が無い' }]))).toEqual([['assistant/', 'malformed', 'unknown:a1:0', undefined]]);
+    expect(brief({ type: 'brand-new' })).toEqual([['brand-new', 'unknown', expect.stringMatching(/^unknown:n\d+$/), undefined]]);
+    expect(brief({ type: 'assistant', message: { content: [{ type: 'server_tool_use' }] } } as TranscriptEntry)).toEqual([
+      ['assistant/server_tool_use', 'unknown', expect.stringMatching(/^unknown:n\d+$/), undefined],
+    ]);
+  });
+
+  it('チャットの外で使う行と、意図して捨てる行（ふだんから会話ログに出る付帯情報・Claude への文脈など）は出さない', () => {
+    const known: TranscriptEntry[] = [
+      { type: 'mode', mode: 'normal' } as TranscriptEntry,
+      { type: 'permission-mode', permissionMode: 'default' },
+      { type: 'atis-latch' } as TranscriptEntry,
+      { type: 'file-history-snapshot', messageId: 'm1' } as TranscriptEntry,
+      { type: 'file-history-delta' } as TranscriptEntry,
+      { type: 'last-prompt' } as TranscriptEntry,
+      { type: 'api-request' } as TranscriptEntry,
+      { type: 'api-request-blob' } as TranscriptEntry,
+      { type: 'api-request-shape' } as TranscriptEntry,
+      { type: 'queue-operation' } as TranscriptEntry,
+      { type: 'worktree-state' } as TranscriptEntry,
+      { type: 'agent-name' } as TranscriptEntry,
+      { type: 'cost-state' } as TranscriptEntry,
+      { type: 'summary' } as TranscriptEntry,
+      { type: 'custom-title', customTitle: '名前' },
+      { type: 'ai-title', aiTitle: '名前' },
+      // 形の足りない、知っている種類の行（ほかの欄が無いので読まないだけ）
+      { type: 'bridge-session' },
+      { type: 'pr-link' },
+      ...['environment', 'model', 'total_tokens_reminder', 'session_context', 'date', 'deferred_tools_record', 'skill_listing', 'prompt_snapshot', 'agent_listing_delta', 'remote_session_change', 'silent_turn_reminder', 'edited_text_file', 'file', 'task_status', 'plan_mode'].map((type) => attachment({ type })),
+      // 作業中に届いた、発言でない差し込み・hooks の記録で出さないもの
+      attachment({ type: 'queued_command', commandMode: 'prompt', prompt: '<task-notification>', origin: { kind: 'task-notification' } }),
+      attachment({ type: 'hook_success', hookEvent: 'SessionStart', stdout: JSON.stringify({ suppressOutput: true }) }),
+      ...['away_summary', 'permission_retry', 'scheduled_task_fire', 'rewind_stand_in', 'cloud_session_status', 'file_snapshot', 'model_refusal_no_fallback', 'model_consent_fallback', 'agents_killed'].map((subtype) => system(subtype)),
+      system('bridge_status'),
+      system('informational'),
+      assistant([{ type: 'redacted_thinking', data: 'x' }, { type: 'thinking', thinking: '' }, { type: 'text', text: '' }, { type: 'tool_use' }]),
+      user([{ type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } }, { type: 'text', text: '' }]),
+      // 呼び出しの ID の無いツールの結果（付けるカードが無い）
+      user([{ type: 'tool_result', content: 'x' }]),
+      // メタの行・圧縮の要約は、ブロックを見ない
+      user([{ type: 'brand_new' }], { isMeta: true }),
+      user([{ type: 'brand_new' }], { isCompactSummary: true }),
+    ];
+    expect(known.flatMap((entry) => events(entry)).filter((e) => e.type === 'unknown-event')).toEqual([]);
+  });
+
+  it('本体の会話ログのサブエージェントの行は出さない。サブエージェントの会話ログを読むときは出す', () => {
+    const side = { type: 'brand-new', uuid: 'n1', isSidechain: true };
+    expect(events(side)).toEqual([]);
+    expect(events(side, true)).toMatchObject([{ type: 'unknown-event', name: 'brand-new' }]);
   });
 });
 

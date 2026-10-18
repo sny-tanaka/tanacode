@@ -112,6 +112,8 @@ export function prepareExport(
 export function applyOptions(items: ChatItem[], options: ExportOptions, home: string): ChatItem[] {
   const hooks = (runs: HookRun[]) => (options.toolOutput ? runs : runs.map((r) => ({ ...r, stdout: '', stderr: '', message: '' })));
   const out = items.flatMap((item): ChatItem[] => {
+    // 未知のイベントは、tanacode の対応を足すための生の行（作業の中身ではなく、行の全文が入る）なので、書き出さない
+    if (item.kind === 'unknown') return [];
     if (item.kind === 'thinking') return options.thinking ? [item] : [];
     if (item.kind === 'user') return [options.images ? item : { ...item, images: undefined }];
     if (item.kind === 'shell') return [options.toolOutput ? item : { ...item, output: '' }];

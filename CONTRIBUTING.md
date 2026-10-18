@@ -352,7 +352,7 @@ PR で、次のものを流します。develop への push では流しません
 | ファイル | 確かめること |
 | --- | --- |
 | `chat-scroll.test.ts` | チャットの一覧が最下部に張り付いているとき、Shift+Tab で上の見えていない要素へフォーカスを移すと、その要素が見えたままになり、「最新のメッセージへ」が出るか（ブラウザは focusin より先に一覧を動かす。その順は画面の部品のテストに無いので、本物の画面で確かめる） |
-| `chat.test.ts` | 新規セッションの画面から、信頼していないフォルダで始める（フォルダの信頼は確かめない）。Bash と Write の許可・質問に、チャットのカードで答える（答えがモックの API まで届くか）。チャットの並び・一覧のタイトルと権限モード・ターミナルパネルのシェル |
+| `chat.test.ts` | 新規セッションの画面から、信頼していないフォルダで始める（フォルダの信頼は確かめない）。Bash と Write の許可・質問に、チャットのカードで答える（答えがモックの API まで届くか）。チャットの並び・一覧のタイトルと権限モード・ターミナルパネルのシェル。アプリの知らない行（モックの API が返すサーバーのツールのブロック）が「未知のイベント」の 1 行で出て、開くと生の行が読め、コピーできるか（手元の Mac では、人のクリップボードを書き換えないよう、写す先を差し替える。CI では本物のクリップボードを読み直す） |
 | `workspace.test.ts` | 作業フォルダのファイルを、エクスプローラー・エディタ・Markdown のプレビュー・⌘P・全文検索で扱う。プレビューの整形（コードの色付け・mermaid の図・フォルダの中の画像）と相対リンク。エディタで書き換えて ⌘S で保存するとディスクに書かれ、ディスクの変更がエディタに戻るか。日本語の名前のファイルも ⌘P で開け、入力欄の `@` の補完で選んで送ると中身が Claude に渡るか（git の一覧を `-z` なしで読むと、名前がエスケープされて出ない） |
 | `reload.test.ts` | 画面を読み込み直しても（⌘R）、セッションのシェルが動き続け、ターミナルパネルに同じタブ（新しく開かない）と画面が戻り、同じシェルに打てるか。新規セッションの画面で開いたシェルは止めるか |
 | `single-instance.test.ts` | 同じ userData でもう 1 つアプリを起動すると、2 つめはすぐに終わり（終了コード 0）、動いているアプリに知らせ（`second-instance`）が届いて、そのまま使えるか（2 つめは `E2EApp.launchAgain` で、同じ引数と環境変数で起動する） |
@@ -398,10 +398,10 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 画面は読まず、キーも押しません（ターミナルモードの TUI も、起動の引数と状態だけを見る。`tuiArgs`）。決まった時間だけ待たず、状態を待ちます（`untilState`・`waitUntil`・`idle`）。許可の確認と質問には、カードのボタンと同じ `SessionManager.replyPermission`・`replyQuestion` で答えます（`ClaudeRun.permission`・`replyPermission`・`question`・`replyQuestion`）。答えようとしたときに、もう待っていなければ、テストを失敗にします。
   - アプリを止めている間の操作は、claude の標準入力に発言の行を直に書きます（`sendWithoutApp`）。
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
-    - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。文のブロックを書き終える前に止めておくこともできます（`holdText`。書いている途中の文がアプリから配信されてから、会話ログに出るようにする）。
+    - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）と、そのほかの API のブロック（`raw`。そのまま送る）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。文のブロックを書き終える前に止めておくこともできます（`holdText`。書いている途中の文がアプリから配信されてから、会話ログに出るようにする）。
     - 本体の会話の呼び出しごとに、頼まれたモデルとエフォートを控えます（切り替えが届いたかを確かめる。`calls`）。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
-  - 台本は 19 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
+  - 台本は 20 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
 
     | ファイル | 台本 |
     | --- | --- |
@@ -426,6 +426,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `turn-summary.test.ts` | Remote Control のターンの終わりの要約が、チャットの完了を待たせないか。Remote Control のつながりとモデルの要約を環境変数で同じ状態にして（`CLAUDE_CODE_ENVIRONMENT_KIND=bridge`・`CLAUDE_CODE_CLASSIFIER_SUMMARY=1`。アプリが渡す `0` が優先される）、要約の呼び出し（ツールの無い呼び出し）の返事を止めたままでも、作業中から待機中に戻って完了を知らせるか。要約そのもの（`system/post_turn_summary`）は、応答の文から作られて出るか |
     | `internal-requests.test.ts` | アプリが使う Claude Code の内部の制御の要求（`stream/internal.ts`。公開の Agent SDK の型に無いもの）に受け口があるか。`remote_control`（つなぐ・切る。モックの API では理由つきで断られる）・`generate_session_title`（タイトルが返る）・`rewind_conversation`（知らない発言を指すと、巻き戻さずに理由を返す）・`end_session`（Claude Code が終わる）が、「Unsupported control request subtype」で断られない。毎日の確認で、新しい Claude Code でも使えるかを見る |
     | `commands-changed.test.ts` | セッションの途中で / のコマンドの一覧が変わったとき。起動したあとにプロジェクトのスキルのファイルを足すと、Claude Code が `system/commands_changed` を出し、入力欄の候補（`SessionManager.commandsOf`）が起動し直さずに新しくなるか。Claude Code のスキルの見張りは起動の途中で裏で始まり、始まる前に足したファイルは変化として知らされないので、デバッグの記録（`DEBUG_SDK=1` と `CLAUDE_CODE_DEBUG_LOGS_DIR`）に見張りの始まり（`Watching for changes in skill/command directories`）が出てから足す |
+    | `unknown-events.test.ts` | アプリの知らない行が、捨てられずに未知のイベントとしてチャットに届くか。モックの API が応答に、アプリの読まないブロック（サーバーのツールの `server_tool_use`・`web_search_tool_result`。本物の API が返す形）を混ぜると、Claude Code はそのまま会話ログに書き（2.1.302 で実測）、チャットに種類・会話ログから来たこと・バージョン・生の行の付いた未知のイベントが届く。ターンは始めず、ふつうに終わって待機中に戻る |
 
   - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。同じように、書いている途中で接続を切る応答（`cuts`。書きかけを送ってから、`holdText` が済んだら切る）と、ツールを呼ばないのに `stop_reason` が `tool_use` の応答（`malformed`）も返せます。どちらも Claude Code が取り消して、取り直します。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
@@ -442,7 +443,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 確かめる `claude` は `TANACODE_CLAUDE_BIN` で指定（無ければ PATH の `claude`）。
   - 失敗したときは、そのときの状態と、Claude Code の標準エラーの末尾がログに出ます。
 - 控え（`test/fixtures/claude-code/<バージョン>/`）は、会話ログ（`transcript.jsonl`。`basic.test.ts` のもの）と、statusLine の JSON（`statusline.json`。`-p` では statusLine が動かないので、`terminal-mode.test.ts` がターミナルモードの TUI で取る）と、stream-json の出力の行（`stream.jsonl`。`basic.test.ts` のチャットの claude が標準出力に書いたもの。書いている途中の文の `stream_event` は除く。2.1.302 から）の 3 つ。
-  - stream-json の行は、毎日の確認でも、どれもアプリの読み取り（`StreamClient`）で読めるかを確かめます（`basic.test.ts` の最後。`unreadableStreamLines`。そのあとに届いた行も入る控えは、同じジョブで、動作確認済のバージョンを上げたつもりの作業ツリーで流す単体テスト全体（`recorded.test.ts`・`statusline.test.ts`・`context.test.ts` など）が読み直す）。知らない種類の行・使う項目の形が違う行があれば落ちて Issue が立つので（時間で出る `keep_alive` や、Remote Control のときに出る内部用の `system/task_summary`・`system/post_turn_summary` のように、使わないと分かっている種類は数えない。`IGNORED_KINDS`）、Claude Code の更新で stream-json の形が変わったことに気づけます（アプリは、そうした行を捨てて動き続ける）。Claude Code からの制御の要求（`control_request`）も、`can_use_tool`・`elicitation` 以外の種類は知らない種類として、形の違う `can_use_tool`・`elicitation` は形の違う行として数えます。制御の返事（`control_response`）と取り下げ（`control_cancel_request`）は、包み（`request_id`・`subtype`・`error`）の形だけを見ます。
+  - stream-json の行は、毎日の確認でも、どれもアプリの読み取り（`StreamClient`）で読めるかを確かめます（`basic.test.ts` の最後。`unreadableStreamLines`。そのあとに届いた行も入る控えは、同じジョブで、動作確認済のバージョンを上げたつもりの作業ツリーで流す単体テスト全体（`recorded.test.ts`・`statusline.test.ts`・`context.test.ts` など）が読み直す）。知らない種類の行・使う項目の形が違う行があれば落ちて Issue が立つので（時間で出る `keep_alive` や、Remote Control のときに出る内部用の `system/task_summary`・`system/post_turn_summary` のように、意図して捨てると決めた種類は数えない。`IGNORED_KINDS`。理由つき）、Claude Code の更新で stream-json の形が変わったことに気づけます（アプリは、そうした行をチャットに未知のイベントとして出し、動き続ける）。会話ログも同じく、組み立てたチャットに未知のイベントが 1 つも無いかを確かめます（`test/scenario.ts` の `checkChat`。控えの `recorded.test.ts` も）。Claude Code からの制御の要求（`control_request`）も、`can_use_tool`・`elicitation` と意図して断る要求（`DECLINED_REQUESTS`。アプリが登録・宣言したときだけ来るもの）のほかは知らない種類として、形の違う `can_use_tool`・`elicitation` は形の違う行として数えます。制御の返事（`control_response`）と取り下げ（`control_cancel_request`）は、包み（`request_id`・`subtype`・`error`）の形だけを見ます。
     - 限界: アプリが送った要求への返事の中身（`initialize`・`get_usage`・`get_context_usage` などの `response`）の形は、どの要求への返事かが控えからは分からないので、ここでは確かめません（`initialize`・`get_context_usage` は、`basic.test.ts` の、アプリを通した確かめで見ます）。`get_usage` は実験的な要求で（2.1.302 の説明: 形が変わることがある）、API キーでは中身（`rate_limits`）が返らないので、モデル別の枠の形は毎日の確認でも確かめられません。`basic.test.ts` で、返事の外側（`subscription_type`・`rate_limits_available`・`rate_limits` の欄）があることだけを確かめます。アプリが書いた行（標準入力）も控えに入らないので、確かめません。
   - `TANACODE_RECORD=1 npm run test:cli` で取ります。会話ログからは、システムプロンプトの全文やツールの一覧など、アプリが読まない大きな添付の行を除きます。stream-json の行は、書いている途中の文（`stream_event`）だけを除き、ほかはどれも読めるかを確かめるために残します（`initialize`・`get_context_usage` の返事や `init` のツールの一覧のような大きな行も入る）。使い捨てのフォルダのパスは、決まったパス（`/tmp/tanacode-cli`）に置き換えます。
   - 単体テスト（`npm test`）は、どのバージョンの控えも読みます（`recorded.test.ts`。会話ログからチャットを組み立てられるか・statusLine の JSON を読めるか・stream-json の行を読めるか。TUI で取った古い控えには `turn_duration` の行があり、ターンの終わりも会話ログから出る）。動作確認済のバージョンの控えは、`statusline.test.ts`・`context.test.ts` も読みます。`claude` が無くても流せます。古いバージョンの控えも残し、読めるままかを確かめ続けます。
@@ -535,7 +536,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 発言: アプリが `uuid` を付けた `user` の行（下の「チャット」）。
   - 制御の要求: `request_id` は `tc-<接続ごとの印>-<連番>`（起動し直したアプリの連番が、前のアプリの返事と重ならないように）。返事を待ち、30 秒で時間切れにします（`initialize` は区切らない。MCP サーバー・SessionStart のフック・worktree の作成を待ってから答えるため。`remote_control` は 60 秒、`end_session` は 5 秒）。error の返事・時間切れ・claude の終了は、その操作だけを理由付きで失敗にします（`ControlError`）。
   - Claude Code からの要求: `can_use_tool`（許可の確認・質問・プランの承認・ワークフローを始める前の確認）は、答えを待つ要求として持ち、カードか親の道具が答えたら `control_response` で返します。`control_cancel_request` が来たら、待つのをやめます（スマホなど、ほかで先に答えた。実測）。`elicitation`（MCP サーバーから人への質問）も答えを待つ要求として持ち、カードが答えたら返します（下の「MCP サーバーの質問（elicitation）」）。使わない要求（`hook_callback` など）には、必ず error で返します（返さないと Claude Code が待ち続ける）。
-  - 予期しない行: 全部が JSON で届くので、機械的に見分けます。読めない行・知らない種類は捨てて数え、知らない種類は 1 回だけコンソールに残します（新しいバージョンで知らせが増えても壊れない）。知っている種類でも、使う項目の形が違う行は捨てて、「読めない行」として数えます。
+  - 予期しない行: 全部が JSON で届くので、機械的に見分けます。読めない行・知らない種類は捨てて数え、知らない種類は 1 回だけコンソールに残します（新しいバージョンで知らせが増えても壊れない）。知っている種類でも、使う項目の形が違う行は捨てて、「読めない行」として数えます。数えたもの（使わない種類の要求も）は、捨てる前に `onUnknown` で知らせ、チャットに「未知のイベント」として出します（下の「チャット」）。
   - 送受信の控え: `userData/stream-logs/<セッション ID>.log`（`stream/log.ts`。`0600`。4MB を超えたら `.1` に回す。1 行は 64KB まで。書いている途中の行は控えない）。不具合を調べるためのもので、セッションを一覧から消すと一緒に消します。
   - initialize: 起動の直後に 1 回だけ送ります。`perTaskStopAffordance: true` を渡し、中断で裏のサブエージェントとワークフローまで止めないようにします（TUI の Esc と同じ。渡さないと、どちらも止まる。2.1.301 で実測）。フックと MCP は initialize では渡さず、`--settings`・`--mcp-config` で渡します（ターミナルモードで開き直しても同じ設定にするため）。返事のコマンドとモデルの一覧は、`/` の候補とモデルの選択肢に使います。
   - 返事が来るまでが起動中です。10 秒を過ぎたら、経過と、ホストが控えている標準エラーの末尾をチャットに出します（`SLOW_START_MS`。MCP サーバーや SessionStart のフックで遅くなることがある）。
@@ -703,6 +704,20 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 圧縮の失敗は、`system/status` の `null` の行の `compact_result: failed` と `compact_error`（理由）から、エラーとしてチャットに出します（会話ログには残らない。手動の `/compact` の失敗は、会話ログではローカルのコマンドの標準エラーの行になり、チャットには出していない）。成功は、会話ログの区切り（`compact_boundary`）で出るので、ここでは出しません。
   - 失敗の知らせは、送った発言の行が会話ログに書かれるより先に届きます（`/compact` の発言の行は圧縮のあとに書かれる。自動の圧縮がターンの始めに失敗したときも同じ）。発言のときのフックと同じく、その行のあとまで待たせます（`heldHooks`）。`/compact` のようなモデルを呼ばないターンは、ふだんは発言の行を待たずに終わりを出しますが、失敗を待たせているときは待ちます。
   - アプリの圧縮の前のフックが止めたことは、失敗に数えません。2.1.302 の自動の圧縮は、フックが止めると `compact_result` の無い `null` で終えますが、道によっては失敗（`compact_error` が「Compaction blocked by PreCompact hook: <フックの理由>」）として知らせるので、理由がアプリの止める理由のものは出しません（`auto-compact.ts` の `blockedByPreCompact`）。人のフックが止めたものは出します。
+- 未知のイベント: tanacode が知らない（中身か使い方が分からない）、Claude Code からの行を、捨てずにチャットに出します（`shared/unknown-event.ts` の `UnknownEvent`。画面は `chat/UnknownEventRow.tsx`）。対応を足すときの手がかりにするためのもので、設定は無く、いつも出します。
+  - 種類の分け方: どの種類も「使う」「意図して捨てる（理由つき）」「知らない」のどれか 1 か所にだけ書きます（[Claude Code のイベントの一覧](docs/claude-code-events.md) の ✅・⏭・⚠️ と同じ）。中身が分かっている種類は、使うか、理由を書いて捨てるかを決め、どちらとも言えない「受け取るだけ」にはしません。
+    - stream-json（`stream/client.ts`）: 使う種類は `messageOf` の case と `SYSTEM_CHECKS`（使う項目の形を確かめる）。意図して捨てる種類は `IGNORED_KINDS`（ほかの道で足りている・tanacode の起動のしかたでは出ない・クラウドや別の機能向け・使い道がない、の理由ごとに並べる）。意図して断る要求は `DECLINED_REQUESTS`（error で返し、数えない）。
+    - 会話ログ（`chat.ts`）: 使う種類は `toChatEvents` の分岐（読む種類は、出すものが無いときも分岐の中で返す）と、チャットの外で使う種類（`TYPES_USED_ELSEWHERE`。一覧の名前・作業中に送った発言の振り分け・ターミナルモードの権限モード）。意図して捨てる種類は `IGNORED_TYPES`（Claude Code が自分で使う付帯情報）・`IGNORED_SYSTEM`・`IGNORED_ATTACHMENTS`（Claude Code が Claude に渡す文脈）・`IGNORED_ASSISTANT_BLOCKS`（中身の読めない思考）。出どころは、控えの会話ログ・手元の会話ログ・Claude Code 2.1.302 の本体（会話ログを読む処理と attachment の一覧）と、上の一覧。
+    - どこにも書いていない種類が、知らない種類です。
+  - 出すもの: stream-json の知らない種類・形の違う行・JSON として読めない行・知らない種類の要求（`StreamClient` が数えるものと同じ。要求には、これまでどおり error で返す）と、会話ログの知らない種類の行・system の行・attachment・応答と発言の content のブロック（`toChatEvents`）。
+  - 出さないもの: 使う種類・意図して捨てる種類・意図して断る要求・書いている途中の行（`stream_event`）・引き継ぎで受け取った前のアプリの頃の行・本体の会話ログのサブエージェントの行。
+  - Claude Code の更新で種類が増えたことに気づけるよう、控えの会話ログと毎日の確認の会話ログ（`test/scenario.ts` の `checkChat`）は、未知のイベントが 1 つも出ないことを確かめます。増えたら、使うか、理由を書いて捨てるかを決めます。
+  - 生の行は、整形した JSON（読めない行は、その文字のまま）。64KB（UTF-8）で切り、元の大きさを添えます（`UNKNOWN_RAW_BYTES`）。会話ログのブロックは、行の全体でなく、そのブロックだけを載せます（行の全体は大きいことがあり、切れて見えなくなるため）。
+  - バージョン: 会話ログの行は、行の `version`。行に無いもの（付帯情報の行）と stream-json の行は、動いている Claude Code のバージョン（`system/init` の `claude_code_version`。`withVersion`）。
+  - ID は行の `uuid`（要求は `request_id`）から作ります。stream-json と会話ログの両方に同じ行が出たら（system の行の一部は、両方に出る）、画面（`chatState.ts` の `withUnknown`）が、先に出た行の隣に生の行を足して 1 回と数えます（同じところから届き直したものは足さない）。両方の形を見比べられるよう、どちらかを捨てることはしません。
+  - 同じ種類（名前とわけ）が、ほかの画面の行を挟まずに続いたら、1 行にまとめて回数を添えます。生の行は、新しいほうから 20 回分（`UNKNOWN_SAMPLES`）。開くまでは生の行を描きません。
+  - ターンの始まりにも終わりにもならず、ほかのセッションに返す会話（`read_session`）・最適化圧縮の切り替え・作業の書き出しでは使いません（書き出しでは外す）。
+  - stream-json にだけ出たものは、別に保存しません（チャットは起動のたびに会話ログから作り直すので、起動し直すと消える）。
 - 再試行中の API エラーは、`system/api_retry` の行から「再試行中」として出します（会話ログには残らない）。入力なしで始まったターン（裏のタスクの完了の知らせなど）では、再試行の行だけが続くことがあるので、ターンの始まりに数えます。裏のタスクが動いている間は数えません（裏のクエリが利用枠を待つ間も、同じ形の行が出るため。2.1.301 の本体）。
 - Claude Code の警告（`system/notification`）は、stream-json にだけ出て会話ログに残らないので、`api_retry` と同じく、その行からお知らせ（`info`。`color` が `warning`・`error` なら警告の色）として出します（`stream/notification.ts`）。文は Claude Code のもの（英語）のまま。ターンは始めず、起動し直すと消えます。知らない `key` も出します。出さないもの（決めたこと）:
   - `stop-hook-error`: Stop フックの失敗。会話ログの `stop_hook_summary` から、フックの表示で出している。
@@ -1005,7 +1020,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
 - 画像は、長い辺 1,600px までに縮めて WebP（品質 0.85）にします。小さくならなければ元のまま（GIF も、動きを残すため元のまま）。
 - 保存は main（`saveExport`）。保存のダイアログ（既定は「ダウンロード」の `<セッション名> <日付>.html`）で選んだ場所に、`0600` で書きます（`writeFile` の `mode` は新しく作るときにしか効かないので、上書きのために `chmod` し直す）。Finder で見せるのは、このアプリが保存したパスだけ。
 - HTML を作る部品（react-dom/server・`global.css` の文字）は大きいので、書き出すときに読み込みます（`import('./exportHtml')`）。
-- 書き出すのは本体の会話だけ。サブエージェント・ワークフローの会話は入れません。
+- 書き出すのは本体の会話だけ。サブエージェント・ワークフローの会話は入れません。未知のイベントも入れません（tanacode の対応を足すための生の行で、作業の中身ではないため）。
 
 ### バックグラウンドの作業（タスク）
 
@@ -1564,7 +1579,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `translate/`: チャットの思考・応答の翻訳（`useBlockTranslation`。翻訳のボタンと、ブロックの下に出す訳文）
   - `i18n.tsx`: 文言の途中に部品を埋め込む `tx()`。`main.tsx` は、描く前に言語（preload の `language()`）を決める
   - `demo/`: デモのサイトと README の紹介画像の、作り物のデータと台本（下の「デモのサイト」「README の紹介画像」）
-- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、貼り付けた文の扱い（`paste.ts`。札にする境目・ターミナルモードの TUI に貼るときのブラケットペースト・制御文字の除去）、権限モードと作業の進み具合と、通知に使う確認の形（`screen.ts`）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）、Claude Code が答えを待っている質問・許可の確認と、その返事の型・答えの文の組み立て・返事の形の確かめ（`questions.ts`）、MCP サーバーの質問の型・項目の読み取り・入力の確かめ（`elicitation.ts`）
+- `src/shared`: IPC の型と、画面の文言（`i18n.ts` と、言語ごとの JSON の `locales/ja.json`・`locales/en.json`。上の「画面の言語」）、会話ログからチャットへの変換（`chat.ts`）、未知のイベントの型と作り方（`unknown-event.ts`）、MCP のツールの定義の形（`mcp-tools.ts`）、アプリ内ブラウザの MCP のツールの一覧と Claude に許す先の判定（`browser-tools.ts`）、セッションの MCP のツールの一覧と説明・親からの指示と知らせの目印の作り方と読み方・見える範囲の判定・権限モードの強さ（`session-tools.ts`）、チェックリストの型と番号の読み方・未読の判定・画面から届いた値の検査（`checklist.ts`）、最適化圧縮で Claude に送る文と状態の形（`optimized-compact.ts`）、チェックリストの書き換え（`checklist-book.ts`。保存は main の `ChecklistStore`）、チェックリストの MCP のツールの一覧と説明・知らせの文と目印の作り方と読み方・ツールの行の対象（`checklist-tools.ts`）、hooks で Claude に渡す今のチェックリストの文と、ターンの終わりを止める条件（`checklist-reminder.ts`）、ウォークスルーの型と質問の文（`walkthrough.ts`）、ウォークスルーの MCP のツールの一覧と説明・ツールの行の対象と押したときに開くもの（`walkthrough-tools.ts`）、ウォークスルーを PR に載せるコメントの本文とパーマリンク（`walkthrough-comment.ts`）、人のターミナルの MCP のツールの一覧と説明・打つものの読み方と見せ方・タブの名前（`terminal-tools.ts`）、貼り付けた文の扱い（`paste.ts`。札にする境目・ターミナルモードの TUI に貼るときのブラケットペースト・制御文字の除去）、権限モードと作業の進み具合と、通知に使う確認の形（`screen.ts`）、コンテキストの中身の型と圧縮の指示の組み立て（`context.ts`）、tanacode で動作確認済の Claude Code のバージョン（`claude-code.ts`）、ソース管理の変更をフォルダごとのツリーにする並べ方（`scm-tree.ts`。フォルダが先・子がフォルダ 1 つだけなら 1 行にまとめる）、チャットの翻訳の型と、訳す前後の文字の扱い・ボタンを出すかの判定（`translate.ts`）、予約したメッセージの型と、すぐ選べる時刻・時刻の表示（`scheduled.ts`）、Claude Code が答えを待っている質問・許可の確認と、その返事の型・答えの文の組み立て・返事の形の確かめ（`questions.ts`）、MCP サーバーの質問の型・項目の読み取り・入力の確かめ（`elicitation.ts`）
 - `native/translate/main.swift`: 翻訳の補助プログラム（Swift。macOS 標準の翻訳を呼ぶ。`scripts/build-translate-helper.mjs` で作る）
 - `design/`: アプリのロゴと、README の紹介画像（`screenshot.png`）
 - `scripts/`: アイコン・ライセンス表示の生成、node-pty の実行権限の修正、README の紹介画像の撮影、動作確認済の Claude Code のバージョンの書き換え、翻訳の補助プログラムのビルド、カバレッジのまとめ（`coverage-report.mjs`）と E2E のカバレッジの変換（`e2e-coverage.mjs`）、ミューテーションテスト（`mutation.mjs`・`mutation-worker.mjs`・`mutation-setup.mjs`）
@@ -1592,7 +1607,7 @@ worktree のセッションでは、ユーザーの操作（許可した子セ�
   - `checklist-reminder.test.ts` / `checklist-hook.test.ts` / `checklist-mcp-entry.test.ts`: チェックリストを使い続けさせる hooks（どの時点で何を渡すか・ターンの終わりを止める条件・会話ログからのツールの数え方・アプリへの聞き方と Claude Code への返し方・中継の入り口）
   - `walkthrough-comment.test.ts`: ウォークスルーを PR に載せる（本文とパーマリンク・一言・開いている PR と HEAD とファイルの確かめ・投稿と長さの上限）
   - `walkthrough.test.ts`: ウォークスルー（MCP のツール（手順とファイルの範囲の確かめ・フォルダの外を断る・寄り道・今の場所・PR への投稿と載せ直し・載せられない理由）・画面からのステップの移動と閉じる・開き直す・中継と起動の引数・設定・チャットのツールの行・質問の文）
-  - `stream-client.test.ts` / `stream-state.test.ts`: stream-json のやりとり（行の読み分け・知らない種類と形の違う行・制御の要求と返事・時間切れ・答えを待つ要求と取り下げ・使わない要求への error・引き継ぎ・内部の要求）と、行から作る値（権限モードの名前・表記・進み具合・利用枠）
+  - `stream-client.test.ts` / `stream-state.test.ts`: stream-json のやりとり（行の読み分け・知らない種類と形の違う行（未知のイベントとして知らせるものと、知らせないもの）・制御の要求と返事・時間切れ・答えを待つ要求と取り下げ・使わない要求への error・引き継ぎ・内部の要求）と、行から作る値（権限モードの名前・表記・進み具合・利用枠）
   - `chat-notices.test.ts` / `fixtures/claude-code-events/<バージョン>/`: チャットのお知らせ（Claude Code の警告と出さない `key`・モデルの切り替え・断られた応答の取り直しと取り消し・メモリ）。切り替えと取り直しの行は、本物の Claude Code をモックの API につないで録った控え（場面ごとのフォルダに、stream-json の行と、アプリが読まない大きな行を除いた会話ログ）
   - `pipe-backlog.test.ts`: パイプの claude の出力の行の控え（通し番号と送り直し・上限・種類ごとの最新・答えを待つ要求）
   - `requests.test.ts` / `pending-questions.test.ts`: 答えを待つ要求（カードに出す形・「今後は聞かない」の説明・人だけが答えられる確認・返事の文）と、待っている質問

@@ -161,6 +161,7 @@ export class ClaudeSession {
         : {}),
       onCancel: (id) => !this.killed && this.handlers.stream?.onCancel(id),
       onCaughtUp: () => !this.killed && this.handlers.stream?.onCaughtUp?.(),
+      onUnknown: (event) => !this.killed && this.handlers.stream?.onUnknown?.(event),
       onExit: (exitCode, stderr) => {
         if (this.pipe !== pipe) return;
         this.pipe = null;
@@ -373,6 +374,10 @@ export function childEnv(claudeDir: string | null = null): Record<string, string
   // 親の tanacode がそのセッションの Claude Code に付けたつなぎ先（ソケット・セッション ID など）も受け継がない。
   // この tanacode は、子ごとに自分のものを付け直す（無いまま親のものが残ると、子のフックが親の tanacode につながる）
   for (const key of Object.keys(env)) if (key.startsWith('TANACODE_')) delete env[key];
+  // 親の tanacode がチャットの Claude Code に付けた変数も受け継がない。この tanacode が、起動の種類ごとに付け直す（claudeEnv。
+  // 受け継ぐと、ターミナルモードの Claude Code まで、要約をモデルで作らなくなる）
+  delete env[FILE_CHECKPOINTING_ENV];
+  delete env[CLASSIFIER_SUMMARY_ENV];
   delete env.ELECTRON_RUN_AS_NODE;
   if (claudeDir) env.CLAUDE_CONFIG_DIR = claudeDir;
   env.TERM = 'xterm-256color';

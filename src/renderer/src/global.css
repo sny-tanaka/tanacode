@@ -3219,6 +3219,75 @@ details[open] > summary > .disclosure {
   width: fit-content;
   cursor: pointer;
 }
+/* 未知のイベント（tanacode が知らない、Claude Code からの行）。ふだんは灰色の小さな 1 行で、開くと生の行 */
+.chat-unknown {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.chat-unknown summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  list-style: none;
+}
+.chat-unknown summary::-webkit-details-marker {
+  display: none;
+}
+.chat-unknown-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-unknown-name {
+  font-family: var(--font-mono);
+}
+.chat-unknown-count {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.chat-unknown-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.chat-unknown-about,
+.chat-unknown-note {
+  margin: 0;
+}
+/* まとめた行の、1 回分ずつの区切り */
+.chat-unknown-sample + .chat-unknown-sample {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-strong);
+}
+.chat-unknown-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.chat-unknown-copy {
+  margin-left: auto;
+}
+.chat-unknown-raw {
+  max-height: 320px;
+  margin: 4px 0 0;
+  overflow: auto;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 /* ! を付けて実行したシェルのコマンド */
 .chat-shell {
   border-radius: 8px;

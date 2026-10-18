@@ -605,6 +605,24 @@
       "thinking": "Thinking",
       "answers": "Answers"
     },
+    "unknown": {
+      "summary": "Unknown event: {name}",
+      "summaryMalformed": "Unknown event: {name} (unexpected shape)",
+      "malformedLine": "Unknown event: line with an unexpected shape",
+      "unparsableLine": "Unknown event: unreadable line",
+      "count": "{count} times",
+      "about": "A line from Claude Code that tanacode does not handle. To add support for it, start from the raw line below.",
+      "sourceStream": "stream-json line",
+      "sourceTranscript": "Transcript line",
+      "sourceRequest": "Request from Claude Code (answered with an error)",
+      "version": "Claude Code {version}",
+      "versionUnknown": "Claude Code version unknown",
+      "copy": "Copy raw line",
+      "copied": "Copied",
+      "truncated": "Too long: showing only the first {limit} KB (the whole line is {total} KB)",
+      "omitted": "The raw lines of the {count} older occurrences are not shown",
+      "omitted_one": "The raw line of {count} older occurrence is not shown"
+    },
     "hookRuns": {
       "success": "Succeeded",
       "blocked": "Blocked",

@@ -7,16 +7,17 @@ import { ControlError, StreamClient, testing } from '../src/main/stream/client';
 import { disableRemoteControl, enableRemoteControl, endSession, generateTitle, rewindConversation, unsupported } from '../src/main/stream/internal';
 import { LineLog } from '../src/main/stream/log';
 import type { CanUseToolRequest, StreamMessage } from '../src/main/stream/protocol';
+import { UNKNOWN_RAW_BYTES, type UnknownEvent } from '../src/shared/unknown-event';
 import { ScriptedPipe } from './helpers/scripted-claude';
 
 // stream-json の claude との行の読み書き（StreamClient）と、内部の要求（internal.ts）・送受信の控え（LineLog）。
 // claude の代わりに、テストが行を出すパイプ（ScriptedPipe）を使う
 
-type Got = { messages: [StreamMessage, boolean][]; permissions: [string, CanUseToolRequest][]; cancels: string[]; exits: [number, string][] };
+type Got = { messages: [StreamMessage, boolean][]; permissions: [string, CanUseToolRequest][]; cancels: string[]; exits: [number, string][]; unknowns: UnknownEvent[] };
 
 function setup(log: LineLog | null = null) {
   const pipe = new ScriptedPipe('p1', { tag: 's1', file: 'claude', args: [], cwd: '/', env: {}, retain: [], transient: [] });
-  const got: Got = { messages: [], permissions: [], cancels: [], exits: [] };
+  const got: Got = { messages: [], permissions: [], cancels: [], exits: [], unknowns: [] };
   const client = new StreamClient(
     pipe,
     {
@@ -24,6 +25,7 @@ function setup(log: LineLog | null = null) {
       onPermission: (id, request) => got.permissions.push([id, request]),
       onCancel: (id) => got.cancels.push(id),
       onExit: (code, stderr) => got.exits.push([code, stderr]),
+      onUnknown: (event) => got.unknowns.push(event),
     },
     log,
   );
@@ -83,12 +85,24 @@ describe('StreamClient', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('Remote Control のときに出る内部用の system の行（task_summary・post_turn_summary）は、使わないので、知らない種類として数えずに黙って捨てる', () => {
+  it('意図して捨てる種類（Remote Control の内部用・ほかの道で足りている・tanacode の起動のしかたでは出ない・別の機能向け・使い道がない）は、知らない種類として数えずに黙って捨て、未知のイベントにもしない', () => {
     const { pipe, client, got } = setup();
     client.start();
     pipe.emit({ type: 'system', subtype: 'task_summary', summary: 'テストを直している', session_id: 's', uuid: 'u1' });
     pipe.emit({ type: 'system', subtype: 'post_turn_summary', status_category: 'done', status_detail: '直した', needs_action: false, session_id: 's', uuid: 'u2' });
+    // 形を確かめないので、使う項目が無くても数えない
+    pipe.emit({ type: 'system', subtype: 'compact_boundary' });
+    const subtypes = [
+      ...['informational', 'local_command', 'task_progress', 'task_updated', 'background_tasks_changed', 'thinking_tokens', 'hook_progress', 'permission_denied'],
+      ...['session_title_changed', 'code_change_published', 'worker_shutting_down', 'model_refusal_no_fallback', 'model_fallback', 'memory_recall'],
+      ...['session_state_changed', 'plugin_install', 'mirror_error', 'control_request_progress', 'model_consent_fallback'],
+      ...['cloud_session_delta', 'vcs_state_changed', 'file_attachments_missing', 'peer_message_hold', 'feedback_draft_queued', 'instruction_size_warning'],
+      ...['ui_invalidate', 'ui_panes', 'ui_scroll', 'ui_focus', 'per_turn_effort_changed'],
+    ];
+    for (const subtype of subtypes) pipe.emit({ type: 'system', subtype, uuid: subtype });
+    for (const type of ['prompt_suggestion', 'auth_status', 'transcript_mirror', 'active_goal', 'autocompact_state', 'tool_use_summary']) pipe.emit({ type, uuid: type });
     expect(got.messages).toEqual([]);
+    expect(got.unknowns).toEqual([]);
     expect([...client.unknown]).toEqual([]);
     expect(client.malformed).toBe(0);
     expect(warn).not.toHaveBeenCalled();
@@ -117,7 +131,6 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'permission_check_status', status: 'checking' },
       { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'waiting' },
       { type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'done', agent_id: 1 },
-      { type: 'system', subtype: 'compact_boundary' },
       { type: 'system', subtype: 'api_retry' },
       // / のコマンドの一覧が無い・名前や説明が文字列でない・別名が文字列の配列でない
       { type: 'system', subtype: 'commands_changed' },
@@ -156,11 +169,10 @@ describe('StreamClient', () => {
       { type: 'system', subtype: 'task_started', task_id: 't' },
       { type: 'system', subtype: 'task_notification', task_id: 't', status: 'stopped' },
       { type: 'system', subtype: 'bridge_state', state: 'connected' },
-      { type: 'system', subtype: 'compact_boundary', compact_metadata: {} },
       { type: 'system', subtype: 'api_retry', attempt: 1 },
       { type: 'system', subtype: 'commands_changed', commands: [] },
       { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy', description: 'x', argumentHint: '', aliases: ['d'] }] },
-      { type: 'system', subtype: 'task_progress' },
+      { type: 'system', subtype: 'hook_started', hook_id: 'h1' },
       { type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'PreToolUse:Bash', hook_event: 'PreToolUse', outcome: 'success', stdout: '', stderr: '' },
       { type: 'system', subtype: 'elicitation_complete', mcp_server_name: 'deploy', elicitation_id: 'el-1', uuid: 'u', session_id: 's' },
     ];
@@ -323,12 +335,11 @@ describe('StreamClient', () => {
       { subtype: 'error', request_id: 'b1', error: 'tanacode does not handle can_use_tool requests.' },
       { subtype: 'error', request_id: 'n1', error: 'tanacode does not handle unknown requests.' },
     ]);
-    // 控えのテスト（unreadableStreamLines）で、Claude Code の要求の種類・形の変化に気づけるよう数える
-    expect([...client.unknown]).toEqual([
-      ['control_request/hook_callback', 1],
-      ['control_request/elicitation', 1],
-    ]);
+    // 控えのテスト（unreadableStreamLines）で、Claude Code の要求の種類・形の変化に気づけるよう、知らない要求は数える。
+    // 意図して断る要求（アプリが登録したときだけ来る hook_callback など）は数えず、未知のイベントにもしない
+    expect([...client.unknown]).toEqual([['control_request/elicitation', 1]]);
     expect(client.malformed).toBe(3);
+    expect(got.unknowns.map((e) => e.name)).not.toContain('control_request/hook_callback');
   });
 
   it('形の違う返事・取り下げ（control_response・control_cancel_request）は、読めない行として数える。待っていない要求への返事は数えない', () => {
@@ -401,6 +412,121 @@ describe('StreamClient', () => {
       'assistant:false',
       'result/success:false',
     ]);
+  });
+});
+
+describe('未知のイベント（onUnknown）', () => {
+  // 名前・わけ・どこから・ID（生の行は別に確かめる）
+  const brief = (events: UnknownEvent[]) => events.map((e) => [e.name, e.problem, e.source, e.id]);
+
+  it('知らない種類・形の違う行・読めない行・使わない種類の要求を、数えるのと一緒に、未知のイベントとして知らせる。ID は行の uuid（要求は request_id）', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'brand_new', uuid: 'u1' });
+    pipe.emit({ type: 'system', subtype: 'brand_new_notice', uuid: 'u2', from: 'a', to: 'b' });
+    pipe.emit({ type: 'system', subtype: 'init', session_id: 's', uuid: 'u3' });
+    pipe.emit('{壊れた');
+    pipe.emit('[1,2]');
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'register_device_hooks' } });
+    pipe.emit({ type: 'control_request', request_id: 'b1', request: { subtype: 'can_use_tool', tool_name: 'Bash' } });
+    pipe.emit({ type: 'control_request', request_id: 'n1' });
+    pipe.emit({ type: 'control_request', request: { subtype: 'can_use_tool' } });
+    pipe.emit({ type: 'control_response' });
+    pipe.emit({ type: 'control_cancel_request' });
+    expect(brief(got.unknowns)).toEqual([
+      ['brand_new', 'unknown', 'stream', 'unknown:u1'],
+      ['system/brand_new_notice', 'unknown', 'stream', 'unknown:u2'],
+      ['system/init', 'malformed', 'stream', 'unknown:u3'],
+      ['', 'unparsable', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+      ['', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+      ['control_request/register_device_hooks', 'unknown', 'request', 'unknown:request:e1'],
+      ['control_request/can_use_tool', 'malformed', 'request', 'unknown:request:b1'],
+      ['control_request', 'malformed', 'request', 'unknown:request:n1'],
+      ['control_request', 'malformed', 'request', expect.stringMatching(/^unknown:request:n\d+$/)],
+      ['control_response', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+      ['control_cancel_request', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+    ]);
+    // 生の行は、読めた行は整形した JSON、読めない行はその文字のまま。知らない要求に error で返す動きと、数はそのまま
+    expect(got.unknowns[1].raw).toBe(JSON.stringify({ type: 'system', subtype: 'brand_new_notice', uuid: 'u2', from: 'a', to: 'b' }, null, 2));
+    expect(got.unknowns[3].raw).toBe('{壊れた');
+    expect(pipe.messages.filter((m) => m.type === 'control_response').map((m) => (m.response as { request_id: string }).request_id)).toEqual(['e1', 'b1', 'n1']);
+    expect([...client.unknown]).toEqual([
+      ['brand_new', 1],
+      ['system/brand_new_notice', 1],
+      ['control_request/register_device_hooks', 1],
+    ]);
+    expect(client.malformed).toBe(8);
+  });
+
+  it('意図して捨てる種類・知っているが使わない種類・使う種類と、書いている途中の行（形が違っても）は、未知のイベントにしない', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'keep_alive' });
+    pipe.emit({ type: 'system', subtype: 'task_summary', summary: 's', uuid: 'u1' });
+    pipe.emit({ type: 'system', subtype: 'post_turn_summary', uuid: 'u2' });
+    pipe.emit({ type: 'system', subtype: 'thinking_tokens', uuid: 'u3' });
+    pipe.emit({ type: 'system', subtype: 'informational', content: 'x', uuid: 'u4' });
+    pipe.emit({ type: 'assistant', message: { content: [] }, parent_tool_use_id: null, uuid: 'a1' });
+    pipe.emit({ type: 'stream_event', event: { type: 'message_start' } });
+    pipe.emit({ type: 'stream_event', event: {} });
+    pipe.emit({ type: 'control_request', request_id: 'p1', request: permission });
+    expect(got.unknowns).toEqual([]);
+    // 書いている途中の形の違う行は、数えるだけ
+    expect(client.malformed).toBe(1);
+  });
+
+  it('長い行は、生の行を 64KB で切り、元のバイト数を添える', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'brand_new', text: 'あ'.repeat(30_000) });
+    pipe.emit({ type: 'brand_new', text: 'a'.repeat(100) });
+    // 文字の数では上限に近くても、UTF-8 で上限に収まれば切らない
+    pipe.emit({ type: 'brand_new', text: 'a'.repeat(30_000) });
+    const [long, short, ascii] = got.unknowns;
+    expect(ascii.truncated).toBeUndefined();
+    expect(ascii.raw).toContain('a'.repeat(30_000));
+    expect(new TextEncoder().encode(long.raw).length).toBeLessThanOrEqual(UNKNOWN_RAW_BYTES);
+    expect(new TextEncoder().encode(long.raw).length).toBeGreaterThan(UNKNOWN_RAW_BYTES - 4);
+    expect(long.raw).not.toContain('�');
+    expect(long.truncated).toBe(new TextEncoder().encode(JSON.stringify({ type: 'brand_new', text: 'あ'.repeat(30_000) }, null, 2)).length);
+    expect(short.truncated).toBeUndefined();
+  });
+
+  it('引き継いだとき、前のアプリの頃の行（送り直しの行・控えの頭より前の行・出し直した要求）は、未知のイベントにしない', () => {
+    const { pipe, client, got } = setup();
+    client.adopt({
+      kind: 'pipe',
+      id: 'p1',
+      tag: 's1',
+      pid: 1,
+      startedAt: 0,
+      exitCode: null,
+      lastSeq: 9,
+      firstSeq: 3,
+      retained: [
+        { seq: 1, line: '{壊れた' },
+        { seq: 2, line: JSON.stringify({ type: 'brand_new' }) },
+      ],
+      pending: [
+        { seq: 5, line: JSON.stringify({ type: 'control_request', request_id: 'device', request: { subtype: 'register_device_hooks' } }) },
+        { seq: 5, line: JSON.stringify({ type: 'control_request', request: { subtype: 'can_use_tool' } }) },
+      ],
+      ended: false,
+      stderr: '',
+    });
+    pipe.emit({ type: 'brand_new', uuid: 'old' }, 3);
+    pipe.emit('{壊れた');
+    pipe.emit({ type: 'control_request', request_id: 'old-request', request: { subtype: 'register_device_hooks' } });
+    pipe.emit({ type: 'control_response' });
+    pipe.emit({ type: 'control_cancel_request' });
+    pipe.emit({ type: 'system', subtype: 'init', session_id: 's' });
+    pipe.emit({ type: 'keep_alive' });
+    expect(got.unknowns).toEqual([]);
+    // 前の行も数える（控えのテストと同じ数え方）
+    expect(client.malformed).toBe(5);
+    // 引き継いだあとの新しい行は出す
+    pipe.emit({ type: 'brand_new', uuid: 'new' });
+    expect(brief(got.unknowns)).toEqual([['brand_new', 'unknown', 'stream', 'unknown:new']]);
   });
 });
 

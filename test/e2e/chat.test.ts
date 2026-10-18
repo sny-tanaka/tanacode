@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { HOOK_COMMAND, PROMPT, QUESTION, SETTINGS, stepsFor } from '../scenario';
-import { E2EApp } from './app';
+import { BACKGROUND, E2EApp } from './app';
 
 // 基本の台本（test/scenario.ts）を、アプリの画面から動かす。信頼していないフォルダで新しいセッションを始め、チャットに出るカードで
 // Bash の許可・質問・Write の許可に答えて、返事がチャットに出るまで。
@@ -81,6 +81,42 @@ describe('チャットから Claude Code を動かす', () => {
     await app.page.keyboard.type('echo e2e-$((40+2))');
     await app.page.keyboard.press('Enter');
     await shell.locator('.xterm-rows').getByText('e2e-42', { exact: false }).waitFor();
+  });
+
+  it('アプリの知らない行（サーバーのツールのブロック）は、灰色の 1 行の「未知のイベント」で出て、開くと生の行が読め、コピーできる', async () => {
+    // Claude Code は、応答の中のサーバーのツールのブロックを、そのまま会話ログに書く（2.1.302 で実測）
+    const prompt = '知らないブロックを返してください';
+    app.api.intercept = (last) =>
+      last.includes(prompt)
+        ? [
+            { type: 'raw', block: { type: 'server_tool_use', id: 'srvtoolu_e2e', name: 'web_search', input: {} } },
+            { type: 'text', text: 'サーバーのツールを使いました' },
+          ]
+        : null;
+    await app.send(prompt);
+    const chat = app.page.locator('.chat-list');
+    await chat.getByText('サーバーのツールを使いました').waitFor();
+    const row = app.byText('details.chat-unknown', 'assistant/server_tool_use');
+    expect(await row.locator('summary').textContent()).toBe('未知のイベント: assistant/server_tool_use');
+    await row.locator('summary').click();
+    expect(await row.locator('.chat-unknown-meta').textContent()).toMatch(/^会話ログの行Claude Code \d+\.\d+\.\d+$/);
+    expect(JSON.parse((await row.locator('.chat-unknown-raw').textContent())!)).toMatchObject({ type: 'server_tool_use', id: 'srvtoolu_e2e' });
+    // 手元の Mac（裏で起動）では、人のクリップボードを書き換えないよう、写す先を差し替える。CI では本物のクリップボードに写して読み直す
+    if (BACKGROUND) {
+      await app.page.evaluate(() => {
+        const page = window as { copied?: string };
+        Object.defineProperty(navigator.clipboard, 'writeText', {
+          value: (text: string) => {
+            page.copied = text;
+            return Promise.resolve();
+          },
+        });
+      });
+    }
+    await row.getByRole('button', { name: '生の行をコピー' }).click();
+    await row.getByRole('button', { name: 'コピーしました' }).waitFor();
+    const copied = BACKGROUND ? await app.page.evaluate(() => (window as { copied?: string }).copied ?? '') : await app.app.evaluate(({ clipboard }) => clipboard.readText());
+    expect(JSON.parse(copied)).toMatchObject({ type: 'server_tool_use', id: 'srvtoolu_e2e' });
   });
 
   it('画面のコンソールにエラーが出ていない', () => {

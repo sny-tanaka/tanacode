@@ -12,7 +12,9 @@ export type Block =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   // 思考。署名（signature）はモックなので、それらしい文字にする
-  | { type: 'thinking'; thinking: string; signature?: string };
+  | { type: 'thinking'; thinking: string; signature?: string }
+  // そのほかの、API が返すブロック（サーバーのツールの server_tool_use など）。content_block_start でそのまま送る（アプリの知らないブロックを確かめる）
+  | { type: 'raw'; block: Record<string, unknown> };
 
 // 会話の n 番目の応答（n = リクエストに入っている assistant の発言の数）
 export type Step = Block[];
@@ -212,7 +214,7 @@ function message({ id, model, content, stopReason, inputTokens }: Reply) {
     type: 'message',
     role: 'assistant',
     model,
-    content,
+    content: content.map((block) => (block.type === 'raw' ? block.block : block)),
     stop_reason: stopReason,
     stop_sequence: null,
     usage: { input_tokens: inputTokens, output_tokens: 20 },
@@ -251,6 +253,8 @@ async function stream(res: ServerResponse, reply: Reply, hold: ((text: string) =
       send('content_block_start', { index, content_block: { type: 'thinking', thinking: '', signature: '' } });
       send('content_block_delta', { index, delta: { type: 'thinking_delta', thinking: block.thinking } });
       send('content_block_delta', { index, delta: { type: 'signature_delta', signature: block.signature ?? MOCK_SIGNATURE } });
+    } else if (block.type === 'raw') {
+      send('content_block_start', { index, content_block: block.block });
     } else {
       send('content_block_start', { index, content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} } });
       send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });

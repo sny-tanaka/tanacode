@@ -463,3 +463,71 @@ describe('応答と思考の日本語訳（BlockTranslation）', () => {
     expect(within(container).queryByRole('button', { name: 'システム設定を開く' })).toBeNull();
   });
 });
+
+describe('未知のイベント', () => {
+  const item: ChatItem = {
+    kind: 'unknown',
+    id: 'unknown:u1',
+    name: 'system/ui_toast',
+    problem: 'unknown',
+    count: 2,
+    samples: [
+      { id: 'unknown:u1', source: 'stream', version: '2.1.302', raw: '{\n  "type": "system"\n}' },
+      { id: 'unknown:u2', source: 'transcript', raw: '{\n  "uuid": "u2"\n}' },
+    ],
+  };
+  // jsdom は summary を押しても details を開かないので、開いて toggle を送る
+  const open = (details: HTMLDetailsElement) => {
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+  };
+
+  it('畳んだ 1 行に種類と回数を出し、生の行は開くまで描かない。開くと、どこから来たか・バージョン・生の行を出す', () => {
+    const { container } = render(<ChatRow {...rowProps(item)} />);
+    expect(container.querySelector('summary')!.textContent).toBe('未知のイベント: system/ui_toast2 回');
+    expect(container.querySelector('.chat-unknown-raw')).toBeNull();
+    open(container.querySelector('details')!);
+    expect([...container.querySelectorAll('.chat-unknown-meta')].map((m) => m.textContent)).toEqual(['stream-json の行Claude Code 2.1.302', '会話ログの行Claude Code のバージョンは不明']);
+    expect([...container.querySelectorAll('.chat-unknown-raw')].map((p) => p.textContent)).toEqual(['{\n  "type": "system"\n}', '{\n  "uuid": "u2"\n}']);
+  });
+
+  it('「生の行をコピー」で、その回の生の行をクリップボードに写し、写したことをボタンに出す', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { container } = render(<ChatRow {...rowProps(item)} />);
+    open(container.querySelector('details')!);
+    fireEvent.click(screen.getAllByRole('button', { name: '生の行をコピー' })[1]);
+    expect(writeText).toHaveBeenCalledWith('{\n  "uuid": "u2"\n}');
+    await screen.findByRole('button', { name: 'コピーしました' });
+    expect(screen.getAllByRole('button', { name: '生の行をコピー' })).toHaveLength(1);
+  });
+
+  it('コピーできなかったら、ボタンを変えずにコンソールに残す', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('denied')) }, configurable: true });
+    const { container } = render(<ChatRow {...rowProps(item)} />);
+    open(container.querySelector('details')!);
+    fireEvent.click(screen.getAllByRole('button', { name: '生の行をコピー' })[0]);
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(screen.getAllByRole('button', { name: '生の行をコピー' })).toHaveLength(2);
+  });
+
+  it('わけごとの見出し（形の違う行・読めない行）と、切った行・省いた回の知らせ', () => {
+    const one = (over: Partial<Extract<ChatItem, { kind: 'unknown' }>>): ChatItem => ({ ...item, count: 1, samples: [item.samples[0]], ...over }) as ChatItem;
+    const summary = (row: ChatItem) => {
+      const { container } = render(<ChatRow {...rowProps(row)} />);
+      const text = container.querySelector('summary')!.textContent;
+      cleanup();
+      return text;
+    };
+    expect(summary(one({ problem: 'malformed' }))).toBe('未知のイベント: system/ui_toast（形が違う）');
+    expect(summary(one({ problem: 'malformed', name: '' }))).toBe('未知のイベント: 形の違う行');
+    expect(summary(one({ problem: 'unparsable', name: '' }))).toBe('未知のイベント: 読めない行');
+    const { container } = render(<ChatRow {...rowProps(one({ count: 5, samples: [{ ...item.samples[0], truncated: 200_000 }] }))} />);
+    open(container.querySelector('details')!);
+    expect([...container.querySelectorAll('.chat-unknown-note')].map((n) => n.textContent)).toEqual([
+      '古い 4 回分の生の行は省いています',
+      '長いので、先頭の 64 KB だけを出しています（全体は 196 KB）',
+    ]);
+  });
+});

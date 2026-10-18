@@ -3,9 +3,16 @@ import type { ChatEvent, HookRun, PartialBlock, PullRequestLink, QuestionAnswer,
 import type { CardRef } from '@shared/checklist-tools';
 import type { ChatBatch, SessionSnapshot } from '@shared/ipc';
 import type { SessionState } from '@shared/session-tools';
+import type { UnknownEvent, UnknownProblem } from '@shared/unknown-event';
 import { useSessionValues } from '../sessionValues';
 
 export type ToolStatus = 'running' | 'done' | 'error';
+
+// 未知のイベントの 1 回分（生の行と、どこから来たか）
+export type UnknownSample = Pick<UnknownEvent, 'id' | 'source' | 'version' | 'raw' | 'truncated'>;
+
+// まとめた未知のイベントの行に残す生の行の数（同じ種類が何度も続いても、画面と覚える量を増やし続けない。数は全部を数える）
+export const UNKNOWN_SAMPLES = 20;
 
 // at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 // settled: 書いている途中の文（partial）が外れたのと同じ配信で出た本文・思考。同じ場所のまま入れ替わって見えるよう、出るときの動きを付けない
@@ -23,6 +30,10 @@ export type ChatItem =
   | { kind: 'error'; id: string; text: string; retrying: boolean }
   // ツールに付かない hooks（Stop・SessionStart・UserPromptSubmit など）。同じきっかけのものはまとめる
   | { kind: 'hook'; id: string; runs: HookRun[] }
+  // 未知のイベント（tanacode が知らない、Claude Code からの行）。同じ種類が続いたものは 1 行にまとめる。
+  // count: 起きた数 / samples: 起きたものの生の行（新しいほうから UNKNOWN_SAMPLES 件まで。同じ行が stream と会話ログの両方に出たら、
+  // 同じ id で 2 つ並ぶ。数は 1 つ）
+  | { kind: 'unknown'; id: string; name: string; problem: UnknownProblem; count: number; samples: UnknownSample[] }
   | {
       kind: 'tool';
       id: string;
@@ -144,6 +155,25 @@ function withHook(items: ChatItem[], id: string, run: HookRun): ChatItem[] {
     return [...items.slice(0, -1), { ...last, runs: merge(last.runs) }];
   }
   return [...items, { kind: 'hook', id, runs: [run] }];
+}
+
+// 未知のイベントを足す。同じ行（同じ id）がもう出ていれば（stream と会話ログの両方に出た行）、その行の隣に生の行だけを足す（数は増やさない。
+// 同じところから届き直したものは足さない）。直前の行が同じ種類の未知のイベントなら、そこにまとめる
+function withUnknown(items: ChatItem[], event: UnknownEvent): ChatItem[] {
+  const sample: UnknownSample = { id: event.id, source: event.source, version: event.version, raw: event.raw, truncated: event.truncated };
+  const index = items.findLastIndex((i) => i.kind === 'unknown' && i.samples.some((s) => s.id === event.id));
+  const found = items[index];
+  if (found?.kind === 'unknown') {
+    if (found.samples.some((s) => s.id === event.id && s.source === event.source)) return items;
+    const at = found.samples.findLastIndex((s) => s.id === event.id) + 1;
+    const samples = [...found.samples.slice(0, at), sample, ...found.samples.slice(at)];
+    return items.map((item, i) => (i === index ? { ...found, samples } : item));
+  }
+  const last = items[items.length - 1];
+  if (last?.kind === 'unknown' && last.name === event.name && last.problem === event.problem) {
+    return [...items.slice(0, -1), { ...last, count: last.count + 1, samples: [...last.samples, sample].slice(-UNKNOWN_SAMPLES) }];
+  }
+  return [...items, { kind: 'unknown', id: event.id, name: event.name, problem: event.problem, count: 1, samples: [sample] }];
 }
 
 // ! のコマンドの出力を、まだ出力の無い直前の shell に付ける。見つからなければ、出力だけの shell として出す
@@ -296,6 +326,9 @@ function apply(state: ChatState, event: ChatEvent): ChatState {
       return { ...state, unsent: event.prompts };
     case 'pr-link':
       return state.pr?.url === event.pr.url ? state : { ...state, pr: event.pr };
+    // ターンの始まりにも終わりにもしない（作業中・待機中を変えない）
+    case 'unknown-event':
+      return { ...state, items: withUnknown(state.items, event) };
   }
 }
 

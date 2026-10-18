@@ -17,6 +17,7 @@ import {
   type TranscriptEntry,
   type UnsentPrompt,
 } from '@shared/chat';
+import type { UnknownEvent } from '@shared/unknown-event';
 import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
 import type { CarriedTask } from '@shared/optimized-compact';
@@ -2052,6 +2053,11 @@ export class SessionManager {
             runtime.caughtUp = true;
             this.historySettled(id, runtime, true);
           },
+          // stream-json にだけ出た未知のイベントは、ここでチャットに出す（保存はしないので、起動し直すと消える。会話ログにも出た行は、
+          // そちらから作り直したチャットに出る）
+          onUnknown: (event) => {
+            if (runtime.process === process) this.pushEvents(id, [withVersion(event, runtime)]);
+          },
         },
         onExit: (exitCode, stderr) => {
           // アーカイブ（kill）・アプリの終了のあとに届いた終わりは、片付け済み。開き直していれば、新しい起動の表示に流さない
@@ -3109,6 +3115,8 @@ export class SessionManager {
     const covered = !!rt && !past && !rt.terminal && rt.partial.cover(entry);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない
     let events = toChatEvents(entry, record.cwd, false, rememberImage).filter((e) => !(past && e.type === 'remote-control'));
+    // 今の claude が書いた行の未知のイベントで、行にバージョンが無いもの（付帯情報の行）には、今のバージョンを添える
+    if (rt && !past) events = events.map((e) => (e.type === 'unknown-event' ? withVersion(e, rt) : e));
     // 今の claude のターンの終わりは、stream-json の result で決める（-p は turn_duration を書かない。ほかの行の終わりと二重にしない）。
     // ターミナルモード（TUI）では result が来ないので、会話ログのターンの終わりを使う
     if (rt && !isHistory && !rt.terminal) events = events.filter((e) => e.type !== 'turn-end');
@@ -3227,6 +3235,12 @@ export class SessionManager {
     for (const s of sessions) this.shownStates.set(s.id, s.state);
     this.listeners.onSessionsChanged(sessions);
   }
+}
+
+// 未知のイベントに、動いている Claude Code のバージョンを添える（行に書かれていないとき）
+function withVersion(event: UnknownEvent, rt: Runtime): UnknownEvent {
+  const version = rt.statusLine?.version;
+  return event.version || !version ? event : { ...event, version };
 }
 
 // いちばん前の、Claude Code が答えを待っている要求
