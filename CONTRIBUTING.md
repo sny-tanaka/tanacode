@@ -397,7 +397,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 画面は読まず、キーも押しません（ターミナルモードの TUI も、起動の引数と状態だけを見る。`tuiArgs`）。決まった時間だけ待たず、状態を待ちます（`untilState`・`waitUntil`・`idle`）。許可の確認と質問には、カードのボタンと同じ `SessionManager.replyPermission`・`replyQuestion` で答えます（`ClaudeRun.permission`・`replyPermission`・`question`・`replyQuestion`）。答えようとしたときに、もう待っていなければ、テストを失敗にします。
   - アプリを止めている間の操作は、claude の標準入力に発言の行を直に書きます（`sendWithoutApp`）。
   - API は、決まった応答を返すモック（`test/cli/mock-api.ts`）に `ANTHROPIC_BASE_URL` で差し替えます。API キーは使わず、料金もかかりません。
-    - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。
+    - 応答は文章・ツールの呼び出し・思考（署名はそれらしい文字）。ツールの無い裏の呼び出し（タイトル作りなど）にも、決めた文を返せます。その返事を止めておくこともできます（`holdPlain`。Claude Code がその返事を待たずに先へ進むかを確かめる）。文のブロックを書き終える前に止めておくこともできます（`holdText`。書いている途中の文がアプリから配信されてから、会話ログに出るようにする）。
     - 本体の会話の呼び出しごとに、頼まれたモデルとエフォートを控えます（切り替えが届いたかを確かめる。`calls`）。
   - サブエージェントやワークフローのエージェントも、別の会話として API を呼びます。モックは、会話のはじめの発言で台本を選びます。
   - 台本は 18 個のファイル。それぞれ別の `claude` を起動して、同時に流します。
@@ -423,7 +423,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     | `turn-summary.test.ts` | Remote Control のターンの終わりの要約が、チャットの完了を待たせないか。Remote Control のつながりとモデルの要約を環境変数で同じ状態にして（`CLAUDE_CODE_ENVIRONMENT_KIND=bridge`・`CLAUDE_CODE_CLASSIFIER_SUMMARY=1`。アプリが渡す `0` が優先される）、要約の呼び出し（ツールの無い呼び出し）の返事を止めたままでも、作業中から待機中に戻って完了を知らせるか。要約そのもの（`system/post_turn_summary`）は、応答の文から作られて出るか |
     | `internal-requests.test.ts` | アプリが使う Claude Code の内部の制御の要求（`stream/internal.ts`。公開の Agent SDK の型に無いもの）に受け口があるか。`remote_control`（つなぐ・切る。モックの API では理由つきで断られる）・`generate_session_title`（タイトルが返る）・`rewind_conversation`（知らない発言を指すと、巻き戻さずに理由を返す）・`end_session`（Claude Code が終わる）が、「Unsupported control request subtype」で断られない。毎日の確認で、新しい Claude Code でも使えるかを見る |
 
-  - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。同じように、書いている途中で接続を切る応答（`cuts`。書きかけがチャットに出たのをテストが見届けてから切る `holdCut`）と、ツールを呼ばないのに `stop_reason` が `tool_use` の応答（`malformed`）も返せます。どちらも Claude Code が取り消して、取り直します。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
+  - モックは、台本の応答の代わりに API エラーを返すこともできます（`failures`。回数を決めれば、その後は応答を返す）。同じように、書いている途中で接続を切る応答（`cuts`。書きかけを送ってから、`holdText` が済んだら切る）と、ツールを呼ばないのに `stop_reason` が `tool_use` の応答（`malformed`）も返せます。どちらも Claude Code が取り消して、取り直します。再試行の待ち時間を短くするため、失敗と中断の台本では `CLAUDE_CODE_MAX_RETRIES` を付けて起動します（`ClaudeRun` の `env`）。
 
   - 確かめられないもの:
     - Remote Control（つないだあとの `system/bridge_state`・スマホからの発言・スマホで先に答えたときの `control_cancel_request`・ターミナルモードと行き来したときの付け直し）: claude.ai へのログインが要ります。モックの API では、`remote_control` は「Remote Control is only available when using Claude via api.anthropic.com」の error を返します。受け口が無いときの「Unsupported control request subtype」とは見分けられるので、受け口があることだけは `internal-requests.test.ts` で確かめます（2.1.301 で実測）。関わるところを変えたときは、開発用のビルドを `TANACODE_REMOTE_CONTROL=1` を付けて別の userData で起動し、本物のアカウントとスマホで確かめます（つなぐ・スマホからの発言・スマホで許可に答える・ターミナルモードと行き来して付け直す・切る）。
@@ -509,6 +509,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 書いている途中の応答（`stream_event`）だけは、会話ログに書かれる前に、チャットの最後（作業中の表示の上）に出します（`stream/partial.ts` の `PartialText`）。会話ログに残らない、画面だけの表示です。
     - main が、応答（`message_start` の `message.id`）とブロック（`index`）ごとに文と思考をため、0.05 秒に 1 回までまとめて、チャットの配信に載せます（`ChatBatch` の `partial`。そのときの全部）。通し番号には数えず、`rt.events` にも入れません。スナップショットにも入れるので、画面を読み込み直しても続きから出ます。
     - そのブロックが会話ログに出たら（同じ `message.id` と `apiBlockIndex` の応答の行。会話ログは 1 ブロックを 1 行に書く。`apiBlockIndex` が無ければ、同じ応答の行の数で決める）外し、その行のイベントと同じ配信で送ります。画面では、同じ場所のまま書き終わった本文に入れ替わります（決めたこと）。中断しても、書いたところまでが会話ログに残るので、同じく入れ替わります（2.1.302 で実測）。
+    - stream-json の行と会話ログは別の道で届くので、まとめて送る前に、そのブロックが会話ログに出ることもあります（すぐ書き終わる短い文）。そのときは途中の文を一度も送らず、会話ログの応答だけが出ます。
     - 途中は Markdown にせず、素の文で出します（決めたこと）。思考は、本文が届いたときだけ、思考の枠に出します（今のモデルの多くは本文が空）。書き途中と分かるよう、文も思考も、書き終わった色より少しだけ暗くします（`--text-partial`・`--text-partial-secondary`。テーマの色を混ぜたもの。決めたこと）。翻訳と実行のボタンは、書き終わってから出します。
     - 出さないもの: サブエージェントの行（Claude Code 2.1.302 は、サブエージェントの書いている途中の行を、`--forward-subagent-text` を付けても出さない。実測。サブエージェントの中身の表示は、今どおり書き終わったブロックごと。決めたこと）・応答の始まりを見ていない応答（起動し直して引き継いだときに書いている途中だったもの。頭が欠けるので、書き終わって会話ログに出たときに出す。決めたこと）・空白だけのもの・チェックリストの「直すものは無い」の目印の書きかけ。
     - 取り消されて会話ログに出ない応答のブロックは、次のときに外します。
@@ -516,7 +517,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
       - 取り直すために捨てたと知らされた（`message_stop` の行の外側の `abandoned_blocks`。`{ api_message_id, from_block_index }` で、その応答のそのブロックから先）。接続が途中で切れたとき、Claude Code は書きかけのブロックを `content_block_stop` で閉じてから、これを付けて取り直します（2.1.302 で実測）。
       - あとから始まった応答の行が、会話ログに出た。会話ログは応答の順に書かれるので、それより前の応答の残りは、もう出ません。`abandoned_blocks` の付かない取り消し（ツールの呼び出しの形が壊れた応答の取り直しなど。Claude Code の内部では tombstone）への備えです。Claude Code は、取り消す応答の書きかけのブロックを閉じますが、`abandoned_blocks` は付けません（本体のコードを読んで確かめたもの）。
     - それでも会話ログに出ないまま残ったものは、ターンの終わり・claude の終了・`/clear` で捨てます。
-    - 確かめは `test/stream-partial.test.ts`・`test/session-manager-partial.test.ts`。本物の Claude Code の応答の ID と、会話ログの `message.id`・`apiBlockIndex` が合って入れ替わることは `test/cli/basic.test.ts`、取り消された書きかけが取り直した返事より先に外れることは `test/cli/errors.test.ts` で確かめます。
+    - 確かめは `test/stream-partial.test.ts`・`test/session-manager-partial.test.ts`。本物の Claude Code の応答の ID と、会話ログの `message.id`・`apiBlockIndex` が合って入れ替わることは `test/cli/basic.test.ts`（モックの API は、途中の文が配信されるまで文を書き終えない。`holdText`）、取り消された書きかけが取り直した返事より先に外れることは `test/cli/errors.test.ts` で確かめます。
   - `/clear` のあとの会話は、チャットでは `conversation_reset` のあとの `system/init` の `session_id` で分かります（`new_conversation_id` とは別の値。実測）。ターミナルモードでは、statusLine の `transcript_path` で分かります。Remote Control を使っていれば、新しい会話ログにも同じ `bridge-session` の ID が書かれるので、それでも追います。
   - Remote Control のつながりは、会話ログの `bridge_status`（URL）と `bridge-session`（ID。切ると空になる）の行と、チャットでは `system/bridge_state` で分かります。
   - 会話ログは、変更の通知（`fs.watch`）ですぐ読みます。取りこぼしに備えて、0.15 秒ごとにも確かめます。

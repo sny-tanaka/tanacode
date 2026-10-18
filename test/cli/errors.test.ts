@@ -176,14 +176,14 @@ describe(`Claude Code ${version} の失敗と中断`, () => {
 
   it('書いている途中で接続が切れて取り直すと、取り消された書きかけはチャットから外れ、取り直した返事だけが残る', async () => {
     const batches = run.chatBatches.length;
-    // 書きかけの文が、書いている途中の文として配信されたのを見届けてから、接続を切る
+    // 書きかけの文が、書いている途中の文として配信されたのを見届けてから、接続を切る（切る応答では、切る前に holdText を待つ）
     const drafted = () => run.chatBatches.slice(batches).some((b) => b.partial?.some((p) => p.text === CUT_DRAFT));
-    api.holdCut = () => run.waitUntil('書きかけの文', drafted, 30_000).then(() => undefined);
+    api.holdText = (text) => (text === CUT_DRAFT ? run.waitUntil('書きかけの文', drafted, 30_000) : Promise.resolve());
     try {
       await begin(CUT_PROMPT);
       await run.waitUntil('ターンの終わり', has((e) => e.type === 'turn-end'), 30_000);
     } finally {
-      api.holdCut = null;
+      api.holdText = null;
     }
     checkCut(run.chatBatches.slice(batches), events());
     // 1 回目は書いている途中で切れ、取り直した 2 回目で応答した
