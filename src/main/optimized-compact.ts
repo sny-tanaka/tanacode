@@ -1,6 +1,5 @@
 import type { ChatEvent } from '@shared/chat';
 import type { Checklist } from '@shared/checklist';
-import { language } from '@shared/i18n';
 import {
   IDLE_COMPACT_STATUS,
   autoHandoffText,
@@ -189,7 +188,6 @@ export class OptimizedCompact {
         messages: carriedMessages(conversation),
         omitted: carriedOmitted(conversation),
         tasks: host.runningTasks(id),
-        language: language(),
         reply,
         ...(auto ? { auto, stopped, handoffSkipped } : {}),
       });

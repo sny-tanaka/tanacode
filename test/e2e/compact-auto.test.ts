@@ -165,13 +165,14 @@ describe('最適化圧縮を自動で始める', () => {
     use(85);
     await app.send(NEXT);
     await app.waitUntil('自動の仕上げの頼み', () => handoffs().length === 1, 60_000);
-    expect(handoffs()[0]).toContain('instead of compacting it (automatic; context 85% full).');
-    expect(handoffs()[0]).toContain('This reset is automatic: the user did not press anything');
-    expect(handoffs()[0]).toContain('After the reset you will pick the work up from the state list: you will continue it, unless the list says that you are waiting for an answer.');
+    // 画面の言語（E2E は日本語）で書く
+    expect(handoffs()[0]).toContain('これから消します（自動・コンテキスト 85%）。');
+    expect(handoffs()[0]).toContain('今回は自動の切り替えです。ユーザーは何も押しておらず');
+    expect(handoffs()[0]).toContain('消したあとは、いまの状態のリストから作業を再開します。リストに答え待ちと書いてなければ、作業を続けます。');
     await app.waitUntil('再開の文', () => resumes().length === 1, 60_000);
     const resume = resumes()[0];
-    expect(resume).toContain('(automatic; context 85% full). No summary was made.');
-    expect(resume).toContain('- Then decide from the state list whether you are waiting for an answer from the user');
+    expect(resume).toContain('消しました（自動・コンテキスト 85%）。要約は作っていません。');
+    expect(resume).toContain('- そのうえで、ユーザー（または、作業を指示した親セッション）の答えを待っているかを、いまの状態のリストから決めてください:');
     expect(resume).not.toContain('Do not continue the work until the user tells you to.');
     expect(resume).toContain(`<user-message>\n${NEXT}\n</user-message>`);
     // 切り替える前の最後の応答も入る（人が、それに短く答えるかもしれない）
@@ -204,15 +205,14 @@ describe('最適化圧縮を自動で始める', () => {
     const done = steps();
     expect(done).toBeGreaterThan(0);
     expect(done).toBeLessThan(8);
-    expect(handoffs()[1]).toContain('tanacode stopped your turn between tool calls, and after the reset you will continue the same work.');
+    expect(handoffs()[1]).toContain('tanacode がツールの切れ目であなたのターンを止めたので、消したあとは、同じ作業を続けます。');
     await app.waitUntil('再開の文', () => resumes().length === 2, 60_000);
     const resume = resumes()[1];
-    expect(resume).toContain('This reset happened in the middle of your turn');
-    expect(resume).toContain('This reset happened in the middle of your turn');
-    expect(resume).toContain('continue the work that was in progress from where it stopped (the state list, and "Where the turn was stopped" below)');
+    expect(resume).toContain('- この切り替えは、あなたのターンの途中で起きました。');
+    expect(resume).toContain('進めていた作業を、止まったところから続けてください（いまの状態のリストと、下の「ターンを止めた場所」）。');
     expect(resume).not.toContain('Do not continue the work until the user tells you to.');
-    expect(resume).toContain('# Where the turn was stopped (recorded by tanacode, not written by you)');
-    expect(resume).toContain(`- Bash: sleep 0.6 && echo step-${done} → finished`);
+    expect(resume).toContain('# ターンを止めた場所（tanacode が記録したもので、あなたが書いたものではありません）');
+    expect(resume).toContain(`- Bash: sleep 0.6 && echo step-${done} → 終わった`);
     expect(resume).toContain(`<user-message>\n${LONG}\n</user-message>`);
     // 止めたあとは、手順を進めていない（切り替えの間に、ツールが走り続けない）
     expect(steps()).toBe(done);
