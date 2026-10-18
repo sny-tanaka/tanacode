@@ -73,6 +73,111 @@ export const エラー_再試行中: Story = { args: { item: { kind: 'error', id
 
 export const 区切り: Story = { args: { item: { kind: 'divider', id: 'd1', text: '会話を圧縮しました' } } };
 
+// 未知のイベント（tanacode が知らない、Claude Code からの行）。生の行の例は、形を見せるための作りもの
+const json = (value: unknown) => JSON.stringify(value, null, 2);
+const fallbackStream = json({
+  type: 'system',
+  subtype: 'model_fallback',
+  from_model: 'claude-opus-5-5',
+  to_model: 'claude-sonnet-5-5',
+  reason: 'overloaded',
+  session_id: '6f1d2c3b-4a5e-4f60-8a71-92b3c4d5e6f7',
+  uuid: '1c5e7a9b-0d2f-4e6a-8b1c-3d5e7f9a0b2c',
+});
+const fallbackTranscript = json({
+  parentUuid: '0b4d6f8a-1c3e-4a5b-9c7d-2e4f6a8b0c1d',
+  isSidechain: false,
+  type: 'system',
+  subtype: 'model_fallback',
+  content: 'Switched to claude-sonnet-5-5 because claude-opus-5-5 is overloaded',
+  level: 'warning',
+  uuid: '1c5e7a9b-0d2f-4e6a-8b1c-3d5e7f9a0b2c',
+  timestamp: '2026-10-18T11:02:41.512Z',
+  version: '2.1.302',
+});
+const elicitation = json({
+  type: 'control_request',
+  request_id: '9d1c3b5a-7e2f-4a6b-8c0d-1e3f5a7b9c2d',
+  request: { subtype: 'elicitation', mcp_server_name: 'deploy', message: 'Choose the environment to deploy to', requested_schema: { type: 'object', properties: { env: { type: 'string', enum: ['staging', 'production'] } } } },
+});
+const goal = (n: number) => ({
+  id: `unknown:a${n}`,
+  source: 'transcript' as const,
+  version: '2.1.302',
+  raw: json({ type: 'attachment', attachment: { type: 'goal_status', goal: 'すべてのテストを通す', met: false, turns: n }, uuid: `a${n}`, version: '2.1.302' }),
+});
+// 開いた形を見せる（summary を押す）
+const openRow = async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+  await userEvent.click(canvasElement.querySelector('summary')!);
+};
+
+export const 未知のイベント: Story = {
+  args: { item: { kind: 'unknown', id: 'unknown:1c5e', name: 'system/model_fallback', problem: 'unknown', count: 1, samples: [{ id: 'unknown:1c5e', source: 'stream', version: '2.1.302', raw: fallbackStream }] } },
+};
+
+// stream-json と会話ログの両方に出た同じ行は、1 回と数えて、両方の生の行を並べる
+export const 未知のイベント_開いた: Story = {
+  args: {
+    item: {
+      kind: 'unknown',
+      id: 'unknown:1c5e',
+      name: 'system/model_fallback',
+      problem: 'unknown',
+      count: 1,
+      samples: [
+        { id: 'unknown:1c5e', source: 'stream', version: '2.1.302', raw: fallbackStream },
+        { id: 'unknown:1c5e', source: 'transcript', version: '2.1.302', raw: fallbackTranscript },
+      ],
+    },
+  },
+  play: openRow,
+};
+
+// 同じ種類が続いたら 1 行にまとめて、回数を添える
+export const 未知のイベント_まとめた行: Story = {
+  args: { item: { kind: 'unknown', id: 'unknown:a1', name: 'attachment/goal_status', problem: 'unknown', count: 3, samples: [goal(1), goal(2), goal(3)] } },
+};
+
+export const 未知のイベント_まとめた行_開いた: Story = { ...未知のイベント_まとめた行, play: openRow };
+
+// まとめた行の生の行は 20 回分まで（古いものは省いたことを書く）
+export const 未知のイベント_古いものを省いた: Story = {
+  args: { item: { kind: 'unknown', id: 'unknown:a1', name: 'attachment/goal_status', problem: 'unknown', count: 23, samples: Array.from({ length: 20 }, (_, i) => goal(i + 4)) } },
+  play: openRow,
+};
+
+// Claude Code からの要求（使わない種類は、エラーで返している）
+export const 未知のイベント_要求: Story = {
+  args: { item: { kind: 'unknown', id: 'unknown:request:9d1c', name: 'control_request/elicitation', problem: 'unknown', count: 1, samples: [{ id: 'unknown:request:9d1c', source: 'request', version: '2.1.302', raw: elicitation }] } },
+  play: openRow,
+};
+
+// 知っている種類の、形の違う行・読めない行（バージョンが分からないとき）
+export const 未知のイベント_形が違う: Story = {
+  args: { item: { kind: 'unknown', id: 'unknown:n1', name: 'system/init', problem: 'malformed', count: 1, samples: [{ id: 'unknown:n1', source: 'stream', raw: json({ type: 'system', subtype: 'init', session_id: 's' }) }] } },
+  play: openRow,
+};
+
+export const 未知のイベント_読めない行: Story = {
+  args: { item: { kind: 'unknown', id: 'unknown:n2', name: '', problem: 'unparsable', count: 1, samples: [{ id: 'unknown:n2', source: 'stream', raw: '{"type":"assistant","message":{"content":[{"type":"text","text":"途中で切れ' }] } },
+  play: openRow,
+};
+
+// 長い行は 64KB で切り、全体の大きさを書く
+export const 未知のイベント_長い行: Story = {
+  args: {
+    item: {
+      kind: 'unknown',
+      id: 'unknown:big',
+      name: 'attachment/structured_output',
+      problem: 'unknown',
+      count: 1,
+      samples: [{ id: 'unknown:big', source: 'transcript', version: '2.1.302', raw: json({ type: 'attachment', attachment: { type: 'structured_output', data: 'x'.repeat(3000) } }), truncated: 214_322 }],
+    },
+  },
+  play: openRow,
+};
+
 // 子セッションのチャットから見た、ほかのセッション（親・兄弟）。名前の解決と、押して移る先に使う
 const SESSIONS = [
   { id: '5e8a1c3b-2f4d-4a6b-9c8d-0e1f2a3b4c5d', title: '検索機能の取りまとめ' },

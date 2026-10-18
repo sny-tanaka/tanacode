@@ -889,3 +889,34 @@ describe('会話のタイトル（generate_session_title）', () => {
     expect(titled.pipe.requests('generate_session_title')).toEqual([]);
   });
 });
+
+describe('未知のイベント', () => {
+  const unknowns = (id: string) => app.events(id).flatMap((e) => (e.type === 'unknown-event' ? [[e.name, e.source, e.id, e.version ?? null]] : []));
+
+  it('stream-json の知らない行・使わない要求は、チャットに未知のイベントとして出し、動いている Claude Code のバージョンを添える。ターンは始まらない', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.emit(stream.init(app.claudeId(id), { claude_code_version: '2.1.302' }));
+    pipe.emit({ type: 'system', subtype: 'model_fallback', uuid: 'fb1', session_id: app.claudeId(id) });
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'elicitation' } });
+    expect(unknowns(id)).toEqual([
+      ['system/model_fallback', 'stream', 'unknown:fb1', '2.1.302'],
+      ['control_request/elicitation', 'request', 'unknown:request:e1', '2.1.302'],
+    ]);
+    expect(app.manager.stateOf(id)).toBe('idle');
+  });
+
+  it('会話ログの知らない行は、行のバージョンを添えて出す。行にバージョンが無ければ（付帯情報の行）、動いている Claude Code のバージョン', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    pipe.emit(stream.init(app.claudeId(id), { claude_code_version: '2.1.302' }));
+    const at = new Date().toISOString();
+    app.append(id, { type: 'system', subtype: 'model_fallback', uuid: 'fb1', version: '2.1.300', timestamp: at }, { type: 'brand-new', uuid: 'n1', timestamp: at });
+    await app.waitFor('会話ログの未知のイベント', () => unknowns(id).length === 2);
+    expect(unknowns(id)).toEqual([
+      ['system/model_fallback', 'transcript', 'unknown:fb1', '2.1.300'],
+      ['brand-new', 'transcript', 'unknown:n1', '2.1.302'],
+    ]);
+    expect(app.manager.stateOf(id)).toBe('idle');
+  });
+});

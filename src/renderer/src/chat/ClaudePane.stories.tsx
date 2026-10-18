@@ -155,6 +155,26 @@ const withThinking: ChatItem[] = [
   { kind: 'text', id: 't1', text: '`useEffect` の依存の配列を直しました。テストも通っています。' },
 ];
 
+// 未知のイベント（tanacode が知らない、Claude Code からの行）を挟む会話。起きた場所に、畳んだ灰色の 1 行で出る
+const unknownRow = (id: string, name: string, count = 1): ChatItem => ({
+  kind: 'unknown',
+  id,
+  name,
+  problem: 'unknown',
+  count,
+  samples: Array.from({ length: count }, (_, i) => ({ id: `${id}:${i}`, source: 'stream' as const, version: '2.1.302', raw: JSON.stringify({ type: 'system', subtype: name.split('/')[1], uuid: `${id}:${i}` }, null, 2) })),
+});
+const withUnknown: ChatItem[] = [
+  { kind: 'user', id: 'u1', text: 'ログイン画面のバグを直してください。' },
+  unknownRow('unknown:fb', 'system/model_fallback'),
+  tool('r1', 'Read', 'src/Login.tsx'),
+  tool('r2', 'Grep', 'onSubmit'),
+  unknownRow('unknown:pc', 'system/permission_check_status', 3),
+  tool('e1', 'Edit', 'src/Login.tsx'),
+  tool('b1', 'Bash', 'npm test'),
+  { kind: 'text', id: 't1', text: '`useEffect` の依存の配列を直しました。テストも通っています。' },
+];
+
 // 3 秒ごとに返答が増える。最下部にいれば追いかけ、上へスクロールしていれば追いかけずにボタンを出す
 function GrowingPane() {
   const [count, setCount] = useState(30);
@@ -200,6 +220,8 @@ type Story = StoryObj<typeof meta>;
 export const 長い会話: Story = {};
 
 export const 思考を挟む会話: Story = { args: { items: withThinking } };
+
+export const 未知のイベントを挟む会話: Story = { args: { items: withUnknown } };
 
 export const 返答が増える: Story = { render: () => <GrowingPane /> };
 

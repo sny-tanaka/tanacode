@@ -597,6 +597,23 @@
       "thinking": "思考",
       "answers": "質問への回答"
     },
+    "unknown": {
+      "summary": "未知のイベント: {name}",
+      "summaryMalformed": "未知のイベント: {name}（形が違う）",
+      "malformedLine": "未知のイベント: 形の違う行",
+      "unparsableLine": "未知のイベント: 読めない行",
+      "count": "{count} 回",
+      "about": "tanacode が対応していない、Claude Code からの行です。対応を足すときは、下の生の行を手がかりにしてください。",
+      "sourceStream": "stream-json の行",
+      "sourceTranscript": "会話ログの行",
+      "sourceRequest": "Claude Code からの要求（エラーで返しました）",
+      "version": "Claude Code {version}",
+      "versionUnknown": "Claude Code のバージョンは不明",
+      "copy": "生の行をコピー",
+      "copied": "コピーしました",
+      "truncated": "長いので、先頭の {limit} KB だけを出しています（全体は {total} KB）",
+      "omitted": "古い {count} 回分の生の行は省いています"
+    },
     "hookRuns": {
       "success": "成功",
       "blocked": "止めた",

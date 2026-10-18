@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { unknownEvent, type UnknownEvent, type UnknownProblem } from '@shared/unknown-event';
 import type { PipeHandle } from '../pty-host-client';
 import type { HostedLine, HostedPipeInfo } from '../pty-host-protocol';
 import type { LineLog } from './log';
@@ -7,7 +8,8 @@ import type { CanUseToolRequest, ControlResponseMessage, PermissionResult, Strea
 // stream-json の claude 1 つとの、行の読み書き・制御の要求と返事の対応・待っている要求の管理（設計書 6 節）。
 // SessionManager は行の形を知らずに、ここの関数と知らせだけを使う。
 // 全部が JSON で届くので、予期しないものは機械的に見分ける: 読めない行・知らない種類は捨てて数え、控え（LineLog）とコンソールに残す。
-// 使う項目の形が違う行も捨てて「読めない行」として数える。知らない要求が Claude Code から来たら、必ず error で返す（返さないと待ち続ける）
+// 使う項目の形が違う行も捨てて「読めない行」として数える。知らない要求が Claude Code から来たら、必ず error で返す（返さないと待ち続ける）。
+// 数えたものは、未知のイベント（onUnknown）としてチャットにも出す。書いている途中の行（stream_event）と、前のアプリの頃の行は出さない
 
 // 制御の要求の返事を待つ既定の上限
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -24,6 +26,8 @@ export type StreamEvents = {
   onExit(exitCode: number, stderr: string): void;
   // 引き継いだとき、前のアプリの頃の行を読み終えた
   onCaughtUp?(): void;
+  // 知らない種類の行・形の違う行・読めない行・使わない種類の要求（数えたもの）。チャットに未知のイベントとして出す（バージョンは受け取る側が添える）
+  onUnknown?(event: UnknownEvent): void;
 };
 
 // 制御の要求が失敗した（error の返事・時間切れ・終了）。reason: Claude Code の理由（時間切れなら timeout）
@@ -140,6 +144,7 @@ export class StreamClient {
     if (value?.type !== 'stream_event') this.log?.write('<', line);
     if (!value) {
       this.malformed += 1;
+      if (!past) this.report(...unreadable(line));
       return;
     }
     // 制御の要求・返事・取り下げも、形が違えば読めない行として数え、使わない種類の要求は知らない種類として数える
@@ -147,7 +152,10 @@ export class StreamClient {
     switch (value.type) {
       case 'control_response':
         // 形が違っても、待っている要求には渡す（受け取らないと、要求が時間切れまで待ち続ける）
-        if (!isControlResponse(value)) this.malformed += 1;
+        if (!isControlResponse(value)) {
+          this.malformed += 1;
+          if (!past) this.report('control_response', 'malformed', value);
+        }
         // 前のアプリが送った要求への返事は、受け取らない
         if (!past) this.answered(value);
         return;
@@ -156,22 +164,34 @@ export class StreamClient {
         if (!past) this.raise(line);
         return;
       case 'control_cancel_request':
-        if (typeof value.request_id !== 'string') this.malformed += 1;
-        else if (this.permissions.delete(value.request_id)) this.events.onCancel(value.request_id);
+        if (typeof value.request_id !== 'string') {
+          this.malformed += 1;
+          if (!past) this.report('control_cancel_request', 'malformed', value);
+        } else if (this.permissions.delete(value.request_id)) this.events.onCancel(value.request_id);
         return;
     }
     if (IGNORED_KINDS.has(kindOf(value))) return;
     const message = messageOf(value);
     if (message === 'unknown') {
       this.countUnknown(kindOf(value));
+      if (!past) this.report(kindOf(value), 'unknown', value);
       return;
     }
     if (!message) {
       this.malformed += 1;
       console.warn(`stream-json: 形の違う行を捨てました（${kindOf(value)}）`);
+      // 書いている途中の行は、未知のイベントにしない（数が多く、形はテストの偽物の行で確かめる）
+      if (!past && value.type !== 'stream_event') this.report(kindOf(value), 'malformed', value);
       return;
     }
     this.events.onMessage(message, past);
+  }
+
+  // 未知のイベントを知らせる。要求（control_request）は request_id、ほかは行の uuid で ID を作る（会話ログにも同じ行が出たら、画面で寄せる）
+  private report(name: string, problem: UnknownProblem, value: unknown, source: 'stream' | 'request' = 'stream'): void {
+    const record = isRecord(value) ? value : null;
+    const key = source === 'request' ? record?.request_id : record?.uuid;
+    this.events.onUnknown?.(unknownEvent(name, problem, source, value, { key: typeof key === 'string' ? key : undefined }));
   }
 
   // 控えの頭より前の、種類ごとの最新の行（引き継いだときだけ）
@@ -187,6 +207,7 @@ export class StreamClient {
     const requestId = value?.request_id;
     if (typeof requestId !== 'string') {
       this.malformed += 1;
+      if (!replayed) this.report('control_request', 'malformed', value, 'request');
       return;
     }
     if (this.permissions.has(requestId)) return;
@@ -197,8 +218,11 @@ export class StreamClient {
       return;
     }
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';
-    if (subtype === 'can_use_tool' || subtype === 'unknown') this.malformed += 1;
+    const malformed = subtype === 'can_use_tool' || subtype === 'unknown';
+    if (malformed) this.malformed += 1;
     else this.countUnknown(`control_request/${subtype}`);
+    // 前のアプリの頃から答えを待っている要求（引き継いで出し直したもの）は、ほかの前の行と同じく出さない
+    if (!replayed) this.report(subtype === 'unknown' ? 'control_request' : `control_request/${subtype}`, malformed ? 'malformed' : 'unknown', value, 'request');
     this.write(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `tanacode does not handle ${subtype} requests.` } } satisfies ControlResponseMessage));
   }
 
@@ -247,6 +271,15 @@ function parse(line: string): Record<string, unknown> | null {
     return isRecord(value) && typeof value.type === 'string' ? value : null;
   } catch {
     return null;
+  }
+}
+
+// 読めない行の、未知のイベントの名前・わけ・値。JSON として読めれば形の違う行（オブジェクトでない・種類の欄が無い）、読めなければ、その文字のまま
+function unreadable(line: string): [string, UnknownProblem, unknown] {
+  try {
+    return ['', 'malformed', JSON.parse(line) as unknown];
+  } catch {
+    return ['', 'unparsable', line];
   }
 }
 

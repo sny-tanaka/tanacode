@@ -7,16 +7,17 @@ import { ControlError, StreamClient, testing } from '../src/main/stream/client';
 import { disableRemoteControl, enableRemoteControl, endSession, generateTitle, rewindConversation, unsupported } from '../src/main/stream/internal';
 import { LineLog } from '../src/main/stream/log';
 import type { CanUseToolRequest, StreamMessage } from '../src/main/stream/protocol';
+import { UNKNOWN_RAW_BYTES, type UnknownEvent } from '../src/shared/unknown-event';
 import { ScriptedPipe } from './helpers/scripted-claude';
 
 // stream-json の claude との行の読み書き（StreamClient）と、内部の要求（internal.ts）・送受信の控え（LineLog）。
 // claude の代わりに、テストが行を出すパイプ（ScriptedPipe）を使う
 
-type Got = { messages: [StreamMessage, boolean][]; permissions: [string, CanUseToolRequest][]; cancels: string[]; exits: [number, string][] };
+type Got = { messages: [StreamMessage, boolean][]; permissions: [string, CanUseToolRequest][]; cancels: string[]; exits: [number, string][]; unknowns: UnknownEvent[] };
 
 function setup(log: LineLog | null = null) {
   const pipe = new ScriptedPipe('p1', { tag: 's1', file: 'claude', args: [], cwd: '/', env: {}, retain: [], transient: [] });
-  const got: Got = { messages: [], permissions: [], cancels: [], exits: [] };
+  const got: Got = { messages: [], permissions: [], cancels: [], exits: [], unknowns: [] };
   const client = new StreamClient(
     pipe,
     {
@@ -24,6 +25,7 @@ function setup(log: LineLog | null = null) {
       onPermission: (id, request) => got.permissions.push([id, request]),
       onCancel: (id) => got.cancels.push(id),
       onExit: (code, stderr) => got.exits.push([code, stderr]),
+      onUnknown: (event) => got.unknowns.push(event),
     },
     log,
   );
@@ -327,6 +329,108 @@ describe('StreamClient', () => {
       'assistant:false',
       'result/success:false',
     ]);
+  });
+});
+
+describe('未知のイベント（onUnknown）', () => {
+  // 名前・わけ・どこから・ID（生の行は別に確かめる）
+  const brief = (events: UnknownEvent[]) => events.map((e) => [e.name, e.problem, e.source, e.id]);
+
+  it('知らない種類・形の違う行・読めない行・使わない種類の要求を、数えるのと一緒に、未知のイベントとして知らせる。ID は行の uuid（要求は request_id）', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'brand_new', uuid: 'u1' });
+    pipe.emit({ type: 'system', subtype: 'model_fallback', uuid: 'u2', from: 'a', to: 'b' });
+    pipe.emit({ type: 'system', subtype: 'init', session_id: 's', uuid: 'u3' });
+    pipe.emit('{壊れた');
+    pipe.emit('[1,2]');
+    pipe.emit({ type: 'control_request', request_id: 'e1', request: { subtype: 'elicitation' } });
+    pipe.emit({ type: 'control_request', request_id: 'b1', request: { subtype: 'can_use_tool', tool_name: 'Bash' } });
+    pipe.emit({ type: 'control_request', request_id: 'n1' });
+    pipe.emit({ type: 'control_request', request: { subtype: 'can_use_tool' } });
+    pipe.emit({ type: 'control_response' });
+    pipe.emit({ type: 'control_cancel_request' });
+    expect(brief(got.unknowns)).toEqual([
+      ['brand_new', 'unknown', 'stream', 'unknown:u1'],
+      ['system/model_fallback', 'unknown', 'stream', 'unknown:u2'],
+      ['system/init', 'malformed', 'stream', 'unknown:u3'],
+      ['', 'unparsable', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+      ['', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+      ['control_request/elicitation', 'unknown', 'request', 'unknown:request:e1'],
+      ['control_request/can_use_tool', 'malformed', 'request', 'unknown:request:b1'],
+      ['control_request', 'malformed', 'request', 'unknown:request:n1'],
+      ['control_request', 'malformed', 'request', expect.stringMatching(/^unknown:request:n\d+$/)],
+      ['control_response', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+      ['control_cancel_request', 'malformed', 'stream', expect.stringMatching(/^unknown:n\d+$/)],
+    ]);
+    // 生の行は、読めた行は整形した JSON、読めない行はその文字のまま。知らない要求に error で返す動きと、数はそのまま
+    expect(got.unknowns[1].raw).toBe(JSON.stringify({ type: 'system', subtype: 'model_fallback', uuid: 'u2', from: 'a', to: 'b' }, null, 2));
+    expect(got.unknowns[3].raw).toBe('{壊れた');
+    expect(pipe.messages.filter((m) => m.type === 'control_response').map((m) => (m.response as { request_id: string }).request_id)).toEqual(['e1', 'b1', 'n1']);
+    expect([...client.unknown]).toEqual([
+      ['brand_new', 1],
+      ['system/model_fallback', 1],
+      ['control_request/elicitation', 1],
+    ]);
+    expect(client.malformed).toBe(8);
+  });
+
+  it('意図して捨てる種類・知っているが使わない種類・使う種類と、書いている途中の行（形が違っても）は、未知のイベントにしない', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'keep_alive' });
+    pipe.emit({ type: 'system', subtype: 'task_summary', summary: 's', uuid: 'u1' });
+    pipe.emit({ type: 'system', subtype: 'post_turn_summary', uuid: 'u2' });
+    pipe.emit({ type: 'system', subtype: 'thinking_tokens', uuid: 'u3' });
+    pipe.emit({ type: 'system', subtype: 'informational', content: 'x', uuid: 'u4' });
+    pipe.emit({ type: 'assistant', message: { content: [] }, parent_tool_use_id: null, uuid: 'a1' });
+    pipe.emit({ type: 'stream_event', event: { type: 'message_start' } });
+    pipe.emit({ type: 'stream_event', event: {} });
+    pipe.emit({ type: 'control_request', request_id: 'p1', request: permission });
+    expect(got.unknowns).toEqual([]);
+    // 書いている途中の形の違う行は、数えるだけ
+    expect(client.malformed).toBe(1);
+  });
+
+  it('長い行は、生の行を 64KB で切り、元のバイト数を添える', () => {
+    const { pipe, client, got } = setup();
+    client.start();
+    pipe.emit({ type: 'brand_new', text: 'あ'.repeat(30_000) });
+    pipe.emit({ type: 'brand_new', text: 'a'.repeat(100) });
+    const [long, short] = got.unknowns;
+    expect(new TextEncoder().encode(long.raw).length).toBeLessThanOrEqual(UNKNOWN_RAW_BYTES);
+    expect(new TextEncoder().encode(long.raw).length).toBeGreaterThan(UNKNOWN_RAW_BYTES - 4);
+    expect(long.raw).not.toContain('�');
+    expect(long.truncated).toBe(new TextEncoder().encode(JSON.stringify({ type: 'brand_new', text: 'あ'.repeat(30_000) }, null, 2)).length);
+    expect(short.truncated).toBeUndefined();
+  });
+
+  it('引き継いだとき、前のアプリの頃の行（送り直しの行・控えの頭より前の行・出し直した要求）は、未知のイベントにしない', () => {
+    const { pipe, client, got } = setup();
+    client.adopt({
+      kind: 'pipe',
+      id: 'p1',
+      tag: 's1',
+      pid: 1,
+      startedAt: 0,
+      exitCode: null,
+      lastSeq: 7,
+      firstSeq: 5,
+      retained: [
+        { seq: 2, line: '{壊れた' },
+        { seq: 3, line: JSON.stringify({ type: 'brand_new' }) },
+      ],
+      pending: [{ seq: 5, line: JSON.stringify({ type: 'control_request', request_id: 'hook', request: { subtype: 'hook_callback' } }) }],
+      ended: false,
+      stderr: '',
+    });
+    pipe.emit({ type: 'brand_new', uuid: 'old' }, 5);
+    pipe.emit('{壊れた');
+    pipe.emit({ type: 'control_request', request_id: 'old-request', request: { subtype: 'elicitation' } });
+    expect(got.unknowns).toEqual([]);
+    // 引き継いだあとの新しい行は出す
+    pipe.emit({ type: 'brand_new', uuid: 'new' });
+    expect(brief(got.unknowns)).toEqual([['brand_new', 'unknown', 'stream', 'unknown:new']]);
   });
 });
 

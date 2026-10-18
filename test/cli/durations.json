@@ -17,5 +17,6 @@
   "test/cli/terminal-mode.test.ts": 2,
   "test/cli/terminal.test.ts": 27,
   "test/cli/turn-summary.test.ts": 2,
+  "test/cli/unknown-events.test.ts": 1,
   "test/cli/worktree.test.ts": 92
 }

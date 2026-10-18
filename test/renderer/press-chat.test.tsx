@@ -449,3 +449,42 @@ describe('応答と思考の日本語訳（BlockTranslation）', () => {
     expect(within(container).queryByRole('button', { name: 'システム設定を開く' })).toBeNull();
   });
 });
+
+describe('未知のイベント', () => {
+  const item: ChatItem = {
+    kind: 'unknown',
+    id: 'unknown:u1',
+    name: 'system/model_fallback',
+    problem: 'unknown',
+    count: 2,
+    samples: [
+      { id: 'unknown:u1', source: 'stream', version: '2.1.302', raw: '{\n  "type": "system"\n}' },
+      { id: 'unknown:u2', source: 'transcript', raw: '{\n  "uuid": "u2"\n}' },
+    ],
+  };
+  // jsdom は summary を押しても details を開かないので、開いて toggle を送る
+  const open = (details: HTMLDetailsElement) => {
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+  };
+
+  it('畳んだ 1 行に種類と回数を出し、生の行は開くまで描かない。開くと、どこから来たか・バージョン・生の行を出す', () => {
+    const { container } = render(<ChatRow {...rowProps(item)} />);
+    expect(container.querySelector('summary')!.textContent).toBe('未知のイベント: system/model_fallback2 回');
+    expect(container.querySelector('.chat-unknown-raw')).toBeNull();
+    open(container.querySelector('details')!);
+    expect([...container.querySelectorAll('.chat-unknown-meta')].map((m) => m.textContent)).toEqual(['stream-json の行Claude Code 2.1.302', '会話ログの行Claude Code のバージョンは不明']);
+    expect([...container.querySelectorAll('.chat-unknown-raw')].map((p) => p.textContent)).toEqual(['{\n  "type": "system"\n}', '{\n  "uuid": "u2"\n}']);
+  });
+
+  it('「生の行をコピー」で、その回の生の行をクリップボードに写し、写したことをボタンに出す', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { container } = render(<ChatRow {...rowProps(item)} />);
+    open(container.querySelector('details')!);
+    fireEvent.click(screen.getAllByRole('button', { name: '生の行をコピー' })[1]);
+    expect(writeText).toHaveBeenCalledWith('{\n  "uuid": "u2"\n}');
+    await screen.findByRole('button', { name: 'コピーしました' });
+    expect(screen.getAllByRole('button', { name: '生の行をコピー' })).toHaveLength(1);
+  });
+});

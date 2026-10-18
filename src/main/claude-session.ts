@@ -157,6 +157,7 @@ export class ClaudeSession {
       onPermission: (id, request, replayed) => !this.killed && this.handlers.stream?.onPermission(id, request, replayed),
       onCancel: (id) => !this.killed && this.handlers.stream?.onCancel(id),
       onCaughtUp: () => !this.killed && this.handlers.stream?.onCaughtUp?.(),
+      onUnknown: (event) => !this.killed && this.handlers.stream?.onUnknown?.(event),
       onExit: (exitCode, stderr) => {
         if (this.pipe !== pipe) return;
         this.pipe = null;

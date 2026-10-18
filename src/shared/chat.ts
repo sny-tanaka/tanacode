@@ -4,6 +4,7 @@ import { t } from './i18n';
 import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
+import { unknownEvent, type UnknownEvent } from './unknown-event';
 
 // images: 画像の鍵（中身は main の画像置き場から取る。ImageSink を参照）。at: 会話ログの時刻（ミリ秒。作業の書き出しで使う）
 // parent: 親セッションの Claude からの指示（start_session・send_message）なら、親セッションの ID。人の発言には無い
@@ -98,7 +99,9 @@ export type ChatEvent =
   // 起動が終わって入力を受け付けられるようになった（入力欄が出た）
   | { type: 'ready' }
   // reason: 終わったわけ（ターミナルモードで、起動を終える前に終わった など）。終了の表示に、終了コードの代わりに出す
-  | { type: 'process-exit'; exitCode: number; reason?: string };
+  | { type: 'process-exit'; exitCode: number; reason?: string }
+  // tanacode が知らない、Claude Code からの行（stream-json・会話ログ・制御の要求）。チャットに畳んだ 1 行で出すだけで、ターンは始まらない
+  | UnknownEvent;
 
 // id: TaskCreate で作ったもの（Task #1 の 1）。TodoWrite の項目には無い
 export type TodoItem = { content: string; status: string; activeForm?: string; id?: string };
@@ -200,6 +203,8 @@ export type TranscriptEntry = {
   prNumber?: number;
   prUrl?: string;
   prRepository?: string;
+  // その行を書いた Claude Code のバージョン（未知のイベントに添える。付帯情報の行には無い）
+  version?: string;
 };
 
 const INTERRUPTED_PREFIX = '[Request interrupted by user';
@@ -246,7 +251,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
           : t('chat.transcript.apiError', { message });
       return [{ type: 'api-error', id: entry.uuid ?? '', text, retrying: true }];
     }
-    return [];
+    if (typeof entry.subtype !== 'string') return [unknownLine(entry, 'system', 'malformed')];
+    return TRANSCRIPT_SYSTEM.has(entry.subtype) ? [] : [unknownLine(entry, `system/${entry.subtype}`)];
   }
 
   if (entry.type === 'bridge-session') {
@@ -269,7 +275,11 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     }
     if (isChecklistStop(entry.attachment)) return [{ type: 'checklist-stop' }];
     const run = hookRunOf(entry.attachment);
-    return run ? [{ type: 'hook', id: entry.uuid ?? '', run }] : [];
+    if (run) return [{ type: 'hook', id: entry.uuid ?? '', run }];
+    // hooks の記録（hook_）は、出さないもの（アプリが足したフックなど）も知っている
+    const kind = entry.attachment?.type;
+    if (typeof kind !== 'string') return [unknownLine(entry, 'attachment', 'malformed')];
+    return kind.startsWith('hook_') || TRANSCRIPT_ATTACHMENTS.has(kind) ? [] : [unknownLine(entry, `attachment/${kind}`)];
   }
 
   if (entry.type === 'assistant') {
@@ -307,6 +317,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
           sentFiles: block.name === 'SendUserFile' ? sentFilesOf(input, cwd) : undefined,
           at,
         });
+      } else if (!ASSISTANT_BLOCKS.has(block.type)) {
+        events.push(unknownBlock(entry, block, i));
       }
     });
     return events;
@@ -346,6 +358,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
         if (blocked) events.push({ type: 'hook', id: `${entry.uuid ?? ''}:hook`, run: blocked });
       } else if (block.type === 'text' && block.text) {
         events.push(...userTextEvents(entry, block.text));
+      } else if (!USER_BLOCKS.has(block.type)) {
+        events.push(unknownBlock(entry, block, index));
       }
     });
     // ユーザーが発言に添付した画像（ツールの結果の行には付けない）
@@ -353,7 +367,192 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
     return withImages(events, entry, takeImages(entry, content ?? [], 'u', onImage));
   }
 
-  return [];
+  if (typeof entry.type !== 'string') return [unknownLine(entry, '', 'malformed')];
+  return TRANSCRIPT_TYPES.has(entry.type) ? [] : [unknownLine(entry, entry.type)];
+}
+
+// 会話ログの、チャットに出さないと決めた行の種類（上で読む user・assistant・system・attachment・bridge-session・pr-link のほか）。
+// どれも Claude Code がセッションを開き直すための付帯情報で、チャットの中身ではない。ここに無い種類は、未知のイベントとして出す。
+// 出どころ: test/fixtures/claude-code/ の会話ログ、開発者の手元の会話ログ、Claude Code 2.1.302 の本体で会話ログを読む処理
+const TRANSCRIPT_TYPES = new Set([
+  'user',
+  'assistant',
+  'system',
+  'attachment',
+  'bridge-session',
+  'pr-link',
+  // 一覧の名前（transcriptTitle）と、前のバージョンの Claude Code が書いた会話の要約
+  'custom-title',
+  'ai-title',
+  'summary',
+  'mode',
+  'permission-mode',
+  'atis-latch',
+  'isolation-latch',
+  'file-history-snapshot',
+  'file-history-delta',
+  'last-prompt',
+  'api-request',
+  'api-request-blob',
+  'api-request-shape',
+  'queue-operation',
+  'worktree-state',
+  'agent-name',
+  'agent-color',
+  'agent-setting',
+  'tag',
+  'cost-state',
+  'artifact-comment-monitor',
+  'artifact-autoreact-ledger',
+  'dev-mods',
+  'memory-mode',
+  'history-suppression',
+  'attribution-snapshot',
+  'content-replacement',
+  'fork-context-ref',
+  'relocated',
+  'ended-by-model',
+  'continued-in',
+  'frame-link',
+]);
+
+// 会話ログの system の行のうち、知っているもの（上で読むもの・出さないと決めたもの）。出さないもの: 離れていた間のまとめ・裏のエージェントの停止・
+// メモリの保存・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・ファイルの控え（docs の Claude Code のイベントの一覧で、
+// 「出さない」としたもの）。モデルの切り替え（model_fallback など）は、対応を考えたいので、未知のイベントとして出す
+const TRANSCRIPT_SYSTEM = new Set([
+  'turn_duration',
+  'local_command',
+  'bridge_status',
+  'informational',
+  'compact_boundary',
+  'stop_hook_summary',
+  'api_error',
+  'away_summary',
+  'agents_killed',
+  'memory_saved',
+  'permission_retry',
+  'scheduled_task_fire',
+  'rewind_stand_in',
+  'cloud_session_status',
+  'file_snapshot',
+]);
+
+// 会話ログの attachment のうち、知っているもの（hook_ で始まるもののほか）。queued_command は作業中に送った発言（上で読む）。
+// ほかは、Claude Code が Claude に渡す文脈（環境・日付・一覧の差分・思い出させる文・読んだファイルなど）で、チャットには出さない。
+// Claude Code 2.1.302 の本体にある attachment の一覧のうち、そういうものを並べた。チャットに出すかを考えたいもの（max_turns_reached・
+// goal_status・structured_output・async_hook_response_batch・teammate_shutdown_batch・unknown_command_fallback）は、未知のイベントとして出す
+const TRANSCRIPT_ATTACHMENTS = new Set([
+  'queued_command',
+  'environment',
+  'model',
+  'date',
+  'date_change',
+  'session_context',
+  'credential_org',
+  'instructions',
+  'language',
+  'output_style',
+  'output_style_instructions',
+  'coordinator_context',
+  'context_sections',
+  'prompt_snapshot',
+  'prompt_render_point',
+  'remote_session_change',
+  'total_tokens_reminder',
+  'token_usage',
+  'output_token_usage',
+  'budget_usd',
+  'silent_turn_reminder',
+  'elapsed_time_reminder',
+  'output_limit_note',
+  'critical_system_reminder',
+  'todo_reminder',
+  'task_reminder',
+  'task_status',
+  'tool_search_usage_reminder',
+  'batching_reminder',
+  'batching_reminder_sent',
+  'secondary_reminder',
+  'secondary_reminder_sent',
+  'bash_output_audience_note',
+  'read_truncation_notice',
+  'context_efficiency',
+  'attention_budget',
+  'thread_state',
+  'prefix_delta',
+  'deferred_tools_delta',
+  'deferred_tools_record',
+  'agent_listing_delta',
+  'mcp_instructions_delta',
+  'mcp_dropped_tools_delta',
+  'skill_listing',
+  'invoked_skills',
+  'dynamic_skill',
+  'command_permissions',
+  'auto_mode',
+  'auto_mode_exit',
+  'plan_mode',
+  'plan_mode_exit',
+  'plan_mode_reentry',
+  'plan_file_reference',
+  'proactivity',
+  'sandbox_instructions',
+  'team_context',
+  'tool_hosts_notice',
+  'tool_hosts_correction',
+  'tool_host_result_lines',
+  'workflow_keyword_request',
+  'workflow_size_guideline_change',
+  'ultra_effort_enter',
+  'ultra_effort_exit',
+  'ultrathink_effort',
+  'thinking_stripped',
+  'thinking_drop',
+  'advisor_stripped',
+  'advisor_tool',
+  'artifact_opening_prefetch',
+  'agent_mention',
+  'at_mention_reference',
+  'peer_mention',
+  'skill_mention',
+  'file',
+  'directory',
+  'already_read_file',
+  'edited_text_file',
+  'edited_image_file',
+  'compact_file_reference',
+  'pdf_reference',
+  'inlined_image_paths',
+  'opened_file_in_ide',
+  'selected_lines_in_ide',
+  'selected_lines_in_diff',
+  'diagnostics',
+  'mcp_resource',
+  'nested_memory',
+  'relevant_memories',
+  'memory_update',
+  'withheld_memory',
+  'cowork_memory_context',
+  'account_memory_recall',
+]);
+
+// 応答・発言の content のブロックのうち、知っているもの（思考の本文が無いもの・空の文も、知っている形）
+const ASSISTANT_BLOCKS = new Set(['text', 'thinking', 'redacted_thinking', 'tool_use']);
+const USER_BLOCKS = new Set(['text', 'image', 'tool_result']);
+
+// 会話ログの行の未知のイベント
+function unknownLine(entry: TranscriptEntry, name: string, problem: 'unknown' | 'malformed' = 'unknown'): UnknownEvent {
+  return unknownEvent(name, problem, 'transcript', entry, { key: entry.uuid, version: entry.version });
+}
+
+// 応答・発言の、知らない content のブロック。生の JSON は、そのブロック（行の全体は大きいことがあり、上限で切れて見えなくなる）
+function unknownBlock(entry: TranscriptEntry, block: unknown, index: number): UnknownEvent {
+  const kind = (block as { type?: unknown } | null)?.type;
+  const name = `${entry.type}/${typeof kind === 'string' ? kind : ''}`;
+  return unknownEvent(name, typeof kind === 'string' ? 'unknown' : 'malformed', 'transcript', block, {
+    key: entry.uuid && `${entry.uuid}:${index}`,
+    version: entry.version,
+  });
 }
 
 // 画像のブロック（base64）を onImage に渡し、その鍵を返す。鍵は行の uuid と場所から作る

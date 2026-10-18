@@ -2,8 +2,10 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent, HookRun } from '@shared/chat';
-import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusBarStatus, statusOf, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
+import type { UnknownEvent } from '@shared/unknown-event';
+import { acceptsInput, chatFromEvents, EMPTY_CHAT, statusBarStatus, statusOf, UNKNOWN_SAMPLES, useSessionChats, withStatus } from '../../src/renderer/src/chat/chatState';
 import { groupTools } from '../../src/renderer/src/chat/toolGroups';
+import { applyOptions } from '../../src/renderer/src/export/exportContent';
 import { mockApi } from './mock-api';
 
 // チャットの状態（会話ログから作ったイベントを、チャットの行と状態にする）。
@@ -182,6 +184,74 @@ describe('チャットの行', () => {
     expect(chat).toMatchObject({ unsent: [later], remoteControlUrl: 'https://claude.ai/code/x', pr });
     // 送った発言が会話に出たら、main が空の一覧を知らせる
     expect(run([{ type: 'queue', prompts: [later] }, { type: 'queue', prompts: [] }]).unsent).toEqual([]);
+  });
+});
+
+describe('未知のイベント', () => {
+  const unknown = (id: string, over: Partial<UnknownEvent> = {}): UnknownEvent => ({
+    type: 'unknown-event',
+    id,
+    name: 'system/model_fallback',
+    problem: 'unknown',
+    source: 'stream',
+    raw: `{"uuid":"${id}"}`,
+    ...over,
+  });
+  // 行ごとの [名前, 数, 生の行の ID と出どころ]
+  const rows = (events: ChatEvent[]) =>
+    run(events).items.map((i) => (i.kind === 'unknown' ? [i.name, i.count, i.samples.map((s) => `${s.id}@${s.source}`)] : i.kind));
+
+  it('ターンを始めず、作業中・待機中を変えない', () => {
+    const idle = run([{ type: 'process-start' }, { type: 'ready' }, unknown('unknown:a')]);
+    expect(idle).toMatchObject({ status: 'idle', inTurn: false });
+    const running = run([{ type: 'process-start' }, { type: 'ready' }, { type: 'user', id: 'u', text: 'a' }, unknown('unknown:a')]);
+    expect(running).toMatchObject({ status: 'running', inTurn: true });
+  });
+
+  it('同じ種類が間を置かずに続いたら 1 行にまとめて数え、それぞれの生の行を残す。ほかの行を挟んだら・種類やわけが違えば、別の行にする', () => {
+    expect(
+      rows([
+        unknown('unknown:a'),
+        unknown('unknown:b'),
+        // 画面の行にならないもの（ターンの終わり・順番待ちなど）は、間に挟んでも切らない
+        { type: 'turn-end' },
+        unknown('unknown:c'),
+        unknown('unknown:d', { name: 'system/notification' }),
+        unknown('unknown:e', { name: 'system/notification', problem: 'malformed' }),
+        { type: 'info', id: 'i', text: 'お知らせ' },
+        unknown('unknown:f'),
+      ]),
+    ).toEqual([
+      ['system/model_fallback', 3, ['unknown:a@stream', 'unknown:b@stream', 'unknown:c@stream']],
+      ['system/notification', 1, ['unknown:d@stream']],
+      ['system/notification', 1, ['unknown:e@stream']],
+      'info',
+      ['system/model_fallback', 1, ['unknown:f@stream']],
+    ]);
+  });
+
+  it('stream と会話ログの両方に出た同じ行（同じ id）は、前に出た行の隣に生の行を足し、数は増やさない。同じところから届き直したものは足さない', () => {
+    expect(
+      rows([
+        unknown('unknown:a'),
+        { type: 'assistant-text', id: 't', text: '返事' },
+        unknown('unknown:a', { source: 'transcript' }),
+        unknown('unknown:a', { source: 'transcript' }),
+        unknown('unknown:a'),
+      ]),
+    ).toEqual([['system/model_fallback', 1, ['unknown:a@stream', 'unknown:a@transcript']], 'text']);
+  });
+
+  it('まとめた行の生の行は、新しいほうから UNKNOWN_SAMPLES 件まで残す。数は全部を数える', () => {
+    const events = Array.from({ length: UNKNOWN_SAMPLES + 5 }, (_, i) => unknown(`unknown:${i}`));
+    const [item] = run(events).items;
+    expect(item).toMatchObject({ kind: 'unknown', count: UNKNOWN_SAMPLES + 5 });
+    expect(item.kind === 'unknown' && item.samples.map((s) => s.id)).toEqual(events.slice(5).map((e) => e.id));
+  });
+
+  it('作業の書き出しには入れない', () => {
+    const items = run([{ type: 'user', id: 'u', text: 'a' }, unknown('unknown:a')]).items;
+    expect(applyOptions(items, { thinking: true, toolOutput: true, diffs: true, images: true, homeToTilde: false }, '/Users/me').map((i) => i.kind)).toEqual(['user']);
   });
 });
 
