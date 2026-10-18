@@ -25,7 +25,7 @@ export function branchCut(chain: ChainEntry[], entry: TranscriptEntry): { eventC
   return { eventCut: skipped[0].eventStart, chainCut: parent + 1 };
 }
 
-// 断られて取り消された応答の行（uuids。model_refusal_fallback の retractedMessageUuids）から作ったイベントを外す。
+// 取り消された応答の行（uuids。model_refusal_fallback の retractedMessageUuids と、会話ログに書かれてから消された行）から作ったイベントを外す。
 // 外した行は chain からも外し、あとの行のイベントの位置をずらす。外す行が無ければ null
 export function retract(chain: ChainEntry[], events: ChatEvent[], uuids: string[]): { chain: ChainEntry[]; events: ChatEvent[] } | null {
   const dropped = new Set(uuids);

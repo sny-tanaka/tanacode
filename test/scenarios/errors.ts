@@ -225,11 +225,16 @@ export function checkCut(batches: ChatBatch[], events: ChatEvent[]): void {
 }
 
 // ツールの呼び出しの形が壊れた応答を、Claude Code が取り消して（tombstone。abandoned_blocks は付かない）取り直したあと。
-// 確かめるのは、書いている途中の文が残らないことだけ。取り消された応答は、会話ログにいったん書かれてから消される（2.1.302 で実測）。
-// 消される前に読んだ行は、ふつうの応答としてチャットに残る（別の不具合。ここでは確かめない）
+// 取り消された応答は、会話ログにいったん書かれてから消される（2.1.302 で実測）。消される前に読んだ行も、チャットには残らない（#240）。
+// 書いている途中の文にも残らない
 export function checkMalformed(batches: ChatBatch[], events: ChatEvent[]): void {
   checkPartialRetracted(batches, MALFORMED_DRAFT, MALFORMED_REPLY);
-  expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
+  checkMalformedTalk(events);
+}
+// events: 今の台本のチャット（配信したもの・会話ログから作り直したもの）。取り直した返事だけが残る
+export function checkMalformedTalk(events: ChatEvent[]): void {
+  const expected = [{ type: 'user', text: MALFORMED_PROMPT }, { type: 'assistant-text', text: MALFORMED_REPLY }, { type: 'turn-end' }];
+  expect(talk(events)).toEqual(expected.map((e) => expect.objectContaining(e)));
 }
 
 // ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks

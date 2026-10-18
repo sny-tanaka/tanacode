@@ -1,8 +1,9 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, renameSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranscriptTail } from '../src/main/transcript-tail';
+import { removeLine } from './helpers/tombstone';
 
 // 会話ログを開けない（stat のあとに消された）ときを作るため、open だけを差し替えられるようにする
 const openFails = vi.hoisted(() => ({ on: false }));
@@ -17,17 +18,24 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 // 会話ログの末尾読み（TranscriptTail）。親（parentUuid）の行より先に書かれた行を、親の後ろに並べ直す
 
-type Row = { uuid: string; parentUuid: string | null; type: string };
-const row = (uuid: string, parentUuid: string | null, type = 'assistant'): Row => ({ uuid, parentUuid, type });
+type Row = { uuid: string; parentUuid: string | null; type: string; text?: string };
+const row = (uuid: string, parentUuid: string | null, type = 'assistant', text?: string): Row => ({ uuid, parentUuid, type, ...(text ? { text } : {}) });
 const line = (r: Row) => `${JSON.stringify(r)}\n`;
 
 let dir: string;
 let file: string;
 let tail: TranscriptTail | null = null;
 let read: { uuid: string; isHistory: boolean }[];
+// 会話ログから消えたと知らされた行（知らせごと）
+let removed: string[][];
 
 function start(): void {
-  tail = new TranscriptTail(file, (entry, isHistory) => read.push({ uuid: (entry as Row).uuid, isHistory }));
+  tail = new TranscriptTail(
+    file,
+    (entry, isHistory) => read.push({ uuid: (entry as Row).uuid, isHistory }),
+    undefined,
+    (uuids) => removed.push(uuids),
+  );
   tail.start();
 }
 const uuids = () => read.map((r) => r.uuid);
@@ -36,6 +44,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'tanacode-tail-'));
   file = join(dir, 'session.jsonl');
   read = [];
+  removed = [];
 });
 
 afterEach(() => {
@@ -105,5 +114,126 @@ describe('TranscriptTail', () => {
     // 過去ログの行を親にする新しい行も、待たない
     appendFileSync(file, line(row('u1', 'a2', 'user')));
     await vi.waitFor(() => expect(uuids()).toEqual(['a1', 'a2', 'u1']));
+  });
+});
+
+// Claude Code は、取り消した応答（tombstone）の行を、書いたあとで消す（removeLine を参照）。消したあとすぐ次の行を書き足すので、
+// 大きさは前に読んだところより大きいまま。前の位置から読むと、消えた行の長さの分だけ、書き足された行の頭を読み落とす（#240）
+describe('TranscriptTail: 書いたあとで消された行', () => {
+  const malformed = row('a1', 'u1', 'assistant', '形の壊れた応答です。これは取り消されるはず');
+
+  it('消された行を知らせ、消したあとに書き足された行を読み落とさない', async () => {
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')) + line(malformed) + line(row('att1', 'a1', 'attachment')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'att1']));
+    // 消して、読まれる前に、消した行より長い行を書き足す
+    removeLine(file, 'a1');
+    appendFileSync(file, line(row('r1', 'u1', 'user', 'The previous response failed to produce a valid tool call.')) + line(row('a2', 'r1', 'assistant', '形を直して届いた返事')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'att1', 'r1', 'a2']));
+    expect(removed).toEqual([['a1']]);
+  });
+
+  // 書き直しの途中（切り詰めたところ）と見分けがつかないので、変わらないまましばらく（1 秒）たってから
+  it('消されて短くなっただけ（あとに書き足されない）でも、しばらくして変わらなければ知らせる', async () => {
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')) + line(malformed));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1']));
+    removeLine(file, 'a1');
+    await vi.waitFor(() => expect(removed).toEqual([['a1']]), { timeout: 3000 });
+    // そのあとに書き足された行も読む
+    appendFileSync(file, line(row('a2', 'u1')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'a2']));
+    expect(removed).toEqual([['a1']]);
+  });
+
+  it('書きかけを読んだ行が、書き終えてから消されても、その行は出さず、あとの行を読み落とさない', async () => {
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1']));
+    const text = line(malformed);
+    appendFileSync(file, text.slice(0, 20));
+    await new Promise((r) => setTimeout(r, 400));
+    appendFileSync(file, text.slice(20));
+    removeLine(file, 'a1');
+    appendFileSync(file, line(row('a2', 'u1', 'assistant', '形を直して届いた返事')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a2']));
+    expect(removed).toEqual([]);
+  });
+
+  it('親を待っている（まだ出していない）行が消されたら、出さずに捨て、知らせない', async () => {
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1']));
+    appendFileSync(file, line(row('a1', 'missing', 'assistant', '親の届かない応答')));
+    await new Promise((r) => setTimeout(r, 400));
+    removeLine(file, 'a1');
+    appendFileSync(file, line(row('a2', 'u1', 'assistant', '形を直して届いた返事です')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a2']));
+    // 親を待つ長さ（1 秒）を過ぎても出ない
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(uuids()).toEqual(['u1', 'a2']);
+    expect(removed).toEqual([]);
+  });
+
+  it('消された行を親にする行は、来ない親を待たずに出す', async () => {
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')) + line(malformed));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1']));
+    removeLine(file, 'a1');
+    appendFileSync(file, line(row('att1', 'a1', 'attachment', '消えた応答を親にしたままの行')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'att1']), { timeout: 500 });
+  });
+
+  // Claude Code は、消す行の頭で切り詰めてから、後ろの行を書き戻す（removeLine）。変更の通知は切り詰めた時点で届くので、その間を読むことがある
+  it('切り詰めてから書き戻すまでの間を読んでも、書き戻された行は消えたことにせず、出し直さない', async () => {
+    start();
+    const before = line(row('u1', null, 'user'));
+    const rest = line(row('att1', 'a1', 'attachment')) + line(row('att2', 'att1', 'attachment'));
+    appendFileSync(file, before + line(malformed) + rest);
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'att1', 'att2']));
+    truncateSync(file, Buffer.byteLength(before));
+    await new Promise((r) => setTimeout(r, 400));
+    appendFileSync(file, rest + line(row('r1', 'att2', 'user', 'The previous response failed to produce a valid tool call.')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'att1', 'att2', 'r1']));
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(removed).toEqual([['a1']]);
+    expect(uuids()).toEqual(['u1', 'a1', 'att1', 'att2', 'r1']);
+  });
+
+  // 消す行が末尾の近くに無ければ、全体を書き直す（空にしてから書く）
+  it('全体を書き直す途中（空にしたところ）を読んでも、残った行は消えたことにせず、出し直さない', async () => {
+    start();
+    const u1 = line(row('u1', null, 'user'));
+    const att1 = line(row('att1', 'a1', 'attachment'));
+    appendFileSync(file, u1 + line(malformed) + att1);
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'att1']));
+    writeFileSync(file, '');
+    await new Promise((r) => setTimeout(r, 400));
+    writeFileSync(file, u1 + att1);
+    await vi.waitFor(() => expect(removed).toEqual([['a1']]));
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(removed).toEqual([['a1']]);
+    expect(uuids()).toEqual(['u1', 'a1', 'att1']);
+  });
+
+  it('書き直しで、前の方の行がまとめて消えても、残った行は出し直さない', async () => {
+    start();
+    appendFileSync(file, line(row('u1', null, 'user')) + line(row('a1', 'u1')) + line(row('u2', 'a1', 'user')) + line(row('a2', 'u2')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'u2', 'a2']));
+    // 前の 2 行を消して書き直し（別のファイルに書いて置き換える）、新しい行を書き足す
+    writeFileSync(`${file}.tmp`, line(row('u2', 'a1', 'user')) + line(row('a2', 'u2')) + line(row('u3', 'a2', 'user')));
+    renameSync(`${file}.tmp`, file);
+    await vi.waitFor(() => expect(uuids()).toEqual(['u1', 'a1', 'u2', 'a2', 'u3']));
+    expect(removed).toEqual([['u1', 'a1']]);
+  });
+
+  it('過去ログの行が消されても知らせる', async () => {
+    writeFileSync(file, line(row('u1', null, 'user')) + line(malformed));
+    start();
+    await vi.waitFor(() => expect(read).toEqual([{ uuid: 'u1', isHistory: true }, { uuid: 'a1', isHistory: true }]));
+    removeLine(file, 'a1');
+    appendFileSync(file, line(row('a2', 'u1', 'assistant', '形を直して届いた返事です。長めに書きます')));
+    await vi.waitFor(() => expect(read.at(-1)).toEqual({ uuid: 'a2', isHistory: false }));
+    expect(removed).toEqual([['a1']]);
   });
 });
