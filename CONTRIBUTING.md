@@ -461,6 +461,8 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
     - develop のルールセット（need-pr）は、PR を通すことと、必須のチェック（`check`・`build`・`tour`）が通ることを求めています（承認 0 人・squash のみ）。
   - 途中の控えは artifact（`claude-code-<バージョン>`）にも残します。
   - 「Run workflow」で、バージョンを指定して確かめることもできます。通れば、定期の確認と同じく PR を作ってマージします（動作確認済のバージョンより古いバージョンでは作らない）。
+- Claude Code が stream-json で出すイベント・会話ログにだけ書く system の行と、tanacode の対応の一覧は [docs/claude-code-events.md](docs/claude-code-events.md)。Agent SDK の型に無い種類も含めた、ある時点の写しです。調べ直し方も載せています。
+  - 毎日の確認で気づけるのは、台本で起こした場面に出た種類だけです。台本に無い場面（接続が途中で切れて取り直す、など）で出る種類は、この一覧で確かめます。
 
 ## 仕組み
 
