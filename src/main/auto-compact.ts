@@ -71,7 +71,13 @@ type State = {
 const IDLE_STATES = new Set<SessionState>(['idle', 'background']);
 
 // 圧縮の前のフックに返す、止める理由（Claude Code の画面に出る）
-const PRECOMPACT_REASON = 'tanacode resets the conversation and resumes from the checklists instead of compacting (optimized compaction is set to automatic for this session).';
+export const PRECOMPACT_REASON = 'tanacode resets the conversation and resumes from the checklists instead of compacting (optimized compaction is set to automatic for this session).';
+
+// Claude Code が知らせた圧縮の失敗の理由（system/status の compact_error）が、このフックが止めたものか。自動の圧縮の道によっては、
+// フックが止めたことを失敗として知らせる（理由は「Compaction blocked by PreCompact hook: <フックの理由>」。2.1.302 の本体）
+export function blockedByPreCompact(error: string): boolean {
+  return error.includes(PRECOMPACT_REASON);
+}
 
 export class AutoCompact {
   private readonly states = new Map<string, State>();
@@ -163,16 +169,22 @@ export class AutoCompact {
   // 止めたら、次のツールの切れ目（かターンの終わり）で、同じ流れに入る。オフ・使えない・休んでいる・ターミナルモードのセッションと、
   // 切り替えたばかりのセッションでは止めない（空を返す）
   preCompact(id: string): string {
-    if (!this.active(id)) return '';
+    if (!this.blocks(id)) return '';
     // 流れの途中（仕上げのターン）なら、止めるだけ。このあと会話を消す
     if (this.deps.compact.running(id)) return PRECOMPACT_REASON;
-    const s = this.state(id);
-    // 切り替えたばかりで、まだ割合が下がっていない（次は始めない決まり）のに、Claude Code が圧縮しようとしている。
-    // 止めても切り替えられないので、止めない（Claude Code の圧縮に任せる。止め続けると、上限で詰まる・切り替えを繰り返す）
-    if (!s.armed) return '';
-    s.preCompact = true;
+    this.state(id).preCompact = true;
     this.check(id);
     return PRECOMPACT_REASON;
+  }
+
+  // 今 Claude Code の自動の圧縮が始まろうとしたら、圧縮の前のフック（preCompact）で止めるか（状態は変えない）。
+  // Claude Code は、フックより先に「圧縮中」を知らせるので、止める圧縮を作業中の表示で圧縮中に見せないために使う（SessionManager）
+  blocks(id: string): boolean {
+    if (!this.active(id)) return false;
+    if (this.deps.compact.running(id)) return true;
+    // 切り替えたばかりで、まだ割合が下がっていない（次は始めない決まり）のに、Claude Code が圧縮しようとしている。
+    // 止めても切り替えられないので、止めない（Claude Code の圧縮に任せる。止め続けると、上限で詰まる・切り替えを繰り返す）
+    return this.state(id).armed;
   }
 
   forget(id: string): void {

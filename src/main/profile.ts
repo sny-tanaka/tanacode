@@ -318,6 +318,7 @@ export class Profile {
       onChange: (id) => compact.refresh([id]),
     });
     this.autoCompact = autoCompact;
+    manager.compactBlocked = (id) => autoCompact.blocks(id);
     manager.watchState((id) => autoCompact.check(id));
     // 前に起動したアプリから動き続けている Claude Code を引き継ぐ
     await manager.adopt();

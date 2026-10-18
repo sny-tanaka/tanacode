@@ -673,6 +673,8 @@
       "waiting": "応答を待っています",
       "thinking": "考えています",
       "writing": "応答を書いています",
+      "compacting": "会話を圧縮しています",
+      "checking": "安全を確認しています",
       "tokens": "{count} トークン",
       "inProgress": "作業中…",
       "done": "完了"
@@ -697,6 +699,8 @@
       "apiErrorNoDetail": "API エラー",
       "charsOmitted": "…（{count} 文字省略）",
       "compacted": "会話を圧縮しました",
+      "compactFailed": "会話を圧縮できませんでした: {message}",
+      "compactFailedNoDetail": "会話を圧縮できませんでした",
       "compactedAuto": "会話を自動で圧縮しました",
       "compactedFrom": "会話を圧縮しました（{count}k tokens から）",
       "compactedAutoFrom": "会話を自動で圧縮しました（{count}k tokens から）",

@@ -53,6 +53,7 @@ import { branchCut, readAgentLog, readChatLog, readExportLog, retract, type Chai
 import { ClaudeSession, transcriptPath, type LaunchKind } from './claude-session';
 import { claudeConfigDir, settingsDefaultMode } from './claude-config';
 import { commandsFromInitialize } from './commands';
+import { blockedByPreCompact } from './auto-compact';
 import { turnStarterOf, type TurnNotice, type TurnStarter } from './compact-notice';
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
@@ -90,9 +91,11 @@ import type {
   ModelInfo,
   ModelRefusalFallbackMessage,
   NotificationMessage,
+  PermissionCheckStatusMessage,
   ResultMessage,
   RewindFilesResult,
   SettingsResponse,
+  StatusMessage,
   StreamMessage,
   TaskNotificationMessage,
   TaskStartedMessage,
@@ -183,8 +186,8 @@ type Runtime = {
   permissionAt: number | null;
   // 何も出力しなかったフック（hook_response）をチャットに出すための控え（quietHook）。hookStarts: 始まった時刻（hook_id → 時刻）/
   // streamTools: stream で見た、結果がまだ来ていないツールの呼び出し（来た順。sub: サブエージェントの中のもの）/ shownTools: 会話ログからチャットに出した
-  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフックと、まだ会話に出ていない発言のときのフック
-  // （ツールの呼び出しの ID・送った発言の uuid → イベント）
+  // ツールのカード / heldHooks: カードがまだチャットに出ていないツールに付けるフックと、まだ会話に出ていない発言のときのフック・
+  // 圧縮の失敗の知らせ（ツールの呼び出しの ID・送った発言の uuid → イベント）
   hookStarts: Map<string, number>;
   streamTools: { id: string; name: string; sub: boolean }[];
   shownTools: Set<string>;
@@ -402,6 +405,10 @@ export class SessionManager {
   // 最適化圧縮の流れが、そのセッションに /clear を打って、新しい会話になるのを待っているか（profile.ts がつなぐ）。
   // その /clear で会話が替わったときは、reset に印を付ける（チャットの画面を消さない）
   compactClearing: (id: string) => boolean = () => false;
+
+  // 今 Claude Code の自動の圧縮が始まろうとしたら、アプリの圧縮の前のフックが止めるか（自動の最適化圧縮がオンのセッション。
+  // profile.ts が AutoCompact.blocks をつなぐ）。止める圧縮は、作業中の表示で圧縮中にしない
+  compactBlocked: (id: string) => boolean = () => false;
 
   // 残った claude を止める（leftover-claude.ts。テストで差し替える）
   stopLeftover: (claude: ClaudeProcess) => Promise<boolean> = stopLeftoverClaude;
@@ -2350,8 +2357,18 @@ export class SessionManager {
         return;
       }
       case 'status': {
-        const mode = (message as Extract<StreamMessage, { subtype: 'status' }>).permissionMode;
-        if (mode) this.noteMode(id, rt, appMode(mode));
+        const status = message as StatusMessage;
+        if (status.permissionMode) this.noteMode(id, rt, appMode(status.permissionMode));
+        // 権限モードの変化の行は、圧縮の始まり・終わりに数えない
+        else if (!past) this.compactStatus(id, rt, status);
+        return;
+      }
+      case 'permission_check_status': {
+        // auto モードの判定を待っている間は、作業中の表示を「安全を確認しています」にする。サブエージェントの中の判定は数えない
+        // （進み具合は、本体の行だけで作る）
+        const check = message as PermissionCheckStatusMessage;
+        if (past || check.agent_id) return;
+        if (rt.progress?.checking(check.tool_use_id, check.status === 'checking')) this.emitProgress(id, rt);
         return;
       }
       case 'bridge_state': {
@@ -2418,6 +2435,32 @@ export class SessionManager {
         return;
       }
     }
+  }
+
+  // 圧縮の始まり（compacting。要約を待つ間は 30 秒ごとに出直す）と終わり（null）。圧縮の間は、作業中の表示を
+  // 「会話を圧縮しています」にする。失敗（compact_result が failed）は、理由をチャットに出す（会話ログには残らない。手動の /compact の
+  // 失敗は、会話ログではローカルのコマンドの標準エラーになり、チャットには出していない）。成功は、会話ログの区切り（compact_boundary）で出る。
+  // 自動の最適化圧縮がオンのセッションでは、Claude Code の自動の圧縮をアプリの圧縮の前のフックが止める。Claude Code はフックより先に
+  // compacting を出すので、止める自動の圧縮（compact_output_chars が付く）は圧縮中にせず、止めたことの失敗も出さない
+  private compactStatus(id: string, rt: Runtime, status: StatusMessage): void {
+    if (status.status === 'compacting') {
+      if (status.compact_output_chars !== undefined && this.compactBlocked(id)) return;
+      if (rt.progress?.compacting(true)) this.emitProgress(id, rt);
+      return;
+    }
+    // requesting（応答を頼んだ）は、圧縮の終わりではない
+    if (status.status) return;
+    if (rt.progress?.compacting(false)) this.emitProgress(id, rt);
+    if (status.compact_result !== 'failed') return;
+    const reason = status.compact_error?.trim();
+    if (reason && blockedByPreCompact(reason)) return;
+    const text = reason ? t('chat.transcript.compactFailed', { message: reason }) : t('chat.transcript.compactFailedNoDetail');
+    const event: ChatEvent = { type: 'api-error', id: status.uuid, text, retrying: false };
+    // 手動の /compact の発言の行は、圧縮が終わってから会話ログに書かれる（失敗の知らせの方が先に届く。2.1.302 で実測）。
+    // 今のターンの送った発言がまだ会話に出ていなければ、発言のときのフックと同じく、その行のあとまで待たせる（closeTurn も待つ）
+    const prompt = rt.turnOpen ? rt.promptLine : null;
+    if (prompt) rt.heldHooks.set(prompt, [...(rt.heldHooks.get(prompt) ?? []), event]);
+    else this.pushEvents(id, [event]);
   }
 
   // stream に出た応答（uuids）が取り消された。書いている途中の文から外し、ターンの最後の行にしない（会話ログに出るのを待たない）
@@ -2522,8 +2565,11 @@ export class SessionManager {
     // TUI では、これらにターンの終わりが無かった。作業の完了として知らせない（最適化圧縮の /clear で「作業が完了しました」が鳴らない）
     const local = result.num_turns === 0 && result.subtype === 'success';
     // 応答の前に終わったターン（中断・失敗）は、result が会話ログの発言の行より先に届くことがある。先に終わりを出すと、チャットで
-    // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ
-    const prompt = !rt.lastTurnLine && !local && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
+    // 発言より前に並ぶ（最適化圧縮は、仕上げの頼みのあとの終わりを待ち続ける）ので、その発言が会話ログに出るのを待つ。
+    // モデルを呼ばなかったターンは待たない（/clear の発言の行は新しい会話ログに出ないことがあり、フックが止めた発言は会話に出ない）。
+    // ただし、/compact の失敗の知らせを、その発言の行のあとに出すために待たせていれば待つ（/compact の発言の行は、圧縮のあとに必ず書かれる）
+    const compactFailed = !!rt.turnPrompt && !!rt.heldHooks.get(rt.turnPrompt)?.some((e) => e.type === 'api-error');
+    const prompt = !rt.lastTurnLine && (!local || compactFailed) && rt.turnPrompt && !rt.arrivedPrompts.has(rt.turnPrompt) ? rt.turnPrompt : null;
     const waitFor = rt.lastTurnLine && !rt.chain.some((c) => c.uuid === rt.lastTurnLine) ? rt.lastTurnLine : prompt;
     rt.turnEnding = { interrupted, local, waitFor, error, timer: setTimeout(() => this.turnEndTimedOut(id, rt), this.turnEndWaitMs) };
     if (result.total_cost_usd !== undefined) this.updateStatus(id, rt, { costUsd: result.total_cost_usd });

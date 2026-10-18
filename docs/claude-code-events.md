@@ -11,7 +11,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 - SDK の型（`sdk.d.ts` の `SDKMessage`）は 39 種類（うち system は 28 種類）。Claude Code は、型に無い種類も出します。
 - SDK は、型に無い種類も捨てずにアプリへ渡します。SDK が自分で受け取って渡さないのは、`keep_alive`・制御の要求と返事・`transcript_mirror` だけです。
 - tanacode の読み取り（`src/main/stream/client.ts` の `StreamClient`）は、知らない種類を捨てて数え、コンソールに警告を出します。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
-- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）・モデルが断る場面（同じモデルでの取り直しと、別のモデルでの取り直し）・混雑による予備のモデルへの切り替えです（あとの 2 つの行は `test/fixtures/claude-code-events/2.1.302/` に置いた）。
+- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）・モデルが断る場面（同じモデルでの取り直しと、別のモデルでの取り直し）・混雑による予備のモデルへの切り替え（あとの 2 つの行は `test/fixtures/claude-code-events/2.1.302/` に置いた）・圧縮（`/compact`・自動の圧縮・その失敗・PreCompact フックで止めた自動の圧縮）・auto モードの判定待ち（`permission_check_status`。`test/cli/progress.test.ts`）です。
 
 ## 凡例
 
@@ -53,7 +53,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | subtype | どんなイベントか | SDK | tanacode |
 | --- | --- | --- | --- |
 | `init` | 起動・/clear のあとの、セッションの情報 | 有 | ✅ 権限モード・モデル・バージョン。会話ログの乗り換え |
-| `status` | 圧縮中・応答待ち・権限モードの変化 | 有 | ✅ 権限モードだけ |
+| `status` | 圧縮中・応答待ち・権限モードの変化 | 有 | ✅ 権限モード。作業中の表示の「会話を圧縮しています」（compacting から null まで）と、圧縮の失敗（`compact_result`・`compact_error`）のチャットへの表示 |
 | `bridge_state` | Remote Control のつながり | 無 | ✅ つながっているかの表示 |
 | `task_started` | 裏のタスクの始まり | 有 | ✅ タスクを止めるときの ID |
 | `task_notification` | 裏のタスクの終わり | 有 | ✅ 止めたタスクの終わり |
@@ -63,6 +63,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `notification` | 警告（起動時のエフォートやコンテキストの上限・メモリの停止・plan を抜けたら auto が使えなかった・組織の方針で使えないモデルなど） | 有 | ✅ チャットのお知らせ（文はそのまま。ほかの道で出すもの・tanacode 自身が起こしたもの・一時的なものは出さない。`stream/notification.ts`） |
 | `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ✅ 取り消された応答を、書いている途中の文から外す。お知らせは会話ログの行から（5 節） |
 | `commands_changed` | / のコマンドの一覧の途中での変化（スキルのファイルを足した・プラグインを読み直したなど） | 有 | ✅ 入力欄の / の候補と記録を差し替える。プロジェクトのスキルのファイルを足すと出る（実測。`test/cli/commands-changed.test.ts`） |
+| `permission_check_status` | auto モードの判定を 4 秒より長く待っている（checking）・待ち終えた（done） | 無 | ✅ 作業中の表示の「安全を確認しています」 |
 
 ### 受け取るだけのもの
 
@@ -95,7 +96,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `model_refusal_no_fallback` | 断られたが、取り直さなかった | 有 | ⚠️ |
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | 無 | ⚠️ |
 | `permission_denied` | auto モードの判定や規則による、確認なしの拒否 | 有 | ⚠️ 理由はツールの結果には残る |
-| `permission_check_status` | auto モードの判定中・判定済み | 無 | ⚠️ 作業中の表示に使えそう |
 
 **関係の薄いもの（条件付き、または tanacode では出ない見込み）**
 

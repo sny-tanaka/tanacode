@@ -444,7 +444,31 @@ describe('Claude Code の自動の圧縮が先に始まろうとした（PreComp
     finish('busy');
     turn(85);
     finish('busy');
+    expect(auto.blocks(ID)).toBe(false);
     expect(auto.preCompact(ID)).toBe('');
+  });
+
+  it('止めるか（blocks。作業中の表示で圧縮中にしないために聞く）は、止めるとき（preCompact）と同じ決まりで答え、状態を変えない', () => {
+    state = 'working';
+    percent = 70;
+    auto.check(ID);
+    expect(auto.blocks(ID)).toBe(true);
+    // 聞いただけでは、止めるファイルを書かず、流れにも入らない
+    expect(existsSync(stopFile())).toBe(false);
+    state = 'idle';
+    auto.check(ID);
+    expect(started).toEqual([]);
+    // 流れの途中は止める。切り替えたばかりで、まだ割合が下がっていなければ止めない
+    turn(97);
+    expect(auto.blocks(ID)).toBe(true);
+    finish(null);
+    expect(auto.blocks(ID)).toBe(false);
+    expect(auto.preCompact(ID)).toBe('');
+    // トグルがオフなら止めない
+    turn(50);
+    expect(auto.blocks(ID)).toBe(true);
+    summary = { autoCompact: false };
+    expect(auto.blocks(ID)).toBe(false);
   });
 });
 

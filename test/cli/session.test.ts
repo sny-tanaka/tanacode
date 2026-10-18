@@ -129,12 +129,20 @@ describe(`Claude Code ${version} の会話の操作`, () => {
     await idle('待機中');
   });
 
-  it('/compact で会話の区切りが出る', async () => {
+  it('/compact で会話の区切りが出る。圧縮の間は、作業中の表示が圧縮中になり、終わると戻る', async () => {
     const dividers = () => run.chatEvents.filter((e) => e.type === 'divider').length;
     const before = dividers();
+    const from = run.activities.length;
     await run.send('/compact');
+    // 要約の頼みは、ゆっくり返す会話の続きとして届く（4 秒待つ）
+    await run.waitUntil('圧縮中', () => run.activities.at(-1)?.phase === 'compacting', 30_000);
     await run.waitUntil('圧縮の区切り', () => dividers() > before, 30_000);
     await idle('待機中');
+    // 圧縮が終わったら、圧縮中ではなくなる（応答待ちに戻ってから、ターンが終わる）
+    const phases = run.activities.slice(from).map((a) => a?.phase ?? null);
+    expect(phases.at(-1)).toBeNull();
+    expect(phases.slice(phases.lastIndexOf('compacting') + 1)).not.toContain('compacting');
+    expect(run.chatEvents.filter((e) => e.type === 'api-error')).toEqual([]);
   });
 
   it('/compact に複数行の指示を添えると、要約の頼みに指示が入る（発言 1 行で送る）', async () => {
@@ -145,6 +153,26 @@ describe(`Claude Code ${version} の会話の操作`, () => {
     await idle('待機中');
     const asked = api.lastPrompts.find((p) => p.includes('Additional Instructions:'));
     expect(asked).toContain(`Additional Instructions:\n${COMPACT_INSTRUCTIONS}`);
+  });
+
+  it('/compact が失敗したら、理由をチャットに出す（会話ログには残らない）', async () => {
+    // 圧縮したばかりで、圧縮できる発言が無い（Not enough messages to compact）ので、ひとこと話しておく
+    await run.send('圧縮の前のひとことです');
+    await run.waitUntil('ひとことへの返事', () => api.lastPrompts.some((p) => p.includes('圧縮の前のひとことです')), 30_000);
+    await idle('待機中');
+    api.failIf = (prompt) => (prompt.includes('COMPACT-FAIL') ? { status: 400, errorType: 'invalid_request_error', message: 'mock summary failure' } : null);
+    const from = run.activities.length;
+    await run.send('/compact COMPACT-FAIL');
+    await run.waitUntil('失敗の知らせ', () => chat().some((e) => e.type === 'api-error'), 30_000);
+    await idle('待機中');
+    api.failIf = null;
+    const error = chat().find((e) => e.type === 'api-error');
+    expect(error).toMatchObject({ retrying: false, text: expect.stringMatching(/^会話を圧縮できませんでした: .*mock summary failure/) });
+    expect(run.activities.slice(from).map((a) => a?.phase ?? null)).toContain('compacting');
+    expect(run.activities.at(-1)).toBeNull();
+    // 送った /compact は、送信中の表示から外れている（会話ログの発言の行を待ってから、失敗とターンの終わりを出す）
+    const queue = [...run.chatEvents].reverse().find((e) => e.type === 'queue');
+    expect(queue?.type === 'queue' ? queue.prompts : []).toEqual([]);
   });
 
   it('/clear のあと、新しい会話（init の session_id）の会話ログに乗り換え、チャットを空にして出し直す', async () => {

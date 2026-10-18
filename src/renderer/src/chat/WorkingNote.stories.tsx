@@ -18,6 +18,10 @@ export const 応答を待っている: Story = { args: { activity: { phase: 'wai
 export const 考えている: Story = { args: { activity: { phase: 'thinking', elapsed: '12s', tokens: null } } };
 export const 応答を書いている: Story = { args: { activity: { phase: 'writing', elapsed: '1m 5s', tokens: '1.2k' } } };
 export const ツールの実行中: Story = { args: { activity: { phase: 'working', elapsed: '48s', tokens: '3.4k' } } };
+// /compact と、コンテキストが埋まったときの自動の圧縮（要約を待つ間、1 分ほどかかることがある）
+export const 会話を圧縮している: Story = { args: { activity: { phase: 'compacting', elapsed: '1m 12s', tokens: null } } };
+// auto モードの判定（ツールを使ってよいか）を 4 秒より長く待っている
+export const 安全を確認している: Story = { args: { activity: { phase: 'checking', elapsed: '9s', tokens: '3.4k' } } };
 export const ToDoの名前: Story = { args: { label: '要件書を作成して発注中', activity: { phase: 'thinking', elapsed: '12s', tokens: null } } };
 
 const TASKS: TodoItem[] = [
