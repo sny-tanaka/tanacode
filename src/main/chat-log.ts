@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { isTranscriptEntry, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { isTranscriptEntry, retractedUuidsOf, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import { rememberImage } from './image-cache';
 import { parentFirst } from './transcript-tail';
 
@@ -23,6 +23,22 @@ export function branchCut(chain: ChainEntry[], entry: TranscriptEntry): { eventC
   const skipped = chain.slice(parent + 1);
   if (!skipped.some((c) => c.type === 'user' || c.type === 'assistant')) return null;
   return { eventCut: skipped[0].eventStart, chainCut: parent + 1 };
+}
+
+// 断られて取り消された応答の行（uuids。model_refusal_fallback の retractedMessageUuids）から作ったイベントを外す。
+// 外した行は chain からも外し、あとの行のイベントの位置をずらす。外す行が無ければ null
+export function retract(chain: ChainEntry[], events: ChatEvent[], uuids: string[]): { chain: ChainEntry[]; events: ChatEvent[] } | null {
+  const dropped = new Set(uuids);
+  if (!chain.some((c) => dropped.has(c.uuid))) return null;
+  // 最初の行より前のイベント（uuid の無い行から作ったもの）は残す
+  const kept = events.slice(0, chain[0].eventStart);
+  const rest: ChainEntry[] = [];
+  chain.forEach((c, i) => {
+    if (dropped.has(c.uuid)) return;
+    rest.push({ ...c, eventStart: kept.length });
+    kept.push(...events.slice(c.eventStart, chain[i + 1]?.eventStart ?? events.length));
+  });
+  return { chain: rest, events: kept };
 }
 
 // 会話ログの行を、親（parentUuid）が先になる順に読む（TranscriptTail と同じ。parentFirst を参照）
@@ -71,6 +87,8 @@ function chatEventsOf(entries: TranscriptEntry[], cwd: string, endTurn = true): 
       }
       chain.push({ uuid: entry.uuid, type: entry.type, eventStart: events.length });
     }
+    const retracted = retract(chain, events, retractedUuidsOf(entry));
+    if (retracted) ({ chain, events } = retracted);
     events.push(...toChatEvents(entry, cwd, false, rememberImage));
   }
   // 応答のないまま終わったターンを作業中として扱わない

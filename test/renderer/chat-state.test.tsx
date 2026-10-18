@@ -72,6 +72,20 @@ describe('チャットの行', () => {
     expect(chat.items.map((i) => `${i.kind}:${i.id}`)).toEqual(['user:u', 'error:r1']);
   });
 
+  it('お知らせ（info）は、開くと読める全文と警告の印を持つ。作業中・待機中は変えない', () => {
+    const chat = run([
+      { type: 'process-start' },
+      { type: 'ready' },
+      { type: 'info', id: 'f', text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました', detail: 'Switched to Sonnet 5.5', warning: true },
+      { type: 'info', id: 'm', text: 'メモリを 1 件思い出しました', detail: 'build.md' },
+    ]);
+    expect(chat.status).toBe('idle');
+    expect(chat.items).toEqual([
+      { kind: 'info', id: 'f', text: 'モデルを Opus 5.5 から Sonnet 5.5 に切り替えました', detail: 'Switched to Sonnet 5.5', warning: true },
+      { kind: 'info', id: 'm', text: 'メモリを 1 件思い出しました', detail: 'build.md', warning: undefined },
+    ]);
+  });
+
   it('ツールは結果で完了・失敗になり、結果が来ないままターンが終わったら（中断）失敗にする', () => {
     const chat = run([
       { type: 'tool-use', id: 'a', name: 'Edit', target: 'a.ts', input: '', filePath: '/w/a.ts', at: 1 },

@@ -117,6 +117,14 @@ export class PartialText {
     this.current = null;
   }
 
+  // 取り消された応答（モデルが断ったので、別のモデルで取り直すもの。system/model_refusal_fallback）のブロックを外す。
+  // 会話ログには出ないので、取り直した応答を書き終えるのを待たずに外す（決めたこと）。外したら true
+  drop(messageIds: string[]): boolean {
+    const visible = this.key();
+    for (const message of this.messages) if (messageIds.includes(message.id)) message.blocks = [];
+    return this.key() !== visible;
+  }
+
   private message(id: string): Message {
     let message = this.messages.find((m) => m.id === id);
     if (!message) {

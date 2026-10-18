@@ -11,7 +11,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 - SDK の型（`sdk.d.ts` の `SDKMessage`）は 39 種類（うち system は 28 種類）。Claude Code は、型に無い種類も出します。
 - SDK は、型に無い種類も捨てずにアプリへ渡します。SDK が自分で受け取って渡さないのは、`keep_alive`・制御の要求と返事・`transcript_mirror` だけです。
 - tanacode の読み取り（`src/main/stream/client.ts` の `StreamClient`）は、知らない種類を捨てて数え、コンソールに警告を出します。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
-- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）と、モデルが断る場面の 2 つです。
+- 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）・モデルが断る場面（同じモデルでの取り直しと、別のモデルでの取り直し）・混雑による予備のモデルへの切り替えです（あとの 2 つの行は `test/fixtures/claude-code-events/2.1.302/` に置いた）。
 
 ## 凡例
 
@@ -60,6 +60,8 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `hook_started` | フックの始まり | 有 | ✅ フックの時間 |
 | `hook_response` | フックの終わり（`--include-hook-events`） | 有 | ✅ 何も出力しなかったフックの、チャットへの表示 |
 | `api_retry` | API の再試行 | 有 | ✅ チャットの「再試行中」 |
+| `notification` | 警告（起動時のエフォートやコンテキストの上限・メモリの停止・plan を抜けたら auto が使えなかった・組織の方針で使えないモデルなど） | 有 | ✅ チャットのお知らせ（文はそのまま。ほかの道で出すもの・tanacode 自身が起こしたもの・一時的なものは出さない。`stream/notification.ts`） |
+| `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ✅ 取り消された応答を、書いている途中の文から外す。お知らせは会話ログの行から（5 節） |
 
 ### 受け取るだけのもの
 
@@ -73,6 +75,8 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | `thinking_tokens` | 思考のトークン数 | 有 | 🔷 |
 | `hook_progress` | フックの経過 | 有 | 🔷 |
 | `local_command` | /context などローカルのコマンド | 無 | 🔷 SDK の型にあるのは `local_command_output` だが、Claude Code はその名前で出していない |
+| `model_fallback` | 混雑などによる、予備のモデルへの切り替え | 無 | 🔷 お知らせは会話ログの行から出す（5 節。同じ `uuid`。実測） |
+| `memory_recall` | 思い出したメモリ | 有 | 🔷 お知らせは会話ログの `relevant_memories` から出す（5 節） |
 
 ### 意図して捨てるもの
 
@@ -87,9 +91,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 | subtype | どんなイベントか | SDK | tanacode |
 | --- | --- | --- | --- |
-| `model_fallback` | 混雑などによる、モデルの自動の切り替え | 無 | ⚠️ チャットに何も出ない（TUI では黄色で出る） |
-| `notification` | 警告（圧縮の失敗・Stop フックの止めすぎ・モデルのコンテキストやエフォートの上限・メモリの停止など） | 有 | ⚠️ チャットに何も出ない |
-| `model_refusal_fallback` | 断られた応答の取り消しと、別のモデルでの取り直し（`retracted_message_uuids`） | 有 | ⚠️ 取り消された応答を外していない（5 節） |
 | `model_refusal_no_fallback` | 断られたが、取り直さなかった | 有 | ⚠️ |
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | 無 | ⚠️ |
 | `permission_denied` | auto モードの判定や規則による、確認なしの拒否 | 有 | ⚠️ 理由はツールの結果には残る |
@@ -100,7 +101,6 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 | subtype | どんなイベントか | SDK | 出る条件 |
 | --- | --- | --- | --- |
-| `memory_recall` | 思い出したメモリ | 有 | メモリの機能を使うとき |
 | `session_state_changed` | セッションの状態（idle・running・requires_action） | 有 | `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` などを付けたときだけ |
 | `control_request_progress` | アプリが送った side_question の進み具合 | 有 | side_question を送ったときだけ（tanacode は送らない） |
 | `elicitation_complete` | MCP サーバーの URL での質問の完了 | 有 | MCP サーバーが URL で質問したとき |
@@ -162,10 +162,13 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 | `local_command` | ローカルのコマンド | ✅ |
 | `informational` | お知らせの文 | ✅ |
 | `compact_boundary` | 圧縮の区切り | ✅ |
-| `model_fallback` | モデルの自動の切り替え | ⚠️ 出さない |
-| `model_refusal_fallback` | 断られた応答の取り消し（`retractedMessageUuids`） | ⚠️ 取り消された応答を外していない。Claude Code は、会話ログを読むときに外す（未確認。断ったときに取り直すモデルの設定でだけ起きる） |
+| `model_fallback` | 予備のモデルへの切り替え | ✅ お知らせ「X から Y に切り替えました」（開くと Claude Code の説明）。stream-json にも同じ `uuid` で出る（実測） |
+| `model_refusal_fallback` | 断られた応答の取り消し（`retractedMessageUuids`） | ✅ お知らせ「X が応答を断ったので、Y で取り直しました」。取り消された行はチャットから外す（`chat-log.ts` の `retract`。Claude Code も、会話を再開するときに外す）。2.1.302 は、取り消した応答を会話ログに書かない（ツールを実行したものも。実測）。別のモデルでの取り直しは Anthropic の API のときだけで、1 回目の拒否は同じモデルで取り直す |
+| `memory_saved` | メモリの保存（`writtenPaths`） | ✅ お知らせ「メモリを N 件保存しました」（開くとファイルの名前） |
 | `model_refusal_no_fallback`・`model_consent_fallback` | 断られた・人が選んだ切り替え | ⚠️ 出さない |
-| `away_summary`・`agents_killed`・`memory_saved`・`permission_retry`・`scheduled_task_fire`・`rewind_stand_in`・`cloud_session_status`・`file_snapshot` | 離れていた間のまとめ・裏のエージェントの停止・メモリの保存・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・ファイルの控え | 出さない |
+| `away_summary`・`agents_killed`・`permission_retry`・`scheduled_task_fire`・`rewind_stand_in`・`cloud_session_status`・`file_snapshot` | 離れていた間のまとめ・裏のエージェントの停止・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・ファイルの控え | 出さない |
+
+会話ログの attachment の `relevant_memories`（思い出したメモリ。`memories[].path`）も、お知らせ「メモリを N 件思い出しました」（開くとファイルの名前）にします。
 
 ## 調べ直し方
 

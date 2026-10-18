@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ChatBatch } from '@shared/ipc';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { line, ScriptedApp, stream } from './helpers/scripted-claude';
@@ -187,6 +189,58 @@ describe('書いている途中の文', () => {
     // 起動の知らせまでに、空の途中の文が届いている
     const start = app.batches.findIndex((b, i) => i >= before && b.events.some((e) => e.type === 'process-start'));
     expect(app.batches.slice(before, start + 1).some((b) => b.partial?.length === 0)).toBe(true);
+    expect(app.manager.snapshot(id).partial).toEqual([]);
+  });
+});
+
+describe('断られた応答の取り直し（system/model_refusal_fallback）', () => {
+  it('取り消された応答の書いている途中の文は、取り直しの知らせで外す（取り直した応答を書き終えるのを待たない）', async () => {
+    const { id, pipe } = await started();
+    pipe.emit(stream.messageStart('msg_r'));
+    pipe.emit(stream.blockStart('text', null, 0));
+    pipe.emit(stream.delta(0, '断られる文'));
+    pipe.emit(stream.blockStop(0));
+    const refused = reply('msg_r', 0, '断られる文');
+    pipe.emit(stream.assistant(refused));
+    await app.waitFor('途中の文', () => lastPartial(id)?.[0]?.text === '断られる文');
+    pipe.emit({ type: 'system', subtype: 'model_refusal_fallback', retracted_message_uuids: [refused.uuid], original_model: 'claude-opus-5-5', fallback_model: 'claude-opus-4-8', uuid: 'f1' });
+    await app.waitFor('外れる', () => lastPartial(id)?.length === 0);
+    // お知らせは会話ログの行から出すので、stream の行では出さない
+    expect(app.events(id).some((e) => e.type === 'info')).toBe(false);
+  });
+
+  it('本物の Claude Code 2.1.302 の行（test/fixtures/claude-code-events/2.1.302/refusal-fallback）を流すと、取り消された書きかけが外れ、チャットには取り直しの知らせと答えが出る', async () => {
+    app.manager.turnEndWaitMs = 60_000;
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const dir = join(__dirname, 'fixtures', 'claude-code-events', '2.1.302', 'refusal-fallback');
+    const lines = (file: string) =>
+      readFileSync(join(dir, file), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+    // 起動の行（init・initialize の返事）は、録ったときの会話と設定のものなので流さない
+    const streamed = lines('stream.jsonl').filter((v) => v.type !== 'control_response' && !(v.type === 'system' && v.subtype === 'init'));
+    const fallback = streamed.findIndex((v) => v.subtype === 'model_refusal_fallback');
+    const refusedIds = new Set(streamed.slice(0, fallback).flatMap((v) => (v.type === 'assistant' ? [(v.message as { id: string }).id] : [])));
+    expect([...refusedIds]).toEqual(['msg_1', 'msg_2']);
+    for (const line of streamed.slice(0, fallback)) pipe.emit(line);
+    await app.waitFor('2 回目の書きかけ', () => !!lastPartial(id)?.some((p) => p.id === 'msg_2:0'));
+    pipe.emit(streamed[fallback]);
+    // 取り消された 2 回目の応答（msg_2）は外れ、会話ログを待っている 1 回目の応答（msg_1。同じモデルで取り直すので残る）は残る
+    await app.waitFor('取り消された書きかけが外れる', () => !lastPartial(id)?.some((p) => p.id === 'msg_2:0'));
+    expect(lastPartial(id)?.map((p) => p.id)).toEqual(['msg_1:0']);
+
+    app.append(id, ...lines('transcript.jsonl'));
+    for (const line of streamed.slice(fallback + 1)) pipe.emit(line);
+    await app.waitFor('ターンの終わり', () => app.events(id).some((e) => e.type === 'turn-end'));
+    const shown = app.events(id).flatMap((e) => (e.type === 'assistant-text' || e.type === 'info' ? [`${e.type}:${e.text}`] : []));
+    expect(shown).toEqual([
+      'assistant-text:書きかけの文です。これは取り消されるはず',
+      "info:Opus 5.5's safeguards stopped the response above · continuing once with that noted",
+      'info:Opus 5.5 が応答を断ったので、Opus 4.8 で取り直しました',
+      'assistant-text:答えです。',
+    ]);
     expect(app.manager.snapshot(id).partial).toEqual([]);
   });
 });

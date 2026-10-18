@@ -149,6 +149,32 @@ export type ApiRetryMessage = {
   uuid: string;
 };
 
+// SDKNotificationMessage。Claude Code の警告（圧縮の失敗・起動時のエフォートやコンテキストの上限・メモリの停止など）。stream-json にだけ出る。
+// key: 種類（stop-hook-error など）/ priority: low・medium・high・immediate / color: error・warning・success・suggestion など /
+// timeout_ms: TUI で消すまでの時間（一時的な知らせ）。uuid は付かないこともある（Claude Code 2.1.302 の本体）
+export type NotificationMessage = {
+  type: 'system';
+  subtype: 'notification';
+  key: string;
+  text: string;
+  priority?: string;
+  color?: string;
+  timeout_ms?: number;
+  uuid?: string;
+};
+
+// SDKModelRefusalFallbackMessage。モデルが断った応答を取り消して、別のモデルで取り直した。チャットのお知らせは会話ログの同じ行から出し、
+// ここでは取り消された応答（retracted_message_uuids。stream-json に出た assistant・user の行の uuid）を、書いている途中の文から外すのに使う。
+// 取り消された応答は会話ログに書かれない（2.1.302 で実測）
+export type ModelRefusalFallbackMessage = {
+  type: 'system';
+  subtype: 'model_refusal_fallback';
+  original_model?: string;
+  fallback_model?: string;
+  retracted_message_uuids?: string[];
+  uuid?: string;
+};
+
 // Remote Control のつながり（system/bridge_state。SDK の公開の型には無い）。state: ready・connected・failed など
 export type BridgeStateMessage = { type: 'system'; subtype: 'bridge_state'; state: string; detail?: string; uuid?: string };
 
@@ -335,6 +361,8 @@ export type StreamMessage =
   | TaskNotificationMessage
   | CompactBoundaryMessage
   | ApiRetryMessage
+  | NotificationMessage
+  | ModelRefusalFallbackMessage
   | BridgeStateMessage
   | ConversationResetMessage
   | StreamEventMessage
