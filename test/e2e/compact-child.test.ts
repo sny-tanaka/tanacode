@@ -87,13 +87,14 @@ describe('子セッションで、最適化圧縮が自動で動く', () => {
     await app.choose(card, /^許可する/);
     await app.byText('.chat-list', PARENT_STARTED).waitFor();
     await app.waitUntil('子の仕上げの頼み', () => prompts(`<${HANDOFF_TAG}>`).length === 1, 90_000);
-    expect(prompts(`<${HANDOFF_TAG}>`)[0]).toContain('tanacode stopped your turn between tool calls');
+    // 画面の言語（E2E は日本語）で書く
+    expect(prompts(`<${HANDOFF_TAG}>`)[0]).toContain('tanacode がツールの切れ目であなたのターンを止めたので');
     await app.waitUntil('子の再開の文', () => prompts(`<${RESUME_TAG}>`).length === 1, 60_000);
     // 8 つの手順を終える前に、止まっている
     expect(steps()).toBeGreaterThan(0);
     expect(steps()).toBeLessThan(8);
     // 再開の文には、親の指示が「親セッションからの指示」として入る
-    expect(prompts(`<${RESUME_TAG}>`)[0]).toContain(`<user-message from="the Claude in the parent session">\n${CHILD}\n</user-message>`);
+    expect(prompts(`<${RESUME_TAG}>`)[0]).toContain(`<user-message from="親セッションの Claude">\n${CHILD}\n</user-message>`);
   });
 
   it('親には、子が続きを終えたときに、知らせが 1 回だけ届く（止めた瞬間・仕上げのあと・/clear のあとのすき間では届かない）', async () => {

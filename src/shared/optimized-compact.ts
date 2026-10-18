@@ -1,6 +1,6 @@
 import type { ChatEvent } from './chat';
 import { activeCards, liveCards, liveLists, progressOf, traitsOf, type Card, type Checklist } from './checklist';
-import type { Language } from './i18n';
+import { language, locale, t, tFor, type Language } from './i18n';
 import { neutralizeTags, unwrapWholePaste } from './session-tools';
 
 // 最適化圧縮。会話を要約にせず、会話を消して（/clear）、チェックリストから再開する。
@@ -8,7 +8,9 @@ import { neutralizeTags, unwrapWholePaste } from './session-tools';
 // 1. 仕上げ: 続きに要ることを、チェックリストに書かせる（handoffText）
 // 2. 切り替え: /clear を送る
 // 3. 再開の文: 新しい会話の最初の発言として送る（resumeText）。決定事項と「いまの状態」の中身・ユーザーの発言の原文・裏で動いているタスク
-// Claude だけが読む文なので、英語で書く
+// どちらも、チャットのお知らせの行を開くと全文が人に見えるので、画面の言語で書く（chat.compactPrompt.*。英語に決め打ちしない）。
+// 会話ログから読み戻すときの目印（自動の印・途中で止めた印・発言の原文の見出し・落とした件数）は、どの言語の文も見分ける。
+// 前のバージョンが英語で書いた会話ログも、英語の文言が前と同じなので読める
 
 // 仕上げの頼みと、再開の文の囲み。チェックリストの MCP サーバーの説明に、この囲みは tanacode が送るものだと書いてある
 export const HANDOFF_TAG = 'tanacode-handoff';
@@ -53,37 +55,63 @@ export const IDLE_COMPACT_STATUS: CompactStatus = { phase: null, failure: null, 
 // 切り替えたあとに続けるか待つかは、手動・自動とも、チェックリスト（「いまの状態」の、ユーザーの答えを待っているか）で決めさせる
 export type AutoCompactTrigger = { percent: number; midTurn: boolean };
 
+// 文を書ける言語。会話ログから読み戻すときは、どの言語で書いたものも見分ける（書いたときの画面の言語は分からない）
+const LANGUAGES: readonly Language[] = ['ja', 'en'];
+
 // 自動の切り替えの目印（仕上げの頼み・再開の文の中に入れる。チャットの知らせの行で、手動と見分ける）
-const autoMark = (percent: number) => `(automatic; context ${Math.round(percent)}% full)`;
-const AUTO_MARK = /\(automatic; context (\d+)% full\)/;
+const autoMark = (percent: number) => t('chat.compactPrompt.handoff.triggerAuto', { percent: Math.round(percent) });
+
+// 文言の値（{count} や {percent}）のところを数の取り出しにした正規表現。言語ごとに 1 つ（数の値を印にするので、英語の単数形は入らない）。
+// はじめて使うときに作る（t() はモジュールの読み込みでは呼ばない。CONTRIBUTING.md の「画面の言語」）
+const patterns = new Map<string, RegExp[]>();
+function numberPatterns(key: 'chat.compactPrompt.handoff.triggerAuto' | 'chat.compactPrompt.resume.omitted', name: string, flags = ''): RegExp[] {
+  let list = patterns.get(key);
+  if (!list) {
+    const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    list = LANGUAGES.map((lang) => {
+      const [before, after = ''] = tFor(lang, key, { [name]: '\u0000' }).split('\u0000');
+      return new RegExp(`${escape(before)}(\\d+)${escape(after)}`, flags);
+    });
+    patterns.set(key, list);
+  }
+  return list;
+}
+
+// 落とした発言の数の行の、英語の単数形と複数形（前のバージョンの文と同じ）
+const ENGLISH_OMITTED = /^\((\d+) older messages? (?:is|are) not shown\.\)$/m;
 
 // 仕上げの頼み・再開の文が、自動の切り替えのものなら、そのときのコンテキストの割合。手動なら null
 export function autoPercentOf(body: string): number | null {
-  const m = AUTO_MARK.exec(body);
-  return m ? Number(m[1]) : null;
+  for (const pattern of numberPatterns('chat.compactPrompt.handoff.triggerAuto', 'percent')) {
+    const m = pattern.exec(body);
+    if (m) return Number(m[1]);
+  }
+  return null;
 }
 
-// ターンの途中で止めて切り替えたときの文の目印（仕上げの頼みの終わり・再開の文の頭に入る）
+// ターンの途中で止めて切り替えたときの文の目印（仕上げの頼みの終わり・再開の文の頭に入る）。前のバージョンの英語の文の書き出しと、
+// 今の文（言語ごと）。今の英語の文も、前の書き出しで始まる
 const MID_TURN_HANDOFF = 'tanacode stopped your turn between tool calls';
 const MID_TURN_RESUME = 'This reset happened in the middle of your turn';
+const midTurnMarks = (key: 'chat.compactPrompt.handoff.autoMidTurn' | 'chat.compactPrompt.resume.midTurn', legacy: string) => [legacy, ...LANGUAGES.map((lang) => tFor(lang, key))];
 
 // 仕上げの頼み・再開の文が、ターンの途中で止めた切り替えのものか（止めたターンは作業の途中なので、再開のあとは必ず作業の続き）。
 // 人への通知とほかのセッションに状態を返すとき（main の compact-notice.ts・sessions-control.ts）に、再開のあとの応答が作業の続きかどうかを見分ける。
 // カードや発言に同じ文が書かれていても拾わないよう、アプリが書くところ（再開の文は最初の見出しの前・仕上げの頼みは終わり）だけを見る
 export function compactMidTurn(body: string): boolean {
   const head = body.indexOf('\n\n# ');
-  return (head === -1 ? body : body.slice(0, head)).includes(MID_TURN_RESUME) || body.slice(-700).includes(MID_TURN_HANDOFF);
+  const top = head === -1 ? body : body.slice(0, head);
+  const end = body.slice(-700);
+  return (
+    midTurnMarks('chat.compactPrompt.resume.midTurn', MID_TURN_RESUME).some((mark) => top.includes(mark)) ||
+    midTurnMarks('chat.compactPrompt.handoff.autoMidTurn', MID_TURN_HANDOFF).some((mark) => end.includes(mark))
+  );
 }
 
 // 自動のときの、仕上げの頼み。アプリの仕上げの頼み（handoffText）の書き出しを「自動で始めた」に替え（「ボタンが押された」と書いたまま、
 // 終わりで「誰も押していない」と言うと、食い違う）、終わりに、自動であることと、途中で止めたときに書いておくことを足す
 export function autoHandoffText(auto: AutoCompactTrigger): string {
-  const note = [
-    'This reset is automatic: the user did not press anything and is not watching for a question.',
-    auto.midTurn
-      ? `${MID_TURN_HANDOFF}, and after the reset you will continue the same work. So, in the state list, also write exactly where you stopped: the step that was in progress, whether your last tool calls finished and what they returned, and the very next action to take.`
-      : 'After the reset you will pick the work up from the state list: you will continue it, unless the list says that you are waiting for an answer.',
-  ].join(' ');
+  const note = t(auto.midTurn ? 'chat.compactPrompt.handoff.autoMidTurn' : 'chat.compactPrompt.handoff.autoTurnEnd');
   const closing = `</${HANDOFF_TAG}>`;
   const text = handoffText(autoMark(auto.percent));
   const at = text.lastIndexOf(closing);
@@ -112,20 +140,20 @@ const TASK_CHARS = 200;
 // - 長さの上限は無いと伝える。長くなる話題は、削らずにカードを分けさせる（再開の文は、カードの本文を CARD_BODY_CHARS で切るため）
 // - ツールの呼び出しは少なく（呼び出しのたびに、長い会話を読み直す）。card_add は 1 回で何枚も足せる
 // trigger: 何で始まったか（手動はボタン。自動は autoHandoffText が、そのときのコンテキストの割合の目印に替える）
-export function handoffText(trigger = '(the user pressed the "optimized compaction" button)'): string {
+export function handoffText(trigger = t('chat.compactPrompt.handoff.triggerManual')): string {
   return [
     `<${HANDOFF_TAG}>`,
-    `tanacode is about to reset this conversation instead of compacting it ${trigger}. Nothing from this conversation will be kept, and no summary is made. After the reset you start like a new session: the project instructions are loaded again, and you are given only the checklists (tanacode-checklist), the messages of the user verbatim, and the list of background tasks. So bring the checklists up to date now, with the checklist tools, and write down everything that is needed to continue the work without this conversation. Do not continue the task itself, and do not ask the user anything.`,
-    'Start by calling checklist_overview, even if you think the lists are already up to date or you read them a moment ago: if you do not use a checklist tool in this turn, tanacode cancels the reset. Then compare the lists with this conversation, and add what is missing and fix what is out of date.',
-    'Use few tool calls, because every call re-reads this whole conversation: card_add takes many cards at once, and card_delete, card_check and card_revoke take several numbers at once. Write all the new cards of a list in one card_add call instead of one call per card. Do not write less to save calls.',
-    '- Decisions list (kind "decisions"): what the user asked for, required, corrected or approved, with the scope of each approval or permission, and the options that were rejected and why. Quote the user\'s own words where the wording matters. Add what is missing, and revoke what no longer holds.',
-    '- State list (kind "state"; create one if there is none): rewrite it so that it is true now (delete the cards that are out of date, and add the new ones). Its cards are handed to you in full after the reset, so the details go here, as separate cards, one topic per card:',
-    '  - State: what is being worked on right now and why; what is done and what is not; changes that are not committed or not pushed; what you were about to do next; anything still running in the background.',
-    '  - Waiting: whether you are waiting for an answer from the user (or from the parent session that gave you the task) before you can go on. If you are, write what you asked (the question or the proposal, with its options) and what waits on the answer. If you are not, say so, and write the next action. Always write this card, even when you are not waiting: after the reset, it is what tells you whether to continue the work or to wait.',
-    '  - Tried: every approach that failed or was abandoned, and why, so that it is not repeated.',
-    '  - Pointers: where things are (files, functions, branches, PR and issue numbers, URLs); the commands used to build, test and verify, exactly as you ran them, with every option; and facts that would be costly to rediscover, with their exact values (names, numbers, versions, timeouts, scopes, settings).',
-    '- To-do lists: check what is finished, and add the tasks that are left, in order.',
-    `Be specific and complete: exact names, numbers and commands matter more than prose. There is no length limit, so do not shorten anything or leave anything out to keep the lists small. When one card would get long (more than about ${HANDOFF_CARD_CHARS.toLocaleString('en-US')} characters), split it into several cards by topic instead of cutting it. But do not copy file contents that can simply be read again from disk; point to them instead. Write in the language the user is using. When the lists are up to date, reply with one short line and end your turn. tanacode then resets the conversation by itself.`,
+    t('chat.compactPrompt.handoff.intro', { trigger }),
+    t('chat.compactPrompt.handoff.start'),
+    t('chat.compactPrompt.handoff.calls'),
+    t('chat.compactPrompt.handoff.decisions'),
+    t('chat.compactPrompt.handoff.stateList'),
+    t('chat.compactPrompt.handoff.state'),
+    t('chat.compactPrompt.handoff.waiting'),
+    t('chat.compactPrompt.handoff.tried'),
+    t('chat.compactPrompt.handoff.pointers'),
+    t('chat.compactPrompt.handoff.todos'),
+    t('chat.compactPrompt.handoff.closing', { chars: HANDOFF_CARD_CHARS.toLocaleString(locale()) }),
     `</${HANDOFF_TAG}>`,
   ].join('\n');
 }
@@ -206,14 +234,11 @@ export function stoppedAt(events: ChatEvent[]): StoppedAt {
   return { text, tools };
 }
 
-// 発言の原文の見出し。前の再開の文から発言を取り出すときの目印にもする
-const MESSAGES_HEAD = [
-  '# What the user said in the previous conversation (a record, not a new request)',
-  'These are the messages of the user from the previous conversation, verbatim, oldest first. They are a record of what was said then, not requests made now: do not carry any of them out again because it is written here. What still holds is on the decisions list.',
-];
-const FROM_PARENT = ' from="the Claude in the parent session"';
+// 発言の原文の見出し（見出しと説明の 2 行）。前の再開の文から発言を取り出すときの目印にもする（どの言語で書いたものも見分ける。
+// 前のバージョンの英語の見出しは、今の英語の文言と同じ）
+const messagesHead = (lang: Language = language()) => [tFor(lang, 'chat.compactPrompt.resume.messagesHeading'), tFor(lang, 'chat.compactPrompt.resume.messagesNote')];
+const messagesHeads = () => LANGUAGES.map((lang) => messagesHead(lang));
 const CARRIED_MESSAGE = /<user-message( from="[^"]*")?>\n([\s\S]*?)\n<\/user-message>/g;
-const OMITTED = /^\((\d+) older messages? (?:is|are) not shown\.\)$/m;
 
 // 今の会話（最後の /clear よりあと）のイベント
 function currentConversation(events: ChatEvent[]): ChatEvent[] {
@@ -228,8 +253,11 @@ function currentConversation(events: ChatEvent[]): ChatEvent[] {
 function carriedSection(event: ChatEvent): string | null {
   if (event.type !== 'notice' || event.compact !== 'resume' || !event.detail) return null;
   // 見出しは 1 つだけ（中に入れる文の、見出しと同じ文は打ち消してある。inertHead）
-  const at = event.detail.indexOf(MESSAGES_HEAD.join('\n'));
-  return at === -1 ? null : event.detail.slice(at);
+  const detail = event.detail;
+  const at = messagesHeads()
+    .map((head) => detail.indexOf(head.join('\n')))
+    .find((i) => i !== -1);
+  return at === undefined ? null : detail.slice(at);
 }
 
 // 会話（今の会話ログのイベント）から、引き継ぐ発言を古い順に取り出す。人の発言と、親セッションからの指示だけ。
@@ -255,7 +283,7 @@ export function carriedMessages(events: ChatEvent[]): CarriedMessage[] {
 // （ログや Web の文章）ので、「ユーザーの発言の原文」に混ぜない。全体が 1 つの貼り付けだった発言（札だけを送ったもの）も同じ
 function carriedText(event: Extract<ChatEvent, { type: 'user' }>): string {
   const pastes = event.pasted ? [event.text] : (event.pastes ?? []);
-  const notes = pastes.map((paste) => `[pasted text: ${paste.length} characters, not shown]`);
+  const notes = pastes.map((paste) => t('chat.compactPrompt.resume.pasted', { count: paste.length }));
   return [event.pasted ? '' : event.text.trim(), ...notes].filter(Boolean).join('\n');
 }
 
@@ -263,16 +291,15 @@ function carriedText(event: Extract<ChatEvent, { type: 'user' }>): string {
 export function carriedOmitted(events: ChatEvent[]): number {
   let omitted = 0;
   for (const event of currentConversation(events)) {
-    const count = carriedSection(event)?.match(OMITTED)?.[1];
+    const section = carriedSection(event);
+    const count = section === null ? undefined : [ENGLISH_OMITTED, ...numberPatterns('chat.compactPrompt.resume.omitted', 'count', 'm')].map((pattern) => section.match(pattern)?.[1]).find(Boolean);
     if (count) omitted += Number(count);
   }
   return omitted;
 }
 
-const LANGUAGE_NAMES: Record<Language, string> = { ja: 'Japanese', en: 'English' };
-
 // 再開の文。lists: セッションのチェックリスト / messages: 引き継ぐ発言（古い順）/ tasks: 裏で動いているタスク /
-// omitted: これまでの切り替えで、もう落とした発言の数 / language: アプリの画面の言語（発言もリストも無いときの、報告の言語の手がかり）/
+// omitted: これまでの切り替えで、もう落とした発言の数 /
 // auto: 自動で切り替えたとき（無ければ手動）。auto.midTurn なら、止めた場所（stopped）を足す /
 // reply: 切り替える前の最後の応答（ターンの終わりの切り替え・手動のとき。途中で止めたときは stopped に入っている）/
 // handoffSkipped: 仕上げができなかった（上限に当たったあとなど）ので、リストは切り替えの前のまま
@@ -281,7 +308,6 @@ export function resumeText({
   messages,
   tasks,
   omitted = 0,
-  language,
   auto,
   stopped,
   reply = '',
@@ -291,7 +317,6 @@ export function resumeText({
   messages: CarriedMessage[];
   tasks: CarriedTask[];
   omitted?: number;
-  language?: Language;
   auto?: AutoCompactTrigger;
   stopped?: StoppedAt;
   reply?: string;
@@ -301,32 +326,24 @@ export function resumeText({
   const midTurn = !!auto?.midTurn;
   const parts = [
     [
-      `tanacode reset the conversation instead of compacting it ${auto ? autoMark(auto.percent) : '(the user pressed the "optimized compaction" button)'}. No summary was made. Below is everything that was carried over from the previous conversation.`,
-      ...(handoffSkipped
-        ? [
-            '- The wrap-up before this reset could not run (the request failed, most likely because the context was full). So the lists were NOT brought up to date: they are as they were before, and may be out of date or incomplete. Use the messages of the user below as well, check against the files, and ask the user when something that matters is missing.',
-          ]
-        : []),
-      '- The checklists (tanacode-checklist) are the source of truth. Where things disagree, follow them in this order: the decisions list, then the project instructions (CLAUDE.md and the like).',
-      '- A permission the user gave in the previous conversation carries over only if it is written on the decisions list.',
-      '- First read all the lists with checklist_overview, and read the cards whose bodies are not shown in full below with card_get.',
-      ...(midTurn
-        ? [
-            `- ${MID_TURN_RESUME}: tanacode stopped you between tool calls because the context was filling up. The user did not interrupt you and is not waiting to be asked. "Where the turn was stopped" below shows where you were.`,
-          ]
-        : []),
+      t('chat.compactPrompt.resume.intro', { trigger: auto ? autoMark(auto.percent) : t('chat.compactPrompt.handoff.triggerManual') }),
+      ...(handoffSkipped ? [t('chat.compactPrompt.resume.skipped')] : []),
+      t('chat.compactPrompt.resume.truth'),
+      t('chat.compactPrompt.resume.permission'),
+      t('chat.compactPrompt.resume.read'),
+      ...(midTurn ? [t('chat.compactPrompt.resume.midTurn')] : []),
       // 続けるか待つかは、この文で一律に決めない。仕上げで「いまの状態」に書かせた、ユーザーの答えを待っているかで決めさせる。
       // 続けるときの歯止め（進めていた作業だけ・許可が要るなら聞く・はっきりしなければ待つ）は、どの場合も同じ
-      '- Then decide from the state list whether you are waiting for an answer from the user (or from the parent session that gave you the task):',
+      t('chat.compactPrompt.resume.decide'),
       // 待つときに、ほかのツール（ファイルの確かめなど）を使わせない。使うと、tanacode が作業を続けたターンと見分けられない（compact-notice.ts）
-      '  - If you are (you asked a question or made a proposal, and it has not been answered), tell the user briefly what you carried over and what you are waiting for, and wait for the answer. Do not use other tools for this (checking the files can wait until you go on).',
-      `  - If you are not, tell the user in one line that the conversation was reset and what you are picking up, then continue the work that was in progress from where it stopped (the state list${midTurn ? ', and "Where the turn was stopped" below' : ''}).`,
-      '- Continue only the work that was already under way. Do not start anything new.',
-      '- If the next step needs a permission or a decision that is not on the decisions list, stop and ask the user.',
-      '- If the state list does not make clear whether you are waiting or what was in progress, or the work is already finished, do not guess: tell the user briefly what you carried over (what the work is, where it stands and what comes next), and wait.',
-      `- When you continue, a step may have taken effect without the lists saying so (a commit, a push, a file write)${midTurn ? ', above all a tool call listed below without a result' : ''}. Check the actual state before you do it again.`,
-      // この文は英語なので、何も言わないと英語で報告することがある（Haiku で起きた）
-      `- Write to the user in the language the user is using: the language of their messages below and of the lists, not the language of this message (tanacode writes it in English).${language ? ` If neither tells you, use ${LANGUAGE_NAMES[language]}, the language of the user's tanacode.` : ''}`,
+      t('chat.compactPrompt.resume.waiting'),
+      t(midTurn ? 'chat.compactPrompt.resume.continueMidTurn' : 'chat.compactPrompt.resume.continue'),
+      t('chat.compactPrompt.resume.underWay'),
+      t('chat.compactPrompt.resume.ask'),
+      t('chat.compactPrompt.resume.unclear'),
+      t(midTurn ? 'chat.compactPrompt.resume.verifyMidTurn' : 'chat.compactPrompt.resume.verify'),
+      // 報告の言語。英語で書いていた頃、何も言わないと、日本語の会話なのに英語で報告することがあった（Haiku で起きた）
+      t('chat.compactPrompt.resume.language'),
     ].join('\n'),
     cardsSection(live),
     otherListsSection(live),
@@ -342,19 +359,19 @@ export function resumeText({
 // 決定事項と「いまの状態」のカード（題名と本文）。収まらなければ、古いカードから題名だけにする
 function cardsSection(live: Checklist[]): string {
   const pinned = live.filter((list) => traitsOf(list).pinned);
-  if (pinned.length === 0) return '# Decisions and state\n(There is no decisions list and no state list. Read what there is with checklist_overview.)';
+  if (pinned.length === 0) return [t('chat.compactPrompt.resume.cardsHeading'), t('chat.compactPrompt.resume.cardsNone')].join('\n');
   const cardsOf = (list: Checklist) => (traitsOf(list).locked ? activeCards(list) : liveCards(list));
   const titleOnly = new Set<Card>();
   const build = () =>
     pinned
       .map((list) => {
         const cards = cardsOf(list);
-        const kind = traitsOf(list).locked ? 'decisions in force' : 'state, as you last wrote it';
+        const kind = t(traitsOf(list).locked ? 'chat.compactPrompt.resume.kindDecisions' : 'chat.compactPrompt.resume.kindState');
         return [
-          `# ${line(list.name, 80)} (${kind})`,
-          ...(list.description ? [`Description: ${line(list.description, 300)}`] : []),
+          t('chat.compactPrompt.resume.listHeading', { name: line(list.name, 80), kind }),
+          ...(list.description ? [t('chat.compactPrompt.resume.description', { text: line(list.description, 300) })] : []),
           ...cards.map((c) => cardText(c, !titleOnly.has(c))),
-          ...(cards.length === 0 ? ['(no cards)'] : []),
+          ...(cards.length === 0 ? [t('chat.compactPrompt.resume.noCards')] : []),
         ].join('\n');
       })
       .join('\n\n');
@@ -373,8 +390,8 @@ function cardText(card: Card, withBody: boolean): string {
   const title = `## #${card.number} ${line(card.title, 300)}`;
   const body = inert(card.body).trim();
   if (!body) return title;
-  if (!withBody) return `${title}\n(body not shown; read it with card_get)`;
-  return `${title}\n${body.length > CARD_BODY_CHARS ? `${body.slice(0, CARD_BODY_CHARS)}… (cut; read the rest with card_get)` : body}`;
+  if (!withBody) return `${title}\n${t('chat.compactPrompt.resume.bodyNotShown')}`;
+  return `${title}\n${body.length > CARD_BODY_CHARS ? `${body.slice(0, CARD_BODY_CHARS)}${t('chat.compactPrompt.resume.bodyCut')}` : body}`;
 }
 
 // ほかのリストは、名前・説明・枚数だけ。中身はツールで読ませる
@@ -382,32 +399,36 @@ function otherListsSection(live: Checklist[]): string {
   const others = live.filter((list) => !traitsOf(list).pinned);
   if (others.length === 0) return '';
   return [
-    '# Other lists (read the cards with checklist_overview)',
+    t('chat.compactPrompt.resume.otherHeading'),
     ...others.map((list) => {
       const { done, total } = progressOf(list);
-      return `- ${line(list.name, 80)} (${done}/${total} checked)${list.description ? `: ${line(list.description, 300)}` : ''}`;
+      const name = line(list.name, 80);
+      return list.description
+        ? t('chat.compactPrompt.resume.otherListDescribed', { name, done, total, description: line(list.description, 300) })
+        : t('chat.compactPrompt.resume.otherList', { name, done, total });
     }),
   ].join('\n');
 }
 
 // ユーザーの発言の原文。新しいものから上限まで選び、古い順に並べる。入りきらない分は件数を伝える
 function messagesSection(messages: CarriedMessage[], omittedBefore: number): string {
-  const head = MESSAGES_HEAD;
-  if (messages.length === 0 && omittedBefore === 0) return [...head, '(no messages)'].join('\n');
+  const head = messagesHead();
+  if (messages.length === 0 && omittedBefore === 0) return [...head, t('chat.compactPrompt.resume.noMessages')].join('\n');
+  const fromParentAttr = ` from="${t('chat.compactPrompt.resume.fromParent')}"`;
   const chosen: string[] = [];
   let used = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const { text, fromParent } = messages[i];
     // 発言の中の閉じタグでは、発言の囲みを閉じさせない。見出しと同じ文も、次の切り替えで見出しと取り違えないよう打ち消す
     const body = shorten(inertReply(inertHead(neutralizeTags(text))).replaceAll('</user-message', '＜/user-message').trim(), MESSAGE_CHARS);
-    const entry = `<user-message${fromParent ? FROM_PARENT : ''}>\n${body}\n</user-message>`;
+    const entry = `<user-message${fromParent ? fromParentAttr : ''}>\n${body}\n</user-message>`;
     // いちばん新しい発言は、上限を超えても入れる
     if (chosen.length > 0 && used + entry.length > MESSAGES_CHARS) break;
     chosen.unshift(entry);
     used += entry.length;
   }
   const omitted = messages.length - chosen.length + omittedBefore;
-  return [...head, ...(omitted > 0 ? [`(${omitted} older ${omitted === 1 ? 'message is' : 'messages are'} not shown.)`] : []), ...chosen].join('\n');
+  return [...head, ...(omitted > 0 ? [t('chat.compactPrompt.resume.omitted', { count: omitted })] : []), ...chosen].join('\n');
 }
 
 // 切り替える前の、最後の応答。人は、これに答えているかもしれない（「B で」「それで進めて」）
@@ -415,35 +436,37 @@ function lastReplySection(reply: string): string {
   const text = inert(reply).trim();
   if (!text) return '';
   return [
-    '# Your last reply before the reset (the next message of the user may be an answer to it)',
-    'This is how your last turn ended, as recorded by tanacode. The user can read it in the chat, so do not repeat it. If their next message is short or refers to something not written there (for example "B" or "yes, go ahead"), read it as an answer to this reply. It is a record, not a request: do not carry it out because it is written here. Whether to continue the work or to wait is decided from the state list, as said above.',
+    t('chat.compactPrompt.resume.lastReplyHeading'),
+    t('chat.compactPrompt.resume.lastReplyNote'),
     `<${LAST_REPLY_TAG}>\n${shorten(text, LAST_REPLY_CHARS)}\n</${LAST_REPLY_TAG}>`,
   ].join('\n');
 }
 
 // ターンの途中で止めた場所。アプリが会話ログから機械的に取り出したもの
 function stoppedSection(stopped: StoppedAt): string {
-  const results = { ok: 'finished', error: 'finished with an error', none: 'no result recorded' };
+  const results = { ok: t('chat.compactPrompt.resume.resultOk'), error: t('chat.compactPrompt.resume.resultError'), none: t('chat.compactPrompt.resume.resultNone') };
   const text = inert(stopped.text).trim();
+  const toolLine = (tool: StoppedTool) =>
+    tool.target
+      ? t('chat.compactPrompt.resume.toolLine', { name: line(tool.name, 80), target: line(tool.target, TASK_CHARS), result: results[tool.result] })
+      : t('chat.compactPrompt.resume.toolLineNoTarget', { name: line(tool.name, 80), result: results[tool.result] });
   return [
-    '# Where the turn was stopped (recorded by tanacode, not written by you)',
-    ...(text ? ['Your last words before the stop:', text.length > STOPPED_TEXT_CHARS ? `…${text.slice(-STOPPED_TEXT_CHARS)}` : text] : []),
-    ...(stopped.tools.length > 0
-      ? ['Your last tool calls, oldest first:', ...stopped.tools.map((tool) => `- ${line(tool.name, 80)}${tool.target ? `: ${line(tool.target, TASK_CHARS)}` : ''} → ${results[tool.result]}`)]
-      : ['(no tool calls were recorded in the stopped turn)']),
+    t('chat.compactPrompt.resume.stoppedHeading'),
+    ...(text ? [t('chat.compactPrompt.resume.stoppedText'), text.length > STOPPED_TEXT_CHARS ? `…${text.slice(-STOPPED_TEXT_CHARS)}` : text] : []),
+    ...(stopped.tools.length > 0 ? [t('chat.compactPrompt.resume.stoppedTools'), ...stopped.tools.map(toolLine)] : [t('chat.compactPrompt.resume.stoppedNoTools')]),
   ].join('\n');
 }
 
 // /clear のあとの会話には、裏で動いているものがあるとは伝わらないので、ここで伝える
 function tasksSection(tasks: CarriedTask[]): string {
   if (tasks.length === 0) return '';
-  const names = { bash: 'Bash', agent: 'Subagent', workflow: 'Workflow' };
+  const names = { bash: t('chat.compactPrompt.resume.taskBash'), agent: t('chat.compactPrompt.resume.taskAgent'), workflow: t('chat.compactPrompt.resume.taskWorkflow') };
   const shown = tasks.slice(0, MAX_TASKS);
   return [
-    '# Background tasks',
-    'These were running in the background when the conversation was reset, and keep running. A notice arrives when one of them finishes.',
-    ...shown.map((task) => `- ${names[task.kind]}: ${line(task.label, TASK_CHARS)}`),
-    ...(tasks.length > shown.length ? [`(${tasks.length - shown.length} more)`] : []),
+    t('chat.compactPrompt.resume.tasksHeading'),
+    t('chat.compactPrompt.resume.tasksNote'),
+    ...shown.map((task) => t('chat.compactPrompt.resume.taskLine', { kind: names[task.kind], label: line(task.label, TASK_CHARS) })),
+    ...(tasks.length > shown.length ? [t('chat.compactPrompt.resume.tasksMore', { count: tasks.length - shown.length })] : []),
   ].join('\n');
 }
 
@@ -451,12 +474,12 @@ function tasksSection(tasks: CarriedTask[]): string {
 function shorten(text: string, max: number): string {
   if (text.length <= max) return text;
   const head = Math.floor(max * 0.7);
-  return `${text.slice(0, head)}\n[… ${text.length - max} characters cut …]\n${text.slice(text.length - (max - head))}`;
+  return `${text.slice(0, head)}\n${t('chat.compactPrompt.resume.shortened', { count: text.length - max })}\n${text.slice(text.length - (max - head))}`;
 }
 
-// 発言の原文の見出しと同じ文を、見出しとして読めなくする（# を全角にする）。再開の文の中に、本物の見出しを 1 つだけにする
+// 発言の原文の見出しと同じ文を、見出しとして読めなくする（# を全角にする。どの言語の見出しも）。再開の文の中に、本物の見出しを 1 つだけにする
 function inertHead(text: string): string {
-  return text.replaceAll(MESSAGES_HEAD[0], `＃${MESSAGES_HEAD[0].slice(1)}`);
+  return messagesHeads().reduce((inerted, [heading]) => inerted.replaceAll(heading, `＃${heading.slice(1)}`), text);
 }
 
 // 最後の応答の囲みと同じ文を、囲みとして読めなくする（再開の文から最後の応答を取り出すときに、取り違えないように）
@@ -472,7 +495,7 @@ function inert(text: string): string {
 }
 
 function clipEnd(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 20)}\n… (cut)` : text;
+  return text.length > max ? `${text.slice(0, max - 20)}\n${t('chat.compactPrompt.resume.cutEnd')}` : text;
 }
 
 // 人や別のセッションが書いたもの（リストの名前・題名・タスクの名前）を 1 行にして、囲みを閉じるタグを効かなくする

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { setLanguage } from '../src/shared/i18n';
 import type { ChatEvent } from '../src/shared/chat';
 import type { Checklist } from '../src/shared/checklist';
 import { HANDOFF_TAG, IDLE_COMPACT_STATUS, RESUME_TAG, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
@@ -6,6 +7,10 @@ import type { SessionState } from '../src/shared/session-tools';
 import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compact';
 
 // 最適化圧縮の流れ（main の OptimizedCompact）。仕上げ → /clear → 再開の文、と進むこと・怪しいときは会話を消さずに取りやめること
+
+// 送る文は画面の言語で書く。英語の文を確かめるテストは、英語で流す（日本語の文は、下の 1 つで確かめる）
+beforeAll(() => setLanguage('en'));
+afterAll(() => setLanguage('ja'));
 
 const ID = 's1';
 // 自動で始める大きさは、AutoCompact から届く（ここでは 60）
@@ -183,8 +188,21 @@ describe('流れ', () => {
     expect((await finished()).failure).toBeNull();
     const second = host.submitted.filter(isResume)[1];
     expect(second).toContain('<user-message>\n税率を可変にして\n</user-message>\n<user-message>\n次は README\n</user-message>');
-    // アプリの画面の言語を、報告の言語の手がかりとして添える
-    expect(second).toContain("use Japanese, the language of the user's tanacode.");
+    // 報告の言語は、ユーザーの発言とリストの言語。分からなければ、この文の言語（画面の言語）
+    expect(second).toContain('If neither tells you, use the language of this message.');
+  });
+
+  it('送る文は、そのときの画面の言語で書く（日本語の画面なら、仕上げの頼みも再開の文も日本語）', async () => {
+    setLanguage('ja');
+    try {
+      script();
+      compact.start(ID);
+      expect((await finished()).failure).toBeNull();
+      expect(host.submitted[0]).toContain('tanacode は、この会話を圧縮する代わりに、これから消します（ユーザーが「最適化圧縮」のボタンを押しました）。');
+      expect(host.submitted[2]).toContain('tanacode は、会話を圧縮する代わりに消しました（ユーザーが「最適化圧縮」のボタンを押しました）。');
+    } finally {
+      setLanguage('en');
+    }
   });
 
   it('進んでいる間にもう一度押しても、二重には始めない', async () => {
