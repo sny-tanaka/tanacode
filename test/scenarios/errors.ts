@@ -26,6 +26,10 @@ export const BAD_REQUEST_MESSAGE = 'テストの不正なリクエストです';
 export const CUT_PROMPT = '書いている途中で接続が切れます';
 export const CUT_DRAFT = '書きかけの文です。これは取り消されるはず';
 export const CUT_REPLY = '取り直した返事';
+// ツールの呼び出しの形が壊れた応答を返す発言と、取り消される応答の文・取り直した返事
+export const MALFORMED_PROMPT = 'ツールの呼び出しの形が壊れます';
+export const MALFORMED_DRAFT = '形の壊れた応答です。これは取り消されるはず';
+export const MALFORMED_REPLY = '形を直して届いた返事';
 // ツールの失敗・hooks で止める・Write と Edit
 export const TOOLS_PROMPT = 'ツールの失敗と差分を試してください';
 export const TOOLS_REPLY = 'ツールの確認が終わりました';
@@ -93,6 +97,8 @@ const CONVERSATIONS: Conversation[] = [
   },
   // 1 回目のストリーミングを、書いている途中で切る（Claude Code は取り直す）
   { match: CUT_PROMPT, cuts: { 0: { text: CUT_DRAFT, times: 1 } }, steps: [[{ type: 'text', text: CUT_REPLY }]] },
+  // 1 回目は、ツールを呼ばないのに stop_reason が tool_use の応答（Claude Code は取り消して、形を直すよう頼んで取り直す）
+  { match: MALFORMED_PROMPT, malformed: { 0: { text: MALFORMED_DRAFT, times: 1 } }, steps: [[{ type: 'text', text: MALFORMED_REPLY }]] },
   {
     match: TOOLS_PROMPT,
     steps: [
@@ -195,20 +201,35 @@ export function checkBadRequest(events: ChatEvent[]): void {
   expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
 }
 
-// 書いている途中で接続が切れて、取り直したあと（#233）。batches: 発言を送ってからの配信 / events: 今の台本のチャット。
-// 取り消された書きかけ（会話ログに出ない）は、取り直した返事がチャットに出るまでに、書いている途中の文から外れる（ターンの終わりまで残らない）。
-// チャットに残るのは、取り直した返事だけ
+// 取り消された応答を取り直したあと（#233）。batches: 発言を送ってからの配信。取り消された応答の文は、取り直した返事が
+// チャットに出るまでに、書いている途中の文から外れる（ターンの終わりまで残らない）。返すのは、取り直した返事が出た配信の位置
+function checkPartialRetracted(batches: ChatBatch[], draft: string, reply: string): number {
+  const answered = batches.findIndex((b) => b.events.some((e) => e.type === 'assistant-text' && e.text === reply));
+  expect(answered, '取り直した返事が出る').toBeGreaterThanOrEqual(0);
+  // 配信は、書いている途中の文が変わったときだけ、その全部を持つ。取り直した返事が出たときに出ていたものと、そのあとに出たもの
+  const then = batches.slice(0, answered + 1).reverse().find((b) => b.partial)?.partial ?? [];
+  const later = batches.slice(answered + 1).flatMap((b) => b.partial ?? []);
+  expect([...then, ...later].map((b) => b.text), '取り直した返事が出るまでに外れる（ターンの終わりまで残らない）').not.toContain(draft);
+  return answered;
+}
+
+// 書いている途中で接続が切れて、取り直したあと。events: 今の台本のチャット。書きかけは、書いている途中の文として一度出てから外れる。
+// 書きかけは会話ログに出ないので、チャットに残るのは取り直した返事だけ
 export function checkCut(batches: ChatBatch[], events: ChatEvent[]): void {
-  const drafting = (batch: ChatBatch) => !!batch.partial?.some((b) => b.text === CUT_DRAFT);
-  const shown = batches.findIndex(drafting);
+  const answered = checkPartialRetracted(batches, CUT_DRAFT, CUT_REPLY);
+  const shown = batches.findIndex((b) => b.partial?.some((p) => p.text === CUT_DRAFT));
   expect(shown, '書きかけの文が、書いている途中の文として出る').toBeGreaterThanOrEqual(0);
-  const removed = batches.findIndex((b, i) => i > shown && !!b.partial && !drafting(b));
-  const answered = batches.findIndex((b) => b.events.some((e) => e.type === 'assistant-text' && e.text === CUT_REPLY));
-  expect(answered, '取り直した返事が出る').toBeGreaterThan(shown);
-  expect(removed, '取り消された書きかけが外れる').toBeGreaterThan(shown);
-  expect(removed, '取り直した返事が出るまでに外れる（ターンの終わりまで残らない）').toBeLessThanOrEqual(answered);
+  expect(shown).toBeLessThan(answered);
   const expected = [{ type: 'user', text: CUT_PROMPT }, { type: 'assistant-text', text: CUT_REPLY }, { type: 'turn-end' }];
   expect(talk(events)).toEqual(expected.map((e) => expect.objectContaining(e)));
+}
+
+// ツールの呼び出しの形が壊れた応答を、Claude Code が取り消して（tombstone。abandoned_blocks は付かない）取り直したあと。
+// 確かめるのは、書いている途中の文が残らないことだけ。取り消された応答は、会話ログにいったん書かれてから消される（2.1.302 で実測）。
+// 消される前に読んだ行は、ふつうの応答としてチャットに残る（別の不具合。ここでは確かめない）
+export function checkMalformed(batches: ChatBatch[], events: ChatEvent[]): void {
+  checkPartialRetracted(batches, MALFORMED_DRAFT, MALFORMED_REPLY);
+  expect(talk(events).at(-1)).toEqual({ type: 'turn-end' });
 }
 
 // ツールの失敗・hooks で止めたツール・Write と Edit の差分・Stop の hooks

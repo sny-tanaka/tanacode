@@ -19,23 +19,26 @@ export type Step = Block[];
 
 // match: 会話のはじめの発言に含まれる文字。delayMs: 応答を返し始めるまで待つ時間（作業中の画面を見るため）。
 // model: 応答に書くモデル（無ければ頼まれたモデル。会話ログのモデルが画面のモデル名になるかを見るため）
-// failures: 応答の番号 → 応答の代わりに返す API エラー。cuts: 応答の番号 → 書いている途中で接続を切る応答（ストリーミングのときだけ）
+// failures: 応答の番号 → 応答の代わりに返す API エラー。cuts: 応答の番号 → 書いている途中で接続を切る応答（ストリーミングのときだけ）。
+// malformed: 応答の番号 → ツールを呼ばないのに stop_reason が tool_use の応答（ツールの呼び出しの形が壊れた応答）。
+// cuts と malformed は、Claude Code が取り消して取り直す応答（会話ログには残らない）
 export type Conversation = {
   match: string;
   steps: Step[];
   delayMs?: number;
   model?: string;
   failures?: Record<number, ApiFailure>;
-  cuts?: Record<number, StreamCut>;
+  cuts?: Record<number, Retracted>;
+  malformed?: Record<number, Retracted>;
 };
 
 // 応答の代わりに返す API エラー。status: HTTP の状態コード（529 は overloaded）。errorType: エラーの種類（overloaded_error など）。
 // times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（再試行が通る）
 export type ApiFailure = { status: number; errorType: string; message: string; times?: number };
 
-// 書いている途中で接続を切る応答。text: 切る前に送る、文のブロックの書きかけ。times: 続けて切る回数（無ければ毎回）。
-// 使い切ったあとは台本どおりの応答を返す（Claude Code の取り直しが通る）
-export type StreamCut = { text: string; times?: number };
+// 台本の応答の代わりに返す、取り消される応答。text: その応答の文（切るものは、切る前に送る書きかけ）。
+// times: 続けて返す回数（無ければ毎回）。使い切ったあとは台本どおりの応答を返す（Claude Code の取り直しが通る）
+export type Retracted = { text: string; times?: number };
 
 type Message = { role?: string; content?: string | { type?: string; text?: string; content?: string | { type?: string; text?: string }[] }[] };
 type Body = {
@@ -162,15 +165,20 @@ export class MockApi {
     }
     // 応答ごとに ID を変える（同じ ID の応答は、Claude Code が 1 つの発言にまとめる）
     const answer = { id: `msg_mock_${++this.count}`, model: conversation?.model ?? body.model ?? 'claude-mock', content: blocks, stopReason, inputTokens: this.inputTokens };
-    const cut = body.stream ? conversation?.cuts?.[index] : undefined;
-    const cutKey = `${key}:cut`;
-    if (cut && (cut.times === undefined || (this.failed.get(cutKey) ?? 0) < cut.times)) {
-      this.failed.set(cutKey, (this.failed.get(cutKey) ?? 0) + 1);
-      this.requests.push(`  → 書いている途中で接続を切る（${this.failed.get(cutKey)} 回目）`);
-      return cutStream(res, answer, cut.text, this.holdCut);
-    }
-    if (body.stream) stream(res, answer);
-    else json(res, message(answer));
+    // 取り消される応答を、使い切るまで台本の応答の代わりに返す
+    const retract = (label: string, retracted: Retracted | undefined): Retracted | undefined => {
+      const counted = `${key}:${label}`;
+      if (!retracted || (retracted.times !== undefined && (this.failed.get(counted) ?? 0) >= retracted.times)) return undefined;
+      this.failed.set(counted, (this.failed.get(counted) ?? 0) + 1);
+      this.requests.push(`  → ${label}（${this.failed.get(counted)} 回目）`);
+      return retracted;
+    };
+    const cut = body.stream ? retract('書いている途中で接続を切る', conversation?.cuts?.[index]) : undefined;
+    if (cut) return cutStream(res, answer, cut.text, this.holdCut);
+    const malformed = retract('形の壊れたツールの呼び出し', conversation?.malformed?.[index]);
+    const sent: Reply = malformed ? { ...answer, content: [{ type: 'text', text: malformed.text }], stopReason: 'tool_use' } : answer;
+    if (body.stream) stream(res, sent);
+    else json(res, message(sent));
   }
 }
 
