@@ -123,6 +123,10 @@ export class MockApi {
   // Claude Code は、ブロックを書き終えてから会話ログに書くので、書いている途中の文がアプリに届いてから、会話ログに出るようにできる。
   // 書いている途中で接続を切る応答（cuts）では、書きかけを送ってから切るまでに止める（書きかけがアプリに届いてから切る）
   holdText: ((text: string) => Promise<unknown>) | null = null;
+  // 台本のある会話のツールの呼び出しのブロックを書き終えた（content_block_stop を送った）あと、次を送る前に、これが済むまで止める
+  // （id: その呼び出しの tool_use ID）。Claude Code は、書き終えた呼び出しから動かすので、その結果が会話ログに出てから次の呼び出しを
+  // 送れる（本物のモデルが、並べて呼ぶ次の呼び出しをゆっくり書いているときと同じ並び）
+  holdTool: ((id: string) => Promise<unknown>) | null = null;
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -209,6 +213,13 @@ export class MockApi {
           (error: unknown) => void this.requests.push(`  → 文「${text}」を止めたが、待ち切れなかった（${error instanceof Error ? error.message : String(error)}）`),
         )
       : null;
+    const holdTool = conversation ? this.holdTool : null;
+    const holdAfterTool = holdTool
+      ? (id: string) => holdTool(id).then(
+          () => undefined,
+          (error: unknown) => void this.requests.push(`  → 呼び出し ${id} のあとで止めたが、待ち切れなかった（${error instanceof Error ? error.message : String(error)}）`),
+        )
+      : null;
     // 取り消される応答を、使い切るまで台本の応答の代わりに返す
     const retract = (label: string, retracted: Retracted | undefined): Retracted | undefined => {
       const counted = `${key}:${label}`;
@@ -221,7 +232,7 @@ export class MockApi {
     if (cut) return cutStream(res, answer, cut.text, hold);
     const malformed = retract('形の壊れたツールの呼び出し', conversation?.malformed?.[index]);
     const sent: Reply = malformed ? { ...answer, content: [{ type: 'text', text: malformed.text }], stopReason: 'tool_use' } : answer;
-    if (body.stream) await stream(res, sent, hold);
+    if (body.stream) await stream(res, sent, hold, holdAfterTool);
     else json(res, message(sent));
   }
 }
@@ -264,8 +275,13 @@ function openStream(res: ServerResponse, reply: Reply): (type: string, data: Rec
 }
 
 // ストリーミング（SSE）の応答。文章は text_delta、ツールの入力は input_json_delta で 1 回に送る。
-// hold: 文のブロックを書き終える前に待つもの（MockApi.holdText）
-async function stream(res: ServerResponse, reply: Reply, hold: ((text: string) => Promise<void>) | null): Promise<void> {
+// hold: 文のブロックを書き終える前に待つもの（MockApi.holdText）。holdAfterTool: ツールの呼び出しのブロックを書き終えたあとに待つもの（MockApi.holdTool）
+async function stream(
+  res: ServerResponse,
+  reply: Reply,
+  hold: ((text: string) => Promise<void>) | null,
+  holdAfterTool: ((id: string) => Promise<void>) | null = null,
+): Promise<void> {
   const send = openStream(res, reply);
   for (const [index, block] of reply.content.entries()) {
     if (block.type === 'text') {
@@ -283,6 +299,7 @@ async function stream(res: ServerResponse, reply: Reply, hold: ((text: string) =
       send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });
     }
     send('content_block_stop', { index });
+    if (block.type === 'tool_use' && holdAfterTool) await holdAfterTool(block.id);
   }
   send('message_delta', { delta: { stop_reason: reply.stopReason, stop_sequence: null }, usage: { output_tokens: 20 } });
   send('message_stop', {});

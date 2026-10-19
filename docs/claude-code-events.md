@@ -163,6 +163,8 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 
 会話ログの応答の行のうち、合成の API エラー（`isApiErrorMessage`）で `apiError` が `usage_limit_reached` のものは、プランの利用枠に当たって止まった印として読みます（枠が戻る時刻は `apiErrorParams.rate_limit_info.resetsAt`（秒）、当たった枠は `rateLimitType`。`quotaLimits` にも同じ中身。`src/shared/usage-limit.ts`）。Claude Code は、OAuth のトークンで動いているときだけ、API の 429 と枠のヘッダー（`anthropic-ratelimit-unified-status: rejected` など）をこの形にします（API キーでは、ただの 429 のエラー。2.1.302 で実測）。
 
+会話ログの `api-request`・`api-request-blob`・`api-request-shape`（2.1.301 から）は、API に送った要求の控えです。`api-request-blob` には、前の応答と発言が、API に送った形で `toolUseResult` なしにもう一度入ります（会話ログの行と API に送る 1 通が合わないものだけ。並べて呼んだツールで、前の呼び出しの結果が次の呼び出しより先に書かれたとき・ToolSearch の結果に「Tool loaded.」を足したときなど。2.1.302 で実測）。チャットでは捨て（`IGNORED_TYPES`）、裏のタスクの追跡（`src/main/task-router.ts`）も、ツールの呼び出しと結果を会話の行（`user`・`assistant`）からだけ読みます（控えの中の結果で、裏のサブエージェントを完了にしないため）。
+
 ## 調べ直し方
 
 スキル `/claude-code-events`（`.claude/skills/claude-code-events/SKILL.md`）の手順で調べ直します。引数は調べる Claude Code のバージョンです。
