@@ -3,6 +3,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import { toolTarget, type TranscriptEntry } from '@shared/chat';
 import { clip, type ContextItem, type ContextItemKind, type SessionContext } from '@shared/context';
 import { t } from '@shared/i18n';
+import { conversationOf, type ConversationEntry } from '@shared/transcript-line';
 import { branchCut, readEntries, type ChainEntry } from './chat-log';
 import { EDIT_TOOLS, READ_TOOLS } from './knowledge-tracker';
 
@@ -94,7 +95,8 @@ export class ContextTracker {
     this.topic = conversationStart();
   }
 
-  handle(entry: TranscriptEntry): void {
+  // 会話の行（@shared/transcript-line）だけを受け取る
+  handle(entry: ConversationEntry): void {
     if (entry.isSidechain) return;
     const uuid = entry.uuid ?? '';
     if (uuid) {
@@ -377,7 +379,10 @@ export class ContextTracker {
 // 会話ログ全体から集める（動いていないセッション・アーカイブ済みのセッション）
 export async function readContext(file: string, cwd: string): Promise<SessionContext> {
   const tracker = new ContextTracker(cwd);
-  for (const entry of await readEntries(file)) tracker.handle(entry);
+  for (const entry of await readEntries(file)) {
+    const conversation = conversationOf(entry);
+    if (conversation) tracker.handle(conversation);
+  }
   return tracker.current();
 }
 

@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
+import type { ConversationEntry } from '@shared/transcript-line';
 import type { ContextItem } from '@shared/context';
 import { ContextTracker, estimateTokens, imageTokens, readContext } from '../src/main/context-tracker';
 
@@ -15,7 +16,7 @@ import { ContextTracker, estimateTokens, imageTokens, readContext } from '../src
 const CWD = '/work/app';
 let seq = 0;
 let last: string | null = null;
-function row(entry: TranscriptEntry & Record<string, unknown>, parent: string | null | undefined = last): TranscriptEntry {
+function row(entry: ConversationEntry & Record<string, unknown>, parent: string | null | undefined = last): ConversationEntry {
   const uuid = `c${++seq}`;
   last = uuid;
   return { uuid, parentUuid: parent, ...entry };
@@ -32,7 +33,7 @@ const result = (toolUseId: string, content: unknown, toolUseResult?: unknown, ex
   row({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }, ...extra] as never }, toolUseResult });
 const attachment = (a: Record<string, unknown>) => row({ type: 'attachment', attachment: a });
 
-function track(entries: TranscriptEntry[]): ContextItem[] {
+function track(entries: ConversationEntry[]): ContextItem[] {
   const tracker = new ContextTracker(CWD);
   for (const e of entries) tracker.handle(e);
   return tracker.current().items;

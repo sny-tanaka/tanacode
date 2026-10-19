@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from '@shared/chat';
+import type { ConversationEntry } from '@shared/transcript-line';
 import { CHECKLIST_UNCHANGED_MARK } from '@shared/checklist-tools';
 import { describe, expect, it } from 'vitest';
 import type { StreamEventMessage } from '../src/main/stream/protocol';
@@ -28,7 +28,7 @@ const stop = (index: number) => event({ type: 'content_block_stop', index });
 // 応答の終わり。abandoned: 取り直すために捨てたブロック（この応答の from_block_index から先）
 const end = (abandoned?: StreamEventMessage['abandoned_blocks']) => event({ type: 'message_stop' }, abandoned ? { abandoned_blocks: abandoned } : {});
 // 会話ログの本体の応答の行
-const line = (id: string, apiBlockIndex?: number, extra: Partial<TranscriptEntry> = {}): TranscriptEntry => ({
+const line = (id: string, apiBlockIndex?: number, extra: Partial<ConversationEntry> = {}): ConversationEntry => ({
   type: 'assistant',
   message: { id, content: [{ type: 'text', text: 'x' }] },
   ...(apiBlockIndex === undefined ? {} : { apiBlockIndex }),

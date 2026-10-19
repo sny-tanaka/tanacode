@@ -199,7 +199,9 @@ describe('WorkflowTracker', () => {
 
     // 1 つ目のエージェントが始まった（meta.json は少し遅れて書かれる）
     journal({ type: 'launched' }, started(A, KEY_A, '確認係', '調べる'));
-    agentLog(A, t0 + 50, prompt('ワークフローのエージェントAです'), toolCall('Bash', { command: 'echo wf-a' }));
+    // API の要求の控え（2.1.301 から）にも同じ呼び出しが入るが、会話の行だけを数える
+    const copy = { type: 'api-request-blob', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_copy', name: 'Grep', input: {} }] } };
+    agentLog(A, t0 + 50, prompt('ワークフローのエージェントAです'), toolCall('Bash', { command: 'echo wf-a' }), copy);
     await refresh();
     expect(run().agents).toEqual([
       {

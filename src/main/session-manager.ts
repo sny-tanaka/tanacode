@@ -7,8 +7,8 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   bridgeUrlOf,
   isTranscriptEntry,
+  lineChatEvents,
   retractedUuidsOf,
-  toChatEvents,
   transcriptTitle,
   unsentView,
   type ChatEvent,
@@ -17,6 +17,7 @@ import {
   type TranscriptEntry,
   type UnsentPrompt,
 } from '@shared/chat';
+import { classifyLine, type ConversationEntry, type KnownEntry } from '@shared/transcript-line';
 import type { UnknownEvent } from '@shared/unknown-event';
 import { bracketedPaste, stripControlChars } from '@shared/paste';
 import { t, type MessageKey } from '@shared/i18n';
@@ -3061,7 +3062,7 @@ export class SessionManager {
   }
 
   // 巻き戻しで会話が枝分かれしたら、親より後に表示していたものを捨てて、親の時点の表示に戻す
-  private followBranch(id: string, rt: Runtime, entry: TranscriptEntry, isHistory: boolean): void {
+  private followBranch(id: string, rt: Runtime, entry: ConversationEntry, isHistory: boolean): void {
     if (!entry.uuid || entry.isSidechain) return;
     const cut = branchCut(rt.chain, entry);
     if (cut) {
@@ -3078,7 +3079,7 @@ export class SessionManager {
 
   // モデルが断って取り消された応答（model_refusal_fallback の retractedMessageUuids）が、もうチャットに出ていたら外す。
   // 2.1.302 は取り消した応答を会話ログに書かない（実測）が、書かれていても、会話ログから作り直したチャット（chat-log.ts）と同じにする
-  private followRetraction(id: string, rt: Runtime, entry: TranscriptEntry, isHistory: boolean): void {
+  private followRetraction(id: string, rt: Runtime, entry: ConversationEntry, isHistory: boolean): void {
     this.retractEntries(id, rt, retractedUuidsOf(entry), isHistory);
   }
 
@@ -3119,8 +3120,15 @@ export class SessionManager {
     const record = this.store.get(id);
     if (!record) return;
 
+    // 行の種類は、ここで 1 回だけ分ける（@shared/transcript-line）。読み手には、要る種類の行だけを渡す。
+    // 意図して捨てる行（API の要求の控えなど）と知らない行は、どの読み手にも渡さない（知らない行は、チャットに未知のイベントとして出す）
+    const line = classifyLine(entry);
+    // 会話の行と、ほかで使う付帯の行
+    const known = line.kind === 'conversation' || line.kind === 'side' ? line.entry : null;
+    const conversation = line.kind === 'conversation' ? line.entry : null;
+
     let changed = false;
-    const title = transcriptTitle(entry);
+    const title = known && transcriptTitle(known);
     // 優先度が高いものは常に採用。同じ優先度なら custom / ai タイトルは最新を、最初の発言は最初のものを使う
     const replaces =
       title &&
@@ -3134,23 +3142,25 @@ export class SessionManager {
     const rt = this.runtimes.get(id);
     // 引き継いだ claude が起動してから書いた行は、読み直した履歴でも今動いているもの（バックグラウンドのタスクや質問を追う）
     const past = isHistory && !(rt?.aliveSince && entryTime(entry) >= rt.aliveSince);
-    rt?.tasks.track(entry, past);
-    const planFile = entry.attachment?.planFilePath;
+    // 裏のタスクの追跡は、会話の行（ツールの呼び出しと結果・作業中に届いた完了通知）と、順番待ちの行（queue-operation）を読む
+    if (known) rt?.tasks.track(known, past);
+    const planFile = conversation?.attachment?.planFilePath;
     if (rt && typeof planFile === 'string' && planFile && planFile !== rt.planFile) {
       rt.planFile = planFile;
       this.refreshPlans(id, rt);
     }
     // 時刻の無い行（TUI の permission-mode の行）は、読んだ今のモードとして扱う
-    if (rt && !past) this.noteMode(id, rt, permissionModeOf(entry), entryTime(entry) || undefined);
-    rt?.knowledge.handle(entry);
-    rt?.context.handle(entry);
-
-    if (rt) this.followBranch(id, rt, entry, isHistory);
-    if (rt) this.followRetraction(id, rt, entry, isHistory);
+    if (rt && !past && known) this.noteMode(id, rt, permissionModeOf(known), entryTime(entry) || undefined);
+    if (rt && conversation) {
+      rt.knowledge.handle(conversation);
+      rt.context.handle(conversation);
+      this.followBranch(id, rt, conversation, isHistory);
+      this.followRetraction(id, rt, conversation, isHistory);
+    }
     // 書いている途中の文のうち、この行で会話ログに出たブロックを外す（この行のイベントと同じ配信で送り、同じ場所で入れ替える）
-    const covered = !!rt && !past && !rt.terminal && rt.partial.cover(entry);
+    const covered = !!rt && !past && !rt.terminal && !!conversation && rt.partial.cover(conversation);
     // Remote Control の URL は起動ごとに変わる。前に起動した claude の URL（読み直した過去の行）は出さない
-    let events = toChatEvents(entry, record.cwd, false, rememberImage).filter((e) => !(past && e.type === 'remote-control'));
+    let events = lineChatEvents(line, record.cwd, false, rememberImage).filter((e) => !(past && e.type === 'remote-control'));
     // 今の claude が書いた行の未知のイベントで、行にバージョンが無いもの（付帯情報の行）には、今のバージョンを添える
     if (rt && !past) events = events.map((e) => (e.type === 'unknown-event' ? withVersion(e, rt) : e));
     // 今の claude のターンの終わりは、stream-json の result で決める（-p は turn_duration を書かない。ほかの行の終わりと二重にしない）。
@@ -3162,14 +3172,12 @@ export class SessionManager {
     // ターミナルモードは stream が無いので、モデルが応答したかは会話ログの行で見る
     if (rt?.terminal && !past && events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use' || e.type === 'thinking')) rt.turnAnswered = true;
     if (rt?.terminal && !past) this.tuiEntry(id, rt, entry, events, isHistory);
-    if (rt && isHistory) {
-      const bridge = bridgeUrlOf(entry);
+    if (rt && isHistory && known) {
+      const bridge = bridgeUrlOf(known);
       if (bridge !== undefined) rt.lastBridgeUrl = bridge;
     }
     // ターミナルモードの TUI（--remote-control）がつないだ Remote Control のセッションも、付け直せるように覚える
-    if (rt && entry.type === 'bridge-session' && typeof (entry as { bridgeSessionId?: unknown }).bridgeSessionId === 'string') {
-      this.noteBridgeSession(id, rt, (entry as { bridgeSessionId: string }).bridgeSessionId);
-    }
+    if (rt && known?.type === 'bridge-session' && typeof known.bridgeSessionId === 'string') this.noteBridgeSession(id, rt, known.bridgeSessionId);
     if (rt && !past) {
       const remote = [...events].reverse().find((e) => e.type === 'remote-control');
       if (remote) rt.remoteConnected = remote.url !== null;
@@ -3186,7 +3194,7 @@ export class SessionManager {
       if (rt.turnStarter === 'resume' && events.some(continuesWork)) rt.turnStarter = 'other';
     }
     // 送った発言の行（作業中に送ったものは queued_command の attachment）。その uuid
-    const arrived = rt && !past ? sentUuidOf(entry) : null;
+    const arrived = rt && !past && conversation ? sentUuidOf(conversation) : null;
     // ツールのカードを出したら、待たせていたフック（quietHook）を、そのすぐあとに付ける
     if (rt) events = events.flatMap((e) => (e.type === 'tool-use' ? [e, ...this.shownTool(rt, e.id)] : [e]));
     // 発言のときのフックは、その発言の行（送った uuid。作業中に送ったものは attachment）のあとに付ける。違う形で出たとき（uuid の違う
@@ -3292,7 +3300,7 @@ function firstRequest(rt: Runtime): CanUseToolRequest | null {
 }
 
 // 会話ログの行が、アプリが送った発言のものなら、その uuid（発言の行・作業中に送った発言の queued_command の attachment）
-function sentUuidOf(entry: TranscriptEntry): string | null {
+function sentUuidOf(entry: ConversationEntry): string | null {
   if (entry.isSidechain) return null;
   if (entry.type === 'user' && entry.uuid) return entry.uuid;
   const source = entry.type === 'attachment' ? entry.attachment?.source_uuid : undefined;
@@ -3391,7 +3399,7 @@ const TRANSCRIPT_MODES = new Map<string, PermissionMode>([
 // Claude Code が会話ログに書いた、その時点の権限モード（user 行・permission-mode 行）。書いていなければ null。
 // サブエージェントの行（sidechain）は読まない（エージェントの定義で、本体と別のモードで動くことがある）。
 // 知らない名前（dontAsk など）は、許す操作の多さが分からないので manual にする
-function permissionModeOf(entry: TranscriptEntry): PermissionMode | null {
+function permissionModeOf(entry: KnownEntry): PermissionMode | null {
   if (entry.isSidechain || (entry.type !== 'user' && entry.type !== 'permission-mode')) return null;
   if (typeof entry.permissionMode !== 'string' || !entry.permissionMode) return null;
   return TRANSCRIPT_MODES.get(entry.permissionMode) ?? 'manual';

@@ -10,7 +10,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 - SDK の型（`sdk.d.ts` の `SDKMessage`）は 39 種類（うち system は 28 種類）。Claude Code は、型に無い種類も出します。
 - SDK は、型に無い種類も捨てずにアプリへ渡します。SDK が自分で受け取って渡さないのは、`keep_alive`・制御の要求と返事・`transcript_mirror` だけです。
-- tanacode は、どの種類も「使う」「意図して捨てる（理由つき）」「知らない」のどれか 1 つに分けます。stream-json は `src/main/stream/client.ts`（使う: `messageOf`・`SYSTEM_CHECKS`、意図して捨てる: `IGNORED_KINDS`、断る要求: `DECLINED_REQUESTS`）、会話ログは `src/shared/chat.ts`（使う: `toChatEvents` の分岐と `TYPES_USED_ELSEWHERE`、意図して捨てる: `IGNORED_*`）。どこにも書いていない種類が「知らない」種類です。
+- tanacode は、どの種類も「使う」「意図して捨てる（理由つき）」「知らない」のどれか 1 つに分けます。stream-json は `src/main/stream/client.ts`（使う: `messageOf`・`SYSTEM_CHECKS`、意図して捨てる: `IGNORED_KINDS`、断る要求: `DECLINED_REQUESTS`）、会話ログは `src/shared/transcript-line.ts`（行の種類を、会話の行・ほかで使う付帯の行・意図して捨てる行・知らない行に分ける。意図して捨てる: `IGNORED_*`）と、`src/shared/chat.ts`（使う: `toChatEvents` の分岐）。どこにも書いていない種類が「知らない」種類です。
 - 知らない種類は、数えてコンソールに警告を出し、チャットに「未知のイベント」として出します（仕組みは CONTRIBUTING.md の「チャット」）。落ちることはありません。毎日の確認（`claude-code-check.yml`）は、台本で起こした場面で知らない種類が 0 かを確かめています。
 - 「出る条件」の多くは、Claude Code の本体のコードを読んでの推測です。実際に動かして確かめたのは、取り直し（接続が途中で切れる）・モデルが断る場面（同じモデルでの取り直しと、別のモデルでの取り直し）・混雑による予備のモデルへの切り替え（あとの 2 つの行は `test/fixtures/claude-code-events/2.1.302/` に置いた）・圧縮（`/compact`・自動の圧縮・その失敗・PreCompact フックで止めた自動の圧縮）・auto モードの判定待ち（`permission_check_status`。`test/cli/progress.test.ts`）です。
 
@@ -140,7 +140,7 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 
 ## 5. 会話ログ（jsonl）にだけ書く system の行
 
-stream-json には出ません。Claude Code は、会話の処理が作った system の行のうち、決まった 12 種類（`status`・`init`・`notification`・`api_retry`・`compact_boundary`・`model_fallback` など）だけを stream-json に出します。tanacode はチャットを会話ログから作る（`src/shared/chat.ts` の `toChatEvents`）ので、こちらでの対応がチャットの表示になります。意図して捨てるものは `chat.ts` の `IGNORED_SYSTEM` に並べ、どこにも無い subtype は未知のイベントとして出します。system 以外の行（付帯情報の行・attachment・応答と発言のブロック）の分け方も `chat.ts` にあります（`TYPES_USED_ELSEWHERE`・`IGNORED_TYPES`・`IGNORED_ATTACHMENTS`・`IGNORED_ASSISTANT_BLOCKS`）。
+stream-json には出ません。Claude Code は、会話の処理が作った system の行のうち、決まった 12 種類（`status`・`init`・`notification`・`api_retry`・`compact_boundary`・`model_fallback` など）だけを stream-json に出します。tanacode はチャットを会話ログから作る（`src/shared/chat.ts` の `toChatEvents`）ので、こちらでの対応がチャットの表示になります。意図して捨てるものは `src/shared/transcript-line.ts` の `IGNORED_SYSTEM` に並べ、どこにも無い subtype は未知のイベントとして出します。system 以外の行（付帯情報の行・attachment・応答と発言のブロック）の分け方も `transcript-line.ts` にあります（`SIDE_TYPES`・`IGNORED_TYPES`・`IGNORED_ATTACHMENTS`・`IGNORED_ASSISTANT_BLOCKS`）。
 
 | subtype | どんなイベントか | tanacode のチャット |
 | --- | --- | --- |
@@ -163,7 +163,7 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 
 会話ログの応答の行のうち、合成の API エラー（`isApiErrorMessage`）で `apiError` が `usage_limit_reached` のものは、プランの利用枠に当たって止まった印として読みます（枠が戻る時刻は `apiErrorParams.rate_limit_info.resetsAt`（秒）、当たった枠は `rateLimitType`。`quotaLimits` にも同じ中身。`src/shared/usage-limit.ts`）。Claude Code は、OAuth のトークンで動いているときだけ、API の 429 と枠のヘッダー（`anthropic-ratelimit-unified-status: rejected` など）をこの形にします（API キーでは、ただの 429 のエラー。2.1.302 で実測）。
 
-会話ログの `api-request`・`api-request-blob`・`api-request-shape`（2.1.301 から）は、API に送った要求の控えです。`api-request-blob` には、前の応答と発言が、API に送った形で `toolUseResult` なしにもう一度入ります（会話ログの行と API に送る 1 通が合わないものだけ。並べて呼んだツールで、前の呼び出しの結果が次の呼び出しより先に書かれたとき・ToolSearch の結果に「Tool loaded.」を足したときなど。2.1.302 で実測）。チャットでは捨て（`IGNORED_TYPES`）、裏のタスクの追跡（`src/main/task-router.ts`）も、ツールの呼び出しと結果を会話の行（`user`・`assistant`）からだけ読みます（控えの中の結果で、裏のサブエージェントを完了にしないため）。
+会話ログの `api-request`・`api-request-blob`・`api-request-shape`（2.1.301 から）は、API に送った要求の控えです。`api-request-blob` には、前の応答と発言が、API に送った形で `toolUseResult` なしにもう一度入ります（会話ログの行と API に送る 1 通が合わないものだけ。並べて呼んだツールで、前の呼び出しの結果が次の呼び出しより先に書かれたとき・ToolSearch の結果に「Tool loaded.」を足したときなど。2.1.302 で実測）。意図して捨てる行（`IGNORED_TYPES`）で、チャットにも、裏のタスクの追跡（`src/main/task-router.ts`）などほかの読み手にも渡しません（控えの中の結果で、裏のサブエージェントを完了にしないため。行の種類は `src/main/session-manager.ts` の `handleEntry` で 1 回だけ分ける）。
 
 ## 調べ直し方
 

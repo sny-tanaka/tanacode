@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { isTranscriptEntry, retractedUuidsOf, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { isTranscriptEntry, lineChatEvents, retractedUuidsOf, toChatEvents, type ChatEvent, type TranscriptEntry } from '@shared/chat';
+import { classifyLine } from '@shared/transcript-line';
 import { rememberImage } from './image-cache';
 import { parentFirst } from './transcript-tail';
 
@@ -79,17 +80,20 @@ function chatEventsOf(entries: TranscriptEntry[], cwd: string, endTurn = true): 
   let events: ChatEvent[] = [];
   let chain: ChainEntry[] = [];
   for (const entry of entries) {
-    if (entry.uuid && !entry.isSidechain) {
-      const cut = branchCut(chain, entry);
+    // 巻き戻しと取り消しは、会話の行（@shared/transcript-line）で見る（uuid でつながるのは会話の行だけ）
+    const line = classifyLine(entry);
+    const conversation = line.kind === 'conversation' ? line.entry : null;
+    if (conversation?.uuid && !conversation.isSidechain) {
+      const cut = branchCut(chain, conversation);
       if (cut) {
         events = events.slice(0, cut.eventCut);
         chain = chain.slice(0, cut.chainCut);
       }
-      chain.push({ uuid: entry.uuid, type: entry.type, eventStart: events.length });
+      chain.push({ uuid: conversation.uuid, type: conversation.type, eventStart: events.length });
     }
-    const retracted = retract(chain, events, retractedUuidsOf(entry));
+    const retracted = conversation && retract(chain, events, retractedUuidsOf(conversation));
     if (retracted) ({ chain, events } = retracted);
-    events.push(...toChatEvents(entry, cwd, false, rememberImage));
+    events.push(...lineChatEvents(line, cwd, false, rememberImage));
   }
   // 応答のないまま終わったターンを作業中として扱わない
   return endTurn ? [...events, { type: 'turn-end' }] : events;
