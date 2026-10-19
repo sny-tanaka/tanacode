@@ -197,9 +197,12 @@ describe('TranscriptFollower', () => {
     writeFileSync(next, line({ type: 'mode' }) + 'not json\n' + line({ type: 'bridge-session', bridgeSessionId: 'cse_now' }) + line({ uuid: 'b1', type: 'user' }));
     await expect.poll(() => switches).toEqual([next]);
     await expect.poll(uuids).toContain('b1');
-    // 乗り換えたあと、前の会話ログの書き足しで乗り換え直さない（今の会話ログそのものの変更でも）
+    // 乗り換えたあと、前の会話ログの書き足し（/clear のときに Claude Code が書き足す。頭には同じブリッジ ID がある）でも、
+    // 今の会話ログそのものの変更でも、乗り換え直さない
+    appendFileSync(first, line({ type: 'queue-operation' }));
     appendFileSync(next, line({ uuid: 'b2', type: 'user' }));
     await expect.poll(uuids).toContain('b2');
+    await sleep(300);
     expect(switches).toEqual([next]);
     // 止めたら、フォルダの見張りもやめる
     const f = follower!;

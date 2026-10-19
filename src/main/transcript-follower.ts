@@ -22,6 +22,9 @@ export class TranscriptFollower {
   private current: string;
   // --resume では過去のブリッジ ID も履歴に残っているため、最後に見たものを使う
   private bridgeSessionId: string | null = null;
+  // 乗り換えて離れた会話ログ。ブリッジ ID では、ここへ乗り換え直さない（/clear のときに Claude Code が前の会話ログにも行を
+  // 書き足し、その頭にも同じブリッジ ID があるため。乗り換え直すと、チャットに前の会話が戻る。実測）
+  private readonly left = new Set<string>();
   private dirWatcher: FSWatcher | null = null;
   private stopped = false;
   // 前からあった行（過去ログ）を読み終えたと、一度でも決めたか。はじめの会話ログがはじめから空なら、読むものが無いので読み終えた
@@ -57,6 +60,7 @@ export class TranscriptFollower {
   // 前からあった行の大きさは、TranscriptTail が読み始めに取ったものを使う（別に取ると、その間に書かれた行で食い違う）
   private follow(file: string, initial = false): void {
     this.tail?.stop();
+    if (file !== this.current) this.left.add(this.current);
     this.current = file;
     const tail: TranscriptTail = new TranscriptTail(
       file,
@@ -107,6 +111,7 @@ export class TranscriptFollower {
   }
 
   private async checkCandidate(file: string): Promise<void> {
+    if (this.left.has(file)) return;
     const info = await stat(file).catch(() => null);
     if (!info || info.birthtimeMs < this.startedAt || !this.bridgeSessionId) return;
     const head = await readHead(file);
