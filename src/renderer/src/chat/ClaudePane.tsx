@@ -269,6 +269,14 @@ export const ClaudePane = memo(function ClaudePane({
       ['blur', leave],
     ];
     for (const [type, listener] of listeners) window.addEventListener(type, listener, true);
+    // 一覧の中のどこかが変わったら（行が増える・消える。行の中で、閉じたまとまりの下の終わったツールの行が消える・本文が描き直されるなど）、
+    // 変わった直後に（描く前に）位置を戻す。大きさの変化の知らせは次に描くときにしか来ないので、それを待つと、その前に離したときに
+    // ずれた所で離すことになり、click が届かない（Playwright の click は押してから離すまでが短く、CI でツールのまとまりが開かなかった）
+    // 位置を保つために一覧に足した余白（一覧の style）の変化は数えない（数えると、戻すたびにまた呼ばれる）
+    const changes = new MutationObserver((records) => {
+      if (records.some((r) => !(r.target === list && r.attributeName === 'style'))) keepPressed(list);
+    });
+    changes.observe(list, { subtree: true, childList: true, attributes: true, characterData: true });
     pressed.current = {
       element,
       top: element.getBoundingClientRect().top,
@@ -276,6 +284,7 @@ export const ClaudePane = memo(function ClaudePane({
       pad: { top: 0, bottom: 0 },
       stop: () => {
         clearTimeout(timer);
+        changes.disconnect();
         for (const [type, listener] of listeners) window.removeEventListener(type, listener, true);
       },
     };
@@ -347,8 +356,6 @@ export const ClaudePane = memo(function ClaudePane({
         for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node);
         for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node);
       }
-      // 行が消えても、大きさの変化の知らせは来ない。押している間は、ここでも押した要素の位置を保つ
-      keepPressed(list);
     });
     rows.observe(list, { childList: true });
     return () => {
