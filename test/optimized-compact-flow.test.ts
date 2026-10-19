@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { setLanguage } from '../src/shared/i18n';
 import type { ChatEvent } from '../src/shared/chat';
 import type { Checklist } from '../src/shared/checklist';
 import { HANDOFF_TAG, IDLE_COMPACT_STATUS, RESUME_TAG, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
@@ -6,6 +7,10 @@ import type { SessionState } from '../src/shared/session-tools';
 import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compact';
 
 // 最適化圧縮の流れ（main の OptimizedCompact）。仕上げ → /clear → 再開の文、と進むこと・怪しいときは会話を消さずに取りやめること
+
+// 送る文は画面の言語で書く。英語の文を確かめるテストは、英語で流す（日本語の文は、下の 1 つで確かめる）
+beforeAll(() => setLanguage('en'));
+afterAll(() => setLanguage('ja'));
 
 const ID = 's1';
 // 自動で始める大きさは、AutoCompact から届く（ここでは 60）
@@ -183,8 +188,21 @@ describe('流れ', () => {
     expect((await finished()).failure).toBeNull();
     const second = host.submitted.filter(isResume)[1];
     expect(second).toContain('<user-message>\n税率を可変にして\n</user-message>\n<user-message>\n次は README\n</user-message>');
-    // アプリの画面の言語を、報告の言語の手がかりとして添える
-    expect(second).toContain("use Japanese, the language of the user's tanacode.");
+    // 報告の言語は、ユーザーの発言とリストの言語。分からなければ、この文の言語（画面の言語）
+    expect(second).toContain('If neither tells you, use the language of this message.');
+  });
+
+  it('送る文は、そのときの画面の言語で書く（日本語の画面なら、仕上げの頼みも再開の文も日本語）', async () => {
+    setLanguage('ja');
+    try {
+      script();
+      compact.start(ID);
+      expect((await finished()).failure).toBeNull();
+      expect(host.submitted[0]).toContain('tanacode は、この会話を圧縮する代わりに、これから消します（ユーザーが「最適化圧縮」のボタンを押しました）。');
+      expect(host.submitted[2]).toContain('tanacode は、会話を圧縮する代わりに消しました（ユーザーが「最適化圧縮」のボタンを押しました）。');
+    } finally {
+      setLanguage('en');
+    }
   });
 
   it('進んでいる間にもう一度押しても、二重には始めない', async () => {
@@ -227,7 +245,7 @@ describe('流れ', () => {
 });
 
 describe('自動で始めた流れ', () => {
-  it('ターンの終わり: 仕上げの頼みと再開の文に、自動であることが入る。再開のあとは報告して待たせる。終わったら知らせる', async () => {
+  it('ターンの終わり: 仕上げの頼みと再開の文に、自動であることが入る。再開のあとに続けるか待つかは「いまの状態」で決めさせる。終わったら知らせる', async () => {
     script();
     const auto = { percent: 83, midTurn: false };
     compact.start(ID, auto);
@@ -235,7 +253,8 @@ describe('自動で始めた流れ', () => {
     expect(host.submitted[0]).toContain('instead of compacting it (automatic; context 83% full).');
     expect(host.submitted[0]).toContain('This reset is automatic: the user did not press anything');
     expect(host.submitted[2]).toContain('(automatic; context 83% full). No summary was made.');
-    expect(host.submitted[2]).toContain('Do not continue the work until the user tells you to.');
+    expect(host.submitted[2]).toContain('- Then decide from the state list whether you are waiting for an answer from the user');
+    expect(host.submitted[2]).not.toContain('Do not continue the work until the user tells you to.');
     expect(finishes).toEqual([{ failure: null, auto }]);
   });
 
@@ -252,7 +271,7 @@ describe('自動で始めた流れ', () => {
     expect((await finished()).failure).toBeNull();
     expect(host.submitted[0]).toContain('tanacode stopped your turn between tool calls');
     const resume = host.submitted[2];
-    expect(resume).toContain('continue the work from where it stopped');
+    expect(resume).toContain('continue the work that was in progress from where it stopped (the state list, and "Where the turn was stopped" below)');
     expect(resume).toContain('Your last words before the stop:\nテストを流します\nYour last tool calls, oldest first:\n- Bash: npm test → finished');
     expect(resume).not.toContain('Do not continue the work until the user tells you to.');
   });
@@ -269,6 +288,22 @@ describe('自動で始めた流れ', () => {
     expect((await finished()).failure).toBeNull();
     expect(host.submitted[1]).toBe('/clear');
     expect(host.submitted[2]).toContain('The wrap-up before this reset could not run');
+  });
+
+  it('仕上げのターンがプランの利用枠に当たって止まったら、飛ばさずに取りやめる（会話を消さない。手動も自動も）', async () => {
+    for (const auto of [{ percent: 97, midTurn: true }, null]) {
+      host.submitted = [];
+      script({
+        afterHandoff: () => {
+          host.events.push({ type: 'api-error', id: 'e', text: '利用枠の上限に達したので、止まりました', retrying: false, limit: { resetsAt: Date.now() + 3_600_000, window: 'five_hour' } }, { type: 'turn-end' });
+          host.state = 'idle';
+        },
+      });
+      compact.start(ID, auto);
+      expect((await finished()).failure).toBe('usage-limit');
+      expect(host.submitted).toHaveLength(1);
+    }
+    expect(finishes.map((f) => f.failure)).toEqual(['usage-limit', 'usage-limit']);
   });
 
   it('再試行中の API エラー・立ち直った API エラーでは、飛ばさない', async () => {

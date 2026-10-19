@@ -1,6 +1,5 @@
 import type { ChatEvent } from '@shared/chat';
 import type { Checklist } from '@shared/checklist';
-import { language } from '@shared/i18n';
 import {
   IDLE_COMPACT_STATUS,
   autoHandoffText,
@@ -76,7 +75,8 @@ type Deps = {
 const IDLE_STATES = new Set<SessionState>(['idle', 'background']);
 
 // 仕上げのターンの終わり方。done: 終わった / again: 終わったあとに別のターン（タスクの完了の知らせなど）が続いて、それも終わった /
-// api-error: API エラーで終わった（上限に当たったなど。Claude Code があきらめたもの）
+// api-error: API エラーで終わった（コンテキストの上限に当たったなど。Claude Code があきらめたもの）/
+// usage-limit（CompactFailure）: プランの利用枠に当たって止まった
 type Finalized = 'done' | 'again' | 'api-error' | CompactFailure;
 
 export class OptimizedCompact {
@@ -172,7 +172,9 @@ export class OptimizedCompact {
         continue;
       }
       // 仕上げもできなかった（上限に当たったあとなど、仕上げのターンが API エラーで終わった）。自動のときは、仕上げを飛ばして、
-      // 今あるリストと発言の原文だけで再開する（再開の文に、そう書く）。手動のときは、飛ばさない（下の not-used で取りやめる）
+      // 今あるリストと発言の原文だけで再開する（再開の文に、そう書く）。手動のときは、飛ばさない（下の not-used で取りやめる）。
+      // 利用枠に当たって止まったときは、飛ばさずに取りやめる（usage-limit。untilFinalized が返す）。飛ばして切り替えても、再開の文の
+      // ターンも同じ枠で止まるうえ、リストが古いまま会話を消すことになる。枠が戻ったら、続きを頼む予約で Claude が続ける
       const handoffSkipped = finalized === 'api-error' && !!auto;
       if (finalized !== 'done' && finalized !== 'api-error') return finalized;
       // Claude がチェックリストのツールを 1 回も呼ばなかったのに会話を消すと、何も引き継げない（チェックリストの MCP が足されていない
@@ -186,7 +188,6 @@ export class OptimizedCompact {
         messages: carriedMessages(conversation),
         omitted: carriedOmitted(conversation),
         tasks: host.runningTasks(id),
-        language: language(),
         reply,
         ...(auto ? { auto, stopped, handoffSkipped } : {}),
       });
@@ -247,7 +248,7 @@ export class OptimizedCompact {
         if (turn.prompted) return 'prompted';
         if (turn.interrupted) return 'interrupted';
         const state = host.stateOf(id);
-        if (turn.ended && state && IDLE_STATES.has(state)) return turn.followed ? 'again' : turn.apiError ? 'api-error' : 'done';
+        if (turn.ended && state && IDLE_STATES.has(state)) return turn.followed ? 'again' : turn.limited ? 'usage-limit' : turn.apiError ? 'api-error' : 'done';
       }
       await sleep(this.timings.pollMs);
     }
@@ -290,9 +291,11 @@ function handoffIndex(events: ChatEvent[], base: number): number {
 }
 
 // 仕上げの頼みのあとに起きたこと。ended: ターンが終わった（最後のターンまで）/ followed: 仕上げのターンのあとに、別のターンが続いた /
-// prompted: 人（または親セッション）が発言した・順番待ちに発言がある / interrupted: 人が中断した
-function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; prompted: boolean; interrupted: boolean; apiError: boolean } {
+// prompted: 人（または親セッション）が発言した・順番待ちに発言がある / interrupted: 人が中断した /
+// apiError: あきらめた API エラーで終わった / limited: そのエラーが、プランの利用枠に当たったもの
+function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; prompted: boolean; interrupted: boolean; apiError: boolean; limited: boolean } {
   let apiError = false;
+  let limited = false;
   let ended = false;
   let followed = false;
   let prompted = false;
@@ -302,8 +305,13 @@ function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; pr
     if (event.type === 'user') prompted = true;
     else if (event.type === 'queue') queued = event.prompts.length;
     // あきらめた API エラー（再試行中のものは数えない）。そのあとに応答が来たら、立ち直っている
-    else if (event.type === 'api-error') apiError = !event.retrying;
-    else if (event.type === 'assistant-text' && !ended) apiError = false;
+    else if (event.type === 'api-error') {
+      apiError = !event.retrying;
+      limited = !!event.limit;
+    } else if (event.type === 'assistant-text' && !ended) {
+      apiError = false;
+      limited = false;
+    }
     else if (event.type === 'turn-end') {
       ended = true;
       if (event.interrupted) interrupted = true;
@@ -316,7 +324,7 @@ function turnAfter(events: ChatEvent[]): { ended: boolean; followed: boolean; pr
       ended = false;
     }
   }
-  return { ended, followed, prompted: prompted || queued > 0, interrupted, apiError };
+  return { ended, followed, prompted: prompted || queued > 0, interrupted, apiError, limited };
 }
 
 function sleep(ms: number): Promise<void> {

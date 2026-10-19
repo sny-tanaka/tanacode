@@ -131,8 +131,9 @@ describe('最適化圧縮', () => {
 
   it('再開の文には、「いまの状態」の中身と、前の会話の発言の原文が入る。要約は頼まない', () => {
     const resume = resumes()[0] ?? '';
-    expect(resume).toContain('No summary was made.');
-    expect(resume).toContain(`# ${STATE} (state, as you last wrote it)`);
+    // 画面の言語（E2E は日本語）で書く
+    expect(resume).toContain('要約は作っていません。');
+    expect(resume).toContain(`# ${STATE}（あなたが最後に書いた、いまの状態）`);
     expect(resume).toContain(`## #1 ${STATE_CARD}\n${STATE_BODY}`);
     expect(resume).toContain(`<user-message>\n${PROMPT}\n</user-message>`);
     // 長い文も、欠けずに届く（決定事項の本文の終わりまで・囲みの閉じタグまで）
@@ -160,7 +161,7 @@ describe('最適化圧縮', () => {
     await app.waitUntil('2 回めの再開の文', () => resumes().length > before, 60_000);
     const second = resumes().at(-1) ?? '';
     expect(second).toContain(`<user-message>\n${PROMPT}\n</user-message>`);
-    expect(second).not.toContain('(no messages)');
+    expect(second).not.toContain('（発言はありません）');
     expect(second).toContain(`## #1 ${STATE_CARD}\n${STATE_BODY}`);
     await app.page.locator('.claude-header button[aria-label="最適化圧縮"]:not([disabled])').waitFor();
     expect(await app.page.locator('.compact-status.failed').count()).toBe(0);

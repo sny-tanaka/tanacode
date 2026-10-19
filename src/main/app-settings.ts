@@ -16,6 +16,7 @@ export type StoredSettingsFile = { id: string; name: string; path: string };
 // walkthroughControl: Claude にウォークスルーさせるか（起動する Claude Code に、ウォークスルーの MCP サーバーを足すか）/
 // terminalControl: Claude に人のターミナルを使わせるか（起動する Claude Code に、ターミナルの MCP サーバーを足すか）/
 // autoCompactPercent: 最適化圧縮を自動で始める大きさ（コンテキストの割合。40・60・80）/
+// usageLimitResume: 利用枠で止まったセッションに、枠が戻ったら続きを頼む予約を入れるか（usage-limit-resume.ts）/
 // language: 画面の言語（system は Mac の言語の設定に合わせる）
 type Values = {
   notifications: boolean;
@@ -29,6 +30,7 @@ type Values = {
   walkthroughControl: boolean;
   terminalControl: boolean;
   autoCompactPercent: number;
+  usageLimitResume: boolean;
   language: LanguageSetting;
 };
 
@@ -125,6 +127,14 @@ export class AppSettings {
     this.update({ terminalControl: on });
   }
 
+  usageLimitResumeEnabled(): boolean {
+    return this.values.usageLimitResume;
+  }
+
+  setUsageLimitResumeEnabled(on: boolean): void {
+    this.update({ usageLimitResume: on });
+  }
+
   setBrowserHosts(hosts: string[]): void {
     this.update({ browserHosts: hosts });
   }
@@ -172,6 +182,7 @@ function load(file: string): Values {
       walkthroughControl?: unknown;
       terminalControl?: unknown;
       autoCompactPercent?: unknown;
+      usageLimitResume?: unknown;
       language?: unknown;
     };
     return {
@@ -186,10 +197,11 @@ function load(file: string): Values {
       walkthroughControl: data.walkthroughControl !== false,
       terminalControl: data.terminalControl !== false,
       autoCompactPercent: (AUTO_COMPACT_PERCENTS as readonly unknown[]).includes(data.autoCompactPercent) ? (data.autoCompactPercent as number) : DEFAULT_AUTO_COMPACT_PERCENT,
+      usageLimitResume: data.usageLimitResume !== false,
       language: isLanguageSetting(data.language) ? data.language : 'system',
     };
   } catch {
-    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, language: 'system' };
+    return { notifications: true, updateCheck: true, updateOnQuit: true, settingsFiles: [], browserControl: true, browserHosts: [], sessionsControl: true, checklistControl: true, walkthroughControl: true, terminalControl: true, autoCompactPercent: DEFAULT_AUTO_COMPACT_PERCENT, usageLimitResume: true, language: 'system' };
   }
 }
 

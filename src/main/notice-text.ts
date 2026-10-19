@@ -1,6 +1,7 @@
 import { t } from '@shared/i18n';
 import { formatScheduleTime, type ScheduledMessage } from '@shared/scheduled';
 import type { Menu } from '@shared/screen';
+import type { UsageLimitNotice } from './usage-limit-resume';
 
 // 通知の本文に出す長さ（これを超えたら切る）
 const MAX_LENGTH = 100;
@@ -19,11 +20,23 @@ export function menuNotice(menu: Menu): string {
   return detail ? t('main.notification.permission', { detail }) : t('main.notification.permissionNoDetail');
 }
 
-// 予約したメッセージを送れなかった・時刻に送れなかったときの通知の本文。Claude が自分に入れた予約は、人の予約と見分けて伝える
+// 予約したメッセージを送れなかった・時刻に送れなかったときの通知の本文。Claude が自分に入れた予約・利用枠の再開の予約は、人の予約と見分けて伝える
 export function scheduledNotice(message: ScheduledMessage, now: Date = new Date()): string {
+  // 利用枠の再開の予約の本文は、アプリが書いた決まった文なので出さない（利用枠の再開だと伝える）
+  if (message.by === 'usage-limit') {
+    if (message.state === 'missed') return t('main.notification.usageResumeMissed', { time: formatScheduleTime(message.at, now) });
+    return t('main.notification.usageResumeFailed', { reason: message.error ?? t('main.notification.unknownReason') });
+  }
   // 文が無ければ、貼り付けた文（札）の冒頭を出す
   const text = snippet(message.text) || snippet(message.pastes[0] ?? '') || t('main.notification.images', { count: message.attachments.length });
   const claude = message.by === 'claude';
   if (message.state === 'missed') return t(claude ? 'main.notification.wakeupMissed' : 'main.notification.scheduledMissed', { time: formatScheduleTime(message.at, now), text });
   return t(claude ? 'main.notification.wakeupFailed' : 'main.notification.scheduledFailed', { reason: message.error ?? t('main.notification.unknownReason'), text });
+}
+
+// 利用枠で止まったときの通知の本文（「作業が完了しました」の代わり）。再開の予約を入れたならその時刻、入れなかったら枠が戻る時刻を伝える
+export function usageLimitNotice(notice: UsageLimitNotice, now: Date = new Date()): string {
+  if (notice.resumeAt !== null) return t('main.notification.usageLimitResume', { time: formatScheduleTime(notice.resumeAt, now) });
+  if (notice.resetsAt !== null) return t('main.notification.usageLimitStopped', { time: formatScheduleTime(notice.resetsAt, now) });
+  return t('main.notification.usageLimitStoppedNoTime');
 }

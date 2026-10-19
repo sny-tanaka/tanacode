@@ -6,8 +6,8 @@ import { E2EApp } from './app';
 
 // 最適化圧縮を、自動で始める。モックの API が返す入力のトークン数を大きくして、コンテキストが埋まってきたことにする
 // （上限はモデルによるので、ヘッダーのメーターから読む）。
-// - ターンの終わりに、設定の大きさ（既定は 80%）を超えていたら、仕上げ → /clear → 再開の文、と進む（Claude は報告して待つ）
-// - 1 つのターンが長くて 90% を超えたら、ツールの切れ目で止めて（PostToolUse のフック）切り替え、続きを進めさせる
+// - ターンの終わりに、設定の大きさ（既定は 80%）を超えていたら、仕上げ → /clear → 再開の文、と進む（続けるか待つかは「いまの状態」で決めさせる）
+// - 1 つのターンが長くて 90% を超えたら、ツールの切れ目で止めて（PostToolUse のフック）切り替え、止めた場所を再開の文に入れる
 // - 「自動」のトグルをオフにしたセッションでは始めず、Claude Code の自動の圧縮（要約）が今までどおり動く
 // - 始める大きさは、メニューで選ぶ。続けて 2 回取りやめになったら、そのセッションでは休む
 
@@ -160,18 +160,20 @@ describe('最適化圧縮を自動で始める', () => {
     expect(handoffs()).toEqual([]);
   });
 
-  it('ターンの終わりに 80% を超えていたら、自動で切り替える（仕上げ → /clear → 再開の文）。再開のあとは、報告して待たせる', async () => {
+  it('ターンの終わりに 80% を超えていたら、自動で切り替える（仕上げ → /clear → 再開の文）。再開のあとに続けるか待つかは、手動と同じく「いまの状態」で決めさせる', async () => {
     // 次の応答から、コンテキストの 85% を使っていることにする
     use(85);
     await app.send(NEXT);
     await app.waitUntil('自動の仕上げの頼み', () => handoffs().length === 1, 60_000);
-    expect(handoffs()[0]).toContain('instead of compacting it (automatic; context 85% full).');
-    expect(handoffs()[0]).toContain('This reset is automatic: the user did not press anything');
-    expect(handoffs()[0]).toContain('After the reset you will report what you carried over and wait for the user.');
+    // 画面の言語（E2E は日本語）で書く
+    expect(handoffs()[0]).toContain('これから消します（自動・コンテキスト 85%）。');
+    expect(handoffs()[0]).toContain('今回は自動の切り替えです。ユーザーは何も押しておらず');
+    expect(handoffs()[0]).toContain('消したあとは、いまの状態のリストから作業を再開します。リストに答え待ちと書いてなければ、作業を続けます。');
     await app.waitUntil('再開の文', () => resumes().length === 1, 60_000);
     const resume = resumes()[0];
-    expect(resume).toContain('(automatic; context 85% full). No summary was made.');
-    expect(resume).toContain('Do not continue the work until the user tells you to.');
+    expect(resume).toContain('消しました（自動・コンテキスト 85%）。要約は作っていません。');
+    expect(resume).toContain('- そのうえで、ユーザー（または、作業を指示した親セッション）の答えを待っているかを、いまの状態のリストから決めてください:');
+    expect(resume).not.toContain('Do not continue the work until the user tells you to.');
     expect(resume).toContain(`<user-message>\n${NEXT}\n</user-message>`);
     // 切り替える前の最後の応答も入る（人が、それに短く答えるかもしれない）
     expect(resume).toContain(`<your-last-reply>\n${NEXT_REPLY}\n</your-last-reply>`);
@@ -191,7 +193,7 @@ describe('最適化圧縮を自動で始める', () => {
     expect(prompts(SUMMARY_REQUEST)).toEqual([]);
   });
 
-  it('1 つのターンが長くて 90% を超えたら、ツールの切れ目で止めて切り替え、続きを進めさせる（止めた場所を、再開の文に入れる）', async () => {
+  it('1 つのターンが長くて 90% を超えたら、ツールの切れ目で止めて切り替え、止めたことと止めた場所を再開の文に入れる', async () => {
     // いったん下がったことにして（設定より 10 ポイント下を下回ると、また始められる）、次の長いターンで 92% を超える
     use(1);
     await ask(SMALL, SMALL_REPLY);
@@ -203,14 +205,14 @@ describe('最適化圧縮を自動で始める', () => {
     const done = steps();
     expect(done).toBeGreaterThan(0);
     expect(done).toBeLessThan(8);
-    expect(handoffs()[1]).toContain('tanacode stopped your turn between tool calls, and after the reset you will continue the same work.');
+    expect(handoffs()[1]).toContain('tanacode がツールの切れ目であなたのターンを止めたので、消したあとは、同じ作業を続けます。');
     await app.waitUntil('再開の文', () => resumes().length === 2, 60_000);
     const resume = resumes()[1];
-    expect(resume).toContain('This reset happened in the middle of your turn');
-    expect(resume).toContain('continue the work from where it stopped');
+    expect(resume).toContain('- この切り替えは、あなたのターンの途中で起きました。');
+    expect(resume).toContain('進めていた作業を、止まったところから続けてください（いまの状態のリストと、下の「ターンを止めた場所」）。');
     expect(resume).not.toContain('Do not continue the work until the user tells you to.');
-    expect(resume).toContain('# Where the turn was stopped (recorded by tanacode, not written by you)');
-    expect(resume).toContain(`- Bash: sleep 0.6 && echo step-${done} → finished`);
+    expect(resume).toContain('# ターンを止めた場所（tanacode が記録したもので、あなたが書いたものではありません）');
+    expect(resume).toContain(`- Bash: sleep 0.6 && echo step-${done} → 終わった`);
     expect(resume).toContain(`<user-message>\n${LONG}\n</user-message>`);
     // 止めたあとは、手順を進めていない（切り替えの間に、ツールが走り続けない）
     expect(steps()).toBe(done);

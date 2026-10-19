@@ -177,8 +177,8 @@ describe(`Claude Code ${version} の発言`, () => {
 });
 
 // 上限いっぱいの再開の文（最適化圧縮で、新しい会話の最初に送る文）。アプリの resumeText で、どの部分も上限まで埋める:
-// 決定事項と「いまの状態」のカード（24,000 文字）・発言の原文（12,000 文字）・切り替える前の最後の応答（3,000 文字）。
-// 合わせると上限を超えるので、終わり（最後の応答の途中）は上限で切られる。
+// 決定事項と「いまの状態」のカード（24,000 文字）・発言の原文（12,000 文字）・切り替える前の最後の応答（3,000 文字）・裏のタスク（20 件）。
+// 合わせると上限を超えるので、終わり（タスクの一覧の途中）は上限で切られる（決まった文は画面の言語で、日本語は英語より短いので、タスクで埋める）。
 // 日本語で埋める（1 文字 3 バイトなので、打つバイト数がいちばん大きくなる）。行の長さは、短い行から、断片に分かれる長い行（300 文字超）まで混ぜる
 function fullResumeText(): string {
   const SENTENCES = [
@@ -218,9 +218,8 @@ function fullResumeText(): string {
       list('やること', 'normal', [card(1, 'テストを足す', '')]),
     ],
     messages: Array.from({ length: 4 }, (_, i) => ({ text: prose(2000 + i * 100, 2900), fromParent: i === 1 })),
-    tasks: [],
+    tasks: Array.from({ length: 20 }, (_, i) => ({ kind: 'bash' as const, label: prose(4000 + i * 10, 190) })),
     reply: prose(3000, 3000),
-    language: 'ja',
   });
 }
 
@@ -245,7 +244,7 @@ describe(`Claude Code ${version} に、上限いっぱいの再開の文を送�
     // 上限まで埋まっている（どの部分も入っていて、終わりは上限で切られている）
     expect(text.length).toBeGreaterThan(RESUME_MAX_CHARS - 20);
     expect(text.length).toBeLessThanOrEqual(RESUME_MAX_CHARS);
-    for (const part of ['# 決定事項', '# いまの状態', '# What the user said', '# Your last reply before the reset']) expect(text).toContain(part);
+    for (const part of ['# 決定事項', '# いまの状態', '# 前の会話でのユーザーの発言', '# 会話を消す前の、あなたの最後の応答', '# 裏で動いているタスク']) expect(text).toContain(part);
     expect(bytes).toBeGreaterThan(90_000);
     await run.waitUntil('手が空く', () => run.idle);
     const attentions = run.attentions.length;

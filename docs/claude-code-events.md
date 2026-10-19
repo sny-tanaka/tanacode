@@ -30,10 +30,10 @@ Claude Code がチャット（`claude -p` の stream-json）で出すイベン�
 | --- | --- | --- | --- |
 | `user` | 送った発言の戻り（`--replay-user-messages`）と、ツールの結果 | 有 | ✅ スマホから届いた発言でのターンの始まり。ツールの結果の控え |
 | `assistant` | 応答（ブロックごと） | 有 | ✅ ツールの呼び出しの控え・ExitPlanMode のプランの控え・モデル・コンテキストの量 |
-| `result` | ターンの終わり | 有 | ✅ ターンを閉じる処理 |
+| `result` | ターンの終わり | 有 | ✅ ターンを閉じる処理。`api_error` が `usage_limit_reached` なら、利用枠で止まったことの補い（`subtype` は `success` のまま・時刻は無い。2.1.302 で実測） |
 | `stream_event` | 書いている途中の応答（`--include-partial-messages`） | 有 | ✅ 進み具合と、書いている途中の文（4 節） |
 | `tool_progress` | ツールの実行中の経過 | 有 | ✅ 進み具合 |
-| `rate_limit_event` | 利用枠の状態 | 有 | ✅ 利用枠の表示 |
+| `rate_limit_event` | 利用枠の状態 | 有 | ✅ 利用枠の表示。`status` が `rejected` なら、枠が戻る時刻（`resetsAt`）を、利用枠で止まったときの補いに控える |
 | `conversation_reset` | /clear での新しい会話 | 有 | ✅ 書いている途中の文を捨て、コンテキストの量を空に |
 | `command_lifecycle` | 送った発言の受け付け（順番待ち・取り込み・終わり） | 無 | ✅ 送信中の表示 |
 | `control_request`・`control_response`・`control_cancel_request` | 制御の要求・返事・取り下げ | 有 | ✅ 3 節も参照 |
@@ -160,6 +160,8 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 | `agents_killed` | 裏のエージェントの停止 | ⏭ 使い道がない（止めたことは、裏のタスクの終わりで分かる） |
 
 会話ログの attachment の `relevant_memories`（思い出したメモリ。`memories[].path`）も、お知らせ「メモリを N 件思い出しました」（開くとファイルの名前）にします。
+
+会話ログの応答の行のうち、合成の API エラー（`isApiErrorMessage`）で `apiError` が `usage_limit_reached` のものは、プランの利用枠に当たって止まった印として読みます（枠が戻る時刻は `apiErrorParams.rate_limit_info.resetsAt`（秒）、当たった枠は `rateLimitType`。`quotaLimits` にも同じ中身。`src/shared/usage-limit.ts`）。Claude Code は、OAuth のトークンで動いているときだけ、API の 429 と枠のヘッダー（`anthropic-ratelimit-unified-status: rejected` など）をこの形にします（API キーでは、ただの 429 のエラー。2.1.302 で実測）。
 
 ## 調べ直し方
 

@@ -550,6 +550,10 @@ const modules: Record<string, Record<string, unknown>> = {
   },
   'system-monitor': { SystemMonitor: fakeClass('SystemMonitor', { start: () => undefined, stop: () => undefined }) },
   'claude-version': { ClaudeVersionMonitor: fakeClass('ClaudeVersionMonitor', { get: echo('claudeVersions.get'), start: () => undefined, stop: () => undefined, refresh: async () => undefined }) },
+  // 利用枠で止まったセッションの再開の予約。止まったか・通知の中身は、テストが noticeOf を差し替えて決める
+  'usage-limit-resume': {
+    UsageLimitResume: fakeClass('UsageLimitResume', { turnEnded: echo('usageLimit.turnEnded'), noticeOf: () => null, cancelAll: echo('usageLimit.cancelAll'), forget: () => undefined }),
+  },
   'usage-monitor': {
     UsageMonitor: fakeClass('UsageMonitor', { get: echo('usage.get'), refresh: echo('usage.refresh'), start: async () => undefined, fromStatusLine: () => undefined }),
   },
@@ -617,6 +621,7 @@ vi.mock('../../src/main/translate', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/translate')>()),
   Translator: fakeClass('Translator', { translate: echo('translator.translate') }),
 }));
+vi.mock('../../src/main/usage-limit-resume', () => modules['usage-limit-resume']);
 vi.mock('../../src/main/usage-monitor', () => modules['usage-monitor']);
 vi.mock('../../src/main/workspace', () => modules.workspace);
 vi.mock('../../src/main/workspace-watcher', () => modules['workspace-watcher']);

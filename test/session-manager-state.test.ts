@@ -427,7 +427,7 @@ describe('statusLine', () => {
     const { id } = app.create();
     await app.ready(id);
     const asked: [string, TurnStarter][] = [];
-    // 最適化圧縮の流れの途中のターン（仕上げ）では出さず、流れの最後のターン（報告して待つ再開）では、最適化の完了にする
+    // 最適化圧縮の流れの途中のターン（仕上げ）では出さず、流れの最後のターン（報告して待った再開）では、最適化の完了にする
     app.manager.turnNotice = (session, starter) => {
       asked.push([session, starter]);
       return starter === 'handoff' ? null : starter === 'resume' ? 'compact' : 'work';
@@ -444,8 +444,15 @@ describe('statusLine', () => {
     // 仕上げのターン（このあと /clear）: 聞くが、完了は知らせない。途中で届いた知らせ（タスクの完了など）では、仕上げのターンのまま
     await turn(line.user(handoffText()), line.user('<task-notification><summary>ビルドが終わりました</summary></task-notification>'));
     expect(app.turnNotices).toEqual(['work']);
-    // 報告して待つ再開のターン
+    // 報告して待った再開のターン。チェックリストを読むだけ（その定義の読み込みも）なら、作業を続けたことにならない
     await turn(line.user(resumeText(RESUME)));
+    await turn(
+      line.user(resumeText(RESUME)),
+      line.toolUse('toolu_s', 'ToolSearch', { query: 'select:mcp__tanacode-checklist__checklist_overview' }),
+      line.toolUse('toolu_c', 'mcp__tanacode-checklist__checklist_overview', {}),
+    );
+    // 再開のターンで、チェックリスト以外のツールを使った: 作業を続けた（その終わりは、作業の完了）
+    await turn(line.user(resumeText(RESUME)), line.toolUse('toolu_c2', 'mcp__tanacode-checklist__checklist_overview', {}), line.toolUse('toolu_b', 'Bash', { command: 'npm test' }));
     // ターンの途中で止めた切り替えの再開は、作業の続き
     await turn(line.user(resumeText({ ...RESUME, auto: { percent: 92, midTurn: true } })));
     // 仕上げの間に人が発言したら、その発言のターン
@@ -456,16 +463,18 @@ describe('statusLine', () => {
       [id, 'other'],
       [id, 'handoff'],
       [id, 'resume'],
+      [id, 'resume'],
+      [id, 'other'],
       [id, 'other'],
       [id, 'other'],
       [id, 'other'],
     ]);
-    expect(app.turnNotices).toEqual(['work', 'compact', 'work', 'work', 'work']);
+    expect(app.turnNotices).toEqual(['work', 'compact', 'compact', 'work', 'work', 'work', 'work']);
     // 完了を知らせないとき（ブラウザでの操作待ち）も聞く（流れの途中で出さなかったことを、覚えさせる）
     app.manager.browserAskChanged(id, true);
     await turn(line.user(handoffText()));
-    expect(asked).toHaveLength(7);
-    expect(app.turnNotices).toHaveLength(5);
+    expect(asked).toHaveLength(9);
+    expect(app.turnNotices).toHaveLength(7);
   });
 
   it('何もつながなければ、ターンの終わりは、ふつうの完了として知らせる', async () => {
@@ -475,6 +484,79 @@ describe('statusLine', () => {
     app.finish(id);
     await app.waitFor('完了の知らせ', () => app.turnsCompleted.length === 1);
     expect(app.turnNotices).toEqual(['work']);
+  });
+
+  describe('プランの利用枠に当たって止まったターン', () => {
+    const RESET = Date.now() + 3 * 60 * 60_000;
+
+    it('会話ログの行（apiError が usage_limit_reached）を正にして、ターンの終わりに枠が戻る時刻を知らせる。止まらずに終わったターンは null', async () => {
+      const { id } = app.create();
+      await app.ready(id);
+      app.say(id, line.user('頼み'), line.text('はい'));
+      app.finish(id);
+      await app.waitFor('ふつうのターンの終わり', () => app.turnLimits.length === 1);
+      // 枠に当たった: 断られた知らせ（rate_limit_event）→ 合成の応答の行 → result（api_error）。時刻は会話ログの行のものを使う
+      await app.prompt(id, '続けて');
+      app.pipe(id).emit(stream.rateLimit('rejected', RESET + 60_000));
+      app.say(id, line.limit(RESET));
+      app.pipe(id).emit(stream.limited(app.claudeId(id)));
+      await app.waitFor('枠で止まったターンの終わり', () => app.turnLimits.length === 2);
+      expect(app.turnLimits).toEqual([
+        { id, limit: null },
+        { id, limit: { resetsAt: RESET, window: 'five_hour' } },
+      ]);
+      // チャットには、枠が戻る時刻の付いた API エラーを、ターンの終わりの前に出す。完了の知らせ（onTurnCompleted）は、いつもどおり聞く
+      const shown = app.events(id).slice(-2);
+      expect(shown[0]).toMatchObject({ type: 'api-error', retrying: false, limit: { resetsAt: RESET, window: 'five_hour' } });
+      expect(shown[1]).toEqual({ type: 'turn-end' });
+      expect(app.turnNotices).toEqual(['work', 'work']);
+    });
+
+    it('会話ログの行が間に合わなくても、result の api_error で止まったと分かる。時刻は断られた知らせから取り、それも無ければ分からない。次のターンに持ち越さない', async () => {
+      const { id } = app.create();
+      await app.ready(id);
+      await app.prompt(id, '続けて');
+      // 枠を使ってよい知らせ（allowed）は、時刻の補いにしない
+      app.pipe(id).emit(stream.rateLimit('allowed', RESET + 600_000));
+      app.pipe(id).emit(stream.rateLimit('rejected', RESET));
+      app.pipe(id).emit(stream.limited(app.claudeId(id)));
+      await app.waitFor('1 回め', () => app.turnLimits.length === 1);
+      await app.prompt(id, 'もう一度');
+      app.pipe(id).emit(stream.limited(app.claudeId(id)));
+      await app.waitFor('2 回め', () => app.turnLimits.length === 2);
+      await app.prompt(id, '戻りましたか');
+      app.say(id, line.text('はい'));
+      app.finish(id);
+      await app.waitFor('3 回め', () => app.turnLimits.length === 3);
+      expect(app.turnLimits.map((t) => t.limit)).toEqual([{ resetsAt: RESET, window: 'five_hour' }, { resetsAt: null, window: null }, null]);
+    });
+
+    it('止まらずに、モデルが応答しないまま終わったターン（応答の前の中断など）では知らせない（再開の予約を、作業が進んだとして消させない）', async () => {
+      const { id } = app.create();
+      await app.ready(id);
+      await app.prompt(id, '続けて');
+      app.say(id, line.limit(RESET));
+      app.pipe(id).emit(stream.limited(app.claudeId(id)));
+      await app.waitFor('枠で止まる', () => app.turnLimits.length === 1);
+      await app.prompt(id, 'やっぱり待って');
+      app.pipe(id).emit(stream.interrupted(app.claudeId(id)));
+      await app.waitFor('中断したターンの終わり', () => app.turnsCompleted.length === 2);
+      expect(app.turnLimits).toHaveLength(1);
+    });
+
+    it('ターンが終わったあとに遅れて出た利用枠の行は、次のターンに数えない', async () => {
+      const { id } = app.create();
+      await app.ready(id);
+      app.say(id, line.user('頼み'), line.text('はい'));
+      app.finish(id);
+      await app.waitFor('ターンの終わり', () => app.turnLimits.length === 1);
+      app.append(id, line.limit(RESET));
+      await app.waitFor('遅れて出た行', () => app.events(id).some((e) => e.type === 'api-error'));
+      app.say(id, line.user('次'), line.text('はい'));
+      app.finish(id);
+      await app.waitFor('次のターンの終わり', () => app.turnLimits.length === 2);
+      expect(app.turnLimits.map((t) => t.limit)).toEqual([null, null]);
+    });
   });
 
   it('最後に終わったターンが、人の中断で終わったかが分かる（result の terminal_reason が aborted_…）。外から見た状態が変わったことを、見張っている先に知らせられる', async () => {

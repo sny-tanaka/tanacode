@@ -913,6 +913,7 @@ function buildMenu(): void {
           { label: t('main.menu.checklistControl'), type: 'checkbox', checked: !!activeProfile()?.settings.checklistControlEnabled(), click: (item) => setChecklistControl(item) },
           { label: t('main.menu.walkthroughControl'), type: 'checkbox', checked: !!activeProfile()?.settings.walkthroughControlEnabled(), click: (item) => setWalkthroughControl(item) },
           { label: t('main.menu.terminalControl'), type: 'checkbox', checked: !!activeProfile()?.settings.terminalControlEnabled(), click: (item) => setTerminalControl(item) },
+          { label: t('main.menu.usageLimitResume'), type: 'checkbox', checked: !!activeProfile()?.settings.usageLimitResumeEnabled(), click: (item) => setUsageLimitResume(item) },
           {
             label: t('main.menu.autoCompactPercent'),
             submenu: AUTO_COMPACT_PERCENTS.map((percent) => ({
@@ -1159,6 +1160,18 @@ function setWalkthroughControl(item: MenuItem): void {
 function setTerminalControl(item: MenuItem): void {
   try {
     activeProfile()?.settings.setTerminalControlEnabled(item.checked);
+  } catch {
+    item.checked = !item.checked;
+  }
+}
+
+// メニューの「利用枠で止まったら、戻ったときに自動で再開する」。オフにしたら、待っている再開の予約を取り消す（入れたままだと、
+// オフにしたのに再開する）。オンにしても、もう止まっているセッションには予約しない（次に止まったときから）。保存できなかったら、チェックを元に戻す
+function setUsageLimitResume(item: MenuItem): void {
+  try {
+    const profile = activeProfile();
+    profile?.settings.setUsageLimitResumeEnabled(item.checked);
+    if (!item.checked) profile?.usageLimit?.cancelAll();
   } catch {
     item.checked = !item.checked;
   }

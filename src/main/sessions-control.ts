@@ -11,6 +11,7 @@ import { answerText, type PendingPermission, type PendingQuestion, type Permissi
 import type { PendingElicitation } from '@shared/elicitation';
 import type { SubagentRun } from '@shared/subagent';
 import type { BashTask } from '@shared/task';
+import type { UsageLimitStop } from '@shared/usage-limit';
 import type { WorkflowRun } from '@shared/workflow';
 import {
   canSee,
@@ -29,6 +30,7 @@ import {
   SWITCHABLE_MODES,
   type SessionState,
 } from '@shared/session-tools';
+import { resumeContinued } from './compact-notice';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
@@ -214,8 +216,8 @@ class ToolError extends Error {}
 export class SessionsControl {
   // 子セッションの、前に見た状態（作業中から手が空いたことを知るため）
   private readonly lastState = new Map<string, SessionState | null>();
-  // 親に知らせる子の出来事（親の ID → 子の ID → 状態と時刻）。親の手が空いたら送る
-  private readonly notices: SessionNotices<{ state: SessionState; at: number }>;
+  // 親に知らせる子の出来事（親の ID → 子の ID → 状態と時刻、利用枠で止まったならその知らせ）。親の手が空いたら送る
+  private readonly notices: SessionNotices<ChildNotice>;
   // 親が子の状態を読んだ時刻（`親:子`）。読んだあとの知らせは送らない
   private readonly observedAt = new Map<string, number>();
   // 最適化圧縮の流れが進んだ子（流れが始まってから、再開の文のターンが終わるまで）
@@ -241,6 +243,9 @@ export class SessionsControl {
       enabled: deps.enabled,
       compose: (parentId, queue) => this.noticeFor(parentId, queue),
       delayMs: deps.notifyDelayMs,
+      // 親が利用枠で止まって再開を待っている間は、子の知らせを送らない（送っても、親のターンが同じ枠で断られるだけ）。
+      // 再開して手が空いたら送る
+      holds: (parentId) => this.usageResumeAt(parentId) !== null,
     });
   }
 
@@ -834,11 +839,11 @@ export class SessionsControl {
       now: localIso(Date.now()),
       messages: messages.map((m) => ({
         id: m.id,
-        by: m.by === 'claude' ? 'claude' : 'user',
+        by: m.by === 'claude' ? 'claude' : m.by === 'usage-limit' ? 'tanacode' : 'user',
         state: m.state,
         at: new Date(m.at).toISOString(),
         local_time: localIso(m.at),
-        text: clip(m.text, MAX_WAKEUP_TEXT_CHARS),
+        text: m.by === 'usage-limit' ? 'tanacode resumes this session after the usage limit resets (the message asks you to check where you stopped and continue).' : clip(m.text, MAX_WAKEUP_TEXT_CHARS),
         ...(m.attachments.length > 0 ? { images: m.attachments.length } : {}),
         ...(m.pastes.length > 0 ? { pasted_texts: m.pastes.length } : {}),
         // 送れなかった理由。error は画面の言語の文なので、Claude には reason から英語の文を作って返す（理由の分からないものは、文を返さない）
@@ -864,6 +869,7 @@ export class SessionsControl {
     if (matches.length === 0) throw new ToolError(`No scheduled message of this session has the ID ${id}. It may have been sent or cancelled already (check with list_wakeups).`);
     if (matches.length > 1) throw new ToolError(`More than one scheduled message has an ID starting with ${id}. Pass a longer ID.`);
     const target = matches[0];
+    if (target.by === 'usage-limit') throw new ToolError('tanacode scheduled this message to resume this session after the usage limit resets. Only the user can cancel or change it.');
     if (target.by !== 'claude') throw new ToolError('This message was scheduled by the user. Only the user can cancel or change it.');
     scheduled.cancel(target.id);
     return json({ id: target.id, cancelled: true });
@@ -879,6 +885,12 @@ export class SessionsControl {
     if (!this.deps.report) throw new ToolError(NOT_READY);
     this.deps.report(caller.id, text);
     return textResult('Saved. It is shown in the notification when this turn ends (not while the user is looking at this session, and not if notifications are off).');
+  }
+
+  // 利用枠の再開の予約の時刻（時刻を待っている・送っている途中のもの。無ければ null）
+  private usageResumeAt(id: string): number | null {
+    const message = this.deps.scheduled?.()?.list().find((m) => m.sessionId === id && m.by === 'usage-limit' && (m.state === 'scheduled' || m.state === 'sending'));
+    return message?.at ?? null;
   }
 
   private wakeups(): WakeupHost {
@@ -920,20 +932,30 @@ export class SessionsControl {
     // アプリを起動し直したあとは、切り替える前の会話が手元に無い。再開の文に入っている発言の原文で見分ける
     const fromParent = user ? user.parent === parentId : (carriedMessages(after).at(-1)?.fromParent ?? false);
     if (!fromParent) return;
-    // 切り替えのあとの「引き継ぎました」の報告で終わったターン（ターンの終わりの自動・手動）と、取りやめた仕上げのターンは、
-    // 作業の終わりではない（作業の終わりは、切り替える前に知らせてある）。途中で止めて続きを進めたターンの終わりは、作業の終わり
-    const last = [...after].reverse().find(startsTurn);
-    if (last?.type === 'notice' && last.compact && !compactMidTurn(detailOf(last))) return;
-    this.notices.add(parentId, childId, { state, at });
+    // 利用枠に当たって止まったのは、作業の終わりではない。いつ再開するかと一緒に知らせる。
+    // 最適化圧縮のターン（仕上げ・再開）で止まったときも知らせる（枠が戻ったら再開のメッセージが届き、子はそこから動き出す）
+    const limit = usageLimitStopOf(after);
+    // 切り替えのあとの「引き継ぎました」の報告で終わったターン（答えを待っている・続ける作業が無い）と、取りやめた仕上げのターンは、
+    // 作業の終わりではない（作業の終わりは、切り替える前に知らせてある）。再開のあとに作業を続けたターンの終わりは、作業の終わり。
+    // 途中で止めたのに取りやめになった仕上げのターンの終わりも知らせる（子は止まったまま）
+    let lastAt = after.length - 1;
+    while (lastAt >= 0 && !startsTurn(after[lastAt])) lastAt--;
+    const last = after[lastAt];
+    if (!limit && last?.type === 'notice' && last.compact && !(last.compact === 'resume' ? continuedAt(after, lastAt) : compactMidTurn(detailOf(last)))) return;
+    this.notices.add(parentId, childId, { state, at, ...(limit ? { limit } : {}) });
   }
 
   // 続けて手が空いた子の知らせを、1 つにまとめた文。親がもう読んだ出来事は除く
-  private noticeFor(parentId: string, queue: Map<string, { state: SessionState; at: number }>): string | null {
+  private noticeFor(parentId: string, queue: Map<string, ChildNotice>): string | null {
     const all = this.deps.host.list();
     const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
     if (notices.length === 0) return null;
     const message = [
-      ...notices.map(([child, event]) => noticeText(all.find((s) => s.id === child), child, event.state, event.state === 'question' ? askingElicitation(this.deps.host, child) : null)),
+      ...notices.map(([child, event]) =>
+        event.limit && (event.state === 'idle' || event.state === 'background')
+          ? limitNoticeText(all.find((s) => s.id === child), child, event.limit, this.usageResumeAt(child))
+          : noticeText(all.find((s) => s.id === child), child, event.state, event.state === 'question' ? askingElicitation(this.deps.host, child) : null),
+      ),
       t('tools.notice.checkSessions'),
     ].join(' ');
     return sessionEventText(notices.map(([child]) => child), message);
@@ -1066,6 +1088,9 @@ export class SessionsControl {
     const running = base.state !== 'exited' && base.state !== 'archived';
     // 動いている裏のタスク（無ければ出さない）
     const tasks = runningTasks(this.deps.host, s.id);
+    // 最後のターンが利用枠に当たって止まった。last_response は、止まる前の途中の応答（結果ではない）
+    const limit = usageLimitStopOf(all);
+    const resumeAt = limit ? this.usageResumeAt(s.id) : null;
     return {
       ...base,
       permission_mode: running ? this.deps.host.modeOf(s.id) : null,
@@ -1078,6 +1103,18 @@ export class SessionsControl {
         ? { from: lastPrompt.type === 'notice' ? 'notice' : lastPrompt.parent ? (s.parentId ? 'parent' : 'session') : 'human', text: clip(lastPrompt.text, 1000) }
         : null,
       last_response: response ? clip(response, 4000) : null,
+      usage_limit: limit
+        ? {
+            resets_at: limit.resetsAt === null ? null : localIso(limit.resetsAt),
+            resume_scheduled_at: resumeAt === null ? null : localIso(resumeAt),
+            note: [
+              'The last turn stopped because the usage limit of the plan was reached: last_response (if any) is from before the stop, not a result of the work.',
+              resumeAt === null
+                ? 'No message is scheduled to resume it. Tell the user, or send it a message to continue once the limit has reset.'
+                : 'At resume_scheduled_at, tanacode sends it a message to continue (the user can move or cancel it). There is no need to check on it before then.',
+            ].join(' '),
+          }
+        : undefined,
       question: base.state === 'question' ? questionView(this.deps.host.pendingQuestion(s.id)) : undefined,
       mcp_question: base.state === 'question' ? mcpQuestionView(askingElicitation(this.deps.host, s.id)) : undefined,
       permission: base.state === 'permission' ? permissionViewOf(this.deps.host.pendingPermission(s.id), (r) => this.deps.humanOnly?.(s.id, r) ?? null) : undefined,
@@ -1233,6 +1270,14 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   return t('tools.notice.childDone', params);
 }
 
+// 子が利用枠に当たって止まった知らせ。再開の予約があればその時刻、無ければ枠が戻る時刻を伝える（時刻は、Claude が人に伝えるときの形）
+function limitNoticeText(child: SessionSummary | undefined, id: string, limit: UsageLimitStop, resumeAt: number | null): string {
+  const params = { name: child?.title ?? t('tools.notice.untitledSession'), id: id.slice(0, 8) };
+  if (resumeAt !== null) return t('tools.notice.childUsageLimit', { ...params, time: localIso(resumeAt) });
+  if (limit.resetsAt !== null) return t('tools.notice.childUsageLimitNoResume', { ...params, time: localIso(limit.resetsAt) });
+  return t('tools.notice.childUsageLimitNoTime', params);
+}
+
 // 答えを待っている許可の確認を、親に渡す形にする。
 // problem: 親に許させない理由（入力が長すぎて全文を渡せない・人だけが答えられる）。あっても、断ることはできる。
 // 人だけが答えられるのは、プランの承認・Claude Code や人の設定が人に回したもの（PendingPermission.humanOnly）と、Deps の humanOnly
@@ -1344,7 +1389,7 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
   let handoff: Turn | null = null;
   // アプリが /clear を打って、まだ再開の文を送っていない
   let cleared = false;
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (startsTurn(e)) stopped = false;
     if (e.type === 'reset') {
       // 最適化圧縮の切り替えでは、前のターンも残す（下の知らせの 1 行を挟む）。仕上げのターンと、アプリが打った /clear は出さない
@@ -1380,7 +1425,9 @@ function conversationLines(events: ChatEvent[], turns: number, titleOf: (id: str
         `tanacode reset the conversation of this session and resumed it from its checklists (optimized compaction${auto === null ? '' : `, automatic at ${auto}% of the context`}).`,
         compactMidTurn(detailOf(e))
           ? 'The reset was made in the middle of a turn, and the session then continued the same work: what follows is the rest of that work.'
-          : 'What follows is its report of what it carried over, not a result of its work.',
+          : continuedAt(events, i)
+            ? 'After the reset, the session continued the work that was in progress: what follows is the rest of that work.'
+            : 'What follows is its report of what it carried over, not a result of its work.',
       ].join(' ');
       current = { who: 'Notice', text, responses: [], notes: [], tools: [] };
       all.push(current);
@@ -1536,6 +1583,19 @@ const isResume = (e: ChatEvent): e is Extract<ChatEvent, { type: 'notice' }> => 
 // ターンのはじまり（発言・知らせ・別の Claude からの知らせ）
 const startsTurn = (e: ChatEvent): boolean => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start';
 
+// 親に知らせる、子の出来事。limit: 利用枠に当たって止まった（その知らせ）
+type ChildNotice = { state: SessionState; at: number; limit?: UsageLimitStop };
+
+// 最後のターンが、プランの利用枠に当たって止まったなら、その知らせ（あきらめた API エラーのあとに、応答もツールの呼び出しも無い）
+function usageLimitStopOf(events: ChatEvent[]): UsageLimitStop | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'api-error' && !e.retrying) return e.limit ?? null;
+    if (startsTurn(e) || e.type === 'assistant-text' || e.type === 'tool-use') return null;
+  }
+  return null;
+}
+
 // 応答を、作業の応答（work）と、チェックリストを直した報告（notes）に分ける。
 // チェックリストを使い続けさせるフック（checklist-hook.ts）がターンの終わりを止めると、Claude はリストを直して 1 行で報告する。
 // それは作業の結果ではないので、ほかのセッションに「最後の応答」として返さない。次のターンのはじまりで、作業の応答に戻る
@@ -1551,8 +1611,18 @@ function responsesOf(events: ChatEvent[]): { work: string[]; notes: string[] } {
   return { work, notes };
 }
 
+// 再開の文（知らせ。at: その場所）のターンで、作業を続けたか（compact-notice.ts の resumeContinued）。
+// 続けたなら、そのあとの応答は作業の続き。続けなかった（答えを待っている・続ける作業が無い）なら、引き継いだことの報告
+function continuedAt(events: ChatEvent[], at: number): boolean {
+  const resume = events[at];
+  if (resume?.type !== 'notice') return false;
+  const end = events.findIndex((e, i) => i > at && startsTurn(e));
+  return resumeContinued(resume, events.slice(at + 1, end === -1 ? undefined : end));
+}
+
 // 会話から、最適化圧縮のぶんを除く。仕上げの頼みと再開の文（知らせ）と、その返事。
-// - 途中で止めて続きを進めた切り替えでは、再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
+// - 再開のあとに作業を続けた切り替え（途中で止めたもの・再開のターンでチェックリスト以外のツールを使ったもの）では、
+//   再開のあとの応答は作業の続きなので残す（切り替える前の指示の応答として読める）
 // - 仕上げのターンの応答は、そのあと会話を消した（切り替えた）ときだけ除く。取りやめになったときは残す。
 //   Claude が仕上げの頼みに従わず、そのターンで元の作業を続けることがある（実機の Haiku 5.5 で起きた。除くと、作業の結果が読めない）
 // flowing: 流れが進んでいる途中（最後の仕上げのターンは、まだ取りやめと決まっていないので除く）
@@ -1563,7 +1633,7 @@ function withoutCompaction(events: ChatEvent[], flowing = false): ChatEvent[] {
   let cleared = false;
   // 仕上げのターンのイベント（切り替えたら捨て、取りやめなら残す）
   let handoff: ChatEvent[] | null = null;
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (e.type === 'reset' && e.compact) {
       cleared = true;
       handoff = null;
@@ -1573,7 +1643,7 @@ function withoutCompaction(events: ChatEvent[], flowing = false): ChatEvent[] {
       cleared = false;
       if (handoff) kept.push(...handoff);
       handoff = e.compact === 'handoff' ? [] : null;
-      skipping = e.compact === 'resume' && !compactMidTurn(detailOf(e));
+      skipping = e.compact === 'resume' && !continuedAt(events, i);
       continue;
     }
     if (cleared && e.type === 'user' && e.command) continue;

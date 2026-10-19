@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
 import { textResult } from '../src/main/mcp-bridge';
 import { menuNotice, scheduledNotice } from '../src/main/notice-text';
+import { formatScheduleTime } from '@shared/scheduled';
 import {
   allOf,
   argsOf,
@@ -445,6 +446,7 @@ describe('部品から画面への知らせ', () => {
     for (const id of ['s1', 's2', 's3']) watch(id);
     expect(the('ScheduledMessages').dropSession.mock.calls).toEqual([['s1'], ['s2']]);
     expect(the('WalkthroughControl').discard.mock.calls).toEqual([['s1'], ['s2']]);
+    expect(the('UsageLimitResume').forget.mock.calls).toEqual([['s1'], ['s2']]);
   });
 
   it('制御の部品に渡すもの（一覧にあるか・設定・フォルダ・ホーム）', async () => {
@@ -709,6 +711,50 @@ describe('通知', () => {
       await boot();
       expect(optionsOf('SessionsControl').scheduled()).toBe(the('ScheduledMessages'));
     });
+
+    it('利用枠で止まったターンは、作業の完了ではなく、いつ再開するか（再開しないなら、枠がいつ戻るか）を知らせる。報告より先', async () => {
+      await boot();
+      const resumeAt = Date.now() + 61 * 60_000;
+      const resetsAt = Date.now() + 60 * 60_000;
+      const notices = new Map([
+        ['s1', { resumeAt, resetsAt }],
+        ['s2', { resumeAt: null, resetsAt }],
+        ['s3', { resumeAt: null, resetsAt: null }],
+      ]);
+      the('UsageLimitResume').noticeOf.mockImplementation((id: string) => notices.get(id) ?? null);
+      report('s1', '止まる前の報告');
+      callbacks().onTurnCompleted(session, 'work');
+      callbacks().onTurnCompleted({ id: 's2', title: 'ほか' }, 'compact');
+      callbacks().onTurnCompleted({ id: 's3', title: 'ほか' }, 'work');
+      callbacks().onTurnCompleted({ id: 's4', title: 'ほか' }, 'work');
+      expect(bodies()).toEqual([
+        `利用枠で止まりました。${formatScheduleTime(resumeAt)} に再開します`,
+        `利用枠で止まりました。${formatScheduleTime(resetsAt)} に戻ります`,
+        '利用枠で止まりました',
+        '作業が完了しました',
+      ]);
+      // 止まったときの報告は、使って捨てる
+      callbacks().onTurnCompleted({ id: 's1', title: 'メニューを直す' }, 'work');
+      expect(bodies()).toHaveLength(5);
+    });
+  });
+
+  it('利用枠の再開: ターンの終わり（onTurnLimit）を渡し、設定・ターミナルモード・親・予約を読ませる', async () => {
+    await boot({ settings: { usageLimitResume: false } });
+    const stop = { resetsAt: 1_800_000_000_000, window: 'five_hour' };
+    callbacks().onTurnLimit?.('s1', stop);
+    callbacks().onTurnLimit?.('s2', null);
+    expect(the('UsageLimitResume').turnEnded.mock.calls).toEqual([
+      ['s1', stop],
+      ['s2', null],
+    ]);
+    const options = optionsOf('UsageLimitResume');
+    expect(options.scheduled()).toBe(the('ScheduledMessages'));
+    expect(options.enabled()).toBe(false);
+    manager().summary.mockImplementation((id: string) => (id === 'tui' ? { id, terminal: true } : { id }));
+    expect([options.terminal('tui'), options.terminal('chat')]).toEqual([true, false]);
+    manager().parentOf.mockImplementation((id: string) => (id === 'child' ? 'parent' : null));
+    expect([options.parentOf('child'), options.parentOf('parent')]).toEqual(['parent', null]);
   });
 
   it('予約を送れなかったら、予約の中身を知らせる', async () => {
@@ -1131,7 +1177,7 @@ describe('メニュー', () => {
   };
 
   it('アプリのメニューに、設定の切り替えと、許す先・新規セッション・止めて終了を並べる', async () => {
-    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, checklistControl: true, walkthroughControl: false, terminalControl: true } });
+    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, checklistControl: true, walkthroughControl: false, terminalControl: true, usageLimitResume: false } });
     const [appMenu, fileMenu, ...rest] = state.menu!;
     expect(appMenu.label).toBe('tanacode');
     expect(appMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual([
@@ -1144,6 +1190,7 @@ describe('メニュー', () => {
       'Claude にチェックリストを扱わせる',
       'Claude にウォークスルーさせる',
       'Claude にターミナルを使わせる',
+      '利用枠で止まったら、戻ったときに自動で再開する',
       '自動で最適化圧縮する大きさ',
       'アプリ内ブラウザで Claude に許す先…',
       'separator',
@@ -1157,7 +1204,7 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, true, false, true]);
+    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, true, false, true, false]);
     expect(fileMenu.label).toBe('ファイル');
     expect(fileMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual(['新規セッション', 'separator', 'close', 'separator', 'Claude Code も止めて終了']);
     expect(menuItem('新規セッション').accelerator).toBe('CmdOrCtrl+N');
@@ -1291,12 +1338,21 @@ describe('メニュー', () => {
     ['Claude にチェックリストを扱わせる', 'checklistControl'],
     ['Claude にウォークスルーさせる', 'walkthroughControl'],
     ['Claude にターミナルを使わせる', 'terminalControl'],
+    ['利用枠で止まったら、戻ったときに自動で再開する', 'usageLimitResume'],
   ])('「%s」: 設定（%s）に保存する', async (label, key) => {
     await boot();
     toggle(label);
     expect(savedSettings()[key]).toBe(false);
     toggle(label);
     expect(savedSettings()[key]).toBe(true);
+  });
+
+  it('「利用枠で止まったら、戻ったときに自動で再開する」をオフにしたら、待っている再開の予約を取り消す（オンにしたときは何もしない）', async () => {
+    await boot();
+    toggle('利用枠で止まったら、戻ったときに自動で再開する');
+    expect(the('UsageLimitResume').cancelAll).toHaveBeenCalledTimes(1);
+    toggle('利用枠で止まったら、戻ったときに自動で再開する');
+    expect(the('UsageLimitResume').cancelAll).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1307,6 +1363,7 @@ describe('メニュー', () => {
     'Claude にチェックリストを扱わせる',
     'Claude にウォークスルーさせる',
     'Claude にターミナルを使わせる',
+    '利用枠で止まったら、戻ったときに自動で再開する',
   ])('「%s」: 保存できなかったら、チェックを元に戻し、ほかは何もしない', async (label) => {
     await boot();
     // 設定は、一時ファイルに書いてから置き換える。一時ファイルの場所にフォルダがあると、書けない

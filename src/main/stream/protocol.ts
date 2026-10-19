@@ -75,6 +75,9 @@ export type ResultMessage = {
   // このターンが取り込んだ発言の uuid（アプリが付けたもの）
   user_message_uuids?: string[];
   errors?: string[];
+  // API エラーで終わったときの種類と状態コード（利用枠に当たったときは usage_limit_reached と 429。subtype は success のまま。2.1.302 で実測）
+  api_error?: string;
+  api_error_status?: number;
   uuid: string;
   session_id: string;
 };
