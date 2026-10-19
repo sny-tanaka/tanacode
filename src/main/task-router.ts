@@ -29,7 +29,11 @@ export class TaskRouter {
   // isHistory: 前の起動の行（過去のもの）
   track(entry: TranscriptEntry, isHistory: boolean): void {
     const { workflows, subagents, bashTasks } = this.targets;
-    const content = Array.isArray(entry.message?.content) ? entry.message.content : [];
+    // ツールの呼び出しと結果は、会話の行（応答と発言）からだけ読む。Claude Code は 2.1.301 から、API に送った要求の控え（api-request-blob）にも、
+    // 前の tool_use と tool_result を toolUseResult なしでもう一度書く。控えから読むと、裏で起動したサブエージェントの結果を
+    // 起動の知らせ（async_launched）でないものと読んで、すぐ完了にしてしまう
+    const conversation = entry.type === 'user' || entry.type === 'assistant';
+    const content = conversation && Array.isArray(entry.message?.content) ? entry.message.content : [];
     for (const block of content) {
       if (block.type === 'tool_use' && block.name === 'Workflow' && block.id && typeof block.input?.script === 'string') {
         this.workflowScripts.set(block.id, block.input.script);

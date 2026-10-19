@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
 import type { BashTaskTracker } from '../src/main/bash-task-tracker';
-import type { SubagentTracker } from '../src/main/subagent-tracker';
+import { SubagentTracker } from '../src/main/subagent-tracker';
 import { TaskRouter, taskNotificationOf } from '../src/main/task-router';
 import type { WorkflowTracker } from '../src/main/workflow-tracker';
 
@@ -22,6 +22,11 @@ const result = (toolUseId: string, content: unknown, toolUseResult?: unknown, is
   message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content, ...(isError ? { is_error: true } : {}) }] as never },
   toolUseResult,
 });
+// API に送った要求の控え（2.1.302 の api-request-blob）。前の応答と結果が、API に送った形で入る（並べて呼んだツールの呼び出しと
+// 結果は、それぞれ 1 通にまとまる）。toolUseResult は付かない
+const blob = (role: 'user' | 'assistant', blocks: unknown[]): TranscriptEntry =>
+  ({ type: 'api-request-blob', hash: '9be495a9220ff0a0', sessionId: 's1', message: { role, content: blocks } }) as TranscriptEntry;
+const resultBlock = (toolUseId: string, content: unknown) => ({ type: 'tool_result', tool_use_id: toolUseId, content });
 
 // 完了通知の本文（2.1.292 の形）
 const AGENT_NOTICE = [
@@ -172,6 +177,64 @@ describe('TaskRouter', () => {
     expect(bashTasks.notified).toHaveBeenLastCalledWith('toolu_agent', 'completed', null);
     router.track({ type: 'user', message: { content: '<task-notification>\n<summary>なにか</summary>\n</task-notification>' } }, false);
     expect(workflows.notified).toHaveBeenCalledTimes(1);
+  });
+
+  it('裏のサブエージェントは、起動の知らせのあとに同じ結果が API の要求の控えに書かれても、完了通知まで実行中のまま', () => {
+    // 状態の移り変わりを見るため、サブエージェントの追跡だけは本物を使う
+    const subagents = new SubagentTracker('/work/app', () => {});
+    const { workflows, bashTasks } = fakes();
+    const router = new TaskRouter({
+      workflows: workflows as unknown as WorkflowTracker,
+      subagents,
+      bashTasks: bashTasks as unknown as BashTaskTracker,
+      sessionDir: () => SESSION_DIR,
+    });
+    try {
+      // 2.1.302 の会話ログの並び（2 つのツールを並べて呼んだ）: モデルが次の呼び出しを書いている間に前の呼び出しが動き、その結果の行が
+      // 次の呼び出しの行より先に書かれる。行が API に送る 1 通ずつと合わないので、次の要求を送るときに、まとめて送った応答と結果を控えに書く
+      const list = toolUse('toolu_list', 'mcp__tanacode-sessions__list_sessions', {});
+      const agent = toolUse('toolu_agent', 'Agent', { description: '調べもの', prompt: '…', subagent_type: 'general-purpose', run_in_background: true });
+      const launchedText = [{ type: 'text', text: 'Async agent launched successfully.' }];
+      router.track(assistant([list]), false);
+      router.track(result('toolu_list', '[]'), false);
+      router.track(assistant([agent]), false);
+      router.track(result('toolu_agent', launchedText, { isAsync: true, status: 'async_launched', agentId: 'acc4e89e2bbe86674', description: '調べもの' }), false);
+      router.track(blob('assistant', [list, agent]), false);
+      router.track(blob('user', [resultBlock('toolu_list', '[]'), resultBlock('toolu_agent', launchedText)]), false);
+      expect(subagents.all()).toMatchObject([{ toolUseId: 'toolu_agent', agentId: 'acc4e89e2bbe86674', background: true, state: 'running', result: null }]);
+
+      router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: AGENT_NOTICE } }, false);
+      expect(subagents.all()).toMatchObject([{ toolUseId: 'toolu_agent', state: 'done', result: 'サブエージェントの結果', toolCalls: 2, tokens: 120, durationMs: 1746 }]);
+    } finally {
+      subagents.dispose();
+    }
+  });
+
+  it('API の要求の控えにだけあるツールの呼び出しと結果は、どの追跡にも渡さない', () => {
+    const { router, workflows, subagents, bashTasks } = fakes();
+    router.track(
+      blob('assistant', [
+        toolUse('toolu_agent', 'Agent', { description: '調べもの', prompt: '…', run_in_background: true }),
+        toolUse('toolu_bg', 'Bash', { command: 'sleep 9', run_in_background: true }),
+        toolUse('toolu_send', 'SendMessage', { to: 'b2', message: '続きをお願いします' }),
+        toolUse('toolu_wf', 'Workflow', { script: 'return 1' }),
+      ]),
+      false,
+    );
+    router.track(
+      blob('user', [
+        resultBlock('toolu_agent', 'Async agent launched successfully.'),
+        resultBlock('toolu_bg', 'Command running in background with ID: b1. Output is being written to: /tmp/b1.output'),
+        resultBlock('toolu_send', '{"success":true,"resumedAgentId":"b2"}'),
+        resultBlock('toolu_wf', 'Workflow launched in background. Task ID: wb7qvqa8p'),
+      ]),
+      false,
+    );
+    expect(subagents.start).not.toHaveBeenCalled();
+    expect(subagents.finish).not.toHaveBeenCalled();
+    expect(subagents.resume).not.toHaveBeenCalled();
+    expect(bashTasks.start).not.toHaveBeenCalled();
+    expect(workflows.add).not.toHaveBeenCalled();
   });
 });
 

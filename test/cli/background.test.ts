@@ -11,7 +11,7 @@ import { ClaudeRun, claudeVersion, sleep } from './claude-run';
 import { MockApi } from './mock-api';
 
 // 本物の claude をモックの API で動かし、バックグラウンドで動くものを、アプリと同じトラッカーで追えるかを確かめる。
-// 台本: サブエージェント（Agent）→ バックグラウンドの Bash → ワークフロー（Workflow）→ 文章で返事。
+// 台本: サブエージェント（Agent）とバックグラウンドの Bash（並べて呼ぶ）→ ワークフロー（Workflow）→ 文章で返事。
 // サブエージェントとワークフローのエージェントも、それぞれの台本でモックの API に答えてもらう。
 // ワークフローのエージェントは応答を大きく遅らせ、ほかのものがすべて済んでから（待機中に）完了通知が届くようにする
 
@@ -46,8 +46,13 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
       {
         match: PROMPT,
         steps: [
-          [{ type: 'tool_use', id: 'toolu_agent', name: 'Agent', input: { description: '調べもの', prompt: AGENT_PROMPT, subagent_type: 'general-purpose' } }],
-          [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 1 && echo bg-done', description: '裏で待つ', run_in_background: true } }],
+          // サブエージェントとバックグラウンドの Bash は、1 つの応答で並べて呼ぶ。Bash の呼び出しは、サブエージェントの起動の結果が
+          // 会話ログに出てから送る（下の holdTool）。会話ログでは呼び出しと結果が交互の行になり、API に送る 1 通ずつと合わないので、
+          // Claude Code はその 2 通を API の要求の控え（api-request-blob）に書く。控えの中の結果で、終わったことにしないかを見る
+          [
+            { type: 'tool_use', id: 'toolu_agent', name: 'Agent', input: { description: '調べもの', prompt: AGENT_PROMPT, subagent_type: 'general-purpose' } },
+            { type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 1 && echo bg-done', description: '裏で待つ', run_in_background: true } },
+          ],
           [{ type: 'tool_use', id: 'toolu_wf', name: 'Workflow', input: { script: SCRIPT } }],
           [{ type: 'text', text: '起動しました' }],
         ],
@@ -63,6 +68,10 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
       { match: WORKFLOW_AGENT_PROMPT, delayMs: WORKFLOW_AGENT_DELAY_MS, steps: [[{ type: 'text', text: 'ワークフローの結果' }]] },
     ];
     run = new ClaudeRun(await api.start());
+    // 本物のモデルが、並べて呼ぶ次の呼び出しを書いている間に、先の呼び出しが動いて結果ができるのと同じ並びにする。結果ができたことは
+    // stream-json の行で見る（会話ログには、応答を流し終えてからまとめて書かれる）
+    const streamed = () => run.streamLines().flatMap((line) => parsed(line));
+    api.holdTool = (id) => (id === 'toolu_agent' ? run.waitUntil('サブエージェントの起動の結果', () => hasResult(streamed(), 'user', 'toolu_agent')) : Promise.resolve());
     await run.open();
   });
 
@@ -90,6 +99,8 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
 
   it('サブエージェントの進み具合と結果を読める', async () => {
     const agent = await run.waitUntil('サブエージェントの完了', () => run.subagentRuns.find((r) => r.toolUseId === 'toolu_agent' && r.state !== 'running'));
+    // 起動の知らせの結果は、API の要求の控えにも（toolUseResult なしで）もう一度書かれている。それで終わったことにせず、完了通知で終わる
+    expect(hasResult(run.entries, 'api-request-blob', 'toolu_agent')).toBe(true);
     expect(agent).toMatchObject({ state: 'done', result: 'サブエージェントの結果' });
     expect(agent.agentId).toBeTruthy();
     expect(agent.toolCalls).toBe(1);
@@ -183,6 +194,23 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
     expect(silent.workflows.find((w) => w.toolUseId === 'toolu_wf')?.status).toBe('running');
   });
 });
+
+// 行のうち、その種類の行で、そのツールの結果を含むものがあるか
+function hasResult(entries: TranscriptEntry[], type: string, toolUseId: string): boolean {
+  return entries.some(
+    (entry) =>
+      entry.type === type && Array.isArray(entry.message?.content) && entry.message.content.some((b) => b.type === 'tool_result' && b.tool_use_id === toolUseId),
+  );
+}
+
+// JSON の行。読めなければ無し
+function parsed(line: string): TranscriptEntry[] {
+  try {
+    return [JSON.parse(line) as TranscriptEntry];
+  } catch {
+    return [];
+  }
+}
 
 // 会話ログの行から、トラッカーが読むファイルの場所を消す（Bash の出力ファイル）・空のフォルダに向ける（ワークフロー）
 function withoutFiles(entry: TranscriptEntry, empty: string): TranscriptEntry {

@@ -409,7 +409,7 @@ const IGNORED_TYPES = new Set([
   'attribution-snapshot',
   'content-replacement',
   'fork-context-ref',
-  // API の呼び出しの控え
+  // API の呼び出しの控え（前の応答と発言が、もう一度入る。裏のタスクの追跡（main の task-router.ts）も読まない）
   'api-request',
   'api-request-blob',
   'api-request-shape',
