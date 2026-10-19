@@ -832,10 +832,11 @@ export function App() {
     [editorCwd, updateEditor],
   );
   // ディスク側でも変わっていて書かなかったら（衝突）、main が返した今の内容をタブに入れる（エディタが衝突の知らせを出す）。
-  // 変更の知らせが届く前や、監視しないフォルダのファイルでも、知らせを出せるように
+  // 変更の知らせが届く前や、監視しないフォルダのファイルでも、知らせを出せるように。エディタのフォルダが無ければ書けないので、
+  // 書けなかったことにする（保存していないまま残す）
   const saveFile = useCallback(
     async (path: string, text: string, expected: string | null) => {
-      if (!editorId || !editorCwd) return true;
+      if (!editorId || !editorCwd) return false;
       const result = await window.tanacode.workspace.writeFile(editorId, path, text, expected);
       updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk) }));
       return result.ok;
