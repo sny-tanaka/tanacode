@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
+import { knownOf } from '@shared/transcript-line';
 import { BashTaskTracker } from '../../src/main/bash-task-tracker';
 import { SubagentTracker } from '../../src/main/subagent-tracker';
 import { TaskRouter, taskNotificationOf } from '../../src/main/task-router';
@@ -171,9 +172,11 @@ describe(`Claude Code ${version} のバックグラウンドの作業`, () => {
       const subagents = new SubagentTracker(run.cwd, () => {});
       const bashTasks = new BashTaskTracker(() => {});
       const router = new TaskRouter({ workflows, subagents, bashTasks, sessionDir: () => empty });
+      // アプリ（session-manager の handleEntry）と同じく、知っている行だけを渡す
       for (const { entry } of run.seen) {
-        if (skipNotifications && taskNotificationOf(entry)) continue;
-        router.track(withoutFiles(entry, empty), false);
+        const known = knownOf(withoutFiles(entry, empty));
+        if (!known || (skipNotifications && taskNotificationOf(known))) continue;
+        router.track(known, false);
       }
       // ワークフローの完了は、ファイルを読み直してから決まる（無いので通知の状態になる）
       for (let i = 0; i < 40 && workflows.all().some((w) => w.status === 'running') && !skipNotifications; i++) await sleep(50);

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
+import type { ConversationEntry } from '@shared/transcript-line';
 import type { SessionKnowledge } from '@shared/knowledge';
 import { KnowledgeTracker } from '../src/main/knowledge-tracker';
 
@@ -8,16 +9,16 @@ import { KnowledgeTracker } from '../src/main/knowledge-tracker';
 // edited_text_file と compact_file_reference の attachment は、その会話ログに出なかったので、src の読み取りに合わせて組み立てた
 
 const CWD = '/work/app';
-const file = (path: string): TranscriptEntry => ({
+const file = (path: string): ConversationEntry => ({
   type: 'attachment',
   attachment: { type: 'file', filename: path, content: { type: 'text', file: { filePath: path, content: 'メモ\n' } }, displayPath: path.slice(CWD.length + 1) },
 });
-const nested = (path: string): TranscriptEntry => ({
+const nested = (path: string): ConversationEntry => ({
   type: 'attachment',
   attachment: { type: 'nested_memory', path, content: { path, type: 'Project', content: '# 決まり\n' }, displayPath: path.slice(CWD.length + 1) },
 });
-const reply = (blocks: unknown[], usage?: Record<string, number>, extra: Partial<TranscriptEntry> = {}): TranscriptEntry =>
-  ({ type: 'assistant', message: { content: blocks, ...(usage ? { usage } : {}) }, ...extra }) as TranscriptEntry;
+const reply = (blocks: unknown[], usage?: Record<string, number>, extra: Partial<TranscriptEntry> = {}): ConversationEntry =>
+  ({ type: 'assistant', message: { content: blocks, ...(usage ? { usage } : {}) }, ...extra }) as ConversationEntry;
 const toolUse = (name: string, input: Record<string, unknown>) => ({ type: 'tool_use', id: `toolu_${name}`, name, input });
 
 let changes: SessionKnowledge[];

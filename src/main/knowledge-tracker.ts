@@ -1,6 +1,6 @@
 import { isAbsolute, relative, sep } from 'node:path';
-import type { TranscriptEntry } from '@shared/chat';
 import type { FileKnowledge, SessionKnowledge } from '@shared/knowledge';
+import type { ConversationEntry } from '@shared/transcript-line';
 
 export const READ_TOOLS = new Set(['Read']);
 export const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
@@ -35,7 +35,8 @@ export class KnowledgeTracker {
     this.emit();
   }
 
-  handle(entry: TranscriptEntry): void {
+  // 会話の行（@shared/transcript-line）だけを受け取る
+  handle(entry: ConversationEntry): void {
     if (entry.isSidechain) return;
     let changed = false;
     const mark = (path: unknown, knowledge: FileKnowledge) => {

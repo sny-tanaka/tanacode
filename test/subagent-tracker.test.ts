@@ -91,6 +91,9 @@ describe('SubagentTracker', () => {
         line({ type: 'user', isSidechain: true, message: { role: 'user', content: [{ tool_use_id: 't1', type: 'tool_result', content: 'sub-agent' }] } }) +
         '書きかけでない、壊れた行\n' +
         line({ type: 'assistant', message: { content: 'ブロックでない応答' } }) +
+        // API の要求の控え（2.1.301 から）にも同じ呼び出しが入るが、会話の行だけを数える。オブジェクトでない行も飛ばす
+        line({ type: 'api-request-blob', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo sub-agent' } }] } }) +
+        'null\n' +
         line({ type: 'assistant', message: { content: [{ type: 'text', text: '途中経過' }, { type: 'tool_use', id: 'x', input: {} }] } }) +
         toolUseLine('t2', 'Read', { file_path: `${CWD}/note.txt` }) +
         toolUseLine('t3', 'Grep', { pattern: 'TODO' }) +

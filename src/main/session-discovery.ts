@@ -1,6 +1,7 @@
 import { open, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { isTranscriptEntry, transcriptTitle, type TranscriptEntry } from '@shared/chat';
+import { knownOf } from '@shared/transcript-line';
 import type { DiscoveredSession } from '@shared/ipc';
 import { claudeConfigDir } from './claude-config';
 
@@ -43,7 +44,9 @@ async function summarize(file: string, mtime: number): Promise<DiscoveredSession
     for (const entry of [...head, ...tail]) {
       const e = entry as TranscriptEntry & { cwd?: string };
       cwd ??= typeof e.cwd === 'string' ? e.cwd : null;
-      const title = transcriptTitle(e);
+      // 名前は、知っている行（会話の行と、ほかで使う付帯の行。@shared/transcript-line）から読む
+      const known = knownOf(e);
+      const title = known && transcriptTitle(known);
       // 最初の発言は最初のもの、custom / ai タイトルは最新のものを使う
       if (title && (!best || title.priority > best.priority || (title.priority === best.priority && title.priority > 1))) best = title;
     }

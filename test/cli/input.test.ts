@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toChatEvents, type ChatEvent } from '@shared/chat';
+import { conversationOf } from '@shared/transcript-line';
 import type { Card, Checklist, ListKind } from '@shared/checklist';
 import { RESUME_MAX_CHARS, RESUME_TAG, resumeText } from '@shared/optimized-compact';
 import { parentMessageText } from '@shared/session-tools';
@@ -302,13 +303,14 @@ describe(`Claude Code ${version} の読み取り`, () => {
 
   it('@ で添付・Read で読んだファイル、サブフォルダの CLAUDE.md、コンテキストの使用量を KnowledgeTracker で読める', () => {
     const knowledge = new KnowledgeTracker(run.cwd, () => {});
-    for (const entry of run.entries) knowledge.handle(entry);
+    // アプリ（session-manager の handleEntry）と同じく、会話の行だけを渡す
+    for (const entry of run.entries.flatMap((e) => conversationOf(e) ?? [])) knowledge.handle(entry);
     checkKnowledge(knowledge.current());
   });
 
   it('読んだファイルと発言のやりとりを、ContextTracker でコンテキストの中身として読める', async () => {
     const context = new ContextTracker(run.cwd);
-    for (const entry of run.entries) context.handle(entry);
+    for (const entry of run.entries.flatMap((e) => conversationOf(e) ?? [])) context.handle(entry);
     checkContext(context.current(), prompt);
     // アプリと同じく、SessionManager が集めたものも同じ
     checkContext(await run.manager.context(run.sessionId!), prompt);

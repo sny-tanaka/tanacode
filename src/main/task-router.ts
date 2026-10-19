@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from '@shared/chat';
+import type { KnownEntry } from '@shared/transcript-line';
 import type { BashTaskTracker } from './bash-task-tracker';
 import type { SubagentTracker } from './subagent-tracker';
 import { workflowLaunchOf, type WorkflowTracker } from './workflow-tracker';
@@ -26,12 +27,13 @@ export class TaskRouter {
 
   constructor(private readonly targets: Targets) {}
 
+  // entry: 知っている行（@shared/transcript-line の会話の行と、ほかで使う付帯の行）だけを受け取る。Claude Code は 2.1.301 から、
+  // API に送った要求の控え（api-request-blob。意図して捨てる行）にも、前の tool_use と tool_result を toolUseResult なしでもう一度書く。
+  // 控えから読むと、裏で起動したサブエージェントの結果を起動の知らせ（async_launched）でないものと読んで、すぐ完了にしてしまう。
   // isHistory: 前の起動の行（過去のもの）
-  track(entry: TranscriptEntry, isHistory: boolean): void {
+  track(entry: KnownEntry, isHistory: boolean): void {
     const { workflows, subagents, bashTasks } = this.targets;
-    // ツールの呼び出しと結果は、会話の行（応答と発言）からだけ読む。Claude Code は 2.1.301 から、API に送った要求の控え（api-request-blob）にも、
-    // 前の tool_use と tool_result を toolUseResult なしでもう一度書く。控えから読むと、裏で起動したサブエージェントの結果を
-    // 起動の知らせ（async_launched）でないものと読んで、すぐ完了にしてしまう
+    // ツールの呼び出しと結果は、応答と発言の行から読む
     const conversation = entry.type === 'user' || entry.type === 'assistant';
     const content = conversation && Array.isArray(entry.message?.content) ? entry.message.content : [];
     for (const block of content) {

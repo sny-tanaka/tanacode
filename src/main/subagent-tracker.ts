@@ -1,9 +1,10 @@
 import { statSync } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { toolTarget } from '@shared/chat';
+import { isTranscriptEntry, toolTarget } from '@shared/chat';
 import { t } from '@shared/i18n';
 import type { SubagentRun } from '@shared/subagent';
+import { conversationOf } from '@shared/transcript-line';
 import type { TaskUsage } from './task-router';
 
 const POLL_MS = 1000;
@@ -226,14 +227,16 @@ export class SubagentTracker {
     let { toolCalls, recent } = t.run;
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
-      let e: { type?: string; message?: { content?: unknown; model?: string } };
+      let value: unknown;
       try {
-        e = JSON.parse(line);
+        value = JSON.parse(line);
       } catch {
         continue;
       }
-      if (e.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
-      for (const block of e.message.content as { type?: string; name?: string; input?: Record<string, unknown> }[]) {
+      // ツールの呼び出しは、会話の行（@shared/transcript-line）の応答から数える（API の要求の控えにも、同じ呼び出しがもう一度入る）
+      const e = isTranscriptEntry(value) ? conversationOf(value) : null;
+      if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
+      for (const block of e.message.content) {
         if (block.type !== 'tool_use' || !block.name) continue;
         toolCalls++;
         recent = [...recent, { name: block.name, target: toolTarget(block.input ?? {}, this.cwd) }].slice(-RECENT_TOOLS);
