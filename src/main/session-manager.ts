@@ -293,8 +293,13 @@ type Runtime = {
   caughtUp: boolean;
   // Remote Control が実際につながっているか（system/bridge_state・remote_control の返事・会話ログの bridge-session で分かる）
   remoteConnected: boolean;
-  // Remote Control を切り替えている途中（remote_control の返事を待っている）
-  remoteSwitching: boolean;
+  // Remote Control を切り替えている途中なら、その切り替え（remote_control の返事を待っている）。無ければ null
+  remoteSwitch: Promise<string | null> | null;
+  // setRemoteControl を呼んだ回数。切り替えの途中に待っている間に、あとから変えられたかを見分ける
+  remoteWish: number;
+  // この起動の中で、Remote Control のつながりを確かめた（remote_control の返事・bridge_state・今の claude が書いた行）。
+  // 確かめたあとは、読み直した会話ログのつながり（lastBridgeUrl）で上書きしない
+  remoteLive: boolean;
   // チャットとターミナルモードを切り替えて起動した、元の種類。切り替えた先が起動を終える前に終わったら、元の種類で開き直す。
   // 起動を終えたら（チャットは initialize のあと、TUI は statusLine か会話ログの新しい行が届いたら）null
   switchedFrom: LaunchKind | null;
@@ -1142,7 +1147,9 @@ export class SessionManager {
   }
 
   // このセッションの Remote Control を切り替える。動いていれば、制御の要求 remote_control でその場でつなぐ・切る。
-  // 止まっている・起動の途中なら、指定だけ変える（起動が終わったら合わせる。reconcileRemote）。切り替えられなかったら指定を戻して、理由を返す
+  // 止まっている・起動の途中なら、指定だけ変える（起動が終わったら合わせる。reconcileRemote）。切り替えられなかったら指定を戻して、理由を返す。
+  // 切り替えの途中（起動が終わったときのつなぎ・前に押した分）なら、終わるのを待ってから合わせる。待っている間にまた変えられたら、
+  // あとの呼び出しに任せる（途中で何度変えても、最後の指定に落ち着く。先に「つながっていない」と見て返すと、切ったつもりでつながったまま残る）
   async setRemoteControl(id: string, on: boolean): Promise<string | null> {
     if (!this.remoteControlAvailable) return t('main.remote.unavailable');
     const record = this.store.get(id);
@@ -1150,14 +1157,16 @@ export class SessionManager {
     this.store.update(id, { remoteControl: on });
     this.emitSessions();
     const rt = this.runtimes.get(id);
-    if (!rt?.process?.client || !rt.ready || rt.remoteConnected === on) return null;
-    if (rt.remoteSwitching) {
-      this.store.update(id, { remoteControl: !on });
-      this.emitSessions();
-      return t('main.remote.switching');
+    if (!rt) return null;
+    const wish = ++rt.remoteWish;
+    while (rt.remoteSwitch) {
+      await rt.remoteSwitch;
+      if (rt.remoteWish !== wish) return null;
     }
+    if (!rt.process?.client || !rt.ready || rt.remoteConnected === on) return null;
     const reason = await this.switchRemote(id, rt, record.cwd, on);
-    if (reason === null) return null;
+    // 待っている間にあとから変えられたら、指定は戻さない（あとの呼び出しが合わせる）
+    if (reason === null || rt.remoteWish !== wish) return reason;
     this.store.update(id, { remoteControl: !on });
     this.emitSessions();
     return reason;
@@ -1166,7 +1175,7 @@ export class SessionManager {
   // 指定と、実際につながっているかがずれていたら合わせる（起動が終わったとき）。失敗は知らせない（一覧の印で分かる）
   private reconcileRemote(id: string, rt: Runtime): void {
     const record = this.store.get(id);
-    if (!record || !rt.process?.client || !rt.ready || rt.remoteSwitching) return;
+    if (!record || !rt.process?.client || !rt.ready || rt.remoteSwitch) return;
     const want = this.wantsRemote(record);
     if (want === rt.remoteConnected) return;
     // Remote Control を使えない環境（API キー・Bedrock など。initialize の remote_control_available）では、つなぎに行かない
@@ -1174,31 +1183,39 @@ export class SessionManager {
     void this.switchRemote(id, rt, record.cwd, want);
   }
 
-  // Remote Control をつなぐ・切る。できたら null、できなければ理由
-  private async switchRemote(id: string, rt: Runtime, cwd: string, on: boolean): Promise<string | null> {
+  // Remote Control をつなぐ・切る。できたら null、できなければ理由。終わるまで rt.remoteSwitch に置く（setRemoteControl が待つ）
+  private switchRemote(id: string, rt: Runtime, cwd: string, on: boolean): Promise<string | null> {
+    // 起動し直したあとに、前の起動の切り替えが終わっても、今の起動の切り替えを消さない
+    const switching: Promise<string | null> = this.sendRemote(id, rt, cwd, on).finally(() => {
+      if (rt.remoteSwitch === switching) rt.remoteSwitch = null;
+    });
+    rt.remoteSwitch = switching;
+    return switching;
+  }
+
+  private async sendRemote(id: string, rt: Runtime, cwd: string, on: boolean): Promise<string | null> {
     const process = rt.process;
     const client = process?.client;
     if (!client) return t('main.send.notRunning');
-    rt.remoteSwitching = true;
     try {
       if (on) {
         const session = await enableRemoteControl(client, remoteName(cwd), rt.bridgeSessionId);
         if (rt.process !== process) return null;
         this.noteBridgeSession(id, rt, session.bridgeSessionId);
         rt.remoteConnected = true;
+        rt.remoteLive = true;
         if (session.sessionUrl) this.pushEvents(id, [{ type: 'remote-control', url: session.sessionUrl }]);
       } else {
         await disableRemoteControl(client);
         if (rt.process !== process) return null;
         rt.remoteConnected = false;
+        rt.remoteLive = true;
         this.pushEvents(id, [{ type: 'remote-control', url: null }]);
       }
       this.emitSessions();
       return null;
     } catch (error) {
       return t('main.remote.failed', { reason: error instanceof ControlError ? error.reason : String(error) });
-    } finally {
-      rt.remoteSwitching = false;
     }
   }
 
@@ -1226,7 +1243,7 @@ export class SessionManager {
   remoteConnectedOf(id: string): boolean | null {
     const rt = this.runtimes.get(id);
     if (!rt?.process) return false;
-    return rt.remoteSwitching ? null : rt.remoteConnected;
+    return rt.remoteSwitch ? null : rt.remoteConnected;
   }
 
   // このセッションで Remote Control を使うか（開発版では使わない）
@@ -1932,7 +1949,9 @@ export class SessionManager {
         sendChain: Promise.resolve(),
         caughtUp: true,
         remoteConnected: false,
-        remoteSwitching: false,
+        remoteSwitch: null,
+        remoteWish: 0,
+        remoteLive: false,
         bridgeSessionId: record.bridgeSessionId ?? null,
         freshConversation: false,
         contextSize: null,
@@ -2008,7 +2027,8 @@ export class SessionManager {
     this.stopStartWatch(id, runtime);
     // Remote Control のつながりは、会話ログ（bridge-session）と bridge_state で分かる
     runtime.remoteConnected = false;
-    runtime.remoteSwitching = false;
+    runtime.remoteSwitch = null;
+    runtime.remoteLive = false;
     runtime.taskIds.clear();
     // 読み直す会話ログが無ければ（新しい会話）、読み終わりの知らせは来ないので、はじめから読み終えたことにする
     runtime.historyLoaded = fileSize(transcriptPath(record.cwd, claudeSessionId, this.claudeDir)) === 0;
@@ -2364,10 +2384,14 @@ export class SessionManager {
     // 前のアプリの頃に始まったターンの途中なら、進み具合を始める（経過はここから数える）
     else if (!rt.progress && rt.process) this.startProgress(id, rt);
     // 引き継いだ claude は、最後の bridge-session 行のつながりのまま動いている
-    // （以前つないでいた会話を再開すると、フラグが無くてもつなぎ直すため）
+    // （以前つないでいた会話を再開すると、フラグが無くてもつなぎ直すため）。この起動の中でつながりを確かめたあとは、上書きしない。
+    // 読んだ行のつながりは一度だけ使う（/clear で乗り換えた先を読み終えたときに、前の会話ログの古いつながりに戻さない）
     if (adopted && rt.lastBridgeUrl !== undefined) {
-      rt.remoteConnected = rt.lastBridgeUrl !== null;
-      this.pushEvents(id, [{ type: 'remote-control', url: rt.lastBridgeUrl }]);
+      if (!rt.remoteLive) {
+        rt.remoteConnected = rt.lastBridgeUrl !== null;
+        this.pushEvents(id, [{ type: 'remote-control', url: rt.lastBridgeUrl }]);
+      }
+      rt.lastBridgeUrl = undefined;
     }
   }
 
@@ -2459,6 +2483,7 @@ export class SessionManager {
         // Remote Control のつながり（ready・connected はつながっている。failed などは切れた）
         const state = (message as BridgeStateMessage).state;
         const connected = state === 'ready' || state === 'connected';
+        rt.remoteLive = true;
         if (rt.remoteConnected === connected) return;
         rt.remoteConnected = connected;
         this.emitSessions();
@@ -3180,7 +3205,10 @@ export class SessionManager {
     if (rt && known?.type === 'bridge-session' && typeof known.bridgeSessionId === 'string') this.noteBridgeSession(id, rt, known.bridgeSessionId);
     if (rt && !past) {
       const remote = [...events].reverse().find((e) => e.type === 'remote-control');
-      if (remote) rt.remoteConnected = remote.url !== null;
+      if (remote) {
+        rt.remoteConnected = remote.url !== null;
+        rt.remoteLive = true;
+      }
       if (remote && rt.terminal) rt.tuiRemoteSeen = true;
       const starter = events.find((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start');
       if (starter) {

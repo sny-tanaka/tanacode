@@ -370,6 +370,30 @@ describe('adopt', () => {
     ]);
   });
 
+  it('この起動の中で切ったあとに /clear しても、前の会話ログのつながりに戻さない（入れ直せば、つなぐ要求を送る）', async () => {
+    const id = await previous(line.user('はじめ'), bridgeSession('cse_abc'));
+    app.host.hosted = [hosted(id, { startedAt: Date.now() - 60_000 })];
+    await app.manager.adopt();
+    const pipe = attached(id)!;
+    pipe.replayed();
+    await app.waitFor('つながり', () => app.manager.remoteConnectedOf(id) === true);
+    expect(await app.manager.setRemoteControl(id, false)).toBeNull();
+    expect(pipe.requests('remote_control').map((r) => r.request)).toEqual([{ subtype: 'remote_control', enabled: false }]);
+    expect(app.manager.remoteConnectedOf(id)).toBe(false);
+    // /clear で新しい会話になった。乗り換えた先に前からあった行を読み終えても、切ったまま
+    const next = '99999999-0000-4000-8000-000000000011';
+    writeFileSync(join(dirname(app.transcript(id)), `${next}.jsonl`), JSON.stringify({ ...line.user('/clear のあと'), sessionId: next, cwd: app.cwd }) + '\n');
+    pipe.emit(stream.init(next));
+    await app.waitFor('乗り換え', () => app.claudeId(id) === next);
+    const types = () => app.events(id).map((e) => e.type);
+    await app.waitFor('乗り換えた先の読み終わり', () => types().lastIndexOf('turn-end') > types().lastIndexOf('reset'));
+    expect(app.manager.remoteConnectedOf(id)).toBe(false);
+    expect(app.events(id).filter((e) => e.type === 'remote-control').at(-1)).toEqual({ type: 'remote-control', url: null });
+    // 入れ直したら、つなぐ要求を送る（つながっていると思い込んで、何も送らないままにしない）
+    expect(await app.manager.setRemoteControl(id, true)).toBeNull();
+    expect(pipe.requests('remote_control').at(-1)?.request).toMatchObject({ subtype: 'remote_control', enabled: true });
+  });
+
   it('切れていた（空の bridge-session）なら、つながっていないと出す', async () => {
     const id = await previous(line.user('はじめ'), bridgeSession(''));
     app.host.hosted = [hosted(id)];

@@ -206,11 +206,6 @@ const CONFIGURE_REFUSAL: Partial<Record<SessionState, string>> = {
     'is waiting for the user to act in the in-app browser, so nothing was changed. Tell the user, and call configure_session again once the child is idle (or interrupt it with stop_session first).',
 };
 
-// setRemoteControl が返す理由（画面の言語）を置き換える、Claude に返す英語の文
-const REMOTE_REFUSAL: [MessageKey, string][] = [
-  ['main.remote.switching', 'it is in the middle of switching Remote Control. Try again in a moment.'],
-];
-
 class ToolError extends Error {}
 
 export class SessionsControl {
@@ -1178,8 +1173,6 @@ function withBrowserState(host: SessionsHost): SessionsHost {
 
 // Remote Control を切り替えられなかった理由（setRemoteControl が返す、画面の言語の文）を、英語の文にする
 function remoteRefusal(reason: string): string {
-  const known = REMOTE_REFUSAL.find(([key]) => t(key) === reason)?.[1];
-  if (known) return known;
   // Claude Code が断った理由（英語）は、そのまま渡す
   const refused = placeholderIn('main.remote.failed', 'reason', reason);
   if (refused !== null) return `its Claude Code refused it: ${refused}`;
