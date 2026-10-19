@@ -82,14 +82,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           overwrite: true
-      # 落ちたときの手がかりに、そこまでの会話ログなどの控えを残す
+      # 落ちたときの手がかりに、そこまでの会話ログなどの控えを残す。通ったときは、動作確認済のバージョンの控え（行の目録の inventory.json など）を
+      # コミットするのにも使える（全部の台本が通ったときだけ、目録が書かれる。test/cli/global-setup.ts）
       - name: 控えを残す
-        if: failure() && steps.claude.outputs.version
+        if: always() && steps.claude.outputs.version
         uses: actions/upload-artifact@v7
         with:
           name: claude-code-${{ steps.claude.outputs.version }}
           path: test/fixtures/claude-code/
           if-no-files-found: ignore
+          retention-days: 7
           overwrite: true
 
   # E2E のカバレッジを src の行に戻すため、ソースマップ付きで作る（.map は .app には入らない。package.json の build.files）。

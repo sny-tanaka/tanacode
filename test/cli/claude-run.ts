@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { inject } from 'vitest';
 import { ASK_FILE_ENV, isTranscriptEntry, type ChatEvent, type TranscriptEntry } from '@shared/chat';
 import type { ChatBatch, SessionSummary } from '@shared/ipc';
 import type { SessionKnowledge } from '@shared/knowledge';
@@ -24,7 +25,8 @@ import { SessionStore } from '../../src/main/session-store';
 import { STATUS_FILE_ENV, StatusLineWatcher } from '../../src/main/statusline';
 import { TERMINAL_COMMAND_ENV, TERMINAL_SCRIPT_ENV, TERMINAL_SESSION_ENV, TERMINAL_SOCKET_ENV } from '../../src/main/terminal-bridge';
 import { WorkspaceWatchers } from '../../src/main/workspace-watcher';
-import { FIXTURE_ROOT, fixtureLines } from '../scenario';
+import { FIXTURE_ROOT, fixtureLines, unreadableStreamLines } from '../scenario';
+import { InventoryBuilder } from '../transcript-inventory';
 import { FakePtyHost } from './fake-pty-host';
 
 // API キーでログインしたことにする（モックの API にしか送らない）
@@ -74,6 +76,9 @@ type Options = {
   git?: boolean;
   // フォルダの信頼の確認を済ませておく（claude --worktree は、信頼していないフォルダでは始まらない）
   trusted?: boolean;
+  // 台本が、わざと出させる知らない種類（会話ログの未知のイベントの名前。モックの API が、アプリの読まないブロックを混ぜるなど）。
+  // ほかの知らない種類が出たら、終わるとき（stop）に失敗にする
+  unknown?: string[];
 };
 
 // 本物の claude を、アプリと同じ SessionManager で動かして読む。src/main/index.ts と同じ組み立て方で、
@@ -528,10 +533,12 @@ export class ClaudeRun {
   }
 
   // claude を止めて、使い捨てのフォルダを消す。claude は終わるときにも設定の控えなどを書くので、
-  // 終わるのを待ってからもう一度消す（待たずに呼んでも、すぐ一度は消す）
+  // 終わるのを待ってからもう一度消す（待たずに呼んでも、すぐ一度は消す）。
+  // 消す前に、Claude Code が書いた行を見直す（survey）。知らない種類があれば、片付けたあとで失敗にする
   async stop(): Promise<void> {
     this.closeApp(true);
     this.app = null;
+    const survey = this.survey();
     const gone = this.host.dispose();
     process.env.HOME = this.oldHome;
     const remove = () => rmSync(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -542,7 +549,54 @@ export class ClaudeRun {
     }
     await gone;
     remove();
+    // 控えを取るとき（TANACODE_RECORD=1）は、この台本の目録を置く。全部の台本が終わったら、test/cli/global-setup.ts が 1 つにまとめる
+    const dir = inject('inventoryDir');
+    if (process.env.TANACODE_RECORD && dir) writeFileSync(join(dir, `${randomUUID()}.json`), JSON.stringify(survey.inventory.result()));
+    if (survey.problems.length > 0) throw new Error(`Claude Code が、アプリの知らない行を書きました（台本でわざと出させるものは、ClaudeRun の unknown に足す）:\n${survey.problems.join('\n')}`);
   }
+
+  // Claude Code が書いた行を、どれもアプリの分け方（@shared/transcript-line）とチャットの組み立て・stream-json の読み取りにかけ、
+  // 知らない種類を数える。あわせて目録（test/transcript-inventory.ts）を作る。見るのは、使い捨ての HOME の下の会話ログ
+  // （本体の会話ログ・サブエージェントとワークフローのエージェントの会話ログ。/clear・worktree で増えたものも）と、stream-json の行
+  private survey(): { inventory: InventoryBuilder; problems: string[] } {
+    const inventory = new InventoryBuilder();
+    for (const file of transcriptFiles(join(this.home, '.claude', 'projects'))) inventory.addTranscript(readTranscript(file), this.cwd);
+    const lines = this.streamLines();
+    inventory.addStream(lines);
+    const allowed = new Set(this.options.unknown ?? []);
+    const problems = [...inventory.unknown].filter(([name]) => !allowed.has(name)).map(([name, count]) => `会話ログ: ${name}（${count} 行）`);
+    const stream = unreadableStreamLines(lines);
+    if (stream.malformed > 0) problems.push(`stream-json: 形の違う行・JSON でない行（${stream.malformed} 行）`);
+    for (const [name, count] of Object.entries(stream.unknown)) problems.push(`stream-json: ${name}（${count} 行）`);
+    return { inventory, problems };
+  }
+}
+
+// フォルダの下の会話ログ（本体の <会話の ID>.jsonl と、エージェントの agent-<ID>.jsonl。ワークフローの journal.jsonl などは除く）
+function transcriptFiles(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir, { recursive: true, encoding: 'utf8' });
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => /^[^/]+\/[^/]+\.jsonl$/.test(name) || /\/agent-[^/]+\.jsonl$/.test(name))
+    .sort()
+    .map((name) => join(dir, name));
+}
+
+// 会話ログの行（読めない行・書きかけの行は飛ばす）
+function readTranscript(file: string): TranscriptEntry[] {
+  return (readOrNull(file) ?? '').split('\n').flatMap((line) => {
+    if (!line.trim()) return [];
+    try {
+      const entry: unknown = JSON.parse(line);
+      return isTranscriptEntry(entry) ? [entry] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 // チャットのイベントを、画面（renderer の chatState）と同じく当てたあとに残るもの。

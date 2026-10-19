@@ -3,7 +3,7 @@
 //   node scripts/update-verified-version.mjs <版>
 // 標準出力に、することを 1 語で書く（ワークフローがこれを見て PR を作る）
 //   bump:     確認した版が今の動作確認済のバージョンより新しい。src/shared/claude-code.ts と README（日本語・英語）・GUIDE の版を書き換えた
-//   fixtures: 同じ版だが、その版の控えがまだコミットされていない（控えだけを足す）
+//   fixtures: 同じ版だが、その版の控え（か、その目録の inventory.json）がまだコミットされていない（控えだけを足す）
 //   skip:     何もしない（古い版を確かめたとき・控えもあるとき）
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -43,7 +43,7 @@ if (order < 0 || !existsSync(fixtures)) {
   }
   console.log('bump');
 } else {
-  console.log(committed(fixtures) ? 'skip' : 'fixtures');
+  console.log(committed(fixtures) && committed(`${fixtures}/inventory.json`) ? 'skip' : 'fixtures');
 }
 
 function committed(dir) {

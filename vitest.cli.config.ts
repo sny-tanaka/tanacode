@@ -12,6 +12,8 @@ export default defineConfig({
   test: {
     include: ['test/cli/**/*.test.ts'],
     setupFiles: ['test/clean-env.ts'],
+    // 台本ごとの目録を 1 つにまとめる（TANACODE_RECORD=1 のとき。test/transcript-inventory.ts）
+    globalSetup: ['test/cli/global-setup.ts'],
     testTimeout: 60_000,
     hookTimeout: 60_000,
     coverage: coverage('cli'),
