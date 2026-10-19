@@ -840,6 +840,25 @@ describe('ヘッダー', () => {
       expect(list.scrollTop).toBe(1000 - 60 + 100 - 200);
     });
 
+    // 直す前: 位置を戻すのは、大きさの変化の知らせ（次に描くときに来る）と、一覧の直下の行の出入りのときだけだった。行の中が変わってから
+    // 次に描くまでに離すと、ずれた所で離していた（CI の chat の E2E で、ツールのまとまりの見出しを押しても開かなかった）
+    it('行の中が変わったら、大きさの変化の知らせを待たずに、変わった直後に位置を戻す', async () => {
+      const { list, option, scene, top } = pressScene({ content: 1000, view: 200, offset: 950 });
+      list.scrollTop = 800;
+      fireEvent.scroll(list);
+      // 選択肢と同じ行の中に、あとで消える要素（閉じたまとまりの下の、終わったツールの行の代わり）を置いておく
+      const leaving = document.createElement('span');
+      option.parentElement!.append(leaving);
+      fireEvent.pointerDown(option);
+      // その要素が消えて、選択肢の下が縮む。最下部に張り付いた一覧は、ブラウザがスクロールの位置を詰めるので、選択肢が下へずれる
+      leaving.remove();
+      scene.below = -24;
+      list.scrollTop = 800;
+      expect(top()).toBe(174);
+      await Promise.resolve();
+      expect(top()).toBe(150);
+    });
+
     // 直す前: 大きさの変化の知らせでは、最下部にいるときしか位置を戻さず、上の行が伸びた（選択肢が下へずれた）分は、スクロールしない一覧では戻せなかった
     it('最下部にいない（少し上を読んでいる）ときも、上の行が縮んだ分をスクロールで戻す', () => {
       const { list, option, scene, top, resized } = pressScene({ content: 1000, view: 200, offset: 600 });

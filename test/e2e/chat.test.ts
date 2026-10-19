@@ -60,7 +60,11 @@ describe('チャットから Claude Code を動かす', () => {
     // ツールはまとまりに畳まれている。開くと、Bash のカード（説明と、あとに動いたフック）と Write のカードが出る
     const heads = chat.locator('.tool-group-head');
     expect(await heads.count()).toBe(2);
-    for (const head of await heads.all()) await head.click();
+    // 押したクリックが見出しに届かなければ、押す間に画面に届いたイベントを添えて、その場で落とす（押し直さない）。届いたら開いている
+    for (const head of await heads.all()) {
+      await app.press(head);
+      await head.and(chat.locator('[aria-expanded="true"]')).waitFor();
+    }
     await app.byText('.tool-card .tool-target', '確認のフォルダを作る').waitFor();
     await app.byText('.hook-run .hook-command', HOOK_COMMAND).waitFor();
     await app.byText('.tool-card .tool-target', 'hello.txt').waitFor();
