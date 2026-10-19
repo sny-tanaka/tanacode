@@ -74,6 +74,11 @@ const fake = vi.hoisted(() => {
       saveViewState: () => null,
       restoreViewState() {},
       getLayoutInfo: () => ({ contentWidth: 800 }),
+      // キーの割り当て（⌘S）は控えておき、テストから押す
+      addCommand(keybinding: number, handler: () => void) {
+        made.commands.push({ keybinding, handler });
+        return null;
+      },
       createDecorationsCollection: () => ({ set() {}, clear() {} }),
       changeViewZones: (change: (accessor: { addZone: () => string; removeZone: () => void; layoutZone: () => void }) => void) =>
         change({ addZone: () => 'zone', removeZone() {}, layoutZone() {} }),
@@ -98,7 +103,11 @@ const fake = vi.hoisted(() => {
       dispose() {},
     });
   }
-  const made = { models: [] as FakeModel[], diffEditors: [] as ReturnType<typeof diffEditor>[] };
+  const made = {
+    models: [] as FakeModel[],
+    diffEditors: [] as ReturnType<typeof diffEditor>[],
+    commands: [] as { keybinding: number; handler: () => void }[],
+  };
   const monaco = {
     editor: {
       create: () => codeEditor(),
@@ -150,6 +159,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   fake.made.models.length = 0;
   fake.made.diffEditors.length = 0;
+  fake.made.commands.length = 0;
 });
 
 describe('EditorPane（エディタ）', () => {
@@ -168,7 +178,7 @@ describe('EditorPane（エディタ）', () => {
     reveal: null,
     onActivate: vi.fn(),
     onClose: vi.fn(),
-    onSave: vi.fn(() => Promise.resolve()),
+    onSave: vi.fn(() => Promise.resolve(true)),
     onCursor: vi.fn(),
     comments: [],
     onAddComment: vi.fn(),
@@ -181,6 +191,26 @@ describe('EditorPane（エディタ）', () => {
   const edit = (from: string, to: string) => act(() => modelOf(from).setValue(to));
   const banner = () => screen.queryByText('未保存の変更があるうちに、ディスク上のファイルが変更されました');
   const body = () => document.querySelector<HTMLElement>('.editor-body')!;
+  const dirtyDot = (path: string) => tab(path).querySelector('.editor-tab-dot.dirty');
+  // ⌘S を押す（保存の返事を受けたあとの処理まで進める）
+  const pressSave = async () => {
+    const save = fake.made.commands.find((c) => c.keybinding === (fake.monaco.KeyMod.CtrlCmd | fake.monaco.KeyCode.KeyS))!;
+    await act(async () => save.handler());
+    await settle();
+  };
+  const MINE = 'const total = 2; // 手で直した\n';
+  const CLAUDE = 'const total = 3; // Claude が直した\n';
+  // main の書き込み（App の onSave の先）の代わりのディスク。expected（エディタが読んだとき・最後に保存したときの中身）を
+  // 渡されたら、今の中身と同じときだけ書き、違えば書かずに false を返す。渡されなければ（直す前の main と同じく）確かめずに書く
+  function fakeDisk() {
+    const files: Record<string, string> = { 'src/app.ts': APP, 'README.md': README };
+    const onSave = vi.fn(async (path: string, text: string, expected?: string | null) => {
+      if (typeof expected === 'string' && files[path] !== expected) return false;
+      files[path] = text;
+      return true;
+    });
+    return { files, onSave };
+  }
 
   it('タブを押すと、そのファイルに切り替える', () => {
     mockApi().install();
@@ -247,15 +277,17 @@ describe('EditorPane（エディタ）', () => {
   });
 
   describe('未保存の変更があるうちに、ディスク上のファイルが変わったとき', () => {
-    // 書き換えたあと、ディスク側（Claude Code など）でも変わる
+    // 書き換えたあと、ディスク側（Claude Code など）でも変わり、その知らせが届く
     async function conflict() {
       mockApi().install();
-      const p = props();
+      const disk = fakeDisk();
+      const p = props({ onSave: disk.onSave });
       const view = render(<EditorPane {...p} />);
-      await edit(APP, 'const total = 2; // 手で直した\n');
-      view.rerender(<EditorPane {...p} files={[text('src/app.ts', 'const total = 3; // Claude が直した\n'), text('README.md', README)]} />);
+      await edit(APP, MINE);
+      disk.files['src/app.ts'] = CLAUDE;
+      view.rerender(<EditorPane {...p} files={[text('src/app.ts', CLAUDE), text('README.md', README)]} />);
       expect(banner()).not.toBeNull();
-      return { p, view };
+      return { p, view, disk };
     }
 
     it('「ディスクの内容を読み込む」で、書き換えを捨ててディスクの内容にする', async () => {
@@ -269,15 +301,46 @@ describe('EditorPane（エディタ）', () => {
       expect(p.onSave).not.toHaveBeenCalled();
     });
 
-    it('「このまま保存」で、書き換えた内容をディスクに書く', async () => {
-      const { p } = await conflict();
+    it('「このまま保存」で、書き換えた内容をディスクに書く（ディスク側の変更を確かめずに上書きする）', async () => {
+      const { p, disk } = await conflict();
       const model = fake.made.models.find((m) => m.language === 'typescript')!;
       fireEvent.click(button('このまま保存'));
-      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', 'const total = 2; // 手で直した\n');
+      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', MINE, null);
       await settle();
+      expect(disk.files['src/app.ts']).toBe(MINE);
       expect(banner()).toBeNull();
-      expect(model.value).toBe('const total = 2; // 手で直した\n');
-      expect(tab('src/app.ts').querySelector('.editor-tab-dot.dirty')).toBeNull();
+      expect(model.value).toBe(MINE);
+      expect(dirtyDot('src/app.ts')).toBeNull();
+    });
+
+    it('⌘S では書かない（Claude の変更を黙って消さない）。知らせを出したまま、どちらを残すか選ぶまで未保存のまま', async () => {
+      const { disk } = await conflict();
+      await pressSave();
+      expect(disk.files['src/app.ts']).toBe(CLAUDE);
+      expect(banner()).not.toBeNull();
+      expect(dirtyDot('src/app.ts')).not.toBeNull();
+      fireEvent.click(button('このまま保存'));
+      await settle();
+      expect(disk.files['src/app.ts']).toBe(MINE);
+      expect(banner()).toBeNull();
+    });
+
+    it('変更の知らせが届く前（監視のまとめの間・監視しないフォルダのファイル）に ⌘S を押しても書かない。main が返した今の中身で、同じ知らせを出す', async () => {
+      mockApi().install();
+      const disk = fakeDisk();
+      const p = props({ onSave: disk.onSave });
+      const view = render(<EditorPane {...p} />);
+      await edit(APP, MINE);
+      disk.files['src/app.ts'] = CLAUDE;
+      await pressSave();
+      // 読んだときの中身を添えて頼み、main が今のディスクと違うので書かない
+      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', MINE, APP);
+      expect(disk.files['src/app.ts']).toBe(CLAUDE);
+      expect(dirtyDot('src/app.ts')).not.toBeNull();
+      // App が、main の返した今の中身を files に入れる
+      view.rerender(<EditorPane {...p} files={[text('src/app.ts', CLAUDE), text('README.md', README)]} />);
+      expect(banner()).not.toBeNull();
+      expect(fake.made.models.find((m) => m.language === 'typescript')!.value).toBe(MINE);
     });
 
     it('知らせは、変わったファイルを開いているときだけ出し、ほかのファイルに移った直後に押せるボタンは無い', async () => {
@@ -327,10 +390,10 @@ describe('EditorPane（エディタ）', () => {
 
   // 別のフォルダへ移る（App がエディタを作り直す）前に、App が保存していないファイルを聞き、まとめて保存する
   describe('保存していない変更を、App から聞いて保存する', () => {
-    async function twoEdited() {
+    async function twoEdited(over: Partial<Props> = {}) {
       mockApi().install();
       const handle = createRef<EditorHandle>();
-      const p = props();
+      const p = props(over);
       const view = render(<EditorPane {...p} handle={handle} />);
       expect(handle.current!.unsaved()).toEqual([]);
       await edit(APP, 'const total = 2;\n');
@@ -348,17 +411,28 @@ describe('EditorPane（エディタ）', () => {
       expect(handle.current!.conflicts()).toEqual(['src/app.ts']);
       await act(() => handle.current!.saveAll());
       expect(p.onSave).toHaveBeenCalledTimes(1);
-      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n');
+      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n', README);
       expect(handle.current!.unsaved()).toEqual(['src/app.ts']);
       expect(handle.current!.conflicts()).toEqual(['src/app.ts']);
+      // 残ったものがあるので、「保存して移る」は失敗にして移らない
+      await expect(act(() => saveForLeaving(handle.current))).rejects.toThrow('src/app.ts は、ディスク側（Claude など）でも変わっています');
+    });
+
+    it('まとめて保存したときに、ディスク側でも変わっていた（知らせがまだ届いていない）ファイルは書かず、「保存して移る」は失敗にして移らない', async () => {
+      const disk = fakeDisk();
+      const { handle } = await twoEdited({ onSave: disk.onSave });
+      disk.files['src/app.ts'] = CLAUDE;
+      await expect(act(() => saveForLeaving(handle.current))).rejects.toThrow('src/app.ts は、ディスク側（Claude など）でも変わっています');
+      expect(disk.files).toEqual({ 'src/app.ts': CLAUDE, 'README.md': '# 直した使い方\n' });
+      expect(handle.current!.unsaved()).toEqual(['src/app.ts']);
     });
 
     it('保存していないファイルをタブの順に返し、まとめて保存すると、すべて書いて未保存の印も消える', async () => {
       const { handle, p } = await twoEdited();
       expect(handle.current!.unsaved()).toEqual(['src/app.ts', 'README.md']);
       await act(() => handle.current!.saveAll());
-      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', 'const total = 2;\n');
-      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n');
+      expect(p.onSave).toHaveBeenCalledWith('src/app.ts', 'const total = 2;\n', APP);
+      expect(p.onSave).toHaveBeenCalledWith('README.md', '# 直した使い方\n', README);
       expect(handle.current!.unsaved()).toEqual([]);
       expect(document.querySelector('.editor-tab-dot.dirty')).toBeNull();
     });

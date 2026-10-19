@@ -3,10 +3,13 @@ import { t } from '@shared/i18n';
 import { errorMessage } from '../errorMessage';
 import type { EditorHandle } from './EditorPane';
 
-// 「保存して移る」の保存。エディタが閉じていたら（ダイアログを出している間に外れた）保存できないので、失敗にして移らない
+// 「保存して移る」の保存。エディタが閉じていたら（ダイアログを出している間に外れた）保存できないので、失敗にして移らない。
+// 保存しても残ったもの（ディスク側でも変わっていたので書かなかった）があるときも、移るとその変更が消えるので、失敗にして移らない
 export async function saveForLeaving(editor: EditorHandle | null): Promise<void> {
   if (!editor) throw new Error(t('editor.unsaved.editorClosed'));
   await editor.saveAll();
+  const left = editor.unsaved();
+  if (left.length > 0) throw new Error(t('editor.unsaved.changedOnDisk', { files: left.join(t('main.format.listSeparator')) }));
 }
 
 // 別のフォルダへ移る（エディタを作り直す）前の確認。エディタに保存していない変更があるときだけ出す。

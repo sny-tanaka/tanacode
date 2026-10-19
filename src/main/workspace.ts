@@ -1,7 +1,7 @@
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { t } from '@shared/i18n';
-import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo } from '@shared/ipc';
+import type { DirEntry, FileContent, SearchOptions, SearchResult, WorkspaceInfo, WriteResult } from '@shared/ipc';
 import { git } from './git';
 
 // ツリーに出さず、変更の監視もしないもの
@@ -68,8 +68,21 @@ export class Workspace {
     return `data:${mime};base64,${(await readFile(abs)).toString('base64')}`;
   }
 
-  async writeFile(relPath: string, text: string): Promise<void> {
-    await writeFile(this.resolve(relPath), text, 'utf8');
+  // エディタの保存。expected は、エディタが読んだとき（または最後に保存したとき）の中身。今のディスクがそれと違えば
+  // （Claude Code などが書き換えた）、書かずに今の内容を返す。変更の知らせが届く前（監視のまとめの間）や、監視しないフォルダ
+  // （IGNORED_NAMES の out など）のファイルでも、外の変更を黙って上書きしないため。消えていたファイルは書き直す（中身は失われない）。
+  // null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）
+  async writeFile(relPath: string, text: string, expected: string | null): Promise<WriteResult> {
+    const abs = this.resolve(relPath);
+    if (expected !== null) {
+      const disk = await this.readFile(relPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (disk && !(disk.kind === 'text' && disk.text === expected)) return { ok: false, disk };
+    }
+    await writeFile(abs, text, 'utf8');
+    return { ok: true };
   }
 
   // @ファイル名の補完用。git 管理下なら追跡中と未追跡（.gitignore を除く）、そうでなければフォルダをたどる。

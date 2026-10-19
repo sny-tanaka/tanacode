@@ -311,9 +311,10 @@ export function App() {
     await saveForLeaving(editorRef.current);
     finishLeaving();
   }, [finishLeaving]);
-  // 移らない。衝突中のファイルがあれば、そのファイルをエディタで開く（どちらを残すかを選ぶ知らせを見せる）
+  // 移らない。衝突中のファイルがあれば、そのファイルをエディタで開く（どちらを残すかを選ぶ知らせを見せる）。
+  // ダイアログを出したあと（「保存して移る」で保存しようとしたときなど）に衝突が分かったものも開けるよう、今のエディタに聞く
   const stayInFolder = useCallback(() => {
-    const conflict = leavingRef.current?.conflicts[0];
+    const conflict = editorRef.current?.conflicts()[0] ?? leavingRef.current?.conflicts[0];
     const dir = editorCwdRef.current;
     setLeaving(null);
     if (!conflict || !dir) return;
@@ -830,11 +831,14 @@ export function App() {
     (path: string) => editorCwd && updateEditor(editorCwd, (s) => ({ ...s, activePath: path })),
     [editorCwd, updateEditor],
   );
+  // ディスク側でも変わっていて書かなかったら（衝突）、main が返した今の内容をタブに入れる（エディタが衝突の知らせを出す）。
+  // 変更の知らせが届く前や、監視しないフォルダのファイルでも、知らせを出せるように
   const saveFile = useCallback(
-    async (path: string, text: string) => {
-      if (!editorId || !editorCwd) return;
-      await window.tanacode.workspace.writeFile(editorId, path, text);
-      updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, { kind: 'text', text }) }));
+    async (path: string, text: string, expected: string | null) => {
+      if (!editorId || !editorCwd) return true;
+      const result = await window.tanacode.workspace.writeFile(editorId, path, text, expected);
+      updateEditor(editorCwd, (s) => ({ ...s, files: withFile(s.files, path, result.ok ? { kind: 'text', text } : result.disk) }));
+      return result.ok;
     },
     [editorId, editorCwd, updateEditor],
   );

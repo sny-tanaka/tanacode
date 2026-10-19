@@ -118,7 +118,7 @@ function Pane({ initial, stale = false, files = FILES }: { initial: Walkthrough;
           reveal={null}
           onActivate={setActivePath}
           onClose={noop}
-          onSave={async () => {}}
+          onSave={async () => true}
           onCursor={noop}
           comments={[]}
           onAddComment={noop}
