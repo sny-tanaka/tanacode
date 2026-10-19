@@ -122,6 +122,24 @@ describe('会話ログを読む', () => {
     expect(done.events.at(-1)).toEqual({ type: 'turn-end' });
   });
 
+  it('readChatLog: API の要求の控えと意図して捨てる行は出さない。知らない行は未知のイベントにする', async () => {
+    // 控えには、前の発言と応答がもう一度入る（uuid は無い）
+    const copy = (role: string, text: string) => ({ type: 'api-request-blob', hash: `h-${text}`, message: { role, content: [{ type: 'text', text }] } });
+    const file = write(
+      'd.jsonl',
+      user('u1', null, 'はじめ'),
+      copy('user', 'はじめ'),
+      assistant('a1', 'u1', 'はい'),
+      copy('assistant', 'はい'),
+      { type: 'file-history-snapshot', messageId: 'u1' },
+      { type: 'brand-new', uuid: 'n1', parentUuid: 'a1' },
+      user('u2', 'a1', '次'),
+    );
+    const events = await readChatLog(file, CWD);
+    expect(texts(events)).toEqual(['はじめ', 'はい', '次']);
+    expect(events.filter((e) => e.type === 'unknown-event')).toMatchObject([{ name: 'brand-new', id: 'unknown:n1' }]);
+  });
+
   it('readAgentLog: サブエージェントの会話ログ（行はどれもサイドチェーン）をそのまま出す', async () => {
     const file = write('agent.jsonl', user('u1', null, '調べて', { isSidechain: true }), assistant('a1', 'u1', '調べました', { isSidechain: true }));
     expect(texts(await readAgentLog(file, CWD))).toEqual(['調べて', '調べました']);

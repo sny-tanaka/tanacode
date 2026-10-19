@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
+import { conversationOf } from '@shared/transcript-line';
 import { clip, contextPercent, contextUsage, contextWindow, type ContextItem } from '@shared/context';
 import { setLanguage } from '@shared/i18n';
 import { ContextTracker, estimateTokens } from '../src/main/context-tracker';
@@ -31,7 +32,7 @@ const result = (toolUseId: string, content: unknown, toolUseResult?: unknown) =>
 
 function track(entries: TranscriptEntry[]): ContextItem[] {
   const tracker = new ContextTracker(CWD);
-  for (const e of entries) tracker.handle(e);
+  for (const e of entries.flatMap((entry) => conversationOf(entry) ?? [])) tracker.handle(e);
   return tracker.current().items;
 }
 const find = (items: ContextItem[], label: string) => items.find((i) => i.label === label);
@@ -215,7 +216,11 @@ describe('ContextTracker', () => {
   it('動作確認済の Claude Code の会話ログを読める', () => {
     const file = join('test', 'fixtures', 'claude-code', VERIFIED_CLAUDE_CODE_VERSION, 'transcript.jsonl');
     const tracker = new ContextTracker(CWD);
-    for (const line of readFileSync(file, 'utf8').split('\n')) if (line.trim()) tracker.handle(JSON.parse(line) as TranscriptEntry);
+    // アプリ（session-manager の handleEntry）と同じく、会話の行だけを渡す
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      const conversation = line.trim() ? conversationOf(JSON.parse(line) as TranscriptEntry) : null;
+      if (conversation) tracker.handle(conversation);
+    }
     const items = tracker.current().items;
     expect(items.some((i) => i.kind === 'topic')).toBe(true);
     expect(items.every((i) => Number.isFinite(i.tokens) && i.tokens >= 0)).toBe(true);

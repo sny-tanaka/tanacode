@@ -1,5 +1,6 @@
-import type { PartialBlock, TranscriptEntry } from '@shared/chat';
+import type { PartialBlock } from '@shared/chat';
 import { CHECKLIST_UNCHANGED_MARK } from '@shared/checklist-tools';
+import type { ConversationEntry } from '@shared/transcript-line';
 import type { StreamEventMessage } from './protocol';
 
 // 書いている途中の応答（stream_event。--include-partial-messages）から、チャットの最後に出す途中の文と思考を組み立てる。
@@ -76,9 +77,9 @@ export class PartialText {
     }
   }
 
-  // 会話ログの行。本体の応答の行なら、そのブロックを途中の文から外す（外したら true）。apiBlockIndex の無い行は、
-  // 同じ応答の行の数から位置を決める（会話ログは、ブロックの順に 1 行ずつ書かれる）
-  cover(entry: TranscriptEntry): boolean {
+  // 会話ログの会話の行（@shared/transcript-line）。本体の応答の行なら、そのブロックを途中の文から外す（外したら true）。
+  // apiBlockIndex の無い行は、同じ応答の行の数から位置を決める（会話ログは、ブロックの順に 1 行ずつ書かれる）
+  cover(entry: ConversationEntry): boolean {
     const id = entry.message?.id;
     if (entry.type !== 'assistant' || entry.isSidechain || typeof id !== 'string' || !id) return false;
     // 会話ログの行が、stream の始まりより先に読めたときも外せるよう、知らない応答なら控えを作る

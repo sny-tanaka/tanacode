@@ -5,6 +5,7 @@ import { modelName } from './model-name';
 import { autoPercentOf, isCompactMessage, parseCompactMessage } from './optimized-compact';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
+import { classifyLine, isIgnoredAssistantBlock, isIgnoredAttachment, isIgnoredSystem, type ConversationEntry, type SideEntry, type TranscriptLine } from './transcript-line';
 import { parseUsageResume, USAGE_RESUME_TAG, usageLimitOf, usageLimitText, type UsageLimitStop } from './usage-limit';
 import { unknownEvent, type UnknownEvent } from './unknown-event';
 
@@ -240,7 +241,33 @@ export function bridgeUrlOf(entry: TranscriptEntry): string | null | undefined {
 
 // onImage: 画像を受け取る先（無ければ画像は出さない）
 export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = false, onImage?: ImageSink): ChatEvent[] {
-  if (entry.isSidechain && !sidechain) return [];
+  return lineChatEvents(classifyLine(entry), cwd, sidechain, onImage);
+}
+
+// 分けた行（transcript-line.ts の classifyLine）をチャットのイベントにする。もう分けた行を読むところ（main の session-manager.ts の
+// handleEntry・chat-log.ts）は、こちらを使う。知らない行は未知のイベントにし、意図して捨てる行は出さない
+export function lineChatEvents(line: TranscriptLine, cwd: string, sidechain = false, onImage?: ImageSink): ChatEvent[] {
+  if (line.entry.isSidechain && !sidechain) return [];
+  if (line.kind === 'unknown') return [unknownLine(line.entry, line.name, line.problem)];
+  if (line.kind === 'ignored') return [];
+  if (line.kind === 'side') return sideEvents(line.entry);
+  return conversationEvents(line.entry, cwd, sidechain, onImage);
+}
+
+// ほかで使う付帯の行のうち、チャットに出すもの（Remote Control のつながり・PR へのリンク）
+function sideEvents(entry: SideEntry): ChatEvent[] {
+  if (entry.type === 'bridge-session') {
+    const url = bridgeUrlOf(entry);
+    return url !== undefined ? [{ type: 'remote-control', url }] : [];
+  }
+  if (entry.type === 'pr-link') {
+    if (typeof entry.prUrl !== 'string' || typeof entry.prNumber !== 'number') return [];
+    return [{ type: 'pr-link', pr: { number: entry.prNumber, url: entry.prUrl, repository: entry.prRepository ?? '' } }];
+  }
+  return [];
+}
+
+function conversationEvents(entry: ConversationEntry, cwd: string, sidechain: boolean, onImage?: ImageSink): ChatEvent[] {
   const at = timeOf(entry);
 
   if (entry.type === 'system') {
@@ -269,16 +296,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
       return [{ type: 'api-error', id: entry.uuid ?? '', text, retrying: true }];
     }
     if (typeof entry.subtype !== 'string') return [unknownLine(entry, 'system', 'malformed')];
-    return IGNORED_SYSTEM.has(entry.subtype) ? [] : [unknownLine(entry, `system/${entry.subtype}`)];
-  }
-
-  if (entry.type === 'bridge-session') {
-    const url = bridgeUrlOf(entry);
-    return url !== undefined ? [{ type: 'remote-control', url }] : [];
-  }
-  if (entry.type === 'pr-link') {
-    if (typeof entry.prUrl !== 'string' || typeof entry.prNumber !== 'number') return [];
-    return [{ type: 'pr-link', pr: { number: entry.prNumber, url: entry.prUrl, repository: entry.prRepository ?? '' } }];
+    return isIgnoredSystem(entry.subtype) ? [] : [unknownLine(entry, `system/${entry.subtype}`)];
   }
 
   if (entry.type === 'attachment') {
@@ -306,7 +324,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
       return run ? [{ type: 'hook', id: entry.uuid ?? '', run }] : [];
     }
     if (typeof kind !== 'string') return [unknownLine(entry, 'attachment', 'malformed')];
-    return IGNORED_ATTACHMENTS.has(kind) ? [] : [unknownLine(entry, `attachment/${kind}`)];
+    return isIgnoredAttachment(kind) ? [] : [unknownLine(entry, `attachment/${kind}`)];
   }
 
   if (entry.type === 'assistant') {
@@ -333,7 +351,7 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
         if (block.thinking?.trim()) events.push({ type: 'thinking', id: `${entry.uuid}:${i}`, text: block.thinking.trim() });
       } else if (block.type === 'tool_use') {
         if (block.id && block.name) events.push(toolUseEvent(block.id, block.name, block.input ?? {}, cwd, at));
-      } else if (!IGNORED_ASSISTANT_BLOCKS.has(block.type)) {
+      } else if (!isIgnoredAssistantBlock(block.type)) {
         events.push(unknownBlock(entry, block, i));
       }
     });
@@ -366,179 +384,8 @@ export function toChatEvents(entry: TranscriptEntry, cwd: string, sidechain = fa
   }
 
   // メタの行（Claude への文脈・スキルの本文など）・圧縮の要約・会話ログにだけ見える行は出さない
-  if (entry.type === 'user') return [];
-  if (typeof entry.type !== 'string') return [unknownLine(entry, '', 'malformed')];
-  return TYPES_USED_ELSEWHERE.has(entry.type) || IGNORED_TYPES.has(entry.type) ? [] : [unknownLine(entry, entry.type)];
+  return [];
 }
-
-// 会話ログの種類は、どれも次の 3 つのどれか 1 か所にだけ書く（docs/claude-code-events.md の ✅・⏭・⚠️ と同じ分け方。stream-json は
-// main の stream/client.ts）
-// - 使う: 上の toChatEvents の分岐と、チャットの外で使う種類（TYPES_USED_ELSEWHERE）
-// - 意図して捨てる: 下の IGNORED_*（理由つき）
-// - 知らない: どこにも書かない（未知のイベントとして出す）
-// 出どころ: test/fixtures/claude-code/ の会話ログ、開発者の手元の会話ログ、Claude Code 2.1.302 の本体（会話ログを読む処理と attachment の一覧）
-
-// 行の種類のうち、チャットの外で使うもの: 一覧の名前（transcriptTitle）・作業中に送った発言の振り分け（main の task-router.ts）・
-// ターミナルモードの権限モード（main の session-manager.ts の permissionModeOf）
-const TYPES_USED_ELSEWHERE = new Set(['custom-title', 'ai-title', 'queue-operation', 'permission-mode']);
-
-// 意図して捨てる行の種類。どれも Claude Code が自分で使う付帯情報で、チャットの中身ではない
-const IGNORED_TYPES = new Set([
-  // セッションを開き直すときの状態（モード・名前・色・タグ・費用・worktree・メモリのモード・場所の移動・続きの先・モデルが終えた印・
-  // 最後の発言・前のバージョンが書いた会話の要約など）
-  'summary',
-  'mode',
-  'atis-latch',
-  'isolation-latch',
-  'last-prompt',
-  'worktree-state',
-  'agent-name',
-  'agent-color',
-  'agent-setting',
-  'tag',
-  'cost-state',
-  'dev-mods',
-  'memory-mode',
-  'history-suppression',
-  'relocated',
-  'ended-by-model',
-  'continued-in',
-  // 巻き戻し・枝分かれのためのファイルと文脈の控え
-  'file-history-snapshot',
-  'file-history-delta',
-  'attribution-snapshot',
-  'content-replacement',
-  'fork-context-ref',
-  // API の呼び出しの控え（前の応答と発言が、もう一度入る。裏のタスクの追跡（main の task-router.ts）も読まない）
-  'api-request',
-  'api-request-blob',
-  'api-request-shape',
-  // Claude アプリの成果物（コメントの見張り・自動の反応）とフレームへのリンク
-  'artifact-comment-monitor',
-  'artifact-autoreact-ledger',
-  'frame-link',
-]);
-
-// 意図して捨てる system の行（docs/claude-code-events.md の 5 節）
-const IGNORED_SYSTEM = new Set([
-  // クラウド・Remote Control・別の機能向け（離れていた間のまとめ・許可のやり直し・予約の実行・巻き戻しの代わりの行・クラウドの状態・
-  // ファイルの控え）
-  'away_summary',
-  'permission_retry',
-  'scheduled_task_fire',
-  'rewind_stand_in',
-  'cloud_session_status',
-  'file_snapshot',
-  // 断られて取り直さなかった知らせは中身が空（断られた応答そのものは、応答の行に出る）
-  'model_refusal_no_fallback',
-  // 人がモデルを選んで切り替えた知らせ。tanacode の起動のしかたでは選ばせないので出ない
-  'model_consent_fallback',
-  // 使い道がない（裏のエージェントを止めた記録。止めたことは、裏のタスクの終わりで分かる）
-  'agents_killed',
-]);
-
-// 意図して捨てる attachment。どれも Claude Code が Claude に渡す文脈で、チャットには出さない
-const IGNORED_ATTACHMENTS = new Set([
-  // 環境・日付・セッションの情報・指示・出力の形・システムプロンプトの控え
-  'environment',
-  'model',
-  'date',
-  'date_change',
-  'session_context',
-  'credential_org',
-  'instructions',
-  'language',
-  'output_style',
-  'output_style_instructions',
-  'coordinator_context',
-  'context_sections',
-  'prompt_snapshot',
-  'prompt_render_point',
-  'remote_session_change',
-  // トークン・時間・予算などを思い出させる文と、注意書き
-  'total_tokens_reminder',
-  'token_usage',
-  'output_token_usage',
-  'budget_usd',
-  'silent_turn_reminder',
-  'elapsed_time_reminder',
-  'output_limit_note',
-  'critical_system_reminder',
-  'todo_reminder',
-  'task_reminder',
-  'task_status',
-  'tool_search_usage_reminder',
-  'batching_reminder',
-  'batching_reminder_sent',
-  'secondary_reminder',
-  'secondary_reminder_sent',
-  'bash_output_audience_note',
-  'read_truncation_notice',
-  'context_efficiency',
-  'attention_budget',
-  'thread_state',
-  'prefix_delta',
-  // ツール・エージェント・MCP・スキル・コマンドの一覧と、その差分
-  'deferred_tools_delta',
-  'deferred_tools_record',
-  'agent_listing_delta',
-  'mcp_instructions_delta',
-  'mcp_dropped_tools_delta',
-  'skill_listing',
-  'invoked_skills',
-  'dynamic_skill',
-  'command_permissions',
-  // モードと機能の切り替え（auto・プラン・ワークフロー・エフォート・思考など）
-  'auto_mode',
-  'auto_mode_exit',
-  'plan_mode',
-  'plan_mode_exit',
-  'plan_mode_reentry',
-  'plan_file_reference',
-  'proactivity',
-  'sandbox_instructions',
-  'team_context',
-  'tool_hosts_notice',
-  'tool_hosts_correction',
-  'tool_host_result_lines',
-  'workflow_keyword_request',
-  'workflow_size_guideline_change',
-  'ultra_effort_enter',
-  'ultra_effort_exit',
-  'ultrathink_effort',
-  'thinking_stripped',
-  'thinking_drop',
-  'advisor_stripped',
-  'advisor_tool',
-  'artifact_opening_prefetch',
-  // @ で指したもの・読んだファイル・IDE の選択・診断（ファイルの中身は、ツールの結果としてチャットに出る）
-  'agent_mention',
-  'at_mention_reference',
-  'peer_mention',
-  'skill_mention',
-  'file',
-  'directory',
-  'already_read_file',
-  'edited_text_file',
-  'edited_image_file',
-  'compact_file_reference',
-  'pdf_reference',
-  'inlined_image_paths',
-  'opened_file_in_ide',
-  'selected_lines_in_ide',
-  'selected_lines_in_diff',
-  'diagnostics',
-  'mcp_resource',
-  // CLAUDE.md とメモリの更新・差し控え
-  'nested_memory',
-  'memory_update',
-  'withheld_memory',
-  'cowork_memory_context',
-  'account_memory_recall',
-]);
-
-// 意図して捨てる、応答の content のブロック: 中身が暗号化された思考（読めない）
-const IGNORED_ASSISTANT_BLOCKS = new Set(['redacted_thinking']);
 
 // 会話ログの行の未知のイベント
 function unknownLine(entry: TranscriptEntry, name: string, problem: 'unknown' | 'malformed' = 'unknown'): UnknownEvent {

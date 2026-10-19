@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptEntry } from '@shared/chat';
+import { knownOf, type ConversationEntry } from '@shared/transcript-line';
 import type { BashTaskTracker } from '../src/main/bash-task-tracker';
 import { SubagentTracker } from '../src/main/subagent-tracker';
 import { TaskRouter, taskNotificationOf } from '../src/main/task-router';
@@ -13,9 +14,9 @@ import type { WorkflowTracker } from '../src/main/workflow-tracker';
 const SESSION_DIR = '/home/me/.claude/projects/-work-app/s1';
 const WF_DIR = `${SESSION_DIR}/subagents/workflows/wf_1`;
 
-const assistant = (blocks: unknown[]): TranscriptEntry => ({ type: 'assistant', uuid: 'a', message: { content: blocks as never } });
+const assistant = (blocks: unknown[]): ConversationEntry => ({ type: 'assistant', uuid: 'a', message: { content: blocks as never } });
 const toolUse = (id: string, name: string, input: Record<string, unknown>) => ({ type: 'tool_use', id, name, input });
-const result = (toolUseId: string, content: unknown, toolUseResult?: unknown, isError = false): TranscriptEntry => ({
+const result = (toolUseId: string, content: unknown, toolUseResult?: unknown, isError = false): ConversationEntry => ({
   type: 'user',
   uuid: 'r',
   timestamp: '2026-10-07T13:51:06.639Z',
@@ -27,6 +28,11 @@ const result = (toolUseId: string, content: unknown, toolUseResult?: unknown, is
 const blob = (role: 'user' | 'assistant', blocks: unknown[]): TranscriptEntry =>
   ({ type: 'api-request-blob', hash: '9be495a9220ff0a0', sessionId: 's1', message: { role, content: blocks } }) as TranscriptEntry;
 const resultBlock = (toolUseId: string, content: unknown) => ({ type: 'tool_result', tool_use_id: toolUseId, content });
+// アプリ（session-manager の handleEntry）と同じく、行を分けて（@shared/transcript-line）、知っている行だけを渡す
+const feed = (router: TaskRouter, entry: TranscriptEntry) => {
+  const known = knownOf(entry);
+  if (known) router.track(known, false);
+};
 
 // 完了通知の本文（2.1.292 の形）
 const AGENT_NOTICE = [
@@ -199,8 +205,8 @@ describe('TaskRouter', () => {
       router.track(result('toolu_list', '[]'), false);
       router.track(assistant([agent]), false);
       router.track(result('toolu_agent', launchedText, { isAsync: true, status: 'async_launched', agentId: 'acc4e89e2bbe86674', description: '調べもの' }), false);
-      router.track(blob('assistant', [list, agent]), false);
-      router.track(blob('user', [resultBlock('toolu_list', '[]'), resultBlock('toolu_agent', launchedText)]), false);
+      feed(router, blob('assistant', [list, agent]));
+      feed(router, blob('user', [resultBlock('toolu_list', '[]'), resultBlock('toolu_agent', launchedText)]));
       expect(subagents.all()).toMatchObject([{ toolUseId: 'toolu_agent', agentId: 'acc4e89e2bbe86674', background: true, state: 'running', result: null }]);
 
       router.track({ type: 'user', origin: { kind: 'task-notification' }, message: { content: AGENT_NOTICE } }, false);
@@ -212,23 +218,23 @@ describe('TaskRouter', () => {
 
   it('API の要求の控えにだけあるツールの呼び出しと結果は、どの追跡にも渡さない', () => {
     const { router, workflows, subagents, bashTasks } = fakes();
-    router.track(
+    feed(
+      router,
       blob('assistant', [
         toolUse('toolu_agent', 'Agent', { description: '調べもの', prompt: '…', run_in_background: true }),
         toolUse('toolu_bg', 'Bash', { command: 'sleep 9', run_in_background: true }),
         toolUse('toolu_send', 'SendMessage', { to: 'b2', message: '続きをお願いします' }),
         toolUse('toolu_wf', 'Workflow', { script: 'return 1' }),
       ]),
-      false,
     );
-    router.track(
+    feed(
+      router,
       blob('user', [
         resultBlock('toolu_agent', 'Async agent launched successfully.'),
         resultBlock('toolu_bg', 'Command running in background with ID: b1. Output is being written to: /tmp/b1.output'),
         resultBlock('toolu_send', '{"success":true,"resumedAgentId":"b2"}'),
         resultBlock('toolu_wf', 'Workflow launched in background. Task ID: wb7qvqa8p'),
       ]),
-      false,
     );
     expect(subagents.start).not.toHaveBeenCalled();
     expect(subagents.finish).not.toHaveBeenCalled();

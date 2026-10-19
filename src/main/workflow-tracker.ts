@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { open, readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { isTranscriptEntry } from '@shared/chat';
+import { conversationOf } from '@shared/transcript-line';
 import type { WorkflowAgent, WorkflowRun } from '@shared/workflow';
 
 const POLL_MS = 1000;
@@ -454,7 +456,9 @@ async function readAgentLog(file: string, log: AgentLog): Promise<void> {
   log.offset = offset;
   log.modifiedAt = modifiedAt;
   for (const line of lines) {
-    const e = line as { type?: string; timestamp?: string; message?: { content?: unknown } };
+    // 会話の行（@shared/transcript-line）だけを読む（API の要求の控えにも、同じ発言と呼び出しがもう一度入る）
+    const e = isTranscriptEntry(line) ? conversationOf(line) : null;
+    if (!e) continue;
     if (log.startedAt === null && e.timestamp) log.startedAt = Date.parse(e.timestamp) || null;
     const content = e.message?.content;
     if (e.type === 'user' && typeof content === 'string' && log.prompt === null) log.prompt = taskPrompt(content)?.slice(0, PREVIEW_CHARS) ?? null;

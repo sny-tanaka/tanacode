@@ -27,6 +27,8 @@ const sdk = readFileSync(values.sdk, 'utf8');
 const repo = resolve(values.repo);
 const clientSrc = readFileSync(join(repo, 'src/main/stream/client.ts'), 'utf8');
 const chatSrc = readFileSync(join(repo, 'src/shared/chat.ts'), 'utf8');
+// 会話ログの行の種類の分け方（意図して捨てる種類の一覧）
+const lineSrc = readFileSync(join(repo, 'src/shared/transcript-line.ts'), 'utf8');
 
 const uniq = (xs) => [...new Set(xs)].sort();
 const all = (re, s, g = 1) => [...s.matchAll(re)].map((m) => m[g]);
@@ -96,9 +98,9 @@ const topKnown = new Set([
   ...all(/case '([a-z_]+)':/g, block(clientSrc, 'private receive(', '\n  }')),
 ]);
 topKnown.delete('system');
-const transcriptHandled = new Set(all(/entry\.subtype === '([a-z_]+)'/g, block(chatSrc, 'export function toChatEvents', '\n}')));
+const transcriptHandled = new Set(all(/entry\.subtype === '([a-z_]+)'/g, block(chatSrc, 'function conversationEvents', '\n}')));
 // 会話ログの system の行のうち、意図して捨てるもの。読む（分岐のある）ものでも、これでもないものは、チャットに未知のイベントとして出る
-const transcriptKnown = new Set(all(/'([a-z_]+)'/g, block(chatSrc, 'const IGNORED_SYSTEM', ']);')));
+const transcriptKnown = new Set(all(/'([a-z_]+)'/g, block(lineSrc, 'const IGNORED_SYSTEM', ']);')));
 
 const tanacodeSystem = (s) => (ignored.has(`system/${s}`) ? '捨てる' : systemChecks.has(s) ? '使う' : '知らない');
 const tanacodeTop = (t) => (ignored.has(t) ? '捨てる' : topKnown.has(t) ? '使う' : '知らない');
