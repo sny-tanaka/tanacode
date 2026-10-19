@@ -297,7 +297,7 @@ type Runtime = {
   remoteSwitch: Promise<string | null> | null;
   // setRemoteControl を呼んだ回数。切り替えの途中に待っている間に、あとから変えられたかを見分ける
   remoteWish: number;
-  // この起動の中で、Remote Control のつながりを確かめた（remote_control の返事・bridge_state・今の claude が書いた行）。
+  // この起動の中で、Remote Control のつながりを確かめた（remote_control の返事・送り直しでない bridge_state・読み直しでない行）。
   // 確かめたあとは、読み直した会話ログのつながり（lastBridgeUrl）で上書きしない
   remoteLive: boolean;
   // チャットとターミナルモードを切り替えて起動した、元の種類。切り替えた先が起動を終える前に終わったら、元の種類で開き直す。
@@ -2483,7 +2483,8 @@ export class SessionManager {
         // Remote Control のつながり（ready・connected はつながっている。failed などは切れた）
         const state = (message as BridgeStateMessage).state;
         const connected = state === 'ready' || state === 'connected';
-        rt.remoteLive = true;
+        // 送り直し（前のアプリの頃の行）は、この起動の中で確かめたことにしない（あとで切っていれば古い）
+        if (!past) rt.remoteLive = true;
         if (rt.remoteConnected === connected) return;
         rt.remoteConnected = connected;
         this.emitSessions();
@@ -3207,7 +3208,8 @@ export class SessionManager {
       const remote = [...events].reverse().find((e) => e.type === 'remote-control');
       if (remote) {
         rt.remoteConnected = remote.url !== null;
-        rt.remoteLive = true;
+        // 読み直した行（前のアプリの頃に、引き継いだ claude が書いたもの）は、この起動の中で確かめたことにしない
+        if (!isHistory) rt.remoteLive = true;
       }
       if (remote && rt.terminal) rt.tuiRemoteSeen = true;
       const starter = events.find((e) => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start');

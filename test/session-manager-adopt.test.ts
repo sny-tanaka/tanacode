@@ -370,6 +370,22 @@ describe('adopt', () => {
     ]);
   });
 
+  it('送り直された前のアプリの頃の bridge_state があっても、読み直した会話ログのつながり（URL）を出す', async () => {
+    const id = await previous(line.user('はじめ'), bridgeSession('cse_abc'));
+    await app.manager.setRemoteControl(id, true);
+    // 起動を終えたときにつなぎに行っても、答えない（つないだ返事の URL ではなく、会話ログの URL が出るかを見る）
+    app.answers.set('remote_control', null);
+    app.host.hosted = [hosted(id, { lastSeq: 1, firstSeq: 1 })];
+    await app.manager.adopt();
+    const pipe = attached(id)!;
+    pipe.emit({ type: 'system', subtype: 'bridge_state', state: 'connected', uuid: 'state-1', session_id: app.claudeId(id) }, 1);
+    pipe.replayed();
+    await app.waitFor('つながり', () => app.manager.snapshot(id).events.some((e) => e.type === 'remote-control'));
+    expect(app.manager.snapshot(id).events.filter((e) => e.type === 'remote-control')).toEqual([
+      { type: 'remote-control', url: 'https://claude.ai/code/session_abc' },
+    ]);
+  });
+
   it('この起動の中で切ったあとに /clear しても、前の会話ログのつながりに戻さない（入れ直せば、つなぐ要求を送る）', async () => {
     const id = await previous(line.user('はじめ'), bridgeSession('cse_abc'));
     app.host.hosted = [hosted(id, { startedAt: Date.now() - 60_000 })];
