@@ -285,7 +285,7 @@ describe('NewSessionPane（新規セッションの画面）', () => {
     expect(worktree().checked).toBe(true);
     fireEvent.change(select(MODE), { target: { value: 'plan' } });
     expect(select(MODE).value).toBe('plan');
-    expect(send(p)).toEqual(['/work/a', '始めてください', [], { ...DEFAULTS, mode: 'plan', remoteControl: false, worktree: true }, []]);
+    expect(send(p)).toEqual(['/work/a', '始めてください', [], { ...DEFAULTS, mode: 'plan', remoteControl: false, worktree: true }, [], false]);
     cleanup();
     // 開き直しても、前に選んだものから始まる。戻すと、戻した指定で始める
     const again = props();
@@ -452,6 +452,110 @@ describe('NewSessionPane（新規セッションの画面）', () => {
     expect(button('最新のデフォルトブランチへ切り替える').disabled).toBe(false);
   });
 
+  describe('親として始める', () => {
+    const asParent = () => screen.getByRole<HTMLInputElement>('checkbox', { name: '親として始める' });
+    const tipOf = (input: HTMLInputElement) => input.closest('label')!.getAttribute('data-tip');
+
+    it('フォルダに TANACODE_PARENT.md があれば選べ、選ぶと始めるときに渡る。選んだものは覚えない（次に開くと外れている）', async () => {
+      const api = mockApi({
+        'folders.info': () => Promise.resolve({ root: '/work/a', name: 'a', branch: 'feature' }),
+        'folders.parentInstructions': () => Promise.resolve('/work/a/TANACODE_PARENT.md'),
+      });
+      api.install();
+      const p = props();
+      await mount(p);
+      expect(api.argsOf('folders.parentInstructions')).toEqual([['/work/a', false]]);
+      expect(asParent().disabled).toBe(false);
+      expect(asParent().checked).toBe(false);
+      expect(tipOf(asParent())).toContain('TANACODE_PARENT.md を Claude に読ませて');
+      fireEvent.click(asParent());
+      expect(asParent().checked).toBe(true);
+      expect(send(p)).toEqual(['/work/a', '始めてください', [], DEFAULTS, [], true]);
+      cleanup();
+      const again = props();
+      await mount(again);
+      expect(asParent().checked).toBe(false);
+      expect(send(again)[5]).toBe(false);
+    });
+
+    it('ファイルが無ければ選べず、わけを出す。置いたことが見張りで分かると選べる', async () => {
+      let found: string | null = null;
+      const api = mockApi({
+        'folders.info': () => Promise.resolve({ root: '/work/a', name: 'a', branch: 'feature' }),
+        'folders.parentInstructions': () => Promise.resolve(found),
+      });
+      api.install();
+      const p = props();
+      await mount(p);
+      expect(asParent().disabled).toBe(true);
+      expect(tipOf(asParent())).toBe('フォルダに TANACODE_PARENT.md（親として動くときの決まり）を置くと使えます');
+      // ほかのファイルの変更では聞き直さない
+      api.emit('workspace.onFilesChanged', { root: '/work/a', paths: ['README.md'] });
+      await settle();
+      expect(api.argsOf('folders.parentInstructions')).toHaveLength(1);
+      found = '/work/a/TANACODE_PARENT.md';
+      api.emit('workspace.onFilesChanged', { root: '/work/a', paths: ['TANACODE_PARENT.md'] });
+      await settle();
+      expect(asParent().disabled).toBe(false);
+      fireEvent.click(asParent());
+      // 消すと、選んでいても渡さない
+      found = null;
+      window.dispatchEvent(new Event('focus'));
+      await settle();
+      expect(asParent().disabled).toBe(true);
+      expect(asParent().checked).toBe(false);
+      expect(send(p)[5]).toBe(false);
+    });
+
+    it('worktree を使うかを切り替えると、始めたあとに探す場所（worktree ならリポジトリのいちばん上）で決め直す', async () => {
+      const api = mockApi({
+        'folders.info': () => Promise.resolve({ root: '/work/a', name: 'a', branch: 'feature' }),
+        'folders.parentInstructions': (_cwd: never, worktree: never) => Promise.resolve(worktree ? '/work/TANACODE_PARENT.md' : null),
+      });
+      api.install();
+      const p = props();
+      await mount(p);
+      expect(asParent().disabled).toBe(true);
+      fireEvent.click(worktree());
+      await settle();
+      expect(api.argsOf('folders.parentInstructions')).toEqual([
+        ['/work/a', false],
+        ['/work/a', true],
+      ]);
+      expect(asParent().disabled).toBe(false);
+      fireEvent.click(asParent());
+      expect(send(p)[5]).toBe(true);
+    });
+
+    it('フォルダを変えて描き直すと、変えた先のフォルダのファイルで決める', async () => {
+      const api = mockApi({
+        'folders.info': (cwd: never) => Promise.resolve({ root: cwd, name: 'x', branch: 'feature' }),
+        'folders.parentInstructions': (cwd: never) => Promise.resolve(cwd === '/work/b' ? '/work/b/TANACODE_PARENT.md' : null),
+      });
+      api.install();
+      const first = props();
+      const view = await mount(first);
+      expect(asParent().disabled).toBe(true);
+      const second = props({ cwd: '/work/b', gitId: 'folder:/work/b' });
+      view.rerender(<NewSessionPane {...second} />);
+      await settle();
+      expect(asParent().disabled).toBe(false);
+      fireEvent.click(asParent());
+      expect(send(second)).toEqual(['/work/b', '始めてください', [], DEFAULTS, [], true]);
+      expect(first.onStart).not.toHaveBeenCalled();
+    });
+
+    it('始められなかった指示が「親として始める」だったら、入力欄と一緒に選び直す', async () => {
+      mockApi({
+        'folders.info': () => Promise.resolve({ root: '/work/a', name: 'a', branch: 'feature' }),
+        'folders.parentInstructions': () => Promise.resolve('/work/a/TANACODE_PARENT.md'),
+      }).install();
+      await mount(props({ restore: { text: '画面を作って', attachments: [], pastes: [], asParent: true } }));
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox').value).toBe('画面を作って');
+      expect(asParent().checked).toBe(true);
+    });
+  });
+
   it('フォルダを変えて描き直した直後に送ると、変えた先のフォルダで始め、変えた先のフォルダを選んでいる印にする', async () => {
     const api = mockApi({ 'folders.info': (cwd: never) => Promise.resolve({ root: cwd, name: 'x', branch: 'feature' }) });
     api.install();
@@ -461,7 +565,7 @@ describe('NewSessionPane（新規セッションの画面）', () => {
     const second = props({ cwd: '/work/b', gitId: 'folder:/work/b' });
     view.rerender(<NewSessionPane {...second} />);
     fireEvent.click(button('送信'));
-    expect(second.onStart).toHaveBeenCalledWith('/work/b', 'テストを足して', [], DEFAULTS, []);
+    expect(second.onStart).toHaveBeenCalledWith('/work/b', 'テストを足して', [], DEFAULTS, [], false);
     expect(first.onStart).not.toHaveBeenCalled();
     expect(api.argsOf('folders.info')).toEqual([['/work/a'], ['/work/b']]);
     fireEvent.click(document.querySelector('.folder-picker > button')!);

@@ -66,4 +66,20 @@ describe('usePendingSends', () => {
     act(() => expect(result.current.take('s1')?.text).toBe('先に送ったもの\n\n止まってから打ったもの'));
     expect(result.current.pendingOf('s1')).toBeNull();
   });
+
+  it('「親として始める」の発言は、送るときに asParent を付ける。預かってまとめても、送れずに戻しても、取り下げても残る', async () => {
+    const { result, rerender } = render('starting');
+    act(() => result.current.send('s1', '画面を作って', [], [], true));
+    act(() => result.current.send('s1', 'テストも', []));
+    expect(result.current.pendingOf('s1')).toEqual({ text: '画面を作って\n\nテストも', attachments: [], pastes: [], asParent: true });
+    failing = true;
+    await act(async () => rerender({ s: 'idle' }));
+    expect(submits()).toEqual([['s1', '画面を作って\n\nテストも', [], [], { asParent: true }]]);
+    expect(result.current.pendingOf('s1')?.asParent).toBe(true);
+    act(() => expect(result.current.take('s1')).toMatchObject({ text: '画面を作って\n\nテストも', asParent: true }));
+    // ふつうの発言には付けない
+    failing = false;
+    await act(async () => result.current.send('s2', 'ふつう', []));
+    expect(submits().at(-1)).toEqual(['s2', 'ふつう', [], []]);
+  });
 });

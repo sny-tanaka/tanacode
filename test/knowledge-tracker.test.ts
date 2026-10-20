@@ -3,6 +3,7 @@ import type { TranscriptEntry } from '@shared/chat';
 import type { ConversationEntry } from '@shared/transcript-line';
 import type { SessionKnowledge } from '@shared/knowledge';
 import { KnowledgeTracker } from '../src/main/knowledge-tracker';
+import { instructionsContext, parentRoleText } from '@shared/project-instructions';
 
 // 本体の会話ログから、Claude が読んだ・書いたファイルと、コンテキストの使用量を集める（KnowledgeTracker）。
 // 行の形は、Claude Code 2.1.292 をモックの API で動かして取った会話ログ（@ の添付・Read・Edit・Write・サブフォルダの CLAUDE.md・/compact）に合わせた。
@@ -54,6 +55,47 @@ describe('KnowledgeTracker', () => {
       'multi.ts': 'edited',
       'book.ipynb': 'edited',
     });
+  });
+
+  it('アプリのフックが渡した TANACODE.md と、「親にする」で読ませた TANACODE_PARENT.md は read。長すぎて中身を渡さなかったものは数えない', () => {
+    const context = (content: string) => ({
+      type: 'attachment',
+      attachment: { type: 'hook_additional_context', hookName: 'SessionStart', content: ['ユーザーのフックの文', instructionsContext([{ path: `${CWD}/TANACODE.md`, content: content, sum: '0123456789ab' }])] },
+    }) as ConversationEntry;
+    tracker.handle(context('# 決まり'));
+    tracker.handle({ type: 'user', message: { content: parentRoleText([{ path: `${CWD}/TANACODE_PARENT.md`, content: '# 親' }], 'はじめて') } } as ConversationEntry);
+    expect(tracker.current().files).toEqual({ 'TANACODE.md': 'read', 'TANACODE_PARENT.md': 'read' });
+    // 作業の途中に送った（順番待ちから差し込まれた）もの・ブロックの形の発言
+    const other = new KnowledgeTracker(CWD, () => {});
+    other.handle({ type: 'attachment', attachment: { type: 'queued_command', prompt: parentRoleText([{ path: `${CWD}/a/TANACODE_PARENT.md`, content: '# 親' }]) } } as ConversationEntry);
+    other.handle({ type: 'user', message: { content: [{ type: 'text', text: parentRoleText([{ path: `${CWD}/b/TANACODE_PARENT.md`, content: '# 親' }]) }] } } as ConversationEntry);
+    // 長すぎて Read で読むよう頼んだもの・ただの発言・Claude Code が足した行
+    other.handle(context('あ'.repeat(10_000)));
+    other.handle({ type: 'user', message: { content: 'ふつうの発言' } } as ConversationEntry);
+    other.handle({ type: 'user', isMeta: true, message: { content: parentRoleText([{ path: `${CWD}/c/TANACODE_PARENT.md`, content: '# 親' }]) } } as ConversationEntry);
+    expect(other.current().files).toEqual({ 'a/TANACODE_PARENT.md': 'read', 'b/TANACODE_PARENT.md': 'read' });
+  });
+
+  it('プロファイルとフォルダの両方を 1 つの文で渡した・読ませたときは、ファイルごとに印を付ける。フォルダの外のプロファイルのものは数えない', () => {
+    tracker.handle({
+      type: 'attachment',
+      attachment: {
+        type: 'hook_additional_context',
+        hookName: 'SessionStart',
+        content: [
+          instructionsContext([
+            { path: '/Users/me/.claude/TANACODE.md', content: '# どのセッションでも', sum: '0123456789ab' },
+            { path: `${CWD}/TANACODE.md`, content: '# このフォルダでは', sum: 'ba9876543210' },
+          ]),
+        ],
+      },
+    } as ConversationEntry);
+    const parents = [
+      { path: '/Users/me/.claude/TANACODE_PARENT.md', content: '# 親' },
+      { path: `${CWD}/sub/TANACODE_PARENT.md`, content: '# 親' },
+    ];
+    tracker.handle({ type: 'user', message: { content: parentRoleText(parents) } } as ConversationEntry);
+    expect(tracker.current().files).toEqual({ 'TANACODE.md': 'read', 'sub/TANACODE_PARENT.md': 'read' });
   });
 
   it('フォルダの外・相対パス・フォルダそのもの・サブエージェントの行・名前の無いツール・文字列でないパスは数えない', () => {

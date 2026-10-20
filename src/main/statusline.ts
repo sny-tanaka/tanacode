@@ -7,6 +7,7 @@ import type { RateLimit, StatusLineInfo } from '@shared/statusline';
 import { BROWSER_GATE_COMMAND } from './browser-gate';
 import { checklistHooks } from './checklist-hook';
 import { SUPPRESS_OUTPUT } from './hook-output';
+import { instructionsHooks } from './instructions-launch';
 import { sessionsGateCommand, SESSIONS_GATED_TOOL } from './sessions-bridge';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from './terminal-bridge';
 import { worktreeGuardCommand } from './worktree-guard';
@@ -29,6 +30,8 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // - terminal のときだけ: 人のターミナルに打つ前に、権限モードによらず、打つものを見せて人の許可の確認を出させる（terminal-bridge.ts）
 // - checklist のときだけ: 人の発言・ターンの終わり・会話の圧縮のあとに、今のチェックリストを Claude に渡す（checklist-hook.ts）。
 //   自動の最適化圧縮のため、ツールの切れ目で止めるフックと、Claude Code の自動の圧縮を止めるフックも
+// - instructions のとき（アプリが起動するときはいつも）: 会話の始まり・再開・/clear・圧縮のあとに、TANACODE.md を Claude に渡す
+//   （instructions-hook.ts）
 // - 書くだけのフック（何も決めない。いつも足す）: 許可の確認を出す直前（PermissionRequest）のツールの名前と入力、Claude Code の知らせ
 //   （Notification）、ターンの終わりのフック（Stop）を、セッションごとのファイルに書かせる。ターミナルモード（TUI）の間に、確認待ちと、
 //   メニューが閉じたこと・TUI の権限モードを知るため（設計書 9 節）。Stop では、ターンの終わりは決めない（一緒に動くチェックリストの Stop の
@@ -38,8 +41,15 @@ export const STATUS_FILE_ENV = 'TANACODE_STATUS_FILE';
 // claudeMdExcludes: 設定のフォルダが ~/.claude でないときだけ、~/.claude の指示ファイルを読ませない（claude-config.ts の foreignClaudeMdExcludes）。
 // 描き方（tui）は決めない（画面を読まないので、ユーザーの設定のままにする）
 // claudeDir: プロファイルの Claude Code の設定のフォルダ（ユーザー自身の statusLine を探す。null は既定のプロファイル）
-export function sessionSettings(browser = false, sessions = false, claudeDir: string | null = null, checklist = false, terminal = false): string {
-  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal));
+export function sessionSettings(
+  browser = false,
+  sessions = false,
+  claudeDir: string | null = null,
+  checklist = false,
+  terminal = false,
+  instructions = false,
+): string {
+  return JSON.stringify(ownSettings(userStatusLineCommand(claudeDir), browser, sessions, claudeDir, checklist, terminal, instructions));
 }
 
 // sessionSettings の中身。inner: statusLine に同じ JSON を渡す、ユーザー自身の statusLine のコマンド（無ければ null）。
@@ -51,11 +61,14 @@ export function ownSettings(
   claudeDir: string | null = null,
   checklist = false,
   terminal = false,
+  instructions = false,
 ): Record<string, unknown> {
   const command = inner ? `tee "$${STATUS_FILE_ENV}" | ${inner}` : `cat > "$${STATUS_FILE_ENV}"`;
   const excludes = foreignClaudeMdExcludes(claudeDir);
   const writeOnly = (fileCommand: string) => ({ hooks: [{ type: 'command', command: fileCommand, timeout: 10 }] });
   const checklistEvents = checklist ? checklistHooks() : {};
+  // SessionStart は、TANACODE.md を先に（Claude に渡る順。チェックリストの今の状態は、プロジェクトの決まりのあとに読ませる）
+  const sessionStart = [...(instructions ? instructionsHooks() : []), ...(checklistEvents.SessionStart ?? [])];
   return {
     statusLine: { type: 'command', command },
     hooks: {
@@ -68,6 +81,7 @@ export function ownSettings(
       PermissionRequest: [{ matcher: '*', ...writeOnly(PERMISSION_FILE_COMMAND) }],
       Notification: [writeOnly(NOTIFICATION_FILE_COMMAND)],
       ...checklistEvents,
+      ...(sessionStart.length > 0 ? { SessionStart: sessionStart } : {}),
       Stop: [writeOnly(IDLE_FILE_COMMAND), ...(checklistEvents.Stop ?? [])],
       // 自動の最適化圧縮（チェックリストの MCP を足すときだけ。リストが無ければ引き継げない）: ツールの切れ目で止める
       ...(checklist ? { PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: AUTO_COMPACT_STOP_COMMAND, timeout: 5 }] }] } : {}),

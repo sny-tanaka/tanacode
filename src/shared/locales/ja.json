@@ -209,6 +209,7 @@
       "notice": "知らせ: {summary}",
       "taskFinished": "バックグラウンドのタスクが終わりました",
       "answer": "質問への答え: {answer}",
+      "parentRole": "親にする（{file}）",
       "noAnswer": "（回答なし）"
     },
     "hooks": {
@@ -288,6 +289,18 @@
       "tuiExited": "ターミナルモードの Claude Code が、起動を終える前に終わりました（code {code}）。「再開」で起動し直すか、ターミナルモードのボタンでチャットに戻せます",
       "chatExited": "チャットの Claude Code が起動の途中で終了したため（code {code}）、ターミナルモードに戻しました",
       "startFailedStopped": "もう片方でも、元の形でも起動できませんでした（{reason}）。設定を直してから「再開」で開き直してください"
+    },
+    "parentRole": {
+      "missing": "{file} が見つかりません。セッションのフォルダに置くと使えます",
+      "cannotPaste": "Claude Code が確認・質問を出している間は、入力欄に貼れません。答えてから、もう一度押してください",
+      "missingOnStart": "{file} が見つからなかったので、親としては始めず、最初の指示だけを送りました",
+      "child": "子のセッションは親にできません（子は、さらに子のセッションを作れないため）",
+      "unusableOnStart": "{reason}。親としては始めず、最初の指示だけを送りました"
+    },
+    "instructions": {
+      "empty": "{path} が空なので、Claude に渡していません",
+      "tooLarge": "{path} が大きすぎる（1MB を超える）ので、Claude に渡していません",
+      "unreadable": "{path} を読めないので、Claude に渡していません"
     }
   },
   "commands": {
@@ -552,6 +565,10 @@
       "restartTip": "Claude Code を起動し直して、同じ会話を続けます。スキル・CLAUDE.md・設定・MCP などの変更が反映されます",
       "confirmRestart": "作業中のターンやバックグラウンドのタスクは止まります。Claude Code を再起動しますか？",
       "restartFailed": "再起動できませんでした: {error}",
+      "becomeParent": "親にする",
+      "becomeParentTip": "このセッションを親にします。{file} を Claude に 1 回読ませます（作業中なら順番待ちに入ります）。会話を消したら（/clear・最適化圧縮）、もう一度押してください",
+      "becomeParentMissing": "セッションのフォルダに {file}（親として動くときの決まり）を置くと使えます",
+      "becomeParentFailed": "親にできませんでした: {error}",
       "export": "作業を書き出す…",
       "exportTip": "このセッションの流れを、1 枚の HTML ファイルに書き出す",
       "terminal": "ターミナルモード",
@@ -767,6 +784,7 @@
       "scheduledTaskNamed": "スケジュールタスク「{name}」の実行",
       "wakeup": "Claude の予約の時刻になりました",
       "usageLimitResume": "利用枠が戻ったので、続きを頼みました",
+      "parentRole": "{file} を読ませて、親のセッションにしました",
       "modelFallback": "モデルを {from} から {to} に切り替えました",
       "modelFallbackUnknown": "モデルを切り替えました",
       "modelRefusalFallback": "{from} が応答を断ったので、{to} で取り直しました",
@@ -869,6 +887,10 @@
         "shortened": "[… {count} 文字を省きました …]",
         "cutEnd": "…（ここで切りました）"
       }
+    },
+    "parentRole": {
+      "intro": "「親にする」が押されました。この会話では、親のセッションとして、以下の {file} に従ってください。",
+      "queued": "親にする（{file} を読ませる）"
     }
   },
   "composer": {
@@ -1272,6 +1294,9 @@
       "switchDefault": "最新のデフォルトブランチへ切り替える",
       "worktreeAbout": "claude --worktree で、このセッション用の worktree（別の作業フォルダとブランチ）を作って始めます。\n同じフォルダで並行して動かしても、変更がぶつかりません。\n場所はフォルダの .claude/worktrees/、ブランチは worktree-<名前>",
       "useWorktree": "worktree を使う",
+      "asParent": "親として始める",
+      "asParentAbout": "最初の指示と一緒に {file} を Claude に読ませて、子のセッションを動かす親として始めます",
+      "asParentMissing": "フォルダに {file}（親として動くときの決まり）を置くと使えます",
       "folderMissing": "フォルダが見つかりません",
       "placeholder": "最初の指示（⌘Enter で送信 · @ でファイル・セッション · / でコマンド）",
       "placeholderNoFolder": "先に作業するフォルダを選んでください",

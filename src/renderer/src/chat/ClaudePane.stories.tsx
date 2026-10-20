@@ -348,6 +348,50 @@ export const 送信中と順番待ち: Story = {
   },
 };
 
+// 「親にする」（ヘッダーの組織図のアイコン）。セッションのフォルダに TANACODE_PARENT.md があるので押せる。
+// 押すと、TANACODE_PARENT.md を Claude に 1 回読ませ、チャットには知らせとして出る（開くと、前書きと中身が読める）
+const PARENT_RULES = '# 親として動くときの決まり\n- 作業は子のセッションに任せ、自分は見張る\n- 子には worktree で始めさせる';
+export const 親にした: Story = {
+  args: {
+    items: [
+      ...conversation(2),
+      {
+        kind: 'notice',
+        id: 'n-parent',
+        text: t('chat.transcript.parentRole', { file: 'TANACODE_PARENT.md' }),
+        detail: `${t('chat.parentRole.intro', { file: 'TANACODE_PARENT.md' })}\n\n${PARENT_RULES}`,
+      },
+      { kind: 'text', id: 't-parent', text: '分かりました。これからは作業を子のセッションに任せ、進み具合を見張ります。' },
+    ],
+  },
+  beforeEach: () => {
+    mockApi({ 'sessions.parentInstructions': () => Promise.resolve('/Users/me/work/app/TANACODE_PARENT.md') });
+  },
+};
+
+// 作業中に「親にする」を押したとき。順番待ちに入り、今のターンが終わると読ませる
+export const 親にするを順番待ち: Story = {
+  args: {
+    items: conversation(4),
+    running: true,
+    unsent: [{ id: 'q1', text: t('chat.parentRole.queued', { file: 'TANACODE_PARENT.md' }), pastes: [], images: 0, state: 'queued' }],
+  },
+  beforeEach: () => {
+    mockApi({
+      'sessions.parentInstructions': () => Promise.resolve('/Users/me/work/app/TANACODE_PARENT.md'),
+      'sessions.progress': () => Promise.resolve({ phase: 'writing', elapsed: '42s', tokens: '0.8k' }),
+    });
+  },
+};
+
+// セッションのフォルダに TANACODE_PARENT.md が無いとき。「親にする」は押せず、ツールチップに置けば使えることを出す
+export const 親にするファイルが無い: Story = {
+  args: { items: conversation(2) },
+  beforeEach: () => {
+    mockApi({ 'sessions.parentInstructions': () => Promise.resolve(null) });
+  },
+};
+
 // 子セッションで、作業中に親セッションの Claude から届いた指示。会話に出たときと同じく、親の見出しを付けて人の発言と見分ける
 export const 親からの指示の順番待ち: Story = {
   args: {

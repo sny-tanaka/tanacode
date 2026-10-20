@@ -6792,7 +6792,7 @@ body.resizing-rows webview {
   }
 }
 
-/* worktree のセッション。新規セッションの画面の「worktree を使う」と、セッション一覧の行の worktree の名前 */
+/* worktree のセッション。新規セッションの画面の「worktree を使う」「親として始める」と、セッション一覧の行の worktree の名前 */
 .new-session-check {
   display: inline-flex;
   align-items: center;
@@ -6805,6 +6805,12 @@ body.resizing-rows webview {
 }
 .new-session-check:hover {
   color: var(--text-primary);
+}
+/* 選べないとき（「親として始める」で、フォルダに TANACODE_PARENT.md が無い）。わけはツールチップに出す */
+.new-session-check.disabled,
+.new-session-check.disabled:hover {
+  color: var(--text-tertiary);
+  cursor: default;
 }
 .new-session-check input {
   margin: 0;
