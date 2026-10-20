@@ -8,6 +8,7 @@ import type { AskQuestion } from '@shared/screen';
 import { wakeupText } from '@shared/scheduled';
 import { SESSION_TOOLS, parentMessageText, sessionEventText, sessionToolId } from '@shared/session-tools';
 import { McpBridge, textResult } from '../../src/main/mcp-bridge';
+import { ScheduledMessages } from '../../src/main/scheduled-messages';
 import { SessionsControl } from '../../src/main/sessions-control';
 import { buildRelay } from './browser-relay-build';
 import { ClaudeRun, claudeVersion, sleep } from './claude-run';
@@ -25,6 +26,8 @@ import { MockApi, type Block } from './mock-api';
 // - 役目を終えた worktree の子を、親（SessionsControl の end_session）が片付けられる。作業中の子は断り、
 //   裏のタスクの完了待ちの子は、Claude Code と一緒に裏の Bash も止めて、アーカイブし、worktree を消す（未追跡のファイルは控えに残す）
 // - 親からの指示（囲み＋複数行の本文の貼り付け）は、会話ログから「親セッションからの指示」として読める。子の知らせと予約の知らせは「Claude への知らせ」
+// - 自分への予約を重ねようとすると（本物の SessionsControl と ScheduledMessages で）、入らずに、前の予約が Claude に届く。
+//   Claude（モック）がそれを読んで、前の予約を取り消して入れ直せる。even_if_scheduled: true を付けると重ねて入る
 
 const SESSIONS = 'ほかのセッションを扱ってください';
 const ASK = '子の質問の確認をしてください';
@@ -63,6 +66,9 @@ const DENY_REASON = 'made-2 は作らずに、次へ進んでください';
 const END = '裏でサーバーを動かしてください';
 // 裏で動かし続ける Bash（ほかのテストの sleep と見分けられる秒数にする）
 const END_COMMAND = 'sleep 7411';
+const WAKE_TWICE = '見回りの予約を入れ直してください';
+const OLD_WAKEUP = '子を見に行く（古い文面）';
+const NEW_WAKEUP = '子を見に行く（新しい文面）';
 const PARENT = '11111111-0000-4000-8000-000000000001';
 const CHILD = '22222222-0000-4000-8000-000000000002';
 
@@ -79,6 +85,8 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
   let socketPath: string;
   // アプリに届いた呼び出し
   const calls: { session: string; tool: string; args: Record<string, unknown> }[] = [];
+  // このセッションからの呼び出しは、本物の SessionsControl で扱う（予約を重ねようとしたときの確かめ）
+  let routed: { session: string; control: SessionsControl } | null = null;
   const runs: ClaudeRun[] = [];
 
   const resultOf = (run: ClaudeRun, toolUseId: string): unknown => {
@@ -97,6 +105,7 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
     socketDir = mkdtempSync(join(tmpdir(), 'tanacode-sessions-'));
     socketPath = join(socketDir, 'sessions.sock');
     bridge = new McpBridge(socketPath, async (session, tool, args) => {
+      if (routed?.session === session) return routed.control.handle(session, tool, args);
       calls.push({ session, tool, args });
       return textResult(JSON.stringify({ tool, note: `${tool} をしました` }));
     });
@@ -172,6 +181,19 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
         // 送ってから返事までを、作業中として見られるように遅らせる（sleep は、許可の確認なしに通る）
         delayMs: 3000,
         steps: [[{ type: 'tool_use', id: 'toolu_end_bg', name: 'Bash', input: { command: END_COMMAND, description: 'サーバーを起動', run_in_background: true } }], say('裏で動かしました')],
+      },
+      {
+        match: WAKE_TWICE,
+        steps: [
+          call('toolu_wake_1', 'schedule_wakeup', { message: OLD_WAKEUP, in_minutes: 5 }),
+          call('toolu_wake_2', 'schedule_wakeup', { message: NEW_WAKEUP, in_minutes: 30 }),
+          // 2 番目の応答は、届いた結果を読んで決める（api.intercept。前の予約が届いていれば、それを取り消す）
+          say('前の予約が届きませんでした'),
+          call('toolu_wake_3', 'schedule_wakeup', { message: NEW_WAKEUP, in_minutes: 30 }),
+          call('toolu_wake_4', 'schedule_wakeup', { message: 'ビルドを見る', in_minutes: 10 }),
+          call('toolu_wake_5', 'schedule_wakeup', { message: 'ビルドを見る', in_minutes: 10, even_if_scheduled: true }),
+          say('予約を確かめました'),
+        ],
       },
     ];
   });
@@ -565,6 +587,71 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
       const result = await end();
       expect(result.isError, textOf(result)).toBeUndefined();
       expect(JSON.parse(textOf(result))).toMatchObject({ archived: true, already_archived: true, worktree: { folder: 'already_removed' } });
+    });
+  });
+
+  describe('自分への予約を重ねようとしたとき（Issue #277）', () => {
+    let run: ClaudeRun;
+    let scheduled: ScheduledMessages;
+    let control: SessionsControl;
+    type Waiting = { scheduled: false; waiting: { id: string; text: string }[]; note: string };
+    // ツールの結果の文（Claude Code が会話ログに書いたもの）。エラーかどうかも
+    const resultText = (toolUseId: string): { text: string; error: boolean } => {
+      const hit = resultOf(run, toolUseId) as { content?: string | { text?: string }[]; is_error?: boolean };
+      const text = typeof hit.content === 'string' ? hit.content : (hit.content ?? []).map((b) => b.text ?? '').join('');
+      return { text, error: hit.is_error === true };
+    };
+
+    beforeAll(async () => {
+      run = await open();
+      // 時刻を待つだけで送らない（start しない）。入った予約を数えるのに使う
+      scheduled = new ScheduledMessages(join(run.root, 'scheduled-messages.json'), { stateOf: () => 'idle', open: async () => undefined, summary: () => undefined, submitWhenReady: () => new Promise<void>(() => undefined) }, () => undefined);
+      control = new SessionsControl({ host: run.manager, enabled: () => true, archive: async () => null, home: run.home, scheduled: () => scheduled });
+      routed = { session: run.sessionId!, control };
+    });
+
+    afterAll(() => {
+      routed = null;
+      api.intercept = null;
+      control?.dispose();
+      scheduled?.dispose();
+    });
+
+    it('2 回目は入らずに、前の予約（ID・時刻・本文）が Claude に届き、Claude はそれを取り消して入れ直せる。even_if_scheduled: true なら重ねて入る', async () => {
+      // Claude（モック）は、2 回目の結果に前の予約が入っていれば、それを取り消す
+      api.intercept = (_prompt, results, context) => {
+        if (!context.includes(WAKE_TWICE)) return null;
+        const parse = (text: string): Partial<Waiting> => {
+          try {
+            return JSON.parse(text) as Partial<Waiting>;
+          } catch {
+            return {};
+          }
+        };
+        const old = results
+          .map(parse)
+          .find((r) => r.scheduled === false)
+          ?.waiting?.find((m) => m.text === OLD_WAKEUP);
+        return old ? call('toolu_unwake_old', 'cancel_wakeup', { id: old.id }) : null;
+      };
+      await run.send(WAKE_TWICE);
+      await run.waitUntil('返事', replied(run, '予約を確かめました'));
+      const first = JSON.parse(resultText('toolu_wake_1').text) as { id: string };
+      // 2 回目: 入らずに、前の予約を返す（エラーにはしない）
+      const second = resultText('toolu_wake_2');
+      expect(second.error).toBe(false);
+      const refused = JSON.parse(second.text) as Waiting;
+      expect(refused).toMatchObject({ scheduled: false, waiting: [{ id: first.id, text: OLD_WAKEUP }] });
+      expect(refused.note).toContain('even_if_scheduled: true');
+      // その結果が、モデル（API）まで届いている
+      expect(api.toolResults.some((r) => r.includes(first.id) && r.includes('Not scheduled'))).toBe(true);
+      // 前の予約を取り消してから入れ直した
+      expect(JSON.parse(resultText('toolu_unwake_old').text)).toEqual({ id: first.id, cancelled: true });
+      const third = JSON.parse(resultText('toolu_wake_3').text) as { id: string };
+      // 重ねようとすると、入れ直したものが返り、even_if_scheduled: true（中継を通って届く）を付けると入る
+      expect(JSON.parse(resultText('toolu_wake_4').text)).toMatchObject({ scheduled: false, waiting: [{ id: third.id, text: NEW_WAKEUP }] });
+      expect(JSON.parse(resultText('toolu_wake_5').text)).toHaveProperty('id');
+      expect(scheduled.claudeWakeups(run.sessionId!).map((m) => m.text)).toEqual([NEW_WAKEUP, 'ビルドを見る']);
     });
   });
 

@@ -852,6 +852,9 @@ export class SessionsControl {
     const now = Date.now();
     const at = wakeupTime(args, now);
     const waiting = scheduled.claudeWakeups(caller.id);
+    // Claude の予約がもう待っていれば、入れずに見せて、Claude に決めさせる（Issue #277。親が子の見回りの予約を、前のものを忘れて
+    // 重ねて入れ、古い文面のほうが先に届いていた）。重ねると決めたら、even_if_scheduled を付けてもう一度呼ぶ
+    if (waiting.length > 0 && args.even_if_scheduled !== true) return this.wakeupsWaiting(caller, waiting);
     if (waiting.length >= MAX_WAKEUPS) {
       throw new ToolError(
         `${MAX_WAKEUPS} of your wake-ups are already waiting in this session (${waiting.map((m) => `${m.id.slice(0, 8)} at ${localIso(m.at)}`).join(', ')}). Cancel one you no longer need with cancel_wakeup, or wait until one has been sent.`,
@@ -863,6 +866,27 @@ export class SessionsControl {
       at: new Date(added.at).toISOString(),
       local_time: localIso(added.at),
       note: ['Scheduled. End your turn now: at that time, it is sent back to you as soon as this session is idle.', this.wakeupsUnsavedNote(caller)].filter(Boolean).join(' '),
+    });
+  }
+
+  // 予約を入れずに、待っている Claude の予約を返す。人の予約は数えない（Claude は消せない）が、あることは添える。
+  // 断ったのではなく判断を求めているので、エラーにはしない（チャットに失敗として出さない）
+  private wakeupsWaiting(caller: SessionSummary, waiting: ScheduledMessage[]): ToolResult {
+    const sorted = [...waiting].sort((a, b) => a.at - b.at);
+    const users = this.wakeups()
+      .list()
+      .filter((m) => m.sessionId === caller.id && !m.by && (m.state === 'scheduled' || m.state === 'sending')).length;
+    return json({
+      scheduled: false,
+      waiting: sorted.map((m) => ({ id: m.id, state: m.state, at: new Date(m.at).toISOString(), local_time: localIso(m.at), text: clip(m.text, MAX_WAKEUP_TEXT_CHARS) })),
+      note: [
+        `Not scheduled: ${waiting.length === 1 ? 'one of your wake-ups is' : `${waiting.length} of your wake-ups are`} already waiting in this session (waiting). A second one is usually a mistake: the earlier one may arrive first with an outdated message. Decide now: if a waiting one already covers what you need, keep it and do not schedule this one; if its message or time is outdated (it was written before what you know now), cancel it with cancel_wakeup and then schedule this one; only if you really need both, call schedule_wakeup again with the same arguments and even_if_scheduled: true.`,
+        waiting.length >= MAX_WAKEUPS ? `You already have the maximum of ${MAX_WAKEUPS}, so cancel one before you add another.` : '',
+        users > 0 ? `The user also scheduled ${users === 1 ? '1 message' : `${users} messages`} in this session (not counted here: they are the user's, and only the user can change them; see list_wakeups).` : '',
+        this.wakeupsUnsavedNote(caller),
+      ]
+        .filter(Boolean)
+        .join(' '),
     });
   }
 
