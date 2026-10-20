@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { setLanguage } from '../src/shared/i18n';
+import { fill, setLanguage, t } from '../src/shared/i18n';
 import type { ChatEvent } from '../src/shared/chat';
 import type { Checklist } from '../src/shared/checklist';
-import { HANDOFF_TAG, IDLE_COMPACT_STATUS, RESUME_TAG, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
+import { handoffText, IDLE_COMPACT_STATUS, parseCompactMessage, type AutoCompactTrigger, type CarriedTask, type CompactStatus } from '../src/shared/optimized-compact';
+import { defaultPrompt, type CustomPrompts } from '../src/shared/prompts';
 import type { SessionState } from '../src/shared/session-tools';
 import { OptimizedCompact, type CompactHost } from '../src/main/optimized-compact';
 
@@ -71,8 +72,9 @@ beforeEach(() => {
 afterEach(() => compact.dispose());
 
 const handoff = (): ChatEvent => ({ type: 'notice', id: `h${host.events.length}`, text: '仕上げ', compact: 'handoff' });
-const isHandoff = (text: string) => text.startsWith(`<${HANDOFF_TAG}>`);
-const isResume = (text: string) => text.startsWith(`<${RESUME_TAG}>`);
+// 送った文が、仕上げの頼み・再開の文か（囲みには、始まり方の属性が付く）
+const isHandoff = (text: string) => parseCompactMessage(text)?.kind === 'handoff';
+const isResume = (text: string) => parseCompactMessage(text)?.kind === 'resume';
 
 // ふつうに進む台本。仕上げの頼みが会話に出て、ターンが終わる。/clear で新しい会話になる
 function script(over: { afterHandoff?: () => void; onClear?: () => void } = {}): void {
@@ -126,6 +128,29 @@ describe('流れ', () => {
     expect(phases()).toEqual(['finalizing', 'clearing', 'resuming', null]);
   });
 
+  it('利用者が変えた文（メニューの「Claude に送る文…」）を、送るたびに読んで送る。既定に戻したら、次からは既定の文', async () => {
+    let prompts: CustomPrompts = { handoff: 'リストを最新にして{trigger}', resume: '会話を消しました。報告して待って。' };
+    compact.dispose();
+    compact = new OptimizedCompact({ host, lists: () => lists, usedSince: () => used, enabled: () => enabled, prompts: () => prompts, onChange: (_id, status) => statuses.push(status), timings: TIMINGS });
+    script();
+    compact.start(ID);
+    await finished();
+    const manual = t('chat.compactPrompt.handoff.triggerManual');
+    expect(parseCompactMessage(host.submitted[0])!.body).toBe(`リストを最新にして${manual}`);
+    const resume = parseCompactMessage(host.submitted[2])!;
+    expect(resume.body.startsWith(`会話を消しました。報告して待って。\n\n${t('chat.compactPrompt.resume.cardsHeading')}`)).toBe(true);
+    expect(resume.body).toContain('<user-message>\n税率を可変にして\n</user-message>');
+
+    prompts = {};
+    host.submitted = [];
+    statuses = [];
+    host.claudeSession = 'conv-1';
+    compact.start(ID);
+    await finished();
+    expect(host.submitted[0]).toBe(handoffText());
+    expect(parseCompactMessage(host.submitted[2])!.body.startsWith(`${fill(defaultPrompt('resume'), { trigger: manual })}\n\n`)).toBe(true);
+  });
+
   it('再開の文に、切り替える前の最後の応答を入れる（人が、それに短く答えるかもしれない）。途中で止めたときは、止めた場所に入るので入れない', async () => {
     script();
     host.events = [{ type: 'user', id: 'u0', text: '税率を可変にして' }, { type: 'assistant-text', id: 'a0', text: 'A 案と B 案があります。どちらにしますか？' }, { type: 'turn-end' }];
@@ -177,7 +202,7 @@ describe('流れ', () => {
     // 再開の文は、会話ログでは知らせになる（全文は detail）
     const submit = host.onSubmit;
     host.onSubmit = (text) => {
-      if (isResume(text)) host.events.push({ type: 'notice', id: 'r', text: '再開', compact: 'resume', detail: text.slice(`<${RESUME_TAG}>`.length, -`</${RESUME_TAG}>`.length).trim() }, { type: 'turn-end' });
+      if (isResume(text)) host.events.push({ type: 'notice', id: 'r', text: '再開', compact: 'resume', detail: parseCompactMessage(text)!.body }, { type: 'turn-end' });
       else submit(text);
     };
     compact.start(ID);

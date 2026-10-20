@@ -48,14 +48,14 @@ describe('子セッションで、最適化圧縮が自動で動く', () => {
     }
     if (result.includes('"last_response"')) return [{ type: 'text', text: PARENT_READ }];
     // --- 子 ---
-    if (prompt.includes(`<${HANDOFF_TAG}>`)) {
+    if (prompt.includes(`<${HANDOFF_TAG} `)) {
       noticedAtHandoff ??= noticed.length;
       app.api.inputTokens = CHILD_TOKENS;
       return [{ type: 'tool_use', id: 'toolu_state', name: checklistToolId('card_add'), input: { list: 'いまの状態', list_description: '変わったら書き換える', list_kind: 'state', cards: [{ title: '手順の途中', body: '残りの手順を進める' }] } }];
     }
     if (result.includes('Added #')) return [{ type: 'text', text: WRITTEN }];
     // 会話を消したあとは、コンテキストが小さくなる
-    if (prompt.includes(`<${RESUME_TAG}>`)) return [{ type: 'tool_use', id: 'toolu_overview', name: checklistToolId('checklist_overview'), input: {} }];
+    if (prompt.includes(`<${RESUME_TAG} `)) return [{ type: 'tool_use', id: 'toolu_overview', name: checklistToolId('checklist_overview'), input: {} }];
     if (result.includes('## ')) return [{ type: 'text', text: CHILD_DONE }];
     app.api.inputTokens = CHILD_TOKENS;
     if (prompt.includes(CHILD)) return [{ type: 'tool_use', id: 'toolu_step_1', name: 'Bash', input: { command: 'sleep 0.6 && echo step-1', description: '手順 1' } }];
@@ -86,15 +86,15 @@ describe('子セッションで、最適化圧縮が自動で動く', () => {
     const card = await app.menuCard('permission');
     await app.choose(card, /^許可する/);
     await app.byText('.chat-list', PARENT_STARTED).waitFor();
-    await app.waitUntil('子の仕上げの頼み', () => prompts(`<${HANDOFF_TAG}>`).length === 1, 90_000);
+    await app.waitUntil('子の仕上げの頼み', () => prompts(`<${HANDOFF_TAG} `).length === 1, 90_000);
     // 画面の言語（E2E は日本語）で書く
-    expect(prompts(`<${HANDOFF_TAG}>`)[0]).toContain('tanacode がツールの切れ目であなたのターンを止めたので');
-    await app.waitUntil('子の再開の文', () => prompts(`<${RESUME_TAG}>`).length === 1, 60_000);
+    expect(prompts(`<${HANDOFF_TAG} `)[0]).toContain('tanacode がツールの切れ目であなたのターンを止めたので');
+    await app.waitUntil('子の再開の文', () => prompts(`<${RESUME_TAG} `).length === 1, 60_000);
     // 8 つの手順を終える前に、止まっている
     expect(steps()).toBeGreaterThan(0);
     expect(steps()).toBeLessThan(8);
     // 再開の文には、親の指示が「親セッションからの指示」として入る
-    expect(prompts(`<${RESUME_TAG}>`)[0]).toContain(`<user-message from="親セッションの Claude">\n${CHILD}\n</user-message>`);
+    expect(prompts(`<${RESUME_TAG} `)[0]).toContain(`<user-message from="親セッションの Claude">\n${CHILD}\n</user-message>`);
   });
 
   it('親には、子が続きを終えたときに、知らせが 1 回だけ届く（止めた瞬間・仕上げのあと・/clear のあとのすき間では届かない）', async () => {
