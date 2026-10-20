@@ -291,7 +291,9 @@ describe('Claude Code に足す MCP サーバー', () => {
     const scripts = ['browser-mcp.js', 'sessions-mcp.js', 'checklist-mcp.js', 'walkthrough-mcp.js', 'terminal-mcp.js'];
     const sockets = ['browser.sock', 'sessions.sock', 'checklist.sock', 'walkthrough.sock', 'terminal.sock'];
     launches.forEach((name, i) => {
-      expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7' });
+      // セッションには、子セッションの起動の確認を省く印のファイル（userData。アプリ全体で 1 つ）のパスも渡す
+      const extra = name === 'sessionsLaunch' ? { noAskFile: join(state.userData, 'sessions-start-no-ask') } : {};
+      expect(launch(name)).toEqual({ command: '/fake/bin/node', script: join(MAIN_DIR, scripts[i]), socketPath: join(state.userData, sockets[i]), version: '9.8.7', ...extra });
     });
   });
 
@@ -1182,7 +1184,7 @@ describe('メニュー', () => {
   };
 
   it('アプリのメニューに、設定の切り替えと、許す先・新規セッション・止めて終了を並べる', async () => {
-    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, checklistControl: true, walkthroughControl: false, terminalControl: true, usageLimitResume: false } });
+    await boot({ settings: { updateCheck: false, browserControl: true, sessionsControl: false, sessionsStartConfirm: false, checklistControl: true, walkthroughControl: false, terminalControl: true, usageLimitResume: false } });
     const [appMenu, fileMenu, ...rest] = state.menu!;
     expect(appMenu.label).toBe('tanacode');
     expect(appMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual([
@@ -1192,6 +1194,7 @@ describe('メニュー', () => {
       '終了するときに新しいバージョンを入れる（Homebrew）',
       'Claude にアプリ内ブラウザを操作させる',
       'Claude にほかのセッションを扱わせる',
+      'Claude がセッションを始める前に許可を求める',
       'Claude にチェックリストを扱わせる',
       'Claude にウォークスルーさせる',
       'Claude にターミナルを使わせる',
@@ -1209,7 +1212,7 @@ describe('メニュー', () => {
       'separator',
       'quit',
     ]);
-    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, true, false, true, false]);
+    expect(appMenu.submenu!.filter((i) => i.type === 'checkbox').map((i) => i.checked)).toEqual([false, true, true, false, false, true, false, true, false]);
     expect(fileMenu.label).toBe('ファイル');
     expect(fileMenu.submenu!.map((i: MenuItem) => i.role ?? i.label ?? i.type)).toEqual(['新規セッション', 'separator', 'close', 'separator', 'Claude Code も止めて終了']);
     expect(menuItem('新規セッション').accelerator).toBe('CmdOrCtrl+N');
@@ -1340,6 +1343,7 @@ describe('メニュー', () => {
   it.each([
     ['終了するときに新しいバージョンを入れる（Homebrew）', 'updateOnQuit'],
     ['Claude にほかのセッションを扱わせる', 'sessionsControl'],
+    ['Claude がセッションを始める前に許可を求める', 'sessionsStartConfirm'],
     ['Claude にチェックリストを扱わせる', 'checklistControl'],
     ['Claude にウォークスルーさせる', 'walkthroughControl'],
     ['Claude にターミナルを使わせる', 'terminalControl'],
@@ -1350,6 +1354,45 @@ describe('メニュー', () => {
     expect(savedSettings()[key]).toBe(false);
     toggle(label);
     expect(savedSettings()[key]).toBe(true);
+  });
+
+  describe('「Claude がセッションを始める前に許可を求める」', () => {
+    const noAskFile = () => join(state.userData, 'sessions-start-no-ask');
+
+    it('オフにしたら印のファイルを置き、オンにしたら消す（起動の確認のフックが、動いているセッションでも次の呼び出しから読む）', async () => {
+      await boot();
+      expect(existsSync(noAskFile())).toBe(false);
+      toggle('Claude がセッションを始める前に許可を求める');
+      expect(existsSync(noAskFile())).toBe(true);
+      toggle('Claude がセッションを始める前に許可を求める');
+      expect(existsSync(noAskFile())).toBe(false);
+    });
+
+    it('起動したら、印のファイルを保存した設定に合わせ直す（前のアプリが残した印は消し、オフなら置く）', async () => {
+      await boot({ before: (s) => writeFileSync(join(s.userData, 'sessions-start-no-ask'), '') });
+      expect(existsSync(noAskFile())).toBe(false);
+      await boot({ settings: { sessionsStartConfirm: false } });
+      expect(existsSync(noAskFile())).toBe(true);
+    });
+
+    it('保存できなかったら、チェックも印のファイルも元に戻す（確認を省いたままにしない）', async () => {
+      await boot();
+      mkdirSync(join(state.userData, 'settings.json.tmp'));
+      const item = toggle('Claude がセッションを始める前に許可を求める');
+      expect(item.checked).toBe(true);
+      expect(existsSync(noAskFile())).toBe(false);
+    });
+
+    it('印のファイルを置けなかったら、設定も変えずにチェックを元に戻す', async () => {
+      await boot();
+      // ファイルの場所に、中身のあるフォルダがあると置けない
+      mkdirSync(join(noAskFile(), 'x'), { recursive: true });
+      const item = toggle('Claude がセッションを始める前に許可を求める');
+      expect(item.checked).toBe(true);
+      // 設定は保存しない
+      expect(existsSync(join(state.userData, 'settings.json'))).toBe(false);
+      expect(menuItem('Claude がセッションを始める前に許可を求める').checked).toBe(true);
+    });
   });
 
   it('「利用枠で止まったら、戻ったときに自動で再開する」をオフにしたら、待っている再開の予約を取り消す（オンにしたときは何もしない）', async () => {
@@ -1365,6 +1408,7 @@ describe('メニュー', () => {
     '終了するときに新しいバージョンを入れる（Homebrew）',
     'Claude にアプリ内ブラウザを操作させる',
     'Claude にほかのセッションを扱わせる',
+    'Claude がセッションを始める前に許可を求める',
     'Claude にチェックリストを扱わせる',
     'Claude にウォークスルーさせる',
     'Claude にターミナルを使わせる',

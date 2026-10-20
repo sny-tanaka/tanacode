@@ -154,6 +154,24 @@ describe('起動', () => {
     expect(host.spawned[0].request.env).toMatchObject({ TANACODE_BROWSER_SOCKET: '/u/browser.sock', TANACODE_BROWSER_SESSION: 's1' });
   });
 
+  it('セッションの MCP を足すときは、起動の確認のフックが見る印のファイルのパスを渡す。パスが無ければ空で上書きする（受け継いだ値を読ませない）', () => {
+    const sessions = { command: 'node', script: '/x/sessions-mcp.js', socketPath: '/u/sessions.sock', version: '1' };
+    const before = process.env.TANACODE_SESSIONS_NO_ASK_FILE;
+    process.env.TANACODE_SESSIONS_NO_ASK_FILE = '/from/parent';
+    try {
+      session({ sessions: { ...sessions, noAskFile: '/u/sessions-start-no-ask' } }).claude.start();
+      expect(host.spawned[0].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('/u/sessions-start-no-ask');
+      session({ sessions }).claude.start();
+      expect(host.spawned[1].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('');
+      // 子セッションにも渡す（子の中継には起動のツールが無いので、フックは呼ばれない）
+      session({ sessions: { ...sessions, child: true, noAskFile: '/u/sessions-start-no-ask' } }).claude.start();
+      expect(host.spawned[2].request.env.TANACODE_SESSIONS_NO_ASK_FILE).toBe('/u/sessions-start-no-ask');
+    } finally {
+      if (before === undefined) delete process.env.TANACODE_SESSIONS_NO_ASK_FILE;
+      else process.env.TANACODE_SESSIONS_NO_ASK_FILE = before;
+    }
+  });
+
   it('チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数を渡し、設定にフックを入れる', () => {
     const checklist = { command: 'node', script: '/x/checklist-mcp.js', socketPath: '/u/checklist.sock', version: '1' };
     session({ checklist }).claude.start();

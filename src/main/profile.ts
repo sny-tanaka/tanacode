@@ -10,6 +10,7 @@ import type { BrowserMcpLaunch } from './browser-bridge';
 import { BrowserControl } from './browser-control';
 import { McpBridge, textResult, type McpLaunch } from './mcp-bridge';
 import { SessionsControl } from './sessions-control';
+import type { SessionsMcpLaunch } from './sessions-bridge';
 import { ChecklistControl } from './checklist-control';
 import { AutoCompact } from './auto-compact';
 import { CompactNotice, type TurnNotice } from './compact-notice';
@@ -53,6 +54,8 @@ export type ProfileOptions = {
   claudeDir: string | null;
   // このプロファイルの設定（登録した設定ファイル・Claude に許す機能・アプリ内ブラウザの許す先）
   settings: AppSettings;
+  // 子セッションの起動の確認を省く印のファイル（アプリ全体で 1 つ。sessions-bridge.ts の SESSIONS_NO_ASK_FILE）
+  sessionsNoAskFile: string;
   // このプロファイルの画面への知らせと、画面（アプリ内ブラウザの webview を持つもの）
   send: Send;
   host: () => WebContents | null;
@@ -435,10 +438,17 @@ export class Profile {
     return { command: hostExecutable(), script: join(__dirname, 'browser-mcp.js'), socketPath: this.browserBridge.socketPath, version: app.getVersion() };
   }
 
-  // 起動する Claude Code に足す、セッションの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない
-  private sessionsLaunch(): McpLaunch | null {
+  // 起動する Claude Code に足す、セッションの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない。
+  // 子セッションの起動の確認のフックが見る、印のファイルのパスも渡す
+  private sessionsLaunch(): SessionsMcpLaunch | null {
     if (!this.sessionsBridge || !this.settings.sessionsControlEnabled()) return null;
-    return { command: hostExecutable(), script: join(__dirname, 'sessions-mcp.js'), socketPath: this.sessionsBridge.socketPath, version: app.getVersion() };
+    return {
+      command: hostExecutable(),
+      script: join(__dirname, 'sessions-mcp.js'),
+      socketPath: this.sessionsBridge.socketPath,
+      version: app.getVersion(),
+      noAskFile: this.options.sessionsNoAskFile,
+    };
   }
 
   // 起動する Claude Code に足す、チェックリストの MCP サーバー。メニューでオフにしているときや、待ち受けを始められなかったときは足さない

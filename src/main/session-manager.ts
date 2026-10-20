@@ -62,6 +62,7 @@ import { continuesWork, turnStarterOf, type TurnNotice, type TurnStarter } from 
 import type { BrowserMcpLaunch } from './browser-bridge';
 import type { McpLaunch } from './mcp-bridge';
 import { PendingQuestions } from './pending-questions';
+import type { SessionsMcpLaunch } from './sessions-bridge';
 import type { TerminalMcpLaunch } from './terminal-bridge';
 import type { PreparedSettings, SettingsFiles } from './settings-files';
 import { KnowledgeTracker } from './knowledge-tracker';
@@ -401,7 +402,7 @@ export class SessionManager {
     // 起動する Claude Code に、アプリ内ブラウザの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly browser: () => BrowserMcpLaunch | null = () => null,
     // 起動する Claude Code に、セッションの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
-    private readonly sessionsMcp: () => McpLaunch | null = () => null,
+    private readonly sessionsMcp: () => SessionsMcpLaunch | null = () => null,
     // 起動する Claude Code に、チェックリストの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）
     private readonly checklistMcp: () => McpLaunch | null = () => null,
     // 起動する Claude Code に、ウォークスルーの MCP サーバーを足すときの材料（起動のたびに聞く。メニューでオフなら null）

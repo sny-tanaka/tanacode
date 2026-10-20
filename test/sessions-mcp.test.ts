@@ -40,7 +40,7 @@ import { claudeArgs } from '../src/main/claude-session';
 import { respond } from '../src/main/mcp-relay';
 import { SendError, type SendFailure } from '../src/main/send-error';
 import { textResult } from '../src/main/mcp-bridge';
-import { sessionsGateCommand, SESSIONS_GATED_TOOL } from '../src/main/sessions-bridge';
+import { sessionsGateCommand, sessionsGateEnv, SESSIONS_GATED_TOOL, SESSIONS_NO_ASK_ENV, writeSessionsNoAskFile } from '../src/main/sessions-bridge';
 import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-messages';
 import { usageResumeText } from '../src/shared/usage-limit';
 import { PendingQuestions } from '../src/main/pending-questions';
@@ -142,21 +142,80 @@ describe('中継と起動の引数', () => {
     expect(SESSIONS_MCP_FOR_CHILD.instructions).toContain('do not wait to be asked');
   });
 
-  it('起動の確認のフックは、ask と、子も利用枠を使うことを書いた理由を出す', () => {
-    const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8' });
-    const decision = (JSON.parse(out) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } }).hookSpecificOutput;
+  // 起動の確認のフックを、起動する Claude Code と同じ形（環境変数で印のファイルのパスを渡す）で動かし、決めたことを返す
+  const gate = (noAskFile: string | undefined, input = '{"tool_name":"mcp__tanacode-sessions__start_session"}') => {
+    const env: Record<string, string> = { PATH: process.env.PATH ?? '', ...sessionsGateEnv({ ...launch, ...(noAskFile === undefined ? {} : { noAskFile }) }) };
+    const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8', input, env });
+    return JSON.parse(out) as { hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string }; suppressOutput: boolean };
+  };
+
+  it('起動の確認のフックは、印のファイルが無ければ ask と、子も利用枠を使うことを書いた理由を出す', () => {
+    const decision = gate(join(root, 'sessions-start-no-ask')).hookSpecificOutput;
     expect(decision.permissionDecision).toBe('ask');
     expect(decision.permissionDecisionReason).toContain('利用枠');
+    // パスを渡されていない（空）・環境変数が無いときも、確認を出させる
+    expect(gate(undefined).hookSpecificOutput.permissionDecision).toBe('ask');
+    const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('ask');
+  });
+
+  it('印のファイルがあれば、権限モードによらず allow を出す（理由とアプリのフックの印は ask と同じ）', () => {
+    const file = join(root, 'sessions-start-no-ask');
+    writeFileSync(file, '');
+    const allow = gate(file);
+    const ask = gate(join(root, 'missing'));
+    expect(allow).toEqual({ ...ask, hookSpecificOutput: { ...ask.hookSpecificOutput, permissionDecision: 'allow' } });
+    expect(allow.suppressOutput).toBe(true);
+    // チャットのフックの一覧に出さない目印は、どちらのときもコマンドに入っている
+    expect(sessionsGateCommand()).toContain('TANACODE_SESSIONS_GATE=1');
+    // フォルダは印にならない（ふつうのファイルだけを見る）
+    const dir = join(root, 'dir');
+    mkdirSync(dir);
+    expect(gate(dir).hookSpecificOutput.permissionDecision).toBe('ask');
+  });
+
+  it('同じコマンドのまま、印のファイルを置く・消すと、次の呼び出しから切り替わる（動いているセッションにもすぐ効く）', () => {
+    const file = join(root, 'userData', 'sessions-start-no-ask');
+    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('ask');
+    writeSessionsNoAskFile(file, false);
+    expect(readFileSync(file, 'utf8')).toBe('');
+    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('allow');
+    writeSessionsNoAskFile(file, true);
+    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('ask');
+    // 無いファイルを消すのは、何もしない
+    writeSessionsNoAskFile(file, true);
+    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('ask');
+  });
+
+  it('環境変数の名前とパスは、シェルで分かれない（空白・引用符を含む userData でも読める）', () => {
+    expect(SESSIONS_NO_ASK_ENV).toBe('TANACODE_SESSIONS_NO_ASK_FILE');
+    const file = join(root, "Application Support", "it's here", 'sessions-start-no-ask');
+    writeSessionsNoAskFile(file, false);
+    expect(gate(file).hookSpecificOutput.permissionDecision).toBe('allow');
   });
 
   it('起動の確認の理由は、Claude Code を起動するときの言語で書く（英語でも JSON として読める）', () => {
     setLanguage('en');
     try {
-      const out = execFileSync('/bin/sh', ['-c', sessionsGateCommand()], { encoding: 'utf8' });
-      expect((JSON.parse(out) as { hookSpecificOutput: { permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.sessionsGate'));
+      expect(gate(undefined).hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.sessionsGate'));
+      const file = join(root, 'sessions-start-no-ask');
+      writeFileSync(file, '');
+      expect(gate(file).hookSpecificOutput.permissionDecisionReason).toBe(t('main.hooks.sessionsGate'));
     } finally {
       setLanguage('ja');
     }
+  });
+
+  it('「Claude がセッションを始める前に許可を求める」は既定でオンで、保存される', () => {
+    const file = join(root, 'settings.json');
+    const settings = new AppSettings(file);
+    expect(settings.sessionsStartConfirmEnabled()).toBe(true);
+    settings.setSessionsStartConfirmEnabled(false);
+    expect(new AppSettings(file).sessionsStartConfirmEnabled()).toBe(false);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ sessionsStartConfirm: false });
+    // この設定ができる前のファイル（キーが無い）は、今までどおり確かめる
+    writeFileSync(file, JSON.stringify({ version: 1, sessionsControl: true }));
+    expect(new AppSettings(file).sessionsStartConfirmEnabled()).toBe(true);
   });
 
   it('メニューのオン・オフは既定でオンで、保存される', () => {

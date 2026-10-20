@@ -52,6 +52,7 @@
       "updateOnQuit": "終了するときに新しいバージョンを入れる（Homebrew）",
       "browserControl": "Claude にアプリ内ブラウザを操作させる",
       "sessionsControl": "Claude にほかのセッションを扱わせる",
+      "sessionsStartConfirm": "Claude がセッションを始める前に許可を求める",
       "checklistControl": "Claude にチェックリストを扱わせる",
       "walkthroughControl": "Claude にウォークスルーさせる",
       "terminalControl": "Claude にターミナルを使わせる",

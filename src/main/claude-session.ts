@@ -5,7 +5,7 @@ import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './brows
 import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
 import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
-import { sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
+import { sessionsGateEnv, sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
 import { terminalGateEnv, terminalMcpServer, type TerminalMcpLaunch } from './terminal-bridge';
 import type { PipeHandle, PtyHandle, PtyHostApi } from './pty-host-client';
 import type { HostedInfo } from './pty-host-protocol';
@@ -205,6 +205,7 @@ export class ClaudeSession {
   }
 
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
+  // セッションの MCP を足すときは、子セッションの起動の確認のフックが使う環境変数も。
   // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
   // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も
   private env(): Record<string, string> {
@@ -214,6 +215,7 @@ export class ClaudeSession {
       [STATUS_FILE_ENV]: statusFile,
       [ASK_FILE_ENV]: askFile,
       ...(this.options.browser ? browserGateEnv(this.options.browser, sessionId) : {}),
+      ...(this.options.sessions ? sessionsGateEnv(this.options.sessions) : {}),
       ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
       ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
     };
