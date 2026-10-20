@@ -252,6 +252,18 @@ describe('再起動と、送ったがまだ会話に出ていない発言', () =
     await app.waitFor('会話に出た', () => queue(id).length === 0);
   });
 
+  it('起動し直すときは、チャットを空にする起動の知らせと同じ配信で順番待ちを送る（間で画面が描いても、順番待ちの発言が消えない）', async () => {
+    const { id, pipe, sent } = await queueTwo();
+    discardOnEnd(pipe, sent.map((p) => p.uuid));
+    const from = app.batches.length;
+    await app.manager.restart(id);
+    // 画面は process-start でチャットを空にする（順番待ちも）。分けて送ると、その間に画面が描いたとき、順番待ちの発言が消えて見える
+    // （CI の E2E（restart-queue.test.ts）で、起動し直した直後に順番待ちの発言が見つからなかった）
+    const events = app.batches.slice(from).find((b) => b.sessionId === id && b.events.some((e) => e.type === 'process-start'))?.events ?? [];
+    const start = events.findIndex((e) => e.type === 'process-start');
+    expect(events.slice(start + 1).find((e) => e.type === 'queue')).toMatchObject({ prompts: [{ text: 'テストも直して' }, { text: '予約していた発言' }] });
+  });
+
   it('再起動の前にターンに取り込まれた発言（started）と、読み直した会話ログに出ていた発言は、送り直さない', async () => {
     const { id, pipe, sent } = await queueTwo();
     const [first, second] = sent;
@@ -363,6 +375,21 @@ describe('submitWhenReady', () => {
     pipe.respond(pipe.requests('initialize')[0].request_id, INIT_RESPONSE);
     await Promise.all([first, second]);
     expect(pipe.prompts.map((p) => p.message.content)).toEqual([[imageBlock('a.png'), { type: 'text', text: 'ひとつめ' }], 'ふたつめ']);
+  });
+
+  it('待ち始めた順に送る（あとから待ち始めたものが、見直しの間合いで先に送られない）', async () => {
+    app.answers.set('initialize', null);
+    const { id, pipe } = app.create();
+    // 子への最初の指示を待っている間に、親が次の指示を送った（見直しは 100ms ごと。あとのものの見直しが、受け付けられるように
+    // なった直後に来るように、50ms ずらして待ち始め、受け付けられるようになるのは、先のものの見直しの直後にする）
+    const first = app.manager.submitWhenReady(id, '最初の指示', 10_000);
+    await sleep(50);
+    const second = app.manager.submitWhenReady(id, 'あとの指示', 10_000);
+    await sleep(60);
+    pipe.respond(pipe.requests('initialize')[0].request_id, INIT_RESPONSE);
+    await Promise.all([first, second]);
+    // 直す前は、あとの指示が先に送られることがあった（最初の指示を追い越して、子が先に動き出す）
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual(['最初の指示', 'あとの指示']);
   });
 
   it('取りやめ・時間切れは、送らずに失敗する。待つのをやめたら、作業中として数えていた分を戻す', async () => {

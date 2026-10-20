@@ -45,7 +45,8 @@ import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-mess
 import { usageResumeText } from '../src/shared/usage-limit';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
-import { WorktreeError, type WorktreeSetupTrouble } from '../src/main/worktree';
+import { WorktreeError, withSetupNote, type WorktreeSetupTrouble } from '../src/main/worktree';
+import type { WaitingText } from '../src/main/session-manager';
 import type { ScheduledMessage } from '../src/shared/scheduled';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 
@@ -412,7 +413,21 @@ class FakeHost implements SessionsHost {
     this.configured.push({ id, options });
   };
   open = async (id: string) => void this.opened.push(id);
-  submitWhenReady = async (id: string, text: string | (() => string)) => void this.submitted.push({ id, text: typeof text === 'function' ? text() : text });
+  // 送る前にアプリを終えた知らせ（SessionManager は送り先の記録に残す。列の名前 → 送り先 → [キー, 中身]）。JSON にして残す
+  savedNoticeItems = new Map<string, Map<string, string>>();
+  savedNotices = (channel: string) => [...(this.savedNoticeItems.get(channel) ?? [])].map(([target, items]) => ({ target, items: JSON.parse(items) as [string, unknown][] }));
+  saveNotices = (channel: string, target: string, items: [string, unknown][]) => {
+    const byTarget = this.savedNoticeItems.get(channel) ?? new Map<string, string>();
+    if (items.length > 0) byTarget.set(target, JSON.stringify(items));
+    else byTarget.delete(target);
+    this.savedNoticeItems.set(channel, byTarget);
+  };
+  // 送った文（子への最初の指示は、SessionManager と同じく、worktree の準備の結果を添えて囲みに入れる）と、アプリを終えても残す送信（keep）
+  kept: string[] = [];
+  submitWhenReady = async (id: string, text: WaitingText, _timeoutMs?: number, options: { keep?: boolean } = {}) => {
+    if (options.keep) this.kept.push(id);
+    this.submitted.push({ id, text: typeof text === 'string' ? text : parentMessageText(text.parent, withSetupNote(text.body, this.worktreeSetup(id))) });
+  };
   // worktree の準備でうまくいかなかったこと
   setupTrouble = new Map<string, WorktreeSetupTrouble>();
   worktreeSetup = (id: string) => this.setupTrouble.get(id) ?? null;
@@ -598,6 +613,8 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.created[0]).toMatchObject({ cwd: repo, parentId: PARENT, worktree: false, options: { mode: 'acceptEdits', remoteControl: false } });
     expect(host.renamed).toEqual([{ id: started.session_id, title: '登録画面' }]);
     expect(host.submitted).toEqual([{ id: started.session_id, text: parentMessageText(PARENT, '登録画面を作って') }]);
+    // 送る前にアプリを終えても、次のアプリが子を引き継いだら送る
+    expect(host.kept).toEqual([started.session_id]);
     // worktree を使うかは必ず選ばせる
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
   });
@@ -1851,7 +1868,7 @@ describe('ツールの実行（SessionsControl）', () => {
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
       // 子への最初の指示だけが送れない（親への知らせは送れる）
       const submit = host.submitWhenReady;
-      host.submitWhenReady = async (id: string, text: string | (() => string)) => {
+      host.submitWhenReady = async (id: string, text: WaitingText) => {
         if (id === '88888888-0000-4000-8000-000000000008') throw new SendError('busy');
         return submit(id, text);
       };
@@ -2045,6 +2062,26 @@ describe('ツールの実行（SessionsControl）', () => {
       host.set(PARENT, 'idle');
       await settle();
       expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+    });
+
+    it('親が作業中で知らせを預かっている間にアプリを終えても、次のアプリが知らせを戻し、親の手が空いたら送る', async () => {
+      host.set(PARENT, 'working');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted).toEqual([]);
+      // アプリを終えて、次のアプリが起動した（引き継ぐ前は、どのセッションも止まっている）
+      control.dispose();
+      host.set(PARENT, 'exited');
+      control = new SessionsControl({ host, enabled: () => enabled, archive: (id, options) => host.archive(id, options), home: '/nonexistent-home', notifyDelayMs: 10, followUpMs: 40 });
+      await settle();
+      expect(host.submitted).toEqual([]);
+      // 親を引き継いで、手が空いた（直す前は、預かっていた知らせはアプリの終了で消えていた）
+      host.set(PARENT, 'idle');
+      await settle();
+      expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+      expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: [CHILD] });
+      // 送ったら、記録からも外す
+      expect(host.savedNotices('sessions')).toEqual([]);
     });
 
     it('人が子に直接出した指示の作業では、親を起こさない。親がもう読んだ出来事も知らせない', async () => {

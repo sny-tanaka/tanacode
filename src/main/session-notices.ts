@@ -15,6 +15,9 @@ export type NoticeHost = {
   watchState(listener: (id: string) => void): () => void;
   // ターミナルモードの TUI の入力欄に貼る（Enter は送らない）。貼れなければ（メニューを出している間など）false
   pasteIntoTerminal?(id: string, text: string): boolean;
+  // 送る前にアプリを終えた知らせ（channel: 列の名前）を読む・残す（送り先の記録に。SessionManager）。無ければ残さない
+  savedNotices?(channel: string): { target: string; items: [string, unknown][] }[];
+  saveNotices?(channel: string, target: string, items: [string, unknown][]): void;
 };
 
 type Deps<T> = {
@@ -29,6 +32,9 @@ type Deps<T> = {
   pasteInTerminal?: (item: T) => boolean;
   // 手が空いていても、まだ送らずに預かるか（送り先が利用枠で止まって、再開を待っている間など）。次に状態が変わったときに見直す
   holds?: (target: string) => boolean;
+  // 列の名前。付けると、預かっている知らせを送り先の記録に残し（host.saveNotices）、アプリを終えても次のアプリが戻して送る。
+  // 中身（T）は JSON にできるものにする
+  channel?: string;
 };
 
 // 知らせを受け取れる状態（ターンの外）
@@ -44,6 +50,11 @@ export class SessionNotices<T> {
   private readonly unwatch: () => void;
 
   constructor(private readonly deps: Deps<T>) {
+    // 前のアプリが送る前に終えた知らせを戻す。送るのは、送り先の手が空いたとき（引き継いだ claude が受け付けるようになった・
+    // 止まっていたセッションを開き直した）。まだ引き継いでいないうちに送ろうとすると、止まっているとみなして捨ててしまう
+    if (deps.channel) {
+      for (const { target, items } of deps.host.savedNotices?.(deps.channel) ?? []) this.pending.set(target, new Map(items as [string, T][]));
+    }
     // 送り先の手が空いたら、たまっている知らせを送る
     this.unwatch = deps.host.watchState((id) => {
       const state = deps.host.stateOf(id);
@@ -62,11 +73,18 @@ export class SessionNotices<T> {
     const queue = this.pending.get(target) ?? new Map<string, T>();
     queue.set(key, item);
     this.pending.set(target, queue);
+    this.keep(target);
     this.schedule(target);
   }
 
   remove(target: string, key: string): void {
     this.pending.get(target)?.delete(key);
+    this.keep(target);
+  }
+
+  // 預かっている知らせを、送り先の記録に残す（列の名前があるときだけ）
+  private keep(target: string): void {
+    if (this.deps.channel) this.deps.host.saveNotices?.(this.deps.channel, target, [...(this.pending.get(target) ?? [])]);
   }
 
   private schedule(target: string): void {
@@ -87,6 +105,7 @@ export class SessionNotices<T> {
     const session = host.list().find((s) => s.id === target);
     if (!this.deps.enabled() || !session || session.archived || host.stateOf(target) === 'exited') {
       this.pending.delete(target);
+      this.keep(target);
       return;
     }
     if (host.stateOf(target) === 'terminal') {
@@ -95,15 +114,18 @@ export class SessionNotices<T> {
       // 貼れなかったら（メニューを出している間）、貼るものだけ残して、次に状態が変わったとき（watchState）に貼り直す
       if (text && host.pasteIntoTerminal?.(target, text) === false) {
         this.pending.set(target, pasteable);
+        this.keep(target);
         return;
       }
       this.pending.delete(target);
+      this.keep(target);
       return;
     }
     // 作業中なら、手が空いたときに送る（watchState）。預かるあいだも同じ
     const state = host.stateOf(target);
     if (!state || !RECEIVE_STATES.has(state) || this.deps.holds?.(target)) return;
     this.pending.delete(target);
+    this.keep(target);
     const text = this.deps.compose(target, queue);
     if (!text) return;
     await host.submitWhenReady(target, text, NOTIFY_TIMEOUT_MS).catch(() => {});
