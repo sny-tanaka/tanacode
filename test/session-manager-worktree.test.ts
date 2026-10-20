@@ -135,6 +135,9 @@ describe('createInWorktree', () => {
     const types = app.manager.snapshot(id).events.map((e) => e.type);
     expect(types.indexOf('ready')).toBeGreaterThan(types.indexOf('info'));
     expect(app.manager.summary(id)?.worktree?.preparing).toBeNull();
+    // 失敗した install は、チャットの注意の行にし、親と子に伝えるために残す（複製できなかった pkg は install を受け持ったので数えない）
+    expect(app.manager.snapshot(id).events.find((e) => e.type === 'info')).toMatchObject({ warning: true });
+    expect(app.manager.worktreeSetup(id)).toEqual({ installsFailed: [{ dir: 'pkg', command: 'yarn install', exitCode: 1 }], notCopied: [], error: null });
   });
 
   it('node_modules を用意できなくても（失敗）、worktree で始めたことを知らせて受け付ける', async () => {
@@ -146,8 +149,11 @@ describe('createInWorktree', () => {
     const id = await creating;
     initialized(pipe);
     await app.waitFor('受け付け', () => app.manager.stateOf(id) === 'idle');
-    expect(infos(id)).toEqual([`worktree .claude/worktrees/${session.worktree!.name}（ブランチ ${session.worktree!.branch}） で始めました`]);
+    expect(infos(id)).toEqual([
+      `worktree .claude/worktrees/${session.worktree!.name}（ブランチ ${session.worktree!.branch}） で始めました。node_modules を用意できませんでした（git ls-files に失敗しました）`,
+    ]);
     expect(errors).toHaveBeenCalledWith('node_modules を用意できませんでした', expect.any(Error));
+    expect(app.manager.worktreeSetup(id)).toEqual({ installsFailed: [], notCopied: [], error: 'git ls-files に失敗しました' });
     errors.mockRestore();
   });
 

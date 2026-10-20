@@ -34,6 +34,8 @@ import { resumeContinued } from './compact-notice';
 import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
+import type { ScheduledMessage } from '@shared/scheduled';
+import type { WorktreeSetupTrouble } from './worktree';
 import { SEND_FAILURE, SendError } from './send-error';
 import { SessionNotices } from './session-notices';
 import { WAIT_MAX_SECONDS } from './sessions-bridge';
@@ -75,7 +77,8 @@ export type SessionsHost = {
   // モデル・エフォート・設定ファイルを変える。動いていれば、Claude Code を起動し直して同じ会話を続ける
   configure(id: string, options: SessionOptions): Promise<void> | void;
   open(id: string): Promise<void>;
-  submitWhenReady(id: string, text: string, timeoutMs: number): Promise<void>;
+  // 手が空いたら送る。text が関数なら、送る直前に呼んで文を作る（worktree の準備の結果を、最初の指示に添えるため）
+  submitWhenReady(id: string, text: string | (() => string), timeoutMs: number): Promise<void>;
   // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
   switchingTerminal(id: string): boolean;
   // 作業を中断する。止めるターンが開いていたら true（ターンの合間は、状態が作業中でも止めるものが無い）
@@ -98,6 +101,8 @@ export type SessionsHost = {
   workflows(id: string): WorkflowRun[];
   // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
   worktreeLeftovers(id: string): Promise<WorktreeLeftovers | null>;
+  // worktree の準備（node_modules）でうまくいかなかったこと（無ければ null）
+  worktreeSetup(id: string): WorktreeSetupTrouble | null;
   // Claude がアプリ内ブラウザで人に操作を頼んでいるか（ask_user_to_act）
   browserAsking(id: string): boolean;
   // Remote Control を切り替える（チャットのヘッダーのトグルと同じ）。切り替えられなければ、理由（画面の言語）
@@ -475,13 +480,19 @@ export class SessionsControl {
     if (name) host.rename(id, name);
     this.lastState.set(id, host.stateOf(id));
     // 起動（worktree の準備も）が終わってから送る。待たずに返す（結果は wait_sessions で待つ）
-    void host.submitWhenReady(id, parentMessageText(caller.id, prompt), FIRST_PROMPT_TIMEOUT_MS).catch((error: unknown) => {
+    // worktree の準備でうまくいかなかったこと（install の失敗など）は、送るときに指示の本文に添える（子の Claude が、依存が足りないことを知るため。
+    // 囲みの外に足すと、親からの指示と読めなくなる）
+    const firstPrompt = () => parentMessageText(caller.id, withSetupNote(prompt, host.worktreeSetup(id)));
+    void host.submitWhenReady(id, firstPrompt, FIRST_PROMPT_TIMEOUT_MS).catch((error: unknown) => {
       console.error('子セッションに最初の指示を送れませんでした', error);
+      // 送れなかったこと（準備が長すぎた・止まったなど）は、親に知らせる（親は、送られるものとして待っている）
+      if (parentId) this.notices.add(caller.id, `first:${id}`, { child: id, state: 'idle', at: Date.now(), firstPrompt: error instanceof Error ? error.message : String(error) });
     });
     const child = this.summary(id);
-    // worktree の準備は、最初の指示より前に済む。親が子に準備（作る・依存を入れる）を頼まないように伝える
+    // worktree の準備は、最初の指示より前に済む。親が子に準備（作る・依存を入れる）を頼まないように伝える。
+    // うまくいかなかったときに、どこで分かるかも伝える
     const setup = options.worktree
-      ? ` The worktree is set up before the first instruction is sent (the state is starting until then), so the ${independent ? 'session' : 'child'} needs no setup for the worktree itself.`
+      ? ` The worktree is set up before the first instruction is sent (the state is starting until then), so the ${independent ? 'session' : 'child'} needs no setup for the worktree itself. If installing its dependencies fails, the first instruction says so${independent ? '' : ' and get_session shows it in worktree.setup_problems'}.`
       : '';
     return json({
       session_id: id,
@@ -914,6 +925,16 @@ export class SessionsControl {
     return textResult('Saved. It is shown in the notification when this turn ends (not while the user is looking at this session, and not if notifications are off).');
   }
 
+  // 子への予約（利用枠の再開・子の Claude の予約・人の予約）を、時刻に送れなかった・送れなかった。子は人に通知しないので、親に知らせる
+  // （利用枠の再開を待つ親には、それまで見に来なくてよいと伝えてある）。親に回したら true（人には通知しない）
+  scheduledTrouble(message: ScheduledMessage): boolean {
+    const parentId = this.deps.host.parentOf(message.sessionId);
+    if (!parentId || !this.deps.enabled() || (message.state !== 'missed' && message.state !== 'failed')) return false;
+    // 子が動き出しても取り下げないよう、子の作業の知らせとは別のキーにする
+    this.notices.add(parentId, `scheduled:${message.id}`, { child: message.sessionId, state: 'idle', at: Date.now(), scheduled: message });
+    return true;
+  }
+
   // 利用枠の再開の予約の時刻（時刻を待っている・送っている途中のもの。無ければ null）
   private usageResumeAt(id: string): number | null {
     const message = this.deps.scheduled?.()?.list().find((m) => m.sessionId === id && m.by === 'usage-limit' && (m.state === 'scheduled' || m.state === 'sending'));
@@ -990,18 +1011,25 @@ export class SessionsControl {
   // 続けて手が空いた子の知らせを、1 つにまとめた文。親がもう読んだ出来事は除く
   private noticeFor(parentId: string, queue: Map<string, ChildNotice>): string | null {
     const all = this.deps.host.list();
-    const notices = [...queue].filter(([child, event]) => (this.observedAt.get(`${parentId}:${child}`) ?? 0) < event.at);
+    // 子の状態の知らせは、親がもう読んだものを除く（予約・最初の指示を送れなかった知らせは、子の状態からは分からないので除かない）
+    const childOf = ([key, event]: [string, ChildNotice]) => event.child ?? key;
+    const notices = [...queue].filter((item) => item[1].scheduled || item[1].firstPrompt !== undefined || (this.observedAt.get(`${parentId}:${childOf(item)}`) ?? 0) < item[1].at);
     if (notices.length === 0) return null;
-    for (const [child, event] of notices) if (event.state === 'background' && !event.limit) this.backgroundTold.add(`${parentId}:${child}`);
+    for (const [key, event] of notices) if (event.state === 'background' && !event.limit && !event.child) this.backgroundTold.add(`${parentId}:${key}`);
     const message = [
-      ...notices.map(([child, event]) =>
-        event.limit && (event.state === 'idle' || event.state === 'background')
-          ? limitNoticeText(all.find((s) => s.id === child), child, event.limit, this.usageResumeAt(child))
-          : noticeText(all.find((s) => s.id === child), child, event.state, event.state === 'question' ? askingElicitation(this.deps.host, child) : null),
-      ),
+      ...notices.map((item) => {
+        const [, event] = item;
+        const child = childOf(item);
+        const summary = all.find((s) => s.id === child);
+        if (event.scheduled) return scheduledTroubleText(summary, child, event.scheduled);
+        if (event.firstPrompt !== undefined) return t('tools.notice.childFirstPromptFailed', { ...nameParams(summary, child), reason: event.firstPrompt });
+        return event.limit && (event.state === 'idle' || event.state === 'background')
+          ? limitNoticeText(summary, child, event.limit, this.usageResumeAt(child))
+          : noticeText(summary, child, event.state, event.state === 'question' ? askingElicitation(this.deps.host, child) : null);
+      }),
       t('tools.notice.checkSessions'),
     ].join(' ');
-    return sessionEventText(notices.map(([child]) => child), message);
+    return sessionEventText([...new Set(notices.map(childOf))], message);
   }
 
   private observe(parentId: string, childId: string): void {
@@ -1082,7 +1110,14 @@ export class SessionsControl {
       state_label: SESSION_STATE_LABEL[state],
       folder: s.cwd,
       // preparing: worktree の準備の段階（準備中のときだけ。そのあいだ状態は starting）
-      worktree: s.worktree ? { name: s.worktree.name, branch: s.worktree.branch, ...(s.worktree.preparing ? { preparing: s.worktree.preparing } : {}) } : null,
+      worktree: s.worktree
+        ? {
+            name: s.worktree.name,
+            branch: s.worktree.branch,
+            ...(s.worktree.preparing ? { preparing: s.worktree.preparing } : {}),
+            ...setupProblemsOf(this.deps.host.worktreeSetup(s.id)),
+          }
+        : null,
       // 親の ID は、呼び出し元から見える親のときだけ（見えない親の ID は出さない）
       parent_id: s.parentId && this.visibleParent(s.parentId, caller) ? s.parentId : null,
     };
@@ -1311,6 +1346,43 @@ function noticeText(child: SessionSummary | undefined, id: string, state: Sessio
   // ターンは終わったが、裏のタスクがまだ動いている（作業が終わったとは言わない）
   if (state === 'background') return t('tools.notice.childBackground', params);
   return t('tools.notice.childDone', params);
+}
+
+function nameParams(child: SessionSummary | undefined, id: string): { name: string; id: string } {
+  return { name: child?.title ?? t('tools.notice.untitledSession'), id: id.slice(0, 8) };
+}
+
+// 子への予約を送れなかった知らせ。だれの予約か（利用枠の再開・子の Claude・人）と、時刻と、わけ（時刻を過ぎていた・送れなかった理由）
+function scheduledTroubleText(child: SessionSummary | undefined, id: string, message: ScheduledMessage): string {
+  const what = t(message.by === 'usage-limit' ? 'tools.notice.scheduledUsageLimit' : message.by === 'claude' ? 'tools.notice.scheduledWakeup' : 'tools.notice.scheduledByUser');
+  const why = message.state === 'missed' ? t('tools.notice.scheduledLate') : (message.error ?? t('main.notification.unknownReason'));
+  return t('tools.notice.childScheduledTrouble', { ...nameParams(child, id), what, time: localIso(message.at), why });
+}
+
+// get_session の worktree に添える、準備でうまくいかなかったこと（英語。Claude に返すため）
+function setupProblemsOf(trouble: WorktreeSetupTrouble | null): { setup_problems?: string[] } {
+  if (!trouble) return {};
+  const at = (dir: string) => (dir ? `in ${dir}` : 'in the top folder');
+  return {
+    setup_problems: [
+      ...trouble.installsFailed.map((i) => `${i.command} ${at(i.dir)} exited with code ${i.exitCode}, so its dependencies may be missing (its output is in a tab of the Terminal panel)`),
+      ...trouble.notCopied.map((dir) => `node_modules ${at(dir)} could not be copied and was not installed`),
+      ...(trouble.error ? [`setting up node_modules failed: ${trouble.error}`] : []),
+    ],
+  };
+}
+
+// 子への最初の指示に添える、worktree の準備でうまくいかなかったこと（画面の言語。子のチャットにも、親の指示の一部として出る）
+function withSetupNote(prompt: string, trouble: WorktreeSetupTrouble | null): string {
+  if (!trouble) return prompt;
+  const separator = t('main.format.shortListSeparator');
+  const at = (dir: string) => dir || t('main.worktree.topDir');
+  const problems = [
+    ...trouble.installsFailed.map((i) => t('main.worktree.commandFailedAt', { command: i.command, dir: at(i.dir), code: i.exitCode })),
+    ...trouble.notCopied.map((dir) => t('tools.notice.setupNotCopied', { dir: at(dir) })),
+    ...(trouble.error ? [t('main.worktree.prepareFailed', { error: trouble.error })] : []),
+  ].join(separator);
+  return `${prompt}\n\n${t('tools.notice.setupNote', { problems })}`;
 }
 
 // 子が利用枠に当たって止まった知らせ。再開の予約があればその時刻、無ければ枠が戻る時刻を伝える（時刻は、Claude が人に伝えるときの形）
@@ -1633,7 +1705,8 @@ const isResume = (e: ChatEvent): e is Extract<ChatEvent, { type: 'notice' }> => 
 const startsTurn = (e: ChatEvent): boolean => e.type === 'user' || e.type === 'notice' || e.type === 'turn-start';
 
 // 親に知らせる、子の出来事。limit: 利用枠に当たって止まった（その知らせ）
-type ChildNotice = { state: SessionState; at: number; limit?: UsageLimitStop };
+// 親に知らせる子の出来事。キーは子の ID（子の状態の知らせ）か、別のキー（予約・最初の指示を送れなかった知らせ。child に子の ID）
+type ChildNotice = { child?: string; state: SessionState; at: number; limit?: UsageLimitStop; scheduled?: ScheduledMessage; firstPrompt?: string };
 
 // 最後のターンが、プランの利用枠に当たって止まったなら、その知らせ（あきらめた API エラーのあとに、応答もツールの呼び出しも無い）
 function usageLimitStopOf(events: ChatEvent[]): UsageLimitStop | null {

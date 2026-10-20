@@ -767,6 +767,11 @@ describe('通知', () => {
       ['予約したセッション', scheduledNotice(message as never)],
       ['新しいセッション', scheduledNotice(message as never)],
     ]);
+    // 子セッションの予約は、SessionsControl が親に回したら、人には通知しない
+    expect(the('SessionsControl').scheduledTrouble).toHaveBeenCalledWith(message);
+    the('SessionsControl').scheduledTrouble.mockReturnValueOnce(true);
+    fnArg('ScheduledMessages', 3)({ ...message, sessionId: 'child' });
+    expect(state.notifications).toHaveLength(2);
   });
 
   it('Claude がブラウザでの操作を頼んだら、一覧に印を付けて知らせ、クリックでそのセッションのブラウザを開かせる。頼みが終わったら印を消す', async () => {

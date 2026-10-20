@@ -148,7 +148,8 @@ describe('ShellTerminals', () => {
     const running = shells.run('session-1', dir, 'sleep 30', 'sleep');
     const task = opened.at(-1)!.id;
     shells.kill(task);
-    await running;
+    // 止めたコマンドは、済んだことにしない（シグナルで終わると node-pty は終了コードを 0 で返すので、シェルと同じく 128 + シグナルの番号）
+    expect(await running).toBeGreaterThan(128);
     expect(shells.info(task)).toBeNull();
   });
 
