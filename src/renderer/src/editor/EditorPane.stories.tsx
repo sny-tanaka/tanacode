@@ -38,7 +38,7 @@ function Pane({ files }: { files: OpenFile[] }) {
         reveal={null}
         onActivate={noop}
         onClose={noop}
-        onSave={async () => {}}
+        onSave={async () => true}
         onCursor={noop}
         comments={[]}
         onAddComment={noop}

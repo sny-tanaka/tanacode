@@ -429,6 +429,8 @@ export type FileContent =
   // 画像（PNG・JPEG など。SVG は文字なので text）。url は data URL（レンダラーはファイルを直接読めない）
   | { kind: 'image'; url: string }
   | { kind: 'too-large'; size: number };
+// エディタの保存の結果。ok: false は、読んだあとにディスク側（Claude Code など）でも変わっていたので書かなかったもの。disk は今のディスクの内容
+export type WriteResult = { ok: true } | { ok: false; disk: FileContent };
 // paths は root からの相対パス
 export type FilesChanged = { root: string; paths: string[] };
 
@@ -704,7 +706,9 @@ export type TanacodeApi = {
     readFile(sessionId: string, relPath: string): Promise<FileContent>;
     // 画像を data URL で読む（画像でない・大きすぎるときは null）
     readImage(sessionId: string, relPath: string): Promise<string | null>;
-    writeFile(sessionId: string, relPath: string, text: string): Promise<void>;
+    // エディタの保存。expected は、エディタが読んだとき（または最後に保存したとき）の中身で、今のディスクがそれと同じときだけ書く。
+    // null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）
+    writeFile(sessionId: string, relPath: string, text: string, expected: string | null): Promise<WriteResult>;
     // フォルダ選択ダイアログで選んだフォルダを、ワークスペースに追加する（セッションか、新規セッションの画面のフォルダ）。
     // 追加したあとのフォルダの一覧を返す（取りやめたら null）。追加できなければ理由を添えて失敗する。
     // 動いているセッションでは、Claude Code の手が空いたときに --resume で起動し直して、--add-dir で渡す

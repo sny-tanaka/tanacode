@@ -154,6 +154,47 @@ describe('保存していない変更があるうちに、別のフォルダの�
     expect(readFileSync(join(app.work, 'note.txt'), 'utf8')).toBe('Claude が書いた\n');
   });
 
+  // 監視しないフォルダ（out）のファイルは、ディスクで変わっても知らせが来ないので、確かめを出す時点では衝突と分からない
+  it('「保存して移る」で保存しようとして、ディスク側でも変わっていたと分かったファイルは書かず、移らない。「やめる」でそのファイルを開き、衝突の知らせを見せる', async () => {
+    const report = join(app.work, 'out', 'report.txt');
+    const conflictBanner = () => app.byText('.pending-banner', '未保存の変更があるうちに、ディスク上のファイルが変更されました');
+    // 前のテストの衝突は、ディスクの内容を読み込んで片付け、作業フォルダのセッションに戻る
+    await app.page.getByRole('button', { name: 'ディスクの内容を読み込む' }).click();
+    await app.page.click('section.claude:has(.new-session-body) [aria-label="キャンセル"]');
+    await title(FIRST).waitFor();
+    mkdirSync(join(app.work, 'out'));
+    writeFileSync(report, 'はじめの報告\n');
+    await app.page.keyboard.press('ControlOrMeta+P');
+    await app.page.fill('.quick-open input', 'report');
+    await app.byText('.quick-open-list .quick-open-name', 'report.txt').waitFor();
+    await app.page.keyboard.press('Enter');
+    await app.byText('.editor-tab.active', 'report.txt').waitFor();
+    await app.page.locator('.editor .editor-monaco .view-line', { hasText: 'はじめの報告' }).first().click();
+    await app.page.keyboard.press('End');
+    await app.page.keyboard.type(' 手で直した');
+    await dirtyTab().waitFor();
+    writeFileSync(report, 'Claude が書いた報告\n');
+    await row(SECOND).click();
+    await dialog().waitFor();
+    expect(await dialog().innerText()).toContain('out/report.txt');
+    // 保存できなかった理由は window.alert で出る（押したボタンのクリックは、alert を閉じるまで終わらないので、受けたらすぐ閉じる）
+    const alerts: string[] = [];
+    app.page.once('dialog', (shown) => {
+      alerts.push(shown.message());
+      void shown.accept();
+    });
+    await dialog().getByRole('button', { name: '保存して移る' }).click();
+    await expect.poll(() => alerts.length, { timeout: 30_000 }).toBe(1);
+    expect(alerts[0]).toContain('out/report.txt は、ディスク側（Claude など）でも変わっています');
+    await dialog().getByRole('button', { name: '保存して移る', disabled: false }).waitFor();
+    await title(FIRST).waitFor();
+    expect(readFileSync(report, 'utf8')).toBe('Claude が書いた報告\n');
+    await dialog().getByRole('button', { name: 'やめる' }).click();
+    await dialog().waitFor({ state: 'detached' });
+    await app.byText('.editor-tab.active', 'report.txt').waitFor();
+    await conflictBanner().waitFor();
+  });
+
   it('画面のコンソールにエラーが出ていない', () => {
     expect(app.consoleErrors).toEqual([]);
   });

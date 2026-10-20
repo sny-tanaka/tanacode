@@ -111,6 +111,31 @@ describe('作業フォルダのファイルを、エディタと検索で扱う'
     await app.byText('.editor-tab.active', 'tax.ts').waitFor();
   });
 
+  // 監視しないフォルダ（out など）のファイルは、ディスクで変わっても知らせが来ない。書く前に main が、読んだときの中身のままかを確かめる
+  it('保存していない変更があるうちにディスク側でも変わっていたら、⌘S では書かず、衝突の知らせを出す。「このまま保存」を選んだときだけ上書きする', async () => {
+    const report = join(app.work, 'out', 'report.txt');
+    const dirty = () => app.page.locator('.editor-tab.active .editor-tab-dot.dirty');
+    mkdirSync(join(app.work, 'out'));
+    writeFileSync(report, 'はじめの報告\n');
+    await app.page.keyboard.press('ControlOrMeta+P');
+    await app.page.fill('.quick-open input', 'report');
+    await app.byText('.quick-open-list .quick-open-name', 'report.txt').waitFor();
+    await app.page.keyboard.press('Enter');
+    await app.byText('.editor-tab.active', 'report.txt').waitFor();
+    await editorLine('はじめの報告').click();
+    await app.page.keyboard.press('End');
+    await app.page.keyboard.type(' 手で直した');
+    await dirty().waitFor();
+    writeFileSync(report, 'Claude が書いた報告\n');
+    await app.page.keyboard.press('ControlOrMeta+S');
+    await app.byText('.pending-banner', '未保存の変更があるうちに、ディスク上のファイルが変更されました').waitFor();
+    expect(readFileSync(report, 'utf8')).toBe('Claude が書いた報告\n');
+    await dirty().waitFor();
+    await app.page.getByRole('button', { name: 'このまま保存' }).click();
+    await dirty().waitFor({ state: 'detached' });
+    expect(readFileSync(report, 'utf8')).toBe('はじめの報告 手で直した\n');
+  });
+
   // ⌘P の枠を開いたまま落ちると、続くテストの操作が枠に遮られるので、画面を操作するテストの最後に置く
   it('日本語の名前のファイルも、⌘P で開け、入力欄の @ の補完で選んで送ると、中身が Claude に渡る', async () => {
     await app.page.keyboard.press('ControlOrMeta+P');

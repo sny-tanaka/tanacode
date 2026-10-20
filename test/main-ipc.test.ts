@@ -165,7 +165,9 @@ describe('そのまま渡す受け口', () => {
     [IpcChannel.ReadFile, ['s1', 'README.md'], callIn(cwdOf('s1'), 'workspace.readFile', 'README.md')],
     // 追加したフォルダの中の画像も読めるよう、セッションの追加したフォルダも渡す（下の「Markdown のプレビューの画像」）
     [IpcChannel.ReadImage, ['s1', 'logo.png'], callIn(cwdOf('s1'), 'workspace.readImage', 'logo.png', [])],
-    [IpcChannel.WriteFile, ['s1', 'a.txt', '中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身')],
+    // 読んだときの中身（今のディスクと同じときだけ書く）。文字でなければ確かめずに書く（「このまま保存」の null）
+    [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', '前の中身'], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', '前の中身')],
+    [IpcChannel.WriteFile, ['s1', 'a.txt', '中身', null], callIn(cwdOf('s1'), 'workspace.writeFile', 'a.txt', '中身', null)],
     [IpcChannel.ListFiles, ['s1'], callIn(cwdOf('s1'), 'workspace.listFiles')],
     [IpcChannel.Search, ['s1', 'TODO', { regex: true }], callIn(cwdOf('s1'), 'workspace.search', 'TODO', { regex: true })],
     [IpcChannel.GitState, ['s1'], callIn(cwdOf('s1'), 'scm.state')],

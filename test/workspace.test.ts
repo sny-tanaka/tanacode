@@ -27,20 +27,20 @@ describe('Workspace', () => {
   it('フォルダの外を指す相対パス（..）は、読みも書きもしない', async () => {
     writeFileSync(join(root, '..', 'secret.txt'), 'secret');
     await expect(ws.readFile('../secret.txt')).rejects.toThrow('outside workspace');
-    await expect(ws.writeFile('../secret.txt', 'x')).rejects.toThrow('outside workspace');
+    await expect(ws.writeFile('../secret.txt', 'x', null)).rejects.toThrow('outside workspace');
     await expect(ws.listDir('..')).rejects.toThrow('outside workspace');
-    await expect(ws.writeFile('sub/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
+    await expect(ws.writeFile('sub/../../secret.txt', 'x', null)).rejects.toThrow('outside workspace');
     // .. そのもの、名前が .. で始まるフォルダを通って外に出るものも断る
     await expect(ws.readFile('..')).rejects.toThrow('outside workspace');
     await expect(ws.readFile('..notes/../../secret.txt')).rejects.toThrow('outside workspace');
-    await expect(ws.writeFile('..notes/../../secret.txt', 'x')).rejects.toThrow('outside workspace');
+    await expect(ws.writeFile('..notes/../../secret.txt', 'x', null)).rejects.toThrow('outside workspace');
     expect(readFileSync(join(root, '..', 'secret.txt'), 'utf8')).toBe('secret');
   });
 
   it('名前が .. で始まるファイル（フォルダの中のもの）は、読み書きできる', async () => {
     put('..notes.md', 'メモ\n');
     expect(await ws.readFile('..notes.md')).toEqual({ kind: 'text', text: 'メモ\n' });
-    await ws.writeFile('..notes.md', '書き直し\n');
+    await ws.writeFile('..notes.md', '書き直し\n', 'メモ\n');
     expect(readFileSync(join(root, '..notes.md'), 'utf8')).toBe('書き直し\n');
   });
 
@@ -63,8 +63,31 @@ describe('Workspace', () => {
 
   it('writeFile: フォルダの中に書き、読み直せる', async () => {
     put('note.md', '# 前\n');
-    await ws.writeFile('note.md', '# 後\n');
+    expect(await ws.writeFile('note.md', '# 後\n', '# 前\n')).toEqual({ ok: true });
     expect(await ws.readFile('note.md')).toEqual({ kind: 'text', text: '# 後\n' });
+  });
+
+  // エディタが読んだあとに Claude Code などが書き換えたファイルを、⌘S で黙って上書きしない。
+  // 変更の知らせが届く前（監視のまとめの間）や、監視しないフォルダ（out など）のファイルでも、書く前に確かめる
+  it('writeFile: 今のディスクが、エディタが読んだときの中身と違えば書かず、今の中身を返す', async () => {
+    put('note.md', 'Claude が書いた\n');
+    expect(await ws.writeFile('note.md', '手で直した\n', '読んだとき\n')).toEqual({ ok: false, disk: { kind: 'text', text: 'Claude が書いた\n' } });
+    expect(readFileSync(join(root, 'note.md'), 'utf8')).toBe('Claude が書いた\n');
+    put('out/build.log', '書き換えた\n');
+    expect(await ws.writeFile('out/build.log', '手で直した\n', '読んだとき\n')).toEqual({ ok: false, disk: { kind: 'text', text: '書き換えた\n' } });
+    expect(readFileSync(join(root, 'out/build.log'), 'utf8')).toBe('書き換えた\n');
+    // 文字でなくなっていても、書かずに今の中身（バイナリ）を返す
+    put('data.txt', Buffer.from([0x61, 0x00, 0x62]));
+    expect(await ws.writeFile('data.txt', '手で直した\n', '読んだとき\n')).toEqual({ ok: false, disk: { kind: 'binary' } });
+    expect(readFileSync(join(root, 'data.txt'))).toEqual(Buffer.from([0x61, 0x00, 0x62]));
+  });
+
+  it('writeFile: expected が null なら確かめずに書く（衝突の知らせで「このまま保存」を選んだとき）。消えていたファイルは書き直す', async () => {
+    put('note.md', 'Claude が書いた\n');
+    expect(await ws.writeFile('note.md', '手で直した\n', null)).toEqual({ ok: true });
+    expect(readFileSync(join(root, 'note.md'), 'utf8')).toBe('手で直した\n');
+    expect(await ws.writeFile('gone.md', '手で直した\n', '読んだとき\n')).toEqual({ ok: true });
+    expect(readFileSync(join(root, 'gone.md'), 'utf8')).toBe('手で直した\n');
   });
 
   it('listFiles: git のリポジトリなら、追跡中と未追跡（.gitignore を除く）。そうでなければフォルダをたどる', async () => {

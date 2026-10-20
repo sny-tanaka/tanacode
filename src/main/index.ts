@@ -734,8 +734,8 @@ function registerIpc(): void {
     const c = choice as { conversation?: unknown; code?: unknown } | null;
     return P(e).manager.rewind(id, String(messageId), { conversation: c?.conversation === true, code: c?.code === true });
   });
-  handle(IpcChannel.WriteFile, (e, id: string, relPath: string, text: string) =>
-    new Workspace(P(e).cwdOf(id)).writeFile(relPath, text),
+  handle(IpcChannel.WriteFile, (e, id: string, relPath: string, text: string, expected: unknown) =>
+    new Workspace(P(e).cwdOf(id)).writeFile(relPath, text, typeof expected === 'string' ? expected : null),
   );
   const scm = (e: IpcMainInvokeEvent, id: string) => new SourceControl(P(e).cwdOf(id));
   handle(IpcChannel.GitState, (e, id: string) => scm(e, id).state());

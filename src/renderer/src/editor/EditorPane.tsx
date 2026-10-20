@@ -28,7 +28,8 @@ export type EditorHandle = {
   // そのうち、ディスク側（Claude Code など）でも変わったもの（衝突中）
   conflicts(): string[];
   // 保存していない変更を、タブの順に保存する。衝突中のものは書かない（エディタで、どちらを残すか選ばせる。
-  // 今のタブでなければ衝突の知らせが見えないので、Claude が書き換えた中身を黙って上書きしないため）。書けなかったら、そこで止めて投げる
+  // 今のタブでなければ衝突の知らせが見えないので、Claude が書き換えた中身を黙って上書きしないため）。保存しようとして衝突が分かったもの
+  // （変更の知らせが届く前にディスク側で変わっていた）も書かず、保存していないまま残す。書けなかったら、そこで止めて投げる
   saveAll(): Promise<void>;
 };
 
@@ -46,8 +47,10 @@ type Props = {
   reveal: RevealRequest | null;
   onActivate: (path: string) => void;
   onClose: (path: string) => void;
-  // 保存した内容をディスクに書く（書き終えたら files の内容も更新される）
-  onSave: (path: string, text: string) => Promise<void>;
+  // 保存した内容をディスクに書く（書き終えたら files の内容も更新される）。expected（最後に読み込んだ・保存したディスクの内容）を
+  // 渡すと、ディスクがそれと同じときだけ書く。違えば書かずに false を返し、files には今のディスクの内容が入る（衝突の知らせになる）。
+  // null なら確かめずに書く
+  onSave: (path: string, text: string, expected: string | null) => Promise<boolean>;
   onCursor: (pos: { line: number; column: number } | null) => void;
   // Claude へのコメント（このセッションのもの。ファイルで絞り込んで出す）
   comments: ReviewComment[];
@@ -214,11 +217,14 @@ export const EditorPane = memo(function EditorPane({
     });
   }
 
-  async function save(path = activePathRef.current) {
+  // 最後に読み込んだ・保存したときから、ディスク側（Claude Code など）でも変わっていたら書かない（衝突中の ⌘S も）。
+  // 変わっていたことは main が書く前に確かめ、今のディスクの内容が files に入って、衝突の知らせを出す（どちらを残すか選ばせる）。
+  // force: 衝突の知らせで「このまま保存」を選んだとき。確かめずに上書きする
+  async function save(path = activePathRef.current, force = false) {
     const model = path ? modelsRef.current.get(path) : undefined;
     if (!path || !model) return;
     const text = model.getValue();
-    await onSaveRef.current(path, text);
+    if (!(await onSaveRef.current(path, text, force ? null : (savedRef.current.get(path) ?? null)))) return;
     savedRef.current.set(path, text);
     updateDirty(path, model);
     setConflicts((prev) => {
@@ -372,7 +378,7 @@ export const EditorPane = memo(function EditorPane({
           <button className="ghost-button" onClick={() => reloadFromDisk(activePath)}>
             {t('editor.conflict.reload')}
           </button>
-          <button className="send-button" onClick={() => void save(activePath)}>
+          <button className="send-button" onClick={() => void save(activePath, true)}>
             {t('editor.conflict.keep')}
           </button>
         </div>
