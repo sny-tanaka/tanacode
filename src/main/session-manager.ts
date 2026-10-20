@@ -286,6 +286,13 @@ type Runtime = {
   turnEnding: { interrupted: boolean; local: boolean; waitFor: string | null; error: ChatEvent | null; timer: NodeJS.Timeout } | null;
   // 待つ時間が切れて、待っていた行より先にチャットへ出したターンの終わり（その行があとで出たら、そのあとにもう一度出す。次のターンが始まったら捨てる）
   lateTurnEnd: { waitFor: string; interrupted: boolean; error: ChatEvent | null } | null;
+  // 前のターンの最後の行のうち、会話ログに出る前に次のターンが始まったもの（順番待ちの発言は、result から数 ms で始まる）。
+  // その行が利用枠で止まった行でも、今のターンには数えない（数えると、作業が進んだターンのあとに、要らない再開の予約が入る）
+  endedTurnLine: string | null;
+  // 引き継いだ claude の、前のアプリが終えた時刻（記録の detachedAt）と、それよりあとの行で最後のターンが利用枠で止まったなら、その知らせ。
+  // 会話ログを読み終えたら使って捨てる（historySettled）
+  detachedAt: number | null;
+  outsideLimit: UsageLimitStop | null;
   // 今の（か、最後に始まった）ターンを始めたもの。ターンが終わったら other に戻す（compact-notice.ts）
   turnStarter: TurnStarter;
   // 今のターンで、始めたもの（turnStarter）を会話ログから決めた
@@ -1116,6 +1123,12 @@ export class SessionManager {
     if (events.some((e) => (e.type === 'user' && !e.command) || e.type === 'assistant-text' || e.type === 'thinking' || e.type === 'tool-use')) {
       rt.tuiTurn = true;
       changed = true;
+    }
+    // 人の発言で始まったターンは、新しいターン。前のターンが利用枠で止まったまま、ターンの終わりの行が書かれなかったときも、
+    // 止まったことを持ち越さない
+    if (!isHistory && events.some((e) => e.type === 'user' && !e.command)) {
+      rt.turnLimit = null;
+      rt.turnAnswered = false;
     }
     if (events.some((e) => e.type === 'turn-end')) {
       rt.tuiTurn = false;
@@ -2061,7 +2074,8 @@ export class SessionManager {
         const unsent = rt.process
           ? [...rt.unsent.values()].filter((prompt) => !prompt.carried).map((prompt) => ({ ...unsentPrompt(prompt), shown: prompt.shown }))
           : [];
-        this.store.update(id, { unsent: unsent.length > 0 ? unsent : null });
+        // 動いている claude を残して終える時刻（次のアプリが、閉じている間に利用枠で止まったターンを見つけるため）
+        this.store.update(id, { unsent: unsent.length > 0 ? unsent : null, ...(rt.process ? { detachedAt: Date.now() } : {}) });
         rt.process?.detach();
       }
       rt.workflows.dispose();
@@ -2204,6 +2218,9 @@ export class SessionManager {
         arrivedPrompts: new Set(),
         turnEnding: null,
         lateTurnEnd: null,
+        endedTurnLine: null,
+        detachedAt: null,
+        outsideLimit: null,
         turnStarter: 'other',
         starterSeen: false,
         turnLimit: null,
@@ -2290,11 +2307,16 @@ export class SessionManager {
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
     if (!adopted) this.store.update(id, { knownMode: permissionMode });
     runtime.aliveSince = adopted?.startedAt ?? null;
+    // 前のアプリを閉じている間に、利用枠で止まったターンを見つける（チャットの claude だけ。ターミナルモードには再開の予約を入れない）
+    runtime.detachedAt = adopted && !tui ? (record.detachedAt ?? null) : null;
+    runtime.outsideLimit = null;
+    if (record.detachedAt) this.store.update(id, { detachedAt: null });
     runtime.turnOpen = false;
     runtime.lastTurnLine = null;
     if (runtime.turnEnding) clearTimeout(runtime.turnEnding.timer);
     runtime.turnEnding = null;
     runtime.lateTurnEnd = null;
+    runtime.endedTurnLine = null;
     // 前の claude のツールの呼び出し・待たせていたフック・発言の鍵は持ち越さない（結果が来ないまま止まった呼び出しが、次の同じ名前の
     // 呼び出しのフックを決められなくし、待たせたフックが、関係のない発言のあとに出るため）
     runtime.streamTools = [];
@@ -2730,6 +2752,12 @@ export class SessionManager {
     if (!rt.turnOpen) this.pushEvents(id, [{ type: 'turn-end' }]);
     // 前のアプリの頃に始まったターンの途中なら、進み具合を始める（経過はここから数える）
     else if (!rt.progress && rt.process) this.startProgress(id, rt);
+    // アプリを閉じている間に、最後のターンが利用枠で止まって終わった（前のアプリの頃の行なので、ターンの終わりでは知らせていない）。
+    // 枠が戻る時刻がまだ先なら、ターンの終わりと同じく知らせる（戻ったら再開する予約が入る。usage-limit-resume.ts）
+    const outside = rt.outsideLimit;
+    rt.outsideLimit = null;
+    rt.detachedAt = null;
+    if (adopted && !rt.turnOpen && outside && outside.resetsAt !== null && outside.resetsAt > Date.now()) this.listeners.onTurnLimit?.(id, outside);
     // 引き継いだ claude は、最後の bridge-session 行のつながりのまま動いている
     // （以前つないでいた会話を再開すると、フラグが無くてもつなぎ直すため）。この起動の中でつながりを確かめたあとは、上書きしない。
     // 読んだ行のつながりは一度だけ使う（/clear で乗り換えた先を読み終えたときに、前の会話ログの古いつながりに戻さない）
@@ -3000,6 +3028,7 @@ export class SessionManager {
   private openTurn(id: string, rt: Runtime, past: boolean): void {
     if (rt.turnOpen) return;
     rt.turnOpen = true;
+    rt.endedTurnLine = rt.turnEnding?.waitFor ?? rt.lateTurnEnd?.waitFor ?? null;
     if (rt.turnEnding) this.flushTurnEnd(id, rt, true);
     rt.lateTurnEnd = null;
     rt.lastTurnLine = null;
@@ -3543,7 +3572,14 @@ export class SessionManager {
     if (rt && !isHistory && !rt.terminal) events = events.filter((e) => e.type !== 'turn-end');
     // 今のターンが、利用枠に当たって止まった（読み直した過去の行・終わったターンのあとに遅れて出た行は数えない。終わりに予約を入れるので）
     const limited = events.find((e): e is Extract<ChatEvent, { type: 'api-error' }> => e.type === 'api-error' && !!e.limit);
-    if (rt && !past && limited?.limit && (rt.terminal || rt.turnOpen || rt.turnEnding)) rt.turnLimit = limited.limit;
+    // 前のターンの最後の行が、次のターンが始まってから出たもの（endedTurnLine）も数えない
+    if (rt && !past && limited?.limit && (rt.terminal || rt.turnOpen || rt.turnEnding) && entry.uuid !== rt.endedTurnLine) rt.turnLimit = limited.limit;
+    // 引き継いだ claude が、前のアプリを閉じている間に書いた行（読み直した会話ログ）。最後のターンが利用枠で止まったまま終わったかを控える
+    // （止まったあとにモデルが応答したら、作業は進んでいる）。使うのは、読み終えたとき（historySettled）
+    if (rt && isHistory && rt.detachedAt !== null && entryTime(entry) >= rt.detachedAt) {
+      if (limited?.limit) rt.outsideLimit = limited.limit;
+      else if (events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use' || e.type === 'thinking')) rt.outsideLimit = null;
+    }
     // ターミナルモードは stream が無いので、モデルが応答したかは会話ログの行で見る
     if (rt?.terminal && !past && events.some((e) => e.type === 'assistant-text' || e.type === 'tool-use' || e.type === 'thinking')) rt.turnAnswered = true;
     if (rt?.terminal && !past) this.tuiEntry(id, rt, entry, events, isHistory);

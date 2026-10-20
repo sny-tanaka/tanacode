@@ -19,6 +19,7 @@ import {
 import { checklistEventText } from '@shared/checklist-tools';
 import { formatScheduleTime, wakeupText } from '@shared/scheduled';
 import { usageLimitOf, usageResumeText } from '@shared/usage-limit';
+import { autoCompactStopReason, cancelledText } from '@shared/optimized-compact';
 import { instructionsContext, parentRoleText } from '@shared/project-instructions';
 import { INSTRUCTIONS_HOOK_COMMAND } from '../src/main/instructions-launch';
 import { parentMessageText, sessionEventText } from '@shared/session-tools';
@@ -297,6 +298,19 @@ describe('toChatEvents: attachment の行', () => {
     // ユーザーの Stop のフックが止めたとき・Stop でないときは、目印にしない
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'Stop', blockingError: { blockingError: 'テストを流して', command: 'npm test' } }))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
     expect(events(attachment({ type: 'hook_blocking_error', hookEvent: 'PostToolUse', blockingError: { blockingError: '直して', command: CHECKLIST_HOOK_COMMAND } }))).toEqual([]);
+    // 自動の最適化圧縮が、ターンの途中（ツールのあとのフック）で止めた記録。コマンドは載らず、止めた理由だけが入る。
+    // 今の文（autoCompactStopReason）と、前のバージョンのアプリが書いた文（同じ英語の文。suppressOutput の無い JSON を出していた頃は、
+    // 成功の記録の標準出力にも残る）のどちらも出さない
+    const stopped = (message: string) => attachment({ type: 'hook_stopped_continuation', hookName: 'PostToolUse:Bash', hookEvent: 'PostToolUse', toolUseID: 'toolu_bash', message });
+    expect(events(stopped(autoCompactStopReason(91.4)))).toEqual([]);
+    expect(events(stopped(autoCompactStopReason(null)))).toEqual([]);
+    expect(events(stopped('tanacode: the context is 90% full, so tanacode stops here to reset the conversation and resume from the checklists (optimized compaction).'))).toEqual([]);
+    const legacyStdout = JSON.stringify({ continue: false, stopReason: 'tanacode: the context is 88% full, so tanacode stops here to reset the conversation and resume from the checklists (optimized compaction).' });
+    expect(events(attachment({ type: 'hook_success', hookName: 'PostToolUse:Bash', hookEvent: 'PostToolUse', toolUseID: 'toolu_bash', command: 'f="${TANACODE_ASK_FILE%.ask}.stop"', stdout: legacyStdout }))).toEqual([]);
+    expect(events(attachment({ type: 'hook_success', hookName: 'PostToolUse:Bash', hookEvent: 'PostToolUse', toolUseID: 'toolu_bash', stdout: legacyStdout }))).toEqual([]);
+    // ユーザーのフックが止めた記録は出す（理由に tanacode の文を引いていても、文の頭が違えば、ユーザーのもの）
+    expect(events(stopped('lint が落ちたので止めます'))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked', message: 'lint が落ちたので止めます' } });
+    expect(events(stopped(`メモ: ${autoCompactStopReason(91)}`))[0]).toMatchObject({ type: 'hook', run: { outcome: 'blocked' } });
     // TANACODE.md を渡すフック。フックの記録（コマンドの目印）も、Claude に文を渡した記録（コマンドは載らないので、囲みで見分ける）も出さない。2.1.303
     const instructions = instructionsContext([{ path: `${CWD}/TANACODE.md`, content: '# 決まり', sum: '0123456789ab' }]);
     expect(events(attachment({ type: 'hook_success', hookName: 'SessionStart:startup', hookEvent: 'SessionStart', command: INSTRUCTIONS_HOOK_COMMAND, stdout: '{}' }))).toEqual([]);
@@ -747,6 +761,16 @@ describe('toChatEvents: 発言の行', () => {
     expect(transcriptTitle(user(usageResumeText()))).toBeNull();
     expect(unsentView(usageResumeText())).toBeNull();
     expect(events(user(`${usageResumeText()} これは人の発言`))[0]).toMatchObject({ type: 'user' });
+  });
+
+  it('途中で止めた自動の最適化圧縮を取りやめて、続きを頼んだ文は「止めたところから続けるよう頼みました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {
+    const body = cancelledText().replace(/^<[^>]+>\n/, '').replace(/\n<\/[^>]+>$/, '');
+    const text = '最適化圧縮を取りやめたので、止めたところから続けるよう頼みました';
+    expect(events(user(cancelledText()))).toEqual([{ type: 'notice', id: 'u1', text, detail: body }]);
+    expect(isHumanPrompt(cancelledText())).toBe(false);
+    expect(transcriptTitle(user(cancelledText()))).toBeNull();
+    expect(unsentView(cancelledText())).toBeNull();
+    expect(events(user(`${cancelledText()} これは人の発言`))[0]).toMatchObject({ type: 'user' });
   });
 
   it('Claude が自分に入れた予約の知らせは「Claude の予約の時刻になりました」の知らせにし、開くと本文が読める。人の発言・一覧のタイトルにしない', () => {

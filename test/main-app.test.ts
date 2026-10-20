@@ -383,6 +383,8 @@ describe('部品から画面への知らせ', () => {
     fnArg('SettingsFiles', 2)([{ id: 'f1' }]);
     fnArg('ChecklistStore', 1)('s1', [{ id: 'l1' }]);
     fnArg('ScheduledMessages', 2)([{ id: 'm1' }]);
+    // 予約が変わったら、親の再開の予約を待って預かっている子の知らせを見直させる
+    expect(the('SessionsControl').scheduledChanged).toHaveBeenCalledTimes(1);
     optionsOf('WalkthroughControl').onChange('s1', { id: 'w1' });
     fnArg('UsageMonitor', 1)({ fiveHour: 10 });
     fnArg('ClaudeVersionMonitor', 0)('2.1.300');

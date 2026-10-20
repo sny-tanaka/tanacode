@@ -468,8 +468,8 @@ const modules: Record<string, Record<string, unknown>> = {
     }),
   },
   'sessions-control': {
-    // scheduledTrouble: 子の予約の失敗を親に回したか（既定は回さない。人に通知する）
-    SessionsControl: fakeClass('SessionsControl', { handle: echo('sessionsControl.handle'), dispose: () => undefined, scheduledTrouble: () => false }),
+    // scheduledTrouble: 子の予約の失敗を親に回したか（既定は回さない。人に通知する）/ scheduledChanged: 予約が変わった
+    SessionsControl: fakeClass('SessionsControl', { handle: echo('sessionsControl.handle'), dispose: () => undefined, scheduledTrouble: () => false, scheduledChanged: () => undefined }),
   },
   'checklist-control': {
     ChecklistControl: fakeClass('ChecklistControl', { apply: echo('checklistControl.apply'), copy: echo('checklistControl.copy'), handle: echo('checklistControl.handle'), dispose: () => undefined }),

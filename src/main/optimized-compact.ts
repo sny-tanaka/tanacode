@@ -4,6 +4,7 @@ import type { CustomPrompts } from '@shared/prompts';
 import {
   IDLE_COMPACT_STATUS,
   autoHandoffText,
+  cancelledText,
   carriedMessages,
   carriedOmitted,
   handoffText,
@@ -77,6 +78,11 @@ type Deps = {
 // ターンの外（発言を受け付けられる）
 const IDLE_STATES = new Set<SessionState>(['idle', 'background']);
 
+// アプリがターンの途中で止めたのに取りやめたとき、止めたところから続けるよう頼む理由。会話は消しておらず、人も何もしていないもの。
+// 頼まないもの: 人が中断した・発言した（人が次を決める）/ 利用枠で止まった（枠が戻ったら、続きを頼む予約が送る）/
+// セッションが終了した / /clear を送ったのに切り替わらなかった（会話が消えたかどうか分からない）
+const CONTINUE_AFTER = new Set<CompactFailure>(['not-used', 'interleaved', 'busy']);
+
 // 仕上げのターンの終わり方。done: 終わった / again: 終わったあとに別のターン（タスクの完了の知らせなど）が続いて、それも終わった /
 // api-error: API エラーで終わった（コンテキストの上限に当たったなど。Claude Code があきらめたもの）/
 // usage-limit（CompactFailure）: プランの利用枠に当たって止まった
@@ -130,6 +136,10 @@ export class OptimizedCompact {
       .catch((error: unknown) => {
         console.error('[optimized-compact]', error);
         return 'busy' as const;
+      })
+      .then(async (failure) => {
+        if (failure && auto?.midTurn && CONTINUE_AFTER.has(failure)) await this.continueStopped(id).catch((error: unknown) => console.error('[optimized-compact]', error));
+        return failure;
       })
       .then((failure) => {
         this.phases.delete(id);
@@ -231,6 +241,19 @@ export class OptimizedCompact {
         await sleep(this.timings.retryMs);
       }
     }
+  }
+
+  // アプリがターンの途中で止めたのに、会話を消さずに取りやめた。止めたままにしないよう、止めたところから続けるよう頼む。
+  // 再開の文と同じく、続きのターンが始まるまでを流れのうちにする（流れを先に終えると、ほかのセッションから手が空いたように見え、
+  // 親に「止まった」と知らせが行く）。送れなければ、あきらめる（取りやめたことは、人・親に知らせる）
+  private async continueStopped(id: string): Promise<void> {
+    if (!this.alive(id)) return;
+    try {
+      await this.deps.host.submitWhenReady(id, cancelledText(), this.timings.submitMs);
+    } catch {
+      return;
+    }
+    await this.until(id, this.timings.startMs, () => !IDLE_STATES.has(this.deps.host.stateOf(id) ?? 'exited'));
   }
 
   // 仕上げのターンが終わるのを待つ。base: 仕上げの頼みを送る前の、会話のイベントの数。

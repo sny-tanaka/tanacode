@@ -143,6 +143,17 @@ describe('ターミナルモードの間', () => {
     expect(pty.killed).toBe(true);
   });
 
+  it('TUI のターンが利用枠で止まり、ターンの終わりの行が無いまま次のターンが始まっても、止まったことを次のターンに持ち越さない', async () => {
+    const { id } = await chatting();
+    await app.manager.setTerminalMode(id, true);
+    const before = app.turnLimits.length;
+    app.append(id, line.user('TUI で打った指示'), line.limit(Date.now() + 3_600_000));
+    await app.waitFor('止まった', () => app.events(id).some((e) => e.type === 'api-error'));
+    app.append(id, line.user('もう一度'), line.text('はい'), line.turnEnd());
+    await app.waitFor('次のターンの終わり', () => app.turnLimits.length === before + 1);
+    expect(app.turnLimits.at(-1)?.limit).toBeNull();
+  });
+
   it('人の発言の無いターン（スキル・裏のタスクの完了の知らせなど）も、モデルの応答の行で始まりを知る', async () => {
     const { id } = await chatting();
     await app.manager.setTerminalMode(id, true);
