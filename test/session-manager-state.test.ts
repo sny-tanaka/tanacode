@@ -780,6 +780,32 @@ describe('会話ログの読み取り', () => {
     expect(talk(await readChatLog(app.transcript(id), app.cwd))).toEqual(['ツールの呼び出しの形が壊れます', '形を直して届いた返事']);
   });
 
+  it('取り消された応答のあとに送った発言の順番待ちは、取り消しの置き換えのあとも残る', async () => {
+    const { id, pipe } = app.create();
+    await app.ready(id);
+    const prompt = await app.prompt(id, 'ツールの呼び出しの形が壊れます');
+    const malformed = { ...line.text('形の壊れた応答です。これは取り消されるはず'), parentUuid: prompt };
+    app.append(id, malformed);
+    await app.waitFor('取り消される応答', () => app.manager.snapshot(id).events.some((e) => e.type === 'assistant-text'));
+    // 取り消される応答が最後の行のときに、次の発言を送り、順番待ちになった（その知らせは、取り消される行のあとに並ぶ）
+    const next = await app.send(id, 'ついでにこれも');
+    pipe.emit(stream.lifecycle(next, 'queued'));
+    const last = (events: ChatEvent[]) => [...events].reverse().find((e) => e.type === 'queue');
+    await app.waitFor('順番待ち', () => {
+      const queue = last(app.events(id));
+      return queue?.type === 'queue' && queue.prompts[0]?.state === 'queued';
+    });
+    removeLine(app.transcript(id), malformed.uuid);
+    const retry = { ...line.user('The previous response failed to produce a valid tool call. Please retry the tool call now.'), parentUuid: prompt, isMeta: true };
+    app.say(id, retry);
+    await app.waitFor('置き換え', () => app.events(id).some((e) => e.type === 'replace'));
+    const queued = [{ id: next, text: 'ついでにこれも', pastes: [], images: 0, state: 'queued' }];
+    // 直す前は、取り消した行と一緒に順番待ちの知らせも外れ、まだ送っていない発言が画面から消えていた
+    const replaced = app.events(id).find((e) => e.type === 'replace');
+    expect(last(replaced?.type === 'replace' ? replaced.events : [])).toEqual({ type: 'queue', prompts: queued });
+    expect(last(app.manager.snapshot(id).events)).toEqual({ type: 'queue', prompts: queued });
+  });
+
   it('claude が終わったら、送信中を空にし、動いていたバックグラウンドのタスクを止まったことにする', async () => {
     const { id, pipe } = app.create();
     await app.ready(id);
