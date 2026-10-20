@@ -105,7 +105,19 @@ describe('チャットから Claude Code を動かす', () => {
     await row.locator('summary').click();
     expect(await row.locator('.chat-unknown-meta').textContent()).toMatch(/^会話ログの行Claude Code \d+\.\d+\.\d+$/);
     expect(JSON.parse((await row.locator('.chat-unknown-raw').textContent())!)).toMatchObject({ type: 'server_tool_use', id: 'srvtoolu_e2e' });
-    // 手元の Mac（裏で起動）では、人のクリップボードを書き換えないよう、写す先を差し替える。CI では本物のクリップボードに写して読み直す
+    // 手元の Mac（裏で起動）では、人のクリップボードを書き換えないよう、写す先を差し替える。CI では本物のクリップボードに写して読み直す。
+    // 本物のクリップボードに写すには、文書にフォーカスが要る（Clipboard API は、フォーカスの無い文書からの書き込みを断る）。人が押すときは、
+    // 押した時点でウインドウが前に出ているが、Playwright のクリックはウインドウを前に出さない（CI で、ウインドウにフォーカスが無いまま押して、
+    // コピーが断られたことがある）。先にウインドウを前に出し、文書がフォーカスを持つのを待つ
+    if (!BACKGROUND) {
+      await app.app.evaluate(({ app: electron, BrowserWindow }) => {
+        electron.focus({ steal: true });
+        BrowserWindow.getAllWindows()
+          .find((window) => window.isVisible())
+          ?.focus();
+      });
+      await app.page.waitForFunction(() => document.hasFocus());
+    }
     if (BACKGROUND) {
       await app.page.evaluate(() => {
         const page = window as { copied?: string };

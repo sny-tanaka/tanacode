@@ -58,6 +58,8 @@ export class E2EApp {
   readonly api = new MockApi();
   // 画面（レンダラー）のコンソールに出たエラー
   readonly consoleErrors: string[] = [];
+  // 画面のコンソールに出た警告（失敗したときの手がかり。コピーできなかったわけなど、画面がエラーにしないもの）
+  private readonly consoleWarnings: string[] = [];
   // メインプロセスの出力（失敗したときの手がかり）
   private readonly output: string[] = [];
   // アプリに渡す環境変数（prepare で決める）
@@ -199,6 +201,7 @@ export class E2EApp {
     this.window.setDefaultTimeout(TIMEOUT_MS);
     this.window.on('console', (message) => {
       if (message.type() === 'error') this.consoleErrors.push(message.text());
+      else if (message.type() === 'warning') this.consoleWarnings.push(message.text());
     });
     this.window.on('pageerror', (error) => this.consoleErrors.push(String(error)));
     if (COVERAGE) {
@@ -289,6 +292,8 @@ export class E2EApp {
       .catch((error: unknown) => String(error));
     // ターミナルモードのセッションなら、Claude Code の画面も残す（チャットのセッションを切り替えると Claude Code を開き直すので、
     // 切り替えはしない）。落ちたときの手がかりに残すだけで、確かめには使わない（TUI の画面はテストで読まない。決めたこと）
+    // 画面の文書にフォーカスがあるか（Clipboard API など、フォーカスの無い文書からは断られるものがある）
+    const focused = await page?.evaluate(() => document.hasFocus()).catch((error: unknown) => String(error));
     let screen = '';
     if (page) {
       try {
@@ -305,6 +310,9 @@ export class E2EApp {
         this.output.join(''),
         '# 画面のコンソールのエラー',
         ...this.consoleErrors,
+        '# 画面のコンソールの警告',
+        ...this.consoleWarnings,
+        `# 画面の文書にフォーカスがあるか: ${String(focused)}`,
         '# モックの API の呼び出し',
         ...this.api.requests,
         '# セッションの一覧',
