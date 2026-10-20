@@ -1135,6 +1135,9 @@ exports[`MCP サーバー tanacode-sessions の定義 > ツールの名前・種
           "at": {
             "type": "string",
           },
+          "even_if_scheduled": {
+            "type": "boolean",
+          },
           "in_minutes": {
             "type": "integer",
           },
