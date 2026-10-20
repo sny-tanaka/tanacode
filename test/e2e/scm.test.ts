@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { E2EApp } from './app';
@@ -67,6 +67,17 @@ describe('ソース管理の画面から、差分にコメントして返し、�
     const sent = app.api.lastPrompts.find((p) => p.includes(FOLLOW)) ?? '';
     expect(sent).toContain(COMMENT);
     expect(sent).toContain('src/tax.ts:1');
+  });
+
+  // 直す前: 差分の画面は、開いたファイルか、ステージ済みかが変わったときだけ読み直したので、開いたあとに Claude が同じファイルを
+  // 書き換えても（git status の印は「変更あり」のまま）、古い差分のままだった
+  it('差分を開いたまま、ファイルがディスク上で書き換えられると、差分を読み直す', async () => {
+    const modified = app.page.locator('.diff-pane .modified-in-monaco-diff-editor');
+    await modified.locator('.view-line', { hasText: 'TAX_RATE = 0.08' }).waitFor();
+    // Claude の Edit と同じく、ディスク上のファイルを書き換える
+    writeFileSync(join(app.work, 'src/tax.ts'), TAX.replace('TAX_RATE = 0.1', 'TAX_RATE = 0.05'));
+    await modified.locator('.view-line', { hasText: 'TAX_RATE = 0.05' }).waitFor();
+    expect(await modified.locator('.view-line', { hasText: 'TAX_RATE = 0.08' }).count()).toBe(0);
   });
 
   it('変更をステージして、画面からコミットできる', async () => {

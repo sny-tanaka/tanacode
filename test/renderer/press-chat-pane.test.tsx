@@ -592,6 +592,32 @@ describe('ヘッダー', () => {
     expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeTruthy();
   });
 
+  // 直す前: ホイールで動いた位置の知らせ（scroll）が届く前に行が増えると、まだ最下部を追いかけているつもりで最下部へ送り直し、
+  // 人が上へ動かした位置を打ち消していた。CI の E2E（chat-scroll）で、許可のカードを出してホイールで上へ送った直後に、会話ログから
+  // ツールの行が届いて、最下部に戻されて落ちた（CPU が忙しいと、知らせが届くまでの間が長い）
+  it('ホイールで上へ動かした知らせが届く前に、行が増えて追いかけが動いても、人が動かした位置を打ち消さない', () => {
+    const view = render(<ClaudePane {...props({ chat: chatOf({ status: 'running' }) })} />);
+    const list = document.querySelector('.chat-list') as HTMLDivElement;
+    let height = 1000;
+    sizeList(list, () => height);
+    list.scrollTop = 800;
+    fireEvent.scroll(list);
+    // ホイールで 70px 上へ。位置はすぐ動くが、知らせは次に描くときに届く
+    fireEvent.wheel(list, { deltaY: -70 });
+    list.scrollTop = 730;
+    // その前に、会話ログから行が届いて伸びる（会話が変わったときの追いかけが動く）
+    height = 1030;
+    view.rerender(<ClaudePane {...props({ chat: chatOf({ status: 'running', items: [USER, { kind: 'text', id: 't1', text: '届いた行' }] }) })} />);
+    expect(list.scrollTop).toBe(730);
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(730);
+    expect(screen.queryByRole('button', { name: '最新のメッセージへ' })).toBeTruthy();
+    // 追いかけをやめたので、さらに伸びても動かさない
+    height = 1100;
+    view.rerender(<ClaudePane {...props({ chat: chatOf({ status: 'running', items: [USER, { kind: 'text', id: 't1', text: '届いた行' }, { kind: 'text', id: 't2', text: '次の行' }] }) })} />);
+    expect(list.scrollTop).toBe(730);
+  });
+
   // 直す前: 一覧が縮んで位置が押し戻された知らせを、人が上へスクロールしたものと取り違えて、追いかけをやめていた。
   // CI の E2E（browser-shot）で、許可のカードの選択肢が下に隠れ、その上に「最新のメッセージへ」が出て、「Yes」を押せずに落ちていた
   it('一覧が縮んで押し戻された知らせが、そのあと伸びてから届いても、追いかけをやめない（人が上へスクロールしたのではない）', () => {

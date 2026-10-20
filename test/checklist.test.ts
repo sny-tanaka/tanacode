@@ -10,6 +10,7 @@ import {
   cardOfTool,
   checklistEventText,
   checklistTarget,
+  checklistTargetOfTool,
   checklistToolId,
   parseChecklistEvent,
 } from '../src/shared/checklist-tools';
@@ -516,5 +517,32 @@ describe('会話ログとチャットの表示', () => {
     // ほかのセッションのカードは、今のセッションでは開かない
     expect(cardOfTool(checklistToolId('card_reply'), JSON.stringify({ list: '確認事項', number: 2, text: 'x', session_id: '66666666' }))).toBeNull();
     expect(cardOfTool(checklistToolId('card_reply'), JSON.stringify({ list: '確認事項', number: 2, text: 'x', session_id: ' ' }))).toEqual({ list: '確認事項', number: 2 });
+  });
+
+  // 直す前: 親が子のリストを触っても「やること #3」とだけ出て、自分のリストを触ったのと見分けられなかった
+  it('ほかのセッションのリストを触ったツールの行には、そのセッションの名前（分からなければ ID の頭 8 文字）を添える', () => {
+    const child = '1a2b3c4d-0000-4000-8000-000000000000';
+    const nameOf = (id: string) => (child.startsWith(id) ? '画面の直し' : null);
+    expect(checklistTarget(checklistToolId('card_check'), { list: 'やること', numbers: '3', session_id: '1a2b3c4d' }, nameOf)).toBe('「画面の直し」のやること #3');
+    expect(checklistTarget(checklistToolId('card_check'), { list: 'やること', numbers: '3', session_id: child })).toBe('「1a2b3c4d」のやること #3');
+    // リストを決めないツールは、セッションの名前だけ
+    expect(checklistTarget(checklistToolId('checklist_overview'), { session_id: '1a2b3c4d' }, nameOf)).toBe('「画面の直し」');
+    expect(checklistTarget(checklistToolId('checklist_overview'), {}, nameOf)).toBe('');
+    // 子のリストの中で移す
+    expect(checklistTarget(checklistToolId('card_move'), { list: 'やること', numbers: '2', to_list: '人のやること', session_id: '1a2b3c4d' }, nameOf)).toBe(
+      '「画面の直し」のやること #2 → 人のやること',
+    );
+    // 子へコピーする・子からコピーしてくる
+    expect(checklistTarget(checklistToolId('cards_copy'), { from_list: 'やること', numbers: '5-8', to_session: '1a2b3c4d' }, nameOf)).toBe('やること #5-8 → 「画面の直し」');
+    expect(checklistTarget(checklistToolId('cards_copy'), { from_list: 'やること', numbers: '5', to_session: '1a2b3c4d', to_list: '引き継ぎ' }, nameOf)).toBe(
+      'やること #5 → 「画面の直し」の引き継ぎ',
+    );
+    expect(checklistTarget(checklistToolId('cards_copy'), { from_session: '1a2b3c4d', from_list: '完了', numbers: '6-10' }, nameOf)).toBe('「画面の直し」の完了 #6-10');
+    // 入力の JSON から（チャットのツールの行）
+    expect(checklistTargetOfTool(checklistToolId('card_check'), JSON.stringify({ list: 'やること', numbers: '3', session_id: '1a2b3c4d' }), nameOf)).toBe(
+      '「画面の直し」のやること #3',
+    );
+    expect(checklistTargetOfTool(checklistToolId('card_check'), '{', nameOf)).toBeNull();
+    expect(checklistTargetOfTool('Bash', '{}', nameOf)).toBeNull();
   });
 });

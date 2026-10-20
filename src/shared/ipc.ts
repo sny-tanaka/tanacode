@@ -170,6 +170,7 @@ export const IpcChannel = {
   AppUpdateChanged: 'app-update:changed',
   AppUpdateInstall: 'app-update:install',
   AppUpdateCheck: 'app-update:check',
+  AppUpdateChecked: 'app-update:checked',
   StatusLineChanged: 'statusline:changed',
   KnowledgeChanged: 'knowledge:changed',
   // アプリ内ブラウザを Claude が操作する（MCP）。main → 画面: 開く・操作中の様子・表示幅 / 画面 → main: webview を作った
@@ -610,6 +611,8 @@ export type TanacodeApi = {
     // 今すぐ確かめる（タイトルバーの最新の印を押したとき）。確かめられたら true（結果が変われば onChanged でも知らせる）。
     // 確かめられなかった（オフラインなど）・確かめる設定がオフなら false
     check(): Promise<boolean>;
+    // 確かめられた（ふだんの確認でも。結果が前と同じで onChanged が来ないときも）。押して確かめられなかった印を、確かめられたら消すのに使う
+    onChecked(listener: () => void): () => void;
     // Homebrew でダウンロード済みの新しいバージョンを入れる。tanacode を終了し、入れ替えてから起動し直す
     // （Claude Code が動いていれば、止めるかを聞く。キャンセルしたら何もしない）
     install(): Promise<void>;
@@ -963,6 +966,7 @@ export type IpcEvent = {
   [IpcChannel.SystemStats]: Payload<Api['system']['onStats']>;
   [IpcChannel.ClaudeVersionChanged]: Payload<Api['claudeVersion']['onChanged']>;
   [IpcChannel.AppUpdateChanged]: Payload<Api['appUpdate']['onChanged']>;
+  [IpcChannel.AppUpdateChecked]: undefined;
   [IpcChannel.StatusLineChanged]: Payload<Api['statusLine']['onChanged']>;
   [IpcChannel.SettingsFilesChanged]: Payload<Api['settingsFiles']['onChanged']>;
   [IpcChannel.KnowledgeChanged]: Payload<Api['knowledge']['onChanged']>;

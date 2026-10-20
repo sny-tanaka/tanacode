@@ -468,7 +468,9 @@
       "cardCount": "{count} cards",
       "cardCount_one": "{count} card",
       "stepCount": "{count} steps",
-      "stepCount_one": "{count} step"
+      "stepCount_one": "{count} step",
+      "inSession": "{target} in “{session}”",
+      "session": "“{session}”"
     },
     "notice": {
       "untitledSession": "New Session",
