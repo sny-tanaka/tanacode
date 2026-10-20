@@ -2119,7 +2119,15 @@ export class SessionManager {
     rt.context.reset();
     // 前の claude の書きかけの文は捨てる（起動の知らせと一緒に送る）
     rt.partial.clear();
-    this.pushEvents(id, [{ type: 'process-start' }]);
+    // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）。
+    // 起動し直す claude には、再起動で止めた claude が捨てた発言を持ち越す（起動したら送り直す。resendCarried）
+    rt.unsent = adopted
+      ? new Map(!tui ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : [])
+      : new Map(!tui ? [...rt.unsent].filter(([, prompt]) => prompt.carried) : []);
+    if (record.unsent) this.store.update(id, { unsent: null });
+    // 起動の知らせ（画面はチャットを空にする。順番待ちも）と、戻した・持ち越した順番待ちは、同じ配信で送る。分けて送ると、その間に
+    // 画面が描いたとき、順番待ちの発言が消えて見える（CI の E2E で、起動し直した直後に順番待ちの発言が見つからなかった）
+    this.pushEvents(id, [{ type: 'process-start' }, ...(rt.unsent.size > 0 ? [queueEvent(rt)] : [])]);
     const runtime = rt;
     runtime.attention = null;
     runtime.ready = false;
@@ -2135,12 +2143,6 @@ export class SessionManager {
     runtime.redrawFromHost = adopted?.kind === 'pty' ? adopted.id : null;
     runtime.freshConversation = false;
     runtime.requests.clear();
-    // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）。
-    // 起動し直す claude には、再起動で止めた claude が捨てた発言を持ち越す（起動したら送り直す。resendCarried）
-    runtime.unsent = adopted
-      ? new Map(!tui ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : [])
-      : new Map(!tui ? [...runtime.unsent].filter(([, prompt]) => prompt.carried) : []);
-    if (record.unsent) this.store.update(id, { unsent: null });
     // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す（Claude Code が知らせたら、そちらにする）
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
     if (!adopted) this.store.update(id, { knownMode: permissionMode });
@@ -3122,8 +3124,7 @@ export class SessionManager {
 
   // 送ったが、まだ会話に出ていない発言を、チャットに知らせる
   private emitQueue(id: string, rt: Runtime): void {
-    const prompts = [...rt.unsent.values()].filter((prompt) => prompt.shown).map(unsentPrompt);
-    this.pushEvents(id, [{ type: 'queue', prompts }]);
+    this.pushEvents(id, [queueEvent(rt)]);
   }
 
   // MCP サーバーの質問（elicitation）が来た。カードで答える。replayed: 引き継いだときに出し直した要求（もう一度は通知しない）
@@ -3535,6 +3536,11 @@ function firstRequest(rt: Runtime): CanUseToolRequest | null {
 // 送った発言の控えの、画面と記録に出す形（送った行などのアプリの中の印は外す）
 function unsentPrompt({ id, text, pastes, images, state, parent }: Unsent): UnsentPrompt {
   return { id, text, pastes, images, state, ...(parent ? { parent } : {}) };
+}
+
+// 送ったが、まだ会話に出ていない発言の知らせ（チャットに出すものだけ）
+function queueEvent(rt: Runtime): ChatEvent {
+  return { type: 'queue', prompts: [...rt.unsent.values()].filter((prompt) => prompt.shown).map(unsentPrompt) };
 }
 
 // 再起動で止めた claude が捨てた発言のうち、まだ送り直していないものがある
