@@ -14,6 +14,9 @@ import { MockApi, type Block } from './mock-api';
 // アプリと同じ起動の引数（--mcp-config・--allowedTools）で起動し、中継（src/main/checklist-mcp.ts をビルドしたもの）が、
 // アプリの代わりのソケットの先の ChecklistControl まで、ツールの呼び出しを運ぶか。
 // - ツールはすべて、許可の確認なしに通る（書き換えるツールも）
+// - tool search（MCP のツールの定義を一覧に入れず、名前だけを知らせて ToolSearch で読み込ませる）を、本物の API と同じく有効にして
+//   起動する（ENABLE_TOOL_SEARCH。モックのように ANTHROPIC_BASE_URL を差し替えると、2.1.303 までは既定で無効）。どのツールも名前が
+//   Claude に知らされ、ToolSearch で定義を読み込める（読み込みも、許可の確認なしに通る）
 // - サーバーの説明（instructions）が Claude に渡り、/compact で会話を圧縮したあとも渡る
 // - 人がスレッドに「Claude に通知する」で返信すると、手の空いた Claude Code の入力欄に知らせが打たれ、
 //   会話ログから、カードの場所を持つ「Claude への知らせ」として読める
@@ -23,6 +26,8 @@ const AFTER_COMPACT = '圧縮のあとも続けてください';
 // 台本の最後の応答。/compact の要約の頼みにも同じ応答が返るので、圧縮のあとの会話の最初（要約）に入り、圧縮のあとの台本を選べる
 const LAST_REPLY = '返信を読みました（圧縮の目印）';
 const COMPACT_MARK = '圧縮の目印';
+// 台本が ToolSearch で読み込んでから呼ぶツール
+const LOADED = ['card_add', 'card_check', 'checklist_overview'];
 
 const version = claudeVersion();
 
@@ -66,6 +71,8 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
         match: USE,
         delayMs: 300,
         steps: [
+          // 本物のモデルと同じく、名前だけを知らされたツールを ToolSearch で読み込んでから呼ぶ
+          [{ type: 'tool_use', id: 'toolu_search', name: 'ToolSearch', input: { query: `select:${LOADED.map(checklistToolId).join(',')}`, max_results: LOADED.length } }],
           call('toolu_add', 'card_add', {
             list: '完了前チェック',
             list_description: '作業を終える前に、すべて満たされているか確かめる',
@@ -81,7 +88,10 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
       // 圧縮のあとの会話は、要約（user）・Claude Code の応答（assistant）から始まるので、台本は 2 番目の応答から使う
       { match: COMPACT_MARK, steps: [say('（使わない）'), call('toolu_after', 'checklist_overview'), say('圧縮のあとも読めます')] },
     ];
-    run = new ClaudeRun(await api.start(), { checklist: { command: process.execPath, script, socketPath: bridge.socketPath, version: 'test' } });
+    run = new ClaudeRun(await api.start(), {
+      checklist: { command: process.execPath, script, socketPath: bridge.socketPath, version: 'test' },
+      env: { ENABLE_TOOL_SEARCH: 'true' },
+    });
     await run.open();
     control = new ChecklistControl({ store, host: run.manager, enabled: () => true, notifyDelayMs: 50 });
   });
@@ -98,7 +108,11 @@ describe(`Claude Code ${version} とチェックリストの MCP`, () => {
     await run.send(USE);
     // 確認が出ていれば、答えないかぎりここで止まる
     await run.waitUntil('一覧の結果', () => resultOf('toolu_overview'));
-    for (const tool of CHECKLIST_TOOLS) expect([...api.tools], tool.name).toContain(checklistToolId(tool.name));
+    // どのツールも名前が知らされ、ToolSearch で読み込んだツールは、定義（説明の全文）が Claude に渡る
+    for (const tool of CHECKLIST_TOOLS) expect([...api.deferredTools], tool.name).toContain(checklistToolId(tool.name));
+    expect(api.tools).toContain('ToolSearch');
+    for (const tool of CHECKLIST_TOOLS.filter((t) => LOADED.includes(t.name))) expect(api.descriptions.get(checklistToolId(tool.name)), tool.name).toBe(tool.description);
+    expect(run.chatEvents.find((e) => e.type === 'tool-result' && e.id === 'toolu_search')).toMatchObject({ isError: false });
     expect(api.systems.every((s) => s.includes('## tanacode-checklist') && s.includes('survive compaction'))).toBe(true);
     expect(tools).toEqual(['card_add', 'card_check', 'checklist_overview']);
     expect(resultOf('toolu_overview')).toContain('- [x] #1 税込表示が整数であること');

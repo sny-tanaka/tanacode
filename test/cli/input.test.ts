@@ -386,7 +386,7 @@ describe(`Claude Code ${version} のバックグラウンドの Bash を止め�
     const task = await run.waitUntil('バックグラウンドの Bash', () => run.bashTasks.find((t) => t.toolUseId === 'toolu_long' && t.state === 'running'));
     await run.waitUntil('ターンの終わり', () => turnEnds(run) > 0);
     // 止めるツールの入力には、起動したときの ID が要るので、起動を見てから台本の続きを決める
-    steps.push(stopStep(api.tools, task.taskId), [{ type: 'text', text: '止めました' }]);
+    steps.push(stopStep(new Set(api.offeredTools()), task.taskId), [{ type: 'text', text: '止めました' }]);
     await run.waitUntil('入力欄', () => run.idle);
     await run.send(STOP_AGAIN);
     const stopped = await run.waitUntil('止まる', () => run.bashTasks.find((t) => t.toolUseId === 'toolu_long' && t.state !== 'running'), 30_000);

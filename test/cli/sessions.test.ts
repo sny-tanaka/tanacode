@@ -224,7 +224,7 @@ describe(`Claude Code ${version} とセッションの MCP`, () => {
     it('ツールの一覧が Claude に渡り、読むだけのツールは許可の確認なしにアプリまで届く', async () => {
       await run.send(SESSIONS);
       await run.waitUntil('一覧の結果', () => resultOf(run, 'toolu_list'));
-      for (const tool of SESSION_TOOLS) expect([...api.tools], tool.name).toContain(sessionToolId(tool.name));
+      for (const tool of SESSION_TOOLS) expect(api.offeredTools(), tool.name).toContain(sessionToolId(tool.name));
       expect(calls[0]).toEqual({ session: run.sessionId, tool: 'list_sessions', args: {} });
     });
 

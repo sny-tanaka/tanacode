@@ -155,7 +155,7 @@ describe(`Claude Code ${version} と人のターミナルの MCP`, () => {
     await app.openShell(run.cwd, 'echo typed-by-human');
     await run.send(READ);
     await run.waitUntil('返事', replied('読みました'));
-    for (const tool of TERMINAL_TOOLS) expect([...api.tools], tool.name).toContain(terminalToolId(tool.name));
+    for (const tool of TERMINAL_TOOLS) expect(api.offeredTools(), tool.name).toContain(terminalToolId(tool.name));
   });
 
   it('読むツールは、許可の確認なしにアプリまで届き、人が打った出力を読める', () => {

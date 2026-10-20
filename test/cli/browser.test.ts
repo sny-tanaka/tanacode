@@ -111,7 +111,7 @@ describe(`Claude Code ${version} とアプリ内ブラウザの MCP`, () => {
   it('ツールの一覧が Claude に渡る', async () => {
     await run.send(BROWSE);
     await run.waitUntil('はじめのツールの結果', () => resultOf('toolu_shot'));
-    for (const tool of BROWSER_TOOLS) expect([...api.tools], tool.name).toContain(browserToolId(tool.name));
+    for (const tool of BROWSER_TOOLS) expect(api.offeredTools(), tool.name).toContain(browserToolId(tool.name));
   });
 
   it('読むだけのツールは、許可の確認なしにアプリまで届き、画像の結果が会話に入る', async () => {

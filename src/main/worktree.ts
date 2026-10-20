@@ -159,6 +159,19 @@ export function setupTroubleOf(result: NodeModulesResult, error: string | null =
   return installsFailed.length > 0 || notCopied.length > 0 || error ? { installsFailed, notCopied, error } : null;
 }
 
+// 子への最初の指示に添える、worktree の準備でうまくいかなかったこと（画面の言語。子のチャットにも、親の指示の一部として出る）
+export function withSetupNote(prompt: string, trouble: WorktreeSetupTrouble | null): string {
+  if (!trouble) return prompt;
+  const separator = t('main.format.shortListSeparator');
+  const at = (dir: string) => dir || t('main.worktree.topDir');
+  const problems = [
+    ...trouble.installsFailed.map((i) => t('main.worktree.commandFailedAt', { command: i.command, dir: at(i.dir), code: i.exitCode })),
+    ...trouble.notCopied.map((dir) => t('tools.notice.setupNotCopied', { dir: at(dir) })),
+    ...(trouble.error ? [t('main.worktree.prepareFailed', { error: trouble.error })] : []),
+  ].join(separator);
+  return `${prompt}\n\n${t('tools.notice.setupNote', { problems })}`;
+}
+
 type PrepareHooks = {
   onStep: (step: 'copying' | 'installing') => void;
   // worktree の cwd で install のコマンドを実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対
