@@ -165,6 +165,8 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 
 会話ログの `api-request`・`api-request-blob`・`api-request-shape`（2.1.301 から）は、API に送った要求の控えです。`api-request-blob` には、前の応答と発言が、API に送った形で `toolUseResult` なしにもう一度入ります（会話ログの行と API に送る 1 通が合わないものだけ。並べて呼んだツールで、前の呼び出しの結果が次の呼び出しより先に書かれたとき・ToolSearch の結果に「Tool loaded.」を足したときなど。2.1.302 で実測）。意図して捨てる行（`IGNORED_TYPES`）で、チャットにも、裏のタスクの追跡（`src/main/task-router.ts`）などほかの読み手にも渡しません（控えの中の結果で、裏のサブエージェントを完了にしないため。行の種類は `src/main/session-manager.ts` の `handleEntry` で 1 回だけ分ける）。
 
+会話ログの attachment の `structured_output`（`data`・`toolUseID`）は、ワークフローのエージェントが、決めた形（スキーマ）で返した結果の控えです。ワークフローのエージェントの会話ログ（`subagents/workflows/<実行の ID>/agent-<ID>.jsonl`）にだけあります。`data` は、`toolUseID` の `StructuredOutput` の呼び出しの `input` と同じで、ワークフローの `journal.jsonl` の、そのエージェントの `result` とも同じです（2.1.296〜2.1.303 の手元の会話ログの 822 行で実測）。チャットでは呼び出しのカードの入力に、タスクの画面ではエージェントの「結果」に同じ中身が出ているので、意図して捨てます（`IGNORED_ATTACHMENTS`）。
+
 ## 調べ直し方
 
 スキル `/claude-code-events`（`.claude/skills/claude-code-events/SKILL.md`）の手順で調べ直します。引数は調べる Claude Code のバージョンです。
