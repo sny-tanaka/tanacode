@@ -45,7 +45,8 @@ import { ScheduledMessages, type ScheduleHost } from '../src/main/scheduled-mess
 import { usageResumeText } from '../src/shared/usage-limit';
 import { PendingQuestions } from '../src/main/pending-questions';
 import { SessionsControl, testing, type SessionsHost } from '../src/main/sessions-control';
-import { WorktreeError } from '../src/main/worktree';
+import { WorktreeError, type WorktreeSetupTrouble } from '../src/main/worktree';
+import type { ScheduledMessage } from '../src/shared/scheduled';
 import { ownSettings, PERMISSION_FILE_COMMAND } from '../src/main/statusline';
 
 // ほかのセッションを扱う MCP（tanacode-sessions）。中継・起動の引数・会話ログの見分け・ツールの実行（親子・見える範囲・知らせ）
@@ -352,7 +353,10 @@ class FakeHost implements SessionsHost {
     this.configured.push({ id, options });
   };
   open = async (id: string) => void this.opened.push(id);
-  submitWhenReady = async (id: string, text: string) => void this.submitted.push({ id, text });
+  submitWhenReady = async (id: string, text: string | (() => string)) => void this.submitted.push({ id, text: typeof text === 'function' ? text() : text });
+  // worktree の準備でうまくいかなかったこと
+  setupTrouble = new Map<string, WorktreeSetupTrouble>();
+  worktreeSetup = (id: string) => this.setupTrouble.get(id) ?? null;
   // チャットとターミナルモードを切り替えている途中のセッション
   switching = new Set<string>();
   switchingTerminal = (id: string) => this.switching.has(id);
@@ -537,6 +541,35 @@ describe('ツールの実行（SessionsControl）', () => {
     expect(host.submitted).toEqual([{ id: started.session_id, text: parentMessageText(PARENT, '登録画面を作って') }]);
     // worktree を使うかは必ず選ばせる
     expect(textOf(await control.handle(PARENT, 'start_session', { prompt: 'x' }))).toContain('worktree');
+  });
+
+  it('start_session: worktree の準備でうまくいかなかったこと（install の失敗など）は、子への最初の指示の本文に添え、get_session の worktree に出す', async () => {
+    host.setupTrouble.set('88888888-0000-4000-8000-000000000008', {
+      installsFailed: [{ dir: 'pkg', command: 'yarn install', exitCode: 1 }],
+      notCopied: [''],
+      error: null,
+    });
+    const started = jsonOf<{ session_id: string; note: string }>(await control.handle(PARENT, 'start_session', { prompt: '直してください', worktree: true }));
+    expect(started.note).toContain('worktree.setup_problems');
+    // 親からの指示として読める（囲みの中に添える）
+    const first = host.submitted.find((m) => m.id === started.session_id)!.text;
+    expect(parseParentMessage(first)).toMatchObject({ parent: PARENT });
+    expect(parseParentMessage(first)!.body).toContain('直してください');
+    expect(parseParentMessage(first)!.body).toContain('yarn install（pkg・終了コード 1）');
+    expect(parseParentMessage(first)!.body).toContain('いちばん上 の node_modules を複製できず');
+    const got = jsonOf<{ worktree: { setup_problems: string[] } }>(await control.handle(PARENT, 'get_session', { session_id: started.session_id }));
+    expect(got.worktree.setup_problems).toEqual([
+      'yarn install in pkg exited with code 1, so its dependencies may be missing (its output is in a tab of the Terminal panel)',
+      'node_modules in the top folder could not be copied and was not installed',
+    ]);
+    // うまくいったとき（準備し直して直ったときも）は、何も出さない
+    host.setupTrouble.clear();
+    expect(jsonOf<{ worktree: Record<string, unknown> }>(await control.handle(PARENT, 'get_session', { session_id: started.session_id })).worktree).not.toHaveProperty('setup_problems');
+  });
+
+  it('start_session: worktree の準備がうまくいったら、最初の指示はそのまま送る', async () => {
+    const started = jsonOf<{ session_id: string }>(await control.handle(PARENT, 'start_session', { prompt: 'そのまま', worktree: true }));
+    expect(parseParentMessage(host.submitted.find((m) => m.id === started.session_id)!.text)!.body).toBe('そのまま');
   });
 
   it('start_session: worktree で始めたときだけ、worktree の準備は子に要らないと伝える（親が子に準備を頼まないように）', async () => {
@@ -1712,6 +1745,63 @@ describe('ツールの実行（SessionsControl）', () => {
     const settle = () => new Promise((r) => setTimeout(r, 60));
     beforeEach(() => {
       host.events.set(CHILD, [{ type: 'user', id: '1', text: 'x', parent: PARENT }]);
+    });
+
+    const scheduledMessage = (extra: Partial<ScheduledMessage>): ScheduledMessage => ({
+      id: 'm-0001',
+      sessionId: CHILD,
+      text: '続けてください',
+      attachments: [],
+      pastes: [],
+      at: Date.parse('2026-10-20T05:00:00Z'),
+      createdAt: Date.parse('2026-10-20T00:00:00Z'),
+      state: 'missed',
+      error: null,
+      ...extra,
+    });
+
+    it('子への予約（利用枠の再開など）を送れなかったら、親に知らせる（子は人に通知しない）。子が動き出しても取り下げない', async () => {
+      host.set(PARENT, 'working');
+      expect(control.scheduledTrouble(scheduledMessage({ by: 'usage-limit' }))).toBe(true);
+      // 子の状態の知らせ（子のキー）を取り下げても、予約の知らせは残る
+      host.set(CHILD, 'working');
+      host.set(PARENT, 'idle');
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+      const text = host.submitted[0].text;
+      expect(parseSessionEvent(text)).toMatchObject({ sessions: [CHILD] });
+      expect(text).toContain('利用枠が戻ったら続きを頼むメッセージ');
+      expect(text).toContain('時刻を過ぎていました');
+      // 送れなかった理由（画面の言語の文）と、だれの予約か
+      host.submitted.length = 0;
+      expect(control.scheduledTrouble(scheduledMessage({ id: 'm-0002', by: 'claude', state: 'failed', error: 'Claude Code が動いていません' }))).toBe(true);
+      await settle();
+      expect(host.submitted[0].text).toContain('子の Claude が自分に入れた予約');
+      expect(host.submitted[0].text).toContain('Claude Code が動いていません');
+    });
+
+    it('子でないセッションの予約・オフのときは、親に回さない（人に通知する）', () => {
+      expect(control.scheduledTrouble(scheduledMessage({ sessionId: PARENT }))).toBe(false);
+      enabled = false;
+      expect(control.scheduledTrouble(scheduledMessage({}))).toBe(false);
+      enabled = true;
+      expect(host.submitted).toEqual([]);
+    });
+
+    it('子に最初の指示を送れなかったら（worktree の準備が長すぎた・止まった）、親に知らせる', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // 子への最初の指示だけが送れない（親への知らせは送れる）
+      const submit = host.submitWhenReady;
+      host.submitWhenReady = async (id: string, text: string | (() => string)) => {
+        if (id === '88888888-0000-4000-8000-000000000008') throw new SendError('busy');
+        return submit(id, text);
+      };
+      jsonOf(await control.handle(PARENT, 'start_session', { prompt: 'x', worktree: true }));
+      await settle();
+      expect(host.submitted.map((m) => m.id)).toEqual([PARENT]);
+      expect(host.submitted[0].text).toContain('最初の指示を送れませんでした');
+      expect(parseSessionEvent(host.submitted[0].text)).toMatchObject({ sessions: ['88888888-0000-4000-8000-000000000008'] });
+      errors.mockRestore();
     });
 
     it('親が出した指示の作業を子が終えたら、手の空いている親に知らせる', async () => {

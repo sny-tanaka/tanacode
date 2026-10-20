@@ -266,12 +266,15 @@ export class Profile {
       scheduled: () => this.scheduled ?? null,
       report: (id, text) => this.reports.set(id, text),
     });
-    // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する
+    // 時刻を指定して送信（予約）。送れなかった・時刻を過ぎていたものは通知する。子セッションのものは、人に通知しない代わりに親に知らせる
     this.scheduled = new ScheduledMessages(
       join(dataDir, 'scheduled-messages.json'),
       manager,
       (messages) => send(IpcChannel.ScheduledChanged, messages),
-      (message) => notify(message.sessionId, manager.summary(message.sessionId)?.title ?? null, scheduledNotice(message)),
+      (message) => {
+        if (this.sessionsControl?.scheduledTrouble(message)) return;
+        notify(message.sessionId, manager.summary(message.sessionId)?.title ?? null, scheduledNotice(message));
+      },
     );
     this.usageLimit = new UsageLimitResume({
       scheduled: () => this.scheduled ?? null,

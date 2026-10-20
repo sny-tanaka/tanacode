@@ -143,6 +143,22 @@ export type NodeModulesResult = {
   installs: { dir: string; command: string; exitCode: number }[];
 };
 
+// worktree の準備（node_modules）でうまくいかなかったこと。installsFailed: 失敗した install（終了コードが 0 でない。止めたものも）/
+// notCopied: 複製できず、install もしなかった node_modules の場所（worktree からの相対。'' はいちばん上）/ error: 準備そのものが失敗した理由
+export type WorktreeSetupTrouble = {
+  installsFailed: NodeModulesResult['installs'];
+  notCopied: string[];
+  error: string | null;
+};
+
+// 準備の結果から、うまくいかなかったことを取り出す。無ければ null
+export function setupTroubleOf(result: NodeModulesResult, error: string | null = null): WorktreeSetupTrouble | null {
+  const installsFailed = result.installs.filter((i) => i.exitCode !== 0);
+  // 複製できなかった場所は、install を受け持つことがある（lock ファイルがあるとき）。install もしなかった場所だけを数える
+  const notCopied = result.failed.filter((dir) => !result.installs.some((i) => i.dir === dir));
+  return installsFailed.length > 0 || notCopied.length > 0 || error ? { installsFailed, notCopied, error } : null;
+}
+
 type PrepareHooks = {
   onStep: (step: 'copying' | 'installing') => void;
   // worktree の cwd で install のコマンドを実行し、終了コードを返す（アプリはターミナルのタブに進み具合を出す）。dir: worktree からの相対

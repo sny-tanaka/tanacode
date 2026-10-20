@@ -117,10 +117,12 @@ import {
   prepareNodeModules,
   removeWorktree,
   restoreWorktree,
+  setupTroubleOf,
   waitForWorktree,
   worktreeLeftovers,
   WorktreeError,
   type NodeModulesResult,
+  type WorktreeSetupTrouble,
 } from './worktree';
 
 // rename で付けた名前。会話ログのタイトル（最大 3）より常に優先する
@@ -486,6 +488,8 @@ export class SessionManager {
 
   // 消した worktree を作り直している途中のセッション（まだ Claude Code を起動していない）
   private readonly restoring = new Set<string>();
+  // worktree の準備（node_modules）でうまくいかなかったこと（セッションごと。準備のたびに置き換える。アプリを起動し直すと忘れる）
+  private readonly setupTrouble = new Map<string, WorktreeSetupTrouble>();
   // Claude がアプリ内ブラウザでユーザーに操作を頼んでいるセッション（browser-control が知らせてくる）
   private readonly browserAsks = new Set<string>();
 
@@ -775,6 +779,11 @@ export class SessionManager {
     }
     if (!removing || !record?.worktree) return null;
     return removeWorktree(record.worktree, record.cwd);
+  }
+
+  // worktree の準備（node_modules）でうまくいかなかったこと（最後の準備のもの。無ければ・準備していなければ null）
+  worktreeSetup(id: string): WorktreeSetupTrouble | null {
+    return this.setupTrouble.get(id) ?? null;
   }
 
   // worktree を消す前に、残っているもの（worktree のセッションでなければ null）
@@ -1702,7 +1711,8 @@ export class SessionManager {
   // attachments: 画像のパス・pastes: 入力欄の札（submit と同じ）/ signal: 待っている間に取りやめる（予約の取り消し）
   async submitWhenReady(
     id: string,
-    text: string,
+    // 関数なら、送る直前に呼んで文を作る（待っている間に分かったこと（worktree の準備の結果）を添えるため）
+    text: string | (() => string),
     timeoutMs: number,
     { attachments = [], pastes = [], signal }: { attachments?: string[]; pastes?: string[]; signal?: AbortSignal } = {},
   ): Promise<void> {
@@ -1731,7 +1741,7 @@ export class SessionManager {
         if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
-      await this.submit(id, text, attachments, pastes, 'later');
+      await this.submit(id, typeof text === 'function' ? text() : text, attachments, pastes, 'later');
     } finally {
       rt.pendingSubmits -= 1;
       this.changed(id);
@@ -2383,17 +2393,27 @@ export class SessionManager {
       rt.preparing = preparing;
       this.emitSessions();
     };
+    let failure: string | null = null;
     const result = await prepareNodeModules(root, record.cwd, {
       onStep: step,
       install: (cwd, dir, command) => this.runTask(id, cwd, command, dir ? t('main.worktree.commandAt', { command, dir }) : command),
     }).catch((error: unknown): NodeModulesResult => {
       console.error('node_modules を用意できませんでした', error);
+      failure = error instanceof Error ? error.message : String(error);
       return { cloned: [], failed: [], installs: [] };
     });
     if (this.runtimes.get(id) !== rt) return;
     rt.preparing = null;
-    const notes = [t(how === 'created' ? 'main.worktree.started' : 'main.worktree.restored', { name, branch }), ...nodeModulesNotes(result)];
-    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: sentences(notes) }]);
+    // うまくいかなかったことは、親（get_session）と、子への最初の指示に伝える（sessions-control.ts）。チャットでは注意の行にする
+    const trouble = setupTroubleOf(result, failure);
+    if (trouble) this.setupTrouble.set(id, trouble);
+    else this.setupTrouble.delete(id);
+    const notes = [
+      t(how === 'created' ? 'main.worktree.started' : 'main.worktree.restored', { name, branch }),
+      ...nodeModulesNotes(result),
+      ...(failure ? [t('main.worktree.prepareFailed', { error: failure })] : []),
+    ];
+    this.pushEvents(id, [{ type: 'info', id: `worktree:${Date.now()}`, text: sentences(notes), ...(trouble ? { warning: true } : {}) }]);
     // 準備の間に起動を終えていたら、ここで受け付けられるようになったことにする
     if (!rt.ready && rt.init && rt.process) {
       rt.ready = true;

@@ -108,7 +108,9 @@ export class ShellTerminals {
     const id = `task-${++this.seq}`;
     const shell = this.spawn(id, owner, cwd, 'command', name, command, ['-l', '-c', command], 100, 24);
     if (!this.detached) this.listeners.onOpened?.(owner, id, name, true);
-    return new Promise((resolve) => shell.proc.onExit(({ exitCode }) => resolve(exitCode)));
+    // シグナルで終わったもの（タブを閉じて止めた・強く止めた）は、node-pty が終了コードを 0 のまま返すので、シェルと同じく 128 + シグナルの番号にする
+    // （0 のままだと、止めた install が済んだことになる）
+    return new Promise((resolve) => shell.proc.onExit(({ exitCode, signal }) => resolve(signal ? 128 + signal : exitCode)));
   }
 
   // 止めたもの（kill したが、まだ終わっていない）には打たない
