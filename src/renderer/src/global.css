@@ -2589,6 +2589,150 @@ button.session-ref:hover {
 .settings-files-dialog .browser-hosts-input:focus {
   border-color: var(--border-focus);
 }
+/* Claude に送る文（左に文の種類、右にその文の欄） */
+.prompts-dialog {
+  width: min(920px, 92vw);
+  max-height: calc(100vh - 120px);
+  outline: none;
+}
+.prompts-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+}
+.prompts-tabs {
+  flex: none;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid var(--border-subtle);
+  /* 選んでいる文の種類（ダイアログの地と同じ色）が浮くよう、列の地は暗くする */
+  background: var(--bg-panel);
+}
+.prompts-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.prompts-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.prompts-tab.selected {
+  background: var(--bg-selected);
+  color: var(--text-heading);
+}
+.prompts-changed {
+  color: var(--warn);
+  font-size: 11px;
+}
+.prompts-pane {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  padding: 12px 16px 16px;
+}
+.prompts-about {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.prompts-dialog code {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.prompts-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--warn-tint);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.prompt-field-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prompt-field-head label {
+  color: var(--text-heading);
+  font-size: 12px;
+  font-weight: 600;
+}
+.prompt-field-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.prompt-field-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.prompt-field-input:focus {
+  border-color: var(--border-focus);
+}
+.prompt-field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+.prompt-placeholders {
+  margin: 2px 0 0;
+  padding-left: 16px;
+}
+.prompt-default summary {
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.prompt-default pre {
+  max-height: 240px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
 .session-rename {
   width: 100%;
   padding: 1px 4px;

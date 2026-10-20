@@ -12,7 +12,8 @@ import type { AskQuestion, PermissionMode } from '../src/shared/screen';
 import type { SubagentRun } from '../src/shared/subagent';
 import type { BashTask } from '../src/shared/task';
 import type { WorkflowRun } from '../src/shared/workflow';
-import { HANDOFF_TAG, RESUME_TAG, autoHandoffText, handoffText, resumeText, type AutoCompactTrigger, type CarriedMessage } from '../src/shared/optimized-compact';
+import { autoHandoffText, handoffText, parseCompactMessage, resumeText, type AutoCompactTrigger, type CarriedMessage } from '../src/shared/optimized-compact';
+import type { CustomPrompts } from '../src/shared/prompts';
 import { outwardHost, outwardState } from '../src/main/outward-state';
 import {
   SESSIONS_MCP,
@@ -2107,32 +2108,43 @@ describe('ツールの実行（SessionsControl）', () => {
     let flowing: Set<string>;
     let flow: SessionsControl;
     let n = 0;
-    const strip = (text: string, tag: string) => text.slice(`<${tag}>`.length, -`</${tag}>`.length).trim();
-    const handoffNotice = (auto: AutoCompactTrigger | null): ChatEvent => ({ type: 'notice', id: `h${n++}`, text: '仕上げ', compact: 'handoff', detail: strip(auto ? autoHandoffText(auto) : handoffText(), HANDOFF_TAG) });
-    const resumeNotice = (auto: AutoCompactTrigger | null, over: { messages?: CarriedMessage[]; reply?: string } = {}): ChatEvent => ({
+    // 会話ログから作る知らせと同じく、全文（囲みの中）と、囲みの属性から読んだ始まり方を持たせる
+    const parsed = (text: string) => {
+      const { body, trigger } = parseCompactMessage(text)!;
+      return { detail: body, trigger };
+    };
+    // prompts: 利用者が変えた文（無ければ既定の文）
+    const handoffNotice = (auto: AutoCompactTrigger | null, prompts: CustomPrompts = {}): ChatEvent => ({
+      type: 'notice',
+      id: `h${n++}`,
+      text: '仕上げ',
+      compact: 'handoff',
+      ...parsed(auto ? autoHandoffText(auto, prompts) : handoffText(prompts)),
+    });
+    const resumeNotice = (auto: AutoCompactTrigger | null, over: { messages?: CarriedMessage[]; reply?: string; prompts?: CustomPrompts } = {}): ChatEvent => ({
       type: 'notice',
       id: `r${n++}`,
       text: '再開',
       compact: 'resume',
-      detail: strip(resumeText({ lists: [], messages: over.messages ?? [], tasks: [], reply: over.reply, ...(auto ? { auto } : {}) }), RESUME_TAG),
+      ...parsed(resumeText({ lists: [], messages: over.messages ?? [], tasks: [], reply: over.reply, prompts: over.prompts, ...(auto ? { auto } : {}) })),
     });
     const said = (text: string): ChatEvent => ({ type: 'assistant-text', id: `a${n++}`, text });
     const push = (...events: ChatEvent[]) => host.events.set(CHILD, [...(host.events.get(CHILD) ?? []), ...events]);
     const status = async () => jsonOf<{ state: string; last_prompt: { from: string; text: string } | null; last_response: string | null }>(await flow.handle(PARENT, 'get_session', { session_id: CHILD }));
     const notices = () => host.submitted.filter((s) => s.id === PARENT);
     // 流れ: 仕上げのターン → /clear → 再開の文のターン。start から、再開のターンが始まるまでが、流れの途中
-    const handoffTurn = (auto: AutoCompactTrigger | null) => {
+    const handoffTurn = (auto: AutoCompactTrigger | null, prompts: CustomPrompts = {}) => {
       flowing.add(CHILD);
-      push(handoffNotice(auto));
+      push(handoffNotice(auto, prompts));
       host.set(CHILD, 'working');
       push(said('リストを更新しました'), { type: 'turn-end' });
       host.set(CHILD, 'idle');
     };
     const tool = (name: string): ChatEvent => ({ type: 'tool-use', id: `t${n++}`, name, target: '', input: '' });
     // tools: 再開のターンで使ったツール（チェックリストのツールだけなら報告して待った、ほかのツールを使ったら作業を続けた）
-    const resumeTurn = (auto: AutoCompactTrigger | null, reply: string, tools: ChatEvent[] = []) => {
+    const resumeTurn = (auto: AutoCompactTrigger | null, reply: string, tools: ChatEvent[] = [], prompts: CustomPrompts = {}) => {
       // 新しい会話には、アプリが打った /clear が、コマンドの発言として残る
-      push({ type: 'reset', compact: true }, { type: 'user', id: `c${n++}`, text: '/clear', command: true }, { type: 'turn-end' }, resumeNotice(auto));
+      push({ type: 'reset', compact: true }, { type: 'user', id: `c${n++}`, text: '/clear', command: true }, { type: 'turn-end' }, resumeNotice(auto, { prompts }));
       host.set(CHILD, 'working');
       flowing.delete(CHILD);
       host.set(CHILD, 'working');
@@ -2269,6 +2281,41 @@ describe('ツールの実行（SessionsControl）', () => {
       expect(notices()).toHaveLength(1);
       // 取りやめになった仕上げのターンの応答は、残す（下のテスト）
       expect((await status()).last_response).toBe('リストを更新しました');
+    });
+
+    // 利用者が変えた文（メニューの「Claude に送る文…」）。自動・途中で止めた目印の文を含まないので、囲みの属性だけで見分ける
+    const PLAIN: CustomPrompts = { handoff: '仕上げて', handoffAutoTurnEnd: '自動', handoffAutoMidTurn: '途中', resume: '再開', resumeMidTurn: '途中から再開' };
+
+    it('変えた文でも、途中で止めた自動は見分ける: 取りやめになったら親に知らせる。再開したら、続きを終えたときに知らせる', async () => {
+      const MID = { percent: 91, midTurn: true };
+      flowing.add(CHILD);
+      push({ type: 'turn-end' });
+      host.set(CHILD, 'idle');
+      handoffTurn(MID, PLAIN);
+      await settle();
+      expect(notices()).toEqual([]);
+      flowing.delete(CHILD);
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(notices()).toHaveLength(1);
+      // もう一度。今度は切り替えて、ツールを使わずに続きを終えた（途中で止めた切り替えの再開は、いつも作業の続き）
+      handoffTurn(MID, PLAIN);
+      resumeTurn(MID, '続きを終えました', [], PLAIN);
+      await settle();
+      expect(notices()).toHaveLength(2);
+      expect((await status()).last_response).toBe('続きを終えました');
+    });
+
+    it('変えた文でも、read_session の切り替えの行に、自動の割合と途中で止めたことが出る', () => {
+      const MID = { percent: 91, midTurn: true };
+      const lines = (events: ChatEvent[]) => testing.conversationLines(events, 5, () => '').join('\n');
+      const switched = lines([{ type: 'user', id: 'u', text: '頼み' }, handoffNotice(MID, PLAIN), said('書きました'), { type: 'reset', compact: true }, resumeNotice(MID, { prompts: PLAIN }), said('続き')]);
+      expect(switched).toContain('(optimized compaction, automatic at 91% of the context). The reset was made in the middle of a turn, and the session then continued the same work');
+      expect(switched).toContain('続き');
+      const cancelled = lines([{ type: 'user', id: 'u', text: '頼み' }, handoffNotice(MID, PLAIN), said('書きました')]);
+      expect(cancelled).toContain('for an optimized compaction (automatic at 91% of the context). The conversation was not reset after this');
+      const manual = lines([{ type: 'user', id: 'u', text: '頼み' }, handoffNotice(null, PLAIN), said('書きました'), { type: 'reset', compact: true }, resumeNotice(null, { prompts: PLAIN }), said('引き継ぎました')]);
+      expect(manual).toContain('(optimized compaction). What follows is its report');
     });
 
     it('Claude が仕上げの頼みに従わず、そのターンで元の作業を続けた（実機の Haiku で起きた）: 流れは取りやめ。親には、その作業の応答が読める', async () => {

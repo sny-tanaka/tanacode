@@ -1,5 +1,6 @@
 import type { ChatEvent } from '@shared/chat';
 import type { Checklist } from '@shared/checklist';
+import type { CustomPrompts } from '@shared/prompts';
 import {
   IDLE_COMPACT_STATUS,
   autoHandoffText,
@@ -67,6 +68,8 @@ type Deps = {
   onFinish?: (id: string, failure: CompactFailure | null, auto: AutoCompactTrigger | null) => void;
   // メニューの「Claude にチェックリストを扱わせる」
   enabled: () => boolean;
+  // 利用者が変えた、Claude に送る文（メニューの「Claude に送る文…」。無ければ既定の文）。送るたびに読む
+  prompts?: () => CustomPrompts;
   onChange: (id: string, status: CompactStatus) => void;
   timings?: Partial<Timings>;
 };
@@ -162,7 +165,8 @@ export class OptimizedCompact {
       const startedAt = Date.now();
       const base = (await host.conversation(id)).length;
       try {
-        await host.submitWhenReady(id, auto ? autoHandoffText(auto) : handoffText(), this.timings.submitMs);
+        const prompts = this.deps.prompts?.() ?? {};
+        await host.submitWhenReady(id, auto ? autoHandoffText(auto, prompts) : handoffText(prompts), this.timings.submitMs);
       } catch {
         return this.alive(id) ? 'busy' : 'exited';
       }
@@ -189,6 +193,7 @@ export class OptimizedCompact {
         omitted: carriedOmitted(conversation),
         tasks: host.runningTasks(id),
         reply,
+        prompts: this.deps.prompts?.() ?? {},
         ...(auto ? { auto, stopped, handoffSkipped } : {}),
       });
       this.setPhase(id, 'clearing');

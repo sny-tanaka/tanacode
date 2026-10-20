@@ -37,7 +37,7 @@ describe('最適化圧縮の仕上げを、応答の前に中断する', () => {
     await app.byText('.chat-list', REPLY).waitFor();
     await app.page.click('.claude-header button[aria-label="最適化圧縮"]:not([disabled])');
     // 応答を待っている間に中断する（応答は 12 秒遅らせている）
-    await app.waitUntil('仕上げの頼みが届く', () => app.api.lastPrompts.some((p) => p.includes(`<${HANDOFF_TAG}>`)));
+    await app.waitUntil('仕上げの頼みが届く', () => app.api.lastPrompts.some((p) => p.includes(`<${HANDOFF_TAG} `)));
     await app.page.click('.chat-input [aria-label="中断"]');
     // 取りやめるまでの間、入力欄は空のまま
     const input = app.page.locator('.chat-input textarea');

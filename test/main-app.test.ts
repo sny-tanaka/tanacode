@@ -1201,6 +1201,7 @@ describe('メニュー', () => {
       '利用枠で止まったら、戻ったときに自動で再開する',
       '自動で最適化圧縮する大きさ',
       'アプリ内ブラウザで Claude に許す先…',
+      'Claude に送る文…',
       'separator',
       '言語（Language）',
       'separator',
@@ -1426,15 +1427,17 @@ describe('メニュー', () => {
     expect(the('BrowserControl').turnOff).not.toHaveBeenCalled();
   });
 
-  it('「アプリ内ブラウザで Claude に許す先…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
+  it('「アプリ内ブラウザで Claude に許す先…」「Claude に送る文…」「新規セッション」は、ウインドウを出して、画面にダイアログ・新規セッションの画面を開かせる', async () => {
     await boot();
     mainWindow().emit('closed');
     menuItem('アプリ内ブラウザで Claude に許す先…').click?.({});
     expect(state.windows).toHaveLength(2);
+    menuItem('Claude に送る文…').click?.({});
     menuItem('新規セッション').click?.({});
-    expect(mainWindow().show).toHaveBeenCalledTimes(2);
+    expect(mainWindow().show).toHaveBeenCalledTimes(3);
     expect(mainWindow().webContents.sent).toEqual([
       [IpcChannel.BrowserHostsOpen, undefined],
+      [IpcChannel.PromptsOpen, undefined],
       [IpcChannel.SessionsNew, undefined],
     ]);
   });

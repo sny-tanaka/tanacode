@@ -105,7 +105,8 @@ function join(parts: string[], params: Params): string {
   let out = parts[0];
   for (let i = 1; i < parts.length; i += 2) {
     const name = parts[i];
-    out += (name in params ? String(params[name]) : `{${name}}`) + parts[i + 1];
+    // params 自身の値だけを使う（in で見ると、{constructor} や {toString} がプロトタイプの関数の文字になる。利用者が書いた文にも使うため）
+    out += (Object.hasOwn(params, name) ? String(params[name]) : `{${name}}`) + parts[i + 1];
   }
   return out;
 }
