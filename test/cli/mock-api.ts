@@ -183,7 +183,8 @@ export class MockApi {
     // 止めたあとの続き（Claude Code が、フックの文を最後の user の発言に入れて続ける。2.1.302 は「Stop hook additional context: 」を頭に付ける）
     const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`<${CHECKLIST_REMINDER_TAG}>Before you end this turn`);
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
-    if (conversation) for (const t of tools) if (t.name && t.description !== undefined) this.descriptions.set(t.name, t.description);    if (conversation) {
+    if (conversation) for (const t of tools) if (t.name && t.description !== undefined) this.descriptions.set(t.name, t.description);
+    if (conversation) {
       const system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text ?? '').join('\n');
       this.systems.push([system, ...messages.filter((m) => m.role === 'system').map(textOf)].join('\n'));
       this.contexts.push(messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n'));
