@@ -25,8 +25,8 @@ export class PartialText {
   private current: Message | null = null;
   // 応答の始まりを見た数（started を付ける）
   private starts = 0;
-  // 最後に渡した途中の文の印（ブロックの ID と文の長さ。文は足されるだけなので、これで変わったかが分かる）
-  private sent = '';
+  // 最後に渡した途中の文の印（ブロックの ID と文の長さ。文は足されるだけなので、これで変わったかが分かる）。null: 次は変わっていなくても渡す
+  private sent: string | null = '';
 
   // 書いている途中の行。出す文が変わったかもしれなければ true
   event(line: StreamEventMessage): boolean {
@@ -110,6 +110,11 @@ export class PartialText {
     if (key === this.sent) return null;
     this.sent = key;
     return this.view();
+  }
+
+  // 次の take で、変わっていなくても今の途中の文を渡す（画面が、ターンの終わりで消した途中の文を出し直すため）
+  resend(): void {
+    this.sent = null;
   }
 
   // 途中の文をすべて捨てる（ターンの終わり・起動し直し・/clear）。今の応答も忘れる（このあとの行は、次の message_start まで出さない）
