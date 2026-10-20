@@ -70,7 +70,7 @@ type Body = {
   model?: string;
   output_config?: { effort?: unknown };
   stream?: boolean;
-  tools?: { name?: string }[];
+  tools?: { name?: string; description?: string }[];
   messages?: Message[];
   system?: string | { type?: string; text?: string }[];
 };
@@ -84,6 +84,13 @@ export class MockApi {
   private readonly failed = new Map<string, number>();
   // 台本のある会話に付いてきたツールの名前（台本で使うツールが、今の Claude Code にあるかを確かめる）
   readonly tools = new Set<string>();
+  // 台本のある会話で、あとから読み込むツール（deferred tools）として、名前だけを発言で知らされたもの。Claude Code は MCP のツールの
+  // 定義を一覧に入れず、名前だけを知らせて ToolSearch で読み込ませる（tool search。本物の API では既定。ANTHROPIC_BASE_URL を
+  // 差し替えたこのモックでも、2.1.304 から既定）
+  readonly deferredTools = new Set<string>();
+  // 台本のある会話の一覧に付いてきたツールの説明（名前 → 説明）。名前だけを知らされたツールは、ToolSearch で読み込んだあとの
+  // 一覧に、定義が付いてくる（defer_loading 付き。本物の API は、ToolSearch の結果の tool_reference をこの定義に置き換えて Claude に見せる）
+  readonly descriptions = new Map<string, string>();
   // 受け取ったリクエストの、最後の user の発言の文章（/compact の要約の頼み方などを確かめる）
   readonly lastPrompts: string[] = [];
   // 台本のある会話の、Claude に渡ったシステムの文（システムプロンプトと、会話の中の system の発言。
@@ -128,6 +135,12 @@ export class MockApi {
   // 送れる（本物のモデルが、並べて呼ぶ次の呼び出しをゆっくり書いているときと同じ並び）
   holdTool: ((id: string) => Promise<unknown>) | null = null;
 
+  // Claude が使えると知らされたツールの名前。一覧に定義が付いてきたものと、名前だけを知らされたもの（読み込む ToolSearch が
+  // 一覧にあるときだけ）。MCP のツールがどちらで渡るかは、Claude Code のバージョンと tool search の設定で変わる
+  offeredTools(): string[] {
+    return [...this.tools, ...(this.tools.has('ToolSearch') ? this.deferredTools : [])];
+  }
+
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
@@ -170,10 +183,12 @@ export class MockApi {
     // 止めたあとの続き（Claude Code が、フックの文を最後の user の発言に入れて続ける。2.1.302 は「Stop hook additional context: 」を頭に付ける）
     const stopped = !this.scriptChecklistStops && tools.length > 0 && textOf(lastUser).includes(`<${CHECKLIST_REMINDER_TAG}>Before you end this turn`);
     if (conversation) for (const t of tools) if (t.name) this.tools.add(t.name);
+    if (conversation) for (const t of tools) if (t.name && t.description !== undefined) this.descriptions.set(t.name, t.description);
     if (conversation) {
       const system = typeof body.system === 'string' ? body.system : (body.system ?? []).map((b) => b.text ?? '').join('\n');
       this.systems.push([system, ...messages.filter((m) => m.role === 'system').map(textOf)].join('\n'));
       this.contexts.push(messages.filter((m) => m.role !== 'assistant').map(textOf).join('\n'));
+      for (const text of [system, ...messages.filter((m) => m.role !== 'assistant').map(textOf)]) for (const name of deferredToolNames(text)) this.deferredTools.add(name);
     }
     const plain = tools.length === 0 ? this.plainReplies.find((r) => messages.map(textOf).join('\n').includes(r.match)) : undefined;
     const lastResults = Array.isArray(lastUser?.content) ? lastUser.content.filter((b) => b.type === 'tool_result').map((b) => resultText(b.content)) : [];
@@ -313,6 +328,20 @@ async function cutStream(res: ServerResponse, reply: Reply, text: string, hold: 
   send('content_block_delta', { index: 0, delta: { type: 'text_delta', text } });
   if (hold) await hold(text);
   res.socket?.destroy();
+}
+
+// 発言の中の、あとから読み込むツールの知らせから、ツールの名前を取り出す。知らせは、ToolSearch で読み込むように言う行
+// （「The following deferred tools are now available via ToolSearch. … before calling them:」）のあとに、1 行に 1 つずつ名前が並ぶ
+// （2.1.304 で実測）。もう使えなくなったツールの知らせ（no longer）は数えない
+function deferredToolNames(text: string): string[] {
+  const names: string[] = [];
+  let listing = false;
+  for (const line of text.split('\n')) {
+    const name = line.trim();
+    if (listing && /^[\w.-]+$/.test(name)) names.push(name);
+    else listing = /\bdeferred tools\b/i.test(line) && line.includes('ToolSearch') && !/no longer/i.test(line);
+  }
+  return names;
 }
 
 function textOf(message: Message | undefined): string {
