@@ -22,8 +22,10 @@ export class TaskRouter {
   private readonly agentToolIds = new Set<string>();
   // SendMessage の tool_use ID（結果が、前に起動したエージェントの再開かを見る）
   private readonly sendMessageIds = new Set<string>();
-  // バックグラウンドで起動した Bash の入力（tool_use ID ごと）。結果の行で起動を知る
-  private readonly bashInputs = new Map<string, Record<string, unknown>>();
+  // Bash と Monitor の呼び出し（tool_use ID ごと。結果の行が来たら捨てる）。裏で動くかは結果の行で知る:
+  // Bash は run_in_background のほか、時間切れ（timeout）で Claude Code が裏に回すこともあり、どちらも結果に backgroundTaskId が付く
+  // （時間切れのものは input に run_in_background が無い。2.1.302）。Monitor は、見張りを始めると結果に taskId が付く
+  private readonly shellCalls = new Map<string, { tool: 'Bash' | 'Monitor'; input: Record<string, unknown> }>();
 
   constructor(private readonly targets: Targets) {}
 
@@ -53,11 +55,15 @@ export class TaskRouter {
       if (block.type === 'tool_result' && block.tool_use_id && this.agentToolIds.has(block.tool_use_id)) {
         subagents.finish(block.tool_use_id, entry.toolUseResult, !!block.is_error, isHistory);
       }
-      if (block.type === 'tool_use' && block.name === 'Bash' && block.id && block.input && isTrue(block.input.run_in_background)) {
-        this.bashInputs.set(block.id, block.input);
+      if (block.type === 'tool_use' && (block.name === 'Bash' || block.name === 'Monitor') && block.id && block.input) {
+        this.shellCalls.set(block.id, { tool: block.name, input: block.input });
       }
-      const bashInput = block.type === 'tool_result' && block.tool_use_id ? this.bashInputs.get(block.tool_use_id) : undefined;
-      if (bashInput) bashTasks.start(block.tool_use_id!, bashInput, entry.toolUseResult, resultText(block.content), isHistory);
+      const call = block.type === 'tool_result' && block.tool_use_id ? this.shellCalls.get(block.tool_use_id) : undefined;
+      if (call) {
+        this.shellCalls.delete(block.tool_use_id!);
+        if (call.tool === 'Bash') bashTasks.start(block.tool_use_id!, call.input, entry.toolUseResult, resultText(block.content), isHistory);
+        else bashTasks.startMonitor(block.tool_use_id!, call.input, entry.toolUseResult, isHistory);
+      }
     }
     const launch = workflowLaunchOf(entry, this.workflowScripts);
     if (launch) workflows.add(launch, isHistory);
@@ -66,7 +72,11 @@ export class TaskRouter {
     if (notice && notice.toolUseId !== null && notice.status !== null) {
       workflows.notified(notice.toolUseId, notice.status);
       subagents.notified(notice.toolUseId, notice.status, notice.result, notice.usage);
-      bashTasks.notified(notice.toolUseId, notice.status, notice.exitCode);
+      bashTasks.notified(notice.toolUseId, notice.status, notice.exitCode, notice.outputFile);
+    } else if (notice?.taskId && notice.event !== null && entry.type === 'queue-operation') {
+      // Monitor の途中の知らせ（終わりでないもの）。同じ知らせが発言の行・queued_command にも書かれるので、どの知らせにもある
+      // queue-operation の enqueue からだけ読む（何度も足さないように）
+      bashTasks.event(notice.taskId, notice.event);
     }
   }
 }
@@ -79,7 +89,9 @@ function isTrue(value: unknown): boolean {
 export type TaskUsage = { durationMs: number | null; totalTokens: number | null; toolUses: number | null };
 
 // 完了通知の中身。toolUseId・status: どのタスクがどうなったか（無ければ null）。result: サブエージェントの結果の文。
-// exitCode: Bash の要約に書かれた終了コード（「Background command "…" completed (exit code 0)」。無ければ null）
+// exitCode: Bash の要約に書かれた終了コード（「Background command "…" completed (exit code 0)」。無ければ null）。
+// taskId: タスクの ID。outputFile: 出力ファイル。event: Monitor の知らせの中身（<event>。無ければ null）。
+// Monitor は、見張りの出力が出るたびに、tool-use-id と status の無い知らせ（「Monitor event: "…"」）を出し、終わりに status の付いた知らせを出す
 export type TaskNotification = {
   text: string;
   usage: TaskUsage | null;
@@ -87,6 +99,9 @@ export type TaskNotification = {
   status: string | null;
   result: string | null;
   exitCode: number | null;
+  taskId: string | null;
+  outputFile: string | null;
+  event: string | null;
 };
 
 // バックグラウンドのタスクの完了通知（<task-notification>）。書かれ方は 3 通りあり、同じ通知が複数の形で書かれることもある
@@ -118,6 +133,9 @@ export function taskNotificationOf(entry: TranscriptEntry): TaskNotification | n
     status: notified?.[2] ?? null,
     result: text.match(/<result>([\s\S]*?)<\/result>/)?.[1]?.trim() ?? null,
     exitCode: exitCodeOf(text.match(/<summary>([\s\S]*?)<\/summary>/)?.[1]),
+    taskId: text.match(/<task-id>(.*?)<\/task-id>/)?.[1] ?? null,
+    outputFile: text.match(/<output-file>(.*?)<\/output-file>/)?.[1] ?? null,
+    event: text.match(/<event>([\s\S]*?)<\/event>/)?.[1] ?? null,
   };
 }
 

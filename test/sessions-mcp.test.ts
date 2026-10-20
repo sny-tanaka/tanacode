@@ -1709,6 +1709,55 @@ describe('ツールの実行（SessionsControl）', () => {
       host.set(CHILD, 'background');
       await settle();
       expect(host.submitted.map((s) => s.id)).toEqual([PARENT]);
+      // 作業が終わったとは言わない
+      expect(host.submitted[0].text).toContain('裏のタスクがまだ動いています');
+      expect(host.submitted[0].text).not.toContain('作業が終わりました');
+    });
+
+    it('裏のタスクの知らせ（Monitor の途中の知らせなど）で始まったターンが、また完了待ちで終わっても知らせ直さない。手が空いたら知らせる', async () => {
+      host.set(CHILD, 'background');
+      await settle();
+      expect(host.submitted).toHaveLength(1);
+      // Monitor の途中の知らせでターンが始まり、裏のタスクを残したまま終わる（2 回）
+      const events: ChatEvent[] = [{ type: 'user', id: '1', text: 'x', parent: PARENT }];
+      for (const n of [2, 3]) {
+        events.push({ type: 'notice', id: `${n}`, text: 'Monitor event: "CI の結果"' }, { type: 'assistant-text', id: `a${n}`, text: 'まだ途中です' });
+        host.events.set(CHILD, [...events]);
+        host.set(CHILD, 'working');
+        host.set(CHILD, 'background');
+        await settle();
+      }
+      expect(host.submitted).toHaveLength(1);
+      // 見張りが終わり、裏のタスクが無くなって手が空いた
+      host.events.set(CHILD, [...events, { type: 'notice', id: '4', text: 'Monitor "CI の結果" stream ended' }, { type: 'assistant-text', id: 'a4', text: '終わりました' }]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'idle');
+      await settle();
+      expect(host.submitted).toHaveLength(2);
+      expect(host.submitted[1].text).toContain('作業が終わりました');
+      // 親が次の指示を出して、また裏のタスクを残して終わったら、知らせる
+      host.events.set(CHILD, [{ type: 'user', id: '5', text: 'もう一度', parent: PARENT }]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'background');
+      await settle();
+      expect(host.submitted).toHaveLength(3);
+    });
+
+    it('完了待ちの知らせを送る前に取り下げられた（子がまた動き出した）なら、裏のタスクの知らせのターンの終わりで知らせる', async () => {
+      host.set(PARENT, 'working');
+      host.set(CHILD, 'background');
+      await settle();
+      // 親が忙しい間に、Monitor の途中の知らせで子が動き出し、完了待ちの知らせは取り下げられる
+      host.events.set(CHILD, [
+        { type: 'user', id: '1', text: 'x', parent: PARENT },
+        { type: 'notice', id: '2', text: 'Monitor event: "CI の結果"' },
+      ]);
+      host.set(CHILD, 'working');
+      host.set(CHILD, 'background');
+      host.set(PARENT, 'idle');
+      await settle();
+      expect(host.submitted).toHaveLength(1);
+      expect(host.submitted[0].text).toContain('裏のタスクがまだ動いています');
     });
 
     it('子が実行の許可を待ったら、親に知らせて人に伝えさせる（子セッションは人に通知しない）', async () => {
