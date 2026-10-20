@@ -20,6 +20,7 @@ export default defineConfig({
     resolve: { alias: { '@shared': resolve('src/shared') } },
     // pty-host: Claude Code を持っておく常駐プロセス（アプリが切り離して起動する）。
     // browser-mcp・sessions-mcp・checklist-mcp・walkthrough-mcp・terminal-mcp: アプリ内ブラウザ・セッション・チェックリスト・ウォークスルー・ターミナルの MCP サーバー（Claude Code が起動し、アプリへ中継する）
+    // instructions-hook: TANACODE.md を Claude に渡す SessionStart のフック（Claude Code が起動する）
     build: {
       sourcemap,
       rolldownOptions: {
@@ -32,6 +33,7 @@ export default defineConfig({
           'checklist-mcp': resolve('src/main/checklist-mcp.ts'),
           'walkthrough-mcp': resolve('src/main/walkthrough-mcp.ts'),
           'terminal-mcp': resolve('src/main/terminal-mcp.ts'),
+          'instructions-hook': resolve('src/main/instructions-hook.ts'),
         },
       },
     },

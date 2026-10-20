@@ -157,6 +157,20 @@ export const worktreeで始める: Story = {
   },
 };
 
+// フォルダに TANACODE_PARENT.md があるとき。「親として始める」を選ぶと、最初の指示と一緒に読ませて、親として始める
+export const 親として始められる: Story = {
+  beforeEach: () => {
+    mockApi({ 'settingsFiles.list': () => Promise.resolve([]), 'folders.parentInstructions': () => Promise.resolve('/Users/me/work/tanacode/TANACODE_PARENT.md') });
+  },
+};
+
+// フォルダに TANACODE_PARENT.md が無いとき。「親として始める」は選べず、ツールチップに置けば使えることを出す
+export const 親として始めるファイルが無い: Story = {
+  beforeEach: () => {
+    mockApi({ 'settingsFiles.list': () => Promise.resolve([]), 'folders.parentInstructions': () => Promise.resolve(null) });
+  },
+};
+
 // worktree で始めてセッションの画面に移ったあとで、Claude Code が worktree を作れなかったとき（まだ信頼していないフォルダなど）。
 // 新規セッションの画面に戻り、送るはずだった指示（貼り付けた札も）が入力欄に戻っている。理由は、アプリがダイアログで出す
 export const 始められなかった指示が戻る: Story = {

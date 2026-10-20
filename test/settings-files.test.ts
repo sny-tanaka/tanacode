@@ -194,6 +194,19 @@ describe('起動の準備', () => {
     expect(written.hooks.SessionStart[0].matcher).toBe('compact');
   });
 
+  it('TANACODE.md を渡すフックも、登録した設定の SessionStart のフックと並べて入れる', () => {
+    const files = make();
+    const mine = { matcher: 'startup', hooks: [{ type: 'command', command: 'echo hi' }] };
+    const { id } = files.add(file('a.json', { hooks: { SessionStart: [mine] } }));
+    expect(JSON.parse(readFileSync(files.prepare('s', id).settingsFile, 'utf8')).hooks.SessionStart).toEqual([mine]);
+    const written = JSON.parse(readFileSync(files.prepare('s', id, false, false, true, false, true).settingsFile, 'utf8'));
+    expect(written.hooks.SessionStart).toEqual([
+      mine,
+      { matcher: 'startup|resume|clear|compact', hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_INSTRUCTIONS_HOOK=1') })] },
+      { matcher: 'compact', hooks: [expect.objectContaining({ command: expect.stringContaining('TANACODE_CHECKLIST_HOOK=1') })] },
+    ]);
+  });
+
   it('登録した設定の statusLine は、アプリの statusLine が包んで動かす', () => {
     const files = make();
     const { id } = files.add(file('a.json', { statusLine: { type: 'command', command: 'my-line' } }));

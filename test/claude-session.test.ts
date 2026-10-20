@@ -192,6 +192,29 @@ describe('起動', () => {
     expect(Object.keys(JSON.parse(host.spawned[1].arg('--settings')!).hooks)).toEqual(['PreToolUse', 'PermissionRequest', 'Notification', 'Stop']);
   });
 
+  it('TANACODE.md を渡すフックを足すときは、探すフォルダ（worktree なら元のリポジトリも）と実行ファイルを環境変数で渡し、設定にフックを入れる', () => {
+    const instructions = { command: '/Apps/tanacode Helper', script: '/x/instructions-hook.js' };
+    session({ instructions }).claude.start();
+    const { env } = host.spawned[0].request;
+    expect(env).toMatchObject({
+      TANACODE_INSTRUCTIONS_COMMAND: '/Apps/tanacode Helper',
+      TANACODE_INSTRUCTIONS_SCRIPT: '/x/instructions-hook.js',
+      TANACODE_INSTRUCTIONS_DIRS: JSON.stringify([join(root, 'work')]),
+    });
+    // プロファイルのフォルダ（CLAUDE_CONFIG_DIR）。既定のプロファイルなら ~/.claude
+    expect(env.TANACODE_INSTRUCTIONS_PROFILE).toBe(join(process.env.HOME ?? '', '.claude'));
+    session({ instructions, claudeDir: '/Users/me/.claude-personal' }).claude.start();
+    expect(host.spawned.at(-1)!.request.env.TANACODE_INSTRUCTIONS_PROFILE).toBe('/Users/me/.claude-personal');
+    host.spawned.pop();
+    expect(JSON.parse(host.spawned[0].arg('--settings')!).hooks.SessionStart[0].hooks[0].command).toContain('TANACODE_INSTRUCTIONS_HOOK=1');
+    const worktree = join(root, 'work', '.claude', 'worktrees', 'w1');
+    session({ instructions, cwd: worktree, worktree: 'w1', worktreeRoot: join(root, 'work') }).claude.start();
+    expect(host.spawned[1].request.env.TANACODE_INSTRUCTIONS_DIRS).toBe(JSON.stringify([worktree, join(root, 'work')]));
+    session().claude.start();
+    expect(host.spawned[2].request.env.TANACODE_INSTRUCTIONS_DIRS).toBeUndefined();
+    expect(JSON.parse(host.spawned[2].arg('--settings')!).hooks.SessionStart).toBeUndefined();
+  });
+
   it('人のターミナルを足すときは、打つ前の確認のフックが使う環境変数を渡し、設定にフックを入れる。子セッションには、どちらも渡さない', () => {
     const terminal = { command: 'node', script: '/x/terminal-mcp.js', socketPath: '/u/terminal.sock', version: '1' };
     const gateHooks = (args: string[]) =>

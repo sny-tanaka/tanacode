@@ -390,6 +390,9 @@ export class DemoBackend {
         configure: () => ok(undefined),
         models: () => ok(null),
         restart: () => ok(undefined),
+        // デモのリポジトリには TANACODE_PARENT.md が無い（「親にする」は押せない）
+        parentInstructions: () => ok(null),
+        becomeParent: () => ok(undefined),
         setRemoteControl: () => ok(null),
         setTerminalMode: () => ok(undefined),
         // デモでは、自動の最適化圧縮は起きない（台本が進める）
@@ -554,6 +557,7 @@ export class DemoBackend {
       folders: {
         pick: () => ok(null),
         info: () => ok(info),
+        parentInstructions: () => ok(null),
         listFiles: () => ok(Object.keys(p.files).sort()),
         commands: () => ok([]),
         open: () => ok('folder:demo'),

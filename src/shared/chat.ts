@@ -4,6 +4,7 @@ import { t } from './i18n';
 import { handbackOf, type Handback } from './handback';
 import { modelName } from './model-name';
 import { CANCELLED_TAG, isAutoCompactStop, isCompactMessage, parseCompactCancelled, parseCompactMessage, type AutoCompactTrigger } from './optimized-compact';
+import { INSTRUCTIONS_TAG, PARENT_INSTRUCTIONS_FILE, parseParentRole } from './project-instructions';
 import { parseWakeup } from './scheduled';
 import { parseParentMessage, parseSessionEvent, SESSION_EVENT_TAG, unwrapWholePaste, WAKEUP_TAG } from './session-tools';
 import { classifyLine, isIgnoredAssistantBlock, isIgnoredAttachment, isIgnoredSystem, type ConversationEntry, type SideEntry, type TranscriptLine } from './transcript-line';
@@ -536,7 +537,18 @@ export const CHECKLIST_HOOK_ENV = 'TANACODE_CHECKLIST_HOOK';
 export const TERMINAL_GATE_HOOK_ENV = 'TANACODE_TERMINAL_GATE';
 // 前のバージョンのアプリが足した、AskUserQuestion の質問をアプリに渡して答えを待つフックの目印（前の会話ログに残る行を、チャットのフックの一覧に出さない）
 export const QUESTION_HOOK_ENV = 'TANACODE_QUESTION_HOOK';
-const APP_HOOK_MARKS = [ASK_FILE_ENV, GUARD_HOOK_ENV, BROWSER_GATE_HOOK_ENV, SESSIONS_GATE_HOOK_ENV, CHECKLIST_HOOK_ENV, TERMINAL_GATE_HOOK_ENV, QUESTION_HOOK_ENV];
+// アプリが足した、TANACODE.md を Claude に渡すフック（main の instructions-hook.ts）の目印
+export const INSTRUCTIONS_HOOK_ENV = 'TANACODE_INSTRUCTIONS_HOOK';
+const APP_HOOK_MARKS = [
+  ASK_FILE_ENV,
+  GUARD_HOOK_ENV,
+  BROWSER_GATE_HOOK_ENV,
+  SESSIONS_GATE_HOOK_ENV,
+  CHECKLIST_HOOK_ENV,
+  TERMINAL_GATE_HOOK_ENV,
+  QUESTION_HOOK_ENV,
+  INSTRUCTIONS_HOOK_ENV,
+];
 
 function isAppHook(command: string): boolean {
   return APP_HOOK_MARKS.some((mark) => command.includes(mark));
@@ -552,15 +564,24 @@ function isChecklistStop(a: Record<string, unknown> | undefined): boolean {
   return typeof command === 'string' && command.includes(CHECKLIST_HOOK_ENV);
 }
 
+// アプリのフックが Claude に渡した文か（チェックリストの知らせ・TANACODE.md）
+function isAppText(text: string): boolean {
+  return text.includes(`<${CHECKLIST_REMINDER_TAG}>`) || text.includes(`<${INSTRUCTIONS_TAG} `);
+}
+
 // type: hook_ で始まる attachment の種類
 function hookRunOf(a: Record<string, unknown>, type: string): HookRun | null {
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
   const blocking = (a.blockingError ?? null) as { blockingError?: string; command?: string } | null;
-  const content = Array.isArray(a.content) ? a.content.map(String).join('\n') : str(a.content);
+  // Claude に文を渡した記録（hook_additional_context）は、同じ出来事で動いたフックの文を、1 つの記録の content にまとめて持つ
+  // （SessionStart で、ユーザーのフックとアプリのフックが 1 つの記録になる。2.1.303 で実測）。アプリのフックの文だけを除いて、残りを出す
+  const parts = Array.isArray(a.content) ? a.content.map(String) : null;
+  const users = parts ? parts.filter((part) => !isAppText(part)) : null;
+  const content = users ? users.join('\n') : str(a.content);
   // アプリが足したフックは、ユーザーのフックではないので出さない（止めたフックのコマンドは blockingError に入る。
-  // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせは囲みで見分ける）
-  if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || content.includes(`<${CHECKLIST_REMINDER_TAG}>`)) return null;
+  // Claude に文を渡した記録にはコマンドが無いので、チェックリストの知らせと TANACODE.md は囲みで見分ける）
+  if (isAppHook(str(a.command)) || isAppHook(blocking?.command ?? '') || (users ? users.length === 0 : isAppText(content))) return null;
   // 自動の最適化圧縮が、ツールのあとのフックでターンを止めた記録（hook_stopped_continuation）。コマンドが載らないので、止めた理由の文で
   // 見分ける。前のバージョンのアプリ（suppressOutput を書かなかった頃）の成功の記録は、標準出力の JSON の stopReason に入る
   if (isAutoCompactStop(str(a.message)) || isAutoCompactStop(content) || isAutoCompactStop(stopReasonOf(str(a.stdout)))) return null;
@@ -707,6 +728,14 @@ function userTextEvents(entry: TranscriptEntry, text: string): ChatEvent[] {
     const { pasted: _, ...parts } = pastedParts(fromParent.body);
     return [{ type: 'user', id: entry.uuid ?? '', ...parts, at: timeOf(entry), parent: fromParent.parent }];
   }
+  // 「親にする」で TANACODE_PARENT.md を読ませた発言。開くと、前書きとファイルの中身が読める。
+  // 新規セッションの画面の「親として始める」では、最初の指示が続くので、知らせのあとに人の発言として出す（発言の ID は、行の uuid のまま）
+  const parentRole = parseParentRole(text);
+  if (parentRole) {
+    const id = entry.uuid ?? '';
+    const notice: ChatEvent = { type: 'notice', id: parentRole.rest ? `${id}:parent-role` : id, text: t('chat.transcript.parentRole', { file: PARENT_INSTRUCTIONS_FILE }), detail: parentRole.body };
+    return parentRole.rest ? [notice, ...userTextEvents(entry, parentRole.rest)] : [notice];
+  }
   // 子セッションの作業が終わった・人の対応待ちになった知らせ（アプリが、手の空いている親に送る）
   const event = parseSessionEvent(text);
   if (event) return [{ type: 'notice', id: entry.uuid ?? '', text: event.message, sessions: event.sessions }];
@@ -833,9 +862,12 @@ export function isHumanPrompt(text: string): boolean {
 
 // 送った発言を、送信中・順番待ちに出す形。会話ログの発言の行と同じ読み方（userTextEvents）で、会話に出たときと同じ形にする
 // （親セッションからの指示は、囲みを外した本文と親の ID）。発言でないもの（子セッション・予約・チェックリストの知らせ、
-// 最適化圧縮の文など）は null（出さない。会話に出たときに、お知らせとして出る）
+// 最適化圧縮の文など）は null（出さない。会話に出たときに、お知らせとして出る）。
+// 「親にする」の発言は、人がボタンで頼んだものなので、順番待ちにも出す（最初の指示が続くときは、その指示を出す）
 export function unsentView(text: string): { text: string; pastes: string[]; parent?: string } | null {
-  const events = userTextEvents({}, text);
+  const parentRole = parseParentRole(text);
+  if (parentRole && !parentRole.rest) return { text: t('chat.parentRole.queued', { file: PARENT_INSTRUCTIONS_FILE }), pastes: [] };
+  const events = userTextEvents({}, parentRole ? parentRole.rest : text);
   const event = events.length === 1 ? events[0] : null;
   if (event?.type !== 'user' || event.command) return null;
   return { text: event.text, pastes: event.pastes ?? [], ...(event.parent ? { parent: event.parent } : {}) };
@@ -1035,8 +1067,11 @@ export function transcriptTitle(entry: TranscriptEntry): { title: string; priori
     // 順番待ちの発言をまとめた行は、はじめに送った発言で決める
     const text = mergedParts(entry, entry.message.content)?.[0].text ?? entry.message.content;
     if (text.includes('<local-command-') || text.includes('<command-name>') || parseSessionEvent(text) || parseChecklistEvent(text) || parseCompactMessage(text) || parseCompactCancelled(text) || parseWakeup(text) || parseUsageResume(text)) return null;
+    // 「親にする」の発言は、続く最初の指示から（「親として始める」）。指示が無ければタイトルにしない
+    const parentRole = parseParentRole(text);
+    if (parentRole && !parentRole.rest) return null;
     // 親セッションからの指示は、囲みを外した本文の 1 行目
-    const firstLine = unwrapPasted(promptDisplayText(text)).trim().split('\n')[0];
+    const firstLine = unwrapPasted(promptDisplayText(parentRole ? parentRole.rest : text)).trim().split('\n')[0];
     return firstLine ? { title: firstLine.slice(0, 80), priority: 1 } : null;
   }
   return null;

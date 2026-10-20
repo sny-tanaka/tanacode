@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ASK_FILE_ENV } from '@shared/chat';
 import { VERIFIED_CLAUDE_CODE_VERSION } from '@shared/claude-code';
 import type { StatusLineInfo } from '@shared/statusline';
+import { INSTRUCTIONS_HOOK_COMMAND } from '../src/main/instructions-launch';
 import { mergeSettings } from '../src/main/settings-files';
 import { TERMINAL_GATE_COMMAND, TERMINAL_GATED_TOOL } from '../src/main/terminal-bridge';
 import {
@@ -139,6 +140,18 @@ describe('アプリが Claude Code に渡す設定', () => {
     expect(gate(ownSettings(null))).toEqual([]);
     expect(gate(ownSettings(null, false, false, null, false, true))).toEqual([{ matcher: TERMINAL_GATED_TOOL, hooks: [{ type: 'command', command: TERMINAL_GATE_COMMAND, timeout: 10 }] }]);
     expect(gate(JSON.parse(sessionSettings(false, false, null, false, true)))).toHaveLength(1);
+  });
+
+  it('TANACODE.md を渡すフック（会話の始まり・再開・/clear・圧縮のあと）は、instructions のときだけ足す。チェックリストの圧縮のあとのフックより前', () => {
+    expect(Object.keys(ownSettings(null).hooks as object)).not.toContain('SessionStart');
+    const only = ownSettings(null, false, false, null, false, false, true).hooks as Record<string, { matcher?: string; hooks: { command: string; timeout?: number }[] }[]>;
+    expect(only.SessionStart).toEqual([{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: INSTRUCTIONS_HOOK_COMMAND, timeout: 10 }] }]);
+    // チャットのフックの一覧に出さない目印と、起動する Claude Code の環境変数で渡す実行ファイル・スクリプト
+    expect(INSTRUCTIONS_HOOK_COMMAND).toBe('TANACODE_INSTRUCTIONS_HOOK=1 ELECTRON_RUN_AS_NODE=1 "$TANACODE_INSTRUCTIONS_COMMAND" "$TANACODE_INSTRUCTIONS_SCRIPT"');
+    const both = ownSettings(null, false, false, null, true, false, true).hooks as Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
+    expect(both.SessionStart.map((h) => h.matcher)).toEqual(['startup|resume|clear|compact', 'compact']);
+    expect(both.SessionStart[1].hooks[0].command).toContain('--hook');
+    expect(JSON.parse(sessionSettings(false, false, null, false, false, true)).hooks.SessionStart).toHaveLength(1);
   });
 
   it('チェックリストを使い続けさせるフック（人の発言・ターンの終わり・圧縮のあと）は、チェックリストを使うときだけ足す', () => {

@@ -1,5 +1,6 @@
 import { isAbsolute, relative, sep } from 'node:path';
 import type { FileKnowledge, SessionKnowledge } from '@shared/knowledge';
+import { parseInstructions, parseParentRole } from '@shared/project-instructions';
 import type { ConversationEntry } from '@shared/transcript-line';
 
 export const READ_TOOLS = new Set(['Read']);
@@ -7,7 +8,7 @@ export const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']
 // 再開時は過去の会話を 1 行ずつ読み直すので、知らせるのはまとめて行う
 const EMIT_DELAY_MS = 100;
 
-type Attachment = { type?: string; filename?: string; path?: string };
+type Attachment = { type?: string; filename?: string; path?: string; content?: unknown; prompt?: unknown };
 type Usage = { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
 
 // 本体の会話ログから、Claude が読んだ・書いたファイルと、コンテキストの使用量を集める。
@@ -60,6 +61,20 @@ export class KnowledgeTracker {
       if (a?.type === 'file' || a?.type === 'edited_text_file') mark(a.filename, 'read');
       if (a?.type === 'nested_memory') mark(a.path, 'read');
       if (a?.type === 'compact_file_reference') mark(a.filename, 'stale');
+      // 作業の途中に届いた「親にする」の発言（TANACODE_PARENT.md の中身が丸ごと入っている）
+      if (a?.type === 'queued_command' && typeof a.prompt === 'string') for (const file of parseParentRole(a.prompt)?.files ?? []) mark(file.path, 'read');
+      // アプリのフックが渡した TANACODE.md（中身が丸ごと Claude に渡っている。長すぎて中身を入れなかったものは、Claude が読んだときに付く）
+      if (a?.type === 'hook_additional_context' && Array.isArray(a.content)) {
+        for (const text of a.content) {
+          for (const block of typeof text === 'string' ? parseInstructions(text) : []) if (block.full) mark(block.path, 'read');
+        }
+      }
+    }
+    // 「親にする」の発言（TANACODE_PARENT.md の中身が丸ごと入っている）
+    if (entry.type === 'user' && !entry.isMeta) {
+      const content = entry.message?.content;
+      const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => (b.type === 'text' ? (b.text ?? '') : '')).join('') : '';
+      for (const file of text ? (parseParentRole(text)?.files ?? []) : []) mark(file.path, 'read');
     }
     if (entry.type === 'assistant') {
       const content = entry.message?.content;

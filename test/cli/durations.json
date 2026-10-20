@@ -10,6 +10,7 @@
   "test/cli/elicitation.test.ts": 2,
   "test/cli/errors.test.ts": 23,
   "test/cli/input.test.ts": 52,
+  "test/cli/instructions.test.ts": 3,
   "test/cli/internal-requests.test.ts": 3,
   "test/cli/permission-mode.test.ts": 4,
   "test/cli/progress.test.ts": 8,

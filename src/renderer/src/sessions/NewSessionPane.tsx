@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
 import type { NewSessionOptions, SessionSummary, WorkspaceInfo } from '@shared/ipc';
 import type { PermissionMode } from '@shared/screen';
+import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { canSee } from '@shared/session-tools';
 import icon from '../assets/icon.png';
 import { errorMessage } from '../errorMessage';
@@ -9,6 +10,7 @@ import { ChatInput, listCompletionFiles, type CompletionSource } from '../chat/C
 import { isLongPaste } from '@shared/paste';
 import { useInsertInput } from '../chat/insertInput';
 import type { PendingSend } from '../chat/pendingSends';
+import { useParentInstructions } from '../chat/parentRole';
 import { RemoteControlToggle } from '../chat/RemoteControlToggle';
 import { EFFORTS, modeChoices, refreshTitle, useModelCatalog } from '../chat/sessionOptions';
 import { SettingsFileSelect, useSettingsFiles } from '../chat/settingsFiles';
@@ -59,8 +61,8 @@ type Props = {
   onCommentsChange: (comments: ReviewComment[]) => void;
   onShowComment: (comment: ReviewComment) => void;
   // フォルダで Claude Code を起動し、最初の発言を送る（起動が終わるのを待って送られる）。始めたら、すぐそのセッションに移る
-  // pastes: 入力欄の札（貼り付けた長い文）
-  onStart: (cwd: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[]) => Promise<void>;
+  // pastes: 入力欄の札（貼り付けた長い文）/ asParent: 「親として始める」（最初の発言と一緒に TANACODE_PARENT.md を読ませる）
+  onStart: (cwd: string, text: string, attachments: string[], options: NewSessionOptions, pastes: string[], asParent: boolean) => Promise<void>;
   // 始められなかった指示（worktree で始めて、セッションに移ったあとで worktree を作れなかった）。入力欄に戻す
   restore?: PendingSend | null;
   // 前に見ていたセッションに戻る。戻る先が無ければ null
@@ -97,6 +99,8 @@ export function NewSessionPane({
     else setInput((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
     if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
   });
+  // 「親として始める」。セッションごとに決めるもの（小さい作業をそのまま頼むことも多い）なので、選んだものを覚えない
+  const [asParent, setAsParent] = useState(false);
   // 始められなかった指示を、入力欄に戻す（書きかけがあれば、その前に足す）。同じものは 1 回だけ
   const restored = useRef<PendingSend | null>(null);
   useEffect(() => {
@@ -105,6 +109,7 @@ export function NewSessionPane({
     setInput((prev) => [restore.text, prev].filter((text) => text.trim()).join('\n'));
     setAttachments((prev) => [...restore.attachments, ...prev]);
     setPastes((prev) => [...restore.pastes, ...prev]);
+    if (restore.asParent) setAsParent(true);
   }, [restore]);
   const [startingDirs, setStartingDirs] = useState<ReadonlySet<string>>(() => new Set());
   const starting = !!cwd && startingDirs.has(cwd);
@@ -161,6 +166,11 @@ export function NewSessionPane({
     [cwd, addedFolders],
   );
 
+  // 選んでいるフォルダで始めたときに読ませる TANACODE_PARENT.md（無ければ「親として始める」を選べない）。worktree を使うかで、探す場所が
+  // 変わる（worktree はリポジトリのいちばん上から作る）。main が始めたあとに探す場所と同じところを、main に聞く
+  const parentFile = useParentInstructions(cwd ? `${options.worktree ? 'worktree' : 'folder'}:${cwd}` : null, () =>
+    window.tanacode.folders.parentInstructions(cwd!, options.worktree),
+  );
   const missing = !!cwd && info === null;
   // ブランチを切り替えている間は送らない（切り替え前のブランチで始まらないように）
   const blocked = !cwd || missing || starting || switching;
@@ -196,7 +206,7 @@ export function NewSessionPane({
     setStartingDirs((prev) => new Set(prev).add(dir));
     const text = comments.length > 0 ? [input.trim(), formatComments(comments)].filter(Boolean).join('\n\n') : input;
     try {
-      await onStart(dir, text, attachments, options, pastes);
+      await onStart(dir, text, attachments, options, pastes, asParent && !!parentFile);
       // 始めている間にフォルダを変えていたら、変えた先で付けたコメントは残す（始めたセッションには、送ったときのものが入っている）
       if (cwdRef.current === dir) onCommentsChange([]);
     } catch (err) {
@@ -256,6 +266,15 @@ export function NewSessionPane({
             <input type="checkbox" checked={options.worktree} onChange={(e) => change({ worktree: e.target.checked })} />
             {t('sessions.newSession.useWorktree')}
           </label>
+          {cwd && (
+            <label
+              className={`new-session-check${parentFile ? '' : ' disabled'}`}
+              data-tip={t(parentFile === null ? 'sessions.newSession.asParentMissing' : 'sessions.newSession.asParentAbout', { file: PARENT_INSTRUCTIONS_FILE })}
+            >
+              <input type="checkbox" checked={asParent && !!parentFile} disabled={!parentFile} onChange={(e) => setAsParent(e.target.checked)} />
+              {t('sessions.newSession.asParent')}
+            </label>
+          )}
           {missing && <span className="new-session-warning">{t('sessions.newSession.folderMissing')}</span>}
           {switchError && <span className="new-session-warning">{switchError}</span>}
         </div>
