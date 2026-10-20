@@ -141,7 +141,8 @@
       "busy": "Couldn't send because Claude Code is busy",
       "notReady": "Couldn't send because Claude Code didn't become ready to accept messages",
       "imagesSkipped": "Sent without some images that can't be sent: {names} (only readable PNG, JPEG, GIF, and WebP files can be sent)",
-      "terminalMode": "Can't send while in terminal mode. Switch back to the chat first"
+      "terminalMode": "Can't send while in terminal mode. Switch back to the chat first",
+      "keptFailed": "Couldn't send the parent session's instruction that was waiting to be sent when the app quit ({reason})"
     },
     "worktree": {
       "createFailed": "Claude Code couldn't create the worktree",

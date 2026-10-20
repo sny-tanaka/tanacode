@@ -139,7 +139,8 @@
       "busy": "Claude Code の手が空かないため、送れませんでした",
       "notReady": "Claude Code が受け付けられるようにならなかったため、送れませんでした",
       "imagesSkipped": "送れない画像があったため、添えずに送りました: {names}（送れるのは PNG・JPEG・GIF・WebP の、読めるファイルだけです）",
-      "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください"
+      "terminalMode": "ターミナルモードの間は送れません。チャットに戻してから送ってください",
+      "keptFailed": "アプリを終える前に送るはずだった親セッションの指示を、送れませんでした（{reason}）"
     },
     "worktree": {
       "createFailed": "Claude Code が worktree を作れませんでした",
