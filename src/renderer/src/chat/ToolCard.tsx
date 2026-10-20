@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { cardOfTool } from '@shared/checklist-tools';
+import { cardOfTool, checklistTargetOfTool } from '@shared/checklist-tools';
 import { t } from '@shared/i18n';
 import { sessionIdOfTool } from '@shared/session-tools';
 import { walkthroughOfTool } from '@shared/walkthrough-tools';
@@ -77,7 +77,14 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
   const openWalk = walk ? () => openWalkthroughTarget(walk) : null;
   // 入力の session_id がそのまま対象に出るツール（send_message など）は、ID の代わりに名前を出す
   const targetIsId = !!sessionKey && /^[0-9a-f-]{8,36}$/.test(item.target.trim());
-  const target = targetIsId && session ? sessionName(session) : item.target;
+  // チェックリストのツールで、ほかのセッション（子など）のリストを触ったものは、そのセッションの名前を添える（「「画面の直し」のやること #3」）
+  const checklistShown = sessions
+    ? checklistTargetOfTool(item.name, item.input, (id) => {
+        const found = findSession(sessions, id);
+        return found ? sessionName(found) : null;
+      })
+    : null;
+  const target = targetIsId && session ? sessionName(session) : (checklistShown ?? item.target);
   const status = subagent ? t(`chat.toolCard.${subagent.state}`) : bash ? bashStateLabel(bash.state) : statusLabel(item.status);
   const dot: DotState = subagent
     ? subagent.state === 'running' ? 'running' : subagent.state === 'done' ? 'done' : 'error'
@@ -112,7 +119,7 @@ export function ToolCard({ item, subagent, bash, onOpenFile, onOpenTask, session
         {item.description ? (
           <span className="tool-target described">{item.description}</span>
         ) : (
-          <span className="tool-target" title={item.target}>
+          <span className="tool-target" title={checklistShown ?? item.target}>
             {target}
           </span>
         )}

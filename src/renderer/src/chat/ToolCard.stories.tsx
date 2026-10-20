@@ -206,6 +206,28 @@ export const セッション_一覧に無いセッション: Story = {
   },
 };
 
+// 子のチェックリストを触ったチェックリストのツール。対象の欄には、子の名前を添える（自分のリストを触ったのと見分けられるように）
+export const チェックリスト_子のカードをチェック: Story = {
+  args: {
+    item: tool('cc1', 'mcp__tanacode-checklist__card_check', `「${CHILD_ID.slice(0, 8)}」のやること #3`, {
+      input: JSON.stringify({ list: 'やること', numbers: '3', session_id: CHILD_ID.slice(0, 8), comment: 'npm test が通った' }, null, 2),
+      output: 'Checked #3 in "やること". 2 unchecked cards left in "やること".',
+    }),
+    ...sessionArgs,
+  },
+};
+
+// 子へのカードのコピー（cards_copy の to_session）。移す先に子の名前を出す
+export const チェックリスト_子へコピー: Story = {
+  args: {
+    item: tool('cc2', 'mcp__tanacode-checklist__cards_copy', `やること #5-8 → 「${CHILD_ID.slice(0, 8)}」`, {
+      input: JSON.stringify({ from_list: 'やること', numbers: '5-8', to_session: CHILD_ID.slice(0, 8) }, null, 2),
+      output: 'Copied #5-8 to "やること" in "API の実装".',
+    }),
+    ...sessionArgs,
+  },
+};
+
 // 畳んだ行の要約は「セッション N」、実行中の行はツールの名前（「子セッションを待つ…」）
 const sessionGroup = group([
   tool('sg1', 'mcp__tanacode-sessions__list_sessions', '', { input: '{}' }),

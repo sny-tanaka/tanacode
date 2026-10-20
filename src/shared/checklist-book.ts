@@ -348,7 +348,7 @@ export class ChecklistBook {
     const from = this.list(doc, listId);
     const to = this.list(doc, toListId);
     const cards = cardIds.map((id) => this.card(from, id));
-    if (author === 'claude' && from !== to && traitsOf(from).locked) throw new ChecklistError(lockedMessage(from, 'move its cards out'));
+    if (from !== to) this.checkMoveOut(author, from);
     if (before && cards.some((c) => c.id === before)) return cards;
     from.cards = from.cards.filter((c) => !cards.includes(c));
     if (from !== to) {
@@ -363,6 +363,12 @@ export class ChecklistBook {
     to.cards.splice(at < 0 ? to.cards.length : at, 0, ...cards);
     this.changed(sessionId);
     return cards;
+  }
+
+  // from のカードを、ほかのリストへ移せるか。Claude が書き換えられないリスト（決定事項）からは、移せない（断る）。
+  // 移す先のリストを作る前に断れるよう、moveCards から分けておく（作ってから断ると、空のリストが残る）
+  checkMoveOut(author: Author, from: Checklist): void {
+    if (author === 'claude' && traitsOf(from).locked) throw new ChecklistError(lockedMessage(from, 'move its cards out'));
   }
 
   // Claude が書き換えられないリストでは、Claude が消せるのは取り消したカードだけ（有効な決定を、理由を残さずに消さないように）

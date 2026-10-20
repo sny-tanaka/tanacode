@@ -1431,7 +1431,7 @@ tanacode は Claude Code の stream-json のやりとり（出力の行・制御
   - 会話ログでは、`chat.ts` が `notice` のイベント（`cards` にカードの場所）にします。順番待ちの行では人の発言として数えず、セッションの名前にもしません。チャットでは「カードを開く」を添えます。
 - 別のセッションへのコピー（`ChecklistStore.copyCards`）: タイトル・説明文・チェック・スレッドを写し（id は振り直す）、記録の行「〜からコピーしました」を足します。先に同じ名前のリストがあれば足し、無ければ元の説明ごと作ります。コピーできる範囲は `tanacode-sessions` と同じ `canSee`（同じフォルダ・親子・兄弟）。アーカイブしたセッションへは断ります。画面からは `checklist:copy`。
 - 画面: サイドパネルの `checklist/ChecklistPanel.tsx`（リストごとにタイトルだけを並べる。チェック欄・＋・ドラッグ・⌘ と ⇧ での選択・ゴミ箱。チェックの無いリストは、チェック欄の代わりにピン、進み具合の代わりに有効な数、取り消したカードに印）と、エディタの場所の `checklist/CardPane.tsx`（`App.tsx` の `CenterView` の `card`。カードの id で引くので、別のリストへ移しても追いかける）。値は `useChecklists`（選んでいるセッションのリストと、全セッションの未読の数。セッション一覧とアクティビティバーの印）。
-  - チャットの知らせやツールの行からカードを開くときは、props を通さずに `checklist/openCard.ts` の `openChecklistCard` で `App` に渡します（知らせは id で、ツールの行はリストの名前と番号で指す。`cardOfTool`）。ツールの行の対象は `checklistTarget`（「やること #3」など）。
+  - チャットの知らせやツールの行からカードを開くときは、props を通さずに `checklist/openCard.ts` の `openChecklistCard` で `App` に渡します（知らせは id で、ツールの行はリストの名前と番号で指す。`cardOfTool`）。ツールの行の対象は `checklistTarget`（「やること #3」など）。ほかのセッションのリスト（`session_id`・`from_session`・`to_session`）には、そのセッションの名前を添えます（「「画面の直し」のやること #3」。main が作る対象は ID の頭 8 文字で、画面の `ToolCard` が一覧の名前に置き換える。`checklistTargetOfTool`）。
   - 「Claude に通知する」の前回の選択は localStorage（`tanacode.checklist.notify`。どのプロファイルの画面でも同じにする表示設定）。
   - カードの詳細は、`locked` のリストのカードに「取り消す」（理由を書く行を見出しの下に出す。Enter で取り消す）と「有効に戻す」を出します。リストのフォーム（`ListForm.tsx`）で種類を選びます。
   - ストーリーは `ChecklistPanel.stories.tsx`・`CardPane.stories.tsx`（作り物は `sampleChecklists.ts`）。

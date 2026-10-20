@@ -291,6 +291,12 @@ describe('並べ替えとゴミ箱（card_move・checklist_trash・list_restore�
     expect(out.isError).toBe(true);
     expect(first(out)).toContain('but you cannot move its cards out; only the user can.');
     expect(titles('決定事項')).toEqual(['#2 B', '#1 A']);
+    // 断るのは、移す先のリストを作る前（まだ無いリストへ移そうとしても、空のリストを残さない）
+    expect(store.findList(ME, 'やること')).toBeUndefined();
+    // 決定事項のリストの名前を移す先にすると、同じリストの中の並べ替え
+    expect(first(await call('card_move', { list: '決定事項', numbers: '1', to_list: '決定事項' }))).toBe(
+      'Put #1 in "決定事項" at the end (the numbers stay). Order of "決定事項" now: #2, #1.',
+    );
   });
 
   it('checklist_trash: ゴミ箱のリスト（id・種類・消した人と時刻・中のカード）と、ほかのリストから消したカードを返す。決定事項のものには、戻せるのは人だけと添える', async () => {
