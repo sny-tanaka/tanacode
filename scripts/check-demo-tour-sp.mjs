@@ -15,7 +15,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, sta
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { devices, webkit } from 'playwright';
-import { EVIDENCE_TIMEOUT_MS, snapshot, within } from './demo-tour-evidence.mjs';
+import { EVIDENCE_TIMEOUT_MS, snapshot, TRACE_QUERY, TRACE_SHOWN, traceLog, within } from './demo-tour-evidence.mjs';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -107,11 +107,15 @@ if (!existsSync(join(dir, 'index.html'))) {
 }
 
 const server = await serve();
-const url = `http://127.0.0.1:${server.address().port}/#${chapter}`;
+// 台本の操作の足あとを出させる（止まったときに、どの操作の途中だったかを残す）
+const url = `http://127.0.0.1:${server.address().port}/${TRACE_QUERY}#${chapter}`;
 const browser = await webkit.launch();
 const page = await (await browser.newContext({ ...devices[DEVICE] })).newPage();
 const errors = [];
-page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+const trace = traceLog();
+page.on('console', (m) => {
+  if (!trace.add(m.text()) && m.type() === 'error') errors.push(m.text());
+});
 let crashed = false;
 page.on('crash', () => (crashed = true));
 await page.goto(url);
@@ -196,6 +200,7 @@ for (;;) {
   if (Date.now() - started > LIMIT_MS) break;
 }
 clearInterval(meter);
+trace.freeze();
 measure();
 const seconds = elapsed();
 const hungSeconds = unresponsive ? ((Date.now() - unresponsive.since) / 1000).toFixed(0) : '';
@@ -215,7 +220,7 @@ async function saveEvidence() {
     if (html) writeFileSync(join(evidenceDir, 'app.html'), html);
     state = await within(app.evaluate(snapshot).catch((e) => ({ error: String(e) })), { error: '応答しませんでした' });
   }
-  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], state }, null, 2));
+  writeFileSync(join(evidenceDir, 'state.json'), JSON.stringify({ result, seconds: Number(seconds), step, last, errors: [...new Set(errors)], trace: trace.lines(), state }, null, 2));
   console.log(`止まったときの様子を ${evidenceDir} に書き出しました`);
 }
 
@@ -235,6 +240,11 @@ else {
   console.log(`ツアーが最後まで流れました（${seconds} 秒）`);
 }
 (ok ? console.log : console.error)(memory);
+// 止まったときは、直前の台本の操作の足あとを出す（最後の行が、固まった・止まった操作）
+if (result !== 'done') {
+  console.error('直前の台本の操作（古い順。足あとが「済み」で終わっていなければ、その操作の途中）:');
+  for (const line of trace.lines().slice(-TRACE_SHOWN)) console.error(`  ${line}`);
+}
 // 同じエラーは、まとめて 1 行にする（WebKit では、作り物の環境で許されない操作のエラーが何十回も出るため）
 const counts = new Map();
 for (const message of errors) counts.set(message, (counts.get(message) ?? 0) + 1);
