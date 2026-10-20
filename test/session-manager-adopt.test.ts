@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { sessionEventText } from '@shared/session-tools';
+import { parentMessageText, sessionEventText } from '@shared/session-tools';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HostedPipeInfo, HostedPtyInfo } from '../src/main/pty-host-protocol';
 import { DEFAULT_PTY_SIZE } from '../src/main/session-manager';
@@ -310,6 +310,50 @@ describe('adopt', () => {
     app.manager.closeAll(false);
     const record = new SessionStore(join(app.userData, 'sessions.json')).get(id);
     expect(record?.unsent).toEqual([{ id: uuid, text: '待っている発言', pastes: [], images: 0, state: 'queued', shown: true }]);
+  });
+
+  it('起動を待っていて、まだ送っていない親の指示（keep）は、アプリを終えるときに記録に残す（止めて終えるときも）。残さない送信は残さない', async () => {
+    const parent = '0f8c2a1e-0000-4000-8000-000000000001';
+    for (const stop of [false, true]) {
+      const each = new ScriptedApp();
+      each.answers.set('initialize', null);
+      const { id } = each.create();
+      const waits = [
+        each.manager.submitWhenReady(id, { parent, body: '最初の指示', setupNote: true }, 1000, { keep: true }),
+        each.manager.submitWhenReady(id, '子の知らせ', 1000),
+        each.manager.submitWhenReady(id, parentMessageText(parent, 'あとの指示'), 1000, { keep: true }),
+      ];
+      for (const wait of waits) wait.catch(() => {});
+      // 直す前は、メモリの上だけで待っていて、アプリを終えると消えていた
+      each.manager.closeAll(stop);
+      expect(new SessionStore(join(each.userData, 'sessions.json')).get(id)?.waiting).toEqual([
+        { text: { parent, body: '最初の指示', setupNote: true }, timeoutMs: 1000 },
+        { text: parentMessageText(parent, 'あとの指示'), timeoutMs: 1000 },
+      ]);
+      each.dispose();
+    }
+  });
+
+  it('引き継いだら、前のアプリが送る前に終えた親の指示（記録の waiting）を、受け付けるようになってから待ち始めた順に送る', async () => {
+    const id = await previous(line.user('はじめ'));
+    const store = (app.manager as unknown as { store: SessionStore }).store;
+    const parent = '0f8c2a1e-0000-4000-8000-000000000001';
+    store.update(id, {
+      waiting: [
+        { text: { parent, body: '最初の指示', setupNote: true }, timeoutMs: 60_000 },
+        { text: parentMessageText(parent, 'あとの指示'), timeoutMs: 60_000 },
+      ],
+    });
+    app.host.hosted = [hosted(id)];
+    await app.manager.adopt();
+    const pipe = attached(id)!;
+    pipe.replayed();
+    await app.waitFor('送り直し', () => pipe.prompts.length === 2);
+    expect(pipe.prompts).toMatchObject([
+      { message: { content: parentMessageText(parent, '最初の指示') }, priority: 'later' },
+      { message: { content: parentMessageText(parent, 'あとの指示') }, priority: 'later' },
+    ]);
+    expect(store.get(id)?.waiting).toBeNull();
   });
 
   it('引き継いだら、前のアプリが残した送信中・順番待ちの発言を戻す。前のアプリの頃に済んだもの・会話に出たものは外す', async () => {

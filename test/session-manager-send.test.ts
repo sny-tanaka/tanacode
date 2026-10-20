@@ -347,6 +347,21 @@ describe('submitWhenReady', () => {
     expect(pipe.prompts.map((p) => p.message.content)).toEqual([[imageBlock('a.png'), { type: 'text', text: 'ひとつめ' }], 'ふたつめ']);
   });
 
+  it('待ち始めた順に送る（あとから待ち始めたものが、見直しの間合いで先に送られない）', async () => {
+    app.answers.set('initialize', null);
+    const { id, pipe } = app.create();
+    // 子への最初の指示を待っている間に、親が次の指示を送った（見直しは 100ms ごと。あとのものの見直しが、受け付けられるように
+    // なった直後に来るように、50ms ずらして待ち始め、受け付けられるようになるのは、先のものの見直しの直後にする）
+    const first = app.manager.submitWhenReady(id, '最初の指示', 10_000);
+    await sleep(50);
+    const second = app.manager.submitWhenReady(id, 'あとの指示', 10_000);
+    await sleep(60);
+    pipe.respond(pipe.requests('initialize')[0].request_id, INIT_RESPONSE);
+    await Promise.all([first, second]);
+    // 直す前は、あとの指示が先に送られることがあった（最初の指示を追い越して、子が先に動き出す）
+    expect(pipe.prompts.map((p) => p.message.content)).toEqual(['最初の指示', 'あとの指示']);
+  });
+
   it('取りやめ・時間切れは、送らずに失敗する。待つのをやめたら、作業中として数えていた分を戻す', async () => {
     app.answers.set('initialize', null);
     const { id, pipe } = app.create();

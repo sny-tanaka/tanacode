@@ -35,6 +35,7 @@ import { branchBase, branchFiles, git, repoInfo } from './git';
 import { textResult, type ToolResult } from './mcp-bridge';
 import type { ScheduledMessages } from './scheduled-messages';
 import type { ScheduledMessage } from '@shared/scheduled';
+import type { WaitingText } from './session-manager';
 import type { WorktreeSetupTrouble } from './worktree';
 import { SEND_FAILURE, SendError } from './send-error';
 import { SessionNotices } from './session-notices';
@@ -77,8 +78,9 @@ export type SessionsHost = {
   // モデル・エフォート・設定ファイルを変える。動いていれば、Claude Code を起動し直して同じ会話を続ける
   configure(id: string, options: SessionOptions): Promise<void> | void;
   open(id: string): Promise<void>;
-  // 手が空いたら送る。text が関数なら、送る直前に呼んで文を作る（worktree の準備の結果を、最初の指示に添えるため）
-  submitWhenReady(id: string, text: string | (() => string), timeoutMs: number): Promise<void>;
+  // 手が空いたら送る（待ち始めた順に）。子への最初の指示（{ parent, body, setupNote }）は、送る直前に worktree の準備の結果を添える。
+  // keep: 送る前にアプリを終えても記録に残し、次にそのセッションを起動したら送り直す
+  submitWhenReady(id: string, text: WaitingText, timeoutMs: number, options?: { keep?: boolean }): Promise<void>;
   // チャットとターミナルモードを切り替えている途中か（状態は starting だが、終わるまで送れない）
   switchingTerminal(id: string): boolean;
   // 作業を中断する。止めるターンが開いていたら true（ターンの合間は、状態が作業中でも止めるものが無い）
@@ -266,6 +268,8 @@ export class SessionsControl {
       // 親が利用枠で止まって再開を待っている間は、子の知らせを送らない（送っても、親のターンが同じ枠で断られるだけ）。
       // 再開して手が空いたら送る
       holds: (parentId) => this.usageResumeAt(parentId) !== null,
+      // 親が忙しくて預かっている間にアプリを終えても、次のアプリが戻して、親の手が空いたら送る
+      channel: 'sessions',
     });
   }
 
@@ -480,10 +484,9 @@ export class SessionsControl {
     if (name) host.rename(id, name);
     this.lastState.set(id, host.stateOf(id));
     // 起動（worktree の準備も）が終わってから送る。待たずに返す（結果は wait_sessions で待つ）
-    // worktree の準備でうまくいかなかったこと（install の失敗など）は、送るときに指示の本文に添える（子の Claude が、依存が足りないことを知るため。
-    // 囲みの外に足すと、親からの指示と読めなくなる）
-    const firstPrompt = () => parentMessageText(caller.id, withSetupNote(prompt, host.worktreeSetup(id)));
-    void host.submitWhenReady(id, firstPrompt, FIRST_PROMPT_TIMEOUT_MS).catch((error: unknown) => {
+    // worktree の準備でうまくいかなかったこと（install の失敗など）は、送るときに指示の本文に添える（SessionManager の waitingText）。
+    // 送る前にアプリを終えても、次のアプリが子を引き継いだら送る（keep）
+    void host.submitWhenReady(id, { parent: caller.id, body: prompt, setupNote: true }, FIRST_PROMPT_TIMEOUT_MS, { keep: true }).catch((error: unknown) => {
       console.error('子セッションに最初の指示を送れませんでした', error);
       // 送れなかったこと（準備が長すぎた・止まったなど）は、親に知らせる（親は、送られるものとして待っている）
       if (parentId) this.notices.add(caller.id, `first:${id}`, { child: id, state: 'idle', at: Date.now(), firstPrompt: error instanceof Error ? error.message : String(error) });
@@ -545,7 +548,8 @@ export class SessionsControl {
     // 作業中・起動中・止まっている子は、手が空くまでアプリが預かってから打つ（作業中に打つと、そのあいだに出た許可の確認で、
     // Enter や数字が選択になってしまうことがあるため）。待たずに返す
     if (state === 'exited') await host.open(child.id);
-    void host.submitWhenReady(child.id, text, SEND_TIMEOUT_MS).catch((error: unknown) => console.error('子セッションに指示を送れませんでした', error));
+    // 送る前にアプリを終えても、次のアプリが子を引き継いだら（止まっている子は、次に起動したら）送る（keep）
+    void host.submitWhenReady(child.id, text, SEND_TIMEOUT_MS, { keep: true }).catch((error: unknown) => console.error('子セッションに指示を送れませんでした', error));
     return json({
       session_id: child.id,
       state: host.stateOf(child.id),
@@ -1370,19 +1374,6 @@ function setupProblemsOf(trouble: WorktreeSetupTrouble | null): { setup_problems
       ...(trouble.error ? [`setting up node_modules failed: ${trouble.error}`] : []),
     ],
   };
-}
-
-// 子への最初の指示に添える、worktree の準備でうまくいかなかったこと（画面の言語。子のチャットにも、親の指示の一部として出る）
-function withSetupNote(prompt: string, trouble: WorktreeSetupTrouble | null): string {
-  if (!trouble) return prompt;
-  const separator = t('main.format.shortListSeparator');
-  const at = (dir: string) => dir || t('main.worktree.topDir');
-  const problems = [
-    ...trouble.installsFailed.map((i) => t('main.worktree.commandFailedAt', { command: i.command, dir: at(i.dir), code: i.exitCode })),
-    ...trouble.notCopied.map((dir) => t('tools.notice.setupNotCopied', { dir: at(dir) })),
-    ...(trouble.error ? [t('main.worktree.prepareFailed', { error: trouble.error })] : []),
-  ].join(separator);
-  return `${prompt}\n\n${t('tools.notice.setupNote', { problems })}`;
 }
 
 // 子が利用枠に当たって止まった知らせ。再開の予約があればその時刻、無ければ枠が戻る時刻を伝える（時刻は、Claude が人に伝えるときの形）
