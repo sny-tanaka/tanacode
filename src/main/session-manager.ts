@@ -107,6 +107,7 @@ import type {
   TaskNotificationMessage,
   TaskStartedMessage,
   UsageResponse,
+  UserInput,
   UserMessage,
 } from './stream/protocol';
 import { notificationEvent } from './stream/notification';
@@ -164,8 +165,10 @@ const PARTIAL_INTERVAL_MS = 50;
 export const DEFAULT_PTY_SIZE = { cols: 120, rows: 40 };
 
 // 送ったが、まだ会話に出ていない発言。at: 送った時刻 / shown: チャットに出す（発言。親セッション・子セッションの知らせや
-// 最適化圧縮の文は出さないが、会話に出るまでは作業中に数える）
-type Unsent = UnsentPrompt & { at: number; shown: boolean };
+// 最適化圧縮の文は出さないが、会話に出るまでは作業中に数える）/ input: 送った user の行（引き継いだ claude の分は無い）/
+// started: Claude Code がターンに取り込んだ（会話ログに書かれる）/ carried: 再起動で止めた claude が、取り込まずに捨てた。
+// 起動し直した claude に、同じ行を送り直す（resendCarried）
+type Unsent = UnsentPrompt & { at: number; shown: boolean; input?: UserInput; started?: true; carried?: true };
 
 type Runtime = {
   process: ClaudeSession | null;
@@ -1602,7 +1605,12 @@ export class SessionManager {
         // ターミナルモードなら、TUI で起動し直す
         this.start(id, mode, null, rt.terminal ? 'tui' : 'stream');
       } catch (error) {
-        // 起動し直せなかった。止めた claude の終わりは出していないので、ここで出す（チャットの「再開」で開き直せる）
+        // 起動し直せなかった。止めた claude の終わりは出していないので、ここで出す（チャットの「再開」で開き直せる）。
+        // 送り直すはずだった発言は、送る先が無いので、順番待ちから外す
+        if (rt.unsent.size > 0) {
+          rt.unsent.clear();
+          this.emitQueue(id, rt);
+        }
         this.pushEvents(id, [{ type: 'process-exit', exitCode: 0 }]);
         throw error;
       }
@@ -1634,7 +1642,9 @@ export class SessionManager {
       const read = await Promise.all(attachments.map(imageBlock));
       // 再起動で止めている claude には書かない（閉じかけで消える。止め終わるまで rt.process に残る）。画像を読んでいる間に再起動が
       // 始まったときも、起動し直した claude が受け付けるようになるまで待ち、書く先を取り直す
-      if (rt.restarting || !rt.ready) await this.untilRestarted(id, rt);
+      if (rt.restarting || !rt.ready || hasCarried(rt)) await this.untilRestarted(id, rt);
+      // 画像を読んでいる間に、ターミナルモードへの切り替えが始まった。止めている最中の claude に書くと、発言が黙って消える
+      if (rt.terminal || rt.switching) throw new SendError('terminalMode');
       const process = rt.process;
       const client = process?.client;
       if (!process || !client) throw new SendError('notRunning');
@@ -1645,6 +1655,7 @@ export class SessionManager {
       if (!text && images.length === 0 && kept.length === 0) return;
       const content: string | ContentBlock[] = images.length === 0 ? text : [...images, ...(text ? [{ type: 'text' as const, text }] : [])];
       const uuid = randomUUID();
+      const input: UserInput = { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, uuid, ...(kept.length > 0 ? { pasted_content: kept } : {}), ...(priority ? { priority } : {}) };
       // スラッシュコマンドは発言として残らないものが多いので、送信中に入れない。親の指示などは、会話に出たときと同じ形で出す
       // （子セッション・予約・チェックリストの知らせや最適化圧縮の文は出さないが、会話に出るまでは作業中に数える）
       if (!text.trimStart().startsWith('/')) {
@@ -1658,10 +1669,11 @@ export class SessionManager {
           ...(view?.parent ? { parent: view.parent } : {}),
           at: Date.now(),
           shown: view !== null,
+          input,
         });
         this.emitQueue(id, rt);
       }
-      client.send({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, uuid, ...(kept.length > 0 ? { pasted_content: kept } : {}), ...(priority ? { priority } : {}) });
+      client.send(input);
       this.changed(id);
       this.expireSending(id, rt, uuid);
     };
@@ -1672,7 +1684,8 @@ export class SessionManager {
 
   // 再起動の途中に送った発言を、起動し直した claude（止められなかったときは、止めようとした claude）が受け付けるようになるまで待たせる。
   // 止めている間にアーカイブ・一覧から削除した・起動し直せなかった・受け付ける前に終わった（claude がいない）ときと、待ちきれないときは、
-  // 送らずに失敗する（止めた claude のまま待ち続けて、送信が返らなくならないように）。また再起動して claude が変わっても、受け付けるまで待つ
+  // 送らずに失敗する（止めた claude のまま待ち続けて、送信が返らなくならないように）。また再起動して claude が変わっても、受け付けるまで待つ。
+  // 止めた claude が捨てた発言の送り直し（resendCarried）が済むまでも待つ（あとから送った発言が追い越さない）
   private async untilRestarted(id: string, rt: Runtime): Promise<void> {
     // 受け付けるまでの期限（再起動が終わるたびに数え直す）
     let deadline: number | null = null;
@@ -1684,7 +1697,7 @@ export class SessionManager {
         deadline = null;
       }
       if (this.gone(id, rt) || !rt.process) throw new SendError('exited');
-      if (rt.ready) return;
+      if (rt.ready && !hasCarried(rt)) return;
       deadline ??= Date.now() + this.restartSendWaitMs;
       if (Date.now() > deadline) throw new SendError('notReady');
       await sleep(100);
@@ -1696,14 +1709,35 @@ export class SessionManager {
     return this.runtimes.get(id) !== rt || rt.closing;
   }
 
-  // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る
+  // 受け付けの知らせも会話ログの行も来ないまま、送信中が残らないよう、時間を区切る。送り直すのを待っているもの（carried）と、
+  // 送り直したもの（送った時刻が変わる。送り直したときから数え直す）は、ここでは外さない
   private expireSending(id: string, rt: Runtime, uuid: string): void {
+    const at = rt.unsent.get(uuid)?.at;
     setTimeout(() => {
-      if (rt.unsent.get(uuid)?.state !== 'sending') return;
+      const prompt = rt.unsent.get(uuid);
+      if (prompt?.state !== 'sending' || prompt.carried || prompt.at !== at) return;
       rt.unsent.delete(uuid);
       this.emitQueue(id, rt);
       this.changed(id);
     }, SENDING_TIMEOUT_MS).unref?.();
+  }
+
+  // 再起動で止めた claude が捨てた発言（carried）を、起動し直した claude に、送ったときと同じ行（uuid・中身・priority）で送り直す。
+  // 受け付けられるようになり、前の会話ログを読み終えてから（止める直前に取り込まれて会話ログに出ていたものは、読み直したときに外れる）。
+  // 受け付けるようになるのを待っている送信（submit・submitWhenReady）は、これが済むまで待つので、追い越さない
+  private resendCarried(id: string, rt: Runtime): void {
+    const client = rt.process?.client;
+    if (!client || !rt.ready || !rt.historyLoaded || !hasCarried(rt)) return;
+    for (const prompt of rt.unsent.values()) {
+      if (!prompt.carried) continue;
+      delete prompt.carried;
+      prompt.state = 'sending';
+      prompt.at = Date.now();
+      client.send(prompt.input!);
+      this.expireSending(id, rt, prompt.id);
+    }
+    this.emitQueue(id, rt);
+    this.changed(id);
   }
 
   // 起動が終わる（入力を受け付けられる）のを待ってから、ターンが終わってから届く発言（priority: later）として送る
@@ -1738,7 +1772,8 @@ export class SessionManager {
         }
         if (rt.process !== process) throw new SendError('exited');
         if (signal?.aborted) throw new SendError('cancelled');
-        if (rt.ready && !rt.preparing) break;
+        // 再起動で捨てられた発言の送り直し（resendCarried）が済むまでは送らない（追い越さない）
+        if (rt.ready && !rt.preparing && !hasCarried(rt)) break;
         if (Date.now() > deadline) throw new SendError('busy');
         await sleep(100);
       }
@@ -1819,8 +1854,11 @@ export class SessionManager {
         rt.process?.kill();
         this.settingsFiles?.release(id);
       } else {
-        // 次のアプリが claude を引き継いだときに、送信中・順番待ちを戻せるよう残す
-        const unsent = rt.process ? [...rt.unsent.values()].map(({ at: _, ...prompt }) => prompt) : [];
+        // 次のアプリが claude を引き継いだときに、送信中・順番待ちを戻せるよう残す（送った行は残さない。画像を含み、引き継ぐ claude には
+        // 送り直さない）。再起動で送り直すのを待っているものは、引き継ぐ claude の順番待ちに無いので残さない
+        const unsent = rt.process
+          ? [...rt.unsent.values()].filter((prompt) => !prompt.carried).map((prompt) => ({ ...unsentPrompt(prompt), shown: prompt.shown }))
+          : [];
         this.store.update(id, { unsent: unsent.length > 0 ? unsent : null });
         rt.process?.detach();
       }
@@ -2026,8 +2064,11 @@ export class SessionManager {
     runtime.redrawFromHost = adopted?.kind === 'pty' ? adopted.id : null;
     runtime.freshConversation = false;
     runtime.requests.clear();
-    // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）
-    runtime.unsent = new Map(adopted && !tui ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : []);
+    // 引き継ぐ claude には、前のアプリが送って、まだ会話に出ていなかった発言を戻す（済んだものは、送り直しの行と会話ログで外れる）。
+    // 起動し直す claude には、再起動で止めた claude が捨てた発言を持ち越す（起動したら送り直す。resendCarried）
+    runtime.unsent = adopted
+      ? new Map(!tui ? (record.unsent ?? []).map((prompt) => [prompt.id, { ...prompt, at: Date.now() }]) : [])
+      : new Map(!tui ? [...runtime.unsent].filter(([, prompt]) => prompt.carried) : []);
     if (record.unsent) this.store.update(id, { unsent: null });
     // 引き継ぐ claude は、前のアプリが決めたモードのまま動いているので、記録から戻す（Claude Code が知らせたら、そちらにする）
     runtime.knownMode = adopted ? (record.knownMode ?? null) : permissionMode;
@@ -2143,7 +2184,13 @@ export class SessionManager {
           // 書きかけのまま終わった文は、会話ログに出ないので捨てる（このあとの終了の知らせと一緒に送る）
           runtime.partial.clear();
           if (runtime.unsent.size > 0) {
-            runtime.unsent.clear();
+            // 再起動で止めた claude が取り込まなかった発言は、起動し直した claude に送り直す（resendCarried）。捨てた知らせ（discarded）が
+            // 来なかったもの・受け付けの知らせの前のものも。取り込んだもの（started）は会話ログに出ているので、読み直した行で出る
+            const restarting = runtime.restarting?.process === process;
+            for (const [uuid, prompt] of runtime.unsent) {
+              if (restarting && !prompt.started && prompt.input) prompt.carried = true;
+              else runtime.unsent.delete(uuid);
+            }
             this.emitQueue(id, runtime);
           }
           runtime.tuiTurn = false;
@@ -2190,6 +2237,7 @@ export class SessionManager {
         onHistoryLoaded: () => {
           runtime.historyLoaded = true;
           this.historySettled(id, runtime, adopted !== null);
+          this.resendCarried(id, runtime);
         },
         onSwitch: (nextClaudeSessionId) => {
           this.store.update(id, { claudeSessionId: nextClaudeSessionId });
@@ -2354,6 +2402,7 @@ export class SessionManager {
       this.pushEvents(id, [{ type: 'ready' }]);
       this.reconcileRemote(id, rt);
     }
+    this.resendCarried(id, rt);
     this.emitSessions();
   }
 
@@ -2679,9 +2728,14 @@ export class SessionManager {
       if (!past) rt.promptLine = message.command_uuid;
     }
     if (!unsent) return;
+    if (message.state === 'started') unsent.started = true;
     if (message.state === 'queued' && unsent.state === 'sending') {
       unsent.state = 'queued';
       this.emitQueue(id, rt);
+    } else if (!past && (message.state === 'cancelled' || message.state === 'discarded') && rt.restarting?.process === rt.process && !unsent.started && unsent.input) {
+      // 再起動で止めている claude が、取り込まずに捨てた（end_session で終わるとき、順番待ちの発言を discarded と知らせる。2.1.303 で実測）。
+      // 黙って消さず、起動し直した claude に送り直す（順番待ちには出したまま）
+      unsent.carried = true;
     } else if (message.state === 'cancelled' || message.state === 'discarded' || message.state === 'completed') {
       rt.unsent.delete(message.command_uuid);
       this.emitQueue(id, rt);
@@ -2978,7 +3032,7 @@ export class SessionManager {
 
   // 送ったが、まだ会話に出ていない発言を、チャットに知らせる
   private emitQueue(id: string, rt: Runtime): void {
-    const prompts = [...rt.unsent.values()].filter((prompt) => prompt.shown).map(({ at: _, shown: __, ...prompt }) => prompt);
+    const prompts = [...rt.unsent.values()].filter((prompt) => prompt.shown).map(unsentPrompt);
     this.pushEvents(id, [{ type: 'queue', prompts }]);
   }
 
@@ -3308,6 +3362,13 @@ export class SessionManager {
       this.emitQueue(id, rt);
       this.changed(id);
     }
+    // 再起動で送り直すのを待っている発言が、起動し直した claude が読み直した会話ログに出ていた（止める直前に取り込まれていた）。送り直さない
+    const replayed = rt && past && conversation ? sentUuidOf(conversation) : null;
+    if (rt && replayed && rt.unsent.get(replayed)?.carried) {
+      rt.unsent.delete(replayed);
+      this.emitQueue(id, rt);
+      this.changed(id);
+    }
     // ターンの最後の応答（応答の前に終わったターンは、始めた発言）が会話ログに出たら、待っていたターンの終わりを出す
     const waitFor = rt?.turnEnding?.waitFor;
     if (rt && waitFor && (entry.uuid === waitFor || arrived === waitFor)) this.flushTurnEnd(id, rt);
@@ -3376,6 +3437,17 @@ function withVersion(event: UnknownEvent, rt: Runtime): UnknownEvent {
 // いちばん前の、Claude Code が答えを待っている要求
 function firstRequest(rt: Runtime): CanUseToolRequest | null {
   return rt.requests.values().next().value ?? null;
+}
+
+// 送った発言の控えの、画面と記録に出す形（送った行などのアプリの中の印は外す）
+function unsentPrompt({ id, text, pastes, images, state, parent }: Unsent): UnsentPrompt {
+  return { id, text, pastes, images, state, ...(parent ? { parent } : {}) };
+}
+
+// 再起動で止めた claude が捨てた発言のうち、まだ送り直していないものがある
+function hasCarried(rt: Runtime): boolean {
+  for (const prompt of rt.unsent.values()) if (prompt.carried) return true;
+  return false;
 }
 
 // 会話ログの行が、アプリが送った発言のものなら、その uuid（発言の行・作業中に送った発言の queued_command の attachment）
