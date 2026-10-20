@@ -29,12 +29,14 @@ let read: { uuid: string; isHistory: boolean }[];
 // 会話ログから消えたと知らされた行（知らせごと）
 let removed: string[][];
 
-function start(): void {
+// onMissingParent: 親の行がまだ届いていない行を読んだときに、その親がもう来ないかを答える（省くと、いつも待つ）
+function start(onMissingParent?: (parent: string) => boolean): void {
   tail = new TranscriptTail(
     file,
     (entry, isHistory) => read.push({ uuid: (entry as Row).uuid, isHistory }),
     undefined,
     (uuids) => removed.push(uuids),
+    onMissingParent,
   );
   tail.start();
 }
@@ -89,6 +91,37 @@ describe('TranscriptTail', () => {
     start();
     appendFileSync(file, line(row('a1', 'missing')) + line(row('a2', 'a1')));
     await vi.waitFor(() => expect(uuids()).toEqual(['a1', 'a2']), { timeout: 3000 });
+  });
+
+  // 取り消された応答の行が、書かれたあと、読む前に消された（その行を親にする取り直しの行だけが届く）。
+  // 直す前: 来ない親を 1 秒待ってから出したので、取り直した応答とターンの終わりが遅れ、その間、取り消された応答の書きかけの文が残った
+  it('親がもう来ないと分かれば（onMissingParent が true）、待たずに出す。その親を待っていた行は先に、書かれた順に出す', async () => {
+    const asked: string[] = [];
+    let gone = false;
+    start((parent) => (asked.push(parent), gone));
+    // まだ分からないうちは待つ
+    appendFileSync(file, line(row('a1', 'removed')));
+    await vi.waitFor(() => expect(asked).toEqual(['removed']));
+    expect(uuids()).toEqual([]);
+    gone = true;
+    appendFileSync(file, line(row('a2', 'removed')) + line(row('a3', 'a2')));
+    // HOLD_MS（1 秒）より早く出る
+    await vi.waitFor(() => expect(uuids()).toEqual(['a1', 'a2', 'a3']), { timeout: 600 });
+    // 来ないと分かった親は、もう聞かない
+    appendFileSync(file, line(row('a4', 'removed')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['a1', 'a2', 'a3', 'a4']), { timeout: 600 });
+    expect(asked).toEqual(['removed', 'removed']);
+  });
+
+  it('親がもう来ないと分からなければ（onMissingParent が false）、これまでどおり待つ', async () => {
+    const asked: string[] = [];
+    start((parent) => (asked.push(parent), false));
+    appendFileSync(file, line(row('a1', 'later')));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(asked).toEqual(['later']);
+    expect(uuids()).toEqual([]);
+    appendFileSync(file, line(row('later', null, 'user')));
+    await vi.waitFor(() => expect(uuids()).toEqual(['later', 'a1']));
   });
 
   it('親を待っている行と関係のない行は、待たずに出す', async () => {
