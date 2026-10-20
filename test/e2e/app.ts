@@ -58,6 +58,8 @@ export class E2EApp {
   readonly api = new MockApi();
   // 画面（レンダラー）のコンソールに出たエラー
   readonly consoleErrors: string[] = [];
+  // 画面のコンソールに出た警告（失敗したときの手がかり。コピーできなかったわけなど、画面がエラーにしないもの）
+  private readonly consoleWarnings: string[] = [];
   // メインプロセスの出力（失敗したときの手がかり）
   private readonly output: string[] = [];
   // アプリに渡す環境変数（prepare で決める）
@@ -199,6 +201,7 @@ export class E2EApp {
     this.window.setDefaultTimeout(TIMEOUT_MS);
     this.window.on('console', (message) => {
       if (message.type() === 'error') this.consoleErrors.push(message.text());
+      else if (message.type() === 'warning') this.consoleWarnings.push(message.text());
     });
     this.window.on('pageerror', (error) => this.consoleErrors.push(String(error)));
     if (COVERAGE) {
@@ -289,6 +292,8 @@ export class E2EApp {
       .catch((error: unknown) => String(error));
     // ターミナルモードのセッションなら、Claude Code の画面も残す（チャットのセッションを切り替えると Claude Code を開き直すので、
     // 切り替えはしない）。落ちたときの手がかりに残すだけで、確かめには使わない（TUI の画面はテストで読まない。決めたこと）
+    // 画面の文書にフォーカスがあるか（Clipboard API など、フォーカスの無い文書からは断られるものがある）
+    const focused = await page?.evaluate(() => document.hasFocus()).catch((error: unknown) => String(error));
     let screen = '';
     if (page) {
       try {
@@ -305,6 +310,9 @@ export class E2EApp {
         this.output.join(''),
         '# 画面のコンソールのエラー',
         ...this.consoleErrors,
+        '# 画面のコンソールの警告',
+        ...this.consoleWarnings,
+        `# 画面の文書にフォーカスがあるか: ${String(focused)}`,
         '# モックの API の呼び出し',
         ...this.api.requests,
         '# セッションの一覧',
@@ -486,8 +494,21 @@ export class E2EApp {
       const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click'];
       const listener = (e: Event) => entries.push(snapshot(e.type, e as MouseEvent));
       for (const type of types) window.addEventListener(type, listener, true);
+      // チャットの一覧が押している間に動いたとき、いつ・どれだけ動いたか（スクロールは泡立たないので、捕まえる側で受ける）。
+      // 一覧の子の数も残す（描き直しで一覧が作り直されたかを見分ける）
+      const scrolled = (e: Event) => {
+        if (!(e.target instanceof Element) || !e.target.classList.contains('chat-list')) return;
+        entries.push({ ...snapshot('scroll'), children: e.target.childElementCount });
+      };
+      document.addEventListener('scroll', scrolled, true);
       entries.push(snapshot('start'));
-      w.__e2ePress = { entries, stop: () => types.forEach((type) => window.removeEventListener(type, listener, true)) };
+      w.__e2ePress = {
+        entries,
+        stop: () => {
+          types.forEach((type) => window.removeEventListener(type, listener, true));
+          document.removeEventListener('scroll', scrolled, true);
+        },
+      };
     }, element);
     let entries: Record<string, string | number | boolean>[] = [];
     try {
