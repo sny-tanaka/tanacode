@@ -159,7 +159,7 @@ stream-json には出ません。Claude Code は、会話の処理が作った s
 | `model_consent_fallback` | 人が選んだ、モデルの切り替え | ⏭ tanacode の起動のしかたでは出ない（モデルを選ばせない） |
 | `agents_killed` | 裏のエージェントの停止 | ⏭ 使い道がない（止めたことは、裏のタスクの終わりで分かる） |
 
-会話ログの attachment の `relevant_memories`（思い出したメモリ。`memories[].path`）も、お知らせ「メモリを N 件思い出しました」（開くとファイルの名前）にします。
+会話ログの attachment の `relevant_memories`（思い出したメモリ。`memories[].path`）も、お知らせ「メモリを N 件思い出しました」（開くとファイルの名前）にします。`memory_saved` と `relevant_memories` の形が違う（ファイルの一覧が無い・パスでないものが混じる）ときは、未知のイベント（形の崩れ）にします。
 
 会話ログの応答の行のうち、合成の API エラー（`isApiErrorMessage`）で `apiError` が `usage_limit_reached` のものは、プランの利用枠に当たって止まった印として読みます（枠が戻る時刻は `apiErrorParams.rate_limit_info.resetsAt`（秒）、当たった枠は `rateLimitType`。`quotaLimits` にも同じ中身。`src/shared/usage-limit.ts`）。Claude Code は、OAuth のトークンで動いているときだけ、API の 429 と枠のヘッダー（`anthropic-ratelimit-unified-status: rejected` など）をこの形にします（API キーでは、ただの 429 のエラー。2.1.302 で実測）。
 
