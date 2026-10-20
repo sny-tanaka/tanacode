@@ -45,9 +45,11 @@ type Check = 'idle' | 'checking' | 'confirmed' | 'failed';
 
 // 最新バージョンの印。押すと、今すぐ確かめる（ふだんは起動時と 1 時間ごと）。確かめている間はぐるぐるにする。
 // 最新のままなら、チェックを描き直して、確かめたことを見せる。新しいバージョンが見つかれば、印がダウンロードの印に変わる。
-// 確かめられなかったら失敗の印にして、次に押すまでそのままにする（ふだんの確認は、確かめられなくても何も出さない）
+// 確かめられなかったら失敗の印にして、次に確かめられるまで（押して確かめ直す・ふだんの確認で確かめられる）そのままにする
+// （ふだんの確認は、確かめられなくても何も出さない。確かめられたのに失敗の印を残すと、もう確かめられるのに「確かめられない」と出たままになる）
 function LatestMark() {
   const [check, setCheck] = useState<Check>('idle');
+  useEffect(() => window.tanacode.appUpdate.onChecked(() => setCheck((c) => (c === 'failed' ? 'idle' : c))), []);
   const run = () => {
     setCheck('checking');
     window.tanacode.appUpdate.check().then(

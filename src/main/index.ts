@@ -1339,6 +1339,7 @@ app.whenReady().then(async () => {
       sendAppUpdate(update);
     },
     (url, init) => net.fetch(url, init),
+    () => send(IpcChannel.AppUpdateChecked, undefined),
   );
   registerIpc();
   buildMenu();
