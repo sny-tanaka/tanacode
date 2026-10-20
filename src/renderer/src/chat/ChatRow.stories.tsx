@@ -212,10 +212,10 @@ export const 未知のイベント_長い行: Story = {
     item: {
       kind: 'unknown',
       id: 'unknown:big',
-      name: 'attachment/structured_output',
+      name: 'attachment/new_record',
       problem: 'unknown',
       count: 1,
-      samples: [{ id: 'unknown:big', source: 'transcript', version: '2.1.302', raw: json({ type: 'attachment', attachment: { type: 'structured_output', data: 'x'.repeat(3000) } }), truncated: 214_322 }],
+      samples: [{ id: 'unknown:big', source: 'transcript', version: '2.1.302', raw: json({ type: 'attachment', attachment: { type: 'new_record', data: 'x'.repeat(3000) } }), truncated: 214_322 }],
     },
   },
   play: openRow,
