@@ -3,6 +3,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import { toolTarget, type TranscriptEntry } from '@shared/chat';
 import { clip, type ContextItem, type ContextItemKind, type SessionContext } from '@shared/context';
 import { t } from '@shared/i18n';
+import { PARENT_INSTRUCTIONS_FILE, parseInstructions, parseParentRole } from '@shared/project-instructions';
 import { conversationOf, type ConversationEntry } from '@shared/transcript-line';
 import { branchCut, readEntries, type ChainEntry } from './chat-log';
 import { EDIT_TOOLS, READ_TOOLS } from './knowledge-tracker';
@@ -283,6 +284,18 @@ export class ContextTracker {
       if (toolUseId && tool) return this.addResult(uuid, toolUseId, tool, tokens);
       return this.addToTopic(uuid, tokens);
     }
+    // 「親にする」で読ませた TANACODE_PARENT.md は、ファイルごとの行にする（プロファイルとフォルダの両方のことがある。前書きは、はじめの
+    // ファイルの行に入れる）。「親として始める」であとに続く最初の指示は、ふつうの発言のやりとり
+    const parentRole = !origin.meta ? parseParentRole(text) : null;
+    if (parentRole) {
+      const rest = estimateTokens(parentRole.rest);
+      this.startTopic(uuid, promptLabel(parentRole.rest) ?? t('main.context.parentRole', { file: PARENT_INSTRUCTIONS_FILE }), rest);
+      const sections = parentRole.files.map((file) => estimateTokens(file.text));
+      const others = sections.slice(1).reduce((sum, n) => sum + n, 0);
+      parentRole.files.forEach((file, i) => this.addFile(uuid, file.path, false, i === 0 ? tokens - rest - others : sections[i]));
+      if (parentRole.files.length === 0) this.addToTopic(uuid, tokens - rest);
+      return;
+    }
     const prompt = !origin.meta && !entry.interruptedMessageId ? promptLabel(text.trimStart()) : null;
     if (prompt) return this.startTopic(uuid, prompt, tokens);
     // 圧縮のコマンドの記録・コマンドの出力・メタの行・中断の知らせなどは、今のやりとりに足す
@@ -352,6 +365,18 @@ export class ContextTracker {
         meta: false,
         queued: true,
       });
+    }
+    // TANACODE.md（アプリのフックが、会話の始まり・/clear・圧縮のあとなどに渡す。プロファイルとフォルダの両方のことがある）は、
+    // CLAUDE.md と同じく、ファイルごとの行にする
+    if (a.type === 'hook_additional_context' && Array.isArray(a.content)) {
+      let rest = 0;
+      for (const text of a.content) {
+        const value = typeof text === 'string' ? text : '';
+        const blocks = parseInstructions(value);
+        for (const block of blocks) this.addFile(uuid, block.path, false, estimateTokens(block.text));
+        if (blocks.length === 0) rest += estimateTokens(value);
+      }
+      return this.addToTopic(uuid, rest);
     }
     const tokens = estimateTokens(attachmentText(a));
     // hooks が足した文は、そのやりとりに入れる

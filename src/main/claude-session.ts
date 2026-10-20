@@ -3,6 +3,8 @@ import type { PermissionMode } from '@shared/screen';
 import type { PreparedSettings } from './settings-files';
 import { browserGateEnv, browserMcpServer, type BrowserMcpLaunch } from './browser-bridge';
 import { checklistHookEnv, checklistMcpServer } from './checklist-bridge';
+import { instructionsHookEnv, type InstructionsLaunch } from './instructions-launch';
+import { instructionDirs } from './project-instructions';
 import { walkthroughMcpServer } from './walkthrough-bridge';
 import { mcpArgs, type McpLaunch, type McpServerEntry } from './mcp-bridge';
 import { sessionsGateEnv, sessionsMcpServer, type SessionsMcpLaunch } from './sessions-bridge';
@@ -13,7 +15,7 @@ import { ASK_FILE_ENV } from '@shared/chat';
 import { STATUS_FILE_ENV, sessionSettings } from './statusline';
 import { TranscriptFollower } from './transcript-follower';
 import type { EntryHandler, MissingParentHandler, RemovedHandler } from './transcript-tail';
-import { projectLogDir } from './claude-config';
+import { claudeConfigDir, projectLogDir } from './claude-config';
 import { StreamClient, type StreamEvents } from './stream/client';
 import { endSession } from './stream/internal';
 import { LineLog } from './stream/log';
@@ -58,6 +60,8 @@ type BaseOptions = {
   walkthrough?: McpLaunch | null;
   // 人のターミナルの MCP サーバーを足すときの材料。null なら足さない（メニューでオフにしている）。child: 子セッション（読むツールだけで、打つ前の確認のフックも足さない）
   terminal?: TerminalMcpLaunch | null;
+  // TANACODE.md を渡すフックを足すときの材料。null なら足さない
+  instructions?: InstructionsLaunch | null;
   // プロファイルの Claude Code の設定のフォルダ（CLAUDE_CONFIG_DIR として渡す）。null・無しは既定のプロファイルで、アプリの環境変数のまま
   claudeDir?: string | null;
   // ワークスペースに追加したフォルダ（--add-dir）。Claude Code は、cwd と同じように読み書きを許す
@@ -207,9 +211,10 @@ export class ClaudeSession {
   // アプリ内ブラウザを足すときは、JavaScript の実行の確認のフックが使う環境変数も（フックは Claude Code の環境で動く）。
   // セッションの MCP を足すときは、子セッションの起動の確認のフックが使う環境変数も。
   // チェックリストを足すときは、チェックリストを使い続けさせるフックが使う環境変数も。
-  // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も
+  // 人のターミナルを足すとき（子セッションでないとき）は、打つ前の確認のフックが使う環境変数も。
+  // TANACODE.md を渡すフックを足すときは、そのフックが使う環境変数（探すフォルダ）も
   private env(): Record<string, string> {
-    const { sessionId, statusFile, askFile, kind } = this.options;
+    const { sessionId, statusFile, askFile, kind, cwd, worktreeRoot } = this.options;
     return {
       ...claudeEnv(kind, this.options.claudeDir ?? null),
       [STATUS_FILE_ENV]: statusFile,
@@ -218,6 +223,7 @@ export class ClaudeSession {
       ...(this.options.sessions ? sessionsGateEnv(this.options.sessions) : {}),
       ...(this.options.checklist ? checklistHookEnv(this.options.checklist, sessionId) : {}),
       ...(this.options.terminal && !this.options.terminal.child ? terminalGateEnv(this.options.terminal, sessionId) : {}),
+      ...(this.options.instructions ? instructionsHookEnv(this.options.instructions, instructionDirs(cwd, worktreeRoot), claudeConfigDir(this.options.claudeDir ?? null)) : {}),
     };
   }
 
@@ -299,7 +305,7 @@ export class ClaudeSession {
 // kind を省くと tui（ターミナルモード）
 export function claudeArgs(
   options: Pick<Options, 'claudeSessionId' | 'resume' | 'remoteControlName' | 'model' | 'effort' | 'permissionMode'> &
-    Partial<Pick<Options, 'kind' | 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs'>>,
+    Partial<Pick<Options, 'kind' | 'settings' | 'worktree' | 'browser' | 'sessions' | 'checklist' | 'walkthrough' | 'sessionId' | 'claudeDir' | 'terminal' | 'addDirs' | 'instructions'>>,
 ): string[] {
   const {
     kind = 'tui',
@@ -319,6 +325,7 @@ export function claudeArgs(
     claudeDir = null,
     terminal = null,
     addDirs = [],
+    instructions = null,
   } = options;
   const args: string[] = kind === 'stream' ? [...STREAM_ARGS] : [];
   args.push(resume ? '--resume' : '--session-id', claudeSessionId);
@@ -343,7 +350,7 @@ export function claudeArgs(
   args.push(...mcpArgs(servers));
   // このセッションだけの設定。ユーザーの設定ファイルは書き換えない。どちらの起動でも同じ中身にする（statusline.ts の ownSettings）。
   // --settings は 2 回渡しても合わさらない（最後の 1 つだけが使われる）ので、設定ファイルを選んでいるときは合わせたファイルを 1 つ渡す
-  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child));
+  args.push('--settings', settings ? settings.settingsFile : sessionSettings(!!browser, !!sessions, claudeDir, !!checklist, !!terminal && !terminal.child, !!instructions));
   return args;
 }
 

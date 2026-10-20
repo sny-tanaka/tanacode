@@ -8,8 +8,9 @@ import type { PermissionMode } from '@shared/screen';
 import type { PendingPermission, PendingQuestion } from '@shared/questions';
 import type { PendingElicitation } from '@shared/elicitation';
 import type { BashTask, TaskRef } from '@shared/task';
+import { PARENT_INSTRUCTIONS_FILE } from '@shared/project-instructions';
 import { errorMessage } from '../errorMessage';
-import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ReloadIcon } from '../icons';
+import { ArrowDownIcon, CloseIcon, ExportIcon, IconButton, MonitorIcon, ParentIcon, ReloadIcon } from '../icons';
 import { formatComments, type ReviewComment } from '../review/LineComments';
 import { ExportDialog } from '../export/ExportDialog';
 import { ContextMeter } from '../knowledge/ContextMeter';
@@ -36,6 +37,7 @@ import type { SubagentRuns } from './useSessionSubagents';
 import { acceptsInput, type ChatState } from './chatState';
 import type { PendingSend } from './pendingSends';
 import { PastedChips } from './PastedChips';
+import { useParentInstructions } from './parentRole';
 import { RewindCard } from './RewindCard';
 import { ParentHeading } from './SessionRefs';
 import { ScheduledRow } from './ScheduledRow';
@@ -411,6 +413,8 @@ export const ClaudePane = memo(function ClaudePane({
   // worktree の準備の途中（終わるまで最初の指示を送らない）
   const preparing = session.archived ? null : (session.worktree?.preparing ?? null);
   const live = !session.archived && chat.status !== 'exited' && chat.status !== 'not-started';
+  // 「親にする」で読ませる TANACODE_PARENT.md。子のセッションには出さない（子は start_session を使えない）
+  const parentFile = useParentInstructions(live && !session.parentId ? session.id : null, (id) => window.tanacode.sessions.parentInstructions(id));
   // ターミナルモード。チャット・入力欄の代わりに、Claude Code の画面を出す。アーカイブ済みのセッションには画面が無いので、チャットのまま
   const screenMode = terminalOpen && !session.archived;
   // ターミナルモードで、Claude Code の入力欄に貼れる（起動の途中に貼った文字は、Claude Code が取りこぼす）
@@ -708,6 +712,21 @@ export const ClaudePane = memo(function ClaudePane({
             auto={session.autoCompact !== false}
             onStart={() => void window.tanacode.compact.start(session.id)}
             onAutoChange={(on) => void window.tanacode.sessions.setAutoCompact(session.id, on)}
+          />
+        )}
+        {live && !session.parentId && (
+          <IconButton
+            size="md"
+            icon={ParentIcon}
+            label={t('chat.pane.becomeParent')}
+            tip={t(parentFile === null ? 'chat.pane.becomeParentMissing' : 'chat.pane.becomeParentTip', { file: PARENT_INSTRUCTIONS_FILE })}
+            // 押すたびに 1 回読ませる（親の状態は覚えないので、押した印は付けない）。作業中なら順番待ちに入り、ターミナルモードなら入力欄に貼る
+            disabled={!parentFile}
+            onClick={() =>
+              void window.tanacode.sessions
+                .becomeParent(session.id)
+                .catch((error: unknown) => window.alert(t('chat.pane.becomeParentFailed', { error: errorMessage(error) })))
+            }
           />
         )}
         {live && (

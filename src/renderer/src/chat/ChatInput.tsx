@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@shared/i18n';
-import type { SessionSummary, SlashCommand } from '@shared/ipc';
+import type { SessionSummary, SlashCommand, SubmitOptions } from '@shared/ipc';
 import { isLongPaste, stripControlChars } from '@shared/paste';
 import { projectRootOf, sessionRef } from '@shared/session-tools';
 import { CloseIcon, IconButton, SendIcon, StopIcon } from '../icons';
@@ -129,8 +129,8 @@ function tokenAt(text: string, caret: number): Token | null {
 
 // Claude Code に送る。打ち込みは main が行う（同じセッションへの送信が混ざらないよう、親セッションからの指示と同じ順番待ちに並ぶ）。
 // pastes: 入力欄の札（貼り付けた長い文）
-export function submitToClaude(sessionId: string, text: string, attachments: string[], pastes: string[] = []): Promise<void> {
-  return window.tanacode.sessions.submit(sessionId, text, attachments, pastes);
+export function submitToClaude(sessionId: string, text: string, attachments: string[], pastes: string[] = [], options?: SubmitOptions): Promise<void> {
+  return options ? window.tanacode.sessions.submit(sessionId, text, attachments, pastes, options) : window.tanacode.sessions.submit(sessionId, text, attachments, pastes);
 }
 
 export function ChatInput({

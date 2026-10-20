@@ -138,6 +138,59 @@ describe('ヘッダー', () => {
     expect(toggle().disabled).toBe(false);
   });
 
+  it('「親にする」は、開いているセッションの TANACODE_PARENT.md を読ませる。作業中も押せる。描き直してセッションが変わったら、そのセッションに効く', async () => {
+    install({ 'sessions.parentInstructions': (id: never) => Promise.resolve(`/work/${id}/TANACODE_PARENT.md`) });
+    const view = render(<ClaudePane {...props()} />);
+    const parent = () => screen.getByRole('button', { name: '親にする' }) as HTMLButtonElement;
+    await settle();
+    expect(api.argsOf('sessions.parentInstructions')).toEqual([['s1']]);
+    expect(parent().disabled).toBe(false);
+    expect(parent().getAttribute('data-tip')).toContain('このセッションを親にします。TANACODE_PARENT.md を Claude に 1 回読ませます');
+    fireEvent.click(parent());
+    expect(api.argsOf('sessions.becomeParent')).toEqual([['s1']]);
+    // 押した印は付けない（押すたびに 1 回読ませる）
+    fireEvent.click(parent());
+    expect(api.argsOf('sessions.becomeParent')).toEqual([['s1'], ['s1']]);
+    view.rerender(<ClaudePane {...props({ chat: chatOf({ status: 'running' }) })} />);
+    expect(parent().disabled).toBe(false);
+    view.rerender(<ClaudePane {...props({ session: S2 })} />);
+    await settle();
+    expect(api.argsOf('sessions.parentInstructions').at(-1)).toEqual(['s2']);
+    fireEvent.click(parent());
+    expect(api.argsOf('sessions.becomeParent').at(-1)).toEqual(['s2']);
+  });
+
+  it('「親にする」は、ファイルが無ければ押せず、わけを出す。置いたことが見張りで分かると押せる。読ませられなかったら、わけを出す', async () => {
+    let found: string | null = null;
+    install({
+      'sessions.parentInstructions': () => Promise.resolve(found),
+      'sessions.becomeParent': () => Promise.reject(new Error("Error invoking remote method 'sessions:become-parent': Error: TANACODE_PARENT.md が見つかりません")),
+    });
+    render(<ClaudePane {...props()} />);
+    const parent = () => screen.getByRole('button', { name: '親にする' }) as HTMLButtonElement;
+    await settle();
+    expect(parent().disabled).toBe(true);
+    expect(parent().getAttribute('data-tip')).toBe('セッションのフォルダに TANACODE_PARENT.md（親として動くときの決まり）を置くと使えます');
+    found = '/work/s1/TANACODE_PARENT.md';
+    await act(async () => api.emit('workspace.onFilesChanged', { root: '/work/s1', paths: ['TANACODE_PARENT.md'] }));
+    await settle();
+    expect(parent().disabled).toBe(false);
+    fireEvent.click(parent());
+    await settle();
+    expect(alerts).toEqual(['親にできませんでした: TANACODE_PARENT.md が見つかりません']);
+  });
+
+  it('「親にする」は、子のセッション・止まっているセッションには出さない', async () => {
+    install({ 'sessions.parentInstructions': () => Promise.resolve('/work/TANACODE_PARENT.md') });
+    const view = render(<ClaudePane {...props({ session: { ...S1, parentId: 'p1' } })} />);
+    await settle();
+    expect(screen.queryByRole('button', { name: '親にする' })).toBeNull();
+    expect(api.argsOf('sessions.parentInstructions')).toEqual([]);
+    view.rerender(<ClaudePane {...props({ chat: chatOf({ status: 'exited' }) })} />);
+    await settle();
+    expect(screen.queryByRole('button', { name: '親にする' })).toBeNull();
+  });
+
   it('「最適化圧縮」は、main に流れを始めさせる（/compact は送らない）。作業中・会話がまだ無いときは押せない', async () => {
     const onSend = vi.fn();
     const view = render(<ClaudePane {...props({ onSend })} />);

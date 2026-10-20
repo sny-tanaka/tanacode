@@ -247,6 +247,8 @@ export class Profile {
       () => this.walkthroughLaunch(),
       this.claudeDir,
       () => this.terminalLaunch(),
+      // TANACODE.md を渡すフック。メニューで切り替えず、いつも足す（ファイルが無ければ何も渡さない）
+      () => ({ command: hostExecutable(), script: join(__dirname, 'instructions-hook.js') }),
     );
     const manager = this.manager;
     // 最適化圧縮の流れが進んでいるセッション（アプリが止めたターンが、流れに入るのを待っている間も）。
