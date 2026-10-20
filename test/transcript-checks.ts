@@ -1,4 +1,5 @@
 import { lineChatEvents, type TranscriptEntry } from '@shared/chat';
+import { PARENT_MESSAGE_TAG } from '@shared/session-tools';
 import { classifyLine } from '@shared/transcript-line';
 import { BashTaskTracker } from '../src/main/bash-task-tracker';
 import { ContextTracker } from '../src/main/context-tracker';
@@ -26,13 +27,16 @@ export type TranscriptCheck = {
   duplicateResults: { toolUseId: string; lines: number[] }[];
   // 完了の知らせより前に、実行中でなくなった裏のタスク
   earlyFinish: { toolUseId: string; kind: 'subagent' | 'bash' | 'workflow'; line: number; state: string }[];
+  // 親セッションからの指示として読んだ発言の本文に、囲みのタグが文字で残った行（囲みの本文にはタグが入らない。neutralizeTags）。
+  // Claude Code が順番待ちの発言をまとめた行（mergedSendUuids）を、1 つの発言として読むと出る
+  parentTags: number[];
 };
 
 // line: ファイルの中の行の番号（1 から）。agentLog: サブエージェント・ワークフローのエージェントの会話ログ（行はどれもサイドチェーン）
 export type NumberedEntry = { entry: TranscriptEntry; line: number };
 
 export function checkTranscript(entries: NumberedEntry[], { cwd, agentLog }: { cwd: string; agentLog: boolean }): TranscriptCheck {
-  const check: TranscriptCheck = { lines: entries.length, unknown: new Map(), toolBlocksOutside: new Map(), duplicateResults: [], earlyFinish: [] };
+  const check: TranscriptCheck = { lines: entries.length, unknown: new Map(), toolBlocksOutside: new Map(), duplicateResults: [], earlyFinish: [], parentTags: [] };
   const results = new Map<string, number[]>();
   const seenUuids = new Set<string>();
   // 裏のタスクの追跡。ファイルは読ませない（出力ファイル・完了時の記録という後ろ盾を使わず、会話ログの行と完了の知らせだけで動かす）
@@ -47,6 +51,7 @@ export function checkTranscript(entries: NumberedEntry[], { cwd, agentLog }: { c
     for (const { entry, line } of entries) {
       const classified = classifyLine(entry);
       for (const event of lineChatEvents(classified, cwd, agentLog)) {
+        if (event.type === 'user' && event.parent && PARENT_TAG.test(event.text) && !check.parentTags.includes(line)) check.parentTags.push(line);
         if (event.type !== 'unknown-event') continue;
         const found = check.unknown.get(event.name);
         check.unknown.set(event.name, { count: (found?.count ?? 0) + 1, line: found?.line ?? line });
@@ -90,6 +95,8 @@ export function checkTranscript(entries: NumberedEntry[], { cwd, agentLog }: { c
 
 // 無いフォルダ（トラッカーに、サブエージェントの会話ログ・ワークフローの記録を読ませない）
 const NO_DIR = '/nonexistent/tanacode-transcript-check';
+// 親セッションからの指示の囲みのタグ（@shared/session-tools の PARENT_MESSAGE_TAG）
+const PARENT_TAG = new RegExp(`</?${PARENT_MESSAGE_TAG}`);
 
 // ワークフローの完了時の記録・journal を読ませない（会話ログの行と、完了の知らせだけで動かす）
 function withoutFiles<T extends TranscriptEntry>(entry: T): T {
